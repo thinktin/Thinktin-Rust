@@ -7,6 +7,10 @@ name = "agent-shim"
 version = "0.1.0"
 
 [[package]]
+name = "auth"
+version = "0.1.0"
+
+[[package]]
 name = "catalog"
 version = "0.1.0"
 
@@ -35,6 +39,14 @@ name = "llm-gw"
 version = "0.1.0"
 
 [[package]]
+name = "notify"
+version = "0.1.0"
+
+[[package]]
+name = "orchestrator"
+version = "0.1.0"
+
+[[package]]
 name = "proto"
 version = "0.1.0"
 
@@ -44,4 +56,12 @@ version = "0.1.0"
 
 [[package]]
 name = "sandbox"
+version = "0.1.0"
+
+[[package]]
+name = "server"
+version = "0.1.0"
+
+[[package]]
+name = "store"
 version = "0.1.0"

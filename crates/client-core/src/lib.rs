@@ -1,3 +1,5 @@
+//! 客户端共享核心，经 UniFFI 供 Swift / Kotlin 调用
+
 pub fn add(left: u64, right: u64) -> u64 {
     left + right
 }

@@ -1,3 +1,5 @@
+//! 共享协议与类型（平台 ↔ shim、平台 ↔ 客户端）
+
 pub fn add(left: u64, right: u64) -> u64 {
     left + right
 }

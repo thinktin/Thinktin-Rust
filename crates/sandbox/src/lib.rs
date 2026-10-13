@@ -1,3 +1,5 @@
+//! 沙箱抽象：Cube（E2B 兼容接口）、本地开发后端
+
 pub fn add(left: u64, right: u64) -> u64 {
     left + right
 }
