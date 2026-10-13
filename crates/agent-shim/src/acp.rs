@@ -94,25 +94,23 @@ pub async fn connect(
     let mut backlog = Vec::new();
     if let Some(previous) = opts.previous_session.filter(|_| opts.restore_supported) {
         let params = json!({"sessionId": previous, "cwd": cwd, "mcpServers": mcp_servers});
-        let attempt = if caps.pointer("/sessionCapabilities/resume").is_some() {
-            Some(("session/resume", false))
+        let method = if caps.pointer("/sessionCapabilities/resume").is_some() {
+            Some("session/resume")
         } else if caps.get("loadSession").and_then(Value::as_bool) == Some(true) {
-            Some(("session/load", true))
+            Some("session/load")
         } else {
             None
         };
-        match attempt {
-            Some((method, replays)) => {
+        match method {
+            Some(method) => {
                 match with_timeout(timeout, method, peer.request(method, params)).await {
                     Ok(_) => {
-                        if replays {
-                            // `session/load` 会先把历史以 session/update 重放一遍再回复；
-                            // 这些内容平台的运行日志里已经有了，丢掉。
-                            while let Ok(msg) = incoming.try_recv() {
-                                if !matches!(&msg, Incoming::Notification { method, .. } if method == "session/update")
-                                {
-                                    backlog.push(msg);
-                                }
+                        // `session/load` 会先把历史以 session/update 重放一遍再回复，有的 agent
+                        // （如 Hermes）在 `session/resume` 时也会重放。此时还没有任何一轮在跑，
+                        // 这些内容平台的运行日志里已经有了，丢掉；其余消息留给驱动循环处理。
+                        while let Ok(msg) = incoming.try_recv() {
+                            if !is_history_replay(&msg) {
+                                backlog.push(msg);
                             }
                         }
                         return Ok(Connected {
@@ -154,6 +152,28 @@ pub async fn connect(
         restore_error,
         backlog,
     })
+}
+
+/// 接回会话时 agent 重放的历史内容。
+fn is_history_replay(msg: &Incoming) -> bool {
+    let Incoming::Notification { method, params } = msg else {
+        return false;
+    };
+    let kind = params
+        .pointer("/update/sessionUpdate")
+        .and_then(Value::as_str);
+    method == "session/update"
+        && matches!(
+            kind,
+            Some(
+                "user_message_chunk"
+                    | "agent_message_chunk"
+                    | "agent_thought_chunk"
+                    | "tool_call"
+                    | "tool_call_update"
+                    | "plan"
+            )
+        )
 }
 
 async fn with_timeout(
@@ -275,7 +295,7 @@ impl Driver<'_> {
                 }
                 msg = self.incoming.recv() => {
                     let Some(msg) = msg else {
-                        let code = process.child.wait().await.ok().and_then(|s| s.code());
+                        let code = crate::process::exit_code(&mut process.child).await;
                         return self.gone(turn, code);
                     };
                     let mut state = State {

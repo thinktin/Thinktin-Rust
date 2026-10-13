@@ -15,6 +15,7 @@
 - 最后一条消息是工具结果：回复 "MOCK_DONE: <结果前 200 字>"
 - 用户消息里有 `MOCK_TOOL:<工具名>:<JSON 参数>`（参数写到行尾），且请求的工具列表里有这个工具：
   返回一次对该工具的调用
+- 用户消息里有 `MOCK_SLOW`：慢慢输出一段长文字（约 8 秒），用来测取消
 - 其他情况：回复 "pong from mock"
 """
 
@@ -28,6 +29,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 TOOL_RE = re.compile(r"MOCK_TOOL:([A-Za-z0-9_.-]+):(\{.*\})\s*$", re.M)
 PONG = "pong from mock"
+SLOW_TEXT = "slow " * 80
 
 _counter = 0
 _counter_lock = threading.Lock()
@@ -68,6 +70,8 @@ def plan_reply(last_is_tool_result, tool_result_text, user_text, tool_names):
     """返回 ("text", 文本) 或 ("tool", 工具名, 参数 JSON 字符串)。"""
     if last_is_tool_result:
         return ("text", "MOCK_DONE: " + tool_result_text.strip()[:200])
+    if "MOCK_SLOW" in (user_text or ""):
+        return ("text", SLOW_TEXT)
     matches = TOOL_RE.findall(user_text or "")
     if matches:
         name, args = matches[-1]
@@ -271,6 +275,16 @@ def chunks(text, size=8):
 # ---------- HTTP ----------
 
 
+class Server(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        # agent 取消一轮时会直接断开流式连接，这是预期行为，不打印堆栈。
+        if isinstance(sys.exc_info()[1], (BrokenPipeError, ConnectionResetError)):
+            return
+        super().handle_error(request, client_address)
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "mock-llm/1"
@@ -319,6 +333,8 @@ class Handler(BaseHTTPRequestHandler):
     def sse_raw(self, text):
         self.wfile.write(text.encode())
         self.wfile.flush()
+        if getattr(self, "slow", False):
+            time.sleep(0.1)
 
     def route(self):
         path = self.path.split("?", 1)[0]
@@ -364,6 +380,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(401, {"type": "error", "error": {"type": "authentication_error", "message": "bad sandbox token"}})
         plan_fn, respond_fn = handlers[sub]
         plan, tools = plan_fn(body)
+        self.slow = plan == ("text", SLOW_TEXT)
         if self.server.dump:
             with open(self.server.dump, "a", encoding="utf-8") as f:
                 f.write(json.dumps({"path": self.path, "body": body}, ensure_ascii=False) + "\n")
@@ -382,8 +399,7 @@ def main():
     ap.add_argument("--model", action="append", default=None, help="模型列表接口返回的模型，可重复")
     ap.add_argument("--dump", default=None, help="把完整请求体追加到这个文件（调试用）")
     args = ap.parse_args()
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
-    server.daemon_threads = True
+    server = Server(("127.0.0.1", args.port), Handler)
     server.token = args.token
     server.root = args.root.rstrip("/")
     server.models = args.model or ["main", "fast"]

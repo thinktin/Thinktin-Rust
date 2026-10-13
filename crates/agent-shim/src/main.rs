@@ -1,4 +1,5 @@
-//! 沙箱内守护进程：用 ACP 驱动 agent，桥接 MCP
+//! 沙箱内守护进程：按清单启动开源 agent，用 ACP 或 Claude Code stream-json 驱动它，
+//! 注入模型配置、转发权限请求、上报事件（架构方案 3.3）。
 
 mod acp;
 mod claude_cli;
@@ -136,14 +137,41 @@ struct RoutingArgs {
     /// 从哪个环境变量读沙箱令牌（不走命令行参数，免得出现在进程列表里）
     #[arg(long, default_value = config::TOKEN_ENV)]
     token_env: String,
-    /// 模型别名，可重复；第一个是默认模型。名为 fast 的别名用于轻量任务
-    #[arg(long = "model", default_values_t = ["main".to_string()])]
-    models: Vec<String>,
+    /// 模型别名，可重复；第一个是默认模型。名为 fast 的别名用于轻量任务。
+    /// 可带上下文窗口和最大输出 token：main:131072:8192
+    #[arg(long = "model", default_value = "main", value_parser = parse_model)]
+    models: Vec<ModelAlias>,
     #[arg(long)]
     default_model: Option<String>,
     /// 指定模型协议：anthropic-messages、openai-completions、openai-responses
     #[arg(long, value_parser = parse_protocol)]
     protocol: Option<LlmProtocol>,
+}
+
+fn parse_model(s: &str) -> Result<ModelAlias, String> {
+    let mut parts = s.split(':');
+    let id = parts
+        .next()
+        .filter(|id| !id.is_empty())
+        .ok_or("empty model alias")?;
+    let mut number = |what: &str| -> Result<Option<u32>, String> {
+        parts
+            .next()
+            .map(|n| {
+                n.parse()
+                    .map_err(|_| format!("{what} must be a number in `{s}`"))
+            })
+            .transpose()
+    };
+    let mut alias = ModelAlias::new(id);
+    alias.context_window = number("context window")?;
+    alias.max_output_tokens = number("max output tokens")?;
+    if parts.next().is_some() {
+        return Err(format!(
+            "expected alias[:context_window[:max_output_tokens]], got `{s}`"
+        ));
+    }
+    Ok(alias)
 }
 
 fn parse_protocol(s: &str) -> Result<LlmProtocol, String> {
@@ -159,11 +187,11 @@ impl RoutingArgs {
         let default_model = self
             .default_model
             .clone()
-            .unwrap_or_else(|| self.models[0].clone());
+            .unwrap_or_else(|| self.models[0].id.clone());
         Ok(ModelRouting {
             gateway_url: self.gateway.clone(),
             token,
-            models: self.models.iter().map(ModelAlias::new).collect(),
+            models: self.models.clone(),
             default_model,
             protocol: self.protocol,
         })
@@ -252,21 +280,25 @@ impl CommonArgs {
     }
 }
 
-#[tokio::main]
-async fn main() -> ExitCode {
+fn main() -> ExitCode {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .with_writer(std::io::stderr)
         .init();
-    match run(Cli::parse()).await {
+    let cli = Cli::parse();
+    let runtime = tokio::runtime::Runtime::new().expect("failed to start the tokio runtime");
+    let code = match runtime.block_on(run(cli)) {
         Ok(code) => code,
         Err(err) => {
             eprintln!("agent-shim: {err:#}");
             ExitCode::FAILURE
         }
-    }
+    };
+    // 读 stdin 的阻塞线程可能还在等输入（平台发完 shutdown 不一定关管道），不等它。
+    runtime.shutdown_background();
+    code
 }
 
 async fn run(cli: Cli) -> anyhow::Result<ExitCode> {
@@ -454,5 +486,23 @@ fn print_event(env: &EventEnvelope, format: Format) {
                 eprintln!("[{}] {v}", env.seq);
             }
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn model_alias_syntax() {
+        assert_eq!(parse_model("main").unwrap(), ModelAlias::new("main"));
+        let m = parse_model("main:131072:8192").unwrap();
+        assert_eq!(
+            (m.context_window, m.max_output_tokens),
+            (Some(131072), Some(8192))
+        );
+        assert!(parse_model("main:lots").is_err());
+        assert!(parse_model("main:1:2:3").is_err());
+        assert!(parse_model(":1").is_err());
     }
 }

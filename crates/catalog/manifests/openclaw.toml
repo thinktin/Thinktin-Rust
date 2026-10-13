@@ -19,8 +19,11 @@ state_dirs = [".openclaw"]
 [[harness]]
 id = "acp"
 kind = "acp"
-command = ["openclaw", "acp", "--url", "ws://127.0.0.1:18789"]
-session = { restore = true, per_session_mcp = false }
+# 桥的 ACP 会话 id 只在内存里，重启后接不回来。所以让桥固定绑定到 Gateway 的一个会话键，
+# 历史由 Gateway 持久化在状态目录里：每次 session/new 都接着同一段对话。
+# 不给 --url，桥按配置连本机 Gateway，令牌取自配置里的 ${OPENCLAW_GATEWAY_TOKEN}。
+command = ["openclaw", "acp", "--session", "agent:main:thinktin"]
+session = { restore = false, per_session_mcp = false }
 
 [[harness.sidecar]]
 name = "gateway"

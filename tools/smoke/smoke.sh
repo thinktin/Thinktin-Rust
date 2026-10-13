@@ -8,6 +8,7 @@
 #   WORKDIR  放 HOME、工作目录和日志的目录，默认新建临时目录；复用同一目录可测会话接回
 #   DUMP=1   把完整请求体存到 $WORKDIR/dump.jsonl
 #   SHIM     agent-shim 路径，默认 target/debug/agent-shim
+#   PORT     网关替身的端口，默认随机；有的 agent（如 Hermes）会把网关地址记进会话，测会话接回时要固定
 # agent 的可执行文件（claude-agent-acp、codex-acp、pi-acp、openclaw、hermes-acp）要在 PATH 里。
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
@@ -17,7 +18,7 @@ work=${WORKDIR:-$(mktemp -d)}
 mkdir -p "$work"
 token="sbx-smoke-$$-$RANDOM"
 
-python3 "$root/tools/mock-llm/mock_llm.py" --token "$token" --log "$work/llm.jsonl" \
+python3 "$root/tools/mock-llm/mock_llm.py" --port "${PORT:-0}" --token "$token" --log "$work/llm.jsonl" \
   ${DUMP:+--dump "$work/dump.jsonl"} >"$work/mock.out" 2>&1 &
 mock=$!
 trap 'kill $mock 2>/dev/null || true' EXIT
@@ -47,14 +48,16 @@ reply = "".join(e["text"] for e in events if e["type"] == "message_chunk")
 tools = [f'{e.get("kind")}:{e.get("title")}' for e in events if e["type"] == "tool_call"]
 perms = [f'{e["by"]}->{e["option_id"]}' for e in events if e["type"] == "permission_resolved"]
 errors = [e["message"][:300] for e in events if e["type"] == "error"]
-bad_auth = [c for c in calls if c.get("auth") != "ok"]
 model_calls = [c for c in calls if c["method"] == "POST" and "reply" in c]
+bad_auth = [c for c in calls if c["method"] == "POST" and c.get("auth") != "ok"]
+# 有的 agent（如 Hermes）会不带凭证探测网关是不是本地推理服务，这些 GET 只记录不判失败。
+probes = sorted({c["path"] for c in calls if c["method"] == "GET" and c.get("auth") != "ok"})
 checks = {
     "agent ready": ready is not None,
     "turn ended": ended is not None,
     f"reply contains {expect!r}": expect in reply,
     "model called via gateway": len(model_calls) > 0,
-    "every request used the sandbox token": not bad_auth,
+    "every model request used the sandbox token": not bad_auth,
 }
 print(f"agent:    {ready and ready['agent_id']} / {ready and ready['harness']}  ({ready and json.dumps(ready.get('agent_info'))})")
 print(f"session:  {ready and ready['session_id']}  restored={ready and ready['session_restored']}")
@@ -65,6 +68,8 @@ print(f"perms:    {perms}")
 print(f"requests: {[(c['path'], c.get('model'), c.get('reply') or c.get('error')) for c in calls]}")
 if errors:
     print(f"errors:   {errors}")
+if probes:
+    print(f"probes without token (rejected by the real gateway): {probes}")
 for name, ok in checks.items():
     print(f"  [{'ok' if ok else 'FAIL'}] {name}")
 print(f"logs:     {work}")

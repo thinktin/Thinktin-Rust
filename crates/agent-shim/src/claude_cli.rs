@@ -230,6 +230,7 @@ async fn drive(
         session_restored: restored,
     });
 
+    let (expired_tx, mut expired_rx) = mpsc::unbounded_channel::<String>();
     let mut d = Driver {
         sink,
         policy: &cfg.policy,
@@ -237,10 +238,8 @@ async fn drive(
         pending: HashMap::new(),
         next_permission: 1,
         next_control: 1,
-        expired_tx: mpsc::unbounded_channel().0,
+        expired_tx,
     };
-    let (expired_tx, mut expired_rx) = mpsc::unbounded_channel::<String>();
-    d.expired_tx = expired_tx;
     for msg in std::mem::take(&mut conn.backlog) {
         d.on_message(&conn, msg);
     }
@@ -255,7 +254,7 @@ async fn drive(
             msg = conn.rx.recv() => match msg {
                 Some(msg) => d.on_message(&conn, msg),
                 None => {
-                    let code = conn.proc.child.wait().await.ok().and_then(|s| s.code());
+                    let code = process::exit_code(&mut conn.proc.child).await;
                     break d.gone(code);
                 }
             },

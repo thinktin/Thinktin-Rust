@@ -288,10 +288,21 @@ fn openclaw(
                 "model": {"primary": format!("thinktin/{}", r.default_model)},
             }
         },
+        // 执行命令要人审批，审批经 ACP 转给平台的预授权策略（默认是不审批的 full）。
+        "tools": {"exec": {"mode": "ask"}},
+        // 启用安装策略但不配审批命令：技能、插件的安装（含 ClawHub）一律失败关闭（3.6）。
+        "security": {"installPolicy": {"enabled": true}},
     });
     out.files
         .push((PathBuf::from(".openclaw/openclaw.json"), pretty(&config)));
     Ok(())
+}
+
+fn default_alias(r: &ModelRouting) -> &ModelAlias {
+    r.models
+        .iter()
+        .find(|m| m.id == r.default_model)
+        .expect("render() checked the default model")
 }
 
 fn hermes(r: &ModelRouting, home: &Path, out: &mut RenderedConfig) {
@@ -305,14 +316,18 @@ fn hermes(r: &ModelRouting, home: &Path, out: &mut RenderedConfig) {
         _ => "chat_completions",
     };
     // YAML 是 JSON 的超集，直接写 JSON，省一个 YAML 依赖。
+    // 供应商条目必须就叫 `custom`：Hermes 接回会话时按裸的 `custom` 重新解析供应商，
+    // 叫别的名字会找不到 key_env，导致会话接不回来。
+    let mut model = json!({"provider": "custom", "default": r.default_model});
+    // 不给上下文长度时 Hermes 会去探测网关，探不到就按 256K 算。
+    if let Some(n) = default_alias(r).context_window {
+        model["context_length"] = n.into();
+    }
     let config = json!({
-        "model": {
-            "provider": "custom:thinktin",
-            "default": r.default_model,
-        },
+        "model": model,
         "providers": {
-            "thinktin": {
-                "name": "thinktin",
+            "custom": {
+                "name": "custom",
                 "base_url": r.base_url(out.protocol),
                 "key_env": TOKEN_ENV,
                 "transport": transport,
@@ -439,13 +454,35 @@ mod tests {
             "${THINKTIN_SANDBOX_TOKEN}"
         );
         assert_eq!(v["gateway"]["bind"], "loopback");
+        assert_eq!(v["security"]["installPolicy"]["enabled"], true);
         assert_eq!(c.env["OPENCLAW_GATEWAY_TOKEN"].len(), 64);
         assert_no_token_in_files(&c);
 
         let c = render_for("hermes");
         let v: Value = serde_json::from_str(file(&c, ".hermes/config.yaml")).unwrap();
-        assert_eq!(v["providers"]["thinktin"]["key_env"], TOKEN_ENV);
+        assert_eq!(v["providers"]["custom"]["key_env"], TOKEN_ENV);
         assert_no_token_in_files(&c);
+    }
+
+    #[test]
+    fn context_window_reaches_agent_configs() {
+        let mut r = routing();
+        r.models[0].context_window = Some(131072);
+        r.models[0].max_output_tokens = Some(8192);
+        let render = |id| {
+            let m = catalog::builtin(id).unwrap();
+            render(&m, &r, Path::new("/h"), Path::new("/w")).unwrap()
+        };
+        let c = render("hermes");
+        let v: Value = serde_json::from_str(file(&c, ".hermes/config.yaml")).unwrap();
+        assert_eq!(v["model"]["context_length"], 131072);
+        let c = render("pi");
+        let v: Value = serde_json::from_str(file(&c, ".pi/agent/models.json")).unwrap();
+        let main = &v["providers"]["thinktin"]["models"][0];
+        assert_eq!(
+            (main["contextWindow"].as_u64(), main["maxTokens"].as_u64()),
+            (Some(131072), Some(8192))
+        );
     }
 
     #[test]

@@ -104,6 +104,15 @@ impl Agent {
             ("session/resume", Some(id)) => {
                 let sid = params["sessionId"].as_str().unwrap_or_default();
                 if self.sessions.contains(sid) {
+                    // 像 Hermes 一样在 resume 时也重放历史，外加一条非历史的更新。
+                    update(
+                        sid,
+                        json!({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "REPLAYED"}}),
+                    );
+                    update(
+                        sid,
+                        json!({"sessionUpdate": "available_commands_update", "availableCommands": [{"name": "after-resume"}]}),
+                    );
                     reply(id, json!({}));
                 } else {
                     reply_err(id, -32002, "session not found");

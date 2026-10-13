@@ -161,6 +161,14 @@ impl ProcessHandle {
     }
 }
 
+/// agent 的 stdout 关闭后取它的退出码。关了 stdout 却不退出的进程不等，交给 terminate 处理。
+pub async fn exit_code(child: &mut Child) -> Option<i32> {
+    match tokio::time::timeout(Duration::from_secs(5), child.wait()).await {
+        Ok(Ok(status)) => status.code(),
+        _ => None,
+    }
+}
+
 /// 等辅助进程监听到指定的回环地址。进程提前退出则失败。
 pub async fn wait_tcp_ready(
     addr: &str,

@@ -213,6 +213,23 @@ fn prompt_roundtrip_and_event_order() {
 }
 
 #[test]
+fn shutdown_does_not_wait_for_stdin_to_close() {
+    let setup = Setup::new();
+    let mut shim = setup.serve(&[]);
+    shim.wait_type("ready");
+    shim.send(json!({"type": "shutdown"}));
+    // stdin 保持打开：平台发完 shutdown 不一定关管道。
+    for _ in 0..100 {
+        if let Some(status) = shim.child.try_wait().unwrap() {
+            assert!(status.success());
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    panic!("agent-shim did not exit after shutdown");
+}
+
+#[test]
 fn agent_environment_is_isolated() {
     let setup = Setup::new();
     let mut shim = setup.serve(&[]);
@@ -364,6 +381,16 @@ fn crash_restarts_agent_and_resumes_session() {
     assert_eq!(second["session_id"], first["session_id"]);
     shim.prompt("r2", "hello");
     assert_eq!(shim.finish_turn("r2").0, "echo: hello");
+    assert!(
+        !shim.seen.iter().any(|e| e["text"] == "REPLAYED"),
+        "resume 时重放的历史不能算进新的一轮"
+    );
+    assert!(
+        shim.seen
+            .iter()
+            .any(|e| e["kind"] == "available_commands_update"
+                && e["raw"]["availableCommands"][0]["name"] == "after-resume")
+    );
     shim.shutdown();
 }
 
