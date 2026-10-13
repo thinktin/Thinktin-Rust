@@ -1,0 +1,36 @@
+# OpenClaw：`openclaw acp` 是连到 OpenClaw Gateway 的 ACP 桥，
+# 所以先在沙箱里起一个只监听回环地址的 Gateway（sidecar），再启动桥。
+# 出过多起技能市场投毒事件（3.6），技能市场必须关闭。
+
+[agent]
+id = "openclaw"
+name = "OpenClaw"
+upstream = "https://github.com/openclaw/openclaw"
+version = "2026.10.3"
+license = "MIT"
+sites = ["cn", "global"]
+
+[runtime]
+template = "agents/openclaw:2026.10.3"
+vcpu = 1
+memory_mb = 2048
+state_dirs = [".openclaw"]
+
+[[harness]]
+id = "acp"
+kind = "acp"
+command = ["openclaw", "acp", "--url", "ws://127.0.0.1:18789"]
+session = { restore = true, per_session_mcp = false }
+
+[[harness.sidecar]]
+name = "gateway"
+command = ["openclaw", "gateway", "run"]
+ready_tcp = "127.0.0.1:18789"
+ready_timeout_secs = 120
+
+[llm]
+protocols = ["openai-completions", "anthropic-messages", "openai-responses"]
+config = "openclaw"
+
+[policy]
+heartbeat = "platform"

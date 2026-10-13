@@ -1,0 +1,28 @@
+# Hermes Agent（Nous Research）：自带 ACP 入口 hermes-acp（pip 包 hermes-agent[acp]）。
+
+[agent]
+id = "hermes"
+name = "Hermes Agent"
+upstream = "https://github.com/NousResearch/hermes-agent"
+version = "0.19.0"
+license = "MIT"
+sites = ["cn", "global"]
+
+[runtime]
+template = "agents/hermes:0.19.0"
+vcpu = 1
+memory_mb = 2048
+state_dirs = [".hermes"]
+
+[[harness]]
+id = "acp"
+kind = "acp"
+command = ["hermes-acp"]
+session = { restore = true, per_session_mcp = true }
+
+[llm]
+protocols = ["openai-completions", "anthropic-messages"]
+config = "hermes"
+
+[policy]
+heartbeat = "platform"
