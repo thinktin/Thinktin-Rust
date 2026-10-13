@@ -9,6 +9,8 @@
 #   DUMP=1   把完整请求体存到 $WORKDIR/dump.jsonl
 #   SHIM     agent-shim 路径，默认 target/debug/agent-shim
 #   PORT     网关替身的端口，默认随机；有的 agent（如 Hermes）会把网关地址记进会话，测会话接回时要固定
+#   EGRESS=1 用 strace 记录 agent 所有进程的 DNS 查询和网络连接，出现回环以外的连接就判失败
+#            （需要 strace；会去掉代理变量，让外联直接暴露出来）。agent 都是自部署的，只应连模型网关
 # agent 的可执行文件（claude-agent-acp、codex-acp、pi-acp、openclaw、hermes-acp）要在 PATH 里。
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
@@ -29,17 +31,24 @@ done
 port=$(sed -n 's/listening on //p' "$work/mock.out")
 start_line=$(wc -l <"$work/llm.jsonl")
 
+trace=()
+if [ -n "${EGRESS:-}" ]; then
+  unset HTTPS_PROXY https_proxy HTTP_PROXY http_proxy
+  : >"$work/egress.trace"
+  trace=(strace -f -qq -xx -s 512 -e trace=connect,sendto,sendmmsg -o "$work/egress.trace")
+fi
+
 set +e
-THINKTIN_SANDBOX_TOKEN=$token "${SHIM:-$root/target/debug/agent-shim}" run \
+THINKTIN_SANDBOX_TOKEN=$token "${trace[@]}" "${SHIM:-$root/target/debug/agent-shim}" run \
   --agent "$agent" --home "$work/home" --cwd "$work/work" \
   --gateway "http://127.0.0.1:$port" --prompt "${PROMPT:-Say hi}" "$@" \
   >"$work/events.jsonl" 2>"$work/shim.log"
 code=$?
 set -e
 
-python3 - "$work" "$code" "${EXPECT:-pong from mock}" "$start_line" <<'PY'
-import json, sys
-work, code, expect, start = sys.argv[1], int(sys.argv[2]), sys.argv[3], int(sys.argv[4])
+python3 - "$work" "$code" "${EXPECT:-pong from mock}" "$start_line" "${EGRESS:-}" <<'PY'
+import json, re, sys
+work, code, expect, start, egress = sys.argv[1], int(sys.argv[2]), sys.argv[3], int(sys.argv[4]), sys.argv[5]
 events = [json.loads(l) for l in open(f"{work}/events.jsonl") if l.strip()]
 calls = [json.loads(l) for l in open(f"{work}/llm.jsonl")][start:]
 ready = next((e for e in events if e["type"] == "ready"), None)
@@ -70,6 +79,31 @@ if errors:
     print(f"errors:   {errors}")
 if probes:
     print(f"probes without token (rejected by the real gateway): {probes}")
+if egress:
+    # 从 strace 记录里取出回环以外的连接和 DNS 查询（-xx 下字符串都是 \xHH 形式）。
+    unhex = lambda h: bytes(int(x, 16) for x in h.split("\\x")[1:])
+    remote, names = set(), set()
+    for line in open(f"{work}/egress.trace", errors="replace"):
+        if "connect(" in line:
+            m = re.search(r'sin6?_port=htons\((\d+)\).*?(?:inet_addr\("|AF_INET6, ")([^"]+)"', line)
+            if m:
+                addr = m.group(2)
+                addr = unhex(addr).decode() if addr.startswith("\\x") else addr
+                if not (addr.startswith("127.") or addr in ("::1", "::ffff:127.0.0.1")):
+                    remote.add(f"{addr}:{m.group(1)}")
+        if "sendto(" in line or "sendmmsg(" in line:
+            for h in re.findall(r'"((?:\\x[0-9a-f]{2})+)"', line):
+                b = unhex(h)
+                if len(b) < 17 or b[4:6] != b"\x00\x01":
+                    continue
+                i, labels = 12, []
+                while i < len(b) and b[i] and len(labels) < 20:
+                    labels.append(b[i + 1:i + 1 + b[i]].decode("ascii", "replace"))
+                    i += b[i] + 1
+                if labels:
+                    names.add(".".join(labels))
+    print(f"egress:   dns={sorted(names) or 'none'} connects={sorted(remote) or 'none'}")
+    checks["no traffic outside the sandbox"] = not remote and not names
 for name, ok in checks.items():
     print(f"  [{'ok' if ok else 'FAIL'}] {name}")
 print(f"logs:     {work}")

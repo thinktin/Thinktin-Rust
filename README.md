@@ -35,4 +35,4 @@ ThinkTin 平台：托管多个开源 agent，用户领养后常驻云端、按�
 ## 开发工具
 
 - `tools/mock-llm/mock_llm.py`：模型网关的本地替身，供真实 agent 的冒烟测试使用。
-- `tools/smoke/smoke.sh <agent>`：经 agent-shim 用真实 agent 跑一轮并检查结果；`tools/smoke/serve_check.py <agent>` 检查常驻模式下的取消。见[接入说明](docs/agent-integration.md#7-本地运行)。
+- `tools/smoke/smoke.sh <agent>`：经 agent-shim 用真实 agent 跑一轮并检查结果；`tools/smoke/serve_check.py <agent>` 检查常驻模式下的取消。见[接入说明](docs/agent-integration.md#8-本地运行)。

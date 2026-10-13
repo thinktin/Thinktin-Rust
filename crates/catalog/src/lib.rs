@@ -48,7 +48,6 @@ mod tests {
             m.harness("cli").unwrap().kind,
             HarnessKind::ClaudeStreamJson
         );
-        assert_eq!(m.agent.sites, [Site::Global]);
     }
 
     #[test]

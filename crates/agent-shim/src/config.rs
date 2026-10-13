@@ -174,6 +174,8 @@ fn codex(r: &ModelRouting, home: &Path, out: &mut RenderedConfig) -> anyhow::Res
         "model": r.default_model,
         "model_provider": "thinktin",
         "check_for_update_on_startup": false,
+        // 插件市场会在后台连 GitHub 和 chatgpt.com 同步；apps 是 ChatGPT 的连接器。都关掉。
+        "features": {"plugins": false, "apps": false},
         "model_providers": {
             "thinktin": {
                 "name": "ThinkTin model gateway",
@@ -263,6 +265,11 @@ fn openclaw(
     set(out, "OPENCLAW_GATEWAY_TOKEN", random_hex(32)?);
     set(out, "OPENCLAW_NO_AUTO_UPDATE", "1");
     set(out, "OPENCLAW_DISABLE_BONJOUR", "1");
+    // Gateway 会在后台访问 ClawHub（推荐、推广、插件目录等），配置里没有总开关。
+    // 指向本机一个没有服务的端口，所有 ClawHub 请求在沙箱内直接失败。
+    // 以后平台有了审核过的技能源，改指向它（3.6）。
+    set(out, "OPENCLAW_CLAWHUB_URL", "http://127.0.0.1:9");
+    set(out, "CLAWHUB_DISABLE_TELEMETRY", "1");
     let api = pi_api(out.protocol);
     let config = json!({
         "gateway": {
@@ -273,6 +280,8 @@ fn openclaw(
         },
         "models": {
             "mode": "replace",
+            // 不从 catalog.openclaw.ai 拉模型目录和价格。
+            "catalogRefresh": {"enabled": false},
             "providers": {
                 "thinktin": {
                     "baseUrl": r.base_url(out.protocol),
@@ -292,6 +301,9 @@ fn openclaw(
         "tools": {"exec": {"mode": "ask"}},
         // 启用安装策略但不配审批命令：技能、插件的安装（含 ClawHub）一律失败关闭（3.6）。
         "security": {"installPolicy": {"enabled": true}},
+        // 不检查更新（版本、插件版本漂移），不发遥测。
+        "update": {"checkOnStart": false},
+        "telemetry": {"enabled": false},
     });
     out.files
         .push((PathBuf::from(".openclaw/openclaw.json"), pretty(&config)));
@@ -414,6 +426,7 @@ mod tests {
         assert_eq!(p["env_key"].as_str(), Some(TOKEN_ENV));
         assert_eq!(p["wire_api"].as_str(), Some("responses"));
         assert_eq!(parsed["model_provider"].as_str(), Some("thinktin"));
+        assert_eq!(parsed["features"]["plugins"].as_bool(), Some(false));
         assert_eq!(c.env[TOKEN_ENV], "sbx-token");
         assert_no_token_in_files(&c);
     }
@@ -455,6 +468,9 @@ mod tests {
         );
         assert_eq!(v["gateway"]["bind"], "loopback");
         assert_eq!(v["security"]["installPolicy"]["enabled"], true);
+        assert_eq!(v["update"]["checkOnStart"], false);
+        assert_eq!(v["models"]["catalogRefresh"]["enabled"], false);
+        assert!(c.env["OPENCLAW_CLAWHUB_URL"].starts_with("http://127.0.0.1:"));
         assert_eq!(c.env["OPENCLAW_GATEWAY_TOKEN"].len(), 64);
         assert_no_token_in_files(&c);
 
