@@ -20,6 +20,9 @@ state_dirs = [".codex"]
 id = "acp"
 kind = "acp"
 command = ["codex-acp"]
+# 只读模式：改文件、执行命令、联网都要审批，经 ACP 交给平台的预授权策略决定（4.7）。
+# 默认的 agent 模式会让 Codex 自己用模型（codex-auto-review）审批，绕过平台。
+env = { INITIAL_AGENT_MODE = "read-only" }
 session = { restore = true, per_session_mcp = true }
 
 [llm]

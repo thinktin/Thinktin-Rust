@@ -330,12 +330,19 @@ fn pretty(v: &Value) -> String {
     s
 }
 
-fn random_hex(bytes: usize) -> anyhow::Result<String> {
-    let mut buf = vec![0u8; bytes];
+pub(crate) fn random_bytes(n: usize) -> anyhow::Result<Vec<u8>> {
+    let mut buf = vec![0u8; n];
     std::fs::File::open("/dev/urandom")
         .and_then(|mut f| f.read_exact(&mut buf))
         .context("reading /dev/urandom")?;
-    Ok(buf.iter().map(|b| format!("{b:02x}")).collect())
+    Ok(buf)
+}
+
+fn random_hex(bytes: usize) -> anyhow::Result<String> {
+    Ok(random_bytes(bytes)?
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect())
 }
 
 #[cfg(test)]
