@@ -11,6 +11,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 pub mod apns;
+pub mod jpush;
 
 /// 推送的种类，决定客户端怎么展示（iOS 的 category、Android 的通知渠道）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

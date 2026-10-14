@@ -25,6 +25,9 @@ pub struct Config {
     /// 沙箱令牌签名私钥种子（base64url），只从环境变量 THINKTIN_SANDBOX_TOKEN_SEED 读。
     #[serde(skip)]
     pub sandbox_token_seed: Option<String>,
+    /// 极光推送的 Master Secret，只从环境变量 THINKTIN_JPUSH_MASTER_SECRET 读。
+    #[serde(skip)]
+    pub jpush_master_secret: Option<String>,
     /// 接口用的密钥，只从环境变量读（见 [`ApiSecrets`]）。
     #[serde(skip)]
     pub api_secrets: ApiSecrets,
@@ -138,6 +141,37 @@ impl Default for Storage {
 #[serde(default, deny_unknown_fields)]
 pub struct Push {
     pub apns: Option<Apns>,
+    /// 国内 Android：经极光推送覆盖各厂商通道（设备的推送通道是 unipush）。
+    pub jpush: Option<Jpush>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Jpush {
+    #[serde(default = "default_jpush_endpoint")]
+    pub endpoint: String,
+    pub app_key: String,
+    /// App 里审批通知的通知渠道 id。
+    #[serde(default = "default_approval_channel")]
+    pub approval_channel: String,
+    /// App 里其他通知的通知渠道 id。
+    #[serde(default = "default_results_channel")]
+    pub default_channel: String,
+    /// 各厂商的消息分类参数（厂商后台申请下来以后再填）。
+    #[serde(default)]
+    pub vendors: notify::jpush::VendorOptions,
+}
+
+fn default_jpush_endpoint() -> String {
+    notify::jpush::ENDPOINT.into()
+}
+
+fn default_approval_channel() -> String {
+    "tt_approval".into()
+}
+
+fn default_results_channel() -> String {
+    "tt_results".into()
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -224,6 +258,7 @@ impl Default for Config {
             storage: Storage::default(),
             push: Push::default(),
             sandbox_token_seed: None,
+            jpush_master_secret: None,
             api_secrets: ApiSecrets::default(),
         }
     }
@@ -291,6 +326,7 @@ impl Config {
             cfg.node_id = Some(node);
         }
         cfg.sandbox_token_seed = env.var("THINKTIN_SANDBOX_TOKEN_SEED");
+        cfg.jpush_master_secret = env.var("THINKTIN_JPUSH_MASTER_SECRET");
         cfg.api_secrets = ApiSecrets {
             access_token_seed: env.var("THINKTIN_ACCESS_TOKEN_SEED"),
             code_pepper: env.var("THINKTIN_CODE_PEPPER"),
@@ -347,6 +383,9 @@ impl Config {
             }
             if self.api_secrets.kms_key.is_none() {
                 bail!("worker.enabled needs THINKTIN_KMS_KEY (artifacts are encrypted per user)");
+            }
+            if self.push.jpush.is_some() && self.jpush_master_secret.is_none() {
+                bail!("push.jpush needs THINKTIN_JPUSH_MASTER_SECRET");
             }
             if self.worker.max_concurrent_runs == 0 {
                 bail!("worker.max_concurrent_runs must be positive");
@@ -463,6 +502,10 @@ mod tests {
             team_id = "T"
             key_id = "K"
             key_path = "/etc/thinktin/apns.p8"
+            [push.jpush]
+            app_key = "abc"
+            [push.jpush.vendors]
+            huawei_category = "WORK"
             "#,
         )
         .unwrap();
@@ -472,11 +515,23 @@ mod tests {
         let seed = ("THINKTIN_SANDBOX_TOKEN_SEED", "seed");
         let err = Config::load(Some(&path), &MapEnv(HashMap::from([db, seed]))).unwrap_err();
         assert!(err.to_string().contains("THINKTIN_KMS_KEY"));
+        let kms = ("THINKTIN_KMS_KEY", "ab");
+        let err = Config::load(Some(&path), &MapEnv(HashMap::from([db, seed, kms]))).unwrap_err();
+        assert!(err.to_string().contains("THINKTIN_JPUSH_MASTER_SECRET"));
         let cfg = Config::load(
             Some(&path),
-            &MapEnv(HashMap::from([db, seed, ("THINKTIN_KMS_KEY", "ab")])),
+            &MapEnv(HashMap::from([
+                db,
+                seed,
+                kms,
+                ("THINKTIN_JPUSH_MASTER_SECRET", "s"),
+            ])),
         )
         .unwrap();
+        let jpush = cfg.push.jpush.clone().unwrap();
+        assert_eq!(jpush.endpoint, "https://api.jpush.cn");
+        assert_eq!(jpush.default_channel, "tt_results");
+        assert_eq!(jpush.vendors.huawei_category.as_deref(), Some("WORK"));
         assert!(cfg.worker.enabled);
         assert_eq!(
             cfg.push.apns.unwrap().endpoint,

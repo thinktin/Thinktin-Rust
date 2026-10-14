@@ -9,6 +9,7 @@ use auth::sandbox_token::SandboxTokenIssuer;
 use chrono::{Datelike, NaiveDate, Utc};
 use control::{BuiltinTemplates, Lifecycle, LifecycleConfig};
 use notify::apns::{ApnsClient, ApnsConfig};
+use notify::jpush::{JpushClient, JpushConfig};
 use orchestrator::exec::{ExecConfig, ExecConnector};
 use orchestrator::executor::{Executor, ExecutorConfig};
 use orchestrator::outbox::{Dispatcher, DispatcherConfig};
@@ -112,6 +113,18 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
         })
         .context("APNs client")?;
         dispatcher = dispatcher.with_channel(PushChannelKind::Apns, Arc::new(client));
+    }
+    if let Some(jpush) = &cfg.push.jpush {
+        let client = JpushClient::new(JpushConfig {
+            endpoint: jpush.endpoint.clone(),
+            app_key: jpush.app_key.clone(),
+            master_secret: Zeroizing::new(cfg.jpush_master_secret.clone().unwrap_or_default()),
+            vendors: jpush.vendors.clone(),
+            approval_channel: jpush.approval_channel.clone(),
+            default_channel: jpush.default_channel.clone(),
+        })
+        .context("JPush client")?;
+        dispatcher = dispatcher.with_channel(PushChannelKind::Unipush, Arc::new(client));
     }
 
     bg.spawn("scheduler", move |stop| async move {
