@@ -1,6 +1,6 @@
 # ThinkTin 模型网关与密钥库
 
-> 更新日期：2026-10-14　｜　对应 WBS：9.1 信封加密、4.4 沙箱令牌、9.2 鉴权与路由、9.3 流式透传、9.4 计量、9.5 限额与熔断、9.6 SSRF 防护、9.7 厂商适配（进行中）
+> 更新日期：2026-10-14　｜　对应 WBS：9.1 信封加密、4.4 沙箱令牌、9.2 鉴权与路由、9.3 流式透传、9.4 计量、9.5 限额与熔断、9.6 SSRF 防护、9.7 厂商适配（适配表已按官方文档核对，待真实 key 联调）
 >
 > 依据《ThinkTin 平台架构方案 v3》第 5 节和 4.6 节。
 
@@ -23,6 +23,8 @@ agent（沙箱内） ──沙箱令牌──▶ llm-gw ──用户 key──�
 | Hermes | Chat Completions | 通过 |
 
 每次实测都检查：厂商收到的每个请求都带用户 key、从没见过沙箱令牌；agent 用的别名被换成了上游模型；每次调用都记了用量（`GW=1 tools/smoke/smoke.sh <agent>`，见第 9 节）。
+
+常驻模式下的取消也经网关实测过（`GW=1 tools/smoke/serve_check.py <agent>`，六种组合都通过）：agent 中途取消后，网关把那次调用记成 `client_closed`，并断开和厂商的连接；下一轮照常。
 
 ## 2. 密钥库（9.1）
 
@@ -168,5 +170,36 @@ GW=1 PROMPT='MOCK_TOOL:Bash:{"command": "touch x", "description": "touch"}' EXPE
 | 预算请求前检查、响应后记账 | 同时在途的请求可能让当天用量略微超出上限 | 生产账本放 Redis，必要时预扣 |
 | agent 中途断开时只记下已知的用量 | Anthropic 流式断开时输出 token 数只有 `message_start` 里的值，厂商实际计费可能更多 | 可接受；对账以厂商账单为准 |
 | 只有 Chat Completions 接口的厂商不能给 Codex 用 | Codex 只会 Responses 协议 | 网关做协议转换（架构方案 5.3，后期） |
-| 厂商适配表待逐家核实 | 地址和鉴权头以官方文档为准 | 9.7 |
+| 厂商适配表只按文档核对，还没用真实 key 联调 | 文档没写清的地方（见第 11 节“待联调”）可能和实际不符 | 9.7 用各家真实 key 逐项验证 |
 | 路由数据、预算账本、用量记录都在内存或日志里 | 只适合开发 | 3.x 数据层、9.10 用量看板 |
+
+## 11. 厂商适配表（9.7）
+
+`llm-gw vendors` 打印完整的表（`crates/llm-gw/src/vendors.rs`）。按各家官方文档核对于 2026-10-14；**各家的国内站和国际站账号、key 互不相通**，用错区域的地址会返回 401，所以每个区域单独一条，用户保存 key 时选区域。
+
+| id | Anthropic 兼容（不带 /v1） | 鉴权头 | OpenAI 兼容 | Responses 前缀 | Chat 流式用量 |
+|---|---|---|---|---|---|
+| `deepseek` | `https://api.deepseek.com/anthropic` | x-api-key | `https://api.deepseek.com` | 同左 | 最后一个内容分片自带，不用补 |
+| `qwen-cn` | `https://dashscope.aliyuncs.com/apps/anthropic` | x-api-key | `https://dashscope.aliyuncs.com/compatible-mode/v1` | 同左 | 补 `include_usage` |
+| `qwen-intl` / `qwen-us` / `qwen-hk` | `dashscope-intl` / `dashscope-us` / `cn-hongkong.dashscope` 同路径 | x-api-key | 同路径 | 同左 | 补 |
+| `glm-cn` | `https://open.bigmodel.cn/api/anthropic` | x-api-key | `https://open.bigmodel.cn/api/paas/v4` | `https://open.bigmodel.cn/api/v1` | 最后一个分片自带，文档没有 `stream_options` |
+| `glm-intl`（Z.ai） | `https://api.z.ai/api/anthropic` | x-api-key | `https://api.z.ai/api/paas/v4` | `https://api.z.ai/api/v1` | 同上 |
+| `kimi-cn` | `https://api.moonshot.cn/anthropic` | Bearer | `https://api.moonshot.cn/v1` | 同左（只支持 kimi-k3） | 补；有时在 `choices[0].usage` |
+| `kimi-intl` | `https://api.moonshot.ai/anthropic` | Bearer | `https://api.moonshot.ai/v1` | 同左 | 同上 |
+| `minimax-cn` | `https://api.minimax.cn/anthropic` | Bearer | `https://api.minimax.cn/v1` | 同左 | 补 |
+| `minimax-intl` | `https://api.minimax.io/anthropic` | Bearer | `https://api.minimax.io/v1` | 同左 | 补 |
+
+**五家都提供 Responses API**，所以 Codex 不需要协议转换就能用；但各家的 Responses 都是无状态的（不支持 `previous_response_id`、`store`），Codex 用自定义供应商时每次都发完整上下文，不受影响。
+
+**订阅类 key 不收**：百炼编程套餐（`sk-sp-`）、MiniMax 订阅（`sk-cp-`）的 key 按厂商条款只能在官方工具里用；智谱明确把“中转”列为封号行为。保存 key 时按前缀拒绝（智谱的编程套餐 key 没有前缀可辨认，界面上提示用户只填按量付费 key）。
+
+**会影响 agent 的差异**（详见表里每家的 `notes`）：
+
+- DeepSeek 的 Chat Completions 默认开思考，带工具的请求必须回传之前每轮的 `reasoning_content`，否则 400。Pi、OpenClaw、Hermes 走 Chat Completions 时可能踩到，建议 DeepSeek 配 Anthropic 协议。DeepSeek 的 Anthropic 接口还会把不认识的模型名静默换成 `deepseek-flash`，别名配错了不会报错。
+- MiniMax 的 Anthropic 流里 `message_start` 的用量不可信，以 `message_delta` 为准（网关按后到的覆盖，结果正确；只有中途断开的记录会偏）。MiniMax-M3 不设思考参数时，三种协议的默认行为不同。
+- Kimi 按“输入 + max_completion_tokens”预占 TPM，同一账号下所有 key 共用额度；低等级账号跑 kimi-k3 容易 429。
+- 智谱流式中途失败不返回错误码，只在最后一个分片的 `finish_reason` 里体现（如 `sensitive`、`network_error`）。
+- 百炼的 key 可能被用户设了来源 IP 和模型白名单，网关的出口 IP 不在白名单里会被拒。
+
+**待联调**（文档没写清，需要真实 key 验证）：DeepSeek、智谱的 Anthropic 接口是否也认 Bearer；百炼共享域名下的 `/compatible-mode/v1/responses`；智谱 Chat Completions 收到 `stream_options` 是忽略还是报错；DeepSeek、智谱 Anthropic 流里用量的位置；MiniMax Responses 流式事件和用量的位置。
+

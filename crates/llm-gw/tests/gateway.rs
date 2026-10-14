@@ -187,7 +187,7 @@ fn credential(
         vendor: "custom".into(),
         anthropic_base: Some(format!("{base}/anthropic")),
         openai_base: Some(format!("{base}/openai/v1")),
-        responses,
+        responses_base: responses.then(|| format!("{base}/openai/v1")),
         secret: vault
             .seal("user-1", id, &SecretString::from(VENDOR_KEY.to_owned()))
             .unwrap(),

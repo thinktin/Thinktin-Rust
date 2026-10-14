@@ -68,9 +68,9 @@ pub struct Credential {
     /// 只对 `custom` 生效：OpenAI 兼容接口的 base URL（带版本段）。
     #[serde(default)]
     pub openai_base: Option<String>,
-    /// 只对 `custom` 生效：是否提供 Responses API。
+    /// 只对 `custom` 生效：Responses API 的前缀（通常和 `openai_base` 相同），不提供就为空。
     #[serde(default)]
-    pub responses: bool,
+    pub responses_base: Option<String>,
     pub secret: SealedSecret,
     /// 每天最多消耗的 token 数（输入、缓存、输出合计）。
     #[serde(default)]

@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context, bail};
 use auth::sandbox_token::{SandboxTokenIssuer, SandboxTokenVerifier, TokenRequest};
 use clap::{Parser, Subcommand};
-use keyvault::secrecy::SecretString;
+use keyvault::secrecy::{ExposeSecret, SecretString};
 use keyvault::{KeyStore, KeyVault, LocalKms, MemoryKeyStore};
 use llm_gw::limits::{Limiter, MemoryLedger};
 use llm_gw::store::{Credential, DevStore};
@@ -98,11 +98,17 @@ enum Command {
         /// 厂商 id（见 `llm-gw vendors`）或 custom
         #[arg(long)]
         vendor: String,
+        /// custom 厂商：Anthropic 兼容接口的 base URL（不带 /v1）
         #[arg(long)]
         anthropic_base: Option<String>,
+        /// custom 厂商：OpenAI 兼容接口的 base URL（带版本段）
         #[arg(long)]
         openai_base: Option<String>,
+        /// custom 厂商：Responses API 的前缀
         #[arg(long)]
+        responses_base: Option<String>,
+        /// custom 厂商：Responses API 和 --openai-base 同一个前缀
+        #[arg(long, conflicts_with = "responses_base")]
         responses: bool,
         #[arg(long)]
         daily_token_limit: Option<u64>,
@@ -252,12 +258,15 @@ fn main() -> anyhow::Result<()> {
             vendor,
             anthropic_base,
             openai_base,
+            responses_base,
             responses,
             daily_token_limit,
         } => {
             if vendor != vendors::CUSTOM && vendors::vendor(&vendor).is_none() {
                 bail!("unknown vendor {vendor}; see `llm-gw vendors`");
             }
+            let responses_base =
+                responses_base.or_else(|| openai_base.clone().filter(|_| responses));
             let mut dev = DevStore::load(&store)?;
             let keys = MemoryKeyStore::default();
             for (u, wrapped) in &dev.user_keys {
@@ -271,6 +280,7 @@ fn main() -> anyhow::Result<()> {
             std::io::stdin().read_to_string(&mut text)?;
             let secret = SecretString::from(text.trim().to_owned());
             zeroize::Zeroize::zeroize(&mut text);
+            vendors::check_key(&vendor, secret.expose_secret()).map_err(anyhow::Error::msg)?;
             let sealed = vault.seal(&user, &id, &secret)?;
             println!(
                 "saved key ****{} as {id}",
@@ -285,7 +295,7 @@ fn main() -> anyhow::Result<()> {
                 vendor,
                 anthropic_base,
                 openai_base,
-                responses,
+                responses_base,
                 secret: sealed,
                 daily_token_limit,
                 disabled: false,

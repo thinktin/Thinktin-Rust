@@ -368,12 +368,12 @@ struct Target {
 }
 
 fn target(cred: &Credential, endpoint: Endpoint, alias: &str) -> Result<Target, ApiError> {
-    let (anthropic_base, openai_base, responses, anthropic_auth, chat_stream_usage) =
+    let (anthropic_base, openai_base, responses_base, anthropic_auth, chat_stream_usage) =
         if cred.vendor == vendors::CUSTOM {
             (
                 cred.anthropic_base.as_deref(),
                 cred.openai_base.as_deref(),
-                cred.responses,
+                cred.responses_base.as_deref(),
                 AnthropicAuth::Both,
                 true,
             )
@@ -387,7 +387,7 @@ fn target(cred: &Credential, endpoint: Endpoint, alias: &str) -> Result<Target, 
             (
                 v.anthropic_base,
                 v.openai_base,
-                v.responses,
+                v.responses_base,
                 v.anthropic_auth,
                 v.chat_stream_usage,
             )
@@ -395,7 +395,7 @@ fn target(cred: &Credential, endpoint: Endpoint, alias: &str) -> Result<Target, 
     let base = match endpoint {
         Endpoint::Messages | Endpoint::CountTokens => anthropic_base,
         Endpoint::Chat => openai_base,
-        Endpoint::Responses => openai_base.filter(|_| responses),
+        Endpoint::Responses => responses_base,
     };
     let base = base.ok_or_else(|| {
         let protocol = match endpoint {

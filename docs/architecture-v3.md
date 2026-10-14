@@ -452,7 +452,7 @@ DeepSeek、通义、智谱、Kimi、MiniMax 都同时提供 OpenAI 兼容和 Ant
 | 自定义端点（vLLM、OneAPI 等） | 有 | — |
 | OpenAI、Anthropic、Google | 各自原生协议 | 只在海外站开放（见第 11 节） |
 
-- 地址以各厂商官方文档为准，接入时逐个验证。
+- 地址以各厂商官方文档为准，接入时逐个验证。已核对的适配表（含国际站地址、鉴权头和差异）见 [模型网关文档](llm-gateway.md#11-厂商适配表97)。
 - 各家兼容程度不一。比如 MiniMax 的 Anthropic 接口会忽略 `top_k`、`stop_sequences` 等参数，部分模型只支持文本。这类差异记在厂商适配表里。
 - 配置界面只列出"agent 支持的协议"和"厂商提供的协议"有交集的组合。确实需要跨协议时（比如 agent 只会 Anthropic 协议，厂商只有 OpenAI 接口），再在网关里做协议转换，放到后期。
 

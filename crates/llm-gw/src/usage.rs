@@ -81,7 +81,12 @@ impl UsageMeter {
                 _ => {}
             },
             Protocol::Chat => {
-                if let Some(u) = data.get("usage").filter(|u| u.is_object()) {
+                // 一般在顶层 `usage`；Kimi 有时放在结束分片的 `choices[0].usage` 里。
+                let usage = data
+                    .get("usage")
+                    .filter(|u| u.is_object())
+                    .or_else(|| data.pointer("/choices/0/usage").filter(|u| u.is_object()));
+                if let Some(u) = usage {
                     self.usage = Some(openai_usage(u, "prompt_tokens", "completion_tokens"));
                 }
             }
@@ -135,17 +140,23 @@ impl UsageMeter {
     }
 }
 
-/// OpenAI 风格：输入数含缓存命中，单独给出命中数（DeepSeek 用 `prompt_cache_hit_tokens`）。
+/// OpenAI 风格：输入数含缓存命中和缓存写入，单独给出这两个数。
+/// 命中数：`*_details.cached_tokens`，DeepSeek 用 `prompt_cache_hit_tokens`；写入数：Kimi 的 `*_details.cache_write_tokens`。
 fn openai_usage(u: &Value, input_key: &str, output_key: &str) -> Usage {
+    let details = format!("{input_key}_details");
     let input = num(u, &[input_key]).unwrap_or(0);
-    let cached = num(u, &[&format!("{input_key}_details"), "cached_tokens"])
+    let cached = num(u, &[&details, "cached_tokens"])
         .or_else(|| num(u, &["prompt_cache_hit_tokens"]))
         .unwrap_or(0)
         .min(input);
+    let written = num(u, &[&details, "cache_write_tokens"])
+        .or_else(|| num(u, &[&details, "cache_creation_input_tokens"]))
+        .unwrap_or(0)
+        .min(input - cached);
     Usage {
-        input_tokens: input - cached,
+        input_tokens: input - cached - written,
         cache_read_tokens: cached,
-        cache_write_tokens: 0,
+        cache_write_tokens: written,
         output_tokens: num(u, &[output_key]).unwrap_or(0),
     }
 }
@@ -378,6 +389,19 @@ mod tests {
         let mut d = UsageMeter::new(Protocol::Chat);
         d.on_body(&json!({"usage":{"prompt_tokens":30,"completion_tokens":7,"prompt_cache_hit_tokens":25}}));
         assert_eq!(d.usage().unwrap().cache_read_tokens, 25);
+
+        // Kimi：用量在结束分片的 choices[0].usage 里，还带缓存写入数。
+        let mut k = UsageMeter::new(Protocol::Chat);
+        k.on_event(&json!({"choices":[{"delta":{},"finish_reason":"stop","usage":{"prompt_tokens":100,"completion_tokens":3,"prompt_tokens_details":{"cached_tokens":60,"cache_write_tokens":30}}}]}));
+        assert_eq!(
+            k.usage(),
+            Some(Usage {
+                input_tokens: 10,
+                cache_read_tokens: 60,
+                cache_write_tokens: 30,
+                output_tokens: 3
+            })
+        );
 
         let mut r = UsageMeter::new(Protocol::Responses);
         r.on_event(&json!({"type":"response.output_text.delta","delta":"x"}));
