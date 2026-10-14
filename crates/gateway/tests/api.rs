@@ -1487,3 +1487,115 @@ async fn instance_versions_can_be_switched() {
     assert!(w.instance_runtime(inst).await.unwrap().rebuild_pending);
     w.rollback().await.unwrap();
 }
+
+/// 用量看板（9.10）：按天（用户时区）、实例、模型汇总自己的用量；看不到别人的。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn usage_is_summarised_per_day_instance_and_model() {
+    let Some(a) = api().await else { return };
+    let u = a.login("13800138900").await;
+    let other = a.login("13800138901").await;
+    let tok = Some(u.access.as_str());
+    let i1 = a.adopt(&u).await;
+    let i2 = a.adopt(&u).await;
+    let foreign = a.adopt(&other).await;
+    let (_, me) = a.call(Method::GET, "/v1/me", tok, None).await;
+    let user: UserId = me["id"].as_str().unwrap().parse().unwrap();
+    let (_, them) = a
+        .call(Method::GET, "/v1/me", Some(&other.access), None)
+        .await;
+    let them: UserId = them["id"].as_str().unwrap().parse().unwrap();
+    // (用户, 实例, 模型, 计费 token, 时间)
+    let rows = [
+        (user, i1, "deepseek-chat", 100, "2026-10-13T10:00:00Z"),
+        // 上海时间 10 月 14 日凌晨。
+        (user, i1, "deepseek-chat", 50, "2026-10-13T17:00:00Z"),
+        (user, i2, "glm-4.6", 30, "2026-10-14T03:00:00Z"),
+        (them, foreign, "deepseek-chat", 999, "2026-10-14T03:00:00Z"),
+    ];
+    for (who, inst, model, charged, at) in rows {
+        let mut w = a.t.db.worker().await.unwrap();
+        w.insert_usage(&store::NewUsage {
+            user: who,
+            instance: inst,
+            alias: "main".into(),
+            vendor: "v".into(),
+            upstream_model: model.into(),
+            endpoint: "chat".into(),
+            status: 200,
+            outcome: "complete".into(),
+            input_tokens: charged,
+            charged_tokens: charged,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        w.commit().await.unwrap();
+        sqlx::query("UPDATE usage_records SET created_at = $1::timestamptz WHERE created_at > now() - interval '1 minute' AND charged_tokens = $2")
+            .bind(at)
+            .bind(charged as i64)
+            .execute(a.t.db.pool())
+            .await
+            .unwrap();
+    }
+    let range = "from=2026-10-01T00:00:00Z&to=2026-10-20T00:00:00Z";
+    let (st, body) = a
+        .call(Method::GET, &format!("/v1/usage?{range}"), tok, None)
+        .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let days: Vec<(String, u64)> = body["buckets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| {
+            (
+                b["key"].as_str().unwrap().to_owned(),
+                b["charged_tokens"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        days,
+        [
+            ("2026-10-13".to_string(), 100),
+            ("2026-10-14".to_string(), 80)
+        ],
+        "days follow Asia/Shanghai"
+    );
+    assert_eq!(body["total"]["charged_tokens"], 180, "other users excluded");
+    assert_eq!(body["total"]["requests"], 3);
+    let (_, utc) = a
+        .call(Method::GET, &format!("/v1/usage?{range}&tz=UTC"), tok, None)
+        .await;
+    assert_eq!(utc["buckets"][0]["charged_tokens"], 150);
+    let (_, by_model) = a
+        .call(
+            Method::GET,
+            &format!("/v1/usage?{range}&group=model"),
+            tok,
+            None,
+        )
+        .await;
+    assert_eq!(by_model["buckets"][0]["key"], "v/deepseek-chat");
+    assert_eq!(by_model["buckets"][0]["charged_tokens"], 150);
+    let (_, one) = a
+        .call(
+            Method::GET,
+            &format!("/v1/usage?{range}&group=instance&instance_id={i2}"),
+            tok,
+            None,
+        )
+        .await;
+    assert_eq!(one["buckets"].as_array().unwrap().len(), 1);
+    assert_eq!(one["buckets"][0]["key"], i2.to_string());
+    for bad in [
+        "group=week".to_string(),
+        "tz=Mars/Olympus".to_string(),
+        "from=2026-10-20T00:00:00Z&to=2026-10-01T00:00:00Z".to_string(),
+        "from=2024-01-01T00:00:00Z&to=2026-01-01T00:00:00Z".to_string(),
+    ] {
+        let (st, _) = a
+            .call(Method::GET, &format!("/v1/usage?{bad}"), tok, None)
+            .await;
+        assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{bad}");
+    }
+}

@@ -49,7 +49,7 @@ pub use outbox::{NewOutboxItem, OutboxItem};
 pub use plans::{DueTrigger, NewPlan};
 pub use runs::{NewRun, RunChange, RunRecord};
 pub use sessions::{LoginCode, SessionRecord, SessionState};
-pub use usage::NewUsage;
+pub use usage::{NewUsage, UsageBucket, UsageFilter, UsageGroup};
 
 /// 业务事务里单条语句的上限：防止慢查询拖住连接池。
 const TENANT_STATEMENT_TIMEOUT: &str = "15s";

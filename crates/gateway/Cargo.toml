@@ -10,6 +10,7 @@ auth = { path = "../auth" }
 axum = { workspace = true, features = ["ws"] }
 catalog = { path = "../catalog" }
 chrono.workspace = true
+chrono-tz.workspace = true
 control = { path = "../control" }
 futures-util.workspace = true
 keyvault = { path = "../keyvault" }

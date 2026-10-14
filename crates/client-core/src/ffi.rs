@@ -514,6 +514,42 @@ impl std::fmt::Debug for NewCredential {
     }
 }
 
+/// 用量的一组汇总：`key` 按分组是日期、实例 id、`厂商/模型` 或 key 的 id。
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct UsageBucket {
+    pub key: String,
+    pub requests: u64,
+    pub input_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_write_tokens: u64,
+    pub output_tokens: u64,
+    pub charged_tokens: u64,
+    pub estimated_requests: u64,
+    pub failed_requests: u64,
+}
+
+impl From<api::UsageBucket> for UsageBucket {
+    fn from(b: api::UsageBucket) -> Self {
+        Self {
+            key: b.key,
+            requests: b.requests,
+            input_tokens: b.input_tokens,
+            cache_read_tokens: b.cache_read_tokens,
+            cache_write_tokens: b.cache_write_tokens,
+            output_tokens: b.output_tokens,
+            charged_tokens: b.charged_tokens,
+            estimated_requests: b.estimated_requests,
+            failed_requests: b.failed_requests,
+        }
+    }
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct UsageSummary {
+    pub buckets: Vec<UsageBucket>,
+    pub total: UsageBucket,
+}
+
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct Artifact {
     pub id: String,
@@ -1050,6 +1086,42 @@ impl ThinktinClient {
         let up_to: Option<d::InboxItemId> = parse_opt(&up_to_id, "inbox item")?;
         self.run(|c| async move { c.mark_inbox_read(&ids, up_to).await })
             .await
+    }
+
+    // ---------- 用量 ----------
+
+    /// 用量汇总。`group`：day / instance / model / credential；时间是 Unix 毫秒，不给就是最近 30 天；
+    /// `tz` 是按天分组的时区（IANA 名称，默认 Asia/Shanghai）。
+    pub async fn usage(
+        &self,
+        group: String,
+        from_ms: Option<i64>,
+        to_ms: Option<i64>,
+        tz: Option<String>,
+    ) -> Result<UsageSummary> {
+        let rfc = |ms: Option<i64>| -> Result<Option<String>> {
+            ms.map(|m| {
+                Utc.timestamp_millis_opt(m)
+                    .single()
+                    .map(|t| t.to_rfc3339())
+                    .ok_or_else(|| ClientError::InvalidArgument {
+                        message: format!("bad time {m}"),
+                    })
+            })
+            .transpose()
+        };
+        let (from, to) = (rfc(from_ms)?, rfc(to_ms)?);
+        self.run(|c| async move {
+            let s = c
+                .api
+                .usage(&group, from.as_deref(), to.as_deref(), tz.as_deref())
+                .await?;
+            Ok(UsageSummary {
+                buckets: s.buckets.into_iter().map(Into::into).collect(),
+                total: s.total.into(),
+            })
+        })
+        .await
     }
 
     // ---------- 模型 key ----------

@@ -46,6 +46,7 @@
 | 15.4 | 密钥与日志审计：key 流转路径、主链路上自动检查 key 不进沙箱和日志、令牌不落盘；含密钥的结构调试输出全部打码；已知残留 | [审计记录](security-audit.md) |
 | 16.4（技术部分） | 注销即销毁：除了销毁 DEK，还删除提示词、摘要、事件、收件箱、计划、审批、团队、产出物索引、待发推送，手机号和设备信息去标识化；逐表测试 | [说明](compliance.md#5-注销wbs-164-的技术部分) |
 | 16.3 | AI 生成内容标识：agent 生成的事件、收件箱条目带标识位；系统通知正文加“【AI 生成】”；下载产出物带元数据头（隐式标识），纯文本和 Markdown 末尾加显式标识；推送文字的内容过滤（命中换成中性提示）；`[compliance]` 配置 | [说明](compliance.md) |
+| 9.10 | 用量看板数据：`GET /v1/usage` 按天（用户时区）、实例、模型、key 汇总请求数、各类 token、估算和失败次数，附总计；client-core 的 `usage()` | `crates/gateway/src/routes/usage.rs`、`crates/store/src/usage.rs` |
 | 11.1 | UniFFI 工程：client-core 出 Swift（`ThinktinCore`）/ Kotlin（`cn.thinktin.core`）绑定；xcframework + Swift Package、Android 库工程 / AAR 打包脚本（`mobile` 编译配置、16 KB 页对齐）；经 C ABI 的冒烟测试 | `crates/client-core/src/ffi.rs`、`tools/client-core/` |
 | 11.2 | 接口客户端：版本头、统一错误模型（按错误码区分重新登录 / 重试 / 提示）、访问令牌过期自动刷新（并发只刷一次）、刷新令牌失效清会话；会话交给原生端的安全存储 | `crates/client-core/src/api.rs` |
 | 11.3 | 事件流：WebSocket 按序号续传、去重、指数退避加抖动重连、空闲超时、握手 401 / 4001 关闭时刷新令牌再连、会话失效或实例不存在时停止 | `crates/client-core/src/events.rs` |

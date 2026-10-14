@@ -11,6 +11,7 @@ mod instances;
 mod plans;
 mod runs;
 mod teams;
+mod usage;
 
 use axum::Router;
 use axum::routing::{delete, get, post, put};
@@ -99,6 +100,8 @@ pub fn router() -> Router<AppState> {
             get(artifacts::get).delete(artifacts::delete),
         )
         .route("/v1/artifacts/{id}/content", get(artifacts::content))
+        // 用量看板（9.10）
+        .route("/v1/usage", get(usage::summary))
         // 收件箱（10.4）
         .route("/v1/inbox", get(inbox::list))
         .route("/v1/inbox/read", post(inbox::mark_read))

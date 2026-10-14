@@ -116,6 +116,26 @@ pub struct InboxPage {
     pub unread: i64,
 }
 
+/// 用量的一组汇总（9.10）。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+pub struct UsageBucket {
+    pub key: String,
+    pub requests: u64,
+    pub input_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_write_tokens: u64,
+    pub output_tokens: u64,
+    pub charged_tokens: u64,
+    pub estimated_requests: u64,
+    pub failed_requests: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct UsageSummary {
+    pub buckets: Vec<UsageBucket>,
+    pub total: UsageBucket,
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct EventsPage {
     pub events: Vec<InstanceEvent>,
@@ -701,6 +721,27 @@ impl Api {
 
     pub async fn delete_credential(&self, id: CredentialId) -> Result<()> {
         self.empty(Method::DELETE, &format!("/v1/credentials/{id}"), None)
+            .await
+    }
+
+    // ---------- 用量 ----------
+
+    /// 用量汇总。`group`：day / instance / model / credential；时间是 RFC 3339，不给就是最近 30 天。
+    pub async fn usage(
+        &self,
+        group: &str,
+        from: Option<&str>,
+        to: Option<&str>,
+        tz: Option<&str>,
+    ) -> Result<UsageSummary> {
+        let mut q = url::form_urlencoded::Serializer::new(String::new());
+        q.append_pair("group", group);
+        for (k, v) in [("from", from), ("to", to), ("tz", tz)] {
+            if let Some(v) = v {
+                q.append_pair(k, v);
+            }
+        }
+        self.json(Method::GET, &format!("/v1/usage?{}", q.finish()), None)
             .await
     }
 
