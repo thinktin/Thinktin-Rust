@@ -109,7 +109,8 @@ agent（沙箱内） ──沙箱令牌──▶ llm-gw ──用户 key──�
   }],
   "instances": [{
     "id": "inst-1", "user_id": "user-1", "sandbox": "sbx-1", "active": true,
-    "routes": { "main": { "credential": "cred-1", "model": "deepseek-chat" } },
+    "routes": { "main": { "credential": "cred-1", "model": "deepseek-chat",
+                          "fallbacks": [{ "credential": "cred-2", "model": "qwen3.8-flash" }] } },
     "limits": { "requests_per_minute": 120, "max_concurrent": 8 }
   }],
   "revoked_grants": []
@@ -137,6 +138,24 @@ agent（沙箱内） ──沙箱令牌──▶ llm-gw ──用户 key──�
 - **按实例限并发**：`max_concurrent`（默认 8），许可一直持有到响应流结束。
 - **熔断**：一分钟内被限速拒绝的次数达到每分钟配额（agent 无视 429 在猛打，比如死循环），就熔断 5 分钟，并输出 `llm_gw::breaker` 告警日志，供控制面通知用户。
 - **按 key 每日预算**：`daily_token_limit`，按东八区切天（`--budget-utc-offset-hours` 可调）。请求前检查、响应后记账，所以同时在途的请求可能让当天用量略微超出上限。生产环境的账本以用量表的汇总为准（多副本共享），加上本副本还没落库的记账；开发环境在内存里。用量记录进队列、后台批量写用量表，库不可用时退回结构化日志，不丢账。
+
+### 降级链（9.9）
+
+每个别名除了主 key，还可以按顺序配最多 3 个备用项（key + 那边的上游模型），表 `model_route_fallbacks`，接口是 `PUT /v1/instances/{id}/routes` 里每个别名的 `fallbacks`。网关按顺序试，在把任何内容交给 agent 之前决定换不换：
+
+| 情况 | 换下一个 | 这把 key 冷却 |
+|---|---|---|
+| 401、402、403（key 失效、欠费、没权限） | 换 | 5 分钟 |
+| 429、503、529（被限流、过载） | 换 | 按厂商的 `Retry-After`（1 秒到 5 分钟），没给就 30 秒 |
+| 连不上（请求没发出去） | 换 | 30 秒 |
+| key 停用、当日预算用完、不支持这个协议、地址被 SSRF 规则拦下 | 跳过，不发请求 | — |
+| 其他错误（400 之类请求本身的问题） | 不换，原样交给 agent | — |
+| 超时、读响应中途出错 | 不换：厂商可能已经在处理并计费，换 key 重发会重复扣钱 | — |
+
+- 冷却是每个副本各自在内存里记的，只调整顺序（冷却中的排到最后），从不拒绝请求；成功一次就解除。所以只有一把 key 的别名行为和以前完全一样。
+- 每次发出去的尝试各记一条用量：别名不变，key、厂商、上游模型按实际的记。失败的尝试记 `upstream_status` 或 `connect_failed`，不记账。
+- 都失败时：有厂商的真实失败就把最后一个原样交给 agent（照样抹掉 key）；一个都没发出去就报主 key 的原因（比如 402 预算用完）。
+- 删除 key 时，被任何别名的主路由或降级链用着都拒绝。
 
 ### 入站连接
 

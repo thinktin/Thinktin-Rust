@@ -745,7 +745,12 @@ async fn forward_inner(
             }
             Attempt::Failed { result, reason } => {
                 if has_next {
-                    tracing::info!(alias, credential, reason, "upstream failed; trying the next fallback");
+                    tracing::info!(
+                        alias,
+                        credential,
+                        reason,
+                        "upstream failed; trying the next fallback"
+                    );
                     metrics::counter!("thinktin_llm_fallbacks_total", "reason" => reason)
                         .increment(1);
                 }
@@ -889,11 +894,11 @@ impl Gateway {
                 return Attempt::Skipped(err(Kind::Internal, "failed to load the API key"));
             }
         };
-        let headers = match upstream_headers(&req.parts.headers, endpoint, target.anthropic_auth, &key)
-        {
-            Ok(h) => h,
-            Err(e) => return Attempt::Skipped(e),
-        };
+        let headers =
+            match upstream_headers(&req.parts.headers, endpoint, target.anthropic_auth, &key) {
+                Ok(h) => h,
+                Err(e) => return Attempt::Skipped(e),
+            };
 
         // 从这里起请求可能已经到了厂商：无论之后怎么结束（包括 agent 断开、这个 future 被丢弃），
         // Finisher 都会记一条用量并记账。

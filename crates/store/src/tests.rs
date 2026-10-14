@@ -976,6 +976,7 @@ async fn erasing_an_account_deletes_its_content() {
     for table in [
         "user_keys",
         "model_routes",
+        "model_route_fallbacks",
         "runs",
         "events",
         "approvals",
@@ -995,7 +996,7 @@ async fn erasing_an_account_deletes_its_content() {
             "{table} still has alice's rows"
         );
         assert!(
-            count(table, bob).await > 0 || table == "model_routes",
+            count(table, bob).await > 0 || table.starts_with("model_route"),
             "{table}: bob untouched"
         );
     }
@@ -1024,4 +1025,125 @@ async fn erasing_an_account_deletes_its_content() {
     let mut w = db.worker().await.unwrap();
     let (again, created) = w.upsert_user_by_phone("+8613800000001").await.unwrap();
     assert!(created && again.id != alice);
+}
+
+/// 降级链（9.9）：跟着主路由存取、最多 3 个、key 要可用、被引用的 key 不能删、网关按顺序读到。
+#[tokio::test]
+async fn route_fallbacks_round_trip_and_guard_their_keys() {
+    use proto::domain::RouteFallback;
+
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = user(db, "+8613800000001").await;
+    let bob = user(db, "+8613800000002").await;
+    let inst = instance(db, alice).await;
+    let mut a = db.tenant(alice).await.unwrap();
+    let primary = a.create_credential(&credential("0001")).await.unwrap();
+    let backup = a.create_credential(&credential("0002")).await.unwrap();
+    let spare = a.create_credential(&credential("0003")).await.unwrap();
+    let fb = |c: &proto::domain::Credential, m: &str| RouteFallback {
+        credential_id: c.id,
+        upstream_model: m.into(),
+    };
+    let route = ModelRoute {
+        alias: "main".into(),
+        credential_id: primary.id,
+        upstream_model: "m-primary".into(),
+        fallbacks: vec![fb(&backup, "m-backup"), fb(&spare, "m-spare")],
+    };
+    let plain = ModelRoute {
+        alias: "fast".into(),
+        credential_id: spare.id,
+        upstream_model: "m-fast".into(),
+        fallbacks: vec![],
+    };
+    a.set_model_routes(inst.id, &[route.clone(), plain.clone()])
+        .await
+        .unwrap();
+    assert_eq!(
+        a.model_routes(inst.id).await.unwrap(),
+        vec![plain.clone(), route.clone()]
+    );
+    // 只被降级链引用的 key 也不能删。
+    assert!(
+        a.delete_credential(backup.id)
+            .await
+            .unwrap_err()
+            .is_conflict()
+    );
+    a.commit().await.unwrap();
+
+    // 模型网关按顺序读到降级链。
+    let mut g = db.llmgw().await.unwrap();
+    let gi = g.gateway_instance(inst.id).await.unwrap().unwrap();
+    g.rollback().await.unwrap();
+    let main = gi.routes.iter().find(|r| r.alias == "main").unwrap();
+    assert_eq!(
+        main.fallbacks,
+        vec![
+            (backup.id, "m-backup".to_string()),
+            (spare.id, "m-spare".to_string())
+        ]
+    );
+    assert!(
+        gi.routes
+            .iter()
+            .find(|r| r.alias == "fast")
+            .unwrap()
+            .fallbacks
+            .is_empty()
+    );
+
+    // 别人看不到这些行。
+    let mut b = db.tenant(bob).await.unwrap();
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM model_route_fallbacks")
+        .fetch_one(b.conn())
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
+    b.rollback().await.unwrap();
+
+    let mut a = db.tenant(alice).await.unwrap();
+    // 超过 3 个、或者引用停用的 key：整体拒绝，原来的不变。
+    let too_many = ModelRoute {
+        fallbacks: vec![
+            fb(&backup, "a"),
+            fb(&spare, "b"),
+            fb(&backup, "c"),
+            fb(&spare, "d"),
+        ],
+        ..route.clone()
+    };
+    assert!(matches!(
+        a.set_model_routes(inst.id, &[too_many]).await.unwrap_err(),
+        Error::Invalid(_)
+    ));
+    a.rollback().await.unwrap();
+    let mut a = db.tenant(alice).await.unwrap();
+    a.set_credential_disabled(spare.id, true).await.unwrap();
+    let err = a
+        .set_model_routes(
+            inst.id,
+            &[ModelRoute {
+                fallbacks: vec![fb(&spare, "m")],
+                ..route.clone()
+            }],
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::Invalid(_)), "{err:?}");
+    a.rollback().await.unwrap();
+
+    // 替换别名时降级链一起替换；去掉降级链后 key 可以删。
+    let mut a = db.tenant(alice).await.unwrap();
+    let bare = ModelRoute {
+        fallbacks: vec![],
+        ..route.clone()
+    };
+    a.set_model_routes(inst.id, std::slice::from_ref(&bare))
+        .await
+        .unwrap();
+    assert_eq!(a.model_routes(inst.id).await.unwrap(), vec![bare]);
+    a.delete_credential(backup.id).await.unwrap();
+    a.commit().await.unwrap();
 }

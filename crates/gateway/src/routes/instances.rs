@@ -178,6 +178,15 @@ pub async fn set_routes(
     }
     for r in &req.routes {
         check_len("upstream_model", &r.upstream_model, 1, 128)?;
+        if r.fallbacks.len() > proto::domain::MAX_ROUTE_FALLBACKS {
+            return Err(crate::ApiError::invalid(format!(
+                "at most {} fallbacks per model alias",
+                proto::domain::MAX_ROUTE_FALLBACKS
+            )));
+        }
+        for f in &r.fallbacks {
+            check_len("upstream_model", &f.upstream_model, 1, 128)?;
+        }
     }
     let mut t = s.db.tenant(who.user).await?;
     t.set_model_routes(id, &req.routes).await?;

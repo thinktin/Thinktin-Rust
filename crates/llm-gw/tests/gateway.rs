@@ -13,7 +13,7 @@ use axum::response::{IntoResponse, Response};
 use keyvault::secrecy::SecretString;
 use keyvault::{KeyVault, LocalKms, MemoryKeyStore};
 use llm_gw::limits::{Limiter, MemoryLedger};
-use llm_gw::store::{Credential, Instance, Limits, MemoryDirectory, Route};
+use llm_gw::store::{Credential, Fallback, Instance, Limits, MemoryDirectory, Route};
 use llm_gw::usage::{MemorySink, Outcome, Usage};
 use llm_gw::{Gateway, Options, build_client, router};
 use serde_json::{Value, json};
@@ -119,6 +119,19 @@ async fn upstream_handler(State(up): State<Arc<Upstream>>, req: Request) -> Resp
                 .body(Body::from_stream(stream))
                 .unwrap()
         }
+        // 被限流：降级链换下一把 key，这把按 Retry-After 冷却。
+        "/busy/anthropic/v1/messages" => (
+            StatusCode::TOO_MANY_REQUESTS,
+            [("retry-after", "7")],
+            axum::Json(json!({"type": "error", "error": {"type": "rate_limit_error", "message": "slow down"}})),
+        )
+            .into_response(),
+        // 请求本身有问题：换 key 也没用，不降级。
+        "/broke/anthropic/v1/messages" => (
+            StatusCode::BAD_REQUEST,
+            axum::Json(json!({"type": "error", "error": {"type": "invalid_request_error", "message": "bad request"}})),
+        )
+            .into_response(),
         // 迟迟不回响应头。
         "/hang/anthropic/v1/messages" => {
             tokio::time::sleep(Duration::from_secs(30)).await;
@@ -241,6 +254,22 @@ async fn start(setup: Setup) -> Env {
             true,
             None,
         ),
+        credential(
+            &vault,
+            "cred-busy",
+            &format!("http://{upstream_addr}/busy"),
+            true,
+            None,
+        ),
+        credential(
+            &vault,
+            "cred-broke",
+            &format!("http://{upstream_addr}/broke"),
+            true,
+            None,
+        ),
+        // 没有人监听的端口：连不上。
+        credential(&vault, "cred-down", "http://127.0.0.1:1/v", true, None),
         // https 加域名能通过静态检查，要靠 DNS 解析这一步拦住。
         credential(
             &vault,
@@ -255,6 +284,16 @@ async fn start(setup: Setup) -> Env {
         model: model.into(),
         fallbacks: vec![],
     };
+    let chain = |cred: &str, model: &str, fallbacks: &[(&str, &str)]| Route {
+        fallbacks: fallbacks
+            .iter()
+            .map(|(c, m)| Fallback {
+                credential: (*c).into(),
+                model: (*m).into(),
+            })
+            .collect(),
+        ..route(cred, model)
+    };
     let instance = Instance {
         id: "inst-1".into(),
         user_id: "user-1".into(),
@@ -268,6 +307,36 @@ async fn start(setup: Setup) -> Env {
             ("local".into(), route("cred-local", "up-model")),
             ("hang".into(), route("cred-hang", "up-model")),
             ("nousage".into(), route("cred-nousage", "up-model")),
+            (
+                "chain".into(),
+                chain(
+                    "cred-busy",
+                    "m-busy",
+                    &[("cred-bad", "m-bad"), ("cred-main", "m-main")],
+                ),
+            ),
+            (
+                "allbad".into(),
+                chain("cred-busy", "m-busy", &[("cred-bad", "m-bad")]),
+            ),
+            (
+                "broke".into(),
+                chain("cred-broke", "m-broke", &[("cred-main", "m-main")]),
+            ),
+            (
+                "down".into(),
+                chain("cred-down", "m-down", &[("cred-main", "m-main")]),
+            ),
+            // cred-nores 没有 Responses 接口：调 Responses 时跳过它。
+            (
+                "codex".into(),
+                chain("cred-nores", "m-nores", &[("cred-main", "m-main")]),
+            ),
+            // cred-main 的当日预算用完后跳到 cred-nores。
+            (
+                "budgeted".into(),
+                chain("cred-main", "m-main", &[("cred-nores", "m-nores")]),
+            ),
         ]),
         limits: setup.limits,
     };
@@ -674,9 +743,13 @@ async fn model_listing_shows_aliases_only() {
         .iter()
         .map(|m| m["id"].as_str().unwrap())
         .collect();
+    // 只列别名，降级链里的上游模型不出现。
     assert_eq!(
         ids,
-        ["bad", "hang", "local", "main", "nores", "nousage", "slow"]
+        [
+            "allbad", "bad", "broke", "budgeted", "chain", "codex", "down", "hang", "local",
+            "main", "nores", "nousage", "slow"
+        ]
     );
     let resp = env
         .http
@@ -924,4 +997,177 @@ async fn background_and_case_variant_keys_are_rejected() {
         assert_eq!(resp.status(), 400, "{body}");
     }
     assert!(env.upstream.requests().is_empty());
+}
+
+// ---------- 降级链（9.9） ----------
+
+fn models_seen(env: &Env) -> Vec<(String, String)> {
+    env.upstream
+        .requests()
+        .iter()
+        .map(|s| {
+            let body: Value = serde_json::from_slice(&s.body).unwrap_or(Value::Null);
+            (
+                s.path.split('/').nth(1).unwrap_or_default().to_owned(),
+                body["model"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn fallback_chain_moves_on_after_rate_limits_and_bad_keys() {
+    let env = start(Setup::default()).await;
+    let token = env.token();
+    let body = json!({"model": "chain", "max_tokens": 8, "stream": true, "messages": []});
+    let resp = env.anthropic(&token, body.clone()).await;
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.text().await.unwrap(), ANTHROPIC_SSE);
+    // 按顺序试：被限流的、key 失效的，最后成功；每把 key 用它自己的上游模型。
+    let pair = |a: &str, b: &str| (a.to_owned(), b.to_owned());
+    assert_eq!(
+        models_seen(&env),
+        [
+            pair("busy", "m-busy"),
+            pair("bad", "m-bad"),
+            pair("v", "m-main")
+        ]
+    );
+    for seen in env.upstream.requests() {
+        assert_eq!(seen.headers["x-api-key"], VENDOR_KEY);
+        assert_no_token_leak(&seen, &token);
+    }
+    // 每次尝试各记一条用量，别名不变，key 和上游模型按实际的记。
+    let records = env.records(3).await;
+    let got: Vec<_> = records
+        .iter()
+        .map(|r| {
+            (
+                r.alias.as_str(),
+                r.credential.as_str(),
+                r.upstream_model.as_str(),
+                r.status,
+                r.outcome,
+            )
+        })
+        .collect();
+    assert_eq!(
+        got,
+        [
+            ("chain", "cred-busy", "m-busy", 429, Outcome::UpstreamStatus),
+            ("chain", "cred-bad", "m-bad", 401, Outcome::UpstreamStatus),
+            ("chain", "cred-main", "m-main", 200, Outcome::Complete),
+        ]
+    );
+    // 两把失败的 key 在冷却：下一个请求直接从能用的开始。
+    let resp = env.anthropic(&token, body).await;
+    assert_eq!(resp.status(), 200);
+    resp.text().await.unwrap();
+    assert_eq!(models_seen(&env).len(), 4);
+    assert_eq!(models_seen(&env)[3], pair("v", "m-main"));
+}
+
+#[tokio::test]
+async fn fallback_chain_returns_the_last_failure_when_every_key_fails() {
+    let env = start(Setup::default()).await;
+    let token = env.token();
+    let resp = env
+        .anthropic(
+            &token,
+            json!({"model": "allbad", "max_tokens": 8, "messages": []}),
+        )
+        .await;
+    assert_eq!(resp.status(), 401);
+    let text = resp.text().await.unwrap();
+    assert!(!text.contains(VENDOR_KEY), "vendor key leaked: {text}");
+    assert_eq!(env.upstream.requests().len(), 2);
+    // 冷却只调整顺序，不拒绝：都在冷却时照样按顺序再试一遍。
+    let resp = env
+        .anthropic(
+            &token,
+            json!({"model": "allbad", "max_tokens": 8, "messages": []}),
+        )
+        .await;
+    assert_eq!(resp.status(), 401);
+    assert_eq!(env.upstream.requests().len(), 4);
+}
+
+#[tokio::test]
+async fn request_errors_and_timeouts_do_not_fall_back() {
+    let env = start(Setup::default()).await;
+    let token = env.token();
+    let resp = env
+        .anthropic(
+            &token,
+            json!({"model": "broke", "max_tokens": 8, "messages": []}),
+        )
+        .await;
+    assert_eq!(resp.status(), 400);
+    assert_eq!(
+        models_seen(&env),
+        [("broke".to_owned(), "m-broke".to_owned())]
+    );
+}
+
+#[tokio::test]
+async fn fallback_chain_covers_unreachable_vendors() {
+    let env = start(Setup::default()).await;
+    let token = env.token();
+    let resp = env
+        .anthropic(
+            &token,
+            json!({"model": "down", "max_tokens": 8, "messages": []}),
+        )
+        .await;
+    assert_eq!(resp.status(), 200);
+    resp.text().await.unwrap();
+    assert_eq!(models_seen(&env), [("v".to_owned(), "m-main".to_owned())]);
+    let records = env.records(2).await;
+    assert_eq!(
+        (records[0].credential.as_str(), records[0].outcome),
+        ("cred-down", Outcome::ConnectFailed)
+    );
+    assert_eq!(records[0].charged_tokens, 0);
+    assert_eq!(records[1].credential, "cred-main");
+}
+
+#[tokio::test]
+async fn fallback_chain_skips_keys_without_the_protocol_or_budget() {
+    let env = start(Setup {
+        daily_token_limit: Some(40),
+        ..Setup::default()
+    })
+    .await;
+    let token = env.token();
+    // cred-nores 没有 Responses：直接跳过，不发请求、不记用量。
+    let resp = env
+        .openai(
+            "responses",
+            &token,
+            json!({"model": "codex", "input": "ping"}),
+        )
+        .await;
+    assert_eq!(resp.status(), 200);
+    resp.text().await.unwrap();
+    assert_eq!(models_seen(&env), [("v".to_owned(), "m-main".to_owned())]);
+    assert_eq!(env.records(1).await[0].credential, "cred-main");
+    // cred-main 的当日预算这时已经用完（59 > 40）：跳到备用的 key。
+    let resp = env
+        .anthropic(
+            &token,
+            json!({"model": "budgeted", "max_tokens": 8, "messages": []}),
+        )
+        .await;
+    assert_eq!(resp.status(), 200);
+    resp.text().await.unwrap();
+    assert_eq!(models_seen(&env)[1], ("v".to_owned(), "m-nores".to_owned()));
+    assert_eq!(env.records(2).await[1].credential, "cred-nores");
+    // 只有一把 key 而且预算用完：还是原来的 402。
+    let resp = env
+        .anthropic(
+            &token,
+            json!({"model": "main", "max_tokens": 8, "messages": []}),
+        )
+        .await;
+    assert_eq!(resp.status(), 402);
 }

@@ -146,6 +146,15 @@ pub struct ModelRoute {
     pub alias: String,
     pub credential_id: String,
     pub upstream_model: String,
+    /// 降级链：主 key 失效、欠费、被限流或连不上时按顺序换用，最多 3 个。
+    pub fallbacks: Vec<RouteFallback>,
+}
+
+/// 降级链里的一项：备用的 key 和它那边的上游模型。
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct RouteFallback {
+    pub credential_id: String,
+    pub upstream_model: String,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -819,6 +828,14 @@ impl ThinktinClient {
                     alias: r.alias,
                     credential_id: r.credential_id.to_string(),
                     upstream_model: r.upstream_model,
+                    fallbacks: r
+                        .fallbacks
+                        .into_iter()
+                        .map(|f| RouteFallback {
+                            credential_id: f.credential_id.to_string(),
+                            upstream_model: f.upstream_model,
+                        })
+                        .collect(),
                 })
                 .collect())
         })
@@ -839,6 +856,16 @@ impl ThinktinClient {
                     alias: r.alias,
                     credential_id: parse(&r.credential_id, "credential")?,
                     upstream_model: r.upstream_model,
+                    fallbacks: r
+                        .fallbacks
+                        .into_iter()
+                        .map(|f| {
+                            Ok(d::RouteFallback {
+                                credential_id: parse(&f.credential_id, "credential")?,
+                                upstream_model: f.upstream_model,
+                            })
+                        })
+                        .collect::<Result<Vec<_>>>()?,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
