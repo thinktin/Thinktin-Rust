@@ -24,6 +24,8 @@ pub struct NewPlan {
 #[derive(Debug, Clone, PartialEq)]
 pub struct DueTrigger {
     pub user_id: UserId,
+    /// 实例当前锁定的模板版本（运行创建时记下）。
+    pub agent_version: String,
     pub trigger: Trigger,
     pub plan: Plan,
     pub run_grant_id: Option<GrantId>,
@@ -271,6 +273,7 @@ impl<R> Tx<R> {
 #[derive(sqlx::FromRow)]
 struct DueRow {
     user_id: Uuid,
+    agent_version: String,
     run_grant_id: Option<Uuid>,
     #[sqlx(flatten)]
     trigger: TriggerRow,
@@ -294,7 +297,7 @@ impl Tx<Worker> {
         limit: i64,
     ) -> Result<Vec<DueTrigger>> {
         let rows: Vec<DueRow> = sqlx::query_as(
-            "SELECT t.user_id, p.run_grant_id, \
+            "SELECT t.user_id, i.agent_version, p.run_grant_id, \
                t.id, t.plan_id, t.spec, t.enabled, t.next_fire_at, t.last_fire_at, \
                p.id AS p_id, p.instance_id AS p_instance_id, p.title AS p_title, p.goal AS p_goal, \
                p.policy AS p_policy, p.catch_up AS p_catch_up, p.status AS p_status, \
@@ -327,6 +330,7 @@ impl Tx<Worker> {
                 .into_plan()?;
                 Ok(DueTrigger {
                     user_id: r.user_id.into(),
+                    agent_version: r.agent_version,
                     trigger: r.trigger.into_trigger()?,
                     plan,
                     run_grant_id: r.run_grant_id.map(Into::into),

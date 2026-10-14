@@ -1746,12 +1746,23 @@ checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
 name = "orchestrator"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "auth",
  "chrono",
  "chrono-tz",
+ "control",
  "croner",
+ "notify",
  "proto",
  "rrule",
+ "sandbox",
+ "serde",
+ "serde_json",
+ "store",
+ "tempfile",
  "thiserror",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

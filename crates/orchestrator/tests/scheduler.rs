@@ -1,0 +1,194 @@
+//! 调度循环：到点生成运行、补跑策略、重复扫描、坏规则。需要 DATABASE_URL（没有时跳过）。
+
+use chrono::{DateTime, Duration, Utc};
+use orchestrator::scheduler::{Scheduler, SchedulerConfig};
+use proto::domain::{
+    CatchUp, InstanceId, InstanceLimits, PlanAuthor, PlanId, PlanPolicy, RunSource, RunState,
+    ScheduleSpec, TriggerId, UserId,
+};
+use store::testing::TestDb;
+use store::{NewInstance, NewPlan};
+
+fn at(s: &str) -> DateTime<Utc> {
+    s.parse().unwrap()
+}
+
+struct Fixture {
+    t: TestDb,
+    user: UserId,
+    instance: InstanceId,
+}
+
+async fn fixture() -> Option<Fixture> {
+    let t = TestDb::new().await?;
+    let mut w = t.db.worker().await.unwrap();
+    let (user, _) = w.upsert_user_by_phone("+8613800000001").await.unwrap();
+    w.commit().await.unwrap();
+    let mut tx = t.db.tenant(user.id).await.unwrap();
+    let inst = tx
+        .create_instance(&NewInstance {
+            agent_id: "claude".into(),
+            agent_version: "1.2.3".into(),
+            harness: "acp".into(),
+            name: "main".into(),
+            workspace_id: "ws".into(),
+            limits: InstanceLimits::default(),
+        })
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    Some(Fixture {
+        t,
+        user: user.id,
+        instance: inst.id,
+    })
+}
+
+async fn plan_with_trigger(
+    f: &Fixture,
+    catch_up: CatchUp,
+    spec: ScheduleSpec,
+    next: DateTime<Utc>,
+) -> (PlanId, TriggerId) {
+    let mut tx = f.t.db.tenant(f.user).await.unwrap();
+    let plan = tx
+        .create_plan(&NewPlan {
+            instance_id: f.instance,
+            title: "news".into(),
+            goal: "summarize the news".into(),
+            policy: PlanPolicy::default(),
+            catch_up,
+            created_by: PlanAuthor::User,
+            run_grant_id: None,
+        })
+        .await
+        .unwrap();
+    let trig = tx.add_trigger(plan.id, &spec, Some(next)).await.unwrap();
+    tx.commit().await.unwrap();
+    (plan.id, trig.id)
+}
+
+fn daily_8am_shanghai() -> ScheduleSpec {
+    ScheduleSpec::Cron {
+        expr: "0 8 * * *".into(),
+        tz: "Asia/Shanghai".into(),
+    }
+}
+
+fn scheduler(f: &Fixture) -> Scheduler {
+    Scheduler::new(f.t.db.clone(), SchedulerConfig::default())
+}
+
+#[tokio::test]
+async fn on_time_fire_creates_one_run_with_jitter() {
+    let Some(f) = fixture().await else { return };
+    // 北京时间 8 点 = UTC 0 点。
+    let due = at("2026-10-14T00:00:00Z");
+    let (plan, trig) = plan_with_trigger(&f, CatchUp::Once, daily_8am_shanghai(), due).await;
+    let s = scheduler(&f);
+    let report = s.tick(at("2026-10-13T23:59:59Z")).await.unwrap();
+    assert_eq!(report.triggers, 0, "not due yet");
+
+    let report = s.tick(at("2026-10-14T00:00:01Z")).await.unwrap();
+    assert_eq!((report.triggers, report.runs_created), (1, 1));
+    let mut tx = f.t.db.tenant(f.user).await.unwrap();
+    let runs = tx.runs(f.instance, None, 10).await.unwrap();
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].plan_id, Some(plan));
+    assert_eq!(runs[0].source, RunSource::Plan);
+    assert_eq!(runs[0].state, RunState::Queued);
+    assert_eq!(runs[0].prompt, "summarize the news");
+    let trig_now = &tx.triggers(plan).await.unwrap()[0];
+    assert_eq!(trig_now.id, trig);
+    assert_eq!(trig_now.last_fire_at, Some(due));
+    assert_eq!(trig_now.next_fire_at, Some(at("2026-10-15T00:00:00Z")));
+    tx.rollback().await.unwrap();
+    let mut w = f.t.db.worker().await.unwrap();
+    let rec = w.run_record(runs[0].id).await.unwrap();
+    assert_eq!(rec.fire_time, Some(due));
+    assert_eq!(rec.agent_version, "1.2.3");
+    assert!(rec.not_before >= due && rec.not_before < due + Duration::seconds(30));
+    w.rollback().await.unwrap();
+
+    // 别的副本拿着旧的“下一次”又扫了一遍：唯一约束挡住，不会重复生成。
+    let mut tx = f.t.db.tenant(f.user).await.unwrap();
+    tx.set_trigger_enabled(trig, true, Some(due)).await.unwrap();
+    tx.commit().await.unwrap();
+    let report = s.tick(at("2026-10-14T00:00:02Z")).await.unwrap();
+    assert_eq!((report.runs_created, report.duplicates), (0, 1));
+}
+
+#[tokio::test]
+async fn catch_up_policies() {
+    let Some(f) = fixture().await else { return };
+    // 停机三天：错过 11、12、13、14 号四次。
+    let due = at("2026-10-11T00:00:00Z");
+    let now = at("2026-10-14T03:00:00Z");
+    let (once, _) = plan_with_trigger(&f, CatchUp::Once, daily_8am_shanghai(), due).await;
+    let (all, _) = plan_with_trigger(&f, CatchUp::All, daily_8am_shanghai(), due).await;
+    let (skip, _) = plan_with_trigger(&f, CatchUp::Skip, daily_8am_shanghai(), due).await;
+    let report = scheduler(&f).tick(now).await.unwrap();
+    assert_eq!((report.triggers, report.runs_created), (3, 1 + 4));
+
+    let mut w = f.t.db.worker().await.unwrap();
+    let mut tx = f.t.db.tenant(f.user).await.unwrap();
+    let runs = tx.runs(f.instance, None, 100).await.unwrap();
+    let fires = |plan| {
+        let mut v: Vec<_> = runs
+            .iter()
+            .filter(|r| r.plan_id == Some(plan))
+            .map(|r| r.id)
+            .collect();
+        v.sort();
+        v
+    };
+    let once_runs = fires(once);
+    assert_eq!(once_runs.len(), 1);
+    assert_eq!(
+        w.run_record(once_runs[0]).await.unwrap().fire_time,
+        Some(at("2026-10-14T00:00:00Z")),
+        "only the latest missed fire"
+    );
+    assert_eq!(fires(all).len(), 4);
+    assert!(fires(skip).is_empty());
+    for plan in [once, all, skip] {
+        let t = &tx.triggers(plan).await.unwrap()[0];
+        assert_eq!(t.next_fire_at, Some(at("2026-10-15T00:00:00Z")));
+    }
+    let skipped = &tx.triggers(skip).await.unwrap()[0];
+    assert_eq!(skipped.last_fire_at, None, "nothing ran");
+}
+
+#[tokio::test]
+async fn one_shot_and_broken_triggers() {
+    let Some(f) = fixture().await else { return };
+    let when = at("2026-10-14T09:30:00Z");
+    let (once, _) =
+        plan_with_trigger(&f, CatchUp::Once, ScheduleSpec::Once { at: when }, when).await;
+    let (broken, _) = plan_with_trigger(
+        &f,
+        CatchUp::Once,
+        ScheduleSpec::Cron {
+            expr: "0 8 * * *".into(),
+            tz: "Mars/Olympus_Mons".into(),
+        },
+        when,
+    )
+    .await;
+    let s = scheduler(&f);
+    let report = s.tick(when + Duration::seconds(1)).await.unwrap();
+    assert_eq!((report.runs_created, report.invalid), (1, 1));
+    let mut tx = f.t.db.tenant(f.user).await.unwrap();
+    assert_eq!(tx.triggers(once).await.unwrap()[0].next_fire_at, None);
+    assert_eq!(tx.triggers(broken).await.unwrap()[0].next_fire_at, None);
+    tx.rollback().await.unwrap();
+    // 之后不再触发。
+    let report = s.tick(when + Duration::days(2)).await.unwrap();
+    assert_eq!(report.triggers, 0);
+    // 暂停的计划不生成运行。
+    let (paused, _) = plan_with_trigger(&f, CatchUp::Once, daily_8am_shanghai(), when).await;
+    let mut tx = f.t.db.tenant(f.user).await.unwrap();
+    tx.set_plan_paused(paused, true).await.unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(s.tick(when + Duration::days(3)).await.unwrap().triggers, 0);
+}
