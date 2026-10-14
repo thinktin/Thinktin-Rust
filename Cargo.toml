@@ -42,4 +42,5 @@ tower = "0.5.3"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 url = "2.5.8"
+uuid = { version = "1.28.0", features = ["v7", "serde"] }
 zeroize = { version = "1.9.1", features = ["derive"] }

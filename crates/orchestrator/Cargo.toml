@@ -9,6 +9,6 @@ publish.workspace = true
 chrono.workspace = true
 chrono-tz.workspace = true
 croner.workspace = true
+proto = { path = "../proto" }
 rrule.workspace = true
-serde.workspace = true
 thiserror.workspace = true

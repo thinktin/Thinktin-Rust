@@ -12,7 +12,6 @@ use chrono::{DateTime, TimeZone, Utc};
 use chrono_tz::Tz;
 use croner::Cron;
 use croner::parser::{CronParser, Seconds};
-use serde::{Deserialize, Serialize};
 
 /// 一次最多展开这么多个触发时间（补跑、校验最小间隔时用），防止病态规则拖垮调度循环。
 pub const MAX_EXPANSION: usize = 1000;
@@ -29,17 +28,7 @@ pub enum ScheduleError {
     TooFrequent { min_secs: u64 },
 }
 
-/// 触发方式。事件触发（新消息、webhook）不在这里，由事件到达时直接生成运行。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum ScheduleSpec {
-    /// 五段 cron（分钟粒度），按 `tz` 的本地时间解释。
-    Cron { expr: String, tz: String },
-    /// iCalendar 的 DTSTART + RRULE，DTSTART 必须带 TZID。
-    Rrule { rule: String },
-    /// 一次性定时。
-    Once { at: DateTime<Utc> },
-}
+pub use proto::domain::ScheduleSpec;
 
 /// 解析好的触发方式。
 #[derive(Debug, Clone)]
@@ -49,18 +38,7 @@ pub enum Schedule {
     Once { at: DateTime<Utc> },
 }
 
-/// 错过的触发怎么补（平台停机、实例冻结期间）。
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CatchUp {
-    /// 只补一次：错过多少次都只生成一个运行，名义时间取最近错过的那一次（默认）。
-    #[default]
-    Once,
-    /// 全部补跑（最多 [`MAX_EXPANSION`] 次）。
-    All,
-    /// 跳过错过的触发。
-    Skip,
-}
+pub use proto::domain::CatchUp;
 
 pub fn parse_tz(name: &str) -> Result<Tz, ScheduleError> {
     Tz::from_str(name).map_err(|_| ScheduleError::TimeZone(name.to_owned()))
