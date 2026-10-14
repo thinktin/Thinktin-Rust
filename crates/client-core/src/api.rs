@@ -734,14 +734,17 @@ impl Api {
         to: Option<&str>,
         tz: Option<&str>,
     ) -> Result<UsageSummary> {
-        let mut q = url::form_urlencoded::Serializer::new(String::new());
-        q.append_pair("group", group);
-        for (k, v) in [("from", from), ("to", to), ("tz", tz)] {
-            if let Some(v) = v {
-                q.append_pair(k, v);
+        let query = {
+            let mut q = url::form_urlencoded::Serializer::new(String::new());
+            q.append_pair("group", group);
+            for (k, v) in [("from", from), ("to", to), ("tz", tz)] {
+                if let Some(v) = v {
+                    q.append_pair(k, v);
+                }
             }
-        }
-        self.json(Method::GET, &format!("/v1/usage?{}", q.finish()), None)
+            q.finish()
+        };
+        self.json(Method::GET, &format!("/v1/usage?{query}"), None)
             .await
     }
 
