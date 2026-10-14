@@ -43,6 +43,7 @@
 | 17.1 | 端到端测试：真实控制面（接口 + 后台任务）+ 本地沙箱 + agent-shim + 按 Pi 方式配置的假 agent + 接数据库的模型网关 + 模拟厂商，用 client-core 走完登录、存 key、领养、配别名、下任务、事件流、用量、收件箱；执行器把实例的模型别名（按授权收窄）交给 agent | `crates/e2e/tests/main_chain.rs` |
 | 15.2 | 租户隔离测试：RLS 覆盖检查（新表忘了开会失败）、36 个跨用户访问用例、模型网关的跨用户 / 换沙箱 / 吊销 / 收窄授权（网关现在按授权的别名范围放行） | [审计记录](security-audit.md) |
 | 15.4 | 密钥与日志审计：key 流转路径、主链路上自动检查 key 不进沙箱和日志、令牌不落盘；含密钥的结构调试输出全部打码；已知残留 | [审计记录](security-audit.md) |
+| 16.4（技术部分） | 注销即销毁：除了销毁 DEK，还删除提示词、摘要、事件、收件箱、计划、审批、团队、产出物索引、待发推送，手机号和设备信息去标识化；逐表测试 | [说明](compliance.md#5-注销wbs-164-的技术部分) |
 | 16.3 | AI 生成内容标识：agent 生成的事件、收件箱条目带标识位；系统通知正文加“【AI 生成】”；下载产出物带元数据头（隐式标识），纯文本和 Markdown 末尾加显式标识；推送文字的内容过滤（命中换成中性提示）；`[compliance]` 配置 | [说明](compliance.md) |
 | 11.1 | UniFFI 工程：client-core 出 Swift（`ThinktinCore`）/ Kotlin（`cn.thinktin.core`）绑定；xcframework + Swift Package、Android 库工程 / AAR 打包脚本（`mobile` 编译配置、16 KB 页对齐）；经 C ABI 的冒烟测试 | `crates/client-core/src/ffi.rs`、`tools/client-core/` |
 | 11.2 | 接口客户端：版本头、统一错误模型（按错误码区分重新登录 / 重试 / 提示）、访问令牌过期自动刷新（并发只刷一次）、刷新令牌失效清会话；会话交给原生端的安全存储 | `crates/client-core/src/api.rs` |

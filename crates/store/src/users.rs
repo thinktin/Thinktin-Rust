@@ -106,50 +106,36 @@ impl Tx<Worker> {
         Ok(())
     }
 
-    /// 注销账号（4.1）：吊销全部会话、设备、运行授权，删掉包裹的 DEK（密文随之无法解密，即“注销即销毁”），
-    /// 清掉 key 密文，实例标记删除（沙箱由生命周期管理回收），账号标记注销（手机号可以重新注册）。
+    /// 注销（16.4）：销毁用户的 DEK（key 和产出物的密文从此解不开），删掉用户的内容
+    /// （运行、提示词、摘要、事件、收件箱、计划、审批、团队、产出物索引、待发的推送），
+    /// 手机号和设备信息去标识化，实例标记删除（沙箱和工作区卷由巡检回收）。
+    /// 审计日志和用量记录只有 id 和计数，按网络日志的要求保留。
     pub async fn erase_account(&mut self, id: UserId) -> Result<()> {
         self.set_user_status(id, UserStatus::Deleted).await?;
         self.revoke_user_sessions(id, "account_deleted").await?;
         self.revoke_user_grants(id, "account_deleted").await?;
-        sqlx::query("DELETE FROM user_keys WHERE user_id = $1")
-            .bind(id.0)
-            .execute(self.conn())
-            .await?;
-        sqlx::query(
-            "UPDATE credentials SET deleted_at = coalesce(deleted_at, now()), disabled = true, sealed = ''::bytea, \
+        for sql in [
+            "DELETE FROM user_keys WHERE user_id = $1",
+            "UPDATE credentials SET deleted_at = coalesce(deleted_at, now()), disabled = true, \
+               sealed = ''::bytea, label = '', anthropic_base = NULL, openai_base = NULL, \
+               responses_base = NULL, updated_at = now() WHERE user_id = $1",
+            "DELETE FROM model_routes WHERE user_id = $1",
+            // 运行删了，审批、产出物、带运行的事件一起级联删掉。
+            "DELETE FROM runs WHERE user_id = $1",
+            "DELETE FROM events WHERE user_id = $1",
+            // 计划删了，触发器、流水线步骤级联删掉。
+            "DELETE FROM plans WHERE user_id = $1",
+            "DELETE FROM inbox_items WHERE user_id = $1",
+            "DELETE FROM outbox WHERE user_id = $1 AND delivered_at IS NULL",
+            "DELETE FROM teams WHERE user_id = $1",
+            "DELETE FROM team_templates WHERE user_id = $1",
+            "UPDATE instances SET state = 'deleted', name = '', deleted_at = coalesce(deleted_at, now()), \
                updated_at = now() WHERE user_id = $1",
-        )
-        .bind(id.0)
-        .execute(self.conn())
-        .await?;
-        sqlx::query("DELETE FROM model_routes WHERE user_id = $1")
-            .bind(id.0)
-            .execute(self.conn())
-            .await?;
-        sqlx::query(
-            "UPDATE instances SET state = 'deleted', deleted_at = coalesce(deleted_at, now()), updated_at = now() \
-             WHERE user_id = $1",
-        )
-        .bind(id.0)
-        .execute(self.conn())
-        .await?;
-        sqlx::query(
-            "UPDATE runs SET state = 'cancelled', state_reason = 'account deleted', lease_owner = NULL, \
-               lease_expires_at = NULL, finished_at = now(), updated_at = now() \
-             WHERE user_id = $1 AND state NOT IN ('succeeded', 'failed', 'cancelled')",
-        )
-        .bind(id.0)
-        .execute(self.conn())
-        .await?;
-        sqlx::query("UPDATE plans SET status = 'deleted', updated_at = now() WHERE user_id = $1")
-            .bind(id.0)
-            .execute(self.conn())
-            .await?;
-        sqlx::query("UPDATE triggers SET enabled = false, updated_at = now() WHERE user_id = $1")
-            .bind(id.0)
-            .execute(self.conn())
-            .await?;
+            "UPDATE devices SET name = '', push_channel = NULL, push_token = NULL WHERE user_id = $1",
+            "UPDATE users SET phone = 'deleted', display_name = NULL WHERE id = $1",
+        ] {
+            sqlx::query(sql).bind(id.0).execute(self.conn()).await?;
+        }
         Ok(())
     }
 }

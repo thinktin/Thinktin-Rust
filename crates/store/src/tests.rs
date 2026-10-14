@@ -808,3 +808,215 @@ async fn every_tenant_table_the_app_can_touch_has_rls() {
         assert!(touched.contains(&must), "{must} missing from {touched:?}");
     }
 }
+
+/// 注销（16.4）：用户的内容全部删掉，手机号、设备去标识化；别人的数据不受影响。
+#[tokio::test]
+async fn erasing_an_account_deletes_its_content() {
+    use proto::domain::{
+        ArtifactId, DevicePlatform, PlanStep, PushChannelKind, TeamMember, TeamRole,
+        TeamTemplateSpec, TemplateMember,
+    };
+
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = user(db, "+8613800000001").await;
+    let bob = user(db, "+8613800000002").await;
+    for who in [alice, bob] {
+        let inst = instance(db, who).await;
+        let run = queue_run(db, who, &inst, "写一份关于我体检报告的总结").await;
+        let mut w = db.worker().await.unwrap();
+        w.insert_user_key(who, "local", &[1, 2, 3]).await.unwrap();
+        w.create_device(
+            who,
+            DevicePlatform::Ios,
+            "张三的 iPhone",
+            Some((PushChannelKind::Apns, "tok")),
+        )
+        .await
+        .unwrap();
+        w.create_approval(&crate::NewApproval {
+            user: who,
+            instance: inst.id,
+            run: run.id,
+            request_id: "r1",
+            title: Some("删除病历.pdf"),
+            options: &json!([]),
+            tool_call: &json!({}),
+            expires_in: Duration::from_secs(60),
+        })
+        .await
+        .unwrap();
+        w.insert_artifact(&crate::NewArtifact {
+            id: ArtifactId::new(),
+            user: who,
+            instance: inst.id,
+            run: run.id,
+            root: run.id,
+            name: "体检总结.md",
+            content_type: "text/markdown",
+            size: 3,
+            sha256: &[0; 32],
+            blob_key: "k",
+        })
+        .await
+        .unwrap();
+        w.insert_inbox(
+            who,
+            &NewInboxItem {
+                kind: "run_finished".into(),
+                title: "体检".into(),
+                body: "血压偏高".into(),
+                ..NewInboxItem::default()
+            },
+        )
+        .await
+        .unwrap();
+        w.enqueue_outbox(
+            who,
+            &NewOutboxItem {
+                kind: "push".into(),
+                payload: json!({ "body": "血压偏高" }),
+                dedupe_key: None,
+                available_at: None,
+            },
+        )
+        .await
+        .unwrap();
+        w.commit().await.unwrap();
+        let mut tx = db.tenant(who).await.unwrap();
+        tx.append_event(
+            inst.id,
+            Some(run.id),
+            "agent.message",
+            &json!({ "text": "血压偏高" }),
+        )
+        .await
+        .unwrap();
+        tx.append_event(inst.id, None, "instance.state", &json!({}))
+            .await
+            .unwrap();
+        let plan = tx
+            .create_plan(&NewPlan {
+                instance_id: inst.id,
+                title: "每周体检提醒".into(),
+                goal: "看看我的体检数据".into(),
+                policy: PlanPolicy::default(),
+                catch_up: CatchUp::Once,
+                created_by: PlanAuthor::User,
+                run_grant_id: None,
+            })
+            .await
+            .unwrap();
+        tx.add_trigger(
+            plan.id,
+            &ScheduleSpec::Cron {
+                expr: "0 8 * * 1".into(),
+                tz: "Asia/Shanghai".into(),
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        tx.set_plan_steps(
+            plan.id,
+            &[PlanStep {
+                key: "a".into(),
+                instance_id: inst.id,
+                prompt: "读体检报告".into(),
+                depends_on: vec![],
+            }],
+        )
+        .await
+        .unwrap();
+        tx.create_team(
+            "家庭医生",
+            &[TeamMember {
+                instance_id: inst.id,
+                role: TeamRole::Lead,
+                position: 0,
+            }],
+        )
+        .await
+        .unwrap();
+        tx.create_team_template(
+            "家庭医生",
+            &TeamTemplateSpec {
+                members: vec![TemplateMember {
+                    agent_id: "claude".into(),
+                    harness: None,
+                    name: "医生".into(),
+                    role: TeamRole::Lead,
+                }],
+            },
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+    }
+
+    let mut w = db.worker().await.unwrap();
+    w.erase_account(alice).await.unwrap();
+    w.commit().await.unwrap();
+
+    let count = |table: &'static str, user: UserId| async move {
+        let n: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT count(*) FROM {table} WHERE user_id = $1"
+        )))
+        .bind(user.0)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+        n
+    };
+    for table in [
+        "user_keys",
+        "model_routes",
+        "runs",
+        "events",
+        "approvals",
+        "artifacts",
+        "plans",
+        "triggers",
+        "plan_steps",
+        "inbox_items",
+        "outbox",
+        "teams",
+        "team_members",
+        "team_templates",
+    ] {
+        assert_eq!(
+            count(table, alice).await,
+            0,
+            "{table} still has alice's rows"
+        );
+        assert!(
+            count(table, bob).await > 0 || table == "model_routes",
+            "{table}: bob untouched"
+        );
+    }
+    let (phone, name): (String, Option<String>) =
+        sqlx::query_as("SELECT phone, display_name FROM users WHERE id = $1")
+            .bind(alice.0)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    assert_eq!((phone.as_str(), name), ("deleted", None));
+    let devices: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT name, push_token FROM devices WHERE user_id = $1")
+            .bind(alice.0)
+            .fetch_all(db.pool())
+            .await
+            .unwrap();
+    assert!(devices.iter().all(|(n, tok)| n.is_empty() && tok.is_none()));
+    let states: Vec<(String, String)> =
+        sqlx::query_as("SELECT state, name FROM instances WHERE user_id = $1")
+            .bind(alice.0)
+            .fetch_all(db.pool())
+            .await
+            .unwrap();
+    assert!(states.iter().all(|(s, n)| s == "deleted" && n.is_empty()));
+    // 同一个手机号可以重新注册成新账号。
+    let mut w = db.worker().await.unwrap();
+    let (again, created) = w.upsert_user_by_phone("+8613800000001").await.unwrap();
+    assert!(created && again.id != alice);
+}
