@@ -9,7 +9,7 @@
 | App 里的对话流 | 事件里 `agent.message`、`agent.thought`、`agent.plan` 是 agent 生成的，client-core 的 `InstanceEvent.ai_generated` 为真，界面在旁边显示“AI 生成” | `proto::labels::is_ai_generated_event`、`crates/client-core/src/ffi.rs` |
 | 收件箱 | 正文是 agent 写的（运行摘要、工具调用标题、agent 起的计划名）时 `ai_generated` 为真，界面显示标识 | `inbox_items.ai_generated`、`orchestrator::outbox::Notice` |
 | 系统通知（APNs、厂商通道） | 通知栏由系统绘制，正文前加“【AI 生成】” | `notify::PushMessage::display_body` |
-| 下载产出物 | 纯文本、Markdown 末尾追加一行“——本内容由人工智能生成（服务提供者）”；其他类型见待决问题 | `crates/gateway/src/routes/artifacts.rs` |
+| 下载产出物 | 纯文本、Markdown 末尾追加一行“——本内容由人工智能生成（服务提供者）”（`[compliance] label_downloads` 可关）；其他类型不加显式标识，只有隐式标识（2026-10-14 决定） | `crates/gateway/src/routes/artifacts.rs` |
 | 复制、导出 | 客户端在复制 agent 输出时带上标识（App 端实现，WBS 12.x / 13.x） | — |
 
 ## 2. 隐式标识（文件元数据）

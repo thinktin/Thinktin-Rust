@@ -45,6 +45,8 @@
 | Codex | Apache-2.0（CLI、app-server、codex-acp 都是）；内含 LGPL 的 bubblewrap、改过的 zsh、ripgrep 等第三方组件 | 允许 | 允许：自定义供应商不需要 OpenAI 登录；只支持 Responses 协议 | 分发镜像要带 LICENSE、NOTICE 和第三方许可清单（npm 包里没带）；不能用 “Codex” 做产品名；遥测（`analytics`、`otel.metrics_exporter`、`feedback`）已在生成的配置里关掉 |
 | Pi、OpenClaw、Hermes | MIT | 允许 | 允许 | — |
 
+**2026-10-14 决定**：Claude 全球提供，不分国内站、海外站。Claude agent 能用哪些 key（只限用户自己的 Anthropic、Bedrock、Vertex 凭证，还是任何厂商的 Anthropic 兼容接口）还没定，见 [进度](progress.md) 的待决问题 1。
+
 依据：code.claude.com/docs/en/legal-and-compliance、/agent-sdk/overview、/llm-gateway，anthropic.com/supported-countries、/legal/commercial-terms；github.com/openai/codex 的 LICENSE、NOTICE，learn.chatgpt.com/docs/config-file/config-reference。条款随时可能更新，上线前由法务复核（16.5）。
 
 ## 3. 结构
