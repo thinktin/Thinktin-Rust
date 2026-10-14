@@ -1,14 +1,16 @@
 //! 用户的模型 key（9.8）。库里只有密钥库封好的密文，对外只给后 4 位。
 
 use chrono::{DateTime, Utc};
-use proto::domain::{Credential, CredentialId};
+use proto::domain::{Credential, CredentialId, UserId};
 use uuid::Uuid;
 
-use crate::{Error, Result, Tenant, Tx, signed, unsigned};
+use crate::{Error, Result, Tenant, Tx, Worker, signed, unsigned};
 
 /// 新增的 key。`sealed` 是密钥库用这个用户的 DEK 封好的密文。
 #[derive(Clone)]
 pub struct NewCredential {
+    /// 由调用方先生成：密文的附加认证数据里带着它（密文挪到别的记录上解不开）。
+    pub id: CredentialId,
     pub vendor: String,
     pub label: String,
     pub anthropic_base: Option<String>,
@@ -71,7 +73,7 @@ impl Tx<Tenant> {
              VALUES ($1, app_user_id(), $2, $3, $4, $5, $6, $7, $8, $9) RETURNING ",
             columns!()
         ))
-        .bind(CredentialId::new().0)
+        .bind(new.id.0)
         .bind(&new.vendor)
         .bind(&new.label)
         .bind(&new.anthropic_base)
@@ -110,6 +112,20 @@ impl Tx<Tenant> {
         .fetch_one(self.conn())
         .await?;
         row.into_credential()
+    }
+
+    pub async fn rename_credential(&mut self, id: CredentialId, label: &str) -> Result<()> {
+        let done = sqlx::query(
+            "UPDATE credentials SET label = $2, updated_at = now() WHERE id = $1 AND deleted_at IS NULL",
+        )
+        .bind(id.0)
+        .bind(label)
+        .execute(self.conn())
+        .await?;
+        if done.rows_affected() == 0 {
+            return Err(Error::NotFound);
+        }
+        Ok(())
     }
 
     pub async fn set_credential_disabled(
@@ -182,5 +198,86 @@ impl Tx<Tenant> {
             return Err(Error::NotFound);
         }
         Ok(())
+    }
+}
+
+/// 模型网关解密用的凭证记录（只给后台角色和模型网关）。
+#[derive(Clone)]
+pub struct SealedCredential {
+    pub id: CredentialId,
+    pub user_id: UserId,
+    pub vendor: String,
+    pub anthropic_base: Option<String>,
+    pub openai_base: Option<String>,
+    pub responses_base: Option<String>,
+    pub sealed: Vec<u8>,
+    pub last4: String,
+    pub daily_token_limit: Option<u64>,
+    pub disabled: bool,
+}
+
+impl std::fmt::Debug for SealedCredential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SealedCredential")
+            .field("id", &self.id)
+            .field("vendor", &self.vendor)
+            .field("last4", &self.last4)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Tx<Worker> {
+    /// 没删除的凭证的密文和路由信息。
+    pub async fn sealed_credential(
+        &mut self,
+        id: CredentialId,
+    ) -> Result<Option<SealedCredential>> {
+        #[allow(clippy::type_complexity)]
+        let row: Option<(
+            Uuid,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Vec<u8>,
+            String,
+            Option<i64>,
+            bool,
+        )> = sqlx::query_as(
+            "SELECT user_id, vendor, anthropic_base, openai_base, responses_base, sealed, last4, \
+               daily_token_limit, disabled FROM credentials WHERE id = $1 AND deleted_at IS NULL",
+        )
+        .bind(id.0)
+        .fetch_optional(self.conn())
+        .await?;
+        row.map(
+            |(
+                user,
+                vendor,
+                anthropic_base,
+                openai_base,
+                responses_base,
+                sealed,
+                last4,
+                limit,
+                disabled,
+            )| {
+                Ok(SealedCredential {
+                    id,
+                    user_id: user.into(),
+                    vendor,
+                    anthropic_base,
+                    openai_base,
+                    responses_base,
+                    sealed,
+                    last4,
+                    daily_token_limit: limit
+                        .map(|v| unsigned(v, "daily_token_limit"))
+                        .transpose()?,
+                    disabled,
+                })
+            },
+        )
+        .transpose()
     }
 }

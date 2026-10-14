@@ -7,6 +7,9 @@ use uuid::Uuid;
 
 use crate::{Error, Result, Tx, Worker, signed, unsigned};
 
+/// 事件追加后在这个 Postgres 通知频道上发实例 id。
+pub const EVENTS_CHANNEL: &str = "thinktin_events";
+
 #[derive(sqlx::FromRow)]
 struct Row {
     instance_id: Uuid,
@@ -60,6 +63,12 @@ impl<R> Tx<R> {
         .bind(payload)
         .fetch_one(self.conn())
         .await?;
+        // 提交时通知在线的事件流（接入网关按实例转给订阅者，订阅者再按序号来取）。
+        sqlx::query("SELECT pg_notify($1, $2)")
+            .bind(EVENTS_CHANNEL)
+            .bind(instance.to_string())
+            .execute(self.conn())
+            .await?;
         row.into_event()
     }
 

@@ -34,8 +34,9 @@ use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::{PgConnection, PgPool, Postgres, Transaction};
 
 pub use approvals::{ApprovalRecord, NewApproval};
-pub use credentials::NewCredential;
+pub use credentials::{NewCredential, SealedCredential};
 pub use error::{Error, Result};
+pub use events::EVENTS_CHANNEL;
 pub use instances::{InstanceRuntime, NewInstance};
 pub use outbox::{NewOutboxItem, OutboxItem};
 pub use plans::{DueTrigger, NewPlan};

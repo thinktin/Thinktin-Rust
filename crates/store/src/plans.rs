@@ -153,6 +153,21 @@ impl Tx<Tenant> {
         row.into_plan()
     }
 
+    /// 计划用的运行授权（建计划后签发，带着计划 id）。
+    pub async fn set_plan_grant(&mut self, plan: PlanId, grant: GrantId) -> Result<()> {
+        let done = sqlx::query(
+            "UPDATE plans SET run_grant_id = $2, updated_at = now() WHERE id = $1 AND status <> 'deleted'",
+        )
+        .bind(plan.0)
+        .bind(grant.0)
+        .execute(self.conn())
+        .await?;
+        if done.rows_affected() == 0 {
+            return Err(Error::NotFound);
+        }
+        Ok(())
+    }
+
     /// 删除计划：停掉它的触发器。已经生成的运行不受影响。
     pub async fn delete_plan(&mut self, id: PlanId) -> Result<()> {
         let done = sqlx::query(

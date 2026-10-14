@@ -1,0 +1,102 @@
+//! `/v1` 接口。
+
+mod account;
+mod agents;
+mod approvals;
+mod credentials;
+mod events;
+mod instances;
+mod plans;
+mod runs;
+
+use axum::Router;
+use axum::routing::{delete, get, post, put};
+
+use crate::AppState;
+
+pub fn router() -> Router<AppState> {
+    Router::new()
+        // 账号与设备（4.1、4.2）
+        .route("/v1/auth/code", post(account::send_code))
+        .route("/v1/auth/login", post(account::login))
+        .route("/v1/auth/refresh", post(account::refresh))
+        .route("/v1/auth/logout", post(account::logout))
+        .route("/v1/me", get(account::me).patch(account::update_me))
+        .route("/v1/me/code", post(account::send_self_code))
+        .route("/v1/me/delete", post(account::delete_account))
+        .route("/v1/devices", get(account::devices))
+        .route("/v1/devices/current/push", put(account::set_push))
+        .route("/v1/devices/{id}", delete(account::revoke_device))
+        // agent 目录
+        .route("/v1/agents", get(agents::list))
+        // 实例（6.4）
+        .route("/v1/instances", get(instances::list).post(instances::adopt))
+        .route(
+            "/v1/instances/{id}",
+            get(instances::get)
+                .patch(instances::update)
+                .delete(instances::delete),
+        )
+        .route(
+            "/v1/instances/{id}/routes",
+            get(instances::routes).put(instances::set_routes),
+        )
+        // 运行
+        .route(
+            "/v1/instances/{id}/runs",
+            get(runs::list).post(runs::create),
+        )
+        .route("/v1/runs/{id}", get(runs::get))
+        .route("/v1/runs/{id}/cancel", post(runs::cancel))
+        .route("/v1/runs/{id}/tree", get(runs::tree))
+        // 计划与触发器（7.1）
+        .route("/v1/plans", get(plans::list).post(plans::create))
+        .route(
+            "/v1/plans/{id}",
+            get(plans::get).patch(plans::update).delete(plans::delete),
+        )
+        .route("/v1/plans/{id}/pause", post(plans::pause))
+        .route("/v1/plans/{id}/resume", post(plans::resume))
+        .route("/v1/plans/{id}/triggers", post(plans::add_trigger))
+        .route("/v1/triggers/{id}", delete(plans::delete_trigger))
+        // 审批（4.7）
+        .route("/v1/approvals", get(approvals::list))
+        .route("/v1/approvals/{id}/decide", post(approvals::decide))
+        // 模型 key（9.8）
+        .route(
+            "/v1/credentials",
+            get(credentials::list).post(credentials::create),
+        )
+        .route(
+            "/v1/credentials/{id}",
+            axum::routing::patch(credentials::update).delete(credentials::delete),
+        )
+        .route(
+            "/v1/credentials/{id}/secret",
+            put(credentials::replace_secret),
+        )
+        // 事件流（5.2、5.3）
+        .route("/v1/instances/{id}/events", get(events::page))
+        .route("/v1/instances/{id}/events/ws", get(events::stream))
+}
+
+/// 路径里的 id 解析失败时返回 404（不区分“格式不对”和“不存在”）。
+pub(crate) fn parse_id<T: std::str::FromStr>(raw: &str, what: &str) -> Result<T, crate::ApiError> {
+    raw.parse().map_err(|_| crate::ApiError::not_found(what))
+}
+
+/// 检查文本长度（按字符）。
+pub(crate) fn check_len(
+    field: &str,
+    value: &str,
+    min: usize,
+    max: usize,
+) -> Result<(), crate::ApiError> {
+    let n = value.chars().count();
+    if n < min || n > max {
+        return Err(crate::ApiError::invalid(format!(
+            "{field} must be {min}-{max} characters"
+        )));
+    }
+    Ok(())
+}

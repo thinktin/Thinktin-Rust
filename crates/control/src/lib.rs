@@ -107,6 +107,58 @@ pub struct SweepReport {
     pub failed: usize,
 }
 
+/// 领养（不需要沙箱后端，接口层直接调用）：锁定 agent 当前版本和接入方式，建实例记录。
+pub async fn adopt(
+    db: &Db,
+    templates: &dyn Templates,
+    user: UserId,
+    actor: &str,
+    agent_id: &str,
+    harness: Option<&str>,
+    name: &str,
+) -> Result<Instance> {
+    let m = templates
+        .current(agent_id)
+        .ok_or_else(|| Error::UnknownAgent(agent_id.into()))?;
+    let harness = match harness {
+        Some(h) => m
+            .harness(h)
+            .ok_or_else(|| Error::Invalid(format!("{agent_id} has no harness {h}")))?,
+        None => m.default_harness(),
+    };
+    if name.trim().is_empty() || name.chars().count() > 64 {
+        return Err(Error::Invalid("name must be 1-64 characters".into()));
+    }
+    let mut t = db.tenant(user).await?;
+    let instance = t
+        .create_instance(&NewInstance {
+            agent_id: m.agent.id.clone(),
+            agent_version: m.agent.version.clone(),
+            harness: harness.id.clone(),
+            name: name.trim().into(),
+            workspace_id: format!("ws-{}", uuid::Uuid::now_v7().simple()),
+            limits: InstanceLimits::default(),
+        })
+        .await?;
+    t.append_event(
+        instance.id,
+        None,
+        "instance.state",
+        &json!({ "state": instance.state }),
+    )
+    .await?;
+    t.audit(
+        actor,
+        "instance.adopt",
+        Some(&instance.id.to_string()),
+        &json!({ "agent": m.agent.id, "version": m.agent.version, "harness": harness.id }),
+    )
+    .await?;
+    t.commit().await?;
+    info!(instance = %instance.id, agent = %m.agent.id, "instance adopted");
+    Ok(instance)
+}
+
 pub struct Lifecycle {
     db: Db,
     provider: Arc<dyn SandboxProvider>,
@@ -138,47 +190,16 @@ impl Lifecycle {
         harness: Option<&str>,
         name: &str,
     ) -> Result<Instance> {
-        let m = self
-            .templates
-            .current(agent_id)
-            .ok_or_else(|| Error::UnknownAgent(agent_id.into()))?;
-        let harness = match harness {
-            Some(h) => m
-                .harness(h)
-                .ok_or_else(|| Error::Invalid(format!("{agent_id} has no harness {h}")))?,
-            None => m.default_harness(),
-        };
-        if name.trim().is_empty() || name.chars().count() > 64 {
-            return Err(Error::Invalid("name must be 1-64 characters".into()));
-        }
-        let mut t = self.db.tenant(user).await?;
-        let instance = t
-            .create_instance(&NewInstance {
-                agent_id: m.agent.id.clone(),
-                agent_version: m.agent.version.clone(),
-                harness: harness.id.clone(),
-                name: name.trim().into(),
-                workspace_id: format!("ws-{}", uuid::Uuid::now_v7().simple()),
-                limits: InstanceLimits::default(),
-            })
-            .await?;
-        t.append_event(
-            instance.id,
-            None,
-            "instance.state",
-            &json!({ "state": instance.state }),
-        )
-        .await?;
-        t.audit(
+        adopt(
+            &self.db,
+            self.templates.as_ref(),
+            user,
             actor,
-            "instance.adopt",
-            Some(&instance.id.to_string()),
-            &json!({ "agent": m.agent.id, "version": m.agent.version, "harness": harness.id }),
+            agent_id,
+            harness,
+            name,
         )
-        .await?;
-        t.commit().await?;
-        info!(instance = %instance.id, agent = %m.agent.id, "instance adopted");
-        Ok(instance)
+        .await
     }
 
     /// 保证实例的沙箱在运行，返回最新的绑定（沙箱 id、地址）。编排服务在开始或继续一个运行前调用。

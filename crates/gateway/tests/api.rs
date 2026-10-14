@@ -1,0 +1,737 @@
+//! 接入网关的接口：起一个真实的 HTTP 服务（带事件监听），用 reqwest 和 WebSocket 客户端调用。
+//! 需要 DATABASE_URL（没有时跳过）。
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use auth::access_token::{AccessTokenIssuer, AccessTokenVerifier};
+use auth::service::{AuthConfig, AuthService};
+use auth::signed::{Signer25519, Verifier25519};
+use auth::sms::RecordingSms;
+use control::BuiltinTemplates;
+use futures_util::StreamExt;
+use gateway::{AppState, EventHub, GatewayConfig, Inner};
+use keyvault::secrecy::ExposeSecret;
+use keyvault::{KeyStore, KeyVault, LocalKms, MemoryKeyStore, SealedSecret, WrappedKey};
+use proto::domain::{ApprovalState, InstanceId, RunId};
+use reqwest::{Method, StatusCode};
+use serde_json::{Value, json};
+use store::testing::TestDb;
+use tokio_tungstenite::tungstenite;
+use zeroize::Zeroizing;
+
+const KMS_KEY: [u8; 32] = [9; 32];
+
+struct Api {
+    t: TestDb,
+    base: String,
+    http: reqwest::Client,
+    sms: Arc<RecordingSms>,
+}
+
+async fn api() -> Option<Api> {
+    let t = TestDb::new().await?;
+    let signer = Signer25519::generate("a1").unwrap();
+    let mut verifier = Verifier25519::new();
+    verifier
+        .add_key_b64("a1", &signer.verifying_key_b64())
+        .unwrap();
+    let sms = Arc::new(RecordingSms::default());
+    let auth = AuthService::new(
+        t.db.clone(),
+        AuthConfig {
+            code_resend_interval: Duration::ZERO,
+            ..AuthConfig::default()
+        },
+        Zeroizing::new(vec![3u8; 32]),
+        AccessTokenIssuer(signer),
+        AccessTokenVerifier(verifier),
+        sms.clone(),
+    )
+    .unwrap();
+    let hub = EventHub::new();
+    let state = AppState::new(Inner {
+        db: t.db.clone(),
+        auth: Arc::new(auth),
+        templates: Arc::new(BuiltinTemplates),
+        kms: Arc::new(LocalKms::new("kms1", &KMS_KEY)),
+        hub: hub.clone(),
+        cfg: GatewayConfig {
+            ws_heartbeat: Duration::from_millis(300),
+            ..GatewayConfig::default()
+        },
+    });
+    tokio::spawn(hub.listen(t.db.pool().clone(), std::future::pending()));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move {
+        axum::serve(listener, gateway::router(state)).await.unwrap();
+    });
+    Some(Api {
+        t,
+        base,
+        http: reqwest::Client::new(),
+        sms,
+    })
+}
+
+struct User {
+    access: String,
+    refresh: String,
+}
+
+impl Api {
+    async fn call(
+        &self,
+        method: Method,
+        path: &str,
+        token: Option<&str>,
+        body: Option<Value>,
+    ) -> (StatusCode, Value) {
+        let mut req = self.http.request(method, format!("{}{path}", self.base));
+        if let Some(t) = token {
+            req = req.bearer_auth(t);
+        }
+        if let Some(b) = body {
+            req = req.json(&b);
+        }
+        let resp = req.send().await.unwrap();
+        let status = resp.status();
+        let text = resp.text().await.unwrap();
+        (status, serde_json::from_str(&text).unwrap_or(Value::Null))
+    }
+
+    async fn login(&self, phone: &str) -> User {
+        let (st, _) = self
+            .call(
+                Method::POST,
+                "/v1/auth/code",
+                None,
+                Some(json!({ "phone": phone })),
+            )
+            .await;
+        assert_eq!(st, StatusCode::NO_CONTENT);
+        let e164 = format!("+86{phone}");
+        let code = self.sms.last_code(&e164).unwrap();
+        let (st, body) = self
+            .call(
+                Method::POST,
+                "/v1/auth/login",
+                None,
+                Some(json!({
+                    "phone": phone,
+                    "code": code,
+                    "device": { "platform": "ios", "name": "iPhone", "push_channel": "apns", "push_token": "tok" }
+                })),
+            )
+            .await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        User {
+            access: body["access_token"].as_str().unwrap().into(),
+            refresh: body["refresh_token"].as_str().unwrap().into(),
+        }
+    }
+
+    async fn adopt(&self, u: &User) -> InstanceId {
+        let (st, body) = self
+            .call(
+                Method::POST,
+                "/v1/instances",
+                Some(&u.access),
+                Some(json!({ "agent_id": "claude", "name": "My Claude" })),
+            )
+            .await;
+        assert_eq!(st, StatusCode::CREATED, "{body}");
+        body["id"].as_str().unwrap().parse().unwrap()
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn login_refresh_logout_and_errors() {
+    let Some(a) = api().await else { return };
+    let (st, body) = a.call(Method::GET, "/v1/me", None, None).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+    assert_eq!(body["code"], "unauthenticated");
+    let (st, body) = a
+        .call(
+            Method::POST,
+            "/v1/auth/code",
+            None,
+            Some(json!({ "phone": "123" })),
+        )
+        .await;
+    assert_eq!(
+        (st, body["code"].as_str()),
+        (StatusCode::UNPROCESSABLE_ENTITY, Some("invalid"))
+    );
+    let (st, body) = a
+        .call(
+            Method::POST,
+            "/v1/auth/login",
+            None,
+            Some(json!({ "nope": 1 })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["code"], "invalid", "bad JSON uses the error envelope");
+
+    let u = a.login("13800138000").await;
+    let (st, me) = a.call(Method::GET, "/v1/me", Some(&u.access), None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(me["phone"], "+8613800138000");
+    let (_, devices) = a
+        .call(Method::GET, "/v1/devices", Some(&u.access), None)
+        .await;
+    assert_eq!(devices["devices"][0]["current"], true);
+    assert_eq!(devices["devices"][0]["push_channel"], "apns");
+
+    let (st, tokens) = a
+        .call(
+            Method::POST,
+            "/v1/auth/refresh",
+            None,
+            Some(json!({ "refresh_token": u.refresh })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    let access = tokens["access_token"].as_str().unwrap().to_owned();
+    let (st, _) = a
+        .call(Method::POST, "/v1/auth/logout", Some(&access), None)
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let (st, body) = a.call(Method::GET, "/v1/me", Some(&access), None).await;
+    assert_eq!(
+        (st, body["code"].as_str()),
+        (StatusCode::UNAUTHORIZED, Some("session_revoked"))
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn instances_keys_and_routes_are_per_user() {
+    let Some(a) = api().await else { return };
+    let (_, agents) = a.call(Method::GET, "/v1/agents", None, None).await;
+    assert!(
+        agents["agents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x["id"] == "claude")
+    );
+
+    let alice = a.login("13800138000").await;
+    let bob = a.login("13900139000").await;
+    let inst = a.adopt(&alice).await;
+    let (st, body) = a
+        .call(
+            Method::POST,
+            "/v1/instances",
+            Some(&alice.access),
+            Some(json!({ "agent_id": "nope", "name": "x" })),
+        )
+        .await;
+    assert_eq!(
+        (st, body["code"].as_str()),
+        (StatusCode::NOT_FOUND, Some("not_found"))
+    );
+
+    // key：加密保存，只返回后 4 位；用这个用户的 DEK 能解开，记录 id 绑在密文上。
+    let (st, cred) = a
+        .call(
+            Method::POST,
+            "/v1/credentials",
+            Some(&alice.access),
+            Some(
+                json!({ "vendor": "anthropic", "label": "work", "api_key": "sk-ant-secret-1234" }),
+            ),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{cred}");
+    assert_eq!(cred["last4"], "1234");
+    assert!(
+        !cred.to_string().contains("secret"),
+        "the key never comes back"
+    );
+    let cred_id: proto::domain::CredentialId = cred["id"].as_str().unwrap().parse().unwrap();
+    let mut w = a.t.db.worker().await.unwrap();
+    let sealed = w.sealed_credential(cred_id).await.unwrap().unwrap();
+    let (kms_key_id, wrapped) = w.user_key(sealed.user_id).await.unwrap().unwrap();
+    w.rollback().await.unwrap();
+    let store = MemoryKeyStore::default();
+    let uid = sealed.user_id.to_string();
+    store.insert_new(
+        &uid,
+        WrappedKey {
+            kms_key_id,
+            ciphertext: wrapped,
+        },
+    );
+    let vault = KeyVault::new(LocalKms::new("kms1", &KMS_KEY), store);
+    let plain = vault
+        .open(
+            &uid,
+            &cred_id.to_string(),
+            &SealedSecret {
+                ciphertext: sealed.sealed.clone(),
+                last4: sealed.last4,
+            },
+        )
+        .unwrap();
+    assert_eq!(plain.expose_secret(), "sk-ant-secret-1234");
+    assert!(
+        vault
+            .open(
+                &uid,
+                &proto::domain::CredentialId::new().to_string(),
+                &SealedSecret {
+                    ciphertext: sealed.sealed,
+                    last4: String::new()
+                }
+            )
+            .is_err(),
+        "ciphertext is bound to its record"
+    );
+    // 第二把 key 复用同一个 DEK。
+    let (st, _) = a
+        .call(
+            Method::POST,
+            "/v1/credentials",
+            Some(&alice.access),
+            Some(json!({ "vendor": "deepseek:cn", "api_key": "sk-ds-000000009999" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED);
+    let (st, body) = a
+        .call(
+            Method::POST,
+            "/v1/credentials",
+            Some(&alice.access),
+            Some(json!({ "vendor": "custom", "api_key": "sk-x-12345678" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+
+    let routes = json!({ "routes": [{ "alias": "main", "credential_id": cred_id, "upstream_model": "claude-sonnet" }] });
+    let (st, body) = a
+        .call(
+            Method::PUT,
+            &format!("/v1/instances/{inst}/routes"),
+            Some(&alice.access),
+            Some(routes.clone()),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(body["routes"][0]["alias"], "main");
+    let (st, _) = a
+        .call(
+            Method::DELETE,
+            &format!("/v1/credentials/{cred_id}"),
+            Some(&alice.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::CONFLICT, "still used by a route");
+
+    // Bob 看不到 Alice 的实例和 key，也引用不了她的 key。
+    let (st, _) = a
+        .call(
+            Method::GET,
+            &format!("/v1/instances/{inst}"),
+            Some(&bob.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (_, list) = a
+        .call(Method::GET, "/v1/credentials", Some(&bob.access), None)
+        .await;
+    assert_eq!(list["credentials"].as_array().unwrap().len(), 0);
+    let bob_inst = a.adopt(&bob).await;
+    let (st, _) = a
+        .call(
+            Method::PUT,
+            &format!("/v1/instances/{bob_inst}/routes"),
+            Some(&bob.access),
+            Some(routes),
+        )
+        .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+
+    // 换 key：后 4 位变了，记录 id 不变。
+    let (st, rotated) = a
+        .call(
+            Method::PUT,
+            &format!("/v1/credentials/{cred_id}/secret"),
+            Some(&alice.access),
+            Some(json!({ "api_key": "sk-ant-secret-5678" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(rotated["last4"], "5678");
+
+    // 删除实例：授权吊销、标记删除。
+    let (st, _) = a
+        .call(
+            Method::DELETE,
+            &format!("/v1/instances/{inst}"),
+            Some(&alice.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let (st, _) = a
+        .call(
+            Method::GET,
+            &format!("/v1/instances/{inst}"),
+            Some(&alice.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn runs_plans_and_approvals() {
+    let Some(a) = api().await else { return };
+    let u = a.login("13800138000").await;
+    let inst = a.adopt(&u).await;
+
+    let (st, run) = a
+        .call(
+            Method::POST,
+            &format!("/v1/instances/{inst}/runs"),
+            Some(&u.access),
+            Some(json!({ "prompt": "summarize my inbox" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{run}");
+    assert_eq!(run["state"], "queued");
+    let run_id: RunId = run["id"].as_str().unwrap().parse().unwrap();
+    let (st, runs) = a
+        .call(
+            Method::GET,
+            &format!("/v1/instances/{inst}/runs"),
+            Some(&u.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(runs["runs"].as_array().unwrap().len(), 1);
+    let (st, cancelled) = a
+        .call(
+            Method::POST,
+            &format!("/v1/runs/{run_id}/cancel"),
+            Some(&u.access),
+            None,
+        )
+        .await;
+    assert_eq!(
+        (st, cancelled["state"].as_str()),
+        (StatusCode::OK, Some("cancelled"))
+    );
+    let (st, body) = a
+        .call(
+            Method::POST,
+            &format!("/v1/runs/{run_id}/cancel"),
+            Some(&u.access),
+            None,
+        )
+        .await;
+    assert_eq!(
+        (st, body["code"].as_str()),
+        (StatusCode::CONFLICT, Some("conflict"))
+    );
+
+    // 计划：规则校验、下一次触发时间、暂停与恢复、删除时吊销授权。
+    let plan_req = |triggers: Value| json!({ "instance_id": inst, "title": "早报", "goal": "summarize the news", "triggers": triggers });
+    let (st, body) = a
+        .call(
+            Method::POST,
+            "/v1/plans",
+            Some(&u.access),
+            Some(plan_req(
+                json!([{ "kind": "cron", "expr": "* * * * *", "tz": "UTC" }]),
+            )),
+        )
+        .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "too frequent: {body}");
+    let (st, _) = a
+        .call(
+            Method::POST,
+            "/v1/plans",
+            Some(&u.access),
+            Some(plan_req(
+                json!([{ "kind": "cron", "expr": "0 8 * * *", "tz": "Mars/Base" }]),
+            )),
+        )
+        .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+    let (st, plan) = a
+        .call(
+            Method::POST,
+            "/v1/plans",
+            Some(&u.access),
+            Some(plan_req(
+                json!([{ "kind": "cron", "expr": "0 8 * * *", "tz": "Asia/Shanghai" }]),
+            )),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{plan}");
+    assert_eq!(plan["triggers"].as_array().unwrap().len(), 1);
+    assert!(
+        plan["triggers"][0]["next_fire_at"]
+            .as_str()
+            .unwrap()
+            .ends_with("T00:00:00Z")
+    );
+    let plan_id = plan["id"].as_str().unwrap().to_owned();
+    let (_, paused) = a
+        .call(
+            Method::POST,
+            &format!("/v1/plans/{plan_id}/pause"),
+            Some(&u.access),
+            None,
+        )
+        .await;
+    assert_eq!(paused["paused"], true);
+    let (_, resumed) = a
+        .call(
+            Method::POST,
+            &format!("/v1/plans/{plan_id}/resume"),
+            Some(&u.access),
+            None,
+        )
+        .await;
+    assert_eq!(resumed["paused"], false);
+    let (st, updated) = a
+        .call(
+            Method::PATCH,
+            &format!("/v1/plans/{plan_id}"),
+            Some(&u.access),
+            Some(json!({ "title": "晚报" })),
+        )
+        .await;
+    assert_eq!(
+        (st, updated["title"].as_str()),
+        (StatusCode::OK, Some("晚报"))
+    );
+    let (st, _) = a
+        .call(
+            Method::DELETE,
+            &format!("/v1/plans/{plan_id}"),
+            Some(&u.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let mut w = a.t.db.worker().await.unwrap();
+    let plan_uuid: proto::domain::PlanId = plan_id.parse().unwrap();
+    let grants: Vec<_> = {
+        let mut tx =
+            a.t.db
+                .tenant(w.run_record(run_id).await.unwrap().user_id)
+                .await
+                .unwrap();
+        let g = tx.run_grants(inst).await.unwrap();
+        tx.rollback().await.unwrap();
+        g
+    };
+    assert!(
+        grants.iter().all(|g| g.plan_id != Some(plan_uuid)),
+        "plan grant revoked"
+    );
+
+    // 审批：执行器建的审批出现在列表里，用户决定。
+    let (_, run2) = a
+        .call(
+            Method::POST,
+            &format!("/v1/instances/{inst}/runs"),
+            Some(&u.access),
+            Some(json!({ "prompt": "clean up" })),
+        )
+        .await;
+    let run2: RunId = run2["id"].as_str().unwrap().parse().unwrap();
+    let rec = w.run_record(run2).await.unwrap();
+    w.create_approval(&store::NewApproval {
+        user: rec.user_id,
+        instance: inst,
+        run: run2,
+        request_id: "p1",
+        title: Some("Delete files"),
+        options: &json!([{ "option_id": "allow", "name": "Allow", "kind": "allow_once" },
+                         { "option_id": "deny", "name": "Deny", "kind": "reject_once" }]),
+        tool_call: &json!({}),
+        expires_in: Duration::from_secs(3600),
+    })
+    .await
+    .unwrap();
+    w.commit().await.unwrap();
+    let (_, list) = a
+        .call(Method::GET, "/v1/approvals", Some(&u.access), None)
+        .await;
+    let approval_id = list["approvals"][0]["id"].as_str().unwrap().to_owned();
+    let (st, decided) = a
+        .call(
+            Method::POST,
+            &format!("/v1/approvals/{approval_id}/decide"),
+            Some(&u.access),
+            Some(json!({ "option_id": "deny" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{decided}");
+    assert_eq!(decided["state"], json!(ApprovalState::Rejected));
+    let (st, _) = a
+        .call(
+            Method::POST,
+            &format!("/v1/approvals/{approval_id}/decide"),
+            Some(&u.access),
+            Some(json!({ "option_id": "allow" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CONFLICT, "decided once");
+}
+
+async fn ws_connect(
+    a: &Api,
+    token: Option<&str>,
+    inst: InstanceId,
+    after: u64,
+) -> Result<
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+    tungstenite::Error,
+> {
+    use tungstenite::client::IntoClientRequest;
+    let url = format!(
+        "{}/v1/instances/{inst}/events/ws?after={after}",
+        a.base.replace("http", "ws")
+    );
+    let mut req = url.into_client_request().unwrap();
+    if let Some(t) = token {
+        req.headers_mut()
+            .insert("authorization", format!("Bearer {t}").parse().unwrap());
+    }
+    tokio_tungstenite::connect_async(req).await.map(|(s, _)| s)
+}
+
+async fn next_event<S>(ws: &mut S) -> Value
+where
+    S: futures_util::Stream<Item = Result<tungstenite::Message, tungstenite::Error>> + Unpin,
+{
+    loop {
+        let msg = tokio::time::timeout(Duration::from_secs(10), ws.next())
+            .await
+            .expect("an event in time")
+            .unwrap()
+            .unwrap();
+        if let tungstenite::Message::Text(t) = msg {
+            return serde_json::from_str(&t).unwrap();
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn event_stream_replays_then_streams_live() {
+    let Some(a) = api().await else { return };
+    let u = a.login("13800138000").await;
+    let inst = a.adopt(&u).await; // 领养时写了一条 instance.state 事件（seq 1）
+    let append = |kind: &'static str, n: i64| {
+        let db = a.t.db.clone();
+        async move {
+            let mut w = db.worker().await.unwrap();
+            let ev = w
+                .append_event(inst, None, kind, &json!({ "n": n }))
+                .await
+                .unwrap();
+            w.commit().await.unwrap();
+            ev.seq
+        }
+    };
+    append("agent.message", 1).await;
+    append("agent.message", 2).await;
+
+    assert!(
+        ws_connect(&a, None, inst, 0).await.is_err(),
+        "needs a token"
+    );
+    let mut ws = ws_connect(&a, Some(&u.access), inst, 1).await.unwrap();
+    let e2 = next_event(&mut ws).await;
+    assert_eq!(
+        (e2["type"].as_str(), e2["seq"].as_u64()),
+        (Some("event"), Some(2))
+    );
+    assert_eq!(next_event(&mut ws).await["seq"], 3);
+    // 实时：别的进程追加事件（提交时 pg_notify），连接被叫醒后推过来。
+    let seq = append("run.state", 4).await;
+    let live = next_event(&mut ws).await;
+    assert_eq!(live["seq"].as_u64(), Some(seq));
+    assert_eq!(live["payload"]["n"], 4);
+    ws.close(None).await.ok();
+
+    // 断线重连：带上最后的序号，只收之后的。
+    append("agent.message", 5).await;
+    let mut ws = ws_connect(&a, Some(&u.access), inst, seq).await.unwrap();
+    assert_eq!(next_event(&mut ws).await["payload"]["n"], 5);
+
+    // REST 分页补发。
+    let (st, page) = a
+        .call(
+            Method::GET,
+            &format!("/v1/instances/{inst}/events?after=2&limit=2"),
+            Some(&u.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(page["events"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        (page["oldest_seq"].as_u64(), page["latest_seq"].as_u64()),
+        (Some(1), Some(5))
+    );
+
+    // 别人订阅不了。
+    let bob = a.login("13900139000").await;
+    assert!(ws_connect(&a, Some(&bob.access), inst, 0).await.is_err());
+
+    // 会话被吊销：下一次心跳时以 4001 关闭。
+    let (st, _) = a
+        .call(Method::POST, "/v1/auth/logout", Some(&u.access), None)
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let closed = tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(msg) = ws.next().await {
+            if let Ok(tungstenite::Message::Close(Some(frame))) = msg {
+                return Some(u16::from(frame.code));
+            }
+        }
+        None
+    })
+    .await
+    .unwrap();
+    assert_eq!(closed, Some(4001));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn account_deletion_over_http() {
+    let Some(a) = api().await else { return };
+    let u = a.login("13800138000").await;
+    let (st, _) = a
+        .call(
+            Method::POST,
+            "/v1/me/code",
+            Some(&u.access),
+            Some(json!({ "purpose": "delete_account" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let code = a.sms.last_code("+8613800138000").unwrap();
+    let (st, _) = a
+        .call(
+            Method::POST,
+            "/v1/me/delete",
+            Some(&u.access),
+            Some(json!({ "code": code })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let (st, _) = a.call(Method::GET, "/v1/me", Some(&u.access), None).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+}

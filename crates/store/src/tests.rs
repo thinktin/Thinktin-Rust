@@ -41,6 +41,7 @@ async fn instance(db: &Db, user: UserId) -> Instance {
 
 fn credential(last4: &str) -> NewCredential {
     NewCredential {
+        id: proto::domain::CredentialId::new(),
         vendor: "anthropic".into(),
         label: "work".into(),
         anthropic_base: None,

@@ -60,6 +60,20 @@ pub trait Kms: Send + Sync {
     fn unwrap(&self, wrapped: &WrappedKey, context: &str) -> Result<Zeroizing<[u8; DEK_LEN]>>;
 }
 
+impl<T: Kms + ?Sized> Kms for std::sync::Arc<T> {
+    fn current_key_id(&self) -> &str {
+        (**self).current_key_id()
+    }
+
+    fn wrap(&self, dek: &[u8; DEK_LEN], context: &str) -> Result<WrappedKey> {
+        (**self).wrap(dek, context)
+    }
+
+    fn unwrap(&self, wrapped: &WrappedKey, context: &str) -> Result<Zeroizing<[u8; DEK_LEN]>> {
+        (**self).unwrap(wrapped, context)
+    }
+}
+
 /// 开发和测试用的本地 KMS：主密钥在进程内存里，用 AES-256-GCM 包裹 DEK。
 /// 生产环境必须换成云 KMS，主密钥不离开 KMS。
 pub struct LocalKms {

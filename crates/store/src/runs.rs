@@ -296,6 +296,26 @@ impl Tx<Tenant> {
     }
 }
 
+impl Tx<Tenant> {
+    /// 取消实例上所有没结束的运行（删除实例时）。返回取消的个数。
+    pub async fn cancel_instance_runs(
+        &mut self,
+        instance: InstanceId,
+        reason: &str,
+    ) -> Result<u64> {
+        let done = sqlx::query(
+            "UPDATE runs SET state = 'cancelled', state_reason = $2, lease_owner = NULL, lease_expires_at = NULL, \
+               finished_at = now(), updated_at = now() \
+             WHERE instance_id = $1 AND state NOT IN ('succeeded', 'failed', 'cancelled')",
+        )
+        .bind(instance.0)
+        .bind(reason)
+        .execute(self.conn())
+        .await?;
+        Ok(done.rows_affected())
+    }
+}
+
 impl Tx<Worker> {
     /// 后台建运行（计划到点、流水线、委派）。同一计划同一触发时间已有运行时返回 None。
     pub async fn create_run(&mut self, user: UserId, new: &NewRun) -> Result<Option<Run>> {

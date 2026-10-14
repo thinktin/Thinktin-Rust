@@ -129,6 +129,19 @@ impl<R> Tx<R> {
         Ok(done.rows_affected())
     }
 
+    /// 吊销计划的授权（删除计划时）。
+    pub async fn revoke_plan_grants(&mut self, plan: PlanId, reason: &str) -> Result<u64> {
+        let done = sqlx::query(
+            "UPDATE run_grants SET revoked_at = now(), revoke_reason = $2 \
+             WHERE plan_id = $1 AND revoked_at IS NULL",
+        )
+        .bind(plan.0)
+        .bind(reason)
+        .execute(self.conn())
+        .await?;
+        Ok(done.rows_affected())
+    }
+
     /// 吊销实例的全部授权（停用、删除实例）。
     pub async fn revoke_instance_grants(
         &mut self,
