@@ -25,6 +25,37 @@ pub enum ShimCommand {
     },
     /// 让 agent 落盘后退出，沙箱随后会被暂停或销毁。
     Shutdown,
+    /// 设置注入给 agent 的平台工具（MCP 工具，比如 `schedule_create`）。会话中途修改时，
+    /// shim 通知 agent 工具列表变了。
+    SetPlatformTools { tools: Vec<PlatformTool> },
+    /// 平台工具调用的结果，对应 [`ShimEvent::PlatformToolCall`]。
+    PlatformToolResult {
+        call_id: String,
+        /// MCP 的内容块，比如 `[{"type":"text","text":"..."}]`。
+        content: Vec<Value>,
+        #[serde(default)]
+        is_error: bool,
+    },
+}
+
+/// 平台提供给 agent 的工具（以 MCP 工具的形式注入，服务器名 `thinktin`）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlatformTool {
+    /// 只能用字母、数字、`_`、`-`，最长 64 个字符（MCP 的要求）。
+    pub name: String,
+    pub description: String,
+    /// 参数的 JSON Schema。
+    pub input_schema: Value,
+}
+
+impl PlatformTool {
+    pub fn valid_name(name: &str) -> bool {
+        !name.is_empty()
+            && name.len() <= 64
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    }
 }
 
 /// shim 发出的每条事件都带单调递增的序号，平台按序号写入运行日志、做续传（4.8）。
@@ -116,6 +147,16 @@ pub enum ShimEvent {
         run_id: Option<String>,
         kind: String,
         raw: Value,
+    },
+    /// agent 接受了这一轮任务，开始执行（编排服务据此把运行从“启动中”转为“运行中”）。
+    TurnStarted { run_id: String },
+    /// agent 调用了平台工具，等平台回 [`ShimCommand::PlatformToolResult`]。
+    /// `run_id` 由 shim 填当前这一轮，agent 改不了；`call_id` 在这一轮里唯一，平台据此做幂等（4.5）。
+    PlatformToolCall {
+        run_id: String,
+        call_id: String,
+        name: String,
+        arguments: Value,
     },
     /// 一轮任务结束。
     TurnEnded {

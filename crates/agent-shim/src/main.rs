@@ -2,6 +2,7 @@
 //! 注入模型配置、转发权限请求、上报事件（架构方案 3.3）。
 
 mod acp;
+mod bridge;
 mod claude_cli;
 mod config;
 mod events;
@@ -54,6 +55,13 @@ enum Command {
     Serve {
         #[command(flatten)]
         common: CommonArgs,
+        #[command(flatten)]
+        bridge: BridgeArgs,
+    },
+    /// 平台工具桥：由 agent 作为 MCP 服务器启动，把工具调用转给 shim（不要手动运行）
+    McpBridge {
+        #[arg(long)]
+        socket: PathBuf,
     },
     /// 让 agent 跑一轮任务后退出，用于本地调试和冒烟测试
     Run {
@@ -226,6 +234,19 @@ impl PermissionArgs {
 }
 
 #[derive(Args)]
+struct BridgeArgs {
+    /// 给 agent 注入平台工具（MCP 服务器 `thinktin`），工具列表由平台用 set_platform_tools 指令下发
+    #[arg(long)]
+    platform_tools: bool,
+    /// 启动时就有的平台工具（JSON 数组，元素是 {name, description, input_schema}）
+    #[arg(long, requires = "platform_tools")]
+    platform_tools_file: Option<PathBuf>,
+    /// 平台工具调用最长等多久
+    #[arg(long, default_value_t = 600)]
+    platform_tool_timeout_secs: u64,
+}
+
+#[derive(Args)]
 struct CommonArgs {
     #[command(flatten)]
     agent: AgentArgs,
@@ -349,9 +370,13 @@ async fn run(cli: Cli) -> anyhow::Result<ExitCode> {
             println!("{}", serde_json::to_string_pretty(&out)?);
             Ok(ExitCode::SUCCESS)
         }
-        Command::Serve { common } => {
+        Command::Serve { common, bridge } => {
             let cfg = common.shim_config(Fallback::Ask, 5)?;
-            serve(cfg).await
+            serve(cfg, bridge).await
+        }
+        Command::McpBridge { socket } => {
+            bridge::run_client(&socket).await?;
+            Ok(ExitCode::SUCCESS)
         }
         Command::Run {
             common,
@@ -367,11 +392,43 @@ async fn run(cli: Cli) -> anyhow::Result<ExitCode> {
     }
 }
 
-async fn serve(cfg: ShimConfig) -> anyhow::Result<ExitCode> {
+async fn serve(mut cfg: ShimConfig, args: BridgeArgs) -> anyhow::Result<ExitCode> {
     let (sink, mut events) = EventSink::new();
+    let bridge = if args.platform_tools {
+        let tools = match &args.platform_tools_file {
+            Some(path) => {
+                let text = std::fs::read_to_string(path)
+                    .with_context(|| format!("reading {}", path.display()))?;
+                serde_json::from_str(&text)
+                    .with_context(|| format!("{} must be a JSON array of tools", path.display()))?
+            }
+            None => Vec::new(),
+        };
+        let b = bridge::Bridge::start(
+            &cfg.home.join(".thinktin"),
+            sink.clone(),
+            tools,
+            Duration::from_secs(args.platform_tool_timeout_secs),
+        )?;
+        tracing::info!(socket = %b.socket_path().display(), "platform tool bridge listening");
+        let exe = std::env::current_exe().context("locating agent-shim")?;
+        cfg.mcp_servers.push(b.mcp_server_entry(&exe));
+        Some(b)
+    } else {
+        None
+    };
+    let observer = bridge.clone();
     let writer = tokio::spawn(async move {
         let mut stdout = tokio::io::stdout();
         while let Some(env) = events.recv().await {
+            // 工具桥按 agent 实际开始、结束的那一轮来归属平台工具调用。
+            if let Some(b) = &observer {
+                match &env.event {
+                    ShimEvent::TurnStarted { run_id } => b.begin_run(run_id),
+                    ShimEvent::TurnEnded { run_id, .. } => b.end_run(run_id),
+                    _ => {}
+                }
+            }
             let mut line = serde_json::to_vec(&env).expect("events serialize");
             line.push(b'\n');
             if stdout.write_all(&line).await.is_err() || stdout.flush().await.is_err() {
@@ -380,21 +437,45 @@ async fn serve(cfg: ShimConfig) -> anyhow::Result<ExitCode> {
         }
     });
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
-    tokio::spawn(read_commands(cmd_tx.clone()));
+    tokio::spawn(read_commands(cmd_tx.clone(), bridge.clone()));
     tokio::spawn(forward_signals(cmd_tx));
     let result = shim::run(cfg, cmd_rx, sink).await;
+    if let Some(b) = &bridge {
+        b.close();
+    }
     let _ = writer.await;
     result.map(|()| ExitCode::SUCCESS)
 }
 
-/// 从 stdin 读指令；stdin 关闭视为停止。
-async fn read_commands(tx: mpsc::UnboundedSender<ShimCommand>) {
+/// 从 stdin 读指令；stdin 关闭视为停止。平台工具相关的指令交给工具桥。
+async fn read_commands(
+    tx: mpsc::UnboundedSender<ShimCommand>,
+    bridge: Option<std::sync::Arc<bridge::Bridge>>,
+) {
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         if line.trim().is_empty() {
             continue;
         }
         match serde_json::from_str::<ShimCommand>(&line) {
+            Ok(ShimCommand::SetPlatformTools { tools }) => match &bridge {
+                Some(b) => b.set_tools(tools),
+                None => {
+                    tracing::warn!("set_platform_tools ignored: start serve with --platform-tools")
+                }
+            },
+            Ok(ShimCommand::PlatformToolResult {
+                call_id,
+                content,
+                is_error,
+            }) => {
+                let answered = bridge
+                    .as_ref()
+                    .is_some_and(|b| b.resolve(&call_id, bridge::ToolResult { content, is_error }));
+                if !answered {
+                    tracing::warn!(%call_id, "no pending platform tool call with this id");
+                }
+            }
             Ok(cmd) => {
                 if tx.send(cmd).is_err() {
                     return;

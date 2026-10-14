@@ -475,3 +475,61 @@ fn run_mode_fails_when_agent_crashes() {
         .unwrap();
     assert_eq!(out.status.code(), Some(1));
 }
+
+#[test]
+fn platform_tools_reach_the_platform_and_back() {
+    let setup = Setup::new();
+    let tools = setup.dir.path().join("tools.json");
+    std::fs::write(
+        &tools,
+        json!([{"name": "schedule_list", "description": "List schedules", "input_schema": {"type": "object"}}]).to_string(),
+    )
+    .unwrap();
+    let mut shim = setup.serve(&[
+        "--platform-tools",
+        "--platform-tools-file",
+        tools.to_str().unwrap(),
+    ]);
+    shim.wait_type("ready");
+    shim.prompt("r1", r#"mcp schedule_list {"limit":2}"#);
+    let started = shim.wait_type("turn_started");
+    assert_eq!(started["run_id"], "r1");
+    let call = shim.wait_type("platform_tool_call");
+    assert_eq!(
+        call["run_id"], "r1",
+        "the shim, not the agent, decides which run a call belongs to"
+    );
+    assert_eq!(call["name"], "schedule_list");
+    assert_eq!(call["arguments"], json!({"limit": 2}));
+    shim.send(json!({
+        "type": "platform_tool_result",
+        "call_id": call["call_id"],
+        "content": [{"type": "text", "text": "two schedules"}],
+    }));
+    let (text, stop) = shim.finish_turn("r1");
+    assert_eq!(stop, "end_turn");
+    assert_eq!(
+        text,
+        "server=thinktin tools=1 error=false text=two schedules"
+    );
+
+    // 平台中途换了工具列表；没有的工具直接报错，不打扰平台。
+    shim.send(json!({"type": "set_platform_tools", "tools": [
+        {"name": "schedule_list", "description": "List", "input_schema": {"type": "object"}},
+        {"name": "artifacts_get", "description": "Get", "input_schema": {"type": "object"}},
+    ]}));
+    shim.prompt("r2", "mcp nope {}");
+    let (text, _) = shim.finish_turn("r2");
+    assert_eq!(
+        text,
+        "server=thinktin tools=2 error=true text=unknown tool `nope`"
+    );
+    assert!(
+        shim.seen
+            .iter()
+            .filter(|e| e["type"] == "platform_tool_call")
+            .count()
+            == 1
+    );
+    assert!(shim.shutdown().success());
+}

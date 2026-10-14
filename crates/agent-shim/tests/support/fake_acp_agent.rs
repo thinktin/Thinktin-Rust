@@ -5,6 +5,7 @@
 //! - `crash`：直接退出（模拟 agent 崩溃）
 //! - `env`：把关心的环境变量回报出来，检查 shim 的环境隔离
 //! - `usage`：上报用量
+//! - `mcp <工具> <JSON 参数>`：启动会话配置里的第一个 MCP 服务器，列出工具并调用一次，把结果说出来
 //! - 其他：回显
 //!
 //! 环境变量 `FAKE_ACP_CAPS` 控制声明的会话能力：`resume`（默认）、`load` 或 `none`。
@@ -36,6 +37,7 @@ fn main() {
         next_id: 1000,
         sessions: load_sessions(),
         cancelled: false,
+        mcp_servers: Vec::new(),
     };
     while let Ok(msg) = agent.rx.recv() {
         agent.handle(msg);
@@ -47,6 +49,7 @@ struct Agent {
     next_id: u64,
     sessions: BTreeSet<String>,
     cancelled: bool,
+    mcp_servers: Vec<Value>,
 }
 
 fn send(v: Value) {
@@ -96,6 +99,7 @@ impl Agent {
                 );
             }
             ("session/new", Some(id)) => {
+                self.mcp_servers = params["mcpServers"].as_array().cloned().unwrap_or_default();
                 let sid = format!("fake-{}", self.sessions.len() + 1);
                 self.sessions.insert(sid.clone());
                 self.save_sessions();
@@ -222,6 +226,11 @@ impl Agent {
             .to_string());
             return reply(id, json!({"stopReason": "end_turn"}));
         }
+        if let Some(rest) = text.strip_prefix("mcp ") {
+            let (tool, args) = rest.split_once(' ').unwrap_or((rest, "{}"));
+            say(&mcp_call(self.mcp_servers.first(), tool, args));
+            return reply(id, json!({"stopReason": "end_turn"}));
+        }
         if text == "usage" {
             update(
                 &sid,
@@ -274,4 +283,60 @@ fn update(sid: &str, update: Value) {
     send(
         json!({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": sid, "update": update}}),
     );
+}
+
+/// 当一个最简单的 MCP 客户端：启动服务器、握手、列工具、调一次工具。
+fn mcp_call(server: Option<&Value>, tool: &str, args: &str) -> String {
+    let Some(server) = server else {
+        return "no mcp server".into();
+    };
+    let mut child = std::process::Command::new(server["command"].as_str().unwrap())
+        .args(
+            server["args"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|a| a.as_str().unwrap()),
+        )
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = std::io::BufReader::new(child.stdout.take().unwrap());
+    let mut rpc = |id: u64, method: &str, params: Value| -> Value {
+        writeln!(
+            stdin,
+            "{}",
+            json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params})
+        )
+        .unwrap();
+        loop {
+            let mut line = String::new();
+            stdout.read_line(&mut line).unwrap();
+            let v: Value = serde_json::from_str(&line).unwrap();
+            if v["id"] == json!(id) {
+                return v;
+            }
+        }
+    };
+    let init = rpc(
+        1,
+        "initialize",
+        json!({"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "fake"}}),
+    );
+    let tools = rpc(2, "tools/list", json!({}));
+    let args: Value = serde_json::from_str(args).unwrap_or(json!({}));
+    let result = rpc(3, "tools/call", json!({"name": tool, "arguments": args}));
+    let _ = child.kill();
+    let _ = child.wait();
+    format!(
+        "server={} tools={} error={} text={}",
+        init["result"]["serverInfo"]["name"].as_str().unwrap_or("?"),
+        tools["result"]["tools"].as_array().map_or(0, Vec::len),
+        result["result"]["isError"],
+        result["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or(""),
+    )
 }

@@ -304,6 +304,8 @@ impl Driver<'_> {
     fn on_command(&mut self, conn: &Conn, cmd: ShimCommand) {
         match cmd {
             ShimCommand::Shutdown => unreachable!("handled by the caller"),
+            // 平台工具的指令由 main 交给工具桥，不会到这里。
+            ShimCommand::SetPlatformTools { .. } | ShimCommand::PlatformToolResult { .. } => {}
             ShimCommand::Prompt { run_id, text } => {
                 if let Some(turn) = &self.turn {
                     self.sink.emit(ShimEvent::Error {
@@ -318,6 +320,9 @@ impl Driver<'_> {
                     "parent_tool_use_id": null,
                     "session_id": conn.session_id,
                 }));
+                self.sink.emit(ShimEvent::TurnStarted {
+                    run_id: run_id.clone(),
+                });
                 self.turn = Some(Turn {
                     run_id,
                     cancel_requested: false,

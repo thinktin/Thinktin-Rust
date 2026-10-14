@@ -255,6 +255,7 @@ impl Driver<'_> {
                                 continue;
                             }
                             turn = Some(run_id.clone());
+                            self.sink.emit(ShimEvent::TurnStarted { run_id: run_id.clone() });
                             let peer = self.peer.clone();
                             let done = done_tx.clone();
                             let params = json!({
@@ -288,6 +289,8 @@ impl Driver<'_> {
                                 });
                             }
                         }
+                        // 平台工具的指令由 main 交给工具桥，不会到这里。
+                        ShimCommand::SetPlatformTools { .. } | ShimCommand::PlatformToolResult { .. } => {}
                         ShimCommand::PermissionDecision { request_id, option_id } => {
                             self.on_decision(&mut pending, request_id, option_id);
                         }

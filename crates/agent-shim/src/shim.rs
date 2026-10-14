@@ -283,6 +283,7 @@ async fn wait_or_shutdown(
                         message: "agent is restarting".into(),
                     });
                 }
+                Some(ShimCommand::SetPlatformTools { .. } | ShimCommand::PlatformToolResult { .. }) => {}
                 Some(ShimCommand::PermissionDecision { request_id, .. }) => {
                     sink.emit(ShimEvent::Error {
                         run_id: None,
