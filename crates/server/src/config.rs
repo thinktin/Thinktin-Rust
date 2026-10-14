@@ -17,6 +17,94 @@ pub struct Config {
     pub database: Database,
     pub shutdown: Shutdown,
     pub log: Log,
+    pub worker: Worker,
+    pub sandbox: Sandbox,
+    pub push: Push,
+    /// 沙箱令牌签名私钥种子（base64url），只从环境变量 THINKTIN_SANDBOX_TOKEN_SEED 读。
+    #[serde(skip)]
+    pub sandbox_token_seed: Option<String>,
+}
+
+/// 后台任务：调度循环、执行器、出箱投递、实例巡检、数据维护。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Worker {
+    /// 这个副本跑后台任务。只做接口的副本不开。
+    pub enabled: bool,
+    /// 同时执行的运行数上限。
+    pub max_concurrent_runs: usize,
+    /// 实例巡检（空闲暂停、归档、回收）间隔。
+    pub sweep_every_secs: u64,
+    /// 数据维护（事件分区、过期验证码）间隔。
+    pub maintenance_every_secs: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Sandbox {
+    /// 沙箱后端：目前只有 local（本地开发）；cube 待 WBS 6.2。
+    pub provider: String,
+    /// local 后端的数据目录。
+    pub local_root: std::path::PathBuf,
+    /// 沙箱出网白名单。
+    pub network_allow: Vec<String>,
+    /// 沙箱里 agent-shim 的路径。
+    pub shim_path: String,
+    /// 沙箱里看到的模型网关地址。
+    pub gateway_url: String,
+    /// 本地开发：用这个清单代替内置清单（比如接假 agent）。
+    pub manifest_override: Option<String>,
+    /// 沙箱令牌签名密钥的 kid（模型网关按它找公钥）。
+    pub token_kid: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Push {
+    pub apns: Option<Apns>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Apns {
+    /// 默认生产环境；测试包用 https://api.sandbox.push.apple.com。
+    #[serde(default = "default_apns_endpoint")]
+    pub endpoint: String,
+    /// App 的 bundle id。
+    pub topic: String,
+    pub team_id: String,
+    pub key_id: String,
+    /// .p8 私钥文件。
+    pub key_path: std::path::PathBuf,
+}
+
+fn default_apns_endpoint() -> String {
+    "https://api.push.apple.com".into()
+}
+
+impl Default for Worker {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_concurrent_runs: 16,
+            sweep_every_secs: 60,
+            maintenance_every_secs: 3600,
+        }
+    }
+}
+
+impl Default for Sandbox {
+    fn default() -> Self {
+        Self {
+            provider: "local".into(),
+            local_root: ".thinktin/sandboxes".into(),
+            network_allow: Vec::new(),
+            shim_path: "agent-shim".into(),
+            gateway_url: "http://127.0.0.1:8790".into(),
+            manifest_override: None,
+            token_kid: "k1".into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -54,6 +142,10 @@ impl Default for Config {
             database: Database::default(),
             shutdown: Shutdown::default(),
             log: Log::default(),
+            worker: Worker::default(),
+            sandbox: Sandbox::default(),
+            push: Push::default(),
+            sandbox_token_seed: None,
         }
     }
 }
@@ -119,6 +211,7 @@ impl Config {
         if let Some(node) = env.var("THINKTIN_NODE_ID") {
             cfg.node_id = Some(node);
         }
+        cfg.sandbox_token_seed = env.var("THINKTIN_SANDBOX_TOKEN_SEED");
         cfg.validate()?;
         Ok(cfg)
     }
@@ -133,6 +226,22 @@ impl Config {
         }
         if self.database.max_connections == 0 {
             bail!("database.max_connections must be positive");
+        }
+        if self.worker.enabled {
+            if self.sandbox_token_seed.is_none() {
+                bail!(
+                    "worker.enabled needs THINKTIN_SANDBOX_TOKEN_SEED (generate one with `llm-gw keygen`)"
+                );
+            }
+            if self.sandbox.provider != "local" {
+                bail!(
+                    "sandbox.provider {:?} is not supported yet (only \"local\")",
+                    self.sandbox.provider
+                );
+            }
+            if self.worker.max_concurrent_runs == 0 {
+                bail!("worker.max_concurrent_runs must be positive");
+            }
         }
         if let Some(id) = &self.node_id
             && (id.is_empty() || id.len() > 128)
@@ -220,5 +329,41 @@ mod tests {
         );
         let err = Config::load(None, &MapEnv(HashMap::new())).unwrap_err();
         assert!(err.to_string().contains("DATABASE_URL"));
+    }
+
+    #[test]
+    fn workers_need_the_token_seed() {
+        let dir = std::env::temp_dir().join(format!("tt-cfg-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("server.toml");
+        std::fs::write(
+            &path,
+            r#"
+            [worker]
+            enabled = true
+            [sandbox]
+            local_root = "/var/lib/thinktin/sandboxes"
+            [push.apns]
+            topic = "app.thinktin"
+            team_id = "T"
+            key_id = "K"
+            key_path = "/etc/thinktin/apns.p8"
+            "#,
+        )
+        .unwrap();
+        let db = ("DATABASE_URL", "postgres://x");
+        let err = Config::load(Some(&path), &MapEnv(HashMap::from([db]))).unwrap_err();
+        assert!(err.to_string().contains("THINKTIN_SANDBOX_TOKEN_SEED"));
+        let cfg = Config::load(
+            Some(&path),
+            &MapEnv(HashMap::from([db, ("THINKTIN_SANDBOX_TOKEN_SEED", "seed")])),
+        )
+        .unwrap();
+        assert!(cfg.worker.enabled);
+        assert_eq!(
+            cfg.push.apns.unwrap().endpoint,
+            "https://api.push.apple.com"
+        );
+        std::fs::remove_dir_all(dir).ok();
     }
 }

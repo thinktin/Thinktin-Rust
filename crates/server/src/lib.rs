@@ -6,6 +6,7 @@
 pub mod config;
 mod http;
 mod lifecycle;
+mod workers;
 
 use std::future::{Future, IntoFuture};
 use std::time::Duration;
@@ -44,7 +45,9 @@ pub async fn serve(
     let addr = listener.local_addr()?;
     let shutdown = ShutdownSignal::new();
     let mut background = Background::new(shutdown.clone());
-    // 后台模块（调度循环、出箱投递、分区维护……）在这里注册：background.spawn(...)。
+    if cfg.worker.enabled {
+        workers::spawn(cfg, &db, &node_id, &mut background)?;
+    }
     let router = http::router(http::AppState {
         db: db.clone(),
         shutdown: shutdown.subscribe(),

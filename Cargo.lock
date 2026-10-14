@@ -2442,17 +2442,26 @@ name = "server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "auth",
  "axum",
+ "catalog",
+ "chrono",
  "clap",
+ "control",
+ "notify",
+ "orchestrator",
  "proto",
  "reqwest",
+ "sandbox",
  "serde",
  "serde_json",
  "store",
+ "tempfile",
  "tokio",
  "toml",
  "tracing",
  "tracing-subscriber",
+ "zeroize",
 ]
 
 [[package]]
