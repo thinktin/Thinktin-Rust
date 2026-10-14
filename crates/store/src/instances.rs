@@ -303,6 +303,81 @@ impl Tx<Worker> {
         Ok(())
     }
 
+    /// 锁住实例行再读（唤醒、暂停、重建这些操作串行化，多个副本不会同时给一个实例建沙箱）。
+    pub async fn lock_instance(&mut self, id: InstanceId) -> Result<InstanceRuntime> {
+        let row: RuntimeRow = sqlx::query_as(concat!(
+            "SELECT ",
+            runtime_columns!(),
+            " FROM instances WHERE id = $1 FOR UPDATE"
+        ))
+        .bind(id.0)
+        .fetch_one(self.conn())
+        .await?;
+        row.into_runtime()
+    }
+
+    /// 有正在执行的运行（启动中、运行中）：这时不能暂停或归档。
+    pub async fn instance_busy(&mut self, id: InstanceId) -> Result<bool> {
+        Ok(sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM runs WHERE instance_id = $1 AND state IN ('starting', 'running'))",
+        )
+        .bind(id.0)
+        .fetch_one(self.conn())
+        .await?)
+    }
+
+    /// 这段时间内有没有计划要触发（有就不归档，免得到点还要从模板重建）。
+    pub async fn trigger_due_within(&mut self, id: InstanceId, within: Duration) -> Result<bool> {
+        Ok(sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM triggers t JOIN plans p ON p.id = t.plan_id \
+               WHERE p.instance_id = $1 AND p.status = 'active' AND t.enabled \
+                 AND t.next_fire_at < now() + make_interval(secs => $2))",
+        )
+        .bind(id.0)
+        .bind(secs(within))
+        .fetch_one(self.conn())
+        .await?)
+    }
+
+    /// 升级、回滚模板版本（重建时生效）。
+    pub async fn set_instance_version(
+        &mut self,
+        id: InstanceId,
+        agent_version: &str,
+    ) -> Result<()> {
+        sqlx::query("UPDATE instances SET agent_version = $2, updated_at = now() WHERE id = $1")
+            .bind(id.0)
+            .bind(agent_version)
+            .execute(self.conn())
+            .await?;
+        Ok(())
+    }
+
+    /// 已删除、资源还没回收的实例，锁住返回（SKIP LOCKED）。
+    pub async fn instances_to_purge(&mut self, limit: i64) -> Result<Vec<InstanceRuntime>> {
+        let rows: Vec<RuntimeRow> = sqlx::query_as(concat!(
+            "SELECT ",
+            runtime_columns!(),
+            " FROM instances WHERE state = 'deleted' AND purged_at IS NULL \
+             ORDER BY deleted_at LIMIT $1 FOR UPDATE SKIP LOCKED"
+        ))
+        .bind(limit)
+        .fetch_all(self.conn())
+        .await?;
+        rows.into_iter().map(RuntimeRow::into_runtime).collect()
+    }
+
+    pub async fn mark_instance_purged(&mut self, id: InstanceId) -> Result<()> {
+        sqlx::query(
+            "UPDATE instances SET purged_at = now(), sandbox_id = NULL, sandbox_address = NULL, snapshot_id = NULL \
+             WHERE id = $1",
+        )
+        .bind(id.0)
+        .execute(self.conn())
+        .await?;
+        Ok(())
+    }
+
     /// 记一次活动（运行开始、用户发消息），空闲暂停按它计时。
     pub async fn touch_instance(&mut self, id: InstanceId) -> Result<()> {
         sqlx::query("UPDATE instances SET last_active_at = now() WHERE id = $1")

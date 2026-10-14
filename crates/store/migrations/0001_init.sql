@@ -131,9 +131,11 @@ CREATE TABLE instances (
     updated_at       timestamptz NOT NULL DEFAULT now(),
     last_active_at   timestamptz NOT NULL DEFAULT now(),
     deleted_at       timestamptz,
+    purged_at        timestamptz,             -- 删除后沙箱和工作区卷都回收完的时间
     UNIQUE (id, user_id)
 );
 CREATE INDEX instances_user ON instances (user_id) WHERE state <> 'deleted';
+CREATE INDEX instances_purge ON instances (deleted_at) WHERE state = 'deleted' AND purged_at IS NULL;
 -- 空闲暂停、归档扫描。
 CREATE INDEX instances_idle ON instances (state, last_active_at) WHERE state IN ('running', 'paused');
 
