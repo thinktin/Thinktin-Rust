@@ -131,6 +131,15 @@ impl Tx<Worker> {
         .bind(by)
         .execute(self.conn())
         .await?;
+        sqlx::query(
+            "UPDATE inbox_items SET read_at = now() \
+             WHERE approval_id IN (SELECT id FROM approvals WHERE run_id = $1 AND request_id = $2) \
+               AND read_at IS NULL",
+        )
+        .bind(run.0)
+        .bind(request_id)
+        .execute(self.conn())
+        .await?;
         Ok(())
     }
 
@@ -139,6 +148,14 @@ impl Tx<Worker> {
         let done = sqlx::query(
             "UPDATE approvals SET state = 'cancelled', decided_by = 'system', decided_at = now() \
              WHERE run_id = $1 AND state = 'pending'",
+        )
+        .bind(run.0)
+        .execute(self.conn())
+        .await?;
+        // 收件箱里这个运行的审批提醒都处理完了。
+        sqlx::query(
+            "UPDATE inbox_items SET read_at = now() \
+             WHERE run_id = $1 AND approval_id IS NOT NULL AND read_at IS NULL",
         )
         .bind(run.0)
         .execute(self.conn())
@@ -213,6 +230,7 @@ impl Tx<Tenant> {
         .bind(format!("device:{device}"))
         .fetch_one(self.conn())
         .await?;
+        self.settle_approval_inbox(id).await?;
         Ok(row.into_record()?.approval)
     }
 }

@@ -10,7 +10,9 @@ use proto::domain::{
 use serde_json::json;
 
 use crate::testing::TestDb;
-use crate::{Db, Error, NewCredential, NewInstance, NewOutboxItem, NewPlan, NewRun, RunChange};
+use crate::{
+    Db, Error, NewCredential, NewInboxItem, NewInstance, NewOutboxItem, NewPlan, NewRun, RunChange,
+};
 
 const LEASE: Duration = Duration::from_secs(60);
 
@@ -666,4 +668,86 @@ async fn outbox_delivers_once_and_retries() {
         .await
         .unwrap();
     assert_eq!(audits, 1);
+}
+
+#[tokio::test]
+async fn inbox_keeps_every_notice_with_read_state() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = user(db, "+8613800000001").await;
+    let bob = user(db, "+8613800000002").await;
+    let inst = instance(db, alice).await;
+    let run = queue_run(db, alice, &inst, "hi").await;
+    let item = |n: u32| NewInboxItem {
+        kind: "run_finished".into(),
+        title: format!("t{n}"),
+        body: "done".into(),
+        instance_id: Some(inst.id),
+        run_id: Some(run.id),
+        dedupe_key: Some(format!("k{n}")),
+        ..NewInboxItem::default()
+    };
+    let mut w = db.worker().await.unwrap();
+    let mut ids = Vec::new();
+    for n in 0..5 {
+        ids.push(w.insert_inbox(alice, &item(n)).await.unwrap().unwrap());
+    }
+    assert_eq!(
+        w.insert_inbox(alice, &item(0)).await.unwrap(),
+        None,
+        "deduplicated"
+    );
+    w.commit().await.unwrap();
+
+    // 别人看不到，也写不进别人的收件箱。
+    let mut b = db.tenant(bob).await.unwrap();
+    assert!(b.inbox(None, 50, false).await.unwrap().is_empty());
+    assert!(matches!(b.inbox_item(ids[0]).await, Err(Error::NotFound)));
+    assert!(b.insert_inbox(alice, &item(9)).await.is_err());
+    b.rollback().await.unwrap();
+    let mut b = db.tenant(bob).await.unwrap();
+    assert_eq!(b.mark_inbox_read(Some(&ids), None).await.unwrap(), 0);
+    assert!(matches!(
+        b.delete_inbox_item(ids[0]).await,
+        Err(Error::NotFound)
+    ));
+    b.commit().await.unwrap();
+
+    let mut a = db.tenant(alice).await.unwrap();
+    let page = a.inbox(None, 3, false).await.unwrap();
+    assert_eq!(
+        page.iter().map(|i| i.title.as_str()).collect::<Vec<_>>(),
+        ["t4", "t3", "t2"],
+        "newest first"
+    );
+    let rest = a.inbox(Some(page[2].id), 3, false).await.unwrap();
+    assert_eq!(rest.len(), 2);
+    assert_eq!(a.inbox_unread().await.unwrap(), 5);
+    assert_eq!(a.mark_inbox_read(Some(&ids[..1]), None).await.unwrap(), 1);
+    // “全部已读”只标到客户端看到的那一条为止。
+    assert_eq!(a.mark_inbox_read(None, Some(ids[3])).await.unwrap(), 3);
+    assert_eq!(a.inbox_unread().await.unwrap(), 1);
+    let unread = a.inbox(None, 50, true).await.unwrap();
+    assert_eq!(unread.len(), 1);
+    assert_eq!(unread[0].id, ids[4]);
+    a.mark_inbox_unread(ids[0]).await.unwrap();
+    assert_eq!(a.inbox_unread().await.unwrap(), 2);
+    a.delete_inbox_item(ids[0]).await.unwrap();
+    assert_eq!(a.inbox(None, 50, false).await.unwrap().len(), 4);
+    // 自己的事务里也能写（平台工具代表用户操作时）。
+    assert!(a.insert_inbox(alice, &item(7)).await.unwrap().is_some());
+    a.commit().await.unwrap();
+
+    // 运行删除后条目还在，只是不再指向它。
+    let mut w = db.worker().await.unwrap();
+    sqlx::query("DELETE FROM runs WHERE id = $1")
+        .bind(run.id.0)
+        .execute(w.conn())
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+    let mut a = db.tenant(alice).await.unwrap();
+    let all = a.inbox(None, 50, false).await.unwrap();
+    assert_eq!(all.len(), 5);
+    assert!(all.iter().all(|i| i.run_id.is_none()));
 }

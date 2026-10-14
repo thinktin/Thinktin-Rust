@@ -10,14 +10,14 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
-use notify::{PushKind, PushMessage, PushTarget};
+use notify::PushKind;
 use proto::domain::{PlanStep, RunKind, RunSource, RunState, order_steps};
 use serde_json::json;
 use store::{Db, InstanceRuntime, NewRun, RunChange, RunRecord, Tx, Worker};
 use tracing::{error, info};
 
 use crate::artifacts::ArtifactStore;
-use crate::outbox::push_item;
+use crate::outbox::{Notice, notify};
 
 #[derive(Debug, Clone)]
 pub struct PipelineConfig {
@@ -309,32 +309,25 @@ impl PipelineDriver {
             None => String::new(),
         };
         let (kind, body) = push;
-        let message = PushMessage {
-            kind,
-            title: if title.is_empty() {
-                "ThinkTin".into()
-            } else {
-                title
-            },
-            body: if body.is_empty() {
-                "流水线完成".into()
-            } else {
-                body
-            },
-            thread_id: Some(root.run.id.to_string()),
-            collapse_id: None,
-            target: PushTarget {
-                instance_id: Some(root.run.instance_id.to_string()),
-                run_id: Some(root.run.id.to_string()),
-                ..Default::default()
-            },
-            ttl: None,
+        let title = if title.is_empty() {
+            "ThinkTin".to_owned()
+        } else {
+            title
         };
-        w.enqueue_outbox(
-            root.user_id,
-            &push_item(&message, Some(format!("run:{}:{to}", root.run.id))),
-        )
-        .await?;
+        let body = if body.is_empty() {
+            "流水线完成".to_owned()
+        } else {
+            body
+        };
+        let notice = Notice {
+            instance: Some(root.run.instance_id),
+            run: Some(root.run.id),
+            plan: root.run.plan_id,
+            thread_id: Some(root.run.id.to_string()),
+            dedupe_key: Some(format!("run:{}:{to}", root.run.id)),
+            ..Notice::new(kind, title, body)
+        };
+        notify(w, root.user_id, &notice).await?;
         info!(run = %root.run.id, state = %to, "pipeline finished");
         Ok(())
     }

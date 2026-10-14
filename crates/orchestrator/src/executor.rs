@@ -16,7 +16,7 @@ use auth::grants::GrantService;
 use auth::service::AuthError;
 use chrono::Utc;
 use control::Lifecycle;
-use notify::{PushKind, PushMessage, PushTarget};
+use notify::PushKind;
 use proto::domain::{ApprovalState, ApprovalTimeoutAction, GrantId, PlanPolicy, RunState};
 use proto::shim::{DecisionSource, ShimCommand, ShimEvent, StopReason};
 use serde_json::{Value, json};
@@ -26,7 +26,7 @@ use tokio::task::JoinSet;
 use tokio::time::Instant;
 use tracing::{debug, error, info, warn};
 
-use crate::outbox::push_item;
+use crate::outbox::{Notice, notify};
 use crate::shim::{PlatformTools, ShimConnector, ShimLaunch, ShimSession, ToolContext, event_kind};
 
 #[derive(Debug, Clone)]
@@ -475,33 +475,26 @@ impl Executor {
             &json!({ "state": to, "reason": done.run.state_reason, "attempt": done.run.attempt }),
         )
         .await?;
-        if let Some((kind, body)) = push {
+        // 流水线的步骤不单独通知：整条流水线结束时由根运行通知（8.3）。
+        if let Some((kind, body)) = push.filter(|_| rec.run.step_key.is_none()) {
             let title = match rec.run.plan_id {
                 Some(plan) => w.plan(plan).await.map(|p| p.title).unwrap_or_default(),
                 None => String::new(),
             };
-            let message = PushMessage {
-                kind,
-                title: if title.is_empty() {
-                    "ThinkTin".into()
-                } else {
-                    title
-                },
-                body,
-                thread_id: Some(run.to_string()),
-                collapse_id: None,
-                target: PushTarget {
-                    instance_id: Some(rec.run.instance_id.to_string()),
-                    run_id: Some(run.to_string()),
-                    ..Default::default()
-                },
-                ttl: None,
+            let title = if title.is_empty() {
+                "ThinkTin".to_owned()
+            } else {
+                title
             };
-            w.enqueue_outbox(
-                rec.user_id,
-                &push_item(&message, Some(format!("run:{run}:{to}"))),
-            )
-            .await?;
+            let notice = Notice {
+                instance: Some(rec.run.instance_id),
+                run: Some(run),
+                plan: rec.run.plan_id,
+                thread_id: Some(run.to_string()),
+                dedupe_key: Some(format!("run:{run}:{to}")),
+                ..Notice::new(kind, title, body)
+            };
+            notify(&mut w, rec.user_id, &notice).await?;
         }
         w.commit().await
     }
@@ -838,26 +831,23 @@ impl Exec<'_> {
                     expires_in,
                 })
                 .await?;
-            let id = approval.approval.id.to_string();
-            let message = PushMessage {
-                kind: PushKind::Approval,
-                title: "需要你的批准".into(),
-                body: truncate(title.unwrap_or("agent 请求执行一个操作"), 100),
+            let id = approval.approval.id;
+            let notice = Notice {
+                instance: Some(self.rec.run.instance_id),
+                run: Some(self.rec.run.id),
+                plan: self.rec.run.plan_id,
+                approval: Some(id),
                 thread_id: Some(self.rec.run.id.to_string()),
-                collapse_id: Some(id.clone()),
-                target: PushTarget {
-                    instance_id: Some(self.rec.run.instance_id.to_string()),
-                    run_id: Some(self.rec.run.id.to_string()),
-                    approval_id: Some(id.clone()),
-                    ..Default::default()
-                },
+                collapse_id: Some(id.to_string()),
                 ttl: Some(expires_in),
+                dedupe_key: Some(format!("approval:{id}")),
+                ..Notice::new(
+                    PushKind::Approval,
+                    "需要你的批准",
+                    truncate(title.unwrap_or("agent 请求执行一个操作"), 100),
+                )
             };
-            w.enqueue_outbox(
-                self.rec.user_id,
-                &push_item(&message, Some(format!("approval:{id}"))),
-            )
-            .await?;
+            notify(&mut w, self.rec.user_id, &notice).await?;
             w.commit().await
         }
         .await;

@@ -12,14 +12,14 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::Utc;
-use notify::{PushKind, PushMessage, PushTarget};
+use notify::PushKind;
 use proto::domain::{CatchUp, Plan, PlanAuthor, PlanId, PlanPolicy, ScheduleSpec};
 use proto::shim::PlatformTool;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use store::{Db, NewPlan, Tenant, Tx};
 
-use crate::outbox::push_item;
+use crate::outbox::{Notice, notify_tenant};
 use crate::schedule::Schedule;
 use crate::shim::{PlatformTools, ToolContext, ToolOutput};
 
@@ -145,22 +145,22 @@ impl ScheduleTools {
         what: &str,
     ) -> Result<(), Fail> {
         t.set_plan_paused(plan.id, true).await?;
-        let message = PushMessage {
-            kind: PushKind::Info,
-            title: "agent 想安排一个计划".into(),
-            body: format!(
-                "{what}「{}」，确认后才会按时运行",
-                plan.title.chars().take(40).collect::<String>()
-            ),
+        let notice = Notice {
+            instance: Some(ctx.instance),
+            run: Some(ctx.run),
+            plan: Some(plan.id),
             thread_id: Some(plan.id.to_string()),
             collapse_id: Some(format!("plan-confirm:{}", plan.id)),
-            target: PushTarget {
-                instance_id: Some(ctx.instance.to_string()),
-                ..Default::default()
-            },
-            ttl: None,
+            ..Notice::new(
+                PushKind::Info,
+                "agent 想安排一个计划",
+                format!(
+                    "{what}「{}」，确认后才会按时运行",
+                    plan.title.chars().take(40).collect::<String>()
+                ),
+            )
         };
-        t.enqueue_outbox(&push_item(&message, None)).await?;
+        notify_tenant(t, &notice).await?;
         t.append_event(
             ctx.instance,
             Some(ctx.run),

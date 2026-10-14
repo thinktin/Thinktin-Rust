@@ -130,6 +130,7 @@ impl ApnsClient {
             ("instance", &t.instance_id),
             ("run", &t.run_id),
             ("approval", &t.approval_id),
+            ("plan", &t.plan_id),
             ("inbox", &t.inbox_id),
         ] {
             if let Some(v) = v {
@@ -322,6 +323,7 @@ mod tests {
                 instance_id: Some("inst-1".into()),
                 run_id: Some("run-1".into()),
                 approval_id: Some("appr-9".into()),
+                plan_id: None,
                 inbox_id: None,
             },
             ttl: Some(Duration::from_secs(3600)),

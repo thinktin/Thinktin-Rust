@@ -25,6 +25,7 @@ uuid.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+notify = { path = "../notify" }
 reqwest.workspace = true
 store = { path = "../store", features = ["testing"] }
 tempfile.workspace = true

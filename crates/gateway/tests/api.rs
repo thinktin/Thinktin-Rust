@@ -1034,3 +1034,123 @@ async fn teams_pipelines_and_artifacts() {
         .await;
     assert_eq!(st, StatusCode::OK);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn inbox_over_http() {
+    use notify::PushKind;
+    use orchestrator::outbox::{Notice, notify};
+
+    let Some(a) = api().await else { return };
+    let u = a.login("13800138400").await;
+    let other = a.login("13800138401").await;
+    let tok = Some(u.access.as_str());
+    let inst = a.adopt(&u).await;
+    let (_, me) = a.call(Method::GET, "/v1/me", tok, None).await;
+    let user: UserId = me["id"].as_str().unwrap().parse().unwrap();
+    let mut w = a.t.db.worker().await.unwrap();
+    for n in 0..3 {
+        let notice = Notice {
+            instance: Some(inst),
+            dedupe_key: Some(format!("n{n}")),
+            ..Notice::new(PushKind::RunFinished, format!("早报 {n}"), "完成")
+        };
+        notify(&mut w, user, &notice).await.unwrap();
+        notify(&mut w, user, &notice).await.unwrap();
+    }
+    w.commit().await.unwrap();
+
+    let (st, body) = a.call(Method::GET, "/v1/inbox", tok, None).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(body["unread"], 3, "one item per notice");
+    let items = body["items"].as_array().unwrap().clone();
+    assert_eq!(items[0]["title"], "早报 2");
+    assert_eq!(items[0]["kind"], "run_finished");
+    assert_eq!(items[0]["instance_id"], json!(inst));
+    let first = items[0]["id"].as_str().unwrap().to_owned();
+    let (_, page) = a
+        .call(
+            Method::GET,
+            &format!("/v1/inbox?limit=1&before={first}"),
+            tok,
+            None,
+        )
+        .await;
+    assert_eq!(page["items"][0]["title"], "早报 1");
+
+    let (_, body) = a
+        .call(Method::GET, "/v1/inbox", Some(&other.access), None)
+        .await;
+    assert_eq!(body["items"], json!([]));
+    assert_eq!(body["unread"], 0);
+    let (st, _) = a
+        .call(
+            Method::GET,
+            &format!("/v1/inbox/{first}"),
+            Some(&other.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+
+    let (st, body) = a
+        .call(
+            Method::POST,
+            "/v1/inbox/read",
+            tok,
+            Some(json!({ "ids": [first] })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(
+        (body["marked"].clone(), body["unread"].clone()),
+        (json!(1), json!(2))
+    );
+    let (st, _) = a
+        .call(
+            Method::POST,
+            "/v1/inbox/read",
+            tok,
+            Some(json!({ "ids": [first], "up_to": first })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+    let (_, body) = a
+        .call(Method::GET, &format!("/v1/inbox/{first}"), tok, None)
+        .await;
+    assert_eq!(body["read"], true);
+    let (st, _) = a
+        .call(
+            Method::POST,
+            &format!("/v1/inbox/{first}/unread"),
+            tok,
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let (_, body) = a
+        .call(Method::POST, "/v1/inbox/read", tok, Some(json!({})))
+        .await;
+    assert_eq!(
+        (body["marked"].clone(), body["unread"].clone()),
+        (json!(3), json!(0))
+    );
+    let (_, body) = a
+        .call(Method::GET, "/v1/inbox?unread=true", tok, None)
+        .await;
+    assert_eq!(body["items"], json!([]));
+    let (st, _) = a
+        .call(
+            Method::DELETE,
+            &format!("/v1/inbox/{first}"),
+            Some(&other.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (st, _) = a
+        .call(Method::DELETE, &format!("/v1/inbox/{first}"), tok, None)
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let (_, body) = a.call(Method::GET, "/v1/inbox", tok, None).await;
+    assert_eq!(body["items"].as_array().unwrap().len(), 2);
+}

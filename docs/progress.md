@@ -34,6 +34,7 @@
 | 8.3 | 流水线（DAG）执行：计划带步骤时触发成流水线根运行；依赖满足的步骤并行启动（每步按步骤实例签发收窄的子授权）；一步失败停掉其余步骤、根运行失败并通知 | `crates/orchestrator/src/pipeline.rs`、`crates/store/migrations/0002_collaboration.sql` |
 | 8.4 | 产出物服务：按用户 DEK 加密后存对象存储（本地目录后端）、同名再发布是新版本、按运行树 / 实例索引；平台工具 thinktin.artifacts（发布、列出、读取、取到工作区）；下载接口按附件返回 | `crates/orchestrator/src/artifacts.rs`、`tools.rs`、`crates/gateway/src/routes/artifacts.rs` |
 | 8.5 | 交接说明：下游步骤的任务里附上游摘要和产出物清单，启动前把上游产出物复制到下游工作区 `handoff/` | `crates/orchestrator/src/pipeline.rs`（`handoff_prompt`、`HandoffCopier`） |
+| 10.4 | 收件箱：每条通知（运行结果、审批、计划确认）和推送在同一个事务里写进收件箱，按去重键只记一条；推送带收件箱 id；审批处理完自动已读；流水线步骤不单独通知；接口分页、未读数、按 id 或“到某条为止”标已读、标未读、删除 | `crates/store/src/inbox.rs`、`crates/orchestrator/src/outbox.rs`（`Notice`）、`crates/gateway/src/routes/inbox.rs` |
 | 4.3、4.4（换取） | 运行授权：签发、范围只能收窄的子授权、连带吊销、有活动自动续期；退出登录不影响；用授权换绑定沙箱的令牌 | `crates/auth/src/grants.rs` |
 
 ## 进行中
@@ -50,7 +51,7 @@
 | M4 编排 | 7.1–7.7、7.9 | 计划与触发器（cron / RRULE / 一次性，带时区）、调度循环、运行状态机、执行租约、出箱、补跑、预算护栏、运行日志 | 完成（端到端测试：计划到点 → 真实 agent-shim → 结果与通知；Redis 热数据待 M5 事件流） |
 | M5 接入网关 | 5.1–5.3、9.8 | REST 接口、WebSocket 事件流、按序号续传；key 管理接口 | 完成（会话核对每次查库、热数据走 Postgres 通知；需要时加缓存 / Redis；短信通道待选型） |
 | M6 平台工具与协同 | 6.12、7.8、8.1–8.5 | MCP 桥接、thinktin.schedule、团队、运行树、流水线、产出物、交接说明 | 完成（对象存储先做本地目录后端，S3 / OSS 后端随部署补） |
-| M7 通知 | 10.1、10.3、10.4 | 收件箱、APNs、国内厂商推送（接口 + 统一推送服务适配） | 待开始 |
+| M7 通知 | 10.1、10.3、10.4 | 收件箱、APNs、国内厂商推送（接口 + 统一推送服务适配） | 进行中（10.1、10.4 完成） |
 | M8 客户端核心 | 11.1–11.4 | UniFFI、接口客户端、事件流续传、本地缓存 | 待开始 |
 | M9 端到端 | 17.1、15.2、15.4、16.3 | 本地沙箱 + 模拟厂商跑通主链路；租户隔离测试；密钥与日志审计；AI 生成内容标识 | 待开始 |
 

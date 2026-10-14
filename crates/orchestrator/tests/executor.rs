@@ -395,6 +395,13 @@ impl Env {
             .collect()
     }
 
+    async fn inbox(&self) -> Vec<proto::domain::InboxItem> {
+        let mut tx = self.t.db.tenant(self.user).await.unwrap();
+        let items = tx.inbox(None, 100, false).await.unwrap();
+        tx.rollback().await.unwrap();
+        items
+    }
+
     async fn outbox_kinds(&self) -> Vec<String> {
         let mut w = self.t.db.worker().await.unwrap();
         let items = w
@@ -439,6 +446,23 @@ async fn a_run_goes_from_queue_to_success_with_a_log_and_a_notification() {
     assert_eq!(message.1["text"], "Hello world", "chunks are coalesced");
     assert_eq!(events.last().unwrap().1["state"], "succeeded");
     assert_eq!(e.outbox_kinds().await, ["run_finished"]);
+    // 收件箱留一条，推送里带着它的 id。
+    let inbox = e.inbox().await;
+    assert_eq!(inbox.len(), 1);
+    assert_eq!(inbox[0].kind, "run_finished");
+    assert_eq!(inbox[0].run_id, Some(run));
+    assert_eq!(inbox[0].body, "Hello world");
+    assert!(!inbox[0].read);
+    let mut w = e.t.db.worker().await.unwrap();
+    let pushed = w
+        .claim_outbox("test", Duration::from_secs(60), 10)
+        .await
+        .unwrap();
+    w.rollback().await.unwrap();
+    assert_eq!(
+        pushed[0].payload["target"]["inbox_id"],
+        inbox[0].id.to_string()
+    );
 
     // 沙箱令牌经 launch 交给 shim；没有预授权的工具。
     let launch = e.fake.rec.lock().unwrap().launches[0].clone();
@@ -483,6 +507,12 @@ async fn approvals_wait_for_the_user() {
     tx.rollback().await.unwrap();
     let kinds = e.outbox_kinds().await;
     assert!(kinds.contains(&"approval".to_string()) && kinds.contains(&"run_finished".to_string()));
+    // 审批提醒处理完就算已读；运行结果还没读。
+    let inbox = e.inbox().await;
+    let approval = inbox.iter().find(|i| i.kind == "approval").unwrap();
+    assert!(approval.read && approval.approval_id.is_some());
+    let done = inbox.iter().find(|i| i.kind == "run_finished").unwrap();
+    assert!(!done.read);
     let states: Vec<String> = e
         .events(run)
         .await

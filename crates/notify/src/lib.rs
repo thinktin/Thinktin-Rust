@@ -27,6 +27,16 @@ pub enum PushKind {
 }
 
 impl PushKind {
+    /// 收件箱里记的种类。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::RunFinished => "run_finished",
+            Self::RunFailed => "run_failed",
+            Self::Approval => "approval",
+            Self::Info => "info",
+        }
+    }
+
     /// iOS 通知的 category，App 里注册同名的操作按钮。
     pub fn category(self) -> &'static str {
         match self {
@@ -60,6 +70,7 @@ pub struct PushTarget {
     pub instance_id: Option<String>,
     pub run_id: Option<String>,
     pub approval_id: Option<String>,
+    pub plan_id: Option<String>,
     pub inbox_id: Option<String>,
 }
 

@@ -6,6 +6,7 @@ mod approvals;
 mod artifacts;
 mod credentials;
 mod events;
+mod inbox;
 mod instances;
 mod plans;
 mod runs;
@@ -97,6 +98,11 @@ pub fn router() -> Router<AppState> {
             get(artifacts::get).delete(artifacts::delete),
         )
         .route("/v1/artifacts/{id}/content", get(artifacts::content))
+        // 收件箱（10.4）
+        .route("/v1/inbox", get(inbox::list))
+        .route("/v1/inbox/read", post(inbox::mark_read))
+        .route("/v1/inbox/{id}", get(inbox::get).delete(inbox::delete))
+        .route("/v1/inbox/{id}/unread", post(inbox::mark_unread))
         // 事件流（5.2、5.3）
         .route("/v1/instances/{id}/events", get(events::page))
         .route("/v1/instances/{id}/events/ws", get(events::stream))

@@ -636,6 +636,8 @@ pub struct InboxItem {
     pub id: InboxItemId,
     pub instance_id: Option<InstanceId>,
     pub run_id: Option<RunId>,
+    pub plan_id: Option<PlanId>,
+    pub approval_id: Option<ApprovalId>,
     pub kind: String,
     pub title: String,
     pub body: String,

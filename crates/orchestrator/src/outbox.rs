@@ -9,9 +9,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Utc;
-use notify::{PushChannel, PushMessage, PushOutcome};
-use proto::domain::PushChannelKind;
-use store::{Db, NewOutboxItem, OutboxItem};
+use notify::{PushChannel, PushKind, PushMessage, PushOutcome, PushTarget};
+use proto::domain::{ApprovalId, InboxItemId, InstanceId, PlanId, PushChannelKind, RunId, UserId};
+use store::{Db, NewInboxItem, NewOutboxItem, OutboxItem, Tenant, Tx, Worker};
 use tracing::{error, info, warn};
 
 /// 推送类出箱条目的 kind；载荷是 [`PushMessage`]。
@@ -25,6 +25,104 @@ pub fn push_item(message: &PushMessage, dedupe_key: Option<String>) -> NewOutbox
         dedupe_key,
         available_at: None,
     }
+}
+
+/// 给用户的一条通知：写进收件箱（10.4），再推送到用户的设备。
+/// 和引起它的状态变更放在同一个事务里写（见 [`notify`]）。
+#[derive(Debug, Clone)]
+pub struct Notice {
+    pub kind: PushKind,
+    /// 标题，比如计划名、实例名。
+    pub title: String,
+    /// 摘要，一两句话，不含对话正文。
+    pub body: String,
+    pub instance: Option<InstanceId>,
+    pub run: Option<RunId>,
+    pub plan: Option<PlanId>,
+    pub approval: Option<ApprovalId>,
+    /// 推送分组（同一个运行的通知归成一组）。
+    pub thread_id: Option<String>,
+    /// 推送替换（同一个 id 的新通知替换旧的）。
+    pub collapse_id: Option<String>,
+    /// 过了这个时间推送就不必再送达（收件箱照样留着）。
+    pub ttl: Option<Duration>,
+    /// 同一件事只记一条、只推一次（收件箱和出箱共用）。
+    pub dedupe_key: Option<String>,
+}
+
+impl Notice {
+    pub fn new(kind: PushKind, title: impl Into<String>, body: impl Into<String>) -> Self {
+        Self {
+            kind,
+            title: title.into(),
+            body: body.into(),
+            instance: None,
+            run: None,
+            plan: None,
+            approval: None,
+            thread_id: None,
+            collapse_id: None,
+            ttl: None,
+            dedupe_key: None,
+        }
+    }
+
+    fn inbox(&self) -> NewInboxItem {
+        NewInboxItem {
+            kind: self.kind.as_str().into(),
+            title: self.title.clone(),
+            body: self.body.clone(),
+            instance_id: self.instance,
+            run_id: self.run,
+            plan_id: self.plan,
+            approval_id: self.approval,
+            dedupe_key: self.dedupe_key.clone(),
+        }
+    }
+
+    /// 推送消息：只带 id，客户端打开后按 id 取内容。
+    pub fn push(&self, inbox: Option<InboxItemId>) -> PushMessage {
+        PushMessage {
+            kind: self.kind,
+            title: self.title.clone(),
+            body: self.body.clone(),
+            thread_id: self.thread_id.clone(),
+            collapse_id: self.collapse_id.clone(),
+            target: PushTarget {
+                instance_id: self.instance.map(|i| i.to_string()),
+                run_id: self.run.map(|r| r.to_string()),
+                approval_id: self.approval.map(|a| a.to_string()),
+                plan_id: self.plan.map(|p| p.to_string()),
+                inbox_id: inbox.map(|i| i.to_string()),
+            },
+            ttl: self.ttl,
+        }
+    }
+}
+
+/// 写收件箱并入出箱（后台任务的事务）。同一个去重键已经通知过就什么都不做。
+pub async fn notify(w: &mut Tx<Worker>, user: UserId, notice: &Notice) -> store::Result<()> {
+    if let Some(id) = w.insert_inbox(user, &notice.inbox()).await? {
+        w.enqueue_outbox(
+            user,
+            &push_item(&notice.push(Some(id)), notice.dedupe_key.clone()),
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+/// 同 [`notify`]，在用户自己的事务里（平台工具代表用户操作时）。
+pub async fn notify_tenant(t: &mut Tx<Tenant>, notice: &Notice) -> store::Result<()> {
+    let user = t.user();
+    if let Some(id) = t.insert_inbox(user, &notice.inbox()).await? {
+        t.enqueue_outbox(&push_item(
+            &notice.push(Some(id)),
+            notice.dedupe_key.clone(),
+        ))
+        .await?;
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone)]
