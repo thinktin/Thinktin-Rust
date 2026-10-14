@@ -409,6 +409,8 @@ pub struct InboxItem {
     pub kind: String,
     pub title: String,
     pub body: String,
+    /// 正文是 agent 生成的：显示时要带“AI 生成”标识（16.3）。
+    pub ai_generated: bool,
     pub read: bool,
     pub created_at_ms: i64,
 }
@@ -424,6 +426,7 @@ impl From<d::InboxItem> for InboxItem {
             kind: i.kind,
             title: i.title,
             body: i.body,
+            ai_generated: i.ai_generated,
             read: i.read,
             created_at_ms: ms(i.created_at),
         }
@@ -444,6 +447,8 @@ pub struct InstanceEvent {
     /// agent.message、agent.tool_call、run.state……
     pub kind: String,
     pub payload_json: String,
+    /// 内容是 agent 生成的（消息、思考、计划）：显示时要带“AI 生成”标识（16.3）。
+    pub ai_generated: bool,
     pub created_at_ms: i64,
 }
 
@@ -455,6 +460,7 @@ impl From<&d::InstanceEvent> for InstanceEvent {
             run_id: e.run_id.map(|r| r.to_string()),
             kind: e.kind.clone(),
             payload_json: e.payload.to_string(),
+            ai_generated: proto::labels::is_ai_generated_event(&e.kind),
             created_at_ms: ms(e.created_at),
         }
     }

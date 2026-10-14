@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Utc;
+use notify::filter::{self, AllowAll, ContentFilter, Verdict};
 use notify::{PushChannel, PushKind, PushMessage, PushOutcome, PushTarget};
 use proto::domain::{ApprovalId, InboxItemId, InstanceId, PlanId, PushChannelKind, RunId, UserId};
 use store::{Db, NewInboxItem, NewOutboxItem, OutboxItem, Tenant, Tx, Worker};
@@ -48,6 +49,8 @@ pub struct Notice {
     pub ttl: Option<Duration>,
     /// 同一件事只记一条、只推一次（收件箱和出箱共用）。
     pub dedupe_key: Option<String>,
+    /// 正文是 agent 生成的（运行摘要、工具调用的标题）：显示时带“AI 生成”标识。
+    pub ai_generated: bool,
 }
 
 impl Notice {
@@ -64,6 +67,7 @@ impl Notice {
             collapse_id: None,
             ttl: None,
             dedupe_key: None,
+            ai_generated: false,
         }
     }
 
@@ -77,6 +81,7 @@ impl Notice {
             plan_id: self.plan,
             approval_id: self.approval,
             dedupe_key: self.dedupe_key.clone(),
+            ai_generated: self.ai_generated,
         }
     }
 
@@ -96,6 +101,7 @@ impl Notice {
                 inbox_id: inbox.map(|i| i.to_string()),
             },
             ttl: self.ttl,
+            ai_generated: self.ai_generated,
         }
     }
 }
@@ -163,6 +169,7 @@ pub struct Dispatcher {
     db: Db,
     node_id: String,
     channels: HashMap<PushChannelKind, Arc<dyn PushChannel>>,
+    filter: Arc<dyn ContentFilter>,
     cfg: DispatcherConfig,
 }
 
@@ -177,8 +184,15 @@ impl Dispatcher {
             db,
             node_id: node_id.into(),
             channels: HashMap::new(),
+            filter: Arc::new(AllowAll),
             cfg,
         }
+    }
+
+    /// 推送文字的内容安全过滤（16.3）。
+    pub fn with_filter(mut self, filter: Arc<dyn ContentFilter>) -> Self {
+        self.filter = filter;
+        self
     }
 
     /// 配置某种设备推送通道的发送实现（APNs、各家厂商）。没配的通道跳过。
@@ -252,10 +266,20 @@ impl Dispatcher {
                 item.kind
             ))));
         }
-        let message: PushMessage = match serde_json::from_value(item.payload.clone()) {
+        let mut message: PushMessage = match serde_json::from_value(item.payload.clone()) {
             Ok(m) => m,
             Err(e) => return Ok(Settle::Done(Some(format!("bad push payload: {e}")))),
         };
+        // 系统通知栏是公开展示的地方：命中过滤的换成中性提示，原文留在收件箱。
+        for text in [message.title.clone(), message.body.clone()] {
+            if let Verdict::Block { reason } = self.filter.check(&text) {
+                info!(item = item.id, %reason, "push text filtered");
+                message.title = "ThinkTin".into();
+                message.body = filter::BLOCKED_BODY.into();
+                message.ai_generated = false;
+                break;
+            }
+        }
         if let Some(ttl) = message.ttl {
             let age = (Utc::now() - item.created_at).to_std().unwrap_or_default();
             if age > ttl {

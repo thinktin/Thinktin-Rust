@@ -979,7 +979,16 @@ async fn teams_pipelines_and_artifacts() {
     assert_eq!(resp.status(), StatusCode::OK);
     assert_eq!(resp.headers()["content-disposition"], "attachment");
     assert_eq!(resp.headers()["x-content-type-options"], "nosniff");
-    assert_eq!(resp.text().await.unwrap(), "# 周报\n");
+    // AI 生成内容标识：隐式（元数据头）+ 显式（Markdown 末尾一行）。
+    let meta: Value = serde_json::from_str(resp.headers()["x-aigc"].to_str().unwrap()).unwrap();
+    assert_eq!(
+        meta,
+        json!({ "Label": "1", "ContentProducer": "ThinkTin", "ProduceID": art_id })
+    );
+    assert_eq!(
+        resp.text().await.unwrap(),
+        format!("# 周报\n{}", proto::labels::text_footer("ThinkTin"))
+    );
     let (st, _) = a
         .call(
             Method::GET,

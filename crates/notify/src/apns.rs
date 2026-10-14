@@ -112,7 +112,11 @@ impl ApnsClient {
 
     /// 推送载荷。客户端自定义数据放在 `tt` 下，只有 id。
     pub fn payload(message: &PushMessage) -> Value {
-        let body: String = message.body.chars().take(MAX_BODY_CHARS).collect();
+        let body: String = message
+            .display_body()
+            .chars()
+            .take(MAX_BODY_CHARS)
+            .collect();
         let mut aps = json!({
             "alert": {"title": message.title, "body": body},
             "sound": "default",
@@ -327,6 +331,7 @@ mod tests {
                 inbox_id: None,
             },
             ttl: Some(Duration::from_secs(3600)),
+            ai_generated: false,
         }
     }
 

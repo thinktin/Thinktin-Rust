@@ -96,7 +96,11 @@ impl JpushClient {
     /// 请求体。客户端自定义数据放在 extras 里，键都以 `tt_` 开头、值都是字符串（厂商通道只认字符串）。
     pub fn payload(&self, registration_id: &str, message: &PushMessage) -> Value {
         let title: String = message.title.chars().take(MAX_TITLE_CHARS).collect();
-        let body: String = message.body.chars().take(MAX_BODY_CHARS).collect();
+        let body: String = message
+            .display_body()
+            .chars()
+            .take(MAX_BODY_CHARS)
+            .collect();
         let mut extras = Map::new();
         extras.insert("tt_kind".into(), json!(message.kind.as_str()));
         let t = &message.target;
@@ -339,6 +343,7 @@ mod tests {
                 inbox_id: Some("inbox-3".into()),
             },
             ttl: Some(Duration::from_secs(3600)),
+            ai_generated: false,
         }
     }
 
@@ -394,6 +399,11 @@ mod tests {
         assert_eq!(a["priority"], 0);
         assert_eq!(a["alert"].as_str().unwrap().chars().count(), 200);
         assert_eq!(v["options"]["time_to_live"], 86400);
+        // agent 写的正文带显式标识。
+        m.ai_generated = true;
+        m.body = "今天晴".into();
+        let p = client.payload("1a0018970a8b7c6d5e4", &m);
+        assert_eq!(p["notification"]["android"]["alert"], "【AI 生成】今天晴");
         assert_eq!(
             v["options"]["third_party_channel"],
             json!({ "huawei": { "importance": "NORMAL" }, "honor": { "importance": "NORMAL" } })

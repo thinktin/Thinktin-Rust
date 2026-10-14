@@ -7,6 +7,7 @@ use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::Response;
 use proto::api::ErrorCode;
 use proto::domain::{Artifact, ArtifactId, InstanceId, RunId};
+use proto::labels;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -70,7 +71,19 @@ pub async fn get(
     Ok(Json(a.artifact))
 }
 
-/// 下载：解密后原样返回。按附件下载，避免浏览器把 agent 产出的 HTML 当页面执行。
+/// 文本类产出物：下载时末尾能加显式标识。
+fn is_labelable_text(content_type: &str) -> bool {
+    let base = content_type
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    matches!(base.as_str(), "text/plain" | "text/markdown")
+}
+
+/// 下载：解密后返回。按附件下载，避免浏览器把 agent 产出的 HTML 当页面执行。
+/// 产出物是 agent 生成的（16.3）：响应头带隐式标识的元数据，纯文本和 Markdown 末尾加显式标识。
 pub async fn content(
     State(s): State<AppState>,
     Authed(who): Authed,
@@ -80,7 +93,10 @@ pub async fn content(
     let mut t = s.db.tenant(who.user).await?;
     let a = t.artifact(id).await?;
     t.rollback().await?;
-    let bytes = store(&s)?.read(&a).await.map_err(ApiError::internal)?;
+    let mut bytes = store(&s)?.read(&a).await.map_err(ApiError::internal)?;
+    if s.cfg.label_downloads && is_labelable_text(&a.artifact.content_type) {
+        bytes.extend_from_slice(labels::text_footer(&s.cfg.content_producer).as_bytes());
+    }
     let mut resp = Response::new(Body::from(bytes));
     let headers = resp.headers_mut();
     headers.insert(
@@ -96,6 +112,16 @@ pub async fn content(
         "x-content-type-options",
         HeaderValue::from_static("nosniff"),
     );
+    if s.cfg.label_downloads {
+        let meta =
+            labels::AigcMetadata::generated(&s.cfg.content_producer, &a.artifact.id.to_string());
+        if let Ok(v) = serde_json::to_string(&meta)
+            .map_err(|_| ())
+            .and_then(|j| HeaderValue::from_str(&j).map_err(|_| ()))
+        {
+            headers.insert("x-aigc", v);
+        }
+    }
     Ok(resp)
 }
 

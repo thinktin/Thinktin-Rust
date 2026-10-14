@@ -71,6 +71,8 @@ pub fn build(
         artifacts: Some(artifacts),
         cfg: GatewayConfig {
             default_platform_tools: cfg.api.default_platform_tools.clone(),
+            content_producer: cfg.compliance.content_producer.clone(),
+            label_downloads: cfg.compliance.label_downloads,
             ..GatewayConfig::default()
         },
     });

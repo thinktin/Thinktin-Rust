@@ -505,6 +505,8 @@ impl Executor {
                 plan: rec.run.plan_id,
                 thread_id: Some(run.to_string()),
                 dedupe_key: Some(format!("run:{run}:{to}")),
+                // 成功时正文是 agent 写的摘要；失败原因是平台写的。
+                ai_generated: kind == PushKind::RunFinished,
                 ..Notice::new(kind, title, body)
             };
             notify(&mut w, rec.user_id, &notice).await?;
@@ -854,6 +856,8 @@ impl Exec<'_> {
                 collapse_id: Some(id.to_string()),
                 ttl: Some(expires_in),
                 dedupe_key: Some(format!("approval:{id}")),
+                // 正文是 agent 给工具调用起的标题。
+                ai_generated: title.is_some(),
                 ..Notice::new(
                     PushKind::Approval,
                     "需要你的批准",

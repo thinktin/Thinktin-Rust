@@ -9,6 +9,7 @@ use auth::sandbox_token::SandboxTokenIssuer;
 use chrono::{Datelike, NaiveDate, Utc};
 use control::{BuiltinTemplates, Lifecycle, LifecycleConfig};
 use notify::apns::{ApnsClient, ApnsConfig};
+use notify::filter::KeywordFilter;
 use notify::jpush::{JpushClient, JpushConfig};
 use orchestrator::exec::{ExecConfig, ExecConnector};
 use orchestrator::executor::{Executor, ExecutorConfig};
@@ -101,6 +102,12 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
     let pipelines = PipelineDriver::new(db.clone(), PipelineConfig::default());
     let scheduler = Scheduler::new(db.clone(), SchedulerConfig::default());
     let mut dispatcher = Dispatcher::new(db.clone(), node_id, DispatcherConfig::default());
+    if let Some(path) = &cfg.compliance.push_keywords_file {
+        let filter = KeywordFilter::load(path)
+            .with_context(|| format!("reading push keywords {}", path.display()))?;
+        info!(keywords = filter.len(), "push content filter loaded");
+        dispatcher = dispatcher.with_filter(Arc::new(filter));
+    }
     if let Some(apns) = &cfg.push.apns {
         let key = std::fs::read_to_string(&apns.key_path)
             .with_context(|| format!("reading APNs key {}", apns.key_path.display()))?;

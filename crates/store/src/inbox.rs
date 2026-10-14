@@ -17,11 +17,13 @@ pub struct NewInboxItem {
     pub plan_id: Option<PlanId>,
     pub approval_id: Option<ApprovalId>,
     pub dedupe_key: Option<String>,
+    /// 正文是 agent 生成的。
+    pub ai_generated: bool,
 }
 
 macro_rules! columns {
     () => {
-        "id, instance_id, run_id, plan_id, approval_id, kind, title, body, read_at, created_at"
+        "id, instance_id, run_id, plan_id, approval_id, kind, title, body, ai_generated, read_at, created_at"
     };
 }
 
@@ -34,12 +36,14 @@ type Row = (
     String,
     String,
     String,
+    bool,
     Option<DateTime<Utc>>,
     DateTime<Utc>,
 );
 
 fn item(r: Row) -> InboxItem {
-    let (id, instance, run, plan, approval, kind, title, body, read_at, created_at) = r;
+    let (id, instance, run, plan, approval, kind, title, body, ai_generated, read_at, created_at) =
+        r;
     InboxItem {
         id: InboxItemId(id),
         instance_id: instance.map(InstanceId),
@@ -49,6 +53,7 @@ fn item(r: Row) -> InboxItem {
         kind,
         title,
         body,
+        ai_generated,
         read: read_at.is_some(),
         created_at,
     }
@@ -65,8 +70,8 @@ impl<R> Tx<R> {
         let id = InboxItemId::new();
         let done = sqlx::query(
             "INSERT INTO inbox_items \
-               (id, user_id, instance_id, run_id, plan_id, approval_id, kind, title, body, dedupe_key) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
+               (id, user_id, instance_id, run_id, plan_id, approval_id, kind, title, body, dedupe_key, ai_generated) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
              ON CONFLICT (user_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING",
         )
         .bind(id.0)
@@ -79,6 +84,7 @@ impl<R> Tx<R> {
         .bind(&new.title)
         .bind(&new.body)
         .bind(new.dedupe_key.as_deref())
+        .bind(new.ai_generated)
         .execute(self.conn())
         .await?;
         Ok((done.rows_affected() == 1).then_some(id))

@@ -22,6 +22,7 @@ pub struct Config {
     pub sandbox: Sandbox,
     pub storage: Storage,
     pub push: Push,
+    pub compliance: Compliance,
     /// 沙箱令牌签名私钥种子（base64url），只从环境变量 THINKTIN_SANDBOX_TOKEN_SEED 读。
     #[serde(skip)]
     pub sandbox_token_seed: Option<String>,
@@ -47,6 +48,7 @@ impl std::fmt::Debug for Config {
             .field("sandbox", &self.sandbox)
             .field("storage", &self.storage)
             .field("push", &self.push)
+            .field("compliance", &self.compliance)
             .field("sandbox_token_seed", &self.sandbox_token_seed.is_some())
             .field("jpush_master_secret", &self.jpush_master_secret.is_some())
             .field("api_secrets", &self.api_secrets)
@@ -137,6 +139,28 @@ pub struct Sandbox {
     pub manifest_override: Option<String>,
     /// 沙箱令牌签名密钥的 kid（模型网关按它找公钥）。
     pub token_kid: String,
+}
+
+/// 合规（16.3）：AI 生成内容标识、推送的内容安全过滤。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Compliance {
+    /// 标识里的服务提供者名称或编码（ASCII，放进元数据头）。
+    pub content_producer: String,
+    /// 下载产出物时加标识（元数据头；纯文本和 Markdown 末尾加一行显式标识）。
+    pub label_downloads: bool,
+    /// 推送文字的关键词过滤表（一行一个）；不配就不过滤。
+    pub push_keywords_file: Option<std::path::PathBuf>,
+}
+
+impl Default for Compliance {
+    fn default() -> Self {
+        Self {
+            content_producer: "ThinkTin".into(),
+            label_downloads: true,
+            push_keywords_file: None,
+        }
+    }
 }
 
 /// 产出物存储（8.4）。内容按用户 DEK 加密后才落盘。
@@ -278,6 +302,7 @@ impl Default for Config {
             sandbox: Sandbox::default(),
             storage: Storage::default(),
             push: Push::default(),
+            compliance: Compliance::default(),
             sandbox_token_seed: None,
             jpush_master_secret: None,
             api_secrets: ApiSecrets::default(),
@@ -428,6 +453,13 @@ impl Config {
                 "storage.provider {:?} is not supported yet (only \"local\")",
                 self.storage.provider
             );
+        }
+        let producer = &self.compliance.content_producer;
+        if producer.is_empty()
+            || producer.len() > 64
+            || !producer.bytes().all(|b| b.is_ascii_graphic() || b == b' ')
+        {
+            bail!("compliance.content_producer must be 1-64 printable ASCII characters");
         }
         if let Some(id) = &self.node_id
             && (id.is_empty() || id.len() > 128)

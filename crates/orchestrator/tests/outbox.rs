@@ -50,6 +50,7 @@ fn message(ttl: Option<Duration>) -> PushMessage {
         collapse_id: None,
         target: PushTarget::default(),
         ttl,
+        ai_generated: false,
     }
 }
 
@@ -163,4 +164,38 @@ async fn retries_then_gives_up_and_drops_expired() {
     tokio::time::sleep(Duration::from_millis(20)).await;
     assert_eq!(slow.tick().await.unwrap().dropped, 1);
     assert!(apns.sent().len() == 1, "only the k2 attempt was sent");
+}
+
+#[tokio::test]
+async fn filtered_push_text_is_replaced_not_dropped() {
+    let Some(t) = TestDb::new().await else { return };
+    let user = user_with_devices(&t, &[(PushChannelKind::Apns, "tok")]).await;
+    let rec = Arc::new(notify::RecordingChannel::default());
+    let d = Dispatcher::new(t.db.clone(), "node-a", DispatcherConfig::default())
+        .with_channel(PushChannelKind::Apns, rec.clone())
+        .with_filter(Arc::new(notify::filter::KeywordFilter::new(["坏词"])));
+    let mut bad = message(None);
+    bad.body = "这里有坏词".into();
+    bad.ai_generated = true;
+    enqueue(&t, user, &bad, "a").await;
+    let mut good = message(None);
+    good.ai_generated = true;
+    enqueue(&t, user, &good, "b").await;
+    assert_eq!(d.tick().await.unwrap().delivered, 2);
+    let sent: Vec<PushMessage> = rec
+        .sent
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(_, m)| m.clone())
+        .collect();
+    let bodies: Vec<String> = sent.iter().map(PushMessage::display_body).collect();
+    assert!(
+        bodies.contains(&notify::filter::BLOCKED_BODY.to_string()),
+        "{bodies:?}"
+    );
+    assert!(
+        bodies.contains(&"【AI 生成】Daily news is ready".to_string()),
+        "{bodies:?}"
+    );
 }

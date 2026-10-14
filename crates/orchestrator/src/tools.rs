@@ -151,6 +151,8 @@ impl ScheduleTools {
             plan: Some(plan.id),
             thread_id: Some(plan.id.to_string()),
             collapse_id: Some(format!("plan-confirm:{}", plan.id)),
+            // 计划标题是 agent 起的。
+            ai_generated: true,
             ..Notice::new(
                 PushKind::Info,
                 "agent 想安排一个计划",

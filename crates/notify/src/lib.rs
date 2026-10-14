@@ -11,6 +11,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 pub mod apns;
+pub mod filter;
 pub mod jpush;
 
 /// 推送的种类，决定客户端怎么展示（iOS 的 category、Android 的通知渠道）。
@@ -64,6 +65,20 @@ pub struct PushMessage {
     pub target: PushTarget,
     /// 过了这个时间就不必再送达（审批超时之后的审批通知没有意义）。
     pub ttl: Option<Duration>,
+    /// 正文是 agent 生成的：系统通知里要带显式标识（16.3）。
+    #[serde(default)]
+    pub ai_generated: bool,
+}
+
+impl PushMessage {
+    /// 系统通知里显示的正文：agent 生成的加上“AI 生成”标识。
+    pub fn display_body(&self) -> String {
+        if self.ai_generated {
+            format!("【{}】{}", proto::labels::EXPLICIT_LABEL, self.body)
+        } else {
+            self.body.clone()
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

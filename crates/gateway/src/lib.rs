@@ -35,6 +35,10 @@ pub struct GatewayConfig {
     pub ws_heartbeat: Duration,
     /// 每次从库里取多少条事件。
     pub events_page: i64,
+    /// AI 生成内容标识里的服务提供者名称或编码（16.3，ASCII）。
+    pub content_producer: String,
+    /// 下载产出物时加标识：元数据头，纯文本和 Markdown 末尾加一行显式标识。
+    pub label_downloads: bool,
 }
 
 impl Default for GatewayConfig {
@@ -45,6 +49,8 @@ impl Default for GatewayConfig {
             min_trigger_interval: Duration::from_secs(5 * 60),
             ws_heartbeat: Duration::from_secs(25),
             events_page: 200,
+            content_producer: "ThinkTin".into(),
+            label_downloads: true,
         }
     }
 }

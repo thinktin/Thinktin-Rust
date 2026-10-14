@@ -385,6 +385,7 @@ mod tests {
             kind: "run_finished".into(),
             title: "早报".into(),
             body: "完成".into(),
+            ai_generated: true,
             read,
             created_at: Utc::now(),
         }

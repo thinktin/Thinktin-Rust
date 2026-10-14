@@ -325,6 +325,7 @@ impl PipelineDriver {
             plan: root.run.plan_id,
             thread_id: Some(root.run.id.to_string()),
             dedupe_key: Some(format!("run:{}:{to}", root.run.id)),
+            ai_generated: kind == PushKind::RunFinished,
             ..Notice::new(kind, title, body)
         };
         notify(w, root.user_id, &notice).await?;

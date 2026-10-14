@@ -1958,6 +1958,7 @@ dependencies = [
  "axum",
  "base64 0.23.1",
  "p256",
+ "proto",
  "reqwest",
  "serde",
  "serde_json",

@@ -641,6 +641,9 @@ pub struct InboxItem {
     pub kind: String,
     pub title: String,
     pub body: String,
+    /// 正文是 agent 生成的：显示时要带“AI 生成”标识。
+    #[serde(default)]
+    pub ai_generated: bool,
     pub read: bool,
     pub created_at: DateTime<Utc>,
 }
