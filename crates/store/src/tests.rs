@@ -104,6 +104,7 @@ async fn tenants_are_isolated() {
             alias: "main".into(),
             credential_id: cred.id,
             upstream_model: "claude-sonnet".into(),
+            fallbacks: vec![],
         }],
     )
     .await
@@ -146,6 +147,7 @@ async fn tenants_are_isolated() {
                 alias: "main".into(),
                 credential_id: cred.id,
                 upstream_model: "x".into(),
+                fallbacks: vec![],
             }],
         )
         .await
@@ -231,6 +233,7 @@ async fn users_and_credentials() {
         alias: "main".into(),
         credential_id: cred.id,
         upstream_model: "m".into(),
+        fallbacks: vec![],
     };
     a.set_model_routes(inst.id, std::slice::from_ref(&route))
         .await
@@ -260,6 +263,7 @@ async fn users_and_credentials() {
                 alias: "main".into(),
                 credential_id: cred.id,
                 upstream_model: "m".into(),
+                fallbacks: vec![],
             }],
         )
         .await
@@ -275,6 +279,7 @@ async fn users_and_credentials() {
                 alias: "Bad Alias".into(),
                 credential_id: live.id,
                 upstream_model: "m".into(),
+                fallbacks: vec![],
             }],
         )
         .await

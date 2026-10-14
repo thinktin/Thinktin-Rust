@@ -23,7 +23,7 @@ use url::{Host, Url};
 use zeroize::Zeroizing;
 
 use crate::body::JsonObject;
-use crate::limits::{BudgetLedger, Limiter, Rejection};
+use crate::limits::{BudgetLedger, KeyCooldowns, Limiter, Rejection};
 use crate::ssrf::{self, PublicOnlyResolver, SsrfError};
 use crate::store::{Credential, Directory, Instance};
 use crate::usage::{
@@ -38,6 +38,12 @@ const MAX_ERROR_BODY: usize = 1 << 20;
 const ERROR_BODY_TIMEOUT: Duration = Duration::from_secs(30);
 /// 读 agent 请求体的时限。
 const BODY_READ_TIMEOUT: Duration = Duration::from_secs(60);
+/// 降级链：key 失效、欠费、没权限后冷却多久（期间排到降级链最后）。
+const KEY_INVALID_COOLDOWN: Duration = Duration::from_secs(300);
+/// 降级链：key 被限流、厂商过载或连不上后冷却多久（厂商没给 Retry-After 时）。
+const KEY_BUSY_COOLDOWN: Duration = Duration::from_secs(30);
+/// 按厂商 Retry-After 冷却的上限。
+const MAX_COOLDOWN: Duration = Duration::from_secs(300);
 /// 请求里没写最大输出 token 数时，估算用的默认值。
 const DEFAULT_MAX_OUTPUT: u64 = 8192;
 
@@ -73,6 +79,8 @@ pub struct Gateway {
     pub usage: Arc<dyn UsageSink>,
     pub ledger: Arc<dyn BudgetLedger>,
     pub limiter: Limiter,
+    /// 降级链用的 key 冷却（每个副本各自记）。
+    pub cooldowns: KeyCooldowns,
     pub client: reqwest::Client,
     pub options: Options,
 }
@@ -636,12 +644,12 @@ async fn forward_inner(
     endpoint: Endpoint,
     req: Request,
 ) -> Result<Response, ApiError> {
-    let started = Instant::now();
     let (parts, body) = req.into_parts();
     let caller = gw.authenticate(&parts.headers, peer).await?;
-    let permit = gw
-        .limiter
-        .acquire(&caller.instance.id, caller.instance.limits)?;
+    let mut permit = Some(
+        gw.limiter
+            .acquire(&caller.instance.id, caller.instance.limits)?,
+    );
 
     let bytes = tokio::time::timeout(
         BODY_READ_TIMEOUT,
@@ -655,7 +663,7 @@ async fn forward_inner(
         )
     })?
     .map_err(|_| err(Kind::TooLarge, "request body is too large"))?;
-    let mut body = JsonObject::parse(&bytes).map_err(|m| err(Kind::Invalid, m))?;
+    let body = JsonObject::parse(&bytes).map_err(|m| err(Kind::Invalid, m))?;
     drop(bytes);
     let alias = body
         .get_str("model")
@@ -674,44 +682,6 @@ async fn forward_inner(
             format!("model `{alias}` is not allowed for this run"),
         ));
     }
-    let cred = gw
-        .directory
-        .credential(&route.credential)
-        .await
-        .filter(|c| c.user_id == caller.instance.user_id && !c.disabled)
-        .ok_or_else(|| {
-            err(
-                Kind::Permission,
-                format!("the API key behind model `{alias}` is unavailable"),
-            )
-        })?;
-    let day = gw.budget_day();
-    if let Some(limit) = cred.daily_token_limit
-        && gw.ledger.used(&cred.id, day).await >= limit
-    {
-        return Err(err(
-            Kind::Budget,
-            format!("the daily token budget of the API key behind model `{alias}` is used up"),
-        ));
-    }
-
-    let target = target(&cred, endpoint, &alias)?;
-    let mut url = target.url;
-    ssrf::check_upstream_url(&url, gw.options.insecure_upstreams)
-        .map_err(|e| blocked(&alias, &e))?;
-    if gw.options.via_proxy
-        && !gw.options.insecure_upstreams
-        && let Some(Host::Domain(domain)) = url.host()
-    {
-        ssrf::resolve_public(domain)
-            .await
-            .map_err(|e| blocked(&alias, &e))?;
-    }
-    // Claude Code 的 SDK 调 beta 接口时带 `?beta=true`，其余查询参数一律不转发。
-    if endpoint.flavor() == Flavor::Anthropic && parts.uri.query() == Some("beta=true") {
-        url.set_query(Some("beta=true"));
-    }
-
     let stream = body
         .get_bool("stream")
         .map_err(|m| err(Kind::Invalid, m))?
@@ -729,161 +699,356 @@ async fn forward_inner(
         .into_iter()
         .find_map(|k| body.get_u64(k))
         .unwrap_or(DEFAULT_MAX_OUTPUT);
-    body.set("model", &route.model);
-    let strip_usage_chunk = if endpoint == Endpoint::Chat && stream && target.chat_stream_usage {
-        body.ensure_include_usage()
-            .map_err(|m| err(Kind::Invalid, m))?
-    } else {
-        false
-    };
-    let payload = body.to_vec();
-    drop(body);
 
-    let key = gw
-        .secrets
-        .open_secret(&cred.user_id, &cred.id, &cred.secret)
-        .map_err(|e| {
-            tracing::error!(credential = %cred.id, error = %e, "failed to open API key");
-            err(Kind::Internal, "failed to load the API key")
-        })?;
-    let headers = upstream_headers(&parts.headers, endpoint, target.anthropic_auth, &key)?;
-
-    // 从这里起请求可能已经到了厂商：无论之后怎么结束（包括 agent 断开、这个 future 被丢弃），
-    // Finisher 都会记一条用量并记账。
-    let mut finisher = Finisher {
-        gw: gw.clone(),
-        credential: cred.id.clone(),
-        day,
-        started,
-        metered: endpoint.meter().is_some(),
-        estimate_input: payload.len() as u64 / 4,
+    // 降级链（9.9）：主 key 在前，备用的按顺序；冷却中的排到最后（相对顺序不变）。
+    let mut candidates: Vec<(usize, &str, &str)> =
+        std::iter::once((route.credential.as_str(), route.model.as_str()))
+            .chain(
+                route
+                    .fallbacks
+                    .iter()
+                    .map(|f| (f.credential.as_str(), f.model.as_str())),
+            )
+            .enumerate()
+            .map(|(i, (c, m))| (i, c, m))
+            .collect();
+    candidates.sort_by_key(|(_, c, _)| gw.cooldowns.cooling(c));
+    let request = AttemptRequest {
+        caller: &caller,
+        parts: &parts,
+        endpoint,
+        body: &body,
+        alias: &alias,
+        stream,
         max_output,
-        events: 0,
-        done: false,
-        record: UsageRecord {
-            ts_ms: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0),
-            instance: caller.instance.id.clone(),
-            user: caller.claims.uid.clone(),
-            grant: caller.claims.grant.clone(),
-            sandbox: caller.claims.sbx.clone(),
-            token_id: caller.claims.jti.clone(),
-            alias: alias.clone(),
-            credential: cred.id.clone(),
-            vendor: target.vendor.clone(),
-            upstream_model: route.model.clone(),
-            endpoint: endpoint.name(),
-            stream,
-            status: 0,
-            outcome: Outcome::UpstreamError,
-            usage: None,
-            charged_tokens: 0,
-            estimated: false,
-            duration_ms: 0,
-        },
+        day: gw.budget_day(),
     };
-
-    let resp = match gw
-        .client
-        .post(url)
-        .headers(headers)
-        .body(payload)
-        .send()
-        .await
-    {
-        Ok(resp) => resp,
-        Err(e) => {
-            if let Some(ssrf) = ssrf::find_ssrf_error(&e) {
-                finisher.finish(Outcome::ConnectFailed, None);
-                return Err(blocked(&alias, ssrf));
+    let mut primary_error = None;
+    let mut first_skip = None;
+    let mut last_failure = None;
+    let count = candidates.len();
+    for (n, (position, credential, model)) in candidates.into_iter().enumerate() {
+        let has_next = n + 1 < count;
+        match gw.attempt(&request, credential, model, &mut permit).await {
+            Attempt::Final(result) => return result,
+            Attempt::Skipped(e) => {
+                if has_next {
+                    tracing::info!(alias, credential, reason = %e.message, "key unavailable; trying the next fallback");
+                    metrics::counter!("thinktin_llm_fallbacks_total", "reason" => "unavailable")
+                        .increment(1);
+                }
+                if position == 0 {
+                    primary_error = Some(e);
+                } else if first_skip.is_none() {
+                    first_skip = Some(e);
+                }
             }
-            tracing::warn!(alias, vendor = %target.vendor, error = %e, "upstream request failed");
-            finisher.finish(
-                if e.is_connect() {
-                    Outcome::ConnectFailed
-                } else {
-                    Outcome::UpstreamError
-                },
-                None,
-            );
-            return Err(if e.is_timeout() {
-                err(Kind::Timeout, "the vendor did not respond in time")
-            } else {
-                err(Kind::Upstream, "could not reach the vendor")
-            });
+            Attempt::Failed { result, reason } => {
+                if has_next {
+                    tracing::info!(alias, credential, reason, "upstream failed; trying the next fallback");
+                    metrics::counter!("thinktin_llm_fallbacks_total", "reason" => reason)
+                        .increment(1);
+                }
+                last_failure = Some(result);
+            }
         }
-    };
+    }
+    // 都没成：有厂商的真实失败就交出最后一个；都没发出去就报主 key 的原因。
+    if let Some(result) = last_failure {
+        return result;
+    }
+    Err(primary_error
+        .or(first_skip)
+        .unwrap_or_else(|| err(Kind::Internal, "no route to try")))
+}
 
-    let status = resp.status();
-    finisher.record.status = status.as_u16();
-    let headers = downstream_headers(resp.headers());
+/// 一个请求里各次尝试共用的部分。
+struct AttemptRequest<'a> {
+    caller: &'a Caller,
+    parts: &'a axum::http::request::Parts,
+    endpoint: Endpoint,
+    body: &'a JsonObject,
+    alias: &'a str,
+    stream: bool,
+    max_output: u64,
+    day: u64,
+}
 
-    if !status.is_success() {
-        // 错误响应很小：读完（有上限和时限）、抹掉 key，再整体返回。
-        let secret = key.expose_secret();
-        let cap = MAX_ERROR_BODY + secret.len();
-        let mut buf = Vec::new();
-        let mut truncated = false;
-        let mut upstream = resp.bytes_stream();
-        let read = async {
-            loop {
-                match upstream.next().await {
-                    Some(Ok(chunk)) => {
-                        let room = cap - buf.len();
-                        buf.extend_from_slice(&chunk[..chunk.len().min(room)]);
-                        if buf.len() >= cap {
+enum Attempt {
+    /// 交给 agent：成功，或者换 key 也没用的错误（请求本身有问题、超时这类厂商可能已经在处理的情况）。
+    Final(Result<Response, ApiError>),
+    /// 没有发出去：这把 key 用不了（停用、当日预算用完、不支持这个接口、地址被拦、解不开）。
+    Skipped(ApiError),
+    /// 发出去了、厂商没处理（key 失效、欠费、被限流、过载、连不上），换下一把可能成功。
+    /// 没有下一把时把它交给 agent。
+    Failed {
+        result: Result<Response, ApiError>,
+        reason: &'static str,
+    },
+}
+
+/// 换一把 key 重发可能成功的上游状态码，以及这把 key 冷却多久（没有 Retry-After 时）。
+fn fallback_status(status: StatusCode) -> Option<(&'static str, Duration)> {
+    match status.as_u16() {
+        401 => Some(("status_401", KEY_INVALID_COOLDOWN)),
+        402 => Some(("status_402", KEY_INVALID_COOLDOWN)),
+        403 => Some(("status_403", KEY_INVALID_COOLDOWN)),
+        429 => Some(("status_429", KEY_BUSY_COOLDOWN)),
+        503 => Some(("status_503", KEY_BUSY_COOLDOWN)),
+        // Anthropic 的“过载”。
+        529 => Some(("status_529", KEY_BUSY_COOLDOWN)),
+        _ => None,
+    }
+}
+
+/// 厂商给的 Retry-After（秒数），限制在合理范围内。
+fn retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
+    headers
+        .get(reqwest::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse::<u64>()
+        .ok()
+        .map(|s| Duration::from_secs(s.clamp(1, MAX_COOLDOWN.as_secs())))
+}
+
+impl Gateway {
+    /// 用降级链里的一项（key + 上游模型）发一次请求。
+    async fn attempt(
+        self: &Arc<Self>,
+        req: &AttemptRequest<'_>,
+        credential: &str,
+        model: &str,
+        permit: &mut Option<OwnedSemaphorePermit>,
+    ) -> Attempt {
+        let started = Instant::now();
+        let alias = req.alias;
+        let endpoint = req.endpoint;
+        let user = &req.caller.instance.user_id;
+        let Some(cred) = self
+            .directory
+            .credential(credential)
+            .await
+            .filter(|c| &c.user_id == user && !c.disabled)
+        else {
+            return Attempt::Skipped(err(
+                Kind::Permission,
+                format!("the API key behind model `{alias}` is unavailable"),
+            ));
+        };
+        if let Some(limit) = cred.daily_token_limit
+            && self.ledger.used(&cred.id, req.day).await >= limit
+        {
+            return Attempt::Skipped(err(
+                Kind::Budget,
+                format!("the daily token budget of the API key behind model `{alias}` is used up"),
+            ));
+        }
+        let target = match target(&cred, endpoint, alias) {
+            Ok(t) => t,
+            Err(e) => return Attempt::Skipped(e),
+        };
+        let mut url = target.url;
+        if let Err(e) = ssrf::check_upstream_url(&url, self.options.insecure_upstreams) {
+            return Attempt::Skipped(blocked(alias, &e));
+        }
+        if self.options.via_proxy
+            && !self.options.insecure_upstreams
+            && let Some(Host::Domain(domain)) = url.host()
+            && let Err(e) = ssrf::resolve_public(domain).await
+        {
+            return Attempt::Skipped(blocked(alias, &e));
+        }
+        // Claude Code 的 SDK 调 beta 接口时带 `?beta=true`，其余查询参数一律不转发。
+        if endpoint.flavor() == Flavor::Anthropic && req.parts.uri.query() == Some("beta=true") {
+            url.set_query(Some("beta=true"));
+        }
+
+        let mut body = req.body.clone();
+        body.set("model", &model);
+        let strip_usage_chunk =
+            if endpoint == Endpoint::Chat && req.stream && target.chat_stream_usage {
+                match body.ensure_include_usage() {
+                    Ok(injected) => injected,
+                    Err(m) => return Attempt::Final(Err(err(Kind::Invalid, m))),
+                }
+            } else {
+                false
+            };
+        let payload = body.to_vec();
+        drop(body);
+
+        let key = match self
+            .secrets
+            .open_secret(&cred.user_id, &cred.id, &cred.secret)
+        {
+            Ok(key) => key,
+            Err(e) => {
+                tracing::error!(credential = %cred.id, error = %e, "failed to open API key");
+                return Attempt::Skipped(err(Kind::Internal, "failed to load the API key"));
+            }
+        };
+        let headers = match upstream_headers(&req.parts.headers, endpoint, target.anthropic_auth, &key)
+        {
+            Ok(h) => h,
+            Err(e) => return Attempt::Skipped(e),
+        };
+
+        // 从这里起请求可能已经到了厂商：无论之后怎么结束（包括 agent 断开、这个 future 被丢弃），
+        // Finisher 都会记一条用量并记账。
+        let caller = req.caller;
+        let mut finisher = Finisher {
+            gw: self.clone(),
+            credential: cred.id.clone(),
+            day: req.day,
+            started,
+            metered: endpoint.meter().is_some(),
+            estimate_input: payload.len() as u64 / 4,
+            max_output: req.max_output,
+            events: 0,
+            done: false,
+            record: UsageRecord {
+                ts_ms: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0),
+                instance: caller.instance.id.clone(),
+                user: caller.claims.uid.clone(),
+                grant: caller.claims.grant.clone(),
+                sandbox: caller.claims.sbx.clone(),
+                token_id: caller.claims.jti.clone(),
+                alias: alias.to_owned(),
+                credential: cred.id.clone(),
+                vendor: target.vendor.clone(),
+                upstream_model: model.to_owned(),
+                endpoint: endpoint.name(),
+                stream: req.stream,
+                status: 0,
+                outcome: Outcome::UpstreamError,
+                usage: None,
+                charged_tokens: 0,
+                estimated: false,
+                duration_ms: 0,
+            },
+        };
+
+        let resp = match self
+            .client
+            .post(url)
+            .headers(headers)
+            .body(payload)
+            .send()
+            .await
+        {
+            Ok(resp) => resp,
+            Err(e) => {
+                if let Some(ssrf) = ssrf::find_ssrf_error(&e) {
+                    finisher.finish(Outcome::ConnectFailed, None);
+                    return Attempt::Skipped(blocked(alias, ssrf));
+                }
+                tracing::warn!(alias, vendor = %target.vendor, error = %e, "upstream request failed");
+                // 连不上说明请求没到厂商，可以换 key；超时等其他错误厂商可能已经在处理（并计费），不重发。
+                if e.is_connect() {
+                    finisher.finish(Outcome::ConnectFailed, None);
+                    self.cooldowns.cool(&cred.id, KEY_BUSY_COOLDOWN);
+                    return Attempt::Failed {
+                        result: Err(err(Kind::Upstream, "could not reach the vendor")),
+                        reason: "connect",
+                    };
+                }
+                finisher.finish(Outcome::UpstreamError, None);
+                return Attempt::Final(Err(if e.is_timeout() {
+                    err(Kind::Timeout, "the vendor did not respond in time")
+                } else {
+                    err(Kind::Upstream, "could not reach the vendor")
+                }));
+            }
+        };
+
+        let status = resp.status();
+        finisher.record.status = status.as_u16();
+        let headers = downstream_headers(resp.headers());
+
+        if !status.is_success() {
+            let fallback = fallback_status(status);
+            if let Some((_, default)) = fallback {
+                let period = retry_after(resp.headers()).unwrap_or(default);
+                self.cooldowns.cool(&cred.id, period);
+            }
+            // 错误响应很小：读完（有上限和时限）、抹掉 key，再整体返回。
+            let secret = key.expose_secret();
+            let cap = MAX_ERROR_BODY + secret.len();
+            let mut buf = Vec::new();
+            let mut truncated = false;
+            let mut upstream = resp.bytes_stream();
+            let read = async {
+                loop {
+                    match upstream.next().await {
+                        Some(Ok(chunk)) => {
+                            let room = cap - buf.len();
+                            buf.extend_from_slice(&chunk[..chunk.len().min(room)]);
+                            if buf.len() >= cap {
+                                truncated = true;
+                                break;
+                            }
+                        }
+                        Some(Err(_)) => {
                             truncated = true;
                             break;
                         }
+                        None => break,
                     }
-                    Some(Err(_)) => {
-                        truncated = true;
-                        break;
-                    }
-                    None => break,
                 }
+            };
+            if tokio::time::timeout(ERROR_BODY_TIMEOUT, read)
+                .await
+                .is_err()
+            {
+                truncated = true;
             }
-        };
-        if tokio::time::timeout(ERROR_BODY_TIMEOUT, read)
-            .await
-            .is_err()
-        {
-            truncated = true;
+            let body = redact_error_body(&buf, secret, truncated);
+            tracing::info!(alias, vendor = %target.vendor, status = status.as_u16(), "upstream returned an error");
+            finisher.finish(Outcome::UpstreamStatus, None);
+            let result = Ok((status, headers, body).into_response());
+            return match fallback {
+                Some((reason, _)) => Attempt::Failed { result, reason },
+                None => Attempt::Final(result),
+            };
         }
-        let body = redact_error_body(&buf, secret, truncated);
-        tracing::info!(alias, vendor = %target.vendor, status = status.as_u16(), "upstream returned an error");
-        finisher.finish(Outcome::UpstreamStatus, None);
-        return Ok((status, headers, body).into_response());
-    }
-    drop(key);
+        drop(key);
+        self.cooldowns.clear(&cred.id);
 
-    let sse = is_event_stream(resp.headers());
-    let meter = endpoint.meter().map(UsageMeter::new);
-    let tapped = Tapped {
-        inner: Box::pin(resp.bytes_stream()),
-        sse: (sse && meter.is_some()).then(SseParser::default),
-        json: (!sse && meter.is_some()).then(Vec::new),
-        strip_usage_chunk: strip_usage_chunk && sse,
-        meter,
-        finisher,
-        tail: None,
-        done: false,
-        _permit: permit,
-    };
-    let mut response = Response::new(Body::from_stream(tapped));
-    *response.status_mut() = status;
-    *response.headers_mut() = headers;
-    if sse {
-        response
-            .headers_mut()
-            .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
-        response
-            .headers_mut()
-            .insert("x-accel-buffering", HeaderValue::from_static("no"));
+        let sse = is_event_stream(resp.headers());
+        let meter = endpoint.meter().map(UsageMeter::new);
+        let Some(permit) = permit.take() else {
+            // 每个请求只会有一次成功的尝试。
+            return Attempt::Final(Err(err(Kind::Internal, "request permit already used")));
+        };
+        let tapped = Tapped {
+            inner: Box::pin(resp.bytes_stream()),
+            sse: (sse && meter.is_some()).then(SseParser::default),
+            json: (!sse && meter.is_some()).then(Vec::new),
+            strip_usage_chunk: strip_usage_chunk && sse,
+            meter,
+            finisher,
+            tail: None,
+            done: false,
+            _permit: permit,
+        };
+        let mut response = Response::new(Body::from_stream(tapped));
+        *response.status_mut() = status;
+        *response.headers_mut() = headers;
+        if sse {
+            response
+                .headers_mut()
+                .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+            response
+                .headers_mut()
+                .insert("x-accel-buffering", HeaderValue::from_static("no"));
+        }
+        Attempt::Final(Ok(response))
     }
-    Ok(response)
 }
 
 /// 记一次调用的用量，并给 key 的每日预算记账。

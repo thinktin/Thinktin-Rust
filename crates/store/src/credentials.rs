@@ -177,11 +177,13 @@ impl Tx<Tenant> {
         .bind(id.0)
         .fetch_one(self.conn())
         .await?;
-        let routes: i64 =
-            sqlx::query_scalar("SELECT count(*) FROM model_routes WHERE credential_id = $1")
-                .bind(id.0)
-                .fetch_one(self.conn())
-                .await?;
+        let routes: i64 = sqlx::query_scalar(
+            "SELECT (SELECT count(*) FROM model_routes WHERE credential_id = $1) \
+                  + (SELECT count(*) FROM model_route_fallbacks WHERE credential_id = $1)",
+        )
+        .bind(id.0)
+        .fetch_one(self.conn())
+        .await?;
         if routes > 0 {
             return Err(Error::Conflict(format!(
                 "credential is used by {routes} model route(s)"

@@ -266,6 +266,7 @@ fn main() -> anyhow::Result<()> {
                     usage,
                     ledger,
                     limiter: Limiter::default(),
+                    cooldowns: Default::default(),
                     client,
                     options,
                 };

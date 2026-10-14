@@ -153,9 +153,60 @@ impl BudgetLedger for MemoryLedger {
     }
 }
 
+/// 降级链（9.9）：失效、欠费、被限流或连不上的 key 冷却一段时间，冷却期间排到降级链最后再试。
+///
+/// 每个副本各记各的：只影响尝试顺序、从不拒绝请求，不需要多副本一致。
+#[derive(Default)]
+pub struct KeyCooldowns(Mutex<HashMap<String, Instant>>);
+
+impl KeyCooldowns {
+    pub fn cooling(&self, credential: &str) -> bool {
+        self.cooling_at(credential, Instant::now())
+    }
+
+    pub fn cool(&self, credential: &str, period: Duration) {
+        self.cool_at(credential, period, Instant::now());
+    }
+
+    /// 请求成功后解除冷却。
+    pub fn clear(&self, credential: &str) {
+        let mut map = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        map.remove(credential);
+    }
+
+    fn cooling_at(&self, credential: &str, now: Instant) -> bool {
+        let map = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        map.get(credential).is_some_and(|until| *until > now)
+    }
+
+    fn cool_at(&self, credential: &str, period: Duration, now: Instant) {
+        let mut map = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if map.len() >= 10_000 {
+            map.retain(|_, until| *until > now);
+        }
+        // 清完还满就不记：冷却只是排序上的优化。
+        if map.len() < 10_000 || map.contains_key(credential) {
+            map.insert(credential.to_owned(), now + period);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cooldowns_expire_and_clear() {
+        let c = KeyCooldowns::default();
+        let t0 = Instant::now();
+        c.cool_at("k", Duration::from_secs(30), t0);
+        assert!(c.cooling_at("k", t0 + Duration::from_secs(29)));
+        assert!(!c.cooling_at("k", t0 + Duration::from_secs(31)));
+        assert!(!c.cooling_at("other", t0));
+        c.cool_at("k", Duration::from_secs(30), t0);
+        c.clear("k");
+        assert!(!c.cooling_at("k", t0));
+    }
 
     fn limits(rpm: u32, conc: u32) -> Limits {
         Limits {

@@ -166,6 +166,7 @@ async fn start_llm_gw(db: store::Db, issuer: &SandboxTokenIssuer) -> String {
         usage: Arc::new(sink),
         ledger: Arc::new(PgLedger::new(db, options.budget_utc_offset_secs, ttl)),
         limiter: Limiter::default(),
+        cooldowns: Default::default(),
         client: build_client(&options, None).unwrap(),
         options,
     };
@@ -345,6 +346,7 @@ async fn a_task_runs_through_the_whole_platform() {
                 alias: "main".into(),
                 credential_id: cred.id,
                 upstream_model: "vendor-model".into(),
+                fallbacks: vec![],
             }],
         )
         .await

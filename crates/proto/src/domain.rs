@@ -438,7 +438,20 @@ pub struct ModelRoute {
     pub alias: String,
     pub credential_id: CredentialId,
     pub upstream_model: String,
+    /// 降级链（9.9）：主 key 失效、欠费或被限流时按顺序换用，最多 [`MAX_ROUTE_FALLBACKS`] 个。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fallbacks: Vec<RouteFallback>,
 }
+
+/// 降级链里的一项：备用的 key 和它那边的上游模型。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RouteFallback {
+    pub credential_id: CredentialId,
+    pub upstream_model: String,
+}
+
+/// 每个别名最多几个备用项。
+pub const MAX_ROUTE_FALLBACKS: usize = 3;
 
 /// 用户保存的 key：永远只返回后 4 位。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

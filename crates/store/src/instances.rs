@@ -4,7 +4,10 @@ use std::net::IpAddr;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use proto::domain::{Instance, InstanceId, InstanceLimits, InstanceState, ModelRoute, UserId};
+use proto::domain::{
+    CredentialId, Instance, InstanceId, InstanceLimits, InstanceState, MAX_ROUTE_FALLBACKS,
+    ModelRoute, RouteFallback, UserId,
+};
 use uuid::Uuid;
 
 use crate::{Error, Result, Tenant, Tx, Worker, from_json, parse, secs, to_json};
@@ -124,6 +127,28 @@ struct RouteRow {
     upstream_model: String,
 }
 
+/// 实例各别名的降级链（按顺序）。租户和模型网关两边共用。
+pub(crate) async fn route_fallbacks(
+    conn: &mut sqlx::PgConnection,
+    instance: InstanceId,
+) -> Result<std::collections::HashMap<String, Vec<RouteFallback>>> {
+    let rows: Vec<RouteRow> = sqlx::query_as(
+        "SELECT alias, credential_id, upstream_model FROM model_route_fallbacks \
+         WHERE instance_id = $1 ORDER BY alias, position",
+    )
+    .bind(instance.0)
+    .fetch_all(conn)
+    .await?;
+    let mut map: std::collections::HashMap<String, Vec<RouteFallback>> = Default::default();
+    for r in rows {
+        map.entry(r.alias).or_default().push(RouteFallback {
+            credential_id: r.credential_id.into(),
+            upstream_model: r.upstream_model,
+        });
+    }
+    Ok(map)
+}
+
 impl Tx<Tenant> {
     pub async fn create_instance(&mut self, new: &NewInstance) -> Result<Instance> {
         let row: Row = sqlx::query_as(concat!(
@@ -214,31 +239,28 @@ impl Tx<Tenant> {
         Ok(())
     }
 
-    /// 整体替换实例的模型别名。凭证必须是自己的、没删除、没停用。
+    /// 整体替换实例的模型别名（连同各自的降级链）。凭证必须是自己的、没删除、没停用。
     pub async fn set_model_routes(
         &mut self,
         instance: InstanceId,
         routes: &[ModelRoute],
     ) -> Result<()> {
+        for route in routes {
+            if route.fallbacks.len() > MAX_ROUTE_FALLBACKS {
+                return Err(Error::Invalid(format!(
+                    "at most {MAX_ROUTE_FALLBACKS} fallbacks per model alias"
+                )));
+            }
+        }
         // 锁住实例行：并发替换时后到的等前一个提交，不会交错成两份的并集。
         self.instance_for_update(instance).await?;
+        // 备用项随主路由级联删除。
         sqlx::query("DELETE FROM model_routes WHERE instance_id = $1")
             .bind(instance.0)
             .execute(self.conn())
             .await?;
         for route in routes {
-            let usable: Option<bool> = sqlx::query_scalar(
-                "SELECT deleted_at IS NULL AND NOT disabled FROM credentials WHERE id = $1 FOR SHARE",
-            )
-            .bind(route.credential_id.0)
-            .fetch_optional(self.conn())
-            .await?;
-            if usable != Some(true) {
-                return Err(Error::Invalid(format!(
-                    "credential {} is not usable",
-                    route.credential_id
-                )));
-            }
+            self.lock_usable_credential(route.credential_id).await?;
             sqlx::query(
                 "INSERT INTO model_routes (instance_id, alias, user_id, credential_id, upstream_model) \
                  VALUES ($1, $2, app_user_id(), $3, $4)",
@@ -249,6 +271,21 @@ impl Tx<Tenant> {
             .bind(&route.upstream_model)
             .execute(self.conn())
             .await?;
+            for (i, fb) in route.fallbacks.iter().enumerate() {
+                self.lock_usable_credential(fb.credential_id).await?;
+                sqlx::query(
+                    "INSERT INTO model_route_fallbacks \
+                       (instance_id, alias, position, user_id, credential_id, upstream_model) \
+                     VALUES ($1, $2, $3, app_user_id(), $4, $5)",
+                )
+                .bind(instance.0)
+                .bind(&route.alias)
+                .bind(i as i16 + 1)
+                .bind(fb.credential_id.0)
+                .bind(&fb.upstream_model)
+                .execute(self.conn())
+                .await?;
+            }
         }
         sqlx::query("UPDATE instances SET updated_at = now() WHERE id = $1")
             .bind(instance.0)
@@ -265,14 +302,30 @@ impl Tx<Tenant> {
         .bind(instance.0)
         .fetch_all(self.conn())
         .await?;
+        let mut fallbacks = route_fallbacks(self.conn(), instance).await?;
         Ok(rows
             .into_iter()
             .map(|r| ModelRoute {
+                fallbacks: fallbacks.remove(&r.alias).unwrap_or_default(),
                 alias: r.alias,
                 credential_id: r.credential_id.into(),
                 upstream_model: r.upstream_model,
             })
             .collect())
+    }
+
+    /// 路由要用的 key：自己的、没删除、没停用。`FOR SHARE` 和删除 key 互斥，检查之后不会被删掉。
+    async fn lock_usable_credential(&mut self, id: CredentialId) -> Result<()> {
+        let usable: Option<bool> = sqlx::query_scalar(
+            "SELECT deleted_at IS NULL AND NOT disabled FROM credentials WHERE id = $1 FOR SHARE",
+        )
+        .bind(id.0)
+        .fetch_optional(self.conn())
+        .await?;
+        if usable != Some(true) {
+            return Err(Error::Invalid(format!("credential {id} is not usable")));
+        }
+        Ok(())
     }
 
     async fn instance_for_update(&mut self, id: InstanceId) -> Result<()> {

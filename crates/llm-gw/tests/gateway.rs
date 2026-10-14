@@ -253,6 +253,7 @@ async fn start(setup: Setup) -> Env {
     let route = |cred: &str, model: &str| Route {
         credential: cred.into(),
         model: model.into(),
+        fallbacks: vec![],
     };
     let instance = Instance {
         id: "inst-1".into(),
@@ -285,6 +286,7 @@ async fn start(setup: Setup) -> Env {
         usage: sink.clone(),
         ledger: ledger.clone(),
         limiter: Limiter::default(),
+        cooldowns: Default::default(),
         client: build_client(&setup.options, None).unwrap(),
         options: setup.options,
     };

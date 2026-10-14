@@ -17,6 +17,16 @@ use serde::{Deserialize, Serialize};
 pub struct Route {
     pub credential: String,
     pub model: String,
+    /// 降级链（9.9）：主 key 失效、欠费、被限流或连不上时按顺序换用。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fallbacks: Vec<Fallback>,
+}
+
+/// 降级链里的一项。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Fallback {
+    pub credential: String,
+    pub model: String,
 }
 
 /// 单个实例的速率和并发上限（WBS 9.5）。

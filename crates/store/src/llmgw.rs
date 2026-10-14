@@ -17,8 +17,16 @@ pub struct GatewayInstance {
     /// 当前沙箱：令牌里的沙箱 id 必须是它。
     pub sandbox_id: Option<String>,
     pub limits: InstanceLimits,
-    /// （别名，凭证，上游模型）
-    pub routes: Vec<(String, CredentialId, String)>,
+    pub routes: Vec<GatewayRoute>,
+}
+
+/// 别名指向的 key 和上游模型，以及按顺序的降级链（9.9）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct GatewayRoute {
+    pub alias: String,
+    pub credential: CredentialId,
+    pub model: String,
+    pub fallbacks: Vec<(CredentialId, String)>,
 }
 
 impl Tx<Llmgw> {
@@ -38,6 +46,7 @@ impl Tx<Llmgw> {
         .bind(id.0)
         .fetch_all(self.conn())
         .await?;
+        let mut fallbacks = crate::instances::route_fallbacks(self.conn(), id).await?;
         let limits: InstanceLimits = if limits.as_object().is_some_and(|o| o.is_empty()) {
             InstanceLimits::default()
         } else {
@@ -51,7 +60,17 @@ impl Tx<Llmgw> {
             limits,
             routes: routes
                 .into_iter()
-                .map(|(a, c, m)| (a, CredentialId(c), m))
+                .map(|(alias, c, model)| GatewayRoute {
+                    fallbacks: fallbacks
+                        .remove(&alias)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|f| (f.credential_id, f.upstream_model))
+                        .collect(),
+                    alias,
+                    credential: CredentialId(c),
+                    model,
+                })
                 .collect(),
         }))
     }

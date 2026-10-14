@@ -18,7 +18,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use crate::limits::BudgetLedger;
-use crate::store::{Credential, Directory, Instance, Limits, Route};
+use crate::store::{Credential, Directory, Fallback, Instance, Limits, Route};
 use crate::usage::{UsageRecord, UsageSink};
 
 /// 缓存条目上限，超过时清掉过期的。
@@ -97,12 +97,20 @@ impl PgDirectory {
                 routes: i
                     .routes
                     .into_iter()
-                    .map(|(alias, credential, model)| {
+                    .map(|r| {
                         (
-                            alias,
+                            r.alias,
                             Route {
-                                credential: credential.to_string(),
-                                model,
+                                credential: r.credential.to_string(),
+                                model: r.model,
+                                fallbacks: r
+                                    .fallbacks
+                                    .into_iter()
+                                    .map(|(credential, model)| Fallback {
+                                        credential: credential.to_string(),
+                                        model,
+                                    })
+                                    .collect(),
                             },
                         )
                     })

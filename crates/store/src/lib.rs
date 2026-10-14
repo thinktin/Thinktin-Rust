@@ -44,7 +44,7 @@ pub use error::{Error, Result};
 pub use events::EVENTS_CHANNEL;
 pub use inbox::NewInboxItem;
 pub use instances::{InstanceRuntime, NewInstance};
-pub use llmgw::GatewayInstance;
+pub use llmgw::{GatewayInstance, GatewayRoute};
 pub use outbox::{NewOutboxItem, OutboxItem};
 pub use plans::{DueTrigger, NewPlan};
 pub use runs::{NewRun, RunChange, RunRecord};

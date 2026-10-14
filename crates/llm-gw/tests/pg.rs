@@ -124,6 +124,7 @@ async fn env() -> Option<Env> {
             alias: "main".into(),
             credential_id: credential,
             upstream_model: "up-model".into(),
+            fallbacks: vec![],
         }],
     )
     .await
@@ -165,6 +166,7 @@ async fn env() -> Option<Env> {
         usage: Arc::new(sink),
         ledger: ledger.clone(),
         limiter: Limiter::default(),
+        cooldowns: Default::default(),
         client: build_client(&options, None).unwrap(),
         options,
     };

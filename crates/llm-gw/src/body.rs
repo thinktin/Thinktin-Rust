@@ -27,7 +27,7 @@ fn fold(key: &str) -> String {
 }
 
 /// 保留顺序的顶层 JSON 对象，值是原始 JSON 片段。
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct JsonObject(Vec<(String, Box<RawValue>)>);
 
 impl JsonObject {
