@@ -339,6 +339,8 @@ fn hermes(r: &ModelRouting, home: &Path, out: &mut RenderedConfig) {
         "HERMES_HOME",
         home.join(".hermes").display().to_string(),
     );
+    // 缺 Node 时不在运行时自动下载安装（模板里该有的都装好了）。
+    set(out, "HERMES_SKIP_NODE_BOOTSTRAP", "1");
     let transport = match out.protocol {
         LlmProtocol::AnthropicMessages => "anthropic_messages",
         _ => "chat_completions",
@@ -352,6 +354,10 @@ fn hermes(r: &ModelRouting, home: &Path, out: &mut RenderedConfig) {
         model["context_length"] = n.into();
     }
     let config = json!({
+        // 加固基线（15.3）：技能里的内联命令不执行；agent 自己写的技能也过安全扫描；
+        // 不在后台跑技能整理（会起额外的模型调用、改动技能库）。
+        "skills": {"inline_shell": false, "guard_agent_created": true},
+        "curator": {"enabled": false},
         "model": model,
         "providers": {
             "custom": {
@@ -419,6 +425,52 @@ mod tests {
                 "{} 里有令牌",
                 path.display()
             );
+        }
+    }
+
+    /// 加固基线（15.3）：每个内置 agent 都关掉自更新、遥测和技能 / 插件市场，控制台只听回环地址。
+    /// 新接一个 agent 时这里会因为没有登记而失败，逼着先把它的加固项想清楚。
+    #[test]
+    fn every_builtin_agent_meets_the_hardening_baseline() {
+        for id in catalog::builtin_ids() {
+            let c = render_for(id);
+            assert_no_token_in_files(&c);
+            match id {
+                "claude" => {
+                    assert_eq!(c.env["DISABLE_AUTOUPDATER"], "1");
+                    assert_eq!(c.env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"], "1");
+                }
+                "codex" => {
+                    let t: toml::Table = toml::from_str(file(&c, ".codex/config.toml")).unwrap();
+                    assert_eq!(t["check_for_update_on_startup"].as_bool(), Some(false));
+                    assert_eq!(t["features"]["plugins"].as_bool(), Some(false));
+                    assert_eq!(t["features"]["apps"].as_bool(), Some(false));
+                    assert_eq!(t["analytics"]["enabled"].as_bool(), Some(false));
+                    assert_eq!(t["feedback"]["enabled"].as_bool(), Some(false));
+                }
+                "pi" => {
+                    assert_eq!(c.env["PI_OFFLINE"], "1");
+                    assert_eq!(c.env["PI_SKIP_VERSION_CHECK"], "1");
+                    assert_eq!(c.env["PI_TELEMETRY"], "0");
+                }
+                "openclaw" => {
+                    let v: Value =
+                        serde_json::from_str(file(&c, ".openclaw/openclaw.json")).unwrap();
+                    assert_eq!(v["gateway"]["bind"], "loopback");
+                    assert_eq!(v["update"]["checkOnStart"], false);
+                    assert_eq!(v["telemetry"]["enabled"], false);
+                    assert_eq!(v["security"]["installPolicy"]["enabled"], true);
+                    assert_eq!(c.env["OPENCLAW_NO_AUTO_UPDATE"], "1");
+                    assert!(c.env["OPENCLAW_CLAWHUB_URL"].starts_with("http://127.0.0.1:"));
+                }
+                "hermes" => {
+                    let v: Value = serde_json::from_str(file(&c, ".hermes/config.yaml")).unwrap();
+                    assert_eq!(v["skills"]["inline_shell"], false);
+                    assert_eq!(v["curator"]["enabled"], false);
+                    assert_eq!(c.env["HERMES_SKIP_NODE_BOOTSTRAP"], "1");
+                }
+                other => panic!("no hardening baseline recorded for {other}"),
+            }
         }
     }
 
