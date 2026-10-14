@@ -11,6 +11,9 @@
 #   PORT     网关替身的端口，默认随机；有的 agent（如 Hermes）会把网关地址记进会话，测会话接回时要固定
 #   EGRESS=1 用 strace 记录 agent 所有进程的 DNS 查询和网络连接，出现回环以外的连接就判失败
 #            （需要 strace；会去掉代理变量，让外联直接暴露出来）。agent 都是自部署的，只应连模型网关
+#   GW=1     走真实模型网关：agent → agent-shim → llm-gw → 网关替身扮演的厂商。
+#            厂商只认用户 key；检查厂商从没见过沙箱令牌、别名被换成上游模型、每次调用都记了用量。
+#            此时 PORT 指 llm-gw 的端口（agent 看到的地址）；GW_BIN 指定 llm-gw 路径
 # agent 的可执行文件（claude-agent-acp、codex-acp、pi-acp、openclaw、hermes-acp）要在 PATH 里。
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
@@ -19,17 +22,32 @@ shift
 work=${WORKDIR:-$(mktemp -d)}
 mkdir -p "$work"
 token="sbx-smoke-$$-$RANDOM"
+mock_args=(--port "${PORT:-0}" --token "$token")
+if [ -n "${GW:-}" ]; then
+  # 替身扮演厂商：只认用户 key，路径前缀 /vendor，不应见到任何沙箱令牌（都以 tts1. 开头）。
+  vendor_key="sk-vendor-$$-$RANDOM-0001"
+  mock_args=(--port 0 --token "$vendor_key" --root /vendor --forbid tts1.)
+fi
 
-python3 "$root/tools/mock-llm/mock_llm.py" --port "${PORT:-0}" --token "$token" --log "$work/llm.jsonl" \
+python3 "$root/tools/mock-llm/mock_llm.py" "${mock_args[@]}" --log "$work/llm.jsonl" \
   ${DUMP:+--dump "$work/dump.jsonl"} >"$work/mock.out" 2>&1 &
 mock=$!
-trap 'kill $mock 2>/dev/null || true' EXIT
+gw=
+trap 'kill $mock $gw 2>/dev/null || true' EXIT
 for _ in $(seq 50); do
   grep -q "listening on" "$work/mock.out" 2>/dev/null && break
   sleep 0.1
 done
 port=$(sed -n 's/listening on //p' "$work/mock.out")
 start_line=$(wc -l <"$work/llm.jsonl")
+gw_start=0
+
+if [ -n "${GW:-}" ]; then
+  touch "$work/gw.log"
+  gw_start=$(wc -l <"$work/gw.log")
+  read -r gw port token < <(python3 "$root/tools/smoke/gateway.py" "$work" "$port" "$vendor_key" "${PORT:-0}")
+  [ -n "${token:-}" ] || { echo "llm-gw failed to start; see $work/gw.log" >&2; exit 1; }
+fi
 
 trace=()
 if [ -n "${EGRESS:-}" ]; then
@@ -46,9 +64,10 @@ THINKTIN_SANDBOX_TOKEN=$token "${trace[@]}" "${SHIM:-$root/target/debug/agent-sh
 code=$?
 set -e
 
-python3 - "$work" "$code" "${EXPECT:-pong from mock}" "$start_line" "${EGRESS:-}" <<'PY'
+python3 - "$work" "$code" "${EXPECT:-pong from mock}" "$start_line" "${EGRESS:-}" "${GW:-}" "$gw_start" "$root/tools/smoke" <<'PY'
 import json, re, sys
 work, code, expect, start, egress = sys.argv[1], int(sys.argv[2]), sys.argv[3], int(sys.argv[4]), sys.argv[5]
+via_gw, gw_start = sys.argv[6], int(sys.argv[7])
 events = [json.loads(l) for l in open(f"{work}/events.jsonl") if l.strip()]
 calls = [json.loads(l) for l in open(f"{work}/llm.jsonl")][start:]
 ready = next((e for e in events if e["type"] == "ready"), None)
@@ -66,8 +85,19 @@ checks = {
     "turn ended": ended is not None,
     f"reply contains {expect!r}": expect in reply,
     "model called via gateway": len(model_calls) > 0,
-    "every model request used the sandbox token": not bad_auth,
+    ("every vendor request carried the user's key" if via_gw else "every model request used the sandbox token"): not bad_auth,
 }
+if via_gw:
+    sys.path.insert(0, sys.argv[8])
+    from gateway import usage_records
+    usage = usage_records(work, gw_start)
+    leaks = [c["path"] for c in calls if c.get("forbidden_seen")]
+    print(f"gateway:  {[(u['endpoint'], u['alias'], u['upstream_model'], u['status'], u['outcome'], u['usage']) for u in usage]}")
+    checks["vendor never saw a sandbox token"] = not leaks
+    checks["gateway mapped aliases to upstream models"] = bool(model_calls) and all(c.get("model", "").startswith("up-") for c in model_calls)
+    checks["gateway metered every model call"] = (
+        len(usage) >= len(model_calls) and all(u["usage"] for u in usage if u["status"] == 200 and u["outcome"] == "complete")
+    )
 print(f"agent:    {ready and ready['agent_id']} / {ready and ready['harness']}  ({ready and json.dumps(ready.get('agent_info'))})")
 print(f"session:  {ready and ready['session_id']}  restored={ready and ready['session_restored']}")
 print(f"stop:     {ended and ended['stop_reason']}   exit={code}")

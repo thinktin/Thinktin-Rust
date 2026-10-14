@@ -103,7 +103,7 @@ shim 把当前会话 id 记在 `~/.thinktin/shim-session.json`（工作区卷上
 | 问题 | 影响 | 后续 |
 |---|---|---|
 | Claude Agent SDK 和 Claude Code 二进制是 Anthropic 专有软件（All rights reserved），只有适配器是 Apache-2.0 | 多租户托管前需要法务确认（我们是自部署运行它，不用 Anthropic 的服务） | 16.5 许可证审查 |
-| Codex 的自定义供应商只支持 Responses 协议 | 模型网关要提供 `/openai/v1/responses`；只有 Chat Completions 的国内厂商要靠网关做协议转换 | 9.3、9.7 |
+| Codex 的自定义供应商只支持 Responses 协议 | 网关已提供 `/openai/v1/responses`（见[模型网关](llm-gateway.md)）；只有 Chat Completions 的国内厂商要靠网关做协议转换 | 9.7、协议转换 |
 | Codex 不认识平台的模型别名，每轮开头输出一句 “Model metadata for `main` not found” 警告 | 用户会看到这句警告 | 生成 `model_catalog_json`，但条目必须带完整的系统提示词，需要在模板构建（6.8）时从 Codex 本身取 |
 | Pi 没有权限系统 | 预授权策略管不到 Pi 的工具 | 只靠 microVM 隔离；计划里如果要求审批，就不能选 Pi |
 | OpenClaw Gateway 冷启动约 20 秒，还会在工作目录写入 AGENTS.md、SOUL.md 等人设文件 | 唤醒慢；工作目录里多出文件 | 更适合停留在“已暂停”状态（4.10）；人设文件放进模板 |
@@ -128,6 +128,7 @@ pip install "hermes-agent[acp]==0.19.0"
 
 # 冒烟测试：起模型网关替身，经 agent-shim 跑一轮，检查回复和网关日志
 tools/smoke/smoke.sh claude
+GW=1 tools/smoke/smoke.sh claude                       # 走真实模型网关，替身扮演厂商
 tools/smoke/smoke.sh claude --harness cli
 tools/smoke/smoke.sh codex
 PROMPT='MOCK_TOOL:Bash:{"command": "touch x", "description": "touch"}' EXPECT=MOCK_DONE \

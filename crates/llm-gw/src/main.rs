@@ -195,7 +195,7 @@ fn main() -> anyhow::Result<()> {
                 let listener = tokio::net::TcpListener::bind(listen)
                     .await
                     .with_context(|| format!("bind {listen}"))?;
-                tracing::info!(%listen, "llm-gw listening");
+                tracing::info!(addr = %listener.local_addr()?, "llm-gw listening");
                 axum::serve(
                     listener,
                     router(Arc::new(gw)).into_make_service_with_connect_info::<SocketAddr>(),

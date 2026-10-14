@@ -294,6 +294,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def record(self, **fields):
         entry = {"ts": round(time.time(), 3), "method": self.command, "path": self.path, **fields}
+        # 扮演厂商时，检查请求里有没有不该出现的东西（比如沙箱令牌）。
+        seen = getattr(self, "raw_body", b"").decode("utf-8", "replace") + "\n".join(f"{k}: {v}" for k, v in self.headers.items())
+        hits = [f for f in self.server.forbid if f in seen]
+        if hits:
+            entry["forbidden_seen"] = hits
         with self.server.log_lock:
             self.server.log.write(json.dumps(entry, ensure_ascii=False) + "\n")
             self.server.log.flush()
@@ -359,6 +364,7 @@ class Handler(BaseHTTPRequestHandler):
         sub, _ = self.route()
         length = int(self.headers.get("Content-Length") or 0)
         raw = self.rfile.read(length) if length else b""
+        self.raw_body = raw
         try:
             body = json.loads(raw or b"{}")
         except ValueError:
@@ -398,6 +404,7 @@ def main():
     ap.add_argument("--log", required=True, help="请求日志（JSON Lines）")
     ap.add_argument("--model", action="append", default=None, help="模型列表接口返回的模型，可重复")
     ap.add_argument("--dump", default=None, help="把完整请求体追加到这个文件（调试用）")
+    ap.add_argument("--forbid", action="append", default=[], help="请求头和请求体里不应出现的字符串，出现就记进日志，可重复")
     args = ap.parse_args()
     server = Server(("127.0.0.1", args.port), Handler)
     server.token = args.token
@@ -406,6 +413,7 @@ def main():
     server.log = open(args.log, "a", encoding="utf-8")
     server.log_lock = threading.Lock()
     server.dump = args.dump
+    server.forbid = args.forbid
     print(f"listening on {server.server_address[1]}", flush=True)
     try:
         server.serve_forever()
