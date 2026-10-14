@@ -4,7 +4,8 @@
 --   thinktin_app     业务接口用，受行级安全（RLS）约束，只能看到 app.user_id 对应用户的数据；
 --   thinktin_worker  后台任务（调度、租约、出箱投递、登录流程）用，绕过 RLS，代码里显式选用；
 --   thinktin_llmgw   模型网关用，只读路由数据、写用量。
--- 应用每个事务开头执行 SET LOCAL ROLE <角色>，租户事务再 SET LOCAL app.user_id。
+-- 应用每个事务开头切换到对应角色（set_config('role', ..., true)，等同 SET LOCAL ROLE），租户事务再设置 app.user_id。
+-- 角色是整个集群共享的；并发建库（测试）时两个迁移可能同时建角色，所以也忽略唯一键冲突。
 -- 部署时给各服务的登录账号授予对应角色的成员身份（GRANT thinktin_app TO app_login），开发环境用超级用户直接 SET ROLE。
 --
 -- 主键都是应用生成的 UUIDv7；时间都是 timestamptz（UTC）。
@@ -12,9 +13,9 @@
 -- 跨表引用一律用 (id, user_id) 复合外键：外键检查不受 RLS 约束，单列外键会让一个用户
 -- 引用别人的 key、实例或计划（只要知道 id）；复合外键在库里保证两边属于同一个用户。
 
-DO $$ BEGIN CREATE ROLE thinktin_app NOLOGIN NOBYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE ROLE thinktin_worker NOLOGIN BYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE ROLE thinktin_llmgw NOLOGIN BYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE ROLE thinktin_app NOLOGIN NOBYPASSRLS; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
+DO $$ BEGIN CREATE ROLE thinktin_worker NOLOGIN BYPASSRLS; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
+DO $$ BEGIN CREATE ROLE thinktin_llmgw NOLOGIN BYPASSRLS; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
 
 -- 当前租户；没设置时为 NULL，策略因此不匹配任何行。
 CREATE FUNCTION app_user_id() RETURNS uuid
@@ -251,8 +252,8 @@ CREATE TABLE runs (
 );
 -- 多副本同时扫描触发器也只生成一次运行（4.4）。
 CREATE UNIQUE INDEX runs_plan_fire ON runs (plan_id, fire_time) WHERE plan_id IS NOT NULL AND fire_time IS NOT NULL;
--- 领取排队的运行。
-CREATE INDEX runs_claim ON runs (not_before) WHERE state = 'queued';
+-- 领取排队的运行和退避到期的运行。
+CREATE INDEX runs_claim ON runs (not_before) WHERE state IN ('queued', 'backoff');
 -- 接管过期租约。
 CREATE INDEX runs_lease ON runs (lease_expires_at) WHERE lease_owner IS NOT NULL;
 CREATE INDEX runs_instance ON runs (instance_id, created_at DESC);
@@ -295,6 +296,26 @@ BEGIN
 END $$;
 SELECT ensure_event_partitions((now() - interval '1 month')::date, 4);
 
+-- 保留期：删掉整月都早于 before 的分区，返回删掉的个数。
+CREATE FUNCTION drop_event_partitions_before(before date) RETURNS integer
+    LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+    part text;
+    dropped integer := 0;
+BEGIN
+    FOR part IN
+        SELECT c.relname FROM pg_inherits i
+        JOIN pg_class c ON c.oid = i.inhrelid
+        WHERE i.inhparent = 'events'::regclass AND c.relname ~ '^events_[0-9]{6}$'
+    LOOP
+        IF (to_date(substr(part, 8), 'YYYYMM') + interval '1 month')::date <= before THEN
+            EXECUTE format('DROP TABLE %I', part);
+            dropped := dropped + 1;
+        END IF;
+    END LOOP;
+    RETURN dropped;
+END $$;
+
 -- ---------- 审批（4.7、7.10） ----------
 
 CREATE TABLE approvals (
@@ -329,7 +350,7 @@ CREATE TABLE outbox (
     user_id      uuid NOT NULL,
     kind         text NOT NULL,               -- push / im / internal
     payload      jsonb NOT NULL,
-    dedupe_key   text UNIQUE,
+    dedupe_key   text,
     available_at timestamptz NOT NULL DEFAULT now(),
     attempts     integer NOT NULL DEFAULT 0,
     locked_by    text,
@@ -338,6 +359,8 @@ CREATE TABLE outbox (
     created_at   timestamptz NOT NULL DEFAULT now(),
     delivered_at timestamptz
 );
+-- 去重键按用户划分：业务角色入箱时的冲突检查只会碰到自己的键。
+CREATE UNIQUE INDEX outbox_dedupe ON outbox (user_id, dedupe_key) WHERE dedupe_key IS NOT NULL;
 CREATE INDEX outbox_ready ON outbox (available_at) WHERE delivered_at IS NULL;
 
 CREATE TABLE inbox_items (
@@ -430,6 +453,8 @@ ALTER TABLE user_keys FORCE ROW LEVEL SECURITY;
 ALTER TABLE outbox ENABLE ROW LEVEL SECURITY;
 ALTER TABLE outbox FORCE ROW LEVEL SECURITY;
 CREATE POLICY append_own ON outbox FOR INSERT TO thinktin_app WITH CHECK (user_id = app_user_id());
+-- 入箱用 ON CONFLICT 去重，需要对新行有读权限：只放开自己的行，且列权限只给 user_id、dedupe_key。
+CREATE POLICY read_own_keys ON outbox FOR SELECT TO thinktin_app USING (user_id = app_user_id());
 
 -- ---------- 权限 ----------
 
@@ -444,11 +469,13 @@ GRANT SELECT, INSERT ON events TO thinktin_app;
 GRANT SELECT ON usage_records TO thinktin_app;
 GRANT INSERT ON audit_log TO thinktin_app;
 GRANT INSERT ON outbox TO thinktin_app;  -- 和状态变更同事务写入；RLS 下 thinktin_app 读不到出箱
+GRANT SELECT (user_id, dedupe_key) ON outbox TO thinktin_app;  -- ON CONFLICT 推断去重索引要用（行仍然读不到）
 
 -- worker：后台任务需要的全部读写（绕过 RLS）。
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO thinktin_worker;
-REVOKE EXECUTE ON FUNCTION ensure_event_partitions(date, integer) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION ensure_event_partitions(date, integer) TO thinktin_worker;
+REVOKE EXECUTE ON FUNCTION ensure_event_partitions(date, integer), drop_event_partitions_before(date) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION ensure_event_partitions(date, integer), drop_event_partitions_before(date)
+    TO thinktin_worker;
 
 -- 模型网关：只读路由数据，写用量。
 GRANT SELECT ON users, instances, model_routes, credentials, run_grants, user_keys TO thinktin_llmgw;

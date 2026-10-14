@@ -218,6 +218,7 @@ str_enum!(
     CatchUp { Once = "once", All = "all", Skip = "skip" }
 );
 
+#[allow(clippy::derivable_impls)] // 枚举由宏生成，没法在变体上标 #[default]
 impl Default for CatchUp {
     fn default() -> Self {
         Self::Once
@@ -350,7 +351,22 @@ impl Default for InstanceLimits {
     }
 }
 
+str_enum!(
+    /// 计划由谁建的：agent 通过平台工具建的计划要用户确认后才生效（7.8）。
+    PlanAuthor { User = "user", Agent = "agent" }
+);
+
 // ---------- 对外展示的对象（接入网关返回、客户端核心缓存） ----------
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct User {
+    pub id: UserId,
+    /// E.164。
+    pub phone: String,
+    pub display_name: Option<String>,
+    pub status: UserStatus,
+    pub created_at: DateTime<Utc>,
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Instance {
@@ -392,6 +408,7 @@ pub struct Plan {
     pub policy: PlanPolicy,
     pub catch_up: CatchUp,
     pub paused: bool,
+    pub created_by: PlanAuthor,
     pub created_at: DateTime<Utc>,
 }
 

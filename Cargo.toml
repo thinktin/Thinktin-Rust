@@ -33,6 +33,7 @@ secrecy = "0.10.3"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["raw_value"] }
 sha2 = "0.11.1"
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "tls-rustls-aws-lc-rs", "postgres", "macros", "derive", "migrate", "uuid", "chrono", "json"] }
 subtle = "2.6.1"
 tempfile = "3.27.0"
 thiserror = "2.0.21"
