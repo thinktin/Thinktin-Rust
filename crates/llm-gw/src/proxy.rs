@@ -83,6 +83,8 @@ pub fn build_client(
     egress_proxy: Option<&str>,
 ) -> anyhow::Result<reqwest::Client> {
     let mut builder = reqwest::Client::builder()
+        // 只用 HTTP/1.1：流式透传和错误处理都按它验证过。
+        .http1_only()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(10))
         .read_timeout(Duration::from_secs(600))
