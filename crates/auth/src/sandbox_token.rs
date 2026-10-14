@@ -6,17 +6,12 @@
 //! - 格式：`tts1.<kid>.<base64url(claims JSON)>.<base64url(签名)>`，签名覆盖前三段。
 //!   `kid` 标识签名密钥，便于轮换。
 
-use std::collections::HashMap;
-
-use base64::Engine;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
-use zeroize::Zeroizing;
+
+use crate::signed::{self, Signer25519, TimedClaims, Verifier25519};
+pub use crate::signed::{LEEWAY_SECS, TokenError, redact};
 
 const PREFIX: &str = "tts1";
-/// 校验时间时允许的时钟偏差。
-const LEEWAY_SECS: u64 = 30;
 /// 令牌最长 7 天，防止误签出“永久”令牌。
 const MAX_TTL_SECS: u64 = 7 * 24 * 3600;
 
@@ -38,29 +33,17 @@ pub struct SandboxClaims {
     pub jti: String,
 }
 
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
-pub enum TokenError {
-    #[error("malformed sandbox token")]
-    Malformed,
-    #[error("unknown signing key {0}")]
-    UnknownKey(String),
-    #[error("bad signature")]
-    BadSignature,
-    #[error("token expired")]
-    Expired,
-    #[error("token not yet valid")]
-    NotYetValid,
-    #[error("invalid ttl")]
-    InvalidTtl,
-    #[error("random number generator failed")]
-    Rng,
+impl TimedClaims for SandboxClaims {
+    fn iat(&self) -> u64 {
+        self.iat
+    }
+    fn exp(&self) -> u64 {
+        self.exp
+    }
 }
 
 /// 签发方（控制面）。
-pub struct SandboxTokenIssuer {
-    kid: String,
-    key: SigningKey,
-}
+pub struct SandboxTokenIssuer(Signer25519);
 
 /// 签发时调用方提供的字段；时间和 jti 由签发方填。
 #[derive(Debug, Clone)]
@@ -73,53 +56,36 @@ pub struct TokenRequest {
 }
 
 impl SandboxTokenIssuer {
-    pub fn new(kid: impl Into<String>, key: SigningKey) -> Self {
-        Self {
-            kid: kid.into(),
-            key,
-        }
+    pub fn new(kid: impl Into<String>, key: ed25519_dalek::SigningKey) -> Self {
+        Self(Signer25519::new(kid, key))
     }
 
     /// 生成新的签名密钥。
     pub fn generate(kid: impl Into<String>) -> Result<Self, TokenError> {
-        let mut seed = Zeroizing::new([0u8; 32]);
-        getrandom::fill(seed.as_mut()).map_err(|_| TokenError::Rng)?;
-        Ok(Self::new(kid, SigningKey::from_bytes(&seed)))
+        Signer25519::generate(kid).map(Self)
     }
 
     /// 从 base64url 编码的 32 字节私钥种子创建。
     pub fn from_seed_b64(kid: impl Into<String>, seed: &str) -> Result<Self, TokenError> {
-        let bytes = Zeroizing::new(
-            URL_SAFE_NO_PAD
-                .decode(seed.trim())
-                .map_err(|_| TokenError::Malformed)?,
-        );
-        let seed: [u8; 32] = bytes
-            .as_slice()
-            .try_into()
-            .map_err(|_| TokenError::Malformed)?;
-        let seed = Zeroizing::new(seed);
-        Ok(Self::new(kid, SigningKey::from_bytes(&seed)))
+        Signer25519::from_seed_b64(kid, seed).map(Self)
     }
 
-    pub fn seed_b64(&self) -> Zeroizing<String> {
-        Zeroizing::new(URL_SAFE_NO_PAD.encode(self.key.to_bytes()))
+    pub fn seed_b64(&self) -> zeroize::Zeroizing<String> {
+        self.0.seed_b64()
     }
 
     pub fn kid(&self) -> &str {
-        &self.kid
+        self.0.kid()
     }
 
     pub fn verifying_key_b64(&self) -> String {
-        URL_SAFE_NO_PAD.encode(self.key.verifying_key().to_bytes())
+        self.0.verifying_key_b64()
     }
 
     pub fn issue(&self, req: TokenRequest, ttl_secs: u64, now: u64) -> Result<String, TokenError> {
         if ttl_secs == 0 || ttl_secs > MAX_TTL_SECS {
             return Err(TokenError::InvalidTtl);
         }
-        let mut jti = [0u8; 12];
-        getrandom::fill(&mut jti).map_err(|_| TokenError::Rng)?;
         let claims = SandboxClaims {
             iid: req.iid,
             uid: req.uid,
@@ -128,102 +94,40 @@ impl SandboxTokenIssuer {
             net: req.net,
             iat: now,
             exp: now + ttl_secs,
-            jti: URL_SAFE_NO_PAD.encode(jti),
+            jti: signed::random_jti()?,
         };
-        let body = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).expect("claims serialize"));
-        let signed = format!("{PREFIX}.{}.{body}", self.kid);
-        let sig = self.key.sign(signed.as_bytes());
-        Ok(format!(
-            "{signed}.{}",
-            URL_SAFE_NO_PAD.encode(sig.to_bytes())
-        ))
+        Ok(self.0.sign(PREFIX, &claims))
     }
 }
 
 /// 校验方（模型网关）。可同时持有多把公钥，支持签名密钥轮换。
 #[derive(Default, Clone)]
-pub struct SandboxTokenVerifier {
-    keys: HashMap<String, VerifyingKey>,
-}
+pub struct SandboxTokenVerifier(Verifier25519);
 
 impl SandboxTokenVerifier {
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn add_key(&mut self, kid: impl Into<String>, key: VerifyingKey) {
-        self.keys.insert(kid.into(), key);
+    pub fn add_key(&mut self, kid: impl Into<String>, key: ed25519_dalek::VerifyingKey) {
+        self.0.add_key(kid, key);
     }
 
     pub fn add_key_b64(&mut self, kid: impl Into<String>, key: &str) -> Result<(), TokenError> {
-        let bytes = URL_SAFE_NO_PAD
-            .decode(key.trim())
-            .map_err(|_| TokenError::Malformed)?;
-        let bytes: [u8; 32] = bytes
-            .as_slice()
-            .try_into()
-            .map_err(|_| TokenError::Malformed)?;
-        let key = VerifyingKey::from_bytes(&bytes).map_err(|_| TokenError::Malformed)?;
-        self.add_key(kid, key);
-        Ok(())
+        self.0.add_key_b64(kid, key)
     }
 
     /// 校验签名和有效期。实例、授权、沙箱是否仍然有效，以及来源地址是否匹配，由调用方核对。
     pub fn verify(&self, token: &str, now: u64) -> Result<SandboxClaims, TokenError> {
-        let mut parts = token.split('.');
-        let (Some(prefix), Some(kid), Some(body), Some(sig), None) = (
-            parts.next(),
-            parts.next(),
-            parts.next(),
-            parts.next(),
-            parts.next(),
-        ) else {
-            return Err(TokenError::Malformed);
-        };
-        if prefix != PREFIX {
-            return Err(TokenError::Malformed);
-        }
-        let key = self
-            .keys
-            .get(kid)
-            .ok_or_else(|| TokenError::UnknownKey(kid.to_owned()))?;
-        let sig_bytes = URL_SAFE_NO_PAD
-            .decode(sig)
-            .map_err(|_| TokenError::Malformed)?;
-        let sig_bytes: [u8; 64] = sig_bytes
-            .as_slice()
-            .try_into()
-            .map_err(|_| TokenError::Malformed)?;
-        let signed_len = prefix.len() + 1 + kid.len() + 1 + body.len();
-        key.verify_strict(
-            &token.as_bytes()[..signed_len],
-            &Signature::from_bytes(&sig_bytes),
-        )
-        .map_err(|_| TokenError::BadSignature)?;
-        let claims: SandboxClaims = URL_SAFE_NO_PAD
-            .decode(body)
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .ok_or(TokenError::Malformed)?;
-        if now > claims.exp + LEEWAY_SECS {
-            return Err(TokenError::Expired);
-        }
-        if claims.iat > now + LEEWAY_SECS {
-            return Err(TokenError::NotYetValid);
-        }
-        Ok(claims)
+        self.0.verify(PREFIX, token, now)
     }
-}
-
-/// 令牌在日志里只显示 kid 和 jti 的前几位。
-pub fn redact(token: &str) -> String {
-    let kid = token.split('.').nth(1).unwrap_or("?");
-    format!("tts1.{kid}.***")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
     fn req() -> TokenRequest {
         TokenRequest {
