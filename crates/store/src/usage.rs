@@ -3,7 +3,7 @@
 use proto::domain::{CredentialId, GrantId, InstanceId, UserId};
 use uuid::Uuid;
 
-use crate::{Result, Tx, Worker, signed};
+use crate::{Result, Tx, signed};
 
 #[derive(Debug, Clone, Default)]
 pub struct NewUsage {
@@ -28,7 +28,7 @@ pub struct NewUsage {
     pub duration_ms: u64,
 }
 
-impl Tx<Worker> {
+impl<R: crate::Internal> Tx<R> {
     pub async fn insert_usage(&mut self, u: &NewUsage) -> Result<()> {
         sqlx::query(
             "INSERT INTO usage_records (id, user_id, instance_id, run_grant_id, credential_id, alias, vendor, \

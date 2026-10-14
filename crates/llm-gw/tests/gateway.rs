@@ -430,7 +430,7 @@ async fn anthropic_stream_swaps_key_rewrites_model_and_meters() {
     );
     let day = (now() as i64 + 8 * 3600) as u64 / 86_400;
     assert_eq!(
-        llm_gw::limits::BudgetLedger::used(env.ledger.as_ref(), "cred-main", day),
+        llm_gw::limits::BudgetLedger::used(env.ledger.as_ref(), "cred-main", day).await,
         48
     );
 }
@@ -593,8 +593,10 @@ async fn token_and_instance_checks() {
     assert_eq!(env.anthropic(&token, body.clone()).await.status(), 401);
     let token2 = env.token_with(|r| r.grant = "grant-2".into());
     assert_eq!(env.anthropic(&token2, body.clone()).await.status(), 200);
-    let mut inst =
-        (*llm_gw::store::Directory::instance(env.directory.as_ref(), "inst-1").unwrap()).clone();
+    let mut inst = (*llm_gw::store::Directory::instance(env.directory.as_ref(), "inst-1", false)
+        .await
+        .unwrap())
+    .clone();
     inst.active = false;
     env.directory.upsert_instance(inst);
     assert_eq!(env.anthropic(&token2, body.clone()).await.status(), 401);
@@ -865,7 +867,7 @@ async fn disconnect_before_vendor_answers_is_still_charged() {
     );
     let day = (now() as i64 + 8 * 3600) as u64 / 86_400;
     assert_eq!(
-        llm_gw::limits::BudgetLedger::used(env.ledger.as_ref(), "cred-hang", day),
+        llm_gw::limits::BudgetLedger::used(env.ledger.as_ref(), "cred-hang", day).await,
         r.charged_tokens
     );
 }

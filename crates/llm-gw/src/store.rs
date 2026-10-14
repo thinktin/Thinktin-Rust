@@ -8,6 +8,7 @@ use std::path::Path;
 use std::sync::{Arc, RwLock};
 
 use anyhow::Context;
+use async_trait::async_trait;
 use keyvault::{SealedSecret, WrappedKey};
 use serde::{Deserialize, Serialize};
 
@@ -80,10 +81,12 @@ pub struct Credential {
 }
 
 /// 网关读取路由数据的接口。实现要快（每个请求都会调用），生产实现应在本地缓存。
+#[async_trait]
 pub trait Directory: Send + Sync {
-    fn instance(&self, id: &str) -> Option<Arc<Instance>>;
-    fn credential(&self, id: &str) -> Option<Arc<Credential>>;
-    fn grant_revoked(&self, grant: &str) -> bool;
+    /// `fresh` 时跳过缓存（缓存里的实例和令牌对不上时再确认一次）。
+    async fn instance(&self, id: &str, fresh: bool) -> Option<Arc<Instance>>;
+    async fn credential(&self, id: &str) -> Option<Arc<Credential>>;
+    async fn grant_revoked(&self, grant: &str) -> bool;
 }
 
 #[derive(Default)]
@@ -139,8 +142,9 @@ impl MemoryDirectory {
     }
 }
 
+#[async_trait]
 impl Directory for MemoryDirectory {
-    fn instance(&self, id: &str) -> Option<Arc<Instance>> {
+    async fn instance(&self, id: &str, _fresh: bool) -> Option<Arc<Instance>> {
         self.0
             .read()
             .unwrap_or_else(|e| e.into_inner())
@@ -149,7 +153,7 @@ impl Directory for MemoryDirectory {
             .cloned()
     }
 
-    fn credential(&self, id: &str) -> Option<Arc<Credential>> {
+    async fn credential(&self, id: &str) -> Option<Arc<Credential>> {
         self.0
             .read()
             .unwrap_or_else(|e| e.into_inner())
@@ -158,7 +162,7 @@ impl Directory for MemoryDirectory {
             .cloned()
     }
 
-    fn grant_revoked(&self, grant: &str) -> bool {
+    async fn grant_revoked(&self, grant: &str) -> bool {
         self.0
             .read()
             .unwrap_or_else(|e| e.into_inner())

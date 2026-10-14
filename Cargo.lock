@@ -1818,17 +1818,22 @@ name = "llm-gw"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "auth",
  "axum",
  "bytes",
+ "chrono",
  "clap",
  "futures-util",
  "hyper",
  "hyper-util",
  "keyvault",
+ "proto",
  "reqwest",
  "serde",
  "serde_json",
+ "sqlx",
+ "store",
  "tempfile",
  "thiserror",
  "tokio",
@@ -1836,6 +1841,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+ "uuid",
  "zeroize",
 ]
 

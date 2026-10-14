@@ -4,16 +4,17 @@ use std::io::Read;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, bail};
 use auth::sandbox_token::{SandboxTokenIssuer, SandboxTokenVerifier, TokenRequest};
 use clap::{Parser, Subcommand};
 use keyvault::secrecy::{ExposeSecret, SecretString};
-use keyvault::{KeyStore, KeyVault, LocalKms, MemoryKeyStore};
-use llm_gw::limits::{Limiter, MemoryLedger};
-use llm_gw::store::{Credential, DevStore};
-use llm_gw::usage::LogSink;
+use keyvault::{KeyStore, KeyVault, LocalKms, MemoryKeyStore, SecretOpener};
+use llm_gw::limits::{BudgetLedger, Limiter, MemoryLedger};
+use llm_gw::pg::{PgDirectory, PgLedger, PgUsageSink};
+use llm_gw::store::{Credential, DevStore, Directory};
+use llm_gw::usage::{LogSink, UsageSink};
 use llm_gw::{Gateway, Options, ServeOptions, build_client, router, serve, vendors};
 use zeroize::Zeroizing;
 
@@ -21,6 +22,8 @@ use zeroize::Zeroizing;
 const ENV_KMS_KEY: &str = "THINKTIN_DEV_KMS_KEY";
 /// 沙箱令牌签名私钥种子（base64url）。
 const ENV_TOKEN_SEED: &str = "THINKTIN_DEV_TOKEN_SEED";
+/// 生产：KMS 主密钥（本地 KMS，64 位十六进制），和控制面的 THINKTIN_KMS_KEY 是同一把。
+const ENV_KMS_KEY_PROD: &str = "THINKTIN_KMS_KEY";
 
 #[derive(Parser)]
 #[command(
@@ -39,9 +42,22 @@ enum Command {
     Serve {
         #[arg(long, default_value = "127.0.0.1:8790")]
         listen: SocketAddr,
-        /// 路由数据和用户 DEK（开发用 JSON 文件）
-        #[arg(long)]
-        store: PathBuf,
+        /// 路由数据和用户 DEK（开发用 JSON 文件）。和 --database-url 二选一
+        #[arg(
+            long,
+            conflicts_with = "database_url",
+            required_unless_present = "database_url"
+        )]
+        store: Option<PathBuf>,
+        /// 控制面数据库（生产）：路由数据、用户 DEK、用量都在这里。主密钥从环境变量 THINKTIN_KMS_KEY 读
+        #[arg(long, env = "DATABASE_URL")]
+        database_url: Option<String>,
+        /// 本地 KMS 主密钥的 id（和控制面的 api.kms_key_id 一致）
+        #[arg(long, default_value = "local-1")]
+        kms_key_id: String,
+        /// 路由数据缓存多久（秒）：吊销授权、改路由最多这么久后生效
+        #[arg(long, default_value_t = 5)]
+        cache_secs: u64,
         /// 沙箱令牌验签公钥，格式 `kid=base64url`，可重复
         #[arg(long = "token-key", required = true)]
         token_keys: Vec<String>,
@@ -120,6 +136,14 @@ enum Command {
     Vendors,
 }
 
+/// 路由数据、解密、用量、预算账本：开发用文件版，生产用数据库版。
+type Backends = (
+    Arc<dyn Directory>,
+    Arc<dyn SecretOpener>,
+    Arc<dyn UsageSink>,
+    Arc<dyn BudgetLedger>,
+);
+
 fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -141,6 +165,9 @@ fn main() -> anyhow::Result<()> {
         Command::Serve {
             listen,
             store,
+            database_url,
+            kms_key_id,
+            cache_secs,
             token_keys,
             egress_proxy,
             insecure_upstreams,
@@ -173,11 +200,6 @@ fn main() -> anyhow::Result<()> {
                     .add_key_b64(kid, key)
                     .with_context(|| format!("bad --token-key for {kid}"))?;
             }
-            let dev = DevStore::load(&store)?;
-            let keys = MemoryKeyStore::default();
-            for (user, wrapped) in &dev.user_keys {
-                keys.insert_new(user, wrapped.clone());
-            }
             let options = Options {
                 insecure_upstreams,
                 allow_unbound_tokens,
@@ -190,18 +212,59 @@ fn main() -> anyhow::Result<()> {
                     "--insecure-upstreams: http and private upstream addresses are allowed (dev only)"
                 );
             }
-            let gw = Gateway {
-                verifier,
-                directory: Arc::new(dev.directory()),
-                secrets: Arc::new(KeyVault::new(kms(&dev.kms_key_id)?, keys)),
-                usage: Arc::new(LogSink),
-                ledger: Arc::new(MemoryLedger::default()),
-                limiter: Limiter::default(),
-                client: build_client(&options, egress_proxy.as_deref())?,
-                options,
-            };
+            let client = build_client(&options, egress_proxy.as_deref())?;
             let runtime = tokio::runtime::Runtime::new()?;
             runtime.block_on(async move {
+                let mut writer = None;
+                let (directory, secrets, usage, ledger): Backends = match (store, database_url) {
+                    (Some(path), _) => {
+                        let dev = DevStore::load(&path)?;
+                        let keys = MemoryKeyStore::default();
+                        for (user, wrapped) in &dev.user_keys {
+                            keys.insert_new(user, wrapped.clone());
+                        }
+                        (
+                            Arc::new(dev.directory()),
+                            Arc::new(KeyVault::new(kms(&dev.kms_key_id)?, keys)),
+                            Arc::new(LogSink),
+                            Arc::new(MemoryLedger::default()),
+                        )
+                    }
+                    (None, Some(url)) => {
+                        let db = store::Db::connect(&url, 16)
+                            .await
+                            .context("connect to database")?;
+                        let hex = Zeroizing::new(
+                            std::env::var(ENV_KMS_KEY_PROD)
+                                .with_context(|| format!("{ENV_KMS_KEY_PROD} is not set"))?,
+                        );
+                        let kms =
+                            LocalKms::from_hex(&kms_key_id, hex.trim()).with_context(|| {
+                                format!("{ENV_KMS_KEY_PROD} must be 64 hex characters")
+                            })?;
+                        let ttl = Duration::from_secs(cache_secs.max(1));
+                        let keys = Arc::new(MemoryKeyStore::default());
+                        let (sink, w) = PgUsageSink::spawn(db.clone());
+                        writer = Some(w);
+                        (
+                            Arc::new(PgDirectory::new(db.clone(), keys.clone(), ttl)),
+                            Arc::new(KeyVault::new(kms, keys)),
+                            Arc::new(sink),
+                            Arc::new(PgLedger::new(db, options.budget_utc_offset_secs, ttl)),
+                        )
+                    }
+                    (None, None) => bail!("give --store or --database-url"),
+                };
+                let gw = Gateway {
+                    verifier,
+                    directory,
+                    secrets,
+                    usage,
+                    ledger,
+                    limiter: Limiter::default(),
+                    client,
+                    options,
+                };
                 let listener = tokio::net::TcpListener::bind(listen)
                     .await
                     .with_context(|| format!("bind {listen}"))?;
@@ -214,6 +277,14 @@ fn main() -> anyhow::Result<()> {
                     let _ = tokio::signal::ctrl_c().await;
                 })
                 .await?;
+                // 等还没写进库的用量落库（进行中的流式响应结束后队列才会关闭）。
+                if let Some(w) = writer
+                    && tokio::time::timeout(Duration::from_secs(30), w.finish())
+                        .await
+                        .is_err()
+                {
+                    tracing::warn!("usage writer did not finish in time");
+                }
                 anyhow::Ok(())
             })
         }

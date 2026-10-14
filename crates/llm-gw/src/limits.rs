@@ -127,17 +127,20 @@ impl Limiter {
     }
 }
 
-/// 每把 key 每天已用的 token 数。生产环境放 Redis，按天过期。
+/// 每把 key 每天已用的 token 数。多副本时以用量表为准（见 `pg::PgLedger`）。
+#[async_trait::async_trait]
 pub trait BudgetLedger: Send + Sync {
-    fn used(&self, credential: &str, day: u64) -> u64;
+    async fn used(&self, credential: &str, day: u64) -> u64;
+    /// 响应结束时记账（在 Drop 里调用，不能等待）。
     fn add(&self, credential: &str, day: u64, tokens: u64);
 }
 
 #[derive(Default)]
 pub struct MemoryLedger(Mutex<HashMap<(String, u64), u64>>);
 
+#[async_trait::async_trait]
 impl BudgetLedger for MemoryLedger {
-    fn used(&self, credential: &str, day: u64) -> u64 {
+    async fn used(&self, credential: &str, day: u64) -> u64 {
         let map = self.0.lock().unwrap_or_else(|e| e.into_inner());
         map.get(&(credential.to_owned(), day)).copied().unwrap_or(0)
     }
@@ -226,14 +229,14 @@ mod tests {
         assert!(l.acquire_at("i", lim, t0 + BREAKER_COOLDOWN).is_ok());
     }
 
-    #[test]
-    fn ledger_tracks_days() {
+    #[tokio::test]
+    async fn ledger_tracks_days() {
         let l = MemoryLedger::default();
         l.add("c", 10, 100);
         l.add("c", 10, 50);
-        assert_eq!(l.used("c", 10), 150);
-        assert_eq!(l.used("c", 11), 0);
+        assert_eq!(l.used("c", 10).await, 150);
+        assert_eq!(l.used("c", 11).await, 0);
         l.add("c", 12, 1);
-        assert_eq!(l.used("c", 10), 0, "old days are dropped");
+        assert_eq!(l.used("c", 10).await, 0, "old days are dropped");
     }
 }

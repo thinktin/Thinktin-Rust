@@ -320,7 +320,11 @@ struct Caller {
 
 impl Gateway {
     /// 校验令牌，并核对实例、沙箱、运行授权和来源地址。所有失败对外都是同一句话，具体原因只进日志。
-    fn authenticate(&self, headers: &HeaderMap, peer: SocketAddr) -> Result<Caller, ApiError> {
+    async fn authenticate(
+        &self,
+        headers: &HeaderMap,
+        peer: SocketAddr,
+    ) -> Result<Caller, ApiError> {
         let rejected = || err(Kind::Auth, "sandbox token rejected");
         let token =
             presented_token(headers).ok_or_else(|| err(Kind::Auth, "missing sandbox token"))?;
@@ -344,10 +348,16 @@ impl Gateway {
             }
             None => {}
         }
-        let instance = self
-            .directory
-            .instance(&claims.iid)
-            .ok_or_else(|| deny("unknown instance"))?;
+        // 目录可能有缓存：实例刚唤醒、换了沙箱时缓存里还是旧的，重新读一次再判断。
+        let usable = |i: &Instance| i.active && i.sandbox.as_deref() == Some(claims.sbx.as_str());
+        let instance = match self.directory.instance(&claims.iid, false).await {
+            Some(i) if usable(&i) => i,
+            _ => self
+                .directory
+                .instance(&claims.iid, true)
+                .await
+                .ok_or_else(|| deny("unknown instance"))?,
+        };
         if instance.user_id != claims.uid {
             return Err(deny("instance belongs to another user"));
         }
@@ -357,7 +367,7 @@ impl Gateway {
         if instance.sandbox.as_deref() != Some(claims.sbx.as_str()) {
             return Err(deny("sandbox is not the instance's current sandbox"));
         }
-        if self.directory.grant_revoked(&claims.grant) {
+        if self.directory.grant_revoked(&claims.grant).await {
             return Err(deny("run grant revoked"));
         }
         Ok(Caller { claims, instance })
@@ -626,7 +636,7 @@ async fn forward_inner(
 ) -> Result<Response, ApiError> {
     let started = Instant::now();
     let (parts, body) = req.into_parts();
-    let caller = gw.authenticate(&parts.headers, peer)?;
+    let caller = gw.authenticate(&parts.headers, peer).await?;
     let permit = gw
         .limiter
         .acquire(&caller.instance.id, caller.instance.limits)?;
@@ -658,6 +668,7 @@ async fn forward_inner(
     let cred = gw
         .directory
         .credential(&route.credential)
+        .await
         .filter(|c| c.user_id == caller.instance.user_id && !c.disabled)
         .ok_or_else(|| {
             err(
@@ -667,7 +678,7 @@ async fn forward_inner(
         })?;
     let day = gw.budget_day();
     if let Some(limit) = cred.daily_token_limit
-        && gw.ledger.used(&cred.id, day) >= limit
+        && gw.ledger.used(&cred.id, day).await >= limit
     {
         return Err(err(
             Kind::Budget,
@@ -1060,7 +1071,7 @@ async fn list_models(
     headers: &HeaderMap,
     peer: SocketAddr,
 ) -> Result<Vec<String>, ApiError> {
-    let caller = gw.authenticate(headers, peer)?;
+    let caller = gw.authenticate(headers, peer).await?;
     Ok(caller.instance.routes.keys().cloned().collect())
 }
 

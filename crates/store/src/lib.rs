@@ -16,6 +16,7 @@ mod events;
 mod grants;
 mod inbox;
 mod instances;
+mod llmgw;
 mod outbox;
 mod plans;
 mod runs;
@@ -43,6 +44,7 @@ pub use error::{Error, Result};
 pub use events::EVENTS_CHANNEL;
 pub use inbox::NewInboxItem;
 pub use instances::{InstanceRuntime, NewInstance};
+pub use llmgw::GatewayInstance;
 pub use outbox::{NewOutboxItem, OutboxItem};
 pub use plans::{DueTrigger, NewPlan};
 pub use runs::{NewRun, RunChange, RunRecord};
@@ -119,6 +121,18 @@ impl Db {
         .await?;
         Ok(Tx { tx, role: Worker })
     }
+
+    /// 模型网关的事务：只读路由数据、写用量（绕过 RLS，但表权限很窄）。
+    pub async fn llmgw(&self) -> Result<Tx<Llmgw>> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query(
+            "SELECT set_config('role', 'thinktin_llmgw', true), set_config('statement_timeout', $1, true)",
+        )
+        .bind(TENANT_STATEMENT_TIMEOUT)
+        .execute(&mut *tx)
+        .await?;
+        Ok(Tx { tx, role: Llmgw })
+    }
 }
 
 /// 一个数据库事务，带着它的角色。没有提交就丢弃时回滚。
@@ -136,6 +150,15 @@ pub struct Tenant {
 /// 后台任务。
 #[derive(Debug, Clone, Copy)]
 pub struct Worker;
+
+/// 模型网关。
+#[derive(Debug, Clone, Copy)]
+pub struct Llmgw;
+
+/// 平台内部的角色（后台任务、模型网关）：能读 key 的密文和用户的包裹 DEK、写用量。
+pub trait Internal {}
+impl Internal for Worker {}
+impl Internal for Llmgw {}
 
 impl<R> Tx<R> {
     pub async fn commit(self) -> Result<()> {

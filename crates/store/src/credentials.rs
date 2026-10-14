@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use proto::domain::{Credential, CredentialId, UserId};
 use uuid::Uuid;
 
-use crate::{Error, Result, Tenant, Tx, Worker, signed, unsigned};
+use crate::{Error, Result, Tenant, Tx, signed, unsigned};
 
 /// 新增的 key。`sealed` 是密钥库用这个用户的 DEK 封好的密文。
 #[derive(Clone)]
@@ -226,7 +226,7 @@ impl std::fmt::Debug for SealedCredential {
     }
 }
 
-impl Tx<Worker> {
+impl<R: crate::Internal> Tx<R> {
     /// 没删除的凭证的密文和路由信息。
     pub async fn sealed_credential(
         &mut self,

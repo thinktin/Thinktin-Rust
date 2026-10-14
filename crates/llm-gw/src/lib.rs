@@ -5,6 +5,7 @@
 
 pub mod body;
 pub mod limits;
+pub mod pg;
 pub mod proxy;
 pub mod serve;
 pub mod ssrf;

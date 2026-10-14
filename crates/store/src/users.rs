@@ -106,16 +106,6 @@ impl Tx<Worker> {
         Ok(())
     }
 
-    /// 用户的包裹 DEK：（KMS 主密钥 id，密文）。
-    pub async fn user_key(&mut self, user: UserId) -> Result<Option<(String, Vec<u8>)>> {
-        Ok(
-            sqlx::query_as("SELECT kms_key_id, wrapped_dek FROM user_keys WHERE user_id = $1")
-                .bind(user.0)
-                .fetch_optional(self.conn())
-                .await?,
-        )
-    }
-
     /// 注销账号（4.1）：吊销全部会话、设备、运行授权，删掉包裹的 DEK（密文随之无法解密，即“注销即销毁”），
     /// 清掉 key 密文，实例标记删除（沙箱由生命周期管理回收），账号标记注销（手机号可以重新注册）。
     pub async fn erase_account(&mut self, id: UserId) -> Result<()> {
@@ -183,5 +173,17 @@ impl Tx<Tenant> {
             .execute(self.conn())
             .await?;
         Ok(())
+    }
+}
+
+impl<R: crate::Internal> Tx<R> {
+    /// 用户的包裹 DEK：（KMS 主密钥 id，密文）。
+    pub async fn user_key(&mut self, user: UserId) -> Result<Option<(String, Vec<u8>)>> {
+        Ok(
+            sqlx::query_as("SELECT kms_key_id, wrapped_dek FROM user_keys WHERE user_id = $1")
+                .bind(user.0)
+                .fetch_optional(self.conn())
+                .await?,
+        )
     }
 }
