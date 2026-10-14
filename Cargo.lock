@@ -2410,6 +2410,20 @@ dependencies = [
 [[package]]
 name = "server"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "proto",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "store",
+ "tokio",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+]
 
 [[package]]
 name = "sha1"
