@@ -2534,6 +2534,8 @@ dependencies = [
  "chrono",
  "clap",
  "control",
+ "gateway",
+ "keyvault",
  "notify",
  "orchestrator",
  "proto",

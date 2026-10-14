@@ -17,12 +17,64 @@ pub struct Config {
     pub database: Database,
     pub shutdown: Shutdown,
     pub log: Log,
+    pub api: Api,
     pub worker: Worker,
     pub sandbox: Sandbox,
     pub push: Push,
     /// 沙箱令牌签名私钥种子（base64url），只从环境变量 THINKTIN_SANDBOX_TOKEN_SEED 读。
     #[serde(skip)]
     pub sandbox_token_seed: Option<String>,
+    /// 接口用的密钥，只从环境变量读（见 [`ApiSecrets`]）。
+    #[serde(skip)]
+    pub api_secrets: ApiSecrets,
+}
+
+/// 客户端接口（接入网关）。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Api {
+    pub enabled: bool,
+    /// 只用于本地开发：验证码打印到标准错误，不发短信。
+    pub dev_sms: bool,
+    /// 访问令牌签名密钥的 kid。
+    pub access_token_kid: String,
+    /// 本地 KMS 主密钥的 id（生产环境换成云 KMS）。
+    pub kms_key_id: String,
+    /// 领养、建计划时默认给 agent 的平台工具。
+    pub default_platform_tools: Vec<String>,
+}
+
+impl Default for Api {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            dev_sms: false,
+            access_token_kid: "a1".into(),
+            kms_key_id: "local-1".into(),
+            default_platform_tools: Vec::new(),
+        }
+    }
+}
+
+/// 接口用的密钥。
+#[derive(Clone, Default)]
+pub struct ApiSecrets {
+    /// THINKTIN_ACCESS_TOKEN_SEED：访问令牌签名私钥种子（base64url）。
+    pub access_token_seed: Option<String>,
+    /// THINKTIN_CODE_PEPPER：验证码 HMAC 的服务端密钥（十六进制，至少 32 字节）。
+    pub code_pepper: Option<String>,
+    /// THINKTIN_KMS_KEY：本地 KMS 主密钥（64 位十六进制）。
+    pub kms_key: Option<String>,
+}
+
+impl std::fmt::Debug for ApiSecrets {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ApiSecrets")
+            .field("access_token_seed", &self.access_token_seed.is_some())
+            .field("code_pepper", &self.code_pepper.is_some())
+            .field("kms_key", &self.kms_key.is_some())
+            .finish()
+    }
 }
 
 /// 后台任务：调度循环、执行器、出箱投递、实例巡检、数据维护。
@@ -142,10 +194,12 @@ impl Default for Config {
             database: Database::default(),
             shutdown: Shutdown::default(),
             log: Log::default(),
+            api: Api::default(),
             worker: Worker::default(),
             sandbox: Sandbox::default(),
             push: Push::default(),
             sandbox_token_seed: None,
+            api_secrets: ApiSecrets::default(),
         }
     }
 }
@@ -212,6 +266,11 @@ impl Config {
             cfg.node_id = Some(node);
         }
         cfg.sandbox_token_seed = env.var("THINKTIN_SANDBOX_TOKEN_SEED");
+        cfg.api_secrets = ApiSecrets {
+            access_token_seed: env.var("THINKTIN_ACCESS_TOKEN_SEED"),
+            code_pepper: env.var("THINKTIN_CODE_PEPPER"),
+            kms_key: env.var("THINKTIN_KMS_KEY"),
+        };
         cfg.validate()?;
         Ok(cfg)
     }
@@ -226,6 +285,28 @@ impl Config {
         }
         if self.database.max_connections == 0 {
             bail!("database.max_connections must be positive");
+        }
+        if self.api.enabled {
+            let missing: Vec<&str> = [
+                (
+                    "THINKTIN_ACCESS_TOKEN_SEED",
+                    &self.api_secrets.access_token_seed,
+                ),
+                ("THINKTIN_CODE_PEPPER", &self.api_secrets.code_pepper),
+                ("THINKTIN_KMS_KEY", &self.api_secrets.kms_key),
+            ]
+            .into_iter()
+            .filter(|(_, v)| v.is_none())
+            .map(|(k, _)| k)
+            .collect();
+            if !missing.is_empty() {
+                bail!("api.enabled needs {}", missing.join(", "));
+            }
+            if !self.api.dev_sms {
+                bail!(
+                    "no SMS provider is configured yet; set api.dev_sms = true for local development"
+                );
+            }
         }
         if self.worker.enabled {
             if self.sandbox_token_seed.is_none() {

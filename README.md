@@ -17,7 +17,7 @@ ThinkTin 平台：托管多个开源 agent，用户领养后常驻云端、按�
 | proto | lib | 共享协议与类型：领域类型、平台 ↔ shim 的指令和事件、接口版本协商与错误模型 |
 | store | lib | 数据访问层：迁移、按角色开启的事务（业务角色受行级安全约束）、各表仓储 |
 | auth | lib | 账号、设备会话、运行授权、沙箱令牌 |
-| gateway | lib | 接入网关、事件流续传 |
+| gateway | lib | 接入网关：`/v1` REST 接口、实例事件流（WebSocket，按序号续传）、模型 key 管理 |
 | control | lib | 实例生命周期、沙箱暂停与唤醒 |
 | orchestrator | lib | 计划、触发器、运行树、多 agent 协同 |
 | notify | lib | APNs、FCM、国内厂商推送、IM 渠道 |
@@ -43,6 +43,9 @@ ThinkTin 平台：托管多个开源 agent，用户领养后常驻云端、按�
   `[worker] enabled = true` 时同一进程里跑调度、执行、出箱投递和巡检，需要环境变量
   `THINKTIN_SANDBOX_TOKEN_SEED`（`llm-gw keygen` 生成，模型网关配对应公钥）；本地开发用
   `[sandbox] provider = "local"`，`manifest_override` 可以换成假 agent 的清单联调。
+  `[api] enabled = true` 时挂上客户端接口，需要 `THINKTIN_ACCESS_TOKEN_SEED`（访问令牌签名种子）、
+  `THINKTIN_CODE_PEPPER`（验证码 HMAC 密钥，十六进制）、`THINKTIN_KMS_KEY`（本地 KMS 主密钥）；
+  短信通道还没接，本地开发用 `dev_sms = true` 把验证码打到标准错误。
 
 - `tools/mock-llm/mock_llm.py`：模型网关的本地替身，供真实 agent 的冒烟测试使用。
 - `tools/smoke/smoke.sh <agent>`：经 agent-shim 用真实 agent 跑一轮并检查结果，`GW=1` 时走真实的模型网关；`tools/smoke/serve_check.py <agent>` 检查常驻模式下的取消。见[接入说明](docs/agent-integration.md#9-本地运行)。

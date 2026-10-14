@@ -16,6 +16,8 @@ axum.workspace = true
 chrono.workspace = true
 clap.workspace = true
 control = { path = "../control" }
+gateway = { path = "../gateway" }
+keyvault = { path = "../keyvault" }
 notify = { path = "../notify" }
 orchestrator = { path = "../orchestrator" }
 proto = { path = "../proto" }

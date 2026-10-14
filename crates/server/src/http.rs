@@ -23,14 +23,16 @@ pub struct AppState {
     pub shutdown: ShutdownListener,
 }
 
-pub fn router(state: AppState) -> Router {
-    Router::new()
+/// 运维接口，加上（启用时的）客户端接口 `api`。
+pub fn router(state: AppState, api: Option<Router>) -> Router {
+    let ops = Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
         .route("/version", get(version))
+        .with_state(state);
+    ops.merge(api.unwrap_or_default())
         .fallback(not_found)
         .layer(middleware::from_fn(api_version))
-        .with_state(state)
 }
 
 pub fn error(code: ErrorCode, message: impl Into<String>) -> Response {

@@ -58,6 +58,15 @@ async fn main() -> anyhow::Result<()> {
                 "shutdown = drain {}s, grace {}s",
                 cfg.shutdown.drain_secs, cfg.shutdown.grace_secs
             );
+            println!(
+                "api.enabled = {} (dev_sms = {})",
+                cfg.api.enabled, cfg.api.dev_sms
+            );
+            println!(
+                "worker.enabled = {} (sandbox provider {}, max {} concurrent runs)",
+                cfg.worker.enabled, cfg.sandbox.provider, cfg.worker.max_concurrent_runs
+            );
+            println!("push.apns = {}", cfg.push.apns.is_some());
             Ok(())
         }
     }

@@ -110,3 +110,68 @@ async fn health_version_and_graceful_shutdown() {
         "no longer listening"
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn client_api_is_mounted_when_enabled() {
+    let Some(t) = TestDb::new().await else { return };
+    let mut cfg = Config::parse(
+        r#"
+        [shutdown]
+        drain_secs = 0
+        [api]
+        enabled = true
+        dev_sms = true
+        "#,
+    )
+    .unwrap();
+    cfg.api_secrets = server::config::ApiSecrets {
+        access_token_seed: Some(
+            auth::signed::Signer25519::generate("a1")
+                .unwrap()
+                .seed_b64()
+                .to_string(),
+        ),
+        code_pepper: Some("ab".repeat(32)),
+        kms_key: Some("cd".repeat(32)),
+    };
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+    let db = t.db.clone();
+    let server = tokio::spawn(async move {
+        server::serve(&cfg, db, listener, async {
+            stop_rx.await.ok();
+        })
+        .await
+    });
+    let http = reqwest::Client::new();
+    let r = http.get(format!("{base}/v1/agents")).send().await.unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.headers()[VERSION_HEADER], "1");
+    let r = http
+        .post(format!("{base}/v1/auth/code"))
+        .json(&serde_json::json!({ "phone": "13800138000" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+    let r = http.get(format!("{base}/v1/me")).send().await.unwrap();
+    assert_eq!(r.status(), 401);
+    assert_eq!(
+        r.json::<ErrorBody>().await.unwrap().code,
+        ErrorCode::Unauthenticated
+    );
+    let r = http
+        .get(format!("{base}/v1/agents"))
+        .header(VERSION_HEADER, "0")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        r.status(),
+        426,
+        "old clients are turned away from the API too"
+    );
+    stop_tx.send(()).unwrap();
+    server.await.unwrap().unwrap();
+}

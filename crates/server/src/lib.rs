@@ -3,6 +3,7 @@
 //! 停机顺序：收到信号 → 就绪检查转为 503、后台任务停止领取新工作 → 等 `drain`（负载均衡摘除）
 //! → 停止接新连接，等进行中的请求 → 等后台任务收尾（最多 `grace`）→ 关闭数据库连接池。
 
+mod api;
 pub mod config;
 mod http;
 mod lifecycle;
@@ -48,10 +49,18 @@ pub async fn serve(
     if cfg.worker.enabled {
         workers::spawn(cfg, &db, &node_id, &mut background)?;
     }
-    let router = http::router(http::AppState {
-        db: db.clone(),
-        shutdown: shutdown.subscribe(),
-    });
+    let api = if cfg.api.enabled {
+        Some(api::build(cfg, &db, &mut background)?)
+    } else {
+        None
+    };
+    let router = http::router(
+        http::AppState {
+            db: db.clone(),
+            shutdown: shutdown.subscribe(),
+        },
+        api,
+    );
     let drain = cfg.drain();
     let mut draining = shutdown.subscribe();
     let server = axum::serve(listener, router).with_graceful_shutdown(async move {
