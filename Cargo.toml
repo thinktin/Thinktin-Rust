@@ -9,14 +9,25 @@ license = "UNLICENSED"
 publish = false
 
 [workspace.dependencies]
+aes-gcm = "0.11.1"
 anyhow = "1.0.104"
+axum = "0.8.9"
+base64 = "0.23.1"
+bytes = "1.12.1"
 clap = { version = "4.6.7", features = ["derive", "env"] }
+ed25519-dalek = "3.0.0"
+futures-util = "0.3.34"
+getrandom = "0.4.3"
 libc = "0.2.190"
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "stream", "json"] }
+secrecy = "0.10.3"
 serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.154"
+serde_json = { version = "1.0.154", features = ["raw_value"] }
 tempfile = "3.27.0"
 thiserror = "2.0.21"
 tokio = { version = "1.53.2", features = ["full"] }
 toml = "1.1.8"
 tracing = "0.1.44"
-tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
+url = "2.5.8"
+zeroize = { version = "1.9.1", features = ["derive"] }
