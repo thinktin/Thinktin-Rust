@@ -321,6 +321,36 @@ impl Tx<Worker> {
         .transpose()
     }
 
+    /// 用户还登录着、有推送令牌的设备。
+    pub async fn push_targets(
+        &mut self,
+        user: UserId,
+    ) -> Result<Vec<(DeviceId, PushChannelKind, String)>> {
+        let rows: Vec<(Uuid, String, String)> = sqlx::query_as(
+            "SELECT id, push_channel, push_token FROM devices \
+             WHERE user_id = $1 AND revoked_at IS NULL AND push_channel IS NOT NULL AND push_token IS NOT NULL \
+             ORDER BY last_seen_at DESC",
+        )
+        .bind(user.0)
+        .fetch_all(self.conn())
+        .await?;
+        rows.into_iter()
+            .map(|(id, channel, token)| Ok((id.into(), parse(&channel)?, token)))
+            .collect()
+    }
+
+    /// 推送通道说令牌失效了：清掉（只在令牌没被 App 更新过时清）。
+    pub async fn clear_push_token(&mut self, device: DeviceId, token: &str) -> Result<()> {
+        sqlx::query(
+            "UPDATE devices SET push_channel = NULL, push_token = NULL WHERE id = $1 AND push_token = $2",
+        )
+        .bind(device.0)
+        .bind(token)
+        .execute(self.conn())
+        .await?;
+        Ok(())
+    }
+
     /// 吊销用户的全部设备和会话（冻结、注销）。返回吊销的会话数。
     pub async fn revoke_user_sessions(&mut self, user: UserId, reason: &str) -> Result<u64> {
         let done = sqlx::query(

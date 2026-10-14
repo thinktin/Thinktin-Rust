@@ -1,0 +1,166 @@
+//! 出箱投递：按设备通道发送、失效令牌清理、重试与放弃、过期。需要 DATABASE_URL（没有时跳过）。
+
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use async_trait::async_trait;
+use notify::{PushChannel, PushKind, PushMessage, PushOutcome, PushTarget};
+use orchestrator::outbox::{Dispatcher, DispatcherConfig, push_item};
+use proto::domain::{DevicePlatform, PushChannelKind, UserId};
+use store::testing::TestDb;
+
+#[derive(Default)]
+struct Scripted {
+    outcomes: Mutex<HashMap<String, PushOutcome>>,
+    sent: Mutex<Vec<String>>,
+}
+
+impl Scripted {
+    fn set(&self, token: &str, outcome: PushOutcome) {
+        self.outcomes.lock().unwrap().insert(token.into(), outcome);
+    }
+    fn sent(&self) -> Vec<String> {
+        std::mem::take(&mut self.sent.lock().unwrap())
+    }
+}
+
+#[async_trait]
+impl PushChannel for Scripted {
+    fn name(&self) -> &'static str {
+        "scripted"
+    }
+    async fn send(&self, token: &str, _message: &PushMessage) -> PushOutcome {
+        self.sent.lock().unwrap().push(token.into());
+        self.outcomes
+            .lock()
+            .unwrap()
+            .get(token)
+            .cloned()
+            .unwrap_or(PushOutcome::Delivered { id: None })
+    }
+}
+
+fn message(ttl: Option<Duration>) -> PushMessage {
+    PushMessage {
+        kind: PushKind::RunFinished,
+        title: "Claude".into(),
+        body: "Daily news is ready".into(),
+        thread_id: Some("run-1".into()),
+        collapse_id: None,
+        target: PushTarget::default(),
+        ttl,
+    }
+}
+
+async fn user_with_devices(t: &TestDb, devices: &[(PushChannelKind, &str)]) -> UserId {
+    let mut w = t.db.worker().await.unwrap();
+    let (user, _) = w.upsert_user_by_phone("+8613800000001").await.unwrap();
+    for (kind, token) in devices {
+        w.create_device(user.id, DevicePlatform::Ios, "d", Some((*kind, token)))
+            .await
+            .unwrap();
+    }
+    w.commit().await.unwrap();
+    user.id
+}
+
+async fn enqueue(t: &TestDb, user: UserId, msg: &PushMessage, key: &str) {
+    let mut tx = t.db.tenant(user).await.unwrap();
+    assert!(
+        tx.enqueue_outbox(&push_item(msg, Some(key.into())))
+            .await
+            .unwrap()
+    );
+    tx.commit().await.unwrap();
+}
+
+fn dispatcher(t: &TestDb, apns: Arc<Scripted>, cfg: DispatcherConfig) -> Dispatcher {
+    Dispatcher::new(t.db.clone(), "node-a", cfg).with_channel(PushChannelKind::Apns, apns)
+}
+
+#[tokio::test]
+async fn delivers_to_devices_and_clears_dead_tokens() {
+    let Some(t) = TestDb::new().await else { return };
+    let user = user_with_devices(
+        &t,
+        &[
+            (PushChannelKind::Apns, "tok-live"),
+            (PushChannelKind::Apns, "tok-dead"),
+            (PushChannelKind::Hms, "tok-huawei"),
+        ],
+    )
+    .await;
+    let apns = Arc::new(Scripted::default());
+    apns.set(
+        "tok-dead",
+        PushOutcome::InvalidToken {
+            reason: "Unregistered".into(),
+        },
+    );
+    let d = dispatcher(&t, apns.clone(), DispatcherConfig::default());
+    enqueue(&t, user, &message(None), "run_finished:1").await;
+
+    let report = d.tick().await.unwrap();
+    assert_eq!(
+        (report.delivered, report.retried, report.dropped),
+        (1, 0, 0)
+    );
+    let mut sent = apns.sent();
+    sent.sort();
+    assert_eq!(sent, ["tok-dead", "tok-live"], "no HMS channel configured");
+    let mut w = t.db.worker().await.unwrap();
+    let targets: Vec<String> = w
+        .push_targets(user)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|(_, _, tok)| tok)
+        .collect();
+    assert!(!targets.contains(&"tok-dead".to_string()));
+    w.rollback().await.unwrap();
+    assert_eq!(d.tick().await.unwrap(), Default::default(), "sent once");
+}
+
+#[tokio::test]
+async fn retries_then_gives_up_and_drops_expired() {
+    let Some(t) = TestDb::new().await else { return };
+    let user = user_with_devices(&t, &[(PushChannelKind::Apns, "tok")]).await;
+    let apns = Arc::new(Scripted::default());
+    apns.set(
+        "tok",
+        PushOutcome::Retry {
+            after: None,
+            reason: "503".into(),
+        },
+    );
+    let d = dispatcher(
+        &t,
+        apns.clone(),
+        DispatcherConfig {
+            max_attempts: 2,
+            backoff_base: Duration::ZERO,
+            ..DispatcherConfig::default()
+        },
+    );
+    enqueue(&t, user, &message(None), "k1").await;
+    assert_eq!(d.tick().await.unwrap().retried, 1);
+    assert_eq!(
+        d.tick().await.unwrap().dropped,
+        1,
+        "gave up after 2 attempts"
+    );
+    assert_eq!(apns.sent().len(), 2);
+
+    // 退避期内不再领取。
+    let slow = dispatcher(&t, apns.clone(), DispatcherConfig::default());
+    enqueue(&t, user, &message(None), "k2").await;
+    assert_eq!(slow.tick().await.unwrap().retried, 1);
+    assert_eq!(slow.tick().await.unwrap(), Default::default());
+
+    // 过了有效期的通知直接丢弃（比如审批已经超时）。
+    enqueue(&t, user, &message(Some(Duration::ZERO)), "k3").await;
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert_eq!(slow.tick().await.unwrap().dropped, 1);
+    assert!(apns.sent().len() == 1, "only the k2 attempt was sent");
+}
