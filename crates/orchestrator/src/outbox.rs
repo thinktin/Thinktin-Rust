@@ -214,14 +214,17 @@ impl Dispatcher {
             let result = match settle {
                 Settle::Done(None) => {
                     report.delivered += 1;
+                    metrics::counter!("thinktin_push_total", "result" => "delivered").increment(1);
                     w.finish_outbox(item.id, &self.node_id, None).await
                 }
                 Settle::Done(Some(reason)) => {
                     report.dropped += 1;
+                    metrics::counter!("thinktin_push_total", "result" => "dropped").increment(1);
                     w.finish_outbox(item.id, &self.node_id, Some(&reason)).await
                 }
                 Settle::Retry(reason, _) if item.attempts >= self.cfg.max_attempts => {
                     report.dropped += 1;
+                    metrics::counter!("thinktin_push_total", "result" => "dropped").increment(1);
                     w.finish_outbox(
                         item.id,
                         &self.node_id,
@@ -234,6 +237,7 @@ impl Dispatcher {
                 }
                 Settle::Retry(reason, after) => {
                     report.retried += 1;
+                    metrics::counter!("thinktin_push_total", "result" => "retried").increment(1);
                     let delay = after.max(self.backoff(item.attempts));
                     let at = Utc::now() + chrono::Duration::from_std(delay).unwrap_or_default();
                     w.retry_outbox(item.id, &self.node_id, &reason, at).await

@@ -24,6 +24,7 @@ use store::{Db, NewApproval, RunChange, RunRecord};
 use tokio::sync::{Semaphore, watch};
 use tokio::task::JoinSet;
 use tokio::time::Instant;
+use tracing::Instrument;
 use tracing::{debug, error, info, warn};
 
 use crate::outbox::{Notice, notify};
@@ -88,6 +89,18 @@ pub enum Outcome {
     LeaseLost,
     /// 这个副本要停机：转入退避，别的副本马上接着跑。
     Interrupted,
+}
+
+/// 指标里的结果标签（取值固定，基数小）。
+fn outcome_label(o: &Outcome) -> &'static str {
+    match o {
+        Outcome::Succeeded { .. } => "succeeded",
+        Outcome::Failed(_) => "failed",
+        Outcome::Retry(_) => "retry",
+        Outcome::Cancelled => "cancelled",
+        Outcome::LeaseLost => "lease_lost",
+        Outcome::Interrupted => "interrupted",
+    }
 }
 
 pub struct Executor {
@@ -241,15 +254,30 @@ impl Executor {
         Ok(n)
     }
 
-    /// 执行一个已领取（启动中）的运行，直到结束。
+    /// 执行一个已领取（启动中）的运行，直到结束。这次执行的日志都挂在一个 `run` span 下（2.8）。
     pub async fn execute(&self, rec: RunRecord, stop: watch::Receiver<bool>) {
-        info!(run = %rec.run.id, instance = %rec.run.instance_id, attempt = rec.run.attempt, "run starting");
-        let (state, outcome) = match self.start(&rec).await {
-            Ok(exec) => exec.drive(stop).await,
-            Err(outcome) => (rec.run.state, outcome),
-        };
-        info!(run = %rec.run.id, ?outcome, "run finished");
-        self.finish(&rec, state, outcome).await;
+        let span = tracing::info_span!(
+            "run",
+            run = %rec.run.id,
+            instance = %rec.run.instance_id,
+            attempt = rec.run.attempt
+        );
+        async {
+            let started = std::time::Instant::now();
+            info!("run starting");
+            let (state, outcome) = match self.start(&rec).await {
+                Ok(exec) => exec.drive(stop).await,
+                Err(outcome) => (rec.run.state, outcome),
+            };
+            info!(?outcome, "run finished");
+            let label = outcome_label(&outcome);
+            metrics::counter!("thinktin_run_attempts_total", "outcome" => label).increment(1);
+            metrics::histogram!("thinktin_run_attempt_seconds", "outcome" => label)
+                .record(started.elapsed().as_secs_f64());
+            self.finish(&rec, state, outcome).await;
+        }
+        .instrument(span)
+        .await
     }
 
     async fn start<'a>(&'a self, rec: &'a RunRecord) -> Result<Exec<'a>, Outcome> {

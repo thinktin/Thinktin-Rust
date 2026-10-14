@@ -33,6 +33,7 @@ pub fn router(state: AppState, api: Option<Router>) -> Router {
     ops.merge(api.unwrap_or_default())
         .fallback(not_found)
         .layer(middleware::from_fn(api_version))
+        .layer(middleware::from_fn(crate::observability::track))
 }
 
 pub fn error(code: ErrorCode, message: impl Into<String>) -> Response {

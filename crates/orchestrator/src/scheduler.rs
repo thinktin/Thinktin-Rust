@@ -134,6 +134,7 @@ impl Scheduler {
                 Some(r) => {
                     debug!(run = %r.id, plan = %d.plan.id, %fire, "plan run created");
                     report.runs_created += 1;
+                    metrics::counter!("thinktin_scheduled_runs_total").increment(1);
                 }
                 None => report.duplicates += 1,
             }

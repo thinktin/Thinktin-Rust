@@ -7,6 +7,7 @@ mod api;
 pub mod config;
 mod http;
 mod lifecycle;
+pub mod observability;
 mod workers;
 
 use std::future::{Future, IntoFuture};
@@ -68,6 +69,24 @@ pub async fn serve_with(
     let addr = listener.local_addr()?;
     let shutdown = ShutdownSignal::new();
     let mut background = Background::new(shutdown.clone());
+    if let Some(addr) = cfg.observability.metrics_listen {
+        match observability::handle() {
+            Some(handle) => {
+                let listener = TcpListener::bind(addr)
+                    .await
+                    .with_context(|| format!("metrics listen on {addr}"))?;
+                info!(addr = %listener.local_addr()?, "metrics endpoint started");
+                let app = observability::router(handle);
+                background.spawn("metrics", move |mut stop| async move {
+                    axum::serve(listener, app)
+                        .with_graceful_shutdown(async move { stop.wait().await })
+                        .await?;
+                    Ok(())
+                });
+            }
+            None => warn!("metrics recorder unavailable, /metrics is not served"),
+        }
+    }
     if cfg.worker.enabled {
         workers::spawn(cfg, &db, &node_id, &mut background)?;
     }

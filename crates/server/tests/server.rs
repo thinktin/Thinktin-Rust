@@ -136,6 +136,12 @@ async fn client_api_is_mounted_when_enabled() {
     };
     let blobs = tempfile::tempdir().unwrap();
     cfg.storage.local_root = blobs.path().to_path_buf();
+    // 指标端口：先占一个空闲端口再放掉，交给服务端监听。
+    let metrics_addr = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    cfg.observability.metrics_listen = Some(metrics_addr);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
@@ -173,6 +179,32 @@ async fn client_api_is_mounted_when_enabled() {
         r.status(),
         426,
         "old clients are turned away from the API too"
+    );
+    // 指标按路由模板记，不在业务端口上暴露。
+    let metrics = http
+        .get(format!("http://{metrics_addr}/metrics"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        metrics.contains("thinktin_http_requests_total{")
+            && metrics.contains("route=\"/v1/agents\""),
+        "{metrics}"
+    );
+    assert!(
+        metrics.contains("thinktin_http_request_seconds_bucket"),
+        "{metrics}"
+    );
+    assert_eq!(
+        http.get(format!("{base}/metrics"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        404
     );
     stop_tx.send(()).unwrap();
     server.await.unwrap().unwrap();

@@ -223,6 +223,8 @@ impl ApiError {
 
     fn into_response(self, flavor: Flavor) -> Response {
         let status = self.status();
+        metrics::counter!("thinktin_llm_rejections_total", "kind" => format!("{:?}", self.kind).to_lowercase())
+            .increment(1);
         let body = match flavor {
             Flavor::Anthropic => {
                 let ty = match self.kind {
@@ -949,6 +951,21 @@ impl Finisher {
                 "usage unknown or incomplete; charged a conservative estimate"
             );
         }
+        let outcome_label = serde_json::to_value(self.record.outcome)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .unwrap_or_default();
+        metrics::counter!(
+            "thinktin_llm_requests_total",
+            "endpoint" => self.record.endpoint,
+            "outcome" => outcome_label,
+            "vendor" => self.record.vendor.clone()
+        )
+        .increment(1);
+        metrics::counter!("thinktin_llm_charged_tokens_total", "vendor" => self.record.vendor.clone())
+            .increment(self.record.charged_tokens);
+        metrics::histogram!("thinktin_llm_request_seconds", "endpoint" => self.record.endpoint)
+            .record(self.record.duration_ms as f64 / 1000.0);
         self.gw.usage.record(self.record.clone());
     }
 }

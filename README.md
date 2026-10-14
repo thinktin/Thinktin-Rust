@@ -44,6 +44,7 @@ ThinkTin 平台：托管多个开源 agent，用户领养后常驻云端、按�
   `THINKTIN_SANDBOX_TOKEN_SEED`（`llm-gw keygen` 生成，模型网关配对应公钥）和
   `THINKTIN_KMS_KEY`（产出物按用户 DEK 加密）；本地开发用
   `[sandbox] provider = "local"`，`manifest_override` 可以换成假 agent 的清单联调。
+  `[observability] metrics_listen` 打开 Prometheus 指标端口（只给内网抓取）。
   国内 Android 推送配 `[push.jpush] app_key`，Master Secret 走环境变量 `THINKTIN_JPUSH_MASTER_SECRET`。
   产出物放在 `[storage] local_root`（默认 `.thinktin/blobs`，接口和后台任务要看到同一个目录）。
   `[api] enabled = true` 时挂上客户端接口，需要 `THINKTIN_ACCESS_TOKEN_SEED`（访问令牌签名种子）、

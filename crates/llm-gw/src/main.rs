@@ -81,6 +81,9 @@ enum Command {
         /// 日志输出 JSON
         #[arg(long)]
         log_json: bool,
+        /// Prometheus `/metrics` 的监听地址（只给内网的抓取方）
+        #[arg(long)]
+        metrics_listen: Option<SocketAddr>,
     },
     /// 生成沙箱令牌签名密钥，打印私钥种子和公钥
     Keygen {
@@ -176,6 +179,7 @@ fn main() -> anyhow::Result<()> {
             max_connections_per_ip,
             budget_utc_offset_hours,
             log_json,
+            metrics_listen,
         } => {
             let filter = tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "info".into());
@@ -265,6 +269,27 @@ fn main() -> anyhow::Result<()> {
                     client,
                     options,
                 };
+                if let Some(addr) = metrics_listen {
+                    let handle = metrics_exporter_prometheus::PrometheusBuilder::new()
+                        .install_recorder()
+                        .context("installing the metrics recorder")?;
+                    let l = tokio::net::TcpListener::bind(addr)
+                        .await
+                        .with_context(|| format!("bind {addr}"))?;
+                    let app = axum::Router::new().route(
+                        "/metrics",
+                        axum::routing::get(move || {
+                            let h = handle.clone();
+                            async move { h.render() }
+                        }),
+                    );
+                    tokio::spawn(async move {
+                        if let Err(e) = axum::serve(l, app).await {
+                            tracing::error!(error = %e, "metrics endpoint stopped");
+                        }
+                    });
+                    tracing::info!(%addr, "metrics endpoint started");
+                }
                 let listener = tokio::net::TcpListener::bind(listen)
                     .await
                     .with_context(|| format!("bind {listen}"))?;

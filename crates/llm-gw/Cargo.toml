@@ -17,6 +17,8 @@ futures-util.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
 keyvault = { path = "../keyvault" }
+metrics.workspace = true
+metrics-exporter-prometheus.workspace = true
 proto = { path = "../proto" }
 reqwest.workspace = true
 serde.workspace = true

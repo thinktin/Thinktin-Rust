@@ -23,6 +23,7 @@ pub struct Config {
     pub storage: Storage,
     pub push: Push,
     pub compliance: Compliance,
+    pub observability: Observability,
     /// 沙箱令牌签名私钥种子（base64url），只从环境变量 THINKTIN_SANDBOX_TOKEN_SEED 读。
     #[serde(skip)]
     pub sandbox_token_seed: Option<String>,
@@ -49,6 +50,7 @@ impl std::fmt::Debug for Config {
             .field("storage", &self.storage)
             .field("push", &self.push)
             .field("compliance", &self.compliance)
+            .field("observability", &self.observability)
             .field("sandbox_token_seed", &self.sandbox_token_seed.is_some())
             .field("jpush_master_secret", &self.jpush_master_secret.is_some())
             .field("api_secrets", &self.api_secrets)
@@ -139,6 +141,14 @@ pub struct Sandbox {
     pub manifest_override: Option<String>,
     /// 沙箱令牌签名密钥的 kid（模型网关按它找公钥）。
     pub token_kid: String,
+}
+
+/// 可观测性（2.8）。
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Observability {
+    /// Prometheus `/metrics` 的监听地址（只给内网的抓取方）；不配就不提供。
+    pub metrics_listen: Option<SocketAddr>,
 }
 
 /// 合规（16.3）：AI 生成内容标识、推送的内容安全过滤。
@@ -303,6 +313,7 @@ impl Default for Config {
             storage: Storage::default(),
             push: Push::default(),
             compliance: Compliance::default(),
+            observability: Observability::default(),
             sandbox_token_seed: None,
             jpush_master_secret: None,
             api_secrets: ApiSecrets::default(),
