@@ -108,6 +108,8 @@ impl Agent {
             ("session/resume", Some(id)) => {
                 let sid = params["sessionId"].as_str().unwrap_or_default();
                 if self.sessions.contains(sid) {
+                    // 和真实 agent 一样，接回会话时用这次给的 MCP 服务器。
+                    self.mcp_servers = params["mcpServers"].as_array().cloned().unwrap_or_default();
                     // 像 Hermes 一样在 resume 时也重放历史，外加一条非历史的更新。
                     update(
                         sid,
@@ -127,6 +129,7 @@ impl Agent {
                 if !self.sessions.contains(&sid) {
                     return reply_err(id, -32002, "session not found");
                 }
+                self.mcp_servers = params["mcpServers"].as_array().cloned().unwrap_or_default();
                 update(
                     &sid,
                     json!({"sessionUpdate": "user_message_chunk", "content": {"type": "text", "text": "old question"}}),

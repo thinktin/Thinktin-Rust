@@ -55,6 +55,8 @@ impl ToolResult {
 
 pub struct Bridge {
     socket: PathBuf,
+    /// socket 放在临时目录时，退出时连目录一起删。
+    private_dir: Option<PathBuf>,
     tools: RwLock<Vec<PlatformTool>>,
     pending: Mutex<HashMap<String, oneshot::Sender<ToolResult>>>,
     /// 当前正在执行的那一轮。
@@ -74,10 +76,26 @@ impl Bridge {
         tools: Vec<PlatformTool>,
         timeout: Duration,
     ) -> anyhow::Result<Arc<Self>> {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::create_dir_all(dir)?;
-        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
-        let socket = dir.join("platform-tools.sock");
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+        let mut socket = dir.join("platform-tools.sock");
+        let mut private_dir = None;
+        if socket.as_os_str().len() >= MAX_SOCKET_PATH {
+            // Unix socket 路径有长度上限（约 108 字节）；HOME 很深时改放到临时目录下一个只有本用户能进的目录里。
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.subsec_nanos())
+                .unwrap_or_default();
+            let short = std::env::temp_dir().join(format!("tt-{}-{nanos:x}", std::process::id()));
+            std::fs::DirBuilder::new()
+                .mode(0o700)
+                .create(&short)
+                .with_context(|| format!("creating {}", short.display()))?;
+            socket = short.join("bridge.sock");
+            private_dir = Some(short);
+        } else {
+            std::fs::create_dir_all(dir)?;
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+        }
         let _ = std::fs::remove_file(&socket);
         let listener =
             UnixListener::bind(&socket).with_context(|| format!("binding {}", socket.display()))?;
@@ -85,6 +103,7 @@ impl Bridge {
         let (changed, _) = broadcast::channel(8);
         let bridge = Arc::new(Self {
             socket,
+            private_dir,
             tools: RwLock::new(Vec::new()),
             pending: Mutex::default(),
             run: Mutex::default(),
@@ -288,8 +307,14 @@ impl Bridge {
 impl Drop for Bridge {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.socket);
+        if let Some(dir) = &self.private_dir {
+            let _ = std::fs::remove_dir(dir);
+        }
     }
 }
+
+/// socket 路径的长度上限（sockaddr_un.sun_path 是 108 字节，留点余量）。
+const MAX_SOCKET_PATH: usize = 100;
 
 // ---------- mcp-bridge 子命令：agent 启动的 MCP 服务器 ----------
 
