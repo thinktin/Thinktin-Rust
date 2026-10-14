@@ -37,6 +37,7 @@
 | 10.3 | 国内 Android 推送：经极光推送 REST v3 覆盖华为、荣耀、小米、OPPO、vivo 厂商通道（设备推送通道 `unipush`、令牌是 registration_id）；按系统消息发，只带 id；各厂商消息分类参数可配置；失效令牌、限频、配额、鉴权错误分别处理；`[push.jpush]` 配置 | `crates/notify/src/jpush.rs` |
 | 10.4 | 收件箱：每条通知（运行结果、审批、计划确认）和推送在同一个事务里写进收件箱，按去重键只记一条；推送带收件箱 id；审批处理完自动已读；流水线步骤不单独通知；接口分页、未读数、按 id 或“到某条为止”标已读、标未读、删除 | `crates/store/src/inbox.rs`、`crates/orchestrator/src/outbox.rs`（`Notice`）、`crates/gateway/src/routes/inbox.rs` |
 | 9.2–9.5（接库） | 模型网关接控制面数据库：`serve --database-url` 用 `thinktin_llmgw` 角色读实例、路由、凭证密文、用户包裹 DEK、授权状态（短时缓存，沙箱对不上时重读）；用量批量写进用量表（带运行授权，执行器按它算预算）；按 key 每日预算以用量表汇总为准（多副本共享） | `crates/llm-gw/src/pg.rs`、`crates/store/src/llmgw.rs` |
+| 2.1（Rust 部分） | CI：格式、clippy、全部测试（Postgres 服务容器，`THINKTIN_REQUIRE_DB=1` 保证集成测试真跑）、客户端核心绑定冒烟；手动触发的 xcframework / Android 库打包 | `.github/workflows/` |
 | 15.3 | agent 加固基线：每个内置 agent 关自更新、遥测、技能 / 插件市场，控制台只听回环（Hermes 新增：不在运行时装 Node、技能内联命令不执行、不跑后台技能整理，真实 Hermes 冒烟通过）；测试逐个守住，新接 agent 不登记会失败 | [基线](agent-hardening.md) |
 | 17.1 | 端到端测试：真实控制面（接口 + 后台任务）+ 本地沙箱 + agent-shim + 按 Pi 方式配置的假 agent + 接数据库的模型网关 + 模拟厂商，用 client-core 走完登录、存 key、领养、配别名、下任务、事件流、用量、收件箱；执行器把实例的模型别名（按授权收窄）交给 agent | `crates/e2e/tests/main_chain.rs` |
 | 15.2 | 租户隔离测试：RLS 覆盖检查（新表忘了开会失败）、36 个跨用户访问用例、模型网关的跨用户 / 换沙箱 / 吊销 / 收窄授权（网关现在按授权的别名范围放行） | [审计记录](security-audit.md) |
