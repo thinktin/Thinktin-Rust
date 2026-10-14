@@ -1289,6 +1289,11 @@ async fn other_users_objects_are_invisible() {
         (Method::DELETE, format!("/v1/instances/{inst}"), None),
         (Method::GET, format!("/v1/instances/{inst}/routes"), None),
         (
+            Method::POST,
+            format!("/v1/instances/{inst}/version"),
+            Some(json!({})),
+        ),
+        (
             Method::PUT,
             format!("/v1/instances/{inst}/routes"),
             Some(json!({ "routes": [] })),
@@ -1441,4 +1446,44 @@ async fn other_users_objects_are_invisible() {
         )
         .await;
     assert_eq!(st, StatusCode::OK);
+}
+
+/// 升级、回滚（6.7）：换到存在的版本，下次唤醒时重建；不存在的版本拒绝。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn instance_versions_can_be_switched() {
+    let Some(a) = api().await else { return };
+    let u = a.login("13800138800").await;
+    let tok = Some(u.access.as_str());
+    let (_, agents) = a.call(Method::GET, "/v1/agents", None, None).await;
+    let claude = agents["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|x| x["id"] == "claude")
+        .unwrap()
+        .clone();
+    assert_eq!(claude["versions"][0], claude["version"], "current first");
+    let inst = a.adopt(&u).await;
+    let (st, body) = a
+        .call(
+            Method::POST,
+            &format!("/v1/instances/{inst}/version"),
+            tok,
+            Some(json!({ "version": "0.0.0-nope" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    let (st, body) = a
+        .call(
+            Method::POST,
+            &format!("/v1/instances/{inst}/version"),
+            tok,
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(st, StatusCode::ACCEPTED, "{body}");
+    assert_eq!(body["agent_version"], claude["version"]);
+    let mut w = a.t.db.worker().await.unwrap();
+    assert!(w.instance_runtime(inst).await.unwrap().rebuild_pending);
+    w.rollback().await.unwrap();
 }

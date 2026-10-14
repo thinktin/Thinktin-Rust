@@ -35,6 +35,8 @@ pub struct InstanceRuntime {
     pub snapshot_id: Option<String>,
     pub limits: InstanceLimits,
     pub last_active_at: DateTime<Utc>,
+    /// 换了模板版本，下次唤醒时要按新版本重建沙箱。
+    pub rebuild_pending: bool,
 }
 
 #[derive(sqlx::FromRow)]
@@ -84,6 +86,7 @@ struct RuntimeRow {
     snapshot_id: Option<String>,
     limits: serde_json::Value,
     last_active_at: DateTime<Utc>,
+    rebuild_pending: bool,
 }
 
 impl RuntimeRow {
@@ -101,6 +104,7 @@ impl RuntimeRow {
             snapshot_id: self.snapshot_id,
             limits: from_json(self.limits, "instance limits")?,
             last_active_at: self.last_active_at,
+            rebuild_pending: self.rebuild_pending,
         })
     }
 }
@@ -108,7 +112,8 @@ impl RuntimeRow {
 macro_rules! runtime_columns {
     () => {
         "id, user_id, agent_id, agent_version, harness, state, sandbox_id, \
-         host(sandbox_address) AS sandbox_address, workspace_id, snapshot_id, limits, last_active_at"
+         host(sandbox_address) AS sandbox_address, workspace_id, snapshot_id, limits, last_active_at, \
+         rebuild_pending"
     };
 }
 
@@ -177,6 +182,24 @@ impl Tx<Tenant> {
     }
 
     /// 标记删除。沙箱和工作区由后台的生命周期管理回收。
+    /// 换模板版本（升级或回滚）：记下新版本，下次唤醒时重建沙箱。版本是否存在由调用方核对。
+    pub async fn request_instance_version(
+        &mut self,
+        id: InstanceId,
+        version: &str,
+    ) -> Result<Instance> {
+        let row: Option<Row> = sqlx::query_as(concat!(
+            "UPDATE instances SET agent_version = $2, rebuild_pending = true, updated_at = now() \
+             WHERE id = $1 AND state <> 'deleted' RETURNING ",
+            columns!()
+        ))
+        .bind(id.0)
+        .bind(version)
+        .fetch_optional(self.conn())
+        .await?;
+        row.ok_or(Error::NotFound)?.into_instance()
+    }
+
     pub async fn delete_instance(&mut self, id: InstanceId) -> Result<()> {
         let done = sqlx::query(
             "UPDATE instances SET state = 'deleted', deleted_at = now(), updated_at = now() \
@@ -350,6 +373,15 @@ impl Tx<Worker> {
     }
 
     /// 升级、回滚模板版本（重建时生效）。
+    /// 按新版本重建完成。
+    pub async fn clear_rebuild_pending(&mut self, id: InstanceId) -> Result<()> {
+        sqlx::query("UPDATE instances SET rebuild_pending = false WHERE id = $1")
+            .bind(id.0)
+            .execute(self.conn())
+            .await?;
+        Ok(())
+    }
+
     pub async fn set_instance_version(
         &mut self,
         id: InstanceId,

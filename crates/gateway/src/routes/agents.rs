@@ -15,6 +15,8 @@ pub async fn list() -> Json<Value> {
                 "sites": m.agent.sites,
                 "harnesses": m.harnesses.iter().map(|h| h.id.clone()).collect::<Vec<_>>(),
                 "default_harness": m.default_harness().id,
+                // 可以用的版本，当前版本在前：实例的版本落后时提示升级，也可以回滚到旧版本。
+                "versions": catalog::builtin_versions(&m.agent.id),
             })
         })
         .collect();

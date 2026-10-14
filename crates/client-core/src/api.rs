@@ -84,6 +84,9 @@ pub struct AgentInfo {
     pub sites: Vec<String>,
     pub harnesses: Vec<String>,
     pub default_harness: String,
+    /// 可以用的版本，当前版本在前。
+    #[serde(default)]
+    pub versions: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -467,6 +470,20 @@ impl Api {
             Method::PATCH,
             &format!("/v1/instances/{id}"),
             Some(&json!({ "name": name })),
+        )
+        .await
+    }
+
+    /// 换模板版本（不给就是升级到当前版本）：下次唤醒时重建沙箱，工作区保留。
+    pub async fn set_instance_version(
+        &self,
+        id: InstanceId,
+        version: Option<&str>,
+    ) -> Result<Instance> {
+        self.json(
+            Method::POST,
+            &format!("/v1/instances/{id}/version"),
+            Some(&json!({ "version": version })),
         )
         .await
     }

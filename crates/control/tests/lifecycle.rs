@@ -311,3 +311,63 @@ async fn sweep_pauses_archives_and_purges() {
     );
     assert_eq!(lc.sweep().await.unwrap().purged, 0);
 }
+
+/// 升级、回滚（6.7）：换了版本的实例下次唤醒时按新版本重建沙箱，工作区保留。
+#[tokio::test]
+async fn version_changes_rebuild_on_the_next_wake() {
+    let Some(e) = env().await else { return };
+    let lc = lifecycle(&e, LifecycleConfig::default());
+    let inst = lc.adopt(e.user, "user:d", "pi", None, "Pi").await.unwrap();
+    let rt = lc.ensure_running(inst.id).await.unwrap();
+    let old = rt.sandbox_id.clone().unwrap();
+    e.provider
+        .write_file(&SandboxId(old.clone()), "workspace/notes.md", b"keep me")
+        .await
+        .unwrap();
+    // 没换版本时唤醒不重建。
+    assert_eq!(
+        lc.ensure_running(inst.id).await.unwrap().sandbox_id,
+        Some(old.clone())
+    );
+
+    // 不存在的版本：拒绝重建，旧沙箱不动。
+    let mut t = e.t.db.tenant(e.user).await.unwrap();
+    t.request_instance_version(inst.id, "0.0.0-missing")
+        .await
+        .unwrap();
+    t.commit().await.unwrap();
+    assert!(matches!(
+        lc.ensure_running(inst.id).await,
+        Err(Error::UnknownVersion { .. })
+    ));
+    assert_eq!(
+        sandbox_state(&e.provider, &old).await,
+        Some(SandboxState::Running)
+    );
+
+    let current = catalog::builtin("pi").unwrap().agent.version;
+    let mut t = e.t.db.tenant(e.user).await.unwrap();
+    let i = t.request_instance_version(inst.id, &current).await.unwrap();
+    assert_eq!(i.agent_version, current);
+    t.commit().await.unwrap();
+    let rt = lc.ensure_running(inst.id).await.unwrap();
+    let new = rt.sandbox_id.clone().unwrap();
+    assert_ne!(new, old, "a fresh sandbox from the template");
+    assert!(!rt.rebuild_pending);
+    assert_eq!(
+        sandbox_state(&e.provider, &old).await,
+        None,
+        "old one destroyed"
+    );
+    let kept = e
+        .provider
+        .read_file(&SandboxId(new.clone()), "workspace/notes.md")
+        .await
+        .unwrap();
+    assert_eq!(kept, b"keep me", "the workspace volume survives");
+    // 之后照常唤醒，不再重建。
+    assert_eq!(
+        lc.ensure_running(inst.id).await.unwrap().sandbox_id,
+        Some(new)
+    );
+}

@@ -7,7 +7,7 @@
 
 | WBS | 内容 | 位置 |
 |---|---|---|
-| 6.7（部分） | Agent 清单格式、校验、内置清单（Claude 两种接入、Codex、Pi、OpenClaw、Hermes） | `crates/catalog` |
+| 6.7 | Agent 清单格式、校验、内置清单（Claude 两种接入、Codex、Pi、OpenClaw、Hermes）；版本锁定（实例锁在领养时的版本）、旧版本保留（换新版时旧清单进 `manifests/archive`）、升级与回滚（`POST /v1/instances/{id}/version`，下次唤醒按新版本重建沙箱，工作区保留） | `crates/catalog`、`crates/control` |
 | 6.9、6.10、6.11、6.13 | agent-shim：进程管理、ACP 客户端、Claude Code stream-json、配置注入、审批转发、事件上报 | `crates/agent-shim` |
 | 17.2 | 真实 agent 冒烟测试集（工具调用、审批、会话接回、取消、出网审计、断网运行） | `tools/smoke` |
 | 9.1 | 密钥库：按用户 DEK 的信封加密 | `crates/keyvault` |

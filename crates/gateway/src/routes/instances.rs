@@ -83,6 +83,48 @@ pub async fn update(
     Ok(Json(instance))
 }
 
+#[derive(Deserialize)]
+pub struct VersionReq {
+    /// 不给就是当前上架的版本（升级）；给旧版本就是回滚。
+    version: Option<String>,
+}
+
+/// 换模板版本（6.7）：下次唤醒时按新版本重建沙箱，工作区保留。正在跑的任务不受影响。
+pub async fn set_version(
+    State(s): State<AppState>,
+    Authed(who): Authed,
+    Path(id): Path<String>,
+    ApiJson(req): ApiJson<VersionReq>,
+) -> ApiResult<(StatusCode, Json<Instance>)> {
+    let id: InstanceId = parse_id(&id, "instance")?;
+    let mut t = s.db.tenant(who.user).await?;
+    let cur = t.instance(id).await?;
+    let version = match req.version {
+        Some(v) => v,
+        None => s
+            .templates
+            .current(&cur.agent_id)
+            .map(|m| m.agent.version)
+            .ok_or_else(|| crate::ApiError::invalid("this agent is no longer offered"))?,
+    };
+    if s.templates.manifest(&cur.agent_id, &version).is_none() {
+        return Err(crate::ApiError::invalid(format!(
+            "version {version} of {} is not available",
+            cur.agent_id
+        )));
+    }
+    let instance = t.request_instance_version(id, &version).await?;
+    t.audit(
+        &who.actor(),
+        "instance.version",
+        Some(&id.to_string()),
+        &json!({ "from": cur.agent_version, "to": version }),
+    )
+    .await?;
+    t.commit().await?;
+    Ok((StatusCode::ACCEPTED, Json(instance)))
+}
+
 /// 删除：取消没结束的运行、吊销授权、标记删除；沙箱和工作区卷由后台回收。
 pub async fn delete(
     State(s): State<AppState>,

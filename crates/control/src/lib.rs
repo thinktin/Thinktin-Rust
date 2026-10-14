@@ -52,6 +52,13 @@ pub trait Templates: Send + Sync {
     fn current(&self, agent_id: &str) -> Option<Manifest>;
     /// 指定版本；下架或不存在时返回 None。
     fn manifest(&self, agent_id: &str, version: &str) -> Option<Manifest>;
+    /// 可以用的版本，当前版本在前（升级、回滚）。
+    fn versions(&self, agent_id: &str) -> Vec<String> {
+        self.current(agent_id)
+            .map(|m| m.agent.version)
+            .into_iter()
+            .collect()
+    }
 }
 
 /// 内置清单（`crates/catalog/manifests`），每个 agent 一个版本。
@@ -63,7 +70,11 @@ impl Templates for BuiltinTemplates {
     }
 
     fn manifest(&self, agent_id: &str, version: &str) -> Option<Manifest> {
-        catalog::builtin(agent_id).filter(|m| m.agent.version == version)
+        catalog::builtin_version(agent_id, version)
+    }
+
+    fn versions(&self, agent_id: &str) -> Vec<String> {
+        catalog::builtin_versions(agent_id)
     }
 }
 
@@ -206,6 +217,26 @@ impl Lifecycle {
     pub async fn ensure_running(&self, id: InstanceId) -> Result<InstanceRuntime> {
         let mut w = self.db.worker().await?;
         let rt = w.lock_instance(id).await?;
+        // 用户换了模板版本（升级、回滚）：丢掉旧沙箱，按新版本重建，工作区卷保留。
+        if rt.rebuild_pending && rt.state != InstanceState::Deleted {
+            self.templates
+                .manifest(&rt.agent_id, &rt.agent_version)
+                .ok_or_else(|| Error::UnknownVersion {
+                    agent: rt.agent_id.clone(),
+                    version: rt.agent_version.clone(),
+                })?;
+            if let Some(sid) = &rt.sandbox_id {
+                self.op("destroy", self.provider.destroy(&SandboxId(sid.clone())))
+                    .await?;
+            }
+            info!(instance = %id, version = %rt.agent_version, "rebuilding for a new template version");
+            let mut rt = self.create(&mut w, &rt).await?;
+            w.clear_rebuild_pending(id).await?;
+            rt.rebuild_pending = false;
+            w.touch_instance(id).await?;
+            w.commit().await?;
+            return Ok(rt);
+        }
         let rt = match rt.state {
             InstanceState::Deleted => return Err(Error::Deleted),
             InstanceState::Running | InstanceState::Paused => match &rt.sandbox_id {
@@ -302,7 +333,9 @@ impl Lifecycle {
             self.op("destroy", self.provider.destroy(&SandboxId(sid.clone())))
                 .await?;
         }
-        let rt = self.create(&mut w, &rt).await?;
+        let mut rt = self.create(&mut w, &rt).await?;
+        w.clear_rebuild_pending(id).await?;
+        rt.rebuild_pending = false;
         w.commit().await?;
         Ok(rt)
     }

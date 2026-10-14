@@ -94,6 +94,8 @@ pub struct AgentInfo {
     pub sites: Vec<String>,
     pub harnesses: Vec<String>,
     pub default_harness: String,
+    /// 可以用的版本，当前版本在前：实例的版本不是第一个时可以提示升级。
+    pub versions: Vec<String>,
 }
 
 impl From<api::AgentInfo> for AgentInfo {
@@ -106,6 +108,7 @@ impl From<api::AgentInfo> for AgentInfo {
             sites: a.sites,
             harnesses: a.harnesses,
             default_harness: a.default_harness,
+            versions: a.versions,
         }
     }
 }
@@ -751,6 +754,22 @@ impl ThinktinClient {
         let id: d::InstanceId = parse(&instance_id, "instance")?;
         self.run(|c| async move { Ok(c.api.rename_instance(id, &name).await?.into()) })
             .await
+    }
+
+    /// 升级（不给版本）或回滚到旧版本：下次唤醒时生效，工作区保留。
+    pub async fn set_instance_version(
+        &self,
+        instance_id: String,
+        version: Option<String>,
+    ) -> Result<Instance> {
+        let id: d::InstanceId = parse(&instance_id, "instance")?;
+        self.run(|c| async move {
+            Ok(c.api
+                .set_instance_version(id, version.as_deref())
+                .await?
+                .into())
+        })
+        .await
     }
 
     pub async fn model_routes(&self, instance_id: String) -> Result<Vec<ModelRoute>> {
