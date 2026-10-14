@@ -37,6 +37,16 @@
 
 所以沙箱的出网策略（WBS 2.7）按“默认拒绝、只放行模型网关”配置即可，agent 不依赖任何外部服务。
 
+## 2.1 许可与使用条款（2026-10-14 核实）
+
+| Agent | 许可 | 自部署托管给用户用 | 接国内厂商模型 | 要注意的 |
+|---|---|---|---|---|
+| Claude（Agent SDK / Claude Code） | 专有，All rights reserved，受 Anthropic 商业条款约束；只有 ACP 适配器和 Python SDK 的外壳是开源的，里面跑的 Claude Code 二进制是专有的 | 允许，但有条件：二进制不得修改；不得移除、禁用或限制它自带的登录方式（Claude 账号、用户自己的 API key）；平台不得代付、转售或居间 Claude 用量，每个终端用户要用自己的 Anthropic key、Claude 订阅或 Bedrock / Google Cloud / Foundry 凭证，费用直接记在用户名下 | 技术上可行（各家都有官方教程），但 Anthropic 文档明说“不支持经任何网关把 Claude Code 接到非 Claude 模型”；条款里没有明文禁止，也没有明文允许 | **地区政策点名 Claude Code，中国大陆、香港、澳门不在支持列表**；由这些地区的主体控股或控制的公司，即使在海外也不在范围内。产品名不能用 “Claude Code”，可用 “Claude Agent” 或 “XX Powered by Claude” |
+| Codex | Apache-2.0（CLI、app-server、codex-acp 都是）；内含 LGPL 的 bubblewrap、改过的 zsh、ripgrep 等第三方组件 | 允许 | 允许：自定义供应商不需要 OpenAI 登录；只支持 Responses 协议 | 分发镜像要带 LICENSE、NOTICE 和第三方许可清单（npm 包里没带）；不能用 “Codex” 做产品名；遥测（`analytics`、`otel.metrics_exporter`、`feedback`）已在生成的配置里关掉 |
+| Pi、OpenClaw、Hermes | MIT | 允许 | 允许 | — |
+
+依据：code.claude.com/docs/en/legal-and-compliance、/agent-sdk/overview、/llm-gateway，anthropic.com/supported-countries、/legal/commercial-terms；github.com/openai/codex 的 LICENSE、NOTICE，learn.chatgpt.com/docs/config-file/config-reference。条款随时可能更新，上线前由法务复核（16.5）。
+
 ## 3. 结构
 
 ```

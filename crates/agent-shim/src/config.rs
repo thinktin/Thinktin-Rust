@@ -176,6 +176,10 @@ fn codex(r: &ModelRouting, home: &Path, out: &mut RenderedConfig) -> anyhow::Res
         "check_for_update_on_startup": false,
         // 插件市场会在后台连 GitHub 和 chatgpt.com 同步；apps 是 ChatGPT 的连接器。都关掉。
         "features": {"plugins": false, "apps": false},
+        // 遥测：指标默认经 statsig 上报到 ab.chatgpt.com；分析事件、/feedback 也会连 OpenAI。都显式关掉。
+        "analytics": {"enabled": false},
+        "feedback": {"enabled": false},
+        "otel": {"metrics_exporter": "none"},
         "model_providers": {
             "thinktin": {
                 "name": "ThinkTin model gateway",
@@ -427,6 +431,8 @@ mod tests {
         assert_eq!(p["wire_api"].as_str(), Some("responses"));
         assert_eq!(parsed["model_provider"].as_str(), Some("thinktin"));
         assert_eq!(parsed["features"]["plugins"].as_bool(), Some(false));
+        assert_eq!(parsed["analytics"]["enabled"].as_bool(), Some(false));
+        assert_eq!(parsed["otel"]["metrics_exporter"].as_str(), Some("none"));
         assert_eq!(c.env[TOKEN_ENV], "sbx-token");
         assert_no_token_in_files(&c);
     }
