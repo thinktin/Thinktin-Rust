@@ -119,6 +119,15 @@ async fn upstream_handler(State(up): State<Arc<Upstream>>, req: Request) -> Resp
                 .body(Body::from_stream(stream))
                 .unwrap()
         }
+        // 迟迟不回响应头。
+        "/hang/anthropic/v1/messages" => {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            (StatusCode::OK, "late").into_response()
+        }
+        // 2xx 但不带用量。
+        "/nousage/openai/v1/chat/completions" => {
+            axum::Json(json!({"choices": [{"message": {"content": "pong"}}]})).into_response()
+        }
         _ => (StatusCode::NOT_FOUND, "no such upstream route").into_response(),
     }
 }
@@ -218,6 +227,20 @@ async fn start(setup: Setup) -> Env {
             true,
             None,
         ),
+        credential(
+            &vault,
+            "cred-hang",
+            &format!("http://{upstream_addr}/hang"),
+            true,
+            None,
+        ),
+        credential(
+            &vault,
+            "cred-nousage",
+            &format!("http://{upstream_addr}/nousage"),
+            true,
+            None,
+        ),
         // https 加域名能通过静态检查，要靠 DNS 解析这一步拦住。
         credential(
             &vault,
@@ -242,6 +265,8 @@ async fn start(setup: Setup) -> Env {
             ("bad".into(), route("cred-bad", "up-model")),
             ("slow".into(), route("cred-slow", "up-model")),
             ("local".into(), route("cred-local", "up-model")),
+            ("hang".into(), route("cred-hang", "up-model")),
+            ("nousage".into(), route("cred-nousage", "up-model")),
         ]),
         limits: setup.limits,
     };
@@ -265,14 +290,12 @@ async fn start(setup: Setup) -> Env {
     };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        axum::serve(
-            listener,
-            router(Arc::new(gw)).into_make_service_with_connect_info::<SocketAddr>(),
-        )
-        .await
-        .unwrap()
-    });
+    tokio::spawn(llm_gw::serve(
+        listener,
+        router(Arc::new(gw)),
+        llm_gw::ServeOptions::default(),
+        std::future::pending(),
+    ));
     Env {
         gw: format!("http://{addr}"),
         upstream,
@@ -647,7 +670,10 @@ async fn model_listing_shows_aliases_only() {
         .iter()
         .map(|m| m["id"].as_str().unwrap())
         .collect();
-    assert_eq!(ids, ["bad", "local", "main", "nores", "slow"]);
+    assert_eq!(
+        ids,
+        ["bad", "hang", "local", "main", "nores", "nousage", "slow"]
+    );
     let resp = env
         .http
         .get(format!("{}/anthropic/v1/models/main", env.gw))
@@ -791,9 +817,107 @@ async fn private_upstreams_are_blocked_in_secure_mode() {
         .await;
     assert_eq!(resp.status(), 502);
     let text = resp.text().await.unwrap();
+    // 解析结果不告诉调用方（否则能拿来探测内网域名是否存在）。
+    assert!(text.contains("is not allowed"), "{text}");
     assert!(
-        text.contains("does not resolve to a public address"),
+        !text.contains("resolve") && !text.contains("localhost"),
         "{text}"
     );
+    assert!(env.upstream.requests().is_empty());
+}
+
+#[tokio::test]
+async fn disconnect_before_vendor_answers_is_still_charged() {
+    let env = start(Setup::default()).await;
+    let token = env.token();
+    let impatient = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_millis(300))
+        .build()
+        .unwrap();
+    let body = json!({"model": "hang", "max_tokens": 1000, "messages": [{"role": "user", "content": "x".repeat(4000)}]});
+    let res = impatient
+        .post(format!("{}/anthropic/v1/messages", env.gw))
+        .header("x-api-key", &token)
+        .json(&body)
+        .send()
+        .await;
+    assert!(
+        res.is_err(),
+        "the client gives up before the vendor answers"
+    );
+    let records = env.records(1).await;
+    assert_eq!(
+        records.len(),
+        1,
+        "a record is written even though no response came back"
+    );
+    let r = &records[0];
+    assert_eq!(
+        (r.outcome, r.usage, r.estimated),
+        (Outcome::ClientClosed, None, true)
+    );
+    // 输入按请求体字节数 / 4，输出按 max_tokens。
+    assert!(
+        r.charged_tokens >= 1000 + 1000,
+        "charged {}",
+        r.charged_tokens
+    );
+    let day = (now() as i64 + 8 * 3600) as u64 / 86_400;
+    assert_eq!(
+        llm_gw::limits::BudgetLedger::used(env.ledger.as_ref(), "cred-hang", day),
+        r.charged_tokens
+    );
+}
+
+#[tokio::test]
+async fn missing_usage_is_charged_conservatively() {
+    let env = start(Setup::default()).await;
+    let token = env.token();
+    let resp = env
+        .openai(
+            "chat/completions",
+            &token,
+            json!({"model": "nousage", "max_tokens": 500, "messages": []}),
+        )
+        .await;
+    assert_eq!(resp.status(), 200);
+    resp.text().await.unwrap();
+    let r = &env.records(1).await[0];
+    assert_eq!(
+        (r.outcome, r.usage, r.estimated),
+        (Outcome::Complete, None, true)
+    );
+    assert!(r.charged_tokens >= 500, "charged {}", r.charged_tokens);
+}
+
+#[tokio::test]
+async fn background_and_case_variant_keys_are_rejected() {
+    let env = start(Setup::default()).await;
+    let token = env.token();
+    let resp = env
+        .openai(
+            "responses",
+            &token,
+            json!({"model": "main", "input": "x", "background": true}),
+        )
+        .await;
+    assert_eq!(resp.status(), 400);
+    assert!(resp.text().await.unwrap().contains("background"));
+    for body in [
+        r#"{"model":"main","Stream":true}"#,
+        r#"{"model":"main","MODEL":"other"}"#,
+    ] {
+        let resp = env
+            .http
+            .post(format!("{}/openai/v1/chat/completions", env.gw))
+            .bearer_auth(&token)
+            .header("content-type", "application/json")
+            .body(body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 400, "{body}");
+    }
     assert!(env.upstream.requests().is_empty());
 }

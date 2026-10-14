@@ -6,9 +6,11 @@
 pub mod body;
 pub mod limits;
 pub mod proxy;
+pub mod serve;
 pub mod ssrf;
 pub mod store;
 pub mod usage;
 pub mod vendors;
 
 pub use proxy::{Gateway, Options, build_client, router};
+pub use serve::{ServeOptions, serve};

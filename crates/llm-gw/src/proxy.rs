@@ -27,13 +27,19 @@ use crate::limits::{BudgetLedger, Limiter, Rejection};
 use crate::ssrf::{self, PublicOnlyResolver, SsrfError};
 use crate::store::{Credential, Directory, Instance};
 use crate::usage::{
-    MAX_PARSE_BYTES, Outcome, Protocol, SseParser, Usage, UsageMeter, UsageRecord, UsageSink,
-    is_injected_usage_chunk,
+    MAX_BODY_BYTES, Outcome, Protocol, SseParser, SsePiece, Usage, UsageMeter, UsageRecord,
+    UsageSink,
 };
 use crate::vendors::{self, AnthropicAuth};
 
 /// 上游错误响应最多读这么多。
 const MAX_ERROR_BODY: usize = 1 << 20;
+/// 读上游错误响应的时限。
+const ERROR_BODY_TIMEOUT: Duration = Duration::from_secs(30);
+/// 读 agent 请求体的时限。
+const BODY_READ_TIMEOUT: Duration = Duration::from_secs(60);
+/// 请求里没写最大输出 token 数时，估算用的默认值。
+const DEFAULT_MAX_OUTPUT: u64 = 8192;
 
 #[derive(Debug, Clone)]
 pub struct Options {
@@ -176,6 +182,7 @@ enum Kind {
     Budget,
     Upstream,
     Timeout,
+    RequestTimeout,
     Internal,
 }
 
@@ -207,6 +214,7 @@ impl ApiError {
             Kind::Budget => StatusCode::PAYMENT_REQUIRED,
             Kind::Upstream => StatusCode::BAD_GATEWAY,
             Kind::Timeout => StatusCode::GATEWAY_TIMEOUT,
+            Kind::RequestTimeout => StatusCode::REQUEST_TIMEOUT,
             Kind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -219,7 +227,7 @@ impl ApiError {
                     Kind::Auth => "authentication_error",
                     Kind::Permission => "permission_error",
                     Kind::NotFound => "not_found_error",
-                    Kind::Invalid => "invalid_request_error",
+                    Kind::Invalid | Kind::RequestTimeout => "invalid_request_error",
                     Kind::TooLarge => "request_too_large",
                     Kind::RateLimit => "rate_limit_error",
                     Kind::Budget => "billing_error",
@@ -233,6 +241,7 @@ impl ApiError {
                     Kind::Permission => ("invalid_request_error", "permission_denied"),
                     Kind::NotFound => ("invalid_request_error", "model_not_found"),
                     Kind::Invalid => ("invalid_request_error", "invalid_request"),
+                    Kind::RequestTimeout => ("invalid_request_error", "request_timeout"),
                     Kind::TooLarge => ("invalid_request_error", "request_too_large"),
                     Kind::RateLimit => ("requests", "rate_limit_exceeded"),
                     Kind::Budget => ("insufficient_quota", "insufficient_quota"),
@@ -429,10 +438,16 @@ fn target(cred: &Credential, endpoint: Endpoint, alias: &str) -> Result<Target, 
 
 fn blocked(alias: &str, e: &SsrfError) -> ApiError {
     tracing::warn!(alias, reason = %e, "upstream blocked by SSRF policy");
-    err(
-        Kind::Upstream,
-        format!("the vendor URL for model `{alias}` is not allowed: {e}"),
-    )
+    // 解析结果（不存在、内网地址）只写日志：告诉调用方会泄露内网域名是否存在。
+    let message = match e {
+        SsrfError::NotHttps | SsrfError::Extras | SsrfError::NoHost => {
+            format!("the vendor URL for model `{alias}` is not allowed: {e}")
+        }
+        SsrfError::NotPublic(_) | SsrfError::NoAddress(_) => {
+            format!("the vendor URL for model `{alias}` is not allowed")
+        }
+    };
+    err(Kind::Upstream, message)
 }
 
 // ---------- 请求头 ----------
@@ -529,7 +544,7 @@ fn is_event_stream(headers: &HeaderMap) -> bool {
 /// 厂商的错误信息偶尔会带上 key 本身，转发前抹掉。
 fn redact_secret(body: &[u8], secret: &str) -> Vec<u8> {
     let needle = secret.as_bytes();
-    if needle.len() < 8 {
+    if needle.is_empty() {
         return body.to_vec();
     }
     let mut out = Vec::with_capacity(body.len());
@@ -541,6 +556,20 @@ fn redact_secret(body: &[u8], secret: &str) -> Vec<u8> {
         } else {
             out.push(body[i]);
             i += 1;
+        }
+    }
+    out
+}
+
+/// 错误体抹 key。读到上限或中途断了（`truncated`）时，截到上限，并去掉结尾可能残留的半截 key。
+/// 调用方要多读 `key 长度` 个字节，保证跨过上限的完整 key 也能先被抹掉。
+fn redact_error_body(body: &[u8], secret: &str, truncated: bool) -> Vec<u8> {
+    let mut out = redact_secret(body, secret);
+    if truncated || out.len() > MAX_ERROR_BODY {
+        out.truncate(MAX_ERROR_BODY);
+        let key = secret.as_bytes();
+        if let Some(n) = (1..key.len()).rev().find(|&n| out.ends_with(&key[..n])) {
+            out.truncate(out.len() - n);
         }
     }
     out
@@ -600,9 +629,18 @@ async fn forward_inner(
         .limiter
         .acquire(&caller.instance.id, caller.instance.limits)?;
 
-    let bytes = axum::body::to_bytes(body, gw.options.max_body_bytes)
-        .await
-        .map_err(|_| err(Kind::TooLarge, "request body is too large"))?;
+    let bytes = tokio::time::timeout(
+        BODY_READ_TIMEOUT,
+        axum::body::to_bytes(body, gw.options.max_body_bytes),
+    )
+    .await
+    .map_err(|_| {
+        err(
+            Kind::RequestTimeout,
+            "the request body was not received in time",
+        )
+    })?
+    .map_err(|_| err(Kind::TooLarge, "request body is too large"))?;
     let mut body = JsonObject::parse(&bytes).map_err(|m| err(Kind::Invalid, m))?;
     drop(bytes);
     let alias = body
@@ -656,6 +694,19 @@ async fn forward_inner(
         .get_bool("stream")
         .map_err(|m| err(Kind::Invalid, m))?
         .unwrap_or(false);
+    // 后台模式立即返回、用量为空，厂商在后台继续生成并计费，网关记不上账。
+    if endpoint == Endpoint::Responses
+        && body
+            .get_bool("background")
+            .map_err(|m| err(Kind::Invalid, m))?
+            == Some(true)
+    {
+        return Err(err(Kind::Invalid, "background responses are not supported"));
+    }
+    let max_output = ["max_tokens", "max_completion_tokens", "max_output_tokens"]
+        .into_iter()
+        .find_map(|k| body.get_u64(k))
+        .unwrap_or(DEFAULT_MAX_OUTPUT);
     body.set("model", &route.model);
     let strip_usage_chunk = if endpoint == Endpoint::Chat && stream && target.chat_stream_usage {
         body.ensure_include_usage()
@@ -675,11 +726,18 @@ async fn forward_inner(
         })?;
     let headers = upstream_headers(&parts.headers, endpoint, target.anthropic_auth, &key)?;
 
+    // 从这里起请求可能已经到了厂商：无论之后怎么结束（包括 agent 断开、这个 future 被丢弃），
+    // Finisher 都会记一条用量并记账。
     let mut finisher = Finisher {
         gw: gw.clone(),
         credential: cred.id.clone(),
         day,
         started,
+        metered: endpoint.meter().is_some(),
+        estimate_input: payload.len() as u64 / 4,
+        max_output,
+        events: 0,
+        done: false,
         record: UsageRecord {
             ts_ms: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -699,6 +757,8 @@ async fn forward_inner(
             status: 0,
             outcome: Outcome::UpstreamError,
             usage: None,
+            charged_tokens: 0,
+            estimated: false,
             duration_ms: 0,
         },
     };
@@ -713,11 +773,19 @@ async fn forward_inner(
     {
         Ok(resp) => resp,
         Err(e) => {
-            finisher.finish(Outcome::UpstreamError, None);
             if let Some(ssrf) = ssrf::find_ssrf_error(&e) {
+                finisher.finish(Outcome::ConnectFailed, None);
                 return Err(blocked(&alias, ssrf));
             }
             tracing::warn!(alias, vendor = %target.vendor, error = %e, "upstream request failed");
+            finisher.finish(
+                if e.is_connect() {
+                    Outcome::ConnectFailed
+                } else {
+                    Outcome::UpstreamError
+                },
+                None,
+            );
             return Err(if e.is_timeout() {
                 err(Kind::Timeout, "the vendor did not respond in time")
             } else {
@@ -731,17 +799,38 @@ async fn forward_inner(
     let headers = downstream_headers(resp.headers());
 
     if !status.is_success() {
-        // 错误响应很小：读完、抹掉 key，再整体返回。
+        // 错误响应很小：读完（有上限和时限）、抹掉 key，再整体返回。
+        let secret = key.expose_secret();
+        let cap = MAX_ERROR_BODY + secret.len();
         let mut buf = Vec::new();
+        let mut truncated = false;
         let mut upstream = resp.bytes_stream();
-        while let Some(Ok(chunk)) = upstream.next().await {
-            let room = MAX_ERROR_BODY.saturating_sub(buf.len());
-            buf.extend_from_slice(&chunk[..chunk.len().min(room)]);
-            if buf.len() >= MAX_ERROR_BODY {
-                break;
+        let read = async {
+            loop {
+                match upstream.next().await {
+                    Some(Ok(chunk)) => {
+                        let room = cap - buf.len();
+                        buf.extend_from_slice(&chunk[..chunk.len().min(room)]);
+                        if buf.len() >= cap {
+                            truncated = true;
+                            break;
+                        }
+                    }
+                    Some(Err(_)) => {
+                        truncated = true;
+                        break;
+                    }
+                    None => break,
+                }
             }
+        };
+        if tokio::time::timeout(ERROR_BODY_TIMEOUT, read)
+            .await
+            .is_err()
+        {
+            truncated = true;
         }
-        let body = redact_secret(&buf, key.expose_secret());
+        let body = redact_error_body(&buf, secret, truncated);
         tracing::info!(alias, vendor = %target.vendor, status = status.as_u16(), "upstream returned an error");
         finisher.finish(Outcome::UpstreamStatus, None);
         return Ok((status, headers, body).into_response());
@@ -749,13 +838,14 @@ async fn forward_inner(
     drop(key);
 
     let sse = is_event_stream(resp.headers());
+    let meter = endpoint.meter().map(UsageMeter::new);
     let tapped = Tapped {
         inner: Box::pin(resp.bytes_stream()),
-        meter: endpoint.meter().map(UsageMeter::new),
-        sse: sse.then(SseParser::default),
-        json: (!sse && endpoint.meter().is_some()).then(Vec::new),
+        sse: (sse && meter.is_some()).then(SseParser::default),
+        json: (!sse && meter.is_some()).then(Vec::new),
         strip_usage_chunk: strip_usage_chunk && sse,
-        finisher: Some(finisher),
+        meter,
+        finisher,
         tail: None,
         done: false,
         _permit: permit,
@@ -775,23 +865,77 @@ async fn forward_inner(
 }
 
 /// 记一次调用的用量，并给 key 的每日预算记账。
+///
+/// 厂商报告了用量就按报告的记；没报告（agent 中途断开、还没等到响应头就断开、上游出错、响应太大取不到）
+/// 就按保守估算记，宁可多记不能漏记：输入按请求体字节数 / 4，输出按请求里的最大输出 token 数，
+/// 已经流出事件的按每个事件 4 个 token 估（不超过最大输出）。厂商返回非 2xx、或者请求没发出去，不记账。
 struct Finisher {
     gw: Arc<Gateway>,
     credential: String,
     day: u64,
     started: Instant,
+    /// 这个接口计量（count_tokens 不计）。
+    metered: bool,
+    estimate_input: u64,
+    max_output: u64,
+    /// 已经流给 agent 的 SSE 事件数。
+    events: u64,
+    done: bool,
     record: UsageRecord,
 }
 
 impl Finisher {
-    fn finish(mut self, outcome: Outcome, usage: Option<Usage>) {
+    fn finish(&mut self, outcome: Outcome, usage: Option<Usage>) {
+        if std::mem::replace(&mut self.done, true) {
+            return;
+        }
+        let upstream_rejected = self.record.status >= 300;
+        let output_estimate = if self.events > 0 {
+            self.events.saturating_mul(4).min(self.max_output)
+        } else {
+            self.max_output
+        };
+        let (charged, estimated) = match (outcome, usage) {
+            (Outcome::ConnectFailed | Outcome::UpstreamStatus, u) => {
+                (u.map_or(0, |u| u.total()), false)
+            }
+            _ if upstream_rejected || !self.metered => (usage.map_or(0, |u| u.total()), false),
+            (Outcome::Complete, Some(u)) => (u.total(), false),
+            // 中途断开或出错：已知的用量里输出数可能还没更新，取估算和已知的较大值。
+            (_, Some(u)) if u.output_tokens < output_estimate && outcome != Outcome::Complete => {
+                let raised = Usage {
+                    output_tokens: output_estimate,
+                    ..u
+                };
+                (raised.total(), true)
+            }
+            (_, Some(u)) => (u.total(), false),
+            (_, None) => (self.estimate_input.saturating_add(output_estimate), true),
+        };
         self.record.outcome = outcome;
         self.record.usage = usage;
+        self.record.charged_tokens = charged;
+        self.record.estimated = estimated;
         self.record.duration_ms = self.started.elapsed().as_millis() as u64;
-        if let Some(u) = usage {
-            self.gw.ledger.add(&self.credential, self.day, u.total());
+        if charged > 0 {
+            self.gw.ledger.add(&self.credential, self.day, charged);
         }
-        self.gw.usage.record(self.record);
+        if estimated {
+            tracing::info!(
+                instance = %self.record.instance,
+                alias = %self.record.alias,
+                outcome = ?outcome,
+                charged,
+                "usage unknown or incomplete; charged a conservative estimate"
+            );
+        }
+        self.gw.usage.record(self.record.clone());
+    }
+}
+
+impl Drop for Finisher {
+    fn drop(&mut self) {
+        self.finish(Outcome::ClientClosed, None);
     }
 }
 
@@ -803,7 +947,7 @@ struct Tapped {
     /// 非流式响应：攒下响应体（有上限）用来取用量。
     json: Option<Vec<u8>>,
     strip_usage_chunk: bool,
-    finisher: Option<Finisher>,
+    finisher: Finisher,
     tail: Option<Bytes>,
     done: bool,
     _permit: OwnedSemaphorePermit,
@@ -812,34 +956,29 @@ struct Tapped {
 impl Tapped {
     fn process(&mut self, chunk: Bytes) -> Bytes {
         if let Some(parser) = self.sse.as_mut() {
-            if parser.broken {
-                return chunk;
-            }
             let keep_raw = self.strip_usage_chunk;
-            let events = parser.push(&chunk, keep_raw);
             let mut out = Vec::new();
-            for event in events {
-                let parsed = event
-                    .data
-                    .as_deref()
-                    .and_then(|d| serde_json::from_slice::<Value>(d).ok());
-                if let (Some(v), Some(meter)) = (&parsed, self.meter.as_mut()) {
-                    meter.on_event(v);
+            for piece in parser.push(&chunk, keep_raw) {
+                match piece {
+                    SsePiece::Pass(bytes) => out.extend_from_slice(&bytes),
+                    SsePiece::Event { raw, data } => {
+                        let mut injected = false;
+                        if let Some(data) = data {
+                            self.finisher.events += 1;
+                            if let Some(meter) = self.meter.as_mut() {
+                                injected = meter.on_event(&data);
+                            }
+                        }
+                        if keep_raw && !injected {
+                            out.extend_from_slice(&raw);
+                        }
+                    }
                 }
-                if keep_raw && !parsed.as_ref().is_some_and(is_injected_usage_chunk) {
-                    out.extend_from_slice(&event.raw);
-                }
             }
-            if !keep_raw {
-                return chunk;
-            }
-            if parser.broken {
-                out.extend_from_slice(&parser.take_rest());
-            }
-            return Bytes::from(out);
+            return if keep_raw { Bytes::from(out) } else { chunk };
         }
         if let Some(buf) = self.json.as_mut() {
-            if buf.len() + chunk.len() <= MAX_PARSE_BYTES {
+            if buf.len() + chunk.len() <= MAX_BODY_BYTES {
                 buf.extend_from_slice(&chunk);
             } else {
                 self.json = None;
@@ -853,26 +992,22 @@ impl Tapped {
         let mut tail = None;
         if let Some(parser) = self.sse.as_mut()
             && self.strip_usage_chunk
-            && !parser.broken
         {
             let rest = parser.take_rest();
             if !rest.is_empty() {
                 tail = Some(Bytes::from(rest));
             }
         }
-        if let (Some(buf), Some(meter)) = (self.json.take(), self.meter.as_mut())
-            && let Ok(v) = serde_json::from_slice::<Value>(&buf)
-        {
-            meter.on_body(&v);
+        if let (Some(buf), Some(meter)) = (self.json.take(), self.meter.as_mut()) {
+            meter.on_body(&buf);
         }
         self.finish(Outcome::Complete);
         tail
     }
 
     fn finish(&mut self, outcome: Outcome) {
-        if let Some(f) = self.finisher.take() {
-            f.finish(outcome, self.meter.as_ref().and_then(UsageMeter::usage));
-        }
+        let usage = self.meter.as_ref().and_then(UsageMeter::usage);
+        self.finisher.finish(outcome, usage);
     }
 }
 
@@ -1034,6 +1169,30 @@ mod tests {
         assert_eq!(presented_token(&h), Some("tts1.c"));
         h.insert(header::AUTHORIZATION, HeaderValue::from_static("Basic abc"));
         assert_eq!(presented_token(&h), Some("tts1.c"));
+    }
+
+    #[test]
+    fn redaction_survives_truncation() {
+        let key = "sk-0123456789abcdef";
+        // key 横跨上限：多读的字节保证它先被整体抹掉。
+        let mut body = vec![b'a'; MAX_ERROR_BODY - 5];
+        body.extend_from_slice(key.as_bytes());
+        let out = redact_error_body(&body, key, true);
+        assert!(out.len() <= MAX_ERROR_BODY);
+        assert!(
+            !out.windows(5).any(|w| w == b"sk-01"),
+            "no fragment of the key survives"
+        );
+        // 读到一半断了：结尾半截 key 去掉。
+        let mut body = b"invalid key ".to_vec();
+        body.extend_from_slice(&key.as_bytes()[..10]);
+        let out = redact_error_body(&body, key, true);
+        assert_eq!(out, b"invalid key ");
+        // 短 key 也抹。
+        assert_eq!(
+            redact_secret(b"key=EMPTY", "EMPTY"),
+            b"key=[redacted]".to_vec()
+        );
     }
 
     #[test]

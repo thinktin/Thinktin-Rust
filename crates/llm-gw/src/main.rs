@@ -14,7 +14,7 @@ use keyvault::{KeyStore, KeyVault, LocalKms, MemoryKeyStore};
 use llm_gw::limits::{Limiter, MemoryLedger};
 use llm_gw::store::{Credential, DevStore};
 use llm_gw::usage::LogSink;
-use llm_gw::{Gateway, Options, build_client, router, vendors};
+use llm_gw::{Gateway, Options, ServeOptions, build_client, router, serve, vendors};
 use zeroize::Zeroizing;
 
 /// 本地 KMS 主密钥（64 位十六进制）。只从环境变量读，不走命令行参数（会出现在进程列表里）。
@@ -56,6 +56,9 @@ enum Command {
         allow_unbound_tokens: bool,
         #[arg(long, default_value_t = 32)]
         max_body_mb: usize,
+        /// 每个来源地址最多同时保持的连接数
+        #[arg(long, default_value_t = 64)]
+        max_connections_per_ip: usize,
         /// 每日预算按哪个时区切天（相对 UTC 的小时数）
         #[arg(long, default_value_t = 8, allow_negative_numbers = true)]
         budget_utc_offset_hours: i64,
@@ -143,6 +146,7 @@ fn main() -> anyhow::Result<()> {
             insecure_upstreams,
             allow_unbound_tokens,
             max_body_mb,
+            max_connections_per_ip,
             budget_utc_offset_hours,
             log_json,
         } => {
@@ -202,11 +206,11 @@ fn main() -> anyhow::Result<()> {
                     .await
                     .with_context(|| format!("bind {listen}"))?;
                 tracing::info!(addr = %listener.local_addr()?, "llm-gw listening");
-                axum::serve(
-                    listener,
-                    router(Arc::new(gw)).into_make_service_with_connect_info::<SocketAddr>(),
-                )
-                .with_graceful_shutdown(async {
+                let serve_options = ServeOptions {
+                    max_connections_per_ip,
+                    ..ServeOptions::default()
+                };
+                serve(listener, router(Arc::new(gw)), serve_options, async {
                     let _ = tokio::signal::ctrl_c().await;
                 })
                 .await?;

@@ -151,6 +151,9 @@ pub trait SecretOpener: Send + Sync {
         record_id: &str,
         sealed: &SealedSecret,
     ) -> Result<SecretString>;
+
+    /// 丢掉为这个用户缓存的解密材料。用户注销（销毁 DEK）后由控制面通知网关调用，不必等缓存过期。
+    fn forget_user(&self, _user_id: &str) {}
 }
 
 impl<K: Kms, S: KeyStore> SecretOpener for KeyVault<K, S> {
@@ -161,6 +164,10 @@ impl<K: Kms, S: KeyStore> SecretOpener for KeyVault<K, S> {
         sealed: &SealedSecret,
     ) -> Result<SecretString> {
         self.open(user_id, record_id, sealed)
+    }
+
+    fn forget_user(&self, user_id: &str) {
+        self.cache.lock().unwrap().remove(user_id);
     }
 }
 
@@ -189,7 +196,8 @@ impl KeyStore for MemoryKeyStore {
 
 /// 解开的 DEK 在内存里缓存一小段时间，省得每个请求都调 KMS（5.4：比如 5 分钟）。
 struct CachedDek {
-    dek: Zeroizing<[u8; DEK_LEN]>,
+    /// 放在堆上：哈希表扩容、删除时只搬指针，不在旧内存里留下密钥的副本。
+    dek: Box<Zeroizing<[u8; DEK_LEN]>>,
     expires: Instant,
 }
 
@@ -275,7 +283,7 @@ impl<K: Kms, S: KeyStore> KeyVault<K, S> {
         {
             let mut cache = self.cache.lock().unwrap();
             match cache.get(user_id) {
-                Some(c) if c.expires > now => return Ok(c.dek.clone()),
+                Some(c) if c.expires > now => return Ok((*c.dek).clone()),
                 Some(_) => {
                     cache.remove(user_id);
                 }
@@ -287,10 +295,13 @@ impl<K: Kms, S: KeyStore> KeyVault<K, S> {
             .get(user_id)
             .ok_or_else(|| Error::NoUserKey(user_id.to_owned()))?;
         let dek = self.kms.unwrap(&wrapped, user_id)?;
-        self.cache.lock().unwrap().insert(
+        let mut cache = self.cache.lock().unwrap();
+        // 顺手清掉所有过期的条目，不让不再来的用户（包括已注销的）的 DEK 一直留在内存里。
+        cache.retain(|_, c| c.expires > now);
+        cache.insert(
             user_id.to_owned(),
             CachedDek {
-                dek: dek.clone(),
+                dek: Box::new(dek.clone()),
                 expires: now + self.cache_ttl,
             },
         );
@@ -440,6 +451,25 @@ mod tests {
             other.unwrap(&wrapped, "u1"),
             Err(Error::UnknownKmsKey(_))
         ));
+    }
+
+    #[test]
+    fn expired_deks_are_swept_and_can_be_forgotten() {
+        let v = vault().with_cache_ttl(Duration::from_millis(20));
+        for u in ["u1", "u2"] {
+            v.create_user_key(u).unwrap();
+            v.seal(u, "r", &SecretString::from("sk-test-0000".to_owned()))
+                .unwrap();
+        }
+        assert_eq!(v.cache.lock().unwrap().len(), 2);
+        std::thread::sleep(Duration::from_millis(30));
+        // 别的用户来取 DEK 时，过期的条目一并清掉。
+        v.create_user_key("u3").unwrap();
+        v.seal("u3", "r", &SecretString::from("sk-test-0000".to_owned()))
+            .unwrap();
+        assert_eq!(v.cache.lock().unwrap().keys().collect::<Vec<_>>(), ["u3"]);
+        SecretOpener::forget_user(&v, "u3");
+        assert!(v.cache.lock().unwrap().is_empty());
     }
 
     #[test]
