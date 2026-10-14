@@ -4,8 +4,8 @@
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
+use keyvault::SealedSecret;
 use keyvault::secrecy::SecretString;
-use keyvault::{KeyStore, KeyVault, MemoryKeyStore, SealedSecret, WrappedKey};
 use proto::domain::{Credential, CredentialId, UserId};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -22,55 +22,11 @@ async fn seal(
     record: CredentialId,
     secret: &SecretString,
 ) -> ApiResult<SealedSecret> {
-    let uid = user.to_string();
-    let vault_with = |kms_key_id: String, ciphertext: Vec<u8>| {
-        let store = MemoryKeyStore::default();
-        store.insert_new(
-            &uid,
-            WrappedKey {
-                kms_key_id,
-                ciphertext,
-            },
-        );
-        KeyVault::new(s.kms.clone(), store)
-    };
-    let mut w = s.db.worker().await?;
-    let vault = match w.user_key(user).await? {
-        Some((kms_key_id, ciphertext)) => {
-            w.rollback().await?;
-            vault_with(kms_key_id, ciphertext)
-        }
-        None => {
-            let vault = KeyVault::new(s.kms.clone(), MemoryKeyStore::default());
-            vault.create_user_key(&uid).map_err(ApiError::internal)?;
-            let wrapped = vault
-                .store()
-                .get(&uid)
-                .ok_or_else(|| ApiError::internal("generated key vanished"))?;
-            match w
-                .insert_user_key(user, &wrapped.kms_key_id, &wrapped.ciphertext)
-                .await
-            {
-                Ok(()) => {
-                    w.commit().await?;
-                    vault
-                }
-                Err(store::Error::Conflict(_)) => {
-                    drop(w);
-                    let mut w = s.db.worker().await?;
-                    let (kms_key_id, ciphertext) = w
-                        .user_key(user)
-                        .await?
-                        .ok_or_else(|| ApiError::internal("user key disappeared"))?;
-                    w.rollback().await?;
-                    vault_with(kms_key_id, ciphertext)
-                }
-                Err(e) => return Err(e.into()),
-            }
-        }
-    };
+    let vault = orchestrator::artifacts::user_vault(&s.db, s.kms.clone(), user, true)
+        .await
+        .map_err(ApiError::internal)?;
     vault
-        .seal(&uid, &record.to_string(), secret)
+        .seal(&user.to_string(), &record.to_string(), secret)
         .map_err(ApiError::internal)
 }
 

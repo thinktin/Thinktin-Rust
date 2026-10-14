@@ -40,9 +40,11 @@ ThinkTin 平台：托管多个开源 agent，用户领养后常驻云端、按�
   store、server 的测试每个测试建一个新库（没设置 DATABASE_URL 时跳过，设 `THINKTIN_REQUIRE_DB=1` 则改为失败）。
 - `thinktin-server [--config server.toml] [serve|migrate|check-config]`：本地运行控制面。
   配置项见 `crates/server/src/config.rs`；`DATABASE_URL`、`THINKTIN_LISTEN`、`THINKTIN_NODE_ID` 覆盖配置文件。
-  `[worker] enabled = true` 时同一进程里跑调度、执行、出箱投递和巡检，需要环境变量
-  `THINKTIN_SANDBOX_TOKEN_SEED`（`llm-gw keygen` 生成，模型网关配对应公钥）；本地开发用
+  `[worker] enabled = true` 时同一进程里跑调度、流水线推进、执行、出箱投递和巡检，需要环境变量
+  `THINKTIN_SANDBOX_TOKEN_SEED`（`llm-gw keygen` 生成，模型网关配对应公钥）和
+  `THINKTIN_KMS_KEY`（产出物按用户 DEK 加密）；本地开发用
   `[sandbox] provider = "local"`，`manifest_override` 可以换成假 agent 的清单联调。
+  产出物放在 `[storage] local_root`（默认 `.thinktin/blobs`，接口和后台任务要看到同一个目录）。
   `[api] enabled = true` 时挂上客户端接口，需要 `THINKTIN_ACCESS_TOKEN_SEED`（访问令牌签名种子）、
   `THINKTIN_CODE_PEPPER`（验证码 HMAC 密钥，十六进制）、`THINKTIN_KMS_KEY`（本地 KMS 主密钥）；
   短信通道还没接，本地开发用 `dev_sms = true` 把验证码打到标准错误。

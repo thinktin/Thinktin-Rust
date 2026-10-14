@@ -13,7 +13,8 @@ use futures_util::StreamExt;
 use gateway::{AppState, EventHub, GatewayConfig, Inner};
 use keyvault::secrecy::ExposeSecret;
 use keyvault::{KeyStore, KeyVault, LocalKms, MemoryKeyStore, SealedSecret, WrappedKey};
-use proto::domain::{ApprovalState, InstanceId, RunId};
+use orchestrator::artifacts::{ArtifactStore, LocalBlobStore, Origin};
+use proto::domain::{ApprovalState, InstanceId, RunId, UserId};
 use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};
 use store::testing::TestDb;
@@ -27,6 +28,8 @@ struct Api {
     base: String,
     http: reqwest::Client,
     sms: Arc<RecordingSms>,
+    artifacts: Arc<ArtifactStore>,
+    _blobs: tempfile::TempDir,
 }
 
 async fn api() -> Option<Api> {
@@ -50,12 +53,20 @@ async fn api() -> Option<Api> {
     )
     .unwrap();
     let hub = EventHub::new();
+    let kms = Arc::new(LocalKms::new("kms1", &KMS_KEY));
+    let blobs = tempfile::tempdir().unwrap();
+    let artifacts = Arc::new(ArtifactStore::new(
+        t.db.clone(),
+        Arc::new(LocalBlobStore::new(blobs.path()).unwrap()),
+        kms.clone(),
+    ));
     let state = AppState::new(Inner {
         db: t.db.clone(),
         auth: Arc::new(auth),
         templates: Arc::new(BuiltinTemplates),
-        kms: Arc::new(LocalKms::new("kms1", &KMS_KEY)),
+        kms,
         hub: hub.clone(),
+        artifacts: Some(artifacts.clone()),
         cfg: GatewayConfig {
             ws_heartbeat: Duration::from_millis(300),
             ..GatewayConfig::default()
@@ -72,6 +83,8 @@ async fn api() -> Option<Api> {
         base,
         http: reqwest::Client::new(),
         sms,
+        artifacts,
+        _blobs: blobs,
     })
 }
 
@@ -734,4 +747,290 @@ async fn account_deletion_over_http() {
     assert_eq!(st, StatusCode::NO_CONTENT);
     let (st, _) = a.call(Method::GET, "/v1/me", Some(&u.access), None).await;
     assert_eq!(st, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn teams_pipelines_and_artifacts() {
+    let Some(a) = api().await else { return };
+    let u = a.login("13800138300").await;
+    let other = a.login("13800138301").await;
+    let tok = Some(u.access.as_str());
+    let lead = a.adopt(&u).await;
+    let writer = a.adopt(&u).await;
+    let foreign = a.adopt(&other).await;
+
+    // 团队（8.1）
+    let (st, body) = a
+        .call(
+            Method::POST,
+            "/v1/teams",
+            tok,
+            Some(json!({ "name": "研究组", "members": [] })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    let (st, team) = a
+        .call(
+            Method::POST,
+            "/v1/teams",
+            tok,
+            Some(json!({ "name": "研究组", "members": [
+                { "instance_id": lead, "role": "lead", "position": 0 },
+                { "instance_id": writer, "role": "member", "position": 1 },
+            ] })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{team}");
+    let team_id = team["id"].as_str().unwrap().to_owned();
+    let (st, body) = a
+        .call(
+            Method::POST,
+            "/v1/teams",
+            tok,
+            Some(json!({ "name": "抢别人的", "members": [
+                { "instance_id": foreign, "role": "lead", "position": 0 },
+            ] })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "{body}");
+    let (st, body) = a
+        .call(
+            Method::GET,
+            &format!("/v1/teams/{team_id}"),
+            Some(&other.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "{body}");
+    let (st, body) = a
+        .call(
+            Method::PATCH,
+            &format!("/v1/teams/{team_id}"),
+            tok,
+            Some(json!({ "name": "写作组" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(body["name"], "写作组");
+    assert_eq!(body["members"].as_array().unwrap().len(), 2);
+
+    // 团队模板：从现有团队生成，再一键领养。
+    let (st, tpl) = a
+        .call(
+            Method::POST,
+            "/v1/team-templates",
+            tok,
+            Some(json!({ "name": "写作组模板", "team_id": team_id })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{tpl}");
+    assert_eq!(tpl["spec"]["members"].as_array().unwrap().len(), 2);
+    let (st, body) = a
+        .call(
+            Method::POST,
+            "/v1/team-templates",
+            tok,
+            Some(json!({ "name": "坏模板", "spec": { "members": [
+                { "agent_id": "no-such-agent", "name": "x" },
+            ] } })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    let (st, adopted) = a
+        .call(
+            Method::POST,
+            &format!("/v1/team-templates/{}/adopt", tpl["id"].as_str().unwrap()),
+            tok,
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{adopted}");
+    let members = adopted["members"].as_array().unwrap();
+    assert_eq!(members.len(), 2);
+    assert_eq!(members[0]["role"], "lead");
+    assert_ne!(members[0]["instance_id"], json!(lead), "new instances");
+    let (_, list) = a.call(Method::GET, "/v1/instances", tok, None).await;
+    assert_eq!(list["instances"].as_array().unwrap().len(), 4);
+    let (_, teams) = a.call(Method::GET, "/v1/teams", tok, None).await;
+    assert_eq!(teams["teams"].as_array().unwrap().len(), 2);
+
+    // 流水线计划（8.2）：步骤校验。
+    let plan_with = |steps: Value| {
+        json!({
+            "instance_id": lead,
+            "title": "周报",
+            "goal": "写一份周报",
+            "steps": steps,
+        })
+    };
+    for (steps, why) in [
+        (
+            json!([
+                { "key": "a", "instance_id": lead, "prompt": "x", "depends_on": ["b"] },
+                { "key": "b", "instance_id": writer, "prompt": "y", "depends_on": ["a"] },
+            ]),
+            "cycle",
+        ),
+        (
+            json!([{ "key": "Bad Key", "instance_id": lead, "prompt": "x" }]),
+            "bad key",
+        ),
+        (
+            json!([{ "key": "a", "instance_id": lead, "prompt": "x", "depends_on": ["zz"] }]),
+            "unknown dependency",
+        ),
+        (
+            json!([{ "key": "a", "instance_id": lead, "prompt": " " }]),
+            "empty prompt",
+        ),
+    ] {
+        let (st, body) = a
+            .call(Method::POST, "/v1/plans", tok, Some(plan_with(steps)))
+            .await;
+        assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{why}: {body}");
+    }
+    let (st, body) = a
+        .call(
+            Method::POST,
+            "/v1/plans",
+            tok,
+            Some(plan_with(
+                json!([{ "key": "a", "instance_id": foreign, "prompt": "x" }]),
+            )),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "{body}");
+    let (st, plan) = a
+        .call(
+            Method::POST,
+            "/v1/plans",
+            tok,
+            Some(plan_with(json!([
+                { "key": "research", "instance_id": lead, "prompt": "查资料" },
+                { "key": "write", "instance_id": writer, "prompt": "写稿", "depends_on": ["research"] },
+            ]))),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{plan}");
+    assert_eq!(plan["steps"].as_array().unwrap().len(), 2);
+    assert_eq!(plan["steps"][1]["depends_on"], json!(["research"]));
+    let plan_path = format!("/v1/plans/{}", plan["id"].as_str().unwrap());
+    let (st, body) = a
+        .call(Method::PATCH, &plan_path, tok, Some(json!({ "steps": [] })))
+        .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(body["steps"], json!([]));
+
+    // 产出物（8.4）：worker 发布，客户端列出、下载、删除。
+    let (st, run) = a
+        .call(
+            Method::POST,
+            &format!("/v1/instances/{lead}/runs"),
+            tok,
+            Some(json!({ "prompt": "写个报告" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{run}");
+    let run_id: RunId = run["id"].as_str().unwrap().parse().unwrap();
+    let (_, me) = a.call(Method::GET, "/v1/me", tok, None).await;
+    let user: UserId = me["id"].as_str().unwrap().parse().unwrap();
+    let published = a
+        .artifacts
+        .publish(
+            Origin {
+                user,
+                instance: lead,
+                run: run_id,
+                root: run_id,
+            },
+            "report.md",
+            "text/markdown",
+            "# 周报\n".as_bytes(),
+        )
+        .await
+        .unwrap();
+    let art_id = published.artifact.id.to_string();
+    let (st, list) = a
+        .call(
+            Method::GET,
+            &format!("/v1/runs/{run_id}/artifacts"),
+            tok,
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(list["artifacts"][0]["name"], "report.md");
+    let (_, list) = a
+        .call(
+            Method::GET,
+            &format!("/v1/instances/{lead}/artifacts"),
+            tok,
+            None,
+        )
+        .await;
+    assert_eq!(list["artifacts"].as_array().unwrap().len(), 1);
+    let resp = a
+        .http
+        .get(format!("{}/v1/artifacts/{art_id}/content", a.base))
+        .bearer_auth(&u.access)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(resp.headers()["content-disposition"], "attachment");
+    assert_eq!(resp.headers()["x-content-type-options"], "nosniff");
+    assert_eq!(resp.text().await.unwrap(), "# 周报\n");
+    let (st, _) = a
+        .call(
+            Method::GET,
+            &format!("/v1/artifacts/{art_id}/content"),
+            Some(&other.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "other users cannot download");
+    let (st, _) = a
+        .call(
+            Method::DELETE,
+            &format!("/v1/artifacts/{art_id}"),
+            Some(&other.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (st, _) = a
+        .call(
+            Method::DELETE,
+            &format!("/v1/artifacts/{art_id}"),
+            tok,
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let (st, _) = a
+        .call(Method::GET, &format!("/v1/artifacts/{art_id}"), tok, None)
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+
+    // 停掉整棵运行树（8.2）。
+    let (st, body) = a
+        .call(
+            Method::POST,
+            &format!("/v1/runs/{run_id}/cancel?tree=true"),
+            tok,
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(body["state"], "cancelled");
+
+    // 删除团队不影响实例。
+    let (st, _) = a
+        .call(Method::DELETE, &format!("/v1/teams/{team_id}"), tok, None)
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let (st, _) = a
+        .call(Method::GET, &format!("/v1/instances/{lead}"), tok, None)
+        .await;
+    assert_eq!(st, StatusCode::OK);
 }

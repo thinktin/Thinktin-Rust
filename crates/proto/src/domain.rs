@@ -61,6 +61,9 @@ id_type!(
     RunId,
     ApprovalId,
     InboxItemId,
+    TeamId,
+    TeamTemplateId,
+    ArtifactId,
 );
 
 /// 字符串枚举的公共实现：和数据库里的取值一一对应。
@@ -191,7 +194,8 @@ impl RunState {
             return true;
         }
         match self {
-            Queued => matches!(to, Starting),
+            // 流水线运行不执行 agent：排队后直接等子运行。
+            Queued => matches!(to, Starting | WaitingChildren),
             Starting => matches!(to, Running | Backoff | Failed),
             Running => matches!(
                 to,
@@ -204,14 +208,29 @@ impl RunState {
                     | Failed
             ),
             // 等的事情发生：沙箱还醒着就直接回到运行中，已暂停就先唤醒（启动中）。超时按策略失败。
-            WaitingApproval | WaitingDevice | WaitingQuota | WaitingChildren => {
+            WaitingApproval | WaitingDevice | WaitingQuota => {
                 matches!(to, Running | Starting | Failed)
             }
+            // 子运行都结束：委派的父运行回到运行中，流水线运行直接结束。
+            WaitingChildren => matches!(to, Running | Starting | Succeeded | Failed),
             Backoff => matches!(to, Starting | Failed),
             Succeeded | Failed | Cancelled => false,
         }
     }
 }
+
+str_enum!(
+    /// 运行的种类：agent 在实例的沙箱里执行一轮；pipeline 是流水线的根，只协调子运行（8.3）。
+    RunKind { Agent = "agent", Pipeline = "pipeline" }
+);
+
+str_enum!(
+    TeamRole {
+        /// 负责人：委派时由它分工（8.7）。
+        Lead = "lead",
+        Member = "member",
+    }
+);
 
 str_enum!(
     /// 错过的触发怎么补（4.4）。
@@ -459,10 +478,13 @@ pub struct Trigger {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Run {
     pub id: RunId,
+    pub kind: RunKind,
     pub instance_id: InstanceId,
     pub plan_id: Option<PlanId>,
     pub parent_run_id: Option<RunId>,
     pub root_run_id: RunId,
+    /// 流水线子运行对应的步骤。
+    pub step_key: Option<String>,
     pub source: RunSource,
     pub prompt: String,
     pub state: RunState,
@@ -486,6 +508,115 @@ pub struct Approval {
     pub tool_call: Value,
     pub state: ApprovalState,
     pub expires_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// 团队（8.1）：同一用户的几个实例。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Team {
+    pub id: TeamId,
+    pub name: String,
+    pub members: Vec<TeamMember>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamMember {
+    pub instance_id: InstanceId,
+    pub role: TeamRole,
+    pub position: u32,
+}
+
+/// 团队模板：一键领养一整个团队。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TeamTemplate {
+    pub id: TeamTemplateId,
+    pub name: String,
+    pub spec: TeamTemplateSpec,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamTemplateSpec {
+    pub members: Vec<TemplateMember>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TemplateMember {
+    pub agent_id: String,
+    #[serde(default)]
+    pub harness: Option<String>,
+    pub name: String,
+    #[serde(default = "member_role")]
+    pub role: TeamRole,
+}
+
+fn member_role() -> TeamRole {
+    TeamRole::Member
+}
+
+/// 流水线的一步（8.3）：交给哪个实例、做什么、依赖哪些步骤的产出。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlanStep {
+    pub key: String,
+    pub instance_id: InstanceId,
+    pub prompt: String,
+    #[serde(default)]
+    pub depends_on: Vec<String>,
+}
+
+/// 校验流水线步骤：键唯一、依赖都存在、没有环。返回按依赖排好的顺序（拓扑序）。
+pub fn order_steps(steps: &[PlanStep]) -> Result<Vec<&PlanStep>, String> {
+    use std::collections::{HashMap, HashSet};
+    let mut by_key: HashMap<&str, &PlanStep> = HashMap::new();
+    for s in steps {
+        if by_key.insert(s.key.as_str(), s).is_some() {
+            return Err(format!("duplicate step {:?}", s.key));
+        }
+    }
+    for s in steps {
+        for d in &s.depends_on {
+            if !by_key.contains_key(d.as_str()) {
+                return Err(format!("step {:?} depends on unknown step {d:?}", s.key));
+            }
+            if d == &s.key {
+                return Err(format!("step {:?} depends on itself", s.key));
+            }
+        }
+    }
+    // Kahn 算法；同一层按声明顺序，结果稳定。
+    let mut done: HashSet<&str> = HashSet::new();
+    let mut order = Vec::with_capacity(steps.len());
+    while order.len() < steps.len() {
+        let ready: Vec<&PlanStep> = steps
+            .iter()
+            .filter(|s| !done.contains(s.key.as_str()))
+            .filter(|s| s.depends_on.iter().all(|d| done.contains(d.as_str())))
+            .collect();
+        if ready.is_empty() {
+            return Err("steps have a dependency cycle".into());
+        }
+        for s in ready {
+            done.insert(s.key.as_str());
+            order.push(s);
+        }
+    }
+    Ok(order)
+}
+
+/// 产出物（8.4）：运行发布的文件，内容加密存在对象存储里。名字在一棵运行树里唯一，同名再发布是新版本。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Artifact {
+    pub id: ArtifactId,
+    pub instance_id: InstanceId,
+    pub run_id: RunId,
+    pub root_run_id: RunId,
+    pub name: String,
+    pub version: u32,
+    pub content_type: String,
+    pub size: u64,
+    /// 内容的 SHA-256（十六进制）。
+    pub sha256: String,
     pub created_at: DateTime<Utc>,
 }
 
@@ -559,6 +690,8 @@ mod tests {
             (Backoff, Failed),
             (Running, Succeeded),
             (WaitingApproval, Failed),
+            (Queued, WaitingChildren),
+            (WaitingChildren, Succeeded),
         ] {
             assert!(a.can_transition(b), "{a} -> {b}");
         }
@@ -615,6 +748,32 @@ mod tests {
         };
         assert!(!parent.contains(&extra_tool));
         assert!(GrantScope::default().contains(&GrantScope::default()));
+    }
+
+    #[test]
+    fn step_ordering() {
+        let step = |k: &str, deps: &[&str]| PlanStep {
+            key: k.into(),
+            instance_id: InstanceId::new(),
+            prompt: "p".into(),
+            depends_on: deps.iter().map(|d| d.to_string()).collect(),
+        };
+        let steps = vec![
+            step("report", &["research", "data"]),
+            step("research", &[]),
+            step("data", &[]),
+            step("push", &["report"]),
+        ];
+        let order: Vec<_> = order_steps(&steps)
+            .unwrap()
+            .into_iter()
+            .map(|s| s.key.as_str())
+            .collect();
+        assert_eq!(order, ["research", "data", "report", "push"]);
+        assert!(order_steps(&[step("a", &["b"]), step("b", &["a"])]).is_err());
+        assert!(order_steps(&[step("a", &["zzz"])]).is_err());
+        assert!(order_steps(&[step("a", &[]), step("a", &[])]).is_err());
+        assert!(order_steps(&[step("a", &["a"])]).is_err());
     }
 
     #[test]

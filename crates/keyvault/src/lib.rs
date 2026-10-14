@@ -274,6 +274,19 @@ impl<K: Kms, S: KeyStore> KeyVault<K, S> {
         })
     }
 
+    /// 加密一段数据（产出物等）。`object_id` 进 AAD，用的是和 key 不同的域，两类密文不能互换。
+    pub fn seal_bytes(&self, user_id: &str, object_id: &str, plain: &[u8]) -> Result<Vec<u8>> {
+        let dek = self.dek(user_id)?;
+        let cipher = Aes256Gcm::new_from_slice(dek.as_ref()).expect("32-byte key");
+        seal_raw(&cipher, plain, &blob_aad(user_id, object_id))
+    }
+
+    pub fn open_bytes(&self, user_id: &str, object_id: &str, sealed: &[u8]) -> Result<Vec<u8>> {
+        let dek = self.dek(user_id)?;
+        let cipher = Aes256Gcm::new_from_slice(dek.as_ref()).expect("32-byte key");
+        open_raw(&cipher, sealed, &blob_aad(user_id, object_id))
+    }
+
     /// 解密一把 API key。只应在模型网关里调用，结果尽快用完丢弃。
     pub fn open(
         &self,
@@ -321,6 +334,15 @@ impl<K: Kms, S: KeyStore> KeyVault<K, S> {
         );
         Ok(dek)
     }
+}
+
+fn blob_aad(user_id: &str, object_id: &str) -> Vec<u8> {
+    let mut out = b"thinktin/blob/v1/".to_vec();
+    out.extend_from_slice(&(user_id.len() as u32).to_be_bytes());
+    out.extend_from_slice(user_id.as_bytes());
+    out.extend_from_slice(&(object_id.len() as u32).to_be_bytes());
+    out.extend_from_slice(object_id.as_bytes());
+    out
 }
 
 fn aad(user_id: &str, record_id: &str) -> Vec<u8> {
@@ -484,6 +506,25 @@ mod tests {
         assert_eq!(v.cache.lock().unwrap().keys().collect::<Vec<_>>(), ["u3"]);
         SecretOpener::forget_user(&v, "u3");
         assert!(v.cache.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn blobs_are_bound_to_user_and_object() {
+        let vault = KeyVault::new(LocalKms::new("k", &[1; 32]), MemoryKeyStore::default());
+        vault.create_user_key("u1").unwrap();
+        vault.create_user_key("u2").unwrap();
+        let sealed = vault.seal_bytes("u1", "a1", b"report body").unwrap();
+        assert_eq!(
+            vault.open_bytes("u1", "a1", &sealed).unwrap(),
+            b"report body"
+        );
+        assert!(vault.open_bytes("u1", "a2", &sealed).is_err());
+        assert!(vault.open_bytes("u2", "a1", &sealed).is_err());
+        // 和 key 的密文域分开：同样的 id 也解不开。
+        let key = vault
+            .seal("u1", "a1", &SecretString::from("sk-test-1234".to_string()))
+            .unwrap();
+        assert!(vault.open_bytes("u1", "a1", &key.ciphertext).is_err());
     }
 
     #[test]

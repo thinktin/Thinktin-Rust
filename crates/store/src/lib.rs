@@ -9,6 +9,7 @@
 //! 只在 `Tx<Worker>` 上有，业务接口拿不到。
 
 mod approvals;
+mod artifacts;
 mod credentials;
 mod error;
 mod events;
@@ -18,6 +19,7 @@ mod outbox;
 mod plans;
 mod runs;
 mod sessions;
+mod teams;
 mod usage;
 mod users;
 
@@ -34,6 +36,7 @@ use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::{PgConnection, PgPool, Postgres, Transaction};
 
 pub use approvals::{ApprovalRecord, NewApproval};
+pub use artifacts::{NewArtifact, StoredArtifact};
 pub use credentials::{NewCredential, SealedCredential};
 pub use error::{Error, Result};
 pub use events::EVENTS_CHANNEL;

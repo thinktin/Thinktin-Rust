@@ -1,4 +1,4 @@
-//! 后台任务的组装：调度循环、执行器、出箱投递、实例巡检、数据维护。
+//! 后台任务的组装：调度循环、流水线推进、执行器、出箱投递、实例巡检、数据维护。
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,8 +12,10 @@ use notify::apns::{ApnsClient, ApnsConfig};
 use orchestrator::exec::{ExecConfig, ExecConnector};
 use orchestrator::executor::{Executor, ExecutorConfig};
 use orchestrator::outbox::{Dispatcher, DispatcherConfig};
+use orchestrator::pipeline::{HandoffCopier, PipelineConfig, PipelineDriver};
 use orchestrator::scheduler::{Scheduler, SchedulerConfig};
-use orchestrator::tools::ScheduleTools;
+use orchestrator::shim::PlatformTools;
+use orchestrator::tools::{ArtifactTools, ScheduleTools, ToolSet};
 use proto::domain::PushChannelKind;
 use sandbox::SandboxProvider;
 use sandbox::local::LocalProvider;
@@ -57,27 +59,45 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
         GrantConfig::default(),
         issuer,
     ));
-    let connector = Arc::new(ExecConnector::new(
-        provider,
-        ExecConfig {
-            shim_path: cfg.sandbox.shim_path.clone(),
-            gateway_url: cfg.sandbox.gateway_url.clone(),
-            manifest_override: cfg.sandbox.manifest_override.clone(),
-            ..ExecConfig::default()
-        },
-    ));
-    let executor = Arc::new(Executor::new(
-        db.clone(),
-        node_id,
-        lifecycle.clone(),
-        grants,
-        connector,
+    let exec_cfg = ExecConfig {
+        shim_path: cfg.sandbox.shim_path.clone(),
+        gateway_url: cfg.sandbox.gateway_url.clone(),
+        manifest_override: cfg.sandbox.manifest_override.clone(),
+        ..ExecConfig::default()
+    };
+    let workdir = exec_cfg.workdir.clone();
+    let connector = Arc::new(ExecConnector::new(provider.clone(), exec_cfg));
+    let artifacts = crate::artifact_store(cfg, db, crate::kms(cfg)?)?;
+    let tools: Vec<Arc<dyn PlatformTools>> = vec![
         Arc::new(ScheduleTools::new(db.clone())),
-        ExecutorConfig {
-            max_concurrent: cfg.worker.max_concurrent_runs,
-            ..ExecutorConfig::default()
-        },
-    ));
+        Arc::new(ArtifactTools::new(
+            db.clone(),
+            artifacts.clone(),
+            provider.clone(),
+            workdir.clone(),
+        )),
+    ];
+    let executor = Arc::new(
+        Executor::new(
+            db.clone(),
+            node_id,
+            lifecycle.clone(),
+            grants,
+            connector,
+            Arc::new(ToolSet::new(tools)),
+            ExecutorConfig {
+                max_concurrent: cfg.worker.max_concurrent_runs,
+                ..ExecutorConfig::default()
+            },
+        )
+        .with_handoff(Arc::new(HandoffCopier::new(
+            db.clone(),
+            artifacts,
+            provider,
+            workdir,
+        ))),
+    );
+    let pipelines = PipelineDriver::new(db.clone(), PipelineConfig::default());
     let scheduler = Scheduler::new(db.clone(), SchedulerConfig::default());
     let mut dispatcher = Dispatcher::new(db.clone(), node_id, DispatcherConfig::default());
     if let Some(apns) = &cfg.push.apns {
@@ -96,6 +116,10 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
 
     bg.spawn("scheduler", move |stop| async move {
         scheduler.run(stopped(stop)).await;
+        Ok(())
+    });
+    bg.spawn("pipelines", move |stop| async move {
+        pipelines.run(stopped(stop)).await;
         Ok(())
     });
     bg.spawn("executor", move |stop| async move {

@@ -7,8 +7,8 @@ use axum::http::StatusCode;
 use chrono::{DateTime, Utc};
 use orchestrator::schedule::Schedule;
 use proto::domain::{
-    CatchUp, GrantScope, InstanceId, Plan, PlanAuthor, PlanId, PlanPolicy, ScheduleSpec, Trigger,
-    TriggerId,
+    CatchUp, GrantScope, InstanceId, Plan, PlanAuthor, PlanId, PlanPolicy, PlanStep, ScheduleSpec,
+    Trigger, TriggerId, order_steps,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -18,12 +18,15 @@ use super::{check_len, parse_id};
 use crate::{ApiError, ApiJson, ApiResult, AppState, Authed};
 
 const MAX_TRIGGERS: usize = 10;
+const MAX_STEPS: usize = 20;
 
 #[derive(Serialize)]
 pub struct PlanView {
     #[serde(flatten)]
     plan: Plan,
     triggers: Vec<Trigger>,
+    /// 流水线步骤（8.2）；为空时计划是单个 agent 的运行。
+    steps: Vec<PlanStep>,
 }
 
 /// 校验触发规则，返回下一次触发时间。
@@ -57,9 +60,36 @@ fn check_policy(policy: &PlanPolicy) -> ApiResult<()> {
     Ok(())
 }
 
+/// 校验流水线步骤：键的格式、提示词长度、依赖关系（实例归属在库里校验）。
+fn check_steps(steps: &[PlanStep]) -> ApiResult<()> {
+    if steps.len() > MAX_STEPS {
+        return Err(ApiError::invalid(format!("at most {MAX_STEPS} steps")));
+    }
+    for st in steps {
+        let ok = (1..=32).contains(&st.key.len())
+            && st.key.bytes().enumerate().all(|(i, b)| {
+                b.is_ascii_lowercase() || b.is_ascii_digit() || (i > 0 && (b == b'_' || b == b'-'))
+            });
+        if !ok {
+            return Err(ApiError::invalid(format!(
+                "step key {:?} must be 1-32 of a-z 0-9 _ - (starting with a letter or digit)",
+                st.key
+            )));
+        }
+        check_len("step prompt", st.prompt.trim(), 1, 8000)?;
+    }
+    order_steps(steps).map_err(ApiError::invalid)?;
+    Ok(())
+}
+
 async fn view(t: &mut Tx<Tenant>, plan: Plan) -> ApiResult<PlanView> {
     let triggers = t.triggers(plan.id).await?;
-    Ok(PlanView { plan, triggers })
+    let steps = t.plan_steps(plan.id).await?;
+    Ok(PlanView {
+        plan,
+        triggers,
+        steps,
+    })
 }
 
 #[derive(Deserialize)]
@@ -73,6 +103,8 @@ pub struct CreateReq {
     catch_up: CatchUp,
     #[serde(default)]
     triggers: Vec<ScheduleSpec>,
+    #[serde(default)]
+    steps: Vec<PlanStep>,
 }
 
 pub async fn create(
@@ -88,6 +120,7 @@ pub async fn create(
             "at most {MAX_TRIGGERS} triggers"
         )));
     }
+    check_steps(&req.steps)?;
     let now = Utc::now();
     let fires = req
         .triggers
@@ -115,6 +148,9 @@ pub async fn create(
         .create_run_grant(req.instance_id, Some(plan.id), &scope, s.cfg.grant_ttl)
         .await?;
     t.set_plan_grant(plan.id, grant.id).await?;
+    if !req.steps.is_empty() {
+        t.set_plan_steps(plan.id, &req.steps).await?;
+    }
     for (spec, next) in req.triggers.iter().zip(fires) {
         t.add_trigger(plan.id, spec, Some(next)).await?;
     }
@@ -170,6 +206,8 @@ pub struct UpdateReq {
     goal: Option<String>,
     policy: Option<PlanPolicy>,
     catch_up: Option<CatchUp>,
+    /// 整体替换；给空数组就变回单个 agent 的计划。
+    steps: Option<Vec<PlanStep>>,
 }
 
 pub async fn update(
@@ -187,6 +225,9 @@ pub async fn update(
     check_len("title", title.trim(), 1, 100)?;
     check_len("goal", goal.trim(), 1, 8000)?;
     check_policy(&policy)?;
+    if let Some(steps) = &req.steps {
+        check_steps(steps)?;
+    }
     let plan = t
         .update_plan(
             id,
@@ -196,6 +237,9 @@ pub async fn update(
             req.catch_up.unwrap_or(cur.catch_up),
         )
         .await?;
+    if let Some(steps) = &req.steps {
+        t.set_plan_steps(id, steps).await?;
+    }
     t.audit(
         &who.actor(),
         "plan.update",

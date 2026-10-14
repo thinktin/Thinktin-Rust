@@ -29,6 +29,11 @@
 | 3.5（续） | 主程序带后台任务：调度、执行、投递、实例巡检、事件分区和验证码维护；`[worker]`、`[sandbox]`、`[push.apns]` 配置 | `crates/server/src/workers.rs` |
 | 5.1、5.2、5.3、9.8 | 接入网关：账号、设备、agent 目录、实例、模型别名、运行、计划与触发器（规则校验、计划授权）、审批、模型 key（按用户 DEK 加密、只显示后 4 位、审计）；实例事件流（WebSocket 补发 + 实时、Postgres 通知唤醒、过期位置 reset、心跳重新核对会话）；REST 分页补发 | `crates/gateway`、[server 的 `[api]` 配置](../README.md) |
 | 7.8 | 平台工具 thinktin.schedule：agent 查看、新建、修改、取消计划（新建和修改要用户在 App 里确认后生效；只能动自己实例的计划；计划授权不超过发起调用的运行） | `crates/orchestrator/src/tools.rs` |
+| 8.1 | 团队与团队模板：成员（一个负责人）、从现有团队生成模板、按模板一键领养整个团队 | `crates/store/src/teams.rs`、`crates/gateway/src/routes/teams.rs` |
+| 8.2 | 运行树：父子运行、流水线根运行等待子任务（`waiting_children`）、整树停止（`POST /v1/runs/{id}/cancel?tree=true`） | `crates/store/src/runs.rs` |
+| 8.3 | 流水线（DAG）执行：计划带步骤时触发成流水线根运行；依赖满足的步骤并行启动（每步按步骤实例签发收窄的子授权）；一步失败停掉其余步骤、根运行失败并通知 | `crates/orchestrator/src/pipeline.rs`、`crates/store/migrations/0002_collaboration.sql` |
+| 8.4 | 产出物服务：按用户 DEK 加密后存对象存储（本地目录后端）、同名再发布是新版本、按运行树 / 实例索引；平台工具 thinktin.artifacts（发布、列出、读取、取到工作区）；下载接口按附件返回 | `crates/orchestrator/src/artifacts.rs`、`tools.rs`、`crates/gateway/src/routes/artifacts.rs` |
+| 8.5 | 交接说明：下游步骤的任务里附上游摘要和产出物清单，启动前把上游产出物复制到下游工作区 `handoff/` | `crates/orchestrator/src/pipeline.rs`（`handoff_prompt`、`HandoffCopier`） |
 | 4.3、4.4（换取） | 运行授权：签发、范围只能收窄的子授权、连带吊销、有活动自动续期；退出登录不影响；用授权换绑定沙箱的令牌 | `crates/auth/src/grants.rs` |
 
 ## 进行中
@@ -44,7 +49,7 @@
 | M3 执行面 | 6.1、6.3、6.4 | 沙箱抽象（按 E2B 接口）、本地开发后端、实例生命周期 | 完成（6.2 Cube 后端待 2.3 部署） |
 | M4 编排 | 7.1–7.7、7.9 | 计划与触发器（cron / RRULE / 一次性，带时区）、调度循环、运行状态机、执行租约、出箱、补跑、预算护栏、运行日志 | 完成（端到端测试：计划到点 → 真实 agent-shim → 结果与通知；Redis 热数据待 M5 事件流） |
 | M5 接入网关 | 5.1–5.3、9.8 | REST 接口、WebSocket 事件流、按序号续传；key 管理接口 | 完成（会话核对每次查库、热数据走 Postgres 通知；需要时加缓存 / Redis；短信通道待选型） |
-| M6 平台工具与协同 | 6.12、7.8、8.1–8.5 | MCP 桥接、thinktin.schedule、团队、运行树、流水线、产出物、交接说明 | 进行中（6.12 完成） |
+| M6 平台工具与协同 | 6.12、7.8、8.1–8.5 | MCP 桥接、thinktin.schedule、团队、运行树、流水线、产出物、交接说明 | 完成（对象存储先做本地目录后端，S3 / OSS 后端随部署补） |
 | M7 通知 | 10.1、10.3、10.4 | 收件箱、APNs、国内厂商推送（接口 + 统一推送服务适配） | 待开始 |
 | M8 客户端核心 | 11.1–11.4 | UniFFI、接口客户端、事件流续传、本地缓存 | 待开始 |
 | M9 端到端 | 17.1、15.2、15.4、16.3 | 本地沙箱 + 模拟厂商跑通主链路；租户隔离测试；密钥与日志审计；AI 生成内容标识 | 待开始 |

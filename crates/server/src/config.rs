@@ -20,6 +20,7 @@ pub struct Config {
     pub api: Api,
     pub worker: Worker,
     pub sandbox: Sandbox,
+    pub storage: Storage,
     pub push: Push,
     /// 沙箱令牌签名私钥种子（base64url），只从环境变量 THINKTIN_SANDBOX_TOKEN_SEED 读。
     #[serde(skip)]
@@ -53,6 +54,7 @@ impl Default for Api {
             kms_key_id: "local-1".into(),
             default_platform_tools: orchestrator::tools::SCHEDULE_TOOLS
                 .iter()
+                .chain(orchestrator::tools::ARTIFACT_TOOLS.iter())
                 .map(|s| s.to_string())
                 .collect(),
         }
@@ -111,6 +113,25 @@ pub struct Sandbox {
     pub manifest_override: Option<String>,
     /// 沙箱令牌签名密钥的 kid（模型网关按它找公钥）。
     pub token_kid: String,
+}
+
+/// 产出物存储（8.4）。内容按用户 DEK 加密后才落盘。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Storage {
+    /// 对象存储后端：目前只有 local（本地目录，开发用；接口和后台任务要能看到同一个目录）。
+    pub provider: String,
+    /// local 后端的目录。
+    pub local_root: std::path::PathBuf,
+}
+
+impl Default for Storage {
+    fn default() -> Self {
+        Self {
+            provider: "local".into(),
+            local_root: ".thinktin/blobs".into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -200,6 +221,7 @@ impl Default for Config {
             api: Api::default(),
             worker: Worker::default(),
             sandbox: Sandbox::default(),
+            storage: Storage::default(),
             push: Push::default(),
             sandbox_token_seed: None,
             api_secrets: ApiSecrets::default(),
@@ -323,9 +345,18 @@ impl Config {
                     self.sandbox.provider
                 );
             }
+            if self.api_secrets.kms_key.is_none() {
+                bail!("worker.enabled needs THINKTIN_KMS_KEY (artifacts are encrypted per user)");
+            }
             if self.worker.max_concurrent_runs == 0 {
                 bail!("worker.max_concurrent_runs must be positive");
             }
+        }
+        if (self.api.enabled || self.worker.enabled) && self.storage.provider != "local" {
+            bail!(
+                "storage.provider {:?} is not supported yet (only \"local\")",
+                self.storage.provider
+            );
         }
         if let Some(id) = &self.node_id
             && (id.is_empty() || id.len() > 128)
@@ -438,9 +469,12 @@ mod tests {
         let db = ("DATABASE_URL", "postgres://x");
         let err = Config::load(Some(&path), &MapEnv(HashMap::from([db]))).unwrap_err();
         assert!(err.to_string().contains("THINKTIN_SANDBOX_TOKEN_SEED"));
+        let seed = ("THINKTIN_SANDBOX_TOKEN_SEED", "seed");
+        let err = Config::load(Some(&path), &MapEnv(HashMap::from([db, seed]))).unwrap_err();
+        assert!(err.to_string().contains("THINKTIN_KMS_KEY"));
         let cfg = Config::load(
             Some(&path),
-            &MapEnv(HashMap::from([db, ("THINKTIN_SANDBOX_TOKEN_SEED", "seed")])),
+            &MapEnv(HashMap::from([db, seed, ("THINKTIN_KMS_KEY", "ab")])),
         )
         .unwrap();
         assert!(cfg.worker.enabled);

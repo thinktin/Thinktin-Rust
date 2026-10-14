@@ -1,4 +1,6 @@
-//! 平台工具（WBS 7.8）：`thinktin.schedule`，让 agent 在平台上登记、查看、修改、取消计划，
+//! 平台工具：`thinktin.schedule`（WBS 7.8）和 `thinktin.artifacts`（8.4）。
+//!
+//! `thinktin.schedule`，让 agent 在平台上登记、查看、修改、取消计划，
 //! 代替 agent 自带的定时功能（架构方案 4.9）。agent 看到的名字是 `mcp__thinktin__schedule_*` 之类。
 //!
 //! agent 不可信（可能被网页、邮件里的内容诱导），而计划会在没人看着的时候用用户的 key 反复运行，所以：
@@ -365,6 +367,281 @@ impl PlatformTools for ScheduleTools {
                 Ok(a) => self.cancel(ctx, a).await,
                 Err(e) => Err(e),
             },
+            other => Err(Fail(format!("unknown platform tool {other}"))),
+        };
+        match result {
+            Ok(v) => ToolOutput::text(v.to_string()),
+            Err(Fail(m)) => ToolOutput::error(m),
+        }
+    }
+}
+
+// ---------- 组合 ----------
+
+/// 把几组平台工具合在一起，按工具名分派。
+pub struct ToolSet {
+    providers: Vec<std::sync::Arc<dyn PlatformTools>>,
+}
+
+impl ToolSet {
+    pub fn new(providers: Vec<std::sync::Arc<dyn PlatformTools>>) -> Self {
+        Self { providers }
+    }
+}
+
+#[async_trait]
+impl PlatformTools for ToolSet {
+    fn tools(&self) -> Vec<PlatformTool> {
+        self.providers.iter().flat_map(|p| p.tools()).collect()
+    }
+
+    async fn call(&self, ctx: &ToolContext, name: &str, arguments: &Value) -> ToolOutput {
+        for p in &self.providers {
+            if p.tools().iter().any(|t| t.name == name) {
+                return p.call(ctx, name, arguments).await;
+            }
+        }
+        ToolOutput::error(format!("unknown platform tool {name}"))
+    }
+}
+
+// ---------- thinktin.artifacts（8.4） ----------
+
+pub const ARTIFACT_TOOLS: [&str; 4] = [
+    "artifact_publish",
+    "artifact_list",
+    "artifact_read",
+    "artifact_fetch",
+];
+
+/// 读给 agent 的文本内容上限（更大的用 artifact_fetch 放进工作区）。
+const MAX_INLINE_BYTES: usize = 64 << 10;
+
+pub struct ArtifactTools {
+    db: Db,
+    store: std::sync::Arc<crate::artifacts::ArtifactStore>,
+    provider: std::sync::Arc<dyn sandbox::SandboxProvider>,
+    /// agent 工作区在沙箱里的目录（相对沙箱根）。
+    workdir: String,
+}
+
+impl ArtifactTools {
+    pub fn new(
+        db: Db,
+        store: std::sync::Arc<crate::artifacts::ArtifactStore>,
+        provider: std::sync::Arc<dyn sandbox::SandboxProvider>,
+        workdir: impl Into<String>,
+    ) -> Self {
+        Self {
+            db,
+            store,
+            provider,
+            workdir: workdir.into(),
+        }
+    }
+
+    async fn origin(
+        &self,
+        ctx: &ToolContext,
+    ) -> Result<(crate::artifacts::Origin, Option<String>), Fail> {
+        let mut w = self.db.worker().await?;
+        let rec = w.run_record(ctx.run).await?;
+        let rt = w.instance_runtime(ctx.instance).await?;
+        w.rollback().await?;
+        Ok((
+            crate::artifacts::Origin {
+                user: ctx.user,
+                instance: ctx.instance,
+                run: ctx.run,
+                root: rec.run.root_run_id,
+            },
+            rt.sandbox_id,
+        ))
+    }
+
+    fn workspace_path(&self, rel: &str) -> Result<String, Fail> {
+        sandbox::check_relative_path(rel).map_err(|e| Fail(e.to_string()))?;
+        Ok(format!("{}/{rel}", self.workdir))
+    }
+
+    async fn publish(&self, ctx: &ToolContext, args: &Value) -> Result<Value, Fail> {
+        #[derive(Deserialize)]
+        struct A {
+            name: String,
+            path: Option<String>,
+            content: Option<String>,
+            content_type: Option<String>,
+        }
+        let a: A = parse(args)?;
+        let (origin, sandbox) = self.origin(ctx).await?;
+        let (bytes, default_type) = match (&a.path, &a.content) {
+            (Some(path), None) => {
+                let sid = sandbox.ok_or_else(|| Fail("the sandbox is not running".into()))?;
+                let bytes = self
+                    .provider
+                    .read_file(&sandbox::SandboxId(sid), &self.workspace_path(path)?)
+                    .await
+                    .map_err(|e| Fail(format!("reading {path}: {e}")))?;
+                (bytes, "application/octet-stream")
+            }
+            (None, Some(text)) => (text.clone().into_bytes(), "text/plain; charset=utf-8"),
+            _ => return Err(Fail("give exactly one of path or content".into())),
+        };
+        let content_type = a.content_type.as_deref().unwrap_or(default_type);
+        let stored = self
+            .store
+            .publish(origin, a.name.trim(), content_type, &bytes)
+            .await
+            .map_err(|e| match e {
+                crate::artifacts::ArtifactError::Invalid(m) => Fail(m),
+                other => {
+                    tracing::error!(error = %other, "publishing an artifact failed");
+                    Fail("could not store the artifact, try again later".into())
+                }
+            })?;
+        Ok(json!({
+            "artifact_id": stored.artifact.id,
+            "name": stored.artifact.name,
+            "version": stored.artifact.version,
+            "size": stored.artifact.size,
+        }))
+    }
+
+    async fn list(&self, ctx: &ToolContext) -> Result<Value, Fail> {
+        let (origin, _) = self.origin(ctx).await?;
+        let mut w = self.db.worker().await?;
+        let items = w.tree_artifacts(origin.root).await?;
+        w.rollback().await?;
+        let list: Vec<Value> = items
+            .into_iter()
+            .map(|a| {
+                json!({
+                    "name": a.artifact.name,
+                    "version": a.artifact.version,
+                    "size": a.artifact.size,
+                    "content_type": a.artifact.content_type,
+                    "from_run": a.artifact.run_id,
+                })
+            })
+            .collect();
+        Ok(json!({ "artifacts": list }))
+    }
+
+    async fn find(
+        &self,
+        ctx: &ToolContext,
+        args: &Value,
+    ) -> Result<(store::StoredArtifact, Value), Fail> {
+        let (origin, _) = self.origin(ctx).await?;
+        let name = args
+            .get("name")
+            .and_then(Value::as_str)
+            .ok_or_else(|| Fail("name is required".into()))?;
+        let version = args
+            .get("version")
+            .and_then(Value::as_u64)
+            .map(|v| u32::try_from(v).unwrap_or(u32::MAX));
+        let mut w = self.db.worker().await?;
+        let a = w
+            .named_artifact(origin.root, name, version)
+            .await
+            .map_err(|e| match e {
+                store::Error::NotFound => Fail(format!("no artifact named {name:?} in this task")),
+                other => other.into(),
+            })?;
+        w.rollback().await?;
+        Ok((a, args.clone()))
+    }
+
+    async fn read(&self, ctx: &ToolContext, args: &Value) -> Result<Value, Fail> {
+        let (a, _) = self.find(ctx, args).await?;
+        if a.artifact.size as usize > MAX_INLINE_BYTES {
+            return Err(Fail(format!(
+                "{} is {} bytes; use artifact_fetch to copy it into the workspace",
+                a.artifact.name, a.artifact.size
+            )));
+        }
+        let bytes = self
+            .store
+            .read(&a)
+            .await
+            .map_err(|_| Fail("could not read the artifact, try again later".into()))?;
+        let text = String::from_utf8(bytes)
+            .map_err(|_| Fail("the artifact is binary; use artifact_fetch".into()))?;
+        Ok(json!({ "name": a.artifact.name, "version": a.artifact.version, "content": text }))
+    }
+
+    async fn fetch(&self, ctx: &ToolContext, args: &Value) -> Result<Value, Fail> {
+        let (a, args) = self.find(ctx, args).await?;
+        let rel = args
+            .get("path")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("handoff/{}", a.artifact.name));
+        let target = self.workspace_path(&rel)?;
+        let (_, sandbox) = self.origin(ctx).await?;
+        let sid = sandbox.ok_or_else(|| Fail("the sandbox is not running".into()))?;
+        let bytes = self
+            .store
+            .read(&a)
+            .await
+            .map_err(|_| Fail("could not read the artifact, try again later".into()))?;
+        self.provider
+            .write_file(&sandbox::SandboxId(sid), &target, &bytes)
+            .await
+            .map_err(|e| Fail(format!("writing {rel}: {e}")))?;
+        Ok(json!({ "name": a.artifact.name, "version": a.artifact.version, "path": rel }))
+    }
+}
+
+#[async_trait]
+impl PlatformTools for ArtifactTools {
+    fn tools(&self) -> Vec<PlatformTool> {
+        let name = json!({ "type": "string", "description": "Artifact name, like report.md" });
+        let version = json!({ "type": "integer", "description": "Version (default latest)" });
+        vec![
+            PlatformTool {
+                name: "artifact_publish".into(),
+                description: "Publish a result of this task as an artifact so later steps and other agents can use it. Give either `content` (text) or `path` (a file in your workspace). Publishing the same name again creates a new version.".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "name": name,
+                        "content": { "type": "string" },
+                        "path": { "type": "string", "description": "File path relative to your workspace" },
+                        "content_type": { "type": "string" }
+                    },
+                    "required": ["name"]
+                }),
+            },
+            PlatformTool {
+                name: "artifact_list".into(),
+                description: "List the artifacts published in this task (including by upstream steps and other agents).".into(),
+                input_schema: json!({ "type": "object", "properties": {} }),
+            },
+            PlatformTool {
+                name: "artifact_read".into(),
+                description: "Read a small text artifact (up to 64 KB).".into(),
+                input_schema: json!({ "type": "object", "properties": { "name": name, "version": version }, "required": ["name"] }),
+            },
+            PlatformTool {
+                name: "artifact_fetch".into(),
+                description: "Copy an artifact into your workspace (default handoff/<name>).".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": { "name": name, "version": version, "path": { "type": "string" } },
+                    "required": ["name"]
+                }),
+            },
+        ]
+    }
+
+    async fn call(&self, ctx: &ToolContext, name: &str, arguments: &Value) -> ToolOutput {
+        let result = match name {
+            "artifact_publish" => self.publish(ctx, arguments).await,
+            "artifact_list" => self.list(ctx).await,
+            "artifact_read" => self.read(ctx, arguments).await,
+            "artifact_fetch" => self.fetch(ctx, arguments).await,
             other => Err(Fail(format!("unknown platform tool {other}"))),
         };
         match result {

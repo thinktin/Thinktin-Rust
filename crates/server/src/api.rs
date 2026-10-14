@@ -10,7 +10,6 @@ use auth::sms::DevConsoleSms;
 use axum::Router;
 use control::BuiltinTemplates;
 use gateway::{AppState, EventHub, GatewayConfig, Inner};
-use keyvault::LocalKms;
 use store::Db;
 use zeroize::Zeroizing;
 
@@ -46,11 +45,8 @@ pub fn build(cfg: &Config, db: &Db, bg: &mut Background) -> anyhow::Result<Route
     if pepper.len() < 32 {
         bail!("THINKTIN_CODE_PEPPER must be at least 32 bytes (64 hex characters)");
     }
-    let kms = LocalKms::from_hex(
-        cfg.api.kms_key_id.clone(),
-        secrets.kms_key.as_deref().unwrap_or_default(),
-    )
-    .context("THINKTIN_KMS_KEY must be 64 hex characters")?;
+    let kms = crate::kms(cfg)?;
+    let artifacts = crate::artifact_store(cfg, db, kms.clone())?;
     let auth = AuthService::new(
         db.clone(),
         AuthConfig::default(),
@@ -65,8 +61,9 @@ pub fn build(cfg: &Config, db: &Db, bg: &mut Background) -> anyhow::Result<Route
         db: db.clone(),
         auth: Arc::new(auth),
         templates: Arc::new(BuiltinTemplates),
-        kms: Arc::new(kms),
+        kms,
         hub: hub.clone(),
+        artifacts: Some(artifacts),
         cfg: GatewayConfig {
             default_platform_tools: cfg.api.default_platform_tools.clone(),
             ..GatewayConfig::default()

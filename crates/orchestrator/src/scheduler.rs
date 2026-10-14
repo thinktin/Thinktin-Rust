@@ -107,6 +107,8 @@ impl Scheduler {
             }
         };
         let plan = plan_due(&schedule, due, now, d.plan.catch_up);
+        // 带步骤的计划生成流水线运行（8.3），由流水线驱动给每一步建子运行。
+        let pipeline = !w.plan_steps(d.plan.id).await?.is_empty();
         if plan.dropped > 0 {
             warn!(trigger = %t.id, dropped = plan.dropped, "too many missed fires, some were dropped");
         }
@@ -117,6 +119,9 @@ impl Scheduler {
                 d.plan.goal.clone(),
                 d.agent_version.clone(),
             );
+            if pipeline {
+                run.kind = proto::domain::RunKind::Pipeline;
+            }
             run.plan_id = Some(d.plan.id);
             run.trigger_id = Some(t.id);
             run.fire_time = Some(*fire);

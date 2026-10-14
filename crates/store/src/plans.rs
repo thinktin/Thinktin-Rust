@@ -2,8 +2,8 @@
 
 use chrono::{DateTime, Utc};
 use proto::domain::{
-    CatchUp, GrantId, InstanceId, Plan, PlanAuthor, PlanId, PlanPolicy, ScheduleSpec, Trigger,
-    TriggerId, UserId,
+    CatchUp, GrantId, InstanceId, Plan, PlanAuthor, PlanId, PlanPolicy, PlanStep, ScheduleSpec,
+    Trigger, TriggerId, UserId, order_steps,
 };
 use uuid::Uuid;
 
@@ -168,6 +168,35 @@ impl Tx<Tenant> {
         Ok(())
     }
 
+    /// 整体替换计划的流水线步骤（空表示普通计划：到点直接在计划的实例上运行目标）。
+    /// 步骤要能排成无环的依赖顺序，每一步的实例必须是自己的、没删除的。
+    pub async fn set_plan_steps(&mut self, plan: PlanId, steps: &[PlanStep]) -> Result<()> {
+        order_steps(steps).map_err(Error::Invalid)?;
+        self.plan(plan).await?;
+        for s in steps {
+            self.instance(s.instance_id).await?;
+        }
+        sqlx::query("DELETE FROM plan_steps WHERE plan_id = $1")
+            .bind(plan.0)
+            .execute(self.conn())
+            .await?;
+        for (i, s) in steps.iter().enumerate() {
+            sqlx::query(
+                "INSERT INTO plan_steps (plan_id, key, user_id, instance_id, prompt, depends_on, position) \
+                 VALUES ($1, $2, app_user_id(), $3, $4, $5, $6)",
+            )
+            .bind(plan.0)
+            .bind(&s.key)
+            .bind(s.instance_id.0)
+            .bind(&s.prompt)
+            .bind(&s.depends_on)
+            .bind(i32::try_from(i).unwrap_or(i32::MAX))
+            .execute(self.conn())
+            .await?;
+        }
+        Ok(())
+    }
+
     /// 删除计划：停掉它的触发器。已经生成的运行不受影响。
     pub async fn delete_plan(&mut self, id: PlanId) -> Result<()> {
         let done = sqlx::query(
@@ -270,6 +299,25 @@ impl<R> Tx<R> {
             return Err(Error::NotFound);
         }
         Ok(())
+    }
+
+    /// 计划的流水线步骤，按声明顺序。
+    pub async fn plan_steps(&mut self, plan: PlanId) -> Result<Vec<PlanStep>> {
+        let rows: Vec<(String, Uuid, String, Vec<String>)> = sqlx::query_as(
+            "SELECT key, instance_id, prompt, depends_on FROM plan_steps WHERE plan_id = $1 ORDER BY position",
+        )
+        .bind(plan.0)
+        .fetch_all(self.conn())
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(key, instance, prompt, depends_on)| PlanStep {
+                key,
+                instance_id: instance.into(),
+                prompt,
+                depends_on,
+            })
+            .collect())
     }
 
     pub async fn triggers(&mut self, plan: PlanId) -> Result<Vec<Trigger>> {

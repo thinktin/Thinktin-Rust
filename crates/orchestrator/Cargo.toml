@@ -12,12 +12,14 @@ chrono.workspace = true
 chrono-tz.workspace = true
 control = { path = "../control" }
 croner.workspace = true
+keyvault = { path = "../keyvault" }
 notify = { path = "../notify" }
 proto = { path = "../proto" }
 rrule.workspace = true
 sandbox = { path = "../sandbox" }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 store = { path = "../store" }
 thiserror.workspace = true
 tokio.workspace = true

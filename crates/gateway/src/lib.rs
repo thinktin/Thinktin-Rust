@@ -56,6 +56,8 @@ pub struct Inner {
     /// 用户 DEK 的包裹密钥（保存 key 时用；解密只在模型网关）。
     pub kms: Arc<dyn Kms>,
     pub hub: EventHub,
+    /// 产出物存储；没配置时下载接口返回不可用。
+    pub artifacts: Option<Arc<orchestrator::artifacts::ArtifactStore>>,
     pub cfg: GatewayConfig,
 }
 

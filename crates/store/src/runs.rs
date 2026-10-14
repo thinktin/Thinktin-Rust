@@ -9,7 +9,8 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use proto::domain::{
-    GrantId, InstanceId, PlanId, Run, RunBudget, RunId, RunSource, RunState, TriggerId, UserId,
+    GrantId, InstanceId, PlanId, Run, RunBudget, RunId, RunKind, RunSource, RunState, TriggerId,
+    UserId,
 };
 use uuid::Uuid;
 
@@ -18,6 +19,7 @@ use crate::{Error, Result, Tenant, Tx, Worker, from_json, parse, secs, to_json, 
 /// 新运行。用 [`NewRun::new`] 建，再按需填计划、父运行等字段。
 #[derive(Debug, Clone)]
 pub struct NewRun {
+    pub kind: RunKind,
     pub instance_id: InstanceId,
     pub source: RunSource,
     pub prompt: String,
@@ -28,6 +30,8 @@ pub struct NewRun {
     /// 计划运行的名义触发时间；同一计划同一时间只会有一个运行。
     pub fire_time: Option<DateTime<Utc>>,
     pub parent_run_id: Option<RunId>,
+    /// 流水线子运行对应的步骤。
+    pub step_key: Option<String>,
     pub run_grant_id: Option<GrantId>,
     pub budget: RunBudget,
     /// 抖动后的最早开始时间；None 为立即。
@@ -43,6 +47,7 @@ impl NewRun {
         agent_version: impl Into<String>,
     ) -> Self {
         Self {
+            kind: RunKind::Agent,
             instance_id,
             source,
             prompt: prompt.into(),
@@ -51,6 +56,7 @@ impl NewRun {
             trigger_id: None,
             fire_time: None,
             parent_run_id: None,
+            step_key: None,
             run_grant_id: None,
             budget: RunBudget::default(),
             not_before: None,
@@ -92,6 +98,8 @@ pub struct RunRecord {
 #[derive(sqlx::FromRow)]
 struct Row {
     id: Uuid,
+    kind: String,
+    step_key: Option<String>,
     user_id: Uuid,
     instance_id: Uuid,
     plan_id: Option<Uuid>,
@@ -122,7 +130,7 @@ struct Row {
 
 macro_rules! columns {
     () => {
-        "id, user_id, instance_id, plan_id, trigger_id, fire_time, parent_run_id, root_run_id, source, prompt, \
+        "id, kind, step_key, user_id, instance_id, plan_id, trigger_id, fire_time, parent_run_id, root_run_id, source, prompt, \
          state, state_reason, attempt, max_attempts, not_before, lease_owner, lease_expires_at, agent_version, \
          run_grant_id, budget, tokens_used, steps, summary, error, created_at, started_at, finished_at"
     };
@@ -136,10 +144,12 @@ impl Row {
     fn into_record(self) -> Result<RunRecord> {
         let run = Run {
             id: self.id.into(),
+            kind: parse(&self.kind)?,
             instance_id: self.instance_id.into(),
             plan_id: self.plan_id.map(Into::into),
             parent_run_id: self.parent_run_id.map(Into::into),
             root_run_id: self.root_run_id.into(),
+            step_key: self.step_key,
             source: parse(&self.source)?,
             prompt: self.prompt,
             state: parse(&self.state)?,
@@ -191,8 +201,8 @@ impl<R> Tx<R> {
         };
         let row: Option<Row> = sqlx::query_as(concat!(
             "INSERT INTO runs (id, user_id, instance_id, plan_id, trigger_id, fire_time, parent_run_id, root_run_id, \
-               source, prompt, agent_version, run_grant_id, budget, not_before, max_attempts) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, coalesce($14, now()), $15) \
+               source, prompt, agent_version, run_grant_id, budget, not_before, max_attempts, kind, step_key) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, coalesce($14, now()), $15, $16, $17) \
              ON CONFLICT (plan_id, fire_time) WHERE plan_id IS NOT NULL AND fire_time IS NOT NULL DO NOTHING \
              RETURNING ",
             columns!()
@@ -212,6 +222,8 @@ impl<R> Tx<R> {
         .bind(to_json(&new.budget)?)
         .bind(new.not_before)
         .bind(i32::try_from(new.max_attempts.max(1)).unwrap_or(i32::MAX))
+        .bind(new.kind.as_str())
+        .bind(&new.step_key)
         .fetch_optional(self.conn())
         .await?;
         row.map(Row::into_run).transpose()
@@ -297,6 +309,24 @@ impl Tx<Tenant> {
 }
 
 impl Tx<Tenant> {
+    /// 停掉整棵运行树（8.2）：根和所有没结束的子孙一起取消。返回取消的个数。
+    pub async fn cancel_run_tree(&mut self, root: RunId, reason: &str) -> Result<u64> {
+        let done = sqlx::query(
+            "UPDATE runs SET state = 'cancelled', state_reason = $2, lease_owner = NULL, lease_expires_at = NULL, \
+               finished_at = now(), updated_at = now() \
+             WHERE root_run_id = $1 AND state NOT IN ('succeeded', 'failed', 'cancelled')",
+        )
+        .bind(root.0)
+        .bind(reason)
+        .execute(self.conn())
+        .await?;
+        if done.rows_affected() == 0 {
+            // 区分“树不存在”和“都已经结束”。
+            self.run(root).await?;
+        }
+        Ok(done.rows_affected())
+    }
+
     /// 取消实例上所有没结束的运行（删除实例时）。返回取消的个数。
     pub async fn cancel_instance_runs(
         &mut self,
@@ -342,9 +372,9 @@ impl Tx<Worker> {
         for _ in 0..8 {
             let id: Option<Uuid> = sqlx::query_scalar(
                 "SELECT r.id FROM runs r JOIN users u ON u.id = r.user_id AND u.status = 'active' \
-                 WHERE r.not_before <= now() AND ( \
+                 WHERE r.kind = 'agent' AND r.not_before <= now() AND ( \
                    (r.state = 'queued' AND NOT EXISTS ( \
-                      SELECT 1 FROM runs a WHERE a.instance_id = r.instance_id AND a.state IN \
+                      SELECT 1 FROM runs a WHERE a.instance_id = r.instance_id AND a.kind = 'agent' AND a.state IN \
                         ('starting', 'running', 'waiting_approval', 'waiting_device', 'waiting_quota', \
                          'waiting_children', 'backoff'))) \
                    OR (r.state = 'backoff' AND (r.lease_owner IS NULL OR r.lease_expires_at < now()))) \
@@ -528,6 +558,84 @@ impl Tx<Worker> {
         .execute(self.conn())
         .await?;
         Ok(())
+    }
+
+    /// 待推进的流水线运行（排队中、等子运行中），锁住返回（SKIP LOCKED：多副本各拿各的）。
+    pub async fn due_pipelines(&mut self, limit: i64) -> Result<Vec<RunRecord>> {
+        let rows: Vec<Row> = sqlx::query_as(concat!(
+            "SELECT ",
+            columns!(),
+            " FROM runs WHERE kind = 'pipeline' AND state IN ('queued', 'waiting_children') \
+               AND not_before <= now() ORDER BY not_before LIMIT $1 FOR UPDATE SKIP LOCKED"
+        ))
+        .bind(limit)
+        .fetch_all(self.conn())
+        .await?;
+        rows.into_iter().map(Row::into_record).collect()
+    }
+
+    /// 直接子运行。
+    pub async fn child_runs(&mut self, parent: RunId) -> Result<Vec<RunRecord>> {
+        let rows: Vec<Row> = sqlx::query_as(concat!(
+            "SELECT ",
+            columns!(),
+            " FROM runs WHERE parent_run_id = $1 ORDER BY created_at, id"
+        ))
+        .bind(parent.0)
+        .fetch_all(self.conn())
+        .await?;
+        rows.into_iter().map(Row::into_record).collect()
+    }
+
+    /// 推进不持有租约的运行（流水线运行）：按状态机校验，并比较当前状态（CAS）。
+    pub async fn set_unleased_state(
+        &mut self,
+        id: RunId,
+        from: RunState,
+        to: RunState,
+        change: &RunChange,
+    ) -> Result<RunRecord> {
+        if !from.can_transition(to) {
+            return Err(Error::InvalidTransition { from, to });
+        }
+        let row: Option<Row> = sqlx::query_as(concat!(
+            "UPDATE runs SET state = $3, state_reason = coalesce($4, state_reason), \
+               summary = coalesce($5, summary), error = coalesce($6, error), \
+               started_at = CASE WHEN $3 = 'waiting_children' THEN coalesce(started_at, now()) ELSE started_at END, \
+               finished_at = CASE WHEN $3 IN ('succeeded', 'failed', 'cancelled') THEN now() ELSE finished_at END, \
+               updated_at = now() \
+             WHERE id = $1 AND state = $2 AND lease_owner IS NULL RETURNING ",
+            columns!()
+        ))
+        .bind(id.0)
+        .bind(from.as_str())
+        .bind(to.as_str())
+        .bind(&change.reason)
+        .bind(&change.summary)
+        .bind(&change.error)
+        .fetch_optional(self.conn())
+        .await?;
+        match row {
+            Some(r) => r.into_record(),
+            None => {
+                let now = self.run_record(id).await?.run.state;
+                Err(Error::InvalidTransition { from: now, to })
+            }
+        }
+    }
+
+    /// 取消一个运行的所有没结束的直接子运行（失败传播）。
+    pub async fn cancel_children(&mut self, parent: RunId, reason: &str) -> Result<u64> {
+        let done = sqlx::query(
+            "UPDATE runs SET state = 'cancelled', state_reason = $2, lease_owner = NULL, lease_expires_at = NULL, \
+               finished_at = now(), updated_at = now() \
+             WHERE parent_run_id = $1 AND state NOT IN ('succeeded', 'failed', 'cancelled')",
+        )
+        .bind(parent.0)
+        .bind(reason)
+        .execute(self.conn())
+        .await?;
+        Ok(done.rows_affected())
     }
 
     /// 累加用量（模型网关回报的 token、agent 的步数），供预算护栏判断。

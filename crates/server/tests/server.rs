@@ -134,6 +134,8 @@ async fn client_api_is_mounted_when_enabled() {
         code_pepper: Some("ab".repeat(32)),
         kms_key: Some("cd".repeat(32)),
     };
+    let blobs = tempfile::tempdir().unwrap();
+    cfg.storage.local_root = blobs.path().to_path_buf();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();

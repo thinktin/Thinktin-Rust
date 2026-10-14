@@ -12,7 +12,11 @@ mod workers;
 use std::future::{Future, IntoFuture};
 use std::time::Duration;
 
+use std::sync::Arc;
+
 use anyhow::Context;
+use keyvault::{Kms, LocalKms};
+use orchestrator::artifacts::{ArtifactStore, LocalBlobStore};
 use store::Db;
 use tokio::net::TcpListener;
 use tracing::{error, info, warn};
@@ -109,6 +113,27 @@ pub async fn serve(
         Some(err) => Err(err),
         None => Ok(()),
     }
+}
+
+/// 用户 DEK 的包裹密钥（本地 KMS；生产换成云 KMS）。
+fn kms(cfg: &Config) -> anyhow::Result<Arc<dyn Kms>> {
+    let kms = LocalKms::from_hex(
+        cfg.api.kms_key_id.clone(),
+        cfg.api_secrets.kms_key.as_deref().unwrap_or_default(),
+    )
+    .context("THINKTIN_KMS_KEY must be 64 hex characters")?;
+    Ok(Arc::new(kms))
+}
+
+/// 产出物存储：接口（下载）和后台任务（发布、交接）共用。
+fn artifact_store(cfg: &Config, db: &Db, kms: Arc<dyn Kms>) -> anyhow::Result<Arc<ArtifactStore>> {
+    let blobs = LocalBlobStore::new(&cfg.storage.local_root)
+        .with_context(|| format!("storage root {}", cfg.storage.local_root.display()))?;
+    Ok(Arc::new(ArtifactStore::new(
+        db.clone(),
+        Arc::new(blobs),
+        kms,
+    )))
 }
 
 /// SIGTERM（容器编排）或 Ctrl-C。

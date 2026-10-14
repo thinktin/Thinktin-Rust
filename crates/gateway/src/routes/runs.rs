@@ -76,13 +76,35 @@ pub async fn get(
     Ok(Json(run))
 }
 
+#[derive(Deserialize)]
+pub struct CancelQuery {
+    /// 停掉整棵运行树（8.2）。
+    #[serde(default)]
+    tree: bool,
+}
+
 pub async fn cancel(
     State(s): State<AppState>,
     Authed(who): Authed,
     Path(id): Path<String>,
+    Query(q): Query<CancelQuery>,
 ) -> ApiResult<Json<Run>> {
     let id: RunId = parse_id(&id, "run")?;
     let mut t = s.db.tenant(who.user).await?;
+    if q.tree {
+        let root = t.run(id).await?.root_run_id;
+        t.cancel_run_tree(root, "stopped by user").await?;
+        let run = t.run(root).await?;
+        t.append_event(
+            run.instance_id,
+            Some(run.id),
+            "run.state",
+            &json!({ "state": run.state, "reason": "stopped by user", "tree": true }),
+        )
+        .await?;
+        t.commit().await?;
+        return Ok(Json(run));
+    }
     let run = t.cancel_run(id, None).await?;
     t.append_event(
         run.instance_id,

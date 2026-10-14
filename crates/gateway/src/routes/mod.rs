@@ -3,11 +3,13 @@
 mod account;
 mod agents;
 mod approvals;
+mod artifacts;
 mod credentials;
 mod events;
 mod instances;
 mod plans;
 mod runs;
+mod teams;
 
 use axum::Router;
 use axum::routing::{delete, get, post, put};
@@ -75,6 +77,26 @@ pub fn router() -> Router<AppState> {
             "/v1/credentials/{id}/secret",
             put(credentials::replace_secret),
         )
+        // 团队（8.1）
+        .route("/v1/teams", get(teams::list).post(teams::create))
+        .route(
+            "/v1/teams/{id}",
+            get(teams::get).patch(teams::update).delete(teams::delete),
+        )
+        .route(
+            "/v1/team-templates",
+            get(teams::templates).post(teams::create_template),
+        )
+        .route("/v1/team-templates/{id}", delete(teams::delete_template))
+        .route("/v1/team-templates/{id}/adopt", post(teams::adopt_template))
+        // 产出物（8.4）
+        .route("/v1/instances/{id}/artifacts", get(artifacts::for_instance))
+        .route("/v1/runs/{id}/artifacts", get(artifacts::for_run))
+        .route(
+            "/v1/artifacts/{id}",
+            get(artifacts::get).delete(artifacts::delete),
+        )
+        .route("/v1/artifacts/{id}/content", get(artifacts::content))
         // 事件流（5.2、5.3）
         .route("/v1/instances/{id}/events", get(events::page))
         .route("/v1/instances/{id}/events/ws", get(events::stream))

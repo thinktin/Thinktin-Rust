@@ -93,6 +93,8 @@ async fn a_due_plan_runs_to_completion_inside_the_server() {
         manifest.display(),
     ))
     .unwrap();
+    cfg.storage.local_root = dir.path().join("blobs");
+    cfg.api_secrets.kms_key = Some("cd".repeat(32));
     cfg.sandbox_token_seed = Some(
         SandboxTokenIssuer::generate("k1")
             .unwrap()

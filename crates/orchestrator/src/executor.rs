@@ -97,6 +97,7 @@ pub struct Executor {
     grants: Arc<GrantService>,
     connector: Arc<dyn ShimConnector>,
     tools: Arc<dyn PlatformTools>,
+    handoff: Option<Arc<crate::pipeline::HandoffCopier>>,
     cfg: ExecutorConfig,
 }
 
@@ -142,8 +143,15 @@ impl Executor {
             grants,
             connector,
             tools,
+            handoff: None,
             cfg,
         }
+    }
+
+    /// 流水线步骤开始前把上游产出物复制到工作区（8.5）。
+    pub fn with_handoff(mut self, handoff: Arc<crate::pipeline::HandoffCopier>) -> Self {
+        self.handoff = Some(handoff);
+        self
     }
 
     pub fn node_id(&self) -> &str {
@@ -280,6 +288,11 @@ impl Executor {
                 AuthError::Invalid(m) => Outcome::Failed(m),
                 e => Outcome::Retry(e.to_string()),
             })?;
+        if let Some(h) = &self.handoff {
+            h.copy(rec, &rt)
+                .await
+                .map_err(|e| Outcome::Retry(format!("handing over upstream artifacts: {e}")))?;
+        }
         let platform_tools = self
             .tools
             .tools()
