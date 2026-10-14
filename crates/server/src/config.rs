@@ -7,7 +7,7 @@ use std::time::Duration;
 use anyhow::{Context, bail};
 use serde::Deserialize;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     /// 接入网关监听的地址。
@@ -31,6 +31,27 @@ pub struct Config {
     /// 接口用的密钥，只从环境变量读（见 [`ApiSecrets`]）。
     #[serde(skip)]
     pub api_secrets: ApiSecrets,
+}
+
+/// 密钥类的值只显示有没有配置（打日志、调试输出时不泄露）。
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Config")
+            .field("listen", &self.listen)
+            .field("node_id", &self.node_id)
+            .field("database", &self.database)
+            .field("shutdown", &self.shutdown)
+            .field("log", &self.log)
+            .field("api", &self.api)
+            .field("worker", &self.worker)
+            .field("sandbox", &self.sandbox)
+            .field("storage", &self.storage)
+            .field("push", &self.push)
+            .field("sandbox_token_seed", &self.sandbox_token_seed.is_some())
+            .field("jpush_master_secret", &self.jpush_master_secret.is_some())
+            .field("api_secrets", &self.api_secrets)
+            .finish()
+    }
 }
 
 /// 客户端接口（接入网关）。
@@ -217,7 +238,7 @@ impl Default for Sandbox {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Database {
     /// 优先用环境变量 DATABASE_URL。
@@ -261,6 +282,17 @@ impl Default for Config {
             jpush_master_secret: None,
             api_secrets: ApiSecrets::default(),
         }
+    }
+}
+
+/// 连接串里有密码，只显示有没有配置。
+impl std::fmt::Debug for Database {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Database")
+            .field("url", &self.url.is_some())
+            .field("max_connections", &self.max_connections)
+            .field("migrate_on_start", &self.migrate_on_start)
+            .finish()
     }
 }
 
@@ -443,6 +475,24 @@ mod tests {
     impl Env for MapEnv {
         fn var(&self, key: &str) -> Option<String> {
             self.0.get(key).map(|v| v.to_string())
+        }
+    }
+
+    #[test]
+    fn debug_output_hides_secrets() {
+        let mut cfg = Config::parse("").unwrap();
+        cfg.database.url = Some("postgres://u:hunter2@db/x".into());
+        cfg.sandbox_token_seed = Some("seed-value-xyz".into());
+        cfg.jpush_master_secret = Some("jpush-secret-xyz".into());
+        cfg.api_secrets.kms_key = Some("kms-hex-xyz".into());
+        let s = format!("{cfg:?}");
+        for secret in [
+            "hunter2",
+            "seed-value-xyz",
+            "jpush-secret-xyz",
+            "kms-hex-xyz",
+        ] {
+            assert!(!s.contains(secret), "{secret} leaked: {s}");
         }
     }
 

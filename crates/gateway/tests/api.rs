@@ -1154,3 +1154,282 @@ async fn inbox_over_http() {
     let (_, body) = a.call(Method::GET, "/v1/inbox", tok, None).await;
     assert_eq!(body["items"].as_array().unwrap().len(), 2);
 }
+
+/// 跨用户访问（15.2）：别人的每一类对象，按 id 读、改、删、操作都当作不存在；列表里也看不到。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn other_users_objects_are_invisible() {
+    use orchestrator::artifacts::Origin;
+
+    let Some(a) = api().await else { return };
+    let owner = a.login("13800138700").await;
+    let thief = a.login("13800138701").await;
+    let tok = Some(owner.access.as_str());
+    let inst = a.adopt(&owner).await;
+    let (_, me) = a.call(Method::GET, "/v1/me", tok, None).await;
+    let user: UserId = me["id"].as_str().unwrap().parse().unwrap();
+
+    // 主人的各类对象。
+    let (_, run) = a
+        .call(
+            Method::POST,
+            &format!("/v1/instances/{inst}/runs"),
+            tok,
+            Some(json!({ "prompt": "hi" })),
+        )
+        .await;
+    let run = run["id"].as_str().unwrap().to_owned();
+    let (_, plan) = a
+        .call(
+            Method::POST,
+            "/v1/plans",
+            tok,
+            Some(json!({ "instance_id": inst, "title": "t", "goal": "g",
+                "triggers": [{ "kind": "cron", "expr": "0 8 * * *", "tz": "Asia/Shanghai" }] })),
+        )
+        .await;
+    let trigger = plan["triggers"][0]["id"].as_str().unwrap().to_owned();
+    let plan = plan["id"].as_str().unwrap().to_owned();
+    let (_, cred) = a
+        .call(
+            Method::POST,
+            "/v1/credentials",
+            tok,
+            Some(json!({ "vendor": "deepseek", "api_key": "sk-0123456789abcdef" })),
+        )
+        .await;
+    let cred = cred["id"].as_str().unwrap().to_owned();
+    let (_, team) = a
+        .call(
+            Method::POST,
+            "/v1/teams",
+            tok,
+            Some(json!({ "name": "t", "members": [{ "instance_id": inst, "role": "lead", "position": 0 }] })),
+        )
+        .await;
+    let team = team["id"].as_str().unwrap().to_owned();
+    let (_, tpl) = a
+        .call(
+            Method::POST,
+            "/v1/team-templates",
+            tok,
+            Some(json!({ "name": "t", "team_id": team })),
+        )
+        .await;
+    let tpl = tpl["id"].as_str().unwrap().to_owned();
+    let run_id: RunId = run.parse().unwrap();
+    let art = a
+        .artifacts
+        .publish(
+            Origin {
+                user,
+                instance: inst,
+                run: run_id,
+                root: run_id,
+            },
+            "a.txt",
+            "text/plain",
+            b"secret",
+        )
+        .await
+        .unwrap()
+        .artifact
+        .id
+        .to_string();
+    let mut w = a.t.db.worker().await.unwrap();
+    let inbox = w
+        .insert_inbox(
+            user,
+            &store::NewInboxItem {
+                kind: "info".into(),
+                title: "t".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .to_string();
+    w.commit().await.unwrap();
+    let approval = {
+        let mut w = a.t.db.worker().await.unwrap();
+        let rec = w
+            .create_approval(&store::NewApproval {
+                user,
+                instance: inst,
+                run: run_id,
+                request_id: "r1",
+                title: Some("t"),
+                options: &json!([{ "option_id": "allow", "name": "Allow", "kind": "allow_once" }]),
+                tool_call: &json!({}),
+                expires_in: Duration::from_secs(600),
+            })
+            .await
+            .unwrap();
+        w.commit().await.unwrap();
+        rec.approval.id.to_string()
+    };
+
+    let t2 = Some(thief.access.as_str());
+    let cases: Vec<(Method, String, Option<Value>)> = vec![
+        (Method::GET, format!("/v1/instances/{inst}"), None),
+        (
+            Method::PATCH,
+            format!("/v1/instances/{inst}"),
+            Some(json!({ "name": "x" })),
+        ),
+        (Method::DELETE, format!("/v1/instances/{inst}"), None),
+        (Method::GET, format!("/v1/instances/{inst}/routes"), None),
+        (
+            Method::PUT,
+            format!("/v1/instances/{inst}/routes"),
+            Some(json!({ "routes": [] })),
+        ),
+        (Method::GET, format!("/v1/instances/{inst}/runs"), None),
+        (
+            Method::POST,
+            format!("/v1/instances/{inst}/runs"),
+            Some(json!({ "prompt": "steal" })),
+        ),
+        (Method::GET, format!("/v1/instances/{inst}/events"), None),
+        (Method::GET, format!("/v1/instances/{inst}/artifacts"), None),
+        (Method::GET, format!("/v1/runs/{run}"), None),
+        (Method::POST, format!("/v1/runs/{run}/cancel"), None),
+        (
+            Method::POST,
+            format!("/v1/runs/{run}/cancel?tree=true"),
+            None,
+        ),
+        (Method::GET, format!("/v1/runs/{run}/tree"), None),
+        (Method::GET, format!("/v1/runs/{run}/artifacts"), None),
+        (Method::GET, format!("/v1/plans/{plan}"), None),
+        (
+            Method::PATCH,
+            format!("/v1/plans/{plan}"),
+            Some(json!({ "title": "x" })),
+        ),
+        (Method::DELETE, format!("/v1/plans/{plan}"), None),
+        (Method::POST, format!("/v1/plans/{plan}/pause"), None),
+        (Method::POST, format!("/v1/plans/{plan}/resume"), None),
+        (
+            Method::POST,
+            format!("/v1/plans/{plan}/triggers"),
+            Some(json!({ "spec": { "kind": "cron", "expr": "0 9 * * *", "tz": "Asia/Shanghai" } })),
+        ),
+        (Method::DELETE, format!("/v1/triggers/{trigger}"), None),
+        (
+            Method::POST,
+            format!("/v1/approvals/{approval}/decide"),
+            Some(json!({ "option_id": "allow" })),
+        ),
+        (
+            Method::PATCH,
+            format!("/v1/credentials/{cred}"),
+            Some(json!({ "label": "x" })),
+        ),
+        (
+            Method::PUT,
+            format!("/v1/credentials/{cred}/secret"),
+            Some(json!({ "api_key": "sk-stolen-0000000" })),
+        ),
+        (Method::DELETE, format!("/v1/credentials/{cred}"), None),
+        (Method::GET, format!("/v1/teams/{team}"), None),
+        (
+            Method::PATCH,
+            format!("/v1/teams/{team}"),
+            Some(json!({ "name": "x" })),
+        ),
+        (Method::DELETE, format!("/v1/teams/{team}"), None),
+        (Method::DELETE, format!("/v1/team-templates/{tpl}"), None),
+        (
+            Method::POST,
+            format!("/v1/team-templates/{tpl}/adopt"),
+            Some(json!({})),
+        ),
+        (Method::GET, format!("/v1/artifacts/{art}"), None),
+        (Method::GET, format!("/v1/artifacts/{art}/content"), None),
+        (Method::DELETE, format!("/v1/artifacts/{art}"), None),
+        (Method::GET, format!("/v1/inbox/{inbox}"), None),
+        (Method::POST, format!("/v1/inbox/{inbox}/unread"), None),
+        (Method::DELETE, format!("/v1/inbox/{inbox}"), None),
+    ];
+    for (method, path, body) in cases {
+        let (st, resp) = a.call(method.clone(), &path, t2, body).await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "{method} {path}: {resp}");
+    }
+    // 用别人的实例建计划、组团队也不行。
+    let (st, _) = a
+        .call(
+            Method::POST,
+            "/v1/plans",
+            t2,
+            Some(json!({ "instance_id": inst, "title": "t", "goal": "g" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    // 批量标已读碰不到别人的条目。
+    let (_, r) = a
+        .call(
+            Method::POST,
+            "/v1/inbox/read",
+            t2,
+            Some(json!({ "ids": [inbox] })),
+        )
+        .await;
+    assert_eq!(r["marked"], 0);
+    // 列表里看不到。
+    for path in [
+        "/v1/instances",
+        "/v1/plans",
+        "/v1/approvals",
+        "/v1/credentials",
+        "/v1/teams",
+        "/v1/team-templates",
+        "/v1/inbox",
+    ] {
+        let (st, body) = a.call(Method::GET, path, t2, None).await;
+        assert_eq!(st, StatusCode::OK, "{path}");
+        let list = body
+            .as_object()
+            .unwrap()
+            .values()
+            .find_map(Value::as_array)
+            .unwrap();
+        assert!(list.is_empty(), "{path}: {body}");
+    }
+    // 事件流也连不上。
+    let r = a
+        .http
+        .get(format!("{}/v1/instances/{inst}/events/ws", a.base))
+        .bearer_auth(&thief.access)
+        .header("connection", "upgrade")
+        .header("upgrade", "websocket")
+        .header("sec-websocket-version", "13")
+        .header("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::NOT_FOUND);
+
+    // 主人的东西都还在，一样没被改。
+    let (st, i) = a
+        .call(Method::GET, &format!("/v1/instances/{inst}"), tok, None)
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(i["name"], "My Claude");
+    let (_, p) = a
+        .call(Method::GET, &format!("/v1/plans/{plan}"), tok, None)
+        .await;
+    assert_eq!(p["title"], "t");
+    assert_eq!(p["paused"], false);
+    let (_, list) = a.call(Method::GET, "/v1/approvals", tok, None).await;
+    assert_eq!(list["approvals"].as_array().unwrap().len(), 1);
+    let (st, _) = a
+        .call(
+            Method::GET,
+            &format!("/v1/artifacts/{art}/content"),
+            tok,
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK);
+}

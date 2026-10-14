@@ -751,3 +751,60 @@ async fn inbox_keeps_every_notice_with_read_state() {
     assert_eq!(all.len(), 5);
     assert!(all.iter().all(|i| i.run_id.is_none()));
 }
+
+/// 租户隔离的兜底（15.2）：业务角色碰得到的、带 user_id 的表都必须开 RLS 并有策略；
+/// 新加表忘了开会在这里失败。
+#[tokio::test]
+async fn every_tenant_table_the_app_can_touch_has_rls() {
+    let Some(t) = TestDb::new().await else { return };
+    let rows: Vec<(String, bool, i64, bool)> = sqlx::query_as(
+        "SELECT c.relname::text, c.relrowsecurity, \
+           (SELECT count(*) FROM pg_policies p WHERE p.schemaname = 'public' AND p.tablename = c.relname), \
+           has_table_privilege('thinktin_app', c.oid, 'SELECT, INSERT, UPDATE, DELETE') \
+             OR has_any_column_privilege('thinktin_app', c.oid, 'SELECT, INSERT, UPDATE') \
+         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
+         WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') \
+           AND EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.oid AND a.attname = 'user_id' AND NOT a.attisdropped) \
+         ORDER BY 1",
+    )
+    .fetch_all(t.db.pool())
+    .await
+    .unwrap();
+    assert!(rows.len() > 10, "{rows:?}");
+    let mut bad = Vec::new();
+    for (table, rls, policies, app_can_touch) in &rows {
+        if *app_can_touch && (!rls || *policies == 0) {
+            bad.push(table.clone());
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "tables reachable by thinktin_app without RLS: {bad:?}"
+    );
+    // 业务角色不能绕过 RLS。
+    let bypass: bool =
+        sqlx::query_scalar("SELECT rolbypassrls FROM pg_roles WHERE rolname = 'thinktin_app'")
+            .fetch_one(t.db.pool())
+            .await
+            .unwrap();
+    assert!(!bypass);
+    // 用户表按 id 隔离。
+    let users_rls: bool =
+        sqlx::query_scalar("SELECT relrowsecurity FROM pg_class WHERE relname = 'users'")
+            .fetch_one(t.db.pool())
+            .await
+            .unwrap();
+    assert!(users_rls);
+    let touched: Vec<&str> = rows.iter().filter(|r| r.3).map(|r| r.0.as_str()).collect();
+    for must in [
+        "instances",
+        "runs",
+        "plans",
+        "credentials",
+        "inbox_items",
+        "artifacts",
+        "teams",
+    ] {
+        assert!(touched.contains(&must), "{must} missing from {touched:?}");
+    }
+}

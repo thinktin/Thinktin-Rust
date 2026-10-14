@@ -56,15 +56,21 @@ impl Tx<Llmgw> {
         }))
     }
 
-    /// 授权被吊销、过期或者不存在。
-    pub async fn grant_unusable(&mut self, grant: GrantId) -> Result<bool> {
-        let ok: Option<bool> = sqlx::query_scalar(
-            "SELECT revoked_at IS NULL AND expires_at > now() FROM run_grants WHERE id = $1",
+    /// 还能用的授权允许的模型别名（空表示实例配置的全部）；授权被吊销、过期或者不存在时为 None。
+    pub async fn usable_grant_aliases(&mut self, grant: GrantId) -> Result<Option<Vec<String>>> {
+        let row: Option<(bool, serde_json::Value)> = sqlx::query_as(
+            "SELECT revoked_at IS NULL AND expires_at > now(), scope FROM run_grants WHERE id = $1",
         )
         .bind(grant.0)
         .fetch_optional(self.conn())
         .await?;
-        Ok(ok != Some(true))
+        match row {
+            Some((true, scope)) => {
+                let scope: proto::domain::GrantScope = from_json(scope, "grant scope")?;
+                Ok(Some(scope.aliases))
+            }
+            _ => Ok(None),
+        }
     }
 
     /// 一把 key 从 `since` 起计费的 token 数（每日预算）。

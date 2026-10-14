@@ -665,6 +665,13 @@ async fn forward_inner(
             format!("model `{alias}` is not configured for this agent"),
         )
     })?;
+    let allowed = gw.directory.grant_aliases(&caller.claims.grant).await;
+    if !allowed.is_empty() && !allowed.contains(&alias) {
+        return Err(err(
+            Kind::Permission,
+            format!("model `{alias}` is not allowed for this run"),
+        ));
+    }
     let cred = gw
         .directory
         .credential(&route.credential)

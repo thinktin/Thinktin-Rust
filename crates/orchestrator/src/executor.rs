@@ -274,6 +274,18 @@ impl Executor {
                 .ok_or_else(|| Outcome::Failed("the instance has no active run grant".into()))?,
         };
         let (_, grant_row) = w.run_grant(grant).await.map_err(retry)?;
+        let mut models: Vec<String> = w
+            .route_aliases(instance)
+            .await
+            .map_err(retry)?
+            .into_iter()
+            .filter(|a| grant_row.scope.aliases.is_empty() || grant_row.scope.aliases.contains(a))
+            .collect();
+        // 叫 main 的别名当默认模型。
+        if let Some(i) = models.iter().position(|m| m == "main") {
+            let main = models.remove(i);
+            models.insert(0, main);
+        }
         let policy = match rec.run.plan_id {
             Some(plan) => w.plan(plan).await.map(|p| p.policy).unwrap_or_default(),
             None => PlanPolicy::default(),
@@ -306,6 +318,7 @@ impl Executor {
             allow_tools: policy.preauthorized_tools.clone(),
             ask_timeout: Duration::from_secs(policy.approval_timeout_secs),
             platform_tools,
+            models,
         };
         let mut session = self
             .connector

@@ -24,6 +24,13 @@ use tracing::{error, info, warn};
 pub use config::Config;
 pub use lifecycle::{Background, ShutdownListener, ShutdownSignal};
 
+/// 测试用的替换件（生产用 [`serve`]，全部默认）。
+#[derive(Default, Clone)]
+pub struct Hooks {
+    /// 短信发送：端到端测试用 `auth::sms::RecordingSms` 读验证码。
+    pub sms: Option<std::sync::Arc<dyn auth::sms::SmsSender>>,
+}
+
 /// 连接数据库、按需迁移、监听端口，一直运行到收到停机信号。
 pub async fn run(cfg: Config) -> anyhow::Result<()> {
     let db = Db::connect(cfg.database_url(), cfg.database.max_connections)
@@ -46,6 +53,17 @@ pub async fn serve(
     listener: TcpListener,
     stop: impl Future<Output = ()> + Send,
 ) -> anyhow::Result<()> {
+    serve_with(cfg, db, listener, stop, Hooks::default()).await
+}
+
+/// 同 [`serve`]，带测试用的替换件。
+pub async fn serve_with(
+    cfg: &Config,
+    db: Db,
+    listener: TcpListener,
+    stop: impl Future<Output = ()> + Send,
+    hooks: Hooks,
+) -> anyhow::Result<()> {
     let node_id = cfg.node_id();
     let addr = listener.local_addr()?;
     let shutdown = ShutdownSignal::new();
@@ -54,7 +72,7 @@ pub async fn serve(
         workers::spawn(cfg, &db, &node_id, &mut background)?;
     }
     let api = if cfg.api.enabled {
-        Some(api::build(cfg, &db, &mut background)?)
+        Some(api::build(cfg, &db, &mut background, &hooks)?)
     } else {
         None
     };

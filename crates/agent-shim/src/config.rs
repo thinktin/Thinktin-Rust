@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 pub const TOKEN_ENV: &str = "THINKTIN_SANDBOX_TOKEN";
 
 /// 平台给这个实例配置的模型路由（5.5）。
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ModelRouting {
     /// 模型网关的根地址。
     pub gateway_url: String,
@@ -31,6 +31,18 @@ pub struct ModelRouting {
     pub default_model: String,
     /// 指定协议；为空时按清单的优先级选。
     pub protocol: Option<LlmProtocol>,
+}
+
+/// 沙箱令牌不进调试输出。
+impl std::fmt::Debug for ModelRouting {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ModelRouting")
+            .field("gateway_url", &self.gateway_url)
+            .field("models", &self.models)
+            .field("default_model", &self.default_model)
+            .field("protocol", &self.protocol)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

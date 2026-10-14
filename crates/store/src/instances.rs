@@ -264,6 +264,16 @@ impl Tx<Tenant> {
 }
 
 impl Tx<Worker> {
+    /// 实例配置的模型别名（交给 agent 的模型列表）。
+    pub async fn route_aliases(&mut self, id: InstanceId) -> Result<Vec<String>> {
+        Ok(sqlx::query_scalar(
+            "SELECT alias FROM model_routes WHERE instance_id = $1 ORDER BY alias",
+        )
+        .bind(id.0)
+        .fetch_all(self.conn())
+        .await?)
+    }
+
     pub async fn instance_runtime(&mut self, id: InstanceId) -> Result<InstanceRuntime> {
         let row: RuntimeRow = sqlx::query_as(concat!(
             "SELECT ",

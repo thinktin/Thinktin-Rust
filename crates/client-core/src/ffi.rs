@@ -137,6 +137,14 @@ impl From<d::Instance> for Instance {
     }
 }
 
+/// 模型别名：agent 用别名调模型，平台按它找到用户的哪把 key、哪个上游模型。
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct ModelRoute {
+    pub alias: String,
+    pub credential_id: String,
+    pub upstream_model: String,
+}
+
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct Run {
     pub id: String,
@@ -477,7 +485,7 @@ impl From<d::Credential> for Credential {
     }
 }
 
-#[derive(Debug, Clone, uniffi::Record)]
+#[derive(Clone, uniffi::Record)]
 pub struct NewCredential {
     pub vendor: String,
     pub label: String,
@@ -486,6 +494,15 @@ pub struct NewCredential {
     pub openai_base: Option<String>,
     pub responses_base: Option<String>,
     pub daily_token_limit: Option<u64>,
+}
+
+impl std::fmt::Debug for NewCredential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NewCredential")
+            .field("vendor", &self.vendor)
+            .field("label", &self.label)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -727,6 +744,44 @@ impl ThinktinClient {
     pub async fn rename_instance(&self, instance_id: String, name: String) -> Result<Instance> {
         let id: d::InstanceId = parse(&instance_id, "instance")?;
         self.run(|c| async move { Ok(c.api.rename_instance(id, &name).await?.into()) })
+            .await
+    }
+
+    pub async fn model_routes(&self, instance_id: String) -> Result<Vec<ModelRoute>> {
+        let id: d::InstanceId = parse(&instance_id, "instance")?;
+        self.run(|c| async move {
+            Ok(c.api
+                .model_routes(id)
+                .await?
+                .into_iter()
+                .map(|r| ModelRoute {
+                    alias: r.alias,
+                    credential_id: r.credential_id.to_string(),
+                    upstream_model: r.upstream_model,
+                })
+                .collect())
+        })
+        .await
+    }
+
+    /// 整体替换实例的模型别名（叫 main 的是默认模型）。
+    pub async fn set_model_routes(
+        &self,
+        instance_id: String,
+        routes: Vec<ModelRoute>,
+    ) -> Result<()> {
+        let id: d::InstanceId = parse(&instance_id, "instance")?;
+        let routes = routes
+            .into_iter()
+            .map(|r| {
+                Ok(d::ModelRoute {
+                    alias: r.alias,
+                    credential_id: parse(&r.credential_id, "credential")?,
+                    upstream_model: r.upstream_model,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        self.run(|c| async move { c.api.set_model_routes(id, &routes).await })
             .await
     }
 

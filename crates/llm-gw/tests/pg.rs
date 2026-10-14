@@ -341,3 +341,50 @@ async fn erased_accounts_cannot_use_their_keys() {
     let (st, _) = e.chat(&token).await;
     assert!(st == 401 || st == 403, "{st}");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn narrowed_grants_only_reach_their_aliases() {
+    let Some(e) = env().await else { return };
+    let mut w = e.t.db.worker().await.unwrap();
+    let narrow = |aliases: &[&str]| GrantScope {
+        aliases: aliases.iter().map(|a| a.to_string()).collect(),
+        ..GrantScope::default()
+    };
+    let only_other = w
+        .create_child_grant(
+            e.grant.id,
+            e.instance,
+            &narrow(&["other"]),
+            Duration::from_secs(600),
+        )
+        .await
+        .unwrap();
+    let only_main = w
+        .create_child_grant(
+            e.grant.id,
+            e.instance,
+            &narrow(&["main"]),
+            Duration::from_secs(600),
+        )
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+    let token = |grant: &RunGrant| {
+        e.issuer
+            .issue(
+                TokenRequest {
+                    iid: e.instance.to_string(),
+                    uid: e.user.to_string(),
+                    grant: grant.id.to_string(),
+                    sbx: "sbx-1".into(),
+                    net: None,
+                },
+                600,
+                now(),
+            )
+            .unwrap()
+    };
+    let (st, body) = e.chat(&token(&only_other)).await;
+    assert_eq!(st, 403, "{body}");
+    assert_eq!(e.chat(&token(&only_main)).await.0, 200);
+}

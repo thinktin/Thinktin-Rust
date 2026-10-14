@@ -9,8 +9,8 @@ use std::time::Duration;
 use proto::api::{API_VERSION, ErrorBody, ErrorCode, VERSION_HEADER};
 use proto::domain::{
     Approval, ApprovalId, Artifact, ArtifactId, Credential, CredentialId, DevicePlatform,
-    InboxItem, InboxItemId, Instance, InstanceEvent, InstanceId, Plan, PlanId, PlanStep,
-    PushChannelKind, Run, RunId, ScheduleSpec, Trigger, User,
+    InboxItem, InboxItemId, Instance, InstanceEvent, InstanceId, ModelRoute, Plan, PlanId,
+    PlanStep, PushChannelKind, Run, RunId, ScheduleSpec, Trigger, User,
 };
 use reqwest::Method;
 use serde::de::DeserializeOwned;
@@ -20,12 +20,21 @@ use serde_json::{Value, json};
 use crate::error::{ClientError, Result};
 
 /// 登录后的会话。刷新令牌等同于密码，原生端要放进系统的安全存储。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
 pub struct Session {
     pub user_id: String,
     pub device_id: String,
     pub access_token: String,
     pub refresh_token: String,
+}
+
+impl std::fmt::Debug for Session {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Session")
+            .field("user_id", &self.user_id)
+            .field("device_id", &self.device_id)
+            .finish_non_exhaustive()
+    }
 }
 
 /// 原生端实现：把会话存进 Keychain / Keystore。`save(None)` 表示退出登录或会话失效，要删掉。
@@ -111,7 +120,7 @@ pub struct EventsPage {
     pub latest_seq: Option<u64>,
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Clone, Default, Serialize)]
 pub struct NewCredential {
     pub vendor: String,
     pub label: String,
@@ -124,6 +133,15 @@ pub struct NewCredential {
     pub responses_base: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub daily_token_limit: Option<u64>,
+}
+
+impl std::fmt::Debug for NewCredential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NewCredential")
+            .field("vendor", &self.vendor)
+            .field("label", &self.label)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Deserialize)]
@@ -451,6 +469,30 @@ impl Api {
             Some(&json!({ "name": name })),
         )
         .await
+    }
+
+    /// 实例的模型别名 → 哪把 key、哪个上游模型。
+    pub async fn model_routes(&self, id: InstanceId) -> Result<Vec<ModelRoute>> {
+        #[derive(Deserialize)]
+        struct R {
+            routes: Vec<ModelRoute>,
+        }
+        Ok(self
+            .json::<R>(Method::GET, &format!("/v1/instances/{id}/routes"), None)
+            .await?
+            .routes)
+    }
+
+    /// 整体替换实例的模型别名。
+    pub async fn set_model_routes(&self, id: InstanceId, routes: &[ModelRoute]) -> Result<()> {
+        self.send(
+            Method::PUT,
+            &format!("/v1/instances/{id}/routes"),
+            Some(&json!({ "routes": routes })),
+            true,
+        )
+        .await?;
+        Ok(())
     }
 
     pub async fn delete_instance(&self, id: InstanceId) -> Result<()> {

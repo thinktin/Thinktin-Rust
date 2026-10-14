@@ -23,6 +23,8 @@ pub struct ShimLaunch {
     /// 超出预授权的请求交给用户，最多等这么久。
     pub ask_timeout: Duration,
     pub platform_tools: Vec<PlatformTool>,
+    /// 交给 agent 的模型别名（实例配置的、授权允许的），第一个是默认模型。为空用 shim 的默认值。
+    pub models: Vec<String>,
 }
 
 impl std::fmt::Debug for ShimLaunch {

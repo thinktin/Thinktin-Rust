@@ -81,6 +81,9 @@ impl ExecConnector {
         if !launch.allow_tools.is_empty() {
             argv.extend(["--allow-tools".into(), launch.allow_tools.join(",")]);
         }
+        for m in &launch.models {
+            argv.extend(["--model".into(), m.clone()]);
+        }
         if let Some(file) = tools_file {
             argv.extend([
                 "--platform-tools".into(),

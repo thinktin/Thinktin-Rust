@@ -6,6 +6,7 @@
 //! - `env`：把关心的环境变量回报出来，检查 shim 的环境隔离
 //! - `usage`：上报用量
 //! - `mcp <工具> <JSON 参数>`：启动会话配置里的第一个 MCP 服务器，列出工具并调用一次，把结果说出来
+//! - `llm <问题>`：按 shim 写的 Pi 配置（models.json）调模型网关，把回答说出来
 //! - 其他：回显
 //!
 //! 环境变量 `FAKE_ACP_CAPS` 控制声明的会话能力：`resume`（默认）、`load` 或 `none`。
@@ -234,6 +235,14 @@ impl Agent {
             say(&mcp_call(self.mcp_servers.first(), tool, args));
             return reply(id, json!({"stopReason": "end_turn"}));
         }
+        // 像 Pi 一样按 shim 写的 models.json 调模型网关（端到端测试用）。
+        if let Some(question) = text.strip_prefix("llm ") {
+            match ask_llm(question) {
+                Ok(answer) => say(&format!("llm: {answer}")),
+                Err(e) => say(&format!("llm error: {e}")),
+            }
+            return reply(id, json!({"stopReason": "end_turn"}));
+        }
         if text == "usage" {
             update(
                 &sid,
@@ -342,4 +351,48 @@ fn mcp_call(server: Option<&Value>, tool: &str, args: &str) -> String {
             .as_str()
             .unwrap_or(""),
     )
+}
+
+/// 读 shim 生成的 Pi 配置，向模型网关发一次非流式的 Chat Completions 请求，返回回答。
+/// 只支持 http（本地网关）。
+fn ask_llm(question: &str) -> Result<String, String> {
+    use std::io::Read;
+    let dir = std::env::var("PI_CODING_AGENT_DIR").map_err(|_| "no PI_CODING_AGENT_DIR")?;
+    let models: Value = serde_json::from_str(
+        &std::fs::read_to_string(format!("{dir}/models.json")).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    let p = &models["providers"]["thinktin"];
+    let base = p["baseUrl"].as_str().ok_or("no baseUrl")?;
+    let key = p["apiKey"].as_str().ok_or("no apiKey")?;
+    let key = match key.strip_prefix('$') {
+        Some(var) => std::env::var(var).map_err(|_| format!("{var} is not set"))?,
+        None => key.to_owned(),
+    };
+    let model = p["models"][0]["id"].as_str().ok_or("no model")?;
+    let rest = base
+        .strip_prefix("http://")
+        .ok_or("only http is supported")?;
+    let (host, path) = rest.split_once('/').unwrap_or((rest, ""));
+    let body =
+        json!({"model": model, "messages": [{"role": "user", "content": question}]}).to_string();
+    let mut conn = std::net::TcpStream::connect(host).map_err(|e| e.to_string())?;
+    write!(
+        conn,
+        "POST /{path}/chat/completions HTTP/1.0\r\nHost: {host}\r\nAuthorization: Bearer {key}\r\n\
+         Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
+    .map_err(|e| e.to_string())?;
+    let mut resp = String::new();
+    conn.read_to_string(&mut resp).map_err(|e| e.to_string())?;
+    let (head, payload) = resp.split_once("\r\n\r\n").ok_or("bad response")?;
+    if !head.starts_with("HTTP/1.0 200") && !head.starts_with("HTTP/1.1 200") {
+        return Err(head.lines().next().unwrap_or_default().to_owned());
+    }
+    let v: Value = serde_json::from_str(payload).map_err(|e| format!("{e}: {payload}"))?;
+    Ok(v["choices"][0]["message"]["content"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned())
 }

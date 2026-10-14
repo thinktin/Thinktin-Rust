@@ -945,6 +945,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
+name = "e2e"
+version = "0.1.0"
+dependencies = [
+ "auth",
+ "axum",
+ "client-core",
+ "keyvault",
+ "llm-gw",
+ "proto",
+ "reqwest",
+ "serde_json",
+ "server",
+ "sqlx",
+ "store",
+ "tempfile",
+ "tokio",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "ecdsa"
 version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

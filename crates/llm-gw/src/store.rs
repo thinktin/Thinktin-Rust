@@ -87,6 +87,10 @@ pub trait Directory: Send + Sync {
     async fn instance(&self, id: &str, fresh: bool) -> Option<Arc<Instance>>;
     async fn credential(&self, id: &str) -> Option<Arc<Credential>>;
     async fn grant_revoked(&self, grant: &str) -> bool;
+    /// 授权允许的模型别名；空表示实例配置的全部（子运行的授权会收窄到一部分）。
+    async fn grant_aliases(&self, _grant: &str) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 #[derive(Default)]

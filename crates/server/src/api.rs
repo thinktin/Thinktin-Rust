@@ -26,7 +26,12 @@ fn decode_hex(s: &str) -> Option<Vec<u8>> {
         .collect()
 }
 
-pub fn build(cfg: &Config, db: &Db, bg: &mut Background) -> anyhow::Result<Router> {
+pub fn build(
+    cfg: &Config,
+    db: &Db,
+    bg: &mut Background,
+    hooks: &crate::Hooks,
+) -> anyhow::Result<Router> {
     let secrets = &cfg.api_secrets;
     let seed = secrets
         .access_token_seed
@@ -53,7 +58,7 @@ pub fn build(cfg: &Config, db: &Db, bg: &mut Background) -> anyhow::Result<Route
         pepper,
         AccessTokenIssuer(signer),
         AccessTokenVerifier(verifier),
-        Arc::new(DevConsoleSms),
+        hooks.sms.clone().unwrap_or_else(|| Arc::new(DevConsoleSms)),
     )
     .context("auth service")?;
     let hub = EventHub::new();

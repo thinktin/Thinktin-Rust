@@ -64,7 +64,8 @@ pub struct PgDirectory {
     ttl: Duration,
     instances: TtlMap<Option<Arc<Instance>>>,
     credentials: TtlMap<Option<Arc<Credential>>>,
-    grants: TtlMap<bool>,
+    /// 授权 → 允许的别名；None 表示不能用。
+    grants: TtlMap<Option<Arc<Vec<String>>>>,
 }
 
 impl PgDirectory {
@@ -159,14 +160,31 @@ impl PgDirectory {
         })))
     }
 
-    async fn load_grant_revoked(&self, grant: &str) -> store::Result<bool> {
+    async fn load_grant(&self, grant: &str) -> store::Result<Option<Arc<Vec<String>>>> {
         let Ok(id) = grant.parse::<GrantId>() else {
-            return Ok(true);
+            return Ok(None);
         };
         let mut tx = self.db.llmgw().await?;
-        let r = tx.grant_unusable(id).await?;
+        let r = tx.usable_grant_aliases(id).await?;
         tx.rollback().await?;
-        Ok(r)
+        Ok(r.map(Arc::new))
+    }
+
+    /// 读不到时按不能用处理（宁可拒绝）。
+    async fn grant(&self, grant: &str) -> Option<Arc<Vec<String>>> {
+        if let Some(v) = self.grants.get(grant, self.ttl) {
+            return v;
+        }
+        match self.load_grant(grant).await {
+            Ok(v) => {
+                self.grants.put(grant, v.clone(), self.ttl);
+                v
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "loading run grant failed");
+                None
+            }
+        }
     }
 }
 
@@ -204,21 +222,15 @@ impl Directory for PgDirectory {
         }
     }
 
-    /// 读不到时按已吊销处理（宁可拒绝）。
     async fn grant_revoked(&self, grant: &str) -> bool {
-        if let Some(v) = self.grants.get(grant, self.ttl) {
-            return v;
-        }
-        match self.load_grant_revoked(grant).await {
-            Ok(v) => {
-                self.grants.put(grant, v, self.ttl);
-                v
-            }
-            Err(e) => {
-                tracing::error!(error = %e, "loading run grant failed");
-                true
-            }
-        }
+        self.grant(grant).await.is_none()
+    }
+
+    async fn grant_aliases(&self, grant: &str) -> Vec<String> {
+        self.grant(grant)
+            .await
+            .map(|a| a.as_ref().clone())
+            .unwrap_or_default()
     }
 }
 
