@@ -50,5 +50,9 @@ ThinkTin 平台：托管多个开源 agent，用户领养后常驻云端、按�
   `THINKTIN_CODE_PEPPER`（验证码 HMAC 密钥，十六进制）、`THINKTIN_KMS_KEY`（本地 KMS 主密钥）；
   短信通道还没接，本地开发用 `dev_sms = true` 把验证码打到标准错误。
 
+- `tools/client-core/`：客户端核心的绑定与打包。`gen-bindings.sh` 生成 Swift / Kotlin 绑定；
+  `build-apple.sh`（macOS + Xcode）出 xcframework 和 Swift Package；`build-android.sh`（NDK + cargo-ndk）出 Android 库工程 / AAR；
+  `ffi-smoke.sh` 经 C ABI 冒烟测试绑定接口。
+
 - `tools/mock-llm/mock_llm.py`：模型网关的本地替身，供真实 agent 的冒烟测试使用。
 - `tools/smoke/smoke.sh <agent>`：经 agent-shim 用真实 agent 跑一轮并检查结果，`GW=1` 时走真实的模型网关；`tools/smoke/serve_check.py <agent>` 检查常驻模式下的取消。见[接入说明](docs/agent-integration.md#9-本地运行)。

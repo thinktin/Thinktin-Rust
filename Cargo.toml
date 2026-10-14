@@ -45,3 +45,11 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 url = "2.5.8"
 uuid = { version = "1.28.0", features = ["v7", "serde"] }
 zeroize = { version = "1.9.1", features = ["derive"] }
+
+# 手机端的 client-core：体积优先。保留 unwind：UniFFI 要把 Rust 里的 panic 变成错误返回给原生端。
+[profile.mobile]
+inherits = "release"
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
