@@ -83,7 +83,32 @@ agent-shim（沙箱里，crates/agent-shim）
 
 模型别名用 `--model main:131072:8192` 的形式传入（上下文窗口、最大输出可省），第一个是默认模型，名为 `fast` 的别名给 Claude 的轻量任务用。网关按“令牌 → 实例 → 别名”查出真实的厂商和模型（架构方案 5.5）。
 
-## 5. 权限审批
+## 5. 平台工具（WBS 6.12）
+
+`agent-shim serve --platform-tools` 给 agent 的会话注入一个名为 `thinktin` 的 MCP 服务器，平台的工具（计划、产出物、委派等）都从这里提供：
+
+```
+agent ──stdio MCP──▶ agent-shim mcp-bridge ──Unix socket──▶ shim ──platform_tool_call 事件──▶ 平台
+      ◀────────────                       ◀───────────────      ◀──platform_tool_result 指令──
+```
+
+- 工具列表由平台用 `set_platform_tools` 指令下发（也可以启动时用 `--platform-tools-file` 给），会话中途可以改，agent 会收到列表变化通知。
+- 调用属于哪一轮由 shim 按 agent 实际在执行的那一轮（新增的 `turn_started` 事件）来定，agent 改不了；不在执行任务时、调用不存在的工具时直接报错，不打扰平台；一轮结束时还没回的调用按失败返回。
+- socket 在 agent 的 HOME 下，只有本用户能读写。
+
+用真实 agent 实测（`tools/smoke/platform_tools_check.py <agent>`，脚本扮演平台）：
+
+| Agent | 工具在 agent 里的名字 | 调用前要审批 | 结果 |
+|---|---|---|---|
+| Claude（`acp`） | `mcp__thinktin__schedule_list` | 是 | 通过 |
+| Claude（`cli`） | 同上（审批标题显示为 “Schedule List”） | 是 | 通过 |
+| Codex | Responses 的 `namespace` 工具 `mcp__thinktin` 下的 `schedule_list` | 是（只读模式下 MCP 调用都要审批） | 通过 |
+| Hermes | `mcp__thinktin__schedule_list` | 否 | 通过；需要 `hermes-agent[mcp]`，Hermes 会把结果包成 `<untrusted_tool_result>` 交给模型 |
+| Pi、OpenClaw | — | — | 还不支持（见第 8 节） |
+
+所以平台下发的工具描述和返回内容都要按“会被模型当作外部数据”来写，别指望模型把工具结果当指令执行。
+
+## 6. 权限审批
 
 预授权范围按 ACP 的工具类别表达：`read`、`edit`、`delete`、`move`、`search`、`execute`、`think`、`fetch`、`switch_mode`、`other`，`*` 表示全部。范围内的请求 shim 直接选“只允许这一次”；范围外的按策略拒绝，或者发 `permission_requested` 等用户决定，默认最长等 24 小时（4.7）。工具类别是沙箱里的 agent 自己报告的，只表达用户意图；安全边界是 microVM。
 
@@ -95,7 +120,7 @@ agent-shim（沙箱里，crates/agent-shim）
 - **Hermes**：只有它判定为危险的命令（如 `rm -rf`）才审批，普通命令直接执行。
 - **Pi**：没有权限系统，工具直接执行。
 
-## 6. 会话接回
+## 7. 会话接回
 
 shim 把当前会话 id 记在 `~/.thinktin/shim-session.json`（工作区卷上）。agent 重启或沙箱唤醒后：
 
@@ -108,7 +133,7 @@ shim 把当前会话 id 记在 `~/.thinktin/shim-session.json`（工作区卷上
 - **OpenClaw**：ACP 桥的会话 id 只在内存里，重启后接不回来。所以桥用 `--session agent:main:thinktin` 固定绑定到 Gateway 的一个会话键，历史由 Gateway 持久化。每次 `session/new` 都接着同一段对话，`ready` 里的 `session_restored` 为假，但上下文还在。
 - **Claude 命令行**：新会话用 `--session-id` 指定 id，接回用 `--resume`。要接回的会话不存在时命令行会在握手前退出，shim 改开新会话。
 
-## 7. 已知问题与后续工作
+## 8. 已知问题与后续工作
 
 | 问题 | 影响 | 后续 |
 |---|---|---|
@@ -120,10 +145,10 @@ shim 把当前会话 id 记在 `~/.thinktin/shim-session.json`（工作区卷上
 | 辅助进程（OpenClaw Gateway）中途退出时 shim 不单独监控 | 桥会报错退出，之后按 agent 崩溃重启 | 6.9 增加辅助进程健康检查 |
 | Hermes 会把网关地址记进会话（令牌每次从 `key_env` 取，不受影响），网关在回环或内网地址时还会不带凭证探测本地推理服务的接口 | 网关地址变了，旧会话还打旧地址；网关会收到一些无凭证的探测请求 | 沙箱里的网关地址保持固定（比如固定的内部域名）；网关对无凭证请求一律 401 |
 | OpenClaw 启动约 90 秒后在后台拉 ClawHub 插件目录，配置关不掉 | 沙箱放行外网时会连 `clawhub.ai`（只读，不带数据） | 沙箱出网策略拦截（2.7） |
-| 不支持按会话注入 MCP 的 agent（Pi、OpenClaw），平台工具还没写进它们自己的配置 | `thinktin.schedule` 等平台工具暂时只能注入 Claude、Codex、Hermes | 6.12 MCP 桥接 |
+| 不支持按会话注入 MCP 的 agent（Pi、OpenClaw），平台工具还没写进它们自己的配置 | 平台工具（第 5 节）暂时只能注入 Claude、Codex、Hermes | Pi 本身没有 MCP；OpenClaw 要把桥写进它的配置文件 |
 | 平台链路目前是 stdio JSON Lines | 还没接编排服务 | 3.2 协议定义、7.x 编排服务 |
 
-## 8. 本地运行
+## 9. 本地运行
 
 ```sh
 cargo build -p agent-shim
@@ -134,7 +159,7 @@ npm i @agentclientprotocol/claude-agent-acp@0.90.0   # Claude（ACP）；Claude 
 npm i @agentclientprotocol/codex-acp@2.2.2           # Codex
 npm i pi-acp@0.0.34 @earendil-works/pi-coding-agent@1.2.0
 npm i openclaw@2026.10.3                             # 需要 Node 24.16 以上
-pip install "hermes-agent[acp]==0.19.0"
+pip install "hermes-agent[acp,mcp]==0.19.0"          # 没有 mcp 这个 extra，平台工具注入会被静默忽略
 
 # 冒烟测试：起模型网关替身，经 agent-shim 跑一轮，检查回复和网关日志
 tools/smoke/smoke.sh claude
@@ -147,6 +172,9 @@ PROMPT='MOCK_TOOL:Bash:{"command": "touch x", "description": "touch"}' EXPECT=MO
 # 自部署检查：记录 agent 所有进程的外联（需要 strace），以及在断网环境里跑（需要 root）
 EGRESS=1 tools/smoke/smoke.sh openclaw
 unshare -n tools/smoke/offline.sh env -u HTTPS_PROXY -u https_proxy tools/smoke/smoke.sh openclaw
+
+# 平台工具：agent 调平台工具 → 平台回结果 → agent 拿到结果（脚本扮演平台）
+tools/smoke/platform_tools_check.py claude
 
 # 常驻模式：正常一轮 → 慢的一轮中途取消 → 再来一轮
 tools/smoke/serve_check.py codex

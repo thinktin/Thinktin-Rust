@@ -13,7 +13,7 @@
 
 回复规则：
 - 最后一条消息是工具结果：回复 "MOCK_DONE: <结果前 200 字>"
-- 用户消息里有 `MOCK_TOOL:<工具名>:<JSON 参数>`（参数写到行尾），且请求的工具列表里有这个工具：
+- 用户消息里有 `MOCK_TOOL:<工具名>:<JSON 参数>`（参数写到行尾），且请求的工具列表里有这个工具（工具名写成 `*后缀` 时按后缀匹配）：
   返回一次对该工具的调用
 - 用户消息里有 `MOCK_SLOW`：慢慢输出一段长文字（约 8 秒），用来测取消
 - 其他情况：回复 "pong from mock"
@@ -27,7 +27,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-TOOL_RE = re.compile(r"MOCK_TOOL:([A-Za-z0-9_.-]+):(\{.*\})\s*$", re.M)
+TOOL_RE = re.compile(r"MOCK_TOOL:(\*?[A-Za-z0-9_.-]+):(\{.*\})\s*$", re.M)
 PONG = "pong from mock"
 SLOW_TEXT = "slow " * 80
 
@@ -69,12 +69,15 @@ def text_of(content):
 def plan_reply(last_is_tool_result, tool_result_text, user_text, tool_names):
     """返回 ("text", 文本) 或 ("tool", 工具名, 参数 JSON 字符串)。"""
     if last_is_tool_result:
-        return ("text", "MOCK_DONE: " + tool_result_text.strip()[:200])
+        return ("text", "MOCK_DONE: " + tool_result_text.strip()[:1000])
     if "MOCK_SLOW" in (user_text or ""):
         return ("text", SLOW_TEXT)
     matches = TOOL_RE.findall(user_text or "")
     if matches:
         name, args = matches[-1]
+        # `*后缀` 匹配名字以它结尾的工具（各家 agent 给 MCP 工具加的前缀不同）。
+        if name.startswith("*"):
+            name = next((t for t in tool_names if t and t.endswith(name[1:])), name)
         if name in tool_names:
             try:
                 json.loads(args)
@@ -219,7 +222,15 @@ def responses_plan(body):
     items = body.get("input")
     if isinstance(items, str):
         items = [{"role": "user", "content": items}]
-    tools = [t.get("name") for t in body.get("tools") or [] if isinstance(t, dict)]
+    tools = []
+    for t in body.get("tools") or []:
+        if not isinstance(t, dict):
+            continue
+        if t.get("type") == "namespace":
+            # Codex 把 MCP 服务器的工具放进 namespace 工具里：内层工具记成 `命名空间::工具名`。
+            tools += [f"{t.get('name')}::{inner.get('name')}" for inner in t.get("tools") or [] if isinstance(inner, dict)]
+        else:
+            tools.append(t.get("name"))
     last, kind = last_turn(items, responses_kind)
     if kind == "tool_result":
         return plan_reply(True, text_of(last.get("output")), "", tools), tools
@@ -236,6 +247,8 @@ def responses_response(handler, body, plan):
     if plan[0] == "tool":
         item = {"type": "function_call", "id": f"fc_mock_{next_id()}", "call_id": f"call_mock_{next_id()}",
                 "name": plan[1], "arguments": plan[2], "status": "completed"}
+        if "::" in plan[1]:
+            item["namespace"], item["name"] = plan[1].split("::", 1)
     else:
         item = {"type": "message", "id": f"msg_mock_{next_id()}", "status": "completed", "role": "assistant",
                 "content": [{"type": "output_text", "text": plan[1], "annotations": []}]}

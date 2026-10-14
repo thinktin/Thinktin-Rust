@@ -1,4 +1,4 @@
-# Hermes Agent（Nous Research）：自带 ACP 入口 hermes-acp（pip 包 hermes-agent[acp]）。
+# Hermes Agent（Nous Research）：自带 ACP 入口 hermes-acp（pip 包 hermes-agent[acp,mcp]；没有 mcp extra 时会话注入的 MCP 服务器被静默忽略）。
 
 [agent]
 id = "hermes"
