@@ -51,7 +51,10 @@ impl Default for Api {
             dev_sms: false,
             access_token_kid: "a1".into(),
             kms_key_id: "local-1".into(),
-            default_platform_tools: Vec::new(),
+            default_platform_tools: orchestrator::tools::SCHEDULE_TOOLS
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
         }
     }
 }

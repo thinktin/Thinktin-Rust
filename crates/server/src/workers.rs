@@ -13,7 +13,7 @@ use orchestrator::exec::{ExecConfig, ExecConnector};
 use orchestrator::executor::{Executor, ExecutorConfig};
 use orchestrator::outbox::{Dispatcher, DispatcherConfig};
 use orchestrator::scheduler::{Scheduler, SchedulerConfig};
-use orchestrator::shim::NoPlatformTools;
+use orchestrator::tools::ScheduleTools;
 use proto::domain::PushChannelKind;
 use sandbox::SandboxProvider;
 use sandbox::local::LocalProvider;
@@ -72,7 +72,7 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
         lifecycle.clone(),
         grants,
         connector,
-        Arc::new(NoPlatformTools),
+        Arc::new(ScheduleTools::new(db.clone())),
         ExecutorConfig {
             max_concurrent: cfg.worker.max_concurrent_runs,
             ..ExecutorConfig::default()
