@@ -8,6 +8,7 @@
 //! 仓储方法挂在 [`Tx<Tenant>`] / [`Tx<Worker>`] 上，后台专用的操作（领取运行、扫描到点触发器）
 //! 只在 `Tx<Worker>` 上有，业务接口拿不到。
 
+mod approvals;
 mod credentials;
 mod error;
 mod events;
@@ -17,6 +18,7 @@ mod outbox;
 mod plans;
 mod runs;
 mod sessions;
+mod usage;
 mod users;
 
 #[cfg(any(test, feature = "testing"))]
@@ -31,6 +33,7 @@ use proto::domain::UserId;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::{PgConnection, PgPool, Postgres, Transaction};
 
+pub use approvals::{ApprovalRecord, NewApproval};
 pub use credentials::NewCredential;
 pub use error::{Error, Result};
 pub use instances::{InstanceRuntime, NewInstance};
@@ -38,6 +41,7 @@ pub use outbox::{NewOutboxItem, OutboxItem};
 pub use plans::{DueTrigger, NewPlan};
 pub use runs::{NewRun, RunChange, RunRecord};
 pub use sessions::{LoginCode, SessionRecord, SessionState};
+pub use usage::NewUsage;
 
 /// 业务事务里单条语句的上限：防止慢查询拖住连接池。
 const TENANT_STATEMENT_TIMEOUT: &str = "15s";

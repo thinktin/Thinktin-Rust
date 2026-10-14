@@ -215,6 +215,21 @@ impl Tx<Worker> {
         row.map(Row::into_grant).transpose()
     }
 
+    /// 实例当前可用的顶层授权（用户直接发起的运行用它换沙箱令牌），取最新的一个。
+    pub async fn active_grant_for_instance(
+        &mut self,
+        instance: InstanceId,
+    ) -> Result<Option<GrantId>> {
+        let id: Option<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM run_grants WHERE instance_id = $1 AND parent_id IS NULL AND plan_id IS NULL \
+               AND revoked_at IS NULL AND expires_at > now() ORDER BY created_at DESC LIMIT 1",
+        )
+        .bind(instance.0)
+        .fetch_optional(self.conn())
+        .await?;
+        Ok(id.map(Into::into))
+    }
+
     /// 吊销用户的全部授权（冻结、“全部停止”、注销）。
     pub async fn revoke_user_grants(&mut self, user: UserId, reason: &str) -> Result<u64> {
         let done = sqlx::query(

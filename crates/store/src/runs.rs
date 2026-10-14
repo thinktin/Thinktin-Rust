@@ -479,6 +479,37 @@ impl Tx<Worker> {
         row.into_record()
     }
 
+    /// 模型网关记下的这个实例从 `since` 起的计费 token 数。同一实例同时只执行一个运行，
+    /// 所以运行开始以来的用量就是这个运行的用量（预算护栏用，不依赖各家 agent 的用量格式）。
+    pub async fn instance_usage_since(
+        &mut self,
+        instance: InstanceId,
+        since: DateTime<Utc>,
+    ) -> Result<u64> {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT coalesce(sum(charged_tokens), 0)::bigint FROM usage_records \
+             WHERE instance_id = $1 AND created_at >= $2",
+        )
+        .bind(instance.0)
+        .bind(since)
+        .fetch_one(self.conn())
+        .await?;
+        unsigned(n, "usage")
+    }
+
+    /// 写入运行的累计用量（覆盖）。
+    pub async fn set_run_usage(&mut self, id: RunId, tokens: u64, steps: u32) -> Result<()> {
+        sqlx::query(
+            "UPDATE runs SET tokens_used = $2, steps = $3, updated_at = now() WHERE id = $1",
+        )
+        .bind(id.0)
+        .bind(crate::signed(tokens, "tokens")?)
+        .bind(i32::try_from(steps).map_err(|_| Error::Invalid("steps too large".into()))?)
+        .execute(self.conn())
+        .await?;
+        Ok(())
+    }
+
     /// 累加用量（模型网关回报的 token、agent 的步数），供预算护栏判断。
     pub async fn add_run_usage(&mut self, id: RunId, tokens: u64, steps: u32) -> Result<RunRecord> {
         let row: Row = sqlx::query_as(concat!(
