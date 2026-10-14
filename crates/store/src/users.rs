@@ -89,6 +89,81 @@ impl Tx<Worker> {
     }
 }
 
+impl Tx<Worker> {
+    /// 保存用户的包裹 DEK（第一次存 key 时由密钥库生成）。已经有了返回冲突。
+    pub async fn insert_user_key(
+        &mut self,
+        user: UserId,
+        kms_key_id: &str,
+        wrapped_dek: &[u8],
+    ) -> Result<()> {
+        sqlx::query("INSERT INTO user_keys (user_id, kms_key_id, wrapped_dek) VALUES ($1, $2, $3)")
+            .bind(user.0)
+            .bind(kms_key_id)
+            .bind(wrapped_dek)
+            .execute(self.conn())
+            .await?;
+        Ok(())
+    }
+
+    /// 用户的包裹 DEK：（KMS 主密钥 id，密文）。
+    pub async fn user_key(&mut self, user: UserId) -> Result<Option<(String, Vec<u8>)>> {
+        Ok(
+            sqlx::query_as("SELECT kms_key_id, wrapped_dek FROM user_keys WHERE user_id = $1")
+                .bind(user.0)
+                .fetch_optional(self.conn())
+                .await?,
+        )
+    }
+
+    /// 注销账号（4.1）：吊销全部会话、设备、运行授权，删掉包裹的 DEK（密文随之无法解密，即“注销即销毁”），
+    /// 清掉 key 密文，实例标记删除（沙箱由生命周期管理回收），账号标记注销（手机号可以重新注册）。
+    pub async fn erase_account(&mut self, id: UserId) -> Result<()> {
+        self.set_user_status(id, UserStatus::Deleted).await?;
+        self.revoke_user_sessions(id, "account_deleted").await?;
+        self.revoke_user_grants(id, "account_deleted").await?;
+        sqlx::query("DELETE FROM user_keys WHERE user_id = $1")
+            .bind(id.0)
+            .execute(self.conn())
+            .await?;
+        sqlx::query(
+            "UPDATE credentials SET deleted_at = coalesce(deleted_at, now()), disabled = true, sealed = ''::bytea, \
+               updated_at = now() WHERE user_id = $1",
+        )
+        .bind(id.0)
+        .execute(self.conn())
+        .await?;
+        sqlx::query("DELETE FROM model_routes WHERE user_id = $1")
+            .bind(id.0)
+            .execute(self.conn())
+            .await?;
+        sqlx::query(
+            "UPDATE instances SET state = 'deleted', deleted_at = coalesce(deleted_at, now()), updated_at = now() \
+             WHERE user_id = $1",
+        )
+        .bind(id.0)
+        .execute(self.conn())
+        .await?;
+        sqlx::query(
+            "UPDATE runs SET state = 'cancelled', state_reason = 'account deleted', lease_owner = NULL, \
+               lease_expires_at = NULL, finished_at = now(), updated_at = now() \
+             WHERE user_id = $1 AND state NOT IN ('succeeded', 'failed', 'cancelled')",
+        )
+        .bind(id.0)
+        .execute(self.conn())
+        .await?;
+        sqlx::query("UPDATE plans SET status = 'deleted', updated_at = now() WHERE user_id = $1")
+            .bind(id.0)
+            .execute(self.conn())
+            .await?;
+        sqlx::query("UPDATE triggers SET enabled = false, updated_at = now() WHERE user_id = $1")
+            .bind(id.0)
+            .execute(self.conn())
+            .await?;
+        Ok(())
+    }
+}
+
 impl Tx<Tenant> {
     /// 当前用户自己。
     pub async fn me(&mut self) -> Result<User> {

@@ -11,10 +11,12 @@
 mod credentials;
 mod error;
 mod events;
+mod grants;
 mod instances;
 mod outbox;
 mod plans;
 mod runs;
+mod sessions;
 mod users;
 
 #[cfg(any(test, feature = "testing"))]
@@ -34,7 +36,8 @@ pub use error::{Error, Result};
 pub use instances::{InstanceRuntime, NewInstance};
 pub use outbox::{NewOutboxItem, OutboxItem};
 pub use plans::{DueTrigger, NewPlan};
-pub use runs::{NewRun, RunChange};
+pub use runs::{NewRun, RunChange, RunRecord};
+pub use sessions::{LoginCode, SessionRecord, SessionState};
 
 /// 业务事务里单条语句的上限：防止慢查询拖住连接池。
 const TENANT_STATEMENT_TIMEOUT: &str = "15s";

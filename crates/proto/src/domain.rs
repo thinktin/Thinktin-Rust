@@ -368,6 +368,40 @@ pub struct User {
     pub created_at: DateTime<Utc>,
 }
 
+/// 登录过的一台设备。退出登录、远程下线后 `revoked_at` 有值。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Device {
+    pub id: DeviceId,
+    pub platform: DevicePlatform,
+    pub name: String,
+    pub push_channel: Option<PushChannelKind>,
+    pub created_at: DateTime<Utc>,
+    pub last_seen_at: DateTime<Utc>,
+    pub revoked_at: Option<DateTime<Utc>>,
+}
+
+/// 运行授权（4.6）：实例代表用户干活的权限，和登录会话无关。只在平台内部使用，不下发到客户端或沙箱。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RunGrant {
+    pub id: GrantId,
+    pub instance_id: InstanceId,
+    pub plan_id: Option<PlanId>,
+    /// 从哪个授权收窄出来的（子运行）。
+    pub parent_id: Option<GrantId>,
+    pub scope: GrantScope,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+    pub last_used_at: Option<DateTime<Utc>>,
+    pub revoked_at: Option<DateTime<Utc>>,
+    pub revoke_reason: Option<String>,
+}
+
+impl RunGrant {
+    pub fn is_active(&self, now: DateTime<Utc>) -> bool {
+        self.revoked_at.is_none() && self.expires_at > now
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Instance {
     pub id: InstanceId,
