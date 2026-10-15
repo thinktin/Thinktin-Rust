@@ -1148,3 +1148,43 @@ async fn pipeline_roots_are_served_round_robin() {
     let distinct: std::collections::HashSet<_> = seen.iter().collect();
     assert_eq!(distinct.len(), 5, "{seen:?}");
 }
+
+/// 推送只发给还登录着的设备；同一台设备换了账号登录，之前的账号不再收到推送。
+#[tokio::test]
+async fn pushes_only_reach_signed_in_devices_and_their_current_user() {
+    use proto::domain::{DevicePlatform, PushChannelKind, SessionId};
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = user(db, "+8613800000001").await;
+    let bob = user(db, "+8613800000002").await;
+    let hour = Duration::from_secs(3600);
+    let mut w = db.worker().await.unwrap();
+    let shared = Some((PushChannelKind::Apns, "shared-token"));
+    let a_dev = w
+        .create_device(alice, DevicePlatform::Ios, "iPad", shared)
+        .await
+        .unwrap();
+    let a_session = SessionId::new();
+    w.create_session(a_session, alice, a_dev, b"r1", hour)
+        .await
+        .unwrap();
+    assert_eq!(w.push_targets(alice).await.unwrap().len(), 1);
+    // 会话被吊销（没走退出接口，设备记录还在）：这台设备收不到了。
+    w.revoke_session(a_session, "test").await.unwrap();
+    assert!(w.push_targets(alice).await.unwrap().is_empty());
+    w.create_session(SessionId::new(), alice, a_dev, b"r2", hour)
+        .await
+        .unwrap();
+    assert_eq!(w.push_targets(alice).await.unwrap().len(), 1);
+    // bob 在同一台设备上登录：令牌归 bob。
+    let b_dev = w
+        .create_device(bob, DevicePlatform::Ios, "iPad", shared)
+        .await
+        .unwrap();
+    w.create_session(SessionId::new(), bob, b_dev, b"r3", hour)
+        .await
+        .unwrap();
+    assert!(w.push_targets(alice).await.unwrap().is_empty());
+    assert_eq!(w.push_targets(bob).await.unwrap().len(), 1);
+    w.rollback().await.unwrap();
+}

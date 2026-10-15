@@ -199,7 +199,29 @@ impl Tx<Worker> {
         .bind(push.map(|(_, t)| t))
         .execute(self.conn())
         .await?;
+        if let Some((channel, token)) = push {
+            self.release_push_token(id, channel, token).await?;
+        }
         Ok(id)
+    }
+
+    /// 一个推送令牌只属于一台设备：同一台手机换了账号登录，之前账号的设备不再收到推送。
+    pub async fn release_push_token(
+        &mut self,
+        keep: DeviceId,
+        channel: PushChannelKind,
+        token: &str,
+    ) -> Result<u64> {
+        let done = sqlx::query(
+            "UPDATE devices SET push_channel = NULL, push_token = NULL \
+             WHERE push_channel = $2 AND push_token = $3 AND id <> $1",
+        )
+        .bind(keep.0)
+        .bind(channel.as_str())
+        .bind(token)
+        .execute(self.conn())
+        .await?;
+        Ok(done.rows_affected())
     }
 
     /// 新会话。会话 id 由调用方先生成（刷新令牌里带着它）。
@@ -353,15 +375,19 @@ impl Tx<Worker> {
         .transpose()
     }
 
-    /// 用户还登录着、有推送令牌的设备。
+    /// 用户还登录着、有推送令牌的设备。会话过期、被吊销（没调退出接口）的设备不算：
+    /// 那台手机可能已经换了人用。
     pub async fn push_targets(
         &mut self,
         user: UserId,
     ) -> Result<Vec<(DeviceId, PushChannelKind, String)>> {
         let rows: Vec<(Uuid, String, String)> = sqlx::query_as(
-            "SELECT id, push_channel, push_token FROM devices \
-             WHERE user_id = $1 AND revoked_at IS NULL AND push_channel IS NOT NULL AND push_token IS NOT NULL \
-             ORDER BY last_seen_at DESC",
+            "SELECT d.id, d.push_channel, d.push_token FROM devices d \
+             WHERE d.user_id = $1 AND d.revoked_at IS NULL \
+               AND d.push_channel IS NOT NULL AND d.push_token IS NOT NULL \
+               AND EXISTS (SELECT 1 FROM sessions s WHERE s.device_id = d.id \
+                             AND s.revoked_at IS NULL AND s.expires_at > now()) \
+             ORDER BY d.last_seen_at DESC",
         )
         .bind(user.0)
         .fetch_all(self.conn())

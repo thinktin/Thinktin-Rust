@@ -58,9 +58,19 @@ async fn user_with_devices(t: &TestDb, devices: &[(PushChannelKind, &str)]) -> U
     let mut w = t.db.worker().await.unwrap();
     let (user, _) = w.upsert_user_by_phone("+8613800000001").await.unwrap();
     for (kind, token) in devices {
-        w.create_device(user.id, DevicePlatform::Ios, "d", Some((*kind, token)))
+        let device = w
+            .create_device(user.id, DevicePlatform::Ios, "d", Some((*kind, token)))
             .await
             .unwrap();
+        w.create_session(
+            proto::domain::SessionId::new(),
+            user.id,
+            device,
+            b"refresh",
+            Duration::from_secs(3600),
+        )
+        .await
+        .unwrap();
     }
     w.commit().await.unwrap();
     user.id
