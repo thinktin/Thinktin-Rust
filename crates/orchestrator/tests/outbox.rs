@@ -306,3 +306,41 @@ async fn settled_approvals_are_not_pushed() {
     assert_eq!((report.delivered, report.dropped), (1, 1));
     assert_eq!(apns.sent(), ["tok"]);
 }
+
+/// 一批按顺序发，前面慢了，后面的锁过期被别的投递器领走：不再发一遍。
+#[tokio::test]
+async fn items_whose_lock_expired_are_not_sent_twice() {
+    let Some(t) = TestDb::new().await else { return };
+    let user = user_with_devices(&t, &[(PushChannelKind::Apns, "tok")]).await;
+    enqueue(&t, user, &message(None), "k1").await;
+    // 另一个投递器领了（锁立即过期），再被第三个投递器接手。
+    let mut w = t.db.worker().await.unwrap();
+    assert_eq!(
+        w.claim_outbox("node-b", Duration::ZERO, 10)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    w.commit().await.unwrap();
+    let mut w = t.db.worker().await.unwrap();
+    let mut w2 = t.db.worker().await.unwrap();
+    let item = w2
+        .claim_outbox("node-c", Duration::from_secs(60), 10)
+        .await
+        .unwrap();
+    w2.commit().await.unwrap();
+    assert_eq!(item.len(), 1);
+    // node-b 的锁已经不在了。
+    assert!(
+        !w.extend_outbox_lock(item[0].id, "node-b", Duration::from_secs(60))
+            .await
+            .unwrap()
+    );
+    assert!(
+        w.extend_outbox_lock(item[0].id, "node-c", Duration::from_secs(60))
+            .await
+            .unwrap()
+    );
+    w.rollback().await.unwrap();
+}

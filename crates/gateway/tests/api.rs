@@ -1747,3 +1747,37 @@ async fn agent_plans_are_confirmed_by_revision() {
         .await;
     assert_eq!(st, StatusCode::CONFLICT);
 }
+
+/// 停流水线的根运行（不带 tree=true）也停掉它的步骤：根运行自己不跑 agent。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancelling_a_pipeline_root_stops_its_steps() {
+    let Some(a) = api().await else { return };
+    let u = a.login("13800138000").await;
+    let inst = a.adopt(&u).await;
+    let mut w = a.t.db.worker().await.unwrap();
+    let user = w.instance_runtime(inst).await.unwrap().user_id;
+    let mut root = store::NewRun::new(inst, proto::domain::RunSource::Plan, "pipeline", "1");
+    root.kind = proto::domain::RunKind::Pipeline;
+    let root = w.create_run(user, &root).await.unwrap().unwrap();
+    let mut step = store::NewRun::new(inst, proto::domain::RunSource::Pipeline, "step a", "1");
+    step.parent_run_id = Some(root.id);
+    step.step_key = Some("a".into());
+    let step = w.create_run(user, &step).await.unwrap().unwrap();
+    w.commit().await.unwrap();
+
+    let (st, body) = a
+        .call(
+            Method::POST,
+            &format!("/v1/runs/{}/cancel", root.id),
+            Some(&u.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let mut w = a.t.db.worker().await.unwrap();
+    assert_eq!(
+        w.run_record(step.id).await.unwrap().run.state,
+        proto::domain::RunState::Cancelled
+    );
+    w.rollback().await.unwrap();
+}

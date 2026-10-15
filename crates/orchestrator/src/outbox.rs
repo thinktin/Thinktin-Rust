@@ -209,6 +209,18 @@ impl Dispatcher {
             .await?;
         w.commit().await?;
         for item in items {
+            let mut w = self.db.worker().await?;
+            let held = w
+                .extend_outbox_lock(item.id, &self.node_id, self.cfg.lock_for)
+                .await?;
+            w.commit().await?;
+            if !held {
+                warn!(
+                    item = item.id,
+                    "outbox lock expired before sending, leaving it to the new holder"
+                );
+                continue;
+            }
             let settle = self.deliver(&item).await?;
             let mut w = self.db.worker().await?;
             let result = match settle {
