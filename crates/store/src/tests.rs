@@ -577,7 +577,7 @@ async fn events_are_sequenced_per_instance() {
     let tail = a.events_after(x.id, 1, 100).await.unwrap();
     assert_eq!(tail.iter().map(|e| e.seq).collect::<Vec<_>>(), [2, 3]);
     assert_eq!(tail[1].payload, json!({ "i": 2 }));
-    assert_eq!(a.event_range(x.id).await.unwrap(), (Some(1), 3));
+    assert_eq!(a.event_range(x.id).await.unwrap(), (1, 3));
     a.commit().await.unwrap();
 
     // 分区维护：提前建好的分区可以重复建；过了保留期的整月分区被删掉。
