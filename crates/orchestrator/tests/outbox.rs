@@ -227,3 +227,72 @@ async fn absurd_retry_after_is_clamped() {
     assert_eq!(d.tick().await.unwrap().retried, 1);
     assert_eq!(d.tick().await.unwrap().retried, 1);
 }
+
+/// 审批提醒发出前再看一眼：用户已经在别的设备上处理了（或者运行结束了），就不推了。
+#[tokio::test]
+async fn settled_approvals_are_not_pushed() {
+    let Some(t) = TestDb::new().await else { return };
+    let user = user_with_devices(&t, &[(PushChannelKind::Apns, "tok")]).await;
+    let mut tx = t.db.tenant(user).await.unwrap();
+    let inst = tx
+        .create_instance(&store::NewInstance {
+            agent_id: "claude".into(),
+            agent_version: "1".into(),
+            harness: "acp".into(),
+            name: "main".into(),
+            workspace_id: "ws".into(),
+            limits: Default::default(),
+        })
+        .await
+        .unwrap();
+    let run = tx
+        .create_run(&store::NewRun::new(
+            inst.id,
+            proto::domain::RunSource::User,
+            "hi",
+            "1",
+        ))
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let mut approvals = Vec::new();
+    let mut w = t.db.worker().await.unwrap();
+    for request in ["1:p1", "1:p2"] {
+        let a = w
+            .create_approval(&store::NewApproval {
+                user,
+                instance: inst.id,
+                run: run.id,
+                request_id: request,
+                title: Some("Delete old reports"),
+                options: &serde_json::json!([]),
+                tool_call: &serde_json::json!({}),
+                expires_in: Duration::from_secs(600),
+            })
+            .await
+            .unwrap();
+        approvals.push(a.approval.id);
+    }
+    // 第一个已经由预授权策略了结。
+    w.settle_approval(
+        run.id,
+        "1:p1",
+        proto::domain::ApprovalState::Cancelled,
+        Some("allow"),
+        "policy",
+    )
+    .await
+    .unwrap();
+    w.commit().await.unwrap();
+    for (i, id) in approvals.iter().enumerate() {
+        let mut msg = message(None);
+        msg.kind = PushKind::Approval;
+        msg.target.approval_id = Some(id.to_string());
+        enqueue(&t, user, &msg, &format!("approval:{i}")).await;
+    }
+    let apns = Arc::new(Scripted::default());
+    let d = dispatcher(&t, apns.clone(), DispatcherConfig::default());
+    let report = d.tick().await.unwrap();
+    assert_eq!((report.delivered, report.dropped), (1, 1));
+    assert_eq!(apns.sent(), ["tok"]);
+}

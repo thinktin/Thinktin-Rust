@@ -297,6 +297,15 @@ impl Dispatcher {
             }
         }
         let mut w = self.db.worker().await?;
+        // 审批提醒：用户已经在别的设备上处理了、过期了，或者运行已经结束，就不必再推。
+        if message.kind == PushKind::Approval
+            && let Some(id) = message.target.approval_id.as_deref()
+            && let Ok(id) = id.parse::<ApprovalId>()
+            && !w.approval_pending(id).await?
+        {
+            w.rollback().await?;
+            return Ok(Settle::Done(Some("approval no longer pending".into())));
+        }
         let targets = w.push_targets(item.user_id).await?;
         w.rollback().await?;
         let mut delivered = 0;

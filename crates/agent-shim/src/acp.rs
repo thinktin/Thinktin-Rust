@@ -394,19 +394,13 @@ impl Driver<'_> {
         let request_id = format!("perm-{}", *state.next_permission);
         *state.next_permission += 1;
         let run_id = state.turn.clone();
-        self.sink.emit(ShimEvent::PermissionRequested {
-            run_id: run_id.clone(),
-            request_id: request_id.clone(),
-            title: str_field(&tool_call, "title"),
-            options: options.clone(),
-            tool_call: tool_call.clone(),
-        });
         let kind = tool_call.get("kind").and_then(Value::as_str);
         let decided = match self.policy.decide(kind, &options) {
             Decision::Select(option_id) => Some(Some(option_id)),
             Decision::Cancel => Some(None),
             Decision::Ask => None,
         };
+        // 预授权策略直接决定的不发 PermissionRequested（平台会当成要用户批准、推送提醒），只发结果。
         if let Some(option_id) = decided {
             self.peer.respond(rpc_id, Ok(outcome(option_id.as_deref())));
             self.sink.emit(ShimEvent::PermissionResolved {
@@ -417,6 +411,13 @@ impl Driver<'_> {
             });
             return;
         }
+        self.sink.emit(ShimEvent::PermissionRequested {
+            run_id: run_id.clone(),
+            request_id: request_id.clone(),
+            title: str_field(&tool_call, "title"),
+            options: options.clone(),
+            tool_call: tool_call.clone(),
+        });
         let expired = state.expired_tx.clone();
         let wait = self.policy.ask_timeout;
         let id = request_id.clone();

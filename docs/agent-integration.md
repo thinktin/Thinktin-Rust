@@ -112,7 +112,7 @@ agent ──stdio MCP──▶ agent-shim mcp-bridge ──Unix socket──▶ 
 
 ## 6. 权限审批
 
-预授权范围按 ACP 的工具类别表达：`read`、`edit`、`delete`、`move`、`search`、`execute`、`think`、`fetch`、`switch_mode`、`other`，`*` 表示全部。范围内的请求 shim 直接选“只允许这一次”；范围外的按策略拒绝，或者发 `permission_requested` 等用户决定，默认最长等 24 小时（4.7）。工具类别是沙箱里的 agent 自己报告的，只表达用户意图；安全边界是 microVM。
+预授权范围按 ACP 的工具类别表达：`read`、`edit`、`delete`、`move`、`search`、`execute`、`think`、`fetch`、`switch_mode`、`other`，`*` 表示全部。范围内的请求 shim 直接选“只允许这一次”；范围外的按策略拒绝，或者发 `permission_requested` 等用户决定，默认最长等 24 小时（4.7）。按策略直接决定的只发 `permission_resolved`（`by: policy`），不发 `permission_requested`：平台收到 `permission_requested` 就会建审批、推送“需要你的批准”。工具类别是沙箱里的 agent 自己报告的，只表达用户意图；安全边界是 microVM。
 
 各家的审批行为不一样，冒烟测试里确认过：
 

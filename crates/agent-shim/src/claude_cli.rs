@@ -492,18 +492,6 @@ impl Driver<'_> {
         self.next_permission += 1;
         let run_id = self.run_id();
         let options = permission_options();
-        self.sink.emit(ShimEvent::PermissionRequested {
-            run_id: run_id.clone(),
-            request_id: request_id.clone(),
-            title: Some(title.clone()),
-            options: options.clone(),
-            tool_call: json!({
-                "toolCallId": req["tool_use_id"],
-                "title": title,
-                "kind": kind,
-                "rawInput": req["input"],
-            }),
-        });
         let pending = PendingPermission {
             control_id,
             run_id: run_id.clone(),
@@ -514,6 +502,19 @@ impl Driver<'_> {
             Decision::Select(id) => Some(id),
             Decision::Cancel => None,
             Decision::Ask => {
+                // 只有要等用户决定的才发 PermissionRequested；预授权直接决定的只发结果。
+                self.sink.emit(ShimEvent::PermissionRequested {
+                    run_id: run_id.clone(),
+                    request_id: request_id.clone(),
+                    title: Some(title.clone()),
+                    options,
+                    tool_call: json!({
+                        "toolCallId": req["tool_use_id"],
+                        "title": title,
+                        "kind": kind,
+                        "rawInput": req["input"],
+                    }),
+                });
                 let expired = self.expired_tx.clone();
                 let wait = self.policy.ask_timeout;
                 let id = request_id.clone();

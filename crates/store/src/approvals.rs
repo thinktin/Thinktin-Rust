@@ -143,6 +143,17 @@ impl Tx<Worker> {
         Ok(())
     }
 
+    /// 审批是否还在等用户决定（推送前再看一眼：已经处理掉的不必再推）。
+    pub async fn approval_pending(&mut self, id: ApprovalId) -> Result<bool> {
+        let pending: Option<bool> = sqlx::query_scalar(
+            "SELECT state = 'pending' AND expires_at > now() FROM approvals WHERE id = $1",
+        )
+        .bind(id.0)
+        .fetch_optional(self.conn())
+        .await?;
+        Ok(pending.unwrap_or(false))
+    }
+
     /// 运行结束：还没决定的审批一并作废。
     pub async fn cancel_run_approvals(&mut self, run: RunId) -> Result<u64> {
         let done = sqlx::query(
