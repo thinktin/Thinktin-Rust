@@ -637,11 +637,21 @@ impl Api {
         self.json(Method::POST, "/v1/plans", Some(&body)).await
     }
 
-    /// 暂停或恢复（agent 新建、修改的计划要用户恢复才生效）。
+    /// 暂停或恢复用户自己的计划（等确认的计划用 `confirm_plan`）。
     pub async fn set_plan_paused(&self, id: PlanId, paused: bool) -> Result<PlanView> {
         let action = if paused { "pause" } else { "resume" };
         self.json(Method::POST, &format!("/v1/plans/{id}/{action}"), None)
             .await
+    }
+
+    /// 确认 agent 新建或修改的计划，`revision` 是用户看到的版本。
+    pub async fn confirm_plan(&self, id: PlanId, revision: u32) -> Result<PlanView> {
+        self.json(
+            Method::POST,
+            &format!("/v1/plans/{id}/confirm"),
+            Some(&serde_json::json!({ "revision": revision })),
+        )
+        .await
     }
 
     pub async fn delete_plan(&self, id: PlanId) -> Result<()> {

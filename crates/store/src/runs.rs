@@ -327,6 +327,26 @@ impl Tx<Tenant> {
         Ok(done.rows_affected())
     }
 
+    /// 运行的预算（agent 在运行里新建计划时，计划沿用这个预算）。
+    pub async fn run_budget(&mut self, id: RunId) -> Result<RunBudget> {
+        let budget: serde_json::Value = sqlx::query_scalar("SELECT budget FROM runs WHERE id = $1")
+            .bind(id.0)
+            .fetch_one(self.conn())
+            .await?;
+        from_json(budget, "run budget")
+    }
+
+    /// 一次运行里某种事件的条数（限制 agent 在一次运行里反复改计划、发提醒）。
+    pub async fn run_event_count(&mut self, id: RunId, kind: &str) -> Result<u64> {
+        let n: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM events WHERE run_id = $1 AND kind = $2")
+                .bind(id.0)
+                .bind(kind)
+                .fetch_one(self.conn())
+                .await?;
+        Ok(u64::try_from(n).unwrap_or_default())
+    }
+
     /// 取消实例上所有没结束的运行（删除实例时），连同根在这个实例上的运行树里、在别的实例上跑的步骤。
     /// 返回取消的个数。
     pub async fn cancel_instance_runs(

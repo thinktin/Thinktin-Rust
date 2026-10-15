@@ -12,3 +12,8 @@ CREATE TABLE session_refresh_history (
 ALTER TABLE session_refresh_history ENABLE ROW LEVEL SECURITY;
 ALTER TABLE session_refresh_history FORCE ROW LEVEL SECURITY;
 GRANT SELECT, INSERT, DELETE ON session_refresh_history TO thinktin_worker;
+
+-- 计划确认绑定到用户看过的版本：agent 每次新建、修改计划都把版本号加一、标记待确认；
+-- 用户确认时带上看到的版本号，对不上（中间又被 agent 改过）就拒绝。待确认的计划不能直接“恢复”。
+ALTER TABLE plans ADD COLUMN revision integer NOT NULL DEFAULT 1;
+ALTER TABLE plans ADD COLUMN awaiting_confirmation boolean NOT NULL DEFAULT false;

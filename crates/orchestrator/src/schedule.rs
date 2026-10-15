@@ -75,6 +75,18 @@ impl Schedule {
                 if rule.contains("FREQ=SECONDLY") {
                     return Err(ScheduleError::RRule("FREQ=SECONDLY is not allowed".into()));
                 }
+                // 只允许一条 RRULE、不允许 RDATE：多条规则或额外的日期能让前面的触发稀疏、后面的密集，
+                // 躲过只看前几十次的频率检查。一条规则的间隔是周期性的。
+                let upper: Vec<String> = rule
+                    .lines()
+                    .map(|l| l.trim().to_ascii_uppercase())
+                    .collect();
+                if upper.iter().filter(|l| l.starts_with("RRULE")).count() > 1 {
+                    return Err(ScheduleError::RRule("only one RRULE is allowed".into()));
+                }
+                if upper.iter().any(|l| l.starts_with("RDATE")) {
+                    return Err(ScheduleError::RRule("RDATE is not allowed".into()));
+                }
                 Ok(Self::Rrule { set: Box::new(set) })
             }
             ScheduleSpec::Once { at } => Ok(Self::Once { at: *at }),
@@ -201,6 +213,35 @@ pub fn plan_due(
     }
 }
 
+/// 不管规则怎么写，同一个触发器相邻两次触发至少隔 `min`：太近的丢掉，下一次排到最后一次之后至少 `min`。
+/// 解析时的频率检查只看前几十次，这里是最后一道兜底。返回丢掉的个数。
+pub fn enforce_min_gap(
+    plan: &mut CatchUpPlan,
+    schedule: &Schedule,
+    last_fire: Option<DateTime<Utc>>,
+    min: Duration,
+) -> usize {
+    let Ok(min) = chrono::Duration::from_std(min) else {
+        return 0;
+    };
+    let before = plan.fires.len();
+    let mut prev = last_fire;
+    plan.fires.retain(|f| {
+        // 和上一次是同一个名义时间：是重复扫描，交给 (plan_id, fire_time) 唯一约束去重，不算太频繁。
+        let ok = prev.is_none_or(|p| *f == p || *f - p >= min);
+        if ok {
+            prev = Some(*f);
+        }
+        ok
+    });
+    if let (Some(p), Some(next)) = (prev, plan.next)
+        && next - p < min
+    {
+        plan.next = schedule.next_after(p + min - chrono::Duration::seconds(1));
+    }
+    before - plan.fires.len()
+}
+
 /// 确定性的削峰抖动：`[0, max)` 之间，由触发器 id 和名义触发时间决定（FNV-1a，跨版本稳定）。
 pub fn jitter(trigger_id: &[u8], fire: DateTime<Utc>, max: Duration) -> Duration {
     let ms = max.as_millis() as u64;
@@ -282,6 +323,40 @@ mod tests {
             s.next_after(utc("2026-03-10T00:00:00Z")),
             Some(utc("2026-03-10T12:00:00Z"))
         );
+    }
+
+    /// 多条 RRULE 或 RDATE：前几十次稀疏、后面密集，躲过频率检查。解析时拒绝，调度时还有兜底。
+    #[test]
+    fn dense_later_fires_cannot_slip_past_the_frequency_limit() {
+        for rule in [
+            "DTSTART;TZID=Asia/Shanghai:20261015T090000\nRRULE:FREQ=DAILY;COUNT=60\nRRULE:FREQ=MINUTELY;BYMONTH=6",
+            "DTSTART;TZID=Asia/Shanghai:20261015T090000\nRRULE:FREQ=DAILY\nRDATE;TZID=Asia/Shanghai:20270601T000000,20270601T000100",
+        ] {
+            assert!(
+                Schedule::parse(&ScheduleSpec::Rrule { rule: rule.into() }).is_err(),
+                "{rule}"
+            );
+        }
+        // 兜底：每分钟一次的规则（假设绕过了解析检查）到调度时按最小间隔丢掉太近的。
+        let s = cron("* * * * *", "UTC");
+        let mut plan = CatchUpPlan {
+            fires: vec![
+                utc("2026-10-15T00:00:00Z"),
+                utc("2026-10-15T00:01:00Z"),
+                utc("2026-10-15T00:05:00Z"),
+                utc("2026-10-15T00:06:00Z"),
+            ],
+            dropped: 0,
+            next: Some(utc("2026-10-15T00:07:00Z")),
+        };
+        let five = Duration::from_secs(300);
+        let dropped = enforce_min_gap(&mut plan, &s, Some(utc("2026-10-14T23:58:00Z")), five);
+        assert_eq!(
+            dropped, 3,
+            "00:00 and 00:01 follow 23:58 too soon, 00:06 follows 00:05"
+        );
+        assert_eq!(plan.fires, [utc("2026-10-15T00:05:00Z")]);
+        assert_eq!(plan.next, Some(utc("2026-10-15T00:10:00Z")));
     }
 
     #[test]

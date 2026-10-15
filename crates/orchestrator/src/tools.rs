@@ -30,6 +30,11 @@ pub const SCHEDULE_TOOLS: [&str; 4] = [
     "schedule_cancel",
 ];
 
+/// 一个实例上 agent 建的计划（没删除的）最多这么多。
+const MAX_AGENT_PLANS: u64 = 20;
+/// 一次运行里 agent 最多新建、修改这么多次计划（每次都会给用户发确认提醒）。
+const MAX_PLAN_CHANGES_PER_RUN: u64 = 10;
+
 pub struct ScheduleTools {
     db: Db,
     min_interval: Duration,
@@ -137,14 +142,27 @@ impl ScheduleTools {
         Ok(plan)
     }
 
-    /// 计划改动后等用户确认：暂停，并推送提醒。
+    /// 一次运行里改计划的次数有上限：每次改动都会给用户发确认提醒。
+    async fn check_change_quota(t: &mut Tx<Tenant>, ctx: &ToolContext) -> Result<(), Fail> {
+        if t.run_event_count(ctx.run, "plan.needs_confirmation")
+            .await?
+            >= MAX_PLAN_CHANGES_PER_RUN
+        {
+            return Err(Fail(format!(
+                "this run already created or changed {MAX_PLAN_CHANGES_PER_RUN} plans; wait for the user"
+            )));
+        }
+        Ok(())
+    }
+
+    /// 计划改动后等用户确认：暂停、版本号加一，并推送提醒。用户确认时要带上看到的版本。
     async fn ask_to_confirm(
         t: &mut Tx<Tenant>,
         ctx: &ToolContext,
         plan: &Plan,
         what: &str,
     ) -> Result<(), Fail> {
-        t.set_plan_paused(plan.id, true).await?;
+        t.request_plan_confirmation(plan.id).await?;
         let notice = Notice {
             instance: Some(ctx.instance),
             run: Some(ctx.run),
@@ -200,27 +218,33 @@ impl ScheduleTools {
         check_text("title", &args.title, 100)?;
         check_text("goal", &args.goal, 8000)?;
         let next = self.next_fire(&args.schedule)?;
-        let scope = {
-            let mut w = self.db.worker().await?;
-            let (_, g) = w.run_grant(ctx.grant).await?;
-            w.rollback().await?;
-            g.scope
-        };
         let mut t = self.db.tenant(ctx.user).await?;
+        Self::check_change_quota(&mut t, ctx).await?;
+        if t.agent_plan_count(ctx.instance).await? >= MAX_AGENT_PLANS {
+            return Err(Fail(format!(
+                "this agent already has {MAX_AGENT_PLANS} plans; ask the user to remove some first"
+            )));
+        }
+        // 预算沿用发起调用的这次运行，不比它宽。
+        let policy = PlanPolicy {
+            budget: t.run_budget(ctx.run).await?,
+            ..PlanPolicy::default()
+        };
         let plan = t
             .create_plan(&NewPlan {
                 instance_id: ctx.instance,
                 title: args.title.trim().into(),
                 goal: args.goal.trim().into(),
-                policy: PlanPolicy::default(),
+                policy,
                 catch_up: args.catch_up,
                 created_by: PlanAuthor::Agent,
                 run_grant_id: None,
             })
             .await?;
-        // 计划的授权不超过发起这次调用的运行的授权。
+        // 计划的授权从发起调用的运行的授权收窄出来：范围相同、有效期不超过它，吊销它时一起失效。
+        // 用户确认计划时换成正式的授权。
         let grant = t
-            .create_run_grant(ctx.instance, Some(plan.id), &scope, self.grant_ttl)
+            .create_plan_child_grant(ctx.grant, ctx.instance, plan.id, self.grant_ttl)
             .await?;
         t.set_plan_grant(plan.id, grant.id).await?;
         t.add_trigger(plan.id, &args.schedule, Some(next)).await?;
@@ -249,6 +273,7 @@ impl ScheduleTools {
             .transpose()?;
         let mut t = self.db.tenant(ctx.user).await?;
         let plan = Self::own_plan(&mut t, ctx, args.plan_id).await?;
+        Self::check_change_quota(&mut t, ctx).await?;
         let title = args.title.unwrap_or(plan.title.clone());
         let goal = args.goal.unwrap_or(plan.goal.clone());
         check_text("title", &title, 100)?;

@@ -14,7 +14,7 @@ use serde_json::json;
 use store::{Db, DueTrigger, NewRun, Tx, Worker};
 use tracing::{debug, error, info, warn};
 
-use crate::schedule::{Schedule, jitter, plan_due};
+use crate::schedule::{Schedule, enforce_min_gap, jitter, plan_due};
 
 #[derive(Debug, Clone)]
 pub struct SchedulerConfig {
@@ -26,6 +26,8 @@ pub struct SchedulerConfig {
     pub max_jitter: Duration,
     /// 计划运行的最多尝试次数。
     pub max_attempts: u32,
+    /// 同一个触发器两次触发的最小间隔（兜底，和新建计划时的检查一致）。
+    pub min_interval: Duration,
 }
 
 impl Default for SchedulerConfig {
@@ -35,6 +37,7 @@ impl Default for SchedulerConfig {
             batch: 100,
             max_jitter: Duration::from_secs(30),
             max_attempts: 3,
+            min_interval: Duration::from_secs(5 * 60),
         }
     }
 }
@@ -106,7 +109,12 @@ impl Scheduler {
                 return Ok(());
             }
         };
-        let plan = plan_due(&schedule, due, now, d.plan.catch_up);
+        let mut plan = plan_due(&schedule, due, now, d.plan.catch_up);
+        let throttled =
+            enforce_min_gap(&mut plan, &schedule, t.last_fire_at, self.cfg.min_interval);
+        if throttled > 0 {
+            warn!(trigger = %t.id, throttled, "fires closer than the minimum interval were skipped");
+        }
         // 带步骤的计划生成流水线运行（8.3），由流水线驱动给每一步建子运行。
         let pipeline = !w.plan_steps(d.plan.id).await?.is_empty();
         if plan.dropped > 0 {

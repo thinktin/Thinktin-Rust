@@ -82,6 +82,56 @@ impl Tx<Tenant> {
         insert(self, user, instance, plan, None, scope, ttl).await
     }
 
+    /// agent 新建计划时给计划签的授权：从发起调用的运行的授权收窄出来（范围相同、有效期不超过它、不自动续期），
+    /// 这样吊销调用方的授权时计划的授权跟着失效。用户确认计划时再换成正式的授权。
+    pub async fn create_plan_child_grant(
+        &mut self,
+        parent: GrantId,
+        instance: InstanceId,
+        plan: PlanId,
+        ttl: Duration,
+    ) -> Result<RunGrant> {
+        let row: Option<Row> = sqlx::query_as(concat!(
+            "SELECT ",
+            columns!(),
+            " FROM run_grants WHERE id = $1 AND revoked_at IS NULL AND expires_at > now() AND ",
+            ancestors_usable!()
+        ))
+        .bind(parent.0)
+        .fetch_optional(self.conn())
+        .await?;
+        let Some(row) = row else {
+            return Err(Error::Invalid(format!(
+                "the calling grant {parent} is not active"
+            )));
+        };
+        let (user, p) = row.into_grant()?;
+        let remaining = (p.expires_at - Utc::now()).to_std().unwrap_or_default();
+        insert(
+            self,
+            user,
+            instance,
+            Some(plan),
+            Some(parent),
+            &p.scope,
+            ttl.min(remaining),
+        )
+        .await
+    }
+
+    /// 计划现在用的授权。
+    pub async fn plan_grant(&mut self, plan: PlanId) -> Result<Option<RunGrant>> {
+        let row: Option<Row> = sqlx::query_as(concat!(
+            "SELECT ",
+            columns!(),
+            " FROM run_grants WHERE id = (SELECT run_grant_id FROM plans WHERE id = $1)"
+        ))
+        .bind(plan.0)
+        .fetch_optional(self.conn())
+        .await?;
+        row.map(|r| Ok(r.into_grant()?.1)).transpose()
+    }
+
     /// 实例的有效授权。
     pub async fn run_grants(&mut self, instance: InstanceId) -> Result<Vec<RunGrant>> {
         let rows: Vec<Row> = sqlx::query_as(concat!(

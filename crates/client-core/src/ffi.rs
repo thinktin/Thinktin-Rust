@@ -344,8 +344,12 @@ pub struct Plan {
     pub title: String,
     pub goal: String,
     pub paused: bool,
-    /// user / agent（agent 建的计划要用户恢复才生效）
+    /// user / agent
     pub created_by: String,
+    /// agent 新建或修改过、等用户确认（用 `confirm_plan`，带上 `revision`）。
+    pub awaiting_confirmation: bool,
+    /// 计划的版本，确认时原样带回：确认之前又被改过，确认会失败（要重新看一遍）。
+    pub revision: u32,
     /// 策略（预授权工具、审批超时、预算），JSON。
     pub policy_json: String,
     pub created_at_ms: i64,
@@ -363,6 +367,8 @@ impl From<d::Plan> for Plan {
             goal: p.goal,
             paused: p.paused,
             created_by: p.created_by.to_string(),
+            awaiting_confirmation: p.awaiting_confirmation,
+            revision: p.revision,
             policy_json: serde_json::to_string(&p.policy).unwrap_or_default(),
             created_at_ms: ms(p.created_at),
             triggers: Vec::new(),
@@ -1024,10 +1030,18 @@ impl ThinktinClient {
             .await
     }
 
-    /// 暂停或恢复。agent 建的计划要用户在这里恢复才会按时运行。
+    /// 暂停或恢复用户自己的计划。等确认的计划要用 `confirm_plan`。
     pub async fn set_plan_paused(&self, plan_id: String, paused: bool) -> Result<Plan> {
         let id: d::PlanId = parse(&plan_id, "plan")?;
         self.run(|c| async move { Ok(c.api.set_plan_paused(id, paused).await?.into()) })
+            .await
+    }
+
+    /// 确认 agent 新建或修改的计划。`revision` 是界面上展示的那个版本：之后又被改过会返回冲突错误，
+    /// 重新拉取计划给用户看了再确认。
+    pub async fn confirm_plan(&self, plan_id: String, revision: u32) -> Result<Plan> {
+        let id: d::PlanId = parse(&plan_id, "plan")?;
+        self.run(|c| async move { Ok(c.api.confirm_plan(id, revision).await?.into()) })
             .await
     }
 
