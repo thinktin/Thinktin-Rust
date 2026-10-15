@@ -7,3 +7,58 @@ version = "0.1.0"
 edition = "2024"
 license = "UNLICENSED"
 publish = false
+
+[workspace.dependencies]
+aes-gcm = { version = "0.11.1", features = ["zeroize"] }
+anyhow = "1.0.104"
+async-trait = "0.1.92"
+axum = "0.8.9"
+base64 = "0.23.1"
+bytes = "1.12.1"
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "serde", "std"] }
+chrono-tz = "0.10.4"
+clap = { version = "4.6.7", features = ["derive", "env"] }
+croner = "4.0.1"
+ed25519-dalek = "3.0.0"
+futures-util = "0.3.34"
+getrandom = "0.4.3"
+hmac = "0.13.0"
+hyper = { version = "1.12.0", features = ["http1", "server"] }
+hyper-util = { version = "0.1.21", features = ["tokio", "service"] }
+libc = "0.2.190"
+metrics = "0.24.6"
+metrics-exporter-prometheus = { version = "0.18.3", default-features = false }
+p256 = { version = "0.14.0", features = ["ecdsa", "pkcs8", "pem"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "stream", "json", "http2"] }
+rrule = "0.14.0"
+secrecy = "0.10.3"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.154", features = ["raw_value"] }
+sha2 = "0.11.1"
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "tls-rustls-aws-lc-rs", "postgres", "macros", "derive", "migrate", "uuid", "chrono", "json"] }
+subtle = "2.6.1"
+tempfile = "3.27.0"
+thiserror = "2.0.21"
+tokio = { version = "1.53.2", features = ["full"] }
+toml = "1.1.8"
+tower = "0.5.3"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
+url = "2.5.8"
+uuid = { version = "1.28.0", features = ["v7", "serde"] }
+zeroize = { version = "1.9.1", features = ["derive"] }
+
+# 开发和测试：只留行号（回溯够用），依赖不带调试信息。完整调试信息让一次全量测试构建占二十多 GB。
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+# 手机端的 client-core：体积优先。保留 unwind：UniFFI 要把 Rust 里的 panic 变成错误返回给原生端。
+[profile.mobile]
+inherits = "release"
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
