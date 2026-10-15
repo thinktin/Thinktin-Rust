@@ -1,6 +1,6 @@
 //! 沙箱抽象（架构方案 4.10、6，WBS 6.1）：按 E2B 的接口定义创建、执行进程、暂停、恢复、快照、销毁。
 //!
-//! 控制服务只依赖 [`SandboxProvider`]。生产环境的实现对接 CubeSandbox 的 E2B 兼容接口（6.2），
+//! 控制服务只依赖 [`SandboxProvider`]。生产环境用 [`cube::CubeProvider`]，对接 CubeSandbox 的 E2B 兼容接口（6.2）；
 //! 本地开发和端到端测试用 [`local::LocalProvider`]（6.3）：沙箱就是本机上的一个目录加一组进程，没有隔离。
 
 use std::collections::BTreeMap;
@@ -12,6 +12,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
 
+pub mod cube;
 pub mod local;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]

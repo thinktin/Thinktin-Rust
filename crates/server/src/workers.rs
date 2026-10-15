@@ -21,6 +21,7 @@ use orchestrator::shim::PlatformTools;
 use orchestrator::tools::{ArtifactTools, ScheduleTools, ToolSet};
 use proto::domain::PushChannelKind;
 use sandbox::SandboxProvider;
+use sandbox::cube::CubeProvider;
 use sandbox::local::LocalProvider;
 use store::Db;
 use tracing::{error, info, warn};
@@ -42,10 +43,16 @@ async fn stopped(mut stop: ShutdownListener) {
 }
 
 pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyhow::Result<()> {
-    let provider: Arc<dyn SandboxProvider> = Arc::new(
-        LocalProvider::new(&cfg.sandbox.local_root)
-            .with_context(|| format!("sandbox root {}", cfg.sandbox.local_root.display()))?,
-    );
+    let provider: Arc<dyn SandboxProvider> = match cfg.sandbox.provider.as_str() {
+        "cube" => Arc::new(
+            CubeProvider::new(cfg.sandbox.cube.to_config(cfg.cube_api_key.clone()))
+                .context("sandbox.cube")?,
+        ),
+        _ => Arc::new(
+            LocalProvider::new(&cfg.sandbox.local_root)
+                .with_context(|| format!("sandbox root {}", cfg.sandbox.local_root.display()))?,
+        ),
+    };
     let lifecycle = Arc::new(Lifecycle::new(
         db.clone(),
         provider.clone(),

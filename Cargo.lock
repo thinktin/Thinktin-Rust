@@ -2775,9 +2775,15 @@ name = "sandbox"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "axum",
+ "base64 0.23.1",
+ "bytes",
+ "futures-util",
  "getrandom 0.4.3",
  "libc",
+ "reqwest",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror",
  "tokio",

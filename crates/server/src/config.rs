@@ -30,6 +30,9 @@ pub struct Config {
     /// 极光推送的 Master Secret，只从环境变量 THINKTIN_JPUSH_MASTER_SECRET 读。
     #[serde(skip)]
     pub jpush_master_secret: Option<String>,
+    /// CubeAPI 的 key，只从环境变量 THINKTIN_CUBE_API_KEY 读（CubeAPI 没开鉴权时不用配）。
+    #[serde(skip)]
+    pub cube_api_key: Option<String>,
     /// 接口用的密钥，只从环境变量读（见 [`ApiSecrets`]）。
     #[serde(skip)]
     pub api_secrets: ApiSecrets,
@@ -53,6 +56,7 @@ impl std::fmt::Debug for Config {
             .field("observability", &self.observability)
             .field("sandbox_token_seed", &self.sandbox_token_seed.is_some())
             .field("jpush_master_secret", &self.jpush_master_secret.is_some())
+            .field("cube_api_key", &self.cube_api_key.is_some())
             .field("api_secrets", &self.api_secrets)
             .finish()
     }
@@ -127,10 +131,12 @@ pub struct Worker {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Sandbox {
-    /// 沙箱后端：目前只有 local（本地开发）；cube 待 WBS 6.2。
+    /// 沙箱后端：local（本地开发，没有隔离）或 cube（CubeSandbox，6.2）。
     pub provider: String,
     /// local 后端的数据目录。
     pub local_root: std::path::PathBuf,
+    /// cube 后端（`provider = "cube"` 时用）。CubeAPI 的 key 只从环境变量 THINKTIN_CUBE_API_KEY 读。
+    pub cube: CubeSandbox,
     /// 沙箱出网白名单。
     pub network_allow: Vec<String>,
     /// 沙箱里 agent-shim 的路径。
@@ -141,6 +147,68 @@ pub struct Sandbox {
     pub manifest_override: Option<String>,
     /// 沙箱令牌签名密钥的 kid（模型网关按它找公钥）。
     pub token_kid: String,
+}
+
+/// cube 后端的配置（见 docs/sandbox-cube.md）。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct CubeSandbox {
+    /// CubeAPI 地址（E2B SDK 的 `E2B_API_URL`）。
+    pub api_url: String,
+    /// 沙箱域名兜底（Cube 的响应里会带）。
+    pub domain: Option<String>,
+    /// 直接连 CubeProxy 的地址（如 `http://10.0.0.5`），按 Host 头路由；不填就走泛域名 DNS。
+    pub proxy_url: Option<String>,
+    /// 不用 `proxy_url` 时数据面的 scheme。
+    pub data_scheme: String,
+    /// 沙箱里的根目录：`home` 是 HOME，`workspace` 挂工作区卷。
+    pub root: String,
+    /// 沙箱里运行进程的用户。
+    pub user: String,
+    /// 模型网关看到的沙箱来源地址（Cube 节点的出网地址或 NAT 地址），沙箱令牌绑定它。
+    pub egress_address: Option<std::net::IpAddr>,
+    /// 工作区放在 Cube 卷上（要先在 CubeMaster 里配好卷插件）。
+    pub use_volumes: bool,
+    /// 卷插件名，不填用 CubeMaster 的默认插件。
+    pub volume_driver: Option<String>,
+    /// 控制面请求的超时（秒）。
+    pub request_timeout_secs: u64,
+}
+
+impl Default for CubeSandbox {
+    fn default() -> Self {
+        let d = sandbox::cube::CubeConfig::default();
+        Self {
+            api_url: d.api_url,
+            domain: d.domain,
+            proxy_url: d.proxy_url,
+            data_scheme: d.data_scheme,
+            root: d.root,
+            user: d.user,
+            egress_address: d.egress_address,
+            use_volumes: d.use_volumes,
+            volume_driver: d.volume_driver,
+            request_timeout_secs: d.request_timeout.as_secs(),
+        }
+    }
+}
+
+impl CubeSandbox {
+    pub fn to_config(&self, api_key: Option<String>) -> sandbox::cube::CubeConfig {
+        sandbox::cube::CubeConfig {
+            api_url: self.api_url.clone(),
+            api_key,
+            domain: self.domain.clone(),
+            proxy_url: self.proxy_url.clone(),
+            data_scheme: self.data_scheme.clone(),
+            root: self.root.clone(),
+            user: self.user.clone(),
+            egress_address: self.egress_address,
+            use_volumes: self.use_volumes,
+            volume_driver: self.volume_driver.clone(),
+            request_timeout: Duration::from_secs(self.request_timeout_secs),
+        }
+    }
 }
 
 /// 可观测性（2.8）。
@@ -263,6 +331,7 @@ impl Default for Sandbox {
         Self {
             provider: "local".into(),
             local_root: ".thinktin/sandboxes".into(),
+            cube: CubeSandbox::default(),
             network_allow: Vec::new(),
             shim_path: "agent-shim".into(),
             gateway_url: "http://127.0.0.1:8790".into(),
@@ -395,6 +464,7 @@ impl Config {
         }
         cfg.sandbox_token_seed = env.var("THINKTIN_SANDBOX_TOKEN_SEED");
         cfg.jpush_master_secret = env.var("THINKTIN_JPUSH_MASTER_SECRET");
+        cfg.cube_api_key = env.var("THINKTIN_CUBE_API_KEY");
         cfg.api_secrets = ApiSecrets {
             access_token_seed: env.var("THINKTIN_ACCESS_TOKEN_SEED"),
             code_pepper: env.var("THINKTIN_CODE_PEPPER"),
@@ -443,11 +513,20 @@ impl Config {
                     "worker.enabled needs THINKTIN_SANDBOX_TOKEN_SEED (generate one with `llm-gw keygen`)"
                 );
             }
-            if self.sandbox.provider != "local" {
-                bail!(
-                    "sandbox.provider {:?} is not supported yet (only \"local\")",
-                    self.sandbox.provider
-                );
+            match self.sandbox.provider.as_str() {
+                "local" => {}
+                "cube" => {
+                    if self.sandbox.cube.api_url.is_empty() {
+                        bail!("sandbox.cube.api_url is not configured");
+                    }
+                    // Cube 的出网经节点 SNAT：不配就签不出绑定来源地址的沙箱令牌，模型网关会拒绝。
+                    if self.sandbox.cube.egress_address.is_none() {
+                        bail!(
+                            "sandbox.cube.egress_address is not configured (the address the model gateway sees for Cube sandboxes)"
+                        );
+                    }
+                }
+                other => bail!("sandbox.provider {other:?} is not supported (local or cube)"),
             }
             if self.api_secrets.kms_key.is_none() {
                 bail!("worker.enabled needs THINKTIN_KMS_KEY (artifacts are encrypted per user)");
@@ -528,12 +607,14 @@ mod tests {
         cfg.sandbox_token_seed = Some("seed-value-xyz".into());
         cfg.jpush_master_secret = Some("jpush-secret-xyz".into());
         cfg.api_secrets.kms_key = Some("kms-hex-xyz".into());
+        cfg.cube_api_key = Some("cube-key-xyz".into());
         let s = format!("{cfg:?}");
         for secret in [
             "hunter2",
             "seed-value-xyz",
             "jpush-secret-xyz",
             "kms-hex-xyz",
+            "cube-key-xyz",
         ] {
             assert!(!s.contains(secret), "{secret} leaked: {s}");
         }
@@ -576,6 +657,57 @@ mod tests {
         );
         let err = Config::load(None, &MapEnv(HashMap::new())).unwrap_err();
         assert!(err.to_string().contains("DATABASE_URL"));
+    }
+
+    #[test]
+    fn cube_sandbox_settings() {
+        let cfg = Config::parse(
+            r#"
+            [sandbox]
+            provider = "cube"
+            [sandbox.cube]
+            api_url = "http://cube-api:3000"
+            proxy_url = "http://10.0.0.5"
+            egress_address = "10.0.0.20"
+            volume_driver = "nfs"
+            "#,
+        )
+        .unwrap();
+        let c = cfg.sandbox.cube.to_config(Some("k".into()));
+        assert_eq!(c.api_url, "http://cube-api:3000");
+        assert_eq!(c.proxy_url.as_deref(), Some("http://10.0.0.5"));
+        assert_eq!(c.root, "/sandbox", "unset keys keep defaults");
+        assert_eq!(c.user, "user");
+        assert_eq!(c.egress_address, Some("10.0.0.20".parse().unwrap()));
+        assert_eq!(c.volume_driver.as_deref(), Some("nfs"));
+        assert_eq!(c.api_key.as_deref(), Some("k"));
+        assert!(
+            Config::parse("[sandbox.cube]\napi_ur = \"x\"").is_err(),
+            "typos are rejected"
+        );
+
+        let dir = std::env::temp_dir().join(format!("tt-cube-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("server.toml");
+        let env = MapEnv(HashMap::from([
+            ("DATABASE_URL", "postgres://x"),
+            ("THINKTIN_SANDBOX_TOKEN_SEED", "seed"),
+        ]));
+        std::fs::write(
+            &path,
+            "[worker]\nenabled = true\n[sandbox]\nprovider = \"cube\"\n",
+        )
+        .unwrap();
+        let err = Config::load(Some(&path), &env).unwrap_err();
+        assert!(err.to_string().contains("egress_address"), "{err}");
+        std::fs::write(
+            &path,
+            "[worker]\nenabled = true\n[sandbox]\nprovider = \"podman\"\n",
+        )
+        .unwrap();
+        let err = Config::load(Some(&path), &env).unwrap_err();
+        assert!(err.to_string().contains("not supported"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
