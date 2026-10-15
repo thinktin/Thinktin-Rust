@@ -41,9 +41,20 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Format
         run: cargo fmt --all -- --check
+      # 编译错误、clippy 报错和失败的测试同时写成注解（tools/ci/annotate.py），
+      # 在 PR 页面和检查结果的接口里直接能看到，不用翻日志。
       - name: Lint
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: |
+          set -o pipefail
+          cargo clippy --workspace --all-targets --message-format=json -- -D warnings \
+            | python3 tools/ci/annotate.py cargo
       - name: Test
-        run: cargo test --workspace
+        id: test
+        run: |
+          set -o pipefail
+          cargo test --workspace 2>&1 | tee "$RUNNER_TEMP/test.log"
+      - name: Annotate test failures
+        if: failure() && steps.test.outcome == 'failure'
+        run: python3 tools/ci/annotate.py tests < "$RUNNER_TEMP/test.log"
       - name: client-core bindings smoke test
         run: tools/client-core/ffi-smoke.sh
