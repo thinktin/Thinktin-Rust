@@ -1,0 +1,25 @@
+[package]
+name = "e2e"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "端到端测试（WBS 17.1）：本地沙箱后端 + 模拟厂商跑通主链路"
+
+[dependencies]
+
+[dev-dependencies]
+auth = { path = "../auth" }
+axum.workspace = true
+client-core = { path = "../client-core" }
+keyvault = { path = "../keyvault" }
+llm-gw = { path = "../llm-gw" }
+proto = { path = "../proto" }
+reqwest.workspace = true
+serde_json.workspace = true
+server = { path = "../server" }
+sqlx.workspace = true
+store = { path = "../store", features = ["testing"] }
+tempfile.workspace = true
+tokio.workspace = true
+tracing-subscriber.workspace = true

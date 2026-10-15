@@ -1,0 +1,49 @@
+# 后端 CI（WBS 2.1）：格式、lint、全部测试（含 Postgres 上的集成测试和端到端测试）、客户端核心的绑定冒烟。
+name: CI
+
+on:
+  push:
+    branches: [main, backend-core]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: thinktin_dev
+          POSTGRES_PASSWORD: thinktin_dev
+          POSTGRES_DB: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://thinktin_dev:thinktin_dev@127.0.0.1:5432/postgres
+      # 没有数据库时测试是跳过而不是失败；CI 里必须真的跑。
+      THINKTIN_REQUIRE_DB: "1"
+      CARGO_INCREMENTAL: "0"
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Lint
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --workspace
+      - name: client-core bindings smoke test
+        run: tools/client-core/ffi-smoke.sh

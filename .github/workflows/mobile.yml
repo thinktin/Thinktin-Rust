@@ -1,0 +1,40 @@
+# 客户端核心的打包（WBS 11.1）：iOS / macOS 的 xcframework，Android 的库工程。手动触发。
+name: Mobile packages
+
+on:
+  workflow_dispatch:
+
+jobs:
+  apple:
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: brew install cmake
+      - run: tools/client-core/build-apple.sh target/apple
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ThinktinCore-swift-package
+          path: target/apple/ThinktinCore
+
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: nttld/setup-ndk@v1
+        id: ndk
+        with:
+          ndk-version: r27c
+      - run: cargo install cargo-ndk --locked
+      - run: tools/client-core/build-android.sh target/android
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: thinktin-core-android
+          path: target/android/thinktin-core
