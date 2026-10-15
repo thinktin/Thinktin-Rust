@@ -9,7 +9,7 @@ use std::future::Future;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use proto::domain::RunSource;
+use proto::domain::{RunSource, ScheduleSpec};
 use serde_json::json;
 use store::{Db, DueTrigger, NewRun, Tx, Worker};
 use tracing::{debug, error, info, warn};
@@ -150,6 +150,16 @@ impl Scheduler {
         // 跳过补跑时没有生成运行，最后一次触发时间保持原样。
         w.advance_trigger(t.id, plan.fires.last().copied(), plan.next)
             .await?;
+        // 长期运行的 RRULE：DTSTART 挪到最近一次触发，之后每次计算不用从很早以前数起。
+        if let ScheduleSpec::Rrule { rule } = &t.spec
+            && let Some(last) = plan.fires.last().copied().or(t.last_fire_at)
+            && schedule.needs_rebase(last)
+            && let Some(rule) = Schedule::rebased_rrule(rule, last)
+        {
+            debug!(trigger = %t.id, "moved the rule's DTSTART forward");
+            w.set_trigger_spec(t.id, &ScheduleSpec::Rrule { rule })
+                .await?;
+        }
         Ok(())
     }
 

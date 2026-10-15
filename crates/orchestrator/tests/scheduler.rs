@@ -192,3 +192,30 @@ async fn one_shot_and_broken_triggers() {
     tx.commit().await.unwrap();
     assert_eq!(s.tick(when + Duration::days(3)).await.unwrap().triggers, 0);
 }
+
+/// 长期运行的 RRULE：调度时把 DTSTART 挪到最近一次触发，之后每次计算都快，触发时间不变。
+#[tokio::test]
+async fn long_running_rrules_get_their_start_moved_forward() {
+    let Some(f) = fixture().await else { return };
+    let due = at("2026-10-14T00:00:00Z"); // 上海早上 8 点
+    let spec = ScheduleSpec::Rrule {
+        rule: "DTSTART;TZID=Asia/Shanghai:20260901T080000\nRRULE:FREQ=DAILY".into(),
+    };
+    let (plan, _) = plan_with_trigger(&f, CatchUp::Once, spec, due).await;
+    let report = scheduler(&f)
+        .tick(at("2026-10-14T00:00:01Z"))
+        .await
+        .unwrap();
+    assert_eq!(report.runs_created, 1);
+    let mut tx = f.t.db.tenant(f.user).await.unwrap();
+    let trig = &tx.triggers(plan).await.unwrap()[0];
+    let ScheduleSpec::Rrule { rule } = &trig.spec else {
+        panic!("still an rrule")
+    };
+    assert!(
+        rule.starts_with("DTSTART;TZID=Asia/Shanghai:20261014T080000"),
+        "{rule}"
+    );
+    assert_eq!(trig.next_fire_at, Some(at("2026-10-15T00:00:00Z")));
+    tx.rollback().await.unwrap();
+}

@@ -589,12 +589,26 @@ impl Tx<Worker> {
             "SELECT ",
             columns!(),
             " FROM runs WHERE kind = 'pipeline' AND state IN ('queued', 'waiting_children') \
-               AND not_before <= now() ORDER BY not_before LIMIT $1 FOR UPDATE SKIP LOCKED"
+               AND not_before <= now() ORDER BY not_before, id LIMIT $1 FOR UPDATE SKIP LOCKED"
         ))
         .bind(limit)
         .fetch_all(self.conn())
         .await?;
         rows.into_iter().map(Row::into_record).collect()
+    }
+
+    /// 把这一轮处理过、还没结束的流水线排到队尾（流水线的 `not_before` 只用来给驱动器排序，
+    /// 设成现在就排在这一轮没轮到的后面）：等子运行的流水线多了，后面的也能轮到，不延后处理。
+    pub async fn requeue_pipelines(&mut self, ids: &[RunId]) -> Result<()> {
+        let ids: Vec<Uuid> = ids.iter().map(|r| r.0).collect();
+        sqlx::query(
+            "UPDATE runs SET not_before = now() \
+             WHERE id = ANY($1) AND kind = 'pipeline' AND state IN ('queued', 'waiting_children')",
+        )
+        .bind(&ids)
+        .execute(self.conn())
+        .await?;
+        Ok(())
     }
 
     /// 直接子运行。

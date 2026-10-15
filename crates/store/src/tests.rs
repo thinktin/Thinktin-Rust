@@ -1114,3 +1114,37 @@ async fn deleting_an_instance_stops_its_whole_run_tree_and_grant_tree() {
     let mut gw = db.llmgw().await.unwrap();
     assert!(gw.usable_grant_aliases(gy.id).await.unwrap().is_none());
 }
+
+/// 流水线驱动器按轮转处理：处理过的排到队尾，一直等子运行的流水线不会每轮都占满这一批。
+#[tokio::test]
+async fn pipeline_roots_are_served_round_robin() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = user(db, "+8613800000001").await;
+    let inst = instance(db, alice).await;
+    let mut a = db.tenant(alice).await.unwrap();
+    let mut ids = Vec::new();
+    for i in 0..5 {
+        let mut new = NewRun::new(inst.id, RunSource::User, format!("p{i}"), "1");
+        new.kind = proto::domain::RunKind::Pipeline;
+        ids.push(a.create_run(&new).await.unwrap().id);
+    }
+    a.commit().await.unwrap();
+    let mut seen = Vec::new();
+    for _ in 0..3 {
+        let mut w = db.worker().await.unwrap();
+        let batch: Vec<_> = w
+            .due_pipelines(2)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|r| r.run.id)
+            .collect();
+        w.requeue_pipelines(&batch).await.unwrap();
+        w.commit().await.unwrap();
+        seen.extend(batch);
+    }
+    // 三轮、每轮两个：五个都轮到了，第六个又回到第一个。
+    let distinct: std::collections::HashSet<_> = seen.iter().collect();
+    assert_eq!(distinct.len(), 5, "{seen:?}");
+}

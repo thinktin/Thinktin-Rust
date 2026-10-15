@@ -31,7 +31,7 @@ pub struct PlanView {
 
 /// 校验触发规则，返回下一次触发时间。
 fn next_fire(s: &AppState, spec: &ScheduleSpec, now: DateTime<Utc>) -> ApiResult<DateTime<Utc>> {
-    let schedule = Schedule::parse(spec).map_err(|e| ApiError::invalid(e.to_string()))?;
+    let schedule = Schedule::parse_new(spec, now).map_err(|e| ApiError::invalid(e.to_string()))?;
     if !matches!(spec, ScheduleSpec::Once { .. }) {
         schedule
             .check_min_interval(now, s.cfg.min_trigger_interval)

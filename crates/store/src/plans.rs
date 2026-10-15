@@ -474,6 +474,16 @@ impl Tx<Worker> {
     }
 
     /// 处理完一次到点：记下最后一次触发的名义时间，写入下一次（None 表示不再触发）。
+    /// 换掉触发规则（调度循环把长期运行的 RRULE 的 DTSTART 挪近，规则等价）。
+    pub async fn set_trigger_spec(&mut self, id: TriggerId, spec: &ScheduleSpec) -> Result<()> {
+        sqlx::query("UPDATE triggers SET spec = $2, updated_at = now() WHERE id = $1")
+            .bind(id.0)
+            .bind(to_json(spec)?)
+            .execute(self.conn())
+            .await?;
+        Ok(())
+    }
+
     pub async fn advance_trigger(
         &mut self,
         id: TriggerId,

@@ -124,7 +124,7 @@ fn check_text(field: &str, v: &str, max: usize) -> Result<(), Fail> {
 impl ScheduleTools {
     fn next_fire(&self, spec: &ScheduleSpec) -> Result<chrono::DateTime<Utc>, Fail> {
         let now = Utc::now();
-        let s = Schedule::parse(spec).map_err(|e| Fail(e.to_string()))?;
+        let s = Schedule::parse_new(spec, now).map_err(|e| Fail(e.to_string()))?;
         if !matches!(spec, ScheduleSpec::Once { .. }) {
             s.check_min_interval(now, self.min_interval)
                 .map_err(|e| Fail(e.to_string()))?;
