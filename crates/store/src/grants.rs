@@ -43,6 +43,18 @@ impl Row {
     }
 }
 
+/// 授权 `$1` 的每一级父授权都还有效（没吊销、没过期）。
+macro_rules! ancestors_usable {
+    () => {
+        "NOT EXISTS (WITH RECURSIVE up AS ( \
+           SELECT parent_id FROM run_grants WHERE id = $1 \
+           UNION SELECT g.parent_id FROM run_grants g JOIN up ON g.id = up.parent_id) \
+         SELECT 1 FROM run_grants a JOIN up ON a.id = up.parent_id \
+         WHERE a.revoked_at IS NOT NULL OR a.expires_at <= now())"
+    };
+}
+pub(crate) use ancestors_usable;
+
 macro_rules! columns {
     () => {
         "id, user_id, instance_id, plan_id, parent_id, scope, created_at, expires_at, last_used_at, \
@@ -129,11 +141,14 @@ impl<R> Tx<R> {
         Ok(done.rows_affected())
     }
 
-    /// 吊销计划的授权（删除计划时）。
+    /// 吊销计划的授权（删除计划时），连同从它们收窄出来的子授权。
     pub async fn revoke_plan_grants(&mut self, plan: PlanId, reason: &str) -> Result<u64> {
         let done = sqlx::query(
-            "UPDATE run_grants SET revoked_at = now(), revoke_reason = $2 \
-             WHERE plan_id = $1 AND revoked_at IS NULL",
+            "WITH RECURSIVE tree AS ( \
+               SELECT id FROM run_grants WHERE plan_id = $1 \
+               UNION SELECT g.id FROM run_grants g JOIN tree t ON g.parent_id = t.id) \
+             UPDATE run_grants SET revoked_at = now(), revoke_reason = $2 \
+             WHERE id IN (SELECT id FROM tree) AND revoked_at IS NULL",
         )
         .bind(plan.0)
         .bind(reason)
@@ -142,15 +157,19 @@ impl<R> Tx<R> {
         Ok(done.rows_affected())
     }
 
-    /// 吊销实例的全部授权（停用、删除实例）。
+    /// 吊销实例的全部授权（停用、删除实例），连同从它们收窄出来、发给别的实例的子授权
+    /// （流水线的步骤在别的实例上跑）。
     pub async fn revoke_instance_grants(
         &mut self,
         instance: InstanceId,
         reason: &str,
     ) -> Result<u64> {
         let done = sqlx::query(
-            "UPDATE run_grants SET revoked_at = now(), revoke_reason = $2 \
-             WHERE instance_id = $1 AND revoked_at IS NULL",
+            "WITH RECURSIVE tree AS ( \
+               SELECT id FROM run_grants WHERE instance_id = $1 \
+               UNION SELECT g.id FROM run_grants g JOIN tree t ON g.parent_id = t.id) \
+             UPDATE run_grants SET revoked_at = now(), revoke_reason = $2 \
+             WHERE id IN (SELECT id FROM tree) AND revoked_at IS NULL",
         )
         .bind(instance.0)
         .bind(reason)
@@ -206,7 +225,7 @@ impl Tx<Worker> {
     }
 
     /// 记一次使用（换沙箱令牌时）。顶层授权在剩余有效期不足 `renew_below` 时顺延到 `ttl`（有活动自动续期）；
-    /// 子授权不续期，跟着父授权走。已吊销、已过期的不动，返回 None。
+    /// 子授权不续期，跟着父授权走。自己或任何一级父授权已吊销、已过期的不动，返回 None。
     pub async fn touch_run_grant(
         &mut self,
         id: GrantId,
@@ -217,7 +236,9 @@ impl Tx<Worker> {
             "UPDATE run_grants SET last_used_at = now(), \
                expires_at = CASE WHEN parent_id IS NULL AND expires_at < now() + make_interval(secs => $2) \
                                  THEN now() + make_interval(secs => $3) ELSE expires_at END \
-             WHERE id = $1 AND revoked_at IS NULL AND expires_at > now() RETURNING ",
+             WHERE id = $1 AND revoked_at IS NULL AND expires_at > now() AND ",
+            ancestors_usable!(),
+            " RETURNING ",
             columns!()
         ))
         .bind(id.0)

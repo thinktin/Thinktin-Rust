@@ -327,7 +327,8 @@ impl Tx<Tenant> {
         Ok(done.rows_affected())
     }
 
-    /// 取消实例上所有没结束的运行（删除实例时）。返回取消的个数。
+    /// 取消实例上所有没结束的运行（删除实例时），连同根在这个实例上的运行树里、在别的实例上跑的步骤。
+    /// 返回取消的个数。
     pub async fn cancel_instance_runs(
         &mut self,
         instance: InstanceId,
@@ -336,7 +337,9 @@ impl Tx<Tenant> {
         let done = sqlx::query(
             "UPDATE runs SET state = 'cancelled', state_reason = $2, lease_owner = NULL, lease_expires_at = NULL, \
                finished_at = now(), updated_at = now() \
-             WHERE instance_id = $1 AND state NOT IN ('succeeded', 'failed', 'cancelled')",
+             WHERE (instance_id = $1 \
+                    OR root_run_id IN (SELECT id FROM runs WHERE instance_id = $1 AND parent_run_id IS NULL)) \
+               AND state NOT IN ('succeeded', 'failed', 'cancelled')",
         )
         .bind(instance.0)
         .bind(reason)

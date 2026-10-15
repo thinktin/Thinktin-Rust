@@ -28,7 +28,9 @@ use tracing::Instrument;
 use tracing::{debug, error, info, warn};
 
 use crate::outbox::{Notice, notify};
-use crate::shim::{PlatformTools, ShimConnector, ShimLaunch, ShimSession, ToolContext, event_kind};
+use crate::shim::{
+    PlatformTools, ShimConnector, ShimLaunch, ShimSession, ToolContext, ToolOutput, event_kind,
+};
 
 #[derive(Debug, Clone)]
 pub struct ExecutorConfig {
@@ -133,6 +135,8 @@ struct Exec<'a> {
     steps: u32,
     pending: HashSet<String>,
     usage_since: chrono::DateTime<Utc>,
+    /// 授权范围内、告诉了 agent 的平台工具。调用时再核对一次：shim 和 agent 在同一个沙箱里，不可信。
+    allowed_tools: HashSet<String>,
     /// 这次执行已经写进运行日志的字节数。
     logged: usize,
     log_capped: bool,
@@ -386,12 +390,13 @@ impl Executor {
                 .await
                 .map_err(|e| Outcome::Retry(format!("handing over upstream artifacts: {e}")))?;
         }
-        let platform_tools = self
+        let platform_tools: Vec<_> = self
             .tools
             .tools()
             .into_iter()
             .filter(|t| grant_row.scope.platform_tools.contains(&t.name))
             .collect();
+        let allowed_tools = platform_tools.iter().map(|t| t.name.clone()).collect();
         let launch = ShimLaunch {
             instance: rt.clone(),
             run: rec.run.id,
@@ -451,6 +456,7 @@ impl Executor {
             steps: rec.steps,
             pending: HashSet::new(),
             usage_since: rec.run.started_at.unwrap_or_else(Utc::now),
+            allowed_tools,
             logged: 0,
             log_capped: false,
         };
@@ -883,7 +889,12 @@ impl Exec<'_> {
                 arguments,
                 ..
             } => {
-                let out = self.ex.tools.call(&self.ctx, &name, &arguments).await;
+                let out = if self.allowed_tools.contains(&name) {
+                    self.ex.tools.call(&self.ctx, &name, &arguments).await
+                } else {
+                    warn!(run = %self.rec.run.id, tool = %name, "platform tool outside the run grant");
+                    ToolOutput::error(format!("unknown platform tool {name}"))
+                };
                 self.send(ShimCommand::PlatformToolResult {
                     call_id,
                     content: out.content,

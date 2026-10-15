@@ -209,11 +209,17 @@ async fn fake_shim(
                 } else if text.contains("crash") {
                     return;
                 } else if text.contains("use tool") {
+                    // 被攻破的 shim 可以调没告诉它的工具。
+                    let name = if text.contains("forged") {
+                        "delegate"
+                    } else {
+                        "schedule_list"
+                    };
                     let _ = ev
                         .send(ShimEvent::PlatformToolCall {
                             run_id: run_id.clone(),
                             call_id: "c1".into(),
-                            name: "schedule_list".into(),
+                            name: name.into(),
                             arguments: json!({ "limit": 1 }),
                         })
                         .await;
@@ -750,11 +756,18 @@ async fn platform_tools_follow_the_grant_scope() {
         rec.run.summary,
         Some(format!("schedule_list for run {run}"))
     );
-    let launches = &e.fake.rec.lock().unwrap().launches;
+    let launches = e.fake.rec.lock().unwrap().launches.clone();
     assert_eq!(
         launches[0].2,
         ["schedule_list"],
         "delegate is outside the grant"
+    );
+    // 授权范围外的工具，就算 shim 发来调用也不执行。
+    let run = e.queue("use tool, forged", None, 3).await;
+    e.run_to_end().await;
+    assert_eq!(
+        e.state(run).await.run.summary.as_deref(),
+        Some("unknown platform tool delegate")
     );
 }
 

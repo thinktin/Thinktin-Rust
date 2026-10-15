@@ -1020,3 +1020,97 @@ async fn erasing_an_account_deletes_its_content() {
     let (again, created) = w.upsert_user_by_phone("+8613800000001").await.unwrap();
     assert!(created && again.id != alice);
 }
+
+/// 删除实例：从它的授权收窄给别的实例的子授权一起吊销；根在它上面的运行树里、在别的实例上跑的步骤一起取消。
+/// 父授权失效后，子授权也换不到沙箱令牌、模型网关也不认。
+#[tokio::test]
+async fn deleting_an_instance_stops_its_whole_run_tree_and_grant_tree() {
+    use proto::domain::GrantScope;
+
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = user(db, "+8613800000001").await;
+    let x = instance(db, alice).await;
+    let y = instance(db, alice).await;
+    let mut a = db.tenant(alice).await.unwrap();
+    let g = a
+        .create_run_grant(
+            x.id,
+            None,
+            &GrantScope::default(),
+            Duration::from_secs(3600),
+        )
+        .await
+        .unwrap();
+    let mut root = NewRun::new(x.id, RunSource::User, "pipeline", "1");
+    root.run_grant_id = Some(g.id);
+    let root = a.create_run(&root).await.unwrap();
+    a.commit().await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    let gy = w
+        .create_child_grant(
+            g.id,
+            y.id,
+            &GrantScope::default(),
+            Duration::from_secs(3600),
+        )
+        .await
+        .unwrap();
+    let mut step = NewRun::new(y.id, RunSource::User, "step on y", "1");
+    step.parent_run_id = Some(root.id);
+    step.run_grant_id = Some(gy.id);
+    let step = w.create_run(alice, &step).await.unwrap().unwrap();
+    w.commit().await.unwrap();
+
+    // 只让父授权失效：子授权跟着不能用（换沙箱令牌、模型网关都不认），恢复以后又能用。
+    let ttl = Duration::from_secs(3600);
+    let set_parent_revoked = |revoked: bool| async move {
+        sqlx::query("UPDATE run_grants SET revoked_at = CASE WHEN $2 THEN now() END WHERE id = $1")
+            .bind(g.id.0)
+            .bind(revoked)
+            .execute(db.pool())
+            .await
+            .unwrap();
+    };
+    let usable = || async {
+        let mut w = db.worker().await.unwrap();
+        let touched = w.touch_run_grant(gy.id, ttl, ttl).await.unwrap().is_some();
+        w.rollback().await.unwrap();
+        let mut gw = db.llmgw().await.unwrap();
+        let aliases = gw.usable_grant_aliases(gy.id).await.unwrap().is_some();
+        gw.rollback().await.unwrap();
+        (touched, aliases)
+    };
+    assert_eq!(usable().await, (true, true));
+    set_parent_revoked(true).await;
+    assert_eq!(usable().await, (false, false));
+    set_parent_revoked(false).await;
+    assert_eq!(usable().await, (true, true));
+
+    // 删除实例 x 的流程：取消运行、吊销授权。
+    let mut a = db.tenant(alice).await.unwrap();
+    assert_eq!(
+        a.cancel_instance_runs(x.id, "instance deleted")
+            .await
+            .unwrap(),
+        2
+    );
+    a.revoke_instance_grants(x.id, "instance deleted")
+        .await
+        .unwrap();
+    a.commit().await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    assert_eq!(
+        w.run_record(step.id).await.unwrap().run.state,
+        RunState::Cancelled
+    );
+    let (_, child) = w.run_grant(gy.id).await.unwrap();
+    assert!(
+        child.revoked_at.is_some(),
+        "child grant on another instance is revoked"
+    );
+    assert!(w.touch_run_grant(gy.id, ttl, ttl).await.unwrap().is_none());
+    w.rollback().await.unwrap();
+    let mut gw = db.llmgw().await.unwrap();
+    assert!(gw.usable_grant_aliases(gy.id).await.unwrap().is_none());
+}
