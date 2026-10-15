@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use proto::domain::{User, UserId, UserStatus};
 use uuid::Uuid;
 
-use crate::{Result, Tenant, Tx, Worker, parse};
+use crate::{Result, Tenant, Tx, Worker, parse, unsigned};
 
 #[derive(sqlx::FromRow)]
 struct Row {
@@ -99,6 +99,60 @@ impl Tx<Worker> {
             return Err(crate::Error::NotFound);
         }
         Ok(())
+    }
+}
+
+/// 运维查看账号（4.6）：给客服用的概况，不含对话内容。
+#[derive(Debug, Clone)]
+pub struct AccountSummary {
+    pub user: User,
+    /// 没下线的设备。
+    pub devices: u64,
+    /// 没删除的实例。
+    pub instances: u64,
+    /// 没结束的运行。
+    pub active_runs: u64,
+    /// 在用的计划。
+    pub active_plans: u64,
+    /// 有效的运行授权。
+    pub active_grants: u64,
+    /// 最近一次登录。
+    pub last_login_at: Option<DateTime<Utc>>,
+}
+
+impl Tx<Worker> {
+    pub async fn account_summary(&mut self, id: UserId) -> Result<AccountSummary> {
+        let user = self.user(id).await?;
+        let (devices, instances, runs, plans, grants, last_login): (
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            Option<DateTime<Utc>>,
+        ) = sqlx::query_as(
+            "SELECT \
+               (SELECT count(*) FROM devices WHERE user_id = $1 AND revoked_at IS NULL), \
+               (SELECT count(*) FROM instances WHERE user_id = $1 AND state <> 'deleted'), \
+               (SELECT count(*) FROM runs WHERE user_id = $1 \
+                  AND state NOT IN ('succeeded', 'failed', 'cancelled')), \
+               (SELECT count(*) FROM plans WHERE user_id = $1 AND status = 'active'), \
+               (SELECT count(*) FROM run_grants WHERE user_id = $1 AND revoked_at IS NULL \
+                  AND expires_at > now()), \
+               (SELECT max(created_at) FROM sessions WHERE user_id = $1)",
+        )
+        .bind(id.0)
+        .fetch_one(self.conn())
+        .await?;
+        Ok(AccountSummary {
+            user,
+            devices: unsigned(devices, "device count")?,
+            instances: unsigned(instances, "instance count")?,
+            active_runs: unsigned(runs, "run count")?,
+            active_plans: unsigned(plans, "plan count")?,
+            active_grants: unsigned(grants, "grant count")?,
+            last_login_at: last_login,
+        })
     }
 }
 

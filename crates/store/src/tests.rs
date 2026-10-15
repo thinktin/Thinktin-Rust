@@ -1324,3 +1324,122 @@ async fn pushes_only_reach_signed_in_devices_and_their_current_user() {
     assert_eq!(w.push_targets(bob).await.unwrap().len(), 1);
     w.rollback().await.unwrap();
 }
+
+/// 冻结、“全部停止”（4.6）：只动这个用户的东西，占着实例的运行让令牌代数加一。
+#[tokio::test]
+async fn stopping_everything_for_a_user() {
+    use proto::domain::GrantScope;
+
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = user(db, "+8613800000001").await;
+    let bob = user(db, "+8613800000002").await;
+    let x = instance(db, alice).await;
+    let y = instance(db, alice).await;
+    let z = instance(db, bob).await;
+    let mut a = db.tenant(alice).await.unwrap();
+    for i in [&x, &y] {
+        a.create_run_grant(
+            i.id,
+            None,
+            &GrantScope::default(),
+            Duration::from_secs(3600),
+        )
+        .await
+        .unwrap();
+    }
+    let mut plans = Vec::new();
+    for title in ["daily", "weekly", "monthly"] {
+        let p = a
+            .create_plan(&NewPlan {
+                instance_id: x.id,
+                title: title.into(),
+                goal: "summarize".into(),
+                policy: PlanPolicy::default(),
+                catch_up: CatchUp::Once,
+                created_by: PlanAuthor::User,
+                run_grant_id: None,
+            })
+            .await
+            .unwrap();
+        plans.push(p.id);
+    }
+    a.set_plan_paused(plans[2], true).await.unwrap();
+    a.commit().await.unwrap();
+    let mut b = db.tenant(bob).await.unwrap();
+    b.create_run_grant(
+        z.id,
+        None,
+        &GrantScope::default(),
+        Duration::from_secs(3600),
+    )
+    .await
+    .unwrap();
+    b.commit().await.unwrap();
+
+    // x 上的运行开始执行（占着实例），y 上的还在排队；bob 的不受影响。
+    let rx = queue_run(db, alice, &x, "one").await;
+    let mut w = db.worker().await.unwrap();
+    let claimed = w.claim_next_run("node", LEASE).await.unwrap().unwrap();
+    assert_eq!(claimed.run.id, rx.id);
+    w.commit().await.unwrap();
+    let ry = queue_run(db, alice, &y, "two").await;
+    let rz = queue_run(db, bob, &z, "theirs").await;
+
+    async fn epoch(w: &mut crate::Tx<crate::Worker>, id: proto::domain::InstanceId) -> u64 {
+        w.instance_runtime(id).await.unwrap().token_epoch
+    }
+    let mut w = db.worker().await.unwrap();
+    let (ex, ey, ez) = (
+        epoch(&mut w, x.id).await,
+        epoch(&mut w, y.id).await,
+        epoch(&mut w, z.id).await,
+    );
+    let summary = w.account_summary(alice).await.unwrap();
+    assert_eq!(
+        (
+            summary.instances,
+            summary.active_runs,
+            summary.active_plans,
+            summary.active_grants
+        ),
+        (2, 2, 2, 2)
+    );
+    assert_eq!(summary.user.status, UserStatus::Active);
+
+    assert_eq!(
+        w.cancel_user_runs(alice, "account frozen").await.unwrap(),
+        2
+    );
+    assert_eq!(w.revoke_user_grants(alice, "stop_all").await.unwrap(), 2);
+    assert_eq!(w.pause_user_plans(alice).await.unwrap(), 2);
+    assert_eq!(w.pause_user_plans(alice).await.unwrap(), 0);
+    assert_eq!(epoch(&mut w, x.id).await, ex + 1);
+    assert_eq!(
+        epoch(&mut w, y.id).await,
+        ey,
+        "a queued run holds no tokens"
+    );
+    assert_eq!(epoch(&mut w, z.id).await, ez);
+    for (id, state) in [
+        (rx.id, RunState::Cancelled),
+        (ry.id, RunState::Cancelled),
+        (rz.id, RunState::Queued),
+    ] {
+        assert_eq!(w.run_record(id).await.unwrap().run.state, state);
+    }
+    let rec = w.run_record(rx.id).await.unwrap();
+    assert_eq!(rec.run.state_reason.as_deref(), Some("account frozen"));
+    let summary = w.account_summary(alice).await.unwrap();
+    assert_eq!(
+        (
+            summary.active_runs,
+            summary.active_plans,
+            summary.active_grants
+        ),
+        (0, 0, 0)
+    );
+    let theirs = w.account_summary(bob).await.unwrap();
+    assert_eq!((theirs.active_runs, theirs.active_grants), (1, 1));
+    w.commit().await.unwrap();
+}

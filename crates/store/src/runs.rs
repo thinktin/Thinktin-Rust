@@ -399,6 +399,25 @@ impl Tx<Tenant> {
 }
 
 impl Tx<Worker> {
+    /// 取消用户所有没结束的运行（冻结、“全部停止”，4.6）：执行中的副本续租失败后停下 agent，
+    /// 这些实例的令牌代数加一，已经发出的沙箱令牌马上作废（模型网关不再放行）。返回取消的个数。
+    pub async fn cancel_user_runs(&mut self, user: UserId, reason: &str) -> Result<u64> {
+        sqlx::query(bump_epochs_where!("user_id = $1"))
+            .bind(user.0)
+            .execute(self.conn())
+            .await?;
+        let done = sqlx::query(
+            "UPDATE runs SET state = 'cancelled', state_reason = $2, lease_owner = NULL, lease_expires_at = NULL, \
+               finished_at = now(), updated_at = now() \
+             WHERE user_id = $1 AND state NOT IN ('succeeded', 'failed', 'cancelled')",
+        )
+        .bind(user.0)
+        .bind(reason)
+        .execute(self.conn())
+        .await?;
+        Ok(done.rows_affected())
+    }
+
     /// 后台建运行（计划到点、流水线、委派）。同一计划同一触发时间已有运行时返回 None。
     pub async fn create_run(&mut self, user: UserId, new: &NewRun) -> Result<Option<Run>> {
         self.insert_run(user, new).await

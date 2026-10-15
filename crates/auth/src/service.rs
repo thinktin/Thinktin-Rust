@@ -97,7 +97,7 @@ impl AuthError {
         match self {
             Self::InvalidPhone | Self::InvalidCode | Self::Invalid(_) => ErrorCode::Invalid,
             Self::TooManyCodes { .. } | Self::SignupLimited { .. } => ErrorCode::RateLimited,
-            Self::AccountFrozen => ErrorCode::Forbidden,
+            Self::AccountFrozen => ErrorCode::AccountFrozen,
             Self::Unauthenticated => ErrorCode::Unauthenticated,
             Self::SessionRevoked => ErrorCode::SessionRevoked,
             Self::NotFound => ErrorCode::NotFound,
@@ -460,6 +460,23 @@ impl AuthService {
         Ok(())
     }
 
+    /// 下线自己的其他所有设备，只留当前这台（4.6，怀疑账号被盗时用）。返回下线的台数。
+    pub async fn revoke_other_devices(&self, who: &Principal) -> Result<u64> {
+        let mut t = self.db.tenant(who.user).await?;
+        let n = t
+            .revoke_other_devices(who.device, "signed_out_by_other_device")
+            .await?;
+        t.audit(
+            &who.actor(),
+            "auth.sign_out_others",
+            None,
+            &json!({ "devices": n }),
+        )
+        .await?;
+        t.commit().await?;
+        Ok(n)
+    }
+
     /// 注销账号：需要发到本人手机的 `delete_account` 验证码。吊销一切、销毁密钥，见
     /// [`store::Tx::erase_account`]。
     pub async fn delete_account(&self, who: &Principal, code: &str) -> Result<()> {
@@ -476,31 +493,6 @@ impl AuthService {
             "auth.delete_account",
             None,
             &json!({}),
-        )
-        .await?;
-        w.commit().await?;
-        Ok(())
-    }
-
-    /// 风控冻结或解冻：冻结后不能登录、刷新，所有运行授权暂停（换不出沙箱令牌），解冻后恢复。
-    pub async fn set_frozen(&self, user: UserId, frozen: bool, reason: &str) -> Result<()> {
-        let mut w = self.db.worker().await?;
-        let status = if frozen {
-            UserStatus::Frozen
-        } else {
-            UserStatus::Active
-        };
-        w.set_user_status(user, status).await?;
-        w.audit(
-            Some(user),
-            "system",
-            if frozen {
-                "auth.freeze"
-            } else {
-                "auth.unfreeze"
-            },
-            None,
-            &json!({ "reason": reason }),
         )
         .await?;
         w.commit().await?;

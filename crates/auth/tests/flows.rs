@@ -9,7 +9,9 @@ use auth::sandbox_token::{SandboxTokenIssuer, SandboxTokenVerifier};
 use auth::service::{AuthConfig, AuthError, AuthService, Login, NewDevice, Principal};
 use auth::signed::{Signer25519, Verifier25519};
 use auth::sms::{CodePurpose, RecordingSms};
-use proto::domain::{DevicePlatform, GrantScope, InstanceLimits, InstanceState, PushChannelKind};
+use proto::domain::{
+    DevicePlatform, GrantScope, InstanceLimits, InstanceState, PushChannelKind, UserId, UserStatus,
+};
 use store::NewInstance;
 use store::testing::TestDb;
 use zeroize::Zeroizing;
@@ -58,6 +60,13 @@ async fn login(svc: &AuthService, sms: &RecordingSms, device: &str) -> Login {
 
 async fn principal(svc: &AuthService, l: &Login) -> Principal {
     svc.authenticate(&l.tokens.access_token).await.unwrap()
+}
+
+/// 冻结、解冻（运维的完整操作在 orchestrator::account，这里只改状态）。
+async fn set_status(t: &TestDb, user: UserId, status: UserStatus) {
+    let mut w = t.db.worker().await.unwrap();
+    w.set_user_status(user, status).await.unwrap();
+    w.commit().await.unwrap();
 }
 
 #[tokio::test]
@@ -296,6 +305,25 @@ async fn devices_logout_and_remote_logout() {
         Err(AuthError::NotFound)
     ));
 
+    // 下线其他设备（4.6）：只留当前这台，别人的设备不受影响。
+    let ipad_login = login(&other_svc, &other_sms, "ipad").await;
+    let watch_login = login(&other_svc, &other_sms, "watch").await;
+    assert_eq!(other_svc.revoke_other_devices(&phone).await.unwrap(), 2);
+    for l in [&ipad_login, &watch_login] {
+        assert!(matches!(
+            other_svc.authenticate(&l.tokens.access_token).await,
+            Err(AuthError::SessionRevoked)
+        ));
+    }
+    other_svc
+        .authenticate(&phone_login.tokens.access_token)
+        .await
+        .unwrap();
+    assert_eq!(other_svc.revoke_other_devices(&phone).await.unwrap(), 0);
+    let mut tx = t.db.tenant(stranger.user).await.unwrap();
+    assert_eq!(tx.devices().await.unwrap().len(), 1);
+    tx.rollback().await.unwrap();
+
     other_svc.logout(&phone).await.unwrap();
     assert!(matches!(
         other_svc
@@ -397,7 +425,7 @@ async fn grants_outlive_logout_but_not_freeze_or_revocation() {
     w.commit().await.unwrap();
 
     // 冻结：换不出令牌；解冻后恢复。
-    svc.set_frozen(who.user, true, "risk").await.unwrap();
+    set_status(&t, who.user, UserStatus::Frozen).await;
     assert!(matches!(
         grants.sandbox_token(grant.id, instance).await,
         Err(AuthError::AccountFrozen)
@@ -408,7 +436,7 @@ async fn grants_outlive_logout_but_not_freeze_or_revocation() {
         svc.login(PHONE, &code, &phone_device("x")).await,
         Err(AuthError::AccountFrozen)
     ));
-    svc.set_frozen(who.user, false, "cleared").await.unwrap();
+    set_status(&t, who.user, UserStatus::Active).await;
     grants.sandbox_token(grant.id, instance).await.unwrap();
 
     // 用户吊销：令牌换不出来了，子授权一起失效。

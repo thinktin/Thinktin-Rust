@@ -17,7 +17,7 @@ use client_core::ffi;
 use control::BuiltinTemplates;
 use gateway::{AppState, EventHub, GatewayConfig, Inner};
 use keyvault::LocalKms;
-use proto::domain::{DevicePlatform, InboxItemId, InstanceEvent, InstanceId, UserId};
+use proto::domain::{DevicePlatform, InboxItemId, InstanceEvent, InstanceId, UserId, UserStatus};
 use serde_json::json;
 use store::NewInboxItem;
 use store::testing::TestDb;
@@ -340,6 +340,72 @@ async fn stream_stops_when_the_session_is_revoked() {
     // 事件流发现会话没了：本地缓存（上一个人的数据）一并清掉。
     assert!(client.cached_instances().unwrap().is_empty());
     assert!(client.cache().unwrap().instances().unwrap().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn frozen_accounts_stop_the_stream_but_keep_the_session() {
+    let Some(e) = env().await else { return };
+    let store = Arc::new(MemorySessionStore::default());
+    let api = e.api(store.clone());
+    e.login(&api, "13800138503").await;
+    let user: UserId = store.load().unwrap().user_id.parse().unwrap();
+    let client = Client::new(api, Some(Cache::in_memory().unwrap())).unwrap();
+    let inst = client.api.adopt("claude", "助手", None).await.unwrap().id;
+    client.instances().await.unwrap();
+    let set_status = |status: UserStatus| {
+        let db = e.t.db.clone();
+        async move {
+            let mut w = db.worker().await.unwrap();
+            w.set_user_status(user, status).await.unwrap();
+            w.commit().await.unwrap();
+        }
+    };
+    let sink = Arc::new(Sink::default());
+    let _h = client.subscribe(
+        &tokio::runtime::Handle::current(),
+        inst,
+        sink.clone(),
+        fast(),
+    );
+    sink.wait_for("live", |s| {
+        s.statuses.lock().unwrap().contains(&StreamStatus::Live)
+    })
+    .await;
+
+    // 冻结（4.6）：心跳时服务端以 4003 关闭，事件流以 AccountFrozen 结束；接口和刷新都返回
+    // AccountFrozen，会话留着（解冻后接着用）。
+    set_status(UserStatus::Frozen).await;
+    sink.wait_for("frozen", |s| {
+        s.statuses.lock().unwrap().last() == Some(&StreamStatus::AccountFrozen)
+    })
+    .await;
+    assert_eq!(
+        client.api.me().await.unwrap_err(),
+        ClientError::AccountFrozen
+    );
+    assert_eq!(
+        client.api.refresh().await.unwrap_err(),
+        ClientError::AccountFrozen
+    );
+    assert!(store.load().is_some(), "freezing keeps the session");
+    assert_eq!(client.cached_instances().unwrap().len(), 1);
+
+    // 冻结期间连事件流：握手被拒，问过接口后以 AccountFrozen 结束。
+    let sink2 = Arc::new(Sink::default());
+    let _h2 = client.subscribe(
+        &tokio::runtime::Handle::current(),
+        inst,
+        sink2.clone(),
+        fast(),
+    );
+    sink2
+        .wait_for("frozen at connect", |s| {
+            s.statuses.lock().unwrap().last() == Some(&StreamStatus::AccountFrozen)
+        })
+        .await;
+
+    set_status(UserStatus::Active).await;
+    client.api.me().await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

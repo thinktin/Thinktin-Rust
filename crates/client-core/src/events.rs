@@ -1,6 +1,7 @@
 //! 事件流（WBS 11.3）：连实例的 WebSocket，带上最后收到的序号续传；断线按指数退避重连；
 //! 按序号去重（重连时服务端可能补发已经收到的）；服务端以 4001 关闭（令牌过期、会话失效）时
-//! 刷新令牌再连，刷新失败说明已经退出登录，停下来。
+//! 刷新令牌再连，刷新失败说明已经退出登录，停下来。账号被冻结（4.6：握手被拒、以 4003 关闭、
+//! 刷新被拒）也停下来。
 //!
 //! 收到的事件先写进缓存（推进续传位置），再交给 [`EventSink`]，界面从缓存读也不会漏。
 
@@ -24,6 +25,8 @@ use crate::error::ClientError;
 
 /// 服务端会话失效时的关闭码。
 const CLOSE_UNAUTHENTICATED: u16 = 4001;
+/// 账号被冻结时的关闭码。
+const CLOSE_ACCOUNT_FROZEN: u16 = 4003;
 
 /// 连接状态，给界面显示“连接中 / 已连接 / 重连中”。
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
@@ -38,6 +41,8 @@ pub enum StreamStatus {
     SignedOut,
     /// 实例不存在或不属于当前用户，事件流停止。
     NotFound,
+    /// 账号被冻结（4.6），事件流停止；提示联系客服。
+    AccountFrozen,
     Stopped,
 }
 
@@ -136,6 +141,10 @@ enum Ended {
     /// 令牌过期：刷新后马上重连。
     Unauthenticated,
     NotFound,
+    /// 账号被冻结。
+    AccountFrozen,
+    /// 握手被拒（403），原因要问接口。
+    Forbidden,
     /// 网络问题：退避后重连。`progressed` 表示这次连上后收到过消息（退避重新从头算）。
     Dropped {
         progressed: bool,
@@ -178,6 +187,7 @@ async fn run(
         match ended {
             Ended::Stopped => return StreamStatus::Stopped,
             Ended::NotFound => return StreamStatus::NotFound,
+            Ended::AccountFrozen => return StreamStatus::AccountFrozen,
             Ended::Unauthenticated => {
                 refreshed_in_a_row += 1;
                 match api.refresh().await {
@@ -185,7 +195,17 @@ async fn run(
                     Ok(()) if refreshed_in_a_row <= 2 => continue,
                     Ok(()) => {}
                     Err(ClientError::SignedOut) => return StreamStatus::SignedOut,
+                    Err(ClientError::AccountFrozen) => return StreamStatus::AccountFrozen,
                     Err(e) => debug!(error = %e, "token refresh failed"),
+                }
+            }
+            Ended::Forbidden => {
+                // 握手被拒（403）：问一下接口是不是账号被冻结了，别的情况按网络问题退避。
+                match api.me().await {
+                    Err(ClientError::AccountFrozen) => return StreamStatus::AccountFrozen,
+                    Err(ClientError::SignedOut) => return StreamStatus::SignedOut,
+                    Ok(_) => {}
+                    Err(e) => debug!(error = %e, "checking the account failed"),
                 }
             }
             Ended::Dropped { progressed } => {
@@ -264,6 +284,7 @@ async fn connect_once(
             Ok(Err(WsError::Http(resp))) => {
                 return match resp.status().as_u16() {
                     401 => Ended::Unauthenticated,
+                    403 => Ended::Forbidden,
                     404 => Ended::NotFound,
                     s => {
                         debug!(status = s, "event stream refused");
@@ -333,6 +354,7 @@ async fn connect_once(
                 let code = frame.map(|f| f.code);
                 return match code {
                     Some(CloseCode::Library(CLOSE_UNAUTHENTICATED)) => Ended::Unauthenticated,
+                    Some(CloseCode::Library(CLOSE_ACCOUNT_FROZEN)) => Ended::AccountFrozen,
                     _ => Ended::Dropped { progressed },
                 };
             }

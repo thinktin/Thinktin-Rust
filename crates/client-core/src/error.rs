@@ -13,6 +13,9 @@ pub enum ClientError {
     /// 客户端版本太老：提示升级。
     #[error("upgrade required")]
     UpgradeRequired,
+    /// 账号被冻结（风控、运维，4.6）：提示联系客服。登录状态保留，解冻后接着用。
+    #[error("account frozen")]
+    AccountFrozen,
     /// 服务端返回的错误。`code` 是 [`ErrorCode`] 的字符串形式（not_found、conflict、invalid……）。
     #[error("{code}: {message}")]
     Api {

@@ -8,7 +8,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use store::NewRun;
 
-use super::{check_len, parse_id};
+use super::{check_len, default_scope, parse_id};
 use crate::{ApiJson, ApiResult, AppState, Authed};
 
 #[derive(Deserialize)]
@@ -26,6 +26,24 @@ pub async fn create(
     check_len("prompt", req.prompt.trim(), 1, 32_000)?;
     let mut t = s.db.tenant(who.user).await?;
     let instance = t.instance(id).await?;
+    // 用户发起的运行用实例的授权。“全部停止”（4.6）吊销了它、或者它过期了：用户再发起时重新签发。
+    let has_grant = t
+        .run_grants(id)
+        .await?
+        .iter()
+        .any(|g| g.plan_id.is_none() && g.parent_id.is_none());
+    if !has_grant {
+        let grant = t
+            .create_run_grant(id, None, &default_scope(&s), s.cfg.grant_ttl)
+            .await?;
+        t.audit(
+            &who.actor(),
+            "grant.reissue",
+            Some(&grant.id.to_string()),
+            &json!({ "instance": id }),
+        )
+        .await?;
+    }
     let run = t
         .create_run(&NewRun::new(
             id,

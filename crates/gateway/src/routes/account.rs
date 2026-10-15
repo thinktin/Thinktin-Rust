@@ -1,10 +1,11 @@
-//! 登录、刷新、退出、本人信息、设备（4.1、4.2）。
+//! 登录、刷新、退出、本人信息、设备（4.1、4.2），全部停止、下线其他设备（4.6）。
 
 use auth::service::NewDevice;
 use auth::sms::CodePurpose;
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
+use orchestrator::account::{self, Stopped};
 use proto::domain::{Device, DeviceId, DevicePlatform, PushChannelKind, User};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -247,4 +248,36 @@ pub async fn revoke_device(
     let device: DeviceId = parse_id(&id, "device")?;
     s.auth.revoke_device(&who, device).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// 全部停止（4.6）：取消所有运行、吊销全部运行授权、暂停全部计划。
+/// 之后在实例上发起运行、恢复计划时重新签发授权。
+pub async fn stop_all(State(s): State<AppState>, Authed(who): Authed) -> ApiResult<Json<Stopped>> {
+    Ok(Json(
+        account::stop_all(&s.db, who.user, &who.actor()).await?,
+    ))
+}
+
+#[derive(Deserialize)]
+pub struct SignOutOthersReq {
+    /// 同时停止全部 agent（怀疑账号被盗时）。
+    #[serde(default)]
+    stop_agents: bool,
+}
+
+/// 下线其他设备（4.6），只留当前这台；可以顺带“全部停止”。
+pub async fn sign_out_others(
+    State(s): State<AppState>,
+    Authed(who): Authed,
+    ApiJson(req): ApiJson<SignOutOthersReq>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let devices = s.auth.revoke_other_devices(&who).await?;
+    let stopped = if req.stop_agents {
+        Some(account::stop_all(&s.db, who.user, &who.actor()).await?)
+    } else {
+        None
+    };
+    Ok(Json(
+        json!({ "devices_signed_out": devices, "stopped": stopped }),
+    ))
 }

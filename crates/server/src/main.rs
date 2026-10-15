@@ -26,6 +26,42 @@ enum Command {
     Migrate,
     /// 检查配置并打印生效的值（不打印数据库连接串）
     CheckConfig,
+    /// 运维操作：冻结、解冻、查看账号（冻结和解冻记审计、通知用户）
+    Admin {
+        #[command(subcommand)]
+        action: AdminCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum AdminCommand {
+    /// 冻结账号：停掉所有运行，登录和接口都拒绝，计划暂停触发
+    Freeze {
+        /// 手机号或用户 id
+        account: String,
+        /// 原因（只记进审计，不发给用户）
+        #[arg(long)]
+        reason: String,
+        /// 操作人（记进审计）
+        #[arg(long, env = "THINKTIN_OPERATOR")]
+        operator: String,
+    },
+    /// 解冻账号
+    Unfreeze {
+        /// 手机号或用户 id
+        account: String,
+        /// 原因（只记进审计）
+        #[arg(long)]
+        reason: String,
+        /// 操作人（记进审计）
+        #[arg(long, env = "THINKTIN_OPERATOR")]
+        operator: String,
+    },
+    /// 查看账号概况（手机号打码，不含对话内容）
+    Show {
+        /// 手机号或用户 id
+        account: String,
+    },
 }
 
 #[tokio::main]
@@ -68,6 +104,27 @@ async fn main() -> anyhow::Result<()> {
             );
             println!("push.apns = {}", cfg.push.apns.is_some());
             Ok(())
+        }
+        Command::Admin { action } => {
+            let db = store::Db::connect(cfg.database_url(), 2)
+                .await
+                .context("connect to database")?;
+            let mut out = std::io::stdout();
+            match action {
+                AdminCommand::Freeze {
+                    account,
+                    reason,
+                    operator,
+                } => server::admin::freeze(&db, &account, &operator, &reason, &mut out).await,
+                AdminCommand::Unfreeze {
+                    account,
+                    reason,
+                    operator,
+                } => server::admin::unfreeze(&db, &account, &operator, &reason, &mut out).await,
+                AdminCommand::Show { account } => {
+                    server::admin::show(&db, &account, &mut out).await
+                }
+            }
         }
     }
 }

@@ -4,11 +4,12 @@
 //! - `{"type":"event", "seq":…, "run_id":…, "kind":…, "payload":…, "created_at":…}`
 //! - `{"type":"reset", "oldest_seq":…, "latest_seq":…}`：要续传的位置已经过了保留期，客户端整体重新加载后从 oldest_seq 接着收。
 //!
-//! 心跳时重新核对访问令牌和会话：令牌过期或会话被吊销就以 4001 关闭，客户端刷新令牌后重连。
+//! 心跳时重新核对访问令牌和会话：令牌过期或会话被吊销就以 4001 关闭，客户端刷新令牌后重连；
+//! 账号被冻结（4.6）以 4003 关闭，客户端不再重连。
 
 use std::time::Duration;
 
-use auth::service::Principal;
+use auth::service::{AuthError, Principal};
 use axum::Json;
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
@@ -28,6 +29,8 @@ use crate::{ApiError, ApiResult, AppState};
 const SEND_TIMEOUT: Duration = Duration::from_secs(10);
 /// 会话失效时的关闭码。
 const CLOSE_UNAUTHENTICATED: u16 = 4001;
+/// 账号被冻结（4.6）时的关闭码：客户端不再重连，提示联系客服。
+const CLOSE_ACCOUNT_FROZEN: u16 = 4003;
 
 #[derive(Deserialize)]
 pub struct PageQuery {
@@ -189,9 +192,16 @@ async fn run_stream(
                     Err(RecvError::Closed) => return,
                 },
                 _ = heartbeat.tick() => {
-                    if s.auth.authenticate(&token).await.is_err() {
-                        close(&mut socket, CLOSE_UNAUTHENTICATED, "unauthenticated").await;
-                        return;
+                    match s.auth.authenticate(&token).await {
+                        Ok(_) => {}
+                        Err(AuthError::AccountFrozen) => {
+                            close(&mut socket, CLOSE_ACCOUNT_FROZEN, "account frozen").await;
+                            return;
+                        }
+                        Err(_) => {
+                            close(&mut socket, CLOSE_UNAUTHENTICATED, "unauthenticated").await;
+                            return;
+                        }
                     }
                     if !send(&mut socket, Message::Ping(Default::default())).await {
                         return;

@@ -3,6 +3,7 @@
 //! 停机顺序：收到信号 → 就绪检查转为 503、后台任务停止领取新工作 → 等 `drain`（负载均衡摘除）
 //! → 停止接新连接，等进行中的请求 → 等后台任务收尾（最多 `grace`）→ 关闭数据库连接池。
 
+pub mod admin;
 mod api;
 pub mod config;
 mod http;

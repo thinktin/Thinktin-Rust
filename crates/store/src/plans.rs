@@ -420,6 +420,17 @@ struct DueRow {
 }
 
 impl Tx<Worker> {
+    /// 暂停用户所有在用的计划（“全部停止”，4.6）。用户逐个恢复时重新签发授权。返回暂停的个数。
+    pub async fn pause_user_plans(&mut self, user: UserId) -> Result<u64> {
+        let done = sqlx::query(
+            "UPDATE plans SET status = 'paused', updated_at = now() WHERE user_id = $1 AND status = 'active'",
+        )
+        .bind(user.0)
+        .execute(self.conn())
+        .await?;
+        Ok(done.rows_affected())
+    }
+
     /// 名义触发时间不晚于 `now` 的触发器：计划在用、实例没删除。锁住返回的触发器行
     /// （SKIP LOCKED：多个副本同时扫描时各拿各的），调用方在同一个事务里生成运行、推进触发时间。
     pub async fn due_triggers(

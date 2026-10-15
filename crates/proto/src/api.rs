@@ -39,6 +39,8 @@ pub enum ErrorCode {
     Unauthenticated,
     /// 刷新令牌失效（被吊销、被重复使用）：回到登录页。
     SessionRevoked,
+    /// 账号被冻结（风控、运维，4.6）：提示联系客服。登录状态保留，解冻后接着用。
+    AccountFrozen,
     Forbidden,
     NotFound,
     /// 和现有状态冲突（重复创建、并发修改、运行已结束）。
@@ -58,7 +60,7 @@ impl ErrorCode {
     pub fn http_status(self) -> u16 {
         match self {
             Self::Unauthenticated | Self::SessionRevoked => 401,
-            Self::Forbidden => 403,
+            Self::AccountFrozen | Self::Forbidden => 403,
             Self::NotFound => 404,
             Self::Conflict => 409,
             Self::Invalid => 422,
@@ -144,6 +146,11 @@ mod tests {
             serde_json::json!({ "code": "session_revoked", "message": "refresh token reused" })
         );
         assert_eq!(ErrorCode::UpgradeRequired.http_status(), 426);
+        assert_eq!(ErrorCode::AccountFrozen.http_status(), 403);
+        assert_eq!(
+            serde_json::to_value(ErrorCode::AccountFrozen).unwrap(),
+            "account_frozen"
+        );
         assert!(ErrorCode::Unavailable.retryable() && !ErrorCode::Invalid.retryable());
     }
 }

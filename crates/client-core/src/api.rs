@@ -143,6 +143,23 @@ pub struct EventsPage {
     pub latest_seq: Option<u64>,
 }
 
+/// 全部停止的结果（4.6）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+pub struct Stopped {
+    pub runs_cancelled: u64,
+    pub grants_revoked: u64,
+    pub plans_paused: u64,
+}
+
+/// 下线其他设备的结果（4.6）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct SignedOutOthers {
+    pub devices_signed_out: u64,
+    /// 顺带全部停止时有。
+    #[serde(default)]
+    pub stopped: Option<Stopped>,
+}
+
 /// 预置的模型厂商（9.12）。不在列表里的接口用 `custom` 加自定义地址。
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct VendorInfo {
@@ -311,6 +328,7 @@ impl Api {
             };
             match err.code {
                 ErrorCode::UpgradeRequired => return Err(ClientError::UpgradeRequired),
+                ErrorCode::AccountFrozen => return Err(ClientError::AccountFrozen),
                 ErrorCode::Unauthenticated if attempt == 0 && token.is_some() => {
                     // 令牌过期：刷新后重试。别人已经刷新过就直接重试。
                     match self.refresh_from(token.as_deref()).await? {
@@ -369,6 +387,8 @@ impl Api {
                 Ok(Refreshed::SignedOut)
             }
             Some(ErrorCode::UpgradeRequired) => Err(ClientError::UpgradeRequired),
+            // 冻结不清会话：解冻后用同一个刷新令牌接着用。
+            Some(ErrorCode::AccountFrozen) => Err(ClientError::AccountFrozen),
             Some(code) => {
                 let e = err.unwrap_or_else(|| ErrorBody::new(code, ""));
                 Err(ClientError::api(
@@ -476,6 +496,22 @@ impl Api {
             Method::PUT,
             "/v1/devices/current/push",
             Some(&json!({ "channel": channel, "token": token })),
+        )
+        .await
+    }
+
+    /// 全部停止（4.6）：取消所有运行、吊销全部运行授权、暂停全部计划。
+    pub async fn stop_all(&self) -> Result<Stopped> {
+        self.json(Method::POST, "/v1/me/stop-all", Some(&json!({})))
+            .await
+    }
+
+    /// 下线其他设备（4.6），只留当前这台。`stop_agents` 时顺带全部停止。
+    pub async fn sign_out_other_devices(&self, stop_agents: bool) -> Result<SignedOutOthers> {
+        self.json(
+            Method::POST,
+            "/v1/devices/sign-out-others",
+            Some(&json!({ "stop_agents": stop_agents })),
         )
         .await
     }

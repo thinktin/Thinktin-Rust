@@ -85,6 +85,32 @@ pub struct LoginResult {
     pub new_user: bool,
 }
 
+/// 全部停止的结果（4.6）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
+pub struct StopAllResult {
+    pub runs_cancelled: u64,
+    pub grants_revoked: u64,
+    pub plans_paused: u64,
+}
+
+impl From<api::Stopped> for StopAllResult {
+    fn from(s: api::Stopped) -> Self {
+        Self {
+            runs_cancelled: s.runs_cancelled,
+            grants_revoked: s.grants_revoked,
+            plans_paused: s.plans_paused,
+        }
+    }
+}
+
+/// 下线其他设备的结果（4.6）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
+pub struct SignOutOthersResult {
+    pub devices_signed_out: u64,
+    /// 顺带全部停止时有。
+    pub stopped: Option<StopAllResult>,
+}
+
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct AgentInfo {
     pub id: String,
@@ -785,6 +811,25 @@ impl ThinktinClient {
         let channel: d::PushChannelKind = from_enum_str(&channel, "push channel")?;
         self.run(|c| async move { c.api.set_push(channel, &token).await })
             .await
+    }
+
+    /// 全部停止（4.6）：取消所有运行、吊销全部运行授权、暂停全部计划。
+    /// 之后在实例上发起运行、恢复计划时自动重新授权。
+    pub async fn stop_all(&self) -> Result<StopAllResult> {
+        self.run(|c| async move { Ok(c.api.stop_all().await?.into()) })
+            .await
+    }
+
+    /// 下线其他设备（4.6），只留当前这台。`stop_agents` 时顺带全部停止（怀疑账号被盗时）。
+    pub async fn sign_out_other_devices(&self, stop_agents: bool) -> Result<SignOutOthersResult> {
+        self.run(|c| async move {
+            let r = c.api.sign_out_other_devices(stop_agents).await?;
+            Ok(SignOutOthersResult {
+                devices_signed_out: r.devices_signed_out,
+                stopped: r.stopped.map(Into::into),
+            })
+        })
+        .await
     }
 
     // ---------- agent 与实例 ----------

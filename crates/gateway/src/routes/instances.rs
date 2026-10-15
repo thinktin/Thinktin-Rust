@@ -3,11 +3,11 @@
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use proto::domain::{GrantScope, Instance, InstanceId, ModelRoute};
+use proto::domain::{Instance, InstanceId, ModelRoute};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use super::{check_len, parse_id};
+use super::{check_len, default_scope, parse_id};
 use crate::{ApiJson, ApiResult, AppState, Authed};
 
 pub async fn list(State(s): State<AppState>, Authed(who): Authed) -> ApiResult<Json<Value>> {
@@ -41,11 +41,7 @@ pub async fn adopt(
     )
     .await?;
     let mut t = s.db.tenant(who.user).await?;
-    let scope = GrantScope {
-        platform_tools: s.cfg.default_platform_tools.clone(),
-        ..GrantScope::default()
-    };
-    t.create_run_grant(instance.id, None, &scope, s.cfg.grant_ttl)
+    t.create_run_grant(instance.id, None, &default_scope(&s), s.cfg.grant_ttl)
         .await?;
     t.commit().await?;
     Ok((StatusCode::CREATED, Json(instance)))

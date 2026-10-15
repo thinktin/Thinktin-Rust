@@ -7,14 +7,14 @@ use axum::http::StatusCode;
 use chrono::{DateTime, Utc};
 use orchestrator::schedule::Schedule;
 use proto::domain::{
-    CatchUp, GrantScope, InstanceId, Plan, PlanAuthor, PlanId, PlanPolicy, PlanStep, ScheduleSpec,
+    CatchUp, GrantId, InstanceId, Plan, PlanAuthor, PlanId, PlanPolicy, PlanStep, ScheduleSpec,
     Trigger, TriggerId, order_steps,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use store::{NewPlan, Tenant, Tx};
 
-use super::{check_len, parse_id};
+use super::{check_len, default_scope, parse_id};
 use crate::{ApiError, ApiJson, ApiResult, AppState, Authed};
 
 const MAX_TRIGGERS: usize = 10;
@@ -140,12 +140,13 @@ pub async fn create(
         })
         .await?;
     // 计划自己的运行授权：退出登录不影响，删除计划时吊销。
-    let scope = GrantScope {
-        platform_tools: s.cfg.default_platform_tools.clone(),
-        ..GrantScope::default()
-    };
     let grant = t
-        .create_run_grant(req.instance_id, Some(plan.id), &scope, s.cfg.grant_ttl)
+        .create_run_grant(
+            req.instance_id,
+            Some(plan.id),
+            &default_scope(&s),
+            s.cfg.grant_ttl,
+        )
         .await?;
     t.set_plan_grant(plan.id, grant.id).await?;
     if !req.steps.is_empty() {
@@ -289,11 +290,51 @@ pub async fn resume(
     let id: PlanId = parse_id(&id, "plan")?;
     let mut t = s.db.tenant(who.user).await?;
     t.set_plan_paused(id, false).await?;
-    reschedule(&mut t, id).await?;
     let plan = t.plan(id).await?;
+    // “全部停止”（4.6）吊销了计划的授权，或者授权过期了：恢复时重新签发。
+    if let Some(grant) =
+        ensure_plan_grant(&s, &mut t, &plan, "replaced when the plan was resumed").await?
+    {
+        t.audit(
+            &who.actor(),
+            "grant.reissue",
+            Some(&grant.to_string()),
+            &json!({ "plan": id }),
+        )
+        .await?;
+    }
+    reschedule(&mut t, id).await?;
     let v = view(&mut t, plan).await?;
     t.commit().await?;
     Ok(Json(v))
+}
+
+/// 计划没有能用的正式授权时签发一个：用户确认 agent 写的计划（换掉 agent 签的子授权）、
+/// “全部停止”之后恢复计划、授权过期。范围沿用原来的授权；原来的还有效就吊销。返回新授权。
+async fn ensure_plan_grant(
+    s: &AppState,
+    t: &mut Tx<Tenant>,
+    plan: &Plan,
+    reason: &str,
+) -> ApiResult<Option<GrantId>> {
+    let current = t.plan_grant(plan.id).await?;
+    if current
+        .as_ref()
+        .is_some_and(|g| g.parent_id.is_none() && g.is_active(Utc::now()))
+    {
+        return Ok(None);
+    }
+    let scope = current
+        .as_ref()
+        .map_or_else(|| default_scope(s), |g| g.scope.clone());
+    let grant = t
+        .create_run_grant(plan.instance_id, Some(plan.id), &scope, s.cfg.grant_ttl)
+        .await?;
+    t.set_plan_grant(plan.id, grant.id).await?;
+    if let Some(old) = current {
+        t.revoke_run_grant(old.id, reason).await?;
+    }
+    Ok(Some(grant.id))
 }
 
 #[derive(Deserialize)]
@@ -313,27 +354,13 @@ pub async fn confirm(
     let id: PlanId = parse_id(&id, "plan")?;
     let mut t = s.db.tenant(who.user).await?;
     let plan = t.confirm_plan(id, req.revision).await?;
-    let current = t.plan_grant(id).await?;
-    if current
-        .as_ref()
-        .is_none_or(|g| g.parent_id.is_some() || !g.is_active(Utc::now()))
-    {
-        let scope = current.as_ref().map_or_else(
-            || GrantScope {
-                platform_tools: s.cfg.default_platform_tools.clone(),
-                ..GrantScope::default()
-            },
-            |g| g.scope.clone(),
-        );
-        let grant = t
-            .create_run_grant(plan.instance_id, Some(id), &scope, s.cfg.grant_ttl)
-            .await?;
-        t.set_plan_grant(id, grant.id).await?;
-        if let Some(old) = current {
-            t.revoke_run_grant(old.id, "replaced when the user confirmed the plan")
-                .await?;
-        }
-    }
+    ensure_plan_grant(
+        &s,
+        &mut t,
+        &plan,
+        "replaced when the user confirmed the plan",
+    )
+    .await?;
     reschedule(&mut t, id).await?;
     t.audit(
         &who.actor(),

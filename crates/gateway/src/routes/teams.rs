@@ -4,13 +4,13 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use proto::domain::{
-    GrantScope, Team, TeamId, TeamMember, TeamRole, TeamTemplate, TeamTemplateId, TeamTemplateSpec,
+    Team, TeamId, TeamMember, TeamRole, TeamTemplate, TeamTemplateId, TeamTemplateSpec,
     TemplateMember,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use super::{check_len, parse_id};
+use super::{check_len, default_scope, parse_id};
 use crate::{ApiError, ApiJson, ApiResult, AppState, Authed};
 
 const MAX_MEMBERS: usize = 12;
@@ -202,16 +202,8 @@ pub async fn adopt_template(
         )
         .await?;
         let mut t = s.db.tenant(who.user).await?;
-        t.create_run_grant(
-            instance.id,
-            None,
-            &GrantScope {
-                platform_tools: s.cfg.default_platform_tools.clone(),
-                ..GrantScope::default()
-            },
-            s.cfg.grant_ttl,
-        )
-        .await?;
+        t.create_run_grant(instance.id, None, &default_scope(&s), s.cfg.grant_ttl)
+            .await?;
         t.commit().await?;
         members.push(TeamMember {
             instance_id: instance.id,

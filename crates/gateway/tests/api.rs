@@ -14,7 +14,7 @@ use gateway::{AppState, EventHub, GatewayConfig, Inner};
 use keyvault::secrecy::ExposeSecret;
 use keyvault::{KeyStore, KeyVault, LocalKms, MemoryKeyStore, SealedSecret, WrappedKey};
 use orchestrator::artifacts::{ArtifactStore, LocalBlobStore, Origin};
-use proto::domain::{ApprovalState, InstanceId, RunId, UserId};
+use proto::domain::{ApprovalState, InstanceId, PlanId, RunId, UserId};
 use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};
 use store::testing::TestDb;
@@ -1884,4 +1884,180 @@ async fn rate_limits_and_signup_cap() {
         .parse()
         .unwrap();
     assert!((1..=20).contains(&retry), "{retry}");
+}
+
+/// 全部停止、下线其他设备、账号冻结（4.6）。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn stop_all_sign_out_others_and_frozen_accounts() {
+    let Some(a) = api().await else { return };
+    let phone = a.login("13800138000").await;
+    let ipad = a.login("13800138000").await;
+    let (_, me) = a
+        .call(Method::GET, "/v1/me", Some(&phone.access), None)
+        .await;
+    let user: UserId = me["id"].as_str().unwrap().parse().unwrap();
+    let inst = a.adopt(&phone).await;
+    let (st, plan) = a
+        .call(
+            Method::POST,
+            "/v1/plans",
+            Some(&phone.access),
+            Some(json!({
+                "instance_id": inst,
+                "title": "早报",
+                "goal": "summarize the news",
+                "triggers": [{ "kind": "cron", "expr": "0 8 * * *", "tz": "Asia/Shanghai" }]
+            })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{plan}");
+    let plan_id: PlanId = plan["id"].as_str().unwrap().parse().unwrap();
+    let runs = format!("/v1/instances/{inst}/runs");
+    let (st, run) = a
+        .call(
+            Method::POST,
+            &runs,
+            Some(&phone.access),
+            Some(json!({ "prompt": "hello" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{run}");
+
+    // 全部停止：运行取消、授权吊销、计划暂停。
+    let (st, body) = a
+        .call(Method::POST, "/v1/me/stop-all", Some(&phone.access), None)
+        .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(
+        body,
+        json!({ "runs_cancelled": 1, "grants_revoked": 2, "plans_paused": 1 })
+    );
+    let (_, run) = a
+        .call(
+            Method::GET,
+            &format!("/v1/runs/{}", run["id"].as_str().unwrap()),
+            Some(&phone.access),
+            None,
+        )
+        .await;
+    assert_eq!(run["state"], "cancelled");
+    let mut t = a.t.db.tenant(user).await.unwrap();
+    assert!(t.run_grants(inst).await.unwrap().is_empty());
+    t.rollback().await.unwrap();
+
+    // 再发起运行、恢复计划时重新签发授权；已经有了就不再签。
+    let (st, _) = a
+        .call(
+            Method::POST,
+            &runs,
+            Some(&phone.access),
+            Some(json!({ "prompt": "again" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED);
+    for _ in 0..2 {
+        let (st, resumed) = a
+            .call(
+                Method::POST,
+                &format!("/v1/plans/{plan_id}/resume"),
+                Some(&phone.access),
+                None,
+            )
+            .await;
+        assert_eq!(
+            (st, resumed["paused"].as_bool()),
+            (StatusCode::OK, Some(false)),
+            "{resumed}"
+        );
+    }
+    let mut t = a.t.db.tenant(user).await.unwrap();
+    let grants = t.run_grants(inst).await.unwrap();
+    assert_eq!(grants.len(), 2, "{grants:?}");
+    assert!(grants.iter().any(|g| g.plan_id.is_none()));
+    let plan_grant = t.plan_grant(plan_id).await.unwrap().unwrap();
+    assert!(plan_grant.is_active(chrono::Utc::now()));
+    t.rollback().await.unwrap();
+
+    // 下线其他设备，顺带全部停止。
+    let (st, body) = a
+        .call(
+            Method::POST,
+            "/v1/devices/sign-out-others",
+            Some(&phone.access),
+            Some(json!({ "stop_agents": true })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(
+        body,
+        json!({
+            "devices_signed_out": 1,
+            "stopped": { "runs_cancelled": 1, "grants_revoked": 2, "plans_paused": 1 }
+        })
+    );
+    let (st, body) = a
+        .call(Method::GET, "/v1/me", Some(&ipad.access), None)
+        .await;
+    assert_eq!(
+        (st, body["code"].as_str()),
+        (StatusCode::UNAUTHORIZED, Some("session_revoked"))
+    );
+    let (st, body) = a
+        .call(
+            Method::POST,
+            "/v1/devices/sign-out-others",
+            Some(&phone.access),
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(body, json!({ "devices_signed_out": 0, "stopped": null }));
+
+    // 冻结：接口和刷新都是 403 account_frozen，事件流以 4003 关闭、握手被拒；解冻后恢复。
+    let mut ws = ws_connect(&a, Some(&phone.access), inst, 0).await.unwrap();
+    orchestrator::account::freeze(&a.t.db, user, "ops-li", "suspicious login")
+        .await
+        .unwrap();
+    let (st, body) = a
+        .call(Method::GET, "/v1/me", Some(&phone.access), None)
+        .await;
+    assert_eq!(
+        (st, body["code"].as_str()),
+        (StatusCode::FORBIDDEN, Some("account_frozen"))
+    );
+    let (st, body) = a
+        .call(
+            Method::POST,
+            "/v1/auth/refresh",
+            None,
+            Some(json!({ "refresh_token": phone.refresh })),
+        )
+        .await;
+    assert_eq!(
+        (st, body["code"].as_str()),
+        (StatusCode::FORBIDDEN, Some("account_frozen"))
+    );
+    let closed = tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(msg) = ws.next().await {
+            if let Ok(tungstenite::Message::Close(Some(frame))) = msg {
+                return Some(u16::from(frame.code));
+            }
+        }
+        None
+    })
+    .await
+    .unwrap();
+    assert_eq!(closed, Some(4003));
+    match ws_connect(&a, Some(&phone.access), inst, 0).await {
+        Err(tungstenite::Error::Http(resp)) => assert_eq!(resp.status().as_u16(), 403),
+        Err(e) => panic!("unexpected error: {e}"),
+        Ok(_) => panic!("a frozen account must not open the event stream"),
+    }
+    orchestrator::account::unfreeze(&a.t.db, user, "ops-li", "verified by phone")
+        .await
+        .unwrap();
+    let (st, _) = a
+        .call(Method::GET, "/v1/me", Some(&phone.access), None)
+        .await;
+    assert_eq!(st, StatusCode::OK);
 }

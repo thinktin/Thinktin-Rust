@@ -1,7 +1,7 @@
 # 开发进度
 
 > 按 [WBS](wbs.md) 推进，P1 优先、按依赖顺序。开发分支是 `backend-core`：实现 → 测试 → fmt / clippy → 提交推送（每次推送 CI 都跑）。做的过程中随时推送，不让代码只留在会话的沙箱里。合进 `main` 走 PR，由人审过再合并。
-> 会话中断后由定时唤醒接着做，进度以这里为准。
+> 会话中断后由看门狗定时任务接着做（每 2 小时检查一次，`backend-core` 超过 2 小时没有新提交就开新会话按这里继续），进度以这里为准。
 
 ## 已完成
 
@@ -51,6 +51,7 @@
 | 9.12 | 主流模型品牌预置：新增 Anthropic、OpenAI、Google Gemini、xAI、Mistral、火山方舟、BytePlus、百度千帆、腾讯混元 TokenHub（国内、新加坡）、阶跃星辰，逐家按官方文档核对（腾讯原混元 API 已于 2026-09-30 停服，改走 TokenHub）；适配表挪到 `proto`，模型网关和接入网关共用；`GET /v1/vendors` 和 client-core 的 `vendors()` 给 App 列出可选厂商；保存 key 时只收预置厂商或 `custom`，按前缀拒绝订阅类 key（新增腾讯 Token Plan、Claude 订阅 OAuth 令牌），自定义端点填了套餐专用地址也拒绝 | `crates/proto/src/vendors.rs`、`crates/gateway/src/routes/vendors.rs`、[模型网关文档第 11 节](llm-gateway.md) |
 | 6.2 | Cube 沙箱后端：按 CubeSandbox 的 E2B 兼容接口实现沙箱的创建、查询、暂停、恢复（`connect`）、快照、从快照恢复、销毁、工作区卷；进程走 envd 的 Connect 协议（输出流转管道、标准输入转发、SIGKILL），文件走 envd 的 `/files`；数据面可经 CubeProxy 按 Host 头路由；默认拒绝出网只放行白名单、数据面要带 envd 和流量令牌；控制服务重启后重新取令牌；`[sandbox.cube]` 配置。模拟服务测试通过，真实集群联调待 2.3 | `crates/sandbox/src/cube.rs`、[说明](sandbox-cube.md) |
 | 5.4 | 限流与防刷：已登录请求按设备、按用户的令牌桶（默认每分钟 600、1200 次）；未登录接口（发码、登录、刷新令牌）按来源地址限频，发验证码按来源地址每小时限次数（手机号自己的限制原来就有）；注册风控：新注册按来源地址每天、全站每小时设上限，验证码校验通过后才占名额，已注册的账号不受影响；每个用户同时打开的事件流有上限；IPv6 按 /64 计，可信任负载均衡的 `X-Forwarded-For`；超限返回 429 和 `Retry-After`；`[api.limits]` 配置。计数在各副本内存里，需要全站精确计数时换 Redis | `crates/gateway/src/limits.rs` |
+| 4.6 | 账号冻结与全部停止：运维命令 `thinktin-server admin freeze / unfreeze / show`（手机号或用户 id，记操作人和原因，输出里手机号打码）；冻结时取消所有运行、沙箱令牌立即作废，登录、刷新、接口返回 `account_frozen`（403），事件流以 4003 关闭，调度和执行跳过，授权和计划保留、解冻后照常；用户“全部停止”（`POST /v1/me/stop-all`）取消运行、吊销全部运行授权、暂停全部计划，之后在实例上发起运行、恢复计划时自动重新签发授权；“下线其他设备”（`POST /v1/devices/sign-out-others`，可顺带全部停止，对应架构里“修改密码时可选停止全部 agent”）；每一步记审计、通知用户；client-core 的 `AccountFrozen` 错误和事件流状态（不清会话）、`stop_all()`、`sign_out_other_devices()` | `crates/orchestrator/src/account.rs`、`crates/server/src/admin.rs`、[威胁模型 3.3](threat-model.md) |
 | 11.1 | UniFFI 工程：client-core 出 Swift（`ThinktinCore`）/ Kotlin（`cn.thinktin.core`）绑定；xcframework + Swift Package、Android 库工程 / AAR 打包脚本（`mobile` 编译配置、16 KB 页对齐）；经 C ABI 的冒烟测试 | `crates/client-core/src/ffi.rs`、`tools/client-core/` |
 | 11.2 | 接口客户端：版本头、统一错误模型（按错误码区分重新登录 / 重试 / 提示）、访问令牌过期自动刷新（并发只刷一次）、刷新令牌失效清会话；会话交给原生端的安全存储 | `crates/client-core/src/api.rs` |
 | 11.3 | 事件流：WebSocket 按序号续传、去重、指数退避加抖动重连、空闲超时、握手 401 / 4001 关闭时刷新令牌再连、会话失效或实例不存在时停止 | `crates/client-core/src/events.rs` |
@@ -60,8 +61,8 @@
 
 ## 进行中
 
-- **4.6 账号冻结与全部停止**：另一个云端会话（2026-10-15）做了大半，撞上用量限额，代码没推送：store 层的停止和冻结、冻结 / 解冻（带通知和运维审计）、用户“全部停止”和之后重新签发授权、`AccountFrozen` 错误码一直到 WebSocket 关闭码和客户端、`stop-all` 和“下线其他设备”接口，运维命令 `thinktin-server admin freeze|unfreeze|show` 写了一半。开工前先看远端有没有救回来的分支，没有就按这个设计重做。
-- 之后按依赖顺序：9.11 密码保险箱 → 11.6 → 7.11 等待电脑与等待 key → 7.10 离线审批策略 → 4.5 biscuit → 8.6–8.8 委派 → 6.5、6.6、7.12–7.14。
+- **9.11 密码保险箱**（待决问题 9 的方案）：下一个开工。
+- 之后按依赖顺序：11.6 → 7.11 等待电脑与等待 key → 7.10 离线审批策略 → 4.5 biscuit → 8.6–8.8 委派 → 6.5、6.6、7.12–7.14。
 
 ## 里程碑（后端核心，P1）
 

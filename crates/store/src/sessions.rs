@@ -511,4 +511,27 @@ impl Tx<Tenant> {
         .await?;
         Ok(())
     }
+
+    /// 下线除 `keep` 以外的所有设备（“下线其他设备”，4.6）：吊销会话、清掉推送令牌。返回下线的台数。
+    pub async fn revoke_other_devices(&mut self, keep: DeviceId, reason: &str) -> Result<u64> {
+        let user = self.user();
+        let devices = sqlx::query(
+            "UPDATE devices SET revoked_at = now(), push_channel = NULL, push_token = NULL \
+             WHERE user_id = $1 AND id <> $2 AND revoked_at IS NULL",
+        )
+        .bind(user.0)
+        .bind(keep.0)
+        .execute(self.conn())
+        .await?;
+        sqlx::query(
+            "UPDATE sessions SET revoked_at = now(), revoke_reason = $3 \
+             WHERE user_id = $1 AND device_id <> $2 AND revoked_at IS NULL",
+        )
+        .bind(user.0)
+        .bind(keep.0)
+        .bind(reason)
+        .execute(self.conn())
+        .await?;
+        Ok(devices.rows_affected())
+    }
 }

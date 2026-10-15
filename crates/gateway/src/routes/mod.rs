@@ -16,6 +16,7 @@ mod vendors;
 
 use axum::Router;
 use axum::routing::{delete, get, post, put};
+use proto::domain::GrantScope;
 
 use crate::AppState;
 
@@ -29,7 +30,12 @@ pub fn router() -> Router<AppState> {
         .route("/v1/me", get(account::me).patch(account::update_me))
         .route("/v1/me/code", post(account::send_self_code))
         .route("/v1/me/delete", post(account::delete_account))
+        .route("/v1/me/stop-all", post(account::stop_all))
         .route("/v1/devices", get(account::devices))
+        .route(
+            "/v1/devices/sign-out-others",
+            post(account::sign_out_others),
+        )
         .route("/v1/devices/current/push", put(account::set_push))
         .route("/v1/devices/{id}", delete(account::revoke_device))
         // agent 目录
@@ -113,6 +119,14 @@ pub fn router() -> Router<AppState> {
         // 事件流（5.2、5.3）
         .route("/v1/instances/{id}/events", get(events::page))
         .route("/v1/instances/{id}/events/ws", get(events::stream))
+}
+
+/// 新签发的运行授权的范围（领养实例、新建计划、“全部停止”之后重新签发）。
+pub(crate) fn default_scope(s: &AppState) -> GrantScope {
+    GrantScope {
+        platform_tools: s.cfg.default_platform_tools.clone(),
+        ..GrantScope::default()
+    }
 }
 
 /// 路径里的 id 解析失败时返回 404（不区分“格式不对”和“不存在”）。
