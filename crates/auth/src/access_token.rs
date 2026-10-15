@@ -99,6 +99,7 @@ mod tests {
             .unwrap()
             .issue(
                 TokenRequest {
+                    ep: 0,
                     iid: "i".into(),
                     uid: "u".into(),
                     grant: "g".into(),

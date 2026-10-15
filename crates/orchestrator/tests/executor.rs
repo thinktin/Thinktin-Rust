@@ -1029,3 +1029,43 @@ async fn a_taken_over_run_is_left_to_the_new_holder() {
         "the new holder's approval is untouched"
     );
 }
+
+/// 运行的一次尝试结束、运行被取消时，签给它的沙箱令牌作废（实例的令牌代数加一），
+/// agent 留在沙箱里的后台进程不能接着用模型网关。排队中的运行被取消不动代数（它没有令牌）。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn sandbox_tokens_die_with_the_run() {
+    let Some(e) = env().await else { return };
+    let epoch = || async {
+        let mut w = e.t.db.worker().await.unwrap();
+        let rt = w.instance_runtime(e.instance.id).await.unwrap();
+        w.rollback().await.unwrap();
+        rt.token_epoch
+    };
+    assert_eq!(epoch().await, 0);
+    e.queue("say hello", None, 3).await;
+    e.run_to_end().await;
+    assert_eq!(epoch().await, 1, "the finished attempt's token is dead");
+
+    let queued = e.queue("say hello", None, 3).await;
+    let mut tx = e.t.db.tenant(e.user).await.unwrap();
+    tx.cancel_run(queued, None).await.unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(epoch().await, 1, "a queued run had no token");
+
+    let run = e.queue("loop forever", None, 3).await;
+    let (_stop, h) = e.spawn().await;
+    e.wait_state(run, RunState::Running).await;
+    let mut tx = e.t.db.tenant(e.user).await.unwrap();
+    tx.cancel_run(run, None).await.unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(epoch().await, 2, "cancelling kills the token at once");
+    tokio::time::timeout(Duration::from_secs(10), h)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        epoch().await,
+        2,
+        "the executor does not bump again (the next run may already hold a token)"
+    );
+}

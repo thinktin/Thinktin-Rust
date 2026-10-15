@@ -351,7 +351,9 @@ impl Gateway {
             None => {}
         }
         // 目录可能有缓存：实例刚唤醒、换了沙箱时缓存里还是旧的，重新读一次再判断。
-        let usable = |i: &Instance| i.active && i.sandbox.as_deref() == Some(claims.sbx.as_str());
+        let usable = |i: &Instance| {
+            i.active && i.sandbox.as_deref() == Some(claims.sbx.as_str()) && i.epoch == claims.ep
+        };
         let instance = match self.directory.instance(&claims.iid, false).await {
             Some(i) if usable(&i) => i,
             _ => self
@@ -368,6 +370,9 @@ impl Gateway {
         }
         if instance.sandbox.as_deref() != Some(claims.sbx.as_str()) {
             return Err(deny("sandbox is not the instance's current sandbox"));
+        }
+        if instance.epoch != claims.ep {
+            return Err(deny("token was issued for an earlier run"));
         }
         if self.directory.grant_revoked(&claims.grant).await {
             return Err(deny("run grant revoked"));

@@ -44,6 +44,9 @@ pub struct Instance {
     pub user_id: String,
     /// 当前沙箱 id。沙箱休眠或重建后变化，旧沙箱的令牌随之失效。
     pub sandbox: Option<String>,
+    /// 令牌代数：令牌里的必须和它一致。运行的一次尝试结束时加一，旧令牌随之失效。
+    #[serde(default)]
+    pub epoch: u64,
     #[serde(default = "yes")]
     pub active: bool,
     #[serde(default)]

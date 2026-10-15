@@ -37,6 +37,8 @@ pub struct InstanceRuntime {
     pub last_active_at: DateTime<Utc>,
     /// 换了模板版本，下次唤醒时要按新版本重建沙箱。
     pub rebuild_pending: bool,
+    /// 沙箱令牌的代数，签进令牌；运行的一次尝试结束时加一，旧令牌随之失效。
+    pub token_epoch: u64,
 }
 
 #[derive(sqlx::FromRow)]
@@ -87,6 +89,7 @@ struct RuntimeRow {
     limits: serde_json::Value,
     last_active_at: DateTime<Utc>,
     rebuild_pending: bool,
+    token_epoch: i64,
 }
 
 impl RuntimeRow {
@@ -105,6 +108,7 @@ impl RuntimeRow {
             limits: from_json(self.limits, "instance limits")?,
             last_active_at: self.last_active_at,
             rebuild_pending: self.rebuild_pending,
+            token_epoch: u64::try_from(self.token_epoch).unwrap_or_default(),
         })
     }
 }
@@ -113,7 +117,7 @@ macro_rules! runtime_columns {
     () => {
         "id, user_id, agent_id, agent_version, harness, state, sandbox_id, \
          host(sandbox_address) AS sandbox_address, workspace_id, snapshot_id, limits, last_active_at, \
-         rebuild_pending"
+         rebuild_pending, token_epoch"
     };
 }
 
@@ -333,6 +337,15 @@ impl Tx<Worker> {
         if done.rows_affected() == 0 {
             return Err(Error::NotFound);
         }
+        Ok(())
+    }
+
+    /// 让实例之前签出的沙箱令牌全部失效（运行的一次尝试结束时调用，和状态变更放在同一个事务里）。
+    pub async fn bump_token_epoch(&mut self, id: InstanceId) -> Result<()> {
+        sqlx::query("UPDATE instances SET token_epoch = token_epoch + 1 WHERE id = $1")
+            .bind(id.0)
+            .execute(self.conn())
+            .await?;
         Ok(())
     }
 

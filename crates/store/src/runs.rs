@@ -251,6 +251,20 @@ impl<R> Tx<R> {
     }
 }
 
+/// 占着实例的 agent 运行（实例上同时只有一个）：取消它时实例的沙箱令牌代数加一，签给它的令牌作废，
+/// agent 留在沙箱里的后台进程不能接着用模型网关。只有它一个，不会误伤别的运行的令牌。
+macro_rules! bump_epochs_where {
+    ($filter:literal) => {
+        concat!(
+            "UPDATE instances SET token_epoch = token_epoch + 1 WHERE id IN ( \
+               SELECT instance_id FROM runs WHERE ",
+            $filter,
+            " AND kind = 'agent' AND state IN ('starting', 'running', 'waiting_approval', \
+               'waiting_device', 'waiting_quota', 'waiting_children', 'backoff'))"
+        )
+    };
+}
+
 impl Tx<Tenant> {
     /// 用户发起的运行（或用户手动触发计划）。
     pub async fn create_run(&mut self, new: &NewRun) -> Result<Run> {
@@ -295,6 +309,10 @@ impl Tx<Tenant> {
                 to: RunState::Cancelled,
             });
         }
+        sqlx::query(bump_epochs_where!("id = $1"))
+            .bind(id.0)
+            .execute(self.conn())
+            .await?;
         let row: Row = sqlx::query_as(concat!(
             "UPDATE runs SET state = 'cancelled', state_reason = $2, lease_owner = NULL, lease_expires_at = NULL, \
                finished_at = now(), updated_at = now() WHERE id = $1 RETURNING ",
@@ -311,6 +329,10 @@ impl Tx<Tenant> {
 impl Tx<Tenant> {
     /// 停掉整棵运行树（8.2）：根和所有没结束的子孙一起取消。返回取消的个数。
     pub async fn cancel_run_tree(&mut self, root: RunId, reason: &str) -> Result<u64> {
+        sqlx::query(bump_epochs_where!("root_run_id = $1"))
+            .bind(root.0)
+            .execute(self.conn())
+            .await?;
         let done = sqlx::query(
             "UPDATE runs SET state = 'cancelled', state_reason = $2, lease_owner = NULL, lease_expires_at = NULL, \
                finished_at = now(), updated_at = now() \
@@ -354,6 +376,13 @@ impl Tx<Tenant> {
         instance: InstanceId,
         reason: &str,
     ) -> Result<u64> {
+        sqlx::query(bump_epochs_where!(
+            "(instance_id = $1 \
+              OR root_run_id IN (SELECT id FROM runs WHERE instance_id = $1 AND parent_run_id IS NULL))"
+        ))
+        .bind(instance.0)
+        .execute(self.conn())
+        .await?;
         let done = sqlx::query(
             "UPDATE runs SET state = 'cancelled', state_reason = $2, lease_owner = NULL, lease_expires_at = NULL, \
                finished_at = now(), updated_at = now() \
@@ -663,6 +692,10 @@ impl Tx<Worker> {
 
     /// 取消一个运行的所有没结束的直接子运行（失败传播）。
     pub async fn cancel_children(&mut self, parent: RunId, reason: &str) -> Result<u64> {
+        sqlx::query(bump_epochs_where!("parent_run_id = $1"))
+            .bind(parent.0)
+            .execute(self.conn())
+            .await?;
         let done = sqlx::query(
             "UPDATE runs SET state = 'cancelled', state_reason = $2, lease_owner = NULL, lease_expires_at = NULL, \
                finished_at = now(), updated_at = now() \

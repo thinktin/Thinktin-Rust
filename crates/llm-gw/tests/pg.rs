@@ -200,9 +200,14 @@ async fn set_sandbox(db: &Db, instance: proto::domain::InstanceId, sbx: &str) {
 
 impl Env {
     fn token(&self, sbx: &str) -> String {
+        self.token_at(sbx, 0)
+    }
+
+    fn token_at(&self, sbx: &str, ep: u64) -> String {
         self.issuer
             .issue(
                 TokenRequest {
+                    ep,
                     iid: self.instance.to_string(),
                     uid: self.user.to_string(),
                     grant: self.grant.id.to_string(),
@@ -303,18 +308,27 @@ async fn sandbox_changes_and_revocations_take_effect() {
     assert_eq!(e.chat(&new).await.0, 200);
     assert_eq!(e.chat(&old).await.0, 401);
 
+    // 运行结束（令牌代数加一）：沙箱 id 没变，之前签的令牌也作废；新签的立刻能用。
+    let mut w = e.t.db.worker().await.unwrap();
+    w.bump_token_epoch(e.instance).await.unwrap();
+    w.commit().await.unwrap();
+    let next = e.token_at("sbx-2", 1);
+    assert_eq!(e.chat(&next).await.0, 200);
+    assert_eq!(e.chat(&new).await.0, 401);
+
     // 吊销运行授权：缓存过期后拒绝。
     let mut tx = e.t.db.tenant(e.user).await.unwrap();
     tx.revoke_run_grant(e.grant.id, "test").await.unwrap();
     tx.commit().await.unwrap();
     tokio::time::sleep(TTL + Duration::from_millis(50)).await;
-    assert_eq!(e.chat(&new).await.0, 401);
+    assert_eq!(e.chat(&next).await.0, 401);
 
     // 不认识的授权 id 一律拒绝。
     let bogus = e
         .issuer
         .issue(
             TokenRequest {
+                ep: 0,
                 iid: e.instance.to_string(),
                 uid: e.user.to_string(),
                 grant: "not-a-grant".into(),
@@ -373,6 +387,7 @@ async fn narrowed_grants_only_reach_their_aliases() {
         e.issuer
             .issue(
                 TokenRequest {
+                    ep: 0,
                     iid: e.instance.to_string(),
                     uid: e.user.to_string(),
                     grant: grant.id.to_string(),

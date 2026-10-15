@@ -93,6 +93,7 @@ impl PgDirectory {
                 id: i.id.to_string(),
                 user_id: i.user_id.to_string(),
                 sandbox: i.sandbox_id,
+                epoch: i.token_epoch,
                 active: i.running,
                 routes: i
                     .routes

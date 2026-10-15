@@ -17,3 +17,7 @@ GRANT SELECT, INSERT, DELETE ON session_refresh_history TO thinktin_worker;
 -- 用户确认时带上看到的版本号，对不上（中间又被 agent 改过）就拒绝。待确认的计划不能直接“恢复”。
 ALTER TABLE plans ADD COLUMN revision integer NOT NULL DEFAULT 1;
 ALTER TABLE plans ADD COLUMN awaiting_confirmation boolean NOT NULL DEFAULT false;
+
+-- 沙箱令牌的代数：运行的一次尝试结束时加一，之前签出的令牌随之失效
+-- （agent 在沙箱里留下的后台进程拿着旧令牌，运行结束后就用不了模型网关了）。
+ALTER TABLE instances ADD COLUMN token_epoch bigint NOT NULL DEFAULT 0;

@@ -145,6 +145,7 @@ impl GrantService {
             .unwrap_or_default();
         let token = self.issuer.issue(
             TokenRequest {
+                ep: rt.token_epoch,
                 iid: instance.to_string(),
                 uid: user.to_string(),
                 grant: grant.to_string(),

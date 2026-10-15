@@ -578,6 +578,8 @@ impl Executor {
         let (to, change, push) = match outcome {
             Outcome::Cancelled => {
                 let mut w = self.db.worker().await?;
+                // 令牌代数在取消的同一个事务里已经加过（见 store 的取消）：这时实例上可能已经
+                // 有下一个运行了，再加会让它的令牌失效。
                 w.cancel_run_approvals(run).await?;
                 return w.commit().await;
             }
@@ -655,6 +657,9 @@ impl Executor {
         // 这次尝试结束了：没处理的审批作废（下次尝试 agent 会重新请求）。走到这里说明还拿着租约
         // （没拿住时 transition_run 报错），不会误伤接手的副本新建的审批。
         w.cancel_run_approvals(run).await?;
+        // 这次尝试签出的沙箱令牌作废：agent 留在沙箱里的后台进程不能接着花用户的模型额度。
+        // 和状态变更在同一个事务里，下一个运行签令牌时一定拿到新的代数。
+        w.bump_token_epoch(rec.run.instance_id).await?;
         w.append_event(
             rec.run.instance_id,
             Some(run),
