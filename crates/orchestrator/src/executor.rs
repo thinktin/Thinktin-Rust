@@ -52,6 +52,9 @@ pub struct ExecutorConfig {
     pub takeover_every: Duration,
     /// 文字流攒多久写一次运行日志。
     pub flush_every: Duration,
+    /// 一次运行最多写这么多字节的运行日志（agent 的输出完全由 agent 控制，不能无限写进共享的数据库）。
+    /// 超过以后只写一条 `run.log_truncated`，状态变化照常记。
+    pub max_run_log_bytes: usize,
 }
 
 impl Default for ExecutorConfig {
@@ -68,6 +71,7 @@ impl Default for ExecutorConfig {
             backoff_max: Duration::from_secs(30 * 60),
             takeover_every: Duration::from_secs(15),
             flush_every: Duration::from_millis(500),
+            max_run_log_bytes: 64 << 20,
         }
     }
 }
@@ -129,6 +133,55 @@ struct Exec<'a> {
     steps: u32,
     pending: HashSet<String>,
     usage_since: chrono::DateTime<Utc>,
+    /// 这次执行已经写进运行日志的字节数。
+    logged: usize,
+    log_capped: bool,
+}
+
+/// 运行摘要从回复里取，最多留这么多字节（摘要只用前 400 个字）。
+const MAX_ANSWER: usize = 8 << 10;
+/// 运行日志里单个字符串的上限：agent 的回复、工具输出这类长文本截断。
+const MAX_EVENT_STRING: usize = 16 << 10;
+/// 单条运行日志的上限，截断字符串以后还超过就只留一个占位。
+const MAX_EVENT_PAYLOAD: usize = 256 << 10;
+
+/// 往 `s` 后面追加，总长不超过 `cap` 字节（按字符边界截断）。
+fn push_capped(s: &mut String, text: &str, cap: usize) {
+    let room = cap.saturating_sub(s.len());
+    if room == 0 {
+        return;
+    }
+    let mut end = text.len().min(room);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    s.push_str(&text[..end]);
+}
+
+/// 写进运行日志之前限制大小：长字符串截断，整条还太大就换成占位。
+fn bound_payload(v: &Value) -> Value {
+    fn walk(v: &Value) -> Value {
+        match v {
+            Value::String(s) if s.len() > MAX_EVENT_STRING => {
+                let mut cut = String::with_capacity(MAX_EVENT_STRING + 16);
+                push_capped(&mut cut, s, MAX_EVENT_STRING);
+                cut.push_str("…[truncated]");
+                Value::String(cut)
+            }
+            Value::Array(items) => Value::Array(items.iter().map(walk).collect()),
+            Value::Object(map) => {
+                Value::Object(map.iter().map(|(k, v)| (k.clone(), walk(v))).collect())
+            }
+            other => other.clone(),
+        }
+    }
+    let bounded = walk(v);
+    let size = serde_json::to_vec(&bounded).map_or(0, |b| b.len());
+    if size > MAX_EVENT_PAYLOAD {
+        json!({ "type": v.get("type").cloned().unwrap_or(Value::Null), "truncated": true, "bytes": size })
+    } else {
+        bounded
+    }
 }
 
 fn truncate(s: &str, max: usize) -> String {
@@ -379,7 +432,7 @@ impl Executor {
                 ));
             }
         };
-        let exec = Exec {
+        let mut exec = Exec {
             ex: self,
             rec,
             state: rec.run.state,
@@ -398,6 +451,8 @@ impl Executor {
             steps: rec.steps,
             pending: HashSet::new(),
             usage_since: rec.run.started_at.unwrap_or_else(Utc::now),
+            logged: 0,
+            log_capped: false,
         };
         exec.persist(&ready).await;
         Ok(exec)
@@ -548,8 +603,28 @@ impl Exec<'_> {
         self.session.commands.send(cmd).await.is_ok()
     }
 
-    /// 写运行日志。写失败只记日志：运行本身比日志重要。
-    async fn persist_raw(&self, kind: &str, payload: &Value) {
+    /// 写运行日志：限制单条大小和这次运行的总量。
+    async fn persist_raw(&mut self, kind: &str, payload: &Value) {
+        let payload = bound_payload(payload);
+        let size = serde_json::to_vec(&payload).map_or(0, |b| b.len());
+        if self.logged.saturating_add(size) > self.ex.cfg.max_run_log_bytes {
+            if !self.log_capped {
+                self.log_capped = true;
+                warn!(run = %self.rec.run.id, logged = self.logged, "run log limit reached; dropping further agent output");
+                self.write_event(
+                    "run.log_truncated",
+                    &json!({ "limit_bytes": self.ex.cfg.max_run_log_bytes }),
+                )
+                .await;
+            }
+            return;
+        }
+        self.logged += size;
+        self.write_event(kind, &payload).await;
+    }
+
+    /// 写一条运行日志。写失败只记日志：运行本身比日志重要。
+    async fn write_event(&self, kind: &str, payload: &Value) {
         let result = async {
             let mut w = self.ex.db.worker().await?;
             w.append_event(
@@ -567,7 +642,7 @@ impl Exec<'_> {
         }
     }
 
-    async fn persist(&self, ev: &ShimEvent) {
+    async fn persist(&mut self, ev: &ShimEvent) {
         let payload = serde_json::to_value(ev).unwrap_or(Value::Null);
         self.persist_raw(event_kind(ev), &payload).await;
     }
@@ -738,7 +813,7 @@ impl Exec<'_> {
         match &ev {
             ShimEvent::MessageChunk { text, .. } => {
                 self.message.push_str(text);
-                self.answer.push_str(text);
+                push_capped(&mut self.answer, text, MAX_ANSWER);
                 if self.message.len() > 4096 {
                     self.flush().await;
                 }
@@ -1045,5 +1120,38 @@ impl Exec<'_> {
                 None
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capped_buffers_keep_the_head_on_char_boundaries() {
+        let mut s = String::new();
+        push_capped(&mut s, "你好世界", 7);
+        assert_eq!(s, "你好");
+        push_capped(&mut s, "abc", 7);
+        assert_eq!(s, "你好a");
+        push_capped(&mut s, "zzz", 7);
+        assert_eq!(s, "你好a");
+    }
+
+    #[test]
+    fn event_payloads_are_bounded() {
+        let long = "x".repeat(MAX_EVENT_STRING * 3);
+        let v = bound_payload(
+            &json!({ "type": "tool_call_update", "raw": { "output": long }, "n": 3 }),
+        );
+        let out = v["raw"]["output"].as_str().unwrap();
+        assert!(out.len() < MAX_EVENT_STRING + 32 && out.ends_with("…[truncated]"));
+        assert_eq!(v["n"], 3);
+        // 很多个不长的字符串加起来太大：整条换成占位。
+        let many: Vec<String> = (0..64).map(|_| "y".repeat(MAX_EVENT_STRING)).collect();
+        let v = bound_payload(&json!({ "type": "plan", "entries": many }));
+        assert_eq!(v["truncated"], true);
+        assert_eq!(v["type"], "plan");
+        assert!(serde_json::to_vec(&v).unwrap().len() < 200);
     }
 }

@@ -195,6 +195,15 @@ async fn fake_shim(
                             break;
                         }
                     }
+                } else if text.contains("flood") {
+                    // 失控的 agent：一大段回复，再夹着工具调用不停输出。
+                    let big = "z".repeat(200 << 10);
+                    for i in 0..20 {
+                        let _ = ev.send(chunk(&run_id, &big)).await;
+                        let _ = ev.send(tool_call(&run_id, i)).await;
+                    }
+                    let _ = ev.send(chunk(&run_id, &big)).await;
+                    let _ = ev.send(ended(&run_id, StopReason::EndTurn)).await;
                 } else if text.contains("loop forever") {
                     looping = Some(run_id);
                 } else if text.contains("crash") {
@@ -759,4 +768,44 @@ async fn runs_without_a_grant_fail() {
     let rec = e.state(run).await;
     assert_eq!(rec.run.state, RunState::Failed);
     assert!(rec.run.error.unwrap().contains("no active run grant"));
+}
+
+/// agent 输出不受控：单条日志截断，整次运行的日志有总量上限，摘要只取开头。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn agent_output_is_bounded_in_memory_and_in_the_log() {
+    let Some(e) = env_with(
+        ExecutorConfig {
+            max_run_log_bytes: 256 << 10,
+            ..fast()
+        },
+        Some(GrantScope::default()),
+        Arc::new(Tools),
+    )
+    .await
+    else {
+        return;
+    };
+    let run = e.queue("please flood", None, 3).await;
+    e.run_to_end().await;
+    let rec = e.state(run).await;
+    assert_eq!(rec.run.state, RunState::Succeeded, "{:?}", rec.run);
+    assert!(rec.run.summary.as_deref().unwrap().chars().count() <= 401);
+    let events = e.events(run).await;
+    let logged: usize = events
+        .iter()
+        .filter(|(k, _)| k.starts_with("agent."))
+        .map(|(_, p)| serde_json::to_vec(p).unwrap().len())
+        .sum();
+    assert!(logged <= 256 << 10, "agent events took {logged} bytes");
+    for (_, p) in &events {
+        assert!(serde_json::to_vec(p).unwrap().len() <= 256 << 10);
+    }
+    let marks = events
+        .iter()
+        .filter(|(k, _)| k == "run.log_truncated")
+        .count();
+    assert_eq!(marks, 1);
+    // 状态变化照常记。
+    assert_eq!(events.last().unwrap().0, "run.state");
+    assert_eq!(events.last().unwrap().1["state"], "succeeded");
 }
