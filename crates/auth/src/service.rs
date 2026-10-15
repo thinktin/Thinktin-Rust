@@ -345,10 +345,18 @@ impl AuthService {
             .prev_refresh_hash
             .as_deref()
             .is_some_and(|h| presented.matches(h));
+        let next = RefreshToken::generate(&sid.to_string())?;
         if !current {
             if previous && s.since_rotation <= self.cfg.refresh_reuse_grace {
                 // App 同时发了两个刷新请求，另一个刚轮换完：照常轮换，两边拿到的令牌都能用到下次刷新。
-            } else if previous || w.refresh_hash_retired(sid, &presented.hash()).await? {
+            } else if previous {
+                // 上次刷新的响应没送到（网络断了、App 被挂起），客户端拿着上一个令牌重试：重新签发，
+                // 刚才那个作废。如果其实是令牌被盗，作废的那个在另一方手里，它再出示时整个会话吊销。
+                w.reissue_refresh(sid, &next.hash(), self.cfg.refresh_ttl)
+                    .await?;
+                w.commit().await?;
+                return self.tokens(s.user_id, s.device_id, sid, next);
+            } else if w.refresh_hash_retired(sid, &presented.hash()).await? {
                 // 出示的是这个会话以前用过的令牌（不只是上一个）：令牌被盗，整个会话吊销。
                 w.revoke_session(sid, "refresh_token_reuse").await?;
                 w.audit(
@@ -366,7 +374,6 @@ impl AuthService {
                 return Err(AuthError::Unauthenticated);
             }
         }
-        let next = RefreshToken::generate(&sid.to_string())?;
         w.rotate_session(sid, &next.hash(), self.cfg.refresh_ttl)
             .await?;
         w.commit().await?;

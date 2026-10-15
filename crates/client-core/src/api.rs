@@ -189,7 +189,11 @@ pub struct Api {
     store: Arc<dyn SessionStore>,
     session: RwLock<Option<Session>>,
     refreshing: tokio::sync::Mutex<()>,
+    /// 会话没了（退出、被吊销、刷新失败）时调用：清掉上一个人的本地缓存。
+    on_signed_out: RwLock<Option<SignedOutHook>>,
 }
+
+type SignedOutHook = Arc<dyn Fn() + Send + Sync>;
 
 /// 刷新请求本身的结果。
 enum Refreshed {
@@ -213,6 +217,7 @@ impl Api {
             store,
             session: RwLock::new(session),
             refreshing: tokio::sync::Mutex::new(()),
+            on_signed_out: RwLock::new(None),
         })
     }
 
@@ -232,8 +237,27 @@ impl Api {
     }
 
     fn set_session(&self, s: Option<Session>) {
+        let signed_out = s.is_none();
         *self.session.write().unwrap_or_else(|e| e.into_inner()) = s.clone();
         self.store.save(s);
+        if signed_out {
+            let hook = self
+                .on_signed_out
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
+            if let Some(hook) = hook {
+                hook();
+            }
+        }
+    }
+
+    /// 会话没了的时候要做的事（不管是哪个接口、事件流发现的）。
+    pub fn on_signed_out(&self, hook: impl Fn() + Send + Sync + 'static) {
+        *self
+            .on_signed_out
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(hook));
     }
 
     /// 当前的访问令牌（事件流连 WebSocket 用）。没有登录时返回 [`ClientError::SignedOut`]。

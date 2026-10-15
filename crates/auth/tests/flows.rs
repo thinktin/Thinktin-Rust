@@ -93,20 +93,23 @@ async fn login_refresh_and_reuse_detection() {
         (l.user.id, l.device_id, l.session_id)
     );
 
-    // 轮换：新令牌能用；旧令牌再用一次 = 被盗信号，整个会话吊销。
+    // 轮换：新令牌能用。
     let t2 = svc.refresh(&l.tokens.refresh_token).await.unwrap();
     assert_ne!(*t2.refresh_token, *l.tokens.refresh_token);
     svc.authenticate(&t2.access_token).await.unwrap();
-    assert!(matches!(
-        svc.refresh(&l.tokens.refresh_token).await,
-        Err(AuthError::SessionRevoked)
-    ));
+    // 上一个令牌又出现（响应丢了在重试，或者被盗）：重新签发，刚才那个作废。
+    let t2b = svc.refresh(&l.tokens.refresh_token).await.unwrap();
+    // 作废的那个再出现 = 两个人拿着同一个会话：被盗信号，整个会话吊销。
     assert!(matches!(
         svc.refresh(&t2.refresh_token).await,
         Err(AuthError::SessionRevoked)
     ));
     assert!(matches!(
-        svc.authenticate(&t2.access_token).await,
+        svc.refresh(&t2b.refresh_token).await,
+        Err(AuthError::SessionRevoked)
+    ));
+    assert!(matches!(
+        svc.authenticate(&t2b.access_token).await,
         Err(AuthError::SessionRevoked)
     ));
     // 乱写的令牌只是认证失败，不会吊销别人的会话。
@@ -146,6 +149,23 @@ async fn reuse_of_any_retired_refresh_token_revokes_the_session() {
     ));
     assert!(matches!(
         svc.authenticate(&t3.access_token).await,
+        Err(AuthError::SessionRevoked)
+    ));
+}
+
+/// 刷新的响应丢了：客户端过了很久拿上一个令牌重试，照样能用，不算被盗。
+#[tokio::test]
+async fn a_lost_refresh_response_can_be_retried() {
+    let Some(t) = TestDb::new().await else { return };
+    let (svc, sms) = service(&t, Duration::ZERO);
+    let l = login(&svc, &sms, "a").await;
+    let _lost = svc.refresh(&l.tokens.refresh_token).await.unwrap();
+    let retried = svc.refresh(&l.tokens.refresh_token).await.unwrap();
+    let next = svc.refresh(&retried.refresh_token).await.unwrap();
+    svc.authenticate(&next.access_token).await.unwrap();
+    // 再往前的令牌就不是“上一个”了：出示它仍然是被盗信号。
+    assert!(matches!(
+        svc.refresh(&l.tokens.refresh_token).await,
         Err(AuthError::SessionRevoked)
     ));
 }

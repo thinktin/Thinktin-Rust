@@ -320,6 +320,33 @@ impl Tx<Worker> {
         Ok(())
     }
 
+    /// 客户端拿“上一个”令牌重试（上次刷新的响应丢了）：重新签发当前令牌，“上一个”不变。
+    /// 刚才签出的当前令牌记进历史作废：如果它其实在别人手里，再出示时就是被盗信号。
+    pub async fn reissue_refresh(
+        &mut self,
+        id: SessionId,
+        new_hash: &[u8],
+        ttl: Duration,
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO session_refresh_history (session_id, refresh_hash) \
+             SELECT id, refresh_hash FROM sessions WHERE id = $1 ON CONFLICT DO NOTHING",
+        )
+        .bind(id.0)
+        .execute(self.conn())
+        .await?;
+        sqlx::query(
+            "UPDATE sessions SET refresh_hash = $2, rotated_at = now(), \
+               expires_at = now() + make_interval(secs => $3) WHERE id = $1",
+        )
+        .bind(id.0)
+        .bind(new_hash)
+        .bind(secs(ttl))
+        .execute(self.conn())
+        .await?;
+        Ok(())
+    }
+
     /// 这个哈希是不是会话以前轮换掉的刷新令牌。
     pub async fn refresh_hash_retired(&mut self, id: SessionId, hash: &[u8]) -> Result<bool> {
         Ok(sqlx::query_scalar(

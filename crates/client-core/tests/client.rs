@@ -310,8 +310,10 @@ async fn stream_stops_when_the_session_is_revoked() {
     let store = Arc::new(MemorySessionStore::default());
     let api = e.api(store.clone());
     e.login(&api, "13800138502").await;
-    let client = Client::new(api, None).unwrap();
+    let client = Client::new(api, Some(Cache::in_memory().unwrap())).unwrap();
     let inst = client.api.adopt("claude", "助手", None).await.unwrap().id;
+    client.instances().await.unwrap();
+    assert_eq!(client.cached_instances().unwrap().len(), 1);
     let sink = Arc::new(Sink::default());
     let _h = client.subscribe(
         &tokio::runtime::Handle::current(),
@@ -335,6 +337,9 @@ async fn stream_stops_when_the_session_is_revoked() {
     })
     .await;
     assert!(store.load().is_none());
+    // 事件流发现会话没了：本地缓存（上一个人的数据）一并清掉。
+    assert!(client.cached_instances().unwrap().is_empty());
+    assert!(client.cache().unwrap().instances().unwrap().is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

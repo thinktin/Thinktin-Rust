@@ -22,7 +22,20 @@ impl Client {
         if let (Some(c), Some(s)) = (&cache, api.session()) {
             c.bind_user(&s.user_id)?;
         }
+        // 会话没了（远程下线、被吊销、退出）：不管是从哪个接口、事件流发现的，都清掉本地缓存。
+        if let Some(c) = &cache {
+            let c = c.clone();
+            api.on_signed_out(move || {
+                let _ = c.clear();
+            });
+        }
         Ok(Self { api, cache })
+    }
+
+    /// 读缓存前先看还登录着没有：没登录就什么都不给（缓存里可能还是上一个人的）。
+    fn signed_in_cache(&self) -> Option<&Cache> {
+        self.api.session()?;
+        self.cache.as_deref()
     }
 
     pub fn cache(&self) -> Option<&Cache> {
@@ -76,7 +89,7 @@ impl Client {
     }
 
     pub fn cached_instances(&self) -> Result<Vec<Instance>> {
-        match &self.cache {
+        match self.signed_in_cache() {
             Some(c) => c.instances(),
             None => Ok(Vec::new()),
         }
@@ -91,7 +104,7 @@ impl Client {
     }
 
     pub fn cached_runs(&self, instance: InstanceId, limit: u32) -> Result<Vec<Run>> {
-        match &self.cache {
+        match self.signed_in_cache() {
             Some(c) => c.runs(instance, limit),
             None => Ok(Vec::new()),
         }
@@ -124,7 +137,7 @@ impl Client {
         after: u64,
         limit: u32,
     ) -> Result<Vec<InstanceEvent>> {
-        match &self.cache {
+        match self.signed_in_cache() {
             Some(c) => c.events(instance, after, limit),
             None => Ok(Vec::new()),
         }
@@ -154,14 +167,14 @@ impl Client {
     }
 
     pub fn cached_inbox(&self, before: Option<InboxItemId>, limit: u32) -> Result<Vec<InboxItem>> {
-        match &self.cache {
+        match self.signed_in_cache() {
             Some(c) => c.inbox(before, limit),
             None => Ok(Vec::new()),
         }
     }
 
     pub fn cached_unread(&self) -> Result<i64> {
-        match &self.cache {
+        match self.signed_in_cache() {
             Some(c) => c.unread(),
             None => Ok(0),
         }
