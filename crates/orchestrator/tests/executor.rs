@@ -271,6 +271,7 @@ impl PlatformTools for Tools {
 struct Env {
     t: TestDb,
     _dir: tempfile::TempDir,
+    lifecycle: Arc<Lifecycle>,
     exec: Arc<Executor>,
     fake: FakeConnector,
     user: UserId,
@@ -314,7 +315,7 @@ async fn env_with(
     let exec = Arc::new(Executor::new(
         t.db.clone(),
         "node-a",
-        lifecycle,
+        lifecycle.clone(),
         grants,
         Arc::new(fake.clone()),
         tools,
@@ -323,6 +324,7 @@ async fn env_with(
     Some(Env {
         t,
         _dir: dir,
+        lifecycle,
         exec,
         fake,
         user: user.id,
@@ -821,4 +823,139 @@ async fn agent_output_is_bounded_in_memory_and_in_the_log() {
     // 状态变化照常记。
     assert_eq!(events.last().unwrap().0, "run.state");
     assert_eq!(events.last().unwrap().1["state"], "succeeded");
+}
+
+impl Env {
+    async fn approve_pending(&self) {
+        let mut tx = self.t.db.tenant(self.user).await.unwrap();
+        let pending = tx.pending_approvals().await.unwrap();
+        assert_eq!(pending.len(), 1, "{pending:?}");
+        tx.decide_approval(pending[0].id, "allow", proto::domain::DeviceId::new())
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+    }
+
+    async fn instance_state(&self) -> proto::domain::InstanceState {
+        let mut w = self.t.db.worker().await.unwrap();
+        let s = w.instance_runtime(self.instance.id).await.unwrap().state;
+        w.rollback().await.unwrap();
+        s
+    }
+}
+
+/// 等审批期间沙箱被空闲回收暂停：用户批准后先唤醒沙箱，再把决定交给 agent。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn approving_wakes_a_paused_sandbox() {
+    let Some(e) = env().await else { return };
+    let run = e.queue("need approval to clean up", None, 3).await;
+    let (_stop, h) = e.spawn().await;
+    e.wait_state(run, RunState::WaitingApproval).await;
+    assert!(e.lifecycle.pause(e.instance.id).await.unwrap());
+    assert_eq!(
+        e.instance_state().await,
+        proto::domain::InstanceState::Paused
+    );
+    e.approve_pending().await;
+    tokio::time::timeout(Duration::from_secs(20), h)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(e.state(run).await.run.state, RunState::Succeeded);
+    assert_eq!(
+        e.instance_state().await,
+        proto::domain::InstanceState::Running
+    );
+}
+
+/// 等审批时被打断（发版、副本挂了）：没处理的审批作废，下次尝试 agent 从 perm-1 重新请求也不会撞上。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn interrupted_approvals_are_asked_again_on_the_next_attempt() {
+    let Some(e) = env().await else { return };
+    let run = e.queue("need approval to clean up", None, 3).await;
+    let (stop, h) = e.spawn().await;
+    e.wait_state(run, RunState::WaitingApproval).await;
+    stop.send(true).unwrap();
+    tokio::time::timeout(Duration::from_secs(20), h)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(e.state(run).await.run.state, RunState::Backoff);
+    let mut tx = e.t.db.tenant(e.user).await.unwrap();
+    assert!(
+        tx.pending_approvals().await.unwrap().is_empty(),
+        "the old request is void"
+    );
+    tx.rollback().await.unwrap();
+    let (_stop, h) = e.spawn().await;
+    e.wait_state(run, RunState::WaitingApproval).await;
+    e.approve_pending().await;
+    tokio::time::timeout(Duration::from_secs(20), h)
+        .await
+        .unwrap()
+        .unwrap();
+    let rec = e.state(run).await;
+    assert_eq!((rec.run.state, rec.run.attempt), (RunState::Succeeded, 2));
+}
+
+/// 等审批的运行让出执行名额：只有一个名额时，别的运行照样能跑；批准后它拿回名额接着跑完。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn runs_waiting_for_approval_do_not_hold_an_execution_slot() {
+    let Some(e) = env_with(
+        ExecutorConfig {
+            max_concurrent: 1,
+            claim_poll: Duration::from_millis(50),
+            ..fast()
+        },
+        Some(GrantScope::default()),
+        Arc::new(NoPlatformTools),
+    )
+    .await
+    else {
+        return;
+    };
+    let waiting = e.queue("need approval to clean up", None, 3).await;
+    let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+    let exec = e.exec.clone();
+    let loop_handle = tokio::spawn(async move {
+        exec.run(async {
+            let _ = stop_rx.await;
+        })
+        .await
+    });
+    e.wait_state(waiting, RunState::WaitingApproval).await;
+    // 另一个实例上的运行（同一个实例同时只跑一个运行）。
+    let second = e
+        .lifecycle
+        .adopt(e.user, "user:d", "claude", None, "Claude 2")
+        .await
+        .unwrap();
+    let mut tx = e.t.db.tenant(e.user).await.unwrap();
+    tx.create_run_grant(
+        second.id,
+        None,
+        &GrantScope::default(),
+        Duration::from_secs(3600),
+    )
+    .await
+    .unwrap();
+    let other = tx
+        .create_run(&NewRun::new(
+            second.id,
+            RunSource::User,
+            "please say hello",
+            &second.agent_version,
+        ))
+        .await
+        .unwrap()
+        .id;
+    tx.commit().await.unwrap();
+    e.wait_state(other, RunState::Succeeded).await;
+    e.approve_pending().await;
+    e.wait_state(waiting, RunState::Succeeded).await;
+    let _ = stop_tx.send(());
+    tokio::time::timeout(Duration::from_secs(20), loop_handle)
+        .await
+        .unwrap()
+        .unwrap();
 }

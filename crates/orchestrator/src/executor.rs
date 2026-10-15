@@ -21,7 +21,7 @@ use proto::domain::{ApprovalState, ApprovalTimeoutAction, GrantId, PlanPolicy, R
 use proto::shim::{DecisionSource, ShimCommand, ShimEvent, StopReason};
 use serde_json::{Value, json};
 use store::{Db, NewApproval, RunChange, RunRecord};
-use tokio::sync::{Semaphore, watch};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, watch};
 use tokio::task::JoinSet;
 use tokio::time::Instant;
 use tracing::Instrument;
@@ -118,6 +118,8 @@ pub struct Executor {
     tools: Arc<dyn PlatformTools>,
     handoff: Option<Arc<crate::pipeline::HandoffCopier>>,
     cfg: ExecutorConfig,
+    /// 同时执行的运行数。等审批的运行让出名额（沙箱也可能被空闲回收暂停），审批有结果后再拿回来。
+    slots: Arc<Semaphore>,
 }
 
 /// 一个运行执行过程中的状态。
@@ -135,6 +137,11 @@ struct Exec<'a> {
     steps: u32,
     pending: HashSet<String>,
     usage_since: chrono::DateTime<Utc>,
+    /// 占着的执行名额；等审批时让出（`slot_released`），审批有结果后再拿回来。
+    slot: Option<OwnedSemaphorePermit>,
+    slot_released: bool,
+    /// 已经把用户的决定交给 shim、还没收到 permission_resolved 的请求（只发一次）。
+    delivered: HashSet<String>,
     /// 授权范围内、告诉了 agent 的平台工具。调用时再核对一次：shim 和 agent 在同一个沙箱里，不可信。
     allowed_tools: HashSet<String>,
     /// 这次执行已经写进运行日志的字节数。
@@ -214,6 +221,7 @@ impl Executor {
             connector,
             tools,
             handoff: None,
+            slots: Arc::new(Semaphore::new(cfg.max_concurrent.max(1))),
             cfg,
         }
     }
@@ -232,7 +240,7 @@ impl Executor {
     pub async fn run(self: Arc<Self>, stop: impl Future<Output = ()>) {
         tokio::pin!(stop);
         let (stop_tx, stop_rx) = watch::channel(false);
-        let slots = Arc::new(Semaphore::new(self.cfg.max_concurrent.max(1)));
+        let slots = self.slots.clone();
         let mut running = JoinSet::new();
         let mut takeover = tokio::time::interval(self.cfg.takeover_every);
         info!(node = %self.node_id, "executor started");
@@ -252,8 +260,7 @@ impl Executor {
                             let me = self.clone();
                             let stop = stop_rx.clone();
                             running.spawn(async move {
-                                me.execute(rec, stop).await;
-                                drop(permit);
+                                me.execute_in_slot(rec, stop, Some(permit)).await;
                             });
                         }
                         Ok(None) => {
@@ -313,6 +320,16 @@ impl Executor {
 
     /// 执行一个已领取（启动中）的运行，直到结束。这次执行的日志都挂在一个 `run` span 下（2.8）。
     pub async fn execute(&self, rec: RunRecord, stop: watch::Receiver<bool>) {
+        self.execute_in_slot(rec, stop, None).await;
+    }
+
+    /// 执行一个运行，`slot` 是它占的执行名额（等审批时让出）。
+    async fn execute_in_slot(
+        &self,
+        rec: RunRecord,
+        stop: watch::Receiver<bool>,
+        slot: Option<OwnedSemaphorePermit>,
+    ) {
         let span = tracing::info_span!(
             "run",
             run = %rec.run.id,
@@ -322,7 +339,7 @@ impl Executor {
         async {
             let started = std::time::Instant::now();
             info!("run starting");
-            let (state, outcome) = match self.start(&rec).await {
+            let (state, outcome) = match self.start(&rec, slot).await {
                 Ok(exec) => exec.drive(stop).await,
                 Err(outcome) => (rec.run.state, outcome),
             };
@@ -337,7 +354,11 @@ impl Executor {
         .await
     }
 
-    async fn start<'a>(&'a self, rec: &'a RunRecord) -> Result<Exec<'a>, Outcome> {
+    async fn start<'a>(
+        &'a self,
+        rec: &'a RunRecord,
+        slot: Option<OwnedSemaphorePermit>,
+    ) -> Result<Exec<'a>, Outcome> {
         let instance = rec.run.instance_id;
         let rt = self
             .lifecycle
@@ -457,6 +478,9 @@ impl Executor {
             pending: HashSet::new(),
             usage_since: rec.run.started_at.unwrap_or_else(Utc::now),
             allowed_tools,
+            slot,
+            slot_released: false,
+            delivered: HashSet::new(),
             logged: 0,
             log_capped: false,
         };
@@ -567,9 +591,9 @@ impl Executor {
                 .await?;
         }
         let done = w.transition_run(run, &self.node_id, to, &change).await?;
-        if to.is_terminal() {
-            w.cancel_run_approvals(run).await?;
-        }
+        // 这次尝试结束了：没处理的审批作废（下次尝试 agent 会重新请求）。走到这里说明还拿着租约
+        // （没拿住时 transition_run 报错），不会误伤接手的副本新建的审批。
+        w.cancel_run_approvals(run).await?;
         w.append_event(
             rec.run.instance_id,
             Some(run),
@@ -605,6 +629,11 @@ impl Executor {
 }
 
 impl Exec<'_> {
+    /// 审批记录里的请求 id：shim 每次启动都从 perm-1 重新编号，加上第几次尝试，重试时不会撞上旧的。
+    fn approval_key(&self, request_id: &str) -> String {
+        format!("{}:{request_id}", self.rec.run.attempt)
+    }
+
     async fn send(&mut self, cmd: ShimCommand) -> bool {
         self.session.commands.send(cmd).await.is_ok()
     }
@@ -946,6 +975,7 @@ impl Exec<'_> {
     ) -> Result<(), Outcome> {
         let options_json = serde_json::to_value(options).unwrap_or(Value::Null);
         let expires_in = Duration::from_secs(self.policy.approval_timeout_secs);
+        let key = self.approval_key(request_id);
         let result = async {
             let mut w = self.ex.db.worker().await?;
             let approval = w
@@ -953,7 +983,7 @@ impl Exec<'_> {
                     user: self.rec.user_id,
                     instance: self.rec.run.instance_id,
                     run: self.rec.run.id,
-                    request_id,
+                    request_id: &key,
                     title,
                     options: &options_json,
                     tool_call,
@@ -988,6 +1018,10 @@ impl Exec<'_> {
             self.transition(RunState::WaitingApproval, title.map(|t| truncate(t, 200)))
                 .await?;
         }
+        // 等用户的时间可能很长：让出执行名额，别的运行可以先跑。
+        if self.slot.take().is_some() {
+            self.slot_released = true;
+        }
         Ok(())
     }
 
@@ -998,6 +1032,8 @@ impl Exec<'_> {
         option: Option<&str>,
     ) -> Option<Outcome> {
         let was_pending = self.pending.remove(request_id);
+        self.delivered.remove(request_id);
+        let key = self.approval_key(request_id);
         if was_pending && by != DecisionSource::User {
             let state = match by {
                 DecisionSource::Timeout => ApprovalState::Expired,
@@ -1007,7 +1043,7 @@ impl Exec<'_> {
                 let mut w = self.ex.db.worker().await?;
                 w.settle_approval(
                     self.rec.run.id,
-                    request_id,
+                    &key,
                     state,
                     option,
                     &format!("{by:?}").to_lowercase(),
@@ -1057,11 +1093,17 @@ impl Exec<'_> {
 
     /// 查用户的决定，转给 shim。
     async fn poll_approvals(&mut self) -> Result<(), Outcome> {
-        let pending: Vec<String> = self.pending.iter().cloned().collect();
+        let pending: Vec<String> = self
+            .pending
+            .iter()
+            .filter(|r| !self.delivered.contains(*r))
+            .cloned()
+            .collect();
         for request_id in pending {
+            let key = self.approval_key(&request_id);
             let rec = async {
                 let mut w = self.ex.db.worker().await?;
-                let r = w.approval_for_request(self.rec.run.id, &request_id).await?;
+                let r = w.approval_for_request(self.rec.run.id, &key).await?;
                 w.rollback().await?;
                 Ok::<_, store::Error>(r)
             }
@@ -1072,12 +1114,28 @@ impl Exec<'_> {
                 rec.approval.state,
                 ApprovalState::Approved | ApprovalState::Rejected
             ) {
+                // 先拿回执行名额（满了就下次再看），再唤醒沙箱：等审批期间可能被空闲回收暂停了。
+                if self.slot_released {
+                    match self.ex.slots.clone().try_acquire_owned() {
+                        Ok(permit) => {
+                            self.slot = Some(permit);
+                            self.slot_released = false;
+                        }
+                        Err(_) => return Ok(()),
+                    }
+                }
+                self.ex
+                    .lifecycle
+                    .ensure_running(self.rec.run.instance_id)
+                    .await
+                    .map_err(|e| Outcome::Retry(format!("waking the instance: {e}")))?;
                 self.send(ShimCommand::PermissionDecision {
                     request_id: request_id.clone(),
                     option_id: rec.decided_option,
                 })
                 .await;
-                // shim 回 permission_resolved(by=user) 后从 pending 里移除、回到运行中。
+                // 只发一次；shim 回 permission_resolved(by=user) 后从 pending 里移除、回到运行中。
+                self.delivered.insert(request_id);
             }
         }
         Ok(())
