@@ -954,9 +954,18 @@ async fn erasing_an_account_deletes_its_content() {
         tx.commit().await.unwrap();
     }
 
+    // 送达过的推送记录也有正文，注销时一起删。
+    sqlx::query("UPDATE outbox SET delivered_at = now()")
+        .execute(db.pool())
+        .await
+        .unwrap();
     let mut w = db.worker().await.unwrap();
     w.erase_account(alice).await.unwrap();
     w.commit().await.unwrap();
+    // 产出物的密文排进清理队列。
+    let mut w = db.worker().await.unwrap();
+    assert_eq!(w.blob_purge_batch(10).await.unwrap(), ["k"]);
+    w.rollback().await.unwrap();
 
     let count = |table: &'static str, user: UserId| async move {
         let n: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(

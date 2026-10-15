@@ -21,3 +21,28 @@ ALTER TABLE plans ADD COLUMN awaiting_confirmation boolean NOT NULL DEFAULT fals
 -- 沙箱令牌的代数：运行的一次尝试结束时加一，之前签出的令牌随之失效
 -- （agent 在沙箱里留下的后台进程拿着旧令牌，运行结束后就用不了模型网关了）。
 ALTER TABLE instances ADD COLUMN token_epoch bigint NOT NULL DEFAULT 0;
+
+-- 注销（16.4）：按用户删运行时级联删产出物要按 run_id 找，出箱按用户删；送达的出箱条目定期清理。
+CREATE INDEX artifacts_run ON artifacts (run_id);
+CREATE INDEX outbox_user ON outbox (user_id);
+CREATE INDEX outbox_delivered ON outbox (delivered_at) WHERE delivered_at IS NOT NULL;
+
+-- 删掉的产出物（单个删除、删运行级联、注销）：对象存储里的密文排进这个队列，由后台清理。
+-- 触发器以表属主身份写队列（业务角色没有这张表的权限）。
+CREATE TABLE blob_purge (
+    blob_key  text PRIMARY KEY,
+    queued_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE blob_purge ENABLE ROW LEVEL SECURITY;
+-- 领取用 FOR UPDATE SKIP LOCKED，要 UPDATE 权限。
+GRANT SELECT, UPDATE, DELETE ON blob_purge TO thinktin_worker;
+
+CREATE FUNCTION queue_artifact_blob_purge() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+    INSERT INTO blob_purge (blob_key) VALUES (OLD.blob_key) ON CONFLICT DO NOTHING;
+    RETURN OLD;
+END $$;
+REVOKE ALL ON FUNCTION queue_artifact_blob_purge() FROM PUBLIC;
+CREATE TRIGGER artifacts_blob_purge AFTER DELETE ON artifacts
+    FOR EACH ROW EXECUTE FUNCTION queue_artifact_blob_purge();

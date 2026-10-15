@@ -106,6 +106,18 @@ impl Tx<Worker> {
         insert(self.conn(), user, item).await
     }
 
+    /// 删掉送达（或放弃）超过 `older_than` 的条目：载荷里有推送的标题和正文，不长期留着。
+    /// 收件箱里有同样的内容，用户自己能看、能删。
+    pub async fn purge_delivered_outbox(&mut self, older_than: Duration) -> Result<u64> {
+        let done = sqlx::query(
+            "DELETE FROM outbox WHERE delivered_at < now() - make_interval(secs => $1)",
+        )
+        .bind(secs(older_than))
+        .execute(self.conn())
+        .await?;
+        Ok(done.rows_affected())
+    }
+
     pub async fn audit(
         &mut self,
         user: Option<UserId>,

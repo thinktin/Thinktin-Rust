@@ -618,7 +618,9 @@ impl Tx<Worker> {
             "SELECT ",
             columns!(),
             " FROM runs WHERE kind = 'pipeline' AND state IN ('queued', 'waiting_children') \
-               AND not_before <= now() ORDER BY not_before, id LIMIT $1 FOR UPDATE SKIP LOCKED"
+               AND not_before <= now() \
+               AND EXISTS (SELECT 1 FROM users u WHERE u.id = runs.user_id AND u.status = 'active') \
+             ORDER BY not_before, id LIMIT $1 FOR UPDATE OF runs SKIP LOCKED"
         ))
         .bind(limit)
         .fetch_all(self.conn())

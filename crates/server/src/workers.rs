@@ -11,6 +11,7 @@ use control::{BuiltinTemplates, Lifecycle, LifecycleConfig};
 use notify::apns::{ApnsClient, ApnsConfig};
 use notify::filter::KeywordFilter;
 use notify::jpush::{JpushClient, JpushConfig};
+use orchestrator::artifacts::ArtifactStore;
 use orchestrator::exec::{ExecConfig, ExecConnector};
 use orchestrator::executor::{Executor, ExecutorConfig};
 use orchestrator::outbox::{Dispatcher, DispatcherConfig};
@@ -22,7 +23,7 @@ use proto::domain::PushChannelKind;
 use sandbox::SandboxProvider;
 use sandbox::local::LocalProvider;
 use store::Db;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use zeroize::Zeroizing;
 
 use crate::{Background, Config, ShutdownListener};
@@ -33,6 +34,8 @@ const EVENT_RETENTION_DAYS: i64 = 30;
 const LOGIN_CODE_RETENTION: Duration = Duration::from_secs(7 * 24 * 3600);
 /// 会话失效（过期或吊销）多久以后清掉它的刷新令牌历史。
 const REFRESH_HISTORY_RETENTION: Duration = Duration::from_secs(30 * 24 * 3600);
+/// 送达（或放弃）的推送记录留几天（排查送达问题用），之后删掉：载荷里有通知的正文。
+const OUTBOX_RETENTION: Duration = Duration::from_secs(7 * 24 * 3600);
 
 async fn stopped(mut stop: ShutdownListener) {
     stop.wait().await;
@@ -72,6 +75,7 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
     let workdir = exec_cfg.workdir.clone();
     let connector = Arc::new(ExecConnector::new(provider.clone(), exec_cfg));
     let artifacts = crate::artifact_store(cfg, db, crate::kms(cfg)?)?;
+    let blobs = artifacts.clone();
     let tools: Vec<Arc<dyn PlatformTools>> = vec![
         Arc::new(ScheduleTools::new(db.clone())),
         Arc::new(ArtifactTools::new(
@@ -177,6 +181,9 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
             if let Err(e) = maintain(&db).await {
                 error!(error = %e, "maintenance failed");
             }
+            if let Err(e) = purge_blobs(&db, &blobs).await {
+                error!(error = %e, "purging deleted artifact blobs failed");
+            }
         })
         .await;
         Ok(())
@@ -201,7 +208,26 @@ where
     }
 }
 
-/// 事件分区提前建好、过期的删掉；清理过期的登录验证码。
+/// 删掉的产出物：对象存储里的密文按队列删掉（每轮最多 1000 个，删不掉的下轮再试）。
+async fn purge_blobs(db: &Db, artifacts: &ArtifactStore) -> anyhow::Result<()> {
+    let mut w = db.worker().await?;
+    let keys = w.blob_purge_batch(1000).await?;
+    let mut done = Vec::with_capacity(keys.len());
+    for key in keys {
+        match artifacts.delete_blob(&key).await {
+            Ok(()) => done.push(key),
+            Err(e) => warn!(%key, error = %e, "could not delete an artifact blob"),
+        }
+    }
+    w.forget_blob_purge(&done).await?;
+    w.commit().await?;
+    if !done.is_empty() {
+        info!(blobs = done.len(), "purged deleted artifact blobs");
+    }
+    Ok(())
+}
+
+/// 事件分区提前建好、过期的删掉；清理过期的登录验证码、送达的推送记录。
 async fn maintain(db: &Db) -> store::Result<()> {
     let today = Utc::now().date_naive();
     let this_month = NaiveDate::from_ymd_opt(today.year(), today.month(), 1).unwrap_or(today);
@@ -211,7 +237,8 @@ async fn maintain(db: &Db) -> store::Result<()> {
         .drop_event_partitions_before(today - chrono::Duration::days(EVENT_RETENTION_DAYS))
         .await?;
     let purged = w.purge_login_codes(LOGIN_CODE_RETENTION).await?
-        + w.purge_refresh_history(REFRESH_HISTORY_RETENTION).await?;
+        + w.purge_refresh_history(REFRESH_HISTORY_RETENTION).await?
+        + w.purge_delivered_outbox(OUTBOX_RETENTION).await?;
     w.commit().await?;
     if dropped > 0 || purged > 0 {
         info!(
