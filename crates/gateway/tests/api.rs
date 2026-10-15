@@ -33,6 +33,14 @@ struct Api {
 }
 
 async fn api() -> Option<Api> {
+    api_with(GatewayConfig {
+        ws_heartbeat: Duration::from_millis(300),
+        ..GatewayConfig::default()
+    })
+    .await
+}
+
+async fn api_with(cfg: GatewayConfig) -> Option<Api> {
     let t = TestDb::new().await?;
     let signer = Signer25519::generate("a1").unwrap();
     let mut verifier = Verifier25519::new();
@@ -67,10 +75,7 @@ async fn api() -> Option<Api> {
         kms,
         hub: hub.clone(),
         artifacts: Some(artifacts.clone()),
-        cfg: GatewayConfig {
-            ws_heartbeat: Duration::from_millis(300),
-            ..GatewayConfig::default()
-        },
+        cfg,
     });
     tokio::spawn(hub.listen(t.db.pool().clone(), std::future::pending()));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1814,4 +1819,69 @@ async fn cancelling_a_pipeline_root_stops_its_steps() {
         proto::domain::RunState::Cancelled
     );
     w.rollback().await.unwrap();
+}
+
+#[tokio::test]
+async fn rate_limits_and_signup_cap() {
+    let Some(a) = api_with(GatewayConfig {
+        limits: gateway::LimitConfig {
+            device_per_minute: 3,
+            signups_per_hour: 1,
+            ..gateway::LimitConfig::default()
+        },
+        ..GatewayConfig::default()
+    })
+    .await
+    else {
+        return;
+    };
+    // 第一个新手机号能注册；全站每小时只放一个，第二个新号码被拦下。
+    let u = a.login("13800138500").await;
+    let (st, _) = a
+        .call(
+            Method::POST,
+            "/v1/auth/code",
+            None,
+            Some(json!({ "phone": "13800138501" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let code = a.sms.last_code("+8613800138501").unwrap();
+    let login = json!({
+        "phone": "13800138501",
+        "code": code,
+        "device": { "platform": "android", "name": "Pixel" }
+    });
+    let (st, body) = a
+        .call(Method::POST, "/v1/auth/login", None, Some(login))
+        .await;
+    assert_eq!(st, StatusCode::TOO_MANY_REQUESTS, "{body}");
+    assert_eq!(body["code"], "rate_limited");
+    assert!(body["retry_after_secs"].as_u64().unwrap() > 0);
+    // 已注册的账号照常登录。
+    a.login("13800138500").await;
+
+    // 每台设备每分钟 3 次（登录后的第一个请求已经算一次以外再数）：超了返回 429 和 Retry-After。
+    let mut limited = None;
+    for _ in 0..5 {
+        let resp = a
+            .http
+            .get(format!("{}/v1/me", a.base))
+            .bearer_auth(&u.access)
+            .send()
+            .await
+            .unwrap();
+        if resp.status() == StatusCode::TOO_MANY_REQUESTS {
+            limited = Some(resp);
+            break;
+        }
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+    let resp = limited.expect("the device limit kicks in");
+    let retry: u64 = resp.headers()["retry-after"]
+        .to_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!((1..=20).contains(&retry), "{retry}");
 }

@@ -7,6 +7,7 @@
 pub mod error;
 mod extract;
 mod hub;
+pub mod limits;
 mod routes;
 
 use std::ops::Deref;
@@ -22,6 +23,7 @@ use store::Db;
 pub use error::{ApiError, ApiResult};
 pub use extract::{ApiJson, Authed};
 pub use hub::EventHub;
+pub use limits::{ClientIp, LimitConfig, Limited, Limiter};
 
 #[derive(Debug, Clone)]
 pub struct GatewayConfig {
@@ -39,6 +41,8 @@ pub struct GatewayConfig {
     pub content_producer: String,
     /// 下载产出物时加标识：元数据头，纯文本和 Markdown 末尾加一行显式标识。
     pub label_downloads: bool,
+    /// 限流与防刷（5.4）。
+    pub limits: LimitConfig,
 }
 
 impl Default for GatewayConfig {
@@ -51,6 +55,7 @@ impl Default for GatewayConfig {
             events_page: 200,
             content_producer: "ThinkTin".into(),
             label_downloads: true,
+            limits: LimitConfig::default(),
         }
     }
 }
@@ -68,18 +73,30 @@ pub struct Inner {
 }
 
 #[derive(Clone)]
-pub struct AppState(Arc<Inner>);
+pub struct AppState {
+    inner: Arc<Inner>,
+    limits: Arc<Limiter>,
+}
 
 impl AppState {
     pub fn new(inner: Inner) -> Self {
-        Self(Arc::new(inner))
+        let limits = Arc::new(Limiter::new(inner.cfg.limits.clone()));
+        Self {
+            inner: Arc::new(inner),
+            limits,
+        }
+    }
+
+    /// 限流计数（5.4）。
+    pub fn limits(&self) -> &Arc<Limiter> {
+        &self.limits
     }
 }
 
 impl Deref for AppState {
     type Target = Inner;
     fn deref(&self) -> &Inner {
-        &self.0
+        &self.inner
     }
 }
 

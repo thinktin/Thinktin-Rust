@@ -73,6 +73,7 @@ pub fn build(
             default_platform_tools: cfg.api.default_platform_tools.clone(),
             content_producer: cfg.compliance.content_producer.clone(),
             label_downloads: cfg.compliance.label_downloads,
+            limits: cfg.api.limits.clone(),
             ..GatewayConfig::default()
         },
     });

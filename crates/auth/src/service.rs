@@ -55,6 +55,9 @@ pub enum AuthError {
     InvalidPhone,
     #[error("too many codes requested, retry after {retry_after_secs}s")]
     TooManyCodes { retry_after_secs: u64 },
+    /// 注册风控（5.4）：这个来源或全站的新注册太多。
+    #[error("too many new accounts, retry after {retry_after_secs}s")]
+    SignupLimited { retry_after_secs: u64 },
     /// 验证码错误、过期或没发过（不区分，防止探测）。
     #[error("invalid or expired code")]
     InvalidCode,
@@ -93,7 +96,7 @@ impl AuthError {
     pub fn code(&self) -> ErrorCode {
         match self {
             Self::InvalidPhone | Self::InvalidCode | Self::Invalid(_) => ErrorCode::Invalid,
-            Self::TooManyCodes { .. } => ErrorCode::RateLimited,
+            Self::TooManyCodes { .. } | Self::SignupLimited { .. } => ErrorCode::RateLimited,
             Self::AccountFrozen => ErrorCode::Forbidden,
             Self::Unauthenticated => ErrorCode::Unauthenticated,
             Self::SessionRevoked => ErrorCode::SessionRevoked,
@@ -262,9 +265,27 @@ impl AuthService {
 
     /// 验证码登录。手机号没注册过就新建账号。每次登录建一台新设备和一个新会话。
     pub async fn login(&self, phone: &str, code: &str, device: &NewDevice) -> Result<Login> {
+        self.login_gated(phone, code, device, || Ok(())).await
+    }
+
+    /// 和 [`Self::login`] 一样，但手机号没注册过时先问 `may_sign_up`（注册风控，5.4）：
+    /// 它返回 `Err(秒数)` 就不建账号，报 [`AuthError::SignupLimited`]。验证码校验通过后才问，
+    /// 填错码不占注册名额；已注册的账号照常登录。
+    pub async fn login_gated(
+        &self,
+        phone: &str,
+        code: &str,
+        device: &NewDevice,
+        may_sign_up: impl FnOnce() -> std::result::Result<(), u64> + Send,
+    ) -> Result<Login> {
         let phone = normalize_phone(phone).map_err(|_| AuthError::InvalidPhone)?;
         self.check_code(&phone, CodePurpose::Login, code).await?;
         let mut w = self.db.worker().await?;
+        if w.user_by_phone(&phone).await?.is_none()
+            && let Err(retry_after_secs) = may_sign_up()
+        {
+            return Err(AuthError::SignupLimited { retry_after_secs });
+        }
         let (user, new_user) = w.upsert_user_by_phone(&phone).await?;
         if user.status == UserStatus::Frozen {
             return Err(AuthError::AccountFrozen);

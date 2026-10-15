@@ -88,13 +88,19 @@ pub async fn stream(
         .map(str::to_owned)
         .ok_or_else(|| ApiError::new(ErrorCode::Unauthenticated, "missing bearer token"))?;
     let who = s.auth.authenticate(&token).await?;
+    s.limits().authed(who.user, who.device)?;
     let mut t = s.db.tenant(who.user).await?;
     t.instance(id).await?;
     t.rollback().await?;
+    // 每个用户同时打开的事件流有上限（5.4），连接断开时归还。
+    let slot = s.limits().open_stream(who.user)?;
     Ok(ws
         .max_message_size(64 << 10)
         .max_frame_size(64 << 10)
-        .on_upgrade(move |socket| run_stream(s, who, token, id, q.after, socket)))
+        .on_upgrade(move |socket| async move {
+            let _slot = slot;
+            run_stream(s, who, token, id, q.after, socket).await
+        }))
 }
 
 async fn send(socket: &mut WebSocket, msg: Message) -> bool {

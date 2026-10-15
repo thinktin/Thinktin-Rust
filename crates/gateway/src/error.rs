@@ -87,6 +87,13 @@ impl From<auth::service::AuthError> for ApiError {
                 retry_after_secs: Some(retry_after_secs),
                 ..Self::new(ErrorCode::RateLimited, "too many codes requested")
             },
+            AuthError::SignupLimited { retry_after_secs } => Self {
+                retry_after_secs: Some(retry_after_secs),
+                ..Self::new(
+                    ErrorCode::RateLimited,
+                    "too many new accounts from this network, try again later",
+                )
+            },
             AuthError::Store(s) => s.into(),
             AuthError::Token(t) => Self::internal(t),
             AuthError::Sms(s) => {
@@ -97,6 +104,15 @@ impl From<auth::service::AuthError> for ApiError {
                 )
             }
             other => Self::new(other.code(), other.to_string()),
+        }
+    }
+}
+
+impl From<crate::limits::Limited> for ApiError {
+    fn from(l: crate::limits::Limited) -> Self {
+        Self {
+            retry_after_secs: Some(l.0),
+            ..Self::new(ErrorCode::RateLimited, "too many requests, slow down")
         }
     }
 }

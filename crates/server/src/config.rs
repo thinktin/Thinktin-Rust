@@ -75,6 +75,8 @@ pub struct Api {
     pub kms_key_id: String,
     /// 领养、建计划时默认给 agent 的平台工具。
     pub default_platform_tools: Vec<String>,
+    /// 限流与防刷（5.4）：`[api.limits]`，各项上限，0 表示不限。
+    pub limits: gateway::LimitConfig,
 }
 
 impl Default for Api {
@@ -89,6 +91,7 @@ impl Default for Api {
                 .chain(orchestrator::tools::ARTIFACT_TOOLS.iter())
                 .map(|s| s.to_string())
                 .collect(),
+            limits: gateway::LimitConfig::default(),
         }
     }
 }

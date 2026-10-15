@@ -62,6 +62,19 @@ impl Tx<Worker> {
         Ok((row.into_user()?, false))
     }
 
+    /// 按手机号（已规范化的 E.164）找没注销的账号。
+    pub async fn user_by_phone(&mut self, phone: &str) -> Result<Option<User>> {
+        let row: Option<Row> = sqlx::query_as(concat!(
+            "SELECT ",
+            columns!(),
+            " FROM users WHERE phone = $1 AND status <> 'deleted'"
+        ))
+        .bind(phone)
+        .fetch_optional(self.conn())
+        .await?;
+        row.map(Row::into_user).transpose()
+    }
+
     pub async fn user(&mut self, id: UserId) -> Result<User> {
         let row: Row = sqlx::query_as(concat!("SELECT ", columns!(), " FROM users WHERE id = $1"))
             .bind(id.0)

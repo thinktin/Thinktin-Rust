@@ -31,7 +31,10 @@ impl FromRequestParts<AppState> for Authed {
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, ApiError> {
         let token = bearer(&parts.headers)
             .ok_or_else(|| ApiError::new(ErrorCode::Unauthenticated, "missing bearer token"))?;
-        Ok(Authed(state.auth.authenticate(token).await?))
+        let who = state.auth.authenticate(token).await?;
+        // 按设备、按用户限流（5.4）。
+        state.limits().authed(who.user, who.device)?;
+        Ok(Authed(who))
     }
 }
 

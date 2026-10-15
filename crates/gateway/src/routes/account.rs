@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use super::{check_len, parse_id};
-use crate::{ApiError, ApiJson, ApiResult, AppState, Authed};
+use crate::{ApiError, ApiJson, ApiResult, AppState, Authed, ClientIp};
 
 #[derive(Deserialize)]
 pub struct CodeReq {
@@ -19,8 +19,12 @@ pub struct CodeReq {
 
 pub async fn send_code(
     State(s): State<AppState>,
+    ClientIp(ip): ClientIp,
     ApiJson(req): ApiJson<CodeReq>,
 ) -> ApiResult<StatusCode> {
+    // 同一个来源地址发码限频（防短信轰炸）；同一手机号的限制在 auth 里。
+    s.limits().anonymous(ip)?;
+    s.limits().codes(ip)?;
     s.auth.send_code(&req.phone, CodePurpose::Login).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -83,15 +87,24 @@ fn push_of(
 
 pub async fn login(
     State(s): State<AppState>,
+    ClientIp(ip): ClientIp,
     ApiJson(req): ApiJson<LoginReq>,
 ) -> ApiResult<Json<LoginResp>> {
+    s.limits().anonymous(ip)?;
     check_len("device.name", &req.device.name, 0, 64)?;
     let device = NewDevice {
         platform: req.device.platform,
         name: req.device.name,
         push: push_of(req.device.push_channel, req.device.push_token)?,
     };
-    let l = s.auth.login(&req.phone, &req.code, &device).await?;
+    // 注册风控（5.4）：手机号没注册过时，按来源地址和全站的新注册上限放行。
+    let limits = s.limits().clone();
+    let l = s
+        .auth
+        .login_gated(&req.phone, &req.code, &device, move || {
+            limits.signup(ip).map_err(|l| l.0)
+        })
+        .await?;
     Ok(Json(LoginResp {
         user: l.user,
         new_user: l.new_user,
@@ -107,8 +120,10 @@ pub struct RefreshReq {
 
 pub async fn refresh(
     State(s): State<AppState>,
+    ClientIp(ip): ClientIp,
     ApiJson(req): ApiJson<RefreshReq>,
 ) -> ApiResult<Json<TokensResp>> {
+    s.limits().anonymous(ip)?;
     Ok(Json(s.auth.refresh(&req.refresh_token).await?.into()))
 }
 
