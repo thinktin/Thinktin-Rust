@@ -144,6 +144,9 @@ struct Exec<'a> {
     delivered: HashSet<String>,
     /// 授权范围内、告诉了 agent 的平台工具。调用时再核对一次：shim 和 agent 在同一个沙箱里，不可信。
     allowed_tools: HashSet<String>,
+    /// 租约至少续到什么时候（最后一次成功续租 + 租约时长）。续租一直失败、过了这个时间就自己停下，
+    /// 不能和接手的副本同时跑同一个运行。
+    lease_ok_until: Instant,
     /// 这次执行已经写进运行日志的字节数。
     logged: usize,
     log_capped: bool,
@@ -354,7 +357,7 @@ impl Executor {
         async {
             let started = std::time::Instant::now();
             info!("run starting");
-            let (state, outcome) = match self.start(&rec, slot).await {
+            let (state, outcome) = match self.start_renewing(&rec, slot).await {
                 Ok(exec) => exec.drive(stop).await,
                 Err(outcome) => (rec.run.state, outcome),
             };
@@ -367,6 +370,46 @@ impl Executor {
         }
         .instrument(span)
         .await
+    }
+
+    /// 启动（唤醒沙箱、重建、握手）可能比租约还长：启动期间也按时续租，免得被当成过期接手、重跑一遍。
+    /// 启动期间丢了租约就放弃启动。
+    async fn start_renewing<'a>(
+        &'a self,
+        rec: &'a RunRecord,
+        slot: Option<OwnedSemaphorePermit>,
+    ) -> Result<Exec<'a>, Outcome> {
+        let start = self.start(rec, slot);
+        tokio::pin!(start);
+        let mut renew =
+            tokio::time::interval_at(Instant::now() + self.cfg.renew_every, self.cfg.renew_every);
+        let mut ok_until = Instant::now() + self.cfg.lease;
+        loop {
+            tokio::select! {
+                result = &mut start => return result,
+                _ = renew.tick() => {
+                    let held = async {
+                        let mut w = self.db.worker().await?;
+                        let held = w.renew_lease(rec.run.id, &self.node_id, self.cfg.lease).await?;
+                        w.commit().await?;
+                        Ok::<_, store::Error>(held)
+                    }
+                    .await;
+                    match held {
+                        Ok(true) => ok_until = Instant::now() + self.cfg.lease,
+                        Ok(false) => {
+                            warn!(run = %rec.run.id, "lease was taken over while starting, giving up");
+                            return Err(Outcome::LeaseLost);
+                        }
+                        Err(e) if Instant::now() >= ok_until => {
+                            warn!(run = %rec.run.id, error = %e, "could not renew the lease in time while starting");
+                            return Err(Outcome::LeaseLost);
+                        }
+                        Err(e) => warn!(run = %rec.run.id, error = %e, "lease renewal failed while starting"),
+                    }
+                }
+            }
+        }
     }
 
     async fn start<'a>(
@@ -495,6 +538,7 @@ impl Executor {
             allowed_tools,
             slot,
             slot_released: false,
+            lease_ok_until: Instant::now() + self.cfg.lease,
             delivered: HashSet::new(),
             logged: 0,
             log_capped: false,
@@ -532,11 +576,13 @@ impl Executor {
     ) -> store::Result<()> {
         let run = rec.run.id;
         let (to, change, push) = match outcome {
-            Outcome::Cancelled | Outcome::LeaseLost => {
+            Outcome::Cancelled => {
                 let mut w = self.db.worker().await?;
                 w.cancel_run_approvals(run).await?;
                 return w.commit().await;
             }
+            // 租约已经被别的副本接手：这次运行归它了，什么都别动（包括它新建的审批）。
+            Outcome::LeaseLost => return Ok(()),
             Outcome::Succeeded { summary, reason } => {
                 let body = summary
                     .as_deref()
@@ -1180,6 +1226,9 @@ impl Exec<'_> {
             Ok(Ok(tokens))
         }
         .await;
+        if matches!(result, Ok(Ok(_))) {
+            self.lease_ok_until = Instant::now() + self.ex.cfg.lease;
+        }
         match result {
             Ok(Ok(tokens)) => {
                 if let Some(max) = self.rec.budget.max_tokens
@@ -1199,6 +1248,12 @@ impl Exec<'_> {
             }
             Ok(Err(_)) => {
                 warn!(run = %self.rec.run.id, "lease was taken over, letting go");
+                self.session.process.kill().await;
+                Some(Outcome::LeaseLost)
+            }
+            Err(e) if Instant::now() >= self.lease_ok_until => {
+                // 一直续不上，租约已经过期，别的副本随时会接手：停下 agent，不和它同时跑。
+                warn!(run = %self.rec.run.id, error = %e, "lease expired without a renewal, stopping");
                 self.session.process.kill().await;
                 Some(Outcome::LeaseLost)
             }

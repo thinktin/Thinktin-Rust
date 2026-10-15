@@ -974,3 +974,58 @@ async fn nul_characters_in_agent_output_do_not_break_finishing() {
     assert_eq!(rec.run.summary.as_deref(), Some("donehere"));
     assert_eq!(rec.lease_owner, None);
 }
+
+/// 续租赶不上、租约被别的副本接手：原来的执行停下 agent，接手的副本的运行原样不动（不取消、不改状态）。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_taken_over_run_is_left_to_the_new_holder() {
+    let Some(e) = env_with(
+        ExecutorConfig {
+            lease: Duration::from_millis(300),
+            renew_every: Duration::from_secs(1),
+            ..fast()
+        },
+        Some(GrantScope::default()),
+        Arc::new(NoPlatformTools),
+    )
+    .await
+    else {
+        return;
+    };
+    let run = e.queue("loop forever", None, 3).await;
+    let (_stop, h) = e.spawn().await;
+    e.wait_state(run, RunState::Running).await;
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let mut w = e.t.db.worker().await.unwrap();
+    let taken = w
+        .take_over_expired("node-b", Duration::from_secs(60), 10)
+        .await
+        .unwrap();
+    assert_eq!(taken.len(), 1);
+    // 接手的副本已经让 agent 请求了一次审批。
+    w.create_approval(&store::NewApproval {
+        user: e.user,
+        instance: e.instance.id,
+        run,
+        request_id: "2:p1",
+        title: Some("Delete old reports"),
+        options: &json!([{ "option_id": "allow", "name": "Allow", "kind": "allow_once" }]),
+        tool_call: &json!({}),
+        expires_in: Duration::from_secs(600),
+    })
+    .await
+    .unwrap();
+    w.commit().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(10), h)
+        .await
+        .expect("the old holder stops")
+        .unwrap();
+    let rec = e.state(run).await;
+    assert_eq!(rec.run.state, RunState::Running);
+    assert_eq!(rec.lease_owner.as_deref(), Some("node-b"));
+    let mut tx = e.t.db.tenant(e.user).await.unwrap();
+    assert_eq!(
+        tx.pending_approvals().await.unwrap().len(),
+        1,
+        "the new holder's approval is untouched"
+    );
+}
