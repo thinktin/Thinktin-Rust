@@ -1,7 +1,7 @@
 # 开发进度
 
-> 按 [WBS](wbs.md) 推进，P1 优先、按依赖顺序。每个工作包做完：实现 → 测试 → fmt / clippy → 提交推送。
-> 云端会话每 2 小时由定时任务唤醒一次，从这里接着做。
+> 按 [WBS](wbs.md) 推进，P1 优先、按依赖顺序。开发分支是 `backend-core`：实现 → 测试 → fmt / clippy → 提交推送（每次推送 CI 都跑）。做的过程中随时推送，不让代码只留在会话的沙箱里。合进 `main` 走 PR，由人审过再合并。
+> 会话中断后由定时唤醒接着做，进度以这里为准。
 
 ## 已完成
 
@@ -48,6 +48,7 @@
 | 16.3 | AI 生成内容标识：agent 生成的事件、收件箱条目带标识位；系统通知正文加“【AI 生成】”；下载产出物带元数据头（隐式标识），纯文本和 Markdown 末尾加显式标识；推送文字的内容过滤（命中换成中性提示）；`[compliance]` 配置 | [说明](compliance.md) |
 | 9.9 | 降级链：每个别名按顺序最多 3 个备用 key + 上游模型；401/402/403/429/503/529 或连不上时在交给 agent 之前换下一个，超时不换（避免重复扣费）；失败的 key 按 Retry-After 冷却、排到最后；每次尝试各记用量；停用、超预算、不支持协议的 key 直接跳过 | [说明](llm-gateway.md#降级链99) |
 | 9.10 | 用量看板数据：`GET /v1/usage` 按天（用户时区）、实例、模型、key 汇总请求数、各类 token、估算和失败次数，附总计；client-core 的 `usage()` | `crates/gateway/src/routes/usage.rs`、`crates/store/src/usage.rs` |
+| 9.12 | 主流模型品牌预置：新增 Anthropic、OpenAI、Google Gemini、xAI、Mistral、火山方舟、BytePlus、百度千帆、腾讯混元 TokenHub（国内、新加坡）、阶跃星辰，逐家按官方文档核对（腾讯原混元 API 已于 2026-09-30 停服，改走 TokenHub）；适配表挪到 `proto`，模型网关和接入网关共用；`GET /v1/vendors` 和 client-core 的 `vendors()` 给 App 列出可选厂商；保存 key 时只收预置厂商或 `custom`，按前缀拒绝订阅类 key（新增腾讯 Token Plan、Claude 订阅 OAuth 令牌），自定义端点填了套餐专用地址也拒绝 | `crates/proto/src/vendors.rs`、`crates/gateway/src/routes/vendors.rs`、[模型网关文档第 11 节](llm-gateway.md) |
 | 11.1 | UniFFI 工程：client-core 出 Swift（`ThinktinCore`）/ Kotlin（`cn.thinktin.core`）绑定；xcframework + Swift Package、Android 库工程 / AAR 打包脚本（`mobile` 编译配置、16 KB 页对齐）；经 C ABI 的冒烟测试 | `crates/client-core/src/ffi.rs`、`tools/client-core/` |
 | 11.2 | 接口客户端：版本头、统一错误模型（按错误码区分重新登录 / 重试 / 提示）、访问令牌过期自动刷新（并发只刷一次）、刷新令牌失效清会话；会话交给原生端的安全存储 | `crates/client-core/src/api.rs` |
 | 11.3 | 事件流：WebSocket 按序号续传、去重、指数退避加抖动重连、空闲超时、握手 401 / 4001 关闭时刷新令牌再连、会话失效或实例不存在时停止 | `crates/client-core/src/events.rs` |
@@ -57,9 +58,10 @@
 
 ## 进行中
 
-- **9.12 主流模型品牌预置**：已预置 DeepSeek、通义千问、智谱、Kimi、MiniMax；另外 9 个模型品牌（Anthropic、OpenAI、Google、xAI、Mistral、豆包、文心、混元、阶跃）的官方接口按官方文档核对中，核对完写进适配表。
-- **5.4 限流与防刷 + 4.6 账号冻结与全部停止**：实现中（冻结要同时停掉模型网关、进行中的运行和授权，评审里的这一条并在这里做）。
-- 之后按依赖顺序：9.11 密码保险箱 → 7.11 等待电脑与等待 key → 7.10 离线审批策略 → 4.5 biscuit → 8.6–8.8 委派。
+- **6.2 Cube 后端**：按 Cube 的 E2B 兼容接口写，先用模拟服务测，集群部署（2.3）后实测。
+- **5.4 限流与防刷**。
+- **4.6 账号冻结与全部停止**：另一个云端会话（2026-10-15）做了大半，撞上用量限额，代码没推送：store 层的停止和冻结、冻结 / 解冻（带通知和运维审计）、用户“全部停止”和之后重新签发授权、`AccountFrozen` 错误码一直到 WebSocket 关闭码和客户端、`stop-all` 和“下线其他设备”接口，运维命令 `thinktin-server admin freeze|unfreeze|show` 写了一半。开工前先看远端有没有救回来的分支，没有就按这个设计重做。
+- 之后按依赖顺序：9.11 密码保险箱 → 11.6 → 7.11 等待电脑与等待 key → 7.10 离线审批策略 → 4.5 biscuit → 8.6–8.8 委派 → 6.5、6.6、7.12–7.14。
 
 ## 里程碑（后端核心，P1）
 

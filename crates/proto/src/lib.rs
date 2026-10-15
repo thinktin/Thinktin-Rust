@@ -4,3 +4,4 @@ pub mod api;
 pub mod domain;
 pub mod labels;
 pub mod shim;
+pub mod vendors;

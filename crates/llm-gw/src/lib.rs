@@ -11,7 +11,9 @@ pub mod serve;
 pub mod ssrf;
 pub mod store;
 pub mod usage;
-pub mod vendors;
+
+/// 厂商适配表在 `proto` 里（接入网关也要用它校验 key、列出预置厂商）。
+pub use proto::vendors;
 
 pub use proxy::{Gateway, Options, build_client, router};
 pub use serve::{ServeOptions, serve};

@@ -12,6 +12,7 @@ mod plans;
 mod runs;
 mod teams;
 mod usage;
+mod vendors;
 
 use axum::Router;
 use axum::routing::{delete, get, post, put};
@@ -68,7 +69,8 @@ pub fn router() -> Router<AppState> {
         // 审批（4.7）
         .route("/v1/approvals", get(approvals::list))
         .route("/v1/approvals/{id}/decide", post(approvals::decide))
-        // 模型 key（9.8）
+        // 模型 key（9.8）和预置厂商（9.12）
+        .route("/v1/vendors", get(vendors::list))
         .route(
             "/v1/credentials",
             get(credentials::list).post(credentials::create),

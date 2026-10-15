@@ -261,4 +261,22 @@ mod tests {
             .unwrap();
         assert!(find_ssrf_error(err.as_ref()).is_some());
     }
+
+    #[test]
+    fn vendor_presets_pass_static_checks() {
+        for v in crate::vendors::VENDORS {
+            for base in [
+                v.anthropic_base,
+                v.openai_base,
+                v.responses_base,
+                v.models_url,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                let url = Url::parse(base).unwrap();
+                assert_eq!(check_upstream_url(&url, false), Ok(()), "{base}");
+            }
+        }
+    }
 }

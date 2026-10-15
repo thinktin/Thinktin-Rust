@@ -309,7 +309,7 @@ async fn instances_keys_and_routes_are_per_user() {
             Method::POST,
             "/v1/credentials",
             Some(&alice.access),
-            Some(json!({ "vendor": "deepseek:cn", "api_key": "sk-ds-000000009999" })),
+            Some(json!({ "vendor": "deepseek", "api_key": "sk-ds-000000009999" })),
         )
         .await;
     assert_eq!(st, StatusCode::CREATED);
@@ -322,6 +322,40 @@ async fn instances_keys_and_routes_are_per_user() {
         )
         .await;
     assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+
+    // 预置厂商（9.12）：App 从这里选；不认识的厂商、订阅类 key、套餐专用地址都拒绝。
+    let (st, vendors) = a.call(Method::GET, "/v1/vendors", None, None).await;
+    assert_eq!(st, StatusCode::OK, "{vendors}");
+    let ids: Vec<&str> = vendors["vendors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v["id"].as_str().unwrap())
+        .collect();
+    for id in ["anthropic", "openai", "deepseek", "doubao-cn", "hunyuan-cn"] {
+        assert!(ids.contains(&id), "{id} missing from {ids:?}");
+    }
+    assert_eq!(vendors["custom"], "custom");
+    for bad in [
+        json!({ "vendor": "deepseek:cn", "api_key": "sk-ds-000000009999" }),
+        json!({ "vendor": "anthropic", "api_key": "sk-ant-oat01-0000000000000000" }),
+        json!({ "vendor": "hunyuan-cn", "api_key": "sk-tp-0000000000000000" }),
+        json!({
+            "vendor": "custom",
+            "api_key": "sk-x-12345678",
+            "openai_base": "https://ark.cn-beijing.volces.com/api/coding/v3"
+        }),
+    ] {
+        let (st, body) = a
+            .call(
+                Method::POST,
+                "/v1/credentials",
+                Some(&alice.access),
+                Some(bad.clone()),
+            )
+            .await;
+        assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{bad} -> {body}");
+    }
 
     let routes = json!({ "routes": [{ "alias": "main", "credential_id": cred_id, "upstream_model": "claude-sonnet" }] });
     let (st, body) = a

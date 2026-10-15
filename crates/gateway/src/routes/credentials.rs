@@ -7,6 +7,7 @@ use axum::http::StatusCode;
 use keyvault::SealedSecret;
 use keyvault::secrecy::SecretString;
 use proto::domain::{Credential, CredentialId, UserId};
+use proto::vendors;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use store::NewCredential;
@@ -30,7 +31,7 @@ async fn seal(
         .map_err(ApiError::internal)
 }
 
-fn check_key(api_key: &str) -> ApiResult<()> {
+fn check_key(vendor: &str, api_key: &str) -> ApiResult<()> {
     if api_key.len() < 8 || api_key.len() > 4096 {
         return Err(ApiError::invalid("api_key must be 8-4096 bytes"));
     }
@@ -39,7 +40,8 @@ fn check_key(api_key: &str) -> ApiResult<()> {
             "api_key must not contain spaces or control characters",
         ));
     }
-    Ok(())
+    // 订阅类 key（编程套餐等）按厂商条款只能在官方工具里用，平台不能中转（9.12）。
+    vendors::check_key(vendor, api_key).map_err(ApiError::invalid)
 }
 
 fn check_base(field: &str, url: &Option<String>) -> ApiResult<()> {
@@ -47,6 +49,11 @@ fn check_base(field: &str, url: &Option<String>) -> ApiResult<()> {
         check_len(field, u, 9, 512)?;
         if !u.starts_with("https://") {
             return Err(ApiError::invalid(format!("{field} must be an https URL")));
+        }
+        if let Some(plan) = vendors::plan_only_base(u) {
+            return Err(ApiError::invalid(format!(
+                "{field}: {plan} is a coding or subscription plan address, which only works in the vendor's own tools; use the pay-as-you-go address"
+            )));
         }
     }
     Ok(())
@@ -77,18 +84,14 @@ pub async fn create(
     ApiJson(req): ApiJson<CreateReq>,
 ) -> ApiResult<(StatusCode, Json<Credential>)> {
     check_len("vendor", &req.vendor, 1, 64)?;
-    if !req
-        .vendor
-        .bytes()
-        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"-_.:".contains(&b))
-    {
+    if !vendors::is_known(&req.vendor) {
         return Err(ApiError::invalid(
-            "vendor must be a vendor id like anthropic or deepseek:cn",
+            "unknown vendor: use an id from GET /v1/vendors, or custom with your own base URLs",
         ));
     }
     check_len("label", &req.label, 0, 64)?;
     let api_key = Zeroizing::new(req.api_key);
-    check_key(&api_key)?;
+    check_key(&req.vendor, &api_key)?;
     check_base("anthropic_base", &req.anthropic_base)?;
     check_base("openai_base", &req.openai_base)?;
     check_base("responses_base", &req.responses_base)?;
@@ -182,11 +185,11 @@ pub async fn replace_secret(
 ) -> ApiResult<Json<Credential>> {
     let id: CredentialId = parse_id(&id, "credential")?;
     let api_key = Zeroizing::new(req.api_key);
-    check_key(&api_key)?;
-    // 先确认记录存在、属于自己，再加密。
+    // 先确认记录存在、属于自己（按它的厂商检查新 key），再加密。
     let mut t = s.db.tenant(who.user).await?;
-    t.credential(id).await?;
+    let current = t.credential(id).await?;
     t.rollback().await?;
+    check_key(&current.vendor, &api_key)?;
     let sealed = seal(&s, who.user, id, &SecretString::from(api_key.to_string())).await?;
     let mut t = s.db.tenant(who.user).await?;
     t.replace_credential_secret(id, &sealed.ciphertext, &sealed.last4)

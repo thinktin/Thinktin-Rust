@@ -143,6 +143,20 @@ pub struct EventsPage {
     pub latest_seq: Option<u64>,
 }
 
+/// 预置的模型厂商（9.12）。不在列表里的接口用 `custom` 加自定义地址。
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct VendorInfo {
+    pub id: String,
+    pub name: String,
+    /// `anthropic`、`chat`、`responses` 中的若干个：Claude 走 anthropic，Codex 只会 responses，其余走 chat。
+    pub protocols: Vec<String>,
+    /// 推荐的上游模型，以厂商控制台为准。
+    #[serde(default)]
+    pub models: Vec<String>,
+    #[serde(default)]
+    pub notes: String,
+}
+
 #[derive(Clone, Default, Serialize)]
 pub struct NewCredential {
     pub vendor: String,
@@ -735,6 +749,18 @@ impl Api {
     }
 
     // ---------- 模型 key ----------
+
+    /// 预置的模型厂商（添加 key 时选）。
+    pub async fn vendors(&self) -> Result<Vec<VendorInfo>> {
+        #[derive(Deserialize)]
+        struct R {
+            vendors: Vec<VendorInfo>,
+        }
+        Ok(self
+            .json::<R>(Method::GET, "/v1/vendors", None)
+            .await?
+            .vendors)
+    }
 
     pub async fn credentials(&self) -> Result<Vec<Credential>> {
         #[derive(Deserialize)]

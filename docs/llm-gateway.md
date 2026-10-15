@@ -1,6 +1,6 @@
 # ThinkTin 模型网关与密钥库
 
-> 更新日期：2026-10-14　｜　对应 WBS：9.1 信封加密、4.4 沙箱令牌、9.2 鉴权与路由、9.3 流式透传、9.4 计量、9.5 限额与熔断、9.6 SSRF 防护、9.7 厂商适配（适配表已按官方文档核对，待真实 key 联调）
+> 更新日期：2026-10-16　｜　对应 WBS：9.1 信封加密、4.4 沙箱令牌、9.2 鉴权与路由、9.3 流式透传、9.4 计量、9.5 限额与熔断、9.6 SSRF 防护、9.7 厂商适配、9.12 主流模型品牌预置（适配表已按官方文档核对，待真实 key 联调）
 >
 > 依据《ThinkTin 平台架构方案 v3》第 5 节和 4.6 节。
 
@@ -205,12 +205,15 @@ GW=1 PROMPT='MOCK_TOOL:Bash:{"command": "touch x", "description": "touch"}' EXPE
 | 预算请求前检查、响应后记账 | 同时在途的请求、多副本之间的汇总间隔可能让当天用量略微超出上限 | 必要时预扣 |
 | 取不到用量时按估算记账 | 估算偏保守：请求里有 base64 图片时输入会估得很高；取消的流按事件数估输出 | 可接受（只影响预算，不影响厂商实际扣费）；对账以厂商账单为准 |
 | 只有 Chat Completions 接口的厂商不能给 Codex 用 | Codex 只会 Responses 协议 | 网关做协议转换（架构方案 5.3，后期） |
+| 降级链换到不同的上游模型 | Claude（Opus 5.5 起）的思考块绑定模型和会话，Gemini 有思考签名，同一会话中途换模型会被厂商拒绝 | 降级链对这类模型只在同一上游模型的不同 key 之间切换，或换模型时去掉历史思考块（后续） |
 | 厂商适配表只按文档核对，还没用真实 key 联调 | 文档没写清的地方（见第 11 节“待联调”）可能和实际不符 | 9.7 用各家真实 key 逐项验证 |
 | 路由数据、预算账本、用量记录都在内存或日志里 | 只适合开发 | 3.x 数据层、9.10 用量看板 |
 
-## 11. 厂商适配表（9.7）
+## 11. 厂商适配表（9.7、9.12）
 
-`llm-gw vendors` 打印完整的表（`crates/llm-gw/src/vendors.rs`）。按各家官方文档核对于 2026-10-14；**各家的国内站和国际站账号、key 互不相通**，用错区域的地址会返回 401，所以每个区域单独一条，用户保存 key 时选区域。
+`llm-gw vendors` 打印完整的表。表在 `crates/proto/src/vendors.rs`，模型网关按它路由，接入网关按它校验 key，App 通过 `GET /v1/vendors` 拿到可选厂商（client-core 的 `vendors()`）。只预置模型品牌方自己的官方接口；聚合平台、中转站不预置，用户按自定义端点（`custom`）填地址。**各家的国内站和国际站账号、key 互不相通**，用错区域的地址会返回 401，所以每个区域单独一条，用户保存 key 时选区域。
+
+前 5 家（9.7）按官方文档核对于 2026-10-14，后 9 家（9.12）核对于 2026-10-16。
 
 | id | Anthropic 兼容（不带 /v1） | 鉴权头 | OpenAI 兼容 | Responses 前缀 | Chat 流式用量 |
 |---|---|---|---|---|---|
@@ -223,10 +226,25 @@ GW=1 PROMPT='MOCK_TOOL:Bash:{"command": "touch x", "description": "touch"}' EXPE
 | `kimi-intl` | `https://api.moonshot.ai/anthropic` | Bearer | `https://api.moonshot.ai/v1` | 同左 | 同上 |
 | `minimax-cn` | `https://api.minimax.cn/anthropic` | Bearer | `https://api.minimax.cn/v1` | 同左 | 补 |
 | `minimax-intl` | `https://api.minimax.io/anthropic` | Bearer | `https://api.minimax.io/v1` | 同左 | 补 |
+| `anthropic` | `https://api.anthropic.com` | x-api-key | `https://api.anthropic.com/v1`（兼容层，官方定位测试用） | 无 | 补 |
+| `openai` | 无 | | `https://api.openai.com/v1` | 同左（有状态） | 补 |
+| `gemini`（Gemini API） | 无 | | `https://generativelanguage.googleapis.com/v1beta/openai` | 无 | 补 |
+| `xai` | 无 | | `https://api.x.ai/v1`（官方标为旧接口） | 同左 | 每个分片都带累计值，不用补 |
+| `mistral` | 无 | | `https://api.mistral.ai/v1` | 无 | 不补：接口文档没有 `stream_options` |
+| `doubao-cn`（火山方舟） | `https://ark.cn-beijing.volces.com/api/compatible` | Bearer | `https://ark.cn-beijing.volces.com/api/v3` | 同左（默认存储） | 补 |
+| `doubao-intl`（BytePlus ModelArk） | 无（文档没写） | | `https://ark.ap-southeast.bytepluses.com/api/v3` | 同左 | 补（按火山方舟，待联调） |
+| `ernie`（百度千帆） | `https://qianfan.baidubce.com/anthropic` | x-api-key | `https://qianfan.baidubce.com/v2` | 无 | 不补：文档没写 |
+| `hunyuan-cn`（腾讯 TokenHub） | `https://tokenhub.tencentmaas.com` | x-api-key | `https://tokenhub.tencentmaas.com/v1` | 同左 | 补（文档要求） |
+| `hunyuan-intl`（TokenHub 新加坡） | `https://tokenhub-intl.tencentcloudmaas.com` | Bearer | `https://tokenhub-intl.tencentcloudmaas.com/v1` | 同左 | 补 |
+| `stepfun`（阶跃星辰） | `https://api.stepfun.com` | Bearer | `https://api.stepfun.com/v1` | 无 | 每个分片都带累计值，不用补 |
 
-**五家都提供 Responses API**，所以 Codex 不需要协议转换就能用；但各家的 Responses 都是无状态的（不支持 `previous_response_id`、`store`），Codex 用自定义供应商时每次都发完整上下文，不受影响。
+**Codex 只会 Responses 协议**。能直接用的：DeepSeek、百炼、智谱、Kimi、MiniMax、OpenAI、xAI、火山方舟、BytePlus、腾讯 TokenHub。Anthropic、Gemini、Mistral、千帆、阶跃没有 Responses，要等网关做协议转换（第 10 节）。国内前五家的 Responses 都是无状态的（不支持 `previous_response_id`、`store`）；OpenAI 有状态；火山方舟默认开启存储，要无状态得显式传 `store: false`。Codex 用自定义供应商时每次都发完整上下文，不依赖服务端存储。
 
-**订阅类 key 不收**：百炼编程套餐（`sk-sp-`）、MiniMax 订阅（`sk-cp-`）的 key 按厂商条款只能在官方工具里用；智谱明确把“中转”列为封号行为。保存 key 时按前缀拒绝（智谱的编程套餐 key 没有前缀可辨认，界面上提示用户只填按量付费 key）。
+**订阅类 key 和套餐地址不收**。编程套餐、订阅套餐的额度按各家条款只能在官方支持的编程工具里用，平台替用户中转属于违规：
+
+- 按前缀拒绝的 key：百炼编程套餐 `sk-sp-`、MiniMax 订阅 `sk-cp-`、腾讯 Token Plan `sk-tp-`（条款写明“严禁 API 调用”）、Claude 订阅（Free、Pro、Max）的 OAuth 令牌 `sk-ant-oat…` / `sk-ant-ort…`（Anthropic 条款不允许第三方平台收集、保存或居间 Claude 账号凭证）。
+- 自定义端点填了套餐专用地址就拒绝（`PLAN_ONLY_BASES`，只防误填，不是安全边界）：火山方舟 `/api/coding`、`/api/plan`，BytePlus `/api/coding`，千帆 `/v2/coding`、`/anthropic/coding`，腾讯 `api.lkeap.cloud.tencent.com/plan`、`tokenhub-intl…/plan`，阶跃 `/step_plan`，智谱 `/api/coding`。
+- 没法按前缀分辨的：智谱编程套餐的 key 和按量付费共用 Anthropic 地址；火山方舟套餐用专属 key（前缀没公开）；阶跃 Step Plan 和按量付费是同一把 key、按地址计费。预置地址都是按量付费地址，界面上提示用户只填按量付费 key。千帆的套餐 key 调普通接口会被千帆自己拒绝（401）。
 
 **会影响 agent 的差异**（详见表里每家的 `notes`）：
 
@@ -235,8 +253,16 @@ GW=1 PROMPT='MOCK_TOOL:Bash:{"command": "touch x", "description": "touch"}' EXPE
 - Kimi 按“输入 + max_completion_tokens”预占 TPM，同一账号下所有 key 共用额度；低等级账号跑 kimi-k3 容易 429。
 - 智谱流式中途失败不返回错误码，只在最后一个分片的 `finish_reason` 里体现（如 `sensitive`、`network_error`）。
 - 百炼的 key 可能被用户设了来源 IP 和模型白名单，网关的出口 IP 不在白名单里会被拒。
+- Claude Opus 5.5 不能关思考、强制工具调用会报错、思考块绑定模型和会话：同一会话中途换上游模型会出错，降级链换到别的模型时要注意（第 10 节）。Anthropic 的 OpenAI 兼容层不返回思考内容、不支持提示缓存，官方说明不适合生产，Chat 类 agent 用 Claude 时效果打折扣。
+- Gemini 已弃用的模型 id 会被静默转到新模型；思考签名要原样回传（网关透传不改请求体，不受影响）。
+- xAI、阶跃的 Chat Completions 流式每个分片都带累计用量，网关取最后一个，不能累加。
+- 腾讯原混元 API（`api.hunyuan.cloud.tencent.com`）已于 2026-09-30 停服，混元统一走 TokenHub。TokenHub 也托管其他厂商的模型；Anthropic 接口的缓存用量字段不完整，部分模型开思考时 `temperature` 必须为 1。
+- 阶跃的 Anthropic 接口文档只列了部分请求字段（没有 `thinking`、`metadata`，思考强度用 `output_config.effort`），Claude agent 发的其他字段怎么处理要联调确认。
+- 千帆发过“Anthropic API 返回参数 input_tokens 含义更新”的公告，计量要按新含义核对。
 
-**待联调**（文档没写清，需要真实 key 验证）：DeepSeek、智谱的 Anthropic 接口是否也认 Bearer；百炼共享域名下的 `/compatible-mode/v1/responses`；智谱 Chat Completions 收到 `stream_options` 是忽略还是报错；DeepSeek、智谱 Anthropic 流里用量的位置；MiniMax Responses 流式事件和用量的位置。
+**待联调**（文档没写清，需要真实 key 验证）：DeepSeek、智谱的 Anthropic 接口是否也认 Bearer；百炼共享域名下的 `/compatible-mode/v1/responses`；智谱 Chat Completions 收到 `stream_options` 是忽略还是报错；DeepSeek、智谱 Anthropic 流里用量的位置；MiniMax Responses 流式事件和用量的位置；Mistral、千帆流式用量在哪个分片（现在都不补 `include_usage`，取不到就按估算记账）；BytePlus 是否支持 `include_usage`、有没有 Anthropic 兼容接口；腾讯 TokenHub 的 Responses 路径（按 OpenAI 兼容前缀推断）和新加坡站的 Anthropic 地址（按国内站推断）；xAI 是否还有 Anthropic 兼容接口（官方文档已不提）；千帆文心、BytePlus 豆包的模型 id（预置里留空，用户按控制台填）；阶跃国际站。
+
+**依据**（9.12 部分，均为官方文档）：platform.claude.com/docs（models、api/overview、cli-sdks-libraries/libraries/openai-sdk）、code.claude.com/docs/en/legal-and-compliance；developers.openai.com/api/docs/models；ai.google.dev/gemini-api/docs/openai、/models；docs.x.ai/overview、/developers/model-capabilities/text/streaming；docs.mistral.ai/api、/models；ark.volcengine.com/region:cn-beijing/docs/82379/2160841、docs.volcengine.com/docs/ark/chat-api、/responses-api-migration；docs.byteplus.com/en/docs/ModelArk/model-list、/api/docs/ModelArk/2288685；cloud.baidu.com/doc/qianfan-docs/s/6mh3e6gjp、/doc/qianfan/s/imlg0beiu；cloud.tencent.com/announce/detail/2287、/document/product/1823/135874、/document/product/1823/130060、intl.cloud.tencent.com/zh/document/product/1300/80695；platform.stepfun.com/docs/zh/api-reference/chat/messages-create、/chat-completion-create、/step-plan/overview；docs.z.ai/devpack/tool/others。条款和模型变化很快，上线前复核。
 
 ## 12. 安全审查（2026-10-14）
 
