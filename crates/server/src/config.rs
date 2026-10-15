@@ -385,6 +385,7 @@ impl Default for Config {
             observability: Observability::default(),
             sandbox_token_seed: None,
             jpush_master_secret: None,
+            cube_api_key: None,
             api_secrets: ApiSecrets::default(),
         }
     }
