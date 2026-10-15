@@ -1,5 +1,7 @@
 //! 运维接口和所有接口共用的中间件。业务接口由接入网关模块（5.1）挂到这里。
 
+use std::time::Duration;
+
 use axum::Router;
 use axum::extract::{Request, State};
 use axum::http::{HeaderValue, StatusCode};
@@ -33,7 +35,19 @@ pub fn router(state: AppState, api: Option<Router>) -> Router {
     ops.merge(api.unwrap_or_default())
         .fallback(not_found)
         .layer(middleware::from_fn(api_version))
+        .layer(middleware::from_fn(request_timeout))
         .layer(middleware::from_fn(crate::observability::track))
+}
+
+/// 单个请求（含读请求体）最长处理多久：慢慢发请求体的连接不能一直占着处理资源。
+/// WebSocket 升级请求的处理函数马上返回，升级后的连接不受这个限制。
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+
+async fn request_timeout(req: Request, next: Next) -> Response {
+    match tokio::time::timeout(REQUEST_TIMEOUT, next.run(req)).await {
+        Ok(resp) => resp,
+        Err(_) => error(ErrorCode::Unavailable, "request timed out"),
+    }
 }
 
 pub fn error(code: ErrorCode, message: impl Into<String>) -> Response {

@@ -994,12 +994,22 @@ async fn a_taken_over_run_is_left_to_the_new_holder() {
     let run = e.queue("loop forever", None, 3).await;
     let (_stop, h) = e.spawn().await;
     e.wait_state(run, RunState::Running).await;
-    tokio::time::sleep(Duration::from_millis(400)).await;
+    // 续租间隔比租约长：两次续租之间租约会过期，等到那时接手（机器忙时时间点不固定，轮询）。
+    // 每次新开事务：now() 是事务开始的时间。
+    let mut taken = Vec::new();
     let mut w = e.t.db.worker().await.unwrap();
-    let taken = w
-        .take_over_expired("node-b", Duration::from_secs(60), 10)
-        .await
-        .unwrap();
+    for _ in 0..100 {
+        taken = w
+            .take_over_expired("node-b", Duration::from_secs(60), 10)
+            .await
+            .unwrap();
+        if !taken.is_empty() {
+            break;
+        }
+        w.rollback().await.unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        w = e.t.db.worker().await.unwrap();
+    }
     assert_eq!(taken.len(), 1);
     // 接手的副本已经让 agent 请求了一次审批。
     w.create_approval(&store::NewApproval {

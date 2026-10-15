@@ -528,7 +528,8 @@ impl ArtifactTools {
             .publish(origin, a.name.trim(), content_type, &bytes)
             .await
             .map_err(|e| match e {
-                crate::artifacts::ArtifactError::Invalid(m) => Fail(m),
+                crate::artifacts::ArtifactError::Invalid(m)
+                | crate::artifacts::ArtifactError::Store(store::Error::Invalid(m)) => Fail(m),
                 other => {
                     tracing::error!(error = %other, "publishing an artifact failed");
                     Fail("could not store the artifact, try again later".into())

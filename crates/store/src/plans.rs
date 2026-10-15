@@ -127,7 +127,7 @@ impl Tx<Tenant> {
             "SELECT ",
             plan_columns!(),
             " FROM plans WHERE status <> 'deleted' AND ($1::uuid IS NULL OR instance_id = $1) \
-             ORDER BY created_at"
+             ORDER BY created_at LIMIT 1000"
         ))
         .bind(instance.map(|i| i.0))
         .fetch_all(self.conn())

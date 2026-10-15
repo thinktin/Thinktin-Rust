@@ -62,6 +62,11 @@ impl EventHub {
             };
             if let Err(e) = listener.listen(store::EVENTS_CHANNEL).await {
                 warn!(error = %e, "event listener cannot subscribe");
+                tokio::select! {
+                    () = &mut stop => return,
+                    () = tokio::time::sleep(backoff) => {}
+                }
+                backoff = (backoff * 2).min(Duration::from_secs(10));
                 continue;
             }
             info!("event listener connected");
@@ -70,11 +75,17 @@ impl EventHub {
             loop {
                 tokio::select! {
                     () = &mut stop => return,
-                    n = listener.recv() => match n {
-                        Ok(n) => {
+                    // recv() 断线后会自己悄悄重连，中间的通知丢了也不知道；try_recv() 断线时返回
+                    // None（下次调用再重连），这时叫醒所有订阅者，让它们从库里补。
+                    n = listener.try_recv() => match n {
+                        Ok(Some(n)) => {
                             if let Ok(id) = n.payload().parse::<InstanceId>() {
                                 self.notify(id);
                             }
+                        }
+                        Ok(None) => {
+                            warn!("event listener reconnecting");
+                            self.notify_all();
                         }
                         Err(e) => {
                             warn!(error = %e, "event listener lost its connection");
