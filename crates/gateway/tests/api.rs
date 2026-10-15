@@ -700,6 +700,34 @@ async fn event_stream_replays_then_streams_live() {
         (Some(1), Some(5))
     );
 
+    // 事件全过了保留期（按月删分区）：续传要先收到 reset，不能悄悄跳过中间那段。
+    sqlx::query("DELETE FROM events WHERE instance_id = $1")
+        .bind(inst.0)
+        .execute(a.t.db.pool())
+        .await
+        .unwrap();
+    let (_, page) = a
+        .call(
+            Method::GET,
+            &format!("/v1/instances/{inst}/events?after=2"),
+            Some(&u.access),
+            None,
+        )
+        .await;
+    assert_eq!(
+        (page["oldest_seq"].as_u64(), page["latest_seq"].as_u64()),
+        (Some(6), Some(5))
+    );
+    let mut resumed = ws_connect(&a, Some(&u.access), inst, 2).await.unwrap();
+    let reset = next_event(&mut resumed).await;
+    assert_eq!(
+        (reset["type"].as_str(), reset["oldest_seq"].as_u64()),
+        (Some("reset"), Some(6))
+    );
+    let seq = append("agent.message", 6).await;
+    assert_eq!(next_event(&mut resumed).await["seq"].as_u64(), Some(seq));
+    resumed.close(None).await.ok();
+
     // 别人订阅不了。
     let bob = a.login("13900139000").await;
     assert!(ws_connect(&a, Some(&bob.access), inst, 0).await.is_err());

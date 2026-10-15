@@ -91,22 +91,22 @@ impl<R> Tx<R> {
         rows.into_iter().map(Row::into_event).collect()
     }
 
-    /// 还保留着的最早序号（没有事件时为 None）和最新序号。
-    /// 客户端要续传的位置早于最早序号时，中间的事件已经过了保留期，客户端要整体重新加载。
-    pub async fn event_range(&mut self, instance: InstanceId) -> Result<(Option<u64>, u64)> {
-        let latest: i64 = sqlx::query_scalar("SELECT event_seq FROM instances WHERE id = $1")
-            .bind(instance.0)
-            .fetch_one(self.conn())
-            .await?;
-        let oldest: Option<i64> =
-            sqlx::query_scalar("SELECT min(seq) FROM events WHERE instance_id = $1")
-                .bind(instance.0)
-                .fetch_one(self.conn())
-                .await?;
-        Ok((
-            oldest.map(|v| unsigned(v, "event seq")).transpose()?,
-            unsigned(latest, "event seq")?,
-        ))
+    /// 还保留着的最早序号和最新序号（同一个快照里读）。一条都没保留时，最早序号是下一条的序号
+    /// （最新 + 1）：客户端要续传的位置早于最早序号，说明中间的事件已经过了保留期，要整体重新加载。
+    pub async fn event_range(&mut self, instance: InstanceId) -> Result<(u64, u64)> {
+        let (latest, oldest): (i64, Option<i64>) = sqlx::query_as(
+            "SELECT event_seq, (SELECT min(seq) FROM events WHERE instance_id = $1) \
+             FROM instances WHERE id = $1",
+        )
+        .bind(instance.0)
+        .fetch_one(self.conn())
+        .await?;
+        let latest = unsigned(latest, "event seq")?;
+        let oldest = match oldest {
+            Some(v) => unsigned(v, "event seq")?,
+            None => latest + 1,
+        };
+        Ok((oldest, latest))
     }
 }
 
