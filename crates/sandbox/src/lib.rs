@@ -187,7 +187,9 @@ pub trait SandboxProvider: Send + Sync {
     /// 往沙箱里写文件（交接产出物、续跑简报）。路径相对沙箱根目录。
     async fn write_file(&self, id: &SandboxId, path: &str, data: &[u8]) -> Result<()>;
 
-    async fn read_file(&self, id: &SandboxId, path: &str) -> Result<Vec<u8>>;
+    /// 读沙箱里的文件，最多 `max` 字节；更大的报 [`Error::Invalid`]，不读进内存
+    /// （文件内容由 agent 控制，可能是一个很大的稀疏文件）。
+    async fn read_file(&self, id: &SandboxId, path: &str, max: u64) -> Result<Vec<u8>>;
 }
 
 /// 沙箱里的相对路径不能跳出沙箱。

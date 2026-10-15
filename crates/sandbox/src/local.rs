@@ -401,10 +401,24 @@ impl SandboxProvider for LocalProvider {
         Ok(())
     }
 
-    async fn read_file(&self, id: &SandboxId, path: &str) -> Result<Vec<u8>> {
+    async fn read_file(&self, id: &SandboxId, path: &str, max: u64) -> Result<Vec<u8>> {
+        use tokio::io::AsyncReadExt;
         let dir = self.running_dir(id)?;
         let full = self.resolve(&dir, path, false)?;
-        Ok(tokio::fs::read(full).await?)
+        let file = tokio::fs::File::open(full).await?;
+        let too_large = || Error::Invalid(format!("{path} is larger than {max} bytes"));
+        if file.metadata().await?.len() > max {
+            return Err(too_large());
+        }
+        // 读的时候文件可能还在变大：最多读 max + 1 字节来判断。
+        let mut data = Vec::new();
+        file.take(max.saturating_add(1))
+            .read_to_end(&mut data)
+            .await?;
+        if data.len() as u64 > max {
+            return Err(too_large());
+        }
+        Ok(data)
     }
 }
 
@@ -542,10 +556,16 @@ mod tests {
         // 工作区卷在沙箱销毁后还在：新沙箱挂回同一块卷能读到最新内容。
         let b = p.create(spec(Some("inst-1"))).await.unwrap();
         assert_eq!(
-            p.read_file(&b.id, "workspace/notes/plan.md").await.unwrap(),
+            p.read_file(&b.id, "workspace/notes/plan.md", u64::MAX)
+                .await
+                .unwrap(),
             b"step 2"
         );
-        assert!(p.read_file(&b.id, "home/.agent/state.json").await.is_err());
+        assert!(
+            p.read_file(&b.id, "home/.agent/state.json", u64::MAX)
+                .await
+                .is_err()
+        );
         p.destroy(&b.id).await.unwrap();
 
         // 从快照恢复到另一块卷：回到快照时的状态。
@@ -554,11 +574,15 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            p.read_file(&c.id, "workspace/notes/plan.md").await.unwrap(),
+            p.read_file(&c.id, "workspace/notes/plan.md", u64::MAX)
+                .await
+                .unwrap(),
             b"step 1"
         );
         assert_eq!(
-            p.read_file(&c.id, "home/.agent/state.json").await.unwrap(),
+            p.read_file(&c.id, "home/.agent/state.json", u64::MAX)
+                .await
+                .unwrap(),
             b"{}"
         );
         assert!(matches!(
@@ -582,7 +606,7 @@ mod tests {
             "/etc/passwd",
             "workspace/../../../outside.txt",
         ] {
-            assert!(p.read_file(&s.id, bad).await.is_err(), "{bad}");
+            assert!(p.read_file(&s.id, bad, u64::MAX).await.is_err(), "{bad}");
         }
         // agent 在工作区里建了指向外面的符号链接，平台读文件时不跟过去。
         let mut proc = p
@@ -590,7 +614,26 @@ mod tests {
             .await
             .unwrap();
         assert!(proc.control.wait().await.unwrap().success());
-        assert!(p.read_file(&s.id, "workspace/link.txt").await.is_err());
+        assert!(
+            p.read_file(&s.id, "workspace/link.txt", u64::MAX)
+                .await
+                .is_err()
+        );
+        // 超过上限的文件不读进内存，直接拒绝。
+        p.write_file(&s.id, "workspace/big.bin", &[7; 100])
+            .await
+            .unwrap();
+        assert!(matches!(
+            p.read_file(&s.id, "workspace/big.bin", 99).await,
+            Err(Error::Invalid(_))
+        ));
+        assert_eq!(
+            p.read_file(&s.id, "workspace/big.bin", 100)
+                .await
+                .unwrap()
+                .len(),
+            100
+        );
         assert!(
             p.write_file(&s.id, "workspace/link.txt", b"x")
                 .await

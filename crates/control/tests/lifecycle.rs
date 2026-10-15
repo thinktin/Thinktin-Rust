@@ -120,7 +120,7 @@ async fn adopt_wake_pause_archive_and_rebuild() {
     assert_ne!(new_sid, sid);
     assert_eq!(
         e.provider
-            .read_file(&SandboxId(new_sid.clone()), "workspace/notes.txt")
+            .read_file(&SandboxId(new_sid.clone()), "workspace/notes.txt", u64::MAX)
             .await
             .unwrap(),
         b"keep me",
@@ -361,7 +361,7 @@ async fn version_changes_rebuild_on_the_next_wake() {
     );
     let kept = e
         .provider
-        .read_file(&SandboxId(new.clone()), "workspace/notes.md")
+        .read_file(&SandboxId(new.clone()), "workspace/notes.md", u64::MAX)
         .await
         .unwrap();
     assert_eq!(kept, b"keep me", "the workspace volume survives");

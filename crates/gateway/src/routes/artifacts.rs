@@ -71,15 +71,21 @@ pub async fn get(
     Ok(Json(a.artifact))
 }
 
-/// 文本类产出物：下载时末尾能加显式标识。
-fn is_labelable_text(content_type: &str) -> bool {
+/// 文本类产出物：下载时末尾能加显式标识。内容类型是 agent 给的，文件扩展名也算：
+/// agent 不能靠把 `.md` 标成别的类型来躲开标识。
+fn is_labelable_text(content_type: &str, name: &str) -> bool {
     let base = content_type
         .split(';')
         .next()
         .unwrap_or_default()
         .trim()
         .to_ascii_lowercase();
+    let ext = name
+        .rsplit_once('.')
+        .map(|(_, e)| e.to_ascii_lowercase())
+        .unwrap_or_default();
     matches!(base.as_str(), "text/plain" | "text/markdown")
+        || matches!(ext.as_str(), "txt" | "md" | "markdown")
 }
 
 /// 下载：解密后返回。按附件下载，避免浏览器把 agent 产出的 HTML 当页面执行。
@@ -94,7 +100,7 @@ pub async fn content(
     let a = t.artifact(id).await?;
     t.rollback().await?;
     let mut bytes = store(&s)?.read(&a).await.map_err(ApiError::internal)?;
-    if s.cfg.label_downloads && is_labelable_text(&a.artifact.content_type) {
+    if s.cfg.label_downloads && is_labelable_text(&a.artifact.content_type, &a.artifact.name) {
         bytes.extend_from_slice(labels::text_footer(&s.cfg.content_producer).as_bytes());
     }
     let mut resp = Response::new(Body::from(bytes));

@@ -393,6 +393,7 @@ async fn steps_run_in_dependency_order_and_hand_over_artifacts() {
         .read_file(
             &SandboxId(rt_b.sandbox_id.unwrap()),
             "workspace/handoff/notes.md",
+            u64::MAX,
         )
         .await
         .unwrap();

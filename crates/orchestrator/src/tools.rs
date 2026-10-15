@@ -510,7 +510,11 @@ impl ArtifactTools {
                 let sid = sandbox.ok_or_else(|| Fail("the sandbox is not running".into()))?;
                 let bytes = self
                     .provider
-                    .read_file(&sandbox::SandboxId(sid), &self.workspace_path(path)?)
+                    .read_file(
+                        &sandbox::SandboxId(sid),
+                        &self.workspace_path(path)?,
+                        crate::artifacts::MAX_ARTIFACT_BYTES as u64,
+                    )
                     .await
                     .map_err(|e| Fail(format!("reading {path}: {e}")))?;
                 (bytes, "application/octet-stream")
