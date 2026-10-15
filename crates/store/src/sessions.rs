@@ -272,6 +272,14 @@ impl Tx<Worker> {
         new_hash: &[u8],
         ttl: Duration,
     ) -> Result<()> {
+        // 换下来的令牌记进历史：以后再出示它就是被盗信号（见 `refresh_hash_retired`）。
+        sqlx::query(
+            "INSERT INTO session_refresh_history (session_id, refresh_hash) \
+             SELECT id, refresh_hash FROM sessions WHERE id = $1 ON CONFLICT DO NOTHING",
+        )
+        .bind(id.0)
+        .execute(self.conn())
+        .await?;
         sqlx::query(
             "UPDATE sessions SET prev_refresh_hash = refresh_hash, refresh_hash = $2, rotated_at = now(), \
                expires_at = now() + make_interval(secs => $3) WHERE id = $1",
@@ -288,6 +296,30 @@ impl Tx<Worker> {
         .execute(self.conn())
         .await?;
         Ok(())
+    }
+
+    /// 这个哈希是不是会话以前轮换掉的刷新令牌。
+    pub async fn refresh_hash_retired(&mut self, id: SessionId, hash: &[u8]) -> Result<bool> {
+        Ok(sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM session_refresh_history WHERE session_id = $1 AND refresh_hash = $2)",
+        )
+        .bind(id.0)
+        .bind(hash)
+        .fetch_one(self.conn())
+        .await?)
+    }
+
+    /// 清理已经失效很久的会话的刷新令牌历史。
+    pub async fn purge_refresh_history(&mut self, older_than: Duration) -> Result<u64> {
+        let done = sqlx::query(
+            "DELETE FROM session_refresh_history h USING sessions s \
+             WHERE s.id = h.session_id \
+               AND least(coalesce(s.revoked_at, s.expires_at), s.expires_at) < now() - make_interval(secs => $1)",
+        )
+        .bind(secs(older_than))
+        .execute(self.conn())
+        .await?;
+        Ok(done.rows_affected())
     }
 
     pub async fn revoke_session(&mut self, id: SessionId, reason: &str) -> Result<()> {

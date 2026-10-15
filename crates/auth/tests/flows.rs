@@ -124,6 +124,32 @@ async fn login_refresh_and_reuse_detection() {
     ));
 }
 
+/// 拿到旧令牌的人连刷两次，把用户手里的令牌挤出“上一个”：用户再出示它照样判定为重用，整个会话吊销。
+#[tokio::test]
+async fn reuse_of_any_retired_refresh_token_revokes_the_session() {
+    let Some(t) = TestDb::new().await else { return };
+    let (svc, sms) = service(&t, Duration::ZERO);
+    let l = login(&svc, &sms, "a").await;
+    let stolen = l.tokens.refresh_token.clone();
+    let t1 = svc.refresh(&stolen).await.unwrap();
+    let t2 = svc.refresh(&t1.refresh_token).await.unwrap();
+    let t3 = svc.refresh(&t2.refresh_token).await.unwrap();
+    // 用户手里还是最早那个：已经不是“上一个”了，但仍然判定为重用。
+    assert!(matches!(
+        svc.refresh(&l.tokens.refresh_token).await,
+        Err(AuthError::SessionRevoked)
+    ));
+    // 攻击者那条链跟着失效。
+    assert!(matches!(
+        svc.refresh(&t3.refresh_token).await,
+        Err(AuthError::SessionRevoked)
+    ));
+    assert!(matches!(
+        svc.authenticate(&t3.access_token).await,
+        Err(AuthError::SessionRevoked)
+    ));
+}
+
 #[tokio::test]
 async fn concurrent_refresh_within_grace_is_allowed() {
     let Some(t) = TestDb::new().await else { return };

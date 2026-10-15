@@ -348,7 +348,8 @@ impl AuthService {
         if !current {
             if previous && s.since_rotation <= self.cfg.refresh_reuse_grace {
                 // App 同时发了两个刷新请求，另一个刚轮换完：照常轮换，两边拿到的令牌都能用到下次刷新。
-            } else if previous {
+            } else if previous || w.refresh_hash_retired(sid, &presented.hash()).await? {
+                // 出示的是这个会话以前用过的令牌（不只是上一个）：令牌被盗，整个会话吊销。
                 w.revoke_session(sid, "refresh_token_reuse").await?;
                 w.audit(
                     Some(s.user_id),

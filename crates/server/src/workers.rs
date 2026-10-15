@@ -31,6 +31,8 @@ use crate::{Background, Config, ShutdownListener};
 const EVENT_RETENTION_DAYS: i64 = 30;
 /// 登录验证码保留多久（排查问题用），之后删除。
 const LOGIN_CODE_RETENTION: Duration = Duration::from_secs(7 * 24 * 3600);
+/// 会话失效（过期或吊销）多久以后清掉它的刷新令牌历史。
+const REFRESH_HISTORY_RETENTION: Duration = Duration::from_secs(30 * 24 * 3600);
 
 async fn stopped(mut stop: ShutdownListener) {
     stop.wait().await;
@@ -208,7 +210,8 @@ async fn maintain(db: &Db) -> store::Result<()> {
     let dropped = w
         .drop_event_partitions_before(today - chrono::Duration::days(EVENT_RETENTION_DAYS))
         .await?;
-    let purged = w.purge_login_codes(LOGIN_CODE_RETENTION).await?;
+    let purged = w.purge_login_codes(LOGIN_CODE_RETENTION).await?
+        + w.purge_refresh_history(REFRESH_HISTORY_RETENTION).await?;
     w.commit().await?;
     if dropped > 0 || purged > 0 {
         info!(
