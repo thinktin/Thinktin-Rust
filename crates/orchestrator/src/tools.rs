@@ -118,6 +118,10 @@ fn check_text(field: &str, v: &str, max: usize) -> Result<(), Fail> {
     if n == 0 || n > max {
         return Err(Fail(format!("{field} must be 1-{max} characters")));
     }
+    // NUL 存不进 Postgres 的文本列，其他控制字符会污染推送和界面（换行、制表符除外）。
+    if v.chars().any(|c| c.is_control() && c != '\n' && c != '\t') {
+        return Err(Fail(format!("{field} contains control characters")));
+    }
     Ok(())
 }
 

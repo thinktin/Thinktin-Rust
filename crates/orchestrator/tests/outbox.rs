@@ -199,3 +199,31 @@ async fn filtered_push_text_is_replaced_not_dropped() {
         "{bodies:?}"
     );
 }
+
+/// 推送服务给一个离谱的 Retry-After：截到退避上限，投递器不能因为时间溢出崩掉。
+#[tokio::test]
+async fn absurd_retry_after_is_clamped() {
+    let Some(t) = TestDb::new().await else { return };
+    let user = user_with_devices(&t, &[(PushChannelKind::Apns, "tok")]).await;
+    let apns = Arc::new(Scripted::default());
+    apns.set(
+        "tok",
+        PushOutcome::Retry {
+            after: Some(Duration::from_secs(10_000_000_000_000)),
+            reason: "429".into(),
+        },
+    );
+    // 退避上限设成 0：截断生效的话，下一轮马上又能领到。
+    let d = dispatcher(
+        &t,
+        apns,
+        DispatcherConfig {
+            backoff_base: Duration::ZERO,
+            backoff_max: Duration::ZERO,
+            ..DispatcherConfig::default()
+        },
+    );
+    enqueue(&t, user, &message(None), "k").await;
+    assert_eq!(d.tick().await.unwrap().retried, 1);
+    assert_eq!(d.tick().await.unwrap().retried, 1);
+}

@@ -238,8 +238,14 @@ impl Dispatcher {
                 Settle::Retry(reason, after) => {
                     report.retried += 1;
                     metrics::counter!("thinktin_push_total", "result" => "retried").increment(1);
-                    let delay = after.max(self.backoff(item.attempts));
-                    let at = Utc::now() + chrono::Duration::from_std(delay).unwrap_or_default();
+                    // 推送服务给的 Retry-After 不可信：太大的值会让时间相加溢出、让投递器崩溃。
+                    let delay = after
+                        .max(self.backoff(item.attempts))
+                        .min(self.cfg.backoff_max);
+                    let at = chrono::Duration::from_std(delay)
+                        .ok()
+                        .and_then(|d| Utc::now().checked_add_signed(d))
+                        .unwrap_or_else(Utc::now);
                     w.retry_outbox(item.id, &self.node_id, &reason, at).await
                 }
             };

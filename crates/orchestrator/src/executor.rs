@@ -177,12 +177,16 @@ fn bound_payload(v: &Value) -> Value {
                 let mut cut = String::with_capacity(MAX_EVENT_STRING + 16);
                 push_capped(&mut cut, s, MAX_EVENT_STRING);
                 cut.push_str("…[truncated]");
-                Value::String(cut)
+                Value::String(strip_nul(cut))
             }
+            // jsonb 也存不了 \u0000。
+            Value::String(s) if s.contains('\0') => Value::String(strip_nul(s.clone())),
             Value::Array(items) => Value::Array(items.iter().map(walk).collect()),
-            Value::Object(map) => {
-                Value::Object(map.iter().map(|(k, v)| (k.clone(), walk(v))).collect())
-            }
+            Value::Object(map) => Value::Object(
+                map.iter()
+                    .map(|(k, v)| (strip_nul(k.clone()), walk(v)))
+                    .collect(),
+            ),
             other => other.clone(),
         }
     }
@@ -195,11 +199,22 @@ fn bound_payload(v: &Value) -> Value {
     }
 }
 
+/// 截断成最多 `max` 个字，顺便去掉 NUL：摘要、原因、标题都来自 agent，NUL 存不进 Postgres，
+/// 一条写不进去就会让整个收尾事务失败、运行卡在 running 直到被接管重跑。
 fn truncate(s: &str, max: usize) -> String {
     let s = s.trim();
-    match s.char_indices().nth(max) {
+    let cut = match s.char_indices().nth(max) {
         Some((i, _)) => format!("{}…", &s[..i]),
         None => s.to_owned(),
+    };
+    strip_nul(cut)
+}
+
+fn strip_nul(s: String) -> String {
+    if s.contains('\0') {
+        s.replace('\0', "")
+    } else {
+        s
     }
 }
 
@@ -973,7 +988,11 @@ impl Exec<'_> {
         options: &[proto::shim::PermissionOption],
         tool_call: &Value,
     ) -> Result<(), Outcome> {
-        let options_json = serde_json::to_value(options).unwrap_or(Value::Null);
+        // 标题、选项、工具调用都来自 agent：限制大小、去掉 NUL 再入库。
+        let options_json = bound_payload(&serde_json::to_value(options).unwrap_or(Value::Null));
+        let tool_call = &bound_payload(tool_call);
+        let title = title.map(|t| truncate(t, 200));
+        let title = title.as_deref();
         let expires_in = Duration::from_secs(self.policy.approval_timeout_secs);
         let key = self.approval_key(request_id);
         let result = async {

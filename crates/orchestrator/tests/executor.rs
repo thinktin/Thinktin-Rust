@@ -195,6 +195,10 @@ async fn fake_shim(
                             break;
                         }
                     }
+                } else if text.contains("nul") {
+                    // agent 回复里夹着 NUL（比如转述的网页标题）：存不进 Postgres，不能让收尾失败。
+                    let _ = ev.send(chunk(&run_id, "done\u{0}here")).await;
+                    let _ = ev.send(ended(&run_id, StopReason::EndTurn)).await;
                 } else if text.contains("flood") {
                     // 失控的 agent：一大段回复，再夹着工具调用不停输出。
                     let big = "z".repeat(200 << 10);
@@ -958,4 +962,15 @@ async fn runs_waiting_for_approval_do_not_hold_an_execution_slot() {
         .await
         .unwrap()
         .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn nul_characters_in_agent_output_do_not_break_finishing() {
+    let Some(e) = env().await else { return };
+    let run = e.queue("reply with a nul", None, 3).await;
+    e.run_to_end().await;
+    let rec = e.state(run).await;
+    assert_eq!(rec.run.state, RunState::Succeeded, "{:?}", rec.run);
+    assert_eq!(rec.run.summary.as_deref(), Some("donehere"));
+    assert_eq!(rec.lease_owner, None);
 }
