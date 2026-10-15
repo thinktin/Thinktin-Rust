@@ -126,8 +126,8 @@ pub enum ShimEvent {
     },
     /// 上下文占用、花费等用量信息（ACP `usage_update` 或一轮结束时的 `usage`）。
     Usage { run_id: Option<String>, raw: Value },
-    /// agent 请求权限。按预授权策略能直接决定的，紧接着会有 [`ShimEvent::PermissionResolved`]；
-    /// 否则等平台发回 [`ShimCommand::PermissionDecision`]。
+    /// agent 请求权限，要等平台发回 [`ShimCommand::PermissionDecision`]（用户决定）。
+    /// 按预授权策略直接决定的请求不发这个事件，只发 [`ShimEvent::PermissionResolved`]（`by: policy`）。
     PermissionRequested {
         run_id: Option<String>,
         request_id: String,

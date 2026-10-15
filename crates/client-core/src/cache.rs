@@ -21,6 +21,7 @@ pub const MAX_INBOX: i64 = 1000;
 
 const SCHEMA: &str = "
 PRAGMA journal_mode = WAL;
+PRAGMA secure_delete = ON;
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS instances (id TEXT PRIMARY KEY, json TEXT NOT NULL, position INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS runs (
@@ -103,14 +104,16 @@ impl Cache {
         })
     }
 
-    /// 退出登录、注销：全部清空。
+    /// 退出登录、注销、会话被吊销：全部清空。删掉的内容用零覆盖（secure_delete），
+    /// WAL 文件里的旧页也截掉，文件里不留上一个人的数据。
     pub fn clear(&self) -> Result<()> {
         self.with(|c| {
             let tx = c.transaction()?;
             for t in TABLES.iter().chain(&["meta"]) {
                 tx.execute(&format!("DELETE FROM {t}"), [])?;
             }
-            tx.commit()
+            tx.commit()?;
+            c.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
         })
     }
 

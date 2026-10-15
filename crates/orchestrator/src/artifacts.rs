@@ -164,6 +164,34 @@ pub fn check_name(name: &str) -> Result<(), ArtifactError> {
     }
 }
 
+/// 内容类型：agent 给的，要是短的、合法的 MIME 类型（`type/subtype`，可带 `; key=value` 参数）。
+/// 它会原样作为下载的 Content-Type 返回。
+pub fn check_content_type(ct: &str) -> Result<(), ArtifactError> {
+    let token = |t: &str| {
+        !t.is_empty()
+            && t.len() <= 127
+            && t.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"!#$&^_.+-".contains(&b))
+    };
+    let mut parts = ct.split(';');
+    let base_ok = parts
+        .next()
+        .and_then(|b| b.trim().split_once('/'))
+        .is_some_and(|(t, sub)| token(t) && token(sub));
+    let params_ok = parts.all(|p| {
+        p.trim()
+            .split_once('=')
+            .is_some_and(|(k, v)| token(k) && token(v.trim_matches('"')))
+    });
+    if ct.len() <= 200 && base_ok && params_ok {
+        Ok(())
+    } else {
+        Err(ArtifactError::Invalid(
+            "content_type must be a MIME type like text/markdown".into(),
+        ))
+    }
+}
+
 pub struct ArtifactStore {
     db: Db,
     blobs: Arc<dyn BlobStore>,
@@ -193,6 +221,7 @@ impl ArtifactStore {
         bytes: &[u8],
     ) -> Result<StoredArtifact, ArtifactError> {
         check_name(name)?;
+        check_content_type(content_type)?;
         if bytes.len() > MAX_ARTIFACT_BYTES {
             return Err(ArtifactError::Invalid(format!(
                 "artifacts are limited to {} MiB",
@@ -251,5 +280,33 @@ impl ArtifactStore {
 
     pub async fn delete_blob(&self, key: &str) -> Result<(), ArtifactError> {
         Ok(self.blobs.delete(key).await?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn content_types_are_short_mime_types() {
+        for ok in [
+            "text/markdown",
+            "text/plain; charset=utf-8",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "image/svg+xml",
+        ] {
+            assert!(check_content_type(ok).is_ok(), "{ok}");
+        }
+        let long = format!("text/{}", "x".repeat(300));
+        for bad in [
+            "",
+            "markdown",
+            "text/",
+            "text/html\r\nX-Evil: 1",
+            "text/plain; charset",
+            long.as_str(),
+        ] {
+            assert!(check_content_type(bad).is_err(), "{bad:?}");
+        }
     }
 }

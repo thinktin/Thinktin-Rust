@@ -476,6 +476,12 @@ pub struct Plan {
     pub paused: bool,
     pub created_by: PlanAuthor,
     pub created_at: DateTime<Utc>,
+    /// 每次 agent 改动加一；确认时要带上用户看到的版本（防止确认之前被悄悄改掉）。
+    #[serde(default)]
+    pub revision: u32,
+    /// agent 新建或修改过、等用户确认。确认前不会运行，也不能直接恢复。
+    #[serde(default)]
+    pub awaiting_confirmation: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

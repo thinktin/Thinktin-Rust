@@ -340,6 +340,7 @@ fn main() -> anyhow::Result<()> {
             let issuer = SandboxTokenIssuer::from_seed_b64(&kid, &seed)?;
             let token = issuer.issue(
                 TokenRequest {
+                    ep: 0,
                     iid: instance,
                     uid: user,
                     grant,

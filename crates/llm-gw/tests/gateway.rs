@@ -298,6 +298,7 @@ async fn start(setup: Setup) -> Env {
         id: "inst-1".into(),
         user_id: "user-1".into(),
         sandbox: Some("sbx-1".into()),
+        epoch: 0,
         active: true,
         routes: BTreeMap::from([
             ("main".into(), route("cred-main", "up-model")),
@@ -381,6 +382,7 @@ async fn start(setup: Setup) -> Env {
 impl Env {
     fn token_with(&self, f: impl FnOnce(&mut TokenRequest)) -> String {
         let mut req = TokenRequest {
+            ep: 0,
             iid: "inst-1".into(),
             uid: "user-1".into(),
             grant: "grant-1".into(),

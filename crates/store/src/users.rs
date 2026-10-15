@@ -107,10 +107,17 @@ impl Tx<Worker> {
     }
 
     /// 注销（16.4）：销毁用户的 DEK（key 和产出物的密文从此解不开），删掉用户的内容
-    /// （运行、提示词、摘要、事件、收件箱、计划、审批、团队、产出物索引、待发的推送），
+    /// （运行、提示词、摘要、事件、收件箱、计划、审批、团队、产出物索引、推送记录；
+    /// 产出物的密文排进清理队列，由后台从对象存储删掉），
     /// 手机号和设备信息去标识化，实例标记删除（沙箱和工作区卷由巡检回收）。
     /// 审计日志和用量记录只有 id 和计数，按网络日志的要求保留。
     pub async fn erase_account(&mut self, id: UserId) -> Result<()> {
+        // 先锁住用户行：和正在给这个用户插数据的事务（调度器建运行、API 请求）互斥。
+        // 外键检查拿的是 KEY SHARE 锁，这里的 FOR UPDATE 会等它们提交，后面的删除能看到它们的行。
+        sqlx::query("SELECT 1 FROM users WHERE id = $1 FOR UPDATE")
+            .bind(id.0)
+            .execute(self.conn())
+            .await?;
         self.set_user_status(id, UserStatus::Deleted).await?;
         self.revoke_user_sessions(id, "account_deleted").await?;
         self.revoke_user_grants(id, "account_deleted").await?;
@@ -120,13 +127,15 @@ impl Tx<Worker> {
                sealed = ''::bytea, label = '', anthropic_base = NULL, openai_base = NULL, \
                responses_base = NULL, updated_at = now() WHERE user_id = $1",
             "DELETE FROM model_routes WHERE user_id = $1",
-            // 运行删了，审批、产出物、带运行的事件一起级联删掉。
+            // 运行删了，审批、产出物、带运行的事件一起级联删掉（产出物的密文排进 blob_purge）。
             "DELETE FROM runs WHERE user_id = $1",
-            "DELETE FROM events WHERE user_id = $1",
+            // 按实例删，走主键索引（事件表没有以 user_id 开头的索引）。
+            "DELETE FROM events WHERE instance_id IN (SELECT id FROM instances WHERE user_id = $1)",
             // 计划删了，触发器、流水线步骤级联删掉。
             "DELETE FROM plans WHERE user_id = $1",
             "DELETE FROM inbox_items WHERE user_id = $1",
-            "DELETE FROM outbox WHERE user_id = $1 AND delivered_at IS NULL",
+            // 送达的也删：载荷里有推送的标题和正文（运行摘要、工具调用标题）。
+            "DELETE FROM outbox WHERE user_id = $1",
             "DELETE FROM teams WHERE user_id = $1",
             "DELETE FROM team_templates WHERE user_id = $1",
             "UPDATE instances SET state = 'deleted', name = '', deleted_at = coalesce(deleted_at, now()), \

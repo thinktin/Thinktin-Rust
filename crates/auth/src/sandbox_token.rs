@@ -3,6 +3,7 @@
 //! - 由编排服务在唤醒沙箱时用运行授权换出，控制面用 Ed25519 私钥签发；模型网关只持有公钥。
 //! - 绑定实例、用户、运行授权、沙箱 id 和沙箱的网络身份（网关看到的来源地址）。
 //!   令牌被带出沙箱也用不了；每次唤醒换新沙箱 id，旧令牌随之失效（网关核对实例当前的沙箱 id）。
+//!   沙箱 id 不变的情况（休眠后原样恢复）靠令牌代数：运行的每次尝试结束时实例的代数加一，网关核对。
 //! - 格式：`tts1.<kid>.<base64url(claims JSON)>.<base64url(签名)>`，签名覆盖前三段。
 //!   `kid` 标识签名密钥，便于轮换。
 
@@ -27,6 +28,9 @@ pub struct SandboxClaims {
     pub sbx: String,
     /// 沙箱的网络身份：网关应当看到的请求来源地址。为空表示不绑定（只用于本地开发）。
     pub net: Option<String>,
+    /// 实例的令牌代数：运行的一次尝试结束时加一，之前签出的令牌随之失效（网关核对）。
+    #[serde(default)]
+    pub ep: u64,
     pub iat: u64,
     pub exp: u64,
     /// 令牌 id，用于审计。
@@ -53,6 +57,7 @@ pub struct TokenRequest {
     pub grant: String,
     pub sbx: String,
     pub net: Option<String>,
+    pub ep: u64,
 }
 
 impl SandboxTokenIssuer {
@@ -92,6 +97,7 @@ impl SandboxTokenIssuer {
             grant: req.grant,
             sbx: req.sbx,
             net: req.net,
+            ep: req.ep,
             iat: now,
             exp: now + ttl_secs,
             jti: signed::random_jti()?,
@@ -131,6 +137,7 @@ mod tests {
 
     fn req() -> TokenRequest {
         TokenRequest {
+            ep: 0,
             iid: "inst-1".into(),
             uid: "user-1".into(),
             grant: "grant-1".into(),

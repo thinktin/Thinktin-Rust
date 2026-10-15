@@ -700,6 +700,34 @@ async fn event_stream_replays_then_streams_live() {
         (Some(1), Some(5))
     );
 
+    // 事件全过了保留期（按月删分区）：续传要先收到 reset，不能悄悄跳过中间那段。
+    sqlx::query("DELETE FROM events WHERE instance_id = $1")
+        .bind(inst.0)
+        .execute(a.t.db.pool())
+        .await
+        .unwrap();
+    let (_, page) = a
+        .call(
+            Method::GET,
+            &format!("/v1/instances/{inst}/events?after=2"),
+            Some(&u.access),
+            None,
+        )
+        .await;
+    assert_eq!(
+        (page["oldest_seq"].as_u64(), page["latest_seq"].as_u64()),
+        (Some(6), Some(5))
+    );
+    let mut resumed = ws_connect(&a, Some(&u.access), inst, 2).await.unwrap();
+    let reset = next_event(&mut resumed).await;
+    assert_eq!(
+        (reset["type"].as_str(), reset["oldest_seq"].as_u64()),
+        (Some("reset"), Some(6))
+    );
+    let seq = append("agent.message", 6).await;
+    assert_eq!(next_event(&mut resumed).await["seq"].as_u64(), Some(seq));
+    resumed.close(None).await.ok();
+
     // 别人订阅不了。
     let bob = a.login("13900139000").await;
     assert!(ws_connect(&a, Some(&bob.access), inst, 0).await.is_err());
@@ -1598,4 +1626,158 @@ async fn usage_is_summarised_per_day_instance_and_model() {
             .await;
         assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{bad}");
     }
+}
+
+/// agent 安排的计划：确认要带上看到的版本；之后又被改过就 409；确认后 agent 签的子授权换成用户签发的授权。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn agent_plans_are_confirmed_by_revision() {
+    use proto::domain::{CatchUp, GrantScope, PlanAuthor, PlanPolicy, ScheduleSpec};
+
+    let Some(a) = api().await else { return };
+    let u = a.login("13800138950").await;
+    let tok = Some(u.access.as_str());
+    let inst = a.adopt(&u).await;
+    let (_, me) = a.call(Method::GET, "/v1/me", tok, None).await;
+    let user: UserId = me["id"].as_str().unwrap().parse().unwrap();
+    // 模拟 agent 在一次运行里建了计划（和 thinktin.schedule 走的同一套存储操作）。
+    let mut t = a.t.db.tenant(user).await.unwrap();
+    let caller = t
+        .create_run_grant(
+            inst,
+            None,
+            &GrantScope::default(),
+            Duration::from_secs(3600),
+        )
+        .await
+        .unwrap();
+    let plan = t
+        .create_plan(&store::NewPlan {
+            instance_id: inst,
+            title: "早报".into(),
+            goal: "news".into(),
+            policy: PlanPolicy::default(),
+            catch_up: CatchUp::Once,
+            created_by: PlanAuthor::Agent,
+            run_grant_id: None,
+        })
+        .await
+        .unwrap();
+    let child = t
+        .create_plan_child_grant(
+            caller.id,
+            inst,
+            plan.id,
+            Duration::from_secs(90 * 24 * 3600),
+        )
+        .await
+        .unwrap();
+    t.set_plan_grant(plan.id, child.id).await.unwrap();
+    t.add_trigger(
+        plan.id,
+        &ScheduleSpec::Cron {
+            expr: "0 8 * * *".into(),
+            tz: "Asia/Shanghai".into(),
+        },
+        None,
+    )
+    .await
+    .unwrap();
+    let shown = t.request_plan_confirmation(plan.id).await.unwrap();
+    t.commit().await.unwrap();
+    let path = format!("/v1/plans/{}", plan.id);
+
+    let (st, v) = a.call(Method::GET, &path, tok, None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(v["awaiting_confirmation"], true);
+    assert_eq!(v["revision"], shown.revision);
+    // 不能绕过确认直接恢复。
+    let (st, _) = a
+        .call(Method::POST, &format!("{path}/resume"), tok, None)
+        .await;
+    assert_eq!(st, StatusCode::CONFLICT);
+    // agent 在用户看完之后又改了一次：用户确认的旧版本被拒。
+    let mut t = a.t.db.tenant(user).await.unwrap();
+    t.request_plan_confirmation(plan.id).await.unwrap();
+    t.commit().await.unwrap();
+    let (st, _) = a
+        .call(
+            Method::POST,
+            &format!("{path}/confirm"),
+            tok,
+            Some(json!({ "revision": shown.revision })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CONFLICT);
+    let (_, v) = a.call(Method::GET, &path, tok, None).await;
+    let (st, v) = a
+        .call(
+            Method::POST,
+            &format!("{path}/confirm"),
+            tok,
+            Some(json!({ "revision": v["revision"] })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(
+        (v["paused"].as_bool(), v["awaiting_confirmation"].as_bool()),
+        (Some(false), Some(false))
+    );
+    assert!(v["triggers"][0]["next_fire_at"].is_string());
+    // 子授权换成了用户签发的顶层授权，旧的吊销。
+    let mut t = a.t.db.tenant(user).await.unwrap();
+    let g = t.plan_grant(plan.id).await.unwrap().unwrap();
+    assert_eq!(g.parent_id, None);
+    assert!(g.is_active(chrono::Utc::now()));
+    assert!(
+        t.run_grants(inst)
+            .await
+            .unwrap()
+            .iter()
+            .all(|x| x.id != child.id)
+    );
+    t.rollback().await.unwrap();
+    // 已经确认过的不能再确认。
+    let (st, _) = a
+        .call(
+            Method::POST,
+            &format!("{path}/confirm"),
+            tok,
+            Some(json!({ "revision": v["revision"] })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CONFLICT);
+}
+
+/// 停流水线的根运行（不带 tree=true）也停掉它的步骤：根运行自己不跑 agent。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancelling_a_pipeline_root_stops_its_steps() {
+    let Some(a) = api().await else { return };
+    let u = a.login("13800138000").await;
+    let inst = a.adopt(&u).await;
+    let mut w = a.t.db.worker().await.unwrap();
+    let user = w.instance_runtime(inst).await.unwrap().user_id;
+    let mut root = store::NewRun::new(inst, proto::domain::RunSource::Plan, "pipeline", "1");
+    root.kind = proto::domain::RunKind::Pipeline;
+    let root = w.create_run(user, &root).await.unwrap().unwrap();
+    let mut step = store::NewRun::new(inst, proto::domain::RunSource::Pipeline, "step a", "1");
+    step.parent_run_id = Some(root.id);
+    step.step_key = Some("a".into());
+    let step = w.create_run(user, &step).await.unwrap().unwrap();
+    w.commit().await.unwrap();
+
+    let (st, body) = a
+        .call(
+            Method::POST,
+            &format!("/v1/runs/{}/cancel", root.id),
+            Some(&u.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let mut w = a.t.db.worker().await.unwrap();
+    assert_eq!(
+        w.run_record(step.id).await.unwrap().run.state,
+        proto::domain::RunState::Cancelled
+    );
+    w.rollback().await.unwrap();
 }

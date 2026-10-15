@@ -106,6 +106,18 @@ impl Tx<Worker> {
         insert(self.conn(), user, item).await
     }
 
+    /// 删掉送达（或放弃）超过 `older_than` 的条目：载荷里有推送的标题和正文，不长期留着。
+    /// 收件箱里有同样的内容，用户自己能看、能删。
+    pub async fn purge_delivered_outbox(&mut self, older_than: Duration) -> Result<u64> {
+        let done = sqlx::query(
+            "DELETE FROM outbox WHERE delivered_at < now() - make_interval(secs => $1)",
+        )
+        .bind(secs(older_than))
+        .execute(self.conn())
+        .await?;
+        Ok(done.rows_affected())
+    }
+
     pub async fn audit(
         &mut self,
         user: Option<UserId>,
@@ -154,6 +166,26 @@ impl Tx<Worker> {
             .collect::<Result<Vec<_>>>()?;
         items.sort_by_key(|i| i.id);
         Ok(items)
+    }
+
+    /// 发送前续一下锁：一批是按顺序发的，前面的推送服务慢，后面条目的锁可能已经过期、
+    /// 被别的投递器领走了。返回 false 表示锁不在手里，这条交给对方，别再发一遍。
+    pub async fn extend_outbox_lock(
+        &mut self,
+        id: i64,
+        owner: &str,
+        lock_for: Duration,
+    ) -> Result<bool> {
+        let done = sqlx::query(
+            "UPDATE outbox SET locked_until = now() + make_interval(secs => $3) \
+             WHERE id = $1 AND locked_by = $2 AND delivered_at IS NULL AND locked_until > now()",
+        )
+        .bind(id)
+        .bind(owner)
+        .bind(secs(lock_for))
+        .execute(self.conn())
+        .await?;
+        Ok(done.rows_affected() == 1)
     }
 
     /// 处理完了：发送成功，或者放弃（`error` 记下放弃的原因）。

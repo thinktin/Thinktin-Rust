@@ -42,6 +42,8 @@ struct PlanRow {
     status: String,
     created_by: String,
     created_at: DateTime<Utc>,
+    revision: i32,
+    awaiting_confirmation: bool,
 }
 
 impl PlanRow {
@@ -56,13 +58,16 @@ impl PlanRow {
             paused: self.status == "paused",
             created_by: parse(&self.created_by)?,
             created_at: self.created_at,
+            revision: u32::try_from(self.revision).unwrap_or_default(),
+            awaiting_confirmation: self.awaiting_confirmation,
         })
     }
 }
 
 macro_rules! plan_columns {
     () => {
-        "id, instance_id, title, goal, policy, catch_up, status, created_by, created_at"
+        "id, instance_id, title, goal, policy, catch_up, status, created_by, created_at, revision, \
+         awaiting_confirmation"
     };
 }
 
@@ -122,7 +127,7 @@ impl Tx<Tenant> {
             "SELECT ",
             plan_columns!(),
             " FROM plans WHERE status <> 'deleted' AND ($1::uuid IS NULL OR instance_id = $1) \
-             ORDER BY created_at"
+             ORDER BY created_at LIMIT 1000"
         ))
         .bind(instance.map(|i| i.0))
         .fetch_all(self.conn())
@@ -139,7 +144,8 @@ impl Tx<Tenant> {
         catch_up: CatchUp,
     ) -> Result<Plan> {
         let row: PlanRow = sqlx::query_as(concat!(
-            "UPDATE plans SET title = $2, goal = $3, policy = $4, catch_up = $5, updated_at = now() \
+            "UPDATE plans SET title = $2, goal = $3, policy = $4, catch_up = $5, revision = revision + 1, \
+               updated_at = now() \
              WHERE id = $1 AND status <> 'deleted' RETURNING ",
             plan_columns!()
         ))
@@ -151,6 +157,61 @@ impl Tx<Tenant> {
         .fetch_one(self.conn())
         .await?;
         row.into_plan()
+    }
+
+    /// agent 新建或修改了计划：暂停、版本号加一、等用户确认。
+    pub async fn request_plan_confirmation(&mut self, id: PlanId) -> Result<Plan> {
+        let row: PlanRow = sqlx::query_as(concat!(
+            "UPDATE plans SET status = 'paused', awaiting_confirmation = true, revision = revision + 1, \
+               updated_at = now() WHERE id = $1 AND status <> 'deleted' RETURNING ",
+            plan_columns!()
+        ))
+        .bind(id.0)
+        .fetch_one(self.conn())
+        .await?;
+        row.into_plan()
+    }
+
+    /// 用户确认 agent 安排的计划。`revision` 是用户看到的版本：之后又被改过就拒绝，让用户看了新内容再确认。
+    pub async fn confirm_plan(&mut self, id: PlanId, revision: u32) -> Result<Plan> {
+        let row: PlanRow = sqlx::query_as(concat!(
+            "SELECT ",
+            plan_columns!(),
+            " FROM plans WHERE id = $1 AND status <> 'deleted' FOR UPDATE"
+        ))
+        .bind(id.0)
+        .fetch_one(self.conn())
+        .await?;
+        if !row.awaiting_confirmation {
+            return Err(Error::Conflict(
+                "the plan is not waiting for confirmation".into(),
+            ));
+        }
+        if i64::from(row.revision) != i64::from(revision) {
+            return Err(Error::Conflict(
+                "the plan changed after you reviewed it; reload it and confirm again".into(),
+            ));
+        }
+        let row: PlanRow = sqlx::query_as(concat!(
+            "UPDATE plans SET status = 'active', awaiting_confirmation = false, updated_at = now() \
+             WHERE id = $1 RETURNING ",
+            plan_columns!()
+        ))
+        .bind(id.0)
+        .fetch_one(self.conn())
+        .await?;
+        row.into_plan()
+    }
+
+    /// 实例上 agent 建的、没删除的计划数。
+    pub async fn agent_plan_count(&mut self, instance: InstanceId) -> Result<u64> {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM plans WHERE instance_id = $1 AND created_by = 'agent' AND status <> 'deleted'",
+        )
+        .bind(instance.0)
+        .fetch_one(self.conn())
+        .await?;
+        Ok(u64::try_from(n).unwrap_or_default())
     }
 
     /// 计划用的运行授权（建计划后签发，带着计划 id）。
@@ -285,17 +346,22 @@ impl<R> Tx<R> {
         row.into_plan()
     }
 
-    /// 暂停或恢复计划。审批超时的 `pause_plan` 策略由后台调用。
+    /// 暂停或恢复计划。审批超时的 `pause_plan` 策略由后台调用。等用户确认的计划不能恢复（用 `confirm_plan`）。
     pub async fn set_plan_paused(&mut self, id: PlanId, paused: bool) -> Result<()> {
         let done = sqlx::query(
             "UPDATE plans SET status = CASE WHEN $2 THEN 'paused' ELSE 'active' END, updated_at = now() \
-             WHERE id = $1 AND status <> 'deleted'",
+             WHERE id = $1 AND status <> 'deleted' AND ($2 OR NOT awaiting_confirmation)",
         )
         .bind(id.0)
         .bind(paused)
         .execute(self.conn())
         .await?;
         if done.rows_affected() == 0 {
+            if self.plan(id).await?.awaiting_confirmation {
+                return Err(Error::Conflict(
+                    "the plan is waiting for confirmation; confirm the version you reviewed".into(),
+                ));
+            }
             return Err(Error::NotFound);
         }
         Ok(())
@@ -349,6 +415,8 @@ struct DueRow {
     p_status: String,
     p_created_by: String,
     p_created_at: DateTime<Utc>,
+    p_revision: i32,
+    p_awaiting_confirmation: bool,
 }
 
 impl Tx<Worker> {
@@ -364,11 +432,14 @@ impl Tx<Worker> {
                t.id, t.plan_id, t.spec, t.enabled, t.next_fire_at, t.last_fire_at, \
                p.id AS p_id, p.instance_id AS p_instance_id, p.title AS p_title, p.goal AS p_goal, \
                p.policy AS p_policy, p.catch_up AS p_catch_up, p.status AS p_status, \
-               p.created_by AS p_created_by, p.created_at AS p_created_at \
+               p.created_by AS p_created_by, p.created_at AS p_created_at, \
+               p.revision AS p_revision, p.awaiting_confirmation AS p_awaiting_confirmation \
              FROM triggers t \
              JOIN plans p ON p.id = t.plan_id \
              JOIN instances i ON i.id = p.instance_id \
+             JOIN users u ON u.id = t.user_id \
              WHERE t.enabled AND t.next_fire_at <= $1 AND p.status = 'active' AND i.state <> 'deleted' \
+               AND u.status = 'active' \
              ORDER BY t.next_fire_at \
              LIMIT $2 \
              FOR UPDATE OF t SKIP LOCKED",
@@ -389,6 +460,8 @@ impl Tx<Worker> {
                     status: r.p_status,
                     created_by: r.p_created_by,
                     created_at: r.p_created_at,
+                    revision: r.p_revision,
+                    awaiting_confirmation: r.p_awaiting_confirmation,
                 }
                 .into_plan()?;
                 Ok(DueTrigger {
@@ -403,6 +476,28 @@ impl Tx<Worker> {
     }
 
     /// 处理完一次到点：记下最后一次触发的名义时间，写入下一次（None 表示不再触发）。
+    /// 换掉触发规则（调度循环把长期运行的 RRULE 的 DTSTART 挪近，规则等价）。
+    pub async fn set_trigger_spec(&mut self, id: TriggerId, spec: &ScheduleSpec) -> Result<()> {
+        sqlx::query("UPDATE triggers SET spec = $2, updated_at = now() WHERE id = $1")
+            .bind(id.0)
+            .bind(to_json(spec)?)
+            .execute(self.conn())
+            .await?;
+        Ok(())
+    }
+
+    /// 计划还在排队、没开始的运行有几个（只数根运行）。调度时用来合并积压的触发。
+    pub async fn queued_plan_runs(&mut self, plan: PlanId) -> Result<u32> {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM runs \
+             WHERE plan_id = $1 AND parent_run_id IS NULL AND state = 'queued'",
+        )
+        .bind(plan.0)
+        .fetch_one(self.conn())
+        .await?;
+        Ok(u32::try_from(n).unwrap_or(u32::MAX))
+    }
+
     pub async fn advance_trigger(
         &mut self,
         id: TriggerId,

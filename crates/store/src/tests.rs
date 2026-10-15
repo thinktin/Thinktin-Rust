@@ -582,7 +582,7 @@ async fn events_are_sequenced_per_instance() {
     let tail = a.events_after(x.id, 1, 100).await.unwrap();
     assert_eq!(tail.iter().map(|e| e.seq).collect::<Vec<_>>(), [2, 3]);
     assert_eq!(tail[1].payload, json!({ "i": 2 }));
-    assert_eq!(a.event_range(x.id).await.unwrap(), (Some(1), 3));
+    assert_eq!(a.event_range(x.id).await.unwrap(), (1, 3));
     a.commit().await.unwrap();
 
     // 分区维护：提前建好的分区可以重复建；过了保留期的整月分区被删掉。
@@ -959,9 +959,18 @@ async fn erasing_an_account_deletes_its_content() {
         tx.commit().await.unwrap();
     }
 
+    // 送达过的推送记录也有正文，注销时一起删。
+    sqlx::query("UPDATE outbox SET delivered_at = now()")
+        .execute(db.pool())
+        .await
+        .unwrap();
     let mut w = db.worker().await.unwrap();
     w.erase_account(alice).await.unwrap();
     w.commit().await.unwrap();
+    // 产出物的密文排进清理队列。
+    let mut w = db.worker().await.unwrap();
+    assert_eq!(w.blob_purge_batch(10).await.unwrap(), ["k"]);
+    w.rollback().await.unwrap();
 
     let count = |table: &'static str, user: UserId| async move {
         let n: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
@@ -1146,4 +1155,172 @@ async fn route_fallbacks_round_trip_and_guard_their_keys() {
     assert_eq!(a.model_routes(inst.id).await.unwrap(), vec![bare]);
     a.delete_credential(backup.id).await.unwrap();
     a.commit().await.unwrap();
+}
+
+/// 删除实例：从它的授权收窄给别的实例的子授权一起吊销；根在它上面的运行树里、在别的实例上跑的步骤一起取消。
+/// 父授权失效后，子授权也换不到沙箱令牌、模型网关也不认。
+#[tokio::test]
+async fn deleting_an_instance_stops_its_whole_run_tree_and_grant_tree() {
+    use proto::domain::GrantScope;
+
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = user(db, "+8613800000001").await;
+    let x = instance(db, alice).await;
+    let y = instance(db, alice).await;
+    let mut a = db.tenant(alice).await.unwrap();
+    let g = a
+        .create_run_grant(
+            x.id,
+            None,
+            &GrantScope::default(),
+            Duration::from_secs(3600),
+        )
+        .await
+        .unwrap();
+    let mut root = NewRun::new(x.id, RunSource::User, "pipeline", "1");
+    root.run_grant_id = Some(g.id);
+    let root = a.create_run(&root).await.unwrap();
+    a.commit().await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    let gy = w
+        .create_child_grant(
+            g.id,
+            y.id,
+            &GrantScope::default(),
+            Duration::from_secs(3600),
+        )
+        .await
+        .unwrap();
+    let mut step = NewRun::new(y.id, RunSource::User, "step on y", "1");
+    step.parent_run_id = Some(root.id);
+    step.run_grant_id = Some(gy.id);
+    let step = w.create_run(alice, &step).await.unwrap().unwrap();
+    w.commit().await.unwrap();
+
+    // 只让父授权失效：子授权跟着不能用（换沙箱令牌、模型网关都不认），恢复以后又能用。
+    let ttl = Duration::from_secs(3600);
+    let set_parent_revoked = |revoked: bool| async move {
+        sqlx::query("UPDATE run_grants SET revoked_at = CASE WHEN $2 THEN now() END WHERE id = $1")
+            .bind(g.id.0)
+            .bind(revoked)
+            .execute(db.pool())
+            .await
+            .unwrap();
+    };
+    let usable = || async {
+        let mut w = db.worker().await.unwrap();
+        let touched = w.touch_run_grant(gy.id, ttl, ttl).await.unwrap().is_some();
+        w.rollback().await.unwrap();
+        let mut gw = db.llmgw().await.unwrap();
+        let aliases = gw.usable_grant_aliases(gy.id).await.unwrap().is_some();
+        gw.rollback().await.unwrap();
+        (touched, aliases)
+    };
+    assert_eq!(usable().await, (true, true));
+    set_parent_revoked(true).await;
+    assert_eq!(usable().await, (false, false));
+    set_parent_revoked(false).await;
+    assert_eq!(usable().await, (true, true));
+
+    // 删除实例 x 的流程：取消运行、吊销授权。
+    let mut a = db.tenant(alice).await.unwrap();
+    assert_eq!(
+        a.cancel_instance_runs(x.id, "instance deleted")
+            .await
+            .unwrap(),
+        2
+    );
+    a.revoke_instance_grants(x.id, "instance deleted")
+        .await
+        .unwrap();
+    a.commit().await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    assert_eq!(
+        w.run_record(step.id).await.unwrap().run.state,
+        RunState::Cancelled
+    );
+    let (_, child) = w.run_grant(gy.id).await.unwrap();
+    assert!(
+        child.revoked_at.is_some(),
+        "child grant on another instance is revoked"
+    );
+    assert!(w.touch_run_grant(gy.id, ttl, ttl).await.unwrap().is_none());
+    w.rollback().await.unwrap();
+    let mut gw = db.llmgw().await.unwrap();
+    assert!(gw.usable_grant_aliases(gy.id).await.unwrap().is_none());
+}
+
+/// 流水线驱动器按轮转处理：处理过的排到队尾，一直等子运行的流水线不会每轮都占满这一批。
+#[tokio::test]
+async fn pipeline_roots_are_served_round_robin() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = user(db, "+8613800000001").await;
+    let inst = instance(db, alice).await;
+    let mut a = db.tenant(alice).await.unwrap();
+    let mut ids = Vec::new();
+    for i in 0..5 {
+        let mut new = NewRun::new(inst.id, RunSource::User, format!("p{i}"), "1");
+        new.kind = proto::domain::RunKind::Pipeline;
+        ids.push(a.create_run(&new).await.unwrap().id);
+    }
+    a.commit().await.unwrap();
+    let mut seen = Vec::new();
+    for _ in 0..3 {
+        let mut w = db.worker().await.unwrap();
+        let batch: Vec<_> = w
+            .due_pipelines(2)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|r| r.run.id)
+            .collect();
+        w.requeue_pipelines(&batch).await.unwrap();
+        w.commit().await.unwrap();
+        seen.extend(batch);
+    }
+    // 三轮、每轮两个：五个都轮到了，第六个又回到第一个。
+    let distinct: std::collections::HashSet<_> = seen.iter().collect();
+    assert_eq!(distinct.len(), 5, "{seen:?}");
+}
+
+/// 推送只发给还登录着的设备；同一台设备换了账号登录，之前的账号不再收到推送。
+#[tokio::test]
+async fn pushes_only_reach_signed_in_devices_and_their_current_user() {
+    use proto::domain::{DevicePlatform, PushChannelKind, SessionId};
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = user(db, "+8613800000001").await;
+    let bob = user(db, "+8613800000002").await;
+    let hour = Duration::from_secs(3600);
+    let mut w = db.worker().await.unwrap();
+    let shared = Some((PushChannelKind::Apns, "shared-token"));
+    let a_dev = w
+        .create_device(alice, DevicePlatform::Ios, "iPad", shared)
+        .await
+        .unwrap();
+    let a_session = SessionId::new();
+    w.create_session(a_session, alice, a_dev, b"r1", hour)
+        .await
+        .unwrap();
+    assert_eq!(w.push_targets(alice).await.unwrap().len(), 1);
+    // 会话被吊销（没走退出接口，设备记录还在）：这台设备收不到了。
+    w.revoke_session(a_session, "test").await.unwrap();
+    assert!(w.push_targets(alice).await.unwrap().is_empty());
+    w.create_session(SessionId::new(), alice, a_dev, b"r2", hour)
+        .await
+        .unwrap();
+    assert_eq!(w.push_targets(alice).await.unwrap().len(), 1);
+    // bob 在同一台设备上登录：令牌归 bob。
+    let b_dev = w
+        .create_device(bob, DevicePlatform::Ios, "iPad", shared)
+        .await
+        .unwrap();
+    w.create_session(SessionId::new(), bob, b_dev, b"r3", hour)
+        .await
+        .unwrap();
+    assert!(w.push_targets(alice).await.unwrap().is_empty());
+    assert_eq!(w.push_targets(bob).await.unwrap().len(), 1);
+    w.rollback().await.unwrap();
 }

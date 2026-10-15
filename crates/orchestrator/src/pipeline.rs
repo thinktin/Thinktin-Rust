@@ -63,9 +63,13 @@ impl PipelineDriver {
     pub async fn tick(&self) -> store::Result<PipelineReport> {
         let mut report = PipelineReport::default();
         let mut w = self.db.worker().await?;
-        for root in w.due_pipelines(self.cfg.batch).await? {
-            self.advance(&mut w, &root, &mut report).await?;
+        let roots = w.due_pipelines(self.cfg.batch).await?;
+        for root in &roots {
+            self.advance(&mut w, root, &mut report).await?;
         }
+        // 处理过的排到队尾：一直等子运行的流水线不会每轮都占满这一批，别的流水线（别的用户的）也能轮到。
+        let ids: Vec<_> = roots.iter().map(|r| r.run.id).collect();
+        w.requeue_pipelines(&ids).await?;
         w.commit().await?;
         Ok(report)
     }

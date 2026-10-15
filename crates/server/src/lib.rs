@@ -7,16 +7,18 @@ mod api;
 pub mod config;
 mod http;
 mod lifecycle;
+mod listen;
 pub mod observability;
 mod workers;
 
-use std::future::{Future, IntoFuture};
+use std::future::Future;
 use std::time::Duration;
 
 use std::sync::Arc;
 
 use anyhow::Context;
 use keyvault::{Kms, LocalKms};
+use listen::ListenOptions;
 use orchestrator::artifacts::{ArtifactStore, LocalBlobStore};
 use store::Db;
 use tokio::net::TcpListener;
@@ -104,11 +106,11 @@ pub async fn serve_with(
     );
     let drain = cfg.drain();
     let mut draining = shutdown.subscribe();
-    let server = axum::serve(listener, router).with_graceful_shutdown(async move {
+    let server = listen::serve(listener, router, ListenOptions::default(), async move {
         draining.wait().await;
         tokio::time::sleep(drain).await;
     });
-    let mut server = tokio::spawn(server.into_future());
+    let mut server = tokio::spawn(server);
     info!(%addr, node = %node_id, "server started");
 
     let mut failure = None;

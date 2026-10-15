@@ -11,7 +11,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use proto::shim::{EventEnvelope, ShimCommand, ShimEvent};
 use sandbox::{EnvValue, ExecSpec, ProcessControl, SandboxId, SandboxProvider};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{Mutex, mpsc};
 use tracing::{debug, warn};
 
@@ -19,6 +19,51 @@ use crate::shim::{ConnectError, ShimConnector, ShimLaunch, ShimProcess, ShimSess
 
 /// shim 的一行事件最长多少字节，超过的丢弃（防止异常输出把内存撑爆）。
 const MAX_EVENT_LINE: u64 = 8 << 20;
+/// shim 标准错误的一行最多记这么多字节（只进调试日志）。
+const MAX_STDERR_LINE: u64 = 16 << 10;
+
+/// 有上限地读一行的结果。
+#[derive(Debug, PartialEq, Eq)]
+enum Line {
+    Eof,
+    /// 读到了完整的一行（或者结尾没有换行的最后一段），在缓冲区里。
+    Complete,
+    /// 这一行超过上限：缓冲区里是开头的 `max` 字节，剩下的已经丢掉了。
+    Oversized,
+}
+
+/// 读一行，最多 `max` 字节。超长的行剩下的部分分块丢掉，不攒在内存里：
+/// shim 和 agent 在同一个沙箱里，输出完全由 agent 控制。
+async fn read_line_bounded<R: AsyncBufRead + Unpin>(
+    r: &mut R,
+    buf: &mut Vec<u8>,
+    max: u64,
+) -> std::io::Result<Line> {
+    buf.clear();
+    let n = (&mut *r).take(max).read_until(b'\n', buf).await?;
+    if n == 0 {
+        return Ok(Line::Eof);
+    }
+    if buf.last() == Some(&b'\n') || (n as u64) < max {
+        return Ok(Line::Complete);
+    }
+    loop {
+        let chunk = r.fill_buf().await?;
+        if chunk.is_empty() {
+            return Ok(Line::Oversized);
+        }
+        match chunk.iter().position(|&b| b == b'\n') {
+            Some(i) => {
+                r.consume(i + 1);
+                return Ok(Line::Oversized);
+            }
+            None => {
+                let len = chunk.len();
+                r.consume(len);
+            }
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct ExecConfig {
@@ -173,26 +218,13 @@ impl ShimConnector for ExecConnector {
         tokio::spawn(async move {
             let mut buf = Vec::new();
             loop {
-                buf.clear();
-                let n = match (&mut stdout)
-                    .take(MAX_EVENT_LINE)
-                    .read_until(b'\n', &mut buf)
-                    .await
-                {
-                    Ok(n) => n,
-                    Err(_) => break,
-                };
-                if n == 0 {
-                    break;
-                }
-                if buf.last() != Some(&b'\n') && n as u64 >= MAX_EVENT_LINE {
-                    warn!(%run, "dropping an oversized shim event");
-                    // 跳过这一行剩下的部分。
-                    let mut rest = Vec::new();
-                    if stdout.read_until(b'\n', &mut rest).await.unwrap_or(0) == 0 {
-                        break;
+                match read_line_bounded(&mut stdout, &mut buf, MAX_EVENT_LINE).await {
+                    Ok(Line::Complete) => {}
+                    Ok(Line::Oversized) => {
+                        warn!(%run, "dropping an oversized shim event");
+                        continue;
                     }
-                    continue;
+                    Ok(Line::Eof) | Err(_) => break,
                 }
                 match serde_json::from_slice::<EventEnvelope>(&buf) {
                     Ok(env) => {
@@ -205,13 +237,20 @@ impl ShimConnector for ExecConnector {
             }
         });
 
-        let stderr = BufReader::new(process.stderr);
+        // 标准错误一直读到底（不读的话 shim 写满管道会卡住），每行有上限，只记前 1000 行。
+        let mut stderr = BufReader::new(process.stderr);
         tokio::spawn(async move {
-            let mut lines = stderr.lines();
+            let mut buf = Vec::new();
             let mut shown = 0;
-            while let Ok(Some(line)) = lines.next_line().await {
+            loop {
+                let cut = match read_line_bounded(&mut stderr, &mut buf, MAX_STDERR_LINE).await {
+                    Ok(Line::Complete) => "",
+                    Ok(Line::Oversized) => " …[truncated]",
+                    Ok(Line::Eof) | Err(_) => break,
+                };
                 if shown < 1000 {
-                    debug!(target: "agent_shim", %run, "{line}");
+                    let line = String::from_utf8_lossy(&buf);
+                    debug!(target: "agent_shim", %run, "{}{cut}", line.trim_end());
                     shown += 1;
                 }
             }
@@ -224,5 +263,39 @@ impl ShimConnector for ExecConnector {
                 control: Mutex::new(process.control),
             }),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn oversized_lines_are_skipped_without_buffering_them() {
+        let mut input = Vec::new();
+        input.extend_from_slice(b"short\n");
+        input.extend(std::iter::repeat_n(b'x', 1000));
+        input.extend_from_slice(b"\nafter\nlast-without-newline");
+        // 小缓冲区：超长的行跨很多次 fill_buf。
+        let mut r = BufReader::with_capacity(16, input.as_slice());
+        let mut buf = Vec::new();
+        let mut got = Vec::new();
+        loop {
+            let line = read_line_bounded(&mut r, &mut buf, 64).await.unwrap();
+            assert!(buf.len() <= 64);
+            if line == Line::Eof {
+                break;
+            }
+            got.push((line, String::from_utf8_lossy(&buf).into_owned()));
+        }
+        assert_eq!(
+            got,
+            [
+                (Line::Complete, "short\n".to_owned()),
+                (Line::Oversized, "x".repeat(64)),
+                (Line::Complete, "after\n".to_owned()),
+                (Line::Complete, "last-without-newline".to_owned()),
+            ]
+        );
     }
 }

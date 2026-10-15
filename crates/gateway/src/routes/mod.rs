@@ -62,6 +62,7 @@ pub fn router() -> Router<AppState> {
         )
         .route("/v1/plans/{id}/pause", post(plans::pause))
         .route("/v1/plans/{id}/resume", post(plans::resume))
+        .route("/v1/plans/{id}/confirm", post(plans::confirm))
         .route("/v1/plans/{id}/triggers", post(plans::add_trigger))
         .route("/v1/triggers/{id}", delete(plans::delete_trigger))
         // 审批（4.7）

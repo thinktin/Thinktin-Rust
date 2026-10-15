@@ -45,6 +45,8 @@
 | Codex | Apache-2.0（CLI、app-server、codex-acp 都是）；内含 LGPL 的 bubblewrap、改过的 zsh、ripgrep 等第三方组件 | 允许 | 允许：自定义供应商不需要 OpenAI 登录；只支持 Responses 协议 | 分发镜像要带 LICENSE、NOTICE 和第三方许可清单（npm 包里没带）；不能用 “Codex” 做产品名；遥测（`analytics`、`otel.metrics_exporter`、`feedback`）已在生成的配置里关掉 |
 | Pi、OpenClaw、Hermes | MIT | 允许 | 允许 | — |
 
+**2026-10-14 决定**：Claude 全球提供，不分国内站、海外站；Claude agent 什么 key 都能接（任何厂商的 Anthropic 兼容接口、用户自己配的中转站），上面“接国内厂商模型”“地区政策”两列的风险已知并接受。
+
 依据：code.claude.com/docs/en/legal-and-compliance、/agent-sdk/overview、/llm-gateway，anthropic.com/supported-countries、/legal/commercial-terms；github.com/openai/codex 的 LICENSE、NOTICE，learn.chatgpt.com/docs/config-file/config-reference。条款随时可能更新，上线前由法务复核（16.5）。
 
 ## 3. 结构
@@ -110,7 +112,7 @@ agent ──stdio MCP──▶ agent-shim mcp-bridge ──Unix socket──▶ 
 
 ## 6. 权限审批
 
-预授权范围按 ACP 的工具类别表达：`read`、`edit`、`delete`、`move`、`search`、`execute`、`think`、`fetch`、`switch_mode`、`other`，`*` 表示全部。范围内的请求 shim 直接选“只允许这一次”；范围外的按策略拒绝，或者发 `permission_requested` 等用户决定，默认最长等 24 小时（4.7）。工具类别是沙箱里的 agent 自己报告的，只表达用户意图；安全边界是 microVM。
+预授权范围按 ACP 的工具类别表达：`read`、`edit`、`delete`、`move`、`search`、`execute`、`think`、`fetch`、`switch_mode`、`other`，`*` 表示全部。范围内的请求 shim 直接选“只允许这一次”；范围外的按策略拒绝，或者发 `permission_requested` 等用户决定，默认最长等 24 小时（4.7）。按策略直接决定的只发 `permission_resolved`（`by: policy`），不发 `permission_requested`：平台收到 `permission_requested` 就会建审批、推送“需要你的批准”。工具类别是沙箱里的 agent 自己报告的，只表达用户意图；安全边界是 microVM。
 
 各家的审批行为不一样，冒烟测试里确认过：
 

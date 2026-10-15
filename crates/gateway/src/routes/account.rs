@@ -216,6 +216,11 @@ pub async fn set_push(
     t.set_push_token(who.device, req.channel, &req.token)
         .await?;
     t.commit().await?;
+    // 同一个令牌之前登记在别的设备（可能是别的账号）上的，清掉：推送只发给现在用这台手机的人。
+    let mut w = s.db.worker().await?;
+    w.release_push_token(who.device, req.channel, &req.token)
+        .await?;
+    w.commit().await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

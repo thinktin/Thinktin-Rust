@@ -3,7 +3,7 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use proto::domain::{InstanceId, Run, RunId, RunSource};
+use proto::domain::{InstanceId, Run, RunId, RunKind, RunSource};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use store::NewRun;
@@ -91,8 +91,12 @@ pub async fn cancel(
 ) -> ApiResult<Json<Run>> {
     let id: RunId = parse_id(&id, "run")?;
     let mut t = s.db.tenant(who.user).await?;
-    if q.tree {
-        let root = t.run(id).await?.root_run_id;
+    // 流水线根运行自己不跑 agent，停它就是停整条流水线：不然步骤运行还在接着跑。
+    let target = t.run(id).await?;
+    let whole_tree =
+        q.tree || (target.kind == RunKind::Pipeline && target.root_run_id == target.id);
+    if whole_tree {
+        let root = target.root_run_id;
         t.cancel_run_tree(root, "stopped by user").await?;
         let run = t.run(root).await?;
         t.append_event(

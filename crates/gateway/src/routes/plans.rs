@@ -31,7 +31,7 @@ pub struct PlanView {
 
 /// 校验触发规则，返回下一次触发时间。
 fn next_fire(s: &AppState, spec: &ScheduleSpec, now: DateTime<Utc>) -> ApiResult<DateTime<Utc>> {
-    let schedule = Schedule::parse(spec).map_err(|e| ApiError::invalid(e.to_string()))?;
+    let schedule = Schedule::parse_new(spec, now).map_err(|e| ApiError::invalid(e.to_string()))?;
     if !matches!(spec, ScheduleSpec::Once { .. }) {
         schedule
             .check_min_interval(now, s.cfg.min_trigger_interval)
@@ -266,16 +266,9 @@ pub async fn pause(
     Ok(Json(v))
 }
 
-/// 恢复：暂停期间错过的不补，从现在起重新算下一次触发。
-pub async fn resume(
-    State(s): State<AppState>,
-    Authed(who): Authed,
-    Path(id): Path<String>,
-) -> ApiResult<Json<PlanView>> {
-    let id: PlanId = parse_id(&id, "plan")?;
+/// 暂停期间错过的不补，从现在起重新算每个触发器的下一次触发。
+async fn reschedule(t: &mut store::Tx<store::Tenant>, id: PlanId) -> ApiResult<()> {
     let now = Utc::now();
-    let mut t = s.db.tenant(who.user).await?;
-    t.set_plan_paused(id, false).await?;
     for trig in t.triggers(id).await? {
         if trig.enabled {
             let next = Schedule::parse(&trig.spec)
@@ -284,7 +277,71 @@ pub async fn resume(
             t.set_trigger_enabled(trig.id, true, next).await?;
         }
     }
+    Ok(())
+}
+
+/// 恢复用户自己暂停的计划。agent 新建、修改过、等确认的计划要用 `confirm`（409）。
+pub async fn resume(
+    State(s): State<AppState>,
+    Authed(who): Authed,
+    Path(id): Path<String>,
+) -> ApiResult<Json<PlanView>> {
+    let id: PlanId = parse_id(&id, "plan")?;
+    let mut t = s.db.tenant(who.user).await?;
+    t.set_plan_paused(id, false).await?;
+    reschedule(&mut t, id).await?;
     let plan = t.plan(id).await?;
+    let v = view(&mut t, plan).await?;
+    t.commit().await?;
+    Ok(Json(v))
+}
+
+#[derive(Deserialize)]
+pub struct ConfirmReq {
+    /// 用户看到的版本（计划详情里的 `revision`）。
+    revision: u32,
+}
+
+/// 确认 agent 新建或修改的计划。确认的是用户看到的那个版本：之后又被 agent 改过就 409，重新看了再确认。
+/// 确认后计划开始按时运行；agent 签的子授权（跟着发起调用的运行、不续期）换成用户签发的授权。
+pub async fn confirm(
+    State(s): State<AppState>,
+    Authed(who): Authed,
+    Path(id): Path<String>,
+    ApiJson(req): ApiJson<ConfirmReq>,
+) -> ApiResult<Json<PlanView>> {
+    let id: PlanId = parse_id(&id, "plan")?;
+    let mut t = s.db.tenant(who.user).await?;
+    let plan = t.confirm_plan(id, req.revision).await?;
+    let current = t.plan_grant(id).await?;
+    if current
+        .as_ref()
+        .is_none_or(|g| g.parent_id.is_some() || !g.is_active(Utc::now()))
+    {
+        let scope = current.as_ref().map_or_else(
+            || GrantScope {
+                platform_tools: s.cfg.default_platform_tools.clone(),
+                ..GrantScope::default()
+            },
+            |g| g.scope.clone(),
+        );
+        let grant = t
+            .create_run_grant(plan.instance_id, Some(id), &scope, s.cfg.grant_ttl)
+            .await?;
+        t.set_plan_grant(id, grant.id).await?;
+        if let Some(old) = current {
+            t.revoke_run_grant(old.id, "replaced when the user confirmed the plan")
+                .await?;
+        }
+    }
+    reschedule(&mut t, id).await?;
+    t.audit(
+        &who.actor(),
+        "plan.confirm",
+        Some(&id.to_string()),
+        &json!({ "revision": req.revision }),
+    )
+    .await?;
     let v = view(&mut t, plan).await?;
     t.commit().await?;
     Ok(Json(v))

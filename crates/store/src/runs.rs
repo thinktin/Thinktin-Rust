@@ -251,6 +251,20 @@ impl<R> Tx<R> {
     }
 }
 
+/// 占着实例的 agent 运行（实例上同时只有一个）：取消它时实例的沙箱令牌代数加一，签给它的令牌作废，
+/// agent 留在沙箱里的后台进程不能接着用模型网关。只有它一个，不会误伤别的运行的令牌。
+macro_rules! bump_epochs_where {
+    ($filter:literal) => {
+        concat!(
+            "UPDATE instances SET token_epoch = token_epoch + 1 WHERE id IN ( \
+               SELECT instance_id FROM runs WHERE ",
+            $filter,
+            " AND kind = 'agent' AND state IN ('starting', 'running', 'waiting_approval', \
+               'waiting_device', 'waiting_quota', 'waiting_children', 'backoff'))"
+        )
+    };
+}
+
 impl Tx<Tenant> {
     /// 用户发起的运行（或用户手动触发计划）。
     pub async fn create_run(&mut self, new: &NewRun) -> Result<Run> {
@@ -295,6 +309,10 @@ impl Tx<Tenant> {
                 to: RunState::Cancelled,
             });
         }
+        sqlx::query(bump_epochs_where!("id = $1"))
+            .bind(id.0)
+            .execute(self.conn())
+            .await?;
         let row: Row = sqlx::query_as(concat!(
             "UPDATE runs SET state = 'cancelled', state_reason = $2, lease_owner = NULL, lease_expires_at = NULL, \
                finished_at = now(), updated_at = now() WHERE id = $1 RETURNING ",
@@ -311,6 +329,10 @@ impl Tx<Tenant> {
 impl Tx<Tenant> {
     /// 停掉整棵运行树（8.2）：根和所有没结束的子孙一起取消。返回取消的个数。
     pub async fn cancel_run_tree(&mut self, root: RunId, reason: &str) -> Result<u64> {
+        sqlx::query(bump_epochs_where!("root_run_id = $1"))
+            .bind(root.0)
+            .execute(self.conn())
+            .await?;
         let done = sqlx::query(
             "UPDATE runs SET state = 'cancelled', state_reason = $2, lease_owner = NULL, lease_expires_at = NULL, \
                finished_at = now(), updated_at = now() \
@@ -327,16 +349,46 @@ impl Tx<Tenant> {
         Ok(done.rows_affected())
     }
 
-    /// 取消实例上所有没结束的运行（删除实例时）。返回取消的个数。
+    /// 运行的预算（agent 在运行里新建计划时，计划沿用这个预算）。
+    pub async fn run_budget(&mut self, id: RunId) -> Result<RunBudget> {
+        let budget: serde_json::Value = sqlx::query_scalar("SELECT budget FROM runs WHERE id = $1")
+            .bind(id.0)
+            .fetch_one(self.conn())
+            .await?;
+        from_json(budget, "run budget")
+    }
+
+    /// 一次运行里某种事件的条数（限制 agent 在一次运行里反复改计划、发提醒）。
+    pub async fn run_event_count(&mut self, id: RunId, kind: &str) -> Result<u64> {
+        let n: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM events WHERE run_id = $1 AND kind = $2")
+                .bind(id.0)
+                .bind(kind)
+                .fetch_one(self.conn())
+                .await?;
+        Ok(u64::try_from(n).unwrap_or_default())
+    }
+
+    /// 取消实例上所有没结束的运行（删除实例时），连同根在这个实例上的运行树里、在别的实例上跑的步骤。
+    /// 返回取消的个数。
     pub async fn cancel_instance_runs(
         &mut self,
         instance: InstanceId,
         reason: &str,
     ) -> Result<u64> {
+        sqlx::query(bump_epochs_where!(
+            "(instance_id = $1 \
+              OR root_run_id IN (SELECT id FROM runs WHERE instance_id = $1 AND parent_run_id IS NULL))"
+        ))
+        .bind(instance.0)
+        .execute(self.conn())
+        .await?;
         let done = sqlx::query(
             "UPDATE runs SET state = 'cancelled', state_reason = $2, lease_owner = NULL, lease_expires_at = NULL, \
                finished_at = now(), updated_at = now() \
-             WHERE instance_id = $1 AND state NOT IN ('succeeded', 'failed', 'cancelled')",
+             WHERE (instance_id = $1 \
+                    OR root_run_id IN (SELECT id FROM runs WHERE instance_id = $1 AND parent_run_id IS NULL)) \
+               AND state NOT IN ('succeeded', 'failed', 'cancelled')",
         )
         .bind(instance.0)
         .bind(reason)
@@ -566,12 +618,28 @@ impl Tx<Worker> {
             "SELECT ",
             columns!(),
             " FROM runs WHERE kind = 'pipeline' AND state IN ('queued', 'waiting_children') \
-               AND not_before <= now() ORDER BY not_before LIMIT $1 FOR UPDATE SKIP LOCKED"
+               AND not_before <= now() \
+               AND EXISTS (SELECT 1 FROM users u WHERE u.id = runs.user_id AND u.status = 'active') \
+             ORDER BY not_before, id LIMIT $1 FOR UPDATE OF runs SKIP LOCKED"
         ))
         .bind(limit)
         .fetch_all(self.conn())
         .await?;
         rows.into_iter().map(Row::into_record).collect()
+    }
+
+    /// 把这一轮处理过、还没结束的流水线排到队尾（流水线的 `not_before` 只用来给驱动器排序，
+    /// 设成现在就排在这一轮没轮到的后面）：等子运行的流水线多了，后面的也能轮到，不延后处理。
+    pub async fn requeue_pipelines(&mut self, ids: &[RunId]) -> Result<()> {
+        let ids: Vec<Uuid> = ids.iter().map(|r| r.0).collect();
+        sqlx::query(
+            "UPDATE runs SET not_before = now() \
+             WHERE id = ANY($1) AND kind = 'pipeline' AND state IN ('queued', 'waiting_children')",
+        )
+        .bind(&ids)
+        .execute(self.conn())
+        .await?;
+        Ok(())
     }
 
     /// 直接子运行。
@@ -626,6 +694,10 @@ impl Tx<Worker> {
 
     /// 取消一个运行的所有没结束的直接子运行（失败传播）。
     pub async fn cancel_children(&mut self, parent: RunId, reason: &str) -> Result<u64> {
+        sqlx::query(bump_epochs_where!("parent_run_id = $1"))
+            .bind(parent.0)
+            .execute(self.conn())
+            .await?;
         let done = sqlx::query(
             "UPDATE runs SET state = 'cancelled', state_reason = $2, lease_owner = NULL, lease_expires_at = NULL, \
                finished_at = now(), updated_at = now() \

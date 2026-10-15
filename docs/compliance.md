@@ -9,7 +9,7 @@
 | App 里的对话流 | 事件里 `agent.message`、`agent.thought`、`agent.plan` 是 agent 生成的，client-core 的 `InstanceEvent.ai_generated` 为真，界面在旁边显示“AI 生成” | `proto::labels::is_ai_generated_event`、`crates/client-core/src/ffi.rs` |
 | 收件箱 | 正文是 agent 写的（运行摘要、工具调用标题、agent 起的计划名）时 `ai_generated` 为真，界面显示标识 | `inbox_items.ai_generated`、`orchestrator::outbox::Notice` |
 | 系统通知（APNs、厂商通道） | 通知栏由系统绘制，正文前加“【AI 生成】” | `notify::PushMessage::display_body` |
-| 下载产出物 | 纯文本、Markdown 末尾追加一行“——本内容由人工智能生成（服务提供者）”；其他类型见待决问题 | `crates/gateway/src/routes/artifacts.rs` |
+| 下载产出物 | 纯文本、Markdown 末尾追加一行“——本内容由人工智能生成（服务提供者）”（`[compliance] label_downloads` 可关）；其他类型不加显式标识，只有隐式标识（2026-10-14 决定） | `crates/gateway/src/routes/artifacts.rs` |
 | 复制、导出 | 客户端在复制 agent 输出时带上标识（App 端实现，WBS 12.x / 13.x） | — |
 
 ## 2. 隐式标识（文件元数据）
@@ -32,10 +32,13 @@
 
 注销要用发到本人手机的专用验证码确认，确认后在一个事务里（`store::Tx::erase_account`）：
 
-- 销毁用户的 DEK：key 密文、产出物内容从此无法解密（对象存储里的密文由巡检清理）；key 密文本身也清空；
-- 删除用户的内容：运行（提示词、摘要、错误）、事件、审批、产出物索引、计划（含触发器、流水线步骤）、收件箱、待发推送、团队、团队模板；
+- 先锁住用户行，等正在给这个用户写数据的事务（调度器建运行、API 请求）提交，之后的删除不会漏掉它们的行；
+- 销毁用户的 DEK：key 密文、产出物内容从此无法解密；key 密文本身也清空。删掉的产出物由触发器把密文的键排进 `blob_purge`，后台维护任务从对象存储删掉（单个删除、删运行级联同样走这个队列）；
+- 删除用户的内容：运行（提示词、摘要、错误）、事件、审批、产出物索引、计划（含触发器、流水线步骤）、收件箱、推送记录（含已送达的：载荷里有通知正文）、团队、团队模板；
 - 去标识化：手机号改成 `deleted`（同一手机号可以重新注册成新账号）、昵称、设备名和推送令牌清空、实例名清空；
 - 吊销全部会话和运行授权；实例标记删除，沙箱和工作区卷由巡检回收；
 - 保留：审计日志和用量记录（只有 id、计数和时间，按网络日志的要求保留）。
 
 测试：`crates/store/src/tests.rs` 的 `erasing_an_account_deletes_its_content`（逐表检查注销用户的行全部删除、另一个用户不受影响）。
+
+平时的保留期：送达（或放弃）的推送记录 7 天后删除（同样的内容在收件箱里，用户自己能看、能删）；事件 30 天。

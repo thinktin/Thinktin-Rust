@@ -77,7 +77,29 @@ pub struct NewArtifact<'a> {
     pub blob_key: &'a str,
 }
 
+/// 一棵运行树最多多少个产出物（含历史版本）。
+pub const MAX_TREE_ARTIFACTS: i64 = 1000;
+
 impl Tx<Worker> {
+    /// 待清理的产出物密文（产出物记录删掉时由触发器排进来）。
+    pub async fn blob_purge_batch(&mut self, limit: i64) -> Result<Vec<String>> {
+        Ok(sqlx::query_scalar(
+            "SELECT blob_key FROM blob_purge ORDER BY queued_at LIMIT $1 FOR UPDATE SKIP LOCKED",
+        )
+        .bind(limit)
+        .fetch_all(self.conn())
+        .await?)
+    }
+
+    /// 对象存储里已经删掉的，移出队列。
+    pub async fn forget_blob_purge(&mut self, keys: &[String]) -> Result<()> {
+        sqlx::query("DELETE FROM blob_purge WHERE blob_key = ANY($1)")
+            .bind(keys)
+            .execute(self.conn())
+            .await?;
+        Ok(())
+    }
+
     /// 登记产出物，版本号在这棵运行树里同名的基础上加一。
     pub async fn insert_artifact(&mut self, a: &NewArtifact<'_>) -> Result<StoredArtifact> {
         // 同一棵树、同一个名字的发布串行化，版本号不会撞。
@@ -85,6 +107,16 @@ impl Tx<Worker> {
             .bind(format!("artifact:{}:{}", a.root, a.name))
             .execute(self.conn())
             .await?;
+        // 一棵运行树里的产出物（含历史版本）有上限：agent 不能无限发布，把列表接口撑爆。
+        let n: i64 = sqlx::query_scalar("SELECT count(*) FROM artifacts WHERE root_run_id = $1")
+            .bind(a.root.0)
+            .fetch_one(self.conn())
+            .await?;
+        if n >= MAX_TREE_ARTIFACTS {
+            return Err(Error::Invalid(format!(
+                "a run tree can hold at most {MAX_TREE_ARTIFACTS} artifacts (versions included)"
+            )));
+        }
         let row: Row = sqlx::query_as(concat!(
             "INSERT INTO artifacts (id, user_id, instance_id, run_id, root_run_id, name, version, content_type, \
                size, sha256, blob_key) \

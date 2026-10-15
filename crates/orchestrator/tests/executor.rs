@@ -195,16 +195,35 @@ async fn fake_shim(
                             break;
                         }
                     }
+                } else if text.contains("nul") {
+                    // agent 回复里夹着 NUL（比如转述的网页标题）：存不进 Postgres，不能让收尾失败。
+                    let _ = ev.send(chunk(&run_id, "done\u{0}here")).await;
+                    let _ = ev.send(ended(&run_id, StopReason::EndTurn)).await;
+                } else if text.contains("flood") {
+                    // 失控的 agent：一大段回复，再夹着工具调用不停输出。
+                    let big = "z".repeat(200 << 10);
+                    for i in 0..20 {
+                        let _ = ev.send(chunk(&run_id, &big)).await;
+                        let _ = ev.send(tool_call(&run_id, i)).await;
+                    }
+                    let _ = ev.send(chunk(&run_id, &big)).await;
+                    let _ = ev.send(ended(&run_id, StopReason::EndTurn)).await;
                 } else if text.contains("loop forever") {
                     looping = Some(run_id);
                 } else if text.contains("crash") {
                     return;
                 } else if text.contains("use tool") {
+                    // 被攻破的 shim 可以调没告诉它的工具。
+                    let name = if text.contains("forged") {
+                        "delegate"
+                    } else {
+                        "schedule_list"
+                    };
                     let _ = ev
                         .send(ShimEvent::PlatformToolCall {
                             run_id: run_id.clone(),
                             call_id: "c1".into(),
-                            name: "schedule_list".into(),
+                            name: name.into(),
                             arguments: json!({ "limit": 1 }),
                         })
                         .await;
@@ -256,6 +275,7 @@ impl PlatformTools for Tools {
 struct Env {
     t: TestDb,
     _dir: tempfile::TempDir,
+    lifecycle: Arc<Lifecycle>,
     exec: Arc<Executor>,
     fake: FakeConnector,
     user: UserId,
@@ -299,7 +319,7 @@ async fn env_with(
     let exec = Arc::new(Executor::new(
         t.db.clone(),
         "node-a",
-        lifecycle,
+        lifecycle.clone(),
         grants,
         Arc::new(fake.clone()),
         tools,
@@ -308,6 +328,7 @@ async fn env_with(
     Some(Env {
         t,
         _dir: dir,
+        lifecycle,
         exec,
         fake,
         user: user.id,
@@ -741,11 +762,18 @@ async fn platform_tools_follow_the_grant_scope() {
         rec.run.summary,
         Some(format!("schedule_list for run {run}"))
     );
-    let launches = &e.fake.rec.lock().unwrap().launches;
+    let launches = e.fake.rec.lock().unwrap().launches.clone();
     assert_eq!(
         launches[0].2,
         ["schedule_list"],
         "delegate is outside the grant"
+    );
+    // 授权范围外的工具，就算 shim 发来调用也不执行。
+    let run = e.queue("use tool, forged", None, 3).await;
+    e.run_to_end().await;
+    assert_eq!(
+        e.state(run).await.run.summary.as_deref(),
+        Some("unknown platform tool delegate")
     );
 }
 
@@ -759,4 +787,295 @@ async fn runs_without_a_grant_fail() {
     let rec = e.state(run).await;
     assert_eq!(rec.run.state, RunState::Failed);
     assert!(rec.run.error.unwrap().contains("no active run grant"));
+}
+
+/// agent 输出不受控：单条日志截断，整次运行的日志有总量上限，摘要只取开头。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn agent_output_is_bounded_in_memory_and_in_the_log() {
+    let Some(e) = env_with(
+        ExecutorConfig {
+            max_run_log_bytes: 256 << 10,
+            ..fast()
+        },
+        Some(GrantScope::default()),
+        Arc::new(Tools),
+    )
+    .await
+    else {
+        return;
+    };
+    let run = e.queue("please flood", None, 3).await;
+    e.run_to_end().await;
+    let rec = e.state(run).await;
+    assert_eq!(rec.run.state, RunState::Succeeded, "{:?}", rec.run);
+    assert!(rec.run.summary.as_deref().unwrap().chars().count() <= 401);
+    let events = e.events(run).await;
+    let logged: usize = events
+        .iter()
+        .filter(|(k, _)| k.starts_with("agent."))
+        .map(|(_, p)| serde_json::to_vec(p).unwrap().len())
+        .sum();
+    assert!(logged <= 256 << 10, "agent events took {logged} bytes");
+    for (_, p) in &events {
+        assert!(serde_json::to_vec(p).unwrap().len() <= 256 << 10);
+    }
+    let marks = events
+        .iter()
+        .filter(|(k, _)| k == "run.log_truncated")
+        .count();
+    assert_eq!(marks, 1);
+    // 状态变化照常记。
+    assert_eq!(events.last().unwrap().0, "run.state");
+    assert_eq!(events.last().unwrap().1["state"], "succeeded");
+}
+
+impl Env {
+    async fn approve_pending(&self) {
+        let mut tx = self.t.db.tenant(self.user).await.unwrap();
+        let pending = tx.pending_approvals().await.unwrap();
+        assert_eq!(pending.len(), 1, "{pending:?}");
+        tx.decide_approval(pending[0].id, "allow", proto::domain::DeviceId::new())
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+    }
+
+    async fn instance_state(&self) -> proto::domain::InstanceState {
+        let mut w = self.t.db.worker().await.unwrap();
+        let s = w.instance_runtime(self.instance.id).await.unwrap().state;
+        w.rollback().await.unwrap();
+        s
+    }
+}
+
+/// 等审批期间沙箱被空闲回收暂停：用户批准后先唤醒沙箱，再把决定交给 agent。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn approving_wakes_a_paused_sandbox() {
+    let Some(e) = env().await else { return };
+    let run = e.queue("need approval to clean up", None, 3).await;
+    let (_stop, h) = e.spawn().await;
+    e.wait_state(run, RunState::WaitingApproval).await;
+    assert!(e.lifecycle.pause(e.instance.id).await.unwrap());
+    assert_eq!(
+        e.instance_state().await,
+        proto::domain::InstanceState::Paused
+    );
+    e.approve_pending().await;
+    tokio::time::timeout(Duration::from_secs(20), h)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(e.state(run).await.run.state, RunState::Succeeded);
+    assert_eq!(
+        e.instance_state().await,
+        proto::domain::InstanceState::Running
+    );
+}
+
+/// 等审批时被打断（发版、副本挂了）：没处理的审批作废，下次尝试 agent 从 perm-1 重新请求也不会撞上。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn interrupted_approvals_are_asked_again_on_the_next_attempt() {
+    let Some(e) = env().await else { return };
+    let run = e.queue("need approval to clean up", None, 3).await;
+    let (stop, h) = e.spawn().await;
+    e.wait_state(run, RunState::WaitingApproval).await;
+    stop.send(true).unwrap();
+    tokio::time::timeout(Duration::from_secs(20), h)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(e.state(run).await.run.state, RunState::Backoff);
+    let mut tx = e.t.db.tenant(e.user).await.unwrap();
+    assert!(
+        tx.pending_approvals().await.unwrap().is_empty(),
+        "the old request is void"
+    );
+    tx.rollback().await.unwrap();
+    let (_stop, h) = e.spawn().await;
+    e.wait_state(run, RunState::WaitingApproval).await;
+    e.approve_pending().await;
+    tokio::time::timeout(Duration::from_secs(20), h)
+        .await
+        .unwrap()
+        .unwrap();
+    let rec = e.state(run).await;
+    assert_eq!((rec.run.state, rec.run.attempt), (RunState::Succeeded, 2));
+}
+
+/// 等审批的运行让出执行名额：只有一个名额时，别的运行照样能跑；批准后它拿回名额接着跑完。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn runs_waiting_for_approval_do_not_hold_an_execution_slot() {
+    let Some(e) = env_with(
+        ExecutorConfig {
+            max_concurrent: 1,
+            claim_poll: Duration::from_millis(50),
+            ..fast()
+        },
+        Some(GrantScope::default()),
+        Arc::new(NoPlatformTools),
+    )
+    .await
+    else {
+        return;
+    };
+    let waiting = e.queue("need approval to clean up", None, 3).await;
+    let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+    let exec = e.exec.clone();
+    let loop_handle = tokio::spawn(async move {
+        exec.run(async {
+            let _ = stop_rx.await;
+        })
+        .await
+    });
+    e.wait_state(waiting, RunState::WaitingApproval).await;
+    // 另一个实例上的运行（同一个实例同时只跑一个运行）。
+    let second = e
+        .lifecycle
+        .adopt(e.user, "user:d", "claude", None, "Claude 2")
+        .await
+        .unwrap();
+    let mut tx = e.t.db.tenant(e.user).await.unwrap();
+    tx.create_run_grant(
+        second.id,
+        None,
+        &GrantScope::default(),
+        Duration::from_secs(3600),
+    )
+    .await
+    .unwrap();
+    let other = tx
+        .create_run(&NewRun::new(
+            second.id,
+            RunSource::User,
+            "please say hello",
+            &second.agent_version,
+        ))
+        .await
+        .unwrap()
+        .id;
+    tx.commit().await.unwrap();
+    e.wait_state(other, RunState::Succeeded).await;
+    e.approve_pending().await;
+    e.wait_state(waiting, RunState::Succeeded).await;
+    let _ = stop_tx.send(());
+    tokio::time::timeout(Duration::from_secs(20), loop_handle)
+        .await
+        .unwrap()
+        .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn nul_characters_in_agent_output_do_not_break_finishing() {
+    let Some(e) = env().await else { return };
+    let run = e.queue("reply with a nul", None, 3).await;
+    e.run_to_end().await;
+    let rec = e.state(run).await;
+    assert_eq!(rec.run.state, RunState::Succeeded, "{:?}", rec.run);
+    assert_eq!(rec.run.summary.as_deref(), Some("donehere"));
+    assert_eq!(rec.lease_owner, None);
+}
+
+/// 续租赶不上、租约被别的副本接手：原来的执行停下 agent，接手的副本的运行原样不动（不取消、不改状态）。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_taken_over_run_is_left_to_the_new_holder() {
+    let Some(e) = env_with(
+        ExecutorConfig {
+            lease: Duration::from_millis(300),
+            renew_every: Duration::from_secs(1),
+            ..fast()
+        },
+        Some(GrantScope::default()),
+        Arc::new(NoPlatformTools),
+    )
+    .await
+    else {
+        return;
+    };
+    let run = e.queue("loop forever", None, 3).await;
+    let (_stop, h) = e.spawn().await;
+    e.wait_state(run, RunState::Running).await;
+    // 续租间隔比租约长：两次续租之间租约会过期，等到那时接手（机器忙时时间点不固定，轮询）。
+    // 每次新开事务：now() 是事务开始的时间。
+    let mut taken = Vec::new();
+    let mut w = e.t.db.worker().await.unwrap();
+    for _ in 0..100 {
+        taken = w
+            .take_over_expired("node-b", Duration::from_secs(60), 10)
+            .await
+            .unwrap();
+        if !taken.is_empty() {
+            break;
+        }
+        w.rollback().await.unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        w = e.t.db.worker().await.unwrap();
+    }
+    assert_eq!(taken.len(), 1);
+    // 接手的副本已经让 agent 请求了一次审批。
+    w.create_approval(&store::NewApproval {
+        user: e.user,
+        instance: e.instance.id,
+        run,
+        request_id: "2:p1",
+        title: Some("Delete old reports"),
+        options: &json!([{ "option_id": "allow", "name": "Allow", "kind": "allow_once" }]),
+        tool_call: &json!({}),
+        expires_in: Duration::from_secs(600),
+    })
+    .await
+    .unwrap();
+    w.commit().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(10), h)
+        .await
+        .expect("the old holder stops")
+        .unwrap();
+    let rec = e.state(run).await;
+    assert_eq!(rec.run.state, RunState::Running);
+    assert_eq!(rec.lease_owner.as_deref(), Some("node-b"));
+    let mut tx = e.t.db.tenant(e.user).await.unwrap();
+    assert_eq!(
+        tx.pending_approvals().await.unwrap().len(),
+        1,
+        "the new holder's approval is untouched"
+    );
+}
+
+/// 运行的一次尝试结束、运行被取消时，签给它的沙箱令牌作废（实例的令牌代数加一），
+/// agent 留在沙箱里的后台进程不能接着用模型网关。排队中的运行被取消不动代数（它没有令牌）。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn sandbox_tokens_die_with_the_run() {
+    let Some(e) = env().await else { return };
+    let epoch = || async {
+        let mut w = e.t.db.worker().await.unwrap();
+        let rt = w.instance_runtime(e.instance.id).await.unwrap();
+        w.rollback().await.unwrap();
+        rt.token_epoch
+    };
+    assert_eq!(epoch().await, 0);
+    e.queue("say hello", None, 3).await;
+    e.run_to_end().await;
+    assert_eq!(epoch().await, 1, "the finished attempt's token is dead");
+
+    let queued = e.queue("say hello", None, 3).await;
+    let mut tx = e.t.db.tenant(e.user).await.unwrap();
+    tx.cancel_run(queued, None).await.unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(epoch().await, 1, "a queued run had no token");
+
+    let run = e.queue("loop forever", None, 3).await;
+    let (_stop, h) = e.spawn().await;
+    e.wait_state(run, RunState::Running).await;
+    let mut tx = e.t.db.tenant(e.user).await.unwrap();
+    tx.cancel_run(run, None).await.unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(epoch().await, 2, "cancelling kills the token at once");
+    tokio::time::timeout(Duration::from_secs(10), h)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        epoch().await,
+        2,
+        "the executor does not bump again (the next run may already hold a token)"
+    );
 }

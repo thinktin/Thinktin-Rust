@@ -15,6 +15,14 @@ use croner::parser::{CronParser, Seconds};
 
 /// 一次最多展开这么多个触发时间（补跑、校验最小间隔时用），防止病态规则拖垮调度循环。
 pub const MAX_EXPANSION: usize = 1000;
+/// RRULE 文本的长度上限（新建、修改计划时）。
+const MAX_RULE_LEN: usize = 1000;
+/// rrule 每次计算都从 DTSTART 往后数，DTSTART 越早越慢：新建、修改计划时 DTSTART 只能在现在附近，
+/// 长期运行的规则由调度循环定期把 DTSTART 挪到最近一次触发（[`Schedule::rebased_rrule`]）。
+const DTSTART_PAST_DAYS: i64 = 1;
+const DTSTART_FUTURE_DAYS: i64 = 366;
+/// DTSTART 比最近一次触发早这么多天就挪。
+const REBASE_AFTER_DAYS: i64 = 7;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ScheduleError {
@@ -75,9 +83,130 @@ impl Schedule {
                 if rule.contains("FREQ=SECONDLY") {
                     return Err(ScheduleError::RRule("FREQ=SECONDLY is not allowed".into()));
                 }
+                // 只允许一条 RRULE、不允许 RDATE：多条规则或额外的日期能让前面的触发稀疏、后面的密集，
+                // 躲过只看前几十次的频率检查。一条规则的间隔是周期性的。
+                let upper: Vec<String> = rule
+                    .lines()
+                    .map(|l| l.trim().to_ascii_uppercase())
+                    .collect();
+                if upper.iter().filter(|l| l.starts_with("RRULE")).count() > 1 {
+                    return Err(ScheduleError::RRule("only one RRULE is allowed".into()));
+                }
+                if upper.iter().any(|l| l.starts_with("RDATE")) {
+                    return Err(ScheduleError::RRule("RDATE is not allowed".into()));
+                }
                 Ok(Self::Rrule { set: Box::new(set) })
             }
             ScheduleSpec::Once { at } => Ok(Self::Once { at: *at }),
+        }
+    }
+
+    /// 新建、修改计划时用：在 `parse` 之外还要求 RRULE 不太长、DTSTART 在现在附近。
+    pub fn parse_new(spec: &ScheduleSpec, now: DateTime<Utc>) -> Result<Self, ScheduleError> {
+        if let ScheduleSpec::Rrule { rule } = spec
+            && rule.len() > MAX_RULE_LEN
+        {
+            return Err(ScheduleError::RRule(format!(
+                "the rule is longer than {MAX_RULE_LEN} characters"
+            )));
+        }
+        let s = Self::parse(spec)?;
+        if let Self::Rrule { set } = &s {
+            let start = set.get_dt_start().with_timezone(&Utc);
+            if start < now - chrono::Duration::days(DTSTART_PAST_DAYS)
+                || start > now + chrono::Duration::days(DTSTART_FUTURE_DAYS)
+            {
+                return Err(ScheduleError::RRule(
+                    "DTSTART must be between a day before and a year after now".into(),
+                ));
+            }
+        }
+        Ok(s)
+    }
+
+    /// DTSTART 是不是比 `last_fire` 早太久，该挪了（只对 RRULE）。
+    pub fn needs_rebase(&self, last_fire: DateTime<Utc>) -> bool {
+        match self {
+            Self::Rrule { set } => {
+                set.get_dt_start().with_timezone(&Utc)
+                    < last_fire - chrono::Duration::days(REBASE_AFTER_DAYS)
+            }
+            _ => false,
+        }
+    }
+
+    /// 把 RRULE 的 DTSTART 挪到 `at`（规则的一次触发），得到之后触发完全一样、算起来快的规则。
+    /// 带 COUNT 的规则（挪了次数会变）、不带时区的 DTSTART、挪完后面几次触发对不上的（比如夏令时调整过的那次），
+    /// 都返回 `None`，保持原样。
+    pub fn rebased_rrule(rule: &str, at: DateTime<Utc>) -> Option<String> {
+        if rule.to_ascii_uppercase().contains("COUNT=") {
+            return None;
+        }
+        let line = rule
+            .lines()
+            .find(|l| l.trim_start().to_ascii_uppercase().starts_with("DTSTART"))?;
+        let (params, value) = line.trim().rsplit_once(':')?;
+        let new_value = match params.split_once("TZID=") {
+            Some((_, tz)) => {
+                let tz = parse_tz(tz.split(';').next()?).ok()?;
+                at.with_timezone(&tz).format("%Y%m%dT%H%M%S").to_string()
+            }
+            None if value.ends_with('Z') => at.format("%Y%m%dT%H%M%SZ").to_string(),
+            None => return None,
+        };
+        let rebased: String = rule
+            .lines()
+            .map(|l| {
+                if std::ptr::eq(l, line) {
+                    format!("{params}:{new_value}")
+                } else {
+                    l.to_owned()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let old = Self::parse(&ScheduleSpec::Rrule { rule: rule.into() }).ok()?;
+        let new = Self::parse(&ScheduleSpec::Rrule {
+            rule: rebased.clone(),
+        })
+        .ok()?;
+        let one_second = chrono::Duration::seconds(1);
+        if old.next_after(at - one_second) != Some(at) {
+            return None;
+        }
+        let ahead = |s: &Self| s.first_after(at - one_second, 6);
+        (ahead(&old) == ahead(&new)).then_some(rebased)
+    }
+
+    /// 严格晚于 `from` 的前 `n` 次触发。RRULE 一次遍历（每次单独算都要从 DTSTART 重新数）。
+    fn first_after(&self, from: DateTime<Utc>, n: usize) -> Vec<DateTime<Utc>> {
+        let n = n.min(MAX_EXPANSION);
+        match self {
+            Self::Rrule { set } => {
+                let start = (from + chrono::Duration::seconds(1)).with_timezone(&rrule::Tz::UTC);
+                (**set)
+                    .clone()
+                    .after(start)
+                    .all(u16::try_from(n).unwrap_or(u16::MAX))
+                    .dates
+                    .into_iter()
+                    .map(|t| t.with_timezone(&Utc))
+                    .collect()
+            }
+            _ => {
+                let mut out = Vec::new();
+                let mut cursor = from;
+                while out.len() < n {
+                    match self.next_after(cursor) {
+                        Some(t) => {
+                            out.push(t);
+                            cursor = t;
+                        }
+                        None => break,
+                    }
+                }
+                out
+            }
         }
     }
 
@@ -110,6 +239,19 @@ impl Schedule {
         to: DateTime<Utc>,
         cap: usize,
     ) -> Vec<DateTime<Utc>> {
+        if let Self::Rrule { set } = self {
+            let start = (from + chrono::Duration::seconds(1)).with_timezone(&rrule::Tz::UTC);
+            let cap = u16::try_from(cap.min(MAX_EXPANSION)).unwrap_or(u16::MAX);
+            return (**set)
+                .clone()
+                .after(start)
+                .before(to.with_timezone(&rrule::Tz::UTC))
+                .all(cap)
+                .dates
+                .into_iter()
+                .map(|t| t.with_timezone(&Utc))
+                .collect();
+        }
         let mut out = Vec::new();
         let mut cursor = from;
         while out.len() < cap.min(MAX_EXPANSION) {
@@ -126,17 +268,10 @@ impl Schedule {
 
     /// 从 `from` 起相邻两次触发的最小间隔（只看前 `samples` 次），用于按档位限制触发频率。
     pub fn min_interval(&self, from: DateTime<Utc>, samples: usize) -> Option<Duration> {
-        let mut prev = self.next_after(from)?;
-        let mut min: Option<Duration> = None;
-        for _ in 1..samples.min(MAX_EXPANSION) {
-            let Some(next) = self.next_after(prev) else {
-                break;
-            };
-            let gap = (next - prev).to_std().unwrap_or_default();
-            min = Some(min.map_or(gap, |m| m.min(gap)));
-            prev = next;
-        }
-        min
+        self.first_after(from, samples)
+            .windows(2)
+            .map(|w| (w[1] - w[0]).to_std().unwrap_or_default())
+            .min()
     }
 
     /// 校验触发间隔不小于档位允许的最小值。
@@ -199,6 +334,35 @@ pub fn plan_due(
         dropped,
         next,
     }
+}
+
+/// 不管规则怎么写，同一个触发器相邻两次触发至少隔 `min`：太近的丢掉，下一次排到最后一次之后至少 `min`。
+/// 解析时的频率检查只看前几十次，这里是最后一道兜底。返回丢掉的个数。
+pub fn enforce_min_gap(
+    plan: &mut CatchUpPlan,
+    schedule: &Schedule,
+    last_fire: Option<DateTime<Utc>>,
+    min: Duration,
+) -> usize {
+    let Ok(min) = chrono::Duration::from_std(min) else {
+        return 0;
+    };
+    let before = plan.fires.len();
+    let mut prev = last_fire;
+    plan.fires.retain(|f| {
+        // 和上一次是同一个名义时间：是重复扫描，交给 (plan_id, fire_time) 唯一约束去重，不算太频繁。
+        let ok = prev.is_none_or(|p| *f == p || *f - p >= min);
+        if ok {
+            prev = Some(*f);
+        }
+        ok
+    });
+    if let (Some(p), Some(next)) = (prev, plan.next)
+        && next - p < min
+    {
+        plan.next = schedule.next_after(p + min - chrono::Duration::seconds(1));
+    }
+    before - plan.fires.len()
 }
 
 /// 确定性的削峰抖动：`[0, max)` 之间，由触发器 id 和名义触发时间决定（FNV-1a，跨版本稳定）。
@@ -281,6 +445,88 @@ mod tests {
         assert_eq!(
             s.next_after(utc("2026-03-10T00:00:00Z")),
             Some(utc("2026-03-10T12:00:00Z"))
+        );
+    }
+
+    /// 多条 RRULE 或 RDATE：前几十次稀疏、后面密集，躲过频率检查。解析时拒绝，调度时还有兜底。
+    #[test]
+    fn dense_later_fires_cannot_slip_past_the_frequency_limit() {
+        for rule in [
+            "DTSTART;TZID=Asia/Shanghai:20261015T090000\nRRULE:FREQ=DAILY;COUNT=60\nRRULE:FREQ=MINUTELY;BYMONTH=6",
+            "DTSTART;TZID=Asia/Shanghai:20261015T090000\nRRULE:FREQ=DAILY\nRDATE;TZID=Asia/Shanghai:20270601T000000,20270601T000100",
+        ] {
+            assert!(
+                Schedule::parse(&ScheduleSpec::Rrule { rule: rule.into() }).is_err(),
+                "{rule}"
+            );
+        }
+        // 兜底：每分钟一次的规则（假设绕过了解析检查）到调度时按最小间隔丢掉太近的。
+        let s = cron("* * * * *", "UTC");
+        let mut plan = CatchUpPlan {
+            fires: vec![
+                utc("2026-10-15T00:00:00Z"),
+                utc("2026-10-15T00:01:00Z"),
+                utc("2026-10-15T00:05:00Z"),
+                utc("2026-10-15T00:06:00Z"),
+            ],
+            dropped: 0,
+            next: Some(utc("2026-10-15T00:07:00Z")),
+        };
+        let five = Duration::from_secs(300);
+        let dropped = enforce_min_gap(&mut plan, &s, Some(utc("2026-10-14T23:58:00Z")), five);
+        assert_eq!(
+            dropped, 3,
+            "00:00 and 00:01 follow 23:58 too soon, 00:06 follows 00:05"
+        );
+        assert_eq!(plan.fires, [utc("2026-10-15T00:05:00Z")]);
+        assert_eq!(plan.next, Some(utc("2026-10-15T00:10:00Z")));
+    }
+
+    /// rrule 每次都从 DTSTART 往后数：新建时 DTSTART 只能在现在附近；长期运行的规则把 DTSTART 挪到最近一次触发。
+    #[test]
+    fn rrule_start_is_bounded_and_moved_forward() {
+        let now = utc("2026-10-15T00:00:00Z");
+        let rule = |r: &str| ScheduleSpec::Rrule { rule: r.into() };
+        assert!(
+            Schedule::parse_new(
+                &rule("DTSTART:20250101T000000Z\nRRULE:FREQ=MINUTELY;INTERVAL=5"),
+                now
+            )
+            .is_err(),
+            "a DTSTART long ago makes every evaluation walk from it"
+        );
+        assert!(
+            Schedule::parse_new(&rule("DTSTART:20261015T080000Z\nRRULE:FREQ=DAILY"), now).is_ok()
+        );
+        let long = format!(
+            "DTSTART:20261015T080000Z\nRRULE:FREQ=DAILY\nEXDATE:{}",
+            "20261016T080000Z,".repeat(80)
+        );
+        assert!(Schedule::parse_new(&rule(&long), now).is_err());
+
+        // 每天早上 9 点（上海），从年初开始：挪到 10 月 14 日那次，之后完全一样。
+        let daily = "DTSTART;TZID=Asia/Shanghai:20260101T090000\nRRULE:FREQ=DAILY;BYDAY=MO,WE,FR";
+        let at = utc("2026-10-14T01:00:00Z"); // 周三上海 9 点
+        let s = Schedule::parse(&rule(daily)).unwrap();
+        assert!(s.needs_rebase(at));
+        let moved = Schedule::rebased_rrule(daily, at).unwrap();
+        assert!(
+            moved.starts_with("DTSTART;TZID=Asia/Shanghai:20261014T090000"),
+            "{moved}"
+        );
+        let m = Schedule::parse(&rule(&moved)).unwrap();
+        assert!(!m.needs_rebase(at));
+        let span = (utc("2026-10-14T01:00:00Z"), utc("2027-01-01T00:00:00Z"));
+        assert_eq!(
+            s.fires_between(span.0, span.1, 100),
+            m.fires_between(span.0, span.1, 100)
+        );
+        // 带 COUNT 的规则挪了次数会变；不是规则里的触发时间也不挪。
+        let counted = "DTSTART;TZID=Asia/Shanghai:20260101T090000\nRRULE:FREQ=DAILY;COUNT=400";
+        assert_eq!(Schedule::rebased_rrule(counted, at), None);
+        assert_eq!(
+            Schedule::rebased_rrule(daily, utc("2026-10-14T02:00:00Z")),
+            None
         );
     }
 

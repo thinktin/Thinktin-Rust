@@ -199,7 +199,29 @@ impl Tx<Worker> {
         .bind(push.map(|(_, t)| t))
         .execute(self.conn())
         .await?;
+        if let Some((channel, token)) = push {
+            self.release_push_token(id, channel, token).await?;
+        }
         Ok(id)
+    }
+
+    /// 一个推送令牌只属于一台设备：同一台手机换了账号登录，之前账号的设备不再收到推送。
+    pub async fn release_push_token(
+        &mut self,
+        keep: DeviceId,
+        channel: PushChannelKind,
+        token: &str,
+    ) -> Result<u64> {
+        let done = sqlx::query(
+            "UPDATE devices SET push_channel = NULL, push_token = NULL \
+             WHERE push_channel = $2 AND push_token = $3 AND id <> $1",
+        )
+        .bind(keep.0)
+        .bind(channel.as_str())
+        .bind(token)
+        .execute(self.conn())
+        .await?;
+        Ok(done.rows_affected())
     }
 
     /// 新会话。会话 id 由调用方先生成（刷新令牌里带着它）。
@@ -272,6 +294,14 @@ impl Tx<Worker> {
         new_hash: &[u8],
         ttl: Duration,
     ) -> Result<()> {
+        // 换下来的令牌记进历史：以后再出示它就是被盗信号（见 `refresh_hash_retired`）。
+        sqlx::query(
+            "INSERT INTO session_refresh_history (session_id, refresh_hash) \
+             SELECT id, refresh_hash FROM sessions WHERE id = $1 ON CONFLICT DO NOTHING",
+        )
+        .bind(id.0)
+        .execute(self.conn())
+        .await?;
         sqlx::query(
             "UPDATE sessions SET prev_refresh_hash = refresh_hash, refresh_hash = $2, rotated_at = now(), \
                expires_at = now() + make_interval(secs => $3) WHERE id = $1",
@@ -288,6 +318,57 @@ impl Tx<Worker> {
         .execute(self.conn())
         .await?;
         Ok(())
+    }
+
+    /// 客户端拿“上一个”令牌重试（上次刷新的响应丢了）：重新签发当前令牌，“上一个”不变。
+    /// 刚才签出的当前令牌记进历史作废：如果它其实在别人手里，再出示时就是被盗信号。
+    pub async fn reissue_refresh(
+        &mut self,
+        id: SessionId,
+        new_hash: &[u8],
+        ttl: Duration,
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO session_refresh_history (session_id, refresh_hash) \
+             SELECT id, refresh_hash FROM sessions WHERE id = $1 ON CONFLICT DO NOTHING",
+        )
+        .bind(id.0)
+        .execute(self.conn())
+        .await?;
+        sqlx::query(
+            "UPDATE sessions SET refresh_hash = $2, rotated_at = now(), \
+               expires_at = now() + make_interval(secs => $3) WHERE id = $1",
+        )
+        .bind(id.0)
+        .bind(new_hash)
+        .bind(secs(ttl))
+        .execute(self.conn())
+        .await?;
+        Ok(())
+    }
+
+    /// 这个哈希是不是会话以前轮换掉的刷新令牌。
+    pub async fn refresh_hash_retired(&mut self, id: SessionId, hash: &[u8]) -> Result<bool> {
+        Ok(sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM session_refresh_history WHERE session_id = $1 AND refresh_hash = $2)",
+        )
+        .bind(id.0)
+        .bind(hash)
+        .fetch_one(self.conn())
+        .await?)
+    }
+
+    /// 清理已经失效很久的会话的刷新令牌历史。
+    pub async fn purge_refresh_history(&mut self, older_than: Duration) -> Result<u64> {
+        let done = sqlx::query(
+            "DELETE FROM session_refresh_history h USING sessions s \
+             WHERE s.id = h.session_id \
+               AND least(coalesce(s.revoked_at, s.expires_at), s.expires_at) < now() - make_interval(secs => $1)",
+        )
+        .bind(secs(older_than))
+        .execute(self.conn())
+        .await?;
+        Ok(done.rows_affected())
     }
 
     pub async fn revoke_session(&mut self, id: SessionId, reason: &str) -> Result<()> {
@@ -321,15 +402,19 @@ impl Tx<Worker> {
         .transpose()
     }
 
-    /// 用户还登录着、有推送令牌的设备。
+    /// 用户还登录着、有推送令牌的设备。会话过期、被吊销（没调退出接口）的设备不算：
+    /// 那台手机可能已经换了人用。
     pub async fn push_targets(
         &mut self,
         user: UserId,
     ) -> Result<Vec<(DeviceId, PushChannelKind, String)>> {
         let rows: Vec<(Uuid, String, String)> = sqlx::query_as(
-            "SELECT id, push_channel, push_token FROM devices \
-             WHERE user_id = $1 AND revoked_at IS NULL AND push_channel IS NOT NULL AND push_token IS NOT NULL \
-             ORDER BY last_seen_at DESC",
+            "SELECT d.id, d.push_channel, d.push_token FROM devices d \
+             WHERE d.user_id = $1 AND d.revoked_at IS NULL \
+               AND d.push_channel IS NOT NULL AND d.push_token IS NOT NULL \
+               AND EXISTS (SELECT 1 FROM sessions s WHERE s.device_id = d.id \
+                             AND s.revoked_at IS NULL AND s.expires_at > now()) \
+             ORDER BY d.last_seen_at DESC",
         )
         .bind(user.0)
         .fetch_all(self.conn())

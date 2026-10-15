@@ -8,6 +8,7 @@ use std::time::Instant;
 
 use axum::Router;
 use axum::extract::{MatchedPath, Request};
+use axum::http::Method;
 use axum::middleware::Next;
 use axum::response::Response;
 use axum::routing::get;
@@ -42,7 +43,17 @@ pub async fn track(req: Request, next: Next) -> Response {
         .get::<MatchedPath>()
         .map(|p| p.as_str().to_owned())
         .unwrap_or_else(|| "unmatched".into());
-    let method = req.method().as_str().to_owned();
+    // 方法名任意（扩展方法），不能直接当标签：每个新值都是一条新的时间序列，未认证的请求就能撑爆内存。
+    let method = match *req.method() {
+        Method::GET => "GET",
+        Method::POST => "POST",
+        Method::PUT => "PUT",
+        Method::PATCH => "PATCH",
+        Method::DELETE => "DELETE",
+        Method::HEAD => "HEAD",
+        Method::OPTIONS => "OPTIONS",
+        _ => "other",
+    };
     let started = Instant::now();
     let resp = next.run(req).await;
     let status = resp.status().as_u16().to_string();

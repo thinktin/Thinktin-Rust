@@ -93,6 +93,7 @@ pub async fn stream(
     t.rollback().await?;
     Ok(ws
         .max_message_size(64 << 10)
+        .max_frame_size(64 << 10)
         .on_upgrade(move |socket| run_stream(s, who, token, id, q.after, socket)))
 }
 
@@ -134,7 +135,7 @@ async fn run_stream(
     }
     .await;
     match range {
-        Ok((Some(oldest), latest)) if oldest > last.saturating_add(1) => {
+        Ok((oldest, latest)) if oldest > last.saturating_add(1) => {
             let msg = json!({ "type": "reset", "oldest_seq": oldest, "latest_seq": latest });
             if !send(&mut socket, Message::Text(msg.to_string().into())).await {
                 return;
@@ -173,25 +174,29 @@ async fn run_stream(
                 break;
             }
         }
-        tokio::select! {
-            r = wake.recv() => match r {
-                Ok(()) | Err(RecvError::Lagged(_)) => {}
-                Err(RecvError::Closed) => return,
-            },
-            _ = heartbeat.tick() => {
-                if s.auth.authenticate(&token).await.is_err() {
-                    close(&mut socket, CLOSE_UNAUTHENTICATED, "unauthenticated").await;
-                    return;
+        // 等到有新事件（或心跳）再查库。客户端发来的消息（pong、文本）不处理，也不触发查库：
+        // 否则一个连接狂发小帧就能让服务端不停开数据库事务。
+        loop {
+            tokio::select! {
+                r = wake.recv() => match r {
+                    Ok(()) | Err(RecvError::Lagged(_)) => break,
+                    Err(RecvError::Closed) => return,
+                },
+                _ = heartbeat.tick() => {
+                    if s.auth.authenticate(&token).await.is_err() {
+                        close(&mut socket, CLOSE_UNAUTHENTICATED, "unauthenticated").await;
+                        return;
+                    }
+                    if !send(&mut socket, Message::Ping(Default::default())).await {
+                        return;
+                    }
+                    break;
                 }
-                if !send(&mut socket, Message::Ping(Default::default())).await {
-                    return;
-                }
+                msg = socket.recv() => match msg {
+                    None | Some(Err(_)) | Some(Ok(Message::Close(_))) => return,
+                    Some(Ok(_)) => {}
+                },
             }
-            msg = socket.recv() => match msg {
-                None | Some(Err(_)) | Some(Ok(Message::Close(_))) => return,
-                // 客户端发来的其他消息（pong、文本）都不需要处理。
-                Some(Ok(_)) => {}
-            },
         }
     }
 }

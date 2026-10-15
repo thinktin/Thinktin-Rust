@@ -16,6 +16,8 @@ pub struct GatewayInstance {
     pub running: bool,
     /// 当前沙箱：令牌里的沙箱 id 必须是它。
     pub sandbox_id: Option<String>,
+    /// 令牌代数：令牌里的必须是它（运行结束后旧令牌失效）。
+    pub token_epoch: u64,
     pub limits: InstanceLimits,
     pub routes: Vec<GatewayRoute>,
 }
@@ -31,13 +33,13 @@ pub struct GatewayRoute {
 
 impl Tx<Llmgw> {
     pub async fn gateway_instance(&mut self, id: InstanceId) -> Result<Option<GatewayInstance>> {
-        let row: Option<(Uuid, String, Option<String>, serde_json::Value)> = sqlx::query_as(
-            "SELECT user_id, state, sandbox_id, limits FROM instances WHERE id = $1",
+        let row: Option<(Uuid, String, Option<String>, serde_json::Value, i64)> = sqlx::query_as(
+            "SELECT user_id, state, sandbox_id, limits, token_epoch FROM instances WHERE id = $1",
         )
         .bind(id.0)
         .fetch_optional(self.conn())
         .await?;
-        let Some((user, state, sandbox_id, limits)) = row else {
+        let Some((user, state, sandbox_id, limits, token_epoch)) = row else {
             return Ok(None);
         };
         let routes: Vec<(String, Uuid, String)> = sqlx::query_as(
@@ -57,6 +59,7 @@ impl Tx<Llmgw> {
             user_id: UserId(user),
             running: state == "running",
             sandbox_id,
+            token_epoch: u64::try_from(token_epoch).unwrap_or_default(),
             limits,
             routes: routes
                 .into_iter()
@@ -77,9 +80,11 @@ impl Tx<Llmgw> {
 
     /// 还能用的授权允许的模型别名（空表示实例配置的全部）；授权被吊销、过期或者不存在时为 None。
     pub async fn usable_grant_aliases(&mut self, grant: GrantId) -> Result<Option<Vec<String>>> {
-        let row: Option<(bool, serde_json::Value)> = sqlx::query_as(
-            "SELECT revoked_at IS NULL AND expires_at > now(), scope FROM run_grants WHERE id = $1",
-        )
+        let row: Option<(bool, serde_json::Value)> = sqlx::query_as(concat!(
+            "SELECT revoked_at IS NULL AND expires_at > now() AND ",
+            crate::grants::ancestors_usable!(),
+            ", scope FROM run_grants WHERE id = $1"
+        ))
         .bind(grant.0)
         .fetch_optional(self.conn())
         .await?;

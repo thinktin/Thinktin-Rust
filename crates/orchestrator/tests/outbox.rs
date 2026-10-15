@@ -58,9 +58,19 @@ async fn user_with_devices(t: &TestDb, devices: &[(PushChannelKind, &str)]) -> U
     let mut w = t.db.worker().await.unwrap();
     let (user, _) = w.upsert_user_by_phone("+8613800000001").await.unwrap();
     for (kind, token) in devices {
-        w.create_device(user.id, DevicePlatform::Ios, "d", Some((*kind, token)))
+        let device = w
+            .create_device(user.id, DevicePlatform::Ios, "d", Some((*kind, token)))
             .await
             .unwrap();
+        w.create_session(
+            proto::domain::SessionId::new(),
+            user.id,
+            device,
+            b"refresh",
+            Duration::from_secs(3600),
+        )
+        .await
+        .unwrap();
     }
     w.commit().await.unwrap();
     user.id
@@ -198,4 +208,139 @@ async fn filtered_push_text_is_replaced_not_dropped() {
         bodies.contains(&"【AI 生成】Daily news is ready".to_string()),
         "{bodies:?}"
     );
+}
+
+/// 推送服务给一个离谱的 Retry-After：截到退避上限，投递器不能因为时间溢出崩掉。
+#[tokio::test]
+async fn absurd_retry_after_is_clamped() {
+    let Some(t) = TestDb::new().await else { return };
+    let user = user_with_devices(&t, &[(PushChannelKind::Apns, "tok")]).await;
+    let apns = Arc::new(Scripted::default());
+    apns.set(
+        "tok",
+        PushOutcome::Retry {
+            after: Some(Duration::from_secs(10_000_000_000_000)),
+            reason: "429".into(),
+        },
+    );
+    // 退避上限设成 0：截断生效的话，下一轮马上又能领到。
+    let d = dispatcher(
+        &t,
+        apns,
+        DispatcherConfig {
+            backoff_base: Duration::ZERO,
+            backoff_max: Duration::ZERO,
+            ..DispatcherConfig::default()
+        },
+    );
+    enqueue(&t, user, &message(None), "k").await;
+    assert_eq!(d.tick().await.unwrap().retried, 1);
+    assert_eq!(d.tick().await.unwrap().retried, 1);
+}
+
+/// 审批提醒发出前再看一眼：用户已经在别的设备上处理了（或者运行结束了），就不推了。
+#[tokio::test]
+async fn settled_approvals_are_not_pushed() {
+    let Some(t) = TestDb::new().await else { return };
+    let user = user_with_devices(&t, &[(PushChannelKind::Apns, "tok")]).await;
+    let mut tx = t.db.tenant(user).await.unwrap();
+    let inst = tx
+        .create_instance(&store::NewInstance {
+            agent_id: "claude".into(),
+            agent_version: "1".into(),
+            harness: "acp".into(),
+            name: "main".into(),
+            workspace_id: "ws".into(),
+            limits: Default::default(),
+        })
+        .await
+        .unwrap();
+    let run = tx
+        .create_run(&store::NewRun::new(
+            inst.id,
+            proto::domain::RunSource::User,
+            "hi",
+            "1",
+        ))
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let mut approvals = Vec::new();
+    let mut w = t.db.worker().await.unwrap();
+    for request in ["1:p1", "1:p2"] {
+        let a = w
+            .create_approval(&store::NewApproval {
+                user,
+                instance: inst.id,
+                run: run.id,
+                request_id: request,
+                title: Some("Delete old reports"),
+                options: &serde_json::json!([]),
+                tool_call: &serde_json::json!({}),
+                expires_in: Duration::from_secs(600),
+            })
+            .await
+            .unwrap();
+        approvals.push(a.approval.id);
+    }
+    // 第一个已经由预授权策略了结。
+    w.settle_approval(
+        run.id,
+        "1:p1",
+        proto::domain::ApprovalState::Cancelled,
+        Some("allow"),
+        "policy",
+    )
+    .await
+    .unwrap();
+    w.commit().await.unwrap();
+    for (i, id) in approvals.iter().enumerate() {
+        let mut msg = message(None);
+        msg.kind = PushKind::Approval;
+        msg.target.approval_id = Some(id.to_string());
+        enqueue(&t, user, &msg, &format!("approval:{i}")).await;
+    }
+    let apns = Arc::new(Scripted::default());
+    let d = dispatcher(&t, apns.clone(), DispatcherConfig::default());
+    let report = d.tick().await.unwrap();
+    assert_eq!((report.delivered, report.dropped), (1, 1));
+    assert_eq!(apns.sent(), ["tok"]);
+}
+
+/// 一批按顺序发，前面慢了，后面的锁过期被别的投递器领走：不再发一遍。
+#[tokio::test]
+async fn items_whose_lock_expired_are_not_sent_twice() {
+    let Some(t) = TestDb::new().await else { return };
+    let user = user_with_devices(&t, &[(PushChannelKind::Apns, "tok")]).await;
+    enqueue(&t, user, &message(None), "k1").await;
+    // 另一个投递器领了（锁立即过期），再被第三个投递器接手。
+    let mut w = t.db.worker().await.unwrap();
+    assert_eq!(
+        w.claim_outbox("node-b", Duration::ZERO, 10)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    w.commit().await.unwrap();
+    let mut w = t.db.worker().await.unwrap();
+    let mut w2 = t.db.worker().await.unwrap();
+    let item = w2
+        .claim_outbox("node-c", Duration::from_secs(60), 10)
+        .await
+        .unwrap();
+    w2.commit().await.unwrap();
+    assert_eq!(item.len(), 1);
+    // node-b 的锁已经不在了。
+    assert!(
+        !w.extend_outbox_lock(item[0].id, "node-b", Duration::from_secs(60))
+            .await
+            .unwrap()
+    );
+    assert!(
+        w.extend_outbox_lock(item[0].id, "node-c", Duration::from_secs(60))
+            .await
+            .unwrap()
+    );
+    w.rollback().await.unwrap();
 }

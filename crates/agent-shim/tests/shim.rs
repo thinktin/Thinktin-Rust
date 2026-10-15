@@ -267,13 +267,14 @@ fn preauthorized_tools_are_approved_by_policy() {
     );
     let (text, _) = shim.finish_turn("r1");
     assert_eq!(text, "tool allowed");
-    let requested = shim
-        .seen
-        .iter()
-        .find(|e| e["type"] == "permission_requested")
-        .unwrap();
-    assert_eq!(requested["title"], "Write notes.txt");
-    assert_eq!(requested["options"].as_array().unwrap().len(), 3);
+    // 预授权直接决定的不当成“请求用户批准”发出去（平台会推送提醒）。
+    assert!(
+        !shim
+            .seen
+            .iter()
+            .any(|e| e["type"] == "permission_requested"),
+        "policy decisions are not announced as requests"
+    );
 
     shim.prompt("r2", "tool:execute");
     let resolved = shim.wait_type("permission_resolved");
@@ -289,6 +290,8 @@ fn unlisted_tools_wait_for_the_user() {
     shim.wait_type("ready");
     shim.prompt("r1", "tool:delete");
     let req = shim.wait_type("permission_requested");
+    assert_eq!(req["title"], "Write notes.txt");
+    assert_eq!(req["options"].as_array().unwrap().len(), 3);
     let request_id = req["request_id"].as_str().unwrap().to_owned();
 
     shim.send(
