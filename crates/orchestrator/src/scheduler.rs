@@ -4,17 +4,22 @@
 //!   运行表上 (plan_id, fire_time) 的唯一约束也保证同一次触发只生成一个运行。
 //! - 削峰：运行的最早开始时间 = 名义触发时间 + 确定性抖动（同一次触发在哪个副本算都一样）。
 //! - 触发规则坏了（时区改名、规则不合法）：停掉这个触发器并记审计，不影响其他触发器。
+//! - 积压：实例忙（一次只跑一个运行）时，计划已经有排队没开始的运行，新的触发并进去，不再建运行；
+//!   补跑策略是“全部补”的最多攒 [`MAX_QUEUED_FIRES`] 个。账号冻结期间不调度，解冻后错过的触发按补跑策略处理。
 
 use std::future::Future;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use proto::domain::{RunSource, ScheduleSpec};
+use proto::domain::{CatchUp, RunSource, ScheduleSpec};
 use serde_json::json;
 use store::{Db, DueTrigger, NewRun, Tx, Worker};
 use tracing::{debug, error, info, warn};
 
 use crate::schedule::{Schedule, enforce_min_gap, jitter, plan_due};
+
+/// 补跑策略是“全部补”的计划最多攒多少个排队的运行，再多的触发并进已有的运行。
+pub const MAX_QUEUED_FIRES: u32 = 10;
 
 #[derive(Debug, Clone)]
 pub struct SchedulerConfig {
@@ -49,6 +54,8 @@ pub struct TickReport {
     pub runs_created: usize,
     /// 已经有运行的触发（别的副本先建了）。
     pub duplicates: usize,
+    /// 计划已经有排队没开始的运行，并进去了的触发。
+    pub coalesced: usize,
     /// 规则失效、被停掉的触发器。
     pub invalid: usize,
 }
@@ -120,7 +127,18 @@ impl Scheduler {
         if plan.dropped > 0 {
             warn!(trigger = %t.id, dropped = plan.dropped, "too many missed fires, some were dropped");
         }
+        let max_queued = match d.plan.catch_up {
+            CatchUp::All => MAX_QUEUED_FIRES,
+            CatchUp::Once | CatchUp::Skip => 1,
+        };
+        let mut queued = w.queued_plan_runs(d.plan.id).await?;
         for fire in &plan.fires {
+            if queued >= max_queued {
+                debug!(trigger = %t.id, plan = %d.plan.id, %fire, "plan already has a queued run, merging this fire into it");
+                report.coalesced += 1;
+                metrics::counter!("thinktin_scheduled_fires_coalesced_total").increment(1);
+                continue;
+            }
             let mut run = NewRun::new(
                 d.plan.instance_id,
                 RunSource::Plan,
@@ -141,6 +159,7 @@ impl Scheduler {
             match w.create_run(d.user_id, &run).await? {
                 Some(r) => {
                     debug!(run = %r.id, plan = %d.plan.id, %fire, "plan run created");
+                    queued += 1;
                     report.runs_created += 1;
                     metrics::counter!("thinktin_scheduled_runs_total").increment(1);
                 }

@@ -437,7 +437,9 @@ impl Tx<Worker> {
              FROM triggers t \
              JOIN plans p ON p.id = t.plan_id \
              JOIN instances i ON i.id = p.instance_id \
+             JOIN users u ON u.id = t.user_id \
              WHERE t.enabled AND t.next_fire_at <= $1 AND p.status = 'active' AND i.state <> 'deleted' \
+               AND u.status = 'active' \
              ORDER BY t.next_fire_at \
              LIMIT $2 \
              FOR UPDATE OF t SKIP LOCKED",
@@ -482,6 +484,18 @@ impl Tx<Worker> {
             .execute(self.conn())
             .await?;
         Ok(())
+    }
+
+    /// 计划还在排队、没开始的运行有几个（只数根运行）。调度时用来合并积压的触发。
+    pub async fn queued_plan_runs(&mut self, plan: PlanId) -> Result<u32> {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM runs \
+             WHERE plan_id = $1 AND parent_run_id IS NULL AND state = 'queued'",
+        )
+        .bind(plan.0)
+        .fetch_one(self.conn())
+        .await?;
+        Ok(u32::try_from(n).unwrap_or(u32::MAX))
     }
 
     pub async fn advance_trigger(
