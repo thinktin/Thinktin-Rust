@@ -19,11 +19,21 @@
   坑和决定：……
   ```
 
+## 自动保存
+
+`.claude/hooks/autosave.sh` 兜底：云端会话里每次改完文件，它把整个工作区（包括没提交、没跟踪的文件）做成快照，强制推送到 GitHub 的 `autosave/<分支名>`。当前分支的历史和暂存区不动，所以照常自己提交。
+
+- 只在云端会话（`CLAUDE_CODE_REMOTE=true`）生效；在分离头指针、合并或变基进行中时跳过。
+- 设环境变量 `CLAUDE_AUTOSAVE=0` 关闭。日志在 `.git/autosave.log`。
+- 快照会推送所有没被 `.gitignore` 忽略的文件，密钥不要放进仓库目录。
+- 分支合并后删掉对应的 `autosave/<分支名>`。
+
 ## 接手别人的工作
 
 1. 用户指定了分支就用那个；没指定就 `git fetch origin`，再用 `git branch -r --sort=-committerdate | head` 找最近有动静的分支。
-2. `git checkout <分支>`，读 `docs/progress/<分支名>.md` 和 `git log --oneline -20`。
-3. 先跑一遍构建和测试确认现状，再从"下一步"接着做。
+2. 如果有 `origin/autosave/<分支名>`，说明上个会话可能留下了没推送的改动，先恢复：`.claude/hooks/autosave.sh --restore <分支名>`。它会切到分支、把快照里没提交的改动放回工作区；分支在快照之后又有新提交时会拒绝，需要手动处理。
+3. 没有快照就直接 `git checkout <分支>`。然后读 `docs/progress/<分支名>.md` 和 `git log --oneline -20`。
+4. 先跑一遍构建和测试确认现状，再从"下一步"接着做。
 
 ## 常用命令
 
