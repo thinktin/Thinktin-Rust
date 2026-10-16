@@ -108,6 +108,10 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
             Arc::new(ToolSet::new(tools)),
             ExecutorConfig {
                 max_concurrent: cfg.worker.max_concurrent_runs,
+                lease: Duration::from_secs(cfg.worker.lease_secs),
+                renew_every: Duration::from_secs(cfg.worker.lease_secs) / 4,
+                takeover_every: Duration::from_secs(cfg.worker.takeover_every_secs),
+                backoff_base: Duration::from_secs(cfg.worker.retry_backoff_secs),
                 ..ExecutorConfig::default()
             },
         )

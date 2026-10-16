@@ -984,6 +984,7 @@ version = "0.1.0"
 dependencies = [
  "auth",
  "axum",
+ "catalog",
  "chrono",
  "client-core",
  "keyvault",

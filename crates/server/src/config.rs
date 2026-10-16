@@ -170,6 +170,13 @@ pub struct Worker {
     pub sweep_every_secs: u64,
     /// 数据维护（事件分区、过期验证码）间隔。
     pub maintenance_every_secs: u64,
+    /// 执行租约时长：副本被杀、宿主机宕机后，别的副本最多等这么久（再加一个接管间隔）接手它的运行。
+    /// 续租间隔是它的四分之一。
+    pub lease_secs: u64,
+    /// 多久扫一次租约过期的运行。
+    pub takeover_every_secs: u64,
+    /// 运行中断（agent 崩溃、租约过期）后第一次重试前等多久，之后每次翻倍。
+    pub retry_backoff_secs: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -479,6 +486,9 @@ impl Default for Worker {
             max_concurrent_runs: 16,
             sweep_every_secs: 60,
             maintenance_every_secs: 3600,
+            lease_secs: 60,
+            takeover_every_secs: 15,
+            retry_backoff_secs: 30,
         }
     }
 }
@@ -698,6 +708,14 @@ impl Config {
             }
         }
         if self.worker.enabled {
+            if self.worker.lease_secs < 4 {
+                bail!(
+                    "worker.lease_secs must be at least 4 (leases are renewed every quarter of it)"
+                );
+            }
+            if self.worker.takeover_every_secs == 0 || self.worker.retry_backoff_secs == 0 {
+                bail!("worker.takeover_every_secs and worker.retry_backoff_secs must be positive");
+            }
             if self.sandbox_token_seed.is_none() {
                 bail!(
                     "worker.enabled needs THINKTIN_SANDBOX_TOKEN_SEED (generate one with `llm-gw keygen`)"
