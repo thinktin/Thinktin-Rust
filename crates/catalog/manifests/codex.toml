@@ -31,3 +31,8 @@ config = "codex"
 
 [policy]
 heartbeat = "none"
+
+# 模板构建（6.8，deploy/templates）装的包，版本写死；升级时和 agent.version、runtime.template 一起改。
+# 内含 @openai/codex 的原生二进制（按平台的可选依赖）。
+[install]
+npm = ["@agentclientprotocol/codex-acp@2.2.2"]

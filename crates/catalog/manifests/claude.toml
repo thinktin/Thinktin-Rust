@@ -36,3 +36,8 @@ config = "claude"
 
 [policy]
 heartbeat = "none"
+
+# 模板构建（6.8，deploy/templates）装的包，版本写死；升级时和 agent.version、runtime.template 一起改。
+# Claude Code 二进制随 Agent SDK 一起装（cli 接入方式用的 `claude` 命令也在里面）。
+[install]
+npm = ["@agentclientprotocol/claude-agent-acp@0.90.0"]

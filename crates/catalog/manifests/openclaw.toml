@@ -37,3 +37,8 @@ config = "openclaw"
 
 [policy]
 heartbeat = "platform"
+
+# 模板构建（6.8，deploy/templates）装的包，版本写死；升级时和 agent.version、runtime.template 一起改。
+# 需要 Node 24.16 以上（模板的基础镜像是 Node 24）。
+[install]
+npm = ["openclaw@2026.10.3"]

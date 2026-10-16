@@ -1,0 +1,107 @@
+# agent 的沙箱模板（WBS 6.8，说明见 docs/templates.md）。
+#
+# - 改了清单、agent-shim、模板、冒烟脚本（推到 main、backend-core）：每个内置 agent 构建模板镜像，
+#   在断网的容器里冒烟。不推送。
+# - 打 v* 标签：同样构建、冒烟，再推到镜像仓库：<前缀>/agents/<id>:<agent 版本>，另打一个带平台版本的
+#   标签 <agent 版本>-<平台版本>（模板里的 agent-shim 是这个平台版本的）。前缀同 release.yml。
+# - 每周一：看上游有没有新版本，写在运行的摘要页里。
+name: Templates
+
+on:
+  push:
+    tags: ["v*"]
+    branches: [main, backend-core]
+    paths:
+      - crates/catalog/**
+      - crates/agent-shim/**
+      - deploy/templates/**
+      - tools/smoke/**
+      - tools/mock-llm/**
+      - .github/workflows/templates.yml
+  schedule:
+    - cron: "17 1 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: templates-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+permissions:
+  contents: read
+
+jobs:
+  templates:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: write
+    env:
+      REGISTRY: ${{ vars.IMAGE_REGISTRY || 'ghcr.io' }}
+      NAMESPACE: ${{ vars.IMAGE_NAMESPACE || github.repository_owner }}
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: templates
+      # 主机上编一次 agent-shim，五个镜像共用（不在每个镜像里各编一遍）。
+      - name: Build agent-shim
+        run: |
+          cargo build --release --locked -p agent-shim
+          mkdir -p "$RUNNER_TEMP/shim/out"
+          cp target/release/agent-shim "$RUNNER_TEMP/shim/out/"
+      - name: Build and smoke-test the templates
+        env:
+          SHIM_DIR: ${{ runner.temp }}/shim
+          IMAGE_PREFIX: thinktin-test
+        run: |
+          set -euo pipefail
+          agents=$(python3 -c 'import pathlib; print(" ".join(sorted(p.stem for p in pathlib.Path("crates/catalog/manifests").glob("*.toml"))))')
+          failed=()
+          for agent in $agents; do
+            echo "::group::$agent"
+            image=$(deploy/templates/build.sh "$agent")
+            echo "$image" >> "$RUNNER_TEMP/images"
+            if ! deploy/templates/smoke.sh "$image" "$agent"; then
+              echo "::error title=template smoke test::$agent ($image) failed the smoke test"
+              failed+=("$agent")
+            fi
+            echo "::endgroup::"
+          done
+          docker images --format '{{.Repository}}:{{.Tag}} {{.Size}}' | grep '^thinktin-test/' || true
+          [ ${#failed[@]} -eq 0 ] || { echo "failed: ${failed[*]}"; exit 1; }
+
+      - name: Log in to the registry
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.IMAGE_REGISTRY_USERNAME || github.actor }}
+          password: ${{ secrets.IMAGE_REGISTRY_PASSWORD || secrets.GITHUB_TOKEN }}
+      - name: Push
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          prefix="${REGISTRY}/${NAMESPACE,,}"
+          platform="${GITHUB_REF_NAME#v}"
+          while read -r image; do
+            name="${image#thinktin-test/}"           # agents/claude:0.90.0
+            for tag in "$prefix/$name" "$prefix/$name-$platform"; do
+              docker tag "$image" "$tag"
+              docker push "$tag"
+            done
+            digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$prefix/$name")
+            echo "- \`$digest\`" >> "$GITHUB_STEP_SUMMARY"
+          done < "$RUNNER_TEMP/images"
+
+  upstream:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Newer upstream versions
+        run: python3 deploy/templates/upstream.py

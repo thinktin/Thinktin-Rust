@@ -26,3 +26,8 @@ config = "hermes"
 
 [policy]
 heartbeat = "platform"
+
+# 模板构建（6.8，deploy/templates）装的包，版本写死；升级时和 agent.version、runtime.template 一起改。
+# 要带 mcp 这个 extra，不然平台工具注入会被静默忽略。
+[install]
+pip = ["hermes-agent[acp,mcp]==0.19.0"]

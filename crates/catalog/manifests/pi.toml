@@ -27,3 +27,8 @@ config = "pi"
 
 [policy]
 heartbeat = "none"
+
+# 模板构建（6.8，deploy/templates）装的包，版本写死；升级时和 agent.version、runtime.template 一起改。
+# 适配器 pi-acp 和 Pi 本身分开装。
+[install]
+npm = ["pi-acp@0.0.34", "@earendil-works/pi-coding-agent@1.2.0"]

@@ -9,6 +9,7 @@ ThinkTin 平台：托管多个开源 agent，用户领养后常驻云端、按�
 - [模型网关与密钥库](docs/llm-gateway.md)：沙箱令牌、信封加密、按别名路由换 key、流式透传、计量、限额、SSRF 防护
 - [设备中继](docs/relay.md)：电脑的长连接、电脑工具调用按会话绑定路由、手机和电脑之间的配对审批消息、部署
 - [电脑工具](docs/desktop.md)：agent 用的 `computer_*` 工具、能力令牌和手机签名审批、电脑端的工具服务和审计日志
+- [agent 的沙箱模板](docs/templates.md)：清单里锁定的包、模板镜像的构建、断网冒烟、上架新版本的步骤
 - [发布流程](docs/release.md)：版本和镜像、数据库迁移的规则和检查、预发和生产的上线步骤（灰度、全量）、密钥、回滚
 - [工作分解结构（WBS）](docs/wbs.md) · [CSV](docs/wbs.csv)
 - [架构方案 v2](docs/architecture-v2.md) · [讨论记录 2026-10-14](docs/discussion-2026-10-14.md)
@@ -35,7 +36,7 @@ ThinkTin 平台：托管多个开源 agent，用户领养后常驻云端、按�
 | client-core | lib | 客户端共享核心（UniFFI） |
 
 原生客户端在 `apps/apple`（iOS + macOS）和 `apps/android`。服务端的镜像和 Kubernetes 清单在 `deploy/`
-（见[发布流程](docs/release.md)）。
+（见[发布流程](docs/release.md)），agent 的沙箱模板在 `deploy/templates`（见[沙箱模板](docs/templates.md)）。
 
 ## 开发工具
 

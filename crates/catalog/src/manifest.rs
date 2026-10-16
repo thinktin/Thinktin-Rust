@@ -16,6 +16,9 @@ pub struct Manifest {
     pub llm: LlmSection,
     #[serde(default)]
     pub policy: PolicySection,
+    /// 模板里装的包（6.8，`deploy/templates`）。
+    #[serde(default)]
+    pub install: InstallSection,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -53,6 +56,75 @@ pub struct RuntimeSection {
     pub memory_mb: u32,
     /// agent 的状态目录，相对于 agent 的 HOME，挂在实例的工作区卷上。
     pub state_dirs: Vec<String>,
+}
+
+/// 模板构建时装进沙箱模板的包（6.8）。版本都写死（`name@1.2.3`、`name==1.2.3`），
+/// `agent.version` 是其中一个包的版本；升级 agent 就是改这里和 `agent.version`、`runtime.template`。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InstallSection {
+    /// 全局安装的 npm 包。
+    #[serde(default)]
+    pub npm: Vec<String>,
+    /// 装进 agent 自己的虚拟环境（`/opt/agents/<id>`，`bin` 在 PATH 上）的 Python 包。
+    #[serde(default)]
+    pub pip: Vec<String>,
+}
+
+impl InstallSection {
+    pub fn is_empty(&self) -> bool {
+        self.npm.is_empty() && self.pip.is_empty()
+    }
+
+    /// 每个包锁定的版本（格式不对的跳过，校验时会报出来）。
+    pub fn pinned_versions(&self) -> impl Iterator<Item = &str> {
+        self.npm
+            .iter()
+            .filter_map(|s| npm_pin(s).map(|(_, v)| v))
+            .chain(self.pip.iter().filter_map(|s| pip_pin(s).map(|(_, v)| v)))
+    }
+}
+
+/// `@scope/name@1.2.3` 或 `name@1.2.3` → (名字, 版本)。版本必须是确切的版本号，不能是范围或 `latest`。
+fn npm_pin(spec: &str) -> Option<(&str, &str)> {
+    let at = spec.get(1..)?.rfind('@')? + 1;
+    let (name, version) = (&spec[..at], &spec[at + 1..]);
+    let name_ok = !name.is_empty()
+        && name.chars().all(|c| {
+            c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '@' | '/' | '-' | '.' | '_')
+        });
+    (name_ok && is_exact_version(version)).then_some((name, version))
+}
+
+/// `name==1.2.3` 或 `name[extra,extra]==1.2.3` → (名字, 版本)。
+fn pip_pin(spec: &str) -> Option<(&str, &str)> {
+    let (name, version) = spec.split_once("==")?;
+    let base = name
+        .split_once('[')
+        .map_or(name, |(b, rest)| if rest.ends_with(']') { b } else { "" });
+    let name_ok = !base.is_empty()
+        && base
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+    (name_ok && is_exact_version(version)).then_some((name, version))
+}
+
+/// `1.2.3`、`2026.10.3`、`0.3.0-rc.1` 这样的确切版本号。
+fn is_exact_version(v: &str) -> bool {
+    let (core, pre) = match v.split_once(['-', '+']) {
+        Some((c, p)) => (c, Some(p)),
+        None => (v, None),
+    };
+    let parts: Vec<&str> = core.split('.').collect();
+    (2..=4).contains(&parts.len())
+        && parts
+            .iter()
+            .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+        && pre.is_none_or(|p| {
+            !p.is_empty()
+                && p.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+'))
+        })
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -268,6 +340,13 @@ impl Manifest {
             "runtime.template 不能为空".into(),
         );
         check(
+            r.template.ends_with(&format!(":{}", a.version)),
+            format!(
+                "runtime.template `{}` 的标签要是 agent.version `{}`（模板按 agent 版本构建）",
+                r.template, a.version
+            ),
+        );
+        check(
             (1..=16).contains(&r.vcpu),
             "runtime.vcpu 要在 1 到 16 之间".into(),
         );
@@ -354,6 +433,27 @@ impl Manifest {
             format!(
                 "llm.config `{:?}` 写不出 llm.protocols 里的任何一种协议",
                 self.llm.config
+            ),
+        );
+
+        let i = &self.install;
+        for spec in &i.npm {
+            check(
+                npm_pin(spec).is_some(),
+                format!("install.npm `{spec}` 要写成 名字@确切版本"),
+            );
+        }
+        for spec in &i.pip {
+            check(
+                pip_pin(spec).is_some(),
+                format!("install.pip `{spec}` 要写成 名字==确切版本"),
+            );
+        }
+        check(
+            i.is_empty() || i.pinned_versions().any(|v| v == a.version),
+            format!(
+                "agent.version `{}` 要是 install 里某个包的版本（升级时一起改）",
+                a.version
             ),
         );
 
@@ -496,6 +596,57 @@ mod tests {
             panic!("应当校验失败");
         };
         assert!(problems[0].contains("llm.config"), "{problems:?}");
+    }
+
+    #[test]
+    fn install_specs_are_pinned_and_match_the_version() {
+        let ok = format!(
+            "{MINIMAL}\n[install]\nnpm = [\"@acme/demo-acp@0.3.1\", \"demo@1.0.0\"]\npip = [\"demo-tools[acp,mcp]==2.0.0\"]\n"
+        );
+        let m = Manifest::from_toml(&ok).unwrap();
+        assert_eq!(
+            m.install.pinned_versions().collect::<Vec<_>>(),
+            ["0.3.1", "1.0.0", "2.0.0"]
+        );
+        for bad in [
+            "npm = [\"demo@^1.0.0\"]",
+            "npm = [\"demo@latest\"]",
+            "npm = [\"demo\"]",
+            "npm = [\"@acme/demo\"]",
+            "pip = [\"demo>=1.0.0\"]",
+            "pip = [\"demo[acp==1.0.0\"]",
+            "npm = [\"\"]",
+        ] {
+            let text = format!("{MINIMAL}\n[install]\n{bad}\n");
+            assert!(Manifest::from_toml(&text).is_err(), "{bad}");
+        }
+        // agent.version 要是某个包的版本；模板标签要是 agent.version。
+        let stale = ok.replace("demo@1.0.0", "demo@1.0.1");
+        let Err(ManifestError::Invalid { problems, .. }) = Manifest::from_toml(&stale) else {
+            panic!("应当校验失败");
+        };
+        assert!(problems[0].contains("agent.version"), "{problems:?}");
+        let text = MINIMAL.replace("agents/demo:1.0.0", "agents/demo:0.9.0");
+        assert!(Manifest::from_toml(&text).is_err());
+    }
+
+    #[test]
+    fn exact_versions() {
+        for v in ["1.2.3", "2026.10.3", "0.3.0-rc.1", "1.0", "1.2.3.4"] {
+            assert!(is_exact_version(v), "{v}");
+        }
+        for v in [
+            "",
+            "1",
+            "^1.2.3",
+            "~1.2",
+            "1.x",
+            "latest",
+            "1.2.3 || 2",
+            "1.2.3-",
+        ] {
+            assert!(!is_exact_version(v), "{v}");
+        }
     }
 
     #[test]

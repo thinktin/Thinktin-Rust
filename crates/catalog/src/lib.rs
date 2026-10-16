@@ -3,8 +3,9 @@
 pub mod manifest;
 
 pub use manifest::{
-    AgentSection, ConfigGenerator, Harness, HarnessKind, Heartbeat, LlmProtocol, LlmSection,
-    Manifest, ManifestError, PolicySection, RuntimeSection, SessionSupport, Sidecar, Site,
+    AgentSection, ConfigGenerator, Harness, HarnessKind, Heartbeat, InstallSection, LlmProtocol,
+    LlmSection, Manifest, ManifestError, PolicySection, RuntimeSection, SessionSupport, Sidecar,
+    Site,
 };
 
 /// 内置清单，按接入优先级排列。
@@ -127,11 +128,8 @@ mod tests {
     fn withdrawn_versions_are_not_offered() {
         let cur = builtin("claude").unwrap();
         let v = cur.agent.version.clone();
-        let old_text = include_str!("../manifests/claude.toml").replacen(
-            &format!("version = \"{v}\""),
-            "version = \"0.0.1-old\"",
-            1,
-        );
+        // 旧版本：版本号、模板标签、装的包一起换（清单校验要求三者一致）。
+        let old_text = include_str!("../manifests/claude.toml").replace(&v, "0.0.1-old");
         assert_eq!(parse_archived(&old_text).agent.version, "0.0.1-old");
         let archived = [("claude", old_text.as_str())];
         let none: [(&str, &str, &'static str); 0] = [];
@@ -201,11 +199,7 @@ mod tests {
     fn older_versions_stay_reachable() {
         let cur = include_str!("../manifests/pi.toml");
         let current = builtin("pi").unwrap();
-        let old_text = cur.replacen(
-            &format!("version = \"{}\"", current.agent.version),
-            "version = \"0.0.1-old\"",
-            1,
-        );
+        let old_text = cur.replace(&current.agent.version, "0.0.1-old");
         let archived = [("pi", old_text.as_str())];
         assert_eq!(
             list_versions(Some(current.clone()), &archived, &[], "pi"),
@@ -228,6 +222,13 @@ mod tests {
         for id in builtin_ids() {
             let m = builtin(id).unwrap();
             assert_eq!(m.agent.id, id, "文件名和 agent.id 要一致");
+            // 模板构建（6.8）要知道装什么。
+            assert!(!m.install.is_empty(), "{id}: [install] is empty");
+            assert_eq!(
+                m.runtime.template,
+                format!("agents/{id}:{}", m.agent.version),
+                "{id}: templates are named agents/<id>:<version>"
+            );
         }
         assert!(builtin("nope").is_none());
     }
