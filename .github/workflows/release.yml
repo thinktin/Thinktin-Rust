@@ -1,0 +1,264 @@
+# 发布（WBS 2.9，流程见 docs/release.md）。
+#
+# - 打 v* 标签（比如 v0.2.0）：构建控制面、模型网关、设备中继三个镜像，跑一遍冒烟，推到镜像仓库
+#   （默认 ghcr.io/<仓库属主>；仓库变量 IMAGE_REGISTRY、IMAGE_NAMESPACE 可改，那时用户名密码放
+#   IMAGE_REGISTRY_USERNAME、IMAGE_REGISTRY_PASSWORD 两个 secret），生成按镜像摘要固定版本的部署包，
+#   建 GitHub Release。
+# - 推到 main、backend-core 时改了镜像或部署清单：只构建、冒烟、校验清单，不推送。
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+    branches: [main, backend-core]
+    paths:
+      - deploy/**
+      - .dockerignore
+      - .github/workflows/release.yml
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+permissions:
+  contents: read
+
+jobs:
+  manifests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Render and validate the Kubernetes manifests
+        run: |
+          set -euo pipefail
+          curl -sSfL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz \
+            | tar -xz -C "$RUNNER_TEMP" kubeconform
+          for bundle in staging staging-migrate production production-migrate production-canary; do
+            echo "== $bundle"
+            deploy/k8s/bundle.sh "$bundle" ghcr.io/example 0.0.0-check > "$RUNNER_TEMP/$bundle.yaml"
+            "$RUNNER_TEMP/kubeconform" -strict -summary -kubernetes-version 1.30.0 "$RUNNER_TEMP/$bundle.yaml"
+          done
+      - name: Check what the bundles contain
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet pyyaml
+          "$RUNNER_TEMP/venv/bin/python" - "$RUNNER_TEMP" <<'EOF'
+          import sys, yaml
+          def load(name):
+              return [d for d in yaml.safe_load_all(open(f"{sys.argv[1]}/{name}.yaml")) if d]
+          def deployments(docs):
+              return {d["metadata"]["name"]: d for d in docs if d["kind"] == "Deployment"}
+          for env, ns in [("staging", "thinktin-staging"), ("production", "thinktin")]:
+              docs = load(env)
+              assert {d["metadata"]["namespace"] for d in docs} == {ns}, env
+              deps = deployments(docs)
+              assert sorted(deps) == ["thinktin-api", "thinktin-llm-gw", "thinktin-relay", "thinktin-worker"], deps
+              for name, d in deps.items():
+                  for c in d["spec"]["template"]["spec"]["containers"]:
+                      assert c["image"].startswith("ghcr.io/example/thinktin-") and c["image"].endswith(":0.0.0-check"), c["image"]
+              cms = {d["metadata"]["name"] for d in docs if d["kind"] == "ConfigMap"}
+              assert cms == {"thinktin-server", "thinktin-llm-gw", "thinktin-relay"}, cms
+              migrate = load(f"{env}-migrate")
+              assert [(d["kind"], d["metadata"]["name"], d["metadata"]["namespace"]) for d in migrate] == \
+                  [("Job", "thinktin-migrate-0-0-0-check", ns)], migrate
+          # 灰度：只有四个工作负载，名字带 -canary，选择器只选 track: canary（不和正式副本抢 Pod）。
+          canary = load("production-canary")
+          deps = deployments(canary)
+          assert len(canary) == 4 and sorted(deps) == [
+              "thinktin-api-canary", "thinktin-llm-gw-canary", "thinktin-relay-canary", "thinktin-worker-canary"], deps
+          prod = deployments(load("production"))
+          for name, d in deps.items():
+              assert d["metadata"]["namespace"] == "thinktin"
+              assert d["spec"]["replicas"] == 1
+              assert d["spec"]["selector"]["matchLabels"]["track"] == "canary", name
+              assert d["spec"]["template"]["metadata"]["labels"]["track"] == "canary", name
+              stable = prod[name[: -len("-canary")]]
+              assert stable["spec"]["selector"]["matchLabels"]["track"] == "stable"
+              # 灰度副本的参数和正式副本一样（比如模型网关的 KMS 参数）。
+              assert d["spec"]["template"]["spec"]["containers"][0].get("args") == \
+                  stable["spec"]["template"]["spec"]["containers"][0].get("args"), name
+          print("bundles ok")
+          EOF
+
+  images:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    needs: manifests
+    permissions:
+      contents: write
+      packages: write
+    env:
+      REGISTRY: ${{ vars.IMAGE_REGISTRY || 'ghcr.io' }}
+      NAMESPACE: ${{ vars.IMAGE_NAMESPACE || github.repository_owner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Version
+        id: v
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+            [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] \
+              || { echo "::error::tag $GITHUB_REF_NAME is not vMAJOR.MINOR.PATCH"; exit 1; }
+            echo "push=true" >> "$GITHUB_OUTPUT"
+          else
+            version="0.0.0-dev.${GITHUB_SHA::12}"
+            echo "push=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "prefix=${REGISTRY}/${NAMESPACE,,}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+
+      # 三个目标共用编译阶段：第一个编译，后两个直接用缓存。先装进本地跑冒烟，过了再推。
+      - name: Build server
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          target: server
+          build-args: THINKTIN_VERSION=${{ steps.v.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          load: true
+          tags: thinktin-server:test
+      - name: Build llm-gw
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          target: llm-gw
+          build-args: THINKTIN_VERSION=${{ steps.v.outputs.version }}
+          cache-from: type=gha
+          load: true
+          tags: thinktin-llm-gw:test
+      - name: Build relay
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          target: relay
+          build-args: THINKTIN_VERSION=${{ steps.v.outputs.version }}
+          cache-from: type=gha
+          load: true
+          tags: thinktin-relay:test
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          version="${{ steps.v.outputs.version }}"
+          for image in server llm-gw relay; do
+            out=$(docker run --rm "thinktin-$image:test" --version)
+            echo "$out"
+            grep -qF "$version" <<< "$out" || { echo "::error::thinktin-$image reports the wrong version"; exit 1; }
+          done
+          # 运行时镜像里没有 shell：只能看程序起得来、读得了配置、拒绝不完整的配置。
+          out=$(docker run --rm -e DATABASE_URL=postgres://x@db/x thinktin-server:test check-config)
+          echo "$out"
+          grep -qF "worker.enabled = false" <<< "$out"
+          if docker run --rm -e DATABASE_URL=postgres://x@db/x -e THINKTIN_WORKER_ENABLED=true \
+              thinktin-server:test check-config; then
+            echo "::error::a worker without its secrets passed the config check"; exit 1
+          fi
+          docker run --rm thinktin-llm-gw:test vendors > /dev/null
+          if docker run --rm thinktin-relay:test; then
+            echo "::error::the relay started without a database and keys"; exit 1
+          fi
+
+      - name: Log in to the registry
+        if: steps.v.outputs.push == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.IMAGE_REGISTRY_USERNAME || github.actor }}
+          password: ${{ secrets.IMAGE_REGISTRY_PASSWORD || secrets.GITHUB_TOKEN }}
+      - name: Push server
+        id: server
+        if: steps.v.outputs.push == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          target: server
+          build-args: THINKTIN_VERSION=${{ steps.v.outputs.version }}
+          cache-from: type=gha
+          push: true
+          provenance: mode=max
+          sbom: true
+          tags: |
+            ${{ steps.v.outputs.prefix }}/thinktin-server:${{ steps.v.outputs.version }}
+            ${{ steps.v.outputs.prefix }}/thinktin-server:sha-${{ github.sha }}
+      - name: Push llm-gw
+        id: llmgw
+        if: steps.v.outputs.push == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          target: llm-gw
+          build-args: THINKTIN_VERSION=${{ steps.v.outputs.version }}
+          cache-from: type=gha
+          push: true
+          provenance: mode=max
+          sbom: true
+          tags: |
+            ${{ steps.v.outputs.prefix }}/thinktin-llm-gw:${{ steps.v.outputs.version }}
+            ${{ steps.v.outputs.prefix }}/thinktin-llm-gw:sha-${{ github.sha }}
+      - name: Push relay
+        id: relay
+        if: steps.v.outputs.push == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          target: relay
+          build-args: THINKTIN_VERSION=${{ steps.v.outputs.version }}
+          cache-from: type=gha
+          push: true
+          provenance: mode=max
+          sbom: true
+          tags: |
+            ${{ steps.v.outputs.prefix }}/thinktin-relay:${{ steps.v.outputs.version }}
+            ${{ steps.v.outputs.prefix }}/thinktin-relay:sha-${{ github.sha }}
+
+      # 部署包：各环境的清单，镜像按摘要固定（标签被改指向也不影响）。没推送时按标签生成，只为确认能生成。
+      - name: Deployment bundles
+        run: |
+          set -euo pipefail
+          version="${{ steps.v.outputs.version }}"
+          digests=()
+          if [ "${{ steps.v.outputs.push }}" = true ]; then
+            digests=("${{ steps.server.outputs.digest }}" "${{ steps.llmgw.outputs.digest }}" "${{ steps.relay.outputs.digest }}")
+          fi
+          mkdir -p dist
+          for bundle in staging staging-migrate production production-migrate production-canary; do
+            deploy/k8s/bundle.sh "$bundle" "${{ steps.v.outputs.prefix }}" "$version" "${digests[@]}" \
+              > "dist/thinktin-$bundle-$version.yaml"
+          done
+          ls -l dist
+      - name: GitHub Release
+        if: steps.v.outputs.push == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          version="${{ steps.v.outputs.version }}"
+          prefix="${{ steps.v.outputs.prefix }}"
+          {
+            echo "## 镜像"
+            echo
+            echo "- \`$prefix/thinktin-server@${{ steps.server.outputs.digest }}\`"
+            echo "- \`$prefix/thinktin-llm-gw@${{ steps.llmgw.outputs.digest }}\`"
+            echo "- \`$prefix/thinktin-relay@${{ steps.relay.outputs.digest }}\`"
+            echo
+            echo "## 部署"
+            echo
+            echo "按[发布流程](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/docs/release.md)："
+            echo "预发（迁移 → 更新 → 冒烟）→ 生产（迁移 → 灰度 → 全量）。附件是镜像按摘要固定的清单。"
+            echo
+            gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$GITHUB_REF_NAME" --jq .body
+          } > notes.md
+          flags=()
+          [[ "$version" == *-* ]] && flags+=(--prerelease)
+          gh release create "$GITHUB_REF_NAME" dist/*.yaml --title "$GITHUB_REF_NAME" --notes-file notes.md "${flags[@]}"

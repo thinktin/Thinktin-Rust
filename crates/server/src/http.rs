@@ -77,7 +77,7 @@ async fn readyz(State(state): State<AppState>) -> Response {
 }
 
 async fn version() -> Json<ServerInfo> {
-    Json(ServerInfo::current(env!("CARGO_PKG_VERSION")))
+    Json(ServerInfo::current(crate::VERSION))
 }
 
 async fn not_found() -> Response {

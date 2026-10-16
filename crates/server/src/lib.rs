@@ -29,6 +29,13 @@ use tracing::{error, info, warn};
 pub use config::Config;
 pub use lifecycle::{Background, ShutdownListener, ShutdownSignal};
 
+/// 程序的版本：发布构建由流水线按标签传 `THINKTIN_VERSION`（见 deploy/docker/Dockerfile），
+/// 本地构建用 crate 的版本。`/version`、启动日志和 `thinktin_build_info` 指标里都是它，灰度时据此区分新旧副本。
+pub const VERSION: &str = match option_env!("THINKTIN_VERSION") {
+    Some(v) if !v.is_empty() => v,
+    _ => env!("CARGO_PKG_VERSION"),
+};
+
 /// 测试用的替换件（生产用 [`serve`]，全部默认）。
 #[derive(Default, Clone)]
 pub struct Hooks {
@@ -117,7 +124,8 @@ pub async fn serve_with(
         tokio::time::sleep(drain).await;
     });
     let mut server = tokio::spawn(server);
-    info!(%addr, node = %node_id, "server started");
+    metrics::gauge!("thinktin_build_info", "version" => VERSION).set(1.0);
+    info!(%addr, node = %node_id, version = VERSION, "server started");
 
     let mut failure = None;
     tokio::select! {

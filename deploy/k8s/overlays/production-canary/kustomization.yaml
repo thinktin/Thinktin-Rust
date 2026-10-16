@@ -1,0 +1,33 @@
+# 生产环境的灰度副本：四个服务各一个新版本的副本（名字加 -canary、标签 track: canary），
+# 和老版本的副本一起接流量（服务不看 track，按副本数分）、一起领运行。用法见 docs/release.md 第 4 节：
+# 迁移之后先 apply 灰度包，看一段时间指标，没问题再更新正式副本、删掉灰度副本；有问题直接删掉灰度副本。
+# 配置和密钥用正式副本的（同一个命名空间里的 ConfigMap、Secret）。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: thinktin
+nameSuffix: -canary
+resources:
+  - ../../base/workloads
+# 连同选择器和 Pod 模板一起改成 track: canary。
+labels:
+  - pairs:
+      track: canary
+    includeSelectors: true
+patches:
+  - target:
+      kind: Deployment
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+  # 和正式副本一样（overlays/production）。
+  - target:
+      kind: Deployment
+      labelSelector: app.kubernetes.io/name=thinktin-llm-gw
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --aliyun-kms-endpoint=https://kms.cn-hangzhou.aliyuncs.com
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --aliyun-kms-key-id=alias/thinktin-production

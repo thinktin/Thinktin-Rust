@@ -9,7 +9,7 @@ use server::config::ProcessEnv;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
-#[command(name = "thinktin-server", version, about = "ThinkTin 控制面")]
+#[command(name = "thinktin-server", version = server::VERSION, about = "ThinkTin 控制面")]
 struct Cli {
     /// 配置文件（TOML）。环境变量 DATABASE_URL、THINKTIN_LISTEN、THINKTIN_NODE_ID 覆盖其中的值。
     #[arg(long, global = true, env = "THINKTIN_CONFIG")]

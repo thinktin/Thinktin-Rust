@@ -621,7 +621,9 @@ impl Env for ProcessEnv {
 }
 
 impl Config {
-    /// 读配置文件（可选），再用环境变量覆盖：DATABASE_URL、THINKTIN_LISTEN、THINKTIN_NODE_ID。
+    /// 读配置文件（可选），再用环境变量覆盖：DATABASE_URL、THINKTIN_LISTEN、THINKTIN_NODE_ID，
+    /// 以及副本的角色 THINKTIN_API_ENABLED、THINKTIN_WORKER_ENABLED（`true` / `false`；部署时接口副本和
+    /// 后台副本用同一份配置文件，见 deploy/k8s）。
     pub fn load(path: Option<&Path>, env: &dyn Env) -> anyhow::Result<Self> {
         let mut cfg = match path {
             Some(p) => {
@@ -639,6 +641,12 @@ impl Config {
         }
         if let Some(node) = env.var("THINKTIN_NODE_ID") {
             cfg.node_id = Some(node);
+        }
+        if let Some(v) = env.var("THINKTIN_API_ENABLED") {
+            cfg.api.enabled = env_bool("THINKTIN_API_ENABLED", &v)?;
+        }
+        if let Some(v) = env.var("THINKTIN_WORKER_ENABLED") {
+            cfg.worker.enabled = env_bool("THINKTIN_WORKER_ENABLED", &v)?;
         }
         cfg.sandbox_token_seed = env.var("THINKTIN_SANDBOX_TOKEN_SEED");
         cfg.jpush_master_secret = env.var("THINKTIN_JPUSH_MASTER_SECRET");
@@ -812,6 +820,14 @@ impl Config {
     }
 }
 
+fn env_bool(key: &str, value: &str) -> anyhow::Result<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "true" | "1" | "yes" => Ok(true),
+        "false" | "0" | "no" => Ok(false),
+        other => bail!("{key} must be true or false, not {other:?}"),
+    }
+}
+
 fn default_node_id() -> String {
     let host = std::env::var("HOSTNAME")
         .ok()
@@ -868,6 +884,74 @@ mod tests {
         assert_eq!(cfg.database.max_connections, 20);
         assert_eq!(cfg.grace(), Duration::from_secs(30));
         assert!(cfg.node_id().contains('-'));
+        assert!(!cfg.api.enabled && !cfg.worker.enabled);
+    }
+
+    /// 接口副本和后台副本用同一份配置文件，按环境变量开各自的部分。
+    #[test]
+    fn roles_come_from_the_environment() {
+        let env = MapEnv(HashMap::from([
+            ("DATABASE_URL", "postgres://u:p@db/thinktin"),
+            ("THINKTIN_API_ENABLED", "false"),
+            ("THINKTIN_WORKER_ENABLED", "true"),
+            ("THINKTIN_SANDBOX_TOKEN_SEED", "seed"),
+            ("THINKTIN_KMS_KEY", "00"),
+        ]));
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("server.toml");
+        std::fs::write(&path, "[api]\nenabled = true\ndev_sms = true\n").unwrap();
+        let cfg = Config::load(Some(&path), &env).unwrap();
+        assert!(!cfg.api.enabled && cfg.worker.enabled);
+        let bad = MapEnv(HashMap::from([
+            ("DATABASE_URL", "postgres://u:p@db/thinktin"),
+            ("THINKTIN_WORKER_ENABLED", "maybe"),
+        ]));
+        let err = Config::load(None, &bad).unwrap_err().to_string();
+        assert!(err.contains("THINKTIN_WORKER_ENABLED"), "{err}");
+    }
+
+    /// deploy/k8s 里各环境的配置文件能被这一版解析、按接口和后台两种角色都通过校验
+    /// （密钥由 Secret 给，这里填假的）。
+    #[test]
+    fn deployment_configs_are_valid() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/k8s/overlays");
+        let mut checked = 0;
+        for entry in std::fs::read_dir(&root).unwrap() {
+            let path = entry.unwrap().path().join("server.toml");
+            if !path.exists() {
+                continue;
+            }
+            for (api, worker) in [("true", "false"), ("false", "true")] {
+                let env = MapEnv(HashMap::from([
+                    ("DATABASE_URL", "postgres://u:p@db/thinktin"),
+                    ("THINKTIN_API_ENABLED", api),
+                    ("THINKTIN_WORKER_ENABLED", worker),
+                    ("THINKTIN_ACCESS_TOKEN_SEED", "seed"),
+                    ("THINKTIN_CODE_PEPPER", "00"),
+                    ("THINKTIN_KMS_KEY", "00"),
+                    ("THINKTIN_SANDBOX_TOKEN_SEED", "seed"),
+                    ("THINKTIN_CUBE_API_KEY", "key"),
+                    ("THINKTIN_JPUSH_MASTER_SECRET", "secret"),
+                    ("THINKTIN_S3_ACCESS_KEY_ID", "id"),
+                    ("THINKTIN_S3_SECRET_ACCESS_KEY", "secret"),
+                    ("THINKTIN_ALIYUN_SMS_ACCESS_KEY_ID", "id"),
+                    ("THINKTIN_ALIYUN_SMS_ACCESS_KEY_SECRET", "secret"),
+                    ("THINKTIN_ALIYUN_KMS_ACCESS_KEY_ID", "id"),
+                    ("THINKTIN_ALIYUN_KMS_ACCESS_KEY_SECRET", "secret"),
+                ]));
+                let cfg = Config::load(Some(&path), &env)
+                    .unwrap_or_else(|e| panic!("{}: {e:#}", path.display()));
+                assert!(!cfg.database.migrate_on_start, "{}", path.display());
+                assert!(!cfg.api.dev_sms, "{}", path.display());
+                assert!(cfg.observability.metrics_listen.is_some());
+                checked += 1;
+            }
+        }
+        assert!(
+            checked >= 4,
+            "found {checked} configs under {}",
+            root.display()
+        );
     }
 
     #[test]

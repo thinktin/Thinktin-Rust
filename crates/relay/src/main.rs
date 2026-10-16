@@ -10,10 +10,16 @@ use clap::Parser;
 use relay::{Relay, RelayConfig};
 use tracing::{error, info};
 
+/// 程序的版本：发布构建由流水线按标签传 `THINKTIN_VERSION`（见 deploy/docker/Dockerfile），本地构建用 crate 的版本。
+const VERSION: &str = match option_env!("THINKTIN_VERSION") {
+    Some(v) if !v.is_empty() => v,
+    _ => env!("CARGO_PKG_VERSION"),
+};
+
 #[derive(Parser)]
 #[command(
     name = "thinktin-relay",
-    version,
+    version = VERSION,
     about = "ThinkTin 设备中继：电脑主动连出的长连接，转发电脑工具调用和手机电脑之间的消息"
 )]
 struct Cli {
@@ -25,7 +31,7 @@ struct Cli {
     #[arg(long, default_value_t = 16)]
     db_connections: u32,
     /// 控制面签访问令牌的公钥，格式 `kid=base64url`，可重复（轮换时新旧都给）。
-    /// `thinktin-server check` 会打印它
+    /// `thinktin-server check-config` 会打印它
     #[arg(
         long = "access-key",
         env = "THINKTIN_ACCESS_TOKEN_KEYS",
@@ -123,6 +129,8 @@ fn main() -> anyhow::Result<()> {
             });
             info!(%addr, "metrics endpoint started");
         }
+        metrics::gauge!("thinktin_build_info", "version" => VERSION).set(1.0);
+        info!(version = VERSION, "starting");
         let listener = tokio::net::TcpListener::bind(cli.listen)
             .await
             .with_context(|| format!("bind {}", cli.listen))?;

@@ -1,0 +1,85 @@
+# 生产环境的控制面配置。接口副本和后台副本共用，角色由环境变量 THINKTIN_API_ENABLED、
+# THINKTIN_WORKER_ENABLED 决定（见 deploy/k8s/base/workloads）。
+# 密钥都不在这里，由 Secret 以环境变量给（docs/release.md 第 5 节）。标了“部署前填”的是占位值。
+# 改完跑一遍 `cargo test -p server deployment_configs_are_valid`：这一版能不能解析、校验过不过。
+
+[log]
+json = true
+filter = "info"
+
+[observability]
+metrics_listen = "0.0.0.0:9090"
+
+[database]
+# 每个副本的连接数。副本数 × 它，加上模型网关、中继、迁移的连接，要小于 Postgres 的连接上限。
+max_connections = 20
+# 迁移由发布流程先执行（迁移 Job），程序启动时只核对。
+migrate_on_start = false
+
+[shutdown]
+drain_secs = 5
+grace_secs = 30
+
+[api]
+access_token_kid = "a1"
+
+[worker]
+max_concurrent_runs = 16
+lease_secs = 60
+takeover_every_secs = 15
+retry_backoff_secs = 30
+
+[sandbox]
+provider = "cube"
+token_kid = "k1"
+# 部署前填：沙箱访问模型网关的内网地址；沙箱只能连它。
+gateway_url = "http://llm-gw.internal:8790"
+network_allow = ["llm-gw.internal:8790"]
+
+[sandbox.cube]
+# 部署前填（docs/sandbox-cube.md）。
+api_url = "http://cube-api.internal:3000"
+proxy_url = "http://10.0.0.5"
+egress_address = "10.0.0.20"
+
+[storage]
+provider = "s3"
+
+[storage.s3]
+# 部署前填：阿里云 OSS 的内网地址、桶。
+endpoint = "https://oss-cn-hangzhou-internal.aliyuncs.com"
+region = "oss-cn-hangzhou"
+bucket = "thinktin-production-artifacts"
+prefix = "production/"
+
+[kms]
+provider = "aliyun"
+
+[kms.aliyun]
+# 部署前填。
+endpoint = "https://kms.cn-hangzhou.aliyuncs.com"
+key_id = "alias/thinktin-production"
+
+[sms.aliyun]
+# 部署前填：控制台申请下来的签名和验证码模板。
+sign_name = "ThinkTin"
+template_code = "SMS_FILL_IN"
+
+[push.apns]
+# 部署前填：App 的 bundle id、开发者账号的 Team ID、推送密钥的 Key ID。私钥在 Secret thinktin-push 里。
+topic = "com.thinktin.app"
+team_id = "FILL_IN"
+key_id = "FILL_IN"
+key_path = "/etc/thinktin/push/apns.p8"
+
+[push.jpush]
+# 部署前填：极光的 AppKey（Master Secret 在 Secret thinktin-worker 里）。
+app_key = "FILL_IN"
+
+[push.fcm]
+service_account_path = "/etc/thinktin/push/fcm.json"
+
+[compliance]
+# 备案后换成正式的服务提供者编码（16.3）。
+content_producer = "ThinkTin"
+label_downloads = true

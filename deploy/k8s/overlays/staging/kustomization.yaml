@@ -1,0 +1,44 @@
+# 预发环境：和生产一样的部署方式，每个服务一个副本，接独立的数据库、对象存储、KMS 主密钥和 Cube 集群。
+# 每次发布先在这里走一遍（迁移、更新、冒烟），再上生产。标了“部署前填”的是占位值。
+# 镜像版本由发布包固定（../../bundle.sh），见 overlays/production。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: thinktin-staging
+resources:
+  - ../../base
+configMapGenerator:
+  - name: thinktin-server
+    files:
+      - server.toml
+  # 部署前填：预发自己的密钥对的公钥（和生产不共用）。
+  - name: thinktin-llm-gw
+    literals:
+      - THINKTIN_SANDBOX_TOKEN_KEY=k1=FILL-IN-THE-SANDBOX-TOKEN-PUBLIC-KEY
+  - name: thinktin-relay
+    literals:
+      - THINKTIN_ACCESS_TOKEN_KEYS=a1=FILL-IN-THE-ACCESS-TOKEN-PUBLIC-KEY
+generatorOptions:
+  disableNameSuffixHash: true
+patches:
+  - target:
+      kind: Deployment
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+  - target:
+      kind: PodDisruptionBudget
+    patch: |-
+      - op: replace
+        path: /spec/minAvailable
+        value: 0
+  - target:
+      kind: Deployment
+      labelSelector: app.kubernetes.io/name=thinktin-llm-gw
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --aliyun-kms-endpoint=https://kms.cn-hangzhou.aliyuncs.com
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --aliyun-kms-key-id=alias/thinktin-staging

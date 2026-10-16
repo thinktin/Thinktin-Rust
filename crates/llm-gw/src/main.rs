@@ -27,10 +27,16 @@ const ENV_TOKEN_SEED: &str = "THINKTIN_DEV_TOKEN_SEED";
 /// 生产：KMS 主密钥（本地 KMS，64 位十六进制），和控制面的 THINKTIN_KMS_KEY 是同一把。
 const ENV_KMS_KEY_PROD: &str = "THINKTIN_KMS_KEY";
 
+/// 程序的版本：发布构建由流水线按标签传 `THINKTIN_VERSION`（见 deploy/docker/Dockerfile），本地构建用 crate 的版本。
+const VERSION: &str = match option_env!("THINKTIN_VERSION") {
+    Some(v) if !v.is_empty() => v,
+    _ => env!("CARGO_PKG_VERSION"),
+};
+
 #[derive(Parser)]
 #[command(
     name = "llm-gw",
-    version,
+    version = VERSION,
     about = "ThinkTin 模型网关：沙箱令牌换用户 key，流式透传给厂商"
 )]
 struct Cli {
@@ -94,6 +100,12 @@ enum Command {
         /// Prometheus `/metrics` 的监听地址（只给内网的抓取方）
         #[arg(long)]
         metrics_listen: Option<SocketAddr>,
+        /// 收到停机信号（SIGTERM、Ctrl-C）后照常接新连接多少秒，等负载均衡把这个副本摘掉
+        #[arg(long, default_value_t = 5)]
+        drain_secs: u64,
+        /// 不再接新连接以后，最多等进行中的请求（流式响应）多少秒，用量都落库后退出
+        #[arg(long, default_value_t = 30)]
+        grace_secs: u64,
     },
     /// 生成沙箱令牌签名密钥，打印私钥种子和公钥
     Keygen {
@@ -157,6 +169,34 @@ type Backends = (
     Arc<dyn BudgetLedger>,
 );
 
+/// 停机信号：Ctrl-C，或者 SIGTERM（Kubernetes 停 Pod、滚动更新时发的就是它）。
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        if let Err(e) = tokio::signal::ctrl_c().await {
+            tracing::error!(error = %e, "cannot listen for ctrl-c");
+            std::future::pending::<()>().await;
+        }
+    };
+    #[cfg(unix)]
+    let term = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut s) => {
+                s.recv().await;
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "cannot listen for SIGTERM");
+                std::future::pending::<()>().await;
+            }
+        }
+    };
+    #[cfg(not(unix))]
+    let term = std::future::pending::<()>();
+    tokio::select! {
+        () = ctrl_c => {}
+        () = term => {}
+    }
+}
+
 fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -192,6 +232,8 @@ fn main() -> anyhow::Result<()> {
             budget_utc_offset_hours,
             log_json,
             metrics_listen,
+            drain_secs,
+            grace_secs,
         } => {
             let filter = tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "info".into());
@@ -337,26 +379,30 @@ fn main() -> anyhow::Result<()> {
                     });
                     tracing::info!(%addr, "metrics endpoint started");
                 }
+                metrics::gauge!("thinktin_build_info", "version" => VERSION).set(1.0);
                 let listener = tokio::net::TcpListener::bind(listen)
                     .await
                     .with_context(|| format!("bind {listen}"))?;
-                tracing::info!(addr = %listener.local_addr()?, "llm-gw listening");
+                tracing::info!(addr = %listener.local_addr()?, version = VERSION, "llm-gw listening");
                 let serve_options = ServeOptions {
                     max_connections_per_ip,
                     ..ServeOptions::default()
                 };
                 serve(listener, router(Arc::new(gw)), serve_options, async {
-                    let _ = tokio::signal::ctrl_c().await;
+                    shutdown_signal().await;
+                    tracing::info!(drain_secs, "shutting down: draining");
+                    tokio::time::sleep(Duration::from_secs(drain_secs)).await;
                 })
                 .await?;
-                // 等还没写进库的用量落库（进行中的流式响应结束后队列才会关闭）。
+                // 等进行中的请求结束、还没写进库的用量落库（流式响应都结束后队列才会关闭）。
                 if let Some(w) = writer
-                    && tokio::time::timeout(Duration::from_secs(30), w.finish())
+                    && tokio::time::timeout(Duration::from_secs(grace_secs), w.finish())
                         .await
                         .is_err()
                 {
                     tracing::warn!("usage writer did not finish in time");
                 }
+                tracing::info!("stopped");
                 anyhow::Ok(())
             })
         }

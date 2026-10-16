@@ -29,3 +29,6 @@ rustc-ice-*.txt
 
 # Python 字节码（tools/ 下的脚本）
 __pycache__/
+
+# 部署包生成时的临时目录（deploy/k8s/bundle.sh）
+deploy/k8s/.bundle.*
