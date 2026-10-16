@@ -580,7 +580,14 @@ async fn plans_keep_running_while_the_user_is_away() {
     assert_eq!(summary.as_deref(), Some("echo: morning brief"));
     let run: RunId = run.parse().unwrap();
 
-    // 再登录：收件箱里有结果。
+    // 一夜过去了，再登录：收件箱里有结果。（同一个手机号两次发码有最短间隔：把之前的验证码挪到一天前。）
+    sqlx::query(
+        "UPDATE login_codes SET created_at = created_at - interval '1 day' WHERE phone = $1",
+    )
+    .bind("+8613800138601")
+    .execute(p.t.db.pool())
+    .await
+    .unwrap();
     p.sign_in(&phone, "13800138601").await;
     let inbox = phone.sync_inbox(20).await.unwrap();
     assert!(
