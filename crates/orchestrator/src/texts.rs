@@ -89,6 +89,15 @@ pub fn pipeline_finished(locale: Locale) -> &'static str {
     pick(locale, "流水线完成", "Pipeline finished")
 }
 
+/// 任务要用电脑上的工具、电脑不在线（7.11、14.2）：运行的状态说明和通知正文，最多 100 个字符。
+pub fn computer_offline(locale: Locale) -> &'static str {
+    pick(
+        locale,
+        "任务要用你的电脑，但电脑不在线，任务已暂停。电脑上的 ThinkTin 连上后自动继续。",
+        "This task needs your computer, which is offline. Paused; it resumes once ThinkTin is running there.",
+    )
+}
+
 /// 审批提醒的标题（7.4）。
 pub fn approval_needed(locale: Locale) -> &'static str {
     pick(locale, "需要你的批准", "Your approval is needed")
@@ -492,7 +501,10 @@ mod tests {
             assert!(b.contains("Daily news"));
             let (_, b) = vault_request(locale, "GitHub");
             assert!(b.contains("GitHub"));
+            // 推送正文最多 100 个字符：等电脑的说明要完整放得下。
+            assert!(computer_offline(locale).chars().count() <= 100, "{locale}");
         }
+        assert_ne!(computer_offline(Locale::ZhCn), computer_offline(Locale::En));
         assert_eq!(task_finished(Locale::En), "Task finished");
         assert_eq!(task_finished(Locale::ZhCn), "任务完成");
         assert_eq!(

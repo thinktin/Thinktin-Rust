@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use auth::grants::{GrantConfig, GrantService};
 use auth::sandbox_token::SandboxTokenIssuer;
 use control::{BuiltinTemplates, Lifecycle, LifecycleConfig};
+use orchestrator::computer::DeviceCalls;
 use orchestrator::delegate::{DELEGATE_TOOLS, DelegateTools, MAX_CHILDREN_PER_RUN};
 use orchestrator::executor::{Executor, ExecutorConfig};
 use orchestrator::shim::{
@@ -15,8 +16,8 @@ use orchestrator::shim::{
     ShimSession, ToolContext, ToolOutput,
 };
 use proto::domain::{
-    CatchUp, GrantScope, Instance, PlanAuthor, PlanPolicy, RunBudget, RunId, RunSource, RunState,
-    TeamMember, TeamRole, UserId,
+    CatchUp, DevicePlatform, GrantScope, Instance, PlanAuthor, PlanPolicy, RunBudget, RunId,
+    RunSource, RunState, TeamMember, TeamRole, UserId,
 };
 use proto::shim::{
     DecisionSource, PermissionKind, PermissionOption, PlatformTool, ShimCommand, ShimEvent,
@@ -360,6 +361,46 @@ async fn fake_shim(
                     }
                     let _ = ev.send(chunk(&run_id, &got.join("|"))).await;
                     let _ = ev.send(ended(&run_id, StopReason::EndTurn)).await;
+                } else if let Some((_, tool)) = text.split_once("use computer: ") {
+                    // 用电脑上的工具（14.2），把结果（或错误）当作回复。电脑不在线时执行器还会取消这一轮。
+                    let tool = tool
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or_default()
+                        .to_owned();
+                    let _ = ev
+                        .send(ShimEvent::PlatformToolCall {
+                            run_id: run_id.clone(),
+                            call_id: "pc1".into(),
+                            name: tool,
+                            arguments: json!({ "path": "/Users/a/notes.md" }),
+                        })
+                        .await;
+                    while let Some(c) = cmds.recv().await {
+                        match c {
+                            ShimCommand::PlatformToolResult {
+                                content, is_error, ..
+                            } => {
+                                let text = content[0]["text"].as_str().unwrap_or_default();
+                                let reply = if is_error {
+                                    format!("error: {text}")
+                                } else {
+                                    text.to_owned()
+                                };
+                                let _ = ev.send(chunk(&run_id, &reply)).await;
+                                if !reply.contains("offline") {
+                                    let _ = ev.send(ended(&run_id, StopReason::EndTurn)).await;
+                                    break;
+                                }
+                            }
+                            ShimCommand::Cancel { run_id } => {
+                                let _ = ev.send(ended(&run_id, StopReason::Cancelled)).await;
+                                break;
+                            }
+                            ShimCommand::Shutdown => return,
+                            _ => {}
+                        }
+                    }
                 } else if text.contains("crash") {
                     return;
                 } else if text.contains("use tool") {
@@ -460,6 +501,24 @@ async fn env_with(
     scope: Option<GrantScope>,
     tools: Arc<dyn PlatformTools>,
 ) -> Option<Env> {
+    env_full(cfg, scope, tools, false).await
+}
+
+/// 带电脑工具（14.2）的执行器：调用写进库里，由测试扮演的电脑（[`fake_computer`]）领走、回结果。
+async fn env_computer() -> Option<Env> {
+    let scope = GrantScope {
+        platform_tools: proto::computer::names().map(String::from).collect(),
+        ..GrantScope::default()
+    };
+    env_full(fast(), Some(scope), Arc::new(NoPlatformTools), true).await
+}
+
+async fn env_full(
+    cfg: ExecutorConfig,
+    scope: Option<GrantScope>,
+    tools: Arc<dyn PlatformTools>,
+    computer: bool,
+) -> Option<Env> {
     let t = TestDb::new().await?;
     let dir = tempfile::tempdir().unwrap();
     let provider = Arc::new(LocalProvider::new(dir.path()).unwrap());
@@ -489,18 +548,23 @@ async fn env_with(
         tx.commit().await.unwrap();
     }
     let fake = FakeConnector::default();
-    let exec = Arc::new(
-        Executor::new(
-            t.db.clone(),
-            "node-a",
-            lifecycle.clone(),
-            grants,
-            Arc::new(fake.clone()),
-            tools,
-            cfg,
-        )
-        .with_vault(kms()),
-    );
+    let mut exec = Executor::new(
+        t.db.clone(),
+        "node-a",
+        lifecycle.clone(),
+        grants,
+        Arc::new(fake.clone()),
+        tools,
+        cfg,
+    )
+    .with_vault(kms());
+    if computer {
+        let calls = Arc::new(DeviceCalls::new(t.db.clone()));
+        let listening = calls.clone();
+        tokio::spawn(async move { listening.listen(std::future::pending()).await });
+        exec = exec.with_computer(calls);
+    }
+    let exec = Arc::new(exec);
     Some(Env {
         t,
         _dir: dir,
@@ -1994,4 +2058,205 @@ async fn side_effecting_tools_run_once_per_identical_call() {
         Some("published #1|published #1|published #2")
     );
     assert_eq!(tools.0.load(std::sync::atomic::Ordering::SeqCst), 2);
+}
+
+// ---------- 电脑工具（14.2） ----------
+
+async fn add_mac(e: &Env) -> proto::domain::DeviceId {
+    let mut w = e.t.db.worker().await.unwrap();
+    let mac = w
+        .create_device(e.user, DevicePlatform::Macos, "MacBook", None)
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+    mac
+}
+
+/// 测试扮演的电脑：连上中继（在线、唤醒等它的运行），把发给它的调用领走，`delay` 之后回
+/// “<工具> read <路径>”。停掉返回的任务就是电脑不再回（在线状态还新鲜）。
+fn fake_computer(e: &Env, mac: proto::domain::DeviceId, delay: Duration) -> JoinHandle<()> {
+    let db = e.t.db.clone();
+    let user = e.user;
+    tokio::spawn(async move {
+        let conn = uuid::Uuid::now_v7();
+        let mut r = db.relay().await.unwrap();
+        r.link_device(&store::NewLink {
+            device: mac,
+            user,
+            node: "relay-test".into(),
+            connection: conn,
+        })
+        .await
+        .unwrap();
+        r.wake_device_waiters(user).await.unwrap();
+        r.commit().await.unwrap();
+        loop {
+            let mut r = db.relay().await.unwrap();
+            r.touch_link(mac, conn).await.unwrap();
+            let calls = r.claim_device_calls(mac, conn, 10).await.unwrap();
+            r.commit().await.unwrap();
+            for c in calls {
+                tokio::time::sleep(delay).await;
+                let text = format!(
+                    "{} read {}",
+                    c.tool,
+                    c.arguments["path"].as_str().unwrap_or_default()
+                );
+                let mut r = db.relay().await.unwrap();
+                r.finish_device_call(
+                    c.id,
+                    mac,
+                    conn,
+                    &json!({ "content": [{ "type": "text", "text": text }], "is_error": false }),
+                )
+                .await
+                .unwrap();
+                r.commit().await.unwrap();
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+}
+
+async fn device_call_states(e: &Env) -> Vec<String> {
+    sqlx::query_scalar("SELECT state FROM device_calls ORDER BY created_at")
+        .fetch_all(e.t.db.pool())
+        .await
+        .unwrap()
+}
+
+/// 有电脑的用户：agent 拿到电脑工具，调用转到用户自己的电脑上，结果交回 agent。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn computer_tools_reach_the_users_own_computer() {
+    let Some(e) = env_computer().await else {
+        return;
+    };
+    let mac = add_mac(&e).await;
+    let computer = fake_computer(&e, mac, Duration::from_millis(300));
+    let run = e.queue("use computer: computer_read_file", None, 3).await;
+    e.run_to_end().await;
+    computer.abort();
+    let rec = e.state(run).await;
+    assert_eq!(rec.run.state, RunState::Succeeded, "{:?}", rec.run);
+    assert_eq!(
+        rec.run.summary.as_deref(),
+        Some("computer_read_file read /Users/a/notes.md")
+    );
+    let launches = e.fake.rec.lock().unwrap().launches.clone();
+    assert!(
+        launches[0].2.iter().any(|t| t == "computer_screenshot"),
+        "{launches:?}"
+    );
+    let (device, run_id, state): (uuid::Uuid, Option<uuid::Uuid>, String) =
+        sqlx::query_as("SELECT device_id, run_id, state FROM device_calls")
+            .fetch_one(e.t.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(
+        (device, run_id, state.as_str()),
+        (mac.0, Some(run.0), "done")
+    );
+}
+
+/// 电脑迟迟不回（比如在等用户在手机上批准）时执行器照常续租：用户取消马上生效，不用等电脑。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn waiting_for_the_computer_does_not_block_the_run() {
+    let Some(e) = env_computer().await else {
+        return;
+    };
+    let mac = add_mac(&e).await;
+    let computer = fake_computer(&e, mac, Duration::from_secs(3600));
+    let run = e.queue("use computer: computer_run", None, 3).await;
+    let (_stop, h) = e.spawn().await;
+    for _ in 0..400 {
+        if device_call_states(&e).await == ["sent"] {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert_eq!(device_call_states(&e).await, ["sent"]);
+    let mut tx = e.t.db.tenant(e.user).await.unwrap();
+    tx.cancel_run(run, None).await.unwrap();
+    tx.commit().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(10), h)
+        .await
+        .expect("cancelling does not wait for the computer")
+        .unwrap();
+    computer.abort();
+    assert_eq!(e.state(run).await.run.state, RunState::Cancelled);
+}
+
+/// 电脑不在线：运行停下这一轮、转入等电脑上线（放掉租约、通知用户）；电脑连上中继时唤醒，
+/// 带着续跑说明接着跑，这次调成了。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_run_waits_for_the_computer_to_come_online() {
+    let Some(e) = env_computer().await else {
+        return;
+    };
+    let mac = add_mac(&e).await;
+    let run = e.queue("use computer: computer_screenshot", None, 3).await;
+    e.run_to_end().await;
+    let rec = e.state(run).await;
+    assert_eq!(rec.run.state, RunState::WaitingDevice, "{:?}", rec.run);
+    assert_eq!(rec.lease_owner, None);
+    assert!(
+        e.inbox()
+            .await
+            .iter()
+            .any(|i| i.body.contains("电脑不在线")),
+        "{:?}",
+        e.inbox().await
+    );
+    assert!(e.exec.claim().await.unwrap().is_none());
+
+    let computer = fake_computer(&e, mac, Duration::ZERO);
+    let mut claimed = None;
+    for _ in 0..200 {
+        if let Some(r) = e.exec.claim().await.unwrap() {
+            claimed = Some(r);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    let rec = claimed.expect("the run wakes up when the computer connects");
+    let (_tx, rx) = watch::channel(false);
+    tokio::time::timeout(Duration::from_secs(20), e.exec.execute(rec, rx))
+        .await
+        .unwrap();
+    computer.abort();
+    let rec = e.state(run).await;
+    assert_eq!(rec.run.state, RunState::Succeeded, "{:?}", rec.run);
+    assert_eq!(
+        rec.run.summary.as_deref(),
+        Some("computer_screenshot read /Users/a/notes.md")
+    );
+    let prompts = e.fake.rec.lock().unwrap().prompts.clone();
+    assert!(prompts[1].contains("续跑说明"), "{prompts:?}");
+}
+
+/// 没登录电脑的用户：agent 看不到电脑工具，硬调也不行。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn without_a_computer_there_are_no_computer_tools() {
+    let Some(e) = env_computer().await else {
+        return;
+    };
+    let run = e.queue("use computer: computer_list_dir", None, 3).await;
+    e.run_to_end().await;
+    let launches = e.fake.rec.lock().unwrap().launches.clone();
+    assert!(
+        launches[0].2.iter().all(|t| !t.starts_with("computer_")),
+        "{launches:?}"
+    );
+    let rec = e.state(run).await;
+    assert_eq!(rec.run.state, RunState::Succeeded, "{:?}", rec.run);
+    assert!(
+        rec.run
+            .summary
+            .as_deref()
+            .unwrap_or_default()
+            .contains("unknown platform tool"),
+        "{:?}",
+        rec.run.summary
+    );
+    assert!(device_call_states(&e).await.is_empty());
 }

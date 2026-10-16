@@ -18,6 +18,7 @@ use chrono::Utc;
 use control::Lifecycle;
 use keyvault::{Kms, Scrubber};
 use notify::PushKind;
+use proto::computer::ComputerTool;
 use proto::domain::{
     ApprovalState, ApprovalTimeoutAction, GrantId, InstanceEvent, Locale, PlanPolicy, RunId,
     RunSource, RunState, UserId, VaultItemId, valid_vault_name,
@@ -31,6 +32,7 @@ use tokio::time::Instant;
 use tracing::Instrument;
 use tracing::{debug, error, info, warn};
 
+use crate::computer::{CallError, CallOutput, DeviceCalls};
 use crate::delegate::DELEGATE_TOOLS;
 use crate::outbox::{Notice, notify};
 use crate::shim::{
@@ -137,6 +139,8 @@ pub struct Executor {
     handoff: Option<Arc<crate::pipeline::HandoffCopier>>,
     /// 密码保险箱（9.11）：解开用户的条目，给沙箱里的助手、给运行日志抹值。
     vault: Option<Arc<dyn Kms>>,
+    /// 用户电脑上的工具（14.2）：经设备中继转给用户自己的电脑。
+    computer: Option<Arc<DeviceCalls>>,
     cfg: ExecutorConfig,
     /// 同时执行的运行数。等审批的运行让出名额（沙箱也可能被空闲回收暂停），审批有结果后再拿回来。
     slots: Arc<Semaphore>,
@@ -184,7 +188,14 @@ struct Exec<'a> {
     brief: Option<String>,
     /// 用户的语言（1.6）：平台写的通知、状态说明按它输出。
     locale: Locale,
+    /// 在等电脑回结果的电脑工具调用（14.2）。不在事件循环里等：电脑可能要好一会儿
+    /// （高危操作要等用户在手机上批准），等的时候照常续租、处理别的事件、发现取消。
+    /// 运行结束时还没回的随它一起丢掉。
+    computer_calls: JoinSet<ComputerDone>,
 }
+
+/// 一个电脑工具调用的结果：shim 的调用 id、结果。
+type ComputerDone = (String, Result<CallOutput, CallError>);
 
 /// 运行结束时推送的正文（1.6）：要按用户的语言写的部分，查到语言后再定。
 enum PushBody {
@@ -203,6 +214,29 @@ impl PushBody {
             Self::Summary(None) => crate::texts::task_finished(locale).to_owned(),
             Self::Failed(reason) => crate::texts::task_failed(locale, &reason),
             Self::Ready(text) => text,
+        }
+    }
+}
+
+/// 电脑工具没调成时告诉 agent 的话（英文，和平台工具的说明一样）。
+fn computer_error(e: &CallError) -> String {
+    match e {
+        CallError::NoComputer => {
+            "No computer is signed in to this ThinkTin account. Ask the user to \
+            install ThinkTin on their Mac and sign in."
+                .into()
+        }
+        CallError::Offline => "The user's computer is offline.".into(),
+        CallError::Unsupported(tool) => format!(
+            "The user's computer cannot run {tool} right now; the ThinkTin app there may be missing \
+             a macOS permission (Screen Recording, Accessibility)."
+        ),
+        CallError::Timeout => "The user's computer did not answer in time (actions that need the \
+            user's approval wait for them to approve on their phone)."
+            .into(),
+        CallError::Failed(m) => format!("The user's computer could not run the tool: {m}"),
+        CallError::Store(_) => {
+            "Internal error while reaching the user's computer; try again later.".into()
         }
     }
 }
@@ -353,6 +387,7 @@ impl Executor {
             tools,
             handoff: None,
             vault: None,
+            computer: None,
             slots: Arc::new(Semaphore::new(cfg.max_concurrent.max(1))),
             cfg,
         }
@@ -367,6 +402,13 @@ impl Executor {
     /// 密码保险箱（9.11）：沙箱里的助手按名字要值，运行日志落盘前抹掉用户保险箱里的值。
     pub fn with_vault(mut self, kms: Arc<dyn Kms>) -> Self {
         self.vault = Some(kms);
+        self
+    }
+
+    /// 用户电脑上的工具（14.2）：有登录着的电脑的用户，agent 拿到 `computer_*` 工具（还要运行授权允许），
+    /// 调用经设备中继转给用户自己的电脑；电脑不在线时运行转入“等待电脑上线”（7.11）。
+    pub fn with_computer(mut self, calls: Arc<DeviceCalls>) -> Self {
+        self.computer = Some(calls);
         self
     }
 
@@ -640,6 +682,9 @@ impl Executor {
         // 委派的子任务做完了、结果还没交还：这次接着跑的消息就是它们的结果（8.7）。
         let delegated = w.delegated_runs(rec.run.id).await.map_err(retry)?;
         let finished = w.unreported_children(rec.run.id).await.map_err(retry)?;
+        // 电脑工具（14.2）只给登录着电脑的用户：没电脑的 agent 看不到它们。
+        let has_computer =
+            self.computer.is_some() && w.has_computer(rec.user_id).await.map_err(retry)?;
         w.rollback().await.map_err(retry)?;
         let resume = if finished.is_empty() {
             None
@@ -675,10 +720,15 @@ impl Executor {
                 .await
                 .map_err(|e| Outcome::Retry(format!("handing over upstream artifacts: {e}")))?;
         }
+        let computer_tools = proto::computer::TOOLS
+            .iter()
+            .filter(|_| has_computer)
+            .map(|t| t.platform_tool());
         let platform_tools: Vec<_> = self
             .tools
             .tools()
             .into_iter()
+            .chain(computer_tools)
             .filter(|t| grant_row.scope.platform_tools.contains(&t.name))
             .filter(|t| lead || !DELEGATE_TOOLS.contains(&t.name.as_str()))
             .collect();
@@ -788,6 +838,7 @@ impl Executor {
             session_restored,
             brief,
             locale,
+            computer_calls: JoinSet::new(),
         };
         exec.persist(&ready).await;
         Ok(exec)
@@ -1198,6 +1249,90 @@ impl Exec<'_> {
         }
     }
 
+    /// 电脑工具（14.2）：交给设备中继转给用户自己的电脑。结果不在这里等（见 `computer_calls`）。
+    async fn call_computer(
+        &mut self,
+        call_id: String,
+        tool: &'static ComputerTool,
+        arguments: Value,
+    ) {
+        let Some(calls) = self.ex.computer.clone() else {
+            let out = ToolOutput::error(computer_error(&CallError::NoComputer));
+            self.send(ShimCommand::PlatformToolResult {
+                call_id,
+                content: out.content,
+                is_error: true,
+            })
+            .await;
+            return;
+        };
+        let (user, run) = (self.rec.user_id, self.rec.run.id);
+        let timeout = Duration::from_secs(tool.timeout_secs());
+        debug!(run = %run, tool = tool.name, "calling a tool on the user's computer");
+        self.computer_calls.spawn(async move {
+            let result = calls
+                .call(user, Some(run), tool.name, arguments, timeout)
+                .await;
+            (call_id, result)
+        });
+    }
+
+    /// 电脑回了结果（或者没回成）：交给 agent。电脑不在线时停下这一轮，转入等电脑上线（7.11），
+    /// 电脑连上设备中继时唤醒，带着续跑说明接着跑。
+    async fn on_computer_result(
+        &mut self,
+        call_id: String,
+        result: Result<CallOutput, CallError>,
+    ) -> Option<Outcome> {
+        let out = match result {
+            Ok(out) => ToolOutput {
+                content: out.content,
+                is_error: out.is_error,
+            },
+            Err(CallError::Offline) => {
+                let out = ToolOutput::error(
+                    "The user's computer is offline. This task pauses until it is back online.",
+                );
+                self.send(ShimCommand::PlatformToolResult {
+                    call_id,
+                    content: out.content,
+                    is_error: true,
+                })
+                .await;
+                self.cancel_turn().await;
+                return Some(self.wait_for_device());
+            }
+            Err(e) => {
+                if let CallError::Store(err) = &e {
+                    warn!(run = %self.rec.run.id, error = %err, "a computer tool call failed");
+                }
+                ToolOutput::error(computer_error(&e))
+            }
+        };
+        self.send(ShimCommand::PlatformToolResult {
+            call_id,
+            content: out.content,
+            is_error: out.is_error,
+        })
+        .await;
+        None
+    }
+
+    /// 转入等电脑上线：电脑连上中继时唤醒；最多等计划的 `wait_timeout_secs`。要用户打开电脑，发通知。
+    fn wait_for_device(&self) -> Outcome {
+        let deadline = Utc::now()
+            + chrono::Duration::from_std(Duration::from_secs(self.policy.wait_timeout_secs))
+                .unwrap_or_default();
+        info!(run = %self.rec.run.id, "the user's computer is offline; waiting for it");
+        Outcome::Waiting {
+            state: RunState::WaitingDevice,
+            reason: crate::texts::computer_offline(self.locale).to_owned(),
+            retry_at: None,
+            deadline: Some(deadline),
+            notify: true,
+        }
+    }
+
     /// 转入等 key：被限流、繁忙的过几分钟自己再试，欠费的每小时试一次，key 无效的等用户换；
     /// 最多等计划的 `wait_timeout_secs`。
     fn wait_for_key(&self, problem: KeyProblem) -> Outcome {
@@ -1297,6 +1432,16 @@ impl Exec<'_> {
                     };
                     if let Some(outcome) = self.on_event(ev, &run_id).await {
                         return outcome;
+                    }
+                }
+                Some(done) = self.computer_calls.join_next(), if !self.computer_calls.is_empty() => {
+                    match done {
+                        Ok((call_id, result)) => {
+                            if let Some(outcome) = self.on_computer_result(call_id, result).await {
+                                return outcome;
+                            }
+                        }
+                        Err(e) => error!(run = %self.rec.run.id, error = %e, "a computer tool call task died"),
                     }
                 }
                 _ = renew.tick() => {
@@ -1406,6 +1551,12 @@ impl Exec<'_> {
                 arguments,
                 ..
             } => {
+                if let Some(tool) =
+                    proto::computer::tool(&name).filter(|_| self.allowed_tools.contains(&name))
+                {
+                    self.call_computer(call_id, tool, arguments).await;
+                    return None;
+                }
                 let out = if self.allowed_tools.contains(&name) {
                     self.call_tool(&name, &arguments).await
                 } else {

@@ -13,6 +13,7 @@ use notify::fcm::{FcmClient, FcmConfig, ServiceAccount};
 use notify::filter::KeywordFilter;
 use notify::jpush::{JpushClient, JpushConfig};
 use orchestrator::artifacts::ArtifactStore;
+use orchestrator::computer::DeviceCalls;
 use orchestrator::delegate::DelegateTools;
 use orchestrator::exec::{ExecConfig, ExecConnector};
 use orchestrator::executor::{Executor, ExecutorConfig};
@@ -101,6 +102,8 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
         Arc::new(VaultTools::new(db.clone())),
         Arc::new(DelegateTools::new(db.clone())),
     ];
+    // 用户电脑上的工具（14.2）：调用经设备中继转给用户自己的电脑，结果靠数据库通知取回。
+    let computer = Arc::new(DeviceCalls::new(db.clone()));
     let executor = Arc::new(
         Executor::new(
             db.clone(),
@@ -124,7 +127,8 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
             provider,
             workdir,
         )))
-        .with_vault(kms),
+        .with_vault(kms)
+        .with_computer(computer.clone()),
     );
     let pipelines = PipelineDriver::new(db.clone(), PipelineConfig::default());
     let scheduler = Scheduler::new(db.clone(), SchedulerConfig::default());
@@ -191,6 +195,10 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
     });
     bg.spawn("executor", move |stop| async move {
         executor.run(stopped(stop)).await;
+        Ok(())
+    });
+    bg.spawn("device-calls", move |stop| async move {
+        computer.listen(stopped(stop)).await;
         Ok(())
     });
     bg.spawn("outbox", move |stop| async move {
