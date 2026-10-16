@@ -27,6 +27,9 @@ pub enum Error {
     Corrupt(String),
     #[error(transparent)]
     Migrate(#[from] sqlx::migrate::MigrateError),
+    /// 数据库的迁移和程序对不上（2.9）：缺这一版要的迁移、发布过的迁移被改过、迁移执行了一半。
+    #[error("{0}")]
+    Schema(String),
     #[error(transparent)]
     Db(sqlx::Error),
 }

@@ -250,6 +250,10 @@ fn main() -> anyhow::Result<()> {
                         let db = store::Db::connect(&url, 16)
                             .await
                             .context("connect to database")?;
+                        // 迁移由控制面的发布流程执行；这一版要的都执行过才启动（2.9）。
+                        db.check_migrations()
+                            .await
+                            .context("checking the database migrations")?;
                         let local = std::env::var(ENV_KMS_KEY_PROD)
                             .ok()
                             .filter(|v| !v.is_empty())

@@ -2089,3 +2089,58 @@ async fn the_device_relay_routes_calls_and_messages() {
     assert_eq!(w.purge_device_traffic(Duration::ZERO).await.unwrap(), 6);
     w.commit().await.unwrap();
 }
+
+/// 发布（2.9）：迁移过的库和程序对得上；回滚到上一版（库里有程序不认识的迁移）时照常启动、
+/// `migrate` 不报错；少了迁移、改过迁移都拒绝启动。服务角色读得到迁移记录。
+#[tokio::test]
+async fn builds_check_the_database_migrations() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    assert_eq!(
+        db.migration_status().await.unwrap(),
+        crate::MigrationStatus::default()
+    );
+
+    // 下一版加的迁移，这一版不认识。
+    sqlx::query(
+        "INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time) \
+         VALUES (99999, 'next release', true, '\\x00', 1)",
+    )
+    .execute(db.pool())
+    .await
+    .unwrap();
+    db.migrate().await.unwrap();
+    let status = db.migration_status().await.unwrap();
+    assert_eq!(status.newer, [99999]);
+    assert_eq!(status.problem(), None);
+
+    // 服务的登录账号经角色继承读迁移记录。
+    for role in ["thinktin_worker", "thinktin_llmgw", "thinktin_relay"] {
+        let mut tx = db.pool().begin().await.unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!("SET LOCAL ROLE {role}")))
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        let n: i64 = sqlx::query_scalar("SELECT count(*) FROM _sqlx_migrations")
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap();
+        assert!(n > 0, "{role}");
+        tx.rollback().await.unwrap();
+    }
+
+    // 发布过的迁移被改了、这一版要的迁移还没执行：拒绝启动。
+    sqlx::query("UPDATE _sqlx_migrations SET checksum = '\\x01' WHERE version = 1")
+        .execute(db.pool())
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM _sqlx_migrations WHERE version = 16")
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let status = db.migration_status().await.unwrap();
+    assert_eq!(status.modified, [1]);
+    assert_eq!(status.pending, [16]);
+    let problem = status.problem().unwrap();
+    assert!(problem.contains("missing migrations 16"), "{problem}");
+}

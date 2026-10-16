@@ -21,6 +21,7 @@ mod llmgw;
 mod outbox;
 mod plans;
 mod runs;
+mod schema;
 mod sessions;
 mod teams;
 mod tool_calls;
@@ -55,6 +56,7 @@ pub use llmgw::{GatewayInstance, GatewayRoute};
 pub use outbox::{NewOutboxItem, OutboxItem};
 pub use plans::{DueTrigger, NewPlan};
 pub use runs::{ModelCall, NewRun, RunChange, RunRecord};
+pub use schema::MigrationStatus;
 pub use sessions::{LoginCode, SessionRecord, SessionState};
 pub use usage::{NewUsage, UsageBucket, UsageFilter, UsageGroup};
 pub use users::AccountSummary;
@@ -88,12 +90,6 @@ impl Db {
 
     pub fn pool(&self) -> &PgPool {
         &self.pool
-    }
-
-    /// 执行迁移。要用表的属主账号（迁移账号）连接；多个副本同时执行时由 sqlx 的咨询锁串行化。
-    pub async fn migrate(&self) -> Result<()> {
-        sqlx::migrate!("./migrations").run(&self.pool).await?;
-        Ok(())
     }
 
     /// 就绪检查。

@@ -45,6 +45,10 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
         db.migrate().await.context("migrate")?;
         info!("migrations applied");
     }
+    // 这一版要的迁移都执行过才启动（2.9）：生产上迁移由发布流程先执行。
+    db.check_migrations()
+        .await
+        .context("checking the database migrations")?;
     let listener = TcpListener::bind(cfg.listen)
         .await
         .with_context(|| format!("listen on {}", cfg.listen))?;

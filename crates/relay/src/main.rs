@@ -98,6 +98,10 @@ fn main() -> anyhow::Result<()> {
         let db = store::Db::connect(&cli.database_url, cli.db_connections)
             .await
             .context("connect to database")?;
+        // 迁移由控制面的发布流程执行；这一版要的都执行过才启动（2.9）。
+        db.check_migrations()
+            .await
+            .context("checking the database migrations")?;
         if let Some(addr) = cli.metrics_listen {
             let handle = metrics_exporter_prometheus::PrometheusBuilder::new()
                 .install_recorder()
