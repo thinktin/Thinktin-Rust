@@ -1,0 +1,40 @@
+# 节点维护、集群升级时每个服务至少留一个副本。
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: thinktin-api
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: thinktin-api
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: thinktin-worker
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: thinktin-worker
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: thinktin-llm-gw
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: thinktin-llm-gw
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: thinktin-relay
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: thinktin-relay

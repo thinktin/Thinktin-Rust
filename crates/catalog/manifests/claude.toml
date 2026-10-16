@@ -1,0 +1,43 @@
+# Claude：同一个 agent，两种接入方式（harness）。
+# - acp（默认）：Claude Agent SDK 的 ACP 适配器 claude-agent-acp
+# - cli：直接驱动 Claude Code 命令行的 stream-json 模式
+# 两种方式都通过 ANTHROPIC_BASE_URL 走模型网关，状态都写在 ~/.claude（CLAUDE_CONFIG_DIR）。
+
+[agent]
+id = "claude"
+name = "Claude Agent"
+upstream = "https://github.com/agentclientprotocol/claude-agent-acp"
+version = "0.90.0"  # claude-agent-acp；内含 Claude Agent SDK 0.3.296
+license = "LicenseRef-Anthropic-Commercial"
+license_note = "适配器 claude-agent-acp 是 Apache-2.0；它依赖的 Claude Agent SDK 和 Claude Code 二进制是 Anthropic 专有软件（All rights reserved，受 Anthropic 法律协议约束），多租户托管前须法务确认。运行方式是在平台沙箱里自部署，模型请求只走平台的模型网关，不登录、不调用 Anthropic 的服务。"
+sites = ["cn", "global"]
+
+[runtime]
+template = "agents/claude:0.90.0"
+vcpu = 1
+memory_mb = 2048
+state_dirs = [".claude"]
+
+[[harness]]
+id = "acp"
+kind = "acp"
+command = ["claude-agent-acp"]
+session = { restore = true, per_session_mcp = true }
+
+[[harness]]
+id = "cli"
+kind = "claude-stream-json"
+command = ["claude"]
+session = { restore = true, per_session_mcp = true }
+
+[llm]
+protocols = ["anthropic-messages"]
+config = "claude"
+
+[policy]
+heartbeat = "none"
+
+# 模板构建（6.8，deploy/templates）装的包，版本写死；升级时和 agent.version、runtime.template 一起改。
+# Claude Code 二进制随 Agent SDK 一起装（cli 接入方式用的 `claude` 命令也在里面）。
+[install]
+npm = ["@agentclientprotocol/claude-agent-acp@0.90.0"]

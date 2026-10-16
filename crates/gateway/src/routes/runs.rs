@@ -1,0 +1,166 @@
+//! 运行：给实例下任务、查看、取消、运行树。
+
+use auth::service::Principal;
+use axum::Json;
+use axum::extract::{Path, Query, State};
+use axum::http::StatusCode;
+use proto::domain::{InstanceId, Run, RunId, RunKind, RunSource};
+use serde::Deserialize;
+use serde_json::{Value, json};
+use store::{NewRun, Tenant, Tx};
+
+use super::{check_len, default_scope, parse_id};
+use crate::{ApiJson, ApiResult, AppState, Authed};
+
+#[derive(Deserialize)]
+pub struct CreateReq {
+    prompt: String,
+}
+
+pub async fn create(
+    State(s): State<AppState>,
+    Authed(who): Authed,
+    Path(id): Path<String>,
+    ApiJson(req): ApiJson<CreateReq>,
+) -> ApiResult<(StatusCode, Json<Run>)> {
+    let id: InstanceId = parse_id(&id, "instance")?;
+    check_len("prompt", req.prompt.trim(), 1, 32_000)?;
+    // 消息里有保险箱里的密码（客户端没拦下来，11.6）：存库前换成引用，agent 和模型都看不到。
+    let prompt = super::vault::scrub_user_text(&s, who.user, req.prompt.trim()).await;
+    let mut t = s.db.tenant(who.user).await?;
+    let instance = t.instance(id).await?;
+    ensure_instance_grant(&s, &mut t, &who, id).await?;
+    let run = t
+        .create_run(&NewRun::new(
+            id,
+            RunSource::User,
+            prompt,
+            instance.agent_version,
+        ))
+        .await?;
+    t.commit().await?;
+    Ok((StatusCode::CREATED, Json(run)))
+}
+
+/// 用户发起的运行用实例的授权。“全部停止”（4.6）吊销了它、或者它过期了：用户再发起时重新签发。
+pub(crate) async fn ensure_instance_grant(
+    s: &AppState,
+    t: &mut Tx<Tenant>,
+    who: &Principal,
+    instance: InstanceId,
+) -> ApiResult<()> {
+    let has_grant = t
+        .run_grants(instance)
+        .await?
+        .iter()
+        .any(|g| g.plan_id.is_none() && g.parent_id.is_none());
+    if !has_grant {
+        let grant = t
+            .create_run_grant(instance, None, &default_scope(s), s.cfg.grant_ttl)
+            .await?;
+        t.audit(
+            &who.actor(),
+            "grant.reissue",
+            Some(&grant.id.to_string()),
+            &json!({ "instance": instance }),
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+#[derive(Deserialize)]
+pub struct ListQuery {
+    before: Option<String>,
+    limit: Option<i64>,
+}
+
+pub async fn list(
+    State(s): State<AppState>,
+    Authed(who): Authed,
+    Path(id): Path<String>,
+    Query(q): Query<ListQuery>,
+) -> ApiResult<Json<Value>> {
+    let id: InstanceId = parse_id(&id, "instance")?;
+    let before = q
+        .before
+        .as_deref()
+        .map(|b| parse_id::<RunId>(b, "run"))
+        .transpose()?;
+    let limit = q.limit.unwrap_or(50).clamp(1, 200);
+    let mut t = s.db.tenant(who.user).await?;
+    t.instance(id).await?;
+    let runs = t.runs(id, before, limit).await?;
+    t.rollback().await?;
+    Ok(Json(json!({ "runs": runs })))
+}
+
+pub async fn get(
+    State(s): State<AppState>,
+    Authed(who): Authed,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Run>> {
+    let id: RunId = parse_id(&id, "run")?;
+    let mut t = s.db.tenant(who.user).await?;
+    let run = t.run(id).await?;
+    t.rollback().await?;
+    Ok(Json(run))
+}
+
+#[derive(Deserialize)]
+pub struct CancelQuery {
+    /// 停掉整棵运行树（8.2）。
+    #[serde(default)]
+    tree: bool,
+}
+
+pub async fn cancel(
+    State(s): State<AppState>,
+    Authed(who): Authed,
+    Path(id): Path<String>,
+    Query(q): Query<CancelQuery>,
+) -> ApiResult<Json<Run>> {
+    let id: RunId = parse_id(&id, "run")?;
+    let mut t = s.db.tenant(who.user).await?;
+    // 流水线根运行自己不跑 agent，停它就是停整条流水线：不然步骤运行还在接着跑。
+    let target = t.run(id).await?;
+    let whole_tree =
+        q.tree || (target.kind == RunKind::Pipeline && target.root_run_id == target.id);
+    if whole_tree {
+        let root = target.root_run_id;
+        t.cancel_run_tree(root, "stopped by user").await?;
+        let run = t.run(root).await?;
+        t.append_event(
+            run.instance_id,
+            Some(run.id),
+            "run.state",
+            &json!({ "state": run.state, "reason": "stopped by user", "tree": true }),
+        )
+        .await?;
+        t.commit().await?;
+        return Ok(Json(run));
+    }
+    let run = t.cancel_run(id, None).await?;
+    t.append_event(
+        run.instance_id,
+        Some(run.id),
+        "run.state",
+        &json!({ "state": run.state, "reason": run.state_reason }),
+    )
+    .await?;
+    t.commit().await?;
+    Ok(Json(run))
+}
+
+pub async fn tree(
+    State(s): State<AppState>,
+    Authed(who): Authed,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    let id: RunId = parse_id(&id, "run")?;
+    let mut t = s.db.tenant(who.user).await?;
+    let run = t.run(id).await?;
+    let runs = t.run_tree(run.root_run_id).await?;
+    t.rollback().await?;
+    Ok(Json(json!({ "root": run.root_run_id, "runs": runs })))
+}

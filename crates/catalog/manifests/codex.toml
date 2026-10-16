@@ -1,0 +1,38 @@
+# Codex（OpenAI）：经 codex-acp 适配器驱动 Codex App Server。
+# Codex 的自定义模型供应商只支持 Responses 协议（wire_api = "responses"），
+# 所以模型网关要对它提供 /v1/responses。
+
+[agent]
+id = "codex"
+name = "Codex"
+upstream = "https://github.com/agentclientprotocol/codex-acp"
+version = "2.2.2"  # codex-acp；内含 @openai/codex 0.160.1
+license = "Apache-2.0"
+sites = ["cn", "global"]
+
+[runtime]
+template = "agents/codex:2.2.2"
+vcpu = 1
+memory_mb = 1024
+state_dirs = [".codex"]
+
+[[harness]]
+id = "acp"
+kind = "acp"
+command = ["codex-acp"]
+# 只读模式：改文件、执行命令、联网都要审批，经 ACP 交给平台的预授权策略决定（4.7）。
+# 默认的 agent 模式会让 Codex 自己用模型（codex-auto-review）审批，绕过平台。
+env = { INITIAL_AGENT_MODE = "read-only" }
+session = { restore = true, per_session_mcp = true }
+
+[llm]
+protocols = ["openai-responses"]
+config = "codex"
+
+[policy]
+heartbeat = "none"
+
+# 模板构建（6.8，deploy/templates）装的包，版本写死；升级时和 agent.version、runtime.template 一起改。
+# 内含 @openai/codex 的原生二进制（按平台的可选依赖）。
+[install]
+npm = ["@agentclientprotocol/codex-acp@2.2.2"]
