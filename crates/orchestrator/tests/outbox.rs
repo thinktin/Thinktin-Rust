@@ -330,6 +330,16 @@ async fn computer_approval_requests_are_pushed_once() {
         .create_device(user, DevicePlatform::Macos, "MacBook", None)
         .await
         .unwrap();
+    // 推送只发给登录着的设备。
+    w.create_session(
+        proto::domain::SessionId::new(),
+        user,
+        phone,
+        b"refresh",
+        Duration::from_secs(3600),
+    )
+    .await
+    .unwrap();
     w.commit().await.unwrap();
 
     let now = chrono::Utc::now().timestamp();
