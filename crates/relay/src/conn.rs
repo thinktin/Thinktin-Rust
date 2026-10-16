@@ -97,6 +97,11 @@ struct Conn {
     last_heard: Instant,
 }
 
+/// 中继开始停机。不把 `watch::Ref`（读锁）带出来：select! 的结果要跨 await 留着，读锁不能跨线程。
+async fn stopped(stopping: &mut watch::Receiver<bool>) {
+    let _ = stopping.wait_for(|s| *s).await;
+}
+
 pub(crate) async fn run(relay: Arc<Relay>, who: Computer, socket: WebSocket) {
     let _live = relay.live.clone();
     // 先订阅再记在线状态：平台看到电脑在线后写的调用，通知一定收得到。
@@ -141,7 +146,7 @@ impl Conn {
                     Err(RecvError::Closed) => Err(End::Internal),
                 },
                 _ = beat.tick() => self.heartbeat().await,
-                _ = stopping.wait_for(|s| *s) => Err(End::Restarting),
+                () = stopped(stopping) => Err(End::Restarting),
                 msg = self.socket.recv() => {
                     self.last_heard = Instant::now();
                     match msg {
