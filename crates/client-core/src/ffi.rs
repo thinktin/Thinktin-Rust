@@ -16,6 +16,7 @@ use crate::cache::Cache;
 use crate::client::Client;
 use crate::error::{ClientError, Result};
 use crate::events::{EventSink, StreamConfig, StreamHandle, StreamStatus};
+use crate::secrets;
 
 fn ms(t: DateTime<Utc>) -> i64 {
     t.timestamp_millis()
@@ -642,6 +643,220 @@ impl From<d::Artifact> for Artifact {
             created_at_ms: ms(a.created_at),
         }
     }
+}
+
+// ---------- 密码保险箱（9.11）和输入里的密码拦截（11.6） ----------
+
+/// 保险箱条目。没有密码；账号只在 `vault_item` 的详情里有。
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct VaultItem {
+    pub id: String,
+    /// 引用名（`github`），消息里写成 `[vault:github]`。
+    pub name: String,
+    pub purpose: String,
+    pub has_username: bool,
+    /// 能用它的实例；空表示全部。
+    pub instance_ids: Vec<String>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+    pub last_used_at_ms: Option<i64>,
+}
+
+impl From<d::VaultItem> for VaultItem {
+    fn from(v: d::VaultItem) -> Self {
+        Self {
+            id: v.id.to_string(),
+            name: v.name,
+            purpose: v.purpose,
+            has_username: v.has_username,
+            instance_ids: v.instance_ids.iter().map(ToString::to_string).collect(),
+            created_at_ms: ms(v.created_at),
+            updated_at_ms: ms(v.updated_at),
+            last_used_at_ms: ms_opt(v.last_used_at),
+        }
+    }
+}
+
+/// 条目详情：多一个账号。
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct VaultItemDetail {
+    pub item: VaultItem,
+    pub username: String,
+}
+
+#[derive(Clone, uniffi::Record)]
+pub struct NewVaultItem {
+    pub name: String,
+    pub purpose: String,
+    pub username: String,
+    pub password: String,
+    /// 空表示所有实例都能用。
+    pub instance_ids: Vec<String>,
+}
+
+impl std::fmt::Debug for NewVaultItem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NewVaultItem")
+            .field("name", &self.name)
+            .field("purpose", &self.purpose)
+            .finish_non_exhaustive()
+    }
+}
+
+impl NewVaultItem {
+    fn into_api(self) -> Result<api::NewVaultItem> {
+        Ok(api::NewVaultItem {
+            name: self.name,
+            purpose: self.purpose,
+            username: self.username,
+            password: self.password,
+            instance_ids: self
+                .instance_ids
+                .iter()
+                .map(|i| parse(i, "instance"))
+                .collect::<Result<_>>()?,
+        })
+    }
+}
+
+/// 修改条目：只改给了的字段。
+#[derive(Clone, uniffi::Record)]
+pub struct VaultItemUpdate {
+    pub purpose: Option<String>,
+    pub username: Option<String>,
+    pub password: Option<String>,
+    pub instance_ids: Option<Vec<String>>,
+}
+
+impl std::fmt::Debug for VaultItemUpdate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VaultItemUpdate")
+            .field("purpose", &self.purpose)
+            .field("password_changed", &self.password.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
+/// agent 请用户填的表单（App 收到 `vault.requested` 事件、推送后展示）。
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct VaultRequest {
+    pub id: String,
+    pub instance_id: String,
+    pub run_id: Option<String>,
+    pub name: String,
+    /// agent 写的用途，显示时带“AI 生成”标识。
+    pub purpose: String,
+    /// 要填的字段：`username`、`password`。
+    pub fields: Vec<String>,
+    /// pending / fulfilled / declined / expired
+    pub status: String,
+    pub item_id: Option<String>,
+    pub created_at_ms: i64,
+    pub expires_at_ms: i64,
+    pub resolved_at_ms: Option<i64>,
+}
+
+impl From<d::VaultRequest> for VaultRequest {
+    fn from(r: d::VaultRequest) -> Self {
+        Self {
+            id: r.id.to_string(),
+            instance_id: r.instance_id.to_string(),
+            run_id: r.run_id.map(|i| i.to_string()),
+            name: r.name,
+            purpose: r.purpose,
+            fields: r.fields,
+            status: r.status.to_string(),
+            item_id: r.item_id.map(|i| i.to_string()),
+            created_at_ms: ms(r.created_at),
+            expires_at_ms: ms(r.expires_at),
+            resolved_at_ms: ms_opt(r.resolved_at),
+        }
+    }
+}
+
+/// 消息里一处像密码、key 的内容（11.6）。位置是 UTF-16 下标（Swift 的 NSRange、Kotlin 的 String 下标）。
+#[derive(Clone, uniffi::Record)]
+pub struct DetectedSecret {
+    /// private_key / url_password / api_key / token / labeled / high_entropy
+    pub kind: String,
+    pub start: u32,
+    pub end: u32,
+    /// 原文里的那段，预填进表单的密码栏。
+    pub value: String,
+    /// 建议的条目名，预填进表单（已经符合命名规则）。
+    pub suggested_name: String,
+    /// 认出来的厂商或服务（anthropic、github……）；模型厂商的 key 可以提示“添加为模型 key”。
+    pub service: String,
+    /// 能存进保险箱。私钥这种多行的不能，只提示别发。
+    pub storable: bool,
+}
+
+impl std::fmt::Debug for DetectedSecret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DetectedSecret")
+            .field("kind", &self.kind)
+            .field("start", &self.start)
+            .field("end", &self.end)
+            .field("suggested_name", &self.suggested_name)
+            .finish_non_exhaustive()
+    }
+}
+
+/// 把消息里的值换成引用时用：`value` 换成 `[vault:name]`。
+#[derive(Clone, uniffi::Record)]
+pub struct SecretReference {
+    pub value: String,
+    pub name: String,
+}
+
+impl std::fmt::Debug for SecretReference {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SecretReference")
+            .field("name", &self.name)
+            .finish_non_exhaustive()
+    }
+}
+
+/// 从消息里存进保险箱的结果：条目和换成引用后的消息（直接放回输入框）。
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct SavedSecret {
+    pub item: VaultItem,
+    pub message: String,
+}
+
+fn utf16_at(text: &str, byte: usize) -> u32 {
+    u32::try_from(text[..byte].encode_utf16().count()).unwrap_or(u32::MAX)
+}
+
+/// 发送前检查消息（11.6），不联网。有命中时 App 拦下，提示“对话里不收明文密码”，
+/// 弹表单（值和建议名已预填）存进保险箱，再把消息里的值换成引用。
+#[uniffi::export]
+pub fn detect_secrets(text: String) -> Vec<DetectedSecret> {
+    secrets::detect(&text)
+        .into_iter()
+        .map(|f| DetectedSecret {
+            kind: f.kind.as_str().into(),
+            start: utf16_at(&text, f.start),
+            end: utf16_at(&text, f.end),
+            value: f.value,
+            suggested_name: f.suggested_name,
+            service: f.service,
+            storable: f.storable,
+        })
+        .collect()
+}
+
+/// 把消息里的值都换成 `[vault:名字]`（所有出现的地方）。
+#[uniffi::export]
+pub fn redact_message(text: String, references: Vec<SecretReference>) -> String {
+    let pairs: Vec<(String, String)> = references.into_iter().map(|r| (r.value, r.name)).collect();
+    secrets::redact(&text, &pairs)
+}
+
+/// 建议名已经被占用时，换一个不重复的（`github` → `github_2`）。`taken` 是现有条目的名字。
+#[uniffi::export]
+pub fn unique_vault_name(base: String, taken: Vec<String>) -> String {
+    secrets::unique_name(&secrets::sanitize_name(&base, "secret"), &taken)
 }
 
 // ---------- 事件流 ----------
@@ -1273,6 +1488,136 @@ impl ThinktinClient {
     pub async fn delete_credential(&self, credential_id: String) -> Result<()> {
         let id: d::CredentialId = parse(&credential_id, "credential")?;
         self.run(|c| async move { c.api.delete_credential(id).await })
+            .await
+    }
+
+    // ---------- 密码保险箱（9.11）和输入里的密码拦截（11.6） ----------
+
+    /// 发一条消息（起一次运行）。消息里有像密码、key 的内容时不发，返回 `ContainsSecrets`
+    /// （先用 `detect_secrets` 检查就不会走到这里）；用户确认要发时带 `allow_secrets`。
+    pub async fn send_message(
+        &self,
+        instance_id: String,
+        text: String,
+        allow_secrets: bool,
+    ) -> Result<Run> {
+        let id: d::InstanceId = parse(&instance_id, "instance")?;
+        self.run(|c| async move { Ok(c.send_message(id, &text, allow_secrets).await?.into()) })
+            .await
+    }
+
+    /// 把消息里拦下的值存进保险箱，返回条目和换成引用后的消息。`value` 是消息里原来的那段，
+    /// `item.password` 是表单里确认过的值。重名时返回 conflict，消息不动（可用 `unique_vault_name` 换名）。
+    pub async fn save_secret_from_message(
+        &self,
+        message: String,
+        value: String,
+        item: NewVaultItem,
+    ) -> Result<SavedSecret> {
+        let item = item.into_api()?;
+        self.run(|c| async move {
+            let (saved, message) = c.save_secret_from_message(&message, &value, &item).await?;
+            Ok(SavedSecret {
+                item: saved.into(),
+                message,
+            })
+        })
+        .await
+    }
+
+    pub async fn vault_items(&self) -> Result<Vec<VaultItem>> {
+        self.run(|c| async move {
+            Ok(c.api
+                .vault_items()
+                .await?
+                .into_iter()
+                .map(Into::into)
+                .collect())
+        })
+        .await
+    }
+
+    pub async fn vault_item(&self, item_id: String) -> Result<VaultItemDetail> {
+        let id: d::VaultItemId = parse(&item_id, "vault item")?;
+        self.run(|c| async move {
+            let v = c.api.vault_item(id).await?;
+            Ok(VaultItemDetail {
+                item: v.item.into(),
+                username: v.username,
+            })
+        })
+        .await
+    }
+
+    pub async fn create_vault_item(&self, item: NewVaultItem) -> Result<VaultItem> {
+        let item = item.into_api()?;
+        self.run(|c| async move { Ok(c.api.create_vault_item(&item).await?.into()) })
+            .await
+    }
+
+    pub async fn update_vault_item(
+        &self,
+        item_id: String,
+        change: VaultItemUpdate,
+    ) -> Result<VaultItem> {
+        let id: d::VaultItemId = parse(&item_id, "vault item")?;
+        let change = api::VaultItemUpdate {
+            purpose: change.purpose,
+            username: change.username,
+            password: change.password,
+            instance_ids: change
+                .instance_ids
+                .map(|ids| {
+                    ids.iter()
+                        .map(|i| parse(i, "instance"))
+                        .collect::<Result<Vec<_>>>()
+                })
+                .transpose()?,
+        };
+        self.run(|c| async move { Ok(c.api.update_vault_item(id, &change).await?.into()) })
+            .await
+    }
+
+    pub async fn delete_vault_item(&self, item_id: String) -> Result<()> {
+        let id: d::VaultItemId = parse(&item_id, "vault item")?;
+        self.run(|c| async move { c.api.delete_vault_item(id).await })
+            .await
+    }
+
+    /// agent 请用户填的表单。默认只要还在等的，`all` 时带上处理过的。
+    pub async fn vault_requests(&self, all: bool) -> Result<Vec<VaultRequest>> {
+        self.run(|c| async move {
+            Ok(c.api
+                .vault_requests(all)
+                .await?
+                .into_iter()
+                .map(Into::into)
+                .collect())
+        })
+        .await
+    }
+
+    /// 填好 agent 要的账号密码。`purpose` 不给就用 agent 写的。
+    pub async fn fulfill_vault_request(
+        &self,
+        request_id: String,
+        username: String,
+        password: String,
+        purpose: Option<String>,
+    ) -> Result<VaultRequest> {
+        let id: d::VaultRequestId = parse(&request_id, "vault request")?;
+        self.run(|c| async move {
+            Ok(c.api
+                .fulfill_vault_request(id, &username, &password, purpose.as_deref())
+                .await?
+                .into())
+        })
+        .await
+    }
+
+    pub async fn decline_vault_request(&self, request_id: String) -> Result<VaultRequest> {
+        let id: d::VaultRequestId = parse(&request_id, "vault request")?;
+        self.run(|c| async move { Ok(c.api.decline_vault_request(id).await?.into()) })
             .await
     }
 }

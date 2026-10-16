@@ -2,12 +2,15 @@
 
 use std::sync::Arc;
 
-use proto::domain::{InboxItem, InboxItemId, Instance, InstanceEvent, InstanceId, Run, User};
+use proto::domain::{
+    InboxItem, InboxItemId, Instance, InstanceEvent, InstanceId, Run, User, VaultItem,
+};
 
-use crate::api::{Api, InboxPage, LoginResult};
+use crate::api::{Api, InboxPage, LoginResult, NewVaultItem};
 use crate::cache::Cache;
 use crate::error::{ClientError, Result};
 use crate::events::{self, EventSink, StreamConfig, StreamHandle};
+use crate::secrets;
 
 pub struct Client {
     pub api: Arc<Api>,
@@ -212,5 +215,40 @@ impl Client {
             }
         }
         Ok(())
+    }
+
+    // ---------- 输入里的密码拦截（11.6） ----------
+
+    /// 在实例上发一条消息（起一次运行）。消息里有像密码、key 的内容时不发，返回
+    /// [`ClientError::ContainsSecrets`]；用户看过提示、坚持要发时带 `allow_secrets`。
+    pub async fn send_message(
+        &self,
+        instance: InstanceId,
+        text: &str,
+        allow_secrets: bool,
+    ) -> Result<Run> {
+        if !allow_secrets {
+            let found = secrets::detect(text);
+            if !found.is_empty() {
+                return Err(ClientError::ContainsSecrets {
+                    count: u32::try_from(found.len()).unwrap_or(u32::MAX),
+                });
+            }
+        }
+        self.api.create_run(instance, text).await
+    }
+
+    /// 把消息里拦下的值存进保险箱，返回条目和换成引用（`[vault:名字]`）后的消息。
+    /// `value` 是消息里原来的那段（替换它的所有出现）；`item.password` 是用户在表单里确认过的值，
+    /// 通常和 `value` 一样，用户改过就以表单为准。存失败（比如重名）时消息不动。
+    pub async fn save_secret_from_message(
+        &self,
+        message: &str,
+        value: &str,
+        item: &NewVaultItem,
+    ) -> Result<(VaultItem, String)> {
+        let saved = self.api.create_vault_item(item).await?;
+        let text = secrets::redact(message, &[(value.to_owned(), saved.name.clone())]);
+        Ok((saved, text))
     }
 }

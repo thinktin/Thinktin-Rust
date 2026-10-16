@@ -49,6 +49,22 @@ async def main():
         await c2.mark_inbox_read(["bad"], None)
     except cc.ClientError.InvalidArgument:
         print("bad id -> InvalidArgument")
+    # 输入里的密码拦截（11.6）：本地识别，位置是 UTF-16 下标；发送时拦下；换成引用。
+    msg = "我的 github 密码是 Abc12345，帮我登录"
+    found = cc.detect_secrets(msg)
+    assert len(found) == 1 and found[0].value == "Abc12345", found
+    assert msg[found[0].start:found[0].end] == "Abc12345", found
+    assert found[0].suggested_name == "github" and found[0].storable
+    print("detect_secrets ->", found[0].kind, found[0].suggested_name)
+    try:
+        await c2.send_message("0192f0c4-0000-7000-8000-000000000002", msg, False)
+        raise SystemExit("expected ContainsSecrets")
+    except cc.ClientError.ContainsSecrets as e:
+        print("send_message -> ContainsSecrets", e.count)
+    red = cc.redact_message(msg, [cc.SecretReference(value="Abc12345", name="github")])
+    assert red == "我的 github 密码是 [vault:github]，帮我登录", red
+    assert cc.detect_secrets(red) == []
+    assert cc.unique_vault_name("GitHub", ["github"]) == "github_2"
     print("ok")
 
 asyncio.run(main())

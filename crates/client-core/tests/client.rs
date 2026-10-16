@@ -9,7 +9,9 @@ use auth::service::{AuthConfig, AuthService};
 use auth::signed::{Signer25519, Verifier25519};
 use auth::sms::RecordingSms;
 use client_core::ClientError;
-use client_core::api::{Api, ApiConfig, MemorySessionStore, Session, SessionStore};
+use client_core::api::{
+    Api, ApiConfig, MemorySessionStore, NewVaultItem, Session, SessionStore, VaultItemUpdate,
+};
 use client_core::cache::Cache;
 use client_core::client::Client;
 use client_core::events::{EventSink, StreamConfig, StreamStatus};
@@ -17,7 +19,9 @@ use client_core::ffi;
 use control::BuiltinTemplates;
 use gateway::{AppState, EventHub, GatewayConfig, Inner};
 use keyvault::LocalKms;
-use proto::domain::{DevicePlatform, InboxItemId, InstanceEvent, InstanceId, UserId, UserStatus};
+use proto::domain::{
+    DevicePlatform, InboxItemId, InstanceEvent, InstanceId, UserId, UserStatus, VaultRequestStatus,
+};
 use serde_json::json;
 use store::NewInboxItem;
 use store::testing::TestDb;
@@ -591,4 +595,176 @@ async fn ffi_client_round_trip() {
     assert!(!c.signed_in());
     assert!(c.cached_instances().unwrap().is_empty());
     drop(c);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vault_and_secrets_in_messages() {
+    let Some(e) = env().await else { return };
+    let store = Arc::new(MemorySessionStore::default());
+    let api = e.api(store.clone());
+    e.login(&api, "13800138505").await;
+    let user: UserId = store.load().unwrap().user_id.parse().unwrap();
+    let client = Client::new(api, None).unwrap();
+    let inst = client.api.adopt("claude", "助手", None).await.unwrap().id;
+
+    // 消息里有密码：不发，什么都没建。
+    let msg = "帮我登录邮箱，mail 密码是 Abc12345，账号 bob@example.com";
+    let err = client.send_message(inst, msg, false).await.unwrap_err();
+    assert_eq!(err, ClientError::ContainsSecrets { count: 1 });
+    assert!(client.api.runs(inst, None, 10).await.unwrap().is_empty());
+
+    // 存进保险箱，消息里换成引用，再发就放行；服务端只收到引用。
+    let found = client_core::secrets::detect(msg);
+    assert_eq!(found[0].suggested_name, "mail");
+    let (item, text) = client
+        .save_secret_from_message(
+            msg,
+            &found[0].value,
+            &NewVaultItem {
+                name: found[0].suggested_name.clone(),
+                purpose: "收邮件".into(),
+                username: "bob@example.com".into(),
+                password: found[0].value.clone(),
+                instance_ids: vec![inst],
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(item.name, "mail");
+    assert_eq!(item.instance_ids, vec![inst]);
+    assert!(!text.contains("Abc12345"));
+    assert!(text.contains("[vault:mail]"), "{text}");
+    let run = client.send_message(inst, &text, false).await.unwrap();
+    assert_eq!(client.api.run(run.id).await.unwrap().id, run.id);
+
+    // 重名：409，消息不动。
+    let err = client
+        .save_secret_from_message(
+            msg,
+            "Abc12345",
+            &NewVaultItem {
+                name: "mail".into(),
+                password: "Abc12345".into(),
+                ..NewVaultItem::default()
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, ClientError::Api { code, .. } if code == "conflict"),
+        "{err:?}"
+    );
+
+    // 用户坚持要发也行（比如是测试账号）。
+    client.send_message(inst, msg, true).await.unwrap();
+
+    // 列表和详情：没有密码，详情有账号；改密码不动账号；删除。
+    let items = client.api.vault_items().await.unwrap();
+    assert_eq!(items.len(), 1);
+    let detail = client.api.vault_item(item.id).await.unwrap();
+    assert_eq!(detail.username, "bob@example.com");
+    assert_eq!(detail.item.id, item.id);
+    let updated = client
+        .api
+        .update_vault_item(
+            item.id,
+            &VaultItemUpdate {
+                password: Some("N3w-secret!".into()),
+                instance_ids: Some(Vec::new()),
+                ..VaultItemUpdate::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(updated.instance_ids.is_empty());
+    assert!(updated.has_username);
+    assert_eq!(
+        client.api.vault_item(item.id).await.unwrap().username,
+        "bob@example.com"
+    );
+    let raw = reqwest::Client::new()
+        .get(format!("{}/v1/vault/{}", e.base, item.id))
+        .bearer_auth(client.api.bearer().unwrap())
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(!raw.contains("N3w-secret!") && !raw.contains("Abc12345"));
+
+    // agent 的填写请求：拒绝一个、填一个。
+    let mut t = e.t.db.tenant(user).await.unwrap();
+    let mut ids = Vec::new();
+    for name in ["github", "db"] {
+        let (r, _) = t
+            .create_vault_request(&store::NewVaultRequest {
+                instance_id: inst,
+                run_id: None,
+                name: name.into(),
+                purpose: "推代码".into(),
+                fields: vec!["username".into(), "password".into()],
+                expires_in: Duration::from_secs(3600),
+            })
+            .await
+            .unwrap();
+        ids.push(r.id);
+    }
+    t.commit().await.unwrap();
+    assert_eq!(client.api.vault_requests(false).await.unwrap().len(), 2);
+    let declined = client.api.decline_vault_request(ids[1]).await.unwrap();
+    assert_eq!(declined.status, VaultRequestStatus::Declined);
+    let done = client
+        .api
+        .fulfill_vault_request(ids[0], "octocat", "gh-pass-123", None)
+        .await
+        .unwrap();
+    assert_eq!(done.status, VaultRequestStatus::Fulfilled);
+    assert!(client.api.vault_requests(false).await.unwrap().is_empty());
+    assert_eq!(client.api.vault_requests(true).await.unwrap().len(), 2);
+    let names: Vec<String> = client
+        .api
+        .vault_items()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|i| i.name)
+        .collect();
+    assert!(names.contains(&"github".to_owned()), "{names:?}");
+
+    client.api.delete_vault_item(item.id).await.unwrap();
+    assert!(
+        client
+            .api
+            .vault_item(item.id)
+            .await
+            .unwrap_err()
+            .is_not_found()
+    );
+
+    // FFI：本地识别（UTF-16 下标）和换成引用。
+    let text = "😀 token: ghp_0123456789abcdefABCDEF0123456789abcd";
+    let hits = ffi::detect_secrets(text.into());
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].kind, "api_key");
+    assert_eq!(hits[0].suggested_name, "github");
+    let utf16: Vec<u16> = text.encode_utf16().collect();
+    assert_eq!(
+        String::from_utf16(&utf16[hits[0].start as usize..hits[0].end as usize]).unwrap(),
+        hits[0].value
+    );
+    assert_eq!(
+        ffi::redact_message(
+            text.into(),
+            vec![ffi::SecretReference {
+                value: hits[0].value.clone(),
+                name: "github".into()
+            }]
+        ),
+        "😀 token: [vault:github]"
+    );
+    assert_eq!(
+        ffi::unique_vault_name("github".into(), vec!["github".into()]),
+        "github_2"
+    );
 }

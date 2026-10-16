@@ -30,6 +30,10 @@ pub enum ClientError {
     /// 本地缓存读写失败。
     #[error("cache: {message}")]
     Cache { message: String },
+    /// 消息里有像密码、key 的内容（11.6），没有发出去：提示用户存进保险箱，消息里换成引用
+    /// （`detect_secrets`、`save_secret_from_message`），或者用户确认后带 `allow_secrets` 重发。
+    #[error("the message looks like it contains {count} password(s) or key(s)")]
+    ContainsSecrets { count: u32 },
     /// 调用方传的参数不对（id 格式、枚举取值）。
     #[error("invalid argument: {message}")]
     InvalidArgument { message: String },

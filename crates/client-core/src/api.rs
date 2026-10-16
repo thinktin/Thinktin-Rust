@@ -10,7 +10,8 @@ use proto::api::{API_VERSION, ErrorBody, ErrorCode, VERSION_HEADER};
 use proto::domain::{
     Approval, ApprovalId, Artifact, ArtifactId, Credential, CredentialId, DevicePlatform,
     InboxItem, InboxItemId, Instance, InstanceEvent, InstanceId, ModelRoute, Plan, PlanId,
-    PlanStep, PushChannelKind, Run, RunId, ScheduleSpec, Trigger, User,
+    PlanStep, PushChannelKind, Run, RunId, ScheduleSpec, Trigger, User, VaultItem, VaultItemId,
+    VaultRequest, VaultRequestId,
 };
 use reqwest::Method;
 use serde::de::DeserializeOwned;
@@ -196,6 +197,58 @@ impl std::fmt::Debug for NewCredential {
             .field("label", &self.label)
             .finish_non_exhaustive()
     }
+}
+
+/// 新建保险箱条目（9.11、11.6）。`instance_ids` 空表示所有实例都能用。
+#[derive(Clone, Default, Serialize)]
+pub struct NewVaultItem {
+    pub name: String,
+    pub purpose: String,
+    pub username: String,
+    pub password: String,
+    pub instance_ids: Vec<InstanceId>,
+}
+
+impl std::fmt::Debug for NewVaultItem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NewVaultItem")
+            .field("name", &self.name)
+            .field("purpose", &self.purpose)
+            .field("instance_ids", &self.instance_ids)
+            .finish_non_exhaustive()
+    }
+}
+
+/// 修改保险箱条目：只改给了的字段。
+#[derive(Clone, Default, Serialize)]
+pub struct VaultItemUpdate {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub purpose: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instance_ids: Option<Vec<InstanceId>>,
+}
+
+impl std::fmt::Debug for VaultItemUpdate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VaultItemUpdate")
+            .field("purpose", &self.purpose)
+            .field("password_changed", &self.password.is_some())
+            .field("instance_ids", &self.instance_ids)
+            .finish_non_exhaustive()
+    }
+}
+
+/// 条目详情：多一个账号。密码永远不返回。
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct VaultItemDetail {
+    #[serde(flatten)]
+    pub item: VaultItem,
+    #[serde(default)]
+    pub username: String,
 }
 
 #[derive(Deserialize)]
@@ -842,6 +895,87 @@ impl Api {
         };
         self.json(Method::GET, &format!("/v1/usage?{query}"), None)
             .await
+    }
+
+    // ---------- 密码保险箱（9.11、11.6） ----------
+
+    /// 条目列表（没有账号和密码）。
+    pub async fn vault_items(&self) -> Result<Vec<VaultItem>> {
+        #[derive(Deserialize)]
+        struct R {
+            items: Vec<VaultItem>,
+        }
+        Ok(self.json::<R>(Method::GET, "/v1/vault", None).await?.items)
+    }
+
+    /// 详情，带账号。
+    pub async fn vault_item(&self, id: VaultItemId) -> Result<VaultItemDetail> {
+        self.json(Method::GET, &format!("/v1/vault/{id}"), None)
+            .await
+    }
+
+    /// 新建。同名返回 409（`conflict`）。
+    pub async fn create_vault_item(&self, item: &NewVaultItem) -> Result<VaultItem> {
+        let body = serde_json::to_value(item).map_err(ClientError::decode)?;
+        self.json(Method::POST, "/v1/vault", Some(&body)).await
+    }
+
+    pub async fn update_vault_item(
+        &self,
+        id: VaultItemId,
+        change: &VaultItemUpdate,
+    ) -> Result<VaultItem> {
+        let body = serde_json::to_value(change).map_err(ClientError::decode)?;
+        self.json(Method::PATCH, &format!("/v1/vault/{id}"), Some(&body))
+            .await
+    }
+
+    pub async fn delete_vault_item(&self, id: VaultItemId) -> Result<()> {
+        self.empty(Method::DELETE, &format!("/v1/vault/{id}"), None)
+            .await
+    }
+
+    /// agent 请用户填的表单。默认只要还在等的，`all` 时带上处理过的。
+    pub async fn vault_requests(&self, all: bool) -> Result<Vec<VaultRequest>> {
+        #[derive(Deserialize)]
+        struct R {
+            requests: Vec<VaultRequest>,
+        }
+        let path = if all {
+            "/v1/vault/requests?all=true"
+        } else {
+            "/v1/vault/requests"
+        };
+        Ok(self.json::<R>(Method::GET, path, None).await?.requests)
+    }
+
+    /// 填好 agent 要的账号密码：存进保险箱，agent 只拿到名字。
+    pub async fn fulfill_vault_request(
+        &self,
+        id: VaultRequestId,
+        username: &str,
+        password: &str,
+        purpose: Option<&str>,
+    ) -> Result<VaultRequest> {
+        let mut body = json!({ "username": username, "password": password });
+        if let Some(p) = purpose {
+            body["purpose"] = json!(p);
+        }
+        self.json(
+            Method::POST,
+            &format!("/v1/vault/requests/{id}/fulfill"),
+            Some(&body),
+        )
+        .await
+    }
+
+    pub async fn decline_vault_request(&self, id: VaultRequestId) -> Result<VaultRequest> {
+        self.json(
+            Method::POST,
+            &format!("/v1/vault/requests/{id}/decline"),
+            None,
+        )
+        .await
     }
 
     // ---------- 产出物 ----------
