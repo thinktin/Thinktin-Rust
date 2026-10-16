@@ -9,7 +9,7 @@ use std::io;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Digest, Sha256};
 
