@@ -866,7 +866,7 @@ impl Gateway {
             .directory
             .credential(&route.credential)
             .await
-            .map(|c| c.vendor)
+            .map(|c| c.vendor.clone())
             .unwrap_or_default();
         metrics::counter!(
             "thinktin_llm_requests_total",
