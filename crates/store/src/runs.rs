@@ -310,10 +310,14 @@ impl Tx<Tenant> {
 
     /// 用户取消。执行中的副本续租失败后停下 agent 这一轮。
     pub async fn cancel_run(&mut self, id: RunId, reason: Option<&str>) -> Result<Run> {
-        let state: String = sqlx::query_scalar("SELECT state FROM runs WHERE id = $1 FOR UPDATE")
-            .bind(id.0)
-            .fetch_one(self.conn())
-            .await?;
+        // FOR NO KEY UPDATE 而不是 FOR UPDATE：执行器写运行日志时先更新实例行（事件序号），再插入引用这个运行的
+        // 事件，外键检查要在运行行上拿 KEY SHARE 锁。FOR UPDATE 和它冲突，而这里接着要更新同一个实例行（作废令牌），
+        // 两边互相等成死锁；NO KEY UPDATE 不挡外键检查。
+        let state: String =
+            sqlx::query_scalar("SELECT state FROM runs WHERE id = $1 FOR NO KEY UPDATE")
+                .bind(id.0)
+                .fetch_one(self.conn())
+                .await?;
         let from: RunState = parse(&state)?;
         if !from.can_transition(RunState::Cancelled) {
             return Err(Error::InvalidTransition {
@@ -742,8 +746,9 @@ impl Tx<Worker> {
         to: RunState,
         change: &RunChange,
     ) -> Result<RunRecord> {
+        // NO KEY UPDATE：不挡别的事务插入引用这个运行的事件（外键检查），见 cancel_run。
         let (state, lease_owner): (String, Option<String>) =
-            sqlx::query_as("SELECT state, lease_owner FROM runs WHERE id = $1 FOR UPDATE")
+            sqlx::query_as("SELECT state, lease_owner FROM runs WHERE id = $1 FOR NO KEY UPDATE")
                 .bind(id.0)
                 .fetch_one(self.conn())
                 .await?;
