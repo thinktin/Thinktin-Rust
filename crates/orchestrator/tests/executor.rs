@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use auth::grants::{GrantConfig, GrantService};
 use auth::sandbox_token::SandboxTokenIssuer;
 use control::{BuiltinTemplates, Lifecycle, LifecycleConfig};
+use orchestrator::delegate::{DELEGATE_TOOLS, DelegateTools};
 use orchestrator::executor::{Executor, ExecutorConfig};
 use orchestrator::shim::{
     ConnectError, NoPlatformTools, PlatformTools, ShimConnector, ShimLaunch, ShimProcess,
@@ -15,7 +16,7 @@ use orchestrator::shim::{
 };
 use proto::domain::{
     CatchUp, GrantScope, Instance, PlanAuthor, PlanPolicy, RunBudget, RunId, RunSource, RunState,
-    UserId,
+    TeamMember, TeamRole, UserId,
 };
 use proto::shim::{
     DecisionSource, PermissionKind, PermissionOption, PlatformTool, ShimCommand, ShimEvent,
@@ -107,6 +108,32 @@ fn ended(run: &str, stop_reason: StopReason) -> ShimEvent {
     }
 }
 
+/// 调平台工具 delegate，把结果当作回复，结束这一轮。
+async fn delegate_call(
+    ev: &mpsc::Sender<ShimEvent>,
+    cmds: &mut mpsc::Receiver<ShimCommand>,
+    run_id: &str,
+    to: &str,
+    task: &str,
+) {
+    let _ = ev
+        .send(ShimEvent::PlatformToolCall {
+            run_id: run_id.into(),
+            call_id: "d1".into(),
+            name: "delegate".into(),
+            arguments: json!({ "to": to, "task": task, "title": "subtask" }),
+        })
+        .await;
+    while let Some(c) = cmds.recv().await {
+        if let ShimCommand::PlatformToolResult { content, .. } = c {
+            let text = content[0]["text"].as_str().unwrap_or_default().to_owned();
+            let _ = ev.send(chunk(run_id, &text)).await;
+            let _ = ev.send(ended(run_id, StopReason::EndTurn)).await;
+            break;
+        }
+    }
+}
+
 /// 按提示词里的关键字表演：say hello / need approval / loop forever / crash / use tool。
 async fn fake_shim(
     mut cmds: mpsc::Receiver<ShimCommand>,
@@ -147,7 +174,15 @@ async fn fake_shim(
                         run_id: run_id.clone(),
                     })
                     .await;
-                if text.contains("say hello") {
+                if text.contains("子任务都结束了") {
+                    // 委派的子任务的结果交回来了（8.7）。
+                    let _ = ev.send(chunk(&run_id, "got the results")).await;
+                    let _ = ev.send(ended(&run_id, StopReason::EndTurn)).await;
+                } else if let Some((_, task)) = text.split_once("lead the team: ") {
+                    delegate_call(&ev, &mut cmds, &run_id, "helper", task).await;
+                } else if text.contains("delegate back") {
+                    delegate_call(&ev, &mut cmds, &run_id, "Claude", "anything").await;
+                } else if text.contains("say hello") {
                     let _ = ev.send(chunk(&run_id, "Hello")).await;
                     let _ = ev.send(chunk(&run_id, " world")).await;
                     let _ = ev.send(ended(&run_id, StopReason::EndTurn)).await;
@@ -1492,4 +1527,233 @@ async fn expired_approvals_pause_the_plan() {
     let mut tx = e.t.db.tenant(e.user).await.unwrap();
     assert!(tx.plan(plan).await.unwrap().paused);
     tx.rollback().await.unwrap();
+}
+
+// ---------- 委派（8.6–8.8） ----------
+
+/// 平台工具晚一点再装上（委派工具要用测试库，库在环境里才建）。
+#[derive(Default, Clone)]
+struct Late(Arc<std::sync::OnceLock<Arc<dyn PlatformTools>>>);
+
+#[async_trait]
+impl PlatformTools for Late {
+    fn tools(&self) -> Vec<PlatformTool> {
+        self.0.get().map(|t| t.tools()).unwrap_or_default()
+    }
+    async fn call(&self, ctx: &ToolContext, name: &str, args: &Value) -> ToolOutput {
+        match self.0.get() {
+            Some(t) => t.call(ctx, name, args).await,
+            None => ToolOutput::error("tools are not ready"),
+        }
+    }
+}
+
+/// 负责人（e.instance，名字 Claude）和成员 helper 编成团队，负责人的授权里有委派工具。
+async fn delegation_env() -> Option<(Env, Instance)> {
+    let late = Late::default();
+    let scope = GrantScope {
+        platform_tools: DELEGATE_TOOLS.iter().map(|t| t.to_string()).collect(),
+        ..GrantScope::default()
+    };
+    let e = env_with(fast(), Some(scope), Arc::new(late.clone())).await?;
+    let _ = late.0.set(Arc::new(DelegateTools::new(e.t.db.clone())));
+    let helper = e
+        .lifecycle
+        .adopt(e.user, "user:d", "claude", None, "helper")
+        .await
+        .unwrap();
+    let mut tx = e.t.db.tenant(e.user).await.unwrap();
+    tx.create_team(
+        "crew",
+        &[
+            TeamMember {
+                instance_id: e.instance.id,
+                role: TeamRole::Lead,
+                position: 0,
+            },
+            TeamMember {
+                instance_id: helper.id,
+                role: TeamRole::Member,
+                position: 1,
+            },
+        ],
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    Some((e, helper))
+}
+
+async fn children(e: &Env, parent: RunId) -> Vec<proto::domain::Run> {
+    let mut w = e.t.db.worker().await.unwrap();
+    let runs = w.delegated_runs(parent).await.unwrap();
+    w.rollback().await.unwrap();
+    runs
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_lead_delegates_waits_and_gets_the_results_back() {
+    let Some((e, helper)) = delegation_env().await else {
+        return;
+    };
+    let run = e.queue("lead the team: say hello please", None, 3).await;
+    // 负责人委派以后结束这一轮：转入等子任务，放掉租约。
+    e.run_to_end().await;
+    let rec = e.state(run).await;
+    assert_eq!(rec.run.state, RunState::WaitingChildren, "{:?}", rec.run);
+    assert_eq!(rec.lease_owner, None);
+    let kids = children(&e, run).await;
+    assert_eq!(kids.len(), 1);
+    let child = &kids[0];
+    assert_eq!(
+        (
+            child.instance_id,
+            child.source,
+            child.parent_run_id,
+            child.root_run_id
+        ),
+        (helper.id, RunSource::Delegate, Some(run), run)
+    );
+    assert!(child.prompt.contains("say hello please") && child.prompt.contains("委派"));
+    // 子运行用从负责人授权收窄出来的子授权。
+    let mut w = e.t.db.worker().await.unwrap();
+    let child_rec = w.run_record(child.id).await.unwrap();
+    let (_, grant) = w.run_grant(child_rec.run_grant_id.unwrap()).await.unwrap();
+    w.rollback().await.unwrap();
+    assert_eq!(grant.instance_id, helper.id);
+    assert!(grant.parent_id.is_some());
+    assert!(
+        e.events(run)
+            .await
+            .iter()
+            .any(|(k, p)| k == "delegate.started" && p["to"] == "helper")
+    );
+
+    // 成员做子任务。
+    e.run_to_end().await;
+    assert_eq!(e.state(child.id).await.run.state, RunState::Succeeded);
+    // 子任务的完成不单独推送。
+    assert!(e.inbox().await.iter().all(|i| i.run_id != Some(child.id)));
+
+    // 负责人接着跑：结果作为新消息交回去，不占重试次数。
+    e.run_to_end().await;
+    let rec = e.state(run).await;
+    assert_eq!(rec.run.state, RunState::Succeeded, "{:?}", rec.run);
+    assert_eq!(rec.run.summary.as_deref(), Some("got the results"));
+    assert_eq!((rec.run.attempt, rec.max_attempts), (2, 4));
+    let prompts = e.fake.rec.lock().unwrap().prompts.clone();
+    assert_eq!(prompts.len(), 3, "{prompts:?}");
+    assert!(
+        prompts[2].contains("交给「helper」") && prompts[2].contains("Hello world"),
+        "{}",
+        prompts[2]
+    );
+    // 交过的结果不再交。
+    let mut w = e.t.db.worker().await.unwrap();
+    assert!(w.unreported_children(run).await.unwrap().is_empty());
+    w.rollback().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn delegating_back_up_the_chain_is_refused() {
+    let Some((e, helper)) = delegation_env().await else {
+        return;
+    };
+    // helper 也领一个团队，成员是负责人：helper 再委派给负责人就成了互相等。
+    let mut tx = e.t.db.tenant(e.user).await.unwrap();
+    tx.create_team(
+        "reverse",
+        &[
+            TeamMember {
+                instance_id: helper.id,
+                role: TeamRole::Lead,
+                position: 0,
+            },
+            TeamMember {
+                instance_id: e.instance.id,
+                role: TeamRole::Member,
+                position: 1,
+            },
+        ],
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let run = e.queue("lead the team: delegate back", None, 3).await;
+    e.run_to_end().await;
+    let child = children(&e, run).await[0].id;
+    e.run_to_end().await;
+    let rec = e.state(child).await;
+    assert_eq!(rec.run.state, RunState::Succeeded);
+    assert!(
+        rec.run
+            .summary
+            .as_deref()
+            .unwrap_or_default()
+            .contains("deadlock"),
+        "{:?}",
+        rec.run.summary
+    );
+    assert!(children(&e, child).await.is_empty());
+    e.run_to_end().await;
+    assert_eq!(e.state(run).await.run.state, RunState::Succeeded);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_run_tree_shares_one_token_budget() {
+    let Some((e, _helper)) = delegation_env().await else {
+        return;
+    };
+    let budget = RunBudget {
+        max_tokens: Some(1000),
+        ..RunBudget::default()
+    };
+    let run = e
+        .queue("lead the team: loop forever please", Some(budget), 3)
+        .await;
+    e.run_to_end().await;
+    assert_eq!(e.state(run).await.run.state, RunState::WaitingChildren);
+    // 负责人自己已经用掉了 800。
+    let mut w = e.t.db.worker().await.unwrap();
+    w.set_run_usage(run, 800, 0).await.unwrap();
+    w.commit().await.unwrap();
+    let child = children(&e, run).await[0].clone();
+    let (_stop, h) = e.spawn().await;
+    e.wait_state(child.id, RunState::Running).await;
+    // 子任务用了 300：自己没超，加上整棵树就超了。
+    let mut w = e.t.db.worker().await.unwrap();
+    w.insert_usage(&NewUsage {
+        user: e.user,
+        instance: child.instance_id,
+        alias: "main".into(),
+        vendor: "anthropic".into(),
+        upstream_model: "m".into(),
+        endpoint: "messages".into(),
+        status: 200,
+        outcome: "complete".into(),
+        charged_tokens: 300,
+        ..NewUsage::default()
+    })
+    .await
+    .unwrap();
+    w.commit().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(20), h)
+        .await
+        .unwrap()
+        .unwrap();
+    let rec = e.state(child.id).await;
+    assert_eq!(rec.run.state, RunState::Failed);
+    assert!(
+        rec.run
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("shared by the run tree"),
+        "{:?}",
+        rec.run.error
+    );
+    // 负责人拿到失败的结果接着跑。
+    e.run_to_end().await;
+    let prompts = e.fake.rec.lock().unwrap().prompts.clone();
+    assert!(prompts.last().unwrap().contains("失败"), "{prompts:?}");
 }

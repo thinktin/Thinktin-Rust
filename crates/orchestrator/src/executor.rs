@@ -19,8 +19,8 @@ use control::Lifecycle;
 use keyvault::{Kms, Scrubber};
 use notify::PushKind;
 use proto::domain::{
-    ApprovalState, ApprovalTimeoutAction, GrantId, PlanPolicy, RunState, UserId, VaultItemId,
-    valid_vault_name,
+    ApprovalState, ApprovalTimeoutAction, GrantId, PlanPolicy, RunId, RunSource, RunState, UserId,
+    VaultItemId, valid_vault_name,
 };
 use proto::shim::{DecisionSource, SecretValues, ShimCommand, ShimEvent, StopReason};
 use serde_json::{Value, json};
@@ -31,6 +31,7 @@ use tokio::time::Instant;
 use tracing::Instrument;
 use tracing::{debug, error, info, warn};
 
+use crate::delegate::DELEGATE_TOOLS;
 use crate::outbox::{Notice, notify};
 use crate::shim::{
     PlatformTools, ShimConnector, ShimLaunch, ShimSession, ToolContext, ToolOutput, event_kind,
@@ -106,8 +107,8 @@ pub enum Outcome {
         reason: String,
         /// 自己再试一次的时间；`None` 等用户处理（补上 key、电脑上线时唤醒）。
         retry_at: Option<chrono::DateTime<Utc>>,
-        /// 到这时还没好就按计划策略结束。
-        deadline: chrono::DateTime<Utc>,
+        /// 到这时还没好就按计划策略结束；`None` 不限（等子任务：子任务自己有预算和时限）。
+        deadline: Option<chrono::DateTime<Utc>>,
         /// 要用户处理的发通知。
         notify: bool,
     },
@@ -173,6 +174,10 @@ struct Exec<'a> {
     scrubber: Scrubber,
     /// 这次尝试开始的时间：只看这之后的模型调用判断是不是卡在 key 上（7.11）。
     attempt_started: chrono::DateTime<Utc>,
+    /// 这次运行委派过子任务（8.7）。
+    has_children: bool,
+    /// 委派的子任务做完了：交还给 agent 的消息，以及其中的子运行（这一轮开始后记成已交还）。
+    resume: Option<(String, Vec<RunId>)>,
 }
 
 /// 运行摘要从回复里取，最多留这么多字节（摘要只用前 400 个字）。
@@ -537,7 +542,37 @@ impl Executor {
             Some(plan) => w.plan(plan).await.map(|p| p.policy).unwrap_or_default(),
             None => PlanPolicy::default(),
         };
+        // 委派工具只给团队负责人（8.7）。
+        let lead = grant_row
+            .scope
+            .platform_tools
+            .iter()
+            .any(|t| DELEGATE_TOOLS.contains(&t.as_str()))
+            && w.is_team_lead(instance).await.map_err(retry)?;
+        // 委派的子任务做完了、结果还没交还：这次接着跑的消息就是它们的结果（8.7）。
+        let delegated = w.delegated_runs(rec.run.id).await.map_err(retry)?;
+        let finished = w.unreported_children(rec.run.id).await.map_err(retry)?;
         w.rollback().await.map_err(retry)?;
+        let resume = if finished.is_empty() {
+            None
+        } else {
+            let mut t = self.db.tenant(rec.user_id).await.map_err(retry)?;
+            let mut named = Vec::with_capacity(finished.len());
+            for child in finished {
+                let name = t
+                    .instance(child.instance_id)
+                    .await
+                    .map(|i| i.name)
+                    .unwrap_or_default();
+                named.push((child, name));
+            }
+            t.rollback().await.map_err(retry)?;
+            let ids = named.iter().map(|(c, _)| c.id).collect::<Vec<_>>();
+            Some((
+                crate::delegate::results_message(&named, &rec.run.prompt),
+                ids,
+            ))
+        };
         let cred = self
             .grants
             .sandbox_token(grant, instance)
@@ -557,6 +592,7 @@ impl Executor {
             .tools()
             .into_iter()
             .filter(|t| grant_row.scope.platform_tools.contains(&t.name))
+            .filter(|t| lead || !DELEGATE_TOOLS.contains(&t.name.as_str()))
             .collect();
         let allowed_tools = platform_tools.iter().map(|t| t.name.clone()).collect();
         let launch = ShimLaunch {
@@ -627,6 +663,8 @@ impl Executor {
             log_capped: false,
             scrubber: self.scrubber(rec.user_id).await,
             attempt_started,
+            has_children: !delegated.is_empty(),
+            resume,
         };
         exec.persist(&ready).await;
         Ok(exec)
@@ -740,9 +778,9 @@ impl Executor {
                 RunChange {
                     reason: Some(reason.clone()),
                     // 不自己试的等用户处理（唤醒时改成现在）；超时由 wait_deadline 管。
-                    not_before: Some(retry_at.unwrap_or(deadline)),
+                    not_before: retry_at.or(deadline),
                     release_lease: true,
-                    wait_deadline: Some(deadline),
+                    wait_deadline: deadline,
                     ..Default::default()
                 },
                 notify.then(|| (PushKind::RunFailed, truncate(&reason, 100))),
@@ -753,7 +791,9 @@ impl Executor {
         let detour = match to {
             RunState::Succeeded => state == RunState::Starting || state.is_waiting(),
             RunState::Backoff => state.is_waiting(),
-            RunState::WaitingQuota | RunState::WaitingDevice => state != RunState::Running,
+            RunState::WaitingQuota | RunState::WaitingDevice | RunState::WaitingChildren => {
+                state != RunState::Running
+            }
             _ => false,
         };
         if detour {
@@ -761,6 +801,10 @@ impl Executor {
                 .await?;
         }
         let done = w.transition_run(run, &self.node_id, to, &change).await?;
+        // 运行失败了：它委派出去、还没做完的子任务没人要了（8.7），一起停掉。
+        if to == RunState::Failed {
+            w.cancel_descendants(run, "the parent run failed").await?;
+        }
         // 这次尝试结束了：没处理的审批作废（下次尝试 agent 会重新请求）。走到这里说明还拿着租约
         // （没拿住时 transition_run 报错），不会误伤接手的副本新建的审批。
         w.cancel_run_approvals(run).await?;
@@ -775,7 +819,8 @@ impl Executor {
         )
         .await?;
         // 流水线的步骤不单独通知：整条流水线结束时由根运行通知（8.3）。等 key 要用户处理，照样通知。
-        let step_quiet = rec.run.step_key.is_some() && !to.is_waiting();
+        let step_quiet = (rec.run.step_key.is_some() || rec.run.source == RunSource::Delegate)
+            && !to.is_waiting();
         if let Some((kind, body)) = push.filter(|_| !step_quiet) {
             let title = match rec.run.plan_id {
                 Some(plan) => w.plan(plan).await.map(|p| p.title).unwrap_or_default(),
@@ -944,6 +989,45 @@ impl Exec<'_> {
         }
     }
 
+    /// 这一轮结束时还有委派的子任务没做完、或者结果还没交还（8.7）：转入等子任务，放掉租约；
+    /// 子任务都结束后执行器把运行重新领起来，把结果作为新消息交给 agent。查不到当作没有。
+    async fn await_children(&self) -> Option<Outcome> {
+        let pending = async {
+            let mut w = self.ex.db.worker().await?;
+            let running = w
+                .delegated_runs(self.rec.run.id)
+                .await?
+                .iter()
+                .filter(|c| !c.state.is_terminal())
+                .count();
+            let finished = w.unreported_children(self.rec.run.id).await?.len();
+            w.rollback().await?;
+            Ok::<_, store::Error>((running, finished))
+        }
+        .await;
+        match pending {
+            Ok((0, 0)) => None,
+            Ok((running, _)) => {
+                info!(run = %self.rec.run.id, running, "waiting for delegated subtasks");
+                Some(Outcome::Waiting {
+                    state: RunState::WaitingChildren,
+                    reason: if running == 0 {
+                        "handing the subtask results to the agent".to_owned()
+                    } else {
+                        format!("waiting for {running} delegated subtask(s)")
+                    },
+                    retry_at: Some(Utc::now()),
+                    deadline: None,
+                    notify: false,
+                })
+            }
+            Err(e) => {
+                warn!(run = %self.rec.run.id, error = %e, "reading delegated subtasks failed");
+                None
+            }
+        }
+    }
+
     /// 转入等 key：被限流、繁忙的过几分钟自己再试，欠费的每小时试一次，key 无效的等用户换；
     /// 最多等计划的 `wait_timeout_secs`。
     fn wait_for_key(&self, problem: KeyProblem) -> Outcome {
@@ -954,7 +1038,7 @@ impl Exec<'_> {
             state: RunState::WaitingQuota,
             reason: problem.describe().to_owned(),
             retry_at: problem.retry_after().map(later),
-            deadline: later(Duration::from_secs(self.policy.wait_timeout_secs)),
+            deadline: Some(later(Duration::from_secs(self.policy.wait_timeout_secs))),
             notify: !problem.transient(),
         }
     }
@@ -998,9 +1082,16 @@ impl Exec<'_> {
     async fn drive_inner(&mut self, stop: &mut watch::Receiver<bool>) -> Outcome {
         let run_id = self.rec.run.id.to_string();
         let mut prompt = self.rec.run.prompt.clone();
-        if self.rec.run.attempt > 1 {
+        if let Some((message, _)) = &self.resume {
+            prompt = message.clone();
+        } else if self.rec.run.attempt > 1 {
+            let children = if self.has_children {
+                "你之前委派的子任务还在，用 delegate_list 查看，不要重复委派。"
+            } else {
+                ""
+            };
             prompt = format!(
-                "（续跑说明：这是第 {} 次尝试，上一次执行中途中断了。先检查工作区里已有的进度，从中断的地方继续，不要重复已经完成的对外操作。）\n\n{prompt}",
+                "（续跑说明：这是第 {} 次尝试，上一次执行中途中断了。先检查工作区里已有的进度，从中断的地方继续，不要重复已经完成的对外操作。{children}）\n\n{prompt}",
                 self.rec.run.attempt
             );
         }
@@ -1086,6 +1177,18 @@ impl Exec<'_> {
                     && let Err(o) = self.transition(RunState::Running, None).await
                 {
                     return Some(o);
+                }
+                // agent 收到了子任务的结果：记成已交还，下次不再交。
+                if let Some((_, ids)) = self.resume.take() {
+                    let marked = async {
+                        let mut w = self.ex.db.worker().await?;
+                        w.mark_reported(&ids).await?;
+                        w.commit().await
+                    }
+                    .await;
+                    if let Err(e) = marked {
+                        warn!(run = %self.rec.run.id, error = %e, "marking subtask results as delivered failed");
+                    }
                 }
             }
             ShimEvent::ToolCall { .. } => {
@@ -1177,6 +1280,14 @@ impl Exec<'_> {
                 // 模型调用一直失败、agent 放弃了这一轮：等 key，而不是算成功或失败。
                 if let Some(problem) = self.key_problem(true).await {
                     return Some(self.wait_for_key(problem));
+                }
+                // 委派的子任务还没做完、或者做完了还没交还（8.7）：等它们，结果作为新消息交还。
+                if matches!(
+                    stop_reason,
+                    StopReason::EndTurn | StopReason::MaxTokens | StopReason::MaxTurnRequests
+                ) && let Some(o) = self.await_children().await
+                {
+                    return Some(o);
                 }
                 let answer = self
                     .scrubber
@@ -1574,22 +1685,29 @@ impl Exec<'_> {
                 .instance_usage_since(self.rec.run.instance_id, self.usage_since)
                 .await?;
             w.set_run_usage(self.rec.run.id, tokens, self.steps).await?;
+            // 整棵运行树共用根运行的预算（8.6）：加上树里别的运行（流水线的步骤、委派的子任务）用掉的。
+            let others = w
+                .tree_tokens_except(self.rec.run.root_run_id, self.rec.run.id)
+                .await?;
             w.commit().await?;
-            Ok(Ok(tokens))
+            Ok(Ok((tokens, others)))
         }
         .await;
         if matches!(result, Ok(Ok(_))) {
             self.lease_ok_until = Instant::now() + self.ex.cfg.lease;
         }
         match result {
-            Ok(Ok(tokens)) => {
+            Ok(Ok((tokens, others))) => {
                 if let Some(max) = self.rec.budget.max_tokens
-                    && tokens > max
+                    && tokens.saturating_add(others) > max
                 {
                     self.cancel_turn().await;
-                    return Some(Outcome::Failed(format!(
-                        "token budget exceeded ({tokens} > {max})"
-                    )));
+                    let total = tokens.saturating_add(others);
+                    return Some(Outcome::Failed(if others == 0 {
+                        format!("token budget exceeded ({tokens} > {max})")
+                    } else {
+                        format!("token budget exceeded ({total} > {max}, shared by the run tree)")
+                    }));
                 }
                 // agent 还在一遍遍重试，但降级链里的 key 都用不了（7.11）：停下这一轮，等 key。
                 if let Some(problem) = self.key_problem(false).await {

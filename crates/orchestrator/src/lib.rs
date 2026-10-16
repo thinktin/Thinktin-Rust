@@ -2,6 +2,7 @@
 
 pub mod account;
 pub mod artifacts;
+pub mod delegate;
 pub mod exec;
 pub mod executor;
 pub mod outbox;

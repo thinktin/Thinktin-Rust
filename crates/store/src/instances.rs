@@ -343,6 +343,36 @@ impl Tx<Tenant> {
     }
 }
 
+impl Tx<Tenant> {
+    /// 委派（8.7）：`lead` 当负责人的团队里的其他成员（没删除的实例），按名字排。
+    pub async fn delegation_targets(&mut self, lead: InstanceId) -> Result<Vec<Instance>> {
+        let rows: Vec<Row> = sqlx::query_as(concat!(
+            "SELECT ",
+            columns!(),
+            " FROM instances WHERE state <> 'deleted' AND id <> $1 AND id IN ( \
+               SELECT m.instance_id FROM team_members m WHERE m.team_id IN ( \
+                 SELECT team_id FROM team_members WHERE instance_id = $1 AND role = 'lead')) \
+             ORDER BY name, id"
+        ))
+        .bind(lead.0)
+        .fetch_all(self.conn())
+        .await?;
+        rows.into_iter().map(Row::into_instance).collect()
+    }
+}
+
+impl Tx<Worker> {
+    /// 实例是不是哪个团队的负责人（只有负责人能委派，8.7）。
+    pub async fn is_team_lead(&mut self, instance: InstanceId) -> Result<bool> {
+        Ok(sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM team_members WHERE instance_id = $1 AND role = 'lead')",
+        )
+        .bind(instance.0)
+        .fetch_one(self.conn())
+        .await?)
+    }
+}
+
 impl Tx<Worker> {
     /// 实例配置的模型别名（交给 agent 的模型列表）。
     pub async fn route_aliases(&mut self, id: InstanceId) -> Result<Vec<String>> {

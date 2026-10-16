@@ -90,6 +90,7 @@ impl Default for Api {
                 .iter()
                 .chain(orchestrator::tools::ARTIFACT_TOOLS.iter())
                 .chain(orchestrator::vault::VAULT_TOOLS.iter())
+                .chain(orchestrator::delegate::DELEGATE_TOOLS.iter())
                 .map(|s| s.to_string())
                 .collect(),
             limits: gateway::LimitConfig::default(),

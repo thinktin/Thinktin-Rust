@@ -459,8 +459,9 @@ impl Tx<Worker> {
     }
 
     /// 领取下一个可以开始的运行，进入“启动中”并拿到租约：
-    /// 排队中且实例空闲的，退避到期且没人持有租约的，或者等电脑、等 key 到了该接着跑的时候
-    /// （等的事情发生了、到了下次试探的时间，还没超时）。账号冻结的不领。
+    /// 排队中且实例空闲的，退避到期且没人持有租约的，等电脑、等 key 到了该接着跑的时候
+    /// （等的事情发生了、到了下次试探的时间，还没超时），或者委派的子运行都结束了的父运行（8.7）。
+    /// 账号冻结的不领。
     /// 从等待里接着跑不占重试次数：尝试次数和上限一起加一。
     /// 两个副本同时领到同一实例的两个运行时，后提交的一方撞上“一个实例一个运行”的唯一索引，
     /// 这里退回保存点换下一个。
@@ -479,7 +480,10 @@ impl Tx<Worker> {
                          'waiting_children', 'backoff'))) \
                    OR (r.state = 'backoff' AND (r.lease_owner IS NULL OR r.lease_expires_at < now())) \
                    OR (r.state IN ('waiting_quota', 'waiting_device') AND r.lease_owner IS NULL \
-                       AND (r.wait_deadline IS NULL OR r.wait_deadline > now()))) \
+                       AND (r.wait_deadline IS NULL OR r.wait_deadline > now())) \
+                   OR (r.state = 'waiting_children' AND r.lease_owner IS NULL AND NOT EXISTS ( \
+                       SELECT 1 FROM runs c WHERE c.parent_run_id = r.id \
+                         AND c.state NOT IN ('succeeded', 'failed', 'cancelled')))) \
                  ORDER BY r.not_before, r.id LIMIT 1 \
                  FOR UPDATE OF r SKIP LOCKED",
             )
@@ -491,8 +495,8 @@ impl Tx<Worker> {
             sqlx::query("SAVEPOINT claim").execute(self.conn()).await?;
             let claimed: Result<Row> = sqlx::query_as(concat!(
                 "UPDATE runs SET state = 'starting', attempt = attempt + 1, \
-                   max_attempts = max_attempts + CASE WHEN state IN ('waiting_quota', 'waiting_device') \
-                     THEN 1 ELSE 0 END, \
+                   max_attempts = max_attempts + CASE WHEN state IN ('waiting_quota', 'waiting_device', \
+                     'waiting_children') THEN 1 ELSE 0 END, \
                    lease_owner = $2, lease_expires_at = now() + make_interval(secs => $3), updated_at = now() \
                  WHERE id = $1 RETURNING ",
                 columns!()
@@ -580,6 +584,102 @@ impl Tx<Worker> {
         .fetch_all(self.conn())
         .await?;
         rows.into_iter().map(Row::into_record).collect()
+    }
+
+    /// 停掉 `run` 下面所有没结束的子孙运行（父运行失败了，委派出去的子任务没人要了，8.7）。
+    /// 执行中的子孙续租时发现被取消，停下 agent；令牌代数加一，沙箱令牌马上作废。返回取消的个数。
+    pub async fn cancel_descendants(&mut self, run: RunId, reason: &str) -> Result<u64> {
+        sqlx::query(concat!(
+            "WITH RECURSIVE tree AS ( \
+               SELECT id FROM runs WHERE parent_run_id = $1 \
+               UNION SELECT r.id FROM runs r JOIN tree t ON r.parent_run_id = t.id) ",
+            bump_epochs_where!("id IN (SELECT id FROM tree)")
+        ))
+        .bind(run.0)
+        .execute(self.conn())
+        .await?;
+        let done = sqlx::query(
+            "WITH RECURSIVE tree AS ( \
+               SELECT id FROM runs WHERE parent_run_id = $1 \
+               UNION SELECT r.id FROM runs r JOIN tree t ON r.parent_run_id = t.id) \
+             UPDATE runs SET state = 'cancelled', state_reason = $2, lease_owner = NULL, lease_expires_at = NULL, \
+               finished_at = now(), updated_at = now() \
+             WHERE id IN (SELECT id FROM tree) AND state NOT IN ('succeeded', 'failed', 'cancelled')",
+        )
+        .bind(run.0)
+        .bind(reason)
+        .execute(self.conn())
+        .await?;
+        Ok(done.rows_affected())
+    }
+
+    /// 运行树里除了 `except` 以外的运行已经用掉的 token（8.6：整棵树共用根运行的预算）。
+    pub async fn tree_tokens_except(&mut self, root: RunId, except: RunId) -> Result<u64> {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT coalesce(sum(tokens_used), 0)::bigint FROM runs WHERE root_run_id = $1 AND id <> $2",
+        )
+        .bind(root.0)
+        .bind(except.0)
+        .fetch_one(self.conn())
+        .await?;
+        unsigned(n, "tree tokens")
+    }
+
+    /// 委派出去的子运行（8.7），早的在前。
+    pub async fn delegated_runs(&mut self, parent: RunId) -> Result<Vec<Run>> {
+        let rows: Vec<Row> = sqlx::query_as(concat!(
+            "SELECT ",
+            columns!(),
+            " FROM runs WHERE parent_run_id = $1 AND source = 'delegate' ORDER BY created_at, id"
+        ))
+        .bind(parent.0)
+        .fetch_all(self.conn())
+        .await?;
+        rows.into_iter().map(Row::into_run).collect()
+    }
+
+    /// 已经结束、结果还没交还给父运行的委派子运行（8.7），早的在前。
+    pub async fn unreported_children(&mut self, parent: RunId) -> Result<Vec<Run>> {
+        let rows: Vec<Row> = sqlx::query_as(concat!(
+            "SELECT ",
+            columns!(),
+            " FROM runs WHERE parent_run_id = $1 AND source = 'delegate' AND reported_at IS NULL \
+               AND state IN ('succeeded', 'failed', 'cancelled') ORDER BY created_at, id"
+        ))
+        .bind(parent.0)
+        .fetch_all(self.conn())
+        .await?;
+        rows.into_iter().map(Row::into_run).collect()
+    }
+
+    /// 子运行的结果已经交还给父运行的 agent（8.7）。
+    pub async fn mark_reported(&mut self, ids: &[RunId]) -> Result<()> {
+        let ids: Vec<Uuid> = ids.iter().map(|r| r.0).collect();
+        sqlx::query(
+            "UPDATE runs SET reported_at = now() WHERE id = ANY($1) AND reported_at IS NULL",
+        )
+        .bind(&ids)
+        .execute(self.conn())
+        .await?;
+        Ok(())
+    }
+
+    /// 从 `run` 往上的父运行链（含自己）：运行 id、实例、来源。委派的深度和循环检测用（8.8）。
+    pub async fn run_chain(&mut self, run: RunId) -> Result<Vec<(RunId, InstanceId, RunSource)>> {
+        let rows: Vec<(Uuid, Uuid, String)> = sqlx::query_as(
+            "WITH RECURSIVE chain AS ( \
+               SELECT id, instance_id, source, parent_run_id, 0 AS depth FROM runs WHERE id = $1 \
+               UNION ALL \
+               SELECT r.id, r.instance_id, r.source, r.parent_run_id, c.depth + 1 \
+               FROM runs r JOIN chain c ON r.id = c.parent_run_id WHERE c.depth < 64) \
+             SELECT id, instance_id, source FROM chain ORDER BY depth",
+        )
+        .bind(run.0)
+        .fetch_all(self.conn())
+        .await?;
+        rows.into_iter()
+            .map(|(id, instance, source)| Ok((id.into(), instance.into(), parse(&source)?)))
+            .collect()
     }
 
     /// 等电脑、等 key 超时的运行（7.11）：拿到租约交给执行器按策略结束。没人持有租约的才拿。

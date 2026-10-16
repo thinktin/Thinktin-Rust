@@ -12,6 +12,7 @@ use notify::apns::{ApnsClient, ApnsConfig};
 use notify::filter::KeywordFilter;
 use notify::jpush::{JpushClient, JpushConfig};
 use orchestrator::artifacts::ArtifactStore;
+use orchestrator::delegate::DelegateTools;
 use orchestrator::exec::{ExecConfig, ExecConnector};
 use orchestrator::executor::{Executor, ExecutorConfig};
 use orchestrator::outbox::{Dispatcher, DispatcherConfig};
@@ -94,6 +95,7 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
             workdir.clone(),
         )),
         Arc::new(VaultTools::new(db.clone())),
+        Arc::new(DelegateTools::new(db.clone())),
     ];
     let executor = Arc::new(
         Executor::new(
