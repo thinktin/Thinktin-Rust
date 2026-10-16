@@ -11,6 +11,7 @@ description = "端到端测试（WBS 17.1）：本地沙箱后端 + 模拟厂商
 [dev-dependencies]
 auth = { path = "../auth" }
 axum.workspace = true
+chrono.workspace = true
 client-core = { path = "../client-core" }
 keyvault = { path = "../keyvault" }
 llm-gw = { path = "../llm-gw" }
