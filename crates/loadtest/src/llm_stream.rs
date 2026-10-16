@@ -144,9 +144,7 @@ async fn upstream_handler(State(up): State<Upstream>, req: Request) -> Response 
     let stream = futures_util::stream::unfold(0usize, move |i| {
         let parts = parts.clone();
         async move {
-            let Some(part) = parts.get(i).cloned() else {
-                return None;
-            };
+            let part = parts.get(i).cloned()?;
             if i > 0 && !delay.is_zero() {
                 tokio::time::sleep(delay).await;
             }
