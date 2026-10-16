@@ -273,7 +273,10 @@ pub async fn user_scrubber(db: &Db, kms: Arc<dyn Kms>, user: UserId) -> Scrubber
     };
     let uid = user.to_string();
     for item in items {
-        match vault.open_vault(&uid, &item.item.id.to_string(), &item.sealed) {
+        match vault
+            .open_vault(&uid, &item.item.id.to_string(), &item.sealed)
+            .await
+        {
             Ok(secret) => s.add_secret(&item.item.name, &secret),
             Err(e) => warn!(item = %item.item.id, error = %e, "cannot open a vault item"),
         }

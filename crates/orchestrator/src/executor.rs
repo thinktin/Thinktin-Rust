@@ -1536,6 +1536,7 @@ impl Exec<'_> {
         for item in &items {
             let secret = vault
                 .open_vault(&uid, &item.item.id.to_string(), &item.sealed)
+                .await
                 .map_err(internal)?;
             self.scrubber.add_secret(&item.item.name, &secret);
             opened.push((item.item.name.as_str(), secret));

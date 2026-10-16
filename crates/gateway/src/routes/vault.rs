@@ -93,6 +93,7 @@ async fn seal(
         .map_err(ApiError::internal)?;
     vault
         .seal_vault(&user.to_string(), &item.to_string(), secret)
+        .await
         .map_err(ApiError::internal)
 }
 
@@ -107,6 +108,7 @@ async fn open(
         .map_err(ApiError::internal)?;
     vault
         .open_vault(&user.to_string(), &item.to_string(), sealed)
+        .await
         .map_err(ApiError::internal)
 }
 

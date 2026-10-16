@@ -79,7 +79,7 @@ async fn env() -> Option<Env> {
     let (user, _) = w.upsert_user_by_phone("+8613800000001").await.unwrap();
     let uid = user.id.to_string();
     let vault = KeyVault::new(kms.clone(), MemoryKeyStore::default());
-    vault.create_user_key(&uid).unwrap();
+    vault.create_user_key(&uid).await.unwrap();
     let wrapped = vault.store().get(&uid).unwrap();
     w.insert_user_key(user.id, &wrapped.kms_key_id, &wrapped.ciphertext)
         .await
@@ -92,6 +92,7 @@ async fn env() -> Option<Env> {
             &credential.to_string(),
             &SecretString::from(VENDOR_KEY.to_owned()),
         )
+        .await
         .unwrap();
     let mut tx = t.db.tenant(user.id).await.unwrap();
     let instance = tx
@@ -418,7 +419,7 @@ async fn vault_items_are_loaded_for_scrubbing() {
     let (user, _) = w.upsert_user_by_phone("+8613800000009").await.unwrap();
     let uid = user.id.to_string();
     let vault = KeyVault::new(kms.clone(), MemoryKeyStore::default());
-    vault.create_user_key(&uid).unwrap();
+    vault.create_user_key(&uid).await.unwrap();
     let wrapped = vault.store().get(&uid).unwrap();
     w.insert_user_key(user.id, &wrapped.kms_key_id, &wrapped.ciphertext)
         .await
@@ -434,6 +435,7 @@ async fn vault_items_are_loaded_for_scrubbing() {
                 password: "pg-vault-pass".into(),
             },
         )
+        .await
         .unwrap();
     let mut tx = t.db.tenant(user.id).await.unwrap();
     tx.create_vault_item(&store::NewVaultItem {
@@ -460,6 +462,7 @@ async fn vault_items_are_loaded_for_scrubbing() {
     let gw_vault = KeyVault::new(kms, keys);
     let secret = gw_vault
         .open_vault(&uid, &items[0].id, &items[0].sealed)
+        .await
         .unwrap();
     assert_eq!(secret.password, "pg-vault-pass");
     assert!(

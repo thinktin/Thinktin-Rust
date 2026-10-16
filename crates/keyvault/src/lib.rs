@@ -7,16 +7,20 @@
 //!   离开作用域时清零。
 //! - 注销即销毁：删掉用户的包裹 DEK，名下所有密文都无法再解开（加密销毁）。
 //!
-//! KMS 用 [`Kms`] 抽象。[`LocalKms`] 只用于开发和测试；生产环境接云 KMS（WBS 2.6）。
+//! KMS 用 [`Kms`] 抽象（异步：云 KMS 是网络调用）。[`LocalKms`] 只用于开发和测试；生产环境接云 KMS（WBS 2.6）。
+//! [`KmsRing`] 按 DEK 记下的主密钥 id 找对应的 KMS（换主密钥后老的 DEK 照样解得开），
+//! [`CachingKms`] 把解开的 DEK 在进程里缓存一会儿，省得每次加解密都调云 KMS。
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use aes_gcm::Aes256Gcm;
 use aes_gcm::aead::{Aead, KeyInit, Nonce, Payload};
+use async_trait::async_trait;
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use zeroize::{Zeroize, Zeroizing};
 
 pub use secrecy;
@@ -52,25 +56,32 @@ pub struct WrappedKey {
     pub ciphertext: Vec<u8>,
 }
 
-/// 密钥管理服务：包裹和解包数据密钥。
+/// 密钥管理服务：包裹和解包数据密钥。`context` 是用户 id：包裹时绑进去，解包时对不上就失败。
+#[async_trait]
 pub trait Kms: Send + Sync {
     /// 当前用于包裹新 DEK 的主密钥标识。
     fn current_key_id(&self) -> &str;
-    fn wrap(&self, dek: &[u8; DEK_LEN], context: &str) -> Result<WrappedKey>;
-    fn unwrap(&self, wrapped: &WrappedKey, context: &str) -> Result<Zeroizing<[u8; DEK_LEN]>>;
+    async fn wrap(&self, dek: &[u8; DEK_LEN], context: &str) -> Result<WrappedKey>;
+    async fn unwrap(&self, wrapped: &WrappedKey, context: &str)
+    -> Result<Zeroizing<[u8; DEK_LEN]>>;
 }
 
-impl<T: Kms + ?Sized> Kms for std::sync::Arc<T> {
+#[async_trait]
+impl<T: Kms + ?Sized> Kms for Arc<T> {
     fn current_key_id(&self) -> &str {
         (**self).current_key_id()
     }
 
-    fn wrap(&self, dek: &[u8; DEK_LEN], context: &str) -> Result<WrappedKey> {
-        (**self).wrap(dek, context)
+    async fn wrap(&self, dek: &[u8; DEK_LEN], context: &str) -> Result<WrappedKey> {
+        (**self).wrap(dek, context).await
     }
 
-    fn unwrap(&self, wrapped: &WrappedKey, context: &str) -> Result<Zeroizing<[u8; DEK_LEN]>> {
-        (**self).unwrap(wrapped, context)
+    async fn unwrap(
+        &self,
+        wrapped: &WrappedKey,
+        context: &str,
+    ) -> Result<Zeroizing<[u8; DEK_LEN]>> {
+        (**self).unwrap(wrapped, context).await
     }
 }
 
@@ -97,12 +108,13 @@ impl LocalKms {
     }
 }
 
+#[async_trait]
 impl Kms for LocalKms {
     fn current_key_id(&self) -> &str {
         &self.key_id
     }
 
-    fn wrap(&self, dek: &[u8; DEK_LEN], context: &str) -> Result<WrappedKey> {
+    async fn wrap(&self, dek: &[u8; DEK_LEN], context: &str) -> Result<WrappedKey> {
         let aad = format!("thinktin/dek/{}/{context}", self.key_id);
         Ok(WrappedKey {
             kms_key_id: self.key_id.clone(),
@@ -110,7 +122,11 @@ impl Kms for LocalKms {
         })
     }
 
-    fn unwrap(&self, wrapped: &WrappedKey, context: &str) -> Result<Zeroizing<[u8; DEK_LEN]>> {
+    async fn unwrap(
+        &self,
+        wrapped: &WrappedKey,
+        context: &str,
+    ) -> Result<Zeroizing<[u8; DEK_LEN]>> {
         if wrapped.kms_key_id != self.key_id {
             return Err(Error::UnknownKmsKey(wrapped.kms_key_id.clone()));
         }
@@ -121,6 +137,129 @@ impl Kms for LocalKms {
             return Err(Error::Malformed);
         }
         dek.copy_from_slice(&plain);
+        Ok(dek)
+    }
+}
+
+/// 几把主密钥：新 DEK 用当前的包裹；解包按 DEK 记下的主密钥 id 找对应的。
+/// 换主密钥（比如从本地主密钥迁到云 KMS）以后，老的 DEK 照样解得开，用户不用重新存 key。
+pub struct KmsRing {
+    current: Arc<dyn Kms>,
+    older: Vec<Arc<dyn Kms>>,
+}
+
+impl KmsRing {
+    pub fn new(current: Arc<dyn Kms>) -> Self {
+        Self {
+            current,
+            older: Vec::new(),
+        }
+    }
+
+    /// 加一把只用来解包老 DEK 的主密钥。
+    pub fn with_older(mut self, kms: Arc<dyn Kms>) -> Self {
+        self.older.push(kms);
+        self
+    }
+}
+
+#[async_trait]
+impl Kms for KmsRing {
+    fn current_key_id(&self) -> &str {
+        self.current.current_key_id()
+    }
+
+    async fn wrap(&self, dek: &[u8; DEK_LEN], context: &str) -> Result<WrappedKey> {
+        self.current.wrap(dek, context).await
+    }
+
+    async fn unwrap(
+        &self,
+        wrapped: &WrappedKey,
+        context: &str,
+    ) -> Result<Zeroizing<[u8; DEK_LEN]>> {
+        let kms = std::iter::once(&self.current)
+            .chain(&self.older)
+            .find(|k| k.current_key_id() == wrapped.kms_key_id)
+            .ok_or_else(|| Error::UnknownKmsKey(wrapped.kms_key_id.clone()))?;
+        kms.unwrap(wrapped, context).await
+    }
+}
+
+/// 解开的 DEK 在进程里缓存一会儿：云 KMS 每次都是网络调用（还按次收费），
+/// 而控制面每次加解密都会重新从库里取包裹的 DEK。按（主密钥 id、用户、密文）的哈希缓存，
+/// 过期的条目顺手清掉，条目太多时整个清空；DEK 放在堆上，丢弃时清零。
+pub struct CachingKms<K> {
+    inner: K,
+    ttl: Duration,
+    max_entries: usize,
+    cache: Mutex<HashMap<[u8; 32], CachedDek>>,
+}
+
+impl<K: Kms> CachingKms<K> {
+    pub fn new(inner: K, ttl: Duration) -> Self {
+        Self {
+            inner,
+            ttl,
+            max_entries: 10_000,
+            cache: Mutex::default(),
+        }
+    }
+
+    fn cache_key(wrapped: &WrappedKey, context: &str) -> [u8; 32] {
+        let mut h = Sha256::new();
+        for part in [
+            wrapped.kms_key_id.as_bytes(),
+            context.as_bytes(),
+            &wrapped.ciphertext,
+        ] {
+            h.update((part.len() as u64).to_be_bytes());
+            h.update(part);
+        }
+        h.finalize().into()
+    }
+}
+
+#[async_trait]
+impl<K: Kms> Kms for CachingKms<K> {
+    fn current_key_id(&self) -> &str {
+        self.inner.current_key_id()
+    }
+
+    async fn wrap(&self, dek: &[u8; DEK_LEN], context: &str) -> Result<WrappedKey> {
+        self.inner.wrap(dek, context).await
+    }
+
+    async fn unwrap(
+        &self,
+        wrapped: &WrappedKey,
+        context: &str,
+    ) -> Result<Zeroizing<[u8; DEK_LEN]>> {
+        let key = Self::cache_key(wrapped, context);
+        let now = Instant::now();
+        let hit = {
+            let cache = self.cache.lock().unwrap();
+            cache
+                .get(&key)
+                .filter(|c| c.expires > now)
+                .map(|c| (*c.dek).clone())
+        };
+        if let Some(dek) = hit {
+            return Ok(dek);
+        }
+        let dek = self.inner.unwrap(wrapped, context).await?;
+        let mut cache = self.cache.lock().unwrap();
+        cache.retain(|_, c| c.expires > now);
+        if cache.len() >= self.max_entries {
+            cache.clear();
+        }
+        cache.insert(
+            key,
+            CachedDek {
+                dek: Box::new(dek.clone()),
+                expires: now + self.ttl,
+            },
+        );
         Ok(dek)
     }
 }
@@ -211,8 +350,9 @@ impl<T: KeyStore + ?Sized> KeyStore for std::sync::Arc<T> {
 }
 
 /// 解密用户 API key 的能力，供模型网关以 trait 对象持有。
+#[async_trait]
 pub trait SecretOpener: Send + Sync {
-    fn open_secret(
+    async fn open_secret(
         &self,
         user_id: &str,
         record_id: &str,
@@ -220,30 +360,35 @@ pub trait SecretOpener: Send + Sync {
     ) -> Result<SecretString>;
 
     /// 解密保险箱条目（9.11）：模型网关转发前要把里面的值从请求里抹掉。
-    fn open_vault_secret(&self, user_id: &str, item_id: &str, sealed: &[u8])
-    -> Result<VaultSecret>;
+    async fn open_vault_secret(
+        &self,
+        user_id: &str,
+        item_id: &str,
+        sealed: &[u8],
+    ) -> Result<VaultSecret>;
 
     /// 丢掉为这个用户缓存的解密材料。用户注销（销毁 DEK）后由控制面通知网关调用，不必等缓存过期。
     fn forget_user(&self, _user_id: &str) {}
 }
 
+#[async_trait]
 impl<K: Kms, S: KeyStore> SecretOpener for KeyVault<K, S> {
-    fn open_secret(
+    async fn open_secret(
         &self,
         user_id: &str,
         record_id: &str,
         sealed: &SealedSecret,
     ) -> Result<SecretString> {
-        self.open(user_id, record_id, sealed)
+        self.open(user_id, record_id, sealed).await
     }
 
-    fn open_vault_secret(
+    async fn open_vault_secret(
         &self,
         user_id: &str,
         item_id: &str,
         sealed: &[u8],
     ) -> Result<VaultSecret> {
-        self.open_vault(user_id, item_id, sealed)
+        self.open_vault(user_id, item_id, sealed).await
     }
 
     fn forget_user(&self, user_id: &str) {
@@ -308,10 +453,10 @@ impl<K: Kms, S: KeyStore> KeyVault<K, S> {
     }
 
     /// 为新用户生成 DEK。已存在时报错，不会覆盖（覆盖等于销毁旧密文）。
-    pub fn create_user_key(&self, user_id: &str) -> Result<()> {
+    pub async fn create_user_key(&self, user_id: &str) -> Result<()> {
         let mut dek = Zeroizing::new([0u8; DEK_LEN]);
         getrandom::fill(dek.as_mut()).map_err(|_| Error::Rng)?;
-        let wrapped = self.kms.wrap(&dek, user_id)?;
+        let wrapped = self.kms.wrap(&dek, user_id).await?;
         if !self.store.insert_new(user_id, wrapped) {
             return Err(Error::UserKeyExists(user_id.to_owned()));
         }
@@ -325,13 +470,13 @@ impl<K: Kms, S: KeyStore> KeyVault<K, S> {
     }
 
     /// 加密一把 API key。`record_id` 是密钥记录的 id，和用户 id 一起进 AAD。
-    pub fn seal(
+    pub async fn seal(
         &self,
         user_id: &str,
         record_id: &str,
         secret: &SecretString,
     ) -> Result<SealedSecret> {
-        let dek = self.dek(user_id)?;
+        let dek = self.dek(user_id).await?;
         let cipher = Aes256Gcm::new_from_slice(dek.as_ref()).expect("32-byte key");
         let plain = secret.expose_secret();
         Ok(SealedSecret {
@@ -341,26 +486,36 @@ impl<K: Kms, S: KeyStore> KeyVault<K, S> {
     }
 
     /// 加密一段数据（产出物等）。`object_id` 进 AAD，用的是和 key 不同的域，两类密文不能互换。
-    pub fn seal_bytes(&self, user_id: &str, object_id: &str, plain: &[u8]) -> Result<Vec<u8>> {
-        let dek = self.dek(user_id)?;
+    pub async fn seal_bytes(
+        &self,
+        user_id: &str,
+        object_id: &str,
+        plain: &[u8],
+    ) -> Result<Vec<u8>> {
+        let dek = self.dek(user_id).await?;
         let cipher = Aes256Gcm::new_from_slice(dek.as_ref()).expect("32-byte key");
         seal_raw(&cipher, plain, &blob_aad(user_id, object_id))
     }
 
-    pub fn open_bytes(&self, user_id: &str, object_id: &str, sealed: &[u8]) -> Result<Vec<u8>> {
-        let dek = self.dek(user_id)?;
+    pub async fn open_bytes(
+        &self,
+        user_id: &str,
+        object_id: &str,
+        sealed: &[u8],
+    ) -> Result<Vec<u8>> {
+        let dek = self.dek(user_id).await?;
         let cipher = Aes256Gcm::new_from_slice(dek.as_ref()).expect("32-byte key");
         open_raw(&cipher, sealed, &blob_aad(user_id, object_id))
     }
 
     /// 解密一把 API key。只应在模型网关里调用，结果尽快用完丢弃。
-    pub fn open(
+    pub async fn open(
         &self,
         user_id: &str,
         record_id: &str,
         sealed: &SealedSecret,
     ) -> Result<SecretString> {
-        let dek = self.dek(user_id)?;
+        let dek = self.dek(user_id).await?;
         let cipher = Aes256Gcm::new_from_slice(dek.as_ref()).expect("32-byte key");
         let mut plain = open_raw(&cipher, &sealed.ciphertext, &aad(user_id, record_id))?;
         let text = String::from_utf8(std::mem::take(&mut plain)).map_err(|e| {
@@ -372,25 +527,30 @@ impl<K: Kms, S: KeyStore> KeyVault<K, S> {
     }
 
     /// 加密一个保险箱条目（9.11）。`item_id` 进 AAD，用的是单独的域，和 key、产出物的密文不能互换。
-    pub fn seal_vault(
+    pub async fn seal_vault(
         &self,
         user_id: &str,
         item_id: &str,
         secret: &VaultSecret,
     ) -> Result<Vec<u8>> {
-        let dek = self.dek(user_id)?;
+        let dek = self.dek(user_id).await?;
         let cipher = Aes256Gcm::new_from_slice(dek.as_ref()).expect("32-byte key");
         seal_raw(&cipher, &secret.encode(), &vault_aad(user_id, item_id))
     }
 
-    pub fn open_vault(&self, user_id: &str, item_id: &str, sealed: &[u8]) -> Result<VaultSecret> {
-        let dek = self.dek(user_id)?;
+    pub async fn open_vault(
+        &self,
+        user_id: &str,
+        item_id: &str,
+        sealed: &[u8],
+    ) -> Result<VaultSecret> {
+        let dek = self.dek(user_id).await?;
         let cipher = Aes256Gcm::new_from_slice(dek.as_ref()).expect("32-byte key");
         let plain = Zeroizing::new(open_raw(&cipher, sealed, &vault_aad(user_id, item_id))?);
         VaultSecret::decode(&plain)
     }
 
-    fn dek(&self, user_id: &str) -> Result<Zeroizing<[u8; DEK_LEN]>> {
+    async fn dek(&self, user_id: &str) -> Result<Zeroizing<[u8; DEK_LEN]>> {
         let now = Instant::now();
         {
             let mut cache = self.cache.lock().unwrap();
@@ -406,7 +566,7 @@ impl<K: Kms, S: KeyStore> KeyVault<K, S> {
             .store
             .get(user_id)
             .ok_or_else(|| Error::NoUserKey(user_id.to_owned()))?;
-        let dek = self.kms.unwrap(&wrapped, user_id)?;
+        let dek = self.kms.unwrap(&wrapped, user_id).await?;
         let mut cache = self.cache.lock().unwrap();
         // 顺手清掉所有过期的条目，不让不再来的用户（包括已注销的）的 DEK 一直留在内存里。
         cache.retain(|_, c| c.expires > now);
@@ -653,144 +813,240 @@ mod tests {
         assert!(!format!("{s:?}").contains("bank-pass"));
     }
 
-    #[test]
-    fn vault_secrets_roundtrip_and_stay_in_their_domain() {
+    #[tokio::test]
+    async fn vault_secrets_roundtrip_and_stay_in_their_domain() {
         let v = vault();
-        v.create_user_key("u1").unwrap();
-        v.create_user_key("u2").unwrap();
+        v.create_user_key("u1").await.unwrap();
+        v.create_user_key("u2").await.unwrap();
         let secret = VaultSecret {
             username: "张三@example.com".into(),
             password: "p@ss wörd".into(),
         };
-        let sealed = v.seal_vault("u1", "item-1", &secret).unwrap();
-        assert_eq!(v.open_vault("u1", "item-1", &sealed).unwrap(), secret);
+        let sealed = v.seal_vault("u1", "item-1", &secret).await.unwrap();
+        assert_eq!(v.open_vault("u1", "item-1", &sealed).await.unwrap(), secret);
         let no_user = VaultSecret {
             username: String::new(),
             password: "x".repeat(300),
         };
-        let sealed2 = v.seal_vault("u1", "item-2", &no_user).unwrap();
-        assert_eq!(v.open_vault("u1", "item-2", &sealed2).unwrap(), no_user);
+        let sealed2 = v.seal_vault("u1", "item-2", &no_user).await.unwrap();
+        assert_eq!(
+            v.open_vault("u1", "item-2", &sealed2).await.unwrap(),
+            no_user
+        );
         // 挪到别的条目、别的用户、别的域（key、产出物）都解不开。
-        assert!(v.open_vault("u1", "item-2", &sealed).is_err());
-        assert!(v.open_vault("u2", "item-1", &sealed).is_err());
-        assert!(v.open_bytes("u1", "item-1", &sealed).is_err());
-        let blob = v.seal_bytes("u1", "item-1", b"\x01\0\0\0\0pw").unwrap();
-        assert!(v.open_vault("u1", "item-1", &blob).is_err());
+        assert!(v.open_vault("u1", "item-2", &sealed).await.is_err());
+        assert!(v.open_vault("u2", "item-1", &sealed).await.is_err());
+        assert!(v.open_bytes("u1", "item-1", &sealed).await.is_err());
+        let blob = v
+            .seal_bytes("u1", "item-1", b"\x01\0\0\0\0pw")
+            .await
+            .unwrap();
+        assert!(v.open_vault("u1", "item-1", &blob).await.is_err());
         assert!(!format!("{secret:?}").contains("wörd"));
         assert!(VaultSecret::decode(&[1, 0, 0, 0, 9, b'a']).is_err());
         assert!(VaultSecret::decode(&[2, 0, 0, 0, 0]).is_err());
     }
 
-    #[test]
-    fn seal_and_open_roundtrip() {
+    #[tokio::test]
+    async fn seal_and_open_roundtrip() {
         let v = vault();
-        v.create_user_key("u1").unwrap();
+        v.create_user_key("u1").await.unwrap();
         let sealed = v
             .seal("u1", "k1", &key("sk-deepseek-1234567890abcd"))
+            .await
             .unwrap();
         assert_eq!(sealed.last4, "abcd");
         assert!(!String::from_utf8_lossy(&sealed.ciphertext).contains("sk-deepseek"));
-        let opened = v.open("u1", "k1", &sealed).unwrap();
+        let opened = v.open("u1", "k1", &sealed).await.unwrap();
         assert_eq!(opened.expose_secret(), "sk-deepseek-1234567890abcd");
     }
 
-    #[test]
-    fn ciphertext_is_bound_to_user_and_record() {
+    #[tokio::test]
+    async fn ciphertext_is_bound_to_user_and_record() {
         let v = vault();
-        v.create_user_key("u1").unwrap();
-        v.create_user_key("u2").unwrap();
-        let sealed = v.seal("u1", "k1", &key("sk-aaaaaaaaaaaaaaaa")).unwrap();
-        assert!(matches!(v.open("u1", "k2", &sealed), Err(Error::Decrypt)));
-        assert!(matches!(v.open("u2", "k1", &sealed), Err(Error::Decrypt)));
+        v.create_user_key("u1").await.unwrap();
+        v.create_user_key("u2").await.unwrap();
+        let sealed = v
+            .seal("u1", "k1", &key("sk-aaaaaaaaaaaaaaaa"))
+            .await
+            .unwrap();
+        assert!(matches!(
+            v.open("u1", "k2", &sealed).await,
+            Err(Error::Decrypt)
+        ));
+        assert!(matches!(
+            v.open("u2", "k1", &sealed).await,
+            Err(Error::Decrypt)
+        ));
         let mut tampered = sealed.clone();
         *tampered.ciphertext.last_mut().unwrap() ^= 1;
-        assert!(matches!(v.open("u1", "k1", &tampered), Err(Error::Decrypt)));
+        assert!(matches!(
+            v.open("u1", "k1", &tampered).await,
+            Err(Error::Decrypt)
+        ));
     }
 
-    #[test]
-    fn nonces_are_unique() {
+    #[tokio::test]
+    async fn nonces_are_unique() {
         let v = vault();
-        v.create_user_key("u1").unwrap();
-        let a = v.seal("u1", "k1", &key("sk-same-secret-value")).unwrap();
-        let b = v.seal("u1", "k1", &key("sk-same-secret-value")).unwrap();
+        v.create_user_key("u1").await.unwrap();
+        let a = v
+            .seal("u1", "k1", &key("sk-same-secret-value"))
+            .await
+            .unwrap();
+        let b = v
+            .seal("u1", "k1", &key("sk-same-secret-value"))
+            .await
+            .unwrap();
         assert_ne!(a.ciphertext, b.ciphertext);
     }
 
-    #[test]
-    fn destroying_user_key_shreds_secrets() {
+    #[tokio::test]
+    async fn destroying_user_key_shreds_secrets() {
         let v = vault();
-        v.create_user_key("u1").unwrap();
-        let sealed = v.seal("u1", "k1", &key("sk-bbbbbbbbbbbbbbbb")).unwrap();
-        v.open("u1", "k1", &sealed).unwrap(); // 进缓存
+        v.create_user_key("u1").await.unwrap();
+        let sealed = v
+            .seal("u1", "k1", &key("sk-bbbbbbbbbbbbbbbb"))
+            .await
+            .unwrap();
+        v.open("u1", "k1", &sealed).await.unwrap(); // 进缓存
         assert!(v.destroy_user_key("u1"));
         assert!(matches!(
-            v.open("u1", "k1", &sealed),
+            v.open("u1", "k1", &sealed).await,
             Err(Error::NoUserKey(_))
         ));
         // 重新建用户密钥也解不开旧密文。
-        v.create_user_key("u1").unwrap();
-        assert!(matches!(v.open("u1", "k1", &sealed), Err(Error::Decrypt)));
+        v.create_user_key("u1").await.unwrap();
+        assert!(matches!(
+            v.open("u1", "k1", &sealed).await,
+            Err(Error::Decrypt)
+        ));
     }
 
-    #[test]
-    fn user_key_is_never_overwritten() {
+    #[tokio::test]
+    async fn user_key_is_never_overwritten() {
         let v = vault();
-        v.create_user_key("u1").unwrap();
+        v.create_user_key("u1").await.unwrap();
         assert!(matches!(
-            v.create_user_key("u1"),
+            v.create_user_key("u1").await,
             Err(Error::UserKeyExists(_))
         ));
     }
 
-    #[test]
-    fn wrapped_dek_is_bound_to_user_and_kms_key() {
+    #[tokio::test]
+    async fn wrapped_dek_is_bound_to_user_and_kms_key() {
         let kms = LocalKms::new("local-1", &[7u8; 32]);
-        let wrapped = kms.wrap(&[9u8; 32], "u1").unwrap();
-        assert_eq!(*kms.unwrap(&wrapped, "u1").unwrap(), [9u8; 32]);
-        assert!(kms.unwrap(&wrapped, "u2").is_err());
+        let wrapped = kms.wrap(&[9u8; 32], "u1").await.unwrap();
+        assert_eq!(*kms.unwrap(&wrapped, "u1").await.unwrap(), [9u8; 32]);
+        assert!(kms.unwrap(&wrapped, "u2").await.is_err());
         let other = LocalKms::new("local-2", &[7u8; 32]);
         assert!(matches!(
-            other.unwrap(&wrapped, "u1"),
+            other.unwrap(&wrapped, "u1").await,
             Err(Error::UnknownKmsKey(_))
         ));
     }
 
-    #[test]
-    fn expired_deks_are_swept_and_can_be_forgotten() {
+    #[tokio::test]
+    async fn expired_deks_are_swept_and_can_be_forgotten() {
         let v = vault().with_cache_ttl(Duration::from_millis(20));
         for u in ["u1", "u2"] {
-            v.create_user_key(u).unwrap();
+            v.create_user_key(u).await.unwrap();
             v.seal(u, "r", &SecretString::from("sk-test-0000".to_owned()))
+                .await
                 .unwrap();
         }
         assert_eq!(v.cache.lock().unwrap().len(), 2);
-        std::thread::sleep(Duration::from_millis(30));
+        tokio::time::sleep(Duration::from_millis(30)).await;
         // 别的用户来取 DEK 时，过期的条目一并清掉。
-        v.create_user_key("u3").unwrap();
+        v.create_user_key("u3").await.unwrap();
         v.seal("u3", "r", &SecretString::from("sk-test-0000".to_owned()))
+            .await
             .unwrap();
         assert_eq!(v.cache.lock().unwrap().keys().collect::<Vec<_>>(), ["u3"]);
         SecretOpener::forget_user(&v, "u3");
         assert!(v.cache.lock().unwrap().is_empty());
     }
 
-    #[test]
-    fn blobs_are_bound_to_user_and_object() {
+    #[tokio::test]
+    async fn blobs_are_bound_to_user_and_object() {
         let vault = KeyVault::new(LocalKms::new("k", &[1; 32]), MemoryKeyStore::default());
-        vault.create_user_key("u1").unwrap();
-        vault.create_user_key("u2").unwrap();
-        let sealed = vault.seal_bytes("u1", "a1", b"report body").unwrap();
+        vault.create_user_key("u1").await.unwrap();
+        vault.create_user_key("u2").await.unwrap();
+        let sealed = vault.seal_bytes("u1", "a1", b"report body").await.unwrap();
         assert_eq!(
-            vault.open_bytes("u1", "a1", &sealed).unwrap(),
+            vault.open_bytes("u1", "a1", &sealed).await.unwrap(),
             b"report body"
         );
-        assert!(vault.open_bytes("u1", "a2", &sealed).is_err());
-        assert!(vault.open_bytes("u2", "a1", &sealed).is_err());
+        assert!(vault.open_bytes("u1", "a2", &sealed).await.is_err());
+        assert!(vault.open_bytes("u2", "a1", &sealed).await.is_err());
         // 和 key 的密文域分开：同样的 id 也解不开。
         let key = vault
             .seal("u1", "a1", &SecretString::from("sk-test-1234".to_string()))
+            .await
             .unwrap();
-        assert!(vault.open_bytes("u1", "a1", &key.ciphertext).is_err());
+        assert!(vault.open_bytes("u1", "a1", &key.ciphertext).await.is_err());
+    }
+
+    /// 数解包次数的 KMS（看缓存有没有挡住重复调用）。
+    struct Counting(LocalKms, std::sync::atomic::AtomicUsize);
+
+    #[async_trait]
+    impl Kms for Counting {
+        fn current_key_id(&self) -> &str {
+            self.0.current_key_id()
+        }
+        async fn wrap(&self, dek: &[u8; DEK_LEN], context: &str) -> Result<WrappedKey> {
+            self.0.wrap(dek, context).await
+        }
+        async fn unwrap(
+            &self,
+            wrapped: &WrappedKey,
+            context: &str,
+        ) -> Result<Zeroizing<[u8; DEK_LEN]>> {
+            self.1.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.0.unwrap(wrapped, context).await
+        }
+    }
+
+    #[tokio::test]
+    async fn a_ring_unwraps_with_older_master_keys() {
+        let old: Arc<dyn Kms> = Arc::new(LocalKms::new("local-1", &[1; 32]));
+        let new: Arc<dyn Kms> = Arc::new(LocalKms::new("cloud-1", &[2; 32]));
+        let legacy = old.wrap(&[5; 32], "u1").await.unwrap();
+        let ring = KmsRing::new(new.clone()).with_older(old);
+        assert_eq!(ring.current_key_id(), "cloud-1");
+        // 老的 DEK 用老的主密钥解，新的 DEK 用新的包裹。
+        assert_eq!(*ring.unwrap(&legacy, "u1").await.unwrap(), [5; 32]);
+        let fresh = ring.wrap(&[6; 32], "u1").await.unwrap();
+        assert_eq!(fresh.kms_key_id, "cloud-1");
+        assert_eq!(*ring.unwrap(&fresh, "u1").await.unwrap(), [6; 32]);
+        let unknown = WrappedKey {
+            kms_key_id: "gone".into(),
+            ciphertext: fresh.ciphertext.clone(),
+        };
+        assert!(matches!(
+            ring.unwrap(&unknown, "u1").await,
+            Err(Error::UnknownKmsKey(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn the_cache_spares_repeated_kms_calls() {
+        let kms = CachingKms::new(
+            Counting(LocalKms::new("k", &[3; 32]), Default::default()),
+            Duration::from_millis(50),
+        );
+        let w = kms.wrap(&[8; 32], "u1").await.unwrap();
+        for _ in 0..3 {
+            assert_eq!(*kms.unwrap(&w, "u1").await.unwrap(), [8; 32]);
+        }
+        assert_eq!(kms.inner.1.load(std::sync::atomic::Ordering::SeqCst), 1);
+        // 用户对不上不能命中别人的缓存，照样解包失败。
+        assert!(kms.unwrap(&w, "u2").await.is_err());
+        // 过期以后重新解包。
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        kms.unwrap(&w, "u1").await.unwrap();
+        assert_eq!(kms.inner.1.load(std::sync::atomic::Ordering::SeqCst), 3);
     }
 
     #[test]
@@ -799,12 +1055,12 @@ mod tests {
         assert_eq!(last4("sk-0123456789ab"), "89ab");
     }
 
-    #[test]
-    fn local_kms_from_hex() {
+    #[tokio::test]
+    async fn local_kms_from_hex() {
         let hex = "07".repeat(32);
         let kms = LocalKms::from_hex("k", &hex).unwrap();
-        let w = kms.wrap(&[1u8; 32], "u").unwrap();
-        assert_eq!(*kms.unwrap(&w, "u").unwrap(), [1u8; 32]);
+        let w = kms.wrap(&[1u8; 32], "u").await.unwrap();
+        assert_eq!(*kms.unwrap(&w, "u").await.unwrap(), [1u8; 32]);
         assert!(LocalKms::from_hex("k", "zz").is_err());
     }
 }

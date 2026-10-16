@@ -119,7 +119,7 @@ pub async fn user_vault(
         return Err(keyvault::Error::NoUserKey(uid).into());
     }
     let vault = KeyVault::new(kms.clone(), MemoryKeyStore::default());
-    vault.create_user_key(&uid)?;
+    vault.create_user_key(&uid).await?;
     let wrapped = vault
         .store()
         .get(&uid)
@@ -230,7 +230,9 @@ impl ArtifactStore {
         }
         let id = ArtifactId::new();
         let vault = user_vault(&self.db, self.kms.clone(), origin.user, true).await?;
-        let sealed = vault.seal_bytes(&origin.user.to_string(), &id.to_string(), bytes)?;
+        let sealed = vault
+            .seal_bytes(&origin.user.to_string(), &id.to_string(), bytes)
+            .await?;
         let key = format!("{}/{}", origin.user.0.simple(), id.0.simple());
         self.blobs.put(&key, &sealed).await?;
         let sha: [u8; 32] = Sha256::digest(bytes).into();
@@ -275,7 +277,9 @@ impl ArtifactStore {
     pub async fn read(&self, a: &StoredArtifact) -> Result<Vec<u8>, ArtifactError> {
         let sealed = self.blobs.get(&a.blob_key).await?;
         let vault = user_vault(&self.db, self.kms.clone(), a.user_id, false).await?;
-        Ok(vault.open_bytes(&a.user_id.to_string(), &a.artifact.id.to_string(), &sealed)?)
+        Ok(vault
+            .open_bytes(&a.user_id.to_string(), &a.artifact.id.to_string(), &sealed)
+            .await?)
     }
 
     pub async fn delete_blob(&self, key: &str) -> Result<(), ArtifactError> {

@@ -1290,6 +1290,7 @@ async fn the_vault_helper_gets_values_and_logs_never_show_them() {
                 password: "gh-secret-123".into(),
             },
         )
+        .await
         .unwrap();
     let mut tx = e.t.db.tenant(e.user).await.unwrap();
     tx.create_vault_item(&store::NewVaultItem {

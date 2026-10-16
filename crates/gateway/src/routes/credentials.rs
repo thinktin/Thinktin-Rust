@@ -28,6 +28,7 @@ async fn seal(
         .map_err(ApiError::internal)?;
     vault
         .seal(&user.to_string(), &record.to_string(), secret)
+        .await
         .map_err(ApiError::internal)
 }
 

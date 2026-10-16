@@ -197,7 +197,7 @@ fn now() -> u64 {
         .as_secs()
 }
 
-fn credential(
+async fn credential(
     vault: &KeyVault<LocalKms, MemoryKeyStore>,
     id: &str,
     base: &str,
@@ -213,6 +213,7 @@ fn credential(
         responses_base: responses.then(|| format!("{base}/openai/v1")),
         secret: vault
             .seal("user-1", id, &SecretString::from(VENDOR_KEY.to_owned()))
+            .await
             .unwrap(),
         daily_token_limit,
         disabled: false,
@@ -222,55 +223,61 @@ fn credential(
 async fn start(setup: Setup) -> Env {
     let (upstream_addr, upstream) = start_upstream().await;
     let vault = KeyVault::new(LocalKms::new("test", &[7u8; 32]), MemoryKeyStore::default());
-    vault.create_user_key("user-1").unwrap();
+    vault.create_user_key("user-1").await.unwrap();
     let base = format!("http://{upstream_addr}/v");
     let creds = vec![
-        credential(&vault, "cred-main", &base, true, setup.daily_token_limit),
-        credential(&vault, "cred-nores", &base, false, None),
+        credential(&vault, "cred-main", &base, true, setup.daily_token_limit).await,
+        credential(&vault, "cred-nores", &base, false, None).await,
         credential(
             &vault,
             "cred-bad",
             &format!("http://{upstream_addr}/bad"),
             true,
             None,
-        ),
+        )
+        .await,
         credential(
             &vault,
             "cred-slow",
             &format!("http://{upstream_addr}/slow"),
             true,
             None,
-        ),
+        )
+        .await,
         credential(
             &vault,
             "cred-hang",
             &format!("http://{upstream_addr}/hang"),
             true,
             None,
-        ),
+        )
+        .await,
         credential(
             &vault,
             "cred-nousage",
             &format!("http://{upstream_addr}/nousage"),
             true,
             None,
-        ),
+        )
+        .await,
         credential(
             &vault,
             "cred-busy",
             &format!("http://{upstream_addr}/busy"),
             true,
             None,
-        ),
+        )
+        .await,
         credential(
             &vault,
             "cred-broke",
             &format!("http://{upstream_addr}/broke"),
             true,
             None,
-        ),
+        )
+        .await,
         // 没有人监听的端口：连不上。
-        credential(&vault, "cred-down", "http://127.0.0.1:1/v", true, None),
+        credential(&vault, "cred-down", "http://127.0.0.1:1/v", true, None).await,
         // https 加域名能通过静态检查，要靠 DNS 解析这一步拦住。
         credential(
             &vault,
@@ -278,7 +285,8 @@ async fn start(setup: Setup) -> Env {
             &format!("https://localhost:{}/v", upstream_addr.port()),
             true,
             None,
-        ),
+        )
+        .await,
     ];
     let route = |cred: &str, model: &str| Route {
         credential: cred.into(),
@@ -358,6 +366,7 @@ async fn start(setup: Setup) -> Env {
                         password: VAULT_SECRET.into(),
                     },
                 )
+                .await
                 .unwrap(),
         }],
     );

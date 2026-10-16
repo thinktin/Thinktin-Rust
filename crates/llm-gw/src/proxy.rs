@@ -412,7 +412,11 @@ impl Gateway {
         let items = self.directory.vault_items(user).await?;
         let mut scrubber = Scrubber::new();
         for item in &items {
-            match self.secrets.open_vault_secret(user, &item.id, &item.sealed) {
+            match self
+                .secrets
+                .open_vault_secret(user, &item.id, &item.sealed)
+                .await
+            {
                 Ok(secret) => scrubber.add_secret(&item.name, &secret),
                 // 解不开的值也不可能交给过沙箱。
                 Err(e) => tracing::warn!(item = %item.id, error = %e, "cannot open a vault item"),
@@ -996,6 +1000,7 @@ impl Gateway {
         let key = match self
             .secrets
             .open_secret(&cred.user_id, &cred.id, &cred.secret)
+            .await
         {
             Ok(key) => key,
             Err(e) => {

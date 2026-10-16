@@ -2159,7 +2159,10 @@ async fn vault_over_http() {
     )
     .await
     .unwrap();
-    let secret = vault.open_vault(&user.to_string(), &id, &sealed).unwrap();
+    let secret = vault
+        .open_vault(&user.to_string(), &id, &sealed)
+        .await
+        .unwrap();
     assert_eq!(
         (secret.username.as_str(), secret.password.as_str()),
         ("octocat", "new-secret-123")

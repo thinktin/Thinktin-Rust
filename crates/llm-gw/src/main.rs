@@ -376,15 +376,17 @@ fn main() -> anyhow::Result<()> {
                 keys.insert_new(u, wrapped.clone());
             }
             let vault = KeyVault::new(kms(&dev.kms_key_id)?, keys);
+            // 密钥库的接口是异步的（云 KMS 是网络调用）：这个命令行子命令用一个单线程运行时跑。
+            let rt = tokio::runtime::Builder::new_current_thread().build()?;
             if !dev.user_keys.contains_key(&user) {
-                vault.create_user_key(&user)?;
+                rt.block_on(vault.create_user_key(&user))?;
             }
             let mut text = String::new();
             std::io::stdin().read_to_string(&mut text)?;
             let secret = SecretString::from(text.trim().to_owned());
             zeroize::Zeroize::zeroize(&mut text);
             vendors::check_key(&vendor, secret.expose_secret()).map_err(anyhow::Error::msg)?;
-            let sealed = vault.seal(&user, &id, &secret)?;
+            let sealed = rt.block_on(vault.seal(&user, &id, &secret))?;
             println!(
                 "saved key ****{} as {id}",
                 sealed.last4.trim_start_matches('*')

@@ -1841,10 +1841,13 @@ name = "keyvault"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",
+ "async-trait",
  "getrandom 0.4.3",
  "secrecy",
  "serde",
+ "sha2 0.11.1",
  "thiserror",
+ "tokio",
  "zeroize",
 ]
 
