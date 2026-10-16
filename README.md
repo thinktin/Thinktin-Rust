@@ -44,6 +44,9 @@ ThinkTin 平台：托管多个开源 agent，用户领养后常驻云端、按�
   `THINKTIN_SANDBOX_TOKEN_SEED`（`llm-gw keygen` 生成，模型网关配对应公钥）和
   `THINKTIN_KMS_KEY`（产出物按用户 DEK 加密）；本地开发用
   `[sandbox] provider = "local"`，`manifest_override` 可以换成假 agent 的清单联调。
+  `[worker] lease_secs`、`takeover_every_secs`、`retry_backoff_secs`（默认 60、15、30）决定副本被杀或宿主机宕机后
+  多快有别的副本接手（见 [常驻可靠性演练](docs/reliability-drill.md)）。
+  压测工具：`cargo run --release -p loadtest -- trigger-storm|wake-storm|llm-stream`（见 [压测说明](docs/loadtest.md)）。
   `[observability] metrics_listen` 打开 Prometheus 指标端口（只给内网抓取）。
   国内 Android 推送配 `[push.jpush] app_key`，Master Secret 走环境变量 `THINKTIN_JPUSH_MASTER_SECRET`；
   海外 Android 推送配 `[push.fcm] service_account_path`（Firebase 服务账号的 JSON 密钥文件）。
