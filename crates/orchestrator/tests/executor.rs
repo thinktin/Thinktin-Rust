@@ -2072,24 +2072,24 @@ async fn add_mac(e: &Env) -> proto::domain::DeviceId {
     mac
 }
 
-/// 测试扮演的电脑：连上中继（在线、唤醒等它的运行），把发给它的调用领走，`delay` 之后回
-/// “<工具> read <路径>”。停掉返回的任务就是电脑不再回（在线状态还新鲜）。
-fn fake_computer(e: &Env, mac: proto::domain::DeviceId, delay: Duration) -> JoinHandle<()> {
+/// 测试扮演的电脑：连上中继（在线、唤醒等它的运行；返回时已经连上），把发给它的调用领走，
+/// `delay` 之后回“<工具> read <路径>”。停掉返回的任务就是电脑不再回（在线状态还新鲜）。
+async fn fake_computer(e: &Env, mac: proto::domain::DeviceId, delay: Duration) -> JoinHandle<()> {
     let db = e.t.db.clone();
     let user = e.user;
+    let conn = uuid::Uuid::now_v7();
+    let mut r = db.relay().await.unwrap();
+    r.link_device(&store::NewLink {
+        device: mac,
+        user,
+        node: "relay-test".into(),
+        connection: conn,
+    })
+    .await
+    .unwrap();
+    r.wake_device_waiters(user).await.unwrap();
+    r.commit().await.unwrap();
     tokio::spawn(async move {
-        let conn = uuid::Uuid::now_v7();
-        let mut r = db.relay().await.unwrap();
-        r.link_device(&store::NewLink {
-            device: mac,
-            user,
-            node: "relay-test".into(),
-            connection: conn,
-        })
-        .await
-        .unwrap();
-        r.wake_device_waiters(user).await.unwrap();
-        r.commit().await.unwrap();
         loop {
             let mut r = db.relay().await.unwrap();
             r.touch_link(mac, conn).await.unwrap();
@@ -2132,7 +2132,7 @@ async fn computer_tools_reach_the_users_own_computer() {
         return;
     };
     let mac = add_mac(&e).await;
-    let computer = fake_computer(&e, mac, Duration::from_millis(300));
+    let computer = fake_computer(&e, mac, Duration::from_millis(300)).await;
     let run = e.queue("use computer: computer_read_file", None, 3).await;
     e.run_to_end().await;
     computer.abort();
@@ -2165,7 +2165,7 @@ async fn waiting_for_the_computer_does_not_block_the_run() {
         return;
     };
     let mac = add_mac(&e).await;
-    let computer = fake_computer(&e, mac, Duration::from_secs(3600));
+    let computer = fake_computer(&e, mac, Duration::from_secs(3600)).await;
     let run = e.queue("use computer: computer_run", None, 3).await;
     let (_stop, h) = e.spawn().await;
     for _ in 0..400 {
@@ -2209,7 +2209,7 @@ async fn a_run_waits_for_the_computer_to_come_online() {
     );
     assert!(e.exec.claim().await.unwrap().is_none());
 
-    let computer = fake_computer(&e, mac, Duration::ZERO);
+    let computer = fake_computer(&e, mac, Duration::ZERO).await;
     let mut claimed = None;
     for _ in 0..200 {
         if let Some(r) = e.exec.claim().await.unwrap() {
