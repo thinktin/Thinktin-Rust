@@ -72,7 +72,30 @@ thinktin-vault exec -- curl -u '{{mail.username}}:{{mail.password}}' https://mai
   和条目的实例限制兜着。高危条目以后可以加“每次使用都要我批准”。
 - 抹值按原文和两种编码找，base64 之类的其他编码（比如 HTTP Basic 认证头）认不出来。
 - agent 把值写进平台工具的参数（比如计划目标、产出物内容），这些地方没有抹。
-- 11.6：客户端拦截对话里的密码、保险箱表单和列表的 client-core 接口。
+
+## 7. 对话里的密码拦截（11.6）
+
+App 发送消息前调 `detect_secrets(text)`（client-core，本地识别，不联网）。有命中就拦下，提示“对话里不收明文密码”，
+弹表单：密码栏预填命中的值、名字预填建议名（重名用 `unique_vault_name` 换一个），用户确认后
+`save_secret_from_message(message, value, item)` 存进保险箱，返回换成 `[vault:名字]` 的消息放回输入框。
+`send_message(instance, text, allow_secrets)` 自己也检查一遍，有命中返回 `ContainsSecrets`；用户坚持要发（比如测试账号）时带 `allow_secrets`。
+
+识别宁可漏不乱拦，只认：
+
+| 类别 | 例子 | 建议名 |
+|---|---|---|
+| `private_key` | `-----BEGIN ... PRIVATE KEY-----` 块 | 多行，存不进保险箱（`storable = false`），只提示别发 |
+| `api_key` | `sk-ant-`、`sk-proj-`、`ghp_`、`github_pat_`、`glpat-`、`xoxb-`、`AIza`、`AKIA`、`LTAI`、`hf_`、`sk-`（兜底）…… | 厂商名，比如 `anthropic`、`github`；`service` 字段给 App 判断要不要提示“添加为模型 key” |
+| `token` | JWT（`eyJ...`，三段） | `token` |
+| `url_password` | `postgres://app:密码@db.internal/prod` | `db_password` |
+| `labeled` | `密码是 Abc123`、`密码：…`、`password: "a b c"`、`DB_PASSWORD=…`、`api key …`、`token …` | 标识符（`db_password`）或前一个词（`github 密码` → `github`） |
+| `high_entropy` | 32 位以上、大小写字母和数字都不少、不是十六进制、不带 `.` `/` | `secret` |
+
+不算：`[vault:名字]`、`${VAR}`、`{{...}}`、`<password>`、`****`、`your_...`、`password is required`、`password manager`、
+提交号、UUID、路径、驼峰命名。位置给原生端的是 UTF-16 下标。
+
+client-core 还有保险箱条目（`vault_items`、`vault_item`、`create_vault_item`、`update_vault_item`、`delete_vault_item`）
+和 agent 填写请求（`vault_requests`、`fulfill_vault_request`、`decline_vault_request`）的接口，界面并入 12.4 / 13.4。
 
 ## 6. 测试
 
@@ -82,3 +105,4 @@ thinktin-vault exec -- curl -u '{{mail.username}}:{{mail.password}}' https://mai
 - `orchestrator`：工具只列名字、请求推送和上限；助手拿到值、运行日志和摘要里看不到值、没有授权拿不到。
 - `agent-shim`：工具桥的 `reveal`、助手的参数解析和占位符、环境变量 / 标准输入注入和退出码、启动脚本的路径转义。
 - `llm-gw`：各种转义写法的抹值、没有要抹的请求一个字节都不改；接库时用网关角色读得到密文、解得开。
+- `client-core`：识别的各类命中和不该命中的（`secrets.rs`）；对着真实接入网关拦下发送、存进保险箱后换成引用再发、重名、条目和填写请求的接口、FFI 的 UTF-16 下标（`tests/client.rs`）；C ABI 冒烟（`tools/client-core/ffi_smoke.py`）。
