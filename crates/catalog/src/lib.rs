@@ -144,7 +144,7 @@ mod tests {
         let withdrawn = [("claude", "0.0.1-old", "TT-2026-001")];
         assert_eq!(
             list_versions(Some(cur.clone()), &archived, &withdrawn, "claude"),
-            [v.clone()]
+            std::slice::from_ref(&v)
         );
         assert!(
             find_version(
