@@ -298,7 +298,15 @@ impl Tx<Relay> {
         connection: Uuid,
         limit: i64,
     ) -> Result<Vec<ClaimedCall>> {
-        let rows: Vec<(Uuid, Option<Uuid>, String, Value, DateTime<Utc>)> = sqlx::query_as(
+        #[derive(sqlx::FromRow)]
+        struct Row {
+            id: Uuid,
+            run_id: Option<Uuid>,
+            tool: String,
+            arguments: Value,
+            expires_at: DateTime<Utc>,
+        }
+        let rows: Vec<Row> = sqlx::query_as(
             "UPDATE device_calls SET state = 'sent', sent_at = now(), connection = $2 \
              WHERE id IN (SELECT c.id FROM device_calls c \
                           WHERE c.device_id = $1 AND c.state = 'pending' AND c.expires_at > now() \
@@ -314,12 +322,12 @@ impl Tx<Relay> {
         .await?;
         let mut calls: Vec<ClaimedCall> = rows
             .into_iter()
-            .map(|(id, run, tool, arguments, expires_at)| ClaimedCall {
-                id: id.into(),
-                run: run.map(Into::into),
-                tool,
-                arguments,
-                expires_at,
+            .map(|r| ClaimedCall {
+                id: r.id.into(),
+                run: r.run_id.map(Into::into),
+                tool: r.tool,
+                arguments: r.arguments,
+                expires_at: r.expires_at,
             })
             .collect();
         calls.sort_by_key(|c| c.id);

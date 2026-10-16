@@ -23,6 +23,7 @@ sandbox = { path = "../sandbox" }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+sqlx.workspace = true
 store = { path = "../store" }
 thiserror.workspace = true
 tokio.workspace = true
