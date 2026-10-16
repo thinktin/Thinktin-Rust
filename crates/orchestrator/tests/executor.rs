@@ -297,6 +297,29 @@ async fn fake_shim(
                     // 补上 key 以后接着跑。
                     let _ = ev.send(chunk(&run_id, "back to work")).await;
                     let _ = ev.send(ended(&run_id, StopReason::EndTurn)).await;
+                } else if text.contains("publish twice") {
+                    // 同样的参数调两次有副作用的工具，再换个参数调一次（7.13）。
+                    let mut got = Vec::new();
+                    for name in ["a", "a", "b"] {
+                        let _ = ev
+                            .send(ShimEvent::PlatformToolCall {
+                                run_id: run_id.clone(),
+                                call_id: format!("c{}", got.len()),
+                                name: "artifact_publish".into(),
+                                arguments: json!({ "name": name }),
+                            })
+                            .await;
+                        while let Some(c) = cmds.recv().await {
+                            if let ShimCommand::PlatformToolResult { content, .. } = c {
+                                got.push(
+                                    content[0]["text"].as_str().unwrap_or_default().to_owned(),
+                                );
+                                break;
+                            }
+                        }
+                    }
+                    let _ = ev.send(chunk(&run_id, &got.join("|"))).await;
+                    let _ = ev.send(ended(&run_id, StopReason::EndTurn)).await;
                 } else if text.contains("crash") {
                     return;
                 } else if text.contains("use tool") {
@@ -1756,4 +1779,47 @@ async fn the_run_tree_shares_one_token_budget() {
     e.run_to_end().await;
     let prompts = e.fake.rec.lock().unwrap().prompts.clone();
     assert!(prompts.last().unwrap().contains("失败"), "{prompts:?}");
+}
+
+// ---------- 副作用幂等（7.13） ----------
+
+/// 数调用次数的、有副作用的工具。
+#[derive(Default)]
+struct Publish(std::sync::atomic::AtomicUsize);
+
+#[async_trait]
+impl PlatformTools for Publish {
+    fn tools(&self) -> Vec<PlatformTool> {
+        vec![PlatformTool {
+            name: "artifact_publish".into(),
+            description: "Publish".into(),
+            input_schema: json!({ "type": "object" }),
+        }]
+    }
+    async fn call(&self, _ctx: &ToolContext, _name: &str, _args: &Value) -> ToolOutput {
+        let n = self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        ToolOutput::text(format!("published #{n}"))
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn side_effecting_tools_run_once_per_identical_call() {
+    let tools = Arc::new(Publish::default());
+    let scope = GrantScope {
+        platform_tools: vec!["artifact_publish".into()],
+        ..GrantScope::default()
+    };
+    let Some(e) = env_with(fast(), Some(scope), tools.clone()).await else {
+        return;
+    };
+    let run = e.queue("publish twice", None, 3).await;
+    e.run_to_end().await;
+    let rec = e.state(run).await;
+    assert_eq!(rec.run.state, RunState::Succeeded, "{:?}", rec.run);
+    // 第二次同样的调用直接拿到第一次的结果；换了参数的照常执行。
+    assert_eq!(
+        rec.run.summary.as_deref(),
+        Some("published #1|published #1|published #2")
+    );
+    assert_eq!(tools.0.load(std::sync::atomic::Ordering::SeqCst), 2);
 }

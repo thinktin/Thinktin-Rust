@@ -180,6 +180,26 @@ struct Exec<'a> {
     resume: Option<(String, Vec<RunId>)>,
 }
 
+/// 有副作用的平台工具（7.13）：同一次运行里参数完全相同的调用只执行一次。
+const SIDE_EFFECT_TOOLS: [&str; 6] = [
+    "schedule_create",
+    "schedule_update",
+    "schedule_cancel",
+    "artifact_publish",
+    "delegate",
+    "vault_request",
+];
+
+/// 幂等键：工具名和参数（JSON，对象的键有序）的 SHA-256。
+fn idempotency_key(name: &str, arguments: &Value) -> Vec<u8> {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(name.as_bytes());
+    h.update([0]);
+    h.update(serde_json::to_vec(arguments).unwrap_or_default());
+    h.finalize().to_vec()
+}
+
 /// 运行摘要从回复里取，最多留这么多字节（摘要只用前 400 个字）。
 const MAX_ANSWER: usize = 8 << 10;
 /// 运行日志里单个字符串的上限：agent 的回复、工具输出这类长文本截断。
@@ -989,6 +1009,55 @@ impl Exec<'_> {
         }
     }
 
+    /// 调平台工具。有副作用的（7.13）按“运行 + 工具 + 参数”只执行一次：agent 重试（或者同一轮里重复调）时
+    /// 直接给它上次的结果，不会多建一个计划、多委派一个子任务。失败的不记，可以再试。
+    async fn call_tool(&self, name: &str, arguments: &Value) -> ToolOutput {
+        if !SIDE_EFFECT_TOOLS.contains(&name) {
+            return self.ex.tools.call(&self.ctx, name, arguments).await;
+        }
+        let key = idempotency_key(name, arguments);
+        let seen = async {
+            let mut w = self.ex.db.worker().await?;
+            let r = w.tool_call_result(self.rec.run.id, &key).await?;
+            w.rollback().await?;
+            Ok::<_, store::Error>(r)
+        }
+        .await;
+        match seen {
+            Ok(Some(Value::Array(content))) => {
+                debug!(run = %self.rec.run.id, tool = name, "reusing the result of an identical call");
+                return ToolOutput {
+                    content,
+                    is_error: false,
+                };
+            }
+            Ok(_) => {}
+            Err(e) => {
+                warn!(run = %self.rec.run.id, error = %e, "reading earlier tool calls failed")
+            }
+        }
+        let out = self.ex.tools.call(&self.ctx, name, arguments).await;
+        if !out.is_error {
+            let saved = async {
+                let mut w = self.ex.db.worker().await?;
+                w.record_tool_call(
+                    self.rec.user_id,
+                    self.rec.run.id,
+                    &key,
+                    name,
+                    &Value::Array(out.content.clone()),
+                )
+                .await?;
+                w.commit().await
+            }
+            .await;
+            if let Err(e) = saved {
+                warn!(run = %self.rec.run.id, error = %e, "recording the tool call failed");
+            }
+        }
+        out
+    }
+
     /// 这一轮结束时还有委派的子任务没做完、或者结果还没交还（8.7）：转入等子任务，放掉租约；
     /// 子任务都结束后执行器把运行重新领起来，把结果作为新消息交给 agent。查不到当作没有。
     async fn await_children(&self) -> Option<Outcome> {
@@ -1237,7 +1306,7 @@ impl Exec<'_> {
                 ..
             } => {
                 let out = if self.allowed_tools.contains(&name) {
-                    self.ex.tools.call(&self.ctx, &name, &arguments).await
+                    self.call_tool(&name, &arguments).await
                 } else {
                     warn!(run = %self.rec.run.id, tool = %name, "platform tool outside the run grant");
                     ToolOutput::error(format!("unknown platform tool {name}"))
@@ -1744,6 +1813,19 @@ impl Exec<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn idempotency_keys_follow_the_tool_and_arguments() {
+        let args = json!({ "to": "helper", "task": "x" });
+        let key = idempotency_key("delegate", &args);
+        assert_eq!(key, idempotency_key("delegate", &args.clone()));
+        assert_ne!(key, idempotency_key("schedule_create", &args));
+        assert_ne!(
+            key,
+            idempotency_key("delegate", &json!({ "to": "helper", "task": "y" }))
+        );
+        assert_eq!(key.len(), 32);
+    }
 
     #[test]
     fn capped_buffers_keep_the_head_on_char_boundaries() {

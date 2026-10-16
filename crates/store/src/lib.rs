@@ -22,6 +22,7 @@ mod plans;
 mod runs;
 mod sessions;
 mod teams;
+mod tool_calls;
 mod usage;
 mod users;
 mod vault;
