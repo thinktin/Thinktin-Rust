@@ -33,6 +33,11 @@ pub struct Config {
     /// CubeAPI 的 key，只从环境变量 THINKTIN_CUBE_API_KEY 读（CubeAPI 没开鉴权时不用配）。
     #[serde(skip)]
     pub cube_api_key: Option<String>,
+    /// S3 兼容存储的访问密钥，只从环境变量 THINKTIN_S3_ACCESS_KEY_ID、THINKTIN_S3_SECRET_ACCESS_KEY 读。
+    #[serde(skip)]
+    pub s3_access_key_id: Option<String>,
+    #[serde(skip)]
+    pub s3_secret_access_key: Option<String>,
     /// 接口用的密钥，只从环境变量读（见 [`ApiSecrets`]）。
     #[serde(skip)]
     pub api_secrets: ApiSecrets,
@@ -57,6 +62,8 @@ impl std::fmt::Debug for Config {
             .field("sandbox_token_seed", &self.sandbox_token_seed.is_some())
             .field("jpush_master_secret", &self.jpush_master_secret.is_some())
             .field("cube_api_key", &self.cube_api_key.is_some())
+            .field("s3_access_key_id", &self.s3_access_key_id.is_some())
+            .field("s3_secret_access_key", &self.s3_secret_access_key.is_some())
             .field("api_secrets", &self.api_secrets)
             .finish()
     }
@@ -250,10 +257,12 @@ impl Default for Compliance {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Storage {
-    /// 对象存储后端：目前只有 local（本地目录，开发用；接口和后台任务要能看到同一个目录）。
+    /// 对象存储后端：local（本地目录，开发用；接口和后台任务要能看到同一个目录）或 s3（S3 兼容的对象存储）。
     pub provider: String,
     /// local 后端的目录。
     pub local_root: std::path::PathBuf,
+    /// s3 后端（`provider = "s3"` 时用）。
+    pub s3: Option<S3Storage>,
 }
 
 impl Default for Storage {
@@ -261,8 +270,34 @@ impl Default for Storage {
         Self {
             provider: "local".into(),
             local_root: ".thinktin/blobs".into(),
+            s3: None,
         }
     }
+}
+
+/// S3 兼容的对象存储：AWS S3、阿里云 OSS、腾讯云 COS、MinIO。访问密钥只从环境变量
+/// THINKTIN_S3_ACCESS_KEY_ID、THINKTIN_S3_SECRET_ACCESS_KEY 读。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct S3Storage {
+    /// 服务地址，不带桶名：`https://oss-cn-hangzhou.aliyuncs.com`、`https://s3.us-east-1.amazonaws.com`。
+    pub endpoint: String,
+    /// 签名用的区域：AWS 是 `us-east-1` 之类；OSS 的 S3 兼容接口是 `oss-cn-hangzhou` 之类。
+    pub region: String,
+    pub bucket: String,
+    /// 对象键的前缀，比如 `prod/`。
+    #[serde(default)]
+    pub prefix: String,
+    /// 路径风格（MinIO 常用）；默认虚拟主机风格（AWS、OSS 要求的）。
+    #[serde(default)]
+    pub path_style: bool,
+    /// 单个请求的超时（秒）。
+    #[serde(default = "default_storage_timeout")]
+    pub timeout_secs: u64,
+}
+
+fn default_storage_timeout() -> u64 {
+    60
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -391,6 +426,8 @@ impl Default for Config {
             sandbox_token_seed: None,
             jpush_master_secret: None,
             cube_api_key: None,
+            s3_access_key_id: None,
+            s3_secret_access_key: None,
             api_secrets: ApiSecrets::default(),
         }
     }
@@ -471,6 +508,8 @@ impl Config {
         cfg.sandbox_token_seed = env.var("THINKTIN_SANDBOX_TOKEN_SEED");
         cfg.jpush_master_secret = env.var("THINKTIN_JPUSH_MASTER_SECRET");
         cfg.cube_api_key = env.var("THINKTIN_CUBE_API_KEY");
+        cfg.s3_access_key_id = env.var("THINKTIN_S3_ACCESS_KEY_ID");
+        cfg.s3_secret_access_key = env.var("THINKTIN_S3_SECRET_ACCESS_KEY");
         cfg.api_secrets = ApiSecrets {
             access_token_seed: env.var("THINKTIN_ACCESS_TOKEN_SEED"),
             code_pepper: env.var("THINKTIN_CODE_PEPPER"),
@@ -544,11 +583,21 @@ impl Config {
                 bail!("worker.max_concurrent_runs must be positive");
             }
         }
-        if (self.api.enabled || self.worker.enabled) && self.storage.provider != "local" {
-            bail!(
-                "storage.provider {:?} is not supported yet (only \"local\")",
-                self.storage.provider
-            );
+        if self.api.enabled || self.worker.enabled {
+            match self.storage.provider.as_str() {
+                "local" => {}
+                "s3" => {
+                    if self.storage.s3.is_none() {
+                        bail!("storage.provider = \"s3\" needs a [storage.s3] section");
+                    }
+                    if self.s3_access_key_id.is_none() || self.s3_secret_access_key.is_none() {
+                        bail!(
+                            "storage.provider = \"s3\" needs THINKTIN_S3_ACCESS_KEY_ID and THINKTIN_S3_SECRET_ACCESS_KEY"
+                        );
+                    }
+                }
+                other => bail!("storage.provider {other:?} is not supported (local or s3)"),
+            }
         }
         let producer = &self.compliance.content_producer;
         if producer.is_empty()
@@ -712,6 +761,54 @@ mod tests {
         )
         .unwrap();
         let err = Config::load(Some(&path), &env).unwrap_err();
+        assert!(err.to_string().contains("not supported"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn s3_storage_needs_its_section_and_keys() {
+        let dir = std::env::temp_dir().join(format!("tt-s3-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("server.toml");
+        let mut vars = HashMap::from([
+            ("DATABASE_URL", "postgres://x"),
+            ("THINKTIN_SANDBOX_TOKEN_SEED", "seed"),
+            ("THINKTIN_KMS_KEY", "ab"),
+        ]);
+        let worker = "[worker]\nenabled = true\n";
+        std::fs::write(&path, format!("{worker}[storage]\nprovider = \"s3\"\n")).unwrap();
+        let err = Config::load(Some(&path), &MapEnv(vars.clone())).unwrap_err();
+        assert!(err.to_string().contains("[storage.s3]"), "{err}");
+        std::fs::write(
+            &path,
+            format!(
+                "{worker}[storage]\nprovider = \"s3\"\n[storage.s3]\n\
+                 endpoint = \"https://oss-cn-hangzhou.aliyuncs.com\"\n\
+                 region = \"oss-cn-hangzhou\"\nbucket = \"tt-artifacts\"\n"
+            ),
+        )
+        .unwrap();
+        let err = Config::load(Some(&path), &MapEnv(vars.clone())).unwrap_err();
+        assert!(
+            err.to_string().contains("THINKTIN_S3_ACCESS_KEY_ID"),
+            "{err}"
+        );
+        vars.insert("THINKTIN_S3_ACCESS_KEY_ID", "AKID");
+        vars.insert("THINKTIN_S3_SECRET_ACCESS_KEY", "s3-secret-xyz");
+        let cfg = Config::load(Some(&path), &MapEnv(vars.clone())).unwrap();
+        let s3 = cfg.storage.s3.as_ref().unwrap();
+        assert_eq!(
+            (
+                s3.bucket.as_str(),
+                s3.prefix.as_str(),
+                s3.path_style,
+                s3.timeout_secs
+            ),
+            ("tt-artifacts", "", false, 60)
+        );
+        assert!(!format!("{cfg:?}").contains("s3-secret-xyz"));
+        std::fs::write(&path, format!("{worker}[storage]\nprovider = \"gcs\"\n")).unwrap();
+        let err = Config::load(Some(&path), &MapEnv(vars)).unwrap_err();
         assert!(err.to_string().contains("not supported"), "{err}");
         let _ = std::fs::remove_dir_all(&dir);
     }

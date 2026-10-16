@@ -7,6 +7,7 @@ pub mod exec;
 pub mod executor;
 pub mod outbox;
 pub mod pipeline;
+pub mod s3;
 pub mod schedule;
 pub mod scheduler;
 pub mod shim;

@@ -20,7 +20,8 @@ use std::sync::Arc;
 use anyhow::Context;
 use keyvault::{Kms, LocalKms};
 use listen::ListenOptions;
-use orchestrator::artifacts::{ArtifactStore, LocalBlobStore};
+use orchestrator::artifacts::{ArtifactStore, BlobStore, LocalBlobStore};
+use orchestrator::s3::{S3BlobStore, S3Config};
 use store::Db;
 use tokio::net::TcpListener;
 use tracing::{error, info, warn};
@@ -167,13 +168,26 @@ fn kms(cfg: &Config) -> anyhow::Result<Arc<dyn Kms>> {
 
 /// 产出物存储：接口（下载）和后台任务（发布、交接）共用。
 fn artifact_store(cfg: &Config, db: &Db, kms: Arc<dyn Kms>) -> anyhow::Result<Arc<ArtifactStore>> {
-    let blobs = LocalBlobStore::new(&cfg.storage.local_root)
-        .with_context(|| format!("storage root {}", cfg.storage.local_root.display()))?;
-    Ok(Arc::new(ArtifactStore::new(
-        db.clone(),
-        Arc::new(blobs),
-        kms,
-    )))
+    let blobs: Arc<dyn BlobStore> = match (cfg.storage.provider.as_str(), &cfg.storage.s3) {
+        ("s3", Some(s3)) => Arc::new(
+            S3BlobStore::new(S3Config {
+                endpoint: s3.endpoint.clone(),
+                region: s3.region.clone(),
+                bucket: s3.bucket.clone(),
+                prefix: s3.prefix.clone(),
+                path_style: s3.path_style,
+                access_key_id: cfg.s3_access_key_id.clone().unwrap_or_default(),
+                secret_access_key: cfg.s3_secret_access_key.clone().unwrap_or_default(),
+                timeout: std::time::Duration::from_secs(s3.timeout_secs.max(1)),
+            })
+            .context("storage.s3")?,
+        ),
+        _ => Arc::new(
+            LocalBlobStore::new(&cfg.storage.local_root)
+                .with_context(|| format!("storage root {}", cfg.storage.local_root.display()))?,
+        ),
+    };
+    Ok(Arc::new(ArtifactStore::new(db.clone(), blobs, kms)))
 }
 
 /// SIGTERM（容器编排）或 Ctrl-C。
