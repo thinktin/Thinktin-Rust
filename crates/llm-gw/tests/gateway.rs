@@ -11,14 +11,15 @@ use axum::extract::{Request, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use keyvault::secrecy::SecretString;
-use keyvault::{KeyVault, LocalKms, MemoryKeyStore};
+use keyvault::{KeyVault, LocalKms, MemoryKeyStore, VaultSecret};
 use llm_gw::limits::{Limiter, MemoryLedger};
-use llm_gw::store::{Credential, Fallback, Instance, Limits, MemoryDirectory, Route};
+use llm_gw::store::{Credential, Fallback, Instance, Limits, MemoryDirectory, Route, SealedVault};
 use llm_gw::usage::{MemorySink, Outcome, Usage};
 use llm_gw::{Gateway, Options, build_client, router};
 use serde_json::{Value, json};
 
 const VENDOR_KEY: &str = "sk-vendor-secret-0001";
+const VAULT_SECRET: &str = "gh-vault-secret-42";
 
 // ---------- 假厂商 ----------
 
@@ -342,6 +343,24 @@ async fn start(setup: Setup) -> Env {
         limits: setup.limits,
     };
     let directory = Arc::new(MemoryDirectory::new(vec![instance], creds, vec![]));
+    // 用户保险箱里的一个条目（9.11）：转发前从请求里抹掉。
+    directory.set_vault(
+        "user-1",
+        vec![SealedVault {
+            id: "item-1".into(),
+            name: "github".into(),
+            sealed: vault
+                .seal_vault(
+                    "user-1",
+                    "item-1",
+                    &VaultSecret {
+                        username: "octocat".into(),
+                        password: VAULT_SECRET.into(),
+                    },
+                )
+                .unwrap(),
+        }],
+    );
     let issuer = SandboxTokenIssuer::generate("k1").unwrap();
     let mut verifier = SandboxTokenVerifier::new();
     verifier
@@ -353,6 +372,7 @@ async fn start(setup: Setup) -> Env {
         verifier,
         directory: directory.clone(),
         secrets: Arc::new(vault),
+        vault: Default::default(),
         usage: sink.clone(),
         ledger: ledger.clone(),
         limiter: Limiter::default(),
@@ -1172,4 +1192,53 @@ async fn fallback_chain_skips_keys_without_the_protocol_or_budget() {
         )
         .await;
     assert_eq!(resp.status(), 402);
+}
+
+/// 保险箱里的值（9.11）转发前从请求里抹掉，模型看不到；不管 agent 的 SDK 怎么转义都认得出来。
+#[tokio::test]
+async fn vault_values_never_reach_the_model() {
+    let env = start(Setup::default()).await;
+    let token = env.token();
+    // Python 的 json.dumps 会把字符转成 \u 转义。
+    let raw = concat!(
+        r#"{"model":"main","max_tokens":8,"messages":["#,
+        r#"{"role":"user","content":"token gh-vault-secret-42"},"#,
+        r#"{"role":"assistant","content":"ok"},"#,
+        r#"{"role":"user","content":[{"type":"tool_result","content":"again: gh-vault-secret-\u0034\u0032"}]}]}"#
+    );
+    let resp = env
+        .http
+        .post(format!("{}/anthropic/v1/messages", env.gw))
+        .header("x-api-key", &token)
+        .header("anthropic-version", "2023-06-01")
+        .header("content-type", "application/json")
+        .body(raw)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    resp.text().await.unwrap();
+    let seen = env.upstream.requests();
+    let body = String::from_utf8(seen.last().unwrap().body.clone()).unwrap();
+    assert!(!body.contains(VAULT_SECRET), "{body}");
+    assert!(!body.contains(r"\u0034\u0032"), "{body}");
+    assert_eq!(body.matches("[vault:github]").count(), 2, "{body}");
+    // 其余内容原样转发（账号不算秘密）。
+    let v: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["messages"][1]["content"], "ok");
+    assert_eq!(v["model"], "up-model");
+
+    // 没有保险箱值的请求一个字节都不改（除了换掉 model）。
+    let resp = env
+        .openai(
+            "chat/completions",
+            &token,
+            json!({"model": "main", "messages": [{"role": "user", "content": "octocat says hi"}]}),
+        )
+        .await;
+    assert_eq!(resp.status(), 200);
+    resp.text().await.unwrap();
+    let seen = env.upstream.requests();
+    let body = String::from_utf8(seen.last().unwrap().body.clone()).unwrap();
+    assert!(body.contains("octocat says hi"), "{body}");
 }

@@ -163,6 +163,7 @@ async fn env() -> Option<Env> {
         verifier,
         directory: Arc::new(PgDirectory::new(t.db.clone(), keys.clone(), TTL)),
         secrets: Arc::new(KeyVault::new(kms, keys)),
+        vault: Default::default(),
         usage: Arc::new(sink),
         ledger: ledger.clone(),
         limiter: Limiter::default(),
@@ -404,4 +405,68 @@ async fn narrowed_grants_only_reach_their_aliases() {
     let (st, body) = e.chat(&token(&only_other)).await;
     assert_eq!(st, 403, "{body}");
     assert_eq!(e.chat(&token(&only_main)).await.0, 200);
+}
+
+/// 保险箱条目（9.11）：网关用 `thinktin_llmgw` 角色读得到密文、用库里的 DEK 解得开，用来抹值。
+#[tokio::test]
+async fn vault_items_are_loaded_for_scrubbing() {
+    use llm_gw::store::Directory;
+
+    let Some(t) = TestDb::new().await else { return };
+    let kms = Arc::new(LocalKms::new("local-1", &[4u8; 32]));
+    let mut w = t.db.worker().await.unwrap();
+    let (user, _) = w.upsert_user_by_phone("+8613800000009").await.unwrap();
+    let uid = user.id.to_string();
+    let vault = KeyVault::new(kms.clone(), MemoryKeyStore::default());
+    vault.create_user_key(&uid).unwrap();
+    let wrapped = vault.store().get(&uid).unwrap();
+    w.insert_user_key(user.id, &wrapped.kms_key_id, &wrapped.ciphertext)
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+    let id = proto::domain::VaultItemId::new();
+    let sealed = vault
+        .seal_vault(
+            &uid,
+            &id.to_string(),
+            &keyvault::VaultSecret {
+                username: String::new(),
+                password: "pg-vault-pass".into(),
+            },
+        )
+        .unwrap();
+    let mut tx = t.db.tenant(user.id).await.unwrap();
+    tx.create_vault_item(&store::NewVaultItem {
+        id,
+        name: "db".into(),
+        purpose: String::new(),
+        sealed,
+        has_username: false,
+        instance_ids: vec![],
+    })
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+
+    let keys = Arc::new(MemoryKeyStore::default());
+    let dir = PgDirectory::new(t.db.clone(), keys.clone(), TTL);
+    let items = dir.vault_items(&uid).await.unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(
+        (items[0].id.as_str(), items[0].name.as_str()),
+        (id.to_string().as_str(), "db")
+    );
+    // 读条目时顺手把用户的 DEK 放进了共享的密钥库。
+    let gw_vault = KeyVault::new(kms, keys);
+    let secret = gw_vault
+        .open_vault(&uid, &items[0].id, &items[0].sealed)
+        .unwrap();
+    assert_eq!(secret.password, "pg-vault-pass");
+    assert!(
+        dir.vault_items(&UserId::new().to_string())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(dir.vault_items("not-a-uuid").await.unwrap().is_empty());
 }

@@ -263,6 +263,7 @@ fn main() -> anyhow::Result<()> {
                     verifier,
                     directory,
                     secrets,
+                    vault: Default::default(),
                     usage,
                     ledger,
                     limiter: Limiter::default(),

@@ -163,6 +163,7 @@ async fn start_llm_gw(db: store::Db, issuer: &SandboxTokenIssuer) -> String {
             LocalKms::from_hex("local-1", KMS_HEX).unwrap(),
             keys,
         )),
+        vault: Default::default(),
         usage: Arc::new(sink),
         ledger: Arc::new(PgLedger::new(db, options.budget_utc_offset_secs, ttl)),
         limiter: Limiter::default(),

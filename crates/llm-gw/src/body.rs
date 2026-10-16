@@ -7,6 +7,7 @@
 
 use std::collections::HashSet;
 
+use keyvault::Scrubber;
 use serde::de::{self, MapAccess, Visitor};
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -105,6 +106,66 @@ impl JsonObject {
     pub fn to_vec(&self) -> Vec<u8> {
         serde_json::to_vec(self).expect("raw values serialize")
     }
+
+    /// 抹掉请求里保险箱的值（9.11）：找出每个 JSON 字符串（包括嵌套对象的键），解码后替换，
+    /// 改过的按标准写法编码回去，其余字节原样保留。网关要读的顶层键不动。返回有没有改动。
+    pub fn scrub(&mut self, scrubber: &Scrubber) -> bool {
+        let mut changed = false;
+        for (key, raw) in &mut self.0 {
+            if SEMANTIC_KEYS.contains(&key.as_str()) {
+                continue;
+            }
+            if let Some(clean) = scrub_raw(scrubber, raw.get()) {
+                *raw = RawValue::from_string(clean).expect("scrubbing keeps the JSON valid");
+                changed = true;
+            }
+        }
+        changed
+    }
+}
+
+/// 在一段合法的 JSON 文本里找出所有字符串，抹掉其中保险箱的值。没有改动返回 None。
+/// 字符串先解码再比较：不管 agent 的 SDK 怎么转义（`\u00e9`、`\/`、Go 的 `\u003c`），都认得出来。
+fn scrub_raw(scrubber: &Scrubber, json: &str) -> Option<String> {
+    let bytes = json.as_bytes();
+    let mut out: Option<String> = None;
+    let mut copied = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'"' {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        let mut j = i + 1;
+        let mut escaped = false;
+        while j < bytes.len() && bytes[j] != b'"' {
+            if bytes[j] == b'\\' {
+                escaped = true;
+                j += 2;
+            } else {
+                j += 1;
+            }
+        }
+        let end = (j + 1).min(bytes.len());
+        let clean = if escaped {
+            serde_json::from_str::<String>(&json[start..end])
+                .ok()
+                .and_then(|decoded| scrubber.scrub(&decoded))
+        } else {
+            scrubber.scrub(&json[start + 1..j.min(bytes.len())])
+        };
+        if let Some(c) = clean {
+            let o = out.get_or_insert_with(|| String::with_capacity(json.len()));
+            o.push_str(&json[copied..start]);
+            o.push_str(&serde_json::to_string(&c).expect("strings serialize"));
+            copied = end;
+        }
+        i = end;
+    }
+    let mut o = out?;
+    o.push_str(&json[copied..]);
+    Some(o)
 }
 
 impl<'de> Deserialize<'de> for JsonObject {
@@ -252,6 +313,37 @@ mod tests {
                 .is_err()
         );
         assert!(JsonObject::parse(b"{} trailing").is_err());
+    }
+
+    #[test]
+    fn vault_values_are_scrubbed_however_they_are_escaped() {
+        let mut s = Scrubber::new();
+        s.add("github", "gh-sécret\"<1>");
+        s.add("mail", "mail-pass-1");
+        // 标准写法、Python 的 \u 转义、Go 的 HTML 安全转义、出现在键里、嵌套的数组里。
+        let input = concat!(
+            r#"{"model":"main","system":"use gh-sécret\"<1> now","#,
+            r#""messages":[{"role":"user","content":[{"type":"text","text":"py: gh-s\u00e9cret\"\u003c1\u003e"}]},"#,
+            r#"{"role":"tool","content":"mail-pass-1 and mail-pass-1"}],"#,
+            r#""metadata":{"mail-pass-1":"x"},"n":5,"stream":true}"#
+        );
+        let mut obj = JsonObject::parse(input.as_bytes()).unwrap();
+        assert!(obj.scrub(&s));
+        let out = String::from_utf8(obj.to_vec()).unwrap();
+        assert_eq!(
+            out,
+            concat!(
+                r#"{"model":"main","system":"use [vault:github] now","#,
+                r#""messages":[{"role":"user","content":[{"type":"text","text":"py: [vault:github]"}]},"#,
+                r#"{"role":"tool","content":"[vault:mail] and [vault:mail]"}],"#,
+                r#""metadata":{"[vault:mail]":"x"},"n":5,"stream":true}"#
+            )
+        );
+        // 没有要抹的：一个字节都不变。
+        let clean = r#"{"model":"main","messages":[{"role":"user","content":"hi \u00e9 \" ok"}]}"#;
+        let mut obj = JsonObject::parse(clean.as_bytes()).unwrap();
+        assert!(!obj.scrub(&s));
+        assert_eq!(String::from_utf8(obj.to_vec()).unwrap(), clean);
     }
 
     #[test]

@@ -93,6 +93,24 @@ pub struct Credential {
     pub disabled: bool,
 }
 
+/// 用户保险箱里的一个条目（9.11）：转发前把它的值从请求里抹掉。
+#[derive(Clone, Serialize, Deserialize)]
+pub struct SealedVault {
+    pub id: String,
+    pub name: String,
+    /// 密钥库用用户 DEK 封好的账号和密码。
+    pub sealed: Vec<u8>,
+}
+
+impl std::fmt::Debug for SealedVault {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SealedVault")
+            .field("id", &self.id)
+            .field("name", &self.name)
+            .finish_non_exhaustive()
+    }
+}
+
 /// 网关读取路由数据的接口。实现要快（每个请求都会调用），生产实现应在本地缓存。
 #[async_trait]
 pub trait Directory: Send + Sync {
@@ -104,6 +122,11 @@ pub trait Directory: Send + Sync {
     async fn grant_aliases(&self, _grant: &str) -> Vec<String> {
         Vec::new()
     }
+    /// 用户保险箱的条目（9.11）。读不到时为 None：网关拒绝转发（抹不掉就不发）。
+    /// 网关自己短时缓存解开后的值，这里不用缓存。
+    async fn vault_items(&self, _user_id: &str) -> Option<Vec<SealedVault>> {
+        Some(Vec::new())
+    }
 }
 
 #[derive(Default)]
@@ -111,6 +134,7 @@ struct Snapshot {
     instances: HashMap<String, Arc<Instance>>,
     credentials: HashMap<String, Arc<Credential>>,
     revoked_grants: HashSet<String>,
+    vault: HashMap<String, Vec<SealedVault>>,
 }
 
 /// 内存里的 [`Directory`]，整体替换，读多写少。
@@ -144,8 +168,15 @@ impl MemoryDirectory {
                 .map(|c| (c.id.clone(), Arc::new(c)))
                 .collect(),
             revoked_grants: revoked_grants.into_iter().collect(),
+            vault: HashMap::new(),
         };
         *self.0.write().unwrap_or_else(|e| e.into_inner()) = snapshot;
+    }
+
+    /// 设置用户保险箱的条目。
+    pub fn set_vault(&self, user_id: &str, items: Vec<SealedVault>) {
+        let mut s = self.0.write().unwrap_or_else(|e| e.into_inner());
+        s.vault.insert(user_id.to_owned(), items);
     }
 
     pub fn upsert_instance(&self, instance: Instance) {
@@ -185,6 +216,18 @@ impl Directory for MemoryDirectory {
             .unwrap_or_else(|e| e.into_inner())
             .revoked_grants
             .contains(grant)
+    }
+
+    async fn vault_items(&self, user_id: &str) -> Option<Vec<SealedVault>> {
+        Some(
+            self.0
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .vault
+                .get(user_id)
+                .cloned()
+                .unwrap_or_default(),
+        )
     }
 }
 

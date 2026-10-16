@@ -15,8 +15,8 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use bytes::Bytes;
 use futures_util::{Stream, StreamExt};
-use keyvault::SecretOpener;
 use keyvault::secrecy::{ExposeSecret, SecretString};
+use keyvault::{Scrubber, SecretOpener};
 use serde_json::{Value, json};
 use tokio::sync::OwnedSemaphorePermit;
 use url::{Host, Url};
@@ -72,10 +72,21 @@ impl Default for Options {
     }
 }
 
+/// 每个用户保险箱里的值（9.11），解开后短时缓存。新存的条目最多这么久后才开始抹。
+const VAULT_TTL: Duration = Duration::from_secs(5);
+
+/// 用户 → 抹值用的列表（解开的保险箱值），短时缓存。
+#[derive(Default)]
+pub struct VaultScrubbers(
+    std::sync::Mutex<std::collections::HashMap<String, (Instant, Arc<Scrubber>)>>,
+);
+
 pub struct Gateway {
     pub verifier: SandboxTokenVerifier,
     pub directory: Arc<dyn Directory>,
     pub secrets: Arc<dyn SecretOpener>,
+    /// 转发前从请求里抹掉保险箱的值（9.11）。
+    pub vault: VaultScrubbers,
     pub usage: Arc<dyn UsageSink>,
     pub ledger: Arc<dyn BudgetLedger>,
     pub limiter: Limiter,
@@ -388,6 +399,34 @@ impl Gateway {
         Ok(Caller { claims, instance })
     }
 
+    /// 用户保险箱里的值（9.11）。没有条目时为 Some(None)；读不到时为 None（调用方拒绝转发）。
+    async fn scrubber(&self, user: &str) -> Option<Option<Arc<Scrubber>>> {
+        {
+            let cache = self.vault.0.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some((at, s)) = cache.get(user)
+                && at.elapsed() < VAULT_TTL
+            {
+                return Some((!s.is_empty()).then(|| s.clone()));
+            }
+        }
+        let items = self.directory.vault_items(user).await?;
+        let mut scrubber = Scrubber::new();
+        for item in &items {
+            match self.secrets.open_vault_secret(user, &item.id, &item.sealed) {
+                Ok(secret) => scrubber.add_secret(&item.name, &secret),
+                // 解不开的值也不可能交给过沙箱。
+                Err(e) => tracing::warn!(item = %item.id, error = %e, "cannot open a vault item"),
+            }
+        }
+        let scrubber = Arc::new(scrubber);
+        let mut cache = self.vault.0.lock().unwrap_or_else(|e| e.into_inner());
+        if cache.len() >= 10_000 {
+            cache.retain(|_, (at, _)| at.elapsed() < VAULT_TTL);
+        }
+        cache.insert(user.to_owned(), (Instant::now(), scrubber.clone()));
+        Some((!scrubber.is_empty()).then_some(scrubber))
+    }
+
     fn budget_day(&self) -> u64 {
         let secs = now_secs() as i64 + self.options.budget_utc_offset_secs;
         (secs.max(0) / 86_400) as u64
@@ -668,8 +707,23 @@ async fn forward_inner(
         )
     })?
     .map_err(|_| err(Kind::TooLarge, "request body is too large"))?;
-    let body = JsonObject::parse(&bytes).map_err(|m| err(Kind::Invalid, m))?;
+    let mut body = JsonObject::parse(&bytes).map_err(|m| err(Kind::Invalid, m))?;
     drop(bytes);
+    // 保险箱里的值不能到模型那里（9.11）：转发前抹掉。读不到保险箱就不转发。
+    match gw.scrubber(&caller.instance.user_id).await {
+        Some(Some(scrubber)) => {
+            if body.scrub(&scrubber) {
+                metrics::counter!("thinktin_llm_vault_scrubbed_total").increment(1);
+            }
+        }
+        Some(None) => {}
+        None => {
+            return Err(err(
+                Kind::Upstream,
+                "the password vault is unavailable, try again later",
+            ));
+        }
+    }
     let alias = body
         .get_str("model")
         .map_err(|m| err(Kind::Invalid, m))?

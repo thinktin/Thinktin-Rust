@@ -2,7 +2,7 @@
 //! 只能读路由相关的表、写用量，碰不到对话、事件这些数据。
 
 use chrono::{DateTime, Utc};
-use proto::domain::{CredentialId, GrantId, InstanceId, InstanceLimits, UserId};
+use proto::domain::{CredentialId, GrantId, InstanceId, InstanceLimits, UserId, VaultItemId};
 use uuid::Uuid;
 
 use crate::{Llmgw, Result, Tx, from_json, unsigned};
@@ -76,6 +76,22 @@ impl Tx<Llmgw> {
                 })
                 .collect(),
         }))
+    }
+
+    /// 用户保险箱条目的密文（9.11）：转发前把里面的值从请求里抹掉。返回（条目 id，名字，密文）。
+    pub async fn vault_items_sealed(
+        &mut self,
+        user: UserId,
+    ) -> Result<Vec<(VaultItemId, String, Vec<u8>)>> {
+        let rows: Vec<(Uuid, String, Vec<u8>)> =
+            sqlx::query_as("SELECT id, name, sealed FROM vault_items WHERE user_id = $1")
+                .bind(user.0)
+                .fetch_all(self.conn())
+                .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, name, sealed)| (VaultItemId(id), name, sealed))
+            .collect())
     }
 
     /// 还能用的授权允许的模型别名（空表示实例配置的全部）；授权被吊销、过期或者不存在时为 None。

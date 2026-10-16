@@ -18,7 +18,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use crate::limits::BudgetLedger;
-use crate::store::{Credential, Directory, Fallback, Instance, Limits, Route};
+use crate::store::{Credential, Directory, Fallback, Instance, Limits, Route, SealedVault};
 use crate::usage::{UsageRecord, UsageSink};
 
 /// 缓存条目上限，超过时清掉过期的。
@@ -136,22 +136,9 @@ impl PgDirectory {
         let key = tx.user_key(c.user_id).await?;
         tx.rollback().await?;
         let uid = c.user_id.to_string();
-        match key {
-            Some((kms_key_id, ciphertext)) => {
-                let wrapped = WrappedKey {
-                    kms_key_id,
-                    ciphertext,
-                };
-                if self.keys.get(&uid).as_ref() != Some(&wrapped) {
-                    self.keys.remove(&uid);
-                    self.keys.insert_new(&uid, wrapped);
-                }
-            }
-            // 用户注销后 DEK 已销毁：密钥库里也不留。
-            None => {
-                self.keys.remove(&uid);
-                return Ok(None);
-            }
+        // 用户注销后 DEK 已销毁：密钥库里也不留。
+        if !self.remember_user_key(&uid, key) {
+            return Ok(None);
         }
         Ok(Some(Arc::new(Credential {
             id: c.id.to_string(),
@@ -177,6 +164,52 @@ impl PgDirectory {
         let r = tx.usable_grant_aliases(id).await?;
         tx.rollback().await?;
         Ok(r.map(Arc::new))
+    }
+
+    /// 把用户的包裹 DEK 放进共享的密钥库（解密 key 和保险箱条目都要它）；用户注销后清掉。
+    fn remember_user_key(&self, uid: &str, key: Option<(String, Vec<u8>)>) -> bool {
+        match key {
+            Some((kms_key_id, ciphertext)) => {
+                let wrapped = WrappedKey {
+                    kms_key_id,
+                    ciphertext,
+                };
+                if self.keys.get(uid).as_ref() != Some(&wrapped) {
+                    self.keys.remove(uid);
+                    self.keys.insert_new(uid, wrapped);
+                }
+                true
+            }
+            None => {
+                self.keys.remove(uid);
+                false
+            }
+        }
+    }
+
+    async fn load_vault(&self, user_id: &str) -> store::Result<Vec<SealedVault>> {
+        let Ok(user) = user_id.parse::<UserId>() else {
+            return Ok(Vec::new());
+        };
+        let mut tx = self.db.llmgw().await?;
+        let items = tx.vault_items_sealed(user).await?;
+        let key = if items.is_empty() {
+            None
+        } else {
+            tx.user_key(user).await?
+        };
+        tx.rollback().await?;
+        if items.is_empty() || !self.remember_user_key(user_id, key) {
+            return Ok(Vec::new());
+        }
+        Ok(items
+            .into_iter()
+            .map(|(id, name, sealed)| SealedVault {
+                id: id.to_string(),
+                name,
+                sealed,
+            })
+            .collect())
     }
 
     /// 读不到时按不能用处理（宁可拒绝）。
@@ -240,6 +273,16 @@ impl Directory for PgDirectory {
             .await
             .map(|a| a.as_ref().clone())
             .unwrap_or_default()
+    }
+
+    async fn vault_items(&self, user_id: &str) -> Option<Vec<SealedVault>> {
+        match self.load_vault(user_id).await {
+            Ok(items) => Some(items),
+            Err(e) => {
+                tracing::error!(error = %e, "loading vault items failed");
+                None
+            }
+        }
     }
 }
 
