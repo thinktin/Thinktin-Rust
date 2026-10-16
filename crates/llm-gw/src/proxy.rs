@@ -821,9 +821,11 @@ async fn forward_inner(
     if let Some(result) = last_failure {
         return result;
     }
-    Err(primary_error
+    let e = primary_error
         .or(first_skip)
-        .unwrap_or_else(|| err(Kind::Internal, "no route to try")))
+        .unwrap_or_else(|| err(Kind::Internal, "no route to try"));
+    gw.record_unavailable(&request, route, e.status()).await;
+    Err(e)
 }
 
 /// 一个请求里各次尝试共用的部分。
@@ -849,6 +851,54 @@ enum Attempt {
         result: Result<Response, ApiError>,
         reason: &'static str,
     },
+}
+
+impl Gateway {
+    /// 降级链里一把 key 都没用上、请求没发出去：记一条结果是 `unavailable` 的用量（不计费），
+    /// 执行器据此认出 agent 卡在 key 上（7.11），用量看板里算一次失败。
+    async fn record_unavailable(
+        &self,
+        req: &AttemptRequest<'_>,
+        route: &crate::store::Route,
+        status: StatusCode,
+    ) {
+        let vendor = self
+            .directory
+            .credential(&route.credential)
+            .await
+            .map(|c| c.vendor)
+            .unwrap_or_default();
+        metrics::counter!(
+            "thinktin_llm_requests_total",
+            "endpoint" => req.endpoint.name(),
+            "outcome" => "unavailable",
+            "vendor" => vendor.clone()
+        )
+        .increment(1);
+        self.usage.record(UsageRecord {
+            ts_ms: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0),
+            instance: req.caller.instance.id.clone(),
+            user: req.caller.claims.uid.clone(),
+            grant: req.caller.claims.grant.clone(),
+            sandbox: req.caller.claims.sbx.clone(),
+            token_id: req.caller.claims.jti.clone(),
+            alias: req.alias.to_owned(),
+            credential: route.credential.clone(),
+            vendor,
+            upstream_model: route.model.clone(),
+            endpoint: req.endpoint.name(),
+            stream: req.stream,
+            status: status.as_u16(),
+            outcome: Outcome::Unavailable,
+            usage: None,
+            charged_tokens: 0,
+            estimated: false,
+            duration_ms: 0,
+        });
+    }
 }
 
 /// 换一把 key 重发可能成功的上游状态码，以及这把 key 冷却多久（没有 Retry-After 时）。

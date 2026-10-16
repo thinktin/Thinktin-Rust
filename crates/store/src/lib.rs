@@ -48,7 +48,7 @@ pub use instances::{InstanceRuntime, NewInstance};
 pub use llmgw::{GatewayInstance, GatewayRoute};
 pub use outbox::{NewOutboxItem, OutboxItem};
 pub use plans::{DueTrigger, NewPlan};
-pub use runs::{NewRun, RunChange, RunRecord};
+pub use runs::{ModelCall, NewRun, RunChange, RunRecord};
 pub use sessions::{LoginCode, SessionRecord, SessionState};
 pub use usage::{NewUsage, UsageBucket, UsageFilter, UsageGroup};
 pub use users::AccountSummary;
@@ -164,6 +164,13 @@ impl Internal for Worker {}
 impl Internal for Llmgw {}
 
 impl<R> Tx<R> {
+    /// 数据库的当前时间（事务开始的时间）：和库里记下的时间比较时用，不受各副本时钟偏差影响。
+    pub async fn db_now(&mut self) -> Result<chrono::DateTime<chrono::Utc>> {
+        Ok(sqlx::query_scalar("SELECT now()")
+            .fetch_one(self.conn())
+            .await?)
+    }
+
     pub async fn commit(self) -> Result<()> {
         self.tx.commit().await?;
         Ok(())

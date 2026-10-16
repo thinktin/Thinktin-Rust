@@ -3,7 +3,7 @@
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use proto::domain::{Instance, InstanceId, ModelRoute};
+use proto::domain::{Instance, InstanceId, ModelRoute, RunState};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -193,6 +193,8 @@ pub async fn set_routes(
         &json!({ "aliases": req.routes.iter().map(|r| &r.alias).collect::<Vec<_>>() }),
     )
     .await?;
+    // 换了 key 或者加了备用 key：等 key 的运行（7.11）马上接着跑。
+    t.wake_waiting_runs(RunState::WaitingQuota).await?;
     let routes = t.model_routes(id).await?;
     t.commit().await?;
     Ok(Json(json!({ "routes": routes })))

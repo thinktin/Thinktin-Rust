@@ -6,7 +6,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use keyvault::SealedSecret;
 use keyvault::secrecy::SecretString;
-use proto::domain::{Credential, CredentialId, UserId};
+use proto::domain::{Credential, CredentialId, RunState, UserId};
 use proto::vendors;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -130,6 +130,8 @@ pub async fn create(
         &json!({ "vendor": cred.vendor, "last4": cred.last4 }),
     )
     .await?;
+    // 等 key 的运行（7.11）马上接着跑：还用不了的话执行器会让它接着等。
+    t.wake_waiting_runs(RunState::WaitingQuota).await?;
     t.commit().await?;
     Ok((StatusCode::CREATED, Json(cred)))
 }
@@ -165,6 +167,9 @@ pub async fn update(
             &json!({}),
         )
         .await?;
+        if !disabled {
+            t.wake_waiting_runs(RunState::WaitingQuota).await?;
+        }
     }
     let cred = t.credential(id).await?;
     t.commit().await?;
@@ -201,6 +206,7 @@ pub async fn replace_secret(
         &json!({ "last4": sealed.last4 }),
     )
     .await?;
+    t.wake_waiting_runs(RunState::WaitingQuota).await?;
     let cred = t.credential(id).await?;
     t.commit().await?;
     Ok(Json(cred))

@@ -76,6 +76,8 @@ pub struct RunChange {
     pub not_before: Option<DateTime<Utc>>,
     /// 放掉执行租约（进入长时间等待、退避时）。进入结束状态总是放掉。
     pub release_lease: bool,
+    /// 进入等待电脑、等待 key（7.11）时：最晚等到什么时候，过了按计划策略结束。
+    pub wait_deadline: Option<DateTime<Utc>>,
 }
 
 /// 后台看到的运行：带租约、预算等执行细节。
@@ -93,6 +95,16 @@ pub struct RunRecord {
     pub not_before: DateTime<Utc>,
     pub lease_owner: Option<String>,
     pub lease_expires_at: Option<DateTime<Utc>>,
+}
+
+/// 模型网关记下的一次模型调用（只有结果，没有内容）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelCall {
+    /// 厂商返回的状态码；网关自己拒绝的是它回给 agent 的状态码；连不上是 0。
+    pub status: u16,
+    /// `complete`、`upstream_status`、`unavailable`（没有能用的 key，请求没发出去）……
+    pub outcome: String,
+    pub at: DateTime<Utc>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -396,6 +408,21 @@ impl Tx<Tenant> {
         .await?;
         Ok(done.rows_affected())
     }
+
+    /// 等的事情可能发生了（7.11：补上或换了 key、改了模型路由，电脑上线）：在 `state` 里等着的运行
+    /// 马上可以重新领起来接着跑。还是不行的话执行器会让它接着等。返回唤醒的个数。
+    pub async fn wake_waiting_runs(&mut self, state: RunState) -> Result<u64> {
+        let user = self.user();
+        let done = sqlx::query(
+            "UPDATE runs SET not_before = now(), updated_at = now() \
+             WHERE user_id = $1 AND state = $2 AND lease_owner IS NULL AND not_before > now()",
+        )
+        .bind(user.0)
+        .bind(state.as_str())
+        .execute(self.conn())
+        .await?;
+        Ok(done.rows_affected())
+    }
 }
 
 impl Tx<Worker> {
@@ -432,7 +459,9 @@ impl Tx<Worker> {
     }
 
     /// 领取下一个可以开始的运行，进入“启动中”并拿到租约：
-    /// 排队中且实例空闲的，或者退避到期且没人持有租约的。账号冻结的不领。
+    /// 排队中且实例空闲的，退避到期且没人持有租约的，或者等电脑、等 key 到了该接着跑的时候
+    /// （等的事情发生了、到了下次试探的时间，还没超时）。账号冻结的不领。
+    /// 从等待里接着跑不占重试次数：尝试次数和上限一起加一。
     /// 两个副本同时领到同一实例的两个运行时，后提交的一方撞上“一个实例一个运行”的唯一索引，
     /// 这里退回保存点换下一个。
     pub async fn claim_next_run(
@@ -448,7 +477,9 @@ impl Tx<Worker> {
                       SELECT 1 FROM runs a WHERE a.instance_id = r.instance_id AND a.kind = 'agent' AND a.state IN \
                         ('starting', 'running', 'waiting_approval', 'waiting_device', 'waiting_quota', \
                          'waiting_children', 'backoff'))) \
-                   OR (r.state = 'backoff' AND (r.lease_owner IS NULL OR r.lease_expires_at < now()))) \
+                   OR (r.state = 'backoff' AND (r.lease_owner IS NULL OR r.lease_expires_at < now())) \
+                   OR (r.state IN ('waiting_quota', 'waiting_device') AND r.lease_owner IS NULL \
+                       AND (r.wait_deadline IS NULL OR r.wait_deadline > now()))) \
                  ORDER BY r.not_before, r.id LIMIT 1 \
                  FOR UPDATE OF r SKIP LOCKED",
             )
@@ -459,8 +490,10 @@ impl Tx<Worker> {
             };
             sqlx::query("SAVEPOINT claim").execute(self.conn()).await?;
             let claimed: Result<Row> = sqlx::query_as(concat!(
-                "UPDATE runs SET state = 'starting', attempt = attempt + 1, lease_owner = $2, \
-                   lease_expires_at = now() + make_interval(secs => $3), updated_at = now() \
+                "UPDATE runs SET state = 'starting', attempt = attempt + 1, \
+                   max_attempts = max_attempts + CASE WHEN state IN ('waiting_quota', 'waiting_device') \
+                     THEN 1 ELSE 0 END, \
+                   lease_owner = $2, lease_expires_at = now() + make_interval(secs => $3), updated_at = now() \
                  WHERE id = $1 RETURNING ",
                 columns!()
             ))
@@ -549,6 +582,58 @@ impl Tx<Worker> {
         rows.into_iter().map(Row::into_record).collect()
     }
 
+    /// 等电脑、等 key 超时的运行（7.11）：拿到租约交给执行器按策略结束。没人持有租约的才拿。
+    pub async fn claim_expired_waits(
+        &mut self,
+        owner: &str,
+        lease: Duration,
+        limit: i64,
+    ) -> Result<Vec<RunRecord>> {
+        let rows: Vec<Row> = sqlx::query_as(concat!(
+            "UPDATE runs SET lease_owner = $1, lease_expires_at = now() + make_interval(secs => $2), \
+               updated_at = now() \
+             WHERE id IN (SELECT id FROM runs WHERE state IN ('waiting_quota', 'waiting_device') \
+                            AND wait_deadline <= now() \
+                            AND (lease_owner IS NULL OR lease_expires_at < now()) \
+                          ORDER BY wait_deadline LIMIT $3 FOR UPDATE SKIP LOCKED) \
+             RETURNING ",
+            columns!()
+        ))
+        .bind(owner)
+        .bind(secs(lease))
+        .bind(limit)
+        .fetch_all(self.conn())
+        .await?;
+        rows.into_iter().map(Row::into_record).collect()
+    }
+
+    /// 模型网关记下的这个实例从 `since` 起最近的 `limit` 次模型调用（新的在前）：状态码和结果。
+    /// 执行器据此判断 agent 是不是卡在 key 失效、额度用完上（7.11）。
+    pub async fn recent_model_calls(
+        &mut self,
+        instance: InstanceId,
+        since: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<Vec<ModelCall>> {
+        let rows: Vec<(i32, String, DateTime<Utc>)> = sqlx::query_as(
+            "SELECT status, outcome, created_at FROM usage_records \
+             WHERE instance_id = $1 AND created_at >= $2 ORDER BY created_at DESC LIMIT $3",
+        )
+        .bind(instance.0)
+        .bind(since)
+        .bind(limit)
+        .fetch_all(self.conn())
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(status, outcome, at)| ModelCall {
+                status: u16::try_from(status).unwrap_or_default(),
+                outcome,
+                at,
+            })
+            .collect())
+    }
+
     /// 推进状态。要求租约在 `owner` 手里、迁移合法；从排队或退避进入启动中算一次新的尝试。
     pub async fn transition_run(
         &mut self,
@@ -577,6 +662,7 @@ impl Tx<Worker> {
             "UPDATE runs SET state = $2, state_reason = $3, \
                summary = coalesce($4, summary), error = coalesce($5, error), \
                not_before = coalesce($6, not_before), \
+               wait_deadline = coalesce($10, wait_deadline), \
                attempt = attempt + CASE WHEN $7 THEN 1 ELSE 0 END, \
                lease_owner = CASE WHEN $8 THEN NULL ELSE lease_owner END, \
                lease_expires_at = CASE WHEN $8 THEN NULL ELSE lease_expires_at END, \
@@ -595,6 +681,7 @@ impl Tx<Worker> {
         .bind(new_attempt)
         .bind(release)
         .bind(to.is_terminal())
+        .bind(change.wait_deadline)
         .fetch_one(self.conn())
         .await?;
         row.into_record()

@@ -839,6 +839,13 @@ async fn daily_budget_stops_the_key() {
         "billing_error"
     );
     assert_eq!(env.upstream.requests().len(), 1);
+    // 请求没发出去，也记一条（不计费）：执行器据此让运行等 key（7.11）。
+    let r = &env.records(2).await[1];
+    assert_eq!(
+        (r.outcome, r.status, r.charged_tokens, r.credential.as_str()),
+        (Outcome::Unavailable, 402, 0, "cred-main")
+    );
+    assert_eq!(r.instance, "inst-1");
 }
 
 #[tokio::test]

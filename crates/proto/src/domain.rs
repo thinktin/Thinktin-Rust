@@ -306,10 +306,13 @@ pub struct PlanPolicy {
     /// 预授权的工具种类（ACP 的 tool kind，比如 read、edit、search）。
     pub preauthorized_tools: Vec<String>,
     pub approval_timeout_secs: u64,
+    /// 审批超时，以及等电脑、等 key 超时（7.11）之后怎么办。等 key 没法“跳过”，按失败处理。
     pub on_approval_timeout: ApprovalTimeoutAction,
     pub budget: RunBudget,
     /// 每天最多消耗的 token 数（整个计划）。
     pub daily_token_limit: Option<u64>,
+    /// 等电脑上线、等补上 key 最多等多久（7.11）。
+    pub wait_timeout_secs: u64,
 }
 
 impl Default for PlanPolicy {
@@ -320,6 +323,7 @@ impl Default for PlanPolicy {
             on_approval_timeout: ApprovalTimeoutAction::PausePlan,
             budget: RunBudget::default(),
             daily_token_limit: None,
+            wait_timeout_secs: 24 * 3600,
         }
     }
 }

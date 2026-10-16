@@ -11,3 +11,4 @@ pub mod scheduler;
 pub mod shim;
 pub mod tools;
 pub mod vault;
+pub mod waits;

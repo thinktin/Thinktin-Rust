@@ -48,6 +48,11 @@ fn check_policy(policy: &PlanPolicy) -> ApiResult<()> {
             "approval_timeout_secs must be 60 s to 7 days",
         ));
     }
+    if policy.wait_timeout_secs < 60 || policy.wait_timeout_secs > 7 * 24 * 3600 {
+        return Err(ApiError::invalid(
+            "wait_timeout_secs must be 60 s to 7 days",
+        ));
+    }
     let b = &policy.budget;
     if b.max_duration_secs == 0 || b.max_duration_secs > 24 * 3600 {
         return Err(ApiError::invalid(

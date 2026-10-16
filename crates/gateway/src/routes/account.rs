@@ -6,7 +6,7 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use orchestrator::account::{self, Stopped};
-use proto::domain::{Device, DeviceId, DevicePlatform, PushChannelKind, User};
+use proto::domain::{Device, DeviceId, DevicePlatform, PushChannelKind, RunState, User};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -100,12 +100,19 @@ pub async fn login(
     };
     // 注册风控（5.4）：手机号没注册过时，按来源地址和全站的新注册上限放行。
     let limits = s.limits().clone();
+    let computer = device.platform == DevicePlatform::Macos;
     let l = s
         .auth
         .login_gated(&req.phone, &req.code, &device, move || {
             limits.signup(ip).map_err(|l| l.0)
         })
         .await?;
+    if computer {
+        // 电脑上线（7.11）：等电脑的运行马上接着跑。
+        let mut t = s.db.tenant(l.user.id).await?;
+        t.wake_waiting_runs(RunState::WaitingDevice).await?;
+        t.commit().await?;
+    }
     Ok(Json(LoginResp {
         user: l.user,
         new_user: l.new_user,

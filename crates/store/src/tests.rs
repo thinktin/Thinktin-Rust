@@ -11,7 +11,8 @@ use serde_json::json;
 
 use crate::testing::TestDb;
 use crate::{
-    Db, Error, NewCredential, NewInboxItem, NewInstance, NewOutboxItem, NewPlan, NewRun, RunChange,
+    Db, Error, NewCredential, NewInboxItem, NewInstance, NewOutboxItem, NewPlan, NewRun, NewUsage,
+    RunChange,
 };
 
 const LEASE: Duration = Duration::from_secs(60);
@@ -1636,4 +1637,138 @@ async fn vault_items_and_requests() {
     ));
     assert_eq!(a.vault_request(r1.id).await.unwrap().item_id, None);
     a.commit().await.unwrap();
+}
+
+/// 等 key、等电脑（7.11）：放掉租约等着；唤醒后接着跑不占重试次数；过了最晚的时间交给超时处理。
+#[tokio::test]
+async fn runs_wait_for_a_key_then_resume_or_time_out() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = user(db, "+8613800000021").await;
+    let inst = instance(db, alice).await;
+    let run = queue_run(db, alice, &inst, "work").await;
+
+    let mut w = db.worker().await.unwrap();
+    let claimed = w.claim_next_run("a", LEASE).await.unwrap().unwrap();
+    assert_eq!((claimed.run.attempt, claimed.max_attempts), (1, 3));
+    w.transition_run(run.id, "a", RunState::Running, &RunChange::default())
+        .await
+        .unwrap();
+    let deadline = Utc::now() + Days::hours(1);
+    let waiting = w
+        .transition_run(
+            run.id,
+            "a",
+            RunState::WaitingQuota,
+            &RunChange {
+                reason: Some("key invalid".into()),
+                not_before: Some(deadline),
+                release_lease: true,
+                wait_deadline: Some(deadline),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(waiting.lease_owner, None);
+    w.commit().await.unwrap();
+
+    // 等用户换 key：领不到，也没超时。
+    let mut w = db.worker().await.unwrap();
+    assert!(w.claim_next_run("b", LEASE).await.unwrap().is_none());
+    assert!(
+        w.claim_expired_waits("b", LEASE, 10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    w.commit().await.unwrap();
+
+    // 换了 key：马上能领（只唤醒等 key 的），接着跑不占重试次数。
+    let mut tx = db.tenant(alice).await.unwrap();
+    assert_eq!(
+        tx.wake_waiting_runs(RunState::WaitingDevice).await.unwrap(),
+        0
+    );
+    assert_eq!(
+        tx.wake_waiting_runs(RunState::WaitingQuota).await.unwrap(),
+        1
+    );
+    tx.commit().await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    let resumed = w.claim_next_run("b", LEASE).await.unwrap().unwrap();
+    assert_eq!(
+        (
+            resumed.run.id,
+            resumed.run.state,
+            resumed.run.attempt,
+            resumed.max_attempts
+        ),
+        (run.id, RunState::Starting, 2, 4)
+    );
+
+    // 又卡住了，而且已经过了最晚的时间：不再领起来，交给超时处理（拿到租约）。
+    w.transition_run(run.id, "b", RunState::Running, &RunChange::default())
+        .await
+        .unwrap();
+    let past = Utc::now() - Days::seconds(1);
+    w.transition_run(
+        run.id,
+        "b",
+        RunState::WaitingQuota,
+        &RunChange {
+            not_before: Some(past),
+            release_lease: true,
+            wait_deadline: Some(past),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    w.commit().await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    assert!(w.claim_next_run("c", LEASE).await.unwrap().is_none());
+    let expired = w.claim_expired_waits("c", LEASE, 10).await.unwrap();
+    assert_eq!(expired.len(), 1);
+    assert_eq!(expired[0].lease_owner.as_deref(), Some("c"));
+    w.transition_run(run.id, "c", RunState::Failed, &RunChange::default())
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+
+    // 模型网关记下的调用结果，新的在前。
+    for status in [401u16, 402] {
+        let mut w = db.worker().await.unwrap();
+        w.insert_usage(&NewUsage {
+            user: alice,
+            instance: inst.id,
+            alias: "main".into(),
+            vendor: "anthropic".into(),
+            upstream_model: "m".into(),
+            endpoint: "messages".into(),
+            status,
+            outcome: "upstream_status".into(),
+            ..NewUsage::default()
+        })
+        .await
+        .unwrap();
+        w.commit().await.unwrap();
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let mut w = db.worker().await.unwrap();
+    let since = w.db_now().await.unwrap() - Days::minutes(1);
+    let calls = w.recent_model_calls(inst.id, since, 10).await.unwrap();
+    assert_eq!(
+        calls.iter().map(|c| c.status).collect::<Vec<_>>(),
+        [402, 401]
+    );
+    assert!(calls.iter().all(|c| c.outcome == "upstream_status"));
+    let later = w.db_now().await.unwrap() + Days::minutes(1);
+    assert!(
+        w.recent_model_calls(inst.id, later, 10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    w.rollback().await.unwrap();
 }

@@ -13,7 +13,10 @@ use orchestrator::shim::{
     ConnectError, NoPlatformTools, PlatformTools, ShimConnector, ShimLaunch, ShimProcess,
     ShimSession, ToolContext, ToolOutput,
 };
-use proto::domain::{GrantScope, Instance, RunBudget, RunId, RunSource, RunState, UserId};
+use proto::domain::{
+    CatchUp, GrantScope, Instance, PlanAuthor, PlanPolicy, RunBudget, RunId, RunSource, RunState,
+    UserId,
+};
 use proto::shim::{
     DecisionSource, PermissionKind, PermissionOption, PlatformTool, ShimCommand, ShimEvent,
     StopReason,
@@ -21,7 +24,7 @@ use proto::shim::{
 use sandbox::local::LocalProvider;
 use serde_json::{Value, json};
 use store::testing::TestDb;
-use store::{NewRun, NewUsage};
+use store::{NewPlan, NewRun, NewUsage};
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 
@@ -238,6 +241,27 @@ async fn fake_shim(
                             break;
                         }
                     }
+                } else if text.contains("broken key") && !text.contains("续跑说明") {
+                    // 模型调用一直失败（测试往用量表里写失败记录），agent 卡着重试，直到被取消。
+                    while let Some(c) = cmds.recv().await {
+                        match c {
+                            ShimCommand::Cancel { run_id } => {
+                                let _ = ev.send(ended(&run_id, StopReason::Cancelled)).await;
+                                break;
+                            }
+                            ShimCommand::Shutdown => return,
+                            _ => {}
+                        }
+                    }
+                } else if text.contains("gives up") {
+                    // 模型调用失败几次以后 agent 自己放弃这一轮（测试在这期间写失败记录）。
+                    tokio::time::sleep(Duration::from_millis(1500)).await;
+                    let _ = ev.send(chunk(&run_id, "API Error: 429")).await;
+                    let _ = ev.send(ended(&run_id, StopReason::EndTurn)).await;
+                } else if text.contains("broken key") {
+                    // 补上 key 以后接着跑。
+                    let _ = ev.send(chunk(&run_id, "back to work")).await;
+                    let _ = ev.send(ended(&run_id, StopReason::EndTurn)).await;
                 } else if text.contains("crash") {
                     return;
                 } else if text.contains("use tool") {
@@ -1209,4 +1233,175 @@ async fn the_vault_needs_the_grant() {
         "{:?}",
         rec.run.summary
     );
+}
+
+/// 模型网关记下的一次失败的模型调用。
+async fn model_call_failed(e: &Env, status: u16) {
+    let mut w = e.t.db.worker().await.unwrap();
+    w.insert_usage(&NewUsage {
+        user: e.user,
+        instance: e.instance.id,
+        alias: "main".into(),
+        vendor: "anthropic".into(),
+        upstream_model: "m".into(),
+        endpoint: "messages".into(),
+        status,
+        outcome: "upstream_status".into(),
+        ..NewUsage::default()
+    })
+    .await
+    .unwrap();
+    w.commit().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_run_stuck_on_its_model_key_waits_until_a_key_is_added() {
+    let Some(e) = env().await else { return };
+    let run = e.queue("broken key", None, 3).await;
+    let (_stop, h) = e.spawn().await;
+    e.wait_state(run, RunState::Running).await;
+    // 主 key、备用 key 都 401：降级链试完了，agent 还在重试。
+    model_call_failed(&e, 401).await;
+    model_call_failed(&e, 401).await;
+    tokio::time::timeout(Duration::from_secs(20), h)
+        .await
+        .unwrap()
+        .unwrap();
+    let rec = e.state(run).await;
+    assert_eq!(rec.run.state, RunState::WaitingQuota, "{:?}", rec.run);
+    assert_eq!(rec.lease_owner, None, "waiting gives the lease back");
+    assert!(
+        rec.run
+            .state_reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("key"),
+        "{:?}",
+        rec.run.state_reason
+    );
+    // 要用户处理：通知用户换 key。
+    assert!(
+        e.inbox().await.iter().any(|i| i.body.contains("更换 key")),
+        "{:?}",
+        e.inbox().await
+    );
+    assert!(
+        e.events(run)
+            .await
+            .iter()
+            .any(|(k, p)| k == "run.state" && p["state"] == "waiting_quota")
+    );
+    // 还没补上 key：领不到。
+    assert!(e.exec.claim().await.unwrap().is_none());
+
+    // 补上 key：接着跑（带续跑说明），这次成功了；从等待里接着跑不占重试次数。
+    let mut tx = e.t.db.tenant(e.user).await.unwrap();
+    assert_eq!(
+        tx.wake_waiting_runs(RunState::WaitingQuota).await.unwrap(),
+        1
+    );
+    tx.commit().await.unwrap();
+    e.run_to_end().await;
+    let rec = e.state(run).await;
+    assert_eq!(rec.run.state, RunState::Succeeded, "{:?}", rec.run);
+    assert_eq!((rec.run.attempt, rec.max_attempts), (2, 4));
+    let prompts = e.fake.rec.lock().unwrap().prompts.clone();
+    assert!(prompts[1].contains("续跑说明"), "{prompts:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn rate_limits_wait_a_few_minutes_without_a_push() {
+    let Some(e) = env().await else { return };
+    let run = e.queue("gives up", None, 3).await;
+    let (_stop, h) = e.spawn().await;
+    e.wait_state(run, RunState::Running).await;
+    model_call_failed(&e, 429).await;
+    model_call_failed(&e, 429).await;
+    // 短暂的限流：续租时不判卡住，agent 自己会退避重试。
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(e.state(run).await.run.state, RunState::Running);
+    // agent 重试几次后放弃了这一轮：转入等 key，几分钟后自己再试，不用打扰用户。
+    tokio::time::timeout(Duration::from_secs(20), h)
+        .await
+        .unwrap()
+        .unwrap();
+    let rec = e.state(run).await;
+    assert_eq!(rec.run.state, RunState::WaitingQuota, "{:?}", rec.run);
+    assert!(rec.not_before > chrono::Utc::now() + chrono::Duration::minutes(4));
+    assert!(e.inbox().await.iter().all(|i| i.kind != "run_failed"));
+    assert!(e.exec.claim().await.unwrap().is_none());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn waits_time_out_by_the_plan_policy() {
+    let Some(e) = env().await else { return };
+    let mut tx = e.t.db.tenant(e.user).await.unwrap();
+    let plan = tx
+        .create_plan(&NewPlan {
+            instance_id: e.instance.id,
+            title: "早报".into(),
+            goal: "汇总新闻".into(),
+            policy: PlanPolicy::default(),
+            catch_up: CatchUp::default(),
+            created_by: PlanAuthor::User,
+            run_grant_id: None,
+        })
+        .await
+        .unwrap();
+    let mut new = NewRun::new(
+        e.instance.id,
+        RunSource::Plan,
+        "broken key",
+        &e.instance.agent_version,
+    );
+    new.plan_id = Some(plan.id);
+    let run = tx.create_run(&new).await.unwrap().id;
+    tx.commit().await.unwrap();
+    // 进入等 key，最晚的时间已经过了。
+    let mut w = e.t.db.worker().await.unwrap();
+    w.claim_next_run("x", Duration::from_secs(60))
+        .await
+        .unwrap()
+        .unwrap();
+    w.transition_run(run, "x", RunState::Running, &store::RunChange::default())
+        .await
+        .unwrap();
+    let past = chrono::Utc::now() - chrono::Duration::seconds(1);
+    w.transition_run(
+        run,
+        "x",
+        RunState::WaitingQuota,
+        &store::RunChange {
+            release_lease: true,
+            not_before: Some(past),
+            wait_deadline: Some(past),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    w.commit().await.unwrap();
+    assert!(
+        e.exec.claim().await.unwrap().is_none(),
+        "expired waits do not resume"
+    );
+
+    assert_eq!(e.exec.expire_waits().await.unwrap(), 1);
+    let rec = e.state(run).await;
+    assert_eq!(rec.run.state, RunState::Failed);
+    assert!(
+        rec.run
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("model key"),
+        "{:?}",
+        rec.run.error
+    );
+    // 计划策略默认是“暂停计划”。
+    let mut tx = e.t.db.tenant(e.user).await.unwrap();
+    assert!(tx.plan(plan.id).await.unwrap().paused);
+    tx.rollback().await.unwrap();
+    assert!(e.inbox().await.iter().any(|i| i.kind == "run_failed"));
+    assert_eq!(e.exec.expire_waits().await.unwrap(), 0);
 }

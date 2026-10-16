@@ -35,6 +35,7 @@ use crate::outbox::{Notice, notify};
 use crate::shim::{
     PlatformTools, ShimConnector, ShimLaunch, ShimSession, ToolContext, ToolOutput, event_kind,
 };
+use crate::waits::KeyProblem;
 
 #[derive(Debug, Clone)]
 pub struct ExecutorConfig {
@@ -99,6 +100,17 @@ pub enum Outcome {
     LeaseLost,
     /// 这个副本要停机：转入退避，别的副本马上接着跑。
     Interrupted,
+    /// 要等一会儿或者等用户处理（7.11：等 key、等电脑）：放掉租约和执行名额，转入等待。
+    Waiting {
+        state: RunState,
+        reason: String,
+        /// 自己再试一次的时间；`None` 等用户处理（补上 key、电脑上线时唤醒）。
+        retry_at: Option<chrono::DateTime<Utc>>,
+        /// 到这时还没好就按计划策略结束。
+        deadline: chrono::DateTime<Utc>,
+        /// 要用户处理的发通知。
+        notify: bool,
+    },
 }
 
 /// 指标里的结果标签（取值固定，基数小）。
@@ -110,6 +122,7 @@ fn outcome_label(o: &Outcome) -> &'static str {
         Outcome::Cancelled => "cancelled",
         Outcome::LeaseLost => "lease_lost",
         Outcome::Interrupted => "interrupted",
+        Outcome::Waiting { .. } => "waiting",
     }
 }
 
@@ -158,6 +171,8 @@ struct Exec<'a> {
     log_capped: bool,
     /// 用户保险箱里的值：写运行日志、摘要、审批之前抹掉（9.11）。
     scrubber: Scrubber,
+    /// 这次尝试开始的时间：只看这之后的模型调用判断是不是卡在 key 上（7.11）。
+    attempt_started: chrono::DateTime<Utc>,
 }
 
 /// 运行摘要从回复里取，最多留这么多字节（摘要只用前 400 个字）。
@@ -293,6 +308,9 @@ impl Executor {
                     if let Err(e) = self.take_over_expired().await {
                         error!(error = %e, "lease takeover failed");
                     }
+                    if let Err(e) = self.expire_waits().await {
+                        error!(error = %e, "ending expired waits failed");
+                    }
                 }
                 permit = slots.clone().acquire_owned() => {
                     let Ok(permit) = permit else { break };
@@ -355,6 +373,47 @@ impl Executor {
                 Outcome::Retry("execution was interrupted (lease expired)".into()),
             )
             .await;
+        }
+        Ok(n)
+    }
+
+    /// 等电脑、等 key 超时的运行（7.11）：结束它；计划策略是“暂停计划”的同时暂停计划。
+    pub async fn expire_waits(&self) -> store::Result<usize> {
+        let mut w = self.db.worker().await?;
+        let runs = w
+            .claim_expired_waits(&self.node_id, self.cfg.lease, 20)
+            .await?;
+        w.commit().await?;
+        let n = runs.len();
+        for rec in runs {
+            let mut reason = if rec.run.state == RunState::WaitingDevice {
+                "timed out waiting for the computer to come online".to_owned()
+            } else {
+                "timed out waiting for a working model key".to_owned()
+            };
+            if let Some(plan) = rec.run.plan_id {
+                let paused = async {
+                    let mut w = self.db.worker().await?;
+                    if w.plan(plan).await?.policy.on_approval_timeout
+                        != ApprovalTimeoutAction::PausePlan
+                    {
+                        w.rollback().await?;
+                        return Ok::<_, store::Error>(false);
+                    }
+                    w.set_plan_paused(plan, true).await?;
+                    w.commit().await?;
+                    Ok(true)
+                }
+                .await;
+                match paused {
+                    Ok(true) => reason.push_str("; the plan was paused"),
+                    Ok(false) => {}
+                    Err(e) => warn!(%plan, error = %e, "pausing the plan failed"),
+                }
+            }
+            info!(run = %rec.run.id, state = %rec.run.state, "wait timed out");
+            self.finish(&rec, rec.run.state, Outcome::Failed(reason))
+                .await;
         }
         Ok(n)
     }
@@ -452,6 +511,7 @@ impl Executor {
             })?;
         let retry = |e: store::Error| Outcome::Retry(e.to_string());
         let mut w = self.db.worker().await.map_err(retry)?;
+        let attempt_started = w.db_now().await.map_err(retry)?;
         let grant: GrantId = match rec.run_grant_id {
             Some(g) => g,
             None => w
@@ -566,6 +626,7 @@ impl Executor {
             logged: 0,
             log_capped: false,
             scrubber: self.scrubber(rec.user_id).await,
+            attempt_started,
         };
         exec.persist(&ready).await;
         Ok(exec)
@@ -668,11 +729,33 @@ impl Executor {
                 },
                 None,
             ),
+            Outcome::Waiting {
+                state: wait,
+                reason,
+                retry_at,
+                deadline,
+                notify,
+            } => (
+                wait,
+                RunChange {
+                    reason: Some(reason.clone()),
+                    // 不自己试的等用户处理（唤醒时改成现在）；超时由 wait_deadline 管。
+                    not_before: Some(retry_at.unwrap_or(deadline)),
+                    release_lease: true,
+                    wait_deadline: Some(deadline),
+                    ..Default::default()
+                },
+                notify.then(|| (PushKind::RunFailed, truncate(&reason, 100))),
+            ),
         };
         let mut w = self.db.worker().await?;
-        // 状态机里成功只能从运行中到达、退避不能从等待中到达：先回到运行中。
-        let detour = matches!(to, RunState::Succeeded | RunState::Backoff)
-            && (state == RunState::Starting && to == RunState::Succeeded || state.is_waiting());
+        // 状态机里成功、等 key、等电脑只能从运行中到达，退避不能从等待中到达：先回到运行中。
+        let detour = match to {
+            RunState::Succeeded => state == RunState::Starting || state.is_waiting(),
+            RunState::Backoff => state.is_waiting(),
+            RunState::WaitingQuota | RunState::WaitingDevice => state != RunState::Running,
+            _ => false,
+        };
         if detour {
             w.transition_run(run, &self.node_id, RunState::Running, &RunChange::default())
                 .await?;
@@ -691,8 +774,9 @@ impl Executor {
             &json!({ "state": to, "reason": done.run.state_reason, "attempt": done.run.attempt }),
         )
         .await?;
-        // 流水线的步骤不单独通知：整条流水线结束时由根运行通知（8.3）。
-        if let Some((kind, body)) = push.filter(|_| rec.run.step_key.is_none()) {
+        // 流水线的步骤不单独通知：整条流水线结束时由根运行通知（8.3）。等 key 要用户处理，照样通知。
+        let step_quiet = rec.run.step_key.is_some() && !to.is_waiting();
+        if let Some((kind, body)) = push.filter(|_| !step_quiet) {
             let title = match rec.run.plan_id {
                 Some(plan) => w.plan(plan).await.map(|p| p.title).unwrap_or_default(),
                 None => String::new(),
@@ -837,6 +921,41 @@ impl Exec<'_> {
                 ..
             }) => Err(Outcome::Cancelled),
             Err(e) => Err(Outcome::Retry(e.to_string())),
+        }
+    }
+
+    /// agent 是不是卡在模型 key 上（7.11）：看模型网关记下的这次尝试以来的调用结果。查不到当作没卡住。
+    async fn key_problem(&self, turn_ended: bool) -> Option<KeyProblem> {
+        let calls = async {
+            let mut w = self.ex.db.worker().await?;
+            let calls = w
+                .recent_model_calls(self.rec.run.instance_id, self.attempt_started, 20)
+                .await?;
+            w.rollback().await?;
+            Ok::<_, store::Error>(calls)
+        }
+        .await;
+        match calls {
+            Ok(calls) => crate::waits::key_problem(&calls, Utc::now(), turn_ended),
+            Err(e) => {
+                warn!(run = %self.rec.run.id, error = %e, "reading recent model calls failed");
+                None
+            }
+        }
+    }
+
+    /// 转入等 key：被限流、繁忙的过几分钟自己再试，欠费的每小时试一次，key 无效的等用户换；
+    /// 最多等计划的 `wait_timeout_secs`。
+    fn wait_for_key(&self, problem: KeyProblem) -> Outcome {
+        let now = Utc::now();
+        let later = |d: Duration| now + chrono::Duration::from_std(d).unwrap_or_default();
+        info!(run = %self.rec.run.id, ?problem, "the agent is stuck on its model key; waiting");
+        Outcome::Waiting {
+            state: RunState::WaitingQuota,
+            reason: problem.describe().to_owned(),
+            retry_at: problem.retry_after().map(later),
+            deadline: later(Duration::from_secs(self.policy.wait_timeout_secs)),
+            notify: !problem.transient(),
         }
     }
 
@@ -1044,6 +1163,9 @@ impl Exec<'_> {
                 code,
                 ..
             } => {
+                if let Some(problem) = self.key_problem(true).await {
+                    return Some(self.wait_for_key(problem));
+                }
                 return Some(Outcome::Retry(format!(
                     "agent exited ({code:?}) and will not be restarted"
                 )));
@@ -1052,6 +1174,10 @@ impl Exec<'_> {
                 run_id: r,
                 stop_reason,
             } if r == run_id => {
+                // 模型调用一直失败、agent 放弃了这一轮：等 key，而不是算成功或失败。
+                if let Some(problem) = self.key_problem(true).await {
+                    return Some(self.wait_for_key(problem));
+                }
                 let answer = self
                     .scrubber
                     .scrub(&self.answer)
@@ -1392,6 +1518,11 @@ impl Exec<'_> {
                     return Some(Outcome::Failed(format!(
                         "token budget exceeded ({tokens} > {max})"
                     )));
+                }
+                // agent 还在一遍遍重试，但降级链里的 key 都用不了（7.11）：停下这一轮，等 key。
+                if let Some(problem) = self.key_problem(false).await {
+                    self.cancel_turn().await;
+                    return Some(self.wait_for_key(problem));
                 }
                 None
             }
