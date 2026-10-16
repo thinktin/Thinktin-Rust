@@ -64,9 +64,23 @@ sequenceDiagram
 
 测试向量由独立实现（Python `cryptography`，也就是 OpenSSL）按同一份规范生成，规范编码、参数摘要、DER 签名（随机 k，含高 S）都对得上（`pairing/tests.rs`）。原生端可以拿这些向量验证自己的签名接口。
 
-## 6. 还没做的
+## 6. 经平台转发的消息正文
+
+手机和电脑之间的消息经 [设备中继](relay.md) 转发（`kind` 见 `proto::domain::DeviceMessageKind`），正文是 JSON，
+类型在 `client_core::pairing` 里。签名一律是 base64url（不带填充）编码的 DER 或 r‖s。
+
+| `kind` | 方向 | 正文 |
+|---|---|---|
+| `capability` | 手机 → 电脑 | `{"grant": CapabilityGrant, "signature": …}`，签的是 `capability_message(grant)` |
+| `revocation` | 手机 → 电脑 | `{"token_id": …}`，不用签名：吊销只会收紧权限，平台伪造了也只能让电脑少做事 |
+| `approval_request` | 电脑 → 手机 | `{"request": ApprovalRequest}` |
+| `approval_decision` | 手机 → 电脑 | `{"request_id": …, "approve": true/false, "signature": …}`，签的是 `approval_message(request, approve)` |
+
+电脑只收配对的手机发来的令牌和吊销；令牌里的电脑 id 必须是自己。审批决定按请求 id 对上等着的请求，再用手机公钥验签。
+
+## 7. 还没做的
 
 - ~~设备中继（14.1）~~：已做，见 [设备中继](relay.md)。配对、审批、能力令牌、吊销消息经平台转发，
   收件方不在线时排队 24 小时；方向由平台检查（配对确认、审批请求只能电脑发）。电脑发来的审批请求推送到手机随审批界面做。
-- 电脑端的 MCP 工具服务（14.2）：在哪里验令牌和审批、本地审计日志。
+- ~~电脑端的工具服务（14.2）~~：已做，见 [电脑工具](desktop.md)。
 - 吊销列表的推送和同步。

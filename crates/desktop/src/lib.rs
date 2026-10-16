@@ -294,6 +294,7 @@ impl Desktop {
                     ));
                 }
                 SessionEnd::Closed(Some(close::REPLACED)) => return Err(DesktopError::Replaced),
+                SessionEnd::Failed(reason) => warn!(%reason, "the relay connection failed"),
                 other => debug!(?other, "relay connection ended"),
             }
             tokio::select! {

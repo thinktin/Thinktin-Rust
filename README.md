@@ -8,6 +8,7 @@ ThinkTin 平台：托管多个开源 agent，用户领养后常驻云端、按�
 - [Agent 接入说明](docs/agent-integration.md)：Claude（ACP 与命令行两种接入）、Codex、Pi、OpenClaw、Hermes 的接入状态、配置注入、权限审批和已知问题
 - [模型网关与密钥库](docs/llm-gateway.md)：沙箱令牌、信封加密、按别名路由换 key、流式透传、计量、限额、SSRF 防护
 - [设备中继](docs/relay.md)：电脑的长连接、电脑工具调用按会话绑定路由、手机和电脑之间的配对审批消息、部署
+- [电脑工具](docs/desktop.md)：agent 用的 `computer_*` 工具、能力令牌和手机签名审批、电脑端的工具服务和审计日志
 - [工作分解结构（WBS）](docs/wbs.md) · [CSV](docs/wbs.csv)
 - [架构方案 v2](docs/architecture-v2.md) · [讨论记录 2026-10-14](docs/discussion-2026-10-14.md)
 
@@ -29,7 +30,7 @@ ThinkTin 平台：托管多个开源 agent，用户领养后常驻云端、按�
 | llm-gw | bin | 模型网关：沙箱令牌换用户 key、流式透传、计量、限额 |
 | relay | bin | 设备中继 `thinktin-relay`：电脑主动连出的长连接，转电脑工具调用和手机电脑之间的消息（[说明](docs/relay.md)） |
 | agent-shim | bin | 沙箱内守护进程：驱动 agent（ACP、Claude Code stream-json）、配置注入、审批转发 |
-| desktop | lib | 电脑端 MCP 工具服务（供 macOS App 调用） |
+| desktop | lib | 电脑端工具服务：连设备中继、按手机签发的能力令牌和签名审批把关、执行、本地审计日志（[说明](docs/desktop.md)） |
 | client-core | lib | 客户端共享核心（UniFFI） |
 
 原生客户端在 `apps/apple`（iOS + macOS）和 `apps/android`。
