@@ -3,5 +3,6 @@
 pub mod api;
 pub mod domain;
 pub mod labels;
+pub mod relay;
 pub mod shim;
 pub mod vendors;

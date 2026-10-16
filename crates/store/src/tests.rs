@@ -832,12 +832,27 @@ async fn erasing_an_account_deletes_its_content() {
         let run = queue_run(db, who, &inst, "写一份关于我体检报告的总结").await;
         let mut w = db.worker().await.unwrap();
         w.insert_user_key(who, "local", &[1, 2, 3]).await.unwrap();
-        w.create_device(
-            who,
-            DevicePlatform::Ios,
-            "张三的 iPhone",
-            Some((PushChannelKind::Apns, "tok")),
-        )
+        let phone = w
+            .create_device(
+                who,
+                DevicePlatform::Ios,
+                "张三的 iPhone",
+                Some((PushChannelKind::Apns, "tok")),
+            )
+            .await
+            .unwrap();
+        let mac = w
+            .create_device(who, DevicePlatform::Macos, "张三的 MacBook", None)
+            .await
+            .unwrap();
+        w.create_device_call(&crate::NewDeviceCall {
+            user: who,
+            device: mac,
+            run: Some(run.id),
+            tool: "fs_read".into(),
+            arguments: json!({ "path": "/Users/zhangsan/体检报告.pdf" }),
+            timeout: Duration::from_secs(60),
+        })
         .await
         .unwrap();
         w.create_approval(&crate::NewApproval {
@@ -977,7 +992,25 @@ async fn erasing_an_account_deletes_its_content() {
         })
         .await
         .unwrap();
+        tx.send_device_message(
+            phone,
+            mac,
+            proto::domain::DeviceMessageKind::Capability,
+            &json!({ "dirs": ["/Users/zhangsan/体检"] }),
+        )
+        .await
+        .unwrap();
         tx.commit().await.unwrap();
+        let mut r = db.relay().await.unwrap();
+        r.link_device(&crate::NewLink {
+            device: mac,
+            user: who,
+            node: "relay-1".into(),
+            connection: uuid::Uuid::now_v7(),
+        })
+        .await
+        .unwrap();
+        r.commit().await.unwrap();
     }
 
     // 送达过的推送记录也有正文，注销时一起删。
@@ -1021,6 +1054,9 @@ async fn erasing_an_account_deletes_its_content() {
         "team_templates",
         "vault_items",
         "vault_requests",
+        "device_calls",
+        "device_messages",
+        "device_links",
     ] {
         assert_eq!(
             count(table, alice).await,
@@ -1771,4 +1807,285 @@ async fn runs_wait_for_a_key_then_resume_or_time_out() {
             .is_empty()
     );
     w.rollback().await.unwrap();
+}
+
+/// 设备中继（14.1）：在线状态、调用的领取和回填、连接被顶掉、断线判失败、消息的方向和投递、
+/// 电脑上线唤醒等电脑的运行、中继角色的权限、数据维护。
+#[tokio::test]
+async fn the_device_relay_routes_calls_and_messages() {
+    use proto::domain::{DeviceCallState, DeviceMessageKind, DevicePlatform};
+
+    use crate::{NewDeviceCall, NewLink};
+
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = user(db, "+8613900000001").await;
+    let bob = user(db, "+8613900000002").await;
+    let mut w = db.worker().await.unwrap();
+    let mac = w
+        .create_device(alice, DevicePlatform::Macos, "MacBook", None)
+        .await
+        .unwrap();
+    let phone = w
+        .create_device(alice, DevicePlatform::Ios, "iPhone", None)
+        .await
+        .unwrap();
+    let bob_phone = w
+        .create_device(bob, DevicePlatform::Android, "Pixel", None)
+        .await
+        .unwrap();
+    // 有电脑，但还没连上中继。
+    assert!(w.has_computer(alice).await.unwrap());
+    assert!(!w.has_computer(bob).await.unwrap());
+    assert_eq!(w.online_computer(alice).await.unwrap(), None);
+    w.commit().await.unwrap();
+    let call = |tool: &str| NewDeviceCall {
+        user: alice,
+        device: mac,
+        run: None,
+        tool: tool.into(),
+        arguments: json!({ "path": "/tmp/a" }),
+        timeout: Duration::from_secs(60),
+    };
+
+    // 一个运行在等电脑上线（7.11）。
+    let inst = instance(db, alice).await;
+    let run = queue_run(db, alice, &inst, "整理桌面").await;
+    let mut w = db.worker().await.unwrap();
+    w.claim_next_run("a", LEASE).await.unwrap().unwrap();
+    w.transition_run(run.id, "a", RunState::Running, &RunChange::default())
+        .await
+        .unwrap();
+    let deadline = Utc::now() + Days::hours(1);
+    w.transition_run(
+        run.id,
+        "a",
+        RunState::WaitingDevice,
+        &RunChange {
+            not_before: Some(deadline),
+            release_lease: true,
+            wait_deadline: Some(deadline),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    w.commit().await.unwrap();
+
+    // 电脑连上中继：在线，等电脑的运行被唤醒。
+    let conn1 = uuid::Uuid::now_v7();
+    let mut r = db.relay().await.unwrap();
+    assert_eq!(
+        r.device_platform(mac).await.unwrap(),
+        Some((alice, DevicePlatform::Macos, false))
+    );
+    r.link_device(&NewLink {
+        device: mac,
+        user: alice,
+        node: "relay-1".into(),
+        connection: conn1,
+    })
+    .await
+    .unwrap();
+    assert!(
+        r.set_link_info(mac, conn1, &["fs_read".to_owned()], "1.0.0")
+            .await
+            .unwrap()
+    );
+    assert_eq!(r.wake_device_waiters(alice).await.unwrap(), 1);
+    assert_eq!(r.wake_device_waiters(bob).await.unwrap(), 0);
+    r.commit().await.unwrap();
+
+    let mut w = db.worker().await.unwrap();
+    assert_eq!(
+        w.claim_next_run("b", LEASE)
+            .await
+            .unwrap()
+            .map(|c| c.run.id),
+        Some(run.id)
+    );
+    assert_eq!(
+        w.online_computer(alice).await.unwrap(),
+        Some((mac, vec!["fs_read".to_owned()]))
+    );
+    assert_eq!(w.online_computer(bob).await.unwrap(), None);
+    let read = w.create_device_call(&call("fs_read")).await.unwrap();
+    w.commit().await.unwrap();
+
+    // 中继领走调用、电脑回结果。
+    let mut r = db.relay().await.unwrap();
+    let claimed = r.claim_device_calls(mac, conn1, 10).await.unwrap();
+    assert_eq!(claimed.len(), 1);
+    assert_eq!(
+        (
+            claimed[0].id,
+            claimed[0].tool.as_str(),
+            &claimed[0].arguments
+        ),
+        (read, "fs_read", &json!({ "path": "/tmp/a" }))
+    );
+    assert!(
+        r.claim_device_calls(mac, conn1, 10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let answer = json!({ "content": [{ "type": "text", "text": "hello" }], "is_error": false });
+    // 别的连接回不了；结果只收一次。
+    assert!(
+        !r.finish_device_call(read, mac, uuid::Uuid::now_v7(), &answer)
+            .await
+            .unwrap()
+    );
+    assert!(
+        r.finish_device_call(read, mac, conn1, &answer)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !r.finish_device_call(read, mac, conn1, &answer)
+            .await
+            .unwrap()
+    );
+    r.commit().await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    let rec = w.device_call(read).await.unwrap();
+    assert_eq!(
+        (rec.state, rec.result),
+        (DeviceCallState::Done, Some(answer))
+    );
+    assert!(!w.expire_device_call(read).await.unwrap());
+    let lost = w.create_device_call(&call("screenshot")).await.unwrap();
+    w.commit().await.unwrap();
+
+    // 调用转出去以后，同一台电脑又连了一次：旧连接被顶掉（心跳刷不上），
+    // 旧连接断开时在线状态留给新连接，转给旧连接、没回的调用判失败。
+    let mut r = db.relay().await.unwrap();
+    assert_eq!(r.claim_device_calls(mac, conn1, 10).await.unwrap().len(), 1);
+    let conn2 = uuid::Uuid::now_v7();
+    r.link_device(&NewLink {
+        device: mac,
+        user: alice,
+        node: "relay-2".into(),
+        connection: conn2,
+    })
+    .await
+    .unwrap();
+    assert!(!r.touch_link(mac, conn1).await.unwrap());
+    assert!(r.touch_link(mac, conn2).await.unwrap());
+    assert_eq!(r.unlink_device(mac, conn1).await.unwrap(), vec![lost]);
+    r.commit().await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    let rec = w.device_call(lost).await.unwrap();
+    assert_eq!(rec.state, DeviceCallState::Failed);
+    assert!(rec.error.is_some());
+    assert_eq!(
+        w.online_computer(alice).await.unwrap().map(|c| c.0),
+        Some(mac)
+    );
+    // 平台不等了的调用不再转出。
+    let late = w.create_device_call(&call("fs_list")).await.unwrap();
+    assert!(w.expire_device_call(late).await.unwrap());
+    w.commit().await.unwrap();
+    let mut r = db.relay().await.unwrap();
+    assert!(
+        r.claim_device_calls(mac, conn2, 10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    r.commit().await.unwrap();
+
+    // 手机发给电脑：能力令牌。方向不对、发给自己、发给别人的设备都不行。
+    let mut a = db.tenant(alice).await.unwrap();
+    let grant = a
+        .send_device_message(
+            phone,
+            mac,
+            DeviceMessageKind::Capability,
+            &json!({ "g": 1 }),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        a.send_device_message(phone, mac, DeviceMessageKind::ApprovalRequest, &json!({}))
+            .await,
+        Err(Error::Invalid(_))
+    ));
+    assert!(matches!(
+        a.send_device_message(phone, phone, DeviceMessageKind::Capability, &json!({}))
+            .await,
+        Err(Error::Invalid(_))
+    ));
+    assert!(matches!(
+        a.send_device_message(phone, bob_phone, DeviceMessageKind::Capability, &json!({}))
+            .await,
+        Err(Error::NotFound)
+    ));
+    a.commit().await.unwrap();
+    // 电脑收到、确认后不再投递；电脑发审批请求给手机，不能发能力令牌。
+    let mut r = db.relay().await.unwrap();
+    assert_eq!(
+        r.pending_device_messages(alice, mac, 10).await.unwrap(),
+        vec![grant.clone()]
+    );
+    assert_eq!(
+        r.ack_device_messages(alice, mac, &[grant.id])
+            .await
+            .unwrap(),
+        1
+    );
+    assert!(
+        r.pending_device_messages(alice, mac, 10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let ask = r
+        .send_device_message(
+            alice,
+            mac,
+            phone,
+            DeviceMessageKind::ApprovalRequest,
+            &json!({ "tool": "rm" }),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        r.send_device_message(alice, mac, phone, DeviceMessageKind::Capability, &json!({}))
+            .await,
+        Err(Error::Invalid(_))
+    ));
+    r.commit().await.unwrap();
+    let mut a = db.tenant(alice).await.unwrap();
+    assert_eq!(
+        a.pending_device_messages(phone, 10).await.unwrap(),
+        vec![ask.clone()]
+    );
+    assert_eq!(a.online_devices().await.unwrap(), vec![mac]);
+    assert_eq!(a.ack_device_messages(phone, &[ask.id]).await.unwrap(), 1);
+    a.commit().await.unwrap();
+    // 别人看不到。
+    let mut b = db.tenant(bob).await.unwrap();
+    assert!(b.online_devices().await.unwrap().is_empty());
+    assert!(b.pending_device_messages(mac, 10).await.unwrap().is_empty());
+    b.rollback().await.unwrap();
+
+    // 中继的角色碰不到别的数据。
+    for sql in [
+        "SELECT count(*) FROM credentials",
+        "SELECT refresh_hash FROM sessions",
+        "SELECT prompt FROM runs",
+        "SELECT phone FROM users",
+    ] {
+        let mut r = db.relay().await.unwrap();
+        let denied = sqlx::query(sql).execute(r.conn()).await;
+        assert!(denied.is_err(), "relay can run {sql}");
+        r.rollback().await.unwrap();
+    }
+
+    // 数据维护：调用、消息、不新鲜的在线状态都清掉。
+    let mut w = db.worker().await.unwrap();
+    assert_eq!(w.purge_device_traffic(Duration::ZERO).await.unwrap(), 6);
+    w.commit().await.unwrap();
 }

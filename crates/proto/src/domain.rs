@@ -66,6 +66,8 @@ id_type!(
     ArtifactId,
     VaultItemId,
     VaultRequestId,
+    DeviceCallId,
+    DeviceMessageId,
 );
 
 /// 字符串枚举的公共实现：和数据库里的取值一一对应。
@@ -781,6 +783,60 @@ pub struct InboxItem {
     pub read: bool,
     pub created_at: DateTime<Utc>,
 }
+
+str_enum!(
+    /// 手机和电脑之间经平台转发的消息（14.1；内容和签名见 docs/pairing.md）。
+    /// 平台只转发：内容由两端用安全芯片里的私钥签名，平台改不了也冒充不了。
+    DeviceMessageKind {
+        /// 手机 → 电脑：扫码后的配对应答。
+        PairResponse = "pair_response",
+        /// 电脑 → 手机：确认配对。
+        PairConfirm = "pair_confirm",
+        /// 电脑 → 手机：高危操作，请手机签名批准。
+        ApprovalRequest = "approval_request",
+        /// 手机 → 电脑：签了名的批准或拒绝。
+        ApprovalDecision = "approval_decision",
+        /// 手机 → 电脑：普通操作的能力令牌。
+        Capability = "capability",
+        /// 手机 → 电脑：吊销能力令牌。
+        Revocation = "revocation",
+    }
+);
+
+impl DeviceMessageKind {
+    /// 这种消息由电脑发给手机（否则由手机发给电脑）。
+    pub fn from_computer(self) -> bool {
+        matches!(self, Self::PairConfirm | Self::ApprovalRequest)
+    }
+}
+
+/// 手机和电脑之间转发的一条消息。收件方不在线时排队，上线后投递，过期没送到的丢掉。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DeviceMessage {
+    pub id: DeviceMessageId,
+    pub from_device: DeviceId,
+    pub to_device: DeviceId,
+    pub kind: DeviceMessageKind,
+    pub body: Value,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+}
+
+str_enum!(
+    /// 平台发给电脑的工具调用（14.1）走到哪一步了。
+    DeviceCallState {
+        /// 等电脑连上中继来取。
+        Pending = "pending",
+        /// 中继已经转给电脑，等结果。
+        Sent = "sent",
+        /// 电脑回了结果（工具本身可能报错，见结果里的 `is_error`）。
+        Done = "done",
+        /// 没能完成：转出去以后电脑断线了。
+        Failed = "failed",
+        /// 平台不等了。
+        Expired = "expired",
+    }
+);
 
 #[cfg(test)]
 mod tests {

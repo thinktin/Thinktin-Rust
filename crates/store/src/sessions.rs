@@ -8,7 +8,7 @@ use proto::domain::{
 };
 use uuid::Uuid;
 
-use crate::{Error, Result, Tenant, Tx, Worker, parse, secs};
+use crate::{Error, Result, SessionCheck, Tenant, Tx, Worker, parse, secs};
 
 /// 一个还有效的验证码。
 #[derive(Debug, Clone)]
@@ -382,26 +382,6 @@ impl Tx<Worker> {
         Ok(())
     }
 
-    /// 访问令牌验签之后核对：会话没吊销、没过期，账号状态。
-    pub async fn session_state(&mut self, id: SessionId) -> Result<Option<SessionState>> {
-        let row: Option<(Uuid, Uuid, String, bool)> = sqlx::query_as(
-            "SELECT s.user_id, s.device_id, u.status, s.revoked_at IS NULL AND s.expires_at > now() \
-             FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id = $1",
-        )
-        .bind(id.0)
-        .fetch_optional(self.conn())
-        .await?;
-        row.map(|(user, device, status, live)| {
-            Ok(SessionState {
-                user_id: user.into(),
-                device_id: device.into(),
-                user_status: parse(&status)?,
-                live,
-            })
-        })
-        .transpose()
-    }
-
     /// 用户还登录着、有推送令牌的设备。会话过期、被吊销（没调退出接口）的设备不算：
     /// 那台手机可能已经换了人用。
     pub async fn push_targets(
@@ -453,6 +433,43 @@ impl Tx<Worker> {
         .execute(self.conn())
         .await?;
         Ok(done.rows_affected())
+    }
+}
+
+impl<R: SessionCheck> Tx<R> {
+    /// 访问令牌验签之后核对：会话没吊销、没过期，账号状态。
+    pub async fn session_state(&mut self, id: SessionId) -> Result<Option<SessionState>> {
+        let row: Option<(Uuid, Uuid, String, bool)> = sqlx::query_as(
+            "SELECT s.user_id, s.device_id, u.status, s.revoked_at IS NULL AND s.expires_at > now() \
+             FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id = $1",
+        )
+        .bind(id.0)
+        .fetch_optional(self.conn())
+        .await?;
+        row.map(|(user, device, status, live)| {
+            Ok(SessionState {
+                user_id: user.into(),
+                device_id: device.into(),
+                user_status: parse(&status)?,
+                live,
+            })
+        })
+        .transpose()
+    }
+
+    /// 设备是哪种平台、吊销了没有（中继只接受没吊销的电脑）。
+    pub async fn device_platform(
+        &mut self,
+        device: DeviceId,
+    ) -> Result<Option<(UserId, DevicePlatform, bool)>> {
+        let row: Option<(Uuid, String, bool)> = sqlx::query_as(
+            "SELECT user_id, platform, revoked_at IS NOT NULL FROM devices WHERE id = $1",
+        )
+        .bind(device.0)
+        .fetch_optional(self.conn())
+        .await?;
+        row.map(|(user, platform, revoked)| Ok((user.into(), parse(&platform)?, revoked)))
+            .transpose()
     }
 }
 

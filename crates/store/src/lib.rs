@@ -11,6 +11,7 @@
 mod approvals;
 mod artifacts;
 mod credentials;
+mod device_relay;
 mod error;
 mod events;
 mod grants;
@@ -42,6 +43,10 @@ use sqlx::{PgConnection, PgPool, Postgres, Transaction};
 pub use approvals::{ApprovalRecord, NewApproval};
 pub use artifacts::{NewArtifact, StoredArtifact};
 pub use credentials::{NewCredential, SealedCredential};
+pub use device_relay::{
+    ClaimedCall, DEVICE_CALL_CHANNEL, DEVICE_CHANNEL, DeviceCallRecord, LINK_FRESH, NewDeviceCall,
+    NewLink,
+};
 pub use error::{Error, Result};
 pub use events::EVENTS_CHANNEL;
 pub use inbox::NewInboxItem;
@@ -137,6 +142,19 @@ impl Db {
         .await?;
         Ok(Tx { tx, role: Llmgw })
     }
+
+    /// 设备中继的事务（14.1）：核对设备会话、维护电脑的在线状态、领取和回填工具调用、收发消息
+    /// （绕过 RLS，但表权限很窄）。
+    pub async fn relay(&self) -> Result<Tx<Relay>> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query(
+            "SELECT set_config('role', 'thinktin_relay', true), set_config('statement_timeout', $1, true)",
+        )
+        .bind(TENANT_STATEMENT_TIMEOUT)
+        .execute(&mut *tx)
+        .await?;
+        Ok(Tx { tx, role: Relay })
+    }
 }
 
 /// 一个数据库事务，带着它的角色。没有提交就丢弃时回滚。
@@ -159,10 +177,19 @@ pub struct Worker;
 #[derive(Debug, Clone, Copy)]
 pub struct Llmgw;
 
+/// 设备中继。
+#[derive(Debug, Clone, Copy)]
+pub struct Relay;
+
 /// 平台内部的角色（后台任务、模型网关）：能读 key 的密文和用户的包裹 DEK、写用量。
 pub trait Internal {}
 impl Internal for Worker {}
 impl Internal for Llmgw {}
+
+/// 能核对设备会话的角色（登录流程、设备中继）。
+pub trait SessionCheck {}
+impl SessionCheck for Worker {}
+impl SessionCheck for Relay {}
 
 impl<R> Tx<R> {
     /// 数据库的当前时间（事务开始的时间）：和库里记下的时间比较时用，不受各副本时钟偏差影响。

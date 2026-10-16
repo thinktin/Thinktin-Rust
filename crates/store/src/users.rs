@@ -176,8 +176,8 @@ impl Tx<Worker> {
     }
 
     /// 注销（16.4）：销毁用户的 DEK（key、保险箱和产出物的密文从此解不开），删掉用户的内容
-    /// （运行、提示词、摘要、事件、收件箱、计划、审批、团队、保险箱、产出物索引、推送记录；
-    /// 产出物的密文排进清理队列，由后台从对象存储删掉），
+    /// （运行、提示词、摘要、事件、收件箱、计划、审批、团队、保险箱、产出物索引、推送记录、
+    /// 电脑工具的调用和手机电脑之间的消息；产出物的密文排进清理队列，由后台从对象存储删掉），
     /// 手机号和设备信息去标识化，实例标记删除（沙箱和工作区卷由巡检回收）。
     /// 审计日志和用量记录只有 id 和计数，按网络日志的要求保留。
     pub async fn erase_account(&mut self, id: UserId) -> Result<()> {
@@ -209,6 +209,10 @@ impl Tx<Worker> {
             "DELETE FROM team_templates WHERE user_id = $1",
             "DELETE FROM vault_requests WHERE user_id = $1",
             "DELETE FROM vault_items WHERE user_id = $1",
+            // 电脑工具的参数和结果（文件内容、截图）、手机和电脑之间的消息、电脑的在线状态（14.1）。
+            "DELETE FROM device_calls WHERE user_id = $1",
+            "DELETE FROM device_messages WHERE user_id = $1",
+            "DELETE FROM device_links WHERE user_id = $1",
             "UPDATE instances SET state = 'deleted', name = '', deleted_at = coalesce(deleted_at, now()), \
                updated_at = now() WHERE user_id = $1",
             "UPDATE devices SET name = '', push_channel = NULL, push_token = NULL WHERE user_id = $1",
