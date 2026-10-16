@@ -21,6 +21,11 @@ const BUILTIN: &[(&str, &str)] = &[
 /// 也能回滚到它；没有实例再用时删掉。
 const ARCHIVED: &[(&str, &str)] = &[];
 
+/// 因为安全问题下架的版本（WBS 15.5）：(agent id, 版本, 公告编号或原因)。下架的版本不能再领养、
+/// 不能升级或回滚到它；锁在它上面的实例下次唤醒时自动换到当前版本、重建沙箱（工作区卷保留）。
+/// 当前版本也下架了（还没有修复版）时，这个 agent 的实例一律不再启动。流程见 docs/vuln-response.md。
+const WITHDRAWN: &[(&str, &str, &str)] = &[];
+
 /// 内置清单的 id，按接入优先级排列。
 pub fn builtin_ids() -> impl Iterator<Item = &'static str> {
     BUILTIN.iter().map(|(id, _)| *id)
@@ -36,12 +41,27 @@ fn parse_archived(text: &str) -> Manifest {
     Manifest::from_toml(text).unwrap_or_else(|e| panic!("保留的旧版清单不合法：{e}"))
 }
 
+fn find_withdrawn(
+    withdrawn: &[(&str, &str, &'static str)],
+    id: &str,
+    version: &str,
+) -> Option<&'static str> {
+    withdrawn
+        .iter()
+        .find(|(wid, wv, _)| *wid == id && *wv == version)
+        .map(|(_, _, why)| *why)
+}
+
 fn find_version(
     current: Option<Manifest>,
     archived: &[(&str, &str)],
+    withdrawn: &[(&str, &str, &'static str)],
     id: &str,
     version: &str,
 ) -> Option<Manifest> {
+    if find_withdrawn(withdrawn, id, version).is_some() {
+        return None;
+    }
     if let Some(m) = current.filter(|m| m.agent.version == version) {
         return Some(m);
     }
@@ -52,7 +72,12 @@ fn find_version(
         .find(|m| m.agent.version == version)
 }
 
-fn list_versions(current: Option<Manifest>, archived: &[(&str, &str)], id: &str) -> Vec<String> {
+fn list_versions(
+    current: Option<Manifest>,
+    archived: &[(&str, &str)],
+    withdrawn: &[(&str, &str, &'static str)],
+    id: &str,
+) -> Vec<String> {
     let mut out: Vec<String> = current.map(|m| m.agent.version).into_iter().collect();
     out.extend(
         archived
@@ -60,17 +85,23 @@ fn list_versions(current: Option<Manifest>, archived: &[(&str, &str)], id: &str)
             .filter(|(aid, _)| *aid == id)
             .map(|(_, text)| parse_archived(text).agent.version),
     );
+    out.retain(|v| find_withdrawn(withdrawn, id, v).is_none());
     out
 }
 
-/// 内置清单的指定版本（当前的或保留的旧版本）。
+/// 内置清单的指定版本（当前的或保留的旧版本）。下架的版本返回 None。
 pub fn builtin_version(id: &str, version: &str) -> Option<Manifest> {
-    find_version(builtin(id), ARCHIVED, id, version)
+    find_version(builtin(id), ARCHIVED, WITHDRAWN, id, version)
 }
 
-/// 可以用的版本，当前版本在前（升级、回滚时选）。
+/// 可以用的版本，当前版本在前（升级、回滚时选）。不含下架的版本。
 pub fn builtin_versions(id: &str) -> Vec<String> {
-    list_versions(builtin(id), ARCHIVED, id)
+    list_versions(builtin(id), ARCHIVED, WITHDRAWN, id)
+}
+
+/// 这个版本是不是因为安全问题下架了；下架了返回公告编号或原因。
+pub fn withdrawn(id: &str, version: &str) -> Option<&'static str> {
+    find_withdrawn(WITHDRAWN, id, version)
 }
 
 #[cfg(test)]
@@ -89,6 +120,64 @@ mod tests {
                     m.llm.config
                 );
             }
+        }
+    }
+
+    #[test]
+    fn withdrawn_versions_are_not_offered() {
+        let cur = builtin("claude").unwrap();
+        let v = cur.agent.version.clone();
+        let old_text = include_str!("../manifests/claude.toml").replacen(
+            &format!("version = \"{v}\""),
+            "version = \"0.0.1-old\"",
+            1,
+        );
+        assert_eq!(parse_archived(&old_text).agent.version, "0.0.1-old");
+        let archived = [("claude", old_text.as_str())];
+        let none: [(&str, &str, &'static str); 0] = [];
+        assert_eq!(
+            list_versions(Some(cur.clone()), &archived, &none, "claude"),
+            [v.clone(), "0.0.1-old".to_string()]
+        );
+
+        // 旧版本下架：不再列出，也取不到；当前版本照常。
+        let withdrawn = [("claude", "0.0.1-old", "TT-2026-001")];
+        assert_eq!(
+            list_versions(Some(cur.clone()), &archived, &withdrawn, "claude"),
+            [v.clone()]
+        );
+        assert!(
+            find_version(
+                Some(cur.clone()),
+                &archived,
+                &withdrawn,
+                "claude",
+                "0.0.1-old"
+            )
+            .is_none()
+        );
+        assert!(find_version(Some(cur.clone()), &archived, &withdrawn, "claude", &v).is_some());
+        assert_eq!(
+            find_withdrawn(&withdrawn, "claude", "0.0.1-old"),
+            Some("TT-2026-001")
+        );
+        assert_eq!(find_withdrawn(&withdrawn, "codex", "0.0.1-old"), None);
+
+        // 当前版本也下架了：一个能用的都没有。
+        let all = [
+            ("claude", "0.0.1-old", "TT-2026-001"),
+            ("claude", v.as_str(), "TT-2026-002"),
+        ];
+        assert!(list_versions(Some(cur.clone()), &archived, &all, "claude").is_empty());
+        assert!(find_version(Some(cur), &archived, &all, "claude", &v).is_none());
+    }
+
+    #[test]
+    fn withdrawn_entries_name_a_builtin_agent_and_a_reason() {
+        // 下架清单里的每一项都对应一个内置 agent。
+        for (id, _, why) in WITHDRAWN {
+            assert!(builtin(id).is_some(), "{id}");
+            assert!(!why.trim().is_empty(), "{id}: say why it was withdrawn");
         }
     }
 

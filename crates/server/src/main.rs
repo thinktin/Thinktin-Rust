@@ -62,6 +62,8 @@ enum AdminCommand {
         /// 手机号或用户 id
         account: String,
     },
+    /// 每个 agent 版本上有多少个实例，标出当前版本和因安全问题下架的版本（漏洞响应用）
+    Versions,
 }
 
 #[tokio::main]
@@ -124,6 +126,7 @@ async fn main() -> anyhow::Result<()> {
                 AdminCommand::Show { account } => {
                     server::admin::show(&db, &account, &mut out).await
                 }
+                AdminCommand::Versions => server::admin::versions(&db, &mut out).await,
             }
         }
     }

@@ -665,6 +665,7 @@ dependencies = [
  "proto",
  "sandbox",
  "serde_json",
+ "sqlx",
  "store",
  "tempfile",
  "thiserror",

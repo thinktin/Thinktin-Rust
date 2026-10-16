@@ -32,6 +32,13 @@ pub enum Error {
     UnknownVersion { agent: String, version: String },
     #[error("invalid: {0}")]
     Invalid(String),
+    /// 版本因为安全问题下架了，而且没有能换过去的版本（当前版本也下架了）。
+    #[error("{agent} {version} was withdrawn ({advisory}) and no safe version is available")]
+    Withdrawn {
+        agent: String,
+        version: String,
+        advisory: String,
+    },
     #[error("instance is deleted")]
     Deleted,
     #[error("instance has a run in progress")]
@@ -59,6 +66,10 @@ pub trait Templates: Send + Sync {
             .into_iter()
             .collect()
     }
+    /// 版本因为安全问题下架了（15.5）：返回公告编号或原因。下架的版本 [`Templates::manifest`] 取不到。
+    fn withdrawn(&self, _agent_id: &str, _version: &str) -> Option<String> {
+        None
+    }
 }
 
 /// 内置清单（`crates/catalog/manifests`），每个 agent 一个版本。
@@ -75,6 +86,10 @@ impl Templates for BuiltinTemplates {
 
     fn versions(&self, agent_id: &str) -> Vec<String> {
         catalog::builtin_versions(agent_id)
+    }
+
+    fn withdrawn(&self, agent_id: &str, version: &str) -> Option<String> {
+        catalog::withdrawn(agent_id, version).map(String::from)
     }
 }
 
@@ -136,6 +151,13 @@ pub async fn adopt(
     let m = templates
         .current(agent_id)
         .ok_or_else(|| Error::UnknownAgent(agent_id.into()))?;
+    if let Some(advisory) = templates.withdrawn(agent_id, &m.agent.version) {
+        return Err(Error::Withdrawn {
+            agent: agent_id.into(),
+            version: m.agent.version.clone(),
+            advisory,
+        });
+    }
     let harness = match harness {
         Some(h) => m
             .harness(h)
@@ -221,7 +243,34 @@ impl Lifecycle {
     /// 保证实例的沙箱在运行，返回最新的绑定（沙箱 id、地址）。编排服务在开始或继续一个运行前调用。
     pub async fn ensure_running(&self, id: InstanceId) -> Result<InstanceRuntime> {
         let mut w = self.db.worker().await?;
-        let rt = w.lock_instance(id).await?;
+        let mut rt = w.lock_instance(id).await?;
+        // 锁定的版本因为安全问题下架了（15.5）：换到当前版本，按重建处理（工作区卷保留）。
+        if rt.state != InstanceState::Deleted
+            && let Some(advisory) = self.templates.withdrawn(&rt.agent_id, &rt.agent_version)
+        {
+            let to = self
+                .templates
+                .current(&rt.agent_id)
+                .map(|m| m.agent.version)
+                .filter(|v| self.templates.withdrawn(&rt.agent_id, v).is_none())
+                .ok_or_else(|| Error::Withdrawn {
+                    agent: rt.agent_id.clone(),
+                    version: rt.agent_version.clone(),
+                    advisory: advisory.clone(),
+                })?;
+            warn!(instance = %id, from = %rt.agent_version, to = %to, %advisory, "template version was withdrawn, moving the instance to the current version");
+            w.set_instance_version(id, &to).await?;
+            w.audit(
+                Some(rt.user_id),
+                "system",
+                "instance.version.withdrawn",
+                Some(&id.to_string()),
+                &json!({ "from": rt.agent_version, "to": to, "advisory": advisory }),
+            )
+            .await?;
+            rt.agent_version = to;
+            rt.rebuild_pending = true;
+        }
         // 用户换了模板版本（升级、回滚）：丢掉旧沙箱，按新版本重建，工作区卷保留。
         if rt.rebuild_pending && rt.state != InstanceState::Deleted {
             self.templates

@@ -505,6 +505,16 @@ impl Tx<Worker> {
         Ok(())
     }
 
+    /// 每个 agent 版本上有多少个没删除的实例（15.5：下架一个版本后看还有多少实例没换过去）。
+    pub async fn instance_versions(&mut self) -> Result<Vec<(String, String, i64)>> {
+        Ok(sqlx::query_as(
+            "SELECT agent_id, agent_version, count(*) FROM instances WHERE state <> 'deleted' \
+             GROUP BY agent_id, agent_version ORDER BY agent_id, agent_version",
+        )
+        .fetch_all(self.conn())
+        .await?)
+    }
+
     pub async fn set_instance_version(
         &mut self,
         id: InstanceId,

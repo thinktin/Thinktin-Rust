@@ -122,7 +122,9 @@ impl From<control::Error> for ApiError {
         use control::Error;
         match e {
             Error::UnknownAgent(a) => Self::new(ErrorCode::NotFound, format!("unknown agent {a}")),
-            Error::UnknownVersion { .. } | Error::Invalid(_) => Self::invalid(e.to_string()),
+            Error::UnknownVersion { .. } | Error::Withdrawn { .. } | Error::Invalid(_) => {
+                Self::invalid(e.to_string())
+            }
             Error::Deleted => Self::not_found("instance"),
             Error::Busy => Self::conflict(e.to_string()),
             Error::Store(s) => s.into(),

@@ -59,3 +59,46 @@ async fn freeze_show_and_unfreeze_by_phone_or_id() {
     assert!(err.to_string().contains("+86139****0000"), "{err}");
     assert!(admin::show(db, "not-a-phone", &mut out).await.is_err());
 }
+
+#[tokio::test]
+async fn versions_count_instances_per_agent_version() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let mut w = db.worker().await.unwrap();
+    let (user, _) = w.upsert_user_by_phone("+8613800138001").await.unwrap();
+    w.commit().await.unwrap();
+    let claude = catalog::builtin("claude").unwrap().agent.version;
+    let mut tx = db.tenant(user.id).await.unwrap();
+    for (i, version) in [claude.as_str(), claude.as_str(), "0.0.1-gone"]
+        .into_iter()
+        .enumerate()
+    {
+        tx.create_instance(&store::NewInstance {
+            agent_id: "claude".into(),
+            agent_version: version.into(),
+            harness: "acp".into(),
+            name: format!("c{i}"),
+            workspace_id: format!("ws-{i}"),
+            limits: Default::default(),
+        })
+        .await
+        .unwrap();
+    }
+    tx.commit().await.unwrap();
+
+    let mut out = Vec::new();
+    admin::versions(db, &mut out).await.unwrap();
+    let text = take(&mut out);
+    let line = |v: &str| {
+        text.lines()
+            .find(|l| l.split_whitespace().nth(1) == Some(v))
+            .unwrap_or_else(|| panic!("no line for {v}: {text}"))
+            .to_owned()
+    };
+    let cur = line(&claude);
+    assert!(
+        cur.split_whitespace().nth(2) == Some("2") && cur.ends_with("current"),
+        "{text}"
+    );
+    assert!(line("0.0.1-gone").ends_with("unknown version"), "{text}");
+}

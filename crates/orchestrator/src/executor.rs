@@ -596,7 +596,9 @@ impl Executor {
             .await
             .map_err(|e| match e {
                 control::Error::Deleted => Outcome::Failed("instance was deleted".into()),
-                control::Error::UnknownVersion { .. } => Outcome::Failed(e.to_string()),
+                control::Error::UnknownVersion { .. } | control::Error::Withdrawn { .. } => {
+                    Outcome::Failed(e.to_string())
+                }
                 e => Outcome::Retry(format!("waking the sandbox failed: {e}")),
             })?;
         let retry = |e: store::Error| Outcome::Retry(e.to_string());

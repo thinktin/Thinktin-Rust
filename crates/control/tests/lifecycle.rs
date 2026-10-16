@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Utc;
-use control::{BuiltinTemplates, Error, Lifecycle, LifecycleConfig};
+use control::{BuiltinTemplates, Error, Lifecycle, LifecycleConfig, Templates};
 use proto::domain::{
     CatchUp, InstanceId, InstanceState, PlanAuthor, PlanPolicy, PlanStep, RunSource, ScheduleSpec,
     UserId,
@@ -453,4 +453,95 @@ async fn instances_wake_up_shortly_before_their_plans_fire() {
     w.rollback().await.unwrap();
     // 已经醒着的不重复唤醒。
     assert_eq!(lc.sweep().await.unwrap().prewarmed, 0);
+}
+
+/// 内置清单，再加上一份下架名单（15.5）。
+struct Withdrawing(Vec<(&'static str, String)>);
+
+impl Templates for Withdrawing {
+    fn current(&self, agent_id: &str) -> Option<catalog::Manifest> {
+        BuiltinTemplates.current(agent_id)
+    }
+    fn manifest(&self, agent_id: &str, version: &str) -> Option<catalog::Manifest> {
+        if self.withdrawn(agent_id, version).is_some() {
+            return None;
+        }
+        BuiltinTemplates.manifest(agent_id, version)
+    }
+    fn withdrawn(&self, agent_id: &str, version: &str) -> Option<String> {
+        self.0
+            .iter()
+            .any(|(a, v)| *a == agent_id && v == version)
+            .then(|| "TT-2026-001".to_string())
+    }
+}
+
+#[tokio::test]
+async fn instances_on_a_withdrawn_version_move_to_the_current_one() {
+    let Some(e) = env().await else { return };
+    let pi = catalog::builtin("pi").unwrap();
+    let current = pi.agent.version.clone();
+    let lc = Lifecycle::new(
+        e.t.db.clone(),
+        e.provider.clone(),
+        Arc::new(Withdrawing(vec![("pi", "0.0.1-old".into())])),
+        LifecycleConfig::default(),
+    );
+    // 一个锁在有漏洞的旧版本上的实例。
+    let mut t = e.t.db.tenant(e.user).await.unwrap();
+    let inst = t
+        .create_instance(&store::NewInstance {
+            agent_id: "pi".into(),
+            agent_version: "0.0.1-old".into(),
+            harness: pi.default_harness().id.clone(),
+            name: "Pi".into(),
+            workspace_id: "ws-old-pi".into(),
+            limits: Default::default(),
+        })
+        .await
+        .unwrap();
+    t.commit().await.unwrap();
+
+    // 唤醒时换到当前版本、按它建沙箱，并记审计。
+    let rt = lc.ensure_running(inst.id).await.unwrap();
+    assert_eq!(rt.agent_version, current);
+    assert!(!rt.rebuild_pending);
+    assert!(rt.sandbox_id.is_some());
+    let mut w = e.t.db.worker().await.unwrap();
+    assert_eq!(
+        w.instance_runtime(inst.id).await.unwrap().agent_version,
+        current
+    );
+    w.rollback().await.unwrap();
+    let detail: serde_json::Value = sqlx::query_scalar(
+        "SELECT detail FROM audit_log WHERE action = 'instance.version.withdrawn' AND target = $1",
+    )
+    .bind(inst.id.to_string())
+    .fetch_one(e.t.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(detail["from"], "0.0.1-old");
+    assert_eq!(detail["to"], current.as_str());
+    assert_eq!(detail["advisory"], "TT-2026-001");
+
+    // 当前版本也下架了：不能领养，已有的实例不再启动，沙箱不动。
+    let lc = Lifecycle::new(
+        e.t.db.clone(),
+        e.provider.clone(),
+        Arc::new(Withdrawing(vec![("pi", current.clone())])),
+        LifecycleConfig::default(),
+    );
+    assert!(matches!(
+        lc.adopt(e.user, "user:d", "pi", None, "Pi 2").await,
+        Err(Error::Withdrawn { .. })
+    ));
+    assert!(matches!(
+        lc.ensure_running(inst.id).await,
+        Err(Error::Withdrawn { .. })
+    ));
+    let sid = rt.sandbox_id.unwrap();
+    assert_eq!(
+        sandbox_state(&e.provider, &sid).await,
+        Some(SandboxState::Running)
+    );
 }

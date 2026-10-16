@@ -1,4 +1,4 @@
-//! 运维命令（WBS 4.6）：`thinktin-server admin freeze|unfreeze|show`。
+//! 运维命令（WBS 4.6、15.5）：`thinktin-server admin freeze|unfreeze|show|versions`。
 //!
 //! 冻结、解冻走 [`orchestrator::account`]：记审计（操作人和原因）、给用户发通知。
 //! 账号可以用手机号或用户 id 指定；输出里的手机号打码，不输出对话内容。
@@ -6,6 +6,7 @@
 use std::io::Write;
 
 use anyhow::{Context, bail};
+use control::Templates;
 use proto::domain::UserId;
 use store::Db;
 
@@ -92,6 +93,35 @@ pub async fn show(db: &Db, account: &str, out: &mut impl Write) -> anyhow::Resul
     writeln!(out, "runs        {} active", s.active_runs)?;
     writeln!(out, "plans       {} active", s.active_plans)?;
     writeln!(out, "grants      {} active", s.active_grants)?;
+    Ok(())
+}
+
+/// 每个 agent 版本上有多少个实例（15.5）：下架一个版本后，看还有多少实例没换到新版本。
+/// 下架版本上的实例在下次唤醒时自动换过去，空闲的实例要等到它下一次运行。
+pub async fn versions(db: &Db, out: &mut impl Write) -> anyhow::Result<()> {
+    let mut w = db.worker().await?;
+    let rows = w.instance_versions().await?;
+    w.rollback().await?;
+    let templates = control::BuiltinTemplates;
+    writeln!(
+        out,
+        "{:<10} {:<16} {:>9}  status",
+        "agent", "version", "instances"
+    )?;
+    for (agent, version, n) in rows {
+        let current = templates
+            .current(&agent)
+            .is_some_and(|m| m.agent.version == version);
+        let status = match templates.withdrawn(&agent, &version) {
+            Some(advisory) => {
+                format!("withdrawn ({advisory}): moves to the current version on its next wake")
+            }
+            None if current => "current".to_string(),
+            None if templates.manifest(&agent, &version).is_some() => "kept".to_string(),
+            None => "unknown version".to_string(),
+        };
+        writeln!(out, "{agent:<10} {version:<16} {n:>9}  {status}")?;
+    }
     Ok(())
 }
 
