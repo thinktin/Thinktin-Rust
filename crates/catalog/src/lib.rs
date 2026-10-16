@@ -208,12 +208,12 @@ mod tests {
         );
         let archived = [("pi", old_text.as_str())];
         assert_eq!(
-            list_versions(Some(current.clone()), &archived, "pi"),
+            list_versions(Some(current.clone()), &archived, &[], "pi"),
             [current.agent.version.clone(), "0.0.1-old".into()]
         );
-        let old = find_version(Some(current.clone()), &archived, "pi", "0.0.1-old").unwrap();
+        let old = find_version(Some(current.clone()), &archived, &[], "pi", "0.0.1-old").unwrap();
         assert_eq!(old.agent.version, "0.0.1-old");
-        assert!(find_version(Some(current), &archived, "pi", "9.9.9").is_none());
+        assert!(find_version(Some(current), &archived, &[], "pi", "9.9.9").is_none());
         assert_eq!(
             builtin_version("pi", &builtin("pi").unwrap().agent.version)
                 .unwrap()
