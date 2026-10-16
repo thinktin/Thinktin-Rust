@@ -1881,7 +1881,7 @@ async fn delegation_stops_at_three_levels() {
         .await;
     // 前三层各自委派下一层，转入等子任务。
     let mut runs = vec![root];
-    for level in 0..3 {
+    for (level, member) in chain.iter().take(3).enumerate() {
         e.run_to_end().await;
         let parent = *runs.last().unwrap();
         let rec = e.state(parent).await;
@@ -1893,7 +1893,7 @@ async fn delegation_stops_at_three_levels() {
         );
         let kids = children(&e, parent).await;
         assert_eq!(kids.len(), 1, "level {level}");
-        assert_eq!(kids[0].instance_id, chain[level].id, "level {level}");
+        assert_eq!(kids[0].instance_id, member.id, "level {level}");
         assert_eq!(kids[0].root_run_id, root);
         runs.push(kids[0].id);
     }
