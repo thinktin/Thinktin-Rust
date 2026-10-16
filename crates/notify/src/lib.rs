@@ -25,6 +25,8 @@ pub enum PushKind {
     RunFailed,
     /// 需要审批：可操作通知，只能直接“拒绝”。
     Approval,
+    /// 电脑上的高危操作请手机批准（14.2）：批准和拒绝都要打开 App 用私钥签名，通知上没有按钮。
+    ComputerApproval,
     /// 其他提醒。
     Info,
 }
@@ -36,6 +38,7 @@ impl PushKind {
             Self::RunFinished => "run_finished",
             Self::RunFailed => "run_failed",
             Self::Approval => "approval",
+            Self::ComputerApproval => "computer_approval",
             Self::Info => "info",
         }
     }
@@ -46,8 +49,14 @@ impl PushKind {
             Self::RunFinished => "RUN_FINISHED",
             Self::RunFailed => "RUN_FAILED",
             Self::Approval => "APPROVAL",
+            Self::ComputerApproval => "COMPUTER_APPROVAL",
             Self::Info => "INFO",
         }
+    }
+
+    /// 等用户批准的：高优先级，走审批的通知渠道。
+    pub fn is_approval(self) -> bool {
+        matches!(self, Self::Approval | Self::ComputerApproval)
     }
 }
 
@@ -142,5 +151,28 @@ impl PushChannel for RecordingChannel {
             .unwrap()
             .push((device_token.to_owned(), message.clone()));
         PushOutcome::Delivered { id: None }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn kinds_serialize_as_their_names() {
+        for kind in [
+            PushKind::RunFinished,
+            PushKind::RunFailed,
+            PushKind::Approval,
+            PushKind::ComputerApproval,
+            PushKind::Info,
+        ] {
+            assert_eq!(
+                serde_json::to_value(kind).unwrap(),
+                serde_json::json!(kind.as_str())
+            );
+        }
+        assert!(PushKind::ComputerApproval.is_approval());
+        assert!(!PushKind::RunFailed.is_approval());
     }
 }

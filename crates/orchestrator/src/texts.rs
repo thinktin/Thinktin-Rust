@@ -89,6 +89,15 @@ pub fn pipeline_finished(locale: Locale) -> &'static str {
     pick(locale, "流水线完成", "Pipeline finished")
 }
 
+/// 电脑上的高危操作请手机批准（14.2）：通知的标题。正文是电脑写的说明。
+pub fn computer_approval(locale: Locale) -> &'static str {
+    pick(
+        locale,
+        "电脑上的操作需要你批准",
+        "Your computer needs your approval",
+    )
+}
+
 /// 任务要用电脑上的工具、电脑不在线（7.11、14.2）：运行的状态说明和通知正文，最多 100 个字符。
 pub fn computer_offline(locale: Locale) -> &'static str {
     pick(

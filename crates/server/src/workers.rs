@@ -1,4 +1,4 @@
-//! 后台任务的组装：调度循环、流水线推进、执行器、出箱投递、实例巡检、数据维护。
+//! 后台任务的组装：调度循环、流水线推进、执行器、出箱投递、电脑审批提醒、实例巡检、数据维护。
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -13,7 +13,7 @@ use notify::fcm::{FcmClient, FcmConfig, ServiceAccount};
 use notify::filter::KeywordFilter;
 use notify::jpush::{JpushClient, JpushConfig};
 use orchestrator::artifacts::ArtifactStore;
-use orchestrator::computer::DeviceCalls;
+use orchestrator::computer::{DeviceCalls, notify_approval_requests};
 use orchestrator::delegate::DelegateTools;
 use orchestrator::exec::{ExecConfig, ExecConnector};
 use orchestrator::executor::{Executor, ExecutorConfig};
@@ -44,6 +44,9 @@ const OUTBOX_RETENTION: Duration = Duration::from_secs(7 * 24 * 3600);
 /// 电脑工具的调用（参数和结果里可能有文件内容、截图）、手机和电脑之间的消息留多久（14.1）。
 /// 消息本身 24 小时就过期。
 const DEVICE_TRAFFIC_RETENTION: Duration = Duration::from_secs(24 * 3600);
+/// 多久看一次有没有要推送的电脑审批请求（14.2），一次最多领多少条。
+const DEVICE_NOTICE_EVERY: Duration = Duration::from_secs(2);
+const DEVICE_NOTICE_BATCH: i64 = 100;
 
 async fn stopped(mut stop: ShutdownListener) {
     stop.wait().await;
@@ -219,6 +222,25 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
                 ),
                 Ok(_) => {}
                 Err(e) => error!(error = %e, "instance sweep failed"),
+            }
+        })
+        .await;
+        Ok(())
+    });
+    // 电脑发给手机的审批请求（14.2）：推送提醒用户打开 App 批准。
+    let notices_db = db.clone();
+    bg.spawn("device-notices", move |stop| async move {
+        every(DEVICE_NOTICE_EVERY, stop, || async {
+            loop {
+                match notify_approval_requests(&notices_db, DEVICE_NOTICE_BATCH).await {
+                    // 一批满了：可能还有，接着领。
+                    Ok(n) if n as i64 >= DEVICE_NOTICE_BATCH => {}
+                    Ok(_) => break,
+                    Err(e) => {
+                        error!(error = %e, "notifying computer approval requests failed");
+                        break;
+                    }
+                }
             }
         })
         .await;

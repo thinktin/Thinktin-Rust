@@ -125,7 +125,7 @@ impl ApnsClient {
         if let Some(thread) = &message.thread_id {
             aps["thread-id"] = json!(thread);
         }
-        if message.kind == PushKind::Approval {
+        if message.kind.is_approval() {
             aps["interruption-level"] = json!("time-sensitive");
         }
         let mut tt = json!({"kind": message.kind});

@@ -6,8 +6,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use notify::{PushChannel, PushKind, PushMessage, PushOutcome, PushTarget};
+use orchestrator::computer::notify_approval_requests;
 use orchestrator::outbox::{Dispatcher, DispatcherConfig, push_item};
-use proto::domain::{DevicePlatform, PushChannelKind, UserId};
+use proto::domain::{DeviceMessageKind, DevicePlatform, PushChannelKind, UserId};
 use store::testing::TestDb;
 
 #[derive(Default)]
@@ -306,6 +307,122 @@ async fn settled_approvals_are_not_pushed() {
     let report = d.tick().await.unwrap();
     assert_eq!((report.delivered, report.dropped), (1, 1));
     assert_eq!(apns.sent(), ["tok"]);
+}
+
+/// 电脑发给手机的审批请求（14.2）：记进收件箱、推送到手机，只提醒一次。
+/// 手机已经取走的、请求已经过期的不提醒；别的消息（比如配对确认）不提醒。
+#[tokio::test]
+async fn computer_approval_requests_are_pushed_once() {
+    let Some(t) = TestDb::new().await else { return };
+    let mut w = t.db.worker().await.unwrap();
+    let (user, _) = w.upsert_user_by_phone("+8613800000002").await.unwrap();
+    let user = user.id;
+    let phone = w
+        .create_device(
+            user,
+            DevicePlatform::Ios,
+            "iPhone",
+            Some((PushChannelKind::Apns, "tok")),
+        )
+        .await
+        .unwrap();
+    let mac = w
+        .create_device(user, DevicePlatform::Macos, "MacBook", None)
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+
+    let now = chrono::Utc::now().timestamp();
+    let request = |id: &str, summary: &str, expires_at: i64| {
+        serde_json::json!({ "request": {
+            "desktop_id": mac.to_string(),
+            "request_id": id,
+            "tool": "computer_run",
+            "arguments_json": "{}",
+            "summary": summary,
+            "issued_at": now,
+            "expires_at": expires_at,
+        } })
+    };
+    let mut r = t.db.relay().await.unwrap();
+    let send = [
+        (
+            DeviceMessageKind::ApprovalRequest,
+            request(
+                "r1",
+                "运行 rm -rf ~/Downloads/old\n理由：清理旧文件",
+                now + 900,
+            ),
+        ),
+        (
+            DeviceMessageKind::ApprovalRequest,
+            request("r2", "已经过期", now - 1),
+        ),
+        (
+            DeviceMessageKind::ApprovalRequest,
+            request("r3", "手机已经取走", now + 900),
+        ),
+        (
+            DeviceMessageKind::PairConfirm,
+            serde_json::json!({ "confirm": "x" }),
+        ),
+    ];
+    let mut sent = Vec::new();
+    for (kind, body) in &send {
+        sent.push(
+            r.send_device_message(user, mac, phone, *kind, body)
+                .await
+                .unwrap(),
+        );
+    }
+    r.commit().await.unwrap();
+    // 手机开着 App，已经取走了 r3。
+    let mut tx = t.db.tenant(user).await.unwrap();
+    tx.ack_device_messages(phone, &[sent[2].id]).await.unwrap();
+    tx.commit().await.unwrap();
+
+    // r1 提醒；r2 过期了，领走但不提醒。
+    assert_eq!(notify_approval_requests(&t.db, 10).await.unwrap(), 2);
+    assert_eq!(notify_approval_requests(&t.db, 10).await.unwrap(), 0);
+
+    let mut tx = t.db.tenant(user).await.unwrap();
+    let inbox = tx.inbox(None, 100, false).await.unwrap();
+    tx.rollback().await.unwrap();
+    assert_eq!(inbox.len(), 1, "{inbox:?}");
+    assert_eq!(
+        (
+            inbox[0].kind.as_str(),
+            inbox[0].title.as_str(),
+            inbox[0].body.as_str(),
+            inbox[0].ai_generated
+        ),
+        (
+            "computer_approval",
+            "电脑上的操作需要你批准",
+            "运行 rm -rf ~/Downloads/old",
+            true
+        )
+    );
+
+    let rec = Arc::new(notify::RecordingChannel::default());
+    let d = Dispatcher::new(t.db.clone(), "node-a", DispatcherConfig::default())
+        .with_channel(PushChannelKind::Apns, rec.clone());
+    assert_eq!(d.tick().await.unwrap().delivered, 1);
+    let pushed = rec.sent.lock().unwrap().clone();
+    assert_eq!(pushed.len(), 1);
+    let (token, m) = &pushed[0];
+    assert_eq!(token, "tok");
+    assert_eq!(m.kind, PushKind::ComputerApproval);
+    assert_eq!(
+        m.collapse_id.as_deref(),
+        Some(format!("device_message:{}", sent[0].id).as_str())
+    );
+    let ttl = m.ttl.expect("the push expires with the request");
+    assert!(
+        ttl > Duration::from_secs(800) && ttl <= Duration::from_secs(900),
+        "{ttl:?}"
+    );
+    assert_eq!(m.target.inbox_id, Some(inbox[0].id.to_string()));
 }
 
 /// 一批按顺序发，前面慢了，后面的锁过期被别的投递器领走：不再发一遍。

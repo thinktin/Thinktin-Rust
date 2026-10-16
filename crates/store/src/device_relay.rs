@@ -459,6 +459,38 @@ impl Tx<Worker> {
         Ok(id)
     }
 
+    /// 电脑发给手机、还没提醒过的审批请求（14.2），最多 `limit` 条：领走并记下提醒过了。
+    /// 和写收件箱、推送放在同一个事务里，失败了回滚，下次再提醒。
+    pub async fn claim_device_message_notices(
+        &mut self,
+        limit: i64,
+    ) -> Result<Vec<(UserId, DeviceMessage)>> {
+        #[derive(sqlx::FromRow)]
+        struct Row {
+            user_id: Uuid,
+            #[sqlx(flatten)]
+            message: MessageRow,
+        }
+        let rows: Vec<Row> = sqlx::query_as(concat!(
+            "UPDATE device_messages SET notified_at = now() \
+             WHERE id IN (SELECT id FROM device_messages \
+                          WHERE notified_at IS NULL AND delivered_at IS NULL \
+                            AND kind = 'approval_request' AND expires_at > now() \
+                          ORDER BY id LIMIT $1 FOR UPDATE SKIP LOCKED) \
+             RETURNING user_id, ",
+            message_columns!()
+        ))
+        .bind(limit)
+        .fetch_all(self.conn())
+        .await?;
+        let mut out = rows
+            .into_iter()
+            .map(|r| Ok((r.user_id.into(), r.message.into_message()?)))
+            .collect::<Result<Vec<(UserId, DeviceMessage)>>>()?;
+        out.sort_by_key(|(_, m)| m.id);
+        Ok(out)
+    }
+
     pub async fn device_call(&mut self, id: DeviceCallId) -> Result<DeviceCallRecord> {
         let (device, state, result, error): (Uuid, String, Option<Value>, Option<String>) =
             sqlx::query_as(

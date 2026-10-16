@@ -6,12 +6,17 @@
 //! 电脑连上中继时唤醒。工具本身由电脑端的工具服务（14.2）提供。
 //!
 //! 等结果靠数据库通知（`thinktin_device_call`，调用结束时发），通知丢了也会定时去库里看，只是慢一点。
+//!
+//! 电脑上的高危操作要手机签名批准（14.2）：电脑经中继发给手机的审批请求由
+//! [`notify_approval_requests`] 写进收件箱、推送到手机。
 
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use chrono::{DateTime, Utc};
+use notify::PushKind;
 use proto::domain::{DeviceCallId, DeviceCallState, DeviceId, RunId, UserId};
 use serde_json::Value;
 use sqlx::postgres::PgListener;
@@ -21,8 +26,70 @@ use tokio::sync::broadcast::error::RecvError;
 use tokio::time::Instant;
 use tracing::{info, warn};
 
+use crate::outbox::{Notice, notify};
+
 /// 没收到通知时多久去库里看一次。
 const POLL: Duration = Duration::from_secs(2);
+
+/// 电脑发给手机的审批请求（14.2）：写进收件箱、推送到用户的手机，提醒用户打开 App 批准
+/// （批准要在 App 里用私钥签名，通知上没有按钮）。每条只提醒一次；一次最多处理 `batch` 条，返回处理了几条。
+/// 后台每隔几秒调一次。
+pub async fn notify_approval_requests(db: &Db, batch: i64) -> store::Result<usize> {
+    let mut w = db.worker().await?;
+    let claimed = w.claim_device_message_notices(batch).await?;
+    let now = Utc::now();
+    let mut sent = 0;
+    for (user, m) in &claimed {
+        // 请求自己的过期时间（电脑签的，Unix 秒）比消息的短：过了就不必提醒。
+        let request = &m.body["request"];
+        let until = request["expires_at"]
+            .as_i64()
+            .and_then(|s| DateTime::from_timestamp(s, 0))
+            .map_or(m.expires_at, |t| t.min(m.expires_at));
+        let Ok(ttl) = (until - now).to_std() else {
+            continue;
+        };
+        let locale = w.user_locale(*user).await?;
+        let key = format!("device_message:{}", m.id);
+        let notice = Notice {
+            dedupe_key: Some(key.clone()),
+            collapse_id: Some(key),
+            ttl: Some(ttl),
+            // 说明是电脑按 agent 要执行的操作写的。
+            ai_generated: true,
+            ..Notice::new(
+                PushKind::ComputerApproval,
+                crate::texts::computer_approval(locale),
+                approval_summary(request["summary"].as_str().unwrap_or_default()),
+            )
+        };
+        notify(&mut w, *user, &notice).await?;
+        sent += 1;
+    }
+    w.commit().await?;
+    if sent > 0 {
+        info!(
+            count = sent,
+            "asked users to approve actions on their computers"
+        );
+    }
+    Ok(claimed.len())
+}
+
+/// 通知正文：说明的第一行，最多 100 个字符。
+fn approval_summary(summary: &str) -> String {
+    let line = summary
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or_default();
+    let line = line.trim();
+    if line.chars().count() <= 100 {
+        return line.to_owned();
+    }
+    let mut out: String = line.chars().take(99).collect();
+    out.push('…');
+    out
+}
 
 /// 电脑回的结果：MCP 的 content 数组；工具自己报错时 `is_error` 为真。
 #[derive(Debug, Clone, PartialEq)]
@@ -271,6 +338,19 @@ mod tests {
             Err(CallError::Failed(_))
         ));
         assert!(matches!(output(d, None), Err(CallError::Failed(_))));
+    }
+
+    #[test]
+    fn approval_notices_show_the_first_line_of_the_summary() {
+        assert_eq!(
+            approval_summary("\n  删除 ~/Downloads/old  \n理由：清理"),
+            "删除 ~/Downloads/old"
+        );
+        let long = "运".repeat(150);
+        let short = approval_summary(&long);
+        assert_eq!(short.chars().count(), 100);
+        assert!(short.ends_with('…'));
+        assert_eq!(approval_summary(""), "");
     }
 
     #[test]

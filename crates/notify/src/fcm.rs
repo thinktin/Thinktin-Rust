@@ -251,8 +251,8 @@ impl FcmClient {
                 data.insert(k.into(), json!(v));
             }
         }
-        let urgent = matches!(message.kind, PushKind::Approval | PushKind::RunFailed);
-        let channel = if message.kind == PushKind::Approval {
+        let urgent = message.kind.is_approval() || message.kind == PushKind::RunFailed;
+        let channel = if message.kind.is_approval() {
             &self.approval_channel
         } else {
             &self.default_channel
