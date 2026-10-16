@@ -93,5 +93,17 @@ def tests():
         emit("\n".join(text.splitlines()[-120:]), title="cargo test failed")
 
 
+def lockfile():
+    """构建时 cargo 改了 Cargo.lock：把差异写成注解，照着改。"""
+    diff = sys.stdin.read()
+    sys.stdout.write(diff)
+    emit(
+        "cargo changed Cargo.lock during the build; commit this change "
+        "(release images build with --locked):\n" + diff,
+        file="Cargo.lock",
+        title="Cargo.lock is out of date",
+    )
+
+
 if __name__ == "__main__":
-    {"cargo": cargo, "tests": tests}[sys.argv[1]]()
+    {"cargo": cargo, "tests": tests, "lockfile": lockfile}[sys.argv[1]]()

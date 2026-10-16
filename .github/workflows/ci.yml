@@ -35,6 +35,14 @@ jobs:
       CARGO_TERM_COLOR: always
     steps:
       - uses: actions/checkout@v4
+        with:
+          # 迁移检查要对照最近的发布标签。
+          fetch-depth: 0
+      # 发布过的迁移不许改，会让上一版程序出错的改动要标明（WBS 2.9，docs/release.md 第 3 节）。
+      - name: Migrations
+        run: |
+          python3 tools/ci/check_migrations.py --self-test
+          python3 tools/ci/check_migrations.py
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -48,6 +56,11 @@ jobs:
           set -o pipefail
           cargo clippy --workspace --all-targets --message-format=json -- -D warnings \
             | python3 tools/ci/annotate.py cargo
+      # 发布镜像用 --locked 构建：Cargo.lock 要和 Cargo.toml 对得上。
+      - name: Cargo.lock is up to date
+        run: |
+          git diff --exit-code -- Cargo.lock > "$RUNNER_TEMP/lock.diff" \
+            || { python3 tools/ci/annotate.py lockfile < "$RUNNER_TEMP/lock.diff"; exit 1; }
       - name: Test
         id: test
         run: |
