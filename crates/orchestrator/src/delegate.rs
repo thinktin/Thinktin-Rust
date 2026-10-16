@@ -11,13 +11,14 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
-use proto::domain::{Instance, Run, RunKind, RunSource, RunState};
+use proto::domain::{Instance, Locale, Run, RunKind, RunSource, RunState};
 use proto::shim::PlatformTool;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use store::{Db, NewRun};
 
 use crate::shim::{PlatformTools, ToolContext, ToolOutput};
+use crate::texts::{ChildOutcome, delegation_results};
 
 pub const DELEGATE_TOOLS: [&str; 2] = ["delegate_list", "delegate"];
 
@@ -137,10 +138,8 @@ impl DelegateTools {
             .map(str::trim)
             .filter(|t| !t.is_empty())
             .map_or_else(|| first_line(task, 40), |t| first_line(t, 40));
-        let prompt = format!(
-            "（这是团队负责人（{lead}）委派给你的子任务「{title}」。做完后用几句话总结结果，\
-             要交给负责人的文件用 artifact_publish 发布。）\n\n{task}"
-        );
+        let locale = w.user_locale(ctx.user).await.map_err(internal)?;
+        let prompt = crate::texts::delegated_task(locale, &lead, &title, task);
         let mut new = NewRun::new(
             target.id,
             RunSource::Delegate,
@@ -200,36 +199,34 @@ fn first_line(s: &str, max: usize) -> String {
     out
 }
 
-/// 子任务的结果，作为新消息交还给负责人（8.7）。`children` 是这次要交还的、已经结束的子运行。
-pub fn results_message(children: &[(Run, String)], original: &str) -> String {
-    let mut out = String::from(
-        "（你委派的子任务都结束了，结果如下。据此继续完成原来的任务；需要的话可以再委派。）\n",
-    );
-    for (i, (run, name)) in children.iter().enumerate() {
-        // 子运行的提示词是“委派说明 + 空行 + 任务”，取任务的第一行。
-        let task = run
-            .prompt
-            .split_once("\n\n")
-            .map_or_else(|| first_line(&run.prompt, 40), |(_, t)| first_line(t, 40));
-        let outcome = match run.state {
-            RunState::Succeeded => {
-                format!("完成。{}", run.summary.as_deref().unwrap_or("（没有总结）"))
-            }
-            RunState::Cancelled => "被取消了。".to_owned(),
-            _ => format!(
-                "失败：{}",
-                first_line(run.error.as_deref().unwrap_or("原因不明"), 300)
-            ),
-        };
-        out.push_str(&format!(
-            "\n{}. 交给「{name}」的「{task}」：{outcome}",
-            i + 1
-        ));
-    }
-    out.push_str(&format!(
-        "\n\n产出物用 artifact_list、artifact_read 查看。\n\n原来的任务（供参考）：\n{original}"
-    ));
-    out
+/// 子任务的结果，作为新消息交还给负责人（8.7），按用户的语言（1.6）。
+/// `children` 是这次要交还的、已经结束的子运行和成员名。
+pub fn results_message(locale: Locale, children: &[(Run, String)], original: &str) -> String {
+    let rows: Vec<(String, Option<String>)> = children
+        .iter()
+        .map(|(run, _)| {
+            // 子运行的提示词是“委派说明 + 空行 + 任务”，取任务的第一行。
+            let task = run
+                .prompt
+                .split_once("\n\n")
+                .map_or_else(|| first_line(&run.prompt, 40), |(_, t)| first_line(t, 40));
+            let error = run.error.as_deref().map(|e| first_line(e, 300));
+            (task, error)
+        })
+        .collect();
+    let items: Vec<(&str, &str, ChildOutcome<'_>)> = children
+        .iter()
+        .zip(&rows)
+        .map(|((run, name), (task, error))| {
+            let outcome = match run.state {
+                RunState::Succeeded => ChildOutcome::Done(run.summary.as_deref()),
+                RunState::Cancelled => ChildOutcome::Cancelled,
+                _ => ChildOutcome::Failed(error.as_deref()),
+            };
+            (name.as_str(), task.as_str(), outcome)
+        })
+        .collect();
+    delegation_results(locale, &items, original)
 }
 
 #[async_trait]
@@ -307,19 +304,18 @@ mod tests {
             started_at: None,
             finished_at: None,
         };
-        let msg = results_message(
-            &[
-                (
-                    run(RunState::Succeeded, Some("做好了表格"), None),
-                    "研究员".into(),
-                ),
-                (
-                    run(RunState::Failed, None, Some("budget exceeded")),
-                    "程序员".into(),
-                ),
-            ],
-            "写一份竞品报告",
-        );
+        let children = [
+            (
+                run(RunState::Succeeded, Some("做好了表格"), None),
+                "研究员".into(),
+            ),
+            (
+                run(RunState::Failed, None, Some("budget exceeded")),
+                "程序员".into(),
+            ),
+            (run(RunState::Cancelled, None, None), "测试员".into()),
+        ];
+        let msg = results_message(Locale::ZhCn, &children, "写一份竞品报告");
         assert!(
             msg.contains("1. 交给「研究员」的「调研三家竞品」：完成。做好了表格"),
             "{msg}"
@@ -328,6 +324,17 @@ mod tests {
             msg.contains("2. 交给「程序员」的「调研三家竞品」：失败：budget exceeded"),
             "{msg}"
         );
+        assert!(
+            msg.contains("3. 交给「测试员」的「调研三家竞品」：被取消了。"),
+            "{msg}"
+        );
         assert!(msg.ends_with("写一份竞品报告"));
+        // 英文用户（1.6）。
+        let msg = results_message(Locale::En, &children, "Write a report");
+        assert!(
+            msg.contains("2. “调研三家竞品” for 程序员: Failed: budget exceeded"),
+            "{msg}"
+        );
+        assert!(msg.ends_with("Write a report"));
     }
 }

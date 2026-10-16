@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use notify::PushKind;
-use proto::domain::{PlanStep, RunKind, RunSource, RunState, order_steps};
+use proto::domain::{Locale, PlanStep, RunKind, RunSource, RunState, order_steps};
 use serde_json::json;
 use store::{Db, InstanceRuntime, NewRun, RunChange, RunRecord, Tx, Worker};
 use tracing::{error, info};
@@ -173,6 +173,7 @@ impl PipelineDriver {
                 .is_some_and(|c| c.run.state == RunState::Succeeded)
         });
         if all_done {
+            let sep = crate::texts::pick(w.user_locale(root.user_id).await?, "：", ": ");
             let finals: Vec<String> = order
                 .iter()
                 .filter(|s| !steps.iter().any(|o| o.depends_on.contains(&s.key)))
@@ -180,7 +181,7 @@ impl PipelineDriver {
                     children
                         .get(&s.key)
                         .and_then(|c| c.run.summary.as_ref())
-                        .map(|sum| format!("{}：{}", s.key, truncate(sum, 300)))
+                        .map(|sum| format!("{}{sep}{}", s.key, truncate(sum, 300)))
                 })
                 .collect();
             return self.finish(w, root, Ok(finals.join("\n")), report).await;
@@ -228,7 +229,8 @@ impl PipelineDriver {
         };
         let dep_ids: Vec<_> = deps.iter().map(|d| d.run.id).collect();
         let artifacts = w.run_artifacts(&dep_ids).await?;
-        let prompt = handoff_prompt(title, &root.run.prompt, step, deps, &artifacts);
+        let locale = w.user_locale(root.user_id).await?;
+        let prompt = handoff_prompt(locale, title, &root.run.prompt, step, deps, &artifacts);
         let mut new = NewRun::new(
             step.instance_id,
             RunSource::Pipeline,
@@ -318,11 +320,11 @@ impl PipelineDriver {
         } else {
             title
         };
-        let body = if body.is_empty() {
-            let locale = w.user_locale(root.user_id).await?;
-            crate::texts::pipeline_finished(locale).to_owned()
-        } else {
-            body
+        let locale = w.user_locale(root.user_id).await?;
+        let body = match kind {
+            PushKind::RunFailed => crate::texts::task_failed(locale, &body),
+            _ if body.is_empty() => crate::texts::pipeline_finished(locale).to_owned(),
+            _ => body,
         };
         let notice = Notice {
             instance: Some(root.run.instance_id),
@@ -357,40 +359,31 @@ impl PipelineDriver {
     }
 }
 
-/// 一步的提示词：步骤本身的要求，加上交接说明（8.5）。
+/// 一步的提示词：步骤本身的要求，加上交接说明（8.5），按用户的语言（1.6）。
 pub fn handoff_prompt(
+    locale: Locale,
     title: &str,
     goal: &str,
     step: &PlanStep,
     deps: &[&RunRecord],
     artifacts: &[store::StoredArtifact],
 ) -> String {
+    let words = crate::texts::HandoffWords::new(locale);
     let mut out = step.prompt.trim().to_owned();
-    out.push_str("\n\n---\n【交接说明】");
-    if title.is_empty() {
-        out.push_str(&format!("这是一条流水线中的一步（{}）。", step.key));
-    } else {
-        out.push_str(&format!("这是流水线「{title}」中的一步（{}）。", step.key));
-    }
-    out.push_str(&format!("\n整体目标：{}", truncate(goal, 1000)));
+    out.push_str(&words.heading(title, &step.key));
+    out.push_str(&words.goal(&truncate(goal, 1000)));
     if !deps.is_empty() {
-        out.push_str("\n上游步骤的结果：");
+        out.push_str(words.upstream());
         for d in deps {
             let key = d.run.step_key.as_deref().unwrap_or("?");
             let summary = d.run.summary.as_deref().map(|s| truncate(s, 600));
-            out.push_str(&format!(
-                "\n- {key}：{}",
-                summary.as_deref().unwrap_or("（没有摘要）")
-            ));
+            out.push_str(&words.upstream_step(key, summary.as_deref()));
         }
     }
     if !artifacts.is_empty() {
-        out.push_str("\n上游产出物（开始前已复制到工作区的 handoff/ 目录；也可以用 artifact_list、artifact_read 查看）：");
+        out.push_str(words.artifacts());
         for a in artifacts {
-            out.push_str(&format!(
-                "\n- handoff/{} （v{}，{} 字节）",
-                a.artifact.name, a.artifact.version, a.artifact.size
-            ));
+            out.push_str(&words.artifact(&a.artifact.name, a.artifact.version, a.artifact.size));
         }
     }
     out

@@ -219,7 +219,8 @@ const SIDE_EFFECT_TOOLS: [&str; 6] = [
 
 /// 续跑简报（7.12）：上一次执行到哪儿了——最近调过的工具、最后说的话、为什么中断。
 /// `events` 是这个运行最近的工具调用和回复（按先后排）。内容来自 agent，已经抹过保险箱的值。
-fn resume_brief(events: &[InstanceEvent], reason: Option<&str>) -> String {
+fn resume_brief(locale: Locale, events: &[InstanceEvent], reason: Option<&str>) -> String {
+    let words = crate::texts::BriefWords::new(locale);
     let tools: Vec<&str> = events
         .iter()
         .filter(|e| e.kind == "agent.tool_call")
@@ -238,22 +239,18 @@ fn resume_brief(events: &[InstanceEvent], reason: Option<&str>) -> String {
         let start = chars.len().saturating_sub(300);
         chars[start..].iter().collect()
     };
-    let mut out = String::from("上次的进展：");
+    let mut out = String::from(words.heading());
     if tools.is_empty() {
-        out.push_str("\n- 还没调用过工具。");
+        out.push_str(words.no_tools());
     } else {
         let recent: Vec<&str> = tools.iter().rev().take(8).rev().copied().collect();
-        out.push_str(&format!(
-            "\n- 最近调用的工具（共 {} 次）：{}",
-            tools.len(),
-            recent.join("、")
-        ));
+        out.push_str(&words.tools(tools.len(), &recent));
     }
     if !said.is_empty() {
-        out.push_str(&format!("\n- 最后说的话：「{said}」"));
+        out.push_str(&words.said(&said));
     }
     if let Some(r) = reason.filter(|r| !r.is_empty()) {
-        out.push_str(&format!("\n- 中断原因：{}", truncate(r, 200)));
+        out.push_str(&words.reason(&truncate(r, 200)));
     }
     out
 }
@@ -658,7 +655,7 @@ impl Executor {
             t.rollback().await.map_err(retry)?;
             let ids = named.iter().map(|(c, _)| c.id).collect::<Vec<_>>();
             Some((
-                crate::delegate::results_message(&named, &rec.run.prompt),
+                crate::delegate::results_message(locale, &named, &rec.run.prompt),
                 ids,
             ))
         };
@@ -743,7 +740,11 @@ impl Executor {
             }
             .await;
             match events {
-                Ok(events) => Some(resume_brief(&events, rec.run.state_reason.as_deref())),
+                Ok(events) => Some(resume_brief(
+                    locale,
+                    &events,
+                    rec.run.state_reason.as_deref(),
+                )),
                 Err(e) => {
                     warn!(run = %rec.run.id, error = %e, "reading the run log for the resume brief failed");
                     None
@@ -1252,22 +1253,14 @@ impl Exec<'_> {
         if let Some((message, _)) = &self.resume {
             prompt = message.clone();
         } else if self.rec.run.attempt > 1 {
-            let children = if self.has_children {
-                "你之前委派的子任务还在，用 delegate_list 查看，不要重复委派。"
-            } else {
-                ""
-            };
             // 会话接回了，agent 记得之前的对话；没接回（换了机器、会话丢了）就附上平台记录的上次进展（7.12）。
-            let (session, brief) = match (&self.brief, self.session_restored) {
-                (Some(brief), false) => (
-                    "之前的对话没能接回，下面是平台记录的上次进展。",
-                    format!("\n{brief}"),
-                ),
-                _ => ("", String::new()),
-            };
-            prompt = format!(
-                "（续跑说明：这是第 {} 次尝试，上一次执行中途中断了。{session}先检查工作区里已有的进度，从中断的地方继续，不要重复已经完成的对外操作。{children}）{brief}\n\n{prompt}",
-                self.rec.run.attempt
+            let brief = self.brief.as_deref().filter(|_| !self.session_restored);
+            prompt = crate::texts::resume_note(
+                self.locale,
+                self.rec.run.attempt,
+                brief,
+                self.has_children,
+                &prompt,
             );
         }
         if !self
@@ -1942,18 +1935,34 @@ mod tests {
             ev("agent.tool_call", json!({ "title": "Run tests" })),
             ev("agent.message", json!({ "text": "测试跑到一半" })),
         ];
-        let brief = resume_brief(&events, Some("agent-shim exited"));
+        let brief = resume_brief(Locale::ZhCn, &events, Some("agent-shim exited"));
         assert!(
             brief.contains("（共 2 次）：Read file、Run tests"),
             "{brief}"
         );
         assert!(brief.contains("「读完了，测试跑到一半」"), "{brief}");
         assert!(brief.contains("中断原因：agent-shim exited"), "{brief}");
-        let empty = resume_brief(&[], None);
+        let empty = resume_brief(Locale::ZhCn, &[], None);
         assert!(empty.contains("还没调用过工具") && !empty.contains("中断原因"));
         // 很长的回复只留最后一段。
         let long = vec![ev("agent.message", json!({ "text": "长".repeat(1000) }))];
-        assert_eq!(resume_brief(&long, None).matches('长').count(), 300);
+        assert_eq!(
+            resume_brief(Locale::ZhCn, &long, None)
+                .matches('长')
+                .count(),
+            300
+        );
+        // 英文用户（1.6）。
+        let brief = resume_brief(Locale::En, &events, Some("agent-shim exited"));
+        assert!(brief.starts_with("Last progress:"), "{brief}");
+        assert!(
+            brief.contains("(2 in total): Read file, Run tests"),
+            "{brief}"
+        );
+        assert!(
+            brief.contains("Why it stopped: agent-shim exited"),
+            "{brief}"
+        );
     }
 
     #[test]
