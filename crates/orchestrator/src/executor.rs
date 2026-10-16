@@ -1402,30 +1402,10 @@ impl Exec<'_> {
             }
         }
         if by == DecisionSource::Timeout {
-            match self.policy.on_approval_timeout {
-                ApprovalTimeoutAction::Skip => {}
-                ApprovalTimeoutAction::Fail => {
-                    self.cancel_turn().await;
-                    return Some(Outcome::Failed("approval timed out".into()));
-                }
-                ApprovalTimeoutAction::PausePlan => {
-                    if let Some(plan) = self.rec.run.plan_id {
-                        let paused = async {
-                            let mut w = self.ex.db.worker().await?;
-                            w.set_plan_paused(plan, true).await?;
-                            w.commit().await
-                        }
-                        .await;
-                        if let Err(e) = paused {
-                            warn!(%plan, error = %e, "pausing the plan failed");
-                        }
-                    }
-                    self.cancel_turn().await;
-                    return Some(Outcome::Failed(
-                        "approval timed out; the plan was paused".into(),
-                    ));
-                }
+            if let Some(o) = self.on_approval_timeout().await {
+                return Some(o);
             }
+            self.notify_skipped(&key).await;
         }
         if self.pending.is_empty()
             && self.state.is_waiting()
@@ -1436,7 +1416,72 @@ impl Exec<'_> {
         None
     }
 
-    /// 查用户的决定，转给 shim。
+    /// 审批超时后按计划策略处理（7.10）：跳过这一步（返回 `None`，agent 接着做）、判失败，
+    /// 或者暂停计划并判失败。
+    async fn on_approval_timeout(&mut self) -> Option<Outcome> {
+        match self.policy.on_approval_timeout {
+            ApprovalTimeoutAction::Skip => None,
+            ApprovalTimeoutAction::Fail => {
+                self.cancel_turn().await;
+                Some(Outcome::Failed("approval timed out".into()))
+            }
+            ApprovalTimeoutAction::PausePlan => {
+                let Some(plan) = self.rec.run.plan_id else {
+                    self.cancel_turn().await;
+                    return Some(Outcome::Failed("approval timed out".into()));
+                };
+                let paused = async {
+                    let mut w = self.ex.db.worker().await?;
+                    w.set_plan_paused(plan, true).await?;
+                    w.commit().await
+                }
+                .await;
+                if let Err(e) = paused {
+                    warn!(%plan, error = %e, "pausing the plan failed");
+                }
+                self.cancel_turn().await;
+                Some(Outcome::Failed(
+                    "approval timed out; the plan was paused".into(),
+                ))
+            }
+        }
+    }
+
+    /// 审批超时、按策略跳过了这一步：告诉用户跳过了什么（用户不在线时回来能看到）。
+    async fn notify_skipped(&self, key: &str) {
+        let result = async {
+            let mut w = self.ex.db.worker().await?;
+            let Some(rec) = w.approval_for_request(self.rec.run.id, key).await? else {
+                return w.rollback().await;
+            };
+            let id = rec.approval.id;
+            let title = rec.approval.title.as_deref();
+            let notice = Notice {
+                instance: Some(self.rec.run.instance_id),
+                run: Some(self.rec.run.id),
+                plan: self.rec.run.plan_id,
+                approval: Some(id),
+                thread_id: Some(self.rec.run.id.to_string()),
+                dedupe_key: Some(format!("approval:{id}:skipped")),
+                // 正文是 agent 给工具调用起的标题。
+                ai_generated: title.is_some(),
+                ..Notice::new(
+                    PushKind::Info,
+                    "审批超时，已跳过这一步",
+                    truncate(title.unwrap_or("agent 请求执行的操作"), 100),
+                )
+            };
+            notify(&mut w, self.rec.user_id, &notice).await?;
+            w.commit().await
+        }
+        .await;
+        if let Err(e) = result {
+            warn!(run = %self.rec.run.id, error = %e, "noting a skipped approval failed");
+        }
+    }
+
+    /// 查用户的决定，转给 shim。过了时限用户还没处理的按超时处理（7.10）：
+    /// 沙箱被空闲回收暂停时 shim 的计时器不走，不能只靠它。
     async fn poll_approvals(&mut self) -> Result<(), Outcome> {
         let pending: Vec<String> = self
             .pending
@@ -1455,33 +1500,60 @@ impl Exec<'_> {
             .await
             .map_err(|e| Outcome::Retry(e.to_string()))?;
             let Some(rec) = rec else { continue };
-            if matches!(
-                rec.approval.state,
-                ApprovalState::Approved | ApprovalState::Rejected
-            ) {
-                // 先拿回执行名额（满了就下次再看），再唤醒沙箱：等审批期间可能被空闲回收暂停了。
-                if self.slot_released {
-                    match self.ex.slots.clone().try_acquire_owned() {
-                        Ok(permit) => {
-                            self.slot = Some(permit);
-                            self.slot_released = false;
-                        }
-                        Err(_) => return Ok(()),
-                    }
+            let mut state = rec.approval.state;
+            if state == ApprovalState::Pending && rec.approval.expires_at <= Utc::now() {
+                let settled = async {
+                    let mut w = self.ex.db.worker().await?;
+                    w.settle_approval(
+                        self.rec.run.id,
+                        &key,
+                        ApprovalState::Expired,
+                        None,
+                        "timeout",
+                    )
+                    .await?;
+                    w.commit().await
                 }
-                self.ex
-                    .lifecycle
-                    .ensure_running(self.rec.run.instance_id)
-                    .await
-                    .map_err(|e| Outcome::Retry(format!("waking the instance: {e}")))?;
-                self.send(ShimCommand::PermissionDecision {
-                    request_id: request_id.clone(),
-                    option_id: rec.decided_option,
-                })
                 .await;
-                // 只发一次；shim 回 permission_resolved(by=user) 后从 pending 里移除、回到运行中。
-                self.delivered.insert(request_id);
+                if let Err(e) = settled {
+                    warn!(run = %self.rec.run.id, error = %e, "expiring the approval failed");
+                    continue;
+                }
+                info!(run = %self.rec.run.id, request = %request_id, "approval timed out");
+                if let Some(outcome) = self.on_approval_timeout().await {
+                    return Err(outcome);
+                }
+                self.notify_skipped(&key).await;
+                state = ApprovalState::Expired;
             }
+            // 超时跳过这一步：告诉 agent 不做了（和 shim 自己超时一样），它接着往下做。
+            let option = match state {
+                ApprovalState::Approved | ApprovalState::Rejected => rec.decided_option,
+                ApprovalState::Expired => None,
+                _ => continue,
+            };
+            // 先拿回执行名额（满了就下次再看），再唤醒沙箱：等审批期间可能被空闲回收暂停了。
+            if self.slot_released {
+                match self.ex.slots.clone().try_acquire_owned() {
+                    Ok(permit) => {
+                        self.slot = Some(permit);
+                        self.slot_released = false;
+                    }
+                    Err(_) => return Ok(()),
+                }
+            }
+            self.ex
+                .lifecycle
+                .ensure_running(self.rec.run.instance_id)
+                .await
+                .map_err(|e| Outcome::Retry(format!("waking the instance: {e}")))?;
+            self.send(ShimCommand::PermissionDecision {
+                request_id: request_id.clone(),
+                option_id: option,
+            })
+            .await;
+            // 只发一次；shim 回 permission_resolved(by=user) 后从 pending 里移除、回到运行中。
+            self.delivered.insert(request_id);
         }
         Ok(())
     }

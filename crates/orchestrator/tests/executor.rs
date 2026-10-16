@@ -1405,3 +1405,91 @@ async fn waits_time_out_by_the_plan_policy() {
     assert!(e.inbox().await.iter().any(|i| i.kind == "run_failed"));
     assert_eq!(e.exec.expire_waits().await.unwrap(), 0);
 }
+
+/// 计划里的运行：用给定的策略。
+async fn queue_plan_run(
+    e: &Env,
+    prompt: &str,
+    policy: PlanPolicy,
+) -> (proto::domain::PlanId, RunId) {
+    let mut tx = e.t.db.tenant(e.user).await.unwrap();
+    let plan = tx
+        .create_plan(&NewPlan {
+            instance_id: e.instance.id,
+            title: "整理报表".into(),
+            goal: prompt.into(),
+            policy,
+            catch_up: CatchUp::default(),
+            created_by: PlanAuthor::User,
+            run_grant_id: None,
+        })
+        .await
+        .unwrap();
+    let mut new = NewRun::new(
+        e.instance.id,
+        RunSource::Plan,
+        prompt,
+        &e.instance.agent_version,
+    );
+    new.plan_id = Some(plan.id);
+    let run = tx.create_run(&new).await.unwrap().id;
+    tx.commit().await.unwrap();
+    (plan.id, run)
+}
+
+/// 审批过了时限用户没处理（7.10）：平台这边判超时（shim 的计时器在沙箱暂停时不走，替身里也没有），
+/// 策略是“跳过”时告诉 agent 不做这一步、接着跑，并告诉用户跳过了什么。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn expired_approvals_are_skipped_by_policy() {
+    let Some(e) = env().await else { return };
+    let policy = PlanPolicy {
+        approval_timeout_secs: 1,
+        on_approval_timeout: proto::domain::ApprovalTimeoutAction::Skip,
+        ..PlanPolicy::default()
+    };
+    let (_, run) = queue_plan_run(&e, "need approval", policy).await;
+    e.run_to_end().await;
+    let rec = e.state(run).await;
+    assert_eq!(rec.run.state, RunState::Succeeded, "{:?}", rec.run);
+    assert_eq!(rec.run.summary.as_deref(), Some("rejected"));
+    let mut w = e.t.db.worker().await.unwrap();
+    let approval = w.approval_for_request(run, "1:p1").await.unwrap().unwrap();
+    w.rollback().await.unwrap();
+    assert_eq!(
+        approval.approval.state,
+        proto::domain::ApprovalState::Expired
+    );
+    let inbox = e.inbox().await;
+    assert!(
+        inbox
+            .iter()
+            .any(|i| i.title == "审批超时，已跳过这一步" && i.body == "Delete old reports"),
+        "{inbox:?}"
+    );
+}
+
+/// 策略是“暂停计划”：计划暂停，运行判失败。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn expired_approvals_pause_the_plan() {
+    let Some(e) = env().await else { return };
+    let policy = PlanPolicy {
+        approval_timeout_secs: 1,
+        ..PlanPolicy::default()
+    };
+    let (plan, run) = queue_plan_run(&e, "need approval", policy).await;
+    e.run_to_end().await;
+    let rec = e.state(run).await;
+    assert_eq!(rec.run.state, RunState::Failed, "{:?}", rec.run);
+    assert!(
+        rec.run
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("plan was paused"),
+        "{:?}",
+        rec.run.error
+    );
+    let mut tx = e.t.db.tenant(e.user).await.unwrap();
+    assert!(tx.plan(plan).await.unwrap().paused);
+    tx.rollback().await.unwrap();
+}
