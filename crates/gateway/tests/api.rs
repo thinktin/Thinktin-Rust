@@ -293,6 +293,7 @@ async fn instances_keys_and_routes_are_per_user() {
                 last4: sealed.last4,
             },
         )
+        .await
         .unwrap();
     assert_eq!(plain.expose_secret(), "sk-ant-secret-1234");
     assert!(
@@ -305,6 +306,7 @@ async fn instances_keys_and_routes_are_per_user() {
                     last4: String::new()
                 }
             )
+            .await
             .is_err(),
         "ciphertext is bound to its record"
     );

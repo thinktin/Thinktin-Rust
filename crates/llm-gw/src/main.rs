@@ -10,7 +10,9 @@ use anyhow::{Context, bail};
 use auth::sandbox_token::{SandboxTokenIssuer, SandboxTokenVerifier, TokenRequest};
 use clap::{Parser, Subcommand};
 use keyvault::secrecy::{ExposeSecret, SecretString};
-use keyvault::{KeyStore, KeyVault, LocalKms, MemoryKeyStore, SecretOpener};
+use keyvault::{
+    CachingKms, KeyStore, KeyVault, Kms, KmsRing, LocalKms, MemoryKeyStore, SecretOpener,
+};
 use llm_gw::limits::{BudgetLedger, Limiter, MemoryLedger};
 use llm_gw::pg::{PgDirectory, PgLedger, PgUsageSink};
 use llm_gw::store::{Credential, DevStore, Directory};
@@ -55,6 +57,14 @@ enum Command {
         /// 本地 KMS 主密钥的 id（和控制面的 api.kms_key_id 一致）
         #[arg(long, default_value = "local-1")]
         kms_key_id: String,
+        /// 主密钥在阿里云 KMS（生产）：接口地址，比如 https://kms.cn-hangzhou.aliyuncs.com。
+        /// AccessKey 从环境变量 THINKTIN_ALIYUN_KMS_ACCESS_KEY_ID、THINKTIN_ALIYUN_KMS_ACCESS_KEY_SECRET 读；
+        /// 这时如果还配着 THINKTIN_KMS_KEY，它只用来解迁移前包裹的老 DEK
+        #[arg(long, requires = "aliyun_kms_key_id")]
+        aliyun_kms_endpoint: Option<String>,
+        /// 阿里云 KMS 主密钥的 KeyId 或别名（和控制面的 kms.aliyun.key_id 一致）
+        #[arg(long, requires = "aliyun_kms_endpoint")]
+        aliyun_kms_key_id: Option<String>,
         /// 路由数据缓存多久（秒）：吊销授权、改路由最多这么久后生效
         #[arg(long, default_value_t = 5)]
         cache_secs: u64,
@@ -170,6 +180,8 @@ fn main() -> anyhow::Result<()> {
             store,
             database_url,
             kms_key_id,
+            aliyun_kms_endpoint,
+            aliyun_kms_key_id,
             cache_secs,
             token_keys,
             egress_proxy,
@@ -238,14 +250,43 @@ fn main() -> anyhow::Result<()> {
                         let db = store::Db::connect(&url, 16)
                             .await
                             .context("connect to database")?;
-                        let hex = Zeroizing::new(
-                            std::env::var(ENV_KMS_KEY_PROD)
-                                .with_context(|| format!("{ENV_KMS_KEY_PROD} is not set"))?,
-                        );
-                        let kms =
-                            LocalKms::from_hex(&kms_key_id, hex.trim()).with_context(|| {
-                                format!("{ENV_KMS_KEY_PROD} must be 64 hex characters")
-                            })?;
+                        let local = std::env::var(ENV_KMS_KEY_PROD)
+                            .ok()
+                            .filter(|v| !v.is_empty())
+                            .map(|hex| {
+                                let hex = Zeroizing::new(hex);
+                                LocalKms::from_hex(&kms_key_id, hex.trim()).with_context(|| {
+                                    format!("{ENV_KMS_KEY_PROD} must be 64 hex characters")
+                                })
+                            })
+                            .transpose()?;
+                        let kms: Arc<dyn Kms> = match (aliyun_kms_endpoint, aliyun_kms_key_id) {
+                            (Some(endpoint), Some(key_id)) => {
+                                let var = |k: &str| {
+                                    std::env::var(k)
+                                        .ok()
+                                        .filter(|v| !v.is_empty())
+                                        .with_context(|| format!("{k} is not set"))
+                                };
+                                let client = aliyun::RpcClient::new(
+                                    endpoint,
+                                    aliyun::kms::VERSION,
+                                    var("THINKTIN_ALIYUN_KMS_ACCESS_KEY_ID")?,
+                                    Zeroizing::new(var("THINKTIN_ALIYUN_KMS_ACCESS_KEY_SECRET")?),
+                                    Duration::from_secs(10),
+                                )?;
+                                let mut ring = KmsRing::new(Arc::new(aliyun::kms::AliyunKms::new(
+                                    client, key_id,
+                                )));
+                                if let Some(local) = local {
+                                    ring = ring.with_older(Arc::new(local));
+                                }
+                                Arc::new(CachingKms::new(ring, Duration::from_secs(300)))
+                            }
+                            _ => Arc::new(
+                                local.with_context(|| format!("{ENV_KMS_KEY_PROD} is not set"))?,
+                            ),
+                        };
                         let ttl = Duration::from_secs(cache_secs.max(1));
                         let keys = Arc::new(MemoryKeyStore::default());
                         let (sink, w) = PgUsageSink::spawn(db.clone());

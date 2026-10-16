@@ -10,6 +10,7 @@ name = "thinktin-server"
 path = "src/main.rs"
 
 [dependencies]
+aliyun = { path = "../aliyun" }
 anyhow.workspace = true
 auth = { path = "../auth" }
 axum.workspace = true

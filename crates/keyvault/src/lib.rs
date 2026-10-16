@@ -43,6 +43,9 @@ pub enum Error {
     Rng,
     #[error("malformed sealed data")]
     Malformed,
+    /// 云 KMS 调不通（网络、权限、限流）：可以重试。
+    #[error("KMS is unavailable: {0}")]
+    Kms(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

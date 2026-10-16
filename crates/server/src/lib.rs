@@ -18,7 +18,7 @@ use std::time::Duration;
 use std::sync::Arc;
 
 use anyhow::Context;
-use keyvault::{Kms, LocalKms};
+use keyvault::{CachingKms, Kms, KmsRing, LocalKms};
 use listen::ListenOptions;
 use orchestrator::artifacts::{ArtifactStore, BlobStore, LocalBlobStore};
 use orchestrator::s3::{S3BlobStore, S3Config};
@@ -158,12 +158,42 @@ pub async fn serve_with(
 
 /// 用户 DEK 的包裹密钥（本地 KMS；生产换成云 KMS）。
 fn kms(cfg: &Config) -> anyhow::Result<Arc<dyn Kms>> {
-    let kms = LocalKms::from_hex(
-        cfg.api.kms_key_id.clone(),
-        cfg.api_secrets.kms_key.as_deref().unwrap_or_default(),
-    )
-    .context("THINKTIN_KMS_KEY must be 64 hex characters")?;
-    Ok(Arc::new(kms))
+    let local = cfg
+        .api_secrets
+        .kms_key
+        .as_deref()
+        .map(|hex| {
+            LocalKms::from_hex(cfg.api.kms_key_id.clone(), hex)
+                .context("THINKTIN_KMS_KEY must be 64 hex characters")
+        })
+        .transpose()?;
+    match (cfg.kms.provider.as_str(), &cfg.kms.aliyun) {
+        ("aliyun", Some(a)) => {
+            let client = aliyun::RpcClient::new(
+                a.endpoint.clone(),
+                aliyun::kms::VERSION,
+                cfg.aliyun_kms_access_key_id.clone().unwrap_or_default(),
+                zeroize::Zeroizing::new(
+                    cfg.aliyun_kms_access_key_secret.clone().unwrap_or_default(),
+                ),
+                std::time::Duration::from_secs(10),
+            )
+            .context("kms.aliyun")?;
+            // 新的 DEK 由阿里云 KMS 包裹；迁移前用本地主密钥包裹的老 DEK 照样解得开。
+            let mut ring = KmsRing::new(Arc::new(aliyun::kms::AliyunKms::new(
+                client,
+                a.key_id.clone(),
+            )));
+            if let Some(local) = local {
+                ring = ring.with_older(Arc::new(local));
+            }
+            Ok(Arc::new(CachingKms::new(
+                ring,
+                std::time::Duration::from_secs(cfg.kms.cache_secs),
+            )))
+        }
+        _ => Ok(Arc::new(local.context("THINKTIN_KMS_KEY is not set")?)),
+    }
 }
 
 /// 产出物存储：接口（下载）和后台任务（发布、交接）共用。

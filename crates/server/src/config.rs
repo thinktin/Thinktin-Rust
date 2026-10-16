@@ -25,6 +25,7 @@ pub struct Config {
     pub compliance: Compliance,
     pub observability: Observability,
     pub sms: Sms,
+    pub kms: KmsSettings,
     /// 沙箱令牌签名私钥种子（base64url），只从环境变量 THINKTIN_SANDBOX_TOKEN_SEED 读。
     #[serde(skip)]
     pub sandbox_token_seed: Option<String>,
@@ -45,6 +46,12 @@ pub struct Config {
     pub aliyun_sms_access_key_id: Option<String>,
     #[serde(skip)]
     pub aliyun_sms_access_key_secret: Option<String>,
+    /// 阿里云 KMS 的 AccessKey，只从环境变量 THINKTIN_ALIYUN_KMS_ACCESS_KEY_ID、
+    /// THINKTIN_ALIYUN_KMS_ACCESS_KEY_SECRET 读。
+    #[serde(skip)]
+    pub aliyun_kms_access_key_id: Option<String>,
+    #[serde(skip)]
+    pub aliyun_kms_access_key_secret: Option<String>,
     /// 接口用的密钥，只从环境变量读（见 [`ApiSecrets`]）。
     #[serde(skip)]
     pub api_secrets: ApiSecrets,
@@ -67,6 +74,7 @@ impl std::fmt::Debug for Config {
             .field("compliance", &self.compliance)
             .field("observability", &self.observability)
             .field("sms", &self.sms)
+            .field("kms", &self.kms)
             .field("sandbox_token_seed", &self.sandbox_token_seed.is_some())
             .field("jpush_master_secret", &self.jpush_master_secret.is_some())
             .field("cube_api_key", &self.cube_api_key.is_some())
@@ -79,6 +87,14 @@ impl std::fmt::Debug for Config {
             .field(
                 "aliyun_sms_access_key_secret",
                 &self.aliyun_sms_access_key_secret.is_some(),
+            )
+            .field(
+                "aliyun_kms_access_key_id",
+                &self.aliyun_kms_access_key_id.is_some(),
+            )
+            .field(
+                "aliyun_kms_access_key_secret",
+                &self.aliyun_kms_access_key_secret.is_some(),
             )
             .field("api_secrets", &self.api_secrets)
             .finish()
@@ -267,6 +283,40 @@ impl Default for Compliance {
             push_keywords_file: None,
         }
     }
+}
+
+/// 主密钥（2.6）：包裹每个用户的数据密钥（DEK）。
+/// - local：环境变量 THINKTIN_KMS_KEY 里的本地主密钥（开发、测试用）；
+/// - aliyun：阿里云 KMS，主密钥不出 KMS。这时如果还配着 THINKTIN_KMS_KEY，它只用来解迁移前包裹的老 DEK。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct KmsSettings {
+    pub provider: String,
+    /// 解开的 DEK 在进程里缓存多久（秒），省得每次加解密都调云 KMS。
+    pub cache_secs: u64,
+    /// aliyun（`provider = "aliyun"` 时用）。AccessKey 只从环境变量
+    /// THINKTIN_ALIYUN_KMS_ACCESS_KEY_ID、THINKTIN_ALIYUN_KMS_ACCESS_KEY_SECRET 读。
+    pub aliyun: Option<AliyunKms>,
+}
+
+impl Default for KmsSettings {
+    fn default() -> Self {
+        Self {
+            provider: "local".into(),
+            cache_secs: 300,
+            aliyun: None,
+        }
+    }
+}
+
+/// 阿里云 KMS。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AliyunKms {
+    /// 比如 `https://kms.cn-hangzhou.aliyuncs.com`。
+    pub endpoint: String,
+    /// 主密钥的 KeyId 或别名（`alias/...`，换主密钥版本时不用改配置）。
+    pub key_id: String,
 }
 
 /// 短信（4.1 登录验证码）。没配服务商时只能用 `api.dev_sms`（本地开发）。
@@ -468,6 +518,7 @@ impl Default for Config {
             push: Push::default(),
             compliance: Compliance::default(),
             sms: Sms::default(),
+            kms: KmsSettings::default(),
             observability: Observability::default(),
             sandbox_token_seed: None,
             jpush_master_secret: None,
@@ -476,6 +527,8 @@ impl Default for Config {
             s3_secret_access_key: None,
             aliyun_sms_access_key_id: None,
             aliyun_sms_access_key_secret: None,
+            aliyun_kms_access_key_id: None,
+            aliyun_kms_access_key_secret: None,
             api_secrets: ApiSecrets::default(),
         }
     }
@@ -560,6 +613,8 @@ impl Config {
         cfg.s3_secret_access_key = env.var("THINKTIN_S3_SECRET_ACCESS_KEY");
         cfg.aliyun_sms_access_key_id = env.var("THINKTIN_ALIYUN_SMS_ACCESS_KEY_ID");
         cfg.aliyun_sms_access_key_secret = env.var("THINKTIN_ALIYUN_SMS_ACCESS_KEY_SECRET");
+        cfg.aliyun_kms_access_key_id = env.var("THINKTIN_ALIYUN_KMS_ACCESS_KEY_ID");
+        cfg.aliyun_kms_access_key_secret = env.var("THINKTIN_ALIYUN_KMS_ACCESS_KEY_SECRET");
         cfg.api_secrets = ApiSecrets {
             access_token_seed: env.var("THINKTIN_ACCESS_TOKEN_SEED"),
             code_pepper: env.var("THINKTIN_CODE_PEPPER"),
@@ -590,6 +645,7 @@ impl Config {
                 ("THINKTIN_KMS_KEY", &self.api_secrets.kms_key),
             ]
             .into_iter()
+            .filter(|(k, _)| *k != "THINKTIN_KMS_KEY" || self.kms.provider == "local")
             .filter(|(_, v)| v.is_none())
             .map(|(k, _)| k)
             .collect();
@@ -640,7 +696,7 @@ impl Config {
                 }
                 other => bail!("sandbox.provider {other:?} is not supported (local or cube)"),
             }
-            if self.api_secrets.kms_key.is_none() {
+            if self.kms.provider == "local" && self.api_secrets.kms_key.is_none() {
                 bail!("worker.enabled needs THINKTIN_KMS_KEY (artifacts are encrypted per user)");
             }
             if self.push.jpush.is_some() && self.jpush_master_secret.is_none() {
@@ -649,6 +705,22 @@ impl Config {
             if self.worker.max_concurrent_runs == 0 {
                 bail!("worker.max_concurrent_runs must be positive");
             }
+        }
+        match self.kms.provider.as_str() {
+            "local" => {}
+            "aliyun" => {
+                if self.kms.aliyun.is_none() {
+                    bail!("kms.provider = \"aliyun\" needs a [kms.aliyun] section");
+                }
+                if self.aliyun_kms_access_key_id.is_none()
+                    || self.aliyun_kms_access_key_secret.is_none()
+                {
+                    bail!(
+                        "kms.provider = \"aliyun\" needs THINKTIN_ALIYUN_KMS_ACCESS_KEY_ID and THINKTIN_ALIYUN_KMS_ACCESS_KEY_SECRET"
+                    );
+                }
+            }
+            other => bail!("kms.provider {other:?} is not supported (local or aliyun)"),
         }
         if self.api.enabled || self.worker.enabled {
             match self.storage.provider.as_str() {
@@ -828,6 +900,49 @@ mod tests {
         )
         .unwrap();
         let err = Config::load(Some(&path), &env).unwrap_err();
+        assert!(err.to_string().contains("not supported"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn aliyun_kms_needs_its_section_and_keys() {
+        let dir = std::env::temp_dir().join(format!("tt-kms-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("server.toml");
+        // 用阿里云 KMS 时不再要求本地主密钥。
+        let mut vars = HashMap::from([
+            ("DATABASE_URL", "postgres://x"),
+            ("THINKTIN_SANDBOX_TOKEN_SEED", "seed"),
+        ]);
+        let worker = "[worker]\nenabled = true\n";
+        std::fs::write(&path, format!("{worker}[kms]\nprovider = \"aliyun\"\n")).unwrap();
+        let err = Config::load(Some(&path), &MapEnv(vars.clone())).unwrap_err();
+        assert!(err.to_string().contains("[kms.aliyun]"), "{err}");
+        std::fs::write(
+            &path,
+            format!(
+                "{worker}[kms]\nprovider = \"aliyun\"\n[kms.aliyun]\n\
+                 endpoint = \"https://kms.cn-hangzhou.aliyuncs.com\"\nkey_id = \"alias/thinktin-dek\"\n"
+            ),
+        )
+        .unwrap();
+        let err = Config::load(Some(&path), &MapEnv(vars.clone())).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("THINKTIN_ALIYUN_KMS_ACCESS_KEY_ID"),
+            "{err}"
+        );
+        vars.insert("THINKTIN_ALIYUN_KMS_ACCESS_KEY_ID", "id");
+        vars.insert("THINKTIN_ALIYUN_KMS_ACCESS_KEY_SECRET", "kms-secret-xyz");
+        let cfg = Config::load(Some(&path), &MapEnv(vars.clone())).unwrap();
+        assert_eq!(cfg.kms.cache_secs, 300);
+        assert_eq!(
+            cfg.kms.aliyun.as_ref().unwrap().key_id,
+            "alias/thinktin-dek"
+        );
+        assert!(!format!("{cfg:?}").contains("kms-secret-xyz"));
+        std::fs::write(&path, format!("{worker}[kms]\nprovider = \"vault\"\n")).unwrap();
+        let err = Config::load(Some(&path), &MapEnv(vars)).unwrap_err();
         assert!(err.to_string().contains("not supported"), "{err}");
         let _ = std::fs::remove_dir_all(&dir);
     }

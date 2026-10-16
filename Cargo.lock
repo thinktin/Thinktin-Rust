@@ -68,6 +68,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "aliyun"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "base64 0.23.1",
+ "chrono",
+ "getrandom 0.4.3",
+ "hmac",
+ "keyvault",
+ "reqwest",
+ "serde_json",
+ "sha1 0.11.0",
+ "thiserror",
+ "tokio",
+ "zeroize",
+]
+
+[[package]]
 name = "allocator-api2"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -234,6 +253,7 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 name = "auth"
 version = "0.1.0"
 dependencies = [
+ "aliyun",
  "async-trait",
  "axum",
  "base64 0.23.1",
@@ -242,10 +262,8 @@ dependencies = [
  "getrandom 0.4.3",
  "hmac",
  "proto",
- "reqwest",
  "serde",
  "serde_json",
- "sha1 0.11.0",
  "sha2 0.11.1",
  "store",
  "subtle",
@@ -1901,6 +1919,7 @@ checksum = "47d9d19d1d6efa0109d2f65ff4c85cddd50bd572e5a00127ab10987290bcefae"
 name = "llm-gw"
 version = "0.1.0"
 dependencies = [
+ "aliyun",
  "anyhow",
  "async-trait",
  "auth",
@@ -2989,6 +3008,7 @@ dependencies = [
 name = "server"
 version = "0.1.0"
 dependencies = [
+ "aliyun",
  "anyhow",
  "auth",
  "axum",
