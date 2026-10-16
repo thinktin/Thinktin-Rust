@@ -65,11 +65,24 @@ jobs:
             echo "::group::$agent"
             image=$(deploy/templates/build.sh "$agent")
             echo "$image" >> "$RUNNER_TEMP/images"
-            if ! deploy/templates/smoke.sh "$image" "$agent"; then
-              echo "::error title=template smoke test::$agent ($image) failed the smoke test"
+            size=$(docker image inspect --format '{{.Size}}' "$image" | awk '{printf "%.0f MB", $1/1e6}')
+            if out=$(deploy/templates/smoke.sh "$image" "$agent" 2>&1); then
+              result=passed
+            else
+              result=FAILED
               failed+=("$agent")
             fi
+            echo "$out"
             echo "::endgroup::"
+            # 结果写成注解，在 PR 页面和接口里直接看得到。
+            summary=$(grep -E '^(agent|reply|requests|stop):|\[(ok|FAIL)\]' <<< "$out" | head -20 || true)
+            level=notice; [ "$result" = passed ] || level=error
+            python3 - "$level" "$agent $image ($size): smoke test $result" "$summary" <<'PY'
+          import sys
+          esc = lambda s: s.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          level, title, body = sys.argv[1:4]
+          print(f"::{level} title={esc(title).replace(':', '%3A').replace(',', '%2C')}::{esc(body or title)}")
+          PY
           done
           docker images --format '{{.Repository}}:{{.Tag}} {{.Size}}' | grep '^thinktin-test/' || true
           [ ${#failed[@]} -eq 0 ] || { echo "failed: ${failed[*]}"; exit 1; }

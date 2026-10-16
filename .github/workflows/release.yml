@@ -4,7 +4,7 @@
 #   （默认 ghcr.io/<仓库属主>；仓库变量 IMAGE_REGISTRY、IMAGE_NAMESPACE 可改，那时用户名密码放
 #   IMAGE_REGISTRY_USERNAME、IMAGE_REGISTRY_PASSWORD 两个 secret），生成按镜像摘要固定版本的部署包，
 #   建 GitHub Release。
-# - 推到 main、backend-core 时改了镜像或部署清单：只构建、冒烟、校验清单，不推送。
+# - 推到 main、backend-core 时改了服务端镜像或部署清单：只构建、冒烟、校验清单，不推送。
 name: Release
 
 on:
@@ -12,7 +12,8 @@ on:
     tags: ["v*"]
     branches: [main, backend-core]
     paths:
-      - deploy/**
+      - deploy/docker/**
+      - deploy/k8s/**
       - .dockerignore
       - .github/workflows/release.yml
   workflow_dispatch:
