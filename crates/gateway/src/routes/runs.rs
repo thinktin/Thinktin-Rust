@@ -1,12 +1,13 @@
 //! 运行：给实例下任务、查看、取消、运行树。
 
+use auth::service::Principal;
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use proto::domain::{InstanceId, Run, RunId, RunKind, RunSource};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use store::NewRun;
+use store::{NewRun, Tenant, Tx};
 
 use super::{check_len, default_scope, parse_id};
 use crate::{ApiJson, ApiResult, AppState, Authed};
@@ -26,24 +27,7 @@ pub async fn create(
     check_len("prompt", req.prompt.trim(), 1, 32_000)?;
     let mut t = s.db.tenant(who.user).await?;
     let instance = t.instance(id).await?;
-    // 用户发起的运行用实例的授权。“全部停止”（4.6）吊销了它、或者它过期了：用户再发起时重新签发。
-    let has_grant = t
-        .run_grants(id)
-        .await?
-        .iter()
-        .any(|g| g.plan_id.is_none() && g.parent_id.is_none());
-    if !has_grant {
-        let grant = t
-            .create_run_grant(id, None, &default_scope(&s), s.cfg.grant_ttl)
-            .await?;
-        t.audit(
-            &who.actor(),
-            "grant.reissue",
-            Some(&grant.id.to_string()),
-            &json!({ "instance": id }),
-        )
-        .await?;
-    }
+    ensure_instance_grant(&s, &mut t, &who, id).await?;
     let run = t
         .create_run(&NewRun::new(
             id,
@@ -54,6 +38,33 @@ pub async fn create(
         .await?;
     t.commit().await?;
     Ok((StatusCode::CREATED, Json(run)))
+}
+
+/// 用户发起的运行用实例的授权。“全部停止”（4.6）吊销了它、或者它过期了：用户再发起时重新签发。
+pub(crate) async fn ensure_instance_grant(
+    s: &AppState,
+    t: &mut Tx<Tenant>,
+    who: &Principal,
+    instance: InstanceId,
+) -> ApiResult<()> {
+    let has_grant = t
+        .run_grants(instance)
+        .await?
+        .iter()
+        .any(|g| g.plan_id.is_none() && g.parent_id.is_none());
+    if !has_grant {
+        let grant = t
+            .create_run_grant(instance, None, &default_scope(s), s.cfg.grant_ttl)
+            .await?;
+        t.audit(
+            &who.actor(),
+            "grant.reissue",
+            Some(&grant.id.to_string()),
+            &json!({ "instance": instance }),
+        )
+        .await?;
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]

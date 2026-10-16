@@ -956,6 +956,26 @@ async fn erasing_an_account_deletes_its_content() {
         )
         .await
         .unwrap();
+        tx.create_vault_item(&crate::NewVaultItem {
+            id: proto::domain::VaultItemId::new(),
+            name: "hospital".into(),
+            purpose: "医院网站".into(),
+            sealed: vec![1, 2, 3],
+            has_username: true,
+            instance_ids: vec![inst.id],
+        })
+        .await
+        .unwrap();
+        tx.create_vault_request(&crate::NewVaultRequest {
+            instance_id: inst.id,
+            run_id: Some(run.id),
+            name: "insurance".into(),
+            purpose: "保险公司网站".into(),
+            fields: vec!["username".into(), "password".into()],
+            expires_in: Duration::from_secs(3600),
+        })
+        .await
+        .unwrap();
         tx.commit().await.unwrap();
     }
 
@@ -998,6 +1018,8 @@ async fn erasing_an_account_deletes_its_content() {
         "teams",
         "team_members",
         "team_templates",
+        "vault_items",
+        "vault_requests",
     ] {
         assert_eq!(
             count(table, alice).await,
@@ -1442,4 +1464,176 @@ async fn stopping_everything_for_a_user() {
     let theirs = w.account_summary(bob).await.unwrap();
     assert_eq!((theirs.active_runs, theirs.active_grants), (1, 1));
     w.commit().await.unwrap();
+}
+
+/// 密码保险箱（9.11）：同名冲突、实例限制、按实例取密文、请求复用和处理、互相看不到。
+#[tokio::test]
+async fn vault_items_and_requests() {
+    use proto::domain::{InstanceId, VaultItemId, VaultRequestStatus};
+
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = user(db, "+8613800000001").await;
+    let bob = user(db, "+8613800000002").await;
+    let x = instance(db, alice).await;
+    let y = instance(db, alice).await;
+    let z = instance(db, bob).await;
+    let item = |name: &str, instance_ids: Vec<InstanceId>| crate::NewVaultItem {
+        id: VaultItemId::new(),
+        name: name.into(),
+        purpose: format!("{name} account"),
+        sealed: vec![9; 40],
+        has_username: false,
+        instance_ids,
+    };
+
+    let mut a = db.tenant(alice).await.unwrap();
+    let github = a.create_vault_item(&item("github", vec![])).await.unwrap();
+    let bank = a
+        .create_vault_item(&item("bank", vec![x.id]))
+        .await
+        .unwrap();
+    assert_eq!(bank.instance_ids, vec![x.id]);
+    a.commit().await.unwrap();
+    // 同名冲突；别人的实例当作不存在；名字不合规则被数据库挡住。
+    for (new, conflict) in [
+        (item("github", vec![]), true),
+        (item("evil", vec![z.id]), false),
+        (item("Bad.Name", vec![]), false),
+    ] {
+        let mut a = db.tenant(alice).await.unwrap();
+        let err = a.create_vault_item(&new).await.unwrap_err();
+        assert_eq!(err.is_conflict(), conflict, "{err}");
+        a.rollback().await.unwrap();
+    }
+    // bob 看不到 alice 的条目。
+    let mut b = db.tenant(bob).await.unwrap();
+    assert!(b.vault_items().await.unwrap().is_empty());
+    assert!(matches!(
+        b.sealed_vault_item(github.id).await,
+        Err(Error::NotFound)
+    ));
+    b.rollback().await.unwrap();
+
+    // 改用途、实例和密文。
+    let mut a = db.tenant(alice).await.unwrap();
+    let changed = a
+        .update_vault_item(
+            bank.id,
+            &crate::VaultItemChange {
+                purpose: Some("网银".into()),
+                instance_ids: Some(vec![y.id]),
+                sealed: Some((vec![7; 40], true)),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        (changed.purpose.as_str(), changed.has_username),
+        ("网银", true)
+    );
+    assert_eq!(changed.instance_ids, vec![y.id]);
+    assert_eq!(
+        a.sealed_vault_item(bank.id).await.unwrap().sealed,
+        vec![7; 40]
+    );
+    assert_eq!(
+        a.sealed_vault_item_named("github").await.unwrap().item.id,
+        github.id
+    );
+    assert_eq!(a.vault_item_count().await.unwrap(), 2);
+    let names: Vec<String> = a
+        .vault_items()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|i| i.name)
+        .collect();
+    assert_eq!(names, ["bank", "github"]);
+    a.commit().await.unwrap();
+
+    // 运行只拿得到这个实例能用的条目。
+    let mut w = db.worker().await.unwrap();
+    let want = vec!["github".to_string(), "bank".to_string(), "nope".to_string()];
+    for (inst, expect) in [(x.id, vec!["github"]), (y.id, vec!["bank", "github"])] {
+        let got: Vec<String> = w
+            .vault_items_for_instance(alice, inst, &want)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|i| i.item.name)
+            .collect();
+        assert_eq!(got, expect);
+    }
+    assert!(
+        w.vault_items_for_instance(bob, z.id, &want)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(w.user_vault_items(alice).await.unwrap().len(), 2);
+    w.touch_vault_items(&[github.id]).await.unwrap();
+    w.commit().await.unwrap();
+
+    // 请求：同名的还在等就复用；处理过的不能再处理；过期的读出来是 expired，同名新请求时关掉。
+    let req = |name: &str, secs: u64| crate::NewVaultRequest {
+        instance_id: x.id,
+        run_id: None,
+        name: name.into(),
+        purpose: "mail".into(),
+        fields: vec!["password".into()],
+        expires_in: Duration::from_secs(secs),
+    };
+    let mut a = db.tenant(alice).await.unwrap();
+    let (r1, created) = a.create_vault_request(&req("mail", 3600)).await.unwrap();
+    assert!(created);
+    assert_eq!(r1.status, VaultRequestStatus::Pending);
+    let (again, created) = a.create_vault_request(&req("mail", 3600)).await.unwrap();
+    assert!(!created);
+    assert_eq!(again.id, r1.id);
+    let (old, _) = a.create_vault_request(&req("old", 0)).await.unwrap();
+    assert_eq!(old.status, VaultRequestStatus::Expired);
+    let pending: Vec<String> = a
+        .vault_requests(true)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| r.name)
+        .collect();
+    assert_eq!(pending, ["mail"]);
+    assert_eq!(a.vault_requests(false).await.unwrap().len(), 2);
+    let (old2, created) = a.create_vault_request(&req("old", 3600)).await.unwrap();
+    assert!(created && old2.id != old.id);
+    assert_eq!(
+        a.vault_request(old.id).await.unwrap().status,
+        VaultRequestStatus::Expired
+    );
+    let done = a
+        .resolve_vault_request(r1.id, Some(github.id))
+        .await
+        .unwrap();
+    assert_eq!(
+        (done.status, done.item_id),
+        (VaultRequestStatus::Fulfilled, Some(github.id))
+    );
+    assert!(matches!(
+        a.resolve_vault_request(r1.id, None).await,
+        Err(Error::Conflict(_))
+    ));
+    let declined = a.resolve_vault_request(old2.id, None).await.unwrap();
+    assert_eq!(declined.status, VaultRequestStatus::Declined);
+    a.commit().await.unwrap();
+    let mut b = db.tenant(bob).await.unwrap();
+    assert!(b.vault_requests(false).await.unwrap().is_empty());
+    b.rollback().await.unwrap();
+
+    // 删除条目：请求里的引用置空。
+    let mut a = db.tenant(alice).await.unwrap();
+    a.delete_vault_item(github.id).await.unwrap();
+    assert!(matches!(
+        a.delete_vault_item(github.id).await,
+        Err(Error::NotFound)
+    ));
+    assert_eq!(a.vault_request(r1.id).await.unwrap().item_id, None);
+    a.commit().await.unwrap();
 }

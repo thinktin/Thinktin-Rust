@@ -2061,3 +2061,238 @@ async fn stop_all_sign_out_others_and_frozen_accounts() {
         .await;
     assert_eq!(st, StatusCode::OK);
 }
+
+/// 密码保险箱（9.11）：响应里从不出现密码，库里只有密文；别人看不到、改不了；
+/// agent 的填写请求由用户填好或拒绝，填好后在实例上接着跑一轮。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vault_over_http() {
+    let Some(a) = api().await else { return };
+    let u = a.login("13800138000").await;
+    let bob = a.login("13900139000").await;
+    let (_, me) = a.call(Method::GET, "/v1/me", Some(&u.access), None).await;
+    let user: UserId = me["id"].as_str().unwrap().parse().unwrap();
+    let inst = a.adopt(&u).await;
+
+    let (st, item) = a
+        .call(
+            Method::POST,
+            "/v1/vault",
+            Some(&u.access),
+            Some(json!({
+                "name": "github",
+                "purpose": "推代码",
+                "username": "octocat",
+                "password": "hunter2-secret"
+            })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{item}");
+    assert!(!item.to_string().contains("hunter2"), "{item}");
+    assert_eq!(item["has_username"], true);
+    let id = item["id"].as_str().unwrap().to_owned();
+    let item_id: uuid::Uuid = id.parse().unwrap();
+    for bad in [
+        json!({ "name": "Git.Hub", "password": "long enough" }),
+        json!({ "name": "short", "password": "abc" }),
+        json!({ "name": "ctrl", "password": "line\nbreak" }),
+        json!({ "name": "inst", "password": "long enough", "instance_ids": [uuid::Uuid::nil()] }),
+    ] {
+        let (st, body) = a
+            .call(Method::POST, "/v1/vault", Some(&u.access), Some(bad))
+            .await;
+        assert!(
+            st == StatusCode::UNPROCESSABLE_ENTITY || st == StatusCode::NOT_FOUND,
+            "{st} {body}"
+        );
+    }
+    let (st, _) = a
+        .call(
+            Method::POST,
+            "/v1/vault",
+            Some(&u.access),
+            Some(json!({ "name": "github", "password": "another one" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CONFLICT);
+
+    let (_, list) = a
+        .call(Method::GET, "/v1/vault", Some(&u.access), None)
+        .await;
+    assert_eq!(list["items"].as_array().unwrap().len(), 1, "{list}");
+    assert!(!list.to_string().contains("hunter2"));
+    let path = format!("/v1/vault/{id}");
+    let (st, detail) = a.call(Method::GET, &path, Some(&u.access), None).await;
+    assert_eq!(st, StatusCode::OK, "{detail}");
+    assert_eq!(detail["username"], "octocat");
+    assert!(!detail.to_string().contains("hunter2"));
+    let raw: Vec<u8> = sqlx::query_scalar("SELECT sealed FROM vault_items WHERE id = $1")
+        .bind(item_id)
+        .fetch_one(a.t.db.pool())
+        .await
+        .unwrap();
+    assert!(!String::from_utf8_lossy(&raw).contains("hunter2"));
+    assert!(!String::from_utf8_lossy(&raw).contains("octocat"));
+
+    // 只改密码：账号留着；密文解开是新密码。
+    let (st, updated) = a
+        .call(
+            Method::PATCH,
+            &path,
+            Some(&u.access),
+            Some(json!({ "password": "new-secret-123", "purpose": "推代码、开 PR" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{updated}");
+    assert_eq!(updated["purpose"], "推代码、开 PR");
+    let (_, detail) = a.call(Method::GET, &path, Some(&u.access), None).await;
+    assert_eq!(detail["username"], "octocat");
+    let sealed: Vec<u8> = sqlx::query_scalar("SELECT sealed FROM vault_items WHERE id = $1")
+        .bind(item_id)
+        .fetch_one(a.t.db.pool())
+        .await
+        .unwrap();
+    let vault = orchestrator::artifacts::user_vault(
+        &a.t.db,
+        Arc::new(LocalKms::new("kms1", &KMS_KEY)),
+        user,
+        false,
+    )
+    .await
+    .unwrap();
+    let secret = vault.open_vault(&user.to_string(), &id, &sealed).unwrap();
+    assert_eq!(
+        (secret.username.as_str(), secret.password.as_str()),
+        ("octocat", "new-secret-123")
+    );
+
+    // 别人的条目当作不存在。
+    for method in [Method::GET, Method::PATCH, Method::DELETE] {
+        let body = (method == Method::PATCH).then(|| json!({ "purpose": "x" }));
+        let (st, _) = a.call(method, &path, Some(&bob.access), body).await;
+        assert_eq!(st, StatusCode::NOT_FOUND);
+    }
+
+    // agent 的填写请求（平台工具建的，这里直接写库）。
+    let new_request = |name: &str| store::NewVaultRequest {
+        instance_id: inst,
+        run_id: None,
+        name: name.into(),
+        purpose: "收邮件".into(),
+        fields: vec!["username".into(), "password".into()],
+        expires_in: Duration::from_secs(3600),
+    };
+    let mut t = a.t.db.tenant(user).await.unwrap();
+    let (mail, _) = t.create_vault_request(&new_request("mail")).await.unwrap();
+    let (other, _) = t.create_vault_request(&new_request("other")).await.unwrap();
+    t.commit().await.unwrap();
+    let (_, pending) = a
+        .call(Method::GET, "/v1/vault/requests", Some(&u.access), None)
+        .await;
+    assert_eq!(
+        pending["requests"].as_array().unwrap().len(),
+        2,
+        "{pending}"
+    );
+    let (_, theirs) = a
+        .call(Method::GET, "/v1/vault/requests", Some(&bob.access), None)
+        .await;
+    assert!(theirs["requests"].as_array().unwrap().is_empty());
+    let fulfill = format!("/v1/vault/requests/{}/fulfill", mail.id);
+    let (st, _) = a
+        .call(
+            Method::POST,
+            &fulfill,
+            Some(&bob.access),
+            Some(json!({ "password": "mail-pass-1" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (st, _) = a
+        .call(
+            Method::POST,
+            &fulfill,
+            Some(&u.access),
+            Some(json!({ "password": "abc" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+    let (st, done) = a
+        .call(
+            Method::POST,
+            &fulfill,
+            Some(&u.access),
+            Some(json!({ "username": "me@example.com", "password": "mail-pass-1" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{done}");
+    assert_eq!(done["status"], "fulfilled");
+    assert!(!done.to_string().contains("mail-pass-1"));
+    let (st, _) = a
+        .call(
+            Method::POST,
+            &fulfill,
+            Some(&u.access),
+            Some(json!({ "password": "mail-pass-2" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CONFLICT);
+    let (_, list) = a
+        .call(Method::GET, "/v1/vault", Some(&u.access), None)
+        .await;
+    let mail_item = list["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["name"] == "mail")
+        .cloned()
+        .unwrap();
+    assert_eq!(mail_item["instance_ids"], json!([inst]));
+    assert_eq!(done["item_id"], mail_item["id"]);
+    // 发起请求时没有在跑的运行：在实例上接着跑一轮，告诉 agent 可以用了。
+    let (_, runs) = a
+        .call(
+            Method::GET,
+            &format!("/v1/instances/{inst}/runs"),
+            Some(&u.access),
+            None,
+        )
+        .await;
+    let runs = runs["runs"].as_array().unwrap();
+    assert_eq!(runs.len(), 1);
+    let prompt = runs[0]["prompt"].as_str().unwrap();
+    assert!(
+        prompt.contains("mail") && !prompt.contains("mail-pass-1"),
+        "{prompt}"
+    );
+
+    let (st, declined) = a
+        .call(
+            Method::POST,
+            &format!("/v1/vault/requests/{}/decline", other.id),
+            Some(&u.access),
+            None,
+        )
+        .await;
+    assert_eq!(
+        (st, declined["status"].as_str()),
+        (StatusCode::OK, Some("declined"))
+    );
+    let (_, all) = a
+        .call(
+            Method::GET,
+            "/v1/vault/requests?all=true",
+            Some(&u.access),
+            None,
+        )
+        .await;
+    assert_eq!(all["requests"].as_array().unwrap().len(), 2);
+    let (_, pending) = a
+        .call(Method::GET, "/v1/vault/requests", Some(&u.access), None)
+        .await;
+    assert!(pending["requests"].as_array().unwrap().is_empty());
+
+    let (st, _) = a.call(Method::DELETE, &path, Some(&u.access), None).await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let (st, _) = a.call(Method::GET, &path, Some(&u.access), None).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+}

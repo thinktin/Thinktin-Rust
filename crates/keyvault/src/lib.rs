@@ -134,6 +134,59 @@ pub struct SealedSecret {
     pub last4: String,
 }
 
+/// 保险箱条目的明文（9.11）：账号（可以为空）和密码。只在内存里短暂存在，丢弃时清零；
+/// 调试输出不显示内容。
+#[derive(Clone, PartialEq, Eq)]
+pub struct VaultSecret {
+    pub username: String,
+    pub password: String,
+}
+
+impl std::fmt::Debug for VaultSecret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VaultSecret")
+            .field("has_username", &!self.username.is_empty())
+            .finish_non_exhaustive()
+    }
+}
+
+impl Drop for VaultSecret {
+    fn drop(&mut self) {
+        self.username.zeroize();
+        self.password.zeroize();
+    }
+}
+
+impl VaultSecret {
+    /// 格式：版本 1、账号长度（4 字节大端）、账号、密码。
+    fn encode(&self) -> Zeroizing<Vec<u8>> {
+        let mut out = Zeroizing::new(Vec::with_capacity(
+            5 + self.username.len() + self.password.len(),
+        ));
+        out.push(1);
+        out.extend_from_slice(&(self.username.len() as u32).to_be_bytes());
+        out.extend_from_slice(self.username.as_bytes());
+        out.extend_from_slice(self.password.as_bytes());
+        out
+    }
+
+    fn decode(plain: &[u8]) -> Result<Self> {
+        let [1, a, b, c, d, rest @ ..] = plain else {
+            return Err(Error::Malformed);
+        };
+        let n = u32::from_be_bytes([*a, *b, *c, *d]) as usize;
+        if n > rest.len() {
+            return Err(Error::Malformed);
+        }
+        let (user, pass) = rest.split_at(n);
+        let text = |b: &[u8]| String::from_utf8(b.to_vec()).map_err(|_| Error::Malformed);
+        Ok(Self {
+            username: text(user)?,
+            password: text(pass)?,
+        })
+    }
+}
+
 /// 存放包裹后的 DEK。生产环境是 Postgres 里按用户一行（WBS 3.3），这里只定义接口。
 pub trait KeyStore: Send + Sync {
     fn get(&self, user_id: &str) -> Option<WrappedKey>;
@@ -166,6 +219,10 @@ pub trait SecretOpener: Send + Sync {
         sealed: &SealedSecret,
     ) -> Result<SecretString>;
 
+    /// 解密保险箱条目（9.11）：模型网关转发前要把里面的值从请求里抹掉。
+    fn open_vault_secret(&self, user_id: &str, item_id: &str, sealed: &[u8])
+    -> Result<VaultSecret>;
+
     /// 丢掉为这个用户缓存的解密材料。用户注销（销毁 DEK）后由控制面通知网关调用，不必等缓存过期。
     fn forget_user(&self, _user_id: &str) {}
 }
@@ -178,6 +235,15 @@ impl<K: Kms, S: KeyStore> SecretOpener for KeyVault<K, S> {
         sealed: &SealedSecret,
     ) -> Result<SecretString> {
         self.open(user_id, record_id, sealed)
+    }
+
+    fn open_vault_secret(
+        &self,
+        user_id: &str,
+        item_id: &str,
+        sealed: &[u8],
+    ) -> Result<VaultSecret> {
+        self.open_vault(user_id, item_id, sealed)
     }
 
     fn forget_user(&self, user_id: &str) {
@@ -305,6 +371,25 @@ impl<K: Kms, S: KeyStore> KeyVault<K, S> {
         Ok(SecretString::from(text))
     }
 
+    /// 加密一个保险箱条目（9.11）。`item_id` 进 AAD，用的是单独的域，和 key、产出物的密文不能互换。
+    pub fn seal_vault(
+        &self,
+        user_id: &str,
+        item_id: &str,
+        secret: &VaultSecret,
+    ) -> Result<Vec<u8>> {
+        let dek = self.dek(user_id)?;
+        let cipher = Aes256Gcm::new_from_slice(dek.as_ref()).expect("32-byte key");
+        seal_raw(&cipher, &secret.encode(), &vault_aad(user_id, item_id))
+    }
+
+    pub fn open_vault(&self, user_id: &str, item_id: &str, sealed: &[u8]) -> Result<VaultSecret> {
+        let dek = self.dek(user_id)?;
+        let cipher = Aes256Gcm::new_from_slice(dek.as_ref()).expect("32-byte key");
+        let plain = Zeroizing::new(open_raw(&cipher, sealed, &vault_aad(user_id, item_id))?);
+        VaultSecret::decode(&plain)
+    }
+
     fn dek(&self, user_id: &str) -> Result<Zeroizing<[u8; DEK_LEN]>> {
         let now = Instant::now();
         {
@@ -342,6 +427,15 @@ fn blob_aad(user_id: &str, object_id: &str) -> Vec<u8> {
     out.extend_from_slice(user_id.as_bytes());
     out.extend_from_slice(&(object_id.len() as u32).to_be_bytes());
     out.extend_from_slice(object_id.as_bytes());
+    out
+}
+
+fn vault_aad(user_id: &str, item_id: &str) -> Vec<u8> {
+    let mut out = b"thinktin/vault/v1/".to_vec();
+    out.extend_from_slice(&(user_id.len() as u32).to_be_bytes());
+    out.extend_from_slice(user_id.as_bytes());
+    out.extend_from_slice(&(item_id.len() as u32).to_be_bytes());
+    out.extend_from_slice(item_id.as_bytes());
     out
 }
 
@@ -413,6 +507,34 @@ mod tests {
 
     fn key(s: &str) -> SecretString {
         SecretString::from(s.to_owned())
+    }
+
+    #[test]
+    fn vault_secrets_roundtrip_and_stay_in_their_domain() {
+        let v = vault();
+        v.create_user_key("u1").unwrap();
+        v.create_user_key("u2").unwrap();
+        let secret = VaultSecret {
+            username: "张三@example.com".into(),
+            password: "p@ss wörd".into(),
+        };
+        let sealed = v.seal_vault("u1", "item-1", &secret).unwrap();
+        assert_eq!(v.open_vault("u1", "item-1", &sealed).unwrap(), secret);
+        let no_user = VaultSecret {
+            username: String::new(),
+            password: "x".repeat(300),
+        };
+        let sealed2 = v.seal_vault("u1", "item-2", &no_user).unwrap();
+        assert_eq!(v.open_vault("u1", "item-2", &sealed2).unwrap(), no_user);
+        // 挪到别的条目、别的用户、别的域（key、产出物）都解不开。
+        assert!(v.open_vault("u1", "item-2", &sealed).is_err());
+        assert!(v.open_vault("u2", "item-1", &sealed).is_err());
+        assert!(v.open_bytes("u1", "item-1", &sealed).is_err());
+        let blob = v.seal_bytes("u1", "item-1", b"\x01\0\0\0\0pw").unwrap();
+        assert!(v.open_vault("u1", "item-1", &blob).is_err());
+        assert!(!format!("{secret:?}").contains("wörd"));
+        assert!(VaultSecret::decode(&[1, 0, 0, 0, 9, b'a']).is_err());
+        assert!(VaultSecret::decode(&[2, 0, 0, 0, 0]).is_err());
     }
 
     #[test]

@@ -12,6 +12,7 @@ mod plans;
 mod runs;
 mod teams;
 mod usage;
+mod vault;
 mod vendors;
 
 use axum::Router;
@@ -76,6 +77,15 @@ pub fn router() -> Router<AppState> {
         .route("/v1/approvals", get(approvals::list))
         .route("/v1/approvals/{id}/decide", post(approvals::decide))
         // 模型 key（9.8）和预置厂商（9.12）
+        // 密码保险箱（9.11）
+        .route("/v1/vault", get(vault::list).post(vault::create))
+        .route("/v1/vault/requests", get(vault::requests))
+        .route("/v1/vault/requests/{id}/fulfill", post(vault::fulfill))
+        .route("/v1/vault/requests/{id}/decline", post(vault::decline))
+        .route(
+            "/v1/vault/{id}",
+            get(vault::get).patch(vault::update).delete(vault::delete),
+        )
         .route("/v1/vendors", get(vendors::list))
         .route(
             "/v1/credentials",

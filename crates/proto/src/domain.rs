@@ -64,6 +64,8 @@ id_type!(
     TeamId,
     TeamTemplateId,
     ArtifactId,
+    VaultItemId,
+    VaultRequestId,
 );
 
 /// 字符串枚举的公共实现：和数据库里的取值一一对应。
@@ -465,6 +467,67 @@ pub struct Credential {
     pub created_at: DateTime<Utc>,
 }
 
+/// 保险箱条目（9.11）：账号和密码按用户 DEK 加密，接口从不返回密码。
+/// agent 只知道名字，用沙箱里的 `thinktin-vault` 按名字把值注入命令。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VaultItem {
+    pub id: VaultItemId,
+    /// 引用名，见 [`valid_vault_name`]，比如 `github`。
+    pub name: String,
+    /// 用途，给用户和 agent 看。
+    pub purpose: String,
+    /// 存没存账号（账号和密码一起加密，详情接口才返回账号）。
+    pub has_username: bool,
+    /// 能用它的实例；空表示全部实例。
+    pub instance_ids: Vec<InstanceId>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub last_used_at: Option<DateTime<Utc>>,
+}
+
+/// 保险箱条目里的字段：账号、密码。
+pub const VAULT_FIELDS: [&str; 2] = ["username", "password"];
+
+/// 保险箱条目名：小写字母或数字开头，只含小写字母、数字、`_`、`-`，最长 64 个字符（和数据库约束一致）。
+/// 不能有 `.`：引用字段时写成 `github.username`。
+pub fn valid_vault_name(name: &str) -> bool {
+    let b = name.as_bytes();
+    !b.is_empty()
+        && b.len() <= 64
+        && (b[0].is_ascii_lowercase() || b[0].is_ascii_digit())
+        && b.iter()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'_' || *c == b'-')
+}
+
+str_enum!(
+    /// agent 请用户填账号密码的请求（9.11）。过了期限还没处理的读出来是 `expired`。
+    VaultRequestStatus {
+        Pending = "pending",
+        Fulfilled = "fulfilled",
+        Declined = "declined",
+        Expired = "expired",
+    }
+);
+
+/// agent 请用户把账号密码存进保险箱（9.11）：App 据此弹表单，用户填的值只进保险箱，
+/// agent 只拿到名字。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VaultRequest {
+    pub id: VaultRequestId,
+    pub instance_id: InstanceId,
+    pub run_id: Option<RunId>,
+    pub name: String,
+    /// agent 写的用途（显示时带“AI 生成”标识）。
+    pub purpose: String,
+    /// 要填的字段，见 [`VAULT_FIELDS`]。
+    pub fields: Vec<String>,
+    pub status: VaultRequestStatus,
+    pub item_id: Option<VaultItemId>,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+    pub resolved_at: Option<DateTime<Utc>>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Plan {
     pub id: PlanId,
@@ -815,5 +878,25 @@ mod tests {
         let p: PlanPolicy = serde_json::from_str("{}").unwrap();
         assert_eq!(p.approval_timeout_secs, 86_400);
         assert_eq!(p.on_approval_timeout, ApprovalTimeoutAction::PausePlan);
+    }
+
+    #[test]
+    fn vault_names() {
+        for ok in ["github", "work-mail", "db_2", "9to5"] {
+            assert!(valid_vault_name(ok), "{ok}");
+        }
+        let long = "a".repeat(65);
+        for bad in [
+            "",
+            "GitHub",
+            "git.hub",
+            "-x",
+            "_x",
+            "邮箱",
+            "a b",
+            long.as_str(),
+        ] {
+            assert!(!valid_vault_name(bad), "{bad}");
+        }
     }
 }

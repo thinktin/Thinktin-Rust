@@ -173,8 +173,8 @@ impl Tx<Worker> {
         Ok(())
     }
 
-    /// 注销（16.4）：销毁用户的 DEK（key 和产出物的密文从此解不开），删掉用户的内容
-    /// （运行、提示词、摘要、事件、收件箱、计划、审批、团队、产出物索引、推送记录；
+    /// 注销（16.4）：销毁用户的 DEK（key、保险箱和产出物的密文从此解不开），删掉用户的内容
+    /// （运行、提示词、摘要、事件、收件箱、计划、审批、团队、保险箱、产出物索引、推送记录；
     /// 产出物的密文排进清理队列，由后台从对象存储删掉），
     /// 手机号和设备信息去标识化，实例标记删除（沙箱和工作区卷由巡检回收）。
     /// 审计日志和用量记录只有 id 和计数，按网络日志的要求保留。
@@ -205,6 +205,8 @@ impl Tx<Worker> {
             "DELETE FROM outbox WHERE user_id = $1",
             "DELETE FROM teams WHERE user_id = $1",
             "DELETE FROM team_templates WHERE user_id = $1",
+            "DELETE FROM vault_requests WHERE user_id = $1",
+            "DELETE FROM vault_items WHERE user_id = $1",
             "UPDATE instances SET state = 'deleted', name = '', deleted_at = coalesce(deleted_at, now()), \
                updated_at = now() WHERE user_id = $1",
             "UPDATE devices SET name = '', push_channel = NULL, push_token = NULL WHERE user_id = $1",
