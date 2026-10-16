@@ -16,6 +16,7 @@ use serde_json::json;
 use store::{Db, Error};
 
 use crate::outbox::{Notice, notify};
+use crate::texts;
 
 /// 停下来了多少东西。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
@@ -34,7 +35,8 @@ fn operator_actor(operator: &str) -> String {
 /// 已经冻结的返回冲突，注销了的返回不存在。
 pub async fn freeze(db: &Db, user: UserId, operator: &str, reason: &str) -> store::Result<Stopped> {
     let mut w = db.worker().await?;
-    match w.user(user).await?.status {
+    let account = w.user(user).await?;
+    match account.status {
         UserStatus::Active => {}
         UserStatus::Frozen => return Err(Error::Conflict("the account is already frozen".into())),
         UserStatus::Deleted => return Err(Error::NotFound),
@@ -52,16 +54,8 @@ pub async fn freeze(db: &Db, user: UserId, operator: &str, reason: &str) -> stor
         &json!({ "reason": reason, "runs_cancelled": stopped.runs_cancelled }),
     )
     .await?;
-    notify(
-        &mut w,
-        user,
-        &Notice::new(
-            PushKind::Info,
-            "账号已冻结",
-            "出于安全原因，你的账号已被冻结，正在运行的任务已全部停止。如有疑问请联系客服。",
-        ),
-    )
-    .await?;
+    let (title, body) = texts::account_frozen(account.locale);
+    notify(&mut w, user, &Notice::new(PushKind::Info, title, body)).await?;
     w.commit().await?;
     Ok(stopped)
 }
@@ -69,7 +63,8 @@ pub async fn freeze(db: &Db, user: UserId, operator: &str, reason: &str) -> stor
 /// 解冻账号。没冻结的返回冲突。
 pub async fn unfreeze(db: &Db, user: UserId, operator: &str, reason: &str) -> store::Result<()> {
     let mut w = db.worker().await?;
-    match w.user(user).await?.status {
+    let account = w.user(user).await?;
+    match account.status {
         UserStatus::Frozen => {}
         UserStatus::Active => return Err(Error::Conflict("the account is not frozen".into())),
         UserStatus::Deleted => return Err(Error::NotFound),
@@ -83,16 +78,8 @@ pub async fn unfreeze(db: &Db, user: UserId, operator: &str, reason: &str) -> st
         &json!({ "reason": reason }),
     )
     .await?;
-    notify(
-        &mut w,
-        user,
-        &Notice::new(
-            PushKind::Info,
-            "账号已恢复",
-            "你的账号已恢复正常，计划会按时继续运行。",
-        ),
-    )
-    .await?;
+    let (title, body) = texts::account_restored(account.locale);
+    notify(&mut w, user, &Notice::new(PushKind::Info, title, body)).await?;
     w.commit().await?;
     Ok(())
 }
@@ -114,19 +101,9 @@ pub async fn stop_all(db: &Db, user: UserId, actor: &str) -> store::Result<Stopp
         &serde_json::to_value(stopped).unwrap_or_default(),
     )
     .await?;
-    notify(
-        &mut w,
-        user,
-        &Notice::new(
-            PushKind::Info,
-            "已全部停止",
-            format!(
-                "停止了 {} 个运行，暂停了 {} 个计划。恢复计划或者重新发起运行时会重新授权。",
-                stopped.runs_cancelled, stopped.plans_paused
-            ),
-        ),
-    )
-    .await?;
+    let locale = w.user_locale(user).await?;
+    let (title, body) = texts::stopped_all(locale, stopped.runs_cancelled, stopped.plans_paused);
+    notify(&mut w, user, &Notice::new(PushKind::Info, title, body)).await?;
     w.commit().await?;
     Ok(stopped)
 }

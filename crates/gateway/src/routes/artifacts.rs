@@ -98,10 +98,11 @@ pub async fn content(
     let id: ArtifactId = parse_id(&id, "artifact")?;
     let mut t = s.db.tenant(who.user).await?;
     let a = t.artifact(id).await?;
+    let locale = t.user_locale(who.user).await?;
     t.rollback().await?;
     let mut bytes = store(&s)?.read(&a).await.map_err(ApiError::internal)?;
     if s.cfg.label_downloads && is_labelable_text(&a.artifact.content_type, &a.artifact.name) {
-        bytes.extend_from_slice(labels::text_footer(&s.cfg.content_producer).as_bytes());
+        bytes.extend_from_slice(labels::text_footer_in(locale, &s.cfg.content_producer).as_bytes());
     }
     let mut resp = Response::new(Body::from(bytes));
     let headers = resp.headers_mut();

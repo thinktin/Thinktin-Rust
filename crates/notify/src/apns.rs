@@ -332,6 +332,7 @@ mod tests {
             },
             ttl: Some(Duration::from_secs(3600)),
             ai_generated: false,
+            locale: Default::default(),
         }
     }
 

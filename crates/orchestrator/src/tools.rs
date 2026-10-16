@@ -22,6 +22,7 @@ use store::{Db, NewPlan, Tenant, Tx};
 use crate::outbox::{Notice, notify_tenant};
 use crate::schedule::Schedule;
 use crate::shim::{PlatformTools, ToolContext, ToolOutput};
+use crate::texts::{self, PlanChange};
 
 pub const SCHEDULE_TOOLS: [&str; 4] = [
     "schedule_list",
@@ -164,9 +165,15 @@ impl ScheduleTools {
         t: &mut Tx<Tenant>,
         ctx: &ToolContext,
         plan: &Plan,
-        what: &str,
+        change: PlanChange,
     ) -> Result<(), Fail> {
         t.request_plan_confirmation(plan.id).await?;
+        let locale = t.user_locale(ctx.user).await?;
+        let (title, body) = texts::plan_needs_confirmation(
+            locale,
+            change,
+            &plan.title.chars().take(40).collect::<String>(),
+        );
         let notice = Notice {
             instance: Some(ctx.instance),
             run: Some(ctx.run),
@@ -175,21 +182,14 @@ impl ScheduleTools {
             collapse_id: Some(format!("plan-confirm:{}", plan.id)),
             // 计划标题是 agent 起的。
             ai_generated: true,
-            ..Notice::new(
-                PushKind::Info,
-                "agent 想安排一个计划",
-                format!(
-                    "{what}「{}」，确认后才会按时运行",
-                    plan.title.chars().take(40).collect::<String>()
-                ),
-            )
+            ..Notice::new(PushKind::Info, title, body)
         };
         notify_tenant(t, &notice).await?;
         t.append_event(
             ctx.instance,
             Some(ctx.run),
             "plan.needs_confirmation",
-            &json!({ "plan_id": plan.id, "title": plan.title, "change": what }),
+            &json!({ "plan_id": plan.id, "title": plan.title, "change": change.as_str() }),
         )
         .await?;
         Ok(())
@@ -252,7 +252,7 @@ impl ScheduleTools {
             .await?;
         t.set_plan_grant(plan.id, grant.id).await?;
         t.add_trigger(plan.id, &args.schedule, Some(next)).await?;
-        Self::ask_to_confirm(&mut t, ctx, &plan, "新建了计划").await?;
+        Self::ask_to_confirm(&mut t, ctx, &plan, PlanChange::Created).await?;
         t.audit(
             &format!("agent:{}", ctx.instance),
             "plan.create",
@@ -297,7 +297,7 @@ impl ScheduleTools {
             }
             t.add_trigger(plan.id, spec, Some(next)).await?;
         }
-        Self::ask_to_confirm(&mut t, ctx, &plan, "修改了计划").await?;
+        Self::ask_to_confirm(&mut t, ctx, &plan, PlanChange::Updated).await?;
         t.audit(
             &format!("agent:{}", ctx.instance),
             "plan.update",

@@ -11,7 +11,9 @@ use std::time::Duration;
 use chrono::Utc;
 use notify::filter::{self, AllowAll, ContentFilter, Verdict};
 use notify::{PushChannel, PushKind, PushMessage, PushOutcome, PushTarget};
-use proto::domain::{ApprovalId, InboxItemId, InstanceId, PlanId, PushChannelKind, RunId, UserId};
+use proto::domain::{
+    ApprovalId, InboxItemId, InstanceId, Locale, PlanId, PushChannelKind, RunId, UserId,
+};
 use store::{Db, NewInboxItem, NewOutboxItem, OutboxItem, Tenant, Tx, Worker};
 use tracing::{error, info, warn};
 
@@ -85,8 +87,8 @@ impl Notice {
         }
     }
 
-    /// 推送消息：只带 id，客户端打开后按 id 取内容。
-    pub fn push(&self, inbox: Option<InboxItemId>) -> PushMessage {
+    /// 推送消息：只带 id，客户端打开后按 id 取内容。`locale` 是收件人的语言（1.6）。
+    pub fn push(&self, inbox: Option<InboxItemId>, locale: Locale) -> PushMessage {
         PushMessage {
             kind: self.kind,
             title: self.title.clone(),
@@ -102,16 +104,19 @@ impl Notice {
             },
             ttl: self.ttl,
             ai_generated: self.ai_generated,
+            locale,
         }
     }
 }
 
 /// 写收件箱并入出箱（后台任务的事务）。同一个去重键已经通知过就什么都不做。
+/// 标题和正文由调用方按用户的语言写好（见 [`crate::texts`]）。
 pub async fn notify(w: &mut Tx<Worker>, user: UserId, notice: &Notice) -> store::Result<()> {
     if let Some(id) = w.insert_inbox(user, &notice.inbox()).await? {
+        let locale = w.user_locale(user).await?;
         w.enqueue_outbox(
             user,
-            &push_item(&notice.push(Some(id)), notice.dedupe_key.clone()),
+            &push_item(&notice.push(Some(id), locale), notice.dedupe_key.clone()),
         )
         .await?;
     }
@@ -122,8 +127,9 @@ pub async fn notify(w: &mut Tx<Worker>, user: UserId, notice: &Notice) -> store:
 pub async fn notify_tenant(t: &mut Tx<Tenant>, notice: &Notice) -> store::Result<()> {
     let user = t.user();
     if let Some(id) = t.insert_inbox(user, &notice.inbox()).await? {
+        let locale = t.user_locale(user).await?;
         t.enqueue_outbox(&push_item(
-            &notice.push(Some(id)),
+            &notice.push(Some(id), locale),
             notice.dedupe_key.clone(),
         ))
         .await?;
@@ -296,8 +302,8 @@ impl Dispatcher {
         for text in [message.title.clone(), message.body.clone()] {
             if let Verdict::Block { reason } = self.filter.check(&text) {
                 info!(item = item.id, %reason, "push text filtered");
-                message.title = "ThinkTin".into();
-                message.body = filter::BLOCKED_BODY.into();
+                message.title = crate::texts::APP_NAME.into();
+                message.body = filter::blocked_body(message.locale).into();
                 message.ai_generated = false;
                 break;
             }

@@ -1,7 +1,7 @@
 //! 用户（4.1）。登录发生在有租户之前，所以建号、按手机号查找只在后台角色上。
 
 use chrono::{DateTime, Utc};
-use proto::domain::{User, UserId, UserStatus};
+use proto::domain::{Locale, User, UserId, UserStatus};
 use uuid::Uuid;
 
 use crate::{Result, Tenant, Tx, Worker, parse, unsigned};
@@ -12,6 +12,7 @@ struct Row {
     phone: String,
     display_name: Option<String>,
     status: String,
+    locale: String,
     created_at: DateTime<Utc>,
 }
 
@@ -22,6 +23,7 @@ impl Row {
             phone: self.phone,
             display_name: self.display_name,
             status: parse(&self.status)?,
+            locale: parse(&self.locale)?,
             created_at: self.created_at,
         })
     }
@@ -29,7 +31,7 @@ impl Row {
 
 macro_rules! columns {
     () => {
-        "id, phone, display_name, status, created_at"
+        "id, phone, display_name, status, locale, created_at"
     };
 }
 
@@ -237,6 +239,26 @@ impl Tx<Tenant> {
             .execute(self.conn())
             .await?;
         Ok(())
+    }
+
+    /// 推送、收件箱用的语言（1.6）。
+    pub async fn set_locale(&mut self, locale: Locale) -> Result<()> {
+        sqlx::query("UPDATE users SET locale = $1 WHERE id = app_user_id()")
+            .bind(locale.as_str())
+            .execute(self.conn())
+            .await?;
+        Ok(())
+    }
+}
+
+impl<R> Tx<R> {
+    /// 用户的语言（1.6）：服务端生成推送、收件箱文案时用。找不到用户按默认语言。
+    pub async fn user_locale(&mut self, user: UserId) -> Result<Locale> {
+        let locale: Option<String> = sqlx::query_scalar("SELECT locale FROM users WHERE id = $1")
+            .bind(user.0)
+            .fetch_optional(self.conn())
+            .await?;
+        Ok(locale.and_then(|l| l.parse().ok()).unwrap_or_default())
     }
 }
 

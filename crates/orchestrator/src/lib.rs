@@ -10,6 +10,7 @@ pub mod pipeline;
 pub mod schedule;
 pub mod scheduler;
 pub mod shim;
+pub mod texts;
 pub mod tools;
 pub mod vault;
 pub mod waits;

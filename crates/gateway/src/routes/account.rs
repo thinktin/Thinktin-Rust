@@ -4,9 +4,9 @@ use auth::service::NewDevice;
 use auth::sms::CodePurpose;
 use axum::Json;
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode, header};
 use orchestrator::account::{self, Stopped};
-use proto::domain::{Device, DeviceId, DevicePlatform, PushChannelKind, RunState, User};
+use proto::domain::{Device, DeviceId, DevicePlatform, Locale, PushChannelKind, RunState, User};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -89,6 +89,7 @@ fn push_of(
 pub async fn login(
     State(s): State<AppState>,
     ClientIp(ip): ClientIp,
+    headers: HeaderMap,
     ApiJson(req): ApiJson<LoginReq>,
 ) -> ApiResult<Json<LoginResp>> {
     s.limits().anonymous(ip)?;
@@ -101,12 +102,25 @@ pub async fn login(
     // 注册风控（5.4）：手机号没注册过时，按来源地址和全站的新注册上限放行。
     let limits = s.limits().clone();
     let computer = device.platform == DevicePlatform::Macos;
-    let l = s
+    let mut l = s
         .auth
         .login_gated(&req.phone, &req.code, &device, move || {
             limits.signup(ip).map_err(|l| l.0)
         })
         .await?;
+    // 新用户的语言（1.6）：按设备的系统语言（Accept-Language）定，之后用户可以在 App 里改。
+    let locale = headers
+        .get(header::ACCEPT_LANGUAGE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(Locale::from_accept_language);
+    if l.new_user
+        && let Some(locale) = locale.filter(|x| *x != Locale::default())
+    {
+        let mut t = s.db.tenant(l.user.id).await?;
+        t.set_locale(locale).await?;
+        t.commit().await?;
+        l.user.locale = locale;
+    }
     if computer {
         // 电脑上线（7.11）：等电脑的运行马上接着跑。
         let mut t = s.db.tenant(l.user.id).await?;
@@ -149,7 +163,20 @@ pub async fn me(State(s): State<AppState>, Authed(who): Authed) -> ApiResult<Jso
 
 #[derive(Deserialize)]
 pub struct UpdateMe {
-    display_name: Option<String>,
+    /// 不带：不改；`null`：清空；字符串：改名。
+    #[serde(default, deserialize_with = "present")]
+    display_name: Option<Option<String>>,
+    /// 推送、收件箱用的语言（1.6）：`zh-CN` 或 `en`，也接受系统的语言标签（`zh-Hans-CN`、`en_US`）。
+    locale: Option<String>,
+}
+
+/// 区分“没带”和“带了 null”：带了的（包括 null）都是 `Some`。
+fn present<'de, D, T>(d: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(d).map(Some)
 }
 
 pub async fn update_me(
@@ -157,11 +184,25 @@ pub async fn update_me(
     Authed(who): Authed,
     ApiJson(req): ApiJson<UpdateMe>,
 ) -> ApiResult<Json<User>> {
-    if let Some(name) = &req.display_name {
+    if let Some(Some(name)) = &req.display_name {
         check_len("display_name", name, 1, 64)?;
     }
+    let locale = match req.locale.as_deref() {
+        Some(tag) => {
+            check_len("locale", tag, 1, 35)?;
+            Some(Locale::from_tag(tag).ok_or_else(|| {
+                ApiError::invalid(format!("unsupported locale {tag:?}, use zh-CN or en"))
+            })?)
+        }
+        None => None,
+    };
     let mut t = s.db.tenant(who.user).await?;
-    t.set_display_name(req.display_name.as_deref()).await?;
+    if let Some(name) = &req.display_name {
+        t.set_display_name(name.as_deref()).await?;
+    }
+    if let Some(locale) = locale {
+        t.set_locale(locale).await?;
+    }
     let me = t.me().await?;
     t.commit().await?;
     Ok(Json(me))

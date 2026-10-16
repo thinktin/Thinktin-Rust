@@ -2328,3 +2328,118 @@ async fn vault_over_http() {
     let (st, _) = a.call(Method::GET, &path, Some(&u.access), None).await;
     assert_eq!(st, StatusCode::NOT_FOUND);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn language_preference() {
+    let Some(a) = api().await else { return };
+    // 没带系统语言的新用户按中文。
+    let u = a.login("13800138500").await;
+    let tok = Some(u.access.as_str());
+    let (_, me) = a.call(Method::GET, "/v1/me", tok, None).await;
+    assert_eq!(me["locale"], "zh-CN");
+    // 只改名字不动语言、只改语言不动名字；系统的语言标签也认。
+    let (st, me) = a
+        .call(
+            Method::PATCH,
+            "/v1/me",
+            tok,
+            Some(json!({ "display_name": "Ann" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{me}");
+    let (st, me) = a
+        .call(
+            Method::PATCH,
+            "/v1/me",
+            tok,
+            Some(json!({ "locale": "en_US" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{me}");
+    assert_eq!(
+        (me["locale"].as_str(), me["display_name"].as_str()),
+        (Some("en"), Some("Ann"))
+    );
+    let (st, body) = a
+        .call(
+            Method::PATCH,
+            "/v1/me",
+            tok,
+            Some(json!({ "locale": "ja-JP" })),
+        )
+        .await;
+    assert_eq!(
+        (st, body["code"].as_str()),
+        (StatusCode::UNPROCESSABLE_ENTITY, Some("invalid"))
+    );
+    let (_, me) = a
+        .call(
+            Method::PATCH,
+            "/v1/me",
+            tok,
+            Some(json!({ "display_name": null })),
+        )
+        .await;
+    assert_eq!(me["locale"], "en");
+    assert_eq!(me["display_name"], Value::Null);
+
+    // 服务端写的通知按用户的语言：收件箱和推送都是英文，推送带上语言（显式标识也按它显示）。
+    let (st, body) = a.call(Method::POST, "/v1/me/stop-all", tok, None).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let (_, inbox) = a.call(Method::GET, "/v1/inbox", tok, None).await;
+    assert_eq!(inbox["items"][0]["title"], "Everything stopped", "{inbox}");
+    let user: UserId = me["id"].as_str().unwrap().parse().unwrap();
+    let pushed: Vec<Value> = sqlx::query_scalar("SELECT payload FROM outbox WHERE user_id = $1")
+        .bind(user.0)
+        .fetch_all(a.t.db.pool())
+        .await
+        .unwrap();
+    assert!(
+        pushed
+            .iter()
+            .any(|p| p["locale"] == "en" && p["title"] == "Everything stopped"),
+        "{pushed:?}"
+    );
+
+    // 新用户按设备的系统语言；老用户再登录不改。
+    let login = |phone: &'static str, lang: &'static str| {
+        let a = &a;
+        async move {
+            let (st, _) = a
+                .call(
+                    Method::POST,
+                    "/v1/auth/code",
+                    None,
+                    Some(json!({ "phone": phone })),
+                )
+                .await;
+            assert_eq!(st, StatusCode::NO_CONTENT);
+            let code = a.sms.last_code(&format!("+86{phone}")).unwrap();
+            let resp = a
+                .http
+                .post(format!("{}/v1/auth/login", a.base))
+                .header("accept-language", lang)
+                .json(&json!({ "phone": phone, "code": code, "device": { "platform": "ios" } }))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+            resp.json::<Value>().await.unwrap()
+        }
+    };
+    let body = login("13800138501", "en-GB,en;q=0.9,zh-CN;q=0.5").await;
+    assert_eq!(body["new_user"], true);
+    assert_eq!(body["user"]["locale"], "en");
+    let (_, me) = a
+        .call(Method::GET, "/v1/me", body["access_token"].as_str(), None)
+        .await;
+    assert_eq!(me["locale"], "en");
+    let body = login("13800138500", "zh-CN").await;
+    assert_eq!(body["new_user"], false);
+    assert_eq!(body["user"]["locale"], "en", "keeps the user's own choice");
+    let body = login("13800138502", "ja-JP,ko;q=0.8").await;
+    assert_eq!(
+        body["user"]["locale"], "zh-CN",
+        "unsupported languages fall back"
+    );
+}

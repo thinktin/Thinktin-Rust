@@ -314,12 +314,13 @@ impl PipelineDriver {
         };
         let (kind, body) = push;
         let title = if title.is_empty() {
-            "ThinkTin".to_owned()
+            crate::texts::APP_NAME.to_owned()
         } else {
             title
         };
         let body = if body.is_empty() {
-            "流水线完成".to_owned()
+            let locale = w.user_locale(root.user_id).await?;
+            crate::texts::pipeline_finished(locale).to_owned()
         } else {
             body
         };

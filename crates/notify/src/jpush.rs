@@ -344,6 +344,7 @@ mod tests {
             },
             ttl: Some(Duration::from_secs(3600)),
             ai_generated: false,
+            locale: Default::default(),
         }
     }
 
@@ -404,6 +405,14 @@ mod tests {
         m.body = "今天晴".into();
         let p = client.payload("1a0018970a8b7c6d5e4", &m);
         assert_eq!(p["notification"]["android"]["alert"], "【AI 生成】今天晴");
+        // 英文用户（1.6）：标识也是英文。
+        m.locale = proto::domain::Locale::En;
+        m.body = "Sunny today".into();
+        let p = client.payload("1a0018970a8b7c6d5e4", &m);
+        assert_eq!(
+            p["notification"]["android"]["alert"],
+            "[AI-generated] Sunny today"
+        );
         assert_eq!(
             v["options"]["third_party_channel"],
             json!({ "huawei": { "importance": "NORMAL" }, "honor": { "importance": "NORMAL" } })

@@ -68,15 +68,21 @@ pub struct PushMessage {
     /// 正文是 agent 生成的：系统通知里要带显式标识（16.3）。
     #[serde(default)]
     pub ai_generated: bool,
+    /// 收件人的语言（1.6）：标题、正文已经按它生成，显式标识也按它显示。
+    #[serde(default)]
+    pub locale: proto::domain::Locale,
 }
 
 impl PushMessage {
-    /// 系统通知里显示的正文：agent 生成的加上“AI 生成”标识。
+    /// 系统通知里显示的正文：agent 生成的加上“AI 生成”标识（按收件人的语言）。
     pub fn display_body(&self) -> String {
-        if self.ai_generated {
-            format!("【{}】{}", proto::labels::EXPLICIT_LABEL, self.body)
-        } else {
-            self.body.clone()
+        if !self.ai_generated {
+            return self.body.clone();
+        }
+        let label = proto::labels::explicit_label(self.locale);
+        match self.locale {
+            proto::domain::Locale::ZhCn => format!("【{label}】{}", self.body),
+            proto::domain::Locale::En => format!("[{label}] {}", self.body),
         }
     }
 }

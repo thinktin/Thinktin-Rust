@@ -79,6 +79,14 @@ impl ContentFilter for KeywordFilter {
 /// 命中时系统通知里显示的正文。
 pub const BLOCKED_BODY: &str = "有新的结果，打开 App 查看";
 
+/// 命中时系统通知里显示的正文，按收件人的语言（1.6）。
+pub fn blocked_body(locale: proto::domain::Locale) -> &'static str {
+    match locale {
+        proto::domain::Locale::ZhCn => BLOCKED_BODY,
+        proto::domain::Locale::En => "You have new results. Open the app to see them.",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -51,6 +51,7 @@ fn message(ttl: Option<Duration>) -> PushMessage {
         target: PushTarget::default(),
         ttl,
         ai_generated: false,
+        locale: Default::default(),
     }
 }
 

@@ -65,6 +65,8 @@ pub struct User {
     pub phone: String,
     pub display_name: Option<String>,
     pub status: String,
+    /// 推送、收件箱用的语言（1.6）：`zh-CN` 或 `en`。
+    pub locale: String,
     pub created_at_ms: i64,
 }
 
@@ -75,6 +77,7 @@ impl From<d::User> for User {
             phone: u.phone,
             display_name: u.display_name,
             status: u.status.to_string(),
+            locale: u.locale.to_string(),
             created_at_ms: ms(u.created_at),
         }
     }
@@ -1019,6 +1022,13 @@ impl ThinktinClient {
 
     pub async fn me(&self) -> Result<User> {
         self.run(|c| async move { Ok(c.me().await?.into()) }).await
+    }
+
+    /// 推送、收件箱用的语言（1.6）。传 App 界面当前的语言（`zh-CN`、`en`，系统的语言标签也行），
+    /// 用户在 App 里换语言时调一次。
+    pub async fn set_locale(&self, locale: String) -> Result<User> {
+        self.run(|c| async move { Ok(c.api.set_locale(&locale).await?.into()) })
+            .await
     }
 
     /// 推送令牌变了（重装、系统重置）时更新。

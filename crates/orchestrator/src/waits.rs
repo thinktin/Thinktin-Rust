@@ -13,6 +13,7 @@
 use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta, Utc};
+use proto::domain::Locale;
 use store::ModelCall;
 
 /// agent 的模型调用卡在哪儿。
@@ -70,16 +71,35 @@ impl KeyProblem {
         }
     }
 
-    /// 给用户看的说明（运行的状态说明、通知正文）。
-    pub fn describe(self) -> &'static str {
-        match self {
-            Self::Invalid => "模型 key 无效或没有权限，任务已暂停。更换 key 后自动继续。",
-            Self::NoBalance => "模型 key 余额不足，任务已暂停。充值或更换 key 后自动继续。",
-            Self::Unavailable => {
+    /// 给用户看的说明（运行的状态说明、通知正文），按用户的语言（1.6）。
+    pub fn describe(self, locale: Locale) -> &'static str {
+        match (self, locale) {
+            (Self::Invalid, Locale::ZhCn) => {
+                "模型 key 无效或没有权限，任务已暂停。更换 key 后自动继续。"
+            }
+            (Self::Invalid, Locale::En) => {
+                "Model key invalid or not permitted. Task paused; it resumes once you replace the key."
+            }
+            (Self::NoBalance, Locale::ZhCn) => {
+                "模型 key 余额不足，任务已暂停。充值或更换 key 后自动继续。"
+            }
+            (Self::NoBalance, Locale::En) => {
+                "Model key out of credit. Task paused; it resumes after you top up or replace the key."
+            }
+            (Self::Unavailable, Locale::ZhCn) => {
                 "没有能用的模型 key（停用了或今天的额度用完），任务已暂停。启用或更换 key 后自动继续。"
             }
-            Self::RateLimited => "模型 key 被限流，任务暂停几分钟后自动继续。",
-            Self::Overloaded => "模型服务繁忙，任务暂停几分钟后自动继续。",
+            (Self::Unavailable, Locale::En) => {
+                "No usable model key (disabled or daily budget spent). Task paused until you enable or replace one."
+            }
+            (Self::RateLimited, Locale::ZhCn) => "模型 key 被限流，任务暂停几分钟后自动继续。",
+            (Self::RateLimited, Locale::En) => {
+                "Model key rate limited. Task paused; it resumes on its own in a few minutes."
+            }
+            (Self::Overloaded, Locale::ZhCn) => "模型服务繁忙，任务暂停几分钟后自动继续。",
+            (Self::Overloaded, Locale::En) => {
+                "Model service busy. Task paused; it resumes on its own in a few minutes."
+            }
         }
     }
 }
@@ -235,7 +255,11 @@ mod tests {
             KeyProblem::RateLimited,
             KeyProblem::Overloaded,
         ] {
-            assert!(p.describe().chars().count() <= 100, "{p:?}");
+            // 推送正文最多 100 个字符：说明要完整放得下。
+            for locale in Locale::ALL.iter().copied() {
+                assert!(p.describe(locale).chars().count() <= 100, "{p:?} {locale}");
+            }
+            assert_ne!(p.describe(Locale::ZhCn), p.describe(Locale::En));
             assert_eq!(
                 p.transient(),
                 p.retry_after() == Some(Duration::from_secs(300))

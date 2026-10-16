@@ -544,6 +544,12 @@ impl Api {
         self.json(Method::GET, "/v1/me", None).await
     }
 
+    /// 推送、收件箱用的语言（1.6）。
+    pub async fn set_locale(&self, locale: &str) -> Result<User> {
+        self.json(Method::PATCH, "/v1/me", Some(&json!({ "locale": locale })))
+            .await
+    }
+
     pub async fn set_push(&self, channel: PushChannelKind, token: &str) -> Result<()> {
         self.empty(
             Method::PUT,

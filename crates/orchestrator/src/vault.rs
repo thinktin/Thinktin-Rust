@@ -149,6 +149,9 @@ impl VaultTools {
                 other => internal(other),
             })?;
         if created {
+            let locale = t.user_locale(ctx.user).await.map_err(internal)?;
+            let (title, body) =
+                crate::texts::vault_request(locale, &purpose.chars().take(60).collect::<String>());
             let notice = Notice {
                 instance: Some(ctx.instance),
                 run: Some(ctx.run),
@@ -156,14 +159,7 @@ impl VaultTools {
                 dedupe_key: Some(format!("vault-request:{}", request.id)),
                 // 用途是 agent 写的。
                 ai_generated: true,
-                ..Notice::new(
-                    PushKind::Info,
-                    "agent 需要账号密码",
-                    format!(
-                        "「{}」：在 App 里填写后 agent 才能使用（只存进你的密码保险箱，agent 和模型都看不到明文）",
-                        purpose.chars().take(60).collect::<String>()
-                    ),
-                )
+                ..Notice::new(PushKind::Info, title, body)
             };
             notify_tenant(&mut t, &notice).await.map_err(internal)?;
             t.append_event(

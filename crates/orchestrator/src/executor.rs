@@ -19,8 +19,8 @@ use control::Lifecycle;
 use keyvault::{Kms, Scrubber};
 use notify::PushKind;
 use proto::domain::{
-    ApprovalState, ApprovalTimeoutAction, GrantId, InstanceEvent, PlanPolicy, RunId, RunSource,
-    RunState, UserId, VaultItemId, valid_vault_name,
+    ApprovalState, ApprovalTimeoutAction, GrantId, InstanceEvent, Locale, PlanPolicy, RunId,
+    RunSource, RunState, UserId, VaultItemId, valid_vault_name,
 };
 use proto::shim::{DecisionSource, SecretValues, ShimCommand, ShimEvent, StopReason};
 use serde_json::{Value, json};
@@ -182,6 +182,29 @@ struct Exec<'a> {
     session_restored: bool,
     /// 续跑简报（7.12）：重试时平台记录的上次进展，会话没接回时交给 agent。
     brief: Option<String>,
+    /// 用户的语言（1.6）：平台写的通知、状态说明按它输出。
+    locale: Locale,
+}
+
+/// 运行结束时推送的正文（1.6）：要按用户的语言写的部分，查到语言后再定。
+enum PushBody {
+    /// agent 写的摘要；没有就用“任务完成”。
+    Summary(Option<String>),
+    /// 平台记下的失败原因，前面加上“任务失败：”。
+    Failed(String),
+    /// 已经按用户的语言写好的说明（比如等 key 的原因）。
+    Ready(String),
+}
+
+impl PushBody {
+    fn text(self, locale: Locale) -> String {
+        match self {
+            Self::Summary(Some(summary)) => summary,
+            Self::Summary(None) => crate::texts::task_finished(locale).to_owned(),
+            Self::Failed(reason) => crate::texts::task_failed(locale, &reason),
+            Self::Ready(text) => text,
+        }
+    }
 }
 
 /// 有副作用的平台工具（7.13）：同一次运行里参数完全相同的调用只执行一次。
@@ -582,6 +605,7 @@ impl Executor {
         let retry = |e: store::Error| Outcome::Retry(e.to_string());
         let mut w = self.db.worker().await.map_err(retry)?;
         let attempt_started = w.db_now().await.map_err(retry)?;
+        let locale = w.user_locale(rec.user_id).await.map_err(retry)?;
         let grant: GrantId = match rec.run_grant_id {
             Some(g) => g,
             None => w
@@ -760,6 +784,7 @@ impl Executor {
             resume,
             session_restored,
             brief,
+            locale,
         };
         exec.persist(&ready).await;
         Ok(exec)
@@ -804,10 +829,7 @@ impl Executor {
             // 租约已经被别的副本接手：这次运行归它了，什么都别动（包括它新建的审批）。
             Outcome::LeaseLost => return Ok(()),
             Outcome::Succeeded { summary, reason } => {
-                let body = summary
-                    .as_deref()
-                    .map(|s| truncate(s, 100))
-                    .unwrap_or_else(|| "任务完成".into());
+                let body = PushBody::Summary(summary.as_deref().map(|s| truncate(s, 100)));
                 (
                     RunState::Succeeded,
                     RunChange {
@@ -825,7 +847,7 @@ impl Executor {
                     error: Some(error.clone()),
                     ..Default::default()
                 },
-                Some((PushKind::RunFailed, truncate(&error, 100))),
+                Some((PushKind::RunFailed, PushBody::Failed(truncate(&error, 100)))),
             ),
             Outcome::Retry(error) if rec.run.attempt >= rec.max_attempts => (
                 RunState::Failed,
@@ -834,7 +856,7 @@ impl Executor {
                     error: Some(error.clone()),
                     ..Default::default()
                 },
-                Some((PushKind::RunFailed, truncate(&error, 100))),
+                Some((PushKind::RunFailed, PushBody::Failed(truncate(&error, 100)))),
             ),
             Outcome::Retry(error) => {
                 let delay = self.backoff(rec.run.attempt);
@@ -878,7 +900,7 @@ impl Executor {
                     wait_deadline: deadline,
                     ..Default::default()
                 },
-                notify.then(|| (PushKind::RunFailed, truncate(&reason, 100))),
+                notify.then(|| (PushKind::RunFailed, PushBody::Ready(truncate(&reason, 100)))),
             ),
         };
         let mut w = self.db.worker().await?;
@@ -922,10 +944,11 @@ impl Executor {
                 None => String::new(),
             };
             let title = if title.is_empty() {
-                "ThinkTin".to_owned()
+                crate::texts::APP_NAME.to_owned()
             } else {
                 title
             };
+            let body = body.text(w.user_locale(rec.user_id).await?);
             let notice = Notice {
                 instance: Some(rec.run.instance_id),
                 run: Some(run),
@@ -1180,7 +1203,7 @@ impl Exec<'_> {
         info!(run = %self.rec.run.id, ?problem, "the agent is stuck on its model key; waiting");
         Outcome::Waiting {
             state: RunState::WaitingQuota,
-            reason: problem.describe().to_owned(),
+            reason: problem.describe(self.locale).to_owned(),
             retry_at: problem.retry_after().map(later),
             deadline: Some(later(Duration::from_secs(self.policy.wait_timeout_secs))),
             notify: !problem.transient(),
@@ -1612,8 +1635,11 @@ impl Exec<'_> {
                 ai_generated: title.is_some(),
                 ..Notice::new(
                     PushKind::Approval,
-                    "需要你的批准",
-                    truncate(title.unwrap_or("agent 请求执行一个操作"), 100),
+                    crate::texts::approval_needed(self.locale),
+                    truncate(
+                        title.unwrap_or(crate::texts::approval_untitled(self.locale)),
+                        100,
+                    ),
                 )
             };
             notify(&mut w, self.rec.user_id, &notice).await?;
@@ -1730,8 +1756,11 @@ impl Exec<'_> {
                 ai_generated: title.is_some(),
                 ..Notice::new(
                     PushKind::Info,
-                    "审批超时，已跳过这一步",
-                    truncate(title.unwrap_or("agent 请求执行的操作"), 100),
+                    crate::texts::approval_skipped(self.locale),
+                    truncate(
+                        title.unwrap_or(crate::texts::approval_skipped_untitled(self.locale)),
+                        100,
+                    ),
                 )
             };
             notify(&mut w, self.rec.user_id, &notice).await?;

@@ -142,6 +142,51 @@ str_enum!(
 );
 
 str_enum!(
+    /// 用户的语言（1.6）：服务端生成的推送、收件箱文案按它输出。App 界面的语言由客户端自己管。
+    Locale { ZhCn = "zh-CN", En = "en" }
+);
+
+/// 默认中文：加语言偏好之前的用户、认不出系统语言的新用户都按中文。
+impl Default for Locale {
+    fn default() -> Self {
+        Self::ZhCn
+    }
+}
+
+impl Locale {
+    /// 从系统的语言标签（`zh-Hans-CN`、`en_US`、`zh` 之类）认出支持的语言；认不出返回 None。
+    pub fn from_tag(tag: &str) -> Option<Self> {
+        let tag = tag.trim().to_ascii_lowercase();
+        match tag.split(['-', '_']).next().unwrap_or_default() {
+            "zh" => Some(Self::ZhCn),
+            "en" => Some(Self::En),
+            _ => None,
+        }
+    }
+
+    /// HTTP `Accept-Language`（`en-US,en;q=0.9,zh-CN;q=0.8`）里最想要的、支持的语言：
+    /// 按 q 值从高到低（相同的按出现顺序），q=0 的不要。
+    pub fn from_accept_language(header: &str) -> Option<Self> {
+        let mut tags: Vec<(f32, &str)> = header
+            .split(',')
+            .take(20)
+            .filter_map(|part| {
+                let mut fields = part.split(';');
+                let tag = fields.next()?.trim();
+                let q = fields
+                    .find_map(|f| f.trim().strip_prefix("q="))
+                    .map_or(Some(1.0), |q| q.trim().parse::<f32>().ok())?;
+                Some((q, tag))
+            })
+            .collect();
+        tags.sort_by(|a, b| b.0.total_cmp(&a.0));
+        tags.into_iter()
+            .filter(|(q, _)| *q > 0.0)
+            .find_map(|(_, tag)| Self::from_tag(tag))
+    }
+}
+
+str_enum!(
     /// 运行由什么发起。
     RunSource { User = "user", Plan = "plan", Pipeline = "pipeline", Delegate = "delegate" }
 );
@@ -390,6 +435,9 @@ pub struct User {
     pub phone: String,
     pub display_name: Option<String>,
     pub status: UserStatus,
+    /// 推送、收件箱用的语言（1.6）。
+    #[serde(default)]
+    pub locale: Locale,
     pub created_at: DateTime<Utc>,
 }
 
@@ -761,6 +809,34 @@ mod tests {
             serde_json::to_string(&ApprovalTimeoutAction::PausePlan).unwrap(),
             "\"pause_plan\""
         );
+    }
+
+    #[test]
+    fn locales_from_system_tags() {
+        for (tag, want) in [
+            ("zh-Hans-CN", Some(Locale::ZhCn)),
+            ("zh_TW", Some(Locale::ZhCn)),
+            ("ZH", Some(Locale::ZhCn)),
+            ("en-US", Some(Locale::En)),
+            ("en", Some(Locale::En)),
+            ("ja-JP", None),
+            ("", None),
+        ] {
+            assert_eq!(Locale::from_tag(tag), want, "{tag}");
+        }
+        assert_eq!(Locale::default(), Locale::ZhCn);
+        assert_eq!("en".parse::<Locale>().unwrap(), Locale::En);
+        for (header, want) in [
+            ("en-US,en;q=0.9,zh-CN;q=0.8", Some(Locale::En)),
+            ("zh-Hans-CN;q=0.5, en;q=0.7", Some(Locale::En)),
+            ("ja-JP, zh-TW;q=0.9", Some(Locale::ZhCn)),
+            ("en;q=0, zh", Some(Locale::ZhCn)),
+            ("ja, ko;q=0.8", None),
+            ("en;q=abc", None),
+            ("", None),
+        ] {
+            assert_eq!(Locale::from_accept_language(header), want, "{header}");
+        }
     }
 
     #[test]
