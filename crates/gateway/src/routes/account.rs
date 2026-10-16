@@ -251,13 +251,17 @@ pub async fn devices(
 ) -> ApiResult<Json<serde_json::Value>> {
     let mut t = s.db.tenant(who.user).await?;
     let devices: Vec<Device> = t.devices().await?;
+    // 电脑连着设备中继就算在线（14.1）；手机总是 false。
+    let online = t.online_devices().await?;
     t.rollback().await?;
     let list: Vec<_> = devices
         .into_iter()
         .map(|d| {
             let current = d.id == who.device;
+            let is_online = online.contains(&d.id);
             let mut v = serde_json::to_value(d).unwrap_or_default();
             v["current"] = json!(current);
+            v["online"] = json!(is_online);
             v
         })
         .collect();

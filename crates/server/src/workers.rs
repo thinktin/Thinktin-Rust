@@ -40,6 +40,9 @@ const LOGIN_CODE_RETENTION: Duration = Duration::from_secs(7 * 24 * 3600);
 const REFRESH_HISTORY_RETENTION: Duration = Duration::from_secs(30 * 24 * 3600);
 /// 送达（或放弃）的推送记录留几天（排查送达问题用），之后删掉：载荷里有通知的正文。
 const OUTBOX_RETENTION: Duration = Duration::from_secs(7 * 24 * 3600);
+/// 电脑工具的调用（参数和结果里可能有文件内容、截图）、手机和电脑之间的消息留多久（14.1）。
+/// 消息本身 24 小时就过期。
+const DEVICE_TRAFFIC_RETENTION: Duration = Duration::from_secs(24 * 3600);
 
 async fn stopped(mut stop: ShutdownListener) {
     stop.wait().await;
@@ -266,7 +269,7 @@ async fn purge_blobs(db: &Db, artifacts: &ArtifactStore) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// 事件分区提前建好、过期的删掉；清理过期的登录验证码、送达的推送记录。
+/// 事件分区提前建好、过期的删掉；清理过期的登录验证码、送达的推送记录、电脑工具的调用和设备间的消息。
 async fn maintain(db: &Db) -> store::Result<()> {
     let today = Utc::now().date_naive();
     let this_month = NaiveDate::from_ymd_opt(today.year(), today.month(), 1).unwrap_or(today);
@@ -277,7 +280,8 @@ async fn maintain(db: &Db) -> store::Result<()> {
         .await?;
     let purged = w.purge_login_codes(LOGIN_CODE_RETENTION).await?
         + w.purge_refresh_history(REFRESH_HISTORY_RETENTION).await?
-        + w.purge_delivered_outbox(OUTBOX_RETENTION).await?;
+        + w.purge_delivered_outbox(OUTBOX_RETENTION).await?
+        + w.purge_device_traffic(DEVICE_TRAFFIC_RETENTION).await?;
     w.commit().await?;
     if dropped > 0 || purged > 0 {
         info!(

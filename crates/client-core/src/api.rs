@@ -8,10 +8,10 @@ use std::time::Duration;
 
 use proto::api::{API_VERSION, ErrorBody, ErrorCode, VERSION_HEADER};
 use proto::domain::{
-    Approval, ApprovalId, Artifact, ArtifactId, Credential, CredentialId, DevicePlatform,
-    InboxItem, InboxItemId, Instance, InstanceEvent, InstanceId, ModelRoute, Plan, PlanId,
-    PlanStep, PushChannelKind, Run, RunId, ScheduleSpec, Trigger, User, VaultItem, VaultItemId,
-    VaultRequest, VaultRequestId,
+    Approval, ApprovalId, Artifact, ArtifactId, Credential, CredentialId, Device, DeviceId,
+    DeviceMessage, DeviceMessageId, DeviceMessageKind, DevicePlatform, InboxItem, InboxItemId,
+    Instance, InstanceEvent, InstanceId, ModelRoute, Plan, PlanId, PlanStep, PushChannelKind, Run,
+    RunId, ScheduleSpec, Trigger, User, VaultItem, VaultItemId, VaultRequest, VaultRequestId,
 };
 use reqwest::Method;
 use serde::de::DeserializeOwned;
@@ -71,6 +71,19 @@ pub struct ApiConfig {
 pub struct LoginResult {
     pub user: User,
     pub new_user: bool,
+}
+
+/// 设备列表里的一台设备。
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct DeviceView {
+    #[serde(flatten)]
+    pub device: Device,
+    /// 是不是正在用的这台。
+    #[serde(default)]
+    pub current: bool,
+    /// 电脑连着设备中继（14.1）；手机总是 false。
+    #[serde(default)]
+    pub online: bool,
 }
 
 /// 可以领养的 agent。
@@ -573,6 +586,64 @@ impl Api {
             Some(&json!({ "stop_agents": stop_agents })),
         )
         .await
+    }
+
+    /// 登录着的设备，最近活跃的在前；电脑带在线状态（连着设备中继，14.1）。
+    pub async fn devices(&self) -> Result<Vec<DeviceView>> {
+        #[derive(Deserialize)]
+        struct R {
+            devices: Vec<DeviceView>,
+        }
+        Ok(self
+            .json::<R>(Method::GET, "/v1/devices", None)
+            .await?
+            .devices)
+    }
+
+    // ---------- 手机和电脑之间的消息（14.1，内容和签名见 pairing） ----------
+
+    /// 发给自己的另一台设备（手机发给电脑：配对应答、审批决定、能力令牌、吊销）。
+    /// 电脑不在线时排队，连上设备中继后投递。
+    pub async fn send_device_message(
+        &self,
+        to: DeviceId,
+        kind: DeviceMessageKind,
+        body: &Value,
+    ) -> Result<DeviceMessage> {
+        self.json(
+            Method::POST,
+            &format!("/v1/devices/{to}/messages"),
+            Some(&json!({ "kind": kind, "body": body })),
+        )
+        .await
+    }
+
+    /// 别的设备发给这台、还没收的消息（电脑发来的配对确认、审批请求），按发出的顺序。
+    pub async fn device_messages(&self) -> Result<Vec<DeviceMessage>> {
+        #[derive(Deserialize)]
+        struct R {
+            messages: Vec<DeviceMessage>,
+        }
+        Ok(self
+            .json::<R>(Method::GET, "/v1/devices/current/messages", None)
+            .await?
+            .messages)
+    }
+
+    /// 收下了这些消息（验过签、处理完），之后不再返回。返回确认的条数。
+    pub async fn ack_device_messages(&self, ids: &[DeviceMessageId]) -> Result<u64> {
+        #[derive(Deserialize)]
+        struct R {
+            acknowledged: u64,
+        }
+        Ok(self
+            .json::<R>(
+                Method::POST,
+                "/v1/devices/current/messages/ack",
+                Some(&json!({ "ids": ids })),
+            )
+            .await?
+            .acknowledged)
     }
 
     // ---------- agent 与实例 ----------

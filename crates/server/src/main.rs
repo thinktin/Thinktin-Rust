@@ -24,7 +24,7 @@ enum Command {
     Serve,
     /// 执行数据库迁移后退出（用表的属主账号连接）
     Migrate,
-    /// 检查配置并打印生效的值（不打印数据库连接串）
+    /// 检查配置并打印生效的值（不打印数据库连接串和密钥；打印访问令牌的公钥，配设备中继用）
     CheckConfig,
     /// 运维操作：冻结、解冻、查看账号（冻结和解冻记审计、通知用户）
     Admin {
@@ -105,6 +105,22 @@ async fn main() -> anyhow::Result<()> {
                 cfg.worker.enabled, cfg.sandbox.provider, cfg.worker.max_concurrent_runs
             );
             println!("push.apns = {}", cfg.push.apns.is_some());
+            // 设备中继（thinktin-relay --access-key）验访问令牌用的公钥。
+            match cfg.api_secrets.access_token_seed.as_deref() {
+                Some(seed) => {
+                    let signer = auth::signed::Signer25519::from_seed_b64(
+                        cfg.api.access_token_kid.clone(),
+                        seed,
+                    )
+                    .context("THINKTIN_ACCESS_TOKEN_SEED")?;
+                    println!(
+                        "access token key = {}={}",
+                        signer.kid(),
+                        signer.verifying_key_b64()
+                    );
+                }
+                None => println!("access token key = (THINKTIN_ACCESS_TOKEN_SEED is not set)"),
+            }
             Ok(())
         }
         Command::Admin { action } => {

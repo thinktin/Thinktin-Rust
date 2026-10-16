@@ -768,3 +768,111 @@ async fn vault_and_secrets_in_messages() {
         "github_2"
     );
 }
+
+/// 手机和电脑之间的消息（14.1）：手机在设备列表里看得到自己的电脑和它在不在线；手机发给电脑的消息
+/// 电脑收得到，电脑发来的审批请求手机收得到，确认后不再返回；方向不对、发给别人的设备都被拒绝。
+/// 电脑平时经设备中继收发（见 relay 的测试），这里两边都用接口。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn phones_and_computers_exchange_messages() {
+    use proto::domain::DeviceMessageKind;
+
+    let Some(e) = env().await else { return };
+    let phone = e.api(Arc::new(MemorySessionStore::default()));
+    e.login(&phone, "13800138071").await;
+    let mac = Api::new(
+        ApiConfig {
+            base_url: e.base.clone(),
+            platform: DevicePlatform::Macos,
+            device_name: "MacBook".into(),
+            timeout: Duration::from_secs(10),
+        },
+        Arc::new(MemorySessionStore::default()),
+    )
+    .unwrap();
+    e.login(&mac, "13800138071").await;
+    let other = e.api(Arc::new(MemorySessionStore::default()));
+    e.login(&other, "13800138072").await;
+
+    let devices = phone.devices().await.unwrap();
+    assert_eq!(devices.len(), 2, "{devices:?}");
+    let me = devices.iter().find(|d| d.current).unwrap().device.id;
+    let computer = devices
+        .iter()
+        .find(|d| d.device.platform == DevicePlatform::Macos)
+        .unwrap();
+    assert!(!computer.online && !computer.current);
+    let computer = computer.device.id;
+
+    // 电脑连着中继就算在线（这里直接记在线状态；中继本身的测试在 relay 里）。
+    let user = phone.me().await.unwrap().id;
+    let mut r = e.t.db.relay().await.unwrap();
+    r.link_device(&store::NewLink {
+        device: computer,
+        user,
+        node: "relay-1".into(),
+        connection: uuid::Uuid::now_v7(),
+    })
+    .await
+    .unwrap();
+    r.commit().await.unwrap();
+    assert!(
+        phone
+            .devices()
+            .await
+            .unwrap()
+            .iter()
+            .any(|d| d.device.id == computer && d.online)
+    );
+
+    // 手机 → 电脑：能力令牌。
+    let grant = phone
+        .send_device_message(
+            computer,
+            DeviceMessageKind::Capability,
+            &json!({ "dirs": ["/Users/a/Documents"] }),
+        )
+        .await
+        .unwrap();
+    assert_eq!((grant.from_device, grant.to_device), (me, computer));
+    // 审批请求只能电脑发；不能发给自己；别人的设备不存在。
+    let invalid =
+        |r: Result<_, ClientError>| matches!(r, Err(ClientError::Api { status: 422, .. }));
+    assert!(invalid(
+        phone
+            .send_device_message(computer, DeviceMessageKind::ApprovalRequest, &json!({}))
+            .await
+    ));
+    assert!(invalid(
+        phone
+            .send_device_message(me, DeviceMessageKind::Capability, &json!({}))
+            .await
+    ));
+    let strangers = other.devices().await.unwrap()[0].device.id;
+    assert!(matches!(
+        phone
+            .send_device_message(strangers, DeviceMessageKind::Capability, &json!({}))
+            .await,
+        Err(ClientError::Api { status: 404, .. })
+    ));
+
+    // 电脑收到、确认。
+    let inbox = mac.device_messages().await.unwrap();
+    assert_eq!(inbox, vec![grant.clone()]);
+    assert_eq!(mac.ack_device_messages(&[grant.id]).await.unwrap(), 1);
+    assert!(mac.device_messages().await.unwrap().is_empty());
+
+    // 电脑 → 手机：审批请求。手机收到、确认后不再返回。
+    let ask = mac
+        .send_device_message(
+            me,
+            DeviceMessageKind::ApprovalRequest,
+            &json!({ "tool": "fs_delete", "summary": "删除 ~/Downloads/a.zip" }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(phone.device_messages().await.unwrap(), vec![ask.clone()]);
+    assert!(other.device_messages().await.unwrap().is_empty());
+    assert_eq!(phone.ack_device_messages(&[ask.id]).await.unwrap(), 1);
+    assert_eq!(phone.ack_device_messages(&[ask.id]).await.unwrap(), 0);
+    assert!(phone.device_messages().await.unwrap().is_empty());
+}

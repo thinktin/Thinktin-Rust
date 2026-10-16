@@ -5,6 +5,7 @@ mod agents;
 mod approvals;
 mod artifacts;
 mod credentials;
+mod device_messages;
 mod events;
 mod inbox;
 mod instances;
@@ -39,6 +40,16 @@ pub fn router() -> Router<AppState> {
         )
         .route("/v1/devices/current/push", put(account::set_push))
         .route("/v1/devices/{id}", delete(account::revoke_device))
+        // 手机和电脑之间的消息（14.1）
+        .route(
+            "/v1/devices/current/messages",
+            get(device_messages::pending),
+        )
+        .route(
+            "/v1/devices/current/messages/ack",
+            post(device_messages::ack),
+        )
+        .route("/v1/devices/{id}/messages", post(device_messages::send))
         // agent 目录
         .route("/v1/agents", get(agents::list))
         // 实例（6.4）
