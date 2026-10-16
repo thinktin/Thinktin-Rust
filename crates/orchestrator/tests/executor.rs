@@ -806,6 +806,8 @@ async fn shutdown_hands_the_run_to_another_replica_with_a_resume_note() {
     let run = e.queue("loop forever", None, 3).await;
     let (stop, h) = e.spawn().await;
     e.wait_state(run, RunState::Running).await;
+    // 让 agent 先干一会儿（调几次工具），续跑简报里要有这些。
+    tokio::time::sleep(Duration::from_millis(300)).await;
     stop.send(true).unwrap();
     tokio::time::timeout(Duration::from_secs(20), h)
         .await
@@ -824,6 +826,14 @@ async fn shutdown_hands_the_run_to_another_replica_with_a_resume_note() {
     e.wait_state(run, RunState::Running).await;
     let prompts = e.fake.rec.lock().unwrap().prompts.clone();
     assert!(prompts[1].contains("续跑说明") && prompts[1].contains("第 2 次"));
+    // 替身接不回会话：附上平台记录的上次进展（7.12）。
+    assert!(
+        prompts[1].contains("没能接回")
+            && prompts[1].contains("Read file")
+            && prompts[1].contains("中断原因"),
+        "{}",
+        prompts[1]
+    );
     let mut t = e.t.db.tenant(e.user).await.unwrap();
     t.cancel_run(run, None).await.unwrap();
     t.commit().await.unwrap();

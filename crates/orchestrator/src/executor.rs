@@ -19,8 +19,8 @@ use control::Lifecycle;
 use keyvault::{Kms, Scrubber};
 use notify::PushKind;
 use proto::domain::{
-    ApprovalState, ApprovalTimeoutAction, GrantId, PlanPolicy, RunId, RunSource, RunState, UserId,
-    VaultItemId, valid_vault_name,
+    ApprovalState, ApprovalTimeoutAction, GrantId, InstanceEvent, PlanPolicy, RunId, RunSource,
+    RunState, UserId, VaultItemId, valid_vault_name,
 };
 use proto::shim::{DecisionSource, SecretValues, ShimCommand, ShimEvent, StopReason};
 use serde_json::{Value, json};
@@ -178,6 +178,10 @@ struct Exec<'a> {
     has_children: bool,
     /// 委派的子任务做完了：交还给 agent 的消息，以及其中的子运行（这一轮开始后记成已交还）。
     resume: Option<(String, Vec<RunId>)>,
+    /// agent 接回了之前的会话（还记得之前的对话）。
+    session_restored: bool,
+    /// 续跑简报（7.12）：重试时平台记录的上次进展，会话没接回时交给 agent。
+    brief: Option<String>,
 }
 
 /// 有副作用的平台工具（7.13）：同一次运行里参数完全相同的调用只执行一次。
@@ -189,6 +193,47 @@ const SIDE_EFFECT_TOOLS: [&str; 6] = [
     "delegate",
     "vault_request",
 ];
+
+/// 续跑简报（7.12）：上一次执行到哪儿了——最近调过的工具、最后说的话、为什么中断。
+/// `events` 是这个运行最近的工具调用和回复（按先后排）。内容来自 agent，已经抹过保险箱的值。
+fn resume_brief(events: &[InstanceEvent], reason: Option<&str>) -> String {
+    let tools: Vec<&str> = events
+        .iter()
+        .filter(|e| e.kind == "agent.tool_call")
+        .filter_map(|e| e.payload["title"].as_str())
+        .collect();
+    let mut said = String::new();
+    for e in events.iter().rev().filter(|e| e.kind == "agent.message") {
+        let text = e.payload["text"].as_str().unwrap_or_default();
+        said.insert_str(0, text);
+        if said.chars().count() >= 300 {
+            break;
+        }
+    }
+    let said: String = {
+        let chars: Vec<char> = said.trim().chars().collect();
+        let start = chars.len().saturating_sub(300);
+        chars[start..].iter().collect()
+    };
+    let mut out = String::from("上次的进展：");
+    if tools.is_empty() {
+        out.push_str("\n- 还没调用过工具。");
+    } else {
+        let recent: Vec<&str> = tools.iter().rev().take(8).rev().copied().collect();
+        out.push_str(&format!(
+            "\n- 最近调用的工具（共 {} 次）：{}",
+            tools.len(),
+            recent.join("、")
+        ));
+    }
+    if !said.is_empty() {
+        out.push_str(&format!("\n- 最后说的话：「{said}」"));
+    }
+    if let Some(r) = reason.filter(|r| !r.is_empty()) {
+        out.push_str(&format!("\n- 中断原因：{}", truncate(r, 200)));
+    }
+    out
+}
 
 /// 幂等键：工具名和参数（JSON，对象的键有序）的 SHA-256。
 fn idempotency_key(name: &str, arguments: &Value) -> Vec<u8> {
@@ -655,6 +700,34 @@ impl Executor {
                 ));
             }
         };
+        let session_restored = matches!(
+            ready,
+            ShimEvent::Ready {
+                session_restored: true,
+                ..
+            }
+        );
+        // 续跑简报（7.12）：重试（不是交还子任务结果）时，从运行日志里整理上次执行到哪儿了。
+        let brief = if rec.run.attempt > 1 && resume.is_none() {
+            let events = async {
+                let mut w = self.db.worker().await?;
+                let events = w
+                    .recent_run_events(rec.run.id, &["agent.tool_call", "agent.message"], 40)
+                    .await?;
+                w.rollback().await?;
+                Ok::<_, store::Error>(events)
+            }
+            .await;
+            match events {
+                Ok(events) => Some(resume_brief(&events, rec.run.state_reason.as_deref())),
+                Err(e) => {
+                    warn!(run = %rec.run.id, error = %e, "reading the run log for the resume brief failed");
+                    None
+                }
+            }
+        } else {
+            None
+        };
         let mut exec = Exec {
             ex: self,
             rec,
@@ -685,6 +758,8 @@ impl Executor {
             attempt_started,
             has_children: !delegated.is_empty(),
             resume,
+            session_restored,
+            brief,
         };
         exec.persist(&ready).await;
         Ok(exec)
@@ -1159,8 +1234,16 @@ impl Exec<'_> {
             } else {
                 ""
             };
+            // 会话接回了，agent 记得之前的对话；没接回（换了机器、会话丢了）就附上平台记录的上次进展（7.12）。
+            let (session, brief) = match (&self.brief, self.session_restored) {
+                (Some(brief), false) => (
+                    "之前的对话没能接回，下面是平台记录的上次进展。",
+                    format!("\n{brief}"),
+                ),
+                _ => ("", String::new()),
+            };
             prompt = format!(
-                "（续跑说明：这是第 {} 次尝试，上一次执行中途中断了。先检查工作区里已有的进度，从中断的地方继续，不要重复已经完成的对外操作。{children}）\n\n{prompt}",
+                "（续跑说明：这是第 {} 次尝试，上一次执行中途中断了。{session}先检查工作区里已有的进度，从中断的地方继续，不要重复已经完成的对外操作。{children}）{brief}\n\n{prompt}",
                 self.rec.run.attempt
             );
         }
@@ -1813,6 +1896,36 @@ impl Exec<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resume_briefs_summarize_the_last_attempt() {
+        let ev = |kind: &str, payload: Value| InstanceEvent {
+            instance_id: proto::domain::InstanceId::new(),
+            seq: 1,
+            run_id: None,
+            kind: kind.into(),
+            payload,
+            created_at: Utc::now(),
+        };
+        let events = vec![
+            ev("agent.tool_call", json!({ "title": "Read file" })),
+            ev("agent.message", json!({ "text": "读完了，" })),
+            ev("agent.tool_call", json!({ "title": "Run tests" })),
+            ev("agent.message", json!({ "text": "测试跑到一半" })),
+        ];
+        let brief = resume_brief(&events, Some("agent-shim exited"));
+        assert!(
+            brief.contains("（共 2 次）：Read file、Run tests"),
+            "{brief}"
+        );
+        assert!(brief.contains("「读完了，测试跑到一半」"), "{brief}");
+        assert!(brief.contains("中断原因：agent-shim exited"), "{brief}");
+        let empty = resume_brief(&[], None);
+        assert!(empty.contains("还没调用过工具") && !empty.contains("中断原因"));
+        // 很长的回复只留最后一段。
+        let long = vec![ev("agent.message", json!({ "text": "长".repeat(1000) }))];
+        assert_eq!(resume_brief(&long, None).matches('长').count(), 300);
+    }
 
     #[test]
     fn idempotency_keys_follow_the_tool_and_arguments() {

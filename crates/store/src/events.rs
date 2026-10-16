@@ -111,6 +111,27 @@ impl<R> Tx<R> {
 }
 
 impl Tx<Worker> {
+    /// 运行最近的 `limit` 条事件（只要 `kinds` 里的种类），按先后排。续跑简报用（7.12）。
+    pub async fn recent_run_events(
+        &mut self,
+        run: RunId,
+        kinds: &[&str],
+        limit: i64,
+    ) -> Result<Vec<InstanceEvent>> {
+        let kinds: Vec<String> = kinds.iter().map(|k| (*k).to_owned()).collect();
+        let mut rows: Vec<Row> = sqlx::query_as(
+            "SELECT instance_id, seq, run_id, kind, payload, created_at FROM events \
+             WHERE run_id = $1 AND kind = ANY($2) ORDER BY seq DESC LIMIT $3",
+        )
+        .bind(run.0)
+        .bind(&kinds)
+        .bind(limit)
+        .fetch_all(self.conn())
+        .await?;
+        rows.reverse();
+        rows.into_iter().map(Row::into_event).collect()
+    }
+
     /// 建好从 `from` 所在月起 `months` 个月的事件分区（维护任务每天调一次，提前建好下个月的）。
     pub async fn ensure_event_partitions(&mut self, from: NaiveDate, months: i32) -> Result<()> {
         if !(1..=24).contains(&months) {
