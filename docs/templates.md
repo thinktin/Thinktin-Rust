@@ -34,11 +34,15 @@ deploy/templates/build.sh claude                       # 构建
 deploy/templates/smoke.sh thinktin/agents/claude:0.90.0 claude   # 冒烟
 ```
 
+现在五个模板（解压后的大小）：Pi 508 MB、Hermes 587 MB、Claude 695 MB、Codex 852 MB、OpenClaw 905 MB。
+
 ## 3. 冒烟：断网跑一轮
 
 `deploy/templates/smoke.sh <镜像> <id>` 在 `--network none` 的容器里起模型网关的替身（`tools/mock-llm`），
 经镜像里的 agent-shim 让 agent 跑一轮（`tools/smoke/smoke.sh`），检查 agent 就绪、这一轮结束、回复对、
 每个模型请求都带沙箱令牌。断网同时证明 agent 只要模型网关就能干活，不偷偷连外网（自部署、遥测和自更新关掉了）。
+五个 agent 都通过（2026-10-17）；Hermes 会先不带凭证探测一串本地推理服务的接口（`/api/tags`、`/props` 之类），
+真实的模型网关一律回 401，不影响。每次的结果写成流水线的注解（agent 的版本、回复、模型请求、各项检查）。
 
 ## 4. 流水线（`.github/workflows/templates.yml`）
 

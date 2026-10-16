@@ -32,7 +32,8 @@ permissions:
 jobs:
   templates:
     if: github.event_name != 'schedule'
-    runs-on: ubuntu-latest
+    # agent-shim 在主机上编译、放进 Debian trixie（glibc 2.41）的镜像：主机的 glibc 不能比它新。
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     permissions:
       contents: read
