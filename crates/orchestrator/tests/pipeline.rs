@@ -460,3 +460,56 @@ async fn the_whole_tree_can_be_stopped() {
     e.driver.tick().await.unwrap();
     assert_eq!(e.record(root).await.run.state, RunState::Cancelled);
 }
+
+// ---------- 多 agent 协同（17.4） ----------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn independent_steps_run_side_by_side() {
+    let Some(e) = env().await else { return };
+    let plan = e
+        .plan(vec![
+            step("summary", &e.a, "sum up", &["left", "right"]),
+            step("left", &e.a, "collect facts", &[]),
+            step("right", &e.b, "collect numbers", &[]),
+        ])
+        .await;
+    Scheduler::new(e.t.db.clone(), SchedulerConfig::default())
+        .tick(Utc::now())
+        .await
+        .unwrap();
+    let root = e.root_of(plan).await;
+    // 第一次推进：没有依赖的两步一起排上队，下游的还没建。
+    e.driver.tick().await.unwrap();
+    let mut tx = e.t.db.tenant(e.user).await.unwrap();
+    let tree = tx.run_tree(root).await.unwrap();
+    tx.rollback().await.unwrap();
+    let mut queued: Vec<&str> = tree
+        .iter()
+        .filter(|r| r.state == RunState::Queued)
+        .filter_map(|r| r.step_key.as_deref())
+        .collect();
+    queued.sort_unstable();
+    assert_eq!(queued, ["left", "right"]);
+    assert!(
+        tree.iter()
+            .all(|r| r.step_key.as_deref() != Some("summary"))
+    );
+    // 两步各在自己的实例上，同时领起来、同时执行。
+    let first = e.exec.claim().await.unwrap().expect("a step to run");
+    let second = e.exec.claim().await.unwrap().expect("the other step");
+    assert_ne!(first.run.instance_id, second.run.instance_id);
+    let run = |rec: store::RunRecord| {
+        let exec = e.exec.clone();
+        tokio::spawn(async move {
+            let (_stop, rx) = watch::channel(false);
+            exec.execute(rec, rx).await;
+        })
+    };
+    let (one, two) = (run(first), run(second));
+    one.await.unwrap();
+    two.await.unwrap();
+    // 两个上游都完成后，下游接着跑，整条流水线完成。
+    let done = e.drive(root).await;
+    assert_eq!(done.run.state, RunState::Succeeded, "{:?}", done.run);
+    assert_eq!(done.run.summary.as_deref(), Some("summary：done: sum up"));
+}

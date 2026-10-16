@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use auth::grants::{GrantConfig, GrantService};
 use auth::sandbox_token::SandboxTokenIssuer;
 use control::{BuiltinTemplates, Lifecycle, LifecycleConfig};
-use orchestrator::delegate::{DELEGATE_TOOLS, DelegateTools};
+use orchestrator::delegate::{DELEGATE_TOOLS, DelegateTools, MAX_CHILDREN_PER_RUN};
 use orchestrator::executor::{Executor, ExecutorConfig};
 use orchestrator::shim::{
     ConnectError, NoPlatformTools, PlatformTools, ShimConnector, ShimLaunch, ShimProcess,
@@ -134,6 +134,34 @@ async fn delegate_call(
     }
 }
 
+/// 一轮里调 `n` 次 delegate（任务各不相同，不会被当成重复调用），把最后一次的结果当作回复，结束这一轮。
+async fn fan_out(
+    ev: &mpsc::Sender<ShimEvent>,
+    cmds: &mut mpsc::Receiver<ShimCommand>,
+    run_id: &str,
+    n: usize,
+) {
+    let mut last = String::new();
+    for i in 0..n {
+        let _ = ev
+            .send(ShimEvent::PlatformToolCall {
+                run_id: run_id.into(),
+                call_id: format!("f{i}"),
+                name: "delegate".into(),
+                arguments: json!({ "to": "helper", "task": format!("say hello, part {i}") }),
+            })
+            .await;
+        while let Some(c) = cmds.recv().await {
+            if let ShimCommand::PlatformToolResult { content, .. } = c {
+                last = content[0]["text"].as_str().unwrap_or_default().to_owned();
+                break;
+            }
+        }
+    }
+    let _ = ev.send(chunk(run_id, &last)).await;
+    let _ = ev.send(ended(run_id, StopReason::EndTurn)).await;
+}
+
 /// 按提示词里的关键字表演：say hello / need approval / loop forever / crash / use tool。
 async fn fake_shim(
     mut cmds: mpsc::Receiver<ShimCommand>,
@@ -180,6 +208,18 @@ async fn fake_shim(
                     let _ = ev.send(ended(&run_id, StopReason::EndTurn)).await;
                 } else if let Some((_, task)) = text.split_once("lead the team: ") {
                     delegate_call(&ev, &mut cmds, &run_id, "helper", task).await;
+                } else if let Some((_, rest)) = text.split_once("relay to ") {
+                    // 一层层往下委派（8.8 的深度上限）："relay to 成员: 剩下的任务"。
+                    let (to, task) = rest.split_once(": ").unwrap_or((rest, "say hello"));
+                    delegate_call(&ev, &mut cmds, &run_id, to.trim(), task).await;
+                } else if let Some((_, n)) = text.split_once("fan out ") {
+                    // 一轮里委派很多个子任务（8.8 每次运行的上限）。
+                    let n = n
+                        .split_whitespace()
+                        .next()
+                        .and_then(|n| n.parse().ok())
+                        .unwrap_or(1);
+                    fan_out(&ev, &mut cmds, &run_id, n).await;
                 } else if text.contains("delegate back") {
                     delegate_call(&ev, &mut cmds, &run_id, "Claude", "anything").await;
                 } else if text.contains("say hello") {
@@ -1789,6 +1829,127 @@ async fn the_run_tree_shares_one_token_budget() {
     e.run_to_end().await;
     let prompts = e.fake.rec.lock().unwrap().prompts.clone();
     assert!(prompts.last().unwrap().contains("失败"), "{prompts:?}");
+}
+
+/// `lead` 领一个两人团队，成员是 `member`。
+async fn team(e: &Env, name: &str, lead: &Instance, member: &Instance) {
+    let mut tx = e.t.db.tenant(e.user).await.unwrap();
+    tx.create_team(
+        name,
+        &[
+            TeamMember {
+                instance_id: lead.id,
+                role: TeamRole::Lead,
+                position: 0,
+            },
+            TeamMember {
+                instance_id: member.id,
+                role: TeamRole::Member,
+                position: 1,
+            },
+        ],
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+}
+
+// ---------- 多 agent 协同（17.4） ----------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn delegation_stops_at_three_levels() {
+    let Some((e, helper)) = delegation_env().await else {
+        return;
+    };
+    // 一条委派链：负责人 → helper → carol → dave → xena，每一层领一个两人团队。
+    let mut chain = vec![helper];
+    for name in ["carol", "dave", "xena"] {
+        let next = e
+            .lifecycle
+            .adopt(e.user, "user:d", "claude", None, name)
+            .await
+            .unwrap();
+        team(&e, &format!("team {name}"), chain.last().unwrap(), &next).await;
+        chain.push(next);
+    }
+    let root = e
+        .queue(
+            "relay to helper: relay to carol: relay to dave: relay to xena: say hello",
+            None,
+            3,
+        )
+        .await;
+    // 前三层各自委派下一层，转入等子任务。
+    let mut runs = vec![root];
+    for level in 0..3 {
+        e.run_to_end().await;
+        let parent = *runs.last().unwrap();
+        let rec = e.state(parent).await;
+        assert_eq!(
+            rec.run.state,
+            RunState::WaitingChildren,
+            "level {level}: {:?}",
+            rec.run
+        );
+        let kids = children(&e, parent).await;
+        assert_eq!(kids.len(), 1, "level {level}");
+        assert_eq!(kids[0].instance_id, chain[level].id, "level {level}");
+        assert_eq!(kids[0].root_run_id, root);
+        runs.push(kids[0].id);
+    }
+    // 第三层（dave）再委派就超过 3 层：被拒，自己做完。
+    e.run_to_end().await;
+    let deepest = e.state(*runs.last().unwrap()).await;
+    assert_eq!(deepest.run.state, RunState::Succeeded, "{:?}", deepest.run);
+    assert!(
+        deepest
+            .run
+            .summary
+            .as_deref()
+            .unwrap_or_default()
+            .contains("limited to 3 levels"),
+        "{:?}",
+        deepest.run.summary
+    );
+    assert!(children(&e, deepest.run.id).await.is_empty());
+    // 结果一层层交回去，整条链都完成，只有根运行推送。
+    for _ in 0..3 {
+        e.run_to_end().await;
+    }
+    for run in &runs {
+        assert_eq!(e.state(*run).await.run.state, RunState::Succeeded, "{run}");
+    }
+    let inbox = e.inbox().await;
+    assert!(inbox.iter().all(|i| i.run_id == Some(root)), "{inbox:?}");
+    assert!(e.exec.claim().await.unwrap().is_none());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_run_delegates_at_most_ten_subtasks() {
+    let Some((e, helper)) = delegation_env().await else {
+        return;
+    };
+    let run = e.queue("fan out 11", None, 3).await;
+    e.run_to_end().await;
+    assert_eq!(e.state(run).await.run.state, RunState::WaitingChildren);
+    let kids = children(&e, run).await;
+    assert_eq!(kids.len(), MAX_CHILDREN_PER_RUN);
+    assert!(
+        kids.iter()
+            .all(|k| k.instance_id == helper.id && k.source == RunSource::Delegate)
+    );
+    // 第 11 个被拒：agent 拿到的是错误，没有多建子运行。
+    let said: Vec<String> = e
+        .events(run)
+        .await
+        .into_iter()
+        .filter(|(k, _)| k == "agent.message")
+        .map(|(_, p)| p["text"].as_str().unwrap_or_default().to_owned())
+        .collect();
+    assert!(
+        said.iter().any(|t| t.contains("at most 10 subtasks")),
+        "{said:?}"
+    );
 }
 
 // ---------- 副作用幂等（7.13） ----------
