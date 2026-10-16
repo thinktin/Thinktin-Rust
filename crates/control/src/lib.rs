@@ -86,6 +86,8 @@ pub struct LifecycleConfig {
     pub archive_after: Duration,
     /// 这段时间内有计划要触发的不归档。
     pub keep_if_trigger_within: Duration,
+    /// 计划快到点时提前这么久把要用的实例从暂停里唤醒（6.5 预热），到点时 agent 马上能干活。0 不预热。
+    pub prewarm_lead: Duration,
     /// 沙箱出网白名单（模型网关、控制面接入点）。
     pub network_allow: Vec<String>,
     pub disk_mb: u32,
@@ -101,6 +103,7 @@ impl Default for LifecycleConfig {
             idle_pause: Duration::from_secs(10 * 60),
             archive_after: Duration::from_secs(7 * 24 * 3600),
             keep_if_trigger_within: Duration::from_secs(24 * 3600),
+            prewarm_lead: Duration::from_secs(2 * 60),
             network_allow: Vec::new(),
             disk_mb: Resources::default().disk_mb,
             op_timeout: sandbox::DEFAULT_OP_TIMEOUT,
@@ -112,6 +115,8 @@ impl Default for LifecycleConfig {
 /// 一轮巡检的结果。
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct SweepReport {
+    /// 计划快到点、提前唤醒的（6.5）。
+    pub prewarmed: usize,
     pub paused: usize,
     pub archived: usize,
     pub purged: usize,
@@ -340,9 +345,29 @@ impl Lifecycle {
         Ok(rt)
     }
 
-    /// 巡检：暂停空闲的、归档长期暂停的、回收已删除实例的沙箱和工作区卷。单个实例出错不影响其他实例。
+    /// 巡检：预热快到点的、暂停空闲的、归档长期暂停的、回收已删除实例的沙箱和工作区卷。
+    /// 单个实例出错不影响其他实例。
     pub async fn sweep(&self) -> Result<SweepReport> {
         let mut report = SweepReport::default();
+
+        // 预热（6.5）：计划快到点了，它要用的实例（计划自己的、流水线第一批步骤的）还暂停着就提前唤醒。
+        // 唤醒时记一次活动，下面的空闲暂停不会马上又把它停掉。
+        if !self.cfg.prewarm_lead.is_zero() {
+            let mut w = self.db.worker().await?;
+            let due = w
+                .instances_to_prewarm(self.cfg.prewarm_lead, self.cfg.sweep_batch)
+                .await?;
+            w.commit().await?;
+            for id in due {
+                match self.ensure_running(id).await {
+                    Ok(_) => report.prewarmed += 1,
+                    Err(e) => {
+                        warn!(instance = %id, error = %e, "prewarm failed");
+                        report.failed += 1;
+                    }
+                }
+            }
+        }
 
         let mut w = self.db.worker().await?;
         for rt in w

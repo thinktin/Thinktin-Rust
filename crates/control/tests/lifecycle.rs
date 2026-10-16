@@ -6,7 +6,8 @@ use std::time::Duration;
 use chrono::Utc;
 use control::{BuiltinTemplates, Error, Lifecycle, LifecycleConfig};
 use proto::domain::{
-    CatchUp, InstanceState, PlanAuthor, PlanPolicy, RunSource, ScheduleSpec, UserId,
+    CatchUp, InstanceId, InstanceState, PlanAuthor, PlanPolicy, PlanStep, RunSource, ScheduleSpec,
+    UserId,
 };
 use sandbox::local::LocalProvider;
 use sandbox::{SandboxId, SandboxProvider, SandboxState};
@@ -370,4 +371,86 @@ async fn version_changes_rebuild_on_the_next_wake() {
         lc.ensure_running(inst.id).await.unwrap().sandbox_id,
         Some(new)
     );
+}
+
+/// 预热（6.5）：计划快到点时，它要用的、暂停着的实例提前唤醒；还早的不动。
+#[tokio::test]
+async fn instances_wake_up_shortly_before_their_plans_fire() {
+    let Some(e) = env().await else { return };
+    let lc = lifecycle(
+        &e,
+        LifecycleConfig {
+            prewarm_lead: Duration::from_secs(120),
+            ..LifecycleConfig::default()
+        },
+    );
+    let mut ids = Vec::new();
+    for name in ["soon", "step", "later"] {
+        let i = lc
+            .adopt(e.user, "user:d", "claude", None, name)
+            .await
+            .unwrap();
+        lc.ensure_running(i.id).await.unwrap();
+        assert!(lc.pause(i.id).await.unwrap());
+        ids.push(i.id);
+    }
+    let (soon, step, later) = (ids[0], ids[1], ids[2]);
+    let plan = |instance: InstanceId| NewPlan {
+        instance_id: instance,
+        title: "p".into(),
+        goal: "g".into(),
+        policy: PlanPolicy::default(),
+        catch_up: CatchUp::Once,
+        created_by: PlanAuthor::User,
+        run_grant_id: None,
+    };
+    let hourly = ScheduleSpec::Cron {
+        expr: "0 * * * *".into(),
+        tz: "UTC".into(),
+    };
+    let mut t = e.t.db.tenant(e.user).await.unwrap();
+    // 一分钟后触发的流水线：计划自己的实例和第一步的实例都要预热。
+    let p1 = t.create_plan(&plan(soon)).await.unwrap();
+    t.add_trigger(
+        p1.id,
+        &hourly,
+        Some(Utc::now() + chrono::Duration::seconds(60)),
+    )
+    .await
+    .unwrap();
+    t.set_plan_steps(
+        p1.id,
+        &[PlanStep {
+            key: "first".into(),
+            instance_id: step,
+            prompt: "collect".into(),
+            depends_on: Vec::new(),
+        }],
+    )
+    .await
+    .unwrap();
+    // 一小时后才触发的不动。
+    let p2 = t.create_plan(&plan(later)).await.unwrap();
+    t.add_trigger(
+        p2.id,
+        &hourly,
+        Some(Utc::now() + chrono::Duration::hours(1)),
+    )
+    .await
+    .unwrap();
+    t.commit().await.unwrap();
+
+    let report = lc.sweep().await.unwrap();
+    assert_eq!((report.prewarmed, report.paused, report.failed), (2, 0, 0));
+    let mut w = e.t.db.worker().await.unwrap();
+    for (id, want) in [
+        (soon, InstanceState::Running),
+        (step, InstanceState::Running),
+        (later, InstanceState::Paused),
+    ] {
+        assert_eq!(w.instance_runtime(id).await.unwrap().state, want);
+    }
+    w.rollback().await.unwrap();
+    // 已经醒着的不重复唤醒。
+    assert_eq!(lc.sweep().await.unwrap().prewarmed, 0);
 }

@@ -173,7 +173,8 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
     bg.spawn("sweeper", move |stop| async move {
         every(sweep_every, stop, || async {
             match lifecycle.sweep().await {
-                Ok(r) if r.paused + r.archived + r.purged + r.failed > 0 => info!(
+                Ok(r) if r.prewarmed + r.paused + r.archived + r.purged + r.failed > 0 => info!(
+                    prewarmed = r.prewarmed,
                     paused = r.paused,
                     archived = r.archived,
                     purged = r.purged,
