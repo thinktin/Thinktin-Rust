@@ -64,8 +64,8 @@ pub struct PairingOffer {
     pub expires_at: u64,
 }
 
-/// 手机签名批准（或拒绝）的高危操作。
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+/// 手机签名批准（或拒绝）的高危操作。经设备中继转发时原样放进消息正文（JSON）。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ApprovalRequest {
     pub desktop_id: String,
     pub request_id: String,
@@ -81,7 +81,8 @@ pub struct ApprovalRequest {
 }
 
 /// 手机签发给电脑的能力令牌：普通操作能碰哪些目录、哪些应用，到什么时候。
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+/// 经设备中继转发时原样放进消息正文（JSON）。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CapabilityGrant {
     pub desktop_id: String,
     pub token_id: String,
@@ -559,6 +560,50 @@ pub fn capability_allows_path(grant: CapabilityGrant, path: String) -> bool {
 pub fn encode_public_key(sec1: Vec<u8>) -> Result<String, PairingError> {
     VerifyingKey::from_sec1_bytes(&sec1).map_err(|_| malformed("not a P-256 public key"))?;
     Ok(b64(&sec1))
+}
+
+// ---------- 经设备中继转发的消息正文（14.1、14.2） ----------
+//
+// 手机和电脑之间的消息由平台转发（`proto::domain::DeviceMessageKind`），正文是下面这些 JSON。
+// 签名都是 base64url（不带填充）编码的 DER 或 r‖s。
+
+/// 手机 → 电脑（`capability`）：签过名的能力令牌。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CapabilityBody {
+    pub grant: CapabilityGrant,
+    /// 手机对 [`capability_message`] 的签名。
+    pub signature: String,
+}
+
+/// 手机 → 电脑（`revocation`）：吊销能力令牌。不用签名：吊销只会收紧权限，
+/// 平台伪造了也只能让电脑少做事（平台本来就可以不转发消息）。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RevocationBody {
+    pub token_id: String,
+}
+
+/// 电脑 → 手机（`approval_request`）：请手机签名批准的高危操作。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ApprovalRequestBody {
+    pub request: ApprovalRequest,
+}
+
+/// 手机 → 电脑（`approval_decision`）：签过名的批准或拒绝（[`approval_message`]）。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ApprovalDecisionBody {
+    pub request_id: String,
+    pub approve: bool,
+    pub signature: String,
+}
+
+/// 签名放进消息正文的编码。
+pub fn encode_signature(signature: &[u8]) -> String {
+    b64(signature)
+}
+
+/// 消息正文里的签名解出字节。
+pub fn decode_signature(signature: &str) -> Result<Vec<u8>, PairingError> {
+    unb64("signature", signature)
 }
 
 #[cfg(test)]

@@ -21,6 +21,7 @@ pub use error::{ClientError, Result};
 uniffi::setup_scaffolding!();
 
 /// TLS 用 aws-lc-rs（和 HTTP 客户端一致）；WebSocket 走进程默认的加密实现，要先装上。
-pub(crate) fn install_crypto() {
+/// 电脑端的工具服务（`desktop`）连设备中继前也调它。
+pub fn install_crypto() {
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 }

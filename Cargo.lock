@@ -933,6 +933,26 @@ dependencies = [
 [[package]]
 name = "desktop"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "auth",
+ "base64 0.23.1",
+ "client-core",
+ "futures-util",
+ "orchestrator",
+ "p256",
+ "proto",
+ "relay",
+ "serde",
+ "serde_json",
+ "store",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-tungstenite",
+ "tracing",
+ "uuid",
+]
 
 [[package]]
 name = "digest"
