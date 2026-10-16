@@ -77,6 +77,21 @@ pub fn builtin_versions(id: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
+    /// 清单说定时归平台管（7.14）的，配置生成器必须知道怎么关掉 agent 自带的定时和心跳。
+    #[test]
+    fn platform_scheduling_needs_a_generator_that_can_switch_it_off() {
+        for id in builtin_ids() {
+            let m = builtin(id).unwrap();
+            if m.policy.heartbeat == Heartbeat::Platform {
+                assert!(
+                    m.llm.config.disables_scheduler(),
+                    "{id}: heartbeat = platform but {:?} cannot switch off the agent's scheduler",
+                    m.llm.config
+                );
+            }
+        }
+    }
+
     #[test]
     fn archived_versions_are_valid_and_distinct() {
         for (id, text) in ARCHIVED {

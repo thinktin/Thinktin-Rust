@@ -355,6 +355,7 @@ stateDiagram-v2
 - shim 按清单关掉 agent 内置的定时和心跳（清单字段 `heartbeat = "platform"`）。
 - shim 给每个会话注入一个平台 MCP 工具 `thinktin.schedule`，提供创建、查看、修改、取消计划。用户对 agent 说“每天早上 8 点帮我整理新闻”，agent 调用这个工具，计划就登记在平台上，用户在 App 的“计划”页面能看到、能改。
 - 关不掉内置定时的 agent 不上架，或者在适配器里拦截它的定时配置。
+- 现状（7.14）：OpenClaw 在配置里关掉定时任务（`cron.enabled = false`，再加 `OPENCLAW_SKIP_CRON=1`）和心跳（`agents.defaults.heartbeat.every = "0m"`）；Hermes 的定时任务只在它自己的 gateway 守护进程里触发，沙箱里只跑 ACP 入口、不起那个守护进程，再明确 `cron.allow_agent_scheduling = false`。Claude Code、Codex、Pi 没有内置定时（清单写 `heartbeat = "none"`）。目录的测试保证：清单写归平台管的，配置生成器一定知道怎么关。
 
 ### 4.10 沙箱的休眠与唤醒
 

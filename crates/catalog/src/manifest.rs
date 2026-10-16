@@ -138,6 +138,11 @@ pub enum ConfigGenerator {
 }
 
 impl ConfigGenerator {
+    /// 这个生成器知道怎么关掉 agent 自带的定时和心跳（清单里 `heartbeat = "platform"` 时，7.14）。
+    pub fn disables_scheduler(self) -> bool {
+        matches!(self, Self::Openclaw | Self::Hermes)
+    }
+
     /// 这个生成器能写出哪些协议的配置。
     pub fn supported_protocols(self) -> &'static [LlmProtocol] {
         use LlmProtocol::*;

@@ -6,13 +6,15 @@
 //! - 网关按协议分路径：Anthropic Messages 在 `{gateway}/anthropic`，
 //!   OpenAI 兼容接口（Chat Completions、Responses）在 `{gateway}/openai/v1`。
 //! - 关掉 agent 的自更新、遥测和启动时的联网检查（3.6）。
+//! - 清单里 `heartbeat = "platform"` 的，关掉 agent 自带的定时和心跳（7.14）：计划由编排服务调度，
+//!   agent 用平台工具 `schedule_*` 登记，用户不在线时照样按时跑，也不会两边都跑。
 
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
-use catalog::{ConfigGenerator, LlmProtocol, Manifest};
+use catalog::{ConfigGenerator, Heartbeat, LlmProtocol, Manifest};
 use serde_json::{Value, json};
 
 /// 沙箱令牌所在的环境变量。
@@ -136,12 +138,13 @@ pub fn render(
     };
     out.env.insert("HOME".into(), home.display().to_string());
     out.env.insert(TOKEN_ENV.into(), routing.token.clone());
+    let take_over = manifest.policy.heartbeat == Heartbeat::Platform;
     match manifest.llm.config {
         ConfigGenerator::Claude => claude(routing, home, &mut out),
         ConfigGenerator::Codex => codex(routing, home, &mut out)?,
         ConfigGenerator::Pi => pi(routing, home, &mut out),
-        ConfigGenerator::Openclaw => openclaw(routing, home, cwd, &mut out)?,
-        ConfigGenerator::Hermes => hermes(routing, home, &mut out),
+        ConfigGenerator::Openclaw => openclaw(routing, home, cwd, take_over, &mut out)?,
+        ConfigGenerator::Hermes => hermes(routing, home, take_over, &mut out),
     }
     Ok(out)
 }
@@ -268,6 +271,7 @@ fn openclaw(
     r: &ModelRouting,
     home: &Path,
     cwd: &Path,
+    take_over: bool,
     out: &mut RenderedConfig,
 ) -> anyhow::Result<()> {
     let state = home.join(".openclaw");
@@ -287,7 +291,7 @@ fn openclaw(
     set(out, "OPENCLAW_CLAWHUB_URL", "http://127.0.0.1:9");
     set(out, "CLAWHUB_DISABLE_TELEMETRY", "1");
     let api = pi_api(out.protocol);
-    let config = json!({
+    let mut config = json!({
         "gateway": {
             "mode": "local",
             "bind": "loopback",
@@ -321,6 +325,12 @@ fn openclaw(
         "update": {"checkOnStart": false},
         "telemetry": {"enabled": false},
     });
+    if take_over {
+        // 定时归平台（7.14）：关掉 Gateway 的定时任务和心跳（`every = 0m` 关心跳，心跳提示也不再进上下文）。
+        set(out, "OPENCLAW_SKIP_CRON", "1");
+        config["cron"] = json!({"enabled": false});
+        config["agents"]["defaults"]["heartbeat"] = json!({"every": "0m"});
+    }
     out.files
         .push((PathBuf::from(".openclaw/openclaw.json"), pretty(&config)));
     Ok(())
@@ -333,7 +343,7 @@ fn default_alias(r: &ModelRouting) -> &ModelAlias {
         .expect("render() checked the default model")
 }
 
-fn hermes(r: &ModelRouting, home: &Path, out: &mut RenderedConfig) {
+fn hermes(r: &ModelRouting, home: &Path, take_over: bool, out: &mut RenderedConfig) {
     set(
         out,
         "HERMES_HOME",
@@ -353,7 +363,7 @@ fn hermes(r: &ModelRouting, home: &Path, out: &mut RenderedConfig) {
     if let Some(n) = default_alias(r).context_window {
         model["context_length"] = n.into();
     }
-    let config = json!({
+    let mut config = json!({
         // 加固基线（15.3）：技能里的内联命令不执行；agent 自己写的技能也过安全扫描；
         // 不在后台跑技能整理（会起额外的模型调用、改动技能库）。
         "skills": {"inline_shell": false, "guard_agent_created": true},
@@ -369,6 +379,11 @@ fn hermes(r: &ModelRouting, home: &Path, out: &mut RenderedConfig) {
             }
         },
     });
+    if take_over {
+        // 定时归平台（7.14）：Hermes 的定时任务只在它自己的 gateway 守护进程里触发，沙箱里只跑 ACP 入口，
+        // 不起那个守护进程，所以 agent 自己登记的定时任务不会跑。再明确禁止定时运行里改定时任务。
+        config["cron"] = json!({"allow_agent_scheduling": false});
+    }
     out.files
         .push((PathBuf::from(".hermes/config.yaml"), pretty(&config)));
 }
@@ -542,12 +557,29 @@ mod tests {
         assert_eq!(v["models"]["catalogRefresh"]["enabled"], false);
         assert!(c.env["OPENCLAW_CLAWHUB_URL"].starts_with("http://127.0.0.1:"));
         assert_eq!(c.env["OPENCLAW_GATEWAY_TOKEN"].len(), 64);
+        // 定时归平台（7.14）：定时任务和心跳都关掉。
+        assert_eq!(v["cron"]["enabled"], false);
+        assert_eq!(v["agents"]["defaults"]["heartbeat"]["every"], "0m");
+        assert_eq!(c.env["OPENCLAW_SKIP_CRON"], "1");
         assert_no_token_in_files(&c);
 
         let c = render_for("hermes");
         let v: Value = serde_json::from_str(file(&c, ".hermes/config.yaml")).unwrap();
         assert_eq!(v["providers"]["custom"]["key_env"], TOKEN_ENV);
+        assert_eq!(v["cron"]["allow_agent_scheduling"], false);
         assert_no_token_in_files(&c);
+    }
+
+    /// 清单说 agent 没有自带定时的，不加这些设置；说归平台的才关（7.14）。
+    #[test]
+    fn scheduler_settings_follow_the_manifest() {
+        let mut m = catalog::builtin("openclaw").unwrap();
+        m.policy.heartbeat = Heartbeat::None;
+        let c = render(&m, &routing(), Path::new("/h"), Path::new("/w")).unwrap();
+        let v: Value = serde_json::from_str(file(&c, ".openclaw/openclaw.json")).unwrap();
+        assert!(v.get("cron").is_none());
+        assert!(v["agents"]["defaults"].get("heartbeat").is_none());
+        assert!(!c.env.contains_key("OPENCLAW_SKIP_CRON"));
     }
 
     #[test]
