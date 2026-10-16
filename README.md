@@ -7,6 +7,7 @@ ThinkTin 平台：托管多个开源 agent，用户领养后常驻云端、按�
 - [架构方案 v3](docs/architecture-v3.md)（当前版本）
 - [Agent 接入说明](docs/agent-integration.md)：Claude（ACP 与命令行两种接入）、Codex、Pi、OpenClaw、Hermes 的接入状态、配置注入、权限审批和已知问题
 - [模型网关与密钥库](docs/llm-gateway.md)：沙箱令牌、信封加密、按别名路由换 key、流式透传、计量、限额、SSRF 防护
+- [设备中继](docs/relay.md)：电脑的长连接、电脑工具调用按会话绑定路由、手机和电脑之间的配对审批消息、部署
 - [工作分解结构（WBS）](docs/wbs.md) · [CSV](docs/wbs.csv)
 - [架构方案 v2](docs/architecture-v2.md) · [讨论记录 2026-10-14](docs/discussion-2026-10-14.md)
 
@@ -26,7 +27,7 @@ ThinkTin 平台：托管多个开源 agent，用户领养后常驻云端、按�
 | keyvault | lib | 密钥库：按用户 DEK 的信封加密 |
 | server | bin | 控制面主程序 `thinktin-server`（模块化单体）：配置、健康检查、优雅停机 |
 | llm-gw | bin | 模型网关：沙箱令牌换用户 key、流式透传、计量、限额 |
-| relay | bin | 设备中继 |
+| relay | bin | 设备中继 `thinktin-relay`：电脑主动连出的长连接，转电脑工具调用和手机电脑之间的消息（[说明](docs/relay.md)） |
 | agent-shim | bin | 沙箱内守护进程：驱动 agent（ACP、Claude Code stream-json）、配置注入、审批转发 |
 | desktop | lib | 电脑端 MCP 工具服务（供 macOS App 调用） |
 | client-core | lib | 客户端共享核心（UniFFI） |
@@ -62,6 +63,9 @@ ThinkTin 平台：托管多个开源 agent，用户领养后常驻云端、按�
   短信走阿里云短信服务：`[sms.aliyun]` 填 `sign_name`、`template_code`（国内验证码模板，变量 `${code}`），
   境外号码另配 `international_sign_name`、`international_template_code`；AccessKey 走环境变量
   `THINKTIN_ALIYUN_SMS_ACCESS_KEY_ID`、`THINKTIN_ALIYUN_SMS_ACCESS_KEY_SECRET`。本地开发不配，用 `dev_sms = true` 把验证码打到标准错误。
+
+- `thinktin-relay --database-url ... --access-key a1=<公钥>`：设备中继（独立部署）。数据库登录账号要有
+  `thinktin_relay` 角色；公钥是 `thinktin-server check-config` 打印的 `access token key`。见 [设备中继](docs/relay.md)。
 
 - `tools/client-core/`：客户端核心的绑定与打包。`gen-bindings.sh` 生成 Swift / Kotlin 绑定；
   `build-apple.sh`（macOS + Xcode）出 xcframework 和 Swift Package；`build-android.sh`（NDK + cargo-ndk）出 Android 库工程 / AAR；
