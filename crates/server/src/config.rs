@@ -24,6 +24,7 @@ pub struct Config {
     pub push: Push,
     pub compliance: Compliance,
     pub observability: Observability,
+    pub sms: Sms,
     /// 沙箱令牌签名私钥种子（base64url），只从环境变量 THINKTIN_SANDBOX_TOKEN_SEED 读。
     #[serde(skip)]
     pub sandbox_token_seed: Option<String>,
@@ -38,6 +39,12 @@ pub struct Config {
     pub s3_access_key_id: Option<String>,
     #[serde(skip)]
     pub s3_secret_access_key: Option<String>,
+    /// 阿里云短信的 AccessKey，只从环境变量 THINKTIN_ALIYUN_SMS_ACCESS_KEY_ID、
+    /// THINKTIN_ALIYUN_SMS_ACCESS_KEY_SECRET 读。
+    #[serde(skip)]
+    pub aliyun_sms_access_key_id: Option<String>,
+    #[serde(skip)]
+    pub aliyun_sms_access_key_secret: Option<String>,
     /// 接口用的密钥，只从环境变量读（见 [`ApiSecrets`]）。
     #[serde(skip)]
     pub api_secrets: ApiSecrets,
@@ -59,11 +66,20 @@ impl std::fmt::Debug for Config {
             .field("push", &self.push)
             .field("compliance", &self.compliance)
             .field("observability", &self.observability)
+            .field("sms", &self.sms)
             .field("sandbox_token_seed", &self.sandbox_token_seed.is_some())
             .field("jpush_master_secret", &self.jpush_master_secret.is_some())
             .field("cube_api_key", &self.cube_api_key.is_some())
             .field("s3_access_key_id", &self.s3_access_key_id.is_some())
             .field("s3_secret_access_key", &self.s3_secret_access_key.is_some())
+            .field(
+                "aliyun_sms_access_key_id",
+                &self.aliyun_sms_access_key_id.is_some(),
+            )
+            .field(
+                "aliyun_sms_access_key_secret",
+                &self.aliyun_sms_access_key_secret.is_some(),
+            )
             .field("api_secrets", &self.api_secrets)
             .finish()
     }
@@ -253,6 +269,35 @@ impl Default for Compliance {
     }
 }
 
+/// 短信（4.1 登录验证码）。没配服务商时只能用 `api.dev_sms`（本地开发）。
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Sms {
+    /// 阿里云短信服务。AccessKey 只从环境变量 THINKTIN_ALIYUN_SMS_ACCESS_KEY_ID、
+    /// THINKTIN_ALIYUN_SMS_ACCESS_KEY_SECRET 读。
+    pub aliyun: Option<AliyunSms>,
+}
+
+/// 阿里云短信：签名和验证码模板在阿里云控制台申请，模板里的变量是 `${code}`。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AliyunSms {
+    /// 默认中国站 `https://dysmsapi.aliyuncs.com`；国际站账号用 `https://dysmsapi.ap-southeast-1.aliyuncs.com`。
+    #[serde(default = "default_aliyun_sms_endpoint")]
+    pub endpoint: String,
+    /// 国内短信的签名。
+    pub sign_name: String,
+    /// 国内验证码模板的 code（`SMS_` 开头）。
+    pub template_code: String,
+    /// 国际 / 港澳台消息的签名和模板（两个一起配）；不配就只能给国内号码发。
+    pub international_sign_name: Option<String>,
+    pub international_template_code: Option<String>,
+}
+
+fn default_aliyun_sms_endpoint() -> String {
+    auth::sms::aliyun::ENDPOINT.into()
+}
+
 /// 产出物存储（8.4）。内容按用户 DEK 加密后才落盘。
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -422,12 +467,15 @@ impl Default for Config {
             storage: Storage::default(),
             push: Push::default(),
             compliance: Compliance::default(),
+            sms: Sms::default(),
             observability: Observability::default(),
             sandbox_token_seed: None,
             jpush_master_secret: None,
             cube_api_key: None,
             s3_access_key_id: None,
             s3_secret_access_key: None,
+            aliyun_sms_access_key_id: None,
+            aliyun_sms_access_key_secret: None,
             api_secrets: ApiSecrets::default(),
         }
     }
@@ -510,6 +558,8 @@ impl Config {
         cfg.cube_api_key = env.var("THINKTIN_CUBE_API_KEY");
         cfg.s3_access_key_id = env.var("THINKTIN_S3_ACCESS_KEY_ID");
         cfg.s3_secret_access_key = env.var("THINKTIN_S3_SECRET_ACCESS_KEY");
+        cfg.aliyun_sms_access_key_id = env.var("THINKTIN_ALIYUN_SMS_ACCESS_KEY_ID");
+        cfg.aliyun_sms_access_key_secret = env.var("THINKTIN_ALIYUN_SMS_ACCESS_KEY_SECRET");
         cfg.api_secrets = ApiSecrets {
             access_token_seed: env.var("THINKTIN_ACCESS_TOKEN_SEED"),
             code_pepper: env.var("THINKTIN_CODE_PEPPER"),
@@ -546,10 +596,27 @@ impl Config {
             if !missing.is_empty() {
                 bail!("api.enabled needs {}", missing.join(", "));
             }
-            if !self.api.dev_sms {
-                bail!(
-                    "no SMS provider is configured yet; set api.dev_sms = true for local development"
-                );
+            match &self.sms.aliyun {
+                Some(a) => {
+                    if self.aliyun_sms_access_key_id.is_none()
+                        || self.aliyun_sms_access_key_secret.is_none()
+                    {
+                        bail!(
+                            "sms.aliyun needs THINKTIN_ALIYUN_SMS_ACCESS_KEY_ID and THINKTIN_ALIYUN_SMS_ACCESS_KEY_SECRET"
+                        );
+                    }
+                    if a.international_sign_name.is_some()
+                        != a.international_template_code.is_some()
+                    {
+                        bail!(
+                            "sms.aliyun: international_sign_name and international_template_code go together"
+                        );
+                    }
+                }
+                None if !self.api.dev_sms => bail!(
+                    "no SMS provider is configured: add [sms.aliyun], or set api.dev_sms = true for local development"
+                ),
+                None => {}
             }
         }
         if self.worker.enabled {
@@ -762,6 +829,46 @@ mod tests {
         .unwrap();
         let err = Config::load(Some(&path), &env).unwrap_err();
         assert!(err.to_string().contains("not supported"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_api_needs_an_sms_provider() {
+        let dir = std::env::temp_dir().join(format!("tt-sms-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("server.toml");
+        let mut vars = HashMap::from([
+            ("DATABASE_URL", "postgres://x"),
+            ("THINKTIN_ACCESS_TOKEN_SEED", "seed"),
+            ("THINKTIN_CODE_PEPPER", "ab"),
+            ("THINKTIN_KMS_KEY", "ab"),
+        ]);
+        let api = "[api]\nenabled = true\n";
+        std::fs::write(&path, api).unwrap();
+        let err = Config::load(Some(&path), &MapEnv(vars.clone())).unwrap_err();
+        assert!(err.to_string().contains("no SMS provider"), "{err}");
+        let aliyun = "[sms.aliyun]\nsign_name = \"ThinkTin\"\ntemplate_code = \"SMS_1\"\n";
+        std::fs::write(&path, format!("{api}{aliyun}")).unwrap();
+        let err = Config::load(Some(&path), &MapEnv(vars.clone())).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("THINKTIN_ALIYUN_SMS_ACCESS_KEY_ID"),
+            "{err}"
+        );
+        vars.insert("THINKTIN_ALIYUN_SMS_ACCESS_KEY_ID", "id");
+        vars.insert("THINKTIN_ALIYUN_SMS_ACCESS_KEY_SECRET", "sms-secret-xyz");
+        let cfg = Config::load(Some(&path), &MapEnv(vars.clone())).unwrap();
+        let a = cfg.sms.aliyun.as_ref().unwrap();
+        assert_eq!(a.endpoint, auth::sms::aliyun::ENDPOINT);
+        assert_eq!(a.international_template_code, None);
+        assert!(!format!("{cfg:?}").contains("sms-secret-xyz"));
+        std::fs::write(
+            &path,
+            format!("{api}{aliyun}international_sign_name = \"ThinkTin\"\n"),
+        )
+        .unwrap();
+        let err = Config::load(Some(&path), &MapEnv(vars)).unwrap_err();
+        assert!(err.to_string().contains("go together"), "{err}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

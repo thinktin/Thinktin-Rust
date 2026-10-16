@@ -1,8 +1,10 @@
-//! 短信验证码的发送通道（可替换：阿里云、腾讯云短信等在部署时接入）。
+//! 短信验证码的发送通道（可替换）：阿里云短信服务（[`aliyun`]）；本地开发打印到标准错误；测试记下来。
 
 use std::sync::Mutex;
 
 use async_trait::async_trait;
+
+pub mod aliyun;
 
 /// 验证码的用途：哈希里带着它，一种用途的码不能拿去做另一件事。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

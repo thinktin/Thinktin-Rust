@@ -6,7 +6,8 @@ use anyhow::{Context, bail};
 use auth::access_token::{AccessTokenIssuer, AccessTokenVerifier};
 use auth::service::{AuthConfig, AuthService};
 use auth::signed::{Signer25519, Verifier25519};
-use auth::sms::DevConsoleSms;
+use auth::sms::aliyun::{AliyunSms, AliyunSmsConfig};
+use auth::sms::{DevConsoleSms, SmsSender};
 use axum::Router;
 use control::BuiltinTemplates;
 use gateway::{AppState, EventHub, GatewayConfig, Inner};
@@ -52,13 +53,35 @@ pub fn build(
     }
     let kms = crate::kms(cfg)?;
     let artifacts = crate::artifact_store(cfg, db, kms.clone())?;
+    // 短信：测试注入的 > 阿里云 > 本地开发打印（配置校验保证没配服务商时开着 dev_sms）。
+    let sms: Arc<dyn SmsSender> = match (&hooks.sms, &cfg.sms.aliyun) {
+        (Some(sms), _) => sms.clone(),
+        (None, Some(a)) => Arc::new(
+            AliyunSms::new(AliyunSmsConfig {
+                endpoint: a.endpoint.clone(),
+                access_key_id: cfg.aliyun_sms_access_key_id.clone().unwrap_or_default(),
+                access_key_secret: Zeroizing::new(
+                    cfg.aliyun_sms_access_key_secret.clone().unwrap_or_default(),
+                ),
+                sign_name: a.sign_name.clone(),
+                template_code: a.template_code.clone(),
+                international: a
+                    .international_sign_name
+                    .clone()
+                    .zip(a.international_template_code.clone()),
+                timeout: std::time::Duration::from_secs(10),
+            })
+            .context("sms.aliyun")?,
+        ),
+        (None, None) => Arc::new(DevConsoleSms),
+    };
     let auth = AuthService::new(
         db.clone(),
         AuthConfig::default(),
         pepper,
         AccessTokenIssuer(signer),
         AccessTokenVerifier(verifier),
-        hooks.sms.clone().unwrap_or_else(|| Arc::new(DevConsoleSms)),
+        sms,
     )
     .context("auth service")?;
     let hub = EventHub::new();

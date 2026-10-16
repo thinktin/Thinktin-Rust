@@ -235,14 +235,17 @@ name = "auth"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "axum",
  "base64 0.23.1",
  "chrono",
  "ed25519-dalek",
  "getrandom 0.4.3",
  "hmac",
  "proto",
+ "reqwest",
  "serde",
  "serde_json",
+ "sha1 0.11.0",
  "sha2 0.11.1",
  "store",
  "subtle",

@@ -52,7 +52,9 @@ ThinkTin 平台：托管多个开源 agent，用户领养后常驻云端、按�
   `THINKTIN_S3_ACCESS_KEY_ID`、`THINKTIN_S3_SECRET_ACCESS_KEY`。
   `[api] enabled = true` 时挂上客户端接口，需要 `THINKTIN_ACCESS_TOKEN_SEED`（访问令牌签名种子）、
   `THINKTIN_CODE_PEPPER`（验证码 HMAC 密钥，十六进制）、`THINKTIN_KMS_KEY`（本地 KMS 主密钥）；
-  短信通道还没接，本地开发用 `dev_sms = true` 把验证码打到标准错误。
+  短信走阿里云短信服务：`[sms.aliyun]` 填 `sign_name`、`template_code`（国内验证码模板，变量 `${code}`），
+  境外号码另配 `international_sign_name`、`international_template_code`；AccessKey 走环境变量
+  `THINKTIN_ALIYUN_SMS_ACCESS_KEY_ID`、`THINKTIN_ALIYUN_SMS_ACCESS_KEY_SECRET`。本地开发不配，用 `dev_sms = true` 把验证码打到标准错误。
 
 - `tools/client-core/`：客户端核心的绑定与打包。`gen-bindings.sh` 生成 Swift / Kotlin 绑定；
   `build-apple.sh`（macOS + Xcode）出 xcframework 和 Swift Package；`build-android.sh`（NDK + cargo-ndk）出 Android 库工程 / AAR；
