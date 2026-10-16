@@ -132,6 +132,7 @@ pub fn event_kind(ev: &ShimEvent) -> &'static str {
         ShimEvent::AgentUpdate { .. } => "agent.update",
         ShimEvent::TurnStarted { .. } => "agent.turn_started",
         ShimEvent::PlatformToolCall { .. } => "agent.platform_tool_call",
+        ShimEvent::VaultReveal { .. } => "agent.vault_reveal",
         ShimEvent::TurnEnded { .. } => "agent.turn_ended",
         ShimEvent::Error { .. } => "agent.error",
     }

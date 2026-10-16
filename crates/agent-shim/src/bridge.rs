@@ -13,6 +13,10 @@
 //! socket 上的消息是 JSON Lines：请求 `{"id":1,"op":"list"}`、`{"id":2,"op":"call","name":..,"arguments":..}`，
 //! 回复 `{"id":1,"tools":[..]}`、`{"id":2,"result":{"content":[..],"isError":false}}`，
 //! 工具列表变化时 shim 主动发 `{"op":"tools_changed"}`。
+//!
+//! 保险箱助手（`thinktin-vault`，9.11）也连这个 socket：`{"id":3,"op":"reveal","refs":["github.password"]}`，
+//! shim 发 [`ShimEvent::VaultReveal`]、等平台回值，回复 `{"id":3,"values":[..]}` 或 `{"id":3,"error":".."}`。
+//! 值只交给助手，不进 agent 的上下文。
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -33,6 +37,12 @@ use crate::events::EventSink;
 pub const SERVER_NAME: &str = "thinktin";
 /// 我们支持的 MCP 协议版本，按新旧排列。
 const MCP_VERSIONS: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
+
+/// 平台对保险箱请求的回复：和引用一一对应的值，或者出错原因。
+pub type VaultReply = Result<Vec<String>, String>;
+
+/// 一次最多要这么多个值。
+const MAX_VAULT_REFS: usize = 20;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ToolResult {
@@ -59,6 +69,8 @@ pub struct Bridge {
     private_dir: Option<PathBuf>,
     tools: RwLock<Vec<PlatformTool>>,
     pending: Mutex<HashMap<String, oneshot::Sender<ToolResult>>>,
+    /// 等平台回保险箱里的值的请求（9.11）。
+    vault_pending: Mutex<HashMap<String, oneshot::Sender<VaultReply>>>,
     /// 当前正在执行的那一轮。
     run: Mutex<Option<String>>,
     next_call: AtomicU64,
@@ -106,6 +118,7 @@ impl Bridge {
             private_dir,
             tools: RwLock::new(Vec::new()),
             pending: Mutex::default(),
+            vault_pending: Mutex::default(),
             run: Mutex::default(),
             next_call: AtomicU64::new(1),
             changed,
@@ -133,6 +146,14 @@ impl Bridge {
             .drain()
         {
             let _ = tx.send(ToolResult::error("the agent-shim is shutting down"));
+        }
+        for (_, tx) in self
+            .vault_pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .drain()
+        {
+            let _ = tx.send(Err("the agent-shim is shutting down".into()));
         }
     }
 
@@ -188,6 +209,65 @@ impl Bridge {
                 let _ = tx.send(ToolResult::error(
                     "the task ended before the platform answered",
                 ));
+            }
+        }
+        drop(pending);
+        let mut vault = self.vault_pending.lock().unwrap_or_else(|e| e.into_inner());
+        let stale: Vec<String> = vault
+            .keys()
+            .filter(|k| k.starts_with(&prefix))
+            .cloned()
+            .collect();
+        for k in stale {
+            if let Some(tx) = vault.remove(&k) {
+                let _ = tx.send(Err("the task ended before the platform answered".into()));
+            }
+        }
+    }
+
+    /// 平台回了保险箱里的值。返回是否有人在等。
+    pub fn resolve_vault(&self, call_id: &str, reply: VaultReply) -> bool {
+        let tx = self
+            .vault_pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(call_id);
+        tx.is_some_and(|tx| tx.send(reply).is_ok())
+    }
+
+    /// 替保险箱助手向平台要值（9.11）。只在有任务执行时可用，平台按这一轮的授权核对。
+    async fn reveal(&self, refs: Vec<String>) -> VaultReply {
+        if refs.is_empty() || refs.len() > MAX_VAULT_REFS {
+            return Err(format!("ask for 1-{MAX_VAULT_REFS} values at a time"));
+        }
+        let Some(run_id) = self.run.lock().unwrap_or_else(|e| e.into_inner()).clone() else {
+            return Err("the password vault is only available while a task is running".into());
+        };
+        let Some(sink) = self.sink.lock().unwrap_or_else(|e| e.into_inner()).clone() else {
+            return Err("the agent-shim is shutting down".into());
+        };
+        let call_id = format!(
+            "{run_id}:v{}",
+            self.next_call.fetch_add(1, Ordering::Relaxed)
+        );
+        let (tx, rx) = oneshot::channel();
+        self.vault_pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(call_id.clone(), tx);
+        sink.emit(ShimEvent::VaultReveal {
+            run_id,
+            call_id: call_id.clone(),
+            refs,
+        });
+        match tokio::time::timeout(self.timeout, rx).await {
+            Ok(Ok(reply)) => reply,
+            _ => {
+                self.vault_pending
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&call_id);
+                Err("the platform did not answer in time".into())
             }
         }
     }
@@ -293,6 +373,25 @@ impl Bridge {
                     tokio::spawn(async move {
                         let result = this.call(&name, args).await;
                         let _ = out.send(json!({"id": id, "result": result.to_json()}));
+                    });
+                }
+                Some("reveal") => {
+                    let this = self.clone();
+                    let out = out_tx.clone();
+                    let refs: Vec<String> = req["refs"]
+                        .as_array()
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|r| r.as_str().map(str::to_owned))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    tokio::spawn(async move {
+                        let reply = match this.reveal(refs).await {
+                            Ok(values) => json!({"id": id, "values": values}),
+                            Err(error) => json!({"id": id, "error": error}),
+                        };
+                        let _ = out.send(reply);
                     });
                 }
                 _ => {}
@@ -576,6 +675,83 @@ mod tests {
             .mode()
             & 0o777;
         assert_eq!(mode, 0o600);
+    }
+
+    #[tokio::test]
+    async fn vault_reveals_go_to_the_platform_for_the_running_task() {
+        let dir = tempfile::tempdir().unwrap();
+        let (sink, mut events) = EventSink::new();
+        let bridge = Bridge::start(dir.path(), sink, vec![], Duration::from_secs(5)).unwrap();
+        let mut conn = BufReader::new(UnixStream::connect(bridge.socket_path()).await.unwrap());
+        // 没有在执行的任务：直接报错，不打扰平台。
+        let r = ask(
+            &mut conn,
+            json!({"id": 1, "op": "reveal", "refs": ["github"]}),
+        )
+        .await;
+        assert!(
+            r["error"]
+                .as_str()
+                .unwrap()
+                .contains("while a task is running"),
+            "{r}"
+        );
+        let r = ask(&mut conn, json!({"id": 2, "op": "reveal", "refs": []})).await;
+        assert!(r["error"].is_string(), "{r}");
+
+        bridge.begin_run("run-1");
+        let send = |id: u64| {
+            format!(
+                "{}\n",
+                json!({"id": id, "op": "reveal", "refs": ["github", "github.username"]})
+            )
+        };
+        conn.get_mut().write_all(send(3).as_bytes()).await.unwrap();
+        let ev = events.recv().await.unwrap();
+        let ShimEvent::VaultReveal {
+            run_id,
+            call_id,
+            refs,
+        } = ev.event
+        else {
+            panic!("unexpected {ev:?}")
+        };
+        assert_eq!(run_id, "run-1");
+        assert!(call_id.starts_with("run-1:v"), "{call_id}");
+        assert_eq!(refs, ["github", "github.username"]);
+        assert!(bridge.resolve_vault(&call_id, Ok(vec!["pw-1".into(), "octocat".into()])));
+        assert!(
+            !bridge.resolve_vault(&call_id, Ok(vec![])),
+            "answered only once"
+        );
+        let mut buf = String::new();
+        conn.read_line(&mut buf).await.unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&buf).unwrap(),
+            json!({"id": 3, "values": ["pw-1", "octocat"]})
+        );
+
+        // 平台拒绝（没有这个条目、授权不让用）：原因交给助手。
+        conn.get_mut().write_all(send(4).as_bytes()).await.unwrap();
+        let ev = events.recv().await.unwrap();
+        let ShimEvent::VaultReveal { call_id, .. } = ev.event else {
+            panic!("unexpected {ev:?}")
+        };
+        bridge.resolve_vault(&call_id, Err("no vault item named github".into()));
+        let mut buf = String::new();
+        conn.read_line(&mut buf).await.unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&buf).unwrap(),
+            json!({"id": 4, "error": "no vault item named github"})
+        );
+
+        // 一轮结束时还在等的请求失败返回。
+        conn.get_mut().write_all(send(5).as_bytes()).await.unwrap();
+        let _ = events.recv().await.unwrap();
+        bridge.end_run("run-1");
+        let mut buf = String::new();
+        conn.read_line(&mut buf).await.unwrap();
+        assert!(serde_json::from_str::<Value>(&buf).unwrap()["error"].is_string());
     }
 
     #[tokio::test]

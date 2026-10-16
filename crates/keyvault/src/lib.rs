@@ -494,6 +494,108 @@ fn decode_hex(hex: &str, out: &mut [u8]) -> Option<()> {
     Some(())
 }
 
+/// 比这短的值不抹：太容易误伤正常文字（保险箱也不收这么短的密码）。
+pub const MIN_SCRUB_LEN: usize = 4;
+
+/// 从文字里抹掉保险箱里的值（9.11）：模型网关转发前、运行日志落盘前用。
+/// 每个值连同它的百分号编码、JSON 转义形式一起找，换成 `[vault:名字]`。
+#[derive(Default)]
+pub struct Scrubber {
+    /// （值，替换成的标签），按值从长到短排。
+    entries: Vec<(Zeroizing<String>, String)>,
+}
+
+impl std::fmt::Debug for Scrubber {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Scrubber({} values)", self.entries.len())
+    }
+}
+
+impl Scrubber {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 加一个要抹掉的值。太短的不加。
+    pub fn add(&mut self, name: &str, value: &str) {
+        if value.chars().count() < MIN_SCRUB_LEN {
+            return;
+        }
+        let label = format!("[vault:{name}]");
+        let mut forms = vec![value.to_owned(), percent_encode(value), json_escape(value)];
+        forms.sort();
+        forms.dedup();
+        for form in forms {
+            if !self.entries.iter().any(|(v, _)| **v == form) {
+                self.entries.push((Zeroizing::new(form), label.clone()));
+            }
+        }
+        self.entries.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+    }
+
+    /// 加一个条目的密码（账号不算秘密，不抹）。
+    pub fn add_secret(&mut self, name: &str, secret: &VaultSecret) {
+        self.add(name, &secret.password);
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// 抹掉 `text` 里的值。没有要抹的返回 None。重叠时取靠前、较长的那个。
+    pub fn scrub(&self, text: &str) -> Option<String> {
+        let mut hits: Vec<(usize, usize, &str)> = Vec::new();
+        for (value, label) in &self.entries {
+            for (start, m) in text.match_indices(value.as_str()) {
+                hits.push((start, start + m.len(), label.as_str()));
+            }
+        }
+        if hits.is_empty() {
+            return None;
+        }
+        hits.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)));
+        let mut out = String::with_capacity(text.len());
+        let mut at = 0;
+        for (start, end, label) in hits {
+            if start < at {
+                continue;
+            }
+            out.push_str(&text[at..start]);
+            out.push_str(label);
+            at = end;
+        }
+        out.push_str(&text[at..]);
+        Some(out)
+    }
+}
+
+/// RFC 3986 的百分号编码（只留不保留字符），值出现在网址、表单里时是这个样子。
+fn percent_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
+            out.push(char::from(b));
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+/// JSON 字符串里的转义形式（和 serde_json 一样不转义 `/`），值出现在没解析的 JSON 文本里时是这个样子。
+fn json_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -507,6 +609,48 @@ mod tests {
 
     fn key(s: &str) -> SecretString {
         SecretString::from(s.to_owned())
+    }
+
+    #[test]
+    fn scrubber_replaces_values_and_their_encodings() {
+        let mut s = Scrubber::new();
+        s.add("github", "p@ss/w\"rd");
+        s.add("pin", "123");
+        s.add("mail", "mail-secret-1");
+        s.add_secret(
+            "bank",
+            &VaultSecret {
+                username: "alice".into(),
+                password: "bank-pass".into(),
+            },
+        );
+        assert!(!s.is_empty());
+        assert_eq!(s.scrub("nothing here"), None);
+        assert_eq!(
+            s.scrub("login p@ss/w\"rd then mail-secret-1, mail-secret-1")
+                .unwrap(),
+            "login [vault:github] then [vault:mail], [vault:mail]"
+        );
+        // 网址里的百分号编码、没解析的 JSON 里的转义形式也抹掉；太短的值、账号不抹。
+        assert_eq!(
+            s.scrub("https://u:p%40ss%2Fw%22rd@host").unwrap(),
+            "https://u:[vault:github]@host"
+        );
+        assert_eq!(
+            s.scrub(r#"{"pw":"p@ss/w\"rd"}"#).unwrap(),
+            r#"{"pw":"[vault:github]"}"#
+        );
+        assert_eq!(s.scrub("pin 123 for alice"), None);
+        assert_eq!(s.scrub("bank-pass").unwrap(), "[vault:bank]");
+        // 重叠：取靠前、较长的。
+        let mut o = Scrubber::new();
+        o.add("short", "abcd");
+        o.add("long", "abcdef");
+        assert_eq!(
+            o.scrub("xabcdefx abcd").unwrap(),
+            "x[vault:long]x [vault:short]"
+        );
+        assert!(!format!("{s:?}").contains("bank-pass"));
     }
 
     #[test]

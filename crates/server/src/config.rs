@@ -89,6 +89,7 @@ impl Default for Api {
             default_platform_tools: orchestrator::tools::SCHEDULE_TOOLS
                 .iter()
                 .chain(orchestrator::tools::ARTIFACT_TOOLS.iter())
+                .chain(orchestrator::vault::VAULT_TOOLS.iter())
                 .map(|s| s.to_string())
                 .collect(),
             limits: gateway::LimitConfig::default(),

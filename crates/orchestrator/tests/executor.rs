@@ -210,6 +210,34 @@ async fn fake_shim(
                     let _ = ev.send(ended(&run_id, StopReason::EndTurn)).await;
                 } else if text.contains("loop forever") {
                     looping = Some(run_id);
+                } else if text.contains("use vault") {
+                    // 沙箱里的助手要保险箱里的值，命令把它打印了出来。
+                    let _ = ev
+                        .send(ShimEvent::VaultReveal {
+                            run_id: run_id.clone(),
+                            call_id: "v1".into(),
+                            refs: vec!["github".into(), "github.username".into()],
+                        })
+                        .await;
+                    while let Some(c) = cmds.recv().await {
+                        if let ShimCommand::VaultValues { values, error, .. } = c {
+                            let text = match error {
+                                Some(e) => format!("error: {e}"),
+                                None => format!("got {} for {}", values.0[0], values.0[1]),
+                            };
+                            let _ = ev
+                                .send(ShimEvent::ToolCallUpdate {
+                                    run_id: Some(run_id.clone()),
+                                    tool_call_id: "t1".into(),
+                                    status: Some("completed".into()),
+                                    raw: json!({ "content": [{ "type": "text", "text": text }] }),
+                                })
+                                .await;
+                            let _ = ev.send(chunk(&run_id, &text)).await;
+                            let _ = ev.send(ended(&run_id, StopReason::EndTurn)).await;
+                            break;
+                        }
+                    }
                 } else if text.contains("crash") {
                     return;
                 } else if text.contains("use tool") {
@@ -244,6 +272,29 @@ async fn fake_shim(
             ShimCommand::Shutdown => return,
             _ => {}
         }
+    }
+}
+
+const KMS_KEY: [u8; 32] = [9; 32];
+
+fn kms() -> Arc<dyn keyvault::Kms> {
+    Arc::new(keyvault::LocalKms::new("kms1", &KMS_KEY))
+}
+
+/// 只声明 vault_list：授权里有它，沙箱里的助手才能要值。
+struct VaultStub;
+
+#[async_trait]
+impl PlatformTools for VaultStub {
+    fn tools(&self) -> Vec<PlatformTool> {
+        vec![PlatformTool {
+            name: "vault_list".into(),
+            description: "List vault items".into(),
+            input_schema: json!({ "type": "object" }),
+        }]
+    }
+    async fn call(&self, _ctx: &ToolContext, name: &str, _args: &Value) -> ToolOutput {
+        ToolOutput::text(name)
     }
 }
 
@@ -316,15 +367,18 @@ async fn env_with(
         tx.commit().await.unwrap();
     }
     let fake = FakeConnector::default();
-    let exec = Arc::new(Executor::new(
-        t.db.clone(),
-        "node-a",
-        lifecycle.clone(),
-        grants,
-        Arc::new(fake.clone()),
-        tools,
-        cfg,
-    ));
+    let exec = Arc::new(
+        Executor::new(
+            t.db.clone(),
+            "node-a",
+            lifecycle.clone(),
+            grants,
+            Arc::new(fake.clone()),
+            tools,
+            cfg,
+        )
+        .with_vault(kms()),
+    );
     Some(Env {
         t,
         _dir: dir,
@@ -1077,5 +1131,82 @@ async fn sandbox_tokens_die_with_the_run() {
         epoch().await,
         2,
         "the executor does not bump again (the next run may already hold a token)"
+    );
+}
+
+/// 密码保险箱（9.11）：沙箱里的助手按名字拿到值（授权里有保险箱工具、条目允许这个实例），
+/// 记审计和运行日志（只记名字）；运行日志、摘要里看不到值。没有授权时拿不到。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_vault_helper_gets_values_and_logs_never_show_them() {
+    let scope = GrantScope {
+        platform_tools: vec!["vault_list".into()],
+        ..GrantScope::default()
+    };
+    let Some(e) = env_with(fast(), Some(scope), Arc::new(VaultStub)).await else {
+        return;
+    };
+    let vault = orchestrator::artifacts::user_vault(&e.t.db, kms(), e.user, true)
+        .await
+        .unwrap();
+    let id = proto::domain::VaultItemId::new();
+    let sealed = vault
+        .seal_vault(
+            &e.user.to_string(),
+            &id.to_string(),
+            &keyvault::VaultSecret {
+                username: "octocat".into(),
+                password: "gh-secret-123".into(),
+            },
+        )
+        .unwrap();
+    let mut tx = e.t.db.tenant(e.user).await.unwrap();
+    tx.create_vault_item(&store::NewVaultItem {
+        id,
+        name: "github".into(),
+        purpose: "push code".into(),
+        sealed,
+        has_username: true,
+        instance_ids: vec![e.instance.id],
+    })
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+
+    let run = e.queue("please use vault", None, 1).await;
+    e.run_to_end().await;
+    let rec = e.state(run).await;
+    assert_eq!(rec.run.state, RunState::Succeeded, "{:?}", rec.run);
+    assert_eq!(
+        rec.run.summary.as_deref(),
+        Some("got [vault:github] for octocat")
+    );
+    let events = e.events(run).await;
+    let all = serde_json::to_string(&events).unwrap();
+    assert!(!all.contains("gh-secret-123"), "{all}");
+    assert!(all.contains("[vault:github]"), "{all}");
+    let used: Vec<&Value> = events
+        .iter()
+        .filter(|(k, _)| k == "vault.used")
+        .map(|(_, p)| p)
+        .collect();
+    assert_eq!(used, [&json!({ "names": ["github"] })]);
+    let mut tx = e.t.db.tenant(e.user).await.unwrap();
+    assert!(tx.vault_items().await.unwrap()[0].last_used_at.is_some());
+    tx.rollback().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_vault_needs_the_grant() {
+    let Some(e) = env().await else { return };
+    let run = e.queue("please use vault", None, 1).await;
+    e.run_to_end().await;
+    let rec = e.state(run).await;
+    assert!(
+        rec.run
+            .summary
+            .as_deref()
+            .is_some_and(|s| s.contains("not allowed to use the password vault")),
+        "{:?}",
+        rec.run.summary
     );
 }

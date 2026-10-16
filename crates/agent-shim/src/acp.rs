@@ -290,7 +290,9 @@ impl Driver<'_> {
                             }
                         }
                         // 平台工具的指令由 main 交给工具桥，不会到这里。
-                        ShimCommand::SetPlatformTools { .. } | ShimCommand::PlatformToolResult { .. } => {}
+                        ShimCommand::SetPlatformTools { .. }
+                        | ShimCommand::PlatformToolResult { .. }
+                        | ShimCommand::VaultValues { .. } => {}
                         ShimCommand::PermissionDecision { request_id, option_id } => {
                             self.on_decision(&mut pending, request_id, option_id);
                         }

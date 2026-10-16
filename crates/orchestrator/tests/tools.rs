@@ -290,3 +290,124 @@ fn proto_ctx(ctx: &ToolContext, run: proto::domain::RunId) -> ToolContext {
         grant: ctx.grant,
     }
 }
+
+/// 密码保险箱的平台工具（9.11）：agent 只看到名字和用途；请求推送给用户、同名的复用、有上限；
+/// 已经有可用的条目就直接告诉它怎么用。
+#[tokio::test]
+async fn vault_tools_list_names_and_ask_the_user() {
+    use orchestrator::vault::VaultTools;
+    use proto::domain::VaultItemId;
+
+    let Some(t) = TestDb::new().await else { return };
+    let mut w = t.db.worker().await.unwrap();
+    let (user, _) = w.upsert_user_by_phone("+8613800000001").await.unwrap();
+    w.commit().await.unwrap();
+    let (ctx, inst) = context(&t, user.id).await;
+    let (other_ctx, other) = context(&t, user.id).await;
+    let mut tx = t.db.tenant(user.id).await.unwrap();
+    for (name, instances) in [("github", vec![]), ("bank", vec![other])] {
+        tx.create_vault_item(&store::NewVaultItem {
+            id: VaultItemId::new(),
+            name: name.into(),
+            purpose: format!("{name} account"),
+            sealed: vec![1; 40],
+            has_username: true,
+            instance_ids: instances,
+        })
+        .await
+        .unwrap();
+    }
+    tx.commit().await.unwrap();
+    let tools = VaultTools::new(t.db.clone());
+    assert_eq!(tools.tools().len(), 2);
+
+    // 只列这个实例能用的，从不带值。
+    let listed = body(&tools.call(&ctx, "vault_list", &json!({})).await);
+    let names: Vec<&str> = listed["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["github"]);
+    assert!(listed["usage"].as_str().unwrap().contains("thinktin-vault"));
+    let listed = body(&tools.call(&other_ctx, "vault_list", &json!({})).await);
+    assert_eq!(listed["items"].as_array().unwrap().len(), 2);
+
+    // 已经有了：直接用。
+    let out = tools
+        .call(
+            &ctx,
+            "vault_request",
+            &json!({ "name": "github", "purpose": "push code" }),
+        )
+        .await;
+    assert!(!out.is_error);
+    assert_eq!(body(&out)["status"], "available");
+
+    // 请用户填：推送、记事件；同名的复用，不重复推送。
+    for _ in 0..2 {
+        let out = tools
+            .call(
+                &ctx,
+                "vault_request",
+                &json!({ "name": "work-mail", "purpose": "read the weekly report", "fields": ["username"] }),
+            )
+            .await;
+        assert!(!out.is_error, "{out:?}");
+        assert_eq!(body(&out)["status"], "requested");
+    }
+    let mut tx = t.db.tenant(user.id).await.unwrap();
+    let pending = tx.vault_requests(true).await.unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].fields, ["username", "password"]);
+    assert_eq!(pending[0].run_id, Some(ctx.run));
+    let inbox = tx.inbox(None, 10, false).await.unwrap();
+    assert_eq!(inbox.len(), 1);
+    assert!(inbox[0].ai_generated && inbox[0].body.contains("read the weekly report"));
+    assert_eq!(
+        tx.run_event_count(ctx.run, "vault.requested")
+            .await
+            .unwrap(),
+        1
+    );
+    tx.rollback().await.unwrap();
+    // 别的实例上的同名条目这个 agent 用不了：照样请用户处理。
+    let out = tools
+        .call(
+            &ctx,
+            "vault_request",
+            &json!({ "name": "bank", "purpose": "pay the bill" }),
+        )
+        .await;
+    assert_eq!(body(&out)["status"], "requested");
+    let listed = body(&tools.call(&ctx, "vault_list", &json!({})).await);
+    assert_eq!(listed["pending_requests"].as_array().unwrap().len(), 2);
+
+    // 参数校验和每次运行的上限。
+    for bad in [
+        json!({ "name": "Bad Name", "purpose": "x" }),
+        json!({ "name": "ok", "purpose": "" }),
+        json!({ "name": "ok", "purpose": "x", "fields": ["token"] }),
+    ] {
+        assert!(tools.call(&ctx, "vault_request", &bad).await.is_error);
+    }
+    for i in 0..3 {
+        let out = tools
+            .call(
+                &ctx,
+                "vault_request",
+                &json!({ "name": format!("site-{i}"), "purpose": "login" }),
+            )
+            .await;
+        assert!(!out.is_error);
+    }
+    let out = tools
+        .call(
+            &ctx,
+            "vault_request",
+            &json!({ "name": "one-more", "purpose": "login" }),
+        )
+        .await;
+    assert!(out.is_error, "the sixth request in one run is refused");
+}

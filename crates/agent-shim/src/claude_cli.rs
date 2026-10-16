@@ -305,7 +305,9 @@ impl Driver<'_> {
         match cmd {
             ShimCommand::Shutdown => unreachable!("handled by the caller"),
             // 平台工具的指令由 main 交给工具桥，不会到这里。
-            ShimCommand::SetPlatformTools { .. } | ShimCommand::PlatformToolResult { .. } => {}
+            ShimCommand::SetPlatformTools { .. }
+            | ShimCommand::PlatformToolResult { .. }
+            | ShimCommand::VaultValues { .. } => {}
             ShimCommand::Prompt { run_id, text } => {
                 if let Some(turn) = &self.turn {
                     self.sink.emit(ShimEvent::Error {

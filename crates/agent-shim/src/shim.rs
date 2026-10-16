@@ -39,6 +39,10 @@ pub struct ShimConfig {
     pub policy: PermissionPolicy,
     pub max_restarts: u32,
     pub handshake_timeout: Duration,
+    /// 另外给 agent 的环境变量（保险箱助手的 socket 等）。
+    pub extra_env: std::collections::BTreeMap<String, String>,
+    /// 加在 agent 的 PATH 前面的目录（放 `thinktin-vault` 的地方）。
+    pub path_prepend: Vec<PathBuf>,
 }
 
 impl ShimConfig {
@@ -114,6 +118,23 @@ async fn attempt(
 ) -> anyhow::Result<Outcome> {
     let mut env = rendered.env.clone();
     env.extend(harness.env.clone());
+    env.extend(cfg.extra_env.clone());
+    if !cfg.path_prepend.is_empty() {
+        let mut parts: Vec<String> = cfg
+            .path_prepend
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect();
+        if let Some(base) = env
+            .get("PATH")
+            .cloned()
+            .or_else(|| std::env::var("PATH").ok())
+            .filter(|p| !p.is_empty())
+        {
+            parts.push(base);
+        }
+        env.insert("PATH".into(), parts.join(":"));
+    }
 
     let mut sidecars = Vec::new();
     let started = start_sidecars(cfg, harness, &env, &mut sidecars).await;
@@ -283,7 +304,11 @@ async fn wait_or_shutdown(
                         message: "agent is restarting".into(),
                     });
                 }
-                Some(ShimCommand::SetPlatformTools { .. } | ShimCommand::PlatformToolResult { .. }) => {}
+                Some(
+                    ShimCommand::SetPlatformTools { .. }
+                    | ShimCommand::PlatformToolResult { .. }
+                    | ShimCommand::VaultValues { .. },
+                ) => {}
                 Some(ShimCommand::PermissionDecision { request_id, .. }) => {
                     sink.emit(ShimEvent::Error {
                         run_id: None,

@@ -16,9 +16,13 @@ use auth::grants::GrantService;
 use auth::service::AuthError;
 use chrono::Utc;
 use control::Lifecycle;
+use keyvault::{Kms, Scrubber};
 use notify::PushKind;
-use proto::domain::{ApprovalState, ApprovalTimeoutAction, GrantId, PlanPolicy, RunState};
-use proto::shim::{DecisionSource, ShimCommand, ShimEvent, StopReason};
+use proto::domain::{
+    ApprovalState, ApprovalTimeoutAction, GrantId, PlanPolicy, RunState, UserId, VaultItemId,
+    valid_vault_name,
+};
+use proto::shim::{DecisionSource, SecretValues, ShimCommand, ShimEvent, StopReason};
 use serde_json::{Value, json};
 use store::{Db, NewApproval, RunChange, RunRecord};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, watch};
@@ -117,6 +121,8 @@ pub struct Executor {
     connector: Arc<dyn ShimConnector>,
     tools: Arc<dyn PlatformTools>,
     handoff: Option<Arc<crate::pipeline::HandoffCopier>>,
+    /// 密码保险箱（9.11）：解开用户的条目，给沙箱里的助手、给运行日志抹值。
+    vault: Option<Arc<dyn Kms>>,
     cfg: ExecutorConfig,
     /// 同时执行的运行数。等审批的运行让出名额（沙箱也可能被空闲回收暂停），审批有结果后再拿回来。
     slots: Arc<Semaphore>,
@@ -150,6 +156,8 @@ struct Exec<'a> {
     /// 这次执行已经写进运行日志的字节数。
     logged: usize,
     log_capped: bool,
+    /// 用户保险箱里的值：写运行日志、摘要、审批之前抹掉（9.11）。
+    scrubber: Scrubber,
 }
 
 /// 运行摘要从回复里取，最多留这么多字节（摘要只用前 400 个字）。
@@ -239,6 +247,7 @@ impl Executor {
             connector,
             tools,
             handoff: None,
+            vault: None,
             slots: Arc::new(Semaphore::new(cfg.max_concurrent.max(1))),
             cfg,
         }
@@ -250,8 +259,52 @@ impl Executor {
         self
     }
 
+    /// 密码保险箱（9.11）：沙箱里的助手按名字要值，运行日志落盘前抹掉用户保险箱里的值。
+    pub fn with_vault(mut self, kms: Arc<dyn Kms>) -> Self {
+        self.vault = Some(kms);
+        self
+    }
+
     pub fn node_id(&self) -> &str {
         &self.node_id
+    }
+
+    /// 用户保险箱里的值，运行日志落盘前抹掉（9.11）。出错只记日志：抹值是额外的一层保护。
+    async fn scrubber(&self, user: UserId) -> Scrubber {
+        let mut s = Scrubber::new();
+        let Some(kms) = &self.vault else {
+            return s;
+        };
+        let items = async {
+            let mut w = self.db.worker().await?;
+            let items = w.user_vault_items(user).await?;
+            w.rollback().await?;
+            Ok::<_, store::Error>(items)
+        }
+        .await;
+        let items = match items {
+            Ok(items) if items.is_empty() => return s,
+            Ok(items) => items,
+            Err(e) => {
+                warn!(%user, error = %e, "loading vault items failed");
+                return s;
+            }
+        };
+        let vault = match crate::artifacts::user_vault(&self.db, kms.clone(), user, false).await {
+            Ok(v) => v,
+            Err(e) => {
+                warn!(%user, error = %e, "opening the user's vault failed");
+                return s;
+            }
+        };
+        let uid = user.to_string();
+        for item in items {
+            match vault.open_vault(&uid, &item.item.id.to_string(), &item.sealed) {
+                Ok(secret) => s.add_secret(&item.item.name, &secret),
+                Err(e) => warn!(item = %item.item.id, error = %e, "cannot open a vault item"),
+            }
+        }
+        s
     }
 
     /// 领取并执行运行，直到 `stop` 完成；之后等进行中的运行收尾。
@@ -542,6 +595,7 @@ impl Executor {
             delivered: HashSet::new(),
             logged: 0,
             log_capped: false,
+            scrubber: self.scrubber(rec.user_id).await,
         };
         exec.persist(&ready).await;
         Ok(exec)
@@ -706,7 +760,13 @@ impl Exec<'_> {
 
     /// 写运行日志：限制单条大小和这次运行的总量。
     async fn persist_raw(&mut self, kind: &str, payload: &Value) {
-        let payload = bound_payload(payload);
+        let payload = if self.scrubber.is_empty() {
+            bound_payload(payload)
+        } else {
+            let mut clean = payload.clone();
+            crate::vault::scrub_json(&self.scrubber, &mut clean);
+            bound_payload(&clean)
+        };
         let size = serde_json::to_vec(&payload).map_or(0, |b| b.len());
         if self.logged.saturating_add(size) > self.ex.cfg.max_run_log_bytes {
             if !self.log_capped {
@@ -997,6 +1057,18 @@ impl Exec<'_> {
                 })
                 .await;
             }
+            ShimEvent::VaultReveal { call_id, refs, .. } => {
+                let (values, error) = match self.reveal(&refs).await {
+                    Ok(values) => (values, None),
+                    Err(e) => (Vec::new(), Some(e)),
+                };
+                self.send(ShimCommand::VaultValues {
+                    call_id,
+                    values: SecretValues(values),
+                    error,
+                })
+                .await;
+            }
             ShimEvent::AgentExited {
                 will_restart: false,
                 code,
@@ -1010,7 +1082,11 @@ impl Exec<'_> {
                 run_id: r,
                 stop_reason,
             } if r == run_id => {
-                let summary = Some(truncate(&self.answer, 400)).filter(|s| !s.is_empty());
+                let answer = self
+                    .scrubber
+                    .scrub(&self.answer)
+                    .unwrap_or_else(|| self.answer.clone());
+                let summary = Some(truncate(&answer, 400)).filter(|s| !s.is_empty());
                 return Some(match stop_reason {
                     StopReason::EndTurn => Outcome::Succeeded {
                         summary,
@@ -1032,6 +1108,104 @@ impl Exec<'_> {
         None
     }
 
+    /// 沙箱里的助手要用保险箱里的值（9.11）：核对授权和实例，解密，记审计和运行日志（只记名字）。
+    /// 解开的密码加进抹值的列表：不管 agent 拿它做什么，运行日志里都看不到。
+    async fn reveal(&mut self, refs: &[String]) -> Result<Vec<String>, String> {
+        fn internal(e: impl std::fmt::Display) -> String {
+            warn!(error = %e, "revealing vault values failed");
+            "the password vault is not available, try again later".into()
+        }
+        let Some(kms) = self.ex.vault.clone() else {
+            return Err("the password vault is not available on this platform".into());
+        };
+        if !self.allowed_tools.contains("vault_list") {
+            return Err("this agent is not allowed to use the password vault".into());
+        }
+        if refs.is_empty() || refs.len() > 20 {
+            return Err("ask for 1-20 values at a time".into());
+        }
+        let mut wanted: Vec<(String, bool)> = Vec::with_capacity(refs.len());
+        for r in refs {
+            let (name, field) = r.split_once('.').unwrap_or((r.as_str(), "password"));
+            if !valid_vault_name(name) || !matches!(field, "password" | "username") {
+                return Err(format!(
+                    "{r:?} is not a vault reference (name, name.username or name.password)"
+                ));
+            }
+            wanted.push((name.to_owned(), field == "username"));
+        }
+        let mut names: Vec<String> = wanted.iter().map(|(n, _)| n.clone()).collect();
+        names.sort();
+        names.dedup();
+        let user = self.rec.user_id;
+        let instance = self.rec.run.instance_id;
+        let mut w = self.ex.db.worker().await.map_err(internal)?;
+        let items = w
+            .vault_items_for_instance(user, instance, &names)
+            .await
+            .map_err(internal)?;
+        w.rollback().await.map_err(internal)?;
+        if let Some(missing) = names
+            .iter()
+            .find(|n| !items.iter().any(|i| &i.item.name == *n))
+        {
+            return Err(format!(
+                "no vault item named {missing} for this agent; ask the user with vault_request"
+            ));
+        }
+        let vault = crate::artifacts::user_vault(&self.ex.db, kms, user, false)
+            .await
+            .map_err(internal)?;
+        let uid = user.to_string();
+        let mut opened = Vec::with_capacity(items.len());
+        for item in &items {
+            let secret = vault
+                .open_vault(&uid, &item.item.id.to_string(), &item.sealed)
+                .map_err(internal)?;
+            self.scrubber.add_secret(&item.item.name, &secret);
+            opened.push((item.item.name.as_str(), secret));
+        }
+        let mut values = Vec::with_capacity(wanted.len());
+        for (name, username) in &wanted {
+            let Some((_, secret)) = opened.iter().find(|(n, _)| n == name) else {
+                return Err(format!("no vault item named {name} for this agent"));
+            };
+            if *username {
+                if secret.username.is_empty() {
+                    return Err(format!("{name} has no username"));
+                }
+                values.push(secret.username.clone());
+            } else {
+                values.push(secret.password.clone());
+            }
+        }
+        let ids: Vec<VaultItemId> = items.iter().map(|i| i.item.id).collect();
+        let run = self.rec.run.id;
+        let recorded = async {
+            let mut w = self.ex.db.worker().await?;
+            w.touch_vault_items(&ids).await?;
+            w.audit(
+                Some(user),
+                &format!("agent:{instance}"),
+                "vault.use",
+                None,
+                &json!({ "run": run, "items": names }),
+            )
+            .await?;
+            w.append_event(
+                instance,
+                Some(run),
+                "vault.used",
+                &json!({ "names": names }),
+            )
+            .await?;
+            w.commit().await
+        }
+        .await;
+        recorded.map_err(internal)?;
+        Ok(values)
+    }
+
     async fn on_permission(
         &mut self,
         request_id: &str,
@@ -1039,10 +1213,15 @@ impl Exec<'_> {
         options: &[proto::shim::PermissionOption],
         tool_call: &Value,
     ) -> Result<(), Outcome> {
-        // 标题、选项、工具调用都来自 agent：限制大小、去掉 NUL 再入库。
+        // 标题、选项、工具调用都来自 agent：抹掉保险箱里的值、限制大小、去掉 NUL 再入库。
         let options_json = bound_payload(&serde_json::to_value(options).unwrap_or(Value::Null));
-        let tool_call = &bound_payload(tool_call);
-        let title = title.map(|t| truncate(t, 200));
+        let mut tool_call = tool_call.clone();
+        crate::vault::scrub_json(&self.scrubber, &mut tool_call);
+        let tool_call = &bound_payload(&tool_call);
+        let title = title.map(|t| {
+            let t = self.scrubber.scrub(t).unwrap_or_else(|| t.to_owned());
+            truncate(&t, 200)
+        });
         let title = title.as_deref();
         let expires_in = Duration::from_secs(self.policy.approval_timeout_secs);
         let key = self.approval_key(request_id);

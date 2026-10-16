@@ -19,6 +19,7 @@ use orchestrator::pipeline::{HandoffCopier, PipelineConfig, PipelineDriver};
 use orchestrator::scheduler::{Scheduler, SchedulerConfig};
 use orchestrator::shim::PlatformTools;
 use orchestrator::tools::{ArtifactTools, ScheduleTools, ToolSet};
+use orchestrator::vault::VaultTools;
 use proto::domain::PushChannelKind;
 use sandbox::SandboxProvider;
 use sandbox::cube::CubeProvider;
@@ -81,7 +82,8 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
     };
     let workdir = exec_cfg.workdir.clone();
     let connector = Arc::new(ExecConnector::new(provider.clone(), exec_cfg));
-    let artifacts = crate::artifact_store(cfg, db, crate::kms(cfg)?)?;
+    let kms = crate::kms(cfg)?;
+    let artifacts = crate::artifact_store(cfg, db, kms.clone())?;
     let blobs = artifacts.clone();
     let tools: Vec<Arc<dyn PlatformTools>> = vec![
         Arc::new(ScheduleTools::new(db.clone())),
@@ -91,6 +93,7 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
             provider.clone(),
             workdir.clone(),
         )),
+        Arc::new(VaultTools::new(db.clone())),
     ];
     let executor = Arc::new(
         Executor::new(
@@ -110,7 +113,8 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
             artifacts,
             provider,
             workdir,
-        ))),
+        )))
+        .with_vault(kms),
     );
     let pipelines = PipelineDriver::new(db.clone(), PipelineConfig::default());
     let scheduler = Scheduler::new(db.clone(), SchedulerConfig::default());

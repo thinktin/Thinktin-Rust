@@ -36,6 +36,26 @@ pub enum ShimCommand {
         #[serde(default)]
         is_error: bool,
     },
+    /// 保险箱里的值（9.11），对应 [`ShimEvent::VaultReveal`]。shim 只转给沙箱里的助手，不交给 agent。
+    VaultValues {
+        call_id: String,
+        /// 和请求的引用一一对应；出错时为空，`error` 说明原因。
+        #[serde(default)]
+        values: SecretValues,
+        #[serde(default)]
+        error: Option<String>,
+    },
+}
+
+/// 明文值（保险箱里的密码等）：调试输出不显示内容。
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SecretValues(pub Vec<String>);
+
+impl std::fmt::Debug for SecretValues {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "SecretValues({} redacted)", self.0.len())
+    }
 }
 
 /// 平台提供给 agent 的工具（以 MCP 工具的形式注入，服务器名 `thinktin`）。
@@ -158,6 +178,13 @@ pub enum ShimEvent {
         name: String,
         arguments: Value,
     },
+    /// 沙箱里的助手（`thinktin-vault`）要用保险箱里的值（9.11），等平台回 [`ShimCommand::VaultValues`]。
+    /// `refs` 形如 `github`（密码）或 `github.username`；`run_id` 由 shim 填当前这一轮。
+    VaultReveal {
+        run_id: String,
+        call_id: String,
+        refs: Vec<String>,
+    },
     /// 一轮任务结束。
     TurnEnded {
         run_id: String,
@@ -273,6 +300,30 @@ mod tests {
         );
         let back: EventEnvelope = serde_json::from_value(v).unwrap();
         assert_eq!(back, env);
+    }
+
+    #[test]
+    fn vault_values_stay_out_of_debug_output() {
+        let cmd = ShimCommand::VaultValues {
+            call_id: "v1".into(),
+            values: SecretValues(vec!["hunter2-secret".into()]),
+            error: None,
+        };
+        assert!(!format!("{cmd:?}").contains("hunter2"));
+        let v = serde_json::to_value(&cmd).unwrap();
+        assert_eq!(v["values"], json!(["hunter2-secret"]));
+        let back: ShimCommand = serde_json::from_value(
+            json!({"type": "vault_values", "call_id": "v2", "error": "no such item"}),
+        )
+        .unwrap();
+        assert_eq!(
+            back,
+            ShimCommand::VaultValues {
+                call_id: "v2".into(),
+                values: SecretValues::default(),
+                error: Some("no such item".into())
+            }
+        );
     }
 
     #[test]

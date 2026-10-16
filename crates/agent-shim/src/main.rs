@@ -11,6 +11,7 @@ mod policy;
 mod process;
 mod shim;
 mod state;
+mod vault_helper;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -63,6 +64,14 @@ enum Command {
         #[arg(long)]
         socket: PathBuf,
     },
+    /// 密码保险箱助手（沙箱里叫 thinktin-vault）：按名字把保险箱里的值注入命令
+    Vault {
+        /// shim 的工具桥 socket
+        #[arg(long, env = "THINKTIN_VAULT_SOCKET")]
+        socket: PathBuf,
+        #[command(subcommand)]
+        action: VaultAction,
+    },
     /// 让 agent 跑一轮任务后退出，用于本地调试和冒烟测试
     Run {
         #[command(flatten)]
@@ -72,6 +81,22 @@ enum Command {
         /// 输出格式：json 每行一个事件；text 只把回复正文打到 stdout，其余事件打到 stderr
         #[arg(long, value_enum, default_value_t = Format::Json)]
         format: Format,
+    },
+}
+
+#[derive(Subcommand)]
+enum VaultAction {
+    /// 执行命令：`--env 变量=引用` 设环境变量，`--stdin 引用` 从标准输入送进去，参数里的 `{{引用}}` 换成值。
+    /// 引用是 `名字`（密码）或 `名字.username`、`名字.password`。例：
+    /// `thinktin-vault exec --env GH_TOKEN=github -- gh repo list`
+    Exec {
+        #[arg(long = "env", value_name = "VAR=REF")]
+        env: Vec<String>,
+        #[arg(long, value_name = "REF")]
+        stdin: Option<String>,
+        /// 要执行的命令，写在 `--` 后面
+        #[arg(last = true, required = true)]
+        command: Vec<String>,
     },
 }
 
@@ -297,6 +322,8 @@ impl CommonArgs {
             policy: self.permissions.policy(default_fallback),
             max_restarts: self.max_restarts.unwrap_or(default_restarts),
             handshake_timeout: Duration::from_secs(self.handshake_timeout_secs),
+            extra_env: std::collections::BTreeMap::new(),
+            path_prepend: Vec::new(),
         })
     }
 }
@@ -378,6 +405,19 @@ async fn run(cli: Cli) -> anyhow::Result<ExitCode> {
             bridge::run_client(&socket).await?;
             Ok(ExitCode::SUCCESS)
         }
+        Command::Vault {
+            socket,
+            action:
+                VaultAction::Exec {
+                    env,
+                    stdin,
+                    command,
+                },
+        } => {
+            let plan = vault_helper::Plan::parse(&env, stdin.as_deref(), &command)?;
+            let code = vault_helper::exec(&socket, &plan)?;
+            Ok(ExitCode::from(u8::try_from(code).unwrap_or(1)))
+        }
         Command::Run {
             common,
             prompt,
@@ -413,6 +453,17 @@ async fn serve(mut cfg: ShimConfig, args: BridgeArgs) -> anyhow::Result<ExitCode
         tracing::info!(socket = %b.socket_path().display(), "platform tool bridge listening");
         let exe = std::env::current_exe().context("locating agent-shim")?;
         cfg.mcp_servers.push(b.mcp_server_entry(&exe));
+        // 密码保险箱助手（9.11）：agent 的命令里用 thinktin-vault 按名字引用保险箱里的值。
+        let bin = vault_helper::install(
+            &cfg.home.join(".thinktin").join("bin"),
+            &exe,
+            b.socket_path(),
+        )?;
+        cfg.path_prepend.push(bin);
+        cfg.extra_env.insert(
+            "THINKTIN_VAULT_SOCKET".into(),
+            b.socket_path().display().to_string(),
+        );
         Some(b)
     } else {
         None
@@ -474,6 +525,22 @@ async fn read_commands(
                     .is_some_and(|b| b.resolve(&call_id, bridge::ToolResult { content, is_error }));
                 if !answered {
                     tracing::warn!(%call_id, "no pending platform tool call with this id");
+                }
+            }
+            Ok(ShimCommand::VaultValues {
+                call_id,
+                values,
+                error,
+            }) => {
+                let reply = match error {
+                    Some(e) => Err(e),
+                    None => Ok(values.0),
+                };
+                let answered = bridge
+                    .as_ref()
+                    .is_some_and(|b| b.resolve_vault(&call_id, reply));
+                if !answered {
+                    tracing::warn!(%call_id, "no pending vault request with this id");
                 }
             }
             Ok(cmd) => {
