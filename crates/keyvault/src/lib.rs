@@ -530,7 +530,7 @@ impl Scrubber {
                 self.entries.push((Zeroizing::new(form), label.clone()));
             }
         }
-        self.entries.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+        self.entries.sort_by_key(|e| std::cmp::Reverse(e.0.len()));
     }
 
     /// 加一个条目的密码（账号不算秘密，不抹）。
@@ -553,7 +553,7 @@ impl Scrubber {
         if hits.is_empty() {
             return None;
         }
-        hits.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)));
+        hits.sort_by_key(|h| (h.0, std::cmp::Reverse(h.1)));
         let mut out = String::with_capacity(text.len());
         let mut at = 0;
         for (start, end, label) in hits {
