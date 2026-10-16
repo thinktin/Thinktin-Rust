@@ -45,7 +45,8 @@ ThinkTin 平台：托管多个开源 agent，用户领养后常驻云端、按�
   `THINKTIN_KMS_KEY`（产出物按用户 DEK 加密）；本地开发用
   `[sandbox] provider = "local"`，`manifest_override` 可以换成假 agent 的清单联调。
   `[observability] metrics_listen` 打开 Prometheus 指标端口（只给内网抓取）。
-  国内 Android 推送配 `[push.jpush] app_key`，Master Secret 走环境变量 `THINKTIN_JPUSH_MASTER_SECRET`。
+  国内 Android 推送配 `[push.jpush] app_key`，Master Secret 走环境变量 `THINKTIN_JPUSH_MASTER_SECRET`；
+  海外 Android 推送配 `[push.fcm] service_account_path`（Firebase 服务账号的 JSON 密钥文件）。
   产出物放在 `[storage] local_root`（默认 `.thinktin/blobs`，接口和后台任务要看到同一个目录）；
   生产用 S3 兼容的对象存储（AWS S3、阿里云 OSS、腾讯云 COS、MinIO）：`[storage] provider = "s3"`，
   `[storage.s3]` 填 `endpoint`、`region`、`bucket`（可选 `prefix`、`path_style`），访问密钥走环境变量

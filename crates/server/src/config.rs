@@ -401,6 +401,28 @@ pub struct Push {
     pub apns: Option<Apns>,
     /// 国内 Android：经极光推送覆盖各厂商通道（设备的推送通道是 unipush）。
     pub jpush: Option<Jpush>,
+    /// 海外 Android：Firebase Cloud Messaging（设备的推送通道是 fcm）。
+    pub fcm: Option<Fcm>,
+}
+
+/// FCM：服务账号的 JSON 密钥文件（Firebase 控制台“项目设置 → 服务账号”生成）放在 `service_account_path`，
+/// 和 APNs 的私钥文件一样只给服务进程读。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Fcm {
+    #[serde(default = "default_fcm_endpoint")]
+    pub endpoint: String,
+    pub service_account_path: std::path::PathBuf,
+    /// App 里审批通知的通知渠道 id。
+    #[serde(default = "default_approval_channel")]
+    pub approval_channel: String,
+    /// App 里其他通知的通知渠道 id。
+    #[serde(default = "default_results_channel")]
+    pub default_channel: String,
+}
+
+fn default_fcm_endpoint() -> String {
+    notify::fcm::ENDPOINT.into()
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -9,6 +9,7 @@ use auth::sandbox_token::SandboxTokenIssuer;
 use chrono::{Datelike, NaiveDate, Utc};
 use control::{BuiltinTemplates, Lifecycle, LifecycleConfig};
 use notify::apns::{ApnsClient, ApnsConfig};
+use notify::fcm::{FcmClient, FcmConfig, ServiceAccount};
 use notify::filter::KeywordFilter;
 use notify::jpush::{JpushClient, JpushConfig};
 use orchestrator::artifacts::ArtifactStore;
@@ -151,6 +152,26 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
         })
         .context("JPush client")?;
         dispatcher = dispatcher.with_channel(PushChannelKind::Unipush, Arc::new(client));
+    }
+    if let Some(fcm) = &cfg.push.fcm {
+        let text = Zeroizing::new(
+            std::fs::read_to_string(&fcm.service_account_path).with_context(|| {
+                format!(
+                    "reading the FCM service account {}",
+                    fcm.service_account_path.display()
+                )
+            })?,
+        );
+        let account: ServiceAccount =
+            serde_json::from_str(&text).context("FCM service account JSON")?;
+        let client = FcmClient::new(FcmConfig {
+            endpoint: fcm.endpoint.clone(),
+            account,
+            approval_channel: fcm.approval_channel.clone(),
+            default_channel: fcm.default_channel.clone(),
+        })
+        .context("FCM client")?;
+        dispatcher = dispatcher.with_channel(PushChannelKind::Fcm, Arc::new(client));
     }
 
     bg.spawn("scheduler", move |stop| async move {

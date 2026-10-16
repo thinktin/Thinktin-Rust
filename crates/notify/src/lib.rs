@@ -11,6 +11,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 pub mod apns;
+pub mod fcm;
 pub mod filter;
 pub mod jpush;
 
