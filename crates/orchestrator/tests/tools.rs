@@ -302,7 +302,7 @@ async fn vault_tools_list_names_and_ask_the_user() {
     let mut w = t.db.worker().await.unwrap();
     let (user, _) = w.upsert_user_by_phone("+8613800000001").await.unwrap();
     w.commit().await.unwrap();
-    let (ctx, inst) = context(&t, user.id).await;
+    let (ctx, _) = context(&t, user.id).await;
     let (other_ctx, other) = context(&t, user.id).await;
     let mut tx = t.db.tenant(user.id).await.unwrap();
     for (name, instances) in [("github", vec![]), ("bank", vec![other])] {
