@@ -271,40 +271,10 @@ impl Executor {
 
     /// 用户保险箱里的值，运行日志落盘前抹掉（9.11）。出错只记日志：抹值是额外的一层保护。
     async fn scrubber(&self, user: UserId) -> Scrubber {
-        let mut s = Scrubber::new();
-        let Some(kms) = &self.vault else {
-            return s;
-        };
-        let items = async {
-            let mut w = self.db.worker().await?;
-            let items = w.user_vault_items(user).await?;
-            w.rollback().await?;
-            Ok::<_, store::Error>(items)
+        match &self.vault {
+            Some(kms) => crate::vault::user_scrubber(&self.db, kms.clone(), user).await,
+            None => Scrubber::new(),
         }
-        .await;
-        let items = match items {
-            Ok(items) if items.is_empty() => return s,
-            Ok(items) => items,
-            Err(e) => {
-                warn!(%user, error = %e, "loading vault items failed");
-                return s;
-            }
-        };
-        let vault = match crate::artifacts::user_vault(&self.db, kms.clone(), user, false).await {
-            Ok(v) => v,
-            Err(e) => {
-                warn!(%user, error = %e, "opening the user's vault failed");
-                return s;
-            }
-        };
-        let uid = user.to_string();
-        for item in items {
-            match vault.open_vault(&uid, &item.item.id.to_string(), &item.sealed) {
-                Ok(secret) => s.add_secret(&item.item.name, &secret),
-                Err(e) => warn!(item = %item.item.id, error = %e, "cannot open a vault item"),
-            }
-        }
-        s
     }
 
     /// 领取并执行运行，直到 `stop` 完成；之后等进行中的运行收尾。

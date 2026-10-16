@@ -73,6 +73,14 @@ fn check_instances(ids: &[InstanceId]) -> ApiResult<Vec<InstanceId>> {
     Ok(out)
 }
 
+/// 用户发的消息里有保险箱里的密码（客户端没拦下来，11.6）：存库前换成引用 `[vault:名字]`。
+pub(crate) async fn scrub_user_text(s: &AppState, user: UserId, text: &str) -> String {
+    orchestrator::vault::user_scrubber(&s.db, s.kms.clone(), user)
+        .await
+        .scrub(text)
+        .unwrap_or_else(|| text.to_owned())
+}
+
 /// 用用户的 DEK 加密账号和密码。用户还没有 DEK 就生成一个。
 async fn seal(
     s: &AppState,

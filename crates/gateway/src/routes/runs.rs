@@ -25,6 +25,8 @@ pub async fn create(
 ) -> ApiResult<(StatusCode, Json<Run>)> {
     let id: InstanceId = parse_id(&id, "instance")?;
     check_len("prompt", req.prompt.trim(), 1, 32_000)?;
+    // 消息里有保险箱里的密码（客户端没拦下来，11.6）：存库前换成引用，agent 和模型都看不到。
+    let prompt = super::vault::scrub_user_text(&s, who.user, req.prompt.trim()).await;
     let mut t = s.db.tenant(who.user).await?;
     let instance = t.instance(id).await?;
     ensure_instance_grant(&s, &mut t, &who, id).await?;
@@ -32,7 +34,7 @@ pub async fn create(
         .create_run(&NewRun::new(
             id,
             RunSource::User,
-            req.prompt.trim(),
+            prompt,
             instance.agent_version,
         ))
         .await?;

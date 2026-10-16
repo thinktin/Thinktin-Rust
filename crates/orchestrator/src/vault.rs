@@ -4,16 +4,18 @@
 //! 注入命令，见 agent-shim 的 `vault_helper`）。没有合适的条目时用 `vault_request` 请用户在 App 里填，
 //! 用户填的值只进保险箱；填好后平台在实例上接着跑一轮。
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use keyvault::Scrubber;
+use keyvault::{Kms, Scrubber};
 use notify::PushKind;
-use proto::domain::{VAULT_FIELDS, valid_vault_name};
+use proto::domain::{UserId, VAULT_FIELDS, valid_vault_name};
 use proto::shim::PlatformTool;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use store::{Db, NewVaultRequest};
+use tracing::warn;
 
 use crate::outbox::{Notice, notify_tenant};
 use crate::shim::{PlatformTools, ToolContext, ToolOutput};
@@ -245,6 +247,42 @@ impl PlatformTools for VaultTools {
             Err(m) => ToolOutput::error(m),
         }
     }
+}
+
+/// 用户保险箱里全部密码的抹值器：运行日志落盘前、用户发的消息存库前用。出错只记日志、少抹一些：
+/// 抹值是额外的一层保护，模型网关转发前还会再抹一遍（读不到保险箱就不转发）。
+pub async fn user_scrubber(db: &Db, kms: Arc<dyn Kms>, user: UserId) -> Scrubber {
+    let mut s = Scrubber::new();
+    let items = async {
+        let mut w = db.worker().await?;
+        let items = w.user_vault_items(user).await?;
+        w.rollback().await?;
+        Ok::<_, store::Error>(items)
+    }
+    .await;
+    let items = match items {
+        Ok(items) if items.is_empty() => return s,
+        Ok(items) => items,
+        Err(e) => {
+            warn!(%user, error = %e, "loading vault items failed");
+            return s;
+        }
+    };
+    let vault = match crate::artifacts::user_vault(db, kms, user, false).await {
+        Ok(v) => v,
+        Err(e) => {
+            warn!(%user, error = %e, "opening the user's vault failed");
+            return s;
+        }
+    };
+    let uid = user.to_string();
+    for item in items {
+        match vault.open_vault(&uid, &item.item.id.to_string(), &item.sealed) {
+            Ok(secret) => s.add_secret(&item.item.name, &secret),
+            Err(e) => warn!(item = %item.item.id, error = %e, "cannot open a vault item"),
+        }
+    }
+    s
 }
 
 /// 抹掉 JSON 里所有字符串中的保险箱值（对象的键也算）。返回有没有改动。

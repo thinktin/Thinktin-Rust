@@ -2291,6 +2291,38 @@ async fn vault_over_http() {
         .await;
     assert!(pending["requests"].as_array().unwrap().is_empty());
 
+    // 消息里漏发了保险箱里的密码（客户端没拦下来，11.6）：存库前换成引用，agent 和模型都看不到。
+    let (st, run) = a
+        .call(
+            Method::POST,
+            &format!("/v1/instances/{inst}/runs"),
+            Some(&u.access),
+            Some(json!({ "prompt": "用 new-secret-123 推代码，邮箱密码 mail-pass-1" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{run}");
+    assert_eq!(
+        run["prompt"],
+        "用 [vault:github] 推代码，邮箱密码 [vault:mail]"
+    );
+    let stored: String = sqlx::query_scalar("SELECT prompt FROM runs WHERE id = $1")
+        .bind(run["id"].as_str().unwrap().parse::<uuid::Uuid>().unwrap())
+        .fetch_one(a.t.db.pool())
+        .await
+        .unwrap();
+    assert!(!stored.contains("new-secret-123"), "{stored}");
+    // 别人发同样的文字不受影响（只抹自己保险箱里的）。
+    let bob_inst = a.adopt(&bob).await;
+    let (_, theirs) = a
+        .call(
+            Method::POST,
+            &format!("/v1/instances/{bob_inst}/runs"),
+            Some(&bob.access),
+            Some(json!({ "prompt": "用 new-secret-123 推代码" })),
+        )
+        .await;
+    assert_eq!(theirs["prompt"], "用 new-secret-123 推代码");
+
     let (st, _) = a.call(Method::DELETE, &path, Some(&u.access), None).await;
     assert_eq!(st, StatusCode::NO_CONTENT);
     let (st, _) = a.call(Method::GET, &path, Some(&u.access), None).await;
