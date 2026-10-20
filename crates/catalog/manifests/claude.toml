@@ -38,6 +38,10 @@ config = "claude"
 heartbeat = "none"
 
 # 模板构建（6.8，deploy/templates）装的包，版本写死；升级时和 agent.version、runtime.template 一起改。
-# Claude Code 二进制随 Agent SDK 一起装（cli 接入方式用的 `claude` 命令也在里面）。
+# Claude Code 二进制随 Agent SDK 一起装（按平台分包，claude-agent-sdk-linux-x64 等），但没有哪个包把它放上 PATH，
+# cli 接入方式要直接调 `claude`，所以链接到 /usr/local/bin。
 [install]
 npm = ["@agentclientprotocol/claude-agent-acp@0.90.0"]
+
+[install.bin]
+claude = "@agentclientprotocol/claude-agent-acp/node_modules/@anthropic-ai/claude-agent-sdk-linux-*/claude"

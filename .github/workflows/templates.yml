@@ -70,12 +70,20 @@ jobs:
             image=$(deploy/templates/build.sh "$agent")
             echo "$image" >> "$RUNNER_TEMP/images"
             size=$(docker image inspect --format '{{.Size}}' "$image" | awk '{printf "%.0f MB", $1/1e6}')
-            if out=$(deploy/templates/smoke.sh "$image" "$agent" 2>&1); then
-              result=passed
-            else
-              result=FAILED
-              failed+=("$agent")
-            fi
+            # 清单里的每个接入方式都跑一遍（Claude 有 acp 和 cli 两种）。
+            harnesses=$(python3 -c 'import sys, tomllib; print(" ".join(h["id"] for h in tomllib.load(open(sys.argv[1], "rb"))["harness"]))' \
+              "crates/catalog/manifests/$agent.toml")
+            out=""
+            result=passed
+            for harness in $harnesses; do
+              if o=$(deploy/templates/smoke.sh "$image" "$agent" --harness "$harness" 2>&1); then
+                :
+              else
+                result=FAILED
+                failed+=("$agent/$harness")
+              fi
+              out+="harness: $harness"$'\n'"$o"$'\n'
+            done
             echo "$out"
             # 镜像里的第三方许可证清单（构建时生成）按策略检查；问题写成注解，汇总写进摘要页。
             docker run --rm "$image" cat /usr/share/thinktin/licenses/inventory.json > "$RUNNER_TEMP/licenses-$agent.json"

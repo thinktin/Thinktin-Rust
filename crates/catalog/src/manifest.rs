@@ -69,6 +69,11 @@ pub struct InstallSection {
     /// 装进 agent 自己的虚拟环境（`/opt/agents/<id>`，`bin` 在 PATH 上）的 Python 包。
     #[serde(default)]
     pub pip: Vec<String>,
+    /// 包没放上 PATH、接入方式又要直接调用的程序：命令名 → 全局 npm 目录（`/usr/local/lib/node_modules`）下的路径，
+    /// 可以用通配符（`*` 匹配平台后缀）。模板构建时链接到 `/usr/local/bin/<命令名>`，必须正好匹配一个文件。
+    /// 比如 Claude Code 二进制随 Agent SDK 装在 claude-agent-acp 的依赖里，cli 接入方式要直接调 `claude`。
+    #[serde(default)]
+    pub bin: BTreeMap<String, String>,
 }
 
 impl InstallSection {
@@ -456,6 +461,31 @@ impl Manifest {
                 a.version
             ),
         );
+        let npm_names: Vec<&str> = i
+            .npm
+            .iter()
+            .filter_map(|s| npm_pin(s).map(|(n, _)| n))
+            .collect();
+        for (name, path) in &i.bin {
+            check(
+                !name.is_empty()
+                    && !name.starts_with('.')
+                    && name
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c)),
+                format!("install.bin 的命令名 `{name}` 只能有字母、数字和 . _ -"),
+            );
+            check(
+                !path.starts_with('/')
+                    && !path.split('/').any(|p| p == ".." || p.is_empty())
+                    && npm_names
+                        .iter()
+                        .any(|n| path.strip_prefix(n).is_some_and(|r| r.starts_with('/'))),
+                format!(
+                    "install.bin.{name} `{path}` 要是 install.npm 里某个包下的相对路径（不能有 ..）"
+                ),
+            );
+        }
 
         let p = &self.policy;
         check(
@@ -628,6 +658,32 @@ mod tests {
         assert!(problems[0].contains("agent.version"), "{problems:?}");
         let text = MINIMAL.replace("agents/demo:1.0.0", "agents/demo:0.9.0");
         assert!(Manifest::from_toml(&text).is_err());
+    }
+
+    #[test]
+    fn install_bin_points_into_an_installed_npm_package() {
+        let base =
+            format!("{MINIMAL}\n[install]\nnpm = [\"@acme/demo-acp@0.3.1\", \"demo@1.0.0\"]\n");
+        let ok = format!(
+            "{base}[install.bin]\ndemo = \"@acme/demo-acp/node_modules/@acme/demo-linux-*/demo\"\n"
+        );
+        let m = Manifest::from_toml(&ok).unwrap();
+        assert_eq!(
+            m.install.bin["demo"],
+            "@acme/demo-acp/node_modules/@acme/demo-linux-*/demo"
+        );
+        for bad in [
+            "demo = \"/usr/bin/demo\"",         // 绝对路径
+            "demo = \"demo/../../etc/passwd\"", // 跳出包目录
+            "demo = \"other-pkg/bin/demo\"",    // 不是装的包
+            "demo = \"demo-acp/bin/demo\"",     // 只是前缀相同
+            "\"../demo\" = \"demo/bin/demo\"",  // 命令名带路径
+            "\"de mo\" = \"demo/bin/demo\"",    // 命令名带空格
+            "demo = \"demo//demo\"",            // 空的路径段
+        ] {
+            let text = format!("{base}[install.bin]\n{bad}\n");
+            assert!(Manifest::from_toml(&text).is_err(), "{bad}");
+        }
     }
 
     #[test]

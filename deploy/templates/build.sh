@@ -23,6 +23,7 @@ for key, value in [
     ("version", m["agent"]["version"]),
     ("npm", " ".join(inst.get("npm", []))),
     ("pip", " ".join(inst.get("pip", []))),
+    ("bins", " ".join("%s=%s" % kv for kv in sorted(inst.get("bin", {}).items()))),
 ]:
     print(f"{key}={shlex.quote(value)}")
 PY
@@ -42,6 +43,7 @@ args=(
   --build-arg "AGENT_VERSION=$version"
   --build-arg "NPM_PACKAGES=$npm"
   --build-arg "PIP_PACKAGES=$pip"
+  --build-arg "NPM_BINS=$bins"
   -t "$image"
 )
 if [ -n "${SHIM_DIR:-}" ]; then

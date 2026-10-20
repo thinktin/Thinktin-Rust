@@ -52,6 +52,17 @@ RUN set -f; if [ -n "$PIP_PACKAGES" ]; then \
         python3 -m venv "/opt/agents/$AGENT_ID" \
         && "/opt/agents/$AGENT_ID/bin/pip" install --no-cache-dir $PIP_PACKAGES; \
     fi
+# 清单 [install.bin]：包没放上 PATH、接入方式要直接调用的程序，链接到 /usr/local/bin（比如 Claude 的 `claude`）。
+# 每项是 <命令名>=<全局 npm 目录下的路径>，路径里的通配符必须正好匹配一个可执行文件。
+ARG NPM_BINS=""
+RUN set -f; for pair in $NPM_BINS; do \
+        name="${pair%%=*}"; pattern="${pair#*=}"; \
+        set +f; set -- /usr/local/lib/node_modules/$pattern; set -f; \
+        if [ "$#" -ne 1 ] || [ ! -x "$1" ]; then \
+            echo "install.bin.$name: $pattern 要正好匹配一个可执行文件，匹配到：$*" >&2; exit 1; \
+        fi; \
+        ln -s "$1" "/usr/local/bin/$name"; \
+    done
 # 第三方许可证（16.5，docs/licenses.md）：镜像里所有 npm、Python、Debian 包和 agent-shim 的 crate，
 # 原文复制到 /usr/share/thinktin/licenses，清单 inventory.json 由 CI 按许可证策略检查。
 # 上游有、包里没带的原文（比如 Codex 的 NOTICE）放在 deploy/templates/notices/<agent id>/。
