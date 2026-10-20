@@ -1,0 +1,14 @@
+# Pi 模板要额外带的原文（16.5，docs/licenses.md 第 3 节）。
+#
+# Pi 自己的 npm 包（@earendil-works/pi-coding-agent 和它带的 pi-agent-core、pi-ai、pi-tui 等）在 package.json 里写了
+# MIT，但包里都没有 LICENSE。从上游仓库（单仓库，根目录的 LICENSE 管所有包）取，钉在标签 v1.2.0 上。
+# 2026-10-20 按 @earendil-works/pi-coding-agent 1.2.0 核对；升级后 applies_to 对不上，CI 会报错，要重新取。
+
+applies_to = ["npm:@earendil-works/pi-coding-agent@1.2.0"]
+
+[[file]]
+component = "earendil-works/pi"
+version = "1.2.0"
+license = "MIT"
+path = "pi-LICENSE"
+url = "https://raw.githubusercontent.com/earendil-works/pi/v1.2.0/LICENSE"
