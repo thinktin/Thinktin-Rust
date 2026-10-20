@@ -25,6 +25,8 @@ RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-Wl,-z,max-page-size=16384" \
 
 tools/client-core/gen-bindings.sh "$out/bindings"
 cp -R "$out/bindings/kotlin/." "$mod/src/main/kotlin/"
+# 客户端核心依赖的 crate 的许可证原文和清单（WBS 16.5，docs/licenses.md），App 的“开源许可”页面从 assets 里读。
+python3 tools/licenses/licenses.py cargo -p client-core --subject client-core --out "$mod/src/main/assets/thinktin-licenses"
 
 cat > "$mod/src/main/AndroidManifest.xml" <<'XML'
 <?xml version="1.0" encoding="utf-8"?>

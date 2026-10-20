@@ -90,3 +90,12 @@ text_sha256 = "8ce94b9478bb9868f9641f818e06cd722fbe55d4c22e2d2ed11971b20146173a"
 as = "LicenseRef-Anthropic-Commercial"
 reason = "Claude Code 二进制本体，同上；里面静态链接的第三方组件的原文见 deploy/templates/notices/claude"
 agents = ["claude"]
+
+# Codex 带的 zsh：zsh 自己的宽松许可（保留版权声明和免责的两段即可使用、修改、分发，没有 SPDX 标识）。
+# LICENCE 里提到个别 shell 函数是 GPL，Codex 只带了 bin/zsh，没带函数文件。
+[[exception]]
+ecosystem = "upstream"
+name = "zsh"
+license = "LicenseRef-Zsh"
+reason = "zsh 自己的宽松许可（类似 MIT），原文在 deploy/templates/notices/codex/zsh-LICENCE"
+agents = ["codex"]

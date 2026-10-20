@@ -789,10 +789,15 @@ def scan_deb(inv, admindir=None):
 # 额外的原文（上游有、装好的包里没带的，比如 Codex 的 NOTICE）
 
 def scan_extra(inv, directory):
-    """directory 下有 sources.toml，每个 [[file]] 写明 component、version、license、path（相对 directory）、url。
+    """directory 下有 sources.toml（格式见 docs/licenses.md 第 3 节）：
 
-    顶层的 applies_to 写这些原文是按哪个包的哪个版本核对的（"<生态>:<包名>@<版本>"），检查时镜像里没有这个
-    版本就报错：上游升级后要重新核对原文。
+    - [[file]]：仓库里放的上游原文。component、version、license、path（相对 directory）、url。
+    - [[installed]]：镜像里已经有、但不在包的根目录（扫描找不到）的原文。component、version、license、
+      glob（镜像里的绝对路径，可以用 **）。一个也匹配不到时构建失败：上游改了目录结构。
+    - [[cargo]]：上游的 Rust 程序（比如 Codex 的二进制）依赖的 crate。构建前由 `licenses.py upstream-cargo`
+      从上游源码生成到 directory/crates/（不进仓库，deploy/templates/build.sh 会自动跑），这里并进清单。
+    - applies_to：这些原文是按哪个包的哪个版本核对的（"<生态>:<包名>@<版本>"），检查时镜像里没有这个
+      版本就报错：上游升级后要重新核对。
     """
     directory = Path(directory)
     meta = directory / "sources.toml"
@@ -806,12 +811,88 @@ def scan_extra(inv, directory):
         groups.setdefault(key, {"license": f["license"], "files": [], "urls": []})
         groups[key]["files"].append(directory / f["path"])
         groups[key]["urls"].append(f.get("url"))
+    for f in data.get("installed", []):
+        import glob as globmod
+
+        hits = sorted(Path(p) for p in globmod.glob(f["glob"], recursive=True) if Path(p).is_file())
+        if not hits:
+            raise SystemExit("%s：[[installed]] %s 在镜像里一个文件也没匹配到（%s）：上游改了目录结构？"
+                             % (meta, f["component"], f["glob"]))
+        key = (f["component"], f["version"])
+        groups.setdefault(key, {"license": f["license"], "files": [], "urls": []})
+        groups[key]["files"] += hits
     for (name, version), g in groups.items():
         missing = [str(p) for p in g["files"] if not p.is_file()]
         if missing:
             raise SystemExit("extra 原文缺文件：%s" % ", ".join(missing))
         inv.add("upstream", name, version, g["license"], canonical_spdx(g["license"]) or g["license"], "extra", g["files"], None,
                 extra={"urls": [u for u in g["urls"] if u], "applies_to": applies_to, "notices_dir": directory.name})
+    if data.get("cargo"):
+        crates = directory / "crates"
+        want = upstream_cargo_subject(data["cargo"])
+        got = None
+        if (crates / "inventory.json").is_file():
+            got = json.loads((crates / "inventory.json").read_text(encoding="utf-8")).get("subject")
+        if got != want:
+            raise SystemExit("%s 声明了上游的 Rust 程序，但 %s 没生成或不是这个版本（要 %s，有 %s）。"
+                             "先运行 python3 tools/licenses/licenses.py upstream-cargo %s" % (meta, crates, want, got, directory))
+        inv.merge(crates)
+        for c in inv.components.values():
+            if c.get("merged_from") == want:
+                c.setdefault("applies_to", applies_to)
+                c.setdefault("notices_dir", directory.name)
+
+
+def upstream_cargo_subject(entries):
+    return "; ".join("%s@%s %s" % (e["repo"], e["tag"], ",".join(e["packages"])) for e in entries)
+
+
+def cmd_upstream_cargo(args):
+    """按 sources.toml 的 [[cargo]]，从上游源码（浅克隆）生成 crate 清单到 <目录>/crates/。已经是这个版本就跳过。"""
+    directory = Path(args.notices_dir)
+    meta = directory / "sources.toml"
+    if not meta.is_file():
+        return 0
+    entries = tomllib.loads(meta.read_text(encoding="utf-8")).get("cargo", [])
+    if not entries:
+        return 0
+    subject = upstream_cargo_subject(entries)
+    out = directory / "crates"
+    if (out / "inventory.json").is_file() and json.loads((out / "inventory.json").read_text(encoding="utf-8")).get("subject") == subject:
+        print("%s 已是 %s" % (out, subject), file=sys.stderr)
+        return 0
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        parts = []
+        for i, e in enumerate(entries):
+            repo = tmp / ("repo%d" % i)
+            subdir = str(Path(e["manifest"]).parent)
+            subprocess.run(["git", "clone", "-q", "--depth", "1", "--branch", e["tag"], "--filter=blob:none", "--sparse", e["repo"], str(repo)],
+                           check=True)
+            subprocess.run(["git", "-C", str(repo), "sparse-checkout", "set", subdir], check=True)
+            part = tmp / ("part%d" % i)
+            inv = Inventory(part, "%s@%s" % (e["repo"], e["tag"]))
+            # 上游的 rust-toolchain.toml 锁的版本不用装：读清单用现有的 stable 就行。上游发布时只改工作区自己的
+            # 版本号、不更新 Cargo.lock，所以不加 --locked（第三方依赖的解析不变）。
+            env_backup = os.environ.get("RUSTUP_TOOLCHAIN")
+            os.environ["RUSTUP_TOOLCHAIN"] = os.environ.get("THINKTIN_UPSTREAM_TOOLCHAIN", "stable")
+            try:
+                scan_cargo(inv, e["packages"], target=e.get("target"), manifest_path=repo / e["manifest"], locked=False)
+            finally:
+                if env_backup is None:
+                    os.environ.pop("RUSTUP_TOOLCHAIN", None)
+                else:
+                    os.environ["RUSTUP_TOOLCHAIN"] = env_backup
+            inv.write()
+            parts.append(part)
+        if out.exists():
+            shutil.rmtree(out)
+        inv = Inventory(out, subject)
+        for part in parts:
+            inv.merge(part)
+        doc = inv.write()
+    print("%s：%d 个 crate → %s" % (subject, len(doc["components"]), out), file=sys.stderr)
+    return 0
 
 
 def scan_runtime_node(inv):
@@ -852,17 +933,20 @@ def fetch(url, attempts=4):
 # ---------------------------------------------------------------------------
 # Cargo
 
-def scan_cargo(inv, packages, target=None, manifest_path=None, metadata_json=None):
+def scan_cargo(inv, packages, target=None, manifest_path=None, metadata_json=None, locked=True):
     """packages 是工作区里程序的包名；列出它们在 target 平台上的运行时依赖（不含 dev 依赖和只在构建时用的依赖）。"""
     if metadata_json:
         meta = json.loads(Path(metadata_json).read_text(encoding="utf-8"))
     else:
-        cmd = ["cargo", "metadata", "--format-version", "1", "--locked"]
+        cmd = ["cargo", "metadata", "--format-version", "1"] + (["--locked"] if locked else [])
         if manifest_path:
             cmd += ["--manifest-path", str(manifest_path)]
         if target:
             cmd += ["--filter-platform", target]
-        meta = json.loads(subprocess.run(cmd, check=True, capture_output=True, text=True).stdout)
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode != 0:
+            raise SystemExit("cargo metadata 失败：\n%s" % r.stderr[-4000:])
+        meta = json.loads(r.stdout)
     by_id = {p["id"]: p for p in meta["packages"]}
     nodes = {n["id"]: n for n in meta["resolve"]["nodes"]}
     workspace = set(meta["workspace_members"])
@@ -1118,7 +1202,8 @@ def cmd_scan(args):
 
 def cmd_cargo(args):
     inv = Inventory(args.out, args.subject or "+".join(args.package))
-    scan_cargo(inv, args.package, target=args.target, manifest_path=args.manifest_path, metadata_json=args.metadata)
+    scan_cargo(inv, args.package, target=args.target, manifest_path=args.manifest_path, metadata_json=args.metadata,
+               locked=not args.no_locked)
     doc = inv.write()
     print("%s：%d 个 crate → %s" % (inv.subject, len(doc["components"]), args.out), file=sys.stderr)
 
@@ -1164,8 +1249,14 @@ def main(argv=None):
     c.add_argument("-p", "--package", action="append", required=True, help="工作区里的程序包名，可给多个")
     c.add_argument("--target", help="只算这个平台上的依赖，比如 x86_64-unknown-linux-gnu；不给就算全部平台")
     c.add_argument("--manifest-path")
+    c.add_argument("--no-locked", action="store_true",
+                   help="不加 --locked：给上游工程（比如 Codex）生成清单、它的 Cargo.lock 只差工作区自己的版本号时用")
     c.add_argument("--metadata", help=argparse.SUPPRESS)  # 测试用：直接给 cargo metadata 的输出
     c.set_defaults(func=cmd_cargo)
+
+    u = sub.add_parser("upstream-cargo", help="按 sources.toml 的 [[cargo]] 从上游源码生成 crate 清单")
+    u.add_argument("notices_dir", help="deploy/templates/notices/<agent id>")
+    u.set_defaults(func=cmd_upstream_cargo)
 
     k = sub.add_parser("check", help="按策略检查清单")
     k.add_argument("inventory")

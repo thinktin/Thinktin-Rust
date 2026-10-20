@@ -32,3 +32,6 @@ __pycache__/
 
 # 部署包生成时的临时目录（deploy/k8s/bundle.sh）
 deploy/k8s/.bundle.*
+
+# 构建模板前从上游源码生成的 crate 许可证清单（deploy/templates/build.sh）
+deploy/templates/notices/*/crates/

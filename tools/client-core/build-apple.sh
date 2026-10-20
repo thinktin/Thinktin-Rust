@@ -35,6 +35,9 @@ xcodebuild -create-xcframework \
   -library "$out/macos/libclient_core.a" -headers "$out/headers" \
   -output "$pkg/ThinktinCoreFFI.xcframework"
 cp "$out/bindings/swift/ThinktinCore.swift" "$pkg/Sources/ThinktinCore/"
+# 客户端核心依赖的 crate 的许可证原文和清单（WBS 16.5，docs/licenses.md），App 的“开源许可”页面
+# 从 Bundle.module 的 Licenses 目录读。
+python3 tools/licenses/licenses.py cargo -p client-core --subject client-core --out "$pkg/Sources/ThinktinCore/Licenses"
 cat > "$pkg/Package.swift" <<'SWIFT'
 // swift-tools-version:5.9
 import PackageDescription
@@ -48,6 +51,7 @@ let package = Package(
         .target(
             name: "ThinktinCore",
             dependencies: ["ThinktinCoreFFI"],
+            resources: [.copy("Licenses")],
             linkerSettings: [.linkedFramework("SystemConfiguration"), .linkedFramework("Security")]
         ),
     ]

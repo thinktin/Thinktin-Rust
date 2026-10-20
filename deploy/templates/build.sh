@@ -29,6 +29,12 @@ PY
 )"
 [ -n "$npm$pip" ] || { echo "$manifest has no [install]" >&2; exit 2; }
 
+# 上游 Rust 程序的 crate 许可证清单（16.5）：notices/<id>/sources.toml 有 [[cargo]] 时从上游源码生成，
+# 已经是这个版本就跳过。镜像构建时并进清单。
+if [ -f "$root/deploy/templates/notices/$agent/sources.toml" ]; then
+  python3 "$root/tools/licenses/licenses.py" upstream-cargo "$root/deploy/templates/notices/$agent" >&2
+fi
+
 image="${IMAGE_PREFIX:-thinktin}/$template"
 args=(
   -f "$root/deploy/templates/Dockerfile"
