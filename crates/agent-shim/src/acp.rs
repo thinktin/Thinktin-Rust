@@ -239,7 +239,10 @@ impl Driver<'_> {
 
         loop {
             // biased：agent 的消息先于“这一轮已结束”处理。agent 总是先发完 session/update
-            // 再回复 session/prompt，读线程也按这个顺序投递，所以事件不会乱序。
+            // 再回复 session/prompt，读线程也按这个顺序投递。光靠 biased 不够：一次轮询里先看
+            // incoming（还空着）、再看 done_rx 的间隙，读线程可能刚好投递完正文和回复（线程在这
+            // 两步之间被抢占时间隙会很长），于是“这一轮已结束”抢在正文前面。所以处理回复前先把
+            // incoming 里已经到的消息处理完（读线程先投递消息、后交付回复，回复到了，它前面的消息一定在队列里）。
             tokio::select! {
                 biased;
                 cmd = cmds.recv() => {
@@ -312,6 +315,17 @@ impl Driver<'_> {
                     self.on_incoming(msg, &mut state);
                 }
                 Some((run_id, result)) = done_rx.recv() => {
+                    {
+                        let mut state = State {
+                            turn: &mut turn,
+                            pending: &mut pending,
+                            next_permission: &mut next_permission,
+                            expired_tx: &expired_tx,
+                        };
+                        while let Ok(msg) = self.incoming.try_recv() {
+                            self.on_incoming(msg, &mut state);
+                        }
+                    }
                     turn = None;
                     match result {
                         Ok(resp) => {

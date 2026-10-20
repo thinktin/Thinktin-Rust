@@ -176,6 +176,26 @@ impl Shim {
     }
 }
 
+/// agent 先发完 session/update 再回复 session/prompt；“这一轮结束”不能抢在回复正文前面
+/// （抢了的话平台在这一轮结束时还没收到正文，运行的摘要是空的）。连跑几百轮放大竞态。
+#[test]
+fn turn_end_never_overtakes_the_reply() {
+    let setup = Setup::new();
+    let mut shim = setup.serve(&[]);
+    shim.wait_type("ready");
+    for i in 0..300 {
+        let run = format!("r{i}");
+        shim.prompt(&run, &format!("hello {i}"));
+        let (text, stop) = shim.finish_turn(&run);
+        assert_eq!(
+            (text.as_str(), stop.as_str()),
+            (format!("echo: hello {i}").as_str(), "end_turn"),
+            "第 {i} 轮"
+        );
+    }
+    assert!(shim.shutdown().success());
+}
+
 #[test]
 fn prompt_roundtrip_and_event_order() {
     let setup = Setup::new();
