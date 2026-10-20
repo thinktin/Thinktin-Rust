@@ -88,6 +88,10 @@
 
 ## 进行中
 
+- **旧主会话交接（2026-10-21 02:15，北京时间）**：用户让 10-14 起的那个主会话停手，16.5 由 02:10 重新认领的会话做。交接三件事：
+  1. **16.5 的半成品在分支 `wip/16.5-license-inventory`**（提交 `1477d73`，基于 `17727e5`，没跑过 CI，可以拿来用也可以只参考）：`deploy/templates/licenses.py` 在模板镜像里以 root 跑，列出全局 npm 包连同全部依赖、agent 虚拟环境里的 Python 包（去掉 npm、corepack、pip 这些自带的），拷许可证和 NOTICE，按策略补取上游没放进包里的 NOTICE，写 `/usr/share/doc/thinktin-agent/licenses.json` 和 `THIRD-PARTY-LICENSES.md`；`license_check.py` + `license-policy.toml` 分 allow / review / deny（拦 AGPL、SSPL、BUSL 这类，GPL 一类提醒），带常见非 SPDX 写法的别名、Anthropic 两个包的例外和 `--self-test`；`deploy/templates/Dockerfile.dockerignore` 让模板的构建上下文只带 Rust 工作区和这两个脚本；templates.yml 每个模板跑检查；docs/templates.md 第 6 节。
+  2. **没验证的地方**：Codex NOTICE 的地址 `https://raw.githubusercontent.com/openai/codex/rust-v{version}/NOTICE` 的标签格式没核实，取不到时现在会让模板构建失败（本来打算改成提醒）；两个例外的包名 `@anthropic-ai/claude-agent-sdk`、`@anthropic-ai/claude-code` 是按印象写的，要拿生成的清单核对；`license_check.py --self-test` 本地没来得及跑。
+  3. **顺手记下的**：GitHub 的 ubuntu-latest 从 10-19 起逐步换成 Ubuntu 26，CI 要是突然坏了先看这个（templates.yml 已固定 ubuntu-24.04：主机上编的 agent-shim 放进 Debian trixie 的镜像，主机的 glibc 不能更新）；actions/checkout@v4 有 Node 20 弃用提醒，可以升到 v5；PR #5 的说明还没补上 relay、desktop 两个 crate 和迁移 0014–0016。看门狗定时任务已按用户要求删除，旧主会话也没有别的定时任务了。
 - 后端 P2 的工作包已完成，`backend-core` → `main` 的 PR 是 #5，等用户审、合并。
 - **17.5 压测（运行部分）**：工具已就绪（见已完成）。等 2.4 部署预发环境后，按 [压测说明](loadtest.md) 跑出正式数字记在那里；沙箱延迟参数用 2.3 Cube 联调实测的值。
 - `claude/autosave-handoff` 已按用户要求合进 `backend-core`（2026-10-16）：CLAUDE.md 的交接规则（改成以本文件为 `backend-core` 的进度文件）和 `.claude/hooks/autosave.sh`，钩子在 `.claude/settings.json` 里注册为 PostToolUse。远端那个分支可以删了。
