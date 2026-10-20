@@ -26,6 +26,15 @@ allow = [
   "LGPL-2.1", "LGPL-2.1+", "LGPL-3.0", "LGPL-3.0+", "LicenseRef-LGPL-Unspecified",
 ]
 
+# `A WITH 例外`：下面这些例外只是额外放宽（允许链接、允许不带源码分发运行时之类），按 A 判定；
+# 别的例外要人看；在 deny 里的（比如 Commons-Clause 这种附加限制）直接禁止。
+allow_exceptions = [
+  "LLVM-exception", "Classpath-exception-2.0", "GCC-exception-2.0", "GCC-exception-3.1", "PCRE2-exception",
+  "OpenSSL-exception", "Autoconf-exception-*", "Bison-exception-*", "Libtool-exception", "Font-exception-2.0",
+  "Swift-exception", "Linux-syscall-note", "LZMA-exception", "Universal-FOSS-exception-1.0",
+  "WxWindows-exception-3.1", "Qt-LGPL-exception-1.1", "Qt-GPL-exception-1.0",
+]
+
 deny = [
   "AGPL-*", "LicenseRef-AGPL-*", "SSPL-*", "OSL-*", "EUPL-*", "RPL-*", "CPAL-*",
   "BUSL-*", "Elastic-*", "PolyForm-*", "Commons-Clause", "LicenseRef-Commons-Clause",
@@ -62,10 +71,10 @@ license_of = "pypi:hermes-agent"
 
 # ---------------------------------------------------------------------------
 # 登记的例外。字段：ecosystem、name、version（可省，默认任何版本）、license（扫描出来的许可证；
-# 认不出时是包里声明的原文，比如 "SEE LICENSE IN README.md"）、text_sha256（可省：许可证原文的 SHA-256，
-# 写了的话原文一改登记就失效，专有组件都写上）、as（可省：给这个许可证起的名字，清单 agent.license 用它）、
-# reason（为什么能用、谁确认的）、agents（可省：只在这些 agent 的镜像里出现；写了的话，镜像里找不到这一条
-# 也报错，防止上游换了包名后登记悄悄失效）。
+# 认不出时是包里声明的原文，比如 "SEE LICENSE IN README.md"）、text_sha256（可省：原文的 SHA-256，列表的话
+# 包里的原文要正好是这几份，哪份改了登记就失效，专有组件都写上）、as（可省：给这个许可证起的名字，清单
+# agent.license 用它）、reason（为什么能用、谁确认的）、agents（可省：只对这些 agent 的镜像有效，别的 agent
+# 带上同一个组件要另外审查；在这些 agent 的镜像里找不到这一条也报错，防止上游换了包名后登记悄悄失效）。
 
 # Claude Agent SDK 和它带的 Claude Code 二进制（按平台分包，sdk-linux-x64 等）：Anthropic 专有。
 # LICENSE.md 全文：“© Anthropic PBC. All rights reserved. Use is subject to the Legal Agreements outlined here:
@@ -73,11 +82,15 @@ license_of = "pypi:hermes-agent"
 # 那个页面允许在托管沙箱里运行 Claude Code，条件（2026-10-20 核对，docs/agent-integration.md 2.1、docs/licenses.md）：
 # 接受 Anthropic 商业条款；二进制不改，不去掉、不限制它自带的登录方式（Claude 账号、用户自己的 API key）；
 # 平台不代付、不转售、不居间 Claude 用量，每个用户用自己的凭证。上线前法务复核（16.5 人的部分）。
+# 声明指向 README.md，法律条款在 LICENSE.md：两份都钉住，哪份改了都要重新看。
 [[exception]]
 ecosystem = "npm"
 name = "@anthropic-ai/claude-agent-sdk"
 license = "SEE LICENSE IN README.md"
-text_sha256 = "8ce94b9478bb9868f9641f818e06cd722fbe55d4c22e2d2ed11971b20146173a"
+text_sha256 = [
+  "8ce94b9478bb9868f9641f818e06cd722fbe55d4c22e2d2ed11971b20146173a", # LICENSE.md
+  "786e57ced73510c752e2e15901d290c7c22786e4791d8a2e2d96991a9a97c192", # README.md
+]
 as = "LicenseRef-Anthropic-Commercial"
 reason = "Anthropic 专有，按 legal-and-compliance 页面的条件在托管沙箱里运行（法务复核前不上线）"
 agents = ["claude"]
@@ -86,7 +99,7 @@ agents = ["claude"]
 ecosystem = "npm"
 name = "@anthropic-ai/claude-agent-sdk-linux-*"
 license = "SEE LICENSE IN LICENSE.md"
-text_sha256 = "8ce94b9478bb9868f9641f818e06cd722fbe55d4c22e2d2ed11971b20146173a"
+text_sha256 = ["8ce94b9478bb9868f9641f818e06cd722fbe55d4c22e2d2ed11971b20146173a"] # LICENSE.md
 as = "LicenseRef-Anthropic-Commercial"
 reason = "Claude Code 二进制本体，同上；里面静态链接的第三方组件的原文见 deploy/templates/notices/claude"
 agents = ["claude"]

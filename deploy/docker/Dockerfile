@@ -29,7 +29,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     && cp target/release/thinktin-server target/release/llm-gw target/release/thinktin-relay /out/ \
     && host="$(rustc -vV | sed -n 's/^host: //p')" \
     && for p in server llm-gw relay; do \
-        python3 tools/licenses/licenses.py cargo -p "$p" --subject "$p" --target "$host" --out "/out/licenses/$p" || exit 1; \
+        python3 tools/licenses/licenses.py cargo -p "$p" --subject "$p" --target "$host" --out "/out/licenses/$p" \
+        && python3 tools/licenses/licenses.py check "/out/licenses/$p/inventory.json" || exit 1; \
     done
 
 # 控制面：接入网关（客户端接口）和后台任务（调度、执行、推送）同一个程序，按配置开哪一部分。

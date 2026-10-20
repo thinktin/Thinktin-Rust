@@ -135,57 +135,63 @@ def spdx_ids(tree):
     return [x for t in tree[1] for x in spdx_ids(t)]
 
 
-def is_spdx(text):
+def _load_ids(name):
     try:
-        tree = parse_spdx(text)
-    except SpdxError:
-        return False
-    return all(_looks_like_id(x) for x in spdx_ids(tree))
+        lines = (SPDX_DIR / name).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return set()
+    return {line.strip() for line in lines if line.strip() and not line.startswith("#")}
 
 
-def _looks_like_id(x):
-    # SPDX 的许可证标识都是不带空格的一个词；“MIT License”“BSD”这类自由文本会被拆成几个词，解析就会失败。
-    return x.upper() not in _OPS and (x in KNOWN_IDS or x.startswith("LicenseRef-") or x.upper() in KNOWN_UPPER)
+# SPDX 的全部许可证标识和例外标识（spdx/license-ids.txt、exception-ids.txt，取自 license-list-data v3.29.0）。
+# 不在这两张表里、也不是 LicenseRef- / AdditionRef- 的词不算 SPDX：“MIT License”“Commons-Clause”这类按自由文本处理。
+LICENSE_IDS = _load_ids("license-ids.txt")
+EXCEPTION_IDS = _load_ids("exception-ids.txt")
+_CANONICAL = {x.upper(): x for x in LICENSE_IDS}
+_CANONICAL_EXC = {x.upper(): x for x in EXCEPTION_IDS}
+_LICENSE_REF = re.compile(r"^(DocumentRef-[A-Za-z0-9.-]+:)?LicenseRef-[A-Za-z0-9.-]+$")
+_ADDITION_REF = re.compile(r"^(DocumentRef-[A-Za-z0-9.-]+:)?AdditionRef-[A-Za-z0-9.-]+$")
 
 
-# 常见的 SPDX 标识（不求全：不在这里、也不是 LicenseRef- 的词按自由文本处理）。
-KNOWN_IDS = set(
-    """
-0BSD AFL-2.1 AFL-3.0 AGPL-1.0 AGPL-3.0 AGPL-3.0-only AGPL-3.0-or-later Apache-1.1 Apache-2.0 APSL-2.0
-Artistic-1.0 Artistic-2.0 BlueOak-1.0.0 BSD-1-Clause BSD-2-Clause BSD-2-Clause-Patent BSD-3-Clause
-BSD-3-Clause-Clear BSD-4-Clause BSL-1.0 BUSL-1.1 bzip2-1.0.6 CAL-1.0 CC-BY-3.0 CC-BY-4.0 CC-BY-NC-4.0
-CC-BY-NC-SA-4.0 CC-BY-ND-4.0 CC-BY-SA-3.0 CC-BY-SA-4.0 CC0-1.0 CDDL-1.0 CDDL-1.1 CDLA-Permissive-2.0
-CPAL-1.0 CPL-1.0 curl ECL-2.0 EFL-2.0 Elastic-2.0 EPL-1.0 EPL-2.0 EUPL-1.1 EUPL-1.2 GPL-1.0-or-later
-GPL-2.0 GPL-2.0+ GPL-2.0-only GPL-2.0-or-later GPL-3.0 GPL-3.0+ GPL-3.0-only GPL-3.0-or-later HPND ICU
-IJG Info-ZIP ISC JSON LGPL-2.0 LGPL-2.0-only LGPL-2.0-or-later LGPL-2.1 LGPL-2.1+ LGPL-2.1-only
-LGPL-2.1-or-later LGPL-3.0 LGPL-3.0+ LGPL-3.0-only LGPL-3.0-or-later libpng-2.0 MIT MIT-0 MIT-CMU
-MPL-1.1 MPL-2.0 MPL-2.0-no-copyleft-exception MS-PL MulanPSL-2.0 NCSA ODbL-1.0 OFL-1.1 OpenSSL OSL-3.0
-PolyForm-Noncommercial-1.0.0 PolyForm-Small-Business-1.0.0 PostgreSQL PSF-2.0 Python-2.0 Python-2.0.1
-RPL-1.5 Ruby SISSL SSPL-1.0 Unicode-3.0 Unicode-DFS-2015 Unicode-DFS-2016 Unlicense UPL-1.0 W3C
-W3C-20150513 WTFPL X11 Zlib zlib-acknowledgement ZPL-2.0 ZPL-2.1
-""".split()
-)
-KNOWN_UPPER = {x.upper() for x in KNOWN_IDS}
-_CANONICAL = {x.upper(): x for x in KNOWN_IDS}
+def _canonical_id(x):
+    """SPDX 许可证标识的官方写法（`GPL-2.0+` 这种带 + 的也认）；不是标识返回 None。"""
+    if _LICENSE_REF.match(x):
+        return x
+    if x.upper() in _CANONICAL:
+        return _CANONICAL[x.upper()]
+    if x.endswith("+") and x[:-1].upper() in _CANONICAL:
+        return _CANONICAL[x[:-1].upper()] + "+"
+    return None
+
+
+def _canonical_exception(x):
+    if _ADDITION_REF.match(x):
+        return x
+    return _CANONICAL_EXC.get(x.upper())
+
+
+def _canonical_tree(tree):
+    if tree[0] == "id":
+        lid = _canonical_id(tree[1])
+        return ("id", lid) if lid else None
+    if tree[0] == "with":
+        lid, exc = _canonical_id(tree[1]), _canonical_exception(tree[2])
+        return ("with", lid, exc) if lid and exc else None
+    kids = [_canonical_tree(t) for t in tree[1]]
+    return (tree[0], kids) if all(kids) else None
+
+
+def is_spdx(text):
+    return canonical_spdx(text) is not None
 
 
 def canonical_spdx(text):
-    """把合法的 SPDX 表达式统一写法（标识按官方大小写、运算符大写），不合法返回 None。"""
+    """合法的 SPDX 表达式统一写法（标识按官方大小写、运算符大写）；语法不对、或有不在 SPDX 表里的标识，返回 None。"""
     try:
-        tree = parse_spdx(text)
+        tree = _canonical_tree(parse_spdx(text))
     except SpdxError:
         return None
-    if not all(_looks_like_id(x) for x in spdx_ids(tree)):
-        return None
-
-    def fix(t):
-        if t[0] == "id":
-            return ("id", _CANONICAL.get(t[1].upper(), t[1]))
-        if t[0] == "with":
-            return ("with", _CANONICAL.get(t[1].upper(), t[1]), t[2])
-        return (t[0], [fix(x) for x in t[1]])
-
-    return render_spdx(fix(tree))
+    return render_spdx(tree) if tree else None
 
 
 # 常见的非 SPDX 写法 → SPDX（键是小写、去掉多余空白后的文本）。
@@ -304,12 +310,12 @@ def normalize_declared(text):
     text = text.strip()
     if text.startswith("(") and text.endswith(")") and "(" not in text[1:]:
         text = text[1:-1].strip()
-    c = canonical_spdx(text)
-    if c:
-        return c
     key = _norm_text(text).rstrip(".")
     if key in FREE_TEXT:
         return FREE_TEXT[key]
+    c = canonical_spdx(text)
+    if c:
+        return c
     if "/" in text:  # Cargo 早期用 / 表示“任选其一”：`MIT/Apache-2.0`、`Apache-2.0 / MIT`
         c = canonical_spdx(" OR ".join(p.strip() for p in text.split("/")))
         if c:
@@ -438,12 +444,23 @@ def read_text(path):
 
 
 def is_notice(path):
-    return Path(path).name.upper().startswith(("NOTICE", "THIRD"))
+    """NOTICE、版权声明、第三方许可清单：讲的是别人的许可证或者只是署名，不拿来认这个包自己的许可证。"""
+    name = Path(path).name.upper()
+    return (
+        name.startswith(("NOTICE", "THIRD", "COPYRIGHT", "PATENTS", "AUTHORS"))
+        or "THIRD" in name
+        or "3RD" in name
+        or re.match(r"^LICENSES(\.|$)", name) is not None
+    )
 
 
 def license_from_files(paths):
-    """从原文认许可证。NOTICE、第三方清单不参与（它们讲的是别人的许可证）。多个认出来的用 AND 连起来。"""
-    found = []
+    """从原文认许可证。NOTICE、第三方清单不参与。多个认出来的用 AND 连起来。
+
+    有认不出的许可证文件时加上 LicenseRef-Unrecognized（要登记）：认不出的可能正是专有或限制性的条款，
+    不能因为旁边还有一份 MIT 原文就当它是 MIT。一个也认不出返回 None。
+    """
+    found, unknown = [], False
     for p in paths:
         if is_notice(p):
             continue
@@ -451,11 +468,53 @@ def license_from_files(paths):
         if text is None:
             continue
         spdx = detect_text(text)
-        if spdx and spdx not in found:
+        if spdx is None:
+            unknown = True
+        elif spdx not in found:
             found.append(spdx)
     if not found:
         return None
+    if unknown:
+        found.append("LicenseRef-Unrecognized")
     return found[0] if len(found) == 1 else " AND ".join(found)
+
+
+# 许可证原文里出现这些说法，说明条款限制商用或托管（Commons Clause、非商用、BUSL、SSPL……），
+# 不管元数据怎么声明，都加上 LicenseRef-Restricted-Terms 要人看。GPL 正文里的“noncommercially”不算。
+_RESTRICTED_PHRASES = [
+    "commons clause",
+    "non-commercial",
+    "noncommercial use",
+    "noncommercial purpose",
+    "attribution-noncommercial",
+    "not for commercial use",
+    "commercial use is not permitted",
+    "commercial use is prohibited",
+    "may not be used for commercial",
+    "shall not be used for commercial",
+    "business source license",
+    "server side public license",
+    "elastic license",
+    "polyform",
+    "for evaluation purposes only",
+]
+
+
+def restricted_terms(paths):
+    hits = []
+    for p in paths:
+        if is_notice(p):
+            continue
+        text = read_text(p)
+        if text is None:
+            continue
+        t = _norm_text(text[:50000])
+        # “for any purpose, commercial or non-commercial”（Unlicense 等）是放宽，不是限制。
+        t = re.sub(r"\bcommercial,? (or|and) non-?commercial\b|\bnon-?commercial,? (or|and) commercial\b", "", t)
+        for phrase in _RESTRICTED_PHRASES:
+            if phrase in t and phrase not in hits:
+                hits.append(phrase)
+    return hits
 
 
 # ---------------------------------------------------------------------------
@@ -476,11 +535,19 @@ class Inventory:
             c["root_level"] = c["root_level"] or root_level
             return c
         copied, digests = self._copy(ecosystem, name, version, files)
+        restricted = restricted_terms(files or []) if ecosystem not in ("deb", "runtime") else []
+        if restricted and license:
+            try:
+                wrap = parse_spdx(license)[0] == "or"
+            except SpdxError:
+                wrap = True
+            license = "%s AND LicenseRef-Restricted-Terms" % ("(%s)" % license if wrap else license)
         c = {
             "ecosystem": ecosystem,
             "name": name,
             "version": version,
             "license": license,
+            "restricted_terms": restricted or None,
             "declared": declared,
             "license_from": license_from,
             "files": copied,
@@ -604,28 +671,67 @@ def render_notices(doc):
 _VAGUE = ("LicenseRef-BSD-Unspecified", "LicenseRef-LGPL-Unspecified", "LicenseRef-GPL-Unspecified", "LicenseRef-AGPL-Unspecified")
 
 
-def resolve_license(declared_list, files, classifiers=()):
-    """按可靠程度依次取：元数据里的声明（SPDX 表达式，或认得出的写法）、PyPI 的许可证分类、原文识别、
-    含糊的声明或分类（“BSD”）。原文识别是猜的，有明确的元数据就不用它。"""
+def _is_vague(expr):
+    return any(v in expr for v in _VAGUE)
+
+
+def _same_family(vague, precise):
+    """原文认出来的（BSD-3-Clause）是含糊声明（BSD）的一种，才拿它代替声明。"""
+    try:
+        ids = spdx_ids(parse_spdx(precise))
+    except SpdxError:
+        return False
+    family = {
+        "LicenseRef-BSD-Unspecified": ("BSD-", "0BSD"),
+        "LicenseRef-LGPL-Unspecified": ("LGPL-",),
+        "LicenseRef-GPL-Unspecified": ("GPL-",),
+        "LicenseRef-AGPL-Unspecified": ("AGPL-",),
+    }.get(vague)
+    return bool(family) and all(i.startswith(family) for i in ids)
+
+
+def _and(items):
+    items = list(dict.fromkeys(items))
+    return " AND ".join("(%s)" % i if " OR " in i else i for i in items)
+
+
+def resolve_license(declared_list, files, classifiers=(), see_file=None):
+    """包的许可证。元数据里有声明就以声明为准（SPDX 表达式，或认得出的写法）；声明认不出时不拿原文或分类去猜
+    （猜出来的可能比真实的宽松），返回 None，要人登记。
+
+    - “SEE LICENSE IN <文件>”：只看那个文件的原文（see_file；文件不存在时传 False）。
+    - 声明含糊（“BSD”）：原文认出来是同一类的（BSD-3-Clause）就用原文的，否则用含糊的。
+    - 没有声明：PyPI 的许可证分类（几个分类都适用，用 AND 连：分类本身不说明是“任选其一”）、原文识别。
+    """
     declared_list = [d for d in declared_list if d and d.strip()]
-    vague = None
+    vague, unrecognized = None, False
     for d in declared_list:
+        if d.strip().upper().startswith("SEE LICEN"):
+            continue
         n = normalize_declared(d)
-        if n and not any(v in n for v in _VAGUE):
+        if n is None:
+            unrecognized = True
+        elif not _is_vague(n):
             return n, "metadata"
-        vague = vague or n
-    specific = [c for c in classifiers if not any(v in c for v in _VAGUE)]
-    if specific:
-        # 几个分类是“任选其一”（python-dateutil：BSD 或 Apache），含糊的那个也留着。
-        both = list(dict.fromkeys(classifiers))
-        return (both[0] if len(both) == 1 else " OR ".join(both)), "classifier"
+        else:
+            vague = vague or n
+    if see_file is not None:
+        from_file = license_from_files([see_file]) if see_file else None
+        return (from_file, "text") if from_file else (None, "none")
+    if unrecognized:
+        return None, "none"
+    if vague:
+        from_text = license_from_files(files)
+        if from_text and _same_family(vague, from_text):
+            return from_text, "text"
+        return vague, "metadata"
+    if any(not _is_vague(c) for c in classifiers):
+        return _and(classifiers), "classifier"
     from_text = license_from_files(files)
     if from_text:
         return from_text, "text"
-    if vague:
-        return vague, "metadata"
     if classifiers:
-        return " OR ".join(dict.fromkeys(classifiers)), "classifier"
+        return _and(classifiers), "classifier"
     return None, "none"
 
 
@@ -668,16 +774,40 @@ def scan_npm(inv, root):
         name, version = pkg.get("name"), pkg.get("version")
         if not isinstance(name, str) or not isinstance(version, str):
             continue
-        declared = npm_declared(pkg)
-        files = legal_files(here)
-        if declared and declared.upper().startswith("SEE LICEN"):
-            # “SEE LICENSE IN <文件>”：原文在包里指定的文件，可能不叫 LICENSE。
-            ref = here / declared.split(" IN ", 1)[-1].strip() if " IN " in declared.upper() else None
-            if ref and ref.is_file() and ref not in files:
-                files.append(ref)
-        license, source = resolve_license([declared] if declared else [], files)
         root_level = parent == root or (parent.parent == root and parent.name.startswith("@"))
-        inv.add("npm", name, version, declared, license, source, files, here, root_level, authors=npm_author(pkg))
+        npm_component(inv, here, pkg, root_level)
+
+
+def npm_component(inv, here, pkg, root_level):
+    name, version = pkg.get("name"), pkg.get("version")
+    if not isinstance(name, str) or not isinstance(version, str):
+        return
+    declared = npm_declared(pkg)
+    files = legal_files(here)
+    see_file = None
+    if declared and declared.upper().startswith("SEE LICEN"):
+        # “SEE LICENSE IN <文件>”：原文在包里指定的那个文件（可能不叫 LICENSE），许可证只按它认。
+        m = re.match(r"(?i)^see licen[cs]e in\s+(.+)$", declared.strip())
+        ref = (here / m.group(1).strip()) if m else None
+        see_file = ref if ref and ref.is_file() and here.resolve() in ref.resolve().parents else False
+        if see_file and see_file not in files:
+            files.append(see_file)
+    license, source = resolve_license([declared] if declared else [], files, see_file=see_file)
+    inv.add("npm", name, version, declared, license, source, files, here, root_level, authors=npm_author(pkg))
+
+
+def scan_npm_packages(inv, pattern):
+    """不在 node_modules 里的 npm 包（比如基础镜像带的 /opt/yarn-v1.22.22），连同它自己的 node_modules。"""
+    import glob as globmod
+
+    for d in sorted(globmod.glob(pattern)):
+        here = Path(d)
+        try:
+            pkg = json.loads((here / "package.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        npm_component(inv, here, pkg, root_level=False)
+        scan_npm(inv, here / "node_modules")
 
 
 def npm_author(pkg):
@@ -689,6 +819,13 @@ def npm_author(pkg):
 
 # ---------------------------------------------------------------------------
 # Python
+
+# PyPI 的 License 字段里不说明任何事情的占位写法，当成没写（看分类和原文）。“Custom”之类有含义的不在这里。
+_NOT_A_DECLARATION = {
+    "unknown", "none", "n/a", "dual license", "license", "license.txt", "license.md", "see license",
+    "see license file", "see license.txt", "see licence", "file license",
+}
+
 
 def pypi_norm(name):
     return re.sub(r"[-_.]+", "-", name).lower()
@@ -713,11 +850,13 @@ def scan_python(inv, site_packages, root_names=()):
         lic = msg.get("License")
         # 有的包把整篇许可证正文塞进 License 字段：太长或多行的不当声明用，靠原文识别。
         short_lic = lic.strip() if lic and len(lic.strip()) <= 120 and "\n" not in lic.strip() else None
-        if short_lic and short_lic.upper() not in ("UNKNOWN", "NONE"):
+        if short_lic and _norm_text(short_lic).rstrip(".") not in _NOT_A_DECLARATION:
             declared.append(short_lic)
         classifiers = [c.split("::")[-1].strip() for c in msg.get_all("Classifier") or [] if c.startswith("License ::")]
-        mapped = [CLASSIFIERS.get(c.lower()) for c in classifiers]
-        mapped = [m for m in mapped if m and m != "LicenseRef-OSI-Approved"]
+        classifiers = [c for c in classifiers if c.lower() != "osi approved"]
+        mapped = [CLASSIFIERS[c.lower()] for c in classifiers if c.lower() in CLASSIFIERS]
+        # 对照表里没有的许可证分类当成认不出的声明（可能正是限制性的），除非有明确的 License-Expression。
+        declared += ["Classifier: %s" % c for c in classifiers if c.lower() not in CLASSIFIERS]
         files = legal_files(dist)
         for lf in msg.get_all("License-File") or []:
             for cand in (dist / "licenses" / lf, dist / lf):
@@ -729,7 +868,7 @@ def scan_python(inv, site_packages, root_names=()):
                 if p.is_file() and p not in files:
                     files.append(p)
         license, source = resolve_license(declared, files, mapped)
-        shown = "; ".join(declared + ["Classifier: %s" % c for c in classifiers]) or None
+        shown = "; ".join([d for d in declared if not d.startswith("Classifier: ")] + ["Classifier: %s" % c for c in classifiers]) or None
         authors = msg.get("Author") or msg.get("Author-email") or msg.get("Maintainer") or msg.get("Maintainer-email")
         inv.add("pypi", name, version, shown, license, source, files, dist, pypi_norm(name) in roots,
                 authors=authors.strip() if authors and authors.strip().upper() != "UNKNOWN" else None)
@@ -981,10 +1120,20 @@ def scan_cargo(inv, packages, target=None, manifest_path=None, metadata_json=Non
 # ---------------------------------------------------------------------------
 # 策略检查
 
+_DENY_WORDS = re.compile(
+    r"agpl|affero|sspl|server[\s_-]*side[\s_-]*public|busl|business[\s_-]*source|commons[\s_-]*clause|"
+    r"non[\s_-]?commercial|cc-by(-sa)?-nc|polyform|elastic[\s_-]*license",
+    re.I,
+)
+
+
 class Policy:
     def __init__(self, data):
         self.allow = data.get("allow", [])
         self.deny = data.get("deny", [])
+        # `A WITH 例外`：例外只是额外放宽（LLVM-exception、Classpath-exception……）时按 A 判定；
+        # 不在这张表里的例外要人看，在禁止名单里的（Commons-Clause 这种附加限制）直接禁止。
+        self.allow_exceptions = data.get("allow_exceptions", [])
         self.ecosystems = data.get("ecosystem", {})
         self.exceptions = data.get("exception", [])
         self.agents = data.get("agents", {})
@@ -1016,15 +1165,25 @@ class Policy:
             return "review"
 
         def walk(t):
-            if t[0] in ("id", "with"):
+            if t[0] == "id":
                 return self.classify_id(t[1], ecosystem)
+            if t[0] == "with":
+                base = self.classify_id(t[1], ecosystem)
+                exc = t[2].upper()
+                if any(fnmatch.fnmatchcase(exc, pat.upper()) for pat in self.deny):
+                    return "deny"
+                if any(fnmatch.fnmatchcase(exc, pat.upper()) for pat in self.allow_exceptions):
+                    return base
+                return max(base, "review", key=rank.get)
             results = [walk(x) for x in t[1]]
             pick = min if t[0] == "or" else max
             return pick(results, key=rank.get)
 
         return walk(tree)
 
-    def exception_for(self, c):
+    def exception_for(self, c, agent=None):
+        """这个组件登记过的例外。写了 agents 的例外只在这些 agent 的镜像里有效（别的 agent 带上了同一个专有组件，
+        要重新审查，不能沿用）。text_sha256 是一个值时原文里要有这一份；是列表时原文要正好是这几份。"""
         shown = c["license"] or c["declared"] or ""
         for e in self.exceptions:
             if e["ecosystem"] != c["ecosystem"] or not fnmatch.fnmatchcase(c["name"], e["name"]):
@@ -1033,7 +1192,13 @@ class Policy:
                 continue
             if e["license"] != shown:
                 continue
-            if e.get("text_sha256") and e["text_sha256"] not in (c.get("text_sha256") or []):
+            if e.get("agents") and agent not in e["agents"]:
+                continue
+            pins = e.get("text_sha256")
+            have = set(c.get("text_sha256") or [])
+            if isinstance(pins, str) and pins not in have:
+                continue
+            if isinstance(pins, list) and set(pins) != have:
                 continue
             return e
         return None
@@ -1047,13 +1212,14 @@ def check(inventory, policy, manifest=None, out=sys.stdout):
         label = "%s %s@%s" % (c["ecosystem"], c["name"], c["version"])
         eco = policy.ecosystems.get(c["ecosystem"], {})
         if eco.get("mode") == "deny-only":
-            # Debian main 都是自由软件；只拦明确禁止的（DEP-5 里声明的许可证名）。
+            # Debian main 都是自由软件；只拦明确禁止的（DEP-5 里声明的许可证名，写法五花八门：AGPL-3+、AGPLv3+、
+            # GNU-AGPL-3……，按名字匹配之外再按关键词）。
             for n in re.split(r",\s*", c["declared"] or ""):
                 spdx = normalize_declared(n) or n
-                if n and any(fnmatch.fnmatchcase(spdx.upper(), pat.upper()) for pat in policy.deny):
+                if n and (any(fnmatch.fnmatchcase(spdx.upper(), pat.upper()) for pat in policy.deny) or _DENY_WORDS.search(n)):
                     errors.append("%s：许可证 %s 在禁止名单里" % (label, n))
             continue
-        exc = policy.exception_for(c)
+        exc = policy.exception_for(c, manifest["agent"]["id"] if manifest else None)
         if exc:
             registered.append((c, exc))
             continue
@@ -1090,8 +1256,8 @@ def check(inventory, policy, manifest=None, out=sys.stdout):
     return errors, warnings, summary
 
 
-def _license_shown(c, policy):
-    exc = policy.exception_for(c)
+def _license_shown(c, policy, agent=None):
+    exc = policy.exception_for(c, agent)
     if exc and exc.get("as"):
         return exc["as"]
     return c["license"] or c["declared"]
@@ -1125,7 +1291,7 @@ def check_manifest(inventory, policy, manifest):
     if not hit:
         errors.append("[agents.%s] license_of 指的 %s 不在镜像里" % (agent, rule["license_of"]))
         return errors
-    shown = _license_shown(hit[0], policy)
+    shown = _license_shown(hit[0], policy, agent)
     if shown != manifest["agent"]["license"]:
         errors.append(
             "清单 agent.license 是 %s，但 %s 的许可证是 %s：上游改了许可证？复核后改清单（App 的目录里显示的是清单写的）"
@@ -1185,6 +1351,8 @@ def cmd_scan(args):
         root_names = [s.split("==", 1)[0].split("[", 1)[0] for s in m.get("install", {}).get("pip", [])]
     for root in args.npm_root or []:
         scan_npm(inv, root)
+    for pattern in args.npm_package or []:
+        scan_npm_packages(inv, pattern)
     for sp in args.site_packages or []:
         for path in sorted(Path("/").glob(sp.lstrip("/"))) if any(ch in sp for ch in "*?[") else [Path(sp)]:
             scan_python(inv, path, root_names)
@@ -1235,6 +1403,7 @@ def main(argv=None):
     s.add_argument("--out", required=True)
     s.add_argument("--subject", required=True, help="清单说的是什么，比如 agents/claude:0.90.0")
     s.add_argument("--npm-root", action="append", help="node_modules 目录，可给多个")
+    s.add_argument("--npm-package", action="append", help="不在 node_modules 里的 npm 包目录，可以用通配符（基础镜像的 /opt/yarn-*）")
     s.add_argument("--site-packages", action="append", help="site-packages 目录，可以用通配符")
     s.add_argument("--manifest", help="agent 清单（用来认 [install] 里直接装的 Python 包）")
     s.add_argument("--deb", action="store_true", help="扫描 dpkg 装的包")
@@ -1343,7 +1512,8 @@ PROPRIETARY_TEXT = """© Anthropic PBC. All rights reserved. Use is subject to t
 
 TEST_POLICY = """
 allow = ["MIT", "Apache-2.0", "BSD-*", "ISC", "0BSD", "LGPL-*", "MPL-2.0", "LicenseRef-BSD-Unspecified"]
-deny = ["AGPL-*", "SSPL-*", "BUSL-*"]
+allow_exceptions = ["LLVM-exception"]
+deny = ["AGPL-*", "SSPL-*", "BUSL-*", "Commons-Clause", "LicenseRef-Commons-Clause", "CC-BY-NC-*"]
 
 [ecosystem.cargo]
 review = ["LGPL-*"]
@@ -1504,10 +1674,10 @@ def self_test():
         eq(got["old-style"]["license"], "BSD-3-Clause", "含糊的声明看原文")
         eq(got["classified"]["license"], "Apache-2.0", "只有分类")
         eq(got["text-in-field"]["license"], "MIT", "正文塞进 License 字段")
-        eq(got["dual"]["license"], "MIT OR Apache-2.0", "两个分类")
+        eq(got["dual"]["license"], "MIT AND Apache-2.0", "两个分类按 AND（分类不说明是任选其一）")
         eq(got["unknown"]["license"], None, "UNKNOWN")
         eq((got["pathspec"]["license"], got["pathspec"]["license_from"]), ("MPL-2.0", "classifier"), "明确的分类比原文识别优先")
-        eq(got["dateutil"]["license"], "LicenseRef-BSD-Unspecified OR Apache-2.0", "含糊的分类在“任选其一”里留着")
+        eq(got["dateutil"]["license"], "LicenseRef-BSD-Unspecified AND Apache-2.0", "“Dual License”不算声明，分类按 AND")
 
         # extra 原文
         ex = tmp / "extra"
@@ -1597,6 +1767,73 @@ def self_test():
         ]}
         errors, _, _ = check(deb_doc, pol)
         eq(errors == ["deb bad@1：许可证 AGPL-3.0 在禁止名单里"], True, "Debian 只拦禁止的：%s" % errors)
+
+    # 对抗式评审复现过的绕过：每一条都要拦住（errors 非空）
+    commons_clause = APACHE_TEXT + "\n\"Commons Clause\" License Condition v1.0\nThe Software is provided to you by the Licensor\n"
+    eula = "Acme EULA. All rights reserved. Commercial agreement required for any use.\n"
+    noncommercial = MIT_TEXT.replace("to deal\nin the Software without restriction", "to deal\nin the Software for non-commercial purposes only")
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        nm = tmp / "node_modules"
+        cases = {
+            "unknown-spdx-id": ({"license": "MIT AND AGPL-1.0-or-later"}, {"LICENSE": MIT_TEXT}),
+            "commons-clause-declared": ({"license": "Commons-Clause"}, {"LICENSE": commons_clause}),
+            "commons-clause-with": ({"license": "Apache-2.0 WITH Commons-Clause"}, {"LICENSE": APACHE_TEXT}),
+            "cc-nc-and": ({"license": "MIT AND CC-BY-NC-ND-4.0"}, {"LICENSE": MIT_TEXT}),
+            "see-eula-next-to-mit": ({"license": "SEE LICENSE IN LICENSE.md"}, {"LICENSE.md": eula, "LICENSE-THIRD-PARTY.md": MIT_TEXT}),
+            "unrecognized-file-next-to-mit": ({}, {"LICENSE": eula, "LICENSE-MIT": MIT_TEXT}),
+            "mit-declared-commons-clause-text": ({"license": "MIT"}, {"LICENSE": MIT_TEXT + "\nCommons Clause applies.\n"}),
+            "mit-worded-noncommercial": ({}, {"LICENSE": noncommercial}),
+        }
+        for name, (meta, files) in cases.items():
+            d = nm / name
+            d.mkdir(parents=True)
+            (d / "package.json").write_text(json.dumps(dict({"name": name, "version": "1.0.0"}, **meta)))
+            for fname, text in files.items():
+                (d / fname).write_text(text)
+        inv = Inventory(tmp / "out", "bypass")
+        scan_npm(inv, nm)
+        doc = inv.write()
+        errors, _, _ = check(doc, pol)
+        for name in cases:
+            eq(any(" %s@" % name in e for e in errors), True, "绕过要被拦住：%s（%s）" % (name, inv.components[("npm", name, "1.0.0")]["license"]))
+        unlicense = ("This is free and unencumbered software released into the public domain.\n\nAnyone is free to copy, modify, "
+                     "publish, use, compile, sell, or\ndistribute this software, either in source code form or as a compiled\n"
+                     "binary, for any purpose, commercial or non-commercial, and by any\nmeans.\n")
+        eq(restricted_terms([tmp / "u.txt"]) if (tmp / "u.txt").write_text(unlicense) else None, [], "Unlicense 的“commercial or non-commercial”不算限制")
+        eq(pol.classify("Apache-2.0 WITH LicenseRef-Extra", "npm"), "review", "不认识的 WITH 例外要人看")
+        eq(normalize_declared("Apache-2.0 WITH Commons-Clause"), None, "Commons-Clause 不是 SPDX 的例外标识")
+        eq(normalize_declared("AGPL-1.0-or-later"), "AGPL-1.0-or-later", "SPDX 表里的标识都认")
+        eq(normalize_declared("GPL-2.0+"), "GPL-2.0+", "带 + 的旧写法")
+        # PyPI：几个分类按 AND，AGPL + MIT 要拦
+        sp = tmp / "sp"
+        d = sp / "agplmit-1.0.dist-info"
+        d.mkdir(parents=True)
+        (d / "METADATA").write_text("Metadata-Version: 2.1\nName: agplmit\nVersion: 1.0\n"
+                                    "Classifier: License :: OSI Approved :: GNU Affero General Public License v3\n"
+                                    "Classifier: License :: OSI Approved :: MIT License\n\nx\n")
+        d = sp / "oddclass-1.0.dist-info"
+        d.mkdir(parents=True)
+        (d / "METADATA").write_text("Metadata-Version: 2.1\nName: oddclass\nVersion: 1.0\n"
+                                    "Classifier: License :: Aladdin Free Public License (AFPL)\n\nx\n")
+        inv = Inventory(tmp / "out2", "py")
+        scan_python(inv, sp)
+        errors, _, _ = check(inv.write(), pol)
+        eq(any("agplmit@" in e and "禁止" in e for e in errors), True, "AGPL 分类加 MIT 分类要拦")
+        eq(any("oddclass@" in e for e in errors), True, "对照表里没有的许可证分类要人看")
+        # 写了 agents 的例外只在这些 agent 里有效
+        vendor = {"ecosystem": "npm", "name": "@vendor/sdk", "version": "1.2.0", "license": None,
+                  "declared": "SEE LICENSE IN README.md", "files": ["x"], "text_sha256": [], "root_level": True}
+        eq(pol.exception_for(vendor, "demo") is not None, True, "登记的 agent 里有效")
+        eq(pol.exception_for(vendor, "other"), None, "别的 agent 里无效")
+        eq(pol.exception_for(vendor, None), None, "不带清单检查时无效")
+        # Debian 的各种写法
+        deb_doc = {"subject": "x", "components": [
+            {"ecosystem": "deb", "name": n, "version": "1", "license": None, "declared": decl, "files": [], "root_level": False}
+            for n, decl in [("a", "AGPLv3+"), ("b", "GNU-AGPL-3"), ("c", "SSPL"), ("ok", "GPL-2+, BSD-3-clause, Expat")]
+        ]}
+        errors, _, _ = check(deb_doc, pol)
+        eq(sorted(e.split("@")[0] for e in errors), ["deb a", "deb b", "deb c"], "Debian 的 AGPL、SSPL 各种写法：%s" % errors)
 
     # 仓库里的策略文件能加载，例外都写了理由
     real = Path(__file__).with_name("policy.toml")

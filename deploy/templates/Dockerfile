@@ -74,7 +74,8 @@ RUN set -f; extra="--extra /tmp/licenses/notices/_base"; \
     [ ! -d "/tmp/licenses/notices/$AGENT_ID" ] || extra="$extra --extra /tmp/licenses/notices/$AGENT_ID"; \
     python3 /tmp/licenses/tool/licenses.py scan --out /usr/share/thinktin/licenses \
         --subject "agents/$AGENT_ID:$AGENT_VERSION" --manifest /tmp/licenses/manifest.toml \
-        --npm-root /usr/local/lib/node_modules --site-packages "/opt/agents/$AGENT_ID/lib/python3*/site-packages" \
+        --npm-root /usr/local/lib/node_modules --npm-package "/opt/yarn-*" \
+        --site-packages "/opt/agents/$AGENT_ID/lib/python3*/site-packages" \
         --deb --node $extra --merge /tmp/licenses/shim \
     && rm -rf /tmp/licenses
 ENV PATH=/opt/agents/${AGENT_ID}/bin:${PATH} \
