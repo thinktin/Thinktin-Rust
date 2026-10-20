@@ -70,7 +70,29 @@ deploy/templates/smoke.sh thinktin/agents/claude:0.90.0 claude   # 冒烟
    Cube 里的模板名（或别名）要和它对上。
 5. 发布控制面（带新清单）：新领养的实例用新版本；已有的实例在用户或平台升级时重建（6.7）。
 
-## 6. 还没做的
+## 6. 第三方许可（16.5）
+
+模板构建时 `deploy/templates/licenses.py` 在镜像里把装上的每个包（npm 包连同全部依赖、agent 虚拟环境里的
+Python 包）登记下来，放在 `/usr/share/doc/thinktin-agent`：
+
+- `licenses.json`：名字、版本、来源、许可证（尽量写成 SPDX 标识）、许可证文件；
+- `THIRD-PARTY-LICENSES.md`：同样的清单，后面附每个许可证、NOTICE 文件的全文（相同的文本只附一次）；
+- `files/<包>@<版本>/`：许可证、NOTICE 文件的原样拷贝。上游没放进包里的 NOTICE（Codex）按装上的版本从上游取。
+
+模板流水线用 `deploy/templates/license_check.py` 按 `deploy/templates/license-policy.toml` 检查每个模板：
+
+- **deny**（拦下，模板失败）：托管成网络服务也要开源的（AGPL、SSPL），限制商业托管的（BUSL、Elastic、
+  Commons Clause、非商业的 CC）。
+- **review**（提醒）：GPL、EPL、CDDL 这类。模板只在平台的沙箱里运行、不分发给用户时没有开源义务；将来要是把模板或
+  其中的程序交给用户（下载、私有化部署），就要按它们的条款提供源码。
+- 认不出的（没写许可证、自定义的说法）也提醒，查清楚以后加进 `allow`、`aliases` 或单独登记成例外。
+- **例外**（`[[exception]]`）：已知、单独处理的包，写明原因。现在只有 Claude Agent SDK、Claude Code：Anthropic 的专有软件，
+  按它的商业条款在沙箱里自部署运行，多租户托管须法务确认（[接入说明](agent-integration.md) 2.1 节）。
+
+每个模板的结果（包数、按许可证的分布、要看的包）写成流水线的注解。法务复核时看策略文件的例外和这些提醒；
+商标（产品名不能用 “Claude Code”、“Codex”）和各家的使用条款不在自动检查的范围里。
+
+## 7. 还没做的
 
 - **envd**：Cube 从镜像建模板时镜像里要有 envd（探活端口 49983）。来源（Cube 提供的基础镜像，或从 E2B 的源码编译）
   和 Cube 模板名的对应方式等 2.3 部署集群时确定；到时换 `BASE_IMAGE` 或在 base 阶段加一层。

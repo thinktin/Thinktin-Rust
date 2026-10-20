@@ -1,0 +1,49 @@
+# 沙箱模板里第三方包的许可证策略（WBS 16.5）。模板构建时 deploy/templates/licenses.py 在镜像里生成清单，
+# CI 用 deploy/templates/license_check.py 按这里检查（每个模板都查）。说明见 docs/templates.md 第 6 节。
+#
+# - allow：可以直接用（SPDX 标识，* 通配）。
+# - review：能用，但要法务看过用法——提醒。比如 GPL：模板只在平台的沙箱里运行、不分发给用户时没有开源义务，
+#   将来要是把模板或其中的程序交给用户（下载、私有化部署），就要按 GPL 提供源码。
+# - deny：托管成网络服务也要开源（AGPL、SSPL），或者限制商业托管（BUSL、Elastic、Commons Clause、非商业）——拦下。
+# 不在这三个列表里的（没写许可证、自定义的说法）——提醒，查清楚以后加进 allow、aliases 或 exception。
+# 一个包有几个许可证可选（A OR B）时，按最宽松的算。
+
+allow = [
+  "MIT", "MIT-0", "ISC", "0BSD", "BSD-2-Clause", "BSD-3-Clause", "BSD-3-Clause-Clear", "Apache-2.0",
+  "Unlicense", "CC0-1.0", "CC-BY-3.0", "CC-BY-4.0", "BlueOak-1.0.0", "Python-2.0", "PSF-2.0",
+  "Zlib", "BSL-1.0", "MPL-2.0", "WTFPL", "Artistic-2.0", "LGPL-*", "OFL-1.1", "Unicode-*", "X11",
+  "HPND", "Public-Domain",
+]
+review = ["GPL-*", "EPL-*", "CDDL-*", "EUPL-*", "CC-BY-SA-*", "JSON"]
+deny = ["AGPL-*", "SSPL-*", "BUSL-*", "Elastic-*", "Commons-Clause", "CC-BY-NC-*", "CC-BY-ND-*"]
+
+# 包里常见的非 SPDX 写法（整个表达式，不分大小写）。
+[aliases]
+"Apache 2.0" = "Apache-2.0"
+"Apache License 2.0" = "Apache-2.0"
+"Apache License, Version 2.0" = "Apache-2.0"
+"Apache Software License" = "Apache-2.0"
+"Apache-2" = "Apache-2.0"
+"MIT License" = "MIT"
+"MIT/X11" = "MIT"
+"BSD" = "BSD-3-Clause"
+"BSD License" = "BSD-3-Clause"
+"new BSD License" = "BSD-3-Clause"
+"Python Software Foundation License" = "PSF-2.0"
+"MPL 2.0" = "MPL-2.0"
+"Public Domain" = "Public-Domain"
+"Unlicensed" = "Unlicense"
+
+# 已知、单独登记的例外：不按上面的列表查（照样列在清单里），写明原因。法务复核时看这里。
+[[exception]]
+package = "@anthropic-ai/claude-agent-sdk"
+reason = "Anthropic 专有软件（All rights reserved），按 Anthropic 的商业条款在平台沙箱里自部署运行；多租户托管须法务确认（docs/agent-integration.md 2.1 节）"
+
+[[exception]]
+package = "@anthropic-ai/claude-code"
+reason = "同上：Claude Code 本体"
+
+# 上游没放进包里的 NOTICE：构建时按装上的版本从上游取，放进清单。
+[[notice]]
+package = "@openai/codex"
+url = "https://raw.githubusercontent.com/openai/codex/rust-v{version}/NOTICE"

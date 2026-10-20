@@ -48,6 +48,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: templates
+      - name: License checker self-test
+        run: python3 deploy/templates/license_check.py --self-test
       # 主机上编一次 agent-shim，五个镜像共用（不在每个镜像里各编一遍）。
       - name: Build agent-shim
         run: |
@@ -84,6 +86,12 @@ jobs:
           level, title, body = sys.argv[1:4]
           print(f"::{level} title={esc(title).replace(':', '%3A').replace(',', '%2C')}::{esc(body or title)}")
           PY
+            # 第三方许可清单按策略检查（16.5）：deny 的许可证让这个模板失败，要法务看的写成提醒。
+            docker run --rm --entrypoint cat "$image" /usr/share/doc/thinktin-agent/licenses.json \
+              > "$RUNNER_TEMP/licenses-$agent.json"
+            if ! python3 deploy/templates/license_check.py "$RUNNER_TEMP/licenses-$agent.json"; then
+              failed+=("$agent (licenses)")
+            fi
           done
           docker images --format '{{.Repository}}:{{.Tag}} {{.Size}}' | grep '^thinktin-test/' || true
           [ ${#failed[@]} -eq 0 ] || { echo "failed: ${failed[*]}"; exit 1; }

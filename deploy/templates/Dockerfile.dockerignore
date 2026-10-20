@@ -1,0 +1,8 @@
+# 模板镜像的构建上下文（只对 deploy/templates/Dockerfile 生效）：agent-shim 的源码（Rust 工作区）
+# 和生成许可证清单的脚本、策略。
+*
+!Cargo.toml
+!Cargo.lock
+!crates
+!deploy/templates/licenses.py
+!deploy/templates/license-policy.toml
