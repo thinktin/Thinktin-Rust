@@ -10,6 +10,7 @@ ThinkTin 平台：托管多个开源 agent，用户领养后常驻云端、按�
 - [设备中继](docs/relay.md)：电脑的长连接、电脑工具调用按会话绑定路由、手机和电脑之间的配对审批消息、部署
 - [电脑工具](docs/desktop.md)：agent 用的 `computer_*` 工具、能力令牌和手机签名审批、电脑端的工具服务和审计日志
 - [agent 的沙箱模板](docs/templates.md)：清单里锁定的包、模板镜像的构建、断网冒烟、上架新版本的步骤
+- [第三方许可证](docs/licenses.md)：镜像和 App 里带的许可证原文和清单、许可证策略和 CI 检查、留给法务复核的问题
 - [发布流程](docs/release.md)：版本和镜像、数据库迁移的规则和检查、预发和生产的上线步骤（灰度、全量）、密钥、回滚
 - [工作分解结构（WBS）](docs/wbs.md) · [CSV](docs/wbs.csv)
 - [架构方案 v2](docs/architecture-v2.md) · [讨论记录 2026-10-14](docs/discussion-2026-10-14.md)

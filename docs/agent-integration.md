@@ -47,7 +47,7 @@
 
 **2026-10-14 决定**：Claude 全球提供，不分国内站、海外站；Claude agent 什么 key 都能接（任何厂商的 Anthropic 兼容接口、用户自己配的中转站），上面“接国内厂商模型”“地区政策”两列的风险已知并接受。
 
-依据：code.claude.com/docs/en/legal-and-compliance、/agent-sdk/overview、/llm-gateway，anthropic.com/supported-countries、/legal/commercial-terms；github.com/openai/codex 的 LICENSE、NOTICE，learn.chatgpt.com/docs/config-file/config-reference。条款随时可能更新，上线前由法务复核（16.5）。
+依据：code.claude.com/docs/en/legal-and-compliance、/agent-sdk/overview、/llm-gateway，anthropic.com/supported-countries、/legal/commercial-terms；github.com/openai/codex 的 LICENSE、NOTICE，learn.chatgpt.com/docs/config-file/config-reference。条款随时可能更新，上线前由法务复核（16.5，要复核的问题见 [第三方许可证](licenses.md) 第 6 节）。
 
 ## 3. 结构
 

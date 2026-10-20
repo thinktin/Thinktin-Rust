@@ -46,8 +46,8 @@ deploy/templates/smoke.sh thinktin/agents/claude:0.90.0 claude   # 冒烟
 
 ## 4. 流水线（`.github/workflows/templates.yml`）
 
-- 改了清单、agent-shim、模板或冒烟脚本，推到 `main`、`backend-core` 时：主机上编一次 agent-shim，五个 agent
-  逐个构建、冒烟，不推送。
+- 改了清单、agent-shim、模板、冒烟脚本或许可证策略，推到 `main`、`backend-core` 时：主机上编一次 agent-shim，
+  五个 agent 逐个构建、冒烟，再按许可证策略检查镜像里的第三方组件（[第三方许可证](licenses.md)），不推送。
 - 打 `v*` 标签（和服务端一起发布）时：构建、冒烟通过后推到镜像仓库（前缀同服务端镜像，见[发布流程](release.md)）：
   `agents/<id>:<agent 版本>`，另打一个 `agents/<id>:<agent 版本>-<平台版本>`（模板里的 agent-shim 是这个平台版本的，
   平台版本之间 shim 协议有变化时据此区分）。镜像摘要写在运行的摘要页里。
@@ -55,7 +55,9 @@ deploy/templates/smoke.sh thinktin/agents/claude:0.90.0 claude   # 冒烟
 
 ## 5. 上架一个新版本
 
-1. 看上游的发布说明和许可证有没有变（16.5），新版本有没有新的联网行为、配置项要关（[加固基线](agent-hardening.md)）。
+1. 看上游的发布说明和许可证有没有变（每周的上游检查会报许可证变化，[第三方许可证](licenses.md) 第 5 节），新版本有没有
+   新的联网行为、配置项要关（[加固基线](agent-hardening.md)）。`deploy/templates/notices/<id>/` 里补的上游原文是按旧版本
+   核对的，要按那里 `sources.toml` 的说明重新核对、改版本号（不改 CI 会报错）。
 2. 旧清单移到 `crates/catalog/manifests/archive/<id>-<旧版本>.toml`、登记进 `ARCHIVED`（锁在旧版本上的实例照常跑、
    能回滚）；改新清单的 `agent.version`、`runtime.template`、`[install]`。
 3. 推上去，CI 和模板流水线都绿（清单校验、shim 测试、断网冒烟）。
