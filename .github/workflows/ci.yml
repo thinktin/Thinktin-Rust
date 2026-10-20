@@ -61,6 +61,12 @@ jobs:
         run: |
           git diff --exit-code -- Cargo.lock > "$RUNNER_TEMP/lock.diff" \
             || { python3 tools/ci/annotate.py lockfile < "$RUNNER_TEMP/lock.diff"; exit 1; }
+      # 第三方许可证（WBS 16.5，docs/licenses.md）：发出去的每个 Rust 程序依赖的 crate 都按
+      # tools/licenses/policy.toml 检查，问题写成注解。模板镜像里的 npm、Python 包在 templates.yml 里查。
+      - name: Licenses
+        run: |
+          python3 tools/licenses/licenses.py self-test
+          tools/licenses/rust.sh "$RUNNER_TEMP/licenses"
       - name: Test
         id: test
         run: |

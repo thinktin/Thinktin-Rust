@@ -1,0 +1,92 @@
+# 许可证策略（WBS 16.5，说明见 docs/licenses.md）。tools/licenses/licenses.py check 按这里检查清单。
+#
+# 判定：SPDX 表达式里 OR 取对我们最有利的一支（多许可证的包我们选能用的那个），AND 取最严的。
+# 每个许可证落在三类之一：
+# - allow：放行。宽松许可证，和只管改动过的文件的弱 copyleft（MPL、EPL、CDDL）。
+# - deny：直接报错。网络 copyleft（用户经网络使用就要向用户公开源码：AGPL、SSPL、OSL、EUPL、RPL、CPAL），
+#   和限制商用、托管的“源码可见”许可证（BUSL、Elastic、PolyForm、Commons Clause、CC 的非商用条款）。
+# - 其他（GPL、专有、没有许可证、认不出来）：在下面 [[exception]] 逐个登记、写明理由才放行，否则报错。
+#   登记按“生态 + 包名 + 版本 + 许可证”匹配：上游换了许可证，登记就对不上，CI 报错，要人重新看。
+#
+# 名字可以用通配符（* ?），不分大小写。
+
+allow = [
+  # 宽松
+  "MIT", "MIT-0", "X11", "Apache-2.0", "BSD-1-Clause", "BSD-2-Clause", "BSD-2-Clause-Patent", "BSD-3-Clause",
+  "BSD-3-Clause-Clear", "LicenseRef-BSD-Unspecified", "ISC", "0BSD", "Zlib", "zlib-acknowledgement", "BSL-1.0",
+  "Unlicense", "CC0-1.0", "LicenseRef-Public-Domain", "WTFPL", "BlueOak-1.0.0", "Python-2.0", "Python-2.0.1",
+  "PSF-2.0", "HPND", "MIT-CMU", "UPL-1.0", "NCSA", "PostgreSQL", "curl", "OpenSSL", "ICU", "Unicode-3.0", "Unicode-DFS-2015",
+  "Unicode-DFS-2016", "CDLA-Permissive-2.0", "Artistic-2.0", "ZPL-2.1", "AFL-2.1", "AFL-3.0", "MS-PL", "W3C",
+  "W3C-20150513", "bzip2-1.0.6", "libpng-2.0", "IJG", "Info-ZIP", "MulanPSL-2.0", "ECL-2.0",
+  # 文档、数据、字体（随包带的图标、文档）
+  "CC-BY-3.0", "CC-BY-4.0", "OFL-1.1",
+  # 弱 copyleft：只要求改过的文件（MPL、EPL、CDDL）或库本身（LGPL）开源；我们不改上游代码。
+  "MPL-2.0", "MPL-1.1", "EPL-1.0", "EPL-2.0", "CDDL-1.0", "CDDL-1.1",
+  "LGPL-2.0-only", "LGPL-2.0-or-later", "LGPL-2.1-only", "LGPL-2.1-or-later", "LGPL-3.0-only", "LGPL-3.0-or-later",
+  "LGPL-2.1", "LGPL-2.1+", "LGPL-3.0", "LGPL-3.0+", "LicenseRef-LGPL-Unspecified",
+]
+
+deny = [
+  "AGPL-*", "LicenseRef-AGPL-*", "SSPL-*", "OSL-*", "EUPL-*", "RPL-*", "CPAL-*",
+  "BUSL-*", "Elastic-*", "PolyForm-*", "Commons-Clause", "LicenseRef-Commons-Clause",
+  "CC-BY-NC-*", "LicenseRef-NonCommercial",
+]
+
+# Rust 的依赖静态链接进我们的程序：LGPL 要求用户能换掉库重新链接，静态链接做不到，所以要单独看。
+[ecosystem.cargo]
+review = ["LGPL-*", "LicenseRef-LGPL-*"]
+
+# Debian main 的包都是自由软件（DFSG），copyright 文件里一个包常列好几个许可证（测试文件、文档各不相同），
+# 不逐个判定，只拦禁止名单里的。
+[ecosystem.deb]
+mode = "deny-only"
+
+# ---------------------------------------------------------------------------
+# 每个 agent：清单 agent.license（App 的 agent 目录里显示的）以哪个包为准。
+# license_of = "<生态>:<包名>"。检查时这个包的许可证（登记过的例外用它的 as）要和 agent.license 一样。
+
+[agents.claude]
+license_of = "npm:@anthropic-ai/claude-agent-sdk"
+
+[agents.codex]
+license_of = "npm:@agentclientprotocol/codex-acp"
+
+[agents.pi]
+license_of = "npm:@earendil-works/pi-coding-agent"
+
+[agents.openclaw]
+license_of = "npm:openclaw"
+
+[agents.hermes]
+license_of = "pypi:hermes-agent"
+
+# ---------------------------------------------------------------------------
+# 登记的例外。字段：ecosystem、name、version（可省，默认任何版本）、license（扫描出来的许可证；
+# 认不出时是包里声明的原文，比如 "SEE LICENSE IN README.md"）、text_sha256（可省：许可证原文的 SHA-256，
+# 写了的话原文一改登记就失效，专有组件都写上）、as（可省：给这个许可证起的名字，清单 agent.license 用它）、
+# reason（为什么能用、谁确认的）、agents（可省：只在这些 agent 的镜像里出现；写了的话，镜像里找不到这一条
+# 也报错，防止上游换了包名后登记悄悄失效）。
+
+# Claude Agent SDK 和它带的 Claude Code 二进制（按平台分包，sdk-linux-x64 等）：Anthropic 专有。
+# LICENSE.md 全文：“© Anthropic PBC. All rights reserved. Use is subject to the Legal Agreements outlined here:
+# https://code.claude.com/docs/en/legal-and-compliance.”
+# 那个页面允许在托管沙箱里运行 Claude Code，条件（2026-10-20 核对，docs/agent-integration.md 2.1、docs/licenses.md）：
+# 接受 Anthropic 商业条款；二进制不改，不去掉、不限制它自带的登录方式（Claude 账号、用户自己的 API key）；
+# 平台不代付、不转售、不居间 Claude 用量，每个用户用自己的凭证。上线前法务复核（16.5 人的部分）。
+[[exception]]
+ecosystem = "npm"
+name = "@anthropic-ai/claude-agent-sdk"
+license = "SEE LICENSE IN README.md"
+text_sha256 = "8ce94b9478bb9868f9641f818e06cd722fbe55d4c22e2d2ed11971b20146173a"
+as = "LicenseRef-Anthropic-Commercial"
+reason = "Anthropic 专有，按 legal-and-compliance 页面的条件在托管沙箱里运行（法务复核前不上线）"
+agents = ["claude"]
+
+[[exception]]
+ecosystem = "npm"
+name = "@anthropic-ai/claude-agent-sdk-linux-*"
+license = "SEE LICENSE IN LICENSE.md"
+text_sha256 = "8ce94b9478bb9868f9641f818e06cd722fbe55d4c22e2d2ed11971b20146173a"
+as = "LicenseRef-Anthropic-Commercial"
+reason = "Claude Code 二进制本体，同上；里面静态链接的第三方组件的原文见 deploy/templates/notices/claude"
+agents = ["claude"]

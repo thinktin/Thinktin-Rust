@@ -9,3 +9,6 @@ deploy
 tools
 **/*.md
 !crates/**/*.md
+# 许可证清单（16.5）：服务端镜像和模板镜像构建时都要用。
+!tools/licenses
+!deploy/templates/notices

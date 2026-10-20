@@ -1,7 +1,7 @@
 # agent 的沙箱模板（WBS 6.8，说明见 docs/templates.md）。
 #
-# - 改了清单、agent-shim、模板、冒烟脚本（推到 main、backend-core）：每个内置 agent 构建模板镜像，
-#   在断网的容器里冒烟。不推送。
+# - 改了清单、agent-shim、模板、冒烟脚本、许可证策略（推到 main、backend-core）：每个内置 agent 构建模板镜像，
+#   在断网的容器里冒烟，按许可证策略检查镜像里的第三方组件（16.5，docs/licenses.md）。不推送。
 # - 打 v* 标签：同样构建、冒烟，再推到镜像仓库：<前缀>/agents/<id>:<agent 版本>，另打一个带平台版本的
 #   标签 <agent 版本>-<平台版本>（模板里的 agent-shim 是这个平台版本的）。前缀同 release.yml。
 # - 每周一：看上游有没有新版本，写在运行的摘要页里。
@@ -17,6 +17,7 @@ on:
       - deploy/templates/**
       - tools/smoke/**
       - tools/mock-llm/**
+      - tools/licenses/**
       - .github/workflows/templates.yml
   schedule:
     - cron: "17 1 * * 1"
@@ -48,12 +49,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: templates
-      # 主机上编一次 agent-shim，五个镜像共用（不在每个镜像里各编一遍）。
+      # 主机上编一次 agent-shim，五个镜像共用（不在每个镜像里各编一遍），连同它依赖的 crate 的许可证清单。
       - name: Build agent-shim
         run: |
           cargo build --release --locked -p agent-shim
           mkdir -p "$RUNNER_TEMP/shim/out"
           cp target/release/agent-shim "$RUNNER_TEMP/shim/out/"
+          python3 tools/licenses/licenses.py cargo -p agent-shim --subject agent-shim \
+            --target "$(rustc -vV | sed -n 's/^host: //p')" --out "$RUNNER_TEMP/shim/out/licenses"
       - name: Build and smoke-test the templates
         env:
           SHIM_DIR: ${{ runner.temp }}/shim
@@ -74,6 +77,13 @@ jobs:
               failed+=("$agent")
             fi
             echo "$out"
+            # 镜像里的第三方许可证清单（构建时生成）按策略检查；问题写成注解，汇总写进摘要页。
+            docker run --rm "$image" cat /usr/share/thinktin/licenses/inventory.json > "$RUNNER_TEMP/licenses-$agent.json"
+            if ! python3 tools/licenses/licenses.py check "$RUNNER_TEMP/licenses-$agent.json" \
+                --manifest "crates/catalog/manifests/$agent.toml"; then
+              result="$result, licenses FAILED"
+              failed+=("$agent (licenses)")
+            fi
             echo "::endgroup::"
             # 结果写成注解，在 PR 页面和接口里直接看得到。
             summary=$(grep -E '^(agent|reply|requests|stop):|\[(ok|FAIL)\]' <<< "$out" | head -20 || true)
