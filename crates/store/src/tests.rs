@@ -2481,6 +2481,37 @@ async fn im_channels_are_per_user_rate_limited_and_settle_without_spending_attem
         0,
         "rows in flight are left to their holder"
     );
+    // 失败重试中的排在新条目后面领：出故障的那一家占不满发送的名额。
+    w.retry_outbox(
+        heads[1].id,
+        "n1",
+        "timed out",
+        Utc::now() - chrono::Duration::minutes(1),
+    )
+    .await
+    .unwrap();
+    let third = ImChannelId::new();
+    w.enqueue_outbox(
+        alice,
+        &NewOutboxItem {
+            kind: "im".into(),
+            payload: json!({ "channel": third, "message": {} }),
+            dedupe_key: None,
+            available_at: None,
+        },
+    )
+    .await
+    .unwrap();
+    let first = w
+        .claim_im_outbox("n1", Duration::from_secs(60), 1)
+        .await
+        .unwrap();
+    assert_eq!(first[0].payload["channel"], json!(third));
+    let next = w
+        .claim_im_outbox("n1", Duration::from_secs(60), 1)
+        .await
+        .unwrap();
+    assert_eq!((next[0].id, next[0].attempts), (heads[1].id, 2));
     w.commit().await.unwrap();
 
     let mut tx = db.tenant(alice).await.unwrap();

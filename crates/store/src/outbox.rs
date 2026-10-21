@@ -217,6 +217,7 @@ impl Tx<Worker> {
 
     /// 领 IM 渠道的出箱条目（10.5）：每个渠道只领它最早的、还没发完的那一条（还没到时间、正在发的，后面的都等着），
     /// 消息按顺序到群里；限流推后的条目一个渠道只有一条在等，不会到点一起涌回来。
+    /// 没试过的先领，失败重试中的排在后面：某一家出故障时，它那些反复超时的条目占不满发送的名额。
     pub async fn claim_im_outbox(
         &mut self,
         owner: &str,
@@ -232,7 +233,7 @@ impl Tx<Worker> {
                             AND NOT EXISTS (SELECT 1 FROM outbox p \
                                             WHERE p.kind = 'im' AND p.delivered_at IS NULL \
                                               AND p.payload->>'channel' = o.payload->>'channel' AND p.id < o.id) \
-                          ORDER BY o.id LIMIT $3 FOR UPDATE SKIP LOCKED) \
+                          ORDER BY o.attempts > 0, o.id LIMIT $3 FOR UPDATE SKIP LOCKED) \
              RETURNING id, user_id, kind, payload, attempts, created_at",
         )
         .bind(owner)

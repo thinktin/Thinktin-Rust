@@ -213,6 +213,11 @@ pub async fn notify_tenant(t: &mut Tx<Tenant>, notice: &Notice) -> store::Result
     Ok(())
 }
 
+/// 等到要停下来（发送方没了也算）。
+async fn stopping(stop: &mut tokio::sync::watch::Receiver<bool>) {
+    let _ = stop.wait_for(|s| *s).await;
+}
+
 /// 投递器领哪些出箱条目。生产环境推送和 IM 各一个投递器（各自的循环），测试里一个投递器两种都领。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Claims {
@@ -313,30 +318,15 @@ impl Dispatcher {
         self
     }
 
+    /// 领一批、发完再返回（测试用；生产环境的 [`Dispatcher::run`] 里 IM 不等一批发完就接着领）。
     pub async fn tick(&self) -> store::Result<DispatchReport> {
         let mut report = DispatchReport::default();
         let mut outcomes = Vec::new();
         if self.cfg.claims != Claims::Im {
-            let mut w = self.db.worker().await?;
-            let items = w
-                .claim_outbox_of(
-                    &self.node_id,
-                    self.cfg.lock_for,
-                    self.cfg.batch,
-                    Some(&[PUSH]),
-                )
-                .await?;
-            w.commit().await?;
-            for item in items {
-                outcomes.push(self.handle(item).await?);
-            }
+            outcomes.extend(self.push_round().await?);
         }
         if self.cfg.claims != Claims::Push {
-            let mut w = self.db.worker().await?;
-            let items = w
-                .claim_im_outbox(&self.node_id, self.cfg.lock_for, self.cfg.batch)
-                .await?;
-            w.commit().await?;
+            let items = self.claim_im(self.cfg.batch).await?;
             let done: Vec<store::Result<Outcome>> =
                 futures_util::stream::iter(items.into_iter().map(|i| self.handle(i)))
                     .buffer_unordered(self.cfg.concurrency.max(1))
@@ -355,6 +345,34 @@ impl Dispatcher {
             }
         }
         Ok(report)
+    }
+
+    /// 领一批设备推送，按顺序发完。
+    async fn push_round(&self) -> store::Result<Vec<Outcome>> {
+        let mut w = self.db.worker().await?;
+        let items = w
+            .claim_outbox_of(
+                &self.node_id,
+                self.cfg.lock_for,
+                self.cfg.batch,
+                Some(&[PUSH]),
+            )
+            .await?;
+        w.commit().await?;
+        let mut outcomes = Vec::with_capacity(items.len());
+        for item in items {
+            outcomes.push(self.handle(item).await?);
+        }
+        Ok(outcomes)
+    }
+
+    async fn claim_im(&self, limit: i64) -> store::Result<Vec<OutboxItem>> {
+        let mut w = self.db.worker().await?;
+        let items = w
+            .claim_im_outbox(&self.node_id, self.cfg.lock_for, limit)
+            .await?;
+        w.commit().await?;
+        Ok(items)
     }
 
     /// 投递一条并记下结果。
@@ -736,20 +754,77 @@ impl Dispatcher {
     }
 
     pub async fn run(&self, stop: impl Future<Output = ()>) {
-        tokio::pin!(stop);
+        let (stopping, stopped) = tokio::sync::watch::channel(false);
+        info!("outbox dispatcher started");
+        let signal = async {
+            stop.await;
+            let _ = stopping.send(true);
+        };
+        tokio::join!(
+            signal,
+            self.push_loop(stopped.clone()),
+            self.im_loop(stopped)
+        );
+        info!("outbox dispatcher stopped");
+    }
+
+    fn ticker(&self) -> tokio::time::Interval {
         let mut tick = tokio::time::interval(self.cfg.tick);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        info!("outbox dispatcher started");
+        tick
+    }
+
+    async fn push_loop(&self, mut stop: tokio::sync::watch::Receiver<bool>) {
+        if self.cfg.claims == Claims::Im {
+            return;
+        }
+        let mut tick = self.ticker();
         loop {
             tokio::select! {
-                () = &mut stop => break,
+                () = stopping(&mut stop) => break,
                 _ = tick.tick() => {
-                    if let Err(e) = self.tick().await {
+                    if let Err(e) = self.push_round().await {
                         error!(error = %e, "outbox dispatch failed");
                     }
                 }
             }
         }
-        info!("outbox dispatcher stopped");
+    }
+
+    /// IM：最多同时发 `concurrency` 条，发完一条下一轮就补领一条，不等同一批里最慢的那条（某一家的群机器人
+    /// 连不上时，请求要等到超时，别的渠道不能跟着等）。重试中的条目排在新条目后面领（见 `claim_im_outbox`）。
+    async fn im_loop(&self, mut stop: tokio::sync::watch::Receiver<bool>) {
+        if self.cfg.claims == Claims::Push {
+            return;
+        }
+        let max = self.cfg.concurrency.max(1);
+        let mut tick = self.ticker();
+        let mut sending = futures_util::stream::FuturesUnordered::new();
+        loop {
+            tokio::select! {
+                () = stopping(&mut stop) => break,
+                Some(done) = sending.next() => {
+                    if let Err(e) = done {
+                        error!(error = %e, "im delivery failed");
+                    }
+                }
+                _ = tick.tick() => {
+                    let free = max.saturating_sub(sending.len());
+                    if free > 0 {
+                        let limit = i64::try_from(free).unwrap_or(i64::MAX).min(self.cfg.batch);
+                        match self.claim_im(limit).await {
+                            Ok(items) => sending.extend(items.into_iter().map(|i| self.handle(i))),
+                            Err(e) => error!(error = %e, "outbox dispatch failed"),
+                        }
+                    }
+                }
+            }
+        }
+        // 停下来时把正在发的发完（请求有超时）：发出去了却没记下，锁过期后会再发一遍。
+        while let Some(done) = sending.next().await {
+            if let Err(e) = done {
+                error!(error = %e, "im delivery failed");
+            }
+        }
     }
 }

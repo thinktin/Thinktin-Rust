@@ -22,6 +22,8 @@ type Sent = (ImVendor, String, Option<String>, ImMessage);
 #[derive(Default)]
 struct Recording {
     outcomes: Mutex<HashMap<String, PushOutcome>>,
+    /// 发到这个 token 要等这么久（厂商慢、连不上时等到超时）。
+    delays: Mutex<HashMap<String, Duration>>,
     sent: Mutex<Vec<Sent>>,
 }
 
@@ -38,6 +40,10 @@ impl Recording {
 impl ImSender for Recording {
     async fn send(&self, hook: &ImHook, message: &ImMessage) -> PushOutcome {
         let token = hook.token.as_str().to_owned();
+        let delay = self.delays.lock().unwrap().get(&token).copied();
+        if let Some(delay) = delay {
+            tokio::time::sleep(delay).await;
+        }
         self.sent.lock().unwrap().push((
             hook.vendor,
             token.clone(),
@@ -836,4 +842,88 @@ async fn push_and_im_dispatchers_claim_their_own_rows_and_channels_go_in_paralle
         .unwrap();
     assert_eq!(im.tick().await.unwrap().delivered, 2);
     let _ = (a, b);
+}
+
+#[tokio::test]
+async fn a_slow_bot_does_not_hold_up_other_channels() {
+    let Some(t) = TestDb::new().await else { return };
+    let u = user(&t, "+8613800000040").await;
+    let slow = channel(&t, u, ImVendor::Lark, "lark-blackhole-1", "", ImEvent::ALL).await;
+    let fast = channel(
+        &t,
+        u,
+        ImVendor::Feishu,
+        "feishu-fast-0001",
+        "",
+        ImEvent::ALL,
+    )
+    .await;
+    let rec = Arc::new(Recording::default());
+    rec.delays
+        .lock()
+        .unwrap()
+        .insert("lark-blackhole-1".into(), Duration::from_secs(3));
+    let mut w = t.db.worker().await.unwrap();
+    let mut msg = notice(PushKind::Info, "x").push(None, Locale::ZhCn);
+    msg.ttl = None;
+    w.enqueue_outbox(u, &im_item(slow, &msg, None))
+        .await
+        .unwrap();
+    for _ in 0..2 {
+        w.enqueue_outbox(u, &im_item(fast, &msg, None))
+            .await
+            .unwrap();
+    }
+    w.commit().await.unwrap();
+    let d = Arc::new(
+        Dispatcher::new(
+            t.db.clone(),
+            "node-a",
+            DispatcherConfig {
+                tick: Duration::from_millis(50),
+                claims: Claims::Im,
+                concurrency: 4,
+                ..Default::default()
+            },
+        )
+        .with_im(rec.clone(), kms()),
+    );
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let running = tokio::spawn({
+        let d = d.clone();
+        async move {
+            d.run(async {
+                let _ = stopped.await;
+            })
+            .await
+        }
+    });
+    let delivered = |ch: ImChannelId| {
+        let pool = t.db.pool().clone();
+        async move {
+            let n: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM outbox WHERE kind = 'im' AND delivered_at IS NOT NULL \
+                 AND payload->>'channel' = $1",
+            )
+            .bind(ch.to_string())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            n
+        }
+    };
+    // 慢的那条还在发，快的渠道两条都发完了（以前要等同一批里最慢的那条发完才领下一批）。
+    let started = std::time::Instant::now();
+    while delivered(fast).await < 2 {
+        assert!(
+            started.elapsed() < Duration::from_millis(2500),
+            "the fast channel waited for the slow one"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(delivered(slow).await, 0);
+    // 停下来时把正在发的发完。
+    stop.send(()).unwrap();
+    running.await.unwrap();
+    assert_eq!(delivered(slow).await, 1);
 }

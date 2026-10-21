@@ -145,7 +145,7 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
             ..DispatcherConfig::default()
         },
     );
-    // IM：每个渠道一次领一条，几个渠道同时发；一批少领一些，发得慢时锁也不会过期。
+    // IM：每个渠道一次领一条，最多 8 条同时在发，发完一条补领一条（不等同一批里最慢的）。
     let mut im_dispatcher = Dispatcher::new(
         db.clone(),
         node_id,
