@@ -1346,3 +1346,53 @@ async fn ffi_device_messages() {
         "pair_confirm"
     );
 }
+
+#[tokio::test]
+async fn ffi_live_activities() {
+    let Some(e) = env().await else { return };
+    let (c, _store, _d) = ffi_login(&e, "13800138520", "ios", "iPhone").await;
+    let inst = c.adopt("claude".into(), "助手".into(), None).await.unwrap();
+    let run = c
+        .create_run(inst.id.clone(), "整理邮件".into())
+        .await
+        .unwrap();
+    let token = "ab".repeat(40);
+    c.register_live_activity(run.id.clone(), token.clone())
+        .await
+        .unwrap();
+    assert!(matches!(
+        c.register_live_activity(run.id.clone(), "nope".into())
+            .await,
+        Err(ClientError::Api { status: 422, .. })
+    ));
+    // 后台领得到，带着登记的令牌。
+    let mut w = e.t.db.worker().await.unwrap();
+    let due = w
+        .claim_live_activities(
+            "test",
+            std::time::Duration::from_secs(60),
+            10,
+            std::time::Duration::ZERO,
+            std::time::Duration::ZERO,
+        )
+        .await
+        .unwrap();
+    w.rollback().await.unwrap();
+    assert_eq!(due.len(), 1);
+    assert_eq!(due[0].run_id.to_string(), run.id);
+    assert_eq!(due[0].push_token.as_deref(), Some(token.as_str()));
+    c.end_live_activity(run.id.clone()).await.unwrap();
+
+    c.set_live_activity_start_token(Some("cd".repeat(40)))
+        .await
+        .unwrap();
+    c.set_live_activity_start_token(None).await.unwrap();
+    // Android 上没有实时活动。
+    let (droid, _s, _d2) = ffi_login(&e, "13800138521", "android", "Pixel").await;
+    assert!(matches!(
+        droid
+            .set_live_activity_start_token(Some("cd".repeat(40)))
+            .await,
+        Err(ClientError::Api { status: 422, .. })
+    ));
+}

@@ -653,6 +653,19 @@ impl Api {
         .await
     }
 
+    /// 这台设备的推送开启令牌（10.6，ActivityKit 的 `pushToStartTokenUpdates`）：`Some` 登记（用户打开了
+    /// “计划运行时显示实时活动”），`None` 清掉。
+    pub async fn set_live_activity_start_token(&self, token: Option<&str>) -> Result<()> {
+        let path = "/v1/devices/current/live-activity-start";
+        match token {
+            Some(token) => {
+                self.empty(Method::PUT, path, Some(&json!({ "token": token })))
+                    .await
+            }
+            None => self.empty(Method::DELETE, path, None).await,
+        }
+    }
+
     /// 全部停止（4.6）：取消所有运行、吊销全部运行授权、暂停全部计划。
     pub async fn stop_all(&self) -> Result<Stopped> {
         self.json(Method::POST, "/v1/me/stop-all", Some(&json!({})))
@@ -860,6 +873,27 @@ impl Api {
         self.json(
             Method::POST,
             &format!("/v1/runs/{id}/cancel?tree={tree}"),
+            None,
+        )
+        .await
+    }
+
+    /// 这个运行在这台设备上开了实时活动（10.6），或者远程开启的那个拿到了令牌：登记它的推送令牌
+    /// （ActivityKit 的 `pushTokenUpdates`）。令牌变了再调一次。
+    pub async fn register_live_activity(&self, id: RunId, token: &str) -> Result<()> {
+        self.empty(
+            Method::PUT,
+            &format!("/v1/runs/{id}/live-activity"),
+            Some(&json!({ "token": token })),
+        )
+        .await
+    }
+
+    /// 这个运行的实时活动关掉了（用户划掉了、App 自己结束了）：后台不再推送。
+    pub async fn end_live_activity(&self, id: RunId) -> Result<()> {
+        self.empty(
+            Method::DELETE,
+            &format!("/v1/runs/{id}/live-activity"),
             None,
         )
         .await

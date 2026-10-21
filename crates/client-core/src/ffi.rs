@@ -1405,6 +1405,13 @@ impl ThinktinClient {
             .await
     }
 
+    /// 推送开启令牌（10.6，ActivityKit 的 `pushToStartTokenUpdates`，十六进制）：用户打开“计划运行时显示实时活动”时
+    /// 登记，计划到点开始的运行就在这台 iPhone 上远程开启实时活动；传 nil 清掉。只有 iPhone、iPad 能登记。
+    pub async fn set_live_activity_start_token(&self, token: Option<String>) -> Result<()> {
+        self.run(|c| async move { c.api.set_live_activity_start_token(token.as_deref()).await })
+            .await
+    }
+
     /// 全部停止（4.6）：取消所有运行、吊销全部运行授权、暂停全部计划。
     /// 之后在实例上发起运行、恢复计划时自动重新授权。
     pub async fn stop_all(&self) -> Result<StopAllResult> {
@@ -1611,6 +1618,21 @@ impl ThinktinClient {
     pub async fn cancel_run(&self, run_id: String, whole_tree: bool) -> Result<Run> {
         let id: d::RunId = parse(&run_id, "run")?;
         self.run(|c| async move { Ok(c.api.cancel_run(id, whole_tree).await?.into()) })
+            .await
+    }
+
+    /// 这个运行开了实时活动（10.6），或者远程开启的拿到了令牌：登记它的推送令牌（ActivityKit 的
+    /// `pushTokenUpdates`，十六进制），之后运行的状态、步数变了、结束了，后台推送更新。令牌变了再调一次。
+    pub async fn register_live_activity(&self, run_id: String, token: String) -> Result<()> {
+        let id: d::RunId = parse(&run_id, "run")?;
+        self.run(|c| async move { c.api.register_live_activity(id, &token).await })
+            .await
+    }
+
+    /// 这个运行的实时活动关掉了（用户划掉了、App 自己结束了）：后台不再推送。
+    pub async fn end_live_activity(&self, run_id: String) -> Result<()> {
+        let id: d::RunId = parse(&run_id, "run")?;
+        self.run(|c| async move { c.api.end_live_activity(id).await })
             .await
     }
 
