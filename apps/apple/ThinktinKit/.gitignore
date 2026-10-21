@@ -1,0 +1,6 @@
+# SwiftPM 构建产物
+.build/
+.swiftpm/
+/Packages
+*.xcodeproj
+xcuserdata/
