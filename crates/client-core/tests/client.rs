@@ -929,3 +929,75 @@ async fn im_channels_round_trip() {
     api.delete_im_channel(ch.id).await.unwrap();
     assert!(api.im_channels().await.unwrap().is_empty());
 }
+
+/// 11.7：设备列表和吊销、改昵称、注销账号（经 UniFFI 的客户端）。
+async fn ffi_login(
+    e: &Env,
+    phone: &str,
+    platform: &str,
+    device: &str,
+) -> (
+    Arc<ffi::ThinktinClient>,
+    Arc<MemorySessionStore>,
+    tempfile::TempDir,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(MemorySessionStore::default());
+    let c = ffi::ThinktinClient::new(
+        ffi::ClientConfig {
+            base_url: e.base.clone(),
+            cache_path: Some(dir.path().join("c.db").display().to_string()),
+            platform: platform.into(),
+            device_name: device.into(),
+            timeout_secs: 10,
+        },
+        store.clone(),
+    )
+    .unwrap();
+    c.send_code(phone.into()).await.unwrap();
+    let code = e.sms.last_code(&format!("+86{phone}")).unwrap();
+    c.login(phone.into(), code, None, None).await.unwrap();
+    (c, store, dir)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ffi_account_and_devices() {
+    let Some(e) = env().await else { return };
+    let (phone, _ps, _pd) = ffi_login(&e, "13800138507", "ios", "iPhone").await;
+    let (laptop, _ls, _ld) = ffi_login(&e, "13800138507", "macos", "MacBook").await;
+
+    let me = phone.update_profile(Some("小明".into())).await.unwrap();
+    assert_eq!(me.display_name.as_deref(), Some("小明"));
+    assert_eq!(phone.update_profile(None).await.unwrap().display_name, None);
+
+    let devices = phone.devices().await.unwrap();
+    assert_eq!(devices.len(), 2);
+    let mine = devices.iter().find(|d| d.current).unwrap();
+    assert_eq!(
+        (mine.platform.as_str(), mine.name.as_str()),
+        ("ios", "iPhone")
+    );
+    let mac = devices.iter().find(|d| !d.current).unwrap();
+    assert_eq!(mac.platform, "macos");
+    assert!(matches!(
+        phone.revoke_device("not-an-id".into()).await,
+        Err(ClientError::InvalidArgument { .. })
+    ));
+    phone.revoke_device(mac.id.clone()).await.unwrap();
+    assert!(matches!(laptop.me().await, Err(ClientError::SignedOut)));
+    assert_eq!(phone.devices().await.unwrap().len(), 1);
+
+    // 注销：验证码发到自己的手机号；错的码不行；成功后本地也退出登录。
+    phone.send_self_code("delete_account".into()).await.unwrap();
+    assert!(matches!(
+        phone.send_self_code("nonsense".into()).await,
+        Err(ClientError::Api { status: 422, .. })
+    ));
+    let code = e.sms.last_code("+8613800138507").unwrap();
+    let wrong = if code == "000000" { "111111" } else { "000000" };
+    assert!(phone.delete_account(wrong.into()).await.is_err());
+    assert!(phone.signed_in(), "a wrong code changes nothing");
+    phone.delete_account(code).await.unwrap();
+    assert!(!phone.signed_in());
+    assert!(phone.cached_instances().unwrap().is_empty());
+}

@@ -83,6 +83,38 @@ impl From<d::User> for User {
     }
 }
 
+/// 登录着的一台设备（设置里的“登录设备”）。
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct DeviceInfo {
+    pub id: String,
+    /// ios、android、macos……
+    pub platform: String,
+    pub name: String,
+    pub push_channel: Option<String>,
+    /// 是不是正在用的这台。
+    pub current: bool,
+    /// 电脑连着设备中继（14.1）；手机总是 false。
+    pub online: bool,
+    pub created_at_ms: i64,
+    pub last_seen_at_ms: i64,
+}
+
+impl From<api::DeviceView> for DeviceInfo {
+    fn from(v: api::DeviceView) -> Self {
+        let d = v.device;
+        Self {
+            id: d.id.to_string(),
+            platform: d.platform.as_str().into(),
+            name: d.name,
+            push_channel: d.push_channel.map(|c| c.as_str().into()),
+            current: v.current,
+            online: v.online,
+            created_at_ms: ms(d.created_at),
+            last_seen_at_ms: ms(d.last_seen_at),
+        }
+    }
+}
+
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct LoginResult {
     pub user: User,
@@ -1079,6 +1111,40 @@ impl ThinktinClient {
     /// 用户在 App 里换语言时调一次。
     pub async fn set_locale(&self, locale: String) -> Result<User> {
         self.run(|c| async move { Ok(c.api.set_locale(&locale).await?.into()) })
+            .await
+    }
+
+    /// 改昵称；传 `None` 清掉。
+    pub async fn update_profile(&self, display_name: Option<String>) -> Result<User> {
+        self.run(|c| async move { Ok(c.api.update_profile(display_name.as_deref()).await?.into()) })
+            .await
+    }
+
+    /// 登录着的设备，最近活跃的在前。
+    pub async fn devices(&self) -> Result<Vec<DeviceInfo>> {
+        self.run(
+            |c| async move { Ok(c.api.devices().await?.into_iter().map(Into::into).collect()) },
+        )
+        .await
+    }
+
+    /// 吊销一台设备：它的登录会话立即失效（吊销当前这台等于退出登录）。
+    pub async fn revoke_device(&self, device_id: String) -> Result<()> {
+        let id: d::DeviceId = parse(&device_id, "device")?;
+        self.run(|c| async move { c.api.revoke_device(id).await })
+            .await
+    }
+
+    /// 给自己的手机号发验证码：`purpose` 是 `delete_account`（注销）或 `change_phone`。
+    pub async fn send_self_code(&self, purpose: String) -> Result<()> {
+        self.run(|c| async move { c.api.send_self_code(&purpose).await })
+            .await
+    }
+
+    /// 注销账号（16.4）：用 `send_self_code("delete_account")` 发来的验证码确认。内容全部删除、不能恢复；
+    /// 成功后本地的登录状态和缓存一起清掉。
+    pub async fn delete_account(&self, code: String) -> Result<()> {
+        self.run(|c| async move { c.delete_account(&code).await })
             .await
     }
 

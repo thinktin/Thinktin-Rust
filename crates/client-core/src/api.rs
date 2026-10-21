@@ -585,6 +585,44 @@ impl Api {
             .await
     }
 
+    /// 改昵称；`None` 清掉。
+    pub async fn update_profile(&self, display_name: Option<&str>) -> Result<User> {
+        self.json(
+            Method::PATCH,
+            "/v1/me",
+            Some(&json!({ "display_name": display_name })),
+        )
+        .await
+    }
+
+    /// 给自己的手机号发验证码，做敏感操作前确认：`delete_account`（注销）或 `change_phone`。
+    pub async fn send_self_code(&self, purpose: &str) -> Result<()> {
+        self.empty(
+            Method::POST,
+            "/v1/me/code",
+            Some(&json!({ "purpose": purpose })),
+        )
+        .await
+    }
+
+    /// 注销账号（16.4）：用 [`Self::send_self_code`]（`delete_account`）发来的验证码确认。成功后本地会话一起清掉。
+    pub async fn delete_account(&self, code: &str) -> Result<()> {
+        self.empty(
+            Method::POST,
+            "/v1/me/delete",
+            Some(&json!({ "code": code })),
+        )
+        .await?;
+        self.set_session(None);
+        Ok(())
+    }
+
+    /// 吊销一台设备（丢了的手机、不用的电脑）：它的登录会话立即失效。
+    pub async fn revoke_device(&self, id: DeviceId) -> Result<()> {
+        self.empty(Method::DELETE, &format!("/v1/devices/{id}"), None)
+            .await
+    }
+
     pub async fn set_push(&self, channel: PushChannelKind, token: &str) -> Result<()> {
         self.empty(
             Method::PUT,

@@ -71,6 +71,15 @@ impl Client {
         self.signed_out_clears(self.api.me().await)
     }
 
+    /// 注销账号：成功后本地缓存一起清掉。
+    pub async fn delete_account(&self, code: &str) -> Result<()> {
+        self.api.delete_account(code).await?;
+        if let Some(c) = &self.cache {
+            c.clear()?;
+        }
+        Ok(())
+    }
+
     /// 登录失效时顺手清掉缓存（换人登录前不留上一个人的数据）。
     fn signed_out_clears<T>(&self, r: Result<T>) -> Result<T> {
         if matches!(r, Err(ClientError::SignedOut))
