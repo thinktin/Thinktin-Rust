@@ -88,7 +88,7 @@ MainActivity
 ```
 
 - 返回栈：抽屉入口的页面都是顶级目的地（`popUpTo(home)`），其余是子页面。
-- 深链：`thinktin://run/{id}`、`thinktin://approval/{id}`、`thinktin://plan/{id}`、`thinktin://inbox`，推送点击用它们跳转。
+- 深链（两端一致）：`thinktin://run/{id}`、`thinktin://approval/{id}`、`thinktin://plan/{id}`、`thinktin://instance/{id}`、`thinktin://vault/request/{id}`、`thinktin://inbox`、`thinktin://inbox/{id}`，推送点击用它们跳转；推送载荷里的字段两端共用服务端的定义（`notify::PushMessage` 的 `tt_*` 数据）。
 
 ## 4. 页面规范
 
