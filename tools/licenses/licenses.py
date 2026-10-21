@@ -36,6 +36,7 @@ import shutil
 import subprocess
 import tempfile
 import tomllib
+import unicodedata
 from pathlib import Path
 
 SCHEMA = 1
@@ -347,14 +348,29 @@ def normalize_declared(text):
 # 从原文识别许可证，分两步：
 # 1. 提名：按许可证正文开头的标题（只看开头 TITLE_WINDOW 个字符），或者授权条款里固定的句子，猜是哪个许可证；
 # 2. 核对：整个文件要和这个许可证的 SPDX 标准文本（tools/licenses/spdx/<标识>.txt）或标准头部声明（_HEADERS）
-#    对得上——去掉版权行以后，文件里多出来的词不超过 VERIFY_EXTRA_WORDS 个（多出来的往往正是附加的限制条款、
-#    专有声明、EULA），标准文本里缺的不超过 VERIFY_MISSING（有的包把附录删了）。对不上就算认不出，要人登记。
+#    逐词对得上（_aligns）。多出来的往往正是附加的限制条款、专有声明、EULA，缺了的可能正是授权的那几个词，
+#    所以容差按位置算：
+#    - 标准文本的占位处（<year>、<copyright holders>、BSD 第三条的组织名）可以换成名字，一处最多 VERIFY_FILL_WORDS 个词；
+#    - 别处多出来的词一段不超过 VERIFY_EXTRA_RUN 个、加起来不超过 VERIFY_EXTRA_WORDS 个（标题、SPDX 标识行这些
+#      无害的词不算）；多出来的词里有限制性的说法（not、only、commercial……）或者非拉丁字母的文字（中文、俄文的
+#      附加条款）就对不上；
+#    - 标准文本里缺的词一段不超过 VERIFY_MISSING_RUN 个、加起来不超过 VERIFY_MISSING（比例）；缺的是授权的词
+#      （use、copy、distribute……）就对不上。可以省的部分（附录、“How to Apply”、Exhibit）整段缺也行；
+#    - 版权行只去掉版权声明本身（“Copyright (c) 2024 Acme Inc.”），同一行后面别的话照常核对。
+#    对不上就算认不出，要人登记。
 # 提名用的说法都是许可证正文里固定的句子，正文里顺带提到的别的许可证（MPL-2.0 定义“次级许可证”时提到 AGPL）不算。
 # 一份原文可能被几条规则提名（X11 也含 MIT 的授权句），按规则顺序逐个核对，第一个对得上的算数；
-# 都对不上时记第一个提名。
+# 都对不上时记第一个提名。禁止名单里那些许可证的正文标题、声明在文件里任何位置出现都记下来（_DENY_SECTIONS），
+# 检查时和包的声明对照：合并成一个文件的第三方许可清单里，AGPL 的那一段可能在很后面。
 TITLE_WINDOW = 300
 VERIFY_EXTRA_WORDS = 8
-VERIFY_MISSING = 0.25
+VERIFY_EXTRA_RUN = 5
+VERIFY_FILL_WORDS = 10
+VERIFY_MISSING_RUN = 6
+VERIFY_MISSING = 0.03
+VERIFY_MISSING_MIN = 8
+VERIFY_MAX_CHARS = 200000  # 比这长的原文不核对（不会是一份许可证）：截断核对会漏掉后面附加的条款
+NOTICE_MAX_WORDS = 30
 _TITLE_RULES = [
     ("MPL-2.0", ["mozilla public license", "2.0"]),
     ("MPL-1.1", ["mozilla public license", "version 1.1"]),
@@ -363,6 +379,11 @@ _TITLE_RULES = [
     ("Elastic-2.0", ["elastic license 2.0"]),
     ("PolyForm-Noncommercial-1.0.0", ["polyform noncommercial license"]),
     ("AGPL-3.0-only", ["gnu affero general public license"]),
+    ("EUPL-1.1", ["european union public licen", "1.1"]),
+    ("EUPL-1.2", ["european union public licen"]),
+    ("OSL-3.0", ["open software license"]),
+    ("RPL-1.5", ["reciprocal public license"]),
+    ("CPAL-1.0", ["common public attribution license"]),
     ("LGPL-2.1-only", ["gnu lesser general public license", "version 2.1"]),
     ("LGPL-3.0-only", ["gnu lesser general public license"]),
     ("LGPL-2.0-only", ["gnu library general public license"]),
@@ -424,9 +445,20 @@ _BODY_RULES = [
     ("BSD-3-Clause-Clear", ["redistribution and use in source and binary forms",
                             "no express or implied licenses to any party's patent rights are granted"]),
     ("BSD-3-Clause", ["redistribution and use in source and binary forms", "endorse or promote products"]),
-    # 少了条款的文本也核对得上多的那个（标准文本里缺的不超过 VERIFY_MISSING），所以条款少的先核对。
     ("BSD-1-Clause", ["redistribution and use in source and binary forms", "!redistributions in binary form"]),
     ("BSD-2-Clause", ["redistribution and use in source and binary forms"]),
+]
+# 禁止名单里的许可证：正文的标题和“按某许可证授权”的固定声明，在文件任何位置出现都记下（不只开头）。
+# 只用这些许可证自己的正文才有的句子：GPL-3 第 13 条、MPL-2.0 的“次级许可证”提到 AGPL 的说法不算。
+_DENY_SECTIONS = [
+    ("AGPL-3.0-only", ["gnu affero general public license version 3, 19 november 2007"]),
+    ("AGPL-3.0-only", ["under the terms of the gnu affero general public license as published by the free software foundation"]),
+    ("SSPL-1.0", ["server side public license version 1"]),
+    ("EUPL-1.2", ["european union public licence v. 1."]),
+    ("EUPL-1.2", ["licensed under the eupl"]),
+    ("OSL-3.0", ['this open software license (the "license") applies']),
+    ("RPL-1.5", ["reciprocal public license (rpl)"]),
+    ("CPAL-1.0", ["common public attribution license version 1.0"]),
 ]
 
 
@@ -444,14 +476,87 @@ _HEADERS = {
         "distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/."
     ),
 }
-# 版权行：Copyright …、© …、(c) 2024 …。条款编号“(c) You must retain …”不算。
-# 许可证官方发布的文件里有、SPDX 标准文本里没有的固定句子：核对前去掉（只去一字不差的这几句）。
+# 许可证官方发布的文件里有、SPDX 标准文本里没有的固定句子：核对前去掉（只去一字不差的这几句，网址只认官方的）。
 _PREAMBLES = {
     "OFL-1.1": [r"This Font Software is licensed under the SIL Open Font License,? Version 1\.1\.?\s+This license is copied "
-                r"below, and is also available with a FAQ at:?\s+<?https?://\S+?>?(?=\s)"],
+                r"below, and is also available with a FAQ at:?\s+<?https?://(?:scripts\.sil\.org/OFL|openfontlicense\.org)/?>?(?=\s|$)"],
     "CC0-1.0": [r"For more information, please see\s+<?https?://creativecommons\.org/publicdomain/zero/1\.0/?>?"],
 }
-_COPYRIGHT_LINE = re.compile(r"^\s*(portions\s+)?(copyright\b|©|\(c\)\s*(\d|copyright\b))", re.I)
+# 标准文本里可以省的部分（附录、“How to Apply”、Exhibit、CC 的说明和免责声明）：(从这一句, 到这一句之前)，
+# 到结尾的写 None。
+_OPTIONAL_SPANS = {
+    "Apache-2.0": [("END OF TERMS AND CONDITIONS", None)],
+    "GPL-2.0-only": [("END OF TERMS AND CONDITIONS", None)],
+    "GPL-3.0-only": [("END OF TERMS AND CONDITIONS", None)],
+    "LGPL-2.0-only": [("END OF TERMS AND CONDITIONS", None)],
+    "LGPL-2.1-only": [("END OF TERMS AND CONDITIONS", None)],
+    # SPDX 的 LGPL-3.0 文本后面附了整篇 GPL-3.0；单独发的 COPYING.LESSER 没有。
+    "LGPL-3.0-only": [("GNU GENERAL PUBLIC LICENSE", None)],
+    "MPL-2.0": [("Exhibit A - Source Code Form License Notice", None)],
+    "EPL-2.0": [("Exhibit A – Form of Secondary Licenses Notice", None)],
+    "CC-BY-3.0": [("Creative Commons Notice", None)],
+    "CC-BY-4.0": [("Creative Commons is not a party", None)],
+    "CC0-1.0": [("CREATIVE COMMONS CORPORATION IS NOT A LAW FIRM", "Statement of Purpose")],
+}
+# GNU 发布的 GPL-2.0 原文最后一段，SPDX 的标准文本里没有（在可以省的部分里）。
+_OPTIONAL_TAIL = {
+    "GPL-2.0-only": "This General Public License does not permit incorporating your program into proprietary programs. "
+                    "If your program is a subroutine library, you may consider it more useful to permit linking proprietary "
+                    "applications with the library. If this is what you want to do, use the GNU Lesser General Public "
+                    "License instead of this License.",
+}
+# SPDX 的模板里标成可变、纯文本版里却写成默认值的地方：换成占位，名字换了也对得上。
+_BSD_SLOTS = [("THE COPYRIGHT HOLDERS AND CONTRIBUTORS", "<copyright holders and contributors>"),
+              ("THE COPYRIGHT HOLDER OR CONTRIBUTORS", "<copyright holder or contributors>")]
+_TEMPLATE_SLOTS = {
+    "BSD-3-Clause": [("Neither the name of the copyright holder nor", "Neither the name of <copyright holder> nor")] + _BSD_SLOTS,
+    "BSD-2-Clause": _BSD_SLOTS,
+    "BSD-1-Clause": _BSD_SLOTS,
+    "MIT": [("THE AUTHORS OR COPYRIGHT HOLDERS", "<copyright holders>")],
+}
+# 版权声明：Copyright (c) …、Copyright 2024 …、Copyright Acme Inc.、© …、(c) 2024 …（区分大小写）。
+# 条款编号“(c) You must retain …”、正文里的“COPYRIGHT HOLDERS AND CONTRIBUTORS”“copyright protection”不算。
+_NOTICE_START = re.compile(
+    r"^\s*(?:<program>\s+)?(?:[Pp]ortions\s+)?(?:"
+    r"(?:[Cc]opyright|COPYRIGHT)\s*(?:\([cC]\)|©|\d|[<\[])"
+    r"|Copyright\s+(?!(?:Holders?|Owners?|Notices?|Act|Laws?|Licen[cs]es?|Agent|Office|Statement|Policy|Protection)\b)[A-Z]"
+    r"|©|\([cC]\)\s*(?:\d|[Cc]opyright\b)|SPDX-FileCopyrightText:)"
+)
+# 版权行里常跟着的商标声明（字体：“Source is a trademark of Adobe …”）：和版权声明一起去掉。
+_TRADEMARK = re.compile(r"\b(?:is|are)\s+(?:a\s+|the\s+)?(?:registered\s+)?trademarks?\s+(?:of|owned\s+by)\b", re.I)
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+(?=[A-Z]|[^\x00-\x7f])|(?<=[;:])\s+")
+# 占位写法：<year>、<copyright holders>、[yyyy]。尖括号里的网址、邮箱是正文；Markdown 链接 [x](…) 也是。
+_PLACEHOLDER = re.compile(r"<(?!\s*(?:https?://|mailto:|www\.)|[^<>\s]+@)[^<>\n]{1,60}>|\[(?![^\]\n]*\]\()[^\[\]\n]{1,40}\]")
+_SLOT = "qqslotqq"
+# 多出来的词里有这些，说明加了条件或限制：对不上。
+_LIMITING = set(
+    "not no non only solely exclusively except excluding exclude excludes unless never cannot prohibit prohibits "
+    "prohibited prohibition forbid forbids forbidden restrict restricts restricted restriction restrictions restrictive "
+    "limit limits limited limitation limitations personal personally internal internally evaluation evaluate trial "
+    "commercial commercially noncommercial paid pay payment fee fees subscription subscriptions subscriber purchase "
+    "purchased purchaser customer customers revoke revoked revocable revocation terminate terminated termination void "
+    "agreement agreements eula proprietary confidential must require requires required obtain".split()
+)
+# 版权声明里出现这些，就不当成版权声明去掉（照常核对）：版权行里藏的限制。公司名常带的 Limited 不算。
+_NOTICE_LIMITING = _LIMITING - {"limited", "limit", "limits"} | {"may", "shall", "subject", "terms"}
+# 标准文本里缺了这些词就对不上：授权的范围被删了。
+_GRANT_WORDS = set(
+    "use copy modify merge publish distribute sublicense sell redistribute redistribution redistributions permission "
+    "permitted granted grant grants hereby royalty perpetual irrevocable worldwide reproduce derivative".split()
+)
+# 核对时文件里可以多出来的“无害”的词：标题、SPDX 标识行、“All rights reserved”。
+_BENIGN_WORDS = set(
+    "the a an and or of license licence licensed mit x11 expat isc bsd new simplified modified clause apache version v "
+    "spdx identifier all rights reserved software".split()
+)
+_HOMOGLYPHS = str.maketrans(dict(zip("аеорсухіјѕԁһАВЕКМНОРСТХοαειινρτυχΑΒΕΖΗΙΚΜΝΟΡΤΥΧ",
+                                      "aeopcyxijsdhABEKMHOPCTXoaeiivptuxABEZHIKMNOPTYX")))
+_CJK = r"぀-ヿ㐀-䶿一-鿿가-힯豈-﫿"
+
+
+def _fold(text):
+    """NFKC（全角字母、连字 ﬀ 换成普通字母），再把长得和拉丁字母一样的西里尔、希腊字母换成拉丁字母。"""
+    return unicodedata.normalize("NFKC", text).translate(_HOMOGLYPHS)
 
 
 def _matches(t, needles):
@@ -468,8 +573,8 @@ def _strip_comments(text):
     return "\n".join(re.sub(r"^\s*(?://+|#+|;+|--+|>+|/?\*+/?)\s?", "", line) for line in text.splitlines())
 
 
-def _normalized(text):
-    t = _norm_text(_strip_comments(text[:8000]))
+def _normalized(text, limit=8000):
+    t = _norm_text(_strip_comments(_fold(text[:limit] if limit else text)))
     return t.replace("*", "").replace("#", "").replace("“", '"').replace("”", '"').replace("’", "'").strip()
 
 
@@ -482,81 +587,174 @@ def candidates(text):
     return list(dict.fromkeys(out))
 
 
+def deny_sections(text):
+    """文件里任何位置出现的禁止名单许可证的正文标题、授权声明（_DENY_SECTIONS）。"""
+    t = _normalized(text, limit=None)
+    return list(dict.fromkeys(spdx for spdx, needles in _DENY_SECTIONS if _matches(t, needles)))
+
+
 def propose(text):
     """第一个提名（没核对过）；猜不出返回 None。"""
     found = candidates(text)
     return found[0] if found else None
 
 
-def _words(text):
-    """去掉注释前缀和版权行以后的词（小写字母和数字）。"""
-    lines = [line for line in _strip_comments(text).splitlines() if not _COPYRIGHT_LINE.match(line)]
-    return re.findall(r"[a-z0-9]+", "\n".join(lines).lower().replace("'", "").replace("’", ""))
+def _tokens(text):
+    out = []
+    for w in re.findall(r"[^\W_]+", text.lower().replace("'", "").replace("’", "")):
+        if w.isascii():
+            out.append(w)
+        else:
+            # 汉字、假名、韩文不用空格分词：一个字算一个词
+            out += re.findall(r"[%s]|[^%s]+" % (_CJK, _CJK), w)
+    return out
+
+
+def _foreign(w):
+    """非拉丁字母的词（中文、俄文……）：许可证标准文本都是英文，多出来的这种词多半是附加条款。"""
+    return not w.isascii() and any(ch.isalpha() and "LATIN" not in unicodedata.name(ch, "") for ch in w)
+
+
+def _drop_notices(line):
+    """版权行：去掉版权声明本身（最多 NOTICE_MAX_WORDS 个词），同一行后面别的话留着照常核对。版权声明里有
+    限制性的说法（“Copyright 2024 Acme: you may only …”）就不当版权声明，整句照常核对。"""
+    keep = []
+    for s in _SENTENCE_END.split(line):
+        words = _tokens(_PLACEHOLDER.sub(" ", s))
+        if not _NOTICE_START.match(s) and not (_TRADEMARK.search(s) and len(words) <= NOTICE_MAX_WORDS):
+            keep.append(s)
+            continue
+        if any(w in _NOTICE_LIMITING or _foreign(w) for w in words[:NOTICE_MAX_WORDS]):
+            keep.append(s)
+        elif len(words) > NOTICE_MAX_WORDS:
+            keep.append(" ".join(words[NOTICE_MAX_WORDS:]))
+    return " ".join(keep)
+
+
+def _known_placeholders():
+    found = set()
+    for path in SPDX_DIR.glob("*.txt"):
+        found.update(m.group(0) for m in _PLACEHOLDER.finditer(path.read_text(encoding="utf-8")))
+    for pairs in _TEMPLATE_SLOTS.values():
+        for _, new in pairs:
+            found.update(m.group(0) for m in _PLACEHOLDER.finditer(new))
+    found = sorted(found, key=len, reverse=True)
+    return re.compile("|".join(re.escape(p) for p in found), re.I) if found else None
+
+
+_KNOWN_PLACEHOLDER = None
+
+
+def _words(text, template=False):
+    """核对用的词（小写；占位处是 _SLOT）：去掉注释前缀和版权声明。标准文本里的占位写法都是占位；文件里只有
+    标准文本里出现过的占位写法（GNU 原文里的 <year>、Apache 附录的 [yyyy]）算占位，别的尖括号里的字照常核对。"""
+    global _KNOWN_PLACEHOLDER
+    text = _strip_comments(_fold(text).replace("\r", ""))
+    text = "\n".join(_drop_notices(line) if _NOTICE_START.match(line) else line for line in text.splitlines())
+    if template:
+        text = _PLACEHOLDER.sub(" %s " % _SLOT, text)
+    else:
+        if _KNOWN_PLACEHOLDER is None:
+            _KNOWN_PLACEHOLDER = _known_placeholders() or re.compile(r"(?!)")
+        text = _KNOWN_PLACEHOLDER.sub(" %s " % _SLOT, text)
+    return _tokens(text)
 
 
 _TEMPLATES = {}
 
 
 def _template_words(lid):
+    """lid 的标准文本（和标准头部）：[(词, 可以省的词的下标集合)]。"""
     if lid not in _TEMPLATES:
-        words = []
+        out = []
         path = SPDX_DIR / ("%s.txt" % lid)
         if path.is_file():
-            # SPDX 标准文本里的占位写法（<year>、<copyright holders>、[yyyy]）连同版权行一起去掉。
-            text = re.sub(r"<[^>]{1,60}>|\[[^\]]{1,40}\]", " ", path.read_text(encoding="utf-8"))
-            words = [_words(text)]
+            text = path.read_text(encoding="utf-8")
+            for old, new in _TEMPLATE_SLOTS.get(lid, []):
+                text = text.replace(old, new)
+            # 按可以省的部分切开：[(这一段, 可以省吗)]
+            parts, pos = [], 0
+            for start, end in _OPTIONAL_SPANS.get(lid, []):
+                a = text.find(start, max(pos, 1))
+                b = text.find(end, a) if end and a >= 0 else len(text)
+                if a < 0 or b < 0:
+                    raise SystemExit("spdx/%s.txt 里找不到可以省的部分（%s）" % (lid, start))
+                parts += [(text[pos:a], False), (text[a:b], True)]
+                pos = b
+            parts += [(text[pos:], False), (_OPTIONAL_TAIL.get(lid, ""), True)]
+            words, optional = [], set()
+            for part, opt in parts:
+                w = _words(part, template=True)
+                if opt:
+                    optional.update(range(len(words), len(words) + len(w)))
+                words += w
+            out.append((words, optional))
         if lid in _HEADERS:
-            words.append(_words(_HEADERS[lid]))
-        _TEMPLATES[lid] = words
+            out.append((_words(_HEADERS[lid], template=True), set()))
+        _TEMPLATES[lid] = out
     return _TEMPLATES[lid]
 
 
-# 核对时文件里可以多出来的“无害”的词：标题、SPDX 标识行、“All rights reserved”。别的多出来的词要是名字替换
-# 这种短的（BSD 第三条“Neither the name of <组织> nor …”），一段不超过 5 个、加起来不超过 VERIFY_EXTRA_WORDS 个。
-_BENIGN_WORDS = set(
-    "the a an and or of license licence licensed mit x11 expat isc bsd new simplified modified clause apache version v "
-    "spdx identifier all rights reserved software".split()
-)
-VERIFY_EXTRA_RUN = 5
+def _aligns(got, want, optional):
+    """文件的词 got 和标准文本的词 want 逐段对照（见上面的说明）。"""
+    import difflib
+
+    sm = difflib.SequenceMatcher(None, got, want, autojunk=False)
+    required = sum(1 for i, w in enumerate(want) if w != _SLOT and i not in optional and not w.isdigit())
+    extra_total = missing_total = 0
+    pa = pb = 0
+    for b in sm.get_matching_blocks():
+        gap = range(pb, b.b)
+        extras = [w for w in got[pa:b.a] if w != _SLOT and w not in _BENIGN_WORDS and not w.isdigit()]
+        missing = [want[i] for i in gap if want[i] != _SLOT and i not in optional and not want[i].isdigit()]
+        if any(w in _LIMITING or _foreign(w) for w in extras):
+            return False
+        if any(want[i] == _SLOT for i in gap):
+            if len(extras) > VERIFY_FILL_WORDS:
+                return False
+        elif extras:
+            if len(extras) > VERIFY_EXTRA_RUN:
+                return False
+            extra_total += len(extras)
+        if missing:
+            if len(missing) > VERIFY_MISSING_RUN or any(w in _GRANT_WORDS for w in missing):
+                return False
+            missing_total += len(missing)
+        pa, pb = b.a + b.size, b.b + b.size
+    return extra_total <= VERIFY_EXTRA_WORDS and missing_total <= max(VERIFY_MISSING_MIN, VERIFY_MISSING * required)
 
 
 def verify_text(text, lid):
-    """原文是不是就是 lid 这个许可证（标准文本或标准头部），没有多出来的条款。"""
-    import difflib
-
-    text = text[:200000]
+    """原文是不是就是 lid 这个许可证（标准文本或标准头部），没有多出来的条款、没有删掉授权。"""
+    if len(text) > VERIFY_MAX_CHARS:
+        return False
     for pat in _PREAMBLES.get(lid, []):
         text = re.sub(pat, " ", text, flags=re.I)
     got = _words(text)
-    if not got:
+    if not any(w != _SLOT for w in got):
         return False
-    for want in _template_words(lid):
-        if not want:
-            continue
-        sm = difflib.SequenceMatcher(None, got, want, autojunk=False)
-        blocks = sm.get_matching_blocks()
-        matched = sum(b.size for b in blocks)
-        if len(want) - matched > VERIFY_MISSING * len(want):
-            continue
-        extra, pos = [], 0
-        for b in blocks:
-            if b.a > pos:
-                run = [w for w in got[pos:b.a] if w not in _BENIGN_WORDS and not w.isdigit()]
-                if run:
-                    extra.append(run)
-            pos = b.a + b.size
-        if all(len(r) <= VERIFY_EXTRA_RUN for r in extra) and sum(len(r) for r in extra) <= VERIFY_EXTRA_WORDS:
-            return True
-    return False
+    return any(_aligns(got, want, optional) for want, optional in _template_words(lid) if want)
+
+
+def examine(text):
+    """一份原文：提名（proposed）、核对过没有（verified）、提名是不是来自标题（titled）、所有提名和文件里任何位置
+    出现的禁止名单许可证（candidates）。proposed 是第一个核对得上的提名；都对不上时是第一个提名。"""
+    found = candidates(text)
+    head = _normalized(text)[:TITLE_WINDOW]
+    titled = {spdx for spdx, needles in _TITLE_RULES if _matches(head, needles)}
+    lid, ok = (found[0] if found else None), False
+    for x in found:
+        if verify_text(text, x):
+            lid, ok = x, True
+            break
+    return {"proposed": lid, "verified": ok, "titled": lid in titled,
+            "candidates": list(dict.fromkeys(found + deny_sections(text)))}
 
 
 def identify(text):
     """(许可证, 核对过没有)：第一个核对得上的提名；都对不上时是第一个提名和 False。"""
-    found = candidates(text)
-    for lid in found:
-        if verify_text(text, lid):
-            return lid, True
-    return (found[0] if found else None), False
+    r = examine(text)
+    return r["proposed"], r["verified"]
 
 
 def detect_text(text):
@@ -1986,7 +2184,7 @@ def main(argv=None):
 
 def _spdx_text(lid, holder="2024 Someone"):
     """测试用：SPDX 标准全文，占位写法换成具体的版权方。"""
-    return re.sub(r"<[^>]{1,60}>", holder, (SPDX_DIR / ("%s.txt" % lid)).read_text(encoding="utf-8"))
+    return _PLACEHOLDER.sub(holder, (SPDX_DIR / ("%s.txt" % lid)).read_text(encoding="utf-8"))
 
 
 MIT_TEXT = _spdx_text("MIT")
@@ -2392,6 +2590,78 @@ def self_test():
        "MIT", "标题和版权行不算多余的话")
     if (SPDX_DIR / "Unicode-3.0.txt").is_file():
         eq(detect_text((SPDX_DIR / "Unicode-3.0.txt").read_text()), "Unicode-3.0", "Unicode-3.0 不是 MIT-0")
+
+    # 第三轮评审：版权行里、非拉丁文字、短句写的限制，删掉的授权，都核对不上
+    import textwrap
+
+    mit_body = MIT_TEXT.split("\n\n", 1)[1]
+    apache_cut = re.sub(r"2\. Grant of Copyright License\..*?4\. Redistribution\.", "4. Redistribution.", APACHE_TEXT, flags=re.S)
+    ofl = _spdx_text("OFL-1.1")
+    for name, text in [
+        ("专有声明在 © 行上", "© Foo Inc. All rights reserved. Use is subject to the Legal Agreements outlined here: "
+                           "https://foo.example/legal. You may not redistribute, sublicense or resell this package.\n\n"
+                           "Portions Copyright (c) 2020 Bar contributors, included under the following license:\n\nMIT License\n\n" + mit_body),
+        ("版权行后面的订阅条件", "Copyright (c) 2024 Foo Inc. Use of this Software is limited to customers holding a paid subscription.\n\n" + mit_body),
+        ("版权行冒号后面的限制", "(c) 2024 Foo: you may only run this software on hardware sold by Foo.\n\n" + mit_body),
+        ("字体版权行后面的商用条件", "Copyright 2020 Foo Type Foundry. Embedding this font in a product requires a paid commercial license.\n\n" + ofl),
+        ("中文附加条款", MIT_TEXT + "\n附加条款：本软件仅限个人非营利使用，禁止任何商业用途。商业授权请联系 Foo 公司。\n"),
+        ("中文条款插在中间", MIT_TEXT.replace("The above copyright notice", "本软件禁止商用。\nThe above copyright notice")),
+        ("俄文附加条款", MIT_TEXT + "\nкоммерческое использование запрещено\n"),
+        ("全角字母写的限制", MIT_TEXT + "\nＣｏｍｍｅｒｃｉａｌ ｕｓｅ ｉｓ ｐｒｏｈｉｂｉｔｅｄ\n"),
+        ("短句：只限个人使用", MIT_TEXT + "\nPersonal use only. No redistribution.\n"),
+        ("短句：不能商用", MIT_TEXT + "\nNo commercial use.\n"),
+        ("否定授权", MIT_TEXT.replace("without restriction", "not without restriction", 1)),
+        ("权利清单换成只能内部使用", re.sub(r"without\s+restriction.*?furnished\s+to\s+do\s+so", "solely to use the Software internally",
+                                           MIT_TEXT, flags=re.S)),
+        ("删掉 distribute", re.sub(r"publish,\s+distribute,", "publish,", MIT_TEXT)),
+        ("Apache 删掉第 2、3 条", apache_cut),
+        ("Apache 头部加只能评估", "Copyright 2020 X\n\n" + _HEADERS["Apache-2.0"] + "\nFor internal evaluation only.\n"),
+        ("MPL 头部加不能用于生产", _HEADERS["MPL-2.0"] + "\nNot for production.\n"),
+        ("填充后面附加的限制", MIT_TEXT + " " * 200000 + "Commercial use is prohibited. The MIT terms above are void.\n"),
+        ("OFL 网址里藏的条款", "This Font Software is licensed under the SIL Open Font License, Version 1.1.\nThis license is copied below, "
+                            "and is also available with a FAQ at:\nhttps://openfontlicense.org/#Desktop_and_web_embedding_require_a_"
+                            "separate_paid_commercial_license_from_Foo\n\n" + ofl),
+    ]:
+        eq(detect_text(text), None, "限制条款核对不上：%s" % name)
+    eq("AGPL-3.0-only" in candidates(AGPL_TEXT.replace("ff", "ﬀ")), True, "连字写的 Affero 照样提名 AGPL")
+    eq("AGPL-3.0-only" in candidates(AGPL_TEXT.replace("AFFERO", "AFFЕRO")), True, "西里尔字母写的 Affero 照样提名 AGPL")
+    for name, text, want in [
+        ("持有人叫 Nor", MIT_TEXT.replace("2024 Someone", "2020 Nor Khasyatillah"), "MIT"),
+        ("字体版权行带商标声明", "Copyright 2010, 2012 Adobe Systems Incorporated (http://www.adobe.com/), with Reserved Font Name "
+                              "'Source'. All Rights Reserved. Source is a trademark of Adobe Systems Incorporated in the United States "
+                              "and/or other countries.\n\nThis Font Software is licensed under the SIL Open Font License, Version 1.1.\n\n"
+                              "This license is copied below, and is also available with a FAQ at: http://scripts.sil.org/OFL\n\n" + ofl, "OFL-1.1"),
+        ("BSD 免责里写组织名", BSD3_TEXT.replace("THE COPYRIGHT HOLDERS AND CONTRIBUTORS", "ZETETIC LLC")
+                               .replace("THE COPYRIGHT HOLDER OR CONTRIBUTORS", "ZETETIC LLC"), "BSD-3-Clause"),
+        ("HPND 写了持有人的名字", _spdx_text("HPND", "Secret Labs AB and Fredrik Lundh"), "HPND"),
+    ]:
+        eq(detect_text(text), want, "核对得上：%s" % name)
+    # 标准文本换个折行照样核对得上（版权行判断不能依赖原来的折行）
+    for path in sorted(SPDX_DIR.glob("*.txt")):
+        if path.stem in ("license-ids", "exception-ids"):
+            continue
+        out = []
+        for para in re.split(r"\n\s*\n", path.read_text(encoding="utf-8")):
+            # 版权行还是单独一行（真实的文件里也是），别的重新折行
+            lines, run = [], []
+            for line in para.splitlines() + [None]:
+                if line is None or _NOTICE_START.match(line):
+                    if run:
+                        lines.append(textwrap.fill(" ".join(" ".join(run).split()), 50))
+                        run = []
+                    if line is not None:
+                        lines.append(line.strip())
+                else:
+                    run.append(line)
+            out.append("\n".join(lines))
+        rewrapped = "\n\n".join(out)
+        eq(identify(rewrapped), (path.stem, True), "%s 标准文本换行以后" % path.stem)
+    # GNU 发布的原文（Debian 的 /usr/share/common-licenses）核对得上
+    for name, lid in [("GPL-2", "GPL-2.0-only"), ("GPL-3", "GPL-3.0-only"), ("LGPL-2.1", "LGPL-2.1-only"), ("LGPL-3", "LGPL-3.0-only"),
+                      ("Apache-2.0", "Apache-2.0"), ("MPL-2.0", "MPL-2.0")]:
+        sys_text = Path("/usr/share/common-licenses") / name
+        if sys_text.is_file():
+            eq(identify(sys_text.read_text(encoding="utf-8")), (lid, True), "GNU / Debian 的 %s 原文" % name)
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         nm = tmp / "node_modules"
