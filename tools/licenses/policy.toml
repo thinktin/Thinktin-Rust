@@ -4,7 +4,7 @@
 # 每个许可证落在三类之一：
 # - allow：放行。宽松许可证，和只管改动过的文件的弱 copyleft（MPL、EPL、CDDL）。
 # - deny：直接报错。网络 copyleft（用户经网络使用就要向用户公开源码：AGPL、SSPL、OSL、EUPL、RPL、CPAL），
-#   和限制商用、托管的“源码可见”许可证（BUSL、Elastic、PolyForm、Commons Clause、CC 的非商用条款）。
+#   和限制商用、托管的“源码可见”许可证（BUSL、Elastic、PolyForm、FSL、Commons Clause、CC 的非商用条款）。
 # - 其他（GPL、专有、没有许可证、认不出来）：在下面 [[exception]] 逐个登记、写明理由才放行，否则报错。
 #   登记按“生态 + 包名 + 版本 + 许可证”匹配：上游换了许可证，登记就对不上，CI 报错，要人重新看。
 #
@@ -37,7 +37,7 @@ allow_exceptions = [
 
 deny = [
   "AGPL-*", "LicenseRef-AGPL-*", "SSPL-*", "OSL-*", "EUPL-*", "RPL-*", "CPAL-*",
-  "BUSL-*", "Elastic-*", "PolyForm-*", "Commons-Clause", "LicenseRef-Commons-Clause",
+  "BUSL-*", "Elastic-*", "PolyForm-*", "FSL-*", "Commons-Clause", "LicenseRef-Commons-Clause",
   "CC-BY-NC-*", "LicenseRef-NonCommercial",
 ]
 

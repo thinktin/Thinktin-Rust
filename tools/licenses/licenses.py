@@ -362,7 +362,15 @@ _TITLE_RULES = [
     ("Artistic-2.0", ["the artistic license 2.0"]),
     ("CC0-1.0", ["cc0 1.0 universal"]),
     ("CC-BY-4.0", ["creative commons attribution 4.0 international"]),
+    ("Unicode-3.0", ["unicode license v3"]),
+    ("PSF-2.0", ["python software foundation license"]),
+    ("CC-BY-3.0", ["creative commons", "attribution 3.0"]),
+    ("CDLA-Permissive-2.0", ["community data license agreement", "permissive", "2.0"]),
+    ("Unicode-DFS-2016", ["unicode, inc. license agreement - data files and software"]),
+    ("FSL-1.1-MIT", ["functional source license", "mit future license"]),
+    ("FSL-1.1-ALv2", ["functional source license"]),
 ]
+_GRANT_MIT = "permission is hereby granted, free of charge, to any person obtaining a copy"
 _BODY_RULES = [
     ("Apache-2.0", ["licensed under the apache license, version 2.0"]),
     ("MPL-2.0", ["subject to the terms of the mozilla public license, v. 2.0"]),
@@ -371,15 +379,34 @@ _BODY_RULES = [
     ("LicenseRef-GPL-Unspecified", ["under the terms of the gnu general public license"]),
     ("Unlicense", ["this is free and unencumbered software released into the public domain"]),
     ("PSF-2.0", ["python software foundation license agreement"]),
-    ("Zlib", ["altered source versions must be plainly marked as such"]),
-    ("MIT-0", ["permission is hereby granted, free of charge, to any person obtaining a copy", "!the above copyright notice and this permission notice shall be included"]),
-    ("MIT", ["permission is hereby granted, free of charge, to any person obtaining a copy"]),
+    ("Zlib", ["this software is provided 'as-is', without any express or implied warranty",
+              "altered source versions must be plainly marked as such"]),
+    # 先认含 MIT 授权句的特殊许可证：JSON（“用于善不用于恶”，有使用限制）、Unicode 的数据文件许可。
+    ("JSON", [_GRANT_MIT, "shall be used for good, not evil"]),
+    ("Unicode-DFS-2016", [_GRANT_MIT, "unicode data files"]),
+    # MIT-0 要正面认：有授权句，但没有“须保留版权和许可声明”那一条件。
+    ("MIT-0", [_GRANT_MIT, "!subject to the following condition", "!shall be included"]),
+    ("MIT", [_GRANT_MIT]),
     ("ISC", ["permission to use, copy, modify, and/or distribute this software for any purpose", "provided that the above copyright notice"]),
     ("ISC", ["permission to use, copy, modify, and distribute this software for any purpose", "provided that the above copyright notice"]),
     ("0BSD", ["permission to use, copy, modify, and/or distribute this software for any purpose"]),
+    # BSD 一族：Sleepycat（要求公开源码）、带广告条款的 BSD-4 都含 BSD-3 的句子，先认它们。
+    ("Sleepycat", ["redistribution and use in source and binary forms", "information on how to obtain complete source code"]),
+    ("BSD-4-Clause", ["redistribution and use in source and binary forms", "all advertising materials mentioning features"]),
     ("BSD-3-Clause", ["redistribution and use in source and binary forms", "endorse or promote products"]),
     ("BSD-2-Clause", ["redistribution and use in source and binary forms"]),
 ]
+
+# 正文规则匹配到的句子前面，只能是标题和版权声明。前面还有别的话（专有声明、EULA、“Commons Clause”前言……）
+# 就不认：那段话可能才是这个包真正的条款，后面的 MIT 原文只是它带的第三方代码。
+_PREAMBLE_ALLOWED = re.compile(
+    r"(copyright|©|\(c\))[^.]*\.?|all rights reserved\.?|"
+    r"\b(the )?(mit|isc|bsd|apache|zlib|expat|unlicense|0bsd|new bsd|simplified bsd|modified bsd|"
+    r"bsd[ -]?[234][ -]?clause|apache[ -]2\.0)\b|\blicen[cs]e\b|\(mit\)|\bversion\b|"
+    r"[^a-z]+",
+)
+_PREAMBLE_SUSPICIOUS = ("proprietary", "eula", "end user license", "license agreement", "commercial", "prohibited",
+                        "not permitted", "may not")
 
 
 def _matches(t, needles):
@@ -392,10 +419,19 @@ def _matches(t, needles):
     return True
 
 
+def _clean_preamble(t, pos):
+    pre = t[:pos]
+    if any(w in pre for w in _PREAMBLE_SUSPICIOUS):
+        return False
+    rest = _PREAMBLE_ALLOWED.sub("", pre)
+    return len(rest) <= 80
+
+
 def detect_text(text):
     """从许可证原文认出 SPDX 标识；认不出返回 None。"""
-    t = _norm_text(text[:8000])
-    # 去掉 Markdown 的标题符号、强调和引号差异，让关键句能对上。
+    # 去掉注释前缀（源文件头部的 // # ; -- > *），再统一空白、大小写、Markdown 符号和引号。
+    lines = [re.sub(r"^\s*(?://+|#+|;+|--+|>+|/?\*+/?)\s?", "", line) for line in text[:8000].splitlines()]
+    t = _norm_text("\n".join(lines))
     t = t.replace("*", "").replace("#", "").replace("“", '"').replace("”", '"').replace("’", "'").strip()
     head = t[:TITLE_WINDOW]
     for spdx, needles in _TITLE_RULES:
@@ -403,7 +439,8 @@ def detect_text(text):
             return spdx
     for spdx, needles in _BODY_RULES:
         if _matches(t, needles):
-            return spdx
+            first = next(n for n in needles if not n.startswith("!"))
+            return spdx if _clean_preamble(t, t.index(first)) else None
     return None
 
 
@@ -767,14 +804,16 @@ def scan_npm(inv, root):
         in_modules = parent.name == "node_modules" or (parent.name.startswith("@") and parent.parent.name == "node_modules")
         if "package.json" not in filenames or not in_modules or here.name.startswith("."):
             continue
-        try:
-            pkg = json.loads((here / "package.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        name, version = pkg.get("name"), pkg.get("version")
-        if not isinstance(name, str) or not isinstance(version, str):
-            continue
         root_level = parent == root or (parent.parent == root and parent.name.startswith("@"))
+        try:
+            pkg = json.loads((here / "package.json").read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError):
+            pkg = None
+        if not isinstance(pkg, dict) or not isinstance(pkg.get("name"), str) or not isinstance(pkg.get("version"), str):
+            # node_modules 下的目录有 package.json 却读不出名字和版本：不能悄悄跳过，记成认不出的组件，检查时报错。
+            name = here.name if not parent.name.startswith("@") else "%s/%s" % (parent.name, here.name)
+            inv.add("npm", name, "?", "package.json 读不出名字或版本", None, "none", legal_files(here), here, root_level)
+            continue
         npm_component(inv, here, pkg, root_level)
 
 
@@ -803,7 +842,7 @@ def scan_npm_packages(inv, pattern):
     for d in sorted(globmod.glob(pattern)):
         here = Path(d)
         try:
-            pkg = json.loads((here / "package.json").read_text(encoding="utf-8"))
+            pkg = json.loads((here / "package.json").read_text(encoding="utf-8-sig"))
         except (OSError, ValueError):
             continue
         npm_component(inv, here, pkg, root_level=False)
@@ -835,8 +874,12 @@ def scan_python(inv, site_packages, root_names=()):
     """site_packages 是一个 site-packages 目录。root_names 是直接要求安装的包（清单 [install] 里的）。"""
     site_packages = Path(site_packages)
     roots = {pypi_norm(n) for n in root_names}
-    for dist in sorted(site_packages.glob("*.dist-info")):
-        meta_path = dist / "METADATA"
+    dists = sorted(site_packages.glob("*.dist-info")) + sorted(site_packages.glob("*.egg-info"))
+    for dist in dists:
+        if dist.is_dir():
+            meta_path = dist / ("METADATA" if dist.suffix == ".dist-info" else "PKG-INFO")
+        else:
+            meta_path = dist  # 单个文件的 .egg-info
         if not meta_path.is_file():
             continue
         msg = email.parser.HeaderParser().parsestr(meta_path.read_text(encoding="utf-8", errors="replace"))
@@ -857,7 +900,17 @@ def scan_python(inv, site_packages, root_names=()):
         mapped = [CLASSIFIERS[c.lower()] for c in classifiers if c.lower() in CLASSIFIERS]
         # 对照表里没有的许可证分类当成认不出的声明（可能正是限制性的），除非有明确的 License-Expression。
         declared += ["Classifier: %s" % c for c in classifiers if c.lower() not in CLASSIFIERS]
-        files = legal_files(dist)
+        files = legal_files(dist) if dist.is_dir() else []
+        # venv 里的 pip、setuptools 是 Debian 的 python3-pip-whl / python3-setuptools-whl 那个 wheel 装的，
+        # 它们 vendored 的第三方包（pip/_vendor：certifi、requests、urllib3……）的版权和许可证在 Debian 的 copyright 文件里。
+        extra = {}
+        deb_copyright = Path("/usr/share/doc/python3-%s-whl/copyright" % pypi_norm(name))
+        if deb_copyright.is_file():
+            files.append(deb_copyright)
+        vendor_txt = site_packages / pypi_norm(name).replace("-", "_") / "_vendor" / "vendor.txt"
+        if vendor_txt.is_file():
+            extra["vendored"] = [line.strip() for line in vendor_txt.read_text(encoding="utf-8").splitlines()
+                                 if line.strip() and not line.strip().startswith("#")]
         for lf in msg.get_all("License-File") or []:
             for cand in (dist / "licenses" / lf, dist / lf):
                 if cand.is_file() and cand not in files:
@@ -870,7 +923,7 @@ def scan_python(inv, site_packages, root_names=()):
         license, source = resolve_license(declared, files, mapped)
         shown = "; ".join([d for d in declared if not d.startswith("Classifier: ")] + ["Classifier: %s" % c for c in classifiers]) or None
         authors = msg.get("Author") or msg.get("Author-email") or msg.get("Maintainer") or msg.get("Maintainer-email")
-        inv.add("pypi", name, version, shown, license, source, files, dist, pypi_norm(name) in roots,
+        inv.add("pypi", name, version, shown, license, source, files, dist, pypi_norm(name) in roots, extra=extra or None,
                 authors=authors.strip() if authors and authors.strip().upper() != "UNKNOWN" else None)
 
 
@@ -915,8 +968,11 @@ def scan_deb(inv, admindir=None):
                 "license": None,
                 "declared": declared,
                 "license_from": "dep5" if declared else "none",
+                "restricted_terms": None,
                 "files": [str(copyright)] if copyright.is_file() else [],
                 "text_sha256": [],
+                "generic_files": [],
+                "authors": None,
                 "path": None,
                 "root_level": False,
                 "locations": 1,
@@ -945,11 +1001,18 @@ def scan_extra(inv, directory):
     data = tomllib.loads(meta.read_text(encoding="utf-8"))
     applies_to = data.get("applies_to", [])
     groups = {}
-    for f in data.get("file", []):
+    def group(f):
         key = (f["component"], f["version"])
-        groups.setdefault(key, {"license": f["license"], "files": [], "urls": []})
-        groups[key]["files"].append(directory / f["path"])
-        groups[key]["urls"].append(f.get("url"))
+        g = groups.setdefault(key, {"license": f["license"], "files": [], "urls": []})
+        if g["license"] != f["license"]:
+            raise SystemExit("%s：%s %s 的几个文件写的许可证不一样（%s、%s），分成不同的 component"
+                             % (meta, f["component"], f["version"], g["license"], f["license"]))
+        return g
+
+    for f in data.get("file", []):
+        group(f)
+        groups[(f["component"], f["version"])]["files"].append(directory / f["path"])
+        groups[(f["component"], f["version"])]["urls"].append(f.get("url"))
     for f in data.get("installed", []):
         import glob as globmod
 
@@ -957,9 +1020,7 @@ def scan_extra(inv, directory):
         if not hits:
             raise SystemExit("%s：[[installed]] %s 在镜像里一个文件也没匹配到（%s）：上游改了目录结构？"
                              % (meta, f["component"], f["glob"]))
-        key = (f["component"], f["version"])
-        groups.setdefault(key, {"license": f["license"], "files": [], "urls": []})
-        groups[key]["files"] += hits
+        group(f)["files"] += hits
     for (name, version), g in groups.items():
         missing = [str(p) for p in g["files"] if not p.is_file()]
         if missing:
@@ -1101,7 +1162,8 @@ def scan_cargo(inv, packages, target=None, manifest_path=None, metadata_json=Non
         seen.add(pid)
         for dep in nodes[pid]["deps"]:
             kinds = [k.get("kind") for k in dep.get("dep_kinds", [])]
-            if any(k is None for k in kinds):  # 普通依赖（会编进程序的）
+            # 普通依赖会编进程序；构建依赖一般不会，但 *-src（openssl-src 这种）是把 C 源码编进去的。
+            if any(k is None for k in kinds) or ("build" in kinds and by_id[dep["pkg"]]["name"].endswith("-src")):
                 stack.append(dep["pkg"])
     for pid in sorted(seen - workspace, key=lambda p: (by_id[p]["name"], by_id[p]["version"])):
         p = by_id[pid]
@@ -1834,6 +1896,75 @@ def self_test():
         ]}
         errors, _, _ = check(deb_doc, pol)
         eq(sorted(e.split("@")[0] for e in errors), ["deb a", "deb b", "deb c"], "Debian 的 AGPL、SSPL 各种写法：%s" % errors)
+
+    # 原文识别的评审发现：特殊许可证不被当成 MIT / BSD，前面有别的条款的不认
+    x11 = MIT_TEXT.replace("The above copyright notice and this permission notice shall",
+                           "The above copyright notice and this permission notice (including the next\nparagraph) shall")
+    eq(detect_text(x11), "MIT", "X11 写法“(including the next paragraph)”是 MIT，不是 MIT-0")
+    eq(detect_text("// " + MIT_TEXT.replace("\n", "\n// ")), "MIT", "源文件注释里的 MIT")
+    eq(detect_text(BSD3_TEXT + "\n3. All advertising materials mentioning features or use of this software must display\n"), "BSD-4-Clause", "带广告条款的 BSD")
+    eq(detect_text(BSD3_TEXT + "\nmust be accompanied by information on how to obtain complete source code for the DB software\n"),
+       "Sleepycat", "Sleepycat 要求公开源码")
+    eq(detect_text(MIT_TEXT + "\nThe Software shall be used for Good, not Evil.\n"), "JSON", "JSON 许可证")
+    eq(detect_text("Copyright Acme Corp. All rights reserved.\nThis is proprietary software licensed under the Acme EULA.\n\n"
+                   "Bundled third-party code:\n\n" + MIT_TEXT), None, "专有声明后面带的 MIT 原文不算")
+    eq(detect_text("\"Commons Clause\" License Condition v1.0\n\nThe Software is provided to you by the Licensor under the License, "
+                   "as defined below, subject to the following condition.\n\n" + MIT_TEXT), None, "Commons Clause 前言后面的 MIT 不算")
+    eq(detect_text("MIT License\n\nCopyright (c) 2015-2024 A. Person, B. Person and contributors\n\n" + MIT_TEXT.split("\n\n", 2)[2]),
+       "MIT", "标题和版权行不算多余的话")
+    if (SPDX_DIR / "Unicode-3.0.txt").is_file():
+        eq(detect_text((SPDX_DIR / "Unicode-3.0.txt").read_text()), "Unicode-3.0", "Unicode-3.0 不是 MIT-0")
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        nm = tmp / "node_modules"
+        (nm / "bom").mkdir(parents=True)
+        (nm / "bom" / "package.json").write_text("﻿" + json.dumps({"name": "bom", "version": "1.0.0", "license": "AGPL-3.0-only"}))
+        (nm / "noversion").mkdir()
+        (nm / "noversion" / "package.json").write_text(json.dumps({"name": "noversion", "license": "MIT"}))
+        inv = Inventory(tmp / "out", "edge")
+        scan_npm(inv, nm)
+        errors, _, _ = check(inv.write(), pol)
+        eq(any("bom@1.0.0" in e and "禁止" in e for e in errors), True, "带 BOM 的 package.json 照样读")
+        eq(any("noversion@?" in e for e in errors), True, "读不出版本的包不能悄悄跳过")
+        # .egg-info
+        sp = tmp / "sp"
+        (sp / "eggy-1.0.egg-info").mkdir(parents=True)
+        (sp / "eggy-1.0.egg-info" / "PKG-INFO").write_text("Metadata-Version: 1.1\nName: eggy\nVersion: 1.0\nLicense: AGPL-3.0-only\n")
+        inv = Inventory(tmp / "out2", "egg")
+        scan_python(inv, sp)
+        eq(inv.components.get(("pypi", "eggy", "1.0"), {}).get("license"), "AGPL-3.0-only", ".egg-info 也扫")
+        # sources.toml：同一组件的许可证要一致
+        ex = tmp / "conflict"
+        ex.mkdir()
+        (ex / "a").write_text("a")
+        (ex / "b").write_text("b")
+        (ex / "sources.toml").write_text('[[file]]\ncomponent = "x"\nversion = "1"\nlicense = "MIT"\npath = "a"\n'
+                                         '[[file]]\ncomponent = "x"\nversion = "1"\nlicense = "Apache-2.0"\npath = "b"\n')
+        try:
+            scan_extra(Inventory(tmp / "out3", "x"), ex)
+            eq("没报错", "报错", "同一组件写了不同的许可证")
+        except SystemExit:
+            pass
+        # cargo：*-src 构建依赖算进去
+        reg = tmp / "reg"
+        for n in ("openssl-src", "cc"):
+            (reg / n).mkdir(parents=True)
+        meta = {
+            "packages": [{"id": "app", "name": "app", "version": "1", "license": "UNLICENSED", "license_file": None,
+                          "manifest_path": str(tmp / "ws" / "Cargo.toml")}]
+            + [{"id": n, "name": n, "version": "1", "license": "Apache-2.0", "license_file": None,
+                "manifest_path": str(reg / n / "Cargo.toml")} for n in ("openssl-src", "cc")],
+            "workspace_members": ["app"],
+            "resolve": {"nodes": [
+                {"id": "app", "deps": [{"pkg": "openssl-src", "dep_kinds": [{"kind": "build"}]}, {"pkg": "cc", "dep_kinds": [{"kind": "build"}]}]},
+                {"id": "openssl-src", "deps": []}, {"id": "cc", "deps": []},
+            ]},
+        }
+        (tmp / "m.json").write_text(json.dumps(meta))
+        inv = Inventory(tmp / "out4", "app")
+        scan_cargo(inv, ["app"], metadata_json=tmp / "m.json")
+        eq(sorted(c["name"] for c in inv.components.values()), ["openssl-src"], "*-src 构建依赖算，别的构建依赖不算")
+    eq(pol.classify("FSL-1.1-MIT", "npm") in ("review", "deny"), True, "FSL 不放行")
 
     # 仓库里的策略文件能加载，例外都写了理由
     real = Path(__file__).with_name("policy.toml")

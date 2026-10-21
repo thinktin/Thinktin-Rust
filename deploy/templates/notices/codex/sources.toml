@@ -31,10 +31,11 @@ license = "Apache-2.0"
 path = "codex-NOTICE"
 url = "https://raw.githubusercontent.com/openai/codex/rust-v0.160.1/NOTICE"
 
+# Codex 源码树里 vendored 的 wezterm 代码（third_party/wezterm）。
 [[file]]
-component = "openai-codex"
-version = "0.160.1"
-license = "Apache-2.0"
+component = "wezterm"
+version = "openai/codex rust-v0.160.1 third_party/wezterm"
+license = "MIT"
 path = "wezterm-LICENSE"
 url = "https://raw.githubusercontent.com/openai/codex/rust-v0.160.1/third_party/wezterm/LICENSE"
 
