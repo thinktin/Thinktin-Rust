@@ -515,6 +515,11 @@ _TEMPLATE_SLOTS = {
     "BSD-1-Clause": _BSD_SLOTS,
     "MIT": [("THE AUTHORS OR COPYRIGHT HOLDERS", "<copyright holders>")],
 }
+# GNU 的 GPL-2.0、LGPL-2.x 里自由软件基金会的地址：各版本不一样（59 Temple Place、51 Franklin Street，现在的原文
+# 换成了 <https://fsf.org/> 和“see <https://www.gnu.org/licenses/>”），当占位。
+_FSF_ADDRESS = (r"51\s+Franklin\s+St(?:reet)?,\s*Fifth\s+Floor,\s*"
+                r"Boston,\s*MA\s+02110-1301,?\s+USA", "<fsf address>")
+_TEMPLATE_SLOT_RES = {"GPL-2.0-only": [_FSF_ADDRESS], "LGPL-2.0-only": [_FSF_ADDRESS], "LGPL-2.1-only": [_FSF_ADDRESS]}
 # 版权声明：Copyright (c) …、Copyright 2024 …、Copyright Acme Inc.、© …、(c) 2024 …（区分大小写）。
 # 条款编号“(c) You must retain …”、正文里的“COPYRIGHT HOLDERS AND CONTRIBUTORS”“copyright protection”不算。
 _NOTICE_START = re.compile(
@@ -673,6 +678,8 @@ def _template_words(lid):
             text = path.read_text(encoding="utf-8")
             for old, new in _TEMPLATE_SLOTS.get(lid, []):
                 text = text.replace(old, new)
+            for pat, new in _TEMPLATE_SLOT_RES.get(lid, []):
+                text = re.sub(pat, new, text)
             # 按可以省的部分切开：[(这一段, 可以省吗)]
             parts, pos = [], 0
             for start, end in _OPTIONAL_SPANS.get(lid, []):
@@ -2753,6 +2760,13 @@ def self_test():
             out.append("\n".join(lines))
         rewrapped = "\n\n".join(out)
         eq(identify(rewrapped), (path.stem, True), "%s 标准文本换行以后" % path.stem)
+    # GNU 现在发布的 GPL-2.0、LGPL-2.1：地址换成了网址（Ubuntu 26.04 的 /usr/share/common-licenses 就是这一版）
+    for lid in ("GPL-2.0-only", "LGPL-2.1-only"):
+        current = re.sub(r"51 Franklin Street, Fifth Floor, Boston, MA\s+02110-1301,?\s+USA", "<https://fsf.org/>",
+                         re.sub(r"write to the Free Software Foundation, Inc\., 51 Franklin Street, Fifth Floor, Boston, MA\s+02110-1301,?\s+USA",
+                                "see <https://www.gnu.org/licenses/>", _spdx_text(lid)))
+        eq("Franklin" in current, False, "%s 换掉了地址" % lid)
+        eq(identify(current), (lid, True), "GNU 现在的 %s 原文（地址换成网址）" % lid)
     # GNU 发布的原文（Debian 的 /usr/share/common-licenses）核对得上
     for name, lid in [("GPL-2", "GPL-2.0-only"), ("GPL-3", "GPL-3.0-only"), ("LGPL-2.1", "LGPL-2.1-only"), ("LGPL-3", "LGPL-3.0-only"),
                       ("Apache-2.0", "Apache-2.0"), ("MPL-2.0", "MPL-2.0")]:
