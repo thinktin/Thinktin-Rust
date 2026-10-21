@@ -15,6 +15,8 @@
 2. 12.2 → 12.3 → 12.4 → 12.5 → 12.6 → 12.8 → 12.7 → 12.11，再做 P2 的 12.9、12.10。
 
 坑和决定：
+- 安卓会话（session_01T2zubC6hDr9ZZR3ihhPP5b）在分支 `android-app` 做 13.x，设计规范在 `docs/android-design.md`；深链格式、事件 kind → 界面的规则两端保持一致。
+- `docs/gen_wbs.py`：只改 `AREAS["12 iOS App"]` 这一块；backend-core 手改进 wbs.md 但没进脚本的五行（1.6、9.11、9.12、11.6、13.12）按 wbs.md 逐字补回脚本（安卓分支也这么补，内容相同）。wbs.md / wbs.csv 是生成物，合并时后合的一方重新跑 `python3 docs/gen_wbs.py docs/wbs.md docs/wbs.csv`，不手工解冲突。
 - 云端会话是 Linux，没有 Xcode：SwiftUI 代码靠 GitHub Actions 的 macOS runner 编译和跑测试（每次推送都跑）；纯 Swift 逻辑（模型、视图模型、格式化、状态机）用 Linux 上的 Swift 6.2 工具链本地 `swift test`。
 - Xcode 工程不手写 pbxproj，用 XcodeGen 的 `project.yml` 生成（CI 和本机都 `xcodegen generate`）。
 - 用量限制后由预约的提醒（21:32 UTC）叫醒本会话接着做。

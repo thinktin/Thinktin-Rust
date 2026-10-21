@@ -119,6 +119,13 @@ Claude App 的特点：暖色纸张底色、极少的强调色、标题用衬线
 
 接口的 `message` 是英文、给开发者看的，界面显示按错误码本地化的文案。
 
+## 6.1 深链与推送
+
+和安卓端（[docs/android-design.md](android-design.md) 第 3 节）用同一套深链，推送点击、收件箱跳转、实时活动都走它：
+`thinktin://run/{id}`、`thinktin://approval/{id}`、`thinktin://plan/{id}`、`thinktin://inbox`（可带 `/{id}`）、
+`thinktin://vault/request/{id}`、`thinktin://instance/{id}`。推送 payload 里的字段（收件箱 id、运行 id、审批 id）由服务端
+`notify` 定义，两端共用。Universal Links 等上线前再配。
+
 ## 7. 构建与测试
 
 - **本机（macOS）**：`brew install xcodegen`，`tools/client-core/build-apple.sh target/apple`，`cd apps/apple && xcodegen generate`，
