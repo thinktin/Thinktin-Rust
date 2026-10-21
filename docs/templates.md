@@ -17,7 +17,7 @@ pip = ["hermes-agent[acp,mcp]==0.19.0"]                  # 装进 /opt/agents/<i
 
 - `[install.bin]`：包没放上 PATH、接入方式要直接调用的程序，`<命令名> = "<全局 npm 目录下的路径>"`，链接到
   `/usr/local/bin`（Claude 的 `claude` 二进制在 claude-agent-acp 的依赖里）。路径要正好匹配一个可执行文件，同名命令已经有了就失败。
-- `prune`：装好以后删掉的文件或目录，`npm:<全局 npm 目录下的路径>` 或 `pip:<site-packages 下的路径>`，可以用通配符。
+- `prune`：装好以后删掉的文件或目录，`npm:<install.npm 里某个包下的路径>` 或 `pip:<site-packages 下的路径>`，可以用通配符。
   给许可证审查不过、agent 又用不到的东西（Hermes 网页界面里的商用字体、Pi 的 DOOM 演示扩展，见
   [licenses.md](licenses.md)）。和安装在同一层里删（分开的话删掉的文件还留在安装那一层），每项一个也匹配不到就构建失败。
 

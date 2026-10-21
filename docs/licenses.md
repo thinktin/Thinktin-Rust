@@ -54,31 +54,47 @@ CI 按许可证策略检查。法务的判断（商标、各家的使用条款�
 1. **元数据里的声明**（npm 的 `license`、PyPI 的 `License-Expression` / `License`、Cargo 的 `license`）：合法的 SPDX
    表达式（标识按 SPDX 的完整列表核对，`tools/licenses/spdx/license-ids.txt`），或对照表里的常见写法（“MIT License”
    “Apache 2.0”）。**有声明但认不出的，不再拿原文或分类去猜**，直接算认不出。`SEE LICENSE IN <文件>` 只看那个文件。
-   PyPI 没有 `License-Expression` 时，`License` 字段和许可证分类都只是说明：分类里有 `License` 字段没提到的许可证，
-   两个都算（AND）。
+   PyPI 有认得出的 `License-Expression` 就只看它；没有时 `License` 字段和许可证分类都只是说明：分类里有 `License` 字段
+   没提到的许可证（含糊的“GPL”分类也算），两个都算（AND）。几个声明里有一个认不出（认不出的 `License-Expression`、
+   对照表里没有的分类），整个包就算认不出，别的声明认得出也不算。
 2. 没有声明时：**PyPI 的许可证分类**（几个分类用 AND 连：分类本身不说明是“任选其一”；对照表里没有的分类算认不出）。
 3. 再没有就看**原文**，分两步：先按正文开头的标题和授权条款里固定的句子提名（可能提名好几个：X11 也含 MIT 的授权句），
-   再逐个拿**整份文件和 SPDX 标准文本核对**（`tools/licenses/spdx/<标识>.txt`，Apache-2.0、MPL-2.0 也认标准的头部声明）：
-   去掉版权行以后，文件里多出来的词一段不超过 5 个、加起来不超过 8 个（标题、SPDX 标识行这类不算），标准文本缺的不超过
-   四分之一。第一个对得上的算数；都对不上算认不出。这样前后加了专有声明、EULA、限制条款的不会被认成宽松许可证，代价是
-   带了来历说明、额外版权行的文件也认不出（有声明的包不受影响，没声明的要登记）。
+   再逐个拿**整份文件和 SPDX 标准文本逐词核对**（`tools/licenses/spdx/<标识>.txt`，Apache-2.0、MPL-2.0 也认标准的头部声明；
+   GNU 发布的 GPL-2.0 最后一段、单独发的 LGPL-3.0 也算标准文本）。容差按位置算：
+   - 标准文本的占位处（`<year>`、`<copyright holders>`、BSD 免责和第三条里的组织名）可以换成名字，一处最多 10 个词；
+   - 别处多出来的词一段不超过 5 个、加起来不超过 8 个（标题、SPDX 标识行这类不算）；多出来的词里有限制性的说法
+     （not、only、solely、commercial、personal、subscription……）或者非拉丁字母的文字（中文、俄文写的附加条款），就对不上；
+   - 标准文本里缺的词一段不超过 6 个、加起来不超过 3%（至少 8 个）；缺的是授权的词（use、copy、distribute……）就对不上；
+     附录、“How to Apply”、Exhibit、CC0 开头的免责声明整段缺也行；
+   - 版权行只去掉版权声明本身（“Copyright (c) 2024 Acme Inc.”，最多 30 个词，连同跟着的商标声明），同一行后面的话照常
+     核对；版权声明里有限制性说法的不去掉。全角字母、连字（ﬀ）、长得像拉丁字母的西里尔字母先换成普通字母；
+   - 超过 20 万个字符的文件不核对（不会是一份许可证；截断核对会漏掉后面附加的条款）。
+   第一个对得上的算数；都对不上算认不出。这样前后加了专有声明、EULA、限制条款的不会被认成宽松许可证，代价是
+   改过措辞的文件（BSD 第三条写成“may not be used to endorse”）也认不出（有声明的包不受影响，没声明的要登记）。
    包里有认不出的许可证文件时加上 `LicenseRef-Unrecognized`，要登记。
 4. 含糊的声明（“BSD”）用核对过的原文细化成同一类的（BSD-3-Clause），不是同一类的两个都算（AND）；
    “AGPL”“GPL”这类含糊声明不会被原文改成宽松的。
 
-不管从哪里认的，还要和包里的许可证文件对一遍：文件核对过是要审查的许可证（声明 MIT，文件是 GPL 全文），或者看着像
-禁止的许可证（AGPL……），而声明里没有它，报错要人看。只是顺带提到别的许可证的不算。
+不管从哪里认的，还要和包里的许可证文件对一遍，声明里没有的报错要人看：
+- 禁止名单里的许可证：文件的任何一个提名（AGPL 的标题下面是 MIT 的正文也算），或者文件任何位置出现的这些许可证的正文
+  标题、授权声明（合并成一个文件的第三方许可清单里，AGPL 那一段可能在很后面）；
+- 要审查的许可证（GPL……）：核对过的（声明 MIT，文件是 GPL 全文），按标题提名的（GPL 原文前面加了一句话照样是 GPL），
+  或者包自己根目录的许可证文件第一个提名就是它、又什么都核对不上（JSON 许可证、改过的 GPL）。
+只是顺带提到别的许可证、文件又核对得上的不算。
 
-许可证原文里有限制商用、托管的说法（Commons Clause、non-commercial、BUSL、SSPL、PolyForm……）都会加上
-`LicenseRef-Restricted-Terms`，要人看。
+许可证原文里有限制商用、托管的说法（Commons Clause、non-commercial、BUSL、SSPL、PolyForm、Sustainable Use License……，
+整个文件都找，超过 16 MiB 的文件要人看）都会加上 `LicenseRef-Restricted-Terms`，要人看。
 
 **包里子目录下的原文**（`vendor/x/LICENSE`、`fonts/x-OFL.txt`、名字里带 NOTICE、LICENSE、OFL 的，`licenses/` 目录下的；
-npm 包不进它自己的 `node_modules`，那是别的包；PyPI 包按 RECORD 找）一起带上：不拿来认包的许可证，但和声明对照（上面那条）、
-找限制性说法。
+隐藏目录（`.vitepress/`、`.next/`）也看，不看版本库目录；npm 包不进它自己的 `node_modules`，那是别的包；crate 不进
+子目录里别的 crate（git 依赖带着整个仓库）；PyPI 包按 RECORD 找，装到虚拟环境根目录下的数据文件（`share/…`）也算，
+`bin/` 下的脚本不算）一起带上：不拿来认包的许可证，但和声明对照（上面那条）、找限制性说法。HTML 写的
+（`LICENSE.html`、`ThirdPartyNotices.html`）去掉标签再看。同名同版本的包在依赖树里出现好几份时，每一份的原文、字体都记。
 
 **字体**单独看：字体常常和包的代码分开授权，有的是商用字体（Hermes 的网页界面就带了付费字体）。包里每个字体文件
-（`.ttf`、`.otf`、`.woff`、`.woff2`……）都要在 `policy.toml` 的 `[[asset]]` 登记许可证，按字体家族写路径，写明原文在哪：
-`license_file`（包里的原文，要核对得上登记的许可证）或 `upstream`（`notices/` 里补的组件）。没登记的报错。
+（`.ttf`、`.otf`、`.woff`、`.woff2`、字体集合、Type 1 的 `.pfb` / `.afm`、点阵字体……）都要在 `policy.toml` 的 `[[asset]]`
+登记许可证，按字体家族写路径，写明原文在哪：`license_file`（包里的原文，根目录的也行，要核对得上登记的许可证）或
+`upstream`（`notices/` 里补的组件）。没登记的报错。
 审查不过、agent 又用不到的，在清单的 `[install] prune` 里删掉（见 [templates.md](templates.md)），构建时在扫描前删。
 
 扫描的范围：全局 npm 包（`/usr/local/lib/node_modules`）、基础镜像带的 Yarn（`/opt/yarn-*`）、agent 虚拟环境里的 Python 包
@@ -107,7 +123,7 @@ copyright 文件里，一并带上）、dpkg 装的包、Node.js 本身、agent-
 | OpenClaw | Playwright 带的 VS Code 图标字体 codicon：VS Code 的 MIT 原文（Playwright 源码树里有、npm 包里没有）和 vscode-codicons 的 CC-BY-4.0 原文 |
 | Hermes | 网页界面终端用的 JetBrains Mono 字体的 OFL 原文 |
 | Pi | 上游仓库的 MIT LICENSE（Pi 的 npm 包都写了 MIT，却都没带原文） |
-| Codex | Apache-2.0 的 LICENSE、NOTICE（npm 包里都没有）；bubblewrap（LGPL-2.0-or-later）、libcap、zsh（改过）、ripgrep、PCRE2、musl、OpenSSL、V8、wezterm 的原文；语音运行时（GStreamer、GLib 等）包里自带的原文；Codex 自己 1067 个 crate（标签 rust-v0.160.1 的源码） |
+| Codex | Apache-2.0 的 LICENSE、NOTICE（npm 包里都没有）；bubblewrap（LGPL-2.0-or-later）、libcap、zsh（改过）、ripgrep、PCRE2、musl、OpenSSL、V8、wezterm 的原文；语音运行时（GStreamer、GLib 等）包里自带的原文；Codex 自己 1071 个 crate（标签 rust-v0.160.1 的源码） |
 
 ## 4. CI
 
@@ -123,7 +139,8 @@ copyright 文件里，一并带上）、dpkg 装的包、Node.js 本身、agent-
 |---|---|
 | 认不出许可证 | 看包里的 LICENSE 和 package.json / METADATA。是常见写法没收进对照表的，加进 `licenses.py` 的 `FREE_TEXT`；真没写许可证的，按 GPL 一类处理（下一行） |
 | 需要单独审查（GPL、专有……） | 弄清这个包在镜像里怎么用、许可证要求什么，确认能用后在 `policy.toml` 登记 `[[exception]]`，理由写清楚；拿不准的找法务 |
-| 许可证是 X，但包里的文件是（像是）Y | 声明和原文对不上：看包的源码仓库，弄清到底按哪个许可证发布。声明写错了、Y 只管个别文件的，确认后登记 `[[exception]]`（license 写扫描出的 X，用 `text_sha256` 钉住原文）；真是 Y 的按 Y 处理 |
+| 许可证是 X，但包里的文件是（像是）Y | 声明和原文对不上：看包的源码仓库，弄清到底按哪个许可证发布。声明写错了、Y 只管个别文件的（不编进去的测试数据、双许可里的另一支），确认后登记 `[[exception]]`（license 写扫描出的 X，写死 version）；真是 Y 的按 Y 处理。Y 在禁止名单里的，登记了也照样报 |
+| 登记过例外，但包里的原文有限制性的说法 | 登记时没看过这些说法（上游新加的条款，或者新带进来的第三方代码）：复核，能用的在登记里写上 `restricted_terms = ["…"]`（报错里列的说法） |
 | 在禁止名单里 | 不能用：换一个包，或者让上游换依赖。依赖是间接引进来的，看能不能用 npm 的 `overrides` 去掉 |
 | 清单的 `agent.license` 和上游对不上 | 上游改了许可证：复核新许可证还能不能这么用（第 6 节），再改清单 |
 | 登记的例外在镜像里没找到 | 上游换了包名或许可证：重新复核，更新登记 |
@@ -193,8 +210,10 @@ copyright 文件里，一并带上）、dpkg 装的包、Node.js 本身、agent-
   在文件里，不单独扫描。
 - **Codex 二进制里 V8 带的第三方库**（ICU、abseil 等）和 **Bun 静态链接的各库**（BoringSSL、zstd、sqlite 等）：只带了
   上游给的清单和主要的原文（第 3 节）。
-- **Rust crate 里的字体**（`include_bytes!` 编进程序的）不检查；crate 子目录里的原文只在核对得上时才和声明对照
-  （没核对上的 GPL 原文常是“任选其一”里的另一支，比如 zstd 的 `BSD OR GPL-2.0`）。
+- **Rust crate 里的字体**（`include_bytes!` 编进程序的）不检查。crate 子目录里的 GPL 原文常是“任选其一”里的另一支
+  （zstd 的 `BSD OR GPL-2.0`）或不编进去的测试数据，逐个登记了（`policy.toml`）。
+- **原文核对是逐词比对**，不理解句意：换个说法、不用那些限制性的词写的附加条件（容差范围内的几个词）还是可能核对得上。
+  靠的是有声明的包以声明为准、没声明的包大多核对不上要人看。
 - **Android 库工程的 JVM 依赖**（JNA、kotlinx-coroutines）不在清单里：`build-android.sh` 只生成了 Rust 客户端核心的清单，
   App 工程（13.x）接入时要加上 Gradle 依赖的许可证。
 - **Codex 的 1071 个 crate** 按上游 `rust-v0.160.1` 标签的 Cargo.lock 解析（不加 `--locked`，因为上游发布时只改工作区版本号），

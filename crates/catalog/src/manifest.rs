@@ -75,7 +75,7 @@ pub struct InstallSection {
     #[serde(default)]
     pub bin: BTreeMap<String, String>,
     /// 装好以后删掉的文件或目录（第三方许可证审查不过、agent 又用不到的东西，比如网页界面里的商用字体）。
-    /// `npm:<全局 npm 目录下的路径>` 或 `pip:<site-packages 下的路径>`，可以用通配符；模板构建时一个也匹配不到就失败
+    /// `npm:<install.npm 里某个包下的路径>` 或 `pip:<site-packages 下的路径>`，可以用通配符；模板构建时一个也匹配不到就失败
     /// （上游改了目录，要重新看）。
     #[serde(default)]
     pub prune: Vec<String>,

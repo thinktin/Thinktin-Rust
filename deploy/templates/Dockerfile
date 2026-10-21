@@ -44,7 +44,7 @@ ARG AGENT_VERSION
 ARG NPM_PACKAGES=""
 ARG PIP_PACKAGES=""
 # 清单 [install] prune：装好以后删掉的东西（许可证审查不过、agent 又用不到的，比如商用字体）。
-# npm:<全局 npm 目录下的路径> 或 pip:<site-packages 下的路径>，每项至少要匹配到一个，不然是上游改了目录，要重新看。
+# npm:<install.npm 里某个包下的路径> 或 pip:<site-packages 下的路径>，每项至少要匹配到一个，不然是上游改了目录，要重新看。
 # 和安装在同一层里删：分开的话，删掉的文件还留在安装那一层里，镜像照样带着。
 ARG PRUNE=""
 # npm 包装到全局（命令在 /usr/local/bin），Python 包装到 agent 自己的虚拟环境 /opt/agents/<id>。
