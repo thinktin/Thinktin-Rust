@@ -89,6 +89,7 @@
 
 ## 进行中
 
+- **10.5 IM 渠道**：主会话在做（2026-10-21 17:23 起，北京时间）。飞书、企业微信、钉钉的群机器人 webhook：用户在 App 里绑定（地址和签名密钥加密存放，只认三家的官方域名），运行完成、需要审批、运行失败按用户的设置经出箱发到群里（签名、限流、失败重试），内容过本地关键词过滤、带 AI 生成标识。
 - **16.5 剩下的（人的部分）**：上线前法务复核，问题列在 [许可证说明](licenses.md) 第 6 节：Claude（Anthropic 专有）按 legal-and-compliance 页面的条件在托管沙箱里运行、平台形态算不算“居间”；各 agent 的名字和商标；LGPL、MPL 组件的源码义务（交镜像给客户时）；Bun 静态链接的各库要不要逐个补原文；App 的“开源许可”页面（12.x、13.x 做界面时接上）。看不全的地方记在说明第 8 节（包里编译好的原生代码、打包好的 JavaScript 等）。分支 `wip/16.5-license-inventory`（旧主会话的半成品）已被 `backend-core` 上的实现取代，可以删掉。
 - **6.14 接入其他 agent**：按 10-14 拍板的“暂不接其他 agent”先不做；以后要接，优先 DeepSeek。
 - **mobile.yml 没实跑过**：`tools/client-core/build-apple.sh` 这次加了许可证资源（Swift 包的 `resources: [.copy("Licenses")]`），但 mobile.yml 只能手动触发、而且只在默认分支（main）上能触发，合并 PR #5 后要在 main 上跑一次确认。
