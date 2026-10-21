@@ -34,9 +34,11 @@ on:
       - .github/workflows/ios.yml
   workflow_dispatch:
 
+# 同一分支的运行排队、不互相取消：仓库要求小步频繁推送（CLAUDE.md），取消正在跑的会让 macOS 作业（20 分钟以上）
+# 一直出不了结果。排队时只留最新的一个，中间的推送会被跳过。
 concurrency:
   group: ios-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
