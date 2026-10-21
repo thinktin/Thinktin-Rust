@@ -770,17 +770,26 @@ def detect_text(text):
 # 许可证、NOTICE 文件的名字：以这些词开头，或者词在 - _ . 后面（LICENSE-MIT、node-runtime-NOTICE.md、jetbrains-mono-OFL.txt、
 # ThirdPartyNotices.txt）。
 _LEGAL_NAME = re.compile(r"(^|[-_. ])(LICEN[CS]E|COPYING|NOTICE|UNLICENSE|COPYRIGHT|PATENTS|THIRD[-_ ]?PARTY|OFL([-_. ]|$))", re.I)
-_FONT_EXT = {".ttf", ".otf", ".woff", ".woff2", ".eot", ".ttc"}
+# 字体：TrueType / OpenType / Web 字体、字体集合、Type 1（.pfb、.pfa、.afm、.pfm、.t1）、点阵字体（.bdf、.pcf、.fnt、.fon）。
+_FONT_EXT = {".ttf", ".otf", ".woff", ".woff2", ".eot", ".ttc", ".otc", ".dfont", ".pfb", ".pfa", ".afm", ".pfm", ".t1",
+             ".bdf", ".pcf", ".pcf.gz", ".bdf.gz", ".fnt", ".fon"}
 _CODE_EXT = {
     ".js", ".cjs", ".mjs", ".ts", ".cts", ".mts", ".jsx", ".tsx", ".json", ".py", ".pyc", ".pyi", ".rs", ".go",
     ".map", ".sh", ".yml", ".yaml", ".toml", ".css", ".svg", ".png", ".jpg", ".gif", ".wasm", ".node", ".so",
-    ".d", ".h", ".c", ".cc", ".cpp", ".java", ".rb", ".html", ".htm",
+    ".d", ".h", ".c", ".cc", ".cpp", ".java", ".rb",
 } | _FONT_EXT
+# 包里不看的目录：版本库、别的包（node_modules 下每个包单独记）。别的隐藏目录（.vitepress、.next）照样看。
+_SKIP_DIRS = {".git", ".hg", ".svn", "node_modules"}
 
 
 def _is_code(name):
     lower = name.lower()
     return any(lower.endswith(ext) for ext in _CODE_EXT)
+
+
+def _is_font(name):
+    lower = name.lower()
+    return any(lower.endswith(ext) for ext in _FONT_EXT)
 
 
 def is_legal_file(name):
@@ -790,23 +799,24 @@ def is_legal_file(name):
 def _bundled_kind(path, in_licenses_dir=False):
     """包里子目录下的文件算什么：legal（许可证、NOTICE；licenses/ 目录下的都算）、font，或者 None。"""
     name = Path(path).name
-    if Path(name).suffix.lower() in _FONT_EXT:
+    if _is_font(name):
         return "font"
     if is_legal_file(name) or (in_licenses_dir and not _is_code(name)):
         return "legal"
     return None
 
 
-def bundled_files(directory):
+def bundled_files(directory, stop_at=None):
     """包里子目录下（不进 node_modules：那是别的包）的许可证、NOTICE 和字体，返回 (原文列表, 字体列表)。
 
     打包进来的第三方代码、图标、字体的原文常在子目录里（vendor/x/LICENSE、fonts/x-OFL.txt）；字体常常单独授权
-    （有的是商用字体），每个都要登记（policy.toml 的 [[asset]]）。字体在包的根目录也算。"""
+    （有的是商用字体），每个都要登记（policy.toml 的 [[asset]]）。字体在包的根目录也算。
+    stop_at：子目录里有这个文件就是另一个包，不进去（cargo 的 git 依赖：整个仓库都在，旁边是工作区里别的 crate）。"""
     directory = Path(directory)
     legal, fonts = [], []
     for dirpath, dirnames, filenames in os.walk(directory):
-        dirnames[:] = sorted(d for d in dirnames if d != "node_modules" and not d.startswith("."))
         here = Path(dirpath)
+        dirnames[:] = sorted(d for d in dirnames if d not in _SKIP_DIRS and not (stop_at and (here / d / stop_at).is_file()))
         in_licenses_dir = re.fullmatch(r"(?i)licen[cs]es", here.name) is not None
         for f in sorted(filenames):
             kind = _bundled_kind(here / f, in_licenses_dir)
@@ -836,6 +846,17 @@ def read_text(path):
     return data.decode("utf-8", errors="replace")
 
 
+def legal_text(path):
+    """拿来认许可证、找限制性说法的正文：HTML 的（LICENSE.html、ThirdPartyNotices.html）去掉标签。"""
+    text = read_text(path)
+    if text is not None and Path(path).name.lower().endswith((".html", ".htm")):
+        import html
+
+        text = re.sub(r"(?is)<(script|style)\b.*?</\1\s*>", " ", text)
+        text = html.unescape(re.sub(r"(?s)<[^>]*>", " ", text))
+    return text
+
+
 def is_notice(path):
     """NOTICE、版权声明、第三方许可清单：讲的是别人的许可证或者只是署名，不拿来认这个包自己的许可证。"""
     name = Path(path).name.upper()
@@ -858,7 +879,7 @@ def license_from_files(paths):
     for p in paths:
         if is_notice(p):
             continue
-        text = read_text(p)
+        text = legal_text(p)
         if text is None:
             continue
         spdx = detect_text(text)
@@ -879,7 +900,7 @@ def file_detections(paths):
     for p in paths:
         if is_notice(p):
             continue
-        text = read_text(p)
+        text = legal_text(p)
         if text is None:
             continue
         out.append((p, examine(text)))
@@ -924,7 +945,7 @@ def restricted_terms(paths):
     for p in paths:
         if is_notice(p):
             continue
-        text = read_text(p)
+        text = legal_text(p)
         if text is None:
             continue
         if len(text.encode("utf-8", errors="replace")) > SCAN_MAX_BYTES:
@@ -942,10 +963,13 @@ def restricted_terms(paths):
 # 清单
 
 def _relative(f, base):
-    try:
-        return str(Path(f).relative_to(base)) if base else str(f)
-    except ValueError:
+    """f 相对 base 的路径；不在 base 下面时用 ../（PyPI 包装到虚拟环境根目录下的数据文件）。"""
+    if not base:
         return str(f)
+    try:
+        return str(Path(f).relative_to(base))
+    except ValueError:
+        return os.path.relpath(f, base)
 
 
 class Inventory:
@@ -1302,10 +1326,11 @@ def git_web_url(url):
     if not isinstance(url, str) or not url.strip():
         return None
     u = url.strip()
-    m = re.fullmatch(r"(?:(github|gitlab|bitbucket):)?([\w.-]+/[\w.-]+)", u)
+    m = re.fullmatch(r"(?:(github|gitlab|bitbucket):)?(\w[\w.-]*/(?!\.\.?$)[\w.-]+)", u)
     if m:
         return "https://%s.%s/%s" % (m.group(1) or "github", "org" if m.group(1) == "bitbucket" else "com", m.group(2))
     u = re.sub(r"^git\+", "", u)
+    u = re.sub(r"^ssh://git@([^:/]+):(?!\d)", r"https://\1/", u)  # git+ssh://git@github.com:org/repo.git
     u = re.sub(r"^(git|ssh)://(git@)?", "https://", u)
     u = re.sub(r"^git@([^:/]+):", r"https://\1/", u)
     u = re.sub(r"\.git(#.*)?$", "", u)
@@ -1433,15 +1458,23 @@ def record_files(dist, site_packages):
     if not dist.is_dir():
         return legal, fonts
     if (dist / "RECORD").is_file():
-        base, names = site_packages, [row.split(",")[0] for row in (dist / "RECORD").read_text(encoding="utf-8", errors="replace").splitlines()]
+        import csv
+        import io
+
+        rows = csv.reader(io.StringIO((dist / "RECORD").read_text(encoding="utf-8", errors="replace")))
+        base, names = site_packages, [row[0] for row in rows if row]
     elif (dist / "installed-files.txt").is_file():
         base, names = dist, (dist / "installed-files.txt").read_text(encoding="utf-8", errors="replace").splitlines()
     else:
         return legal, fonts
-    root = site_packages.resolve()
+    # wheel 的数据文件（.data/data）装在虚拟环境的根目录下（<venv>/share/…），也算；bin/ 下的脚本不算。
+    sp = site_packages.resolve()
+    root = sp.parents[2] if len(sp.parents) > 2 and sp.parent.parent.name == "lib" else sp
     for n in sorted(set(x.strip() for x in names if x.strip())):
         p = (base / n).resolve()
         if root not in p.parents or dist.resolve() in p.parents or not p.is_file():
+            continue
+        if root != sp and sp not in p.parents and p.relative_to(root).parts[0] == "bin":
             continue
         kind = _bundled_kind(p, re.fullmatch(r"(?i)licen[cs]es", p.parent.name) is not None)
         if kind == "font":
@@ -1732,7 +1765,7 @@ def scan_cargo(inv, packages, target=None, manifest_path=None, metadata_json=Non
                 files.append(lf)
         declared = p.get("license")
         license, source = resolve_license([declared] if declared else [], files)
-        bundled, _ = bundled_files(src_dir)
+        bundled, _ = bundled_files(src_dir, stop_at="Cargo.toml")
         inv.add("cargo", p["name"], p["version"], declared or (p.get("license_file") and "license-file: %s" % p["license_file"]),
                 license, source, files, None, root_level=False, authors=", ".join(p.get("authors") or []) or None,
                 bundled=bundled, source_url=cargo_source(p), asset_base=src_dir)
@@ -2974,6 +3007,51 @@ def self_test():
         doc = inv.write()
         inter = inv.components[("npm", "@fontsource/inter", "5.0.0")]
         eq(check_assets(inter, "inter", ofl_pol, None, set(), doc["components"]), [], "根目录的 OFL 原文可以当字体的 license_file")
+
+        # 扫描：隐藏目录、更多字体格式、HTML 的许可证文件
+        nm = tmp / "scan" / "node_modules"
+        pkg = nm / "docsite"
+        for rel, text in {"package.json": json.dumps({"name": "docsite", "version": "1.0.0", "license": "MIT"}),
+                          "LICENSE.html": "<html><body><h1>MIT License</h1><p>" + MIT_TEXT.replace("\n\n", "</p><p>") + "</p></body></html>",
+                          ".vitepress/theme/fonts/CommercialSans.woff2": "x", ".vitepress/theme/fonts/LICENSE": MIT_TEXT + "\nNon-commercial use only.\n",
+                          "standard_fonts/FoxitSans.pfb": "x", "fonts/NotoCJK.otc": "x", "fonts/fixed.pcf.gz": "x",
+                          ".git/LICENSE": AGPL_TEXT}.items():
+            (pkg / rel).parent.mkdir(parents=True, exist_ok=True)
+            (pkg / rel).write_text(text)
+        inv = Inventory(tmp / "out-scan", "scan")
+        scan_npm(inv, nm)
+        ds = inv.components[("npm", "docsite", "1.0.0")]
+        eq(sorted(a["path"] for a in ds["assets"]), [".vitepress/theme/fonts/CommercialSans.woff2", "fonts/NotoCJK.otc", "fonts/fixed.pcf.gz",
+                                                     "standard_fonts/FoxitSans.pfb"], "隐藏目录里的字体、Type 1 / 集合 / 点阵字体")
+        eq(ds["restricted_terms"] is not None, True, "隐藏目录里的原文也看（.git 不看）")
+        eq([(d["path"], d["proposed"], d["verified"]) for d in ds["file_licenses"] if not d.get("bundled")], [("LICENSE.html", "MIT", True)],
+           "HTML 的许可证文件去掉标签再认")
+        # PyPI：装到虚拟环境根目录下的数据文件；RECORD 按 CSV 读
+        venv = tmp / "venv"
+        sp = venv / "lib" / "python3.12" / "site-packages"
+        dist = sp / "lab-1.0.dist-info"
+        dist.mkdir(parents=True)
+        (dist / "METADATA").write_text("Metadata-Version: 2.1\nName: lab\nVersion: 1.0\nLicense-Expression: MIT\n\nx\n")
+        for rel in ("lab/__init__.py", "lab/fonts/Paid, Bold.woff2", "../../../share/jupyter/lab/static/Brand.woff2", "../../../bin/lab"):
+            (sp / rel).parent.mkdir(parents=True, exist_ok=True)
+            (sp / rel).write_text("x")
+        (dist / "RECORD").write_text('lab/__init__.py,,\n"lab/fonts/Paid, Bold.woff2",sha256=x,1\n'
+                                     "../../../share/jupyter/lab/static/Brand.woff2,,\n../../../bin/lab,,\n")
+        inv = Inventory(tmp / "out-venv", "venv")
+        scan_python(inv, sp)
+        lab = inv.components[("pypi", "lab", "1.0")]
+        eq(sorted(a["path"] for a in lab["assets"]), ["../../../share/jupyter/lab/static/Brand.woff2", "lab/fonts/Paid, Bold.woff2"],
+           "RECORD 里带逗号的路径、装到 share/ 的字体")
+        # cargo：git 依赖的整个仓库都在，旁边别的 crate 的原文不算这个 crate 的
+        repo = tmp / "git" / "nucleo"
+        for rel, text in {"Cargo.toml": "", "LICENSE": _spdx_text("MPL-2.0"), "matcher/Cargo.toml": "", "matcher/LICENSE": _spdx_text("GPL-3.0-only"),
+                          "vendor/lib/COPYING": MIT_TEXT}.items():
+            (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+            (repo / rel).write_text(text)
+        legal, _ = bundled_files(repo, stop_at="Cargo.toml")
+        eq([str(Path(f).relative_to(repo)) for f in legal], ["vendor/lib/COPYING"], "不进工作区里别的 crate")
+    eq(git_web_url("git+ssh://git@github.com:a/b.git"), "https://github.com/a/b", "git+ssh://git@host:org/repo")
+    eq(git_web_url("../local"), None, "相对路径不是仓库")
 
     # 仓库里的策略文件能加载，例外都写了理由
     real = Path(__file__).with_name("policy.toml")
