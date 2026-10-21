@@ -23,4 +23,4 @@
 - `docs/gen_wbs.py`：只改 `AREAS["12 iOS App"]` 这一块；backend-core 手改进 wbs.md 但没进脚本的五行（1.6、9.11、9.12、11.6、13.12）按 wbs.md 逐字补回脚本（安卓分支也这么补，内容相同）。wbs.md / wbs.csv 是生成物，合并时后合的一方重新跑 `python3 docs/gen_wbs.py docs/wbs.md docs/wbs.csv`，不手工解冲突。
 - 云端会话是 Linux，没有 Xcode：SwiftUI 代码靠 GitHub Actions 的 macOS runner 编译和跑测试（每次推送都跑）；纯 Swift 逻辑（模型、视图模型、格式化、状态机）用 Linux 上的 Swift 6.2 工具链本地 `swift test`。
 - Xcode 工程不手写 pbxproj，用 XcodeGen 的 `project.yml` 生成（CI 和本机都 `xcodegen generate`）。
-- 用量限制后由预约的提醒（21:32 UTC）叫醒本会话接着做。
+- 用量限额：2026-10-21 17:45 前后撞上五小时限额，12.1 骨架工作流的三个 agent 和 WBS 审查者中断，21:33 重置后恢复（已写的文件先按 WIP 提交，`c11a0eb`）。现在有每 3 小时一次的定期检查（`trig_01Wt6oEwQkA7pisCjcDZQZJB`）叫醒本会话续跑；12.x 全部完成后停用。
