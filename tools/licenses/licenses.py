@@ -380,6 +380,7 @@ _TITLE_RULES = [
     ("Elastic-2.0", ["elastic license 2.0"]),
     ("PolyForm-Noncommercial-1.0.0", ["polyform noncommercial license"]),
     ("AGPL-3.0-only", ["gnu affero general public license"]),
+    ("AGPL-1.0-only", ["affero general public license"]),  # 2002 年 Affero 公司的第 1 版，标题没有 GNU
     ("EUPL-1.1", ["european union public licen", "1.1"]),
     ("EUPL-1.2", ["european union public licen"]),
     ("OSL-3.0", ["open software license"]),
@@ -450,10 +451,17 @@ _BODY_RULES = [
     ("BSD-2-Clause", ["redistribution and use in source and binary forms"]),
 ]
 # 禁止名单里的许可证：正文的标题和“按某许可证授权”的固定声明，在文件任何位置出现都记下（不只开头）。
-# 只用这些许可证自己的正文才有的句子：GPL-3 第 13 条、MPL-2.0 的“次级许可证”提到 AGPL 的说法不算。
+# 只用这些许可证自己的正文才有的句子：GPL-3 第 13 条（“licensed under version 3 of the GNU Affero …”）、MPL-2.0 的
+# “次级许可证”提到 AGPL 的说法不算。另外 “License: AGPL-3.0-only”“SPDX-License-Identifier: …”这种行（打包工具生成的
+# 第三方清单里每个依赖一行）按声明认（_license_lines）。
 _DENY_SECTIONS = [
     ("AGPL-3.0-only", ["gnu affero general public license version 3, 19 november 2007"]),
-    ("AGPL-3.0-only", ["under the terms of the gnu affero general public license as published by the free software foundation"]),
+    ("AGPL-3.0-only", ["under the gnu affero general public license"]),
+    ("AGPL-3.0-only", ["under the terms of the gnu affero general public license"]),
+    ("AGPL-3.0-only", ["users interacting with it remotely through a computer network"]),
+    ("AGPL-3.0-only", ["under the agpl"]),
+    ("AGPL-1.0-only", ["affero general public license version 1, march 2002"]),
+    ("AGPL-1.0-only", ["any user interacting with the program was given the opportunity to request transmission"]),
     ("SSPL-1.0", ["server side public license version 1"]),
     ("EUPL-1.2", ["european union public licence v. 1."]),
     ("EUPL-1.2", ["licensed under the eupl"]),
@@ -580,8 +588,35 @@ def _strip_comments(text):
 
 
 def _normalized(text, limit=8000):
-    t = _norm_text(_strip_comments(_fold(text[:limit] if limit else text)))
-    return t.replace("*", "").replace("#", "").replace("“", '"').replace("”", '"').replace("’", "'").strip()
+    """提名、找禁止名单许可证用的文本：小写、空白合成一个，去掉注释前缀和 Markdown 的格式（**粗体**、# 标题、
+    _强调_、`代码`、===== 和 ----- 下划线）。"""
+    t = _strip_comments(_fold(text[:limit] if limit else text))
+    t = re.sub(r"[_=~`]+|-{2,}", " ", t.replace("*", "").replace("#", ""))
+    return _norm_text(t).replace("“", '"').replace("”", '"').replace("’", "'")
+
+
+# 打包工具生成的第三方清单里每个依赖一行的许可证（rollup / vite 的 “License: MIT”、源文件头的 SPDX-License-Identifier）。
+_LICENSE_LINE = re.compile(r"(?im)^[\s*#/>-]*(?:SPDX-License-Identifier|Licen[cs]es?(?:\s+type)?)\s*[:=]\s*\**\s*(.+?)\s*\**\s*$")
+# 禁止名单那一类许可证（网络 copyleft、限制商用或托管）：文件任何位置提到都要记下的。policy.toml 的 deny 加了新的一类，
+# 这里也要加（内置测试会查）。
+_DENY_CLASS = re.compile(r"^(?:LicenseRef-)?(?:AGPL|SSPL|OSL|EUPL|RPL|CPAL|BUSL|Elastic|PolyForm|FSL|CC-BY-NC|Commons-Clause|"
+                         r"NonCommercial)", re.I)
+
+
+def _license_lines(text):
+    """“License: X”“SPDX-License-Identifier: X”行里认得出的、禁止名单那一类的许可证。"""
+    out = []
+    for m in _LICENSE_LINE.finditer(text):
+        value = m.group(1).strip().strip("\"'`,;.")
+        if len(value) > 120 or not re.search(r"(?i)agpl|affero|sspl|osl|eupl|rpl|cpal|bus|elastic|polyform|fsl|nc|commons", value):
+            continue
+        expr = normalize_declared(value) or CLASSIFIERS.get(_norm_text(value))
+        if expr:
+            try:
+                out += [i for i in spdx_ids(parse_spdx(expr)) if _DENY_CLASS.match(i)]
+            except SpdxError:
+                pass
+    return out
 
 
 def candidates(text):
@@ -594,9 +629,11 @@ def candidates(text):
 
 
 def deny_sections(text):
-    """文件里任何位置出现的禁止名单许可证的正文标题、授权声明（_DENY_SECTIONS）。"""
+    """文件里任何位置出现的禁止名单许可证的正文标题、授权声明（_DENY_SECTIONS），和“License: X”行里的许可证
+    （什么许可证都记，检查时只有禁止名单里的、声明里又没有的才报）。"""
     t = _normalized(text, limit=None)
-    return list(dict.fromkeys(spdx for spdx, needles in _DENY_SECTIONS if _matches(t, needles)))
+    found = [spdx for spdx, needles in _DENY_SECTIONS if _matches(t, needles)]
+    return list(dict.fromkeys(found + _license_lines(text)))
 
 
 def propose(text):
@@ -775,8 +812,12 @@ def detect_text(text):
 # 原文文件
 
 # 许可证、NOTICE 文件的名字：以这些词开头，或者词在 - _ . 后面（LICENSE-MIT、node-runtime-NOTICE.md、jetbrains-mono-OFL.txt、
-# ThirdPartyNotices.txt）。
-_LEGAL_NAME = re.compile(r"(^|[-_. ])(LICEN[CS]E|COPYING|NOTICE|UNLICENSE|COPYRIGHT|PATENTS|THIRD[-_ ]?PARTY|OFL([-_. ]|$))", re.I)
+# ThirdPartyNotices.txt、Angular 生成的 3rdpartylicenses.txt、EULA.txt、TERMS-OF-USE.md）；只叫 TERMS、LEGAL 的
+# （TERMS.md、LEGAL.txt）也算，名字里带 terms 的别的文件（terms.json、glossary-terms.txt）不算。
+_LEGAL_NAME = re.compile(
+    r"(^|[-_. ])(LICEN[CS]E|COPYING|NOTICE|UNLICENSE|COPYRIGHT|PATENTS|THIRD[-_ ]?PARTY|3RD[-_ ]?PARTY|EULA|"
+    r"TERMS[-_ ]?(?:OF[-_ ]?(?:USE|SERVICE)|AND[-_ ]?CONDITIONS)|OFL([-_. ]|$))"
+    r"|^(TERMS|LEGAL)(\.(md|txt|rst|html?))?$", re.I)
 # 字体：TrueType / OpenType / Web 字体、字体集合、Type 1（.pfb、.pfa、.afm、.pfm、.t1）、点阵字体（.bdf、.pcf、.fnt、.fon）。
 _FONT_EXT = {".ttf", ".otf", ".woff", ".woff2", ".eot", ".ttc", ".otc", ".dfont", ".pfb", ".pfa", ".afm", ".pfm", ".t1",
              ".bdf", ".pcf", ".pcf.gz", ".bdf.gz", ".fnt", ".fon"}
@@ -902,13 +943,18 @@ def license_from_files(paths):
 
 
 def file_detections(paths):
-    """每个许可证文件（NOTICE 之外）提名的许可证和核对结果（examine），给检查时和声明对照用。"""
+    """每个许可证文件提名的许可证和核对结果（examine），给检查时和声明对照用。NOTICE、第三方许可清单不提名
+    （讲的是别人的许可证），只记里面任何位置出现的禁止名单许可证（deny_sections）：打包工具把依赖的许可证合进
+    一个 THIRD_PARTY_NOTICES、3rdpartylicenses.txt，AGPL、BUSL 的依赖就藏在那里。"""
     out = []
     for p in paths:
-        if is_notice(p):
-            continue
         text = legal_text(p)
         if text is None:
+            continue
+        if is_notice(p):
+            found = deny_sections(text)
+            if found:
+                out.append((p, {"proposed": None, "verified": False, "titled": False, "candidates": found, "notice": True}))
             continue
         out.append((p, examine(text)))
     return out
@@ -948,10 +994,9 @@ _RESTRICTED_PHRASES = [
 
 
 def restricted_terms(paths):
+    """许可证文件（NOTICE、第三方许可清单也算）里的限制性说法（_RESTRICTED_PHRASES）。"""
     hits = []
     for p in paths:
-        if is_notice(p):
-            continue
         text = legal_text(p)
         if text is None:
             continue
@@ -3119,6 +3164,52 @@ def self_test():
                       ("https://user:token@example.com/org/repo", "https://example.com/org/repo"),
                       ("user@host.com:org/repo.git", "https://host.com/org/repo")]:
         eq(git_web_url(url), want, "网页地址：%s" % url)
+    # 第四轮评审：NOTICE、第三方许可清单（合并成一个文件的）也找禁止名单许可证和限制性说法；EULA、TERMS 也是原文
+    long_mit = MIT_TEXT + ("\n\n---\n\n" + MIT_TEXT) * 12
+    agpl_md = ("GNU Affero General Public License\n=================================\n\n_Version 3, 19 November 2007_\n"
+               "_Copyright © 2007 Free Software Foundation, Inc. <<http://fsf.org/>>_\n\n## Preamble\n")
+    agpl_1 = "AFFERO GENERAL PUBLIC LICENSE\nVersion 1, March 2002 Copyright © 2002 Affero Inc.\n"
+    busl = "Business Source License 1.1\n\nThe Licensor grants a right to make non-production use of the Licensed Work.\n"
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        nm = tmp / "node_modules"
+        cases = {}
+        for fname in ("ThirdPartyNotices.txt", "dist/THIRD-PARTY-NOTICES.md", "dist/LICENSES.md", "NOTICE", "dist/3rdpartylicenses.txt",
+                      "COPYRIGHT", "vendor/evil/NOTICE.txt", "THIRD_PARTY_LICENSES.txt"):
+            for kind, body in (("agpl-notice", "foo is distributed under the terms of the GNU Affero General Public License as "
+                                               "published by the Free Software Foundation."),
+                               ("agpl-md", agpl_md), ("agpl-line", "## foo\nLicense: AGPL-3.0-only\nBy: Foo\n"),
+                               ("agpl-licensed", "foo: Licensed under the GNU Affero General Public License v3.0."),
+                               ("agpl-1", agpl_1), ("busl", busl)):
+                cases["%s-%s" % (kind, re.sub(r"\W+", "-", fname).lower())] = {fname: long_mit + "\n\n" + body}
+        cases["eula-busl"] = {"EULA.txt": "Business Source License 1.1\nNon-commercial use only.\n"}
+        cases["terms-busl"] = {"vendor/x/TERMS-OF-USE.md": busl}
+        cases["md-agpl-in-license"] = {"LICENSE.md": "# Licenses of bundled dependencies\n\n" + long_mit + "\n\n" + agpl_md}
+        for name, files in cases.items():
+            d = nm / name
+            for fname, text in dict(files, **{"package.json": json.dumps({"name": name, "version": "1.0.0", "license": "MIT"}),
+                                              "LICENSE": MIT_TEXT}).items():
+                (d / fname).parent.mkdir(parents=True, exist_ok=True)
+                (d / fname).write_text(text)
+        (nm / "plain-notices" / "dist").mkdir(parents=True)
+        (nm / "plain-notices" / "package.json").write_text(json.dumps({"name": "plain-notices", "version": "1.0.0", "license": "MIT"}))
+        (nm / "plain-notices" / "LICENSE").write_text(MIT_TEXT)
+        (nm / "plain-notices" / "dist" / "THIRD_PARTY_NOTICES.md").write_text(long_mit + "\n## bar\nLicense: MIT OR GPL-3.0-only\n")
+        inv = Inventory(tmp / "out", "r4")
+        scan_npm(inv, nm)
+        errors, _, _ = check(inv.write(), pol)
+        for name in cases:
+            eq(any(" %s@" % name in e for e in errors), True, "合并的第三方清单里的禁止名单许可证要拦：%s（%s）"
+               % (name, inv.components[("npm", name, "1.0.0")]["file_licenses"]))
+        eq([e for e in errors if "plain-notices@" in e], [], "第三方清单里只有宽松的、要审查的许可证不报")
+    eq((is_legal_file("3rdpartylicenses.txt"), is_legal_file("EULA.txt"), is_legal_file("TERMS-OF-USE.md"), is_legal_file("TERMS.md"),
+        is_legal_file("LEGAL.txt"), is_legal_file("terms.json"), is_legal_file("glossary-terms.txt"), is_legal_file("legalese.py")),
+       (True, True, True, True, True, False, False, False), "3rdpartylicenses.txt、EULA、TERMS 是原文，名字里带 terms 的别的文件不是")
+    eq(identify(agpl_1)[0], "AGPL-1.0-only", "AGPL-1.0（标题没有 GNU）")
+    eq(identify(AGPL_TEXT)[0], "AGPL-3.0-only", "GNU 的 AGPL 还是 AGPL-3.0")
+    deny_pats = tomllib.loads(Path(__file__).with_name("policy.toml").read_text(encoding="utf-8")).get("deny", [])
+    eq([p for p in deny_pats if not _DENY_CLASS.match(p.rstrip("*").rstrip("-") or "x")], [],
+       "policy.toml 禁止名单里的每一类，_DENY_CLASS 都认（文件任何位置提到都记下）")
     # 太大不复制的原文也算哈希：登记例外钉住的原文列表要包括它
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
