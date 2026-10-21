@@ -39,8 +39,9 @@ import tomllib
 import unicodedata
 from pathlib import Path
 
-SCHEMA = 1
+SCHEMA = 2
 MAX_TEXT_BYTES = 1 << 20  # 单个原文文件的上限，超过的只记路径不复制
+SCAN_MAX_BYTES = 16 << 20  # 找限制性说法、禁止名单许可证时读的上限；更大的文件要人看
 MAX_ANNOTATIONS = 30
 # 包里没带原文的组件，用 SPDX 的标准文本（spdx/ 下，取自 spdx/license-list-data v3.29.0），加上元数据里的作者。
 SPDX_DIR = Path(__file__).resolve().with_name("spdx")
@@ -826,9 +827,10 @@ def legal_files(directory):
 
 
 def read_text(path):
+    """原文（最多 SCAN_MAX_BYTES + 1 个字节：长度超过 SCAN_MAX_BYTES 说明没读完）。"""
     try:
         with open(path, "rb") as f:
-            data = f.read(MAX_TEXT_BYTES + 1)
+            data = f.read(SCAN_MAX_BYTES + 1)
     except OSError:
         return None
     return data.decode("utf-8", errors="replace")
@@ -872,7 +874,7 @@ def license_from_files(paths):
 
 
 def file_detections(paths):
-    """每个许可证文件（NOTICE 之外）提名的许可证和核对结果，给检查时和声明对照用。"""
+    """每个许可证文件（NOTICE 之外）提名的许可证和核对结果（examine），给检查时和声明对照用。"""
     out = []
     for p in paths:
         if is_notice(p):
@@ -880,8 +882,7 @@ def file_detections(paths):
         text = read_text(p)
         if text is None:
             continue
-        lid, ok = identify(text)
-        out.append((p, lid, ok))
+        out.append((p, examine(text)))
     return out
 
 
@@ -911,6 +912,10 @@ _RESTRICTED_PHRASES = [
     "as a managed service",
     "software as a service",
     "non production use",
+    "sustainable use license",
+    "source available license",
+    "confluent community license",
+    "prosperity public license",
 ]
 
 
@@ -922,7 +927,10 @@ def restricted_terms(paths):
         text = read_text(p)
         if text is None:
             continue
-        t = re.sub(r"[\s_\-]+", " ", text[:50000].lower())
+        if len(text.encode("utf-8", errors="replace")) > SCAN_MAX_BYTES:
+            hits.append("file too large to scan: %s" % Path(p).name)
+            continue
+        t = re.sub(r"[\s_\-]+", " ", _fold(text).lower())
         t = re.sub(r"\bcommercial,? (or|and) non ?commercial\b|\bnon ?commercial,? (or|and) commercial\b", "", t)
         for phrase in _RESTRICTED_PHRASES:
             if phrase in t and phrase not in hits:
@@ -949,22 +957,20 @@ class Inventory:
     def add(self, ecosystem, name, version, declared, license, license_from, files, path, root_level=False, extra=None,
             authors=None, bundled=None, fonts=None, source_url=None, asset_base=None):
         """files：包根目录的许可证文件（拿来认许可证）；bundled：子目录里的（打包进来的第三方代码、字体的原文，
-        只拿来和声明对照、找限制性说法）；fonts：包里的字体（相对 path 记下来，检查时要有登记）。"""
+        只拿来和声明对照、找限制性说法）；fonts：包里的字体（相对 path 记下来，检查时要有登记）。
+
+        同名同版本的包在别的位置又出现一次（npm 的依赖树里常见）：这一份的原文、字体也记上（可能被打过补丁、
+        或者构建时只删了一份里的字体），许可证认得不一样时两个都算（AND）。"""
         key = (ecosystem, name, version)
-        if key in self.components:
-            c = self.components[key]
-            c["locations"] += 1
-            c["root_level"] = c["root_level"] or root_level
-            return c
         self._where = {}
         copied, digests = self._copy(ecosystem, name, version, files)
-        bundled_copied, _ = self._copy(ecosystem, name, version, bundled)
+        bundled_copied, bundled_digests = self._copy(ecosystem, name, version, bundled)
         checked = ecosystem not in ("deb", "runtime")
+        base = asset_base or path
         detections = [
-            dict({"file": self._where.get(Path(src), str(src)), "proposed": lid, "verified": ok},
-                 **({"bundled": True, "path": _relative(src, asset_base or path)} if b else {}))
+            dict({"file": self._where.get(Path(src), str(src)), "path": _relative(src, base)}, **r, **({"bundled": True} if b else {}))
             for b, group in ((False, files), (True, bundled)) if checked
-            for src, lid, ok in file_detections(group or [])
+            for src, r in file_detections(group or [])
         ]
         restricted = restricted_terms(list(files or []) + list(bundled or [])) if checked else []
         if restricted and license:
@@ -986,7 +992,8 @@ class Inventory:
             "text_sha256": digests,
             "generic_files": [] if copied or not license else self._generic(license),
             "bundled_files": bundled_copied,
-            "assets": [{"kind": "font", "path": _relative(f, asset_base or path)} for f in fonts or []],
+            "bundled_sha256": bundled_digests,
+            "assets": [{"kind": "font", "path": _relative(f, base)} for f in fonts or []],
             "authors": authors or None,
             "source_url": source_url,
             "path": str(path) if path else None,
@@ -995,7 +1002,26 @@ class Inventory:
         }
         if extra:
             c.update(extra)
+        if key in self.components:
+            return self._merge_copy(self.components[key], c)
         self.components[key] = c
+        return c
+
+    @staticmethod
+    def _merge_copy(c, new):
+        """同一个包的另一份：原文、字体、提名、限制性说法都并进来。"""
+        c["locations"] += 1
+        c["root_level"] = c["root_level"] or new["root_level"]
+        if new["license"] != c["license"]:
+            c["license"] = _and([c["license"], new["license"]]) if c["license"] and new["license"] else None
+        for k in ("files", "text_sha256", "bundled_files", "bundled_sha256", "generic_files"):
+            c[k] = list(dict.fromkeys((c.get(k) or []) + (new.get(k) or [])))
+        seen = {(d["file"], d.get("path"), d.get("bundled", False)) for d in c["file_licenses"]}
+        c["file_licenses"] += [d for d in new["file_licenses"] if (d["file"], d.get("path"), d.get("bundled", False)) not in seen]
+        paths = {a["path"] for a in c["assets"]}
+        c["assets"] += [a for a in new["assets"] if a["path"] not in paths]
+        terms = list(dict.fromkeys((c.get("restricted_terms") or []) + (new.get("restricted_terms") or [])))
+        c["restricted_terms"] = terms or None
         return c
 
     def _generic(self, license):
@@ -1050,10 +1076,15 @@ class Inventory:
             key = (c["ecosystem"], c["name"], c["version"])
             if key in self.components:
                 continue
-            for f in c["files"] + c.get("generic_files", []):
+            refs = c["files"] + c.get("generic_files", []) + c.get("bundled_files", []) + [d["file"] for d in c.get("file_licenses") or []]
+            for f in dict.fromkeys(refs):
+                if os.path.isabs(f):
+                    continue  # 太大没复制的原文：记的是镜像里的位置
                 src = other_dir / f
-                if not os.path.isabs(f) and src.is_file():
-                    target = self.out / f
+                if not src.is_file():
+                    raise SystemExit("%s：%s %s 的原文 %s 不在清单目录里" % (other_dir, c["name"], c["version"], f))
+                target = self.out / f
+                if not target.is_file():
                     target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copyfile(src, target)
             c = dict(c, merged_from=data.get("subject"))
@@ -1788,7 +1819,7 @@ class Policy:
 
     def exception_for(self, c, agent=None):
         """这个组件登记过的例外。写了 agents 的例外只在这些 agent 的镜像里有效（别的 agent 带上了同一个专有组件，
-        要重新审查，不能沿用）。text_sha256 是一个值时原文里要有这一份；是列表时原文要正好是这几份。"""
+        要重新审查，不能沿用）。text_sha256 是一个值时原文里要有这一份；是列表时原文（包括子目录里的）要正好是这几份。"""
         shown = c["license"] or c["declared"] or ""
         for e in self.exceptions:
             if e["ecosystem"] != c["ecosystem"] or not fnmatch.fnmatchcase(c["name"], e["name"]):
@@ -1800,7 +1831,7 @@ class Policy:
             if e.get("agents") and agent not in e["agents"]:
                 continue
             pins = e.get("text_sha256")
-            have = set(c.get("text_sha256") or [])
+            have = set(c.get("text_sha256") or []) | set(c.get("bundled_sha256") or [])
             if isinstance(pins, str) and pins not in have:
                 continue
             if isinstance(pins, list) and set(pins) != have:
@@ -1847,7 +1878,7 @@ def check_assets(c, label, policy, agent, used, comps):
             errors.append("%s：字体 %s 登记的许可证 %s %s" % (label, a["path"], e["license"],
                                                          "在禁止名单里" if verdict == "deny" else "不在放行名单里"))
         texts = _as_list(e.get("license_file"))
-        found = [d for d in c.get("file_licenses") or [] if d.get("bundled") and d.get("verified") and _covers(e["license"], d["proposed"])]
+        found = [d for d in c.get("file_licenses") or [] if d.get("verified") and _covers(e["license"], d["proposed"])]
         bad = [pat for pat in texts if not any(fnmatch.fnmatchcase(d.get("path", ""), pat) for d in found)]
         if bad:
             errors.append("%s：登记说字体 %s 的 %s 原文在 %s，包里没有核对得上的这份原文" % (label, a["path"], e["license"], "、".join(bad)))
@@ -1885,6 +1916,12 @@ def check(inventory, policy, manifest=None, out=sys.stdout):
         exc = policy.exception_for(c, manifest["agent"]["id"] if manifest else None)
         if exc:
             registered.append((c, exc))
+            # 登记管的是这个包的许可证；包里新出现的禁止名单许可证、限制性说法登记时没看过，照样要报。
+            errors += cross_check(c, label, policy, registered=True)
+            new_terms = [t for t in c.get("restricted_terms") or [] if t not in _as_list(exc.get("restricted_terms"))]
+            if new_terms:
+                errors.append("%s：登记过例外，但包里的原文有限制性的说法（%s），登记时没确认过。复核后在登记里写上 "
+                              "restricted_terms" % (label, "、".join(new_terms)))
             continue
         if c["license"] is None:
             errors.append("%s：认不出许可证（声明：%s）。查清后在 policy.toml 登记，见 docs/licenses.md" % (label, c["declared"] or "无"))
@@ -1924,20 +1961,30 @@ def check(inventory, policy, manifest=None, out=sys.stdout):
     return errors, warnings, summary
 
 
-def cross_check(c, label, policy):
-    """声明和包里的许可证原文对不上：原文核对过是要审查的许可证（GPL……），或者看着像禁止的许可证（AGPL……），
-    而声明里没有它。声明写 MIT、包里却是 GPL 的原文，以原文为准要人看。"""
+def cross_check(c, label, policy, registered=False):
+    """声明和包里的许可证原文对不上，声明里却没有：
+    - 禁止名单里的许可证：文件里任何一个提名、任何位置的正文标题或授权声明（核对过没有都算）；
+    - 要审查的许可证（GPL……）：核对过的，或者是按标题提名的（核对不上也算：GPL 的原文前面加了一句话照样是 GPL）；
+      包自己根目录的许可证文件，第一个提名是要审查的许可证、又什么都核对不上，也算。
+    声明写 MIT、包里却是 GPL 的原文，以原文为准要人看。registered：登记过例外的包只查禁止名单。"""
     errors = []
+    license = c["license"]
     for f in c.get("file_licenses") or []:
         lid = f.get("proposed")
-        if not lid:
-            continue
-        verdict = policy.classify_id(lid, c["ecosystem"])
-        if verdict == "allow" or _covers(c["license"], lid):
-            continue
-        if verdict == "deny" or f.get("verified"):
-            errors.append("%s：许可证是 %s，但包里的 %s %s %s，声明里没有。查清后改正或在 policy.toml 登记"
-                          % (label, c["license"], f["file"], "是" if f.get("verified") else "像是", lid))
+        ids = list(dict.fromkeys(([lid] if lid else []) + (f.get("candidates") or [])))
+        for x in ids:
+            verdict = policy.classify_id(x, c["ecosystem"])
+            if verdict == "allow" or (license and _covers(license, x)):
+                continue
+            if verdict == "deny":
+                flagged = True
+            elif registered or x != lid:
+                flagged = False
+            else:
+                flagged = f.get("verified") or f.get("titled") or not f.get("bundled")
+            if flagged:
+                errors.append("%s：许可证是 %s，但包里的 %s %s %s，声明里没有。查清后改正或在 policy.toml 登记"
+                              % (label, license, f.get("path") or f["file"], "是" if x == lid and f.get("verified") else "像是", x))
     return errors
 
 
@@ -2220,7 +2267,7 @@ PROPRIETARY_TEXT = """© Anthropic PBC. All rights reserved. Use is subject to t
 TEST_POLICY = """
 allow = ["MIT", "Apache-2.0", "BSD-*", "ISC", "0BSD", "LGPL-*", "MPL-2.0", "LicenseRef-BSD-Unspecified"]
 allow_exceptions = ["LLVM-exception"]
-deny = ["AGPL-*", "SSPL-*", "BUSL-*", "Commons-Clause", "LicenseRef-Commons-Clause", "CC-BY-NC-*"]
+deny = ["AGPL-*", "SSPL-*", "BUSL-*", "Commons-Clause", "LicenseRef-Commons-Clause", "CC-BY-NC-*", "EUPL-*", "OSL-*", "RPL-*", "CPAL-*"]
 
 [ecosystem.cargo]
 review = ["LGPL-*"]
@@ -2688,8 +2735,9 @@ def self_test():
                                   ("dualgpl", "MIT OR GPL-3.0-or-later", {"COPYING": _spdx_text("GPL-3.0-only")}),
                                   ("agpllike", "MIT", {"LICENSE": agpl_like}),
                                   ("mitfile", "MIT", {"LICENSE": MIT_TEXT}),
-                                  ("gplmention", "MIT", {"LICENSE": MIT_TEXT + "\nParts were once distributed under the terms "
-                                                         "of the GNU General Public License.\n"})]:
+                                  ("gplmention", "MIT", {"LICENSE": MIT_TEXT + "\nFormerly GPL.\n"}),
+                                  ("gplsentence", "MIT", {"LICENSE": MIT_TEXT + "\nParts were once distributed under the terms "
+                                                          "of the GNU General Public License.\n"})]:
             (nm / name).mkdir(parents=True)
             (nm / name / "package.json").write_text(json.dumps({"name": name, "version": "1.0.0", "license": decl}))
             for fn, text in files.items():
@@ -2699,6 +2747,7 @@ def self_test():
         errors, _, _ = check(inv.write(), pol)
         eq(any("gplfile@" in e and "GPL-3.0-only" in e for e in errors), True, "声明 MIT、包里是 GPL 原文要拦")
         eq(any("agpllike@" in e and "AGPL" in e for e in errors), True, "声明 MIT、包里像 AGPL 原文要拦")
+        eq(any("gplsentence@" in e and "GPL" in e for e in errors), True, "根目录的原文说按 GPL 分发、又核对不上 MIT，要人看")
         eq([e for e in errors if "dualgpl@" in e or "mitfile@" in e or "gplmention@" in e], [],
            "声明里有的、对得上的、只是顺带提到的不拦")
         # PyPI 没有 License-Expression 时，License 字段没提到的分类也算
@@ -2809,6 +2858,103 @@ def self_test():
         scan_cargo(inv, ["app"], metadata_json=tmp / "m.json")
         eq(sorted(c["name"] for c in inv.components.values()), ["openssl-src"], "*-src 构建依赖算，别的构建依赖不算")
     eq(pol.classify("FSL-1.1-MIT", "npm") in ("review", "deny"), True, "FSL 不放行")
+
+    # 第三轮评审：和声明对照、登记过的例外、合并、同一个包的几份
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        nm = tmp / "node_modules"
+        mit_body = MIT_TEXT.split("\n\n", 1)[1]
+        long_mit = MIT_TEXT + ("\n\n---\n\n" + MIT_TEXT) * 9
+        busl = "Business Source License 1.1\n\nThe Licensor grants a right to make non-production use of the Licensed Work.\n"
+        cases = {
+            "agpl-title-mit-body": ("MIT", {"LICENSE": "GNU AFFERO GENERAL PUBLIC LICENSE v3\n\n" + mit_body}),
+            "agpl-deep-in-notices": ("MIT", {"LICENSE.md": long_mit + "\n\n## foo\n\n" + AGPL_TEXT}),
+            "busl-deep-in-notices": ("MIT", {"LICENSE.md": MIT_TEXT + ("\n\n---\n\n" + MIT_TEXT) * 60 + "\n\n" + busl}),
+            "json-root": ("MIT", {"LICENSE": MIT_TEXT + "\nThe Software shall be used for Good, not Evil.\n"}),
+            "gpl-with-preface": ("MIT", {"COPYING": "This project is licensed under GPLv3, see below.\n\n" + _spdx_text("GPL-3.0-only")}),
+            "eupl-bundled": ("MIT", {"LICENSE": MIT_TEXT, "vendor/x/LICENSE": "EUROPEAN UNION PUBLIC LICENCE v. 1.2\nEUPL © the European Union 2007, 2016\n"}),
+            "osl-bundled": ("MIT", {"LICENSE": MIT_TEXT, "vendor/x/LICENSE": 'Open Software License ("OSL") v. 3.0\n\nThis Open Software License (the "License") applies to any original work\n'}),
+            "agpl-copyright-line": ("MIT", {"LICENSE": "Copyright (c) 2024 Foo Inc. This program is distributed under the terms of the GNU Affero "
+                                                     "General Public License as published by the Free Software Foundation.\n\n" + mit_body}),
+        }
+        for name, (decl, files) in cases.items():
+            d = nm / name
+            for fname, text in dict(files, **{"package.json": json.dumps({"name": name, "version": "1.0.0", "license": decl})}).items():
+                (d / fname).parent.mkdir(parents=True, exist_ok=True)
+                (d / fname).write_text(text)
+        inv = Inventory(tmp / "out", "r3")
+        scan_npm(inv, nm)
+        errors, _, _ = check(inv.write(), pol)
+        for name in cases:
+            eq(any(" %s@" % name in e for e in errors), True, "要拦：%s（%s）" % (name, inv.components[("npm", name, "1.0.0")]["file_licenses"]))
+        eq(any("busl-deep-in-notices@" in e and "Restricted" in e for e in errors), True, "很长的文件后面的限制性说法也找得到")
+
+        # 登记过的例外：包里新出现的禁止名单许可证、限制性说法照样报；列表钉住的原文包括子目录里的
+        sdk = tmp / "exc" / "node_modules" / "@vendor" / "sdk"
+        for fname, text in {"package.json": json.dumps({"name": "@vendor/sdk", "version": "1.2.0", "license": "SEE LICENSE IN README.md"}),
+                            "LICENSE.md": PROPRIETARY_TEXT, "README.md": "readme", "vendor/evil/LICENSE": AGPL_TEXT,
+                            "vendor/evil/COPYING": busl}.items():
+            (sdk / fname).parent.mkdir(parents=True, exist_ok=True)
+            (sdk / fname).write_text(text)
+        inv = Inventory(tmp / "out-exc", "agents/demo:1.0")
+        scan_npm(inv, tmp / "exc" / "node_modules")
+        doc = inv.write()
+        manifest = {"agent": {"id": "demo", "license": "LicenseRef-Vendor-Commercial"}, "install": {"npm": ["@vendor/sdk@1.2.0"]}}
+        errors, _, _ = check(doc, pol, manifest)
+        eq(any("@vendor/sdk" in e and "AGPL" in e for e in errors), True, "登记过的包里新出现的 AGPL 要报")
+        eq(any("@vendor/sdk" in e and "限制性的说法" in e for e in errors), True, "登记过的包里新出现的限制性说法要报")
+        sdk_c = inv.components[("npm", "@vendor/sdk", "1.2.0")]
+        root_pins = [hashlib.sha256((sdk / f).read_bytes()).hexdigest() for f in ("LICENSE.md", "README.md")]
+        pinned = Policy(tomllib.loads(TEST_POLICY.replace('reason = "专有', 'text_sha256 = %s\nreason = "专有' % json.dumps(root_pins))))
+        eq(pinned.exception_for(sdk_c, "demo"), None, "列表钉住的原文要包括子目录里的")
+        all_pins = root_pins + sdk_c["bundled_sha256"]
+        pinned = Policy(tomllib.loads(TEST_POLICY.replace('reason = "专有', 'text_sha256 = %s\nreason = "专有' % json.dumps(all_pins))))
+        eq(pinned.exception_for(sdk_c, "demo") is not None, True, "根目录和子目录的原文都钉住")
+
+        # 合并：子目录的原文一起复制；清单引用的原文缺了要报
+        shim = Inventory(tmp / "shim", "agent-shim")
+        (tmp / "crate" / "unicode").mkdir(parents=True)
+        (tmp / "crate" / "LICENSE-MIT").write_text(MIT_TEXT)
+        (tmp / "crate" / "unicode" / "LICENSE-UNICODE").write_text(_spdx_text("Unicode-3.0"))
+        shim.add("cargo", "regex-syntax", "0.8", "MIT", "MIT", "metadata", [tmp / "crate" / "LICENSE-MIT"], None,
+                 bundled=[tmp / "crate" / "unicode" / "LICENSE-UNICODE"], asset_base=tmp / "crate")
+        shim.write()
+        img = Inventory(tmp / "img", "img")
+        img.merge(tmp / "shim")
+        rs = img.components[("cargo", "regex-syntax", "0.8")]
+        eq(all((tmp / "img" / f).is_file() for f in rs["files"] + rs["bundled_files"]), True, "合并时子目录的原文一起复制")
+        os.remove(tmp / "shim" / rs["bundled_files"][0])
+        try:
+            Inventory(tmp / "img2", "img").merge(tmp / "shim")
+            eq("没报错", "报错", "合并时清单引用的原文缺了")
+        except SystemExit:
+            pass
+
+        # 同名同版本的另一份里的字体、原文也记上；根目录的 OFL 原文可以当字体的 license_file
+        nm = tmp / "dup" / "node_modules"
+        for host, extra in (("a-host", {}), ("b-host", {"fonts/Commercial.woff2": "x", "fonts/LICENSE": MIT_TEXT + "\nNon-commercial use only.\n"})):
+            d = nm / host / "node_modules" / "fontpkg"
+            for fname, text in dict(extra, **{"package.json": json.dumps({"name": "fontpkg", "version": "1.0.0", "license": "MIT"}),
+                                              "LICENSE": MIT_TEXT}).items():
+                (d / fname).parent.mkdir(parents=True, exist_ok=True)
+                (d / fname).write_text(text)
+            (nm / host / "package.json").write_text(json.dumps({"name": host, "version": "1.0.0", "license": "MIT"}))
+        fontsrc = nm / "@fontsource" / "inter"
+        for fname, text in {"package.json": json.dumps({"name": "@fontsource/inter", "version": "5.0.0", "license": "OFL-1.1"}),
+                            "LICENSE": _spdx_text("OFL-1.1"), "files/inter-latin-400-normal.woff2": "x"}.items():
+            (fontsrc / fname).parent.mkdir(parents=True, exist_ok=True)
+            (fontsrc / fname).write_text(text)
+        inv = Inventory(tmp / "out-dup", "dup")
+        scan_npm(inv, nm)
+        fp = inv.components[("npm", "fontpkg", "1.0.0")]
+        eq(([a["path"] for a in fp["assets"]], fp["locations"]), (["fonts/Commercial.woff2"], 2), "另一份里的字体也记上")
+        eq(fp["restricted_terms"] is not None, True, "另一份里的限制性说法也记上")
+        ofl_pol = Policy({"allow": ["MIT", "OFL-1.1"], "asset": [
+            {"ecosystem": "npm", "name": "@fontsource/inter", "path": "files/*.woff2", "license": "OFL-1.1", "license_file": "LICENSE",
+             "reason": "OFL"}]})
+        doc = inv.write()
+        inter = inv.components[("npm", "@fontsource/inter", "5.0.0")]
+        eq(check_assets(inter, "inter", ofl_pol, None, set(), doc["components"]), [], "根目录的 OFL 原文可以当字体的 license_file")
 
     # 仓库里的策略文件能加载，例外都写了理由
     real = Path(__file__).with_name("policy.toml")
