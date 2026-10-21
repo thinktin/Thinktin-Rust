@@ -1,0 +1,20 @@
+# ios-app
+
+目标：iOS App（WBS 12.x）。Swift + SwiftUI 原生开发，界面参考 Claude iOS App 的信息架构与视觉；iOS / macOS 共享 `ThinktinKit`；经 UniFFI 调 `crates/client-core`（`ThinktinCore` Swift 包，由 `tools/client-core/build-apple.sh` 打出）。分支从 `backend-core`（`82b60b5`）切出，后端接口以那里为准。
+
+认领：iOS 会话（session_01GuCp3KRgqaK6Kzynw6udRn）在做，2026-10-22 01:10 起（北京时间）。12.x 全部由本分支负责；`backend-core` 会话请不要重做 12.x。client-core（11.x）接口如有变动，请在 `docs/progress.md` 里记一句，本分支定期合 `backend-core`。
+
+已完成：
+- 分支与进度文件（本文件）。
+
+进行中：
+- 12.x WBS 细化：对照 client-core 现有接口（`crates/client-core/src/ffi.rs`）、Claude iOS App 的界面结构、上架与平台要求补全工作包，改 `docs/gen_wbs.py` 后重新生成 `wbs.md` / `wbs.csv`。
+
+下一步：
+1. 12.1 工程与 ThinktinKit：XcodeGen 工程（`apps/apple/project.yml`）、`ThinktinKit` Swift Package（模型、视图模型、设计系统、Mock 客户端、ThinktinCore 适配层）、GitHub Actions 在 macOS 上 `xcodebuild` 构建与测试、Linux 上 `swift test` 跑纯逻辑测试。
+2. 12.2 → 12.3 → 12.4 → 12.5 → 12.6 → 12.8 → 12.7 → 12.11，再做 P2 的 12.9、12.10。
+
+坑和决定：
+- 云端会话是 Linux，没有 Xcode：SwiftUI 代码靠 GitHub Actions 的 macOS runner 编译和跑测试（每次推送都跑）；纯 Swift 逻辑（模型、视图模型、格式化、状态机）用 Linux 上的 Swift 6.2 工具链本地 `swift test`。
+- Xcode 工程不手写 pbxproj，用 XcodeGen 的 `project.yml` 生成（CI 和本机都 `xcodegen generate`）。
+- 用量限制后由预约的提醒（21:32 UTC）叫醒本会话接着做。
