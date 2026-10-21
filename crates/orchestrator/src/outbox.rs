@@ -551,11 +551,16 @@ impl Dispatcher {
         };
         let mut w = self.db.worker().await?;
         let ch = w.sealed_im_channel(id).await?;
+        // 条目都是按用户自己的渠道写的；对不上就只放弃这一条，不碰那个渠道排着的别的条目。
+        if ch.as_ref().is_some_and(|ch| ch.user_id != item.user_id) {
+            w.rollback().await?;
+            return Ok(Settle::Done(Some(
+                "im channel belongs to another user".into(),
+            )));
+        }
         let gone = match &ch {
             None => Some("im channel deleted"),
-            Some(ch) if ch.user_id != item.user_id || !ch.channel.enabled => {
-                Some("im channel disabled")
-            }
+            Some(ch) if !ch.channel.enabled => Some("im channel disabled"),
             _ => None,
         };
         if let Some(reason) = gone {
