@@ -172,3 +172,60 @@ MainActivity
 
 - `:data` 模块有 `MockThinktinClient`，覆盖 client-core 的全部接口，用假数据演示所有页面，`debug` 构建可在设置里切换“演示模式”。
 - 页面先从缓存（`cached_*`）渲染，再联网刷新；断网时顶部显示“离线，显示的是缓存内容”。
+
+## 8. 数据契约速查（来自 client-core / proto）
+
+客户端只和 `cn.thinktin.core.ThinktinClient`（UniFFI 生成）打交道：id 都是字符串，时间是 Unix 毫秒（`*_at_ms`），结构不固定的部分是 JSON 字符串（`payload_json`、`tool_call_json`、`policy_json`）。
+
+### 8.1 状态取值
+
+| 字段 | 取值 | 界面 |
+|---|---|---|
+| `Instance.state` | `provisioning` / `running` / `paused` / `archived` / `deleted` | 状态点：创建中（灰闪）、运行中（绿）、已暂停（灰）、已归档（空心）、已删除（不显示） |
+| `Run.state` | `queued` / `starting` / `running` / `waiting_approval` / `waiting_device` / `waiting_quota` / `waiting_children` / `backoff` / `succeeded` / `failed` / `cancelled` | 排队、启动中、运行中（进度条）、等待审批 / 等待电脑 / 等待 key（警告色横幅）、等待子任务、重试等待、成功（绿）、失败（红）、已取消（灰） |
+| `Run.source` | `user` / `plan` / `pipeline` / `delegate` | 运行区块头：你 / 计划 / 流水线 / 委派 |
+| `Run.kind` | `agent` / `pipeline` | 流水线根运行只显示子运行汇总 |
+| `Approval.state` | 见 `proto::domain::ApprovalState`（`pending` 等） | 待处理 / 已批准 / 已拒绝 / 已超时 |
+| `ApprovalOption.kind` | `allow_once` / `allow_always` / `reject_once` / `reject_always` | 批准 / 一直允许 / 拒绝 / 一直拒绝 |
+| `InboxItem.kind` | `run_finished` / `run_failed` / `approval` / `computer_approval` / `info` | 完成（绿勾）、失败（红叉）、审批（警告铃）、电脑审批（电脑图标）、提醒（信息） |
+| `StreamStatus` | `Connecting` / `Live` / `Reconnecting{retry_in_ms}` / `SignedOut` / `NotFound` / `AccountFrozen` / `Stopped` | 顶部连接提示；`SignedOut` 回登录页，`AccountFrozen` 冻结说明页 |
+| `ClientError` | `Network` / `SignedOut` / `UpgradeRequired` / `AccountFrozen` / `Api{status, code, message, retry_after_secs}` / `Decode` / `Cache` / `ContainsSecrets{count}` / `InvalidArgument` / `Internal` | 网络：Snackbar 重试；SignedOut：回登录；UpgradeRequired：升级提示；Api 按 `code` 映射文案 |
+| `User.locale` | `zh-CN` / `en` | 设置里的语言 |
+
+### 8.2 事件流（`InstanceEvent.kind` 与 `payload_json`）
+
+对话页按 `run_id` 把事件归到运行区块；同一运行里按 `seq` 排序。用户的提问不在事件流里，取 `Run.prompt`。
+
+| kind | payload 主要字段 | 渲染 |
+|---|---|---|
+| `agent.message` | `text` | agent 文本（累积拼接相邻的同类事件后再做 Markdown） |
+| `agent.thought` | `text` | 可折叠的“思考过程”，默认收起 |
+| `agent.tool_call` | `tool_call_id`、`title`、`kind`（read / edit / search / execute / fetch…）、`status`、`raw` | 工具调用卡片，按 `kind` 选图标；`raw` 展开显示 |
+| `agent.tool_call_update` | `tool_call_id`、`status`、`raw` | 更新同 id 卡片的状态（pending / in_progress / completed / failed） |
+| `agent.plan` | `entries` | agent 的计划清单（任务列表卡片） |
+| `agent.usage` | `raw` | token 用量，显示在运行区块尾部 |
+| `agent.permission_requested` | `request_id`、`title`、`options[]{option_id,name,kind}`、`tool_call` | 内嵌审批卡片（真正提交用 `approvals()` / `decide_approval`） |
+| `agent.permission_resolved` | `request_id`、`option_id`、`by`（policy / user / timeout / cancelled） | 审批卡片变为已决定 |
+| `agent.platform_tool_call` | `call_id`、`name`、`arguments` | 平台工具调用卡片（schedule_*、artifact_*、delegate…） |
+| `agent.vault_reveal` | `call_id`、`refs[]` | “使用了保险箱：名字”提示 |
+| `agent.turn_started` / `agent.turn_ended` | `stop_reason`（end_turn / max_tokens / max_turn_requests / refusal / cancelled） | 区块内的轮次分隔，异常 stop_reason 显示说明 |
+| `agent.ready` / `agent.session_lost` / `agent.exited` / `agent.update` / `agent.error` | 见 `proto::shim::ShimEvent` | 系统提示行（灰色小字），`agent.error` 用错误色 |
+| `run.state` | `state`、`reason`、`attempt`、`tree?`、`steps?` | 运行区块头的状态；等待类状态显示横幅 |
+| `run.log_truncated` | `limit_bytes` | “日志超出上限，后续输出未记录” |
+| `pipeline.step_started` | `step`、`run_id`、`instance_id` | 运行树里的子运行入口 |
+| `delegate.started` | `child_run_id`、`instance_id`、`to`、`title` | 同上 |
+| `artifact.published` | `artifact_id`、`name`、`version`、`size` | 产出物卡片 |
+| `approval.decided` | `approval_id`、`state`、`option_id` | 审批卡片变为已决定 |
+| `plan.needs_confirmation` / `plan.cancelled` | `plan_id`、`title`、`change` | 计划卡片，带“去确认”按钮 |
+| `vault.requested` / `vault.fulfilled` / `vault.declined` / `vault.used` | `request_id`、`name`、`purpose`、`fields[]` / `names[]` | 填写请求卡片（带表单入口）、使用提示 |
+
+未知的 kind 一律显示成灰色系统行，不崩。
+
+### 8.3 调用约定
+
+- `ThinktinClient(config, sessions)`：`sessions` 由 App 实现 `SessionStore`（`load()` / `save(session?)`，`Session{user_id, device_id, access_token, refresh_token}`），存 EncryptedSharedPreferences。
+- `platform = "android"`，`cache_path` 指向 `filesDir/thinktin.db`，`device_name` 用 `Build.MODEL`（用户可改）。
+- 所有 `suspend` 调用都在 client-core 自己的线程池执行；`EventListener` 回调在后台线程，必须切回主线程再改状态。
+- 打开对话页：`cached_events(instance, 0, N)` 先渲染 → `subscribe(instance, listener)`；离开页面 `subscription.stop()`。`on_reset` 时清空本地事件重新加载。
+- 发送：`detect_secrets(text)` 有命中先弹保险箱表单；`send_message(instance, text, allow_secrets=false)` 抛 `ContainsSecrets` 时同样处理。
+- 列表页先用 `cached_*`（实例、运行、收件箱、未读数）渲染，再调网络版刷新。
