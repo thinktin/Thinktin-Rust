@@ -172,6 +172,16 @@ public struct ToolCallPayload: Hashable, Codable, Sendable {
         }
         self.init(object: object)
     }
+
+    /// 编码成事件里的形式。`raw` 为 nil 时写成 null：省略的话解码时会把整个载荷当成原始内容，往返就不一致了。
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(toolCallID, forKey: .toolCallID)
+        try c.encodeIfPresent(title, forKey: .title)
+        try c.encodeIfPresent(kind, forKey: .kind)
+        try c.encodeIfPresent(status, forKey: .status)
+        try c.encode(raw ?? .null, forKey: .raw)
+    }
 }
 
 /// `agent.platform_tool_call`：`{call_id, name, arguments}`。

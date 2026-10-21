@@ -367,6 +367,17 @@ struct EventPayloadTests {
         #expect(ToolCallPayload(json: "oops") == nil)
     }
 
+    @Test("工具调用载荷编解码往返（raw 为空时也一样）")
+    func toolCallRoundTrip() throws {
+        let full = ToolCallPayload(toolCallID: "t", title: "读", kind: "read", status: .completed, raw: ["a": 1])
+        #expect(try decode(ToolCallPayload.self, try jsonString(full)) == full)
+        let bare = ToolCallPayload(toolCallID: "t", status: .unknown("queued"))
+        let json = try jsonString(bare)
+        #expect(json == #"{"raw":null,"status":"queued","tool_call_id":"t"}"#)
+        #expect(try decode(ToolCallPayload.self, json) == bare)
+        #expect(throws: DecodingError.self) { try decode(ToolCallPayload.self, "[1]") }
+    }
+
     @Test("审批请求：选项、工具调用")
     func permissionRequested() throws {
         let json =
