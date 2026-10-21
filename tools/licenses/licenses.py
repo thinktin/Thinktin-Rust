@@ -1198,17 +1198,14 @@ def resolve_license(declared_list, files, classifiers=(), see_file=None):
     - 没有声明：PyPI 的许可证分类（几个分类都适用，用 AND 连：分类本身不说明是“任选其一”）、原文识别。
     """
     declared_list = [d for d in declared_list if d and d.strip()]
+    normalized = [normalize_declared(d) for d in declared_list if not d.strip().upper().startswith("SEE LICEN")]
+    if any(n is None for n in normalized):
+        return None, "none"  # 有一个声明认不出（可能正是限制性的），别的声明认得出也不算
     vague, unrecognized = None, False
-    for d in declared_list:
-        if d.strip().upper().startswith("SEE LICEN"):
-            continue
-        n = normalize_declared(d)
-        if n is None:
-            unrecognized = True
-        elif not _is_vague(n):
+    for n in normalized:
+        if not _is_vague(n):
             return n, "metadata"
-        else:
-            vague = vague or n
+        vague = vague or n
     if see_file is not None:
         from_file = license_from_files([see_file]) if see_file else None
         if not from_file or "LicenseRef-Unrecognized" in from_file:
@@ -1379,6 +1376,8 @@ def scan_python(inv, site_packages, root_names=()):
         expr = msg.get("License-Expression")
         if expr:
             declared.append(expr.strip())
+            # 认得出的 License-Expression 为准（PEP 639：有它就不看 License 字段和许可证分类）；认不出时一起报
+            expr = expr if normalize_declared(expr) else None
         lic = msg.get("License")
         # 有的包把整篇许可证正文塞进 License 字段：太长或多行的不当声明用，靠原文识别。
         short_lic = lic.strip() if lic and len(lic.strip()) <= 120 and "\n" not in lic.strip() else None
@@ -1389,6 +1388,8 @@ def scan_python(inv, site_packages, root_names=()):
         mapped = [CLASSIFIERS[c.lower()] for c in classifiers if c.lower() in CLASSIFIERS]
         # 对照表里没有的许可证分类当成认不出的声明（可能正是限制性的），除非有明确的 License-Expression。
         declared += ["Classifier: %s" % c for c in classifiers if c.lower() not in CLASSIFIERS]
+        if expr:
+            declared, mapped = declared[:1], []
         files = legal_files(dist) if dist.is_dir() else []
         # venv 里的 pip、setuptools 是 Debian 的 python3-pip-whl / python3-setuptools-whl 那个 wheel 装的，
         # 它们 vendored 的第三方包（pip/_vendor：certifi、requests、urllib3……）的版权和许可证在 Debian 的 copyright 文件里。
@@ -1414,8 +1415,7 @@ def scan_python(inv, site_packages, root_names=()):
         if license and not expr and source in ("metadata", "text"):
             # 没有 License-Expression 时，License 字段和许可证分类都只是说明，分类里有 License 字段没提到的许可证
             # （License: MIT，分类却是 GPL），两个都算（AND），要人看。
-            more = [m for m in mapped if not _is_vague(m)
-                    and not all(_covers(license, i) for i in spdx_ids(parse_spdx(m)))]
+            more = [m for m in mapped if not all(_covers(license, i) for i in spdx_ids(parse_spdx(m)))]
             if more:
                 license = _and([license] + more)
         shown = "; ".join([d for d in declared if not d.startswith("Classifier: ")] + ["Classifier: %s" % c for c in classifiers]) or None
@@ -2764,8 +2764,27 @@ def self_test():
         inv = Inventory(tmp / "out-cls", "cls")
         scan_python(inv, sp)
         got = {k[1]: v["license"] for k, v in inv.components.items()}
-        eq(got, {"mitgpl": "MIT AND GPL-3.0-only", "mitmit": "MIT", "mitbsd": "MIT", "exprgpl": "MIT"},
-           "License 字段加上没提到的分类；License-Expression 为准")
+        eq(got, {"mitgpl": "MIT AND GPL-3.0-only", "mitmit": "MIT", "mitbsd": "MIT AND LicenseRef-BSD-Unspecified", "exprgpl": "MIT"},
+           "License 字段加上没提到的分类（含糊的也算）；License-Expression 为准")
+        # 认不出的分类、认不出的 License-Expression 不能被认得出的 License 字段盖过去；含糊的 GPL 分类也算
+        sp = tmp / "sp-cls2"
+        for name, headers, files in [
+            ("restricted-cls", "License: MIT\nClassifier: License :: Free To Use But Restricted\n", {}),
+            ("osl-cls", "License: MIT\nClassifier: License :: OSI Approved :: Open Software License 3.0 (OSL-3.0)\n", {}),
+            ("bad-expr", "License-Expression: MIT AND Commons-Clause\nLicense: MIT\n", {}),
+            ("vague-gpl", "License: MIT\nClassifier: License :: OSI Approved :: GNU General Public License (GPL)\n", {}),
+            ("vague-gpl-text", "Classifier: License :: OSI Approved :: GNU General Public License (GPL)\n", {"LICENSE": MIT_TEXT}),
+        ]:
+            d = sp / ("%s-1.0.dist-info" % name.replace("-", "_"))
+            d.mkdir(parents=True)
+            (d / "METADATA").write_text("Metadata-Version: 2.1\nName: %s\nVersion: 1.0\n%s\nx\n" % (name, headers))
+            for fn, text in files.items():
+                (d / fn).write_text(text)
+        inv = Inventory(tmp / "out-cls2", "cls2")
+        scan_python(inv, sp)
+        got = {k[1]: v["license"] for k, v in inv.components.items()}
+        eq(got, {"restricted-cls": None, "osl-cls": None, "bad-expr": None, "vague-gpl": "MIT AND LicenseRef-GPL-Unspecified",
+                 "vague-gpl-text": "MIT AND LicenseRef-GPL-Unspecified"}, "PyPI 的几个声明都要认得出、都算")
         # 包里子目录下的原文和字体；不进 node_modules
         nm = tmp / "bundle" / "node_modules"
         pkg = nm / "ui"
