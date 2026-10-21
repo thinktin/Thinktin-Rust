@@ -6,6 +6,7 @@ pub mod computer;
 pub mod delegate;
 pub mod exec;
 pub mod executor;
+pub mod live;
 pub mod outbox;
 pub mod pipeline;
 pub mod s3;
