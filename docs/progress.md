@@ -92,7 +92,7 @@
 ## 进行中
 
 - **16.5 第三轮评审的修复**：主会话在做（2026-10-22 00:30 起，北京时间）。32 条确认的发现都修了（`ac03807`…`fc6169b`）：按位置算容差的原文核对、版权行只去版权声明、非拉丁文字和限制性的词核对不上、GNU 的 GPL 原文核对得上、每个提名都和声明对照、登记过的例外照样查禁止名单和限制性说法、合并带上包内原文、同一个包的几份都记、PyPI 声明、隐藏目录、字体格式、缓存的键。Codex 的 zstd-sys、rust-stemmers、libdbus-sys 登记了。4635 份真实原文的回归：2 份改过措辞的 BSD 不再核对得上，15 份 GPL / Unicode 原文新核对得上。正在做修复后的对抗式验证；模板的许可证检查看 CI（templates.yml）。
-- **10.6 实时活动推送**：主会话在做（2026-10-22 05:35 起，北京时间）。iOS 会话提的（12.10 灵动岛、锁屏要用）：登记实时活动的推送令牌（App 自己开的、推送开的）和推送开启令牌的接口、client-core 方法；运行的状态和步数变了发 `liveactivity` 推送（合并、限频），结束发 `end`；根运行开始时按设备的推送开启令牌远程开启。WBS 的 10.6 行由 iOS 会话在 `gen_wbs.py` 里加。
+- **10.6 实时活动推送**：主会话在做（2026-10-22 05:35 起，北京时间）。代码、测试、文档都已推送（`83f68ba`…`4874be9`，说明见 [实时活动](live-activities.md)）：`live_activities` 表（每台设备每个运行一行）和设备的推送开启令牌；APNs 的 `liveactivity` 推送（开启、更新、结束）；后台任务 `live-activities` 按运行的状态、步数合并、限频地发；计划到点开始的根运行远程开启；接口 `PUT/DELETE /v1/runs/{id}/live-activity`、`PUT/DELETE /v1/devices/current/live-activity-start`，client-core 的 `register_live_activity`、`end_live_activity`、`set_live_activity_start_token`（都是新加的方法）。和 App 的约定（`RunActivityAttributes`、`ContentState` 的字段）在说明第 3 节。正在做对抗式评审。WBS 的 10.6 行由 iOS 会话在 `gen_wbs.py` 里加。
 - **16.5 剩下的（人的部分）**：上线前法务复核，问题列在 [许可证说明](licenses.md) 第 6 节：Claude（Anthropic 专有）按 legal-and-compliance 页面的条件在托管沙箱里运行、平台形态算不算“居间”；各 agent 的名字和商标；LGPL、MPL 组件的源码义务（交镜像给客户时）；Bun 静态链接的各库要不要逐个补原文；App 的“开源许可”页面（12.x、13.x 做界面时接上）。看不全的地方记在说明第 8 节（包里编译好的原生代码、打包好的 JavaScript 等）。分支 `wip/16.5-license-inventory`（旧主会话的半成品）已被 `backend-core` 上的实现取代，可以删掉。
 - **6.14 接入其他 agent**：按 10-14 拍板的“暂不接其他 agent”先不做；以后要接，优先 DeepSeek。
 - **mobile.yml 没实跑过**：`tools/client-core/build-apple.sh` 这次加了许可证资源（Swift 包的 `resources: [.copy("Licenses")]`），但 mobile.yml 只能手动触发、而且只在默认分支（main）上能触发，合并 PR #5 后要在 main 上跑一次确认。
