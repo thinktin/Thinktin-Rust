@@ -11,8 +11,9 @@ use proto::domain::{
     Approval, ApprovalId, Artifact, ArtifactId, CatchUp, Credential, CredentialId, Device,
     DeviceId, DeviceMessage, DeviceMessageId, DeviceMessageKind, DevicePlatform, ImChannel,
     ImChannelId, InboxItem, InboxItemId, Instance, InstanceEvent, InstanceId, ModelRoute, Plan,
-    PlanId, PlanPolicy, PlanStep, PushChannelKind, Run, RunId, ScheduleSpec, Trigger, TriggerId,
-    User, VaultItem, VaultItemId, VaultRequest, VaultRequestId,
+    PlanId, PlanPolicy, PlanStep, PushChannelKind, Run, RunId, ScheduleSpec, Team, TeamId,
+    TeamMember, TeamTemplate, TeamTemplateId, TeamTemplateSpec, Trigger, TriggerId, User,
+    VaultItem, VaultItemId, VaultRequest, VaultRequestId,
 };
 use reqwest::Method;
 use serde::de::DeserializeOwned;
@@ -1172,6 +1173,104 @@ impl Api {
     pub async fn delete_im_channel(&self, id: ImChannelId) -> Result<()> {
         self.empty(Method::DELETE, &format!("/v1/im-channels/{id}"), None)
             .await
+    }
+
+    // ---------- 团队和团队模板（8.1） ----------
+
+    pub async fn teams(&self) -> Result<Vec<Team>> {
+        #[derive(Deserialize)]
+        struct R {
+            teams: Vec<Team>,
+        }
+        Ok(self.json::<R>(Method::GET, "/v1/teams", None).await?.teams)
+    }
+
+    /// 把几个实例编成团队（一个负责人 lead，其余是成员）。
+    pub async fn create_team(&self, name: &str, members: &[TeamMember]) -> Result<Team> {
+        self.json(
+            Method::POST,
+            "/v1/teams",
+            Some(&json!({ "name": name, "members": members })),
+        )
+        .await
+    }
+
+    pub async fn team(&self, id: TeamId) -> Result<Team> {
+        self.json(Method::GET, &format!("/v1/teams/{id}"), None)
+            .await
+    }
+
+    /// 改名、换成员（整体替换）；给了才改。
+    pub async fn update_team(
+        &self,
+        id: TeamId,
+        name: Option<&str>,
+        members: Option<&[TeamMember]>,
+    ) -> Result<Team> {
+        let mut body = serde_json::Map::new();
+        if let Some(n) = name {
+            body.insert("name".into(), json!(n));
+        }
+        if let Some(m) = members {
+            body.insert("members".into(), json!(m));
+        }
+        self.json(
+            Method::PATCH,
+            &format!("/v1/teams/{id}"),
+            Some(&Value::Object(body)),
+        )
+        .await
+    }
+
+    /// 删团队（实例不删）。
+    pub async fn delete_team(&self, id: TeamId) -> Result<()> {
+        self.empty(Method::DELETE, &format!("/v1/teams/{id}"), None)
+            .await
+    }
+
+    pub async fn team_templates(&self) -> Result<Vec<TeamTemplate>> {
+        #[derive(Deserialize)]
+        struct R {
+            templates: Vec<TeamTemplate>,
+        }
+        Ok(self
+            .json::<R>(Method::GET, "/v1/team-templates", None)
+            .await?
+            .templates)
+    }
+
+    /// 新建团队模板：直接给成员（agent、接入方式、名字、角色），或者从现有团队生成（给 `team`）。
+    pub async fn create_team_template(
+        &self,
+        name: &str,
+        spec: Option<&TeamTemplateSpec>,
+        team: Option<TeamId>,
+    ) -> Result<TeamTemplate> {
+        self.json(
+            Method::POST,
+            "/v1/team-templates",
+            Some(&json!({ "name": name, "spec": spec, "team_id": team })),
+        )
+        .await
+    }
+
+    pub async fn delete_team_template(&self, id: TeamTemplateId) -> Result<()> {
+        self.empty(Method::DELETE, &format!("/v1/team-templates/{id}"), None)
+            .await
+    }
+
+    /// 按模板领养一整个团队：每个成员领养一个新实例，再编成团队。`name` 不给就用模板的名字。
+    pub async fn adopt_team_template(
+        &self,
+        id: TeamTemplateId,
+        name: Option<&str>,
+    ) -> Result<Team> {
+        self.json(
+            Method::POST,
+            &format!("/v1/team-templates/{id}/adopt"),
+            Some(&json!({ "name": name })),
+        )
+        .await
     }
 
     // ---------- 用量 ----------

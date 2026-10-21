@@ -556,6 +556,109 @@ fn trigger_record(t: d::Trigger) -> Trigger {
     }
 }
 
+/// 团队里的一个实例（8.1）。
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct TeamMember {
+    pub instance_id: String,
+    /// lead（负责人，一个团队一个）或 member。
+    pub role: String,
+    /// 显示顺序。
+    pub position: u32,
+}
+
+impl From<d::TeamMember> for TeamMember {
+    fn from(m: d::TeamMember) -> Self {
+        Self {
+            instance_id: m.instance_id.to_string(),
+            role: m.role.as_str().into(),
+            position: m.position,
+        }
+    }
+}
+
+impl TryFrom<TeamMember> for d::TeamMember {
+    type Error = ClientError;
+    fn try_from(m: TeamMember) -> Result<Self> {
+        Ok(Self {
+            instance_id: parse(&m.instance_id, "instance")?,
+            role: from_enum_str(&m.role, "team role")?,
+            position: m.position,
+        })
+    }
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct Team {
+    pub id: String,
+    pub name: String,
+    pub members: Vec<TeamMember>,
+    pub created_at_ms: i64,
+}
+
+impl From<d::Team> for Team {
+    fn from(t: d::Team) -> Self {
+        Self {
+            id: t.id.to_string(),
+            name: t.name,
+            members: t.members.into_iter().map(Into::into).collect(),
+            created_at_ms: ms(t.created_at),
+        }
+    }
+}
+
+/// 团队模板里的一个成员：领养时用这个 agent 新领养一个实例。
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct TemplateMember {
+    pub agent_id: String,
+    /// 接入方式（同一个 agent 的几种，比如 claude 的 acp、cli）；不给用默认的。
+    pub harness: Option<String>,
+    pub name: String,
+    /// lead 或 member。
+    pub role: String,
+}
+
+impl From<d::TemplateMember> for TemplateMember {
+    fn from(m: d::TemplateMember) -> Self {
+        Self {
+            agent_id: m.agent_id,
+            harness: m.harness,
+            name: m.name,
+            role: m.role.as_str().into(),
+        }
+    }
+}
+
+impl TryFrom<TemplateMember> for d::TemplateMember {
+    type Error = ClientError;
+    fn try_from(m: TemplateMember) -> Result<Self> {
+        Ok(Self {
+            agent_id: m.agent_id,
+            harness: m.harness,
+            name: m.name,
+            role: from_enum_str(&m.role, "team role")?,
+        })
+    }
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct TeamTemplate {
+    pub id: String,
+    pub name: String,
+    pub members: Vec<TemplateMember>,
+    pub created_at_ms: i64,
+}
+
+impl From<d::TeamTemplate> for TeamTemplate {
+    fn from(t: d::TeamTemplate) -> Self {
+        Self {
+            id: t.id.to_string(),
+            name: t.name,
+            members: t.spec.members.into_iter().map(Into::into).collect(),
+            created_at_ms: ms(t.created_at),
+        }
+    }
+}
+
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct InboxItem {
     pub id: String,
@@ -1728,6 +1831,124 @@ impl ThinktinClient {
         let id: d::InboxItemId = parse(&item_id, "inbox item")?;
         self.run(|c| async move { c.delete_inbox_item(id).await })
             .await
+    }
+
+    // ---------- 团队和团队模板（8.1） ----------
+
+    pub async fn teams(&self) -> Result<Vec<Team>> {
+        self.run(|c| async move { Ok(c.api.teams().await?.into_iter().map(Into::into).collect()) })
+            .await
+    }
+
+    /// 把几个实例编成团队：一个负责人（role = lead），其余是成员。
+    pub async fn create_team(&self, name: String, members: Vec<TeamMember>) -> Result<Team> {
+        let members: Vec<d::TeamMember> = members
+            .into_iter()
+            .map(TryInto::try_into)
+            .collect::<Result<_>>()?;
+        self.run(|c| async move { Ok(c.api.create_team(&name, &members).await?.into()) })
+            .await
+    }
+
+    pub async fn team(&self, team_id: String) -> Result<Team> {
+        let id: d::TeamId = parse(&team_id, "team")?;
+        self.run(|c| async move { Ok(c.api.team(id).await?.into()) })
+            .await
+    }
+
+    /// 改名、换成员（整体替换）；给了才改。
+    pub async fn update_team(
+        &self,
+        team_id: String,
+        name: Option<String>,
+        members: Option<Vec<TeamMember>>,
+    ) -> Result<Team> {
+        let id: d::TeamId = parse(&team_id, "team")?;
+        let members: Option<Vec<d::TeamMember>> = members
+            .map(|m| m.into_iter().map(TryInto::try_into).collect::<Result<_>>())
+            .transpose()?;
+        self.run(|c| async move {
+            Ok(c.api
+                .update_team(id, name.as_deref(), members.as_deref())
+                .await?
+                .into())
+        })
+        .await
+    }
+
+    /// 删团队（实例不删）。
+    pub async fn delete_team(&self, team_id: String) -> Result<()> {
+        let id: d::TeamId = parse(&team_id, "team")?;
+        self.run(|c| async move { c.api.delete_team(id).await })
+            .await
+    }
+
+    pub async fn team_templates(&self) -> Result<Vec<TeamTemplate>> {
+        self.run(|c| async move {
+            Ok(c.api
+                .team_templates()
+                .await?
+                .into_iter()
+                .map(Into::into)
+                .collect())
+        })
+        .await
+    }
+
+    /// 新建团队模板，直接给成员。
+    pub async fn create_team_template(
+        &self,
+        name: String,
+        members: Vec<TemplateMember>,
+    ) -> Result<TeamTemplate> {
+        let spec = d::TeamTemplateSpec {
+            members: members
+                .into_iter()
+                .map(TryInto::try_into)
+                .collect::<Result<_>>()?,
+        };
+        self.run(|c| async move {
+            Ok(c.api
+                .create_team_template(&name, Some(&spec), None)
+                .await?
+                .into())
+        })
+        .await
+    }
+
+    /// 从现有团队生成模板（每个成员记下它的 agent、接入方式、名字、角色）。
+    pub async fn create_team_template_from_team(
+        &self,
+        name: String,
+        team_id: String,
+    ) -> Result<TeamTemplate> {
+        let id: d::TeamId = parse(&team_id, "team")?;
+        self.run(|c| async move {
+            Ok(c.api
+                .create_team_template(&name, None, Some(id))
+                .await?
+                .into())
+        })
+        .await
+    }
+
+    pub async fn delete_team_template(&self, template_id: String) -> Result<()> {
+        let id: d::TeamTemplateId = parse(&template_id, "template")?;
+        self.run(|c| async move { c.api.delete_team_template(id).await })
+            .await
+    }
+
+    /// 一键领养一整个团队：每个成员领养一个新实例，再编成团队。`name` 不给就用模板的名字。
+    pub async fn adopt_team_template(
+        &self,
+        template_id: String,
+        name: Option<String>,
+    ) -> Result<Team> {
+        let id: d::TeamTemplateId = parse(&template_id, "template")?;
+        self.run(
+            |c| async move { Ok(c.api.adopt_team_template(id, name.as_deref()).await?.into()) },
+        )
+        .await
     }
 
     // ---------- 用量 ----------

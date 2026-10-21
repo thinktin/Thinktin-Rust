@@ -1202,3 +1202,89 @@ async fn ffi_keys_runs_artifacts_and_inbox_items() {
         Err(ClientError::Api { status: 404, .. })
     ));
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ffi_teams_and_templates() {
+    let Some(e) = env().await else { return };
+    let (c, _s, _d) = ffi_login(&e, "13800138510", "android", "Pixel").await;
+    let lead = c.adopt("claude".into(), "主编".into(), None).await.unwrap();
+    let writer = c.adopt("codex".into(), "写手".into(), None).await.unwrap();
+    let member = |inst: &ffi::Instance, role: &str, position: u32| ffi::TeamMember {
+        instance_id: inst.id.clone(),
+        role: role.into(),
+        position,
+    };
+    assert!(matches!(
+        c.create_team("编辑部".into(), vec![member(&lead, "boss", 0)])
+            .await,
+        Err(ClientError::InvalidArgument { .. })
+    ));
+    let team = c
+        .create_team(
+            "编辑部".into(),
+            vec![member(&lead, "lead", 0), member(&writer, "member", 1)],
+        )
+        .await
+        .unwrap();
+    assert_eq!(team.members.len(), 2);
+    assert_eq!(c.teams().await.unwrap().len(), 1);
+    let renamed = c
+        .update_team(
+            team.id.clone(),
+            Some("新编辑部".into()),
+            Some(vec![member(&writer, "lead", 0), member(&lead, "member", 1)]),
+        )
+        .await
+        .unwrap();
+    assert_eq!(renamed.name, "新编辑部");
+    assert_eq!(
+        c.team(team.id.clone()).await.unwrap().members[0].instance_id,
+        writer.id
+    );
+
+    // 模板：从团队生成、直接给成员；一键领养出新团队和新实例。
+    let tpl = c
+        .create_team_template_from_team("编辑部模板".into(), team.id.clone())
+        .await
+        .unwrap();
+    assert_eq!(tpl.members.len(), 2);
+    assert!(
+        tpl.members
+            .iter()
+            .any(|m| m.agent_id == "codex" && m.role == "lead")
+    );
+    let direct = c
+        .create_team_template(
+            "单人".into(),
+            vec![ffi::TemplateMember {
+                agent_id: "claude".into(),
+                harness: Some("cli".into()),
+                name: "助手".into(),
+                role: "lead".into(),
+            }],
+        )
+        .await
+        .unwrap();
+    assert_eq!(c.team_templates().await.unwrap().len(), 2);
+    let adopted = c
+        .adopt_team_template(tpl.id.clone(), Some("第二编辑部".into()))
+        .await
+        .unwrap();
+    assert_eq!(
+        (adopted.name.as_str(), adopted.members.len()),
+        ("第二编辑部", 2)
+    );
+    assert_eq!(c.instances().await.unwrap().len(), 4);
+    c.delete_team_template(direct.id).await.unwrap();
+    assert_eq!(c.team_templates().await.unwrap().len(), 1);
+    c.delete_team(team.id.clone()).await.unwrap();
+    assert!(matches!(
+        c.team(team.id).await,
+        Err(ClientError::Api { status: 404, .. })
+    ));
+    assert_eq!(
+        c.instances().await.unwrap().len(),
+        4,
+        "deleting a team keeps its instances"
+    );
+}
