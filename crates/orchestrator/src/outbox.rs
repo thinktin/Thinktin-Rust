@@ -624,19 +624,45 @@ impl Dispatcher {
                 Ok(vault) => vault.open_webhook(&uid, &id.to_string(), &ch.sealed).await,
                 Err(crate::artifacts::ArtifactError::Crypto(e)) => Err(e),
                 Err(crate::artifacts::ArtifactError::Store(e)) => return Err(e),
-                Err(e) => return Ok(Settle::Retry(format!("key vault: {e}"), Duration::ZERO)),
+                Err(e) => Err(keyvault::Error::Kms(e.to_string())),
             };
         let secret = match opened {
             Ok(s) => s,
-            // 账号注销了（DEK 删了）或者密文对不上：没法再发。
+            // 账号注销了（DEK 删了）或者密文对不上：没法再发，排着的一起放弃。
             Err(
                 e @ (keyvault::Error::NoUserKey(_)
                 | keyvault::Error::Decrypt
                 | keyvault::Error::Malformed),
             ) => {
+                warn!(channel = %id, error = %e, "cannot open the stored webhook");
+                let mut w = self.db.worker().await?;
+                w.record_im_result(
+                    id,
+                    rev,
+                    Some("the stored webhook cannot be opened; enter the address again"),
+                    false,
+                )
+                .await?;
+                w.drop_im_backlog(id, "cannot open the webhook").await?;
+                w.commit().await?;
                 return Ok(Settle::Done(Some(format!("cannot open the webhook: {e}"))));
             }
-            Err(e) => return Ok(Settle::Retry(format!("key vault: {e}"), Duration::ZERO)),
+            // 密钥服务暂时不可用：过一阵再试，和厂商的暂时故障一样记在渠道上（不带密钥服务的原话）。
+            Err(e) => {
+                warn!(channel = %id, error = %e, "key vault unavailable for an im message");
+                let shown = if item.attempts >= self.cfg.max_attempts {
+                    format!(
+                        "gave up after {} attempts: the server could not open the stored webhook",
+                        item.attempts
+                    )
+                } else {
+                    "the server could not open the stored webhook (retrying)".to_owned()
+                };
+                let mut w = self.db.worker().await?;
+                w.record_im_result(id, rev, Some(&shown), false).await?;
+                w.commit().await?;
+                return Ok(Settle::Retry(format!("key vault: {e}"), Duration::ZERO));
+            }
         };
         let hook = ImHook {
             vendor: ch.channel.vendor,

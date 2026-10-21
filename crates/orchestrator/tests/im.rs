@@ -620,6 +620,85 @@ async fn retryable_failures_show_on_the_channel_and_giving_up_too() {
     assert_eq!(channel_row(&t, u, ch).await.last_error, None);
 }
 
+/// 解不开数据密钥的 KMS（云 KMS 限流、权限出错）。
+struct DownKms;
+
+#[async_trait]
+impl Kms for DownKms {
+    fn current_key_id(&self) -> &str {
+        "local-1"
+    }
+    async fn wrap(&self, _: &[u8; 32], _: &str) -> keyvault::Result<keyvault::WrappedKey> {
+        Err(keyvault::Error::Kms("ThrottlingException".into()))
+    }
+    async fn unwrap(
+        &self,
+        _: &keyvault::WrappedKey,
+        _: &str,
+    ) -> keyvault::Result<zeroize::Zeroizing<[u8; 32]>> {
+        Err(keyvault::Error::Kms("ThrottlingException".into()))
+    }
+}
+
+#[tokio::test]
+async fn key_vault_failures_show_on_the_channel() {
+    let Some(t) = TestDb::new().await else { return };
+    let u = user(&t, "+8613800000037").await;
+    let ch = channel(&t, u, ImVendor::Feishu, "feishu-kms-0001", "", ImEvent::ALL).await;
+    send(&t, u, &notice(PushKind::RunFailed, "run:37:failed")).await;
+    drain_push(&t).await;
+    let rec = Arc::new(Recording::default());
+    let d = Dispatcher::new(
+        t.db.clone(),
+        "node-a",
+        DispatcherConfig {
+            backoff_base: Duration::ZERO,
+            max_attempts: 2,
+            ..Default::default()
+        },
+    )
+    .with_im(rec.clone(), Arc::new(DownKms));
+    assert_eq!(d.tick().await.unwrap().retried, 1);
+    assert_eq!(
+        channel_row(&t, u, ch).await.last_error.as_deref(),
+        Some("the server could not open the stored webhook (retrying)")
+    );
+    sqlx::query("UPDATE im_channels SET next_slot_at = NULL")
+        .execute(t.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(d.tick().await.unwrap().dropped, 1);
+    let got = channel_row(&t, u, ch).await;
+    assert_eq!(
+        got.last_error.as_deref(),
+        Some("gave up after 2 attempts: the server could not open the stored webhook")
+    );
+    assert!(got.enabled && got.last_sent_at.is_none());
+    assert!(rec.sent().is_empty());
+
+    // 密文坏了：没法再发，排着的一起放弃，渠道上说要重新填地址。
+    sqlx::query(
+        "UPDATE im_channels SET sealed = '\\x00'::bytea, next_slot_at = NULL WHERE id = $1",
+    )
+    .bind(ch.0)
+    .execute(t.db.pool())
+    .await
+    .unwrap();
+    send(&t, u, &notice(PushKind::RunFailed, "run:38:failed")).await;
+    send(&t, u, &notice(PushKind::RunFailed, "run:39:failed")).await;
+    drain_push(&t).await;
+    assert_eq!(dispatcher(&t, rec.clone()).tick().await.unwrap().dropped, 1);
+    assert_eq!(
+        channel_row(&t, u, ch).await.last_error.as_deref(),
+        Some("the stored webhook cannot be opened; enter the address again")
+    );
+    assert!(
+        im_rows(&t, u).await.iter().all(|r| r.2),
+        "the backlog is dropped too"
+    );
+    assert!(rec.sent().is_empty());
+}
+
 #[tokio::test]
 async fn a_dead_bot_is_reported_once_and_a_new_address_turns_the_channel_back_on() {
     let Some(t) = TestDb::new().await else { return };
