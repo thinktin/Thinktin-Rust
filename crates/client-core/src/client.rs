@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use proto::domain::{
-    InboxItem, InboxItemId, Instance, InstanceEvent, InstanceId, Run, User, VaultItem,
+    InboxItem, InboxItemId, Instance, InstanceEvent, InstanceId, Run, RunId, User, VaultItem,
 };
 
 use crate::api::{Api, InboxPage, LoginResult, NewVaultItem};
@@ -71,6 +71,15 @@ impl Client {
         self.signed_out_clears(self.api.me().await)
     }
 
+    /// 注销账号：成功后本地缓存一起清掉。
+    pub async fn delete_account(&self, code: &str) -> Result<()> {
+        self.api.delete_account(code).await?;
+        if let Some(c) = &self.cache {
+            c.clear()?;
+        }
+        Ok(())
+    }
+
     /// 登录失效时顺手清掉缓存（换人登录前不留上一个人的数据）。
     fn signed_out_clears<T>(&self, r: Result<T>) -> Result<T> {
         if matches!(r, Err(ClientError::SignedOut))
@@ -100,6 +109,20 @@ impl Client {
 
     pub async fn runs(&self, instance: InstanceId, limit: u32) -> Result<Vec<Run>> {
         let runs = self.signed_out_clears(self.api.runs(instance, None, limit).await)?;
+        if let Some(c) = &self.cache {
+            c.put_runs(&runs)?;
+        }
+        Ok(runs)
+    }
+
+    /// 更早的一页运行（`before` 之前的，也写进缓存）。
+    pub async fn older_runs(
+        &self,
+        instance: InstanceId,
+        before: RunId,
+        limit: u32,
+    ) -> Result<Vec<Run>> {
+        let runs = self.signed_out_clears(self.api.runs(instance, Some(before), limit).await)?;
         if let Some(c) = &self.cache {
             c.put_runs(&runs)?;
         }
@@ -200,6 +223,39 @@ impl Client {
             Err(e) if e.retryable() => Ok(local),
             Err(e) => Err(e),
         }
+    }
+
+    /// 一条通知（从推送点进来时）：先补发离线时标的已读，再取最新的，写进缓存。
+    pub async fn inbox_item(&self, id: InboxItemId) -> Result<InboxItem> {
+        if let Err(e) = self.flush_reads().await
+            && !e.retryable()
+        {
+            return Err(e);
+        }
+        let item = self.signed_out_clears(self.api.inbox_item(id).await)?;
+        if let Some(c) = &self.cache {
+            c.put_inbox(std::slice::from_ref(&item))?;
+        }
+        Ok(item)
+    }
+
+    /// 标回未读（要联网：先把离线时标的已读补发掉，免得之后把它又标成已读）。返回未读数。
+    pub async fn mark_inbox_unread(&self, id: InboxItemId) -> Result<i64> {
+        self.flush_reads().await?;
+        self.signed_out_clears(self.api.mark_inbox_unread(id).await)?;
+        match &self.cache {
+            Some(c) => c.mark_unread_local(id),
+            None => Ok(self.api.inbox(None, 1, true).await?.unread),
+        }
+    }
+
+    /// 删一条通知（缓存里一起删）。
+    pub async fn delete_inbox_item(&self, id: InboxItemId) -> Result<()> {
+        self.signed_out_clears(self.api.delete_inbox_item(id).await)?;
+        if let Some(c) = &self.cache {
+            c.remove_inbox(&[id])?;
+        }
+        Ok(())
     }
 
     /// 补发离线时标的已读。

@@ -217,7 +217,7 @@ impl Tx<Worker> {
             "DELETE FROM device_links WHERE user_id = $1",
             "UPDATE instances SET state = 'deleted', name = '', deleted_at = coalesce(deleted_at, now()), \
                updated_at = now() WHERE user_id = $1",
-            "UPDATE devices SET name = '', push_channel = NULL, push_token = NULL WHERE user_id = $1",
+            "UPDATE devices SET name = '', push_channel = NULL, push_token = NULL, activity_start_token = NULL WHERE user_id = $1",
             "UPDATE users SET phone = 'deleted', display_name = NULL WHERE id = $1",
         ] {
             sqlx::query(sql).bind(id.0).execute(self.conn()).await?;

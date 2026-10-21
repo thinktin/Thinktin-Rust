@@ -555,6 +555,8 @@ async fn ffi_client_round_trip() {
                 tz: "Asia/Shanghai".into(),
             }],
             steps: Vec::new(),
+            policy: None,
+            catch_up: None,
         })
         .await
         .unwrap();
@@ -928,4 +930,469 @@ async fn im_channels_round_trip() {
     assert_eq!(api.im_channels().await.unwrap().len(), 1);
     api.delete_im_channel(ch.id).await.unwrap();
     assert!(api.im_channels().await.unwrap().is_empty());
+}
+
+/// 11.7：设备列表和吊销、改昵称、注销账号（经 UniFFI 的客户端）。
+async fn ffi_login(
+    e: &Env,
+    phone: &str,
+    platform: &str,
+    device: &str,
+) -> (
+    Arc<ffi::ThinktinClient>,
+    Arc<MemorySessionStore>,
+    tempfile::TempDir,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(MemorySessionStore::default());
+    let c = ffi::ThinktinClient::new(
+        ffi::ClientConfig {
+            base_url: e.base.clone(),
+            cache_path: Some(dir.path().join("c.db").display().to_string()),
+            platform: platform.into(),
+            device_name: device.into(),
+            timeout_secs: 10,
+        },
+        store.clone(),
+    )
+    .unwrap();
+    c.send_code(phone.into()).await.unwrap();
+    let code = e.sms.last_code(&format!("+86{phone}")).unwrap();
+    c.login(phone.into(), code, None, None).await.unwrap();
+    (c, store, dir)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ffi_account_and_devices() {
+    let Some(e) = env().await else { return };
+    let (phone, _ps, _pd) = ffi_login(&e, "13800138507", "ios", "iPhone").await;
+    let (laptop, _ls, _ld) = ffi_login(&e, "13800138507", "macos", "MacBook").await;
+
+    let me = phone.update_profile(Some("小明".into())).await.unwrap();
+    assert_eq!(me.display_name.as_deref(), Some("小明"));
+    assert_eq!(phone.update_profile(None).await.unwrap().display_name, None);
+
+    let devices = phone.devices().await.unwrap();
+    assert_eq!(devices.len(), 2);
+    let mine = devices.iter().find(|d| d.current).unwrap();
+    assert_eq!(
+        (mine.platform.as_str(), mine.name.as_str()),
+        ("ios", "iPhone")
+    );
+    let mac = devices.iter().find(|d| !d.current).unwrap();
+    assert_eq!(mac.platform, "macos");
+    assert!(matches!(
+        phone.revoke_device("not-an-id".into()).await,
+        Err(ClientError::InvalidArgument { .. })
+    ));
+    phone.revoke_device(mac.id.clone()).await.unwrap();
+    assert!(matches!(laptop.me().await, Err(ClientError::SignedOut)));
+    assert_eq!(phone.devices().await.unwrap().len(), 1);
+
+    // 注销：验证码发到自己的手机号；错的码不行；成功后本地也退出登录。
+    phone.send_self_code("delete_account".into()).await.unwrap();
+    assert!(matches!(
+        phone.send_self_code("nonsense".into()).await,
+        Err(ClientError::Api { status: 422, .. })
+    ));
+    let code = e.sms.last_code("+8613800138507").unwrap();
+    let wrong = if code == "000000" { "111111" } else { "000000" };
+    assert!(phone.delete_account(wrong.into()).await.is_err());
+    assert!(phone.signed_in(), "a wrong code changes nothing");
+    phone.delete_account(code).await.unwrap();
+    assert!(!phone.signed_in());
+    assert!(phone.cached_instances().unwrap().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ffi_plan_editing_and_triggers() {
+    let Some(e) = env().await else { return };
+    let (c, _s, _d) = ffi_login(&e, "13800138508", "android", "Pixel").await;
+    let inst = c.adopt("claude".into(), "助手".into(), None).await.unwrap();
+    let policy = ffi::PlanPolicy {
+        preauthorized_tools: vec!["read".into(), "search".into()],
+        approval_timeout_secs: 3600,
+        on_approval_timeout: "skip".into(),
+        max_tokens: Some(200_000),
+        max_duration_secs: 1800,
+        max_steps: None,
+        daily_token_limit: Some(1_000_000),
+        wait_timeout_secs: 7200,
+    };
+    let plan = c
+        .create_plan(ffi::NewPlan {
+            instance_id: inst.id.clone(),
+            title: "早报".into(),
+            goal: "每天八点整理新闻".into(),
+            triggers: vec![ffi::Schedule::Cron {
+                expr: "0 8 * * *".into(),
+                tz: "Asia/Shanghai".into(),
+            }],
+            steps: vec![],
+            policy: Some(policy.clone()),
+            catch_up: Some("skip".into()),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        (plan.policy.clone(), plan.catch_up.as_str()),
+        (policy.clone(), "skip")
+    );
+    assert!(plan.policy_json.contains("\"preauthorized_tools\""));
+
+    let edited = c
+        .update_plan(
+            plan.id.clone(),
+            ffi::PlanChange {
+                title: Some("晨报".into()),
+                policy: Some(ffi::PlanPolicy {
+                    on_approval_timeout: "fail".into(),
+                    ..policy.clone()
+                }),
+                catch_up: Some("all".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        (
+            edited.title.as_str(),
+            edited.goal.as_str(),
+            edited.catch_up.as_str()
+        ),
+        ("晨报", "每天八点整理新闻", "all")
+    );
+    assert_eq!(edited.policy.on_approval_timeout, "fail");
+    assert_eq!(edited.triggers.len(), 1);
+    assert!(matches!(
+        c.update_plan(
+            plan.id.clone(),
+            ffi::PlanChange {
+                catch_up: Some("sometimes".into()),
+                ..Default::default()
+            }
+        )
+        .await,
+        Err(ClientError::InvalidArgument { .. })
+    ));
+    assert!(matches!(
+        c.update_plan(
+            plan.id.clone(),
+            ffi::PlanChange {
+                title: Some(" ".into()),
+                ..Default::default()
+            }
+        )
+        .await,
+        Err(ClientError::Api { status: 422, .. })
+    ));
+
+    let t = c
+        .add_trigger(
+            plan.id.clone(),
+            ffi::Schedule::Cron {
+                expr: "30 18 * * 1-5".into(),
+                tz: "Asia/Shanghai".into(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(t.next_fire_at_ms.is_some());
+    assert_eq!(c.get_plan(plan.id.clone()).await.unwrap().triggers.len(), 2);
+    c.delete_trigger(t.id.clone()).await.unwrap();
+    assert!(matches!(
+        c.delete_trigger(t.id).await,
+        Err(ClientError::Api { status: 404, .. })
+    ));
+    assert_eq!(c.get_plan(plan.id).await.unwrap().triggers.len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ffi_keys_runs_artifacts_and_inbox_items() {
+    let Some(e) = env().await else { return };
+    let (c, store, _d) = ffi_login(&e, "13800138509", "ios", "iPhone").await;
+    let user: UserId = store.load().unwrap().user_id.parse().unwrap();
+
+    // key：改备注、停用、换 key（只显示新的后 4 位）。
+    let cred = c
+        .add_credential(ffi::NewCredential {
+            vendor: "deepseek".into(),
+            label: "工作".into(),
+            api_key: "sk-0123456789abcdef".into(),
+            anthropic_base: None,
+            openai_base: None,
+            responses_base: None,
+            daily_token_limit: None,
+        })
+        .await
+        .unwrap();
+    let off = c
+        .update_credential(cred.id.clone(), Some("备用".into()), Some(true))
+        .await
+        .unwrap();
+    assert_eq!((off.label.as_str(), off.disabled), ("备用", true));
+    let swapped = c
+        .replace_credential_secret(cred.id.clone(), "sk-fedcba9876543210".into())
+        .await
+        .unwrap();
+    assert_eq!(swapped.last4, "3210");
+    assert!(matches!(
+        c.replace_credential_secret(cred.id, "short".into()).await,
+        Err(ClientError::Api { status: 422, .. })
+    ));
+
+    // 运行往下翻页；单个实例；实例的产出物。
+    let inst = c.adopt("claude".into(), "助手".into(), None).await.unwrap();
+    for n in 0..3 {
+        c.create_run(inst.id.clone(), format!("第 {n} 个"))
+            .await
+            .unwrap();
+    }
+    let first = c.runs(inst.id.clone(), 2).await.unwrap();
+    assert_eq!(first.len(), 2);
+    let older = c
+        .older_runs(inst.id.clone(), first[1].id.clone(), 2)
+        .await
+        .unwrap();
+    assert_eq!(older.len(), 1);
+    assert!(first.iter().all(|r| r.id != older[0].id));
+    assert_eq!(c.cached_runs(inst.id.clone(), 10).unwrap().len(), 3);
+    assert_eq!(c.instance(inst.id.clone()).await.unwrap().name, "助手");
+    assert!(
+        c.instance_artifacts(inst.id.clone(), 10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    // 收件箱：单条、标回未读、删除，缓存跟着变。
+    let mut w = e.t.db.worker().await.unwrap();
+    let mut ids = Vec::new();
+    for n in 0..2 {
+        ids.push(
+            w.insert_inbox(
+                user,
+                &NewInboxItem {
+                    kind: "info".into(),
+                    title: format!("通知 {n}"),
+                    ..NewInboxItem::default()
+                },
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .to_string(),
+        );
+    }
+    w.commit().await.unwrap();
+    c.sync_inbox(20).await.unwrap();
+    assert_eq!(
+        c.mark_inbox_read(vec![ids[0].clone()], None).await.unwrap(),
+        1
+    );
+    assert!(c.inbox_item(ids[0].clone()).await.unwrap().read);
+    assert_eq!(c.mark_inbox_unread(ids[0].clone()).await.unwrap(), 2);
+    assert!(!c.inbox_item(ids[0].clone()).await.unwrap().read);
+    assert_eq!(c.cached_unread().unwrap(), 2);
+    c.delete_inbox_item(ids[1].clone()).await.unwrap();
+    assert_eq!(c.cached_inbox(None, 20).unwrap().len(), 1);
+    assert!(matches!(
+        c.inbox_item(ids[1].clone()).await,
+        Err(ClientError::Api { status: 404, .. })
+    ));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ffi_teams_and_templates() {
+    let Some(e) = env().await else { return };
+    let (c, _s, _d) = ffi_login(&e, "13800138510", "android", "Pixel").await;
+    let lead = c.adopt("claude".into(), "主编".into(), None).await.unwrap();
+    let writer = c.adopt("codex".into(), "写手".into(), None).await.unwrap();
+    let member = |inst: &ffi::Instance, role: &str, position: u32| ffi::TeamMember {
+        instance_id: inst.id.clone(),
+        role: role.into(),
+        position,
+    };
+    assert!(matches!(
+        c.create_team("编辑部".into(), vec![member(&lead, "boss", 0)])
+            .await,
+        Err(ClientError::InvalidArgument { .. })
+    ));
+    let team = c
+        .create_team(
+            "编辑部".into(),
+            vec![member(&lead, "lead", 0), member(&writer, "member", 1)],
+        )
+        .await
+        .unwrap();
+    assert_eq!(team.members.len(), 2);
+    assert_eq!(c.teams().await.unwrap().len(), 1);
+    let renamed = c
+        .update_team(
+            team.id.clone(),
+            Some("新编辑部".into()),
+            Some(vec![member(&writer, "lead", 0), member(&lead, "member", 1)]),
+        )
+        .await
+        .unwrap();
+    assert_eq!(renamed.name, "新编辑部");
+    assert_eq!(
+        c.team(team.id.clone()).await.unwrap().members[0].instance_id,
+        writer.id
+    );
+
+    // 模板：从团队生成、直接给成员；一键领养出新团队和新实例。
+    let tpl = c
+        .create_team_template_from_team("编辑部模板".into(), team.id.clone())
+        .await
+        .unwrap();
+    assert_eq!(tpl.members.len(), 2);
+    assert!(
+        tpl.members
+            .iter()
+            .any(|m| m.agent_id == "codex" && m.role == "lead")
+    );
+    let direct = c
+        .create_team_template(
+            "单人".into(),
+            vec![ffi::TemplateMember {
+                agent_id: "claude".into(),
+                harness: Some("cli".into()),
+                name: "助手".into(),
+                role: "lead".into(),
+            }],
+        )
+        .await
+        .unwrap();
+    assert_eq!(c.team_templates().await.unwrap().len(), 2);
+    let adopted = c
+        .adopt_team_template(tpl.id.clone(), Some("第二编辑部".into()))
+        .await
+        .unwrap();
+    assert_eq!(
+        (adopted.name.as_str(), adopted.members.len()),
+        ("第二编辑部", 2)
+    );
+    assert_eq!(c.instances().await.unwrap().len(), 4);
+    c.delete_team_template(direct.id).await.unwrap();
+    assert_eq!(c.team_templates().await.unwrap().len(), 1);
+    c.delete_team(team.id.clone()).await.unwrap();
+    assert!(matches!(
+        c.team(team.id).await,
+        Err(ClientError::Api { status: 404, .. })
+    ));
+    assert_eq!(
+        c.instances().await.unwrap().len(),
+        4,
+        "deleting a team keeps its instances"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ffi_device_messages() {
+    let Some(e) = env().await else { return };
+    let (phone, _ps, _pd) = ffi_login(&e, "13800138511", "ios", "iPhone").await;
+    let (mac, _ms, _md) = ffi_login(&e, "13800138511", "macos", "MacBook").await;
+    let devices = phone.devices().await.unwrap();
+    let mac_id = devices
+        .iter()
+        .find(|d| d.platform == "macos")
+        .unwrap()
+        .id
+        .clone();
+    let phone_id = devices.iter().find(|d| d.current).unwrap().id.clone();
+    assert!(matches!(
+        phone
+            .send_device_message(mac_id.clone(), "pair_response".into(), "{not json".into())
+            .await,
+        Err(ClientError::InvalidArgument { .. })
+    ));
+    assert!(matches!(
+        phone
+            .send_device_message(mac_id.clone(), "gossip".into(), "{}".into())
+            .await,
+        Err(ClientError::InvalidArgument { .. })
+    ));
+    let sent = phone
+        .send_device_message(
+            mac_id.clone(),
+            "pair_response".into(),
+            r#"{"nonce":"abc"}"#.into(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        (sent.from_device_id.as_str(), sent.to_device_id.as_str()),
+        (phone_id.as_str(), mac_id.as_str())
+    );
+    let got = mac.device_messages().await.unwrap();
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].kind, "pair_response");
+    let body: serde_json::Value = serde_json::from_str(&got[0].body_json).unwrap();
+    assert_eq!(body["nonce"], "abc");
+    assert_eq!(
+        mac.ack_device_messages(vec![got[0].id.clone()])
+            .await
+            .unwrap(),
+        1
+    );
+    assert!(mac.device_messages().await.unwrap().is_empty());
+    mac.send_device_message(phone_id, "pair_confirm".into(), r#"{"ok":true}"#.into())
+        .await
+        .unwrap();
+    assert_eq!(
+        phone.device_messages().await.unwrap()[0].kind,
+        "pair_confirm"
+    );
+}
+
+#[tokio::test]
+async fn ffi_live_activities() {
+    let Some(e) = env().await else { return };
+    let (c, _store, _d) = ffi_login(&e, "13800138520", "ios", "iPhone").await;
+    let inst = c.adopt("claude".into(), "助手".into(), None).await.unwrap();
+    let run = c
+        .create_run(inst.id.clone(), "整理邮件".into())
+        .await
+        .unwrap();
+    let token = "ab".repeat(40);
+    c.register_live_activity(run.id.clone(), token.clone())
+        .await
+        .unwrap();
+    assert!(matches!(
+        c.register_live_activity(run.id.clone(), "nope".into())
+            .await,
+        Err(ClientError::Api { status: 422, .. })
+    ));
+    // 后台领得到，带着登记的令牌。
+    let mut w = e.t.db.worker().await.unwrap();
+    let due = w
+        .claim_live_activities(
+            "test",
+            std::time::Duration::from_secs(60),
+            10,
+            std::time::Duration::ZERO,
+            std::time::Duration::ZERO,
+        )
+        .await
+        .unwrap();
+    w.rollback().await.unwrap();
+    assert_eq!(due.len(), 1);
+    assert_eq!(due[0].run_id.to_string(), run.id);
+    assert_eq!(due[0].push_token.as_deref(), Some(token.as_str()));
+    c.end_live_activity(run.id.clone()).await.unwrap();
+
+    c.set_live_activity_start_token(Some("cd".repeat(40)))
+        .await
+        .unwrap();
+    c.set_live_activity_start_token(None).await.unwrap();
+    // Android 上没有实时活动。
+    let (droid, _s, _d2) = ffi_login(&e, "13800138521", "android", "Pixel").await;
+    assert!(matches!(
+        droid
+            .set_live_activity_start_token(Some("cd".repeat(40)))
+            .await,
+        Err(ClientError::Api { status: 422, .. })
+    ));
 }

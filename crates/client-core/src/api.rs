@@ -8,11 +8,12 @@ use std::time::Duration;
 
 use proto::api::{API_VERSION, ErrorBody, ErrorCode, VERSION_HEADER};
 use proto::domain::{
-    Approval, ApprovalId, Artifact, ArtifactId, Credential, CredentialId, Device, DeviceId,
-    DeviceMessage, DeviceMessageId, DeviceMessageKind, DevicePlatform, ImChannel, ImChannelId,
-    InboxItem, InboxItemId, Instance, InstanceEvent, InstanceId, ModelRoute, Plan, PlanId,
-    PlanStep, PushChannelKind, Run, RunId, ScheduleSpec, Trigger, User, VaultItem, VaultItemId,
-    VaultRequest, VaultRequestId,
+    Approval, ApprovalId, Artifact, ArtifactId, CatchUp, Credential, CredentialId, Device,
+    DeviceId, DeviceMessage, DeviceMessageId, DeviceMessageKind, DevicePlatform, ImChannel,
+    ImChannelId, InboxItem, InboxItemId, Instance, InstanceEvent, InstanceId, ModelRoute, Plan,
+    PlanId, PlanPolicy, PlanStep, PushChannelKind, Run, RunId, ScheduleSpec, Team, TeamId,
+    TeamMember, TeamTemplate, TeamTemplateId, TeamTemplateSpec, Trigger, TriggerId, User,
+    VaultItem, VaultItemId, VaultRequest, VaultRequestId,
 };
 use reqwest::Method;
 use serde::de::DeserializeOwned;
@@ -119,10 +120,30 @@ pub struct NewPlan {
     pub instance_id: InstanceId,
     pub title: String,
     pub goal: String,
+    /// 不给就用服务端的默认（不预授权工具、审批 24 小时超时暂停计划……）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy: Option<PlanPolicy>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub catch_up: Option<CatchUp>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub triggers: Vec<ScheduleSpec>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub steps: Vec<PlanStep>,
+}
+
+/// 改计划：给了才改。`steps` 整体替换，给空的就变回单个 agent 的计划。
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct PlanChange {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub goal: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy: Option<PlanPolicy>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub catch_up: Option<CatchUp>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub steps: Option<Vec<PlanStep>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -585,6 +606,44 @@ impl Api {
             .await
     }
 
+    /// 改昵称；`None` 清掉。
+    pub async fn update_profile(&self, display_name: Option<&str>) -> Result<User> {
+        self.json(
+            Method::PATCH,
+            "/v1/me",
+            Some(&json!({ "display_name": display_name })),
+        )
+        .await
+    }
+
+    /// 给自己的手机号发验证码，做敏感操作前确认：`delete_account`（注销）或 `change_phone`。
+    pub async fn send_self_code(&self, purpose: &str) -> Result<()> {
+        self.empty(
+            Method::POST,
+            "/v1/me/code",
+            Some(&json!({ "purpose": purpose })),
+        )
+        .await
+    }
+
+    /// 注销账号（16.4）：用 [`Self::send_self_code`]（`delete_account`）发来的验证码确认。成功后本地会话一起清掉。
+    pub async fn delete_account(&self, code: &str) -> Result<()> {
+        self.empty(
+            Method::POST,
+            "/v1/me/delete",
+            Some(&json!({ "code": code })),
+        )
+        .await?;
+        self.set_session(None);
+        Ok(())
+    }
+
+    /// 吊销一台设备（丢了的手机、不用的电脑）：它的登录会话立即失效。
+    pub async fn revoke_device(&self, id: DeviceId) -> Result<()> {
+        self.empty(Method::DELETE, &format!("/v1/devices/{id}"), None)
+            .await
+    }
+
     pub async fn set_push(&self, channel: PushChannelKind, token: &str) -> Result<()> {
         self.empty(
             Method::PUT,
@@ -592,6 +651,19 @@ impl Api {
             Some(&json!({ "channel": channel, "token": token })),
         )
         .await
+    }
+
+    /// 这台设备的推送开启令牌（10.6，ActivityKit 的 `pushToStartTokenUpdates`）：`Some` 登记（用户打开了
+    /// “计划运行时显示实时活动”），`None` 清掉。
+    pub async fn set_live_activity_start_token(&self, token: Option<&str>) -> Result<()> {
+        let path = "/v1/devices/current/live-activity-start";
+        match token {
+            Some(token) => {
+                self.empty(Method::PUT, path, Some(&json!({ "token": token })))
+                    .await
+            }
+            None => self.empty(Method::DELETE, path, None).await,
+        }
     }
 
     /// 全部停止（4.6）：取消所有运行、吊销全部运行授权、暂停全部计划。
@@ -806,6 +878,27 @@ impl Api {
         .await
     }
 
+    /// 这个运行在这台设备上开了实时活动（10.6），或者远程开启的那个拿到了令牌：登记它的推送令牌
+    /// （ActivityKit 的 `pushTokenUpdates`）。令牌变了再调一次。
+    pub async fn register_live_activity(&self, id: RunId, token: &str) -> Result<()> {
+        self.empty(
+            Method::PUT,
+            &format!("/v1/runs/{id}/live-activity"),
+            Some(&json!({ "token": token })),
+        )
+        .await
+    }
+
+    /// 这个运行的实时活动关掉了（用户划掉了、App 自己结束了）：后台不再推送。
+    pub async fn end_live_activity(&self, id: RunId) -> Result<()> {
+        self.empty(
+            Method::DELETE,
+            &format!("/v1/runs/{id}/live-activity"),
+            None,
+        )
+        .await
+    }
+
     pub async fn run_tree(&self, id: RunId) -> Result<Vec<Run>> {
         #[derive(Deserialize)]
         struct R {
@@ -863,6 +956,27 @@ impl Api {
         self.json(Method::POST, "/v1/plans", Some(&body)).await
     }
 
+    pub async fn update_plan(&self, id: PlanId, change: &PlanChange) -> Result<PlanView> {
+        let body = serde_json::to_value(change).map_err(ClientError::decode)?;
+        self.json(Method::PATCH, &format!("/v1/plans/{id}"), Some(&body))
+            .await
+    }
+
+    /// 给计划加一个触发器（一个计划最多 10 个）。
+    pub async fn add_trigger(&self, plan: PlanId, spec: &ScheduleSpec) -> Result<Trigger> {
+        self.json(
+            Method::POST,
+            &format!("/v1/plans/{plan}/triggers"),
+            Some(&json!({ "spec": spec })),
+        )
+        .await
+    }
+
+    pub async fn delete_trigger(&self, id: TriggerId) -> Result<()> {
+        self.empty(Method::DELETE, &format!("/v1/triggers/{id}"), None)
+            .await
+    }
+
     /// 暂停或恢复用户自己的计划（等确认的计划用 `confirm_plan`）。
     pub async fn set_plan_paused(&self, id: PlanId, paused: bool) -> Result<PlanView> {
         let action = if paused { "pause" } else { "resume" };
@@ -898,6 +1012,21 @@ impl Api {
             path.push_str(&format!("&before={b}"));
         }
         self.json(Method::GET, &path, None).await
+    }
+
+    pub async fn inbox_item(&self, id: InboxItemId) -> Result<InboxItem> {
+        self.json(Method::GET, &format!("/v1/inbox/{id}"), None)
+            .await
+    }
+
+    pub async fn mark_inbox_unread(&self, id: InboxItemId) -> Result<()> {
+        self.empty(Method::POST, &format!("/v1/inbox/{id}/unread"), None)
+            .await
+    }
+
+    pub async fn delete_inbox_item(&self, id: InboxItemId) -> Result<()> {
+        self.empty(Method::DELETE, &format!("/v1/inbox/{id}"), None)
+            .await
     }
 
     /// 标已读：给 `ids` 只标这些；否则标到 `up_to`（含）为止。返回剩余未读数。
@@ -967,6 +1096,42 @@ impl Api {
             .await
     }
 
+    /// 改备注、停用或重新启用一把 key；给了才改。
+    pub async fn update_credential(
+        &self,
+        id: CredentialId,
+        label: Option<&str>,
+        disabled: Option<bool>,
+    ) -> Result<Credential> {
+        let mut body = serde_json::Map::new();
+        if let Some(l) = label {
+            body.insert("label".into(), json!(l));
+        }
+        if let Some(d) = disabled {
+            body.insert("disabled".into(), json!(d));
+        }
+        self.json(
+            Method::PATCH,
+            &format!("/v1/credentials/{id}"),
+            Some(&Value::Object(body)),
+        )
+        .await
+    }
+
+    /// 换 key（同一个厂商、同一条记录：模型路由不用改）。
+    pub async fn replace_credential_secret(
+        &self,
+        id: CredentialId,
+        api_key: &str,
+    ) -> Result<Credential> {
+        self.json(
+            Method::PUT,
+            &format!("/v1/credentials/{id}/secret"),
+            Some(&json!({ "api_key": api_key })),
+        )
+        .await
+    }
+
     pub async fn delete_credential(&self, id: CredentialId) -> Result<()> {
         self.empty(Method::DELETE, &format!("/v1/credentials/{id}"), None)
             .await
@@ -1017,7 +1182,7 @@ impl Api {
         .await
     }
 
-    /// 换 webhook 地址或加签密钥（要是同一家的）。
+    /// 换 webhook 地址或加签密钥（要是同一家的）。机器人失效被后台停用的渠道会重新打开，用户自己关掉的还是关着。
     pub async fn replace_im_webhook(
         &self,
         id: ImChannelId,
@@ -1042,6 +1207,104 @@ impl Api {
     pub async fn delete_im_channel(&self, id: ImChannelId) -> Result<()> {
         self.empty(Method::DELETE, &format!("/v1/im-channels/{id}"), None)
             .await
+    }
+
+    // ---------- 团队和团队模板（8.1） ----------
+
+    pub async fn teams(&self) -> Result<Vec<Team>> {
+        #[derive(Deserialize)]
+        struct R {
+            teams: Vec<Team>,
+        }
+        Ok(self.json::<R>(Method::GET, "/v1/teams", None).await?.teams)
+    }
+
+    /// 把几个实例编成团队（一个负责人 lead，其余是成员）。
+    pub async fn create_team(&self, name: &str, members: &[TeamMember]) -> Result<Team> {
+        self.json(
+            Method::POST,
+            "/v1/teams",
+            Some(&json!({ "name": name, "members": members })),
+        )
+        .await
+    }
+
+    pub async fn team(&self, id: TeamId) -> Result<Team> {
+        self.json(Method::GET, &format!("/v1/teams/{id}"), None)
+            .await
+    }
+
+    /// 改名、换成员（整体替换）；给了才改。
+    pub async fn update_team(
+        &self,
+        id: TeamId,
+        name: Option<&str>,
+        members: Option<&[TeamMember]>,
+    ) -> Result<Team> {
+        let mut body = serde_json::Map::new();
+        if let Some(n) = name {
+            body.insert("name".into(), json!(n));
+        }
+        if let Some(m) = members {
+            body.insert("members".into(), json!(m));
+        }
+        self.json(
+            Method::PATCH,
+            &format!("/v1/teams/{id}"),
+            Some(&Value::Object(body)),
+        )
+        .await
+    }
+
+    /// 删团队（实例不删）。
+    pub async fn delete_team(&self, id: TeamId) -> Result<()> {
+        self.empty(Method::DELETE, &format!("/v1/teams/{id}"), None)
+            .await
+    }
+
+    pub async fn team_templates(&self) -> Result<Vec<TeamTemplate>> {
+        #[derive(Deserialize)]
+        struct R {
+            templates: Vec<TeamTemplate>,
+        }
+        Ok(self
+            .json::<R>(Method::GET, "/v1/team-templates", None)
+            .await?
+            .templates)
+    }
+
+    /// 新建团队模板：直接给成员（agent、接入方式、名字、角色），或者从现有团队生成（给 `team`）。
+    pub async fn create_team_template(
+        &self,
+        name: &str,
+        spec: Option<&TeamTemplateSpec>,
+        team: Option<TeamId>,
+    ) -> Result<TeamTemplate> {
+        self.json(
+            Method::POST,
+            "/v1/team-templates",
+            Some(&json!({ "name": name, "spec": spec, "team_id": team })),
+        )
+        .await
+    }
+
+    pub async fn delete_team_template(&self, id: TeamTemplateId) -> Result<()> {
+        self.empty(Method::DELETE, &format!("/v1/team-templates/{id}"), None)
+            .await
+    }
+
+    /// 按模板领养一整个团队：每个成员领养一个新实例，再编成团队。`name` 不给就用模板的名字。
+    pub async fn adopt_team_template(
+        &self,
+        id: TeamTemplateId,
+        name: Option<&str>,
+    ) -> Result<Team> {
+        self.json(
+            Method::POST,
+            &format!("/v1/team-templates/{id}/adopt"),
+            Some(&json!({ "name": name })),
+        )
+        .await
     }
 
     // ---------- 用量 ----------
@@ -1160,6 +1423,31 @@ impl Api {
             .json::<R>(Method::GET, &format!("/v1/runs/{run}/artifacts"), None)
             .await?
             .artifacts)
+    }
+
+    /// 实例的产出物，新的在前（最多 `limit` 个）。
+    pub async fn instance_artifacts(
+        &self,
+        instance: InstanceId,
+        limit: u32,
+    ) -> Result<Vec<Artifact>> {
+        #[derive(Deserialize)]
+        struct R {
+            artifacts: Vec<Artifact>,
+        }
+        Ok(self
+            .json::<R>(
+                Method::GET,
+                &format!("/v1/instances/{instance}/artifacts?limit={limit}"),
+                None,
+            )
+            .await?
+            .artifacts)
+    }
+
+    pub async fn delete_artifact(&self, id: ArtifactId) -> Result<()> {
+        self.empty(Method::DELETE, &format!("/v1/artifacts/{id}"), None)
+            .await
     }
 
     pub async fn artifact_content(&self, id: ArtifactId) -> Result<Vec<u8>> {

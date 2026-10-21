@@ -16,7 +16,9 @@ use p256::pkcs8::DecodePrivateKey;
 use serde_json::{Value, json};
 use zeroize::Zeroizing;
 
-use crate::{PushChannel, PushKind, PushMessage, PushOutcome};
+use crate::{
+    LiveActivityChannel, LiveEvent, LivePush, PushChannel, PushKind, PushMessage, PushOutcome,
+};
 
 pub const PRODUCTION: &str = "https://api.push.apple.com";
 pub const SANDBOX: &str = "https://api.sandbox.push.apple.com";
@@ -150,50 +152,68 @@ fn valid_device_token(token: &str) -> bool {
     (32..=200).contains(&token.len()) && token.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-#[async_trait]
-impl PushChannel for ApnsClient {
-    fn name(&self) -> &'static str {
-        "apns"
+/// 实时活动的推送令牌、推送开启令牌也是十六进制串，比设备令牌长。
+fn valid_live_token(token: &str) -> bool {
+    (32..=512).contains(&token.len()) && token.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// 发给 APNs 的一个请求。
+struct Request<'a> {
+    push_type: &'static str,
+    topic: &'a str,
+    priority: &'static str,
+    /// 秒级时间戳；0 表示送不到就算了。
+    expiration: u64,
+    collapse_id: Option<&'a str>,
+    body: String,
+}
+
+impl ApnsClient {
+    /// 实时活动的载荷（`timestamp` 是秒，系统丢掉比现在显示的内容旧的更新）。远程开启要带类型名、静态属性和提醒，
+    /// 并让系统把新实时活动的推送令牌交给 App（`input-push-token`，iOS 18 起）。
+    pub fn live_payload(push: &LivePush, now: u64) -> Value {
+        let mut aps = json!({
+            "timestamp": now,
+            "event": push.event.as_str(),
+            "content-state": push.content_state,
+        });
+        if let Some((kind, attributes)) = &push.attributes {
+            aps["attributes-type"] = json!(kind);
+            aps["attributes"] = attributes.clone();
+        }
+        if let Some((title, body)) = &push.alert {
+            let body: String = body.chars().take(MAX_BODY_CHARS).collect();
+            aps["alert"] = json!({"title": title, "body": body});
+        }
+        if push.event == LiveEvent::Start {
+            aps["input-push-token"] = json!(1);
+        }
+        json!({"aps": aps})
     }
 
-    async fn send(&self, device_token: &str, message: &PushMessage) -> PushOutcome {
-        if !valid_device_token(device_token) {
-            return PushOutcome::InvalidToken {
-                reason: "malformed device token".into(),
-            };
-        }
-        let body = Self::payload(message).to_string();
-        if body.len() > MAX_PAYLOAD {
+    async fn post(&self, device_token: &str, req: Request<'_>) -> PushOutcome {
+        if req.body.len() > MAX_PAYLOAD {
             return PushOutcome::Rejected {
-                reason: format!("payload is {} bytes", body.len()),
+                reason: format!("payload is {} bytes", req.body.len()),
             };
         }
-        let now = now_secs();
-        let priority = if message.kind == PushKind::Info {
-            "5"
-        } else {
-            "10"
-        };
-        let mut req = self
+        let mut builder = self
             .http
             .post(format!("{}/3/device/{device_token}", self.endpoint))
             .header(
                 "authorization",
-                format!("bearer {}", self.provider_token(now)),
+                format!("bearer {}", self.provider_token(now_secs())),
             )
-            .header("apns-topic", &self.topic)
-            .header("apns-push-type", "alert")
-            .header("apns-priority", priority)
-            .header(
-                "apns-expiration",
-                message.ttl.map_or(0, |ttl| now + ttl.as_secs()).to_string(),
-            )
+            .header("apns-topic", req.topic)
+            .header("apns-push-type", req.push_type)
+            .header("apns-priority", req.priority)
+            .header("apns-expiration", req.expiration.to_string())
             .header("content-type", "application/json")
-            .body(body);
-        if let Some(c) = &message.collapse_id {
-            req = req.header("apns-collapse-id", c.chars().take(64).collect::<String>());
+            .body(req.body);
+        if let Some(c) = req.collapse_id {
+            builder = builder.header("apns-collapse-id", c.chars().take(64).collect::<String>());
         }
-        let resp = match req.send().await {
+        let resp = match builder.send().await {
             Ok(r) => r,
             Err(e) => {
                 return PushOutcome::Retry {
@@ -243,10 +263,63 @@ impl PushChannel for ApnsClient {
     }
 }
 
+#[async_trait]
+impl PushChannel for ApnsClient {
+    fn name(&self) -> &'static str {
+        "apns"
+    }
+
+    async fn send(&self, device_token: &str, message: &PushMessage) -> PushOutcome {
+        if !valid_device_token(device_token) {
+            return PushOutcome::InvalidToken {
+                reason: "malformed device token".into(),
+            };
+        }
+        let priority = if message.kind == PushKind::Info {
+            "5"
+        } else {
+            "10"
+        };
+        let req = Request {
+            push_type: "alert",
+            topic: &self.topic,
+            priority,
+            expiration: message.ttl.map_or(0, |ttl| now_secs() + ttl.as_secs()),
+            collapse_id: message.collapse_id.as_deref(),
+            body: Self::payload(message).to_string(),
+        };
+        self.post(device_token, req).await
+    }
+}
+
+/// 实时活动走单独的主题（`<bundle id>.push-type.liveactivity`）。过时的更新没有意义，系统也只留最后一条：
+/// 一小时内送不到就算了。
+#[async_trait]
+impl LiveActivityChannel for ApnsClient {
+    async fn send_live(&self, token: &str, push: &LivePush) -> PushOutcome {
+        if !valid_live_token(token) {
+            return PushOutcome::InvalidToken {
+                reason: "malformed live activity token".into(),
+            };
+        }
+        let now = now_secs();
+        let topic = format!("{}.push-type.liveactivity", self.topic);
+        let req = Request {
+            push_type: "liveactivity",
+            topic: &topic,
+            priority: if push.urgent { "10" } else { "5" },
+            expiration: now + 3600,
+            collapse_id: None,
+            body: Self::live_payload(push, now).to_string(),
+        };
+        self.post(token, req).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::PushTarget;
+    use crate::{LiveActivityChannel, LiveEvent, LivePush, PushTarget};
     use axum::extract::{Path, State};
     use axum::http::{HeaderMap, StatusCode};
     use axum::response::IntoResponse;
@@ -426,6 +499,76 @@ mod tests {
             .map(|(_, h, _)| h["authorization"].clone())
             .collect();
         assert_eq!(auths[0], auths[1], "provider token is cached");
+    }
+
+    #[tokio::test]
+    async fn live_activities_use_their_own_topic_and_payload() {
+        let (client, fake, _) = setup().await;
+        // 实时活动的令牌比设备令牌长。
+        let token = TOKEN.repeat(2);
+        let start = LivePush {
+            event: LiveEvent::Start,
+            content_state: json!({"state": "running", "steps": 0}),
+            urgent: true,
+            attributes: Some(("RunActivityAttributes".into(), json!({"runId": "run-1"}))),
+            alert: Some(("每日新闻".into(), "开始运行".into())),
+        };
+        assert_eq!(
+            client.send_live(&token, &start).await,
+            PushOutcome::Delivered {
+                id: Some("abc-123".into())
+            }
+        );
+        let update = LivePush {
+            event: LiveEvent::Update,
+            content_state: json!({"state": "running", "steps": 4}),
+            urgent: false,
+            attributes: None,
+            alert: None,
+        };
+        client.send_live(&token, &update).await;
+        {
+            let seen = fake.seen.lock().unwrap();
+            let (to, headers, body) = &seen[0];
+            assert_eq!(to, &token);
+            assert_eq!(
+                headers["apns-topic"],
+                "com.thinktin.app.push-type.liveactivity"
+            );
+            assert_eq!(headers["apns-push-type"], "liveactivity");
+            assert_eq!(headers["apns-priority"], "10");
+            assert_ne!(headers["apns-expiration"], "0");
+            let aps = &body["aps"];
+            assert_eq!(aps["event"], "start");
+            assert!(aps["timestamp"].as_u64().unwrap() > 1_700_000_000);
+            assert_eq!(
+                aps["content-state"],
+                json!({"state": "running", "steps": 0})
+            );
+            assert_eq!(aps["attributes-type"], "RunActivityAttributes");
+            assert_eq!(aps["attributes"], json!({"runId": "run-1"}));
+            assert_eq!(
+                aps["alert"],
+                json!({"title": "每日新闻", "body": "开始运行"})
+            );
+            assert_eq!(aps["input-push-token"], 1);
+            let (_, headers, body) = &seen[1];
+            assert_eq!(headers["apns-priority"], "5");
+            assert_eq!(body["aps"]["event"], "update");
+            assert!(body["aps"].get("attributes").is_none() && body["aps"].get("alert").is_none());
+            assert!(body["aps"].get("input-push-token").is_none());
+        }
+        // 实时活动结束后令牌失效；不是十六进制的不发。
+        let dead = format!("dead{}", &token[4..]);
+        assert!(matches!(
+            client.send_live(&dead, &update).await,
+            PushOutcome::InvalidToken { .. }
+        ));
+        assert!(matches!(
+            client.send_live("zz", &update).await,
+            PushOutcome::InvalidToken { .. }
+        ));
+        assert_eq!(fake.seen.lock().unwrap().len(), 3);
     }
 
     #[tokio::test]

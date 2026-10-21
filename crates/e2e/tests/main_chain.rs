@@ -542,6 +542,8 @@ async fn plans_keep_running_while_the_user_is_away() {
                 at: chrono::Utc::now() + chrono::Duration::seconds(3),
             }],
             steps: vec![],
+            policy: None,
+            catch_up: None,
         })
         .await
         .unwrap();

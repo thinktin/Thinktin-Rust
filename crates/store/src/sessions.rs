@@ -426,7 +426,7 @@ impl Tx<Worker> {
         .execute(self.conn())
         .await?;
         sqlx::query(
-            "UPDATE devices SET revoked_at = now(), push_channel = NULL, push_token = NULL \
+            "UPDATE devices SET revoked_at = now(), push_channel = NULL, push_token = NULL, activity_start_token = NULL \
              WHERE user_id = $1 AND revoked_at IS NULL",
         )
         .bind(user.0)
@@ -510,7 +510,7 @@ impl Tx<Tenant> {
     /// 下线一台设备（退出登录、远程下线）：吊销它的会话、清掉推送令牌。运行授权不受影响。
     pub async fn revoke_device(&mut self, device: DeviceId, reason: &str) -> Result<()> {
         let done = sqlx::query(
-            "UPDATE devices SET revoked_at = now(), push_channel = NULL, push_token = NULL \
+            "UPDATE devices SET revoked_at = now(), push_channel = NULL, push_token = NULL, activity_start_token = NULL \
              WHERE id = $1 AND revoked_at IS NULL",
         )
         .bind(device.0)
@@ -533,7 +533,7 @@ impl Tx<Tenant> {
     pub async fn revoke_other_devices(&mut self, keep: DeviceId, reason: &str) -> Result<u64> {
         let user = self.user();
         let devices = sqlx::query(
-            "UPDATE devices SET revoked_at = now(), push_channel = NULL, push_token = NULL \
+            "UPDATE devices SET revoked_at = now(), push_channel = NULL, push_token = NULL, activity_start_token = NULL \
              WHERE user_id = $1 AND id <> $2 AND revoked_at IS NULL",
         )
         .bind(user.0)

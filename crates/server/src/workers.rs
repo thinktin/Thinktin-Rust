@@ -18,7 +18,8 @@ use orchestrator::computer::{DeviceCalls, notify_approval_requests};
 use orchestrator::delegate::DelegateTools;
 use orchestrator::exec::{ExecConfig, ExecConnector};
 use orchestrator::executor::{Executor, ExecutorConfig};
-use orchestrator::outbox::{Dispatcher, DispatcherConfig};
+use orchestrator::live::{LiveConfig, LiveDispatcher};
+use orchestrator::outbox::{Claims, Dispatcher, DispatcherConfig};
 use orchestrator::pipeline::{HandoffCopier, PipelineConfig, PipelineDriver};
 use orchestrator::scheduler::{Scheduler, SchedulerConfig};
 use orchestrator::shim::PlatformTools;
@@ -45,6 +46,8 @@ const OUTBOX_RETENTION: Duration = Duration::from_secs(7 * 24 * 3600);
 /// 电脑工具的调用（参数和结果里可能有文件内容、截图）、手机和电脑之间的消息留多久（14.1）。
 /// 消息本身 24 小时就过期。
 const DEVICE_TRAFFIC_RETENTION: Duration = Duration::from_secs(24 * 3600);
+/// 实时活动最多显示 8 小时，结束后在锁屏上最多再留 4 小时：一天前开的早就不显示了。
+const LIVE_ACTIVITY_RETENTION: Duration = Duration::from_secs(24 * 3600);
 /// 多久看一次有没有要推送的电脑审批请求（14.2），一次最多领多少条。
 const DEVICE_NOTICE_EVERY: Duration = Duration::from_secs(2);
 const DEVICE_NOTICE_BATCH: i64 = 100;
@@ -136,17 +139,42 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
     );
     let pipelines = PipelineDriver::new(db.clone(), PipelineConfig::default());
     let scheduler = Scheduler::new(db.clone(), SchedulerConfig::default());
-    let mut dispatcher = Dispatcher::new(db.clone(), node_id, DispatcherConfig::default());
+    // 设备推送和 IM 群消息各一个投递器（各自的循环）：第三方的群机器人慢了、挂了，不拖累设备推送。
+    let mut dispatcher = Dispatcher::new(
+        db.clone(),
+        node_id,
+        DispatcherConfig {
+            claims: Claims::Push,
+            ..DispatcherConfig::default()
+        },
+    );
+    // IM：每个渠道一次领一条，最多 8 条同时在发，发完一条补领一条（不等同一批里最慢的）。
+    let mut im_dispatcher = Dispatcher::new(
+        db.clone(),
+        node_id,
+        DispatcherConfig {
+            claims: Claims::Im,
+            batch: 16,
+            concurrency: 8,
+            ..DispatcherConfig::default()
+        },
+    );
+    let mut push_filter = None;
     if let Some(path) = &cfg.compliance.push_keywords_file {
-        let filter = KeywordFilter::load(path)
-            .with_context(|| format!("reading push keywords {}", path.display()))?;
+        let filter = Arc::new(
+            KeywordFilter::load(path)
+                .with_context(|| format!("reading push keywords {}", path.display()))?,
+        );
         info!(keywords = filter.len(), "push content filter loaded");
-        dispatcher = dispatcher.with_filter(Arc::new(filter));
+        dispatcher = dispatcher.with_filter(filter.clone());
+        im_dispatcher = im_dispatcher.with_filter(filter.clone());
+        push_filter = Some(filter);
     }
     if cfg.push.im.enabled {
         let client = ImClient::new().context("IM channel client")?;
-        dispatcher = dispatcher.with_im(Arc::new(client), kms);
+        im_dispatcher = im_dispatcher.with_im(Arc::new(client), kms);
     }
+    let mut live = None;
     if let Some(apns) = &cfg.push.apns {
         let key = std::fs::read_to_string(&apns.key_path)
             .with_context(|| format!("reading APNs key {}", apns.key_path.display()))?;
@@ -158,7 +186,14 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
             key_pem: Zeroizing::new(key),
         })
         .context("APNs client")?;
-        dispatcher = dispatcher.with_channel(PushChannelKind::Apns, Arc::new(client));
+        let client = Arc::new(client);
+        dispatcher = dispatcher.with_channel(PushChannelKind::Apns, client.clone());
+        // 实时活动（10.6）也走 APNs。
+        let mut d = LiveDispatcher::new(db.clone(), node_id, client, LiveConfig::default());
+        if let Some(filter) = &push_filter {
+            d = d.with_filter(filter.clone());
+        }
+        live = Some(d);
     }
     if let Some(jpush) = &cfg.push.jpush {
         let client = JpushClient::new(JpushConfig {
@@ -213,6 +248,16 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
         dispatcher.run(stopped(stop)).await;
         Ok(())
     });
+    bg.spawn("outbox-im", move |stop| async move {
+        im_dispatcher.run(stopped(stop)).await;
+        Ok(())
+    });
+    if let Some(live) = live {
+        bg.spawn("live-activities", move |stop| async move {
+            live.run(stopped(stop)).await;
+            Ok(())
+        });
+    }
     let sweep_every = Duration::from_secs(cfg.worker.sweep_every_secs.max(1));
     bg.spawn("sweeper", move |stop| async move {
         every(sweep_every, stop, || async {
@@ -316,7 +361,9 @@ async fn maintain(db: &Db) -> store::Result<()> {
     let purged = w.purge_login_codes(LOGIN_CODE_RETENTION).await?
         + w.purge_refresh_history(REFRESH_HISTORY_RETENTION).await?
         + w.purge_delivered_outbox(OUTBOX_RETENTION).await?
-        + w.purge_device_traffic(DEVICE_TRAFFIC_RETENTION).await?;
+        + w.purge_device_traffic(DEVICE_TRAFFIC_RETENTION).await?
+        + w.purge_im_bot_slots().await?
+        + w.purge_live_activities(LIVE_ACTIVITY_RETENTION).await?;
     w.commit().await?;
     if dropped > 0 || purged > 0 {
         info!(

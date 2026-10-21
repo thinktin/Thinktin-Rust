@@ -333,6 +333,17 @@ fn decode_pair(plain: &[u8]) -> Result<(String, String)> {
     Ok((text(first)?, text(second)?))
 }
 
+/// 认出同一个群机器人用的指纹（10.5）：SHA-256（加了域前缀）的平台和 token。两个渠道绑的是同一个机器人
+/// （两个人各绑了一次同一个群），发送节奏要合在一起算。token 是平台生成的高熵随机串，指纹推不回 token。
+pub fn webhook_fingerprint(vendor: &str, token: &str) -> [u8; 32] {
+    let mut h = Sha256::new();
+    h.update(b"thinktin/im-bot/v1\0");
+    h.update(vendor.as_bytes());
+    h.update(b"\0");
+    h.update(token.as_bytes());
+    h.finalize().into()
+}
+
 /// IM 群机器人的凭证（10.5）：webhook 地址里的 token 和签名密钥（没有加签时为空）。丢弃时清零，
 /// 调试输出不显示内容。
 #[derive(Clone, PartialEq, Eq)]
@@ -906,6 +917,19 @@ mod tests {
         assert!(!format!("{secret:?}").contains("wörd"));
         assert!(VaultSecret::decode(&[1, 0, 0, 0, 9, b'a']).is_err());
         assert!(VaultSecret::decode(&[2, 0, 0, 0, 0]).is_err());
+    }
+
+    #[test]
+    fn webhook_fingerprints_tell_bots_apart() {
+        let a = webhook_fingerprint("dingtalk", "abcdef0123456789");
+        assert_eq!(a, webhook_fingerprint("dingtalk", "abcdef0123456789"));
+        assert_ne!(a, webhook_fingerprint("feishu", "abcdef0123456789"));
+        assert_ne!(a, webhook_fingerprint("dingtalk", "abcdef012345678"));
+        // 分隔符：平台和 token 拼在一起一样也区分得开。
+        assert_ne!(
+            webhook_fingerprint("lark", "x0123456789"),
+            webhook_fingerprint("larkx", "0123456789")
+        );
     }
 
     #[tokio::test]

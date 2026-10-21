@@ -46,6 +46,11 @@ pub fn im_approval_hint(locale: Locale) -> &'static str {
     )
 }
 
+/// 计划到点开始、远程开启实时活动时的提醒（10.6）。
+pub fn live_started(locale: Locale) -> &'static str {
+    pick(locale, "计划开始运行了", "A scheduled run has started")
+}
+
 /// 绑定 IM 群机器人后的测试消息（10.5）。
 pub fn im_test(locale: Locale) -> (&'static str, &'static str) {
     match locale {
