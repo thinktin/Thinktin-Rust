@@ -18,6 +18,7 @@
 2. 12.2 → 12.3 → 12.4 → 12.5 → 12.6 → 12.8 → 12.7 → 12.11，再做 P2 的 12.9、12.10。
 
 坑和决定：
+- 后端前置包（2026-10-22）：backend-core 已认领 11.8、10.7、4.7、5.5（`docs/progress.md` 7b085b7），顺序 10.6 评审 → 11.8 → 10.7 → 4.7 → 5.5；11.8 顺带做计划列表带下次触发时间、Run / run.state 的结构化等待原因码、跨实例的进行中运行列表。5.6 运行附件等 1.1 拍板。新接口只加不改，做完在 `docs/progress.md` 已完成表里写 FFI 新增了什么，本分支合 backend-core 时接上。
 - 12.10 实时活动的约定（backend-core 10.6，83f68ba…39234ba，详见 backend-core 的 `docs/live-activities.md` 第 3 节）：类型名必须是 `RunActivityAttributes`，静态属性 `runId`、`instanceId`、`title`；`ContentState` 是 `state`（运行状态字符串）、`steps`（Int）、`startedAt`、`endedAt`（可选，Unix 秒整数，驼峰键名，ActivityKit 用默认 JSONDecoder 解）。client-core 新方法：`register_live_activity(run_id, token)`（`pushTokenUpdates`，十六进制，变了再调）、`end_live_activity(run_id)`、`set_live_activity_start_token(token?)`（`pushToStartTokenUpdates`，用户打开“计划运行时显示实时活动”才登记，关掉传 nil）；只有 iPhone / iPad 能登记。服务端只远程开启计划到点的根运行，用户自己发起的由 App 自己开；远程开启的在 `Activity<RunActivityAttributes>.activityUpdates` 里拿到后照样 `register_live_activity`。推送里没有摘要和 agent 文字。
 - client-core 没导出的接口（设备列表与下线、注销、改计划与触发器、团队与模板、换 key、产出物列表与删除、收件箱删除和标未读、runs 分页）：2026-10-22 backend-core 会话已认领 11.7（P1，记在 `docs/progress.md`，c2c3825；只加不改已有签名，做完一组提交一组）；实时活动推送 10.6（P2）等 11.7 做完再定，在那之前没人认领。两行由本分支加进 `gen_wbs.py`。落地前 Swift 的 `ClientProtocol` 先定义这些方法、`MockClient` 实现、`CoreClient` 抛 `ClientError.unsupported`。
 - 安卓会话（session_01T2zubC6hDr9ZZR3ihhPP5b）在分支 `android-app` 做 13.x，设计规范在 `docs/android-design.md`；深链格式、事件 kind → 界面的规则两端保持一致。
