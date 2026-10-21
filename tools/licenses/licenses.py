@@ -1075,18 +1075,25 @@ class Inventory:
         return out
 
     def _copy(self, ecosystem, name, version, files):
-        """原文按内容存：texts/by-hash/<哈希前 16 位>/<原文件名>。几百个 crate 的 LICENSE-APACHE 一字不差，只存一份。"""
+        """原文按内容存：texts/by-hash/<哈希前 16 位>/<原文件名>。几百个 crate 的 LICENSE-APACHE 一字不差，只存一份。
+        太大的（超过 MAX_TEXT_BYTES）不复制、只记原来的位置，但哈希照样算：登记例外钉住的原文要包括它。"""
         copied, digests = [], []
         for src in files or []:
             src = Path(src)
             try:
                 size = src.stat().st_size
                 data = src.read_bytes() if size <= MAX_TEXT_BYTES else None
+                if data is None:
+                    h = hashlib.sha256()
+                    with open(src, "rb") as f:
+                        for chunk in iter(lambda: f.read(1 << 20), b""):
+                            h.update(chunk)
             except OSError:
                 continue
             if data is None:
                 copied.append(str(src))  # 太大：只记原来的位置
                 self._where[src] = str(src)
+                digests.append(h.hexdigest())
                 continue
             digest = hashlib.sha256(data).hexdigest()
             rel = Path("texts") / "by-hash" / digest[:16] / src.name
@@ -1337,9 +1344,11 @@ def git_web_url(url):
     if m:
         return "https://%s.%s/%s" % (m.group(1) or "github", "org" if m.group(1) == "bitbucket" else "com", m.group(2))
     u = re.sub(r"^git\+", "", u)
-    u = re.sub(r"^ssh://git@([^:/]+):(?!\d)", r"https://\1/", u)  # git+ssh://git@github.com:org/repo.git
-    u = re.sub(r"^(git|ssh)://(git@)?", "https://", u)
-    u = re.sub(r"^git@([^:/]+):", r"https://\1/", u)
+    # ssh://[用户@]主机[:端口]/org/repo、ssh://[用户@]主机:org/repo（scp 写法套了 ssh://）：网页地址不带用户和 SSH 端口
+    u = re.sub(r"^ssh://(?:[^@/]+@)?([^:/]+)(?::\d*)?[:/]", r"https://\1/", u)
+    u = re.sub(r"^git://", "https://", u)
+    u = re.sub(r"^[^@/:]+@([^:/]+):", r"https://\1/", u)  # git@github.com:org/repo.git
+    u = re.sub(r"^(https?://)[^@/]*@", r"\1", u)  # https://user[:token]@host/…：网页地址不带用户名、口令
     u = re.sub(r"\.git(#.*)?$", "", u)
     return u if u.startswith(("https://", "http://")) else None
 
@@ -3099,6 +3108,26 @@ def self_test():
         scan_extra(Inventory(tmp / "out-up", "x"), up)
     eq(git_web_url("git+ssh://git@github.com:a/b.git"), "https://github.com/a/b", "git+ssh://git@host:org/repo")
     eq(git_web_url("../local"), None, "相对路径不是仓库")
+    # 第四轮评审：SSH 端口、没写用户、地址里的用户名和口令都不进网页地址
+    for url, want in [("ssh://git@github.com:22/org/repo.git", "https://github.com/org/repo"),
+                      ("git+ssh://git@gitlab.com:2222/org/repo.git", "https://gitlab.com/org/repo"),
+                      ("git+ssh://github.com:org/repo.git", "https://github.com/org/repo"),
+                      ("git+ssh://user@host.com:org/repo.git", "https://host.com/org/repo"),
+                      ("ssh://git@github.com/org/repo.git", "https://github.com/org/repo"),
+                      ("git://github.com/org/repo.git", "https://github.com/org/repo"),
+                      ("git+https://jimmywarting@github.com/jimmywarting/FormData.git", "https://github.com/jimmywarting/FormData"),
+                      ("https://user:token@example.com/org/repo", "https://example.com/org/repo"),
+                      ("user@host.com:org/repo.git", "https://host.com/org/repo")]:
+        eq(git_web_url(url), want, "网页地址：%s" % url)
+    # 太大不复制的原文也算哈希：登记例外钉住的原文列表要包括它
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        big = tmp / "pkg" / "THIRD_PARTY_LICENSES.txt"
+        big.parent.mkdir()
+        big.write_bytes(b"x" * (MAX_TEXT_BYTES + 10))
+        inv = Inventory(tmp / "out", "big")
+        c = inv.add("npm", "big", "1.0.0", "MIT", "MIT", "metadata", [big], big.parent)
+        eq((c["files"], c["text_sha256"]), ([str(big)], [hashlib.sha256(big.read_bytes()).hexdigest()]), "太大的原文只记位置，哈希照算")
 
     # 仓库里的策略文件能加载，例外都写了理由
     real = Path(__file__).with_name("policy.toml")
