@@ -1610,8 +1610,9 @@ def scan_extra(inv, directory):
         got = None
         if (crates / "inventory.json").is_file():
             got = json.loads((crates / "inventory.json").read_text(encoding="utf-8")).get("subject")
-        if got != want:
-            raise SystemExit("%s 声明了上游的 Rust 程序，但 %s 没生成或不是这个版本（要 %s，有 %s）。"
+        key = (crates / "key.json").read_text(encoding="utf-8") if (crates / "key.json").is_file() else None
+        if got != want or key != upstream_cargo_key(data["cargo"]):
+            raise SystemExit("%s 声明了上游的 Rust 程序，但 %s 没生成、不是这个版本或者是旧的扫描程序生成的（要 %s，有 %s）。"
                              "先运行 python3 tools/licenses/licenses.py upstream-cargo %s" % (meta, crates, want, got, directory))
         inv.merge(crates)
         for c in inv.components.values():
@@ -1625,9 +1626,12 @@ def upstream_cargo_subject(entries):
 
 
 def upstream_cargo_key(entries):
-    """缓存的 crates/ 还能不能用：[[cargo]] 的每一项（含 manifest、target）和扫描程序本身（改了扫描规则要重新生成）。"""
-    tool = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()[:16]
-    return json.dumps({"entries": entries, "tool": tool, "schema": SCHEMA}, sort_keys=True)
+    """缓存的 crates/ 还能不能用：[[cargo]] 的每一项（含 manifest、target）、扫描程序本身和 SPDX 标准文本
+    （改了扫描规则、核对用的标准文本都要重新生成）。"""
+    h = hashlib.sha256(Path(__file__).read_bytes())
+    for path in sorted(SPDX_DIR.glob("*.txt")):
+        h.update(path.name.encode() + b"\0" + path.read_bytes() + b"\0")
+    return json.dumps({"entries": entries, "tool": h.hexdigest()[:16], "schema": SCHEMA}, sort_keys=True)
 
 
 def cmd_upstream_cargo(args):
@@ -2161,10 +2165,20 @@ def cmd_check(args):
 
 
 _COPYLEFT = ("GPL-*", "LGPL-*", "AGPL-*", "MPL-*", "EPL-*", "CDDL-*", "LicenseRef-*GPL-*")
+# copyleft 的强弱：只管改过的文件（MPL、EPL、CDDL）< 库本身（LGPL）< 整个程序（GPL）< 网络服务也算（AGPL）。
+_COPYLEFT_RANK = (("*AGPL-*", 4), ("*LGPL-*", 2), ("*GPL-*", 3))
+
+
+def _copyleft_rank(lid):
+    for pat, rank in _COPYLEFT_RANK:
+        if fnmatch.fnmatchcase(lid.upper(), pat.upper()):
+            return rank
+    return 1
 
 
 def copyleft_ids(expr):
-    """许可证表达式里非用不可的 copyleft 许可证：OR 里有一支不是 copyleft 就不算（我们选那一支），AND 全算。"""
+    """许可证表达式里非用不可的 copyleft 许可证：OR 里有一支不是 copyleft 就不算（我们选那一支），都是 copyleft
+    时选限制最少的一支（最强的那个许可证最弱，一样时许可证少的）；AND 全算。"""
     try:
         tree = parse_spdx(expr)
     except SpdxError:
@@ -2175,7 +2189,7 @@ def copyleft_ids(expr):
             return [t[1]] if any(fnmatch.fnmatchcase(t[1].upper(), pat.upper()) for pat in _COPYLEFT) else []
         parts = [walk(x) for x in t[1]]
         if t[0] == "or":
-            return [] if any(not x for x in parts) else min(parts, key=len)
+            return [] if any(not x for x in parts) else min(parts, key=lambda x: (max(map(_copyleft_rank, x)), len(x)))
         return [i for x in parts for i in x]
 
     return list(dict.fromkeys(walk(tree)))
@@ -2605,6 +2619,9 @@ def self_test():
         eq(copyleft_ids("MIT OR GPL-3.0-or-later"), [], "OR 里有宽松的一支不算 copyleft")
         eq(copyleft_ids("MPL-2.0 AND MIT"), ["MPL-2.0"], "AND 里的 copyleft")
         eq(copyleft_ids("LGPL-2.1-only OR GPL-2.0-only"), ["LGPL-2.1-only"], "都是 copyleft 时取限制少的一支")
+        eq(copyleft_ids("GPL-2.0-only OR LGPL-2.1-only"), ["LGPL-2.1-only"], "限制少的一支写在后面也选它")
+        eq(copyleft_ids("GPL-3.0-only OR MPL-2.0"), ["MPL-2.0"], "MPL 比 GPL 限制少")
+        eq(copyleft_ids("(MIT AND GPL-2.0-only) OR LGPL-2.1-only"), ["LGPL-2.1-only"], "按每一支里最强的比")
         # PyPI：几个分类按 AND，AGPL + MIT 要拦
         sp = tmp / "sp"
         d = sp / "agplmit-1.0.dist-info"
@@ -3050,6 +3067,22 @@ def self_test():
             (repo / rel).write_text(text)
         legal, _ = bundled_files(repo, stop_at="Cargo.toml")
         eq([str(Path(f).relative_to(repo)) for f in legal], ["vendor/lib/COPYING"], "不进工作区里别的 crate")
+        # 上游 crate 清单的缓存：版本对、但不是这个扫描程序（或这套标准文本）生成的，不能用
+        up = tmp / "notices-up"
+        (up / "crates").mkdir(parents=True)
+        entry = {"repo": "https://example.com/x", "tag": "v1", "manifest": "Cargo.toml", "packages": ["x"]}
+        (up / "sources.toml").write_text('[[cargo]]\nrepo = "%s"\ntag = "v1"\nmanifest = "Cargo.toml"\npackages = ["x"]\n' % entry["repo"])
+        Inventory(up / "crates", upstream_cargo_subject([entry])).write()
+        for key in (None, upstream_cargo_key([entry]).replace('"schema"', '"old"')):
+            if key:
+                (up / "crates" / "key.json").write_text(key)
+            try:
+                scan_extra(Inventory(tmp / "out-up", "x"), up)
+                eq("没报错", "报错", "旧的上游 crate 清单（%s）" % ("没有 key.json" if key is None else "key 不对"))
+            except SystemExit:
+                pass
+        (up / "crates" / "key.json").write_text(upstream_cargo_key([entry]))
+        scan_extra(Inventory(tmp / "out-up", "x"), up)
     eq(git_web_url("git+ssh://git@github.com:a/b.git"), "https://github.com/a/b", "git+ssh://git@host:org/repo")
     eq(git_web_url("../local"), None, "相对路径不是仓库")
 
