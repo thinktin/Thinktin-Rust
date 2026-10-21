@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="design_composer_placeholder">Message your agent</string>
+    <string name="design_attach">Add attachment</string>
+    <string name="design_send">Send</string>
+    <string name="design_stop">Stop</string>
+    <string name="design_expand">Expand</string>
+    <string name="design_collapse">Collapse</string>
+    <string name="design_loading">Loading</string>
+    <string name="design_tool_pending">Pending</string>
+    <string name="design_tool_in_progress">In progress</string>
+    <string name="design_tool_completed">Completed</string>
+    <string name="design_tool_failed">Failed</string>
+</resources>

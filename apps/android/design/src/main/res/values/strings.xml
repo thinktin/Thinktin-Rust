@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="design_composer_placeholder">给 agent 发消息</string>
+    <string name="design_attach">添加附件</string>
+    <string name="design_send">发送</string>
+    <string name="design_stop">停止</string>
+    <string name="design_expand">展开</string>
+    <string name="design_collapse">收起</string>
+    <string name="design_loading">加载中</string>
+    <string name="design_tool_pending">等待中</string>
+    <string name="design_tool_in_progress">进行中</string>
+    <string name="design_tool_completed">已完成</string>
+    <string name="design_tool_failed">失败</string>
+</resources>
