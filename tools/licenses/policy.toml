@@ -116,6 +116,36 @@ license = "MIT OR Apache-2.0"
 reason = "编进去的只有 liblzma（公有领域），带着的 LGPL、GPL 原文属于不编的命令行工具和脚本"
 agents = ["codex"]
 
+# 下面三个是 Codex 的 Rust 依赖，包里带着的 GPL 原文不是 crate 自己的许可证（2026-10-22 按这些版本核对）。
+# zstd-sys 带着 zstd 的源码：zstd 是双许可，每个源文件写着“licensed under both the BSD-style license (LICENSE) and the
+# GPLv2 (COPYING). You may select, at your option, one of the above-listed licenses”，我们按 BSD 用。
+[[exception]]
+ecosystem = "cargo"
+name = "zstd-sys"
+version = "2.0.16+zstd.1.5.7"
+license = "MIT OR Apache-2.0"
+reason = "带着的 zstd 是 BSD-3-Clause 或 GPL-2.0 任选（zstd/LICENSE、zstd/COPYING），按 BSD 用"
+agents = ["codex"]
+
+# rust-stemmers 的 test_data/ 是 Snowball 的测试词表（GPL-3.0），只在 #[cfg(test)] 的测试里读，不编进程序。
+[[exception]]
+ecosystem = "cargo"
+name = "rust-stemmers"
+version = "1.2.0"
+license = "MIT OR BSD-3-Clause"
+reason = "GPL 的只有测试数据 test_data/，测试才读，不编进去"
+agents = ["codex"]
+
+# libdbus-sys 带着 dbus 的源码，只在 vendored 特性打开时编；Codex 的 Cargo.lock 里它只依赖 pkg-config（没有 vendored
+# 要的 cc），用的是系统的 libdbus。dbus 本身是 AFL-2.1 或 GPL-2.0-or-later 任选（vendor/dbus/COPYING）。
+[[exception]]
+ecosystem = "cargo"
+name = "libdbus-sys"
+version = "0.2.7"
+license = "Apache-2.0 OR MIT"
+reason = "带着的 dbus 源码不编进去（没开 vendored）；dbus 是 AFL-2.1 或 GPL-2.0-or-later 任选"
+agents = ["codex"]
+
 # Codex 带的 zsh：zsh 自己的宽松许可（保留版权声明和免责的两段即可使用、修改、分发，没有 SPDX 标识）。
 # LICENCE 里提到个别 shell 函数是 GPL，Codex 只带了 bin/zsh，没带函数文件。
 [[exception]]
