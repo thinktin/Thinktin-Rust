@@ -563,6 +563,57 @@ impl From<api::VendorInfo> for VendorInfo {
     }
 }
 
+/// IM 群机器人（10.5）。token 和签名密钥服务端从不返回，`hint` 是 token 后 4 位。
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct ImChannel {
+    pub id: String,
+    /// feishu、lark、wecom、dingtalk。
+    pub vendor: String,
+    pub label: String,
+    pub hint: String,
+    pub has_secret: bool,
+    /// run_finished、run_failed、approval 中的若干个。
+    pub events: Vec<String>,
+    pub enabled: bool,
+    pub last_sent_at_ms: Option<i64>,
+    pub last_error: Option<String>,
+    pub created_at_ms: i64,
+}
+
+impl From<d::ImChannel> for ImChannel {
+    fn from(c: d::ImChannel) -> Self {
+        Self {
+            id: c.id.to_string(),
+            vendor: c.vendor.as_str().into(),
+            label: c.label,
+            hint: c.hint,
+            has_secret: c.has_secret,
+            events: c.events.iter().map(|e| e.as_str().to_owned()).collect(),
+            enabled: c.enabled,
+            last_sent_at_ms: c.last_sent_at.map(ms),
+            last_error: c.last_error,
+            created_at_ms: ms(c.created_at),
+        }
+    }
+}
+
+#[derive(Clone, uniffi::Record)]
+pub struct NewImChannel {
+    pub webhook_url: String,
+    pub secret: Option<String>,
+    pub label: String,
+    /// 不给就是全部事件。
+    pub events: Option<Vec<String>>,
+}
+
+impl std::fmt::Debug for NewImChannel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NewImChannel")
+            .field("label", &self.label)
+            .finish_non_exhaustive()
+    }
+}
+
 #[derive(Clone, uniffi::Record)]
 pub struct NewCredential {
     pub vendor: String,
@@ -1498,6 +1549,76 @@ impl ThinktinClient {
     pub async fn delete_credential(&self, credential_id: String) -> Result<()> {
         let id: d::CredentialId = parse(&credential_id, "credential")?;
         self.run(|c| async move { c.api.delete_credential(id).await })
+            .await
+    }
+
+    // ---------- IM 渠道（10.5） ----------
+
+    pub async fn im_channels(&self) -> Result<Vec<ImChannel>> {
+        self.run(|c| async move {
+            Ok(c.api
+                .im_channels()
+                .await?
+                .into_iter()
+                .map(Into::into)
+                .collect())
+        })
+        .await
+    }
+
+    pub async fn add_im_channel(&self, channel: NewImChannel) -> Result<ImChannel> {
+        let new = api::NewImChannel {
+            webhook_url: channel.webhook_url,
+            secret: channel.secret,
+            label: channel.label,
+            events: channel.events,
+        };
+        self.run(|c| async move { Ok(c.api.add_im_channel(&new).await?.into()) })
+            .await
+    }
+
+    pub async fn update_im_channel(
+        &self,
+        channel_id: String,
+        label: Option<String>,
+        events: Option<Vec<String>>,
+        enabled: Option<bool>,
+    ) -> Result<ImChannel> {
+        let id: d::ImChannelId = parse(&channel_id, "im channel")?;
+        self.run(|c| async move {
+            Ok(c.api
+                .update_im_channel(id, label.as_deref(), events.as_deref(), enabled)
+                .await?
+                .into())
+        })
+        .await
+    }
+
+    pub async fn replace_im_webhook(
+        &self,
+        channel_id: String,
+        webhook_url: String,
+        secret: Option<String>,
+    ) -> Result<ImChannel> {
+        let id: d::ImChannelId = parse(&channel_id, "im channel")?;
+        self.run(|c| async move {
+            Ok(c.api
+                .replace_im_webhook(id, &webhook_url, secret.as_deref())
+                .await?
+                .into())
+        })
+        .await
+    }
+
+    pub async fn test_im_channel(&self, channel_id: String) -> Result<()> {
+        let id: d::ImChannelId = parse(&channel_id, "im channel")?;
+        self.run(|c| async move { c.api.test_im_channel(id).await })
+            .await
+    }
+
+    pub async fn delete_im_channel(&self, channel_id: String) -> Result<()> {
+        let id: d::ImChannelId = parse(&channel_id, "im channel")?;
+        self.run(|c| async move { c.api.delete_im_channel(id).await })
             .await
     }
 

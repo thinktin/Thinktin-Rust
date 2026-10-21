@@ -9,9 +9,10 @@ use std::time::Duration;
 use proto::api::{API_VERSION, ErrorBody, ErrorCode, VERSION_HEADER};
 use proto::domain::{
     Approval, ApprovalId, Artifact, ArtifactId, Credential, CredentialId, Device, DeviceId,
-    DeviceMessage, DeviceMessageId, DeviceMessageKind, DevicePlatform, InboxItem, InboxItemId,
-    Instance, InstanceEvent, InstanceId, ModelRoute, Plan, PlanId, PlanStep, PushChannelKind, Run,
-    RunId, ScheduleSpec, Trigger, User, VaultItem, VaultItemId, VaultRequest, VaultRequestId,
+    DeviceMessage, DeviceMessageId, DeviceMessageKind, DevicePlatform, ImChannel, ImChannelId,
+    InboxItem, InboxItemId, Instance, InstanceEvent, InstanceId, ModelRoute, Plan, PlanId,
+    PlanStep, PushChannelKind, Run, RunId, ScheduleSpec, Trigger, User, VaultItem, VaultItemId,
+    VaultRequest, VaultRequestId,
 };
 use reqwest::Method;
 use serde::de::DeserializeOwned;
@@ -208,6 +209,27 @@ impl std::fmt::Debug for NewCredential {
         f.debug_struct("NewCredential")
             .field("vendor", &self.vendor)
             .field("label", &self.label)
+            .finish_non_exhaustive()
+    }
+}
+
+/// 绑定 IM 群机器人（10.5）：粘贴的 webhook 地址、加签的密钥（飞书、钉钉可选，企业微信没有）。
+/// `events` 不给就是全部（run_finished、run_failed、approval）。
+#[derive(Clone, Default, Serialize)]
+pub struct NewImChannel {
+    pub webhook_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secret: Option<String>,
+    pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub events: Option<Vec<String>>,
+}
+
+impl std::fmt::Debug for NewImChannel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NewImChannel")
+            .field("label", &self.label)
+            .field("events", &self.events)
             .finish_non_exhaustive()
     }
 }
@@ -947,6 +969,78 @@ impl Api {
 
     pub async fn delete_credential(&self, id: CredentialId) -> Result<()> {
         self.empty(Method::DELETE, &format!("/v1/credentials/{id}"), None)
+            .await
+    }
+
+    // ---------- IM 渠道（10.5） ----------
+
+    pub async fn im_channels(&self) -> Result<Vec<ImChannel>> {
+        #[derive(Deserialize)]
+        struct R {
+            channels: Vec<ImChannel>,
+        }
+        Ok(self
+            .json::<R>(Method::GET, "/v1/im-channels", None)
+            .await?
+            .channels)
+    }
+
+    pub async fn add_im_channel(&self, c: &NewImChannel) -> Result<ImChannel> {
+        let body = serde_json::to_value(c).map_err(ClientError::decode)?;
+        self.json(Method::POST, "/v1/im-channels", Some(&body))
+            .await
+    }
+
+    /// 改名字、订阅的事件、开关；不给的不改。
+    pub async fn update_im_channel(
+        &self,
+        id: ImChannelId,
+        label: Option<&str>,
+        events: Option<&[String]>,
+        enabled: Option<bool>,
+    ) -> Result<ImChannel> {
+        let mut body = serde_json::Map::new();
+        if let Some(l) = label {
+            body.insert("label".into(), json!(l));
+        }
+        if let Some(e) = events {
+            body.insert("events".into(), json!(e));
+        }
+        if let Some(e) = enabled {
+            body.insert("enabled".into(), json!(e));
+        }
+        self.json(
+            Method::PATCH,
+            &format!("/v1/im-channels/{id}"),
+            Some(&Value::Object(body)),
+        )
+        .await
+    }
+
+    /// 换 webhook 地址或加签密钥（要是同一家的）。
+    pub async fn replace_im_webhook(
+        &self,
+        id: ImChannelId,
+        webhook_url: &str,
+        secret: Option<&str>,
+    ) -> Result<ImChannel> {
+        let body = json!({ "webhook_url": webhook_url, "secret": secret });
+        self.json(
+            Method::PUT,
+            &format!("/v1/im-channels/{id}/webhook"),
+            Some(&body),
+        )
+        .await
+    }
+
+    /// 发一条测试消息（异步发，结果看渠道的 `last_sent_at` / `last_error`）。
+    pub async fn test_im_channel(&self, id: ImChannelId) -> Result<()> {
+        self.empty(Method::POST, &format!("/v1/im-channels/{id}/test"), None)
+            .await
+    }
+
+    pub async fn delete_im_channel(&self, id: ImChannelId) -> Result<()> {
+        self.empty(Method::DELETE, &format!("/v1/im-channels/{id}"), None)
             .await
     }
 

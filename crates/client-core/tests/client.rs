@@ -876,3 +876,56 @@ async fn phones_and_computers_exchange_messages() {
     assert_eq!(phone.ack_device_messages(&[ask.id]).await.unwrap(), 0);
     assert!(phone.device_messages().await.unwrap().is_empty());
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn im_channels_round_trip() {
+    let Some(e) = env().await else { return };
+    let store = Arc::new(MemorySessionStore::default());
+    let api = e.api(store.clone());
+    e.login(&api, "13800138506").await;
+    let ch = api
+        .add_im_channel(&client_core::api::NewImChannel {
+            webhook_url:
+                "https://open.feishu.cn/open-apis/bot/v2/hook/abcdef01-2345-6789-abcd-ef0123456789"
+                    .into(),
+            secret: Some("feishu-sign-secret".into()),
+            label: "家庭群".into(),
+            events: Some(vec!["run_finished".into()]),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        (ch.vendor.as_str(), ch.hint.as_str(), ch.has_secret),
+        ("feishu", "…6789", true)
+    );
+    let off = api
+        .update_im_channel(ch.id, None, Some(&["approval".to_owned()]), Some(false))
+        .await
+        .unwrap();
+    assert!(!off.enabled);
+    assert_eq!(off.events, vec![proto::domain::ImEvent::Approval]);
+    let err = api.test_im_channel(ch.id).await.unwrap_err();
+    assert!(
+        matches!(err, ClientError::Api { status: 422, .. }),
+        "{err:?}"
+    );
+    api.update_im_channel(ch.id, None, None, Some(true))
+        .await
+        .unwrap();
+    api.test_im_channel(ch.id).await.unwrap();
+    let rotated = api
+        .replace_im_webhook(
+            ch.id,
+            "https://open.feishu.cn/open-apis/bot/v2/hook/0000aaaa-bbbb-cccc-dddd-eeeeffff1111",
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        (rotated.hint.as_str(), rotated.has_secret),
+        ("…1111", false)
+    );
+    assert_eq!(api.im_channels().await.unwrap().len(), 1);
+    api.delete_im_channel(ch.id).await.unwrap();
+    assert!(api.im_channels().await.unwrap().is_empty());
+}
