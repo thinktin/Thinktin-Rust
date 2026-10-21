@@ -55,14 +55,27 @@ cd apps/apple/ThinktinKit && swift build && swift test
 
 App target 里不依赖 UIKit / Security 的文件可以 `swiftc -typecheck` 查语法；其余的靠 CI 的 macOS 任务编译。
 
+## 代码风格
+
+`swift format`（Swift 6 工具链自带），配置在 `apps/apple/.swift-format`（4 格缩进、120 列，其余是 swift-format
+的默认规则），App 和 ThinktinKit 共用。提交前：
+
+```sh
+swift format -i -r apps/apple            # 改写
+swift format lint --strict -r apps/apple  # 检查（CI 的 kit-linux 也跑这一步）
+```
+
 ## CI（`.github/workflows/ios.yml`）
 
 推到 `ios-app`、`main` 和 PR 时，改了 `apps/apple/**`、`crates/client-core/**`、`crates/proto/**`、
 `tools/client-core/**`（以及 Cargo 依赖、许可证工具、这个 workflow 本身）就跑，按 docs/ios.md 第 7 节：
 
-1. **kit-linux**（ubuntu-24.04）：装 swift.org 的 Swift 6.2（验签），`build-linux-swift.sh`，`swift build && swift test`。
-2. **app-macos**（macos-26，有 Xcode 26.6 就用它）：`build-apple.sh target/apple --ci`；`ThinktinKit` 上 `swift build`
-   （macOS 原生，编 ThinktinUI）；`xcodegen generate`；挑最新 iOS 运行时里第一个可用的 iPhone 模拟器，
-   `xcodebuild build test`（App 的 `ThinktinTests` 和 ThinktinKit 的 `ThinktinUITests`），不签名。
+1. **kit-linux**（ubuntu-24.04）：装 swift.org 的 Swift 6.2（验签），`build-linux-swift.sh`，`swift build && swift test`，
+   最后 `swift format lint --strict`。
+2. **app-macos**（macos-26，有 Xcode 26.6 就用它）：`build-apple.sh target/apple --ci`；`ThinktinKit` 上
+   `swift build --build-tests`（macOS 原生，编 ThinktinUI 和测试目标）；`xcodegen generate`；挑选中的 Xcode 支持的
+   最新 iOS 运行时（不高于模拟器 SDK）里第一个可用的 iPhone 模拟器，`xcodebuild build test`（App 的 `ThinktinTests`
+   和 ThinktinKit 的 `ThinktinUITests`），不签名；最后在 macOS 本机 `swift test`（ThinktinKit 的全部测试，
+   适配层经 macOS 切片的真核心跑）。
 
 两个任务的构建日志、`xcodebuild` 的日志和 `.xcresult` 结果包都传成 artifact（失败了也传），在 Actions 页面下载看。

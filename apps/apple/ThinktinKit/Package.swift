@@ -45,7 +45,12 @@ var targets: [Target] = [
     ),
     .testTarget(
         name: "ThinktinCoreAdapterTests",
-        dependencies: ["ThinktinCoreAdapter", "ThinktinKit"],
+        // 测试里直接构造 ThinktinCore 的记录（ConversionTests 等），要显式依赖，不能只靠适配层间接带进来。
+        dependencies: [
+            "ThinktinCoreAdapter",
+            "ThinktinKit",
+            .product(name: "ThinktinCore", package: "ThinktinCore"),
+        ],
         swiftSettings: strictConcurrency
     ),
 ]

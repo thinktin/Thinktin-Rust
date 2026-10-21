@@ -4,8 +4,9 @@
 #   （ThinktinCore 用本机的 libclient_core.so，tools/client-core/build-linux-swift.sh 生成）。和云端会话
 #   本地跑的是同一套。
 # - app-macos：Xcode 26 上打 ThinktinCore（只要模拟器和 macOS 的 arm64 切片，build-apple.sh --ci），
-#   swift build 整个 ThinktinKit（macOS 原生，含 ThinktinUI），xcodegen 生成工程，在 iPhone 模拟器上
-#   build + test（App 的 ThinktinTests 和 ThinktinKit 的 ThinktinUITests）。日志和结果包传成 artifact。
+#   swift build 整个 ThinktinKit（macOS 原生，含 ThinktinUI 和测试目标），xcodegen 生成工程，在 iPhone 模拟器上
+#   build + test（App 的 ThinktinTests 和 ThinktinKit 的 ThinktinUITests），最后在 macOS 本机 swift test。
+#   日志和结果包传成 artifact。
 name: iOS
 
 on:
@@ -58,6 +59,7 @@ jobs:
       # 直接用 swift.org 的发布包，用 swift.org 公布的公钥（all-keys.asc）验签（6.x 的签名密钥 2028 年才过期），不依赖
       # keyserver（setup-swift@v2 每次都要去 keyserver 刷新公钥，偶尔超时）。
       - name: Install Swift ${{ env.SWIFT_VERSION }}
+        id: swift
         run: |
           set -euo pipefail
           name="swift-${SWIFT_VERSION}-RELEASE-ubuntu24.04"
@@ -87,6 +89,11 @@ jobs:
           set -o pipefail
           swift build 2>&1 | tee "$RUNNER_TEMP/swift-build.log"
           swift test 2>&1 | tee "$RUNNER_TEMP/swift-test.log"
+      # 代码风格（配置在 apps/apple/.swift-format：4 格缩进、120 列）。测试挂了也照样跑，两边的问题一次看全。
+      # 不过时在本地 `swift format -i -r apps/apple` 再提交。
+      - name: swift format lint
+        if: ${{ !cancelled() && steps.swift.outcome == 'success' }}
+        run: swift format lint --strict --recursive --parallel apps/apple
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -124,11 +131,13 @@ jobs:
           xcodegen --version
       - name: Build ThinktinCore (simulator + macOS arm64)
         run: tools/client-core/build-apple.sh target/apple --ci
-      - name: swift build ThinktinKit (macOS, includes ThinktinUI)
+      # macOS 原生编整个 ThinktinKit（含 ThinktinUI 的 AppKit 分支）和全部测试目标；测试在后面单独跑。
+      - name: swift build ThinktinKit (macOS, includes ThinktinUI and the tests)
+        id: kit_macos
         working-directory: apps/apple/ThinktinKit
         run: |
           set -o pipefail
-          swift build 2>&1 | tee "$RUNNER_TEMP/swift-build-macos.log"
+          swift build --build-tests 2>&1 | tee "$RUNNER_TEMP/swift-build-macos.log"
       - name: Generate the Xcode project
         working-directory: apps/apple
         run: xcodegen generate
@@ -136,13 +145,19 @@ jobs:
         id: sim
         run: |
           set -euo pipefail
-          # 最新的 iOS 运行时里第一个可用的 iPhone。
-          udid=$(xcrun simctl list devices available --json | python3 -c '
-          import json, sys
+          # 选中的 Xcode 支持的最新 iOS 运行时（不高于它的模拟器 SDK，镜像里装了更新的测试版运行时也不会挑到）
+          # 里第一个可用的 iPhone。
+          SDK_VERSION=$(xcrun --sdk iphonesimulator --show-sdk-version)
+          export SDK_VERSION
+          echo "iphonesimulator SDK $SDK_VERSION"
+          udid=$(xcrun simctl list --json devices available | python3 -c '
+          import json, os, sys
           devices = json.load(sys.stdin)["devices"]
+          sdk = tuple(int(p) for p in os.environ["SDK_VERSION"].split(".") if p.isdigit())
           def version(runtime):
               return tuple(int(p) for p in runtime.rsplit("iOS-", 1)[1].split("-") if p.isdigit())
-          runtimes = sorted((r for r in devices if ".SimRuntime.iOS-" in r), key=version, reverse=True)
+          runtimes = sorted(
+              (r for r in devices if ".SimRuntime.iOS-" in r and version(r) <= sdk), key=version, reverse=True)
           for runtime in runtimes:
               for d in devices[runtime]:
                   if d.get("isAvailable", True) and d["name"].startswith("iPhone"):
@@ -166,7 +181,17 @@ jobs:
             -resultBundlePath "$RUNNER_TEMP/Thinktin.xcresult" \
             -skipPackagePluginValidation \
             CODE_SIGNING_ALLOWED=NO \
+            COMPILER_INDEX_STORE_ENABLE=NO \
             build test 2>&1 | tee "$RUNNER_TEMP/xcodebuild.log" | "${fmt[@]}"
+      # ThinktinKit 的全部测试在 macOS 本机再跑一遍：ThinktinCoreAdapterTests 经 macOS 切片的真核心跑
+      # （StubHTTPServer 的 Darwin 分支只有这里编译、运行），ThinktinUITests 走 AppKit 分支。放在 xcodebuild
+      # 后面、它失败了也照跑，两边的问题一次看全。
+      - name: swift test ThinktinKit (macOS)
+        if: ${{ !cancelled() && steps.kit_macos.outcome == 'success' }}
+        working-directory: apps/apple/ThinktinKit
+        run: |
+          set -o pipefail
+          swift test 2>&1 | tee "$RUNNER_TEMP/swift-test-macos.log"
       - name: Pack the result bundle
         if: always()
         run: |
@@ -180,5 +205,6 @@ jobs:
           path: |
             ${{ runner.temp }}/xcodebuild.log
             ${{ runner.temp }}/swift-build-macos.log
+            ${{ runner.temp }}/swift-test-macos.log
             ${{ runner.temp }}/Thinktin.xcresult.zip
           if-no-files-found: ignore

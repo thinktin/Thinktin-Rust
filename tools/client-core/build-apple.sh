@@ -40,8 +40,14 @@ if (( ! ci )); then
   sim_libs+=("$(lib x86_64-apple-ios)")
   macos_libs+=("$(lib x86_64-apple-darwin)")
 fi
-lipo -create "${sim_libs[@]}" -output "$out/sim/libclient_core.a"
-lipo -create "${macos_libs[@]}" -output "$out/macos/libclient_core.a"
+# 多个架构合成一个胖库；--ci 只有一个架构，直接复制。
+merge() {
+  local dest="$1"
+  shift
+  if (( $# == 1 )); then cp "$1" "$dest"; else lipo -create "$@" -output "$dest"; fi
+}
+merge "$out/sim/libclient_core.a" "${sim_libs[@]}"
+merge "$out/macos/libclient_core.a" "${macos_libs[@]}"
 
 tools/client-core/gen-bindings.sh "$out/bindings"
 cp "$out/bindings/swift/ThinktinCoreFFI.h" "$out/bindings/swift/module.modulemap" "$out/headers/"

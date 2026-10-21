@@ -70,12 +70,13 @@ Claude App 的特点：暖色纸张底色、极少的强调色、标题用衬线
 | `inkSecondary` | `#5E5D59` | `#B4B2A9` | 次要文字、时间 |
 | `inkTertiary` | `#8E8D87` | `#80807A` | 占位、禁用 |
 | `hairline` | `#E5E3DA` | `#3F3E3A` | 分隔线、边框 |
-| `success` / `warning` / `danger` | `#2E7D4F` / `#B7791F` / `#C0392B` | 同左略亮 | 运行状态、审批、失败 |
+| `success` / `warning` / `danger` | `#2E7D4F` / `#B7791F` / `#C0392B` | `#4A9E6E` / `#D4973A` / `#E05A4C` | 运行状态、审批、失败 |
 
 - 字体：标题 `.fontDesign(.serif)`（系统的 New York），正文默认系统字体（SF）；全部用 Dynamic Type 的语义字号。
 - 圆角：卡片 16，输入框 24，小控件 10。间距 4 的倍数。
 - 状态色只用于状态，不用于装饰。运行状态与颜色：排队 / 启动中 `inkSecondary`，运行中 `accent`，等待（审批 / 电脑 / key / 子任务）`warning`，
-  成功 `success`，失败 `danger`，取消 `inkTertiary`。
+  成功 `success`，失败 `danger`，取消 `inkTertiary`；重试等待（`backoff`）和认不出的状态同排队。实例状态：运行中、启动中、创建中是会呼吸的点，
+  已暂停、已删除 `inkTertiary`，已归档是空心点。规则在 `ThinktinUI/Design/StatusTone.swift`，中英文状态名和安卓设计规范一致。
 - 深色模式、动态字体、VoiceOver 标签是每个页面的验收项，不是后补的。
 
 ## 5. 事件流怎么变成对话
@@ -139,9 +140,15 @@ Claude App 的特点：暖色纸张底色、极少的强调色、标题用衬线
   （只编译 Linux 能编的目标，`Package.swift` 里按 `os(Linux)` 排除 `ThinktinUI`）。
 - **CI（`.github/workflows/ios.yml`）**：
   1. `kit-linux`（ubuntu）：装 Swift，构建 client-core，生成 Linux 包，`swift test`；
-  2. `app-macos`（macos-26，Xcode 26）：Rust 只编 `aarch64-apple-ios-sim` 一个切片打 xcframework（省时间），`xcodegen generate`，
-     `xcodebuild build-for-testing` + `test` 在模拟器上跑 `ThinktinUITests` 和 App 的单元测试；`swift build` 整个 `ThinktinKit`。
-- 代码风格：`swift format`（Swift 6 工具链自带），配置在 `ThinktinKit/.swift-format`。
+  2. `app-macos`（macos-26，Xcode 26）：`build-apple.sh --ci` 只编模拟器和 macOS 的 arm64 两个切片打 xcframework（省时间）；
+     `swift build --build-tests` 整个 `ThinktinKit`（含 ThinktinUI）；`xcodegen generate`；挑一个不高于所选 Xcode 模拟器 SDK 的 iPhone，
+     `xcodebuild test` 跑 App 的 `ThinktinTests` 和 `ThinktinUITests`；最后 macOS 本机 `swift test`（适配层经 macOS 切片跑一遍）。日志传成 artifact。
+  `kit-linux` 最后还有严格模式的 `swift format lint`。
+- 代码风格：`swift format`（Swift 6 工具链自带），配置在 `apps/apple/.swift-format`（App 和 ThinktinKit 共用，4 格缩进、120 列、
+  其余是 swift-format 6.2 的默认规则全量导出）。CI 跑严格模式的 lint，**提交前先 `swift format -i -r apps/apple`**。
+- **Linux 上检查界面代码**：`tools/apple/uicheck/run.sh`（`appkit` 查 macOS 路径，`test` 顺带跑 ThinktinUITests）。SwiftUI、UIKit、AppKit、
+  Security、OSLog 换成桩模块（签名照 iOS 17 / macOS 14 SDK），能发现类型错误和并发检查问题，代替不了 macOS CI 的真实编译。
+  桩模块缺 API 时照 Apple 文档补进 `tools/apple/uicheck/Stubs/`，不要为了过检查改 App 代码。写完界面推送前跑一遍。
 
 ## 8. 工作包与开发顺序
 
