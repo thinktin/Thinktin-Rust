@@ -3,8 +3,12 @@ import ThinktinCore
 
 /// ThinktinCore（UniFFI 生成）的类型统一从这里引用。
 ///
-/// 两个模块里大多数类型同名（`Instance`、`Run`、`ClientError`……）。这个文件只 import ThinktinCore，
-/// 适配层的其他文件只 import ThinktinKit：不加前缀的名字一律是 ThinktinKit 的领域模型，`Core.` 开头的是 ThinktinCore 的。
+/// 两个模块里大多数类型同名（`Instance`、`Run`、`Plan`、`Schedule`、`Session`、`ClientError`……）。约定：
+/// - 这个文件只 import ThinktinCore，把要用的类型和自由函数收在 `Core` 下；
+/// - 适配层的其他文件只 import ThinktinKit，同名类型写全 `ThinktinKit.X`，ThinktinCore 的一律写 `Core.X`。
+///
+/// 其他文件经 `Core.X` 用到 ThinktinCore 类型的成员，靠的是 Swift 默认的成员可见性（模块里有一个文件 import 了，
+/// 成员就处处可见）。所以这个目标不要打开 `MemberImportVisibility`（SE-0444），否则要在用到的文件里也 import ThinktinCore。
 enum Core {
     typealias Client = ThinktinCore.ThinktinClient
     typealias ClientConfig = ThinktinCore.ClientConfig

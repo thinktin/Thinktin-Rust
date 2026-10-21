@@ -100,35 +100,39 @@ public enum Formatting {
     // MARK: 数量
 
     /// token 数：中文按“万 / 亿”（“9,876”、“1.2 万”、“3.5 亿”），英文按 K / M / B（“950”、“1.2K”、“3.4M”）。
+    /// 四舍五入后到了下一级的进位（99,999,999 → “1 亿”，而不是“10000 万”）。
     public static func tokens(_ count: Int, language: DisplayLanguage = .current) -> String {
         let n = abs(count)
         let sign = count < 0 ? "-" : ""
         switch language {
         case .chinese:
             if n < 10_000 { return sign + grouped(n) }
-            if n < 100_000_000 { return sign + oneDecimal(Double(n) / 10_000) + " 万" }
-            return sign + oneDecimal(Double(n) / 100_000_000) + " 亿"
+            return sign + scaled(Double(n), units: [(1e4, " 万"), (1e8, " 亿")])
         case .english:
             if n < 1_000 { return sign + String(n) }
-            if n < 1_000_000 { return sign + oneDecimal(Double(n) / 1_000) + "K" }
-            if n < 1_000_000_000 { return sign + oneDecimal(Double(n) / 1_000_000) + "M" }
-            return sign + oneDecimal(Double(n) / 1_000_000_000) + "B"
+            return sign + scaled(Double(n), units: [(1e3, "K"), (1e6, "M"), (1e9, "B")])
         }
     }
 
-    /// 字节数（1024 进制）：“512 B”、“1.5 KB”、“3.2 MB”、“1.1 GB”。
+    /// 字节数（1024 进制）：“512 B”、“1.5 KB”、“3.2 MB”、“1.1 GB”。四舍五入后满 1024 的进位（“1 MB”，而不是“1024 KB”）。
     public static func bytes(_ count: Int) -> String {
-        let n = Double(max(0, count))
-        let units = ["KB", "MB", "GB", "TB"]
-        if n < 1024 { return "\(max(0, count)) B" }
-        var value = n / 1024
-        var unit = 0
-        while value >= 1024 && unit < units.count - 1 {
-            value /= 1024
-            unit += 1
-        }
-        return oneDecimal(value) + " " + units[unit]
+        guard count >= 1024 else { return "\(max(0, count)) B" }
+        let k = 1024.0
+        return scaled(Double(count), units: [(k, " KB"), (k * k, " MB"), (k * k * k, " GB"), (k * k * k * k, " TB")])
     }
+
+    /// 按单位缩放成一位小数（`units` 从小到大）：用不大于它的最大单位；四舍五入后满了下一级时进位
+    /// （999,999 → “1M” 而不是“1000K”；950,000 还是“950K”）。
+    static func scaled(_ value: Double, units: [(divisor: Double, suffix: String)]) -> String {
+        var i = units.lastIndex { value >= $0.divisor } ?? 0
+        if i + 1 < units.count, rounded1(value / units[i].divisor) * units[i].divisor >= units[i + 1].divisor {
+            i += 1
+        }
+        return oneDecimal(value / units[i].divisor) + units[i].suffix
+    }
+
+    /// 四舍五入到一位小数。
+    static func rounded1(_ value: Double) -> Double { (value * 10).rounded() / 10 }
 
     /// 千分位分组：“1,234,567”。
     public static func grouped(_ n: Int) -> String {
@@ -143,7 +147,7 @@ public enum Formatting {
 
     /// 一位小数，去掉“.0”：1.25 → “1.3”，2.0 → “2”。
     static func oneDecimal(_ value: Double) -> String {
-        let rounded = (value * 10).rounded() / 10
+        let rounded = rounded1(value)
         if rounded == rounded.rounded() { return String(Int(rounded)) }
         return String(format: "%.1f", rounded)
     }

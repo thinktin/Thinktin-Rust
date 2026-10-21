@@ -71,7 +71,15 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
                 case .event(let kind, let payload, let runID):
                     if delay > 0 { try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
                     if Task.isCancelled { return }
-                    self?.emit(kind, payload: payload, runID: runID ?? script.runID, instanceID: instanceID)
+                    guard let self else { return }
+                    // 取消和播放可能同时发生：在锁里检查，被取消的运行不再出新事件（否则会被播放中的脚本“复活”）。
+                    let target = runID ?? script.runID
+                    let emitted = self.inner.withLock { s -> Bool in
+                        if let target, s.cancelledRuns.contains(target) { return false }
+                        s.emit(kind, payload: payload, runID: target, instanceID: instanceID, at: Date())
+                        return true
+                    }
+                    if !emitted { return }
                 case .status(let status):
                     self?.inner.withLock { $0.broadcast(.status(status), to: instanceID) }
                 case .reset(let oldest, let latest):
@@ -308,6 +316,7 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
                 guard let r = s.state.runs.first(where: { $0.id == id }) else { continue }
                 var payload: JSONValue = ["state": "cancelled", "reason": "cancelled by user"]
                 if wholeTree { payload = payload.merging(["tree": true]) }
+                s.cancelledRuns.insert(id)
                 s.emit(.runState, payload: payload, runID: id, instanceID: r.instanceID, at: Date())
             }
             return (s.state.runs[try s.runIndex(runID)], Set(targets))
@@ -667,12 +676,13 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
     public func updateVaultItem(_ itemID: VaultItemID, change: VaultItemUpdate) async throws -> VaultItem {
         try await call { s in
             let i = try s.vaultIndex(itemID)
+            // 先校验再改：出错时状态不动。
+            if let password = change.password, password.isEmpty { throw MockErrors.invalid("empty password") }
             if let purpose = change.purpose { s.state.vaultItems[i].purpose = purpose }
             if let username = change.username {
                 s.state.vaultUsernames[itemID] = username
                 s.state.vaultItems[i].hasUsername = !username.isEmpty
             }
-            if let password = change.password, password.isEmpty { throw MockErrors.invalid("empty password") }
             if let ids = change.instanceIDs { s.state.vaultItems[i].instanceIDs = ids }
             s.state.vaultItems[i].updatedAt = Date()
             return s.state.vaultItems[i]
@@ -766,6 +776,8 @@ private struct Inner: Sendable {
     var subscribers: [UUID: Subscriber] = [:]
     var playbacks: [UUID: Playback] = [:]
     var permissions: [ApprovalID: PendingPermission] = [:]
+    /// 用户取消了的运行：回放中的脚本不再给它们出事件。
+    var cancelledRuns: Set<RunID> = []
 
     init(state: MockState) {
         self.state = state
@@ -819,6 +831,15 @@ private struct Inner: Sendable {
             if p.state == .running && state.runs[i].startedAt == nil { state.runs[i].startedAt = event.createdAt }
             guard p.state.isTerminal else { return }
             state.runs[i].finishedAt = event.createdAt
+            // 运行结束时还没决定的审批一并作废，收件箱里的审批提醒标已读（和服务端的 cancel_run_approvals 一致；
+            // 之后再决定返回 conflict）。
+            for j in state.approvals.indices where state.approvals[j].runID == runID && state.approvals[j].isPending {
+                state.approvals[j].state = .cancelled
+                permissions[state.approvals[j].id] = nil
+            }
+            for j in state.inbox.indices where state.inbox[j].runID == runID && state.inbox[j].approvalID != nil {
+                state.inbox[j].isRead = true
+            }
             let run = state.runs[i]
             let text = (state.events[event.instanceID] ?? []).filter { $0.runID == runID && $0.kind == .agentMessage }
                 .compactMap { e -> String? in
@@ -948,6 +969,7 @@ private struct Inner: Sendable {
     mutating func stopAll() -> (StopAllResult, Set<RunID>) {
         let active = state.runs.filter(\.state.isActive)
         for run in active {
+            cancelledRuns.insert(run.id)
             emit(
                 .runState, payload: ["state": "cancelled", "reason": "stopped by user"], runID: run.id,
                 instanceID: run.instanceID, at: Date())

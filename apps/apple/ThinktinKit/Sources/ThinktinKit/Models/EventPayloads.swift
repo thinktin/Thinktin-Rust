@@ -146,8 +146,14 @@ public struct ToolCallPayload: Hashable, Codable, Sendable {
         title = o["title"]?.stringValue
         kind = o["kind"]?.stringValue
         status = o["status"]?.stringValue.map(ToolCallStatus.init(rawValue:))
-        // 事件里原始内容在 `raw`；审批的 tool_call 本身就是原始内容。
-        raw = o["raw"] ?? .object(o)
+        // 事件里原始内容在 `raw`（为 null 时当作没有，免得合并更新时把原来的内容冲掉）；
+        // 审批的 tool_call 没有 `raw` 字段，本身就是原始内容。
+        // 注意 JSONValue 也认 nil 字面量：`r.isNull ? nil : r` 里的 nil 会变成 `.null`，所以分开写。
+        if let r = o["raw"] {
+            if r.isNull { raw = Optional.none } else { raw = r }
+        } else {
+            raw = .object(o)
+        }
         if title == nil { title = raw?["title"]?.stringValue }
         if kind == nil { kind = raw?["kind"]?.stringValue }
         if status == nil { status = raw?["status"]?.stringValue.map(ToolCallStatus.init(rawValue:)) }

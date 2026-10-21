@@ -29,6 +29,9 @@ public enum ClientError: Error, Hashable, Sendable {
     case expired
     /// 签名验不过。
     case badSignature
+    /// 这个功能 client-core 还没提供（11.7 落地前的方法，`CoreClient` 里抛它；`MockClient` 照常实现）。
+    /// `feature` 是给开发者看的功能名（比如 `listDevices`），界面不显示它。
+    case unsupported(feature: String)
 }
 
 /// 出错后界面该怎么处理（docs/ios.md 第 6 节的表）。
@@ -51,6 +54,8 @@ public enum ErrorRecovery: Hashable, Sendable {
     case offline
     /// 发送前的密码拦截弹层。
     case interceptSecrets(count: Int)
+    /// 功能暂未开放：提示“暂不支持”，不重试（入口最好直接隐藏或置灰）。
+    case featureUnavailable
     /// 通用错误提示，带“复制详情”。
     case generic
 }
@@ -135,6 +140,7 @@ extension ClientError {
         case .network: return .offline
         case .containsSecrets(let n): return .interceptSecrets(count: n)
         case .invalidArgument: return .showFormError
+        case .unsupported: return .featureUnavailable
         case .api(_, let code, _, let secs):
             switch code {
             case .rateLimited, .unavailable: return .retryLater(after: secs.map(TimeInterval.init))
@@ -164,6 +170,7 @@ extension ClientError {
         case .malformed(let m): "malformed: \(m)"
         case .expired: "expired"
         case .badSignature: "bad signature"
+        case .unsupported(let feature): "unsupported: \(feature)"
         }
     }
 
@@ -185,6 +192,7 @@ extension ClientError {
         case .malformed: return zh ? "二维码或签名格式不正确。" : "The code or signature is malformed."
         case .expired: return zh ? "已过期，请重新发起。" : "This has expired. Please start again."
         case .badSignature: return zh ? "签名校验失败。" : "The signature couldn't be verified."
+        case .unsupported: return zh ? "这个功能暂未开放，敬请期待。" : "This feature isn't available yet."
         case .decode, .cache, .internal:
             return zh ? "出了点问题，请稍后重试。" : "Something went wrong. Please try again."
         case .api(_, let code, _, let secs):

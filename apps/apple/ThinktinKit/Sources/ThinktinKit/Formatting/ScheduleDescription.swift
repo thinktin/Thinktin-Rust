@@ -70,10 +70,12 @@ public enum ScheduleDescription {
         var fields: [String: String] = [:]
         var startTime: String?
         for line in rule.split(whereSeparator: \.isNewline).map(String.init) {
-            if line.hasPrefix("DTSTART") {
-                // DTSTART;TZID=Asia/Shanghai:20261022T090000
-                if let t = line.split(separator: "T").last, t.count >= 4, let h = Int(t.prefix(2)),
-                    let m = Int(t.dropFirst(2).prefix(2))
+            if line.uppercased().hasPrefix("DTSTART") {
+                // DTSTART;TZID=Asia/Shanghai:20261022T090000、DTSTART:20261022T010000Z；只有日期的（VALUE=DATE）没有时间。
+                let value = line.split(separator: ":").last.map(String.init) ?? ""
+                let parts = value.uppercased().split(separator: "T", maxSplits: 1)
+                if parts.count == 2, parts[1].count >= 4, let h = Int(parts[1].prefix(2)),
+                    let m = Int(parts[1].dropFirst(2).prefix(2)), (0...23).contains(h), (0...59).contains(m)
                 {
                     startTime = Formatting.pad2(h) + ":" + Formatting.pad2(m)
                 }
@@ -105,8 +107,9 @@ public enum ScheduleDescription {
             let every = interval == 1 ? (zh ? "每周" : "Every week") : (zh ? "每 \(interval) 周" : "Every \(interval) weeks")
             guard !days.isEmpty else { return every + at }
             if zh {
-                let names = days.map { String(zhWeekdays[$0].dropFirst()) }.joined(separator: "、")
-                return every + names + at
+                // 和 cron 的说法一致：“每周一、周三 09:00”、“每 2 周的周五 18:30”。
+                let names = days.map { zhWeekdays[$0] }.joined(separator: "、")
+                return interval == 1 ? "每" + names + at : every + "的" + names + at
             }
             return every + " on " + join(days.map { enWeekdays[$0] }, language: .english) + at
         case "MONTHLY":

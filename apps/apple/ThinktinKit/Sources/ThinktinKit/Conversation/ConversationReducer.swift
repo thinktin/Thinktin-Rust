@@ -55,7 +55,7 @@ public struct ConversationReducer: Sendable {
         let t = turnFor(event)
         turns[t].apply(event)
         if event.kind == .approvalDecided, case .approvalDecided(let p) = event.payload {
-            applyDecision(p)
+            applyDecision(p, runID: event.runID)
         }
         return true
     }
@@ -77,36 +77,40 @@ public struct ConversationReducer: Sendable {
     }
 
     /// 关联审批记录（`approvals()` 的结果）：同一运行里按创建顺序对上未关联的审批卡片，标题相同的优先。
+    /// 未决的审批只配未决的卡片；按预授权策略决定的卡片没有审批记录，不参与。
     /// 关联上之后卡片有 `approvalID`，可以调 `decideApproval`；审批已经有结果、卡片还没有时补上结果。
     public mutating func link(approvals: [Approval]) {
         let linked = Set(approvalLinks.values)
         let byRun = Dictionary(grouping: approvals.filter { !linked.contains($0.id) }, by: \.runID)
         for (runID, list) in byRun {
             guard let t = turnIndex[runID.rawValue] else { continue }
-            var remaining = list.sorted { $0.createdAt < $1.createdAt }
-            for requestID in turns[t].approvalOrder {
-                guard let entry = turns[t].approvalIndex[requestID],
-                    case .approval(var card) = turns[t].entries[entry].content, card.approvalID == nil,
-                    !remaining.isEmpty
+            for approval in list.sorted(by: { $0.createdAt < $1.createdAt }) {
+                let candidates = turns[t].approvalOrder.filter { requestID in
+                    guard let card = turns[t].approvalCard(requestID), card.approvalID == nil else { return false }
+                    if card.resolution?.by == .policy { return false }
+                    return !approval.isPending || card.isPending
+                }
+                let requestID =
+                    candidates.first { turns[t].approvalCard($0)?.title == approval.title } ?? candidates.first
+                guard let requestID, let entry = turns[t].approvalIndex[requestID],
+                    case .approval(var card) = turns[t].entries[entry].content
                 else { continue }
-                let pick = remaining.firstIndex { $0.title == card.title } ?? 0
-                let approval = remaining.remove(at: pick)
                 card.approvalID = approval.id
                 if card.resolution == nil, let resolution = Self.resolution(from: approval, card: card) {
                     card.resolution = resolution
                 }
                 if card.options.isEmpty { card.options = approval.options }
                 turns[t].entries[entry].content = .approval(card)
-                approvalLinks["\(runID.rawValue)|\(requestID)"] = approval.id
+                approvalLinks[Self.linkKey(runID.rawValue, requestID)] = approval.id
             }
         }
     }
 
     // MARK: 输出
 
-    /// 按运行分组的结果。
+    /// 按运行分组的结果。只有不显示的事件的组（`agent.ready`、不认识的 kind）不出现。
     public var conversationTurns: [ConversationTurn] {
-        orderedTurns().map { $0.render() }
+        orderedTurns().filter(\.hasContent).map { $0.render() }
     }
 
     /// 平铺的对话列表（按组的顺序）。
@@ -114,9 +118,9 @@ public struct ConversationReducer: Sendable {
         orderedTurns().flatMap { $0.render().items }
     }
 
-    /// 有运行还在输出（最后一组）。
+    /// 有运行还在输出（最后一个有内容的组）。
     public var isStreaming: Bool {
-        orderedTurns().last?.isStreaming ?? false
+        orderedTurns().last(where: \.hasContent)?.isStreaming ?? false
     }
 
     /// 还没决定的审批卡片（已关联的才能直接决定）。
@@ -150,18 +154,41 @@ public struct ConversationReducer: Sendable {
             appendTurn(TurnState(key: runID.rawValue, runID: runID, run: nil, firstAt: event.createdAt))
             return turns.count - 1
         }
-        if let last = orderedTurns().last, last.runID == nil, let i = turnIndex[last.key] {
+        // 只有不显示的事件的运行组不算“隔开”。
+        if let last = orderedTurns().last(where: { $0.runID == nil || $0.hasContent }), last.runID == nil,
+            let i = turnIndex[last.key]
+        {
             return i
         }
         appendTurn(TurnState(key: "none-\(event.seq)", runID: nil, run: nil, firstAt: event.createdAt))
         return turns.count - 1
     }
 
-    private mutating func applyDecision(_ p: ApprovalDecidedPayload) {
-        guard let link = approvalLinks.first(where: { $0.value == p.approvalID }) else { return }
-        let parts = link.key.split(separator: "|", maxSplits: 1).map(String.init)
-        guard parts.count == 2, let t = turnIndex[parts[0]] else { return }
-        turns[t].resolveApproval(requestID: parts[1], optionID: p.optionID, by: .user, state: p.state)
+    /// `approval.decided`：按关联的审批 id 找卡片。还没关联过时，这个运行里只有一张未决、未关联的卡片就是它
+    /// （agent 一次只等一个审批）；对不上就不改，等 `permission_resolved`。
+    private mutating func applyDecision(_ p: ApprovalDecidedPayload, runID: RunID?) {
+        if let link = approvalLinks.first(where: { $0.value == p.approvalID }) {
+            let parts = link.key.split(separator: "|", maxSplits: 1).map(String.init)
+            guard parts.count == 2, let t = turnIndex[parts[0]] else { return }
+            turns[t].resolveApproval(requestID: parts[1], optionID: p.optionID, by: .user, state: p.state)
+            return
+        }
+        guard let runID, let t = turnIndex[runID.rawValue] else { return }
+        let pending = turns[t].approvalOrder.filter { requestID in
+            guard let card = turns[t].approvalCard(requestID) else { return false }
+            return card.isPending && card.approvalID == nil
+        }
+        guard pending.count == 1, let requestID = pending.first, let entry = turns[t].approvalIndex[requestID],
+            case .approval(var card) = turns[t].entries[entry].content
+        else { return }
+        card.approvalID = p.approvalID
+        turns[t].entries[entry].content = .approval(card)
+        approvalLinks[Self.linkKey(runID.rawValue, requestID)] = p.approvalID
+        turns[t].resolveApproval(requestID: requestID, optionID: p.optionID, by: .user, state: p.state)
+    }
+
+    private static func linkKey(_ turnKey: String, _ requestID: String) -> String {
+        "\(turnKey)|\(requestID)"
     }
 
     private static func resolution(from approval: Approval, card: ApprovalCard) -> ApprovalCard.Resolution? {
@@ -206,6 +233,17 @@ private struct TurnState: Sendable {
     }
 
     var sortDate: Date { run?.createdAt ?? firstAt }
+
+    /// 有要显示的东西：运行记录（用户消息）、输出、状态，或者正在输出（界面显示“输入中”）。
+    var hasContent: Bool {
+        run != nil || !entries.isEmpty || status != nil || isStreaming
+    }
+
+    /// 某个请求的审批卡片。
+    func approvalCard(_ requestID: String) -> ApprovalCard? {
+        guard let i = approvalIndex[requestID], case .approval(let card) = entries[i].content else { return nil }
+        return card
+    }
 
     /// 当前的运行状态：运行记录已经结束时以它为准，否则以最新的 `run.state` 事件为准。
     var effectiveState: (state: RunState, reason: String?, attempt: Int?)? {
