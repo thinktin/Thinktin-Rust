@@ -33,20 +33,37 @@ CI 按许可证策略检查。法务的判断（商标、各家的使用条款�
 | 类别 | 例子 | 结果 |
 |---|---|---|
 | 放行 | MIT、Apache-2.0、BSD、ISC、Unlicense、MPL-2.0、EPL、LGPL（Rust 除外，见下） | 通过 |
-| 禁止 | AGPL、SSPL、OSL、EUPL、RPL、CPAL（网络 copyleft：用户经网络使用就要向用户公开源码）；BUSL、Elastic、PolyForm、Commons Clause、CC 的非商用条款（限制商用或托管） | CI 报错，换掉这个包 |
-| 其他 | GPL、专有、没写许可证、认不出来 | 要在 `[[exception]]` 登记、写明理由才通过 |
+| 禁止 | AGPL、SSPL、OSL、EUPL、RPL、CPAL（网络 copyleft：用户经网络使用就要向用户公开源码）；BUSL、Elastic、PolyForm、FSL、Commons Clause、CC 的非商用条款（限制商用或托管） | CI 报错，换掉这个包 |
+| 其他 | GPL、专有、没写许可证、认不出来、原文里有限制性说法 | 要在 `[[exception]]` 登记、写明理由才通过 |
 
 - **Rust**：crate 静态链接进我们的程序，LGPL 要求用户能换掉库重新链接，静态链接做不到，所以 Rust 的 LGPL 也要单独登记。
 - **Debian**：base 镜像里的包都来自 Debian main（DFSG 自由软件）。一个包的 copyright 文件常列好几个许可证（测试文件、
   文档各不相同），不逐个判定，只拦禁止名单里的。
-- **登记例外**按“生态 + 包名 + 版本 + 许可证”匹配，专有组件再加原文的 SHA-256：上游换了许可证或改了条款原文，登记就
-  对不上，CI 报错，要人重新看。写了 `agents` 的例外，在这个 agent 的镜像里找不到也报错（上游换了包名，登记不能悄悄失效）。
+- **`A WITH 例外`**：例外只是额外放宽的（LLVM-exception、Classpath-exception 等，`allow_exceptions`）按 A 判定；
+  在禁止名单里的（Commons-Clause 这种附加限制）直接禁止；别的要登记。
+- **登记例外**按“生态 + 包名 + 版本 + 许可证”匹配，专有组件再钉住原文的 SHA-256（列表：包里的原文要正好是这几份）：
+  上游换了许可证或改了条款原文，登记就对不上，CI 报错，要人重新看。写了 `agents` 的例外只对这些 agent 的镜像有效
+  （别的 agent 带上同一个专有组件要另外审查），在这些 agent 的镜像里找不到也报错（上游换了包名，登记不能悄悄失效）。
 - **清单的许可证**：App 的 agent 目录里显示的是清单 `agent.license`。`[agents.<id>] license_of` 指定它以哪个包为准，
   检查时两边要一样，上游改了许可证就会发现。
 
-许可证从哪里认：元数据里的声明（npm 的 `license`、PyPI 的 `License-Expression`、Cargo 的 `license`；“MIT License”“Apache 2.0”
-这类常见写法有对照表）→ PyPI 的许可证分类 → 原文（只认许可证正文开头的标题和授权条款里固定的句子，正文里顺带提到的
-许可证不算）→ 含糊的声明（“BSD”）。
+许可证从哪里认（原则：宁可认不出要人看，也不能认宽了）：
+
+1. **元数据里的声明**（npm 的 `license`、PyPI 的 `License-Expression` / `License`、Cargo 的 `license`）：合法的 SPDX
+   表达式（标识按 SPDX 的完整列表核对，`tools/licenses/spdx/license-ids.txt`），或对照表里的常见写法（“MIT License”
+   “Apache 2.0”）。**有声明但认不出的，不再拿原文或分类去猜**，直接算认不出。`SEE LICENSE IN <文件>` 只看那个文件。
+2. 没有声明时：**PyPI 的许可证分类**（几个分类用 AND 连：分类本身不说明是“任选其一”；对照表里没有的分类算认不出）。
+3. 再没有就看**原文**：只认许可证正文开头的标题，和授权条款里固定的句子，而且那句前面只能是标题和版权行（前面有专有
+   声明、EULA、Commons Clause 前言的不认）。包里有认不出的许可证文件时加上 `LicenseRef-Unrecognized`，要登记。
+4. 含糊的声明（“BSD”）用原文细化成同一类的（BSD-3-Clause）；“AGPL”“GPL”这类含糊声明不会被原文改成宽松的。
+
+不管从哪里认的，许可证原文里有限制商用、托管的说法（Commons Clause、non-commercial、BUSL、SSPL、PolyForm……）都会加上
+`LicenseRef-Restricted-Terms`，要人看。
+
+扫描的范围：全局 npm 包（`/usr/local/lib/node_modules`）、基础镜像带的 Yarn（`/opt/yarn-*`）、agent 虚拟环境里的 Python 包
+（`.dist-info`、`.egg-info`；venv 里的 pip、setuptools 来自 Debian 的 wheel 包，它们 vendored 的第三方包的版权在 Debian 的
+copyright 文件里，一并带上）、dpkg 装的包、Node.js 本身、agent-shim 的 crate，加上 `notices/` 里补的上游原文。Rust 只算会
+编进程序的依赖：普通依赖，加上把 C 源码编进程序的 `*-src` 构建依赖（openssl-src 这种）。
 
 ## 3. 上游原文补充（`deploy/templates/notices/<agent id>/`）
 
@@ -107,15 +124,15 @@ CI 按许可证策略检查。法务的判断（商标、各家的使用条款�
    和链接（`bun-license.mdx`），要不要逐个补齐由法务定。
 5. **App 上架**：iOS、Android 的“开源许可”页面要展示客户端核心的清单（12.x、13.x 做界面时接上）。
 
-## 7. 现在的结果（2026-10-20）
+## 7. 现在的结果（2026-10-21）
 
 | 镜像 | 组件 | 结果 |
 |---|---|---|
-| `agents/claude:0.90.0` | 470（npm 247、Debian 141、crate 76、上游补的 5） | 通过；Anthropic 的 SDK 和 Claude Code 二进制按专有组件登记 |
-| `agents/codex:2.2.2` | 1437（crate 1115、Debian 141、npm 170、上游补的 10） | 通过；zsh 的许可证（没有 SPDX 标识）登记 |
-| `agents/pi:1.2.0` | 475 | 通过 |
-| `agents/openclaw:2026.10.3` | 764 | 通过 |
-| `agents/hermes:0.19.0` | 435（含 Python 包 72） | 通过 |
+| `agents/claude:0.90.0` | 471（npm 248、Debian 141、crate 76、上游补的 5） | 通过；Anthropic 的 SDK 和 Claude Code 二进制按专有组件登记 |
+| `agents/codex:2.2.2` | 1443（crate 1119、Debian 141、npm 171、上游补的 11） | 通过；zsh 的许可证（没有 SPDX 标识）登记 |
+| `agents/pi:1.2.0` | 477 | 通过 |
+| `agents/openclaw:2026.10.3` | 765 | 通过 |
+| `agents/hermes:0.19.0` | 436（含 Python 包 72） | 通过 |
 | 服务端、agent-shim、客户端核心、电脑端工具服务 | 355、106、278、279 个 crate（不限平台） | 通过 |
 
 没有发现网络 copyleft 或限制商用的许可证。弱 copyleft 有：MPL-2.0（几个 crate、Hermes 的 pathspec、Codex 的 symphonia、nucleo）、
