@@ -2688,3 +2688,111 @@ async fn im_test_messages_are_rate_limited() {
     let (st, body) = a.call(Method::POST, &path, tok, None).await;
     assert_eq!(st, StatusCode::TOO_MANY_REQUESTS, "{body}");
 }
+
+#[tokio::test]
+async fn live_activities_over_http() {
+    let Some(a) = api().await else { return };
+    let u = a.login("13800138030").await;
+    let tok = Some(u.access.as_str());
+    let inst = a.adopt(&u).await;
+    let (st, run) = a
+        .call(
+            Method::POST,
+            &format!("/v1/instances/{inst}/runs"),
+            tok,
+            Some(json!({ "prompt": "整理邮件" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{run}");
+    let run_id: RunId = run["id"].as_str().unwrap().parse().unwrap();
+    let path = format!("/v1/runs/{run_id}/live-activity");
+    let token = "ab".repeat(40);
+    let stored = |run: RunId| {
+        let pool = a.t.db.pool().clone();
+        async move {
+            let row: Option<(Option<String>, bool)> = sqlx::query_as(
+                "SELECT push_token, ended_at IS NOT NULL FROM live_activities WHERE run_id = $1",
+            )
+            .bind(run.0)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+            row
+        }
+    };
+
+    // 登记这台 iPhone 上的实时活动；不是 ActivityKit 的令牌不收；别人的运行登记不了。
+    let (st, body) = a
+        .call(Method::PUT, &path, tok, Some(json!({ "token": token })))
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT, "{body}");
+    assert_eq!(stored(run_id).await, Some((Some(token.clone()), false)));
+    let (st, _) = a
+        .call(
+            Method::PUT,
+            &path,
+            tok,
+            Some(json!({ "token": "not-a-token" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+    let other = a.login("13800138031").await;
+    let (st, _) = a
+        .call(
+            Method::PUT,
+            &path,
+            Some(&other.access),
+            Some(json!({ "token": token })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    // App 关掉了：不再推送。
+    let (st, _) = a.call(Method::DELETE, &path, tok, None).await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    assert_eq!(stored(run_id).await, Some((Some(token.clone()), true)));
+
+    // 推送开启令牌：登记、同一个令牌换到别的账号上（同一台手机换了人登录）、清掉。
+    let start = "cd".repeat(40);
+    let start_path = "/v1/devices/current/live-activity-start";
+    let start_tokens = || {
+        let pool = a.t.db.pool().clone();
+        async move {
+            let n: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM devices WHERE activity_start_token IS NOT NULL",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            n
+        }
+    };
+    let (st, body) = a
+        .call(
+            Method::PUT,
+            start_path,
+            tok,
+            Some(json!({ "token": start })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT, "{body}");
+    assert_eq!(start_tokens().await, 1);
+    let (st, _) = a
+        .call(
+            Method::PUT,
+            start_path,
+            Some(&other.access),
+            Some(json!({ "token": start })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    assert_eq!(
+        start_tokens().await,
+        1,
+        "the token moved to the new account"
+    );
+    let (st, _) = a
+        .call(Method::DELETE, start_path, Some(&other.access), None)
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    assert_eq!(start_tokens().await, 0);
+}
