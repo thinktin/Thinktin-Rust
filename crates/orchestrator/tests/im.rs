@@ -599,6 +599,25 @@ async fn retryable_failures_show_on_the_channel_and_giving_up_too() {
         channel_row(&t, u, ch).await.last_error.as_deref(),
         Some("a message was not sent within an hour and was dropped")
     );
+
+    // 审批提醒的有效期短（这里一分钟），排队时过期了是正常的：不发，也不算渠道出错。
+    send(&t, u, &notice(PushKind::RunFinished, "run:36:succeeded")).await;
+    drain_push(&t).await;
+    sqlx::query("UPDATE im_channels SET next_slot_at = NULL")
+        .execute(t.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(d.tick().await.unwrap().delivered, 1);
+    let mut n = notice(PushKind::Approval, "approval:36");
+    n.ttl = Some(Duration::from_secs(60));
+    send(&t, u, &n).await;
+    drain_push(&t).await;
+    sqlx::query("UPDATE outbox SET created_at = now() - interval '5 minutes' WHERE kind = 'im' AND delivered_at IS NULL")
+        .execute(t.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(d.tick().await.unwrap().dropped, 1);
+    assert_eq!(channel_row(&t, u, ch).await.last_error, None);
 }
 
 #[tokio::test]

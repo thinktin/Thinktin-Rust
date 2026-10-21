@@ -464,13 +464,8 @@ impl Dispatcher {
                 break;
             }
         }
-        if let Some(ttl) = message.ttl {
-            let age = (Utc::now() - item.created_at).to_std().unwrap_or_default();
-            if age > ttl {
-                return Ok(Some(Settle::Done(Some("expired before delivery".into()))));
-            }
-        }
-        // 审批提醒：用户已经在别的设备上处理了、过期了，或者运行已经结束，就不必再推。
+        // 审批提醒：用户已经在别的设备上处理了、过期了，或者运行已经结束，就不必再推。放在过期检查前面：
+        // 审批的有效期可能只有一分钟，排队时过期是常事，按“处理过了”了结，不当成发送失败。
         if message.kind == PushKind::Approval
             && let Some(id) = message.target.approval_id.as_deref()
             && let Ok(id) = id.parse::<ApprovalId>()
@@ -482,6 +477,12 @@ impl Dispatcher {
                 return Ok(Some(Settle::Done(Some(
                     "approval no longer pending".into(),
                 ))));
+            }
+        }
+        if let Some(ttl) = message.ttl {
+            let age = (Utc::now() - item.created_at).to_std().unwrap_or_default();
+            if age > ttl {
+                return Ok(Some(Settle::Done(Some("expired before delivery".into()))));
             }
         }
         Ok(None)
@@ -591,7 +592,11 @@ impl Dispatcher {
             return Ok(Settle::Done(Some("im channel no longer subscribed".into())));
         }
         if let Some(done) = self.screen(item, &mut message).await? {
-            if matches!(&done, Settle::Done(Some(r)) if r == "expired before delivery") {
+            // 只有排满一个小时的才记到渠道上（审批提醒的有效期可能只有一分钟，过期是正常的）。
+            let age = (Utc::now() - item.created_at).to_std().unwrap_or_default();
+            if age > IM_TTL
+                && matches!(&done, Settle::Done(Some(r)) if r == "expired before delivery")
+            {
                 let mut w = self.db.worker().await?;
                 w.record_im_result(
                     id,
