@@ -13,6 +13,14 @@ npm = ["@agentclientprotocol/claude-agent-acp@0.90.0"]   # 全局安装，命令
 pip = ["hermes-agent[acp,mcp]==0.19.0"]                  # 装进 /opt/agents/<id> 这个虚拟环境，bin 在 PATH 上
 ```
 
+还有两个可选的：
+
+- `[install.bin]`：包没放上 PATH、接入方式要直接调用的程序，`<命令名> = "<全局 npm 目录下的路径>"`，链接到
+  `/usr/local/bin`（Claude 的 `claude` 二进制在 claude-agent-acp 的依赖里）。路径要正好匹配一个可执行文件，同名命令已经有了就失败。
+- `prune`：装好以后删掉的文件或目录，`npm:<全局 npm 目录下的路径>` 或 `pip:<site-packages 下的路径>`，可以用通配符。
+  给许可证审查不过、agent 又用不到的东西（Hermes 网页界面里的商用字体、Pi 的 DOOM 演示扩展，见
+  [licenses.md](licenses.md)）。和安装在同一层里删（分开的话删掉的文件还留在安装那一层），每项一个也匹配不到就构建失败。
+
 清单校验（`catalog` 的测试守住）：每个包都锁定确切的版本（不能是范围、`latest`）；`agent.version` 是其中一个包的版本；
 `runtime.template` 是 `agents/<id>:<agent.version>`。所以升级 agent 时这三处一起改，漏改测试就不过。
 
@@ -26,7 +34,9 @@ pip = ["hermes-agent[acp,mcp]==0.19.0"]                  # 装进 /opt/agents/<i
 - 基础镜像 `node:24-trixie-slim`（OpenClaw 要 Node 24.16 以上），加 Python 3、git、ripgrep、jq、curl 这些 agent
   常用的命令行工具，不装编译器。
 - 用户 `user`（不用 root），HOME 是 `/sandbox/home`，工作区 `/sandbox/workspace`（Cube 的卷挂在这里）。
-- agent-shim 在 `/usr/local/bin`。默认在镜像里从源码编译；给 `SHIM_DIR`（里面是 `out/agent-shim`）就直接用编好的。
+- agent-shim 在 `/usr/local/bin`。默认在镜像里从源码编译；给 `SHIM_DIR` 就直接用编好的：里面是 `out/agent-shim` 和它的
+  crate 许可证清单 `out/licenses`（`python3 tools/licenses/licenses.py cargo -p agent-shim --subject agent-shim --target <平台>
+  --out $SHIM_DIR/out/licenses`，templates.yml 就是这么做的）。
 - 镜像名是 `<前缀>/<runtime.template>`，前缀默认 `thinktin`，比如 `thinktin/agents/claude:0.90.0`。
 
 ```sh

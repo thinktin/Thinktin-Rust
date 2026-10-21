@@ -18,6 +18,8 @@ on:
       - tools/smoke/**
       - tools/mock-llm/**
       - tools/licenses/**
+      - .dockerignore
+      - Cargo.lock
       - .github/workflows/templates.yml
   schedule:
     - cron: "17 1 * * 1"

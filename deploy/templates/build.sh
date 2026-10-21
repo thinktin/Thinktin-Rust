@@ -4,7 +4,8 @@
 #
 # 用法：deploy/templates/build.sh <agent id> [docker buildx build 的其他参数...]
 #   IMAGE_PREFIX  镜像前缀，默认 thinktin
-#   SHIM_DIR      编好的 agent-shim 所在的目录（里面是 out/agent-shim）；不给就在镜像里从源码编译
+#   SHIM_DIR      编好的 agent-shim 所在的目录：里面是 out/agent-shim，和它的 crate 许可证清单 out/licenses
+#                 （licenses.py cargo -p agent-shim --out <SHIM_DIR>/out/licenses）；不给就在镜像里从源码编译
 # 最后一行输出镜像名。
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
@@ -24,6 +25,7 @@ for key, value in [
     ("npm", " ".join(inst.get("npm", []))),
     ("pip", " ".join(inst.get("pip", []))),
     ("bins", " ".join("%s=%s" % kv for kv in sorted(inst.get("bin", {}).items()))),
+    ("prune", " ".join(inst.get("prune", []))),
 ]:
     print(f"{key}={shlex.quote(value)}")
 PY
@@ -44,6 +46,7 @@ args=(
   --build-arg "NPM_PACKAGES=$npm"
   --build-arg "PIP_PACKAGES=$pip"
   --build-arg "NPM_BINS=$bins"
+  --build-arg "PRUNE=$prune"
   -t "$image"
 )
 if [ -n "${SHIM_DIR:-}" ]; then

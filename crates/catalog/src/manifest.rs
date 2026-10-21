@@ -74,6 +74,11 @@ pub struct InstallSection {
     /// 比如 Claude Code 二进制随 Agent SDK 装在 claude-agent-acp 的依赖里，cli 接入方式要直接调 `claude`。
     #[serde(default)]
     pub bin: BTreeMap<String, String>,
+    /// 装好以后删掉的文件或目录（第三方许可证审查不过、agent 又用不到的东西，比如网页界面里的商用字体）。
+    /// `npm:<全局 npm 目录下的路径>` 或 `pip:<site-packages 下的路径>`，可以用通配符；模板构建时一个也匹配不到就失败
+    /// （上游改了目录，要重新看）。
+    #[serde(default)]
+    pub prune: Vec<String>,
 }
 
 impl InstallSection {
@@ -486,6 +491,34 @@ impl Manifest {
                 ),
             );
         }
+        let relative = |path: &str| {
+            !path.starts_with('/')
+                && !path
+                    .split('/')
+                    .any(|p| p == ".." || p == "." || p.is_empty())
+                && path
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "._-@/*?[]".contains(c))
+        };
+        for spec in &i.prune {
+            let ok = match spec.split_once(':') {
+                Some(("npm", path)) => {
+                    relative(path)
+                        && npm_names
+                            .iter()
+                            .any(|n| path.strip_prefix(n).is_some_and(|r| r.starts_with('/')))
+                }
+                Some(("pip", path)) => !i.pip.is_empty() && relative(path),
+                _ => false,
+            };
+            check(
+                ok,
+                format!(
+                    "install.prune `{spec}` 要是 npm:<install.npm 里某个包下的路径> 或 pip:<site-packages 下的路径>\
+                     （相对路径，不能有 .. 和空格）"
+                ),
+            );
+        }
 
         let p = &self.policy;
         check(
@@ -684,6 +717,34 @@ mod tests {
             let text = format!("{base}[install.bin]\n{bad}\n");
             assert!(Manifest::from_toml(&text).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn install_prune_stays_inside_installed_packages() {
+        let base = format!(
+            "{MINIMAL}\n[install]\nnpm = [\"@acme/demo-acp@0.3.1\", \"demo@1.0.0\"]\npip = [\"demo-py==1.0.0\"]\n"
+        );
+        let ok = format!(
+            "{base}prune = [\"npm:@acme/demo-acp/examples/game\", \"pip:demo_py/web/fonts/Brand-*.woff2\"]\n"
+        );
+        assert_eq!(Manifest::from_toml(&ok).unwrap().install.prune.len(), 2);
+        for bad in [
+            "npm:other/examples",    // 不是装的包
+            "npm:demo-acp/examples", // 只是前缀相同
+            "npm:demo/../../../etc", // 跳出包目录
+            "pip:/usr/lib",          // 绝对路径
+            "pip:demo_py/../..",     // 跳出 site-packages
+            "pip:demo py/fonts",     // 空格
+            "demo/examples",         // 没写 npm: 或 pip:
+            "npm:demo",              // 整个包
+        ] {
+            let text = format!("{base}prune = [\"{bad}\"]\n");
+            assert!(Manifest::from_toml(&text).is_err(), "{bad}");
+        }
+        let no_pip = format!(
+            "{MINIMAL}\n[install]\nnpm = [\"demo@1.0.0\"]\nprune = [\"pip:demo_py/fonts\"]\n"
+        );
+        assert!(Manifest::from_toml(&no_pip).is_err());
     }
 
     #[test]

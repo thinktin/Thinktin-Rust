@@ -43,17 +43,31 @@ ARG AGENT_ID
 ARG AGENT_VERSION
 ARG NPM_PACKAGES=""
 ARG PIP_PACKAGES=""
+# 清单 [install] prune：装好以后删掉的东西（许可证审查不过、agent 又用不到的，比如商用字体）。
+# npm:<全局 npm 目录下的路径> 或 pip:<site-packages 下的路径>，每项至少要匹配到一个，不然是上游改了目录，要重新看。
+# 和安装在同一层里删：分开的话，删掉的文件还留在安装那一层里，镜像照样带着。
+ARG PRUNE=""
 # npm 包装到全局（命令在 /usr/local/bin），Python 包装到 agent 自己的虚拟环境 /opt/agents/<id>。
 RUN set -f; if [ -n "$NPM_PACKAGES" ]; then \
         npm install --global --no-fund --no-audit --no-update-notifier $NPM_PACKAGES \
-        && npm cache clean --force; \
-    fi
-RUN set -f; if [ -n "$PIP_PACKAGES" ]; then \
+        && npm cache clean --force || exit 1; \
+    fi; \
+    if [ -n "$PIP_PACKAGES" ]; then \
         python3 -m venv "/opt/agents/$AGENT_ID" \
-        && "/opt/agents/$AGENT_ID/bin/pip" install --no-cache-dir $PIP_PACKAGES; \
-    fi
+        && "/opt/agents/$AGENT_ID/bin/pip" install --no-cache-dir $PIP_PACKAGES || exit 1; \
+    fi; \
+    for spec in $PRUNE; do \
+        case "$spec" in \
+            npm:*) base=/usr/local/lib/node_modules ;; \
+            pip:*) set +f; set -- /opt/agents/$AGENT_ID/lib/python3*/site-packages; set -f; base="$1" ;; \
+            *) echo "install.prune: $spec 要以 npm: 或 pip: 开头" >&2; exit 1 ;; \
+        esac; \
+        set +f; set -- $base/${spec#*:}; set -f; \
+        if [ ! -e "$1" ]; then echo "install.prune: $spec 一个也没匹配到（上游改了目录？）" >&2; exit 1; fi; \
+        rm -rf -- "$@" || exit 1; \
+    done
 # 清单 [install.bin]：包没放上 PATH、接入方式要直接调用的程序，链接到 /usr/local/bin（比如 Claude 的 `claude`）。
-# 每项是 <命令名>=<全局 npm 目录下的路径>，路径里的通配符必须正好匹配一个可执行文件。
+# 每项是 <命令名>=<全局 npm 目录下的路径>，路径里的通配符必须正好匹配一个可执行文件；已经有同名命令时失败，不覆盖。
 ARG NPM_BINS=""
 RUN set -f; for pair in $NPM_BINS; do \
         name="${pair%%=*}"; pattern="${pair#*=}"; \
@@ -61,7 +75,7 @@ RUN set -f; for pair in $NPM_BINS; do \
         if [ "$#" -ne 1 ] || [ ! -x "$1" ]; then \
             echo "install.bin.$name: $pattern 要正好匹配一个可执行文件，匹配到：$*" >&2; exit 1; \
         fi; \
-        ln -s "$1" "/usr/local/bin/$name"; \
+        ln -s "$1" "/usr/local/bin/$name" || exit 1; \
     done
 # 第三方许可证（16.5，docs/licenses.md）：镜像里所有 npm、Python、Debian 包和 agent-shim 的 crate，
 # 原文复制到 /usr/share/thinktin/licenses，清单 inventory.json 由 CI 按许可证策略检查。

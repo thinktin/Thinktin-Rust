@@ -31,3 +31,11 @@ heartbeat = "platform"
 # 要带 mcp 这个 extra，不然平台工具注入会被静默忽略。
 [install]
 pip = ["hermes-agent[acp,mcp]==0.19.0"]
+# 删掉网页界面里的商用字体（16.5，docs/licenses.md）：Collapse、Rules（Blaze Type）和 Mondwest（Pangram Pangram）
+# 是付费授权的字体，包里没有授权说明，我们不能再分发。沙箱里只用 ACP 入口，用不到网页界面；
+# 界面的 CSS 引用不到这些字体时退回默认字体。assets/ 下是打包工具加了哈希的副本。
+prune = [
+  "pip:hermes_cli/web_dist/fonts/Collapse-*", "pip:hermes_cli/web_dist/fonts/Rules*", "pip:hermes_cli/web_dist/fonts/Mondwest-*",
+  "pip:hermes_cli/web_dist/assets/Collapse-*.woff2", "pip:hermes_cli/web_dist/assets/Rules*.woff2",
+  "pip:hermes_cli/web_dist/assets/Mondwest-*.woff2",
+]
