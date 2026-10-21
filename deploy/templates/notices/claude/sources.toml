@@ -17,6 +17,7 @@ version = "1.4.3"
 license = "MIT"
 path = "bun-LICENSE.md"
 url = "https://raw.githubusercontent.com/oven-sh/bun/bun-v1.4.3/LICENSE.md"
+source = "https://github.com/oven-sh/bun/tree/bun-v1.4.3"
 
 [[file]]
 component = "bun"
@@ -31,6 +32,7 @@ version = "oven-sh/WebKit@0c06faadf65bf8e8c8ad3a5a8aca83e1e9ed653f"
 license = "LGPL-2.0-only"
 path = "javascriptcore-COPYING.LIB"
 url = "https://raw.githubusercontent.com/oven-sh/WebKit/0c06faadf65bf8e8c8ad3a5a8aca83e1e9ed653f/Source/JavaScriptCore/COPYING.LIB"
+source = "https://github.com/oven-sh/WebKit/tree/0c06faadf65bf8e8c8ad3a5a8aca83e1e9ed653f/Source/JavaScriptCore"
 
 [[file]]
 component = "tinycc"
@@ -38,6 +40,7 @@ version = "oven-sh/tinycc@05f0fafaa3be31e31d7b4b5c17dc60f62c991171"
 license = "LGPL-2.1-only"
 path = "tinycc-COPYING"
 url = "https://raw.githubusercontent.com/oven-sh/tinycc/05f0fafaa3be31e31d7b4b5c17dc60f62c991171/COPYING"
+source = "https://github.com/oven-sh/tinycc/tree/05f0fafaa3be31e31d7b4b5c17dc60f62c991171"
 
 [[file]]
 component = "ugrep"
@@ -45,6 +48,7 @@ version = "7.8.4"
 license = "BSD-3-Clause"
 path = "ugrep-LICENSE.txt"
 url = "https://raw.githubusercontent.com/Genivia/ugrep/v7.8.4/LICENSE.txt"
+source = "https://github.com/Genivia/ugrep/tree/v7.8.4"
 
 [[file]]
 component = "public-suffix-list"
@@ -52,3 +56,4 @@ version = "embedded in Claude Code 2.1.296"
 license = "MPL-2.0"
 path = "publicsuffix-LICENSE"
 url = "https://raw.githubusercontent.com/publicsuffix/list/5dd321ffe02039e2431382a095cf80e27ff5eb94/LICENSE"
+source = "https://github.com/publicsuffix/list/tree/5dd321ffe02039e2431382a095cf80e27ff5eb94"

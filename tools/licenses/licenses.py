@@ -6,8 +6,10 @@
   scan     扫描装好的 npm 包、Python 包、Debian 包（模板镜像构建时在镜像里跑），
            把许可证、NOTICE 原文复制到输出目录，写清单 inventory.json 和索引 NOTICES.md
   cargo    按 cargo metadata 列出几个程序实际依赖的 crate，同样复制原文、写清单
+  upstream-cargo  按 deploy/templates/notices/<agent>/sources.toml 的 [[cargo]]，从上游源码生成上游程序的 crate 清单
   check    按策略（tools/licenses/policy.toml）检查清单：禁止的许可证、没登记的专有或认不出的许可证、
-           清单里 agent 的许可证和上游对不上
+           声明和原文对不上、没登记的字体、清单里 agent 的许可证和上游对不上
+  summary  几个清单的汇总（组件数、非用不可的 copyleft 组件），docs/licenses.md 第 7 节用
   self-test  内置测试
 
 输出目录（模板镜像里是 /usr/share/thinktin/licenses）：
@@ -1880,6 +1882,56 @@ def cmd_check(args):
     return 1 if errors else 0
 
 
+_COPYLEFT = ("GPL-*", "LGPL-*", "AGPL-*", "MPL-*", "EPL-*", "CDDL-*", "LicenseRef-*GPL-*")
+
+
+def copyleft_ids(expr):
+    """许可证表达式里非用不可的 copyleft 许可证：OR 里有一支不是 copyleft 就不算（我们选那一支），AND 全算。"""
+    try:
+        tree = parse_spdx(expr)
+    except SpdxError:
+        return []
+
+    def walk(t):
+        if t[0] in ("id", "with"):
+            return [t[1]] if any(fnmatch.fnmatchcase(t[1].upper(), pat.upper()) for pat in _COPYLEFT) else []
+        parts = [walk(x) for x in t[1]]
+        if t[0] == "or":
+            return [] if any(not x for x in parts) else min(parts, key=len)
+        return [i for x in parts for i in x]
+
+    return list(dict.fromkeys(walk(tree)))
+
+
+def summarize(inventories):
+    """几个清单的汇总（docs/licenses.md 第 7 节用）：每个清单的组件数，和非用不可的 copyleft 组件（Debian 包除外）。"""
+    lines = ["| 清单 | 组件 |", "|---|---|"]
+    copyleft = {}
+    for inv in inventories:
+        comps = inv["components"]
+        by_eco = {}
+        for c in comps:
+            by_eco[c["ecosystem"]] = by_eco.get(c["ecosystem"], 0) + 1
+        lines.append("| `%s` | %d（%s） |" % (inv["subject"], len(comps), "、".join("%s %d" % kv for kv in sorted(by_eco.items()))))
+        for c in comps:
+            if c["ecosystem"] == "deb" or not c.get("license"):
+                continue
+            for lid in copyleft_ids(c["license"]):
+                copyleft.setdefault(lid, {}).setdefault("%s %s" % (c["ecosystem"], c["name"]), set()).add(inv["subject"])
+    lines += ["", "非用不可的 copyleft（OR 里有宽松一支的不算；Debian 包见各自的 copyright）：", ""]
+    if not copyleft:
+        lines.append("- 无")
+    for lid in sorted(copyleft):
+        items = ["%s（%s）" % (name, "、".join(sorted(subjects))) for name, subjects in sorted(copyleft[lid].items())]
+        lines.append("- %s：%s" % (lid, "；".join(items)))
+    return "\n".join(lines) + "\n"
+
+
+def cmd_summary(args):
+    print(summarize([json.loads(Path(f).read_text(encoding="utf-8")) for f in args.inventory]), end="")
+    return 0
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -1917,6 +1969,10 @@ def main(argv=None):
     k.add_argument("--policy", default=str(Path(__file__).with_name("policy.toml")))
     k.add_argument("--manifest", help="agent 清单：再核对 [install] 和 agent.license")
     k.set_defaults(func=cmd_check)
+
+    m = sub.add_parser("summary", help="几个清单的汇总：组件数、非用不可的 copyleft 组件")
+    m.add_argument("inventory", nargs="+")
+    m.set_defaults(func=cmd_summary)
 
     t = sub.add_parser("self-test", help="内置测试")
     t.set_defaults(func=lambda a: self_test())
@@ -2268,6 +2324,9 @@ def self_test():
         eq(normalize_declared("Apache-2.0 WITH Commons-Clause"), None, "Commons-Clause 不是 SPDX 的例外标识")
         eq(normalize_declared("AGPL-1.0-or-later"), "AGPL-1.0-or-later", "SPDX 表里的标识都认")
         eq(normalize_declared("GPL-2.0+"), "GPL-2.0+", "带 + 的旧写法")
+        eq(copyleft_ids("MIT OR GPL-3.0-or-later"), [], "OR 里有宽松的一支不算 copyleft")
+        eq(copyleft_ids("MPL-2.0 AND MIT"), ["MPL-2.0"], "AND 里的 copyleft")
+        eq(copyleft_ids("LGPL-2.1-only OR GPL-2.0-only"), ["LGPL-2.1-only"], "都是 copyleft 时取限制少的一支")
         # PyPI：几个分类按 AND，AGPL + MIT 要拦
         sp = tmp / "sp"
         d = sp / "agplmit-1.0.dist-info"

@@ -34,7 +34,7 @@ CI 按许可证策略检查。法务的判断（商标、各家的使用条款�
 
 | 类别 | 例子 | 结果 |
 |---|---|---|
-| 放行 | MIT、Apache-2.0、BSD、ISC、Unlicense、MPL-2.0、EPL、LGPL（Rust 除外，见下） | 通过 |
+| 放行 | MIT、Apache-2.0、BSD、ISC、Unlicense、OFL、CC-BY；弱 copyleft 的 MPL、EPL、CDDL、LGPL（Rust 除外，见下） | 通过（弱 copyleft 的义务见第 6 节第 3 条） |
 | 禁止 | AGPL、SSPL、OSL、EUPL、RPL、CPAL（网络 copyleft：用户经网络使用就要向用户公开源码）；BUSL、Elastic、PolyForm、FSL、Commons Clause、CC 的非商用条款（限制商用或托管） | CI 报错，换掉这个包 |
 | 其他 | GPL、专有、没写许可证、认不出来、原文里有限制性说法 | 要在 `[[exception]]` 登记、写明理由才通过 |
 
@@ -102,7 +102,7 @@ copyright 文件里，一并带上）、dpkg 装的包、Node.js 本身、agent-
 
 | agent | 补了什么 |
 |---|---|
-| 所有模板（`_base`） | Node.js 的 LICENSE：官方镜像不带，构建时按镜像里 Node 的确切版本从上游取（里面还列了 Node 打包的 V8、OpenSSL、ICU 等） |
+| 所有模板 | Node.js 的 LICENSE（里面还列了 Node 打包的 V8、OpenSSL、ICU 等）：官方镜像放在 `/usr/local/LICENSE`，扫描时按开头确认是 Node 的再用；没有时按镜像里 Node 的确切版本从上游取。`_base/` 现在是空的，留给所有模板都要补的原文 |
 | Claude | Claude Code 二进制是 Bun 编译的单文件程序，npm 包里只有一行 Anthropic 的专有声明。补了 Bun 的许可说明和它静态链接的库的清单、JavaScriptCore（LGPL-2）、TinyCC（LGPL-2.1）、ugrep（BSD-3-Clause）、二进制里带的公共后缀表（MPL-2.0） |
 | OpenClaw | Playwright 带的 VS Code 图标字体 codicon：VS Code 的 MIT 原文（Playwright 源码树里有、npm 包里没有）和 vscode-codicons 的 CC-BY-4.0 原文 |
 | Hermes | 网页界面终端用的 JetBrains Mono 字体的 OFL 原文 |
@@ -144,28 +144,63 @@ copyright 文件里，一并带上）、dpkg 装的包、Node.js 本身、agent-
 2. **命名和商标**。App 里叫“Claude Agent”（Agent SDK 的品牌指引允许的写法），不能叫“Claude Code”或用 Anthropic 的标志；
    Codex 不能做我们的产品名（OpenAI 的品牌指引不允许在应用名里用它的模型名），可以说“使用 OpenAI Codex”；
    OpenClaw、Hermes（Nous Research）、Pi 的名字和图标用在 App 的 agent 目录里，要看各自的商标政策。
-3. **LGPL 的组件**。Claude Code 二进制里静态链接了 JavaScriptCore、TinyCC，Codex 带的 bubblewrap、语音运行时也是 LGPL。
-   模板镜像只在平台自己的集群里运行、不交给用户时，原文带着就够了；将来要是把镜像交给客户（私有化部署），还要按 LGPL
-   提供对应源码或书面承诺（上游的源码都是公开的，地址在 `sources.toml` 里）。base 镜像里的 GPL 软件（bash、git 等 Debian 包）同理。
+3. **弱 copyleft 的义务**（清单见第 7 节，`licenses.py summary` 生成）。不改上游代码时，要做的是“带原文、告诉对方源码在哪”：
+   - **MPL-2.0**（Codex 的 symphonia、nucleo，客户端核心和电脑端的 uniffi，OpenClaw 的 web-push 和两个原生包
+     `@trycua/cua-driver`、`@ubjs/node`，Hermes 的 certifi、pathspec、tqdm）：以可执行形式分发时，要让对方知道怎么拿到
+     这部分的源码（3.2 条）。npm、PyPI 包本身就是源码；编进程序的（Rust crate、原生包）靠清单里的 `source_url`
+     （crates.io、上游仓库的版本页）和 App 的“开源许可”页面。改了 MPL 的文件，改过的文件要按 MPL 公开。
+   - **EPL、CDDL**：同 MPL（现在的镜像里没有）。
+   - **LGPL**：Claude Code 二进制里静态链接了 JavaScriptCore、TinyCC，Codex 带的 bubblewrap、语音运行时（GStreamer、GLib）。
+     模板镜像只在平台自己的集群里运行、不交给用户时，原文带着就够了；将来要是把镜像交给客户（私有化部署），还要按 LGPL
+     提供对应源码或书面承诺：源码地址在清单的 `source_url`（`sources.toml` 的 `source`），Codex 语音运行时每个库的确切
+     源码包和 SHA-256 在它带的 `sources.json` 里（一起带进了清单）。base 镜像里的 GPL 软件（bash、git 等 Debian 包）同理，
+     源码包在 snapshot.debian.org（清单里有链接）。
+   - **Bun 编译的 Claude Code 二进制**静态链接 JavaScriptCore（LGPL-2）：LGPL 要求用户能换掉库重新链接，单文件程序做不到；
+     这是 Anthropic 分发的二进制，我们原样转发，要法务看转发时我们要承担什么。
 4. **Bun 静态链接的其余各库**（BoringSSL、zstd、sqlite、ICU 等）的完整原文 Anthropic 没有随包提供，我们带了 Bun 自己的清单
    和链接（`bun-license.mdx`），要不要逐个补齐由法务定。
 5. **App 上架**：iOS、Android 的“开源许可”页面要展示客户端核心的清单（12.x、13.x 做界面时接上）。
 
 ## 7. 现在的结果（2026-10-21）
 
-| 镜像 | 组件 | 结果 |
+`python3 tools/licenses/licenses.py summary <各个 inventory.json>` 生成：
+
+| 清单 | 组件 | 结果 |
 |---|---|---|
-| `agents/claude:0.90.0` | 471（npm 248、Debian 141、crate 76、上游补的 5） | 通过；Anthropic 的 SDK 和 Claude Code 二进制按专有组件登记 |
-| `agents/codex:2.2.2` | 1443（crate 1119、Debian 141、npm 171、上游补的 11） | 通过；zsh 的许可证（没有 SPDX 标识）登记 |
-| `agents/pi:1.2.0` | 477 | 通过 |
-| `agents/openclaw:2026.10.3` | 765 | 通过 |
-| `agents/hermes:0.19.0` | 436（含 Python 包 72） | 通过 |
+| `agents/claude:0.90.0` | 471（cargo 76、deb 141、npm 248、runtime 1、upstream 5） | 通过；Anthropic 的 SDK 和 Claude Code 二进制按专有组件登记 |
+| `agents/codex:2.2.2` | 1443（cargo 1119、deb 141、npm 171、runtime 1、upstream 11） | 通过；zsh 的许可证（没有 SPDX 标识）、lzma-sys 带的 xz 源码树登记 |
+| `agents/pi:1.2.0` | 477（cargo 76、deb 141、npm 258、runtime 1、upstream 1） | 通过；删掉了 DOOM 演示扩展 |
+| `agents/openclaw:2026.10.3` | 766（cargo 76、deb 141、npm 547、runtime 1、upstream 1） | 通过；网页界面的 9 个 OFL 字体家族、Playwright 的 codicon 字体登记 |
+| `agents/hermes:0.19.0` | 437（cargo 76、deb 141、npm 146、pypi 72、runtime 1、upstream 1） | 通过；删掉了网页界面的商用字体，JetBrains Mono 登记 |
 | 服务端、agent-shim、客户端核心、电脑端工具服务 | 355、106、278、279 个 crate（不限平台） | 通过 |
 
-没有发现网络 copyleft 或限制商用的许可证。弱 copyleft 有：MPL-2.0（几个 crate、Hermes 的 pathspec、Codex 的 symphonia、nucleo）、
-LGPL（上面第 6 节第 3 条）。
+没有发现网络 copyleft 或限制商用的许可证。非用不可的 copyleft（`A OR B` 里有宽松一支的不算；Debian 包不算）：
 
-## 8. 本地跑
+- LGPL：JavaScriptCore（LGPL-2.0）、TinyCC（LGPL-2.1，都在 Claude Code 二进制里）；bubblewrap（LGPL-2.0-or-later）、
+  语音运行时（LGPL-2.1、LGPL-2.0，都在 Codex 里）。
+- MPL-2.0：Codex 的 nucleo、nucleo-matcher、option-ext 和 symphonia 一族（9 个 crate）；客户端核心和电脑端工具服务的
+  uniffi 一族（8 个 crate）；OpenClaw 的 web-push、`@trycua/cua-driver-linux-x64-gnu`、`@ubjs/core`、`@ubjs/node`、
+  `@ubjs/node-linux-x64-gnu`；Hermes 的 certifi、pathspec、tqdm；Claude Code 二进制里的公共后缀表。
+
+## 8. 已知的缺口
+
+扫描只能看到包里写明的东西。下面这些看不全，要人知道：
+
+- **包里编译好的原生代码**：npm 的 `.node`、`.wasm`（koffi、node-pty、tree-sitter、OpenClaw 的原生包），PyPI 的 wheel 里的
+  `.so`（cryptography 静态链接的 OpenSSL 和 Rust crate，pydantic-core 的 Rust crate，uvloop 的 libuv，Pillow 的 libjpeg、
+  libpng、freetype 等）。它们静态链接的第三方代码，只有包自己带了原文的才在清单里。
+- **打包好的 JavaScript**（`dist/*.js`、Hermes 的 `web_dist/assets/*.js`）：打包工具把依赖合进一个文件，依赖的许可证注释
+  在文件里，不单独扫描。
+- **Codex 二进制里 V8 带的第三方库**（ICU、abseil 等）和 **Bun 静态链接的各库**（BoringSSL、zstd、sqlite 等）：只带了
+  上游给的清单和主要的原文（第 3 节）。
+- **Rust crate 里的字体**（`include_bytes!` 编进程序的）不检查；crate 子目录里的原文只在核对得上时才和声明对照
+  （没核对上的 GPL 原文常是“任选其一”里的另一支，比如 zstd 的 `BSD OR GPL-2.0`）。
+- **Android 库工程的 JVM 依赖**（JNA、kotlinx-coroutines）不在清单里：`build-android.sh` 只生成了 Rust 客户端核心的清单，
+  App 工程（13.x）接入时要加上 Gradle 依赖的许可证。
+- **Codex 的 1071 个 crate** 按上游 `rust-v0.160.1` 标签的 Cargo.lock 解析（不加 `--locked`，因为上游发布时只改工作区版本号），
+  和 OpenAI 实际构建用的可能有出入。
+
+## 9. 本地跑
 
 ```sh
 python3 tools/licenses/licenses.py self-test
@@ -173,4 +208,5 @@ tools/licenses/rust.sh                                   # 发出去的 Rust 程
 deploy/templates/build.sh codex                          # 构建模板（会先生成 Codex 的 crate 清单）
 docker run --rm thinktin/agents/codex:2.2.2 cat /usr/share/thinktin/licenses/inventory.json > /tmp/codex.json
 python3 tools/licenses/licenses.py check /tmp/codex.json --manifest crates/catalog/manifests/codex.toml
+python3 tools/licenses/licenses.py summary /tmp/*.json target/licenses/*/inventory.json   # 第 7 节的汇总
 ```

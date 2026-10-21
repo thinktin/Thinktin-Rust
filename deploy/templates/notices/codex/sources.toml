@@ -23,6 +23,7 @@ version = "0.160.1"
 license = "Apache-2.0"
 path = "codex-LICENSE"
 url = "https://raw.githubusercontent.com/openai/codex/rust-v0.160.1/LICENSE"
+source = "https://github.com/openai/codex/tree/rust-v0.160.1"
 
 [[file]]
 component = "openai-codex"
@@ -38,6 +39,7 @@ version = "openai/codex rust-v0.160.1 third_party/wezterm"
 license = "MIT"
 path = "wezterm-LICENSE"
 url = "https://raw.githubusercontent.com/openai/codex/rust-v0.160.1/third_party/wezterm/LICENSE"
+source = "https://github.com/openai/codex/tree/rust-v0.160.1/third_party/wezterm"
 
 [[file]]
 component = "bubblewrap"
@@ -45,6 +47,7 @@ version = "0.11.2"
 license = "LGPL-2.0-or-later"
 path = "bubblewrap-COPYING"
 url = "https://raw.githubusercontent.com/openai/codex/rust-v0.160.1/codex-rs/vendor/bubblewrap/COPYING"
+source = "https://github.com/openai/codex/tree/rust-v0.160.1/codex-rs/vendor/bubblewrap"
 
 [[file]]
 component = "libcap"
@@ -52,6 +55,7 @@ version = "2.75"
 license = "BSD-3-Clause OR GPL-2.0-only"
 path = "libcap-License"
 url = "https://git.kernel.org/pub/scm/libs/libcap/libcap.git/plain/License?h=libcap-2.75"
+source = "https://git.kernel.org/pub/scm/libs/libcap/libcap.git/tree/?h=libcap-2.75"
 
 [[file]]
 component = "zsh"
@@ -59,6 +63,7 @@ version = "77045ef899e53b9598bebc5a41db93a548a40ca6"
 license = "LicenseRef-Zsh"
 path = "zsh-LICENCE"
 url = "https://raw.githubusercontent.com/zsh-users/zsh/77045ef899e53b9598bebc5a41db93a548a40ca6/LICENCE"
+source = "https://github.com/zsh-users/zsh/tree/77045ef899e53b9598bebc5a41db93a548a40ca6"
 
 [[file]]
 component = "ripgrep"
@@ -66,6 +71,7 @@ version = "15.2.0"
 license = "Unlicense OR MIT"
 path = "ripgrep-COPYING"
 url = "https://raw.githubusercontent.com/BurntSushi/ripgrep/15.2.0/COPYING"
+source = "https://github.com/BurntSushi/ripgrep/tree/15.2.0"
 
 [[file]]
 component = "ripgrep"
@@ -87,6 +93,7 @@ version = "10.46"
 license = "BSD-3-Clause WITH PCRE2-exception"
 path = "pcre2-LICENCE.md"
 url = "https://raw.githubusercontent.com/PCRE2Project/pcre2/pcre2-10.46/LICENCE.md"
+source = "https://github.com/PCRE2Project/pcre2/tree/pcre2-10.46"
 
 [[file]]
 component = "musl"
@@ -94,6 +101,7 @@ version = "1.2.5"
 license = "MIT"
 path = "musl-COPYRIGHT"
 url = "https://git.musl-libc.org/cgit/musl/plain/COPYRIGHT?h=v1.2.5"
+source = "https://git.musl-libc.org/cgit/musl/tree/?h=v1.2.5"
 
 [[file]]
 component = "openssl"
@@ -101,6 +109,7 @@ version = "3.6.4"
 license = "Apache-2.0"
 path = "openssl-LICENSE.txt"
 url = "https://raw.githubusercontent.com/openssl/openssl/openssl-3.6.4/LICENSE.txt"
+source = "https://github.com/openssl/openssl/tree/openssl-3.6.4"
 
 [[file]]
 component = "v8"
@@ -108,6 +117,7 @@ version = "15.0.245.2"
 license = "BSD-3-Clause"
 path = "v8-LICENSE"
 url = "https://raw.githubusercontent.com/v8/v8/15.0.245.2/LICENSE"
+source = "https://github.com/v8/v8/tree/15.0.245.2"
 
 [[file]]
 component = "v8"
@@ -132,11 +142,19 @@ url = "https://raw.githubusercontent.com/v8/v8/15.0.245.2/LICENSE.strongtalk"
 
 # 语音运行时（GStreamer 1.28.6、GLib 2.88.3、libffi、PCRE2 10.47、zlib、opus、proxy-libintl）：
 # 包里自带 NOTICE.md 和 licenses/，在 node_modules 深处，扫描只看包的根目录，这里指过去。
+# sources.json 里是每个库确切的上游版本、源码包地址和 SHA-256（LGPL 要求的“怎么拿到对应源码”），一起带上。
 [[installed]]
 component = "codex-voice-runtime"
 version = "0.160.1"
 license = "LGPL-2.1-only AND LGPL-2.0-only AND MIT AND BSD-3-Clause AND BSD-2-Clause AND Zlib"
 glob = "/usr/local/lib/node_modules/**/codex-resources/voice/NOTICE.md"
+source = "https://github.com/openai/codex/tree/rust-v0.160.1/third_party/voice"
+
+[[installed]]
+component = "codex-voice-runtime"
+version = "0.160.1"
+license = "LGPL-2.1-only AND LGPL-2.0-only AND MIT AND BSD-3-Clause AND BSD-2-Clause AND Zlib"
+glob = "/usr/local/lib/node_modules/**/codex-resources/voice/sources.json"
 
 [[installed]]
 component = "codex-voice-runtime"

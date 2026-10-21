@@ -14,7 +14,7 @@ version = "playwright v1.63.0 packages/web/src/third_party/vscode"
 license = "MIT AND CC-BY-4.0"
 path = "vscode-LICENSE.txt"
 url = "https://raw.githubusercontent.com/microsoft/playwright/v1.63.0/packages/web/src/third_party/vscode/LICENSE.txt"
-source = "https://github.com/microsoft/vscode-codicons"
+source = "https://github.com/microsoft/vscode-codicons/tree/v0.0.46-9"
 
 [[file]]
 component = "vscode-codicon"
