@@ -104,6 +104,7 @@ async fn main() -> anyhow::Result<()> {
                 "worker.enabled = {} (sandbox provider {}, max {} concurrent runs)",
                 cfg.worker.enabled, cfg.sandbox.provider, cfg.worker.max_concurrent_runs
             );
+            println!("push.im = {}", cfg.push.im.enabled);
             println!("push.apns = {}", cfg.push.apns.is_some());
             // 设备中继（thinktin-relay --access-key）验访问令牌用的公钥。
             match cfg.api_secrets.access_token_seed.as_deref() {

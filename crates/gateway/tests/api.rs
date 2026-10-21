@@ -10,7 +10,7 @@ use auth::signed::{Signer25519, Verifier25519};
 use auth::sms::RecordingSms;
 use control::BuiltinTemplates;
 use futures_util::StreamExt;
-use gateway::{AppState, EventHub, GatewayConfig, Inner};
+use gateway::{AppState, EventHub, GatewayConfig, Inner, LimitConfig};
 use keyvault::secrecy::ExposeSecret;
 use keyvault::{KeyStore, KeyVault, LocalKms, MemoryKeyStore, SealedSecret, WrappedKey};
 use orchestrator::artifacts::{ArtifactStore, LocalBlobStore, Origin};
@@ -1276,6 +1276,15 @@ async fn other_users_objects_are_invisible() {
         )
         .await;
     let cred = cred["id"].as_str().unwrap().to_owned();
+    let (_, im) = a
+        .call(
+            Method::POST,
+            "/v1/im-channels",
+            tok,
+            Some(json!({ "webhook_url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=owner-key-00001" })),
+        )
+        .await;
+    let im = im["id"].as_str().unwrap().to_owned();
     let (_, team) = a
         .call(
             Method::POST,
@@ -1415,6 +1424,20 @@ async fn other_users_objects_are_invisible() {
             Some(json!({ "api_key": "sk-stolen-0000000" })),
         ),
         (Method::DELETE, format!("/v1/credentials/{cred}"), None),
+        (
+            Method::PATCH,
+            format!("/v1/im-channels/{im}"),
+            Some(json!({ "enabled": false })),
+        ),
+        (
+            Method::PUT,
+            format!("/v1/im-channels/{im}/webhook"),
+            Some(
+                json!({ "webhook_url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=stolen-key-0001" }),
+            ),
+        ),
+        (Method::POST, format!("/v1/im-channels/{im}/test"), None),
+        (Method::DELETE, format!("/v1/im-channels/{im}"), None),
         (Method::GET, format!("/v1/teams/{team}"), None),
         (
             Method::PATCH,
@@ -1465,6 +1488,7 @@ async fn other_users_objects_are_invisible() {
         "/v1/plans",
         "/v1/approvals",
         "/v1/credentials",
+        "/v1/im-channels",
         "/v1/teams",
         "/v1/team-templates",
         "/v1/inbox",
@@ -2447,4 +2471,208 @@ async fn language_preference() {
         body["user"]["locale"], "zh-CN",
         "unsupported languages fall back"
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn im_channels_over_http() {
+    let Some(a) = api().await else { return };
+    let u = a.login("13800138010").await;
+    let tok = Some(u.access.as_str());
+    let (_, me) = a.call(Method::GET, "/v1/me", tok, None).await;
+    let user: UserId = me["id"].as_str().unwrap().parse().unwrap();
+    let token = "0123456789abcdef0123456789abcdef";
+    let (st, ch) = a
+        .call(
+            Method::POST,
+            "/v1/im-channels",
+            tok,
+            Some(json!({
+                "webhook_url": format!("https://oapi.dingtalk.com/robot/send?access_token={token}"),
+                "secret": "SECsigning-secret-1",
+                "label": "运维群",
+                "events": ["run_failed", "approval"]
+            })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{ch}");
+    assert_eq!(ch["vendor"], "dingtalk");
+    assert_eq!(ch["hint"], "…cdef");
+    assert_eq!(ch["has_secret"], true);
+    assert_eq!(ch["events"], json!(["approval", "run_failed"]));
+    assert!(!ch.to_string().contains(token) && !ch.to_string().contains("signing-secret"));
+    let id = ch["id"].as_str().unwrap().to_owned();
+    let channel_id: proto::domain::ImChannelId = id.parse().unwrap();
+
+    // 库里只有密文；用这个用户的 DEK、这个渠道的 id 才解得开。
+    let raw: Vec<u8> = sqlx::query_scalar("SELECT sealed FROM im_channels WHERE id = $1")
+        .bind(channel_id.0)
+        .fetch_one(a.t.db.pool())
+        .await
+        .unwrap();
+    assert!(!String::from_utf8_lossy(&raw).contains(token));
+    let kms: Arc<dyn keyvault::Kms> = Arc::new(LocalKms::new("kms1", &KMS_KEY));
+    let vault = orchestrator::artifacts::user_vault(&a.t.db, kms, user, false)
+        .await
+        .unwrap();
+    let opened = vault
+        .open_webhook(&user.to_string(), &id, &raw)
+        .await
+        .unwrap();
+    assert_eq!(
+        (opened.token.as_str(), opened.secret.as_str()),
+        (token, "SECsigning-secret-1")
+    );
+    assert!(
+        vault
+            .open_webhook(&user.to_string(), &uuid::Uuid::nil().to_string(), &raw)
+            .await
+            .is_err()
+    );
+
+    for bad in [
+        json!({ "webhook_url": format!("http://oapi.dingtalk.com/robot/send?access_token={token}") }),
+        json!({ "webhook_url": format!("https://oapi.dingtalk.com:8443/robot/send?access_token={token}") }),
+        json!({ "webhook_url": format!("https://user@oapi.dingtalk.com/robot/send?access_token={token}") }),
+        json!({ "webhook_url": format!("https://oapi.dingtalk.com./robot/send?access_token={token}") }),
+        json!({ "webhook_url": format!("https://oapi.dingtalk.com.evil.com/robot/send?access_token={token}") }),
+        json!({ "webhook_url": format!("https://10.0.0.1/robot/send?access_token={token}") }),
+        json!({ "webhook_url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send" }),
+        json!({ "webhook_url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=wecom-key-000001", "secret": "secret-123" }),
+        json!({ "webhook_url": format!("https://oapi.dingtalk.com/robot/send?access_token={token}"), "secret": "not-a-ding-secret" }),
+        json!({ "webhook_url": format!("https://oapi.dingtalk.com/robot/send?access_token={token}"), "events": ["info"] }),
+        json!({ "webhook_url": format!("https://oapi.dingtalk.com/robot/send?access_token={token}"), "events": [] }),
+        json!({ "webhook_url": format!("https://oapi.dingtalk.com/robot/send?access_token={token}"), "label": "a\nb" }),
+    ] {
+        let (st, body) = a
+            .call(Method::POST, "/v1/im-channels", tok, Some(bad.clone()))
+            .await;
+        assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{bad} -> {body}");
+        assert!(!body.to_string().contains(token), "{body}");
+    }
+
+    let path = format!("/v1/im-channels/{id}");
+    let (st, updated) = a
+        .call(
+            Method::PATCH,
+            &path,
+            tok,
+            Some(json!({ "enabled": false, "label": "值班群" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{updated}");
+    assert_eq!(
+        (updated["enabled"].clone(), updated["label"].clone()),
+        (json!(false), json!("值班群"))
+    );
+    // 关着的渠道不能发测试消息。
+    let (st, _) = a
+        .call(Method::POST, &format!("{path}/test"), tok, None)
+        .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+    a.call(Method::PATCH, &path, tok, Some(json!({ "enabled": true })))
+        .await;
+
+    // 换地址：同一家可以，换成别家的不行。
+    let (st, rotated) = a
+        .call(
+            Method::PUT,
+            &format!("{path}/webhook"),
+            tok,
+            Some(json!({ "webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=fedcba9876543210" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{rotated}");
+    assert_eq!(
+        (rotated["hint"].clone(), rotated["has_secret"].clone()),
+        (json!("…3210"), json!(false))
+    );
+    let (st, _) = a
+        .call(
+            Method::PUT,
+            &format!("{path}/webhook"),
+            tok,
+            Some(json!({ "webhook_url": "https://open.feishu.cn/open-apis/bot/v2/hook/abcdef0123456789" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+
+    // 测试消息进出箱（不带凭证），用户的语言。
+    let (st, body) = a
+        .call(Method::POST, &format!("{path}/test"), tok, None)
+        .await;
+    assert_eq!(st, StatusCode::ACCEPTED, "{body}");
+    let payload: Value =
+        sqlx::query_scalar("SELECT payload FROM outbox WHERE user_id = $1 AND kind = 'im'")
+            .bind(user.0)
+            .fetch_one(a.t.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(payload["channel"], id);
+    assert_eq!(payload["message"]["title"], "测试消息");
+    assert!(!payload.to_string().contains("fedcba9876543210"));
+
+    let (_, list) = a.call(Method::GET, "/v1/im-channels", tok, None).await;
+    assert_eq!(list["channels"].as_array().unwrap().len(), 1);
+    let actions: Vec<String> =
+        sqlx::query_scalar("SELECT action FROM audit_log WHERE target = $1 ORDER BY id")
+            .bind(&id)
+            .fetch_all(a.t.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(
+        actions,
+        [
+            "im_channel.create",
+            "im_channel.update",
+            "im_channel.update",
+            "im_channel.rotate",
+            "im_channel.test"
+        ]
+    );
+    let details: Vec<Value> = sqlx::query_scalar("SELECT detail FROM audit_log WHERE target = $1")
+        .bind(&id)
+        .fetch_all(a.t.db.pool())
+        .await
+        .unwrap();
+    assert!(
+        details
+            .iter()
+            .all(|d| !d.to_string().contains("0123456789abcdef0123")
+                && !d.to_string().contains("fedcba98"))
+    );
+
+    let (st, _) = a.call(Method::DELETE, &path, tok, None).await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let (st, _) = a.call(Method::DELETE, &path, tok, None).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn im_test_messages_are_rate_limited() {
+    let Some(a) = api_with(GatewayConfig {
+        limits: LimitConfig {
+            im_tests_per_hour: 1,
+            ..LimitConfig::default()
+        },
+        ..GatewayConfig::default()
+    })
+    .await
+    else {
+        return;
+    };
+    let u = a.login("13800138011").await;
+    let tok = Some(u.access.as_str());
+    let (_, ch) = a
+        .call(
+            Method::POST,
+            "/v1/im-channels",
+            tok,
+            Some(json!({ "webhook_url": "https://open.larksuite.com/open-apis/bot/v2/hook/lark-token-0001" })),
+        )
+        .await;
+    let path = format!("/v1/im-channels/{}/test", ch["id"].as_str().unwrap());
+    let (st, _) = a.call(Method::POST, &path, tok, None).await;
+    assert_eq!(st, StatusCode::ACCEPTED);
+    let (st, body) = a.call(Method::POST, &path, tok, None).await;
+    assert_eq!(st, StatusCode::TOO_MANY_REQUESTS, "{body}");
 }

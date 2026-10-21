@@ -11,6 +11,7 @@ use control::{BuiltinTemplates, Lifecycle, LifecycleConfig};
 use notify::apns::{ApnsClient, ApnsConfig};
 use notify::fcm::{FcmClient, FcmConfig, ServiceAccount};
 use notify::filter::KeywordFilter;
+use notify::im::ImClient;
 use notify::jpush::{JpushClient, JpushConfig};
 use orchestrator::artifacts::ArtifactStore;
 use orchestrator::computer::{DeviceCalls, notify_approval_requests};
@@ -130,7 +131,7 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
             provider,
             workdir,
         )))
-        .with_vault(kms)
+        .with_vault(kms.clone())
         .with_computer(computer.clone()),
     );
     let pipelines = PipelineDriver::new(db.clone(), PipelineConfig::default());
@@ -141,6 +142,10 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
             .with_context(|| format!("reading push keywords {}", path.display()))?;
         info!(keywords = filter.len(), "push content filter loaded");
         dispatcher = dispatcher.with_filter(Arc::new(filter));
+    }
+    if cfg.push.im.enabled {
+        let client = ImClient::new().context("IM channel client")?;
+        dispatcher = dispatcher.with_im(Arc::new(client), kms);
     }
     if let Some(apns) = &cfg.push.apns {
         let key = std::fs::read_to_string(&apns.key_path)

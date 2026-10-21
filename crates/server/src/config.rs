@@ -407,11 +407,27 @@ fn default_storage_timeout() -> u64 {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Push {
+    /// IM 渠道（10.5）：通知发到用户绑定的飞书 / Lark、企业微信、钉钉群机器人。
+    pub im: ImChannels,
     pub apns: Option<Apns>,
     /// 国内 Android：经极光推送覆盖各厂商通道（设备的推送通道是 unipush）。
     pub jpush: Option<Jpush>,
     /// 海外 Android：Firebase Cloud Messaging（设备的推送通道是 fcm）。
     pub fcm: Option<Fcm>,
+}
+
+/// IM 渠道（10.5）。没有平台级的密钥：webhook 的 token 和签名密钥是用户自己的，按用户 DEK 加密存着。
+/// 关掉时用户照样能绑定，后台不发（出箱里的 IM 条目直接放弃）。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ImChannels {
+    pub enabled: bool,
+}
+
+impl Default for ImChannels {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
 }
 
 /// FCM：服务账号的 JSON 密钥文件（Firebase 控制台“项目设置 → 服务账号”生成）放在 `service_account_path`，
@@ -1159,6 +1175,19 @@ mod tests {
         let err = Config::load(Some(&path), &MapEnv(vars)).unwrap_err();
         assert!(err.to_string().contains("not supported"), "{err}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn im_channels_are_on_unless_turned_off() {
+        assert!(Config::parse("").unwrap().push.im.enabled);
+        assert!(
+            !Config::parse("[push.im]\nenabled = false\n")
+                .unwrap()
+                .push
+                .im
+                .enabled
+        );
+        assert!(Config::parse("[push.im]\nwebhook = \"https://x\"\n").is_err());
     }
 
     #[test]

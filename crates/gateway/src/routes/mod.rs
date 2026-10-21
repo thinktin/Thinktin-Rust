@@ -7,6 +7,7 @@ mod artifacts;
 mod credentials;
 mod device_messages;
 mod events;
+mod im_channels;
 mod inbox;
 mod instances;
 mod plans;
@@ -97,6 +98,20 @@ pub fn router() -> Router<AppState> {
             "/v1/vault/{id}",
             get(vault::get).patch(vault::update).delete(vault::delete),
         )
+        // IM 渠道（10.5）
+        .route(
+            "/v1/im-channels",
+            get(im_channels::list).post(im_channels::create),
+        )
+        .route(
+            "/v1/im-channels/{id}",
+            axum::routing::patch(im_channels::update).delete(im_channels::delete),
+        )
+        .route(
+            "/v1/im-channels/{id}/webhook",
+            put(im_channels::replace_webhook),
+        )
+        .route("/v1/im-channels/{id}/test", post(im_channels::test))
         .route("/v1/vendors", get(vendors::list))
         .route(
             "/v1/credentials",
