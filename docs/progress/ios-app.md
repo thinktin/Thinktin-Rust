@@ -9,13 +9,18 @@
 - `tools/client-core/build-linux-swift.sh`：Linux 上的 ThinktinCore Swift 包（同一份 UniFFI 绑定，链本机 `libclient_core.so`），云端会话能编译、测试 ThinktinKit 的纯 Swift 部分和适配层。
 - `docs/ios.md`：工程说明（目录、分层、设计令牌、事件归并规则、错误处理、深链、构建与 CI）。
 - `docs/gen_wbs.py`：补回 1.6、9.11、9.12、11.6、13.12 五行（逐字照 wbs.md），重新生成 wbs.md / wbs.csv。
+- WBS 细化（`21a824f`）：12.x 从 11 个包 54 人日细化为 23 个包 114 人日（P1 89）；后端前置 4.7、5.5、5.6、10.6、10.7、11.7、11.8；每包的实现要点在 `docs/ios-packages.md`，开发顺序和目录分工在 `docs/ios.md` 第 8、9 节。
+- 12.1（`66ebc7e`，macOS CI 待确认）：ThinktinKit（模型、ClientProtocol、ClientError、MockClient、ConversationReducer、格式化）、ThinktinCoreAdapter（CoreClient、桥接）、ThinktinUI（设计令牌、基础组件、欢迎页 RootView）、XcodeGen 工程与 App 骨架（Keychain 会话、隐私清单、文案表）、`.github/workflows/ios.yml`（Linux + macOS 两个作业）、`apps/apple/.swift-format`、`tools/apple/uicheck`（Linux 上用桩 SwiftUI 类型检查界面和 App 代码）。Linux 上 187 个测试通过，严格格式检查干净。
+- 合进 backend-core（`a4e8ba2`）：带进 11.7（33 个新方法）和 10.6（实时活动）。
 
 进行中：
-- 12.x WBS 细化：对照 client-core 现有接口（`crates/client-core/src/ffi.rs`）、Claude iOS App 的界面结构、上架与平台要求补全工作包，改 `docs/gen_wbs.py` 后重新生成 `wbs.md` / `wbs.csv`。
+- 11.7 / 10.6 接入：ThinktinKit 加新模型、ClientProtocol 加 33 个方法、MockClient 实现；CoreClient 接上；测试（工作流 wf_e31bb6fd-adb）。
+- iOS CI 第一次完整跑（run 39687813304，`66ebc7e`）：看 macOS 上真实 SwiftUI / Xcode 的编译结果。
 
 下一步：
-1. 12.1 工程与 ThinktinKit：XcodeGen 工程（`apps/apple/project.yml`）、`ThinktinKit` Swift Package（模型、视图模型、设计系统、Mock 客户端、ThinktinCore 适配层）、GitHub Actions 在 macOS 上 `xcodebuild` 构建与测试、Linux 上 `swift test` 跑纯逻辑测试。
-2. 12.2 → 12.3 → 12.4 → 12.5 → 12.6 → 12.8 → 12.7 → 12.11，再做 P2 的 12.9、12.10。
+1. 修 macOS CI 暴露的问题直到全绿，然后 12.1 的公共文件（ClientProtocol、模型、Theme）只加不改。
+2. W1 四条线并行（`docs/ios.md` 第 8 节）：A 12.16 → 12.2 → 12.12 → 12.17；B 12.3 → 12.4 → 12.8；C 12.5 → 12.18；D 12.6 → 12.7；12.15 由先空的线做。
+3. W2：12.13、12.10、12.20、12.21、12.19；12.11 最后；12.9 随 macOS（P3）。
 
 坑和决定：
 - 后端前置包（2026-10-22）：backend-core 已认领 11.8、10.7、4.7、5.5（`docs/progress.md` 7b085b7），顺序 10.6 评审 → 11.8 → 10.7 → 4.7 → 5.5；11.8 顺带做计划列表带下次触发时间、Run / run.state 的结构化等待原因码、跨实例的进行中运行列表。5.6 运行附件等 1.1 拍板。新接口只加不改，做完在 `docs/progress.md` 已完成表里写 FFI 新增了什么，本分支合 backend-core 时接上。
