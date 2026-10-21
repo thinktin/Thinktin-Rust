@@ -13,8 +13,15 @@
 输出目录（模板镜像里是 /usr/share/thinktin/licenses）：
   inventory.json   每个组件一条：生态、名字、版本、许可证（SPDX 表达式）、原文的位置
   NOTICES.md       人看的索引：按许可证汇总、每个组件的许可证和原文位置
-  texts/<生态>/<名字>@<版本>/   复制来的 LICENSE、NOTICE 原文（Debian 包的原文就在 /usr/share/doc/<包>/copyright）
+  texts/by-hash/<哈希>/  复制来的 LICENSE、NOTICE 原文，按内容存（Debian 包的原文就在 /usr/share/doc/<包>/copyright）
+  texts/spdx/      包里没带原文的组件用的 SPDX 标准文本
 """
+
+import sys
+
+if sys.version_info < (3, 11):
+    # macOS 自带的 python3 是 3.9：给个明白的提示，不要一个 tomllib 的 ImportError。
+    sys.exit("tools/licenses/licenses.py 要 Python 3.11 以上（用到 tomllib），现在是 %d.%d" % sys.version_info[:2])
 
 import argparse
 import email.parser
@@ -25,7 +32,6 @@ import os
 import re
 import shutil
 import subprocess
-import sys
 import tempfile
 import tomllib
 from pathlib import Path
@@ -437,6 +443,12 @@ _HEADERS = {
     ),
 }
 # 版权行：Copyright …、© …、(c) 2024 …。条款编号“(c) You must retain …”不算。
+# 许可证官方发布的文件里有、SPDX 标准文本里没有的固定句子：核对前去掉（只去一字不差的这几句）。
+_PREAMBLES = {
+    "OFL-1.1": [r"This Font Software is licensed under the SIL Open Font License,? Version 1\.1\.?\s+This license is copied "
+                r"below, and is also available with a FAQ at:?\s+<?https?://\S+?>?(?=\s)"],
+    "CC0-1.0": [r"For more information, please see\s+<?https?://creativecommons\.org/publicdomain/zero/1\.0/?>?"],
+}
 _COPYRIGHT_LINE = re.compile(r"^\s*(portions\s+)?(copyright\b|©|\(c\)\s*(\d|copyright\b))", re.I)
 
 
@@ -510,7 +522,10 @@ def verify_text(text, lid):
     """原文是不是就是 lid 这个许可证（标准文本或标准头部），没有多出来的条款。"""
     import difflib
 
-    got = _words(text[:200000])
+    text = text[:200000]
+    for pat in _PREAMBLES.get(lid, []):
+        text = re.sub(pat, " ", text, flags=re.I)
+    got = _words(text)
     if not got:
         return False
     for want in _template_words(lid):
@@ -551,19 +566,54 @@ def detect_text(text):
 # ---------------------------------------------------------------------------
 # 原文文件
 
-_LEGAL_NAME = re.compile(r"^(LICEN[CS]E|COPYING|NOTICE|UNLICENSE|COPYRIGHT|PATENTS|THIRD[-_ ]?PARTY|MIT-LICENSE|APACHE-LICENSE)", re.I)
+# 许可证、NOTICE 文件的名字：以这些词开头，或者词在 - _ . 后面（LICENSE-MIT、node-runtime-NOTICE.md、jetbrains-mono-OFL.txt、
+# ThirdPartyNotices.txt）。
+_LEGAL_NAME = re.compile(r"(^|[-_. ])(LICEN[CS]E|COPYING|NOTICE|UNLICENSE|COPYRIGHT|PATENTS|THIRD[-_ ]?PARTY|OFL([-_. ]|$))", re.I)
+_FONT_EXT = {".ttf", ".otf", ".woff", ".woff2", ".eot", ".ttc"}
 _CODE_EXT = {
     ".js", ".cjs", ".mjs", ".ts", ".cts", ".mts", ".jsx", ".tsx", ".json", ".py", ".pyc", ".pyi", ".rs", ".go",
     ".map", ".sh", ".yml", ".yaml", ".toml", ".css", ".svg", ".png", ".jpg", ".gif", ".wasm", ".node", ".so",
-    ".d", ".h", ".c", ".cc", ".cpp", ".java", ".rb",
-}
+    ".d", ".h", ".c", ".cc", ".cpp", ".java", ".rb", ".html", ".htm",
+} | _FONT_EXT
+
+
+def _is_code(name):
+    lower = name.lower()
+    return any(lower.endswith(ext) for ext in _CODE_EXT)
 
 
 def is_legal_file(name):
-    if not _LEGAL_NAME.match(name):
-        return False
-    lower = name.lower()
-    return not any(lower.endswith(ext) for ext in _CODE_EXT)
+    return _LEGAL_NAME.search(name) is not None and not _is_code(name)
+
+
+def _bundled_kind(path, in_licenses_dir=False):
+    """包里子目录下的文件算什么：legal（许可证、NOTICE；licenses/ 目录下的都算）、font，或者 None。"""
+    name = Path(path).name
+    if Path(name).suffix.lower() in _FONT_EXT:
+        return "font"
+    if is_legal_file(name) or (in_licenses_dir and not _is_code(name)):
+        return "legal"
+    return None
+
+
+def bundled_files(directory):
+    """包里子目录下（不进 node_modules：那是别的包）的许可证、NOTICE 和字体，返回 (原文列表, 字体列表)。
+
+    打包进来的第三方代码、图标、字体的原文常在子目录里（vendor/x/LICENSE、fonts/x-OFL.txt）；字体常常单独授权
+    （有的是商用字体），每个都要登记（policy.toml 的 [[asset]]）。字体在包的根目录也算。"""
+    directory = Path(directory)
+    legal, fonts = [], []
+    for dirpath, dirnames, filenames in os.walk(directory):
+        dirnames[:] = sorted(d for d in dirnames if d != "node_modules" and not d.startswith("."))
+        here = Path(dirpath)
+        in_licenses_dir = re.fullmatch(r"(?i)licen[cs]es", here.name) is not None
+        for f in sorted(filenames):
+            kind = _bundled_kind(here / f, in_licenses_dir)
+            if kind == "font":
+                fonts.append(here / f)
+            elif kind == "legal" and here != directory:
+                legal.append(here / f)
+    return legal, fonts
 
 
 def legal_files(directory):
@@ -588,7 +638,7 @@ def is_notice(path):
     """NOTICE、版权声明、第三方许可清单：讲的是别人的许可证或者只是署名，不拿来认这个包自己的许可证。"""
     name = Path(path).name.upper()
     return (
-        name.startswith(("NOTICE", "THIRD", "COPYRIGHT", "PATENTS", "AUTHORS"))
+        re.search(r"(^|[-_. ])(NOTICE|COPYRIGHT|PATENTS|AUTHORS)", name) is not None
         or "THIRD" in name
         or "3RD" in name
         or re.match(r"^LICENSES(\.|$)", name) is not None
@@ -683,6 +733,13 @@ def restricted_terms(paths):
 # ---------------------------------------------------------------------------
 # 清单
 
+def _relative(f, base):
+    try:
+        return str(Path(f).relative_to(base)) if base else str(f)
+    except ValueError:
+        return str(f)
+
+
 class Inventory:
     def __init__(self, out, subject):
         self.out = Path(out)
@@ -690,19 +747,26 @@ class Inventory:
         self.components = {}
 
     def add(self, ecosystem, name, version, declared, license, license_from, files, path, root_level=False, extra=None,
-            authors=None):
+            authors=None, bundled=None, fonts=None, source_url=None, asset_base=None):
+        """files：包根目录的许可证文件（拿来认许可证）；bundled：子目录里的（打包进来的第三方代码、字体的原文，
+        只拿来和声明对照、找限制性说法）；fonts：包里的字体（相对 path 记下来，检查时要有登记）。"""
         key = (ecosystem, name, version)
         if key in self.components:
             c = self.components[key]
             c["locations"] += 1
             c["root_level"] = c["root_level"] or root_level
             return c
+        self._where = {}
         copied, digests = self._copy(ecosystem, name, version, files)
+        bundled_copied, _ = self._copy(ecosystem, name, version, bundled)
+        checked = ecosystem not in ("deb", "runtime")
         detections = [
-            {"file": self._where.get(Path(src), str(src)), "proposed": lid, "verified": ok}
-            for src, lid, ok in (file_detections(files or []) if ecosystem not in ("deb", "runtime") else [])
+            dict({"file": self._where.get(Path(src), str(src)), "proposed": lid, "verified": ok},
+                 **({"bundled": True, "path": _relative(src, asset_base or path)} if b else {}))
+            for b, group in ((False, files), (True, bundled)) if checked
+            for src, lid, ok in file_detections(group or [])
         ]
-        restricted = restricted_terms(files or []) if ecosystem not in ("deb", "runtime") else []
+        restricted = restricted_terms(list(files or []) + list(bundled or [])) if checked else []
         if restricted and license:
             try:
                 wrap = parse_spdx(license)[0] == "or"
@@ -721,7 +785,10 @@ class Inventory:
             "files": copied,
             "text_sha256": digests,
             "generic_files": [] if copied or not license else self._generic(license),
+            "bundled_files": bundled_copied,
+            "assets": [{"kind": "font", "path": _relative(f, asset_base or path)} for f in fonts or []],
             "authors": authors or None,
+            "source_url": source_url,
             "path": str(path) if path else None,
             "root_level": root_level,
             "locations": 1,
@@ -753,7 +820,6 @@ class Inventory:
     def _copy(self, ecosystem, name, version, files):
         """原文按内容存：texts/by-hash/<哈希前 16 位>/<原文件名>。几百个 crate 的 LICENSE-APACHE 一字不差，只存一份。"""
         copied, digests = [], []
-        self._where = {}
         for src in files or []:
             src = Path(src)
             try:
@@ -824,17 +890,20 @@ def render_notices(doc):
         "",
         "## 组件",
         "",
-        "包里没带原文的，列的是 SPDX 标准文本（`texts/spdx/`），版权方按包的元数据（作者）。",
+        "包里没带原文的，列的是 SPDX 标准文本（`texts/spdx/`），版权方按包的元数据（作者）。“包内”是包里子目录下的原文"
+        "（打包进来的第三方代码、字体、图标的）。源码：包的源码仓库或这个版本的发布页。",
         "",
-        "| 生态 | 组件 | 版本 | 许可证 | 原文 |",
-        "|---|---|---|---|---|",
+        "| 生态 | 组件 | 版本 | 许可证 | 原文 | 源码 |",
+        "|---|---|---|---|---|---|",
     ]
     for c in comps:
         files = "、".join("`%s`" % f for f in c["files"])
         if not files and c.get("generic_files"):
             files = "标准文本 %s；版权方：%s" % ("、".join("`%s`" % f for f in c["generic_files"]), c.get("authors") or "包里没写")
+        if c.get("bundled_files"):
+            files = (files + "；" if files else "") + "包内：" + "、".join("`%s`" % f for f in c["bundled_files"])
         lic = c["license"] or "未识别（%s）" % (c["declared"] or "无声明")
-        cells = (c["ecosystem"], c["name"], c["version"], lic, files or "—")
+        cells = (c["ecosystem"], c["name"], c["version"], lic, files or "—", c.get("source_url") or "—")
         lines.append("| %s |" % " | ".join(str(x).replace("|", "\\|").replace("\n", " ") for x in cells))
     return "\n".join(lines) + "\n"
 
@@ -995,7 +1064,33 @@ def npm_component(inv, here, pkg, root_level):
         if see_file and see_file not in files:
             files.append(see_file)
     license, source = resolve_license([declared] if declared else [], files, see_file=see_file)
-    inv.add("npm", name, version, declared, license, source, files, here, root_level, authors=npm_author(pkg))
+    bundled, fonts = bundled_files(here)
+    inv.add("npm", name, version, declared, license, source, files, here, root_level, authors=npm_author(pkg),
+            bundled=bundled, fonts=fonts, source_url=npm_source(pkg, name, version))
+
+
+def git_web_url(url):
+    """git 仓库地址（git+https://…/x.git、git@github.com:a/b.git、github:a/b）换成网页地址；认不出返回 None。"""
+    if not isinstance(url, str) or not url.strip():
+        return None
+    u = url.strip()
+    m = re.fullmatch(r"(?:(github|gitlab|bitbucket):)?([\w.-]+/[\w.-]+)", u)
+    if m:
+        return "https://%s.%s/%s" % (m.group(1) or "github", "org" if m.group(1) == "bitbucket" else "com", m.group(2))
+    u = re.sub(r"^git\+", "", u)
+    u = re.sub(r"^(git|ssh)://(git@)?", "https://", u)
+    u = re.sub(r"^git@([^:/]+):", r"https://\1/", u)
+    u = re.sub(r"\.git(#.*)?$", "", u)
+    return u if u.startswith(("https://", "http://")) else None
+
+
+def npm_source(pkg, name, version):
+    """源码在哪：package.json 的 repository，没有就是 npm 上这个版本的页面（包本身就是源码）。"""
+    repo = pkg.get("repository")
+    url = git_web_url(repo.get("url") if isinstance(repo, dict) else repo)
+    if url and isinstance(repo, dict) and isinstance(repo.get("directory"), str) and "github.com/" in url:
+        url = "%s/tree/HEAD/%s" % (url, repo["directory"].strip("/"))
+    return url or "https://www.npmjs.com/package/%s/v/%s" % (name, version)
 
 
 def scan_npm_packages(inv, pattern):
@@ -1083,6 +1178,7 @@ def scan_python(inv, site_packages, root_names=()):
             for p in sorted(lic_dir.rglob("*")):
                 if p.is_file() and p not in files:
                     files.append(p)
+        bundled, fonts = record_files(dist, site_packages)
         license, source = resolve_license(declared, files, mapped)
         if license and not expr and source in ("metadata", "text"):
             # 没有 License-Expression 时，License 字段和许可证分类都只是说明，分类里有 License 字段没提到的许可证
@@ -1094,7 +1190,50 @@ def scan_python(inv, site_packages, root_names=()):
         shown = "; ".join([d for d in declared if not d.startswith("Classifier: ")] + ["Classifier: %s" % c for c in classifiers]) or None
         authors = msg.get("Author") or msg.get("Author-email") or msg.get("Maintainer") or msg.get("Maintainer-email")
         inv.add("pypi", name, version, shown, license, source, files, dist, pypi_norm(name) in roots, extra=extra or None,
-                authors=authors.strip() if authors and authors.strip().upper() != "UNKNOWN" else None)
+                authors=authors.strip() if authors and authors.strip().upper() != "UNKNOWN" else None,
+                bundled=[f for f in bundled if f not in files], fonts=fonts, asset_base=site_packages,
+                source_url=pypi_source(msg, name, version))
+
+
+def record_files(dist, site_packages):
+    """PyPI 包装进来的文件（.dist-info 的 RECORD、.egg-info 的 installed-files.txt）里，许可证、NOTICE 和字体。
+    包自己的 .dist-info 里的不算（已经按包的原文处理），装到 site-packages 外面的（bin/ 下的脚本）不算。"""
+    legal, fonts = [], []
+    if not dist.is_dir():
+        return legal, fonts
+    if (dist / "RECORD").is_file():
+        base, names = site_packages, [row.split(",")[0] for row in (dist / "RECORD").read_text(encoding="utf-8", errors="replace").splitlines()]
+    elif (dist / "installed-files.txt").is_file():
+        base, names = dist, (dist / "installed-files.txt").read_text(encoding="utf-8", errors="replace").splitlines()
+    else:
+        return legal, fonts
+    root = site_packages.resolve()
+    for n in sorted(set(x.strip() for x in names if x.strip())):
+        p = (base / n).resolve()
+        if root not in p.parents or dist.resolve() in p.parents or not p.is_file():
+            continue
+        kind = _bundled_kind(p, re.fullmatch(r"(?i)licen[cs]es", p.parent.name) is not None)
+        if kind == "font":
+            fonts.append(p)
+        elif kind == "legal":
+            legal.append(p)
+    return legal, fonts
+
+
+def pypi_source(msg, name, version):
+    """源码在哪：Project-URL 里的 Source / Repository / Homepage，再是 Home-page，都没有就是 PyPI 上这个版本的页面。"""
+    urls = {}
+    for v in msg.get_all("Project-URL") or []:
+        label, _, url = v.partition(",")
+        if url.strip().startswith(("https://", "http://")):
+            urls.setdefault(re.sub(r"[^a-z]", "", label.lower()), url.strip())
+    for label in ("source", "sourcecode", "repository", "code", "github", "homepage", "home"):
+        if label in urls:
+            return urls[label]
+    home = (msg.get("Home-page") or "").strip()
+    if home.startswith(("https://", "http://")):
+        return home
+    return "https://pypi.org/project/%s/%s/" % (name, version)
 
 
 # ---------------------------------------------------------------------------
@@ -1105,7 +1244,7 @@ _DEP5_LICENSE = re.compile(r"^License:\s*(.+?)\s*$", re.M)
 
 def scan_deb(inv, admindir=None):
     """dpkg 装的包。原文就在 /usr/share/doc/<包>/copyright，不复制，只记位置和 DEP-5 格式里声明的许可证名。"""
-    cmd = ["dpkg-query", "-W", "-f", "${Package}\t${Version}\t${Status}\n"]
+    cmd = ["dpkg-query", "-W", "-f", "${Package}\t${Version}\t${Status}\t${source:Package}\t${source:Version}\n"]
     if admindir:
         cmd.insert(1, "--admindir=%s" % admindir)
     try:
@@ -1143,6 +1282,8 @@ def scan_deb(inv, admindir=None):
                 "text_sha256": [],
                 "generic_files": [],
                 "authors": None,
+                # 源码包：Debian 的 snapshot 存档里按版本一直留着。
+                "source_url": "https://snapshot.debian.org/package/%s/%s/" % (parts[3], parts[4]) if len(parts) >= 5 and parts[3] else None,
                 "path": None,
                 "root_level": False,
                 "locations": 1,
@@ -1173,7 +1314,8 @@ def scan_extra(inv, directory):
     groups = {}
     def group(f):
         key = (f["component"], f["version"])
-        g = groups.setdefault(key, {"license": f["license"], "files": [], "urls": []})
+        g = groups.setdefault(key, {"license": f["license"], "files": [], "urls": [], "source": None})
+        g["source"] = g["source"] or f.get("source")
         if g["license"] != f["license"]:
             raise SystemExit("%s：%s %s 的几个文件写的许可证不一样（%s、%s），分成不同的 component"
                              % (meta, f["component"], f["version"], g["license"], f["license"]))
@@ -1196,7 +1338,8 @@ def scan_extra(inv, directory):
         if missing:
             raise SystemExit("extra 原文缺文件：%s" % ", ".join(missing))
         inv.add("upstream", name, version, g["license"], canonical_spdx(g["license"]) or g["license"], "extra", g["files"], None,
-                extra={"urls": [u for u in g["urls"] if u], "applies_to": applies_to, "notices_dir": directory.name})
+                extra={"urls": [u for u in g["urls"] if u], "applies_to": applies_to, "notices_dir": directory.name},
+                source_url=g["source"])
     if data.get("cargo"):
         crates = directory / "crates"
         want = upstream_cargo_subject(data["cargo"])
@@ -1217,6 +1360,12 @@ def upstream_cargo_subject(entries):
     return "; ".join("%s@%s %s" % (e["repo"], e["tag"], ",".join(e["packages"])) for e in entries)
 
 
+def upstream_cargo_key(entries):
+    """缓存的 crates/ 还能不能用：[[cargo]] 的每一项（含 manifest、target）和扫描程序本身（改了扫描规则要重新生成）。"""
+    tool = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()[:16]
+    return json.dumps({"entries": entries, "tool": tool, "schema": SCHEMA}, sort_keys=True)
+
+
 def cmd_upstream_cargo(args):
     """按 sources.toml 的 [[cargo]]，从上游源码（浅克隆）生成 crate 清单到 <目录>/crates/。已经是这个版本就跳过。"""
     directory = Path(args.notices_dir)
@@ -1227,10 +1376,14 @@ def cmd_upstream_cargo(args):
     if not entries:
         return 0
     subject = upstream_cargo_subject(entries)
+    key = upstream_cargo_key(entries)
     out = directory / "crates"
-    if (out / "inventory.json").is_file() and json.loads((out / "inventory.json").read_text(encoding="utf-8")).get("subject") == subject:
+    if (out / "key.json").is_file() and (out / "key.json").read_text(encoding="utf-8") == key:
         print("%s 已是 %s" % (out, subject), file=sys.stderr)
         return 0
+    for tool in ("git", "cargo"):
+        if not shutil.which(tool):
+            raise SystemExit("upstream-cargo 要用 %s（从上游源码生成 %s 的 crate 清单），先装上" % (tool, subject))
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         parts = []
@@ -1261,6 +1414,7 @@ def cmd_upstream_cargo(args):
         for part in parts:
             inv.merge(part)
         doc = inv.write()
+        (out / "key.json").write_text(key, encoding="utf-8")
     print("%s：%d 个 crate → %s" % (subject, len(doc["components"]), out), file=sys.stderr)
     return 0
 
@@ -1272,7 +1426,9 @@ def scan_runtime_node(inv):
         version = subprocess.run(["node", "--version"], check=True, capture_output=True, text=True).stdout.strip().lstrip("v")
     except (OSError, subprocess.CalledProcessError):
         return
-    files = [p for p in (Path("/usr/local/share/doc/node/LICENSE"), Path("/usr/local/include/node/LICENSE")) if p.is_file()]
+    # 官方镜像把 Node 发行包里的 LICENSE 放在 /usr/local/LICENSE（名字太普通，按开头确认是 Node 的）。
+    files = [p for p in (Path("/usr/local/share/doc/node/LICENSE"), Path("/usr/local/include/node/LICENSE"), Path("/usr/local/LICENSE"))
+             if p.is_file() and (read_text(p) or "").lstrip().startswith("Node.js is licensed for use as follows")][:1]
     urls = []
     tmp = None
     if not files:
@@ -1281,7 +1437,7 @@ def scan_runtime_node(inv):
         tmp.write_bytes(fetch(url))
         files, urls = [tmp], [url]
     inv.add("runtime", "node", version, "MIT", "MIT", "metadata", files, shutil.which("node"), extra={"urls": urls} if urls else None,
-            authors="Node.js contributors")
+            authors="Node.js contributors", source_url="https://github.com/nodejs/node/tree/v%s" % version)
     if tmp:
         shutil.rmtree(tmp.parent, ignore_errors=True)
 
@@ -1345,8 +1501,20 @@ def scan_cargo(inv, packages, target=None, manifest_path=None, metadata_json=Non
                 files.append(lf)
         declared = p.get("license")
         license, source = resolve_license([declared] if declared else [], files)
+        bundled, _ = bundled_files(src_dir)
         inv.add("cargo", p["name"], p["version"], declared or (p.get("license_file") and "license-file: %s" % p["license_file"]),
-                license, source, files, None, root_level=False, authors=", ".join(p.get("authors") or []) or None)
+                license, source, files, None, root_level=False, authors=", ".join(p.get("authors") or []) or None,
+                bundled=bundled, source_url=cargo_source(p), asset_base=src_dir)
+
+
+def cargo_source(p):
+    """源码在哪：Cargo.toml 的 repository；crates.io 上的包也可以按版本下载源码。"""
+    src = p.get("source") or ""
+    if src.startswith("registry+") and "crates.io" in src:
+        return "https://crates.io/crates/%s/%s" % (p["name"], p["version"])
+    if src.startswith("git+"):
+        return git_web_url(src.split("?")[0].split("#")[0])
+    return git_web_url(p.get("repository")) or p.get("repository")
 
 
 # ---------------------------------------------------------------------------
@@ -1368,11 +1536,16 @@ class Policy:
         self.allow_exceptions = data.get("allow_exceptions", [])
         self.ecosystems = data.get("ecosystem", {})
         self.exceptions = data.get("exception", [])
+        self.assets = data.get("asset", [])
         self.agents = data.get("agents", {})
         for i, e in enumerate(self.exceptions):
             for k in ("ecosystem", "name", "license", "reason"):
                 if not e.get(k):
                     raise SystemExit("policy: 第 %d 个 [[exception]] 缺 %s" % (i + 1, k))
+        for i, e in enumerate(self.assets):
+            for k in ("ecosystem", "name", "path", "license", "reason"):
+                if not e.get(k):
+                    raise SystemExit("policy: 第 %d 个 [[asset]] 缺 %s" % (i + 1, k))
 
     @classmethod
     def load(cls, path):
@@ -1436,12 +1609,70 @@ class Policy:
         return None
 
 
+    def asset_for(self, c, asset, agent=None):
+        """包里这个字体（或别的资源）登记过的许可证：按生态、包名、版本、包里的路径匹配（都可以用通配符，path 可以是列表）。"""
+        for e in self.assets:
+            if e["ecosystem"] != c["ecosystem"] or not fnmatch.fnmatchcase(c["name"], e["name"]):
+                continue
+            if not fnmatch.fnmatchcase(c["version"], e.get("version", "*")):
+                continue
+            if not any(fnmatch.fnmatchcase(asset["path"], pat) for pat in _as_list(e["path"])):
+                continue
+            if e.get("agents") and agent not in e["agents"]:
+                continue
+            return e
+        return None
+
+
+def _as_list(v):
+    return [v] if isinstance(v, str) else list(v or [])
+
+
+def check_assets(c, label, policy, agent, used, comps):
+    """包里的字体都要登记许可证（[[asset]]）：字体常常和包的代码分开授权，有的是商用字体，不能跟着包算。
+    登记写了 license_file（包里的路径）的，包里要有这份原文、核对得上登记的许可证；写了 upstream 的，
+    notices/ 里要有这个组件（原文从上游补）。"""
+    errors, missing, checked = [], [], set()
+    for a in c.get("assets") or []:
+        e = policy.asset_for(c, a, agent)
+        if e is None:
+            missing.append(a["path"])
+            continue
+        used.add(id(e))
+        if id(e) in checked:
+            continue
+        checked.add(id(e))
+        verdict = policy.classify(e["license"], c["ecosystem"])
+        if verdict != "allow":
+            errors.append("%s：字体 %s 登记的许可证 %s %s" % (label, a["path"], e["license"],
+                                                         "在禁止名单里" if verdict == "deny" else "不在放行名单里"))
+        texts = _as_list(e.get("license_file"))
+        found = [d for d in c.get("file_licenses") or [] if d.get("bundled") and d.get("verified") and _covers(e["license"], d["proposed"])]
+        bad = [pat for pat in texts if not any(fnmatch.fnmatchcase(d.get("path", ""), pat) for d in found)]
+        if bad:
+            errors.append("%s：登记说字体 %s 的 %s 原文在 %s，包里没有核对得上的这份原文" % (label, a["path"], e["license"], "、".join(bad)))
+        if e.get("upstream") and not any(x["ecosystem"] == "upstream" and x["name"] == e["upstream"] and x["license"]
+                                         and all(_covers(x["license"], i) for i in spdx_ids(parse_spdx(e["license"])))
+                                         for x in comps):
+            errors.append("%s：登记说字体 %s 的原文由 notices/ 里的 %s 补上，清单里没有这个组件（或许可证对不上）"
+                          % (label, a["path"], e["upstream"]))
+        if not texts and not e.get("upstream"):
+            errors.append("%s：[[asset]] %s 要写 license_file（包里的原文）或 upstream（notices/ 里补的原文）" % (label, e["path"]))
+    if missing:
+        errors.append("%s：带了 %d 个没登记的字体（%s）。字体常常单独授权（有的是商用字体），查清许可证后在 policy.toml "
+                      "登记 [[asset]]，见 docs/licenses.md" % (label, len(missing), "、".join(missing[:6]) + ("……" if len(missing) > 6 else "")))
+    return errors
+
+
 def check(inventory, policy, manifest=None, out=sys.stdout):
     """返回 (错误列表, 警告列表, 汇总的 Markdown)。"""
     errors, warnings, registered = [], [], []
     comps = inventory["components"]
+    agent = manifest["agent"]["id"] if manifest else None
+    used_assets = set()
     for c in comps:
         label = "%s %s@%s" % (c["ecosystem"], c["name"], c["version"])
+        errors += check_assets(c, label, policy, agent, used_assets, comps)
         eco = policy.ecosystems.get(c["ecosystem"], {})
         if eco.get("mode") == "deny-only":
             # Debian main 都是自由软件；只拦明确禁止的（DEP-5 里声明的许可证名，写法五花八门：AGPL-3+、AGPLv3+、
@@ -1481,6 +1712,10 @@ def check(inventory, policy, manifest=None, out=sys.stdout):
               and not any(x is e for _, x in registered)]
     for e in unused:
         errors.append("policy.toml 登记的 %s %s（%s）在清单里没找到：上游换了包名或许可证？复核后更新登记" % (e["ecosystem"], e["name"], e["license"]))
+    for e in policy.assets:
+        if e.get("agents") and agent in e["agents"] and id(e) not in used_assets:
+            errors.append("policy.toml 登记的字体 %s %s 的 %s 在清单里没找到：上游换了包名或目录？复核后更新登记"
+                          % (e["ecosystem"], e["name"], "、".join(_as_list(e["path"]))))
 
     if manifest:
         errors += check_manifest(inventory, policy, manifest)
@@ -2153,6 +2388,66 @@ def self_test():
         got = {k[1]: v["license"] for k, v in inv.components.items()}
         eq(got, {"mitgpl": "MIT AND GPL-3.0-only", "mitmit": "MIT", "mitbsd": "MIT", "exprgpl": "MIT"},
            "License 字段加上没提到的分类；License-Expression 为准")
+        # 包里子目录下的原文和字体；不进 node_modules
+        nm = tmp / "bundle" / "node_modules"
+        pkg = nm / "ui"
+        for rel, text in [("package.json", json.dumps({"name": "ui", "version": "1.0.0", "license": "MIT",
+                                                      "repository": {"type": "git", "url": "git+https://github.com/acme/ui.git"}})),
+                          ("LICENSE", MIT_TEXT), ("vendor/gpl-lib/COPYING", _spdx_text("GPL-3.0-only")),
+                          ("fonts/brand-OFL.txt", "Copyright 2020 The Brand Authors\n\nThis Font Software is licensed under the "
+                           "SIL Open Font License, Version 1.1.\nThis license is copied below, and is also available with a FAQ "
+                           "at:\nhttps://openfontlicense.org\n\n" + _spdx_text("OFL-1.1")),
+                          ("fonts/brand-Regular.woff2", "x"), ("fonts/paid-Bold.woff2", "x"), ("node-runtime-NOTICE.md", "Notice."),
+                          ("node_modules/inner/LICENSE", _spdx_text("GPL-3.0-only")), ("node_modules/inner/package.json",
+                                                                                      json.dumps({"name": "inner", "version": "1.0.0", "license": "MIT"}))]:
+            (pkg / rel).parent.mkdir(parents=True, exist_ok=True)
+            (pkg / rel).write_text(text)
+        inv = Inventory(tmp / "out-bundle", "bundle")
+        scan_npm(inv, nm)
+        ui = inv.components[("npm", "ui", "1.0.0")]
+        eq(sorted(Path(f).name for f in ui["bundled_files"]), ["COPYING", "brand-OFL.txt"], "子目录下的原文（不进 node_modules）")
+        eq([Path(f).name for f in ui["files"]], ["LICENSE", "node-runtime-NOTICE.md"], "名字中间带 NOTICE 的也算原文")
+        eq([a["path"] for a in ui["assets"]], ["fonts/brand-Regular.woff2", "fonts/paid-Bold.woff2"], "字体")
+        eq(ui["source_url"], "https://github.com/acme/ui", "npm 的 repository")
+        eq(ui["license"], "MIT", "子目录下的原文不参与认包的许可证")
+        apol = Policy({"allow": ["MIT", "OFL-1.1"], "asset": [
+            {"ecosystem": "npm", "name": "ui", "path": ["fonts/brand-*.woff2"], "license": "OFL-1.1",
+             "license_file": "fonts/brand-OFL.txt", "reason": "OFL", "agents": ["demo"]},
+            {"ecosystem": "npm", "name": "ui", "path": "fonts/paid-*.woff2", "license": "OFL-1.1",
+             "license_file": "fonts/paid-OFL.txt", "reason": "原文不在", "agents": ["other"]}]})
+        demo = {"agent": {"id": "demo", "license": "MIT"}, "install": {}}
+        errors, _, _ = check(inv.write(), apol)
+        eq(any("ui@" in e and "COPYING" in e and "GPL-3.0-only" in e for e in errors), True, "子目录下的 GPL 原文要和声明对照")
+        eq(any("ui@" in e and "2 个没登记的字体" in e for e in errors), True, "不带清单检查时登记不生效")
+        doc = inv.write()
+        errs = [e for e in check_assets(ui, "ui", apol, "demo", set(), doc["components"])]
+        eq(errs, ["ui：带了 1 个没登记的字体（fonts/paid-Bold.woff2）。字体常常单独授权（有的是商用字体），查清许可证后在 "
+                  "policy.toml 登记 [[asset]]，见 docs/licenses.md"], "登记过的字体、旁边有核对得上的原文")
+        errs = check_assets(ui, "ui", apol, "other", set(), doc["components"])
+        eq(any("paid-OFL.txt" in e for e in errs), True, "登记说的原文包里没有要报错")
+        eq(git_web_url("git@github.com:a/b.git"), "https://github.com/a/b", "git@ 地址")
+        eq(git_web_url("github:a/b"), "https://github.com/a/b", "github: 简写")
+        eq(git_web_url("a/b"), "https://github.com/a/b", "user/repo 简写")
+        eq(is_notice("OPENCLAW_PATCH_NOTICE.md"), True, "名字中间带 NOTICE 的是 NOTICE")
+        eq(is_legal_file("noticeboard.ts"), False, "代码文件不算")
+        eq(is_legal_file("officially.txt"), False, "OFL 要是单独的词")
+        # PyPI：RECORD 里的文件
+        sp = tmp / "sp-rec"
+        dist = sp / "webapp-1.0.dist-info"
+        dist.mkdir(parents=True)
+        (dist / "METADATA").write_text("Metadata-Version: 2.1\nName: webapp\nVersion: 1.0\nLicense-Expression: MIT\n"
+                                       "Project-URL: Source, https://github.com/acme/webapp\n\nx\n")
+        for rel in ("webapp/__init__.py", "webapp/static/fonts/Brand.woff2", "webapp/static/vendor/LICENSE.txt"):
+            (sp / rel).parent.mkdir(parents=True, exist_ok=True)
+            (sp / rel).write_text(MIT_TEXT if rel.endswith(".txt") else "x")
+        (dist / "RECORD").write_text("webapp/__init__.py,,\nwebapp/static/fonts/Brand.woff2,,\nwebapp/static/vendor/LICENSE.txt,,\n"
+                                     "webapp/static/gone.woff2,,\n../../../bin/webapp,,\nwebapp-1.0.dist-info/METADATA,,\n")
+        inv = Inventory(tmp / "out-rec", "rec")
+        scan_python(inv, sp)
+        web = inv.components[("pypi", "webapp", "1.0")]
+        eq([a["path"] for a in web["assets"]], ["webapp/static/fonts/Brand.woff2"], "RECORD 里的字体（删掉的不算），相对 site-packages")
+        eq([Path(f).name for f in web["bundled_files"]], ["LICENSE.txt"], "RECORD 里的原文")
+        eq(web["source_url"], "https://github.com/acme/webapp", "Project-URL 的 Source")
         # sources.toml：同一组件的许可证要一致
         ex = tmp / "conflict"
         ex.mkdir()

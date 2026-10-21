@@ -104,6 +104,17 @@ as = "LicenseRef-Anthropic-Commercial"
 reason = "Claude Code 二进制本体，同上；里面静态链接的第三方组件的原文见 deploy/templates/notices/claude"
 agents = ["claude"]
 
+# Codex 的 Rust 依赖 lzma-sys 带着 xz 5.2 的整个源码树，里面有 LGPL-2.1、GPL 的原文（检查时和声明对不上）。
+# 2026-10-21 按 0.1.20 核对：build.rs 只编 xz-5.2/src/liblzma 和 src/common/tuklib_*.c，按 xz 的 COPYING 都是公有领域；
+# LGPL 的 getopt、GPL 的脚本和构建文件不编进去。版本写死：升级后 build.rs 编的文件可能变，要重新看。
+[[exception]]
+ecosystem = "cargo"
+name = "lzma-sys"
+version = "0.1.20"
+license = "MIT OR Apache-2.0"
+reason = "编进去的只有 liblzma（公有领域），带着的 LGPL、GPL 原文属于不编的命令行工具和脚本"
+agents = ["codex"]
+
 # Codex 带的 zsh：zsh 自己的宽松许可（保留版权声明和免责的两段即可使用、修改、分发，没有 SPDX 标识）。
 # LICENCE 里提到个别 shell 函数是 GPL，Codex 只带了 bin/zsh，没带函数文件。
 [[exception]]
@@ -112,3 +123,49 @@ name = "zsh"
 license = "LicenseRef-Zsh"
 reason = "zsh 自己的宽松许可（类似 MIT），原文在 deploy/templates/notices/codex/zsh-LICENCE"
 agents = ["codex"]
+
+# ---------------------------------------------------------------------------
+# 包里带的字体（检查要求每个字体都登记）。字体常常和包的代码分开授权，有的是商用字体，不能跟着包的许可证算。
+# 字段：ecosystem、name（包名）、version（可省）、path（包里的路径，可以是列表，可以用通配符；PyPI 包相对 site-packages）、
+# license、reason、agents（可省，同 [[exception]]），原文在哪写一个：license_file（包里的路径，要核对得上 license），
+# 或 upstream（deploy/templates/notices/ 里补的组件名）。只按字体家族登记，新加的字体对不上路径就要重新看。
+
+# OpenClaw 网页界面的字体：都是 Google Fonts 上的 OFL 字体，每个家族的 OFL 原文就在旁边（<家族>-OFL.txt）。
+[[asset]]
+ecosystem = "npm"
+name = "openclaw"
+path = [
+  "dist/control-ui/fonts/atkinson-hyperlegible-next-*.woff2", "dist/control-ui/fonts/dm-sans-*.woff2",
+  "dist/control-ui/fonts/fraunces-*.woff2", "dist/control-ui/fonts/geist-*.woff2", "dist/control-ui/fonts/ibm-plex-sans-*.woff2",
+  "dist/control-ui/fonts/instrument-sans-*.woff2", "dist/control-ui/fonts/jetbrains-mono-*.woff2",
+  "dist/control-ui/fonts/lora-*.woff2", "dist/control-ui/fonts/space-grotesk-*.woff2",
+]
+license = "OFL-1.1"
+license_file = [
+  "dist/control-ui/fonts/atkinson-hyperlegible-next-OFL.txt", "dist/control-ui/fonts/dm-sans-OFL.txt",
+  "dist/control-ui/fonts/fraunces-OFL.txt", "dist/control-ui/fonts/geist-OFL.txt", "dist/control-ui/fonts/ibm-plex-sans-OFL.txt",
+  "dist/control-ui/fonts/instrument-sans-OFL.txt", "dist/control-ui/fonts/jetbrains-mono-OFL.txt",
+  "dist/control-ui/fonts/lora-OFL.txt", "dist/control-ui/fonts/space-grotesk-OFL.txt",
+]
+reason = "OFL-1.1：可以随软件分发，不能单独卖；原文和版权行随字体带着"
+agents = ["openclaw"]
+
+# Playwright 的 trace viewer、recorder 用的 VS Code 图标字体。
+[[asset]]
+ecosystem = "npm"
+name = "playwright-core"
+path = ["lib/vite/*/codicon*.ttf", "lib/vite/*/assets/codicon*.ttf"]
+license = "MIT AND CC-BY-4.0"
+upstream = "vscode-codicon"
+reason = "VS Code 的 codicon（Playwright 按 VS Code 的 MIT 带；图标出自 vscode-codicons，CC-BY-4.0 要署名），原文见 notices/openclaw"
+agents = ["openclaw"]
+
+# Hermes 网页界面终端用的等宽字体。
+[[asset]]
+ecosystem = "pypi"
+name = "hermes-agent"
+path = "hermes_cli/web_dist/fonts-terminal/JetBrainsMono-*.woff2"
+license = "OFL-1.1"
+upstream = "jetbrains-mono"
+reason = "JetBrains Mono，OFL-1.1；包里没带原文，从上游补（notices/hermes）"
+agents = ["hermes"]

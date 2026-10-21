@@ -18,7 +18,9 @@ CI 按许可证策略检查。法务的判断（商标、各家的使用条款�
 目录里有：
 
 - `inventory.json`：每个组件一条（生态 `npm` / `pypi` / `deb` / `cargo` / `runtime` / `upstream`、名字、版本、许可证的
-  SPDX 表达式、声明的原文、许可证从哪认出来的、原文文件、作者）。App 的“开源许可”页面读它。
+  SPDX 表达式、声明的原文、许可证从哪认出来的、原文文件、包里子目录下的原文（`bundled_files`：打包进来的第三方代码、
+  图标、字体的）、字体（`assets`）、作者、源码在哪（`source_url`：源码仓库，或者 crates.io、npm、PyPI 上这个版本的页面，
+  Debian 包是 snapshot.debian.org 上的源码包；LGPL、MPL 这类要求提供源码的，用户从这里拿）。App 的“开源许可”页面读它。
 - `NOTICES.md`：人看的索引，按许可证汇总，再逐个列组件。
 - `texts/by-hash/<哈希>/<原文件名>`：从包里复制来的 LICENSE、NOTICE、COPYING 等，按内容存（几百个 crate 的
   Apache-2.0 正文只存一份）。Debian 包的原文就在系统的 `/usr/share/doc/<包>/copyright`，不复制。
@@ -70,6 +72,15 @@ CI 按许可证策略检查。法务的判断（商标、各家的使用条款�
 许可证原文里有限制商用、托管的说法（Commons Clause、non-commercial、BUSL、SSPL、PolyForm……）都会加上
 `LicenseRef-Restricted-Terms`，要人看。
 
+**包里子目录下的原文**（`vendor/x/LICENSE`、`fonts/x-OFL.txt`、名字里带 NOTICE、LICENSE、OFL 的，`licenses/` 目录下的；
+npm 包不进它自己的 `node_modules`，那是别的包；PyPI 包按 RECORD 找）一起带上：不拿来认包的许可证，但和声明对照（上面那条）、
+找限制性说法。
+
+**字体**单独看：字体常常和包的代码分开授权，有的是商用字体（Hermes 的网页界面就带了付费字体）。包里每个字体文件
+（`.ttf`、`.otf`、`.woff`、`.woff2`……）都要在 `policy.toml` 的 `[[asset]]` 登记许可证，按字体家族写路径，写明原文在哪：
+`license_file`（包里的原文，要核对得上登记的许可证）或 `upstream`（`notices/` 里补的组件）。没登记的报错。
+审查不过、agent 又用不到的，在清单的 `[install] prune` 里删掉（见 [templates.md](templates.md)），构建时在扫描前删。
+
 扫描的范围：全局 npm 包（`/usr/local/lib/node_modules`）、基础镜像带的 Yarn（`/opt/yarn-*`）、agent 虚拟环境里的 Python 包
 （`.dist-info`、`.egg-info`；venv 里的 pip、setuptools 来自 Debian 的 wheel 包，它们 vendored 的第三方包的版权在 Debian 的
 copyright 文件里，一并带上）、dpkg 装的包、Node.js 本身、agent-shim 的 crate，加上 `notices/` 里补的上游原文。Rust 只算会
@@ -80,7 +91,9 @@ copyright 文件里，一并带上）、dpkg 装的包、Node.js 本身、agent-
 有的上游没把原文放进 npm 包，或者包里的程序静态链接了别人的代码却没带原文。这些在 `sources.toml` 里登记：
 
 - `[[file]]`：仓库里放的原文，`url` 钉在上游的标签或提交上。
-- `[[installed]]`：镜像里有、但藏在包的子目录里（扫描只看包的根目录）的原文，按路径通配符找；一个也找不到时构建失败。
+- `[[installed]]`：镜像里有、但藏在包的子目录里的原文，单独算一个组件（写明它的许可证），按路径通配符找；一个也找不到时
+  构建失败。
+- `source`（可省）：这个组件的源码在哪，写进清单的 `source_url`。
 - `[[cargo]]`：上游的 Rust 程序依赖的 crate。`deploy/templates/build.sh` 构建前用 `licenses.py upstream-cargo` 从上游
   源码（浅克隆）生成到 `crates/`（不进仓库，按标签缓存），构建时并进清单；没生成就构建失败。
 - `applies_to`：这些原文是按哪个包的哪个版本核对的。升级 agent 后镜像里没有这个版本，CI 报错，要重新核对、改版本号。
@@ -91,6 +104,9 @@ copyright 文件里，一并带上）、dpkg 装的包、Node.js 本身、agent-
 |---|---|
 | 所有模板（`_base`） | Node.js 的 LICENSE：官方镜像不带，构建时按镜像里 Node 的确切版本从上游取（里面还列了 Node 打包的 V8、OpenSSL、ICU 等） |
 | Claude | Claude Code 二进制是 Bun 编译的单文件程序，npm 包里只有一行 Anthropic 的专有声明。补了 Bun 的许可说明和它静态链接的库的清单、JavaScriptCore（LGPL-2）、TinyCC（LGPL-2.1）、ugrep（BSD-3-Clause）、二进制里带的公共后缀表（MPL-2.0） |
+| OpenClaw | Playwright 带的 VS Code 图标字体 codicon：VS Code 的 MIT 原文（Playwright 源码树里有、npm 包里没有）和 vscode-codicons 的 CC-BY-4.0 原文 |
+| Hermes | 网页界面终端用的 JetBrains Mono 字体的 OFL 原文 |
+| Pi | 上游仓库的 MIT LICENSE（Pi 的 npm 包都写了 MIT，却都没带原文） |
 | Codex | Apache-2.0 的 LICENSE、NOTICE（npm 包里都没有）；bubblewrap（LGPL-2.0-or-later）、libcap、zsh（改过）、ripgrep、PCRE2、musl、OpenSSL、V8、wezterm 的原文；语音运行时（GStreamer、GLib 等）包里自带的原文；Codex 自己 1067 个 crate（标签 rust-v0.160.1 的源码） |
 
 ## 4. CI
