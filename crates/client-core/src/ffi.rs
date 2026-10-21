@@ -1265,6 +1265,12 @@ impl ThinktinClient {
             .await
     }
 
+    pub async fn instance(&self, instance_id: String) -> Result<Instance> {
+        let id: d::InstanceId = parse(&instance_id, "instance")?;
+        self.run(|c| async move { Ok(c.api.instance(id).await?.into()) })
+            .await
+    }
+
     /// 缓存里的实例列表（离线、启动时先显示）。
     pub fn cached_instances(&self) -> Result<Vec<Instance>> {
         Ok(self
@@ -1394,6 +1400,25 @@ impl ThinktinClient {
         .await
     }
 
+    /// 更早的一页运行：`before_run_id` 之前的（列表往下翻）。
+    pub async fn older_runs(
+        &self,
+        instance_id: String,
+        before_run_id: String,
+        limit: u32,
+    ) -> Result<Vec<Run>> {
+        let id: d::InstanceId = parse(&instance_id, "instance")?;
+        let before: d::RunId = parse(&before_run_id, "run")?;
+        self.run(|c| async move {
+            Ok(c.older_runs(id, before, limit)
+                .await?
+                .into_iter()
+                .map(Into::into)
+                .collect())
+        })
+        .await
+    }
+
     pub fn cached_runs(&self, instance_id: String, limit: u32) -> Result<Vec<Run>> {
         let id: d::InstanceId = parse(&instance_id, "instance")?;
         Ok(self
@@ -1428,6 +1453,30 @@ impl ThinktinClient {
                 .collect())
         })
         .await
+    }
+
+    /// 实例的产出物，新的在前（最多 `limit` 个，上限 500）。
+    pub async fn instance_artifacts(
+        &self,
+        instance_id: String,
+        limit: u32,
+    ) -> Result<Vec<Artifact>> {
+        let id: d::InstanceId = parse(&instance_id, "instance")?;
+        self.run(|c| async move {
+            Ok(c.api
+                .instance_artifacts(id, limit)
+                .await?
+                .into_iter()
+                .map(Into::into)
+                .collect())
+        })
+        .await
+    }
+
+    pub async fn delete_artifact(&self, artifact_id: String) -> Result<()> {
+        let id: d::ArtifactId = parse(&artifact_id, "artifact")?;
+        self.run(|c| async move { c.api.delete_artifact(id).await })
+            .await
     }
 
     pub async fn run_artifacts(&self, run_id: String) -> Result<Vec<Artifact>> {
@@ -1661,6 +1710,26 @@ impl ThinktinClient {
             .await
     }
 
+    /// 一条通知（从推送点进来时用）。
+    pub async fn inbox_item(&self, item_id: String) -> Result<InboxItem> {
+        let id: d::InboxItemId = parse(&item_id, "inbox item")?;
+        self.run(|c| async move { Ok(c.inbox_item(id).await?.into()) })
+            .await
+    }
+
+    /// 标回未读（要联网）。返回未读数。
+    pub async fn mark_inbox_unread(&self, item_id: String) -> Result<i64> {
+        let id: d::InboxItemId = parse(&item_id, "inbox item")?;
+        self.run(|c| async move { c.mark_inbox_unread(id).await })
+            .await
+    }
+
+    pub async fn delete_inbox_item(&self, item_id: String) -> Result<()> {
+        let id: d::InboxItemId = parse(&item_id, "inbox item")?;
+        self.run(|c| async move { c.delete_inbox_item(id).await })
+            .await
+    }
+
     // ---------- 用量 ----------
 
     /// 用量汇总。`group`：day / instance / model / credential；时间是 Unix 毫秒，不给就是最近 30 天；
@@ -1730,6 +1799,34 @@ impl ThinktinClient {
             daily_token_limit: credential.daily_token_limit,
         };
         self.run(|c| async move { Ok(c.api.add_credential(&new).await?.into()) })
+            .await
+    }
+
+    /// 改备注、停用或重新启用一把 key；给了才改。
+    pub async fn update_credential(
+        &self,
+        credential_id: String,
+        label: Option<String>,
+        disabled: Option<bool>,
+    ) -> Result<Credential> {
+        let id: d::CredentialId = parse(&credential_id, "credential")?;
+        self.run(|c| async move {
+            Ok(c.api
+                .update_credential(id, label.as_deref(), disabled)
+                .await?
+                .into())
+        })
+        .await
+    }
+
+    /// 换 key（同一个厂商、同一条记录：模型路由不用改）。等 key 的运行会接着跑。
+    pub async fn replace_credential_secret(
+        &self,
+        credential_id: String,
+        api_key: String,
+    ) -> Result<Credential> {
+        let id: d::CredentialId = parse(&credential_id, "credential")?;
+        self.run(|c| async move { Ok(c.api.replace_credential_secret(id, &api_key).await?.into()) })
             .await
     }
 

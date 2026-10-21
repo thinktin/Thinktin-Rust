@@ -979,6 +979,21 @@ impl Api {
         self.json(Method::GET, &path, None).await
     }
 
+    pub async fn inbox_item(&self, id: InboxItemId) -> Result<InboxItem> {
+        self.json(Method::GET, &format!("/v1/inbox/{id}"), None)
+            .await
+    }
+
+    pub async fn mark_inbox_unread(&self, id: InboxItemId) -> Result<()> {
+        self.empty(Method::POST, &format!("/v1/inbox/{id}/unread"), None)
+            .await
+    }
+
+    pub async fn delete_inbox_item(&self, id: InboxItemId) -> Result<()> {
+        self.empty(Method::DELETE, &format!("/v1/inbox/{id}"), None)
+            .await
+    }
+
     /// 标已读：给 `ids` 只标这些；否则标到 `up_to`（含）为止。返回剩余未读数。
     pub async fn mark_inbox_read(
         &self,
@@ -1044,6 +1059,42 @@ impl Api {
         let body = serde_json::to_value(c).map_err(ClientError::decode)?;
         self.json(Method::POST, "/v1/credentials", Some(&body))
             .await
+    }
+
+    /// 改备注、停用或重新启用一把 key；给了才改。
+    pub async fn update_credential(
+        &self,
+        id: CredentialId,
+        label: Option<&str>,
+        disabled: Option<bool>,
+    ) -> Result<Credential> {
+        let mut body = serde_json::Map::new();
+        if let Some(l) = label {
+            body.insert("label".into(), json!(l));
+        }
+        if let Some(d) = disabled {
+            body.insert("disabled".into(), json!(d));
+        }
+        self.json(
+            Method::PATCH,
+            &format!("/v1/credentials/{id}"),
+            Some(&Value::Object(body)),
+        )
+        .await
+    }
+
+    /// 换 key（同一个厂商、同一条记录：模型路由不用改）。
+    pub async fn replace_credential_secret(
+        &self,
+        id: CredentialId,
+        api_key: &str,
+    ) -> Result<Credential> {
+        self.json(
+            Method::PUT,
+            &format!("/v1/credentials/{id}/secret"),
+            Some(&json!({ "api_key": api_key })),
+        )
+        .await
     }
 
     pub async fn delete_credential(&self, id: CredentialId) -> Result<()> {
@@ -1239,6 +1290,31 @@ impl Api {
             .json::<R>(Method::GET, &format!("/v1/runs/{run}/artifacts"), None)
             .await?
             .artifacts)
+    }
+
+    /// 实例的产出物，新的在前（最多 `limit` 个）。
+    pub async fn instance_artifacts(
+        &self,
+        instance: InstanceId,
+        limit: u32,
+    ) -> Result<Vec<Artifact>> {
+        #[derive(Deserialize)]
+        struct R {
+            artifacts: Vec<Artifact>,
+        }
+        Ok(self
+            .json::<R>(
+                Method::GET,
+                &format!("/v1/instances/{instance}/artifacts?limit={limit}"),
+                None,
+            )
+            .await?
+            .artifacts)
+    }
+
+    pub async fn delete_artifact(&self, id: ArtifactId) -> Result<()> {
+        self.empty(Method::DELETE, &format!("/v1/artifacts/{id}"), None)
+            .await
     }
 
     pub async fn artifact_content(&self, id: ArtifactId) -> Result<Vec<u8>> {

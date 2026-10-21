@@ -1107,3 +1107,98 @@ async fn ffi_plan_editing_and_triggers() {
     ));
     assert_eq!(c.get_plan(plan.id).await.unwrap().triggers.len(), 1);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ffi_keys_runs_artifacts_and_inbox_items() {
+    let Some(e) = env().await else { return };
+    let (c, store, _d) = ffi_login(&e, "13800138509", "ios", "iPhone").await;
+    let user: UserId = store.load().unwrap().user_id.parse().unwrap();
+
+    // key：改备注、停用、换 key（只显示新的后 4 位）。
+    let cred = c
+        .add_credential(ffi::NewCredential {
+            vendor: "deepseek".into(),
+            label: "工作".into(),
+            api_key: "sk-0123456789abcdef".into(),
+            anthropic_base: None,
+            openai_base: None,
+            responses_base: None,
+            daily_token_limit: None,
+        })
+        .await
+        .unwrap();
+    let off = c
+        .update_credential(cred.id.clone(), Some("备用".into()), Some(true))
+        .await
+        .unwrap();
+    assert_eq!((off.label.as_str(), off.disabled), ("备用", true));
+    let swapped = c
+        .replace_credential_secret(cred.id.clone(), "sk-fedcba9876543210".into())
+        .await
+        .unwrap();
+    assert_eq!(swapped.last4, "3210");
+    assert!(matches!(
+        c.replace_credential_secret(cred.id, "short".into()).await,
+        Err(ClientError::Api { status: 422, .. })
+    ));
+
+    // 运行往下翻页；单个实例；实例的产出物。
+    let inst = c.adopt("claude".into(), "助手".into(), None).await.unwrap();
+    for n in 0..3 {
+        c.create_run(inst.id.clone(), format!("第 {n} 个"))
+            .await
+            .unwrap();
+    }
+    let first = c.runs(inst.id.clone(), 2).await.unwrap();
+    assert_eq!(first.len(), 2);
+    let older = c
+        .older_runs(inst.id.clone(), first[1].id.clone(), 2)
+        .await
+        .unwrap();
+    assert_eq!(older.len(), 1);
+    assert!(first.iter().all(|r| r.id != older[0].id));
+    assert_eq!(c.cached_runs(inst.id.clone(), 10).unwrap().len(), 3);
+    assert_eq!(c.instance(inst.id.clone()).await.unwrap().name, "助手");
+    assert!(
+        c.instance_artifacts(inst.id.clone(), 10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    // 收件箱：单条、标回未读、删除，缓存跟着变。
+    let mut w = e.t.db.worker().await.unwrap();
+    let mut ids = Vec::new();
+    for n in 0..2 {
+        ids.push(
+            w.insert_inbox(
+                user,
+                &NewInboxItem {
+                    kind: "info".into(),
+                    title: format!("通知 {n}"),
+                    ..NewInboxItem::default()
+                },
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .to_string(),
+        );
+    }
+    w.commit().await.unwrap();
+    c.sync_inbox(20).await.unwrap();
+    assert_eq!(
+        c.mark_inbox_read(vec![ids[0].clone()], None).await.unwrap(),
+        1
+    );
+    assert!(c.inbox_item(ids[0].clone()).await.unwrap().read);
+    assert_eq!(c.mark_inbox_unread(ids[0].clone()).await.unwrap(), 2);
+    assert!(!c.inbox_item(ids[0].clone()).await.unwrap().read);
+    assert_eq!(c.cached_unread().unwrap(), 2);
+    c.delete_inbox_item(ids[1].clone()).await.unwrap();
+    assert_eq!(c.cached_inbox(None, 20).unwrap().len(), 1);
+    assert!(matches!(
+        c.inbox_item(ids[1].clone()).await,
+        Err(ClientError::Api { status: 404, .. })
+    ));
+}

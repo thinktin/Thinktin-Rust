@@ -292,6 +292,7 @@ impl Cache {
             let tx = c.transaction()?;
             for id in ids {
                 tx.execute("DELETE FROM inbox WHERE id = ?1", [id.to_string()])?;
+                tx.execute("DELETE FROM pending_reads WHERE id = ?1", [id.to_string()])?;
             }
             tx.commit()
         })
@@ -342,6 +343,21 @@ impl Cache {
                 tx.execute("UPDATE inbox SET read = 1 WHERE id = ?1", [id])?;
                 tx.execute("INSERT OR IGNORE INTO pending_reads (id) VALUES (?1)", [id])?;
             }
+            let unread = tx.query_row("SELECT count(*) FROM inbox WHERE read = 0", [], |r| {
+                r.get(0)
+            })?;
+            tx.commit()?;
+            Ok(unread)
+        })
+    }
+
+    /// 标回未读（服务端已经改好了）：待同步的已读也去掉。返回本地未读数。
+    pub fn mark_unread_local(&self, id: InboxItemId) -> Result<i64> {
+        let id = id.to_string();
+        self.with(|c| {
+            let tx = c.transaction()?;
+            tx.execute("UPDATE inbox SET read = 0 WHERE id = ?1", [&id])?;
+            tx.execute("DELETE FROM pending_reads WHERE id = ?1", [&id])?;
             let unread = tx.query_row("SELECT count(*) FROM inbox WHERE read = 0", [], |r| {
                 r.get(0)
             })?;
