@@ -1,0 +1,13 @@
+{
+  "name": "thinktin-promo",
+  "private": true,
+  "type": "module",
+  "description": "ThinkTin 20 秒宣传片：HTML/SVG 逐帧渲染",
+  "scripts": {
+    "render": "node render.mjs",
+    "stills": "node render.mjs --stills"
+  },
+  "devDependencies": {
+    "playwright": "1.56.1"
+  }
+}

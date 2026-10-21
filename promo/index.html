@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>ThinkTin Promo</title>
+<style>
+  html, body { margin: 0; background: #05070d; }
+  #stage { position: relative; width: 1920px; height: 1080px; overflow: hidden; font-family: "Noto Sans SC"; color: #fff; }
+  .t { position: absolute; left: 0; top: 400px; width: 1920px; text-align: center; font-size: 120px; font-weight: 900; }
+</style>
+</head>
+<body>
+<div id="stage"><div class="t" id="txt">常驻云端 ThinkTin 0.00</div></div>
+<script>
+  window.DURATION = 20;
+  window.renderFrame = (t) => { document.getElementById('txt').textContent = '常驻云端 ThinkTin ' + t.toFixed(2); };
+</script>
+</body>
+</html>
