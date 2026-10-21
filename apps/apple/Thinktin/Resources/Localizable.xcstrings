@@ -1,0 +1,47 @@
+{
+  "sourceLanguage" : "zh-Hans",
+  "strings" : {
+    "ThinkTin" : {
+      "comment" : "App 名称，各语言都不翻译。",
+      "extractionState" : "manual",
+      "shouldTranslate" : false
+    },
+    "取消" : {
+      "comment" : "通用按钮：取消当前操作。",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel"
+          }
+        }
+      }
+    },
+    "完成" : {
+      "comment" : "通用按钮：完成编辑、关闭弹层。",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Done"
+          }
+        }
+      }
+    },
+    "重试" : {
+      "comment" : "通用按钮：网络或接口出错后重试。",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Retry"
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}
