@@ -214,8 +214,8 @@ pub struct WebhookReq {
     secret: Option<String>,
 }
 
-/// 换地址或签名密钥（群机器人重建了、密钥重置了）。要是同一家的；之前记下的错误清掉，渠道重新打开
-/// （机器人失效被停用的，换上新地址就能接着发）。
+/// 换地址或签名密钥（群机器人重建了、密钥重置了）。要是同一家的；之前记下的错误清掉，机器人失效被后台停用的
+/// 渠道重新打开，换上新地址就能接着发（用户自己关掉的还是关着）。
 pub async fn replace_webhook(
     State(s): State<AppState>,
     Authed(who): Authed,

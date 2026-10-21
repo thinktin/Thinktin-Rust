@@ -1148,7 +1148,7 @@ impl Api {
         .await
     }
 
-    /// 换 webhook 地址或加签密钥（要是同一家的）。
+    /// 换 webhook 地址或加签密钥（要是同一家的）。机器人失效被后台停用的渠道会重新打开，用户自己关掉的还是关着。
     pub async fn replace_im_webhook(
         &self,
         id: ImChannelId,

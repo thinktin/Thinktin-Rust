@@ -18,7 +18,7 @@
 | `GET /v1/im-channels` | 渠道列表：平台、名字、`hint`（token 后 4 位）、有没有密钥、订阅的事件、开关、最近发送时间和错误。**没有地址和密钥** |
 | `POST /v1/im-channels` | `{webhook_url, secret?, label?, events?}`，返回 201。平台按地址认（`feishu`、`lark`、`wecom`、`dingtalk`）；每人最多 20 个（插入时按用户加锁再数，并发的请求也超不过） |
 | `PATCH /v1/im-channels/{id}` | 改 `label`、`events`、`enabled` |
-| `PUT /v1/im-channels/{id}/webhook` | 换地址或密钥（`{webhook_url, secret?}`，没给密钥就是不加签），要是同一家的；之前的错误清掉，渠道重新打开（机器人失效被停用的，换上新地址就能接着发） |
+| `PUT /v1/im-channels/{id}/webhook` | 换地址或密钥（`{webhook_url, secret?}`，没给密钥就是不加签），要是同一家的；之前的错误清掉；机器人失效被后台停用的渠道重新打开，换上新地址就能接着发（用户自己关掉的还是关着） |
 | `POST /v1/im-channels/{id}/test` | 发测试消息，202；经出箱发，结果写回 `last_sent_at` / `last_error`。每人每小时 10 条（`[api.limits] im_tests_per_hour`） |
 | `DELETE /v1/im-channels/{id}` | 删除 |
 
@@ -86,7 +86,7 @@
 |---|---|
 | 地址只认官方前缀和 token；签名密钥按平台检查 | `crates/proto/src/im.rs` |
 | 凭证的密文只在自己的域里解得开 | `crates/keyvault`（`webhook_secrets_roundtrip_and_stay_in_their_domain`） |
-| 表的隔离、发送节奏、厂商限流往后推、按地址的版本记结果、换地址重新打开、按渠道排队领取、并发新建不超上限 | `crates/store/src/tests.rs`（`im_channels_are_per_user_rate_limited_…`） |
+| 表的隔离、发送节奏、厂商限流往后推、按地址的版本记结果、换地址重新打开后台停用的渠道、按渠道排队领取、并发新建不超上限 | `crates/store/src/tests.rs`（`im_channels_are_per_user_rate_limited_…`） |
 | 三家的消息格式、签名（假的厂商服务验签）、错误码分类、不跟随重定向、错误里没有 token | `crates/notify/src/im/tests.rs` |
 | 按订阅的事件进出箱、标题和标识、失效停用并只通知一次、换地址接着发、设置错误记原因、重试和放弃记在渠道上、限流推后不算尝试、退订后不发、超过一小时不发、推送和 IM 各领各的、渠道并发、过滤、删除和注销后放弃 | `crates/orchestrator/tests/im.rs` |
 | 接口：增删改、换地址、测试消息、拒收的地址、审计不含凭证、测试消息限流、跨用户 404 | `crates/gateway/tests/api.rs`（`im_channels_over_http` 等） |

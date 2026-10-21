@@ -15,6 +15,8 @@ CREATE TABLE im_channels (
     events            text[] NOT NULL DEFAULT '{run_finished,run_failed,approval}'
                       CHECK (events <@ ARRAY['run_finished', 'run_failed', 'approval']::text[]),
     enabled           boolean NOT NULL DEFAULT true,
+    -- 后台停用的（机器人删了、地址失效）：换地址时重新打开。用户自己关掉的换了地址还是关着。
+    auto_disabled     boolean NOT NULL DEFAULT false,
     -- 多个后台副本共用的发送节奏（各家对每个机器人每分钟、每秒能发几条有上限）：下一条最早什么时候发。
     -- 厂商说限流了（钉钉会限 10 分钟），也往后推。
     next_slot_at      timestamptz,
@@ -35,7 +37,7 @@ CREATE POLICY tenant ON im_channels TO thinktin_app USING (user_id = app_user_id
 
 GRANT SELECT, INSERT, DELETE ON im_channels TO thinktin_app;
 -- 业务接口改不了发送节奏和发送时间（只有后台发送时写）。
-GRANT UPDATE (label, sealed, hint, has_secret, events, enabled, webhook_rev, last_error, last_error_at, updated_at) ON im_channels TO thinktin_app;
+GRANT UPDATE (label, sealed, hint, has_secret, events, enabled, auto_disabled, webhook_rev, last_error, last_error_at, updated_at) ON im_channels TO thinktin_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON im_channels TO thinktin_worker;
 
 -- 出箱里的 IM 条目按渠道排队：每个渠道只领最早的那一条（按顺序发，限流推后的不会一起涌回来）。

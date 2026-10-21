@@ -33,7 +33,8 @@ impl std::fmt::Debug for NewImChannel {
 }
 
 /// 改绑定：给了才改。`webhook` 是重新封好的 token 和签名密钥，连同提示和有没有密钥
-/// （换了地址或密钥：之前记下的错误清掉，渠道重新打开——机器人失效被停用的，换上新地址就能接着发）。
+/// （换了地址或密钥：之前记下的错误清掉；机器人失效被后台停用的渠道重新打开，换上新地址就能接着发。
+/// 用户自己关掉的渠道换地址后还是关着）。
 #[derive(Clone, Default)]
 pub struct ImChannelChange {
     pub label: Option<String>,
@@ -217,7 +218,8 @@ impl Tx<Tenant> {
         };
         let row: Option<Row> = sqlx::query_as(concat!(
             "UPDATE im_channels SET label = coalesce($2, label), events = coalesce($3, events), \
-               enabled = CASE WHEN $6::bytea IS NULL THEN coalesce($4, enabled) ELSE true END, \
+               enabled = coalesce($4, CASE WHEN $6::bytea IS NULL THEN enabled ELSE enabled OR auto_disabled END), \
+               auto_disabled = CASE WHEN $4::bool IS NULL AND $6::bytea IS NULL THEN auto_disabled ELSE false END, \
                sealed = coalesce($6, sealed), hint = coalesce($7, hint), \
                has_secret = coalesce($8, has_secret), \
                webhook_rev = webhook_rev + CASE WHEN $6::bytea IS NULL THEN 0 ELSE 1 END, \
@@ -364,7 +366,8 @@ impl Tx<Worker> {
              UPDATE im_channels c SET \
                last_sent_at = CASE WHEN $3::text IS NULL THEN now() ELSE c.last_sent_at END, \
                last_error = $3, last_error_at = CASE WHEN $3::text IS NULL THEN NULL ELSE now() END, \
-               enabled = c.enabled AND NOT $4 \
+               enabled = c.enabled AND NOT $4, \
+               auto_disabled = c.auto_disabled OR (c.enabled AND $4) \
              FROM old WHERE c.id = $1 AND c.webhook_rev = $2 \
              RETURNING old.enabled AND NOT c.enabled",
         )

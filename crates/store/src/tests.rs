@@ -2401,6 +2401,22 @@ async fn im_channels_are_per_user_rate_limited_and_settle_without_spending_attem
         .await
         .unwrap();
     assert!(back.enabled && back.last_error.is_none());
+    // 用户自己关掉的：换了地址还是关着，自己打开才发。
+    let off = ImChannelChange {
+        enabled: Some(false),
+        ..Default::default()
+    };
+    assert!(!tx.update_im_channel(id, &off).await.unwrap().enabled);
+    let rotate = ImChannelChange {
+        webhook: Some((ImVendor::Dingtalk, vec![5; 40], "…f00d".into(), true)),
+        ..Default::default()
+    };
+    assert!(!tx.update_im_channel(id, &rotate).await.unwrap().enabled);
+    let on = ImChannelChange {
+        enabled: Some(true),
+        ..Default::default()
+    };
+    assert!(tx.update_im_channel(id, &on).await.unwrap().enabled);
     tx.commit().await.unwrap();
 
     // IM 条目按渠道排队：每个渠道只领最早的一条；推后的那条挡着后面的；渠道删了一起放弃。
