@@ -3,6 +3,7 @@
 pub mod api;
 pub mod computer;
 pub mod domain;
+pub mod im;
 pub mod labels;
 pub mod relay;
 pub mod shim;

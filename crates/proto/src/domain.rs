@@ -68,6 +68,7 @@ id_type!(
     VaultRequestId,
     DeviceCallId,
     DeviceMessageId,
+    ImChannelId,
 );
 
 /// 字符串枚举的公共实现：和数据库里的取值一一对应。
@@ -537,6 +538,44 @@ pub struct VaultItem {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub last_used_at: Option<DateTime<Utc>>,
+}
+
+str_enum!(
+    /// IM 渠道（10.5）：群机器人所在的平台。飞书和 Lark（飞书的海外版）域名不同、账号不通，分开记。
+    ImVendor {
+        Feishu = "feishu",
+        Lark = "lark",
+        Wecom = "wecom",
+        Dingtalk = "dingtalk",
+    }
+);
+
+str_enum!(
+    /// 发到 IM 群里的事件（10.5）：和系统推送的重要事件一致。
+    ImEvent {
+        RunFinished = "run_finished",
+        RunFailed = "run_failed",
+        Approval = "approval",
+    }
+);
+
+/// 用户绑定的 IM 群机器人（10.5）。webhook 地址里的 token 和签名密钥按用户 DEK 加密，接口从不返回，
+/// 只给 `hint`（token 后 4 位）让用户认出是哪个群。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImChannel {
+    pub id: ImChannelId,
+    pub vendor: ImVendor,
+    pub label: String,
+    pub hint: String,
+    /// 有没有存签名密钥（飞书、钉钉的“加签”）。
+    pub has_secret: bool,
+    pub events: Vec<ImEvent>,
+    pub enabled: bool,
+    pub last_sent_at: Option<DateTime<Utc>>,
+    /// 最近一次发送失败的原因（签名不对、关键词不匹配、机器人被删……），发成功后清空。
+    pub last_error: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 /// 保险箱条目里的字段：账号、密码。

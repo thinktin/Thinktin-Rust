@@ -300,32 +300,59 @@ impl Drop for VaultSecret {
 }
 
 impl VaultSecret {
-    /// 格式：版本 1、账号长度（4 字节大端）、账号、密码。
     fn encode(&self) -> Zeroizing<Vec<u8>> {
-        let mut out = Zeroizing::new(Vec::with_capacity(
-            5 + self.username.len() + self.password.len(),
-        ));
-        out.push(1);
-        out.extend_from_slice(&(self.username.len() as u32).to_be_bytes());
-        out.extend_from_slice(self.username.as_bytes());
-        out.extend_from_slice(self.password.as_bytes());
-        out
+        encode_pair(&self.username, &self.password)
     }
 
     fn decode(plain: &[u8]) -> Result<Self> {
-        let [1, a, b, c, d, rest @ ..] = plain else {
-            return Err(Error::Malformed);
-        };
-        let n = u32::from_be_bytes([*a, *b, *c, *d]) as usize;
-        if n > rest.len() {
-            return Err(Error::Malformed);
-        }
-        let (user, pass) = rest.split_at(n);
-        let text = |b: &[u8]| String::from_utf8(b.to_vec()).map_err(|_| Error::Malformed);
-        Ok(Self {
-            username: text(user)?,
-            password: text(pass)?,
-        })
+        let (username, password) = decode_pair(plain)?;
+        Ok(Self { username, password })
+    }
+}
+
+/// 两段文字的明文格式：版本 1、第一段的长度（4 字节大端）、第一段、第二段。
+fn encode_pair(first: &str, second: &str) -> Zeroizing<Vec<u8>> {
+    let mut out = Zeroizing::new(Vec::with_capacity(5 + first.len() + second.len()));
+    out.push(1);
+    out.extend_from_slice(&(first.len() as u32).to_be_bytes());
+    out.extend_from_slice(first.as_bytes());
+    out.extend_from_slice(second.as_bytes());
+    out
+}
+
+fn decode_pair(plain: &[u8]) -> Result<(String, String)> {
+    let [1, a, b, c, d, rest @ ..] = plain else {
+        return Err(Error::Malformed);
+    };
+    let n = u32::from_be_bytes([*a, *b, *c, *d]) as usize;
+    if n > rest.len() {
+        return Err(Error::Malformed);
+    }
+    let (first, second) = rest.split_at(n);
+    let text = |b: &[u8]| String::from_utf8(b.to_vec()).map_err(|_| Error::Malformed);
+    Ok((text(first)?, text(second)?))
+}
+
+/// IM 群机器人的凭证（10.5）：webhook 地址里的 token 和签名密钥（没有加签时为空）。丢弃时清零，
+/// 调试输出不显示内容。
+#[derive(Clone, PartialEq, Eq)]
+pub struct WebhookSecret {
+    pub token: String,
+    pub secret: String,
+}
+
+impl std::fmt::Debug for WebhookSecret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WebhookSecret")
+            .field("has_secret", &!self.secret.is_empty())
+            .finish_non_exhaustive()
+    }
+}
+
+impl Drop for WebhookSecret {
+    fn drop(&mut self) {
+        self.token.zeroize();
+        self.secret.zeroize();
     }
 }
 
@@ -553,6 +580,37 @@ impl<K: Kms, S: KeyStore> KeyVault<K, S> {
         VaultSecret::decode(&plain)
     }
 
+    /// 加密一个 IM 群机器人的凭证（10.5）。`channel_id` 进 AAD，单独的域，和保险箱、key 的密文不能互换。
+    pub async fn seal_webhook(
+        &self,
+        user_id: &str,
+        channel_id: &str,
+        secret: &WebhookSecret,
+    ) -> Result<Vec<u8>> {
+        let dek = self.dek(user_id).await?;
+        let cipher = Aes256Gcm::new_from_slice(dek.as_ref()).expect("32-byte key");
+        let plain = encode_pair(&secret.token, &secret.secret);
+        seal_raw(
+            &cipher,
+            &plain,
+            &domain_aad(b"thinktin/im/v1/", user_id, channel_id),
+        )
+    }
+
+    pub async fn open_webhook(
+        &self,
+        user_id: &str,
+        channel_id: &str,
+        sealed: &[u8],
+    ) -> Result<WebhookSecret> {
+        let dek = self.dek(user_id).await?;
+        let cipher = Aes256Gcm::new_from_slice(dek.as_ref()).expect("32-byte key");
+        let aad = domain_aad(b"thinktin/im/v1/", user_id, channel_id);
+        let plain = Zeroizing::new(open_raw(&cipher, sealed, &aad)?);
+        let (token, secret) = decode_pair(&plain)?;
+        Ok(WebhookSecret { token, secret })
+    }
+
     async fn dek(&self, user_id: &str) -> Result<Zeroizing<[u8; DEK_LEN]>> {
         let now = Instant::now();
         {
@@ -585,20 +643,20 @@ impl<K: Kms, S: KeyStore> KeyVault<K, S> {
 }
 
 fn blob_aad(user_id: &str, object_id: &str) -> Vec<u8> {
-    let mut out = b"thinktin/blob/v1/".to_vec();
+    domain_aad(b"thinktin/blob/v1/", user_id, object_id)
+}
+
+fn vault_aad(user_id: &str, item_id: &str) -> Vec<u8> {
+    domain_aad(b"thinktin/vault/v1/", user_id, item_id)
+}
+
+/// 每类密文一个域，用户 id 和对象 id 带长度前缀。
+fn domain_aad(domain: &[u8], user_id: &str, object_id: &str) -> Vec<u8> {
+    let mut out = domain.to_vec();
     out.extend_from_slice(&(user_id.len() as u32).to_be_bytes());
     out.extend_from_slice(user_id.as_bytes());
     out.extend_from_slice(&(object_id.len() as u32).to_be_bytes());
     out.extend_from_slice(object_id.as_bytes());
-    out
-}
-
-fn vault_aad(user_id: &str, item_id: &str) -> Vec<u8> {
-    let mut out = b"thinktin/vault/v1/".to_vec();
-    out.extend_from_slice(&(user_id.len() as u32).to_be_bytes());
-    out.extend_from_slice(user_id.as_bytes());
-    out.extend_from_slice(&(item_id.len() as u32).to_be_bytes());
-    out.extend_from_slice(item_id.as_bytes());
     out
 }
 
@@ -848,6 +906,32 @@ mod tests {
         assert!(!format!("{secret:?}").contains("wörd"));
         assert!(VaultSecret::decode(&[1, 0, 0, 0, 9, b'a']).is_err());
         assert!(VaultSecret::decode(&[2, 0, 0, 0, 0]).is_err());
+    }
+
+    #[tokio::test]
+    async fn webhook_secrets_roundtrip_and_stay_in_their_domain() {
+        let v = vault();
+        v.create_user_key("u1").await.unwrap();
+        v.create_user_key("u2").await.unwrap();
+        let hook = WebhookSecret {
+            token: "0123456789abcdef0123456789abcdef".into(),
+            secret: "SECc0ffee".into(),
+        };
+        let sealed = v.seal_webhook("u1", "ch-1", &hook).await.unwrap();
+        assert_eq!(v.open_webhook("u1", "ch-1", &sealed).await.unwrap(), hook);
+        assert!(!String::from_utf8_lossy(&sealed).contains("0123456789abcdef"));
+        // 别的渠道、别的用户、别的域（保险箱、产出物）都解不开，反过来也一样。
+        assert!(v.open_webhook("u1", "ch-2", &sealed).await.is_err());
+        assert!(v.open_webhook("u2", "ch-1", &sealed).await.is_err());
+        assert!(v.open_vault("u1", "ch-1", &sealed).await.is_err());
+        assert!(v.open_bytes("u1", "ch-1", &sealed).await.is_err());
+        let item = VaultSecret {
+            username: "0123456789abcdef0123456789abcdef".into(),
+            password: "SECc0ffee".into(),
+        };
+        let vault_sealed = v.seal_vault("u1", "ch-1", &item).await.unwrap();
+        assert!(v.open_webhook("u1", "ch-1", &vault_sealed).await.is_err());
+        assert!(!format!("{hook:?}").contains("c0ffee"));
     }
 
     #[tokio::test]
