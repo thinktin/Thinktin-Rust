@@ -2,18 +2,221 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ThinkTin Promo</title>
 <style>
-  html, body { margin: 0; background: #05070d; }
-  #stage { position: relative; width: 1920px; height: 1080px; overflow: hidden; font-family: "Noto Sans SC"; color: #fff; }
-  .t { position: absolute; left: 0; top: 400px; width: 1920px; text-align: center; font-size: 120px; font-weight: 900; }
+  @font-face { font-family: "Noto Sans SC"; font-weight: 400; src: url(fonts/NotoSansSC-400.woff2) format("woff2"); }
+  @font-face { font-family: "Noto Sans SC"; font-weight: 700; src: url(fonts/NotoSansSC-700.woff2) format("woff2"); }
+  @font-face { font-family: "Noto Sans SC"; font-weight: 900; src: url(fonts/NotoSansSC-900.woff2) format("woff2"); }
+  @font-face { font-family: "Inter"; font-weight: 400; src: url(fonts/Inter-400.woff2) format("woff2"); }
+  @font-face { font-family: "Inter"; font-weight: 600; src: url(fonts/Inter-600.woff2) format("woff2"); }
+  @font-face { font-family: "Inter"; font-weight: 800; src: url(fonts/Inter-800.woff2) format("woff2"); }
+  @font-face { font-family: "JetBrains Mono"; font-weight: 500; src: url(fonts/JetBrainsMono-500.woff2) format("woff2"); }
+
+  :root {
+    --bg: #05070d;
+    --text: #eaf0ff;
+    --dim: #7d8aa8;
+    --cyan: #3de0ff;
+    --violet: #8b7cff;
+    --mint: #3dffb0;
+    --amber: #ffb547;
+    --fit: 1;
+  }
+  html, body { margin: 0; background: #000; overflow: hidden; }
+  body.preview { display: grid; place-items: center; height: 100vh; }
+  #frame { width: calc(1920px * var(--fit)); height: calc(1080px * var(--fit)); overflow: hidden; }
+  #stage {
+    position: relative; width: 1920px; height: 1080px; overflow: hidden;
+    transform: scale(var(--fit)); transform-origin: 0 0;
+    background: var(--bg); color: var(--text);
+    font-family: "Inter", "Noto Sans SC", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .mono { font-family: "JetBrains Mono", "Noto Sans SC", monospace; }
+  .layer { position: absolute; inset: 0; pointer-events: none; }
+
+  /* 背景 */
+  .blob { position: absolute; width: 1400px; height: 1400px; left: -700px; top: -700px; border-radius: 50%; }
+  .b1 { background: radial-gradient(closest-side, rgba(61, 224, 255, .20), rgba(61, 224, 255, 0)); }
+  .b2 { background: radial-gradient(closest-side, rgba(139, 124, 255, .22), rgba(139, 124, 255, 0)); }
+  .b3 { background: radial-gradient(closest-side, rgba(61, 255, 176, .10), rgba(61, 255, 176, 0)); }
+  #grid {
+    background-image: radial-gradient(circle, rgba(125, 138, 168, .22) 1.3px, transparent 1.8px);
+    background-size: 44px 44px;
+    -webkit-mask-image: radial-gradient(ellipse 75% 70% at 60% 50%, #000 30%, transparent 85%);
+  }
+  #vignette { background: radial-gradient(ellipse 80% 75% at 50% 50%, transparent 55%, rgba(0, 0, 0, .6) 100%); }
+  #grain { opacity: .05; mix-blend-mode: overlay; }
+  #flash { background: radial-gradient(ellipse 60% 55% at 50% 50%, rgba(190, 240, 255, .9), rgba(61, 224, 255, 0) 70%); opacity: 0; }
+  #sweep {
+    width: 260px; left: -260px; right: auto;
+    background: linear-gradient(90deg, transparent, rgba(61, 224, 255, .10) 40%, rgba(220, 250, 255, .5) 50%, rgba(139, 124, 255, .10) 60%, transparent);
+  }
+  #fade { background: #000; opacity: 0; }
+
+  /* 镜头 */
+  .scene { position: absolute; inset: 0; display: none; }
+  .copy { position: absolute; left: 150px; top: 318px; width: 780px; }
+  .idx { font-size: 22px; letter-spacing: .12em; color: var(--cyan); margin-bottom: 30px; font-weight: 500; }
+  .idx b { color: var(--text); font-weight: 500; }
+  h1 { margin: 0; font-size: 104px; line-height: 1.2; font-weight: 900; letter-spacing: -.01em; }
+  h1 .l { display: block; white-space: nowrap; }
+  h1 .hl { color: var(--cyan); }
+  .sub { margin: 38px 0 0; font-size: 36px; font-weight: 400; color: #a9b6d6; letter-spacing: .02em; }
+  .ch { display: inline-block; will-change: transform; }
+  .vis { position: absolute; left: 930px; top: 140px; width: 900px; height: 800px; overflow: visible; }
+  .vis text { font-family: "Inter", "Noto Sans SC", sans-serif; }
+  .vis .mono { font-family: "JetBrains Mono", "Noto Sans SC", monospace; }
+  .pop { transform-box: fill-box; transform-origin: center; }
+
+  /* 落版 */
+  #logo { position: absolute; left: 0; right: 0; top: 330px; text-align: center; }
+  .lockup { display: inline-flex; align-items: center; gap: 44px; }
+  #logo-mark { width: 196px; height: 196px; overflow: visible; }
+  #wordmark { font-size: 176px; font-weight: 800; letter-spacing: -.035em; line-height: 1; }
+  #wordmark .tin { color: var(--cyan); }
+  #tagline { margin-top: 64px; font-size: 64px; font-weight: 700; letter-spacing: .02em; }
+  #tagline .em { color: var(--mint); }
+  #slogan { margin-top: 30px; font-size: 28px; color: var(--dim); letter-spacing: .14em; }
+  #wave { position: absolute; left: 960px; top: 540px; width: 0; height: 0; }
+  #wave i { position: absolute; border-radius: 50%; border: 2px solid rgba(61, 224, 255, .5); }
+
+  /* 常驻元素 */
+  #brand { position: absolute; left: 150px; top: 76px; display: flex; align-items: center; gap: 14px; font-size: 26px; font-weight: 600; letter-spacing: -.01em; }
+  #brand svg { width: 36px; height: 36px; }
+  #brand .tin { color: var(--cyan); }
+  #progress { position: absolute; left: 150px; top: 990px; display: flex; gap: 12px; }
+  #progress i { display: block; width: 64px; height: 4px; border-radius: 2px; background: rgba(125, 138, 168, .25); overflow: hidden; }
+  #progress i b { display: block; height: 100%; width: 0; background: var(--cyan); }
+
+  /* 预览播放条 */
+  #scrub { position: fixed; left: 0; right: 0; bottom: 0; display: flex; gap: 12px; align-items: center; padding: 10px 16px; background: rgba(5, 7, 13, .85); color: #eaf0ff; font: 14px "JetBrains Mono", monospace; }
+  #scrub input { flex: 1; }
+  #scrub button { background: #1a2443; color: #eaf0ff; border: 0; border-radius: 6px; width: 44px; height: 30px; cursor: pointer; }
 </style>
 </head>
 <body>
-<div id="stage"><div class="t" id="txt">常驻云端 ThinkTin 0.00</div></div>
-<script>
-  window.DURATION = 20;
-  window.renderFrame = (t) => { document.getElementById('txt').textContent = '常驻云端 ThinkTin ' + t.toFixed(2); };
-</script>
+<div id="frame">
+<div id="stage">
+  <div class="layer" id="bg"><div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div></div>
+  <div class="layer" id="grid"></div>
+
+  <!-- 共享的 SVG 定义 -->
+  <svg width="0" height="0" style="position:absolute">
+    <defs>
+      <linearGradient id="gCV" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#3de0ff"/><stop offset="1" stop-color="#8b7cff"/>
+      </linearGradient>
+      <linearGradient id="scr" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#131c35"/><stop offset="1" stop-color="#0a1022"/>
+      </linearGradient>
+      <radialGradient id="rCore">
+        <stop offset="0" stop-color="#3de0ff" stop-opacity=".45"/><stop offset="1" stop-color="#3de0ff" stop-opacity="0"/>
+      </radialGradient>
+      <radialGradient id="rMint">
+        <stop offset="0" stop-color="#3dffb0" stop-opacity=".5"/><stop offset="1" stop-color="#3dffb0" stop-opacity="0"/>
+      </radialGradient>
+      <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+        <feGaussianBlur stdDeviation="7" result="b"/>
+        <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+      <symbol id="g-agent" viewBox="-60 -60 120 120">
+        <rect x="-44" y="-44" width="88" height="88" rx="28" fill="currentColor" fill-opacity=".16" stroke="currentColor" stroke-width="4"/>
+        <rect x="-21" y="-15" width="11" height="26" rx="5.5" fill="currentColor"/>
+        <rect x="10" y="-15" width="11" height="26" rx="5.5" fill="currentColor"/>
+      </symbol>
+      <symbol id="g-mark" viewBox="0 0 100 100">
+        <path d="M 34 6 H 66 A 28 28 0 0 1 94 34 V 66 A 28 28 0 0 1 66 94 H 34 A 28 28 0 0 1 6 66 V 34 A 28 28 0 0 1 34 6 Z" fill="#0d1530" stroke="url(#gCV)" stroke-width="7"/>
+        <rect x="27" y="29" width="46" height="12" rx="6" fill="#eaf0ff"/>
+        <rect x="44" y="29" width="12" height="44" rx="6" fill="#eaf0ff"/>
+        <circle cx="84" cy="16" r="12" fill="#3dffb0" stroke="#05070d" stroke-width="5"/>
+      </symbol>
+    </defs>
+  </svg>
+
+  <!-- 01 常驻 -->
+  <section class="scene" data-scene="0">
+    <div class="copy">
+      <div class="idx mono">01 — <b>常驻云端</b></div>
+      <h1><span class="l" data-at="0.15">你下线了，</span><span class="l hl" data-at="1.0">它还在干活</span></h1>
+      <p class="sub" data-at="1.5">退出登录，计划照常执行</p>
+    </div>
+    <svg class="vis" id="v1" viewBox="0 0 900 800"></svg>
+  </section>
+
+  <!-- 02 多 agent 协同 -->
+  <section class="scene" data-scene="1">
+    <div class="copy">
+      <div class="idx mono">02 — <b>多 agent 协同</b></div>
+      <h1><span class="l" data-at="0.1">多个 agent</span><span class="l hl" data-at="0.4">分工协作</span></h1>
+      <p class="sub" data-at="0.9">流水线编排 · 负责人委派</p>
+    </div>
+    <svg class="vis" id="v2" viewBox="0 0 900 800"></svg>
+  </section>
+
+  <!-- 03 强隔离 -->
+  <section class="scene" data-scene="2">
+    <div class="copy">
+      <div class="idx mono">03 — <b>强隔离 · 自带 key</b></div>
+      <h1><span class="l" data-at="0.1">一个 agent</span><span class="l hl" data-at="0.4">一台 microVM</span></h1>
+      <p class="sub" data-at="1.0">模型 key 自带，永不进沙箱</p>
+    </div>
+    <svg class="vis" id="v3" viewBox="0 0 900 800"></svg>
+  </section>
+
+  <!-- 04 手机控制电脑 -->
+  <section class="scene" data-scene="3">
+    <div class="copy">
+      <div class="idx mono">04 — <b>手机控制电脑</b></div>
+      <h1><span class="l" data-at="0.1">手机下令，</span><span class="l hl" data-at="0.4">电脑执行</span></h1>
+      <p class="sub" data-at="0.9">高危操作，必须手机签名</p>
+    </div>
+    <svg class="vis" id="v4" viewBox="0 0 900 800"></svg>
+  </section>
+
+  <!-- 05 Rust 与三端原生 -->
+  <section class="scene" data-scene="4">
+    <div class="copy">
+      <div class="idx mono">05 — <b>Rust 全栈 · 三端原生</b></div>
+      <h1><span class="l" data-at="0.1">Rust 内核，</span><span class="l hl" data-at="0.4">三端原生</span></h1>
+      <p class="sub" data-at="0.9">平台与客户端核心全部用 Rust</p>
+    </div>
+    <svg class="vis" id="v5" viewBox="0 0 900 800"></svg>
+  </section>
+
+  <!-- 06 落版 -->
+  <section class="scene" data-scene="5">
+    <div id="wave"><i></i><i></i></div>
+    <div id="logo">
+      <div class="lockup">
+        <svg id="logo-mark" viewBox="0 0 100 100">
+          <path id="lm-shell" d="M 34 6 H 66 A 28 28 0 0 1 94 34 V 66 A 28 28 0 0 1 66 94 H 34 A 28 28 0 0 1 6 66 V 34 A 28 28 0 0 1 34 6 Z" fill="#0d1530" stroke="url(#gCV)" stroke-width="6"/>
+          <g id="lm-t" class="pop">
+            <rect x="27" y="29" width="46" height="12" rx="6" fill="#eaf0ff"/>
+            <rect x="44" y="29" width="12" height="44" rx="6" fill="#eaf0ff"/>
+          </g>
+          <circle id="lm-ping" cx="84" cy="16" r="12" fill="none" stroke="#3dffb0" stroke-width="2"/>
+          <circle id="lm-dot" class="pop" cx="84" cy="16" r="12" fill="#3dffb0" stroke="#05070d" stroke-width="5"/>
+        </svg>
+        <div id="wordmark">Think<span class="tin">Tin</span></div>
+      </div>
+      <div id="tagline"><span id="tg-a">你的 agent，</span><span id="tg-b" class="em">一直在线</span></div>
+      <div id="slogan">领养开源 agent · 常驻云端 · 多 agent 协同</div>
+    </div>
+  </section>
+
+  <div id="brand"><svg viewBox="0 0 100 100"><use href="#g-mark"/></svg><span>Think<span class="tin">Tin</span></span></div>
+  <div id="progress"><i><b></b></i><i><b></b></i><i><b></b></i><i><b></b></i><i><b></b></i></div>
+
+  <div class="layer" id="sweep"></div>
+  <div class="layer" id="flash"></div>
+  <div class="layer" id="vignette"></div>
+  <div class="layer" id="grain"></div>
+  <div class="layer" id="fade"></div>
+</div>
+</div>
+<script src="engine.js"></script>
+<script src="timeline.js"></script>
 </body>
 </html>

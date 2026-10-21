@@ -6,6 +6,7 @@ ThinkTin 平台：托管多个开源 agent，用户领养后常驻云端、按�
 
 - [架构方案 v3](docs/architecture-v3.md)（当前版本）
 - [工作分解结构（WBS）](docs/wbs.md) · [CSV](docs/wbs.csv)
+- [宣传片（20 秒）](promo/out/thinktin-promo.mp4) · [制作说明](promo/README.md)
 - [架构方案 v2](docs/architecture-v2.md) · [讨论记录 2026-10-14](docs/discussion-2026-10-14.md)
 
 ## 代码结构

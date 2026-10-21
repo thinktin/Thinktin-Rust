@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 一键生成宣传片：裁剪字体 → 合成音乐 → 逐帧渲染并编码
+# 一键生成宣传片：裁剪字体 → 合成配乐 → 逐帧渲染并编码 → 导出封面
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -7,6 +7,5 @@ cd "$(dirname "$0")"
 python3 fonts.py
 python3 music.py
 node render.mjs "$@"
-node render.mjs --stills 17.5 >/dev/null
-cp out/stills/t17.50.png out/poster.png
+ffmpeg -v error -y -ss 18.5 -i out/thinktin-promo.mp4 -frames:v 1 out/poster.png
 echo "完成：out/thinktin-promo.mp4、out/poster.png"

@@ -36,19 +36,29 @@ function pose(el, { o = 1, x = 0, y = 0, s = 1, sx, sy, r = 0, blur = 0 } = {}) 
   el.style.filter = blur > 0.05 ? `blur(${blur}px)` : 'none';
 }
 
-// 把文字拆成逐字的 span，返回这些 span
+// 把文字拆成逐字的 span（保留里面的 <span class> 等包裹），返回这些 span
 function splitChars(el) {
   if (el._chars) return el._chars;
-  const text = el.textContent;
-  el.textContent = '';
-  el._chars = [...text].map((c) => {
-    const s = document.createElement('span');
-    s.className = 'ch';
-    s.textContent = c === ' ' ? ' ' : c;
-    el.appendChild(s);
-    return s;
-  });
-  return el._chars;
+  const chars = [];
+  const walk = (node) => {
+    for (const child of [...node.childNodes]) {
+      if (child.nodeType !== Node.TEXT_NODE) {
+        walk(child);
+        continue;
+      }
+      const frag = document.createDocumentFragment();
+      for (const c of child.textContent) {
+        const s = document.createElement('span');
+        s.className = 'ch';
+        s.textContent = c === ' ' ? ' ' : c;
+        frag.appendChild(s);
+        chars.push(s);
+      }
+      child.replaceWith(frag);
+    }
+  };
+  walk(el);
+  return (el._chars = chars);
 }
 
 // 逐字上浮出现、整体淡出

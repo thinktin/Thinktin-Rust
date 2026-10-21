@@ -18,9 +18,9 @@ N = int(SR * DURATION)
 T = np.arange(N) / SR
 
 # 镜头切换点（秒）：每个点前有一段上扬的“嗖”声，落点有一下轻击。
-CUES = [3.0, 6.5, 10.0, 13.5]
+CUES = [3.5, 6.5, 10.0, 13.0]
 # 品牌落版的重击点（秒）：鼓组在这里停下，只留和弦长音。
-LOGO = 16.5
+LOGO = 16.0
 
 # 每小节一个和弦（MIDI 音高），A 小调走向，最后落到 C 大调。
 CHORDS = [
@@ -224,7 +224,7 @@ def hats():
     out = np.zeros(N)
     n = int(0.05 * SR)
     tt = np.arange(n) / SR
-    t = 8.0 + BEAT / 2
+    t = 6.5 + BEAT / 2
     while t < LOGO - 1e-6:
         v = rng.standard_normal(n) * np.exp(-tt * 90)
         place(out, t, v)

@@ -1,4 +1,4 @@
-"""按 index.html 里实际用到的字符裁剪字体，输出 fonts/*.woff2。
+"""按 index.html 和 timeline.js 里实际用到的字符裁剪字体，输出 fonts/*.woff2。
 
 改了片中文字后重新运行：python3 fonts.py
 源字体（Google Fonts，OFL 许可）首次运行时下载到 .cache/fonts/。
@@ -27,8 +27,8 @@ SOURCES = {
 
 
 def used_text() -> str:
-    html = (HERE / "index.html").read_text(encoding="utf-8")
-    extra = {c for c in html if ord(c) > 0x7F}
+    src = "".join((HERE / f).read_text(encoding="utf-8") for f in ("index.html", "timeline.js"))
+    extra = {c for c in src if ord(c) > 0x7F}
     return string.printable + "".join(sorted(extra))
 
 
