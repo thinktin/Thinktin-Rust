@@ -130,6 +130,7 @@ pub async fn create(
         Some(e) => parse_events(e)?,
         None => ImEvent::ALL.to_vec(),
     };
+    // 先粗查一次，省得满了还去封密钥；真正的上限在插入的事务里按用户加锁再数（并发的请求不能一起超过）。
     let mut t = s.db.tenant(who.user).await?;
     let n = t.im_channel_count().await?;
     t.rollback().await?;
@@ -142,15 +143,18 @@ pub async fn create(
     let sealed = seal(&s, who.user, id, &token, &secret).await?;
     let mut t = s.db.tenant(who.user).await?;
     let channel = t
-        .create_im_channel(&NewImChannel {
-            id,
-            vendor,
-            label: req.label,
-            sealed,
-            hint: hint(&token),
-            has_secret: !secret.is_empty(),
-            events,
-        })
+        .create_im_channel(
+            &NewImChannel {
+                id,
+                vendor,
+                label: req.label,
+                sealed,
+                hint: hint(&token),
+                has_secret: !secret.is_empty(),
+                events,
+            },
+            MAX_CHANNELS,
+        )
         .await?;
     t.audit(
         &who.actor(),
@@ -210,7 +214,8 @@ pub struct WebhookReq {
     secret: Option<String>,
 }
 
-/// 换地址或签名密钥（群机器人重建了、密钥重置了）。要是同一家的；之前记下的错误清掉。
+/// 换地址或签名密钥（群机器人重建了、密钥重置了）。要是同一家的；之前记下的错误清掉，渠道重新打开
+/// （机器人失效被停用的，换上新地址就能接着发）。
 pub async fn replace_webhook(
     State(s): State<AppState>,
     Authed(who): Authed,

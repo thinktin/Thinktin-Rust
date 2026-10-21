@@ -18,7 +18,7 @@ use orchestrator::computer::{DeviceCalls, notify_approval_requests};
 use orchestrator::delegate::DelegateTools;
 use orchestrator::exec::{ExecConfig, ExecConnector};
 use orchestrator::executor::{Executor, ExecutorConfig};
-use orchestrator::outbox::{Dispatcher, DispatcherConfig};
+use orchestrator::outbox::{Claims, Dispatcher, DispatcherConfig};
 use orchestrator::pipeline::{HandoffCopier, PipelineConfig, PipelineDriver};
 use orchestrator::scheduler::{Scheduler, SchedulerConfig};
 use orchestrator::shim::PlatformTools;
@@ -136,16 +136,38 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
     );
     let pipelines = PipelineDriver::new(db.clone(), PipelineConfig::default());
     let scheduler = Scheduler::new(db.clone(), SchedulerConfig::default());
-    let mut dispatcher = Dispatcher::new(db.clone(), node_id, DispatcherConfig::default());
+    // 设备推送和 IM 群消息各一个投递器（各自的循环）：第三方的群机器人慢了、挂了，不拖累设备推送。
+    let mut dispatcher = Dispatcher::new(
+        db.clone(),
+        node_id,
+        DispatcherConfig {
+            claims: Claims::Push,
+            ..DispatcherConfig::default()
+        },
+    );
+    // IM：每个渠道一次领一条，几个渠道同时发；一批少领一些，发得慢时锁也不会过期。
+    let mut im_dispatcher = Dispatcher::new(
+        db.clone(),
+        node_id,
+        DispatcherConfig {
+            claims: Claims::Im,
+            batch: 16,
+            concurrency: 8,
+            ..DispatcherConfig::default()
+        },
+    );
     if let Some(path) = &cfg.compliance.push_keywords_file {
-        let filter = KeywordFilter::load(path)
-            .with_context(|| format!("reading push keywords {}", path.display()))?;
+        let filter = Arc::new(
+            KeywordFilter::load(path)
+                .with_context(|| format!("reading push keywords {}", path.display()))?,
+        );
         info!(keywords = filter.len(), "push content filter loaded");
-        dispatcher = dispatcher.with_filter(Arc::new(filter));
+        dispatcher = dispatcher.with_filter(filter.clone());
+        im_dispatcher = im_dispatcher.with_filter(filter);
     }
     if cfg.push.im.enabled {
         let client = ImClient::new().context("IM channel client")?;
-        dispatcher = dispatcher.with_im(Arc::new(client), kms);
+        im_dispatcher = im_dispatcher.with_im(Arc::new(client), kms);
     }
     if let Some(apns) = &cfg.push.apns {
         let key = std::fs::read_to_string(&apns.key_path)
@@ -211,6 +233,10 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
     });
     bg.spawn("outbox", move |stop| async move {
         dispatcher.run(stopped(stop)).await;
+        Ok(())
+    });
+    bg.spawn("outbox-im", move |stop| async move {
+        im_dispatcher.run(stopped(stop)).await;
         Ok(())
     });
     let sweep_every = Duration::from_secs(cfg.worker.sweep_every_secs.max(1));

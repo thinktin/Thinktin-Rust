@@ -215,6 +215,67 @@ impl Tx<Worker> {
         .await
     }
 
+    /// 领 IM 渠道的出箱条目（10.5）：每个渠道只领它最早的、还没发完的那一条（还没到时间、正在发的，后面的都等着），
+    /// 消息按顺序到群里；限流推后的条目一个渠道只有一条在等，不会到点一起涌回来。
+    pub async fn claim_im_outbox(
+        &mut self,
+        owner: &str,
+        lock_for: Duration,
+        limit: i64,
+    ) -> Result<Vec<OutboxItem>> {
+        let rows: Vec<Row> = sqlx::query_as(
+            "UPDATE outbox SET locked_by = $1, locked_until = now() + make_interval(secs => $2), \
+               attempts = attempts + 1 \
+             WHERE id IN (SELECT o.id FROM outbox o \
+                          WHERE o.kind = 'im' AND o.delivered_at IS NULL AND o.available_at <= now() \
+                            AND (o.locked_until IS NULL OR o.locked_until < now()) \
+                            AND NOT EXISTS (SELECT 1 FROM outbox p \
+                                            WHERE p.kind = 'im' AND p.delivered_at IS NULL \
+                                              AND p.payload->>'channel' = o.payload->>'channel' AND p.id < o.id) \
+                          ORDER BY o.id LIMIT $3 FOR UPDATE SKIP LOCKED) \
+             RETURNING id, user_id, kind, payload, attempts, created_at",
+        )
+        .bind(owner)
+        .bind(secs(lock_for))
+        .bind(limit)
+        .fetch_all(self.conn())
+        .await?;
+        let mut items = rows
+            .into_iter()
+            .map(|r| {
+                Ok(OutboxItem {
+                    id: r.id,
+                    user_id: r.user_id.into(),
+                    kind: r.kind,
+                    payload: r.payload,
+                    attempts: u32::try_from(r.attempts)
+                        .map_err(|_| Error::Corrupt("negative attempts".into()))?,
+                    created_at: r.created_at,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        items.sort_by_key(|i| i.id);
+        Ok(items)
+    }
+
+    /// 一个 IM 渠道排着队的条目一起放弃（渠道删了、停用了：后面的一条条领出来再放弃太慢）。正在别处发的不动。
+    pub async fn drop_im_backlog(
+        &mut self,
+        channel: proto::domain::ImChannelId,
+        reason: &str,
+    ) -> Result<u64> {
+        let done = sqlx::query(
+            "UPDATE outbox SET delivered_at = now(), last_error = $2, locked_by = NULL, locked_until = NULL \
+             WHERE kind = 'im' AND delivered_at IS NULL AND payload->>'channel' = $1 \
+               AND (locked_until IS NULL OR locked_until < now())",
+        )
+        .bind(channel.to_string())
+        .bind(reason)
+        .execute(self.conn())
+        .await?;
+        Ok(done.rows_affected())
+    }
+
     /// 这次没发出去，`at` 之后再试。
     pub async fn retry_outbox(
         &mut self,

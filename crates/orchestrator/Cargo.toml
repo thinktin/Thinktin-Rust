@@ -13,6 +13,7 @@ chrono.workspace = true
 chrono-tz.workspace = true
 control = { path = "../control" }
 croner.workspace = true
+futures-util.workspace = true
 hmac.workspace = true
 keyvault = { path = "../keyvault" }
 notify = { path = "../notify" }

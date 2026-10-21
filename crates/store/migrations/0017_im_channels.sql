@@ -15,9 +15,11 @@ CREATE TABLE im_channels (
     events            text[] NOT NULL DEFAULT '{run_finished,run_failed,approval}'
                       CHECK (events <@ ARRAY['run_finished', 'run_failed', 'approval']::text[]),
     enabled           boolean NOT NULL DEFAULT true,
-    -- 多个后台副本共用的限流窗口（各家对每个机器人每分钟能发几条有上限）。
-    rate_window_start timestamptz,
-    rate_window_count integer NOT NULL DEFAULT 0,
+    -- 多个后台副本共用的发送节奏（各家对每个机器人每分钟、每秒能发几条有上限）：下一条最早什么时候发。
+    -- 厂商说限流了（钉钉会限 10 分钟），也往后推。
+    next_slot_at      timestamptz,
+    -- 换一次地址加一。后台记发送结果时按它核对：用户在发送期间换了地址，旧地址的结果不记到新地址上。
+    webhook_rev       integer NOT NULL DEFAULT 0,
     last_sent_at      timestamptz,
     last_error        text CHECK (length(last_error) <= 500),
     last_error_at     timestamptz,
@@ -32,6 +34,9 @@ ALTER TABLE im_channels FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant ON im_channels TO thinktin_app USING (user_id = app_user_id()) WITH CHECK (user_id = app_user_id());
 
 GRANT SELECT, INSERT, DELETE ON im_channels TO thinktin_app;
--- 业务接口改不了限流窗口和发送时间（只有后台发送时写）。
-GRANT UPDATE (label, sealed, hint, has_secret, events, enabled, last_error, last_error_at, updated_at) ON im_channels TO thinktin_app;
+-- 业务接口改不了发送节奏和发送时间（只有后台发送时写）。
+GRANT UPDATE (label, sealed, hint, has_secret, events, enabled, webhook_rev, last_error, last_error_at, updated_at) ON im_channels TO thinktin_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON im_channels TO thinktin_worker;
+
+-- 出箱里的 IM 条目按渠道排队：每个渠道只领最早的那一条（按顺序发，限流推后的不会一起涌回来）。
+CREATE INDEX outbox_im_channel ON outbox ((payload->>'channel'), id) WHERE kind = 'im' AND delivered_at IS NULL;

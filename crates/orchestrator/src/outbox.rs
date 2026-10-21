@@ -4,9 +4,12 @@
 //! 状态改了通知一定会发；投递器崩溃后锁过期，别的副本接着发。
 //!
 //! IM 渠道（10.5）：用户绑定的群机器人订了的事件，每个渠道一条出箱条目（[`im_item`]），独立重试、独立限流。
-//! 载荷里只有渠道 id 和消息，webhook 的 token 和签名密钥发送时才从密钥库解开。
+//! 载荷里只有渠道 id 和消息，webhook 的 token 和签名密钥发送时才从密钥库解开。IM 条目由单独的投递器发
+//! （[`Claims::Im`]）：第三方的群机器人慢了、挂了，不拖累设备推送；每个渠道按顺序一条条发，几个渠道同时发。
 
 use std::collections::HashMap;
+
+use futures_util::StreamExt;
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
@@ -37,19 +40,22 @@ pub struct ImPayload {
     pub message: PushMessage,
 }
 
+/// IM 消息最多等这么久：发不出去的（群机器人限流、厂商出故障）过了这个时间就不发了，群里不会收到几小时前的通知，
+/// 排队的条目也不会越积越多。
+pub const IM_TTL: Duration = Duration::from_secs(3600);
+
 /// 发到一个 IM 渠道。`dedupe_key` 和推送的分开（出箱的去重键是按用户唯一的）。
 pub fn im_item(
     channel: ImChannelId,
     message: &PushMessage,
     dedupe_key: Option<String>,
 ) -> NewOutboxItem {
+    let mut message = message.clone();
+    message.ttl = Some(message.ttl.map_or(IM_TTL, |t| t.min(IM_TTL)));
     NewOutboxItem {
         kind: IM.into(),
-        payload: serde_json::to_value(ImPayload {
-            channel,
-            message: message.clone(),
-        })
-        .expect("im payload serializes"),
+        payload: serde_json::to_value(ImPayload { channel, message })
+            .expect("im payload serializes"),
         dedupe_key,
         available_at: None,
     }
@@ -65,12 +71,12 @@ fn im_event(kind: PushKind) -> Option<ImEvent> {
     }
 }
 
-/// 每个群机器人每分钟最多发几条（各家的上限：飞书 100 条、每秒 5 条，企业微信、钉钉 20 条，钉钉超了会被限 10 分钟），
-/// 留一点余量。
-pub fn im_per_minute(vendor: ImVendor) -> u32 {
+/// 同一个群机器人两条消息之间至少隔多久（各家的上限：飞书 / Lark 每分钟 100 条、每秒 5 条，企业微信、钉钉每分钟
+/// 20 条，钉钉超了会被限 10 分钟）。可以连着发两条，所以任何一分钟里最多 61 条（飞书）、19 条（企业微信、钉钉）。
+pub fn im_interval(vendor: ImVendor) -> Duration {
     match vendor {
-        ImVendor::Feishu | ImVendor::Lark => 60,
-        ImVendor::Wecom | ImVendor::Dingtalk => 18,
+        ImVendor::Feishu | ImVendor::Lark => Duration::from_secs(1),
+        ImVendor::Wecom | ImVendor::Dingtalk => Duration::from_millis(3334),
     }
 }
 
@@ -207,10 +213,21 @@ pub async fn notify_tenant(t: &mut Tx<Tenant>, notice: &Notice) -> store::Result
     Ok(())
 }
 
+/// 投递器领哪些出箱条目。生产环境推送和 IM 各一个投递器（各自的循环），测试里一个投递器两种都领。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Claims {
+    Push,
+    Im,
+    Both,
+}
+
 #[derive(Debug, Clone)]
 pub struct DispatcherConfig {
     pub tick: Duration,
     pub batch: i64,
+    pub claims: Claims,
+    /// 同时发几条（IM：不同渠道的条目并发；推送按顺序发）。
+    pub concurrency: usize,
     /// 领取后锁多久（投递器崩溃后过了这么久别人才能接手）。
     pub lock_for: Duration,
     /// 最多尝试几次，之后放弃。
@@ -225,6 +242,8 @@ impl Default for DispatcherConfig {
         Self {
             tick: Duration::from_secs(1),
             batch: 50,
+            claims: Claims::Both,
+            concurrency: 1,
             lock_for: Duration::from_secs(60),
             max_attempts: 8,
             backoff_base: Duration::from_secs(5),
@@ -248,6 +267,13 @@ pub struct Dispatcher {
     im: Option<(Arc<dyn ImSender>, Arc<dyn Kms>)>,
     filter: Arc<dyn ContentFilter>,
     cfg: DispatcherConfig,
+}
+
+enum Outcome {
+    Delivered,
+    Dropped,
+    Retried,
+    Skipped,
 }
 
 enum Settle {
@@ -289,93 +315,129 @@ impl Dispatcher {
 
     pub async fn tick(&self) -> store::Result<DispatchReport> {
         let mut report = DispatchReport::default();
-        let mut w = self.db.worker().await?;
-        let items = w
-            .claim_outbox_of(
-                &self.node_id,
-                self.cfg.lock_for,
-                self.cfg.batch,
-                Some(&[PUSH, IM]),
-            )
-            .await?;
-        w.commit().await?;
-        for item in items {
+        let mut outcomes = Vec::new();
+        if self.cfg.claims != Claims::Im {
             let mut w = self.db.worker().await?;
-            let held = w
-                .extend_outbox_lock(item.id, &self.node_id, self.cfg.lock_for)
+            let items = w
+                .claim_outbox_of(
+                    &self.node_id,
+                    self.cfg.lock_for,
+                    self.cfg.batch,
+                    Some(&[PUSH]),
+                )
                 .await?;
             w.commit().await?;
-            if !held {
-                warn!(
-                    item = item.id,
-                    "outbox lock expired before sending, leaving it to the new holder"
-                );
-                continue;
+            for item in items {
+                outcomes.push(self.handle(item).await?);
             }
-            let settle = if item.kind == IM {
-                self.deliver_im(&item).await?
-            } else {
-                self.deliver(&item).await?
-            };
-            let metric = if item.kind == IM {
-                "thinktin_im_total"
-            } else {
-                "thinktin_push_total"
-            };
+        }
+        if self.cfg.claims != Claims::Push {
             let mut w = self.db.worker().await?;
-            let result = match settle {
-                Settle::Done(None) => {
-                    report.delivered += 1;
-                    metrics::counter!(metric, "result" => "delivered").increment(1);
-                    w.finish_outbox(item.id, &self.node_id, None).await
-                }
-                Settle::Done(Some(reason)) => {
-                    report.dropped += 1;
-                    metrics::counter!(metric, "result" => "dropped").increment(1);
-                    w.finish_outbox(item.id, &self.node_id, Some(&reason)).await
-                }
-                Settle::Defer(reason, at) => {
-                    report.retried += 1;
-                    metrics::counter!(metric, "result" => "deferred").increment(1);
-                    w.defer_outbox(item.id, &self.node_id, &reason, at).await
-                }
-                Settle::Retry(reason, _) if item.attempts >= self.cfg.max_attempts => {
-                    report.dropped += 1;
-                    metrics::counter!(metric, "result" => "dropped").increment(1);
-                    w.finish_outbox(
-                        item.id,
-                        &self.node_id,
-                        Some(&format!(
-                            "gave up after {} attempts: {reason}",
-                            item.attempts
-                        )),
-                    )
-                    .await
-                }
-                Settle::Retry(reason, after) => {
-                    report.retried += 1;
-                    metrics::counter!(metric, "result" => "retried").increment(1);
-                    // 推送服务给的 Retry-After 不可信：太大的值会让时间相加溢出、让投递器崩溃。
-                    let delay = after
-                        .max(self.backoff(item.attempts))
-                        .min(self.cfg.backoff_max);
-                    let at = chrono::Duration::from_std(delay)
-                        .ok()
-                        .and_then(|d| Utc::now().checked_add_signed(d))
-                        .unwrap_or_else(Utc::now);
-                    w.retry_outbox(item.id, &self.node_id, &reason, at).await
-                }
-            };
-            match result {
-                Ok(()) => w.commit().await?,
-                // 处理太久，锁过期后被别的投递器领走了：交给对方。
-                Err(store::Error::LeaseLost { .. }) => {
-                    warn!(item = item.id, "outbox lock expired during delivery");
-                }
-                Err(e) => return Err(e),
+            let items = w
+                .claim_im_outbox(&self.node_id, self.cfg.lock_for, self.cfg.batch)
+                .await?;
+            w.commit().await?;
+            let done: Vec<store::Result<Outcome>> =
+                futures_util::stream::iter(items.into_iter().map(|i| self.handle(i)))
+                    .buffer_unordered(self.cfg.concurrency.max(1))
+                    .collect()
+                    .await;
+            for o in done {
+                outcomes.push(o?);
+            }
+        }
+        for o in outcomes {
+            match o {
+                Outcome::Delivered => report.delivered += 1,
+                Outcome::Dropped => report.dropped += 1,
+                Outcome::Retried => report.retried += 1,
+                Outcome::Skipped => {}
             }
         }
         Ok(report)
+    }
+
+    /// 投递一条并记下结果。
+    async fn handle(&self, item: OutboxItem) -> store::Result<Outcome> {
+        let mut w = self.db.worker().await?;
+        let held = w
+            .extend_outbox_lock(item.id, &self.node_id, self.cfg.lock_for)
+            .await?;
+        w.commit().await?;
+        if !held {
+            warn!(
+                item = item.id,
+                "outbox lock expired before sending, leaving it to the new holder"
+            );
+            return Ok(Outcome::Skipped);
+        }
+        let settle = if item.kind == IM {
+            self.deliver_im(&item).await?
+        } else {
+            self.deliver(&item).await?
+        };
+        let metric = if item.kind == IM {
+            "thinktin_im_total"
+        } else {
+            "thinktin_push_total"
+        };
+        let mut w = self.db.worker().await?;
+        let (outcome, result) = match settle {
+            Settle::Done(None) => {
+                metrics::counter!(metric, "result" => "delivered").increment(1);
+                (
+                    Outcome::Delivered,
+                    w.finish_outbox(item.id, &self.node_id, None).await,
+                )
+            }
+            Settle::Done(Some(reason)) => {
+                metrics::counter!(metric, "result" => "dropped").increment(1);
+                (
+                    Outcome::Dropped,
+                    w.finish_outbox(item.id, &self.node_id, Some(&reason)).await,
+                )
+            }
+            Settle::Defer(reason, at) => {
+                metrics::counter!(metric, "result" => "deferred").increment(1);
+                (
+                    Outcome::Retried,
+                    w.defer_outbox(item.id, &self.node_id, &reason, at).await,
+                )
+            }
+            Settle::Retry(reason, _) if item.attempts >= self.cfg.max_attempts => {
+                metrics::counter!(metric, "result" => "dropped").increment(1);
+                let reason = format!("gave up after {} attempts: {reason}", item.attempts);
+                (
+                    Outcome::Dropped,
+                    w.finish_outbox(item.id, &self.node_id, Some(&reason)).await,
+                )
+            }
+            Settle::Retry(reason, after) => {
+                metrics::counter!(metric, "result" => "retried").increment(1);
+                // 推送服务给的 Retry-After 不可信：太大的值会让时间相加溢出、让投递器崩溃。
+                let delay = after
+                    .max(self.backoff(item.attempts))
+                    .min(self.cfg.backoff_max);
+                let at = chrono::Duration::from_std(delay)
+                    .ok()
+                    .and_then(|d| Utc::now().checked_add_signed(d))
+                    .unwrap_or_else(Utc::now);
+                (
+                    Outcome::Retried,
+                    w.retry_outbox(item.id, &self.node_id, &reason, at).await,
+                )
+            }
+        };
+        match result {
+            Ok(()) => w.commit().await?,
+            // 处理太久，锁过期后被别的投递器领走了：交给对方。
+            Err(store::Error::LeaseLost { .. }) => {
+                warn!(item = item.id, "outbox lock expired during delivery");
+                return Ok(Outcome::Skipped);
+            }
+            Err(e) => return Err(e),
+        }
+        Ok(outcome)
     }
 
     fn backoff(&self, attempts: u32) -> Duration {
@@ -478,11 +540,8 @@ impl Dispatcher {
         })
     }
 
-    /// 发到一个 IM 渠道（10.5）。
+    /// 发到一个 IM 渠道（10.5）。发不出去的原因都记在渠道上（`last_error`），用户在 App 里看得到。
     async fn deliver_im(&self, item: &OutboxItem) -> store::Result<Settle> {
-        let Some((sender, kms)) = &self.im else {
-            return Ok(Settle::Done(Some("im channels are not configured".into())));
-        };
         let ImPayload {
             channel: id,
             mut message,
@@ -490,20 +549,59 @@ impl Dispatcher {
             Ok(p) => p,
             Err(e) => return Ok(Settle::Done(Some(format!("bad im payload: {e}")))),
         };
+        let mut w = self.db.worker().await?;
+        let ch = w.sealed_im_channel(id).await?;
+        let gone = match &ch {
+            None => Some("im channel deleted"),
+            Some(ch) if ch.user_id != item.user_id || !ch.channel.enabled => {
+                Some("im channel disabled")
+            }
+            _ => None,
+        };
+        if let Some(reason) = gone {
+            // 后面排着的一起放弃：一条条领出来再放弃太慢。
+            w.drop_im_backlog(id, reason).await?;
+            w.commit().await?;
+            return Ok(Settle::Done(Some(reason.into())));
+        }
+        w.rollback().await?;
+        let ch = ch.expect("checked above");
+        let rev = ch.webhook_rev;
+        let Some((sender, kms)) = &self.im else {
+            let mut w = self.db.worker().await?;
+            w.record_im_result(
+                id,
+                rev,
+                Some("IM sending is turned off on this server"),
+                false,
+            )
+            .await?;
+            w.commit().await?;
+            return Ok(Settle::Done(Some("im channels are not configured".into())));
+        };
+        // 用户在排队期间退订了这个事件：不发了（测试消息、渠道停用的通知不属于哪个事件，照发）。
+        if let Some(event) = im_event(message.kind)
+            && !ch.channel.events.contains(&event)
+        {
+            return Ok(Settle::Done(Some("im channel no longer subscribed".into())));
+        }
         if let Some(done) = self.screen(item, &mut message).await? {
+            if matches!(&done, Settle::Done(Some(r)) if r == "expired before delivery") {
+                let mut w = self.db.worker().await?;
+                w.record_im_result(
+                    id,
+                    rev,
+                    Some("a message was not sent within an hour and was dropped"),
+                    false,
+                )
+                .await?;
+                w.commit().await?;
+            }
             return Ok(done);
         }
+        // 先占名额并提交：多个副本共用这个渠道的发送节奏。
         let mut w = self.db.worker().await?;
-        let Some(ch) = w.sealed_im_channel(id).await? else {
-            w.rollback().await?;
-            return Ok(Settle::Done(Some("im channel deleted".into())));
-        };
-        if ch.user_id != item.user_id || !ch.channel.enabled {
-            w.rollback().await?;
-            return Ok(Settle::Done(Some("im channel disabled".into())));
-        }
-        // 先占名额并提交：多个副本共用这一分钟的名额。
-        let slot = w.take_im_slot(id, im_per_minute(ch.channel.vendor)).await?;
+        let slot = w.take_im_slot(id, im_interval(ch.channel.vendor)).await?;
         w.commit().await?;
         match slot {
             ImSlot::Go => {}
@@ -548,32 +646,55 @@ impl Dispatcher {
         };
         let vendor = ch.channel.vendor.as_str();
         let outcome = sender.send(&hook, &im).await;
-        let (error, disable, settle) = match outcome {
-            PushOutcome::Delivered { .. } => (None, false, Settle::Done(None)),
+        let mut w = self.db.worker().await?;
+        let settle = match outcome {
+            PushOutcome::Delivered { .. } => {
+                w.record_im_result(id, rev, None, false).await?;
+                Settle::Done(None)
+            }
             PushOutcome::InvalidToken { reason } => {
                 info!(channel = %id, vendor, %reason, "im bot is gone, disabling the channel");
-                (Some(reason.clone()), true, Settle::Done(Some(reason)))
+                if w.record_im_result(id, rev, Some(&reason), true).await? {
+                    // 只在这次真把渠道停掉时说一次（同一个地址只说一次）。
+                    let (title, body) =
+                        crate::texts::im_channel_disabled(locale, &ch.channel.label);
+                    let mut notice = Notice::new(PushKind::Info, title, body);
+                    notice.dedupe_key = Some(format!("im-disabled:{id}:{rev}"));
+                    notify(&mut w, item.user_id, &notice).await?;
+                    w.drop_im_backlog(id, "im channel disabled").await?;
+                }
+                Settle::Done(Some(reason))
             }
             PushOutcome::Rejected { reason } => {
                 warn!(channel = %id, vendor, %reason, "im message rejected");
-                (Some(reason.clone()), false, Settle::Done(Some(reason)))
+                w.record_im_result(id, rev, Some(&reason), false).await?;
+                Settle::Done(Some(reason))
             }
-            PushOutcome::Retry { after, reason } => {
-                return Ok(Settle::Retry(reason, after.unwrap_or_default()));
+            // 厂商说限流了：这个渠道一段时间都不发，排着的跟着等，不算一次尝试。
+            PushOutcome::Retry {
+                after: Some(after),
+                reason,
+            } => {
+                let until = chrono::Duration::from_std(after.min(Duration::from_secs(3600)))
+                    .ok()
+                    .and_then(|d| Utc::now().checked_add_signed(d))
+                    .unwrap_or_else(Utc::now);
+                w.throttle_im_channel(id, until).await?;
+                Settle::Defer(reason, until)
+            }
+            PushOutcome::Retry {
+                after: None,
+                reason,
+            } => {
+                let shown = if item.attempts >= self.cfg.max_attempts {
+                    format!("gave up after {} attempts: {reason}", item.attempts)
+                } else {
+                    format!("{reason} (retrying)")
+                };
+                w.record_im_result(id, rev, Some(&shown), false).await?;
+                Settle::Retry(reason, Duration::ZERO)
             }
         };
-        let mut w = self.db.worker().await?;
-        w.record_im_result(id, ch.channel.updated_at, error.as_deref(), disable)
-            .await?;
-        if disable {
-            let (title, body) = crate::texts::im_channel_disabled(locale, &ch.channel.label);
-            let mut notice = Notice::new(PushKind::Info, title, body);
-            notice.dedupe_key = Some(format!(
-                "im-disabled:{id}:{}",
-                ch.channel.updated_at.timestamp_micros()
-            ));
-            notify(&mut w, item.user_id, &notice).await?;
-        }
         w.commit().await?;
         Ok(settle)
     }
