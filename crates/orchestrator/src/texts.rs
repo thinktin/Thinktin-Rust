@@ -26,6 +26,70 @@ pub fn quoted(locale: Locale, text: &str) -> String {
     }
 }
 
+/// 发到 IM 群里的标题（10.5）：前面带品牌名，群机器人设了“自定义关键词”时用 ThinkTin 就能通过。
+pub fn im_title(locale: Locale, title: &str) -> String {
+    if title.is_empty() || title == APP_NAME {
+        return APP_NAME.into();
+    }
+    match locale {
+        Locale::ZhCn => format!("【{APP_NAME}】{title}"),
+        Locale::En => format!("[{APP_NAME}] {title}"),
+    }
+}
+
+/// IM 群里的审批提醒只是通知：群消息里不能批准或拒绝（要在 App 里用手机签名）。
+pub fn im_approval_hint(locale: Locale) -> &'static str {
+    pick(
+        locale,
+        "请打开 ThinkTin App 审批，群消息里不能审批。",
+        "Open the ThinkTin app to approve; this group message cannot approve.",
+    )
+}
+
+/// 绑定 IM 群机器人后的测试消息（10.5）。
+pub fn im_test(locale: Locale) -> (&'static str, &'static str) {
+    match locale {
+        Locale::ZhCn => (
+            "测试消息",
+            "这个群已经绑定 ThinkTin，运行完成、需要审批、运行失败时会在这里提醒。",
+        ),
+        Locale::En => (
+            "Test message",
+            "This group is now connected to ThinkTin. You'll be notified here when a run finishes, \
+             needs approval or fails.",
+        ),
+    }
+}
+
+/// 群机器人失效（被移出群、删掉、地址作废），渠道已停用。
+pub fn im_channel_disabled(locale: Locale, label: &str) -> (&'static str, String) {
+    match locale {
+        Locale::ZhCn => (
+            "IM 群提醒已停用",
+            format!(
+                "{}的机器人失效了（可能被移出群或删除），已停用这个渠道。重新添加机器人后在 App 里换上新地址。",
+                if label.is_empty() {
+                    "群".to_owned()
+                } else {
+                    quoted(locale, label)
+                }
+            ),
+        ),
+        Locale::En => (
+            "Group notifications turned off",
+            format!(
+                "The bot for {} no longer works (it may have been removed or deleted), so this channel was turned off. \
+                 Add the bot again and update the address in the app.",
+                if label.is_empty() {
+                    "the group".to_owned()
+                } else {
+                    quoted(locale, label)
+                }
+            ),
+        ),
+    }
+}
+
 /// 账号被冻结（4.6）：标题和正文。
 pub fn account_frozen(locale: Locale) -> (&'static str, &'static str) {
     match locale {

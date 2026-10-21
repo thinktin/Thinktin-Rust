@@ -2,6 +2,9 @@
 //!
 //! 状态变更和通知在同一个事务里写进出箱（见 [`push_item`]），这里异步投递：
 //! 状态改了通知一定会发；投递器崩溃后锁过期，别的副本接着发。
+//!
+//! IM 渠道（10.5）：用户绑定的群机器人订了的事件，每个渠道一条出箱条目（[`im_item`]），独立重试、独立限流。
+//! 载荷里只有渠道 id 和消息，webhook 的 token 和签名密钥发送时才从密钥库解开。
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -9,16 +12,67 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Utc;
+use keyvault::Kms;
 use notify::filter::{self, AllowAll, ContentFilter, Verdict};
+use notify::im::{ImHook, ImMessage, ImSender};
 use notify::{PushChannel, PushKind, PushMessage, PushOutcome, PushTarget};
 use proto::domain::{
-    ApprovalId, InboxItemId, InstanceId, Locale, PlanId, PushChannelKind, RunId, UserId,
+    ApprovalId, ImChannelId, ImEvent, ImVendor, InboxItemId, InstanceId, Locale, PlanId,
+    PushChannelKind, RunId, UserId,
 };
-use store::{Db, NewInboxItem, NewOutboxItem, OutboxItem, Tenant, Tx, Worker};
+use serde::{Deserialize, Serialize};
+use store::{Db, ImSlot, NewInboxItem, NewOutboxItem, OutboxItem, Tenant, Tx, Worker};
 use tracing::{error, info, warn};
+use zeroize::Zeroizing;
 
 /// 推送类出箱条目的 kind；载荷是 [`PushMessage`]。
 pub const PUSH: &str = "push";
+/// IM 渠道的出箱条目（10.5）；载荷是 [`ImPayload`]。
+pub const IM: &str = "im";
+
+/// IM 出箱条目的载荷：发到哪个渠道、发什么（不含凭证）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImPayload {
+    pub channel: ImChannelId,
+    pub message: PushMessage,
+}
+
+/// 发到一个 IM 渠道。`dedupe_key` 和推送的分开（出箱的去重键是按用户唯一的）。
+pub fn im_item(
+    channel: ImChannelId,
+    message: &PushMessage,
+    dedupe_key: Option<String>,
+) -> NewOutboxItem {
+    NewOutboxItem {
+        kind: IM.into(),
+        payload: serde_json::to_value(ImPayload {
+            channel,
+            message: message.clone(),
+        })
+        .expect("im payload serializes"),
+        dedupe_key,
+        available_at: None,
+    }
+}
+
+/// 会发到 IM 群里的事件（和系统推送的重要事件一致）。
+fn im_event(kind: PushKind) -> Option<ImEvent> {
+    match kind {
+        PushKind::RunFinished => Some(ImEvent::RunFinished),
+        PushKind::RunFailed => Some(ImEvent::RunFailed),
+        PushKind::Approval => Some(ImEvent::Approval),
+        PushKind::ComputerApproval | PushKind::Info => None,
+    }
+}
+
+/// 每个群机器人每分钟最多发几条（各家的上限：飞书 100 条、每秒 5 条，企业微信、钉钉 20 条，钉钉超了会被限 10 分钟），
+/// 留一点余量。
+pub fn im_per_minute(vendor: ImVendor) -> u32 {
+    match vendor {
+        ImVendor::Feishu | ImVendor::Lark => 60,
+        ImVendor::Wecom | ImVendor::Dingtalk => 18,
+    }
+}
 
 /// 写一条推送通知进出箱（和状态变更放在同一个事务里）。`dedupe_key` 防止重复通知同一件事。
 pub fn push_item(message: &PushMessage, dedupe_key: Option<String>) -> NewOutboxItem {
@@ -111,14 +165,22 @@ impl Notice {
 
 /// 写收件箱并入出箱（后台任务的事务）。同一个去重键已经通知过就什么都不做。
 /// 标题和正文由调用方按用户的语言写好（见 [`crate::texts`]）。
+/// 用户订了这个事件的 IM 渠道，每个一条（收件箱那条通知的 id 做去重键）。
 pub async fn notify(w: &mut Tx<Worker>, user: UserId, notice: &Notice) -> store::Result<()> {
     if let Some(id) = w.insert_inbox(user, &notice.inbox()).await? {
         let locale = w.user_locale(user).await?;
-        w.enqueue_outbox(
-            user,
-            &push_item(&notice.push(Some(id), locale), notice.dedupe_key.clone()),
-        )
-        .await?;
+        let message = notice.push(Some(id), locale);
+        w.enqueue_outbox(user, &push_item(&message, notice.dedupe_key.clone()))
+            .await?;
+        if let Some(event) = im_event(notice.kind) {
+            for channel in w.im_channels_for(user, event).await? {
+                w.enqueue_outbox(
+                    user,
+                    &im_item(channel, &message, Some(format!("im:{channel}:{id}"))),
+                )
+                .await?;
+            }
+        }
     }
     Ok(())
 }
@@ -128,11 +190,19 @@ pub async fn notify_tenant(t: &mut Tx<Tenant>, notice: &Notice) -> store::Result
     let user = t.user();
     if let Some(id) = t.insert_inbox(user, &notice.inbox()).await? {
         let locale = t.user_locale(user).await?;
-        t.enqueue_outbox(&push_item(
-            &notice.push(Some(id), locale),
-            notice.dedupe_key.clone(),
-        ))
-        .await?;
+        let message = notice.push(Some(id), locale);
+        t.enqueue_outbox(&push_item(&message, notice.dedupe_key.clone()))
+            .await?;
+        if let Some(event) = im_event(notice.kind) {
+            for channel in t.im_channels_for(user, event).await? {
+                t.enqueue_outbox(&im_item(
+                    channel,
+                    &message,
+                    Some(format!("im:{channel}:{id}")),
+                ))
+                .await?;
+            }
+        }
     }
     Ok(())
 }
@@ -175,6 +245,7 @@ pub struct Dispatcher {
     db: Db,
     node_id: String,
     channels: HashMap<PushChannelKind, Arc<dyn PushChannel>>,
+    im: Option<(Arc<dyn ImSender>, Arc<dyn Kms>)>,
     filter: Arc<dyn ContentFilter>,
     cfg: DispatcherConfig,
 }
@@ -182,6 +253,8 @@ pub struct Dispatcher {
 enum Settle {
     Done(Option<String>),
     Retry(String, Duration),
+    /// 自己的限流：到时候再发，不算一次尝试。
+    Defer(String, chrono::DateTime<Utc>),
 }
 
 impl Dispatcher {
@@ -190,9 +263,16 @@ impl Dispatcher {
             db,
             node_id: node_id.into(),
             channels: HashMap::new(),
+            im: None,
             filter: Arc::new(AllowAll),
             cfg,
         }
+    }
+
+    /// IM 渠道（10.5）的发送实现，和解开 webhook 凭证用的 KMS。不配的话 IM 条目直接放弃。
+    pub fn with_im(mut self, sender: Arc<dyn ImSender>, kms: Arc<dyn Kms>) -> Self {
+        self.im = Some((sender, kms));
+        self
     }
 
     /// 推送文字的内容安全过滤（16.3）。
@@ -211,7 +291,12 @@ impl Dispatcher {
         let mut report = DispatchReport::default();
         let mut w = self.db.worker().await?;
         let items = w
-            .claim_outbox(&self.node_id, self.cfg.lock_for, self.cfg.batch)
+            .claim_outbox_of(
+                &self.node_id,
+                self.cfg.lock_for,
+                self.cfg.batch,
+                Some(&[PUSH, IM]),
+            )
             .await?;
         w.commit().await?;
         for item in items {
@@ -227,22 +312,36 @@ impl Dispatcher {
                 );
                 continue;
             }
-            let settle = self.deliver(&item).await?;
+            let settle = if item.kind == IM {
+                self.deliver_im(&item).await?
+            } else {
+                self.deliver(&item).await?
+            };
+            let metric = if item.kind == IM {
+                "thinktin_im_total"
+            } else {
+                "thinktin_push_total"
+            };
             let mut w = self.db.worker().await?;
             let result = match settle {
                 Settle::Done(None) => {
                     report.delivered += 1;
-                    metrics::counter!("thinktin_push_total", "result" => "delivered").increment(1);
+                    metrics::counter!(metric, "result" => "delivered").increment(1);
                     w.finish_outbox(item.id, &self.node_id, None).await
                 }
                 Settle::Done(Some(reason)) => {
                     report.dropped += 1;
-                    metrics::counter!("thinktin_push_total", "result" => "dropped").increment(1);
+                    metrics::counter!(metric, "result" => "dropped").increment(1);
                     w.finish_outbox(item.id, &self.node_id, Some(&reason)).await
+                }
+                Settle::Defer(reason, at) => {
+                    report.retried += 1;
+                    metrics::counter!(metric, "result" => "deferred").increment(1);
+                    w.defer_outbox(item.id, &self.node_id, &reason, at).await
                 }
                 Settle::Retry(reason, _) if item.attempts >= self.cfg.max_attempts => {
                     report.dropped += 1;
-                    metrics::counter!("thinktin_push_total", "result" => "dropped").increment(1);
+                    metrics::counter!(metric, "result" => "dropped").increment(1);
                     w.finish_outbox(
                         item.id,
                         &self.node_id,
@@ -255,7 +354,7 @@ impl Dispatcher {
                 }
                 Settle::Retry(reason, after) => {
                     report.retried += 1;
-                    metrics::counter!("thinktin_push_total", "result" => "retried").increment(1);
+                    metrics::counter!(metric, "result" => "retried").increment(1);
                     // 推送服务给的 Retry-After 不可信：太大的值会让时间相加溢出、让投递器崩溃。
                     let delay = after
                         .max(self.backoff(item.attempts))
@@ -287,18 +386,13 @@ impl Dispatcher {
             .min(self.cfg.backoff_max)
     }
 
-    async fn deliver(&self, item: &OutboxItem) -> store::Result<Settle> {
-        if item.kind != PUSH {
-            return Ok(Settle::Done(Some(format!(
-                "unknown outbox kind {}",
-                item.kind
-            ))));
-        }
-        let mut message: PushMessage = match serde_json::from_value(item.payload.clone()) {
-            Ok(m) => m,
-            Err(e) => return Ok(Settle::Done(Some(format!("bad push payload: {e}")))),
-        };
-        // 系统通知栏是公开展示的地方：命中过滤的换成中性提示，原文留在收件箱。
+    /// 推送和 IM 共用的前几步：过滤文字、过期的不发、处理过的审批不发。返回 Some 就是不必再发了。
+    async fn screen(
+        &self,
+        item: &OutboxItem,
+        message: &mut PushMessage,
+    ) -> store::Result<Option<Settle>> {
+        // 系统通知栏、群聊都是公开展示的地方：命中过滤的换成中性提示，原文留在收件箱。
         for text in [message.title.clone(), message.body.clone()] {
             if let Verdict::Block { reason } = self.filter.check(&text) {
                 info!(item = item.id, %reason, "push text filtered");
@@ -311,19 +405,35 @@ impl Dispatcher {
         if let Some(ttl) = message.ttl {
             let age = (Utc::now() - item.created_at).to_std().unwrap_or_default();
             if age > ttl {
-                return Ok(Settle::Done(Some("expired before delivery".into())));
+                return Ok(Some(Settle::Done(Some("expired before delivery".into()))));
             }
         }
-        let mut w = self.db.worker().await?;
         // 审批提醒：用户已经在别的设备上处理了、过期了，或者运行已经结束，就不必再推。
         if message.kind == PushKind::Approval
             && let Some(id) = message.target.approval_id.as_deref()
             && let Ok(id) = id.parse::<ApprovalId>()
-            && !w.approval_pending(id).await?
         {
+            let mut w = self.db.worker().await?;
+            let pending = w.approval_pending(id).await?;
             w.rollback().await?;
-            return Ok(Settle::Done(Some("approval no longer pending".into())));
+            if !pending {
+                return Ok(Some(Settle::Done(Some(
+                    "approval no longer pending".into(),
+                ))));
+            }
         }
+        Ok(None)
+    }
+
+    async fn deliver(&self, item: &OutboxItem) -> store::Result<Settle> {
+        let mut message: PushMessage = match serde_json::from_value(item.payload.clone()) {
+            Ok(m) => m,
+            Err(e) => return Ok(Settle::Done(Some(format!("bad push payload: {e}")))),
+        };
+        if let Some(done) = self.screen(item, &mut message).await? {
+            return Ok(done);
+        }
+        let mut w = self.db.worker().await?;
         let targets = w.push_targets(item.user_id).await?;
         w.rollback().await?;
         let mut delivered = 0;
@@ -366,6 +476,106 @@ impl Dispatcher {
         } else {
             Settle::Done(last_error.or(Some("not delivered".into())))
         })
+    }
+
+    /// 发到一个 IM 渠道（10.5）。
+    async fn deliver_im(&self, item: &OutboxItem) -> store::Result<Settle> {
+        let Some((sender, kms)) = &self.im else {
+            return Ok(Settle::Done(Some("im channels are not configured".into())));
+        };
+        let ImPayload {
+            channel: id,
+            mut message,
+        } = match serde_json::from_value(item.payload.clone()) {
+            Ok(p) => p,
+            Err(e) => return Ok(Settle::Done(Some(format!("bad im payload: {e}")))),
+        };
+        if let Some(done) = self.screen(item, &mut message).await? {
+            return Ok(done);
+        }
+        let mut w = self.db.worker().await?;
+        let Some(ch) = w.sealed_im_channel(id).await? else {
+            w.rollback().await?;
+            return Ok(Settle::Done(Some("im channel deleted".into())));
+        };
+        if ch.user_id != item.user_id || !ch.channel.enabled {
+            w.rollback().await?;
+            return Ok(Settle::Done(Some("im channel disabled".into())));
+        }
+        // 先占名额并提交：多个副本共用这一分钟的名额。
+        let slot = w.take_im_slot(id, im_per_minute(ch.channel.vendor)).await?;
+        w.commit().await?;
+        match slot {
+            ImSlot::Go => {}
+            ImSlot::Wait(at) => return Ok(Settle::Defer("im channel rate limit".into(), at)),
+            ImSlot::Gone => return Ok(Settle::Done(Some("im channel disabled".into()))),
+        }
+        let uid = item.user_id.to_string();
+        let opened =
+            match crate::artifacts::user_vault(&self.db, kms.clone(), item.user_id, false).await {
+                Ok(vault) => vault.open_webhook(&uid, &id.to_string(), &ch.sealed).await,
+                Err(crate::artifacts::ArtifactError::Crypto(e)) => Err(e),
+                Err(crate::artifacts::ArtifactError::Store(e)) => return Err(e),
+                Err(e) => return Ok(Settle::Retry(format!("key vault: {e}"), Duration::ZERO)),
+            };
+        let secret = match opened {
+            Ok(s) => s,
+            // 账号注销了（DEK 删了）或者密文对不上：没法再发。
+            Err(
+                e @ (keyvault::Error::NoUserKey(_)
+                | keyvault::Error::Decrypt
+                | keyvault::Error::Malformed),
+            ) => {
+                return Ok(Settle::Done(Some(format!("cannot open the webhook: {e}"))));
+            }
+            Err(e) => return Ok(Settle::Retry(format!("key vault: {e}"), Duration::ZERO)),
+        };
+        let hook = ImHook {
+            vendor: ch.channel.vendor,
+            token: Zeroizing::new(secret.token.clone()),
+            secret: (!secret.secret.is_empty()).then(|| Zeroizing::new(secret.secret.clone())),
+        };
+        drop(secret);
+        let locale = message.locale;
+        let mut text = message.display_body();
+        if message.kind == PushKind::Approval {
+            text = format!("{text}\n{}", crate::texts::im_approval_hint(locale));
+        }
+        let im = ImMessage {
+            title: crate::texts::im_title(locale, &message.title),
+            text,
+            locale,
+        };
+        let vendor = ch.channel.vendor.as_str();
+        let outcome = sender.send(&hook, &im).await;
+        let (error, disable, settle) = match outcome {
+            PushOutcome::Delivered { .. } => (None, false, Settle::Done(None)),
+            PushOutcome::InvalidToken { reason } => {
+                info!(channel = %id, vendor, %reason, "im bot is gone, disabling the channel");
+                (Some(reason.clone()), true, Settle::Done(Some(reason)))
+            }
+            PushOutcome::Rejected { reason } => {
+                warn!(channel = %id, vendor, %reason, "im message rejected");
+                (Some(reason.clone()), false, Settle::Done(Some(reason)))
+            }
+            PushOutcome::Retry { after, reason } => {
+                return Ok(Settle::Retry(reason, after.unwrap_or_default()));
+            }
+        };
+        let mut w = self.db.worker().await?;
+        w.record_im_result(id, ch.channel.updated_at, error.as_deref(), disable)
+            .await?;
+        if disable {
+            let (title, body) = crate::texts::im_channel_disabled(locale, &ch.channel.label);
+            let mut notice = Notice::new(PushKind::Info, title, body);
+            notice.dedupe_key = Some(format!(
+                "im-disabled:{id}:{}",
+                ch.channel.updated_at.timestamp_micros()
+            ));
+            notify(&mut w, item.user_id, &notice).await?;
+        }
+        w.commit().await?;
+        Ok(settle)
     }
 
     pub async fn run(&self, stop: impl Future<Output = ()>) {
