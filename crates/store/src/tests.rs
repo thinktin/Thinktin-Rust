@@ -990,6 +990,7 @@ async fn erasing_an_account_deletes_its_content() {
                 sealed: vec![4, 5, 6],
                 hint: "…abcd".into(),
                 has_secret: true,
+                bot_tag: [1; 32],
                 events: vec![proto::domain::ImEvent::RunFinished],
             },
             20,
@@ -2162,7 +2163,7 @@ async fn builds_check_the_database_migrations() {
 
 #[tokio::test]
 async fn im_channels_are_per_user_rate_limited_and_settle_without_spending_attempts() {
-    use crate::{ImChannelChange, ImSlot, NewImChannel, NewOutboxItem};
+    use crate::{ImChannelChange, ImSlot, ImWebhook, NewImChannel, NewOutboxItem};
     use proto::domain::{ImChannelId, ImEvent, ImVendor};
 
     let Some(t) = TestDb::new().await else { return };
@@ -2180,6 +2181,7 @@ async fn im_channels_are_per_user_rate_limited_and_settle_without_spending_attem
                 sealed: vec![9; 40],
                 hint: "…beef".into(),
                 has_secret: true,
+                bot_tag: [2; 32],
                 events: vec![ImEvent::RunFailed, ImEvent::Approval, ImEvent::RunFailed],
             },
             20,
@@ -2214,6 +2216,29 @@ async fn im_channels_are_per_user_rate_limited_and_settle_without_spending_attem
     );
     tx.rollback().await.unwrap();
 
+    // 同一个人不能把同一个群机器人绑两次；别人绑了同一个机器人可以，发送节奏合在一起算（见下）。
+    let same_bot = |id| NewImChannel {
+        id,
+        vendor: ImVendor::Dingtalk,
+        label: String::new(),
+        sealed: vec![8; 40],
+        hint: "…beef".into(),
+        has_secret: false,
+        bot_tag: [2; 32],
+        events: vec![ImEvent::RunFailed],
+    };
+    let mut tx = db.tenant(alice).await.unwrap();
+    assert!(matches!(
+        tx.create_im_channel(&same_bot(ImChannelId::new()), 20)
+            .await,
+        Err(Error::Conflict(_))
+    ));
+    tx.rollback().await.unwrap();
+    let bobs = ImChannelId::new();
+    let mut tx = db.tenant(bob).await.unwrap();
+    tx.create_im_channel(&same_bot(bobs), 20).await.unwrap();
+    tx.commit().await.unwrap();
+
     // 订了哪些事件就只发哪些；停用的不发。
     let mut w = db.worker().await.unwrap();
     assert_eq!(
@@ -2238,6 +2263,10 @@ async fn im_channels_are_per_user_rate_limited_and_settle_without_spending_attem
         wait > chrono::Duration::seconds(25) && wait <= chrono::Duration::seconds(30),
         "{wait}"
     );
+    assert!(
+        matches!(w.take_im_slot(bobs, gap).await.unwrap(), ImSlot::Wait(a) if a == at),
+        "the same bot bound by someone else shares the pace"
+    );
     // 厂商说限流了：往后推，不会往前挪。
     w.throttle_im_channel(id, Utc::now() + chrono::Duration::minutes(10))
         .await
@@ -2250,8 +2279,7 @@ async fn im_channels_are_per_user_rate_limited_and_settle_without_spending_attem
     assert!(
         matches!(w.take_im_slot(id, gap).await.unwrap(), ImSlot::Wait(a) if a > Utc::now() + chrono::Duration::minutes(9))
     );
-    sqlx::query("UPDATE im_channels SET next_slot_at = NULL WHERE id = $1")
-        .bind(id.0)
+    sqlx::query("DELETE FROM im_bot_slots")
         .execute(w.conn())
         .await
         .unwrap();
@@ -2274,7 +2302,13 @@ async fn im_channels_are_per_user_rate_limited_and_settle_without_spending_attem
         .update_im_channel(
             id,
             &ImChannelChange {
-                webhook: Some((ImVendor::Dingtalk, vec![7; 40], "…cafe".into(), false)),
+                webhook: Some(ImWebhook {
+                    vendor: ImVendor::Dingtalk,
+                    sealed: vec![7; 40],
+                    hint: "…cafe".into(),
+                    has_secret: false,
+                    bot_tag: [3; 32],
+                }),
                 ..Default::default()
             },
         )
@@ -2289,7 +2323,13 @@ async fn im_channels_are_per_user_rate_limited_and_settle_without_spending_attem
         ("…cafe", false, None)
     );
     let other_vendor = ImChannelChange {
-        webhook: Some((ImVendor::Wecom, vec![1], "…0000".into(), false)),
+        webhook: Some(ImWebhook {
+            vendor: ImVendor::Wecom,
+            sealed: vec![1],
+            hint: "…0000".into(),
+            has_secret: false,
+            bot_tag: [4; 32],
+        }),
         ..Default::default()
     };
     assert!(matches!(
@@ -2394,7 +2434,13 @@ async fn im_channels_are_per_user_rate_limited_and_settle_without_spending_attem
         .update_im_channel(
             id,
             &ImChannelChange {
-                webhook: Some((ImVendor::Dingtalk, vec![5; 40], "…f00d".into(), true)),
+                webhook: Some(ImWebhook {
+                    vendor: ImVendor::Dingtalk,
+                    sealed: vec![5; 40],
+                    hint: "…f00d".into(),
+                    has_secret: true,
+                    bot_tag: [5; 32],
+                }),
                 ..Default::default()
             },
         )
@@ -2408,7 +2454,13 @@ async fn im_channels_are_per_user_rate_limited_and_settle_without_spending_attem
     };
     assert!(!tx.update_im_channel(id, &off).await.unwrap().enabled);
     let rotate = ImChannelChange {
-        webhook: Some((ImVendor::Dingtalk, vec![5; 40], "…f00d".into(), true)),
+        webhook: Some(ImWebhook {
+            vendor: ImVendor::Dingtalk,
+            sealed: vec![5; 40],
+            hint: "…f00d".into(),
+            has_secret: true,
+            bot_tag: [5; 32],
+        }),
         ..Default::default()
     };
     assert!(!tx.update_im_channel(id, &rotate).await.unwrap().enabled);
@@ -2525,7 +2577,7 @@ async fn im_channels_are_per_user_rate_limited_and_settle_without_spending_attem
 
     // 上限：并发的新建请求一起也不能超过。
     let mut joins = Vec::new();
-    for i in 0..12 {
+    for i in 0..12u8 {
         let db = db.clone();
         joins.push(tokio::spawn(async move {
             let mut tx = db.tenant(alice).await.unwrap();
@@ -2538,6 +2590,7 @@ async fn im_channels_are_per_user_rate_limited_and_settle_without_spending_attem
                         sealed: vec![1; 40],
                         hint: "…0001".into(),
                         has_secret: false,
+                        bot_tag: [100 + i; 32],
                         events: vec![ImEvent::RunFinished],
                     },
                     5,

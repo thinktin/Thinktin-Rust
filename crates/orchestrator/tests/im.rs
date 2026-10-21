@@ -15,7 +15,7 @@ use orchestrator::outbox::{Claims, Dispatcher, DispatcherConfig, IM, Notice, im_
 use proto::domain::{ImChannelId, ImEvent, ImVendor, Locale, UserId};
 use serde_json::Value;
 use store::testing::TestDb;
-use store::{ImChannelChange, NewImChannel};
+use store::{ImChannelChange, ImWebhook, NewImChannel};
 
 type Sent = (ImVendor, String, Option<String>, ImMessage);
 
@@ -97,6 +97,7 @@ async fn channel(
             sealed,
             hint: proto::im::hint(token),
             has_secret: !secret.is_empty(),
+            bot_tag: keyvault::webhook_fingerprint(vendor.as_str(), token),
             events: events.to_vec(),
         },
         20,
@@ -368,7 +369,8 @@ async fn a_busy_channel_defers_without_spending_attempts() {
     .await;
     // 上一条刚发过：钉钉两条之间隔 3.3 秒，可以连着发两条，再往后排就要等。
     sqlx::query(
-        "UPDATE im_channels SET next_slot_at = now() + interval '30 seconds' WHERE id = $1",
+        "INSERT INTO im_bot_slots (bot_tag, next_slot_at) \
+         SELECT bot_tag, now() + interval '30 seconds' FROM im_channels WHERE id = $1",
     )
     .bind(ch.0)
     .execute(t.db.pool())
@@ -534,7 +536,8 @@ async fn vendor_rate_limits_hold_the_channel_without_spending_attempts() {
         "no attempts spent"
     );
     let wait: f64 = sqlx::query_scalar(
-        "SELECT extract(epoch FROM next_slot_at - now())::float8 FROM im_channels WHERE id = $1",
+        "SELECT extract(epoch FROM s.next_slot_at - now())::float8 FROM im_channels c \
+         JOIN im_bot_slots s ON s.bot_tag = c.bot_tag WHERE c.id = $1",
     )
     .bind(ch.0)
     .fetch_one(t.db.pool())
@@ -609,7 +612,7 @@ async fn retryable_failures_show_on_the_channel_and_giving_up_too() {
     // 审批提醒的有效期短（这里一分钟），排队时过期了是正常的：不发，也不算渠道出错。
     send(&t, u, &notice(PushKind::RunFinished, "run:36:succeeded")).await;
     drain_push(&t).await;
-    sqlx::query("UPDATE im_channels SET next_slot_at = NULL")
+    sqlx::query("DELETE FROM im_bot_slots")
         .execute(t.db.pool())
         .await
         .unwrap();
@@ -669,7 +672,7 @@ async fn key_vault_failures_show_on_the_channel() {
         channel_row(&t, u, ch).await.last_error.as_deref(),
         Some("the server could not open the stored webhook (retrying)")
     );
-    sqlx::query("UPDATE im_channels SET next_slot_at = NULL")
+    sqlx::query("DELETE FROM im_bot_slots")
         .execute(t.db.pool())
         .await
         .unwrap();
@@ -684,7 +687,8 @@ async fn key_vault_failures_show_on_the_channel() {
 
     // 密文坏了：没法再发，排着的一起放弃，渠道上说要重新填地址。
     sqlx::query(
-        "UPDATE im_channels SET sealed = '\\x00'::bytea, next_slot_at = NULL WHERE id = $1",
+        "WITH reset AS (DELETE FROM im_bot_slots) \
+         UPDATE im_channels SET sealed = '\\x00'::bytea WHERE id = $1",
     )
     .bind(ch.0)
     .execute(t.db.pool())
@@ -766,12 +770,13 @@ async fn a_dead_bot_is_reported_once_and_a_new_address_turns_the_channel_back_on
         .update_im_channel(
             ch,
             &ImChannelChange {
-                webhook: Some((
-                    ImVendor::Feishu,
+                webhook: Some(ImWebhook {
+                    vendor: ImVendor::Feishu,
                     sealed,
-                    proto::im::hint("feishu-new-00001"),
-                    false,
-                )),
+                    hint: proto::im::hint("feishu-new-00001"),
+                    has_secret: false,
+                    bot_tag: keyvault::webhook_fingerprint("feishu", "feishu-new-00001"),
+                }),
                 ..Default::default()
             },
         )
@@ -836,7 +841,7 @@ async fn push_and_im_dispatchers_claim_their_own_rows_and_channels_go_in_paralle
         first.contains(&"feishu-par-0001".to_owned())
             && first.contains(&"lark-par-00001".to_owned())
     );
-    sqlx::query("UPDATE im_channels SET next_slot_at = NULL")
+    sqlx::query("DELETE FROM im_bot_slots")
         .execute(t.db.pool())
         .await
         .unwrap();

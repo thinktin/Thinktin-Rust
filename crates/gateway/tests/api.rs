@@ -2502,6 +2502,18 @@ async fn im_channels_over_http() {
     assert!(!ch.to_string().contains(token) && !ch.to_string().contains("signing-secret"));
     let id = ch["id"].as_str().unwrap().to_owned();
     let channel_id: proto::domain::ImChannelId = id.parse().unwrap();
+    // 同一个群机器人不能绑两次（每条通知会发两遍）。
+    let (st, err) = a
+        .call(
+            Method::POST,
+            "/v1/im-channels",
+            tok,
+            Some(json!({
+                "webhook_url": format!("https://oapi.dingtalk.com/robot/send?access_token={token}"),
+            })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CONFLICT, "{err}");
 
     // 库里只有密文；用这个用户的 DEK、这个渠道的 id 才解得开。
     let raw: Vec<u8> = sqlx::query_scalar("SELECT sealed FROM im_channels WHERE id = $1")

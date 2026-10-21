@@ -14,7 +14,7 @@ use proto::domain::{ImChannel, ImChannelId, ImEvent, ImVendor, UserId};
 use proto::im::{ImUrlError, check_secret, hint, parse_webhook};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use store::{ImChannelChange, NewImChannel};
+use store::{ImChannelChange, ImWebhook, NewImChannel};
 use zeroize::Zeroizing;
 
 use super::{check_len, parse_id};
@@ -151,6 +151,7 @@ pub async fn create(
                 sealed,
                 hint: hint(&token),
                 has_secret: !secret.is_empty(),
+                bot_tag: keyvault::webhook_fingerprint(vendor.as_str(), &token),
                 events,
             },
             MAX_CHANNELS,
@@ -235,7 +236,13 @@ pub async fn replace_webhook(
         .update_im_channel(
             id,
             &ImChannelChange {
-                webhook: Some((vendor, sealed, hint(&token), !secret.is_empty())),
+                webhook: Some(ImWebhook {
+                    vendor,
+                    sealed,
+                    hint: hint(&token),
+                    has_secret: !secret.is_empty(),
+                    bot_tag: keyvault::webhook_fingerprint(vendor.as_str(), &token),
+                }),
                 ..Default::default()
             },
         )

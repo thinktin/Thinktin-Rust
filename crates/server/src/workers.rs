@@ -342,7 +342,8 @@ async fn maintain(db: &Db) -> store::Result<()> {
     let purged = w.purge_login_codes(LOGIN_CODE_RETENTION).await?
         + w.purge_refresh_history(REFRESH_HISTORY_RETENTION).await?
         + w.purge_delivered_outbox(OUTBOX_RETENTION).await?
-        + w.purge_device_traffic(DEVICE_TRAFFIC_RETENTION).await?;
+        + w.purge_device_traffic(DEVICE_TRAFFIC_RETENTION).await?
+        + w.purge_im_bot_slots().await?;
     w.commit().await?;
     if dropped > 0 || purged > 0 {
         info!(
