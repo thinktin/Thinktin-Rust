@@ -408,6 +408,73 @@ impl TryFrom<PlanStep> for d::PlanStep {
     }
 }
 
+/// 计划的策略（4.4、4.7、7.11）。
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct PlanPolicy {
+    /// 预授权的工具种类（ACP 的 tool kind：read、edit、search、execute……），用到时不用审批。
+    pub preauthorized_tools: Vec<String>,
+    pub approval_timeout_secs: u64,
+    /// 审批（和等电脑、等 key）超时以后：skip（拒绝这一步，接着干）、pause_plan（暂停计划）、fail（这次失败）。
+    pub on_approval_timeout: String,
+    /// 每次运行的上限：token 数、时长、步数。
+    pub max_tokens: Option<u64>,
+    pub max_duration_secs: u64,
+    pub max_steps: Option<u32>,
+    /// 整个计划每天最多用多少 token。
+    pub daily_token_limit: Option<u64>,
+    /// 等电脑上线、等补上 key 最多等多久。
+    pub wait_timeout_secs: u64,
+}
+
+impl From<d::PlanPolicy> for PlanPolicy {
+    fn from(p: d::PlanPolicy) -> Self {
+        Self {
+            preauthorized_tools: p.preauthorized_tools,
+            approval_timeout_secs: p.approval_timeout_secs,
+            on_approval_timeout: p.on_approval_timeout.as_str().into(),
+            max_tokens: p.budget.max_tokens,
+            max_duration_secs: p.budget.max_duration_secs,
+            max_steps: p.budget.max_steps,
+            daily_token_limit: p.daily_token_limit,
+            wait_timeout_secs: p.wait_timeout_secs,
+        }
+    }
+}
+
+impl TryFrom<PlanPolicy> for d::PlanPolicy {
+    type Error = ClientError;
+    fn try_from(p: PlanPolicy) -> Result<Self> {
+        Ok(Self {
+            preauthorized_tools: p.preauthorized_tools,
+            approval_timeout_secs: p.approval_timeout_secs,
+            on_approval_timeout: from_enum_str(&p.on_approval_timeout, "approval timeout action")?,
+            budget: d::RunBudget {
+                max_tokens: p.max_tokens,
+                max_duration_secs: p.max_duration_secs,
+                max_steps: p.max_steps,
+            },
+            daily_token_limit: p.daily_token_limit,
+            wait_timeout_secs: p.wait_timeout_secs,
+        })
+    }
+}
+
+/// 改计划：给了才改。`steps` 整体替换，给空的就变回单个 agent 的计划。
+#[derive(Debug, Clone, Default, uniffi::Record)]
+pub struct PlanChange {
+    #[uniffi(default = None)]
+    pub title: Option<String>,
+    #[uniffi(default = None)]
+    pub goal: Option<String>,
+    #[uniffi(default = None)]
+    pub policy: Option<PlanPolicy>,
+    /// once（错过的只补一次）、all（全补）、skip（不补）。
+    #[uniffi(default = None)]
+    pub catch_up: Option<String>,
+    #[uniffi(default = None)]
+    pub steps: Option<Vec<PlanStep>>,
+}
+
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct Plan {
     pub id: String,
@@ -421,8 +488,11 @@ pub struct Plan {
     pub awaiting_confirmation: bool,
     /// 计划的版本，确认时原样带回：确认之前又被改过，确认会失败（要重新看一遍）。
     pub revision: u32,
-    /// 策略（预授权工具、审批超时、预算），JSON。
+    /// 策略（预授权工具、审批超时、预算），JSON。和 `policy` 一样，留着给老版本的 App 用。
     pub policy_json: String,
+    pub policy: PlanPolicy,
+    /// 错过的触发怎么补：once、all、skip。
+    pub catch_up: String,
     pub created_at_ms: i64,
     /// 列表接口里为空，详情里有。
     pub triggers: Vec<Trigger>,
@@ -441,6 +511,8 @@ impl From<d::Plan> for Plan {
             awaiting_confirmation: p.awaiting_confirmation,
             revision: p.revision,
             policy_json: serde_json::to_string(&p.policy).unwrap_or_default(),
+            policy: p.policy.into(),
+            catch_up: p.catch_up.as_str().into(),
             created_at_ms: ms(p.created_at),
             triggers: Vec::new(),
             steps: Vec::new(),
@@ -451,17 +523,7 @@ impl From<d::Plan> for Plan {
 impl From<api::PlanView> for Plan {
     fn from(v: api::PlanView) -> Self {
         Self {
-            triggers: v
-                .triggers
-                .into_iter()
-                .map(|t| Trigger {
-                    id: t.id.to_string(),
-                    schedule: t.spec.into(),
-                    enabled: t.enabled,
-                    next_fire_at_ms: ms_opt(t.next_fire_at),
-                    last_fire_at_ms: ms_opt(t.last_fire_at),
-                })
-                .collect(),
+            triggers: v.triggers.into_iter().map(trigger_record).collect(),
             steps: v.steps.into_iter().map(Into::into).collect(),
             ..v.plan.into()
         }
@@ -476,6 +538,22 @@ pub struct NewPlan {
     pub triggers: Vec<Schedule>,
     /// 给了就是流水线：按依赖顺序在各个实例上执行。
     pub steps: Vec<PlanStep>,
+    /// 不给就用默认的策略。
+    #[uniffi(default = None)]
+    pub policy: Option<PlanPolicy>,
+    /// once（默认）、all、skip。
+    #[uniffi(default = None)]
+    pub catch_up: Option<String>,
+}
+
+fn trigger_record(t: d::Trigger) -> Trigger {
+    Trigger {
+        id: t.id.to_string(),
+        schedule: t.spec.into(),
+        enabled: t.enabled,
+        next_fire_at_ms: ms_opt(t.next_fire_at),
+        last_fire_at_ms: ms_opt(t.last_fire_at),
+    }
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -1463,8 +1541,51 @@ impl ThinktinClient {
                 .into_iter()
                 .map(TryInto::try_into)
                 .collect::<Result<_>>()?,
+            policy: plan.policy.map(TryInto::try_into).transpose()?,
+            catch_up: plan
+                .catch_up
+                .map(|c| from_enum_str(&c, "catch up"))
+                .transpose()?,
         };
         self.run(|c| async move { Ok(c.api.create_plan(&new).await?.into()) })
+            .await
+    }
+
+    /// 改计划：标题、目标、策略、补跑方式、流水线步骤，给了才改。返回改完的计划（带触发器和步骤）。
+    pub async fn update_plan(&self, plan_id: String, change: PlanChange) -> Result<Plan> {
+        let id: d::PlanId = parse(&plan_id, "plan")?;
+        let change = api::PlanChange {
+            title: change.title,
+            goal: change.goal,
+            policy: change.policy.map(TryInto::try_into).transpose()?,
+            catch_up: change
+                .catch_up
+                .map(|c| from_enum_str(&c, "catch up"))
+                .transpose()?,
+            steps: change
+                .steps
+                .map(|s| {
+                    s.into_iter()
+                        .map(TryInto::try_into)
+                        .collect::<Result<Vec<_>>>()
+                })
+                .transpose()?,
+        };
+        self.run(|c| async move { Ok(c.api.update_plan(id, &change).await?.into()) })
+            .await
+    }
+
+    /// 给计划加一个触发器（一个计划最多 10 个）。
+    pub async fn add_trigger(&self, plan_id: String, schedule: Schedule) -> Result<Trigger> {
+        let id: d::PlanId = parse(&plan_id, "plan")?;
+        let spec: d::ScheduleSpec = schedule.try_into()?;
+        self.run(|c| async move { Ok(trigger_record(c.api.add_trigger(id, &spec).await?)) })
+            .await
+    }
+
+    pub async fn delete_trigger(&self, trigger_id: String) -> Result<()> {
+        let id: d::TriggerId = parse(&trigger_id, "trigger")?;
+        self.run(|c| async move { c.api.delete_trigger(id).await })
             .await
     }
 

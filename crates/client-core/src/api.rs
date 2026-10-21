@@ -8,11 +8,11 @@ use std::time::Duration;
 
 use proto::api::{API_VERSION, ErrorBody, ErrorCode, VERSION_HEADER};
 use proto::domain::{
-    Approval, ApprovalId, Artifact, ArtifactId, Credential, CredentialId, Device, DeviceId,
-    DeviceMessage, DeviceMessageId, DeviceMessageKind, DevicePlatform, ImChannel, ImChannelId,
-    InboxItem, InboxItemId, Instance, InstanceEvent, InstanceId, ModelRoute, Plan, PlanId,
-    PlanStep, PushChannelKind, Run, RunId, ScheduleSpec, Trigger, User, VaultItem, VaultItemId,
-    VaultRequest, VaultRequestId,
+    Approval, ApprovalId, Artifact, ArtifactId, CatchUp, Credential, CredentialId, Device,
+    DeviceId, DeviceMessage, DeviceMessageId, DeviceMessageKind, DevicePlatform, ImChannel,
+    ImChannelId, InboxItem, InboxItemId, Instance, InstanceEvent, InstanceId, ModelRoute, Plan,
+    PlanId, PlanPolicy, PlanStep, PushChannelKind, Run, RunId, ScheduleSpec, Trigger, TriggerId,
+    User, VaultItem, VaultItemId, VaultRequest, VaultRequestId,
 };
 use reqwest::Method;
 use serde::de::DeserializeOwned;
@@ -119,10 +119,30 @@ pub struct NewPlan {
     pub instance_id: InstanceId,
     pub title: String,
     pub goal: String,
+    /// 不给就用服务端的默认（不预授权工具、审批 24 小时超时暂停计划……）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy: Option<PlanPolicy>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub catch_up: Option<CatchUp>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub triggers: Vec<ScheduleSpec>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub steps: Vec<PlanStep>,
+}
+
+/// 改计划：给了才改。`steps` 整体替换，给空的就变回单个 agent 的计划。
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct PlanChange {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub goal: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy: Option<PlanPolicy>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub catch_up: Option<CatchUp>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub steps: Option<Vec<PlanStep>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -899,6 +919,27 @@ impl Api {
     pub async fn create_plan(&self, plan: &NewPlan) -> Result<PlanView> {
         let body = serde_json::to_value(plan).map_err(ClientError::decode)?;
         self.json(Method::POST, "/v1/plans", Some(&body)).await
+    }
+
+    pub async fn update_plan(&self, id: PlanId, change: &PlanChange) -> Result<PlanView> {
+        let body = serde_json::to_value(change).map_err(ClientError::decode)?;
+        self.json(Method::PATCH, &format!("/v1/plans/{id}"), Some(&body))
+            .await
+    }
+
+    /// 给计划加一个触发器（一个计划最多 10 个）。
+    pub async fn add_trigger(&self, plan: PlanId, spec: &ScheduleSpec) -> Result<Trigger> {
+        self.json(
+            Method::POST,
+            &format!("/v1/plans/{plan}/triggers"),
+            Some(&json!({ "spec": spec })),
+        )
+        .await
+    }
+
+    pub async fn delete_trigger(&self, id: TriggerId) -> Result<()> {
+        self.empty(Method::DELETE, &format!("/v1/triggers/{id}"), None)
+            .await
     }
 
     /// 暂停或恢复用户自己的计划（等确认的计划用 `confirm_plan`）。

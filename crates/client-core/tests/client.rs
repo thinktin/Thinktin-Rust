@@ -555,6 +555,8 @@ async fn ffi_client_round_trip() {
                 tz: "Asia/Shanghai".into(),
             }],
             steps: Vec::new(),
+            policy: None,
+            catch_up: None,
         })
         .await
         .unwrap();
@@ -1000,4 +1002,108 @@ async fn ffi_account_and_devices() {
     phone.delete_account(code).await.unwrap();
     assert!(!phone.signed_in());
     assert!(phone.cached_instances().unwrap().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ffi_plan_editing_and_triggers() {
+    let Some(e) = env().await else { return };
+    let (c, _s, _d) = ffi_login(&e, "13800138508", "android", "Pixel").await;
+    let inst = c.adopt("claude".into(), "助手".into(), None).await.unwrap();
+    let policy = ffi::PlanPolicy {
+        preauthorized_tools: vec!["read".into(), "search".into()],
+        approval_timeout_secs: 3600,
+        on_approval_timeout: "skip".into(),
+        max_tokens: Some(200_000),
+        max_duration_secs: 1800,
+        max_steps: None,
+        daily_token_limit: Some(1_000_000),
+        wait_timeout_secs: 7200,
+    };
+    let plan = c
+        .create_plan(ffi::NewPlan {
+            instance_id: inst.id.clone(),
+            title: "早报".into(),
+            goal: "每天八点整理新闻".into(),
+            triggers: vec![ffi::Schedule::Cron {
+                expr: "0 8 * * *".into(),
+                tz: "Asia/Shanghai".into(),
+            }],
+            steps: vec![],
+            policy: Some(policy.clone()),
+            catch_up: Some("skip".into()),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        (plan.policy.clone(), plan.catch_up.as_str()),
+        (policy.clone(), "skip")
+    );
+    assert!(plan.policy_json.contains("\"preauthorized_tools\""));
+
+    let edited = c
+        .update_plan(
+            plan.id.clone(),
+            ffi::PlanChange {
+                title: Some("晨报".into()),
+                policy: Some(ffi::PlanPolicy {
+                    on_approval_timeout: "fail".into(),
+                    ..policy.clone()
+                }),
+                catch_up: Some("all".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        (
+            edited.title.as_str(),
+            edited.goal.as_str(),
+            edited.catch_up.as_str()
+        ),
+        ("晨报", "每天八点整理新闻", "all")
+    );
+    assert_eq!(edited.policy.on_approval_timeout, "fail");
+    assert_eq!(edited.triggers.len(), 1);
+    assert!(matches!(
+        c.update_plan(
+            plan.id.clone(),
+            ffi::PlanChange {
+                catch_up: Some("sometimes".into()),
+                ..Default::default()
+            }
+        )
+        .await,
+        Err(ClientError::InvalidArgument { .. })
+    ));
+    assert!(matches!(
+        c.update_plan(
+            plan.id.clone(),
+            ffi::PlanChange {
+                title: Some(" ".into()),
+                ..Default::default()
+            }
+        )
+        .await,
+        Err(ClientError::Api { status: 422, .. })
+    ));
+
+    let t = c
+        .add_trigger(
+            plan.id.clone(),
+            ffi::Schedule::Cron {
+                expr: "30 18 * * 1-5".into(),
+                tz: "Asia/Shanghai".into(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(t.next_fire_at_ms.is_some());
+    assert_eq!(c.get_plan(plan.id.clone()).await.unwrap().triggers.len(), 2);
+    c.delete_trigger(t.id.clone()).await.unwrap();
+    assert!(matches!(
+        c.delete_trigger(t.id).await,
+        Err(ClientError::Api { status: 404, .. })
+    ));
+    assert_eq!(c.get_plan(plan.id).await.unwrap().triggers.len(), 1);
 }
