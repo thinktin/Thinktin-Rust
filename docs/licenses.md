@@ -52,6 +52,8 @@ CI 按许可证策略检查。法务的判断（商标、各家的使用条款�
 1. **元数据里的声明**（npm 的 `license`、PyPI 的 `License-Expression` / `License`、Cargo 的 `license`）：合法的 SPDX
    表达式（标识按 SPDX 的完整列表核对，`tools/licenses/spdx/license-ids.txt`），或对照表里的常见写法（“MIT License”
    “Apache 2.0”）。**有声明但认不出的，不再拿原文或分类去猜**，直接算认不出。`SEE LICENSE IN <文件>` 只看那个文件。
+   PyPI 没有 `License-Expression` 时，`License` 字段和许可证分类都只是说明：分类里有 `License` 字段没提到的许可证，
+   两个都算（AND）。
 2. 没有声明时：**PyPI 的许可证分类**（几个分类用 AND 连：分类本身不说明是“任选其一”；对照表里没有的分类算认不出）。
 3. 再没有就看**原文**，分两步：先按正文开头的标题和授权条款里固定的句子提名（可能提名好几个：X11 也含 MIT 的授权句），
    再逐个拿**整份文件和 SPDX 标准文本核对**（`tools/licenses/spdx/<标识>.txt`，Apache-2.0、MPL-2.0 也认标准的头部声明）：
@@ -62,7 +64,10 @@ CI 按许可证策略检查。法务的判断（商标、各家的使用条款�
 4. 含糊的声明（“BSD”）用核对过的原文细化成同一类的（BSD-3-Clause），不是同一类的两个都算（AND）；
    “AGPL”“GPL”这类含糊声明不会被原文改成宽松的。
 
-不管从哪里认的，许可证原文里有限制商用、托管的说法（Commons Clause、non-commercial、BUSL、SSPL、PolyForm……）都会加上
+不管从哪里认的，还要和包里的许可证文件对一遍：文件核对过是要审查的许可证（声明 MIT，文件是 GPL 全文），或者看着像
+禁止的许可证（AGPL……），而声明里没有它，报错要人看。只是顺带提到别的许可证的不算。
+
+许可证原文里有限制商用、托管的说法（Commons Clause、non-commercial、BUSL、SSPL、PolyForm……）都会加上
 `LicenseRef-Restricted-Terms`，要人看。
 
 扫描的范围：全局 npm 包（`/usr/local/lib/node_modules`）、基础镜像带的 Yarn（`/opt/yarn-*`）、agent 虚拟环境里的 Python 包
@@ -102,6 +107,7 @@ copyright 文件里，一并带上）、dpkg 装的包、Node.js 本身、agent-
 |---|---|
 | 认不出许可证 | 看包里的 LICENSE 和 package.json / METADATA。是常见写法没收进对照表的，加进 `licenses.py` 的 `FREE_TEXT`；真没写许可证的，按 GPL 一类处理（下一行） |
 | 需要单独审查（GPL、专有……） | 弄清这个包在镜像里怎么用、许可证要求什么，确认能用后在 `policy.toml` 登记 `[[exception]]`，理由写清楚；拿不准的找法务 |
+| 许可证是 X，但包里的文件是（像是）Y | 声明和原文对不上：看包的源码仓库，弄清到底按哪个许可证发布。声明写错了、Y 只管个别文件的，确认后登记 `[[exception]]`（license 写扫描出的 X，用 `text_sha256` 钉住原文）；真是 Y 的按 Y 处理 |
 | 在禁止名单里 | 不能用：换一个包，或者让上游换依赖。依赖是间接引进来的，看能不能用 npm 的 `overrides` 去掉 |
 | 清单的 `agent.license` 和上游对不上 | 上游改了许可证：复核新许可证还能不能这么用（第 6 节），再改清单 |
 | 登记的例外在镜像里没找到 | 上游换了包名或许可证：重新复核，更新登记 |

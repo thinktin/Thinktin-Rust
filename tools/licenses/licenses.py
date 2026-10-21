@@ -861,6 +861,29 @@ def _same_family(vague, precise):
     return bool(family) and all(i.startswith(family) for i in ids)
 
 
+def _family(lid):
+    """GPL-2.0-only、GPL-2.0-or-later、GPL-2.0+ 是同一个许可证的不同版本选择，比较时当一个。"""
+    return re.sub(r"(-only|-or-later|\+)$", "", lid)
+
+
+def _covers(expr, lid):
+    """许可证表达式里有没有 lid（或者同一个许可证的别的版本选择；含糊的 LicenseRef-GPL-Unspecified 算任何 GPL）。"""
+    try:
+        ids = spdx_ids(parse_spdx(expr))
+    except SpdxError:
+        return False
+    want = _family(lid)
+    for i in ids:
+        have = _family(i)
+        if have == want:
+            return True
+        for a, b in ((have, want), (want, have)):
+            m = re.fullmatch(r"LicenseRef-(\w+)-Unspecified", a)
+            if m and b.startswith(m.group(1) + "-"):
+                return True
+    return False
+
+
 def _and(items):
     items = list(dict.fromkeys(items))
     return " AND ".join("(%s)" % i if " OR " in i else i for i in items)
@@ -1061,6 +1084,13 @@ def scan_python(inv, site_packages, root_names=()):
                 if p.is_file() and p not in files:
                     files.append(p)
         license, source = resolve_license(declared, files, mapped)
+        if license and not expr and source in ("metadata", "text"):
+            # 没有 License-Expression 时，License 字段和许可证分类都只是说明，分类里有 License 字段没提到的许可证
+            # （License: MIT，分类却是 GPL），两个都算（AND），要人看。
+            more = [m for m in mapped if not _is_vague(m)
+                    and not all(_covers(license, i) for i in spdx_ids(parse_spdx(m)))]
+            if more:
+                license = _and([license] + more)
         shown = "; ".join([d for d in declared if not d.startswith("Classifier: ")] + ["Classifier: %s" % c for c in classifiers]) or None
         authors = msg.get("Author") or msg.get("Author-email") or msg.get("Maintainer") or msg.get("Maintainer-email")
         inv.add("pypi", name, version, shown, license, source, files, dist, pypi_norm(name) in roots, extra=extra or None,
@@ -1433,6 +1463,7 @@ def check(inventory, policy, manifest=None, out=sys.stdout):
             errors.append("%s：许可证 %s 在禁止名单里（网络 copyleft 或限制商用、托管）" % (label, c["license"]))
         elif verdict == "review":
             errors.append("%s：许可证 %s 需要单独审查，确认能用后在 policy.toml 的 [[exception]] 登记" % (label, c["license"]))
+        errors += cross_check(c, label, policy)
         if not c["files"] and not c.get("generic_files") and c["ecosystem"] != "deb":
             warnings.append(label)
 
@@ -1456,6 +1487,23 @@ def check(inventory, policy, manifest=None, out=sys.stdout):
 
     summary = render_summary(inventory, errors, warnings, registered)
     return errors, warnings, summary
+
+
+def cross_check(c, label, policy):
+    """声明和包里的许可证原文对不上：原文核对过是要审查的许可证（GPL……），或者看着像禁止的许可证（AGPL……），
+    而声明里没有它。声明写 MIT、包里却是 GPL 的原文，以原文为准要人看。"""
+    errors = []
+    for f in c.get("file_licenses") or []:
+        lid = f.get("proposed")
+        if not lid:
+            continue
+        verdict = policy.classify_id(lid, c["ecosystem"])
+        if verdict == "allow" or _covers(c["license"], lid):
+            continue
+        if verdict == "deny" or f.get("verified"):
+            errors.append("%s：许可证是 %s，但包里的 %s %s %s，声明里没有。查清后改正或在 policy.toml 登记"
+                          % (label, c["license"], f["file"], "是" if f.get("verified") else "像是", lid))
+    return errors
 
 
 def _license_shown(c, policy, agent=None):
@@ -2069,6 +2117,42 @@ def self_test():
         inv = Inventory(tmp / "out2", "egg")
         scan_python(inv, sp)
         eq(inv.components.get(("pypi", "eggy", "1.0"), {}).get("license"), "AGPL-3.0-only", ".egg-info 也扫")
+        # 声明和原文对不上：声明 MIT，包里却是 GPL 的原文（核对过）或者像 AGPL 的原文
+        nm = tmp / "cross" / "node_modules"
+        agpl_like = AGPL_TEXT + "\nAdditional permission: you may also use this file under the MIT license.\n"
+        for name, decl, files in [("gplfile", "MIT", {"COPYING": _spdx_text("GPL-3.0-only")}),
+                                  ("dualgpl", "MIT OR GPL-3.0-or-later", {"COPYING": _spdx_text("GPL-3.0-only")}),
+                                  ("agpllike", "MIT", {"LICENSE": agpl_like}),
+                                  ("mitfile", "MIT", {"LICENSE": MIT_TEXT}),
+                                  ("gplmention", "MIT", {"LICENSE": MIT_TEXT + "\nParts were once distributed under the terms "
+                                                         "of the GNU General Public License.\n"})]:
+            (nm / name).mkdir(parents=True)
+            (nm / name / "package.json").write_text(json.dumps({"name": name, "version": "1.0.0", "license": decl}))
+            for fn, text in files.items():
+                (nm / name / fn).write_text(text)
+        inv = Inventory(tmp / "out-cross", "cross")
+        scan_npm(inv, nm)
+        errors, _, _ = check(inv.write(), pol)
+        eq(any("gplfile@" in e and "GPL-3.0-only" in e for e in errors), True, "声明 MIT、包里是 GPL 原文要拦")
+        eq(any("agpllike@" in e and "AGPL" in e for e in errors), True, "声明 MIT、包里像 AGPL 原文要拦")
+        eq([e for e in errors if "dualgpl@" in e or "mitfile@" in e or "gplmention@" in e], [],
+           "声明里有的、对得上的、只是顺带提到的不拦")
+        # PyPI 没有 License-Expression 时，License 字段没提到的分类也算
+        sp = tmp / "sp-cls"
+        for name, cls in [("mitgpl", "GNU General Public License v3 (GPLv3)"), ("mitmit", "MIT License"), ("mitbsd", "BSD License")]:
+            (sp / ("%s-1.0.dist-info" % name)).mkdir(parents=True)
+            (sp / ("%s-1.0.dist-info" % name) / "METADATA").write_text(
+                "Metadata-Version: 2.1\nName: %s\nVersion: 1.0\nLicense: MIT\nClassifier: License :: OSI Approved :: %s\n\nx\n"
+                % (name, cls))
+        (sp / "exprgpl-1.0.dist-info").mkdir(parents=True)
+        (sp / "exprgpl-1.0.dist-info" / "METADATA").write_text(
+            "Metadata-Version: 2.4\nName: exprgpl\nVersion: 1.0\nLicense-Expression: MIT\n"
+            "Classifier: License :: OSI Approved :: GNU General Public License v3 (GPLv3)\n\nx\n")
+        inv = Inventory(tmp / "out-cls", "cls")
+        scan_python(inv, sp)
+        got = {k[1]: v["license"] for k, v in inv.components.items()}
+        eq(got, {"mitgpl": "MIT AND GPL-3.0-only", "mitmit": "MIT", "mitbsd": "MIT", "exprgpl": "MIT"},
+           "License 字段加上没提到的分类；License-Expression 为准")
         # sources.toml：同一组件的许可证要一致
         ex = tmp / "conflict"
         ex.mkdir()
