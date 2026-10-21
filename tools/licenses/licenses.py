@@ -336,13 +336,20 @@ def normalize_declared(text):
     return None
 
 
-# 从原文识别许可证。只认两种确定的写法，别的提法（比如 MPL-2.0 正文里定义“次级许可证”时提到 AGPL）不算：
-# - 标题：许可证全文开头的名字，只在开头 TITLE_WINDOW 个字符里找；
-# - 正文里固定的句子：各许可证授权条款本身的句子、或者源文件头部“按某许可证授权”的那句。
-# 按顺序匹配，先匹配到的为准。
+# 从原文识别许可证，分两步：
+# 1. 提名：按许可证正文开头的标题（只看开头 TITLE_WINDOW 个字符），或者授权条款里固定的句子，猜是哪个许可证；
+# 2. 核对：整个文件要和这个许可证的 SPDX 标准文本（tools/licenses/spdx/<标识>.txt）或标准头部声明（_HEADERS）
+#    对得上——去掉版权行以后，文件里多出来的词不超过 VERIFY_EXTRA_WORDS 个（多出来的往往正是附加的限制条款、
+#    专有声明、EULA），标准文本里缺的不超过 VERIFY_MISSING（有的包把附录删了）。对不上就算认不出，要人登记。
+# 提名用的说法都是许可证正文里固定的句子，正文里顺带提到的别的许可证（MPL-2.0 定义“次级许可证”时提到 AGPL）不算。
+# 一份原文可能被几条规则提名（X11 也含 MIT 的授权句），按规则顺序逐个核对，第一个对得上的算数；
+# 都对不上时记第一个提名。
 TITLE_WINDOW = 300
+VERIFY_EXTRA_WORDS = 8
+VERIFY_MISSING = 0.25
 _TITLE_RULES = [
     ("MPL-2.0", ["mozilla public license", "2.0"]),
+    ("MPL-1.1", ["mozilla public license", "version 1.1"]),
     ("SSPL-1.0", ["server side public license"]),
     ("BUSL-1.1", ["business source license"]),
     ("Elastic-2.0", ["elastic license 2.0"]),
@@ -355,8 +362,13 @@ _TITLE_RULES = [
     ("GPL-2.0-only", ["gnu general public license", "version 2"]),
     ("EPL-2.0", ["eclipse public license", "2.0"]),
     ("EPL-1.0", ["eclipse public license", "1.0"]),
+    ("CDDL-1.1", ["common development and distribution license", "version 1.1"]),
     ("CDDL-1.0", ["common development and distribution license"]),
     ("Apache-2.0", ["apache license", "version 2.0"]),
+    ("Apache-1.1", ["apache software license, version 1.1"]),
+    ("OFL-1.1", ["sil open font license", "version 1.1"]),
+    ("BSD-3-Clause-Clear", ["the clear bsd license"]),
+    ("WTFPL", ["do what the fuck you want to public license"]),
     ("BlueOak-1.0.0", ["blue oak model license"]),
     ("BSL-1.0", ["boost software license"]),
     ("Artistic-2.0", ["the artistic license 2.0"]),
@@ -378,6 +390,8 @@ _BODY_RULES = [
     ("LicenseRef-LGPL-Unspecified", ["under the terms of the gnu lesser general public license"]),
     ("LicenseRef-GPL-Unspecified", ["under the terms of the gnu general public license"]),
     ("Unlicense", ["this is free and unencumbered software released into the public domain"]),
+    # Python 本身的许可证是 PSF 的协议再加 BeOpen、CNRI、CWI 三份历史协议。
+    ("Python-2.0", ["python software foundation license", "beopen.com license agreement for python 2.0"]),
     ("PSF-2.0", ["python software foundation license agreement"]),
     ("Zlib", ["this software is provided 'as-is', without any express or implied warranty",
               "altered source versions must be plainly marked as such"]),
@@ -386,27 +400,44 @@ _BODY_RULES = [
     ("Unicode-DFS-2016", [_GRANT_MIT, "unicode data files"]),
     # MIT-0 要正面认：有授权句，但没有“须保留版权和许可声明”那一条件。
     ("MIT-0", [_GRANT_MIT, "!subject to the following condition", "!shall be included"]),
+    ("X11", [_GRANT_MIT, "except as contained in this notice, the name of"]),
     ("MIT", [_GRANT_MIT]),
+    ("curl", ["permission to use, copy, modify, and distribute this software for any purpose with or without fee",
+              "except as contained in this notice, the name of a copyright holder"]),
     ("ISC", ["permission to use, copy, modify, and/or distribute this software for any purpose", "provided that the above copyright notice"]),
     ("ISC", ["permission to use, copy, modify, and distribute this software for any purpose", "provided that the above copyright notice"]),
     ("0BSD", ["permission to use, copy, modify, and/or distribute this software for any purpose"]),
+    # HPND 和 MIT-CMU 很像，MIT-CMU 多一段开头（“By obtaining, using, and/or copying …”），短的先核对。
+    ("HPND", ["permission to use, copy, modify", "for any purpose and without fee is hereby granted"]),
+    ("MIT-CMU", ["permission to use, copy, modify", "for any purpose and without fee is hereby granted"]),
     # BSD 一族：Sleepycat（要求公开源码）、带广告条款的 BSD-4 都含 BSD-3 的句子，先认它们。
     ("Sleepycat", ["redistribution and use in source and binary forms", "information on how to obtain complete source code"]),
     ("BSD-4-Clause", ["redistribution and use in source and binary forms", "all advertising materials mentioning features"]),
+    ("BSD-3-Clause-Clear", ["redistribution and use in source and binary forms",
+                            "no express or implied licenses to any party's patent rights are granted"]),
     ("BSD-3-Clause", ["redistribution and use in source and binary forms", "endorse or promote products"]),
+    # 少了条款的文本也核对得上多的那个（标准文本里缺的不超过 VERIFY_MISSING），所以条款少的先核对。
+    ("BSD-1-Clause", ["redistribution and use in source and binary forms", "!redistributions in binary form"]),
     ("BSD-2-Clause", ["redistribution and use in source and binary forms"]),
 ]
 
-# 正文规则匹配到的句子前面，只能是标题和版权声明。前面还有别的话（专有声明、EULA、“Commons Clause”前言……）
-# 就不认：那段话可能才是这个包真正的条款，后面的 MIT 原文只是它带的第三方代码。
-_PREAMBLE_ALLOWED = re.compile(
-    r"(copyright|©|\(c\))[^.]*\.?|all rights reserved\.?|"
-    r"\b(the )?(mit|isc|bsd|apache|zlib|expat|unlicense|0bsd|new bsd|simplified bsd|modified bsd|"
-    r"bsd[ -]?[234][ -]?clause|apache[ -]2\.0)\b|\blicen[cs]e\b|\(mit\)|\bversion\b|"
-    r"[^a-z]+",
-)
-_PREAMBLE_SUSPICIOUS = ("proprietary", "eula", "end user license", "license agreement", "commercial", "prohibited",
-                        "not permitted", "may not")
+
+# 只有一段“按某许可证授权”头部声明的许可证文件（常见于 Apache-2.0、MPL-2.0）：按标准头部核对。
+_HEADERS = {
+    "Apache-2.0": (
+        'Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance '
+        "with the License. You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0 Unless "
+        "required by applicable law or agreed to in writing, software distributed under the License is distributed on an "
+        '"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the '
+        "specific language governing permissions and limitations under the License."
+    ),
+    "MPL-2.0": (
+        "This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not "
+        "distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/."
+    ),
+}
+# 版权行：Copyright …、© …、(c) 2024 …。条款编号“(c) You must retain …”不算。
+_COPYRIGHT_LINE = re.compile(r"^\s*(portions\s+)?(copyright\b|©|\(c\)\s*(\d|copyright\b))", re.I)
 
 
 def _matches(t, needles):
@@ -419,29 +450,102 @@ def _matches(t, needles):
     return True
 
 
-def _clean_preamble(t, pos):
-    pre = t[:pos]
-    if any(w in pre for w in _PREAMBLE_SUSPICIOUS):
+def _strip_comments(text):
+    return "\n".join(re.sub(r"^\s*(?://+|#+|;+|--+|>+|/?\*+/?)\s?", "", line) for line in text.splitlines())
+
+
+def _normalized(text):
+    t = _norm_text(_strip_comments(text[:8000]))
+    return t.replace("*", "").replace("#", "").replace("“", '"').replace("”", '"').replace("’", "'").strip()
+
+
+def candidates(text):
+    """按标题或固定句子猜原文可能是哪些许可证（没核对过），按规则顺序。"""
+    t = _normalized(text)
+    head = t[:TITLE_WINDOW]
+    out = [spdx for spdx, needles in _TITLE_RULES if _matches(head, needles)]
+    out += [spdx for spdx, needles in _BODY_RULES if _matches(t, needles)]
+    return list(dict.fromkeys(out))
+
+
+def propose(text):
+    """第一个提名（没核对过）；猜不出返回 None。"""
+    found = candidates(text)
+    return found[0] if found else None
+
+
+def _words(text):
+    """去掉注释前缀和版权行以后的词（小写字母和数字）。"""
+    lines = [line for line in _strip_comments(text).splitlines() if not _COPYRIGHT_LINE.match(line)]
+    return re.findall(r"[a-z0-9]+", "\n".join(lines).lower().replace("'", "").replace("’", ""))
+
+
+_TEMPLATES = {}
+
+
+def _template_words(lid):
+    if lid not in _TEMPLATES:
+        words = []
+        path = SPDX_DIR / ("%s.txt" % lid)
+        if path.is_file():
+            # SPDX 标准文本里的占位写法（<year>、<copyright holders>、[yyyy]）连同版权行一起去掉。
+            text = re.sub(r"<[^>]{1,60}>|\[[^\]]{1,40}\]", " ", path.read_text(encoding="utf-8"))
+            words = [_words(text)]
+        if lid in _HEADERS:
+            words.append(_words(_HEADERS[lid]))
+        _TEMPLATES[lid] = words
+    return _TEMPLATES[lid]
+
+
+# 核对时文件里可以多出来的“无害”的词：标题、SPDX 标识行、“All rights reserved”。别的多出来的词要是名字替换
+# 这种短的（BSD 第三条“Neither the name of <组织> nor …”），一段不超过 5 个、加起来不超过 VERIFY_EXTRA_WORDS 个。
+_BENIGN_WORDS = set(
+    "the a an and or of license licence licensed mit x11 expat isc bsd new simplified modified clause apache version v "
+    "spdx identifier all rights reserved software".split()
+)
+VERIFY_EXTRA_RUN = 5
+
+
+def verify_text(text, lid):
+    """原文是不是就是 lid 这个许可证（标准文本或标准头部），没有多出来的条款。"""
+    import difflib
+
+    got = _words(text[:200000])
+    if not got:
         return False
-    rest = _PREAMBLE_ALLOWED.sub("", pre)
-    return len(rest) <= 80
+    for want in _template_words(lid):
+        if not want:
+            continue
+        sm = difflib.SequenceMatcher(None, got, want, autojunk=False)
+        blocks = sm.get_matching_blocks()
+        matched = sum(b.size for b in blocks)
+        if len(want) - matched > VERIFY_MISSING * len(want):
+            continue
+        extra, pos = [], 0
+        for b in blocks:
+            if b.a > pos:
+                run = [w for w in got[pos:b.a] if w not in _BENIGN_WORDS and not w.isdigit()]
+                if run:
+                    extra.append(run)
+            pos = b.a + b.size
+        if all(len(r) <= VERIFY_EXTRA_RUN for r in extra) and sum(len(r) for r in extra) <= VERIFY_EXTRA_WORDS:
+            return True
+    return False
+
+
+def identify(text):
+    """(许可证, 核对过没有)：第一个核对得上的提名；都对不上时是第一个提名和 False。"""
+    found = candidates(text)
+    for lid in found:
+        if verify_text(text, lid):
+            return lid, True
+    return (found[0] if found else None), False
 
 
 def detect_text(text):
-    """从许可证原文认出 SPDX 标识；认不出返回 None。"""
-    # 去掉注释前缀（源文件头部的 // # ; -- > *），再统一空白、大小写、Markdown 符号和引号。
-    lines = [re.sub(r"^\s*(?://+|#+|;+|--+|>+|/?\*+/?)\s?", "", line) for line in text[:8000].splitlines()]
-    t = _norm_text("\n".join(lines))
-    t = t.replace("*", "").replace("#", "").replace("“", '"').replace("”", '"').replace("’", "'").strip()
-    head = t[:TITLE_WINDOW]
-    for spdx, needles in _TITLE_RULES:
-        if _matches(head, needles):
-            return spdx
-    for spdx, needles in _BODY_RULES:
-        if _matches(t, needles):
-            first = next(n for n in needles if not n.startswith("!"))
-            return spdx if _clean_preamble(t, t.index(first)) else None
-    return None
+    """原文核对过的许可证；提名不出来或者对不上标准文本，返回 None。"""
+    lid, ok = identify(text)
+    return lid if ok else None
 
 
 # ---------------------------------------------------------------------------
@@ -492,10 +596,11 @@ def is_notice(path):
 
 
 def license_from_files(paths):
-    """从原文认许可证。NOTICE、第三方清单不参与。多个认出来的用 AND 连起来。
+    """从原文认许可证（只用核对过的）。NOTICE、第三方清单不参与。多个认出来的用 AND 连起来。
 
     有认不出的许可证文件时加上 LicenseRef-Unrecognized（要登记）：认不出的可能正是专有或限制性的条款，
-    不能因为旁边还有一份 MIT 原文就当它是 MIT。一个也认不出返回 None。
+    不能因为旁边还有一份 MIT 原文就当它是 MIT。有许可证文件但一个也认不出时返回 LicenseRef-Unrecognized，
+    一个许可证文件也没有返回 None。
     """
     found, unknown = [], False
     for p in paths:
@@ -509,22 +614,37 @@ def license_from_files(paths):
             unknown = True
         elif spdx not in found:
             found.append(spdx)
-    if not found:
-        return None
     if unknown:
         found.append("LicenseRef-Unrecognized")
+    if not found:
+        return None
     return found[0] if len(found) == 1 else " AND ".join(found)
 
 
-# 许可证原文里出现这些说法，说明条款限制商用或托管（Commons Clause、非商用、BUSL、SSPL……），
-# 不管元数据怎么声明，都加上 LicenseRef-Restricted-Terms 要人看。GPL 正文里的“noncommercially”不算。
+def file_detections(paths):
+    """每个许可证文件（NOTICE 之外）提名的许可证和核对结果，给检查时和声明对照用。"""
+    out = []
+    for p in paths:
+        if is_notice(p):
+            continue
+        text = read_text(p)
+        if text is None:
+            continue
+        lid, ok = identify(text)
+        out.append((p, lid, ok))
+    return out
+
+
+# 许可证原文里出现这些说法，说明条款限制商用、托管或竞争（Commons Clause、非商用、BUSL、SSPL、FSL……），
+# 不管元数据怎么声明，都加上 LicenseRef-Restricted-Terms 要人看。比对前把连字符、下划线、空白统一成一个空格。
+# GPL 正文里的“noncommercially”、Unlicense 的“commercial or non-commercial”不算。
 _RESTRICTED_PHRASES = [
     "commons clause",
-    "non-commercial",
+    "non commercial",
     "noncommercial use",
     "noncommercial purpose",
-    "attribution-noncommercial",
-    "not for commercial use",
+    "attribution noncommercial",
+    "not for commercial",
     "commercial use is not permitted",
     "commercial use is prohibited",
     "may not be used for commercial",
@@ -532,8 +652,15 @@ _RESTRICTED_PHRASES = [
     "business source license",
     "server side public license",
     "elastic license",
+    "functional source license",
+    "competing use",
     "polyform",
     "for evaluation purposes only",
+    "as a hosted service",
+    "as a hosted or managed service",
+    "as a managed service",
+    "software as a service",
+    "non production use",
 ]
 
 
@@ -545,9 +672,8 @@ def restricted_terms(paths):
         text = read_text(p)
         if text is None:
             continue
-        t = _norm_text(text[:50000])
-        # “for any purpose, commercial or non-commercial”（Unlicense 等）是放宽，不是限制。
-        t = re.sub(r"\bcommercial,? (or|and) non-?commercial\b|\bnon-?commercial,? (or|and) commercial\b", "", t)
+        t = re.sub(r"[\s_\-]+", " ", text[:50000].lower())
+        t = re.sub(r"\bcommercial,? (or|and) non ?commercial\b|\bnon ?commercial,? (or|and) commercial\b", "", t)
         for phrase in _RESTRICTED_PHRASES:
             if phrase in t and phrase not in hits:
                 hits.append(phrase)
@@ -572,6 +698,10 @@ class Inventory:
             c["root_level"] = c["root_level"] or root_level
             return c
         copied, digests = self._copy(ecosystem, name, version, files)
+        detections = [
+            {"file": self._where.get(Path(src), str(src)), "proposed": lid, "verified": ok}
+            for src, lid, ok in (file_detections(files or []) if ecosystem not in ("deb", "runtime") else [])
+        ]
         restricted = restricted_terms(files or []) if ecosystem not in ("deb", "runtime") else []
         if restricted and license:
             try:
@@ -585,6 +715,7 @@ class Inventory:
             "version": version,
             "license": license,
             "restricted_terms": restricted or None,
+            "file_licenses": detections,
             "declared": declared,
             "license_from": license_from,
             "files": copied,
@@ -622,6 +753,7 @@ class Inventory:
     def _copy(self, ecosystem, name, version, files):
         """原文按内容存：texts/by-hash/<哈希前 16 位>/<原文件名>。几百个 crate 的 LICENSE-APACHE 一字不差，只存一份。"""
         copied, digests = [], []
+        self._where = {}
         for src in files or []:
             src = Path(src)
             try:
@@ -631,6 +763,7 @@ class Inventory:
                 continue
             if data is None:
                 copied.append(str(src))  # 太大：只记原来的位置
+                self._where[src] = str(src)
                 continue
             digest = hashlib.sha256(data).hexdigest()
             rel = Path("texts") / "by-hash" / digest[:16] / src.name
@@ -639,6 +772,7 @@ class Inventory:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(data)
             copied.append(str(rel))
+            self._where[src] = str(rel)
             digests.append(digest)
         return copied, digests
 
@@ -754,17 +888,23 @@ def resolve_license(declared_list, files, classifiers=(), see_file=None):
             vague = vague or n
     if see_file is not None:
         from_file = license_from_files([see_file]) if see_file else None
-        return (from_file, "text") if from_file else (None, "none")
+        if not from_file or "LicenseRef-Unrecognized" in from_file:
+            return None, "none"
+        return from_file, "text"
     if unrecognized:
         return None, "none"
     if vague:
         from_text = license_from_files(files)
         if from_text and _same_family(vague, from_text):
             return from_text, "text"
+        if from_text:
+            return _and([vague, from_text]), "metadata"
         return vague, "metadata"
     if any(not _is_vague(c) for c in classifiers):
         return _and(classifiers), "classifier"
     from_text = license_from_files(files)
+    if from_text == "LicenseRef-Unrecognized":
+        from_text = None  # 一个也认不出：许可证未知（要登记），不是“认出来一半”
     if from_text:
         return from_text, "text"
     if classifiers:
@@ -1505,48 +1645,16 @@ def main(argv=None):
 # ---------------------------------------------------------------------------
 # 测试
 
-MIT_TEXT = """MIT License
+def _spdx_text(lid, holder="2024 Someone"):
+    """测试用：SPDX 标准全文，占位写法换成具体的版权方。"""
+    return re.sub(r"<[^>]{1,60}>", holder, (SPDX_DIR / ("%s.txt" % lid)).read_text(encoding="utf-8"))
 
-Copyright (c) 2024 Someone
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-"""
-
-APACHE_TEXT = """
-                                 Apache License
-                           Version 2.0, January 2004
-                        http://www.apache.org/licenses/
-"""
-
-BSD3_TEXT = """Copyright (c) 2010, Someone. All rights reserved.
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are met:
-* Neither the name of the copyright holder nor the names of its contributors
-  may be used to endorse or promote products derived from this software
-  without specific prior written permission.
-"""
-
-ISC_TEXT = """ISC License
-
-Permission to use, copy, modify, and/or distribute this software for any
-purpose with or without fee is hereby granted, provided that the above
-copyright notice and this permission notice appear in all copies.
-"""
-
-ZERO_BSD_TEXT = """Permission to use, copy, modify, and/or distribute this software for any
-purpose with or without fee is hereby granted.
-
-THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
-"""
+MIT_TEXT = _spdx_text("MIT")
+APACHE_TEXT = _spdx_text("Apache-2.0")
+BSD3_TEXT = _spdx_text("BSD-3-Clause")
+ISC_TEXT = _spdx_text("ISC")
+ZERO_BSD_TEXT = _spdx_text("0BSD")
 
 AGPL_TEXT = """                    GNU AFFERO GENERAL PUBLIC LICENSE
                        Version 3, 19 November 2007
@@ -1629,12 +1737,22 @@ def self_test():
     eq(detect_text(BSD3_TEXT), "BSD-3-Clause", "BSD-3 原文")
     eq(detect_text(ISC_TEXT), "ISC", "ISC 原文")
     eq(detect_text(ZERO_BSD_TEXT), "0BSD", "0BSD 原文")
-    eq(detect_text(AGPL_TEXT), "AGPL-3.0-only", "AGPL 原文")
+    eq(identify(AGPL_TEXT)[0], "AGPL-3.0-only", "AGPL 原文（提名；没有标准文本，核对不了）")
     eq(detect_text(PROPRIETARY_TEXT), None, "专有声明认不出")
-    eq(detect_text(MPL_TEXT), "MPL-2.0", "MPL-2.0 正文里提到 AGPL 不算 AGPL")
-    eq(detect_text("Copyright 2020 X\n\nLicensed under the Apache License, Version 2.0 (the \"License\");"), "Apache-2.0", "Apache 头部声明")
+    eq(identify(MPL_TEXT)[0], "MPL-2.0", "MPL-2.0 正文里提到 AGPL 不算 AGPL")
+    eq(detect_text(_spdx_text("MPL-2.0")), "MPL-2.0", "MPL-2.0 全文核对得上")
+    eq(detect_text("Copyright 2020 X\n\n" + _HEADERS["Apache-2.0"]), "Apache-2.0", "Apache 头部声明")
+    eq(detect_text("Copyright 2020 X\n\nLicensed under the Apache License, Version 2.0 (the \"License\"); "
+                   "except that you may not offer it as a service."), None, "改过的 Apache 头部核对不上")
     eq(detect_text("# MIT License\n\n" + MIT_TEXT), "MIT", "Markdown 标题")
     eq(detect_text("Some notice. This product includes software under the GNU General Public License."), None, "顺带提到 GPL 不算")
+    # tools/licenses/spdx/ 里的每份标准文本都认得出是它自己（相近的许可证：X11 和 MIT、curl 和 ISC、Python 和 PSF、
+    # BSD-1 和 BSD-2，靠核对分开）。
+    for path in sorted(SPDX_DIR.glob("*.txt")):
+        if path.stem not in ("license-ids", "exception-ids"):
+            eq(identify(_spdx_text(path.stem)), (path.stem, True), "%s 标准文本" % path.stem)
+    eq(identify(APACHE_TEXT.replace("(c) You must retain", "(c)  You must retain")), ("Apache-2.0", True),
+       "Apache 的条款“(c) You must retain”不是版权行")
     eq(is_legal_file("LICENSE"), True, "LICENSE")
     eq(is_legal_file("LICENSE-APACHE"), True, "LICENSE-APACHE")
     eq(is_legal_file("license.md"), True, "license.md")
@@ -1833,7 +1951,7 @@ def self_test():
     # 对抗式评审复现过的绕过：每一条都要拦住（errors 非空）
     commons_clause = APACHE_TEXT + "\n\"Commons Clause\" License Condition v1.0\nThe Software is provided to you by the Licensor\n"
     eula = "Acme EULA. All rights reserved. Commercial agreement required for any use.\n"
-    noncommercial = MIT_TEXT.replace("to deal\nin the Software without restriction", "to deal\nin the Software for non-commercial purposes only")
+    noncommercial = re.sub(r"without\s+restriction", "for non-commercial purposes only", MIT_TEXT, count=1)
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         nm = tmp / "node_modules"
@@ -1902,10 +2020,28 @@ def self_test():
                            "The above copyright notice and this permission notice (including the next\nparagraph) shall")
     eq(detect_text(x11), "MIT", "X11 写法“(including the next paragraph)”是 MIT，不是 MIT-0")
     eq(detect_text("// " + MIT_TEXT.replace("\n", "\n// ")), "MIT", "源文件注释里的 MIT")
-    eq(detect_text(BSD3_TEXT + "\n3. All advertising materials mentioning features or use of this software must display\n"), "BSD-4-Clause", "带广告条款的 BSD")
-    eq(detect_text(BSD3_TEXT + "\nmust be accompanied by information on how to obtain complete source code for the DB software\n"),
-       "Sleepycat", "Sleepycat 要求公开源码")
-    eq(detect_text(MIT_TEXT + "\nThe Software shall be used for Good, not Evil.\n"), "JSON", "JSON 许可证")
+    eq(identify(BSD3_TEXT + "\n3. All advertising materials mentioning features or use of this software must display\n")[0],
+       "BSD-4-Clause", "带广告条款的 BSD（提名）")
+    eq(detect_text(BSD3_TEXT + "\n3. All advertising materials mentioning features or use of this software must display\n"), None,
+       "带广告条款的不是 BSD-3")
+    eq(identify(BSD3_TEXT + "\nmust be accompanied by information on how to obtain complete source code for the DB software\n")[0],
+       "Sleepycat", "Sleepycat 要求公开源码（提名）")
+    eq(identify(MIT_TEXT + "\nThe Software shall be used for Good, not Evil.\n")[0], "JSON", "JSON 许可证（提名）")
+    eq(detect_text(MIT_TEXT + "\nThe Software shall be used for Good, not Evil.\n"), None, "JSON 不是 MIT")
+    for name, text in [
+        ("EULA 前言", "Copyright (c) 2024 Acme Inc.\n\nUse of this software requires a valid Acme subscription.\n\n"
+                     "This package bundles code from left-pad:\n\n" + MIT_TEXT),
+        ("只能配合某服务用", "Copyright (c) 2024 Acme Inc.\nLicensed for use only with Acme Cloud.\n\n" + MIT_TEXT),
+        ("藏在“copyright”句子里的限制", "The copyright holder grants you a license to run this software only in non-production "
+                                     "environments; production use requires a paid plan.\n" + MIT_TEXT),
+        ("专有声明提到 Apache", "Copyright (c) 2024 Acme Corp. All rights reserved. This software is proprietary and confidential. "
+                              "Redistribution is prohibited. Portions of this software are used under the Apache License, "
+                              "Version 2.0 (see THIRD_PARTY_NOTICES)."),
+    ]:
+        eq(detect_text(text), None, "多出条款的原文认不出：%s" % name)
+    eq(detect_text("SPDX-License-Identifier: MIT\n\n" + MIT_TEXT), "MIT", "SPDX 标识行不算多余的话")
+    bsd_named = BSD3_TEXT.replace("the copyright holder nor", "Google Inc. nor")
+    eq(detect_text(bsd_named), "BSD-3-Clause", "BSD 第三条换成组织名")
     eq(detect_text("Copyright Acme Corp. All rights reserved.\nThis is proprietary software licensed under the Acme EULA.\n\n"
                    "Bundled third-party code:\n\n" + MIT_TEXT), None, "专有声明后面带的 MIT 原文不算")
     eq(detect_text("\"Commons Clause\" License Condition v1.0\n\nThe Software is provided to you by the Licensor under the License, "

@@ -12,7 +12,7 @@
 
 allow = [
   # 宽松
-  "MIT", "MIT-0", "X11", "Apache-2.0", "BSD-1-Clause", "BSD-2-Clause", "BSD-2-Clause-Patent", "BSD-3-Clause",
+  "MIT", "MIT-0", "X11", "Apache-2.0", "Apache-1.1", "BSD-1-Clause", "BSD-2-Clause", "BSD-2-Clause-Patent", "BSD-3-Clause",
   "BSD-3-Clause-Clear", "LicenseRef-BSD-Unspecified", "ISC", "0BSD", "Zlib", "zlib-acknowledgement", "BSL-1.0",
   "Unlicense", "CC0-1.0", "LicenseRef-Public-Domain", "WTFPL", "BlueOak-1.0.0", "Python-2.0", "Python-2.0.1",
   "PSF-2.0", "HPND", "MIT-CMU", "UPL-1.0", "NCSA", "PostgreSQL", "curl", "OpenSSL", "ICU", "Unicode-3.0", "Unicode-DFS-2015",
