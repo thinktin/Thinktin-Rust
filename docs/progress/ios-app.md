@@ -18,7 +18,7 @@
 2. 12.2 → 12.3 → 12.4 → 12.5 → 12.6 → 12.8 → 12.7 → 12.11，再做 P2 的 12.9、12.10。
 
 坑和决定：
-- client-core 没导出的接口（设备列表与下线、注销、改计划与触发器、团队与模板、换 key、产出物列表与删除、收件箱删除和标未读、runs 分页）：2026-10-22 已建议 backend-core 会话认领新工作包 11.7（P1）；实时活动推送 10.6（P2）同样交给后端。落地前 Swift 的 `ClientProtocol` 先定义这些方法、`MockClient` 实现、`CoreClient` 抛 `ClientError.unsupported`。
+- client-core 没导出的接口（设备列表与下线、注销、改计划与触发器、团队与模板、换 key、产出物列表与删除、收件箱删除和标未读、runs 分页）：2026-10-22 backend-core 会话已认领 11.7（P1，记在 `docs/progress.md`，c2c3825；只加不改已有签名，做完一组提交一组）；实时活动推送 10.6（P2）等 11.7 做完再定，在那之前没人认领。两行由本分支加进 `gen_wbs.py`。落地前 Swift 的 `ClientProtocol` 先定义这些方法、`MockClient` 实现、`CoreClient` 抛 `ClientError.unsupported`。
 - 安卓会话（session_01T2zubC6hDr9ZZR3ihhPP5b）在分支 `android-app` 做 13.x，设计规范在 `docs/android-design.md`；深链格式、事件 kind → 界面的规则两端保持一致。
 - `docs/gen_wbs.py`：只改 `AREAS["12 iOS App"]` 这一块；backend-core 手改进 wbs.md 但没进脚本的五行（1.6、9.11、9.12、11.6、13.12）按 wbs.md 逐字补回脚本（安卓分支也这么补，内容相同）。wbs.md / wbs.csv 是生成物，合并时后合的一方重新跑 `python3 docs/gen_wbs.py docs/wbs.md docs/wbs.csv`，不手工解冲突。
 - 云端会话是 Linux，没有 Xcode：SwiftUI 代码靠 GitHub Actions 的 macOS runner 编译和跑测试（每次推送都跑）；纯 Swift 逻辑（模型、视图模型、格式化、状态机）用 Linux 上的 Swift 6.2 工具链本地 `swift test`。
