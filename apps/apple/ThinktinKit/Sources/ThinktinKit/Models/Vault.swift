@@ -58,7 +58,8 @@ public struct NewVaultItem: Hashable, Sendable, CustomStringConvertible, CustomD
     /// 空表示所有实例都能用。
     public var instanceIDs: [InstanceID]
 
-    public init(name: String, purpose: String, username: String = "", password: String, instanceIDs: [InstanceID] = []) {
+    public init(name: String, purpose: String, username: String = "", password: String, instanceIDs: [InstanceID] = [])
+    {
         self.name = name
         self.purpose = purpose
         self.username = username
@@ -77,7 +78,9 @@ public struct VaultItemUpdate: Hashable, Sendable, CustomStringConvertible, Cust
     public var password: String?
     public var instanceIDs: [InstanceID]?
 
-    public init(purpose: String? = nil, username: String? = nil, password: String? = nil, instanceIDs: [InstanceID]? = nil) {
+    public init(
+        purpose: String? = nil, username: String? = nil, password: String? = nil, instanceIDs: [InstanceID]? = nil
+    ) {
         self.purpose = purpose
         self.username = username
         self.password = password

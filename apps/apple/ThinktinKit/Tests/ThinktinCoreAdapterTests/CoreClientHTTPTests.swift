@@ -54,7 +54,9 @@ struct CoreClientHTTPTests {
 
     @Test("instances()：转成 ThinktinKit 的 Instance，并写进缓存（cachedInstances 读得到）")
     func instancesAndCache() async throws {
-        let server = try StubHTTPServer(routes: ["GET /v1/instances": R(200, json: #"{"instances":[\#(Self.instanceJSON)]}"#)])
+        let server = try StubHTTPServer(routes: [
+            "GET /v1/instances": R(200, json: #"{"instances":[\#(Self.instanceJSON)]}"#)
+        ])
         defer { server.stop() }
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("thinktin-adapter-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -124,7 +126,10 @@ struct CoreClientHTTPTests {
         defer { server.stop() }
         let client = try Self.client(server)
 
-        await #expect(throws: ThinktinKit.ClientError.api(status: 404, code: .notFound, message: "no such run", retryAfterSecs: nil)) {
+        await #expect(
+            throws: ThinktinKit.ClientError.api(
+                status: 404, code: .notFound, message: "no such run", retryAfterSecs: nil)
+        ) {
             _ = try await client.getRun(RunID(F.runID))
         }
         let limited = await #expect(throws: ThinktinKit.ClientError.self) { _ = try await client.agents() }

@@ -41,7 +41,8 @@ final class KeychainSessionStore: SessionStoring {
                 return try JSONDecoder().decode(StoredSession.self, from: data).session
             } catch {
                 // 格式不对（比如以后改了结构）：当作没登录，删掉坏数据，免得每次都读失败。
-                Self.log.error("stored session is unreadable, removing it: \(error.localizedDescription, privacy: .public)")
+                Self.log.error(
+                    "stored session is unreadable, removing it: \(error.localizedDescription, privacy: .public)")
                 delete()
                 return nil
             }

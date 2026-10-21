@@ -174,7 +174,8 @@ struct ConversationOutputTests {
         var r = reducer()
         var ev = Events()
         r.apply(ev.add(.agentMessage, runA, ["text": "先看看文件。"]))
-        r.apply(ev.add(.toolCall, runA, ["tool_call_id": "t1", "title": "读取 a.md", "kind": "read", "status": "pending"]))
+        r.apply(
+            ev.add(.toolCall, runA, ["tool_call_id": "t1", "title": "读取 a.md", "kind": "read", "status": "pending"]))
         r.apply(ev.add(.agentMessage, runA, ["text": "看完了。"]))
         let out = output(r)
         #expect(out.tags == ["text", "tool", "text"])
@@ -253,7 +254,10 @@ struct ConversationOutputTests {
                     "raw": ["toolCallId": "t1", "rawInput": ["path": "notes.md"]],
                 ]))
         r.apply(ev.add(.toolCall, runA, ["tool_call_id": "t2", "title": "搜索", "kind": "search", "status": "pending"]))
-        r.apply(ev.add(.toolCallUpdate, runA, ["tool_call_id": "t1", "status": "in_progress", "raw": ["status": "in_progress"]]))
+        r.apply(
+            ev.add(
+                .toolCallUpdate, runA,
+                ["tool_call_id": "t1", "status": "in_progress", "raw": ["status": "in_progress"]]))
         r.apply(
             ev.add(
                 .toolCallUpdate, runA,
@@ -300,7 +304,10 @@ struct ConversationOutputTests {
                 .platformToolCall, runA,
                 ["call_id": "pc1", "name": "schedule_create", "arguments": ["title": "晨报", "cron": "0 8 * * *"]]))
         r.apply(ev.add(.platformToolCall, runA, ["call_id": "pc2", "name": "delegate", "arguments": ["to": "审查"]]))
-        r.apply(ev.add(.platformToolCall, runA, ["call_id": "pc1", "name": "schedule_create", "arguments": ["title": "晨报 v2"]]))
+        r.apply(
+            ev.add(
+                .platformToolCall, runA, ["call_id": "pc1", "name": "schedule_create", "arguments": ["title": "晨报 v2"]])
+        )
         let out = output(r)
         #expect(out.tags == ["tool", "tool"])
         let card = try #require(out[0].content.toolCall)
@@ -322,7 +329,12 @@ struct ConversationOutputTests {
         r.apply(
             ev.add(
                 .agentPlan, runA,
-                ["entries": [["content": "读代码", "priority": "high", "status": "in_progress"], ["content": "写测试", "status": "pending"]]]))
+                [
+                    "entries": [
+                        ["content": "读代码", "priority": "high", "status": "in_progress"],
+                        ["content": "写测试", "status": "pending"],
+                    ]
+                ]))
         r.apply(ev.add(.agentMessage, runA, ["text": "开始。"]))
         r.apply(
             ev.add(
@@ -342,7 +354,8 @@ struct ConversationOutputTests {
     func artifactPublished() throws {
         var r = reducer()
         var ev = Events()
-        r.apply(ev.add(.artifactPublished, runA, ["artifact_id": "art-1", "name": "报告.md", "version": 2, "size": 2048]))
+        r.apply(
+            ev.add(.artifactPublished, runA, ["artifact_id": "art-1", "name": "报告.md", "version": 2, "size": 2048]))
         let card = try #require(output(r).first?.content.artifact)
         #expect(card.artifactID == "art-1")
         #expect(card.name == "报告.md")
@@ -366,8 +379,14 @@ struct ConversationOutputTests {
     func delegateStarted() throws {
         var r = reducer()
         var ev = Events()
-        r.apply(ev.add(.delegateStarted, runA, ["child_run_id": "child-2", "instance_id": "inst-3", "to": "代码审查", "title": "看看 PR"]))
-        r.apply(ev.add(.delegateStarted, runA, ["child_run_id": "child-3", "instance_id": "inst-3", "to": "代码审查", "title": nil]))
+        r.apply(
+            ev.add(
+                .delegateStarted, runA,
+                ["child_run_id": "child-2", "instance_id": "inst-3", "to": "代码审查", "title": "看看 PR"]))
+        r.apply(
+            ev.add(
+                .delegateStarted, runA,
+                ["child_run_id": "child-3", "instance_id": "inst-3", "to": "代码审查", "title": nil]))
         let out = output(r)
         let first = try #require(out[0].content.childRun)
         #expect(first.runID == "child-2")
@@ -457,7 +476,10 @@ struct ConversationApprovalTests {
         r.apply(
             ev.add(
                 .permissionRequested, runA,
-                ["request_id": "r1", "title": "删除 build/", "options": options, "tool_call": ["toolCallId": "t1", "kind": "delete"]]))
+                [
+                    "request_id": "r1", "title": "删除 build/", "options": options,
+                    "tool_call": ["toolCallId": "t1", "kind": "delete"],
+                ]))
         var card = try #require(output(r).first?.content.approval)
         #expect(output(r).first?.id == "approval-run-a-r1")
         #expect(card.isPending)
@@ -629,7 +651,9 @@ struct ConversationVaultTests {
     func declined() throws {
         var r = reducer()
         var ev = Events()
-        r.apply(ev.add(.vaultRequested, runA, ["request_id": "vr-2", "name": "oss", "purpose": "上传", "fields": ["password"]]))
+        r.apply(
+            ev.add(
+                .vaultRequested, runA, ["request_id": "vr-2", "name": "oss", "purpose": "上传", "fields": ["password"]]))
         r.apply(ev.add(.vaultDeclined, runA, ["request_id": "vr-2", "name": "oss"]))
         let card = try #require(output(r).first?.content.vaultRequest)
         #expect(card.status == .declined)
@@ -785,7 +809,8 @@ struct ConversationDedupTests {
         r.apply(ev.list)
         r.link(approvals: [
             Approval(
-                id: "ap-1", runID: runA, instanceID: Fixture.instanceID, title: "t", options: [], expiresAt: Fixture.now,
+                id: "ap-1", runID: runA, instanceID: Fixture.instanceID, title: "t", options: [],
+                expiresAt: Fixture.now,
                 createdAt: Fixture.now)
         ])
         let before = r.items

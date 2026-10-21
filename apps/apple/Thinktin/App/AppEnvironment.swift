@@ -30,7 +30,9 @@ final class AppEnvironment {
 
     /// 正式运行用的装配。推送（12.8）和签名（12.9）先用空实现。
     static func live(_ configuration: AppConfiguration = .current) -> AppEnvironment {
-        log.info("client: \(configuration.client.rawValue, privacy: .public), api: \(configuration.baseURL.absoluteString, privacy: .public)")
+        log.info(
+            "client: \(configuration.client.rawValue, privacy: .public), api: \(configuration.baseURL.absoluteString, privacy: .public)"
+        )
         let client: any ClientProtocol
         switch configuration.client {
         case .mock:

@@ -102,14 +102,16 @@ struct ConversionTests {
         let core = ThinktinCore.Plan(
             id: F.planID, instanceId: F.instanceID, title: "早报", goal: "每天早上汇总新闻", paused: false,
             createdBy: "agent", awaitingConfirmation: true, revision: 3,
-            policyJson: #"{"preauthorized_tools":["read","search"],"approval_timeout_secs":600,"on_approval_timeout":"skip"}"#,
+            policyJson:
+                #"{"preauthorized_tools":["read","search"],"approval_timeout_secs":600,"on_approval_timeout":"skip"}"#,
             createdAtMs: F.createdMs,
             triggers: [
                 ThinktinCore.Trigger(
                     id: "t-cron", schedule: .cron(expr: "0 8 * * *", tz: "Asia/Shanghai"), enabled: true,
                     nextFireAtMs: F.finishedMs, lastFireAtMs: F.startedMs),
                 ThinktinCore.Trigger(
-                    id: "t-rrule", schedule: .rrule(rule: "DTSTART;TZID=Asia/Shanghai:20260101T090000\nRRULE:FREQ=WEEKLY;BYDAY=MO"),
+                    id: "t-rrule",
+                    schedule: .rrule(rule: "DTSTART;TZID=Asia/Shanghai:20260101T090000\nRRULE:FREQ=WEEKLY;BYDAY=MO"),
                     enabled: false, nextFireAtMs: nil, lastFireAtMs: nil),
                 ThinktinCore.Trigger(
                     id: "t-once", schedule: .once(atMs: onceMs), enabled: true, nextFireAtMs: onceMs, lastFireAtMs: nil),
@@ -137,7 +139,8 @@ struct ConversionTests {
         #expect(plan.triggers[0].nextFireAt?.unixMilliseconds == F.finishedMs)
         #expect(plan.triggers[0].lastFireAt?.unixMilliseconds == F.startedMs)
         #expect(
-            plan.triggers[1].schedule == .rrule("DTSTART;TZID=Asia/Shanghai:20260101T090000\nRRULE:FREQ=WEEKLY;BYDAY=MO"))
+            plan.triggers[1].schedule
+                == .rrule("DTSTART;TZID=Asia/Shanghai:20260101T090000\nRRULE:FREQ=WEEKLY;BYDAY=MO"))
         #expect(!plan.triggers[1].isEnabled)
         #expect(plan.triggers[1].nextFireAt == nil)
         #expect(plan.triggers[2].schedule == .once(F.date(onceMs)))
@@ -189,7 +192,9 @@ struct ConversionTests {
             alias: "main", credentialID: "cred-1", upstreamModel: "claude-sonnet",
             fallbacks: [ThinktinKit.RouteFallback(credentialID: "cred-2", upstreamModel: "deepseek-chat")])
         #expect(route.core.credentialId == "cred-1")
-        #expect(route.core.fallbacks == [ThinktinCore.RouteFallback(credentialId: "cred-2", upstreamModel: "deepseek-chat")])
+        #expect(
+            route.core.fallbacks == [ThinktinCore.RouteFallback(credentialId: "cred-2", upstreamModel: "deepseek-chat")]
+        )
         #expect(ThinktinKit.ModelRoute(core: route.core) == route)
 
         let session = F.session
@@ -335,7 +340,8 @@ struct ConversionTests {
         let coreItem = ThinktinCore.VaultItem(
             id: F.itemID, name: "github", purpose: "提 PR", hasUsername: true, instanceIds: [F.instanceID],
             createdAtMs: F.createdMs, updatedAtMs: F.startedMs, lastUsedAtMs: nil)
-        let saved = ThinktinKit.SavedSecret(core: ThinktinCore.SavedSecret(item: coreItem, message: "用 [vault:github] 登录"))
+        let saved = ThinktinKit.SavedSecret(
+            core: ThinktinCore.SavedSecret(item: coreItem, message: "用 [vault:github] 登录"))
         #expect(saved.item.id == VaultItemID(F.itemID))
         #expect(saved.item.instanceIDs == [InstanceID(F.instanceID)])
         #expect(saved.item.updatedAt.unixMilliseconds == F.startedMs)
@@ -350,7 +356,8 @@ struct ConversionTests {
                 == ThinktinCore.NewVaultItem(
                     name: "mail", purpose: "收邮件", username: "bob", password: "pw", instanceIds: [F.instanceID]))
         let change = ThinktinKit.VaultItemUpdate(password: "new")
-        #expect(change.core == ThinktinCore.VaultItemUpdate(purpose: nil, username: nil, password: "new", instanceIds: nil))
+        #expect(
+            change.core == ThinktinCore.VaultItemUpdate(purpose: nil, username: nil, password: "new", instanceIds: nil))
     }
 
     // MARK: 其他记录

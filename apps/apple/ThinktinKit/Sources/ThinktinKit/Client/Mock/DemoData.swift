@@ -103,7 +103,10 @@ public enum DemoData {
             ], at: weekly.startedAt!.addingTimeInterval(4))
         writerEvents.add(
             .toolCallUpdate, weeklyRunID,
-            ["tool_call_id": "tc-read-1", "status": "completed", "raw": ["content": [["type": "text", "text": "（412 行）"]]]],
+            [
+                "tool_call_id": "tc-read-1", "status": "completed",
+                "raw": ["content": [["type": "text", "text": "（412 行）"]]],
+            ],
             at: weekly.startedAt!.addingTimeInterval(5))
         writerEvents.add(
             .agentMessage, weeklyRunID, ["text": "这周的周报要点整理好了，按项目分了三组：\n\n"],
@@ -160,7 +163,10 @@ public enum DemoData {
         ]
         writerEvents.add(
             .toolCall, postRunID,
-            ["tool_call_id": "tc-post-1", "title": "发送消息到「研发群」", "kind": "execute", "status": "pending", "raw": postToolCall],
+            [
+                "tool_call_id": "tc-post-1", "title": "发送消息到「研发群」", "kind": "execute", "status": "pending",
+                "raw": postToolCall,
+            ],
             at: post.startedAt!.addingTimeInterval(8))
         writerEvents.add(
             .permissionRequested, postRunID,
@@ -214,14 +220,16 @@ public enum DemoData {
             Approval(
                 id: pendingApprovalID, runID: postRunID, instanceID: writerID, title: "发送消息到「研发群」",
                 options: approvalOptions, toolCallJSON: postToolCall.compactString(), state: .pending,
-                expiresAt: post.startedAt!.addingTimeInterval(24 * hour), createdAt: post.startedAt!.addingTimeInterval(9))
+                expiresAt: post.startedAt!.addingTimeInterval(24 * hour),
+                createdAt: post.startedAt!.addingTimeInterval(9))
         ]
 
         let plans = [
             Plan(
                 id: digestPlanID, instanceID: writerID, title: "每日 GitHub 通知汇总",
                 goal: "每个工作日早上汇总 GitHub 通知，只列需要我处理的。", createdBy: .user, revision: 1,
-                policyJSON: #"{"preauthorized_tools":["read","search","fetch"],"approval_timeout_secs":3600,"on_approval_timeout":"skip","budget":{"max_tokens":50000,"max_duration_secs":1800}}"#,
+                policyJSON:
+                    #"{"preauthorized_tools":["read","search","fetch"],"approval_timeout_secs":3600,"on_approval_timeout":"skip","budget":{"max_tokens":50000,"max_duration_secs":1800}}"#,
                 createdAt: ago(20 * day),
                 triggers: [
                     Trigger(
@@ -267,7 +275,9 @@ public enum DemoData {
             Credential(
                 id: claudeCredentialID, vendor: "anthropic", label: "Claude 主力", last4: "Q7mA",
                 dailyTokenLimit: 2_000_000, createdAt: ago(30 * day)),
-            Credential(id: deepseekCredentialID, vendor: "deepseek", label: "DeepSeek", last4: "x9Lk", createdAt: ago(25 * day)),
+            Credential(
+                id: deepseekCredentialID, vendor: "deepseek", label: "DeepSeek", last4: "x9Lk", createdAt: ago(25 * day)
+            ),
             Credential(
                 id: qwenCredentialID, vendor: "qwen-cn", label: "百炼（停用）", last4: "3hTz", isDisabled: true,
                 createdAt: ago(60 * day)),
@@ -316,7 +326,8 @@ public enum DemoData {
             """
         let artifact = Artifact(
             id: weeklyArtifactID, instanceID: writerID, runID: weeklyRunID, name: "周报要点.md", version: 1,
-            contentType: "text/markdown", size: artifactText.utf8.count, sha256: "", createdAt: weekly.startedAt!.addingTimeInterval(80))
+            contentType: "text/markdown", size: artifactText.utf8.count, sha256: "",
+            createdAt: weekly.startedAt!.addingTimeInterval(80))
 
         let vaultItems = [
             VaultItem(
@@ -331,7 +342,8 @@ public enum DemoData {
             VaultRequest(
                 id: npmVaultRequestID, instanceID: reviewerID, runID: publishRunID, name: "npm",
                 purpose: "发布 @thinktin/sdk 0.4.0 到 npm", fields: [.password], status: .pending,
-                createdAt: publish.startedAt!.addingTimeInterval(8), expiresAt: publish.startedAt!.addingTimeInterval(day))
+                createdAt: publish.startedAt!.addingTimeInterval(8),
+                expiresAt: publish.startedAt!.addingTimeInterval(day))
         ]
 
         let channels = [
@@ -387,7 +399,10 @@ public enum DemoData {
     ]
 
     static var approvalOptionsJSON: JSONValue {
-        .array(approvalOptions.map { ["option_id": .string($0.id), "name": .string($0.name), "kind": .string($0.kind.rawValue)] })
+        .array(
+            approvalOptions.map {
+                ["option_id": .string($0.id), "name": .string($0.name), "kind": .string($0.kind.rawValue)]
+            })
     }
 
     // MARK: 回放脚本
@@ -413,7 +428,9 @@ public enum DemoData {
                         "tool_call_id": "tc-\(run.id.rawValue.suffix(4))-1", "title": "搜索工作区", "kind": "search",
                         "status": "pending", "raw": ["rawInput": ["query": .string(quoted)]],
                     ]),
-                .event(.toolCallUpdate, payload: ["tool_call_id": "tc-\(run.id.rawValue.suffix(4))-1", "status": "in_progress"]),
+                .event(
+                    .toolCallUpdate,
+                    payload: ["tool_call_id": "tc-\(run.id.rawValue.suffix(4))-1", "status": "in_progress"]),
                 .wait(0.3),
                 .event(
                     .toolCallUpdate,
@@ -446,13 +463,15 @@ public enum DemoData {
                 .event(
                     .toolCall,
                     payload: [
-                        "tool_call_id": .string("tc-\(requestID)"), "title": "执行操作", "kind": "execute", "status": "pending",
+                        "tool_call_id": .string("tc-\(requestID)"), "title": "执行操作", "kind": "execute",
+                        "status": "pending",
                         "raw": toolCall,
                     ]),
                 .event(
                     .permissionRequested,
                     payload: [
-                        "request_id": .string(requestID), "title": .string("执行：\(run.prompt)"), "options": approvalOptionsJSON,
+                        "request_id": .string(requestID), "title": .string("执行：\(run.prompt)"),
+                        "options": approvalOptionsJSON,
                         "tool_call": toolCall,
                     ]),
                 .event(.runState, payload: ["state": "waiting_approval", "reason": .string("执行：\(run.prompt)")]),
@@ -460,17 +479,20 @@ public enum DemoData {
     }
 
     /// 审批决定之后：批准就执行完，拒绝就收尾。
-    public static func approvalResolvedScript(runID: RunID, requestID: String, toolCallID: String?, optionID: String, approved: Bool)
-        -> MockEventScript
-    {
+    public static func approvalResolvedScript(
+        runID: RunID, requestID: String, toolCallID: String?, optionID: String, approved: Bool
+    ) -> MockEventScript {
         var steps: [MockEventScript.Step] = [
-            .event(.permissionResolved, payload: ["request_id": .string(requestID), "option_id": .string(optionID), "by": "user"]),
+            .event(
+                .permissionResolved,
+                payload: ["request_id": .string(requestID), "option_id": .string(optionID), "by": "user"]),
             .event(.runState, payload: ["state": "running"]),
         ]
         if let toolCallID {
             steps.append(
                 .event(
-                    .toolCallUpdate, payload: ["tool_call_id": .string(toolCallID), "status": approved ? "completed" : "failed"]))
+                    .toolCallUpdate,
+                    payload: ["tool_call_id": .string(toolCallID), "status": approved ? "completed" : "failed"]))
         }
         steps += [
             .event(.agentMessage, payload: ["text": approved ? "已经执行完了。" : "好的，这一步先不做了。"]),
@@ -485,14 +507,18 @@ public enum DemoData {
         MockEventScript(
             runID: runID,
             steps: [
-                .event(.agentMessage, payload: ["text": fulfilled ? "收到，正在发布……\n\n已发布 `@thinktin/sdk@0.4.0`。" : "好的，那我先不发布了。"]),
+                .event(
+                    .agentMessage,
+                    payload: ["text": fulfilled ? "收到，正在发布……\n\n已发布 `@thinktin/sdk@0.4.0`。" : "好的，那我先不发布了。"]),
                 .event(.turnEnded, payload: ["stop_reason": "end_turn"]),
                 .event(.runState, payload: ["state": "succeeded"]),
             ])
     }
 
     static func needsApproval(_ prompt: String) -> Bool {
-        ["发到", "发送", "删除", "部署", "审批", "deploy", "delete", "approve"].contains { prompt.localizedCaseInsensitiveContains($0) }
+        ["发到", "发送", "删除", "部署", "审批", "deploy", "delete", "approve"].contains {
+            prompt.localizedCaseInsensitiveContains($0)
+        }
     }
 }
 

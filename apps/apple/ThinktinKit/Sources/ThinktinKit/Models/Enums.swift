@@ -89,7 +89,8 @@ public enum UserLocale: OpenStringEnum {
 
     /// 从系统的语言标签（`zh-Hans-CN`、`en_US`、`zh`）认出支持的语言；认不出返回 nil。和服务端的 `Locale::from_tag` 一致。
     public init?(languageTag tag: String) {
-        let first = tag.trimmingCharacters(in: .whitespaces).lowercased()
+        let first =
+            tag.trimmingCharacters(in: .whitespaces).lowercased()
             .split(whereSeparator: { $0 == "-" || $0 == "_" }).first.map(String.init) ?? ""
         switch first {
         case "zh": self = .zhCN

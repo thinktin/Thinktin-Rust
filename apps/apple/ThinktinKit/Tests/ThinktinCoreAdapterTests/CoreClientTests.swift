@@ -56,7 +56,8 @@ struct CoreClientTests {
         await #expect(throws: ThinktinKit.ClientError.signedOut) { _ = try await client.instances() }
         await #expect(throws: ThinktinKit.ClientError.signedOut) { _ = try await client.syncInbox(limit: 20) }
         await #expect(throws: ThinktinKit.ClientError.signedOut) {
-            _ = try await client.usage(group: .day, from: Date(timeIntervalSince1970: 0), to: Date(), timeZone: .current)
+            _ = try await client.usage(
+                group: .day, from: Date(timeIntervalSince1970: 0), to: Date(), timeZone: .current)
         }
     }
 
@@ -134,7 +135,8 @@ struct CoreClientTests {
     @Test("缓存库路径打不开：抛 cache")
     func unopenableCache() throws {
         // 上一级是个普通文件：谁来跑（包括 root）都打不开。
-        let file = FileManager.default.temporaryDirectory.appendingPathComponent("thinktin-adapter-\(UUID().uuidString)")
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "thinktin-adapter-\(UUID().uuidString)")
         try Data("not a directory".utf8).write(to: file)
         defer { try? FileManager.default.removeItem(at: file) }
 
@@ -221,7 +223,8 @@ struct CoreClientTests {
     @Test("detectSecrets：私钥不能存进保险箱；普通文字没有命中")
     func detectPrivateKeyAndNothing() {
         let detector = CoreSecretDetector()
-        let pem = "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmU=\n-----END OPENSSH PRIVATE KEY-----"
+        let pem =
+            "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmU=\n-----END OPENSSH PRIVATE KEY-----"
         let found = detector.detectSecrets(in: "这是我的私钥\n\(pem)\n帮我配上")
         #expect(found.count == 1)
         #expect(found.first?.kind == .privateKey)

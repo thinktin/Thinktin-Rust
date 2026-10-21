@@ -10,9 +10,9 @@
 import PackageDescription
 
 #if os(Linux)
-let corePackagePath = "../../../target/linux/ThinktinCore"
+    let corePackagePath = "../../../target/linux/ThinktinCore"
 #else
-let corePackagePath = "../../../target/apple/ThinktinCore"
+    let corePackagePath = "../../../target/apple/ThinktinCore"
 #endif
 
 /// 每个目标都开严格并发检查（Swift 6 语言模式下本来就是完整检查，这里显式写上，降级编译时也不放松）。
@@ -52,19 +52,19 @@ var targets: [Target] = [
 
 // SwiftUI 只在 Apple 平台有：Linux 上（云端会话、CI 的 kit-linux）不编界面层。
 #if !os(Linux)
-products.append(.library(name: "ThinktinUI", targets: ["ThinktinUI"]))
-targets.append(contentsOf: [
-    .target(
-        name: "ThinktinUI",
-        dependencies: ["ThinktinKit"],
-        swiftSettings: strictConcurrency
-    ),
-    .testTarget(
-        name: "ThinktinUITests",
-        dependencies: ["ThinktinUI", "ThinktinKit"],
-        swiftSettings: strictConcurrency
-    ),
-])
+    products.append(.library(name: "ThinktinUI", targets: ["ThinktinUI"]))
+    targets.append(contentsOf: [
+        .target(
+            name: "ThinktinUI",
+            dependencies: ["ThinktinKit"],
+            swiftSettings: strictConcurrency
+        ),
+        .testTarget(
+            name: "ThinktinUITests",
+            dependencies: ["ThinktinUI", "ThinktinKit"],
+            swiftSettings: strictConcurrency
+        ),
+    ])
 #endif
 
 let package = Package(

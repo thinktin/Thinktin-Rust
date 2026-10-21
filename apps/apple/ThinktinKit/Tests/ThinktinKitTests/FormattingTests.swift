@@ -99,7 +99,8 @@ struct QuantityFormattingTests {
     @Test(
         "token 数",
         arguments: [
-            (0, "0", "0"), (950, "950", "950"), (1_000, "1,000", "1K"), (1_234, "1,234", "1.2K"), (9_876, "9,876", "9.9K"),
+            (0, "0", "0"), (950, "950", "950"), (1_000, "1,000", "1K"), (1_234, "1,234", "1.2K"),
+            (9_876, "9,876", "9.9K"),
             (10_000, "1 万", "10K"), (12_000, "1.2 万", "12K"), (18_420, "1.8 万", "18.4K"), (125_000, "12.5 万", "125K"),
             (950_000, "95 万", "950K"), (999_949, "100 万", "999.9K"), (999_999, "100 万", "1M"),
             (3_400_000, "340 万", "3.4M"), (99_999_999, "1 亿", "100M"),
@@ -237,12 +238,16 @@ struct ScheduleDescriptionTests {
         let cron = Schedule.cron(expression: "0 9 * * 1-5", timeZone: "Asia/Shanghai")
         #expect(ScheduleDescription.describe(cron, language: .chinese, timeZone: Fixture.shanghai) == "工作日 09:00")
         let tokyo = TimeZone(identifier: "Asia/Tokyo")!
-        #expect(ScheduleDescription.describe(cron, language: .chinese, timeZone: tokyo) == "工作日 09:00（Asia/Shanghai 时间）")
-        #expect(ScheduleDescription.describe(cron, language: .english, timeZone: tokyo) == "Weekdays at 09:00 (Asia/Shanghai time)")
+        #expect(
+            ScheduleDescription.describe(cron, language: .chinese, timeZone: tokyo) == "工作日 09:00（Asia/Shanghai 时间）")
+        #expect(
+            ScheduleDescription.describe(cron, language: .english, timeZone: tokyo)
+                == "Weekdays at 09:00 (Asia/Shanghai time)")
         let noZone = Schedule.cron(expression: "0 9 * * *", timeZone: "")
         #expect(ScheduleDescription.describe(noZone, language: .english, timeZone: tokyo) == "Every day at 09:00")
         let odd = Schedule.cron(expression: "0 9 1 * 1", timeZone: "Asia/Shanghai")
-        #expect(ScheduleDescription.describe(odd, language: .chinese, timeZone: Fixture.shanghai) == "cron 规则 0 9 1 * 1")
+        #expect(
+            ScheduleDescription.describe(odd, language: .chinese, timeZone: Fixture.shanghai) == "cron 规则 0 9 1 * 1")
         #expect(ScheduleDescription.describe(odd, language: .english, timeZone: Fixture.shanghai) == "Cron 0 9 1 * 1")
     }
 
@@ -264,7 +269,8 @@ struct ScheduleDescriptionTests {
                 == "Once at Oct 23, 09:00")
         let utc = TimeZone(identifier: "UTC")!
         #expect(
-            ScheduleDescription.describe(.once(at), language: .english, timeZone: utc, now: now) == "Once at Oct 23, 01:00")
+            ScheduleDescription.describe(.once(at), language: .english, timeZone: utc, now: now)
+                == "Once at Oct 23, 01:00")
         let nextYear = Fixture.date(2027, 1, 2, 8, 30)
         #expect(
             ScheduleDescription.describe(.once(nextYear), language: .chinese, timeZone: Fixture.shanghai, now: now)

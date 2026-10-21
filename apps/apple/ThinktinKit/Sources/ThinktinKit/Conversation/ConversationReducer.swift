@@ -299,7 +299,8 @@ private struct TurnState: Sendable {
             } else {
                 approvalIndex[p.requestID] = entries.count
                 approvalOrder.append(p.requestID)
-                let card = ApprovalCard(requestID: p.requestID, title: p.title, options: p.options, toolCall: p.toolCall)
+                let card = ApprovalCard(
+                    requestID: p.requestID, title: p.title, options: p.options, toolCall: p.toolCall)
                 append(id: "approval-\(key)-\(p.requestID)", event: event, .approval(card))
             }
         case .permissionResolved(let p):
@@ -345,7 +346,8 @@ private struct TurnState: Sendable {
             let card = ArtifactCard(artifactID: p.artifactID, name: p.name, version: p.version, size: p.size)
             append(id: "seq-\(event.seq)", event: event, .artifact(card))
         case .pipelineStepStarted(let p):
-            let card = ChildRunCard(runID: p.runID, instanceID: p.instanceID, title: p.step, origin: .pipelineStep(p.step))
+            let card = ChildRunCard(
+                runID: p.runID, instanceID: p.instanceID, title: p.step, origin: .pipelineStep(p.step))
             append(id: "seq-\(event.seq)", event: event, .childRun(card))
         case .delegateStarted(let p):
             let card = ChildRunCard(
@@ -361,9 +363,13 @@ private struct TurnState: Sendable {
             turnEnded = true
             streaming = false
         case .agentError(let p):
-            append(id: "seq-\(event.seq)", event: event, .systemNotice(SystemNotice(kind: .agentError, message: p.message)))
+            append(
+                id: "seq-\(event.seq)", event: event, .systemNotice(SystemNotice(kind: .agentError, message: p.message))
+            )
         case .sessionLost(let p):
-            append(id: "seq-\(event.seq)", event: event, .systemNotice(SystemNotice(kind: .sessionLost, message: p.reason)))
+            append(
+                id: "seq-\(event.seq)", event: event, .systemNotice(SystemNotice(kind: .sessionLost, message: p.reason))
+            )
         case .agentExited(let p):
             let notice = SystemNotice(
                 kind: .agentExited(willRestart: p.willRestart), message: p.code.map { "exit code \($0)" })
@@ -455,7 +461,8 @@ private struct TurnState: Sendable {
         entries[i].content = .approval(card)
     }
 
-    private mutating func setVaultStatus(_ p: VaultResolvedPayload, _ status: VaultRequestStatus, event: InstanceEvent) {
+    private mutating func setVaultStatus(_ p: VaultResolvedPayload, _ status: VaultRequestStatus, event: InstanceEvent)
+    {
         if let i = vaultIndex[p.requestID], case .vaultRequest(var card) = entries[i].content {
             card.status = status
             entries[i].content = .vaultRequest(card)
@@ -472,7 +479,9 @@ private struct TurnState: Sendable {
         var items: [ConversationItem] = []
         if let run {
             let message = UserMessage(text: run.prompt, source: run.source, planID: run.planID, stepKey: run.stepKey)
-            items.append(ConversationItem(id: "run-\(key)-prompt", runID: runID, createdAt: run.createdAt, content: .userMessage(message)))
+            items.append(
+                ConversationItem(
+                    id: "run-\(key)-prompt", runID: runID, createdAt: run.createdAt, content: .userMessage(message)))
         }
         let streaming = isStreaming
         for (i, item) in entries.enumerated() {
@@ -496,7 +505,8 @@ private struct TurnState: Sendable {
                 state: state.state, reason: state.reason, attempt: state.attempt, tokensUsed: run?.tokensUsed,
                 error: run?.error, startedAt: run?.startedAt, finishedAt: run?.finishedAt)
             let at = statusAt ?? run?.finishedAt ?? run?.startedAt ?? run?.createdAt ?? firstAt
-            items.append(ConversationItem(id: "run-\(key)-status", runID: runID, createdAt: at, content: .runStatus(line)))
+            items.append(
+                ConversationItem(id: "run-\(key)-status", runID: runID, createdAt: at, content: .runStatus(line)))
         }
         return ConversationTurn(
             id: key, runID: runID, run: run, items: items, state: state?.state, isStreaming: streaming,

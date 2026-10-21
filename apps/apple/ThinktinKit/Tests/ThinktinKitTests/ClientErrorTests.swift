@@ -107,7 +107,9 @@ struct ClientErrorTests {
 
     @Test("开发者详情（“复制详情”）")
     func debugDetails() {
-        #expect(api(.rateLimited, status: 429, retryAfter: 3).debugDetails == "api 429 rate_limited: dev message (retry after 3s)")
+        #expect(
+            api(.rateLimited, status: 429, retryAfter: 3).debugDetails
+                == "api 429 rate_limited: dev message (retry after 3s)")
         #expect(api(.unknown("teapot"), status: 418).debugDetails == "api 418 teapot: dev message")
         #expect(ClientError.network(message: "dns").debugDetails == "network: dns")
         #expect(ClientError.containsSecrets(count: 2).debugDetails == "contains 2 secret(s)")

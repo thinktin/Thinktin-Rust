@@ -18,7 +18,9 @@ public struct Trigger: Identifiable, Hashable, Codable, Sendable {
     public var nextFireAt: Date?
     public var lastFireAt: Date?
 
-    public init(id: TriggerID, schedule: Schedule, isEnabled: Bool = true, nextFireAt: Date? = nil, lastFireAt: Date? = nil) {
+    public init(
+        id: TriggerID, schedule: Schedule, isEnabled: Bool = true, nextFireAt: Date? = nil, lastFireAt: Date? = nil
+    ) {
         self.id = id
         self.schedule = schedule
         self.isEnabled = isEnabled

@@ -245,7 +245,8 @@ public final class CoreClient: ClientProtocol {
 
     public func decideApproval(_ approvalID: ApprovalID, optionID: String) async throws -> ThinktinKit.Approval {
         try await perform {
-            ThinktinKit.Approval(core: try await core.decideApproval(approvalId: approvalID.rawValue, optionId: optionID))
+            ThinktinKit.Approval(
+                core: try await core.decideApproval(approvalId: approvalID.rawValue, optionId: optionID))
         }
     }
 
@@ -388,7 +389,8 @@ public final class CoreClient: ClientProtocol {
     public func sendMessage(instanceID: InstanceID, text: String, allowSecrets: Bool) async throws -> ThinktinKit.Run {
         try await perform {
             ThinktinKit.Run(
-                core: try await core.sendMessage(instanceId: instanceID.rawValue, text: text, allowSecrets: allowSecrets))
+                core: try await core.sendMessage(
+                    instanceId: instanceID.rawValue, text: text, allowSecrets: allowSecrets))
         }
     }
 

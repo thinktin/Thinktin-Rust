@@ -298,7 +298,8 @@ public struct PermissionRequestedPayload: Hashable, Codable, Sendable {
         title = try c.decodeIfPresent(String.self, forKey: .title)
         let raw = (try? c.decodeIfPresent([Option].self, forKey: .options)) ?? []
         options = raw.map {
-            ApprovalOption(id: $0.optionID, name: $0.name ?? $0.optionID, kind: ApprovalOptionKind(rawValue: $0.kind ?? ""))
+            ApprovalOption(
+                id: $0.optionID, name: $0.name ?? $0.optionID, kind: ApprovalOptionKind(rawValue: $0.kind ?? ""))
         }
         toolCall = try c.decodeIfPresent(JSONValue.self, forKey: .toolCall)
     }

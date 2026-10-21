@@ -117,7 +117,8 @@ public enum JSONValue: Sendable, Hashable, Codable {
     }
 }
 
-extension JSONValue: ExpressibleByStringLiteral, ExpressibleByStringInterpolation, ExpressibleByIntegerLiteral, ExpressibleByFloatLiteral,
+extension JSONValue: ExpressibleByStringLiteral, ExpressibleByStringInterpolation, ExpressibleByIntegerLiteral,
+    ExpressibleByFloatLiteral,
     ExpressibleByBooleanLiteral, ExpressibleByArrayLiteral, ExpressibleByDictionaryLiteral, ExpressibleByNilLiteral
 {
     public init(stringLiteral value: String) { self = .string(value) }

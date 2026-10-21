@@ -104,7 +104,8 @@ public enum ScheduleDescription {
         case "WEEKLY":
             let codes = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"]
             let days = (fields["BYDAY"] ?? "").split(separator: ",").compactMap { codes.firstIndex(of: String($0)) }
-            let every = interval == 1 ? (zh ? "每周" : "Every week") : (zh ? "每 \(interval) 周" : "Every \(interval) weeks")
+            let every =
+                interval == 1 ? (zh ? "每周" : "Every week") : (zh ? "每 \(interval) 周" : "Every \(interval) weeks")
             guard !days.isEmpty else { return every + at }
             if zh {
                 // 和 cron 的说法一致：“每周一、周三 09:00”、“每 2 周的周五 18:30”。
@@ -132,7 +133,8 @@ public enum ScheduleDescription {
         let zh = language == .chinese
         switch schedule {
         case .cron(let expression, let tz):
-            let text = describeCron(expression, language: language) ?? (zh ? "cron 规则 \(expression)" : "Cron \(expression)")
+            let text =
+                describeCron(expression, language: language) ?? (zh ? "cron 规则 \(expression)" : "Cron \(expression)")
             guard !tz.isEmpty, tz != timeZone.identifier else { return text }
             return zh ? "\(text)（\(tz) 时间）" : "\(text) (\(tz) time)"
         case .rrule(let rule):

@@ -37,9 +37,9 @@ struct AppConfiguration: Equatable, Sendable {
     /// 当前进程的配置。
     static var current: AppConfiguration {
         #if DEBUG
-        let isDebugBuild = true
+            let isDebugBuild = true
         #else
-        let isDebugBuild = false
+            let isDebugBuild = false
         #endif
         return resolve(
             environment: ProcessInfo.processInfo.environment,
@@ -70,7 +70,8 @@ struct AppConfiguration: Equatable, Sendable {
 
     /// 缓存文件的位置；目录不存在就建，并标成不进 iCloud / iTunes 备份（缓存能从服务端重新拉）。
     static func cacheFileURL(fileManager: FileManager = .default) throws -> URL {
-        var directory = try fileManager
+        var directory =
+            try fileManager
             .url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
             .appendingPathComponent(cacheDirectoryName, isDirectory: true)
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)

@@ -45,10 +45,12 @@ struct AppSmokeTests {
     func baseURLFallback() {
         let fallback = AppConfiguration.defaultBaseURL
         #expect(AppConfiguration.baseURL(infoDictionary: nil) == fallback)
-        #expect(AppConfiguration.baseURL(infoDictionary: ["ThinktinAPIBaseURL": "$(THINKTIN_API_BASE_URL)"]) == fallback)
+        #expect(
+            AppConfiguration.baseURL(infoDictionary: ["ThinktinAPIBaseURL": "$(THINKTIN_API_BASE_URL)"]) == fallback)
         #expect(AppConfiguration.baseURL(infoDictionary: ["ThinktinAPIBaseURL": "ftp://example.com"]) == fallback)
         #expect(
-            AppConfiguration.baseURL(infoDictionary: ["ThinktinAPIBaseURL": "https://staging.thinktin.cn"]).absoluteString
+            AppConfiguration.baseURL(infoDictionary: ["ThinktinAPIBaseURL": "https://staging.thinktin.cn"])
+                .absoluteString
                 == "https://staging.thinktin.cn")
     }
 

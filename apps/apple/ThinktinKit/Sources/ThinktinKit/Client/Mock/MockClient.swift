@@ -124,7 +124,7 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
             let keys = s.playbacks.filter { $0.value.runID.map(runIDs.contains) ?? false }.map(\.key)
             return keys.compactMap { s.playbacks.removeValue(forKey: $0)?.task }
         }
-        tasks.forEach { $0.cancel() }
+        for task in tasks { task.cancel() }
     }
 
     private func autoReply(to run: Run) {
@@ -210,7 +210,9 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
 
     public func adopt(agentID: AgentID, name: String, harness: String?) async throws -> Instance {
         try await call { s in
-            guard let agent = s.state.agents.first(where: { $0.id == agentID }) else { throw MockErrors.notFound("agent") }
+            guard let agent = s.state.agents.first(where: { $0.id == agentID }) else {
+                throw MockErrors.notFound("agent")
+            }
             let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !name.isEmpty else { throw MockErrors.invalid("name is empty") }
             let harness = harness ?? agent.defaultHarness
@@ -263,7 +265,9 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
             guard Set(routes.map(\.alias)).count == routes.count else { throw MockErrors.invalid("duplicate alias") }
             for r in routes {
                 guard !r.alias.isEmpty else { throw MockErrors.invalid("empty alias") }
-                guard r.fallbacks.count <= ModelRoute.maxFallbacks else { throw MockErrors.invalid("too many fallbacks") }
+                guard r.fallbacks.count <= ModelRoute.maxFallbacks else {
+                    throw MockErrors.invalid("too many fallbacks")
+                }
                 guard known.contains(r.credentialID), r.fallbacks.allSatisfy({ known.contains($0.credentialID) }) else {
                     throw MockErrors.invalid("unknown credential")
                 }
@@ -456,7 +460,9 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
     public func createPlan(_ plan: NewPlan) async throws -> Plan {
         try await call { s in
             _ = try s.instanceIndex(plan.instanceID)
-            guard !plan.title.trimmingCharacters(in: .whitespaces).isEmpty else { throw MockErrors.invalid("empty title") }
+            guard !plan.title.trimmingCharacters(in: .whitespaces).isEmpty else {
+                throw MockErrors.invalid("empty title")
+            }
             guard !plan.triggers.isEmpty else { throw MockErrors.invalid("a plan needs at least one trigger") }
             for step in plan.steps { _ = try s.instanceIndex(step.instanceID) }
             let policy = (try? JSONEncoder().encode(PlanPolicy())).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
@@ -527,7 +533,9 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
                 for i in s.state.inbox.indices where i >= start { s.state.inbox[i].isRead = true }
             } else {
                 let set = Set(ids)
-                for i in s.state.inbox.indices where set.contains(s.state.inbox[i].id) { s.state.inbox[i].isRead = true }
+                for i in s.state.inbox.indices where set.contains(s.state.inbox[i].id) {
+                    s.state.inbox[i].isRead = true
+                }
             }
             return s.state.unreadCount
         }
@@ -653,7 +661,8 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
         let detector = secretDetector
         return try await call { s in
             let created = try s.createVaultItem(item)
-            let redacted = detector.redactMessage(message, references: [SecretReference(value: value, name: created.name)])
+            let redacted = detector.redactMessage(
+                message, references: [SecretReference(value: value, name: created.name)])
             return SavedSecret(item: created, message: redacted)
         }
     }
@@ -732,7 +741,9 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
     public func declineVaultRequest(_ requestID: VaultRequestID) async throws -> VaultRequest {
         let request = try await call { s -> VaultRequest in
             let i = try s.vaultRequestIndex(requestID)
-            guard s.state.vaultRequests[i].status == .pending else { throw MockErrors.conflict("request already handled") }
+            guard s.state.vaultRequests[i].status == .pending else {
+                throw MockErrors.conflict("request already handled")
+            }
             s.state.vaultRequests[i].status = .declined
             s.state.vaultRequests[i].resolvedAt = Date()
             let request = s.state.vaultRequests[i]
@@ -875,7 +886,8 @@ private struct Inner: Sendable {
             state.vaultRequests.append(
                 VaultRequest(
                     id: p.requestID, instanceID: event.instanceID, runID: event.runID, name: p.name, purpose: p.purpose,
-                    fields: p.fields, createdAt: event.createdAt, expiresAt: event.createdAt.addingTimeInterval(24 * 3600)))
+                    fields: p.fields, createdAt: event.createdAt,
+                    expiresAt: event.createdAt.addingTimeInterval(24 * 3600)))
         case .artifactPublished(let p):
             guard let runID = event.runID, !state.artifacts.contains(where: { $0.id == p.artifactID }) else { return }
             let type = p.name.hasSuffix(".md") ? "text/markdown" : p.name.hasSuffix(".png") ? "image/png" : "text/plain"
@@ -887,7 +899,8 @@ private struct Inner: Sendable {
         case .other(let raw) where event.kind == .agentUsage:
             guard let runID = event.runID, let i = state.runs.firstIndex(where: { $0.id == runID }) else { return }
             let usage = raw?["raw"] ?? raw
-            state.runs[i].tokensUsed += (usage?["input_tokens"]?.intValue ?? 0) + (usage?["output_tokens"]?.intValue ?? 0)
+            state.runs[i].tokensUsed +=
+                (usage?["input_tokens"]?.intValue ?? 0) + (usage?["output_tokens"]?.intValue ?? 0)
         default:
             break
         }
@@ -911,12 +924,16 @@ private struct Inner: Sendable {
     }
 
     func channelIndex(_ id: ImChannelID) throws -> Int {
-        guard let i = state.imChannels.firstIndex(where: { $0.id == id }) else { throw MockErrors.notFound("im channel") }
+        guard let i = state.imChannels.firstIndex(where: { $0.id == id }) else {
+            throw MockErrors.notFound("im channel")
+        }
         return i
     }
 
     func vaultIndex(_ id: VaultItemID) throws -> Int {
-        guard let i = state.vaultItems.firstIndex(where: { $0.id == id }) else { throw MockErrors.notFound("vault item") }
+        guard let i = state.vaultItems.firstIndex(where: { $0.id == id }) else {
+            throw MockErrors.notFound("vault item")
+        }
         return i
     }
 
@@ -930,8 +947,8 @@ private struct Inner: Sendable {
     // MARK: 操作
 
     func runs(of instanceID: InstanceID, limit: Int) -> [Run] {
-        Array(
-            state.runs.filter { $0.instanceID == instanceID }.sorted { $0.createdAt > $1.createdAt }.prefix(max(0, limit)))
+        let runs = state.runs.filter { $0.instanceID == instanceID }.sorted { $0.createdAt > $1.createdAt }
+        return Array(runs.prefix(max(0, limit)))
     }
 
     func inbox(before: InboxItemID?, limit: Int) -> [InboxItem] {
@@ -944,7 +961,8 @@ private struct Inner: Sendable {
         _ = try instanceIndex(instanceID)
         let prompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty else { throw MockErrors.invalid("empty prompt") }
-        let run = Run(id: .random(), instanceID: instanceID, source: .user, prompt: prompt, state: .queued, createdAt: Date())
+        let run = Run(
+            id: .random(), instanceID: instanceID, source: .user, prompt: prompt, state: .queued, createdAt: Date())
         state.runs.append(run)
         return run
     }
@@ -979,7 +997,10 @@ private struct Inner: Sendable {
             state.plans[i].isPaused = true
             paused += 1
         }
-        return (StopAllResult(runsCancelled: active.count, grantsRevoked: active.count, plansPaused: paused), Set(active.map(\.id)))
+        return (
+            StopAllResult(runsCancelled: active.count, grantsRevoked: active.count, plansPaused: paused),
+            Set(active.map(\.id))
+        )
     }
 
     func usage(group: UsageGroup) -> UsageSummary {
@@ -987,17 +1008,21 @@ private struct Inner: Sendable {
             UsageBucket(
                 key: "total", requests: sum.requests + b.requests, inputTokens: sum.inputTokens + b.inputTokens,
                 cacheReadTokens: sum.cacheReadTokens + b.cacheReadTokens,
-                cacheWriteTokens: sum.cacheWriteTokens + b.cacheWriteTokens, outputTokens: sum.outputTokens + b.outputTokens,
-                chargedTokens: sum.chargedTokens + b.chargedTokens, estimatedRequests: sum.estimatedRequests + b.estimatedRequests,
+                cacheWriteTokens: sum.cacheWriteTokens + b.cacheWriteTokens,
+                outputTokens: sum.outputTokens + b.outputTokens,
+                chargedTokens: sum.chargedTokens + b.chargedTokens,
+                estimatedRequests: sum.estimatedRequests + b.estimatedRequests,
                 failedRequests: sum.failedRequests + b.failedRequests)
         }
         func split(_ keys: [(String, Double)]) -> [UsageBucket] {
             keys.map { key, share in
                 UsageBucket(
-                    key: key, requests: Int(Double(total.requests) * share), inputTokens: Int(Double(total.inputTokens) * share),
+                    key: key, requests: Int(Double(total.requests) * share),
+                    inputTokens: Int(Double(total.inputTokens) * share),
                     cacheReadTokens: Int(Double(total.cacheReadTokens) * share),
                     cacheWriteTokens: Int(Double(total.cacheWriteTokens) * share),
-                    outputTokens: Int(Double(total.outputTokens) * share), chargedTokens: Int(Double(total.chargedTokens) * share),
+                    outputTokens: Int(Double(total.outputTokens) * share),
+                    chargedTokens: Int(Double(total.chargedTokens) * share),
                     estimatedRequests: 0, failedRequests: Int(Double(total.failedRequests) * share))
             }
         }

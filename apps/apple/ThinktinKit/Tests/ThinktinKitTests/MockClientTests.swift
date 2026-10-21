@@ -103,7 +103,8 @@ struct MockAccountTests {
         #expect(changed.locale == .en)
         #expect(try await client.me().locale == .en)
         try await client.setPushToken(.apns(deviceToken: Data([1, 2, 3])))
-        #expect(await apiCode { try await client.setPushToken(PushRegistration(channel: .apns, token: "")) } == .invalid)
+        #expect(
+            await apiCode { try await client.setPushToken(PushRegistration(channel: .apns, token: "")) } == .invalid)
 
         try await client.logout()
         #expect(!client.signedIn())
@@ -178,9 +179,12 @@ struct MockInstanceTests {
         #expect(cli.harness == "cli")
 
         #expect(await apiCode { _ = try await client.adopt(agentID: "nope", name: "x", harness: nil) } == .notFound)
-        #expect(await apiCode { _ = try await client.adopt(agentID: DemoData.claudeAgentID, name: " ", harness: nil) } == .invalid)
         #expect(
-            await apiCode { _ = try await client.adopt(agentID: DemoData.codexAgentID, name: "x", harness: "cli") } == .invalid)
+            await apiCode { _ = try await client.adopt(agentID: DemoData.claudeAgentID, name: " ", harness: nil) }
+                == .invalid)
+        #expect(
+            await apiCode { _ = try await client.adopt(agentID: DemoData.codexAgentID, name: "x", harness: "cli") }
+                == .invalid)
     }
 
     @Test("改名、升级 / 回滚、模型路由、删除")
@@ -198,7 +202,9 @@ struct MockInstanceTests {
         let routes = try await client.modelRoutes(instanceID: writer)
         #expect(routes.map(\.alias) == ["main", "fast"])
         #expect(routes[0].fallbacks.count == 1)
-        let replaced = [ModelRoute(alias: "main", credentialID: DemoData.deepseekCredentialID, upstreamModel: "deepseek-v4-pro")]
+        let replaced = [
+            ModelRoute(alias: "main", credentialID: DemoData.deepseekCredentialID, upstreamModel: "deepseek-v4-pro")
+        ]
         try await client.setModelRoutes(instanceID: writer, routes: replaced)
         #expect(try await client.modelRoutes(instanceID: writer) == replaced)
         let duplicate = replaced + replaced
@@ -209,7 +215,8 @@ struct MockInstanceTests {
             ModelRoute(
                 alias: "main", credentialID: DemoData.claudeCredentialID, upstreamModel: "m",
                 fallbacks: Array(
-                    repeating: RouteFallback(credentialID: DemoData.deepseekCredentialID, upstreamModel: "m"), count: 4))
+                    repeating: RouteFallback(credentialID: DemoData.deepseekCredentialID, upstreamModel: "m"), count: 4)
+            )
         ]
         #expect(await apiCode { try await client.setModelRoutes(instanceID: writer, routes: tooMany) } == .invalid)
 
@@ -279,7 +286,8 @@ struct MockRunTests {
         #expect(events.allSatisfy { $0.runID == run.id })
         #expect(
             events.map(\.kind) == [
-                .runState, .runState, .turnStarted, .agentThought, .agentThought, .toolCall, .toolCallUpdate, .toolCallUpdate,
+                .runState, .runState, .turnStarted, .agentThought, .agentThought, .toolCall, .toolCallUpdate,
+                .toolCallUpdate,
                 .agentMessage, .agentMessage, .agentMessage, .agentUsage, .turnEnded, .runState,
             ])
         #expect(events.map(\.runStatePayload?.state).compactMap { $0 } == [.starting, .running, .succeeded])
@@ -364,6 +372,12 @@ struct MockRunTests {
         #expect(await apiCode { _ = try await client.cancelRun(run.id) } == .conflict)
         // 取消不写收件箱。
         #expect(client.state.inbox.allSatisfy { $0.runID != run.id })
+        // 取消之后再播这个运行的脚本（取消和播放赛跑时晚到的那几步）：不出新事件，运行不会被“复活”。
+        let count = client.state.events[writer]?.count
+        client.play(DemoData.replyScript(for: run), instanceID: writer)
+        await client.waitForPlayback()
+        #expect(client.state.events[writer]?.count == count)
+        #expect(try await client.getRun(run.id).state == .cancelled)
     }
 
     @Test("cancelRun：播放中的回答停下，之后不会被“复活”")
@@ -386,12 +400,16 @@ struct MockRunTests {
         client.update { s in
             let now = Date()
             s.runs += [
-                Run(id: root, kind: .pipeline, instanceID: writer, source: .user, prompt: "流水线", state: .waitingChildren, createdAt: now),
                 Run(
-                    id: "tree-a", instanceID: writer, parentRunID: root, rootRunID: root, stepKey: "a", source: .pipeline,
+                    id: root, kind: .pipeline, instanceID: writer, source: .user, prompt: "流水线",
+                    state: .waitingChildren, createdAt: now),
+                Run(
+                    id: "tree-a", instanceID: writer, parentRunID: root, rootRunID: root, stepKey: "a",
+                    source: .pipeline,
                     prompt: "第一步", state: .succeeded, createdAt: now.addingTimeInterval(1)),
                 Run(
-                    id: "tree-b", instanceID: reviewer, parentRunID: root, rootRunID: root, stepKey: "b", source: .pipeline,
+                    id: "tree-b", instanceID: reviewer, parentRunID: root, rootRunID: root, stepKey: "b",
+                    source: .pipeline,
                     prompt: "第二步", state: .running, createdAt: now.addingTimeInterval(2)),
             ]
         }
@@ -446,8 +464,10 @@ struct MockApprovalTests {
 
         // 对话里：审批卡片已决（用户批准），工具调用完成。
         let turn = try #require(
-            Conversation.turns(runs: client.state.runs, events: client.state.events[writer] ?? [], approvals: [approval])
-                .first { $0.runID == run.id })
+            Conversation.turns(
+                runs: client.state.runs, events: client.state.events[writer] ?? [], approvals: [approval]
+            )
+            .first { $0.runID == run.id })
         let card = try #require(turn.items.compactMap(\.content.approval).first)
         #expect(card.approvalID == approval.id)
         #expect(card.resolution?.by == .user)
@@ -462,7 +482,9 @@ struct MockApprovalTests {
     @Test("演示数据里的审批：拒绝后收尾")
     func rejectDemo() async throws {
         let client = makeClient()
-        #expect(await apiCode { _ = try await client.decideApproval(DemoData.pendingApprovalID, optionID: "maybe") } == .invalid)
+        #expect(
+            await apiCode { _ = try await client.decideApproval(DemoData.pendingApprovalID, optionID: "maybe") }
+                == .invalid)
         let decided = try await client.decideApproval(DemoData.pendingApprovalID, optionID: "reject")
         #expect(decided.state == .rejected)
         await client.waitForPlayback()
@@ -485,7 +507,9 @@ struct MockApprovalTests {
         let client = makeClient()
         _ = try await client.cancelRun(DemoData.postRunID)
         #expect(client.state.approvals.first { $0.id == DemoData.pendingApprovalID }?.state == .cancelled)
-        #expect(await apiCode { _ = try await client.decideApproval(DemoData.pendingApprovalID, optionID: "allow") } == .conflict)
+        #expect(
+            await apiCode { _ = try await client.decideApproval(DemoData.pendingApprovalID, optionID: "allow") }
+                == .conflict)
     }
 }
 
@@ -524,13 +548,23 @@ struct MockPlanTests {
     func validation() async {
         let client = makeClient()
         let cron = Schedule.cron(expression: "0 8 * * *", timeZone: "Asia/Shanghai")
-        #expect(await apiCode { _ = try await client.createPlan(NewPlan(instanceID: writer, title: " ", goal: "g", triggers: [cron])) } == .invalid)
-        #expect(await apiCode { _ = try await client.createPlan(NewPlan(instanceID: writer, title: "t", goal: "g", triggers: [])) } == .invalid)
-        #expect(await apiCode { _ = try await client.createPlan(NewPlan(instanceID: "missing", title: "t", goal: "g", triggers: [cron])) } == .notFound)
+        #expect(
+            await apiCode {
+                _ = try await client.createPlan(NewPlan(instanceID: writer, title: " ", goal: "g", triggers: [cron]))
+            } == .invalid)
+        #expect(
+            await apiCode {
+                _ = try await client.createPlan(NewPlan(instanceID: writer, title: "t", goal: "g", triggers: []))
+            } == .invalid)
+        #expect(
+            await apiCode {
+                _ = try await client.createPlan(NewPlan(instanceID: "missing", title: "t", goal: "g", triggers: [cron]))
+            } == .notFound)
         let badStep = PlanStep(key: "a", instanceID: "missing", prompt: "p")
         #expect(
             await apiCode {
-                _ = try await client.createPlan(NewPlan(instanceID: writer, title: "t", goal: "g", triggers: [cron], steps: [badStep]))
+                _ = try await client.createPlan(
+                    NewPlan(instanceID: writer, title: "t", goal: "g", triggers: [cron], steps: [badStep]))
             } == .notFound)
     }
 
@@ -562,7 +596,10 @@ struct MockInboxTests {
         #expect(try client.cachedUnread() == 3)
 
         let older = try await client.olderInbox(before: "0192f3a0-0000-7000-8000-000000001002", limit: 2)
-        #expect(older.map(\.id.rawValue) == ["0192f3a0-0000-7000-8000-000000001003", "0192f3a0-0000-7000-8000-000000001004"])
+        #expect(
+            older.map(\.id.rawValue) == [
+                "0192f3a0-0000-7000-8000-000000001003", "0192f3a0-0000-7000-8000-000000001004",
+            ])
         #expect(try await client.olderInbox(before: "0192f3a0-0000-7000-8000-000000001005", limit: 5).isEmpty)
         #expect(try await client.syncInbox(limit: 2).items.count == 2)
 
@@ -589,9 +626,18 @@ struct MockVaultTests {
         #expect(created.instanceIDs == [reviewer])
         #expect(try await client.vaultItems().count == 3)
 
-        #expect(await apiCode { _ = try await client.createVaultItem(NewVaultItem(name: "npm", purpose: "", password: "x")) } == .conflict)
-        #expect(await apiCode { _ = try await client.createVaultItem(NewVaultItem(name: "NPM Token", purpose: "", password: "x")) } == .invalid)
-        #expect(await apiCode { _ = try await client.createVaultItem(NewVaultItem(name: "pypi", purpose: "", password: "")) } == .invalid)
+        #expect(
+            await apiCode {
+                _ = try await client.createVaultItem(NewVaultItem(name: "npm", purpose: "", password: "x"))
+            } == .conflict)
+        #expect(
+            await apiCode {
+                _ = try await client.createVaultItem(NewVaultItem(name: "NPM Token", purpose: "", password: "x"))
+            } == .invalid)
+        #expect(
+            await apiCode {
+                _ = try await client.createVaultItem(NewVaultItem(name: "pypi", purpose: "", password: ""))
+            } == .invalid)
 
         let detail = try await client.vaultItem(DemoData.githubVaultID)
         #expect(detail.username == "zhangsan")
@@ -623,11 +669,14 @@ struct MockVaultTests {
         let client = makeClient()
         let pending = try await client.vaultRequests(all: false)
         #expect(pending.map(\.id) == [DemoData.npmVaultRequestID])
-        #expect(await apiCode {
-            _ = try await client.fulfillVaultRequest(DemoData.npmVaultRequestID, username: "", password: "", purpose: nil)
-        } == .invalid)
+        #expect(
+            await apiCode {
+                _ = try await client.fulfillVaultRequest(
+                    DemoData.npmVaultRequestID, username: "", password: "", purpose: nil)
+            } == .invalid)
 
-        let done = try await client.fulfillVaultRequest(DemoData.npmVaultRequestID, username: "", password: "npm_abc", purpose: nil)
+        let done = try await client.fulfillVaultRequest(
+            DemoData.npmVaultRequestID, username: "", password: "npm_abc", purpose: nil)
         #expect(done.status == .fulfilled)
         #expect(done.resolvedAt != nil)
         let item = try #require(try await client.vaultItems().first { $0.id == done.itemID })
@@ -640,9 +689,11 @@ struct MockVaultTests {
 
         #expect(try await client.vaultRequests(all: false).isEmpty)
         #expect(try await client.vaultRequests(all: true).count == 1)
-        #expect(await apiCode {
-            _ = try await client.fulfillVaultRequest(DemoData.npmVaultRequestID, username: "", password: "x", purpose: nil)
-        } == .conflict)
+        #expect(
+            await apiCode {
+                _ = try await client.fulfillVaultRequest(
+                    DemoData.npmVaultRequestID, username: "", password: "x", purpose: nil)
+            } == .conflict)
     }
 
     @Test("agent 请填的表单：重名时换个名字；拒绝")
@@ -651,7 +702,9 @@ struct MockVaultTests {
         // agent 又要一个叫 github 的（已经有了）。
         client.emit(
             .vaultRequested,
-            payload: ["request_id": "vr-gh", "name": "github", "purpose": "推送到另一个仓库", "fields": ["username", "password"]],
+            payload: [
+                "request_id": "vr-gh", "name": "github", "purpose": "推送到另一个仓库", "fields": ["username", "password"],
+            ],
             runID: DemoData.publishRunID, instanceID: reviewer)
         let request = try #require(try await client.vaultRequests(all: false).first { $0.id == "vr-gh" })
         #expect(request.needsUsername)
@@ -692,19 +745,23 @@ struct MockVaultTests {
         _ = try await client.sendMessage(instanceID: writer, text: "今天天气怎么样")
         // 没登录时先报没登录。
         try await client.logout()
-        await #expect(throws: ClientError.signedOut) { _ = try await client.sendMessage(instanceID: writer, text: text) }
+        await #expect(throws: ClientError.signedOut) {
+            _ = try await client.sendMessage(instanceID: writer, text: text)
+        }
     }
 
     @Test("把拦下的值存进保险箱，消息换成引用")
     func saveSecretFromMessage() async throws {
         let client = makeClient()
-        let message = "用这个 token：ghp_abcdefghijklmnopqrstuvwxyz0123456789 推送，别用 ghp_abcdefghijklmnopqrstuvwxyz0123456789 以外的"
+        let message =
+            "用这个 token：ghp_abcdefghijklmnopqrstuvwxyz0123456789 推送，别用 ghp_abcdefghijklmnopqrstuvwxyz0123456789 以外的"
         let secrets = client.detectSecrets(in: message)
         #expect(secrets.count == 2)
         let first = try #require(secrets.first)
         #expect(first.kind == .token)
         #expect(first.service == "github")
-        let name = client.secretDetector.uniqueVaultName(base: first.suggestedName, taken: try await client.vaultItems().map(\.name))
+        let name = client.secretDetector.uniqueVaultName(
+            base: first.suggestedName, taken: try await client.vaultItems().map(\.name))
         #expect(name == "github_2")
         let saved = try await client.saveSecretFromMessage(
             message: message, value: first.value, item: NewVaultItem(name: name, purpose: "推送", password: first.value))
@@ -712,10 +769,12 @@ struct MockVaultTests {
         #expect(saved.message == "用这个 token：[vault:github_2] 推送，别用 [vault:github_2] 以外的")
         #expect(client.detectSecrets(in: saved.message).isEmpty)
         // 重名时抛 conflict。
-        #expect(await apiCode {
-            _ = try await client.saveSecretFromMessage(
-                message: message, value: first.value, item: NewVaultItem(name: "github", purpose: "", password: "x"))
-        } == .conflict)
+        #expect(
+            await apiCode {
+                _ = try await client.saveSecretFromMessage(
+                    message: message, value: first.value, item: NewVaultItem(name: "github", purpose: "", password: "x")
+                )
+            } == .conflict)
     }
 }
 
@@ -771,14 +830,23 @@ struct MockSettingsTests {
     func credentials() async throws {
         let client = makeClient()
         #expect(try await client.vendors().map(\.id).contains("deepseek"))
-        let added = try await client.addCredential(NewCredential(vendor: "openai", label: "", apiKey: "  sk-test-12345678  "))
+        let added = try await client.addCredential(
+            NewCredential(vendor: "openai", label: "", apiKey: "  sk-test-12345678  "))
         #expect(added.last4 == "5678")
         #expect(added.label == "OpenAI")
         #expect(try await client.credentials().count == 4)
-        #expect(await apiCode { _ = try await client.addCredential(NewCredential(vendor: "openai", label: "x", apiKey: "short")) } == .invalid)
-        #expect(await apiCode { _ = try await client.addCredential(NewCredential(vendor: "acme", label: "x", apiKey: "12345678")) } == .invalid)
+        #expect(
+            await apiCode {
+                _ = try await client.addCredential(NewCredential(vendor: "openai", label: "x", apiKey: "short"))
+            } == .invalid)
+        #expect(
+            await apiCode {
+                _ = try await client.addCredential(NewCredential(vendor: "acme", label: "x", apiKey: "12345678"))
+            } == .invalid)
         let custom = try await client.addCredential(
-            NewCredential(vendor: NewCredential.customVendor, label: "自建", apiKey: "abcdefgh", openaiBase: "https://llm.example.com/v1"))
+            NewCredential(
+                vendor: NewCredential.customVendor, label: "自建", apiKey: "abcdefgh",
+                openaiBase: "https://llm.example.com/v1"))
         #expect(custom.vendor == "custom")
         try await client.deleteCredential(added.id)
         #expect(await apiCode { try await client.deleteCredential(added.id) } == .notFound)
@@ -809,20 +877,28 @@ struct MockSettingsTests {
         #expect(channel.hint == "1234")
         #expect(!channel.hasSecret)
         #expect(channel.events == ImEvent.knownCases)
-        #expect(await apiCode { _ = try await client.addImChannel(NewImChannel(webhookURL: "http://x.com", label: "x")) } == .invalid)
-        #expect(await apiCode { _ = try await client.addImChannel(NewImChannel(webhookURL: "https://example.com/hook", label: "x")) } == .invalid)
+        #expect(
+            await apiCode { _ = try await client.addImChannel(NewImChannel(webhookURL: "http://x.com", label: "x")) }
+                == .invalid)
+        #expect(
+            await apiCode {
+                _ = try await client.addImChannel(NewImChannel(webhookURL: "https://example.com/hook", label: "x"))
+            } == .invalid)
 
         let updated = try await client.updateImChannel(channel.id, label: "运维", events: [.runFailed], enabled: false)
         #expect(updated.label == "运维")
         #expect(updated.events == [.runFailed])
         #expect(!updated.isEnabled)
-        #expect(await apiCode { _ = try await client.updateImChannel(channel.id, label: nil, events: [], enabled: nil) } == .invalid)
+        #expect(
+            await apiCode { _ = try await client.updateImChannel(channel.id, label: nil, events: [], enabled: nil) }
+                == .invalid)
         #expect(await apiCode { try await client.testImChannel(channel.id) } == .conflict)
         _ = try await client.updateImChannel(channel.id, label: nil, events: nil, enabled: true)
         try await client.testImChannel(channel.id)
         #expect(try await client.imChannels().last?.lastSentAt != nil)
 
-        let moved = try await client.replaceImWebhook(channel.id, webhookURL: "https://oapi.dingtalk.com/robot/send?access_token=zz99", secret: "SEC")
+        let moved = try await client.replaceImWebhook(
+            channel.id, webhookURL: "https://oapi.dingtalk.com/robot/send?access_token=zz99", secret: "SEC")
         #expect(moved.vendor == .dingtalk)
         #expect(moved.hasSecret)
         try await client.deleteImChannel(channel.id)

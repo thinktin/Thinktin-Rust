@@ -138,10 +138,12 @@ struct OpenStringEnumTests {
         #expect(UsageGroup.allCases.map(\.rawValue) == ["day", "instance", "model", "credential"])
     }
 
-    @Test("从系统语言标签认出用户语言", arguments: [
-        ("zh-Hans-CN", UserLocale.zhCN), ("zh_TW", .zhCN), ("zh", .zhCN), ("en_US", .en), ("EN-gb", .en),
-        (" en ", .en),
-    ])
+    @Test(
+        "从系统语言标签认出用户语言",
+        arguments: [
+            ("zh-Hans-CN", UserLocale.zhCN), ("zh_TW", .zhCN), ("zh", .zhCN), ("en_US", .en), ("EN-gb", .en),
+            (" en ", .en),
+        ])
     func userLocaleFromTag(tag: String, expected: UserLocale) {
         #expect(UserLocale(languageTag: tag) == expected)
     }
@@ -335,7 +337,8 @@ struct EventPayloadTests {
     func toolCall() throws {
         let p = try #require(
             ToolCallPayload(
-                json: #"{"tool_call_id":"tc-1","title":"读文件","kind":"read","status":"in_progress","raw":{"toolCallId":"tc-1","rawInput":{"path":"a.md"}}}"#
+                json:
+                    #"{"tool_call_id":"tc-1","title":"读文件","kind":"read","status":"in_progress","raw":{"toolCallId":"tc-1","rawInput":{"path":"a.md"}}}"#
             ))
         #expect(p.toolCallID == "tc-1")
         #expect(p.title == "读文件")
@@ -407,35 +410,40 @@ struct EventPayloadTests {
         #expect(noBy.by == .unknown(""))
     }
 
-    @Test("每种 kind 都解析成对应的载荷", arguments: [
-        (InstanceEventKind.agentMessage, #"{"text":"hi"}"#, "message"),
-        (.agentThought, #"{"text":"hmm"}"#, "thought"),
-        (.toolCall, #"{"tool_call_id":"t"}"#, "toolCall"),
-        (.toolCallUpdate, #"{"tool_call_id":"t"}"#, "toolCallUpdate"),
-        (.platformToolCall, #"{"call_id":"c","name":"schedule_create","arguments":{}}"#, "platformToolCall"),
-        (.agentPlan, #"{"entries":[{"content":"a","status":"pending"}]}"#, "agentPlan"),
-        (.permissionRequested, #"{"request_id":"r","options":[]}"#, "permissionRequested"),
-        (.permissionResolved, #"{"request_id":"r","by":"user"}"#, "permissionResolved"),
-        (.approvalDecided, #"{"approval_id":"a","state":"approved","option_id":"ok"}"#, "approvalDecided"),
-        (.vaultRequested, #"{"request_id":"v","name":"npm","purpose":"p","fields":["password"]}"#, "vaultRequested"),
-        (.vaultFulfilled, #"{"request_id":"v","name":"npm"}"#, "vaultFulfilled"),
-        (.vaultDeclined, #"{"request_id":"v"}"#, "vaultDeclined"),
-        (.vaultUsed, #"{"names":["github"]}"#, "vaultUsed"),
-        (.runState, #"{"state":"running"}"#, "runState"),
-        (.artifactPublished, #"{"artifact_id":"a","name":"x.md","version":2,"size":10}"#, "artifactPublished"),
-        (.pipelineStepStarted, #"{"step":"build","run_id":"r","instance_id":"i"}"#, "pipelineStepStarted"),
-        (.delegateStarted, #"{"child_run_id":"r","instance_id":"i","to":"审查","title":null}"#, "delegateStarted"),
-        (.planNeedsConfirmation, #"{"plan_id":"p","title":"t","change":"created"}"#, "planNeedsConfirmation"),
-        (.planCancelled, #"{"plan_id":"p","title":"t"}"#, "planCancelled"),
-        (.turnEnded, #"{"stop_reason":"end_turn"}"#, "turnEnded"),
-        (.agentError, #"{"message":"boom"}"#, "agentError"),
-        (.agentSessionLost, #"{"previous_session_id":"s","reason":"gone"}"#, "sessionLost"),
-        (.agentExited, #"{"code":1,"will_restart":true,"restarts":2}"#, "agentExited"),
-        (.runLogTruncated, #"{"limit_bytes":1048576}"#, "logTruncated"),
-        (.agentUsage, #"{"raw":{"input_tokens":1}}"#, "other"),
-        (.agentReady, #"{}"#, "other"),
-        (.unknown("x.y"), #"{"a":1}"#, "other"),
-    ])
+    @Test(
+        "每种 kind 都解析成对应的载荷",
+        arguments: [
+            (InstanceEventKind.agentMessage, #"{"text":"hi"}"#, "message"),
+            (.agentThought, #"{"text":"hmm"}"#, "thought"),
+            (.toolCall, #"{"tool_call_id":"t"}"#, "toolCall"),
+            (.toolCallUpdate, #"{"tool_call_id":"t"}"#, "toolCallUpdate"),
+            (.platformToolCall, #"{"call_id":"c","name":"schedule_create","arguments":{}}"#, "platformToolCall"),
+            (.agentPlan, #"{"entries":[{"content":"a","status":"pending"}]}"#, "agentPlan"),
+            (.permissionRequested, #"{"request_id":"r","options":[]}"#, "permissionRequested"),
+            (.permissionResolved, #"{"request_id":"r","by":"user"}"#, "permissionResolved"),
+            (.approvalDecided, #"{"approval_id":"a","state":"approved","option_id":"ok"}"#, "approvalDecided"),
+            (
+                .vaultRequested, #"{"request_id":"v","name":"npm","purpose":"p","fields":["password"]}"#,
+                "vaultRequested"
+            ),
+            (.vaultFulfilled, #"{"request_id":"v","name":"npm"}"#, "vaultFulfilled"),
+            (.vaultDeclined, #"{"request_id":"v"}"#, "vaultDeclined"),
+            (.vaultUsed, #"{"names":["github"]}"#, "vaultUsed"),
+            (.runState, #"{"state":"running"}"#, "runState"),
+            (.artifactPublished, #"{"artifact_id":"a","name":"x.md","version":2,"size":10}"#, "artifactPublished"),
+            (.pipelineStepStarted, #"{"step":"build","run_id":"r","instance_id":"i"}"#, "pipelineStepStarted"),
+            (.delegateStarted, #"{"child_run_id":"r","instance_id":"i","to":"审查","title":null}"#, "delegateStarted"),
+            (.planNeedsConfirmation, #"{"plan_id":"p","title":"t","change":"created"}"#, "planNeedsConfirmation"),
+            (.planCancelled, #"{"plan_id":"p","title":"t"}"#, "planCancelled"),
+            (.turnEnded, #"{"stop_reason":"end_turn"}"#, "turnEnded"),
+            (.agentError, #"{"message":"boom"}"#, "agentError"),
+            (.agentSessionLost, #"{"previous_session_id":"s","reason":"gone"}"#, "sessionLost"),
+            (.agentExited, #"{"code":1,"will_restart":true,"restarts":2}"#, "agentExited"),
+            (.runLogTruncated, #"{"limit_bytes":1048576}"#, "logTruncated"),
+            (.agentUsage, #"{"raw":{"input_tokens":1}}"#, "other"),
+            (.agentReady, #"{}"#, "other"),
+            (.unknown("x.y"), #"{"a":1}"#, "other"),
+        ])
     func kinds(kind: InstanceEventKind, json: String, expected: String) {
         let payload = EventPayload(kind: kind, json: json)
         #expect(payloadTag(payload) == expected)
@@ -465,11 +473,14 @@ struct EventPayloadTests {
         #expect(plan.entries.isEmpty)
     }
 
-    @Test("平台工具的类别", arguments: [
-        ("schedule_create", PlatformToolCategory.plan), ("plan_update", .plan), ("artifact_publish", .artifact),
-        ("delegate", .delegate), ("delegate_status", .delegate), ("vault_request", .vault), ("computer_click", .computer),
-        ("desktop_screenshot", .computer), ("web_search", .other),
-    ])
+    @Test(
+        "平台工具的类别",
+        arguments: [
+            ("schedule_create", PlatformToolCategory.plan), ("plan_update", .plan), ("artifact_publish", .artifact),
+            ("delegate", .delegate), ("delegate_status", .delegate), ("vault_request", .vault),
+            ("computer_click", .computer),
+            ("desktop_screenshot", .computer), ("web_search", .other),
+        ])
     func platformCategory(name: String, expected: PlatformToolCategory) {
         #expect(PlatformToolCategory(toolName: name) == expected)
         #expect(PlatformToolCallPayload(callID: "c", name: name).category == expected)
@@ -478,7 +489,8 @@ struct EventPayloadTests {
     @Test("InstanceEvent 的便捷属性")
     func instanceEvent() {
         let e = InstanceEvent(
-            instanceID: "i", seq: 7, runID: "r", kind: .runState, payloadJSON: #"{"state":"waiting_device","attempt":2}"#,
+            instanceID: "i", seq: 7, runID: "r", kind: .runState,
+            payloadJSON: #"{"state":"waiting_device","attempt":2}"#,
             createdAt: Fixture.now)
         #expect(e.id == "i#7")
         #expect(e.runStatePayload?.state == .waitingDevice)
@@ -597,7 +609,8 @@ struct ModelComputationTests {
     @Test("产出物的类型")
     func artifact() {
         func make(_ type: String) -> Artifact {
-            Artifact(id: "a", instanceID: "i", runID: "r", name: "x", contentType: type, size: 1, createdAt: Fixture.now)
+            Artifact(
+                id: "a", instanceID: "i", runID: "r", name: "x", contentType: type, size: 1, createdAt: Fixture.now)
         }
         #expect(make("text/plain").isText)
         #expect(make("application/json").isText)
@@ -689,7 +702,10 @@ struct ModelComputationTests {
         #expect(item.reference == "[vault:github]")
         #expect(item.updatedAt == item.createdAt)
         #expect(item.isAvailableToAllInstances)
-        #expect(VaultRequest(id: "r", instanceID: "i", name: "n", purpose: "p", createdAt: Fixture.now, expiresAt: Fixture.now).needsUsername)
+        #expect(
+            VaultRequest(
+                id: "r", instanceID: "i", name: "n", purpose: "p", createdAt: Fixture.now, expiresAt: Fixture.now
+            ).needsUsername)
         #expect(
             !VaultRequest(
                 id: "r", instanceID: "i", name: "n", purpose: "p", fields: [.password], createdAt: Fixture.now,
@@ -698,7 +714,8 @@ struct ModelComputationTests {
 
         let bucket = UsageBucket(key: "k", inputTokens: 10, cacheReadTokens: 5, cacheWriteTokens: 2, outputTokens: 3)
         #expect(bucket.totalTokens == 20)
-        #expect(Credential(id: "c", vendor: "v", label: "l", last4: "abcd", createdAt: Fixture.now).maskedKey == "••••abcd")
+        #expect(
+            Credential(id: "c", vendor: "v", label: "l", last4: "abcd", createdAt: Fixture.now).maskedKey == "••••abcd")
     }
 
     @Test("认出的密码在原文里的范围（UTF-16 下标）")
@@ -707,7 +724,8 @@ struct ModelComputationTests {
         let ns = text as NSString
         let r = ns.range(of: "hunter22")
         let secret = DetectedSecret(
-            kind: .labeled, utf16Range: r.location..<(r.location + r.length), value: "hunter22", suggestedName: "password")
+            kind: .labeled, utf16Range: r.location..<(r.location + r.length), value: "hunter22",
+            suggestedName: "password")
         let range = try #require(secret.range(in: text))
         #expect(String(text[range]) == "hunter22")
         #expect(secret.id == r.location)

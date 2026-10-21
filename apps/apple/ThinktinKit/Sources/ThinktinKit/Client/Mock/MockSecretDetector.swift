@@ -16,11 +16,21 @@ public struct MockSecretDetector: SecretDetector {
     }
 
     private static let rules: [Rule] = [
-        Rule(pattern: #"-----BEGIN [A-Z ]*PRIVATE KEY-----"#, kind: .privateKey, name: "private_key", service: "", group: 0, storable: false),
-        Rule(pattern: #"sk-ant-[A-Za-z0-9_\-]{20,}"#, kind: .apiKey, name: "anthropic", service: "anthropic", group: 0, storable: true),
-        Rule(pattern: #"sk-(?!ant-)[A-Za-z0-9_\-]{20,}"#, kind: .apiKey, name: "openai", service: "openai", group: 0, storable: true),
-        Rule(pattern: #"gh[pousr]_[A-Za-z0-9]{20,}"#, kind: .token, name: "github", service: "github", group: 0, storable: true),
-        Rule(pattern: #"(?i)(?:password|passwd|pwd|密码)\s*[:=：]\s*(\S{4,})"#, kind: .labeled, name: "password", service: "", group: 1, storable: true),
+        Rule(
+            pattern: #"-----BEGIN [A-Z ]*PRIVATE KEY-----"#, kind: .privateKey, name: "private_key", service: "",
+            group: 0, storable: false),
+        Rule(
+            pattern: #"sk-ant-[A-Za-z0-9_\-]{20,}"#, kind: .apiKey, name: "anthropic", service: "anthropic", group: 0,
+            storable: true),
+        Rule(
+            pattern: #"sk-(?!ant-)[A-Za-z0-9_\-]{20,}"#, kind: .apiKey, name: "openai", service: "openai", group: 0,
+            storable: true),
+        Rule(
+            pattern: #"gh[pousr]_[A-Za-z0-9]{20,}"#, kind: .token, name: "github", service: "github", group: 0,
+            storable: true),
+        Rule(
+            pattern: #"(?i)(?:password|passwd|pwd|密码)\s*[:=：]\s*(\S{4,})"#, kind: .labeled, name: "password",
+            service: "", group: 1, storable: true),
     ]
 
     public func detectSecrets(in text: String) -> [DetectedSecret] {
