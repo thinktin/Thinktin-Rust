@@ -203,14 +203,15 @@ MainActivity
 | `agent.tool_call` | `tool_call_id`、`title`、`kind`（read / edit / search / execute / fetch…）、`status`、`raw` | 工具调用卡片，按 `kind` 选图标；`raw` 展开显示 |
 | `agent.tool_call_update` | `tool_call_id`、`status`、`raw` | 更新同 id 卡片的状态（pending / in_progress / completed / failed） |
 | `agent.plan` | `entries` | agent 的计划清单（任务列表卡片） |
-| `agent.usage` | `raw` | token 用量，显示在运行区块尾部 |
+| `agent.usage` | `raw` | 不进时间线；显示在运行详情里（与 iOS 一致） |
 | `agent.permission_requested` | `request_id`、`title`、`options[]{option_id,name,kind}`、`tool_call` | 内嵌审批卡片（真正提交用 `approvals()` / `decide_approval`） |
 | `agent.permission_resolved` | `request_id`、`option_id`、`by`（policy / user / timeout / cancelled） | 审批卡片变为已决定 |
 | `agent.platform_tool_call` | `call_id`、`name`、`arguments` | 平台工具调用卡片（schedule_*、artifact_*、delegate…） |
 | `agent.vault_reveal` | `call_id`、`refs[]` | “使用了保险箱：名字”提示 |
-| `agent.turn_started` / `agent.turn_ended` | `stop_reason`（end_turn / max_tokens / max_turn_requests / refusal / cancelled） | 区块内的轮次分隔，异常 stop_reason 显示说明 |
+| `agent.turn_started` / `agent.turn_ended` | `stop_reason`（end_turn / max_tokens / max_turn_requests / refusal / cancelled） | 不显示；`turn_ended` 用来结束流式状态，异常 stop_reason（max_tokens、refusal）显示一行说明 |
 | `agent.ready` / `agent.session_lost` / `agent.exited` / `agent.update` / `agent.error` | 见 `proto::shim::ShimEvent` | 系统提示行（灰色小字），`agent.error` 用错误色 |
-| `run.state` | `state`、`reason`、`attempt`、`tree?`、`steps?` | 运行区块头的状态；等待类状态显示横幅 |
+| `run.state` | `state`、`reason`、`attempt`、`tree?`、`steps?` | 运行区块头的状态；等待类状态显示横幅并给出下一步（去审批、去配 key、等电脑上线）。`reason` 不要当成本地化文案：waiting_quota 的是服务端按用户语言写的，waiting_approval 的是 agent 写的审批标题，失败原因是英文诊断 |
+| `instance.state` | `state`（没有 `run_id`） | 不进时间线；更新页头和抽屉里的实例状态点 |
 | `run.log_truncated` | `limit_bytes` | “日志超出上限，后续输出未记录” |
 | `pipeline.step_started` | `step`、`run_id`、`instance_id` | 运行树里的子运行入口 |
 | `delegate.started` | `child_run_id`、`instance_id`、`to`、`title` | 同上 |
@@ -226,6 +227,41 @@ MainActivity
 - `ThinktinClient(config, sessions)`：`sessions` 由 App 实现 `SessionStore`（`load()` / `save(session?)`，`Session{user_id, device_id, access_token, refresh_token}`），存 EncryptedSharedPreferences。
 - `platform = "android"`，`cache_path` 指向 `filesDir/thinktin.db`，`device_name` 用 `Build.MODEL`（用户可改）。
 - 所有 `suspend` 调用都在 client-core 自己的线程池执行；`EventListener` 回调在后台线程，必须切回主线程再改状态。
-- 打开对话页：`cached_events(instance, 0, N)` 先渲染 → `subscribe(instance, listener)`；离开页面 `subscription.stop()`。`on_reset` 时清空本地事件重新加载。
+- 打开对话页：`cached_runs` + `cached_events(instance, 0, N)` 先渲染 → `subscribe(instance, listener)`；离开页面 `subscription.stop()`。更早的运行用 `older_runs(instance, before, limit)` 翻页（11.7）。
+- `on_reset(oldest_seq, latest_seq)`：client-core 已删掉本地事件并把续传位置设到 `oldest_seq`，服务端会把保留期内的事件全部补发。App 要：清空归并状态但保留运行记录并重新调 `runs()`；补发会一次涌入很多事件，视图模型按批提交；比 `oldest_seq` 更早的运行没有事件了（默认保留 30 天），只显示 `prompt`、`summary`、`error` 并标注“过程记录已超过保留期”。
+- 11.7 之后 client-core 已导出：`update_profile`、`devices` / `revoke_device`、`send_self_code` + `delete_account`、`instance`、`older_runs`、`instance_artifacts` / `delete_artifact`、`update_plan` / `add_trigger` / `delete_trigger`、`inbox_item` / `mark_inbox_unread` / `delete_inbox_item`、团队与模板（`teams`、`create_team`、`adopt_team_template` 等）、`update_credential` / `replace_credential_secret`、设备消息。App 侧服务接口直接接这些方法，不再需要“暂不支持”。
 - 发送：`detect_secrets(text)` 有命中先弹保险箱表单；`send_message(instance, text, allow_secrets=false)` 抛 `ContainsSecrets` 时同样处理。
 - 列表页先用 `cached_*`（实例、运行、收件箱、未读数）渲染，再调网络版刷新。
+
+### 8.4 AI 生成标识（16.3，App 端）
+
+`InstanceEvent.ai_generated` 只对 `agent.message`、`agent.thought`、`agent.plan` 为真，`InboxItem.ai_generated` 由服务端给。其他 agent 写的文字没有标识位，按下表由 App 补标（标识组件统一放 `:design`，文案和 `proto::labels` 的中英文一致：`【AI 生成】` / `[AI-generated]`）：
+
+| 字段 | 标 | 说明 |
+|---|---|---|
+| `agent.message` / `agent.thought` / `agent.plan` 的文本 | 是 | 按 `ai_generated` |
+| 工具调用、平台工具调用的 `title` | 是 | agent 写的 |
+| `Approval.title`、`agent.permission_requested.title` | 是 | agent 写的审批标题 |
+| `VaultRequest.purpose`、`vault.requested.purpose` | 是 | |
+| `created_by = agent` 的计划标题与目标、`plan.needs_confirmation.title` | 是 | 用户建的不标 |
+| `delegate.started.title`、委派子运行的 `Run.prompt` | 是 | 负责人 agent 写的，不能显示成“你说” |
+| `Run.summary`、`Run.error`（agent 写的部分） | 是 | 失败原因是平台诊断，不标 |
+| 流水线步骤 prompt 里附带的上游摘要、产出物名 | 是 | |
+| 用户自己的 `Run.prompt`、收件箱的系统通知、平台文案 | 否 | |
+
+复制、分享 agent 输出时在末尾追加标识文字（`docs/compliance.md`）。
+
+### 8.5 审批与生物识别
+
+- 云端审批（agent 的 `request_permission`，服务端不验签）在 P1 就会出现：审批卡（对话内）+ 审批中心（跨实例队列，路由 `approvals`）单独成包 13.16。
+- 批准前必须先过 `BiometricPrompt`（`BIOMETRIC_STRONG or DEVICE_CREDENTIAL`，没有生物识别时退到锁屏密码）；拒绝不用验证，通知上的“拒绝”按钮直接发。
+- 电脑高危操作的签名审批（Keystore / StrongBox 私钥、扫码配对）是 13.9，属于 P3（随 macOS 端）。
+
+### 8.6 几个容易漏的交互
+
+- 删除实例会级联删掉其他计划里引用它的流水线步骤和团队成员：确认框要列出受影响的计划和团队（先查 `plans()`、`teams()`），再删。
+- 团队模板一键领养（`adopt_team_template`）出来的实例没有模型路由，一跑就进 `waiting_quota`：领养完成后弹“逐个配置模型”的列表，没配好的成员标红；运行树里卡在等 key 的子步骤要冒泡到根节点显示。
+- 触发规则解析失败时调度器会停用触发器（`Trigger.enabled = false`）而不通知：计划详情页显示“规则已失效，已停用”并给“修改规则”入口（`delete_trigger` + `add_trigger`）。
+- `artifact_content` 一次返回整个文件（上限 20 MiB），只能转圈不能显示进度；下载时把客户端超时设够长。
+- 推送、深链指向流水线子运行时，要落到运行树里对应的节点。
+
