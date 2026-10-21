@@ -15,6 +15,7 @@ mod device_relay;
 mod error;
 mod events;
 mod grants;
+mod im_channels;
 mod inbox;
 mod instances;
 mod llmgw;
@@ -50,6 +51,7 @@ pub use device_relay::{
 };
 pub use error::{Error, Result};
 pub use events::EVENTS_CHANNEL;
+pub use im_channels::{ImChannelChange, ImSlot, NewImChannel, SealedImChannel};
 pub use inbox::NewInboxItem;
 pub use instances::{InstanceRuntime, NewInstance};
 pub use llmgw::{GatewayInstance, GatewayRoute};

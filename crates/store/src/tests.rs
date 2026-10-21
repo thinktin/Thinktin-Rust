@@ -982,6 +982,17 @@ async fn erasing_an_account_deletes_its_content() {
         })
         .await
         .unwrap();
+        tx.create_im_channel(&crate::NewImChannel {
+            id: proto::domain::ImChannelId::new(),
+            vendor: proto::domain::ImVendor::Feishu,
+            label: "家庭群".into(),
+            sealed: vec![4, 5, 6],
+            hint: "…abcd".into(),
+            has_secret: true,
+            events: vec![proto::domain::ImEvent::RunFinished],
+        })
+        .await
+        .unwrap();
         tx.create_vault_request(&crate::NewVaultRequest {
             instance_id: inst.id,
             run_id: Some(run.id),
@@ -1054,6 +1065,7 @@ async fn erasing_an_account_deletes_its_content() {
         "team_templates",
         "vault_items",
         "vault_requests",
+        "im_channels",
         "device_calls",
         "device_messages",
         "device_links",
@@ -2143,4 +2155,194 @@ async fn builds_check_the_database_migrations() {
     assert_eq!(status.pending, [16]);
     let problem = status.problem().unwrap();
     assert!(problem.contains("missing migrations 16"), "{problem}");
+}
+
+#[tokio::test]
+async fn im_channels_are_per_user_rate_limited_and_settle_without_spending_attempts() {
+    use crate::{ImChannelChange, ImSlot, NewImChannel, NewOutboxItem};
+    use proto::domain::{ImChannelId, ImEvent, ImVendor};
+
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = user(db, "+8613800000011").await;
+    let bob = user(db, "+8613800000012").await;
+    let id = ImChannelId::new();
+    let mut tx = db.tenant(alice).await.unwrap();
+    let ch = tx
+        .create_im_channel(&NewImChannel {
+            id,
+            vendor: ImVendor::Dingtalk,
+            label: "运维群".into(),
+            sealed: vec![9; 40],
+            hint: "…beef".into(),
+            has_secret: true,
+            events: vec![ImEvent::RunFailed, ImEvent::Approval, ImEvent::RunFailed],
+        })
+        .await
+        .unwrap();
+    assert_eq!(ch.events, vec![ImEvent::Approval, ImEvent::RunFailed]);
+    assert!(ch.enabled && ch.last_error.is_none());
+    tx.commit().await.unwrap();
+
+    // 别人看不见、改不了、删不掉。
+    let mut tx = db.tenant(bob).await.unwrap();
+    assert!(tx.im_channels().await.unwrap().is_empty());
+    assert!(matches!(tx.im_channel(id).await, Err(Error::NotFound)));
+    let change = ImChannelChange {
+        label: Some("x".into()),
+        ..Default::default()
+    };
+    assert!(matches!(
+        tx.update_im_channel(id, &change).await,
+        Err(Error::NotFound)
+    ));
+    assert!(matches!(
+        tx.delete_im_channel(id).await,
+        Err(Error::NotFound)
+    ));
+    assert!(
+        tx.im_channels_for(alice, ImEvent::RunFailed)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    tx.rollback().await.unwrap();
+
+    // 订了哪些事件就只发哪些；停用的不发。
+    let mut w = db.worker().await.unwrap();
+    assert_eq!(
+        w.im_channels_for(alice, ImEvent::RunFailed).await.unwrap(),
+        vec![id]
+    );
+    assert!(
+        w.im_channels_for(alice, ImEvent::RunFinished)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    // 限流窗口：每分钟 2 条，第 3 条要等到窗口结束。
+    assert_eq!(w.take_im_slot(id, 2).await.unwrap(), ImSlot::Go);
+    assert_eq!(w.take_im_slot(id, 2).await.unwrap(), ImSlot::Go);
+    let ImSlot::Wait(at) = w.take_im_slot(id, 2).await.unwrap() else {
+        panic!("window full")
+    };
+    assert!(at > Utc::now() + chrono::Duration::seconds(50));
+    // 失败：记下原因；机器人没了：停用。只改读的那一刻的行。
+    let seen = w.sealed_im_channel(id).await.unwrap().unwrap();
+    assert_eq!(seen.user_id, alice);
+    assert_eq!(seen.sealed, vec![9; 40]);
+    w.record_im_result(id, seen.channel.updated_at, Some("sign not match"), false)
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+    let mut tx = db.tenant(alice).await.unwrap();
+    let got = tx.im_channel(id).await.unwrap();
+    assert_eq!(got.last_error.as_deref(), Some("sign not match"));
+    assert!(got.enabled);
+    // 换了地址：错误清掉；换成别家的地址不行。
+    let rotated = tx
+        .update_im_channel(
+            id,
+            &ImChannelChange {
+                webhook: Some((ImVendor::Dingtalk, vec![7; 40], "…cafe".into(), false)),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        (
+            rotated.hint.as_str(),
+            rotated.has_secret,
+            rotated.last_error
+        ),
+        ("…cafe", false, None)
+    );
+    let other_vendor = ImChannelChange {
+        webhook: Some((ImVendor::Wecom, vec![1], "…0000".into(), false)),
+        ..Default::default()
+    };
+    assert!(matches!(
+        tx.update_im_channel(id, &other_vendor).await,
+        Err(Error::Invalid(_))
+    ));
+    tx.commit().await.unwrap();
+    // 用户换地址之前读到的旧行，结果不能停掉新地址。
+    let mut w = db.worker().await.unwrap();
+    w.record_im_result(
+        id,
+        seen.channel.updated_at,
+        Some("token is not exist"),
+        true,
+    )
+    .await
+    .unwrap();
+    let now = w.sealed_im_channel(id).await.unwrap().unwrap();
+    assert!(now.channel.enabled && now.channel.last_error.is_none());
+    w.record_im_result(id, now.channel.updated_at, None, false)
+        .await
+        .unwrap();
+    w.record_im_result(id, now.channel.updated_at, Some("token is not exist"), true)
+        .await
+        .unwrap();
+    let off = w.sealed_im_channel(id).await.unwrap().unwrap();
+    assert!(!off.channel.enabled && off.channel.last_sent_at.is_some());
+    assert_eq!(w.take_im_slot(id, 2).await.unwrap(), ImSlot::Gone);
+    assert!(
+        w.im_channels_for(alice, ImEvent::RunFailed)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    // 出箱：只领会处理的种类；自己的限流推后不算一次尝试。
+    for kind in ["im", "future-kind"] {
+        w.enqueue_outbox(
+            alice,
+            &NewOutboxItem {
+                kind: kind.into(),
+                payload: json!({}),
+                dedupe_key: None,
+                available_at: None,
+            },
+        )
+        .await
+        .unwrap();
+    }
+    let got = w
+        .claim_outbox_of("n1", Duration::from_secs(60), 10, Some(&["push", "im"]))
+        .await
+        .unwrap();
+    assert_eq!(
+        got.iter().map(|i| i.kind.as_str()).collect::<Vec<_>>(),
+        vec!["im"]
+    );
+    assert_eq!(got[0].attempts, 1);
+    w.defer_outbox(
+        got[0].id,
+        "n1",
+        "rate limited",
+        Utc::now() - chrono::Duration::seconds(1),
+    )
+    .await
+    .unwrap();
+    let again = w
+        .claim_outbox_of("n1", Duration::from_secs(60), 10, Some(&["im"]))
+        .await
+        .unwrap();
+    assert_eq!((again.len(), again[0].attempts), (1, 1));
+    assert!(matches!(
+        w.defer_outbox(again[0].id, "someone-else", "x", Utc::now())
+            .await,
+        Err(Error::LeaseLost { .. })
+    ));
+    w.commit().await.unwrap();
+
+    let mut tx = db.tenant(alice).await.unwrap();
+    tx.delete_im_channel(id).await.unwrap();
+    assert!(matches!(
+        tx.delete_im_channel(id).await,
+        Err(Error::NotFound)
+    ));
+    assert_eq!(tx.im_channel_count().await.unwrap(), 0);
 }

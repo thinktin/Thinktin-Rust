@@ -209,6 +209,8 @@ impl Tx<Worker> {
             "DELETE FROM team_templates WHERE user_id = $1",
             "DELETE FROM vault_requests WHERE user_id = $1",
             "DELETE FROM vault_items WHERE user_id = $1",
+            // IM 群机器人的 token 和签名密钥（10.5）。
+            "DELETE FROM im_channels WHERE user_id = $1",
             // 电脑工具的参数和结果（文件内容、截图）、手机和电脑之间的消息、电脑的在线状态（14.1）。
             "DELETE FROM device_calls WHERE user_id = $1",
             "DELETE FROM device_messages WHERE user_id = $1",

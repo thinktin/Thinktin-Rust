@@ -136,18 +136,32 @@ impl Tx<Worker> {
         lock_for: Duration,
         limit: i64,
     ) -> Result<Vec<OutboxItem>> {
+        self.claim_outbox_of(owner, lock_for, limit, None).await
+    }
+
+    /// 同上，只领这几种（投递器只领自己会处理的：滚动发布时老版本不认识的新种类留给新版本）。
+    pub async fn claim_outbox_of(
+        &mut self,
+        owner: &str,
+        lock_for: Duration,
+        limit: i64,
+        kinds: Option<&[&str]>,
+    ) -> Result<Vec<OutboxItem>> {
+        let kinds: Option<Vec<String>> = kinds.map(|k| k.iter().map(|s| (*s).to_owned()).collect());
         let rows: Vec<Row> = sqlx::query_as(
             "UPDATE outbox SET locked_by = $1, locked_until = now() + make_interval(secs => $2), \
                attempts = attempts + 1 \
              WHERE id IN (SELECT id FROM outbox \
                           WHERE delivered_at IS NULL AND available_at <= now() \
                             AND (locked_until IS NULL OR locked_until < now()) \
+                            AND ($4::text[] IS NULL OR kind = ANY ($4)) \
                           ORDER BY id LIMIT $3 FOR UPDATE SKIP LOCKED) \
              RETURNING id, user_id, kind, payload, attempts, created_at",
         )
         .bind(owner)
         .bind(secs(lock_for))
         .bind(limit)
+        .bind(kinds)
         .fetch_all(self.conn())
         .await?;
         let mut items = rows
@@ -215,6 +229,26 @@ impl Tx<Worker> {
             id,
             owner,
             Some(error),
+            Some(at),
+        )
+        .await
+    }
+
+    /// 自己的限流：`at` 之后再发，不算一次尝试（领取时加的那次退回去）。
+    pub async fn defer_outbox(
+        &mut self,
+        id: i64,
+        owner: &str,
+        reason: &str,
+        at: DateTime<Utc>,
+    ) -> Result<()> {
+        self.settle_outbox(
+            "UPDATE outbox SET available_at = $4, last_error = $3, attempts = greatest(attempts - 1, 0), \
+               locked_by = NULL, locked_until = NULL \
+             WHERE id = $1 AND locked_by = $2 AND delivered_at IS NULL",
+            id,
+            owner,
+            Some(reason),
             Some(at),
         )
         .await
