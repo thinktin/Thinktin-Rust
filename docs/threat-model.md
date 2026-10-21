@@ -71,6 +71,7 @@
 | 威胁 | 场景 | 已落地的对策 | 剩余风险 / 待办 |
 |---|---|---|---|
 | SSRF | 用户自定义 base URL 指向内网 | 只允许 https；DNS 解析后拒绝内网、回环、链路本地、元数据；固定解析出的 IP 防重绑定；不跟随重定向；可走专用出口代理（`docs/llm-gateway.md`） | — |
+| SSRF（IM 渠道） | 用户粘贴的 webhook 地址指向别处 | 只认四个官方前缀加 token，只存 token、发送时按固定前缀拼地址；只走 https、不跟随重定向（`docs/im-channels.md`） | — |
 | key 进日志 | 上游错误回显 key | 网关抹掉上游错误里的 key；日志只有打码令牌；端到端测试扫描 debug 级日志 | 进程内存里的残留（`docs/security-audit.md` 第 4 节） |
 | 计费被绕过 | 流式响应不带用量 | 必要时替 agent 打开 `include_usage`；拿不到用量按保守估算记账；后台模式请求拒绝 | — |
 | 注销后还能用 | 注销用户的令牌、key | 注销销毁 DEK、吊销授权，网关缓存过期后拒绝（`erased_accounts_cannot_use_their_keys`） | 缓存窗口（默认 5 秒） |

@@ -91,7 +91,7 @@ kubectl -n thinktin-staging rollout status deploy/thinktin-api deploy/thinktin-w
    看 30 分钟以上，新旧版本对比（Prometheus 按 Pod 的 `track` 标签或 `thinktin_build_info` 区分）：
    - 接口：`thinktin_http_requests_total` 里 5xx 的比例、`thinktin_http_request_seconds` 的 p99；
    - 运行：`thinktin_run_attempts_total` 按结果的比例、`thinktin_run_attempt_seconds`；
-   - 推送：`thinktin_push_total` 失败的比例；
+   - 推送：`thinktin_push_total` 失败的比例；IM 群消息：`thinktin_im_total`（`dropped` 多半是用户的机器人设置不对，看渠道的 `last_error`）；
    - 模型网关：`thinktin_llm_requests_total` 按状态、`thinktin_llm_rejections_total`；
    - 中继：`thinktin_relay_disconnects_total`、`thinktin_relay_calls_total` 按结果；
    - 日志里 `ERROR` 的数量。
