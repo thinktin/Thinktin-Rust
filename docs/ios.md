@@ -96,7 +96,11 @@ Claude App 的特点：暖色纸张底色、极少的强调色、标题用衬线
 | `artifact.published` | `{artifact_id, name, version, size}` | 产出物卡片，点开预览 / 分享 |
 | `pipeline.step_started` / `delegate.started` | `{step, run_id, instance_id}` / `{child_run_id, instance_id, to, title}` | 子运行链接卡片，进运行树 |
 | `plan.needs_confirmation` | `{plan_id, title, change}` | “agent 新建 / 修改了计划，待确认”卡片，跳到计划页 |
-| `agent.usage`、`agent.turn_started`、`agent.turn_ended`、`agent.ready`、`agent.update` | — | 不显示（`turn_ended` 用来结束流式状态；`usage` 进运行详情） |
+| `plan.cancelled` | `{plan_id, title}` | “agent 取消了计划 X”系统行 |
+| `instance.state` | `{state}`，没有 `run_id` | 不进时间线：更新对话页页头和抽屉里的实例状态（“正在唤醒”，已归档的从模板重建会慢一些） |
+| `approval.decided` | `{approval_id, state, option_id}` | 更新对应的审批卡（按运行关联，见 ios-packages.md 12.15） |
+| `vault.used` / `agent.vault_reveal` | `{names}` / `{call_id, refs}` | “用了保险箱里的 github”提示行（只有名字） |
+| `agent.usage`、`agent.turn_started`、`agent.turn_ended`、`agent.ready`、`agent.update` | — | 不进时间线（`turn_ended` 结束流式状态，`stop_reason` 为 refusal / max_tokens / max_turn_requests 时显示提示行；`usage` 显示在运行详情） |
 | `agent.error`、`agent.session_lost`、`agent.exited`、`run.log_truncated` | `{message}` 等 | 系统提示行 |
 
 - 事件流的回调在后台线程，视图模型切回主线程再更新。
@@ -115,6 +119,7 @@ Claude App 的特点：暖色纸张底色、极少的强调色、标题用衬线
 | `Api(status, code, …)` | `rate_limited` 按 `retry_after_secs` 提示；`conflict` 刷新后重试；`invalid` 显示表单错误；`not_found` 回上一级 |
 | `Network` | 行内可重试的提示；列表页显示缓存数据并标“离线” |
 | `ContainsSecrets(count)` | 发送前的密码拦截弹层（11.6）：一键存进保险箱并换成引用，或坚持发送 |
+| `Unsupported(feature)` | 只在 Swift 侧有：client-core 还没导出的方法（11.7 落地前）由 `CoreClient` 抛出，`MockClient` 照常实现。提示“暂未开放”、不重试（`ErrorRecovery.featureUnavailable`），入口最好直接隐藏或置灰 |
 | 其他 | 通用错误提示，带“复制详情” |
 
 接口的 `message` 是英文、给开发者看的，界面显示按错误码本地化的文案。
@@ -138,10 +143,37 @@ Claude App 的特点：暖色纸张底色、极少的强调色、标题用衬线
      `xcodebuild build-for-testing` + `test` 在模拟器上跑 `ThinktinUITests` 和 App 的单元测试；`swift build` 整个 `ThinktinKit`。
 - 代码风格：`swift format`（Swift 6 工具链自带），配置在 `ThinktinKit/.swift-format`。
 
-## 8. 页面清单
+## 8. 工作包与开发顺序
 
-（WBS 细化后补。）
+12.x 共 23 个工作包（WBS 2026-10-22 细化，见 [wbs.md 第 12 节](wbs.md)），每个包做的时候要注意的事（页面清单、边角情况、依据）
+在 [ios-packages.md](ios-packages.md)。开发顺序：
+
+| 波次 | 内容 |
+|---|---|
+| W0 | 合 `backend-core`（带进 11.7），收尾 12.1：适配层接上 11.7 的接口、设计令牌与基础组件、测试、CI 跑绿；之后 12.1 的公共文件（`ClientProtocol`、模型、`Theme`）只加不改 |
+| W1 | 四条线并行，每条线只改自己的功能目录：A 12.16 → 12.2 → 12.12 → 12.17；B 12.3 → 12.4 → 12.8；C 12.5 → 12.18；D 12.6 → 12.7；12.15 由先空下来的线做 |
+| W2 | 12.13、12.10（等 10.6）、12.20、12.21、12.19；P3 的 12.9 随 macOS（14.5 起）；12.11 最后做（还要等 16.1、16.2） |
+| 待拍板 | 12.22 运行附件、12.23 App 内购买（等 1.1） |
 
 ## 9. 工作包与目录的对应
 
-（WBS 细化后补。）
+| 工作包 | ThinktinKit（纯 Swift） | ThinktinUI（SwiftUI） |
+|---|---|---|
+| 12.1 | `Models/`、`Client/`、`Conversation/`、`Formatting/`、`Support/` | `Design/`、`Components/`、`RootView.swift` |
+| 12.16 | `Navigation/`（路由、深链解析、全局状态） | `Shell/`（抽屉、实例切换、全局横幅） |
+| 12.2 | `ViewModels/Account/` | `Screens/Account/`（登录、设备、注销） |
+| 12.3 | `ViewModels/Agents/` | `Screens/Agents/`（目录、领养、实例详情） |
+| 12.4 | `ViewModels/Models/` | `Screens/Models/`（key、路由、用量） |
+| 12.5 | `ViewModels/Conversation/` | `Screens/Conversation/`（时间线、输入框、事件卡片、运行详情） |
+| 12.6 | `ViewModels/Plans/` | `Screens/Plans/` |
+| 12.7 | `ViewModels/Teams/` | `Screens/Teams/`（团队、流水线编辑器、运行树） |
+| 12.8 | `ViewModels/Inbox/` | `Screens/Inbox/`；推送注册在 App 的 `Platform/` |
+| 12.12 | `ViewModels/Settings/` | `Screens/Settings/`（设置中心、开源许可、关于） |
+| 12.13 | `ViewModels/Vault/` | `Screens/Vault/` |
+| 12.14 | `ViewModels/ImChannels/` | `Screens/ImChannels/` |
+| 12.15 | `ViewModels/Approvals/` | `Screens/Approvals/`（审批卡组件给 12.5 嵌入） |
+| 12.17 | `ViewModels/Onboarding/` | `Screens/Onboarding/` |
+| 12.18 | `ViewModels/Artifacts/` | `Screens/Artifacts/` |
+| 12.10、12.20 | — | App 的 Widget Extension target（`project.yml` 里另起 target） |
+
+每个工作包的测试放在对应的 `Tests/ThinktinKitTests/<功能>/`（视图模型，Linux 能跑）和 `Tests/ThinktinUITests/<功能>/`（只在 macOS 跑）。
