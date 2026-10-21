@@ -115,6 +115,34 @@ impl From<api::DeviceView> for DeviceInfo {
     }
 }
 
+/// 手机和电脑之间的一条消息（14.1）：配对应答、审批请求和决定、能力令牌、吊销。内容和签名的格式见 docs/pairing.md。
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct DeviceMessage {
+    pub id: String,
+    pub from_device_id: String,
+    pub to_device_id: String,
+    /// pair_response、pair_confirm、approval_request、approval_decision、capability、revoke……
+    pub kind: String,
+    /// 消息内容（JSON）。
+    pub body_json: String,
+    pub created_at_ms: i64,
+    pub expires_at_ms: i64,
+}
+
+impl From<d::DeviceMessage> for DeviceMessage {
+    fn from(m: d::DeviceMessage) -> Self {
+        Self {
+            id: m.id.to_string(),
+            from_device_id: m.from_device.to_string(),
+            to_device_id: m.to_device.to_string(),
+            kind: m.kind.as_str().into(),
+            body_json: m.body.to_string(),
+            created_at_ms: ms(m.created_at),
+            expires_at_ms: ms(m.expires_at),
+        }
+    }
+}
+
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct LoginResult {
     pub user: User,
@@ -1313,6 +1341,47 @@ impl ThinktinClient {
     pub async fn revoke_device(&self, device_id: String) -> Result<()> {
         let id: d::DeviceId = parse(&device_id, "device")?;
         self.run(|c| async move { c.api.revoke_device(id).await })
+            .await
+    }
+
+    /// 发给自己的另一台设备（手机发给电脑：配对应答、审批决定、能力令牌、吊销）。`body_json` 是消息内容的 JSON。
+    /// 电脑不在线时排队，连上设备中继后投递。
+    pub async fn send_device_message(
+        &self,
+        to_device_id: String,
+        kind: String,
+        body_json: String,
+    ) -> Result<DeviceMessage> {
+        let to: d::DeviceId = parse(&to_device_id, "device")?;
+        let kind: d::DeviceMessageKind = from_enum_str(&kind, "device message kind")?;
+        let body: serde_json::Value =
+            serde_json::from_str(&body_json).map_err(|e| ClientError::InvalidArgument {
+                message: format!("body_json is not JSON: {e}"),
+            })?;
+        self.run(|c| async move { Ok(c.api.send_device_message(to, kind, &body).await?.into()) })
+            .await
+    }
+
+    /// 别的设备发给这台、还没收下的消息（电脑发来的配对确认、审批请求），按发出的顺序。
+    pub async fn device_messages(&self) -> Result<Vec<DeviceMessage>> {
+        self.run(|c| async move {
+            Ok(c.api
+                .device_messages()
+                .await?
+                .into_iter()
+                .map(Into::into)
+                .collect())
+        })
+        .await
+    }
+
+    /// 收下了这些消息（验过签、处理完），之后不再返回。返回确认的条数。
+    pub async fn ack_device_messages(&self, ids: Vec<String>) -> Result<u64> {
+        let ids: Vec<d::DeviceMessageId> = ids
+            .iter()
+            .map(|i| parse(i, "device message"))
+            .collect::<Result<_>>()?;
+        self.run(|c| async move { c.api.ack_device_messages(&ids).await })
             .await
     }
 

@@ -1288,3 +1288,61 @@ async fn ffi_teams_and_templates() {
         "deleting a team keeps its instances"
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ffi_device_messages() {
+    let Some(e) = env().await else { return };
+    let (phone, _ps, _pd) = ffi_login(&e, "13800138511", "ios", "iPhone").await;
+    let (mac, _ms, _md) = ffi_login(&e, "13800138511", "macos", "MacBook").await;
+    let devices = phone.devices().await.unwrap();
+    let mac_id = devices
+        .iter()
+        .find(|d| d.platform == "macos")
+        .unwrap()
+        .id
+        .clone();
+    let phone_id = devices.iter().find(|d| d.current).unwrap().id.clone();
+    assert!(matches!(
+        phone
+            .send_device_message(mac_id.clone(), "pair_response".into(), "{not json".into())
+            .await,
+        Err(ClientError::InvalidArgument { .. })
+    ));
+    assert!(matches!(
+        phone
+            .send_device_message(mac_id.clone(), "gossip".into(), "{}".into())
+            .await,
+        Err(ClientError::InvalidArgument { .. })
+    ));
+    let sent = phone
+        .send_device_message(
+            mac_id.clone(),
+            "pair_response".into(),
+            r#"{"nonce":"abc"}"#.into(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        (sent.from_device_id.as_str(), sent.to_device_id.as_str()),
+        (phone_id.as_str(), mac_id.as_str())
+    );
+    let got = mac.device_messages().await.unwrap();
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].kind, "pair_response");
+    let body: serde_json::Value = serde_json::from_str(&got[0].body_json).unwrap();
+    assert_eq!(body["nonce"], "abc");
+    assert_eq!(
+        mac.ack_device_messages(vec![got[0].id.clone()])
+            .await
+            .unwrap(),
+        1
+    );
+    assert!(mac.device_messages().await.unwrap().is_empty());
+    mac.send_device_message(phone_id, "pair_confirm".into(), r#"{"ok":true}"#.into())
+        .await
+        .unwrap();
+    assert_eq!(
+        phone.device_messages().await.unwrap()[0].kind,
+        "pair_confirm"
+    );
+}
