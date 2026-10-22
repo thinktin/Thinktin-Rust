@@ -15,7 +15,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
-import androidx.compose.runtime.produceState
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -85,11 +86,15 @@ fun ApprovalOption.toUi(): ApprovalCardOption = ApprovalCardOption(
 
 /** 当前时间，每 [intervalMs] 更新一次（倒计时用；测试里时钟是固定的）。 */
 @Composable
-fun rememberNowMs(clock: Clock, intervalMs: Long = 30_000): State<Long> = produceState(clock.millis(), clock) {
-    while (true) {
-        delay(intervalMs)
-        value = clock.millis()
+fun rememberNowMs(clock: Clock, intervalMs: Long = 30_000): State<Long> {
+    val now = remember(clock) { mutableLongStateOf(clock.millis()) }
+    LaunchedEffect(clock, intervalMs) {
+        while (true) {
+            delay(intervalMs)
+            now.longValue = clock.millis()
+        }
     }
+    return now
 }
 
 /**

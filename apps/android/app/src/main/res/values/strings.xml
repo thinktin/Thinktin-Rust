@@ -554,7 +554,9 @@
     <string name="usage_no_key">没用上 key（都停用了或额度用完了）</string>
     <!-- 13.16 云端审批 -->
     <string name="drawer_approvals">审批</string>
-    <string name="drawer_approvals_pending">%1$d 条待处理的审批</string>
+    <plurals name="drawer_approvals_pending">
+        <item quantity="other">%1$d 条待处理的审批</item>
+    </plurals>
     <string name="approvals_empty_title">没有待处理的审批</string>
     <string name="approvals_empty_message">agent 要做需要你同意的操作时会出现在这里，同时会推送通知。</string>
     <string name="approvals_load_failed">没能加载审批</string>

@@ -554,7 +554,10 @@
     <string name="usage_no_key">No key used (all disabled or out of quota)</string>
     <!-- 13.16 cloud approvals -->
     <string name="drawer_approvals">Approvals</string>
-    <string name="drawer_approvals_pending">%1$d pending approvals</string>
+    <plurals name="drawer_approvals_pending">
+        <item quantity="one">%1$d pending approval</item>
+        <item quantity="other">%1$d pending approvals</item>
+    </plurals>
     <string name="approvals_empty_title">No pending approvals</string>
     <string name="approvals_empty_message">When an agent wants to do something that needs your OK, it shows up here and you get a notification.</string>
     <string name="approvals_load_failed">Couldn\'t load approvals</string>

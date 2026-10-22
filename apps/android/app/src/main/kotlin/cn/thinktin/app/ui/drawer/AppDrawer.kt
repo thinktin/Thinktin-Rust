@@ -41,6 +41,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -128,7 +129,7 @@ fun AppDrawer(
                 modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
             )
             val pendingLabel = if (state.pendingApprovals > 0) {
-                stringResource(R.string.drawer_approvals_pending, state.pendingApprovals)
+                pluralStringResource(R.plurals.drawer_approvals_pending, state.pendingApprovals, state.pendingApprovals)
             } else {
                 null
             }
