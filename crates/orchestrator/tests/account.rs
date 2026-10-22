@@ -122,15 +122,22 @@ async fn freeze_unfreeze_and_stop_all() {
     let mut tx = db.tenant(user).await.unwrap();
     assert!(tx.plan(plan.id).await.unwrap().paused);
     assert!(tx.run_grants(inst.id).await.unwrap().is_empty());
-    // 每一步都通知了用户。
-    let titles: Vec<String> = tx
+    // 每一步都通知了用户，带上是哪一种（App 收到“账号已恢复”就重查账号、重新订阅）。
+    let notices: Vec<(String, Option<String>)> = tx
         .inbox(None, 10, false)
         .await
         .unwrap()
         .into_iter()
-        .map(|i| i.title)
+        .map(|i| (i.title, i.subtype))
         .collect();
-    assert_eq!(titles, ["已全部停止", "账号已恢复", "账号已冻结"]);
+    assert_eq!(
+        notices,
+        [
+            ("已全部停止".into(), Some("stopped_all".into())),
+            ("账号已恢复".into(), Some("account_restored".into())),
+            ("账号已冻结".into(), Some("account_frozen".into())),
+        ]
+    );
     tx.rollback().await.unwrap();
 
     // 注销了的账号：冻结、解冻都当不存在。

@@ -1,6 +1,8 @@
 //! 计划与触发器（7.1）。触发规则在这里校验（能解析、不比档位允许的更频繁、还会触发），
 //! 下一次触发时间算好再存；建计划时签发它自己的运行授权。
 
+use std::collections::HashMap;
+
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -27,6 +29,36 @@ pub struct PlanView {
     triggers: Vec<Trigger>,
     /// 流水线步骤（8.2）；为空时计划是单个 agent 的运行。
     steps: Vec<PlanStep>,
+    /// 下一次按时运行的名义时间（实际可能因削峰晚几分钟）：在用的触发器里最早的；暂停了、等确认、没有会再触发的
+    /// 规则时为空。
+    next_fire_at: Option<DateTime<Utc>>,
+    /// 规则失效、被后台停用的触发器有几个（App 提示“规则已失效”）。
+    invalid_triggers: u32,
+}
+
+impl PlanView {
+    fn new(plan: Plan, triggers: Vec<Trigger>, steps: Vec<PlanStep>) -> Self {
+        let next_fire_at = if plan.paused || plan.awaiting_confirmation {
+            None
+        } else {
+            triggers
+                .iter()
+                .filter(|t| t.enabled)
+                .filter_map(|t| t.next_fire_at)
+                .min()
+        };
+        let invalid_triggers = triggers
+            .iter()
+            .filter(|t| t.disabled_reason.as_deref() == Some(proto::domain::TRIGGER_INVALID_RULE))
+            .count() as u32;
+        Self {
+            plan,
+            triggers,
+            steps,
+            next_fire_at,
+            invalid_triggers,
+        }
+    }
 }
 
 /// 校验触发规则，返回下一次触发时间。
@@ -90,11 +122,7 @@ fn check_steps(steps: &[PlanStep]) -> ApiResult<()> {
 async fn view(t: &mut Tx<Tenant>, plan: Plan) -> ApiResult<PlanView> {
     let triggers = t.triggers(plan.id).await?;
     let steps = t.plan_steps(plan.id).await?;
-    Ok(PlanView {
-        plan,
-        triggers,
-        steps,
-    })
+    Ok(PlanView::new(plan, triggers, steps))
 }
 
 #[derive(Deserialize)]
@@ -189,8 +217,29 @@ pub async fn list(
         .transpose()?;
     let mut t = s.db.tenant(who.user).await?;
     let plans = t.plans(instance).await?;
+    // 每个计划的触发器和步骤：一共三次查询，不是每个计划查一次。
+    let ids: Vec<PlanId> = plans.iter().map(|p| p.id).collect();
+    let mut triggers: HashMap<PlanId, Vec<Trigger>> = HashMap::new();
+    for tr in t.triggers_of(&ids).await? {
+        triggers.entry(tr.plan_id).or_default().push(tr);
+    }
+    let mut steps: HashMap<PlanId, Vec<PlanStep>> = HashMap::new();
+    for (plan, step) in t.plan_steps_of(&ids).await? {
+        steps.entry(plan).or_default().push(step);
+    }
     t.rollback().await?;
-    Ok(Json(json!({ "plans": plans })))
+    let views: Vec<PlanView> = plans
+        .into_iter()
+        .map(|p| {
+            let id = p.id;
+            PlanView::new(
+                p,
+                triggers.remove(&id).unwrap_or_default(),
+                steps.remove(&id).unwrap_or_default(),
+            )
+        })
+        .collect();
+    Ok(Json(json!({ "plans": views })))
 }
 
 pub async fn get(
@@ -277,10 +326,25 @@ async fn reschedule(t: &mut store::Tx<store::Tenant>, id: PlanId) -> ApiResult<(
     let now = Utc::now();
     for trig in t.triggers(id).await? {
         if trig.enabled {
-            let next = Schedule::parse(&trig.spec)
-                .ok()
-                .and_then(|sch| sch.next_after(now));
-            t.set_trigger_enabled(trig.id, true, next).await?;
+            match Schedule::parse(&trig.spec) {
+                Ok(sch) => {
+                    t.set_trigger_enabled(trig.id, true, sch.next_after(now))
+                        .await?
+                }
+                // 规则解析不了了（时区没了之类）：停用，说明原因，通知用户删掉重新加。
+                Err(_) => {
+                    if t.disable_trigger(trig.id, proto::domain::TRIGGER_INVALID_RULE)
+                        .await?
+                    {
+                        let plan = t.plan(id).await?;
+                        let locale = t.user_locale(t.user()).await?;
+                        let notice = orchestrator::scheduler::trigger_disabled_notice(
+                            locale, &plan, trig.id,
+                        );
+                        orchestrator::outbox::notify_tenant(t, &notice).await?;
+                    }
+                }
+            }
         }
     }
     Ok(())

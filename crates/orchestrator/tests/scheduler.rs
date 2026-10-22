@@ -183,8 +183,36 @@ async fn one_shot_and_broken_triggers() {
     let report = s.tick(when + Duration::seconds(1)).await.unwrap();
     assert_eq!((report.runs_created, report.invalid), (1, 1));
     let mut tx = f.t.db.tenant(f.user).await.unwrap();
-    assert_eq!(tx.triggers(once).await.unwrap()[0].next_fire_at, None);
-    assert_eq!(tx.triggers(broken).await.unwrap()[0].next_fire_at, None);
+    // 用完的一次性触发器还开着；规则失效的停用，说明原因（App 才分得清这两种）。
+    let spent = tx.triggers(once).await.unwrap().remove(0);
+    assert_eq!(
+        (spent.next_fire_at, spent.enabled, spent.disabled_reason),
+        (None, true, None)
+    );
+    let bad = tx.triggers(broken).await.unwrap().remove(0);
+    assert_eq!(
+        (
+            bad.next_fire_at,
+            bad.enabled,
+            bad.disabled_reason.as_deref()
+        ),
+        (None, false, Some("invalid_rule"))
+    );
+    // 同一个原因再停用一次：什么都不变（只通知一次）。
+    assert!(!tx.disable_trigger(bad.id, "invalid_rule").await.unwrap());
+    // 告诉了用户是哪个计划（10.7）。
+    let notices: Vec<_> = tx
+        .inbox(None, 10, false)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|i| i.subtype.as_deref() == Some("trigger_disabled"))
+        .collect();
+    assert_eq!(notices.len(), 1);
+    assert_eq!(
+        (notices[0].kind.as_str(), notices[0].plan_id),
+        ("info", Some(broken))
+    );
     tx.rollback().await.unwrap();
     // 之后不再触发。
     let report = s.tick(when + Duration::days(2)).await.unwrap();

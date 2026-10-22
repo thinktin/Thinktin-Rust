@@ -581,6 +581,28 @@ async fn runs_plans_and_approvals() {
             .ends_with("T00:00:00Z")
     );
     let plan_id = plan["id"].as_str().unwrap().to_owned();
+    assert_eq!(plan["next_fire_at"], plan["triggers"][0]["next_fire_at"]);
+    // 列表里也有触发器、下次运行时间（之前列表里是空的）。
+    let listed = |tok: String| {
+        let a = &a;
+        let plan_id = plan_id.clone();
+        async move {
+            let (_, body) = a.call(Method::GET, "/v1/plans", Some(&tok), None).await;
+            body["plans"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|p| p["id"] == plan_id.as_str())
+                .unwrap()
+                .clone()
+        }
+    };
+    let row = listed(u.access.clone()).await;
+    assert_eq!(row["triggers"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        (row["next_fire_at"].clone(), row["invalid_triggers"].clone()),
+        (plan["triggers"][0]["next_fire_at"].clone(), json!(0))
+    );
     let (_, paused) = a
         .call(
             Method::POST,
@@ -590,6 +612,7 @@ async fn runs_plans_and_approvals() {
         )
         .await;
     assert_eq!(paused["paused"], true);
+    assert!(listed(u.access.clone()).await["next_fire_at"].is_null());
     let (_, resumed) = a
         .call(
             Method::POST,
@@ -599,6 +622,46 @@ async fn runs_plans_and_approvals() {
         )
         .await;
     assert_eq!(resumed["paused"], false);
+    assert!(listed(u.access.clone()).await["next_fire_at"].is_string());
+    // 规则后来解析不了了（时区没了）：恢复时停用它、说明原因，列表里提示有几个失效的。
+    sqlx::query(
+        "UPDATE triggers SET spec = '{\"kind\":\"cron\",\"expr\":\"0 8 * * *\",\"tz\":\"Mars/Base\"}' \
+         WHERE plan_id = $1::uuid",
+    )
+    .bind(&plan_id)
+    .execute(a.t.db.pool())
+    .await
+    .unwrap();
+    for action in ["pause", "resume"] {
+        a.call(
+            Method::POST,
+            &format!("/v1/plans/{plan_id}/{action}"),
+            Some(&u.access),
+            None,
+        )
+        .await;
+    }
+    let row = listed(u.access.clone()).await;
+    assert_eq!(
+        (
+            row["triggers"][0]["enabled"].clone(),
+            row["triggers"][0]["disabled_reason"].clone(),
+            row["invalid_triggers"].clone(),
+            row["next_fire_at"].clone()
+        ),
+        (json!(false), json!("invalid_rule"), json!(1), Value::Null)
+    );
+    // 也告诉了用户（10.7）：哪个计划、是哪一种提醒。
+    let (_, inbox) = a
+        .call(Method::GET, "/v1/inbox", Some(&u.access), None)
+        .await;
+    let notice = inbox["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["subtype"] == "trigger_disabled")
+        .expect("trigger disabled notice");
+    assert_eq!(notice["plan_id"], json!(plan_id));
     let (st, updated) = a
         .call(
             Method::PATCH,
@@ -652,7 +715,8 @@ async fn runs_plans_and_approvals() {
         user: rec.user_id,
         instance: inst,
         run: run2,
-        request_id: "p1",
+        // 执行器存的键是 `第几次尝试:shim 的请求 id`，API 拆开给。
+        request_id: "2:perm-1",
         title: Some("Delete files"),
         options: &json!([{ "option_id": "allow", "name": "Allow", "kind": "allow_once" },
                          { "option_id": "deny", "name": "Deny", "kind": "reject_once" }]),
@@ -666,6 +730,31 @@ async fn runs_plans_and_approvals() {
         .call(Method::GET, "/v1/approvals", Some(&u.access), None)
         .await;
     let approval_id = list["approvals"][0]["id"].as_str().unwrap().to_owned();
+    assert_eq!(
+        (
+            &list["approvals"][0]["request_id"],
+            &list["approvals"][0]["attempt"]
+        ),
+        (&json!("perm-1"), &json!(2))
+    );
+    let one = |tok: String| {
+        let a = &a;
+        let path = format!("/v1/approvals/{approval_id}");
+        async move { a.call(Method::GET, &path, Some(&tok), None).await }
+    };
+    let (st, got) = one(u.access.clone()).await;
+    assert_eq!(st, StatusCode::OK, "{got}");
+    assert_eq!(
+        (&got["state"], &got["decided_option"], &got["decided_at"]),
+        (&json!(ApprovalState::Pending), &Value::Null, &Value::Null)
+    );
+    let other = a.login("13800138009").await;
+    let (st, _) = one(other.access.clone()).await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "someone else's approval");
+    let (st, _) = a
+        .call(Method::GET, "/v1/approvals/nope", Some(&u.access), None)
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
     let (st, decided) = a
         .call(
             Method::POST,
@@ -685,6 +774,37 @@ async fn runs_plans_and_approvals() {
         )
         .await;
     assert_eq!(st, StatusCode::CONFLICT, "decided once");
+    // 处理过的也查得到：点旧推送进来时给“已拒绝”的提示。
+    let (st, got) = one(u.access.clone()).await;
+    assert_eq!(st, StatusCode::OK, "{got}");
+    assert_eq!(
+        (&got["state"], &got["decided_option"]),
+        (&json!(ApprovalState::Rejected), &json!("deny"))
+    );
+    assert!(got["decided_at"].is_string(), "{got}");
+    // 决定事件带上和 agent.permission_* 对得上的键。
+    let (_, page) = a
+        .call(
+            Method::GET,
+            &format!("/v1/instances/{inst}/events"),
+            Some(&u.access),
+            None,
+        )
+        .await;
+    let decided = page["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["kind"] == "approval.decided")
+        .expect("approval.decided event");
+    assert_eq!(
+        (
+            &decided["payload"]["request_id"],
+            &decided["payload"]["attempt"],
+            &decided["payload"]["approval_id"],
+        ),
+        (&json!("perm-1"), &json!(2), &json!(approval_id))
+    );
 }
 
 async fn ws_connect(

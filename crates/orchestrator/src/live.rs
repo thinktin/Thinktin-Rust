@@ -44,6 +44,9 @@ pub async fn queue_starts(w: &mut Tx<Worker>, rec: &RunRecord) -> store::Result<
 /// 实时活动的动态内容。
 pub fn content_state(a: &LiveActivity) -> Value {
     let mut v = json!({"state": a.state.as_str(), "steps": a.steps});
+    if let Some(code) = a.wait_code.as_deref().filter(|_| a.state.is_waiting()) {
+        v["waitCode"] = json!(code);
+    }
     if let Some(t) = a.started_at {
         v["startedAt"] = json!(t.timestamp());
     }
@@ -98,6 +101,8 @@ pub struct LiveDispatcher {
     db: Db,
     node_id: String,
     channel: Arc<dyn LiveActivityChannel>,
+    /// 开发包（APNs 沙盒环境的令牌）走这个；没配的话也走 `channel`。
+    sandbox: Option<Arc<dyn LiveActivityChannel>>,
     filter: Arc<dyn ContentFilter>,
     cfg: LiveConfig,
 }
@@ -113,8 +118,22 @@ impl LiveDispatcher {
             db,
             node_id: node_id.into(),
             channel,
+            sandbox: None,
             filter: Arc::new(AllowAll),
             cfg,
+        }
+    }
+
+    /// APNs 沙盒环境（10.7）：设备登记的是 `apns_sandbox` 推送令牌的，实时活动也发到这里。
+    pub fn with_sandbox(mut self, channel: Arc<dyn LiveActivityChannel>) -> Self {
+        self.sandbox = Some(channel);
+        self
+    }
+
+    fn channel_for(&self, a: &LiveActivity) -> &dyn LiveActivityChannel {
+        match &self.sandbox {
+            Some(sandbox) if a.sandbox => sandbox.as_ref(),
+            _ => self.channel.as_ref(),
         }
     }
 
@@ -232,7 +251,7 @@ impl LiveDispatcher {
             )),
             alert: Some((title, crate::texts::live_started(locale).into())),
         };
-        Ok(match self.channel.send_live(token, &push).await {
+        Ok(match self.channel_for(a).send_live(token, &push).await {
             PushOutcome::Delivered { .. } => LiveSettle::Sent {
                 state: a.state,
                 steps: a.steps,
@@ -271,7 +290,7 @@ impl LiveDispatcher {
             attributes: None,
             alert: None,
         };
-        match self.channel.send_live(token, &push).await {
+        match self.channel_for(a).send_live(token, &push).await {
             PushOutcome::Delivered { .. } => LiveSettle::Sent {
                 state: a.state,
                 steps: a.steps,

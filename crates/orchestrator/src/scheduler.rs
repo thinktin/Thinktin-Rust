@@ -3,7 +3,7 @@
 //! - 多副本同时扫描：到点的触发器行用 SKIP LOCKED 锁住，各拿各的；即使重复，
 //!   运行表上 (plan_id, fire_time) 的唯一约束也保证同一次触发只生成一个运行。
 //! - 削峰：运行的最早开始时间 = 名义触发时间 + 确定性抖动（同一次触发在哪个副本算都一样）。
-//! - 触发规则坏了（时区改名、规则不合法）：停掉这个触发器并记审计，不影响其他触发器。
+//! - 触发规则坏了（时区改名、规则不合法）：停掉这个触发器、记审计、通知用户（10.7），不影响其他触发器。
 //! - 积压：实例忙（一次只跑一个运行）时，计划已经有排队没开始的运行，新的触发并进去，不再建运行；
 //!   补跑策略是“全部补”的最多攒 [`MAX_QUEUED_FIRES`] 个。账号冻结期间不调度，解冻后错过的触发按补跑策略处理。
 
@@ -11,12 +11,31 @@ use std::future::Future;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use proto::domain::{CatchUp, RunSource, ScheduleSpec};
+use notify::PushKind;
+use proto::domain::{
+    CatchUp, Locale, Plan, PlanAuthor, RunSource, ScheduleSpec, TriggerId, notice_subtype,
+};
 use serde_json::json;
 use store::{Db, DueTrigger, NewRun, Tx, Worker};
 use tracing::{debug, error, info, warn};
 
+use crate::outbox::{Notice, notify};
 use crate::schedule::{Schedule, enforce_min_gap, jitter, plan_due};
+
+/// 触发器因为规则失效被停用了（10.7）：告诉用户是哪个计划，App 打开计划详情让用户删掉重加。
+/// 后台调度和恢复计划时重算触发时间都会停用，两边都发这一条（同一个触发器只发一次）。
+pub fn trigger_disabled_notice(locale: Locale, plan: &Plan, trigger: TriggerId) -> Notice {
+    let (title, body) = crate::texts::trigger_disabled(locale, &plan.title);
+    Notice {
+        instance: Some(plan.instance_id),
+        plan: Some(plan.id),
+        thread_id: Some(plan.id.to_string()),
+        dedupe_key: Some(format!("trigger-disabled:{trigger}")),
+        // 正文里有计划名，agent 建的计划名是 agent 起的。
+        ai_generated: plan.created_by == PlanAuthor::Agent,
+        ..Notice::new(PushKind::Info, title, body).subtype(notice_subtype::TRIGGER_DISABLED)
+    }
+}
 
 /// 补跑策略是“全部补”的计划最多攒多少个排队的运行，再多的触发并进已有的运行。
 pub const MAX_QUEUED_FIRES: u32 = 10;
@@ -103,7 +122,13 @@ impl Scheduler {
             Ok(s) => s,
             Err(e) => {
                 warn!(trigger = %t.id, error = %e, "trigger spec is invalid, disabling it");
-                w.advance_trigger(t.id, None, None).await?;
+                if w.disable_trigger(t.id, proto::domain::TRIGGER_INVALID_RULE)
+                    .await?
+                {
+                    let locale = w.user_locale(d.user_id).await?;
+                    let notice = trigger_disabled_notice(locale, &d.plan, t.id);
+                    notify(w, d.user_id, &notice).await?;
+                }
                 w.audit(
                     Some(d.user_id),
                     "system",

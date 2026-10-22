@@ -28,7 +28,11 @@ pub enum PushKind {
     Approval,
     /// 电脑上的高危操作请手机批准（14.2）：批准和拒绝都要打开 App 用私钥签名，通知上没有按钮。
     ComputerApproval,
-    /// 其他提醒。
+    /// agent 请用户往保险箱里填账号密码（10.7，目标里有 `vault_request_id`）：运行等着，高优先级。
+    VaultRequest,
+    /// agent 改了计划、等用户确认（10.7，目标里有 `plan_id`）。
+    PlanConfirm,
+    /// 其他提醒（`subtype` 说是哪一种）。
     Info,
 }
 
@@ -40,6 +44,8 @@ impl PushKind {
             Self::RunFailed => "run_failed",
             Self::Approval => "approval",
             Self::ComputerApproval => "computer_approval",
+            Self::VaultRequest => "vault_request",
+            Self::PlanConfirm => "plan_confirm",
             Self::Info => "info",
         }
     }
@@ -51,15 +57,26 @@ impl PushKind {
             Self::RunFailed => "RUN_FAILED",
             Self::Approval => "APPROVAL",
             Self::ComputerApproval => "COMPUTER_APPROVAL",
+            Self::VaultRequest => "VAULT_REQUEST",
+            Self::PlanConfirm => "PLAN_CONFIRM",
             Self::Info => "INFO",
         }
     }
 
-    /// 等用户批准的：高优先级，走审批的通知渠道。
+    /// 等用户批准的。
     pub fn is_approval(self) -> bool {
         matches!(self, Self::Approval | Self::ComputerApproval)
     }
+
+    /// 运行停下来等用户（审批、填保险箱）：iOS 上是 time-sensitive，Android 走审批的通知渠道、高优先级。
+    pub fn waits_for_user(self) -> bool {
+        self.is_approval() || self == Self::VaultRequest
+    }
 }
+
+/// 没给有效期的推送在推送服务那里最多等多久（手机关机、没信号时先存着，开机后送到）。APNs 只给一个应用留最后
+/// 一条；FCM 不带 collapse_key 的每条都存着（每台设备最多 100 条），开机后都会送到。收件箱里一直都在。
+pub const DEFAULT_TTL: Duration = Duration::from_secs(24 * 3600);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PushMessage {
@@ -74,7 +91,7 @@ pub struct PushMessage {
     pub collapse_id: Option<String>,
     /// 客户端打开通知后要跳转的对象（只放 id，不放内容）。
     pub target: PushTarget,
-    /// 过了这个时间就不必再送达（审批超时之后的审批通知没有意义）。
+    /// 过了这个时间就不必再送达（审批超时之后的审批通知没有意义）。没有的按 [`DEFAULT_TTL`]。
     pub ttl: Option<Duration>,
     /// 正文是 agent 生成的：系统通知里要带显式标识（16.3）。
     #[serde(default)]
@@ -82,6 +99,12 @@ pub struct PushMessage {
     /// 收件人的语言（1.6）：标题、正文已经按它生成，显式标识也按它显示。
     #[serde(default)]
     pub locale: proto::domain::Locale,
+    /// 是哪一种提醒（[`proto::domain::notice_subtype`]，运行在等什么时是 `wait_code`）：App 据此跳转、刷新。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subtype: Option<String>,
+    /// 应用图标的角标（10.7）：收件人收件箱的未读数，投递时才算（出箱里排着的不带）。只有 APNs 用。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub badge: Option<u32>,
 }
 
 impl PushMessage {
@@ -105,6 +128,9 @@ pub struct PushTarget {
     pub approval_id: Option<String>,
     pub plan_id: Option<String>,
     pub inbox_id: Option<String>,
+    /// 保险箱请求（10.7，`thinktin://vault/request/{id}`）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vault_request_id: Option<String>,
 }
 
 /// 发送结果。
@@ -204,6 +230,8 @@ mod tests {
             PushKind::RunFailed,
             PushKind::Approval,
             PushKind::ComputerApproval,
+            PushKind::VaultRequest,
+            PushKind::PlanConfirm,
             PushKind::Info,
         ] {
             assert_eq!(
@@ -213,5 +241,9 @@ mod tests {
         }
         assert!(PushKind::ComputerApproval.is_approval());
         assert!(!PushKind::RunFailed.is_approval());
+        assert!(PushKind::VaultRequest.waits_for_user() && !PushKind::VaultRequest.is_approval());
+        assert!(!PushKind::PlanConfirm.waits_for_user());
+        assert_eq!(PushKind::VaultRequest.category(), "VAULT_REQUEST");
+        assert_eq!(PushKind::PlanConfirm.category(), "PLAN_CONFIRM");
     }
 }

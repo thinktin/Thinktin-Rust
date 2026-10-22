@@ -45,6 +45,9 @@ struct RunActivityAttributes: ActivityAttributes {
         var steps: Int         // 已经走了几步（工具调用），连同直接子运行的（流水线的步骤、委派的子任务）
         var startedAt: Int?    // 开始时间，Unix 秒；还没开始时没有
         var endedAt: Int?      // 结束时间，Unix 秒；还没结束时没有
+        var waitCode: String?  // 等的是什么（10.7，和 Run.wait_code 一样）：invalid、no_balance、unavailable、
+                               // rate_limited、overloaded（waiting_quota）、device_offline（waiting_device）；
+                               // 不在等、或者等的是审批和子任务时没有。以后会加新值，不认识的按 state 显示
     }
     var runId: String
     var instanceId: String
@@ -60,7 +63,8 @@ struct RunActivityAttributes: ActivityAttributes {
 ## 4. 推送
 
 - 主题 `<bundle id>.push-type.liveactivity`，`apns-push-type: liveactivity`，和普通推送同一把 .p8 密钥、同一个
-  `[push.apns]` 配置；配了 APNs 就开（后台任务 `live-activities`）。
+  `[push.apns]` 配置；配了 APNs 就开（后台任务 `live-activities`）。设备的推送令牌登记为 `apns_sandbox`（开发包，10.7）
+  的，实时活动也发到沙盒环境（`sandbox_endpoint`）；没有推送令牌的（被清掉了）按生产环境发。
 - 载荷 `{"aps": {"timestamp": <秒>, "event": "start" | "update" | "end", "content-state": {...}}}`：
   - **start**（远程开启）：发到推送开启令牌，加 `attributes-type`、`attributes`、`alert`（标题是实例名，正文“计划开始运行了”，
     按用户的语言）和 `input-push-token: 1`（iOS 18 起系统把新实时活动的令牌交给 App）。

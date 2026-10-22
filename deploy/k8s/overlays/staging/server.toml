@@ -67,8 +67,7 @@ sign_name = "ThinkTin"
 template_code = "SMS_FILL_IN"
 
 [push.apns]
-# 测试包（开发证书签的）走 APNs 的沙箱环境。
-endpoint = "https://api.sandbox.push.apple.com"
+# endpoint、sandbox_endpoint 用默认值：TestFlight 包报 apns（生产环境），开发证书签的包报 apns_sandbox（沙盒环境）。
 # 部署前填：App 的 bundle id、开发者账号的 Team ID、推送密钥的 Key ID。私钥在 Secret thinktin-push 里。
 topic = "com.thinktin.app"
 team_id = "FILL_IN"

@@ -126,7 +126,10 @@ str_enum!(
 str_enum!(
     /// 推送通道（8.3）。
     PushChannelKind {
-        Apns = "apns", Fcm = "fcm", Hms = "hms", Honor = "honor", Mi = "mi", Oppo = "oppo", Vivo = "vivo",
+        Apns = "apns",
+        /// 开发证书签名的包（Xcode 直装）拿到的是 APNs 沙盒环境的令牌，要发到沙盒环境（10.7）。
+        ApnsSandbox = "apns_sandbox",
+        Fcm = "fcm", Hms = "hms", Honor = "honor", Mi = "mi", Oppo = "oppo", Vivo = "vivo",
         /// 统一推送服务（个推、极光之类）。
         Unipush = "unipush",
     }
@@ -698,7 +701,13 @@ pub struct Trigger {
     pub enabled: bool,
     pub next_fire_at: Option<DateTime<Utc>>,
     pub last_fire_at: Option<DateTime<Utc>>,
+    /// 后台为什么停用了它（[`TRIGGER_INVALID_RULE`]）。用户自己停不了触发器，没被停用时没有。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disabled_reason: Option<String>,
 }
+
+/// 触发器的规则解析不了了（比如时区没了）：后台停用它，用户删掉重新加。
+pub const TRIGGER_INVALID_RULE: &str = "invalid_rule";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Run {
@@ -762,6 +771,17 @@ pub struct Approval {
     pub state: ApprovalState,
     pub expires_at: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
+    /// shim 给的请求 id（和 `agent.permission_requested` 事件里的一样）。shim 每次尝试都从 perm-1 重新编号，
+    /// 所以要和 `attempt` 一起才对得上。
+    #[serde(default)]
+    pub request_id: String,
+    /// 第几次尝试（和 `run.state` 事件的 `attempt` 一样）；0 是不知道（老数据）。
+    #[serde(default)]
+    pub attempt: u32,
+    #[serde(default)]
+    pub decided_option: Option<String>,
+    #[serde(default)]
+    pub decided_at: Option<DateTime<Utc>>,
 }
 
 /// 团队（8.1）：同一用户的几个实例。
@@ -884,6 +904,34 @@ pub struct InstanceEvent {
     pub created_at: DateTime<Utc>,
 }
 
+/// 提醒是哪一种（10.7）：推送的 `tt.subtype`（Android 是 `tt_subtype`）和收件箱条目的 `subtype`，App 据此跳转、
+/// 刷新。是字符串不是枚举：以后加了新值，老的客户端照样解析得了（不认识的按 `kind` 显示）。运行在等什么的提醒
+/// （`run_failed`，运行进入等待状态时）用 [`wait_code`] 的值。
+pub mod notice_subtype {
+    /// 账号被冻结了。
+    pub const ACCOUNT_FROZEN: &str = "account_frozen";
+    /// 账号解冻了：App 收到后重查账号状态、重新订阅事件流。
+    pub const ACCOUNT_RESTORED: &str = "account_restored";
+    /// 用户点了“全部停止”。
+    pub const STOPPED_ALL: &str = "stopped_all";
+    /// 审批超时、按策略跳过了这一步。
+    pub const APPROVAL_SKIPPED: &str = "approval_skipped";
+    /// 计划的触发规则失效、被停用了（带 `plan_id`）。
+    pub const TRIGGER_DISABLED: &str = "trigger_disabled";
+    /// IM 群机器人失效、渠道被停用了。
+    pub const IM_CHANNEL_DISABLED: &str = "im_channel_disabled";
+    /// 用户的内容举报处理完了。
+    pub const REPORT_HANDLED: &str = "report_handled";
+}
+
+/// 提醒子类型的格式（和库里的 CHECK 一样）：小写字母开头，字母和下划线，最长 32。
+pub fn valid_subtype(s: &str) -> bool {
+    let b = s.as_bytes();
+    (1..=32).contains(&b.len())
+        && b[0].is_ascii_lowercase()
+        && b.iter().all(|c| c.is_ascii_lowercase() || *c == b'_')
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InboxItem {
     pub id: InboxItemId,
@@ -899,6 +947,12 @@ pub struct InboxItem {
     pub ai_generated: bool,
     pub read: bool,
     pub created_at: DateTime<Utc>,
+    /// 是哪一种提醒（[`notice_subtype`]）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subtype: Option<String>,
+    /// 保险箱请求（`kind` 是 `vault_request` 时）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vault_request_id: Option<VaultRequestId>,
 }
 
 str_enum!(

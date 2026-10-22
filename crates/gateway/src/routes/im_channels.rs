@@ -304,6 +304,8 @@ pub async fn test(
         ttl: Some(std::time::Duration::from_secs(3600)),
         ai_generated: false,
         locale,
+        subtype: None,
+        badge: None,
     };
     t.enqueue_outbox(&orchestrator::outbox::im_item(id, &message, None))
         .await?;

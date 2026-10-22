@@ -10,7 +10,7 @@
 //! 每一种都记审计、给用户发通知（收件箱和推送），和状态变更在同一个事务里。
 
 use notify::PushKind;
-use proto::domain::{UserId, UserStatus};
+use proto::domain::{UserId, UserStatus, notice_subtype};
 use serde::Serialize;
 use serde_json::json;
 use store::{Db, Error};
@@ -55,7 +55,8 @@ pub async fn freeze(db: &Db, user: UserId, operator: &str, reason: &str) -> stor
     )
     .await?;
     let (title, body) = texts::account_frozen(account.locale);
-    notify(&mut w, user, &Notice::new(PushKind::Info, title, body)).await?;
+    let notice = Notice::new(PushKind::Info, title, body).subtype(notice_subtype::ACCOUNT_FROZEN);
+    notify(&mut w, user, &notice).await?;
     w.commit().await?;
     Ok(stopped)
 }
@@ -79,7 +80,8 @@ pub async fn unfreeze(db: &Db, user: UserId, operator: &str, reason: &str) -> st
     )
     .await?;
     let (title, body) = texts::account_restored(account.locale);
-    notify(&mut w, user, &Notice::new(PushKind::Info, title, body)).await?;
+    let notice = Notice::new(PushKind::Info, title, body).subtype(notice_subtype::ACCOUNT_RESTORED);
+    notify(&mut w, user, &notice).await?;
     w.commit().await?;
     Ok(())
 }
@@ -103,7 +105,8 @@ pub async fn stop_all(db: &Db, user: UserId, actor: &str) -> store::Result<Stopp
     .await?;
     let locale = w.user_locale(user).await?;
     let (title, body) = texts::stopped_all(locale, stopped.runs_cancelled, stopped.plans_paused);
-    notify(&mut w, user, &Notice::new(PushKind::Info, title, body)).await?;
+    let notice = Notice::new(PushKind::Info, title, body).subtype(notice_subtype::STOPPED_ALL);
+    notify(&mut w, user, &notice).await?;
     w.commit().await?;
     Ok(stopped)
 }

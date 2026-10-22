@@ -127,7 +127,10 @@ impl ApnsClient {
         if let Some(thread) = &message.thread_id {
             aps["thread-id"] = json!(thread);
         }
-        if message.kind.is_approval() {
+        if let Some(badge) = message.badge {
+            aps["badge"] = json!(badge);
+        }
+        if message.kind.waits_for_user() {
             aps["interruption-level"] = json!("time-sensitive");
         }
         let mut tt = json!({"kind": message.kind});
@@ -138,6 +141,8 @@ impl ApnsClient {
             ("approval", &t.approval_id),
             ("plan", &t.plan_id),
             ("inbox", &t.inbox_id),
+            ("vault_request", &t.vault_request_id),
+            ("subtype", &message.subtype),
         ] {
             if let Some(v) = v {
                 tt[k] = json!(v);
@@ -162,7 +167,7 @@ struct Request<'a> {
     push_type: &'static str,
     topic: &'a str,
     priority: &'static str,
-    /// 秒级时间戳；0 表示送不到就算了。
+    /// 秒级时间戳：设备离线时 APNs 存到这个时候（0 是送不到就算了，我们不用）。
     expiration: u64,
     collapse_id: Option<&'a str>,
     body: String,
@@ -284,7 +289,7 @@ impl PushChannel for ApnsClient {
             push_type: "alert",
             topic: &self.topic,
             priority,
-            expiration: message.ttl.map_or(0, |ttl| now_secs() + ttl.as_secs()),
+            expiration: now_secs() + message.ttl.unwrap_or(crate::DEFAULT_TTL).as_secs(),
             collapse_id: message.collapse_id.as_deref(),
             body: Self::payload(message).to_string(),
         };
@@ -411,10 +416,13 @@ mod tests {
                 approval_id: Some("appr-9".into()),
                 plan_id: None,
                 inbox_id: None,
+                vault_request_id: None,
             },
             ttl: Some(Duration::from_secs(3600)),
             ai_generated: false,
             locale: Default::default(),
+            subtype: None,
+            badge: None,
         }
     }
 
@@ -430,37 +438,93 @@ mod tests {
                 id: Some("abc-123".into())
             }
         );
-        let seen = fake.seen.lock().unwrap();
-        let (token, headers, body) = &seen[0];
-        assert_eq!(token, TOKEN);
-        assert_eq!(headers["apns-topic"], "com.thinktin.app");
-        assert_eq!(headers["apns-push-type"], "alert");
-        assert_eq!(headers["apns-priority"], "10");
-        assert_eq!(headers["apns-collapse-id"], "approval-9");
-        assert_ne!(headers["apns-expiration"], "0");
-        assert_eq!(body["aps"]["category"], "APPROVAL");
-        assert_eq!(body["aps"]["interruption-level"], "time-sensitive");
-        assert_eq!(body["aps"]["thread-id"], "run-1");
-        assert_eq!(
-            body["tt"],
-            json!({"kind": "approval", "instance": "inst-1", "run": "run-1", "approval": "appr-9"})
-        );
-        // JWT 用 ES256 签名，验得过。
-        let jwt = headers["authorization"]
+        {
+            let seen = fake.seen.lock().unwrap();
+            let (token, headers, body) = &seen[0];
+            assert_eq!(token, TOKEN);
+            assert_eq!(headers["apns-topic"], "com.thinktin.app");
+            assert_eq!(headers["apns-push-type"], "alert");
+            assert_eq!(headers["apns-priority"], "10");
+            assert_eq!(headers["apns-collapse-id"], "approval-9");
+            assert_ne!(headers["apns-expiration"], "0");
+            assert_eq!(body["aps"]["category"], "APPROVAL");
+            assert_eq!(body["aps"]["interruption-level"], "time-sensitive");
+            assert_eq!(body["aps"]["thread-id"], "run-1");
+            assert_eq!(
+                body["tt"],
+                json!({"kind": "approval", "instance": "inst-1", "run": "run-1", "approval": "appr-9"})
+            );
+            // JWT 用 ES256 签名，验得过。
+            let jwt = headers["authorization"]
+                .to_str()
+                .unwrap()
+                .strip_prefix("bearer ")
+                .unwrap();
+            let (input, sig) = jwt.rsplit_once('.').unwrap();
+            let sig = Signature::from_slice(&URL_SAFE_NO_PAD.decode(sig).unwrap()).unwrap();
+            vk.verify(input.as_bytes(), &sig).unwrap();
+            let header: Value = serde_json::from_slice(
+                &URL_SAFE_NO_PAD
+                    .decode(input.split('.').next().unwrap())
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(header, json!({"alg": "ES256", "kid": "KEY1234567"}));
+        }
+        // 没给有效期的：APNs 存一天（手机离线时不丢），不是 0。
+        let mut m = message(PushKind::RunFinished);
+        m.ttl = None;
+        client.send(TOKEN, &m).await;
+        let exp: u64 = fake.seen.lock().unwrap()[1].1["apns-expiration"]
             .to_str()
             .unwrap()
-            .strip_prefix("bearer ")
+            .parse()
             .unwrap();
-        let (input, sig) = jwt.rsplit_once('.').unwrap();
-        let sig = Signature::from_slice(&URL_SAFE_NO_PAD.decode(sig).unwrap()).unwrap();
-        vk.verify(input.as_bytes(), &sig).unwrap();
-        let header: Value = serde_json::from_slice(
-            &URL_SAFE_NO_PAD
-                .decode(input.split('.').next().unwrap())
-                .unwrap(),
-        )
-        .unwrap();
-        assert_eq!(header, json!({"alg": "ES256", "kid": "KEY1234567"}));
+        let left = exp.saturating_sub(now_secs());
+        assert!(
+            (crate::DEFAULT_TTL.as_secs() - 60..=crate::DEFAULT_TTL.as_secs()).contains(&left),
+            "{left}"
+        );
+    }
+
+    /// 保险箱请求、计划待确认（10.7）：自己的类别、高优先级，跳转目标和子类型在 `tt` 里。
+    #[tokio::test]
+    async fn vault_requests_and_plan_confirmations() {
+        let (client, fake, _) = setup().await;
+        let mut m = message(PushKind::VaultRequest);
+        m.badge = Some(3);
+        m.target = PushTarget {
+            run_id: Some("run-1".into()),
+            vault_request_id: Some("vr-7".into()),
+            ..PushTarget::default()
+        };
+        client.send(TOKEN, &m).await;
+        let mut m = message(PushKind::Info);
+        m.subtype = Some("account_restored".into());
+        m.target = PushTarget::default();
+        client.send(TOKEN, &m).await;
+        client.send(TOKEN, &message(PushKind::PlanConfirm)).await;
+        let seen = fake.seen.lock().unwrap();
+        let (_, headers, body) = &seen[0];
+        assert_eq!(headers["apns-priority"], "10");
+        assert_eq!(body["aps"]["category"], "VAULT_REQUEST");
+        assert_eq!(body["aps"]["badge"], 3);
+        assert_eq!(body["aps"]["interruption-level"], "time-sensitive");
+        assert_eq!(
+            body["tt"],
+            json!({"kind": "vault_request", "run": "run-1", "vault_request": "vr-7"})
+        );
+        let (_, headers, body) = &seen[1];
+        assert_eq!(headers["apns-priority"], "5");
+        assert!(body["aps"].get("badge").is_none(), "no count, no badge key");
+        assert_eq!(
+            body["tt"],
+            json!({"kind": "info", "subtype": "account_restored"})
+        );
+        let (_, headers, body) = &seen[2];
+        assert_eq!(headers["apns-priority"], "10");
+        assert_eq!(body["aps"]["category"], "PLAN_CONFIRM");
+        assert!(body["aps"].get("interruption-level").is_none());
     }
 
     #[tokio::test]

@@ -79,6 +79,7 @@ struct TriggerRow {
     enabled: bool,
     next_fire_at: Option<DateTime<Utc>>,
     last_fire_at: Option<DateTime<Utc>>,
+    disabled_reason: Option<String>,
 }
 
 impl TriggerRow {
@@ -90,13 +91,14 @@ impl TriggerRow {
             enabled: self.enabled,
             next_fire_at: self.next_fire_at,
             last_fire_at: self.last_fire_at,
+            disabled_reason: self.disabled_reason,
         })
     }
 }
 
 macro_rules! trigger_columns {
     () => {
-        "id, plan_id, spec, enabled, next_fire_at, last_fire_at"
+        "id, plan_id, spec, enabled, next_fire_at, last_fire_at, disabled_reason"
     };
 }
 
@@ -305,8 +307,11 @@ impl Tx<Tenant> {
         enabled: bool,
         next_fire_at: Option<DateTime<Utc>>,
     ) -> Result<()> {
+        // 重新打开时停用的原因一起清掉。
         let done = sqlx::query(
-            "UPDATE triggers SET enabled = $2, next_fire_at = $3, updated_at = now() WHERE id = $1",
+            "UPDATE triggers SET enabled = $2, next_fire_at = $3, \
+               disabled_reason = CASE WHEN $2 THEN NULL ELSE disabled_reason END, updated_at = now() \
+             WHERE id = $1",
         )
         .bind(id.0)
         .bind(enabled)
@@ -333,6 +338,20 @@ impl Tx<Tenant> {
 
 /// 两种角色都能用；业务角色下 RLS 只放行当前用户的行。
 impl<R> Tx<R> {
+    /// 后台停用一个触发器，记下原因（[`proto::domain::TRIGGER_INVALID_RULE`]）。已经因为同一个原因停用了的返回
+    /// `false`（只通知一次）。
+    pub async fn disable_trigger(&mut self, id: TriggerId, reason: &str) -> Result<bool> {
+        let done = sqlx::query(
+            "UPDATE triggers SET enabled = false, next_fire_at = NULL, disabled_reason = $2, updated_at = now() \
+             WHERE id = $1 AND disabled_reason IS DISTINCT FROM $2",
+        )
+        .bind(id.0)
+        .bind(reason)
+        .execute(self.conn())
+        .await?;
+        Ok(done.rows_affected() == 1)
+    }
+
     /// 没删除的计划。
     pub async fn plan(&mut self, id: PlanId) -> Result<Plan> {
         let row: PlanRow = sqlx::query_as(concat!(
@@ -365,6 +384,46 @@ impl<R> Tx<R> {
             return Err(Error::NotFound);
         }
         Ok(())
+    }
+
+    /// 几个计划的触发器（列表一次取完），按计划、创建时间。
+    pub async fn triggers_of(&mut self, plans: &[PlanId]) -> Result<Vec<Trigger>> {
+        let ids: Vec<Uuid> = plans.iter().map(|p| p.0).collect();
+        let rows: Vec<TriggerRow> = sqlx::query_as(concat!(
+            "SELECT ",
+            trigger_columns!(),
+            " FROM triggers WHERE plan_id = ANY($1) ORDER BY plan_id, created_at"
+        ))
+        .bind(&ids)
+        .fetch_all(self.conn())
+        .await?;
+        rows.into_iter().map(TriggerRow::into_trigger).collect()
+    }
+
+    /// 几个计划的流水线步骤（列表一次取完），每个计划内按声明顺序。
+    pub async fn plan_steps_of(&mut self, plans: &[PlanId]) -> Result<Vec<(PlanId, PlanStep)>> {
+        let ids: Vec<Uuid> = plans.iter().map(|p| p.0).collect();
+        let rows: Vec<(Uuid, String, Uuid, String, Vec<String>)> = sqlx::query_as(
+            "SELECT plan_id, key, instance_id, prompt, depends_on FROM plan_steps WHERE plan_id = ANY($1) \
+             ORDER BY plan_id, position",
+        )
+        .bind(&ids)
+        .fetch_all(self.conn())
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(plan, key, instance, prompt, depends_on)| {
+                (
+                    plan.into(),
+                    PlanStep {
+                        key,
+                        instance_id: instance.into(),
+                        prompt,
+                        depends_on,
+                    },
+                )
+            })
+            .collect())
     }
 
     /// 计划的流水线步骤，按声明顺序。
@@ -440,7 +499,7 @@ impl Tx<Worker> {
     ) -> Result<Vec<DueTrigger>> {
         let rows: Vec<DueRow> = sqlx::query_as(
             "SELECT t.user_id, i.agent_version, p.run_grant_id, \
-               t.id, t.plan_id, t.spec, t.enabled, t.next_fire_at, t.last_fire_at, \
+               t.id, t.plan_id, t.spec, t.enabled, t.next_fire_at, t.last_fire_at, t.disabled_reason, \
                p.id AS p_id, p.instance_id AS p_instance_id, p.title AS p_title, p.goal AS p_goal, \
                p.policy AS p_policy, p.catch_up AS p_catch_up, p.status AS p_status, \
                p.created_by AS p_created_by, p.created_at AS p_created_at, \

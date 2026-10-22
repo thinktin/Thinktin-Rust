@@ -246,20 +246,26 @@ impl FcmClient {
             ("tt_approval", &t.approval_id),
             ("tt_plan", &t.plan_id),
             ("tt_inbox", &t.inbox_id),
+            ("tt_vault_request", &t.vault_request_id),
+            ("tt_subtype", &message.subtype),
         ] {
             if let Some(v) = v {
                 data.insert(k.into(), json!(v));
             }
         }
-        let urgent = message.kind.is_approval() || message.kind == PushKind::RunFailed;
-        let channel = if message.kind.is_approval() {
+        let urgent = message.kind.waits_for_user() || message.kind == PushKind::RunFailed;
+        let channel = if message.kind.waits_for_user() {
             &self.approval_channel
         } else {
             &self.default_channel
         };
         let ttl = message
             .ttl
-            .map_or(86_400, |t| t.as_secs().clamp(60, MAX_TTL_SECS));
+            .unwrap_or(crate::DEFAULT_TTL)
+            .as_secs()
+            .clamp(60, MAX_TTL_SECS);
+        // 不带角标数：Android 的 `notification_count` 是“这一条通知代表几件事”，桌面把通知栏里每一条的加起来，
+        // 填未读总数会越加越多。Android 的角标由桌面按通知栏里的通知自己算。
         let mut notification = json!({ "channel_id": channel });
         let mut android = json!({
             "priority": if urgent { "HIGH" } else { "NORMAL" },

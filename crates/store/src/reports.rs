@@ -164,43 +164,52 @@ impl Tx<Tenant> {
                 "name": name, "version": version, "content_type": content_type, "size": size, "sha256": sha256,
             });
         }
-        let row: Option<Row> = sqlx::query_as(concat!(
-            "INSERT INTO content_reports (id, user_id, instance_id, run_id, event_seq, artifact_id, reason, note, \
-               snapshot) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
-             ON CONFLICT (user_id, run_id, coalesce(event_seq, -1), \
-               coalesce(artifact_id, '00000000-0000-0000-0000-000000000000')) WHERE state = 'open' DO NOTHING \
-             RETURNING ",
-            columns!()
-        ))
-        .bind(ReportId::new().0)
-        .bind(self.user().0)
-        .bind(instance)
-        .bind(new.run_id.0)
-        .bind(seq)
-        .bind(new.artifact_id.map(|a| a.0))
-        .bind(new.reason.as_str())
-        .bind(new.note.as_deref())
-        .bind(&snapshot)
-        .fetch_optional(self.conn())
-        .await?;
-        if let Some(row) = row {
-            return Ok((row.into_record()?.report, true));
+        // 同一个对象已经有没处理的举报：返回那一条。插入和查找之间运维可能刚好把它处理掉了（读已提交，两句各看各的），
+        // 那就再插一次；来回撞上几次的算冲突。
+        for _ in 0..3 {
+            let row: Option<Row> = sqlx::query_as(concat!(
+                "INSERT INTO content_reports (id, user_id, instance_id, run_id, event_seq, artifact_id, reason, note, \
+                   snapshot) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
+                 ON CONFLICT (user_id, run_id, coalesce(event_seq, -1), \
+                   coalesce(artifact_id, '00000000-0000-0000-0000-000000000000')) WHERE state = 'open' DO NOTHING \
+                 RETURNING ",
+                columns!()
+            ))
+            .bind(ReportId::new().0)
+            .bind(self.user().0)
+            .bind(instance)
+            .bind(new.run_id.0)
+            .bind(seq)
+            .bind(new.artifact_id.map(|a| a.0))
+            .bind(new.reason.as_str())
+            .bind(new.note.as_deref())
+            .bind(&snapshot)
+            .fetch_optional(self.conn())
+            .await?;
+            if let Some(row) = row {
+                return Ok((row.into_record()?.report, true));
+            }
+            let existing: Option<Row> = sqlx::query_as(concat!(
+                "SELECT ",
+                columns!(),
+                " FROM content_reports \
+                 WHERE user_id = $1 AND run_id = $2 AND event_seq IS NOT DISTINCT FROM $3 \
+                   AND artifact_id IS NOT DISTINCT FROM $4 AND state = 'open'"
+            ))
+            .bind(self.user().0)
+            .bind(new.run_id.0)
+            .bind(seq)
+            .bind(new.artifact_id.map(|a| a.0))
+            .fetch_optional(self.conn())
+            .await?;
+            if let Some(existing) = existing {
+                return Ok((existing.into_record()?.report, false));
+            }
         }
-        let existing: Row = sqlx::query_as(concat!(
-            "SELECT ",
-            columns!(),
-            " FROM content_reports \
-             WHERE user_id = $1 AND run_id = $2 AND event_seq IS NOT DISTINCT FROM $3 \
-               AND artifact_id IS NOT DISTINCT FROM $4 AND state = 'open'"
+        Err(Error::Conflict(
+            "the report was handled while it was being filed; try again".into(),
         ))
-        .bind(self.user().0)
-        .bind(new.run_id.0)
-        .bind(seq)
-        .bind(new.artifact_id.map(|a| a.0))
-        .fetch_one(self.conn())
-        .await?;
-        Ok((existing.into_record()?.report, false))
     }
 
     /// 自己的举报，新的在前。

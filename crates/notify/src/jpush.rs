@@ -110,13 +110,15 @@ impl JpushClient {
             ("tt_approval", &t.approval_id),
             ("tt_plan", &t.plan_id),
             ("tt_inbox", &t.inbox_id),
+            ("tt_vault_request", &t.vault_request_id),
+            ("tt_subtype", &message.subtype),
         ] {
             if let Some(v) = v {
                 extras.insert(k.into(), json!(v));
             }
         }
-        let urgent = message.kind.is_approval() || message.kind == PushKind::RunFailed;
-        let channel = if message.kind.is_approval() {
+        let urgent = message.kind.waits_for_user() || message.kind == PushKind::RunFailed;
+        let channel = if message.kind.waits_for_user() {
             &self.approval_channel
         } else {
             &self.default_channel
@@ -128,7 +130,7 @@ impl JpushClient {
             "priority": if urgent { 1 } else { 0 },
             "extras": extras,
         });
-        if message.kind.is_approval() {
+        if message.kind.waits_for_user() {
             android["category"] = json!("reminder");
         }
         let v = &self.vendors;
@@ -157,7 +159,9 @@ impl JpushClient {
         }
         let ttl = message
             .ttl
-            .map_or(86_400, |t| t.as_secs().clamp(60, MAX_TTL_SECS));
+            .unwrap_or(crate::DEFAULT_TTL)
+            .as_secs()
+            .clamp(60, MAX_TTL_SECS);
         let options = json!({
             "time_to_live": ttl,
             "classification": 1,
@@ -341,10 +345,13 @@ mod tests {
                 approval_id: Some("appr-9".into()),
                 plan_id: None,
                 inbox_id: Some("inbox-3".into()),
+                vault_request_id: None,
             },
             ttl: Some(Duration::from_secs(3600)),
             ai_generated: false,
             locale: Default::default(),
+            subtype: None,
+            badge: None,
         }
     }
 
@@ -400,6 +407,19 @@ mod tests {
         assert_eq!(a["priority"], 0);
         assert_eq!(a["alert"].as_str().unwrap().chars().count(), 200);
         assert_eq!(v["options"]["time_to_live"], 86400);
+        // 保险箱请求（10.7）：走审批渠道、高优先级，带请求 id。
+        let mut vr = message(PushKind::VaultRequest);
+        vr.target.vault_request_id = Some("vr-7".into());
+        let p = client.payload("1a0018970a8b7c6d5e4", &vr);
+        let a = &p["notification"]["android"];
+        assert_eq!(
+            (
+                &a["channel_id"],
+                &a["priority"],
+                &a["extras"]["tt_vault_request"]
+            ),
+            (&json!("tt_approval"), &json!(1), &json!("vr-7"))
+        );
         // agent 写的正文带显式标识。
         m.ai_generated = true;
         m.body = "今天晴".into();

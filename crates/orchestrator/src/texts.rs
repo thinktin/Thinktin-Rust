@@ -95,6 +95,27 @@ pub fn im_channel_disabled(locale: Locale, label: &str) -> (&'static str, String
     }
 }
 
+/// 计划的触发规则解析不了、被停用了（10.7）：标题和正文。`title` 是计划名。
+pub fn trigger_disabled(locale: Locale, title: &str) -> (&'static str, String) {
+    match locale {
+        Locale::ZhCn => (
+            "计划的触发规则失效了",
+            format!(
+                "{}有一条触发规则用不了了（比如时区不再支持），已停用，计划不会再按它运行。请在 App 里删掉它、重新添加。",
+                quoted(locale, title)
+            ),
+        ),
+        Locale::En => (
+            "A plan's schedule stopped working",
+            format!(
+                "One of the schedules of {} can no longer be used (its time zone may no longer be supported), so it was \
+                 turned off and the plan will not run on it. Delete it and add it again in the app.",
+                quoted(locale, title)
+            ),
+        ),
+    }
+}
+
 /// 账号被冻结（4.6）：标题和正文。
 pub fn account_frozen(locale: Locale) -> (&'static str, &'static str) {
     match locale {
@@ -593,6 +614,8 @@ mod tests {
             assert!(b.contains("Daily news"));
             let (_, b) = vault_request(locale, "GitHub");
             assert!(b.contains("GitHub"));
+            let (t, b) = trigger_disabled(locale, "Daily news");
+            assert!(!t.is_empty() && b.contains("Daily news"));
             // 推送正文最多 100 个字符：等电脑的说明要完整放得下。
             assert!(computer_offline(locale).chars().count() <= 100, "{locale}");
         }

@@ -1014,6 +1014,20 @@ async fn ffi_account_and_devices() {
     phone.revoke_device(mac.id.clone()).await.unwrap();
     assert!(matches!(laptop.me().await, Err(ClientError::SignedOut)));
     assert_eq!(phone.devices().await.unwrap().len(), 1);
+    // 吊销的是这台自己（id 大小写不同也算）：本地马上退出登录，缓存清掉。
+    let (tablet, _ts, _td) = ffi_login(&e, "13800138507", "ios", "iPad").await;
+    tablet.instances().await.unwrap();
+    let me = tablet
+        .devices()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|d| d.current)
+        .unwrap();
+    tablet.revoke_device(me.id.to_uppercase()).await.unwrap();
+    assert!(!tablet.signed_in());
+    assert!(tablet.cached_instances().unwrap().is_empty());
+    assert_eq!(phone.devices().await.unwrap().len(), 1);
 
     // 注销：验证码发到自己的手机号；错的码不行；成功后本地也退出登录。
     phone.send_self_code("delete_account".into()).await.unwrap();
@@ -1091,6 +1105,14 @@ async fn ffi_plan_editing_and_triggers() {
     );
     assert_eq!(edited.policy.on_approval_timeout, "fail");
     assert_eq!(edited.triggers.len(), 1);
+    // 列表里也有触发器和下次运行时间（11.8）；暂停了就没有下次。
+    let listed = c.plans(Some(inst.id.clone())).await.unwrap();
+    assert_eq!(listed[0].triggers.len(), 1);
+    assert_eq!(
+        (listed[0].next_fire_at_ms, listed[0].invalid_triggers),
+        (listed[0].triggers[0].next_fire_at_ms, 0)
+    );
+    assert!(listed[0].next_fire_at_ms.is_some());
     assert!(matches!(
         c.update_plan(
             plan.id.clone(),
@@ -1202,6 +1224,7 @@ async fn ffi_keys_runs_artifacts_and_inbox_items() {
                 &NewInboxItem {
                     kind: "info".into(),
                     title: format!("通知 {n}"),
+                    subtype: Some("account_restored".into()),
                     ..NewInboxItem::default()
                 },
             )
@@ -1217,7 +1240,12 @@ async fn ffi_keys_runs_artifacts_and_inbox_items() {
         c.mark_inbox_read(vec![ids[0].clone()], None).await.unwrap(),
         1
     );
-    assert!(c.inbox_item(ids[0].clone()).await.unwrap().read);
+    let item = c.inbox_item(ids[0].clone()).await.unwrap();
+    assert!(item.read);
+    assert_eq!(
+        (item.subtype.as_deref(), item.vault_request_id),
+        (Some("account_restored"), None)
+    );
     assert_eq!(c.mark_inbox_unread(ids[0].clone()).await.unwrap(), 2);
     assert!(!c.inbox_item(ids[0].clone()).await.unwrap().read);
     assert_eq!(c.cached_unread().unwrap(), 2);
@@ -1617,6 +1645,53 @@ async fn ffi_runs_across_instances() {
             10
         )
         .await,
+        Err(ClientError::InvalidArgument { .. })
+    ));
+}
+
+/// 单条审批（11.8）：点推送进来先查；带上 shim 的请求 id 和第几次尝试，处理过的也查得到。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ffi_single_approval() {
+    use proto::domain::RunId;
+    let Some(e) = env().await else { return };
+    let (c, _store, _d) = ffi_login(&e, "13800138526", "ios", "iPhone").await;
+    let inst = c.adopt("claude".into(), "助手".into(), None).await.unwrap();
+    let run = c.create_run(inst.id.clone(), "清理".into()).await.unwrap();
+    let run_id: RunId = run.id.parse().unwrap();
+    let mut w = e.t.db.worker().await.unwrap();
+    let rec = w.run_record(run_id).await.unwrap();
+    w.create_approval(&store::NewApproval {
+        user: rec.user_id,
+        instance: inst.id.parse().unwrap(),
+        run: run_id,
+        request_id: &store::approval_key(1, "perm-1"),
+        title: Some("删除文件"),
+        options: &json!([{ "option_id": "allow", "name": "允许", "kind": "allow_once" },
+                         { "option_id": "deny", "name": "拒绝", "kind": "reject_once" }]),
+        tool_call: &json!({}),
+        expires_in: Duration::from_secs(3600),
+    })
+    .await
+    .unwrap();
+    w.commit().await.unwrap();
+    let listed = c.approvals().await.unwrap();
+    let got = c.get_approval(listed[0].id.clone()).await.unwrap();
+    assert_eq!(
+        (got.request_id.as_str(), got.attempt, got.state.as_str()),
+        ("perm-1", 1, "pending")
+    );
+    assert_eq!((got.decided_option, got.decided_at_ms), (None, None));
+    c.decide_approval(got.id.clone(), "deny".into())
+        .await
+        .unwrap();
+    let got = c.get_approval(got.id).await.unwrap();
+    assert_eq!(
+        (got.state.as_str(), got.decided_option.as_deref()),
+        ("rejected", Some("deny"))
+    );
+    assert!(got.decided_at_ms.is_some());
+    assert!(matches!(
+        c.get_approval("nope".into()).await,
         Err(ClientError::InvalidArgument { .. })
     ));
 }

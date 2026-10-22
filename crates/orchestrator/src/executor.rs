@@ -7,7 +7,7 @@
 //! - 预算：时长到点、token（以模型网关的计费记录为准）或步数超限，就取消这一轮并判定失败。
 //! - 停机：停止领取新运行，进行中的运行取消这一轮后转入退避，别的副本马上接着跑。
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
@@ -20,8 +20,8 @@ use keyvault::{Kms, Scrubber};
 use notify::PushKind;
 use proto::computer::ComputerTool;
 use proto::domain::{
-    ApprovalState, ApprovalTimeoutAction, GrantId, InstanceEvent, Locale, PlanPolicy, RunId,
-    RunSource, RunState, UserId, VaultItemId, valid_vault_name,
+    ApprovalId, ApprovalState, ApprovalTimeoutAction, GrantId, InstanceEvent, Locale, PlanPolicy,
+    RunId, RunSource, RunState, UserId, VaultItemId, valid_vault_name, wait_code,
 };
 use proto::shim::{DecisionSource, SecretValues, ShimCommand, ShimEvent, StopReason};
 use serde_json::{Value, json};
@@ -166,8 +166,10 @@ struct Exec<'a> {
     /// 占着的执行名额；等审批时让出（`slot_released`），审批有结果后再拿回来。
     slot: Option<OwnedSemaphorePermit>,
     slot_released: bool,
-    /// 已经把用户的决定交给 shim、还没收到 permission_resolved 的请求（只发一次）。
-    delivered: HashSet<String>,
+    /// 已经把用户的决定交给 shim、还没收到 permission_resolved 的请求（只发一次）和交过去的结果。
+    delivered: HashMap<String, ApprovalState>,
+    /// 这次尝试里 shim 的请求 id 对应的审批记录（事件里带上，App 靠它把时间线和审批对上）。
+    approval_ids: HashMap<String, ApprovalId>,
     /// 授权范围内、告诉了 agent 的平台工具。调用时再核对一次：shim 和 agent 在同一个沙箱里，不可信。
     allowed_tools: HashSet<String>,
     /// 租约至少续到什么时候（最后一次成功续租 + 租约时长）。续租一直失败、过了这个时间就自己停下，
@@ -321,6 +323,19 @@ fn push_capped(s: &mut String, text: &str, cap: usize) {
     s.push_str(&text[..end]);
 }
 
+/// 运行结果提醒的去重键：同一件事只提醒一次。进入等待的按等的是什么分开（先缺 key、补上后又欠费，两次都要说）；
+/// 只能等用户处理的（key 无效、电脑离线）每次尝试都说一次（用户处理了、又出同样的问题），每小时自己再试的
+/// （欠费、没有可用的 key）同一个原因只说一次。
+fn wait_notice_key(run: RunId, to: RunState, attempt: u32, wait: Option<&str>) -> String {
+    match wait {
+        Some(code @ (wait_code::INVALID | wait_code::DEVICE_OFFLINE)) => {
+            format!("run:{run}:{to}:{code}:{attempt}")
+        }
+        Some(code) => format!("run:{run}:{to}:{code}"),
+        None => format!("run:{run}:{to}"),
+    }
+}
+
 /// 写进运行日志之前限制大小：长字符串截断，整条还太大就换成占位。
 fn bound_payload(v: &Value) -> Value {
     fn walk(v: &Value) -> Value {
@@ -345,7 +360,16 @@ fn bound_payload(v: &Value) -> Value {
     let bounded = walk(v);
     let size = serde_json::to_vec(&bounded).map_or(0, |b| b.len());
     if size > MAX_EVENT_PAYLOAD {
-        json!({ "type": v.get("type").cloned().unwrap_or(Value::Null), "truncated": true, "bytes": size })
+        let mut stub = json!({ "type": v.get("type").cloned().unwrap_or(Value::Null), "truncated": true, "bytes": size });
+        // 认得出是哪一个的几个键留着（App 靠它们把审批卡片、工具调用对上），只留不长的字符串。
+        for key in ["run_id", "request_id", "tool_call_id", "call_id"] {
+            if let Some(Value::String(s)) = v.get(key)
+                && s.len() <= 256
+            {
+                stub[key] = Value::String(strip_nul(s.clone()));
+            }
+        }
+        stub
     } else {
         bounded
     }
@@ -833,7 +857,8 @@ impl Executor {
             slot,
             slot_released: false,
             lease_ok_until: Instant::now() + self.cfg.lease,
-            delivered: HashSet::new(),
+            delivered: HashMap::new(),
+            approval_ids: HashMap::new(),
             logged: 0,
             log_capped: false,
             scrubber: self.scrubber(rec.user_id).await,
@@ -1005,6 +1030,7 @@ impl Executor {
         // 流水线的步骤不单独通知：整条流水线结束时由根运行通知（8.3）。等 key 要用户处理，照样通知。
         let step_quiet = (rec.run.step_key.is_some() || rec.run.source == RunSource::Delegate)
             && !to.is_waiting();
+        let wait = done.run.wait_code.as_deref().filter(|_| to.is_waiting());
         if let Some((kind, body)) = push.filter(|_| !step_quiet) {
             let title = match rec.run.plan_id {
                 Some(plan) => w.plan(plan).await.map(|p| p.title).unwrap_or_default(),
@@ -1021,7 +1047,9 @@ impl Executor {
                 run: Some(run),
                 plan: rec.run.plan_id,
                 thread_id: Some(run.to_string()),
-                dedupe_key: Some(format!("run:{run}:{to}")),
+                dedupe_key: Some(wait_notice_key(run, to, done.run.attempt, wait)),
+                // 等 key、等电脑的：App 按等的是什么跳转（去换 key、去开电脑）。
+                subtype: wait.map(str::to_owned),
                 // 成功时正文是 agent 写的摘要；失败原因是平台写的。
                 ai_generated: kind == PushKind::RunFinished,
                 ..Notice::new(kind, title, body)
@@ -1035,7 +1063,7 @@ impl Executor {
 impl Exec<'_> {
     /// 审批记录里的请求 id：shim 每次启动都从 perm-1 重新编号，加上第几次尝试，重试时不会撞上旧的。
     fn approval_key(&self, request_id: &str) -> String {
-        format!("{}:{request_id}", self.rec.run.attempt)
+        store::approval_key(self.rec.run.attempt, request_id)
     }
 
     async fn send(&mut self, cmd: ShimCommand) -> bool {
@@ -1044,13 +1072,23 @@ impl Exec<'_> {
 
     /// 写运行日志：限制单条大小和这次运行的总量。
     async fn persist_raw(&mut self, kind: &str, payload: &Value) {
-        let payload = if self.scrubber.is_empty() {
+        self.persist_with(kind, payload, &[]).await;
+    }
+
+    /// 同 [`Self::persist_raw`]，再加上平台自己的几个键（抹值、截断之后加，截断了也还在）。
+    async fn persist_with(&mut self, kind: &str, payload: &Value, extra: &[(&str, Value)]) {
+        let mut payload = if self.scrubber.is_empty() {
             bound_payload(payload)
         } else {
             let mut clean = payload.clone();
             crate::vault::scrub_json(&self.scrubber, &mut clean);
             bound_payload(&clean)
         };
+        if let Value::Object(m) = &mut payload {
+            for (k, v) in extra {
+                m.insert((*k).to_owned(), v.clone());
+            }
+        }
         let size = serde_json::to_vec(&payload).map_or(0, |b| b.len());
         if self.logged.saturating_add(size) > self.ex.cfg.max_run_log_bytes {
             if !self.log_capped {
@@ -1089,7 +1127,25 @@ impl Exec<'_> {
 
     async fn persist(&mut self, ev: &ShimEvent) {
         let payload = serde_json::to_value(ev).unwrap_or(Value::Null);
-        self.persist_raw(event_kind(ev), &payload).await;
+        let keys = match ev {
+            ShimEvent::PermissionRequested { request_id, .. }
+            | ShimEvent::PermissionResolved { request_id, .. } => self.join_keys(request_id),
+            _ => Vec::new(),
+        };
+        self.persist_with(event_kind(ev), &payload, &keys).await;
+    }
+
+    /// 审批事件里对得上审批记录的键：第几次尝试（shim 每次尝试从 perm-1 重新编号，`run_id`、`attempt`、
+    /// `request_id` 三个一起才是同一个请求），有记录的带上审批 id，平台交过结果的带上结果。
+    fn join_keys(&self, request_id: &str) -> Vec<(&'static str, Value)> {
+        let mut keys = vec![("attempt", json!(self.rec.run.attempt))];
+        if let Some(id) = self.approval_ids.get(request_id) {
+            keys.push(("approval_id", json!(id)));
+        }
+        if let Some(state) = self.delivered.get(request_id) {
+            keys.push(("approval_state", json!(state)));
+        }
+        keys
     }
 
     /// 把攒着的文字写进运行日志。
@@ -1501,7 +1557,14 @@ impl Exec<'_> {
             _ => {}
         }
         self.flush().await;
-        self.persist(&ev).await;
+        // 审批请求等审批记录建好再写，带上审批 id。
+        let requested = match &ev {
+            ShimEvent::PermissionRequested { .. } => serde_json::to_value(&ev).ok(),
+            _ => {
+                self.persist(&ev).await;
+                None
+            }
+        };
         match ev {
             ShimEvent::TurnStarted { run_id: r } if r == run_id => {
                 if self.state == RunState::Starting
@@ -1541,8 +1604,9 @@ impl Exec<'_> {
                 tool_call,
                 ..
             } => {
+                let raw = requested.unwrap_or(Value::Null);
                 if let Err(o) = self
-                    .on_permission(&request_id, title.as_deref(), &options, &tool_call)
+                    .on_permission(&raw, &request_id, title.as_deref(), &options, &tool_call)
                     .await
                 {
                     return Some(o);
@@ -1751,8 +1815,10 @@ impl Exec<'_> {
         Ok(values)
     }
 
+    /// `raw` 是 shim 的 permission_requested 事件，审批记录建好以后写进运行日志。
     async fn on_permission(
         &mut self,
+        raw: &Value,
         request_id: &str,
         title: Option<&str>,
         options: &[proto::shim::PermissionOption],
@@ -1806,9 +1872,16 @@ impl Exec<'_> {
                 )
             };
             notify(&mut w, self.rec.user_id, &notice).await?;
-            w.commit().await
+            w.commit().await?;
+            Ok::<_, store::Error>(id)
         }
         .await;
+        if let Ok(id) = &result {
+            self.approval_ids.insert(request_id.to_owned(), *id);
+        }
+        let keys = self.join_keys(request_id);
+        self.persist_with("agent.permission_requested", raw, &keys)
+            .await;
         result.map_err(|e| Outcome::Retry(e.to_string()))?;
         self.pending.insert(request_id.to_owned());
         if self.state == RunState::Running {
@@ -1830,6 +1903,7 @@ impl Exec<'_> {
     ) -> Option<Outcome> {
         let was_pending = self.pending.remove(request_id);
         self.delivered.remove(request_id);
+        self.approval_ids.remove(request_id);
         let key = self.approval_key(request_id);
         if was_pending && by != DecisionSource::User {
             let state = match by {
@@ -1915,6 +1989,7 @@ impl Exec<'_> {
                 approval: Some(id),
                 thread_id: Some(self.rec.run.id.to_string()),
                 dedupe_key: Some(format!("approval:{id}:skipped")),
+                subtype: Some(proto::domain::notice_subtype::APPROVAL_SKIPPED.into()),
                 // 正文是 agent 给工具调用起的标题。
                 ai_generated: title.is_some(),
                 ..Notice::new(
@@ -1941,7 +2016,7 @@ impl Exec<'_> {
         let pending: Vec<String> = self
             .pending
             .iter()
-            .filter(|r| !self.delivered.contains(*r))
+            .filter(|r| !self.delivered.contains_key(*r))
             .cloned()
             .collect();
         for request_id in pending {
@@ -2008,7 +2083,7 @@ impl Exec<'_> {
             })
             .await;
             // 只发一次；shim 回 permission_resolved(by=user) 后从 pending 里移除、回到运行中。
-            self.delivered.insert(request_id);
+            self.delivered.insert(request_id, state);
         }
         Ok(())
     }
@@ -2174,5 +2249,15 @@ mod tests {
         assert_eq!(v["truncated"], true);
         assert_eq!(v["type"], "plan");
         assert!(serde_json::to_vec(&v).unwrap().len() < 200);
+        // 很大的审批请求：截掉以后还认得出是哪一个。
+        let v = bound_payload(&json!({
+            "type": "permission_requested", "run_id": "r", "request_id": "perm-1",
+            "tool_call": { "content": many },
+        }));
+        assert_eq!(
+            (&v["truncated"], &v["request_id"], &v["run_id"]),
+            (&json!(true), &json!("perm-1"), &json!("r"))
+        );
+        assert!(serde_json::to_vec(&v).unwrap().len() < 400);
     }
 }

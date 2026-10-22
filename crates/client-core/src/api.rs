@@ -136,6 +136,10 @@ pub struct PlanView {
     pub triggers: Vec<Trigger>,
     #[serde(default)]
     pub steps: Vec<PlanStep>,
+    #[serde(default)]
+    pub next_fire_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default)]
+    pub invalid_triggers: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -361,20 +365,23 @@ pub struct Api {
     upgrade_required: AtomicBool,
 }
 
-/// 检查 `Accept-Language`：去掉首尾空白，空的当没有；最长 256 字节，不能有换行之类的字符。
+/// `Accept-Language` 最长多少字节。
+pub const MAX_ACCEPT_LANGUAGE: usize = 256;
+
+/// 检查 `Accept-Language`：去掉首尾空白，空的当没有；最长 [`MAX_ACCEPT_LANGUAGE`] 字节，不能有换行之类的字符。
 fn accept_language_header(v: Option<&str>) -> Result<Option<HeaderValue>> {
     let Some(v) = v.map(str::trim).filter(|v| !v.is_empty()) else {
         return Ok(None);
     };
-    if v.len() > 256 {
+    if v.len() > MAX_ACCEPT_LANGUAGE {
         return Err(ClientError::InvalidArgument {
-            message: "accept_language is longer than 256 bytes".into(),
+            detail: "accept_language is longer than 256 bytes".into(),
         });
     }
     HeaderValue::from_str(v)
         .map(Some)
         .map_err(|_| ClientError::InvalidArgument {
-            message: "accept_language has characters a header cannot carry".into(),
+            detail: "accept_language has characters a header cannot carry".into(),
         })
 }
 
@@ -391,7 +398,7 @@ impl Api {
         crate::install_crypto();
         if cfg.base_url.starts_with("https://") && !crate::tls::platform_ready() {
             return Err(ClientError::Internal {
-                message: "call cn.thinktin.core.TlsInit.initialize(context) before creating \
+                detail: "call cn.thinktin.core.TlsInit.initialize(context) before creating \
                           ThinktinClient (https on Android)"
                     .into(),
             });
@@ -740,10 +747,19 @@ impl Api {
         Ok(())
     }
 
-    /// 吊销一台设备（丢了的手机、不用的电脑）：它的登录会话立即失效。
+    /// 吊销一台设备（丢了的手机、不用的电脑）：它的登录会话立即失效。吊销的是这台自己：本地的登录状态（和缓存）
+    /// 马上清掉，不用等下一个请求被拒。
     pub async fn revoke_device(&self, id: DeviceId) -> Result<()> {
+        let mine = self
+            .session()
+            .and_then(|s| s.device_id.parse::<DeviceId>().ok())
+            .is_some_and(|d| d == id);
         self.empty(Method::DELETE, &format!("/v1/devices/{id}"), None)
-            .await
+            .await?;
+        if mine {
+            self.set_session(None);
+        }
+        Ok(())
     }
 
     pub async fn set_push(&self, channel: PushChannelKind, token: &str) -> Result<()> {
@@ -1053,6 +1069,12 @@ impl Api {
             .approvals)
     }
 
+    /// 一条审批（什么状态都行）。
+    pub async fn approval(&self, id: ApprovalId) -> Result<Approval> {
+        self.json(Method::GET, &format!("/v1/approvals/{id}"), None)
+            .await
+    }
+
     pub async fn decide_approval(&self, id: ApprovalId, option_id: &str) -> Result<Approval> {
         self.json(
             Method::POST,
@@ -1064,10 +1086,11 @@ impl Api {
 
     // ---------- 计划 ----------
 
-    pub async fn plans(&self, instance: Option<InstanceId>) -> Result<Vec<Plan>> {
+    /// 计划列表，带着每个计划的触发器、步骤、下次运行时间（老的服务端只有计划本身，其余为空）。
+    pub async fn plans(&self, instance: Option<InstanceId>) -> Result<Vec<PlanView>> {
         #[derive(Deserialize)]
         struct R {
-            plans: Vec<Plan>,
+            plans: Vec<PlanView>,
         }
         let path = match instance {
             Some(i) => format!("/v1/plans?instance_id={i}"),

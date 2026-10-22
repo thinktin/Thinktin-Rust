@@ -21,7 +21,7 @@ use notify::im::{ImHook, ImMessage, ImSender};
 use notify::{PushChannel, PushKind, PushMessage, PushOutcome, PushTarget};
 use proto::domain::{
     ApprovalId, ImChannelId, ImEvent, ImVendor, InboxItemId, InstanceId, Locale, PlanId,
-    PushChannelKind, RunId, UserId,
+    PushChannelKind, RunId, UserId, VaultRequestId,
 };
 use serde::{Deserialize, Serialize};
 use store::{Db, ImSlot, NewInboxItem, NewOutboxItem, OutboxItem, Tenant, Tx, Worker};
@@ -67,7 +67,10 @@ fn im_event(kind: PushKind) -> Option<ImEvent> {
         PushKind::RunFinished => Some(ImEvent::RunFinished),
         PushKind::RunFailed => Some(ImEvent::RunFailed),
         PushKind::Approval => Some(ImEvent::Approval),
-        PushKind::ComputerApproval | PushKind::Info => None,
+        PushKind::ComputerApproval
+        | PushKind::VaultRequest
+        | PushKind::PlanConfirm
+        | PushKind::Info => None,
     }
 }
 
@@ -103,6 +106,10 @@ pub struct Notice {
     pub run: Option<RunId>,
     pub plan: Option<PlanId>,
     pub approval: Option<ApprovalId>,
+    /// 保险箱请求（[`PushKind::VaultRequest`]）。
+    pub vault_request: Option<VaultRequestId>,
+    /// 是哪一种提醒（[`proto::domain::notice_subtype`]；运行在等什么时是 `wait_code`）。
+    pub subtype: Option<String>,
     /// 推送分组（同一个运行的通知归成一组）。
     pub thread_id: Option<String>,
     /// 推送替换（同一个 id 的新通知替换旧的）。
@@ -125,6 +132,8 @@ impl Notice {
             run: None,
             plan: None,
             approval: None,
+            vault_request: None,
+            subtype: None,
             thread_id: None,
             collapse_id: None,
             ttl: None,
@@ -144,7 +153,15 @@ impl Notice {
             approval_id: self.approval,
             dedupe_key: self.dedupe_key.clone(),
             ai_generated: self.ai_generated,
+            subtype: self.subtype.clone(),
+            vault_request_id: self.vault_request,
         }
+    }
+
+    /// 某一种提醒（[`proto::domain::notice_subtype`]）。
+    pub fn subtype(mut self, subtype: &str) -> Self {
+        self.subtype = Some(subtype.to_owned());
+        self
     }
 
     /// 推送消息：只带 id，客户端打开后按 id 取内容。`locale` 是收件人的语言（1.6）。
@@ -161,10 +178,13 @@ impl Notice {
                 approval_id: self.approval.map(|a| a.to_string()),
                 plan_id: self.plan.map(|p| p.to_string()),
                 inbox_id: inbox.map(|i| i.to_string()),
+                vault_request_id: self.vault_request.map(|v| v.to_string()),
             },
             ttl: self.ttl,
             ai_generated: self.ai_generated,
             locale,
+            subtype: self.subtype.clone(),
+            badge: None,
         }
     }
 }
@@ -502,6 +522,8 @@ impl Dispatcher {
             if age > ttl {
                 return Ok(Some(Settle::Done(Some("expired before delivery".into()))));
             }
+            // 推送服务只再存剩下的时间：排队、重试过的审批提醒不能比审批本身活得久。
+            message.ttl = Some(ttl - age);
         }
         Ok(None)
     }
@@ -516,6 +538,8 @@ impl Dispatcher {
         }
         let mut w = self.db.worker().await?;
         let targets = w.push_targets(item.user_id).await?;
+        // 角标是发的时候的未读数：排队期间用户读了的不算。
+        message.badge = Some(w.unread_inbox_count(item.user_id).await?);
         w.rollback().await?;
         let mut delivered = 0;
         let mut retry: Option<(String, Duration)> = None;
@@ -712,7 +736,8 @@ impl Dispatcher {
                     // 只在这次真把渠道停掉时说一次（同一个地址只说一次）。
                     let (title, body) =
                         crate::texts::im_channel_disabled(locale, &ch.channel.label);
-                    let mut notice = Notice::new(PushKind::Info, title, body);
+                    let mut notice = Notice::new(PushKind::Info, title, body)
+                        .subtype(proto::domain::notice_subtype::IM_CHANNEL_DISABLED);
                     notice.dedupe_key = Some(format!("im-disabled:{id}:{rev}"));
                     notify(&mut w, item.user_id, &notice).await?;
                     w.drop_im_backlog(id, "im channel disabled").await?;

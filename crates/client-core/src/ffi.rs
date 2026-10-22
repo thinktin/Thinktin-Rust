@@ -28,7 +28,7 @@ fn ms_opt(t: Option<DateTime<Utc>>) -> Option<i64> {
 
 fn parse<T: FromStr>(raw: &str, what: &str) -> Result<T> {
     raw.parse().map_err(|_| ClientError::InvalidArgument {
-        message: format!("bad {what} id {raw:?}"),
+        detail: format!("bad {what} id {raw:?}"),
     })
 }
 
@@ -39,7 +39,7 @@ fn parse_opt<T: FromStr>(raw: &Option<String>, what: &str) -> Result<Option<T>> 
 fn from_enum_str<T: serde::de::DeserializeOwned>(raw: &str, what: &str) -> Result<T> {
     serde_json::from_value(serde_json::Value::String(raw.to_owned())).map_err(|_| {
         ClientError::InvalidArgument {
-            message: format!("unknown {what} {raw:?}"),
+            detail: format!("unknown {what} {raw:?}"),
         }
     })
 }
@@ -65,10 +65,13 @@ pub struct ClientConfig {
 }
 
 /// 把系统的语言列表（按偏好排好，比如 `["zh-Hans-CN", "en-US", "en"]`）拼成 `Accept-Language`：
-/// `zh-Hans-CN, en-US;q=0.9, en;q=0.8`。最多 10 个；不像语言标签的跳过。
+/// `zh-Hans-CN, en-US;q=0.9, en;q=0.8`。最多 10 个；不像语言标签的跳过；放不进 256 字节（`ClientConfig` 的上限）的
+/// 后面几个不要，结果总能直接交给 `ClientConfig.accept_language`、`set_accept_language`。
 #[uniffi::export]
 pub fn accept_language_header(tags: Vec<String>) -> String {
-    tags.iter()
+    let mut out = String::new();
+    let tags = tags
+        .iter()
         .map(|t| t.trim())
         .filter(|t| {
             !t.is_empty()
@@ -76,14 +79,19 @@ pub fn accept_language_header(tags: Vec<String>) -> String {
                 && t.bytes()
                     .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
         })
-        .take(10)
-        .enumerate()
-        .map(|(i, t)| match i {
-            0 => t.replace('_', "-"),
-            i => format!("{};q=0.{}", t.replace('_', "-"), 10 - i),
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
+        .take(10);
+    for (i, t) in tags.enumerate() {
+        let tag = t.replace('_', "-");
+        let item = match i {
+            0 => tag,
+            i => format!(", {tag};q=0.{}", 10 - i),
+        };
+        if out.len() + item.len() > crate::api::MAX_ACCEPT_LANGUAGE {
+            break;
+        }
+        out.push_str(&item);
+    }
+    out
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -148,7 +156,7 @@ pub struct DeviceMessage {
     pub id: String,
     pub from_device_id: String,
     pub to_device_id: String,
-    /// pair_response、pair_confirm、approval_request、approval_decision、capability、revoke……
+    /// pair_response、pair_confirm、approval_request、approval_decision、capability、revocation……
     pub kind: String,
     /// 消息内容（JSON）。
     pub body_json: String,
@@ -370,6 +378,18 @@ pub struct Approval {
     pub state: String,
     pub expires_at_ms: i64,
     pub created_at_ms: i64,
+    /// shim 给的请求 id（和 `agent.permission_requested` 事件里的一样）。shim 每次尝试从 perm-1 重新编号，所以要
+    /// 和 `attempt` 一起用（`run_id`、`attempt`、`request_id` 三个对上才是同一个）。
+    #[uniffi(default = "")]
+    pub request_id: String,
+    /// 第几次尝试（和 `run.state` 事件的 `attempt` 一样）；0 是不知道（老数据）。
+    #[uniffi(default = 0)]
+    pub attempt: u32,
+    /// 选了哪个选项（`option_id`）；没处理、过期了的为空。
+    #[uniffi(default = None)]
+    pub decided_option: Option<String>,
+    #[uniffi(default = None)]
+    pub decided_at_ms: Option<i64>,
 }
 
 impl From<d::Approval> for Approval {
@@ -403,6 +423,10 @@ impl From<d::Approval> for Approval {
             state: a.state.to_string(),
             expires_at_ms: ms(a.expires_at),
             created_at_ms: ms(a.created_at),
+            request_id: a.request_id,
+            attempt: a.attempt,
+            decided_option: a.decided_option,
+            decided_at_ms: ms_opt(a.decided_at),
         }
     }
 }
@@ -443,7 +467,7 @@ impl TryFrom<Schedule> for d::ScheduleSpec {
             Schedule::Once { at_ms } => Self::Once {
                 at: Utc.timestamp_millis_opt(at_ms).single().ok_or_else(|| {
                     ClientError::InvalidArgument {
-                        message: format!("bad time {at_ms}"),
+                        detail: format!("bad time {at_ms}"),
                     }
                 })?,
             },
@@ -458,6 +482,9 @@ pub struct Trigger {
     pub enabled: bool,
     pub next_fire_at_ms: Option<i64>,
     pub last_fire_at_ms: Option<i64>,
+    /// 后台停用它的原因：invalid_rule（规则失效了，比如时区没了；删掉重新加）。没被停用时为空。
+    #[uniffi(default = None)]
+    pub disabled_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
@@ -589,9 +616,16 @@ pub struct Plan {
     #[uniffi(default = "once")]
     pub catch_up: String,
     pub created_at_ms: i64,
-    /// 列表接口里为空，详情里有。
+    /// 列表和详情里都有。
     pub triggers: Vec<Trigger>,
     pub steps: Vec<PlanStep>,
+    /// 下一次按时运行的名义时间（实际可能因削峰晚几分钟）：在用的触发器里最早的；暂停了、等确认、没有会再触发的
+    /// 规则时为空。
+    #[uniffi(default = None)]
+    pub next_fire_at_ms: Option<i64>,
+    /// 规则失效、被后台停用的触发器有几个：详情页提示“规则已失效”，给“修改规则”的入口。
+    #[uniffi(default = 0)]
+    pub invalid_triggers: u32,
 }
 
 impl From<d::Plan> for Plan {
@@ -611,6 +645,8 @@ impl From<d::Plan> for Plan {
             created_at_ms: ms(p.created_at),
             triggers: Vec::new(),
             steps: Vec::new(),
+            next_fire_at_ms: None,
+            invalid_triggers: 0,
         }
     }
 }
@@ -620,6 +656,8 @@ impl From<api::PlanView> for Plan {
         Self {
             triggers: v.triggers.into_iter().map(trigger_record).collect(),
             steps: v.steps.into_iter().map(Into::into).collect(),
+            next_fire_at_ms: ms_opt(v.next_fire_at),
+            invalid_triggers: v.invalid_triggers,
             ..v.plan.into()
         }
     }
@@ -648,6 +686,7 @@ fn trigger_record(t: d::Trigger) -> Trigger {
         enabled: t.enabled,
         next_fire_at_ms: ms_opt(t.next_fire_at),
         last_fire_at_ms: ms_opt(t.last_fire_at),
+        disabled_reason: t.disabled_reason,
     }
 }
 
@@ -761,7 +800,8 @@ pub struct InboxItem {
     pub run_id: Option<String>,
     pub plan_id: Option<String>,
     pub approval_id: Option<String>,
-    /// run_finished / run_failed / approval / info
+    /// run_finished / run_failed / approval / computer_approval / vault_request / plan_confirm / info。以后可能有新的，
+    /// 不认识的按 info 显示。
     pub kind: String,
     pub title: String,
     pub body: String,
@@ -769,6 +809,13 @@ pub struct InboxItem {
     pub ai_generated: bool,
     pub read: bool,
     pub created_at_ms: i64,
+    /// 是哪一种提醒（10.7）：account_frozen、account_restored、stopped_all、approval_skipped、trigger_disabled、
+    /// im_channel_disabled、report_handled；运行进入等待时是 `Run.wait_code` 的值。和推送的 `tt.subtype` 一样。
+    #[uniffi(default = None)]
+    pub subtype: Option<String>,
+    /// 保险箱请求（`kind` 是 vault_request 时，`thinktin://vault/request/{id}`）。
+    #[uniffi(default = None)]
+    pub vault_request_id: Option<String>,
 }
 
 impl From<d::InboxItem> for InboxItem {
@@ -785,6 +832,8 @@ impl From<d::InboxItem> for InboxItem {
             ai_generated: i.ai_generated,
             read: i.read,
             created_at_ms: ms(i.created_at),
+            subtype: i.subtype,
+            vault_request_id: i.vault_request_id.map(|x| x.to_string()),
         }
     }
 }
@@ -1356,7 +1405,7 @@ impl ThinktinClient {
             .spawn(fut)
             .await
             .map_err(|e| ClientError::Internal {
-                message: e.to_string(),
+                detail: e.to_string(),
             })?
     }
 }
@@ -1373,7 +1422,7 @@ impl ThinktinClient {
             .enable_all()
             .build()
             .map_err(|e| ClientError::Internal {
-                message: e.to_string(),
+                detail: e.to_string(),
             })?;
         let api = Api::new(
             ApiConfig {
@@ -1404,8 +1453,8 @@ impl ThinktinClient {
             .set_accept_language(accept_language.as_deref())
     }
 
-    /// 服务端说过这个版本太老了（任何请求返回 `UpgradeRequired`、事件流握手被拒）。之后事件流以 `Stopped` 结束、
-    /// 不再重连；界面进升级页。一直有效（升级就是重装）。
+    /// 服务端说过这个版本太老了（任何请求返回 `UpgradeRequired`、事件流握手被拒）。之后事件流以
+    /// `StreamStatus::UpgradeRequired` 结束、不再重连；界面进升级页。一直有效（升级就是重装）。
     pub fn upgrade_required(&self) -> bool {
         self.inner.api.upgrade_required()
     }
@@ -1417,7 +1466,8 @@ impl ThinktinClient {
             .await
     }
 
-    /// `push_channel` 是 apns / unipush / fcm……，和 `push_token` 一起给，或都不给。
+    /// `push_channel` 是 apns / apns_sandbox / unipush / fcm……，和 `push_token` 一起给，或都不给。开发证书签名的
+    /// 包（Xcode 直装，`aps-environment` 是 development）拿到的是沙盒环境的令牌，要报 `apns_sandbox`。
     pub async fn login(
         &self,
         phone: String,
@@ -1430,7 +1480,7 @@ impl ThinktinClient {
             (None, None) => None,
             _ => {
                 return Err(ClientError::InvalidArgument {
-                    message: "push_channel and push_token go together".into(),
+                    detail: "push_channel and push_token go together".into(),
                 });
             }
         };
@@ -1492,7 +1542,7 @@ impl ThinktinClient {
         let kind: d::DeviceMessageKind = from_enum_str(&kind, "device message kind")?;
         let body: serde_json::Value =
             serde_json::from_str(&body_json).map_err(|e| ClientError::InvalidArgument {
-                message: format!("body_json is not JSON: {e}"),
+                detail: format!("body_json is not JSON: {e}"),
             })?;
         self.run(|c| async move { Ok(c.api.send_device_message(to, kind, &body).await?.into()) })
             .await
@@ -1534,7 +1584,7 @@ impl ThinktinClient {
             .await
     }
 
-    /// 推送令牌变了（重装、系统重置）时更新。
+    /// 推送令牌变了（重装、系统重置）时更新。`channel` 同 [`Self::login`] 的 `push_channel`。
     pub async fn set_push_token(&self, channel: String, token: String) -> Result<()> {
         let channel: d::PushChannelKind = from_enum_str(&channel, "push channel")?;
         self.run(|c| async move { c.api.set_push(channel, &token).await })
@@ -1715,7 +1765,6 @@ impl ThinktinClient {
         .await
     }
 
-    /// 更早的一页运行：`before_run_id` 之前的（列表往下翻）。
     /// 跨实例的运行（11.8），新的在前：某个计划的运行历史、所有没结束的运行。`before_run_id` 往下翻
     /// （上一页最后一个的 id）。
     pub async fn list_runs(
@@ -1747,6 +1796,7 @@ impl ThinktinClient {
         .await
     }
 
+    /// 更早的一页运行：`before_run_id` 之前的（列表往下翻）。
     pub async fn older_runs(
         &self,
         instance_id: String,
@@ -1926,6 +1976,14 @@ impl ThinktinClient {
                 .collect())
         })
         .await
+    }
+
+    /// 一条审批（什么状态都行）。点审批推送、收件箱条目进来时先查：已处理、已过期的给提示，不要报错；推送里“拒绝”的
+    /// 快捷操作先查它还是不是待处理。
+    pub async fn get_approval(&self, approval_id: String) -> Result<Approval> {
+        let id: d::ApprovalId = parse(&approval_id, "approval")?;
+        self.run(|c| async move { Ok(c.api.approval(id).await?.into()) })
+            .await
     }
 
     /// 选一个选项。注意：批准前原生端要先做生物识别确认。
@@ -2245,7 +2303,7 @@ impl ThinktinClient {
                     .single()
                     .map(|t| t.to_rfc3339())
                     .ok_or_else(|| ClientError::InvalidArgument {
-                        message: format!("bad time {m}"),
+                        detail: format!("bad time {m}"),
                     })
             })
             .transpose()
