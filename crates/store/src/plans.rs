@@ -20,6 +20,11 @@ pub struct NewPlan {
     pub run_grant_id: Option<GrantId>,
 }
 
+/// 删除实例和引用它的计划步骤互斥用的咨询锁（[`Tx::share_instances`]）。
+fn instance_plans_key(instance: InstanceId) -> String {
+    format!("instance_plans/{instance}")
+}
+
 /// 删除实例时处理掉的计划（[`Tx::retire_instance_plans`]）。
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct RetiredPlans {
@@ -242,8 +247,12 @@ impl Tx<Tenant> {
 
     /// 整体替换计划的流水线步骤（空表示普通计划：到点直接在计划的实例上运行目标）。
     /// 步骤要能排成无环的依赖顺序，每一步的实例必须是自己的、没删除的。
+    /// 实例拿共享锁再查（[`Tx::share_instances`]）：和删除实例互斥。调用方要在锁计划行之前先调一次
+    /// `share_instances`（这里再拿是重入，不用等）。
     pub async fn set_plan_steps(&mut self, plan: PlanId, steps: &[PlanStep]) -> Result<()> {
         order_steps(steps).map_err(Error::Invalid)?;
+        self.share_instances(steps.iter().map(|s| s.instance_id))
+            .await?;
         self.plan(plan).await?;
         for s in steps {
             self.instance(s.instance_id).await?;
@@ -288,12 +297,27 @@ impl Tx<Tenant> {
     }
 
     /// 删除实例时一并处理它的计划（11.9）：它自己的计划标记删除、触发器停掉；别的实例的流水线计划有一步在它上面的
-    /// 暂停（用户改了步骤再恢复）。要在取消实例的运行之前调：先停触发器（和调度的 `FOR UPDATE` 互斥），正在触发的
-    /// 那一次提交以后才轮到这里，它建的运行接着被取消。已经生成的运行不在这里处理。
+    /// 暂停（用户改了步骤再恢复）。要在这个事务锁别的东西之前、取消实例的运行之前调。
+    ///
+    /// - 先拿这个实例的排他咨询锁：往计划里加它上面的步骤、恢复或确认有一步在它上面的计划的拿共享锁再查
+    ///   （[`Tx::share_instances`]），不会在这里查过之后才提交，留下一个在跑、步骤却在已删除实例上的流水线。
+    /// - 再按 id 顺序一次锁住要改的计划，然后改计划、停触发器：和删除计划、恢复、确认（计划 → 触发器）同一个顺序；
+    ///   两个实例的流水线互相有一步在对方上时同时删除，也是按同一个顺序排队，不会死锁。
+    /// - 停触发器和调度的 `FOR UPDATE` 互斥：正在触发的那一次提交以后才轮到这里，它建的运行接着被取消。
+    ///
+    /// 已经生成的运行不在这里处理。
     pub async fn retire_instance_plans(&mut self, instance: InstanceId) -> Result<RetiredPlans> {
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(instance_plans_key(instance))
+            .execute(self.conn())
+            .await?;
+        // plan_steps 没有按实例的索引：按计划查（主键前缀）。
         sqlx::query(
-            "UPDATE triggers SET enabled = false, updated_at = now() \
-             WHERE enabled AND plan_id IN (SELECT id FROM plans WHERE instance_id = $1 AND status <> 'deleted')",
+            "SELECT p.id FROM plans p \
+             WHERE p.status <> 'deleted' \
+               AND (p.instance_id = $1 OR (p.status = 'active' \
+                    AND EXISTS (SELECT 1 FROM plan_steps s WHERE s.plan_id = p.id AND s.instance_id = $1))) \
+             ORDER BY p.id FOR NO KEY UPDATE",
         )
         .bind(instance.0)
         .execute(self.conn())
@@ -305,7 +329,6 @@ impl Tx<Tenant> {
         .bind(instance.0)
         .fetch_all(self.conn())
         .await?;
-        // plan_steps 没有按实例的索引：按计划查（主键前缀）。
         let paused: Vec<Uuid> = sqlx::query_scalar(
             "UPDATE plans p SET status = 'paused', updated_at = now() \
              WHERE p.status = 'active' AND p.instance_id <> $1 \
@@ -314,6 +337,12 @@ impl Tx<Tenant> {
         )
         .bind(instance.0)
         .fetch_all(self.conn())
+        .await?;
+        sqlx::query(
+            "UPDATE triggers SET enabled = false, updated_at = now() WHERE enabled AND plan_id = ANY($1)",
+        )
+        .bind(&deleted)
+        .execute(self.conn())
         .await?;
         Ok(RetiredPlans {
             deleted: deleted.into_iter().map(PlanId).collect(),
@@ -381,8 +410,36 @@ impl Tx<Tenant> {
 
 /// 两种角色都能用；业务角色下 RLS 只放行当前用户的行。
 impl<R> Tx<R> {
-    /// 计划里第一个在已删除的实例上的步骤（11.9）：有的话恢复、确认前要先改步骤。
+    /// 给这些实例拿共享咨询锁到事务结束（11.9）：拿到以后再查实例没删除、写引用它们的计划步骤或者恢复计划，
+    /// 删除实例（[`Tx::retire_instance_plans`] 拿排他锁）要等这个事务提交，提交后它能看到这里写的步骤。
+    /// 用咨询锁不用实例行锁：删除接着要锁计划、触发器和运行，执行器是先锁运行再更新实例行的，在实例行上排队会成环。
+    /// 拿锁之前这个事务不能已经锁着计划行（删除拿着排他锁时要锁计划）。
+    pub async fn share_instances(
+        &mut self,
+        instances: impl IntoIterator<Item = InstanceId>,
+    ) -> Result<()> {
+        let mut ids: Vec<Uuid> = instances.into_iter().map(|i| i.0).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        for id in ids {
+            sqlx::query("SELECT pg_advisory_xact_lock_shared(hashtextextended($1, 0))")
+                .bind(instance_plans_key(InstanceId(id)))
+                .execute(self.conn())
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// 计划里第一个在已删除的实例上的步骤（11.9）：有的话恢复、确认前要先改步骤。步骤的实例先拿共享锁
+    /// （[`Tx::share_instances`]），所以要在锁计划行之前调；查完到提交之间这些实例删不掉。
     pub async fn deleted_step(&mut self, plan: PlanId) -> Result<Option<String>> {
+        let instances: Vec<Uuid> =
+            sqlx::query_scalar("SELECT DISTINCT instance_id FROM plan_steps WHERE plan_id = $1")
+                .bind(plan.0)
+                .fetch_all(self.conn())
+                .await?;
+        self.share_instances(instances.into_iter().map(InstanceId))
+            .await?;
         Ok(sqlx::query_scalar(
             "SELECT s.key FROM plan_steps s JOIN instances i ON i.id = s.instance_id \
              WHERE s.plan_id = $1 AND i.state = 'deleted' ORDER BY s.position LIMIT 1",

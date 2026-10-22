@@ -1571,6 +1571,192 @@ async fn deleting_an_instance_retires_its_plans() {
     assert_eq!(due, [pz.id]);
 }
 
+/// 接口删除实例的那几步（gateway routes/instances.rs）。
+async fn delete_instance_like_the_api(
+    db: Db,
+    user: UserId,
+    id: proto::domain::InstanceId,
+) -> crate::Result<crate::RetiredPlans> {
+    let mut t = db.tenant(user).await?;
+    t.instance(id).await?;
+    let retired = t.retire_instance_plans(id).await?;
+    t.cancel_instance_runs(id, "instance deleted").await?;
+    t.revoke_instance_grants(id, "instance deleted").await?;
+    t.delete_instance(id).await?;
+    t.commit().await?;
+    Ok(retired)
+}
+
+fn plan_on(instance: &Instance) -> NewPlan {
+    NewPlan {
+        instance_id: instance.id,
+        title: "t".into(),
+        goal: "g".into(),
+        policy: PlanPolicy::default(),
+        catch_up: CatchUp::Once,
+        created_by: PlanAuthor::User,
+        run_grant_id: None,
+    }
+}
+
+fn step_on(instance: &Instance) -> proto::domain::PlanStep {
+    proto::domain::PlanStep {
+        key: "a".into(),
+        instance_id: instance.id,
+        prompt: "p".into(),
+        depends_on: vec![],
+    }
+}
+
+/// 删除实例和删除、恢复计划同时发生，两个互相有一步在对方上的实例同时删除（11.9）：锁的顺序一样（计划 →
+/// 触发器，计划按 id），不会死锁成 500。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn deleting_instances_and_plans_together_does_not_deadlock() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = t.db.clone();
+    let alice = user(&db, "+8613800000001").await;
+    let cron = ScheduleSpec::Cron {
+        expr: "0 8 * * *".into(),
+        tz: "Asia/Shanghai".into(),
+    };
+    let later = Utc::now() + Days::days(1);
+
+    // 删除计划、恢复计划的请求先锁住计划，再动它的触发器；删除实例这时开始，等它提交。
+    for resume in [false, true] {
+        let x = instance(&db, alice).await;
+        let mut a = db.tenant(alice).await.unwrap();
+        let p = a.create_plan(&plan_on(&x)).await.unwrap();
+        let trigger = a.add_trigger(p.id, &cron, Some(later)).await.unwrap();
+        a.commit().await.unwrap();
+        let mut r = db.tenant(alice).await.unwrap();
+        r.set_plan_paused(p.id, !resume).await.unwrap();
+        let d = tokio::spawn(delete_instance_like_the_api(db.clone(), alice, x.id));
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        if resume {
+            r.set_trigger_enabled(trigger.id, true, Some(later))
+                .await
+                .unwrap();
+        } else {
+            r.delete_plan(p.id).await.unwrap();
+        }
+        r.commit().await.unwrap();
+        let retired = d.await.unwrap().unwrap();
+        assert_eq!(retired.deleted.is_empty(), !resume, "{retired:?}");
+        let mut a = db.tenant(alice).await.unwrap();
+        assert!(matches!(a.plan(p.id).await, Err(Error::NotFound)));
+        assert!(a.triggers(p.id).await.unwrap().iter().all(|t| !t.enabled));
+        a.rollback().await.unwrap();
+    }
+
+    // x 的流水线有一步在 y 上，y 的有一步在 x 上，两个同时删除。
+    for _ in 0..10 {
+        let (x, y) = (instance(&db, alice).await, instance(&db, alice).await);
+        let mut a = db.tenant(alice).await.unwrap();
+        let px = a.create_plan(&plan_on(&x)).await.unwrap();
+        a.set_plan_steps(px.id, &[step_on(&y)]).await.unwrap();
+        let py = a.create_plan(&plan_on(&y)).await.unwrap();
+        a.set_plan_steps(py.id, &[step_on(&x)]).await.unwrap();
+        a.commit().await.unwrap();
+        let (rx, ry) = tokio::join!(
+            tokio::spawn(delete_instance_like_the_api(db.clone(), alice, x.id)),
+            tokio::spawn(delete_instance_like_the_api(db.clone(), alice, y.id)),
+        );
+        rx.unwrap().unwrap();
+        ry.unwrap().unwrap();
+        let mut a = db.tenant(alice).await.unwrap();
+        assert!(matches!(a.plan(px.id).await, Err(Error::NotFound)));
+        assert!(matches!(a.plan(py.id).await, Err(Error::NotFound)));
+        a.rollback().await.unwrap();
+    }
+}
+
+async fn blocked<T>(h: &tokio::task::JoinHandle<T>) {
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(!h.is_finished(), "should wait for the other transaction");
+}
+
+/// 恢复、确认前查步骤，改步骤时查实例，都和删除实例互斥（11.9）：先查的那边提交以后删除才处理计划（暂停刚恢复的、
+/// 刚加了它上面的步骤的流水线）；删除先开始的，查的那边等它提交，看到实例已经删了。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn plan_step_checks_and_instance_deletion_take_turns() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = t.db.clone();
+    let alice = user(&db, "+8613800000001").await;
+    let y = instance(&db, alice).await;
+    let paused_pipeline = |x: Instance| {
+        let db = db.clone();
+        let y = y.clone();
+        async move {
+            let mut a = db.tenant(alice).await.unwrap();
+            let p = a.create_plan(&plan_on(&y)).await.unwrap();
+            a.set_plan_steps(p.id, &[step_on(&x)]).await.unwrap();
+            a.set_plan_paused(p.id, true).await.unwrap();
+            a.commit().await.unwrap();
+            p.id
+        }
+    };
+
+    // 恢复先查过步骤：删除等它提交，再把它暂停。
+    let x = instance(&db, alice).await;
+    let p = paused_pipeline(x.clone()).await;
+    let mut r = db.tenant(alice).await.unwrap();
+    assert_eq!(r.deleted_step(p).await.unwrap(), None);
+    let d = tokio::spawn(delete_instance_like_the_api(db.clone(), alice, x.id));
+    blocked(&d).await;
+    r.set_plan_paused(p, false).await.unwrap();
+    r.commit().await.unwrap();
+    assert_eq!(d.await.unwrap().unwrap().paused, [p]);
+    let mut a = db.tenant(alice).await.unwrap();
+    assert!(a.plan(p).await.unwrap().paused);
+    a.rollback().await.unwrap();
+
+    // 删除先开始：恢复等它提交，看到那一步的实例删了。
+    let x = instance(&db, alice).await;
+    let p = paused_pipeline(x.clone()).await;
+    let mut d = db.tenant(alice).await.unwrap();
+    assert_eq!(d.retire_instance_plans(x.id).await.unwrap().paused, []);
+    d.delete_instance(x.id).await.unwrap();
+    let r = tokio::spawn({
+        let db = db.clone();
+        async move {
+            let mut r = db.tenant(alice).await.unwrap();
+            r.deleted_step(p).await
+        }
+    });
+    blocked(&r).await;
+    d.commit().await.unwrap();
+    assert_eq!(r.await.unwrap().unwrap().as_deref(), Some("a"));
+
+    // 改步骤先查过实例：删除等它提交，再暂停这个在跑的流水线。
+    let x = instance(&db, alice).await;
+    let mut a = db.tenant(alice).await.unwrap();
+    let p = a.create_plan(&plan_on(&y)).await.unwrap().id;
+    a.commit().await.unwrap();
+    let mut s = db.tenant(alice).await.unwrap();
+    s.set_plan_steps(p, &[step_on(&x)]).await.unwrap();
+    let d = tokio::spawn(delete_instance_like_the_api(db.clone(), alice, x.id));
+    blocked(&d).await;
+    s.commit().await.unwrap();
+    assert_eq!(d.await.unwrap().unwrap().paused, [p]);
+
+    // 删除先开始：改步骤等它提交，实例已经删了。
+    let x = instance(&db, alice).await;
+    let mut d = db.tenant(alice).await.unwrap();
+    d.retire_instance_plans(x.id).await.unwrap();
+    d.delete_instance(x.id).await.unwrap();
+    let s = tokio::spawn({
+        let db = db.clone();
+        let x = x.clone();
+        async move {
+            let mut s = db.tenant(alice).await.unwrap();
+            s.set_plan_steps(p, &[step_on(&x)]).await
+        }
+    });
+    blocked(&s).await;
+    d.commit().await.unwrap();
+    assert!(matches!(s.await.unwrap(), Err(Error::NotFound)));
+}
+
 /// 删除实例：从它的授权收窄给别的实例的子授权一起吊销；根在它上面的运行树里、在别的实例上跑的步骤一起取消。
 /// 父授权失效后，子授权也换不到沙箱令牌、模型网关也不认。
 #[tokio::test]
