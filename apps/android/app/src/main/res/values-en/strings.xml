@@ -168,7 +168,7 @@
     <string name="profile_name_unset">Not set</string>
     <string name="profile_name_edit">Edit nickname</string>
     <string name="profile_name_hint">Leave empty to remove the nickname</string>
-    <string name="profile_name_too_long">A nickname can have at most %1$d characters</string>
+    <string name="profile_name_too_long">The nickname is too long (limit: %1$d)</string>
 
     <!-- Devices and account -->
     <string name="devices_section_profile">Profile</string>

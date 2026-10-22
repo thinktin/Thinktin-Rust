@@ -48,4 +48,23 @@ class AppContainerLanguageTest {
         }
         assertEquals(listOf("en", "fr-FR"), mock.acceptLanguageTags)
     }
+
+    @Test
+    fun syncsServerLocaleAfterLoginOnlyWhenDifferent() = runBlocking {
+        val fake = FakeThinktinService(mock)
+        val container = testContainer(
+            ApplicationProvider.getApplicationContext(),
+            createCore = { fake },
+            systemLanguage = "ja",
+        )
+        val user = mock.me()
+        // 跟随系统、系统是日语：服务端只认 zh-CN / en，按 en 算
+        assertEquals("en", container.syncServerLocaleNow(fake, user.copy(locale = "zh-CN")))
+        assertEquals(listOf("en"), fake.locales)
+        assertEquals("一致就不改", null, container.syncServerLocaleNow(fake, user.copy(locale = "en")))
+        container.settingsRepository.setLanguage(AppLanguage.Chinese)
+        assertEquals("zh-CN", container.syncServerLocaleNow(fake, user.copy(locale = "en")))
+        assertEquals(null, container.syncServerLocaleNow(fake, user.copy(locale = "zh-cn")))
+        assertEquals(listOf("en", "zh-CN"), fake.locales)
+    }
 }

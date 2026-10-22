@@ -147,6 +147,32 @@ IO 线程上创建，创建中显示加载，任何异常（`UnsatisfiedLinkErro
 Keystore 失效……）都显示“无法加载核心库”页（原因 + 重试），不崩溃。`SecureSessionStore` 遇到 Keystore 失效或偏好文件损坏时
 删掉重建，还不行就退回内存存储，读不出的令牌按未登录处理。
 
+## 登录与账号（13.2）
+
+- **登录流**（`ui/login`，未登录时替换整个主区）：手机号页（国家 / 地区码，默认 +86，常用 8 个；`PhoneRegion` 按位数和开头粗查格式，
+  E.164 交给服务端）→ 验证码页（6 位、自动聚焦、满 6 位自动提交、60 秒倒计时重发、“更换手机号”返回）→
+  `login(phone, code, null, null)`（推送令牌在 13.8 接）。两页共用一个 `LoginViewModel`，挂在 Activity 上（旋转不丢号码和倒计时，
+  登录成功后界面切走也不会取消没跑完的回调），每次新进登录流 `reset()`。
+  错误映射：`rate_limited` 显示剩余秒数（发码时倒计时，按号码算，换号码可以马上发）；`account_frozen` 进 `login/frozen`
+  （还没有登录态，只能返回）；网络错误、服务暂时不可用用 Snackbar 带“重试”；`invalid` 按当前步骤做字段级提示
+  （服务端对号码不对和验证码错都报 `invalid`）。
+- 登录成功后服务的 `authState` 变成已登录，`AppRoot` 换成主界面，暂存的深链在那里处理（`DeepLinkInbox`）；
+  `AppContainer.syncServerLocale` 在容器的作用域里比较 `User.locale` 和 App 当前语言（`AppLanguage.serverLocale`，
+  跟随系统时中文以外一律 en），不一致就 `setLocale`。
+- **冻结页**：已登录时（接口或事件流返回 `AccountFrozen`）是 `FrozenAccountScreen`：登录态保留、提示联系客服、“重新检查”
+  （`me()` 成功时 `CoreThinktinService` 回到已登录）、退出登录。登录时被拒不进这个页：`CoreThinktinService.login` 报冻结时
+  保持未登录（没有会话），由登录流自己的冻结说明处理。
+- **设备与账号**（路由 `devices?action=…`，入口在设置页“安全”区）：资料（手机号、昵称）、设备列表（平台图标、名字、本机标记、
+  电脑的在线状态、最后活跃）、远程下线（确认框；本机没有这个按钮）、下线其他设备（可勾选“同时停止全部 agent”，二次确认，
+  结果 Snackbar）、全部停止（二次确认，结果框里是取消的运行 / 吊销的授权 / 暂停的计划数）、退出登录（只下线本设备）。
+  `action` 是设置页直接要打开的对话框（`sign_out_others`、`stop_all`）。
+- **改昵称**（`account/name`）、**注销账号**（`account/delete`）是单独的页面：注销三步（说明后果，含保险箱 DEK 一并销毁 →
+  `sendSelfCode(DeleteAccount)` 的验证码 → 最后确认），验证码错回第二步；成功后服务变成未登录，回登录页。
+  它们不做成对话框，是因为对话框里的输入框在 Robolectric 下一直不空闲（`AppNotIdleException`），测不了（真机没问题）。
+- 演示模式下没有退出登录和注销（关掉演示模式就是“退出”）；设备列表、下线、全部停止照常演示。
+- 设置页（13.2 的骨架升级）：账号区（手机号、昵称入口）、安全区（设备与账号、下线其他设备、全部停止）、外观、演示模式、
+  危险区（退出登录、注销账号）；语言、通知、关于等在 13.13。
+
 ## 深链
 
 `thinktin://run/{id}`、`approval/{id}`、`plan/{id}`、`instance/{id}`、`vault/request/{id}`、`inbox`、`inbox/{id}`（第 3 节）。
@@ -178,8 +204,10 @@ abortOnError 开着，不用 baseline；release 包跑一遍 R8，检查保留�
   时间统一是 Unix 毫秒（Long），相对时间用 `RelativeTime`。
 - 一个页面一个 ViewModel（`StateFlow<UiState>`，一次性事件用 Channel），用 `viewModel(factory = viewModelFactory { … })`
   从 `LocalThinktinService` / `LocalAppContainer` 取依赖；不引入 Hilt。
-- 错误：服务调用抛 `ServiceError`；文案由 `:app` 的 `ErrorText` 映射；`SignedOut` 回登录流，`AccountFrozen` 显示冻结页
-  （由 `ThinktinService.authState` 驱动）。
+- 错误：服务调用抛 `ServiceError`；文案由 `:app` 的 `ErrorText` 映射（`isRateLimited`、`isInvalid`、`isRetryable` 给表单页
+  做字段级提示和“重试”）；`SignedOut` 回登录流，`AccountFrozen` 显示冻结页（由 `ThinktinService.authState` 驱动）。
+- 倒计时（验证码重发、限频剩余秒数）用 `ui/common/Countdown`，跑在 viewModelScope 上，测试里用 TestCoroutineScheduler 推进。
+- 对话框（`AlertDialog`）里不放输入框：Robolectric 下一直不空闲。要输入的做成单独的页面（见“登录与账号”）。
 - 无障碍：图标按钮都有 `contentDescription`；edge-to-edge 下用 Scaffold 的 innerPadding / `navigationBarsPadding` / `imePadding`。
 - 不提交生成的 `.so` 和许可证资源；`client_core.kt` 只通过脚本更新，不手改。
 - 服务调用只抛 `ServiceError`（`CoreThinktinService` 把 `ClientException` 之外的异常，包括 Rust panic 的 `InternalException`，
@@ -189,6 +217,10 @@ abortOnError 开着，不用 baseline；release 包跑一遍 R8，检查保留�
   `error` 等 13.5 能区分 agent 写的部分后再标。
 
 ## 已知问题
+
+- 登录页“用户协议”“隐私政策”还只是说明文字，没有链接（正式地址未定，13.13 关于页一起做）；冻结页只写“联系客服”，
+  没有具体渠道（客服邮箱 / 工单地址未定）。
+- 验证码没有接 SMS Retriever / 一次性验证码自动填充（需要服务端短信模板带 App 哈希）；推送令牌在 13.8 接，现在登录传 null。
 
 - `tools/client-core/build-android.sh` 没有“跳过 AAR”的开关，`sync-core.sh` 用 PATH 垫片绕过（见上）。以后给它加一个开关
   （比如 `THINKTIN_SKIP_AAR=1`）并去掉 `jvmToolchain(17)` 的硬要求后，删掉垫片。
