@@ -70,11 +70,15 @@ jobs:
           cd "$RUNNER_TEMP"
           curl -fsSL --retry 5 --retry-all-errors -o swift.tar.gz "$url"
           curl -fsSL --retry 5 --retry-all-errors -o swift.tar.gz.sig "$url.sig"
-          # swift.org 的 CDN 偶尔回 200 但内容不是公钥（2026-10-22 遇到过，gpg 报 no valid OpenPGP data），按内容判断、退避重试。
+          # swift.org 的 CDN 有时把公钥按 gzip 压缩发回来（2026-10-22 两次遇到：文件以 1f 8b 开头，gpg 报 no valid OpenPGP
+          # data）。curl 带 --compressed 自动解压；响应头没标压缩时按文件头认出 gzip 再解；还不是公钥就退避重试。
           for attempt in 1 2 3 4 5; do
-            curl -fsSL --retry 5 --retry-all-errors -o swift-keys.asc https://www.swift.org/keys/all-keys.asc || true
+            curl -fsSL --compressed --retry 5 --retry-all-errors -o swift-keys.asc https://www.swift.org/keys/all-keys.asc || true
+            if [ "$(head -c 2 swift-keys.asc 2>/dev/null | od -An -tx1 | tr -d ' \n')" = "1f8b" ]; then
+              gunzip -c swift-keys.asc > swift-keys.asc.plain && mv swift-keys.asc.plain swift-keys.asc || true
+            fi
             if grep -q -- "-----BEGIN PGP PUBLIC KEY BLOCK-----" swift-keys.asc 2>/dev/null; then break; fi
-            echo "::warning::all-keys.asc is not a PGP key block (attempt $attempt): $(head -c 120 swift-keys.asc 2>/dev/null | tr -d '\n')"
+            echo "::warning::all-keys.asc is not a PGP key block (attempt $attempt), first bytes: $(head -c 16 swift-keys.asc 2>/dev/null | od -An -tx1 | tr -d '\n')"
             sleep $((attempt * 15))
           done
           grep -q -- "-----BEGIN PGP PUBLIC KEY BLOCK-----" swift-keys.asc
