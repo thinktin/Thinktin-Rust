@@ -120,6 +120,14 @@ pub struct AgentInfo {
     pub active_protocol: Option<String>,
 }
 
+/// 跨实例列运行的条件（11.8）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RunFilter {
+    pub plan: Option<PlanId>,
+    pub active: bool,
+    pub roots: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct PlanView {
     #[serde(flatten)]
@@ -951,6 +959,33 @@ impl Api {
             runs: Vec<Run>,
         }
         let mut path = format!("/v1/instances/{instance}/runs?limit={limit}");
+        if let Some(b) = before {
+            path.push_str(&format!("&before={b}"));
+        }
+        Ok(self.json::<R>(Method::GET, &path, None).await?.runs)
+    }
+
+    /// 跨实例的运行（11.8），新的在前。
+    pub async fn all_runs(
+        &self,
+        f: &RunFilter,
+        before: Option<RunId>,
+        limit: u32,
+    ) -> Result<Vec<Run>> {
+        #[derive(Deserialize)]
+        struct R {
+            runs: Vec<Run>,
+        }
+        let mut path = format!("/v1/runs?limit={limit}");
+        if let Some(p) = f.plan {
+            path.push_str(&format!("&plan_id={p}"));
+        }
+        if f.active {
+            path.push_str("&active=true");
+        }
+        if f.roots {
+            path.push_str("&roots=true");
+        }
         if let Some(b) = before {
             path.push_str(&format!("&before={b}"));
         }

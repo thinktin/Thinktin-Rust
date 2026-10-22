@@ -82,6 +82,14 @@ pub struct RunChange {
     pub wait_code: Option<&'static str>,
 }
 
+/// 跨实例列运行（11.8）：某个计划的、还没结束的、只要根运行（不要流水线的步骤、委派的子任务）。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RunFilter {
+    pub plan: Option<PlanId>,
+    pub active: bool,
+    pub roots: bool,
+}
+
 /// 后台看到的运行：带租约、预算等执行细节。
 #[derive(Debug, Clone, PartialEq)]
 pub struct RunRecord {
@@ -314,6 +322,47 @@ impl Tx<Tenant> {
         .bind(limit)
         .fetch_all(self.conn())
         .await?;
+        rows.into_iter().map(Row::into_run).collect()
+    }
+
+    /// 这个用户的运行（跨实例），新的在前，`before` 往下翻。四种组合各是一条固定的语句，分别用得上
+    /// runs_plan、runs_user_active、runs_user_recent 这几个索引；“没结束”的写法要和索引的条件一模一样。
+    pub async fn list_runs(
+        &mut self,
+        f: RunFilter,
+        before: Option<RunId>,
+        limit: i64,
+    ) -> Result<Vec<Run>> {
+        macro_rules! list {
+            ($where:literal) => {
+                concat!(
+                    "SELECT ",
+                    columns!(),
+                    " FROM runs WHERE user_id = app_user_id() AND ",
+                    $where,
+                    " AND ($2::bool OR parent_run_id IS NULL) \
+                     AND id < coalesce($3::uuid, 'ffffffff-ffff-ffff-ffff-ffffffffffff'::uuid) \
+                     ORDER BY id DESC LIMIT $4"
+                )
+            };
+        }
+        let sql = match (f.plan.is_some(), f.active) {
+            (true, true) => {
+                list!("plan_id = $1 AND state NOT IN ('succeeded', 'failed', 'cancelled')")
+            }
+            (true, false) => list!("plan_id = $1"),
+            (false, true) => {
+                list!("$1::uuid IS NULL AND state NOT IN ('succeeded', 'failed', 'cancelled')")
+            }
+            (false, false) => list!("$1::uuid IS NULL"),
+        };
+        let rows: Vec<Row> = sqlx::query_as(sql)
+            .bind(f.plan.map(|p| p.0))
+            .bind(!f.roots)
+            .bind(before.map(|r| r.0))
+            .bind(limit)
+            .fetch_all(self.conn())
+            .await?;
         rows.into_iter().map(Row::into_run).collect()
     }
 

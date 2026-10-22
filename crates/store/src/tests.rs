@@ -3337,3 +3337,108 @@ async fn wait_codes_only_show_while_waiting() {
             .is_err()
     );
 }
+
+#[tokio::test]
+async fn runs_across_instances_by_plan_and_state() {
+    use crate::RunFilter;
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = user(db, "+8613800000091").await;
+    let bob = user(db, "+8613800000092").await;
+    let a = instance(db, alice).await;
+    let b = instance(db, alice).await;
+    let done = queue_run(db, alice, &a, "done").await;
+    sqlx::query("UPDATE runs SET state = 'succeeded', finished_at = now() WHERE id = $1")
+        .bind(done.id.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let queued = queue_run(db, alice, &a, "queued").await;
+    let other = queue_run(db, alice, &b, "on b").await;
+    let mut tx = db.tenant(alice).await.unwrap();
+    let plan = tx
+        .create_plan(&NewPlan {
+            instance_id: b.id,
+            title: "日报".into(),
+            goal: "summarize".into(),
+            policy: PlanPolicy::default(),
+            catch_up: CatchUp::Once,
+            created_by: PlanAuthor::User,
+            run_grant_id: None,
+        })
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    let root = w
+        .create_run(
+            alice,
+            &NewRun {
+                plan_id: Some(plan.id),
+                ..NewRun::new(a.id, RunSource::Plan, "root", "1")
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let step = w
+        .create_run(
+            alice,
+            &NewRun {
+                plan_id: Some(plan.id),
+                parent_run_id: Some(root.id),
+                step_key: Some("s1".into()),
+                ..NewRun::new(b.id, RunSource::Pipeline, "step", "1")
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    w.commit().await.unwrap();
+    let bobs = instance(db, bob).await;
+    queue_run(db, bob, &bobs, "bob's").await;
+
+    let list = |u, f: RunFilter, before, limit| async move {
+        let mut tx = db.tenant(u).await.unwrap();
+        let runs = tx.list_runs(f, before, limit).await.unwrap();
+        tx.rollback().await.unwrap();
+        runs.iter().map(|r| r.id).collect::<Vec<_>>()
+    };
+    let all = list(alice, RunFilter::default(), None, 50).await;
+    assert_eq!(all, [step.id, root.id, other.id, queued.id, done.id]);
+    let active = list(
+        alice,
+        RunFilter {
+            active: true,
+            ..Default::default()
+        },
+        None,
+        50,
+    )
+    .await;
+    assert!(!active.contains(&done.id) && active.len() == 4);
+    let of_plan = RunFilter {
+        plan: Some(plan.id),
+        ..Default::default()
+    };
+    assert_eq!(list(alice, of_plan, None, 50).await, [step.id, root.id]);
+    assert_eq!(
+        list(
+            alice,
+            RunFilter {
+                roots: true,
+                ..of_plan
+            },
+            None,
+            50
+        )
+        .await,
+        [root.id]
+    );
+    // 往下翻：两页不重叠，合起来是全部。
+    let first = list(alice, RunFilter::default(), None, 2).await;
+    let rest = list(alice, RunFilter::default(), Some(first[1]), 50).await;
+    assert_eq!([first, rest].concat(), all);
+    // 别人的计划：什么都没有。
+    assert!(list(bob, of_plan, None, 50).await.is_empty());
+}

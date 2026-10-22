@@ -1558,3 +1558,65 @@ async fn ffi_runs_say_what_they_wait_for() {
     let listed = c.runs(inst.id.clone(), 10).await.unwrap();
     assert_eq!(listed[0].wait_code.as_deref(), Some("no_balance"));
 }
+
+/// 跨实例的运行列表（11.8）：全部、没结束的、往下翻；顺便更新每个实例的缓存。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ffi_runs_across_instances() {
+    let Some(e) = env().await else { return };
+    let (c, _store, _d) = ffi_login(&e, "13800138525", "ios", "iPhone").await;
+    let a = c.adopt("claude".into(), "助手".into(), None).await.unwrap();
+    let b = c.adopt("codex".into(), "写手".into(), None).await.unwrap();
+    let mut ids = Vec::new();
+    for (inst, p) in [(&a, "一"), (&a, "二"), (&b, "三")] {
+        ids.push(c.create_run(inst.id.clone(), p.into()).await.unwrap().id);
+    }
+    let all = c
+        .list_runs(ffi::RunFilter::default(), None, 10)
+        .await
+        .unwrap();
+    assert_eq!(
+        all.iter().map(|r| r.id.clone()).collect::<Vec<_>>(),
+        ids.iter().rev().cloned().collect::<Vec<_>>()
+    );
+    c.cancel_run(ids[0].clone(), false).await.unwrap();
+    let active = c
+        .list_runs(
+            ffi::RunFilter {
+                active_only: true,
+                ..Default::default()
+            },
+            None,
+            10,
+        )
+        .await
+        .unwrap();
+    assert_eq!(active.len(), 2);
+    let page = c
+        .list_runs(ffi::RunFilter::default(), None, 2)
+        .await
+        .unwrap();
+    let rest = c
+        .list_runs(ffi::RunFilter::default(), Some(page[1].id.clone()), 10)
+        .await
+        .unwrap();
+    assert_eq!(rest.len(), 1);
+    assert_eq!(rest[0].id, ids[0]);
+    assert!(
+        c.cached_runs(b.id.clone(), 10)
+            .unwrap()
+            .iter()
+            .any(|r| r.id == ids[2])
+    );
+    assert!(matches!(
+        c.list_runs(
+            ffi::RunFilter {
+                plan_id: Some("nope".into()),
+                ..Default::default()
+            },
+            None,
+            10
+        )
+        .await,
+        Err(ClientError::InvalidArgument { .. })
+    ));
+}

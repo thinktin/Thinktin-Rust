@@ -491,6 +491,24 @@ async fn runs_plans_and_approvals() {
         .await;
     assert_eq!(st, StatusCode::OK);
     assert_eq!(runs["runs"].as_array().unwrap().len(), 1);
+    // 跨实例的列表：全部、没结束的。
+    let count = |path: &'static str| {
+        let a = &a;
+        let tok = u.access.clone();
+        async move {
+            let (st, body) = a.call(Method::GET, path, Some(&tok), None).await;
+            assert_eq!(st, StatusCode::OK, "{body}");
+            body["runs"].as_array().unwrap().len()
+        }
+    };
+    assert_eq!(
+        (count("/v1/runs").await, count("/v1/runs?active=true").await),
+        (1, 1)
+    );
+    let (st, _) = a
+        .call(Method::GET, "/v1/runs?plan_id=nope", Some(&u.access), None)
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
     let (st, cancelled) = a
         .call(
             Method::POST,
@@ -502,6 +520,10 @@ async fn runs_plans_and_approvals() {
     assert_eq!(
         (st, cancelled["state"].as_str()),
         (StatusCode::OK, Some("cancelled"))
+    );
+    assert_eq!(
+        (count("/v1/runs").await, count("/v1/runs?active=true").await),
+        (1, 0)
     );
     let (st, body) = a
         .call(
@@ -1513,6 +1535,8 @@ async fn other_users_objects_are_invisible() {
         "/v1/teams",
         "/v1/team-templates",
         "/v1/inbox",
+        "/v1/runs",
+        "/v1/runs?active=true",
     ] {
         let (st, body) = a.call(Method::GET, path, t2, None).await;
         assert_eq!(st, StatusCode::OK, "{path}");

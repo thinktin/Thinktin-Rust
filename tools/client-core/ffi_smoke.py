@@ -44,6 +44,7 @@ async def main():
     c = cc.ThinktinClient(cfg, store)
     print("signed_in", c.signed_in())
     assert c.upgrade_required() is False
+    assert cc.RunFilter().active_only is False
     c.set_accept_language("en-US, en;q=0.9")
     assert cc.accept_language_header(["zh-Hans-CN", "en"]) == "zh-Hans-CN, en;q=0.9"
     print("cached", c.cached_instances(), c.cached_unread())

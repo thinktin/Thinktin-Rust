@@ -875,6 +875,20 @@ impl From<api::VendorInfo> for VendorInfo {
     }
 }
 
+/// 跨实例列运行的条件（11.8）。都有默认值：`RunFilter()` 是全部。
+#[derive(Debug, Clone, Default, uniffi::Record)]
+pub struct RunFilter {
+    /// 只要这个计划的（包括流水线的步骤；配合 `roots_only` 一次触发一行）。
+    #[uniffi(default = None)]
+    pub plan_id: Option<String>,
+    /// 只要没结束的（排队、运行、等待、退避）：抽屉里的“进行中”、实时活动用。
+    #[uniffi(default = false)]
+    pub active_only: bool,
+    /// 只要根运行（不要流水线的步骤、委派的子任务）。
+    #[uniffi(default = false)]
+    pub roots_only: bool,
+}
+
 /// 一条内容举报（5.5）和它的处理结果。
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct ContentReport {
@@ -1702,6 +1716,37 @@ impl ThinktinClient {
     }
 
     /// 更早的一页运行：`before_run_id` 之前的（列表往下翻）。
+    /// 跨实例的运行（11.8），新的在前：某个计划的运行历史、所有没结束的运行。`before_run_id` 往下翻
+    /// （上一页最后一个的 id）。
+    pub async fn list_runs(
+        &self,
+        filter: RunFilter,
+        before_run_id: Option<String>,
+        limit: u32,
+    ) -> Result<Vec<Run>> {
+        let f = api::RunFilter {
+            plan: filter
+                .plan_id
+                .as_deref()
+                .map(|p| parse(p, "plan"))
+                .transpose()?,
+            active: filter.active_only,
+            roots: filter.roots_only,
+        };
+        let before: Option<d::RunId> = before_run_id
+            .as_deref()
+            .map(|b| parse(b, "run"))
+            .transpose()?;
+        self.run(|c| async move {
+            Ok(c.list_runs(&f, before, limit)
+                .await?
+                .into_iter()
+                .map(Into::into)
+                .collect())
+        })
+        .await
+    }
+
     pub async fn older_runs(
         &self,
         instance_id: String,
