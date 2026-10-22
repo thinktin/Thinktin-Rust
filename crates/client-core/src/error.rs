@@ -5,8 +5,8 @@ use proto::api::ErrorCode;
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, uniffi::Error)]
 pub enum ClientError {
     /// 网络不通、超时：稍后重试，离线时用缓存。
-    #[error("network: {message}")]
-    Network { message: String },
+    #[error("network: {detail}")]
+    Network { detail: String },
     /// 没有登录，或登录已失效（刷新令牌被吊销、被重复使用、设备被远程下线）：回到登录页。
     #[error("signed out")]
     SignedOut,
@@ -17,41 +17,42 @@ pub enum ClientError {
     #[error("account frozen")]
     AccountFrozen,
     /// 服务端返回的错误。`code` 是 [`ErrorCode`] 的字符串形式（not_found、conflict、invalid……）。
-    #[error("{code}: {message}")]
+    #[error("{code}: {detail}")]
     Api {
         status: u16,
         code: String,
-        message: String,
+        /// 说明（服务端给的、或者 client-core 写的）。不叫 `message`：Kotlin 的异常类自带 `message`，同名会冲突。
+        detail: String,
         retry_after_secs: Option<u64>,
     },
     /// 响应解析失败（服务端和客户端版本不匹配）。
-    #[error("bad response: {message}")]
-    Decode { message: String },
+    #[error("bad response: {detail}")]
+    Decode { detail: String },
     /// 本地缓存读写失败。
-    #[error("cache: {message}")]
-    Cache { message: String },
+    #[error("cache: {detail}")]
+    Cache { detail: String },
     /// 消息里有像密码、key 的内容（11.6），没有发出去：提示用户存进保险箱，消息里换成引用
     /// （`detect_secrets`、`save_secret_from_message`），或者用户确认后带 `allow_secrets` 重发。
     #[error("the message looks like it contains {count} password(s) or key(s)")]
     ContainsSecrets { count: u32 },
     /// 调用方传的参数不对（id 格式、枚举取值）。
-    #[error("invalid argument: {message}")]
-    InvalidArgument { message: String },
+    #[error("invalid argument: {detail}")]
+    InvalidArgument { detail: String },
     /// client-core 内部错误（后台任务异常退出）。
-    #[error("internal: {message}")]
-    Internal { message: String },
+    #[error("internal: {detail}")]
+    Internal { detail: String },
 }
 
 impl ClientError {
     pub fn network(e: impl std::fmt::Display) -> Self {
         Self::Network {
-            message: e.to_string(),
+            detail: e.to_string(),
         }
     }
 
     pub fn decode(e: impl std::fmt::Display) -> Self {
         Self::Decode {
-            message: e.to_string(),
+            detail: e.to_string(),
         }
     }
 
@@ -68,7 +69,7 @@ impl ClientError {
         Self::Api {
             status,
             code,
-            message,
+            detail: message,
             retry_after_secs,
         }
     }
@@ -93,7 +94,7 @@ impl ClientError {
 impl From<rusqlite::Error> for ClientError {
     fn from(e: rusqlite::Error) -> Self {
         Self::Cache {
-            message: e.to_string(),
+            detail: e.to_string(),
         }
     }
 }

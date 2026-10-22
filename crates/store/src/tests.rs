@@ -1661,6 +1661,22 @@ async fn vault_items_and_requests() {
         a.vault_request(old.id).await.unwrap().status,
         VaultRequestStatus::Expired
     );
+    // 请求的提醒（10.7）：处理完算已读；子类型的格式不对的写不进去。
+    let notice = |vault_request_id, subtype: Option<&str>| NewInboxItem {
+        kind: "vault_request".into(),
+        title: "填一下".into(),
+        vault_request_id,
+        subtype: subtype.map(Into::into),
+        ..Default::default()
+    };
+    let user = a.user();
+    a.insert_inbox(user, &notice(Some(r1.id), None))
+        .await
+        .unwrap();
+    assert!(matches!(
+        a.insert_inbox(user, &notice(None, Some("Bad-Kind"))).await,
+        Err(Error::Invalid(_))
+    ));
     let done = a
         .resolve_vault_request(r1.id, Some(github.id))
         .await
@@ -1668,6 +1684,11 @@ async fn vault_items_and_requests() {
     assert_eq!(
         (done.status, done.item_id),
         (VaultRequestStatus::Fulfilled, Some(github.id))
+    );
+    let inbox = a.inbox(None, 10, false).await.unwrap();
+    assert_eq!(
+        (inbox.len(), inbox[0].vault_request_id, inbox[0].read),
+        (1, Some(r1.id), true)
     );
     assert!(matches!(
         a.resolve_vault_request(r1.id, None).await,
@@ -2740,6 +2761,7 @@ async fn live_activities_follow_their_runs_per_device() {
         steps,
         started: false,
         ended,
+        wait_code: None,
     };
     settle_live(db, &a, "n1", sent(RunState::Queued, 0, false)).await;
     assert!(
@@ -2848,6 +2870,7 @@ async fn live_activities_follow_their_runs_per_device() {
             steps: 0,
             started: true,
             ended: false,
+            wait_code: None,
         },
     )
     .await;
@@ -2888,6 +2911,7 @@ async fn live_activities_follow_their_runs_per_device() {
             steps: 0,
             started: true,
             ended: false,
+            wait_code: None,
         },
     )
     .await;
@@ -3230,6 +3254,7 @@ async fn live_activities_follow_the_phone() {
             steps: 4,
             started: false,
             ended: false,
+            wait_code: None,
         },
     )
     .await;

@@ -36,8 +36,8 @@ pub const MAX_APPROVAL_TTL_SECS: u64 = 24 * 3600;
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, uniffi::Error)]
 pub enum PairingError {
     /// 格式不对：二维码、公钥、字段、签名的编码。
-    #[error("malformed: {message}")]
-    Malformed { message: String },
+    #[error("malformed: {detail}")]
+    Malformed { detail: String },
     /// 过期了（或者签发时间在将来太远）。
     #[error("expired")]
     Expired,
@@ -48,7 +48,7 @@ pub enum PairingError {
 
 fn malformed(message: impl Into<String>) -> PairingError {
     PairingError::Malformed {
-        message: message.into(),
+        detail: message.into(),
     }
 }
 

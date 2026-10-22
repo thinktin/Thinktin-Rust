@@ -1,4 +1,4 @@
-# 预发环境的控制面配置：和生产只差桶、主密钥、并发数，APNs 用沙箱环境（测试包）。
+# 预发环境的控制面配置：和生产只差桶、主密钥、并发数。
 # 接口副本和后台副本共用，角色由环境变量 THINKTIN_API_ENABLED、THINKTIN_WORKER_ENABLED 决定
 # （见 deploy/k8s/base/workloads）。
 # 密钥都不在这里，由 Secret 以环境变量给（docs/release.md 第 5 节）。标了“部署前填”的是占位值。
@@ -67,8 +67,7 @@ sign_name = "ThinkTin"
 template_code = "SMS_FILL_IN"
 
 [push.apns]
-# 测试包（开发证书签的）走 APNs 的沙箱环境。
-endpoint = "https://api.sandbox.push.apple.com"
+# endpoint、sandbox_endpoint 用默认值：TestFlight 包报 apns（生产环境），开发证书签的包报 apns_sandbox（沙盒环境）。
 # 部署前填：App 的 bundle id、开发者账号的 Team ID、推送密钥的 Key ID。私钥在 Secret thinktin-push 里。
 topic = "com.thinktin.app"
 team_id = "FILL_IN"

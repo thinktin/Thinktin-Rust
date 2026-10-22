@@ -197,10 +197,13 @@ fn message(kind: PushKind) -> PushMessage {
             approval_id: Some("appr-9".into()),
             plan_id: None,
             inbox_id: Some("inbox-3".into()),
+            vault_request_id: None,
         },
         ttl: Some(Duration::from_secs(3600)),
         ai_generated: false,
         locale: proto::domain::Locale::En,
+        subtype: None,
+        badge: None,
     }
 }
 
@@ -246,6 +249,36 @@ async fn notifications_go_out_with_ids_only_and_one_access_token() {
     assert_eq!(a["android"]["notification"]["channel_id"], "tt_results");
     assert!(a["android"].get("collapse_key").is_none());
     assert_eq!(a["notification"]["body"], "[AI-generated] Sunny today");
+    drop(sent);
+    // 保险箱请求（10.7）：和审批一样走审批渠道、高优先级，带请求 id；提醒带子类型。
+    let mut m = message(PushKind::VaultRequest);
+    m.target.vault_request_id = Some("vr-7".into());
+    m.subtype = Some("x_y".into());
+    m.badge = Some(4);
+    let p = client.payload(&device("ok"), &m)["message"].clone();
+    // 角标数只给 APNs（Android 的 notification_count 会被桌面加起来）。
+    assert!(
+        p["android"]["notification"]
+            .get("notification_count")
+            .is_none()
+    );
+    // 排队、重试后只剩 25 秒的：原样给，不往上凑到一分钟。
+    let mut short = message(PushKind::Approval);
+    short.ttl = Some(Duration::from_secs(25));
+    assert_eq!(
+        client.payload(&device("ok"), &short)["message"]["android"]["ttl"],
+        "25s"
+    );
+    assert_eq!(
+        (
+            &p["data"]["tt_kind"],
+            &p["data"]["tt_vault_request"],
+            &p["data"]["tt_subtype"]
+        ),
+        (&json!("vault_request"), &json!("vr-7"), &json!("x_y"))
+    );
+    assert_eq!(p["android"]["priority"], "HIGH");
+    assert_eq!(p["android"]["notification"]["channel_id"], "tt_approval");
 }
 
 #[tokio::test]

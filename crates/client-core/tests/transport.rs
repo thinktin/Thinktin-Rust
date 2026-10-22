@@ -1,5 +1,5 @@
 //! 请求的公共部分（11.8）：每个请求都带 `Accept-Language`；服务端说版本太老（426）时，接口报 `UpgradeRequired`、
-//! 事件流以 `Stopped` 结束、不再重连。用一个只会按路径回固定响应的 HTTP 桩，不需要数据库。
+//! 事件流以 `UpgradeRequired` 结束、不再重连。用一个只会按路径回固定响应的 HTTP 桩，不需要数据库。
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -207,7 +207,7 @@ async fn every_request_carries_the_device_language() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_old_app_stops_instead_of_reconnecting() {
     let rt = tokio::runtime::Handle::current();
-    // 握手 426：结束（Stopped），只连了一次；之后再开的事件流不再连。
+    // 握手 426：结束（UpgradeRequired），只连了一次；之后再开的事件流不再连。
     let (base, seen) = stub(vec![(
         "GET /v1/instances/",
         426,
@@ -227,7 +227,7 @@ async fn an_old_app_stops_instead_of_reconnecting() {
     );
     assert_eq!(
         finished(&sink).await,
-        vec![StreamStatus::Connecting, StreamStatus::Stopped]
+        vec![StreamStatus::Connecting, StreamStatus::UpgradeRequired]
     );
     assert!(a.upgrade_required());
     let sink = Arc::new(Sink::default());
@@ -240,7 +240,7 @@ async fn an_old_app_stops_instead_of_reconnecting() {
         sink.clone(),
         fast(),
     );
-    assert_eq!(finished(&sink).await, vec![StreamStatus::Stopped]);
+    assert_eq!(finished(&sink).await, vec![StreamStatus::UpgradeRequired]);
     assert_eq!(seen.lock().unwrap().len(), 1);
 
     // 令牌过期、刷新时才说太老（不带错误体）：一样结束。
@@ -263,7 +263,7 @@ async fn an_old_app_stops_instead_of_reconnecting() {
     let statuses = finished(&sink).await;
     assert_eq!(
         statuses.last(),
-        Some(&StreamStatus::Stopped),
+        Some(&StreamStatus::UpgradeRequired),
         "{statuses:?}"
     );
     assert!(
@@ -310,6 +310,24 @@ fn accept_language_from_the_system_list() {
     assert_eq!(accept_language_header(vec![]), "");
     let many: Vec<String> = (0..15).map(|i| format!("l{i}")).collect();
     assert_eq!(accept_language_header(many).split(", ").count(), 10);
+    // 长的语言标签（带地区偏好的扩展）：只留放得下 256 字节的前几个，结果总能直接用。
+    let long: Vec<String> = (0..10)
+        .map(|i| format!("en-US-u-fw-mon-mu-celsius-x-ab{i:02}"))
+        .collect();
+    let header = accept_language_header(long);
+    assert!(
+        header.len() <= 256 && header.split(", ").count() == 6,
+        "{header}"
+    );
+    assert!(header.ends_with(";q=0.5"), "{header}");
+    let cfg = ApiConfig {
+        base_url: "https://api.example.com".into(),
+        platform: DevicePlatform::Ios,
+        device_name: "test".into(),
+        timeout: Duration::from_secs(5),
+        accept_language: Some(header),
+    };
+    assert!(Api::new(cfg, Arc::new(MemorySessionStore::default())).is_ok());
     assert_eq!(
         proto::domain::Locale::from_accept_language("zh-Hans-CN, en-US;q=0.9"),
         Some(proto::domain::Locale::ZhCn)

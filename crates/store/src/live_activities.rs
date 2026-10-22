@@ -31,6 +31,8 @@ pub struct LiveActivity {
     pub push_token: Option<String>,
     /// 设备的推送开启令牌（远程开启用）。
     pub start_token: Option<String>,
+    /// 设备登记的是 APNs 沙盒环境的推送令牌（开发包，10.7）：实时活动也发到沙盒环境。
+    pub sandbox: bool,
     pub start_sent: bool,
     pub sent_state: Option<RunState>,
     pub sent_steps: Option<u32>,
@@ -39,6 +41,8 @@ pub struct LiveActivity {
     pub instance_id: InstanceId,
     pub instance_name: String,
     pub state: RunState,
+    /// 运行在等什么（`proto::domain::wait_code`），等 key、等电脑时有。
+    pub wait_code: Option<String>,
     pub steps: u32,
     pub started_at: Option<DateTime<Utc>>,
     pub finished_at: Option<DateTime<Utc>>,
@@ -50,6 +54,7 @@ impl std::fmt::Debug for LiveActivity {
             .field("device_id", &self.device_id)
             .field("run_id", &self.run_id)
             .field("pushed", &self.pushed)
+            .field("sandbox", &self.sandbox)
             .field("has_push_token", &self.push_token.is_some())
             .field("start_sent", &self.start_sent)
             .field("sent_state", &self.sent_state)
@@ -62,12 +67,14 @@ impl std::fmt::Debug for LiveActivity {
 /// 发完一个实时活动后记下的结果。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LiveSettle {
-    /// 发出去了：记下发的状态和步数。`started` 是远程开启的那一次，`ended` 是发了 end。
+    /// 发出去了：记下发的状态、等待原因和步数。`started` 是远程开启的那一次，`ended` 是发了 end。
     Sent {
         state: RunState,
         steps: u32,
         started: bool,
         ended: bool,
+        /// 发出去的 `waitCode`（不在等时没有）。
+        wait_code: Option<String>,
     },
     /// 暂时失败：`at` 再试。
     Retry { error: String, at: DateTime<Utc> },
@@ -89,9 +96,11 @@ struct Row {
     sent_steps: Option<i32>,
     attempts: i32,
     activity_start_token: Option<String>,
+    sandbox: bool,
     instance_id: Uuid,
     name: String,
     state: String,
+    wait_code: Option<String>,
     steps: i32,
     started_at: Option<DateTime<Utc>>,
     finished_at: Option<DateTime<Utc>>,
@@ -102,6 +111,7 @@ impl Row {
         let count = |n: i32, what: &str| {
             u32::try_from(n).map_err(|_| Error::Corrupt(format!("negative {what}")))
         };
+        let state: RunState = parse(&self.state)?;
         Ok(LiveActivity {
             device_id: self.device_id.into(),
             run_id: self.run_id.into(),
@@ -109,13 +119,18 @@ impl Row {
             pushed: self.origin == "push",
             push_token: self.push_token,
             start_token: self.activity_start_token,
+            sandbox: self.sandbox,
             start_sent: self.start_sent_at.is_some(),
             sent_state: self.sent_state.as_deref().map(parse).transpose()?,
             sent_steps: self.sent_steps.map(|n| count(n, "steps")).transpose()?,
             attempts: count(self.attempts, "attempts")?,
             instance_id: self.instance_id.into(),
             instance_name: self.name,
-            state: parse(&self.state)?,
+            state,
+            // 只在等 key、等电脑时算数（和 `RunRecord` 一样）：老版本的副本不清这一列，别的状态下可能还留着。
+            wait_code: self
+                .wait_code
+                .filter(|_| matches!(state, RunState::WaitingQuota | RunState::WaitingDevice)),
             steps: count(self.steps, "steps")?,
             started_at: self.started_at,
             finished_at: self.finished_at,
@@ -183,7 +198,7 @@ impl Tx<Tenant> {
             "INSERT INTO live_activities (device_id, run_id, user_id, origin, push_token) \
              SELECT d.id, $2, d.user_id, 'app', $3 FROM devices d WHERE d.id = $1 \
              ON CONFLICT (device_id, run_id) DO UPDATE SET push_token = EXCLUDED.push_token, \
-               sent_state = NULL, sent_steps = NULL, attempts = 0, retry_at = NULL, last_error = NULL, \
+               sent_state = NULL, sent_steps = NULL, sent_wait_code = NULL, attempts = 0, retry_at = NULL, last_error = NULL, \
                ended_at = NULL, gave_up = false, \
                created_at = CASE WHEN live_activities.push_token IS DISTINCT FROM EXCLUDED.push_token \
                  THEN now() ELSE live_activities.created_at END \
@@ -330,7 +345,10 @@ impl Tx<Worker> {
                        x.origin = 'push' AND ((x.start_sent_at IS NULL AND d.activity_start_token IS NOT NULL) \
                          OR r.state IN ('succeeded', 'failed', 'cancelled')) \
                      ELSE x.sent_at IS NULL \
-                       OR (r.state IS DISTINCT FROM x.sent_state AND x.sent_at <= now() - make_interval(secs => $4)) \
+                       OR ((r.state IS DISTINCT FROM x.sent_state \
+                            OR (CASE WHEN r.state IN ('waiting_quota', 'waiting_device') THEN r.wait_code END) \
+                               IS DISTINCT FROM x.sent_wait_code) \
+                           AND x.sent_at <= now() - make_interval(secs => $4)) \
                        OR (t.steps IS DISTINCT FROM x.sent_steps AND x.sent_at <= now() - make_interval(secs => $5)) \
                      END), \
              due AS ( \
@@ -346,7 +364,8 @@ impl Tx<Worker> {
                FROM due WHERE la.device_id = due.device_id AND la.run_id = due.run_id \
                RETURNING la.device_id, la.run_id, la.user_id, la.origin, la.push_token, la.start_sent_at, \
                  la.sent_state, la.sent_steps, la.attempts) \
-             SELECT c.*, d.activity_start_token, r.instance_id, i.name, r.state, due.steps, r.started_at, \
+             SELECT c.*, d.activity_start_token, coalesce(d.push_channel = 'apns_sandbox', false) AS sandbox, \
+               r.instance_id, i.name, r.state, r.wait_code, due.steps, r.started_at, \
                r.finished_at \
              FROM claimed c JOIN due ON due.device_id = c.device_id AND due.run_id = c.run_id \
                JOIN runs r ON r.id = c.run_id JOIN instances i ON i.id = r.instance_id \
@@ -417,7 +436,7 @@ impl Tx<Worker> {
         }
         let sql = match settle {
             LiveSettle::Sent { .. } => mine!(
-                "sent_state = $5, sent_steps = $6, sent_at = now(), \
+                "sent_state = $5, sent_steps = $6, sent_wait_code = $9, sent_at = now(), \
                  start_sent_at = CASE WHEN $7 THEN now() ELSE start_sent_at END, \
                  ended_at = CASE WHEN $8 THEN coalesce(ended_at, now()) ELSE ended_at END, \
                  attempts = 0, retry_at = NULL, last_error = NULL"
@@ -444,11 +463,13 @@ impl Tx<Worker> {
                 steps,
                 started,
                 ended,
+                wait_code,
             } => q
                 .bind(state.as_str())
                 .bind(i32::try_from(*steps).unwrap_or(i32::MAX))
                 .bind(started)
-                .bind(ended),
+                .bind(ended)
+                .bind(wait_code.as_deref()),
             LiveSettle::Retry { error, at } => q.bind(cut(error)).bind(at),
             LiveSettle::GiveUp { error } => q.bind(cut(error)),
             LiveSettle::End { error } => q.bind(error.as_deref().map(cut)),

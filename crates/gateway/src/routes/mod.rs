@@ -97,6 +97,7 @@ pub fn router() -> Router<AppState> {
         .route("/v1/triggers/{id}", delete(plans::delete_trigger))
         // 审批（4.7）
         .route("/v1/approvals", get(approvals::list))
+        .route("/v1/approvals/{id}", get(approvals::get))
         .route("/v1/approvals/{id}/decide", post(approvals::decide))
         // 模型 key（9.8）和预置厂商（9.12）
         // 密码保险箱（9.11）

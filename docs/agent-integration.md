@@ -114,6 +114,8 @@ agent ──stdio MCP──▶ agent-shim mcp-bridge ──Unix socket──▶ 
 
 预授权范围按 ACP 的工具类别表达：`read`、`edit`、`delete`、`move`、`search`、`execute`、`think`、`fetch`、`switch_mode`、`other`，`*` 表示全部。范围内的请求 shim 直接选“只允许这一次”；范围外的按策略拒绝，或者发 `permission_requested` 等用户决定，默认最长等 24 小时（4.7）。按策略直接决定的只发 `permission_resolved`（`by: policy`），不发 `permission_requested`：平台收到 `permission_requested` 就会建审批、推送“需要你的批准”。工具类别是沙箱里的 agent 自己报告的，只表达用户意图；安全边界是 microVM。
 
+shim 每次启动都从 `perm-1` 重新编号，所以运行日志里的审批事件要用 `(run_id, attempt, request_id)` 三个一起认（11.8）。平台写日志时加上自己的键：`agent.permission_requested` 等审批记录建好、推送发出后才写，带 `attempt` 和 `approval_id`（建审批失败的只有 `attempt`）；`agent.permission_resolved` 带 `attempt`，有记录的带 `approval_id`，平台把结果交给 shim 的再带 `approval_state`（`approved`、`rejected`、`expired`：平台判的超时 shim 回的是 `by: user`，要看这个键才不会显示成用户拒绝）；用户决定时写的 `approval.decided` 带 `approval_id`、`state`、`option_id`、`request_id`、`attempt`。单条审批用 `GET /v1/approvals/{id}` 查，什么状态都行。一次尝试结束时它没处理的审批会被取消，所以 `attempt` 比运行当前的尝试小的待处理卡片作废。这几个键在超长事件被截断时也保留。
+
 各家的审批行为不一样，冒烟测试里确认过：
 
 - **Claude**：命令行默认的权限模式不会来征求许可，shim 显式传 `--permission-mode default`。

@@ -270,6 +270,8 @@ async fn delivered_messages_carry_the_brand_label_and_approval_hint() {
             ttl: Some(Duration::from_secs(3600)),
             ai_generated: true,
             locale: Locale::En,
+            subtype: None,
+            badge: None,
         },
         None,
     ))

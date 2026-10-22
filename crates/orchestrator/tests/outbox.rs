@@ -53,6 +53,8 @@ fn message(ttl: Option<Duration>) -> PushMessage {
         ttl,
         ai_generated: false,
         locale: Default::default(),
+        subtype: None,
+        badge: None,
     }
 }
 
@@ -135,6 +137,29 @@ async fn delivers_to_devices_and_clears_dead_tokens() {
     assert_eq!(d.tick().await.unwrap(), Default::default(), "sent once");
 }
 
+/// 开发包的令牌（APNs 沙盒环境，10.7）发到沙盒环境，正式包的发到生产环境。
+#[tokio::test]
+async fn sandbox_tokens_go_to_the_sandbox() {
+    let Some(t) = TestDb::new().await else { return };
+    let user = user_with_devices(
+        &t,
+        &[
+            (PushChannelKind::Apns, "tok-store"),
+            (PushChannelKind::ApnsSandbox, "tok-xcode"),
+        ],
+    )
+    .await;
+    let (production, sandbox) = (Arc::new(Scripted::default()), Arc::new(Scripted::default()));
+    let d = dispatcher(&t, production.clone(), DispatcherConfig::default())
+        .with_channel(PushChannelKind::ApnsSandbox, sandbox.clone());
+    enqueue(&t, user, &message(None), "run_finished:1").await;
+    d.tick().await.unwrap();
+    assert_eq!(
+        (production.sent(), sandbox.sent()),
+        (vec!["tok-store".to_owned()], vec!["tok-xcode".to_owned()])
+    );
+}
+
 #[tokio::test]
 async fn retries_then_gives_up_and_drops_expired() {
     let Some(t) = TestDb::new().await else { return };
@@ -210,6 +235,41 @@ async fn filtered_push_text_is_replaced_not_dropped() {
         bodies.contains(&"【AI 生成】Daily news is ready".to_string()),
         "{bodies:?}"
     );
+}
+
+/// 角标（10.7）：发的时候收件箱里还有几条没读。
+#[tokio::test]
+async fn pushes_carry_the_unread_count() {
+    let Some(t) = TestDb::new().await else { return };
+    let user = user_with_devices(&t, &[(PushChannelKind::Apns, "tok")]).await;
+    let rec = Arc::new(notify::RecordingChannel::default());
+    let d = Dispatcher::new(t.db.clone(), "node-a", DispatcherConfig::default())
+        .with_channel(PushChannelKind::Apns, rec.clone());
+    let mut w = t.db.worker().await.unwrap();
+    for n in 0..2 {
+        let notice = orchestrator::outbox::Notice {
+            dedupe_key: Some(format!("n{n}")),
+            ..orchestrator::outbox::Notice::new(PushKind::RunFinished, "Claude", "done")
+        };
+        orchestrator::outbox::notify(&mut w, user, &notice)
+            .await
+            .unwrap();
+    }
+    w.commit().await.unwrap();
+    // 读了一条以后才发出去：角标是 1，不是写进出箱时的 2。
+    let mut tx = t.db.tenant(user).await.unwrap();
+    let first = tx.inbox(None, 10, false).await.unwrap()[1].id;
+    tx.mark_inbox_read(Some(&[first]), None).await.unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(d.tick().await.unwrap().delivered, 2);
+    let badges: Vec<Option<u32>> = rec
+        .sent
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(_, m)| m.badge)
+        .collect();
+    assert_eq!(badges, [Some(1), Some(1)]);
 }
 
 /// 推送服务给一个离谱的 Retry-After：截到退避上限，投递器不能因为时间溢出崩掉。

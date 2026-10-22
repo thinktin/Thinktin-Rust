@@ -1,11 +1,11 @@
 //! 实时活动（WBS 10.6）：iOS 的灵动岛、锁屏上显示运行的进度。
 //!
 //! App 开了实时活动后登记它的推送令牌；计划到点开始的根运行，按设备的推送开启令牌远程开启（领取运行时记下待开启的，
-//! 见 [`queue_starts`]）。这里定时领该发的：运行的状态、步数和上次发的不一样就发更新（几次变化合成一次，只发现在的
+//! 见 [`queue_starts`]）。这里定时领该发的：运行的状态、等待原因、步数和上次发的不一样就发更新（几次变化合成一次，只发现在的
 //! 样子；只是步数变了的隔一阵才发），运行结束发 end。
 //!
 //! 和 App 的约定（Swift 的 `ActivityAttributes`，见 `docs/live-activities.md`）：类型名 [`ATTRIBUTES_TYPE`]，
-//! 静态属性 `{runId, instanceId, title}`，动态内容 `{state, steps, startedAt?, endedAt?}`（时间是 Unix 秒）。
+//! 静态属性 `{runId, instanceId, title}`，动态内容 `{state, steps, startedAt?, endedAt?, waitCode?}`（时间是 Unix 秒）。
 //! 推送里没有运行的摘要、agent 写的文字：锁屏上谁都看得见。
 
 use std::future::Future;
@@ -44,6 +44,9 @@ pub async fn queue_starts(w: &mut Tx<Worker>, rec: &RunRecord) -> store::Result<
 /// 实时活动的动态内容。
 pub fn content_state(a: &LiveActivity) -> Value {
     let mut v = json!({"state": a.state.as_str(), "steps": a.steps});
+    if let Some(code) = sent_wait_code(a) {
+        v["waitCode"] = json!(code);
+    }
     if let Some(t) = a.started_at {
         v["startedAt"] = json!(t.timestamp());
     }
@@ -51,6 +54,11 @@ pub fn content_state(a: &LiveActivity) -> Value {
         v["endedAt"] = json!(t.timestamp());
     }
     v
+}
+
+/// 内容里的 `waitCode`：运行在等 key、等电脑时等的是什么（领的时候已经按状态过滤过）。
+fn sent_wait_code(a: &LiveActivity) -> Option<String> {
+    a.wait_code.clone()
 }
 
 /// 远程开启时的静态属性。
@@ -98,6 +106,8 @@ pub struct LiveDispatcher {
     db: Db,
     node_id: String,
     channel: Arc<dyn LiveActivityChannel>,
+    /// 开发包（APNs 沙盒环境的令牌）走这个；没配的话也走 `channel`。
+    sandbox: Option<Arc<dyn LiveActivityChannel>>,
     filter: Arc<dyn ContentFilter>,
     cfg: LiveConfig,
 }
@@ -113,8 +123,22 @@ impl LiveDispatcher {
             db,
             node_id: node_id.into(),
             channel,
+            sandbox: None,
             filter: Arc::new(AllowAll),
             cfg,
+        }
+    }
+
+    /// APNs 沙盒环境（10.7）：设备登记的是 `apns_sandbox` 推送令牌的，实时活动也发到这里。
+    pub fn with_sandbox(mut self, channel: Arc<dyn LiveActivityChannel>) -> Self {
+        self.sandbox = Some(channel);
+        self
+    }
+
+    fn channel_for(&self, a: &LiveActivity) -> &dyn LiveActivityChannel {
+        match &self.sandbox {
+            Some(sandbox) if a.sandbox => sandbox.as_ref(),
+            _ => self.channel.as_ref(),
         }
     }
 
@@ -232,12 +256,13 @@ impl LiveDispatcher {
             )),
             alert: Some((title, crate::texts::live_started(locale).into())),
         };
-        Ok(match self.channel.send_live(token, &push).await {
+        Ok(match self.channel_for(a).send_live(token, &push).await {
             PushOutcome::Delivered { .. } => LiveSettle::Sent {
                 state: a.state,
                 steps: a.steps,
                 started: true,
                 ended: false,
+                wait_code: sent_wait_code(a),
             },
             PushOutcome::InvalidToken { reason } => {
                 info!(device = %a.device_id, %reason, "live activity start token is no longer valid");
@@ -271,12 +296,13 @@ impl LiveDispatcher {
             attributes: None,
             alert: None,
         };
-        match self.channel.send_live(token, &push).await {
+        match self.channel_for(a).send_live(token, &push).await {
             PushOutcome::Delivered { .. } => LiveSettle::Sent {
                 state: a.state,
                 steps: a.steps,
                 started: false,
                 ended,
+                wait_code: sent_wait_code(a),
             },
             // 实时活动结束了（用户划掉了、系统结束了）令牌就失效：不再发。
             PushOutcome::InvalidToken { reason } | PushOutcome::Rejected { reason } => {

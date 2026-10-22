@@ -758,6 +758,7 @@ async fn approvals_wait_for_the_user() {
         .await
         .unwrap();
     tx.commit().await.unwrap();
+    let approval_id = pending[0].id;
     tokio::time::timeout(Duration::from_secs(20), h)
         .await
         .unwrap()
@@ -765,6 +766,44 @@ async fn approvals_wait_for_the_user() {
     let rec = e.state(run).await;
     assert_eq!(rec.run.state, RunState::Succeeded);
     assert_eq!(rec.run.summary.as_deref(), Some("approved"));
+    // 审批事件带上对得上审批记录的键。
+    let events = e.events(run).await;
+    let payload = |kind: &str| {
+        events
+            .iter()
+            .find(|(k, _)| k == kind)
+            .unwrap_or_else(|| panic!("no {kind}"))
+            .1
+            .clone()
+    };
+    let asked = payload("agent.permission_requested");
+    assert_eq!(
+        (
+            &asked["attempt"],
+            &asked["approval_id"],
+            &asked["request_id"]
+        ),
+        (
+            &json!(1),
+            &json!(approval_id),
+            &json!(pending[0].request_id)
+        )
+    );
+    let resolved = payload("agent.permission_resolved");
+    assert_eq!(
+        (
+            &resolved["attempt"],
+            &resolved["approval_id"],
+            &resolved["approval_state"]
+        ),
+        (&json!(1), &json!(approval_id), &json!("approved"))
+    );
+    // 先有审批请求，再进入等审批。
+    let at = |want: &dyn Fn(&(String, Value)) -> bool| events.iter().position(want).unwrap();
+    assert!(
+        at(&|(k, _)| k == "agent.permission_requested")
+            < at(&|(k, p)| k == "run.state" && p["state"] == "waiting_approval")
+    );
     let mut tx = e.t.db.tenant(e.user).await.unwrap();
     assert!(tx.pending_approvals().await.unwrap().is_empty());
     tx.rollback().await.unwrap();
@@ -1152,6 +1191,23 @@ async fn interrupted_approvals_are_asked_again_on_the_next_attempt() {
         .unwrap();
     let rec = e.state(run).await;
     assert_eq!((rec.run.state, rec.run.attempt), (RunState::Succeeded, 2));
+    // 两次尝试的请求 id 一样（shim 每次从 perm-1 编号），靠 attempt 和审批 id 分开。
+    let asked: Vec<Value> = e
+        .events(run)
+        .await
+        .into_iter()
+        .filter(|(k, _)| k == "agent.permission_requested")
+        .map(|(_, p)| p)
+        .collect();
+    assert_eq!(asked.len(), 2);
+    assert_eq!(asked[0]["request_id"], asked[1]["request_id"]);
+    assert_eq!(
+        (&asked[0]["attempt"], &asked[1]["attempt"]),
+        (&json!(1), &json!(2))
+    );
+    assert!(
+        asked[0]["approval_id"].is_string() && asked[0]["approval_id"] != asked[1]["approval_id"]
+    );
 }
 
 /// 等审批的运行让出执行名额：只有一个名额时，别的运行照样能跑；批准后它拿回名额接着跑完。
@@ -1454,9 +1510,12 @@ async fn a_run_stuck_on_its_model_key_waits_until_a_key_is_added() {
         "{:?}",
         rec.run.state_reason
     );
-    // 要用户处理：通知用户换 key。
+    // 要用户处理：通知用户换 key；提醒带上等的是什么，App 直接跳到换 key。
     assert!(
-        e.inbox().await.iter().any(|i| i.body.contains("更换 key")),
+        e.inbox()
+            .await
+            .iter()
+            .any(|i| i.body.contains("更换 key") && i.subtype.as_deref() == Some("invalid")),
         "{:?}",
         e.inbox().await
     );
@@ -1506,6 +1565,42 @@ async fn rate_limits_wait_a_few_minutes_without_a_push() {
     assert!(rec.not_before > chrono::Utc::now() + chrono::Duration::minutes(4));
     assert!(e.inbox().await.iter().all(|i| i.kind != "run_failed"));
     assert!(e.exec.claim().await.unwrap().is_none());
+}
+
+/// 先是 key 无效、换了 key 又欠费（10.7）：两次等待各提醒一次，子类型不同；同一个原因不重复提醒。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn each_new_wait_reason_is_announced() {
+    let Some(e) = env().await else { return };
+    let run = e.queue("loop forever", None, 3).await;
+    for (status, code) in [(401, "invalid"), (402, "no_balance")] {
+        let (_stop, h) = e.spawn().await;
+        e.wait_state(run, RunState::Running).await;
+        model_call_failed(&e, status).await;
+        model_call_failed(&e, status).await;
+        tokio::time::timeout(Duration::from_secs(20), h)
+            .await
+            .unwrap()
+            .unwrap();
+        let rec = e.state(run).await;
+        assert_eq!(
+            (rec.run.state, rec.run.wait_code.as_deref()),
+            (RunState::WaitingQuota, Some(code)),
+            "{:?}",
+            rec.run
+        );
+        // 用户补上 key：接着跑。
+        let mut tx = e.t.db.tenant(e.user).await.unwrap();
+        tx.wake_waiting_runs(RunState::WaitingQuota).await.unwrap();
+        tx.commit().await.unwrap();
+    }
+    let waits: Vec<String> = e
+        .inbox()
+        .await
+        .into_iter()
+        .filter(|i| i.kind == "run_failed")
+        .map(|i| i.subtype.unwrap_or_default())
+        .collect();
+    assert_eq!(waits, ["no_balance", "invalid"]);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -1635,11 +1730,29 @@ async fn expired_approvals_are_skipped_by_policy() {
         approval.approval.state,
         proto::domain::ApprovalState::Expired
     );
+    // 平台判的超时，shim 回的是 by=user：事件里带上平台交过去的结果，时间线才不会显示成用户拒绝。
+    let resolved = e
+        .events(run)
+        .await
+        .into_iter()
+        .find(|(k, _)| k == "agent.permission_resolved")
+        .unwrap()
+        .1;
+    assert_eq!(
+        (&resolved["attempt"], &resolved["approval_id"]),
+        (&json!(1), &json!(approval.approval.id))
+    );
+    assert!(
+        resolved["by"] == "timeout" || resolved["approval_state"] == "expired",
+        "{resolved}"
+    );
     let inbox = e.inbox().await;
     assert!(
-        inbox
-            .iter()
-            .any(|i| i.title == "审批超时，已跳过这一步" && i.body == "Delete old reports"),
+        inbox.iter().any(|i| i.title == "审批超时，已跳过这一步"
+                && i.body == "Delete old reports"
+                // 运行结束时只有审批本身那条算已读，这条留给之后回来的用户。
+                && !i.read
+                && i.subtype.as_deref() == Some("approval_skipped")),
         "{inbox:?}"
     );
 }
