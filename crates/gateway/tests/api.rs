@@ -2796,3 +2796,105 @@ async fn live_activities_over_http() {
     assert_eq!(st, StatusCode::NO_CONTENT);
     assert_eq!(start_tokens().await, 0);
 }
+
+#[tokio::test]
+async fn content_reports_over_http() {
+    let Some(a) = api().await else { return };
+    let u = a.login("13800138040").await;
+    let tok = Some(u.access.as_str());
+    let inst = a.adopt(&u).await;
+    let (st, run) = a
+        .call(
+            Method::POST,
+            &format!("/v1/instances/{inst}/runs"),
+            tok,
+            Some(json!({ "prompt": "写一首诗" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{run}");
+    let run_id: RunId = run["id"].as_str().unwrap().parse().unwrap();
+    let mut w = a.t.db.worker().await.unwrap();
+    let seq = w
+        .append_event(
+            inst,
+            Some(run_id),
+            "agent.message",
+            &json!({ "text": "一段不该出现的回复" }),
+        )
+        .await
+        .unwrap()
+        .seq;
+    w.commit().await.unwrap();
+
+    // 举报这一条：进待处理队列，复制下来的内容不回显。
+    let body = json!({ "run_id": run_id.to_string(), "event_seq": seq, "reason": "harmful", "note": "  教唆  " });
+    let (st, first) = a
+        .call(Method::POST, "/v1/reports", tok, Some(body.clone()))
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{first}");
+    assert_eq!(
+        (
+            first["state"].as_str(),
+            first["note"].as_str(),
+            first["event_seq"].as_u64()
+        ),
+        (Some("open"), Some("教唆"), Some(seq))
+    );
+    assert!(first.get("snapshot").is_none());
+    // 再点一次：还是那一条。
+    let (st, again) = a.call(Method::POST, "/v1/reports", tok, Some(body)).await;
+    assert_eq!((st, &again["id"]), (StatusCode::OK, &first["id"]));
+    let mut w = a.t.db.worker().await.unwrap();
+    let open = w.open_reports(10).await.unwrap();
+    w.rollback().await.unwrap();
+    assert_eq!(open.len(), 1);
+    assert_eq!(
+        open[0].snapshot["event"]["payload"]["text"],
+        "一段不该出现的回复"
+    );
+    assert_eq!(open[0].snapshot["run"]["prompt"], "写一首诗");
+
+    // 整个运行也能举报；原因不认识、事件不是这个运行的、别人的运行都不行。
+    let whole = json!({ "run_id": run_id.to_string(), "reason": "other" });
+    let (st, _) = a.call(Method::POST, "/v1/reports", tok, Some(whole)).await;
+    assert_eq!(st, StatusCode::CREATED);
+    let (st, _) = a
+        .call(
+            Method::POST,
+            "/v1/reports",
+            tok,
+            Some(json!({ "run_id": run_id.to_string(), "reason": "boring" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+    let (st, _) = a
+        .call(
+            Method::POST,
+            "/v1/reports",
+            tok,
+            Some(
+                json!({ "run_id": run_id.to_string(), "event_seq": seq + 100, "reason": "other" }),
+            ),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let other = a.login("13800138041").await;
+    let (st, _) = a
+        .call(
+            Method::POST,
+            "/v1/reports",
+            Some(&other.access),
+            Some(json!({ "run_id": run_id.to_string(), "event_seq": seq, "reason": "harmful" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+
+    // 自己的举报和处理结果。
+    let (st, mine) = a.call(Method::GET, "/v1/reports", tok, None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(mine["reports"].as_array().unwrap().len(), 2);
+    let (_, theirs) = a
+        .call(Method::GET, "/v1/reports", Some(&other.access), None)
+        .await;
+    assert_eq!(theirs["reports"].as_array().unwrap().len(), 0);
+}

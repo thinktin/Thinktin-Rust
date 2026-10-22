@@ -1397,3 +1397,36 @@ async fn ffi_live_activities() {
         Err(ClientError::Api { status: 422, .. })
     ));
 }
+
+#[tokio::test]
+async fn ffi_content_reports() {
+    let Some(e) = env().await else { return };
+    let (c, _store, _d) = ffi_login(&e, "13800138522", "ios", "iPhone").await;
+    let inst = c.adopt("claude".into(), "助手".into(), None).await.unwrap();
+    let run = c
+        .create_run(inst.id.clone(), "写一首诗".into())
+        .await
+        .unwrap();
+    let r = c
+        .report_content(
+            run.id.clone(),
+            None,
+            None,
+            "misinformation".into(),
+            Some("编造的数据".into()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        (r.state.as_str(), r.reason.as_str(), r.run_id.as_str()),
+        ("open", "misinformation", run.id.as_str())
+    );
+    assert!(matches!(
+        c.report_content(run.id.clone(), None, None, "boring".into(), None)
+            .await,
+        Err(ClientError::InvalidArgument { .. })
+    ));
+    let mine = c.reports().await.unwrap();
+    assert_eq!(mine.len(), 1);
+    assert_eq!(mine[0].id, r.id);
+}

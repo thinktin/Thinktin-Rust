@@ -121,6 +121,20 @@ pub fn account_restored(locale: Locale) -> (&'static str, &'static str) {
     }
 }
 
+/// 举报处理完了（5.5）：告诉举报的人结果（运营写的处理结果原样带上）。
+pub fn report_handled(locale: Locale, resolution: &str) -> (&'static str, String) {
+    match locale {
+        Locale::ZhCn => (
+            "举报已处理",
+            format!("感谢你的举报，我们已经处理：{resolution}"),
+        ),
+        Locale::En => (
+            "Report handled",
+            format!("Thanks for your report. We have looked into it: {resolution}"),
+        ),
+    }
+}
+
 /// 全部停止（4.6）。
 pub fn stopped_all(locale: Locale, runs: u64, plans: u64) -> (&'static str, String) {
     match locale {

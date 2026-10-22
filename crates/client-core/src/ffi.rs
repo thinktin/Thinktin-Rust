@@ -804,6 +804,43 @@ impl From<api::VendorInfo> for VendorInfo {
     }
 }
 
+/// 一条内容举报（5.5）和它的处理结果。
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct ContentReport {
+    pub id: String,
+    pub run_id: String,
+    pub instance_id: String,
+    pub event_seq: Option<u64>,
+    pub artifact_id: Option<String>,
+    /// harmful、illegal、sexual、hateful、privacy、misinformation、infringement、other。
+    pub reason: String,
+    pub note: Option<String>,
+    /// open（待处理）、closed（已处理）。
+    pub state: String,
+    /// 处理结果（处理完也会发到收件箱和推送）。
+    pub resolution: Option<String>,
+    pub created_at_ms: i64,
+    pub handled_at_ms: Option<i64>,
+}
+
+impl From<d::ContentReport> for ContentReport {
+    fn from(r: d::ContentReport) -> Self {
+        Self {
+            id: r.id.to_string(),
+            run_id: r.run_id.to_string(),
+            instance_id: r.instance_id.to_string(),
+            event_seq: r.event_seq,
+            artifact_id: r.artifact_id.map(|a| a.to_string()),
+            reason: r.reason.as_str().into(),
+            note: r.note,
+            state: r.state.as_str().into(),
+            resolution: r.resolution,
+            created_at_ms: ms(r.created_at),
+            handled_at_ms: r.handled_at.map(ms),
+        }
+    }
+}
+
 /// IM 群机器人（10.5）。token 和签名密钥服务端从不返回，`hint` 是 token 后 4 位。
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct ImChannel {
@@ -2146,6 +2183,42 @@ impl ThinktinClient {
         let id: d::CredentialId = parse(&credential_id, "credential")?;
         self.run(|c| async move { c.api.delete_credential(id).await })
             .await
+    }
+
+    // ---------- 内容举报（5.5） ----------
+
+    /// 举报 agent 的输出（长按回复或产出物）：`event_seq` 是那条事件的序号，`artifact_id` 是产出物，都不给就是整个
+    /// 运行。`reason` 是 harmful、illegal、sexual、hateful、privacy、misinformation、infringement、other 之一，
+    /// `note` 最多 1000 字。同一条内容再举报一次返回那一条待处理的举报。处理结果发到收件箱和推送。
+    pub async fn report_content(
+        &self,
+        run_id: String,
+        event_seq: Option<u64>,
+        artifact_id: Option<String>,
+        reason: String,
+        note: Option<String>,
+    ) -> Result<ContentReport> {
+        let run: d::RunId = parse(&run_id, "run")?;
+        let artifact: Option<d::ArtifactId> = artifact_id
+            .as_deref()
+            .map(|a| parse(a, "artifact"))
+            .transpose()?;
+        let reason: d::ReportReason = from_enum_str(&reason, "report reason")?;
+        self.run(|c| async move {
+            Ok(c.api
+                .report_content(run, event_seq, artifact, reason, note.as_deref())
+                .await?
+                .into())
+        })
+        .await
+    }
+
+    /// 自己的举报和处理结果，新的在前。
+    pub async fn reports(&self) -> Result<Vec<ContentReport>> {
+        self.run(
+            |c| async move { Ok(c.api.reports().await?.into_iter().map(Into::into).collect()) },
+        )
+        .await
     }
 
     // ---------- IM 渠道（10.5） ----------

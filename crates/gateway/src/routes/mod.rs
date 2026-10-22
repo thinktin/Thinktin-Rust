@@ -11,6 +11,7 @@ mod im_channels;
 mod inbox;
 mod instances;
 mod plans;
+mod reports;
 mod runs;
 mod teams;
 mod usage;
@@ -120,6 +121,8 @@ pub fn router() -> Router<AppState> {
             put(im_channels::replace_webhook),
         )
         .route("/v1/im-channels/{id}/test", post(im_channels::test))
+        // 内容举报（5.5）
+        .route("/v1/reports", get(reports::list).post(reports::create))
         .route("/v1/vendors", get(vendors::list))
         .route(
             "/v1/credentials",
