@@ -97,8 +97,10 @@ async fn main() -> anyhow::Result<()> {
                 cfg.shutdown.drain_secs, cfg.shutdown.grace_secs
             );
             println!(
-                "api.enabled = {} (dev_sms = {})",
-                cfg.api.enabled, cfg.api.dev_sms
+                "api.enabled = {} (dev_sms = {}, review account = {})",
+                cfg.api.enabled,
+                cfg.api.dev_sms,
+                cfg.api.review_phone.is_some()
             );
             println!(
                 "worker.enabled = {} (sandbox provider {}, max {} concurrent runs)",

@@ -163,6 +163,40 @@ pub struct AuthService {
     issuer: AccessTokenIssuer,
     verifier: AccessTokenVerifier,
     sms: Arc<dyn SmsSender>,
+    review: Option<ReviewAccount>,
+}
+
+/// 应用审核用的账号（4.7）：审核员收不到短信，这个手机号发码时不发短信，码是配置的固定码（从密钥读）。
+/// 其余照常：限频、有效期、尝试次数、用掉就失效。发码和登录都记审计。
+struct ReviewAccount {
+    phone: String,
+    code: Zeroizing<String>,
+}
+
+/// 检查审核账号的配置：手机号认得出；固定码是 6 位数字（和短信验证码一样），不能是一眼能猜到的（同一个数字、
+/// 顺着或倒着连续）。启动前检查配置时也用它。
+pub fn check_review_account(phone: &str, code: &str) -> Result<()> {
+    normalize_phone(phone).map_err(|_| AuthError::InvalidPhone)?;
+    check_review_code(code)
+}
+
+fn check_review_code(code: &str) -> Result<()> {
+    let digits: Vec<u8> = code.bytes().collect();
+    if digits.len() != 6 || !digits.iter().all(u8::is_ascii_digit) {
+        return Err(AuthError::Invalid(
+            "the review code must be 6 digits".into(),
+        ));
+    }
+    let steps: Vec<i16> = digits
+        .windows(2)
+        .map(|w| i16::from(w[1]) - i16::from(w[0]))
+        .collect();
+    if steps.iter().all(|d| *d == steps[0]) && steps[0].abs() <= 1 {
+        return Err(AuthError::Invalid(
+            "the review code is too easy to guess".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn unix_now() -> u64 {
@@ -195,7 +229,20 @@ impl AuthService {
             issuer,
             verifier,
             sms,
+            review: None,
         })
+    }
+
+    /// 打开应用审核用的账号（4.7）：`phone` 发码时不发短信，码固定是 `code`。
+    pub fn with_review_account(mut self, phone: &str, code: Zeroizing<String>) -> Result<Self> {
+        let phone = normalize_phone(phone).map_err(|_| AuthError::InvalidPhone)?;
+        check_review_code(&code)?;
+        self.review = Some(ReviewAccount { phone, code });
+        Ok(self)
+    }
+
+    fn is_review(&self, phone: &str) -> bool {
+        self.review.as_ref().is_some_and(|r| r.phone == phone)
     }
 
     /// 给手机号发验证码。同一手机号限频；不论号码是否注册都一样处理（不泄露账号是否存在）。
@@ -217,10 +264,31 @@ impl AuthService {
                 retry_after_secs: 3600,
             });
         }
-        let code = generate_code()?;
+        let review = self.review.as_ref().filter(|r| r.phone == phone);
+        let code = match review {
+            Some(r) => r.code.clone(),
+            None => generate_code()?,
+        };
         let hash = code_hash(&self.pepper, purpose.as_str(), &phone, &code);
         w.insert_login_code(&phone, purpose.as_str(), &hash, self.cfg.code_ttl)
             .await?;
+        if review.is_some() {
+            let user = w.user_by_phone(&phone).await?.map(|u| u.id);
+            w.audit(
+                user,
+                "system",
+                "auth.review_code",
+                None,
+                &json!({ "purpose": purpose.as_str() }),
+            )
+            .await?;
+            w.commit().await?;
+            tracing::info!(
+                purpose = purpose.as_str(),
+                "review account code issued (no SMS)"
+            );
+            return Ok(());
+        }
         w.commit().await?;
         // 提交后再发：发送失败时库里多一个没人知道的码，无害；先发后提交则可能发出一个无效的码。
         self.sms.send_code(&phone, &code, purpose).await?;
@@ -309,7 +377,11 @@ impl AuthService {
             &format!("user:{device_id}"),
             "auth.login",
             Some(&session_id.to_string()),
-            &json!({ "new_user": new_user, "platform": device.platform.as_str() }),
+            &json!({
+                "new_user": new_user,
+                "platform": device.platform.as_str(),
+                "review": self.is_review(&phone),
+            }),
         )
         .await?;
         w.commit().await?;
