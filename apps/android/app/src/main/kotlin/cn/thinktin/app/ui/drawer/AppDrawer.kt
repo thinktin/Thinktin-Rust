@@ -1,12 +1,15 @@
 package cn.thinktin.app.ui.drawer
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -15,6 +18,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AccountTree
 import androidx.compose.material.icons.outlined.AddComment
+import androidx.compose.material.icons.outlined.Apps
+import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Inbox
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Search
@@ -22,6 +27,7 @@ import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Badge
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.NavigationDrawerItem
@@ -32,6 +38,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -50,6 +57,9 @@ import cn.thinktin.design.theme.ThinktinSpacing
 /** 抽屉里能去的地方。 */
 enum class DrawerDestination {
     NewChat,
+
+    /** Agent 目录（领养）。 */
+    Catalog,
     Inbox,
     Plans,
     Teams,
@@ -67,6 +77,7 @@ fun AppDrawer(
     onNavigate: (DrawerDestination) -> Unit,
     onOpenInstance: (Instance) -> Unit,
     modifier: Modifier = Modifier,
+    onOpenInstanceSettings: (Instance) -> Unit = {},
 ) {
     ModalDrawerSheet(
         modifier = modifier.testTag(DRAWER_TEST_TAG),
@@ -89,6 +100,9 @@ fun AppDrawer(
             )
             DrawerItem(R.string.drawer_new_chat, Icons.Outlined.AddComment, selected = false) {
                 onNavigate(DrawerDestination.NewChat)
+            }
+            DrawerItem(R.string.drawer_catalog, Icons.Outlined.Apps, selected = currentRoute == "catalog") {
+                onNavigate(DrawerDestination.Catalog)
             }
             val unreadLabel = if (state.unread > 0) {
                 unreadLabel(state.unread)
@@ -134,25 +148,11 @@ fun AppDrawer(
             }
             LazyColumn(Modifier.weight(1f)) {
                 items(instances, key = { it.id }) { instance ->
-                    val stateLabel = stringResource(instance.state.labelRes())
-                    NavigationDrawerItem(
-                        label = {
-                            // 名字 + agent（第 3 节）；13.3 有了 agent 的显示名后换成显示名。
-                            Column {
-                                Text(instance.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(
-                                    text = instance.agentId,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                        },
-                        icon = { StatusDot(instance.state, contentDescription = stateLabel) },
-                        selected = false,
-                        onClick = { onOpenInstance(instance) },
-                        modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
+                    InstanceRow(
+                        instance = instance,
+                        agentName = state.agentNames[instance.agentId] ?: instance.agentId,
+                        onOpen = { onOpenInstance(instance) },
+                        onOpenSettings = { onOpenInstanceSettings(instance) },
                     )
                 }
             }
@@ -164,6 +164,51 @@ fun AppDrawer(
                 ?: if (state.isDemo) stringResource(R.string.drawer_demo_user) else "",
             onClick = { onNavigate(DrawerDestination.Settings) },
         )
+    }
+}
+
+/**
+ * 实例行：状态点、名字（用户起的，不标 AI 生成）、agent 名；点开对话，长按或右侧“更多”进实例设置。
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun InstanceRow(instance: Instance, agentName: String, onOpen: () -> Unit, onOpenSettings: () -> Unit) {
+    val stateLabel = stringResource(instance.state.labelRes())
+    val settingsLabel = stringResource(R.string.drawer_instance_settings)
+    Row(
+        modifier = Modifier
+            .padding(NavigationDrawerItemDefaults.ItemPadding)
+            .fillMaxWidth()
+            .heightIn(min = ThinktinSpacing.ListItemMinHeight)
+            .clip(ThinktinShapes.Composer)
+            .combinedClickable(
+                role = Role.Button,
+                onClick = onOpen,
+                onLongClickLabel = settingsLabel,
+                onLongClick = onOpenSettings,
+            )
+            .padding(start = 16.dp, end = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        StatusDot(instance.state, contentDescription = stateLabel)
+        Column(Modifier.weight(1f)) {
+            Text(instance.name, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                text = agentName,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        IconButton(onClick = onOpenSettings) {
+            Icon(
+                Icons.Outlined.MoreVert,
+                contentDescription = stringResource(R.string.drawer_instance_more, instance.name),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 

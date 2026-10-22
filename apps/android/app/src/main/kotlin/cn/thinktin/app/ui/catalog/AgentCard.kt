@@ -16,8 +16,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import cn.thinktin.app.R
@@ -53,7 +53,8 @@ fun Tag(text: String, accessibleLabel: String? = null, emphasized: Boolean = fal
         contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
         border = if (emphasized) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null,
         modifier = modifier.then(
-            if (accessibleLabel != null) Modifier.semantics { contentDescription = accessibleLabel } else Modifier,
+            // 读屏只读一遍完整的说明（“许可证：MIT”），不再重复读标签上的字。
+            if (accessibleLabel != null) Modifier.clearAndSetSemantics { contentDescription = accessibleLabel } else Modifier,
         ),
     ) {
         Text(

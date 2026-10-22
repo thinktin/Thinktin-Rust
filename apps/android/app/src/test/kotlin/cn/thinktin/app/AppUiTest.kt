@@ -199,9 +199,12 @@ class AppUiTest {
         compose.onNode(hasText("我的 agent") and inDrawer).assertIsDisplayed()
         compose.onNode(hasText("小码") and inDrawer).assertIsDisplayed()
         compose.onNode(hasText("研究员") and inDrawer).assertIsDisplayed()
-        // 第二行是 agent（第 3 节：名字、agent、状态点）
-        compose.onNode(hasText("agent-coder") and inDrawer).assertIsDisplayed()
-        compose.onNode(hasText("agent-research") and inDrawer).assertIsDisplayed()
+        // 第二行是 agent 的显示名（第 3 节：名字、agent、状态点）；目录拉到之前先显示 id
+        compose.waitFor(hasText("代码助手") and inDrawer)
+        compose.onNode(hasText("代码助手") and inDrawer).assertIsDisplayed()
+        compose.onNode(hasText("调研助手") and inDrawer).assertIsDisplayed()
+        compose.onNode(hasContentDescription("运行中") and inDrawer).assertIsDisplayed()
+        compose.onNode(hasContentDescription("小码 的设置") and inDrawer).assertIsDisplayed()
         compose.onNode(hasText("收件箱") and inDrawer).assertIsDisplayed()
     }
 

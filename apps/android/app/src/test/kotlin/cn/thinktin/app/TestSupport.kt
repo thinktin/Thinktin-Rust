@@ -6,7 +6,9 @@ import cn.thinktin.app.settings.AppLanguage
 import cn.thinktin.app.settings.AppSettingsRepository
 import cn.thinktin.data.core.AcceptLanguage
 import cn.thinktin.data.mock.MockThinktinService
+import cn.thinktin.data.model.AgentInfo
 import cn.thinktin.data.model.DeviceInfo
+import cn.thinktin.data.model.Instance
 import cn.thinktin.data.model.LoginResult
 import cn.thinktin.data.model.SelfCodePurpose
 import cn.thinktin.data.model.SignOutOthersResult
@@ -99,6 +101,19 @@ class FakeThinktinService(
     override suspend fun setLocale(locale: String): User {
         synchronized(locales) { locales += locale }
         return mock.setLocale(locale)
+    }
+
+    /** 下一次 adopt 抛 [error]。 */
+    fun failNextAdopt(error: ServiceError) = failNext("adopt", error)
+
+    override suspend fun adopt(agentId: String, name: String, harness: String?): Instance {
+        maybeFail("adopt")
+        return mock.adopt(agentId, name, harness)
+    }
+
+    override suspend fun agents(): List<AgentInfo> {
+        maybeFail("agents")
+        return mock.agents()
     }
 
     override suspend fun devices(): List<DeviceInfo> {

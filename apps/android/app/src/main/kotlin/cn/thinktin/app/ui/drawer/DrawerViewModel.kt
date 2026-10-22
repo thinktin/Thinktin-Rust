@@ -20,6 +20,8 @@ import kotlinx.coroutines.launch
 data class DrawerUiState(
     val user: User? = null,
     val instances: List<Instance> = emptyList(),
+    /** agent id → 显示名（目录拉到之前为空，界面先显示 id）。 */
+    val agentNames: Map<String, String> = emptyMap(),
     val unread: Long = 0,
     val query: String = "",
     val isDemo: Boolean = false,
@@ -80,6 +82,14 @@ class DrawerViewModel(private val service: ThinktinService) : ViewModel() {
         try {
             val instances = service.instances().visible()
             state.update { it.copy(instances = instances) }
+            // 实例行显示 agent 名（第 3 节）；目录拉不到就继续显示 id，不影响其余部分。
+            if (instances.any { it.agentId !in state.value.agentNames }) {
+                try {
+                    val names = service.agents().associate { it.id to it.name }
+                    state.update { it.copy(agentNames = names) }
+                } catch (_: ServiceError) {
+                }
+            }
             val page = service.syncInbox(limit = 1)
             state.update { it.copy(unread = page.unread) }
             val user = service.me()

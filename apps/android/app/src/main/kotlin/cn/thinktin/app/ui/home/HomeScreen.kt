@@ -47,6 +47,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -54,6 +55,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import cn.thinktin.app.R
+import cn.thinktin.app.ui.catalog.AgentCard
 import cn.thinktin.app.ui.common.ErrorText
 import cn.thinktin.app.ui.common.LocalAppContainer
 import cn.thinktin.app.ui.common.LocalThinktinService
@@ -67,7 +69,7 @@ import cn.thinktin.data.service.ServiceError
 import cn.thinktin.design.component.AiGeneratedLabel
 import cn.thinktin.design.component.BannerTone
 import cn.thinktin.design.component.Composer
-import cn.thinktin.design.component.EmptyState
+import cn.thinktin.design.component.PrimaryButton
 import cn.thinktin.design.component.SectionHeader
 import cn.thinktin.app.ui.common.StatusDot
 import cn.thinktin.design.component.TopBarIcons
@@ -84,6 +86,7 @@ fun HomeScreen(
     onOpenRun: (String) -> Unit,
     onOpenCatalog: () -> Unit,
     onOpenInstanceSettings: (String) -> Unit,
+    onOpenAgent: (String) -> Unit = {},
 ) {
     val service = LocalThinktinService.current
     val container = LocalAppContainer.current
@@ -93,6 +96,8 @@ fun HomeScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     val context = LocalContext.current
+    // 回到首页（领养完、删掉实例后）重新取实例列表。
+    LaunchedEffect(viewModel) { viewModel.onShown() }
 
     LaunchedEffect(viewModel) {
         viewModel.uiEvents.collect { event ->
@@ -149,7 +154,7 @@ fun HomeScreen(
             ) {
                 CircularProgressIndicator()
             }
-            state.instances.isEmpty() -> NoInstances(state, Modifier.padding(padding), onOpenCatalog)
+            state.instances.isEmpty() -> NoInstances(state, Modifier.padding(padding), onOpenCatalog, onOpenAgent)
             else -> HomeContent(state, Modifier.padding(padding), onOpenRun)
         }
     }
@@ -379,24 +384,58 @@ private fun LabelledLine(aiGenerated: Boolean, content: @Composable () -> Unit) 
     }
 }
 
+/** 没有实例（第 4.2 节）：衬线问候 + “领养一个 agent”主按钮 + 目录精选卡片。 */
 @Composable
-private fun NoInstances(state: HomeUiState, modifier: Modifier, onOpenCatalog: () -> Unit) {
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(ThinktinSpacing.Page),
-        verticalArrangement = Arrangement.Center,
+private fun NoInstances(state: HomeUiState, modifier: Modifier, onOpenCatalog: () -> Unit, onOpenAgent: (String) -> Unit) {
+    LazyColumn(
+        modifier = modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(ThinktinSpacing.Paragraph),
     ) {
-        EmptyState(
-            title = greetingText(state),
-            message = stringResource(R.string.home_no_instances_message),
-            actionLabel = stringResource(R.string.home_adopt),
-            onAction = onOpenCatalog,
-        )
-        if (state.refreshError != null) {
-            TextButton(onClick = onOpenCatalog, modifier = Modifier.align(Alignment.CenterHorizontally)) {
-                Text(errorText(state.refreshError))
+        item(key = "greeting") {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = ThinktinSpacing.Page)
+                    .padding(top = 48.dp, bottom = 8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(ThinktinSpacing.Paragraph),
+            ) {
+                Text(
+                    text = greetingText(state),
+                    style = ThinktinTextStyles.Greeting,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.semantics { heading() },
+                )
+                Text(
+                    text = stringResource(R.string.home_no_instances_message),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
+                PrimaryButton(text = stringResource(R.string.home_adopt), onClick = onOpenCatalog)
             }
         }
+        banners(state)
+        if (state.featured.isNotEmpty()) {
+            item(key = "featured-header") {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = ThinktinSpacing.Page),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    SectionHeader(title = stringResource(R.string.home_featured), modifier = Modifier.weight(1f))
+                    TextButton(onClick = onOpenCatalog) { Text(stringResource(R.string.home_featured_all)) }
+                }
+            }
+            items(state.featured, key = { "featured-${it.id}" }) { agent ->
+                AgentCard(
+                    agent = agent,
+                    onClick = { onOpenAgent(agent.id) },
+                    modifier = Modifier.padding(horizontal = ThinktinSpacing.Page),
+                )
+            }
+        }
+        item(key = "bottom-space") { Spacer(Modifier.height(24.dp)) }
     }
 }

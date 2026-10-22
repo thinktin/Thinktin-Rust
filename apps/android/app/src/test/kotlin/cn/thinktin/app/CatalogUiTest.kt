@@ -1,0 +1,255 @@
+package cn.thinktin.app
+
+import android.content.Intent
+import android.net.Uri
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isDialog
+import androidx.compose.ui.test.isPopup
+import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextClearance
+import androidx.compose.ui.test.performTextInput
+import androidx.test.core.app.ActivityScenario
+import androidx.test.core.app.ApplicationProvider
+import cn.thinktin.app.ui.agent.ADOPT_SHEET_TEST_TAG
+import cn.thinktin.app.ui.catalog.AGENT_CARD_TEST_TAG
+import cn.thinktin.app.ui.drawer.DRAWER_TEST_TAG
+import cn.thinktin.data.mock.MockThinktinService
+import cn.thinktin.data.model.InstanceState
+import cn.thinktin.data.model.NewPlan
+import cn.thinktin.data.model.PlanStep
+import cn.thinktin.data.service.ServiceError
+import kotlinx.coroutines.runBlocking
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+
+/**
+ * 13.3 的界面：首页空状态与目录精选、目录渲染与搜索、加载失败重试、详情页领养到对话页、
+ * 实例设置（深链进入、改名、删除确认列出受影响的计划和团队）。
+ */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35], application = DemoTestApp::class, qualifiers = "zh-rCN-w411dp-h891dp")
+class CatalogUiTest {
+    @get:Rule
+    val compose = createEmptyComposeRule()
+
+    private var scenario: ActivityScenario<MainActivity>? = null
+    private val app: DemoTestApp get() = ApplicationProvider.getApplicationContext()
+    private val inDialog = hasAnyAncestor(isDialog())
+    private val inSheet = hasAnyAncestor(hasTestTag(ADOPT_SHEET_TEST_TAG))
+    private val mock = MockThinktinService(clock = { DemoTestApp.FIXED_CLOCK.millis() })
+    private val fake = FakeThinktinService(mock)
+
+    @After
+    fun tearDown() {
+        scenario?.close()
+    }
+
+    private fun launch(uri: String? = null) {
+        app.container = testContainer(app, { fake })
+        val intent = Intent(app, MainActivity::class.java)
+        if (uri != null) {
+            intent.action = Intent.ACTION_VIEW
+            intent.data = Uri.parse(uri)
+        }
+        scenario = ActivityScenario.launch(intent)
+    }
+
+    private fun waitFor(matcher: SemanticsMatcher) {
+        compose.waitUntil(timeoutMillis = 10_000) { compose.onAllNodes(matcher).fetchSemanticsNodes().isNotEmpty() }
+    }
+
+    private fun card(agentId: String) = hasTestTag(AGENT_CARD_TEST_TAG + agentId)
+
+    private val searchField = hasContentDescription("搜索 agent") and hasSetTextAction()
+
+    /** 有实例时从首页右上角的溢出菜单进目录。 */
+    private fun openCatalogFromMenu() {
+        waitFor(hasText("最近运行"))
+        compose.waitForIdle()
+        compose.onNode(hasContentDescription("更多")).performClick()
+        compose.onNode(hasText("Agent 目录") and hasAnyAncestor(isPopup())).performClick()
+        waitFor(searchField)
+    }
+
+    @Test
+    fun emptyHomeShowsFeaturedAndCatalogSearches() {
+        runBlocking { mock.instances().forEach { mock.deleteInstance(it.id) } }
+        launch()
+        // 没有实例：衬线问候 + 主按钮 + 目录精选
+        waitFor(hasText("精选 agent"))
+        compose.onNode(hasText("早上好", substring = true)).assertIsDisplayed()
+        compose.onNode(hasText("领养一个 agent")).assertIsDisplayed()
+        compose.onNode(card("agent-coder")).assertExists()
+        compose.onNode(card("agent-writer")).assertExists()
+        compose.onAllNodes(hasText("让", substring = true) and hasSetTextAction()).assertCountEquals(0)
+
+        compose.onNode(hasText("领养一个 agent")).performClick()
+        waitFor(searchField)
+        compose.onNode(hasText("Agent 目录")).assertIsDisplayed()
+        waitFor(card("agent-research"))
+        // 卡片：名字、一句话介绍（上游写的，不标 AI 生成）、许可证、接入方式、协议
+        compose.onNode(hasText("代码助手") and hasAnyAncestor(card("agent-coder"))).assertIsDisplayed()
+        compose.onNode(hasText("读代码、改代码、跑测试，按你的要求提交 PR。")).assertIsDisplayed()
+        compose.onNode(hasContentDescription("许可证：Apache-2.0")).assertIsDisplayed()
+        compose.onNode(hasContentDescription("接入方式：codex") and hasAnyAncestor(card("agent-coder"))).assertIsDisplayed()
+        compose.onNode(hasContentDescription("模型协议：Anthropic Messages") and hasAnyAncestor(card("agent-coder")))
+            .assertIsDisplayed()
+        compose.onNode(hasContentDescription("许可证：专有许可") and hasAnyAncestor(card("agent-writer"))).assertExists()
+        compose.onAllNodes(hasText("【AI 生成】")).assertCountEquals(0)
+
+        compose.onNode(searchField).performTextInput("MIT")
+        waitFor(card("agent-research"))
+        compose.onNode(card("agent-coder")).assertDoesNotExist()
+        compose.onNode(card("agent-writer")).assertDoesNotExist()
+
+        compose.onNode(searchField).performTextClearance()
+        compose.onNode(searchField).performTextInput("没有这个")
+        waitFor(hasText("没有找到和“没有这个”相关的 agent"))
+        compose.onNode(card("agent-research")).assertDoesNotExist()
+
+        compose.onNode(hasContentDescription("清除搜索")).performClick()
+        waitFor(card("agent-coder"))
+        compose.onNode(card("agent-research")).assertExists()
+    }
+
+    @Test
+    fun catalogLoadErrorShowsRetry() {
+        launch()
+        waitFor(hasText("最近运行"))
+        compose.waitForIdle()
+        fake.failNext("agents", ServiceError.Network("offline"))
+        openCatalogFromMenu()
+        waitFor(hasText("目录加载失败"))
+        compose.onNode(hasText("网络不通，请稍后重试")).assertIsDisplayed()
+        compose.onNode(hasText("重试")).performClick()
+        waitFor(card("agent-coder"))
+        compose.onNode(hasText("目录加载失败")).assertDoesNotExist()
+    }
+
+    @Test
+    fun adoptFromDetailOpensChat() {
+        launch()
+        openCatalogFromMenu()
+        waitFor(card("agent-coder"))
+        compose.onNode(card("agent-coder")).performClick()
+
+        // 详情：介绍、版本、许可证、接入方式、协议、上游链接
+        waitFor(hasText("最新版本 1.4.0"))
+        compose.onNode(hasContentDescription("接入方式：claude-code（默认）")).assertIsDisplayed()
+        compose.onNode(hasText("运行时使用 Anthropic Messages：给它配的模型 key 要支持这个协议。")).performScrollTo().assertIsDisplayed()
+        compose.onNode(hasText("1.3.2")).performScrollTo().assertIsDisplayed()
+        compose.onNode(hasText("https://github.com/example/coder")).performScrollTo().assertIsDisplayed()
+
+        // 领养：底部表单，名字默认“<agent 名> 的实例”，两种接入方式可选
+        compose.onNode(hasText("领养") and hasClickAction()).performClick()
+        waitFor(hasTestTag(ADOPT_SHEET_TEST_TAG))
+        val nameField = hasContentDescription("实例名字") and hasSetTextAction()
+        compose.onNode(nameField and hasText("代码助手 的实例")).assertIsDisplayed()
+        compose.onNode(hasText("codex") and inSheet).performClick()
+        compose.onNode(nameField).performTextClearance()
+        compose.onNode(nameField).performTextInput("我的码农")
+        compose.onNode(hasText("领养") and inSheet).performClick()
+
+        // 成功：跳到对话页（13.5 之前是骨架），返回回到首页
+        waitFor(hasText("编号：", substring = true))
+        compose.onNode(hasText("对话")).assertIsDisplayed()
+        val adopted = runBlocking { mock.instances() }.single { it.name == "我的码农" }
+        assertEquals("codex", adopted.harness)
+        compose.onNode(hasText("编号：${adopted.id}")).assertIsDisplayed()
+        compose.onNode(hasContentDescription("返回")).performClick()
+        waitFor(hasText("最近运行"))
+        compose.onNode(searchField).assertDoesNotExist()
+    }
+
+    @Test
+    fun adoptConflictShowsFieldError() {
+        launch()
+        openCatalogFromMenu()
+        waitFor(card("agent-research"))
+        compose.onNode(card("agent-research")).performClick()
+        waitFor(hasText("最新版本 0.9.2"))
+        compose.onNode(hasText("领养") and hasClickAction()).performClick()
+        waitFor(hasTestTag(ADOPT_SHEET_TEST_TAG))
+        // 只有一种接入方式：不让选
+        compose.onAllNodes(hasText("接入方式") and inSheet).assertCountEquals(0)
+        fake.failNextAdopt(ServiceError.Api(409, "conflict", "exists", null))
+        compose.onNode(hasText("领养") and inSheet).performClick()
+        waitFor(hasText("和现有的实例冲突，换个名字再试"))
+        compose.onNode(hasTestTag(ADOPT_SHEET_TEST_TAG)).assertIsDisplayed()
+        // 取消收起表单
+        compose.onNode(hasText("取消") and inSheet).performClick()
+        waitFor(hasText("领养") and hasClickAction() and !inSheet)
+        compose.onNode(hasTestTag(ADOPT_SHEET_TEST_TAG)).assertDoesNotExist()
+    }
+
+    @Test
+    fun instanceDeepLinkRenameAndDeleteListsAffectedPlans() {
+        runBlocking {
+            mock.createPlan(
+                NewPlan(
+                    instanceId = "inst-research",
+                    title = "周报流水线",
+                    goal = "调研后写代码",
+                    triggers = emptyList(),
+                    steps = listOf(
+                        PlanStep("collect", "inst-research", "收集", emptyList()),
+                        PlanStep("code", "inst-coder", "写代码", listOf("collect")),
+                    ),
+                ),
+            )
+        }
+        launch("thinktin://instance/inst-coder")
+        waitFor(hasText("代码助手 · claude-code"))
+        compose.onNode(hasText("实例设置")).assertIsDisplayed()
+        compose.onNode(hasText("1.4.0（已是最新）")).assertIsDisplayed()
+        compose.onNode(hasContentDescription("回滚到 1.3.2")).performScrollTo().assertIsDisplayed()
+        compose.onNode(hasText("模型别名与降级")).performScrollTo().assertIsDisplayed()
+
+        // 改名：单独的页面（不用对话框），保存后回到设置页
+        compose.onNode(hasText("名字") and hasClickAction()).performScrollTo().performClick()
+        val nameField = hasContentDescription("名字") and hasSetTextAction()
+        waitFor(nameField and hasText("小码"))
+        compose.onNode(nameField).performTextClearance()
+        compose.onNode(nameField).performTextInput("码农")
+        compose.onNode(hasText("保存")).performClick()
+        waitFor(hasText("代码助手 · claude-code"))
+        waitFor(hasText("码农") and hasClickAction() and !hasAnyAncestor(hasTestTag(DRAWER_TEST_TAG)))
+        assertEquals("码农", runBlocking { mock.instance("inst-coder") }.name)
+
+        // 删除：先列出受影响的计划和团队，再二次确认
+        compose.onNode(hasText("删除实例")).performScrollTo().performClick()
+        waitFor(hasText("删除“码农”？"))
+        compose.onNode(hasText("删除会影响下面这些计划和团队：") and inDialog).assertIsDisplayed()
+        compose.onNode(hasText("每日依赖检查") and inDialog).assertIsDisplayed()
+        compose.onNode(hasText("周报流水线（1 个步骤）") and inDialog).assertIsDisplayed()
+        compose.onNode(hasText("• 调研小组") and inDialog).assertIsDisplayed()
+        compose.onNode(hasText("继续") and inDialog).performClick()
+        waitFor(hasText("确定删除“码农”？"))
+        assertTrue("第一步不删", runBlocking { mock.instances() }.any { it.id == "inst-coder" })
+        compose.onNode(hasText("删除实例") and inDialog).performClick()
+
+        // 成功回首页：剩下的实例是“研究员”
+        waitFor(hasText("最近运行"))
+        waitFor(hasContentDescription("让 研究员 做点什么"))
+        val left = runBlocking { mock.instances() }
+        assertTrue(left.none { it.id == "inst-coder" || it.state == InstanceState.Deleted })
+        val pipeline = runBlocking { mock.plans() }.single { it.title == "周报流水线" }
+        assertEquals(listOf("collect"), pipeline.steps.map { it.key })
+    }
+}

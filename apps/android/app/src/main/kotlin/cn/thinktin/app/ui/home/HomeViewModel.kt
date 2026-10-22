@@ -2,6 +2,7 @@ package cn.thinktin.app.ui.home
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import cn.thinktin.data.model.AgentInfo
 import cn.thinktin.data.model.Instance
 import cn.thinktin.data.model.InstanceState
 import cn.thinktin.data.model.Run
@@ -45,6 +46,8 @@ data class HomeUiState(
     val instances: List<Instance> = emptyList(),
     val selectedInstanceId: String? = null,
     val recentRuns: List<Run> = emptyList(),
+    /** 没有实例时首页展示的目录精选（前 [HomeViewModel.FEATURED_COUNT] 个）。 */
+    val featured: List<AgentInfo> = emptyList(),
     /** 第一次加载（缓存也没有）时为真。 */
     val loading: Boolean = true,
     /** 刷新失败（网络等）：显示缓存 + 横幅。 */
@@ -87,6 +90,19 @@ class HomeViewModel(
         }
     }
 
+    private var shownOnce = false
+
+    /**
+     * 首页每次显示时调（从目录领养完、删掉实例回来）：第一次已经在 init 里加载，之后重新取实例列表。
+     */
+    fun onShown() {
+        if (!shownOnce) {
+            shownOnce = true
+            return
+        }
+        refresh()
+    }
+
     fun refresh() {
         viewModelScope.launch { refreshNow() }
     }
@@ -96,6 +112,7 @@ class HomeViewModel(
         try {
             applyInstances(service.instances(), fromCache = false)
             state.value.selectedInstanceId?.let { loadRuns(it, network = true) }
+            loadFeatured()
             val name = try {
                 service.me().displayName
             } catch (_: ServiceError) {
@@ -121,6 +138,19 @@ class HomeViewModel(
         if (selected != null && fromCache) {
             val runs = service.cachedRuns(selected, RECENT_LIMIT)
             state.update { it.copy(recentRuns = runs) }
+        }
+    }
+
+    /** 没有实例时拉目录精选（失败不提示：主按钮照样能进目录）。 */
+    private suspend fun loadFeatured() {
+        if (state.value.instances.isNotEmpty()) {
+            if (state.value.featured.isNotEmpty()) state.update { it.copy(featured = emptyList()) }
+            return
+        }
+        try {
+            val agents = service.agents().take(FEATURED_COUNT)
+            state.update { it.copy(featured = agents) }
+        } catch (_: ServiceError) {
         }
     }
 
@@ -179,5 +209,8 @@ class HomeViewModel(
 
     companion object {
         const val RECENT_LIMIT = 20
+
+        /** 首页空状态展示的目录精选个数。 */
+        const val FEATURED_COUNT = 3
     }
 }
