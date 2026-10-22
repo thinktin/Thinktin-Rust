@@ -162,7 +162,7 @@ struct Request<'a> {
     push_type: &'static str,
     topic: &'a str,
     priority: &'static str,
-    /// 秒级时间戳；0 表示送不到就算了。
+    /// 秒级时间戳：设备离线时 APNs 存到这个时候（0 是送不到就算了，我们不用）。
     expiration: u64,
     collapse_id: Option<&'a str>,
     body: String,
@@ -284,7 +284,7 @@ impl PushChannel for ApnsClient {
             push_type: "alert",
             topic: &self.topic,
             priority,
-            expiration: message.ttl.map_or(0, |ttl| now_secs() + ttl.as_secs()),
+            expiration: now_secs() + message.ttl.unwrap_or(crate::DEFAULT_TTL).as_secs(),
             collapse_id: message.collapse_id.as_deref(),
             body: Self::payload(message).to_string(),
         };
@@ -461,6 +461,21 @@ mod tests {
         )
         .unwrap();
         assert_eq!(header, json!({"alg": "ES256", "kid": "KEY1234567"}));
+        drop(seen);
+        // 没给有效期的：APNs 存一天（手机离线时不丢），不是 0。
+        let mut m = message(PushKind::RunFinished);
+        m.ttl = None;
+        client.send(TOKEN, &m).await;
+        let exp: u64 = fake.seen.lock().unwrap()[1].1["apns-expiration"]
+            .to_str()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let left = exp.saturating_sub(now_secs());
+        assert!(
+            (crate::DEFAULT_TTL.as_secs() - 60..=crate::DEFAULT_TTL.as_secs()).contains(&left),
+            "{left}"
+        );
     }
 
     #[tokio::test]

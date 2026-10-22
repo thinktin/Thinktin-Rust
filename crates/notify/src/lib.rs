@@ -61,6 +61,10 @@ impl PushKind {
     }
 }
 
+/// 没给有效期的推送在推送服务那里最多等多久（手机关机、没信号时先存着，开机后送到）。各家推送服务都只给一个
+/// 应用留最后一条，所以不会攒一堆旧通知；收件箱里一直都在。
+pub const DEFAULT_TTL: Duration = Duration::from_secs(24 * 3600);
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PushMessage {
     pub kind: PushKind,
@@ -74,7 +78,7 @@ pub struct PushMessage {
     pub collapse_id: Option<String>,
     /// 客户端打开通知后要跳转的对象（只放 id，不放内容）。
     pub target: PushTarget,
-    /// 过了这个时间就不必再送达（审批超时之后的审批通知没有意义）。
+    /// 过了这个时间就不必再送达（审批超时之后的审批通知没有意义）。没有的按 [`DEFAULT_TTL`]。
     pub ttl: Option<Duration>,
     /// 正文是 agent 生成的：系统通知里要带显式标识（16.3）。
     #[serde(default)]

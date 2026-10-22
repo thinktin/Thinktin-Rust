@@ -157,7 +157,9 @@ impl JpushClient {
         }
         let ttl = message
             .ttl
-            .map_or(86_400, |t| t.as_secs().clamp(60, MAX_TTL_SECS));
+            .unwrap_or(crate::DEFAULT_TTL)
+            .as_secs()
+            .clamp(60, MAX_TTL_SECS);
         let options = json!({
             "time_to_live": ttl,
             "classification": 1,
