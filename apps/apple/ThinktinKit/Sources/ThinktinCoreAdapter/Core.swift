@@ -64,8 +64,22 @@ enum Core {
     typealias SavedSecret = ThinktinCore.SavedSecret
     typealias ImChannel = ThinktinCore.ImChannel
     typealias NewImChannel = ThinktinCore.NewImChannel
+    typealias RunFilter = ThinktinCore.RunFilter
+    typealias LogSink = ThinktinCore.LogSink
+    typealias LogRecord = ThinktinCore.LogRecord
+    typealias LogLevel = ThinktinCore.LogLevel
 
     // 自由函数（不联网）。
+
+    /// 语言列表拼成 `Accept-Language`（11.8）；一个能用的都没有时是空串。
+    static func acceptLanguageHeader(_ tags: [String]) -> String {
+        ThinktinCore.acceptLanguageHeader(tags: tags)
+    }
+
+    /// 把 client-core 的日志交给 `sink`（11.8）；再调一次是换掉 sink、改级别。进程里已经有别的 tracing 订阅者时返回 false。
+    static func initLogging(sink: any LogSink, maxLevel: LogLevel) -> Bool {
+        ThinktinCore.initLogging(sink: sink, maxLevel: maxLevel)
+    }
 
     static func detectSecrets(_ text: String) -> [DetectedSecret] {
         ThinktinCore.detectSecrets(text: text)

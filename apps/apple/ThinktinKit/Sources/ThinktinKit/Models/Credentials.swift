@@ -10,10 +10,13 @@ public struct Credential: Identifiable, Hashable, Codable, Sendable {
     public var dailyTokenLimit: Int?
     public var isDisabled: Bool
     public var createdAt: Date
+    /// 能用哪些模型协议（11.8）：预置厂商按厂商算，自定义地址按配了哪几个地址算（服务端从不返回地址本身）。
+    /// 老的服务端为空。
+    public var protocols: [ModelProtocol]
 
     public init(
         id: CredentialID, vendor: String, label: String, last4: String, dailyTokenLimit: Int? = nil,
-        isDisabled: Bool = false, createdAt: Date
+        isDisabled: Bool = false, createdAt: Date, protocols: [ModelProtocol] = []
     ) {
         self.id = id
         self.vendor = vendor
@@ -22,10 +25,18 @@ public struct Credential: Identifiable, Hashable, Codable, Sendable {
         self.dailyTokenLimit = dailyTokenLimit
         self.isDisabled = isDisabled
         self.createdAt = createdAt
+        self.protocols = protocols
     }
 
     /// 打码显示：`••••abcd`。
     public var maskedKey: String { "••••" + last4 }
+
+    /// 支持这个协议（选 key 时按 agent 的 `activeProtocol` 过滤）。协议为 nil、或者 `protocols` 为空（老的服务端
+    /// 没给）时算支持，不拦。
+    public func supports(_ modelProtocol: ModelProtocol?) -> Bool {
+        guard let modelProtocol, !protocols.isEmpty else { return true }
+        return protocols.contains(modelProtocol)
+    }
 
     /// 备注最长几个字符（可以为空）。
     public static let maxLabelLength = 64
@@ -59,6 +70,17 @@ public struct NewCredential: Hashable, Sendable, CustomStringConvertible, Custom
 
     public var description: String { "NewCredential(vendor: \(vendor), label: \(label))" }
     public var debugDescription: String { description }
+
+    /// 加好以后这把 key 能用哪些协议（和服务端一样算，11.8）：预置厂商按 `vendors` 里它的协议，其余（自定义地址）
+    /// 按配了哪几个地址：Anthropic 地址 → anthropic，OpenAI 地址 → chat，Responses 地址 → responses。
+    /// 添加 key 的表单可以据此提示“这把 key 不能给 Codex 用”。
+    public func expectedProtocols(vendors: [VendorInfo]) -> [ModelProtocol] {
+        if let preset = vendors.first(where: { $0.id == vendor }) { return preset.modelProtocols }
+        let configured: [(String?, ModelProtocol)] = [
+            (anthropicBase, .anthropic), (openaiBase, .chat), (responsesBase, .responses),
+        ]
+        return configured.compactMap { base, proto in base == nil ? nil : proto }
+    }
 }
 
 /// 预置的模型厂商（9.12）。
@@ -77,6 +99,11 @@ public struct VendorInfo: Identifiable, Hashable, Codable, Sendable {
         self.protocols = protocols
         self.models = models
         self.notes = notes
+    }
+
+    /// `protocols` 换成 `ModelProtocol`（和 `AgentInfo.activeProtocol`、`Credential.protocols` 比较用）。
+    public var modelProtocols: [ModelProtocol] {
+        protocols.map { ModelProtocol(rawValue: $0) }
     }
 }
 

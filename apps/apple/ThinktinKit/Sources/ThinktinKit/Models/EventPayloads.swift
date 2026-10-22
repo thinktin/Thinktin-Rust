@@ -418,7 +418,8 @@ public struct VaultUsedPayload: Hashable, Codable, Sendable {
     }
 }
 
-/// `run.state`：`{state, reason, attempt}`（流水线的根还有 `steps`，整棵停止时有 `tree`）。
+/// `run.state`：`{state, reason, attempt}`（流水线的根还有 `steps`，整棵停止时有 `tree`，等 key、等电脑时有
+/// `wait_code`）。
 public struct RunStatePayload: Hashable, Codable, Sendable {
     public var state: RunState
     public var reason: String?
@@ -427,13 +428,24 @@ public struct RunStatePayload: Hashable, Codable, Sendable {
     public var steps: Int?
     /// 整棵运行树一起停止。
     public var tree: Bool?
+    /// 等的是什么（11.8）：只在 `waitingQuota`、`waitingDevice` 时有；老的服务端、别的状态没有这个键。
+    public var waitCode: RunWaitCode?
 
-    public init(state: RunState, reason: String? = nil, attempt: Int? = nil, steps: Int? = nil, tree: Bool? = nil) {
+    public init(
+        state: RunState, reason: String? = nil, attempt: Int? = nil, steps: Int? = nil, tree: Bool? = nil,
+        waitCode: RunWaitCode? = nil
+    ) {
         self.state = state
         self.reason = reason
         self.attempt = attempt
         self.steps = steps
         self.tree = tree
+        self.waitCode = waitCode
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case state, reason, attempt, steps, tree
+        case waitCode = "wait_code"
     }
 }
 

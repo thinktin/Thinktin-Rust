@@ -87,6 +87,32 @@ public enum UserLocale: OpenStringEnum {
         }
     }
 
+    /// `Accept-Language`（`en-US,en;q=0.9,zh-CN;q=0.8`）里最想要的、支持的语言：按 q 值从高到低（相同的按出现顺序），
+    /// q=0 的不要，q 写错了的那一项跳过；一个都认不出返回 nil。和服务端的 `Locale::from_accept_language` 一致
+    /// （新用户注册时服务端按它定推送和收件箱的语言，认不出时用中文）。
+    public init?(acceptLanguage header: String) {
+        // 每一项是“标签;q=…”，没写 q 的算 1；最多看 20 项。
+        var entries: [(q: Float, tag: String)] = []
+        for part in header.split(separator: ",", omittingEmptySubsequences: false).prefix(20) {
+            let fields = part.split(separator: ";", omittingEmptySubsequences: false).map {
+                $0.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            var q: Float = 1
+            if let field = fields.dropFirst().first(where: { $0.hasPrefix("q=") }) {
+                guard let parsed = Float(field.dropFirst(2).trimmingCharacters(in: .whitespaces)) else { continue }
+                q = parsed.isNaN ? 0 : parsed
+            }
+            entries.append((q, fields.first ?? ""))
+        }
+        // q 从高到低；相同的保持出现的顺序（稳定排序）。
+        let ordered = entries.enumerated().sorted { a, b in
+            a.element.q != b.element.q ? a.element.q > b.element.q : a.offset < b.offset
+        }
+        let supported = ordered.lazy.filter { $0.element.q > 0 }.compactMap { UserLocale(languageTag: $0.element.tag) }
+        guard let found = supported.first else { return nil }
+        self = found
+    }
+
     /// 从系统的语言标签（`zh-Hans-CN`、`en_US`、`zh`）认出支持的语言；认不出返回 nil。和服务端的 `Locale::from_tag` 一致。
     public init?(languageTag tag: String) {
         let first =
@@ -698,4 +724,80 @@ public enum APIErrorCode: OpenStringEnum {
 /// 用量的分组方式（`usage(group:)`）。是客户端发出去的参数，所以不需要 `unknown`。
 public enum UsageGroup: String, Sendable, Hashable, Codable, CaseIterable {
     case day, instance, model, credential
+}
+
+/// 运行在等什么（11.8，`Run.waitCode`、`run.state` 事件的 `wait_code`）：只在等 key（`waitingQuota`）、
+/// 等电脑（`waitingDevice`）时有。界面据此决定显示“去换 key”还是“稍后自动继续”，不用去解析 `stateReason`
+/// （那是给人看的一句话）。服务端以后可能加新值，不认识的（`unknown`）按运行状态显示。
+public enum RunWaitCode: OpenStringEnum {
+    /// key 无效或没有权限：去换 key。
+    case invalid
+    /// 欠费、额度用完：去充值或换 key（每小时也自己再试一次）。
+    case noBalance
+    /// 没有能用的 key（都停用了、当天额度用完、解不开）：去处理 key（每小时也自己再试一次）。
+    case unavailable
+    /// 被限流：几分钟后自己继续，不用处理。
+    case rateLimited
+    /// 模型服务繁忙或连不上：几分钟后自己继续，不用处理。
+    case overloaded
+    /// 等用户的电脑上线。
+    case deviceOffline
+    case unknown(String)
+
+    public static let knownCases: [RunWaitCode] = [
+        .invalid, .noBalance, .unavailable, .rateLimited, .overloaded, .deviceOffline,
+    ]
+
+    public var rawValue: String {
+        switch self {
+        case .invalid: "invalid"
+        case .noBalance: "no_balance"
+        case .unavailable: "unavailable"
+        case .rateLimited: "rate_limited"
+        case .overloaded: "overloaded"
+        case .deviceOffline: "device_offline"
+        case .unknown(let raw): raw
+        }
+    }
+
+    /// 要用户去模型 key 页处理（换 key、充值、启用别的 key）：界面给“去处理”的入口。
+    public var needsKeyAction: Bool {
+        switch self {
+        case .invalid, .noBalance, .unavailable: true
+        default: false
+        }
+    }
+
+    /// 过几分钟自己继续，不用处理：界面只说“稍后自动继续”。
+    public var isTransient: Bool {
+        switch self {
+        case .rateLimited, .overloaded: true
+        default: false
+        }
+    }
+}
+
+/// 模型接口的协议（11.8）：agent 能说哪几种（`AgentInfo.protocols`）、运行时用哪种（`AgentInfo.activeProtocol`），
+/// 厂商和 key 提供哪几种（`VendorInfo.protocols`、`Credential.protocols`）。模型网关不在协议之间转换，所以实例配的
+/// 每把 key（包括降级的）都要支持 agent 的 `activeProtocol`。
+public enum ModelProtocol: OpenStringEnum {
+    /// Anthropic Messages。
+    case anthropic
+    /// OpenAI Chat Completions（大多数国内厂商走这个）。
+    case chat
+    /// OpenAI Responses（Codex 只会这个）。
+    case responses
+    case unknown(String)
+
+    /// 顺序就是界面上显示的顺序（和服务端的 `proto::vendors::PROTOCOLS` 一致）。
+    public static let knownCases: [ModelProtocol] = [.anthropic, .chat, .responses]
+
+    public var rawValue: String {
+        switch self {
+        case .anthropic: "anthropic"
+        case .chat: "chat"
+        case .responses: "responses"
+        case .unknown(let raw): raw
+        }
+    }
 }

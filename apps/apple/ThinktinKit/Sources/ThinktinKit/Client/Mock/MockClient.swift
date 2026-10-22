@@ -6,7 +6,8 @@ import Foundation
 /// - 状态可以直接读写（`state`、`update(_:)`），也可以整体换掉（`MockClient(state:)`）；
 /// - 发消息（`sendMessage` / `createRun`）后自动播放一段 agent 回答（`DemoData.replyScript`），
 ///   审批、保险箱请求处理后接着播；`setScript(_:for:)` 设定下一次订阅时回放的事件；
-/// - `failNext(with:)` 让下一次调用抛错；`latency` 模拟网络延迟；
+/// - `failNext(with:)` 让下一次调用抛错；`latency` 模拟网络延迟；抛过 `upgradeRequired` 之后 `upgradeRequired()`
+///   一直是 true（也可以直接设 `MockState.isUpgradeRequired`）；
 /// - `deliverDeviceMessage(from:kind:body:)` 模拟电脑发来的消息，`resolveReport(_:resolution:)` 模拟运营处理了举报；
 /// - 规则尽量和服务端一致：没登录抛 `signedOut`，找不到抛 `not_found`，状态不对抛 `conflict`，参数不对抛 `invalid`。
 public final class MockClient: ClientProtocol, @unchecked Sendable {
@@ -146,7 +147,12 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
 
     private func syncCall<R>(signedIn required: Bool = true, _ body: (inout Inner) throws -> R) throws -> R {
         try inner.withLock { s in
-            if !s.failures.isEmpty { throw s.failures.removeFirst() }
+            if !s.failures.isEmpty {
+                let failure = s.failures.removeFirst()
+                // 和 client-core 一样：任何请求说过版本太老，之后一直记着（11.8）。
+                if failure.requiresUpgrade { s.state.isUpgradeRequired = true }
+                throw failure
+            }
             if required && s.state.session == nil { throw ClientError.signedOut }
             return try body(&s)
         }
@@ -191,6 +197,10 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
             guard code == s.state.verificationCode else { throw MockErrors.invalid("wrong verification code") }
             let isNew = phone != s.state.user.phone
             if isNew { s.state.user.phone = phone }
+            // 新用户的语言按请求的 Accept-Language 定（11.8，服务端的规则；认不出时不改）。
+            if isNew, let locale = s.state.acceptLanguage.flatMap({ UserLocale(acceptLanguage: $0) }) {
+                s.state.user.locale = locale
+            }
             s.state.session = Session(
                 userID: s.state.user.id, deviceID: DemoData.deviceID, accessToken: "mock-access-\(UUID().uuidString)",
                 refreshToken: "mock-refresh-\(UUID().uuidString)")
@@ -265,6 +275,17 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
             s.eraseAccount()
         }
         cancelAllPlayback()
+    }
+
+    // MARK: 请求语言与版本
+
+    /// 和 client-core 一样校验（`AcceptLanguage.validated`）；不对时原来的值不变。
+    public func setAcceptLanguage(_ acceptLanguage: String?) throws {
+        try syncCall(signedIn: false) { s in s.state.acceptLanguage = try AcceptLanguage.validated(acceptLanguage) }
+    }
+
+    public func upgradeRequired() -> Bool {
+        inner.withLock { $0.state.isUpgradeRequired }
     }
 
     // MARK: 登录设备与设备消息
@@ -382,8 +403,12 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
 
     // MARK: agent 与实例
 
+    /// 介绍和许可说明按请求语言给（11.8）：`acceptLanguage` 认出是英文时换成英文文案（`DemoData` 里有的）。
     public func agents() async throws -> [AgentInfo] {
-        try await call { s in s.state.agents }
+        try await call { s in
+            guard s.state.requestLocale == .en else { return s.state.agents }
+            return s.state.agents.map(DemoData.inEnglish)
+        }
     }
 
     public func instances() async throws -> [Instance] {
@@ -485,6 +510,19 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
         }
     }
 
+    /// 跨实例，新的在前（同一时刻的按 id 排）。`before` 按它在全部运行里的位置往后数（它自己现在不满足条件也行，
+    /// 和服务端按 id 比较一样）；找不到这个运行时返回空。`limit` 夹到 1…200。
+    public func listRuns(filter: RunFilter, before: RunID?, limit: Int) async throws -> [Run] {
+        try await call { s in
+            var all = s.state.runs.sorted { ($0.createdAt, $0.id) > ($1.createdAt, $1.id) }[...]
+            if let before {
+                guard let k = all.firstIndex(where: { $0.id == before }) else { return [] }
+                all = all[(k + 1)...]
+            }
+            return Array(all.filter(filter.matches).prefix(RunFilter.clampedLimit(limit)))
+        }
+    }
+
     public func cachedRuns(instanceID: InstanceID, limit: Int) throws -> [Run] {
         try syncCall(signedIn: false) { s in s.runs(of: instanceID, limit: limit) }
     }
@@ -562,6 +600,12 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
         let (stream, continuation) = AsyncStream.makeStream(of: EventStreamElement.self, bufferingPolicy: .unbounded)
         let id = UUID()
         let script = try syncCall(signedIn: false) { s -> MockEventScript? in
+            // 版本太老（11.8）：和 client-core 一样不再连，直接以 stopped 结束。
+            guard !s.state.isUpgradeRequired else {
+                continuation.yield(.status(.stopped))
+                continuation.finish()
+                return nil
+            }
             continuation.yield(.status(.connecting))
             guard s.state.session != nil else {
                 continuation.yield(.status(.signedOut))
@@ -602,6 +646,15 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
     public func cachedEvents(instanceID: InstanceID, afterSeq: UInt64, limit: Int) throws -> [InstanceEvent] {
         try syncCall(signedIn: false) { s in
             Array((s.state.events[instanceID] ?? []).filter { $0.seq > afterSeq }.prefix(max(0, limit)))
+        }
+    }
+
+    /// `beforeSeq` 之前的最后 `limit` 条，旧的在前（演示数据都算在缓存里，不限 2000 条）；没登录时返回空。
+    public func cachedEventsBefore(instanceID: InstanceID, beforeSeq: UInt64?, limit: Int) throws -> [InstanceEvent] {
+        try syncCall(signedIn: false) { s in
+            guard s.state.session != nil else { return [] }
+            let older = (s.state.events[instanceID] ?? []).filter { e in beforeSeq.map { e.seq < $0 } ?? true }
+            return Array(older.suffix(max(0, limit)))
         }
     }
 
@@ -910,7 +963,8 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
             let label = credential.label.isEmpty ? (vendor?.name ?? credential.vendor) : credential.label
             let created = Credential(
                 id: .random(), vendor: credential.vendor, label: label, last4: String(key.suffix(4)),
-                dailyTokenLimit: credential.dailyTokenLimit, createdAt: Date())
+                dailyTokenLimit: credential.dailyTokenLimit, createdAt: Date(),
+                protocols: credential.expectedProtocols(vendors: s.state.vendors))
             s.state.credentials.append(created)
             return created
         }
@@ -1253,6 +1307,8 @@ private struct Inner: Sendable {
             guard let runID = event.runID, let i = state.runs.firstIndex(where: { $0.id == runID }) else { return }
             state.runs[i].state = p.state
             state.runs[i].stateReason = p.reason
+            // 每次状态变化都覆盖等待原因码，只在等 key、等电脑时留着（和服务端一样，旧的不会残留）。
+            state.runs[i].waitCode = RunWaitCode.applies(to: p.state) ? p.waitCode : nil
             if let attempt = p.attempt { state.runs[i].attempt = attempt }
             if p.state == .running && state.runs[i].startedAt == nil { state.runs[i].startedAt = event.createdAt }
             guard p.state.isTerminal else { return }
@@ -1449,14 +1505,15 @@ private struct Inner: Sendable {
         subscribers = [:]
     }
 
-    /// 注销账号：服务端删掉这个人的全部内容，本地登录状态和缓存一起清掉。agent 目录、厂商、验证码留着；
-    /// 用户换成一个没有手机号的新用户，之后用同一个手机号登录算新用户。
+    /// 注销账号：服务端删掉这个人的全部内容，本地登录状态和缓存一起清掉。agent 目录、厂商、验证码留着，客户端自己的
+    /// 设置（请求语言、版本太老的标记）也留着；用户换成一个没有手机号的新用户，之后用同一个手机号登录算新用户。
     mutating func eraseAccount() {
         cancelledRuns.formUnion(state.runs.map(\.id))
         signOutLocally()
         state = MockState(
             user: User(id: .random(), phone: "", createdAt: Date()), verificationCode: state.verificationCode,
-            agents: state.agents, vendors: state.vendors)
+            agents: state.agents, vendors: state.vendors, acceptLanguage: state.acceptLanguage,
+            isUpgradeRequired: state.isUpgradeRequired)
         permissions = [:]
         scripts = [:]
         reportAttempts = []
