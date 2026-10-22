@@ -46,7 +46,7 @@ fun licenseLabel(agent: AgentInfo): String = agent.license?.takeIf { it.isNotBla
  * [emphasized] 用主色描边（详情页里“运行时使用”的协议、默认接入方式）。
  */
 @Composable
-fun Tag(text: String, accessibleLabel: String? = null, emphasized: Boolean = false, modifier: Modifier = Modifier) {
+fun Tag(text: String, modifier: Modifier = Modifier, accessibleLabel: String? = null, emphasized: Boolean = false) {
     Surface(
         shape = MaterialTheme.shapes.extraSmall,
         color = MaterialTheme.colorScheme.surfaceVariant,

@@ -490,32 +490,58 @@ internal class MockData(private val baseMs: Long) {
         ),
     )
 
+    /** 预置厂商（和 crates/proto/src/vendors.rs 的一部分一致，notes 缩短了）。 */
     val vendors = listOf(
-        VendorInfo("anthropic", "Anthropic", listOf("anthropic"), listOf("claude-sonnet-4", "claude-opus-4"), ""),
-        VendorInfo("openai", "OpenAI", listOf("chat", "responses"), listOf("gpt-4.1", "o3"), ""),
-        VendorInfo("deepseek", "DeepSeek", listOf("chat", "anthropic"), listOf("deepseek-chat", "deepseek-reasoner"), "国内直连"),
+        VendorInfo(
+            "deepseek", "DeepSeek", listOf("anthropic", "chat", "responses"),
+            listOf("deepseek-chat", "deepseek-reasoner"),
+            "Anthropic 接口会把不认识的模型名静默映射成 deepseek-flash；Chat Completions 默认开思考",
+        ),
+        VendorInfo(
+            "qwen-cn", "阿里云百炼（北京）", listOf("anthropic", "chat", "responses"), listOf("qwen3-max", "qwen3-coder-plus"),
+            "key 绑定区域，跨区域 401；编程套餐（sk-sp-）的 key 不能用",
+        ),
+        VendorInfo(
+            "minimax-cn", "MiniMax（国内）", listOf("anthropic", "chat", "responses"), listOf("MiniMax-M3"),
+            "订阅 key（sk-cp-）和按量 key（sk-api-）不能混用",
+        ),
+        VendorInfo(
+            "anthropic", "Anthropic", listOf("anthropic", "chat"), listOf("claude-sonnet-4", "claude-opus-4"),
+            "原生 Messages 接口；Claude 订阅的 OAuth 令牌（sk-ant-oat…）不能用",
+        ),
+        VendorInfo("openai", "OpenAI", listOf("chat", "responses"), listOf("gpt-4.1", "o3"), "Responses 有状态"),
+        VendorInfo("gemini", "Google Gemini", listOf("chat"), listOf("gemini-2.5-pro"), "只接 Gemini API 的 key；没有 Responses"),
     )
 
     val credentials = listOf(
-        Credential("cred-work", "anthropic", "工作 key", "a1b2", 2_000_000, false, ago(60L * 24 * 30), listOf("anthropic")),
-        Credential("cred-home", "deepseek", "个人", "9z8y", null, false, ago(60L * 24 * 10), listOf("chat", "anthropic")),
+        Credential("cred-work", "anthropic", "工作 key", "a1b2", 2_000_000, false, ago(60L * 24 * 30), listOf("anthropic", "chat")),
+        Credential(
+            "cred-home", "deepseek", "个人", "9z8y", null, false, ago(60L * 24 * 10),
+            listOf("anthropic", "chat", "responses"),
+        ),
     )
 
     val modelRoutes: Map<String, List<ModelRoute>> = mapOf(
         INSTANCE_CODER to listOf(
-            ModelRoute("default", "cred-work", "claude-sonnet-4", listOf(RouteFallback("cred-home", "deepseek-chat"))),
+            ModelRoute("main", "cred-work", "claude-sonnet-4", listOf(RouteFallback("cred-home", "deepseek-chat"))),
         ),
-        INSTANCE_RESEARCH to listOf(ModelRoute("default", "cred-home", "deepseek-reasoner", emptyList())),
+        INSTANCE_RESEARCH to listOf(ModelRoute("main", "cred-home", "deepseek-reasoner", emptyList())),
     )
 
+    /** 最近 7 天（含今天，按北京时间切天）的用量，key 是日期（yyyy-MM-dd），和服务端按天分组一样。 */
     val usageDays: List<UsageBucket> = (6 downTo 0).map { daysAgo ->
         val factor = (7 - daysAgo).toLong()
         UsageBucket(
-            key = "D-$daysAgo", requests = 12 * factor, inputTokens = 8_000 * factor, cacheReadTokens = 2_000 * factor,
-            cacheWriteTokens = 500 * factor, outputTokens = 1_500 * factor, chargedTokens = 10_000 * factor,
-            estimatedRequests = 0, failedRequests = if (daysAgo == 1) 3 else 0,
+            key = usageDay(daysAgo), requests = 12 * factor, inputTokens = 8_000 * factor,
+            cacheReadTokens = 2_000 * factor, cacheWriteTokens = 500 * factor, outputTokens = 1_500 * factor,
+            chargedTokens = 12_000 * factor, estimatedRequests = if (daysAgo == 2) 1 else 0,
+            failedRequests = if (daysAgo == 1) 3 else 0,
         )
     }
+
+    /** [daysAgo] 天前的日期（北京时间）。 */
+    fun usageDay(daysAgo: Long): String =
+        java.time.Instant.ofEpochMilli(baseMs).atZone(USAGE_ZONE).toLocalDate().minusDays(daysAgo).toString()
 
     val vaultItems = listOf(
         VaultItem("vault-github", "github", "推送代码到 GitHub", true, listOf(INSTANCE_CODER), ago(60L * 24 * 7), ago(60L * 24 * 7), ago(2)),
@@ -604,6 +630,9 @@ internal class MockData(private val baseMs: Long) {
 
     companion object {
         const val MINUTE: Long = 60_000
+
+        /** 演示用量按天切分的时区（服务端默认 Asia/Shanghai）。 */
+        val USAGE_ZONE: java.time.ZoneId = java.time.ZoneId.of("Asia/Shanghai")
 
         const val AGENT_CODER = "agent-coder"
         const val AGENT_RESEARCH = "agent-research"

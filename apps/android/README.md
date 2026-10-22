@@ -178,6 +178,29 @@ Keystore 失效……）都显示“无法加载核心库”页（原因 + 重�
 - 设置页（13.2 的骨架升级）：账号区（手机号、昵称入口）、安全区（设备与账号、下线其他设备、全部停止）、外观、演示模式、
   危险区（退出登录、注销账号）；语言、通知、关于等在 13.13。
 
+## Agent 目录与领养（13.3）
+
+- **目录**（`catalog`，入口：抽屉“领养 agent”、首页空状态的主按钮和精选卡片、首页溢出菜单）：卡片（名字、一句话介绍、许可证、
+  接入方式、模型协议标签），搜索框按名字 / 介绍 / id / 许可证 / 接入方式 / 协议过滤（空白分隔的每个词都要命中）；
+  拉取失败显示错误和“重试”，目录为空、没有匹配各有提示。介绍是上游写的，不标 AI 生成（第 8.4 节）。
+- **详情**（`agent/{agentId}`，目录接口没有单个查询，从 `agents()` 里找；找不到显示“已下架”）：介绍、最新版本与版本列表、
+  接入方式（默认的加标记）、模型协议与 `activeProtocol`、许可证与 `licenseNote`、会访问的网站、上游链接（只认 https，
+  `ACTION_VIEW` 打开，没有浏览器时 Snackbar）。底部“领养”。
+- **领养**：盖在页面上的底部面板（遮罩、返回键、“取消”收起；不是 `ModalBottomSheet`，弹出窗口里的输入框在 Robolectric 下
+  测不了）。名字默认“<agent 名> 的实例”（截到 64 个码点），接入方式多于一种时用 FilterChip 选（默认 `defaultHarness`，
+  只有一种时不传，让服务端用默认）。本地先校验 1–64 字（和服务端一致）。失败映射：`conflict` 和说名字不对的 `invalid`
+  提示在名字下；限频（剩余秒数）、数量上限（code 含 `limit`）、`not_found`（已下架）、其余 `invalid`（版本下架、接入方式停用）
+  是表单级。成功后刷新抽屉，跳到 `chat/{instanceId}`，返回栈弹到首页（返回回首页，首页显示时重新取实例列表）。
+- **实例设置**（`instance/{instanceId}`，入口：对话页顶栏的“实例设置”、首页溢出菜单、抽屉实例行的长按或“更多”、深链）：
+  先用缓存渲染再联网；名字（`instance/{id}/name` 单独页面）、agent 与接入方式（点进详情）、状态点 + 文字、最后活跃；
+  版本：当前版本、不是最新时“升级到最新”（`setInstanceVersion(null)`）、`versions` 里的其他版本可回滚 / 切换，确认框提示
+  “下次唤醒生效，工作区保留”；目录拉不到时只是没有版本选项。模型别名入口指向 `instance/{id}/routes`（13.4 做页面）。
+- **删除实例**（第 8.6 节）：先 `plans()` + `teams()` 算出影响（`DeleteImpact`：它自己的计划、别的计划里引用它的流水线步骤数、
+  它是成员的团队），确认框列出计划和团队名（agent 建的计划标题标 AI 生成），“继续”后二次确认再 `deleteInstance`；
+  查不到影响范围就不让删（Snackbar 说明原因）；已经被删（404）当作成功。成功后刷新抽屉、回首页（首页重新创建）。
+- **首页**：没有实例时显示衬线问候 + “领养一个 agent” + 目录前 3 个精选卡片；抽屉实例行显示名字、agent 显示名（目录拉不到时
+  显示 id）、状态点，长按或右侧“更多”进实例设置。
+
 ## 深链
 
 `thinktin://run/{id}`、`approval/{id}`、`plan/{id}`、`instance/{id}`、`vault/request/{id}`、`inbox`、`inbox/{id}`（第 3 节）。
@@ -232,6 +255,8 @@ abortOnError 开着，不用 baseline；release 包跑一遍 R8）→ 解开 rel
 
 - `tools/client-core/build-android.sh` 没有“跳过 AAR”的开关，`sync-core.sh` 用 PATH 垫片绕过（见上）。以后给它加一个开关
   （比如 `THINKTIN_SKIP_AAR=1`）并去掉 `jvmToolchain(17)` 的硬要求后，删掉垫片。
+- Robolectric 的触摸注入点不到盖在页面上的层（抽屉、领养面板）：触摸落到了下面的内容 / 遮罩上（真机正常），
+  这些控件在测试里用无障碍点击动作（`SemanticsActions.OnClick`）。
 - CI 的 APK 不含 .so（见“CI”）。启动时 `TlsInit` 加载不到库，`TlsState.failure` 记下 `UnsatisfiedLinkError`，演示模式照常可用。
 - `TlsInit.initialize`（JNI）只能在真机 / 模拟器上验证（云端会话没有模拟器，JVM 上的 .so 是 Linux 版，没有这个 JNI 函数）；
   `initLogging`、`accept_language_header` 是普通的 UniFFI 导出，`:core` 的 CoreSmokeTest 经 JNA 调本机 .so 覆盖了，

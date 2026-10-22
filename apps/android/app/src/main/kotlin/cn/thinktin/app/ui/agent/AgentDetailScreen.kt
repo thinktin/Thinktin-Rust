@@ -109,105 +109,105 @@ fun AgentDetailScreen(agentId: String, onBack: () -> Unit, onAdopted: (Instance)
     val agent = state.agent
     val noBrowser = stringResource(R.string.agent_no_browser)
     Box(Modifier.fillMaxSize()) {
-    Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
-        snackbarHost = { SnackbarHost(snackbar) },
-        topBar = {
-            ThinktinTopBar(
-                title = agent?.name ?: stringResource(R.string.page_agent),
-                navigationIcon = TopBarIcons.Back,
-                navigationContentDescription = stringResource(R.string.action_back),
-                onNavigationClick = onBack,
-            )
-        },
-        bottomBar = {
-            if (agent != null && state.adopt == null) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .navigationBarsPadding()
-                        .padding(horizontal = ThinktinSpacing.Page, vertical = 12.dp),
-                ) {
-                    val defaultName = stringResource(R.string.adopt_default_name, agent.name)
-                    PrimaryButton(
-                        text = stringResource(R.string.agent_adopt),
-                        onClick = { viewModel.openAdopt(defaultName) },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-            }
-        },
-    ) { padding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding),
-        ) {
-            when {
-                agent != null -> AgentDetailContent(
-                    agent = agent,
-                    onOpenUpstream = { url ->
-                        try {
-                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                        } catch (_: ActivityNotFoundException) {
-                            scope.launch { snackbar.showSnackbar(noBrowser) }
-                        }
-                    },
+        Scaffold(
+            containerColor = MaterialTheme.colorScheme.background,
+            snackbarHost = { SnackbarHost(snackbar) },
+            topBar = {
+                ThinktinTopBar(
+                    title = agent?.name ?: stringResource(R.string.page_agent),
+                    navigationIcon = TopBarIcons.Back,
+                    navigationContentDescription = stringResource(R.string.action_back),
+                    onNavigationClick = onBack,
                 )
-                state.loading -> {
-                    val loading = stringResource(R.string.loading)
-                    CircularProgressIndicator(
+            },
+            bottomBar = {
+                if (agent != null && state.adopt == null) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .navigationBarsPadding()
+                            .padding(horizontal = ThinktinSpacing.Page, vertical = 12.dp),
+                    ) {
+                        val defaultName = stringResource(R.string.adopt_default_name, agent.name)
+                        PrimaryButton(
+                            text = stringResource(R.string.agent_adopt),
+                            onClick = { viewModel.openAdopt(defaultName) },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+            },
+        ) { padding ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding),
+            ) {
+                when {
+                    agent != null -> AgentDetailContent(
+                        agent = agent,
+                        onOpenUpstream = { url ->
+                            try {
+                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                            } catch (_: ActivityNotFoundException) {
+                                scope.launch { snackbar.showSnackbar(noBrowser) }
+                            }
+                        },
+                    )
+                    state.loading -> {
+                        val loading = stringResource(R.string.loading)
+                        CircularProgressIndicator(
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .semantics { contentDescription = loading },
+                        )
+                    }
+                    state.notFound -> EmptyState(
+                        title = stringResource(R.string.agent_not_found_title),
+                        message = stringResource(R.string.agent_not_found_message),
+                        modifier = Modifier.align(Alignment.Center),
+                    )
+                    else -> Column(
                         modifier = Modifier
                             .align(Alignment.Center)
-                            .semantics { contentDescription = loading },
-                    )
-                }
-                state.notFound -> EmptyState(
-                    title = stringResource(R.string.agent_not_found_title),
-                    message = stringResource(R.string.agent_not_found_message),
-                    modifier = Modifier.align(Alignment.Center),
-                )
-                else -> Column(
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .padding(ThinktinSpacing.Page),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(ThinktinSpacing.Paragraph),
-                ) {
-                    Text(
-                        text = state.loadError?.asString().orEmpty(),
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
-                    )
-                    SecondaryButton(text = stringResource(R.string.action_retry), onClick = viewModel::load)
+                            .padding(ThinktinSpacing.Page),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(ThinktinSpacing.Paragraph),
+                    ) {
+                        Text(
+                            text = state.loadError?.asString().orEmpty(),
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                        )
+                        SecondaryButton(text = stringResource(R.string.action_retry), onClick = viewModel::load)
+                    }
                 }
             }
         }
-    }
-    // 领养表单：盖在页面上的底部面板（遮罩点一下收起）。
-    val form = state.adopt
-    if (agent != null && form != null) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(MaterialTheme.colorScheme.scrim.copy(alpha = SCRIM_ALPHA))
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = viewModel::closeAdopt,
-                )
-                .clearAndSetSemantics {},
-        )
-        AdoptSheet(
-            agent = agent,
-            form = form,
-            onNameChange = viewModel::onNameChange,
-            onHarnessChange = viewModel::onHarnessChange,
-            onSubmit = viewModel::adopt,
-            onCancel = viewModel::closeAdopt,
-            modifier = Modifier.align(Alignment.BottomCenter),
-        )
-    }
+        // 领养表单：盖在页面上的底部面板（遮罩点一下收起）。
+        val form = state.adopt
+        if (agent != null && form != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.scrim.copy(alpha = SCRIM_ALPHA))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = viewModel::closeAdopt,
+                    )
+                    .clearAndSetSemantics {},
+            )
+            AdoptSheet(
+                agent = agent,
+                form = form,
+                onNameChange = viewModel::onNameChange,
+                onHarnessChange = viewModel::onHarnessChange,
+                onSubmit = viewModel::adopt,
+                onCancel = viewModel::closeAdopt,
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
+        }
     }
 }
 
@@ -345,6 +345,8 @@ private fun AdoptSheet(
             modifier = Modifier
                 .navigationBarsPadding()
                 .imePadding()
+                // 字号放大到 200% 时也能滚到按钮。
+                .verticalScroll(rememberScrollState())
                 .padding(ThinktinSpacing.Page),
             verticalArrangement = Arrangement.spacedBy(ThinktinSpacing.Paragraph),
         ) {

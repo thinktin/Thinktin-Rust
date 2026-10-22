@@ -363,6 +363,7 @@ class MockThinktinService(
                 }
             }
             teamList.replaceAll { team -> team.copy(members = team.members.filterNot { it.instanceId == instanceId }) }
+            routes.remove(instanceId)
         }
     }
 
@@ -371,9 +372,26 @@ class MockThinktinService(
         return synchronized(lock) { routes[instanceId].orEmpty() }
     }
 
+    /** 和服务端一样：最多 16 个别名、每个最多 3 个备用，别名格式按库里的约束，key 必须存在且没停用。 */
     override suspend fun setModelRoutes(instanceId: String, routes: List<ModelRoute>) {
         lag()
-        synchronized(lock) { this.routes[instanceId] = routes }
+        synchronized(lock) {
+            if (instanceList.none { it.id == instanceId && it.state != InstanceState.Deleted }) notFound("instance", instanceId)
+            if (routes.size > 16) invalid("at most 16 model aliases")
+            if (routes.map { it.alias }.toSet().size != routes.size) invalid("duplicate model alias")
+            for (route in routes) {
+                if (!ALIAS.matches(route.alias)) invalid("bad alias ${route.alias}")
+                if (route.fallbacks.size > 3) invalid("at most 3 fallbacks per model alias")
+                val used = listOf(route.credentialId to route.upstreamModel) +
+                    route.fallbacks.map { it.credentialId to it.upstreamModel }
+                for ((credentialId, model) in used) {
+                    if (model.isEmpty() || model.length > 128) invalid("upstream_model must be 1-128 characters")
+                    val credential = credentialList.firstOrNull { it.id == credentialId } ?: notFound("credential", credentialId)
+                    if (credential.disabled) invalid("credential $credentialId is disabled")
+                }
+            }
+            this.routes[instanceId] = routes
+        }
     }
 
     // ---- 运行 ----
@@ -905,13 +923,24 @@ class MockThinktinService(
 
     override suspend fun usage(group: UsageGroup, fromMs: Long?, toMs: Long?, tz: String?): UsageSummary {
         lag()
-        val days = data.usageDays
+        // 和服务端一样：不给时间就是最近 30 天；按天切分的时区默认 Asia/Shanghai（演示数据固定按它切）。
+        val to = toMs ?: clock()
+        val from = fromMs ?: (to - 30L * 24 * 60 * 60 * 1000)
+        if (from >= to || to - from > 366L * 24 * 60 * 60 * 1000) invalid("from must be before to, at most 366 days apart")
+        val zone = MockData.USAGE_ZONE
+        val days = data.usageDays.filter { bucket ->
+            val start = java.time.LocalDate.parse(bucket.key).atStartOfDay(zone).toInstant().toEpochMilli()
+            start < to && start + 24L * 60 * 60 * 1000 > from
+        }
         val buckets = when (group) {
             UsageGroup.Day -> days
             UsageGroup.Instance -> splitTotal(days, listOf("inst-coder" to 7, "inst-research" to 3))
-            UsageGroup.Model -> splitTotal(days, listOf("claude-sonnet-4" to 6, "deepseek-chat" to 3, "deepseek-reasoner" to 1))
+            UsageGroup.Model -> splitTotal(
+                days,
+                listOf("anthropic/claude-sonnet-4" to 6, "deepseek/deepseek-chat" to 3, "deepseek/deepseek-reasoner" to 1),
+            )
             UsageGroup.Credential -> splitTotal(days, listOf("cred-work" to 6, "cred-home" to 4))
-        }
+        }.filter { it.requests > 0 }
         return UsageSummary(buckets = buckets, total = sum("total", days))
     }
 
@@ -953,16 +982,48 @@ class MockThinktinService(
 
     override suspend fun addCredential(credential: NewCredential): Credential {
         lag()
-        if (credential.apiKey.length < 8) throw ServiceError.Api(422, "invalid", "api key too short", null)
+        val vendor = data.vendors.firstOrNull { it.id == credential.vendor }
+        if (vendor == null && credential.vendor != CUSTOM_VENDOR) invalid("unknown vendor: use an id from GET /v1/vendors")
+        if (credential.label.length > 64) invalid("label must be 0-64 characters")
+        checkKey(credential.vendor, credential.apiKey)
+        val bases = listOf(
+            "anthropic_base" to credential.anthropicBase,
+            "openai_base" to credential.openaiBase,
+            "responses_base" to credential.responsesBase,
+        )
+        for ((field, base) in bases) {
+            if (base != null && !base.startsWith("https://")) invalid("$field must be an https URL")
+        }
+        val hasBase = bases.any { it.second != null }
+        if ((credential.vendor == CUSTOM_VENDOR) != hasBase) {
+            invalid("base URLs are required for, and only allowed with, vendor custom")
+        }
+        if (credential.dailyTokenLimit == 0L) invalid("daily_token_limit must be positive")
+        val protocols = vendor?.protocols ?: listOfNotNull(
+            "anthropic".takeIf { credential.anthropicBase != null },
+            "chat".takeIf { credential.openaiBase != null },
+            "responses".takeIf { credential.responsesBase != null },
+        )
         val created = Credential(
             id = newId("cred"), vendor = credential.vendor, label = credential.label,
             last4 = credential.apiKey.takeLast(4), dailyTokenLimit = credential.dailyTokenLimit, disabled = false,
             createdAtMs = clock(),
-            protocols = data.vendors.firstOrNull { it.id == credential.vendor }?.protocols.orEmpty(),
+            protocols = protocols,
         )
         synchronized(lock) { credentialList.add(created) }
         return created
     }
+
+    /** 服务端保存 key 前的检查（gateway 的 check_key + proto::vendors::check_key）。 */
+    private fun checkKey(vendor: String, apiKey: String) {
+        if (apiKey.length < 8 || apiKey.length > 4096) invalid("api_key must be 8-4096 bytes")
+        if (apiKey.any { it.isWhitespace() || it.isISOControl() }) invalid("api_key must not contain spaces or control characters")
+        SUBSCRIPTION_PREFIXES[vendor]?.firstOrNull { apiKey.startsWith(it) }?.let { prefix ->
+            invalid("subscription keys ($prefix...) can only be used in the vendor's own tools; use a pay-as-you-go API key")
+        }
+    }
+
+    private fun invalid(detail: String): Nothing = throw ServiceError.Api(422, "invalid", detail, null)
 
     override suspend fun updateCredential(credentialId: String, update: CredentialUpdate): Credential {
         lag()
@@ -979,7 +1040,9 @@ class MockThinktinService(
 
     override suspend fun replaceCredentialSecret(credentialId: String, apiKey: String): Credential {
         lag()
-        if (apiKey.length < 8) throw ServiceError.Api(422, "invalid", "api key too short", null)
+        val vendor = synchronized(lock) { credentialList.firstOrNull { it.id == credentialId }?.vendor }
+            ?: notFound("credential", credentialId)
+        checkKey(vendor, apiKey)
         return synchronized(lock) {
             val i = credentialList.indexOfFirst { it.id == credentialId }
             if (i < 0) notFound("credential", credentialId)
@@ -987,9 +1050,18 @@ class MockThinktinService(
         }
     }
 
+    /** 和服务端一样：还有别名（主 key 或降级链）在用就拒绝（409），先改路由。 */
     override suspend fun deleteCredential(credentialId: String) {
         lag()
-        synchronized(lock) { credentialList.removeAll { it.id == credentialId } }
+        synchronized(lock) {
+            if (credentialList.none { it.id == credentialId }) notFound("credential", credentialId)
+            val used = routes.values.sumOf { list ->
+                list.count { it.credentialId == credentialId } +
+                    list.sumOf { route -> route.fallbacks.count { it.credentialId == credentialId } }
+            }
+            if (used > 0) throw ServiceError.Api(409, "conflict", "credential is used by $used model route(s)", null)
+            credentialList.removeAll { it.id == credentialId }
+        }
     }
 
     // ---- 内容举报 ----
@@ -1139,6 +1211,19 @@ class MockThinktinService(
 
     companion object {
         const val DEFAULT_EVENT_INTERVAL_MS: Long = 2_000
+
+        /** 自定义接口的厂商 id（地址由 key 自己带）。 */
+        private const val CUSTOM_VENDOR = "custom"
+
+        /** 模型别名的格式（库里的 CHECK 约束）。 */
+        private val ALIAS = Regex("^[a-z0-9][a-z0-9._-]{0,63}$")
+
+        /** 订阅类 key 的前缀（crates/proto/src/vendors.rs）：只列演示厂商里有的。 */
+        private val SUBSCRIPTION_PREFIXES = mapOf(
+            "qwen-cn" to listOf("sk-sp-"),
+            "minimax-cn" to listOf("sk-cp-"),
+            "anthropic" to listOf("sk-ant-oat", "sk-ant-ort"),
+        )
         private val IM_EVENTS = listOf("run_finished", "run_failed", "approval")
         private val IM_VENDORS = mapOf(
             "open.feishu.cn" to "feishu",
