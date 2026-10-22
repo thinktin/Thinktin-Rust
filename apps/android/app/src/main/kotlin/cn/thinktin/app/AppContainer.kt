@@ -4,8 +4,10 @@ import android.content.Context
 import android.util.Log
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.preferencesDataStoreFile
+import cn.thinktin.app.settings.AppLanguage
 import cn.thinktin.app.settings.AppSettings
 import cn.thinktin.app.settings.AppSettingsRepository
+import cn.thinktin.data.core.AcceptLanguage
 import cn.thinktin.data.core.ClientFactory
 import cn.thinktin.data.core.TlsState
 import cn.thinktin.data.mock.MockThinktinService
@@ -18,7 +20,10 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.time.Clock
 
@@ -47,12 +52,17 @@ class AppContainer(
     /** 测试用：强制演示模式。 */
     private val forceDemo: Boolean = false,
     private val io: CoroutineDispatcher = Dispatchers.IO,
+    /** App 语言 → 请求头 Accept-Language 的语言列表（默认：选的语言在前，再接系统的语言列表）。 */
+    private val languageTags: (AppLanguage) -> List<String> = { AcceptLanguage.tags(it.tag) },
 ) {
     private val scope = CoroutineScope(SupervisorJob() + io)
     private val mock: ThinktinService by lazy(createMock)
     private val coreState = MutableStateFlow<ServiceState>(ServiceState.Loading)
     private var coreStarted = false
     private val lock = Any()
+
+    /** 系统语言列表变了（[onSystemLocalesChanged]）时加一，让 Accept-Language 重新算一次。 */
+    private val localeChanges = MutableStateFlow(0)
 
     /** 允许演示模式（只有 debug 包）。 */
     val demoAllowed: Boolean get() = settingsRepository.demoAllowed || forceDemo
@@ -84,16 +94,38 @@ class AppContainer(
         }
     }
 
+    /** 系统语言变了（Application.onConfigurationChanged）：重新告诉真实服务 Accept-Language。 */
+    fun onSystemLocalesChanged() {
+        localeChanges.update { it + 1 }
+    }
+
     private fun startCore() {
         scope.launch {
-            coreState.value = try {
+            val state = try {
                 ServiceState.Ready(createCore())
             } catch (e: Throwable) {
                 // 有意兜住 Error：UnsatisfiedLinkError、NoClassDefFoundError、ExceptionInInitializerError 都是 Error。
                 Log.e(TAG, "client-core 不可用", e)
                 ServiceState.Failed(e)
             }
+            coreState.value = state
+            if (state is ServiceState.Ready) followLanguage(state.service)
         }
+    }
+
+    /** App 语言切换、系统语言变了时，把新的语言列表交给 [service]（之后的请求带新的 Accept-Language）。 */
+    private suspend fun followLanguage(service: ThinktinService) {
+        settings.map { it.language }
+            .distinctUntilChanged()
+            .combine(localeChanges) { language, _ -> language }
+            .collect { language ->
+                try {
+                    service.setAcceptLanguage(languageTags(language))
+                } catch (e: Exception) {
+                    // 只是请求头：失败不影响使用（日志里记一下）。
+                    Log.w(TAG, "设置 Accept-Language 失败", e)
+                }
+            }
     }
 
     companion object {

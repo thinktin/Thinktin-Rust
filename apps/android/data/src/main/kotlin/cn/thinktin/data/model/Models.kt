@@ -33,6 +33,16 @@ data class AgentInfo(
     val defaultHarness: String,
     /** 可用版本，当前版本在前。 */
     val versions: List<String>,
+    /** 一句话介绍（按设备语言给；老的服务端为空）。 */
+    val description: String = "",
+    /** 上游仓库（https）；没有时为空。 */
+    val upstream: String = "",
+    /** 许可说明（专有许可证必有），按设备语言给。 */
+    val licenseNote: String? = null,
+    /** 能说的协议，按优先级：anthropic、chat、responses（和 [VendorInfo.protocols]、[Credential.protocols] 同一套名字）。 */
+    val protocols: List<String> = emptyList(),
+    /** 运行时实际用的协议：实例配的每把 key 的 [Credential.protocols] 都要包含它，选 key 时按它过滤。 */
+    val activeProtocol: String? = null,
 )
 
 data class Instance(
@@ -75,6 +85,8 @@ data class Run(
     val createdAtMs: Long,
     val startedAtMs: Long?,
     val finishedAtMs: Long?,
+    /** 等的是什么（只在 waiting_quota / waiting_device 时有）：界面按码显示原因和操作。 */
+    val waitCode: WaitCode? = null,
 ) {
     /** 耗时（毫秒）；还没开始时为 null，没结束时算到 [nowMs]。 */
     fun durationMs(nowMs: Long): Long? {
@@ -210,6 +222,8 @@ data class Trigger(
     val enabled: Boolean,
     val nextFireAtMs: Long?,
     val lastFireAtMs: Long?,
+    /** 后台停用它的原因（规则失效）；没被停用时为 null。 */
+    val disabledReason: TriggerDisabledReason? = null,
 )
 
 data class PlanStep(
@@ -235,14 +249,17 @@ data class Plan(
     /** 错过的触发怎么补。 */
     val catchUp: CatchUp,
     val createdAtMs: Long,
-    /** [triggers]、[steps] 在列表接口（plans）里为空，详情（getPlan）里有。 */
+    /** 列表（plans）和详情（getPlan）里都有。 */
     val triggers: List<Trigger>,
     val steps: List<PlanStep>,
-) {
-    /** 最近一次要触发的时间（启用的触发器里最早的）。 */
-    val nextFireAtMs: Long?
-        get() = triggers.filter { it.enabled }.mapNotNull { it.nextFireAtMs }.minOrNull()
-}
+    /**
+     * 下一次按时运行的名义时间（服务端算好的，实际可能因削峰晚几分钟）：在用的触发器里最早的；
+     * 暂停了、等确认、没有会再触发的规则时为 null。
+     */
+    val nextFireAtMs: Long? = null,
+    /** 规则失效、被后台停用的触发器个数：详情页提示“规则已失效”，给“修改规则”的入口。 */
+    val invalidTriggers: Int = 0,
+)
 
 /**
  * 计划的策略（4.4、4.7、7.11）。默认值和服务端的默认策略一样：`PlanPolicy()` 就是默认策略。
@@ -316,6 +333,8 @@ data class Credential(
     val dailyTokenLimit: Long?,
     val disabled: Boolean,
     val createdAtMs: Long,
+    /** 能用哪些协议（anthropic、chat、responses）：给实例选 key 时要包含 agent 的 [AgentInfo.activeProtocol]。 */
+    val protocols: List<String> = emptyList(),
 )
 
 data class NewCredential(
@@ -352,6 +371,18 @@ data class UsageBucket(
     val chargedTokens: Long,
     val estimatedRequests: Long,
     val failedRequests: Long,
+)
+
+/**
+ * 跨实例列运行的条件（[cn.thinktin.data.service.ThinktinService.listRuns]，11.8）。`RunFilter()` 是全部。
+ */
+data class RunFilter(
+    /** 只要这个计划的（包括流水线的步骤；配合 [rootsOnly] 一次触发一行）。 */
+    val planId: String? = null,
+    /** 只要没结束的（排队、运行、等待、退避）：抽屉里的“进行中”。 */
+    val activeOnly: Boolean = false,
+    /** 只要根运行（不要流水线的步骤、委派的子任务）。 */
+    val rootsOnly: Boolean = false,
 )
 
 data class UsageSummary(val buckets: List<UsageBucket>, val total: UsageBucket)

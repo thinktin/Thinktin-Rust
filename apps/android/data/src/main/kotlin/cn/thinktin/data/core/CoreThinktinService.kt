@@ -31,6 +31,7 @@ import cn.thinktin.data.model.Plan
 import cn.thinktin.data.model.PlanChange
 import cn.thinktin.data.model.ReportReason
 import cn.thinktin.data.model.Run
+import cn.thinktin.data.model.RunFilter
 import cn.thinktin.data.model.SavedSecret
 import cn.thinktin.data.model.Schedule
 import cn.thinktin.data.model.SelfCodePurpose
@@ -162,7 +163,27 @@ internal class CoreThinktinService(
 
     override suspend fun devices(): List<DeviceInfo> = call { client.devices().map { it.toModel() } }
 
-    override suspend fun revokeDevice(deviceId: String) = call { client.revokeDevice(deviceId) }
+    override suspend fun revokeDevice(deviceId: String) {
+        call { client.revokeDevice(deviceId) }
+        // 吊销的是本机时 client-core 已经清掉本地登录态（11.8）：跟着回到未登录。
+        if (!stillSignedIn()) auth.value = AuthState.SignedOut
+    }
+
+    private fun stillSignedIn(): Boolean = try {
+        client.signedIn()
+    } catch (_: Exception) {
+        true
+    }
+
+    override fun setAcceptLanguage(languageTags: List<String>) = call {
+        client.setAcceptLanguage(AcceptLanguage.header(languageTags))
+    }
+
+    override fun upgradeRequired(): Boolean = try {
+        client.upgradeRequired()
+    } catch (_: Exception) {
+        false
+    }
 
     override suspend fun sendSelfCode(purpose: SelfCodePurpose) = call { client.sendSelfCode(purpose.wire) }
 
@@ -222,6 +243,9 @@ internal class CoreThinktinService(
 
     override suspend fun olderRuns(instanceId: String, beforeRunId: String, limit: Int): List<Run> =
         call { client.olderRuns(instanceId, beforeRunId, limit.toUIntNonNegative()).map { it.toModel() } }
+
+    override suspend fun listRuns(filter: RunFilter, beforeRunId: String?, limit: Int): List<Run> =
+        call { client.listRuns(filter.toCore(), beforeRunId, limit.toUIntNonNegative()).map { it.toModel() } }
 
     override suspend fun cachedRuns(instanceId: String, limit: Int): List<Run> =
         cached(emptyList()) { client.cachedRuns(instanceId, limit.toUIntNonNegative()).map { it.toModel() } }

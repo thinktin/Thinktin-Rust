@@ -27,6 +27,7 @@ import cn.thinktin.data.model.Plan
 import cn.thinktin.data.model.PlanChange
 import cn.thinktin.data.model.ReportReason
 import cn.thinktin.data.model.Run
+import cn.thinktin.data.model.RunFilter
 import cn.thinktin.data.model.SavedSecret
 import cn.thinktin.data.model.Schedule
 import cn.thinktin.data.model.SelfCodePurpose
@@ -105,8 +106,8 @@ interface ThinktinService {
     suspend fun devices(): List<DeviceInfo>
 
     /**
-     * 吊销另一台设备：它的登录会话立即失效。当前这台请用 [logout]：吊销当前这台在服务端等于退出，
-     * 但本地要到下一次请求收到 SignedOut 才会发现。
+     * 吊销一台设备：它的登录会话立即失效。吊销的是当前这台（[DeviceInfo.current]）时等于退出登录：
+     * 本地登录状态马上清掉，[authState] 变成未登录，界面回登录页。
      */
     suspend fun revokeDevice(deviceId: String)
 
@@ -118,6 +119,18 @@ interface ThinktinService {
      * 成功后本地登录状态和缓存一起清掉，[authState] 变成未登录。
      */
     suspend fun deleteAccount(code: String)
+
+    /**
+     * App 里切换了语言、或系统语言变了：之后的请求带新的 `Accept-Language`（不联网）。
+     * [languageTags] 按偏好排好的 BCP 47 标签（见 [cn.thinktin.data.core.AcceptLanguage.tags]）；空列表表示不带。
+     */
+    fun setAcceptLanguage(languageTags: List<String>)
+
+    /**
+     * 服务端说过这个版本太老（某个请求抛过 [ServiceError.UpgradeRequired]，或事件流握手被拒）。之后事件流以
+     * `Stopped` 结束、不再重连；界面进升级页。一直有效（升级就是重装）。
+     */
+    fun upgradeRequired(): Boolean
 
     // ---- 手机和电脑之间的消息（14.1，13.9） ----
 
@@ -166,6 +179,16 @@ interface ThinktinService {
 
     /** 更早的一页运行：[beforeRunId] 之前的（列表往下翻），新的在前。 */
     suspend fun olderRuns(instanceId: String, beforeRunId: String, limit: Int = DEFAULT_PAGE): List<Run>
+
+    /**
+     * 跨实例的运行（11.8），新的在前：某个计划的运行历史（[RunFilter.planId]）、所有没结束的运行
+     * （[RunFilter.activeOnly]，抽屉里的“进行中”）。往下翻时 [beforeRunId] 传上一页最后一个的 id。
+     */
+    suspend fun listRuns(
+        filter: RunFilter = RunFilter(),
+        beforeRunId: String? = null,
+        limit: Int = DEFAULT_PAGE,
+    ): List<Run>
 
     suspend fun cachedRuns(instanceId: String, limit: Int = DEFAULT_PAGE): List<Run>
 

@@ -17,6 +17,7 @@ import cn.thinktin.data.model.RunSource
 import cn.thinktin.data.model.RunState
 import cn.thinktin.data.model.Schedule
 import cn.thinktin.data.model.StreamState
+import cn.thinktin.data.model.TriggerDisabledReason
 import cn.thinktin.data.model.isTerminal
 import cn.thinktin.data.model.NewImChannel
 import cn.thinktin.data.model.long
@@ -127,9 +128,11 @@ class MappersTest {
             triggers = listOf(
                 CoreTrigger("t1", CoreSchedule.Cron("0 9 * * *", "Asia/Shanghai"), true, now + 10, null),
                 CoreTrigger("t2", CoreSchedule.Once(now + 5), true, now + 5, null),
-                CoreTrigger("t3", CoreSchedule.Rrule("RRULE:FREQ=DAILY"), false, now + 1, null),
+                CoreTrigger("t3", CoreSchedule.Rrule("RRULE:FREQ=DAILY"), false, now + 1, null, "invalid_rule"),
             ),
             steps = emptyList(),
+            nextFireAtMs = now + 5,
+            invalidTriggers = 1u,
         )
         val plan = core.toModel()
         assertEquals(2, plan.revision)
@@ -139,8 +142,13 @@ class MappersTest {
         assertEquals(CatchUp.Once, plan.catchUp)
         assertEquals(Schedule.Cron("0 9 * * *", "Asia/Shanghai"), plan.triggers[0].schedule)
         assertEquals(Schedule.Once(now + 5), plan.triggers[1].schedule)
-        // 停用的触发器不算。
+        // 下一次运行时间、失效触发器个数用服务端给的（11.8），不在 App 里自己算。
         assertEquals(now + 5, plan.nextFireAtMs)
+        assertEquals(1, plan.invalidTriggers)
+        assertEquals(TriggerDisabledReason.InvalidRule, plan.triggers[2].disabledReason)
+        assertNull(plan.triggers[0].disabledReason)
+        assertEquals(TriggerDisabledReason.Unknown, core.triggers[2].copy(disabledReason = "moon_phase").toModel().disabledReason)
+        assertNull(core.copy(nextFireAtMs = null).toModel().nextFireAtMs)
         assertEquals(CoreSchedule.Rrule("RRULE:FREQ=DAILY"), Schedule.Rrule("RRULE:FREQ=DAILY").toCore())
     }
 

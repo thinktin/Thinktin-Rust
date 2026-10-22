@@ -17,6 +17,9 @@ import cn.thinktin.data.model.TeamMember
 import cn.thinktin.data.model.TeamRole
 import cn.thinktin.data.model.TeamTemplate
 import cn.thinktin.data.model.TemplateMember
+import cn.thinktin.data.model.RunFilter
+import cn.thinktin.data.model.TriggerDisabledReason
+import cn.thinktin.data.model.WaitCode
 import cn.thinktin.data.model.WireEnum
 import cn.thinktin.data.service.ServiceError
 import cn.thinktin.data.model.Approval
@@ -92,6 +95,7 @@ import cn.thinktin.core.Plan as CorePlan
 import cn.thinktin.core.PlanStep as CorePlanStep
 import cn.thinktin.core.RouteFallback as CoreRouteFallback
 import cn.thinktin.core.Run as CoreRun
+import cn.thinktin.core.RunFilter as CoreRunFilter
 import cn.thinktin.core.SavedSecret as CoreSavedSecret
 import cn.thinktin.core.Schedule as CoreSchedule
 import cn.thinktin.core.SignOutOthersResult as CoreSignOutOthersResult
@@ -148,6 +152,11 @@ internal fun CoreAgentInfo.toModel(): AgentInfo = AgentInfo(
     harnesses = harnesses,
     defaultHarness = defaultHarness,
     versions = versions,
+    description = description,
+    upstream = upstream,
+    licenseNote = licenseNote,
+    protocols = protocols,
+    activeProtocol = activeProtocol,
 )
 
 internal fun CoreInstance.toModel(): Instance = Instance(
@@ -198,7 +207,11 @@ internal fun CoreRun.toModel(): Run = Run(
     createdAtMs = createdAtMs,
     startedAtMs = startedAtMs,
     finishedAtMs = finishedAtMs,
+    waitCode = waitCode?.let { WaitCode.fromWire(it) },
 )
+
+internal fun RunFilter.toCore(): CoreRunFilter =
+    CoreRunFilter(planId = planId, activeOnly = activeOnly, rootsOnly = rootsOnly)
 
 internal fun CoreArtifact.toModel(): Artifact = Artifact(
     id = id,
@@ -266,6 +279,7 @@ internal fun CoreTrigger.toModel(): Trigger = Trigger(
     enabled = enabled,
     nextFireAtMs = nextFireAtMs,
     lastFireAtMs = lastFireAtMs,
+    disabledReason = disabledReason?.let { TriggerDisabledReason.fromWire(it) },
 )
 
 internal fun CorePlanStep.toModel(): PlanStep =
@@ -311,6 +325,8 @@ internal fun CorePlan.toModel(): Plan = Plan(
     createdAtMs = createdAtMs,
     triggers = triggers.map { it.toModel() },
     steps = steps.map { it.toModel() },
+    nextFireAtMs = nextFireAtMs,
+    invalidTriggers = invalidTriggers.toIntClamped(),
 )
 
 internal fun NewPlan.toCore(): CoreNewPlan = CoreNewPlan(
@@ -355,6 +371,7 @@ internal fun CoreCredential.toModel(): Credential = Credential(
     dailyTokenLimit = dailyTokenLimit?.toLongClamped(),
     disabled = disabled,
     createdAtMs = createdAtMs,
+    protocols = protocols,
 )
 
 internal fun NewCredential.toCore(): CoreNewCredential = CoreNewCredential(

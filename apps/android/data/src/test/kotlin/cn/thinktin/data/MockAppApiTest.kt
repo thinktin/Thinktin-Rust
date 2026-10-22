@@ -1,16 +1,22 @@
 package cn.thinktin.data
 
+import cn.thinktin.data.mock.MockData
 import cn.thinktin.data.mock.MockThinktinService
 import cn.thinktin.data.model.ApprovalTimeoutAction
 import cn.thinktin.data.model.CatchUp
 import cn.thinktin.data.model.CredentialUpdate
 import cn.thinktin.data.model.DeviceMessageKind
+import cn.thinktin.data.model.NewCredential
 import cn.thinktin.data.model.NewPlan
 import cn.thinktin.data.model.PlanChange
 import cn.thinktin.data.model.PlanPolicy
 import cn.thinktin.data.model.ReportReason
 import cn.thinktin.data.model.ReportState
+import cn.thinktin.data.model.RunFilter
+import cn.thinktin.data.model.RunState
 import cn.thinktin.data.model.Schedule
+import cn.thinktin.data.model.TriggerDisabledReason
+import cn.thinktin.data.model.WaitCode
 import cn.thinktin.data.model.SelfCodePurpose
 import cn.thinktin.data.model.TeamRole
 import cn.thinktin.data.model.TemplateMember
@@ -225,5 +231,71 @@ class MockAppApiTest {
         expectApi(404) { s.reportContent("run-nope", ReportReason.Other) }
         expectApi(422) { s.reportContent("run-done", ReportReason.Unknown) }
         expectApi(422) { s.reportContent("run-done", ReportReason.Other, note = "x".repeat(1001)) }
+    }
+
+    // ---- 11.8 ----
+
+    @Test
+    fun listRunsFiltersAndPages() = runTest {
+        val s = service()
+        val all = s.listRuns()
+        assertEquals("新的在前", all.sortedByDescending { it.createdAtMs }, all)
+        assertEquals(setOf("inst-coder", "inst-research"), all.map { it.instanceId }.toSet())
+
+        val active = s.listRuns(RunFilter(activeOnly = true))
+        assertTrue(active.isNotEmpty())
+        assertTrue(active.all { it.state.isActive })
+        val quota = active.single { it.id == MockData.RUN_QUOTA }
+        assertEquals(RunState.WaitingQuota, quota.state)
+        assertEquals(WaitCode.NoBalance, quota.waitCode)
+
+        val weekly = s.listRuns(RunFilter(planId = MockData.PLAN_WEEKLY))
+        assertEquals(listOf(MockData.RUN_QUOTA), weekly.map { it.id })
+        assertTrue(s.listRuns(RunFilter(rootsOnly = true)).all { it.parentRunId == null })
+
+        val first = s.listRuns(limit = 2)
+        assertEquals(all.take(2), first)
+        assertEquals(all.drop(2).take(2), s.listRuns(beforeRunId = first.last().id, limit = 2))
+        assertTrue("不认识的游标：空页", s.listRuns(beforeRunId = "nope").isEmpty())
+    }
+
+    @Test
+    fun planScheduleSummary() = runTest {
+        val s = service()
+        val daily = s.getPlan(MockData.PLAN_DAILY)
+        assertEquals(1, daily.invalidTriggers)
+        assertEquals(TriggerDisabledReason.InvalidRule, daily.triggers.single { !it.enabled }.disabledReason)
+        assertEquals(daily.triggers.single { it.enabled }.nextFireAtMs, daily.nextFireAtMs)
+        assertEquals("等确认的计划不会按时运行", null, s.getPlan(MockData.PLAN_WEEKLY).nextFireAtMs)
+
+        assertEquals("暂停后没有下一次", null, s.setPlanPaused(MockData.PLAN_DAILY, true).nextFireAtMs)
+        assertEquals(daily.nextFireAtMs, s.setPlanPaused(MockData.PLAN_DAILY, false).nextFireAtMs)
+        s.deleteTrigger("trg-daily-broken")
+        assertEquals(0, s.getPlan(MockData.PLAN_DAILY).invalidTriggers)
+        val once = s.addTrigger(MockData.PLAN_DAILY, Schedule.Once(now + 60_000))
+        assertEquals(now + 60_000, once.nextFireAtMs)
+        assertEquals(now + 60_000, s.getPlan(MockData.PLAN_DAILY).nextFireAtMs)
+    }
+
+    @Test
+    fun agentsAndCredentialsCarryProtocols() = runTest {
+        val s = service()
+        val agents = s.agents()
+        assertTrue(agents.all { it.description.isNotEmpty() && it.upstream.startsWith("https://") })
+        assertTrue("运行时用的协议在 agent 能说的里面", agents.all { it.activeProtocol in it.protocols })
+        assertTrue("专有许可证必有许可说明", agents.filter { it.license == null }.all { it.licenseNote != null })
+        val known = setOf("anthropic", "chat", "responses")
+        assertTrue(s.vendors().all { known.containsAll(it.protocols) })
+        assertTrue(s.credentials().all { it.protocols.isNotEmpty() && known.containsAll(it.protocols) })
+        val added = s.addCredential(NewCredential("openai", "备用", "sk-12345678"))
+        assertEquals(listOf("chat", "responses"), added.protocols)
+    }
+
+    @Test
+    fun acceptLanguageIsRecordedAndUpgradeNeverRequired() {
+        val s = service()
+        s.setAcceptLanguage(listOf("zh-CN", "en"))
+        assertEquals(listOf("zh-CN", "en"), s.acceptLanguageTags)
+        assertFalse(s.upgradeRequired())
     }
 }

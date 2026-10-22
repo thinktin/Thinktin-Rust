@@ -38,6 +38,7 @@ import cn.thinktin.data.model.TeamMember
 import cn.thinktin.data.model.TeamRole
 import cn.thinktin.data.model.TeamTemplate
 import cn.thinktin.data.model.TemplateMember
+import cn.thinktin.data.model.TriggerDisabledReason
 import cn.thinktin.data.model.Trigger
 import cn.thinktin.data.model.UsageBucket
 import cn.thinktin.data.model.User
@@ -45,6 +46,7 @@ import cn.thinktin.data.model.VaultItem
 import cn.thinktin.data.model.VaultRequest
 import cn.thinktin.data.model.VaultRequestStatus
 import cn.thinktin.data.model.VendorInfo
+import cn.thinktin.data.model.WaitCode
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.add
@@ -77,16 +79,23 @@ internal class MockData(private val baseMs: Long) {
             id = AGENT_CODER, name = "代码助手", version = "1.4.0", license = "Apache-2.0",
             sites = listOf("github.com"), harnesses = listOf("claude-code", "codex"), defaultHarness = "claude-code",
             versions = listOf("1.4.0", "1.3.2"),
+            description = "读代码、改代码、跑测试，按你的要求提交 PR。", upstream = "https://github.com/example/coder",
+            protocols = listOf("anthropic", "chat"), activeProtocol = "anthropic",
         ),
         AgentInfo(
             id = AGENT_RESEARCH, name = "调研助手", version = "0.9.2", license = "MIT",
             sites = emptyList(), harnesses = listOf("codex"), defaultHarness = "codex",
             versions = listOf("0.9.2"),
+            description = "上网查资料、整理成带出处的摘要。", upstream = "https://github.com/example/research",
+            protocols = listOf("responses", "chat"), activeProtocol = "chat",
         ),
         AgentInfo(
             id = AGENT_WRITER, name = "写作助手", version = "2.0.1", license = null,
             sites = emptyList(), harnesses = listOf("claude-code"), defaultHarness = "claude-code",
             versions = listOf("2.0.1", "2.0.0", "1.9.0"),
+            description = "写文章、改稿、润色，保持你的语气。", upstream = "https://github.com/example/writer",
+            licenseNote = "专有许可：仅限个人使用，不得再分发。",
+            protocols = listOf("anthropic"), activeProtocol = "anthropic",
         ),
     )
 
@@ -119,6 +128,7 @@ internal class MockData(private val baseMs: Long) {
         error: String? = null,
         reason: String? = null,
         attempt: Int = 1,
+        waitCode: WaitCode? = null,
     ): Run {
         val created = ago(createdMinutesAgo)
         val started = if (state == RunState.Queued) null else created + 2_000
@@ -128,6 +138,7 @@ internal class MockData(private val baseMs: Long) {
             attempt = attempt, tokensUsed = tokens, summary = summary, error = error, createdAtMs = created,
             startedAtMs = started,
             finishedAtMs = if (state.isTerminal && started != null) started + (durationMinutes ?: 1) * MINUTE else null,
+            waitCode = waitCode,
         )
     }
 
@@ -168,6 +179,10 @@ internal class MockData(private val baseMs: Long) {
         run(
             RUN_CANCELLED, INSTANCE_RESEARCH, "整理上周的阅读清单", RunState.Cancelled, 60L * 26, 2, tokens = 410,
             reason = "用户取消",
+        ),
+        run(
+            RUN_QUOTA, INSTANCE_RESEARCH, "每周一整理行业新闻", RunState.WaitingQuota, 45, null, source = RunSource.Plan,
+            planId = PLAN_WEEKLY, tokens = 120, reason = "key 余额不足", waitCode = WaitCode.NoBalance,
         ),
     )
 
@@ -419,8 +434,15 @@ internal class MockData(private val baseMs: Long) {
                     id = "trg-daily", schedule = Schedule.Cron("0 9 * * *", "Asia/Shanghai"), enabled = true,
                     nextFireAtMs = baseMs + 9 * 60 * MINUTE, lastFireAtMs = ago(60L * 24),
                 ),
+                // 规则失效、被后台停用的触发器（时区名不存在）：详情页提示“规则已失效”。
+                Trigger(
+                    id = "trg-daily-broken", schedule = Schedule.Cron("0 21 * * *", "Mars/Olympus"), enabled = false,
+                    nextFireAtMs = null, lastFireAtMs = null, disabledReason = TriggerDisabledReason.InvalidRule,
+                ),
             ),
             steps = emptyList(),
+            nextFireAtMs = baseMs + 9 * 60 * MINUTE,
+            invalidTriggers = 1,
         ),
         Plan(
             id = PLAN_WEEKLY, instanceId = INSTANCE_RESEARCH, title = "每周一整理行业新闻",
@@ -435,6 +457,8 @@ internal class MockData(private val baseMs: Long) {
                 ),
             ),
             steps = listOf(PlanStep("collect", INSTANCE_RESEARCH, "收集上周的行业新闻", emptyList())),
+            // 等确认的计划不会按时运行。
+            nextFireAtMs = null,
         ),
     )
 
@@ -468,13 +492,13 @@ internal class MockData(private val baseMs: Long) {
 
     val vendors = listOf(
         VendorInfo("anthropic", "Anthropic", listOf("anthropic"), listOf("claude-sonnet-4", "claude-opus-4"), ""),
-        VendorInfo("openai", "OpenAI", listOf("openai", "responses"), listOf("gpt-4.1", "o3"), ""),
-        VendorInfo("deepseek", "DeepSeek", listOf("openai", "anthropic"), listOf("deepseek-chat", "deepseek-reasoner"), "国内直连"),
+        VendorInfo("openai", "OpenAI", listOf("chat", "responses"), listOf("gpt-4.1", "o3"), ""),
+        VendorInfo("deepseek", "DeepSeek", listOf("chat", "anthropic"), listOf("deepseek-chat", "deepseek-reasoner"), "国内直连"),
     )
 
     val credentials = listOf(
-        Credential("cred-work", "anthropic", "工作 key", "a1b2", 2_000_000, false, ago(60L * 24 * 30)),
-        Credential("cred-home", "deepseek", "个人", "9z8y", null, false, ago(60L * 24 * 10)),
+        Credential("cred-work", "anthropic", "工作 key", "a1b2", 2_000_000, false, ago(60L * 24 * 30), listOf("anthropic")),
+        Credential("cred-home", "deepseek", "个人", "9z8y", null, false, ago(60L * 24 * 10), listOf("chat", "anthropic")),
     )
 
     val modelRoutes: Map<String, List<ModelRoute>> = mapOf(
@@ -600,6 +624,7 @@ internal class MockData(private val baseMs: Long) {
         const val RUN_PIPELINE_WRITE = "run-pipeline-write"
         const val RUN_DELEGATE = "run-delegate"
         const val RUN_CANCELLED = "run-cancelled"
+        const val RUN_QUOTA = "run-quota"
 
         const val APPROVAL_PENDING = "approval-pending"
         const val APPROVAL_DONE = "approval-done"

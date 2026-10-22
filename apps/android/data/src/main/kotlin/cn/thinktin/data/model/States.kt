@@ -255,3 +255,48 @@ enum class DeviceMessageKind(override val wire: String) : WireEnum {
         fun fromWire(value: String): DeviceMessageKind = parseWire(value, Unknown)
     }
 }
+
+/**
+ * 运行在等什么（[Run.waitCode]，11.8）：只在 waiting_quota / waiting_device 时有。界面按码映射文案；
+ * 不认识的（服务端以后加的）是 Unknown，按 [RunState] 显示。
+ */
+enum class WaitCode(override val wire: String) : WireEnum {
+    /** key 无效：去换 key。 */
+    Invalid("invalid"),
+
+    /** 欠费：充值或换 key（每小时也自己再试）。 */
+    NoBalance("no_balance"),
+
+    /** 没有能用的 key（停用了或当天额度用完；每小时也自己再试）。 */
+    Unavailable("unavailable"),
+
+    /** 限流：几分钟后自己继续，不用处理。 */
+    RateLimited("rate_limited"),
+
+    /** 上游过载：几分钟后自己继续，不用处理。 */
+    Overloaded("overloaded"),
+
+    /** 等电脑上线。 */
+    DeviceOffline("device_offline"),
+    Unknown(""),
+    ;
+
+    /** 要用户处理（换 key、充值、开电脑）；限流和过载会自己继续。 */
+    val needsUserAction: Boolean get() = this != RateLimited && this != Overloaded && this != Unknown
+
+    companion object {
+        fun fromWire(value: String): WaitCode = parseWire(value, Unknown)
+    }
+}
+
+/** 触发器被后台停用的原因（[Trigger.disabledReason]，11.8）。 */
+enum class TriggerDisabledReason(override val wire: String) : WireEnum {
+    /** 规则失效了（比如时区没了）：删掉重新加。 */
+    InvalidRule("invalid_rule"),
+    Unknown(""),
+    ;
+
+    companion object {
+        fun fromWire(value: String): TriggerDisabledReason = parseWire(value, Unknown)
+    }
+}

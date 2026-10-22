@@ -12,6 +12,8 @@ import cn.thinktin.data.model.PlanPolicy
 import cn.thinktin.data.model.PlanStep
 import cn.thinktin.data.model.ReportReason
 import cn.thinktin.data.model.ReportState
+import cn.thinktin.data.model.RunFilter
+import cn.thinktin.data.model.WaitCode
 import cn.thinktin.data.model.Schedule
 import cn.thinktin.data.model.TeamMember
 import cn.thinktin.data.model.TeamRole
@@ -23,7 +25,11 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
+import cn.thinktin.core.AgentInfo as CoreAgentInfo
 import cn.thinktin.core.ContentReport as CoreContentReport
+import cn.thinktin.core.Credential as CoreCredential
+import cn.thinktin.core.Run as CoreRun
+import cn.thinktin.core.RunFilter as CoreRunFilter
 import cn.thinktin.core.DeviceInfo as CoreDeviceInfo
 import cn.thinktin.core.DeviceMessage as CoreDeviceMessage
 import cn.thinktin.core.NewPlan as CoreNewPlan
@@ -211,6 +217,70 @@ class AppApiMappersTest {
         assertEquals(
             listOf("harmful", "illegal", "sexual", "hateful", "privacy", "misinformation", "infringement", "other"),
             ReportReason.entries.filter { it != ReportReason.Unknown }.map { it.wire },
+        )
+    }
+
+    // ---- 11.8 ----
+
+    @Test
+    fun agentInfoCarriesDescriptionAndProtocols() {
+        val core = CoreAgentInfo(
+            id = "a1", name = "代码助手", version = "1.4.0", license = "Proprietary", sites = emptyList(),
+            harnesses = listOf("codex"), defaultHarness = "codex", versions = listOf("1.4.0"),
+            description = "读代码、改代码", upstream = "https://github.com/example/coder", licenseNote = "仅限个人使用",
+            protocols = listOf("anthropic", "chat"), activeProtocol = "anthropic",
+        )
+        val model = core.toModel()
+        assertEquals("读代码、改代码", model.description)
+        assertEquals("https://github.com/example/coder", model.upstream)
+        assertEquals("仅限个人使用", model.licenseNote)
+        assertEquals(listOf("anthropic", "chat"), model.protocols)
+        assertEquals("anthropic", model.activeProtocol)
+        // 老的服务端：字段都是默认值。
+        val old = CoreAgentInfo("a1", "x", "1", null, emptyList(), emptyList(), "codex", emptyList()).toModel()
+        assertEquals("", old.description)
+        assertNull(old.activeProtocol)
+        assertTrue(old.protocols.isEmpty())
+    }
+
+    @Test
+    fun runWaitCodeMapsKnownUnknownAndAbsent() {
+        val base = CoreRun(
+            id = "r1", kind = "agent", instanceId = "i1", planId = null, parentRunId = null, rootRunId = "r1",
+            stepKey = null, source = "user", prompt = "p", state = "waiting_quota", stateReason = null, attempt = 1u,
+            tokensUsed = 0uL, summary = null, error = null, createdAtMs = now, startedAtMs = null, finishedAtMs = null,
+        )
+        assertNull(base.toModel().waitCode)
+        val expected = mapOf(
+            "invalid" to WaitCode.Invalid,
+            "no_balance" to WaitCode.NoBalance,
+            "unavailable" to WaitCode.Unavailable,
+            "rate_limited" to WaitCode.RateLimited,
+            "overloaded" to WaitCode.Overloaded,
+            "device_offline" to WaitCode.DeviceOffline,
+            "solar_flare" to WaitCode.Unknown,
+        )
+        for ((wire, code) in expected) assertEquals(wire, code, base.copy(waitCode = wire).toModel().waitCode)
+        // 限流、过载会自己继续；其余要用户处理。
+        assertEquals(
+            listOf(WaitCode.Invalid, WaitCode.NoBalance, WaitCode.Unavailable, WaitCode.DeviceOffline),
+            WaitCode.entries.filter { it.needsUserAction },
+        )
+    }
+
+    @Test
+    fun credentialProtocols() {
+        val core = CoreCredential("c1", "deepseek", "个人", "9z8y", null, false, now, listOf("chat", "anthropic"))
+        assertEquals(listOf("chat", "anthropic"), core.toModel().protocols)
+        assertTrue(CoreCredential("c1", "x", "y", "z", null, false, now).toModel().protocols.isEmpty())
+    }
+
+    @Test
+    fun runFilterToCore() {
+        assertEquals(CoreRunFilter(), RunFilter().toCore())
+        assertEquals(
+            CoreRunFilter(planId = "p1", activeOnly = true, rootsOnly = true),
+            RunFilter(planId = "p1", activeOnly = true, rootsOnly = true).toCore(),
         )
     }
 }

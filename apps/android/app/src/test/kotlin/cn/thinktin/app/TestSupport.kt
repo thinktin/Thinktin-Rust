@@ -2,7 +2,9 @@ package cn.thinktin.app
 
 import android.content.Context
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import cn.thinktin.app.settings.AppLanguage
 import cn.thinktin.app.settings.AppSettingsRepository
+import cn.thinktin.data.core.AcceptLanguage
 import cn.thinktin.data.mock.MockThinktinService
 import cn.thinktin.data.service.AuthState
 import cn.thinktin.data.service.ThinktinService
@@ -44,6 +46,7 @@ fun testContainer(
     createCore: () -> ThinktinService,
     demoAllowed: Boolean = true,
     demoDefault: Boolean = false,
+    languageTags: ((AppLanguage) -> List<String>)? = null,
 ): AppContainer {
     val store = PreferenceDataStoreFactory.create(
         scope = CoroutineScope(Dispatchers.IO + SupervisorJob()),
@@ -54,5 +57,6 @@ fun testContainer(
         clock = DemoTestApp.FIXED_CLOCK,
         createCore = createCore,
         createMock = { MockThinktinService(clock = { DemoTestApp.FIXED_CLOCK.millis() }) },
+        languageTags = languageTags ?: { AcceptLanguage.tags(it.tag) },
     )
 }

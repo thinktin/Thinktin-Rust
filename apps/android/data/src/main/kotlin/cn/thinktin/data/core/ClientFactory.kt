@@ -19,22 +19,32 @@ object ClientFactory {
     /** 设备名默认用 Build.MODEL（显示在设备管理里，用户可改）。 */
     fun defaultDeviceName(): String = Build.MODEL?.takeIf { it.isNotBlank() } ?: "Android"
 
-    internal fun config(filesDir: File, baseUrl: String, deviceName: String = defaultDeviceName()): ClientConfig =
+    internal fun config(
+        filesDir: File,
+        baseUrl: String,
+        deviceName: String = defaultDeviceName(),
+        acceptLanguage: String? = null,
+    ): ClientConfig =
         ClientConfig(
             baseUrl = baseUrl,
             cachePath = File(filesDir, CACHE_FILE).absolutePath,
             platform = PLATFORM,
             deviceName = deviceName,
             timeoutSecs = TIMEOUT_SECS,
+            acceptLanguage = acceptLanguage,
         )
 
     /** 会加载 libclient_core.so（JNA）、打开 SQLite、读 Keystore：放在后台线程调用；演示模式不要调用。 */
     internal fun create(
         context: Context,
         baseUrl: String,
+        languageTags: List<String>,
         deviceName: String = defaultDeviceName(),
         sessions: SessionStore = SecureSessionStore(context),
-    ): ThinktinClient = ThinktinClient(config(context.filesDir, baseUrl, deviceName), sessions)
+    ): ThinktinClient = ThinktinClient(
+        config(context.filesDir, baseUrl, deviceName, AcceptLanguage.header(languageTags)),
+        sessions,
+    )
 
     /** https 的地址要先初始化系统证书校验（[TlsState]）；没有时抛 [ServiceError.TlsUnavailable]。 */
     internal fun checkTls(baseUrl: String, tls: TlsState) {
@@ -46,9 +56,16 @@ object ClientFactory {
     /**
      * 真实服务（client-core）。可能抛异常（https 但 [tls] 没初始化、安装包里没有 .so、绑定与库的契约版本不一致、
      * 缓存打不开……），调用方要在后台线程调用并兜住（见 :app 的 AppContainer）。
+     * [languageTags] 是请求头 Accept-Language 的语言列表（null 用系统的语言列表，见 [AcceptLanguage.tags]）；
+     * 之后切换语言调 [ThinktinService.setAcceptLanguage]。
      */
-    fun createService(context: Context, baseUrl: String, tls: TlsState): ThinktinService {
+    fun createService(
+        context: Context,
+        baseUrl: String,
+        tls: TlsState,
+        languageTags: List<String>? = null,
+    ): ThinktinService {
         checkTls(baseUrl, tls)
-        return CoreThinktinService(create(context, baseUrl))
+        return CoreThinktinService(create(context, baseUrl, languageTags ?: AcceptLanguage.tags(appLanguage = null)))
     }
 }

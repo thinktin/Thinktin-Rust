@@ -33,6 +33,7 @@ import cn.thinktin.data.model.PlanPolicy
 import cn.thinktin.data.model.ReportReason
 import cn.thinktin.data.model.ReportState
 import cn.thinktin.data.model.Run
+import cn.thinktin.data.model.RunFilter
 import cn.thinktin.data.model.RunKind
 import cn.thinktin.data.model.RunSource
 import cn.thinktin.data.model.RunState
@@ -47,6 +48,7 @@ import cn.thinktin.data.model.TeamMember
 import cn.thinktin.data.model.TeamTemplate
 import cn.thinktin.data.model.TemplateMember
 import cn.thinktin.data.model.Trigger
+import cn.thinktin.data.model.TriggerDisabledReason
 import cn.thinktin.data.model.UsageBucket
 import cn.thinktin.data.model.UsageGroup
 import cn.thinktin.data.model.UsageSummary
@@ -123,6 +125,11 @@ class MockThinktinService(
 
     private val auth = MutableStateFlow(AuthState.SignedIn)
     override val authState: StateFlow<AuthState> = auth.asStateFlow()
+
+    /** 最近一次 [setAcceptLanguage] 给的语言列表（演示模式不联网，只记下来；测试用）。 */
+    @Volatile
+    var acceptLanguageTags: List<String> = emptyList()
+        private set
 
     private suspend fun lag() {
         if (delayMs > 0) delay(delayMs)
@@ -215,9 +222,15 @@ class MockThinktinService(
             deviceList.remove(device)
             device.current
         }
-        // 吊销当前这台等于退出登录（真实服务要到下一次请求才发现，这里直接退出）。
+        // 吊销当前这台等于退出登录（和真实服务一样，本地马上退出）。
         if (current) auth.value = AuthState.SignedOut
     }
+
+    override fun setAcceptLanguage(languageTags: List<String>) {
+        acceptLanguageTags = languageTags.toList()
+    }
+
+    override fun upgradeRequired(): Boolean = false
 
     override suspend fun sendSelfCode(purpose: SelfCodePurpose) {
         lag(); requireSignedIn()
@@ -369,6 +382,23 @@ class MockThinktinService(
             if (i < 0) emptyList() else all.drop(i + 1).take(limit)
         }
     }
+
+    override suspend fun listRuns(filter: RunFilter, beforeRunId: String?, limit: Int): List<Run> {
+        lag(); requireSignedIn()
+        return synchronized(lock) {
+            val all = runList
+                .filter { filter.planId == null || it.planId == filter.planId || it.rootPlanId() == filter.planId }
+                .filter { !filter.activeOnly || it.state.isActive }
+                .filter { !filter.rootsOnly || it.parentRunId == null }
+                .sortedByDescending { it.createdAtMs }
+            val start = if (beforeRunId == null) 0 else all.indexOfFirst { it.id == beforeRunId }.let { if (it < 0) all.size else it + 1 }
+            all.drop(start).take(limit.coerceAtLeast(0))
+        }
+    }
+
+    /** 流水线步骤、委派的子任务记在根运行的计划下（真实服务的 plan_id 过滤也包括它们）。调用方持有 [lock]。 */
+    private fun Run.rootPlanId(): String? =
+        if (parentRunId == null) planId else runList.firstOrNull { it.id == rootRunId }?.planId
 
     private fun sortedRuns(instanceId: String): List<Run> =
         runList.filter { it.instanceId == instanceId }.sortedByDescending { it.createdAtMs }
@@ -563,8 +593,8 @@ class MockThinktinService(
             id = newId("plan"), instanceId = plan.instanceId, title = plan.title, goal = plan.goal, paused = false,
             createdBy = "user", awaitingConfirmation = false, revision = 1, policyJson = policy.toServerJson(),
             policy = policy, catchUp = plan.catchUp ?: CatchUp.Once, createdAtMs = now,
-            triggers = plan.triggers.map { Trigger(newId("trg"), it, true, null, null) }, steps = plan.steps,
-        )
+            triggers = plan.triggers.map { Trigger(newId("trg"), it, true, firstFire(it), null) }, steps = plan.steps,
+        ).withSchedule()
         synchronized(lock) { planList.add(created) }
         return created
     }
@@ -572,8 +602,22 @@ class MockThinktinService(
     private fun updatePlanLocked(planId: String, change: (Plan) -> Plan): Plan = synchronized(lock) {
         val i = planList.indexOfFirst { it.id == planId }
         if (i < 0) notFound("plan", planId)
-        change(planList[i]).also { planList[i] = it }
+        change(planList[i]).withSchedule().also { planList[i] = it }
     }
+
+    /** 像服务端那样重算下一次运行时间和失效触发器个数：暂停、等确认时没有下一次。 */
+    private fun Plan.withSchedule(): Plan = copy(
+        nextFireAtMs = if (paused || awaitingConfirmation) {
+            null
+        } else {
+            triggers.filter { it.enabled }.mapNotNull { it.nextFireAtMs }.minOrNull()
+        },
+        invalidTriggers = triggers.count { it.disabledReason == TriggerDisabledReason.InvalidRule },
+    )
+
+    /** 新触发器的下一次时间：只算一次性的（cron、rrule 演示模式不展开）。 */
+    private fun firstFire(schedule: Schedule): Long? =
+        (schedule as? Schedule.Once)?.atMs?.takeIf { it > clock() }
 
     override suspend fun updatePlan(planId: String, change: PlanChange): Plan {
         lag()
@@ -614,7 +658,7 @@ class MockThinktinService(
 
     override suspend fun addTrigger(planId: String, schedule: Schedule): Trigger {
         lag()
-        val trigger = Trigger(newId("trg"), schedule, true, null, null)
+        val trigger = Trigger(newId("trg"), schedule, true, firstFire(schedule), null)
         updatePlanLocked(planId) { plan ->
             if (plan.triggers.size >= MAX_TRIGGERS) {
                 throw ServiceError.Api(422, "invalid", "a plan has at most $MAX_TRIGGERS triggers", null)
@@ -628,7 +672,7 @@ class MockThinktinService(
         lag()
         synchronized(lock) {
             if (planList.none { plan -> plan.triggers.any { it.id == triggerId } }) notFound("trigger", triggerId)
-            planList.replaceAll { plan -> plan.copy(triggers = plan.triggers.filterNot { it.id == triggerId }) }
+            planList.replaceAll { plan -> plan.copy(triggers = plan.triggers.filterNot { it.id == triggerId }).withSchedule() }
         }
     }
 
@@ -879,6 +923,7 @@ class MockThinktinService(
             id = newId("cred"), vendor = credential.vendor, label = credential.label,
             last4 = credential.apiKey.takeLast(4), dailyTokenLimit = credential.dailyTokenLimit, disabled = false,
             createdAtMs = clock(),
+            protocols = data.vendors.firstOrNull { it.id == credential.vendor }?.protocols.orEmpty(),
         )
         synchronized(lock) { credentialList.add(created) }
         return created

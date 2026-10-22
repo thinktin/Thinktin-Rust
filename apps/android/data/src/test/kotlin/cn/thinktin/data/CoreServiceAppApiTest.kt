@@ -11,6 +11,9 @@ import cn.thinktin.data.model.DeviceMessageKind
 import cn.thinktin.data.model.PlanChange
 import cn.thinktin.data.model.PlanPolicy
 import cn.thinktin.data.model.ReportReason
+import cn.thinktin.data.model.RunFilter
+import cn.thinktin.data.model.RunState
+import cn.thinktin.data.model.WaitCode
 import cn.thinktin.data.model.Schedule
 import cn.thinktin.data.model.SelfCodePurpose
 import cn.thinktin.data.model.TeamMember
@@ -35,6 +38,7 @@ import cn.thinktin.core.InstanceEvent as CoreInstanceEvent
 import cn.thinktin.core.Plan as CorePlan
 import cn.thinktin.core.PlanChange as CorePlanChange
 import cn.thinktin.core.Run as CoreRun
+import cn.thinktin.core.RunFilter as CoreRunFilter
 import cn.thinktin.core.Schedule as CoreSchedule
 import cn.thinktin.core.Team as CoreTeam
 import cn.thinktin.core.TeamMember as CoreTeamMember
@@ -59,7 +63,20 @@ class CoreServiceAppApiTest {
             calls += args.toList()
         }
 
-        override fun signedIn(): Boolean = true
+        /** 吊销本机后 client-core 自己清登录态（11.8）：这里模拟成吊销 d1（本机）后变成未登录。 */
+        var signedIn = true
+        var upgrade = false
+
+        override fun signedIn(): Boolean = signedIn
+
+        override fun upgradeRequired(): Boolean = upgrade
+
+        override fun setAcceptLanguage(acceptLanguage: String?) = record("setAcceptLanguage", acceptLanguage)
+
+        override suspend fun listRuns(filter: CoreRunFilter, beforeRunId: String?, limit: UInt): List<CoreRun> {
+            record("listRuns", filter, beforeRunId, limit)
+            return listOf(run("r9").copy(state = "waiting_quota", waitCode = "no_balance"))
+        }
 
         override suspend fun updateProfile(displayName: String?): CoreUser {
             record("updateProfile", displayName)
@@ -71,7 +88,10 @@ class CoreServiceAppApiTest {
             return listOf(CoreDeviceInfo("d1", "android", "Pixel", "fcm", true, false, 1, 2))
         }
 
-        override suspend fun revokeDevice(deviceId: String) = record("revokeDevice", deviceId)
+        override suspend fun revokeDevice(deviceId: String) {
+            record("revokeDevice", deviceId)
+            if (deviceId == "d1") signedIn = false
+        }
 
         override suspend fun sendSelfCode(purpose: String) = record("sendSelfCode", purpose)
 
@@ -247,6 +267,42 @@ class CoreServiceAppApiTest {
             ),
             fake.calls,
         )
+    }
+
+    @Test
+    fun revokingThisDeviceSignsOut() = runTest {
+        val s = CoreThinktinService(fake)
+        s.revokeDevice("d2")
+        assertEquals("吊销别的设备不影响本机", AuthState.SignedIn, s.authState.value)
+        s.revokeDevice("d1")
+        assertEquals("吊销本机：client-core 已清掉登录态，跟着回登录页", AuthState.SignedOut, s.authState.value)
+    }
+
+    @Test
+    fun listRunsAcrossInstances() = runTest {
+        val s = CoreThinktinService(fake)
+        val run = s.listRuns(RunFilter(planId = "p1", rootsOnly = true), beforeRunId = "r5", limit = 30).single()
+        assertEquals(RunState.WaitingQuota, run.state)
+        assertEquals(WaitCode.NoBalance, run.waitCode)
+        s.listRuns()
+        assertEquals(
+            listOf(
+                listOf("listRuns", CoreRunFilter(planId = "p1", activeOnly = false, rootsOnly = true), "r5", 30u),
+                listOf("listRuns", CoreRunFilter(), null, 50u),
+            ),
+            fake.calls,
+        )
+    }
+
+    @Test
+    fun acceptLanguageAndUpgradeFlag() {
+        val s = CoreThinktinService(fake)
+        // 空列表不拼请求头（不调 client-core 的 accept_language_header），直接清掉。
+        s.setAcceptLanguage(emptyList())
+        assertEquals(listOf(listOf("setAcceptLanguage", null)), fake.calls)
+        assertEquals(false, s.upgradeRequired())
+        fake.upgrade = true
+        assertEquals(true, s.upgradeRequired())
     }
 
     @Test

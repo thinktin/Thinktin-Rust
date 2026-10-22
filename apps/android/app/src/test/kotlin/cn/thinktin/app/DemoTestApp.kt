@@ -14,6 +14,9 @@ import java.util.UUID
 class DemoTestApp : ThinktinApp() {
     override fun initializeTls(): TlsState = FixedTlsState(ready = true)
 
+    /** 不接 client-core 的日志：测试里不加载 .so。 */
+    override fun initializeLogging() = Unit
+
     override fun createContainer(): AppContainer = AppContainer.create(
         this,
         tls = tlsState,
