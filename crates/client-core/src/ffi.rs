@@ -458,6 +458,9 @@ pub struct Trigger {
     pub enabled: bool,
     pub next_fire_at_ms: Option<i64>,
     pub last_fire_at_ms: Option<i64>,
+    /// 后台停用它的原因：invalid_rule（规则失效了，比如时区没了；删掉重新加）。没被停用时为空。
+    #[uniffi(default = None)]
+    pub disabled_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
@@ -589,9 +592,16 @@ pub struct Plan {
     #[uniffi(default = "once")]
     pub catch_up: String,
     pub created_at_ms: i64,
-    /// 列表接口里为空，详情里有。
+    /// 列表和详情里都有。
     pub triggers: Vec<Trigger>,
     pub steps: Vec<PlanStep>,
+    /// 下一次按时运行的名义时间（实际可能因削峰晚几分钟）：在用的触发器里最早的；暂停了、等确认、没有会再触发的
+    /// 规则时为空。
+    #[uniffi(default = None)]
+    pub next_fire_at_ms: Option<i64>,
+    /// 规则失效、被后台停用的触发器有几个：详情页提示“规则已失效”，给“修改规则”的入口。
+    #[uniffi(default = 0)]
+    pub invalid_triggers: u32,
 }
 
 impl From<d::Plan> for Plan {
@@ -611,6 +621,8 @@ impl From<d::Plan> for Plan {
             created_at_ms: ms(p.created_at),
             triggers: Vec::new(),
             steps: Vec::new(),
+            next_fire_at_ms: None,
+            invalid_triggers: 0,
         }
     }
 }
@@ -620,6 +632,8 @@ impl From<api::PlanView> for Plan {
         Self {
             triggers: v.triggers.into_iter().map(trigger_record).collect(),
             steps: v.steps.into_iter().map(Into::into).collect(),
+            next_fire_at_ms: ms_opt(v.next_fire_at),
+            invalid_triggers: v.invalid_triggers,
             ..v.plan.into()
         }
     }
@@ -648,6 +662,7 @@ fn trigger_record(t: d::Trigger) -> Trigger {
         enabled: t.enabled,
         next_fire_at_ms: ms_opt(t.next_fire_at),
         last_fire_at_ms: ms_opt(t.last_fire_at),
+        disabled_reason: t.disabled_reason,
     }
 }
 

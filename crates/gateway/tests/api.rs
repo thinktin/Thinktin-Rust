@@ -581,6 +581,28 @@ async fn runs_plans_and_approvals() {
             .ends_with("T00:00:00Z")
     );
     let plan_id = plan["id"].as_str().unwrap().to_owned();
+    assert_eq!(plan["next_fire_at"], plan["triggers"][0]["next_fire_at"]);
+    // 列表里也有触发器、下次运行时间（之前列表里是空的）。
+    let listed = |tok: String| {
+        let a = &a;
+        let plan_id = plan_id.clone();
+        async move {
+            let (_, body) = a.call(Method::GET, "/v1/plans", Some(&tok), None).await;
+            body["plans"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|p| p["id"] == plan_id.as_str())
+                .unwrap()
+                .clone()
+        }
+    };
+    let row = listed(u.access.clone()).await;
+    assert_eq!(row["triggers"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        (row["next_fire_at"].clone(), row["invalid_triggers"].clone()),
+        (plan["triggers"][0]["next_fire_at"].clone(), json!(0))
+    );
     let (_, paused) = a
         .call(
             Method::POST,
@@ -590,6 +612,7 @@ async fn runs_plans_and_approvals() {
         )
         .await;
     assert_eq!(paused["paused"], true);
+    assert!(listed(u.access.clone()).await["next_fire_at"].is_null());
     let (_, resumed) = a
         .call(
             Method::POST,
@@ -599,6 +622,35 @@ async fn runs_plans_and_approvals() {
         )
         .await;
     assert_eq!(resumed["paused"], false);
+    assert!(listed(u.access.clone()).await["next_fire_at"].is_string());
+    // 规则后来解析不了了（时区没了）：恢复时停用它、说明原因，列表里提示有几个失效的。
+    sqlx::query(
+        "UPDATE triggers SET spec = '{\"kind\":\"cron\",\"expr\":\"0 8 * * *\",\"tz\":\"Mars/Base\"}' \
+         WHERE plan_id = $1::uuid",
+    )
+    .bind(&plan_id)
+    .execute(a.t.db.pool())
+    .await
+    .unwrap();
+    for action in ["pause", "resume"] {
+        a.call(
+            Method::POST,
+            &format!("/v1/plans/{plan_id}/{action}"),
+            Some(&u.access),
+            None,
+        )
+        .await;
+    }
+    let row = listed(u.access.clone()).await;
+    assert_eq!(
+        (
+            row["triggers"][0]["enabled"].clone(),
+            row["triggers"][0]["disabled_reason"].clone(),
+            row["invalid_triggers"].clone(),
+            row["next_fire_at"].clone()
+        ),
+        (json!(false), json!("invalid_rule"), json!(1), Value::Null)
+    );
     let (st, updated) = a
         .call(
             Method::PATCH,

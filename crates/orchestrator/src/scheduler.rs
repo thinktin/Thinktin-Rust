@@ -103,7 +103,8 @@ impl Scheduler {
             Ok(s) => s,
             Err(e) => {
                 warn!(trigger = %t.id, error = %e, "trigger spec is invalid, disabling it");
-                w.advance_trigger(t.id, None, None).await?;
+                w.disable_trigger(t.id, proto::domain::TRIGGER_INVALID_RULE)
+                    .await?;
                 w.audit(
                     Some(d.user_id),
                     "system",

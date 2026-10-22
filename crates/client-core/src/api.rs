@@ -136,6 +136,10 @@ pub struct PlanView {
     pub triggers: Vec<Trigger>,
     #[serde(default)]
     pub steps: Vec<PlanStep>,
+    #[serde(default)]
+    pub next_fire_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default)]
+    pub invalid_triggers: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1064,10 +1068,11 @@ impl Api {
 
     // ---------- 计划 ----------
 
-    pub async fn plans(&self, instance: Option<InstanceId>) -> Result<Vec<Plan>> {
+    /// 计划列表，带着每个计划的触发器、步骤、下次运行时间（老的服务端只有计划本身，其余为空）。
+    pub async fn plans(&self, instance: Option<InstanceId>) -> Result<Vec<PlanView>> {
         #[derive(Deserialize)]
         struct R {
-            plans: Vec<Plan>,
+            plans: Vec<PlanView>,
         }
         let path = match instance {
             Some(i) => format!("/v1/plans?instance_id={i}"),

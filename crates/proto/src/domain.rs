@@ -698,7 +698,13 @@ pub struct Trigger {
     pub enabled: bool,
     pub next_fire_at: Option<DateTime<Utc>>,
     pub last_fire_at: Option<DateTime<Utc>>,
+    /// 后台为什么停用了它（[`TRIGGER_INVALID_RULE`]）。用户自己停不了触发器，没被停用时没有。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disabled_reason: Option<String>,
 }
+
+/// 触发器的规则解析不了了（比如时区没了）：后台停用它，用户删掉重新加。
+pub const TRIGGER_INVALID_RULE: &str = "invalid_rule";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Run {

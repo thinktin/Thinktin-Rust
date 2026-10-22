@@ -1091,6 +1091,14 @@ async fn ffi_plan_editing_and_triggers() {
     );
     assert_eq!(edited.policy.on_approval_timeout, "fail");
     assert_eq!(edited.triggers.len(), 1);
+    // 列表里也有触发器和下次运行时间（11.8）；暂停了就没有下次。
+    let listed = c.plans(Some(inst.id.clone())).await.unwrap();
+    assert_eq!(listed[0].triggers.len(), 1);
+    assert_eq!(
+        (listed[0].next_fire_at_ms, listed[0].invalid_triggers),
+        (listed[0].triggers[0].next_fire_at_ms, 0)
+    );
+    assert!(listed[0].next_fire_at_ms.is_some());
     assert!(matches!(
         c.update_plan(
             plan.id.clone(),
