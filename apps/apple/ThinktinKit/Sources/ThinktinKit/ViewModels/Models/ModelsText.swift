@@ -86,11 +86,12 @@ public enum ModelsText {
         credentialName(credential, vendors: vendors, language: language) + " · " + credential.maskedKey
     }
 
-    /// 换 key、启用后的说明（服务端会唤醒等 key 的运行，7.11）。
+    /// 添加、启用、换 key 后的说明（服务端会唤醒等 key 的运行，7.11：它们马上重试，key 能用才接着跑）。
     public static func wakeExplanation(_ language: DisplayLanguage = .current) -> String {
         language == .chinese
-            ? "启用、换 key 之后，卡在“等待 key”的任务会自动接着跑。"
-            : "After you enable or replace a key, tasks waiting for a key resume on their own."
+            ? "添加、启用或换 key 之后，卡在“等待 key”的任务会马上重试，key 能用就接着跑。"
+            : "After you add, enable or replace a key, tasks waiting for a key retry right away and continue if the "
+                + "key works."
     }
 
     /// 每日上限只能在添加时设（服务端改不了）。
@@ -191,6 +192,15 @@ public enum ModelsText {
             ? "“\(instanceName)”里的消息、文件和产出会经模型网关发给 \(names) 处理，受对方的条款约束。"
             : "Messages, files and output in “\(instanceName)” are sent through the model gateway to \(names), under "
                 + "their terms."
+    }
+
+    /// 保存路由前确认数据共享的那段话：说的是这个实例（不是某一把 key），再加上平台怎么对待这些内容。
+    public static func routesConsentNotice(
+        instanceName: String, vendorNames: [String], language: DisplayLanguage = .current
+    ) -> String {
+        let zh = language == .chinese
+        return routesDataSharing(instanceName: instanceName, vendorNames: vendorNames, language: language)
+            + (zh ? "ThinkTin 不出售这些内容，也不拿它们训练模型。" : " ThinkTin doesn't sell this content or train models on it.")
     }
 }
 

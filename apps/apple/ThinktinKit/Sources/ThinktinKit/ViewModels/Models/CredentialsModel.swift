@@ -108,8 +108,11 @@ public struct CredentialSummary: Identifiable, Hashable, Sendable {
 
 // MARK: - 等 key 的运行
 
-/// 保存路由、启用或换 key 之后，服务端会唤醒卡在“等待 key”的运行（7.11）。这里数一下等 key 的运行，
-/// 操作前后各数一次，界面据此说“已唤醒 N 个任务”“还有 N 个在等 key”。
+/// 保存路由、添加 / 启用 / 换 key 之后，服务端会唤醒卡在“等待 key”的运行（7.11）。
+///
+/// 服务端的“唤醒”只是把这些运行的下次尝试时间改成现在（`wake_waiting_runs`），状态还是“等待 key”，要等执行器接手
+/// 才变（key 还是不能用的会接着等）。所以接口一返回就去数，数到的和操作前一样多，不能拿“前后之差”说接着跑了几个。
+/// 这里只在操作前数一次：这么多个在等 key 的任务这次会马上重试。操作后照样拉一次运行，刷新各实例的运行缓存。
 enum KeyWaitProbe {
     /// 这些实例上在等 key 的运行数（`instanceIDs` 为 nil 时是全部实例）。拉不到为 nil。
     /// 用跨实例的进行中运行（`listRuns(filter: .active)`），它同时刷新每个实例的运行缓存，对话页能看到新状态。
@@ -125,43 +128,27 @@ enum KeyWaitProbe {
     }
 }
 
-/// 唤醒等 key 的运行之后的结果（界面显示一句话）。
+/// 唤醒等 key 的运行的结果（界面显示一句话）。
 public struct KeyWakeResult: Hashable, Sendable {
-    /// 操作前在等 key 的运行数。
-    public var waitingBefore: Int
-    /// 操作后还在等 key 的。
-    public var waitingAfter: Int
+    /// 操作前在等 key、这次会马上重试的运行数。
+    public var retried: Int
 
-    public init(waitingBefore: Int, waitingAfter: Int) {
-        self.waitingBefore = waitingBefore
-        self.waitingAfter = waitingAfter
+    public init(retried: Int) {
+        self.retried = max(0, retried)
     }
 
-    /// 接着跑了的。
-    public var resumed: Int { max(0, waitingBefore - waitingAfter) }
-
-    /// 前后有一次没数到（拉不到）时为 nil，界面只说通用的“等 key 的任务会接着跑”。
-    init?(before: Int?, after: Int?) {
-        guard let before, let after else { return nil }
-        self.init(waitingBefore: before, waitingAfter: after)
+    /// 操作前没数到（拉不到）时为 nil，界面只说通用的“等 key 的任务会接着跑”。
+    init?(retried: Int?) {
+        guard let retried else { return nil }
+        self.init(retried: retried)
     }
 
-    /// 要说的话；前后都没有等 key 的运行时为 nil（不用提）。
+    /// 要说的话；操作前没有等 key 的运行时为 nil（不用提）。不说“还有几个在等”：刚唤醒时它们的状态还没变（见 `KeyWaitProbe`）。
     public func message(_ language: DisplayLanguage = .current) -> String? {
-        let zh = language == .chinese
-        switch (resumed, waitingAfter) {
-        case (0, 0):
-            return nil
-        case (let n, 0):
-            return zh ? "已唤醒 \(n) 个在等 key 的任务，它们会接着跑。" : "Resumed \(n) task(s) that were waiting for a key."
-        case (0, let left):
-            return zh
-                ? "还有 \(left) 个任务在等 key，可能是别的别名或别的实例的 key 有问题。"
-                : "\(left) task(s) are still waiting for a key; another alias or instance may need attention."
-        case (let n, let left):
-            return zh
-                ? "已唤醒 \(n) 个任务；还有 \(left) 个在等 key。"
-                : "Resumed \(n) task(s); \(left) are still waiting for a key."
-        }
+        guard retried > 0 else { return nil }
+        return language == .chinese
+            ? "\(retried) 个在等 key 的任务马上重试：key 能用就接着跑，还不能用的会继续等。"
+            : "\(retried) task(s) waiting for a key are retrying now. They continue if a key works; otherwise they keep "
+                + "waiting."
     }
 }

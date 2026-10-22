@@ -7,7 +7,8 @@ import Observation
 /// - 按天的数据总是拉（画图、算总计）；表格选了别的分组时再拉那一组。时区用这台设备的（`timeZone`），按天分组也按它。
 /// - 服务端只返回有用量的那几天，画图前把没用量的天补成 0（`dayPoints`）。
 /// - 实例、key、厂商的名字另外拉（拉不到退回成 id 的后几位）；删掉了的实例、key 写“已删除”。
-/// - 不缓存（离线时“暂无数据”）。
+/// - 不缓存（离线时“暂无数据”）。换时间范围时清掉上一个范围的数据（不把 30 天的总数显示成 90 天的）；
+///   切得快时，旧范围、旧分组的结果回来了也不用。
 @Observable @MainActor
 public final class UsageModel {
     /// 看多长时间。
@@ -73,7 +74,7 @@ public final class UsageModel {
 
     // MARK: 加载
 
-    /// 拉按天的汇总、表格的分组和名字。
+    /// 拉按天的汇总、表格的分组和名字。结果回来时时间范围已经换了就整个不用，分组换了就只用按天的。
     public func load() async {
         generation += 1
         let current = generation
@@ -83,6 +84,7 @@ public final class UsageModel {
         let (from, to) = range
         let zone = timeZone
         let group = self.group
+        let period = self.period
         async let daily = AgentsErrors.attempt {
             try await client.usage(group: .day, from: from, to: to, timeZone: zone)
         }
@@ -93,7 +95,7 @@ public final class UsageModel {
         async let names = Self.loadNames(client: client, group: group)
 
         let (dailyResult, groupedResult, nameLists) = await (daily, grouped, names)
-        guard current == generation else { return }
+        guard current == generation, period == self.period else { return }
         if let instances = nameLists.instances { self.instances = instances }
         if let credentials = nameLists.credentials { self.credentials = credentials }
         if let vendors = nameLists.vendors { self.vendors = vendors }
@@ -105,6 +107,8 @@ public final class UsageModel {
         case .failure(let failure):
             if let failure = AgentsErrors.from(failure) { error = failure }
         }
+        // 等结果的时候换了分组：这一组用不上了（换过去的那一组界面会再拉）。
+        guard group == self.group else { return }
         switch groupedResult {
         case .success(let summary):
             self.grouped = summary ?? self.daily
@@ -115,10 +119,15 @@ public final class UsageModel {
         }
     }
 
-    /// 换时间范围（界面接着调 `load()`）。
+    /// 换时间范围（界面接着调 `load()`）：上一个范围的数据清掉，界面显示“加载中”，不把旧范围的总数当成新范围的。
     public func select(period: Period) {
         guard period != self.period else { return }
         self.period = period
+        daily = nil
+        grouped = nil
+        hasLoaded = false
+        error = nil
+        groupError = nil
     }
 
     /// 换表格的分组（界面接着调 `load()`）。按天的直接用已经拉到的。

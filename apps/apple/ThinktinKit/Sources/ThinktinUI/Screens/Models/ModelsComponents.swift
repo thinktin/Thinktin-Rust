@@ -5,13 +5,15 @@ import ThinktinKit
 // 分组、行、小标签、页头、加载中、提示条沿用 12.3 的 `AgentsGroup`、`AgentsRow`、`AgentsTag`、`AgentsPageHeader`、
 // `AgentsLoadingView`、`AgentsNotice`，勾选框沿用 12.2 的 `CheckboxRow`、红字沿用 `FieldMessage`。
 
-/// 表单里的一个输入框：上面一行小标题，输入框（普通、密码、网址、数字），下面是问题（危险色）或提示。
+/// 表单里的一个输入框：上面一行小标题，输入框（普通、密码、标识、网址、数字），下面是问题（危险色）或提示。
 struct ModelsField: View {
     enum Kind {
-        /// 普通文字（备注、模型名）。
+        /// 普通文字（备注）。
         case plain
         /// key：打码显示，不自动大写、不纠错。
         case secret
+        /// 要原样提交的名字（上游模型名）：不自动大写、不纠错（厂商的模型名区分大小写，“Claude-…”会找不到）。
+        case identifier
         /// 网址。
         case url
         /// 正整数（每日上限）。
@@ -70,26 +72,31 @@ struct ModelsField: View {
         switch kind {
         case .secret:
             SecureField(title, text: text, prompt: placeholder)
-        case .plain, .url, .number:
+        case .plain, .identifier, .url, .number:
             TextField(title, text: text, prompt: placeholder)
         }
     }
 }
 
 extension View {
-    /// 输入框的键盘：key 和网址不自动大写，网址用网址键盘，上限用数字键盘（iOS）。
+    /// 输入框的键盘：key、标识和网址不自动大写，网址用网址键盘，上限用数字键盘（iOS）。
     @ViewBuilder
     fileprivate func modelsKeyboard(_ kind: ModelsField.Kind) -> some View {
         #if canImport(UIKit)
             switch kind {
             case .plain: self
-            case .secret: self.textInputAutocapitalization(.never).keyboardType(.asciiCapable)
+            case .secret, .identifier: self.textInputAutocapitalization(.never).keyboardType(.asciiCapable)
             case .url: self.textInputAutocapitalization(.never).keyboardType(.URL)
             case .number: self.keyboardType(.numberPad)
             }
         #else
             self
         #endif
+    }
+
+    /// 不在 `ModelsField` 里的输入框（弹窗里的别名）要原样提交时用：不自动大写、不纠错。
+    func modelsIdentifierInput() -> some View {
+        autocorrectionDisabled().modelsKeyboard(.identifier)
     }
 }
 

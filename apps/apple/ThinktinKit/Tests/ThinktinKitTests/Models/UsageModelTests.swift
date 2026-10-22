@@ -134,6 +134,39 @@ struct UsageModelTests {
         #expect(model.dayPoints.count == 90)
     }
 
+    @Test("换时间范围：清掉上一个范围的数据（不把 7 天的总数显示成 30 天的）；旧范围的结果晚回来也不用")
+    func periodSwitchClears() async {
+        let mock = ModelsFixture.mock(latency: 0.05) { $0.dailyUsage = Self.buckets }
+        let model = UsageModel(client: mock, period: .week, timeZone: Fixture.shanghai, now: { Fixture.now })
+        await model.load()
+        #expect(model.hasLoaded && model.total.requests == 55)
+        // 再拉一次 7 天的，还在路上时换成 30 天。
+        let stale = Task { await model.load() }
+        while !model.isLoading { await Task.yield() }
+        model.select(period: .month)
+        #expect(!model.hasLoaded && model.daily == nil && model.grouped == nil)
+        #expect(model.total.requests == 0 && !model.isEmpty)
+        await stale.value
+        #expect(model.daily == nil && !model.hasLoaded && !model.isLoading)
+        await model.load()
+        #expect(model.hasLoaded && model.dayPoints.count == 30 && model.total.requests == 55)
+    }
+
+    @Test("等结果的时候换了分组：旧分组的表格不用，按天的照常")
+    func groupSwitchRace() async {
+        let mock = ModelsFixture.mock(latency: 0.05) { $0.dailyUsage = Self.buckets }
+        let model = UsageModel(
+            client: mock, period: .week, group: .instance, timeZone: Fixture.shanghai, now: { Fixture.now })
+        let pending = Task { await model.load() }
+        while !model.isLoading { await Task.yield() }
+        model.select(group: .model)
+        await pending.value
+        #expect(model.grouped == nil)
+        #expect(model.daily != nil && model.hasLoaded)
+        await model.load()
+        #expect(model.rows(language: .chinese).map(\.title) == ["claude-sonnet-5-5", "deepseek-v4-pro"])
+    }
+
     @Test("没有用量：空状态")
     func empty() async {
         let (_, model) = make { $0.dailyUsage = [] }

@@ -5,8 +5,10 @@ import Observation
 /// 备注、每日上限；选“自定义地址”时填 https 的 Anthropic / OpenAI Chat / Responses 地址（至少一个，本地先校验 https）。
 ///
 /// - 保存前要勾选第三方 AI 数据共享的同意（App Store 5.1.2(i)）：这把 key 的实例里的消息、文件、产出会发给这个厂商。
-///   保存成功后记下同意（`ThirdPartyAIConsentStore`），之后配路由时不再问这个厂商。
-/// - 服务端拒收时（订阅类 key、套餐专用地址、不是 https……）按 `CredentialRejection` 显示本地化的原因，不显示接口的英文说明。
+///   同意是对“发给谁”说的：换了厂商、自定义地址换了主机，要重新勾。保存成功后记下同意（`ThirdPartyAIConsentStore`），
+///   之后配路由时不再问这个厂商。
+/// - 服务端拒收时（订阅类 key、套餐专用地址、不是 https……）按 `CredentialRejection` 显示本地化的原因，不显示接口的英文说明；
+///   能认出是哪个字段的显示在那个字段下面（`rejection(for:)`，和安卓一样是字段级提示），改了那个字段就清掉。
 /// - 从某个实例的模型路由页过来时（`targetAgentID`），提示这把 key 能不能给这个 agent 用（协议对不上时运行会卡在等 key）。
 /// - 加好以后服务端会唤醒等 key 的运行，界面提示一句。
 @Observable @MainActor
@@ -33,22 +35,40 @@ public final class AddCredentialModel {
 
     public var choice: VendorChoice? {
         didSet {
+            // 换了厂商：之前的拒收原因、勾过的同意都不算了（选回来也要重新勾）。
             if oldValue != choice {
                 rejection = nil
-                hasConsented = false
+                consentedRecipient = nil
             }
         }
     }
     public var apiKey = "" {
-        didSet { if rejection?.concernsKey == true { rejection = nil } }
+        didSet { fieldChanged(.apiKey) }
     }
-    public var label = ""
-    public var dailyLimit = ""
-    public var anthropicBase = ""
-    public var openaiBase = ""
-    public var responsesBase = ""
-    /// 勾了第三方 AI 数据共享的同意。换厂商时清掉（同意是对某个厂商说的）。
-    public var hasConsented = false
+    public var label = "" {
+        didSet { fieldChanged(.label) }
+    }
+    public var dailyLimit = "" {
+        didSet { fieldChanged(.dailyLimit) }
+    }
+    public var anthropicBase = "" {
+        didSet { fieldChanged(.endpoint(.anthropic)) }
+    }
+    public var openaiBase = "" {
+        didSet { fieldChanged(.endpoint(.openai)) }
+    }
+    public var responsesBase = "" {
+        didSet { fieldChanged(.endpoint(.responses)) }
+    }
+
+    /// 勾了第三方 AI 数据共享的同意。同意是对“发给谁”说的：换了厂商、自定义地址换了主机（`consentRecipient` 变了）
+    /// 就不算数了，要重新勾。
+    public var hasConsented: Bool {
+        get { consentedRecipient != nil && consentedRecipient == consentRecipient }
+        set { consentedRecipient = newValue ? consentRecipient : nil }
+    }
+    /// 勾同意时的接收方。
+    private var consentedRecipient: String?
 
     /// 点过保存（之后才显示“这一项要填”这类空字段的问题）。
     public private(set) var didAttemptSubmit = false
@@ -118,15 +138,32 @@ public final class AddCredentialModel {
         }
     }
 
-    /// 自定义地址的名字：填了地址时是第一个地址的主机名（“api.example.com”），否则“自定义地址”。
+    /// 自定义地址的名字：填了地址时是这几个地址的主机名（“api.example.com”，几个不同的都列上，同意的那一句要说全
+    /// 发给谁），否则“自定义地址”。
     private func customEndpointName(_ language: DisplayLanguage) -> String {
-        for base in [anthropicBase, openaiBase, responsesBase] {
+        let hosts = customHosts
+        return hosts.isEmpty ? ModelsText.customVendorName(language) : AgentsText.list(hosts, language: language)
+    }
+
+    /// 填对了的自定义地址的主机名（去重，按 Anthropic、OpenAI、Responses 的顺序）。
+    private var customHosts: [String] {
+        var seen = Set<String>()
+        return [anthropicBase, openaiBase, responsesBase].compactMap { base in
             let trimmed = base.trimmingCharacters(in: .whitespacesAndNewlines)
-            if CredentialRules.baseURLProblem(trimmed) == nil, !trimmed.isEmpty, let host = URL(string: trimmed)?.host {
-                return host
-            }
+            guard !trimmed.isEmpty, CredentialRules.baseURLProblem(trimmed) == nil,
+                let host = URL(string: trimmed)?.host?.lowercased(), seen.insert(host).inserted
+            else { return nil }
+            return host
         }
-        return ModelsText.customVendorName(language)
+    }
+
+    /// 同意的对象：预置厂商是它的 id，自定义地址是填了的主机名。还没选厂商为 nil。
+    var consentRecipient: String? {
+        switch choice {
+        case .preset(let id): "preset:" + id
+        case .custom: "custom:" + customHosts.joined(separator: ",")
+        case nil: nil
+        }
     }
 
     /// 选的厂商的推荐模型。
@@ -206,6 +243,41 @@ public final class AddCredentialModel {
     /// 能点保存。
     public var canSubmit: Bool {
         problems.isEmpty && !isSubmitting && created == nil
+    }
+
+    // MARK: 服务端拒收的原因
+
+    /// 服务端拒收的原因显示在哪个字段下面；说不清是哪个字段的（`endpointMismatch`、`other`、没说是哪个地址的）为 nil，
+    /// 显示在表单下面。
+    static func field(of rejection: CredentialRejection) -> Field? {
+        switch rejection {
+        case .subscriptionKey, .keyFormat: .apiKey
+        case .planOnlyEndpoint(let field), .notHTTPS(let field): field.map(Field.endpoint)
+        case .invalidEndpoint(let field): .endpoint(field)
+        case .unknownVendor: .vendor
+        case .dailyLimit: .dailyLimit
+        case .label: .label
+        case .endpointMismatch, .other: nil
+        }
+    }
+
+    /// 这个字段下面要显示的拒收原因。
+    public func rejection(for field: Field) -> CredentialRejection? {
+        guard let rejection, Self.field(of: rejection) == field else { return nil }
+        return rejection
+    }
+
+    /// 不属于哪个字段的拒收原因（显示在表单下面）。
+    public var formRejection: CredentialRejection? {
+        guard let rejection, Self.field(of: rejection) == nil else { return nil }
+        return rejection
+    }
+
+    /// 改了一个字段：拒收的原因是这个字段的（或者说不清是哪个字段的）就清掉，不留着已经改过的问题。
+    private func fieldChanged(_ field: Field) {
+        guard let rejection else { return }
+        let target = Self.field(of: rejection)
+        if target == nil || target == field { self.rejection = nil }
     }
 
     // MARK: 保存

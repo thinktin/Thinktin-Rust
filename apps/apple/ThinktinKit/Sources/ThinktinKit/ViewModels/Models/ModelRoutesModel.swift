@@ -11,7 +11,8 @@ import Observation
 ///   配错了运行会卡在等 key），停用的也不列；已经配上的停用、删掉、不兼容的 key 标成问题，改好才能保存。
 /// - 保存是整体替换（`setModelRoutes`）。保存前路由里有没同意过的厂商时，界面先确认数据共享（`vendorsNeedingConsent`，
 ///   App Store 5.1.2(i)）。保存后服务端唤醒卡在等 key 的运行：重新拉这个实例的运行（刷新缓存，对话页跟着变），
-///   界面说唤醒了几个（`saveResult`），再调 `AppModel.refreshBadges()`。
+///   界面说保存前在等的几个会马上重试（`saveResult`，为什么不数保存后的见 `KeyWaitProbe`），再调
+///   `AppModel.refreshBadges()`。
 /// - 还没有 main 时先放一个 main 的草稿：选最新加的能用的 key 和它的第一个推荐模型（引导里“选刚加的 key 和推荐模型”）。
 @Observable @MainActor
 public final class ModelRoutesModel {
@@ -528,9 +529,9 @@ public final class ModelRoutesModel {
             savedRoutes = routes
         }
         resetDrafts()
-        let after = await Self.waitingRuns(client: client, instanceID: instanceID)
-        waitingRuns = after
-        saveResult = RouteSaveResult(wake: KeyWakeResult(before: before, after: after))
+        // 再拉一次运行：刷新这个实例的运行缓存（对话页跟着变）。刚唤醒时它们的状态还没变，数到的不当“还在等”说。
+        waitingRuns = await Self.waitingRuns(client: client, instanceID: instanceID)
+        saveResult = RouteSaveResult(wake: KeyWakeResult(retried: before))
         return true
     }
 }
@@ -701,7 +702,10 @@ public struct RouteSaveResult: Hashable, Sendable {
         let zh = language == .chinese
         let saved = zh ? "已保存。" : "Saved."
         guard let wake else {
-            return saved + (zh ? "卡在“等待 key”的任务会自动接着跑。" : " Tasks waiting for a key resume on their own.")
+            return saved
+                + (zh
+                    ? "卡在“等待 key”的任务会马上重试，key 能用就接着跑。"
+                    : " Tasks waiting for a key retry right away and continue if a key works.")
         }
         guard let detail = wake.message(language) else { return saved }
         return saved + (zh ? "" : " ") + detail

@@ -7,7 +7,8 @@ import ThinktinKit
 /// 2. 自定义地址填 https 的 Anthropic Messages / OpenAI Chat Completions / OpenAI Responses 地址（至少一个，本地先校验）；
 /// 3. 填 key（打码输入）、备注、每日上限；
 /// 4. 勾选第三方 AI 数据共享的同意（App Store 5.1.2(i)）才能保存；
-/// 5. 服务端拒收（订阅类 key、套餐地址）时显示本地化的原因；加好后说明能用哪些协议、等 key 的任务会接着跑。
+/// 5. 服务端拒收（订阅类 key、套餐地址）时显示本地化的原因，认得出是哪个字段的显示在那个字段下面；加好后说明能用哪些协议、
+///    等 key 的任务会接着跑。
 ///
 /// 从某个实例的模型路由页弹出来时（导航栈顶是 `.modelRoutes(id)`），提示这把 key 能不能给那个实例的 agent 用；
 /// 加好关掉 sheet，路由页会刷新 key 列表、把新 key 选进还没配的 main。
@@ -117,7 +118,7 @@ private struct AddCredentialContent: View {
                 title: zh ? "备注（可选）" : "Note (optional)",
                 text: Binding(get: { model.label }, set: { model.label = $0 }),
                 prompt: model.vendorName(language),
-                problem: model.problem(for: .label)?.message(language),
+                problem: fieldProblem(.label),
                 hint: zh
                     ? "有几把 key 时方便区分，最多 \(Credential.maxLabelLength) 个字。"
                     : "Helps tell keys apart (up to \(Credential.maxLabelLength) characters).")
@@ -126,14 +127,14 @@ private struct AddCredentialContent: View {
                 text: Binding(get: { model.dailyLimit }, set: { model.dailyLimit = $0 }),
                 prompt: zh ? "不限" : "No limit",
                 kind: .number,
-                problem: model.problem(for: .dailyLimit)?.message(language),
+                problem: fieldProblem(.dailyLimit),
                 hint: zh
                     ? "当天用满这么多 token 后不再用这把 key（有备用的改用备用）。添加后不能改。"
                     : "Once a day's tokens reach this, the key is skipped (fallbacks take over). Can't be changed later."
             )
             consentSection
         }
-        if let rejection = model.rejection {
+        if let rejection = model.formRejection {
             AgentsNotice(
                 systemImage: "exclamationmark.octagon", tone: .failure,
                 text: rejection.message(vendorName: model.vendorName(language), language: language))
@@ -156,12 +157,12 @@ private struct AddCredentialContent: View {
     }
 
     /// key 输入框下面的问题：本地查出来的，或者服务端说是订阅类 key、格式不对。
-    private var keyProblem: String? {
-        if let problem = model.problem(for: .apiKey) { return problem.message(language) }
-        if let rejection = model.rejection, rejection.concernsKey {
-            return rejection.message(vendorName: model.vendorName(language), language: language)
-        }
-        return nil
+    private var keyProblem: String? { fieldProblem(.apiKey) }
+
+    /// 一个字段下面的问题：本地查出来的优先，再是服务端拒收的原因里属于这个字段的。
+    private func fieldProblem(_ field: AddCredentialModel.Field) -> String? {
+        if let problem = model.problem(for: field) { return problem.message(language) }
+        return model.rejection(for: field)?.message(vendorName: model.vendorName(language), language: language)
     }
 
     @ViewBuilder
@@ -199,6 +200,8 @@ private struct AddCredentialContent: View {
         }
         if model.problem(for: .vendor) != nil {
             FieldMessage(text: zh ? "先选一个厂商。" : "Choose a vendor first.")
+        } else if let rejection = model.rejection(for: .vendor) {
+            FieldMessage(text: rejection.message(vendorName: model.vendorName(language), language: language))
         }
     }
 
@@ -233,9 +236,8 @@ private struct AddCredentialContent: View {
 
     private func endpointProblem(_ field: CredentialEndpointField) -> String? {
         let zh = language == .chinese
-        guard let problem = model.problem(for: .endpoint(field)) else { return nil }
-        if problem == .required { return zh ? "至少填一个地址。" : "Enter at least one address." }
-        return problem.message(language)
+        if model.problem(for: .endpoint(field)) == .required { return zh ? "至少填一个地址。" : "Enter at least one address." }
+        return fieldProblem(.endpoint(field))
     }
 
     @ViewBuilder

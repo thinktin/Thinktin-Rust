@@ -145,7 +145,7 @@ struct AddCredentialModelTests {
         #expect(consent.hasConsented(to: "openai"))
         #expect(!consent.hasConsented(to: "deepseek"))
         let message = model.createdMessage(.chinese)
-        #expect(message.contains("OpenAI Chat Completions、OpenAI Responses") && message.contains("自动接着跑"))
+        #expect(message.contains("OpenAI Chat Completions、OpenAI Responses") && message.contains("马上重试"))
     }
 
     @Test("自定义地址：至少填一个 https 地址；协议按填了哪几个算；同意按这把 key 记")
@@ -154,7 +154,6 @@ struct AddCredentialModelTests {
         await model.load()
         model.choice = .custom
         model.apiKey = "gw-0123456789"
-        model.hasConsented = true
         #expect(model.problems[.endpoint(.anthropic)] == .required)
         model.openaiBase = "http://gateway.example.com/v1"
         #expect(model.problem(for: .endpoint(.openai)) == .notHTTPS)
@@ -162,6 +161,7 @@ struct AddCredentialModelTests {
         model.openaiBase = ""
         model.anthropicBase = "https://gateway.example.com/anthropic"
         model.responsesBase = " https://gateway.example.com/v1 "
+        model.hasConsented = true
         #expect(model.problems.isEmpty)
         #expect(model.expectedProtocols == [.anthropic, .responses])
         #expect(model.vendorName(.chinese) == "gateway.example.com")
@@ -183,6 +183,102 @@ struct AddCredentialModelTests {
         #expect(other.problems[.endpoint(.anthropic)] == nil)
     }
 
+    @Test("同意是对“发给谁”说的：自定义地址换了主机要重新勾，只改路径不用；几个主机都写进同意的那一句")
+    func consentFollowsRecipient() async {
+        let (_, model, _) = make()
+        await model.load()
+        model.choice = .custom
+        model.apiKey = "gw-0123456789"
+        model.anthropicBase = "https://gateway.example.com/anthropic"
+        model.hasConsented = true
+        #expect(model.hasConsented && model.canSubmit)
+        // 同一个主机换个路径：还算数。
+        model.anthropicBase = "https://gateway.example.com/claude"
+        #expect(model.hasConsented)
+        // 换了主机：要重新勾。
+        model.anthropicBase = "https://other.example.net/anthropic"
+        #expect(!model.hasConsented && !model.canSubmit)
+        #expect(model.vendorName(.chinese) == "other.example.net")
+        model.hasConsented = true
+        // 再加一个别的主机的地址：发给谁变了，同意的那一句两个都写上。
+        model.responsesBase = "https://gateway.example.com/v1"
+        #expect(!model.hasConsented)
+        #expect(model.vendorName(.chinese) == "other.example.net、gateway.example.com")
+        #expect(
+            ModelsText.dataSharingConsent(vendorName: model.vendorName(.chinese), language: .chinese)
+                == "我同意把这些内容发给 other.example.net、gateway.example.com 处理")
+        // 选回预置厂商、再选回来：之前勾的不算数。
+        model.hasConsented = true
+        model.choice = .preset("deepseek")
+        #expect(!model.hasConsented)
+        model.choice = .custom
+        #expect(!model.hasConsented)
+    }
+
+    @Test("服务端拒收的原因显示在对应的字段下面，改了那个字段就清掉")
+    func fieldLevelRejections() async {
+        let (mock, model, _) = make()
+        await model.load()
+        model.choice = .custom
+        model.apiKey = "gw-0123456789"
+        model.anthropicBase = "https://gateway.example.com/anthropic"
+        model.openaiBase = "https://ark.cn-beijing.volces.com/api/coding/v3"
+        model.hasConsented = true
+        mock.failNext(
+            with: .api(
+                status: 422, code: .invalid,
+                message: "openai_base: https://ark.cn-beijing.volces.com/api/coding is a coding or subscription plan "
+                    + "address, which only works in the vendor's own tools; use the pay-as-you-go address",
+                retryAfterSecs: nil))
+        #expect(await model.submit() == nil)
+        #expect(model.rejection(for: .endpoint(.openai)) == .planOnlyEndpoint(field: .openai))
+        #expect(model.rejection(for: .endpoint(.anthropic)) == nil)
+        #expect(model.rejection(for: .apiKey) == nil)
+        #expect(model.formRejection == nil)
+        // 改别的字段不清；改了出问题的地址就清掉。
+        model.anthropicBase = "https://gateway.example.com/claude"
+        #expect(model.rejection(for: .endpoint(.openai)) != nil)
+        model.openaiBase = "https://ark.cn-beijing.volces.com/api/v3"
+        #expect(model.rejection == nil)
+
+        // 备注太长（服务端按字符数算的）：显示在备注下面。
+        mock.failNext(
+            with: .api(status: 422, code: .invalid, message: "label must be 0-64 characters", retryAfterSecs: nil))
+        #expect(await model.submit() == nil)
+        #expect(model.rejection(for: .label) == .label)
+        model.label = "网关"
+        #expect(model.rejection == nil)
+
+        // 说不清是哪个字段的：显示在表单下面，改了任何一项都清掉。
+        mock.failNext(
+            with: .api(
+                status: 422, code: .invalid,
+                message: "base URLs are required for, and only allowed with, vendor custom", retryAfterSecs: nil))
+        #expect(await model.submit() == nil)
+        #expect(model.formRejection == .endpointMismatch)
+        #expect(model.rejection(for: .endpoint(.anthropic)) == nil)
+        model.dailyLimit = "1000"
+        #expect(model.rejection == nil && model.formRejection == nil)
+    }
+
+    @Test("服务端说厂商下架了：显示在厂商下面，换个厂商就清掉")
+    func unknownVendorRejection() async {
+        let (mock, model, _) = make()
+        await model.load()
+        model.choice = .preset("deepseek")
+        model.apiKey = "sk-0123456789"
+        model.hasConsented = true
+        mock.failNext(
+            with: .api(
+                status: 422, code: .invalid,
+                message: "unknown vendor: use an id from GET /v1/vendors, or custom with your own base URLs",
+                retryAfterSecs: nil))
+        #expect(await model.submit() == nil)
+        #expect(model.rejection(for: .vendor) == .unknownVendor)
+        model.choice = .preset("openai")
+        #expect(model.rejection == nil)
+    }
+
     @Test("订阅类 key 被拒：显示原因，改了 key 后原因消失")
     func subscriptionRejected() async {
         let (mock, model, consent) = make()
@@ -197,6 +293,7 @@ struct AddCredentialModelTests {
                     + "tools; use a pay-as-you-go API key", retryAfterSecs: nil))
         #expect(await model.submit() == nil)
         #expect(model.rejection == .subscriptionKey)
+        #expect(model.rejection(for: .apiKey) == .subscriptionKey && model.formRejection == nil)
         #expect(model.error == nil)
         #expect(model.created == nil)
         #expect(!consent.hasConsented(to: "anthropic"))

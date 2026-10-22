@@ -72,6 +72,9 @@ struct ModelsScreensTests {
         renderInBothAppearances(
             ModelsField(
                 title: "API key", text: .constant("sk-…"), kind: .secret, problem: "太短了，至少 8 个字符。"))
+        // 上游模型名：原样提交，不自动大写、不纠错。
+        renderInBothAppearances(
+            ModelsField(title: "上游模型", text: .constant("claude-sonnet-5-5"), kind: .identifier, hint: "可以选推荐的，也可以手填。"))
     }
 
     @Test("横轴的日期文字按看板的时区")

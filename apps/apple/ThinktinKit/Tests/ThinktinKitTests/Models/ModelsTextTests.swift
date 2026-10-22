@@ -162,18 +162,31 @@ struct ModelsTextTests {
                 .contains("“写作助手”"))
     }
 
-    @Test("唤醒等 key 的运行之后说什么")
+    @Test("唤醒等 key 的运行之后说什么：只说操作前在等的几个马上重试，不说“还有几个在等”")
     func wakeMessages() {
-        #expect(KeyWakeResult(waitingBefore: 0, waitingAfter: 0).message(.chinese) == nil)
-        #expect(KeyWakeResult(waitingBefore: 2, waitingAfter: 0).message(.chinese) == "已唤醒 2 个在等 key 的任务，它们会接着跑。")
-        #expect(KeyWakeResult(waitingBefore: 1, waitingAfter: 1).message(.chinese)?.hasPrefix("还有 1 个任务在等 key") == true)
+        #expect(KeyWakeResult(retried: 0).message(.chinese) == nil)
+        #expect(KeyWakeResult(retried: -1).retried == 0)
         #expect(
-            KeyWakeResult(waitingBefore: 3, waitingAfter: 1).message(.english)
-                == "Resumed 2 task(s); 1 are still waiting for a key.")
-        #expect(KeyWakeResult(waitingBefore: 1, waitingAfter: 3).resumed == 0)
-        #expect(KeyWakeResult(before: nil, after: 0) == nil)
-        #expect(RouteSaveResult(wake: nil).message(.chinese) == "已保存。卡在“等待 key”的任务会自动接着跑。")
-        #expect(RouteSaveResult(wake: KeyWakeResult(waitingBefore: 0, waitingAfter: 0)).message(.english) == "Saved.")
+            KeyWakeResult(retried: 2).message(.chinese) == "2 个在等 key 的任务马上重试：key 能用就接着跑，还不能用的会继续等。")
+        #expect(
+            KeyWakeResult(retried: 1).message(.english)?.hasPrefix("1 task(s) waiting for a key are retrying") == true)
+        // 服务端唤醒后运行的状态还没变：消息里不能出现“还在等”“已唤醒 N 个接着跑”这种拿前后之差算的话。
+        #expect(KeyWakeResult(retried: 3).message(.chinese)?.contains("还有") == false)
+        #expect(KeyWakeResult(retried: nil) == nil)
+        #expect(KeyWakeResult(retried: Optional(4))?.retried == 4)
+        #expect(RouteSaveResult(wake: nil).message(.chinese) == "已保存。卡在“等待 key”的任务会马上重试，key 能用就接着跑。")
+        #expect(RouteSaveResult(wake: KeyWakeResult(retried: 0)).message(.english) == "Saved.")
+        #expect(RouteSaveResult(wake: KeyWakeResult(retried: 1)).message(.chinese).hasPrefix("已保存。1 个在等 key 的任务马上重试"))
+    }
+
+    @Test("保存路由前确认的那段话说的是这个实例，并写明平台怎么对待这些内容")
+    func routesConsentNotice() {
+        let zh = ModelsText.routesConsentNotice(
+            instanceName: "写作助手", vendorNames: ["Anthropic (Claude)", "DeepSeek"], language: .chinese)
+        #expect(zh.contains("“写作助手”") && zh.contains("Anthropic (Claude)、DeepSeek") && zh.contains("不出售"))
+        #expect(!zh.contains("这把 key"))
+        let en = ModelsText.routesConsentNotice(instanceName: "Writer", vendorNames: ["DeepSeek"], language: .english)
+        #expect(en.contains("“Writer”") && en.hasSuffix("doesn't sell this content or train models on it."))
     }
 }
 

@@ -4,10 +4,14 @@ import Observation
 /// key 详情（WBS 12.4，`.credential(id)`）：改备注、启用 / 停用、换 key（`replaceCredentialSecret`）、每日上限、删除，
 /// 以及哪些实例的哪些别名在用它、最近 30 天的用量。
 ///
-/// - 启用、换 key 后服务端会唤醒等 key 的运行（7.11）：操作前后数一下用这把 key 的实例上等 key 的运行，
-///   界面说“已唤醒 N 个任务”（`wakeResult`）。界面再调一次 `AppModel.refreshBadges()`，抽屉跟着变。
+/// - 启用、换 key 后服务端会唤醒等 key 的运行（7.11）：操作前数一下用这把 key 的实例上等 key 的运行，
+///   界面说“N 个任务马上重试”（`wakeResult`，为什么不数操作后的见 `KeyWaitProbe`）。界面再调一次
+///   `AppModel.refreshBadges()`，抽屉跟着变。
 /// - 删除：服务端不让删还在路由里的 key（409）。先列出用它的别名（`references`），有的话不让删、给“去改路由”的入口。
-/// - 停用还在用的 key 前提醒：用它的别名会改用备用 key，没有备用的任务会停在“等待 key”。
+///   服务端数的路由包括已删除实例留下的（App 看不到），这时 409 之后说明原因、不再让删（`hasHiddenReferences`），
+///   建议停用。
+/// - 停用还在用的 key 前提醒：用它的别名会改用备用 key，没有备用的任务会停在“等待 key”。还没查到有没有路由在用时
+///   也提醒（说得笼统些），只有确定没人用才直接停用。
 /// - 每日上限只在添加时能设（`PATCH /v1/credentials/{id}` 不收它），这里只显示。
 @Observable @MainActor
 public final class CredentialDetailModel {
@@ -44,6 +48,8 @@ public final class CredentialDetailModel {
     public private(set) var isDeleting = false
     public private(set) var deleteError: ClientError?
     public private(set) var isDeleted = false
+    /// 服务端说还有路由在用（409），可 App 看得到的实例里一个都没有：多半是已删除实例留下的路由。这时不再让删。
+    public private(set) var hasHiddenReferences = false
 
     @ObservationIgnored private let client: any ClientProtocol
     @ObservationIgnored private let now: @Sendable () -> Date
@@ -154,14 +160,20 @@ public final class CredentialDetailModel {
         return (references ?? []).compactMap { seen.insert($0.instanceID).inserted ? $0.instanceID : nil }
     }
 
-    /// 能删：查过了，没有路由在用它。
-    public var canDelete: Bool { references?.isEmpty == true && !isDeleting }
+    /// 能删：查过了，没有路由在用它（服务端也没说还有看不到的路由在用）。
+    public var canDelete: Bool { references?.isEmpty == true && !hasHiddenReferences && !isDeleting }
 
     /// 删不了的原因（界面放在删除按钮下面）；能删、还没查到为 nil。
     public func deleteBlockedReason(_ language: DisplayLanguage = .current) -> String? {
         let zh = language == .chinese
         guard let references else {
             return zh ? "正在查哪些模型路由在用它…" : "Checking which model routes use it…"
+        }
+        if references.isEmpty && hasHiddenReferences {
+            return zh
+                ? "服务端说还有模型路由在用它，但不在你现有的实例里（可能是已删除的实例留下的），暂时删不了。不想再用它的话可以停用。"
+                : "The server says model routes still use it, but none of your current instances do (they may belong "
+                    + "to a deleted instance), so it can't be deleted for now. Disable it if you no longer want it used."
         }
         guard !references.isEmpty else { return nil }
         let count = Set(references.map(\.instanceID)).count
@@ -170,10 +182,16 @@ public final class CredentialDetailModel {
             : "It's still used by model routes in \(count) instance(s). Switch them to another key before deleting."
     }
 
-    /// 停用前的提醒（有路由在用它时）；没在用为 nil。
+    /// 停用前的提醒（有路由在用它、或者还没查到有没有时）；确定没人用为 nil。
     public func disableWarning(_ language: DisplayLanguage = .current) -> String? {
-        guard let references, !references.isEmpty else { return nil }
         let zh = language == .chinese
+        guard let references else {
+            return zh
+                ? "还没查到哪些别名在用它。停用后，用它的别名会改用备用 key；没有备用的，任务会停在“等待 key”。"
+                : "Couldn't check which aliases use it yet. Once disabled, aliases using it switch to their fallbacks; "
+                    + "aliases without a fallback leave tasks waiting for a key."
+        }
+        guard !references.isEmpty else { return nil }
         return zh
             ? "有 \(references.count) 个别名在用它。停用后这些别名会改用备用 key；没有备用的，任务会停在“等待 key”。"
             : "\(references.count) alias(es) use it. Once disabled they switch to their fallbacks; aliases without a "
@@ -281,21 +299,24 @@ public final class CredentialDetailModel {
                 isDeleted = true
             } else {
                 deleteError = failure
-                // 别处刚把它配进了路由（409）：重新查一次引用，界面换成“先改路由”。
+                // 别处刚把它配进了路由（409）：重新查一次引用，界面换成“先改路由”。查完还是一个都没有：
+                // 是看不到的路由（已删除实例留下的），不再让删。
                 if failure.isConflict,
                     case .success(let refs) = await Self.findReferences(to: credentialID, client: client)
                 {
                     references = refs
+                    hasHiddenReferences = refs.isEmpty
                 }
             }
         }
         return isDeleted
     }
 
-    /// 删除失败的说明：服务端说还在用（409）时换成“还有路由在用”，别的照常。
+    /// 删除失败的说明。服务端说还在用（409）时为 nil：原因由 `deleteBlockedReason` 说（删除按钮下面那行），
+    /// 不重复显示；别的照常按错误码。
     public func deleteErrorMessage(_ language: DisplayLanguage = .current) -> String? {
         guard let deleteError else { return nil }
-        if deleteError.isConflict { return deleteBlockedReason(language) ?? deleteError.localizedMessage(language) }
+        if deleteError.isConflict, deleteBlockedReason(language) != nil { return nil }
         return deleteError.localizedMessage(language)
     }
 
@@ -306,9 +327,10 @@ public final class CredentialDetailModel {
         return await KeyWaitProbe.waitingRuns(client: client, instanceIDs: instances)
     }
 
+    /// 记下唤醒的结果：操作前在等的这些会马上重试。再拉一次运行只为刷新运行缓存（数到的不用，见 `KeyWaitProbe`）。
     private func noteWake(before: Int?) async {
-        let after = await waitingRuns()
-        wakeResult = KeyWakeResult(before: before, after: after)
+        _ = await waitingRuns()
+        wakeResult = KeyWakeResult(retried: before)
         didWake = true
     }
 }

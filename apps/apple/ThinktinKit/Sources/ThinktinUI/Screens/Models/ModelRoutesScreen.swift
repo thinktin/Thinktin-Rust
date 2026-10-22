@@ -112,10 +112,13 @@ private struct ModelRoutesContent: View {
             }
             Button(zh ? "取消" : "Cancel", role: .cancel) {}
         } message: {
-            Text(ModelsText.dataSharingNotice(vendorNames: pendingConsent.map(\.name), language: language))
+            Text(
+                ModelsText.routesConsentNotice(
+                    instanceName: displayName, vendorNames: pendingConsent.map(\.name), language: language))
         }
         .alert(zh ? "加一个别名" : "Add an alias", isPresented: $isAddingAlias) {
             TextField(zh ? "别名，比如 vision" : "Alias, e.g. vision", text: $newAlias)
+                .modelsIdentifierInput()
             Button(zh ? "加上" : "Add") {
                 _ = model.addAlias(newAlias)
                 newAlias = ""
@@ -538,6 +541,7 @@ private struct RouteModelField: View {
             ModelsField(
                 title: zh ? "上游模型" : "Upstream model", text: text,
                 prompt: suggestions.first ?? (zh ? "厂商那边的模型名" : "The vendor's model name"),
+                kind: .identifier,
                 problem: problem,
                 hint: suggestions.isEmpty
                     ? (zh ? "填厂商那边的模型名。" : "Enter the model name used by the vendor.")

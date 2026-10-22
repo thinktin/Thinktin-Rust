@@ -256,7 +256,7 @@ struct ModelRoutesModelTests {
         #expect(saved[1].upstreamModel == "claude-opus-5-5")
         #expect(saved[0].fallbacks.map(\.credentialID) == [DemoData.deepseekCredentialID])
         #expect(!model.hasChanges && !model.hasUserEdits)
-        #expect(model.saveResult == RouteSaveResult(wake: KeyWakeResult(waitingBefore: 0, waitingAfter: 0)))
+        #expect(model.saveResult == RouteSaveResult(wake: KeyWakeResult(retried: 0)))
         #expect(model.saveResult?.message(.chinese) == "已保存。")
 
         // 再改一次就不用再问了。
@@ -265,20 +265,35 @@ struct ModelRoutesModelTests {
         #expect(await model.save())
     }
 
-    @Test("保存后唤醒等 key 的运行，重新数一次")
+    @Test("保存后：保存前在等 key 的马上重试；刚唤醒时状态还没变，也不说“还在等”")
     func saveWakes() async throws {
-        let mock = ModelsFixture.mock(latency: 0.03) { state in
+        let mock = ModelsFixture.mock { state in
             state.routes[DemoData.writerID] = []
             state.runs.append(ModelsFixture.waitingRun())
         }
         let (_, model, _) = make(mock)
         await model.load()
         #expect(model.waitingRuns == 1)
+        // 和真的服务端一样：保存一返回，运行还在“等待 key”（执行器还没接手）。
+        #expect(await model.save(consented: true))
+        #expect(model.saveResult?.wake == KeyWakeResult(retried: 1))
+        #expect(
+            model.saveResult?.message(.chinese) == "已保存。1 个在等 key 的任务马上重试：key 能用就接着跑，还不能用的会继续等。")
+        #expect(model.saveResult?.message(.chinese).contains("还有") == false)
+    }
+
+    @Test("保存后重新拉这个实例的运行（刷新缓存）：执行器接手了的就不算在等了")
+    func saveRefreshesRuns() async throws {
+        let mock = ModelsFixture.mock(latency: 0.03) { state in
+            state.routes[DemoData.writerID] = []
+            state.runs.append(ModelsFixture.waitingRun())
+        }
+        let (_, model, _) = make(mock)
+        await model.load()
         ModelsFixture.wakeWaitingRuns(in: mock) { !($0.routes[DemoData.writerID] ?? []).isEmpty }
         #expect(await model.save(consented: true))
         #expect(model.waitingRuns == 0)
-        #expect(model.saveResult?.wake == KeyWakeResult(waitingBefore: 1, waitingAfter: 0))
-        #expect(model.saveResult?.message(.chinese) == "已保存。已唤醒 1 个在等 key 的任务，它们会接着跑。")
+        #expect(model.saveResult?.wake == KeyWakeResult(retried: 1))
     }
 
     @Test("服务端不收（key 刚被停用）：显示错误，重新拉 key 把问题标出来")

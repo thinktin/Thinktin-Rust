@@ -73,7 +73,53 @@ struct CredentialDetailModelTests {
         #expect(!(await model.delete()))
         #expect(!model.isDeleted)
         #expect(model.references?.map(\.alias) == ["fast"])
-        #expect(model.deleteErrorMessage(.chinese) == "还有 1 个实例的模型路由在用它，先在路由里换成别的 key 才能删。")
+        #expect(!model.hasHiddenReferences && !model.canDelete)
+        // 原因只在删除按钮下面说一次，错误提示不重复。
+        #expect(model.deleteBlockedReason(.chinese) == "还有 1 个实例的模型路由在用它，先在路由里换成别的 key 才能删。")
+        #expect(model.deleteErrorMessage(.chinese) == nil)
+    }
+
+    @Test("服务端说还在用（409），可现有的实例里都没用它（已删除实例留下的路由）：说明原因，不再让删")
+    func deleteConflictHidden() async {
+        let mock = ModelsFixture.mock()
+        let model = CredentialDetailModel(client: mock, credentialID: DemoData.qwenCredentialID)
+        await model.load()
+        #expect(model.canDelete)
+        mock.failNext(
+            with: .api(
+                status: 409, code: .conflict, message: "credential is used by 1 model route(s)", retryAfterSecs: nil))
+        #expect(!(await model.delete()))
+        #expect(model.references == [] && model.hasHiddenReferences)
+        #expect(!model.canDelete)
+        #expect(model.deleteBlockedReason(.chinese)?.contains("已删除的实例") == true)
+        #expect(model.deleteBlockedReason(.english)?.contains("Disable it") == true)
+        #expect(model.deleteErrorMessage(.chinese) == nil)
+        // 不发第二次删除请求。
+        #expect(!(await model.delete()))
+        #expect(mock.state.credentials.contains { $0.id == DemoData.qwenCredentialID })
+    }
+
+    @Test("删除失败的其他错误照常按错误码说")
+    func deleteNetworkError() async {
+        let mock = ModelsFixture.mock()
+        let model = CredentialDetailModel(client: mock, credentialID: DemoData.qwenCredentialID)
+        await model.load()
+        mock.failNext(with: .network(message: "offline"))
+        #expect(!(await model.delete()))
+        #expect(model.deleteError == .network(message: "offline"))
+        #expect(
+            model.deleteErrorMessage(.chinese) == ClientError.network(message: "offline").localizedMessage(.chinese))
+        #expect(model.canDelete)
+    }
+
+    @Test("还没查到哪些别名在用：停用前也提醒（说得笼统些）")
+    func disableWarningUnknown() async {
+        let mock = ModelsFixture.mock()
+        let model = CredentialDetailModel(
+            client: mock, credentialID: DemoData.deepseekCredentialID, credential: mock.state.credentials[1])
+        #expect(model.references == nil)
+        #expect(model.disableWarning(.chinese)?.hasPrefix("还没查到哪些别名在用它") == true)
+        #expect(model.disableWarning(.english)?.contains("fallbacks") == true)
     }
 
     @Test("已经被删掉的 key：找不到")
@@ -113,8 +159,8 @@ struct CredentialDetailModelTests {
         #expect(await model.setDisabled(false))
         #expect(model.credential?.isDisabled == false)
         #expect(model.didWake)
-        #expect(model.wakeResult == KeyWakeResult(waitingBefore: 1, waitingAfter: 0))
-        #expect(model.wakeResult?.message(.chinese) == "已唤醒 1 个在等 key 的任务，它们会接着跑。")
+        #expect(model.wakeResult == KeyWakeResult(retried: 1))
+        #expect(model.wakeResult?.message(.chinese) == "1 个在等 key 的任务马上重试：key 能用就接着跑，还不能用的会继续等。")
     }
 
     @Test("停用不数唤醒；状态没变不发请求")
@@ -143,8 +189,21 @@ struct CredentialDetailModelTests {
         #expect(await model.replaceSecret("  sk-new-key-0123WXYZ\n"))
         #expect(model.credential?.last4 == "WXYZ")
         #expect(model.didReplace)
-        // Mock 不模拟唤醒：前后都是 1 个在等。
-        #expect(model.wakeResult == KeyWakeResult(waitingBefore: 1, waitingAfter: 1))
+        // 和真的服务端一样：刚唤醒时运行的状态还没变（Mock 不模拟唤醒），也只说操作前在等的那 1 个马上重试，
+        // 不说“还有 1 个在等”。
+        #expect(model.wakeResult == KeyWakeResult(retried: 1))
+        #expect(model.wakeResult?.message(.chinese)?.contains("还有") == false)
+    }
+
+    @Test("启用前没数到等 key 的运行：只说通用的一句")
+    func wakeUncounted() async {
+        let mock = ModelsFixture.mock()
+        let model = CredentialDetailModel(client: mock, credentialID: DemoData.qwenCredentialID)
+        await model.load()
+        // 启用前数等 key 的运行（第一个调用）失败了，启用照常。
+        mock.failNext(with: .network(message: "offline"))
+        #expect(await model.setDisabled(false))
+        #expect(model.didWake && model.wakeResult == nil)
     }
 
     @Test("换 key 被拒（订阅类 key）：显示原因")
