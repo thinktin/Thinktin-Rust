@@ -331,6 +331,8 @@ pub struct Api {
     refreshing: tokio::sync::Mutex<()>,
     /// 会话没了（退出、被吊销、刷新失败）时调用：清掉上一个人的本地缓存。
     on_signed_out: RwLock<Option<SignedOutHook>>,
+    /// 事件流的 TLS 配置（系统证书校验，和接口请求一样）。
+    ws_tls: Arc<rustls::ClientConfig>,
 }
 
 type SignedOutHook = Arc<dyn Fn() + Send + Sync>;
@@ -344,11 +346,19 @@ enum Refreshed {
 impl Api {
     pub fn new(cfg: ApiConfig, store: Arc<dyn SessionStore>) -> Result<Self> {
         crate::install_crypto();
+        if cfg.base_url.starts_with("https://") && !crate::tls::platform_ready() {
+            return Err(ClientError::Internal {
+                message: "call cn.thinktin.core.TlsInit.initialize(context) before creating \
+                          ThinktinClient (https on Android)"
+                    .into(),
+            });
+        }
         let http = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(10))
             .timeout(cfg.timeout)
             .build()
             .map_err(ClientError::network)?;
+        let ws_tls = crate::tls::ws_client_config().map_err(ClientError::network)?;
         let session = store.load();
         Ok(Self {
             base: cfg.base_url.trim_end_matches('/').to_owned(),
@@ -358,11 +368,16 @@ impl Api {
             session: RwLock::new(session),
             refreshing: tokio::sync::Mutex::new(()),
             on_signed_out: RwLock::new(None),
+            ws_tls,
         })
     }
 
     pub fn base_url(&self) -> &str {
         &self.base
+    }
+
+    pub(crate) fn ws_tls(&self) -> Arc<rustls::ClientConfig> {
+        self.ws_tls.clone()
     }
 
     pub fn session(&self) -> Option<Session> {

@@ -276,7 +276,16 @@ async fn connect_once(
     if let Ok(v) = HeaderValue::from_str(&API_VERSION.to_string()) {
         headers.insert(VERSION_HEADER, v);
     }
-    let connect = tokio::time::timeout(cfg.connect_timeout, tokio_tungstenite::connect_async(req));
+    // wss 用系统证书校验（和接口请求一样），ws（本地开发）不加密。
+    let connect = tokio::time::timeout(
+        cfg.connect_timeout,
+        tokio_tungstenite::connect_async_tls_with_config(
+            req,
+            None,
+            false,
+            Some(tokio_tungstenite::Connector::Rustls(api.ws_tls())),
+        ),
+    );
     let mut ws = tokio::select! {
         () = stopped(stop) => return Ended::Stopped,
         r = connect => match r {

@@ -28,6 +28,8 @@ proto = { path = "../proto" }
 reqwest.workspace = true
 rusqlite = { version = "0.39", features = ["bundled"] }
 rustls = { version = "0.23.45", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
+# 和 reqwest 用的是同一份（Android 上初始化存在它的全局变量里）。
+rustls-platform-verifier = "0.7.1"
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
@@ -39,6 +41,10 @@ uniffi = { version = "0.32.2", features = ["tokio"] }
 url.workspace = true
 uuid.workspace = true
 
+# Android 上系统证书校验要经 JNI 初始化（`tls.rs`）。
+[target.'cfg(target_os = "android")'.dependencies]
+jni = { version = "0.22.4", default-features = false }
+
 [dev-dependencies]
 auth = { path = "../auth" }
 axum.workspace = true
@@ -47,4 +53,6 @@ gateway = { path = "../gateway" }
 keyvault = { path = "../keyvault" }
 store = { path = "../store", features = ["testing"] }
 tempfile.workspace = true
+# tests/tls.rs 的 wss 服务端。
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["aws_lc_rs"] }
 zeroize.workspace = true
