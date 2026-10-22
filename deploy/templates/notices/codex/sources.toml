@@ -1,0 +1,179 @@
+# Codex 模板要额外带的原文（16.5，docs/licenses.md 第 3 节）。
+#
+# Codex 是 Apache-2.0，但 @openai/codex 和它的平台包（@openai/codex@<版本>-linux-x64）里没有 LICENSE、NOTICE，
+# 也没有第三方许可清单。平台包里的程序静态链接了不少第三方代码：
+# - bin/codex、codex-code-mode-host：Rust crate（清单由下面的 [[cargo]] 生成）、OpenSSL、AWS-LC、musl；
+#   code-mode-host 里还有 V8；
+# - codex-resources/bwrap：bubblewrap（LGPL-2.0-or-later）+ libcap（BSD-3-Clause OR GPL-2.0-only）；
+# - codex-path/rg：ripgrep（Unlicense OR MIT）+ PCRE2；
+# - codex-resources/zsh：改过的 zsh（加了 EXEC_WRAPPER，补丁见
+#   https://raw.githubusercontent.com/openai/codex/rust-v0.160.1/codex-rs/shell-escalation/patches/zsh-exec-wrapper.patch）；
+# - codex-resources/voice：GStreamer、GLib 等动态库，它们的原文包里自带（下面的 [[installed]]）。
+# 以上从上游取，URL 钉在标签或提交上。
+#
+# 2026-10-20 按 codex-acp 2.2.2 → @openai/codex 0.160.1（标签 rust-v0.160.1，提交 d27764b8）核对：
+# 各组件的版本来自二进制里的字符串和 openai/codex 在这个标签下的构建脚本（.github/scripts/）。
+# 升级后 applies_to 对不上，CI 会报错，要重新核对（版本号都要换）。
+
+applies_to = ["npm:@openai/codex@0.160.1-linux-x64"]
+
+[[file]]
+component = "openai-codex"
+version = "0.160.1"
+license = "Apache-2.0"
+path = "codex-LICENSE"
+url = "https://raw.githubusercontent.com/openai/codex/rust-v0.160.1/LICENSE"
+source = "https://github.com/openai/codex/tree/rust-v0.160.1"
+
+[[file]]
+component = "openai-codex"
+version = "0.160.1"
+license = "Apache-2.0"
+path = "codex-NOTICE"
+url = "https://raw.githubusercontent.com/openai/codex/rust-v0.160.1/NOTICE"
+
+# Codex 源码树里 vendored 的 wezterm 代码（third_party/wezterm）。
+[[file]]
+component = "wezterm"
+version = "openai/codex rust-v0.160.1 third_party/wezterm"
+license = "MIT"
+path = "wezterm-LICENSE"
+url = "https://raw.githubusercontent.com/openai/codex/rust-v0.160.1/third_party/wezterm/LICENSE"
+source = "https://github.com/openai/codex/tree/rust-v0.160.1/third_party/wezterm"
+
+[[file]]
+component = "bubblewrap"
+version = "0.11.2"
+license = "LGPL-2.0-or-later"
+path = "bubblewrap-COPYING"
+url = "https://raw.githubusercontent.com/openai/codex/rust-v0.160.1/codex-rs/vendor/bubblewrap/COPYING"
+source = "https://github.com/openai/codex/tree/rust-v0.160.1/codex-rs/vendor/bubblewrap"
+
+[[file]]
+component = "libcap"
+version = "2.75"
+license = "BSD-3-Clause OR GPL-2.0-only"
+path = "libcap-License"
+url = "https://git.kernel.org/pub/scm/libs/libcap/libcap.git/plain/License?h=libcap-2.75"
+source = "https://git.kernel.org/pub/scm/libs/libcap/libcap.git/tree/?h=libcap-2.75"
+
+[[file]]
+component = "zsh"
+version = "77045ef899e53b9598bebc5a41db93a548a40ca6"
+license = "LicenseRef-Zsh"
+path = "zsh-LICENCE"
+url = "https://raw.githubusercontent.com/zsh-users/zsh/77045ef899e53b9598bebc5a41db93a548a40ca6/LICENCE"
+source = "https://github.com/zsh-users/zsh/tree/77045ef899e53b9598bebc5a41db93a548a40ca6"
+
+[[file]]
+component = "ripgrep"
+version = "15.2.0"
+license = "Unlicense OR MIT"
+path = "ripgrep-COPYING"
+url = "https://raw.githubusercontent.com/BurntSushi/ripgrep/15.2.0/COPYING"
+source = "https://github.com/BurntSushi/ripgrep/tree/15.2.0"
+
+[[file]]
+component = "ripgrep"
+version = "15.2.0"
+license = "Unlicense OR MIT"
+path = "ripgrep-LICENSE-MIT"
+url = "https://raw.githubusercontent.com/BurntSushi/ripgrep/15.2.0/LICENSE-MIT"
+
+[[file]]
+component = "ripgrep"
+version = "15.2.0"
+license = "Unlicense OR MIT"
+path = "ripgrep-UNLICENSE"
+url = "https://raw.githubusercontent.com/BurntSushi/ripgrep/15.2.0/UNLICENSE"
+
+[[file]]
+component = "pcre2"
+version = "10.46"
+license = "BSD-3-Clause WITH PCRE2-exception"
+path = "pcre2-LICENCE.md"
+url = "https://raw.githubusercontent.com/PCRE2Project/pcre2/pcre2-10.46/LICENCE.md"
+source = "https://github.com/PCRE2Project/pcre2/tree/pcre2-10.46"
+
+[[file]]
+component = "musl"
+version = "1.2.5"
+license = "MIT"
+path = "musl-COPYRIGHT"
+url = "https://git.musl-libc.org/cgit/musl/plain/COPYRIGHT?h=v1.2.5"
+source = "https://git.musl-libc.org/cgit/musl/tree/?h=v1.2.5"
+
+[[file]]
+component = "openssl"
+version = "3.6.4"
+license = "Apache-2.0"
+path = "openssl-LICENSE.txt"
+url = "https://raw.githubusercontent.com/openssl/openssl/openssl-3.6.4/LICENSE.txt"
+source = "https://github.com/openssl/openssl/tree/openssl-3.6.4"
+
+[[file]]
+component = "v8"
+version = "15.0.245.2"
+license = "BSD-3-Clause"
+path = "v8-LICENSE"
+url = "https://raw.githubusercontent.com/v8/v8/15.0.245.2/LICENSE"
+source = "https://github.com/v8/v8/tree/15.0.245.2"
+
+[[file]]
+component = "v8"
+version = "15.0.245.2"
+license = "BSD-3-Clause"
+path = "v8-LICENSE.v8"
+url = "https://raw.githubusercontent.com/v8/v8/15.0.245.2/LICENSE.v8"
+
+[[file]]
+component = "v8"
+version = "15.0.245.2"
+license = "BSD-3-Clause"
+path = "v8-LICENSE.fdlibm"
+url = "https://raw.githubusercontent.com/v8/v8/15.0.245.2/LICENSE.fdlibm"
+
+[[file]]
+component = "v8"
+version = "15.0.245.2"
+license = "BSD-3-Clause"
+path = "v8-LICENSE.strongtalk"
+url = "https://raw.githubusercontent.com/v8/v8/15.0.245.2/LICENSE.strongtalk"
+
+# 语音运行时（GStreamer 1.28.6、GLib 2.88.3、libffi、PCRE2 10.47、zlib、opus、proxy-libintl）：
+# 包里自带 NOTICE.md 和 licenses/，在 node_modules 深处，扫描只看包的根目录，这里指过去。
+# sources.json 里是每个库确切的上游版本、源码包地址和 SHA-256（LGPL 要求的“怎么拿到对应源码”），一起带上。
+[[installed]]
+component = "codex-voice-runtime"
+version = "0.160.1"
+license = "LGPL-2.1-only AND LGPL-2.0-only AND MIT AND BSD-3-Clause AND BSD-2-Clause AND Zlib"
+glob = "/usr/local/lib/node_modules/**/codex-resources/voice/NOTICE.md"
+source = "https://github.com/openai/codex/tree/rust-v0.160.1/third_party/voice"
+
+[[installed]]
+component = "codex-voice-runtime"
+version = "0.160.1"
+license = "LGPL-2.1-only AND LGPL-2.0-only AND MIT AND BSD-3-Clause AND BSD-2-Clause AND Zlib"
+glob = "/usr/local/lib/node_modules/**/codex-resources/voice/sources.json"
+
+[[installed]]
+component = "codex-voice-runtime"
+version = "0.160.1"
+license = "LGPL-2.1-only AND LGPL-2.0-only AND MIT AND BSD-3-Clause AND BSD-2-Clause AND Zlib"
+glob = "/usr/local/lib/node_modules/**/codex-resources/voice/licenses/*"
+
+# Codex 自己的 Rust 程序依赖的 crate：deploy/templates/build.sh 构建前从这个标签的源码生成（licenses.py upstream-cargo）。
+# 包名和平台按 openai/codex 在这个标签下的打包脚本：codex、code-mode-host、bwrap 是 musl 静态链接，语音进程是 glibc。
+[[cargo]]
+repo = "https://github.com/openai/codex"
+tag = "rust-v0.160.1"
+manifest = "codex-rs/Cargo.toml"
+packages = ["codex-cli", "codex-code-mode-host", "codex-bwrap"]
+target = "x86_64-unknown-linux-musl"
+
+[[cargo]]
+repo = "https://github.com/openai/codex"
+tag = "rust-v0.160.1"
+manifest = "codex-rs/Cargo.toml"
+packages = ["codex-voice-host"]
+target = "x86_64-unknown-linux-gnu"

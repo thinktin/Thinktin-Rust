@@ -1,16 +1,20 @@
 //! 编排服务：计划、触发器、运行树、多 agent 协同、租约、出箱
 
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+pub mod account;
+pub mod artifacts;
+pub mod computer;
+pub mod delegate;
+pub mod exec;
+pub mod executor;
+pub mod live;
+pub mod outbox;
+pub mod pipeline;
+pub mod reports;
+pub mod s3;
+pub mod schedule;
+pub mod scheduler;
+pub mod shim;
+pub mod texts;
+pub mod tools;
+pub mod vault;
+pub mod waits;

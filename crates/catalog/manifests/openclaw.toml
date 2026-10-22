@@ -1,0 +1,45 @@
+# OpenClaw：`openclaw acp` 是连到 OpenClaw Gateway 的 ACP 桥，
+# 所以先在沙箱里起一个只监听回环地址的 Gateway（sidecar），再启动桥。
+# 出过多起技能市场投毒事件（3.6），技能市场必须关闭。
+
+[agent]
+id = "openclaw"
+name = "OpenClaw"
+upstream = "https://github.com/openclaw/openclaw"
+version = "2026.10.3"
+license = "MIT"
+description = { zh-CN = "OpenClaw 个人助理 agent；本平台关闭了它的技能市场。", en = "OpenClaw personal-assistant agent; its skills marketplace is turned off here." }
+sites = ["cn", "global"]
+
+[runtime]
+template = "agents/openclaw:2026.10.3"
+vcpu = 1
+memory_mb = 2048
+state_dirs = [".openclaw"]
+
+[[harness]]
+id = "acp"
+kind = "acp"
+# 桥的 ACP 会话 id 只在内存里，重启后接不回来。所以让桥固定绑定到 Gateway 的一个会话键，
+# 历史由 Gateway 持久化在状态目录里：每次 session/new 都接着同一段对话。
+# 不给 --url，桥按配置连本机 Gateway，令牌取自配置里的 ${OPENCLAW_GATEWAY_TOKEN}。
+command = ["openclaw", "acp", "--session", "agent:main:thinktin"]
+session = { restore = false, per_session_mcp = false }
+
+[[harness.sidecar]]
+name = "gateway"
+command = ["openclaw", "gateway", "run"]
+ready_tcp = "127.0.0.1:18789"
+ready_timeout_secs = 120
+
+[llm]
+protocols = ["openai-completions", "anthropic-messages", "openai-responses"]
+config = "openclaw"
+
+[policy]
+heartbeat = "platform"
+
+# 模板构建（6.8，deploy/templates）装的包，版本写死；升级时和 agent.version、runtime.template 一起改。
+# 需要 Node 24.16 以上（模板的基础镜像是 Node 24）。
+[install]
+npm = ["openclaw@2026.10.3"]

@@ -1,0 +1,59 @@
+# Claude 模板要额外带的原文（16.5，docs/licenses.md 第 3 节）。
+#
+# Claude Code 二进制（@anthropic-ai/claude-agent-sdk-linux-x64 里的 `claude`）是 Bun 编译的单文件程序，
+# Bun 把 JavaScriptCore（LGPL-2）、TinyCC（LGPL-2.1）和一串 BSD / MIT 的库静态链接进去，二进制里还带了
+# ugrep（BSD-3-Clause）和公共后缀表（MPL-2.0）。npm 包里只有一行 Anthropic 的专有声明，这些第三方的原文都没带，
+# 从上游取（URL 钉在对应的标签或提交上）。Bun 链接的其余各库的许可证见 bun-license.mdx 里的清单和链接。
+#
+# 2026-10-20 按 claude-agent-acp 0.90.0 → Claude Agent SDK 0.3.296 → Claude Code 2.1.296（Bun v1.4.3）核对：
+# 二进制里的字符串 "Bun v1.4.3"、"ugrep 7.8.4"、内置插件里的公共后缀表 NOTICE。升级后 applies_to 对不上，
+# CI 会报错，要重新核对（Bun 的版本、WebKit 和 TinyCC 的提交号见 Bun 那个标签的 scripts/build/deps/）。
+
+applies_to = ["npm:@anthropic-ai/claude-agent-sdk-linux-x64@0.3.296"]
+
+[[file]]
+component = "bun"
+version = "1.4.3"
+license = "MIT"
+path = "bun-LICENSE.md"
+url = "https://raw.githubusercontent.com/oven-sh/bun/bun-v1.4.3/LICENSE.md"
+source = "https://github.com/oven-sh/bun/tree/bun-v1.4.3"
+
+[[file]]
+component = "bun"
+version = "1.4.3"
+license = "MIT"
+path = "bun-license.mdx"
+url = "https://raw.githubusercontent.com/oven-sh/bun/bun-v1.4.3/docs/project/license.mdx"
+
+[[file]]
+component = "javascriptcore"
+version = "oven-sh/WebKit@0c06faadf65bf8e8c8ad3a5a8aca83e1e9ed653f"
+license = "LGPL-2.0-only"
+path = "javascriptcore-COPYING.LIB"
+url = "https://raw.githubusercontent.com/oven-sh/WebKit/0c06faadf65bf8e8c8ad3a5a8aca83e1e9ed653f/Source/JavaScriptCore/COPYING.LIB"
+source = "https://github.com/oven-sh/WebKit/tree/0c06faadf65bf8e8c8ad3a5a8aca83e1e9ed653f/Source/JavaScriptCore"
+
+[[file]]
+component = "tinycc"
+version = "oven-sh/tinycc@05f0fafaa3be31e31d7b4b5c17dc60f62c991171"
+license = "LGPL-2.1-only"
+path = "tinycc-COPYING"
+url = "https://raw.githubusercontent.com/oven-sh/tinycc/05f0fafaa3be31e31d7b4b5c17dc60f62c991171/COPYING"
+source = "https://github.com/oven-sh/tinycc/tree/05f0fafaa3be31e31d7b4b5c17dc60f62c991171"
+
+[[file]]
+component = "ugrep"
+version = "7.8.4"
+license = "BSD-3-Clause"
+path = "ugrep-LICENSE.txt"
+url = "https://raw.githubusercontent.com/Genivia/ugrep/v7.8.4/LICENSE.txt"
+source = "https://github.com/Genivia/ugrep/tree/v7.8.4"
+
+[[file]]
+component = "public-suffix-list"
+version = "embedded in Claude Code 2.1.296"
+license = "MPL-2.0"
+path = "publicsuffix-LICENSE"
+url = "https://raw.githubusercontent.com/publicsuffix/list/5dd321ffe02039e2431382a095cf80e27ff5eb94/LICENSE"
+source = "https://github.com/publicsuffix/list/tree/5dd321ffe02039e2431382a095cf80e27ff5eb94"

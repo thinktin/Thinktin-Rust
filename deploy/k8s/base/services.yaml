@@ -1,0 +1,46 @@
+# 服务按 app.kubernetes.io/name 选副本，不看 track：灰度副本（track: canary）也分到流量，按副本数分。
+# 对外的入口（客户端接口、电脑连中继的 wss）和沙箱访问模型网关的内网入口由各环境配（云厂商的负载均衡），见 docs/release.md。
+apiVersion: v1
+kind: Service
+metadata:
+  name: thinktin-api
+  labels:
+    app.kubernetes.io/name: thinktin-api
+    app.kubernetes.io/part-of: thinktin
+spec:
+  selector:
+    app.kubernetes.io/name: thinktin-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: thinktin-llm-gw
+  labels:
+    app.kubernetes.io/name: thinktin-llm-gw
+    app.kubernetes.io/part-of: thinktin
+spec:
+  selector:
+    app.kubernetes.io/name: thinktin-llm-gw
+  ports:
+    - name: http
+      port: 8790
+      targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: thinktin-relay
+  labels:
+    app.kubernetes.io/name: thinktin-relay
+    app.kubernetes.io/part-of: thinktin
+spec:
+  selector:
+    app.kubernetes.io/name: thinktin-relay
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

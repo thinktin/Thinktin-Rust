@@ -1,0 +1,14 @@
+# 镜像构建只要 Rust 工作区（deploy/docker/Dockerfile）。
+.git
+.github
+.claude
+target
+apps
+docs
+deploy
+tools
+**/*.md
+!crates/**/*.md
+# 许可证清单（16.5）：服务端镜像和模板镜像构建时都要用。
+!tools/licenses
+!deploy/templates/notices

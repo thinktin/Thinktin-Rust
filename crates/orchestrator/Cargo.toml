@@ -6,3 +6,34 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+metrics.workspace = true
+async-trait.workspace = true
+auth = { path = "../auth" }
+chrono.workspace = true
+chrono-tz.workspace = true
+control = { path = "../control" }
+croner.workspace = true
+futures-util.workspace = true
+hmac.workspace = true
+keyvault = { path = "../keyvault" }
+notify = { path = "../notify" }
+proto = { path = "../proto" }
+reqwest.workspace = true
+rrule.workspace = true
+sandbox = { path = "../sandbox" }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
+store = { path = "../store" }
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+async-trait.workspace = true
+axum.workspace = true
+uuid.workspace = true
+store = { path = "../store", features = ["testing"] }
+tempfile.workspace = true

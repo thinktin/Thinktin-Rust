@@ -1,0 +1,49 @@
+# Claude：同一个 agent，两种接入方式（harness）。
+# - acp（默认）：Claude Agent SDK 的 ACP 适配器 claude-agent-acp
+# - cli：直接驱动 Claude Code 命令行的 stream-json 模式
+# 两种方式都通过 ANTHROPIC_BASE_URL 走模型网关，状态都写在 ~/.claude（CLAUDE_CONFIG_DIR）。
+
+[agent]
+id = "claude"
+name = "Claude Agent"
+upstream = "https://github.com/agentclientprotocol/claude-agent-acp"
+version = "0.90.0"  # claude-agent-acp；内含 Claude Agent SDK 0.3.296
+license = "LicenseRef-Anthropic-Commercial"
+# 内部：多租户托管前须法务确认（docs/licenses.md 第 1 节）。下面是给用户看的说明。
+license_note = { zh-CN = "适配器 claude-agent-acp 是 Apache-2.0；它依赖的 Claude Agent SDK 和 Claude Code 是 Anthropic 的专有软件，受 Anthropic 的条款约束。在平台的沙箱里运行，模型请求只经平台的模型网关发给你配置的厂商。", en = "The claude-agent-acp adapter is Apache-2.0; the Claude Agent SDK and Claude Code it depends on are proprietary Anthropic software under Anthropic's terms. It runs in the platform sandbox, and model requests go only through the platform's model gateway to the vendor you configure." }
+description = { zh-CN = "基于 Anthropic Claude Agent SDK 的通用 agent，擅长写代码、改文件、执行命令。", en = "General-purpose agent built on Anthropic's Claude Agent SDK, good at coding, editing files and running commands." }
+sites = ["cn", "global"]
+
+[runtime]
+template = "agents/claude:0.90.0"
+vcpu = 1
+memory_mb = 2048
+state_dirs = [".claude"]
+
+[[harness]]
+id = "acp"
+kind = "acp"
+command = ["claude-agent-acp"]
+session = { restore = true, per_session_mcp = true }
+
+[[harness]]
+id = "cli"
+kind = "claude-stream-json"
+command = ["claude"]
+session = { restore = true, per_session_mcp = true }
+
+[llm]
+protocols = ["anthropic-messages"]
+config = "claude"
+
+[policy]
+heartbeat = "none"
+
+# 模板构建（6.8，deploy/templates）装的包，版本写死；升级时和 agent.version、runtime.template 一起改。
+# Claude Code 二进制随 Agent SDK 一起装（按平台分包，claude-agent-sdk-linux-x64 等），但没有哪个包把它放上 PATH，
+# cli 接入方式要直接调 `claude`，所以链接到 /usr/local/bin。
+[install]
+npm = ["@agentclientprotocol/claude-agent-acp@0.90.0"]
+
+[install.bin]
+claude = "@agentclientprotocol/claude-agent-acp/node_modules/@anthropic-ai/claude-agent-sdk-linux-*/claude"

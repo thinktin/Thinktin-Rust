@@ -1,0 +1,44 @@
+# 生产环境。这里不写镜像版本：部署用发布包（GitHub Release 的附件 thinktin-production-<版本>.yaml，
+# 镜像按摘要固定，由 ../../bundle.sh 生成），不直接 apply 这个目录。
+# 标了“部署前填”的是占位值（这里和 server.toml 里都有），按实际的云资源改。流程见 docs/release.md。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: thinktin
+resources:
+  - ../../base
+configMapGenerator:
+  # 控制面配置：接口副本和后台副本共用。
+  - name: thinktin-server
+    files:
+      - server.toml
+  # 部署前填：沙箱令牌的验签公钥（kid=公钥；`llm-gw keygen` 生成密钥时打印，kid 和 server.toml 的 sandbox.token_kid 一致）。
+  - name: thinktin-llm-gw
+    literals:
+      - THINKTIN_SANDBOX_TOKEN_KEY=k1=FILL-IN-THE-SANDBOX-TOKEN-PUBLIC-KEY
+  # 部署前填：访问令牌的公钥（`thinktin-server check-config` 打印的 access token key）。
+  - name: thinktin-relay
+    literals:
+      - THINKTIN_ACCESS_TOKEN_KEYS=a1=FILL-IN-THE-ACCESS-TOKEN-PUBLIC-KEY
+generatorOptions:
+  # 灰度副本按固定的名字引用这些 ConfigMap。改了配置要 `kubectl rollout restart`（发布时换镜像会顺带重启）。
+  disableNameSuffixHash: true
+patches:
+  # 副本数：初始值，17.5 压测后按结果调。
+  - target:
+      kind: Deployment
+      labelSelector: app.kubernetes.io/name in (thinktin-api, thinktin-worker, thinktin-llm-gw)
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 3
+  # 主密钥在阿里云 KMS，和 server.toml 的 [kms.aliyun] 一致（部署前填）。
+  - target:
+      kind: Deployment
+      labelSelector: app.kubernetes.io/name=thinktin-llm-gw
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --aliyun-kms-endpoint=https://kms.cn-hangzhou.aliyuncs.com
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --aliyun-kms-key-id=alias/thinktin-production
