@@ -1271,6 +1271,20 @@ impl Api {
         .await
     }
 
+    /// 改每日 token 上限（11.9）：`None` 取消上限。
+    pub async fn set_credential_daily_limit(
+        &self,
+        id: CredentialId,
+        limit: Option<u64>,
+    ) -> Result<Credential> {
+        self.json(
+            Method::PATCH,
+            &format!("/v1/credentials/{id}"),
+            Some(&json!({ "daily_token_limit": limit })),
+        )
+        .await
+    }
+
     /// 换 key（同一个厂商、同一条记录：模型路由不用改）。
     pub async fn replace_credential_secret(
         &self,

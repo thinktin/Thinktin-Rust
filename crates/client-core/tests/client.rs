@@ -1180,6 +1180,33 @@ async fn ffi_keys_runs_artifacts_and_inbox_items() {
         .await
         .unwrap();
     assert_eq!((off.label.as_str(), off.disabled), ("备用", true));
+    // 每日上限（11.9）：改、只改名字时不动、取消；0 不行。
+    let limited = c
+        .set_credential_daily_limit(cred.id.clone(), Some(5_000))
+        .await
+        .unwrap();
+    assert_eq!(
+        (
+            limited.daily_token_limit,
+            limited.label.as_str(),
+            limited.disabled
+        ),
+        (Some(5_000), "备用", true)
+    );
+    let renamed = c
+        .update_credential(cred.id.clone(), Some("主力".into()), None)
+        .await
+        .unwrap();
+    assert_eq!(renamed.daily_token_limit, Some(5_000));
+    let cleared = c
+        .set_credential_daily_limit(cred.id.clone(), None)
+        .await
+        .unwrap();
+    assert_eq!(cleared.daily_token_limit, None);
+    assert!(matches!(
+        c.set_credential_daily_limit(cred.id.clone(), Some(0)).await,
+        Err(ClientError::Api { status: 422, .. })
+    ));
     let swapped = c
         .replace_credential_secret(cred.id.clone(), "sk-fedcba9876543210".into())
         .await

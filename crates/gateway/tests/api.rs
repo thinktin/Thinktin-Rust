@@ -474,6 +474,117 @@ async fn instances_keys_and_routes_are_per_user() {
     assert_eq!(st, StatusCode::NO_CONTENT, "{body}");
 }
 
+/// key 的每日上限可以改、可以取消（11.9）：放宽、取消时等 key 的运行接着跑，调低时不动；每次都记审计。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn credential_daily_limit_is_editable() {
+    use proto::domain::RunState;
+    let Some(a) = api().await else { return };
+    let u = a.login("13800138032").await;
+    let tok = Some(u.access.as_str());
+    let (st, cred) = a
+        .call(
+            Method::POST,
+            "/v1/credentials",
+            tok,
+            Some(json!({ "vendor": "deepseek", "api_key": "sk-0123456789abcdef", "daily_token_limit": 1000 })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{cred}");
+    let path = format!("/v1/credentials/{}", cred["id"].as_str().unwrap());
+    let patch = |body: Value| {
+        let (a, path) = (&a, path.clone());
+        async move { a.call(Method::PATCH, &path, tok, Some(body)).await }
+    };
+    let (st, body) = patch(json!({ "daily_token_limit": 5000 })).await;
+    assert_eq!(
+        (st, &body["daily_token_limit"]),
+        (StatusCode::OK, &json!(5000))
+    );
+    // 只改名字：上限不动（不带不是取消）。
+    let (_, body) = patch(json!({ "label": "备用" })).await;
+    assert_eq!(body["daily_token_limit"], 5000);
+    for bad in [
+        json!(0),
+        json!(-1),
+        json!(1.5),
+        json!("100"),
+        json!(9223372036854775808u64),
+    ] {
+        let (st, body) = patch(json!({ "daily_token_limit": bad })).await;
+        assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{bad}: {body}");
+    }
+    // 等 key 的运行：调低不唤醒，取消上限唤醒。
+    let inst = a.adopt(&u).await;
+    let (_, run) = a
+        .call(
+            Method::POST,
+            &format!("/v1/instances/{inst}/runs"),
+            tok,
+            Some(json!({ "prompt": "x" })),
+        )
+        .await;
+    let run_id: RunId = run["id"].as_str().unwrap().parse().unwrap();
+    let mut w = a.t.db.worker().await.unwrap();
+    w.claim_next_run("n1", Duration::from_secs(60))
+        .await
+        .unwrap()
+        .unwrap();
+    w.transition_run(
+        run_id,
+        "n1",
+        RunState::Running,
+        &store::RunChange::default(),
+    )
+    .await
+    .unwrap();
+    w.transition_run(
+        run_id,
+        "n1",
+        RunState::WaitingQuota,
+        &store::RunChange {
+            not_before: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
+            release_lease: true,
+            wait_code: Some("unavailable"),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    w.commit().await.unwrap();
+    let waiting = || async {
+        sqlx::query_scalar::<_, bool>("SELECT not_before > now() FROM runs WHERE id = $1")
+            .bind(run_id.0)
+            .fetch_one(a.t.db.pool())
+            .await
+            .unwrap()
+    };
+    let (st, _) = patch(json!({ "daily_token_limit": 100 })).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(waiting().await, "lowering the limit does not wake runs");
+    let (st, body) = patch(json!({ "daily_token_limit": null })).await;
+    assert_eq!(
+        (st, &body["daily_token_limit"]),
+        (StatusCode::OK, &Value::Null)
+    );
+    assert!(!waiting().await, "clearing the limit wakes runs");
+    let audit: Vec<(String, Value)> = sqlx::query_as(
+        "SELECT action, detail FROM audit_log WHERE target = $1 AND action = 'credential.limit' ORDER BY id",
+    )
+    .bind(cred["id"].as_str().unwrap())
+    .fetch_all(a.t.db.pool())
+    .await
+    .unwrap();
+    let details: Vec<Value> = audit.into_iter().map(|(_, d)| d).collect();
+    assert_eq!(
+        details,
+        [
+            json!({ "daily_token_limit": 5000, "previous": 1000 }),
+            json!({ "daily_token_limit": 100, "previous": 5000 }),
+            json!({ "daily_token_limit": null, "previous": 100 }),
+        ]
+    );
+}
+
 /// 删除实例时一并处理它的计划（11.9）：它自己的计划没了；别的实例的流水线有一步在它上面的暂停，改了步骤才能恢复。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn deleting_an_instance_deletes_its_plans_and_pauses_pipelines() {
@@ -1704,6 +1815,11 @@ async fn other_users_objects_are_invisible() {
             Method::PATCH,
             format!("/v1/credentials/{cred}"),
             Some(json!({ "label": "x" })),
+        ),
+        (
+            Method::PATCH,
+            format!("/v1/credentials/{cred}"),
+            Some(json!({ "daily_token_limit": 1 })),
         ),
         (
             Method::PUT,

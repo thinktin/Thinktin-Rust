@@ -2378,6 +2378,23 @@ impl ThinktinClient {
         .await
     }
 
+    /// 改每日 token 上限（11.9）：`None` 取消上限，必须大于 0（0 报 422）。放宽或取消时等 key 的运行会接着跑；
+    /// 模型网关几秒内用上新的上限。
+    pub async fn set_credential_daily_limit(
+        &self,
+        credential_id: String,
+        daily_token_limit: Option<u64>,
+    ) -> Result<Credential> {
+        let id: d::CredentialId = parse(&credential_id, "credential")?;
+        self.run(|c| async move {
+            Ok(c.api
+                .set_credential_daily_limit(id, daily_token_limit)
+                .await?
+                .into())
+        })
+        .await
+    }
+
     /// 换 key（同一个厂商、同一条记录：模型路由不用改）。等 key 的运行会接着跑。
     pub async fn replace_credential_secret(
         &self,

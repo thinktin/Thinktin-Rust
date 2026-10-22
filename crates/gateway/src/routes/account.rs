@@ -164,19 +164,10 @@ pub async fn me(State(s): State<AppState>, Authed(who): Authed) -> ApiResult<Jso
 #[derive(Deserialize)]
 pub struct UpdateMe {
     /// 不带：不改；`null`：清空；字符串：改名。
-    #[serde(default, deserialize_with = "present")]
+    #[serde(default, deserialize_with = "super::present")]
     display_name: Option<Option<String>>,
     /// 推送、收件箱用的语言（1.6）：`zh-CN` 或 `en`，也接受系统的语言标签（`zh-Hans-CN`、`en_US`）。
     locale: Option<String>,
-}
-
-/// 区分“没带”和“带了 null”：带了的（包括 null）都是 `Some`。
-fn present<'de, D, T>(d: D) -> Result<Option<Option<T>>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-    T: Deserialize<'de>,
-{
-    Option::<T>::deserialize(d).map(Some)
 }
 
 pub async fn update_me(

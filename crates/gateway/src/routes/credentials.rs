@@ -104,9 +104,7 @@ pub async fn create(
             "base URLs are required for, and only allowed with, vendor custom",
         ));
     }
-    if req.daily_token_limit == Some(0) {
-        return Err(ApiError::invalid("daily_token_limit must be positive"));
-    }
+    check_limit(req.daily_token_limit)?;
     let id = CredentialId::new();
     let secret = SecretString::from(api_key.to_string());
     let sealed = seal(&s, who.user, id, &secret).await?;
@@ -141,6 +139,16 @@ pub async fn create(
 pub struct UpdateReq {
     label: Option<String>,
     disabled: Option<bool>,
+    /// 不带：不改；null：取消上限；正整数：新的上限（11.9）。
+    #[serde(default, deserialize_with = "super::present")]
+    daily_token_limit: Option<Option<u64>>,
+}
+
+fn check_limit(limit: Option<u64>) -> ApiResult<()> {
+    if limit == Some(0) {
+        return Err(ApiError::invalid("daily_token_limit must be positive"));
+    }
+    Ok(())
 }
 
 pub async fn update(
@@ -150,11 +158,18 @@ pub async fn update(
     ApiJson(req): ApiJson<UpdateReq>,
 ) -> ApiResult<Json<Credential>> {
     let id: CredentialId = parse_id(&id, "credential")?;
-    let mut t = s.db.tenant(who.user).await?;
     if let Some(label) = &req.label {
         check_len("label", label, 0, 64)?;
+    }
+    if let Some(limit) = req.daily_token_limit {
+        check_limit(limit)?;
+    }
+    let mut t = s.db.tenant(who.user).await?;
+    if let Some(label) = &req.label {
         t.rename_credential(id, label).await?;
     }
+    // 重新启用、放宽或取消每日上限：等 key 的运行可以接着跑了。
+    let mut wake = false;
     if let Some(disabled) = req.disabled {
         t.set_credential_disabled(id, disabled).await?;
         t.audit(
@@ -168,9 +183,25 @@ pub async fn update(
             &json!({}),
         )
         .await?;
-        if !disabled {
-            t.wake_waiting_runs(RunState::WaitingQuota).await?;
-        }
+        wake |= !disabled;
+    }
+    if let Some(limit) = req.daily_token_limit {
+        let old = t.set_credential_daily_limit(id, limit).await?;
+        t.audit(
+            &who.actor(),
+            "credential.limit",
+            Some(&id.to_string()),
+            &json!({ "daily_token_limit": limit, "previous": old }),
+        )
+        .await?;
+        wake |= match (old, limit) {
+            (Some(_), None) => true,
+            (Some(old), Some(new)) => new > old,
+            (None, _) => false,
+        };
+    }
+    if wake {
+        t.wake_waiting_runs(RunState::WaitingQuota).await?;
     }
     let cred = t.credential(id).await?;
     t.commit().await?;

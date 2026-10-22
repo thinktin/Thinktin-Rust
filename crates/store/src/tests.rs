@@ -1233,6 +1233,58 @@ async fn route_fallbacks_round_trip_and_guard_their_keys() {
     a.commit().await.unwrap();
 }
 
+/// key 的每日上限可以改、可以取消（11.9）；0、太大的不行；别人的、删了的找不到。
+#[tokio::test]
+async fn credential_daily_limit_can_be_changed_and_cleared() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = user(db, "+8613800000001").await;
+    let bob = user(db, "+8613800000002").await;
+    let mut a = db.tenant(alice).await.unwrap();
+    let id = a.create_credential(&credential("0001")).await.unwrap().id;
+    assert_eq!(
+        a.set_credential_daily_limit(id, Some(5)).await.unwrap(),
+        Some(1_000_000)
+    );
+    assert_eq!(a.credential(id).await.unwrap().daily_token_limit, Some(5));
+    assert_eq!(
+        a.set_credential_daily_limit(id, None).await.unwrap(),
+        Some(5)
+    );
+    assert_eq!(a.credential(id).await.unwrap().daily_token_limit, None);
+    assert_eq!(
+        a.set_credential_daily_limit(id, Some(7)).await.unwrap(),
+        None
+    );
+    a.commit().await.unwrap();
+    // 模型网关读到新的上限。
+    let mut w = db.worker().await.unwrap();
+    let sealed = w.sealed_credential(id).await.unwrap().unwrap();
+    w.rollback().await.unwrap();
+    assert_eq!(sealed.daily_token_limit, Some(7));
+    for bad in [0, u64::MAX] {
+        let mut a = db.tenant(alice).await.unwrap();
+        assert!(matches!(
+            a.set_credential_daily_limit(id, Some(bad)).await,
+            Err(Error::Invalid(_))
+        ));
+        a.rollback().await.unwrap();
+    }
+    let mut b = db.tenant(bob).await.unwrap();
+    assert!(matches!(
+        b.set_credential_daily_limit(id, Some(1)).await,
+        Err(Error::NotFound)
+    ));
+    b.rollback().await.unwrap();
+    let mut a = db.tenant(alice).await.unwrap();
+    a.delete_credential(id).await.unwrap();
+    assert!(matches!(
+        a.set_credential_daily_limit(id, Some(1)).await,
+        Err(Error::NotFound)
+    ));
+    a.rollback().await.unwrap();
+}
+
 /// 停用的 key（11.9）：实例原来就用着的可以留在别名里（网关照样跳过它），所以从别名里去掉别的 key 能保存；
 /// 新引用停用的 key（包括别的实例用着的）照样拒绝。
 #[tokio::test]
