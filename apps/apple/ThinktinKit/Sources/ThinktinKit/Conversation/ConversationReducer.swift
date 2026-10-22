@@ -14,7 +14,10 @@ import Foundation
 /// - 按运行分组，组按运行的创建时间（运行还没加载时按第一条事件的时间）排序；
 /// - 连续的 `agent.message`（中间没有别的显示项）拼成一段，`agent.thought` 同理；
 /// - 工具调用按 `tool_call_id` 合并后续的 `agent.tool_call_update`；
-/// - 审批卡片 `agent.permission_requested` 未决 → `agent.permission_resolved` 已决；
+/// - 审批卡片 `agent.permission_requested` 未决 → `agent.permission_resolved` 已决，一个运行里按
+///   `(attempt, request_id)` 认（shim 每次尝试都从 `perm-1` 重新编号，docs/agent-integration.md 第 6 节）；
+///   事件带 `approval_id` 时直接关联审批记录；`approval_state` 是 expired 的显示“已过期”；尝试比运行当前的小的、
+///   运行已经结束的待处理卡片作废（平台把它们取消了）；
 /// - `run.state` 更新这一组末尾的状态行；
 /// - `seq` 不大于已处理的最大 `seq` 的事件当作重复丢掉；`reset()` 之后重新开始。
 public struct ConversationReducer: Sendable {
@@ -22,8 +25,14 @@ public struct ConversationReducer: Sendable {
     private var turnIndex: [String: Int] = [:]
     /// 已处理的最大 `seq`。
     public private(set) var lastSeq: UInt64?
-    /// 关联过的审批：`运行 id|request_id` → 审批 id。
-    private var approvalLinks: [String: ApprovalID] = [:]
+    /// 关联过的审批：审批 id → 哪一组的哪张卡片。
+    private var approvalLinks: [ApprovalID: CardRef] = [:]
+
+    /// 一张审批卡片在哪：组（运行）的键 + 组里的卡片键。
+    private struct CardRef: Hashable, Sendable {
+        var turnKey: String
+        var card: ApprovalKey
+    }
 
     public init(runs: [Run] = []) {
         upsert(runs: runs)
@@ -31,11 +40,12 @@ public struct ConversationReducer: Sendable {
 
     // MARK: 输入
 
-    /// 加入或更新运行记录（用户消息、状态行用它）。
+    /// 加入或更新运行记录（用户消息、状态行用它）。运行记录的尝试次数、结束状态也会让旧的待处理审批卡片作废。
     public mutating func upsert(run: Run) {
         let key = run.id.rawValue
         if let i = turnIndex[key] {
             turns[i].run = run
+            turns[i].supersedeStaleApprovals()
         } else {
             appendTurn(TurnState(key: key, runID: run.id, run: run, firstAt: run.createdAt))
         }
@@ -54,8 +64,19 @@ public struct ConversationReducer: Sendable {
         lastSeq = event.seq
         let t = turnFor(event)
         turns[t].apply(event)
-        if event.kind == .approvalDecided, case .approvalDecided(let p) = event.payload {
-            applyDecision(p, runID: event.runID)
+        switch event.payload {
+        case .permissionRequested(let p):
+            if let id = p.approvalID, let card = turns[t].cardKey(requestID: p.requestID, attempt: p.attempt) {
+                linkCard(id, turn: t, card: card)
+            }
+        case .permissionResolved(let p):
+            if let id = p.approvalID, let card = turns[t].cardKey(requestID: p.requestID, attempt: p.attempt) {
+                linkCard(id, turn: t, card: card)
+            }
+        case .approvalDecided(let p):
+            applyDecision(p, turn: t)
+        default:
+            break
         }
         return true
     }
@@ -76,34 +97,43 @@ public struct ConversationReducer: Sendable {
         upsert(runs: runs)
     }
 
-    /// 关联审批记录（`approvals()` 的结果）：同一运行里按创建顺序对上未关联的审批卡片，标题相同的优先。
-    /// 未决的审批只配未决的卡片；按预授权策略决定的卡片没有审批记录，不参与。
-    /// 关联上之后卡片有 `approvalID`，可以调 `decideApproval`；审批已经有结果、卡片还没有时补上结果。
+    /// 关联审批记录（`approvals()`、`getApproval` 的结果）。卡片已经按事件里的 `approval_id` 关联上的不再动。
+    ///
+    /// - 审批有请求 id（11.8）：按 `(attempt, request_id)` 对上同一运行里的卡片（`attempt` 为 0 的老记录取这个请求 id 的
+    ///   最后一张卡片）；
+    /// - 老的审批（没有请求 id）：同一运行里按创建顺序对上未关联的卡片，标题相同的优先；未决的审批只配未决的卡片；
+    ///   按预授权策略决定的卡片没有审批记录，不参与。
+    ///
+    /// 关联上之后卡片有 `approvalID`，可以调 `decideApproval`；审批已经有结果、卡片还没有（或只是推断作废的）时补上结果。
     public mutating func link(approvals: [Approval]) {
-        let linked = Set(approvalLinks.values)
-        let byRun = Dictionary(grouping: approvals.filter { !linked.contains($0.id) }, by: \.runID)
-        for (runID, list) in byRun {
-            guard let t = turnIndex[runID.rawValue] else { continue }
-            for approval in list.sorted(by: { $0.createdAt < $1.createdAt }) {
-                let candidates = turns[t].approvalOrder.filter { requestID in
-                    guard let card = turns[t].approvalCard(requestID), card.approvalID == nil else { return false }
-                    if card.resolution?.by == .policy { return false }
-                    return !approval.isPending || card.isPending
-                }
-                let requestID =
-                    candidates.first { turns[t].approvalCard($0)?.title == approval.title } ?? candidates.first
-                guard let requestID, let entry = turns[t].approvalIndex[requestID],
-                    case .approval(var card) = turns[t].entries[entry].content
-                else { continue }
-                card.approvalID = approval.id
-                if card.resolution == nil, let resolution = Self.resolution(from: approval, card: card) {
-                    card.resolution = resolution
-                }
-                if card.options.isEmpty { card.options = approval.options }
-                turns[t].entries[entry].content = .approval(card)
-                approvalLinks[Self.linkKey(runID.rawValue, requestID)] = approval.id
+        for approval in approvals.sorted(by: { $0.createdAt < $1.createdAt }) where approvalLinks[approval.id] == nil {
+            guard let t = turnIndex[approval.runID.rawValue], let card = candidateCard(for: approval, in: t) else {
+                continue
             }
+            linkCard(approval.id, turn: t, card: card)
+            turns[t].apply(record: approval, to: card)
         }
+    }
+
+    /// 审批记录对应这一组里的哪张卡片（还没关联别的审批的）。
+    private func candidateCard(for approval: Approval, in t: Int) -> ApprovalKey? {
+        let turn = turns[t]
+        func unlinked(_ key: ApprovalKey) -> Bool { turn.approvalCard(key)?.approvalID == nil }
+        if !approval.requestID.isEmpty {
+            let key: ApprovalKey?
+            if approval.attempt > 0 {
+                key = turn.cardKey(requestID: approval.requestID, attempt: approval.attempt)
+            } else {
+                key = turn.approvalOrder.last { $0.requestID == approval.requestID }
+            }
+            return key.flatMap { unlinked($0) ? $0 : nil }
+        }
+        let candidates = turn.approvalOrder.filter { key in
+            guard let card = turn.approvalCard(key), card.approvalID == nil else { return false }
+            if card.resolution?.by == .policy { return false }
+            return !approval.isPending || card.isPending
+        }
+        return candidates.first { turn.approvalCard($0)?.title == approval.title } ?? candidates.first
     }
 
     // MARK: 输出
@@ -164,45 +194,44 @@ public struct ConversationReducer: Sendable {
         return turns.count - 1
     }
 
-    /// `approval.decided`：按关联的审批 id 找卡片。还没关联过时，这个运行里只有一张未决、未关联的卡片就是它
-    /// （agent 一次只等一个审批）；对不上就不改，等 `permission_resolved`。
-    private mutating func applyDecision(_ p: ApprovalDecidedPayload, runID: RunID?) {
-        if let link = approvalLinks.first(where: { $0.value == p.approvalID }) {
-            let parts = link.key.split(separator: "|", maxSplits: 1).map(String.init)
-            guard parts.count == 2, let t = turnIndex[parts[0]] else { return }
-            turns[t].resolveApproval(requestID: parts[1], optionID: p.optionID, by: .user, state: p.state)
+    /// 卡片关联上审批记录。事件说的为准：这个审批之前按猜测关联到了别的卡片上时，那张卡片解除关联。
+    private mutating func linkCard(_ approvalID: ApprovalID, turn t: Int, card: ApprovalKey) {
+        let ref = CardRef(turnKey: turns[t].key, card: card)
+        if let old = approvalLinks[approvalID], old != ref, let ot = turnIndex[old.turnKey] {
+            turns[ot].setApprovalID(nil, for: old.card)
+        }
+        approvalLinks[approvalID] = ref
+        turns[t].setApprovalID(approvalID, for: card)
+    }
+
+    /// `approval.decided`：按关联的审批 id 找卡片；还没关联过时按事件里的 `(attempt, request_id)`（11.8）；老的服务端没有
+    /// 请求 id 时，这个运行里只有一张未决、未关联的卡片就是它（agent 一次只等一个审批）。对不上就不改，等
+    /// `permission_resolved`。
+    private mutating func applyDecision(_ p: ApprovalDecidedPayload, turn t: Int) {
+        if let ref = approvalLinks[p.approvalID], let lt = turnIndex[ref.turnKey] {
+            turns[lt].resolveApproval(ref.card, optionID: p.optionID, by: .user, state: p.state)
             return
         }
-        guard let runID, let t = turnIndex[runID.rawValue] else { return }
-        let pending = turns[t].approvalOrder.filter { requestID in
-            guard let card = turns[t].approvalCard(requestID) else { return false }
-            return card.isPending && card.approvalID == nil
+        let card: ApprovalKey?
+        if let requestID = p.requestID {
+            card = turns[t].cardKey(requestID: requestID, attempt: p.attempt)
+        } else {
+            let pending = turns[t].approvalOrder.filter { key in
+                guard let card = turns[t].approvalCard(key) else { return false }
+                return card.isPending && card.approvalID == nil
+            }
+            card = pending.count == 1 ? pending.first : nil
         }
-        guard pending.count == 1, let requestID = pending.first, let entry = turns[t].approvalIndex[requestID],
-            case .approval(var card) = turns[t].entries[entry].content
-        else { return }
-        card.approvalID = p.approvalID
-        turns[t].entries[entry].content = .approval(card)
-        approvalLinks[Self.linkKey(runID.rawValue, requestID)] = p.approvalID
-        turns[t].resolveApproval(requestID: requestID, optionID: p.optionID, by: .user, state: p.state)
+        guard let card, turns[t].approvalCard(card)?.approvalID == nil else { return }
+        linkCard(p.approvalID, turn: t, card: card)
+        turns[t].resolveApproval(card, optionID: p.optionID, by: .user, state: p.state)
     }
+}
 
-    private static func linkKey(_ turnKey: String, _ requestID: String) -> String {
-        "\(turnKey)|\(requestID)"
-    }
-
-    private static func resolution(from approval: Approval, card: ApprovalCard) -> ApprovalCard.Resolution? {
-        let by: DecisionSource
-        switch approval.state {
-        case .pending: return nil
-        case .approved, .rejected: by = .user
-        case .expired: by = .timeout
-        case .cancelled: by = .cancelled
-        case .unknown: return nil
-        }
-        return ApprovalCard.Resolution(
-            optionID: nil, optionName: nil, by: by, isApproved: approval.state == .approved)
-    }
+/// 一个运行里一张审批卡片的键：第几次尝试（0 是不知道）+ shim 的请求 id。
+private struct ApprovalKey: Hashable, Sendable {
+    var attempt: Int
+    var requestID: String
 }
 
 /// 一组（一个运行）的归并状态。
@@ -214,9 +243,13 @@ private struct TurnState: Sendable {
     /// agent 的输出（不含用户消息和状态行）。
     var entries: [ConversationItem] = []
     var toolIndex: [String: Int] = [:]
-    var approvalIndex: [String: Int] = [:]
-    /// 审批卡片的出现顺序（request_id）。
-    var approvalOrder: [String] = []
+    var approvalIndex: [ApprovalKey: Int] = [:]
+    /// 审批卡片的出现顺序。
+    var approvalOrder: [ApprovalKey] = []
+    /// 结果是推断出来的卡片（旧的尝试、运行结束时没处理的，当作被取消）：之后事件或审批记录给了真正的结果就换掉。
+    var inferredResolutions: Set<ApprovalKey> = []
+    /// 最近一条 `run.state` 说的第几次尝试（事件里的审批没带 `attempt` 时用它）。
+    var eventAttempt: Int?
     var vaultIndex: [VaultRequestID: Int] = [:]
     var agentPlanIndex: Int?
     var status: RunStatePayload?
@@ -239,10 +272,29 @@ private struct TurnState: Sendable {
         run != nil || !entries.isEmpty || status != nil || isStreaming
     }
 
-    /// 某个请求的审批卡片。
-    func approvalCard(_ requestID: String) -> ApprovalCard? {
-        guard let i = approvalIndex[requestID], case .approval(let card) = entries[i].content else { return nil }
+    /// 某张审批卡片。
+    func approvalCard(_ key: ApprovalKey) -> ApprovalCard? {
+        guard let i = approvalIndex[key], case .approval(let card) = entries[i].content else { return nil }
         return card
+    }
+
+    /// 事件里的审批属于第几次尝试：带了 `attempt` 就用它，否则是这之前最近一条 `run.state` 的，都没有是 0（不知道）。
+    func attempt(of eventAttempt: Int?) -> Int {
+        eventAttempt ?? self.eventAttempt ?? 0
+    }
+
+    /// 已有的卡片：先按 `(attempt, request_id)` 找；找不到时，同一个请求 id、尝试不知道（0）的卡片也算（老数据和新数据混着时）。
+    func cardKey(requestID: String, attempt: Int?) -> ApprovalKey? {
+        let key = ApprovalKey(attempt: self.attempt(of: attempt), requestID: requestID)
+        if approvalIndex[key] != nil { return key }
+        let unknown = ApprovalKey(attempt: 0, requestID: requestID)
+        if approvalIndex[unknown] != nil { return unknown }
+        return nil
+    }
+
+    /// 运行当前是第几次尝试（`run.state` 事件和运行记录里大的那个）；0 是不知道。
+    var currentAttempt: Int {
+        max(eventAttempt ?? 0, run?.attempt ?? 0)
     }
 
     /// 当前的运行状态：运行记录已经结束时以它为准，否则以最新的 `run.state` 事件为准。
@@ -291,27 +343,32 @@ private struct TurnState: Sendable {
                 append(id: "plan-\(key)", event: event, .agentPlan(card))
             }
         case .permissionRequested(let p):
-            if let i = approvalIndex[p.requestID], case .approval(var card) = entries[i].content {
-                card.title = p.title ?? card.title
-                if !p.options.isEmpty { card.options = p.options }
-                card.toolCall = p.toolCall ?? card.toolCall
-                entries[i].content = .approval(card)
+            let card = ApprovalKey(attempt: attempt(of: p.attempt), requestID: p.requestID)
+            if let i = approvalIndex[card], case .approval(var existing) = entries[i].content {
+                existing.title = p.title ?? existing.title
+                if !p.options.isEmpty { existing.options = p.options }
+                existing.toolCall = p.toolCall ?? existing.toolCall
+                entries[i].content = .approval(existing)
             } else {
-                approvalIndex[p.requestID] = entries.count
-                approvalOrder.append(p.requestID)
-                let card = ApprovalCard(
-                    requestID: p.requestID, title: p.title, options: p.options, toolCall: p.toolCall)
-                append(id: "approval-\(key)-\(p.requestID)", event: event, .approval(card))
+                addApprovalCard(
+                    card, event: event,
+                    ApprovalCard(
+                        requestID: p.requestID, attempt: card.attempt, title: p.title, options: p.options,
+                        toolCall: p.toolCall))
             }
+            // 缓存里的旧尝试（运行记录已经是下一次了）、已经结束的运行：这张卡片一出现就作废。
+            supersedeStaleApprovals()
         case .permissionResolved(let p):
-            if approvalIndex[p.requestID] == nil {
+            let card: ApprovalKey
+            if let existing = cardKey(requestID: p.requestID, attempt: p.attempt) {
+                card = existing
+            } else {
                 // 按预授权策略直接决定的请求没有 requested 事件，只有 resolved：补一张已决的卡片。
-                approvalIndex[p.requestID] = entries.count
-                approvalOrder.append(p.requestID)
-                let card = ApprovalCard(requestID: p.requestID, title: nil, options: [])
-                append(id: "approval-\(key)-\(p.requestID)", event: event, .approval(card))
+                card = ApprovalKey(attempt: attempt(of: p.attempt), requestID: p.requestID)
+                addApprovalCard(
+                    card, event: event, ApprovalCard(requestID: p.requestID, attempt: card.attempt, title: nil, options: []))
             }
-            resolveApproval(requestID: p.requestID, optionID: p.optionID, by: p.by, state: nil)
+            resolveApproval(card, optionID: p.optionID, by: p.by, state: p.approvalState)
         case .approvalDecided:
             break  // 由 ConversationReducer 按关联的审批 id 处理
         case .vaultRequested(let p):
@@ -331,6 +388,9 @@ private struct TurnState: Sendable {
         case .runState(let p):
             status = p
             statusAt = event.createdAt
+            if let attempt = p.attempt { eventAttempt = max(eventAttempt ?? 0, attempt) }
+            // 新的尝试开始了（旧尝试没处理的审批被平台取消了）、运行结束了：待处理的旧卡片作废。
+            supersedeStaleApprovals()
             switch p.state {
             case .running:
                 // 回到运行中（开始、审批通过、重试）：这一轮接着输出。
@@ -441,24 +501,93 @@ private struct TurnState: Sendable {
         append(id: "tool-\(key)-\(p.toolCallID)", event: event, .toolCall(card))
     }
 
-    mutating func resolveApproval(requestID: String, optionID: String?, by: DecisionSource, state: ApprovalState?) {
-        guard let i = approvalIndex[requestID], case .approval(var card) = entries[i].content else { return }
-        // 已经有结果的不再改（permission_resolved 和 approval.decided 都会来，以先到的为准，但补上选项名）。
-        let option = optionID.flatMap { id in card.options.first { $0.id == id } }
-        if var existing = card.resolution {
+    /// 加一张审批卡片（id 带上尝试：同一个运行里不同尝试的 `perm-1` 是不同的卡片）。
+    private mutating func addApprovalCard(_ card: ApprovalKey, event: InstanceEvent, _ content: ApprovalCard) {
+        approvalIndex[card] = entries.count
+        approvalOrder.append(card)
+        append(id: "approval-\(key)-\(card.attempt)-\(card.requestID)", event: event, .approval(content))
+    }
+
+    mutating func setApprovalID(_ approvalID: ApprovalID?, for card: ApprovalKey) {
+        guard let i = approvalIndex[card], case .approval(var content) = entries[i].content else { return }
+        content.approvalID = approvalID
+        entries[i].content = .approval(content)
+    }
+
+    /// 写上审批的结果。`state` 是审批记录的结果（`approval_state`、`approval.decided` 的 `state`）：expired 的一律算超时
+    /// （平台判的超时 shim 回的是 `by: user`），cancelled 的算取消。
+    ///
+    /// 已经有结果的不再改（`permission_resolved` 和 `approval.decided` 都会来，以先到的为准），只补上选项、记录的结果；
+    /// 之前的结果是推断的（`inferred`，旧尝试、运行结束时作废的）就整个换掉。推断的结果不覆盖任何已有的结果。
+    mutating func resolveApproval(
+        _ card: ApprovalKey, optionID: String?, by: DecisionSource, state: ApprovalState?, inferred: Bool = false
+    ) {
+        guard let i = approvalIndex[card], case .approval(var content) = entries[i].content else { return }
+        let option = optionID.flatMap { id in content.options.first { $0.id == id } }
+        if var existing = content.resolution, !(inferredResolutions.contains(card) && !inferred) {
+            guard !inferred else { return }
+            var changed = false
             if existing.optionID == nil, let optionID {
                 existing.optionID = optionID
                 existing.optionName = option?.name
                 existing.isApproved = option?.kind.isAllow ?? existing.isApproved
-                card.resolution = existing
-                entries[i].content = .approval(card)
+                changed = true
+            }
+            if existing.state == nil, let state {
+                existing.state = state
+                if state == .expired { existing.by = .timeout }
+                changed = true
+            }
+            if changed {
+                content.resolution = existing
+                entries[i].content = .approval(content)
             }
             return
         }
+        let source: DecisionSource
+        switch state {
+        case .expired?: source = .timeout
+        case .cancelled?: source = .cancelled
+        default: source = by
+        }
         let approved = option?.kind.isAllow ?? (state == .approved)
-        card.resolution = ApprovalCard.Resolution(
-            optionID: optionID, optionName: option?.name, by: by, isApproved: approved)
-        entries[i].content = .approval(card)
+        content.resolution = ApprovalCard.Resolution(
+            optionID: optionID, optionName: option?.name, by: source, isApproved: approved, state: state)
+        entries[i].content = .approval(content)
+        if inferred {
+            inferredResolutions.insert(card)
+        } else {
+            inferredResolutions.remove(card)
+        }
+    }
+
+    /// 一次尝试结束时它没处理的审批会被取消（docs/agent-integration.md 第 6 节）：尝试比运行当前的小的待处理卡片作废；
+    /// 运行已经结束的，待处理的卡片也都作废（平台把它们取消了）。尝试不知道（0）的只在运行结束时作废。
+    mutating func supersedeStaleApprovals() {
+        let current = currentAttempt
+        let ended = effectiveState?.state.isTerminal ?? false
+        for card in approvalOrder {
+            guard approvalCard(card)?.isPending == true else { continue }
+            guard ended || (card.attempt > 0 && card.attempt < current) else { continue }
+            resolveApproval(card, optionID: nil, by: .cancelled, state: .cancelled, inferred: true)
+        }
+    }
+
+    /// 审批记录（`approvals()`、`getApproval`）补到卡片上：选项、结果（卡片还没结果、或者只是推断作废的时候）。
+    mutating func apply(record approval: Approval, to card: ApprovalKey) {
+        guard let i = approvalIndex[card], case .approval(var content) = entries[i].content else { return }
+        if content.options.isEmpty {
+            content.options = approval.options
+            entries[i].content = .approval(content)
+        }
+        let by: DecisionSource
+        switch approval.state {
+        case .pending, .unknown: return
+        case .approved, .rejected: by = .user
+        case .expired: by = .timeout
+        case .cancelled: by = .cancelled
+        }
+        resolveApproval(card, optionID: approval.decidedOption, by: by, state: approval.state)
     }
 
     private mutating func setVaultStatus(_ p: VaultResolvedPayload, _ status: VaultRequestStatus, event: InstanceEvent)
