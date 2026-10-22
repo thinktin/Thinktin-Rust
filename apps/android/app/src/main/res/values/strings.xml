@@ -168,7 +168,6 @@
     <string name="profile_name_edit">修改昵称</string>
     <string name="profile_name_hint">留空表示不设昵称</string>
     <string name="profile_name_too_long">昵称最多 %1$d 个字</string>
-    <string name="profile_name_saved">昵称已保存</string>
 
     <!-- 设备与账号 -->
     <string name="devices_section_profile">个人资料</string>
@@ -205,6 +204,7 @@
     <string name="devices_stop_all_done_runs">取消的运行：%1$d 个</string>
     <string name="devices_stop_all_done_grants">吊销的授权：%1$d 个</string>
     <string name="devices_stop_all_done_plans">暂停的计划：%1$d 个</string>
+    <string name="devices_sign_out_title">退出登录？</string>
     <string name="devices_sign_out_summary">只退出这台设备，其他设备不受影响</string>
     <string name="devices_sign_out_message">只退出这台设备，其他设备和正在运行的 agent 不受影响。本机的缓存会一并清掉。</string>
     <string name="platform_android">Android</string>
@@ -222,6 +222,7 @@
     <string name="account_delete_step2_message">验证码已发送到你登录用的手机号。</string>
     <string name="account_delete_step3_title">最后确认（第 3 步，共 3 步）</string>
     <string name="account_delete_step3_message">确定永久注销账号吗？账号和全部数据会被删除，保险箱密钥会被销毁，之后不能恢复，也不能撤销。</string>
+    <string name="account_delete_demo">演示模式下不能注销账号。关掉演示模式后用自己的手机号登录再操作。</string>
     <string name="account_delete_confirm">永久注销</string>
 
     <!-- 错误 -->

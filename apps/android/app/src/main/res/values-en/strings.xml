@@ -169,7 +169,6 @@
     <string name="profile_name_edit">Edit nickname</string>
     <string name="profile_name_hint">Leave empty to remove the nickname</string>
     <string name="profile_name_too_long">A nickname can have at most %1$d characters</string>
-    <string name="profile_name_saved">Nickname saved</string>
 
     <!-- Devices and account -->
     <string name="devices_section_profile">Profile</string>
@@ -206,6 +205,7 @@
     <string name="devices_stop_all_done_runs">Runs cancelled: %1$d</string>
     <string name="devices_stop_all_done_grants">Grants revoked: %1$d</string>
     <string name="devices_stop_all_done_plans">Plans paused: %1$d</string>
+    <string name="devices_sign_out_title">Sign out?</string>
     <string name="devices_sign_out_summary">Sign out of this device only</string>
     <string name="devices_sign_out_message">Only this device is signed out. Other devices and running agents are not affected. The local cache on this device is cleared.</string>
     <string name="platform_android">Android</string>
@@ -223,6 +223,7 @@
     <string name="account_delete_step2_message">We sent a code to the phone number you sign in with.</string>
     <string name="account_delete_step3_title">Final confirmation (step 3 of 3)</string>
     <string name="account_delete_step3_message">Permanently delete your account? Your account and all data are deleted and the vault key is destroyed. This cannot be recovered or undone.</string>
+    <string name="account_delete_demo">You cannot delete an account in demo mode. Turn off demo mode and sign in with your own phone number first.</string>
     <string name="account_delete_confirm">Delete forever</string>
 
     <!-- Errors -->

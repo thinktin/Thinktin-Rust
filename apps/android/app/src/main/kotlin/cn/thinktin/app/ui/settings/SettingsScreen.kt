@@ -74,7 +74,8 @@ data class SettingsUiState(
 /**
  * 设置（13.2 的骨架升级；语言、通知、关于等完整版在 13.13）：账号（手机号、昵称）、安全（设备与账号、下线其他设备、
  * 全部停止）、外观、演示模式（仅调试版）、危险操作（退出登录、注销账号）。
- * 昵称、下线其他设备、全部停止、注销都在“设备与账号”页里做（[DevicesAction]），这里只是入口，退出登录直接在这里确认。
+ * 下线其他设备、全部停止在“设备与账号”页里做（[DevicesAction]），改昵称、注销账号是单独的页面，这里只是入口；
+ * 退出登录直接在这里确认。
  */
 class SettingsViewModel(
     private val repository: AppSettingsRepository,
@@ -122,7 +123,12 @@ class SettingsViewModel(
 }
 
 @Composable
-fun SettingsScreen(onBack: () -> Unit, onOpenDevices: (DevicesAction?) -> Unit = {}) {
+fun SettingsScreen(
+    onBack: () -> Unit,
+    onOpenDevices: (DevicesAction?) -> Unit = {},
+    onEditName: () -> Unit = {},
+    onDeleteAccount: () -> Unit = {},
+) {
     val container = LocalAppContainer.current
     val service = LocalThinktinService.current
     val viewModel: SettingsViewModel = viewModel(
@@ -154,7 +160,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenDevices: (DevicesAction?) -> Unit =
                     icon = Icons.Outlined.Badge,
                     title = stringResource(R.string.profile_name),
                     value = user.displayName ?: stringResource(R.string.profile_name_unset),
-                    onClick = { onOpenDevices(DevicesAction.EditProfile) },
+                    onClick = onEditName,
                 )
             }
             Section(R.string.settings_security)
@@ -231,7 +237,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenDevices: (DevicesAction?) -> Unit =
                     icon = Icons.Outlined.DeleteForever,
                     title = stringResource(R.string.account_delete),
                     value = stringResource(R.string.account_delete_summary),
-                    onClick = { onOpenDevices(DevicesAction.DeleteAccount) },
+                    onClick = onDeleteAccount,
                     danger = true,
                 )
             }
@@ -245,7 +251,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenDevices: (DevicesAction?) -> Unit =
     }
     if (state.confirmLogout) {
         ConfirmDialog(
-            title = stringResource(R.string.action_sign_out),
+            title = stringResource(R.string.devices_sign_out_title),
             text = stringResource(R.string.devices_sign_out_message),
             confirm = stringResource(R.string.action_sign_out),
             busy = state.signingOut,

@@ -35,6 +35,10 @@ object Routes {
     const val DEVICES = "devices?action={action}"
     const val SETTINGS = "settings"
 
+    /** 改昵称、注销账号（设置页和设备与账号页进入）。 */
+    const val ACCOUNT_NAME = "account/name"
+    const val DELETE_ACCOUNT = "account/delete"
+
     const val ARG_INSTANCE_ID = "instanceId"
     const val ARG_RUN_ID = "runId"
     const val ARG_AGENT_ID = "agentId"

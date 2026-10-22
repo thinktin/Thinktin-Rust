@@ -13,7 +13,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.outlined.Badge
@@ -33,7 +32,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
@@ -54,7 +52,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -64,7 +61,6 @@ import cn.thinktin.app.R
 import cn.thinktin.app.ui.common.LocalAppContainer
 import cn.thinktin.app.ui.common.LocalThinktinService
 import cn.thinktin.app.ui.common.RelativeTime
-import cn.thinktin.app.ui.common.UiText
 import cn.thinktin.app.ui.common.asString
 import cn.thinktin.data.model.DeviceInfo
 import cn.thinktin.data.model.DevicePlatform
@@ -78,13 +74,19 @@ import cn.thinktin.design.theme.ThinktinTheme
 
 /** 设备与账号（13.2，第 4.9 节“安全”）。[action] 是从设置页直接要打开的操作。 */
 @Composable
-fun DevicesScreen(action: DevicesAction?, onBack: () -> Unit) {
+fun DevicesScreen(
+    action: DevicesAction?,
+    onBack: () -> Unit,
+    onEditName: () -> Unit,
+    onDeleteAccount: () -> Unit,
+) {
     val container = LocalAppContainer.current
     val service = LocalThinktinService.current
     val viewModel: DevicesViewModel = viewModel(
         factory = viewModelFactory { initializer { DevicesViewModel(service, action) } },
     )
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    LaunchedEffect(viewModel) { viewModel.onShown() }
     val snackbar = remember { SnackbarHostState() }
     val context = LocalContext.current
     LaunchedEffect(viewModel) {
@@ -124,7 +126,7 @@ fun DevicesScreen(action: DevicesAction?, onBack: () -> Unit) {
                     icon = Icons.Outlined.Badge,
                     title = stringResource(R.string.profile_name),
                     value = state.user?.displayName ?: stringResource(R.string.profile_name_unset),
-                    onClick = if (state.user != null) viewModel::editName else null,
+                    onClick = if (state.user != null) onEditName else null,
                 )
             }
             item { Section(R.string.devices_section_devices) }
@@ -182,7 +184,7 @@ fun DevicesScreen(action: DevicesAction?, onBack: () -> Unit) {
                         icon = Icons.Outlined.DeleteForever,
                         title = stringResource(R.string.account_delete),
                         value = stringResource(R.string.account_delete_summary),
-                        onClick = viewModel::startDeleteAccount,
+                        onClick = onDeleteAccount,
                         danger = true,
                     )
                 }
@@ -350,21 +352,13 @@ private fun DevicesDialogs(dialog: DevicesDialog, busy: Boolean, viewModel: Devi
         }
         is DevicesDialog.StopAllDone -> StopAllDoneDialog(dialog.result, onDismiss = viewModel::dismissDialog)
         DevicesDialog.Logout -> ConfirmDialog(
-            title = stringResource(R.string.action_sign_out),
+            title = stringResource(R.string.devices_sign_out_title),
             text = stringResource(R.string.devices_sign_out_message),
             confirm = stringResource(R.string.action_sign_out),
             busy = busy,
             onConfirm = viewModel::confirmLogout,
             onDismiss = viewModel::dismissDialog,
         )
-        is DevicesDialog.EditName -> EditNameDialog(
-            dialog = dialog,
-            busy = busy,
-            onChange = viewModel::onNameChange,
-            onSave = viewModel::saveName,
-            onDismiss = viewModel::dismissDialog,
-        )
-        is DevicesDialog.DeleteAccount -> DeleteAccountDialog(dialog, busy, viewModel)
     }
 }
 
@@ -429,102 +423,4 @@ private fun StopAllDoneDialog(result: StopAllResult, onDismiss: () -> Unit) {
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_ok)) } },
     )
-}
-
-@Composable
-internal fun EditNameDialog(
-    dialog: DevicesDialog.EditName,
-    busy: Boolean,
-    onChange: (String) -> Unit,
-    onSave: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val label = stringResource(R.string.profile_name)
-    AlertDialog(
-        onDismissRequest = { if (!busy) onDismiss() },
-        title = { Text(stringResource(R.string.profile_name_edit)) },
-        text = {
-            OutlinedTextField(
-                value = dialog.name,
-                onValueChange = onChange,
-                label = { Text(label) },
-                singleLine = true,
-                isError = dialog.error != null,
-                supportingText = { Text(dialog.error?.asString() ?: stringResource(R.string.profile_name_hint)) },
-                modifier = Modifier.semantics { contentDescription = label },
-            )
-        },
-        confirmButton = {
-            TextButton(onClick = onSave, enabled = !busy) { Text(stringResource(R.string.action_save)) }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss, enabled = !busy) { Text(stringResource(R.string.action_cancel)) }
-        },
-    )
-}
-
-/** 注销账号的三步：说明（不可恢复、保险箱密钥一并销毁）→ 验证码 → 最后确认。 */
-@Composable
-private fun DeleteAccountDialog(dialog: DevicesDialog.DeleteAccount, busy: Boolean, viewModel: DevicesViewModel) {
-    when (dialog.step) {
-        DeleteStep.Explain -> ConfirmDialog(
-            title = stringResource(R.string.account_delete_step1_title),
-            text = stringResource(R.string.account_delete_step1_message),
-            confirm = stringResource(R.string.account_delete_send_code),
-            danger = true,
-            busy = busy,
-            onConfirm = viewModel::sendDeleteCode,
-            onDismiss = viewModel::dismissDialog,
-        ) {
-            dialog.error?.let { ErrorLine(it) }
-        }
-        DeleteStep.Code -> {
-            val label = stringResource(R.string.login_code_label)
-            ConfirmDialog(
-                title = stringResource(R.string.account_delete_step2_title),
-                text = stringResource(R.string.account_delete_step2_message),
-                confirm = stringResource(R.string.action_next),
-                busy = false,
-                confirmEnabled = !busy,
-                onConfirm = viewModel::deleteCodeNext,
-                onDismiss = viewModel::dismissDialog,
-            ) {
-                OutlinedTextField(
-                    value = dialog.code,
-                    onValueChange = viewModel::onDeleteCodeChange,
-                    label = { Text(label) },
-                    singleLine = true,
-                    isError = dialog.error != null,
-                    supportingText = dialog.error?.let { { Text(it.asString()) } },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.semantics { contentDescription = label },
-                )
-                TextButton(onClick = viewModel::sendDeleteCode, enabled = !busy && dialog.resendInSecs == 0) {
-                    Text(
-                        if (dialog.resendInSecs > 0) {
-                            stringResource(R.string.login_resend_in, dialog.resendInSecs)
-                        } else {
-                            stringResource(R.string.login_resend)
-                        },
-                    )
-                }
-            }
-        }
-        DeleteStep.Confirm -> ConfirmDialog(
-            title = stringResource(R.string.account_delete_step3_title),
-            text = stringResource(R.string.account_delete_step3_message),
-            confirm = stringResource(R.string.account_delete_confirm),
-            danger = true,
-            busy = busy,
-            onConfirm = viewModel::confirmDeleteAccount,
-            onDismiss = viewModel::dismissDialog,
-            dismiss = stringResource(R.string.action_previous),
-            onDismissButton = viewModel::deleteBack,
-        )
-    }
-}
-
-@Composable
-private fun ErrorLine(text: UiText) {
-    Text(text.asString(), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
 }

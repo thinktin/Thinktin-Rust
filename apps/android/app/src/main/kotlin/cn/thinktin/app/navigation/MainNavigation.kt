@@ -27,6 +27,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.navArgument
 import androidx.navigation.navDeepLink
+import cn.thinktin.app.ui.account.DeleteAccountScreen
+import cn.thinktin.app.ui.account.EditNameScreen
 import cn.thinktin.app.ui.common.LocalThinktinService
 import cn.thinktin.app.ui.devices.DevicesAction
 import cn.thinktin.app.ui.devices.DevicesScreen
@@ -208,14 +210,20 @@ private fun MainNavHost(navController: NavHostController, onOpenDrawer: () -> Un
             DevicesScreen(
                 action = DevicesAction.fromWire(entry.arguments?.getString(Routes.ARG_ACTION)),
                 onBack = back,
+                onEditName = { navController.navigate(Routes.ACCOUNT_NAME) },
+                onDeleteAccount = { navController.navigate(Routes.DELETE_ACCOUNT) },
             )
         }
         composable(Routes.SETTINGS) {
             SettingsScreen(
                 onBack = back,
                 onOpenDevices = { action -> navController.navigate(Routes.devices(action?.wire)) },
+                onEditName = { navController.navigate(Routes.ACCOUNT_NAME) },
+                onDeleteAccount = { navController.navigate(Routes.DELETE_ACCOUNT) },
             )
         }
+        composable(Routes.ACCOUNT_NAME) { EditNameScreen(onBack = back) }
+        composable(Routes.DELETE_ACCOUNT) { DeleteAccountScreen(onBack = back) }
     }
 }
 
