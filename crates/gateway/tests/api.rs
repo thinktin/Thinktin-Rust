@@ -462,6 +462,16 @@ async fn instances_keys_and_routes_are_per_user() {
         )
         .await;
     assert_eq!(st, StatusCode::NOT_FOUND);
+    // 删了的实例的别名不再占着 key（11.9）：实例在的时候删 key 是 409，现在可以删。
+    let (st, body) = a
+        .call(
+            Method::DELETE,
+            &format!("/v1/credentials/{cred_id}"),
+            Some(&alice.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT, "{body}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

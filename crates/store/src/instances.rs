@@ -210,7 +210,6 @@ impl Tx<Tenant> {
         Ok(())
     }
 
-    /// 标记删除。沙箱和工作区由后台的生命周期管理回收。
     /// 换模板版本（升级或回滚）：记下新版本，下次唤醒时重建沙箱。版本是否存在由调用方核对。
     pub async fn request_instance_version(
         &mut self,
@@ -229,6 +228,8 @@ impl Tx<Tenant> {
         row.ok_or(Error::NotFound)?.into_instance()
     }
 
+    /// 标记删除。沙箱和工作区由后台的生命周期管理回收；模型别名和降级链一起删掉（已删除的实例的别名看不到也改不了，
+    /// 留着会让它们指着的 key 删不掉）。实例的计划、运行、授权由调用方处理（接入网关的删除接口）。
     pub async fn delete_instance(&mut self, id: InstanceId) -> Result<()> {
         let done = sqlx::query(
             "UPDATE instances SET state = 'deleted', deleted_at = now(), updated_at = now() \
@@ -240,6 +241,11 @@ impl Tx<Tenant> {
         if done.rows_affected() == 0 {
             return Err(Error::NotFound);
         }
+        // 降级链随主路由级联删除。
+        sqlx::query("DELETE FROM model_routes WHERE instance_id = $1")
+            .bind(id.0)
+            .execute(self.conn())
+            .await?;
         Ok(())
     }
 

@@ -1232,6 +1232,104 @@ async fn route_fallbacks_round_trip_and_guard_their_keys() {
     a.commit().await.unwrap();
 }
 
+/// 已删除的实例的别名不再占着 key（11.9）：删除实例时别名和降级链一起删；之前留下的删 key 时也不算。
+#[tokio::test]
+async fn deleted_instances_do_not_hold_keys() {
+    use proto::domain::RouteFallback;
+
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = user(db, "+8613800000001").await;
+    let (gone, legacy, live) = (
+        instance(db, alice).await,
+        instance(db, alice).await,
+        instance(db, alice).await,
+    );
+    let mut a = db.tenant(alice).await.unwrap();
+    let mut keys = Vec::new();
+    for n in 1..=5 {
+        keys.push(
+            a.create_credential(&credential(&format!("000{n}")))
+                .await
+                .unwrap(),
+        );
+    }
+    let route = |main: usize, fallback: Option<usize>| ModelRoute {
+        alias: "main".into(),
+        credential_id: keys[main].id,
+        upstream_model: "m".into(),
+        fallbacks: fallback
+            .map(|f| {
+                vec![RouteFallback {
+                    credential_id: keys[f].id,
+                    upstream_model: "m".into(),
+                }]
+            })
+            .unwrap_or_default(),
+    };
+    a.set_model_routes(gone.id, &[route(0, Some(1))])
+        .await
+        .unwrap();
+    a.set_model_routes(legacy.id, &[route(2, Some(3))])
+        .await
+        .unwrap();
+    a.set_model_routes(live.id, &[route(4, None)])
+        .await
+        .unwrap();
+    a.commit().await.unwrap();
+
+    let count = |table: &'static str, inst: proto::domain::InstanceId| async move {
+        let sql = match table {
+            "model_routes" => "SELECT count(*) FROM model_routes WHERE instance_id = $1",
+            _ => "SELECT count(*) FROM model_route_fallbacks WHERE instance_id = $1",
+        };
+        sqlx::query_scalar::<_, i64>(sql)
+            .bind(inst.0)
+            .fetch_one(db.pool())
+            .await
+            .unwrap()
+    };
+    // 删除实例：别名和降级链一起删掉，它们指着的 key 可以删了。
+    let mut a = db.tenant(alice).await.unwrap();
+    a.delete_instance(gone.id).await.unwrap();
+    a.commit().await.unwrap();
+    assert_eq!(
+        (
+            count("model_routes", gone.id).await,
+            count("model_route_fallbacks", gone.id).await
+        ),
+        (0, 0)
+    );
+    // 之前的版本删除实例时不删别名：留下的不算引用。
+    sqlx::query("UPDATE instances SET state = 'deleted', deleted_at = now() WHERE id = $1")
+        .bind(legacy.id.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(count("model_routes", legacy.id).await, 1);
+    let mut a = db.tenant(alice).await.unwrap();
+    for k in &keys[..4] {
+        a.delete_credential(k.id).await.unwrap();
+    }
+    // 还在用的实例的别名照样占着。
+    assert!(
+        a.delete_credential(keys[4].id)
+            .await
+            .unwrap_err()
+            .is_conflict()
+    );
+    // 已删除的实例的别名看不到也改不了。
+    assert!(matches!(
+        a.model_routes(gone.id).await,
+        Err(Error::NotFound)
+    ));
+    assert!(matches!(
+        a.set_model_routes(legacy.id, &[]).await,
+        Err(Error::NotFound)
+    ));
+    a.commit().await.unwrap();
+}
+
 /// 删除实例：从它的授权收窄给别的实例的子授权一起吊销；根在它上面的运行树里、在别的实例上跑的步骤一起取消。
 /// 父授权失效后，子授权也换不到沙箱令牌、模型网关也不认。
 #[tokio::test]
