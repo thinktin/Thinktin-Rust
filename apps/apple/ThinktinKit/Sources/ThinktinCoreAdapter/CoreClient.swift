@@ -22,16 +22,20 @@ public final class CoreClient: ClientProtocol {
     ///   - platform: 设备平台，登录时报给服务端（设备管理里显示）。
     ///   - deviceName: 设备名（“张三的 iPhone”），显示在设备管理里。
     ///   - timeout: 单个请求的超时（秒），client-core 里最少 5 秒。
+    ///   - acceptLanguage: 每个请求带的 `Accept-Language`（11.8）：服务端在新用户注册时按它定推送和收件箱的语言，
+    ///     agent 目录的介绍也按它给。默认是系统的语言偏好（`systemAcceptLanguage`）；nil 不带。App 里切换语言后调
+    ///     `setAcceptLanguage(_:)`。
     ///   - sessions: 会话存储（App 里是 Keychain）。已经登录过的会话从这里恢复。
-    /// - Throws: `ClientError`：平台名不对（`invalidArgument`）、缓存库打不开（`cache`）。接口地址这里不校验，
-    ///   地址不对时之后的请求抛 `network`。
+    /// - Throws: `ClientError`：平台名不对、`acceptLanguage` 太长或有请求头放不下的字符（`invalidArgument`）、
+    ///   缓存库打不开（`cache`）。接口地址这里不校验，地址不对时之后的请求抛 `network`。
     public init(
         baseURL: String, cachePath: String? = nil, platform: DevicePlatform = .current, deviceName: String,
-        timeout: TimeInterval = 30, sessions: any SessionStoring
+        timeout: TimeInterval = 30, acceptLanguage: String? = CoreClient.systemAcceptLanguage,
+        sessions: any SessionStoring
     ) throws {
         let config = Core.ClientConfig(
             baseUrl: baseURL, cachePath: cachePath, platform: platform.rawValue, deviceName: deviceName,
-            timeoutSecs: Self.wholeSeconds(timeout))
+            timeoutSecs: Self.wholeSeconds(timeout), acceptLanguage: acceptLanguage)
         do {
             core = try Core.makeClient(config: config, sessions: SessionStoreBridge(sessions))
         } catch {
@@ -68,6 +72,21 @@ public final class CoreClient: ClientProtocol {
     static func wholeSeconds(_ interval: TimeInterval) -> UInt32 {
         guard interval.isFinite else { return 30 }
         return UInt32(min(max(interval.rounded(.up), 0), Double(UInt32.max)))
+    }
+
+    // MARK: 请求语言（11.8）
+
+    /// 语言列表（按偏好排好，比如 `["zh-Hans-CN", "en-US"]`）拼成 `Accept-Language`（client-core 的
+    /// `accept_language_header`：`zh-Hans-CN, en-US;q=0.9`，最多 10 个，不像语言标签的跳过）；一个能用的都没有时为 nil。
+    /// 和 ThinktinKit 的 `AcceptLanguage.header(tags:)` 结果一样。
+    public static func acceptLanguageHeader(tags: [String]) -> String? {
+        let header = Core.acceptLanguageHeader(tags)
+        return header.isEmpty ? nil : header
+    }
+
+    /// 系统的语言偏好（`Locale.preferredLanguages`）拼成的 `Accept-Language`：`init` 的默认值。
+    public static var systemAcceptLanguage: String? {
+        acceptLanguageHeader(tags: Locale.preferredLanguages)
     }
 
     // `ClientProtocol` 的每个方法 client-core 都有对应的。协议先于 client-core 加方法时，那个方法在这里临时抛
@@ -128,6 +147,17 @@ public final class CoreClient: ClientProtocol {
     /// 成功后 client-core 清掉本地会话（经 `SessionStoring.save(nil)`）和缓存；失败（验证码不对）时什么都不动。
     public func deleteAccount(code: String) async throws {
         try await perform { try await core.deleteAccount(code: code) }
+    }
+
+    // MARK: 请求语言与版本（11.8）
+
+    /// client-core 校验（去掉首尾空白，空的当作不带；超过 256 字节、有控制字符抛 `invalidArgument`），不联网。
+    public func setAcceptLanguage(_ acceptLanguage: String?) throws {
+        try performSync { try core.setAcceptLanguage(acceptLanguage: acceptLanguage) }
+    }
+
+    public func upgradeRequired() -> Bool {
+        core.upgradeRequired()
     }
 
     // MARK: 登录设备与设备消息（14.1）
@@ -259,6 +289,16 @@ public final class CoreClient: ClientProtocol {
         }
     }
 
+    /// `GET /v1/runs?limit=&plan_id=&active=true&roots=true&before=`；计划 id、游标不是 UUID 时 client-core 不发请求，
+    /// 抛 `invalidArgument`。
+    public func listRuns(filter: ThinktinKit.RunFilter, before: RunID?, limit: Int) async throws -> [ThinktinKit.Run] {
+        try await perform {
+            let runs = try await core.listRuns(
+                filter: filter.core, beforeRunId: before?.rawValue, limit: Self.count(limit))
+            return runs.map { ThinktinKit.Run(core: $0) }
+        }
+    }
+
     public func cachedRuns(instanceID: InstanceID, limit: Int) throws -> [ThinktinKit.Run] {
         try performSync {
             try core.cachedRuns(instanceId: instanceID.rawValue, limit: Self.count(limit)).map {
@@ -324,6 +364,16 @@ public final class CoreClient: ClientProtocol {
             try core.cachedEvents(instanceId: instanceID.rawValue, afterSeq: afterSeq, limit: Self.count(limit)).map {
                 ThinktinKit.InstanceEvent(core: $0)
             }
+        }
+    }
+
+    public func cachedEventsBefore(instanceID: InstanceID, beforeSeq: UInt64?, limit: Int) throws
+        -> [ThinktinKit.InstanceEvent]
+    {
+        try performSync {
+            let events = try core.cachedEventsBefore(
+                instanceId: instanceID.rawValue, beforeSeq: beforeSeq, limit: Self.count(limit))
+            return events.map { ThinktinKit.InstanceEvent(core: $0) }
         }
     }
 

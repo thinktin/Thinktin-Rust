@@ -148,6 +148,8 @@ public enum StreamStatus: Hashable, Sendable {
     case notFound
     /// 账号被冻结（4.6），事件流停止：显示冻结页。
     case accountFrozen
+    /// 调用方停的；或者这个版本太老了，服务端不再接受（11.8：这时 `ClientProtocol.upgradeRequired()` 是 true，
+    /// 界面进升级页，之后的订阅也直接以它结束、不再连）。
     case stopped
 
     /// 连接中或重连中：顶部显示细条。

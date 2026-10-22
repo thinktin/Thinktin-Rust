@@ -99,7 +99,10 @@ extension ThinktinKit.AgentInfo {
     init(core a: Core.AgentInfo) {
         self.init(
             id: AgentID(a.id), name: a.name, version: a.version, license: a.license, sites: a.sites,
-            harnesses: a.harnesses, defaultHarness: a.defaultHarness, versions: a.versions)
+            harnesses: a.harnesses, defaultHarness: a.defaultHarness, versions: a.versions, description: a.description,
+            upstream: a.upstream, licenseNote: a.licenseNote,
+            protocols: a.protocols.map { ModelProtocol(rawValue: $0) },
+            activeProtocol: a.activeProtocol.map { ModelProtocol(rawValue: $0) })
     }
 }
 
@@ -147,7 +150,13 @@ extension ThinktinKit.Run {
             prompt: r.prompt, state: RunState(rawValue: r.state), stateReason: r.stateReason,
             attempt: Int(clamping: r.attempt), tokensUsed: Int(clamping: r.tokensUsed), summary: r.summary,
             error: r.error, createdAt: Date(ms: r.createdAtMs), startedAt: r.startedAtMs.date,
-            finishedAt: r.finishedAtMs.date)
+            finishedAt: r.finishedAtMs.date, waitCode: r.waitCode.map { RunWaitCode(rawValue: $0) })
+    }
+}
+
+extension ThinktinKit.RunFilter {
+    var core: Core.RunFilter {
+        Core.RunFilter(planId: planID?.rawValue, activeOnly: activeOnly, rootsOnly: rootsOnly)
     }
 }
 
@@ -374,7 +383,7 @@ extension ThinktinKit.Credential {
         self.init(
             id: CredentialID(c.id), vendor: c.vendor, label: c.label, last4: c.last4,
             dailyTokenLimit: c.dailyTokenLimit.map { Int(clamping: $0) }, isDisabled: c.disabled,
-            createdAt: Date(ms: c.createdAtMs))
+            createdAt: Date(ms: c.createdAtMs), protocols: c.protocols.map { ModelProtocol(rawValue: $0) })
     }
 }
 

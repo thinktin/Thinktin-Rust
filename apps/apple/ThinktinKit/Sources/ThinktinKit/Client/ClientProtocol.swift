@@ -35,6 +35,16 @@ public protocol ClientProtocol: AnyObject, Sendable {
     /// 成功后本地的登录状态和缓存一起清掉（`signedIn()` 变成 false，缓存类方法返回空）。
     func deleteAccount(code: String) async throws
 
+    // MARK: 请求语言与版本（11.8）
+
+    /// App 里切换了界面语言：之后的请求带新的 `Accept-Language`（值用 `AcceptLanguage.header(for:)` 拼；nil 或空白
+    /// 不带）。不联网。只影响服务端按请求语言给的内容（新用户注册时定的语言、agent 目录的介绍）；已注册用户的推送和
+    /// 收件箱语言要另外调 `setLocale`。超过 256 字节、有换行之类请求头放不下的字符时抛 `invalidArgument`，原来的值不变。
+    func setAcceptLanguage(_ acceptLanguage: String?) throws
+    /// 服务端说过这个版本太老了（任何请求抛过 `upgradeRequired`、事件流握手被拒）。之后事件流以 `stopped` 结束、
+    /// 不再重连，界面进升级页。一直有效（升级就是重装）。不联网，可以在主线程上调。
+    func upgradeRequired() -> Bool
+
     // MARK: 登录设备与设备消息（14.1）
 
     /// 登录着的设备（吊销了的不在里面），最近活跃的在前；`isCurrent` 的是这台，`isOnline` 的电脑连着设备中继。
@@ -95,6 +105,11 @@ public protocol ClientProtocol: AnyObject, Sendable {
     func runs(instanceID: InstanceID, limit: Int) async throws -> [Run]
     /// 更早的一页运行：`before` 之前的（列表往下翻），新的在前。
     func olderRuns(instanceID: InstanceID, before: RunID, limit: Int) async throws -> [Run]
+    /// 跨实例的运行（11.8），新的在前：抽屉里的“进行中”（`RunFilter.active`）、计划的运行历史（`RunFilter.plan(_:)`，
+    /// 流水线的步骤在别的实例上跑，按实例列不全）。`before` 往下翻（上一页最后一个的 id；它自己现在不满足条件了也照样
+    /// 当游标用）。`limit` 服务端夹到 1…200（`RunFilter.clampedLimit`）。别人的、不存在的计划是空列表，不抛 not_found。
+    /// 同时更新缓存（每个实例的 `cachedRuns` 跟着新）。
+    func listRuns(filter: RunFilter, before: RunID?, limit: Int) async throws -> [Run]
     func cachedRuns(instanceID: InstanceID, limit: Int) throws -> [Run]
     func getRun(_ runID: RunID) async throws -> Run
     /// 取消；`wholeTree` 时停掉整棵运行树（流水线）。
@@ -114,6 +129,10 @@ public protocol ClientProtocol: AnyObject, Sendable {
         -> EventSubscriptionHandle
     /// 缓存里 `afterSeq` 之后的事件（打开页面时先显示）。
     func cachedEvents(instanceID: InstanceID, afterSeq: UInt64, limit: Int) throws -> [InstanceEvent]
+    /// 缓存里往前翻（11.8）：`beforeSeq` 之前（不含）的最多 `limit` 条，旧的在前。打开页面时传 nil 拿最后一屏，
+    /// 往上翻时传已经显示的最小的序号。缓存里每个实例最多留 2000 条，更早的、事件流重置（`onReset`）丢掉的翻不到
+    /// （返回空就是到头了）。没登录时返回空。
+    func cachedEventsBefore(instanceID: InstanceID, beforeSeq: UInt64?, limit: Int) throws -> [InstanceEvent]
 
     // MARK: 审批
 
@@ -246,6 +265,21 @@ extension ClientProtocol {
 
     public func cancelRun(_ runID: RunID) async throws -> Run {
         try await cancelRun(runID, wholeTree: false)
+    }
+
+    /// App 里换了界面语言（11.8）：请求语言换成它排第一、后面跟系统语言偏好的 `Accept-Language`。
+    public func setAcceptLanguage(for language: DisplayLanguage) throws {
+        try setAcceptLanguage(AcceptLanguage.header(for: language))
+    }
+
+    /// 跨实例运行的第一页（11.8）：默认全部运行、一页 50 个。往下翻用 `listRuns(filter:before:limit:)`。
+    public func listRuns(filter: RunFilter = .all, limit: Int = RunFilter.defaultLimit) async throws -> [Run] {
+        try await listRuns(filter: filter, before: nil, limit: limit)
+    }
+
+    /// 缓存里最后一屏事件（打开对话页时先显示），旧的在前。
+    public func latestCachedEvents(instanceID: InstanceID, limit: Int) throws -> [InstanceEvent] {
+        try cachedEventsBefore(instanceID: instanceID, beforeSeq: nil, limit: limit)
     }
 
     public func usage(group: UsageGroup) async throws -> UsageSummary {

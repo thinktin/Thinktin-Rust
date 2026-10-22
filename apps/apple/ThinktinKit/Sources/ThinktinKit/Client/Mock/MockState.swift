@@ -41,6 +41,12 @@ public struct MockState: Sendable {
     public var teamTemplates: [TeamTemplate]
     /// 自己的内容举报（新的在前）。
     public var reports: [ContentReport]
+    /// 请求带的 `Accept-Language`（11.8，`setAcceptLanguage`）；nil 是不带（服务端按中文）。新用户登录时按它定语言，
+    /// `agents()` 的介绍和许可说明按它给中文或英文。
+    public var acceptLanguage: String?
+    /// 服务端说过这个版本太老了（11.8，`upgradeRequired()`）：任何调用抛过 `upgradeRequired` 后一直是 true，之后的
+    /// 订阅直接以 `stopped` 结束。预览升级页时可以直接设成 true。
+    public var isUpgradeRequired: Bool
 
     public init(
         session: Session? = nil, user: User, verificationCode: String = "123456", agents: [AgentInfo] = [],
@@ -51,7 +57,8 @@ public struct MockState: Sendable {
         vaultItems: [VaultItem] = [], vaultUsernames: [VaultItemID: String] = [:], vaultRequests: [VaultRequest] = [],
         imChannels: [ImChannel] = [], devices: [DeviceInfo] = [], deviceMessages: [DeviceMessage] = [],
         liveActivities: [RunID: MockLiveActivity] = [:], liveActivityStartToken: String? = nil, teams: [Team] = [],
-        teamTemplates: [TeamTemplate] = [], reports: [ContentReport] = []
+        teamTemplates: [TeamTemplate] = [], reports: [ContentReport] = [], acceptLanguage: String? = nil,
+        isUpgradeRequired: Bool = false
     ) {
         self.session = session
         self.user = user
@@ -80,6 +87,13 @@ public struct MockState: Sendable {
         self.teams = teams
         self.teamTemplates = teamTemplates
         self.reports = reports
+        self.acceptLanguage = acceptLanguage
+        self.isUpgradeRequired = isUpgradeRequired
+    }
+
+    /// 按 `acceptLanguage` 认出的语言（服务端的规则，认不出时用中文）。
+    public var requestLocale: UserLocale {
+        acceptLanguage.flatMap { UserLocale(acceptLanguage: $0) } ?? .zhCN
     }
 
     /// 实例最后一条事件的 seq（没有为 0）。

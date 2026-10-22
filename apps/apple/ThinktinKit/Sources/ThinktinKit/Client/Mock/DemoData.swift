@@ -286,13 +286,14 @@ public enum DemoData {
         let credentials = [
             Credential(
                 id: claudeCredentialID, vendor: "anthropic", label: "Claude 主力", last4: "Q7mA",
-                dailyTokenLimit: 2_000_000, createdAt: ago(30 * day)),
+                dailyTokenLimit: 2_000_000, createdAt: ago(30 * day), protocols: protocols(ofVendor: "anthropic")),
             Credential(
-                id: deepseekCredentialID, vendor: "deepseek", label: "DeepSeek", last4: "x9Lk", createdAt: ago(25 * day)
-            ),
+                id: deepseekCredentialID, vendor: "deepseek", label: "DeepSeek", last4: "x9Lk",
+                createdAt: ago(25 * day),
+                protocols: protocols(ofVendor: "deepseek")),
             Credential(
                 id: qwenCredentialID, vendor: "qwen-cn", label: "百炼（停用）", last4: "3hTz", isDisabled: true,
-                createdAt: ago(60 * day)),
+                createdAt: ago(60 * day), protocols: protocols(ofVendor: "qwen-cn")),
         ]
 
         let routes: [InstanceID: [ModelRoute]] = [
@@ -415,17 +416,62 @@ public enum DemoData {
     public static let demoSession = Session(
         userID: userID, deviceID: deviceID, accessToken: "demo-access-token", refreshToken: "demo-refresh-token")
 
+    /// agent 目录（介绍、上游、许可说明、协议照 crates/catalog/manifests 里的清单；中文版，英文版见 `englishAgentTexts`）。
     public static let agents: [AgentInfo] = [
         AgentInfo(
             id: claudeAgentID, name: "Claude Agent", version: "0.90.0", license: "LicenseRef-Anthropic-Commercial",
-            sites: ["cn", "global"], harnesses: ["acp", "cli"], defaultHarness: "acp", versions: ["0.90.0", "0.89.2"]),
+            sites: ["cn", "global"], harnesses: ["acp", "cli"], defaultHarness: "acp", versions: ["0.90.0", "0.89.2"],
+            description: "基于 Anthropic Claude Agent SDK 的通用 agent，擅长写代码、改文件、执行命令。",
+            upstream: "https://github.com/agentclientprotocol/claude-agent-acp",
+            licenseNote: """
+                适配器 claude-agent-acp 是 Apache-2.0；它依赖的 Claude Agent SDK 和 Claude Code 是 Anthropic 的专有软件，\
+                受 Anthropic 的条款约束。在平台的沙箱里运行，模型请求只经平台的模型网关发给你配置的厂商。
+                """,
+            protocols: [.anthropic], activeProtocol: .anthropic),
         AgentInfo(
             id: codexAgentID, name: "Codex", version: "2.2.2", license: "Apache-2.0", sites: ["cn", "global"],
-            harnesses: ["acp"], defaultHarness: "acp", versions: ["2.2.2", "2.2.1", "2.1.0"]),
+            harnesses: ["acp"], defaultHarness: "acp", versions: ["2.2.2", "2.2.1", "2.1.0"],
+            description: "使用 OpenAI Codex 的编程 agent；默认只读，改文件、执行命令都要你批准。",
+            upstream: "https://github.com/agentclientprotocol/codex-acp", protocols: [.responses],
+            activeProtocol: .responses),
         AgentInfo(
             id: hermesAgentID, name: "Hermes Agent", version: "0.19.0", license: "MIT", sites: ["cn", "global"],
-            harnesses: ["acp"], defaultHarness: "acp", versions: ["0.19.0"]),
+            harnesses: ["acp"], defaultHarness: "acp", versions: ["0.19.0"],
+            description: "Nous Research 的 Hermes Agent，会积累技能和记忆的通用 agent。",
+            upstream: "https://github.com/NousResearch/hermes-agent", protocols: [.chat, .anthropic],
+            activeProtocol: .chat),
     ]
+
+    /// agent 目录的英文文案（请求语言是英文时 `MockClient.agents()` 换上）：介绍和许可说明。
+    static let englishAgentTexts: [AgentID: (description: String, licenseNote: String?)] = [
+        claudeAgentID: (
+            "General-purpose agent built on Anthropic's Claude Agent SDK, good at coding, editing files and running "
+                + "commands.",
+            "The claude-agent-acp adapter is Apache-2.0; the Claude Agent SDK and Claude Code it depends on are "
+                + "proprietary Anthropic software under Anthropic's terms. It runs in the platform sandbox, and model "
+                + "requests go only through the platform's model gateway to the vendor you configure."
+        ),
+        codexAgentID: (
+            "Coding agent using OpenAI Codex; it starts read-only, so edits and commands need your approval.", nil
+        ),
+        hermesAgentID: (
+            "Hermes Agent from Nous Research, a general-purpose agent that builds up skills and memory.", nil
+        ),
+    ]
+
+    /// 换成英文文案的 agent（没有英文文案的原样返回）。
+    static func inEnglish(_ agent: AgentInfo) -> AgentInfo {
+        guard let texts = englishAgentTexts[agent.id] else { return agent }
+        var out = agent
+        out.description = texts.description
+        if agent.licenseNote != nil { out.licenseNote = texts.licenseNote ?? agent.licenseNote }
+        return out
+    }
+
+    /// 演示厂商提供的协议（预置厂商的 key 按厂商算）。
+    static func protocols(ofVendor id: String) -> [ModelProtocol] {
+        vendors.first { $0.id == id }?.modelProtocols ?? []
+    }
 
     public static let vendors: [VendorInfo] = [
         VendorInfo(

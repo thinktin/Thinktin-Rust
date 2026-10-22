@@ -15,10 +15,23 @@ public struct AgentInfo: Identifiable, Hashable, Codable, Sendable {
     public var defaultHarness: String
     /// 可以用的版本，当前版本在前。
     public var versions: [String]
+    /// 一句话介绍（11.8），按请求的 `Accept-Language` 给中文或英文；老的服务端为空。是清单里人写的，不是 agent 生成的。
+    public var description: String
+    /// 上游仓库（https 地址，11.8）；老的服务端为空。可以点开的地址见 `upstreamURL`。
+    public var upstream: String
+    /// 许可说明（11.8，专有许可证必有），按 `Accept-Language` 给。领养前要给用户看。
+    public var licenseNote: String?
+    /// 能说的模型协议，按优先级（11.8）；老的服务端为空。
+    public var protocols: [ModelProtocol]
+    /// 运行时实际用的协议（11.8）：实例配的每把 key（包括降级的）都要支持它，选 key 时按它过滤（`canUse(_:)`）。
+    /// 老的服务端为 nil。
+    public var activeProtocol: ModelProtocol?
 
     public init(
         id: AgentID, name: String, version: String, license: String? = nil, sites: [String] = [],
-        harnesses: [String] = [], defaultHarness: String, versions: [String] = []
+        harnesses: [String] = [], defaultHarness: String, versions: [String] = [], description: String = "",
+        upstream: String = "", licenseNote: String? = nil, protocols: [ModelProtocol] = [],
+        activeProtocol: ModelProtocol? = nil
     ) {
         self.id = id
         self.name = name
@@ -28,11 +41,29 @@ public struct AgentInfo: Identifiable, Hashable, Codable, Sendable {
         self.harnesses = harnesses
         self.defaultHarness = defaultHarness
         self.versions = versions
+        self.description = description
+        self.upstream = upstream
+        self.licenseNote = licenseNote
+        self.protocols = protocols
+        self.activeProtocol = activeProtocol
     }
 
     /// 实例的版本不是最新的：可以提示升级。
     public func hasUpgrade(from instanceVersion: String) -> Bool {
         (versions.first ?? version) != instanceVersion
+    }
+
+    /// 上游仓库的地址：只认带主机名的 https 地址，别的（空的、http、写错的）为 nil，界面就不给链接。
+    public var upstreamURL: URL? {
+        guard let url = URL(string: upstream), url.scheme?.lowercased() == "https", url.host?.isEmpty == false
+        else { return nil }
+        return url
+    }
+
+    /// 这把 key 能不能配给这个 agent 的实例：key 要支持 agent 的 `activeProtocol`（模型网关不在协议之间转换，
+    /// 配错了运行会卡在等 key）。两边有一边没给协议（老的服务端）时不拦。
+    public func canUse(_ credential: Credential) -> Bool {
+        credential.supports(activeProtocol)
     }
 }
 
