@@ -2614,7 +2614,7 @@ async fn im_channels_are_per_user_rate_limited_and_settle_without_spending_attem
 async fn claim_live(db: &Db, owner: &str, step_gap: Duration) -> Vec<crate::LiveActivity> {
     let mut w = db.worker().await.unwrap();
     let got = w
-        .claim_live_activities(owner, LEASE, 10, Duration::ZERO, step_gap)
+        .claim_live_activities(owner, LEASE, 10, 10, Duration::ZERO, step_gap)
         .await
         .unwrap();
     w.commit().await.unwrap();
@@ -2623,7 +2623,7 @@ async fn claim_live(db: &Db, owner: &str, step_gap: Duration) -> Vec<crate::Live
 
 async fn settle_live(db: &Db, a: &crate::LiveActivity, owner: &str, s: crate::LiveSettle) {
     let mut w = db.worker().await.unwrap();
-    w.settle_live_activity(a.device_id, a.run_id, owner, &s)
+    w.settle_live_activity(a.device_id, a.run_id, owner, a.push_token.as_deref(), &s)
         .await
         .unwrap();
     w.commit().await.unwrap();
@@ -2714,8 +2714,14 @@ async fn live_activities_follow_their_runs_per_device() {
     assert!(claim_live(db, "n2", minute).await.is_empty());
     let mut w = db.worker().await.unwrap();
     assert!(matches!(
-        w.settle_live_activity(phone, run.id, "n2", &LiveSettle::End { error: None })
-            .await,
+        w.settle_live_activity(
+            phone,
+            run.id,
+            "n2",
+            Some("aa11"),
+            &LiveSettle::End { error: None }
+        )
+        .await,
         Err(Error::LeaseLost { .. })
     ));
     w.rollback().await.unwrap();
@@ -2770,22 +2776,30 @@ async fn live_activities_follow_their_runs_per_device() {
     tx.commit().await.unwrap();
     let got = claim_live(db, "n1", minute).await;
     assert_eq!(got[0].push_token.as_deref(), Some("aa12"));
-    // App 在发送期间换了令牌：旧的结果记不上（锁被放开了），新令牌接着发。
+    // App 在发送期间换了令牌：锁还在（别人领不到，不会同时发两次），旧的结果记不上，放开锁后新令牌接着发。
     let mut tx = db.tenant(alice).await.unwrap();
     tx.register_live_activity(phone, run.id, "aa13", 5)
         .await
         .unwrap();
     tx.commit().await.unwrap();
-    let mut w = db.worker().await.unwrap();
-    assert!(matches!(
-        w.settle_live_activity(phone, run.id, "n1", &sent(RunState::Succeeded, 6, true))
-            .await,
-        Err(Error::LeaseLost { .. })
-    ));
-    w.rollback().await.unwrap();
-    let got = claim_live(db, "n1", minute).await;
-    assert_eq!(got[0].push_token.as_deref(), Some("aa13"));
+    assert!(
+        claim_live(db, "n2", minute).await.is_empty(),
+        "still locked"
+    );
     settle_live(db, &got[0], "n1", sent(RunState::Succeeded, 6, true)).await;
+    let got = claim_live(db, "n1", minute).await;
+    assert_eq!(
+        (got[0].push_token.as_deref(), got[0].sent_state),
+        (Some("aa13"), None)
+    );
+    settle_live(db, &got[0], "n1", sent(RunState::Succeeded, 6, true)).await;
+    // 同一个令牌再报一次：什么都不变（不会每报一次就发一次）。
+    let mut tx = db.tenant(alice).await.unwrap();
+    tx.register_live_activity(phone, run.id, "aa13", 5)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    assert!(claim_live(db, "n1", Duration::ZERO).await.is_empty());
 
     // 远程开启：登录着、登记了推送开启令牌的 iPhone 各一个，最多 max_open 个开着。
     let mut tx = db.tenant(alice).await.unwrap();
@@ -2904,4 +2918,315 @@ async fn live_activities_follow_their_runs_per_device() {
             .await
             .unwrap();
     assert_eq!(token, None);
+}
+
+#[tokio::test]
+async fn live_activities_resist_floods_and_races() {
+    use crate::LiveSettle;
+    use proto::domain::{DevicePlatform, SessionId};
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let hour = Duration::from_secs(3600);
+    let mut phones = Vec::new();
+    for n in 0..2 {
+        let u = user(db, &format!("+86138000000{}", 61 + n)).await;
+        let mut w = db.worker().await.unwrap();
+        let d = w
+            .create_device(u, DevicePlatform::Ios, "iPhone", None)
+            .await
+            .unwrap();
+        w.create_session(SessionId::new(), u, d, format!("r{n}").as_bytes(), hour)
+            .await
+            .unwrap();
+        w.commit().await.unwrap();
+        phones.push((u, d));
+    }
+    let [(mallory, mphone), (victim, vphone)] = phones[..] else {
+        unreachable!()
+    };
+    let minst = instance(db, mallory).await;
+    let vinst = instance(db, victim).await;
+    let register = |u, d, run, token: &'static str| async move {
+        let mut tx = db.tenant(u).await.unwrap();
+        let r = tx.register_live_activity(d, run, token, 10).await;
+        tx.commit().await.unwrap();
+        r
+    };
+    let claim = |per_user| async move {
+        let mut w = db.worker().await.unwrap();
+        let got = w
+            .claim_live_activities("n1", LEASE, 3, per_user, Duration::ZERO, Duration::ZERO)
+            .await
+            .unwrap();
+        w.commit().await.unwrap();
+        got
+    };
+
+    // 几个开了好几个钟头的、不停地换令牌：每轮只领得到每个用户的几个，等得最久的先领；后来的用户照样领得到。
+    let mut runs = Vec::new();
+    for n in 0..4 {
+        let r = queue_run(db, mallory, &minst, &format!("m{n}")).await;
+        register(mallory, mphone, r.id, "aa01").await.unwrap();
+        runs.push(r.id);
+    }
+    sqlx::query("UPDATE live_activities SET created_at = now() - interval '1 hour'")
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let vrun = queue_run(db, victim, &vinst, "v").await;
+    register(victim, vphone, vrun.id, "bb01").await.unwrap();
+    for round in 0..3 {
+        let got = claim(2).await;
+        let theirs = got.iter().filter(|a| a.user_id == mallory).count();
+        assert!(theirs <= 2, "round {round}: {theirs} of one user");
+        if round == 0 {
+            assert!(got.iter().any(|a| a.user_id == victim), "victim waits");
+        }
+        for a in &got {
+            settle_live(
+                db,
+                a,
+                "n1",
+                LiveSettle::End {
+                    error: Some("BadDeviceToken".into()),
+                },
+            )
+            .await;
+        }
+        for r in &runs {
+            register(
+                mallory,
+                mphone,
+                *r,
+                if round % 2 == 0 { "aa02" } else { "aa03" },
+            )
+            .await
+            .unwrap();
+        }
+    }
+    // 令牌失效后再报同一个：不会重新打开（不会每报一次就发一次）。
+    let mut w = db.worker().await.unwrap();
+    let ended: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM live_activities WHERE run_id = $1 AND ended_at IS NOT NULL",
+    )
+    .bind(vrun.id.0)
+    .fetch_one(w.conn())
+    .await
+    .unwrap();
+    w.rollback().await.unwrap();
+    assert_eq!(ended, 1);
+    register(victim, vphone, vrun.id, "bb01").await.unwrap();
+    assert!(!claim(10).await.iter().any(|a| a.user_id == victim));
+
+    // 放弃了的：同一个令牌再报一次从头来；App 关掉了的不行。
+    sqlx::query("UPDATE live_activities SET ended_at = NULL WHERE run_id = $1")
+        .bind(vrun.id.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let got = claim(10).await;
+    let a = got.iter().find(|a| a.user_id == victim).unwrap();
+    settle_live(
+        db,
+        a,
+        "n1",
+        LiveSettle::GiveUp {
+            error: "gave up".into(),
+        },
+    )
+    .await;
+    assert!(!claim(10).await.iter().any(|a| a.user_id == victim));
+    register(victim, vphone, vrun.id, "bb01").await.unwrap();
+    let got = claim(10).await;
+    let a = got.iter().find(|a| a.user_id == victim).unwrap();
+    assert_eq!((a.attempts, a.sent_state), (0, None));
+    settle_live(db, a, "n1", LiveSettle::GiveUp { error: "x".into() }).await;
+    let mut tx = db.tenant(victim).await.unwrap();
+    tx.end_live_activity(vphone, vrun.id).await.unwrap();
+    tx.commit().await.unwrap();
+    register(victim, vphone, vrun.id, "bb01").await.unwrap();
+    assert!(!claim(10).await.iter().any(|a| a.user_id == victim));
+
+    // 运行早就结束了：不能登记。
+    sqlx::query(
+        "UPDATE runs SET state = 'succeeded', finished_at = now() - interval '1 hour' WHERE id = $1",
+    )
+    .bind(runs[0].0)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    assert!(matches!(
+        register(mallory, mphone, runs[0], "aa09").await,
+        Err(Error::Invalid(_))
+    ));
+
+    // 并发的登记一起也超不过一台设备的上限。
+    let mut fresh = Vec::new();
+    for n in 0..4 {
+        fresh.push(queue_run(db, victim, &vinst, &format!("f{n}")).await.id);
+    }
+    let joins: Vec<_> = fresh
+        .iter()
+        .map(|r| {
+            let db = db.clone();
+            let r = *r;
+            tokio::spawn(async move {
+                let mut tx = db.tenant(victim).await.unwrap();
+                let ok = tx
+                    .register_live_activity(vphone, r, "cc01", 2)
+                    .await
+                    .is_ok();
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                tx.commit().await.unwrap();
+                ok
+            })
+        })
+        .collect();
+    let mut ok = 0;
+    for j in joins {
+        ok += usize::from(j.await.unwrap());
+    }
+    assert_eq!(ok, 2);
+
+    // 两个副本同时领到同一个用户的两个计划运行：远程开启的也超不过上限。
+    let mut tx = db.tenant(mallory).await.unwrap();
+    tx.set_activity_start_token(mphone, Some("dd01"))
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let mut planned = Vec::new();
+    for n in 0..3 {
+        planned.push(queue_run(db, mallory, &minst, &format!("p{n}")).await.id);
+    }
+    let joins: Vec<_> = planned
+        .iter()
+        .map(|r| {
+            let db = db.clone();
+            let r = *r;
+            tokio::spawn(async move {
+                let mut w = db.worker().await.unwrap();
+                let n = w.queue_live_starts(mallory, r, 1).await.unwrap();
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                w.commit().await.unwrap();
+                n
+            })
+        })
+        .collect();
+    let mut queued = 0;
+    for j in joins {
+        queued += j.await.unwrap();
+    }
+    assert_eq!(queued, 1);
+}
+
+#[tokio::test]
+async fn live_activities_follow_the_phone() {
+    use proto::domain::{DevicePlatform, PushChannelKind, SessionId};
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let hour = Duration::from_secs(3600);
+    let alice = user(db, "+8613800000071").await;
+    let bob = user(db, "+8613800000072").await;
+    let apns = Some((PushChannelKind::Apns, "0a0b"));
+    let mut w = db.worker().await.unwrap();
+    let phone = w
+        .create_device(alice, DevicePlatform::Ios, "iPhone", apns)
+        .await
+        .unwrap();
+    w.create_session(SessionId::new(), alice, phone, b"r1", hour)
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+    let inst = instance(db, alice).await;
+    let run = queue_run(db, alice, &inst, "长任务").await;
+    let child = queue_run(db, alice, &inst, "子任务").await;
+    sqlx::query("UPDATE runs SET parent_run_id = $2, steps = 4 WHERE id = $1")
+        .bind(child.id.0)
+        .bind(run.id.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let mut tx = db.tenant(alice).await.unwrap();
+    tx.set_activity_start_token(phone, Some("ee01"))
+        .await
+        .unwrap();
+    tx.register_live_activity(phone, run.id, "aa01", 5)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+
+    // 步数连同直接子运行的一起算（流水线的步骤、委派的子任务）。
+    let got = claim_live(db, "n1", Duration::ZERO).await;
+    assert_eq!(got[0].steps, 4);
+    // 前面的发得慢、锁过期了：续不上，不发。
+    sqlx::query("UPDATE live_activities SET locked_until = now() - interval '1 second'")
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let mut w = db.worker().await.unwrap();
+    assert!(
+        !w.extend_live_lock(phone, run.id, "n1", LEASE)
+            .await
+            .unwrap()
+    );
+    w.rollback().await.unwrap();
+    let got = claim_live(db, "n1", Duration::ZERO).await;
+    let mut w = db.worker().await.unwrap();
+    assert!(
+        w.extend_live_lock(phone, run.id, "n1", LEASE)
+            .await
+            .unwrap()
+    );
+    w.commit().await.unwrap();
+    settle_live(
+        db,
+        &got[0],
+        "n1",
+        crate::LiveSettle::Sent {
+            state: got[0].state,
+            steps: 4,
+            started: false,
+            ended: false,
+        },
+    )
+    .await;
+
+    // 换了令牌（新的实时活动）：8 小时从现在算。
+    sqlx::query("UPDATE live_activities SET created_at = now() - interval '7 hours'")
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let mut tx = db.tenant(alice).await.unwrap();
+    tx.register_live_activity(phone, run.id, "aa02", 5)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let fresh: bool = sqlx::query_scalar(
+        "SELECT created_at > now() - interval '1 minute' FROM live_activities WHERE run_id = $1",
+    )
+    .bind(run.id.0)
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert!(fresh);
+
+    // 同一台手机换成 bob 登录（推送令牌跟着手机走）：alice 那台不再远程开启，开着的不再更新。
+    let mut w = db.worker().await.unwrap();
+    w.create_device(bob, DevicePlatform::Ios, "iPhone", apns)
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+    let (start, ended): (Option<String>, bool) = sqlx::query_as(
+        "SELECT d.activity_start_token, x.ended_at IS NOT NULL FROM devices d \
+         JOIN live_activities x ON x.device_id = d.id WHERE d.id = $1",
+    )
+    .bind(phone.0)
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert_eq!((start, ended), (None, true));
+    let planned = queue_run(db, alice, &inst, "每日新闻").await;
+    let mut w = db.worker().await.unwrap();
+    assert_eq!(w.queue_live_starts(alice, planned.id, 2).await.unwrap(), 0);
+    w.rollback().await.unwrap();
 }

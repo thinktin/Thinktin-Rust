@@ -512,3 +512,69 @@ async fn sqlx_insert_user_key(w: &mut store::Tx<store::Worker>, user: proto::dom
 async fn user_key_exists(w: &mut store::Tx<store::Worker>, user: proto::domain::UserId) -> bool {
     w.user_key(user).await.unwrap().is_some()
 }
+
+#[tokio::test]
+async fn the_review_account_logs_in_without_sms() {
+    let Some(t) = TestDb::new().await else { return };
+    let (svc, sms) = service(&t, Duration::ZERO);
+    assert!(matches!(
+        auth::service::check_review_account(PHONE, "111111"),
+        Err(AuthError::Invalid(_))
+    ));
+    let svc = svc
+        .with_review_account(PHONE, Zeroizing::new("730591".into()))
+        .unwrap();
+
+    // 发码不发短信，码是配置的固定码；尝试次数照样算。
+    svc.send_code(PHONE, CodePurpose::Login).await.unwrap();
+    assert_eq!(sms.count(), 0);
+    for _ in 0..auth::secrets::CODE_MAX_ATTEMPTS {
+        assert!(matches!(
+            svc.login(PHONE, "000000", &phone_device("a")).await,
+            Err(AuthError::InvalidCode)
+        ));
+    }
+    assert!(matches!(
+        svc.login(PHONE, "730591", &phone_device("a")).await,
+        Err(AuthError::InvalidCode)
+    ));
+    svc.send_code(PHONE, CodePurpose::Login).await.unwrap();
+    let l = svc
+        .login(PHONE, "730591", &phone_device("a"))
+        .await
+        .unwrap();
+    // 用掉就失效。
+    assert!(matches!(
+        svc.login(PHONE, "730591", &phone_device("b")).await,
+        Err(AuthError::InvalidCode)
+    ));
+    // 注销账号的确认码也是固定码（审核员要试注销）。
+    svc.send_code_to_self(&principal(&svc, &l).await, CodePurpose::DeleteAccount)
+        .await
+        .unwrap();
+    assert_eq!(sms.count(), 0);
+
+    // 发码、登录都记审计。
+    let rows: Vec<(String, serde_json::Value)> =
+        sqlx::query_as("SELECT action, detail FROM audit_log WHERE user_id = $1 ORDER BY id")
+            .bind(l.user.id.0)
+            .fetch_all(t.db.pool())
+            .await
+            .unwrap();
+    assert!(
+        rows.iter()
+            .any(|(a, d)| a == "auth.login" && d["review"] == true),
+        "{rows:?}"
+    );
+    assert!(
+        rows.iter()
+            .any(|(a, d)| a == "auth.review_code" && d["purpose"] == "delete_account"),
+        "{rows:?}"
+    );
+
+    // 别的手机号照常发短信。
+    svc.send_code("13900000000", CodePurpose::Login)
+        .await
+        .unwrap();
+    assert_eq!(sms.count(), 1);
+}

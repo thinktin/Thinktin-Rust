@@ -1372,6 +1372,7 @@ async fn ffi_live_activities() {
             "test",
             std::time::Duration::from_secs(60),
             10,
+            10,
             std::time::Duration::ZERO,
             std::time::Duration::ZERO,
         )
@@ -1395,4 +1396,57 @@ async fn ffi_live_activities() {
             .await,
         Err(ClientError::Api { status: 422, .. })
     ));
+}
+
+#[tokio::test]
+async fn ffi_content_reports() {
+    let Some(e) = env().await else { return };
+    let (c, _store, _d) = ffi_login(&e, "13800138522", "ios", "iPhone").await;
+    let inst = c.adopt("claude".into(), "助手".into(), None).await.unwrap();
+    let run = c
+        .create_run(inst.id.clone(), "写一首诗".into())
+        .await
+        .unwrap();
+    let r = c
+        .report_content(
+            run.id.clone(),
+            None,
+            None,
+            "misinformation".into(),
+            Some("编造的数据".into()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        (r.state.as_str(), r.reason.as_str(), r.run_id.as_str()),
+        ("open", "misinformation", run.id.as_str())
+    );
+    assert!(matches!(
+        c.report_content(run.id.clone(), None, None, "boring".into(), None)
+            .await,
+        Err(ClientError::InvalidArgument { .. })
+    ));
+    let mine = c.reports().await.unwrap();
+    assert_eq!(mine.len(), 1);
+    assert_eq!(mine[0].id, r.id);
+}
+
+/// 绑定里 `PlanPolicy` 的默认值和服务端的默认策略一样（`PlanPolicy()` 在 App 里就是默认策略）。
+#[test]
+fn ffi_plan_policy_defaults_match_the_server() {
+    let p: ffi::PlanPolicy = proto::domain::PlanPolicy::default().into();
+    assert_eq!(
+        (
+            p.preauthorized_tools.len(),
+            p.approval_timeout_secs,
+            p.on_approval_timeout.as_str(),
+            p.max_tokens,
+            p.max_duration_secs,
+            p.max_steps,
+            p.daily_token_limit,
+            p.wait_timeout_secs,
+        ),
+        (0, 86400, "pause_plan", None, 21600, None, None, 86400)
+    );
+    assert_eq!(proto::domain::CatchUp::default().as_str(), "once");
 }

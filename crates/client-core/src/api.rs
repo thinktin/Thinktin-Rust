@@ -8,11 +8,11 @@ use std::time::Duration;
 
 use proto::api::{API_VERSION, ErrorBody, ErrorCode, VERSION_HEADER};
 use proto::domain::{
-    Approval, ApprovalId, Artifact, ArtifactId, CatchUp, Credential, CredentialId, Device,
-    DeviceId, DeviceMessage, DeviceMessageId, DeviceMessageKind, DevicePlatform, ImChannel,
+    Approval, ApprovalId, Artifact, ArtifactId, CatchUp, ContentReport, Credential, CredentialId,
+    Device, DeviceId, DeviceMessage, DeviceMessageId, DeviceMessageKind, DevicePlatform, ImChannel,
     ImChannelId, InboxItem, InboxItemId, Instance, InstanceEvent, InstanceId, ModelRoute, Plan,
-    PlanId, PlanPolicy, PlanStep, PushChannelKind, Run, RunId, ScheduleSpec, Team, TeamId,
-    TeamMember, TeamTemplate, TeamTemplateId, TeamTemplateSpec, Trigger, TriggerId, User,
+    PlanId, PlanPolicy, PlanStep, PushChannelKind, ReportReason, Run, RunId, ScheduleSpec, Team,
+    TeamId, TeamMember, TeamTemplate, TeamTemplateId, TeamTemplateSpec, Trigger, TriggerId, User,
     VaultItem, VaultItemId, VaultRequest, VaultRequestId,
 };
 use reqwest::Method;
@@ -1207,6 +1207,44 @@ impl Api {
     pub async fn delete_im_channel(&self, id: ImChannelId) -> Result<()> {
         self.empty(Method::DELETE, &format!("/v1/im-channels/{id}"), None)
             .await
+    }
+
+    // ---------- 内容举报（5.5） ----------
+
+    /// 举报 agent 的输出：整个运行（它的回复），或者其中一条事件、一个产出物。同一条内容再举报一次返回那一条
+    /// 待处理的举报。
+    pub async fn report_content(
+        &self,
+        run: RunId,
+        event_seq: Option<u64>,
+        artifact: Option<ArtifactId>,
+        reason: ReportReason,
+        note: Option<&str>,
+    ) -> Result<ContentReport> {
+        self.json(
+            Method::POST,
+            "/v1/reports",
+            Some(&json!({
+                "run_id": run,
+                "event_seq": event_seq,
+                "artifact_id": artifact,
+                "reason": reason,
+                "note": note,
+            })),
+        )
+        .await
+    }
+
+    /// 自己的举报和处理结果，新的在前。
+    pub async fn reports(&self) -> Result<Vec<ContentReport>> {
+        #[derive(Deserialize)]
+        struct R {
+            reports: Vec<ContentReport>,
+        }
+        Ok(self
+            .json::<R>(Method::GET, "/v1/reports", None)
+            .await?
+            .reports)
     }
 
     // ---------- 团队和团队模板（8.1） ----------

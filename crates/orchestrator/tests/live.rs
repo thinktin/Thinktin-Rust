@@ -15,12 +15,16 @@ use store::testing::TestDb;
 use store::{NewInstance, NewRun};
 
 const PHONE: &str = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90";
+/// App 换了的令牌（同一个实时活动重新开了一个）。
+const PHONE2: &str = "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0";
 const START: &str = "5747a77ec0de5747a77ec0de5747a77ec0de5747a77ec0de5747a77ec0de5747";
 
 #[derive(Default)]
 struct Recording {
     outcomes: Mutex<HashMap<String, PushOutcome>>,
     sent: Mutex<Vec<(String, LivePush)>>,
+    /// 每次发要多久（APNs 很慢的时候）。
+    delay: Mutex<Duration>,
 }
 
 impl Recording {
@@ -35,6 +39,8 @@ impl Recording {
 #[async_trait]
 impl LiveActivityChannel for Recording {
     async fn send_live(&self, token: &str, push: &LivePush) -> PushOutcome {
+        let delay = *self.delay.lock().unwrap();
+        tokio::time::sleep(delay).await;
         self.sent
             .lock()
             .unwrap()
@@ -353,11 +359,14 @@ async fn dead_tokens_retries_and_giving_up() {
     );
     assert_eq!(d.tick().await.unwrap(), 1);
     assert_eq!(s.row(&run).await, (Some("ExpiredToken".into()), true, 0));
-
-    // 暂时失败：退避重试，次数到了就不再发。App 重新登记后从头来。
+    // 失效的令牌再报一次：不重新打开。
     s.register(&run, PHONE).await;
+    assert_eq!(d.tick().await.unwrap(), 0);
+
+    // 暂时失败：退避重试，次数到了就不再发。App 再报一次同一个令牌就从头来。
+    s.register(&run, PHONE2).await;
     rec.set(
-        PHONE,
+        PHONE2,
         PushOutcome::Retry {
             after: None,
             reason: "ServiceUnavailable".into(),
@@ -378,8 +387,8 @@ async fn dead_tokens_retries_and_giving_up() {
         )
     );
     assert_eq!(d.tick().await.unwrap(), 0);
-    rec.set(PHONE, PushOutcome::Delivered { id: None });
-    s.register(&run, PHONE).await;
+    rec.set(PHONE2, PushOutcome::Delivered { id: None });
+    s.register(&run, PHONE2).await;
     assert_eq!(d.tick().await.unwrap(), 1);
     assert_eq!(s.row(&run).await, (None, false, 0));
     assert_eq!(
@@ -387,4 +396,32 @@ async fn dead_tokens_retries_and_giving_up() {
         5,
         "start, dead token, two retries, the fresh one"
     );
+}
+
+#[tokio::test]
+async fn slow_sends_do_not_outlive_their_lock() {
+    let Some(s) = setup("+8613800000064", "调研助手").await else {
+        return;
+    };
+    let first = s.run(RunSource::User).await;
+    s.register(&first, PHONE).await;
+    let second = s.run(RunSource::User).await;
+    s.register(&second, PHONE2).await;
+    let rec = Arc::new(Recording::default());
+    *rec.delay.lock().unwrap() = Duration::from_millis(1500);
+    // 一次只发一个、锁一秒：第一个发完时第二个的锁已经过期（别的副本可能领去发了），不发。
+    let d = s.dispatcher(
+        rec.clone(),
+        LiveConfig {
+            concurrency: 1,
+            lock_for: Duration::from_secs(1),
+            ..eager()
+        },
+    );
+    assert_eq!(d.tick().await.unwrap(), 2);
+    assert_eq!(rec.sent().len(), 1);
+    // 下一轮再领、再发。
+    *rec.delay.lock().unwrap() = Duration::ZERO;
+    assert_eq!(d.tick().await.unwrap(), 1);
+    assert_eq!(rec.sent().len(), 1);
 }

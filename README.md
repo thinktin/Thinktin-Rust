@@ -63,7 +63,8 @@ ThinkTin 平台：托管多个开源 agent，用户领养后常驻云端、按�
   `[storage.s3]` 填 `endpoint`、`region`、`bucket`（可选 `prefix`、`path_style`），访问密钥走环境变量
   `THINKTIN_S3_ACCESS_KEY_ID`、`THINKTIN_S3_SECRET_ACCESS_KEY`。
   `[api] enabled = true` 时挂上客户端接口，需要 `THINKTIN_ACCESS_TOKEN_SEED`（访问令牌签名种子）、
-  `THINKTIN_CODE_PEPPER`（验证码 HMAC 密钥，十六进制）、`THINKTIN_KMS_KEY`（本地 KMS 主密钥）；
+  `THINKTIN_CODE_PEPPER`（验证码 HMAC 密钥，十六进制）、`THINKTIN_KMS_KEY`（本地 KMS 主密钥）；应用商店审核期间可以配
+  `[api] review_phone` 和 `THINKTIN_REVIEW_CODE`（固定验证码，不发短信，见 [发布](docs/release.md) 第 5 节）；
   生产的主密钥放阿里云 KMS：`[kms] provider = "aliyun"`，`[kms.aliyun]` 填 `endpoint`、`key_id`（可以是 `alias/...`），
   AccessKey 走环境变量 `THINKTIN_ALIYUN_KMS_ACCESS_KEY_ID`、`THINKTIN_ALIYUN_KMS_ACCESS_KEY_SECRET`；这时还配着
   `THINKTIN_KMS_KEY` 的话，它只用来解迁移前的老数据密钥（模型网关对应 `--aliyun-kms-endpoint`、`--aliyun-kms-key-id`）；

@@ -69,6 +69,7 @@ id_type!(
     DeviceCallId,
     DeviceMessageId,
     ImChannelId,
+    ReportId,
 );
 
 /// 字符串枚举的公共实现：和数据库里的取值一一对应。
@@ -576,6 +577,51 @@ pub struct ImChannel {
     pub last_error: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+str_enum!(
+    /// 用户举报 agent 输出的原因（5.5）。
+    ReportReason {
+        /// 危害人身安全、教唆违法犯罪。
+        Harmful = "harmful",
+        /// 违法违规的内容。
+        Illegal = "illegal",
+        /// 色情低俗。
+        Sexual = "sexual",
+        /// 歧视、仇恨、侮辱。
+        Hateful = "hateful",
+        /// 泄露个人信息、侵犯隐私。
+        Privacy = "privacy",
+        /// 虚假信息。
+        Misinformation = "misinformation",
+        /// 侵犯知识产权。
+        Infringement = "infringement",
+        Other = "other",
+    }
+);
+
+str_enum!(
+    /// 举报的处理状态：待处理、已处理。
+    ReportState { Open = "open", Closed = "closed" }
+);
+
+/// 用户的一条举报（5.5）。被举报的那一条内容在提交时复制下来（运营看的是它，事件过了保留期也还在），
+/// 接口只返回举报本身，不回显复制的内容。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ContentReport {
+    pub id: ReportId,
+    pub run_id: RunId,
+    pub instance_id: InstanceId,
+    /// 举报的是运行里的哪一条事件（实例事件流的序号）；没有就是整个运行（它的回复）。
+    pub event_seq: Option<u64>,
+    pub artifact_id: Option<ArtifactId>,
+    pub reason: ReportReason,
+    pub note: Option<String>,
+    pub state: ReportState,
+    /// 处理结果（运营写的，也发给举报的人）。
+    pub resolution: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub handled_at: Option<DateTime<Utc>>,
 }
 
 /// 保险箱条目里的字段：账号、密码。

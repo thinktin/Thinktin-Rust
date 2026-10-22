@@ -212,16 +212,27 @@ impl Tx<Worker> {
         channel: PushChannelKind,
         token: &str,
     ) -> Result<u64> {
-        let done = sqlx::query(
-            "UPDATE devices SET push_channel = NULL, push_token = NULL \
-             WHERE push_channel = $2 AND push_token = $3 AND id <> $1",
+        // 推送令牌认的是这台手机（这个 App 安装）：之前账号的设备也不再远程开启实时活动，开着的不再更新
+        // （它们的标题是之前账号的实例名，不能出现在现在这个人的锁屏上）。
+        let moved: Vec<Uuid> = sqlx::query_scalar(
+            "UPDATE devices SET push_channel = NULL, push_token = NULL, activity_start_token = NULL \
+             WHERE push_channel = $2 AND push_token = $3 AND id <> $1 RETURNING id",
         )
         .bind(keep.0)
         .bind(channel.as_str())
         .bind(token)
-        .execute(self.conn())
+        .fetch_all(self.conn())
         .await?;
-        Ok(done.rows_affected())
+        if !moved.is_empty() {
+            sqlx::query(
+                "UPDATE live_activities SET ended_at = now(), gave_up = false \
+                 WHERE device_id = ANY($1) AND ended_at IS NULL",
+            )
+            .bind(&moved)
+            .execute(self.conn())
+            .await?;
+        }
+        Ok(moved.len() as u64)
     }
 
     /// 新会话。会话 id 由调用方先生成（刷新令牌里带着它）。

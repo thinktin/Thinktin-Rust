@@ -292,6 +292,7 @@ async fn start_platform() -> Option<Platform> {
         ),
         code_pepper: Some("ab".repeat(32)),
         kms_key: Some(KMS_HEX.into()),
+        review_code: None,
     };
     let sms = Arc::new(RecordingSms::default());
     let (l, addr) = listen().await;

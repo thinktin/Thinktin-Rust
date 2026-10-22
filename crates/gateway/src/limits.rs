@@ -42,6 +42,8 @@ pub struct LimitConfig {
     pub streams_per_user: u32,
     /// IM 渠道的测试消息（10.5）：每个用户每小时。
     pub im_tests_per_hour: u32,
+    /// 内容举报（5.5）：每个用户每小时。
+    pub reports_per_hour: u32,
     /// 来源地址取 `X-Forwarded-For` 的最后一项（网关前面有自己的负载均衡时才开）。
     pub trust_forwarded_for: bool,
     /// 最多记多少个计数器；满了先清掉闲置的，还满就不再给新的来源计数（放行）。
@@ -59,6 +61,7 @@ impl Default for LimitConfig {
             signups_per_hour: 5000,
             streams_per_user: 32,
             im_tests_per_hour: 10,
+            reports_per_hour: 30,
             trust_forwarded_for: false,
             max_keys: 200_000,
         }
@@ -78,6 +81,7 @@ enum Key {
     SignupsFrom(IpAddr),
     Signups,
     ImTests(UserId),
+    Reports(UserId),
 }
 
 struct Bucket {
@@ -153,6 +157,11 @@ impl Limiter {
     /// IM 渠道的测试消息：按用户（每条都真的发到群里，别让人拿来刷群）。
     pub fn im_tests(&self, user: UserId) -> Result<(), Limited> {
         self.take(Key::ImTests(user), self.cfg.im_tests_per_hour, HOUR)
+    }
+
+    /// 内容举报：按用户（每条都进运营的队列）。
+    pub fn reports(&self, user: UserId) -> Result<(), Limited> {
+        self.take(Key::Reports(user), self.cfg.reports_per_hour, HOUR)
     }
 
     /// 已登录的请求：按设备、按用户。

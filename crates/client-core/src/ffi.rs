@@ -438,19 +438,28 @@ impl TryFrom<PlanStep> for d::PlanStep {
 
 /// 计划的策略（4.4、4.7、7.11）。
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
+/// 每个字段都有默认值（和服务端的默认策略一样），`PlanPolicy()` 就是默认策略。
 pub struct PlanPolicy {
     /// 预授权的工具种类（ACP 的 tool kind：read、edit、search、execute……），用到时不用审批。
+    #[uniffi(default)]
     pub preauthorized_tools: Vec<String>,
+    #[uniffi(default = 86400)]
     pub approval_timeout_secs: u64,
     /// 审批（和等电脑、等 key）超时以后：skip（拒绝这一步，接着干）、pause_plan（暂停计划）、fail（这次失败）。
+    #[uniffi(default = "pause_plan")]
     pub on_approval_timeout: String,
     /// 每次运行的上限：token 数、时长、步数。
+    #[uniffi(default = None)]
     pub max_tokens: Option<u64>,
+    #[uniffi(default = 21600)]
     pub max_duration_secs: u64,
+    #[uniffi(default = None)]
     pub max_steps: Option<u32>,
     /// 整个计划每天最多用多少 token。
+    #[uniffi(default = None)]
     pub daily_token_limit: Option<u64>,
     /// 等电脑上线、等补上 key 最多等多久。
+    #[uniffi(default = 86400)]
     pub wait_timeout_secs: u64,
 }
 
@@ -518,8 +527,11 @@ pub struct Plan {
     pub revision: u32,
     /// 策略（预授权工具、审批超时、预算），JSON。和 `policy` 一样，留着给老版本的 App 用。
     pub policy_json: String,
+    /// 11.7 加的字段都有默认值：App 里自己构造 `Plan`（测试、预览）的代码不用改。
+    #[uniffi(default)]
     pub policy: PlanPolicy,
     /// 错过的触发怎么补：once、all、skip。
+    #[uniffi(default = "once")]
     pub catch_up: String,
     pub created_at_ms: i64,
     /// 列表接口里为空，详情里有。
@@ -800,6 +812,43 @@ impl From<api::VendorInfo> for VendorInfo {
             protocols: v.protocols,
             models: v.models,
             notes: v.notes,
+        }
+    }
+}
+
+/// 一条内容举报（5.5）和它的处理结果。
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct ContentReport {
+    pub id: String,
+    pub run_id: String,
+    pub instance_id: String,
+    pub event_seq: Option<u64>,
+    pub artifact_id: Option<String>,
+    /// harmful、illegal、sexual、hateful、privacy、misinformation、infringement、other。
+    pub reason: String,
+    pub note: Option<String>,
+    /// open（待处理）、closed（已处理）。
+    pub state: String,
+    /// 处理结果（处理完也会发到收件箱和推送）。
+    pub resolution: Option<String>,
+    pub created_at_ms: i64,
+    pub handled_at_ms: Option<i64>,
+}
+
+impl From<d::ContentReport> for ContentReport {
+    fn from(r: d::ContentReport) -> Self {
+        Self {
+            id: r.id.to_string(),
+            run_id: r.run_id.to_string(),
+            instance_id: r.instance_id.to_string(),
+            event_seq: r.event_seq,
+            artifact_id: r.artifact_id.map(|a| a.to_string()),
+            reason: r.reason.as_str().into(),
+            note: r.note,
+            state: r.state.as_str().into(),
+            resolution: r.resolution,
+            created_at_ms: ms(r.created_at),
+            handled_at_ms: r.handled_at.map(ms),
         }
     }
 }
@@ -2146,6 +2195,42 @@ impl ThinktinClient {
         let id: d::CredentialId = parse(&credential_id, "credential")?;
         self.run(|c| async move { c.api.delete_credential(id).await })
             .await
+    }
+
+    // ---------- 内容举报（5.5） ----------
+
+    /// 举报 agent 的输出（长按回复或产出物）：`event_seq` 是那条事件的序号，`artifact_id` 是产出物，都不给就是整个
+    /// 运行。`reason` 是 harmful、illegal、sexual、hateful、privacy、misinformation、infringement、other 之一，
+    /// `note` 最多 1000 字。同一条内容再举报一次返回那一条待处理的举报。处理结果发到收件箱和推送。
+    pub async fn report_content(
+        &self,
+        run_id: String,
+        event_seq: Option<u64>,
+        artifact_id: Option<String>,
+        reason: String,
+        note: Option<String>,
+    ) -> Result<ContentReport> {
+        let run: d::RunId = parse(&run_id, "run")?;
+        let artifact: Option<d::ArtifactId> = artifact_id
+            .as_deref()
+            .map(|a| parse(a, "artifact"))
+            .transpose()?;
+        let reason: d::ReportReason = from_enum_str(&reason, "report reason")?;
+        self.run(|c| async move {
+            Ok(c.api
+                .report_content(run, event_seq, artifact, reason, note.as_deref())
+                .await?
+                .into())
+        })
+        .await
+    }
+
+    /// 自己的举报和处理结果，新的在前。
+    pub async fn reports(&self) -> Result<Vec<ContentReport>> {
+        self.run(
+            |c| async move { Ok(c.api.reports().await?.into_iter().map(Into::into).collect()) },
+        )
+        .await
     }
 
     // ---------- IM 渠道（10.5） ----------

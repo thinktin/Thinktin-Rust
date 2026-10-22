@@ -292,8 +292,11 @@ impl PushChannel for ApnsClient {
     }
 }
 
+/// end 在 APNs 那里最多等多久（实时活动最多显示 8 小时）。
+const LIVE_END_TTL_SECS: u64 = 8 * 3600;
+
 /// 实时活动走单独的主题（`<bundle id>.push-type.liveactivity`）。过时的更新没有意义，系统也只留最后一条：
-/// 一小时内送不到就算了。
+/// 一小时内送不到就算了；end 等到 [`LIVE_END_TTL_SECS`]。
 #[async_trait]
 impl LiveActivityChannel for ApnsClient {
     async fn send_live(&self, token: &str, push: &LivePush) -> PushOutcome {
@@ -304,11 +307,17 @@ impl LiveActivityChannel for ApnsClient {
         }
         let now = now_secs();
         let topic = format!("{}.push-type.liveactivity", self.topic);
+        // end 只发一次：手机离线久一点（坐飞机）也要送到，不然锁屏上一直是“运行中”。更新反正会被下一条取代。
+        let ttl = if push.event == LiveEvent::End {
+            LIVE_END_TTL_SECS
+        } else {
+            3600
+        };
         let req = Request {
             push_type: "liveactivity",
             topic: &topic,
             priority: if push.urgent { "10" } else { "5" },
-            expiration: now + 3600,
+            expiration: now + ttl,
             collapse_id: None,
             body: Self::live_payload(push, now).to_string(),
         };
@@ -527,8 +536,23 @@ mod tests {
             alert: None,
         };
         client.send_live(&token, &update).await;
+        let end = LivePush {
+            event: LiveEvent::End,
+            ..update.clone()
+        };
+        client.send_live(&token, &end).await;
         {
             let seen = fake.seen.lock().unwrap();
+            // 更新一小时内送不到就算了；end 只发一次，等得久（手机离线久一点也送得到）。
+            let expires = |n: usize| {
+                seen[n].1["apns-expiration"]
+                    .to_str()
+                    .unwrap()
+                    .parse::<u64>()
+                    .unwrap()
+                    - now_secs()
+            };
+            assert!(expires(1) <= 3600 && expires(2) > 4 * 3600);
             let (to, headers, body) = &seen[0];
             assert_eq!(to, &token);
             assert_eq!(
@@ -568,7 +592,7 @@ mod tests {
             client.send_live("zz", &update).await,
             PushOutcome::InvalidToken { .. }
         ));
-        assert_eq!(fake.seen.lock().unwrap().len(), 3);
+        assert_eq!(fake.seen.lock().unwrap().len(), 4);
     }
 
     #[tokio::test]

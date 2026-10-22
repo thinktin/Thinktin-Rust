@@ -114,6 +114,7 @@ impl PipelineDriver {
                 &json!({ "state": RunState::WaitingChildren, "steps": steps.len() }),
             )
             .await?;
+            crate::live::queue_starts(w, root).await?;
             report.started += 1;
         }
         let children: HashMap<String, RunRecord> = w

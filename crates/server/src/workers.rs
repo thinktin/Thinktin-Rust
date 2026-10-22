@@ -364,7 +364,12 @@ async fn maintain(db: &Db) -> store::Result<()> {
         + w.purge_device_traffic(DEVICE_TRAFFIC_RETENTION).await?
         + w.purge_im_bot_slots().await?
         + w.purge_live_activities(LIVE_ACTIVITY_RETENTION).await?;
+    // 内容举报（5.5）的待处理队列：几条、最早的一条等了多久（告警看它）。
+    let (open, oldest) = w.report_backlog().await?;
     w.commit().await?;
+    metrics::gauge!("thinktin_content_reports_open").set(open as f64);
+    metrics::gauge!("thinktin_content_report_oldest_seconds")
+        .set(oldest.map_or(0.0, |t| (Utc::now() - t).num_seconds().max(0) as f64));
     if dropped > 0 || purged > 0 {
         info!(
             dropped_partitions = dropped,

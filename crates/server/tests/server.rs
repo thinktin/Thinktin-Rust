@@ -133,6 +133,7 @@ async fn client_api_is_mounted_when_enabled() {
         ),
         code_pepper: Some("ab".repeat(32)),
         kms_key: Some("cd".repeat(32)),
+        review_code: None,
     };
     let blobs = tempfile::tempdir().unwrap();
     cfg.storage.local_root = blobs.path().to_path_buf();

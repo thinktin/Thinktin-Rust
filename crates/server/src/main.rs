@@ -64,6 +64,24 @@ enum AdminCommand {
     },
     /// 每个 agent 版本上有多少个实例，标出当前版本和因安全问题下架的版本（漏洞响应用）
     Versions,
+    /// 内容举报的待处理队列（先来的在前）
+    Reports,
+    /// 一条举报的详情，连同举报时复制下来的内容
+    Report {
+        /// 举报 id
+        id: String,
+    },
+    /// 处理完一条举报：结果发给举报的人
+    CloseReport {
+        /// 举报 id
+        id: String,
+        /// 处理结果（记在举报上，原样发给举报的人；不要写别人的信息）
+        #[arg(long)]
+        resolution: String,
+        /// 操作人（记进审计）
+        #[arg(long, env = "THINKTIN_OPERATOR")]
+        operator: String,
+    },
 }
 
 #[tokio::main]
@@ -97,8 +115,10 @@ async fn main() -> anyhow::Result<()> {
                 cfg.shutdown.drain_secs, cfg.shutdown.grace_secs
             );
             println!(
-                "api.enabled = {} (dev_sms = {})",
-                cfg.api.enabled, cfg.api.dev_sms
+                "api.enabled = {} (dev_sms = {}, review account = {})",
+                cfg.api.enabled,
+                cfg.api.dev_sms,
+                cfg.api.review_phone.is_some()
             );
             println!(
                 "worker.enabled = {} (sandbox provider {}, max {} concurrent runs)",
@@ -144,6 +164,13 @@ async fn main() -> anyhow::Result<()> {
                     server::admin::show(&db, &account, &mut out).await
                 }
                 AdminCommand::Versions => server::admin::versions(&db, &mut out).await,
+                AdminCommand::Reports => server::admin::reports(&db, &mut out).await,
+                AdminCommand::Report { id } => server::admin::report(&db, &id, &mut out).await,
+                AdminCommand::CloseReport {
+                    id,
+                    resolution,
+                    operator,
+                } => server::admin::close_report(&db, &id, &operator, &resolution, &mut out).await,
             }
         }
     }

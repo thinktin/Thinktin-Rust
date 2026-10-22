@@ -84,6 +84,16 @@ pub fn build(
         sms,
     )
     .context("auth service")?;
+    let auth = match (&cfg.api.review_phone, &cfg.api_secrets.review_code) {
+        (Some(phone), Some(code)) => {
+            tracing::warn!(
+                "app review account is enabled (its code is fixed; remove it after review)"
+            );
+            auth.with_review_account(phone, Zeroizing::new(code.clone()))
+                .context("api.review_phone")?
+        }
+        _ => auth,
+    };
     let hub = EventHub::new();
     let state = AppState::new(Inner {
         db: db.clone(),

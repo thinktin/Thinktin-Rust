@@ -513,3 +513,51 @@ async fn independent_steps_run_side_by_side() {
     assert_eq!(done.run.state, RunState::Succeeded, "{:?}", done.run);
     assert_eq!(done.run.summary.as_deref(), Some("summary：done: sum up"));
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn scheduled_pipelines_start_one_live_activity() {
+    let Some(e) = env().await else { return };
+    // 用户的 iPhone 开了“计划运行时显示实时活动”。
+    let mut w = e.t.db.worker().await.unwrap();
+    let phone = w
+        .create_device(e.user, proto::domain::DevicePlatform::Ios, "iPhone", None)
+        .await
+        .unwrap();
+    w.create_session(
+        proto::domain::SessionId::new(),
+        e.user,
+        phone,
+        b"r",
+        Duration::from_secs(3600),
+    )
+    .await
+    .unwrap();
+    w.commit().await.unwrap();
+    let mut tx = e.t.db.tenant(e.user).await.unwrap();
+    tx.set_activity_start_token(phone, Some("5747a77e"))
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+
+    let plan = e
+        .plan(vec![
+            step("research", &e.a, "find three facts", &[]),
+            step("report", &e.b, "write the report", &["research"]),
+        ])
+        .await;
+    Scheduler::new(e.t.db.clone(), SchedulerConfig::default())
+        .tick(Utc::now())
+        .await
+        .unwrap();
+    let root = e.root_of(plan).await;
+    let done = e.drive(root).await;
+    assert_eq!(done.run.state, RunState::Succeeded, "{:?}", done.run);
+    // 流水线开始时给根运行开一个；步骤不单独开。
+    let rows: Vec<(uuid::Uuid, String)> =
+        sqlx::query_as("SELECT run_id, origin FROM live_activities WHERE device_id = $1")
+            .bind(phone.0)
+            .fetch_all(e.t.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(rows, vec![(root.0, "push".to_owned())]);
+}

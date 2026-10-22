@@ -9,6 +9,7 @@ pub mod executor;
 pub mod live;
 pub mod outbox;
 pub mod pipeline;
+pub mod reports;
 pub mod s3;
 pub mod schedule;
 pub mod scheduler;
