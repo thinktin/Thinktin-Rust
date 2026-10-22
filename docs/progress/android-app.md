@@ -17,13 +17,15 @@ PR：[#7](https://github.com/thinktin/Thinktin-Rust/pull/7)（草稿，叠在 #5
 - **13.4 模型 key 配置**（`47eeab6`…）：key 列表（厂商、标签、后 4 位、限额、状态、协议）、编辑 / 换 key / 停用 / 删除（删除前查出引用该 key 的实例别名，先从别名里移除再删）、两步添加（按协议分组的厂商 + 自定义端点；粘贴清洗、订阅类 key 前缀与套餐专用地址的本地校验与 `proto::vendors` 一致）、按实例的模型别名与降级链编辑（main 必填、未配置时警告）、用量看板（时间段 / 分组、总计卡片、按天柱状图、token 格式化）。四维评审 20 条确认发现已修复（领养默认模型、重复提交防抖、Mock 不再虚构级联删除、错误路径测试等）。306 个 debug 测试 + 112 个 release 变体，lint 0 错误。
 - **破坏性改动适配**（`ca2eac3`）：去掉 `patch-bindings.py`，`ServiceError` 读 `detail`，`StreamStatus.UpgradeRequired` → 升级页，`Approval` 关联键（`run_id, attempt, request_id`）、`getApproval`，收件箱 `subtype` / `vault_request_id` 与新 kind；311 个 debug 测试。
 - **13.16 云端审批**（`69f75db`）：`ApprovalCards`（从审批记录或事件流归并出卡片，含作废与 `approval_state` 优先规则）、`:design` 的 ApprovalCard、审批中心与详情（`getApproval` 对已处理 / 过期不报错）、`ApprovalGate`（BiometricPrompt：BIOMETRIC_STRONG 或 DEVICE_CREDENTIAL，无锁屏凭证不允许批准；拒绝不验证）；360 个 debug 测试。
+- **与 backend-core 同步对齐（用户 2026-10-23 07:28 的要求）**：合并到 `67f9e7a`（11.9），绑定重生成（`c90ec76`），App 适配（`8115eba`…`92957c3`）：`setCredentialDailyLimit` 接上、13.4 编辑页每日限额可改；`KeyRules` 改用 `VendorInfo.subscriptionKeyPrefixes` / `planOnlyBases`，删掉复制自 `proto::vendors` 的表和 `KeyRulesSyncTest`（已告知 backend-core 可去掉 `PLAN_ONLY_BASES`）；`instance_limit` / `_limit` 错误码判断“已达上限”，未知错误码按 HTTP 状态显示；删实例的确认文案与 Mock 语义（自己的计划删除、他人流水线暂停需改步骤、别名一起删）；别名页允许保留原有的停用 key；Mock 的模板领养全成或全不成。437 个 debug 测试 + 163 个 release 变体，lint 0 错误。
 
 进行中：
-- 13.5 对话与运行过程：Workflow `wf_2830c5a3-21b` 按用户要求暂停 4 小时（2026-10-23 07:03 起，北京时间；预约 11:20 恢复）。已完成的适配与 13.16 已缓存；13.5 的部分改动已作为快照提交（`ba78a8d`：ConversationBuilder、对话页、运行页、测试的一部分）。恢复命令：`Workflow({scriptPath: "<会话目录>/workflows/scripts/android-adapt-13-16-13-5-wf_2830c5a3-21b.js", resumeFromRunId: "wf_2830c5a3-21b"})`，恢复前把脚本里任务 C 的“注意”段改成描述当前工作区状态。之后：四维评审 → 反方核实 → 修复 → 最终验证。
+- 无。按用户要求（“让各会话把代码都同步对齐先，后面我再安排工作”）已停下等安排；03:20 UTC 的自动恢复提醒已停用。
 
-下一步：
-1. 13.16 云端审批 → 13.5 对话 → 13.6 计划 → 13.8 推送与收件箱 → 13.13 设置 → 13.7 团队与流水线 → 13.11 / 13.12，再做 P2 的 13.10、13.14。
-2. 每个工作包：Workflow（实现 → 多维评审 → 反方核实 → 修复 → 最终验证）→ 提交推送 → 更新本文件。
+下一步（等用户安排后）：
+1. 恢复 13.5 对话与运行过程：`Workflow({scriptPath: "<会话目录>/workflows/scripts/android-adapt-13-16-13-5-wf_2830c5a3-21b.js", resumeFromRunId: "wf_2830c5a3-21b"})`（适配与 13.16 已缓存；13.5 的部分改动在 `ba78a8d`，恢复前把脚本里任务 C 的“注意”段改成描述当前工作区状态），之后四维评审 → 反方核实 → 修复 → 最终验证。
+2. 13.6 计划 → 13.8 推送与收件箱 → 13.13 设置 → 13.7 团队与流水线 → 13.11 / 13.12，再做 P2 的 13.10、13.14。
+3. 每个工作包：Workflow → 提交推送 → 更新本文件。
 
 坑和决定：
 - 云端会话没有 KVM，跑不了模拟器：界面测试用 Robolectric 跑 Compose UI 测试，业务逻辑用 JVM 单元测试；真机联调靠 CI 产出的 APK。
