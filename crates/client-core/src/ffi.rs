@@ -148,7 +148,7 @@ pub struct DeviceMessage {
     pub id: String,
     pub from_device_id: String,
     pub to_device_id: String,
-    /// pair_response、pair_confirm、approval_request、approval_decision、capability、revoke……
+    /// pair_response、pair_confirm、approval_request、approval_decision、capability、revocation……
     pub kind: String,
     /// 消息内容（JSON）。
     pub body_json: String,

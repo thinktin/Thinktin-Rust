@@ -744,10 +744,19 @@ impl Api {
         Ok(())
     }
 
-    /// 吊销一台设备（丢了的手机、不用的电脑）：它的登录会话立即失效。
+    /// 吊销一台设备（丢了的手机、不用的电脑）：它的登录会话立即失效。吊销的是这台自己：本地的登录状态（和缓存）
+    /// 马上清掉，不用等下一个请求被拒。
     pub async fn revoke_device(&self, id: DeviceId) -> Result<()> {
+        let mine = self
+            .session()
+            .and_then(|s| s.device_id.parse::<DeviceId>().ok())
+            .is_some_and(|d| d == id);
         self.empty(Method::DELETE, &format!("/v1/devices/{id}"), None)
-            .await
+            .await?;
+        if mine {
+            self.set_session(None);
+        }
+        Ok(())
     }
 
     pub async fn set_push(&self, channel: PushChannelKind, token: &str) -> Result<()> {

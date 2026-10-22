@@ -1014,6 +1014,20 @@ async fn ffi_account_and_devices() {
     phone.revoke_device(mac.id.clone()).await.unwrap();
     assert!(matches!(laptop.me().await, Err(ClientError::SignedOut)));
     assert_eq!(phone.devices().await.unwrap().len(), 1);
+    // 吊销的是这台自己（id 大小写不同也算）：本地马上退出登录，缓存清掉。
+    let (tablet, _ts, _td) = ffi_login(&e, "13800138507", "ios", "iPad").await;
+    tablet.instances().await.unwrap();
+    let me = tablet
+        .devices()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|d| d.current)
+        .unwrap();
+    tablet.revoke_device(me.id.to_uppercase()).await.unwrap();
+    assert!(!tablet.signed_in());
+    assert!(tablet.cached_instances().unwrap().is_empty());
+    assert_eq!(phone.devices().await.unwrap().len(), 1);
 
     // 注销：验证码发到自己的手机号；错的码不行；成功后本地也退出登录。
     phone.send_self_code("delete_account".into()).await.unwrap();
