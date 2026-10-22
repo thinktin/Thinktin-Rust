@@ -721,6 +721,34 @@ pub struct Run {
     pub created_at: DateTime<Utc>,
     pub started_at: Option<DateTime<Utc>>,
     pub finished_at: Option<DateTime<Utc>>,
+    /// 等的是什么（[`wait_code`]），只在 `waiting_quota`、`waiting_device` 时有。是字符串不是枚举：以后加了新值，
+    /// 老的客户端照样解析得了。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait_code: Option<String>,
+}
+
+/// 运行在等什么（11.8）：App 据此决定显示“去换 key”还是“稍后自动重试”。
+pub mod wait_code {
+    /// key 无效或没有权限：要用户换 key。
+    pub const INVALID: &str = "invalid";
+    /// 欠费、额度用完：要用户充值或换 key（每小时也自己再试一次）。
+    pub const NO_BALANCE: &str = "no_balance";
+    /// 没有能用的 key（都停用了、当天预算用完、解不开）：要用户处理（每小时也自己再试一次）。
+    pub const UNAVAILABLE: &str = "unavailable";
+    /// 被限流：几分钟后自己继续，不用处理。
+    pub const RATE_LIMITED: &str = "rate_limited";
+    /// 模型服务繁忙或连不上：几分钟后自己继续，不用处理。
+    pub const OVERLOADED: &str = "overloaded";
+    /// 等用户的电脑上线。
+    pub const DEVICE_OFFLINE: &str = "device_offline";
+    pub const ALL: [&str; 6] = [
+        INVALID,
+        NO_BALANCE,
+        UNAVAILABLE,
+        RATE_LIMITED,
+        OVERLOADED,
+        DEVICE_OFFLINE,
+    ];
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1123,5 +1151,29 @@ mod tests {
         ] {
             assert!(!valid_vault_name(bad), "{bad}");
         }
+    }
+
+    /// 老服务端、缓存里的运行没有 `wait_code`，新服务端可能给出不认识的值：都解析得了。
+    #[test]
+    fn runs_parse_with_or_without_a_wait_code() {
+        let base = serde_json::json!({
+            "id": RunId::new(), "kind": "agent", "instance_id": InstanceId::new(), "plan_id": null,
+            "parent_run_id": null, "root_run_id": RunId::new(), "step_key": null, "source": "user",
+            "prompt": "p", "state": "waiting_quota", "state_reason": null, "attempt": 1, "tokens_used": 0,
+            "summary": null, "error": null, "created_at": "2026-10-22T00:00:00Z", "started_at": null,
+            "finished_at": null
+        });
+        let old: Run = serde_json::from_value(base.clone()).unwrap();
+        assert_eq!(old.wait_code, None);
+        assert!(
+            serde_json::to_value(&old)
+                .unwrap()
+                .get("wait_code")
+                .is_none()
+        );
+        let mut newer = base;
+        newer["wait_code"] = serde_json::json!("future_thing");
+        let r: Run = serde_json::from_value(newer).unwrap();
+        assert_eq!(r.wait_code.as_deref(), Some("future_thing"));
     }
 }

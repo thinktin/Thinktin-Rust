@@ -31,6 +31,20 @@ pub enum KeyProblem {
     Overloaded,
 }
 
+impl KeyProblem {
+    /// 接口里的等待原因（`Run.wait_code`、`run.state` 事件的 `wait_code`）。
+    pub fn code(self) -> &'static str {
+        use proto::domain::wait_code;
+        match self {
+            Self::Invalid => wait_code::INVALID,
+            Self::NoBalance => wait_code::NO_BALANCE,
+            Self::Unavailable => wait_code::UNAVAILABLE,
+            Self::RateLimited => wait_code::RATE_LIMITED,
+            Self::Overloaded => wait_code::OVERLOADED,
+        }
+    }
+}
+
 /// 最近一次失败离现在超过这么久，就不算卡住（agent 在干别的，比如跑工具）。
 fn stale() -> TimeDelta {
     TimeDelta::minutes(10)
@@ -264,6 +278,32 @@ mod tests {
                 p.transient(),
                 p.retry_after() == Some(Duration::from_secs(300))
             );
+        }
+    }
+
+    /// 等待原因是接口的一部分：字符串不能变，互不相同，都在 `wait_code::ALL` 里。
+    #[test]
+    fn wait_codes_are_stable() {
+        let all = [
+            KeyProblem::Invalid,
+            KeyProblem::NoBalance,
+            KeyProblem::Unavailable,
+            KeyProblem::RateLimited,
+            KeyProblem::Overloaded,
+        ]
+        .map(KeyProblem::code);
+        assert_eq!(
+            all,
+            [
+                "invalid",
+                "no_balance",
+                "unavailable",
+                "rate_limited",
+                "overloaded"
+            ]
+        );
+        for c in all {
+            assert!(proto::domain::wait_code::ALL.contains(&c));
         }
     }
 }

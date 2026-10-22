@@ -316,6 +316,12 @@ pub struct Run {
     pub created_at_ms: i64,
     pub started_at_ms: Option<i64>,
     pub finished_at_ms: Option<i64>,
+    /// 等的是什么，只在 waiting_quota / waiting_device 时有：invalid（key 无效，去换 key）、no_balance（欠费：充值或
+    /// 换 key，每小时也自己再试）、unavailable（没有能用的 key：停用了或当天额度用完，每小时也自己再试）、
+    /// rate_limited / overloaded（几分钟后自己继续，不用处理）、device_offline（等电脑上线）。以后可能加新值，
+    /// 不认识的按 state 显示。
+    #[uniffi(default = None)]
+    pub wait_code: Option<String>,
 }
 
 impl From<d::Run> for Run {
@@ -339,6 +345,7 @@ impl From<d::Run> for Run {
             created_at_ms: ms(r.created_at),
             started_at_ms: ms_opt(r.started_at),
             finished_at_ms: ms_opt(r.finished_at),
+            wait_code: r.wait_code,
         }
     }
 }

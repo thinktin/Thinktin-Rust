@@ -1510,3 +1510,51 @@ async fn new_users_get_the_device_language() {
     let again = login(client("zh-Hans-CN")).await;
     assert_eq!((again.new_user, again.user.locale.as_str()), (false, "en"));
 }
+
+/// 运行在等什么（11.8）：等 key 的运行带着结构化的原因。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ffi_runs_say_what_they_wait_for() {
+    use proto::domain::{RunId, RunState};
+    use store::RunChange;
+    let Some(e) = env().await else { return };
+    let (c, _store, _d) = ffi_login(&e, "13800138524", "ios", "iPhone").await;
+    let inst = c.adopt("claude".into(), "助手".into(), None).await.unwrap();
+    let run = c
+        .create_run(inst.id.clone(), "整理邮件".into())
+        .await
+        .unwrap();
+    assert_eq!(run.wait_code, None);
+    let id: RunId = run.id.parse().unwrap();
+    let mut w = e.t.db.worker().await.unwrap();
+    w.claim_next_run("n1", std::time::Duration::from_secs(60))
+        .await
+        .unwrap()
+        .unwrap();
+    w.transition_run(id, "n1", RunState::Running, &RunChange::default())
+        .await
+        .unwrap();
+    w.transition_run(
+        id,
+        "n1",
+        RunState::WaitingQuota,
+        &RunChange {
+            reason: Some("欠费".into()),
+            release_lease: true,
+            wait_code: Some("no_balance"),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    w.commit().await.unwrap();
+    assert_eq!(
+        c.get_run(run.id.clone())
+            .await
+            .unwrap()
+            .wait_code
+            .as_deref(),
+        Some("no_balance")
+    );
+    let listed = c.runs(inst.id.clone(), 10).await.unwrap();
+    assert_eq!(listed[0].wait_code.as_deref(), Some("no_balance"));
+}
