@@ -15,6 +15,10 @@ use crate::{Error, Result, Tenant, Tx, Worker, parse, secs};
 /// 实时活动最多显示 8 小时（苹果的上限，之后系统自己结束）：开了更久的不再发，也不算开着的。
 const MAX_AGE_SECS: f64 = 8.0 * 3600.0;
 
+/// 运行结束这么久以后不能再登记（实时活动的令牌在运行结束前后才到的，end 还要发得到；早就结束了的
+/// App 自己在本地结束它）。
+const LATE_REGISTER_SECS: f64 = 600.0;
+
 /// 后台领到的、该发的一个实时活动，连同运行现在的样子。
 #[derive(Clone, PartialEq)]
 pub struct LiveActivity {
@@ -67,7 +71,9 @@ pub enum LiveSettle {
     },
     /// 暂时失败：`at` 再试。
     Retry { error: String, at: DateTime<Utc> },
-    /// 不再发（令牌失效、请求被拒、放弃了、没开启运行就结束了）。
+    /// 连着暂时失败太多次，不再发（App 再登记同一个令牌可以从头来）。
+    GiveUp { error: String },
+    /// 不再发（令牌失效、请求被拒、没开启运行就结束了）。
     End { error: Option<String> },
 }
 
@@ -119,8 +125,9 @@ impl Row {
 
 impl Tx<Tenant> {
     /// App 开了一个实时活动（或者远程开启的那个拿到了令牌）：登记它的推送令牌。一台设备一个运行只有一个：
-    /// 再报一次就换令牌，发送进度清掉，现在的状态马上重发一次（App 刚开的实时活动、换了的令牌都要对上现在的状态）。
-    /// 只有 iPhone、iPad 有实时活动；一台设备同时开着的最多 `max_open` 个。
+    /// 换了令牌就把发过的内容清掉，现在的状态再发一次（离上次发照样要隔一阵）；同一个令牌再报一次什么都不变
+    /// （放弃了的从头来）。只有 iPhone、iPad 有实时活动；一台设备同时开着的最多 `max_open` 个；运行结束很久了的
+    /// 不能登记。
     pub async fn register_live_activity(
         &mut self,
         device: DeviceId,
@@ -128,12 +135,33 @@ impl Tx<Tenant> {
         token: &str,
         max_open: u32,
     ) -> Result<()> {
-        let exists: Option<i32> = sqlx::query_scalar("SELECT 1 FROM runs WHERE id = $1")
-            .bind(run.0)
-            .fetch_optional(self.conn())
+        // 按设备加锁：数和插入在同一个事务里，并发的请求不能一起超过上限。
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(format!("live_activities/{}", device.0))
+            .execute(self.conn())
             .await?;
-        if exists.is_none() {
-            return Err(Error::NotFound);
+        let late: Option<bool> = sqlx::query_scalar(
+            "SELECT coalesce(finished_at < now() - make_interval(secs => $2), false) FROM runs WHERE id = $1",
+        )
+        .bind(run.0)
+        .bind(LATE_REGISTER_SECS)
+        .fetch_optional(self.conn())
+        .await?;
+        match late {
+            None => return Err(Error::NotFound),
+            Some(true) => return Err(Error::Invalid("the run has already finished".into())),
+            Some(false) => {}
+        }
+        let ios: Option<i32> = sqlx::query_scalar(
+            "SELECT 1 FROM devices WHERE id = $1 AND revoked_at IS NULL AND platform = 'ios'",
+        )
+        .bind(device.0)
+        .fetch_optional(self.conn())
+        .await?;
+        if ios.is_none() {
+            return Err(Error::Invalid(
+                "live activities are only available on iPhone and iPad".into(),
+            ));
         }
         let open: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM live_activities WHERE device_id = $1 AND run_id <> $2 \
@@ -149,32 +177,29 @@ impl Tx<Tenant> {
                 "at most {max_open} live activities at a time on one device"
             )));
         }
-        let done = sqlx::query(
+        // 上次发的时间和锁不动：换令牌换得再勤也只是隔一阵发一次，正在发的那一次记不上（令牌对不上），放开锁后
+        // 新令牌接着发。
+        sqlx::query(
             "INSERT INTO live_activities (device_id, run_id, user_id, origin, push_token) \
-             SELECT d.id, $2, d.user_id, 'app', $3 FROM devices d \
-             WHERE d.id = $1 AND d.revoked_at IS NULL AND d.platform = 'ios' \
+             SELECT d.id, $2, d.user_id, 'app', $3 FROM devices d WHERE d.id = $1 \
              ON CONFLICT (device_id, run_id) DO UPDATE SET push_token = EXCLUDED.push_token, \
-               sent_state = NULL, sent_steps = NULL, sent_at = NULL, attempts = 0, retry_at = NULL, \
-               last_error = NULL, locked_by = NULL, locked_until = NULL, ended_at = NULL",
+               sent_state = NULL, sent_steps = NULL, attempts = 0, retry_at = NULL, last_error = NULL, \
+               ended_at = NULL, gave_up = false \
+             WHERE live_activities.push_token IS DISTINCT FROM EXCLUDED.push_token OR live_activities.gave_up",
         )
         .bind(device.0)
         .bind(run.0)
         .bind(token)
         .execute(self.conn())
         .await?;
-        if done.rows_affected() == 0 {
-            return Err(Error::Invalid(
-                "live activities are only available on iPhone and iPad".into(),
-            ));
-        }
         Ok(())
     }
 
     /// App 关掉了这个运行的实时活动（用户划掉了、App 自己结束了）：不再发。没登记过也算成功。
     pub async fn end_live_activity(&mut self, device: DeviceId, run: RunId) -> Result<()> {
         sqlx::query(
-            "UPDATE live_activities SET ended_at = now(), locked_by = NULL, locked_until = NULL \
-             WHERE device_id = $1 AND run_id = $2 AND ended_at IS NULL",
+            "UPDATE live_activities SET ended_at = now(), gave_up = false \
+             WHERE device_id = $1 AND run_id = $2 AND (ended_at IS NULL OR gave_up)",
         )
         .bind(device.0)
         .bind(run.0)
@@ -247,6 +272,11 @@ impl Tx<Worker> {
         run: RunId,
         max_open: u32,
     ) -> Result<u64> {
+        // 按用户加锁：两个副本同时领到这个用户的两个计划运行，数和插入也不能一起超过上限。
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(format!("live_starts/{}", user.0))
+            .execute(self.conn())
+            .await?;
         let done = sqlx::query(
             "INSERT INTO live_activities (device_id, run_id, user_id, origin) \
              SELECT d.id, $2, d.user_id, 'push' FROM devices d \
@@ -269,18 +299,22 @@ impl Tx<Worker> {
 
     /// 领该发的实时活动，锁 `lock_for`：待远程开启的；还没发过的；状态变了、离上次发过了 `state_gap` 的；只是步数变了、
     /// 离上次发过了 `step_gap` 的（步数变得勤，苹果对更新也有预算）；还有远程开启了却一直没拿到令牌、运行已经结束的
-    /// （没法再发，了结掉）。设备下线了、开了太久的不领。
+    /// （没法再发，了结掉）。设备下线了、开了太久的不领。等得最久的先领，一个用户一次最多 `per_user` 个（几个账号
+    /// 刷不满整批，别人的照样发得出去）。
     pub async fn claim_live_activities(
         &mut self,
         owner: &str,
         lock_for: Duration,
         limit: i64,
+        per_user: i64,
         state_gap: Duration,
         step_gap: Duration,
     ) -> Result<Vec<LiveActivity>> {
         let rows: Vec<Row> = sqlx::query_as(
-            "WITH due AS ( \
-               SELECT x.device_id, x.run_id FROM live_activities x \
+            "WITH cand AS ( \
+               SELECT x.device_id, x.run_id, coalesce(x.sent_at, x.created_at) AS since, \
+                 row_number() OVER (PARTITION BY x.user_id ORDER BY coalesce(x.sent_at, x.created_at)) AS n \
+               FROM live_activities x \
                JOIN runs r ON r.id = x.run_id \
                JOIN devices d ON d.id = x.device_id \
                WHERE x.ended_at IS NULL AND d.revoked_at IS NULL \
@@ -293,8 +327,13 @@ impl Tx<Worker> {
                      ELSE x.sent_at IS NULL \
                        OR (r.state IS DISTINCT FROM x.sent_state AND x.sent_at <= now() - make_interval(secs => $4)) \
                        OR (r.steps IS DISTINCT FROM x.sent_steps AND x.sent_at <= now() - make_interval(secs => $5)) \
-                     END \
-               ORDER BY x.created_at \
+                     END), \
+             due AS ( \
+               SELECT x.device_id, x.run_id FROM live_activities x \
+               JOIN cand c ON c.device_id = x.device_id AND c.run_id = x.run_id \
+               WHERE c.n <= $7 AND x.ended_at IS NULL \
+                 AND (x.locked_until IS NULL OR x.locked_until < now()) \
+               ORDER BY c.since \
                LIMIT $3 \
                FOR UPDATE OF x SKIP LOCKED), \
              claimed AS ( \
@@ -313,60 +352,87 @@ impl Tx<Worker> {
         .bind(secs(state_gap))
         .bind(secs(step_gap))
         .bind(MAX_AGE_SECS)
+        .bind(per_user)
         .fetch_all(self.conn())
         .await?;
         rows.into_iter().map(Row::into_activity).collect()
     }
 
-    /// 记下发送结果，放开锁。锁已经不在自己手里（过期后被别人领了、App 刚换了令牌）返回 [`Error::LeaseLost`]。
+    /// 记下发送结果，放开锁。`token` 是这次发给的实时活动令牌（远程开启的那一次是 `None`）：发送期间 App 换了令牌，
+    /// 结果不记（新令牌还没收到），只放开锁，新令牌接着发。锁已经不在自己手里（过期后被别人领了）返回
+    /// [`Error::LeaseLost`]。
     pub async fn settle_live_activity(
         &mut self,
         device: DeviceId,
         run: RunId,
         owner: &str,
+        token: Option<&str>,
         settle: &LiveSettle,
     ) -> Result<()> {
+        // 只记自己锁着、令牌没换过的。
+        macro_rules! mine {
+            ($set:literal) => {
+                concat!(
+                    "UPDATE live_activities SET ",
+                    $set,
+                    ", locked_by = NULL, locked_until = NULL \
+                     WHERE device_id = $1 AND run_id = $2 AND locked_by = $3 \
+                       AND push_token IS NOT DISTINCT FROM $4"
+                )
+            };
+        }
+        let sql = match settle {
+            LiveSettle::Sent { .. } => mine!(
+                "sent_state = $5, sent_steps = $6, sent_at = now(), \
+                 start_sent_at = CASE WHEN $7 THEN now() ELSE start_sent_at END, \
+                 ended_at = CASE WHEN $8 THEN coalesce(ended_at, now()) ELSE ended_at END, \
+                 attempts = 0, retry_at = NULL, last_error = NULL"
+            ),
+            LiveSettle::Retry { .. } => {
+                mine!("attempts = attempts + 1, last_error = $5, retry_at = $6")
+            }
+            LiveSettle::GiveUp { .. } => mine!(
+                "gave_up = ended_at IS NULL, ended_at = coalesce(ended_at, now()), last_error = $5"
+            ),
+            LiveSettle::End { .. } => {
+                mine!("ended_at = coalesce(ended_at, now()), last_error = coalesce($5, last_error)")
+            }
+        };
+        let cut = |e: &str| e.chars().take(500).collect::<String>();
+        let q = sqlx::query(sql)
+            .bind(device.0)
+            .bind(run.0)
+            .bind(owner)
+            .bind(token);
         let q = match settle {
             LiveSettle::Sent {
                 state,
                 steps,
                 started,
                 ended,
-            } => sqlx::query(
-                "UPDATE live_activities SET sent_state = $4, sent_steps = $5, sent_at = now(), \
-                   start_sent_at = CASE WHEN $6 THEN now() ELSE start_sent_at END, \
-                   ended_at = CASE WHEN $7 THEN now() ELSE ended_at END, \
-                   attempts = 0, retry_at = NULL, last_error = NULL, locked_by = NULL, locked_until = NULL \
-                 WHERE device_id = $1 AND run_id = $2 AND locked_by = $3",
-            )
-            .bind(device.0)
-            .bind(run.0)
-            .bind(owner)
-            .bind(state.as_str())
-            .bind(i32::try_from(*steps).unwrap_or(i32::MAX))
-            .bind(started)
-            .bind(ended),
-            LiveSettle::Retry { error, at } => sqlx::query(
-                "UPDATE live_activities SET attempts = attempts + 1, retry_at = $5, last_error = $4, \
-                   locked_by = NULL, locked_until = NULL \
-                 WHERE device_id = $1 AND run_id = $2 AND locked_by = $3",
-            )
-            .bind(device.0)
-            .bind(run.0)
-            .bind(owner)
-            .bind(error.chars().take(500).collect::<String>())
-            .bind(at),
-            LiveSettle::End { error } => sqlx::query(
-                "UPDATE live_activities SET ended_at = now(), last_error = coalesce($4, last_error), \
-                   locked_by = NULL, locked_until = NULL \
-                 WHERE device_id = $1 AND run_id = $2 AND locked_by = $3",
-            )
-            .bind(device.0)
-            .bind(run.0)
-            .bind(owner)
-            .bind(error.as_ref().map(|e| e.chars().take(500).collect::<String>())),
+            } => q
+                .bind(state.as_str())
+                .bind(i32::try_from(*steps).unwrap_or(i32::MAX))
+                .bind(started)
+                .bind(ended),
+            LiveSettle::Retry { error, at } => q.bind(cut(error)).bind(at),
+            LiveSettle::GiveUp { error } => q.bind(cut(error)),
+            LiveSettle::End { error } => q.bind(error.as_deref().map(cut)),
         };
-        if q.execute(self.conn()).await?.rows_affected() == 0 {
+        if q.execute(self.conn()).await?.rows_affected() == 1 {
+            return Ok(());
+        }
+        // 令牌换了：只放开锁。
+        let released = sqlx::query(
+            "UPDATE live_activities SET locked_by = NULL, locked_until = NULL \
+             WHERE device_id = $1 AND run_id = $2 AND locked_by = $3",
+        )
+        .bind(device.0)
+        .bind(run.0)
+        .bind(owner)
+        .execute(self.conn())
+        .await?;
+        if released.rows_affected() == 0 {
             return Err(Error::LeaseLost {
                 owner: owner.to_owned(),
             });

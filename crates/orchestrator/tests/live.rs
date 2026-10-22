@@ -15,6 +15,8 @@ use store::testing::TestDb;
 use store::{NewInstance, NewRun};
 
 const PHONE: &str = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90";
+/// App 换了的令牌（同一个实时活动重新开了一个）。
+const PHONE2: &str = "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0";
 const START: &str = "5747a77ec0de5747a77ec0de5747a77ec0de5747a77ec0de5747a77ec0de5747";
 
 #[derive(Default)]
@@ -353,11 +355,14 @@ async fn dead_tokens_retries_and_giving_up() {
     );
     assert_eq!(d.tick().await.unwrap(), 1);
     assert_eq!(s.row(&run).await, (Some("ExpiredToken".into()), true, 0));
-
-    // 暂时失败：退避重试，次数到了就不再发。App 重新登记后从头来。
+    // 失效的令牌再报一次：不重新打开。
     s.register(&run, PHONE).await;
+    assert_eq!(d.tick().await.unwrap(), 0);
+
+    // 暂时失败：退避重试，次数到了就不再发。App 再报一次同一个令牌就从头来。
+    s.register(&run, PHONE2).await;
     rec.set(
-        PHONE,
+        PHONE2,
         PushOutcome::Retry {
             after: None,
             reason: "ServiceUnavailable".into(),
@@ -378,8 +383,8 @@ async fn dead_tokens_retries_and_giving_up() {
         )
     );
     assert_eq!(d.tick().await.unwrap(), 0);
-    rec.set(PHONE, PushOutcome::Delivered { id: None });
-    s.register(&run, PHONE).await;
+    rec.set(PHONE2, PushOutcome::Delivered { id: None });
+    s.register(&run, PHONE2).await;
     assert_eq!(d.tick().await.unwrap(), 1);
     assert_eq!(s.row(&run).await, (None, false, 0));
     assert_eq!(

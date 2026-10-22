@@ -62,6 +62,8 @@ pub fn attributes(run: RunId, instance: &str, title: &str) -> Value {
 pub struct LiveConfig {
     pub tick: Duration,
     pub batch: i64,
+    /// 一个用户一次最多领几个（几个账号刷不满整批）。
+    pub per_user: i64,
     /// 同时发几条。
     pub concurrency: usize,
     pub lock_for: Duration,
@@ -80,6 +82,7 @@ impl Default for LiveConfig {
         Self {
             tick: Duration::from_secs(1),
             batch: 50,
+            per_user: 5,
             concurrency: 8,
             lock_for: Duration::from_secs(60),
             state_gap: Duration::from_secs(2),
@@ -129,6 +132,7 @@ impl LiveDispatcher {
                 &self.node_id,
                 self.cfg.lock_for,
                 self.cfg.batch,
+                self.cfg.per_user,
                 self.cfg.state_gap,
                 self.cfg.step_gap,
             )
@@ -155,16 +159,22 @@ impl LiveDispatcher {
             LiveSettle::Sent { .. } => "sent",
             LiveSettle::Retry { .. } => "retried",
             LiveSettle::End { error: None } => "ended",
-            LiveSettle::End { error: Some(_) } => "dropped",
+            LiveSettle::End { error: Some(_) } | LiveSettle::GiveUp { .. } => "dropped",
         };
         metrics::counter!("thinktin_live_activity_total", "result" => result).increment(1);
         let mut w = self.db.worker().await?;
         match w
-            .settle_live_activity(a.device_id, a.run_id, &self.node_id, &settle)
+            .settle_live_activity(
+                a.device_id,
+                a.run_id,
+                &self.node_id,
+                a.push_token.as_deref(),
+                &settle,
+            )
             .await
         {
             Ok(()) => w.commit().await?,
-            // 锁过期后被别人领了，或者 App 刚换了令牌：交给新的那一轮。
+            // 锁过期后被别人领了：交给新的那一轮。
             Err(store::Error::LeaseLost { .. }) => {
                 warn!(run = %a.run_id, "live activity changed hands during delivery");
             }
@@ -260,8 +270,8 @@ impl LiveDispatcher {
     fn retry(&self, a: &LiveActivity, reason: String, after: Option<Duration>) -> LiveSettle {
         let attempts = a.attempts + 1;
         if attempts >= self.cfg.max_attempts {
-            return LiveSettle::End {
-                error: Some(format!("gave up after {attempts} attempts: {reason}")),
+            return LiveSettle::GiveUp {
+                error: format!("gave up after {attempts} attempts: {reason}"),
             };
         }
         let backoff = self

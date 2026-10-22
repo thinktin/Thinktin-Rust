@@ -27,6 +27,8 @@ CREATE TABLE live_activities (
     locked_until  timestamptz,
     -- 不再发了：发过 end（运行结束）、App 说关掉了、令牌失效、放弃了。
     ended_at      timestamptz,
+    -- 是连着暂时失败、放弃了的（App 再登记同一个令牌可以从头来；令牌失效、关掉了的不行）。
+    gave_up       boolean NOT NULL DEFAULT false,
     created_at    timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (device_id, run_id),
     FOREIGN KEY (device_id, user_id) REFERENCES devices (id, user_id) ON DELETE CASCADE,
@@ -41,7 +43,7 @@ ALTER TABLE live_activities FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant ON live_activities TO thinktin_app USING (user_id = app_user_id()) WITH CHECK (user_id = app_user_id());
 
 GRANT SELECT, INSERT ON live_activities TO thinktin_app;
--- 业务接口只登记令牌、关掉（发送进度、锁只有后台写）；登记令牌时把发送进度清掉，现在的状态重发一次。
-GRANT UPDATE (push_token, sent_state, sent_steps, sent_at, attempts, retry_at, last_error, locked_by, locked_until,
-              ended_at) ON live_activities TO thinktin_app;
+-- 业务接口只登记令牌、关掉（上次发的时间、锁只有后台写）；换了令牌时把发过的内容清掉，现在的状态重发一次。
+GRANT UPDATE (push_token, sent_state, sent_steps, attempts, retry_at, last_error, ended_at, gave_up)
+    ON live_activities TO thinktin_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON live_activities TO thinktin_worker;

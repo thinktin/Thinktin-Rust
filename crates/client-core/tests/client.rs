@@ -1372,6 +1372,7 @@ async fn ffi_live_activities() {
             "test",
             std::time::Duration::from_secs(60),
             10,
+            10,
             std::time::Duration::ZERO,
             std::time::Duration::ZERO,
         )

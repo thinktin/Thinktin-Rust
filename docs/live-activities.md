@@ -20,7 +20,7 @@
 
 | 接口 | client-core | 说明 |
 |---|---|---|
-| `PUT /v1/runs/{id}/live-activity` `{token}` | `register_live_activity` | 登记这台设备上这个运行的实时活动的推送令牌，204。再登记一次就换令牌，现在的状态马上重发一次。只有 iPhone、iPad；一台设备同时最多 10 个；别人的运行 404 |
+| `PUT /v1/runs/{id}/live-activity` `{token}` | `register_live_activity` | 登记这台设备上这个运行的实时活动的推送令牌，204。换了令牌：现在的状态再发一次（离上次发照样隔 2 秒）；同一个令牌再报一次什么都不变（连着失败放弃了的从头来）。只有 iPhone、iPad；一台设备同时最多 10 个；运行结束 10 分钟以上的 422（App 在本地结束它）；别人的运行 404 |
 | `DELETE /v1/runs/{id}/live-activity` | `end_live_activity` | 不再推送，204 |
 | `PUT /v1/devices/current/live-activity-start` `{token}` | `set_live_activity_start_token(Some)` | 登记推送开启令牌，204；只有 iPhone、iPad |
 | `DELETE /v1/devices/current/live-activity-start` | `set_live_activity_start_token(None)` | 清掉 |
@@ -60,14 +60,16 @@ struct RunActivityAttributes: ActivityAttributes {
   - **start**（远程开启）：发到推送开启令牌，加 `attributes-type`、`attributes`、`alert`（标题是实例名，正文“计划开始运行了”，
     按用户的语言）和 `input-push-token: 1`（iOS 18 起系统把新实时活动的令牌交给 App）。
   - **update**：运行没结束时。**end**：运行结束了（成功、失败、取消），之后不再发；系统按默认的时间从锁屏上移走。
-- 合并和限频：后台每秒看一次哪些实时活动的内容和上次发的不一样，只发现在的样子（中间的变化合成一次）。状态变了的
+- 合并和限频：后台每秒看一次哪些实时活动的内容和上次发的不一样，只发现在的样子（中间的变化合成一次）。等得最久的
+  先发，一个用户每秒最多 5 个（几个账号刷不满整批）。状态变了的
   离上次至少 2 秒（同一秒里的两次更新系统会丢掉后一次），优先级 10；只是步数变了的离上次至少 20 秒，优先级 5（苹果对
   优先级 10 的更新有预算）。一小时内送不到就算了（`apns-expiration`），反正系统只留最后一条。
 - 远程开启的：一台设备同时开着的最多 2 个；开启后 App 一直没报上令牌、运行就结束了的，了结掉（没法发 end，系统 8 小时
   后自己结束）。
 - 结果：推送开启令牌失效（410、`BadDeviceToken`）清掉，这台设备不再远程开启，直到 App 报上新的；实时活动的令牌失效
   （用户划掉了、系统结束了）或者请求被拒，这个实时活动不再发；暂时失败（429、5xx、网络）退避重试（5 秒起翻倍，最多
-  10 分钟），连着 5 次就不再发。App 重新登记令牌就从头来。
+  10 分钟），连着 5 次就不再发；App 再报一次令牌（同一个也行）就从头来。令牌失效、App 关掉了的，同一个令牌再报也不
+  重新打开（换了令牌才算新的）。发送期间 App 换了令牌，这一次的结果不记，新令牌接着发。
 - 实时活动最多显示 8 小时（苹果的上限），开了更久的不再发；一天前的记录由维护任务删掉。
 - 指标：`thinktin_live_activity_total{result=sent|retried|ended|dropped}`。
 
@@ -76,6 +78,7 @@ struct RunActivityAttributes: ActivityAttributes {
 | 测试 | 位置 |
 |---|---|
 | 登记、换令牌重发、关掉、只有 iPhone、别人的运行、领取的条件（没发过、状态变了、步数隔一阵、重试时间）、锁、远程开启的数量上限、没拿到令牌就结束的了结、开启令牌只属于一台设备、下线清掉 | `crates/store/src/tests.rs`（`live_activities_follow_their_runs_per_device`） |
+| 刷令牌占不满整批（每个用户的份额、等得最久的先领）、同一个令牌不重新打开、放弃了的从头来、早就结束的运行、并发登记和并发远程开启超不过上限 | `crates/store/src/tests.rs`（`live_activities_resist_floods_and_races`） |
 | 主题、推送类型、优先级、开启的载荷、令牌失效 | `crates/notify/src/apns.rs`（`live_activities_use_their_own_topic_and_payload`） |
 | 跟着运行更新、合并、低优先级的步数更新、end；计划运行远程开启（用户自己发起的不开）、标题过滤；令牌失效、重试和放弃、重新登记 | `crates/orchestrator/tests/live.rs` |
 | 接口 | `crates/gateway/tests/api.rs`（`live_activities_over_http`） |
