@@ -15,6 +15,7 @@
 - iOS CI 第一次全绿（run 39720152852，`b015212`）：Linux 作业、macOS 上 Xcode 26.6 编 App 和模拟器测试都通过。
 - 合进 backend-core 的 11.8 前半（`ccf928f`）：listRuns、cachedEventsBefore、setAcceptLanguage、upgradeRequired、日志接口、Run.waitCode、Credential.activeProtocol、AgentInfo 的介绍 / 上游 / 许可说明；现有代码不用改就能编。
 - 11.7 / 10.6 / 5.5 接入：ThinktinKit 新模型（设备、设备消息、结构化计划策略、计划修改、补跑、团队与模板、内容举报、实时活动限制），ClientProtocol 共 97 个方法，MockClient 全部实现并按服务端规则校验；CoreClient 全部接上真实核心，不再有 `unsupported`；Linux 上 277 个测试通过，严格格式检查、uicheck 两种都过。审查修了一处：下线本机时设备 id 按大小写比较，没退出本地登录。
+- 12.16 应用框架与导航（W1 第一轮）：`ThinktinKit/Navigation`（`AppRoute` 41 个页面及其功能 / 出现方式 / 离线策略 / 中英文标题，`DeepLink`、`PushPayload`、`Router`）；`ViewModels/Shell`（`AppModel`：登录状态四态、启动先缓存再刷新、角标、冻结重查、强制升级停事件流、连接横幅、离线、当前实例记忆；`ObservedClient`：包住客户端，任何调用的全局错误、登录 / 退出自动切换）；`ThinktinUI/Shell`（`AppShell`：导航栈 + 抽屉 + 实例切换菜单 + 全局横幅 + 冻结页 / 升级页 / 新任务）；14 个功能目录的接入点 `Screens/<功能>/<功能>Destination.swift`（占位页，约定见 docs/ios.md 9.1）；App 的 `onOpenURL` 交给 `Router`。Linux 上 342 个测试通过，uicheck 两种和 `test` 都过，严格格式检查干净。
 
 进行中：
 - W1 第一轮（工作流 wf_54cd35af-e50；第一次 wf_4136b616-413 被用量限额打断，没留下改动）：11.8 接入（worktree，分支 `ios-w1/11.8`）和 12.16 应用框架同时做，合并后再（路由、深链、抽屉、全局状态、每个功能目录的 `XxxDestination` 接入点），然后 12.2、12.3、12.5、12.6 在各自的 git worktree 里并行，分别提交到 `ios-w1/12.2-account`、`ios-w1/12.3-agents`、`ios-w1/12.5-conversation`、`ios-w1/12.6-plans`，由本会话合并回 ios-app。
@@ -27,8 +28,10 @@
 3. W2：12.13、12.10、12.20、12.21、12.19；12.11 最后；12.9 随 macOS（P3）。
 
 坑和决定：
+- PR：`ios-app` → `main` 的草稿 PR #8（2026-10-22 开，用户授权自行决定）。本会话订阅了它的 CI 和评审事件，负责把它保持在绿色；P1 的 iOS 包完成后转为可审阅，合并要人审。后端 PR #5 合进 main 之前，#8 的差异里带着后端改动。
 - `CoreClient.revokeDevice` 下线本机时额外调一次 `core.logout()` 清本地会话和缓存（client-core 的 `revoke_device` 只发 DELETE）；已建议 backend-core 在 client-core 里做，做了之后这行可以删。
-- `tools/apple/uicheck/run.sh test` 在 Linux 上抽屉测试会失败：桩 SwiftUI 的 `sizeThatFits` 总是返回提议的尺寸，关着的抽屉测不出 0。以 macOS CI 为准。
+- 桩 SwiftUI 的 `sizeThatFits` 总是返回提议的尺寸：界面测试别断言“关着的抽屉宽度是 0”这类尺寸（12.16 换掉旧抽屉时去掉了那条测试）。以 macOS CI 为准。
+- 12.16 的决定：`thinktin://instance/{id}` 打开实例详情（和安卓一致），推送只有实例 id 时打开实例的对话；运行树页面归 12.5（委派在 P1 就有），12.7 补流水线节点；“进行中”的数现在逐个实例 `runs()` 再本地过滤，合 11.8 时换成 `listRuns`；事件流以 `stopped` 结束时要查 `upgradeRequired()`（`AppModel.streamChanged` 里留了位置）；`ObservedClient` 要给 `ClientProtocol` 的每个新方法加转发；冻结期间整页显示冻结页（不做只读浏览缓存），解冻后对话页重新出现时重新订阅；App Store 链接（`ShellLinks.appStore`）等 12.11 有了 Apple ID 再填。
 - 后端前置包（2026-10-22）：backend-core 已认领 11.8、10.7、4.7、5.5（`docs/progress.md` 7b085b7），顺序 10.6 评审 → 11.8 → 10.7 → 4.7 → 5.5；11.8 顺带做计划列表带下次触发时间、Run / run.state 的结构化等待原因码、跨实例的进行中运行列表。5.6 运行附件等 1.1 拍板。新接口只加不改，做完在 `docs/progress.md` 已完成表里写 FFI 新增了什么，本分支合 backend-core 时接上。
 - 12.10 实时活动的约定（backend-core 10.6，83f68ba…39234ba，详见 backend-core 的 `docs/live-activities.md` 第 3 节）：类型名必须是 `RunActivityAttributes`，静态属性 `runId`、`instanceId`、`title`；`ContentState` 是 `state`（运行状态字符串）、`steps`（Int）、`startedAt`、`endedAt`（可选，Unix 秒整数，驼峰键名，ActivityKit 用默认 JSONDecoder 解）。client-core 新方法：`register_live_activity(run_id, token)`（`pushTokenUpdates`，十六进制，变了再调）、`end_live_activity(run_id)`、`set_live_activity_start_token(token?)`（`pushToStartTokenUpdates`，用户打开“计划运行时显示实时活动”才登记，关掉传 nil）；只有 iPhone / iPad 能登记。服务端只远程开启计划到点的根运行，用户自己发起的由 App 自己开；远程开启的在 `Activity<RunActivityAttributes>.activityUpdates` 里拿到后照样 `register_live_activity`。推送里没有摘要和 agent 文字。
 - client-core 没导出的接口（设备列表与下线、注销、改计划与触发器、团队与模板、换 key、产出物列表与删除、收件箱删除和标未读、runs 分页）：2026-10-22 backend-core 会话已认领 11.7（P1，记在 `docs/progress.md`，c2c3825；只加不改已有签名，做完一组提交一组）；实时活动推送 10.6（P2）等 11.7 做完再定，在那之前没人认领。两行由本分支加进 `gen_wbs.py`。落地前 Swift 的 `ClientProtocol` 先定义这些方法、`MockClient` 实现、`CoreClient` 抛 `ClientError.unsupported`。
