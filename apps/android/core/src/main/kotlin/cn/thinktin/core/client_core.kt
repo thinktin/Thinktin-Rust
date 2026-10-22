@@ -896,6 +896,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_fulfill_vault_request(
     ): Int
+    external fun uniffi_client_core_checksum_method_thinktinclient_get_approval(
+    ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_get_plan(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_get_run(
@@ -1158,6 +1160,8 @@ internal object UniffiLib {
     external fun uniffi_client_core_fn_method_thinktinclient_end_live_activity(`ptr`: Long,`runId`: RustBuffer.ByValue,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_fulfill_vault_request(`ptr`: Long,`requestId`: RustBuffer.ByValue,`username`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,`purpose`: RustBuffer.ByValue,
+    ): Long
+    external fun uniffi_client_core_fn_method_thinktinclient_get_approval(`ptr`: Long,`approvalId`: RustBuffer.ByValue,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_get_plan(`ptr`: Long,`planId`: RustBuffer.ByValue,
     ): Long
@@ -1442,7 +1446,7 @@ private fun uniffiCheckContractApiVersion(lib: IntegrityCheckingUniffiLib) {
 }
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
-    if ((lib.uniffi_client_core_checksum_func_accept_language_header() and 0xFFFF) != 61624) {
+    if ((lib.uniffi_client_core_checksum_func_accept_language_header() and 0xFFFF) != 23539) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_func_detect_secrets() and 0xFFFF) != 41842) {
@@ -1637,6 +1641,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_fulfill_vault_request() and 0xFFFF) != 17468) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_get_approval() and 0xFFFF) != 35157) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_get_plan() and 0xFFFF) != 49491) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1658,10 +1665,10 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_instances() and 0xFFFF) != 31253) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_client_core_checksum_method_thinktinclient_list_runs() and 0xFFFF) != 55152) {
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_list_runs() and 0xFFFF) != 3996) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_client_core_checksum_method_thinktinclient_login() and 0xFFFF) != 20795) {
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_login() and 0xFFFF) != 17016) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_logout() and 0xFFFF) != 64821) {
@@ -1682,7 +1689,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_older_inbox() and 0xFFFF) != 6607) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_client_core_checksum_method_thinktinclient_older_runs() and 0xFFFF) != 41930) {
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_older_runs() and 0xFFFF) != 39421) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_plans() and 0xFFFF) != 27034) {
@@ -1751,7 +1758,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_set_plan_paused() and 0xFFFF) != 34250) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_client_core_checksum_method_thinktinclient_set_push_token() and 0xFFFF) != 27741) {
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_set_push_token() and 0xFFFF) != 42634) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_sign_out_other_devices() and 0xFFFF) != 36591) {
@@ -1799,7 +1806,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_update_vault_item() and 0xFFFF) != 29798) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_client_core_checksum_method_thinktinclient_upgrade_required() and 0xFFFF) != 32584) {
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_upgrade_required() and 0xFFFF) != 60634) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_usage() and 0xFFFF) != 39917) {
@@ -3785,6 +3792,12 @@ public interface ThinktinClientInterface {
      */
     suspend fun `fulfillVaultRequest`(`requestId`: kotlin.String, `username`: kotlin.String, `password`: kotlin.String, `purpose`: kotlin.String?): VaultRequest
     
+    /**
+     * 一条审批（什么状态都行）。点审批推送、收件箱条目进来时先查：已处理、已过期的给提示，不要报错；推送里“拒绝”的
+     * 快捷操作先查它还是不是待处理。
+     */
+    suspend fun `getApproval`(`approvalId`: kotlin.String): Approval
+    
     suspend fun `getPlan`(`planId`: kotlin.String): Plan
     
     suspend fun `getRun`(`runId`: kotlin.String): Run
@@ -3809,14 +3822,14 @@ public interface ThinktinClientInterface {
     suspend fun `instances`(): List<Instance>
     
     /**
-     * 更早的一页运行：`before_run_id` 之前的（列表往下翻）。
      * 跨实例的运行（11.8），新的在前：某个计划的运行历史、所有没结束的运行。`before_run_id` 往下翻
      * （上一页最后一个的 id）。
      */
     suspend fun `listRuns`(`filter`: RunFilter, `beforeRunId`: kotlin.String?, `limit`: kotlin.UInt): List<Run>
     
     /**
-     * `push_channel` 是 apns / unipush / fcm……，和 `push_token` 一起给，或都不给。
+     * `push_channel` 是 apns / apns_sandbox / unipush / fcm……，和 `push_token` 一起给，或都不给。开发证书签名的
+     * 包（Xcode 直装，`aps-environment` 是 development）拿到的是沙盒环境的令牌，要报 `apns_sandbox`。
      */
     suspend fun `login`(`phone`: kotlin.String, `code`: kotlin.String, `pushChannel`: kotlin.String?, `pushToken`: kotlin.String?): LoginResult
     
@@ -3838,6 +3851,9 @@ public interface ThinktinClientInterface {
     
     suspend fun `olderInbox`(`beforeId`: kotlin.String, `limit`: kotlin.UInt): List<InboxItem>
     
+    /**
+     * 更早的一页运行：`before_run_id` 之前的（列表往下翻）。
+     */
     suspend fun `olderRuns`(`instanceId`: kotlin.String, `beforeRunId`: kotlin.String, `limit`: kotlin.UInt): List<Run>
     
     suspend fun `plans`(`instanceId`: kotlin.String?): List<Plan>
@@ -3940,7 +3956,7 @@ public interface ThinktinClientInterface {
     suspend fun `setPlanPaused`(`planId`: kotlin.String, `paused`: kotlin.Boolean): Plan
     
     /**
-     * 推送令牌变了（重装、系统重置）时更新。
+     * 推送令牌变了（重装、系统重置）时更新。`channel` 同 [`Self::login`] 的 `push_channel`。
      */
     suspend fun `setPushToken`(`channel`: kotlin.String, `token`: kotlin.String)
     
@@ -4003,8 +4019,8 @@ public interface ThinktinClientInterface {
     suspend fun `updateVaultItem`(`itemId`: kotlin.String, `change`: VaultItemUpdate): VaultItem
     
     /**
-     * 服务端说过这个版本太老了（任何请求返回 `UpgradeRequired`、事件流握手被拒）。之后事件流以 `Stopped` 结束、
-     * 不再重连；界面进升级页。一直有效（升级就是重装）。
+     * 服务端说过这个版本太老了（任何请求返回 `UpgradeRequired`、事件流握手被拒）。之后事件流以
+     * `StreamStatus::UpgradeRequired` 结束、不再重连；界面进升级页。一直有效（升级就是重装）。
      */
     fun `upgradeRequired`(): kotlin.Boolean
     
@@ -5088,6 +5104,32 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
     }
 
     
+    /**
+     * 一条审批（什么状态都行）。点审批推送、收件箱条目进来时先查：已处理、已过期的给提示，不要报错；推送里“拒绝”的
+     * 快捷操作先查它还是不是待处理。
+     */
+    @Throws(ClientException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `getApproval`(`approvalId`: kotlin.String) : Approval {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_client_core_fn_method_thinktinclient_get_approval(
+                uniffiHandle,
+                
+        FfiConverterString.lower(`approvalId`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_client_core_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeApproval.lift(it) },
+        // Error FFI converter
+        ClientException.ErrorHandler,
+    )
+    }
+
+    
     @Throws(ClientException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
     override suspend fun `getPlan`(`planId`: kotlin.String) : Plan {
@@ -5251,7 +5293,6 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
 
     
     /**
-     * 更早的一页运行：`before_run_id` 之前的（列表往下翻）。
      * 跨实例的运行（11.8），新的在前：某个计划的运行历史、所有没结束的运行。`before_run_id` 往下翻
      * （上一页最后一个的 id）。
      */
@@ -5280,7 +5321,8 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
 
     
     /**
-     * `push_channel` 是 apns / unipush / fcm……，和 `push_token` 一起给，或都不给。
+     * `push_channel` 是 apns / apns_sandbox / unipush / fcm……，和 `push_token` 一起给，或都不给。开发证书签名的
+     * 包（Xcode 直装，`aps-environment` 是 development）拿到的是沙盒环境的令牌，要报 `apns_sandbox`。
      */
     @Throws(ClientException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -5446,6 +5488,9 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
     }
 
     
+    /**
+     * 更早的一页运行：`before_run_id` 之前的（列表往下翻）。
+     */
     @Throws(ClientException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
     override suspend fun `olderRuns`(`instanceId`: kotlin.String, `beforeRunId`: kotlin.String, `limit`: kotlin.UInt) : List<Run> {
@@ -6026,7 +6071,7 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
 
     
     /**
-     * 推送令牌变了（重装、系统重置）时更新。
+     * 推送令牌变了（重装、系统重置）时更新。`channel` 同 [`Self::login`] 的 `push_channel`。
      */
     @Throws(ClientException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -6403,8 +6448,8 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
 
     
     /**
-     * 服务端说过这个版本太老了（任何请求返回 `UpgradeRequired`、事件流握手被拒）。之后事件流以 `Stopped` 结束、
-     * 不再重连；界面进升级页。一直有效（升级就是重装）。
+     * 服务端说过这个版本太老了（任何请求返回 `UpgradeRequired`、事件流握手被拒）。之后事件流以
+     * `StreamStatus::UpgradeRequired` 结束、不再重连；界面进升级页。一直有效（升级就是重装）。
      */override fun `upgradeRequired`(): kotlin.Boolean {
             return FfiConverterBoolean.lift(
     callWithHandle {
@@ -6712,6 +6757,24 @@ data class Approval (
     var `expiresAtMs`: kotlin.Long
     , 
     var `createdAtMs`: kotlin.Long
+    , 
+    /**
+     * shim 给的请求 id（和 `agent.permission_requested` 事件里的一样）。shim 每次尝试从 perm-1 重新编号，所以要
+     * 和 `attempt` 一起用（`run_id`、`attempt`、`request_id` 三个对上才是同一个）。
+     */
+    var `requestId`: kotlin.String = "" 
+    , 
+    /**
+     * 第几次尝试（和 `run.state` 事件的 `attempt` 一样）；0 是不知道（老数据）。
+     */
+    var `attempt`: kotlin.UInt = 0u 
+    , 
+    /**
+     * 选了哪个选项（`option_id`）；没处理、过期了的为空。
+     */
+    var `decidedOption`: kotlin.String? = null 
+    , 
+    var `decidedAtMs`: kotlin.Long? = null 
     
 ){
     
@@ -6737,6 +6800,10 @@ public object FfiConverterTypeApproval: FfiConverterRustBuffer<Approval> {
             FfiConverterString.read(buf),
             FfiConverterLong.read(buf),
             FfiConverterLong.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalLong.read(buf),
         )
     }
 
@@ -6749,7 +6816,11 @@ public object FfiConverterTypeApproval: FfiConverterRustBuffer<Approval> {
             FfiConverterString.allocationSize(value.`toolCallJson`) +
             FfiConverterString.allocationSize(value.`state`) +
             FfiConverterLong.allocationSize(value.`expiresAtMs`) +
-            FfiConverterLong.allocationSize(value.`createdAtMs`)
+            FfiConverterLong.allocationSize(value.`createdAtMs`) +
+            FfiConverterString.allocationSize(value.`requestId`) +
+            FfiConverterUInt.allocationSize(value.`attempt`) +
+            FfiConverterOptionalString.allocationSize(value.`decidedOption`) +
+            FfiConverterOptionalLong.allocationSize(value.`decidedAtMs`)
     )
 
     override fun write(value: Approval, buf: ByteBuffer) {
@@ -6762,6 +6833,10 @@ public object FfiConverterTypeApproval: FfiConverterRustBuffer<Approval> {
             FfiConverterString.write(value.`state`, buf)
             FfiConverterLong.write(value.`expiresAtMs`, buf)
             FfiConverterLong.write(value.`createdAtMs`, buf)
+            FfiConverterString.write(value.`requestId`, buf)
+            FfiConverterUInt.write(value.`attempt`, buf)
+            FfiConverterOptionalString.write(value.`decidedOption`, buf)
+            FfiConverterOptionalLong.write(value.`decidedAtMs`, buf)
     }
 }
 
@@ -7600,7 +7675,8 @@ data class InboxItem (
     var `approvalId`: kotlin.String?
     , 
     /**
-     * run_finished / run_failed / approval / info
+     * run_finished / run_failed / approval / computer_approval / vault_request / plan_confirm / info。以后可能有新的，
+     * 不认识的按 info 显示。
      */
     var `kind`: kotlin.String
     , 
@@ -7616,6 +7692,17 @@ data class InboxItem (
     var `read`: kotlin.Boolean
     , 
     var `createdAtMs`: kotlin.Long
+    , 
+    /**
+     * 是哪一种提醒（10.7）：account_frozen、account_restored、stopped_all、approval_skipped、trigger_disabled、
+     * im_channel_disabled、report_handled；运行进入等待时是 `Run.wait_code` 的值。和推送的 `tt.subtype` 一样。
+     */
+    var `subtype`: kotlin.String? = null 
+    , 
+    /**
+     * 保险箱请求（`kind` 是 vault_request 时，`thinktin://vault/request/{id}`）。
+     */
+    var `vaultRequestId`: kotlin.String? = null 
     
 ){
     
@@ -7643,6 +7730,8 @@ public object FfiConverterTypeInboxItem: FfiConverterRustBuffer<InboxItem> {
             FfiConverterBoolean.read(buf),
             FfiConverterBoolean.read(buf),
             FfiConverterLong.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
         )
     }
 
@@ -7657,7 +7746,9 @@ public object FfiConverterTypeInboxItem: FfiConverterRustBuffer<InboxItem> {
             FfiConverterString.allocationSize(value.`body`) +
             FfiConverterBoolean.allocationSize(value.`aiGenerated`) +
             FfiConverterBoolean.allocationSize(value.`read`) +
-            FfiConverterLong.allocationSize(value.`createdAtMs`)
+            FfiConverterLong.allocationSize(value.`createdAtMs`) +
+            FfiConverterOptionalString.allocationSize(value.`subtype`) +
+            FfiConverterOptionalString.allocationSize(value.`vaultRequestId`)
     )
 
     override fun write(value: InboxItem, buf: ByteBuffer) {
@@ -7672,6 +7763,8 @@ public object FfiConverterTypeInboxItem: FfiConverterRustBuffer<InboxItem> {
             FfiConverterBoolean.write(value.`aiGenerated`, buf)
             FfiConverterBoolean.write(value.`read`, buf)
             FfiConverterLong.write(value.`createdAtMs`, buf)
+            FfiConverterOptionalString.write(value.`subtype`, buf)
+            FfiConverterOptionalString.write(value.`vaultRequestId`, buf)
     }
 }
 
@@ -9855,8 +9948,10 @@ sealed class ClientException: kotlin.Exception() {
      */
     class Network(
         
-        override val `message`: kotlin.String
+        val `detail`: kotlin.String
         ) : ClientException() {
+        override val message
+            get() = "detail=${ `detail` }"
     }
     
     /**
@@ -9895,10 +9990,15 @@ sealed class ClientException: kotlin.Exception() {
         
         val `code`: kotlin.String, 
         
-        override val `message`: kotlin.String, 
+        /**
+         * 说明（服务端给的、或者 client-core 写的）。不叫 `message`：Kotlin 的异常类自带 `message`，同名会冲突。
+         */
+        val `detail`: kotlin.String, 
         
         val `retryAfterSecs`: kotlin.ULong?
         ) : ClientException() {
+        override val message
+            get() = "status=${ `status` }, code=${ `code` }, detail=${ `detail` }, retryAfterSecs=${ `retryAfterSecs` }"
     }
     
     /**
@@ -9906,8 +10006,10 @@ sealed class ClientException: kotlin.Exception() {
      */
     class Decode(
         
-        override val `message`: kotlin.String
+        val `detail`: kotlin.String
         ) : ClientException() {
+        override val message
+            get() = "detail=${ `detail` }"
     }
     
     /**
@@ -9915,8 +10017,10 @@ sealed class ClientException: kotlin.Exception() {
      */
     class Cache(
         
-        override val `message`: kotlin.String
+        val `detail`: kotlin.String
         ) : ClientException() {
+        override val message
+            get() = "detail=${ `detail` }"
     }
     
     /**
@@ -9936,8 +10040,10 @@ sealed class ClientException: kotlin.Exception() {
      */
     class InvalidArgument(
         
-        override val `message`: kotlin.String
+        val `detail`: kotlin.String
         ) : ClientException() {
+        override val message
+            get() = "detail=${ `detail` }"
     }
     
     /**
@@ -9945,8 +10051,10 @@ sealed class ClientException: kotlin.Exception() {
      */
     class Internal(
         
-        override val `message`: kotlin.String
+        val `detail`: kotlin.String
         ) : ClientException() {
+        override val message
+            get() = "detail=${ `detail` }"
     }
     
 
@@ -10004,7 +10112,7 @@ public object FfiConverterTypeClientError : FfiConverterRustBuffer<ClientExcepti
             is ClientException.Network -> (
                 // Add the size for the Int that specifies the variant plus the size needed for all fields
                 4UL
-                + FfiConverterString.allocationSize(value.`message`)
+                + FfiConverterString.allocationSize(value.`detail`)
             )
             is ClientException.SignedOut -> (
                 // Add the size for the Int that specifies the variant plus the size needed for all fields
@@ -10023,18 +10131,18 @@ public object FfiConverterTypeClientError : FfiConverterRustBuffer<ClientExcepti
                 4UL
                 + FfiConverterUShort.allocationSize(value.`status`)
                 + FfiConverterString.allocationSize(value.`code`)
-                + FfiConverterString.allocationSize(value.`message`)
+                + FfiConverterString.allocationSize(value.`detail`)
                 + FfiConverterOptionalULong.allocationSize(value.`retryAfterSecs`)
             )
             is ClientException.Decode -> (
                 // Add the size for the Int that specifies the variant plus the size needed for all fields
                 4UL
-                + FfiConverterString.allocationSize(value.`message`)
+                + FfiConverterString.allocationSize(value.`detail`)
             )
             is ClientException.Cache -> (
                 // Add the size for the Int that specifies the variant plus the size needed for all fields
                 4UL
-                + FfiConverterString.allocationSize(value.`message`)
+                + FfiConverterString.allocationSize(value.`detail`)
             )
             is ClientException.ContainsSecrets -> (
                 // Add the size for the Int that specifies the variant plus the size needed for all fields
@@ -10044,12 +10152,12 @@ public object FfiConverterTypeClientError : FfiConverterRustBuffer<ClientExcepti
             is ClientException.InvalidArgument -> (
                 // Add the size for the Int that specifies the variant plus the size needed for all fields
                 4UL
-                + FfiConverterString.allocationSize(value.`message`)
+                + FfiConverterString.allocationSize(value.`detail`)
             )
             is ClientException.Internal -> (
                 // Add the size for the Int that specifies the variant plus the size needed for all fields
                 4UL
-                + FfiConverterString.allocationSize(value.`message`)
+                + FfiConverterString.allocationSize(value.`detail`)
             )
         }
     }
@@ -10058,7 +10166,7 @@ public object FfiConverterTypeClientError : FfiConverterRustBuffer<ClientExcepti
         when(value) {
             is ClientException.Network -> {
                 buf.putInt(1)
-                FfiConverterString.write(value.`message`, buf)
+                FfiConverterString.write(value.`detail`, buf)
                 Unit
             }
             is ClientException.SignedOut -> {
@@ -10077,18 +10185,18 @@ public object FfiConverterTypeClientError : FfiConverterRustBuffer<ClientExcepti
                 buf.putInt(5)
                 FfiConverterUShort.write(value.`status`, buf)
                 FfiConverterString.write(value.`code`, buf)
-                FfiConverterString.write(value.`message`, buf)
+                FfiConverterString.write(value.`detail`, buf)
                 FfiConverterOptionalULong.write(value.`retryAfterSecs`, buf)
                 Unit
             }
             is ClientException.Decode -> {
                 buf.putInt(6)
-                FfiConverterString.write(value.`message`, buf)
+                FfiConverterString.write(value.`detail`, buf)
                 Unit
             }
             is ClientException.Cache -> {
                 buf.putInt(7)
-                FfiConverterString.write(value.`message`, buf)
+                FfiConverterString.write(value.`detail`, buf)
                 Unit
             }
             is ClientException.ContainsSecrets -> {
@@ -10098,12 +10206,12 @@ public object FfiConverterTypeClientError : FfiConverterRustBuffer<ClientExcepti
             }
             is ClientException.InvalidArgument -> {
                 buf.putInt(9)
-                FfiConverterString.write(value.`message`, buf)
+                FfiConverterString.write(value.`detail`, buf)
                 Unit
             }
             is ClientException.Internal -> {
                 buf.putInt(10)
-                FfiConverterString.write(value.`message`, buf)
+                FfiConverterString.write(value.`detail`, buf)
                 Unit
             }
         }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
@@ -10159,8 +10267,10 @@ sealed class PairingException: kotlin.Exception() {
      */
     class Malformed(
         
-        override val `message`: kotlin.String
+        val `detail`: kotlin.String
         ) : PairingException() {
+        override val message
+            get() = "detail=${ `detail` }"
     }
     
     /**
@@ -10214,7 +10324,7 @@ public object FfiConverterTypePairingError : FfiConverterRustBuffer<PairingExcep
             is PairingException.Malformed -> (
                 // Add the size for the Int that specifies the variant plus the size needed for all fields
                 4UL
-                + FfiConverterString.allocationSize(value.`message`)
+                + FfiConverterString.allocationSize(value.`detail`)
             )
             is PairingException.Expired -> (
                 // Add the size for the Int that specifies the variant plus the size needed for all fields
@@ -10231,7 +10341,7 @@ public object FfiConverterTypePairingError : FfiConverterRustBuffer<PairingExcep
         when(value) {
             is PairingException.Malformed -> {
                 buf.putInt(1)
-                FfiConverterString.write(value.`message`, buf)
+                FfiConverterString.write(value.`detail`, buf)
                 Unit
             }
             is PairingException.Expired -> {
@@ -10411,8 +10521,14 @@ sealed class StreamStatus {
     
     
     /**
-     * 调用方停的；或者这个版本太老了，服务端不再接受（这时 `ThinktinClient::upgrade_required()` 是 true，
-     * 界面进升级页）。
+     * 这个版本太老了，服务端不再接受（握手或别的请求回了 426），事件流停止；界面进升级页
+     * （`ThinktinClient::upgrade_required()` 也是 true）。
+     */
+    object UpgradeRequired : StreamStatus()
+    
+    
+    /**
+     * 调用方停的；或者后台任务意外退出（panic，日志里有 “event stream task panicked”），界面还在时可以重新订阅。
      */
     object Stopped : StreamStatus()
     
@@ -10441,7 +10557,8 @@ public object FfiConverterTypeStreamStatus : FfiConverterRustBuffer<StreamStatus
             4 -> StreamStatus.SignedOut
             5 -> StreamStatus.NotFound
             6 -> StreamStatus.AccountFrozen
-            7 -> StreamStatus.Stopped
+            7 -> StreamStatus.UpgradeRequired
+            8 -> StreamStatus.Stopped
             else -> throw RuntimeException("invalid enum value, something is very wrong!!")
         }
     }
@@ -10484,6 +10601,12 @@ public object FfiConverterTypeStreamStatus : FfiConverterRustBuffer<StreamStatus
                 4UL
             )
         }
+        is StreamStatus.UpgradeRequired -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
         is StreamStatus.Stopped -> {
             // Add the size for the Int that specifies the variant plus the size needed for all fields
             (
@@ -10519,8 +10642,12 @@ public object FfiConverterTypeStreamStatus : FfiConverterRustBuffer<StreamStatus
                 buf.putInt(6)
                 Unit
             }
-            is StreamStatus.Stopped -> {
+            is StreamStatus.UpgradeRequired -> {
                 buf.putInt(7)
+                Unit
+            }
+            is StreamStatus.Stopped -> {
+                buf.putInt(8)
                 Unit
             }
         }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
@@ -11730,7 +11857,8 @@ public object FfiConverterSequenceTypeSchedule: FfiConverterRustBuffer<List<Sche
 
         /**
          * 把系统的语言列表（按偏好排好，比如 `["zh-Hans-CN", "en-US", "en"]`）拼成 `Accept-Language`：
-         * `zh-Hans-CN, en-US;q=0.9, en;q=0.8`。最多 10 个；不像语言标签的跳过。
+         * `zh-Hans-CN, en-US;q=0.9, en;q=0.8`。最多 10 个；不像语言标签的跳过；放不进 256 字节（`ClientConfig` 的上限）的
+         * 后面几个不要，结果总能直接交给 `ClientConfig.accept_language`、`set_accept_language`。
          */ fun `acceptLanguageHeader`(`tags`: List<kotlin.String>): kotlin.String {
             return FfiConverterString.lift(
     uniffiRustCall() { _status ->
