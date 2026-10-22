@@ -49,14 +49,4 @@ object ChatRows {
             }
         }
     }
-
-    /** 某个运行的最后一行（定位时让整段运行出现在底部往上）。 */
-    fun lastRowOf(rows: List<ChatRow>, runId: String): Int = rows.indexOfLast { row ->
-        when (row) {
-            is ChatRow.Header -> row.block.runId == runId
-            is ChatRow.Item -> row.runId == runId
-            is ChatRow.Gap -> row.runId == runId
-            is ChatRow.Outcome -> row.block.runId == runId
-        }
-    }
 }

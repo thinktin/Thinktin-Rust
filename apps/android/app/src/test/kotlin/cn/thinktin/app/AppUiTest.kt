@@ -24,7 +24,11 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.getOrNull
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
+import cn.thinktin.app.ui.chat.CHAT_RUN_HEADER_TEST_TAG
+import cn.thinktin.app.ui.chat.CHAT_SCREEN_TEST_TAG
+import cn.thinktin.app.ui.chat.CHAT_USER_PROMPT_TEST_TAG
 import cn.thinktin.app.ui.drawer.DRAWER_TEST_TAG
+import cn.thinktin.app.ui.run.RUN_DETAIL_TEST_TAG
 import cn.thinktin.design.theme.Appearance
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -89,12 +93,13 @@ class AppUiTest {
     }
 
     @Test
-    fun clickRecentRunOpensRunDetail() {
+    fun clickRecentRunOpensChatAtRun() {
         launch()
         compose.waitFor(hasText("把 README 翻译成英文"))
         compose.onNode(hasText("把 README 翻译成英文")).performClick()
-        compose.waitFor(hasText("编号：run-done"))
-        compose.onNode(hasText("运行详情")).assertIsDisplayed()
+        // 13.5：进对话页并定位到那个运行
+        compose.waitFor(hasTestTag(CHAT_SCREEN_TEST_TAG + "inst-coder"))
+        compose.waitFor(hasTestTag(CHAT_RUN_HEADER_TEST_TAG + "run-done"))
         // 返回回到首页
         compose.onNode(hasContentDescription("返回")).performClick()
         compose.waitFor(hasText("最近运行"))
@@ -107,8 +112,9 @@ class AppUiTest {
         compose.waitFor(field)
         compose.onNode(field).performTextInput("帮我看看 CI")
         compose.onNode(hasContentDescription("发送")).performClick()
-        compose.waitFor(hasText("编号：inst-coder"))
-        compose.onNode(hasText("对话")).assertIsDisplayed()
+        compose.waitFor(hasTestTag(CHAT_SCREEN_TEST_TAG + "inst-coder"))
+        // 发出去的那句在对话页里是用户气泡
+        compose.waitFor(hasText("帮我看看 CI") and hasAnyAncestor(hasTestTag(CHAT_USER_PROMPT_TEST_TAG)))
     }
 
     @Test
@@ -142,7 +148,7 @@ class AppUiTest {
         launch()
         compose.waitFor(hasText("最近运行"))
         deliver("thinktin://run/run-done")
-        compose.waitFor(hasText("编号：run-done"))
+        compose.waitFor(hasTestTag(RUN_DETAIL_TEST_TAG))
         compose.onNode(hasText("运行详情")).assertIsDisplayed()
         // 返回栈是“首页 → 目标页”，和冷启动一样
         compose.onNode(hasContentDescription("返回")).performClick()
@@ -171,7 +177,7 @@ class AppUiTest {
         deliver("https://thinktin.cn/run/run-done")
         compose.waitForIdle()
         compose.onNode(hasText("最近运行")).assertIsDisplayed()
-        compose.onAllNodes(hasText("编号：run-done")).assertCountEquals(0)
+        compose.onAllNodes(hasTestTag(RUN_DETAIL_TEST_TAG)).assertCountEquals(0)
     }
 
     private fun app(): DemoTestApp = ApplicationProvider.getApplicationContext()

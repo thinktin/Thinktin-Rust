@@ -378,7 +378,9 @@ class ChatViewModel(
             return
         }
         if (focusPages >= MAX_FOCUS_PAGES || !state.value.hasOlder) {
+            // 找不到也发一次：界面据此恢复“新内容自动滚到底”（列表里没有它就不动）。
             focusPending = null
+            eventChannel.trySend(ChatEvent.ScrollToRun(target))
             return
         }
         focusPages++

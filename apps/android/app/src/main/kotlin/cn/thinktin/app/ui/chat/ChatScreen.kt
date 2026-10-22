@@ -6,6 +6,7 @@ import android.content.Intent
 import android.webkit.MimeTypeMap
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -51,6 +52,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -89,6 +91,7 @@ import cn.thinktin.design.component.Composer
 import cn.thinktin.design.component.EmptyState
 import cn.thinktin.design.component.WarningBanner
 import cn.thinktin.design.theme.ThinktinSpacing
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -149,6 +152,9 @@ fun ChatScreen(instanceId: String, focusRunId: String?, navigation: ChatNavigati
     val copied = stringResource(R.string.chat_copied)
     val onCopied: () -> Unit = { scope.launch { snackbar.showSnackbar(copied) } }
 
+    // 要定位到某个运行时，先别自动滚到底（定位完或放弃后恢复）。
+    var focusing by remember { mutableStateOf(focusRunId != null) }
+    var focusTarget by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(viewModel) {
         viewModel.events.collect { event ->
             when (event) {
@@ -164,11 +170,7 @@ fun ChatScreen(instanceId: String, focusRunId: String?, navigation: ChatNavigati
                     snackbar.showSnackbar(context.getString(R.string.chat_artifact_no_app))
                 }
                 ChatEvent.ScrollToBottom -> listState.animateScrollToItem(0)
-                is ChatEvent.ScrollToRun -> {
-                    val rowsNow = ChatRows.of(viewModel.uiState.value.conversation)
-                    val index = ChatRows.lastRowOf(rowsNow, event.runId)
-                    if (index >= 0) listState.scrollToItem(rowsNow.size - 1 - index)
-                }
+                is ChatEvent.ScrollToRun -> focusTarget = event.runId
                 is ChatEvent.ScrollToItem -> {
                     val rowsNow = ChatRows.of(viewModel.uiState.value.conversation)
                     val index = rowsNow.indexOfFirst { it.key == event.key }
@@ -182,11 +184,27 @@ fun ChatScreen(instanceId: String, focusRunId: String?, navigation: ChatNavigati
         }
     }
 
+    // 定位到运行：区块头放到屏幕上方。等列表排好，先滚到它（倒序列表里它在最底下），再往回挪大半屏。
+    LaunchedEffect(focusTarget, reversed) {
+        val target = focusTarget ?: return@LaunchedEffect
+        val header = reversed.indexOfFirst { it is ChatRow.Header && it.block.runId == target }
+        if (header >= 0) {
+            snapshotFlow { listState.layoutInfo.totalItemsCount }.first { it > 0 }
+            listState.scrollToItem(header)
+            val info = listState.layoutInfo
+            val size = info.visibleItemsInfo.firstOrNull { it.index == header }?.size ?: 0
+            val shift = info.viewportEndOffset - info.viewportStartOffset - size - info.afterContentPadding
+            if (shift > 0) listState.scrollBy(-shift.toFloat())
+        }
+        focusTarget = null
+        focusing = false
+    }
+
     // 新内容：用户在最底下（或差一项）时跟着滚到底；往上翻着的时候不动。
     val newestKey = rows.lastOrNull()?.key
     val newestSize = (rows.lastOrNull() as? ChatRow.Item)?.item?.let { (it as? TimelineItem.AgentText)?.text?.length }
     LaunchedEffect(newestKey, newestSize) {
-        if (listState.firstVisibleItemIndex <= 1) listState.scrollToItem(0)
+        if (!focusing && listState.firstVisibleItemIndex <= 1) listState.scrollToItem(0)
     }
     // 上拉到顶：加载更早的运行（列表短得一屏放得下时也会接着翻，直到翻完）。
     val nearTop by remember {

@@ -24,6 +24,7 @@ import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
+import cn.thinktin.app.ui.chat.CHAT_SCREEN_TEST_TAG
 import cn.thinktin.app.ui.agent.ADOPT_SHEET_TEST_TAG
 import cn.thinktin.app.ui.catalog.AGENT_CARD_TEST_TAG
 import cn.thinktin.app.ui.drawer.DRAWER_TEST_TAG
@@ -184,16 +185,15 @@ class CatalogUiTest {
         compose.onNode(hasText("claude-opus-4") and inSheet).tap()
         compose.onNode(hasText("领养") and inSheet).tap()
 
-        // 成功：跳到对话页（13.5 之前是骨架），返回回到首页
-        waitFor(hasText("编号：", substring = true))
-        compose.onNode(hasText("对话")).assertIsDisplayed()
+        // 成功：跳到新实例的对话页，返回回到首页
+        waitFor(hasText("开始对话"))
         val adopted = runBlocking { mock.instances() }.single { it.name == "我的码农" }
         assertEquals("codex", adopted.harness)
         assertEquals(
             listOf(ModelRoute("main", "cred-work", "claude-opus-4", emptyList())),
             runBlocking { mock.modelRoutes(adopted.id) },
         )
-        compose.onNode(hasText("编号：${adopted.id}")).assertIsDisplayed()
+        compose.onNode(hasTestTag(CHAT_SCREEN_TEST_TAG + adopted.id)).assertExists()
         compose.onNode(hasContentDescription("返回")).performClick()
         waitFor(hasText("最近运行"))
         compose.onNode(searchField).assertDoesNotExist()
@@ -220,7 +220,7 @@ class CatalogUiTest {
         val adopted = runBlocking { mock.instances() }.single { it.name == "调研助手 的实例" }
         assertTrue(runBlocking { mock.modelRoutes(adopted.id) }.isEmpty())
         compose.onNode(hasContentDescription("返回")).performClick()
-        waitFor(hasText("编号：${adopted.id}"))
+        waitFor(hasTestTag(CHAT_SCREEN_TEST_TAG + adopted.id))
         compose.onNode(hasContentDescription("返回")).performClick()
         waitFor(hasText("最近运行"))
     }
