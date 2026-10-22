@@ -23,6 +23,9 @@ public struct User: Identifiable, Hashable, Codable, Sendable {
         self.createdAt = createdAt
     }
 
+    /// 昵称最长几个字符（`updateProfile`）。
+    public static let maxDisplayNameLength = 64
+
     /// 界面上显示的名字：没有昵称时用打码的手机号。
     public var nameForDisplay: String {
         if let name = displayName, !name.isEmpty { return name }

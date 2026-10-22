@@ -1,12 +1,18 @@
 import Foundation
 
-/// 演示数据：3 个 agent、2 个实例、几次运行（含进行中的审批和保险箱请求）、计划、收件箱、模型 key、保险箱条目。
+/// 演示数据：3 个 agent、2 个实例、几次运行（含进行中的审批和保险箱请求）、计划、收件箱、模型 key、保险箱条目、
+/// 登录设备（当前这台 iPhone、一台在线的 Mac、一台很久没用的 iPad）、一个团队和一个团队模板。
 /// 预览、截图、Linux 上的测试都用它。时间都相对 `now`，看起来总是“最近”。
 public enum DemoData {
     // MARK: 固定 id（测试里直接引用）
 
     public static let userID: UserID = "0192f3a0-0000-7000-8000-000000000001"
+    /// 当前这台 iPhone（演示会话的设备）。
     public static let deviceID: DeviceID = "0192f3a0-0000-7000-8000-0000000000d1"
+    /// 张三的 MacBook Pro（在线，可以收配对、审批消息）。
+    public static let macDeviceID: DeviceID = "0192f3a0-0000-7000-8000-0000000000d2"
+    /// 张三的 iPad（6 天没用了）。
+    public static let iPadDeviceID: DeviceID = "0192f3a0-0000-7000-8000-0000000000d3"
 
     public static let claudeAgentID: AgentID = "claude"
     public static let codexAgentID: AgentID = "codex"
@@ -39,6 +45,10 @@ public enum DemoData {
     public static let ossVaultID: VaultItemID = "0192f3a0-0000-7000-8000-000000000702"
     public static let npmVaultRequestID: VaultRequestID = "0192f3a0-0000-7000-8000-000000000801"
     public static let feishuChannelID: ImChannelID = "0192f3a0-0000-7000-8000-000000000901"
+    /// “发版小组”：代码审查（负责人）+ 写作助手。
+    public static let releaseTeamID: TeamID = "0192f3a0-0000-7000-8000-000000000a01"
+    /// “内容团队”模板：Claude 主笔（负责人）、Hermes 资料员、Codex 校对。
+    public static let contentTemplateID: TeamTemplateID = "0192f3a0-0000-7000-8000-000000000b01"
 
     /// 审批卡片上的 request_id。
     public static let pendingPermissionRequestID = "perm-post-1"
@@ -228,8 +238,10 @@ public enum DemoData {
             Plan(
                 id: digestPlanID, instanceID: writerID, title: "每日 GitHub 通知汇总",
                 goal: "每个工作日早上汇总 GitHub 通知，只列需要我处理的。", createdBy: .user, revision: 1,
-                policyJSON:
-                    #"{"preauthorized_tools":["read","search","fetch"],"approval_timeout_secs":3600,"on_approval_timeout":"skip","budget":{"max_tokens":50000,"max_duration_secs":1800}}"#,
+                policy: PlanPolicy(
+                    preauthorizedTools: ["read", "search", "fetch"], approvalTimeoutSecs: 3600,
+                    onApprovalTimeout: .skip,
+                    budget: RunBudget(maxTokens: 50_000, maxDurationSecs: 1800)),
                 createdAt: ago(20 * day),
                 triggers: [
                     Trigger(
@@ -346,6 +358,35 @@ public enum DemoData {
                 expiresAt: publish.startedAt!.addingTimeInterval(day))
         ]
 
+        let devices = [
+            currentDevice(now: now, createdAt: ago(40 * day)),
+            DeviceInfo(
+                id: macDeviceID, platform: .macos, name: "张三的 MacBook Pro", isOnline: true, createdAt: ago(20 * day),
+                lastSeenAt: ago(1 * min)),
+            DeviceInfo(
+                id: iPadDeviceID, platform: .ios, name: "张三的 iPad", pushChannel: .apns, createdAt: ago(35 * day),
+                lastSeenAt: ago(6 * day)),
+        ]
+
+        let teams = [
+            Team(
+                id: releaseTeamID, name: "发版小组",
+                members: [
+                    TeamMember(instanceID: reviewerID, role: .lead, position: 0),
+                    TeamMember(instanceID: writerID, role: .member, position: 1),
+                ], createdAt: ago(10 * day))
+        ]
+
+        let templates = [
+            TeamTemplate(
+                id: contentTemplateID, name: "内容团队",
+                members: [
+                    TemplateMember(agentID: claudeAgentID, harness: "acp", name: "主笔", role: .lead),
+                    TemplateMember(agentID: hermesAgentID, name: "资料员"),
+                    TemplateMember(agentID: codexAgentID, harness: "acp", name: "校对"),
+                ], createdAt: ago(8 * day))
+        ]
+
         let channels = [
             ImChannel(
                 id: feishuChannelID, vendor: .feishu, label: "研发群", hint: "x7k2", hasSecret: true,
@@ -359,7 +400,15 @@ public enum DemoData {
             plans: plans, inbox: inbox, vendors: vendors, credentials: credentials, dailyUsage: dailyUsage,
             artifacts: [artifact], artifactContents: [weeklyArtifactID: Data(artifactText.utf8)],
             vaultItems: vaultItems, vaultUsernames: [githubVaultID: "zhangsan", ossVaultID: "LTAI5t-demo"],
-            vaultRequests: vaultRequests, imChannels: channels)
+            vaultRequests: vaultRequests, imChannels: channels, devices: devices, teams: teams, teamTemplates: templates
+        )
+    }
+
+    /// 当前这台 iPhone（登录时 Mock 把它登记回登录设备）。
+    public static func currentDevice(now: Date = Date(), createdAt: Date? = nil) -> DeviceInfo {
+        DeviceInfo(
+            id: deviceID, platform: .ios, name: "张三的 iPhone", pushChannel: .apns, isCurrent: true,
+            createdAt: createdAt ?? now, lastSeenAt: now)
     }
 
     /// 演示会话（令牌是假的）。

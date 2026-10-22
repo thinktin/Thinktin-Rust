@@ -45,6 +45,17 @@ public struct PlanStep: Identifiable, Hashable, Codable, Sendable {
         self.prompt = prompt
         self.dependsOn = dependsOn
     }
+
+    /// 步骤名的格式（和服务端一致）：1 到 32 个 a-z、0-9、`_`、`-`，字母或数字开头。
+    public static func isValidKey(_ key: String) -> Bool {
+        let bytes = Array(key.utf8)
+        guard (1...32).contains(bytes.count) else { return false }
+        return bytes.enumerated().allSatisfy { i, b in
+            let alnum =
+                (b >= UInt8(ascii: "a") && b <= UInt8(ascii: "z")) || (b >= UInt8(ascii: "0") && b <= UInt8(ascii: "9"))
+            return alnum || (i > 0 && (b == UInt8(ascii: "_") || b == UInt8(ascii: "-")))
+        }
+    }
 }
 
 /// 计划：定时（或一次性）在实例上执行的任务；有 `steps` 时是流水线。
@@ -201,6 +212,13 @@ public struct PlanPolicy: Hashable, Codable, Sendable {
     public static let maxDurationRange = 1...(24 * 3600)
     /// 预授权的工具种类最多几个。
     public static let maxPreauthorizedTools = 32
+
+    /// 解析服务端 `policy` 字段的 JSON 文本（老接口的 `policy_json`、旧的缓存）。不是合法 JSON 时为 nil，缺的字段用默认值。
+    public init?(json: String) {
+        guard let data = json.data(using: .utf8), let policy = try? JSONDecoder().decode(PlanPolicy.self, from: data)
+        else { return nil }
+        self = policy
+    }
 
     /// 取值都在服务端允许的范围里（不在的保存时返回 invalid）。
     public var isValid: Bool {

@@ -97,4 +97,7 @@ public struct Artifact: Identifiable, Hashable, Codable, Sendable {
     }
 
     public var isImage: Bool { contentType.hasPrefix("image/") }
+
+    /// `instanceArtifacts` 一次最多返回几个。
+    public static let maxListLimit = 500
 }

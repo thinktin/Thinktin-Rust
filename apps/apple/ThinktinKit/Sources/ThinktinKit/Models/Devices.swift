@@ -94,3 +94,19 @@ public enum LiveActivityToken {
         allowedLength.contains(token.utf8.count) && token.allSatisfy { $0.isASCII && $0.isHexDigit }
     }
 }
+
+/// 实时活动（10.6）的服务端上限（docs/live-activities.md 第 2 节）。
+public enum LiveActivityLimits {
+    /// 一台设备同时最多登记几个（再多 `registerLiveActivity` 抛 invalid）。
+    public static let maxOpenPerDevice = 10
+    /// 运行结束超过这么久（秒）再登记抛 invalid：App 在本地结束这个实时活动，不用再调。
+    public static let lateRegistration: TimeInterval = 10 * 60
+    /// 实时活动最多显示多久（苹果的上限，从登记令牌时算），过了后台不再推送。
+    public static let maxAge: TimeInterval = 8 * 3600
+
+    /// 这个运行结束得太久了，登记会被拒（App 直接在本地结束实时活动）。
+    public static func isTooLateToRegister(_ run: Run, now: Date = Date()) -> Bool {
+        guard let finished = run.finishedAt else { return false }
+        return now.timeIntervalSince(finished) > lateRegistration
+    }
+}

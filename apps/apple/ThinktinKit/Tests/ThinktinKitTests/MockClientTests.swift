@@ -152,10 +152,13 @@ struct MockAccountTests {
         #expect(try await client.approvals().isEmpty)
         #expect(client.state.inbox.first { $0.approvalID != nil }?.isRead == true)
 
+        // 演示数据里除了这台 iPhone 还有 Mac 和 iPad：下线后只剩这台。
         let others = try await client.signOutOtherDevices(stopAgents: false)
-        #expect(others.devicesSignedOut == 1)
+        #expect(others.devicesSignedOut == 2)
         #expect(others.stopped == nil)
+        #expect(try await client.devices().map(\.id) == [DemoData.deviceID])
         let both = try await client.signOutOtherDevices(stopAgents: true)
+        #expect(both.devicesSignedOut == 0)
         #expect(both.stopped?.runsCancelled == 0)
     }
 }

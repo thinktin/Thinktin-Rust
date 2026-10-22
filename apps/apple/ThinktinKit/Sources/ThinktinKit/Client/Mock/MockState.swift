@@ -27,6 +27,20 @@ public struct MockState: Sendable {
     public var vaultUsernames: [VaultItemID: String]
     public var vaultRequests: [VaultRequest]
     public var imChannels: [ImChannel]
+    /// 登录着的设备（吊销了的删掉）。当前这台是 `session.deviceID` 那台，`isCurrent` 读出来时按会话算。
+    public var devices: [DeviceInfo]
+    /// 设备之间转发、还没收下的消息（发给谁的都在这里）。
+    public var deviceMessages: [DeviceMessage]
+    /// 这台设备上登记了的实时活动（10.6），按运行。
+    public var liveActivities: [RunID: MockLiveActivity]
+    /// 这台设备的推送开启令牌（10.6）；没登记为 nil。
+    public var liveActivityStartToken: String?
+    /// 团队（先建的在前）。
+    public var teams: [Team]
+    /// 团队模板（先建的在前）。
+    public var teamTemplates: [TeamTemplate]
+    /// 自己的内容举报（新的在前）。
+    public var reports: [ContentReport]
 
     public init(
         session: Session? = nil, user: User, verificationCode: String = "123456", agents: [AgentInfo] = [],
@@ -35,7 +49,9 @@ public struct MockState: Sendable {
         inbox: [InboxItem] = [], vendors: [VendorInfo] = [], credentials: [Credential] = [],
         dailyUsage: [UsageBucket] = [], artifacts: [Artifact] = [], artifactContents: [ArtifactID: Data] = [:],
         vaultItems: [VaultItem] = [], vaultUsernames: [VaultItemID: String] = [:], vaultRequests: [VaultRequest] = [],
-        imChannels: [ImChannel] = []
+        imChannels: [ImChannel] = [], devices: [DeviceInfo] = [], deviceMessages: [DeviceMessage] = [],
+        liveActivities: [RunID: MockLiveActivity] = [:], liveActivityStartToken: String? = nil, teams: [Team] = [],
+        teamTemplates: [TeamTemplate] = [], reports: [ContentReport] = []
     ) {
         self.session = session
         self.user = user
@@ -57,6 +73,13 @@ public struct MockState: Sendable {
         self.vaultUsernames = vaultUsernames
         self.vaultRequests = vaultRequests
         self.imChannels = imChannels
+        self.devices = devices
+        self.deviceMessages = deviceMessages
+        self.liveActivities = liveActivities
+        self.liveActivityStartToken = liveActivityStartToken
+        self.teams = teams
+        self.teamTemplates = teamTemplates
+        self.reports = reports
     }
 
     /// 实例最后一条事件的 seq（没有为 0）。
@@ -66,4 +89,28 @@ public struct MockState: Sendable {
 
     /// 未读数。
     public var unreadCount: Int { inbox.filter { !$0.isRead }.count }
+}
+
+/// Mock 里登记的一个实时活动（10.6）：这台设备上一个运行的推送令牌，以及后台按它推送了几次。
+public struct MockLiveActivity: Hashable, Sendable {
+    /// ActivityKit 给的推送令牌（十六进制）。
+    public var token: String
+    /// App 关掉了（`endLiveActivity`）：不再推送；同一个令牌再登记也不重新打开，换了令牌才算新的。
+    public var isEnded: Bool
+    /// 登记这个令牌的时间（实时活动最多显示 8 小时，从这里算）。
+    public var registeredAt: Date
+    /// 后台按当时的状态推送了几次：换令牌时马上重发一次，同一个令牌再登记不重发。
+    public var pushCount: Int
+
+    public init(token: String, isEnded: Bool = false, registeredAt: Date, pushCount: Int = 1) {
+        self.token = token
+        self.isEnded = isEnded
+        self.registeredAt = registeredAt
+        self.pushCount = pushCount
+    }
+
+    /// 还在推送（没关掉、没过 8 小时），占一台设备的名额。
+    public func isOpen(now: Date = Date()) -> Bool {
+        !isEnded && now.timeIntervalSince(registeredAt) < LiveActivityLimits.maxAge
+    }
 }

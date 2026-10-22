@@ -26,6 +26,9 @@ public struct Credential: Identifiable, Hashable, Codable, Sendable {
 
     /// 打码显示：`••••abcd`。
     public var maskedKey: String { "••••" + last4 }
+
+    /// 备注最长几个字符（可以为空）。
+    public static let maxLabelLength = 64
 }
 
 /// 添加模型 key。描述里不打印 key。

@@ -446,6 +446,63 @@ public enum SelfCodePurpose: String, Sendable, Hashable, Codable, CaseIterable {
     case changePhone = "change_phone"
 }
 
+/// 举报 agent 输出的原因（5.5，`reportContent`）。服务端加了新原因时旧版本 App 显示成“其他”。
+public enum ReportReason: OpenStringEnum {
+    /// 危害人身安全、教唆违法犯罪。
+    case harmful
+    /// 违法违规的内容。
+    case illegal
+    /// 色情低俗。
+    case sexual
+    /// 歧视、仇恨、侮辱。
+    case hateful
+    /// 泄露个人信息、侵犯隐私。
+    case privacy
+    /// 虚假信息。
+    case misinformation
+    /// 侵犯知识产权。
+    case infringement
+    case other
+    case unknown(String)
+
+    public static let knownCases: [ReportReason] = [
+        .harmful, .illegal, .sexual, .hateful, .privacy, .misinformation, .infringement, .other,
+    ]
+
+    public var rawValue: String {
+        switch self {
+        case .harmful: "harmful"
+        case .illegal: "illegal"
+        case .sexual: "sexual"
+        case .hateful: "hateful"
+        case .privacy: "privacy"
+        case .misinformation: "misinformation"
+        case .infringement: "infringement"
+        case .other: "other"
+        case .unknown(let raw): raw
+        }
+    }
+}
+
+/// 举报的处理状态（5.5）。
+public enum ReportState: OpenStringEnum {
+    /// 待处理。
+    case open
+    /// 已处理（结果在 `ContentReport.resolution`，也发到收件箱和推送）。
+    case closed
+    case unknown(String)
+
+    public static let knownCases: [ReportState] = [.open, .closed]
+
+    public var rawValue: String {
+        switch self {
+        case .open: "open"
+        case .closed: "closed"
+        case .unknown(let raw): raw
+        }
+    }
+}
+
 /// 收件箱条目的种类。
 public enum InboxKind: OpenStringEnum {
     case runFinished, runFailed, approval, info

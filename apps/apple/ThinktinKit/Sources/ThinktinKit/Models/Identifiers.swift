@@ -49,6 +49,7 @@ public enum IDTag {
     public enum Team {}
     public enum TeamTemplate {}
     public enum DeviceMessage {}
+    public enum ContentReport {}
 }
 
 public typealias UserID = EntityID<IDTag.User>
@@ -70,3 +71,5 @@ public typealias TeamID = EntityID<IDTag.Team>
 public typealias TeamTemplateID = EntityID<IDTag.TeamTemplate>
 /// 手机和电脑之间转发的一条消息（`DeviceMessage`）。
 public typealias DeviceMessageID = EntityID<IDTag.DeviceMessage>
+/// 一条内容举报（5.5，`ContentReport`）。
+public typealias ContentReportID = EntityID<IDTag.ContentReport>

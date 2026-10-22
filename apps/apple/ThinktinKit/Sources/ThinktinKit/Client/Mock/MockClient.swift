@@ -7,6 +7,7 @@ import Foundation
 /// - 发消息（`sendMessage` / `createRun`）后自动播放一段 agent 回答（`DemoData.replyScript`），
 ///   审批、保险箱请求处理后接着播；`setScript(_:for:)` 设定下一次订阅时回放的事件；
 /// - `failNext(with:)` 让下一次调用抛错；`latency` 模拟网络延迟；
+/// - `deliverDeviceMessage(from:kind:body:)` 模拟电脑发来的消息，`resolveReport(_:resolution:)` 模拟运营处理了举报；
 /// - 规则尽量和服务端一致：没登录抛 `signedOut`，找不到抛 `not_found`，状态不对抛 `conflict`，参数不对抛 `invalid`。
 public final class MockClient: ClientProtocol, @unchecked Sendable {
     public let secretDetector: any SecretDetector
@@ -91,6 +92,38 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
         return task
     }
 
+    /// 模拟另一台设备（比如在线的 Mac）发来一条消息，之后 `deviceMessages()` 能收到（不校验方向和签名）。
+    @discardableResult
+    public func deliverDeviceMessage(
+        from deviceID: DeviceID, kind: DeviceMessageKind, body: JSONValue = [:], at date: Date = Date()
+    ) -> DeviceMessage {
+        inner.withLock { s in
+            let message = DeviceMessage(
+                id: .random(), fromDeviceID: deviceID, toDeviceID: s.state.session?.deviceID ?? DemoData.deviceID,
+                kind: kind, bodyJSON: body.compactString(), createdAt: date)
+            s.state.deviceMessages.append(message)
+            return message
+        }
+    }
+
+    /// 模拟运营处理了一条举报（`admin close-report`）：标成已处理、写上结果，并发一条收件箱通知。找不到时返回 nil。
+    @discardableResult
+    public func resolveReport(_ reportID: ContentReportID, resolution: String, at date: Date = Date())
+        -> ContentReport?
+    {
+        inner.withLock { s in
+            guard let i = s.state.reports.firstIndex(where: { $0.id == reportID }) else { return nil }
+            s.state.reports[i].state = .closed
+            s.state.reports[i].resolution = resolution
+            s.state.reports[i].handledAt = date
+            s.state.inbox.insert(
+                InboxItem(
+                    id: .random(), kind: .info, title: "举报已处理", body: "感谢你的举报，我们已经处理：\(resolution)",
+                    createdAt: date), at: 0)
+            return s.state.reports[i]
+        }
+    }
+
     /// 等所有正在播放的脚本播完（包括播放中又触发的）。
     public func waitForPlayback() async {
         while true {
@@ -127,6 +160,14 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
         for task in tasks { task.cancel() }
     }
 
+    private func cancelAllPlayback() {
+        let tasks = inner.withLock { s -> [Task<Void, Never>] in
+            defer { s.playbacks.removeAll() }
+            return s.playbacks.values.map(\.task)
+        }
+        for task in tasks { task.cancel() }
+    }
+
     private func autoReply(to run: Run) {
         guard inner.withLock({ $0.autoReply }) else { return }
         play(DemoData.replyScript(for: run), instanceID: run.instanceID)
@@ -153,12 +194,14 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
             s.state.session = Session(
                 userID: s.state.user.id, deviceID: DemoData.deviceID, accessToken: "mock-access-\(UUID().uuidString)",
                 refreshToken: "mock-refresh-\(UUID().uuidString)")
+            s.registerCurrentDevice(push: push?.channel)
             return LoginResult(user: s.state.user, isNewUser: isNew)
         }
     }
 
+    /// 退出登录：服务端吊销这台设备（和 `revokeDevice` 当前这台一样）。
     public func logout() async throws {
-        try await call(signedIn: false) { s in s.state.session = nil }
+        try await call(signedIn: false) { s in s.signOutLocally() }
     }
 
     public func me() async throws -> User {
@@ -173,8 +216,9 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
     }
 
     public func setPushToken(_ push: PushRegistration) async throws {
-        try await call { _ in
+        try await call { s in
             guard !push.token.isEmpty else { throw MockErrors.invalid("empty push token") }
+            s.registerCurrentDevice(push: push.channel)
         }
     }
 
@@ -186,12 +230,154 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
 
     public func signOutOtherDevices(stopAgents: Bool) async throws -> SignOutOthersResult {
         let (result, cancelled) = try await call { s -> (SignOutOthersResult, Set<RunID>) in
-            guard stopAgents else { return (SignOutOthersResult(devicesSignedOut: 1), []) }
+            let others = s.state.devices.map(\.id).filter { $0 != s.state.session?.deviceID }
+            for id in others { s.removeDevice(id) }
+            guard stopAgents else { return (SignOutOthersResult(devicesSignedOut: others.count), []) }
             let (stopped, cancelled) = s.stopAll()
-            return (SignOutOthersResult(devicesSignedOut: 1, stopped: stopped), cancelled)
+            return (SignOutOthersResult(devicesSignedOut: others.count, stopped: stopped), cancelled)
         }
         cancelPlayback(runIDs: cancelled)
         return result
+    }
+
+    public func updateProfile(displayName: String?) async throws -> User {
+        try await call { s in
+            if let name = displayName, !(1...User.maxDisplayNameLength).contains(name.unicodeScalars.count) {
+                throw MockErrors.invalid("display_name must be 1-\(User.maxDisplayNameLength) characters")
+            }
+            s.state.user.displayName = displayName
+            return s.state.user
+        }
+    }
+
+    /// 验证码固定是 `state.verificationCode`（和登录的一样）。
+    public func sendSelfCode(purpose: SelfCodePurpose) async throws {
+        try await call { s in _ = s.selfCodes.insert(purpose) }
+    }
+
+    /// 先要 `sendSelfCode(purpose: .deleteAccount)`。成功后除了 agent 目录和厂商，状态全部清空（缓存类方法返回空、
+    /// 事件流收到 `signedOut`）；之后用同一个手机号登录算新用户。
+    public func deleteAccount(code: String) async throws {
+        try await call { s in
+            guard s.selfCodes.contains(.deleteAccount), code == s.state.verificationCode else {
+                throw MockErrors.invalid("wrong verification code")
+            }
+            s.eraseAccount()
+        }
+        cancelAllPlayback()
+    }
+
+    // MARK: 登录设备与设备消息
+
+    public func devices() async throws -> [DeviceInfo] {
+        try await call { s in s.devicesForDisplay() }
+    }
+
+    /// 吊销当前这台等于退出登录（会话、这台的实时活动一起清掉）。
+    public func revokeDevice(_ deviceID: DeviceID) async throws {
+        try await call { s in
+            guard s.state.devices.contains(where: { $0.id == deviceID }) else { throw MockErrors.notFound("device") }
+            if deviceID == s.state.session?.deviceID {
+                s.signOutLocally()
+            } else {
+                s.removeDevice(deviceID)
+            }
+        }
+    }
+
+    public func sendDeviceMessage(to deviceID: DeviceID, kind: DeviceMessageKind, bodyJSON: String) async throws
+        -> DeviceMessage
+    {
+        try await call { s in
+            // 这两个 client-core 在发请求前就拒。
+            guard kind.isKnown else {
+                throw ClientError.invalidArgument(message: "unknown device message kind \(kind)")
+            }
+            guard JSONValue.parse(bodyJSON) != nil else {
+                throw ClientError.invalidArgument(message: "body_json is not JSON")
+            }
+            guard bodyJSON.utf8.count <= DeviceMessage.maxBodyBytes else {
+                throw MockErrors.invalid("body is larger than \(DeviceMessage.maxBodyBytes) bytes")
+            }
+            let from = try s.currentDeviceID()
+            guard deviceID != from else { throw MockErrors.invalid("a device cannot message itself") }
+            guard let sender = s.state.devices.first(where: { $0.id == from }),
+                let recipient = s.state.devices.first(where: { $0.id == deviceID })
+            else { throw MockErrors.notFound("device") }
+            // 方向：电脑发的种类只能电脑发给手机，其余只能手机发给电脑。
+            guard kind.isFromComputer == sender.isComputer, sender.isComputer != recipient.isComputer else {
+                throw MockErrors.invalid(
+                    "\(kind) cannot go from a \(sender.platform) device to a \(recipient.platform) device")
+            }
+            let message = DeviceMessage(
+                id: .random(), fromDeviceID: from, toDeviceID: deviceID, kind: kind, bodyJSON: bodyJSON,
+                createdAt: Date())
+            s.state.deviceMessages.append(message)
+            return message
+        }
+    }
+
+    public func deviceMessages() async throws -> [DeviceMessage] {
+        try await call { s in
+            let me = try s.currentDeviceID()
+            let now = Date()
+            let pending = s.state.deviceMessages.filter { $0.toDeviceID == me && !$0.isExpired(now: now) }
+            return Array(pending.sorted { ($0.createdAt, $0.id) < ($1.createdAt, $1.id) }.prefix(100))
+        }
+    }
+
+    public func ackDeviceMessages(ids: [DeviceMessageID]) async throws -> Int {
+        try await call { s in
+            guard (1...DeviceMessage.maxAckCount).contains(ids.count) else {
+                throw MockErrors.invalid("give 1 to \(DeviceMessage.maxAckCount) ids")
+            }
+            let me = try s.currentDeviceID()
+            let acked = Set(ids)
+            let before = s.state.deviceMessages.count
+            s.state.deviceMessages.removeAll { $0.toDeviceID == me && acked.contains($0.id) }
+            return before - s.state.deviceMessages.count
+        }
+    }
+
+    // MARK: 实时活动
+
+    public func setLiveActivityStartToken(_ token: String?) async throws {
+        try await call { s in
+            guard let token else {
+                s.state.liveActivityStartToken = nil
+                return
+            }
+            guard LiveActivityToken.isValid(token) else { throw MockErrors.badLiveActivityToken }
+            try s.requireLiveActivityDevice()
+            s.state.liveActivityStartToken = token
+        }
+    }
+
+    /// 后台推送的次数记在 `state.liveActivities[runID].pushCount`：换令牌加一，同一个令牌再登记不变。
+    public func registerLiveActivity(runID: RunID, token: String) async throws {
+        try await call { s in
+            guard LiveActivityToken.isValid(token) else { throw MockErrors.badLiveActivityToken }
+            let now = Date()
+            let run = s.state.runs[try s.runIndex(runID)]
+            guard !LiveActivityLimits.isTooLateToRegister(run, now: now) else {
+                throw MockErrors.invalid("the run has already finished")
+            }
+            try s.requireLiveActivityDevice()
+            let open = s.state.liveActivities.filter { $0.key != runID && $0.value.isOpen(now: now) }.count
+            guard open < LiveActivityLimits.maxOpenPerDevice else {
+                throw MockErrors.invalid(
+                    "at most \(LiveActivityLimits.maxOpenPerDevice) live activities at a time on one device")
+            }
+            let existing = s.state.liveActivities[runID]
+            // 同一个令牌：什么都不变（不重发；关掉了的也不重新打开）。
+            if existing?.token == token { return }
+            s.state.liveActivities[runID] = MockLiveActivity(
+                token: token, registeredAt: now, pushCount: (existing?.pushCount ?? 0) + 1)
+        }
+    }
+
+    public func endLiveActivity(runID: RunID) async throws {
+        try await call { s in s.state.liveActivities[runID]?.isEnded = true }
     }
 
     // MARK: agent 与实例
@@ -204,28 +390,16 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
         try await call { s in s.state.instances }
     }
 
+    public func instance(_ instanceID: InstanceID) async throws -> Instance {
+        try await call { s in s.state.instances[try s.instanceIndex(instanceID)] }
+    }
+
     public func cachedInstances() throws -> [Instance] {
         try syncCall(signedIn: false) { s in s.state.instances }
     }
 
     public func adopt(agentID: AgentID, name: String, harness: String?) async throws -> Instance {
-        try await call { s in
-            guard let agent = s.state.agents.first(where: { $0.id == agentID }) else {
-                throw MockErrors.notFound("agent")
-            }
-            let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !name.isEmpty else { throw MockErrors.invalid("name is empty") }
-            let harness = harness ?? agent.defaultHarness
-            guard agent.harnesses.isEmpty || agent.harnesses.contains(harness) else {
-                throw MockErrors.invalid("unknown harness \(harness)")
-            }
-            let now = Date()
-            let instance = Instance(
-                id: .random(), agentID: agent.id, agentVersion: agent.version, harness: harness, name: name,
-                state: .running, createdAt: now, lastActiveAt: now)
-            s.state.instances.append(instance)
-            return instance
-        }
+        try await call { s in try s.adoptInstance(agentID: agentID, name: name, harness: harness) }
     }
 
     public func renameInstance(_ instanceID: InstanceID, name: String) async throws -> Instance {
@@ -282,6 +456,8 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
             s.state.instances.remove(at: i)
             s.state.routes[instanceID] = nil
             s.state.plans.removeAll { $0.instanceID == instanceID }
+            // 和服务端一致：删掉的实例自动移出团队（团队留着）。
+            for t in s.state.teams.indices { s.state.teams[t].members.removeAll { $0.instanceID == instanceID } }
         }
     }
 
@@ -297,6 +473,15 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
         try await call { s in
             _ = try s.instanceIndex(instanceID)
             return s.runs(of: instanceID, limit: limit)
+        }
+    }
+
+    public func olderRuns(instanceID: InstanceID, before: RunID, limit: Int) async throws -> [Run] {
+        try await call { s in
+            _ = try s.instanceIndex(instanceID)
+            let all = s.sortedRuns(of: instanceID)
+            guard let k = all.firstIndex(where: { $0.id == before }) else { throw MockErrors.notFound("run") }
+            return Array(all[(k + 1)...].prefix(max(0, limit)))
         }
     }
 
@@ -343,10 +528,29 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
         }
     }
 
+    public func instanceArtifacts(_ instanceID: InstanceID, limit: Int) async throws -> [Artifact] {
+        try await call { s in
+            _ = try s.instanceIndex(instanceID)
+            let list = s.state.artifacts.filter { $0.instanceID == instanceID }
+                .sorted { ($0.createdAt, $0.id) > ($1.createdAt, $1.id) }
+            return Array(list.prefix(min(max(limit, 1), Artifact.maxListLimit)))
+        }
+    }
+
     public func artifactContent(_ artifactID: ArtifactID) async throws -> Data {
         try await call { s in
             guard let data = s.state.artifactContents[artifactID] else { throw MockErrors.notFound("artifact") }
             return data
+        }
+    }
+
+    public func deleteArtifact(_ artifactID: ArtifactID) async throws {
+        try await call { s in
+            guard let i = s.state.artifacts.firstIndex(where: { $0.id == artifactID }) else {
+                throw MockErrors.notFound("artifact")
+            }
+            s.state.artifacts.remove(at: i)
+            s.state.artifactContents[artifactID] = nil
         }
     }
 
@@ -460,22 +664,55 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
     public func createPlan(_ plan: NewPlan) async throws -> Plan {
         try await call { s in
             _ = try s.instanceIndex(plan.instanceID)
-            guard !plan.title.trimmingCharacters(in: .whitespaces).isEmpty else {
-                throw MockErrors.invalid("empty title")
-            }
+            let title = plan.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            let goal = plan.goal.trimmingCharacters(in: .whitespacesAndNewlines)
+            try s.checkPlan(title: title, goal: goal, policy: plan.policy, catchUp: plan.catchUp, steps: plan.steps)
             guard !plan.triggers.isEmpty else { throw MockErrors.invalid("a plan needs at least one trigger") }
-            for step in plan.steps { _ = try s.instanceIndex(step.instanceID) }
-            let policy = (try? JSONEncoder().encode(PlanPolicy())).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+            guard plan.triggers.count <= Plan.maxTriggers else {
+                throw MockErrors.invalid("at most \(Plan.maxTriggers) triggers")
+            }
             let created = Plan(
-                id: .random(), instanceID: plan.instanceID, title: plan.title, goal: plan.goal, createdBy: .user,
-                revision: 1, policyJSON: policy, createdAt: Date(),
-                triggers: plan.triggers.map { schedule in
-                    var next: Date?
-                    if case .once(let at) = schedule { next = at }
-                    return Trigger(id: .random(), schedule: schedule, nextFireAt: next)
-                }, steps: plan.steps)
+                id: .random(), instanceID: plan.instanceID, title: title, goal: goal, createdBy: .user, revision: 1,
+                policy: plan.policy ?? PlanPolicy(), catchUp: plan.catchUp ?? .default, createdAt: Date(),
+                triggers: try plan.triggers.map { try Inner.makeTrigger($0) }, steps: plan.steps)
             s.state.plans.append(created)
             return created
+        }
+    }
+
+    /// 只改给了的字段，版本号加一（agent 改计划时的“重新待确认”不模拟）。
+    public func updatePlan(_ planID: PlanID, change: PlanChange) async throws -> Plan {
+        try await call { s in
+            let i = try s.planIndex(planID)
+            var plan = change.applied(to: s.state.plans[i])
+            plan.title = plan.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            plan.goal = plan.goal.trimmingCharacters(in: .whitespacesAndNewlines)
+            try s.checkPlan(
+                title: plan.title, goal: plan.goal, policy: change.policy, catchUp: change.catchUp, steps: change.steps)
+            plan.revision += 1
+            s.state.plans[i] = plan
+            return plan
+        }
+    }
+
+    public func addTrigger(planID: PlanID, schedule: Schedule) async throws -> Trigger {
+        try await call { s in
+            let trigger = try Inner.makeTrigger(schedule)
+            let i = try s.planIndex(planID)
+            guard s.state.plans[i].triggers.count < Plan.maxTriggers else {
+                throw MockErrors.invalid("at most \(Plan.maxTriggers) triggers")
+            }
+            s.state.plans[i].triggers.append(trigger)
+            return trigger
+        }
+    }
+
+    public func deleteTrigger(_ triggerID: TriggerID) async throws {
+        try await call { s in
+            guard let i = s.state.plans.firstIndex(where: { $0.triggers.contains { $0.id == triggerID } }) else {
+                throw MockErrors.notFound("trigger")
+            }
+            s.state.plans[i].triggers.removeAll { $0.id == triggerID }
         }
     }
 
@@ -541,6 +778,109 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
         }
     }
 
+    public func inboxItem(_ itemID: InboxItemID) async throws -> InboxItem {
+        try await call { s in s.state.inbox[try s.inboxIndex(itemID)] }
+    }
+
+    public func markInboxUnread(_ itemID: InboxItemID) async throws -> Int {
+        try await call { s in
+            s.state.inbox[try s.inboxIndex(itemID)].isRead = false
+            return s.state.unreadCount
+        }
+    }
+
+    public func deleteInboxItem(_ itemID: InboxItemID) async throws {
+        try await call { s in _ = s.state.inbox.remove(at: try s.inboxIndex(itemID)) }
+    }
+
+    // MARK: 团队与团队模板
+
+    public func teams() async throws -> [Team] {
+        try await call { s in s.state.teams.sorted { ($0.createdAt, $0.id) < ($1.createdAt, $1.id) } }
+    }
+
+    public func team(_ teamID: TeamID) async throws -> Team {
+        try await call { s in s.state.teams[try s.teamIndex(teamID)] }
+    }
+
+    public func createTeam(name: String, members: [TeamMember]) async throws -> Team {
+        try await call { s in
+            let members = try s.checkTeamMembers(members)
+            let team = Team(id: .random(), name: try Inner.checkName(name), members: members, createdAt: Date())
+            s.state.teams.append(team)
+            return team
+        }
+    }
+
+    public func updateTeam(_ teamID: TeamID, name: String?, members: [TeamMember]?) async throws -> Team {
+        try await call { s in
+            let members = try members.map { try s.checkTeamMembers($0) }
+            let name = try name.map { try Inner.checkName($0) }
+            let i = try s.teamIndex(teamID)
+            if let name { s.state.teams[i].name = name }
+            if let members { s.state.teams[i].members = members }
+            return s.state.teams[i]
+        }
+    }
+
+    public func deleteTeam(_ teamID: TeamID) async throws {
+        try await call { s in _ = s.state.teams.remove(at: try s.teamIndex(teamID)) }
+    }
+
+    public func teamTemplates() async throws -> [TeamTemplate] {
+        try await call { s in s.state.teamTemplates.sorted { ($0.createdAt, $0.id) < ($1.createdAt, $1.id) } }
+    }
+
+    public func createTeamTemplate(name: String, members: [TemplateMember]) async throws -> TeamTemplate {
+        try await call { s in
+            let members = try s.checkTemplateMembers(members)
+            let template = TeamTemplate(
+                id: .random(), name: try Inner.checkName(name), members: members, createdAt: Date())
+            s.state.teamTemplates.append(template)
+            return template
+        }
+    }
+
+    public func createTeamTemplateFromTeam(name: String, teamID: TeamID) async throws -> TeamTemplate {
+        try await call { s in
+            let name = try Inner.checkName(name)
+            let team = s.state.teams[try s.teamIndex(teamID)]
+            // 每个成员记下它的 agent、接入方式、名字、角色。
+            var members: [TemplateMember] = []
+            for m in team.members {
+                let instance = s.state.instances[try s.instanceIndex(m.instanceID)]
+                members.append(
+                    TemplateMember(
+                        agentID: instance.agentID, harness: instance.harness, name: instance.name, role: m.role))
+            }
+            let template = TeamTemplate(
+                id: .random(), name: name, members: try s.checkTemplateMembers(members), createdAt: Date())
+            s.state.teamTemplates.append(template)
+            return template
+        }
+    }
+
+    public func deleteTeamTemplate(_ templateID: TeamTemplateID) async throws {
+        try await call { s in _ = s.state.teamTemplates.remove(at: try s.templateIndex(templateID)) }
+    }
+
+    /// 每个成员新领养一个实例（没有模型路由），再编成团队。先全部校验再领养：中途出错不会留下半个团队的实例。
+    public func adoptTeamTemplate(_ templateID: TeamTemplateID, name: String?) async throws -> Team {
+        try await call { s in
+            let template = s.state.teamTemplates[try s.templateIndex(templateID)]
+            let teamName = try Inner.checkName(name ?? template.name)
+            for m in template.members { _ = try s.checkAdoption(agentID: m.agentID, name: m.name, harness: m.harness) }
+            var members: [TeamMember] = []
+            for (i, m) in template.members.enumerated() {
+                let instance = try s.adoptInstance(agentID: m.agentID, name: m.name, harness: m.harness)
+                members.append(TeamMember(instanceID: instance.id, role: m.isLead ? .lead : .member, position: i))
+            }
+            let team = Team(id: .random(), name: teamName, members: members, createdAt: Date())
+            s.state.teams.append(team)
+            return team
+        }
+    }
+
     // MARK: 用量
 
     public func usage(group: UsageGroup, from: Date?, to: Date?, timeZone: TimeZone?) async throws -> UsageSummary {
@@ -576,13 +916,84 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
         }
     }
 
-    public func deleteCredential(_ credentialID: CredentialID) async throws {
+    public func updateCredential(_ credentialID: CredentialID, label: String?, disabled: Bool?) async throws
+        -> Credential
+    {
         try await call { s in
-            guard let i = s.state.credentials.firstIndex(where: { $0.id == credentialID }) else {
-                throw MockErrors.notFound("credential")
+            let i = try s.credentialIndex(credentialID)
+            if let label, label.unicodeScalars.count > Credential.maxLabelLength {
+                throw MockErrors.invalid("label must be 0-\(Credential.maxLabelLength) characters")
             }
-            s.state.credentials.remove(at: i)
+            if let label { s.state.credentials[i].label = label }
+            if let disabled { s.state.credentials[i].isDisabled = disabled }
+            return s.state.credentials[i]
         }
+    }
+
+    public func replaceCredentialSecret(_ credentialID: CredentialID, apiKey: String) async throws -> Credential {
+        try await call { s in
+            let i = try s.credentialIndex(credentialID)
+            guard (8...4096).contains(apiKey.utf8.count), !apiKey.contains(where: { $0.isWhitespace }) else {
+                throw MockErrors.invalid("api_key must be 8-4096 bytes without spaces")
+            }
+            s.state.credentials[i].last4 = String(apiKey.suffix(4))
+            return s.state.credentials[i]
+        }
+    }
+
+    public func deleteCredential(_ credentialID: CredentialID) async throws {
+        try await call { s in _ = s.state.credentials.remove(at: try s.credentialIndex(credentialID)) }
+    }
+
+    // MARK: 内容举报
+
+    public func reportContent(
+        runID: RunID, eventSeq: UInt64?, artifactID: ArtifactID?, reason: ReportReason, note: String?
+    ) async throws -> ContentReport {
+        try await call { s in
+            // client-core 发请求前就拒不认识的原因。
+            guard reason.isKnown else { throw ClientError.invalidArgument(message: "unknown report reason \(reason)") }
+            let note = note?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmedNote = (note?.isEmpty ?? true) ? nil : note
+            if let trimmedNote, trimmedNote.unicodeScalars.count > ContentReport.maxNoteLength {
+                throw MockErrors.invalid("note must be 1-\(ContentReport.maxNoteLength) characters")
+            }
+            // 和服务端一致：限流在查找之前，再举报同一条也算一次。
+            let now = Date()
+            s.reportAttempts.removeAll { now.timeIntervalSince($0) >= 3600 }
+            if s.reportAttempts.count >= ContentReport.maxPerHour, let oldest = s.reportAttempts.first {
+                let wait = Int((3600 - now.timeIntervalSince(oldest)).rounded(.up))
+                throw MockErrors.rateLimited("too many reports", retryAfter: max(1, wait))
+            }
+            s.reportAttempts.append(now)
+            let run = s.state.runs[try s.runIndex(runID)]
+            if let seq = eventSeq,
+                !(s.state.events[run.instanceID] ?? []).contains(where: { $0.seq == seq && $0.runID == runID })
+            {
+                throw MockErrors.notFound("event")
+            }
+            if let artifactID,
+                !s.state.artifacts.contains(where: { $0.id == artifactID && $0.instanceID == run.instanceID })
+            {
+                throw MockErrors.notFound("artifact")
+            }
+            // 同一条内容还有待处理的举报：返回那一条。
+            if let existing = s.state.reports.first(where: {
+                $0.isOpen && $0.runID == runID && $0.eventSeq == eventSeq && $0.artifactID == artifactID
+            }) {
+                return existing
+            }
+            let report = ContentReport(
+                id: .random(), runID: runID, instanceID: run.instanceID, eventSeq: eventSeq, artifactID: artifactID,
+                reason: reason, note: trimmedNote, createdAt: now)
+            s.state.reports.insert(report, at: 0)
+            return report
+        }
+    }
+
+    public func reports() async throws -> [ContentReport] {
+        // 排序是稳定的：同一时刻的保持“新的在前”的存放顺序。
+        try await call { s in Array(s.state.reports.sorted { $0.createdAt > $1.createdAt }.prefix(100)) }
     }
 
     // MARK: IM 渠道
@@ -789,6 +1200,10 @@ private struct Inner: Sendable {
     var permissions: [ApprovalID: PendingPermission] = [:]
     /// 用户取消了的运行：回放中的脚本不再给它们出事件。
     var cancelledRuns: Set<RunID> = []
+    /// 发过验证码的用途（`sendSelfCode`），用掉一次就删。
+    var selfCodes: Set<SelfCodePurpose> = []
+    /// 最近一小时的举报时间（每人每小时 30 次）。
+    var reportAttempts: [Date] = []
 
     init(state: MockState) {
         self.state = state
@@ -923,6 +1338,36 @@ private struct Inner: Sendable {
         return i
     }
 
+    func inboxIndex(_ id: InboxItemID) throws -> Int {
+        guard let i = state.inbox.firstIndex(where: { $0.id == id }) else { throw MockErrors.notFound("inbox item") }
+        return i
+    }
+
+    func teamIndex(_ id: TeamID) throws -> Int {
+        guard let i = state.teams.firstIndex(where: { $0.id == id }) else { throw MockErrors.notFound("team") }
+        return i
+    }
+
+    func templateIndex(_ id: TeamTemplateID) throws -> Int {
+        guard let i = state.teamTemplates.firstIndex(where: { $0.id == id }) else {
+            throw MockErrors.notFound("template")
+        }
+        return i
+    }
+
+    func credentialIndex(_ id: CredentialID) throws -> Int {
+        guard let i = state.credentials.firstIndex(where: { $0.id == id }) else {
+            throw MockErrors.notFound("credential")
+        }
+        return i
+    }
+
+    /// 当前这台设备（调用方已经确认登录了）。
+    func currentDeviceID() throws -> DeviceID {
+        guard let id = state.session?.deviceID else { throw ClientError.signedOut }
+        return id
+    }
+
     func channelIndex(_ id: ImChannelID) throws -> Int {
         guard let i = state.imChannels.firstIndex(where: { $0.id == id }) else {
             throw MockErrors.notFound("im channel")
@@ -946,9 +1391,221 @@ private struct Inner: Sendable {
 
     // MARK: 操作
 
+    /// 实例的运行，新的在前（同一时刻的按 id 排，翻页稳定）。
+    func sortedRuns(of instanceID: InstanceID) -> [Run] {
+        state.runs.filter { $0.instanceID == instanceID }.sorted { ($0.createdAt, $0.id) > ($1.createdAt, $1.id) }
+    }
+
     func runs(of instanceID: InstanceID, limit: Int) -> [Run] {
-        let runs = state.runs.filter { $0.instanceID == instanceID }.sorted { $0.createdAt > $1.createdAt }
-        return Array(runs.prefix(max(0, limit)))
+        Array(sortedRuns(of: instanceID).prefix(max(0, limit)))
+    }
+
+    // MARK: 设备与账号
+
+    /// 登录设备，最近活跃的在前；`isCurrent` 按会话算，手机的 `isOnline` 总是 false。
+    func devicesForDisplay() -> [DeviceInfo] {
+        let current = state.session?.deviceID
+        return state.devices.map { device in
+            var d = device
+            d.isCurrent = d.id == current
+            if !d.isComputer { d.isOnline = false }
+            return d
+        }.sorted { ($0.lastSeenAt, $0.id) > ($1.lastSeenAt, $1.id) }
+    }
+
+    /// 登录、报推送令牌时：这台设备记在登录设备里（吊销过、注销过的重新登记），最近活跃时间是现在。
+    mutating func registerCurrentDevice(push channel: PushChannel?) {
+        guard let id = state.session?.deviceID else { return }
+        let now = Date()
+        if let i = state.devices.firstIndex(where: { $0.id == id }) {
+            state.devices[i].lastSeenAt = now
+            if let channel { state.devices[i].pushChannel = channel }
+        } else {
+            var device = DemoData.currentDevice(now: now)
+            device.id = id
+            device.pushChannel = channel
+            state.devices.append(device)
+        }
+    }
+
+    /// 吊销一台设备：从登录设备里去掉，发给它的、它发的还没收下的消息一起丢掉。
+    mutating func removeDevice(_ id: DeviceID) {
+        state.devices.removeAll { $0.id == id }
+        state.deviceMessages.removeAll { $0.toDeviceID == id || $0.fromDeviceID == id }
+    }
+
+    /// 这台设备下线（退出登录、吊销了这台、注销账号）：会话、这台登记的实时活动和推送开启令牌一起清掉
+    /// （服务端吊销设备时清掉这些），订阅着的事件流收到 `signedOut` 后结束。
+    mutating func signOutLocally() {
+        if let id = state.session?.deviceID { removeDevice(id) }
+        state.session = nil
+        state.liveActivities = [:]
+        state.liveActivityStartToken = nil
+        selfCodes = []
+        for sub in subscribers.values {
+            sub.continuation.yield(.status(.signedOut))
+            sub.continuation.finish()
+        }
+        subscribers = [:]
+    }
+
+    /// 注销账号：服务端删掉这个人的全部内容，本地登录状态和缓存一起清掉。agent 目录、厂商、验证码留着；
+    /// 用户换成一个没有手机号的新用户，之后用同一个手机号登录算新用户。
+    mutating func eraseAccount() {
+        cancelledRuns.formUnion(state.runs.map(\.id))
+        signOutLocally()
+        state = MockState(
+            user: User(id: .random(), phone: "", createdAt: Date()), verificationCode: state.verificationCode,
+            agents: state.agents, vendors: state.vendors)
+        permissions = [:]
+        scripts = [:]
+        reportAttempts = []
+    }
+
+    /// 只有 iPhone、iPad 能登记实时活动（10.6）。
+    func requireLiveActivityDevice() throws {
+        let id = try currentDeviceID()
+        guard state.devices.first(where: { $0.id == id })?.supportsLiveActivities == true else {
+            throw MockErrors.invalid("live activities are only available on iPhone and iPad")
+        }
+    }
+
+    // MARK: 领养
+
+    /// 领养前的校验：agent 在目录里、名字不空、接入方式是这个 agent 的。返回 agent、去掉首尾空白的名字、接入方式。
+    func checkAdoption(agentID: AgentID, name: String, harness: String?) throws -> (AgentInfo, String, String) {
+        guard let agent = state.agents.first(where: { $0.id == agentID }) else { throw MockErrors.notFound("agent") }
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { throw MockErrors.invalid("name is empty") }
+        let harness = harness ?? agent.defaultHarness
+        guard agent.harnesses.isEmpty || agent.harnesses.contains(harness) else {
+            throw MockErrors.invalid("unknown harness \(harness)")
+        }
+        return (agent, name, harness)
+    }
+
+    /// 领养一个新实例（还没有模型路由）。
+    mutating func adoptInstance(agentID: AgentID, name: String, harness: String?) throws -> Instance {
+        let (agent, name, harness) = try checkAdoption(agentID: agentID, name: name, harness: harness)
+        let now = Date()
+        let instance = Instance(
+            id: .random(), agentID: agent.id, agentVersion: agent.version, harness: harness, name: name,
+            state: .running, createdAt: now, lastActiveAt: now)
+        state.instances.append(instance)
+        return instance
+    }
+
+    // MARK: 计划
+
+    /// 计划字段的校验（和服务端的 `check_policy`、`check_steps` 一致）。`policy`、`catchUp`、`steps` 为 nil 的不查。
+    func checkPlan(title: String, goal: String, policy: PlanPolicy?, catchUp: CatchUp?, steps: [PlanStep]?) throws {
+        guard (1...Plan.maxTitleLength).contains(title.unicodeScalars.count) else {
+            throw MockErrors.invalid("title must be 1-\(Plan.maxTitleLength) characters")
+        }
+        guard (1...Plan.maxGoalLength).contains(goal.unicodeScalars.count) else {
+            throw MockErrors.invalid("goal must be 1-\(Plan.maxGoalLength) characters")
+        }
+        // 不认识的取值 client-core 转换时就拒（不发请求）。
+        if let action = policy?.onApprovalTimeout, !action.isKnown {
+            throw ClientError.invalidArgument(message: "unknown approval timeout action \(action)")
+        }
+        if let catchUp, !catchUp.isKnown { throw ClientError.invalidArgument(message: "unknown catch up \(catchUp)") }
+        if let policy, !policy.isValid { throw MockErrors.invalid("policy is out of range") }
+        if let steps { try checkSteps(steps) }
+    }
+
+    /// 流水线步骤：最多 20 步，步骤名合法且不重复，提示词不空，依赖只引用已有的步骤、不成环，实例要在。
+    func checkSteps(_ steps: [PlanStep]) throws {
+        guard steps.count <= Plan.maxSteps else { throw MockErrors.invalid("at most \(Plan.maxSteps) steps") }
+        var keys = Set<String>()
+        for step in steps {
+            guard PlanStep.isValidKey(step.key) else { throw MockErrors.invalid("bad step key \(step.key)") }
+            guard keys.insert(step.key).inserted else { throw MockErrors.invalid("duplicate step key \(step.key)") }
+            let prompt = step.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard (1...8000).contains(prompt.unicodeScalars.count) else {
+                throw MockErrors.invalid("step prompt must be 1-8000 characters")
+            }
+        }
+        for step in steps {
+            if let missing = step.dependsOn.first(where: { !keys.contains($0) }) {
+                throw MockErrors.invalid("step \(step.key) depends on unknown step \(missing)")
+            }
+        }
+        var done = Set<String>()
+        var remaining = steps
+        while !remaining.isEmpty {
+            let ready = remaining.filter { $0.dependsOn.allSatisfy(done.contains) }
+            guard !ready.isEmpty else { throw MockErrors.invalid("steps depend on each other in a cycle") }
+            done.formUnion(ready.map(\.key))
+            remaining.removeAll { done.contains($0.key) }
+        }
+        for step in steps { _ = try instanceIndex(step.instanceID) }
+    }
+
+    /// 新的触发器：一次性的要在将来，cron 要五段、时区认得，rrule 不能为空。下一次触发时间只有一次性的算得出来。
+    static func makeTrigger(_ schedule: Schedule, now: Date = Date()) throws -> Trigger {
+        var next: Date?
+        switch schedule {
+        case .once(let at):
+            guard at > now else { throw MockErrors.invalid("the schedule never fires after now") }
+            next = at
+        case .cron(let expression, let timeZone):
+            guard expression.split(separator: " ").count == 5, TimeZone(identifier: timeZone) != nil else {
+                throw MockErrors.invalid("bad cron schedule")
+            }
+        case .rrule(let rule):
+            guard !rule.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw MockErrors.invalid("empty rrule")
+            }
+        }
+        return Trigger(id: .random(), schedule: schedule, nextFireAt: next)
+    }
+
+    // MARK: 团队
+
+    /// 团队名、模板名：去掉首尾空白后 1 到 64 个字符。
+    static func checkName(_ raw: String) throws -> String {
+        let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard (1...Team.maxNameLength).contains(name.unicodeScalars.count) else {
+            throw MockErrors.invalid("name must be 1-\(Team.maxNameLength) characters")
+        }
+        return name
+    }
+
+    /// 团队成员：1 到 12 个、最多一个负责人、实例要在、不能重复。返回按 `position` 排好的成员。
+    func checkTeamMembers(_ members: [TeamMember]) throws -> [TeamMember] {
+        if let bad = members.first(where: { !$0.role.isKnown }) {
+            throw ClientError.invalidArgument(message: "unknown team role \(bad.role)")
+        }
+        guard (1...Team.maxMembers).contains(members.count) else {
+            throw MockErrors.invalid("a team has 1-\(Team.maxMembers) members")
+        }
+        guard members.filter(\.isLead).count <= 1 else { throw MockErrors.invalid("a team has at most one lead") }
+        for m in members { _ = try instanceIndex(m.instanceID) }
+        guard Set(members.map(\.instanceID)).count == members.count else {
+            throw MockErrors.conflict("an instance is in the team twice")
+        }
+        return members.sorted { ($0.position, $0.instanceID) < ($1.position, $1.instanceID) }
+    }
+
+    /// 模板成员：1 到 12 个、名字 1 到 64 个字符、agent 要在目录里、最多一个负责人。
+    func checkTemplateMembers(_ members: [TemplateMember]) throws -> [TemplateMember] {
+        if let bad = members.first(where: { !$0.role.isKnown }) {
+            throw ClientError.invalidArgument(message: "unknown team role \(bad.role)")
+        }
+        guard (1...Team.maxMembers).contains(members.count) else {
+            throw MockErrors.invalid("a template has 1-\(Team.maxMembers) members")
+        }
+        for m in members {
+            guard (1...Team.maxNameLength).contains(m.name.unicodeScalars.count) else {
+                throw MockErrors.invalid("member name must be 1-\(Team.maxNameLength) characters")
+            }
+            guard state.agents.contains(where: { $0.id == m.agentID }) else {
+                throw MockErrors.invalid("unknown agent \(m.agentID)")
+            }
+        }
+        guard members.filter(\.isLead).count <= 1 else { throw MockErrors.invalid("a team has at most one lead") }
+        return members
     }
 
     func inbox(before: InboxItemID?, limit: Int) -> [InboxItem] {
@@ -1056,6 +1713,13 @@ enum MockErrors {
     static func invalid(_ message: String) -> ClientError {
         .api(status: 422, code: .invalid, message: message, retryAfterSecs: nil)
     }
+
+    static func rateLimited(_ message: String, retryAfter: Int?) -> ClientError {
+        .api(status: 429, code: .rateLimited, message: message, retryAfterSecs: retryAfter)
+    }
+
+    /// 实时活动的令牌格式不对。
+    static let badLiveActivityToken = invalid("token must be the hex push token ActivityKit gave the app")
 
     /// 从 webhook 地址认出 IM 平台。
     static func imVendor(webhookURL: String) throws -> ImVendor {

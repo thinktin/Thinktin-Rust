@@ -56,6 +56,11 @@ struct OpenStringEnumTests {
         try checkOpenEnum(ApprovalTimeoutAction.self)
         try checkOpenEnum(PlanAuthor.self)
         try checkOpenEnum(PlanChangeKind.self)
+        try checkOpenEnum(CatchUp.self, unknown: "weekly")
+        try checkOpenEnum(TeamRole.self, unknown: "reviewer")
+        try checkOpenEnum(DeviceMessageKind.self, unknown: "screen_share")
+        try checkOpenEnum(ReportReason.self, unknown: "spam")
+        try checkOpenEnum(ReportState.self, unknown: "escalated")
         try checkOpenEnum(InboxKind.self, unknown: "plan_paused")
         try checkOpenEnum(VaultRequestStatus.self)
         try checkOpenEnum(VaultField.self, unknown: "otp")
@@ -90,6 +95,13 @@ struct OpenStringEnumTests {
         #expect(InstanceEventKind(rawValue: "agent.tool_call_update") == .toolCallUpdate)
         #expect(InstanceEventKind(rawValue: "pipeline.step_started") == .pipelineStepStarted)
         #expect(InstanceEventKind(rawValue: "run.log_truncated") == .runLogTruncated)
+        #expect(DeviceMessageKind(rawValue: "pair_response") == .pairResponse)
+        #expect(DeviceMessageKind(rawValue: "approval_decision") == .approvalDecision)
+        #expect(DeviceMessageKind(rawValue: "revocation") == .revocation)
+        #expect(ReportReason(rawValue: "misinformation") == .misinformation)
+        #expect(CatchUp(rawValue: "skip") == .skip)
+        #expect(SelfCodePurpose.deleteAccount.rawValue == "delete_account")
+        #expect(SelfCodePurpose.changePhone.rawValue == "change_phone")
         // 大小写不同就是不认识的取值（服务端的取值都是小写）。
         #expect(!RunState(rawValue: "RUNNING").isKnown)
     }
@@ -639,11 +651,11 @@ struct ModelComputationTests {
         #expect(broken.toolCall == nil)
     }
 
-    @Test("计划：策略解析（缺的字段用默认值）、最近触发时间")
+    @Test("计划：结构化的策略、兼容的 JSON（缺的字段用默认值）、最近触发时间")
     func plan() throws {
         let demo = DemoData.state(now: Fixture.now)
         let digest = try #require(demo.plans.first { $0.id == DemoData.digestPlanID })
-        let policy = try #require(digest.policy)
+        let policy = digest.policy
         #expect(policy.preauthorizedTools == ["read", "search", "fetch"])
         #expect(policy.approvalTimeoutSecs == 3600)
         #expect(policy.onApprovalTimeout == .skip)
@@ -651,19 +663,22 @@ struct ModelComputationTests {
         #expect(policy.budget.maxDurationSecs == 1800)
         #expect(policy.waitTimeoutSecs == 24 * 3600)
         #expect(policy.dailyTokenLimit == nil)
+        #expect(policy.isValid)
+        #expect(digest.catchUp == .once)
 
-        var p = digest
-        p.policyJSON = "{}"
-        #expect(p.policy == PlanPolicy())
-        p.policyJSON = #"{"on_approval_timeout":"hibernate"}"#
-        #expect(p.policy?.onApprovalTimeout == .unknown("hibernate"))
-        p.policyJSON = "not json"
-        #expect(p.policy == nil)
+        // 只读的 policyJSON 是服务端格式，能原样解回来。
+        #expect(digest.policyJSON.contains("\"preauthorized_tools\":[\"read\",\"search\",\"fetch\"]"))
+        #expect(PlanPolicy(json: digest.policyJSON) == policy)
+        #expect(PlanPolicy(json: "{}") == PlanPolicy())
+        #expect(PlanPolicy(json: #"{"on_approval_timeout":"hibernate"}"#)?.onApprovalTimeout == .unknown("hibernate"))
+        #expect(PlanPolicy(json: "not json") == nil)
 
         // 策略编码后能原样解回来（服务端的字段名）。
         let encoded = try jsonString(policy)
         #expect(encoded.contains("\"preauthorized_tools\""))
         #expect(try decode(PlanPolicy.self, encoded) == policy)
+
+        var p = digest
 
         let soon = Fixture.now.addingTimeInterval(60)
         let later = Fixture.now.addingTimeInterval(3600)
@@ -735,5 +750,174 @@ struct ModelComputationTests {
         // 落在代理对中间的下标认不出来。
         let split = DetectedSecret(kind: .labeled, utf16Range: 1..<3, value: "", suggestedName: "x")
         #expect(split.range(in: text) == nil)
+    }
+}
+
+// MARK: - 11.7、10.6、5.5 的新模型
+
+@Suite("新模型：设备、团队、计划改动、举报")
+struct AppAPIModelTests {
+    @Test("改计划：只带部分字段，编码时没给的字段不出现")
+    func planChangePartial() throws {
+        let plan = DemoData.state(now: Fixture.now).plans[0]
+        #expect(PlanChange().isEmpty)
+        #expect(PlanChange().applied(to: plan) == plan)
+
+        let rename = PlanChange(title: "新标题")
+        #expect(!rename.isEmpty)
+        let renamed = rename.applied(to: plan)
+        #expect(renamed.title == "新标题")
+        #expect(renamed.goal == plan.goal)
+        #expect(renamed.policy == plan.policy)
+        #expect(renamed.catchUp == plan.catchUp)
+        #expect(renamed.steps == plan.steps)
+        #expect(renamed.revision == plan.revision, "applied 不改版本号")
+        #expect(try jsonString(rename) == #"{"title":"新标题"}"#)
+
+        // 给空数组：变回单个 agent 的计划；只改补跑方式。
+        var pipeline = plan
+        pipeline.steps = [PlanStep(key: "a", instanceID: "i", prompt: "p")]
+        #expect(!PlanChange(steps: []).applied(to: pipeline).isPipeline)
+        let skip = PlanChange(catchUp: .skip)
+        #expect(skip.applied(to: plan).catchUp == .skip)
+        #expect(try jsonString(skip) == #"{"catchUp":"skip"}"#)
+        #expect(try decode(PlanChange.self, #"{"catchUp":"weekly"}"#).catchUp == .unknown("weekly"))
+    }
+
+    @Test("计划和新建计划：策略、补跑方式的默认值")
+    func planDefaults() {
+        let plan = Plan(id: "p", instanceID: "i", title: "t", goal: "g", createdAt: Fixture.now)
+        #expect(plan.policy == PlanPolicy())
+        #expect(plan.catchUp == .once)
+        #expect(CatchUp.default == .once)
+        let new = NewPlan(instanceID: "i", title: "t", goal: "g", triggers: [])
+        #expect(new.policy == nil)
+        #expect(new.catchUp == nil)
+
+        var policy = PlanPolicy()
+        #expect(policy.isValid)
+        policy.approvalTimeoutSecs = 59
+        #expect(!policy.isValid)
+        policy = PlanPolicy(budget: RunBudget(maxDurationSecs: 0))
+        #expect(!policy.isValid)
+        policy = PlanPolicy(preauthorizedTools: Array(repeating: "read", count: 33))
+        #expect(!policy.isValid)
+        policy = PlanPolicy(waitTimeoutSecs: 7 * 24 * 3600 + 1)
+        #expect(!policy.isValid)
+    }
+
+    @Test("流水线步骤名的格式")
+    func stepKeys() {
+        for ok in ["a", "build", "step-2", "x_1", "9lives", String(repeating: "a", count: 32)] {
+            #expect(PlanStep.isValidKey(ok), "\(ok)")
+        }
+        for bad in ["", "-a", "_a", "Build", "a b", "步骤", String(repeating: "a", count: 33)] {
+            #expect(!PlanStep.isValidKey(bad), "\(bad)")
+        }
+    }
+
+    @Test("登录设备：电脑、实时活动、最近活跃时间的默认值")
+    func deviceInfo() throws {
+        let demo = DemoData.state(now: Fixture.now)
+        let phone = try #require(demo.devices.first { $0.id == DemoData.deviceID })
+        #expect(phone.platform == .ios)
+        #expect(phone.isCurrent)
+        #expect(phone.supportsLiveActivities)
+        #expect(!phone.isComputer)
+        let mac = try #require(demo.devices.first { $0.id == DemoData.macDeviceID })
+        #expect(mac.isComputer)
+        #expect(mac.isOnline)
+        #expect(!mac.supportsLiveActivities)
+        let android = DeviceInfo(id: "d", platform: .android, name: "手机", createdAt: Fixture.now)
+        #expect(android.lastSeenAt == android.createdAt)
+        #expect(!android.supportsLiveActivities)
+        #expect(!DeviceInfo(id: "d", platform: .unknown("visionos"), name: "x", createdAt: Fixture.now).isComputer)
+    }
+
+    @Test("设备消息：方向、有效期、内容")
+    func deviceMessage() {
+        #expect(DeviceMessageKind.pairConfirm.isFromComputer)
+        #expect(DeviceMessageKind.approvalRequest.isFromComputer)
+        for kind in [DeviceMessageKind.pairResponse, .approvalDecision, .capability, .revocation] {
+            #expect(!kind.isFromComputer, "\(kind)")
+        }
+        #expect(!DeviceMessageKind(rawValue: "screen_share").isFromComputer)
+
+        let m = DeviceMessage(
+            id: "m", fromDeviceID: "a", toDeviceID: "b", kind: .capability, bodyJSON: #"{"scope":["read"]}"#,
+            createdAt: Fixture.now)
+        #expect(m.expiresAt == Fixture.now.addingTimeInterval(24 * 3600))
+        #expect(!m.isExpired(now: Fixture.now))
+        #expect(m.isExpired(now: m.expiresAt))
+        #expect(m.body?["scope"]?[0]?.stringValue == "read")
+        let broken = DeviceMessage(
+            id: "m", fromDeviceID: "a", toDeviceID: "b", kind: .capability, bodyJSON: "nope", createdAt: Fixture.now)
+        #expect(broken.body == nil)
+    }
+
+    @Test("实时活动的令牌和上限")
+    func liveActivityToken() {
+        let token = Data([0x00, 0x0f, 0xab, 0xff] + Array(repeating: 0x11, count: 12))
+        let hex = LiveActivityToken.hex(token)
+        #expect(hex.hasPrefix("000fabff"))
+        #expect(hex.count == 32)
+        #expect(LiveActivityToken.isValid(hex))
+        #expect(LiveActivityToken.isValid(hex.uppercased()))
+        #expect(!LiveActivityToken.isValid(String(hex.dropLast())), "太短")
+        #expect(!LiveActivityToken.isValid(String(repeating: "a", count: 513)), "太长")
+        #expect(!LiveActivityToken.isValid(String(repeating: "g", count: 32)), "不是十六进制")
+        #expect(!LiveActivityToken.isValid(String(repeating: "１", count: 32)), "全角数字不算")
+
+        var run = Fixture.run(Fixture.runA, state: .succeeded)
+        #expect(!LiveActivityLimits.isTooLateToRegister(run, now: Fixture.now))
+        run.finishedAt = Fixture.now
+        #expect(!LiveActivityLimits.isTooLateToRegister(run, now: Fixture.now.addingTimeInterval(600)))
+        #expect(LiveActivityLimits.isTooLateToRegister(run, now: Fixture.now.addingTimeInterval(601)))
+    }
+
+    @Test("团队与模板：负责人、成员、编排顺序")
+    func teams() throws {
+        let demo = DemoData.state(now: Fixture.now)
+        let team = try #require(demo.teams.first)
+        #expect(team.lead?.instanceID == DemoData.reviewerID)
+        #expect(team.contains(DemoData.writerID))
+        #expect(!team.contains("other"))
+        #expect(team.members.map(\.id) == [DemoData.reviewerID, DemoData.writerID])
+
+        let members = Team.members(["a", "b", "c"])
+        #expect(members.map(\.role) == [.lead, .member, .member])
+        #expect(members.map(\.position) == [0, 1, 2])
+        #expect(Team.members(["a", "b"], leadFirst: false).allSatisfy { !$0.isLead })
+
+        let template = try #require(demo.teamTemplates.first)
+        #expect(template.lead?.agentID == DemoData.claudeAgentID)
+        #expect(template.members.count == 3)
+        // 不认识的角色保留原字符串，不算负责人。
+        let odd = try decode(TeamMember.self, #"{"instanceID":"i","role":"reviewer","position":3}"#)
+        #expect(odd.role == .unknown("reviewer"))
+        #expect(!odd.isLead)
+    }
+
+    @Test("举报：对象、状态，不认识的原因和状态照样解码")
+    func contentReport() throws {
+        var report = ContentReport(
+            id: "r", runID: "run", instanceID: "i", reason: .harmful, createdAt: Fixture.now)
+        #expect(report.isOpen)
+        #expect(report.target == .run)
+        report.eventSeq = 7
+        #expect(report.target == .event(seq: 7))
+        report.artifactID = "a"
+        #expect(report.target == .artifact("a"))
+
+        let json = #"""
+            {"id":"r","runID":"run","instanceID":"i","eventSeq":3,"reason":"spam","state":"escalated",
+             "createdAt":0}
+            """#
+        let decoded = try decode(ContentReport.self, json)
+        #expect(decoded.reason == .unknown("spam"))
+        #expect(decoded.state == .unknown("escalated"))
+        #expect(!decoded.isOpen)
+        #expect(decoded.eventSeq == 3)
+        #expect(try decode(ContentReport.self, try jsonString(decoded)) == decoded)
     }
 }

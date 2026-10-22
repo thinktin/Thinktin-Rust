@@ -27,7 +27,7 @@ public protocol ClientProtocol: AnyObject, Sendable {
     func stopAll() async throws -> StopAllResult
     /// 下线其他设备（4.6），只留当前这台。`stopAgents` 时顺带全部停止（怀疑账号被盗时）。
     func signOutOtherDevices(stopAgents: Bool) async throws -> SignOutOthersResult
-    /// 改昵称；传 nil 清掉（界面上显示打码的手机号）。最长 64 个字符。
+    /// 改昵称；传 nil 清掉（界面上显示打码的手机号）。1 到 64 个字符，空字符串抛 invalid。
     func updateProfile(displayName: String?) async throws -> User
     /// 给自己的手机号发验证码，做敏感操作前确认（注销账号、换手机号）。
     func sendSelfCode(purpose: SelfCodePurpose) async throws
@@ -37,7 +37,7 @@ public protocol ClientProtocol: AnyObject, Sendable {
 
     // MARK: 登录设备与设备消息（14.1）
 
-    /// 登录着的设备，最近活跃的在前；`isCurrent` 的是这台。
+    /// 登录着的设备（吊销了的不在里面），最近活跃的在前；`isCurrent` 的是这台，`isOnline` 的电脑连着设备中继。
     func devices() async throws -> [DeviceInfo]
     /// 吊销一台设备（丢了的手机、不用的电脑）：它的登录会话立即失效。吊销当前这台等于退出登录。
     func revokeDevice(_ deviceID: DeviceID) async throws
@@ -48,18 +48,24 @@ public protocol ClientProtocol: AnyObject, Sendable {
         -> DeviceMessage
     /// 别的设备发给这台、还没收下的消息（电脑发来的配对确认、审批请求），按发出的顺序；过期的不再返回。
     func deviceMessages() async throws -> [DeviceMessage]
-    /// 收下了这些消息（验过签、处理完），之后不再返回。一次 1 到 200 条。返回确认的条数。
+    /// 收下了这些消息（验过签、处理完），之后不再返回。一次 1 到 200 条（不在范围抛 invalid）。返回确认的条数
+    /// （已经收下过的、不是发给这台的不算）。
     func ackDeviceMessages(ids: [DeviceMessageID]) async throws -> Int
 
     // MARK: 实时活动（10.6，只有 iPhone、iPad）
 
-    /// 推送开启令牌（ActivityKit 的 `pushToStartTokenUpdates`，十六进制，见 `LiveActivityToken`）：用户打开
-    /// “计划运行时显示实时活动”时登记，计划到点开始的运行就在这台设备上远程开启实时活动；传 nil 清掉。
-    /// 只有 iPhone、iPad 能登记（别的设备、格式不对抛 invalid）。
+    /// 推送开启令牌（ActivityKit 的 `pushToStartTokenUpdates`，十六进制串，见 `LiveActivityToken`）：用户打开
+    /// “计划运行时显示实时活动”时登记，计划到点开始的根运行就在这台设备上远程开启实时活动；关掉时传 nil 清掉。
+    /// 只有 iPhone、iPad 能登记（别的设备、格式不对抛 invalid）。一个令牌只属于一台设备；设备下线、注销账号时服务端清掉。
     func setLiveActivityStartToken(_ token: String?) async throws
     /// 这个运行开了实时活动，或者远程开启的拿到了令牌：登记它的推送令牌（ActivityKit 的 `pushTokenUpdates`，
-    /// 十六进制）。之后运行的状态、步数变了、结束了，后台推送更新；令牌变了再调一次（换令牌，马上重发一次现在的状态）。
-    /// 一台设备同时最多 10 个。只有 iPhone、iPad。
+    /// 十六进制串）。之后运行的状态、步数变了、结束了，后台推送更新（docs/live-activities.md 第 3 节的
+    /// `RunActivityAttributes`）。
+    ///
+    /// - 换了令牌（新的实时活动）：马上按现在的状态重发一次，8 小时从现在算；同一个令牌再登记什么都不变、不重发
+    ///   （连着发送失败、后台放弃了的从头再来；`endLiveActivity` 关掉了的不重新打开，换了令牌才算新的）。
+    /// - 运行结束 10 分钟以上的抛 invalid（422）：App 在本地结束这个实时活动。别人的运行、不存在的抛 not_found。
+    /// - 只有 iPhone、iPad；一台设备同时最多 10 个（多了抛 invalid）。
     func registerLiveActivity(runID: RunID, token: String) async throws
     /// 这个运行的实时活动关掉了（用户划掉了、App 自己结束了）：后台不再推送。没登记过也算成功。
     func endLiveActivity(runID: RunID) async throws
@@ -186,6 +192,17 @@ public protocol ClientProtocol: AnyObject, Sendable {
     func replaceCredentialSecret(_ credentialID: CredentialID, apiKey: String) async throws -> Credential
     func deleteCredential(_ credentialID: CredentialID) async throws
 
+    // MARK: 内容举报（5.5）
+
+    /// 举报 agent 的输出（长按回复或产出物）：`eventSeq` 是那条事件的序号，`artifactID` 是产出物，都不给就是整个运行。
+    /// `note` 最多 1000 个字符（去掉首尾空白后为空的当作没写）。只能举报自己的运行（别人的、不存在的抛 not_found，
+    /// 事件、产出物不属于这个运行也是）。同一条内容还有待处理的举报时，再举报一次返回那一条（不重复建）。
+    /// 每人每小时 30 次，超了抛 rate_limited。处理结果发到收件箱和推送。`reason` 是不认识的取值时抛 `invalidArgument`。
+    func reportContent(runID: RunID, eventSeq: UInt64?, artifactID: ArtifactID?, reason: ReportReason, note: String?)
+        async throws -> ContentReport
+    /// 自己的举报和处理结果，新的在前（最多 100 条）。
+    func reports() async throws -> [ContentReport]
+
     // MARK: IM 渠道（10.5）
 
     func imChannels() async throws -> [ImChannel]
@@ -244,6 +261,34 @@ extension ClientProtocol {
     /// 实时活动的推送令牌直接给 ActivityKit 的 `Data`。
     public func registerLiveActivity(runID: RunID, token: Data) async throws {
         try await registerLiveActivity(runID: runID, token: LiveActivityToken.hex(token))
+    }
+
+    /// 推送开启令牌直接给 ActivityKit 的 `Data`（清掉用 `setLiveActivityStartToken(nil)`）。
+    public func setLiveActivityStartToken(_ token: Data) async throws {
+        try await setLiveActivityStartToken(LiveActivityToken.hex(token))
+    }
+
+    /// 举报整个运行（它的回复）。
+    public func reportRun(_ runID: RunID, reason: ReportReason, note: String? = nil) async throws -> ContentReport {
+        try await reportContent(runID: runID, eventSeq: nil, artifactID: nil, reason: reason, note: note)
+    }
+
+    /// 举报运行里的一条事件（长按的那条回复）。不属于任何运行的事件不能举报（抛 `invalidArgument`）。
+    public func reportEvent(_ event: InstanceEvent, reason: ReportReason, note: String? = nil) async throws
+        -> ContentReport
+    {
+        guard let runID = event.runID else {
+            throw ClientError.invalidArgument(message: "event \(event.seq) does not belong to a run")
+        }
+        return try await reportContent(runID: runID, eventSeq: event.seq, artifactID: nil, reason: reason, note: note)
+    }
+
+    /// 举报一个产出物。
+    public func reportArtifact(_ artifact: Artifact, reason: ReportReason, note: String? = nil) async throws
+        -> ContentReport
+    {
+        try await reportContent(
+            runID: artifact.runID, eventSeq: nil, artifactID: artifact.id, reason: reason, note: note)
     }
 
     public func detectSecrets(in text: String) -> [DetectedSecret] {
