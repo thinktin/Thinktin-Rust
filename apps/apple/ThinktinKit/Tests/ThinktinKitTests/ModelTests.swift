@@ -525,8 +525,9 @@ struct EventPayloadTests {
         #expect(StreamStatus.connecting.isConnecting)
         #expect(StreamStatus.reconnecting(retryIn: 2).isConnecting)
         #expect(!StreamStatus.live.isConnecting)
-        for s in [StreamStatus.signedOut, .notFound, .accountFrozen, .stopped] {
+        for s in [StreamStatus.signedOut, .notFound, .accountFrozen, .upgradeRequired, .stopped] {
             #expect(s.isFinal)
+            #expect(!s.isConnecting)
         }
         #expect(!StreamStatus.live.isFinal)
         #expect(!StreamStatus.reconnecting(retryIn: 1).isFinal)
@@ -600,6 +601,12 @@ struct ModelComputationTests {
         let r = PushRegistration.apns(deviceToken: Data([0x00, 0xAB, 0x0F, 0xFF]))
         #expect(r.channel == .apns)
         #expect(r.token == "00ab0fff")
+        // 开发证书签名的包（Debug）拿到的是沙盒环境的令牌，报 apns_sandbox（docs/push.md 第 1 节）。
+        let sandbox = PushRegistration.apns(deviceToken: Data([0x01]), sandbox: true)
+        #expect(sandbox.channel == .apnsSandbox)
+        #expect(sandbox.channel.rawValue == "apns_sandbox")
+        #expect(sandbox.token == "01")
+        #expect(PushChannel(rawValue: "apns_sandbox") == .apnsSandbox)
     }
 
     @Test("运行：根、时长")
