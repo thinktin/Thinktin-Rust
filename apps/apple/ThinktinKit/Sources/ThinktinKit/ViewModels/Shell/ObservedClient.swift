@@ -21,7 +21,7 @@ public enum ClientActivity: Sendable {
 /// `AppModel` 把它交给所有页面（`AppModel.client`、界面环境里的 `\.client`），所以任何功能的任何调用遇到
 /// 登录失效、账号冻结、要升级都会切换全局状态，各功能不用自己处理；`login` 成功、`logout` / `deleteAccount` /
 /// 下线本机之后也会自动切到对应的页面。事件流的连接状态汇总成顶部的连接横幅；强制升级时 `haltStreams()` 停掉
-/// 所有事件流，之后的订阅直接抛 `upgradeRequired`。
+/// 所有事件流，之后的订阅直接抛 `upgradeRequired`，`upgradeRequired()` 也一直是 true。
 ///
 /// **`ClientProtocol` 加了方法，这里要加对应的转发**（编译器会提示：不实现就不符合协议）。
 public final class ObservedClient: ClientProtocol, Sendable {
@@ -169,6 +169,10 @@ public final class ObservedClient: ClientProtocol, Sendable {
         try observeSync { try base.cachedEvents(instanceID: instanceID, afterSeq: afterSeq, limit: limit) }
     }
 
+    public func cachedEventsBefore(instanceID: InstanceID, beforeSeq: UInt64?, limit: Int) throws -> [InstanceEvent] {
+        try observeSync { try base.cachedEventsBefore(instanceID: instanceID, beforeSeq: beforeSeq, limit: limit) }
+    }
+
     // MARK: 账号
 
     public func signedIn() -> Bool { base.signedIn() }
@@ -219,6 +223,17 @@ public final class ObservedClient: ClientProtocol, Sendable {
     public func deleteAccount(code: String) async throws {
         try await observe { try await base.deleteAccount(code: code) }
         reportIfSignedOut()
+    }
+
+    // MARK: 请求语言与版本（11.8）
+
+    public func setAcceptLanguage(_ acceptLanguage: String?) throws {
+        try observeSync { try base.setAcceptLanguage(acceptLanguage) }
+    }
+
+    /// `base` 说过要升级，或者已经 `haltStreams()` 过（应用框架只在要升级时停事件流，两边说法一致）。
+    public func upgradeRequired() -> Bool {
+        isHalted || base.upgradeRequired()
     }
 
     // MARK: 登录设备与设备消息
@@ -315,6 +330,10 @@ public final class ObservedClient: ClientProtocol, Sendable {
 
     public func olderRuns(instanceID: InstanceID, before: RunID, limit: Int) async throws -> [Run] {
         try await observe { try await base.olderRuns(instanceID: instanceID, before: before, limit: limit) }
+    }
+
+    public func listRuns(filter: RunFilter, before: RunID?, limit: Int) async throws -> [Run] {
+        try await observe { try await base.listRuns(filter: filter, before: before, limit: limit) }
     }
 
     public func cachedRuns(instanceID: InstanceID, limit: Int) throws -> [Run] {

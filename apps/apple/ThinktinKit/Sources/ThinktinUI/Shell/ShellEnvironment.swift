@@ -88,11 +88,11 @@ enum ShellPreviewClients {
         return MockClient(state: state, autoReply: false)
     }
 
-    /// 版本太老（启动时第一个调用就返回 `upgradeRequired`）。
+    /// 版本太老（之前的调用说过要升级，`upgradeRequired()` 是 true）：第一帧就是升级页。
     static func upgradeRequired() -> MockClient {
-        let client = MockClient(autoReply: false)
-        client.failNext(with: .upgradeRequired)
-        return client
+        var state = DemoData.state()
+        state.isUpgradeRequired = true
+        return MockClient(state: state, autoReply: false)
     }
 
     /// 还没有实例（新用户）。

@@ -82,4 +82,42 @@ struct AppSmokeTests {
         #expect(url.deletingLastPathComponent().lastPathComponent == AppConfiguration.cacheDirectoryName)
         #expect(url.path.contains("/Library/Application Support/"))
     }
+
+    @Test("请求语言：界面用的语言排第一，后面跟设备的语言偏好（11.8）")
+    func acceptLanguage() {
+        #expect(
+            AppEnvironment.acceptLanguage(preferredLanguages: ["zh-Hans-CN", "en-US"])
+                == "zh-CN, zh-Hans-CN;q=0.9, en-US;q=0.8")
+        // 系统语言是日语时界面是英文，服务端也按英文（排第一的是 en）。
+        #expect(
+            AppEnvironment.acceptLanguage(preferredLanguages: ["ja-JP", "zh-Hans-CN"])
+                == "en, ja-JP;q=0.9, zh-Hans-CN;q=0.8")
+        // 没有语言偏好时和界面一样按中文。
+        #expect(AppEnvironment.acceptLanguage(preferredLanguages: []) == "zh-CN")
+        // 语言偏好又多又长：去掉后面的，不超过 client-core 收的 256 字节，界面语言还在第一个。
+        let long = Array(repeating: "zh-Hans-CN-" + String(repeating: "x", count: 24), count: 12)
+        let trimmed = AppEnvironment.acceptLanguage(preferredLanguages: long)
+        #expect(trimmed.utf8.count <= 256)
+        #expect(trimmed.hasPrefix("zh-CN, zh-Hans-CN-"))
+        // 设备当前的值：中文或英文打头，client-core 收得下（不超过 256 字节）。
+        let current = AppEnvironment.acceptLanguage()
+        #expect(current.hasPrefix("zh-CN") || current.hasPrefix("en"))
+        #expect(current.utf8.count <= 256)
+    }
+
+    @Test("client-core 的日志接进系统日志，装两次也没事（11.8）")
+    @MainActor
+    func coreLogging() {
+        #expect(AppEnvironment.installCoreLogging())
+        #expect(AppEnvironment.installCoreLogging())
+    }
+
+    @Test("刚启动不用升级：进的是主界面")
+    @MainActor
+    func notUpgradeRequiredAtLaunch() {
+        let environment = AppEnvironment.live()
+        #expect(!environment.client.upgradeRequired())
+        #expect(!environment.appModel.client.upgradeRequired())
+        #expect(environment.appModel.phase == .signedIn)
+    }
 }

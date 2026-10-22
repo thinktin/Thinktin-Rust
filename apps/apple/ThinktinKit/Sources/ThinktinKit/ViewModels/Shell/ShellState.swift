@@ -6,7 +6,7 @@ public struct ShellBadges: Hashable, Sendable {
     public var inboxUnread: Int
     /// 待审批（还没过期的）。
     public var pendingApprovals: Int
-    /// 进行中的运行（还没结束的，含排队、等待、重试）。
+    /// 进行中的运行（还没结束的，含排队、等待、重试）：实例列表里各实例的数加起来（`listRuns(filter: .active)`）。
     public var activeRuns: Int
     /// agent 建的、等用户确认的计划。
     public var plansAwaitingConfirmation: Int
@@ -78,13 +78,13 @@ extension ShellBadges {
     }
 }
 
-/// 一个实例最近的运行概况（抽屉里的实例行：在跑的点、等你处理的提示）。
+/// 一个实例进行中的运行概况（抽屉里的实例行：等你处理的提示；“进行中”角标是各实例的 `activeRuns` 加起来）。
 public struct InstanceActivity: Hashable, Sendable {
     /// 还没结束的运行。
     public var activeRuns: Int
     /// 在等什么的运行（审批、电脑、key、子任务）：抽屉里这一行标“等你处理”。
     public var waitingRuns: Int
-    /// 最近一次运行的状态和时间。
+    /// 最近一个还没结束的运行的状态和创建时间；都结束了时为 nil。
     public var latestRunState: RunState?
     public var latestRunAt: Date?
 
@@ -95,12 +95,19 @@ public struct InstanceActivity: Hashable, Sendable {
         self.latestRunAt = latestRunAt
     }
 
-    /// 从实例最近的一页运行算（新的在前，顺序不对也没关系）。
+    /// 从一个实例的运行算，只看没结束的（`RunFilter.active`）：传 `listRuns(filter: .active)` 里这个实例的、缓存里最近的
+    /// 一页（含已结束的）都行，顺序不对也没关系。
     public init(runs: [Run]) {
-        let latest = runs.max { $0.createdAt < $1.createdAt }
+        let active = runs.filter(RunFilter.active.matches)
+        let latest = active.max { $0.createdAt < $1.createdAt }
         self.init(
-            activeRuns: runs.filter(\.state.isActive).count, waitingRuns: runs.filter(\.state.isWaiting).count,
+            activeRuns: active.count, waitingRuns: active.filter(\.state.isWaiting).count,
             latestRunState: latest?.state, latestRunAt: latest?.createdAt)
+    }
+
+    /// 跨实例的一页运行（`listRuns(filter: .active)`）按实例分开算。没有进行中运行的实例不在结果里（就是 `.none`）。
+    public static func byInstance(_ runs: [Run]) -> [InstanceID: InstanceActivity] {
+        Dictionary(grouping: runs, by: \.instanceID).mapValues(InstanceActivity.init(runs:))
     }
 
     public static let none = InstanceActivity()

@@ -36,22 +36,65 @@ final class AppEnvironment {
         log.info(
             "client: \(configuration.client.rawValue, privacy: .public), api: \(configuration.baseURL.absoluteString, privacy: .public)"
         )
+        let acceptLanguage = acceptLanguage()
         let client: any ClientProtocol
         switch configuration.client {
         case .mock:
-            // 一点延迟，界面的加载状态看得见。
-            client = MockClient(latency: 0.2)
+            // 一点延迟，界面的加载状态看得见。和真核心带一样的请求语言（agent 目录的介绍跟着变）；
+            // Mock 不经过 client-core，不用接日志。
+            let mock = MockClient(latency: 0.2)
+            try? mock.setAcceptLanguage(acceptLanguage)
+            client = mock
         case .core:
-            client = makeCoreClient(configuration)
+            // 建核心之前接上日志，恢复会话、刷新令牌的日志也收得到。
+            installCoreLogging()
+            client = makeCoreClient(configuration, acceptLanguage: acceptLanguage)
         }
         return AppEnvironment(configuration: configuration, client: client)
+    }
+
+    // MARK: 请求语言与日志（11.8）
+
+    /// 每个请求带的 `Accept-Language`：设备的语言偏好，前面再放 App 界面用的语言（`DisplayLanguage`：系统首选语言是
+    /// 中文时中文，其余英文）。服务端只认中文和英文，按排第一的定新用户推送、收件箱的语言，agent 目录的介绍也按它给，
+    /// 这样和界面一致——只带设备偏好的话，系统语言是日语时界面是英文，服务端却认不出、按中文。
+    ///
+    /// client-core 拒收超过 256 字节的值（`CoreClient` 建不起来）：语言偏好又多又长时从后往前去掉，直到放得下。
+    nonisolated static func acceptLanguage(preferredLanguages: [String] = Locale.preferredLanguages) -> String {
+        let language = preferredLanguages.first.map(DisplayLanguage.init(languageTag:)) ?? .chinese
+        var tags = preferredLanguages
+        var header = AcceptLanguage.header(for: language, systemTags: tags)
+        while header.utf8.count > AcceptLanguage.maxLength, !tags.isEmpty {
+            tags.removeLast()
+            header = AcceptLanguage.header(for: language, systemTags: tags)
+        }
+        return header
+    }
+
+    /// client-core 日志的级别：调试版到 debug，发布版到 info（`CoreLogging` 的建议）。
+    nonisolated static var coreLogLevel: CoreLogging.Level {
+        #if DEBUG
+            .debug
+        #else
+            .info
+        #endif
+    }
+
+    /// 把 client-core 的日志接进系统日志（subsystem `cn.thinktin.core`），进程里只装一次（再调什么都不做）。
+    /// 返回接上了没有：进程里已经有别的 Rust 日志订阅者时是 false（App 里不会）。
+    @discardableResult
+    static func installCoreLogging() -> Bool {
+        let connected = CoreLogging.install(maxLevel: coreLogLevel)
+        if !connected { log.error("client-core logging is not connected: another log subscriber is installed") }
+        return connected
     }
 
     /// 真核心：会话存 Keychain，缓存放 Application Support（`AppConfiguration.cacheFileURL()`）。
     ///
     /// 设备名用 `UIDevice.current.name`：iOS 16 起没有“用户设置的设备名”权限时只返回“iPhone”，
     /// 要显示“张三的 iPhone”得申请 `com.apple.developer.device-information.user-assigned-device-name`（上架时再说）。
-    private static func makeCoreClient(_ configuration: AppConfiguration) -> any ClientProtocol {
+    private static func makeCoreClient(_ configuration: AppConfiguration, acceptLanguage: String) -> any ClientProtocol
+    {
         let sessions = KeychainSessionStore()
         let deviceName = UIDevice.current.name
         let cacheURL: URL?
@@ -66,6 +109,7 @@ final class AppEnvironment {
                 baseURL: configuration.baseURL.absoluteString,
                 cachePath: cacheURL?.path,
                 deviceName: deviceName,
+                acceptLanguage: acceptLanguage,
                 sessions: sessions
             )
         }
