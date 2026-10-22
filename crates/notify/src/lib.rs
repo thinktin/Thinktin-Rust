@@ -134,6 +134,44 @@ pub trait PushChannel: Send + Sync {
     async fn send(&self, device_token: &str, message: &PushMessage) -> PushOutcome;
 }
 
+/// 实时活动（10.6，iOS 的灵动岛、锁屏）的一次推送。
+#[derive(Debug, Clone, PartialEq)]
+pub struct LivePush {
+    pub event: LiveEvent,
+    /// 实时活动的动态内容（App 里 `ActivityAttributes.ContentState` 的 JSON）。
+    pub content_state: serde_json::Value,
+    /// 状态变了（开启、等审批、结束）：立刻送达；只是进度变了：低优先级（苹果对高优先级的更新有预算）。
+    pub urgent: bool,
+    /// 远程开启时的类型名（App 里 `ActivityAttributes` 的类型名）和静态属性。
+    pub attributes: Option<(String, serde_json::Value)>,
+    /// 远程开启时的提醒（标题、正文）。
+    pub alert: Option<(String, String)>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LiveEvent {
+    Start,
+    Update,
+    End,
+}
+
+impl LiveEvent {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Start => "start",
+            Self::Update => "update",
+            Self::End => "end",
+        }
+    }
+}
+
+/// 发实时活动推送的通道（APNs）。
+#[async_trait]
+pub trait LiveActivityChannel: Send + Sync {
+    /// `token`：更新、结束发到这个实时活动的推送令牌，开启发到设备的推送开启令牌。
+    async fn send_live(&self, token: &str, push: &LivePush) -> PushOutcome;
+}
+
 /// 测试用：记下所有消息，按预设返回结果。
 #[derive(Default)]
 pub struct RecordingChannel {

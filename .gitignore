@@ -35,3 +35,6 @@ deploy/k8s/.bundle.*
 
 # 构建模板前从上游源码生成的 crate 许可证清单（deploy/templates/build.sh）
 deploy/templates/notices/*/crates/
+
+# 子会话的 git worktree（Agent 的 isolation: worktree）
+/.claude/worktrees/

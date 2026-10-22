@@ -164,3 +164,55 @@ pub async fn tree(
     t.rollback().await?;
     Ok(Json(json!({ "root": run.root_run_id, "runs": runs })))
 }
+
+/// 实时活动、推送开启的令牌（10.6）：ActivityKit 给的十六进制串。
+pub(super) fn check_live_token(token: &str) -> ApiResult<()> {
+    if !(32..=512).contains(&token.len()) || !token.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(crate::ApiError::invalid(
+            "token must be the hex push token ActivityKit gave the app",
+        ));
+    }
+    Ok(())
+}
+
+#[derive(Deserialize)]
+pub struct LiveActivityReq {
+    token: String,
+}
+
+impl LiveActivityReq {
+    pub(super) fn token(&self) -> &str {
+        &self.token
+    }
+}
+
+/// App 开了这个运行的实时活动（10.6），或者远程开启的那个拿到了令牌：登记它的推送令牌（这台设备的），
+/// 之后运行的状态变了、结束了就推送更新。换了令牌（新的实时活动）：现在的状态再发一次；同一个令牌再报一次什么都不变
+/// （连着失败放弃了的从头来）。运行结束 10 分钟以上的 422。
+pub async fn register_live_activity(
+    State(s): State<AppState>,
+    Authed(who): Authed,
+    Path(id): Path<String>,
+    ApiJson(req): ApiJson<LiveActivityReq>,
+) -> ApiResult<StatusCode> {
+    let run: RunId = parse_id(&id, "run")?;
+    check_live_token(&req.token)?;
+    let mut t = s.db.tenant(who.user).await?;
+    t.register_live_activity(who.device, run, &req.token, orchestrator::live::MAX_OPEN)
+        .await?;
+    t.commit().await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// App 关掉了这个运行的实时活动（用户划掉了、App 自己结束了）：不再推送。
+pub async fn end_live_activity(
+    State(s): State<AppState>,
+    Authed(who): Authed,
+    Path(id): Path<String>,
+) -> ApiResult<StatusCode> {
+    let run: RunId = parse_id(&id, "run")?;
+    let mut t = s.db.tenant(who.user).await?;
+    t.end_live_activity(who.device, run).await?;
+    t.commit().await?;
+    Ok(StatusCode::NO_CONTENT)
+}

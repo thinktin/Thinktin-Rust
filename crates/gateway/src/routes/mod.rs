@@ -11,6 +11,7 @@ mod im_channels;
 mod inbox;
 mod instances;
 mod plans;
+mod reports;
 mod runs;
 mod teams;
 mod usage;
@@ -40,6 +41,10 @@ pub fn router() -> Router<AppState> {
             post(account::sign_out_others),
         )
         .route("/v1/devices/current/push", put(account::set_push))
+        .route(
+            "/v1/devices/current/live-activity-start",
+            put(account::set_live_activity_start).delete(account::clear_live_activity_start),
+        )
         .route("/v1/devices/{id}", delete(account::revoke_device))
         // 手机和电脑之间的消息（14.1）
         .route(
@@ -74,6 +79,10 @@ pub fn router() -> Router<AppState> {
         .route("/v1/runs/{id}", get(runs::get))
         .route("/v1/runs/{id}/cancel", post(runs::cancel))
         .route("/v1/runs/{id}/tree", get(runs::tree))
+        .route(
+            "/v1/runs/{id}/live-activity",
+            put(runs::register_live_activity).delete(runs::end_live_activity),
+        )
         // 计划与触发器（7.1）
         .route("/v1/plans", get(plans::list).post(plans::create))
         .route(
@@ -112,6 +121,8 @@ pub fn router() -> Router<AppState> {
             put(im_channels::replace_webhook),
         )
         .route("/v1/im-channels/{id}/test", post(im_channels::test))
+        // 内容举报（5.5）
+        .route("/v1/reports", get(reports::list).post(reports::create))
         .route("/v1/vendors", get(vendors::list))
         .route(
             "/v1/credentials",

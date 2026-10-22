@@ -46,6 +46,11 @@ pub fn im_approval_hint(locale: Locale) -> &'static str {
     )
 }
 
+/// 计划到点开始、远程开启实时活动时的提醒（10.6）。
+pub fn live_started(locale: Locale) -> &'static str {
+    pick(locale, "计划开始运行了", "A scheduled run has started")
+}
+
 /// 绑定 IM 群机器人后的测试消息（10.5）。
 pub fn im_test(locale: Locale) -> (&'static str, &'static str) {
     match locale {
@@ -112,6 +117,20 @@ pub fn account_restored(locale: Locale) -> (&'static str, &'static str) {
         Locale::En => (
             "Account restored",
             "Your account is back to normal and your plans will keep running on schedule.",
+        ),
+    }
+}
+
+/// 举报处理完了（5.5）：告诉举报的人结果（运营写的处理结果原样带上）。
+pub fn report_handled(locale: Locale, resolution: &str) -> (&'static str, String) {
+    match locale {
+        Locale::ZhCn => (
+            "举报已处理",
+            format!("感谢你的举报，我们已经处理：{resolution}"),
+        ),
+        Locale::En => (
+            "Report handled",
+            format!("Thanks for your report. We have looked into it: {resolution}"),
         ),
     }
 }

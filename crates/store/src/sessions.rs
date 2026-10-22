@@ -212,16 +212,27 @@ impl Tx<Worker> {
         channel: PushChannelKind,
         token: &str,
     ) -> Result<u64> {
-        let done = sqlx::query(
-            "UPDATE devices SET push_channel = NULL, push_token = NULL \
-             WHERE push_channel = $2 AND push_token = $3 AND id <> $1",
+        // 推送令牌认的是这台手机（这个 App 安装）：之前账号的设备也不再远程开启实时活动，开着的不再更新
+        // （它们的标题是之前账号的实例名，不能出现在现在这个人的锁屏上）。
+        let moved: Vec<Uuid> = sqlx::query_scalar(
+            "UPDATE devices SET push_channel = NULL, push_token = NULL, activity_start_token = NULL \
+             WHERE push_channel = $2 AND push_token = $3 AND id <> $1 RETURNING id",
         )
         .bind(keep.0)
         .bind(channel.as_str())
         .bind(token)
-        .execute(self.conn())
+        .fetch_all(self.conn())
         .await?;
-        Ok(done.rows_affected())
+        if !moved.is_empty() {
+            sqlx::query(
+                "UPDATE live_activities SET ended_at = now(), gave_up = false \
+                 WHERE device_id = ANY($1) AND ended_at IS NULL",
+            )
+            .bind(&moved)
+            .execute(self.conn())
+            .await?;
+        }
+        Ok(moved.len() as u64)
     }
 
     /// 新会话。会话 id 由调用方先生成（刷新令牌里带着它）。
@@ -426,7 +437,7 @@ impl Tx<Worker> {
         .execute(self.conn())
         .await?;
         sqlx::query(
-            "UPDATE devices SET revoked_at = now(), push_channel = NULL, push_token = NULL \
+            "UPDATE devices SET revoked_at = now(), push_channel = NULL, push_token = NULL, activity_start_token = NULL \
              WHERE user_id = $1 AND revoked_at IS NULL",
         )
         .bind(user.0)
@@ -510,7 +521,7 @@ impl Tx<Tenant> {
     /// 下线一台设备（退出登录、远程下线）：吊销它的会话、清掉推送令牌。运行授权不受影响。
     pub async fn revoke_device(&mut self, device: DeviceId, reason: &str) -> Result<()> {
         let done = sqlx::query(
-            "UPDATE devices SET revoked_at = now(), push_channel = NULL, push_token = NULL \
+            "UPDATE devices SET revoked_at = now(), push_channel = NULL, push_token = NULL, activity_start_token = NULL \
              WHERE id = $1 AND revoked_at IS NULL",
         )
         .bind(device.0)
@@ -533,7 +544,7 @@ impl Tx<Tenant> {
     pub async fn revoke_other_devices(&mut self, keep: DeviceId, reason: &str) -> Result<u64> {
         let user = self.user();
         let devices = sqlx::query(
-            "UPDATE devices SET revoked_at = now(), push_channel = NULL, push_token = NULL \
+            "UPDATE devices SET revoked_at = now(), push_channel = NULL, push_token = NULL, activity_start_token = NULL \
              WHERE user_id = $1 AND id <> $2 AND revoked_at IS NULL",
         )
         .bind(user.0)

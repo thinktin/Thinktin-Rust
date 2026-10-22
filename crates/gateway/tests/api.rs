@@ -2502,6 +2502,18 @@ async fn im_channels_over_http() {
     assert!(!ch.to_string().contains(token) && !ch.to_string().contains("signing-secret"));
     let id = ch["id"].as_str().unwrap().to_owned();
     let channel_id: proto::domain::ImChannelId = id.parse().unwrap();
+    // 同一个群机器人不能绑两次（每条通知会发两遍）。
+    let (st, err) = a
+        .call(
+            Method::POST,
+            "/v1/im-channels",
+            tok,
+            Some(json!({
+                "webhook_url": format!("https://oapi.dingtalk.com/robot/send?access_token={token}"),
+            })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CONFLICT, "{err}");
 
     // 库里只有密文；用这个用户的 DEK、这个渠道的 id 才解得开。
     let raw: Vec<u8> = sqlx::query_scalar("SELECT sealed FROM im_channels WHERE id = $1")
@@ -2675,4 +2687,214 @@ async fn im_test_messages_are_rate_limited() {
     assert_eq!(st, StatusCode::ACCEPTED);
     let (st, body) = a.call(Method::POST, &path, tok, None).await;
     assert_eq!(st, StatusCode::TOO_MANY_REQUESTS, "{body}");
+}
+
+#[tokio::test]
+async fn live_activities_over_http() {
+    let Some(a) = api().await else { return };
+    let u = a.login("13800138030").await;
+    let tok = Some(u.access.as_str());
+    let inst = a.adopt(&u).await;
+    let (st, run) = a
+        .call(
+            Method::POST,
+            &format!("/v1/instances/{inst}/runs"),
+            tok,
+            Some(json!({ "prompt": "整理邮件" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{run}");
+    let run_id: RunId = run["id"].as_str().unwrap().parse().unwrap();
+    let path = format!("/v1/runs/{run_id}/live-activity");
+    let token = "ab".repeat(40);
+    let stored = |run: RunId| {
+        let pool = a.t.db.pool().clone();
+        async move {
+            let row: Option<(Option<String>, bool)> = sqlx::query_as(
+                "SELECT push_token, ended_at IS NOT NULL FROM live_activities WHERE run_id = $1",
+            )
+            .bind(run.0)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+            row
+        }
+    };
+
+    // 登记这台 iPhone 上的实时活动；不是 ActivityKit 的令牌不收；别人的运行登记不了。
+    let (st, body) = a
+        .call(Method::PUT, &path, tok, Some(json!({ "token": token })))
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT, "{body}");
+    assert_eq!(stored(run_id).await, Some((Some(token.clone()), false)));
+    let (st, _) = a
+        .call(
+            Method::PUT,
+            &path,
+            tok,
+            Some(json!({ "token": "not-a-token" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+    let other = a.login("13800138031").await;
+    let (st, _) = a
+        .call(
+            Method::PUT,
+            &path,
+            Some(&other.access),
+            Some(json!({ "token": token })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    // App 关掉了：不再推送。
+    let (st, _) = a.call(Method::DELETE, &path, tok, None).await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    assert_eq!(stored(run_id).await, Some((Some(token.clone()), true)));
+
+    // 推送开启令牌：登记、同一个令牌换到别的账号上（同一台手机换了人登录）、清掉。
+    let start = "cd".repeat(40);
+    let start_path = "/v1/devices/current/live-activity-start";
+    let start_tokens = || {
+        let pool = a.t.db.pool().clone();
+        async move {
+            let n: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM devices WHERE activity_start_token IS NOT NULL",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            n
+        }
+    };
+    let (st, body) = a
+        .call(
+            Method::PUT,
+            start_path,
+            tok,
+            Some(json!({ "token": start })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT, "{body}");
+    assert_eq!(start_tokens().await, 1);
+    let (st, _) = a
+        .call(
+            Method::PUT,
+            start_path,
+            Some(&other.access),
+            Some(json!({ "token": start })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    assert_eq!(
+        start_tokens().await,
+        1,
+        "the token moved to the new account"
+    );
+    let (st, _) = a
+        .call(Method::DELETE, start_path, Some(&other.access), None)
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    assert_eq!(start_tokens().await, 0);
+}
+
+#[tokio::test]
+async fn content_reports_over_http() {
+    let Some(a) = api().await else { return };
+    let u = a.login("13800138040").await;
+    let tok = Some(u.access.as_str());
+    let inst = a.adopt(&u).await;
+    let (st, run) = a
+        .call(
+            Method::POST,
+            &format!("/v1/instances/{inst}/runs"),
+            tok,
+            Some(json!({ "prompt": "写一首诗" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{run}");
+    let run_id: RunId = run["id"].as_str().unwrap().parse().unwrap();
+    let mut w = a.t.db.worker().await.unwrap();
+    let seq = w
+        .append_event(
+            inst,
+            Some(run_id),
+            "agent.message",
+            &json!({ "text": "一段不该出现的回复" }),
+        )
+        .await
+        .unwrap()
+        .seq;
+    w.commit().await.unwrap();
+
+    // 举报这一条：进待处理队列，复制下来的内容不回显。
+    let body = json!({ "run_id": run_id.to_string(), "event_seq": seq, "reason": "harmful", "note": "  教唆  " });
+    let (st, first) = a
+        .call(Method::POST, "/v1/reports", tok, Some(body.clone()))
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{first}");
+    assert_eq!(
+        (
+            first["state"].as_str(),
+            first["note"].as_str(),
+            first["event_seq"].as_u64()
+        ),
+        (Some("open"), Some("教唆"), Some(seq))
+    );
+    assert!(first.get("snapshot").is_none());
+    // 再点一次：还是那一条。
+    let (st, again) = a.call(Method::POST, "/v1/reports", tok, Some(body)).await;
+    assert_eq!((st, &again["id"]), (StatusCode::OK, &first["id"]));
+    let mut w = a.t.db.worker().await.unwrap();
+    let open = w.open_reports(10).await.unwrap();
+    w.rollback().await.unwrap();
+    assert_eq!(open.len(), 1);
+    assert_eq!(
+        open[0].snapshot["event"]["payload"]["text"],
+        "一段不该出现的回复"
+    );
+    assert_eq!(open[0].snapshot["run"]["prompt"], "写一首诗");
+
+    // 整个运行也能举报；原因不认识、事件不是这个运行的、别人的运行都不行。
+    let whole = json!({ "run_id": run_id.to_string(), "reason": "other" });
+    let (st, _) = a.call(Method::POST, "/v1/reports", tok, Some(whole)).await;
+    assert_eq!(st, StatusCode::CREATED);
+    let (st, _) = a
+        .call(
+            Method::POST,
+            "/v1/reports",
+            tok,
+            Some(json!({ "run_id": run_id.to_string(), "reason": "boring" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+    let (st, _) = a
+        .call(
+            Method::POST,
+            "/v1/reports",
+            tok,
+            Some(
+                json!({ "run_id": run_id.to_string(), "event_seq": seq + 100, "reason": "other" }),
+            ),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let other = a.login("13800138041").await;
+    let (st, _) = a
+        .call(
+            Method::POST,
+            "/v1/reports",
+            Some(&other.access),
+            Some(json!({ "run_id": run_id.to_string(), "event_seq": seq, "reason": "harmful" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+
+    // 自己的举报和处理结果。
+    let (st, mine) = a.call(Method::GET, "/v1/reports", tok, None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(mine["reports"].as_array().unwrap().len(), 2);
+    let (_, theirs) = a
+        .call(Method::GET, "/v1/reports", Some(&other.access), None)
+        .await;
+    assert_eq!(theirs["reports"].as_array().unwrap().len(), 0);
 }

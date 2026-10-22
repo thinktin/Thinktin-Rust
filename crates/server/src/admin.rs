@@ -1,13 +1,14 @@
-//! 运维命令（WBS 4.6、15.5）：`thinktin-server admin freeze|unfreeze|show|versions`。
+//! 运维命令（WBS 4.6、5.5、15.5）：`thinktin-server admin freeze|unfreeze|show|versions|reports|report|close-report`。
 //!
 //! 冻结、解冻走 [`orchestrator::account`]：记审计（操作人和原因）、给用户发通知。
-//! 账号可以用手机号或用户 id 指定；输出里的手机号打码，不输出对话内容。
+//! 账号可以用手机号或用户 id 指定；输出里的手机号打码，不输出对话内容。唯一的例外是内容举报：`report` 输出
+//! 用户举报时复制下来的那一条内容（用户提交举报就是让运营看它），别的对话内容照样不输出。
 
 use std::io::Write;
 
 use anyhow::{Context, bail};
 use control::Templates;
-use proto::domain::UserId;
+use proto::domain::{ReportId, UserId};
 use store::Db;
 
 /// 按用户 id 或手机号找账号（注销了的找不到）。
@@ -27,13 +28,17 @@ pub async fn resolve(db: &Db, account: &str) -> anyhow::Result<UserId> {
 }
 
 fn check(operator: &str, reason: &str) -> anyhow::Result<()> {
+    check_text(operator, "--reason", reason)
+}
+
+fn check_text(operator: &str, flag: &str, text: &str) -> anyhow::Result<()> {
     let operator = operator.trim();
     if operator.is_empty() || operator.chars().count() > 64 {
         bail!("--operator (or THINKTIN_OPERATOR) must be 1-64 characters");
     }
-    let reason = reason.trim();
-    if reason.is_empty() || reason.chars().count() > 500 {
-        bail!("--reason must be 1-500 characters");
+    let text = text.trim();
+    if text.is_empty() || text.chars().count() > 500 {
+        bail!("{flag} must be 1-500 characters");
     }
     Ok(())
 }
@@ -122,6 +127,94 @@ pub async fn versions(db: &Db, out: &mut impl Write) -> anyhow::Result<()> {
         };
         writeln!(out, "{agent:<10} {version:<16} {n:>9}  {status}")?;
     }
+    Ok(())
+}
+
+/// 内容举报（5.5）的待处理队列，先来的在前：id、提交时间、原因、等了多久。
+pub async fn reports(db: &Db, out: &mut impl Write) -> anyhow::Result<()> {
+    let mut w = db.worker().await?;
+    let open = w.open_reports(200).await?;
+    w.rollback().await?;
+    if open.is_empty() {
+        writeln!(out, "no open reports")?;
+        return Ok(());
+    }
+    writeln!(
+        out,
+        "{:<36}  {:<20}  {:<14}  waiting",
+        "report", "submitted (UTC)", "reason"
+    )?;
+    let now = chrono::Utc::now();
+    for r in &open {
+        let r = &r.report;
+        let hours = (now - r.created_at).num_minutes() as f64 / 60.0;
+        writeln!(
+            out,
+            "{:<36}  {:<20}  {:<14}  {hours:.1}h",
+            r.id.to_string(),
+            r.created_at.format("%Y-%m-%d %H:%M:%S"),
+            r.reason.as_str(),
+        )?;
+    }
+    Ok(())
+}
+
+/// 一条举报的详情：举报的人（手机号打码）、原因和说明、复制下来的内容。
+pub async fn report(db: &Db, id: &str, out: &mut impl Write) -> anyhow::Result<()> {
+    let id: ReportId = id.trim().parse().context("not a report id")?;
+    let mut w = db.worker().await?;
+    let r = w.report(id).await.context("no such report")?;
+    let reporter = w.user(r.user_id).await?;
+    w.rollback().await?;
+    let time = |t: chrono::DateTime<chrono::Utc>| t.format("%Y-%m-%d %H:%M:%S UTC").to_string();
+    writeln!(out, "report      {}", r.report.id)?;
+    writeln!(out, "state       {}", r.report.state.as_str())?;
+    writeln!(out, "submitted   {}", time(r.report.created_at))?;
+    writeln!(
+        out,
+        "user        {} ({})",
+        r.user_id,
+        mask_phone(&reporter.phone)
+    )?;
+    writeln!(out, "reason      {}", r.report.reason.as_str())?;
+    writeln!(
+        out,
+        "note        {}",
+        r.report.note.as_deref().unwrap_or("-")
+    )?;
+    writeln!(out, "run         {}", r.report.run_id)?;
+    if let Some(seq) = r.report.event_seq {
+        writeln!(out, "event       #{seq}")?;
+    }
+    if let Some(a) = r.report.artifact_id {
+        writeln!(out, "artifact    {a}")?;
+    }
+    if let Some(at) = r.report.handled_at {
+        writeln!(
+            out,
+            "handled     {} by {}: {}",
+            time(at),
+            r.handled_by.as_deref().unwrap_or("-"),
+            r.report.resolution.as_deref().unwrap_or("-")
+        )?;
+    }
+    writeln!(out, "content (copied when reported):")?;
+    writeln!(out, "{}", serde_json::to_string_pretty(&r.snapshot)?)?;
+    Ok(())
+}
+
+/// 处理完一条举报：记下结果（发给举报的人）和处理人（只进审计）。
+pub async fn close_report(
+    db: &Db,
+    id: &str,
+    operator: &str,
+    resolution: &str,
+    out: &mut impl Write,
+) -> anyhow::Result<()> {
+    check_text(operator, "--resolution", resolution)?;
+    let id: ReportId = id.trim().parse().context("not a report id")?;
+    orchestrator::reports::close(db, id, operator.trim(), resolution.trim()).await?;
+    writeln!(out, "closed {id}; the reporter was told the resolution")?;
     Ok(())
 }
 

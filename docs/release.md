@@ -119,12 +119,18 @@ kubectl -n thinktin-staging rollout status deploy/thinktin-api deploy/thinktin-w
 
 | Secret | 键 | 给谁 |
 |---|---|---|
-| `thinktin-api` | `DATABASE_URL`（控制面登录账号）、`THINKTIN_ACCESS_TOKEN_SEED`、`THINKTIN_CODE_PEPPER`、`THINKTIN_ALIYUN_KMS_ACCESS_KEY_ID`、`THINKTIN_ALIYUN_KMS_ACCESS_KEY_SECRET`（本地 KMS 时换成 `THINKTIN_KMS_KEY`）、`THINKTIN_S3_ACCESS_KEY_ID`、`THINKTIN_S3_SECRET_ACCESS_KEY`、`THINKTIN_ALIYUN_SMS_ACCESS_KEY_ID`、`THINKTIN_ALIYUN_SMS_ACCESS_KEY_SECRET` | 接口副本 |
+| `thinktin-api` | `DATABASE_URL`（控制面登录账号）、`THINKTIN_ACCESS_TOKEN_SEED`、`THINKTIN_CODE_PEPPER`、`THINKTIN_ALIYUN_KMS_ACCESS_KEY_ID`、`THINKTIN_ALIYUN_KMS_ACCESS_KEY_SECRET`（本地 KMS 时换成 `THINKTIN_KMS_KEY`）、`THINKTIN_S3_ACCESS_KEY_ID`、`THINKTIN_S3_SECRET_ACCESS_KEY`、`THINKTIN_ALIYUN_SMS_ACCESS_KEY_ID`、`THINKTIN_ALIYUN_SMS_ACCESS_KEY_SECRET`；提交审核期间加 `THINKTIN_REVIEW_CODE` | 接口副本 |
 | `thinktin-worker` | `DATABASE_URL`（控制面登录账号）、`THINKTIN_SANDBOX_TOKEN_SEED`、KMS 的两个（同上）、对象存储的两个、`THINKTIN_CUBE_API_KEY`、`THINKTIN_JPUSH_MASTER_SECRET` | 后台副本 |
 | `thinktin-push`（文件） | `apns.p8`（APNs 私钥）、`fcm.json`（FCM 服务账号） | 后台副本，挂在 `/etc/thinktin/push` |
 | `thinktin-llm-gw` | `DATABASE_URL`（模型网关登录账号）、KMS 的两个 | 模型网关 |
 | `thinktin-relay` | `DATABASE_URL`（中继登录账号） | 设备中继 |
 | `thinktin-migrate` | `DATABASE_URL`（表的属主） | 迁移 Job |
+
+**应用商店审核账号（4.7）**：审核员收不到短信。提交审核前在 `server.toml` 的 `[api]` 里配 `review_phone`（一个
+不会有人用的手机号），在 `thinktin-api` 里加 `THINKTIN_REVIEW_CODE`（6 位数字，不能是同一个数字或连号）。这个号发码
+时不发短信，码就是这个固定码；限频、有效期、尝试次数和普通的码一样，发码（`auth.review_code`）和登录（`auth.login`
+的 `review: true`）都记审计，启动时打一条警告。手机号和码填在 App Store Connect 的审核备注里。审核过了就把两个都删掉、
+重新部署（只配一个启动不了）。
 
 接口副本和后台副本拿到的密钥不一样：接口副本没有沙箱令牌私钥、CubeAPI 和推送的密钥，后台副本没有访问令牌私钥、
 验证码密钥和短信的密钥。换密钥：访问令牌、沙箱令牌的公钥都可以同时给新旧两个（中继的 `THINKTIN_ACCESS_TOKEN_KEYS`

@@ -292,6 +292,37 @@ pub async fn set_push(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// 这台设备的推送开启令牌（10.6，iOS 17.2 起）：用户在 App 里打开“计划运行时显示实时活动”时登记，计划到点开始的
+/// 运行就在这台手机上远程开启实时活动。
+pub async fn set_live_activity_start(
+    State(s): State<AppState>,
+    Authed(who): Authed,
+    ApiJson(req): ApiJson<super::runs::LiveActivityReq>,
+) -> ApiResult<StatusCode> {
+    super::runs::check_live_token(req.token())?;
+    let mut t = s.db.tenant(who.user).await?;
+    t.set_activity_start_token(who.device, Some(req.token()))
+        .await?;
+    t.commit().await?;
+    // 同一个令牌之前登记在别的设备（可能是别的账号）上的，清掉。
+    let mut w = s.db.worker().await?;
+    w.release_activity_start_token(who.device, req.token())
+        .await?;
+    w.commit().await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// 用户关掉了“计划运行时显示实时活动”：清掉推送开启令牌。
+pub async fn clear_live_activity_start(
+    State(s): State<AppState>,
+    Authed(who): Authed,
+) -> ApiResult<StatusCode> {
+    let mut t = s.db.tenant(who.user).await?;
+    t.set_activity_start_token(who.device, None).await?;
+    t.commit().await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 pub async fn revoke_device(
     State(s): State<AppState>,
     Authed(who): Authed,

@@ -982,15 +982,19 @@ async fn erasing_an_account_deletes_its_content() {
         })
         .await
         .unwrap();
-        tx.create_im_channel(&crate::NewImChannel {
-            id: proto::domain::ImChannelId::new(),
-            vendor: proto::domain::ImVendor::Feishu,
-            label: "家庭群".into(),
-            sealed: vec![4, 5, 6],
-            hint: "…abcd".into(),
-            has_secret: true,
-            events: vec![proto::domain::ImEvent::RunFinished],
-        })
+        tx.create_im_channel(
+            &crate::NewImChannel {
+                id: proto::domain::ImChannelId::new(),
+                vendor: proto::domain::ImVendor::Feishu,
+                label: "家庭群".into(),
+                sealed: vec![4, 5, 6],
+                hint: "…abcd".into(),
+                has_secret: true,
+                bot_tag: [1; 32],
+                events: vec![proto::domain::ImEvent::RunFinished],
+            },
+            20,
+        )
         .await
         .unwrap();
         tx.create_vault_request(&crate::NewVaultRequest {
@@ -2159,7 +2163,7 @@ async fn builds_check_the_database_migrations() {
 
 #[tokio::test]
 async fn im_channels_are_per_user_rate_limited_and_settle_without_spending_attempts() {
-    use crate::{ImChannelChange, ImSlot, NewImChannel, NewOutboxItem};
+    use crate::{ImChannelChange, ImSlot, ImWebhook, NewImChannel, NewOutboxItem};
     use proto::domain::{ImChannelId, ImEvent, ImVendor};
 
     let Some(t) = TestDb::new().await else { return };
@@ -2169,15 +2173,19 @@ async fn im_channels_are_per_user_rate_limited_and_settle_without_spending_attem
     let id = ImChannelId::new();
     let mut tx = db.tenant(alice).await.unwrap();
     let ch = tx
-        .create_im_channel(&NewImChannel {
-            id,
-            vendor: ImVendor::Dingtalk,
-            label: "运维群".into(),
-            sealed: vec![9; 40],
-            hint: "…beef".into(),
-            has_secret: true,
-            events: vec![ImEvent::RunFailed, ImEvent::Approval, ImEvent::RunFailed],
-        })
+        .create_im_channel(
+            &NewImChannel {
+                id,
+                vendor: ImVendor::Dingtalk,
+                label: "运维群".into(),
+                sealed: vec![9; 40],
+                hint: "…beef".into(),
+                has_secret: true,
+                bot_tag: [2; 32],
+                events: vec![ImEvent::RunFailed, ImEvent::Approval, ImEvent::RunFailed],
+            },
+            20,
+        )
         .await
         .unwrap();
     assert_eq!(ch.events, vec![ImEvent::Approval, ImEvent::RunFailed]);
@@ -2208,6 +2216,29 @@ async fn im_channels_are_per_user_rate_limited_and_settle_without_spending_attem
     );
     tx.rollback().await.unwrap();
 
+    // 同一个人不能把同一个群机器人绑两次；别人绑了同一个机器人可以，发送节奏合在一起算（见下）。
+    let same_bot = |id| NewImChannel {
+        id,
+        vendor: ImVendor::Dingtalk,
+        label: String::new(),
+        sealed: vec![8; 40],
+        hint: "…beef".into(),
+        has_secret: false,
+        bot_tag: [2; 32],
+        events: vec![ImEvent::RunFailed],
+    };
+    let mut tx = db.tenant(alice).await.unwrap();
+    assert!(matches!(
+        tx.create_im_channel(&same_bot(ImChannelId::new()), 20)
+            .await,
+        Err(Error::Conflict(_))
+    ));
+    tx.rollback().await.unwrap();
+    let bobs = ImChannelId::new();
+    let mut tx = db.tenant(bob).await.unwrap();
+    tx.create_im_channel(&same_bot(bobs), 20).await.unwrap();
+    tx.commit().await.unwrap();
+
     // 订了哪些事件就只发哪些；停用的不发。
     let mut w = db.worker().await.unwrap();
     assert_eq!(
@@ -2220,20 +2251,47 @@ async fn im_channels_are_per_user_rate_limited_and_settle_without_spending_attem
             .unwrap()
             .is_empty()
     );
-    // 限流窗口：每分钟 2 条，第 3 条要等到窗口结束。
-    assert_eq!(w.take_im_slot(id, 2).await.unwrap(), ImSlot::Go);
-    assert_eq!(w.take_im_slot(id, 2).await.unwrap(), ImSlot::Go);
-    let ImSlot::Wait(at) = w.take_im_slot(id, 2).await.unwrap() else {
-        panic!("window full")
+    // 发送节奏：两条之间隔 30 秒，可以连着发两条，第 3 条等到 30 秒后。
+    let gap = Duration::from_secs(30);
+    assert_eq!(w.take_im_slot(id, gap).await.unwrap(), ImSlot::Go);
+    assert_eq!(w.take_im_slot(id, gap).await.unwrap(), ImSlot::Go);
+    let ImSlot::Wait(at) = w.take_im_slot(id, gap).await.unwrap() else {
+        panic!("not this channel's turn yet")
     };
-    assert!(at > Utc::now() + chrono::Duration::seconds(50));
+    let wait = at - Utc::now();
+    assert!(
+        wait > chrono::Duration::seconds(25) && wait <= chrono::Duration::seconds(30),
+        "{wait}"
+    );
+    assert!(
+        matches!(w.take_im_slot(bobs, gap).await.unwrap(), ImSlot::Wait(a) if a == at),
+        "the same bot bound by someone else shares the pace"
+    );
+    // 厂商说限流了：往后推，不会往前挪。
+    w.throttle_im_channel(id, Utc::now() + chrono::Duration::minutes(10))
+        .await
+        .unwrap();
+    let ImSlot::Wait(at) = w.take_im_slot(id, gap).await.unwrap() else {
+        panic!("throttled")
+    };
+    assert!(at > Utc::now() + chrono::Duration::minutes(9));
+    w.throttle_im_channel(id, Utc::now()).await.unwrap();
+    assert!(
+        matches!(w.take_im_slot(id, gap).await.unwrap(), ImSlot::Wait(a) if a > Utc::now() + chrono::Duration::minutes(9))
+    );
+    sqlx::query("DELETE FROM im_bot_slots")
+        .execute(w.conn())
+        .await
+        .unwrap();
     // 失败：记下原因；机器人没了：停用。只改读的那一刻的行。
     let seen = w.sealed_im_channel(id).await.unwrap().unwrap();
     assert_eq!(seen.user_id, alice);
-    assert_eq!(seen.sealed, vec![9; 40]);
-    w.record_im_result(id, seen.channel.updated_at, Some("sign not match"), false)
-        .await
-        .unwrap();
+    assert_eq!((seen.sealed.clone(), seen.webhook_rev), (vec![9; 40], 0));
+    assert!(
+        !w.record_im_result(id, seen.webhook_rev, Some("sign not match"), false)
+            .await
+            .unwrap()
+    );
     w.commit().await.unwrap();
     let mut tx = db.tenant(alice).await.unwrap();
     let got = tx.im_channel(id).await.unwrap();
@@ -2244,7 +2302,13 @@ async fn im_channels_are_per_user_rate_limited_and_settle_without_spending_attem
         .update_im_channel(
             id,
             &ImChannelChange {
-                webhook: Some((ImVendor::Dingtalk, vec![7; 40], "…cafe".into(), false)),
+                webhook: Some(ImWebhook {
+                    vendor: ImVendor::Dingtalk,
+                    sealed: vec![7; 40],
+                    hint: "…cafe".into(),
+                    has_secret: false,
+                    bot_tag: [3; 32],
+                }),
                 ..Default::default()
             },
         )
@@ -2259,7 +2323,13 @@ async fn im_channels_are_per_user_rate_limited_and_settle_without_spending_attem
         ("…cafe", false, None)
     );
     let other_vendor = ImChannelChange {
-        webhook: Some((ImVendor::Wecom, vec![1], "…0000".into(), false)),
+        webhook: Some(ImWebhook {
+            vendor: ImVendor::Wecom,
+            sealed: vec![1],
+            hint: "…0000".into(),
+            has_secret: false,
+            bot_tag: [4; 32],
+        }),
         ..Default::default()
     };
     assert!(matches!(
@@ -2267,27 +2337,47 @@ async fn im_channels_are_per_user_rate_limited_and_settle_without_spending_attem
         Err(Error::Invalid(_))
     ));
     tx.commit().await.unwrap();
-    // 用户换地址之前读到的旧行，结果不能停掉新地址。
-    let mut w = db.worker().await.unwrap();
-    w.record_im_result(
+    // 用户换地址之前读到的旧行，结果不能停掉新地址；改名字、改事件不影响记结果。
+    let mut tx = db.tenant(alice).await.unwrap();
+    tx.update_im_channel(
         id,
-        seen.channel.updated_at,
-        Some("token is not exist"),
-        true,
+        &ImChannelChange {
+            label: Some("值班群".into()),
+            ..Default::default()
+        },
     )
     .await
     .unwrap();
+    tx.commit().await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    assert!(
+        !w.record_im_result(id, seen.webhook_rev, Some("token is not exist"), true)
+            .await
+            .unwrap()
+    );
     let now = w.sealed_im_channel(id).await.unwrap().unwrap();
     assert!(now.channel.enabled && now.channel.last_error.is_none());
-    w.record_im_result(id, now.channel.updated_at, None, false)
-        .await
-        .unwrap();
-    w.record_im_result(id, now.channel.updated_at, Some("token is not exist"), true)
-        .await
-        .unwrap();
+    assert_eq!(now.webhook_rev, 1);
+    assert!(
+        !w.record_im_result(id, now.webhook_rev, None, false)
+            .await
+            .unwrap()
+    );
+    assert!(
+        w.record_im_result(id, now.webhook_rev, Some("token is not exist"), true)
+            .await
+            .unwrap(),
+        "turned off"
+    );
+    assert!(
+        !w.record_im_result(id, now.webhook_rev, Some("token is not exist"), true)
+            .await
+            .unwrap(),
+        "already off"
+    );
     let off = w.sealed_im_channel(id).await.unwrap().unwrap();
     assert!(!off.channel.enabled && off.channel.last_sent_at.is_some());
-    assert_eq!(w.take_im_slot(id, 2).await.unwrap(), ImSlot::Gone);
+    assert_eq!(w.take_im_slot(id, gap).await.unwrap(), ImSlot::Gone);
     assert!(
         w.im_channels_for(alice, ImEvent::RunFailed)
             .await
@@ -2338,6 +2428,144 @@ async fn im_channels_are_per_user_rate_limited_and_settle_without_spending_attem
     ));
     w.commit().await.unwrap();
 
+    // 停用后换上新地址：重新打开，错误清掉。
+    let mut tx = db.tenant(alice).await.unwrap();
+    let back = tx
+        .update_im_channel(
+            id,
+            &ImChannelChange {
+                webhook: Some(ImWebhook {
+                    vendor: ImVendor::Dingtalk,
+                    sealed: vec![5; 40],
+                    hint: "…f00d".into(),
+                    has_secret: true,
+                    bot_tag: [5; 32],
+                }),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(back.enabled && back.last_error.is_none());
+    // 用户自己关掉的：换了地址还是关着，自己打开才发。
+    let off = ImChannelChange {
+        enabled: Some(false),
+        ..Default::default()
+    };
+    assert!(!tx.update_im_channel(id, &off).await.unwrap().enabled);
+    let rotate = ImChannelChange {
+        webhook: Some(ImWebhook {
+            vendor: ImVendor::Dingtalk,
+            sealed: vec![5; 40],
+            hint: "…f00d".into(),
+            has_secret: true,
+            bot_tag: [5; 32],
+        }),
+        ..Default::default()
+    };
+    assert!(!tx.update_im_channel(id, &rotate).await.unwrap().enabled);
+    let on = ImChannelChange {
+        enabled: Some(true),
+        ..Default::default()
+    };
+    assert!(tx.update_im_channel(id, &on).await.unwrap().enabled);
+    tx.commit().await.unwrap();
+
+    // IM 条目按渠道排队：每个渠道只领最早的一条；推后的那条挡着后面的；渠道删了一起放弃。
+    let other = ImChannelId::new();
+    let mut w = db.worker().await.unwrap();
+    for (ch, n) in [(id, 3), (other, 1)] {
+        for _ in 0..n {
+            w.enqueue_outbox(
+                alice,
+                &NewOutboxItem {
+                    kind: "im".into(),
+                    payload: json!({ "channel": ch, "message": {} }),
+                    dedupe_key: None,
+                    available_at: None,
+                },
+            )
+            .await
+            .unwrap();
+        }
+    }
+    let heads = w
+        .claim_im_outbox("n1", Duration::from_secs(60), 10)
+        .await
+        .unwrap();
+    let chans: Vec<String> = heads
+        .iter()
+        .map(|i| i.payload["channel"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(
+        chans,
+        vec![id.to_string(), other.to_string()],
+        "one head per channel"
+    );
+    assert!(
+        w.claim_im_outbox("n1", Duration::from_secs(60), 10)
+            .await
+            .unwrap()
+            .is_empty(),
+        "heads in flight block the rest"
+    );
+    w.defer_outbox(
+        heads[0].id,
+        "n1",
+        "not yet",
+        Utc::now() + chrono::Duration::minutes(5),
+    )
+    .await
+    .unwrap();
+    assert!(
+        w.claim_im_outbox("n1", Duration::from_secs(60), 10)
+            .await
+            .unwrap()
+            .is_empty(),
+        "a deferred head blocks the rest"
+    );
+    assert_eq!(
+        w.drop_im_backlog(id, "im channel deleted").await.unwrap(),
+        3
+    );
+    assert_eq!(
+        w.drop_im_backlog(other, "x").await.unwrap(),
+        0,
+        "rows in flight are left to their holder"
+    );
+    // 失败重试中的排在新条目后面领：出故障的那一家占不满发送的名额。
+    w.retry_outbox(
+        heads[1].id,
+        "n1",
+        "timed out",
+        Utc::now() - chrono::Duration::minutes(1),
+    )
+    .await
+    .unwrap();
+    let third = ImChannelId::new();
+    w.enqueue_outbox(
+        alice,
+        &NewOutboxItem {
+            kind: "im".into(),
+            payload: json!({ "channel": third, "message": {} }),
+            dedupe_key: None,
+            available_at: None,
+        },
+    )
+    .await
+    .unwrap();
+    let first = w
+        .claim_im_outbox("n1", Duration::from_secs(60), 1)
+        .await
+        .unwrap();
+    assert_eq!(first[0].payload["channel"], json!(third));
+    let next = w
+        .claim_im_outbox("n1", Duration::from_secs(60), 1)
+        .await
+        .unwrap();
+    assert_eq!((next[0].id, next[0].attempts), (heads[1].id, 2));
+    w.commit().await.unwrap();
+
     let mut tx = db.tenant(alice).await.unwrap();
     tx.delete_im_channel(id).await.unwrap();
     assert!(matches!(
@@ -2345,4 +2573,724 @@ async fn im_channels_are_per_user_rate_limited_and_settle_without_spending_attem
         Err(Error::NotFound)
     ));
     assert_eq!(tx.im_channel_count().await.unwrap(), 0);
+    tx.commit().await.unwrap();
+
+    // 上限：并发的新建请求一起也不能超过。
+    let mut joins = Vec::new();
+    for i in 0..12u8 {
+        let db = db.clone();
+        joins.push(tokio::spawn(async move {
+            let mut tx = db.tenant(alice).await.unwrap();
+            let r = tx
+                .create_im_channel(
+                    &NewImChannel {
+                        id: ImChannelId::new(),
+                        vendor: ImVendor::Wecom,
+                        label: format!("群 {i}"),
+                        sealed: vec![1; 40],
+                        hint: "…0001".into(),
+                        has_secret: false,
+                        bot_tag: [100 + i; 32],
+                        events: vec![ImEvent::RunFinished],
+                    },
+                    5,
+                )
+                .await;
+            if r.is_ok() {
+                tx.commit().await.unwrap();
+            }
+            r.is_ok()
+        }));
+    }
+    let mut created = 0;
+    for j in joins {
+        created += usize::from(j.await.unwrap());
+    }
+    assert_eq!(created, 5);
+    let mut tx = db.tenant(alice).await.unwrap();
+    assert_eq!(tx.im_channel_count().await.unwrap(), 5);
+}
+
+async fn claim_live(db: &Db, owner: &str, step_gap: Duration) -> Vec<crate::LiveActivity> {
+    let mut w = db.worker().await.unwrap();
+    let got = w
+        .claim_live_activities(owner, LEASE, 10, 10, Duration::ZERO, step_gap)
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+    got
+}
+
+async fn settle_live(db: &Db, a: &crate::LiveActivity, owner: &str, s: crate::LiveSettle) {
+    let mut w = db.worker().await.unwrap();
+    w.settle_live_activity(a.device_id, a.run_id, owner, a.push_token.as_deref(), &s)
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+}
+
+#[tokio::test]
+async fn live_activities_follow_their_runs_per_device() {
+    use crate::LiveSettle;
+    use proto::domain::{DevicePlatform, RunState, SessionId};
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = user(db, "+8613800000051").await;
+    let bob = user(db, "+8613800000052").await;
+    let hour = Duration::from_secs(3600);
+    let minute = Duration::from_secs(60);
+    let mut w = db.worker().await.unwrap();
+    let phone = w
+        .create_device(alice, DevicePlatform::Ios, "iPhone", None)
+        .await
+        .unwrap();
+    w.create_session(SessionId::new(), alice, phone, b"r1", hour)
+        .await
+        .unwrap();
+    let mac = w
+        .create_device(alice, DevicePlatform::Macos, "Mac", None)
+        .await
+        .unwrap();
+    w.create_session(SessionId::new(), alice, mac, b"r2", hour)
+        .await
+        .unwrap();
+    let bobs = w
+        .create_device(bob, DevicePlatform::Ios, "iPhone", None)
+        .await
+        .unwrap();
+    w.create_session(SessionId::new(), bob, bobs, b"r3", hour)
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+    let inst = instance(db, alice).await;
+    let run = queue_run(db, alice, &inst, "整理邮件").await;
+    let set_run = |state: &'static str, steps: i32| {
+        let pool = db.pool().clone();
+        async move {
+            sqlx::query("UPDATE runs SET state = $2, steps = $3 WHERE id = $1")
+                .bind(run.id.0)
+                .bind(state)
+                .bind(steps)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+    };
+
+    // App 开的：登记令牌。只有 iPhone、iPad 有；别人的运行登记不了。
+    let mut tx = db.tenant(alice).await.unwrap();
+    tx.register_live_activity(phone, run.id, "aa11", 5)
+        .await
+        .unwrap();
+    assert!(matches!(
+        tx.register_live_activity(mac, run.id, "bb22", 5).await,
+        Err(Error::Invalid(_))
+    ));
+    assert!(matches!(
+        tx.set_activity_start_token(mac, Some("cc33")).await,
+        Err(Error::Invalid(_))
+    ));
+    tx.commit().await.unwrap();
+    let mut tx = db.tenant(bob).await.unwrap();
+    assert!(matches!(
+        tx.register_live_activity(bobs, run.id, "dd44", 5).await,
+        Err(Error::NotFound)
+    ));
+    tx.rollback().await.unwrap();
+
+    // 还没发过：领得到，带着运行现在的样子；锁着的别人领不到。
+    let got = claim_live(db, "n1", minute).await;
+    assert_eq!(got.len(), 1);
+    let a = got[0].clone();
+    assert_eq!(
+        (a.device_id, a.run_id, a.user_id, a.pushed),
+        (phone, run.id, alice, false)
+    );
+    assert_eq!(
+        (a.state, a.steps, a.push_token.as_deref(), a.sent_state),
+        (RunState::Queued, 0, Some("aa11"), None)
+    );
+    assert_eq!((a.instance_id, a.instance_name.as_str()), (inst.id, "main"));
+    assert!(claim_live(db, "n2", minute).await.is_empty());
+    let mut w = db.worker().await.unwrap();
+    assert!(matches!(
+        w.settle_live_activity(
+            phone,
+            run.id,
+            "n2",
+            Some("aa11"),
+            &LiveSettle::End { error: None }
+        )
+        .await,
+        Err(Error::LeaseLost { .. })
+    ));
+    w.rollback().await.unwrap();
+    let sent = |state, steps, ended| LiveSettle::Sent {
+        state,
+        steps,
+        started: false,
+        ended,
+    };
+    settle_live(db, &a, "n1", sent(RunState::Queued, 0, false)).await;
+    assert!(
+        claim_live(db, "n1", minute).await.is_empty(),
+        "nothing changed"
+    );
+
+    // 只是步数变了：离上次不到间隔不发；状态变了马上发。
+    set_run("queued", 3).await;
+    assert!(claim_live(db, "n1", minute).await.is_empty());
+    let got = claim_live(db, "n1", Duration::ZERO).await;
+    assert_eq!(got[0].steps, 3);
+    // 暂时失败：到时间再领，记着次数。
+    settle_live(
+        db,
+        &got[0],
+        "n1",
+        LiveSettle::Retry {
+            error: "TooManyRequests".into(),
+            at: Utc::now() + chrono::Duration::minutes(5),
+        },
+    )
+    .await;
+    assert!(claim_live(db, "n1", Duration::ZERO).await.is_empty());
+    sqlx::query("UPDATE live_activities SET retry_at = now() - interval '1 second'")
+        .execute(db.pool())
+        .await
+        .unwrap();
+    set_run("running", 4).await;
+    let got = claim_live(db, "n1", minute).await;
+    assert_eq!((got[0].state, got[0].attempts), (RunState::Running, 1));
+    settle_live(db, &got[0], "n1", sent(RunState::Running, 4, false)).await;
+
+    // 结束：发过 end 就不再发；App 换了令牌（重新开了一个）：现在的状态再发一次。
+    set_run("succeeded", 6).await;
+    let got = claim_live(db, "n1", minute).await;
+    assert_eq!((got[0].state, got[0].attempts), (RunState::Succeeded, 0));
+    settle_live(db, &got[0], "n1", sent(RunState::Succeeded, 6, true)).await;
+    assert!(claim_live(db, "n1", Duration::ZERO).await.is_empty());
+    let mut tx = db.tenant(alice).await.unwrap();
+    tx.register_live_activity(phone, run.id, "aa12", 5)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let got = claim_live(db, "n1", minute).await;
+    assert_eq!(got[0].push_token.as_deref(), Some("aa12"));
+    // App 在发送期间换了令牌：锁还在（别人领不到，不会同时发两次），旧的结果记不上，放开锁后新令牌接着发。
+    let mut tx = db.tenant(alice).await.unwrap();
+    tx.register_live_activity(phone, run.id, "aa13", 5)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    assert!(
+        claim_live(db, "n2", minute).await.is_empty(),
+        "still locked"
+    );
+    settle_live(db, &got[0], "n1", sent(RunState::Succeeded, 6, true)).await;
+    let got = claim_live(db, "n1", minute).await;
+    assert_eq!(
+        (got[0].push_token.as_deref(), got[0].sent_state),
+        (Some("aa13"), None)
+    );
+    settle_live(db, &got[0], "n1", sent(RunState::Succeeded, 6, true)).await;
+    // 同一个令牌再报一次：什么都不变（不会每报一次就发一次）。
+    let mut tx = db.tenant(alice).await.unwrap();
+    tx.register_live_activity(phone, run.id, "aa13", 5)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    assert!(claim_live(db, "n1", Duration::ZERO).await.is_empty());
+
+    // 远程开启：登录着、登记了推送开启令牌的 iPhone 各一个，最多 max_open 个开着。
+    let mut tx = db.tenant(alice).await.unwrap();
+    tx.set_activity_start_token(phone, Some("ee55"))
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let planned = queue_run(db, alice, &inst, "每日新闻").await;
+    let other = queue_run(db, alice, &inst, "周报").await;
+    let mut w = db.worker().await.unwrap();
+    assert_eq!(w.queue_live_starts(alice, planned.id, 1).await.unwrap(), 1);
+    assert_eq!(w.queue_live_starts(alice, planned.id, 1).await.unwrap(), 0);
+    assert_eq!(
+        w.queue_live_starts(alice, other.id, 1).await.unwrap(),
+        0,
+        "one pushed activity open at a time"
+    );
+    w.commit().await.unwrap();
+    let got = claim_live(db, "n1", minute).await;
+    assert_eq!(got.len(), 1);
+    let p = got[0].clone();
+    assert_eq!(
+        (p.run_id, p.pushed, p.push_token.as_deref()),
+        (planned.id, true, None)
+    );
+    assert_eq!(
+        (p.start_token.as_deref(), p.start_sent),
+        (Some("ee55"), false)
+    );
+    settle_live(
+        db,
+        &p,
+        "n1",
+        LiveSettle::Sent {
+            state: RunState::Queued,
+            steps: 0,
+            started: true,
+            ended: false,
+        },
+    )
+    .await;
+    // 开启了、App 还没报上令牌：没法发；报上来了接着发。
+    assert!(claim_live(db, "n1", Duration::ZERO).await.is_empty());
+    let mut tx = db.tenant(alice).await.unwrap();
+    tx.register_live_activity(phone, planned.id, "ff66", 5)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let got = claim_live(db, "n1", minute).await;
+    assert_eq!(
+        (got[0].run_id, got[0].pushed, got[0].push_token.as_deref()),
+        (planned.id, true, Some("ff66"))
+    );
+    // App 关掉了：不再发。
+    let mut tx = db.tenant(alice).await.unwrap();
+    tx.end_live_activity(phone, planned.id).await.unwrap();
+    tx.commit().await.unwrap();
+    sqlx::query("UPDATE runs SET state = 'running' WHERE id = $1")
+        .bind(planned.id.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    assert!(claim_live(db, "n1", Duration::ZERO).await.is_empty());
+
+    // 开启了却一直没拿到令牌、运行已经结束：领出来了结掉。
+    let mut w = db.worker().await.unwrap();
+    assert_eq!(w.queue_live_starts(alice, other.id, 1).await.unwrap(), 1);
+    w.commit().await.unwrap();
+    let got = claim_live(db, "n1", minute).await;
+    settle_live(
+        db,
+        &got[0],
+        "n1",
+        LiveSettle::Sent {
+            state: RunState::Queued,
+            steps: 0,
+            started: true,
+            ended: false,
+        },
+    )
+    .await;
+    sqlx::query("UPDATE runs SET state = 'cancelled' WHERE id = $1")
+        .bind(other.id.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let got = claim_live(db, "n1", minute).await;
+    assert_eq!(
+        (got[0].run_id, got[0].state),
+        (other.id, RunState::Cancelled)
+    );
+    settle_live(db, &got[0], "n1", LiveSettle::End { error: None }).await;
+    assert!(claim_live(db, "n1", Duration::ZERO).await.is_empty());
+
+    // 推送开启令牌只属于一台设备：bob 在同一台手机上登记了，alice 的清掉；下线的设备也清掉。
+    let mut tx = db.tenant(bob).await.unwrap();
+    tx.set_activity_start_token(bobs, Some("ee55"))
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    assert_eq!(
+        w.release_activity_start_token(bobs, "ee55").await.unwrap(),
+        1
+    );
+    let third = queue_run(db, alice, &inst, "再来一次").await;
+    assert_eq!(w.queue_live_starts(alice, third.id, 5).await.unwrap(), 0);
+    w.commit().await.unwrap();
+    let mut tx = db.tenant(bob).await.unwrap();
+    tx.revoke_device(bobs, "test").await.unwrap();
+    tx.commit().await.unwrap();
+    let token: Option<String> =
+        sqlx::query_scalar("SELECT activity_start_token FROM devices WHERE id = $1")
+            .bind(bobs.0)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    assert_eq!(token, None);
+}
+
+#[tokio::test]
+async fn live_activities_resist_floods_and_races() {
+    use crate::LiveSettle;
+    use proto::domain::{DevicePlatform, SessionId};
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let hour = Duration::from_secs(3600);
+    let mut phones = Vec::new();
+    for n in 0..2 {
+        let u = user(db, &format!("+86138000000{}", 61 + n)).await;
+        let mut w = db.worker().await.unwrap();
+        let d = w
+            .create_device(u, DevicePlatform::Ios, "iPhone", None)
+            .await
+            .unwrap();
+        w.create_session(SessionId::new(), u, d, format!("r{n}").as_bytes(), hour)
+            .await
+            .unwrap();
+        w.commit().await.unwrap();
+        phones.push((u, d));
+    }
+    let [(mallory, mphone), (victim, vphone)] = phones[..] else {
+        unreachable!()
+    };
+    let minst = instance(db, mallory).await;
+    let vinst = instance(db, victim).await;
+    let register = |u, d, run, token: &'static str| async move {
+        let mut tx = db.tenant(u).await.unwrap();
+        let r = tx.register_live_activity(d, run, token, 10).await;
+        tx.commit().await.unwrap();
+        r
+    };
+    let claim = |per_user| async move {
+        let mut w = db.worker().await.unwrap();
+        let got = w
+            .claim_live_activities("n1", LEASE, 3, per_user, Duration::ZERO, Duration::ZERO)
+            .await
+            .unwrap();
+        w.commit().await.unwrap();
+        got
+    };
+
+    // 几个开了好几个钟头的、不停地换令牌：每轮只领得到每个用户的几个，等得最久的先领；后来的用户照样领得到。
+    let mut runs = Vec::new();
+    for n in 0..4 {
+        let r = queue_run(db, mallory, &minst, &format!("m{n}")).await;
+        register(mallory, mphone, r.id, "aa01").await.unwrap();
+        runs.push(r.id);
+    }
+    sqlx::query("UPDATE live_activities SET created_at = now() - interval '1 hour'")
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let vrun = queue_run(db, victim, &vinst, "v").await;
+    register(victim, vphone, vrun.id, "bb01").await.unwrap();
+    for round in 0..3 {
+        let got = claim(2).await;
+        let theirs = got.iter().filter(|a| a.user_id == mallory).count();
+        assert!(theirs <= 2, "round {round}: {theirs} of one user");
+        if round == 0 {
+            assert!(got.iter().any(|a| a.user_id == victim), "victim waits");
+        }
+        for a in &got {
+            settle_live(
+                db,
+                a,
+                "n1",
+                LiveSettle::End {
+                    error: Some("BadDeviceToken".into()),
+                },
+            )
+            .await;
+        }
+        for r in &runs {
+            register(
+                mallory,
+                mphone,
+                *r,
+                if round % 2 == 0 { "aa02" } else { "aa03" },
+            )
+            .await
+            .unwrap();
+        }
+    }
+    // 发过一次、之后不停地换假令牌（每次都 BadDeviceToken）：刚换过令牌的排到后面，先轮每个用户的第一个，
+    // 后来的用户第一批就排得上。
+    sqlx::query(
+        "UPDATE live_activities SET sent_at = now() - interval '1 hour' WHERE user_id = $1",
+    )
+    .bind(mallory.0)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    for (n, r) in runs.iter().enumerate() {
+        register(mallory, mphone, *r, ["ab01", "ab02", "ab03", "ab04"][n])
+            .await
+            .unwrap();
+    }
+    let late = queue_run(db, victim, &vinst, "v2").await;
+    register(victim, vphone, late.id, "bc01").await.unwrap();
+    sqlx::query(
+        "UPDATE live_activities SET sent_at = now() - interval '10 seconds' WHERE run_id = $1",
+    )
+    .bind(late.id.0)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    let got = claim(4).await;
+    assert!(
+        got.iter().any(|a| a.run_id == late.id),
+        "{:?}",
+        got.iter().map(|a| a.user_id).collect::<Vec<_>>()
+    );
+    for a in &got {
+        settle_live(db, a, "n1", LiveSettle::End { error: None }).await;
+    }
+
+    // 令牌失效后再报同一个：不会重新打开（不会每报一次就发一次）。
+    let mut w = db.worker().await.unwrap();
+    let ended: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM live_activities WHERE run_id = $1 AND ended_at IS NOT NULL",
+    )
+    .bind(vrun.id.0)
+    .fetch_one(w.conn())
+    .await
+    .unwrap();
+    w.rollback().await.unwrap();
+    assert_eq!(ended, 1);
+    register(victim, vphone, vrun.id, "bb01").await.unwrap();
+    assert!(!claim(10).await.iter().any(|a| a.user_id == victim));
+
+    // 放弃了的：同一个令牌再报一次从头来；App 关掉了的不行。
+    sqlx::query("UPDATE live_activities SET ended_at = NULL WHERE run_id = $1")
+        .bind(vrun.id.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let got = claim(10).await;
+    let a = got.iter().find(|a| a.user_id == victim).unwrap();
+    settle_live(
+        db,
+        a,
+        "n1",
+        LiveSettle::GiveUp {
+            error: "gave up".into(),
+        },
+    )
+    .await;
+    assert!(!claim(10).await.iter().any(|a| a.user_id == victim));
+    register(victim, vphone, vrun.id, "bb01").await.unwrap();
+    let got = claim(10).await;
+    let a = got.iter().find(|a| a.user_id == victim).unwrap();
+    assert_eq!((a.attempts, a.sent_state), (0, None));
+    settle_live(db, a, "n1", LiveSettle::GiveUp { error: "x".into() }).await;
+    let mut tx = db.tenant(victim).await.unwrap();
+    tx.end_live_activity(vphone, vrun.id).await.unwrap();
+    tx.commit().await.unwrap();
+    register(victim, vphone, vrun.id, "bb01").await.unwrap();
+    assert!(!claim(10).await.iter().any(|a| a.user_id == victim));
+
+    // 运行早就结束了：不能登记。
+    sqlx::query(
+        "UPDATE runs SET state = 'succeeded', finished_at = now() - interval '1 hour' WHERE id = $1",
+    )
+    .bind(runs[0].0)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    assert!(matches!(
+        register(mallory, mphone, runs[0], "aa09").await,
+        Err(Error::Invalid(_))
+    ));
+
+    // 并发的登记一起也超不过一台设备的上限。
+    let mut fresh = Vec::new();
+    for n in 0..4 {
+        fresh.push(queue_run(db, victim, &vinst, &format!("f{n}")).await.id);
+    }
+    let joins: Vec<_> = fresh
+        .iter()
+        .map(|r| {
+            let db = db.clone();
+            let r = *r;
+            tokio::spawn(async move {
+                let mut tx = db.tenant(victim).await.unwrap();
+                let ok = tx
+                    .register_live_activity(vphone, r, "cc01", 2)
+                    .await
+                    .is_ok();
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                tx.commit().await.unwrap();
+                ok
+            })
+        })
+        .collect();
+    let mut ok = 0;
+    for j in joins {
+        ok += usize::from(j.await.unwrap());
+    }
+    assert_eq!(ok, 2);
+
+    // 两个副本同时领到同一个用户的两个计划运行：远程开启的也超不过上限。
+    let mut tx = db.tenant(mallory).await.unwrap();
+    tx.set_activity_start_token(mphone, Some("dd01"))
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let mut planned = Vec::new();
+    for n in 0..3 {
+        planned.push(queue_run(db, mallory, &minst, &format!("p{n}")).await.id);
+    }
+    let joins: Vec<_> = planned
+        .iter()
+        .map(|r| {
+            let db = db.clone();
+            let r = *r;
+            tokio::spawn(async move {
+                let mut w = db.worker().await.unwrap();
+                let n = w.queue_live_starts(mallory, r, 1).await.unwrap();
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                w.commit().await.unwrap();
+                n
+            })
+        })
+        .collect();
+    let mut queued = 0;
+    for j in joins {
+        queued += j.await.unwrap();
+    }
+    assert_eq!(queued, 1);
+}
+
+#[tokio::test]
+async fn live_activities_follow_the_phone() {
+    use proto::domain::{DevicePlatform, PushChannelKind, SessionId};
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let hour = Duration::from_secs(3600);
+    let alice = user(db, "+8613800000071").await;
+    let bob = user(db, "+8613800000072").await;
+    let apns = Some((PushChannelKind::Apns, "0a0b"));
+    let mut w = db.worker().await.unwrap();
+    let phone = w
+        .create_device(alice, DevicePlatform::Ios, "iPhone", apns)
+        .await
+        .unwrap();
+    w.create_session(SessionId::new(), alice, phone, b"r1", hour)
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+    let inst = instance(db, alice).await;
+    let run = queue_run(db, alice, &inst, "长任务").await;
+    let child = queue_run(db, alice, &inst, "子任务").await;
+    sqlx::query("UPDATE runs SET parent_run_id = $2, steps = 4 WHERE id = $1")
+        .bind(child.id.0)
+        .bind(run.id.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let mut tx = db.tenant(alice).await.unwrap();
+    tx.set_activity_start_token(phone, Some("ee01"))
+        .await
+        .unwrap();
+    tx.register_live_activity(phone, run.id, "aa01", 5)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+
+    // 步数连同直接子运行的一起算（流水线的步骤、委派的子任务）。
+    let got = claim_live(db, "n1", Duration::ZERO).await;
+    assert_eq!(got[0].steps, 4);
+    // 前面的发得慢、锁过期了：续不上，不发。
+    sqlx::query("UPDATE live_activities SET locked_until = now() - interval '1 second'")
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let mut w = db.worker().await.unwrap();
+    assert!(
+        !w.extend_live_lock(phone, run.id, "n1", LEASE, None)
+            .await
+            .unwrap()
+    );
+    w.rollback().await.unwrap();
+    let got = claim_live(db, "n1", Duration::ZERO).await;
+    let mut w = db.worker().await.unwrap();
+    assert!(
+        w.extend_live_lock(phone, run.id, "n1", LEASE, None)
+            .await
+            .unwrap()
+    );
+    w.commit().await.unwrap();
+    settle_live(
+        db,
+        &got[0],
+        "n1",
+        crate::LiveSettle::Sent {
+            state: got[0].state,
+            steps: 4,
+            started: false,
+            ended: false,
+        },
+    )
+    .await;
+
+    // 换了令牌（新的实时活动）：8 小时从现在算。
+    sqlx::query("UPDATE live_activities SET created_at = now() - interval '7 hours'")
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let mut tx = db.tenant(alice).await.unwrap();
+    tx.register_live_activity(phone, run.id, "aa02", 5)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let fresh: bool = sqlx::query_scalar(
+        "SELECT created_at > now() - interval '1 minute' FROM live_activities WHERE run_id = $1",
+    )
+    .bind(run.id.0)
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert!(fresh);
+
+    // 远程开启领了、还没发：用户关掉了远程开启（或者换了令牌）就不发了。
+    let planned0 = queue_run(db, alice, &inst, "早报").await;
+    let mut w = db.worker().await.unwrap();
+    assert_eq!(w.queue_live_starts(alice, planned0.id, 2).await.unwrap(), 1);
+    w.commit().await.unwrap();
+    let got = claim_live(db, "n1", Duration::ZERO).await;
+    let p = got
+        .iter()
+        .find(|a| a.run_id == planned0.id)
+        .unwrap()
+        .clone();
+    let mut w = db.worker().await.unwrap();
+    assert!(
+        w.extend_live_lock(phone, planned0.id, "n1", LEASE, Some("ee01"))
+            .await
+            .unwrap()
+    );
+    assert!(
+        !w.extend_live_lock(phone, planned0.id, "n1", LEASE, Some("ee99"))
+            .await
+            .unwrap()
+    );
+    w.commit().await.unwrap();
+
+    // 同一台手机换成 bob 登录（推送令牌跟着手机走）：alice 那台不再远程开启，开着的不再更新；已经领了的也不发。
+    let mut w = db.worker().await.unwrap();
+    w.create_device(bob, DevicePlatform::Ios, "iPhone", apns)
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    assert!(
+        !w.extend_live_lock(phone, p.run_id, "n1", LEASE, Some("ee01"))
+            .await
+            .unwrap()
+    );
+    w.rollback().await.unwrap();
+    let (start, ended): (Option<String>, bool) = sqlx::query_as(
+        "SELECT d.activity_start_token, x.ended_at IS NOT NULL FROM devices d \
+         JOIN live_activities x ON x.device_id = d.id WHERE d.id = $1",
+    )
+    .bind(phone.0)
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert_eq!((start, ended), (None, true));
+    let planned = queue_run(db, alice, &inst, "每日新闻").await;
+    let mut w = db.worker().await.unwrap();
+    assert_eq!(w.queue_live_starts(alice, planned.id, 2).await.unwrap(), 0);
+    w.rollback().await.unwrap();
 }

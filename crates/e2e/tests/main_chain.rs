@@ -292,6 +292,7 @@ async fn start_platform() -> Option<Platform> {
         ),
         code_pepper: Some("ab".repeat(32)),
         kms_key: Some(KMS_HEX.into()),
+        review_code: None,
     };
     let sms = Arc::new(RecordingSms::default());
     let (l, addr) = listen().await;
@@ -335,6 +336,7 @@ impl Platform {
                     platform: DevicePlatform::Ios,
                     device_name: "iPhone".into(),
                     timeout: Duration::from_secs(10),
+                    accept_language: None,
                 },
                 Arc::new(MemorySessionStore::default()),
             )
@@ -542,6 +544,8 @@ async fn plans_keep_running_while_the_user_is_away() {
                 at: chrono::Utc::now() + chrono::Duration::seconds(3),
             }],
             steps: vec![],
+            policy: None,
+            catch_up: None,
         })
         .await
         .unwrap();

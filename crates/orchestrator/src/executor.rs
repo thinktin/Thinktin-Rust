@@ -485,6 +485,9 @@ impl Executor {
     pub async fn claim(&self) -> store::Result<Option<RunRecord>> {
         let mut w = self.db.worker().await?;
         let rec = w.claim_next_run(&self.node_id, self.cfg.lease).await?;
+        if let Some(rec) = &rec {
+            crate::live::queue_starts(&mut w, rec).await?;
+        }
         w.commit().await?;
         Ok(rec)
     }

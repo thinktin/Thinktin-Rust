@@ -203,6 +203,8 @@ impl Tx<Worker> {
             // 计划删了，触发器、流水线步骤级联删掉。
             "DELETE FROM plans WHERE user_id = $1",
             "DELETE FROM inbox_items WHERE user_id = $1",
+            // 举报里复制了被举报的内容（运行的提问、事件）。
+            "DELETE FROM content_reports WHERE user_id = $1",
             // 送达的也删：载荷里有推送的标题和正文（运行摘要、工具调用标题）。
             "DELETE FROM outbox WHERE user_id = $1",
             "DELETE FROM teams WHERE user_id = $1",
@@ -217,7 +219,7 @@ impl Tx<Worker> {
             "DELETE FROM device_links WHERE user_id = $1",
             "UPDATE instances SET state = 'deleted', name = '', deleted_at = coalesce(deleted_at, now()), \
                updated_at = now() WHERE user_id = $1",
-            "UPDATE devices SET name = '', push_channel = NULL, push_token = NULL WHERE user_id = $1",
+            "UPDATE devices SET name = '', push_channel = NULL, push_token = NULL, activity_start_token = NULL WHERE user_id = $1",
             "UPDATE users SET phone = 'deleted', display_name = NULL WHERE id = $1",
         ] {
             sqlx::query(sql).bind(id.0).execute(self.conn()).await?;

@@ -11,17 +11,19 @@ use notify::filter::KeywordFilter;
 use notify::im::{ImHook, ImMessage, ImSender};
 use notify::{PushKind, PushMessage, PushOutcome, PushTarget};
 use orchestrator::artifacts::user_vault;
-use orchestrator::outbox::{Dispatcher, DispatcherConfig, IM, Notice, im_item, notify};
+use orchestrator::outbox::{Claims, Dispatcher, DispatcherConfig, IM, Notice, im_item, notify};
 use proto::domain::{ImChannelId, ImEvent, ImVendor, Locale, UserId};
 use serde_json::Value;
-use store::NewImChannel;
 use store::testing::TestDb;
+use store::{ImChannelChange, ImWebhook, NewImChannel};
 
 type Sent = (ImVendor, String, Option<String>, ImMessage);
 
 #[derive(Default)]
 struct Recording {
     outcomes: Mutex<HashMap<String, PushOutcome>>,
+    /// 发到这个 token 要等这么久（厂商慢、连不上时等到超时）。
+    delays: Mutex<HashMap<String, Duration>>,
     sent: Mutex<Vec<Sent>>,
 }
 
@@ -38,6 +40,10 @@ impl Recording {
 impl ImSender for Recording {
     async fn send(&self, hook: &ImHook, message: &ImMessage) -> PushOutcome {
         let token = hook.token.as_str().to_owned();
+        let delay = self.delays.lock().unwrap().get(&token).copied();
+        if let Some(delay) = delay {
+            tokio::time::sleep(delay).await;
+        }
         self.sent.lock().unwrap().push((
             hook.vendor,
             token.clone(),
@@ -83,15 +89,19 @@ async fn channel(
         .await
         .unwrap();
     let mut tx = t.db.tenant(user).await.unwrap();
-    tx.create_im_channel(&NewImChannel {
-        id,
-        vendor,
-        label: "家庭群".into(),
-        sealed,
-        hint: proto::im::hint(token),
-        has_secret: !secret.is_empty(),
-        events: events.to_vec(),
-    })
+    tx.create_im_channel(
+        &NewImChannel {
+            id,
+            vendor,
+            label: "家庭群".into(),
+            sealed,
+            hint: proto::im::hint(token),
+            has_secret: !secret.is_empty(),
+            bot_tag: keyvault::webhook_fingerprint(vendor.as_str(), token),
+            events: events.to_vec(),
+        },
+        20,
+    )
     .await
     .unwrap();
     tx.commit().await.unwrap();
@@ -345,7 +355,7 @@ async fn rejected_messages_record_the_reason_and_keep_the_channel() {
 }
 
 #[tokio::test]
-async fn a_full_rate_window_defers_without_spending_attempts() {
+async fn a_busy_channel_defers_without_spending_attempts() {
     let Some(t) = TestDb::new().await else { return };
     let u = user(&t, "+8613800000025").await;
     let ch = channel(
@@ -357,8 +367,10 @@ async fn a_full_rate_window_defers_without_spending_attempts() {
         ImEvent::ALL,
     )
     .await;
+    // 上一条刚发过：钉钉两条之间隔 3.3 秒，可以连着发两条，再往后排就要等。
     sqlx::query(
-        "UPDATE im_channels SET rate_window_start = now(), rate_window_count = 18 WHERE id = $1",
+        "INSERT INTO im_bot_slots (bot_tag, next_slot_at) \
+         SELECT bot_tag, now() + interval '30 seconds' FROM im_channels WHERE id = $1",
     )
     .bind(ch.0)
     .execute(t.db.pool())
@@ -380,7 +392,7 @@ async fn a_full_rate_window_defers_without_spending_attempts() {
     .await
     .unwrap();
     assert_eq!(attempts, 0);
-    assert!((50.0..=61.0).contains(&wait), "{wait}");
+    assert!((20.0..=27.0).contains(&wait), "{wait}");
 }
 
 #[tokio::test]
@@ -432,4 +444,491 @@ async fn filtered_text_deleted_channels_and_erased_accounts() {
     drain_push(&t).await;
     let bare = Dispatcher::new(t.db.clone(), "node-b", DispatcherConfig::default());
     assert_eq!(bare.tick().await.unwrap().dropped, 1);
+}
+
+async fn channel_row(t: &TestDb, user: UserId, ch: ImChannelId) -> proto::domain::ImChannel {
+    let mut tx = t.db.tenant(user).await.unwrap();
+    let got = tx.im_channel(ch).await.unwrap();
+    tx.rollback().await.unwrap();
+    got
+}
+
+async fn im_rows(t: &TestDb, user: UserId) -> Vec<(i32, Option<String>, bool)> {
+    sqlx::query_as(
+        "SELECT attempts, last_error, delivered_at IS NOT NULL FROM outbox WHERE user_id = $1 AND kind = 'im' ORDER BY id",
+    )
+    .bind(user.0)
+    .fetch_all(t.db.pool())
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn unsubscribing_stops_queued_messages_for_that_event() {
+    let Some(t) = TestDb::new().await else { return };
+    let u = user(&t, "+8613800000031").await;
+    let ch = channel(&t, u, ImVendor::Wecom, "wecom-unsub-001", "", ImEvent::ALL).await;
+    send(&t, u, &notice(PushKind::RunFinished, "run:31:succeeded")).await;
+    drain_push(&t).await;
+    let mut tx = t.db.tenant(u).await.unwrap();
+    tx.update_im_channel(
+        ch,
+        &ImChannelChange {
+            events: Some(vec![ImEvent::Approval]),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let rec = Arc::new(Recording::default());
+    assert_eq!(dispatcher(&t, rec.clone()).tick().await.unwrap().dropped, 1);
+    assert!(rec.sent().is_empty());
+    assert_eq!(
+        im_rows(&t, u).await[0].1.as_deref(),
+        Some("im channel no longer subscribed")
+    );
+}
+
+#[tokio::test]
+async fn vendor_rate_limits_hold_the_channel_without_spending_attempts() {
+    let Some(t) = TestDb::new().await else { return };
+    let u = user(&t, "+8613800000032").await;
+    let ch = channel(
+        &t,
+        u,
+        ImVendor::Dingtalk,
+        "ding-throttle-01",
+        "",
+        ImEvent::ALL,
+    )
+    .await;
+    let rec = Arc::new(Recording::default());
+    rec.set(
+        "ding-throttle-01",
+        PushOutcome::Retry {
+            after: Some(Duration::from_secs(600)),
+            reason: "dingtalk 410100: rate limited".into(),
+        },
+    );
+    for i in 0..3 {
+        send(
+            &t,
+            u,
+            &notice(PushKind::RunFinished, &format!("run:32{i}:succeeded")),
+        )
+        .await;
+    }
+    drain_push(&t).await;
+    let d = dispatcher(&t, rec.clone());
+    let report = d.tick().await.unwrap();
+    assert_eq!(
+        (report.delivered, report.retried, report.dropped),
+        (0, 1, 0)
+    );
+    // 只碰了厂商一次；后面排着的跟着等，不会再去撞限流。
+    assert_eq!(rec.sent().len(), 1);
+    assert_eq!(d.tick().await.unwrap(), Default::default());
+    let rows = im_rows(&t, u).await;
+    assert_eq!(
+        rows.iter().map(|r| r.0).collect::<Vec<_>>(),
+        vec![0, 0, 0],
+        "no attempts spent"
+    );
+    let wait: f64 = sqlx::query_scalar(
+        "SELECT extract(epoch FROM s.next_slot_at - now())::float8 FROM im_channels c \
+         JOIN im_bot_slots s ON s.bot_tag = c.bot_tag WHERE c.id = $1",
+    )
+    .bind(ch.0)
+    .fetch_one(t.db.pool())
+    .await
+    .unwrap();
+    assert!((590.0..=600.0).contains(&wait), "{wait}");
+}
+
+#[tokio::test]
+async fn retryable_failures_show_on_the_channel_and_giving_up_too() {
+    let Some(t) = TestDb::new().await else { return };
+    let u = user(&t, "+8613800000033").await;
+    let ch = channel(&t, u, ImVendor::Lark, "lark-timeout-01", "", ImEvent::ALL).await;
+    let rec = Arc::new(Recording::default());
+    rec.set(
+        "lark-timeout-01",
+        PushOutcome::Retry {
+            after: None,
+            reason: "lark: network: connection timed out".into(),
+        },
+    );
+    send(&t, u, &notice(PushKind::RunFinished, "run:33:succeeded")).await;
+    drain_push(&t).await;
+    let d = Dispatcher::new(
+        t.db.clone(),
+        "node-a",
+        DispatcherConfig {
+            backoff_base: Duration::ZERO,
+            max_attempts: 2,
+            ..Default::default()
+        },
+    )
+    .with_im(rec.clone(), kms());
+    assert_eq!(d.tick().await.unwrap().retried, 1);
+    assert_eq!(
+        channel_row(&t, u, ch).await.last_error.as_deref(),
+        Some("lark: network: connection timed out (retrying)")
+    );
+    assert_eq!(d.tick().await.unwrap().dropped, 1);
+    let got = channel_row(&t, u, ch).await;
+    assert_eq!(
+        got.last_error.as_deref(),
+        Some("gave up after 2 attempts: lark: network: connection timed out")
+    );
+    assert!(got.enabled && got.last_sent_at.is_none());
+
+    // 后台没开 IM：也记在渠道上（测试消息发不出去，用户要知道为什么）。
+    send(&t, u, &notice(PushKind::RunFinished, "run:34:succeeded")).await;
+    drain_push(&t).await;
+    let bare = Dispatcher::new(t.db.clone(), "node-b", DispatcherConfig::default());
+    assert_eq!(bare.tick().await.unwrap().dropped, 1);
+    assert_eq!(
+        channel_row(&t, u, ch).await.last_error.as_deref(),
+        Some("IM sending is turned off on this server")
+    );
+
+    // 排了一个多小时还没发出去的：不发了，记在渠道上。
+    send(&t, u, &notice(PushKind::RunFinished, "run:35:succeeded")).await;
+    drain_push(&t).await;
+    sqlx::query("UPDATE outbox SET created_at = now() - interval '2 hours' WHERE kind = 'im' AND delivered_at IS NULL")
+        .execute(t.db.pool())
+        .await
+        .unwrap();
+    rec.set("lark-timeout-01", PushOutcome::Delivered { id: None });
+    assert_eq!(d.tick().await.unwrap().dropped, 1);
+    assert!(rec.sent().iter().all(|s| s.3.title.contains("每日新闻")));
+    assert_eq!(
+        channel_row(&t, u, ch).await.last_error.as_deref(),
+        Some("a message was not sent within an hour and was dropped")
+    );
+
+    // 审批提醒的有效期短（这里一分钟），排队时过期了是正常的：不发，也不算渠道出错。
+    send(&t, u, &notice(PushKind::RunFinished, "run:36:succeeded")).await;
+    drain_push(&t).await;
+    sqlx::query("DELETE FROM im_bot_slots")
+        .execute(t.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(d.tick().await.unwrap().delivered, 1);
+    let mut n = notice(PushKind::Approval, "approval:36");
+    n.ttl = Some(Duration::from_secs(60));
+    send(&t, u, &n).await;
+    drain_push(&t).await;
+    sqlx::query("UPDATE outbox SET created_at = now() - interval '5 minutes' WHERE kind = 'im' AND delivered_at IS NULL")
+        .execute(t.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(d.tick().await.unwrap().dropped, 1);
+    assert_eq!(channel_row(&t, u, ch).await.last_error, None);
+}
+
+/// 解不开数据密钥的 KMS（云 KMS 限流、权限出错）。
+struct DownKms;
+
+#[async_trait]
+impl Kms for DownKms {
+    fn current_key_id(&self) -> &str {
+        "local-1"
+    }
+    async fn wrap(&self, _: &[u8; 32], _: &str) -> keyvault::Result<keyvault::WrappedKey> {
+        Err(keyvault::Error::Kms("ThrottlingException".into()))
+    }
+    async fn unwrap(
+        &self,
+        _: &keyvault::WrappedKey,
+        _: &str,
+    ) -> keyvault::Result<zeroize::Zeroizing<[u8; 32]>> {
+        Err(keyvault::Error::Kms("ThrottlingException".into()))
+    }
+}
+
+#[tokio::test]
+async fn key_vault_failures_show_on_the_channel() {
+    let Some(t) = TestDb::new().await else { return };
+    let u = user(&t, "+8613800000037").await;
+    let ch = channel(&t, u, ImVendor::Feishu, "feishu-kms-0001", "", ImEvent::ALL).await;
+    send(&t, u, &notice(PushKind::RunFailed, "run:37:failed")).await;
+    drain_push(&t).await;
+    let rec = Arc::new(Recording::default());
+    let d = Dispatcher::new(
+        t.db.clone(),
+        "node-a",
+        DispatcherConfig {
+            backoff_base: Duration::ZERO,
+            max_attempts: 2,
+            ..Default::default()
+        },
+    )
+    .with_im(rec.clone(), Arc::new(DownKms));
+    assert_eq!(d.tick().await.unwrap().retried, 1);
+    assert_eq!(
+        channel_row(&t, u, ch).await.last_error.as_deref(),
+        Some("the server could not open the stored webhook (retrying)")
+    );
+    sqlx::query("DELETE FROM im_bot_slots")
+        .execute(t.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(d.tick().await.unwrap().dropped, 1);
+    let got = channel_row(&t, u, ch).await;
+    assert_eq!(
+        got.last_error.as_deref(),
+        Some("gave up after 2 attempts: the server could not open the stored webhook")
+    );
+    assert!(got.enabled && got.last_sent_at.is_none());
+    assert!(rec.sent().is_empty());
+
+    // 密文坏了：没法再发，排着的一起放弃，渠道上说要重新填地址。
+    sqlx::query(
+        "WITH reset AS (DELETE FROM im_bot_slots) \
+         UPDATE im_channels SET sealed = '\\x00'::bytea WHERE id = $1",
+    )
+    .bind(ch.0)
+    .execute(t.db.pool())
+    .await
+    .unwrap();
+    send(&t, u, &notice(PushKind::RunFailed, "run:38:failed")).await;
+    send(&t, u, &notice(PushKind::RunFailed, "run:39:failed")).await;
+    drain_push(&t).await;
+    assert_eq!(dispatcher(&t, rec.clone()).tick().await.unwrap().dropped, 1);
+    assert_eq!(
+        channel_row(&t, u, ch).await.last_error.as_deref(),
+        Some("the stored webhook cannot be opened; enter the address again")
+    );
+    assert!(
+        im_rows(&t, u).await.iter().all(|r| r.2),
+        "the backlog is dropped too"
+    );
+    assert!(rec.sent().is_empty());
+}
+
+#[tokio::test]
+async fn a_dead_bot_is_reported_once_and_a_new_address_turns_the_channel_back_on() {
+    let Some(t) = TestDb::new().await else { return };
+    let u = user(&t, "+8613800000034").await;
+    let ch = channel(
+        &t,
+        u,
+        ImVendor::Feishu,
+        "feishu-dead-0001",
+        "",
+        ImEvent::ALL,
+    )
+    .await;
+    let rec = Arc::new(Recording::default());
+    rec.set(
+        "feishu-dead-0001",
+        PushOutcome::InvalidToken {
+            reason: "feishu 19001: bot removed".into(),
+        },
+    );
+    for i in 0..3 {
+        send(
+            &t,
+            u,
+            &notice(PushKind::RunFailed, &format!("run:34{i}:failed")),
+        )
+        .await;
+    }
+    drain_push(&t).await;
+    let d = dispatcher(&t, rec.clone());
+    d.tick().await.unwrap();
+    // 排着的另外两条一起放弃，只通知一次。
+    assert_eq!(rec.sent().len(), 1);
+    let rows = im_rows(&t, u).await;
+    assert!(rows.iter().all(|r| r.2), "{rows:?}");
+    let notices: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM inbox_items WHERE user_id = $1 AND title = 'IM 群提醒已停用'",
+    )
+    .bind(u.0)
+    .fetch_one(t.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(notices, 1);
+    // 照通知说的，换上新地址：渠道重新打开，接着发。
+    let vault = user_vault(&t.db, kms(), u, false).await.unwrap();
+    let sealed = vault
+        .seal_webhook(
+            &u.to_string(),
+            &ch.to_string(),
+            &WebhookSecret {
+                token: "feishu-new-00001".into(),
+                secret: String::new(),
+            },
+        )
+        .await
+        .unwrap();
+    let mut tx = t.db.tenant(u).await.unwrap();
+    let back = tx
+        .update_im_channel(
+            ch,
+            &ImChannelChange {
+                webhook: Some(ImWebhook {
+                    vendor: ImVendor::Feishu,
+                    sealed,
+                    hint: proto::im::hint("feishu-new-00001"),
+                    has_secret: false,
+                    bot_tag: keyvault::webhook_fingerprint("feishu", "feishu-new-00001"),
+                }),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    assert!(back.enabled && back.last_error.is_none());
+    send(&t, u, &notice(PushKind::RunFailed, "run:349:failed")).await;
+    drain_push(&t).await;
+    assert_eq!(d.tick().await.unwrap().delivered, 1);
+    assert_eq!(rec.sent()[0].1, "feishu-new-00001");
+}
+
+#[tokio::test]
+async fn push_and_im_dispatchers_claim_their_own_rows_and_channels_go_in_parallel() {
+    let Some(t) = TestDb::new().await else { return };
+    let u = user(&t, "+8613800000035").await;
+    let a = channel(&t, u, ImVendor::Feishu, "feishu-par-0001", "", ImEvent::ALL).await;
+    let b = channel(&t, u, ImVendor::Lark, "lark-par-00001", "", ImEvent::ALL).await;
+    for i in 0..2 {
+        send(
+            &t,
+            u,
+            &notice(PushKind::RunFinished, &format!("run:35{i}:succeeded")),
+        )
+        .await;
+    }
+    let rec = Arc::new(Recording::default());
+    // 推送的投递器不碰 IM 条目。
+    let push = Dispatcher::new(
+        t.db.clone(),
+        "node-p",
+        DispatcherConfig {
+            claims: Claims::Push,
+            ..Default::default()
+        },
+    );
+    push.tick().await.unwrap();
+    assert_eq!(im_rows(&t, u).await.iter().filter(|r| r.0 > 0).count(), 0);
+    let pending_push: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM outbox WHERE kind = 'push' AND delivered_at IS NULL",
+    )
+    .fetch_one(t.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(pending_push, 0, "push rows settled (no devices)");
+    // IM 的投递器：每个渠道一次一条，两个渠道同时发；同一个渠道按顺序。
+    let im = Dispatcher::new(
+        t.db.clone(),
+        "node-i",
+        DispatcherConfig {
+            claims: Claims::Im,
+            concurrency: 8,
+            ..Default::default()
+        },
+    )
+    .with_im(rec.clone(), kms());
+    assert_eq!(im.tick().await.unwrap().delivered, 2);
+    let first: Vec<String> = rec.sent().into_iter().map(|s| s.1).collect();
+    assert_eq!(first.len(), 2);
+    assert!(
+        first.contains(&"feishu-par-0001".to_owned())
+            && first.contains(&"lark-par-00001".to_owned())
+    );
+    sqlx::query("DELETE FROM im_bot_slots")
+        .execute(t.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(im.tick().await.unwrap().delivered, 2);
+    let _ = (a, b);
+}
+
+#[tokio::test]
+async fn a_slow_bot_does_not_hold_up_other_channels() {
+    let Some(t) = TestDb::new().await else { return };
+    let u = user(&t, "+8613800000040").await;
+    let slow = channel(&t, u, ImVendor::Lark, "lark-blackhole-1", "", ImEvent::ALL).await;
+    let fast = channel(
+        &t,
+        u,
+        ImVendor::Feishu,
+        "feishu-fast-0001",
+        "",
+        ImEvent::ALL,
+    )
+    .await;
+    let rec = Arc::new(Recording::default());
+    rec.delays
+        .lock()
+        .unwrap()
+        .insert("lark-blackhole-1".into(), Duration::from_secs(3));
+    let mut w = t.db.worker().await.unwrap();
+    let mut msg = notice(PushKind::Info, "x").push(None, Locale::ZhCn);
+    msg.ttl = None;
+    w.enqueue_outbox(u, &im_item(slow, &msg, None))
+        .await
+        .unwrap();
+    for _ in 0..2 {
+        w.enqueue_outbox(u, &im_item(fast, &msg, None))
+            .await
+            .unwrap();
+    }
+    w.commit().await.unwrap();
+    let d = Arc::new(
+        Dispatcher::new(
+            t.db.clone(),
+            "node-a",
+            DispatcherConfig {
+                tick: Duration::from_millis(50),
+                claims: Claims::Im,
+                concurrency: 4,
+                ..Default::default()
+            },
+        )
+        .with_im(rec.clone(), kms()),
+    );
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let running = tokio::spawn({
+        let d = d.clone();
+        async move {
+            d.run(async {
+                let _ = stopped.await;
+            })
+            .await
+        }
+    });
+    let delivered = |ch: ImChannelId| {
+        let pool = t.db.pool().clone();
+        async move {
+            let n: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM outbox WHERE kind = 'im' AND delivered_at IS NOT NULL \
+                 AND payload->>'channel' = $1",
+            )
+            .bind(ch.to_string())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            n
+        }
+    };
+    // 慢的那条还在发，快的渠道两条都发完了（以前要等同一批里最慢的那条发完才领下一批）。
+    let started = std::time::Instant::now();
+    while delivered(fast).await < 2 {
+        assert!(
+            started.elapsed() < Duration::from_millis(2500),
+            "the fast channel waited for the slow one"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(delivered(slow).await, 0);
+    // 停下来时把正在发的发完。
+    stop.send(()).unwrap();
+    running.await.unwrap();
+    assert_eq!(delivered(slow).await, 1);
 }

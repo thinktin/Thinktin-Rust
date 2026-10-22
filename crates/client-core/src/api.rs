@@ -3,18 +3,21 @@
 //!
 //! 会话（含刷新令牌）交给原生端的 [`SessionStore`] 保存（Keychain / Keystore），这里只在内存里留一份。
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use proto::api::{API_VERSION, ErrorBody, ErrorCode, VERSION_HEADER};
 use proto::domain::{
-    Approval, ApprovalId, Artifact, ArtifactId, Credential, CredentialId, Device, DeviceId,
-    DeviceMessage, DeviceMessageId, DeviceMessageKind, DevicePlatform, ImChannel, ImChannelId,
-    InboxItem, InboxItemId, Instance, InstanceEvent, InstanceId, ModelRoute, Plan, PlanId,
-    PlanStep, PushChannelKind, Run, RunId, ScheduleSpec, Trigger, User, VaultItem, VaultItemId,
-    VaultRequest, VaultRequestId,
+    Approval, ApprovalId, Artifact, ArtifactId, CatchUp, ContentReport, Credential, CredentialId,
+    Device, DeviceId, DeviceMessage, DeviceMessageId, DeviceMessageKind, DevicePlatform, ImChannel,
+    ImChannelId, InboxItem, InboxItemId, Instance, InstanceEvent, InstanceId, ModelRoute, Plan,
+    PlanId, PlanPolicy, PlanStep, PushChannelKind, ReportReason, Run, RunId, ScheduleSpec, Team,
+    TeamId, TeamMember, TeamTemplate, TeamTemplateId, TeamTemplateSpec, Trigger, TriggerId, User,
+    VaultItem, VaultItemId, VaultRequest, VaultRequestId,
 };
 use reqwest::Method;
+use reqwest::header::HeaderValue;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -66,6 +69,9 @@ pub struct ApiConfig {
     pub platform: DevicePlatform,
     pub device_name: String,
     pub timeout: Duration,
+    /// 设备的语言偏好，`Accept-Language` 的写法（`zh-Hans-CN, en-US;q=0.9`）。每个请求都带上；服务端在新用户
+    /// 注册时按它定推送和收件箱的语言。
+    pub accept_language: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -119,10 +125,30 @@ pub struct NewPlan {
     pub instance_id: InstanceId,
     pub title: String,
     pub goal: String,
+    /// 不给就用服务端的默认（不预授权工具、审批 24 小时超时暂停计划……）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy: Option<PlanPolicy>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub catch_up: Option<CatchUp>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub triggers: Vec<ScheduleSpec>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub steps: Vec<PlanStep>,
+}
+
+/// 改计划：给了才改。`steps` 整体替换，给空的就变回单个 agent 的计划。
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct PlanChange {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub goal: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy: Option<PlanPolicy>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub catch_up: Option<CatchUp>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub steps: Option<Vec<PlanStep>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -310,6 +336,28 @@ pub struct Api {
     refreshing: tokio::sync::Mutex<()>,
     /// 会话没了（退出、被吊销、刷新失败）时调用：清掉上一个人的本地缓存。
     on_signed_out: RwLock<Option<SignedOutHook>>,
+    /// 事件流的 TLS 配置（系统证书校验，和接口请求一样）。
+    ws_tls: Arc<rustls::ClientConfig>,
+    accept_language: RwLock<Option<HeaderValue>>,
+    /// 服务端说这个版本太老了（426）：之后的事件流不再连，界面提示升级。一直有效（升级就是重装）。
+    upgrade_required: AtomicBool,
+}
+
+/// 检查 `Accept-Language`：去掉首尾空白，空的当没有；最长 256 字节，不能有换行之类的字符。
+fn accept_language_header(v: Option<&str>) -> Result<Option<HeaderValue>> {
+    let Some(v) = v.map(str::trim).filter(|v| !v.is_empty()) else {
+        return Ok(None);
+    };
+    if v.len() > 256 {
+        return Err(ClientError::InvalidArgument {
+            message: "accept_language is longer than 256 bytes".into(),
+        });
+    }
+    HeaderValue::from_str(v)
+        .map(Some)
+        .map_err(|_| ClientError::InvalidArgument {
+            message: "accept_language has characters a header cannot carry".into(),
+        })
 }
 
 type SignedOutHook = Arc<dyn Fn() + Send + Sync>;
@@ -323,11 +371,20 @@ enum Refreshed {
 impl Api {
     pub fn new(cfg: ApiConfig, store: Arc<dyn SessionStore>) -> Result<Self> {
         crate::install_crypto();
+        if cfg.base_url.starts_with("https://") && !crate::tls::platform_ready() {
+            return Err(ClientError::Internal {
+                message: "call cn.thinktin.core.TlsInit.initialize(context) before creating \
+                          ThinktinClient (https on Android)"
+                    .into(),
+            });
+        }
         let http = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(10))
             .timeout(cfg.timeout)
             .build()
             .map_err(ClientError::network)?;
+        let ws_tls = crate::tls::ws_client_config().map_err(ClientError::network)?;
+        let accept_language = accept_language_header(cfg.accept_language.as_deref())?;
         let session = store.load();
         Ok(Self {
             base: cfg.base_url.trim_end_matches('/').to_owned(),
@@ -337,11 +394,56 @@ impl Api {
             session: RwLock::new(session),
             refreshing: tokio::sync::Mutex::new(()),
             on_signed_out: RwLock::new(None),
+            ws_tls,
+            accept_language: RwLock::new(accept_language),
+            upgrade_required: AtomicBool::new(false),
         })
     }
 
     pub fn base_url(&self) -> &str {
         &self.base
+    }
+
+    pub(crate) fn ws_tls(&self) -> Arc<rustls::ClientConfig> {
+        self.ws_tls.clone()
+    }
+
+    /// 换设备语言（App 里切换了语言）。之后的请求带新的 `Accept-Language`；`None` 不带。
+    pub fn set_accept_language(&self, v: Option<&str>) -> Result<()> {
+        let h = accept_language_header(v)?;
+        *self
+            .accept_language
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = h;
+        Ok(())
+    }
+
+    pub(crate) fn accept_language(&self) -> Option<HeaderValue> {
+        self.accept_language
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// 服务端说过这个版本太老了（任何请求、事件流的握手收到 426）。
+    pub fn upgrade_required(&self) -> bool {
+        self.upgrade_required.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn mark_upgrade_required(&self) {
+        self.upgrade_required.store(true, Ordering::Relaxed);
+    }
+
+    /// 所有请求的公共部分：版本头、语言。
+    fn request(&self, method: Method, url: String) -> reqwest::RequestBuilder {
+        let req = self
+            .http
+            .request(method, url)
+            .header(VERSION_HEADER, API_VERSION.to_string());
+        match self.accept_language() {
+            Some(lang) => req.header(reqwest::header::ACCEPT_LANGUAGE, lang),
+            None => req,
+        }
     }
 
     pub fn session(&self) -> Option<Session> {
@@ -394,10 +496,7 @@ impl Api {
     ) -> Result<reqwest::Response> {
         for attempt in 0..2 {
             let token = if auth { Some(self.bearer()?) } else { None };
-            let mut req = self
-                .http
-                .request(method.clone(), format!("{}{path}", self.base))
-                .header(VERSION_HEADER, API_VERSION.to_string());
+            let mut req = self.request(method.clone(), format!("{}{path}", self.base));
             if let Some(t) = &token {
                 req = req.bearer_auth(t);
             }
@@ -415,7 +514,10 @@ impl Api {
                 Err(e) => return Err(ClientError::decode(format!("status {status}: {e}"))),
             };
             match err.code {
-                ErrorCode::UpgradeRequired => return Err(ClientError::UpgradeRequired),
+                ErrorCode::UpgradeRequired => {
+                    self.mark_upgrade_required();
+                    return Err(ClientError::UpgradeRequired);
+                }
                 ErrorCode::AccountFrozen => return Err(ClientError::AccountFrozen),
                 ErrorCode::Unauthenticated if attempt == 0 && token.is_some() => {
                     // 令牌过期：刷新后重试。别人已经刷新过就直接重试。
@@ -451,14 +553,17 @@ impl Api {
             return Ok(Refreshed::Ok);
         }
         let resp = self
-            .http
-            .post(format!("{}/v1/auth/refresh", self.base))
-            .header(VERSION_HEADER, API_VERSION.to_string())
+            .request(Method::POST, format!("{}/v1/auth/refresh", self.base))
             .json(&json!({ "refresh_token": current.refresh_token }))
             .send()
             .await
             .map_err(ClientError::network)?;
         let status = resp.status().as_u16();
+        // 426 不一定带错误体。
+        if status == 426 {
+            self.mark_upgrade_required();
+            return Err(ClientError::UpgradeRequired);
+        }
         if status == 200 {
             let t: Tokens = resp.json().await.map_err(ClientError::decode)?;
             self.set_session(Some(Session {
@@ -585,6 +690,44 @@ impl Api {
             .await
     }
 
+    /// 改昵称；`None` 清掉。
+    pub async fn update_profile(&self, display_name: Option<&str>) -> Result<User> {
+        self.json(
+            Method::PATCH,
+            "/v1/me",
+            Some(&json!({ "display_name": display_name })),
+        )
+        .await
+    }
+
+    /// 给自己的手机号发验证码，做敏感操作前确认：`delete_account`（注销）或 `change_phone`。
+    pub async fn send_self_code(&self, purpose: &str) -> Result<()> {
+        self.empty(
+            Method::POST,
+            "/v1/me/code",
+            Some(&json!({ "purpose": purpose })),
+        )
+        .await
+    }
+
+    /// 注销账号（16.4）：用 [`Self::send_self_code`]（`delete_account`）发来的验证码确认。成功后本地会话一起清掉。
+    pub async fn delete_account(&self, code: &str) -> Result<()> {
+        self.empty(
+            Method::POST,
+            "/v1/me/delete",
+            Some(&json!({ "code": code })),
+        )
+        .await?;
+        self.set_session(None);
+        Ok(())
+    }
+
+    /// 吊销一台设备（丢了的手机、不用的电脑）：它的登录会话立即失效。
+    pub async fn revoke_device(&self, id: DeviceId) -> Result<()> {
+        self.empty(Method::DELETE, &format!("/v1/devices/{id}"), None)
+            .await
+    }
+
     pub async fn set_push(&self, channel: PushChannelKind, token: &str) -> Result<()> {
         self.empty(
             Method::PUT,
@@ -592,6 +735,19 @@ impl Api {
             Some(&json!({ "channel": channel, "token": token })),
         )
         .await
+    }
+
+    /// 这台设备的推送开启令牌（10.6，ActivityKit 的 `pushToStartTokenUpdates`）：`Some` 登记（用户打开了
+    /// “计划运行时显示实时活动”），`None` 清掉。
+    pub async fn set_live_activity_start_token(&self, token: Option<&str>) -> Result<()> {
+        let path = "/v1/devices/current/live-activity-start";
+        match token {
+            Some(token) => {
+                self.empty(Method::PUT, path, Some(&json!({ "token": token })))
+                    .await
+            }
+            None => self.empty(Method::DELETE, path, None).await,
+        }
     }
 
     /// 全部停止（4.6）：取消所有运行、吊销全部运行授权、暂停全部计划。
@@ -806,6 +962,28 @@ impl Api {
         .await
     }
 
+    /// 这个运行在这台设备上开了实时活动（10.6），或者远程开启的那个拿到了令牌：登记它的推送令牌
+    /// （ActivityKit 的 `pushTokenUpdates`）。令牌变了再调一次；App 启动、回到前台时把每个开着的实时活动现在的令牌
+    /// 再报一次（没变的什么都不做，连着失败放弃了的从头来）。
+    pub async fn register_live_activity(&self, id: RunId, token: &str) -> Result<()> {
+        self.empty(
+            Method::PUT,
+            &format!("/v1/runs/{id}/live-activity"),
+            Some(&json!({ "token": token })),
+        )
+        .await
+    }
+
+    /// 这个运行的实时活动关掉了（用户划掉了、App 自己结束了）：后台不再推送。
+    pub async fn end_live_activity(&self, id: RunId) -> Result<()> {
+        self.empty(
+            Method::DELETE,
+            &format!("/v1/runs/{id}/live-activity"),
+            None,
+        )
+        .await
+    }
+
     pub async fn run_tree(&self, id: RunId) -> Result<Vec<Run>> {
         #[derive(Deserialize)]
         struct R {
@@ -863,6 +1041,27 @@ impl Api {
         self.json(Method::POST, "/v1/plans", Some(&body)).await
     }
 
+    pub async fn update_plan(&self, id: PlanId, change: &PlanChange) -> Result<PlanView> {
+        let body = serde_json::to_value(change).map_err(ClientError::decode)?;
+        self.json(Method::PATCH, &format!("/v1/plans/{id}"), Some(&body))
+            .await
+    }
+
+    /// 给计划加一个触发器（一个计划最多 10 个）。
+    pub async fn add_trigger(&self, plan: PlanId, spec: &ScheduleSpec) -> Result<Trigger> {
+        self.json(
+            Method::POST,
+            &format!("/v1/plans/{plan}/triggers"),
+            Some(&json!({ "spec": spec })),
+        )
+        .await
+    }
+
+    pub async fn delete_trigger(&self, id: TriggerId) -> Result<()> {
+        self.empty(Method::DELETE, &format!("/v1/triggers/{id}"), None)
+            .await
+    }
+
     /// 暂停或恢复用户自己的计划（等确认的计划用 `confirm_plan`）。
     pub async fn set_plan_paused(&self, id: PlanId, paused: bool) -> Result<PlanView> {
         let action = if paused { "pause" } else { "resume" };
@@ -898,6 +1097,21 @@ impl Api {
             path.push_str(&format!("&before={b}"));
         }
         self.json(Method::GET, &path, None).await
+    }
+
+    pub async fn inbox_item(&self, id: InboxItemId) -> Result<InboxItem> {
+        self.json(Method::GET, &format!("/v1/inbox/{id}"), None)
+            .await
+    }
+
+    pub async fn mark_inbox_unread(&self, id: InboxItemId) -> Result<()> {
+        self.empty(Method::POST, &format!("/v1/inbox/{id}/unread"), None)
+            .await
+    }
+
+    pub async fn delete_inbox_item(&self, id: InboxItemId) -> Result<()> {
+        self.empty(Method::DELETE, &format!("/v1/inbox/{id}"), None)
+            .await
     }
 
     /// 标已读：给 `ids` 只标这些；否则标到 `up_to`（含）为止。返回剩余未读数。
@@ -967,6 +1181,42 @@ impl Api {
             .await
     }
 
+    /// 改备注、停用或重新启用一把 key；给了才改。
+    pub async fn update_credential(
+        &self,
+        id: CredentialId,
+        label: Option<&str>,
+        disabled: Option<bool>,
+    ) -> Result<Credential> {
+        let mut body = serde_json::Map::new();
+        if let Some(l) = label {
+            body.insert("label".into(), json!(l));
+        }
+        if let Some(d) = disabled {
+            body.insert("disabled".into(), json!(d));
+        }
+        self.json(
+            Method::PATCH,
+            &format!("/v1/credentials/{id}"),
+            Some(&Value::Object(body)),
+        )
+        .await
+    }
+
+    /// 换 key（同一个厂商、同一条记录：模型路由不用改）。
+    pub async fn replace_credential_secret(
+        &self,
+        id: CredentialId,
+        api_key: &str,
+    ) -> Result<Credential> {
+        self.json(
+            Method::PUT,
+            &format!("/v1/credentials/{id}/secret"),
+            Some(&json!({ "api_key": api_key })),
+        )
+        .await
+    }
+
     pub async fn delete_credential(&self, id: CredentialId) -> Result<()> {
         self.empty(Method::DELETE, &format!("/v1/credentials/{id}"), None)
             .await
@@ -1017,7 +1267,7 @@ impl Api {
         .await
     }
 
-    /// 换 webhook 地址或加签密钥（要是同一家的）。
+    /// 换 webhook 地址或加签密钥（要是同一家的）。机器人失效被后台停用的渠道会重新打开，用户自己关掉的还是关着。
     pub async fn replace_im_webhook(
         &self,
         id: ImChannelId,
@@ -1042,6 +1292,142 @@ impl Api {
     pub async fn delete_im_channel(&self, id: ImChannelId) -> Result<()> {
         self.empty(Method::DELETE, &format!("/v1/im-channels/{id}"), None)
             .await
+    }
+
+    // ---------- 内容举报（5.5） ----------
+
+    /// 举报 agent 的输出：整个运行（它的回复），或者其中一条事件、一个产出物。同一条内容再举报一次返回那一条
+    /// 待处理的举报。
+    pub async fn report_content(
+        &self,
+        run: RunId,
+        event_seq: Option<u64>,
+        artifact: Option<ArtifactId>,
+        reason: ReportReason,
+        note: Option<&str>,
+    ) -> Result<ContentReport> {
+        self.json(
+            Method::POST,
+            "/v1/reports",
+            Some(&json!({
+                "run_id": run,
+                "event_seq": event_seq,
+                "artifact_id": artifact,
+                "reason": reason,
+                "note": note,
+            })),
+        )
+        .await
+    }
+
+    /// 自己的举报和处理结果，新的在前。
+    pub async fn reports(&self) -> Result<Vec<ContentReport>> {
+        #[derive(Deserialize)]
+        struct R {
+            reports: Vec<ContentReport>,
+        }
+        Ok(self
+            .json::<R>(Method::GET, "/v1/reports", None)
+            .await?
+            .reports)
+    }
+
+    // ---------- 团队和团队模板（8.1） ----------
+
+    pub async fn teams(&self) -> Result<Vec<Team>> {
+        #[derive(Deserialize)]
+        struct R {
+            teams: Vec<Team>,
+        }
+        Ok(self.json::<R>(Method::GET, "/v1/teams", None).await?.teams)
+    }
+
+    /// 把几个实例编成团队（一个负责人 lead，其余是成员）。
+    pub async fn create_team(&self, name: &str, members: &[TeamMember]) -> Result<Team> {
+        self.json(
+            Method::POST,
+            "/v1/teams",
+            Some(&json!({ "name": name, "members": members })),
+        )
+        .await
+    }
+
+    pub async fn team(&self, id: TeamId) -> Result<Team> {
+        self.json(Method::GET, &format!("/v1/teams/{id}"), None)
+            .await
+    }
+
+    /// 改名、换成员（整体替换）；给了才改。
+    pub async fn update_team(
+        &self,
+        id: TeamId,
+        name: Option<&str>,
+        members: Option<&[TeamMember]>,
+    ) -> Result<Team> {
+        let mut body = serde_json::Map::new();
+        if let Some(n) = name {
+            body.insert("name".into(), json!(n));
+        }
+        if let Some(m) = members {
+            body.insert("members".into(), json!(m));
+        }
+        self.json(
+            Method::PATCH,
+            &format!("/v1/teams/{id}"),
+            Some(&Value::Object(body)),
+        )
+        .await
+    }
+
+    /// 删团队（实例不删）。
+    pub async fn delete_team(&self, id: TeamId) -> Result<()> {
+        self.empty(Method::DELETE, &format!("/v1/teams/{id}"), None)
+            .await
+    }
+
+    pub async fn team_templates(&self) -> Result<Vec<TeamTemplate>> {
+        #[derive(Deserialize)]
+        struct R {
+            templates: Vec<TeamTemplate>,
+        }
+        Ok(self
+            .json::<R>(Method::GET, "/v1/team-templates", None)
+            .await?
+            .templates)
+    }
+
+    /// 新建团队模板：直接给成员（agent、接入方式、名字、角色），或者从现有团队生成（给 `team`）。
+    pub async fn create_team_template(
+        &self,
+        name: &str,
+        spec: Option<&TeamTemplateSpec>,
+        team: Option<TeamId>,
+    ) -> Result<TeamTemplate> {
+        self.json(
+            Method::POST,
+            "/v1/team-templates",
+            Some(&json!({ "name": name, "spec": spec, "team_id": team })),
+        )
+        .await
+    }
+
+    pub async fn delete_team_template(&self, id: TeamTemplateId) -> Result<()> {
+        self.empty(Method::DELETE, &format!("/v1/team-templates/{id}"), None)
+            .await
+    }
+
+    /// 按模板领养一整个团队：每个成员领养一个新实例，再编成团队。`name` 不给就用模板的名字。
+    pub async fn adopt_team_template(
+        &self,
+        id: TeamTemplateId,
+        name: Option<&str>,
+    ) -> Result<Team> {
+        self.json(
+            Method::POST,
+            &format!("/v1/team-templates/{id}/adopt"),
+            Some(&json!({ "name": name })),
+        )
+        .await
     }
 
     // ---------- 用量 ----------
@@ -1160,6 +1546,31 @@ impl Api {
             .json::<R>(Method::GET, &format!("/v1/runs/{run}/artifacts"), None)
             .await?
             .artifacts)
+    }
+
+    /// 实例的产出物，新的在前（最多 `limit` 个）。
+    pub async fn instance_artifacts(
+        &self,
+        instance: InstanceId,
+        limit: u32,
+    ) -> Result<Vec<Artifact>> {
+        #[derive(Deserialize)]
+        struct R {
+            artifacts: Vec<Artifact>,
+        }
+        Ok(self
+            .json::<R>(
+                Method::GET,
+                &format!("/v1/instances/{instance}/artifacts?limit={limit}"),
+                None,
+            )
+            .await?
+            .artifacts)
+    }
+
+    pub async fn delete_artifact(&self, id: ArtifactId) -> Result<()> {
+        self.empty(Method::DELETE, &format!("/v1/artifacts/{id}"), None)
+            .await
     }
 
     pub async fn artifact_content(&self, id: ArtifactId) -> Result<Vec<u8>> {

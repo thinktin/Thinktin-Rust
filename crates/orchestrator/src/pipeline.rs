@@ -64,8 +64,16 @@ impl PipelineDriver {
         let mut report = PipelineReport::default();
         let mut w = self.db.worker().await?;
         let roots = w.due_pipelines(self.cfg.batch).await?;
+        let mut started = Vec::new();
         for root in &roots {
-            self.advance(&mut w, root, &mut report).await?;
+            self.advance(&mut w, root, &mut report, &mut started)
+                .await?;
+        }
+        // 计划的流水线开始了：远程开启实时活动（10.6）。按用户加锁，所以放到最后、按用户排好序再做：
+        // 两个副本同时推进两批时加锁的顺序一样，不会互相等死。
+        started.sort_by_key(|r: &RunRecord| r.user_id.0);
+        for root in &started {
+            crate::live::queue_starts(&mut w, root).await?;
         }
         // 处理过的排到队尾：一直等子运行的流水线不会每轮都占满这一批，别的流水线（别的用户的）也能轮到。
         let ids: Vec<_> = roots.iter().map(|r| r.run.id).collect();
@@ -79,6 +87,7 @@ impl PipelineDriver {
         w: &mut Tx<Worker>,
         root: &RunRecord,
         report: &mut PipelineReport,
+        started: &mut Vec<RunRecord>,
     ) -> store::Result<()> {
         let Some(plan_id) = root.run.plan_id else {
             return self
@@ -96,17 +105,20 @@ impl PipelineDriver {
             Err(e) => return self.finish(w, root, Err(e), report).await,
         };
         let title = w.plan(plan_id).await.map(|p| p.title).unwrap_or_default();
-        if root.run.state == RunState::Queued {
-            w.set_unleased_state(
-                root.run.id,
-                RunState::Queued,
-                RunState::WaitingChildren,
-                &RunChange {
-                    reason: Some(format!("running {} steps", steps.len())),
-                    ..Default::default()
-                },
-            )
-            .await?;
+        // 开始了就用开始后的记录（后面步骤起不来、要结束整个流水线时，是从“等子运行”结束，不是从“排队”）。
+        let moved;
+        let root = if root.run.state == RunState::Queued {
+            moved = w
+                .set_unleased_state(
+                    root.run.id,
+                    RunState::Queued,
+                    RunState::WaitingChildren,
+                    &RunChange {
+                        reason: Some(format!("running {} steps", steps.len())),
+                        ..Default::default()
+                    },
+                )
+                .await?;
             w.append_event(
                 root.run.instance_id,
                 Some(root.run.id),
@@ -114,8 +126,12 @@ impl PipelineDriver {
                 &json!({ "state": RunState::WaitingChildren, "steps": steps.len() }),
             )
             .await?;
+            started.push(moved.clone());
             report.started += 1;
-        }
+            &moved
+        } else {
+            root
+        };
         let children: HashMap<String, RunRecord> = w
             .child_runs(root.run.id)
             .await?

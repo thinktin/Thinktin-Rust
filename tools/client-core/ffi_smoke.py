@@ -18,6 +18,14 @@ class L(cc.EventListener):
     def on_status(self, s): print("status", s)
 
 async def main():
+    # 记录类型上加的字段带默认值：App 里自己构造的地方（测试、预览）不用改。
+    p = cc.PlanPolicy()
+    assert (p.approval_timeout_secs, p.on_approval_timeout, p.max_duration_secs, p.preauthorized_tools) == \
+        (86400, "pause_plan", 21600, []), p
+    plan = cc.Plan(id="p", instance_id="i", title="t", goal="g", paused=False, created_by="user",
+                   awaiting_confirmation=False, revision=1, policy_json="{}", created_at_ms=0,
+                   triggers=[], steps=[])
+    assert plan.catch_up == "once" and plan.policy == p, plan
     store = Store()
     d = tempfile.mkdtemp()
     cfg = cc.ClientConfig(base_url="http://127.0.0.1:9", cache_path=os.path.join(d, "c.db"),
@@ -29,7 +37,11 @@ async def main():
         print("invalid platform ->", e)
     c = cc.ThinktinClient(cfg, store)
     print("signed_in", c.signed_in())
+    assert c.upgrade_required() is False
+    c.set_accept_language("en-US, en;q=0.9")
+    assert cc.accept_language_header(["zh-Hans-CN", "en"]) == "zh-Hans-CN, en;q=0.9"
     print("cached", c.cached_instances(), c.cached_unread())
+    assert c.cached_events_before("01890000-0000-7000-8000-000000000000", None, 10) == []
     try:
         await c.me()
     except cc.ClientError.SignedOut:

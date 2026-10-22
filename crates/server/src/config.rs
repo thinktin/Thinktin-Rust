@@ -108,6 +108,9 @@ pub struct Api {
     pub enabled: bool,
     /// 只用于本地开发：验证码打印到标准错误，不发短信。
     pub dev_sms: bool,
+    /// 应用商店审核用的手机号（4.7）：审核员收不到短信，这个号发码时不发短信，码固定是密钥 THINKTIN_REVIEW_CODE。
+    /// 不配就没有；审核过了就删掉。
+    pub review_phone: Option<String>,
     /// 访问令牌签名密钥的 kid。
     pub access_token_kid: String,
     /// 本地 KMS 主密钥的 id（生产环境换成云 KMS）。
@@ -123,6 +126,7 @@ impl Default for Api {
         Self {
             enabled: false,
             dev_sms: false,
+            review_phone: None,
             access_token_kid: "a1".into(),
             kms_key_id: "local-1".into(),
             default_platform_tools: orchestrator::tools::SCHEDULE_TOOLS
@@ -148,6 +152,8 @@ pub struct ApiSecrets {
     pub code_pepper: Option<String>,
     /// THINKTIN_KMS_KEY：本地 KMS 主密钥（64 位十六进制）。
     pub kms_key: Option<String>,
+    /// THINKTIN_REVIEW_CODE：审核用手机号的固定验证码（6 位数字），和 `api.review_phone` 一起配。
+    pub review_code: Option<String>,
 }
 
 impl std::fmt::Debug for ApiSecrets {
@@ -156,6 +162,7 @@ impl std::fmt::Debug for ApiSecrets {
             .field("access_token_seed", &self.access_token_seed.is_some())
             .field("code_pepper", &self.code_pepper.is_some())
             .field("kms_key", &self.kms_key.is_some())
+            .field("review_code", &self.review_code.is_some())
             .finish()
     }
 }
@@ -677,6 +684,7 @@ impl Config {
             access_token_seed: env.var("THINKTIN_ACCESS_TOKEN_SEED"),
             code_pepper: env.var("THINKTIN_CODE_PEPPER"),
             kms_key: env.var("THINKTIN_KMS_KEY"),
+            review_code: env.var("THINKTIN_REVIEW_CODE"),
         };
         cfg.validate()?;
         Ok(cfg)
@@ -731,6 +739,15 @@ impl Config {
                     "no SMS provider is configured: add [sms.aliyun], or set api.dev_sms = true for local development"
                 ),
                 None => {}
+            }
+            match (&self.api.review_phone, &self.api_secrets.review_code) {
+                (Some(phone), Some(code)) => auth::service::check_review_account(phone, code)
+                    .map_err(|e| anyhow::anyhow!("api.review_phone / THINKTIN_REVIEW_CODE: {e}"))?,
+                (Some(_), None) => bail!("api.review_phone needs THINKTIN_REVIEW_CODE"),
+                (None, Some(_)) => {
+                    bail!("THINKTIN_REVIEW_CODE is set but api.review_phone is not")
+                }
+                (None, None) => {}
             }
         }
         if self.worker.enabled {
@@ -1086,6 +1103,44 @@ mod tests {
         std::fs::write(&path, format!("{worker}[kms]\nprovider = \"vault\"\n")).unwrap();
         let err = Config::load(Some(&path), &MapEnv(vars)).unwrap_err();
         assert!(err.to_string().contains("not supported"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_review_account_needs_its_code_from_a_secret() {
+        let dir = std::env::temp_dir().join(format!("tt-review-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("server.toml");
+        let mut vars = HashMap::from([
+            ("DATABASE_URL", "postgres://x"),
+            ("THINKTIN_ACCESS_TOKEN_SEED", "seed"),
+            ("THINKTIN_CODE_PEPPER", "ab"),
+            ("THINKTIN_KMS_KEY", "ab"),
+        ]);
+        let api = "[api]\nenabled = true\ndev_sms = true\n";
+        let load = |toml: &str, vars: &HashMap<&'static str, &'static str>| {
+            std::fs::write(&path, toml).unwrap();
+            Config::load(Some(&path), &MapEnv(vars.clone()))
+        };
+        assert!(load(api, &vars).unwrap().api.review_phone.is_none());
+        let with_phone = format!("{api}review_phone = \"+8613800138000\"\n");
+        let err = load(&with_phone, &vars).unwrap_err();
+        assert!(
+            err.to_string().contains("needs THINKTIN_REVIEW_CODE"),
+            "{err}"
+        );
+        vars.insert("THINKTIN_REVIEW_CODE", "123456");
+        let err = load(&with_phone, &vars).unwrap_err();
+        assert!(err.to_string().contains("too easy"), "{err}");
+        let err = load(api, &vars).unwrap_err();
+        assert!(err.to_string().contains("api.review_phone is not"), "{err}");
+        vars.insert("THINKTIN_REVIEW_CODE", "12345");
+        let err = load(&with_phone, &vars).unwrap_err();
+        assert!(err.to_string().contains("6 digits"), "{err}");
+        vars.insert("THINKTIN_REVIEW_CODE", "730591");
+        let cfg = load(&with_phone, &vars).unwrap();
+        assert_eq!(cfg.api.review_phone.as_deref(), Some("+8613800138000"));
+        assert!(!format!("{cfg:?}").contains("730591"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
