@@ -262,6 +262,13 @@ async fn notifications_go_out_with_ids_only_and_one_access_token() {
             .get("notification_count")
             .is_none()
     );
+    // 排队、重试后只剩 25 秒的：原样给，不往上凑到一分钟。
+    let mut short = message(PushKind::Approval);
+    short.ttl = Some(Duration::from_secs(25));
+    assert_eq!(
+        client.payload(&device("ok"), &short)["message"]["android"]["ttl"],
+        "25s"
+    );
     assert_eq!(
         (
             &p["data"]["tt_kind"],

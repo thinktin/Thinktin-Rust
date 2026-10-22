@@ -2761,6 +2761,7 @@ async fn live_activities_follow_their_runs_per_device() {
         steps,
         started: false,
         ended,
+        wait_code: None,
     };
     settle_live(db, &a, "n1", sent(RunState::Queued, 0, false)).await;
     assert!(
@@ -2869,6 +2870,7 @@ async fn live_activities_follow_their_runs_per_device() {
             steps: 0,
             started: true,
             ended: false,
+            wait_code: None,
         },
     )
     .await;
@@ -2909,6 +2911,7 @@ async fn live_activities_follow_their_runs_per_device() {
             steps: 0,
             started: true,
             ended: false,
+            wait_code: None,
         },
     )
     .await;
@@ -3251,6 +3254,7 @@ async fn live_activities_follow_the_phone() {
             steps: 4,
             started: false,
             ended: false,
+            wait_code: None,
         },
     )
     .await;

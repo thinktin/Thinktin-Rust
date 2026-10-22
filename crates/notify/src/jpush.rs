@@ -161,7 +161,8 @@ impl JpushClient {
             .ttl
             .unwrap_or(crate::DEFAULT_TTL)
             .as_secs()
-            .clamp(60, MAX_TTL_SECS);
+            // 剩下的有效期原样给；0 是只发给现在在线的设备。
+            .min(MAX_TTL_SECS);
         let options = json!({
             "time_to_live": ttl,
             "classification": 1,
@@ -407,6 +408,13 @@ mod tests {
         assert_eq!(a["priority"], 0);
         assert_eq!(a["alert"].as_str().unwrap().chars().count(), 200);
         assert_eq!(v["options"]["time_to_live"], 86400);
+        // 只剩 25 秒的：原样给。
+        let mut short = message(PushKind::Approval);
+        short.ttl = Some(Duration::from_secs(25));
+        assert_eq!(
+            client.payload("1a0018970a8b7c6d5e4", &short)["options"]["time_to_live"],
+            25
+        );
         // 保险箱请求（10.7）：走审批渠道、高优先级，带请求 id。
         let mut vr = message(PushKind::VaultRequest);
         vr.target.vault_request_id = Some("vr-7".into());

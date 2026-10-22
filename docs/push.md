@@ -83,9 +83,9 @@ APNs：
 | `report_handled` | `info` | 内容举报处理完 | 进举报记录 |
 | `invalid`、`no_balance`、`unavailable`、`device_offline` | `run_failed` | 运行进入要用户处理的等待（和 `Run.wait_code` 一样） | 去换 key、充值、开电脑 |
 
-等待的提醒按原因分开：先缺 key、补上后又欠费，两次都提醒。只能等用户处理的（`invalid`、`device_offline`）每次尝试都提醒
-（用户处理了又出同样的问题）；每小时自己再试的（`no_balance`、`unavailable`）同一个运行只提醒一次。几分钟后自己继续的
-（`rate_limited`、`overloaded`）不提醒，只在 `Run.wait_code` 和 `run.state` 事件里。
+等待的提醒按原因分开：先缺 key、补上后又欠费，两次都提醒；同一个原因一个运行只提醒一次（唤醒等待中的运行的不只是用户
+处理了它：加了别的实例的 key、电脑的连接断了又连上都会唤醒），之后再等同一个原因只在 `Run.wait_code` 和 `run.state`
+事件里。几分钟后自己继续的（`rate_limited`、`overloaded`）不提醒。
 
 ## 5. 有效期
 

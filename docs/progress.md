@@ -99,7 +99,7 @@
   1. `ClientError`（`Network`、`Api`、`Decode`、`Cache`、`InvalidArgument`、`Internal`）和 `PairingError::Malformed` 里的
      `message` 字段改名 `detail`（Kotlin 的异常类自带 `message`，同名编译不过；Android 的 `patch-bindings.py` 可以去掉了）。
   2. `StreamStatus` 加了 `UpgradeRequired`：服务端说这个版本太老（握手或别的请求回 426）时事件流以它结束，不再是 `Stopped`
-     （`Stopped` 只表示调用方停的）。`upgrade_required()` 照旧。
+     （`Stopped` 表示调用方停的，或者后台任务意外退出、可以重新订阅）。`upgrade_required()` 照旧。
   同时加的（不破坏）：实时活动的 `ContentState` 多了可选的 `waitCode`（见 [实时活动](live-activities.md) 第 3 节）。
 
 - **10.7 APNs 补齐（iOS 会话提的后端前置包，见 `ios-app` 分支的 `docs/ios-packages.md`）**：主会话在做（2026-10-22 06:30 认领，北京时间）。代码都推了（`9a099bd`…`8b36e20`），约定写在 [推送](push.md)：没给有效期的推送存 24 小时；设备按 `apns` / `apns_sandbox` 分生产和沙盒环境（实时活动也跟着走，`[push.apns] sandbox_endpoint`）；保险箱请求、计划待确认有自己的种类（`VAULT_REQUEST`、`PLAN_CONFIRM`，优先级 10，`tt.vault_request`）；提醒带子类型（`tt.subtype` 和收件箱的 `subtype`，账号冻结 / 恢复、触发器失效等，等 key 的是 `wait_code`）；角标是发的时候的未读数；触发规则失效时通知用户。11.8 和 10.7 的对抗式评审确认了 12 条，都修了（`6ac24a8`、`d6f850c`），正在复核修复。没做的：macOS 的 topic（P3）、极光的通知替换。同一批的 11.8、4.7、5.5 已完成（见上表）；5.6 运行附件等 1.1 拍板，先不做。11.8 里留给别的包的可选项：运行带自动重试时间和最晚等到的时间（实时活动的 `waitCode` 已加）。

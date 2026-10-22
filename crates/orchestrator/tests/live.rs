@@ -486,4 +486,14 @@ async fn waiting_runs_say_what_they_wait_for() {
         ),
         (&json!("waiting_quota"), &json!("no_balance"))
     );
+    assert_eq!(d.tick().await.unwrap(), 0, "nothing changed");
+    // 状态没变、只是等的原因变了：也发一次。
+    sqlx::query("UPDATE runs SET wait_code = 'rate_limited' WHERE id = $1")
+        .bind(run.id.0)
+        .execute(s.t.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(d.tick().await.unwrap(), 1);
+    assert_eq!(rec.sent()[0].1.content_state["waitCode"], "rate_limited");
+    assert_eq!(d.tick().await.unwrap(), 0);
 }

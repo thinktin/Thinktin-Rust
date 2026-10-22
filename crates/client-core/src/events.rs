@@ -47,7 +47,7 @@ pub enum StreamStatus {
     /// 这个版本太老了，服务端不再接受（握手或别的请求回了 426），事件流停止；界面进升级页
     /// （`ThinktinClient::upgrade_required()` 也是 true）。
     UpgradeRequired,
-    /// 调用方停的。
+    /// 调用方停的；或者后台任务意外退出（panic，日志里有 “event stream task panicked”），界面还在时可以重新订阅。
     Stopped,
 }
 
@@ -184,10 +184,11 @@ async fn run(
     let mut backoff = cfg.min_backoff;
     let mut refreshed_in_a_row = 0;
     loop {
-        // 这个版本太老了（别的请求、别的事件流发现的）：不再连。
+        // 调用方停了。
         if *stop.borrow() {
             return StreamStatus::Stopped;
         }
+        // 这个版本太老了（别的请求、别的事件流发现的）：不再连。
         if api.upgrade_required() {
             return StreamStatus::UpgradeRequired;
         }

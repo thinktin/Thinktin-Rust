@@ -207,7 +207,7 @@ async fn every_request_carries_the_device_language() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_old_app_stops_instead_of_reconnecting() {
     let rt = tokio::runtime::Handle::current();
-    // 握手 426：结束（Stopped），只连了一次；之后再开的事件流不再连。
+    // 握手 426：结束（UpgradeRequired），只连了一次；之后再开的事件流不再连。
     let (base, seen) = stub(vec![(
         "GET /v1/instances/",
         426,

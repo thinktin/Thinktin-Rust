@@ -1,11 +1,11 @@
 //! 实时活动（WBS 10.6）：iOS 的灵动岛、锁屏上显示运行的进度。
 //!
 //! App 开了实时活动后登记它的推送令牌；计划到点开始的根运行，按设备的推送开启令牌远程开启（领取运行时记下待开启的，
-//! 见 [`queue_starts`]）。这里定时领该发的：运行的状态、步数和上次发的不一样就发更新（几次变化合成一次，只发现在的
+//! 见 [`queue_starts`]）。这里定时领该发的：运行的状态、等待原因、步数和上次发的不一样就发更新（几次变化合成一次，只发现在的
 //! 样子；只是步数变了的隔一阵才发），运行结束发 end。
 //!
 //! 和 App 的约定（Swift 的 `ActivityAttributes`，见 `docs/live-activities.md`）：类型名 [`ATTRIBUTES_TYPE`]，
-//! 静态属性 `{runId, instanceId, title}`，动态内容 `{state, steps, startedAt?, endedAt?}`（时间是 Unix 秒）。
+//! 静态属性 `{runId, instanceId, title}`，动态内容 `{state, steps, startedAt?, endedAt?, waitCode?}`（时间是 Unix 秒）。
 //! 推送里没有运行的摘要、agent 写的文字：锁屏上谁都看得见。
 
 use std::future::Future;
@@ -44,7 +44,7 @@ pub async fn queue_starts(w: &mut Tx<Worker>, rec: &RunRecord) -> store::Result<
 /// 实时活动的动态内容。
 pub fn content_state(a: &LiveActivity) -> Value {
     let mut v = json!({"state": a.state.as_str(), "steps": a.steps});
-    if let Some(code) = a.wait_code.as_deref().filter(|_| a.state.is_waiting()) {
+    if let Some(code) = sent_wait_code(a) {
         v["waitCode"] = json!(code);
     }
     if let Some(t) = a.started_at {
@@ -54,6 +54,11 @@ pub fn content_state(a: &LiveActivity) -> Value {
         v["endedAt"] = json!(t.timestamp());
     }
     v
+}
+
+/// 内容里的 `waitCode`：运行在等 key、等电脑时等的是什么。
+fn sent_wait_code(a: &LiveActivity) -> Option<String> {
+    a.wait_code.clone().filter(|_| a.state.is_waiting())
 }
 
 /// 远程开启时的静态属性。
@@ -257,6 +262,7 @@ impl LiveDispatcher {
                 steps: a.steps,
                 started: true,
                 ended: false,
+                wait_code: sent_wait_code(a),
             },
             PushOutcome::InvalidToken { reason } => {
                 info!(device = %a.device_id, %reason, "live activity start token is no longer valid");
@@ -296,6 +302,7 @@ impl LiveDispatcher {
                 steps: a.steps,
                 started: false,
                 ended,
+                wait_code: sent_wait_code(a),
             },
             // 实时活动结束了（用户划掉了、系统结束了）令牌就失效：不再发。
             PushOutcome::InvalidToken { reason } | PushOutcome::Rejected { reason } => {

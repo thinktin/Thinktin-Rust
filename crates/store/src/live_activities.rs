@@ -67,12 +67,14 @@ impl std::fmt::Debug for LiveActivity {
 /// 发完一个实时活动后记下的结果。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LiveSettle {
-    /// 发出去了：记下发的状态和步数。`started` 是远程开启的那一次，`ended` 是发了 end。
+    /// 发出去了：记下发的状态、等待原因和步数。`started` 是远程开启的那一次，`ended` 是发了 end。
     Sent {
         state: RunState,
         steps: u32,
         started: bool,
         ended: bool,
+        /// 发出去的 `waitCode`（不在等时没有）。
+        wait_code: Option<String>,
     },
     /// 暂时失败：`at` 再试。
     Retry { error: String, at: DateTime<Utc> },
@@ -192,7 +194,7 @@ impl Tx<Tenant> {
             "INSERT INTO live_activities (device_id, run_id, user_id, origin, push_token) \
              SELECT d.id, $2, d.user_id, 'app', $3 FROM devices d WHERE d.id = $1 \
              ON CONFLICT (device_id, run_id) DO UPDATE SET push_token = EXCLUDED.push_token, \
-               sent_state = NULL, sent_steps = NULL, attempts = 0, retry_at = NULL, last_error = NULL, \
+               sent_state = NULL, sent_steps = NULL, sent_wait_code = NULL, attempts = 0, retry_at = NULL, last_error = NULL, \
                ended_at = NULL, gave_up = false, \
                created_at = CASE WHEN live_activities.push_token IS DISTINCT FROM EXCLUDED.push_token \
                  THEN now() ELSE live_activities.created_at END \
@@ -339,7 +341,8 @@ impl Tx<Worker> {
                        x.origin = 'push' AND ((x.start_sent_at IS NULL AND d.activity_start_token IS NOT NULL) \
                          OR r.state IN ('succeeded', 'failed', 'cancelled')) \
                      ELSE x.sent_at IS NULL \
-                       OR (r.state IS DISTINCT FROM x.sent_state AND x.sent_at <= now() - make_interval(secs => $4)) \
+                       OR ((r.state IS DISTINCT FROM x.sent_state OR r.wait_code IS DISTINCT FROM x.sent_wait_code) \
+                           AND x.sent_at <= now() - make_interval(secs => $4)) \
                        OR (t.steps IS DISTINCT FROM x.sent_steps AND x.sent_at <= now() - make_interval(secs => $5)) \
                      END), \
              due AS ( \
@@ -427,7 +430,7 @@ impl Tx<Worker> {
         }
         let sql = match settle {
             LiveSettle::Sent { .. } => mine!(
-                "sent_state = $5, sent_steps = $6, sent_at = now(), \
+                "sent_state = $5, sent_steps = $6, sent_wait_code = $9, sent_at = now(), \
                  start_sent_at = CASE WHEN $7 THEN now() ELSE start_sent_at END, \
                  ended_at = CASE WHEN $8 THEN coalesce(ended_at, now()) ELSE ended_at END, \
                  attempts = 0, retry_at = NULL, last_error = NULL"
@@ -454,11 +457,13 @@ impl Tx<Worker> {
                 steps,
                 started,
                 ended,
+                wait_code,
             } => q
                 .bind(state.as_str())
                 .bind(i32::try_from(*steps).unwrap_or(i32::MAX))
                 .bind(started)
-                .bind(ended),
+                .bind(ended)
+                .bind(wait_code.as_deref()),
             LiveSettle::Retry { error, at } => q.bind(cut(error)).bind(at),
             LiveSettle::GiveUp { error } => q.bind(cut(error)),
             LiveSettle::End { error } => q.bind(error.as_deref().map(cut)),
