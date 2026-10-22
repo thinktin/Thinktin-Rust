@@ -5,6 +5,8 @@ composeBom = "2024.12.01"
 activityCompose = "1.9.3"
 coreKtx = "1.15.0"
 lifecycle = "2.8.7"
+appcompat = "1.7.0"
+biometric = "1.1.0"
 navigation = "2.8.5"
 coroutines = "1.9.0"
 serializationJson = "1.7.3"
@@ -25,6 +27,9 @@ androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-
 androidx-navigation-compose = { module = "androidx.navigation:navigation-compose", version.ref = "navigation" }
 androidx-security-crypto = { module = "androidx.security:security-crypto", version.ref = "securityCrypto" }
 androidx-datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "datastore" }
+# 批准审批前的生物识别 / 锁屏密码确认（BiometricPrompt，13.16）；它要 FragmentActivity，API 26–27 的指纹对话框要 AppCompat 主题。
+androidx-biometric = { module = "androidx.biometric:biometric", version.ref = "biometric" }
+androidx-appcompat = { module = "androidx.appcompat:appcompat", version.ref = "appcompat" }
 
 compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
 compose-ui = { module = "androidx.compose.ui:ui" }

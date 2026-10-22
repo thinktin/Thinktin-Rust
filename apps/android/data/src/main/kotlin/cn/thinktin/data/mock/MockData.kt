@@ -454,6 +454,23 @@ internal class MockData(private val baseMs: Long) {
             state = ApprovalState.Cancelled, expiresAtMs = ago(25) + 24 * 60 * MINUTE, createdAtMs = ago(25),
             requestId = "perm-1", attempt = 1,
         ),
+        // 研究员在“整理上周的阅读清单”里请求下载，没人处理，平台判了超时（演示用的超时很短），之后运行被取消。
+        // 只能 getApproval 查到（不在待处理列表里），审批详情页显示结果。
+        Approval(
+            id = APPROVAL_EXPIRED, runId = RUN_CANCELLED, instanceId = INSTANCE_RESEARCH,
+            title = "下载阅读清单里的 PDF",
+            options = listOf(
+                ApprovalOption("allow", "批准", OptionKind.AllowOnce),
+                ApprovalOption("reject", "拒绝", OptionKind.RejectOnce),
+            ),
+            toolCallJson = """{"title":"Fetch","kind":"fetch","rawInput":{"url":"https://example.com/reading.pdf"}}""",
+            toolCall = buildJsonObject {
+                put("title", "Fetch"); put("kind", "fetch")
+                putJsonObject("rawInput") { put("url", "https://example.com/reading.pdf") }
+            },
+            state = ApprovalState.Expired, expiresAtMs = ago(60L * 26 - 1) + MINUTE / 2, createdAtMs = ago(60L * 26 - 1),
+            requestId = "perm-2", attempt = 1,
+        ),
     )
 
     val plans = listOf(
@@ -701,6 +718,7 @@ internal class MockData(private val baseMs: Long) {
         const val APPROVAL_PENDING = "approval-pending"
         const val APPROVAL_DONE = "approval-done"
         const val APPROVAL_STALE = "approval-stale"
+        const val APPROVAL_EXPIRED = "approval-expired"
 
         const val PLAN_DAILY = "plan-daily"
         const val PLAN_WEEKLY = "plan-weekly"

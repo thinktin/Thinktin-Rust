@@ -4,10 +4,13 @@ import android.content.Context
 import android.util.Log
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.preferencesDataStoreFile
+import androidx.fragment.app.FragmentActivity
 import cn.thinktin.app.settings.AppLanguage
 import cn.thinktin.app.settings.AppSettings
 import cn.thinktin.app.settings.AppSettingsRepository
 import cn.thinktin.app.settings.serverLocale
+import cn.thinktin.app.ui.approval.ApprovalGate
+import cn.thinktin.app.ui.approval.BiometricApprovalGate
 import cn.thinktin.data.core.AcceptLanguage
 import cn.thinktin.data.core.ClientFactory
 import cn.thinktin.data.core.TlsState
@@ -30,6 +33,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.lang.ref.WeakReference
 import java.time.Clock
 import java.util.Locale
 
@@ -62,7 +66,29 @@ class AppContainer(
     private val languageTags: (AppLanguage) -> List<String> = { AcceptLanguage.tags(it.tag) },
     /** 系统首选语言（ISO 639，跟随系统时用来决定告诉服务端的语言）。 */
     private val systemLanguage: () -> String = { Locale.getDefault().language },
+    /** 批准审批前的身份确认；null 用 BiometricPrompt（测试里换成假的）。 */
+    approvalGate: ApprovalGate? = null,
 ) {
+    /** 当前的 MainActivity（弱引用，[attachActivity]）：BiometricPrompt 要它。 */
+    @Volatile
+    private var activityRef: WeakReference<FragmentActivity>? = null
+
+    /**
+     * 批准审批前的身份确认（13.16）。ViewModel 从这里取：它不持有 Activity，每次弹提示框时才找当前的
+     * MainActivity，所以旋转屏幕后（ViewModel 还在、Activity 换了）照样能用。
+     */
+    val approvalGate: ApprovalGate = approvalGate ?: BiometricApprovalGate({ activityRef?.get() })
+
+    /** MainActivity.onCreate 时登记自己（BiometricPrompt 要在当前的 Activity 上弹出）。 */
+    fun attachActivity(activity: FragmentActivity) {
+        activityRef = WeakReference(activity)
+    }
+
+    /** MainActivity.onDestroy：还是它的话就清掉。 */
+    fun detachActivity(activity: FragmentActivity) {
+        if (activityRef?.get() === activity) activityRef = null
+    }
+
     private val scope = CoroutineScope(SupervisorJob() + io)
     private val mock: ThinktinService by lazy(createMock)
     private val coreState = MutableStateFlow<ServiceState>(ServiceState.Loading)

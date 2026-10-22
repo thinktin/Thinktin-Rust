@@ -37,8 +37,6 @@ enum class Page(@StringRes val titleRes: Int) {
     Teams(R.string.page_teams),
     Team(R.string.page_team),
     Inbox(R.string.page_inbox),
-    Approvals(R.string.page_approvals),
-    Approval(R.string.page_approval),
     Vault(R.string.page_vault),
 }
 

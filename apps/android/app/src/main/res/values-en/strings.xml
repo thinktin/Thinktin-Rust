@@ -552,4 +552,46 @@
     <string name="usage_column_name">Name</string>
     <string name="keys_delete_detach_failed">Couldn\'t remove it from “%1$s”\'s model aliases because they still use a disabled key. Enable that key, or replace it on “%1$s”\'s model aliases page, then delete again.</string>
     <string name="usage_no_key">No key used (all disabled or out of quota)</string>
+    <!-- 13.16 cloud approvals -->
+    <string name="drawer_approvals">Approvals</string>
+    <string name="drawer_approvals_pending">%1$d pending approvals</string>
+    <string name="approvals_empty_title">No pending approvals</string>
+    <string name="approvals_empty_message">When an agent wants to do something that needs your OK, it shows up here and you get a notification.</string>
+    <string name="approvals_load_failed">Couldn\'t load approvals</string>
+    <string name="approvals_instance_unknown">Deleted instance</string>
+    <plurals name="approvals_group_title">
+        <item quantity="one">%1$s · %2$d pending</item>
+        <item quantity="other">%1$s · %2$d pending</item>
+    </plurals>
+    <string name="approval_confirm_title">Approve this action?</string>
+    <string name="approval_confirm_text">You chose “%1$s”. Before approving, confirm it\'s you (fingerprint, face or screen lock).</string>
+    <string name="approval_confirm_always_hint">With “Always allow”, this agent won\'t ask again for actions of the same kind.</string>
+    <string name="approval_confirm_action">Verify and approve</string>
+    <string name="approval_no_credential_title">Set up a screen lock first</string>
+    <string name="approval_no_credential_text">Approving needs you to confirm it\'s you, but this device has no screen lock (PIN, pattern or password). Set one up, then come back to approve. Rejecting doesn\'t need it.</string>
+    <string name="approval_no_credential_action">Open settings</string>
+    <string name="approval_unavailable_title">Can\'t verify it\'s you</string>
+    <string name="approval_unavailable_text">This device can\'t verify your identity right now, so you can\'t approve. You can reject, or try again later.</string>
+    <string name="approval_gate_title">Verify to approve</string>
+    <string name="approval_gate_subtitle">Option: %1$s</string>
+    <string name="approval_decided_approved">Approved</string>
+    <string name="approval_decided_rejected">Rejected</string>
+    <string name="approval_already_handled">This approval was already handled. Showing the latest result.</string>
+    <string name="approval_already_expired">This approval has expired</string>
+    <string name="approval_already_cancelled">This approval was cancelled: the run ended or was stopped</string>
+    <string name="approval_gone">This approval no longer exists</string>
+    <string name="approval_verify_lockout">Too many failed attempts. Try again later.</string>
+    <string name="approval_verify_failed">Couldn\'t verify it\'s you. Nothing was approved.</string>
+    <string name="approval_not_found_title">Approval not found</string>
+    <string name="approval_not_found_message">It may have been deleted, or it belongs to another account.</string>
+    <string name="approval_detail_section">Details</string>
+    <string name="approval_detail_instance">Instance</string>
+    <string name="approval_detail_run">Run</string>
+    <string name="approval_open_run">View run</string>
+    <string name="approval_detail_attempt">Attempt</string>
+    <string name="approval_detail_attempt_value">#%1$d</string>
+    <string name="approval_detail_attempt_superseded">#%1$d (the run is now on #%2$d)</string>
+    <string name="approval_detail_requested">Requested</string>
+    <string name="approval_detail_expires">Expires</string>
+    <string name="approval_detail_decided">Handled</string>
 </resources>

@@ -24,6 +24,7 @@ import androidx.compose.material.icons.outlined.Inbox
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.VerifiedUser
 import androidx.compose.material3.Badge
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -61,6 +62,9 @@ enum class DrawerDestination {
     /** Agent 目录（领养）。 */
     Catalog,
     Inbox,
+
+    /** 审批中心（13.16）。 */
+    Approvals,
     Plans,
     Teams,
     Settings,
@@ -68,7 +72,7 @@ enum class DrawerDestination {
 
 const val DRAWER_TEST_TAG = "app-drawer"
 
-/** 抽屉（第 3 节）：搜索、新对话、收件箱（未读角标）、计划、团队与流水线、我的 agent、底部头像 → 设置。 */
+/** 抽屉（第 3 节）：搜索、新对话、收件箱（未读角标）、审批（待处理角标）、计划、团队与流水线、我的 agent、底部头像 → 设置。 */
 @Composable
 fun AppDrawer(
     state: DrawerUiState,
@@ -121,6 +125,25 @@ fun AppDrawer(
                 },
                 selected = currentRoute?.startsWith("inbox") == true,
                 onClick = { onNavigate(DrawerDestination.Inbox) },
+                modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
+            )
+            val pendingLabel = if (state.pendingApprovals > 0) {
+                stringResource(R.string.drawer_approvals_pending, state.pendingApprovals)
+            } else {
+                null
+            }
+            NavigationDrawerItem(
+                label = { Text(stringResource(R.string.drawer_approvals)) },
+                icon = { Icon(Icons.Outlined.VerifiedUser, contentDescription = null) },
+                badge = {
+                    if (state.pendingApprovals > 0) {
+                        Badge(Modifier.semantics { contentDescription = pendingLabel.orEmpty() }) {
+                            Text(if (state.pendingApprovals > 99) "99+" else state.pendingApprovals.toString())
+                        }
+                    }
+                },
+                selected = currentRoute == "approvals",
+                onClick = { onNavigate(DrawerDestination.Approvals) },
                 modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
             )
             DrawerItem(R.string.drawer_plans, Icons.Outlined.Schedule, selected = currentRoute == "plans") {

@@ -31,7 +31,10 @@ object Routes {
 
     /** 收件箱；itemId 可选（推送点进某一条）。 */
     const val INBOX = "inbox?itemId={itemId}"
+    /** 审批中心（13.16）：跨实例的待处理审批。 */
     const val APPROVALS = "approvals"
+
+    /** 审批详情（什么状态都能看）；推送深链 thinktin://approval/{id}。 */
     const val APPROVAL = "approval/{approvalId}"
     /** 模型 key 列表（13.4）。 */
     const val KEYS = "keys"
@@ -85,7 +88,7 @@ object Routes {
     fun vault(requestId: String? = null) = if (requestId == null) "vault" else "vault?requestId=${Uri.encode(requestId)}"
 
     /** 抽屉直达的顶级目的地（返回栈弹到 home）。 */
-    val TOP_LEVEL: Set<String> = setOf(HOME, INBOX, PLANS, TEAMS, SETTINGS, CATALOG)
+    val TOP_LEVEL: Set<String> = setOf(HOME, INBOX, APPROVALS, PLANS, TEAMS, SETTINGS, CATALOG)
 }
 
 /** 深链（两端一致，推送点击用）：thinktin://… */

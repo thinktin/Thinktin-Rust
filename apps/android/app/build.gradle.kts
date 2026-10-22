@@ -110,6 +110,8 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.datastore.preferences)
+    implementation(libs.androidx.appcompat)
+    implementation(libs.androidx.biometric)
     implementation(libs.kotlinx.coroutines.android)
 
     val composeBom = platform(libs.compose.bom)

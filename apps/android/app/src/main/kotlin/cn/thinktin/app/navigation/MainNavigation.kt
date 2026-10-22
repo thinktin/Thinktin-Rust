@@ -36,6 +36,8 @@ import cn.thinktin.app.R
 import cn.thinktin.app.ui.account.DeleteAccountScreen
 import cn.thinktin.app.ui.account.EditNameScreen
 import cn.thinktin.app.ui.agent.AgentDetailScreen
+import cn.thinktin.app.ui.approval.ApprovalCenterScreen
+import cn.thinktin.app.ui.approval.ApprovalDetailScreen
 import cn.thinktin.app.ui.catalog.CatalogScreen
 import cn.thinktin.app.ui.common.LocalThinktinService
 import cn.thinktin.app.ui.devices.DevicesAction
@@ -131,6 +133,7 @@ fun MainNavigation(navController: NavHostController = rememberAppNavController()
                             DrawerDestination.NewChat -> Routes.HOME
                             DrawerDestination.Catalog -> Routes.CATALOG
                             DrawerDestination.Inbox -> Routes.inbox()
+                            DrawerDestination.Approvals -> Routes.APPROVALS
                             DrawerDestination.Plans -> Routes.PLANS
                             DrawerDestination.Teams -> Routes.TEAMS
                             DrawerDestination.Settings -> Routes.SETTINGS
@@ -293,12 +296,21 @@ private fun MainNavHost(navController: NavHostController, onOpenDrawer: () -> Un
                 navDeepLink { uriPattern = DeepLinks.INBOX_ITEM },
             ),
         ) { Placeholder(Page.Inbox, it, Routes.ARG_ITEM_ID) }
-        composable(Routes.APPROVALS) { Placeholder(Page.Approvals, it) }
+        composable(Routes.APPROVALS) {
+            ApprovalCenterScreen(onBack = back, onOpenApproval = { navController.navigate(Routes.approval(it)) })
+        }
         composable(
             Routes.APPROVAL,
             arguments = listOf(stringArg(Routes.ARG_APPROVAL_ID)),
             deepLinks = listOf(navDeepLink { uriPattern = DeepLinks.APPROVAL }),
-        ) { Placeholder(Page.Approval, it, Routes.ARG_APPROVAL_ID) }
+        ) { entry ->
+            ApprovalDetailScreen(
+                approvalId = entry.arguments?.getString(Routes.ARG_APPROVAL_ID).orEmpty(),
+                onBack = back,
+                onOpenRun = { navController.navigate(Routes.run(it)) },
+                onOpenChat = { navController.navigate(Routes.chat(it)) },
+            )
+        }
         composable(Routes.KEYS) {
             KeysScreen(
                 onBack = back,

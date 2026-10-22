@@ -23,6 +23,8 @@ data class DrawerUiState(
     /** agent id → 显示名（目录拉到之前为空，界面先显示 id）。 */
     val agentNames: Map<String, String> = emptyMap(),
     val unread: Long = 0,
+    /** 待处理的审批数（13.16）。 */
+    val pendingApprovals: Int = 0,
     val query: String = "",
     val isDemo: Boolean = false,
 ) {
@@ -93,6 +95,12 @@ class DrawerViewModel(private val service: ThinktinService) : ViewModel() {
                     state.update { it.copy(agentNames = names) }
                 } catch (_: ServiceError) {
                 }
+            }
+            // 审批角标单独取：失败不影响其余部分。
+            try {
+                val pending = service.approvals().size
+                state.update { it.copy(pendingApprovals = pending) }
+            } catch (_: ServiceError) {
             }
             val page = service.syncInbox(limit = 1)
             state.update { it.copy(unread = page.unread) }
