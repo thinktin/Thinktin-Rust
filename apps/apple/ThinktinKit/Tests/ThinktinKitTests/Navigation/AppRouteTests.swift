@@ -13,7 +13,7 @@ enum RouteSamples {
         .home, .conversation("inst-1"), .run("run-1"), .runTree("run-1"), .activeRuns,
         .agentCatalog, .agent("claude"), .instance("inst-1"),
         .credentials, .addCredential, .credential("cred-1"), .modelRoutes("inst-1"), .usage,
-        .plans, .plan("plan-1"), .newPlan(instanceID: nil), .editPlan("plan-1"),
+        .plans, .plan("plan-1"), .newPlan(instanceID: nil), .editPlan("plan-1"), .confirmPlan("plan-1"),
         .teams, .team("team-1"), .teamTemplates, .pipelineEditor(planID: nil, teamID: "team-1"),
         .inbox, .inboxItem("inbox-1"),
         .approvals, .approval("appr-1"),
@@ -26,7 +26,7 @@ enum RouteSamples {
         .newTask, .frozen, .upgrade,
     ]
 
-    static let caseCount = 41
+    static let caseCount = 42
 
     static func index(of route: AppRoute) -> Int {
         switch route {
@@ -50,27 +50,28 @@ enum RouteSamples {
         case .plan: 17
         case .newPlan: 18
         case .editPlan: 19
-        case .teams: 20
-        case .team: 21
-        case .teamTemplates: 22
-        case .pipelineEditor: 23
-        case .inbox: 24
-        case .inboxItem: 25
-        case .approvals: 26
-        case .approval: 27
-        case .artifacts: 28
-        case .vault: 29
-        case .vaultItem: 30
-        case .vaultRequest: 31
-        case .settings: 32
-        case .licenses: 33
-        case .about: 34
-        case .imChannels: 35
-        case .onboarding: 36
-        case .search: 37
-        case .newTask: 38
-        case .frozen: 39
-        case .upgrade: 40
+        case .confirmPlan: 20
+        case .teams: 21
+        case .team: 22
+        case .teamTemplates: 23
+        case .pipelineEditor: 24
+        case .inbox: 25
+        case .inboxItem: 26
+        case .approvals: 27
+        case .approval: 28
+        case .artifacts: 29
+        case .vault: 30
+        case .vaultItem: 31
+        case .vaultRequest: 32
+        case .settings: 33
+        case .licenses: 34
+        case .about: 35
+        case .imChannels: 36
+        case .onboarding: 37
+        case .search: 38
+        case .newTask: 39
+        case .frozen: 40
+        case .upgrade: 41
         }
     }
 }

@@ -518,7 +518,7 @@ struct MockApprovalTests {
 
 @Suite("MockClient：计划")
 struct MockPlanTests {
-    @Test("新建 → 列表（没有触发器）→ 详情 → 暂停 / 恢复 → 删除")
+    @Test("新建 → 列表（带触发器和下一次运行的时间，11.8）→ 详情 → 暂停 / 恢复 → 删除")
     func createAndManage() async throws {
         let client = makeClient()
         let at = Date().addingTimeInterval(3600)
@@ -535,13 +535,20 @@ struct MockPlanTests {
 
         let list = try await client.plans(instanceID: writer)
         let listed = try #require(list.first { $0.id == plan.id })
-        #expect(listed.triggers.isEmpty, "列表接口里没有触发器")
+        #expect(listed.triggers.count == 2, "列表接口里也有触发器（11.8）")
+        #expect(listed.nextFireAt == at)
+        #expect(listed.invalidTriggers == 0)
         #expect(try await client.plans(instanceID: reviewer).allSatisfy { $0.instanceID == reviewer })
         #expect(try await client.plans(instanceID: nil).count == 3)
         #expect(try await client.getPlan(plan.id).triggers.count == 2)
 
-        #expect(try await client.setPlanPaused(plan.id, paused: true).isPaused)
-        #expect(try await client.setPlanPaused(plan.id, paused: false).isPaused == false)
+        let paused = try await client.setPlanPaused(plan.id, paused: true)
+        #expect(paused.isPaused)
+        #expect(paused.nextFireAt == nil, "暂停了没有下一次")
+        #expect(try await client.plans(instanceID: writer).first { $0.id == plan.id }?.nextFireAt == nil)
+        let resumed = try await client.setPlanPaused(plan.id, paused: false)
+        #expect(resumed.isPaused == false)
+        #expect(resumed.nextFireAt == at)
         try await client.deletePlan(plan.id)
         #expect(await apiCode { _ = try await client.getPlan(plan.id) } == .notFound)
         #expect(await apiCode { try await client.deletePlan(plan.id) } == .notFound)

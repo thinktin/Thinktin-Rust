@@ -318,7 +318,7 @@ struct CoreClient118Tests {
 
     // MARK: 版本太老
 
-    @Test("upgradeRequired：任何请求收到 426 后一直是 true；之后订阅直接 stopped、不连", .timeLimit(.minutes(1)))
+    @Test("upgradeRequired：任何请求收到 426 后一直是 true；之后订阅直接以 upgradeRequired 结束、不连", .timeLimit(.minutes(1)))
     func upgradeRequiredAfterREST() async throws {
         let server = try StubHTTPServer(routes: [
             "GET /v1/vendors": R(426, json: #"{"code":"upgrade_required","message":"too old"}"#),
@@ -341,12 +341,13 @@ struct CoreClient118Tests {
             for await element in stream { all.append(element) }
             return all
         }
-        #expect(elements == [.status(.stopped)])
+        // 339e191 起以 UpgradeRequired 结束（Stopped 只表示调用方停的）。
+        #expect(elements == [.status(.upgradeRequired)])
         // 事件流没去连（没有握手请求）。
         #expect(!H.routes(server).contains { $0.hasSuffix("/events/ws") })
     }
 
-    @Test("事件流握手收到 426：以 stopped 结束、不重连，upgradeRequired 变成 true；握手也带 Accept-Language", .timeLimit(.minutes(1)))
+    @Test("事件流握手收到 426：以 upgradeRequired 结束、不重连，upgradeRequired 变成 true；握手也带 Accept-Language", .timeLimit(.minutes(1)))
     func upgradeRequiredOnHandshake() async throws {
         let ws = "/v1/instances/\(F.instanceID)/events/ws"
         let server = try StubHTTPServer(routes: ["GET \(ws)": R(426, json: #"{"code":"upgrade_required"}"#)])
@@ -359,7 +360,7 @@ struct CoreClient118Tests {
             for await element in stream { all.append(element) }
             return all
         }
-        #expect(elements == [.status(.connecting), .status(.stopped)])
+        #expect(elements == [.status(.connecting), .status(.upgradeRequired)])
         #expect(client.upgradeRequired())
         #expect(H.routes(server) == ["GET \(ws)"])
         let handshake = try #require(server.requests.first)

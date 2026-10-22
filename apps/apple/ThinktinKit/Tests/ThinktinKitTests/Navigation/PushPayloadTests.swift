@@ -76,7 +76,9 @@ struct PushPayloadTests {
     func kinds() {
         #expect(
             PushPayload.Kind.knownCases.map(\.rawValue) == [
-                "run_finished", "run_failed", "approval", "computer_approval", "info",
+                "run_finished", "run_failed", "approval", "computer_approval", "vault_request", "plan_confirm", "info",
             ])
+        // 收件箱条目的种类和推送一样（docs/push.md 第 2 节）。
+        #expect(InboxKind.knownCases.map(\.rawValue) == PushPayload.Kind.knownCases.map(\.rawValue))
     }
 }

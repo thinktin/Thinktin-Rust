@@ -10,18 +10,18 @@ import ThinktinKit
 @Suite("错误转换")
 struct ErrorMappingTests {
     static let clientErrors: [ThinktinCore.ClientError] = [
-        .Network(message: "connection refused"),
+        .Network(detail: "connection refused"),
         .SignedOut,
         .UpgradeRequired,
         .AccountFrozen,
-        .Api(status: 429, code: "rate_limited", message: "slow down", retryAfterSecs: 30),
-        .Api(status: 404, code: "not_found", message: "no such run", retryAfterSecs: nil),
-        .Api(status: 418, code: "teapot", message: "", retryAfterSecs: UInt64.max),
-        .Decode(message: "missing field `id`"),
-        .Cache(message: "database is locked"),
+        .Api(status: 429, code: "rate_limited", detail: "slow down", retryAfterSecs: 30),
+        .Api(status: 404, code: "not_found", detail: "no such run", retryAfterSecs: nil),
+        .Api(status: 418, code: "teapot", detail: "", retryAfterSecs: UInt64.max),
+        .Decode(detail: "missing field `id`"),
+        .Cache(detail: "database is locked"),
         .ContainsSecrets(count: 2),
-        .InvalidArgument(message: "bad run id \"x\""),
-        .Internal(message: "task panicked"),
+        .InvalidArgument(detail: "bad run id \"x\""),
+        .Internal(detail: "task panicked"),
     ]
 
     static let expectedClientErrors: [ThinktinKit.ClientError] = [
@@ -50,7 +50,7 @@ struct ErrorMappingTests {
     @Test(
         "ThinktinCore.PairingError 的每个 case",
         arguments: zip(
-            [ThinktinCore.PairingError.Malformed(message: "bad base64"), .Expired, .BadSignature],
+            [ThinktinCore.PairingError.Malformed(detail: "bad base64"), .Expired, .BadSignature],
             [ThinktinKit.ClientError.malformed(message: "bad base64"), .expired, .badSignature]))
     func pairingError(core: ThinktinCore.PairingError, expected: ThinktinKit.ClientError) {
         #expect(ThinktinKit.ClientError(core: core) == expected)
@@ -71,16 +71,16 @@ struct ErrorMappingTests {
         #expect(ThinktinKit.ClientError(core: .SignedOut).recovery == .signIn)
         #expect(ThinktinKit.ClientError(core: .AccountFrozen).recovery == .accountFrozen)
         #expect(ThinktinKit.ClientError(core: .UpgradeRequired).recovery == .upgrade)
-        #expect(ThinktinKit.ClientError(core: .Network(message: "")).recovery == .offline)
+        #expect(ThinktinKit.ClientError(core: .Network(detail: "")).recovery == .offline)
         #expect(ThinktinKit.ClientError(core: .ContainsSecrets(count: 3)).recovery == .interceptSecrets(count: 3))
         #expect(
-            ThinktinKit.ClientError(core: .Api(status: 429, code: "rate_limited", message: "", retryAfterSecs: 30))
+            ThinktinKit.ClientError(core: .Api(status: 429, code: "rate_limited", detail: "", retryAfterSecs: 30))
                 .recovery == .retryLater(after: 30))
         #expect(
-            ThinktinKit.ClientError(core: .Api(status: 409, code: "conflict", message: "", retryAfterSecs: nil))
+            ThinktinKit.ClientError(core: .Api(status: 409, code: "conflict", detail: "", retryAfterSecs: nil))
                 .recovery == .refreshAndRetry)
         #expect(
-            ThinktinKit.ClientError(core: .Api(status: 401, code: "session_revoked", message: "", retryAfterSecs: nil))
+            ThinktinKit.ClientError(core: .Api(status: 401, code: "session_revoked", detail: "", retryAfterSecs: nil))
                 .requiresSignIn)
     }
 }

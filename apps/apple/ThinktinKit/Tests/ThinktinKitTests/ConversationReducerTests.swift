@@ -481,7 +481,9 @@ struct ConversationApprovalTests {
                     "tool_call": ["toolCallId": "t1", "kind": "delete"],
                 ]))
         var card = try #require(output(r).first?.content.approval)
-        #expect(output(r).first?.id == "approval-run-a-r1")
+        // 没有 attempt（老的服务端）也没有 run.state 时尝试不知道（0）；id 带上尝试，不同尝试的 perm-1 不会撞。
+        #expect(output(r).first?.id == "approval-run-a-0-r1")
+        #expect(card.attempt == 0)
         #expect(card.isPending)
         #expect(card.title == "删除 build/")
         #expect(card.options.map(\.id) == ["ok", "always", "no"])

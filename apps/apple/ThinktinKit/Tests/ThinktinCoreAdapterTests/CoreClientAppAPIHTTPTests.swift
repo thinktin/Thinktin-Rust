@@ -88,30 +88,35 @@ struct CoreClientAppAPIHTTPTests {
         #expect(request.headers["authorization"] == "Bearer access-token")
     }
 
-    @Test("revokeDevice：吊销别的设备只发 DELETE；吊销当前这台接着退出登录，本地会话马上清掉")
+    @Test("revokeDevice：都只发 DELETE；吊销当前这台时 client-core 自己清掉本地会话和缓存（b61abc5），不再另调 logout")
     func revokeDevice() async throws {
         let server = try StubHTTPServer(routes: [
+            "GET /v1/instances": R(200, json: #"{"instances":[\#(CoreClientHTTPTests.instanceJSON)]}"#),
             "DELETE /v1/devices/\(F.otherDeviceID)": R(204, json: ""),
             "DELETE /v1/devices/\(F.deviceID)": R(204, json: ""),
-            // 会话已经吊销：服务端拒绝退出登录的请求，client-core 照样清掉本地会话。
-            "POST /v1/auth/logout": R(401, json: #"{"code":"session_revoked","message":"revoked"}"#),
         ])
         defer { server.stop() }
-        let store = InMemorySessionStore(F.session)
-        let client = try Self.client(server, sessions: store)
+        try await Self.withCacheDirectory { cachePath in
+            let store = InMemorySessionStore(F.session)
+            let client = try Self.client(server, sessions: store, cachePath: cachePath)
+            _ = try await client.instances()
+            #expect(try client.cachedInstances().count == 1)
 
-        try await client.revokeDevice(DeviceID(F.otherDeviceID))
-        #expect(Self.routes(server) == ["DELETE /v1/devices/\(F.otherDeviceID)"])
-        #expect(client.signedIn())
-        #expect(store.load() == F.session)
+            try await client.revokeDevice(DeviceID(F.otherDeviceID))
+            #expect(Self.routes(server) == ["GET /v1/instances", "DELETE /v1/devices/\(F.otherDeviceID)"])
+            #expect(client.signedIn())
+            #expect(store.load() == F.session)
+            #expect(try client.cachedInstances().count == 1, "吊销别的设备不动本机的缓存")
 
-        try await client.revokeDevice(DeviceID(F.deviceID))
-        #expect(
-            Self.routes(server) == [
-                "DELETE /v1/devices/\(F.otherDeviceID)", "DELETE /v1/devices/\(F.deviceID)", "POST /v1/auth/logout",
-            ])
-        #expect(!client.signedIn())
-        #expect(store.load() == nil)
+            try await client.revokeDevice(DeviceID(F.deviceID))
+            #expect(
+                Self.routes(server) == [
+                    "GET /v1/instances", "DELETE /v1/devices/\(F.otherDeviceID)", "DELETE /v1/devices/\(F.deviceID)",
+                ])
+            #expect(!client.signedIn())
+            #expect(store.load() == nil)
+            #expect(try client.cachedInstances().isEmpty, "client-core 退出登录时清掉缓存")
+        }
     }
 
     @Test("sendDeviceMessage、ackDeviceMessages：请求体是种类和内容 JSON、要确认的 id；返回的消息和条数")

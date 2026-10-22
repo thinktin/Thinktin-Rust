@@ -313,19 +313,18 @@ struct CoreClientAppAPIForwardingTests {
 
     // MARK: 吊销当前这台
 
-    @Test("revokeDevice：当前这台的 id 大小写不同也认得出来（client-core 按 UUID 解析），照样马上退出登录")
+    @Test("revokeDevice：当前这台的 id 大小写不同也认得出来（client-core 按 UUID 比），照样马上退出登录")
     func revokeCurrentDeviceCaseInsensitive() async throws {
         let server = try StubHTTPServer(routes: [
             // client-core 把解析出的 UUID 按小写拼进路径。
-            "DELETE /v1/devices/\(F.deviceID)": R(204, json: ""),
-            "POST /v1/auth/logout": R(401, json: #"{"code":"session_revoked","message":"revoked"}"#),
+            "DELETE /v1/devices/\(F.deviceID)": R(204, json: "")
         ])
         defer { server.stop() }
         let store = InMemorySessionStore(F.session)
         let client = try Self.client(server, sessions: store)
 
         try await client.revokeDevice(DeviceID(F.deviceID.uppercased()))
-        #expect(H.routes(server) == ["DELETE /v1/devices/\(F.deviceID)", "POST /v1/auth/logout"])
+        #expect(H.routes(server) == ["DELETE /v1/devices/\(F.deviceID)"])
         #expect(!client.signedIn())
         #expect(store.load() == nil)
     }

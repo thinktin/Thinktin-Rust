@@ -687,7 +687,33 @@ struct ModelComputationTests {
             Trigger(id: "t2", schedule: .once(soon), isEnabled: false, nextFireAt: soon),
             Trigger(id: "t3", schedule: .cron(expression: "0 9 * * *", timeZone: "Asia/Shanghai")),
         ]
+        // 改了触发器要重新算（构造时算过一次）；规则和服务端的 PlanView 一样。
+        p.refreshSchedule()
         #expect(p.nextFireAt == later)
+        #expect(p.invalidTriggers == 0)
+        p.isPaused = true
+        p.refreshSchedule()
+        #expect(p.nextFireAt == nil, "暂停了没有下一次")
+        p.isPaused = false
+        p.awaitingConfirmation = true
+        p.refreshSchedule()
+        #expect(p.nextFireAt == nil, "等确认的没有下一次")
+        p.awaitingConfirmation = false
+        p.triggers.append(
+            Trigger(id: "t4", schedule: .cron(expression: "0 9 * * *", timeZone: "Mars/Olympus"), isEnabled: false,
+                disabledReason: .invalidRule))
+        p.refreshSchedule()
+        #expect(p.invalidTriggers == 1)
+        #expect(p.hasInvalidTriggers)
+        #expect(p.triggers[3].isInvalid && !p.triggers[0].isInvalid)
+        #expect(p.nextFireAt == later)
+        // 构造时就算好。
+        let built = Plan(
+            id: "p2", instanceID: "i", title: "t", goal: "g", createdAt: Fixture.now, triggers: p.triggers)
+        #expect(built.nextFireAt == later)
+        #expect(built.invalidTriggers == 1)
+        #expect(TriggerDisabledReason(rawValue: "invalid_rule") == .invalidRule)
+        #expect(TriggerDisabledReason(rawValue: "tz_gone") == .unknown("tz_gone"))
         #expect(!p.isPipeline)
         p.steps = [PlanStep(key: "build", instanceID: "i", prompt: "编译")]
         #expect(p.isPipeline)

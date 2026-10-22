@@ -151,8 +151,27 @@ struct ConversionTests {
         #expect(!plan.triggers[1].isEnabled)
         #expect(plan.triggers[1].nextFireAt == nil)
         #expect(plan.triggers[2].schedule == .once(F.date(onceMs)))
-        // 只算启用的触发器：cron 的下次时间比一次性的早。
-        #expect(plan.nextFireAt?.unixMilliseconds == min(F.finishedMs, onceMs))
+        // 等确认的计划没有下一次（服务端的规则，11.8）；服务端没给 next_fire_at、失效的触发器数时是默认值。
+        #expect(plan.nextFireAt == nil)
+        #expect(plan.invalidTriggers == 0)
+        #expect(plan.triggers.allSatisfy { $0.disabledReason == nil })
+
+        // 确认之后：老的服务端没给 next_fire_at 时从触发器算，只算启用的（cron 的下次时间比一次性的早）。
+        var confirmed = core
+        confirmed.awaitingConfirmation = false
+        #expect(ThinktinKit.Plan(core: confirmed).nextFireAt?.unixMilliseconds == min(F.finishedMs, onceMs))
+        // 服务端给了的以服务端为准（11.8 的计划列表）；触发器停用的原因认得出来、不认识的原样保留。
+        confirmed.nextFireAtMs = F.startedMs
+        confirmed.invalidTriggers = 2
+        confirmed.triggers[1].disabledReason = "invalid_rule"
+        confirmed.triggers[2].disabledReason = "tz_gone"
+        let listed = ThinktinKit.Plan(core: confirmed)
+        #expect(listed.nextFireAt?.unixMilliseconds == F.startedMs)
+        #expect(listed.invalidTriggers == 2)
+        #expect(listed.hasInvalidTriggers)
+        #expect(listed.triggers[1].disabledReason == .invalidRule)
+        #expect(listed.triggers[1].isInvalid)
+        #expect(listed.triggers[2].disabledReason == .unknown("tz_gone"))
 
         #expect(plan.isPipeline)
         #expect(plan.steps.map(\.key) == ["fetch", "write"])
@@ -338,7 +357,8 @@ struct ConversionTests {
     func streamStatus() {
         let pairs: [(ThinktinCore.StreamStatus, ThinktinKit.StreamStatus)] = [
             (.connecting, .connecting), (.live, .live), (.reconnecting(retryInMs: 1500), .reconnecting(retryIn: 1.5)),
-            (.signedOut, .signedOut), (.notFound, .notFound), (.accountFrozen, .accountFrozen), (.stopped, .stopped),
+            (.signedOut, .signedOut), (.notFound, .notFound), (.accountFrozen, .accountFrozen),
+            (.upgradeRequired, .upgradeRequired), (.stopped, .stopped),
         ]
         for (core, kit) in pairs {
             #expect(ThinktinKit.StreamStatus(core: core) == kit)
