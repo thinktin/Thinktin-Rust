@@ -17,9 +17,15 @@ apps/android/scripts/sync-core.sh --from target/android # 已经有 build-androi
 apps/android/scripts/sync-core.sh                      # 交叉编译（NDK + cargo-ndk）后同步（跳过 build-android.sh 的 AAR）
 ```
 
-没有 .so 也能编译和跑 JVM 单元测试，只是装到手机上调用 Rust 会因找不到库而崩溃（演示模式不调 Rust）。
+没有 .so 也能编译和跑 JVM 单元测试；装到手机上时真实服务创建失败，App 显示“无法加载核心库”页（演示模式不调 Rust）。
 
-`consumer-rules.pro` 让依赖本模块的 App 在 release 混淆时保留 `cn.thinktin.core.**` 与 `com.sun.jna.**`（JNA 靠反射）。
+`src/main/kotlin/cn/thinktin/core/TlsInit.kt` 是**手写**的（不是生成文件，脚本不碰它）：HTTPS 的系统证书校验要在建
+`ThinktinClient` 之前经 JNI 初始化（`TlsInit.initialize(applicationContext)`，App 在 `Application.onCreate` 里调，
+见 apps/android/README.md 的“TLS 初始化”）。它依赖的 Java 支持包 `org.rustls:rustls-platform-verifier` 的版本由
+`build.gradle.kts` 从仓库根的 `Cargo.lock`（`rustls-platform-verifier-android`）读出，`RustlsVerifierVersionTest` 检查两边一致。
+
+`consumer-rules.pro` 让依赖本模块的 App 在 release 混淆时保留 `cn.thinktin.core.**` 与 `com.sun.jna.**`（JNA 靠反射），
+以及 `org.rustls.platformverifier.**`（只经 JNI 从 Rust 调用）。
 
 `src/test` 里的 `CoreSmokeTest` 用 JNA 加载本机的 `libclient_core.so`：Gradle 把环境变量
 `THINKTIN_CORE_LIB_DIR`（如 `$REPO/target/debug`，`cargo build -p client-core` 的输出）作为

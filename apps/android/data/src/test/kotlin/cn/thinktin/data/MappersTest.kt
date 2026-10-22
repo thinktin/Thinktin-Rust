@@ -6,7 +6,9 @@ import cn.thinktin.data.core.toLongClamped
 import cn.thinktin.data.core.toUIntNonNegative
 import cn.thinktin.data.core.toULongNonNegative
 import cn.thinktin.data.core.toModel
+import cn.thinktin.data.model.CatchUp
 import cn.thinktin.data.model.EmptyJsonObject
+import cn.thinktin.data.model.PlanPolicy
 import cn.thinktin.data.model.InboxKind
 import cn.thinktin.data.model.InstanceState
 import cn.thinktin.data.model.OptionKind
@@ -131,7 +133,10 @@ class MappersTest {
         )
         val plan = core.toModel()
         assertEquals(2, plan.revision)
-        assertEquals(EmptyJsonObject, plan.policy)
+        // policy_json 只是保留给老版本的原文；结构化的 policy 用 core 的默认值。
+        assertEquals("oops", plan.policyJson)
+        assertEquals(PlanPolicy(), plan.policy)
+        assertEquals(CatchUp.Once, plan.catchUp)
         assertEquals(Schedule.Cron("0 9 * * *", "Asia/Shanghai"), plan.triggers[0].schedule)
         assertEquals(Schedule.Once(now + 5), plan.triggers[1].schedule)
         // 停用的触发器不算。

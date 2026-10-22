@@ -159,3 +159,99 @@ enum class TeamRole(override val wire: String) : WireEnum {
         fun fromWire(value: String): TeamRole = parseWire(value, Unknown)
     }
 }
+
+/** 计划错过的触发怎么补（4.4）。 */
+enum class CatchUp(override val wire: String) : WireEnum {
+    /** 错过的只补一次（默认）。 */
+    Once("once"),
+    All("all"),
+    Skip("skip"),
+    Unknown(""),
+    ;
+
+    companion object {
+        fun fromWire(value: String): CatchUp = parseWire(value, Unknown)
+    }
+}
+
+/** 审批（和等电脑、等 key）超时以后怎么办（4.7）。 */
+enum class ApprovalTimeoutAction(override val wire: String) : WireEnum {
+    /** 拒绝这一步，让 agent 继续。 */
+    Skip("skip"),
+
+    /** 暂停整个计划（默认）。 */
+    PausePlan("pause_plan"),
+
+    /** 这次运行失败。 */
+    Fail("fail"),
+    Unknown(""),
+    ;
+
+    companion object {
+        fun fromWire(value: String): ApprovalTimeoutAction = parseWire(value, Unknown)
+    }
+}
+
+/** 举报原因（5.5）。 */
+enum class ReportReason(override val wire: String) : WireEnum {
+    Harmful("harmful"),
+    Illegal("illegal"),
+    Sexual("sexual"),
+    Hateful("hateful"),
+    Privacy("privacy"),
+    Misinformation("misinformation"),
+    Infringement("infringement"),
+    Other("other"),
+    Unknown(""),
+    ;
+
+    companion object {
+        fun fromWire(value: String): ReportReason = parseWire(value, Unknown)
+    }
+}
+
+/** 举报的处理状态。 */
+enum class ReportState(override val wire: String) : WireEnum {
+    Open("open"),
+    Closed("closed"),
+    Unknown(""),
+    ;
+
+    companion object {
+        fun fromWire(value: String): ReportState = parseWire(value, Unknown)
+    }
+}
+
+/** 给自己手机号发验证码的用途（sendSelfCode）。 */
+enum class SelfCodePurpose(override val wire: String) : WireEnum {
+    /** 注销账号（16.4）。 */
+    DeleteAccount("delete_account"),
+    ChangePhone("change_phone"),
+}
+
+/** 手机和电脑之间的消息种类（14.1）。 */
+enum class DeviceMessageKind(override val wire: String) : WireEnum {
+    /** 手机 → 电脑：扫码后的配对应答。 */
+    PairResponse("pair_response"),
+
+    /** 电脑 → 手机：确认配对。 */
+    PairConfirm("pair_confirm"),
+
+    /** 电脑 → 手机：高危操作，请手机签名批准。 */
+    ApprovalRequest("approval_request"),
+
+    /** 手机 → 电脑：签了名的批准或拒绝。 */
+    ApprovalDecision("approval_decision"),
+
+    /** 手机 → 电脑：普通操作的能力令牌。 */
+    Capability("capability"),
+
+    /** 手机 → 电脑：吊销能力令牌。 */
+    Revocation("revocation"),
+    Unknown(""),
+    ;
+
+    companion object {
+        fun fromWire(value: String): DeviceMessageKind = parseWire(value, Unknown)
+    }
+}

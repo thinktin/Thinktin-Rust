@@ -13,9 +13,9 @@ apps/android/
 ├─ gradle/robolectric.gradle.kts  Robolectric 用的 android-all 经 Gradle 解析、离线使用
 ├─ scripts/sync-core.sh           同步 client-core 的绑定、.so、许可证资源
 ├─ scripts/patch-bindings.py      给生成的绑定打 Kotlin 2 兼容补丁（sync-core.sh 调用）
-├─ core/    :core   client-core 的 UniFFI Kotlin 绑定（cn.thinktin.core）+ jniLibs，见 core/README.md
+├─ core/    :core   client-core 的 UniFFI Kotlin 绑定（cn.thinktin.core）+ 手写的 TlsInit + jniLibs，见 core/README.md
 ├─ data/    :data   App 模型、ThinktinService 接口、CoreThinktinService（真实）、MockThinktinService（演示）、
-│                   SecureSessionStore、ClientFactory
+│                   SecureSessionStore、ClientFactory、TlsState
 ├─ design/  :design ThinktinTheme（色板、字体、形状）与通用组件（顶栏、主按钮、状态点、输入框、消息、横幅……）
 └─ app/     :app    Application、MainActivity、抽屉 + 导航、各页面与 ViewModel
 ```
@@ -56,7 +56,37 @@ apps/android/scripts/sync-core.sh --check                # 只检查提交的绑
 
 `client_core.kt` 提交进 git；`core/src/main/jniLibs/`（约 20 MB）和 `core/src/main/assets/thinktin-licenses/`
 是生成物，不提交。UniFFI 0.32 给错误里名叫 `message` 的字段生成的代码过不了 Kotlin 2 的编译，
-`scripts/patch-bindings.py` 会自动修，见该文件开头的说明。
+`scripts/patch-bindings.py` 会自动修，见该文件开头的说明。`core/src/main/kotlin/cn/thinktin/core/TlsInit.kt`
+是手写的（见下一节），脚本不碰它。
+
+client-core 的 App 接口（11.7、11.8 的 `cachedEventsBefore`、5.5 的举报）已全部接进 `ThinktinService`：
+`CoreThinktinService` 里没有再抛 `ServiceError.Unsupported` 的方法（这个类型留给以后新加、还没接的接口）。
+只给 iOS 的实时活动（`registerLiveActivity`、`endLiveActivity`、`setLiveActivityStartToken`）不接。
+Rust 接口再变时：`sync-core.sh --bindings-only` → 在 `:data` 的模型、`Mappers.kt`（两个方向）、
+`ThinktinService`、`CoreThinktinService`、`MockThinktinService` 里跟上 → 补映射和服务的单测。
+
+## TLS 初始化（Android 上的 HTTPS）
+
+client-core 的接口请求和事件流用 `rustls-platform-verifier` 做系统证书校验（和系统设置里信任的证书一致），
+它在 Android 上要经 JNI 调系统的 `X509TrustManager`，所以**建 `ThinktinClient` 之前必须先初始化**
+（`crates/client-core/src/tls.rs`）：
+
+- `:core` 的 `TlsInit`（手写）：`System.loadLibrary("client_core")` + `external fun initialize(context)`，
+  对应 Rust 导出的 `Java_cn_thinktin_core_TlsInit_initialize`。`loadLibrary` 不能省：JNA 的 dlopen 不会注册 JNI 函数。
+- `ThinktinApp.onCreate` 先 `initializeTls()`（`:data` 的 `SystemTls`，失败不崩溃，原因记在 `TlsState.failure`），
+  再建 `AppContainer`；`ClientFactory.createService(context, baseUrl, tls)` 在 base_url 是 https 而 `tls.ready` 为假时
+  抛 `ServiceError.TlsUnavailable`（界面显示“无法加载核心库”页和原因），不让 Rust 那边报一个看不懂的内部错误。
+  http 的本地联调地址不需要初始化。
+- Java 支持包 `org.rustls:rustls-platform-verifier`（AAR）由 `:core` 依赖：版本**必须**和 `Cargo.lock` 里
+  `rustls-platform-verifier-android` 的一致，`core/build.gradle.kts` 用 `ValueSource` 从 `../../Cargo.lock` 读
+  （`strictly`，Rust 升级后 Gradle 自动跟上），`libs.versions.toml` 里的坐标不写版本。仓库在 `settings.gradle.kts`：
+  `https://raw.githubusercontent.com/rustls/rustls-platform-verifier/maven-archive/android-release-support/maven/`
+  （只放 `org.rustls` 组；README 里 `github.com/…/raw/…` 的写法多一次重定向，云端会话的代理下是 403）。
+  `RustlsVerifierVersionTest` 用独立的解析器读 Cargo.lock，和 Gradle 声明的、实际解析到的版本比对，并确认类在类路径上。
+- R8：`:core` 的 `consumer-rules.pro` 保留 `org.rustls.platformverifier.**`（只经 JNI 调用，R8 看不见）。
+- 测试：本机 `target/debug/libclient_core.so` 是 Linux 版，没有这个 JNI 函数。JVM / Robolectric 测试**不调**
+  `TlsInit.initialize`：`DemoTestApp` 覆盖 `initializeTls()` 返回 `FixedTlsState`，`:data` 的 `TlsStateTest`
+  用假的初始化函数测 `SystemTls` 和 `ClientFactory.checkTls`。真正的 JNI 初始化只能在真机 / 模拟器上验证。
 
 ## 构建与测试
 
@@ -82,14 +112,15 @@ export THINKTIN_CORE_LIB_DIR=$PWD/../../target/debug
 ## 演示模式
 
 debug 包默认开着演示模式（`BuildConfig.DEMO_DEFAULT`）：用 `MockThinktinService` 的确定性假数据（3 个目录 agent、
-2 个实例、覆盖全部事件类型的运行、5 种收件箱条目、计划、key、保险箱……），不联网、不加载 Rust 库。
+2 个实例、覆盖全部事件类型的运行、5 种收件箱条目、计划、key、保险箱、团队与模板、登录设备、设备消息、举报……），
+不联网、不调 Rust（只有启动时 `TlsInit` 会加载一次 `libclient_core.so` 做证书校验初始化，没有 .so 时只记下失败）。
 设置页里可以关掉，关掉后走 `CoreThinktinService` → client-core → 服务端，未登录时显示登录流；登录页和“核心库不可用”页
 也有“使用演示模式”。
 
 release 包没有演示模式（第 7 节）：上面三个入口都不显示，`AppSettingsRepository(demoAllowed = false)` 也忽略已经存下的
 `demo_mode`（比如从 debug 包覆盖安装），release 用户不会困在假数据里。
 
-真实服务（`ClientFactory.createService`：加载 .so、打开 SQLite、读 Keystore）在 `AppContainer` 里第一次用到时才在
+真实服务（`ClientFactory.createService`：检查 TLS 初始化、加载 .so、打开 SQLite、读 Keystore）在 `AppContainer` 里第一次用到时才在
 IO 线程上创建，创建中显示加载，任何异常（`UnsatisfiedLinkError`、契约版本不一致的 `ExceptionInInitializerError`、
 Keystore 失效……）都显示“无法加载核心库”页（原因 + 重试），不崩溃。`SecureSessionStore` 遇到 Keystore 失效或偏好文件损坏时
 删掉重建，还不行就退回内存存储，读不出的令牌按未登录处理。
@@ -139,4 +170,8 @@ Keystore 失效……）都显示“无法加载核心库”页（原因 + 重�
 
 - `tools/client-core/build-android.sh` 没有“跳过 AAR”的开关，`sync-core.sh` 用 PATH 垫片绕过（见上）。以后给它加一个开关
   （比如 `THINKTIN_SKIP_AAR=1`）并去掉 `jvmToolchain(17)` 的硬要求后，删掉垫片。
-- CI 的 APK 不含 .so（见“CI”）。
+- CI 的 APK 不含 .so（见“CI”）。启动时 `TlsInit` 加载不到库，`TlsState.failure` 记下 `UnsatisfiedLinkError`，演示模式照常可用。
+- `TlsInit.initialize` 的 JNI 调用只能在真机 / 模拟器上验证（云端会话没有模拟器，JVM 上的 .so 是 Linux 版）：
+  第一次真机联调 https 时确认没有 `TlsUnavailable`、事件流能连上。
+- 计划列表（`plans`）里的 `triggers`、`steps` 为空（服务端列表接口不带），`Plan.nextFireAtMs` 在列表里是 null；
+  要显示下次触发时间得取详情（`getPlan`），13.6 做计划页时处理。演示数据的列表里带着触发器，和真实服务不完全一样。

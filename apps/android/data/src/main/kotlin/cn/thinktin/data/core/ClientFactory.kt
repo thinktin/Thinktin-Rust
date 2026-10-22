@@ -5,6 +5,7 @@ import android.os.Build
 import cn.thinktin.core.ClientConfig
 import cn.thinktin.core.SessionStore
 import cn.thinktin.core.ThinktinClient
+import cn.thinktin.data.service.ServiceError
 import cn.thinktin.data.service.ThinktinService
 import cn.thinktin.data.session.SecureSessionStore
 import java.io.File
@@ -35,9 +36,19 @@ object ClientFactory {
         sessions: SessionStore = SecureSessionStore(context),
     ): ThinktinClient = ThinktinClient(config(context.filesDir, baseUrl, deviceName), sessions)
 
+    /** https 的地址要先初始化系统证书校验（[TlsState]）；没有时抛 [ServiceError.TlsUnavailable]。 */
+    internal fun checkTls(baseUrl: String, tls: TlsState) {
+        if (baseUrl.trimStart().startsWith("https://", ignoreCase = true) && !tls.ready) {
+            throw ServiceError.TlsUnavailable(tls.failure)
+        }
+    }
+
     /**
-     * 真实服务（client-core）。可能抛异常（安装包里没有 .so、绑定与库的契约版本不一致、缓存打不开……），
-     * 调用方要在后台线程调用并兜住（见 :app 的 AppContainer）。
+     * 真实服务（client-core）。可能抛异常（https 但 [tls] 没初始化、安装包里没有 .so、绑定与库的契约版本不一致、
+     * 缓存打不开……），调用方要在后台线程调用并兜住（见 :app 的 AppContainer）。
      */
-    fun createService(context: Context, baseUrl: String): ThinktinService = CoreThinktinService(create(context, baseUrl))
+    fun createService(context: Context, baseUrl: String, tls: TlsState): ThinktinService {
+        checkTls(baseUrl, tls)
+        return CoreThinktinService(create(context, baseUrl))
+    }
 }

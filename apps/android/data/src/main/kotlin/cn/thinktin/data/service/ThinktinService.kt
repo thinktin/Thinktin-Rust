@@ -3,10 +3,13 @@ package cn.thinktin.data.service
 import cn.thinktin.data.model.AgentInfo
 import cn.thinktin.data.model.Approval
 import cn.thinktin.data.model.Artifact
+import cn.thinktin.data.model.ContentReport
 import cn.thinktin.data.model.Credential
 import cn.thinktin.data.model.CredentialUpdate
 import cn.thinktin.data.model.DetectedSecret
-import cn.thinktin.data.model.Device
+import cn.thinktin.data.model.DeviceInfo
+import cn.thinktin.data.model.DeviceMessage
+import cn.thinktin.data.model.DeviceMessageKind
 import cn.thinktin.data.model.EventStreamItem
 import cn.thinktin.data.model.ImChannel
 import cn.thinktin.data.model.ImChannelUpdate
@@ -21,15 +24,18 @@ import cn.thinktin.data.model.NewImChannel
 import cn.thinktin.data.model.NewPlan
 import cn.thinktin.data.model.NewVaultItem
 import cn.thinktin.data.model.Plan
-import cn.thinktin.data.model.PlanUpdate
+import cn.thinktin.data.model.PlanChange
+import cn.thinktin.data.model.ReportReason
 import cn.thinktin.data.model.Run
 import cn.thinktin.data.model.SavedSecret
 import cn.thinktin.data.model.Schedule
+import cn.thinktin.data.model.SelfCodePurpose
 import cn.thinktin.data.model.SignOutOthersResult
 import cn.thinktin.data.model.StopAllResult
 import cn.thinktin.data.model.Team
 import cn.thinktin.data.model.TeamMember
 import cn.thinktin.data.model.TeamTemplate
+import cn.thinktin.data.model.TemplateMember
 import cn.thinktin.data.model.Trigger
 import cn.thinktin.data.model.UsageGroup
 import cn.thinktin.data.model.UsageSummary
@@ -60,7 +66,7 @@ enum class AuthState {
  * 所有方法失败时抛 [ServiceError]（不会抛别的异常；取消照常抛 CancellationException）。
  * `cached*` 只读本地缓存、不联网，缓存不可用时返回空；它们是挂起函数，真实实现在 IO 线程上读 SQLite，
  * 调用方不必自己切线程。
- * 标注“client-core 还没有”的方法：服务端已有接口，真实实现暂时抛 [ServiceError.Unsupported]。
+ * client-core 只给 iOS 用的实时活动（registerLiveActivity 等）不在这里。
  */
 interface ThinktinService {
     /** 是演示数据（不联网）。 */
@@ -82,30 +88,56 @@ interface ThinktinService {
     /** zh-CN / en */
     suspend fun setLocale(locale: String): User
 
-    /** [channel]：jpush / fcm。 */
+    /** 改昵称；传 null 清掉。 */
+    suspend fun updateProfile(displayName: String?): User
+
+    /**
+     * [channel] 是服务端的推送通道：apns、fcm、hms、honor、mi、oppo、vivo、unipush（极光、个推这类统一推送走 unipush）。
+     * 不认识的通道 client-core 报参数错误。
+     */
     suspend fun setPushToken(channel: String, token: String)
 
     suspend fun stopAll(): StopAllResult
 
     suspend fun signOutOtherDevices(stopAgents: Boolean): SignOutOthersResult
 
-    /** 设备列表（client-core 还没有）。 */
-    suspend fun devices(): List<Device>
+    /** 登录着的设备，最近活跃的在前。 */
+    suspend fun devices(): List<DeviceInfo>
 
-    /** 远程下线一台设备（client-core 还没有）。 */
-    suspend fun signOutDevice(deviceId: String)
+    /**
+     * 吊销另一台设备：它的登录会话立即失效。当前这台请用 [logout]：吊销当前这台在服务端等于退出，
+     * 但本地要到下一次请求收到 SignedOut 才会发现。
+     */
+    suspend fun revokeDevice(deviceId: String)
 
-    /** 给本人手机号发注销验证码（client-core 还没有）。 */
-    suspend fun sendAccountCode()
+    /** 给本人手机号发验证码（注销账号、换手机号前确认）。 */
+    suspend fun sendSelfCode(purpose: SelfCodePurpose)
 
-    /** 注销账号（client-core 还没有）。 */
+    /**
+     * 注销账号（16.4）：用 `sendSelfCode(DeleteAccount)` 发来的验证码确认。内容全部删除、不能恢复；
+     * 成功后本地登录状态和缓存一起清掉，[authState] 变成未登录。
+     */
     suspend fun deleteAccount(code: String)
+
+    // ---- 手机和电脑之间的消息（14.1，13.9） ----
+
+    /** 发给自己的另一台设备；[bodyJson] 是消息内容的 JSON。电脑不在线时排队，上线后投递。 */
+    suspend fun sendDeviceMessage(toDeviceId: String, kind: DeviceMessageKind, bodyJson: String): DeviceMessage
+
+    /** 别的设备发给这台、还没收下的消息，按发出的顺序。 */
+    suspend fun deviceMessages(): List<DeviceMessage>
+
+    /** 收下了这些消息（验过签、处理完），之后不再返回。返回确认的条数。 */
+    suspend fun ackDeviceMessages(ids: List<String>): Long
 
     // ---- 目录与实例（13.3） ----
 
     suspend fun agents(): List<AgentInfo>
 
     suspend fun instances(): List<Instance>
+
+    /** 一个实例（深链进来、刷新详情时用）。 */
+    suspend fun instance(instanceId: String): Instance
 
     suspend fun cachedInstances(): List<Instance>
 
@@ -132,7 +164,7 @@ interface ThinktinService {
     /** 最近的运行，新的在前。 */
     suspend fun runs(instanceId: String, limit: Int = DEFAULT_PAGE): List<Run>
 
-    /** 更早的运行（分页，client-core 还没有）。 */
+    /** 更早的一页运行：[beforeRunId] 之前的（列表往下翻），新的在前。 */
     suspend fun olderRuns(instanceId: String, beforeRunId: String, limit: Int = DEFAULT_PAGE): List<Run>
 
     suspend fun cachedRuns(instanceId: String, limit: Int = DEFAULT_PAGE): List<Run>
@@ -148,10 +180,9 @@ interface ThinktinService {
 
     suspend fun artifactContent(artifactId: String): ByteArray
 
-    /** 实例的全部产出物（client-core 还没有）。 */
-    suspend fun instanceArtifacts(instanceId: String): List<Artifact>
+    /** 实例的产出物，新的在前（最多 [limit] 个，服务端上限 500）。 */
+    suspend fun instanceArtifacts(instanceId: String, limit: Int = DEFAULT_PAGE): List<Artifact>
 
-    /** 删除产出物（client-core 还没有）。 */
     suspend fun deleteArtifact(artifactId: String)
 
     // ---- 事件（13.5） ----
@@ -168,6 +199,17 @@ interface ThinktinService {
     /** 本地缓存的事件（seq 大于 [afterSeq]，按 seq 升序）。 */
     suspend fun cachedEvents(instanceId: String, afterSeq: Long = 0, limit: Int = DEFAULT_EVENTS): List<InstanceEvent>
 
+    /**
+     * 缓存里往前翻：seq 小于 [beforeSeq] 的最后 [limit] 条，按 seq 升序（旧的在前）。
+     * 打开对话页时传 null 拿最后一屏先显示，往上翻时传已经显示的最小 seq。
+     * 缓存里每个实例最多留 2000 条，更早的、事件流重置（Reset）丢掉的翻不到。
+     */
+    suspend fun cachedEventsBefore(
+        instanceId: String,
+        beforeSeq: Long? = null,
+        limit: Int = DEFAULT_SCREEN,
+    ): List<InstanceEvent>
+
     // ---- 审批（13.5） ----
 
     suspend fun approvals(): List<Approval>
@@ -182,8 +224,8 @@ interface ThinktinService {
 
     suspend fun createPlan(plan: NewPlan): Plan
 
-    /** 修改计划（client-core 还没有）。 */
-    suspend fun updatePlan(planId: String, update: PlanUpdate): Plan
+    /** 改计划：标题、目标、策略、补跑方式、流水线步骤，给了才改。返回改完的计划（带触发器和步骤）。 */
+    suspend fun updatePlan(planId: String, change: PlanChange): Plan
 
     suspend fun setPlanPaused(planId: String, paused: Boolean): Plan
 
@@ -191,29 +233,38 @@ interface ThinktinService {
 
     suspend fun deletePlan(planId: String)
 
-    /** 给计划加触发器（client-core 还没有）。 */
+    /** 给计划加一个触发器（一个计划最多 10 个）。 */
     suspend fun addTrigger(planId: String, schedule: Schedule): Trigger
 
-    /** 删除触发器（client-core 还没有）。 */
     suspend fun deleteTrigger(triggerId: String)
 
-    // ---- 团队与流水线（13.7，client-core 还没有） ----
+    // ---- 团队与流水线（13.7） ----
 
     suspend fun teams(): List<Team>
 
+    suspend fun team(teamId: String): Team
+
+    /** 把几个实例编成团队：一个负责人（[cn.thinktin.data.model.TeamRole.Lead]），其余是成员。 */
     suspend fun createTeam(name: String, members: List<TeamMember>): Team
 
+    /** 改名、换成员（整体替换）；给了才改。 */
     suspend fun updateTeam(teamId: String, name: String? = null, members: List<TeamMember>? = null): Team
 
+    /** 删团队（实例不删）。 */
     suspend fun deleteTeam(teamId: String)
 
     suspend fun teamTemplates(): List<TeamTemplate>
 
-    suspend fun saveTeamAsTemplate(teamId: String, name: String): TeamTemplate
+    /** 新建团队模板，直接给成员。 */
+    suspend fun createTeamTemplate(name: String, members: List<TemplateMember>): TeamTemplate
+
+    /** 从现有团队生成模板（每个成员记下它的 agent、接入方式、名字、角色）。 */
+    suspend fun createTeamTemplateFromTeam(name: String, teamId: String): TeamTemplate
 
     suspend fun deleteTeamTemplate(templateId: String)
 
-    suspend fun adoptTeamTemplate(templateId: String): Team
+    /** 一键领养一整个团队：每个成员领养一个新实例，再编成团队。[name] 为 null 用模板的名字。 */
+    suspend fun adoptTeamTemplate(templateId: String, name: String? = null): Team
 
     // ---- 收件箱（13.8） ----
 
@@ -228,10 +279,13 @@ interface ThinktinService {
     /** 标为已读：[ids] 里的，或 [upToId] 及更早的全部。返回剩余未读数。 */
     suspend fun markInboxRead(ids: List<String>, upToId: String? = null): Long
 
-    /** 标为未读（client-core 还没有）。 */
-    suspend fun markInboxUnread(itemId: String)
+    /** 一条通知（从推送点进来时用）。 */
+    suspend fun inboxItem(itemId: String): InboxItem
 
-    /** 删除一条（client-core 还没有）。 */
+    /** 标回未读（要联网）。返回未读数。 */
+    suspend fun markInboxUnread(itemId: String): Long
+
+    /** 删除一条（缓存跟着删）。 */
     suspend fun deleteInboxItem(itemId: String)
 
     // ---- IM 渠道（13.15） ----
@@ -260,10 +314,30 @@ interface ThinktinService {
 
     suspend fun addCredential(credential: NewCredential): Credential
 
-    /** 修改标签、限额、启用状态（client-core 还没有）。 */
+    /** 改备注、停用或重新启用一把 key；给了才改。 */
     suspend fun updateCredential(credentialId: String, update: CredentialUpdate): Credential
 
+    /** 换 key（同一个厂商、同一条记录：模型路由不用改）。等 key 的运行会接着跑。 */
+    suspend fun replaceCredentialSecret(credentialId: String, apiKey: String): Credential
+
     suspend fun deleteCredential(credentialId: String)
+
+    // ---- 内容举报（5.5） ----
+
+    /**
+     * 举报 agent 的输出（长按回复或产出物）：[eventSeq] 是那条事件，[artifactId] 是产出物，都不给就是整个运行。
+     * [note] 最多 1000 字。同一条内容再举报一次返回那一条待处理的举报。处理结果发到收件箱和推送。
+     */
+    suspend fun reportContent(
+        runId: String,
+        reason: ReportReason,
+        eventSeq: Long? = null,
+        artifactId: String? = null,
+        note: String? = null,
+    ): ContentReport
+
+    /** 自己的举报和处理结果，新的在前。 */
+    suspend fun reports(): List<ContentReport>
 
     // ---- 密码保险箱（13.5、13.14） ----
 
@@ -292,6 +366,9 @@ interface ThinktinService {
     companion object {
         const val DEFAULT_PAGE: Int = 50
         const val DEFAULT_EVENTS: Int = 500
+
+        /** 对话页先显示的“最后一屏”事件数。 */
+        const val DEFAULT_SCREEN: Int = 100
     }
 }
 

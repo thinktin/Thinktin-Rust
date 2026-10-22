@@ -229,9 +229,13 @@ data class Plan(
     val createdBy: String,
     val awaitingConfirmation: Boolean,
     val revision: Int,
+    /** 策略的原始 JSON（client-core 为老版本 App 保留）；界面用 [policy]。 */
     val policyJson: String,
-    val policy: JsonObject,
+    val policy: PlanPolicy,
+    /** 错过的触发怎么补。 */
+    val catchUp: CatchUp,
     val createdAtMs: Long,
+    /** [triggers]、[steps] 在列表接口（plans）里为空，详情（getPlan）里有。 */
     val triggers: List<Trigger>,
     val steps: List<PlanStep>,
 ) {
@@ -240,19 +244,51 @@ data class Plan(
         get() = triggers.filter { it.enabled }.mapNotNull { it.nextFireAtMs }.minOrNull()
 }
 
+/**
+ * 计划的策略（4.4、4.7、7.11）。默认值和服务端的默认策略一样：`PlanPolicy()` 就是默认策略。
+ * 时长都是秒；null 表示不限。
+ */
+data class PlanPolicy(
+    /** 预授权的工具种类（ACP 的 tool kind：read、edit、search、execute……），用到时不用审批。 */
+    val preauthorizedTools: List<String> = emptyList(),
+    val approvalTimeoutSecs: Long = DEFAULT_APPROVAL_TIMEOUT_SECS,
+    /** 审批（和等电脑、等 key）超时以后怎么办。 */
+    val onApprovalTimeout: ApprovalTimeoutAction = ApprovalTimeoutAction.PausePlan,
+    /** 每次运行的上限：token 数、时长、步数。 */
+    val maxTokens: Long? = null,
+    val maxDurationSecs: Long = DEFAULT_MAX_DURATION_SECS,
+    val maxSteps: Int? = null,
+    /** 整个计划每天最多用多少 token。 */
+    val dailyTokenLimit: Long? = null,
+    /** 等电脑上线、等补上 key 最多等多久。 */
+    val waitTimeoutSecs: Long = DEFAULT_WAIT_TIMEOUT_SECS,
+) {
+    companion object {
+        const val DEFAULT_APPROVAL_TIMEOUT_SECS: Long = 86_400
+        const val DEFAULT_MAX_DURATION_SECS: Long = 21_600
+        const val DEFAULT_WAIT_TIMEOUT_SECS: Long = 86_400
+    }
+}
+
 data class NewPlan(
     val instanceId: String,
     val title: String,
     val goal: String,
     val triggers: List<Schedule>,
+    /** 给了就是流水线：按依赖顺序在各个实例上执行。 */
     val steps: List<PlanStep> = emptyList(),
+    /** null 用默认策略。 */
+    val policy: PlanPolicy? = null,
+    /** null 用默认（[CatchUp.Once]）。 */
+    val catchUp: CatchUp? = null,
 )
 
-/** 修改计划（服务端 PATCH /v1/plans/{id}；client-core 还没有）。null 表示不改。 */
-data class PlanUpdate(
+/** 修改计划：给了才改（null 表示不改）。[steps] 整体替换，给空列表就变回单个 agent 的计划。 */
+data class PlanChange(
     val title: String? = null,
     val goal: String? = null,
-    val policyJson: String? = null,
+    val policy: PlanPolicy? = null,
+    val catchUp: CatchUp? = null,
     val steps: List<PlanStep>? = null,
 )
 
@@ -292,10 +328,9 @@ data class NewCredential(
     val dailyTokenLimit: Long? = null,
 )
 
-/** 修改 key（服务端 PATCH /v1/credentials/{id}；client-core 还没有）。null 表示不改。 */
+/** 修改 key：改备注、停用或重新启用；null 表示不改。换 key 本身用 replaceCredentialSecret。 */
 data class CredentialUpdate(
     val label: String? = null,
-    val dailyTokenLimit: Long? = null,
     val disabled: Boolean? = null,
 )
 
@@ -389,20 +424,46 @@ data class VaultRequest(
     val resolvedAtMs: Long?,
 )
 
-/** 登录过的设备（服务端 GET /v1/devices；client-core 还没有）。 */
-data class Device(
+/** 登录着的一台设备（设置里的“登录设备”），最近活跃的在前。已吊销的不在列表里。 */
+data class DeviceInfo(
     val id: String,
     val platform: DevicePlatform,
     val name: String,
+    /** 推送通道（apns、fcm、unipush……）；没登记推送时为 null。 */
+    val pushChannel: String?,
+    /** 是不是正在用的这台。 */
     val current: Boolean,
+    /** 电脑连着设备中继（14.1）；手机总是 false。 */
+    val online: Boolean,
     val createdAtMs: Long,
     val lastSeenAtMs: Long,
-    val revokedAtMs: Long?,
 )
 
-data class TeamMember(val instanceId: String, val role: TeamRole, val position: Int)
+/**
+ * 手机和电脑之间经平台转发的一条消息（14.1，13.9 用）：配对应答、审批请求和决定、能力令牌、吊销。
+ * 内容和签名的格式见 docs/pairing.md；[body] 是 [bodyJson] 解析后的对象（失败为空对象）。
+ */
+data class DeviceMessage(
+    val id: String,
+    val fromDeviceId: String,
+    val toDeviceId: String,
+    val kind: DeviceMessageKind,
+    val bodyJson: String,
+    val body: JsonObject,
+    val createdAtMs: Long,
+    val expiresAtMs: Long,
+)
 
-/** 团队（服务端 /v1/teams；client-core 还没有）。 */
+/** 团队里的一个实例。 */
+data class TeamMember(
+    val instanceId: String,
+    /** 负责人（一个团队一个）或成员。 */
+    val role: TeamRole,
+    /** 显示顺序。 */
+    val position: Int,
+)
+
+/** 团队（8.1）：几个实例编成一组，负责人分工。 */
 data class Team(
     val id: String,
     val name: String,
@@ -410,9 +471,16 @@ data class Team(
     val createdAtMs: Long,
 )
 
-data class TemplateMember(val agentId: String, val harness: String?, val name: String, val role: TeamRole)
+/** 团队模板里的一个成员：领养时用这个 agent 新领养一个实例。 */
+data class TemplateMember(
+    val agentId: String,
+    /** 接入方式（同一个 agent 的几种）；null 用默认的。 */
+    val harness: String?,
+    val name: String,
+    val role: TeamRole,
+)
 
-/** 团队模板（服务端 /v1/team-templates；client-core 还没有）。 */
+/** 团队模板：一键领养一整个团队。 */
 data class TeamTemplate(
     val id: String,
     val name: String,
@@ -450,4 +518,20 @@ data class ImChannelUpdate(
     val label: String? = null,
     val events: List<String>? = null,
     val enabled: Boolean? = null,
+)
+
+/** 一条内容举报（5.5）和它的处理结果（处理完也会发到收件箱和推送）。 */
+data class ContentReport(
+    val id: String,
+    val runId: String,
+    val instanceId: String,
+    /** 举报的那条事件；null 表示举报产出物或整个运行。 */
+    val eventSeq: Long?,
+    val artifactId: String?,
+    val reason: ReportReason,
+    val note: String?,
+    val state: ReportState,
+    val resolution: String?,
+    val createdAtMs: Long,
+    val handledAtMs: Long?,
 )

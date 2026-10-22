@@ -137,5 +137,6 @@
     <string name="error_server">服务出错了（%1$s）</string>
     <string name="error_contains_secrets">消息里像是有 %1$d 处密码或 key，没有发出。请先存进保险箱。</string>
     <string name="error_unsupported">这个功能暂不可用</string>
+    <string name="error_tls_unavailable">无法建立安全连接（系统证书校验没有初始化）</string>
     <string name="error_other">出了点问题，请重试</string>
 </resources>

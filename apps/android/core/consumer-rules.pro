@@ -4,3 +4,5 @@
 -keepclassmembers class * extends com.sun.jna.** { public *; }
 -dontwarn java.awt.**
 -dontwarn com.sun.jna.**
+# 系统证书校验的 Java 部分（org.rustls:rustls-platform-verifier）只经 JNI 从 Rust 调用，R8 看不到：必须保留。
+-keep, includedescriptorclasses class org.rustls.platformverifier.** { *; }

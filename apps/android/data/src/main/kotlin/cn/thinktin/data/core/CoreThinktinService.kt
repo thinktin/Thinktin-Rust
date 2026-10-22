@@ -7,10 +7,13 @@ import cn.thinktin.core.ThinktinClientInterface
 import cn.thinktin.data.model.AgentInfo
 import cn.thinktin.data.model.Approval
 import cn.thinktin.data.model.Artifact
+import cn.thinktin.data.model.ContentReport
 import cn.thinktin.data.model.Credential
 import cn.thinktin.data.model.CredentialUpdate
 import cn.thinktin.data.model.DetectedSecret
-import cn.thinktin.data.model.Device
+import cn.thinktin.data.model.DeviceInfo
+import cn.thinktin.data.model.DeviceMessage
+import cn.thinktin.data.model.DeviceMessageKind
 import cn.thinktin.data.model.EventStreamItem
 import cn.thinktin.data.model.ImChannel
 import cn.thinktin.data.model.ImChannelUpdate
@@ -25,16 +28,19 @@ import cn.thinktin.data.model.NewImChannel
 import cn.thinktin.data.model.NewPlan
 import cn.thinktin.data.model.NewVaultItem
 import cn.thinktin.data.model.Plan
-import cn.thinktin.data.model.PlanUpdate
+import cn.thinktin.data.model.PlanChange
+import cn.thinktin.data.model.ReportReason
 import cn.thinktin.data.model.Run
 import cn.thinktin.data.model.SavedSecret
 import cn.thinktin.data.model.Schedule
+import cn.thinktin.data.model.SelfCodePurpose
 import cn.thinktin.data.model.SignOutOthersResult
 import cn.thinktin.data.model.StopAllResult
 import cn.thinktin.data.model.StreamState
 import cn.thinktin.data.model.Team
 import cn.thinktin.data.model.TeamMember
 import cn.thinktin.data.model.TeamTemplate
+import cn.thinktin.data.model.TemplateMember
 import cn.thinktin.data.model.Trigger
 import cn.thinktin.data.model.UsageGroup
 import cn.thinktin.data.model.UsageSummary
@@ -71,7 +77,7 @@ import cn.thinktin.core.detectSecrets as coreDetectSecrets
  * - ClientException → [ServiceError]；SignedOut / AccountFrozen 同时更新 [authState]。
  * - 其他异常（Rust panic 变成的 InternalException、JNA 的错误……）也包成 [ServiceError.Other]，不冲出 ViewModel。
  * - `cached*` 是同步的 JNA + SQLite 调用，切到 [io] 上执行，不占主线程。
- * - client-core 还没有的操作抛 [ServiceError.Unsupported]。
+ * - client-core 只给 iOS 的实时活动（registerLiveActivity 等）不接。
  */
 internal class CoreThinktinService(
     private val client: ThinktinClientInterface,
@@ -126,8 +132,6 @@ internal class CoreThinktinService(
             fallback
         }
 
-    private fun unsupported(operation: String): Nothing = throw ServiceError.Unsupported(operation)
-
     // ---- 登录与账号 ----
 
     override suspend fun sendCode(phone: String) = call { client.sendCode(phone) }
@@ -147,6 +151,8 @@ internal class CoreThinktinService(
 
     override suspend fun setLocale(locale: String): User = call { client.setLocale(locale).toModel() }
 
+    override suspend fun updateProfile(displayName: String?): User = call { client.updateProfile(displayName).toModel() }
+
     override suspend fun setPushToken(channel: String, token: String) = call { client.setPushToken(channel, token) }
 
     override suspend fun stopAll(): StopAllResult = call { client.stopAll().toModel() }
@@ -154,19 +160,35 @@ internal class CoreThinktinService(
     override suspend fun signOutOtherDevices(stopAgents: Boolean): SignOutOthersResult =
         call { client.signOutOtherDevices(stopAgents).toModel() }
 
-    override suspend fun devices(): List<Device> = unsupported("devices")
+    override suspend fun devices(): List<DeviceInfo> = call { client.devices().map { it.toModel() } }
 
-    override suspend fun signOutDevice(deviceId: String) = unsupported("signOutDevice")
+    override suspend fun revokeDevice(deviceId: String) = call { client.revokeDevice(deviceId) }
 
-    override suspend fun sendAccountCode() = unsupported("sendAccountCode")
+    override suspend fun sendSelfCode(purpose: SelfCodePurpose) = call { client.sendSelfCode(purpose.wire) }
 
-    override suspend fun deleteAccount(code: String) = unsupported("deleteAccount")
+    override suspend fun deleteAccount(code: String) {
+        call { client.deleteAccount(code) }
+        // client-core 成功后已经清掉本地的登录状态和缓存。
+        auth.value = AuthState.SignedOut
+    }
+
+    // ---- 手机和电脑之间的消息 ----
+
+    override suspend fun sendDeviceMessage(toDeviceId: String, kind: DeviceMessageKind, bodyJson: String): DeviceMessage =
+        call { client.sendDeviceMessage(toDeviceId, kind.wireOrThrow("device message kind"), bodyJson).toModel() }
+
+    override suspend fun deviceMessages(): List<DeviceMessage> = call { client.deviceMessages().map { it.toModel() } }
+
+    override suspend fun ackDeviceMessages(ids: List<String>): Long =
+        call { client.ackDeviceMessages(ids).toLongClamped() }
 
     // ---- 目录与实例 ----
 
     override suspend fun agents(): List<AgentInfo> = call { client.agents().map { it.toModel() } }
 
     override suspend fun instances(): List<Instance> = call { client.instances().map { it.toModel() } }
+
+    override suspend fun instance(instanceId: String): Instance = call { client.instance(instanceId).toModel() }
 
     override suspend fun cachedInstances(): List<Instance> = cached(emptyList()) { client.cachedInstances().map { it.toModel() } }
 
@@ -199,7 +221,7 @@ internal class CoreThinktinService(
         call { client.runs(instanceId, limit.toUIntNonNegative()).map { it.toModel() } }
 
     override suspend fun olderRuns(instanceId: String, beforeRunId: String, limit: Int): List<Run> =
-        unsupported("olderRuns")
+        call { client.olderRuns(instanceId, beforeRunId, limit.toUIntNonNegative()).map { it.toModel() } }
 
     override suspend fun cachedRuns(instanceId: String, limit: Int): List<Run> =
         cached(emptyList()) { client.cachedRuns(instanceId, limit.toUIntNonNegative()).map { it.toModel() } }
@@ -216,9 +238,10 @@ internal class CoreThinktinService(
 
     override suspend fun artifactContent(artifactId: String): ByteArray = call { client.artifactContent(artifactId) }
 
-    override suspend fun instanceArtifacts(instanceId: String): List<Artifact> = unsupported("instanceArtifacts")
+    override suspend fun instanceArtifacts(instanceId: String, limit: Int): List<Artifact> =
+        call { client.instanceArtifacts(instanceId, limit.toUIntNonNegative()).map { it.toModel() } }
 
-    override suspend fun deleteArtifact(artifactId: String) = unsupported("deleteArtifact")
+    override suspend fun deleteArtifact(artifactId: String) = call { client.deleteArtifact(artifactId) }
 
     // ---- 事件 ----
 
@@ -261,6 +284,12 @@ internal class CoreThinktinService(
             client.cachedEvents(instanceId, afterSeq.toULongNonNegative(), limit.toUIntNonNegative()).map { it.toModel() }
         }
 
+    override suspend fun cachedEventsBefore(instanceId: String, beforeSeq: Long?, limit: Int): List<InstanceEvent> =
+        cached(emptyList()) {
+            client.cachedEventsBefore(instanceId, beforeSeq?.toULongNonNegative(), limit.toUIntNonNegative())
+                .map { it.toModel() }
+        }
+
     // ---- 审批 ----
 
     override suspend fun approvals(): List<Approval> = call { client.approvals().map { it.toModel() } }
@@ -276,7 +305,8 @@ internal class CoreThinktinService(
 
     override suspend fun createPlan(plan: NewPlan): Plan = call { client.createPlan(plan.toCore()).toModel() }
 
-    override suspend fun updatePlan(planId: String, update: PlanUpdate): Plan = unsupported("updatePlan")
+    override suspend fun updatePlan(planId: String, change: PlanChange): Plan =
+        call { client.updatePlan(planId, change.toCore()).toModel() }
 
     override suspend fun setPlanPaused(planId: String, paused: Boolean): Plan =
         call { client.setPlanPaused(planId, paused).toModel() }
@@ -286,29 +316,37 @@ internal class CoreThinktinService(
 
     override suspend fun deletePlan(planId: String) = call { client.deletePlan(planId) }
 
-    override suspend fun addTrigger(planId: String, schedule: Schedule): Trigger = unsupported("addTrigger")
+    override suspend fun addTrigger(planId: String, schedule: Schedule): Trigger =
+        call { client.addTrigger(planId, schedule.toCore()).toModel() }
 
-    override suspend fun deleteTrigger(triggerId: String) = unsupported("deleteTrigger")
+    override suspend fun deleteTrigger(triggerId: String) = call { client.deleteTrigger(triggerId) }
 
     // ---- 团队 ----
 
-    override suspend fun teams(): List<Team> = unsupported("teams")
+    override suspend fun teams(): List<Team> = call { client.teams().map { it.toModel() } }
 
-    override suspend fun createTeam(name: String, members: List<TeamMember>): Team = unsupported("createTeam")
+    override suspend fun team(teamId: String): Team = call { client.team(teamId).toModel() }
+
+    override suspend fun createTeam(name: String, members: List<TeamMember>): Team =
+        call { client.createTeam(name, members.map { it.toCore() }).toModel() }
 
     override suspend fun updateTeam(teamId: String, name: String?, members: List<TeamMember>?): Team =
-        unsupported("updateTeam")
+        call { client.updateTeam(teamId, name, members?.map { it.toCore() }).toModel() }
 
-    override suspend fun deleteTeam(teamId: String) = unsupported("deleteTeam")
+    override suspend fun deleteTeam(teamId: String) = call { client.deleteTeam(teamId) }
 
-    override suspend fun teamTemplates(): List<TeamTemplate> = unsupported("teamTemplates")
+    override suspend fun teamTemplates(): List<TeamTemplate> = call { client.teamTemplates().map { it.toModel() } }
 
-    override suspend fun saveTeamAsTemplate(teamId: String, name: String): TeamTemplate =
-        unsupported("saveTeamAsTemplate")
+    override suspend fun createTeamTemplate(name: String, members: List<TemplateMember>): TeamTemplate =
+        call { client.createTeamTemplate(name, members.map { it.toCore() }).toModel() }
 
-    override suspend fun deleteTeamTemplate(templateId: String) = unsupported("deleteTeamTemplate")
+    override suspend fun createTeamTemplateFromTeam(name: String, teamId: String): TeamTemplate =
+        call { client.createTeamTemplateFromTeam(name, teamId).toModel() }
 
-    override suspend fun adoptTeamTemplate(templateId: String): Team = unsupported("adoptTeamTemplate")
+    override suspend fun deleteTeamTemplate(templateId: String) = call { client.deleteTeamTemplate(templateId) }
+
+    override suspend fun adoptTeamTemplate(templateId: String, name: String?): Team =
+        call { client.adoptTeamTemplate(templateId, name).toModel() }
 
     // ---- 收件箱 ----
 
@@ -325,9 +363,11 @@ internal class CoreThinktinService(
     override suspend fun markInboxRead(ids: List<String>, upToId: String?): Long =
         call { client.markInboxRead(ids, upToId) }
 
-    override suspend fun markInboxUnread(itemId: String) = unsupported("markInboxUnread")
+    override suspend fun inboxItem(itemId: String): InboxItem = call { client.inboxItem(itemId).toModel() }
 
-    override suspend fun deleteInboxItem(itemId: String) = unsupported("deleteInboxItem")
+    override suspend fun markInboxUnread(itemId: String): Long = call { client.markInboxUnread(itemId) }
+
+    override suspend fun deleteInboxItem(itemId: String) = call { client.deleteInboxItem(itemId) }
 
     // ---- IM 渠道 ----
 
@@ -359,9 +399,27 @@ internal class CoreThinktinService(
         call { client.addCredential(credential.toCore()).toModel() }
 
     override suspend fun updateCredential(credentialId: String, update: CredentialUpdate): Credential =
-        unsupported("updateCredential")
+        call { client.updateCredential(credentialId, update.label, update.disabled).toModel() }
+
+    override suspend fun replaceCredentialSecret(credentialId: String, apiKey: String): Credential =
+        call { client.replaceCredentialSecret(credentialId, apiKey).toModel() }
 
     override suspend fun deleteCredential(credentialId: String) = call { client.deleteCredential(credentialId) }
+
+    // ---- 内容举报 ----
+
+    override suspend fun reportContent(
+        runId: String,
+        reason: ReportReason,
+        eventSeq: Long?,
+        artifactId: String?,
+        note: String?,
+    ): ContentReport = call {
+        client.reportContent(runId, eventSeq?.toULongNonNegative(), artifactId, reason.wireOrThrow("report reason"), note)
+            .toModel()
+    }
+
+    override suspend fun reports(): List<ContentReport> = call { client.reports().map { it.toModel() } }
 
     // ---- 保险箱 ----
 

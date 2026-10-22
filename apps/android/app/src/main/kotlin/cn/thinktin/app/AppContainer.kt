@@ -7,6 +7,7 @@ import androidx.datastore.preferences.preferencesDataStoreFile
 import cn.thinktin.app.settings.AppSettings
 import cn.thinktin.app.settings.AppSettingsRepository
 import cn.thinktin.data.core.ClientFactory
+import cn.thinktin.data.core.TlsState
 import cn.thinktin.data.mock.MockThinktinService
 import cn.thinktin.data.service.ThinktinService
 import kotlinx.coroutines.CoroutineDispatcher
@@ -100,6 +101,8 @@ class AppContainer(
 
         fun create(
             context: Context,
+            /** HTTPS 系统证书校验的状态（Application.onCreate 里已经初始化）；https 地址没初始化时真实服务创建失败。 */
+            tls: TlsState,
             forceDemo: Boolean = false,
             clock: Clock = Clock.systemDefaultZone(),
             /** DataStore 的文件名（测试里每个 Application 用自己的，同一进程里不能有两个 DataStore 开同一个文件）。 */
@@ -117,7 +120,7 @@ class AppContainer(
                     demoAllowed = BuildConfig.DEBUG,
                 ),
                 clock = clock,
-                createCore = { ClientFactory.createService(app, BuildConfig.BASE_URL) },
+                createCore = { ClientFactory.createService(app, BuildConfig.BASE_URL, tls) },
                 createMock = { MockThinktinService(clock = { clock.millis() }) },
                 forceDemo = forceDemo,
             )

@@ -42,6 +42,9 @@ kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-t
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serializationJson" }
 
 jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
+# 系统证书校验的 Java 部分（client-core 的 rustls-platform-verifier 经 JNI 调用）。不写版本：版本必须和
+# Cargo.lock 里 rustls-platform-verifier-android 的一致，由 core/build.gradle.kts 从 Cargo.lock 读出来。
+rustls-platform-verifier = { module = "org.rustls:rustls-platform-verifier" }
 
 # 测试统一用 JUnit 4：Robolectric 和 Compose 的测试规则（createComposeRule）都基于它（docs/android-design.md 第 1 节）。
 junit = { module = "junit:junit", version.ref = "junit" }

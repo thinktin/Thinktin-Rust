@@ -31,8 +31,18 @@ sealed class ServiceError(message: String, cause: Throwable? = null) : Exception
     /** 消息里有像密码的内容，没发出去：先存进保险箱。 */
     class ContainsSecrets(val count: Int, cause: Throwable? = null) : ServiceError("contains $count secrets", cause)
 
-    /** 服务端已有、client-core 还没接的操作（真实服务里调用会抛这个）。 */
+    /** 服务端已有、client-core 还没接的操作。11.7 之后没有方法再抛它，留给以后新加的接口。 */
     class Unsupported(val operation: String) : ServiceError("unsupported: $operation")
+
+    /**
+     * HTTPS 的系统证书校验没有初始化（`TlsInit.initialize` 没调或失败，[cause] 是失败原因），
+     * 建不了连 https 地址的客户端。由 [cn.thinktin.data.core.ClientFactory] 在建客户端之前抛出。
+     */
+    class TlsUnavailable(cause: Throwable? = null) : ServiceError(
+        "TLS not initialized: call TlsInit.initialize(applicationContext) in Application.onCreate before " +
+            "creating ThinktinClient for an https base_url" + (cause?.let { " (init failed: $it)" } ?: ""),
+        cause,
+    )
 
     /** 其余（解析、缓存、参数、内部错误）。[kind] 是来源类型，只用于日志。 */
     class Other(val kind: String, val detail: String, cause: Throwable? = null) : ServiceError("$kind: $detail", cause)

@@ -20,6 +20,7 @@ class UiLogicTest {
         assertEquals(UiText(R.string.error_upgrade_required), ErrorText.of(ServiceError.UpgradeRequired()))
         assertEquals(UiText(R.string.error_contains_secrets, listOf(2)), ErrorText.of(ServiceError.ContainsSecrets(2)))
         assertEquals(UiText(R.string.error_unsupported), ErrorText.of(ServiceError.Unsupported("teams")))
+        assertEquals(UiText(R.string.error_tls_unavailable), ErrorText.of(ServiceError.TlsUnavailable()))
         assertEquals(UiText(R.string.error_other), ErrorText.of(ServiceError.Other("decode", "x")))
         assertEquals(
             UiText(R.string.error_rate_limited, listOf(30)),

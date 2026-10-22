@@ -5,8 +5,13 @@ import cn.thinktin.data.model.Approval
 import cn.thinktin.data.model.ApprovalOption
 import cn.thinktin.data.model.ApprovalState
 import cn.thinktin.data.model.Artifact
+import cn.thinktin.data.model.ApprovalTimeoutAction
+import cn.thinktin.data.model.CatchUp
+import cn.thinktin.data.model.ContentReport
 import cn.thinktin.data.model.Credential
-import cn.thinktin.data.model.Device
+import cn.thinktin.data.model.DeviceInfo
+import cn.thinktin.data.model.DeviceMessage
+import cn.thinktin.data.model.DeviceMessageKind
 import cn.thinktin.data.model.DevicePlatform
 import cn.thinktin.data.model.EventKinds
 import cn.thinktin.data.model.InboxItem
@@ -18,7 +23,10 @@ import cn.thinktin.data.model.InstanceState
 import cn.thinktin.data.model.ModelRoute
 import cn.thinktin.data.model.OptionKind
 import cn.thinktin.data.model.Plan
+import cn.thinktin.data.model.PlanPolicy
 import cn.thinktin.data.model.PlanStep
+import cn.thinktin.data.model.ReportReason
+import cn.thinktin.data.model.ReportState
 import cn.thinktin.data.model.RouteFallback
 import cn.thinktin.data.model.Run
 import cn.thinktin.data.model.RunKind
@@ -404,10 +412,7 @@ internal class MockData(private val baseMs: Long) {
         Plan(
             id = PLAN_DAILY, instanceId = INSTANCE_CODER, title = "每日依赖检查", goal = "每天早上检查依赖有没有安全更新，有就开 PR。",
             paused = false, createdBy = "user", awaitingConfirmation = false, revision = 3,
-            policyJson = """{"budget_tokens":50000,"timeout_secs":1800,"on_approval_timeout":"reject"}""",
-            policy = buildJsonObject {
-                put("budget_tokens", 50_000); put("timeout_secs", 1_800); put("on_approval_timeout", "reject")
-            },
+            policyJson = DAILY_POLICY.toServerJson(), policy = DAILY_POLICY, catchUp = CatchUp.Skip,
             createdAtMs = ago(60L * 24 * 14),
             triggers = listOf(
                 Trigger(
@@ -420,8 +425,8 @@ internal class MockData(private val baseMs: Long) {
         Plan(
             id = PLAN_WEEKLY, instanceId = INSTANCE_RESEARCH, title = "每周一整理行业新闻",
             goal = "每周一上午汇总上周的行业新闻，写成一页摘要。", paused = false, createdBy = "agent",
-            awaitingConfirmation = true, revision = 1, policyJson = "{}", policy = JsonObject(emptyMap()),
-            createdAtMs = ago(60L * 25),
+            awaitingConfirmation = true, revision = 1, policyJson = PlanPolicy().toServerJson(), policy = PlanPolicy(),
+            catchUp = CatchUp.Once, createdAtMs = ago(60L * 25),
             triggers = listOf(
                 Trigger(
                     id = "trg-weekly",
@@ -511,9 +516,31 @@ internal class MockData(private val baseMs: Long) {
     )
 
     val devices = listOf(
-        Device("dev-this", DevicePlatform.Android, "Pixel 8", true, ago(60L * 24 * 30), baseMs, null),
-        Device("dev-iphone", DevicePlatform.Ios, "iPhone 15", false, ago(60L * 24 * 60), ago(60L * 5), null),
-        Device("dev-mac", DevicePlatform.Macos, "MacBook Air", false, ago(60L * 24 * 90), ago(60L * 24 * 8), ago(60L * 24 * 8)),
+        DeviceInfo(DEVICE_THIS, DevicePlatform.Android, "Pixel 8", "fcm", true, false, ago(60L * 24 * 30), baseMs),
+        DeviceInfo("dev-iphone", DevicePlatform.Ios, "iPhone 15", "apns", false, false, ago(60L * 24 * 60), ago(60L * 5)),
+        DeviceInfo(DEVICE_MAC, DevicePlatform.Macos, "MacBook Air", null, false, true, ago(60L * 24 * 90), ago(2)),
+    )
+
+    /** 电脑发来、等手机签名批准的高危操作（13.9）。 */
+    val deviceMessages = listOf(
+        DeviceMessage(
+            id = "dmsg-approval", fromDeviceId = DEVICE_MAC, toDeviceId = DEVICE_THIS,
+            kind = DeviceMessageKind.ApprovalRequest,
+            bodyJson = """{"request_id":"cap-1","action":"shell","summary":"rm -rf ~/Downloads/old"}""",
+            body = buildJsonObject {
+                put("request_id", "cap-1"); put("action", "shell"); put("summary", "rm -rf ~/Downloads/old")
+            },
+            createdAtMs = ago(3), expiresAtMs = ago(3) + 10 * MINUTE,
+        ),
+    )
+
+    /** 一条已处理的举报。 */
+    val reports = listOf(
+        ContentReport(
+            id = "report-1", runId = RUN_DONE, instanceId = INSTANCE_CODER, eventSeq = null, artifactId = null,
+            reason = ReportReason.Misinformation, note = "翻译里有一处事实错误", state = ReportState.Closed,
+            resolution = "已核实并反馈给 agent 作者，谢谢你的举报。", createdAtMs = ago(150), handledAtMs = ago(100),
+        ),
     )
 
     val teams = listOf(
@@ -558,6 +585,9 @@ internal class MockData(private val baseMs: Long) {
         const val AGENT_RESEARCH = "agent-research"
         const val AGENT_WRITER = "agent-writer"
 
+        const val DEVICE_THIS = "dev-this"
+        const val DEVICE_MAC = "dev-mac"
+
         const val INSTANCE_CODER = "inst-coder"
         const val INSTANCE_RESEARCH = "inst-research"
 
@@ -578,5 +608,27 @@ internal class MockData(private val baseMs: Long) {
         const val PLAN_WEEKLY = "plan-weekly"
 
         const val VAULT_REQUEST_PENDING = "vreq-pending"
+
+        /** 每日依赖检查的策略：单次 5 万 token、30 分钟，审批超时跳过这一步。 */
+        val DAILY_POLICY = PlanPolicy(
+            preauthorizedTools = listOf("read", "search"),
+            maxTokens = 50_000,
+            maxDurationSecs = 1_800,
+            onApprovalTimeout = ApprovalTimeoutAction.Skip,
+        )
     }
 }
+
+/** 策略 → 服务端的 JSON 形状（Plan.policyJson；和服务端 PlanPolicy 的序列化一致）。 */
+internal fun PlanPolicy.toServerJson(): String = buildJsonObject {
+    putJsonArray("preauthorized_tools") { preauthorizedTools.forEach { add(it) } }
+    put("approval_timeout_secs", approvalTimeoutSecs)
+    put("on_approval_timeout", onApprovalTimeout.wire)
+    putJsonObject("budget") {
+        put("max_tokens", maxTokens)
+        put("max_duration_secs", maxDurationSecs)
+        put("max_steps", maxSteps)
+    }
+    put("daily_token_limit", dailyTokenLimit)
+    put("wait_timeout_secs", waitTimeoutSecs)
+}.toString()

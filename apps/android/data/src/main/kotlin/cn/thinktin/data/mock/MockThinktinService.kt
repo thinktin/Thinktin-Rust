@@ -4,10 +4,13 @@ import cn.thinktin.data.model.AgentInfo
 import cn.thinktin.data.model.Approval
 import cn.thinktin.data.model.ApprovalState
 import cn.thinktin.data.model.Artifact
+import cn.thinktin.data.model.ContentReport
 import cn.thinktin.data.model.Credential
 import cn.thinktin.data.model.CredentialUpdate
 import cn.thinktin.data.model.DetectedSecret
-import cn.thinktin.data.model.Device
+import cn.thinktin.data.model.DeviceInfo
+import cn.thinktin.data.model.DeviceMessage
+import cn.thinktin.data.model.DeviceMessageKind
 import cn.thinktin.data.model.EventKinds
 import cn.thinktin.data.model.EventStreamItem
 import cn.thinktin.data.model.ImChannel
@@ -23,20 +26,26 @@ import cn.thinktin.data.model.NewCredential
 import cn.thinktin.data.model.NewImChannel
 import cn.thinktin.data.model.NewPlan
 import cn.thinktin.data.model.NewVaultItem
+import cn.thinktin.data.model.CatchUp
 import cn.thinktin.data.model.Plan
-import cn.thinktin.data.model.PlanUpdate
+import cn.thinktin.data.model.PlanChange
+import cn.thinktin.data.model.PlanPolicy
+import cn.thinktin.data.model.ReportReason
+import cn.thinktin.data.model.ReportState
 import cn.thinktin.data.model.Run
 import cn.thinktin.data.model.RunKind
 import cn.thinktin.data.model.RunSource
 import cn.thinktin.data.model.RunState
 import cn.thinktin.data.model.SavedSecret
 import cn.thinktin.data.model.Schedule
+import cn.thinktin.data.model.SelfCodePurpose
 import cn.thinktin.data.model.SignOutOthersResult
 import cn.thinktin.data.model.StopAllResult
 import cn.thinktin.data.model.StreamState
 import cn.thinktin.data.model.Team
 import cn.thinktin.data.model.TeamMember
 import cn.thinktin.data.model.TeamTemplate
+import cn.thinktin.data.model.TemplateMember
 import cn.thinktin.data.model.Trigger
 import cn.thinktin.data.model.UsageBucket
 import cn.thinktin.data.model.UsageGroup
@@ -99,6 +108,8 @@ class MockThinktinService(
     private val vaultUsernames = data.vaultUsernames.toMutableMap()
     private val vaultRequestList = data.vaultRequests.toMutableList()
     private val deviceList = data.devices.toMutableList()
+    private val deviceMessageList = data.deviceMessages.toMutableList()
+    private val reportList = data.reports.toMutableList()
     private val teamList = data.teams.toMutableList()
     private val templateList = data.teamTemplates.toMutableList()
     private val imChannelList = data.imChannels.toMutableList()
@@ -155,6 +166,11 @@ class MockThinktinService(
         return synchronized(lock) { user.copy(locale = locale).also { user = it } }
     }
 
+    override suspend fun updateProfile(displayName: String?): User {
+        lag()
+        return synchronized(lock) { user.copy(displayName = displayName?.takeIf { it.isNotBlank() }).also { user = it } }
+    }
+
     override suspend fun setPushToken(channel: String, token: String) = lag()
 
     override suspend fun stopAll(): StopAllResult {
@@ -178,34 +194,70 @@ class MockThinktinService(
     override suspend fun signOutOtherDevices(stopAgents: Boolean): SignOutOthersResult {
         val stopped = if (stopAgents) stopAll() else null
         lag()
+        // 和服务端一样：吊销的设备不再出现在列表里。
         val count = synchronized(lock) {
-            val others = deviceList.count { !it.current && it.revokedAtMs == null }
-            deviceList.replaceAll { if (!it.current && it.revokedAtMs == null) it.copy(revokedAtMs = clock()) else it }
+            val others = deviceList.count { !it.current }
+            deviceList.removeAll { !it.current }
             others.toLong()
         }
         return SignOutOthersResult(devicesSignedOut = count, stopped = stopped)
     }
 
-    override suspend fun devices(): List<Device> {
-        lag()
-        return synchronized(lock) { deviceList.toList() }
+    override suspend fun devices(): List<DeviceInfo> {
+        lag(); requireSignedIn()
+        return synchronized(lock) { deviceList.sortedByDescending { it.lastSeenAtMs } }
     }
 
-    override suspend fun signOutDevice(deviceId: String) {
+    override suspend fun revokeDevice(deviceId: String) {
         lag()
-        synchronized(lock) {
-            val i = deviceList.indexOfFirst { it.id == deviceId }
-            if (i < 0) notFound("device", deviceId)
-            deviceList[i] = deviceList[i].copy(revokedAtMs = clock())
+        val current = synchronized(lock) {
+            val device = deviceList.firstOrNull { it.id == deviceId } ?: notFound("device", deviceId)
+            deviceList.remove(device)
+            device.current
         }
+        // 吊销当前这台等于退出登录（真实服务要到下一次请求才发现，这里直接退出）。
+        if (current) auth.value = AuthState.SignedOut
     }
 
-    override suspend fun sendAccountCode() = lag()
+    override suspend fun sendSelfCode(purpose: SelfCodePurpose) {
+        lag(); requireSignedIn()
+    }
 
     override suspend fun deleteAccount(code: String) {
         lag()
         if (code.length != 6) throw ServiceError.Api(400, "invalid_code", "code must have 6 digits", null)
         auth.value = AuthState.SignedOut
+    }
+
+    // ---- 手机和电脑之间的消息 ----
+
+    override suspend fun sendDeviceMessage(toDeviceId: String, kind: DeviceMessageKind, bodyJson: String): DeviceMessage {
+        lag()
+        if (kind == DeviceMessageKind.Unknown) throw ServiceError.Api(422, "invalid", "unknown device message kind", null)
+        val body = parseJsonObject(bodyJson)
+        val from = synchronized(lock) {
+            if (deviceList.none { it.id == toDeviceId }) notFound("device", toDeviceId)
+            deviceList.first { it.current }.id
+        }
+        val now = clock()
+        return DeviceMessage(
+            id = newId("dmsg"), fromDeviceId = from, toDeviceId = toDeviceId, kind = kind, bodyJson = bodyJson,
+            body = body, createdAtMs = now, expiresAtMs = now + DEVICE_MESSAGE_TTL_MS,
+        )
+    }
+
+    override suspend fun deviceMessages(): List<DeviceMessage> {
+        lag()
+        return synchronized(lock) { deviceMessageList.sortedBy { it.createdAtMs } }
+    }
+
+    override suspend fun ackDeviceMessages(ids: List<String>): Long {
+        lag()
+        return synchronized(lock) {
+            val before = deviceMessageList.size
+            deviceMessageList.removeAll { it.id in ids }
+            (before - deviceMessageList.size).toLong()
+        }
     }
 
     // ---- 目录与实例 ----
@@ -218,6 +270,12 @@ class MockThinktinService(
     override suspend fun instances(): List<Instance> {
         lag(); requireSignedIn()
         return cachedInstances()
+    }
+
+    override suspend fun instance(instanceId: String): Instance {
+        lag(); requireSignedIn()
+        return synchronized(lock) { instanceList.firstOrNull { it.id == instanceId && it.state != InstanceState.Deleted } }
+            ?: notFound("instance", instanceId)
     }
 
     override suspend fun cachedInstances(): List<Instance> =
@@ -359,14 +417,17 @@ class MockThinktinService(
         return text.toByteArray(Charsets.UTF_8)
     }
 
-    override suspend fun instanceArtifacts(instanceId: String): List<Artifact> {
+    override suspend fun instanceArtifacts(instanceId: String, limit: Int): List<Artifact> {
         lag()
-        return synchronized(lock) { artifactList.filter { it.instanceId == instanceId } }
+        return synchronized(lock) {
+            artifactList.filter { it.instanceId == instanceId }.sortedByDescending { it.createdAtMs }
+                .take(limit.coerceIn(0, MAX_ARTIFACTS))
+        }
     }
 
     override suspend fun deleteArtifact(artifactId: String) {
         lag()
-        synchronized(lock) { artifactList.removeAll { it.id == artifactId } }
+        synchronized(lock) { if (!artifactList.removeAll { it.id == artifactId }) notFound("artifact", artifactId) }
     }
 
     // ---- 事件 ----
@@ -440,6 +501,12 @@ class MockThinktinService(
             eventList.filter { it.instanceId == instanceId && it.seq > afterSeq }.sortedBy { it.seq }.take(limit)
         }
 
+    override suspend fun cachedEventsBefore(instanceId: String, beforeSeq: Long?, limit: Int): List<InstanceEvent> =
+        synchronized(lock) {
+            eventList.filter { it.instanceId == instanceId && (beforeSeq == null || it.seq < beforeSeq) }
+                .sortedBy { it.seq }.takeLast(limit.coerceAtLeast(0))
+        }
+
     // ---- 审批 ----
 
     override suspend fun approvals(): List<Approval> {
@@ -491,10 +558,11 @@ class MockThinktinService(
     override suspend fun createPlan(plan: NewPlan): Plan {
         lag()
         val now = clock()
+        val policy = plan.policy ?: PlanPolicy()
         val created = Plan(
             id = newId("plan"), instanceId = plan.instanceId, title = plan.title, goal = plan.goal, paused = false,
-            createdBy = "user", awaitingConfirmation = false, revision = 1, policyJson = "{}",
-            policy = JsonObject(emptyMap()), createdAtMs = now,
+            createdBy = "user", awaitingConfirmation = false, revision = 1, policyJson = policy.toServerJson(),
+            policy = policy, catchUp = plan.catchUp ?: CatchUp.Once, createdAtMs = now,
             triggers = plan.triggers.map { Trigger(newId("trg"), it, true, null, null) }, steps = plan.steps,
         )
         synchronized(lock) { planList.add(created) }
@@ -507,15 +575,18 @@ class MockThinktinService(
         change(planList[i]).also { planList[i] = it }
     }
 
-    override suspend fun updatePlan(planId: String, update: PlanUpdate): Plan {
+    override suspend fun updatePlan(planId: String, change: PlanChange): Plan {
         lag()
+        if (change.catchUp == CatchUp.Unknown) throw ServiceError.Api(422, "invalid", "unknown catch_up", null)
         return updatePlanLocked(planId) { plan ->
+            val policy = change.policy ?: plan.policy
             plan.copy(
-                title = update.title ?: plan.title,
-                goal = update.goal ?: plan.goal,
-                policyJson = update.policyJson ?: plan.policyJson,
-                policy = update.policyJson?.let { parseJsonObject(it) } ?: plan.policy,
-                steps = update.steps ?: plan.steps,
+                title = change.title ?: plan.title,
+                goal = change.goal ?: plan.goal,
+                policy = policy,
+                policyJson = policy.toServerJson(),
+                catchUp = change.catchUp ?: plan.catchUp,
+                steps = change.steps ?: plan.steps,
                 revision = plan.revision + 1,
             )
         }
@@ -544,13 +615,19 @@ class MockThinktinService(
     override suspend fun addTrigger(planId: String, schedule: Schedule): Trigger {
         lag()
         val trigger = Trigger(newId("trg"), schedule, true, null, null)
-        updatePlanLocked(planId) { it.copy(triggers = it.triggers + trigger) }
+        updatePlanLocked(planId) { plan ->
+            if (plan.triggers.size >= MAX_TRIGGERS) {
+                throw ServiceError.Api(422, "invalid", "a plan has at most $MAX_TRIGGERS triggers", null)
+            }
+            plan.copy(triggers = plan.triggers + trigger)
+        }
         return trigger
     }
 
     override suspend fun deleteTrigger(triggerId: String) {
         lag()
         synchronized(lock) {
+            if (planList.none { plan -> plan.triggers.any { it.id == triggerId } }) notFound("trigger", triggerId)
             planList.replaceAll { plan -> plan.copy(triggers = plan.triggers.filterNot { it.id == triggerId }) }
         }
     }
@@ -560,6 +637,11 @@ class MockThinktinService(
     override suspend fun teams(): List<Team> {
         lag()
         return synchronized(lock) { teamList.toList() }
+    }
+
+    override suspend fun team(teamId: String): Team {
+        lag()
+        return synchronized(lock) { teamList.firstOrNull { it.id == teamId } } ?: notFound("team", teamId)
     }
 
     override suspend fun createTeam(name: String, members: List<TeamMember>): Team {
@@ -589,13 +671,20 @@ class MockThinktinService(
         return synchronized(lock) { templateList.toList() }
     }
 
-    override suspend fun saveTeamAsTemplate(teamId: String, name: String): TeamTemplate {
+    override suspend fun createTeamTemplate(name: String, members: List<TemplateMember>): TeamTemplate {
+        lag()
+        val template = TeamTemplate(newId("tpl"), name, members, clock())
+        synchronized(lock) { templateList.add(template) }
+        return template
+    }
+
+    override suspend fun createTeamTemplateFromTeam(name: String, teamId: String): TeamTemplate {
         lag()
         return synchronized(lock) {
             val team = teamList.firstOrNull { it.id == teamId } ?: notFound("team", teamId)
-            val members = team.members.mapNotNull { m ->
+            val members = team.members.sortedBy { it.position }.mapNotNull { m ->
                 instanceList.firstOrNull { it.id == m.instanceId }?.let {
-                    cn.thinktin.data.model.TemplateMember(it.agentId, it.harness, it.name, m.role)
+                    TemplateMember(it.agentId, it.harness, it.name, m.role)
                 }
             }
             TeamTemplate("tpl-demo-${++idCounter}", name, members, clock()).also { templateList.add(it) }
@@ -607,14 +696,14 @@ class MockThinktinService(
         synchronized(lock) { templateList.removeAll { it.id == templateId } }
     }
 
-    override suspend fun adoptTeamTemplate(templateId: String): Team {
+    override suspend fun adoptTeamTemplate(templateId: String, name: String?): Team {
         val template = synchronized(lock) { templateList.firstOrNull { it.id == templateId } }
             ?: notFound("template", templateId)
         val members = template.members.mapIndexed { index, m ->
             val instance = adopt(m.agentId, m.name, m.harness)
             TeamMember(instance.id, m.role, index)
         }
-        return createTeam(template.name, members)
+        return createTeam(name ?: template.name, members)
     }
 
     // ---- 收件箱 ----
@@ -652,14 +741,23 @@ class MockThinktinService(
         }
     }
 
-    override suspend fun markInboxUnread(itemId: String) {
+    override suspend fun inboxItem(itemId: String): InboxItem {
         lag()
-        synchronized(lock) { inboxList.replaceAll { if (it.id == itemId) it.copy(read = false) else it } }
+        return synchronized(lock) { inboxList.firstOrNull { it.id == itemId } } ?: notFound("inbox item", itemId)
+    }
+
+    override suspend fun markInboxUnread(itemId: String): Long {
+        lag()
+        return synchronized(lock) {
+            if (inboxList.none { it.id == itemId }) notFound("inbox item", itemId)
+            inboxList.replaceAll { if (it.id == itemId) it.copy(read = false) else it }
+            unreadLocked()
+        }
     }
 
     override suspend fun deleteInboxItem(itemId: String) {
         lag()
-        synchronized(lock) { inboxList.removeAll { it.id == itemId } }
+        synchronized(lock) { if (!inboxList.removeAll { it.id == itemId }) notFound("inbox item", itemId) }
     }
 
     // ---- IM 渠道 ----
@@ -794,15 +892,54 @@ class MockThinktinService(
             val old = credentialList[i]
             old.copy(
                 label = update.label ?: old.label,
-                dailyTokenLimit = update.dailyTokenLimit ?: old.dailyTokenLimit,
                 disabled = update.disabled ?: old.disabled,
             ).also { credentialList[i] = it }
+        }
+    }
+
+    override suspend fun replaceCredentialSecret(credentialId: String, apiKey: String): Credential {
+        lag()
+        if (apiKey.length < 8) throw ServiceError.Api(422, "invalid", "api key too short", null)
+        return synchronized(lock) {
+            val i = credentialList.indexOfFirst { it.id == credentialId }
+            if (i < 0) notFound("credential", credentialId)
+            credentialList[i].copy(last4 = apiKey.takeLast(4)).also { credentialList[i] = it }
         }
     }
 
     override suspend fun deleteCredential(credentialId: String) {
         lag()
         synchronized(lock) { credentialList.removeAll { it.id == credentialId } }
+    }
+
+    // ---- 内容举报 ----
+
+    override suspend fun reportContent(
+        runId: String,
+        reason: ReportReason,
+        eventSeq: Long?,
+        artifactId: String?,
+        note: String?,
+    ): ContentReport {
+        lag()
+        if (reason == ReportReason.Unknown) throw ServiceError.Api(422, "invalid", "unknown report reason", null)
+        if ((note?.length ?: 0) > MAX_REPORT_NOTE) throw ServiceError.Api(422, "invalid", "note is too long", null)
+        return synchronized(lock) {
+            val run = runList.firstOrNull { it.id == runId } ?: notFound("run", runId)
+            // 同一条内容再举报一次：返回那一条待处理的。
+            reportList.firstOrNull {
+                it.runId == runId && it.eventSeq == eventSeq && it.artifactId == artifactId && it.state == ReportState.Open
+            } ?: ContentReport(
+                id = newId("report"), runId = runId, instanceId = run.instanceId, eventSeq = eventSeq,
+                artifactId = artifactId, reason = reason, note = note, state = ReportState.Open, resolution = null,
+                createdAtMs = clock(), handledAtMs = null,
+            ).also { reportList.add(it) }
+        }
+    }
+
+    override suspend fun reports(): List<ContentReport> {
+        lag()
+        return synchronized(lock) { reportList.sortedByDescending { it.createdAtMs } }
     }
 
     // ---- 保险箱 ----
@@ -933,5 +1070,10 @@ class MockThinktinService(
 
         private val LABELED = Regex("""(?i)(password|passwd|pwd|密码|口令|token|secret)\s*[:：=]\s*(\S{6,})""")
         private val API_KEY = Regex("""\b(sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,})""")
+
+        private const val DEVICE_MESSAGE_TTL_MS: Long = 10 * 60_000
+        private const val MAX_ARTIFACTS = 500
+        private const val MAX_TRIGGERS = 10
+        private const val MAX_REPORT_NOTE = 1000
     }
 }

@@ -20,6 +20,7 @@ object ErrorText {
         is ServiceError.AccountFrozen -> UiText(R.string.error_account_frozen)
         is ServiceError.ContainsSecrets -> UiText(R.string.error_contains_secrets, listOf(error.count))
         is ServiceError.Unsupported -> UiText(R.string.error_unsupported)
+        is ServiceError.TlsUnavailable -> UiText(R.string.error_tls_unavailable)
         is ServiceError.Other -> UiText(R.string.error_other)
         is ServiceError.Api -> api(error)
     }

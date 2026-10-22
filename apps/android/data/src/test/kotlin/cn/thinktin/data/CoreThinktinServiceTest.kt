@@ -105,41 +105,6 @@ class CoreThinktinServiceTest {
         }
     }
 
-    private suspend fun expectUnsupported(name: String, block: suspend () -> Unit) {
-        try {
-            block()
-            fail("$name 应该抛 Unsupported")
-        } catch (e: ServiceError.Unsupported) {
-            assertEquals(name, e.operation)
-        }
-    }
-
-    @Test
-    fun serverOnlyOperationsAreUnsupported() = runTest {
-        val s: ThinktinService = CoreThinktinService(ThinktinClient(NoHandle))
-        expectUnsupported("devices") { s.devices() }
-        expectUnsupported("signOutDevice") { s.signOutDevice("d") }
-        expectUnsupported("sendAccountCode") { s.sendAccountCode() }
-        expectUnsupported("deleteAccount") { s.deleteAccount("123456") }
-        expectUnsupported("olderRuns") { s.olderRuns("i", "r") }
-        expectUnsupported("instanceArtifacts") { s.instanceArtifacts("i") }
-        expectUnsupported("deleteArtifact") { s.deleteArtifact("a") }
-        expectUnsupported("updatePlan") { s.updatePlan("p", cn.thinktin.data.model.PlanUpdate(title = "x")) }
-        expectUnsupported("addTrigger") { s.addTrigger("p", cn.thinktin.data.model.Schedule.Once(1)) }
-        expectUnsupported("deleteTrigger") { s.deleteTrigger("t") }
-        expectUnsupported("teams") { s.teams() }
-        expectUnsupported("createTeam") { s.createTeam("t", emptyList()) }
-        expectUnsupported("updateTeam") { s.updateTeam("t") }
-        expectUnsupported("deleteTeam") { s.deleteTeam("t") }
-        expectUnsupported("teamTemplates") { s.teamTemplates() }
-        expectUnsupported("saveTeamAsTemplate") { s.saveTeamAsTemplate("t", "n") }
-        expectUnsupported("deleteTeamTemplate") { s.deleteTeamTemplate("t") }
-        expectUnsupported("adoptTeamTemplate") { s.adoptTeamTemplate("t") }
-        expectUnsupported("markInboxUnread") { s.markInboxUnread("n") }
-        expectUnsupported("deleteInboxItem") { s.deleteInboxItem("n") }
-        expectUnsupported("updateCredential") { s.updateCredential("c", cn.thinktin.data.model.CredentialUpdate(label = "x")) }
-    }
-
     @Test
     fun mapsResultsAndErrors() = runTest {
         val fake = FakeClient()

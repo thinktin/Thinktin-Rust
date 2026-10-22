@@ -1,6 +1,11 @@
 package cn.thinktin.data
 
 import cn.thinktin.data.model.ApprovalState
+import cn.thinktin.data.model.ApprovalTimeoutAction
+import cn.thinktin.data.model.CatchUp
+import cn.thinktin.data.model.DeviceMessageKind
+import cn.thinktin.data.model.ReportState
+import cn.thinktin.data.model.SelfCodePurpose
 import cn.thinktin.data.model.InboxKind
 import cn.thinktin.data.model.InstanceState
 import cn.thinktin.data.model.OptionKind
@@ -76,5 +81,26 @@ class StatesTest {
         assertEquals(OptionKind.RejectAlways, OptionKind.fromWire("reject_always"))
         assertTrue(OptionKind.AllowAlways.isAllow)
         assertFalse(OptionKind.RejectOnce.isAllow)
+    }
+
+    @Test
+    fun appApiEnumsMatchServerStrings() {
+        // 和 crates/proto/src/domain.rs 的 str_enum 取值一致。
+        assertEquals(listOf("once", "all", "skip"), CatchUp.entries.filter { it != CatchUp.Unknown }.map { it.wire })
+        assertEquals(
+            listOf("skip", "pause_plan", "fail"),
+            ApprovalTimeoutAction.entries.filter { it != ApprovalTimeoutAction.Unknown }.map { it.wire },
+        )
+        assertEquals(listOf("open", "closed"), ReportState.entries.filter { it != ReportState.Unknown }.map { it.wire })
+        assertEquals(listOf("delete_account", "change_phone"), SelfCodePurpose.entries.map { it.wire })
+        assertEquals(
+            listOf("pair_response", "pair_confirm", "approval_request", "approval_decision", "capability", "revocation"),
+            DeviceMessageKind.entries.filter { it != DeviceMessageKind.Unknown }.map { it.wire },
+        )
+        for (kind in DeviceMessageKind.entries.filter { it != DeviceMessageKind.Unknown }) {
+            assertEquals(kind, DeviceMessageKind.fromWire(kind.wire))
+        }
+        assertEquals(CatchUp.Unknown, CatchUp.fromWire("twice"))
+        assertEquals(ApprovalTimeoutAction.Unknown, ApprovalTimeoutAction.fromWire("reject"))
     }
 }

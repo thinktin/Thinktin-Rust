@@ -1,6 +1,24 @@
 package cn.thinktin.data.core
 
 import cn.thinktin.data.model.AgentInfo
+import cn.thinktin.data.model.ApprovalTimeoutAction
+import cn.thinktin.data.model.CatchUp
+import cn.thinktin.data.model.ContentReport
+import cn.thinktin.data.model.DeviceInfo
+import cn.thinktin.data.model.DeviceMessage
+import cn.thinktin.data.model.DeviceMessageKind
+import cn.thinktin.data.model.DevicePlatform
+import cn.thinktin.data.model.PlanChange
+import cn.thinktin.data.model.PlanPolicy
+import cn.thinktin.data.model.ReportReason
+import cn.thinktin.data.model.ReportState
+import cn.thinktin.data.model.Team
+import cn.thinktin.data.model.TeamMember
+import cn.thinktin.data.model.TeamRole
+import cn.thinktin.data.model.TeamTemplate
+import cn.thinktin.data.model.TemplateMember
+import cn.thinktin.data.model.WireEnum
+import cn.thinktin.data.service.ServiceError
 import cn.thinktin.data.model.Approval
 import cn.thinktin.data.model.ApprovalOption
 import cn.thinktin.data.model.ApprovalState
@@ -45,6 +63,15 @@ import cn.thinktin.data.model.VaultRequestStatus
 import cn.thinktin.data.model.VendorInfo
 import cn.thinktin.data.model.parseJsonObject
 import cn.thinktin.core.AgentInfo as CoreAgentInfo
+import cn.thinktin.core.ContentReport as CoreContentReport
+import cn.thinktin.core.DeviceInfo as CoreDeviceInfo
+import cn.thinktin.core.DeviceMessage as CoreDeviceMessage
+import cn.thinktin.core.PlanChange as CorePlanChange
+import cn.thinktin.core.PlanPolicy as CorePlanPolicy
+import cn.thinktin.core.Team as CoreTeam
+import cn.thinktin.core.TeamMember as CoreTeamMember
+import cn.thinktin.core.TeamTemplate as CoreTeamTemplate
+import cn.thinktin.core.TemplateMember as CoreTemplateMember
 import cn.thinktin.core.Approval as CoreApproval
 import cn.thinktin.core.ApprovalOption as CoreApprovalOption
 import cn.thinktin.core.Artifact as CoreArtifact
@@ -83,6 +110,8 @@ import cn.thinktin.core.VendorInfo as CoreVendorInfo
 /*
  * cn.thinktin.core（UniFFI）→ App 模型。无符号数转有符号（服务端的计数和大小远小于 Long.MAX_VALUE），
  * 状态字符串转枚举（未知 → Unknown），JSON 字符串解析成对象（失败 → 空对象）。
+ * 反方向（App 模型 → core 记录，`toCore`）：有符号转无符号时负数按 0；枚举是 Unknown 的不能发给服务端，
+ * 抛 ServiceError.Other("invalid_argument")（界面不该让用户选到 Unknown）。
  */
 
 /** ULong → Long；超出范围（不会发生）时取 Long.MAX_VALUE，不溢出成负数。 */
@@ -94,6 +123,10 @@ internal fun UInt.toIntClamped(): Int = if (this > Int.MAX_VALUE.toUInt()) Int.M
 internal fun Long.toULongNonNegative(): ULong = coerceAtLeast(0).toULong()
 
 internal fun Int.toUIntNonNegative(): UInt = coerceAtLeast(0).toUInt()
+
+/** 枚举 → 服务端字符串；Unknown（空串）不能发出去。 */
+internal fun WireEnum.wireOrThrow(what: String): String =
+    wire.ifEmpty { throw ServiceError.Other("invalid_argument", "unknown $what cannot be sent") }
 
 internal fun CoreUser.toModel(): User = User(
     id = id,
@@ -241,6 +274,28 @@ internal fun CorePlanStep.toModel(): PlanStep =
 internal fun PlanStep.toCore(): CorePlanStep =
     CorePlanStep(key = key, instanceId = instanceId, prompt = prompt, dependsOn = dependsOn)
 
+internal fun CorePlanPolicy.toModel(): PlanPolicy = PlanPolicy(
+    preauthorizedTools = preauthorizedTools,
+    approvalTimeoutSecs = approvalTimeoutSecs.toLongClamped(),
+    onApprovalTimeout = ApprovalTimeoutAction.fromWire(onApprovalTimeout),
+    maxTokens = maxTokens?.toLongClamped(),
+    maxDurationSecs = maxDurationSecs.toLongClamped(),
+    maxSteps = maxSteps?.toIntClamped(),
+    dailyTokenLimit = dailyTokenLimit?.toLongClamped(),
+    waitTimeoutSecs = waitTimeoutSecs.toLongClamped(),
+)
+
+internal fun PlanPolicy.toCore(): CorePlanPolicy = CorePlanPolicy(
+    preauthorizedTools = preauthorizedTools,
+    approvalTimeoutSecs = approvalTimeoutSecs.toULongNonNegative(),
+    onApprovalTimeout = onApprovalTimeout.wireOrThrow("approval timeout action"),
+    maxTokens = maxTokens?.toULongNonNegative(),
+    maxDurationSecs = maxDurationSecs.toULongNonNegative(),
+    maxSteps = maxSteps?.toUIntNonNegative(),
+    dailyTokenLimit = dailyTokenLimit?.toULongNonNegative(),
+    waitTimeoutSecs = waitTimeoutSecs.toULongNonNegative(),
+)
+
 internal fun CorePlan.toModel(): Plan = Plan(
     id = id,
     instanceId = instanceId,
@@ -251,7 +306,8 @@ internal fun CorePlan.toModel(): Plan = Plan(
     awaitingConfirmation = awaitingConfirmation,
     revision = revision.toIntClamped(),
     policyJson = policyJson,
-    policy = parseJsonObject(policyJson),
+    policy = policy.toModel(),
+    catchUp = CatchUp.fromWire(catchUp),
     createdAtMs = createdAtMs,
     triggers = triggers.map { it.toModel() },
     steps = steps.map { it.toModel() },
@@ -263,6 +319,16 @@ internal fun NewPlan.toCore(): CoreNewPlan = CoreNewPlan(
     goal = goal,
     triggers = triggers.map { it.toCore() },
     steps = steps.map { it.toCore() },
+    policy = policy?.toCore(),
+    catchUp = catchUp?.wireOrThrow("catch up"),
+)
+
+internal fun PlanChange.toCore(): CorePlanChange = CorePlanChange(
+    title = title,
+    goal = goal,
+    policy = policy?.toCore(),
+    catchUp = catchUp?.wireOrThrow("catch up"),
+    steps = steps?.map { it.toCore() },
 )
 
 internal fun CoreInboxItem.toModel(): InboxItem = InboxItem(
@@ -397,3 +463,60 @@ internal fun CoreImChannel.toModel(): ImChannel = ImChannel(
 
 internal fun NewImChannel.toCore(): CoreNewImChannel =
     CoreNewImChannel(webhookUrl = webhookUrl, secret = secret, label = label, events = events)
+
+internal fun CoreDeviceInfo.toModel(): DeviceInfo = DeviceInfo(
+    id = id,
+    platform = DevicePlatform.fromWire(platform),
+    name = name,
+    pushChannel = pushChannel,
+    current = current,
+    online = online,
+    createdAtMs = createdAtMs,
+    lastSeenAtMs = lastSeenAtMs,
+)
+
+internal fun CoreDeviceMessage.toModel(): DeviceMessage = DeviceMessage(
+    id = id,
+    fromDeviceId = fromDeviceId,
+    toDeviceId = toDeviceId,
+    kind = DeviceMessageKind.fromWire(kind),
+    bodyJson = bodyJson,
+    body = parseJsonObject(bodyJson),
+    createdAtMs = createdAtMs,
+    expiresAtMs = expiresAtMs,
+)
+
+internal fun CoreTeamMember.toModel(): TeamMember =
+    TeamMember(instanceId = instanceId, role = TeamRole.fromWire(role), position = position.toIntClamped())
+
+internal fun TeamMember.toCore(): CoreTeamMember = CoreTeamMember(
+    instanceId = instanceId,
+    role = role.wireOrThrow("team role"),
+    position = position.toUIntNonNegative(),
+)
+
+internal fun CoreTeam.toModel(): Team =
+    Team(id = id, name = name, members = members.map { it.toModel() }, createdAtMs = createdAtMs)
+
+internal fun CoreTemplateMember.toModel(): TemplateMember =
+    TemplateMember(agentId = agentId, harness = harness, name = name, role = TeamRole.fromWire(role))
+
+internal fun TemplateMember.toCore(): CoreTemplateMember =
+    CoreTemplateMember(agentId = agentId, harness = harness, name = name, role = role.wireOrThrow("team role"))
+
+internal fun CoreTeamTemplate.toModel(): TeamTemplate =
+    TeamTemplate(id = id, name = name, members = members.map { it.toModel() }, createdAtMs = createdAtMs)
+
+internal fun CoreContentReport.toModel(): ContentReport = ContentReport(
+    id = id,
+    runId = runId,
+    instanceId = instanceId,
+    eventSeq = eventSeq?.toLongClamped(),
+    artifactId = artifactId,
+    reason = ReportReason.fromWire(reason),
+    note = note,
+    state = ReportState.fromWire(state),
+    resolution = resolution,
+    createdAtMs = createdAtMs,
+    handledAtMs = handledAtMs,
+)
