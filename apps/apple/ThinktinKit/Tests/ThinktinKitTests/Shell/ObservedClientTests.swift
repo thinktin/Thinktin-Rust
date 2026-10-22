@@ -129,8 +129,9 @@ struct ObservedClientTests {
         client.haltStreams()
         #expect(client.isHalted)
         #expect(client.activeStreamCount == 0)
-        #expect(a.statuses.value.last == .stopped)
-        #expect(b.statuses.value.last == .stopped)
+        // 每个订阅的一方收到一次 upgradeRequired（和 client-core 遇到 426 时一样，stopped 只表示调用方停的）。
+        #expect(a.statuses.value.last == .upgradeRequired)
+        #expect(b.statuses.value.last == .upgradeRequired)
         #expect(log.streamEndedCount == 2)
         #expect(throws: ClientError.upgradeRequired) {
             try client.subscribe(instanceID: DemoData.writerID, afterSeq: nil, listener: StatusCollector())

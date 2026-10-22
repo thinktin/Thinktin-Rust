@@ -137,8 +137,8 @@ struct AppModel118Tests {
         #expect(model.phase == .upgradeRequired)
     }
 
-    @Test("事件流以 stopped 结束、客户端说要升级（握手被拒）：进升级页，别的事件流也停掉")
-    func streamStoppedForUpgrade() async throws {
+    @Test("事件流以 upgradeRequired 结束（服务端回 426）：进升级页，别的事件流也停掉")
+    func streamEndedForUpgrade() async throws {
         let mock = makeShellMock()
         let model = AppModel(client: mock, defaults: nil)
         await model.start()
@@ -151,16 +151,16 @@ struct AppModel118Tests {
         #expect(await writer.wait(for: .live))
         #expect(await reviewer.wait(for: .live))
         mock.update { $0.isUpgradeRequired = true }
-        mock.play(MockEventScript(steps: [.status(.stopped)]), instanceID: DemoData.writerID)
+        mock.play(MockEventScript(steps: [.status(.upgradeRequired)]), instanceID: DemoData.writerID)
         await mock.waitForPlayback()
         #expect(await eventually { model.phase == .upgradeRequired })
-        #expect(await reviewer.wait(for: .stopped))
+        #expect(await reviewer.wait(for: .upgradeRequired))
         #expect(model.connection == .idle)
         #expect((model.client as? ObservedClient)?.activeStreamCount == 0)
         for handle in handles { handle.stop() }
     }
 
-    @Test("调用方自己停的 stopped 不算要升级")
+    @Test("stopped 只表示调用方停的：不算要升级（客户端说要升级也不再从它推断，339e191 起看 upgradeRequired）")
     func streamStoppedByCaller() async throws {
         let mock = makeShellMock()
         let model = AppModel(client: mock, defaults: nil)

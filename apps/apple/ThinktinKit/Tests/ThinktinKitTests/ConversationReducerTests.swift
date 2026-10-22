@@ -625,6 +625,251 @@ struct ConversationApprovalTests {
     }
 }
 
+@Suite("对话归并：审批按尝试认（11.8，docs/agent-integration.md 第 6 节）")
+struct ConversationApprovalAttemptTests {
+    /// 一次尝试的开始（`run.state` 带 attempt）。
+    private func start(_ ev: inout Events, attempt: Int, _ run: RunID = runA) -> InstanceEvent {
+        ev.add(.runState, run, ["state": "running", "attempt": .number(Double(attempt))])
+    }
+
+    private func requested(
+        _ ev: inout Events, _ requestID: String, attempt: Int?, approvalID: String?, title: String = "删除 build/"
+    ) -> InstanceEvent {
+        var payload: [String: JSONValue] = ["request_id": .string(requestID), "title": .string(title), "options": options]
+        if let attempt { payload["attempt"] = .number(Double(attempt)) }
+        if let approvalID { payload["approval_id"] = .string(approvalID) }
+        return ev.add(.permissionRequested, runA, .object(payload))
+    }
+
+    private func cards(_ r: ConversationReducer) -> [ApprovalCard] {
+        output(r).compactMap(\.content.approval)
+    }
+
+    @Test("两次尝试各一个 perm-1：两张卡片，不并到一起；第 1 次的作废，决定只落在第 2 次的卡片上")
+    func samePermIDInTwoAttempts() throws {
+        var r = reducer()
+        var ev = Events()
+        r.apply(start(&ev, attempt: 1))
+        r.apply(requested(&ev, "perm-1", attempt: 1, approvalID: "ap-1"))
+        // 第 1 次尝试崩了，退避后第 2 次尝试；shim 重新从 perm-1 编号。
+        r.apply(ev.add(.runState, runA, ["state": "backoff", "attempt": 1]))
+        r.apply(start(&ev, attempt: 2))
+        r.apply(requested(&ev, "perm-1", attempt: 2, approvalID: "ap-2", title: "再删一次"))
+
+        var list = cards(r)
+        try #require(list.count == 2)
+        #expect(list.map(\.attempt) == [1, 2])
+        #expect(list.map(\.approvalID) == ["ap-1", "ap-2"])
+        #expect(list[0].resolution?.outcome == .cancelled, "旧尝试没处理的审批被平台取消了")
+        #expect(list[1].isPending)
+        #expect(list[1].title == "再删一次")
+        #expect(r.pendingApprovals.map(\.approvalID) == ["ap-2"])
+        let ids = output(r).filter { $0.content.approval != nil }.map(\.id)
+        #expect(ids == ["approval-run-a-1-perm-1", "approval-run-a-2-perm-1"])
+
+        r.apply(
+            ev.add(
+                .approvalDecided, runA,
+                ["approval_id": "ap-2", "state": "approved", "option_id": "ok", "request_id": "perm-1", "attempt": 2]))
+        r.apply(
+            ev.add(
+                .permissionResolved, runA,
+                [
+                    "request_id": "perm-1", "option_id": "ok", "by": "user", "attempt": 2, "approval_id": "ap-2",
+                    "approval_state": "approved",
+                ]))
+        list = cards(r)
+        #expect(list.count == 2)
+        #expect(list[0].resolution?.outcome == .cancelled, "第 1 次的卡片不受影响")
+        #expect(list[1].resolution?.outcome == .approvedByUser)
+        #expect(list[1].resolution?.optionName == "允许一次")
+        #expect(r.pendingApprovals.isEmpty)
+    }
+
+    @Test("事件没带 approval_id（建审批失败、老的服务端）：按审批记录的 (attempt, request_id) 关联")
+    func linkByAttemptAndRequestID() throws {
+        var r = reducer()
+        var ev = Events()
+        r.apply(start(&ev, attempt: 1))
+        r.apply(requested(&ev, "perm-1", attempt: 1, approvalID: nil))
+        r.apply(start(&ev, attempt: 2))
+        r.apply(requested(&ev, "perm-1", attempt: 2, approvalID: nil))
+        r.link(approvals: [
+            approval("ap-2", requestID: "perm-1", attempt: 2),
+            approval("ap-1", requestID: "perm-1", attempt: 1, state: .cancelled),
+        ])
+        let list = cards(r)
+        #expect(list.map(\.approvalID) == ["ap-1", "ap-2"])
+        #expect(list[0].resolution?.outcome == .cancelled)
+        #expect(list[1].isPending)
+        // approval.decided 带了请求 id 和尝试：没关联过也对得上第 2 次的卡片（不会因为“只有一张未决”的猜测弄错）。
+        var other = reducer()
+        var ev2 = Events()
+        other.apply(start(&ev2, attempt: 1))
+        other.apply(requested(&ev2, "perm-1", attempt: 1, approvalID: nil))
+        other.apply(start(&ev2, attempt: 2))
+        other.apply(requested(&ev2, "perm-1", attempt: 2, approvalID: nil))
+        other.apply(
+            ev2.add(
+                .approvalDecided, runA,
+                ["approval_id": "ap-9", "state": "rejected", "option_id": "no", "request_id": "perm-1", "attempt": 2]))
+        let decided = cards(other)
+        #expect(decided[1].approvalID == "ap-9")
+        #expect(decided[1].resolution?.outcome == .rejectedByUser)
+        #expect(decided[0].approvalID == nil)
+    }
+
+    @Test("平台判的超时：shim 回 by: user，approval_state 是 expired，显示已过期而不是“你拒绝了”")
+    func expiredByPlatform() throws {
+        var r = reducer()
+        var ev = Events()
+        r.apply(start(&ev, attempt: 1))
+        r.apply(requested(&ev, "perm-1", attempt: 1, approvalID: "ap-1"))
+        r.apply(requested(&ev, "perm-2", attempt: 1, approvalID: "ap-2"))
+        r.apply(
+            ev.add(
+                .permissionResolved, runA,
+                ["request_id": "perm-1", "by": "user", "attempt": 1, "approval_id": "ap-1", "approval_state": "expired"]
+            ))
+        r.apply(
+            ev.add(
+                .permissionResolved, runA,
+                [
+                    "request_id": "perm-2", "option_id": "no", "by": "user", "attempt": 1, "approval_id": "ap-2",
+                    "approval_state": "rejected",
+                ]))
+        let list = cards(r)
+        let expired = try #require(list[0].resolution)
+        #expect(expired.outcome == .expired)
+        #expect(expired.by == .timeout)
+        #expect(expired.state == .expired)
+        #expect(!expired.isApproved)
+        #expect(list[1].resolution?.outcome == .rejectedByUser)
+        #expect(list[1].resolution?.state == .rejected)
+        // 没有 approval_state 的老事件：照 shim 说的（这里是用户拒绝）；之后审批记录说过期了，补成已过期。
+        var old = reducer()
+        var ev2 = Events()
+        old.apply(requested(&ev2, "perm-1", attempt: nil, approvalID: nil))
+        old.apply(ev2.add(.permissionResolved, runA, ["request_id": "perm-1", "by": "user"]))
+        #expect(cards(old)[0].resolution?.outcome == .rejectedByUser)
+        old.link(approvals: [approval("ap-1", requestID: "perm-1", attempt: 0, state: .expired)])
+        #expect(cards(old)[0].resolution?.outcome == .expired)
+    }
+
+    @Test("旧尝试的待处理卡片作废：运行记录已经是第 2 次（先显示缓存）、run.state 进到第 2 次；运行结束时也作废")
+    func staleAttemptsSuperseded() throws {
+        // 运行记录说已经是第 2 次尝试，缓存里第 1 次的请求一出现就作废；第 2 次的照常待处理。
+        var run = Fixture.run(runA)
+        run.attempt = 2
+        var r = reducer(runs: [run])
+        var ev = Events()
+        r.apply(start(&ev, attempt: 1))
+        r.apply(requested(&ev, "perm-1", attempt: 1, approvalID: "ap-1"))
+        #expect(cards(r)[0].resolution?.outcome == .cancelled)
+        #expect(r.pendingApprovals.isEmpty)
+        r.apply(start(&ev, attempt: 2))
+        r.apply(requested(&ev, "perm-1", attempt: 2, approvalID: "ap-2"))
+        #expect(r.pendingApprovals.map(\.approvalID) == ["ap-2"])
+        // 推断出的“作废”会被真正的结果换掉（比如缓存里稍后就有 shim 的结果）。
+        r.apply(
+            ev.add(
+                .permissionResolved, runA,
+                ["request_id": "perm-1", "by": "user", "attempt": 1, "approval_id": "ap-1", "approval_state": "expired"]
+            ))
+        #expect(cards(r)[0].resolution?.outcome == .expired)
+
+        // 尝试不知道（0）的卡片不按尝试作废；运行结束了，所有待处理的都作废。
+        var legacy = reducer()
+        var ev2 = Events()
+        legacy.apply(requested(&ev2, "r1", attempt: nil, approvalID: nil))
+        legacy.apply(start(&ev2, attempt: 3))
+        #expect(legacy.pendingApprovals.map(\.requestID) == ["r1"])
+        legacy.apply(ev2.add(.runState, runA, ["state": "failed", "attempt": 3]))
+        #expect(legacy.pendingApprovals.isEmpty)
+        #expect(cards(legacy)[0].resolution?.outcome == .cancelled)
+        // 运行记录先到、事件后到也一样：upsert 之后作废。
+        var late = reducer()
+        var ev3 = Events()
+        late.apply(start(&ev3, attempt: 1))
+        late.apply(requested(&ev3, "perm-1", attempt: 1, approvalID: "ap-1"))
+        #expect(late.pendingApprovals.count == 1)
+        var retried = Fixture.run(runA)
+        retried.attempt = 2
+        late.upsert(run: retried)
+        #expect(late.pendingApprovals.isEmpty)
+    }
+
+    @Test("没带 attempt 的事件取这之前最近一条 run.state 的；带了 attempt 的 resolved 也对得上")
+    func attemptFromRunState() throws {
+        var r = reducer()
+        var ev = Events()
+        r.apply(start(&ev, attempt: 2))
+        r.apply(requested(&ev, "perm-1", attempt: nil, approvalID: nil))
+        #expect(cards(r)[0].attempt == 2)
+        r.apply(ev.add(.permissionResolved, runA, ["request_id": "perm-1", "option_id": "ok", "by": "user", "attempt": 2]))
+        #expect(cards(r).count == 1)
+        #expect(cards(r)[0].resolution?.outcome == .approvedByUser)
+        // 尝试不知道的卡片，带了 attempt 的结果也认（老数据和新数据混着）。
+        var mixed = reducer()
+        var ev2 = Events()
+        mixed.apply(requested(&ev2, "perm-1", attempt: nil, approvalID: nil))
+        mixed.apply(
+            ev2.add(.permissionResolved, runA, ["request_id": "perm-1", "option_id": "ok", "by": "user", "attempt": 1]))
+        #expect(cards(mixed).count == 1)
+        #expect(cards(mixed)[0].resolution?.outcome == .approvedByUser)
+    }
+
+    @Test("事件带 approval_id：多张未决卡片时 approval.decided 也落在对的卡片上；之前猜错的关联让位")
+    func approvalIDFromEvents() throws {
+        var r = reducer()
+        var ev = Events()
+        r.apply(start(&ev, attempt: 1))
+        r.apply(requested(&ev, "perm-1", attempt: 1, approvalID: "ap-1", title: "甲"))
+        r.apply(requested(&ev, "perm-2", attempt: 1, approvalID: "ap-2", title: "乙"))
+        r.apply(ev.add(.approvalDecided, runA, ["approval_id": "ap-2", "state": "approved", "option_id": "ok"]))
+        let list = cards(r)
+        #expect(list[0].isPending)
+        #expect(list[1].resolution?.outcome == .approvedByUser)
+        // 已经按事件关联的不被审批记录改掉。
+        r.link(approvals: [approval("ap-1", requestID: "perm-1", attempt: 1)])
+        #expect(cards(r).map(\.approvalID) == ["ap-1", "ap-2"])
+
+        // 老数据先按标题猜着关联，事件里的 approval_id 说的为准。
+        var guessed = reducer()
+        var ev2 = Events()
+        guessed.apply(requested(&ev2, "r1", attempt: nil, approvalID: nil, title: "同名"))
+        guessed.apply(requested(&ev2, "r2", attempt: nil, approvalID: nil, title: "同名"))
+        guessed.link(approvals: [approval("ap-x", requestID: "", attempt: 0, title: "同名")])
+        #expect(cards(guessed).map(\.approvalID) == ["ap-x", nil])
+        guessed.apply(
+            ev2.add(.permissionResolved, runA, ["request_id": "r2", "option_id": "ok", "by": "user", "approval_id": "ap-x"]))
+        #expect(cards(guessed).map(\.approvalID) == [nil, "ap-x"])
+    }
+
+    @Test("结论：用户 / 策略 / 超时 / 取消")
+    func outcomes() {
+        typealias Res = ApprovalCard.Resolution
+        #expect(Res(optionID: "ok", optionName: nil, by: .user, isApproved: true).outcome == .approvedByUser)
+        #expect(Res(optionID: "no", optionName: nil, by: .user, isApproved: false).outcome == .rejectedByUser)
+        #expect(Res(optionID: "ok", optionName: nil, by: .policy, isApproved: true).outcome == .approvedByPolicy)
+        #expect(Res(optionID: nil, optionName: nil, by: .policy, isApproved: false).outcome == .rejectedByPolicy)
+        #expect(Res(optionID: nil, optionName: nil, by: .timeout, isApproved: false).outcome == .expired)
+        #expect(Res(optionID: nil, optionName: nil, by: .user, isApproved: false, state: .expired).outcome == .expired)
+        #expect(Res(optionID: nil, optionName: nil, by: .cancelled, isApproved: false).outcome == .cancelled)
+        #expect(Res(optionID: nil, optionName: nil, by: .unknown(""), isApproved: false, state: .cancelled).outcome == .cancelled)
+    }
+
+    private func approval(
+        _ id: ApprovalID, requestID: String, attempt: Int, title: String = "删除 build/",
+        state: ApprovalState = .pending
+    ) -> Approval {
+        Approval(
+            id: id, runID: runA, instanceID: Fixture.instanceID, title: title, options: DemoData.approvalOptions,
+            state: state, expiresAt: Fixture.now.addingTimeInterval(3600), createdAt: Fixture.now, requestID: requestID,
+            attempt: attempt)
+    }
+}
+
 @Suite("对话归并：保险箱请求")
 struct ConversationVaultTests {
     @Test("vault.requested → vault.fulfilled")

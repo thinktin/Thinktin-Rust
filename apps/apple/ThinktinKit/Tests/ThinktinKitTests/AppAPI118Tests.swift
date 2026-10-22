@@ -480,7 +480,7 @@ struct MockLanguageAndUpgradeTests {
         #expect(user.locale == .zhCN)
     }
 
-    @Test("upgradeRequired：任何调用抛过 upgradeRequired 后一直是 true；之后的订阅直接 stopped", .timeLimit(.minutes(1)))
+    @Test("upgradeRequired：任何调用抛过 upgradeRequired 后一直是 true；之后的订阅直接以 upgradeRequired 结束", .timeLimit(.minutes(1)))
     func upgradeRequired() async throws {
         let client = makeClient()
         #expect(!client.upgradeRequired())
@@ -504,7 +504,7 @@ struct MockLanguageAndUpgradeTests {
             case .reset: break
             }
         }
-        #expect(statuses == [.stopped])
+        #expect(statuses == [.upgradeRequired])
         #expect(events == 0)
 
         // 带 upgrade_required 错误码的接口错误也算。

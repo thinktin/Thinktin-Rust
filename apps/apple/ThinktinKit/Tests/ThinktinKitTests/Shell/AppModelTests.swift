@@ -170,7 +170,7 @@ struct AppModelTests {
         mock.failNext(with: .upgradeRequired)
         _ = try? await model.client.agents()
         #expect(await eventually { model.phase == .upgradeRequired })
-        #expect(collector.statuses.value.last == .stopped)
+        #expect(collector.statuses.value.last == .upgradeRequired)
         #expect(model.connection == .idle)
         #expect(throws: ClientError.upgradeRequired) {
             try model.client.subscribe(instanceID: DemoData.writerID, afterSeq: nil, listener: StatusCollector())
