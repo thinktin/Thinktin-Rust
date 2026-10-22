@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.toggleable
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.outlined.Badge
@@ -108,6 +107,8 @@ fun DevicesScreen(
             )
         },
     ) { padding ->
+        // 资料还没取到：加载中显示“加载中…”，加载失败显示占位（重试在设备区）。
+        val pending = stringResource(if (state.loading) R.string.loading_short else R.string.value_unavailable)
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
@@ -118,14 +119,14 @@ fun DevicesScreen(
                 AccountRow(
                     icon = Icons.Outlined.Phone,
                     title = stringResource(R.string.profile_phone),
-                    value = state.user?.phone ?: stringResource(R.string.loading_short),
+                    value = state.user?.phone ?: pending,
                 )
             }
             item {
                 AccountRow(
                     icon = Icons.Outlined.Badge,
                     title = stringResource(R.string.profile_name),
-                    value = state.user?.displayName ?: stringResource(R.string.profile_name_unset),
+                    value = state.user?.let { it.displayName ?: stringResource(R.string.profile_name_unset) } ?: pending,
                     onClick = if (state.user != null) onEditName else null,
                 )
             }
@@ -265,7 +266,7 @@ private fun DeviceRow(device: DeviceInfo, nowMs: Long, zone: java.time.ZoneId, o
 
 @Composable
 private fun Badge(text: String, color: Color) {
-    Surface(color = color.copy(alpha = 0.12f), contentColor = color, shape = RoundedCornerShape(8.dp)) {
+    Surface(color = color.copy(alpha = 0.12f), contentColor = color, shape = MaterialTheme.shapes.extraSmall) {
         Text(text, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
     }
 }

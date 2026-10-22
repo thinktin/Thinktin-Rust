@@ -7,17 +7,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -52,10 +46,11 @@ import cn.thinktin.app.ui.common.retryAfterSeconds
 import cn.thinktin.data.model.SelfCodePurpose
 import cn.thinktin.data.service.ServiceError
 import cn.thinktin.data.service.ThinktinService
+import cn.thinktin.design.component.DangerButton
+import cn.thinktin.design.component.SecondaryButton
 import cn.thinktin.design.component.ThinktinTopBar
 import cn.thinktin.design.component.TopBarIcons
 import cn.thinktin.design.theme.ThinktinSpacing
-import cn.thinktin.design.theme.ThinktinTextStyles
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -131,7 +126,10 @@ class DeleteAccountViewModel(private val service: ThinktinService) : ViewModel()
         state.update { if (it.step == DeleteStep.Confirm && !it.busy) it.copy(step = DeleteStep.Code) else it }
     }
 
-    /** 第三步“永久注销”。验证码不对时回到第二步重填。 */
+    /**
+     * 第三步“永久注销”。只有验证码不对（invalid）才回到第二步清空重填；断网、超时、5xx、限频时验证码多半
+     * 仍然有效，留在这一步、保留验证码，用户可以再点一次重试。
+     */
     fun confirm() {
         val current = state.value
         if (current.step != DeleteStep.Confirm || current.busy) return
@@ -142,8 +140,13 @@ class DeleteAccountViewModel(private val service: ThinktinService) : ViewModel()
                 countdown.cancel()
                 state.update { it.copy(busy = false) }
             } catch (e: ServiceError) {
-                val text = if (e is ServiceError.Api && e.isInvalid) UiText(R.string.login_code_invalid) else ErrorText.of(e)
-                state.update { it.copy(busy = false, step = DeleteStep.Code, code = "", error = text) }
+                if (e is ServiceError.Api && e.isInvalid) {
+                    state.update {
+                        it.copy(busy = false, step = DeleteStep.Code, code = "", error = UiText(R.string.login_code_invalid))
+                    }
+                } else {
+                    state.update { it.copy(busy = false, error = ErrorText.of(e)) }
+                }
             }
         }
     }
@@ -190,7 +193,8 @@ fun DeleteAccountScreen(onBack: () -> Unit) {
             }
             Text(
                 text = stringResource(title),
-                style = ThinktinTextStyles.Greeting.copy(fontSize = MaterialTheme.typography.headlineSmall.fontSize),
+                // 衬线只用于 28–34sp：headlineMedium 是衬线 28sp。
+                style = MaterialTheme.typography.headlineMedium,
                 modifier = Modifier.semantics { heading() },
             )
             Text(stringResource(message), style = MaterialTheme.typography.bodyLarge)
@@ -247,40 +251,12 @@ fun DeleteAccountScreen(onBack: () -> Unit) {
                     .fillMaxWidth()
                     .padding(top = 8.dp),
             )
-            OutlinedButton(
+            SecondaryButton(
+                text = stringResource(if (state.step == DeleteStep.Confirm) R.string.action_previous else R.string.action_cancel),
                 onClick = if (state.step == DeleteStep.Confirm) viewModel::back else onBack,
                 enabled = !state.busy,
                 modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(stringResource(if (state.step == DeleteStep.Confirm) R.string.action_previous else R.string.action_cancel))
-            }
-        }
-    }
-}
-
-/** 危险操作的主按钮：错误色底。 */
-@Composable
-private fun DangerButton(text: String, onClick: () -> Unit, loading: Boolean, modifier: Modifier = Modifier) {
-    Button(
-        onClick = onClick,
-        enabled = !loading,
-        modifier = modifier,
-        colors = ButtonDefaults.buttonColors(
-            containerColor = MaterialTheme.colorScheme.error,
-            contentColor = MaterialTheme.colorScheme.onError,
-        ),
-    ) {
-        if (loading) {
-            val label = stringResource(R.string.loading)
-            CircularProgressIndicator(
-                strokeWidth = 2.dp,
-                color = LocalContentColor.current,
-                modifier = Modifier
-                    .size(18.dp)
-                    .semantics { contentDescription = label },
             )
-        } else {
-            Text(text)
         }
     }
 }

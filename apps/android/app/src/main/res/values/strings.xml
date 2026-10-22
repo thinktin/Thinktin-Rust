@@ -160,6 +160,8 @@
     <string name="action_save">保存</string>
     <string name="action_ok">知道了</string>
     <string name="loading_short">加载中…</string>
+    <!-- 取不到的值的占位。 -->
+    <string name="value_unavailable" translatable="false">—</string>
 
     <!-- 个人资料 -->
     <string name="profile_phone">手机号</string>

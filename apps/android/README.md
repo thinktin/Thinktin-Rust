@@ -97,7 +97,7 @@ client-core 的接口请求和事件流用 `rustls-platform-verifier` 做系统�
   对应 Rust 导出的 `Java_cn_thinktin_core_TlsInit_initialize`。`loadLibrary` 不能省：JNA 的 dlopen 不会注册 JNI 函数。
 - `ThinktinApp.onCreate` 先 `initializeTls()`（`:data` 的 `SystemTls`，失败不崩溃，原因记在 `TlsState.failure`），
   再建 `AppContainer`；`ClientFactory.createService(context, baseUrl, tls)` 在 base_url 是 https 而 `tls.ready` 为假时
-  抛 `ServiceError.TlsUnavailable`（界面显示“无法加载核心库”页和原因），不让 Rust 那边报一个看不懂的内部错误。
+  抛 `ServiceError.TlsUnavailable`（界面显示“无法加载核心库”页，原因是本地文案“无法建立安全连接”，底层异常只进日志），不让 Rust 那边报一个看不懂的内部错误。
   http 的本地联调地址不需要初始化。
 - Java 支持包 `org.rustls:rustls-platform-verifier`（AAR）由 `:core` 依赖：版本**必须**和 `Cargo.lock` 里
   `rustls-platform-verifier-android` 的一致，`core/build.gradle.kts` 用 `ValueSource` 从 `../../Cargo.lock` 读
@@ -105,10 +105,13 @@ client-core 的接口请求和事件流用 `rustls-platform-verifier` 做系统�
   `https://raw.githubusercontent.com/rustls/rustls-platform-verifier/maven-archive/android-release-support/maven/`
   （只放 `org.rustls` 组；README 里 `github.com/…/raw/…` 的写法多一次重定向，云端会话的代理下是 403）。
   `RustlsVerifierVersionTest` 用独立的解析器读 Cargo.lock，和 Gradle 声明的、实际解析到的版本比对，并确认类在类路径上。
-- R8：`:core` 的 `consumer-rules.pro` 保留 `org.rustls.platformverifier.**`（只经 JNI 调用，R8 看不见）。
+- R8：`:core` 的 `consumer-rules.pro` 保留 `org.rustls.platformverifier.**`（只经 JNI 调用，R8 看不见）和 `cn.thinktin.core.**`。
+  规则漏了 R8 只会悄悄删类、构建照样成功，所以由 CI 的“Release dex keeps JNI classes”一步检查：解开 release 包，
+  在 `classes*.dex` 里找 `CertificateVerifier` 和 `TlsInit`。
 - 测试：本机 `target/debug/libclient_core.so` 是 Linux 版，没有这个 JNI 函数。JVM / Robolectric 测试**不调**
   `TlsInit.initialize`：`DemoTestApp` 覆盖 `initializeTls()` 返回 `FixedTlsState`，`:data` 的 `TlsStateTest`
-  用假的初始化函数测 `SystemTls` 和 `ClientFactory.checkTls`。真正的 JNI 初始化只能在真机 / 模拟器上验证。
+  用假的初始化函数测 `SystemTls` 和 `ClientFactory.checkTls`；`:core` 的 `TlsInitSignatureTest` 用反射钉住 JNI 的
+  类名、方法名和静态 native 签名（不加载类）。真正的 JNI 初始化只能在真机 / 模拟器上验证。
 
 ## 构建与测试
 
@@ -135,7 +138,8 @@ export THINKTIN_CORE_LIB_DIR=$PWD/../../target/debug
 
 debug 包默认开着演示模式（`BuildConfig.DEMO_DEFAULT`）：用 `MockThinktinService` 的确定性假数据（3 个目录 agent、
 2 个实例、覆盖全部事件类型的运行、5 种收件箱条目、计划、key、保险箱、团队与模板、登录设备、设备消息、举报……），
-不联网、不调 Rust（只有启动时 `TlsInit` 会加载一次 `libclient_core.so` 做证书校验初始化，没有 .so 时只记下失败）。
+不联网；启动时只有日志接入（`CoreLogging.install`，经 JNA 调 `initLogging`）和 TLS 初始化（`TlsInit`）会加载
+`libclient_core.so`（见“启动顺序”），没有 .so 时两者都只记下失败、不崩溃。
 设置页里可以关掉，关掉后走 `CoreThinktinService` → client-core → 服务端，未登录时显示登录流；登录页和“核心库不可用”页
 也有“使用演示模式”。
 
@@ -158,7 +162,8 @@ Keystore 失效……）都显示“无法加载核心库”页（原因 + 重�
   （服务端对号码不对和验证码错都报 `invalid`）。
 - 登录成功后服务的 `authState` 变成已登录，`AppRoot` 换成主界面，暂存的深链在那里处理（`DeepLinkInbox`）；
   `AppContainer.syncServerLocale` 在容器的作用域里比较 `User.locale` 和 App 当前语言（`AppLanguage.serverLocale`，
-  跟随系统时中文以外一律 en），不一致就 `setLocale`。
+  跟随系统时中文以外一律 en），不一致就 `setLocale`。已登录时，服务就绪（冷启动）、App 语言切换、系统语言变化也会
+  `me()` 后再同步一次（`AppContainer.followLanguage`，失败只记日志）。
 - **冻结页**：已登录时（接口或事件流返回 `AccountFrozen`）是 `FrozenAccountScreen`：登录态保留、提示联系客服、“重新检查”
   （`me()` 成功时 `CoreThinktinService` 回到已登录）、退出登录。登录时被拒不进这个页：`CoreThinktinService.login` 报冻结时
   保持未登录（没有会话），由登录流自己的冻结说明处理。
@@ -185,7 +190,8 @@ Keystore 失效……）都显示“无法加载核心库”页（原因 + 重�
 `.github/workflows/android.yml`（名为 Android）：改动 `apps/android/**`、`crates/client-core/**`、`crates/proto/**`、
 `tools/client-core/**`、`Cargo.toml`、`Cargo.lock` 时触发，也可以手动触发。步骤：`sync-core.sh --check`（绑定一致，同时编出本机 .so）→
 `./gradlew test lint assembleDebug :app:assembleCnRelease`（`THINKTIN_REQUIRE_CORE=1`，CoreSmokeTest 必须真跑；lint 的
-abortOnError 开着，不用 baseline；release 包跑一遍 R8，检查保留规则）→ 上传 `app-cn-debug.apk`。
+abortOnError 开着，不用 baseline；release 包跑一遍 R8）→ 解开 release 包检查 dex 里还有只经 JNI 用到的类
+（`CertificateVerifier`、`TlsInit`，保留规则漏了在这一步失败）→ 上传 `app-cn-debug.apk`。
 
 **有意**不在这个 workflow 里交叉编译三个 ABI 的 .so（NDK + cargo-ndk 每次几十分钟，每个 PR 都跑不划算），所以这个 APK
 **不含 jniLibs**，只能用演示模式（关掉演示模式会显示“无法加载核心库”页）。绑定和库是否对得上由 `--check` 和 CoreSmokeTest 保证。
@@ -206,6 +212,8 @@ abortOnError 开着，不用 baseline；release 包跑一遍 R8，检查保留�
   从 `LocalThinktinService` / `LocalAppContainer` 取依赖；不引入 Hilt。
 - 错误：服务调用抛 `ServiceError`；文案由 `:app` 的 `ErrorText` 映射（`isRateLimited`、`isInvalid`、`isRetryable` 给表单页
   做字段级提示和“重试”）；`SignedOut` 回登录流，`AccountFrozen` 显示冻结页（由 `ThinktinService.authState` 驱动）。
+- 按钮用 `:design` 的 `PrimaryButton` / `DangerButton`（错误色，注销、删除）/ `SecondaryButton`（描边），统一 20dp 圆角、
+  24/12 内边距和转圈；不直接用 M3 的 `Button` / `OutlinedButton`（默认是胶囊形）。
 - 倒计时（验证码重发、限频剩余秒数）用 `ui/common/Countdown`，跑在 viewModelScope 上，测试里用 TestCoroutineScheduler 推进。
 - 对话框（`AlertDialog`）里不放输入框：Robolectric 下一直不空闲。要输入的做成单独的页面（见“登录与账号”）。
 - 无障碍：图标按钮都有 `contentDescription`；edge-to-edge 下用 Scaffold 的 innerPadding / `navigationBarsPadding` / `imePadding`。
@@ -225,6 +233,7 @@ abortOnError 开着，不用 baseline；release 包跑一遍 R8，检查保留�
 - `tools/client-core/build-android.sh` 没有“跳过 AAR”的开关，`sync-core.sh` 用 PATH 垫片绕过（见上）。以后给它加一个开关
   （比如 `THINKTIN_SKIP_AAR=1`）并去掉 `jvmToolchain(17)` 的硬要求后，删掉垫片。
 - CI 的 APK 不含 .so（见“CI”）。启动时 `TlsInit` 加载不到库，`TlsState.failure` 记下 `UnsatisfiedLinkError`，演示模式照常可用。
-- `TlsInit.initialize`、`initLogging`、`accept_language_header` 的原生调用只能在真机 / 模拟器上验证（云端会话没有模拟器，
-  JVM 上的 .so 是 Linux 版，`:data` 的单测不加载 .so）：第一次真机联调 https 时确认没有 `TlsUnavailable`、事件流能连上、
+- `TlsInit.initialize`（JNI）只能在真机 / 模拟器上验证（云端会话没有模拟器，JVM 上的 .so 是 Linux 版，没有这个 JNI 函数）；
+  `initLogging`、`accept_language_header` 是普通的 UniFFI 导出，`:core` 的 CoreSmokeTest 经 JNA 调本机 .so 覆盖了，
+  但 Android 上的 .so 和 logcat 输出同样要真机确认：第一次真机联调 https 时确认没有 `TlsUnavailable`、事件流能连上、
   logcat 里有 `ThinktinCore` 的日志、请求带着 `Accept-Language`。

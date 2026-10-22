@@ -12,7 +12,8 @@ import org.junit.Test
 
 /**
  * 11.8 的两处接入：Accept-Language 的语言列表、client-core 日志进 logcat。
- * 只测纯逻辑：拼请求头（accept_language_header）和 initLogging 要加载 .so，在真机 / CoreSmokeTest 里覆盖。
+ * 这里只测纯逻辑；拼请求头（acceptLanguageHeader）和 initLogging 是普通的 UniFFI 导出，经 JNA 在 :core 的
+ * CoreSmokeTest 里调本机的 .so 覆盖。只有 TlsInit（JNI）要在真机 / 模拟器上才能测。
  */
 class LanguageAndLoggingTest {
     @Test

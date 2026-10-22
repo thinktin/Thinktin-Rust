@@ -329,19 +329,84 @@ class AuthViewModelTest {
             runCurrent()
             assertEquals(UiText(R.string.frozen_still), awaitItem())
             assertFalse(vm.uiState.value.checking)
-            // 服务端已解冻但这个替身不改登录状态：也提示仍冻结（真实服务会回到已登录，见 CoreServiceAppApiTest）
-            vm.checkAgain()
-            runCurrent()
-            assertEquals(UiText(R.string.frozen_still), awaitItem())
             service.failNext("me", ServiceError.Network("timeout"))
             vm.checkAgain()
             runCurrent()
             assertEquals(UiText(R.string.error_network), awaitItem())
+            assertEquals(AuthState.Frozen, service.authState.value)
+            // 服务端已解冻：取资料成功，服务回到已登录，不提示
+            vm.checkAgain()
+            runCurrent()
+            expectNoEvents()
+            assertEquals(AuthState.SignedIn, service.authState.value)
+            assertFalse(vm.uiState.value.checking)
         }
         vm.signOut()
         runCurrent()
         assertEquals(1, service.logoutCalls)
         assertEquals(AuthState.SignedOut, service.authState.value)
+    }
+
+    // ---- 验证码页重新获取的失败路径 ----
+
+    @Test
+    fun resendRateLimitedCountsDownKeepsCode() = test {
+        val service = fake()
+        val vm = codeStep(service)
+        advanceTimeBy(60_000)
+        runCurrent()
+        vm.onCodeChange("12")
+        service.failNext("sendCode", rateLimited(30))
+        vm.resend()
+        runCurrent()
+        var state = vm.uiState.value
+        assertTrue(state.rateLimited)
+        assertEquals(30, state.cooldownSecs)
+        assertFalse(state.canResend)
+        assertEquals("+8613800138000", state.sentTo)
+        assertEquals("验证码保留", "12", state.code)
+        advanceTimeBy(30_000)
+        runCurrent()
+        state = vm.uiState.value
+        assertEquals(0, state.cooldownSecs)
+        assertFalse(state.rateLimited)
+        assertTrue(state.canResend)
+    }
+
+    @Test
+    fun resendRateLimitedWithoutSecondsShowsCodeError() = test {
+        val service = fake()
+        val vm = codeStep(service)
+        advanceTimeBy(60_000)
+        runCurrent()
+        service.failNext("sendCode", rateLimited(null))
+        vm.resend()
+        runCurrent()
+        assertEquals(UiText(R.string.error_rate_limited_plain), vm.uiState.value.codeError)
+        assertNull(vm.uiState.value.phoneError)
+        assertTrue(vm.uiState.value.canResend)
+    }
+
+    @Test
+    fun resendNetworkErrorOffersRetry() = test {
+        val service = fake()
+        val vm = codeStep(service)
+        vm.events.test {
+            assertEquals(LoginEvent.ShowCodeStep, awaitItem())
+            advanceTimeBy(60_000)
+            runCurrent()
+            service.failNext("sendCode", ServiceError.Network("timeout"))
+            vm.resend()
+            runCurrent()
+            val message = awaitItem() as LoginEvent.Message
+            assertEquals(UiText(R.string.error_network), message.text)
+            assertEquals(2, service.sentCodes.size)
+            message.retry!!.invoke()
+            runCurrent()
+            assertEquals(LoginEvent.Message(UiText(R.string.login_code_resent)), awaitItem())
+            assertEquals(3, service.sentCodes.size)
+            assertEquals(60, vm.uiState.value.cooldownSecs)
+        }
     }
 
     // ---- 设备与账号 ----
@@ -489,6 +554,127 @@ class AuthViewModelTest {
             assertEquals(EditNameEvent.Saved, awaitItem())
             assertNull(service.me().displayName)
         }
+    }
+
+    @Test
+    fun editNicknameLoadFailureBlocksSaveUntilRetry() = test {
+        val service = fake(AuthState.SignedIn)
+        service.failNext("me", ServiceError.Network("timeout"))
+        val vm = EditNameViewModel(service)
+        runCurrent()
+        var state = vm.uiState.value
+        assertFalse(state.loading)
+        assertEquals(UiText(R.string.error_network), state.loadError)
+        assertFalse("加载失败不能编辑", state.editable)
+        // 空输入点保存：不能清掉原来的昵称
+        vm.save()
+        runCurrent()
+        assertTrue(service.updatedNames.isEmpty())
+        assertEquals("演示用户", service.me().displayName)
+        // 重试成功后可以编辑
+        vm.load()
+        runCurrent()
+        state = vm.uiState.value
+        assertNull(state.loadError)
+        assertTrue(state.editable)
+        assertEquals("演示用户", state.name)
+    }
+
+    @Test
+    fun editNicknameUnchangedSkipsRequest() = test {
+        val service = fake(AuthState.SignedIn)
+        val vm = EditNameViewModel(service)
+        runCurrent()
+        vm.events.test {
+            vm.onNameChange(" 演示用户 ")
+            vm.save()
+            runCurrent()
+            assertEquals(EditNameEvent.Saved, awaitItem())
+        }
+        assertTrue(service.updatedNames.isEmpty())
+    }
+
+    @Test
+    fun editNicknameSaveErrors() = test {
+        val service = fake(AuthState.SignedIn)
+        val vm = EditNameViewModel(service)
+        runCurrent()
+        vm.events.test {
+            service.failNext("updateProfile", ServiceError.Api(422, "invalid", "display name too long", null))
+            vm.onNameChange("小陈")
+            vm.save()
+            runCurrent()
+            assertEquals(UiText(R.string.profile_name_too_long, listOf(64)), vm.uiState.value.error)
+            assertFalse(vm.uiState.value.saving)
+            service.failNext("updateProfile", ServiceError.Network("timeout"))
+            vm.save()
+            runCurrent()
+            assertEquals(EditNameEvent.Message(UiText(R.string.error_network)), awaitItem())
+            assertFalse(vm.uiState.value.saving)
+            assertEquals("演示用户", service.me().displayName)
+        }
+    }
+
+    @Test
+    fun revokeDeviceErrorClosesDialogWithMessage() = test {
+        val service = fake(AuthState.SignedIn)
+        val vm = devices(service)
+        runCurrent()
+        val iphone = vm.uiState.value.devices.first { it.name == "iPhone 15" }
+        service.failNext("revokeDevice", ServiceError.Network("timeout"))
+        vm.messages.test {
+            vm.askRevoke(iphone)
+            vm.confirmRevoke()
+            runCurrent()
+            assertEquals(UiText(R.string.error_network), awaitItem())
+        }
+        assertNull(vm.uiState.value.dialog)
+        assertFalse(vm.uiState.value.busy)
+        assertTrue(vm.uiState.value.devices.any { it.name == "iPhone 15" })
+    }
+
+    @Test
+    fun signOutOthersErrorClosesDialogWithMessage() = test {
+        val service = fake(AuthState.SignedIn)
+        val vm = devices(service)
+        runCurrent()
+        service.failNext("signOutOtherDevices", ServiceError.Network("timeout"))
+        vm.messages.test {
+            vm.askSignOutOthers()
+            vm.confirmSignOutOthers()
+            vm.confirmSignOutOthers()
+            runCurrent()
+            assertEquals(UiText(R.string.error_network), awaitItem())
+        }
+        assertNull(vm.uiState.value.dialog)
+        assertFalse(vm.uiState.value.busy)
+        assertEquals(3, vm.uiState.value.devices.size)
+    }
+
+    @Test
+    fun deleteAccountNetworkErrorKeepsCode() = test {
+        val service = fake(AuthState.SignedIn)
+        val vm = DeleteAccountViewModel(service)
+        vm.sendCode()
+        runCurrent()
+        vm.onCodeChange("123456")
+        vm.next()
+        service.failNext("deleteAccount", ServiceError.Network("timeout"))
+        vm.confirm()
+        runCurrent()
+        var state = vm.uiState.value
+        assertEquals("非验证码错误：留在最后确认", DeleteStep.Confirm, state.step)
+        assertEquals("123456", state.code)
+        assertEquals(UiText(R.string.error_network), state.error)
+        assertFalse(state.busy)
+        assertEquals(AuthState.SignedIn, service.authState.value)
+        // 再点一次就成功
+        vm.confirm()
+        runCurrent()
+        state = vm.uiState.value
+        assertNull(state.error)
+        assertEquals("123456", service.deletedWith)
+        assertEquals(AuthState.SignedOut, service.authState.value)
     }
 
     @Test

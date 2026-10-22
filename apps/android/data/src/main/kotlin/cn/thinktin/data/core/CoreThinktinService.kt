@@ -200,7 +200,13 @@ internal class CoreThinktinService(
     override suspend fun sendSelfCode(purpose: SelfCodePurpose) = call { client.sendSelfCode(purpose.wire) }
 
     override suspend fun deleteAccount(code: String) {
-        call { client.deleteAccount(code) }
+        try {
+            call { client.deleteAccount(code) }
+        } catch (e: ServiceError) {
+            // 服务端已经删号、本地会话已经清掉，之后清缓存失败也会报错：没有会话了就回到未登录，不能停在主界面。
+            if (!stillSignedIn()) auth.value = AuthState.SignedOut
+            throw e
+        }
         // client-core 成功后已经清掉本地的登录状态和缓存。
         auth.value = AuthState.SignedOut
     }

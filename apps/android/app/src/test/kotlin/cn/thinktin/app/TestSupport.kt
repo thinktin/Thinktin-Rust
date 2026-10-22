@@ -45,6 +45,8 @@ class FakeThinktinService(
     var deletedWith: String? = null
         private set
     var validCode = "123456"
+    /** 每次 updateProfile 传的昵称。 */
+    val updatedNames = mutableListOf<String?>()
 
     private val failures = mutableMapOf<String, ServiceError>()
 
@@ -80,13 +82,22 @@ class FakeThinktinService(
         auth.value = AuthState.SignedOut
     }
 
+    /** 和真实服务一样：冻结状态下取资料成功说明已经解冻，回到已登录。 */
     override suspend fun me(): User {
         maybeFail("me")
-        return mock.me()
+        val user = mock.me()
+        if (auth.value == AuthState.Frozen) auth.value = AuthState.SignedIn
+        return user
+    }
+
+    override suspend fun updateProfile(displayName: String?): User {
+        maybeFail("updateProfile")
+        updatedNames += displayName
+        return mock.updateProfile(displayName)
     }
 
     override suspend fun setLocale(locale: String): User {
-        locales += locale
+        synchronized(locales) { locales += locale }
         return mock.setLocale(locale)
     }
 

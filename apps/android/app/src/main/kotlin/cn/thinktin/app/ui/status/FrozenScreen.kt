@@ -9,7 +9,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Block
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -40,6 +39,7 @@ import cn.thinktin.data.service.ServiceError
 import cn.thinktin.data.service.ThinktinService
 import cn.thinktin.data.service.logoutQuietly
 import cn.thinktin.design.component.PrimaryButton
+import cn.thinktin.design.component.SecondaryButton
 import cn.thinktin.design.theme.ThinktinSpacing
 import cn.thinktin.design.theme.ThinktinTextStyles
 import kotlinx.coroutines.channels.Channel
@@ -175,7 +175,7 @@ fun FrozenScreen(
                     .padding(top = ThinktinSpacing.Paragraph),
             )
             if (secondaryLabel != null) {
-                OutlinedButton(onClick = onSecondary, modifier = Modifier.fillMaxWidth()) { Text(secondaryLabel) }
+                SecondaryButton(text = secondaryLabel, onClick = onSecondary, modifier = Modifier.fillMaxWidth())
             }
         }
     }

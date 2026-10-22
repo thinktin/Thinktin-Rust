@@ -2,7 +2,9 @@ package cn.thinktin.app
 
 import android.content.Intent
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasAnyAncestor
@@ -17,9 +19,12 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.text.AnnotatedString
+import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import cn.thinktin.app.ui.drawer.DRAWER_TEST_TAG
+import cn.thinktin.app.ui.login.LoginViewModel
 import cn.thinktin.data.service.AuthState
 import cn.thinktin.data.service.ServiceError
 import cn.thinktin.data.service.ThinktinService
@@ -155,11 +160,57 @@ class AuthUiTest {
         val fake = FakeThinktinService(initial = AuthState.Frozen)
         launch(fake)
         waitFor(hasText("账号已冻结"))
+        fake.failNext("me", ServiceError.AccountFrozen())
         compose.onNode(hasText("重新检查")).performClick()
         waitFor(hasText("账号仍处于冻结状态"))
-        // 解冻（服务回到已登录）后回主界面
-        fake.auth.value = AuthState.SignedIn
+        // 已解冻：再检查一次，取资料成功，服务回到已登录，回主界面
+        compose.onNode(hasText("重新检查")).performClick()
         waitFor(hasText("最近运行"))
+        assertEquals(AuthState.SignedIn, fake.authState.value)
+    }
+
+    @Test
+    fun rotationKeepsCodeStepNumberAndCountdown() {
+        val fake = FakeThinktinService(initial = AuthState.SignedOut)
+        launch(fake)
+        enterPhoneAndRequestCode()
+        scenario!!.recreate()
+        waitFor(hasText("6 位验证码已发送至 +86 13800138000"))
+        compose.onNode(hasText("秒后可重新获取", substring = true)).assertIsDisplayed()
+        waitFor(codeField)
+        assertEquals("旋转后不重新发码", 1, fake.sentCodes.size)
+    }
+
+    @Test
+    fun codeStepWithoutNumberGoesBackToPhone() {
+        val fake = FakeThinktinService(initial = AuthState.SignedOut)
+        launch(fake)
+        enterPhoneAndRequestCode()
+        // 模拟进程被杀后恢复：导航还在验证码页，但 ViewModel 是新的、不知道发到了哪个号码
+        scenario!!.onActivity { activity ->
+            ViewModelProvider(activity)["login-${System.identityHashCode(fake)}", LoginViewModel::class.java].reset()
+        }
+        waitFor(phoneField)
+        compose.onNode(hasText("获取验证码")).assertIsDisplayed()
+        compose.onAllNodes(hasText("验证码已发送至", substring = true)).assertCountEquals(0)
+    }
+
+    @Test
+    fun signOutThenLoginStartsOver() {
+        val fake = FakeThinktinService(initial = AuthState.SignedOut)
+        launch(fake)
+        enterPhoneAndRequestCode()
+        waitFor(codeField)
+        compose.onNode(codeField).performTextInput("123456")
+        waitFor(hasText("最近运行"))
+        openSettings()
+        compose.onNode(hasText("退出登录")).performScrollTo().performClick()
+        waitFor(hasText("退出登录") and inDialog)
+        compose.onNode(hasText("退出登录") and inDialog).performClick()
+        // 新进登录流：手机号页、号码清空，不是上一次的验证码页
+        waitFor(phoneField)
+        compose.onNode(phoneField).assert(SemanticsMatcher.expectValue(SemanticsProperties.EditableText, AnnotatedString("")))
+        compose.onAllNodes(hasText("验证码已发送至", substring = true)).assertCountEquals(0)
     }
 
     private fun openSettings() {

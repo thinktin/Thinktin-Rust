@@ -20,6 +20,8 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import cn.thinktin.app.R
+import cn.thinktin.app.ui.common.errorText
+import cn.thinktin.data.service.ServiceError
 import cn.thinktin.design.component.EmptyState
 import cn.thinktin.design.theme.ThinktinSpacing
 
@@ -37,8 +39,10 @@ fun CoreUnavailableScreen(error: Throwable?, onRetry: () -> Unit, onUseDemo: (()
             onAction = onRetry,
         )
         if (error != null) {
+            // 服务层的错误（比如 TLS 证书校验没初始化）按类型给本地文案；其余显示最底层的异常（原始原因已经记在日志里）。
+            val reason = if (error is ServiceError) errorText(error) else error.describe()
             Text(
-                text = stringResource(R.string.core_unavailable_detail, error.describe()),
+                text = stringResource(R.string.core_unavailable_detail, reason),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,

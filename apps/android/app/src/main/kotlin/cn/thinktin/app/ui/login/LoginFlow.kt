@@ -17,10 +17,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowDropDown
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
@@ -47,7 +45,6 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -69,6 +66,7 @@ import cn.thinktin.app.ui.common.UiText
 import cn.thinktin.app.ui.common.asString
 import cn.thinktin.app.ui.status.LoginFrozenScreen
 import cn.thinktin.design.component.PrimaryButton
+import cn.thinktin.design.component.SecondaryButton
 import cn.thinktin.design.component.ThinktinTopBar
 import cn.thinktin.design.component.TopBarIcons
 import cn.thinktin.design.theme.ThinktinSpacing
@@ -240,13 +238,12 @@ private fun RegionPicker(region: PhoneRegion, onSelect: (PhoneRegion) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     val description = stringResource(R.string.login_region_description, stringResource(region.labelRes), region.dialCode)
     Box(modifier = Modifier.padding(top = 8.dp)) {
-        OutlinedButton(
+        SecondaryButton(
+            text = "+${region.dialCode}",
             onClick = { expanded = true },
+            trailingIcon = Icons.Outlined.ArrowDropDown,
             modifier = Modifier.semantics { contentDescription = description },
-        ) {
-            Text("+${region.dialCode}")
-            Icon(Icons.Outlined.ArrowDropDown, contentDescription = null)
-        }
+        )
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             PhoneRegion.entries.forEach { option ->
                 DropdownMenuItem(
@@ -265,6 +262,11 @@ private fun RegionPicker(region: PhoneRegion, onSelect: (PhoneRegion) -> Unit) {
 @Composable
 private fun CodeScreen(viewModel: LoginViewModel, snackbar: SnackbarHostState, onBack: () -> Unit) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    // 进程被杀后导航恢复到这一页，但 ViewModel 是新建的、不知道发到了哪个号码（显示空号码，自动提交和重新获取
+    // 都会悄悄失效）：退回手机号页重新获取。
+    LaunchedEffect(state.sentTo, state.sending) {
+        if (state.sentTo == null && !state.sending) onBack()
+    }
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { focus.requestFocus() }
     Scaffold(
@@ -323,7 +325,7 @@ private fun CodeScreen(viewModel: LoginViewModel, snackbar: SnackbarHostState, o
                         )
                     }
                 },
-                textStyle = TextStyle(fontSize = 24.sp, letterSpacing = 8.sp),
+                textStyle = MaterialTheme.typography.headlineSmall.copy(letterSpacing = 8.sp),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
                 keyboardActions = KeyboardActions(onDone = { viewModel.submit() }),
                 modifier = Modifier

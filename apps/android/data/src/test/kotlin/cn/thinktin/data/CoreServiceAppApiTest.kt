@@ -342,6 +342,20 @@ class CoreServiceAppApiTest {
     }
 
     @Test
+    fun deleteAccountCacheFailureAfterServerDeleteSignsOut() = runTest {
+        val s = CoreThinktinService(fake)
+        // 服务端已删号、本地会话已清，之后清缓存失败：client-core 报错，但已经没有会话了
+        fake.deleteAccountError = ClientException.Cache("disk I/O error")
+        fake.signedIn = false
+        try {
+            s.deleteAccount("123456")
+            fail("清缓存失败应该抛异常")
+        } catch (_: ServiceError) {
+        }
+        assertEquals(AuthState.SignedOut, s.authState.value)
+    }
+
+    @Test
     fun loginFrozenStaysSignedOutAndSuccessSignsIn() = runTest {
         fake.signedIn = false
         val s = CoreThinktinService(fake)

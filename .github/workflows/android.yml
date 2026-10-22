@@ -60,13 +60,31 @@ jobs:
 
       # lint 的 abortOnError 开着，不用 baseline。CoreSmokeTest 经 JNA 调 target/debug 里的 libclient_core.so；
       # THINKTIN_REQUIRE_CORE=1：拿不到库目录时冒烟测试失败而不是跳过（同 ci.yml 的 THINKTIN_REQUIRE_DB）。
-      # :app:assembleCnRelease 跑一遍 R8：UniFFI / JNA / TlsInit / rustls 支持包的保留规则漏了会在这里失败。
+      # :app:assembleCnRelease 跑一遍 R8（打包本身不检查只经 JNI 用到的类，见下一步）。
       - name: Test, lint, assemble
         working-directory: apps/android
         env:
           THINKTIN_CORE_LIB_DIR: ${{ github.workspace }}/target/debug
           THINKTIN_REQUIRE_CORE: "1"
         run: ./gradlew --no-daemon test lint assembleDebug :app:assembleCnRelease
+
+      # R8 删掉没有引用的类只会悄悄删，构建照样成功：org.rustls.platformverifier.** 只有 Rust 经 JNI 调，
+      # TlsInit 只靠 core/consumer-rules.pro 的 -keep 保住。解开 release 包，确认这些类还在 dex 里。
+      - name: Release dex keeps JNI classes
+        working-directory: apps/android
+        run: |
+          set -euo pipefail
+          apk=$(find app/build/outputs/apk/cn/release -name '*.apk' | head -n 1)
+          if [ -z "$apk" ]; then echo "::error::没有找到 release apk"; exit 1; fi
+          dex_dir=$(mktemp -d)
+          unzip -q -o "$apk" 'classes*.dex' -d "$dex_dir"
+          for cls in 'Lorg/rustls/platformverifier/CertificateVerifier;' 'Lcn/thinktin/core/TlsInit;'; do
+            if ! grep -q -a -F "$cls" "$dex_dir"/classes*.dex; then
+              echo "::error::$apk 的 dex 里没有 $cls（R8 删掉了，检查 core/consumer-rules.pro）"
+              exit 1
+            fi
+          done
+          echo "$apk：JNI 用到的类都在"
 
       - name: Upload reports
         if: failure()

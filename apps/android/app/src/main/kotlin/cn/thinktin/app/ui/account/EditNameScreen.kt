@@ -15,6 +15,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -24,7 +25,9 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.lifecycle.ViewModel
@@ -57,9 +60,16 @@ import kotlinx.coroutines.launch
 data class EditNameUiState(
     val loading: Boolean = true,
     val name: String = "",
+    /** 加载到的原昵称（没有昵称是 ""）；还没加载到是 null。 */
+    val original: String? = null,
+    /** 取现在的昵称失败：不能编辑也不能保存（否则空输入一保存就把原来的昵称清掉了），只能重试。 */
+    val loadError: UiText? = null,
     val error: UiText? = null,
     val saving: Boolean = false,
-)
+) {
+    /** 原昵称已经加载到，可以编辑和保存。 */
+    val editable: Boolean get() = !loading && loadError == null && original != null
+}
 
 sealed interface EditNameEvent {
     data object Saved : EditNameEvent
@@ -76,15 +86,19 @@ class EditNameViewModel(private val service: ThinktinService) : ViewModel() {
     val events: Flow<EditNameEvent> = eventChannel.receiveAsFlow()
 
     init {
+        load()
+    }
+
+    /** 取现在的昵称预填；失败时显示错误和“重试”。 */
+    fun load() {
+        state.update { it.copy(loading = true, loadError = null) }
         viewModelScope.launch {
-            val current = try {
-                service.me().displayName.orEmpty()
+            try {
+                val current = service.me().displayName.orEmpty()
+                state.update { it.copy(loading = false, original = current, name = current) }
             } catch (e: ServiceError) {
-                eventChannel.send(EditNameEvent.Message(ErrorText.of(e)))
-                ""
+                state.update { it.copy(loading = false, loadError = ErrorText.of(e)) }
             }
-            // 用户已经开始输入就不覆盖。
-            state.update { if (it.loading && it.name.isEmpty()) it.copy(loading = false, name = current) else it.copy(loading = false) }
         }
     }
 
@@ -94,8 +108,13 @@ class EditNameViewModel(private val service: ThinktinService) : ViewModel() {
 
     fun save() {
         val current = state.value
-        if (current.saving) return
+        if (current.saving || !current.editable) return
         val name = current.name.trim()
+        // 没改：直接当保存成功返回，不发请求。
+        if (name == current.original) {
+            eventChannel.trySend(EditNameEvent.Saved)
+            return
+        }
         if (name.codePointCount(0, name.length) > MAX_NAME_LENGTH) {
             state.update { it.copy(error = UiText(R.string.profile_name_too_long, listOf(MAX_NAME_LENGTH))) }
             return
@@ -142,7 +161,7 @@ fun EditNameScreen(onBack: () -> Unit) {
         }
     }
     val focus = remember { FocusRequester() }
-    LaunchedEffect(state.loading) { if (!state.loading) focus.requestFocus() }
+    LaunchedEffect(state.editable) { if (state.editable) focus.requestFocus() }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbar) },
@@ -171,7 +190,7 @@ fun EditNameScreen(onBack: () -> Unit) {
                 onValueChange = viewModel::onNameChange,
                 label = { Text(label) },
                 singleLine = true,
-                enabled = !state.loading && !state.saving,
+                enabled = state.editable && !state.saving,
                 isError = state.error != null,
                 supportingText = { Text(state.error?.asString() ?: stringResource(R.string.profile_name_hint)) },
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
@@ -184,10 +203,19 @@ fun EditNameScreen(onBack: () -> Unit) {
             PrimaryButton(
                 text = stringResource(R.string.action_save),
                 onClick = viewModel::save,
-                enabled = !state.loading,
+                enabled = state.editable,
                 loading = state.saving,
                 modifier = Modifier.fillMaxWidth(),
             )
+            state.loadError?.let { error ->
+                Text(
+                    text = error.asString(),
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                )
+                TextButton(onClick = viewModel::load) { Text(stringResource(R.string.action_retry)) }
+            }
         }
     }
 }

@@ -13,6 +13,7 @@ import cn.thinktin.data.core.ClientFactory
 import cn.thinktin.data.core.TlsState
 import cn.thinktin.data.mock.MockThinktinService
 import cn.thinktin.data.model.User
+import cn.thinktin.data.service.AuthState
 import cn.thinktin.data.service.ServiceError
 import cn.thinktin.data.service.ThinktinService
 import kotlinx.coroutines.CoroutineDispatcher
@@ -145,7 +146,10 @@ class AppContainer(
         return wanted
     }
 
-    /** App 语言切换、系统语言变了时，把新的语言列表交给 [service]（之后的请求带新的 Accept-Language）。 */
+    /**
+     * 服务就绪时、App 语言切换、系统语言变了时：把新的语言列表交给 [service]（之后的请求带新的 Accept-Language）；
+     * 已登录时再同步服务端记的语言（推送、收件箱用）。登录成功那一刻由 [syncServerLocale] 管。
+     */
     private suspend fun followLanguage(service: ThinktinService) {
         settings.map { it.language }
             .distinctUntilChanged()
@@ -156,6 +160,14 @@ class AppContainer(
                 } catch (e: Exception) {
                     // 只是请求头：失败不影响使用（日志里记一下）。
                     Log.w(TAG, "设置 Accept-Language 失败", e)
+                }
+                if (service.authState.value == AuthState.SignedIn) {
+                    try {
+                        syncServerLocaleNow(service, service.me())
+                    } catch (e: ServiceError) {
+                        // 取资料失败（断网等）：下次语言变化或下次启动再同步。
+                        Log.w(TAG, "同步服务端语言失败", e)
+                    }
                 }
             }
     }

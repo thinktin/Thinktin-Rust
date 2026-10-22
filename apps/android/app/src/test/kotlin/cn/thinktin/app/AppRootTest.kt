@@ -11,6 +11,7 @@ import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import cn.thinktin.data.service.AuthState
+import cn.thinktin.data.service.ServiceError
 import cn.thinktin.data.service.ThinktinService
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -143,5 +144,13 @@ class AppRootTest {
         compose.onNode(hasText("重试")).performClick()
         waitFor(hasText("最近运行"))
         assertEquals(2, attempts)
+    }
+
+    @Test
+    fun tlsInitFailureShowsLocalizedReason() {
+        launch({ throw ServiceError.TlsUnavailable(NoClassDefFoundError("org/rustls/platformverifier/CertificateVerifier")) })
+        waitFor(hasText("无法加载核心库"))
+        compose.onNode(hasText("原因：无法建立安全连接（系统证书校验没有初始化）")).assertIsDisplayed()
+        compose.onAllNodes(hasText("CertificateVerifier", substring = true)).assertCountEquals(0)
     }
 }

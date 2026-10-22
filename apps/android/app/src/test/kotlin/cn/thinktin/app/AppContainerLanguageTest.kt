@@ -3,6 +3,7 @@ package cn.thinktin.app
 import androidx.test.core.app.ApplicationProvider
 import cn.thinktin.app.settings.AppLanguage
 import cn.thinktin.data.mock.MockThinktinService
+import cn.thinktin.data.service.AuthState
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -66,5 +67,36 @@ class AppContainerLanguageTest {
         assertEquals("zh-CN", container.syncServerLocaleNow(fake, user.copy(locale = "en")))
         assertEquals(null, container.syncServerLocaleNow(fake, user.copy(locale = "zh-cn")))
         assertEquals(listOf("en", "zh-CN"), fake.locales)
+    }
+
+    private fun waitUntil(condition: () -> Boolean) {
+        val deadline = System.currentTimeMillis() + 5_000
+        while (!condition() && System.currentTimeMillis() < deadline) Thread.sleep(10)
+    }
+
+    @Test
+    fun syncsServerLocaleOnStartAndLanguageChangeWhenSignedIn() = runBlocking {
+        // 服务端记的是 en，App 跟随系统（中文）：已登录冷启动时改成 zh-CN
+        mock.setLocale("en")
+        val fake = FakeThinktinService(mock)
+        val container = testContainer(ApplicationProvider.getApplicationContext(), createCore = { fake })
+        withTimeout(5_000) { container.coreService().first { it is ServiceState.Ready } }
+        waitUntil { synchronized(fake.locales) { fake.locales.isNotEmpty() } }
+        assertEquals(listOf("zh-CN"), synchronized(fake.locales) { fake.locales.toList() })
+        // 切换 App 语言：服务端跟着改
+        container.settingsRepository.setLanguage(AppLanguage.English)
+        waitUntil { synchronized(fake.locales) { fake.locales.size >= 2 } }
+        assertEquals(listOf("zh-CN", "en"), synchronized(fake.locales) { fake.locales.toList() })
+    }
+
+    @Test
+    fun noServerLocaleSyncWhenSignedOut() = runBlocking {
+        mock.setLocale("en")
+        val fake = FakeThinktinService(mock, initial = AuthState.SignedOut)
+        val container = testContainer(ApplicationProvider.getApplicationContext(), createCore = { fake })
+        withTimeout(5_000) { container.coreService().first { it is ServiceState.Ready } }
+        waitUntil { mock.acceptLanguageTags.isNotEmpty() }
+        Thread.sleep(200)
+        assertEquals(emptyList<String>(), synchronized(fake.locales) { fake.locales.toList() })
     }
 }
