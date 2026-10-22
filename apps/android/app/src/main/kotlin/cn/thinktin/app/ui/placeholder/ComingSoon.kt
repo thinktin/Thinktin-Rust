@@ -3,6 +3,7 @@ package cn.thinktin.app.ui.placeholder
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
@@ -31,9 +32,7 @@ import kotlinx.coroutines.flow.asStateFlow
 enum class Page(@StringRes val titleRes: Int) {
     Chat(R.string.page_chat),
     Run(R.string.page_run),
-    Catalog(R.string.page_catalog),
-    Agent(R.string.page_agent),
-    Instance(R.string.page_instance),
+    ModelRoutes(R.string.page_model_routes),
     Plans(R.string.page_plans),
     Plan(R.string.page_plan),
     Teams(R.string.page_teams),
@@ -53,12 +52,13 @@ class ComingSoonViewModel(page: Page, argument: String?) : ViewModel() {
     val uiState: StateFlow<ComingSoonUiState> = state.asStateFlow()
 }
 
-/** 骨架页：顶栏（返回）+ 标题 + “即将推出”。 */
+/** 骨架页：顶栏（返回）+ 标题 + “即将推出”。[actions] 是顶栏右侧的按钮（对话页的“实例设置”）。 */
 @Composable
 fun ComingSoonScreen(
     page: Page,
     argument: String?,
     onBack: () -> Unit,
+    actions: @Composable RowScope.() -> Unit = {},
     viewModel: ComingSoonViewModel = viewModel(
         key = "coming-soon-${page.name}-$argument",
         factory = viewModelFactory { initializer { ComingSoonViewModel(page, argument) } },
@@ -73,6 +73,7 @@ fun ComingSoonScreen(
                 navigationIcon = TopBarIcons.Back,
                 navigationContentDescription = stringResource(R.string.action_back),
                 onNavigationClick = onBack,
+                actions = actions,
             )
         },
     ) { padding ->

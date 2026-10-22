@@ -18,6 +18,12 @@ object Routes {
     const val CATALOG = "catalog"
     const val AGENT = "agent/{agentId}"
     const val INSTANCE = "instance/{instanceId}"
+
+    /** 改实例名（实例设置页进入；有输入框，单独成页）。 */
+    const val INSTANCE_NAME = "instance/{instanceId}/name"
+
+    /** 实例的模型别名与降级链（13.4 做页面；13.3 先放入口）。 */
+    const val INSTANCE_ROUTES = "instance/{instanceId}/routes"
     const val PLANS = "plans"
     const val PLAN = "plan/{planId}"
     const val TEAMS = "teams"
@@ -53,6 +59,8 @@ object Routes {
     fun run(runId: String) = "run/${Uri.encode(runId)}"
     fun agent(agentId: String) = "agent/${Uri.encode(agentId)}"
     fun instance(instanceId: String) = "instance/${Uri.encode(instanceId)}"
+    fun instanceName(instanceId: String) = "instance/${Uri.encode(instanceId)}/name"
+    fun instanceRoutes(instanceId: String) = "instance/${Uri.encode(instanceId)}/routes"
     fun plan(planId: String) = "plan/${Uri.encode(planId)}"
     fun team(teamId: String) = "team/${Uri.encode(teamId)}"
     fun approval(approvalId: String) = "approval/${Uri.encode(approvalId)}"

@@ -1,5 +1,6 @@
 package cn.thinktin.app.ui.common
 
+import android.content.Context
 import androidx.annotation.StringRes
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.res.stringResource
@@ -53,8 +54,18 @@ val ServiceError.isRetryable: Boolean
     get() = this is ServiceError.Network ||
         (this is ServiceError.Api && (code == "unavailable" || code == "internal" || status >= 500))
 
+/** 参数里可以再套 [UiText]（比如“查不到影响范围：<错误原因>”），先展开里面的。 */
 @Composable
-fun UiText.asString(): String = stringResource(resId, *args.toTypedArray())
+fun UiText.asString(): String {
+    val resolved = args.map { if (it is UiText) it.asString() else it }
+    return stringResource(resId, *resolved.toTypedArray())
+}
+
+/** 在 Composable 之外（Snackbar 的协程里）取文案；参数里的 [UiText] 一并展开。 */
+fun UiText.resolve(context: Context): String {
+    val resolved = args.map { if (it is UiText) it.resolve(context) else it }
+    return context.getString(resId, *resolved.toTypedArray())
+}
 
 @Composable
 fun errorText(error: ServiceError): String = ErrorText.of(error).asString()

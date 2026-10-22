@@ -43,7 +43,7 @@ import cn.thinktin.app.settings.AppSettingsRepository
 import cn.thinktin.app.ui.common.LocalAppContainer
 import cn.thinktin.app.ui.common.LocalThinktinService
 import cn.thinktin.app.ui.devices.AccountRow
-import cn.thinktin.app.ui.devices.ConfirmDialog
+import cn.thinktin.app.ui.common.ConfirmDialog
 import cn.thinktin.app.ui.devices.DevicesAction
 import cn.thinktin.data.model.User
 import cn.thinktin.data.service.ServiceError

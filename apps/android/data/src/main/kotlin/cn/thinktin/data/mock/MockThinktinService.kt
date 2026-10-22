@@ -294,13 +294,27 @@ class MockThinktinService(
     override suspend fun cachedInstances(): List<Instance> =
         synchronized(lock) { instanceList.filter { it.state != InstanceState.Deleted } }
 
+    /** 名字 1–64 个字（去掉首尾空白后），和服务端一样。 */
+    private fun checkInstanceName(name: String): String {
+        val trimmed = name.trim()
+        val length = trimmed.codePointCount(0, trimmed.length)
+        if (length !in 1..64) {
+            throw ServiceError.Api(status = 422, code = "invalid", detail = "name must be 1-64 characters", retryAfterSecs = null)
+        }
+        return trimmed
+    }
+
     override suspend fun adopt(agentId: String, name: String, harness: String?): Instance {
-        lag()
+        lag(); requireSignedIn()
         val agent = agentList.firstOrNull { it.id == agentId } ?: notFound("agent", agentId)
+        val checked = checkInstanceName(name)
+        if (harness != null && harness !in agent.harnesses) {
+            throw ServiceError.Api(status = 422, code = "invalid", detail = "$agentId has no harness $harness", retryAfterSecs = null)
+        }
         val now = clock()
         val instance = Instance(
             id = newId("inst"), agentId = agent.id, agentVersion = agent.version,
-            harness = harness ?: agent.defaultHarness, name = name, state = InstanceState.Running,
+            harness = harness ?: agent.defaultHarness, name = checked, state = InstanceState.Running,
             createdAtMs = now, lastActiveAtMs = now,
         )
         synchronized(lock) { instanceList.add(instance) }
@@ -314,21 +328,42 @@ class MockThinktinService(
     }
 
     override suspend fun renameInstance(instanceId: String, name: String): Instance {
-        lag()
-        return updateInstance(instanceId) { it.copy(name = name) }
+        lag(); requireSignedIn()
+        val checked = checkInstanceName(name)
+        return updateInstance(instanceId) { it.copy(name = checked) }
     }
 
     override suspend fun setInstanceVersion(instanceId: String, version: String?): Instance {
         lag()
+        requireSignedIn()
         return updateInstance(instanceId) { inst ->
             val agent = agentList.first { it.id == inst.agentId }
+            if (version != null && version !in agent.versions) {
+                throw ServiceError.Api(status = 422, code = "invalid", detail = "version $version is not available", retryAfterSecs = null)
+            }
             inst.copy(agentVersion = version ?: agent.version)
         }
     }
 
+    /** 和服务端一样级联：其他计划里引用它的流水线步骤、团队里的它一起删掉。 */
     override suspend fun deleteInstance(instanceId: String) {
-        lag()
-        updateInstance(instanceId) { it.copy(state = InstanceState.Deleted) }
+        lag(); requireSignedIn()
+        synchronized(lock) {
+            if (instanceList.none { it.id == instanceId && it.state != InstanceState.Deleted }) notFound("instance", instanceId)
+            updateInstance(instanceId) { it.copy(state = InstanceState.Deleted) }
+            planList.replaceAll { plan ->
+                val removed = plan.steps.filter { it.instanceId == instanceId }.map { it.key }.toSet()
+                if (removed.isEmpty()) {
+                    plan
+                } else {
+                    plan.copy(
+                        steps = plan.steps.filterNot { it.key in removed }
+                            .map { step -> step.copy(dependsOn = step.dependsOn.filterNot { it in removed }) },
+                    )
+                }
+            }
+            teamList.replaceAll { team -> team.copy(members = team.members.filterNot { it.instanceId == instanceId }) }
+        }
     }
 
     override suspend fun modelRoutes(instanceId: String): List<ModelRoute> {
