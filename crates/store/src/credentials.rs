@@ -162,6 +162,33 @@ impl Tx<Tenant> {
         Ok(())
     }
 
+    /// 改每日 token 上限（11.9）：`None` 取消上限。返回原来的上限。别人的、删了的是 [`Error::NotFound`]。
+    pub async fn set_credential_daily_limit(
+        &mut self,
+        id: CredentialId,
+        limit: Option<u64>,
+    ) -> Result<Option<u64>> {
+        let limit = limit
+            .map(|v| crate::signed(v, "daily_token_limit"))
+            .transpose()?;
+        // FOR NO KEY UPDATE：和普通 UPDATE 拿的一样，不挡别名的外键检查（KEY SHARE）。
+        let old: Option<i64> = sqlx::query_scalar(
+            "SELECT daily_token_limit FROM credentials WHERE id = $1 AND deleted_at IS NULL FOR NO KEY UPDATE",
+        )
+        .bind(id.0)
+        .fetch_one(self.conn())
+        .await?;
+        sqlx::query(
+            "UPDATE credentials SET daily_token_limit = $2, updated_at = now() WHERE id = $1",
+        )
+        .bind(id.0)
+        .bind(limit)
+        .execute(self.conn())
+        .await?;
+        old.map(|v| crate::unsigned(v, "daily_token_limit"))
+            .transpose()
+    }
+
     /// 换 key（同一个厂商）：只替换密文和后 4 位，别名路由不用动。
     pub async fn replace_credential_secret(
         &mut self,
@@ -184,7 +211,7 @@ impl Tx<Tenant> {
         Ok(())
     }
 
-    /// 删除 key：还有实例的别名指向它时拒绝（先改路由）。删除时清掉密文，不在库里留着。
+    /// 删除 key：还有没删除的实例的别名（主路由或降级链）指向它时拒绝（先改路由）。删除时清掉密文，不在库里留着。
     pub async fn delete_credential(&mut self, id: CredentialId) -> Result<()> {
         // 和 set_model_routes 的 FOR SHARE 互斥：不会有路由在检查之后指过来。
         sqlx::query_scalar::<_, Uuid>(
@@ -193,9 +220,12 @@ impl Tx<Tenant> {
         .bind(id.0)
         .fetch_one(self.conn())
         .await?;
+        // 已删除的实例的别名不算：App 看不到也改不了。删除实例时已经一起删掉了，这里兜住之前留下的。
         let routes: i64 = sqlx::query_scalar(
-            "SELECT (SELECT count(*) FROM model_routes WHERE credential_id = $1) \
-                  + (SELECT count(*) FROM model_route_fallbacks WHERE credential_id = $1)",
+            "SELECT (SELECT count(*) FROM model_routes r JOIN instances i ON i.id = r.instance_id \
+                     WHERE r.credential_id = $1 AND i.state <> 'deleted') \
+                  + (SELECT count(*) FROM model_route_fallbacks f JOIN instances i ON i.id = f.instance_id \
+                     WHERE f.credential_id = $1 AND i.state <> 'deleted')",
         )
         .bind(id.0)
         .fetch_one(self.conn())

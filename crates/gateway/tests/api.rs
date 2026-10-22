@@ -364,6 +364,52 @@ async fn instances_keys_and_routes_are_per_user() {
         assert!(ids.contains(&id), "{id} missing from {ids:?}");
     }
     assert_eq!(vendors["custom"], "custom");
+    // 每家带上订阅类 key 的前缀和套餐专用地址（11.9），和服务端检查的是同一份：按它们填的都被拒绝。
+    for v in proto::vendors::VENDORS {
+        let entry = vendors["vendors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["id"] == v.id)
+            .unwrap();
+        assert_eq!(
+            entry["subscription_key_prefixes"],
+            json!(v.subscription_key_prefixes)
+        );
+        assert_eq!(entry["plan_only_bases"], json!(v.plan_only_bases));
+        for prefix in v.subscription_key_prefixes {
+            let (st, body) = a
+                .call(
+                    Method::POST,
+                    "/v1/credentials",
+                    Some(&alice.access),
+                    Some(json!({ "vendor": v.id, "api_key": format!("{prefix}0000000000000000") })),
+                )
+                .await;
+            assert_eq!(
+                st,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "{} {prefix}: {body}",
+                v.id
+            );
+        }
+        for base in v.plan_only_bases {
+            let (st, body) = a
+                .call(
+                    Method::POST,
+                    "/v1/credentials",
+                    Some(&alice.access),
+                    Some(json!({ "vendor": "custom", "api_key": "sk-x-12345678", "openai_base": format!("{base}/v3") })),
+                )
+                .await;
+            assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{base}: {body}");
+        }
+    }
+    let deepseek = &vendors["vendors"].as_array().unwrap()[0];
+    assert_eq!(
+        (&deepseek["id"], &deepseek["plan_only_bases"]),
+        (&json!("deepseek"), &json!([]))
+    );
     for bad in [
         json!({ "vendor": "deepseek:cn", "api_key": "sk-ds-000000009999" }),
         json!({ "vendor": "anthropic", "api_key": "sk-ant-oat01-0000000000000000" }),
@@ -462,6 +508,241 @@ async fn instances_keys_and_routes_are_per_user() {
         )
         .await;
     assert_eq!(st, StatusCode::NOT_FOUND);
+    // 删了的实例的别名不再占着 key（11.9）：实例在的时候删 key 是 409，现在可以删。
+    let (st, body) = a
+        .call(
+            Method::DELETE,
+            &format!("/v1/credentials/{cred_id}"),
+            Some(&alice.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT, "{body}");
+}
+
+/// key 的每日上限可以改、可以取消（11.9）：放宽、取消时等 key 的运行接着跑，调低时不动；每次都记审计。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn credential_daily_limit_is_editable() {
+    use proto::domain::RunState;
+    let Some(a) = api().await else { return };
+    let u = a.login("13800138032").await;
+    let tok = Some(u.access.as_str());
+    let (st, cred) = a
+        .call(
+            Method::POST,
+            "/v1/credentials",
+            tok,
+            Some(json!({ "vendor": "deepseek", "api_key": "sk-0123456789abcdef", "daily_token_limit": 1000 })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{cred}");
+    let path = format!("/v1/credentials/{}", cred["id"].as_str().unwrap());
+    let patch = |body: Value| {
+        let (a, path) = (&a, path.clone());
+        async move { a.call(Method::PATCH, &path, tok, Some(body)).await }
+    };
+    let (st, body) = patch(json!({ "daily_token_limit": 5000 })).await;
+    assert_eq!(
+        (st, &body["daily_token_limit"]),
+        (StatusCode::OK, &json!(5000))
+    );
+    // 只改名字：上限不动（不带不是取消）。
+    let (_, body) = patch(json!({ "label": "备用" })).await;
+    assert_eq!(body["daily_token_limit"], 5000);
+    for bad in [
+        json!(0),
+        json!(-1),
+        json!(1.5),
+        json!("100"),
+        json!(9223372036854775808u64),
+    ] {
+        let (st, body) = patch(json!({ "daily_token_limit": bad })).await;
+        assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{bad}: {body}");
+    }
+    // 等 key 的运行：调低不唤醒，取消上限唤醒。
+    let inst = a.adopt(&u).await;
+    let (_, run) = a
+        .call(
+            Method::POST,
+            &format!("/v1/instances/{inst}/runs"),
+            tok,
+            Some(json!({ "prompt": "x" })),
+        )
+        .await;
+    let run_id: RunId = run["id"].as_str().unwrap().parse().unwrap();
+    let mut w = a.t.db.worker().await.unwrap();
+    w.claim_next_run("n1", Duration::from_secs(60))
+        .await
+        .unwrap()
+        .unwrap();
+    w.transition_run(
+        run_id,
+        "n1",
+        RunState::Running,
+        &store::RunChange::default(),
+    )
+    .await
+    .unwrap();
+    w.transition_run(
+        run_id,
+        "n1",
+        RunState::WaitingQuota,
+        &store::RunChange {
+            not_before: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
+            release_lease: true,
+            wait_code: Some("unavailable"),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    w.commit().await.unwrap();
+    let waiting = || async {
+        sqlx::query_scalar::<_, bool>("SELECT not_before > now() FROM runs WHERE id = $1")
+            .bind(run_id.0)
+            .fetch_one(a.t.db.pool())
+            .await
+            .unwrap()
+    };
+    let (st, _) = patch(json!({ "daily_token_limit": 100 })).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(waiting().await, "lowering the limit does not wake runs");
+    let (st, body) = patch(json!({ "daily_token_limit": null })).await;
+    assert_eq!(
+        (st, &body["daily_token_limit"]),
+        (StatusCode::OK, &Value::Null)
+    );
+    assert!(!waiting().await, "clearing the limit wakes runs");
+    let audit: Vec<(String, Value)> = sqlx::query_as(
+        "SELECT action, detail FROM audit_log WHERE target = $1 AND action = 'credential.limit' ORDER BY id",
+    )
+    .bind(cred["id"].as_str().unwrap())
+    .fetch_all(a.t.db.pool())
+    .await
+    .unwrap();
+    let details: Vec<Value> = audit.into_iter().map(|(_, d)| d).collect();
+    assert_eq!(
+        details,
+        [
+            json!({ "daily_token_limit": 5000, "previous": 1000 }),
+            json!({ "daily_token_limit": 100, "previous": 5000 }),
+            json!({ "daily_token_limit": null, "previous": 100 }),
+        ]
+    );
+}
+
+/// 删除实例时一并处理它的计划（11.9）：它自己的计划没了；别的实例的流水线有一步在它上面的暂停，改了步骤才能恢复。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn deleting_an_instance_deletes_its_plans_and_pauses_pipelines() {
+    let Some(a) = api().await else { return };
+    let u = a.login("13800138031").await;
+    let (gone, stays) = (a.adopt(&u).await, a.adopt(&u).await);
+    let tok = Some(u.access.as_str());
+    let triggers = json!([{ "kind": "cron", "expr": "0 8 * * *", "tz": "Asia/Shanghai" }]);
+    let create = |body: Value| {
+        let a = &a;
+        async move {
+            let (st, plan) = a.call(Method::POST, "/v1/plans", tok, Some(body)).await;
+            assert_eq!(st, StatusCode::CREATED, "{plan}");
+            plan["id"].as_str().unwrap().to_owned()
+        }
+    };
+    let own =
+        create(json!({ "instance_id": gone, "title": "早报", "goal": "g", "triggers": triggers }))
+            .await;
+    let pipeline = create(json!({
+        "instance_id": stays, "title": "周报", "goal": "g", "triggers": triggers,
+        "steps": [
+            { "key": "r", "instance_id": gone, "prompt": "查资料" },
+            { "key": "w", "instance_id": stays, "prompt": "写稿", "depends_on": ["r"] },
+        ],
+    }))
+    .await;
+    let other =
+        create(json!({ "instance_id": stays, "title": "晚报", "goal": "g", "triggers": triggers }))
+            .await;
+
+    let (st, _) = a
+        .call(Method::DELETE, &format!("/v1/instances/{gone}"), tok, None)
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let (_, list) = a.call(Method::GET, "/v1/plans", tok, None).await;
+    let by_id = |id: &str| {
+        list["plans"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["id"] == id)
+            .cloned()
+    };
+    assert!(by_id(&own).is_none(), "{list}");
+    let paused = by_id(&pipeline).unwrap();
+    assert_eq!(
+        (&paused["paused"], &paused["next_fire_at"]),
+        (&json!(true), &Value::Null)
+    );
+    assert_eq!(by_id(&other).unwrap()["paused"], false);
+    let (_, mine) = a
+        .call(
+            Method::GET,
+            &format!("/v1/plans?instance_id={gone}"),
+            tok,
+            None,
+        )
+        .await;
+    assert_eq!(mine["plans"], json!([]));
+    for (method, path) in [
+        (Method::GET, format!("/v1/plans/{own}")),
+        (Method::POST, format!("/v1/plans/{own}/resume")),
+    ] {
+        let (st, body) = a.call(method, &path, tok, None).await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "{path}: {body}");
+    }
+    // 流水线：步骤还在已删除的实例上时不能恢复；改掉那一步就行。
+    let (st, body) = a
+        .call(
+            Method::POST,
+            &format!("/v1/plans/{pipeline}/resume"),
+            tok,
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::CONFLICT, "{body}");
+    assert!(
+        body["message"].as_str().unwrap().contains("step r"),
+        "{body}"
+    );
+    let (st, body) = a
+        .call(
+            Method::PATCH,
+            &format!("/v1/plans/{pipeline}"),
+            tok,
+            Some(json!({ "steps": [{ "key": "w", "instance_id": stays, "prompt": "写稿" }] })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let (st, body) = a
+        .call(
+            Method::POST,
+            &format!("/v1/plans/{pipeline}/resume"),
+            tok,
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert!(body["next_fire_at"].is_string(), "{body}");
+    // 审计里记着处理了哪些计划。
+    let details: Value = sqlx::query_scalar(
+        "SELECT detail FROM audit_log WHERE action = 'instance.delete' AND target = $1",
+    )
+    .bind(gone.to_string())
+    .fetch_one(a.t.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        details,
+        json!({ "plans_deleted": [own], "plans_paused": [pipeline] })
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -1582,6 +1863,11 @@ async fn other_users_objects_are_invisible() {
             Some(json!({ "label": "x" })),
         ),
         (
+            Method::PATCH,
+            format!("/v1/credentials/{cred}"),
+            Some(json!({ "daily_token_limit": 1 })),
+        ),
+        (
             Method::PUT,
             format!("/v1/credentials/{cred}/secret"),
             Some(json!({ "api_key": "sk-stolen-0000000" })),
@@ -2010,6 +2296,148 @@ async fn cancelling_a_pipeline_root_stops_its_steps() {
         proto::domain::RunState::Cancelled
     );
     w.rollback().await.unwrap();
+}
+
+/// 实例数上限（11.9）：到了上限领养报 409 `instance_limit`；放不下整个团队的模板领养先拒绝，不领养一半；
+/// 删掉一个又能领养；别的用户不受影响。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn instance_limit_over_http() {
+    let Some(a) = api_with(GatewayConfig {
+        limits: gateway::LimitConfig {
+            instances_per_user: 2,
+            ..gateway::LimitConfig::default()
+        },
+        ..GatewayConfig::default()
+    })
+    .await
+    else {
+        return;
+    };
+    let u = a.login("13800138033").await;
+    let tok = Some(u.access.as_str());
+    let first = a.adopt(&u).await;
+    let count = || async {
+        let (_, list) = a.call(Method::GET, "/v1/instances", tok, None).await;
+        list["instances"].as_array().unwrap().len()
+    };
+    let (st, tpl) = a
+        .call(
+            Method::POST,
+            "/v1/team-templates",
+            tok,
+            Some(json!({ "name": "两个人", "spec": { "members": [
+                { "agent_id": "claude", "name": "主编", "role": "lead" },
+                { "agent_id": "claude", "name": "写手" },
+            ] } })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{tpl}");
+    let (st, body) = a
+        .call(
+            Method::POST,
+            &format!("/v1/team-templates/{}/adopt", tpl["id"].as_str().unwrap()),
+            tok,
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(
+        (st, &body["code"]),
+        (StatusCode::CONFLICT, &json!("instance_limit")),
+        "{body}"
+    );
+    assert_eq!(count().await, 1, "no half team");
+    a.adopt(&u).await;
+    let adopt = || async {
+        a.call(
+            Method::POST,
+            "/v1/instances",
+            tok,
+            Some(json!({ "agent_id": "claude", "name": "第三个" })),
+        )
+        .await
+    };
+    let (st, body) = adopt().await;
+    assert_eq!(
+        (st, &body["code"]),
+        (StatusCode::CONFLICT, &json!("instance_limit")),
+        "{body}"
+    );
+    assert!(body["message"].as_str().unwrap().contains('2'), "{body}");
+    assert_eq!(count().await, 2);
+    let (st, _) = a
+        .call(Method::DELETE, &format!("/v1/instances/{first}"), tok, None)
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let (st, body) = adopt().await;
+    assert_eq!(st, StatusCode::CREATED, "{body}");
+    let other = a.login("13800138034").await;
+    a.adopt(&other).await;
+}
+
+/// 团队模板整个在一个事务里领养（11.9）：同时领养两次、只放得下一个团队的，一个成、一个 409 `instance_limit`，
+/// 不留下不在团队里的实例；团队名不合法的一个也不领养。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn team_adoption_is_all_or_nothing() {
+    let Some(a) = api_with(GatewayConfig {
+        limits: gateway::LimitConfig {
+            instances_per_user: 4,
+            ..gateway::LimitConfig::default()
+        },
+        ..GatewayConfig::default()
+    })
+    .await
+    else {
+        return;
+    };
+    for round in 0..5 {
+        let u = a.login(&format!("1380013807{round}")).await;
+        let tok = Some(u.access.as_str());
+        let (st, tpl) = a
+            .call(
+                Method::POST,
+                "/v1/team-templates",
+                tok,
+                Some(json!({ "name": "三个人", "spec": { "members": [
+                    { "agent_id": "claude", "name": "主编", "role": "lead" },
+                    { "agent_id": "claude", "name": "写手" },
+                    { "agent_id": "claude", "name": "校对" },
+                ] } })),
+            )
+            .await;
+        assert_eq!(st, StatusCode::CREATED, "{tpl}");
+        let path = format!("/v1/team-templates/{}/adopt", tpl["id"].as_str().unwrap());
+        if round == 0 {
+            let (st, body) = a
+                .call(
+                    Method::POST,
+                    &path,
+                    tok,
+                    Some(json!({ "name": "长".repeat(65) })),
+                )
+                .await;
+            assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+            let (_, list) = a.call(Method::GET, "/v1/instances", tok, None).await;
+            assert_eq!(list["instances"].as_array().unwrap().len(), 0, "{list}");
+        }
+        let ((s1, b1), (s2, b2)) = tokio::join!(
+            a.call(Method::POST, &path, tok, Some(json!({}))),
+            a.call(Method::POST, &path, tok, Some(json!({}))),
+        );
+        let mut got = [(s1, b1["code"].clone()), (s2, b2["code"].clone())];
+        got.sort_by_key(|(st, _)| st.as_u16());
+        assert_eq!(
+            got,
+            [
+                (StatusCode::CREATED, Value::Null),
+                (StatusCode::CONFLICT, json!("instance_limit")),
+            ],
+            "{b1} {b2}"
+        );
+        let (_, list) = a.call(Method::GET, "/v1/instances", tok, None).await;
+        assert_eq!(list["instances"].as_array().unwrap().len(), 3, "{list}");
+        let (_, teams) = a.call(Method::GET, "/v1/teams", tok, None).await;
+        assert_eq!(teams["teams"].as_array().unwrap().len(), 1, "{teams}");
+    }
 }
 
 #[tokio::test]

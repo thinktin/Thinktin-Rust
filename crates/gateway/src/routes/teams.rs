@@ -178,7 +178,8 @@ pub struct AdoptReq {
     name: Option<String>,
 }
 
-/// 按模板领养一整个团队：每个成员领养一个新实例（带运行授权），再编成团队。
+/// 按模板领养一整个团队：每个成员领养一个新实例（带运行授权），再编成团队，都在一个事务里：放不下整个团队
+/// （实例数上限，409 `instance_limit`）或者中途出错的，一个也不领养。按用户加锁数实例数，锁到提交，并发领养排着队。
 pub async fn adopt_template(
     State(s): State<AppState>,
     Authed(who): Authed,
@@ -186,25 +187,29 @@ pub async fn adopt_template(
     ApiJson(req): ApiJson<AdoptReq>,
 ) -> ApiResult<(StatusCode, Json<Team>)> {
     let id: TeamTemplateId = parse_id(&id, "template")?;
+    let max = u64::from(s.limits().config().instances_per_user);
     let mut t = s.db.tenant(who.user).await?;
     let tpl = t.team_template(id).await?;
-    t.rollback().await?;
+    let name = req.name.unwrap_or_else(|| tpl.name.clone());
+    check_len("name", name.trim(), 1, 64)?;
+    if max > 0 && t.lock_instance_count().await? + tpl.spec.members.len() as u64 > max {
+        return Err(control::Error::InstanceLimit { max }.into());
+    }
     let mut members = Vec::new();
     for (i, m) in tpl.spec.members.iter().enumerate() {
-        let instance = control::adopt(
-            &s.db,
+        let instance = control::adopt_in(
+            &mut t,
             s.templates.as_ref(),
-            who.user,
             &who.actor(),
-            &m.agent_id,
-            m.harness.as_deref(),
-            &m.name,
+            control::AdoptSpec {
+                agent_id: &m.agent_id,
+                harness: m.harness.as_deref(),
+                name: &m.name,
+            },
         )
         .await?;
-        let mut t = s.db.tenant(who.user).await?;
         t.create_run_grant(instance.id, None, &default_scope(&s), s.cfg.grant_ttl)
             .await?;
-        t.commit().await?;
         members.push(TeamMember {
             instance_id: instance.id,
             role: if m.role == TeamRole::Lead {
@@ -215,9 +220,6 @@ pub async fn adopt_template(
             position: u32::try_from(i).unwrap_or(u32::MAX),
         });
     }
-    let name = req.name.unwrap_or(tpl.name);
-    check_len("name", name.trim(), 1, 64)?;
-    let mut t = s.db.tenant(who.user).await?;
     let team = t.create_team(name.trim(), &members).await?;
     t.commit().await?;
     Ok((StatusCode::CREATED, Json(team)))

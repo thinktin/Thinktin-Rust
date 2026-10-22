@@ -44,6 +44,8 @@ pub struct LimitConfig {
     pub im_tests_per_hour: u32,
     /// 内容举报（5.5）：每个用户每小时。
     pub reports_per_hour: u32,
+    /// 每个账号最多几个没删除的实例（归档的也算，11.9）；到了上限领养报 409 `instance_limit`。0 不限。
+    pub instances_per_user: u32,
     /// 来源地址取 `X-Forwarded-For` 的最后一项（网关前面有自己的负载均衡时才开）。
     pub trust_forwarded_for: bool,
     /// 最多记多少个计数器；满了先清掉闲置的，还满就不再给新的来源计数（放行）。
@@ -62,6 +64,7 @@ impl Default for LimitConfig {
             streams_per_user: 32,
             im_tests_per_hour: 10,
             reports_per_hour: 30,
+            instances_per_user: 0,
             trust_forwarded_for: false,
             max_keys: 200_000,
         }

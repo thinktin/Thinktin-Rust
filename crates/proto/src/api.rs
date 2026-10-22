@@ -31,7 +31,8 @@ pub fn negotiate(client: Option<u32>) -> Result<u32, VersionTooOld> {
     }
 }
 
-/// 错误码：客户端按它决定怎么处理（重新登录、重试、提示），`message` 只给人看。
+/// 错误码：客户端按它决定怎么处理（重新登录、重试、提示），`message` 只给人看。以后会加新的码：客户端不认识的
+/// 按 HTTP 状态给通用提示。数量到了上限的码都以 `_limit` 结尾（409，原样重试没用，删掉一些再建）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ErrorCode {
@@ -47,13 +48,15 @@ pub enum ErrorCode {
     Conflict,
     /// 请求不合法：参数、取值、状态迁移。
     Invalid,
-    /// 限流或额度用完：按 `retry_after_secs` 退避。
+    /// 限流：按 `retry_after_secs` 退避。
     RateLimited,
     /// 客户端太老：提示升级。
     UpgradeRequired,
     /// 暂时不可用（停机中、依赖故障）：退避重试。
     Unavailable,
     Internal,
+    /// 实例数到了账号的上限（11.9）：删掉一个再领养。
+    InstanceLimit,
 }
 
 impl ErrorCode {
@@ -62,7 +65,7 @@ impl ErrorCode {
             Self::Unauthenticated | Self::SessionRevoked => 401,
             Self::AccountFrozen | Self::Forbidden => 403,
             Self::NotFound => 404,
-            Self::Conflict => 409,
+            Self::Conflict | Self::InstanceLimit => 409,
             Self::Invalid => 422,
             Self::RateLimited => 429,
             Self::UpgradeRequired => 426,
@@ -74,6 +77,11 @@ impl ErrorCode {
     /// 客户端可以原样重试（退避后）。
     pub fn retryable(self) -> bool {
         matches!(self, Self::RateLimited | Self::Unavailable | Self::Internal)
+    }
+
+    /// 数量到了上限（`*_limit`）。
+    pub fn is_limit(self) -> bool {
+        matches!(self, Self::InstanceLimit)
     }
 }
 
@@ -152,5 +160,18 @@ mod tests {
             "account_frozen"
         );
         assert!(ErrorCode::Unavailable.retryable() && !ErrorCode::Invalid.retryable());
+    }
+
+    #[test]
+    fn limit_codes() {
+        let code = ErrorCode::InstanceLimit;
+        assert_eq!(serde_json::to_value(code).unwrap(), "instance_limit");
+        assert_eq!(
+            serde_json::from_value::<ErrorCode>("instance_limit".into()).unwrap(),
+            code
+        );
+        assert_eq!(code.http_status(), 409);
+        assert!(code.is_limit() && !code.retryable());
+        assert!(!ErrorCode::Conflict.is_limit() && !ErrorCode::RateLimited.is_limit());
     }
 }

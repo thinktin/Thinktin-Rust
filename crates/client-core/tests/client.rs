@@ -1162,6 +1162,15 @@ async fn ffi_keys_runs_artifacts_and_inbox_items() {
     let (c, store, _d) = ffi_login(&e, "13800138509", "ios", "iPhone").await;
     let user: UserId = store.load().unwrap().user_id.parse().unwrap();
 
+    // 厂商（11.9）：带上订阅类 key 的前缀和套餐专用地址，App 不用自己抄一份。
+    let vendors = c.vendors().await.unwrap();
+    assert_eq!(vendors.len(), proto::vendors::VENDORS.len());
+    for v in &vendors {
+        let p = proto::vendors::vendor(&v.id).unwrap();
+        assert_eq!(v.subscription_key_prefixes, p.subscription_key_prefixes);
+        assert_eq!(v.plan_only_bases, p.plan_only_bases);
+    }
+
     // key：改备注、停用、换 key（只显示新的后 4 位）。
     let cred = c
         .add_credential(ffi::NewCredential {
@@ -1180,6 +1189,33 @@ async fn ffi_keys_runs_artifacts_and_inbox_items() {
         .await
         .unwrap();
     assert_eq!((off.label.as_str(), off.disabled), ("备用", true));
+    // 每日上限（11.9）：改、只改名字时不动、取消；0 不行。
+    let limited = c
+        .set_credential_daily_limit(cred.id.clone(), Some(5_000))
+        .await
+        .unwrap();
+    assert_eq!(
+        (
+            limited.daily_token_limit,
+            limited.label.as_str(),
+            limited.disabled
+        ),
+        (Some(5_000), "备用", true)
+    );
+    let renamed = c
+        .update_credential(cred.id.clone(), Some("主力".into()), None)
+        .await
+        .unwrap();
+    assert_eq!(renamed.daily_token_limit, Some(5_000));
+    let cleared = c
+        .set_credential_daily_limit(cred.id.clone(), None)
+        .await
+        .unwrap();
+    assert_eq!(cleared.daily_token_limit, None);
+    assert!(matches!(
+        c.set_credential_daily_limit(cred.id.clone(), Some(0)).await,
+        Err(ClientError::Api { status: 422, .. })
+    ));
     let swapped = c
         .replace_credential_secret(cred.id.clone(), "sk-fedcba9876543210".into())
         .await
@@ -1694,4 +1730,13 @@ async fn ffi_single_approval() {
         c.get_approval("nope".into()).await,
         Err(ClientError::InvalidArgument { .. })
     ));
+}
+
+/// 老的服务端（11.9 之前）不给前缀和套餐地址：照样解得开，是空的。
+#[test]
+fn older_servers_vendor_info_decodes() {
+    let v: client_core::api::VendorInfo =
+        serde_json::from_value(json!({ "id": "x", "name": "X", "protocols": ["chat"] })).unwrap();
+    let v = ffi::VendorInfo::from(v);
+    assert!(v.subscription_key_prefixes.is_empty() && v.plan_only_bases.is_empty());
 }

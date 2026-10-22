@@ -143,7 +143,9 @@ agent（沙箱内） ──沙箱令牌──▶ llm-gw ──用户 key──�
 - **按实例限速**：令牌桶，容量和每分钟补充量都是 `requests_per_minute`（默认 120）。
 - **按实例限并发**：`max_concurrent`（默认 8），许可一直持有到响应流结束。
 - **熔断**：一分钟内被限速拒绝的次数达到每分钟配额（agent 无视 429 在猛打，比如死循环），就熔断 5 分钟，并输出 `llm_gw::breaker` 告警日志，供控制面通知用户。
-- **按 key 每日预算**：`daily_token_limit`，按东八区切天（`--budget-utc-offset-hours` 可调）。请求前检查、响应后记账，所以同时在途的请求可能让当天用量略微超出上限。生产环境的账本以用量表的汇总为准（多副本共享），加上本副本还没落库的记账；开发环境在内存里。用量记录进队列、后台批量写用量表，库不可用时退回结构化日志，不丢账。
+- **按 key 每日预算**：`daily_token_limit`，按东八区切天（`--budget-utc-offset-hours` 可调）。建 key 时给，之后用
+  `PATCH /v1/credentials/{id}` 改（`null` 取消上限，client-core 的 `set_credential_daily_limit`），网关在缓存过期
+  （`--cache-secs`，默认 5 秒）后用上新的；放宽或取消时等 key 的运行接着跑。请求前检查、响应后记账，所以同时在途的请求可能让当天用量略微超出上限。生产环境的账本以用量表的汇总为准（多副本共享），加上本副本还没落库的记账；开发环境在内存里。用量记录进队列、后台批量写用量表，库不可用时退回结构化日志，不丢账。
 
 ### 降级链（9.9）
 
@@ -161,7 +163,8 @@ agent（沙箱内） ──沙箱令牌──▶ llm-gw ──用户 key──�
 - 冷却是每个副本各自在内存里记的，只调整顺序（冷却中的排到最后），从不拒绝请求；成功一次就解除。所以只有一把 key 的别名行为和以前完全一样。
 - 每次发出去的尝试各记一条用量：别名不变，key、厂商、上游模型按实际的记。失败的尝试记 `upstream_status` 或 `connect_failed`，不记账。
 - 都失败时：有厂商的真实失败就把最后一个原样交给 agent（照样抹掉 key）；一个都没发出去就报主 key 的原因（比如 402 预算用完）。
-- 删除 key 时，被任何别名的主路由或降级链用着都拒绝。
+- 删除 key 时，被任何没删除的实例的别名（主路由或降级链）用着都拒绝；删除实例时它的别名和降级链一起删掉。
+- 保存别名时，新引用的 key 必须是自己的、没删除、没停用；实例原来就用着的停用 key 可以留着（网关照样跳过它），所以从别名里去掉别的 key 不会因为它保存不了。
 
 ### 没有能用的 key（7.11）
 
@@ -224,7 +227,7 @@ GW=1 PROMPT='MOCK_TOOL:Bash:{"command": "touch x", "description": "touch"}' EXPE
 
 ## 11. 厂商适配表（9.7、9.12）
 
-`llm-gw vendors` 打印完整的表。表在 `crates/proto/src/vendors.rs`，模型网关按它路由，接入网关按它校验 key，App 通过 `GET /v1/vendors` 拿到可选厂商（client-core 的 `vendors()`）。只预置模型品牌方自己的官方接口；聚合平台、中转站不预置，用户按自定义端点（`custom`）填地址。**各家的国内站和国际站账号、key 互不相通**，用错区域的地址会返回 401，所以每个区域单独一条，用户保存 key 时选区域。
+`llm-gw vendors` 打印完整的表。表在 `crates/proto/src/vendors.rs`，模型网关按它路由，接入网关按它校验 key，App 通过 `GET /v1/vendors` 拿到可选厂商（client-core 的 `vendors()`），每家带着 `subscription_key_prefixes`、`plan_only_bases`（11.9），保存前可以先在本地提示，服务端照样检查。只预置模型品牌方自己的官方接口；聚合平台、中转站不预置，用户按自定义端点（`custom`）填地址。**各家的国内站和国际站账号、key 互不相通**，用错区域的地址会返回 401，所以每个区域单独一条，用户保存 key 时选区域。
 
 前 5 家（9.7）按官方文档核对于 2026-10-14，后 9 家（9.12）核对于 2026-10-16。
 
@@ -256,7 +259,7 @@ GW=1 PROMPT='MOCK_TOOL:Bash:{"command": "touch x", "description": "touch"}' EXPE
 **订阅类 key 和套餐地址不收**。编程套餐、订阅套餐的额度按各家条款只能在官方支持的编程工具里用，平台替用户中转属于违规：
 
 - 按前缀拒绝的 key：百炼编程套餐 `sk-sp-`、MiniMax 订阅 `sk-cp-`、腾讯 Token Plan `sk-tp-`（条款写明“严禁 API 调用”）、Claude 订阅（Free、Pro、Max）的 OAuth 令牌 `sk-ant-oat…` / `sk-ant-ort…`（Anthropic 条款不允许第三方平台收集、保存或居间 Claude 账号凭证）。
-- 自定义端点填了套餐专用地址就拒绝（`PLAN_ONLY_BASES`，只防误填，不是安全边界）：火山方舟 `/api/coding`、`/api/plan`，BytePlus `/api/coding`，千帆 `/v2/coding`、`/anthropic/coding`，腾讯 `api.lkeap.cloud.tencent.com/plan`、`tokenhub-intl…/plan`，阶跃 `/step_plan`，智谱 `/api/coding`。
+- 自定义端点填了套餐专用地址就拒绝（每家的 `plan_only_bases`，合起来是 `PLAN_ONLY_BASES`；去掉首尾空白、转小写后等于它或接着是 `/`；只防误填，不是安全边界）：火山方舟 `/api/coding`、`/api/plan`，BytePlus `/api/coding`，千帆 `/v2/coding`、`/anthropic/coding`，腾讯 `api.lkeap.cloud.tencent.com/plan`、`tokenhub-intl…/plan`，阶跃 `/step_plan`，智谱 `/api/coding`。
 - 没法按前缀分辨的：智谱编程套餐的 key 和按量付费共用 Anthropic 地址；火山方舟套餐用专属 key（前缀没公开）；阶跃 Step Plan 和按量付费是同一把 key、按地址计费。预置地址都是按量付费地址，界面上提示用户只填按量付费 key。千帆的套餐 key 调普通接口会被千帆自己拒绝（401）。
 
 **会影响 agent 的差异**（详见表里每家的 `notes`）：

@@ -333,3 +333,58 @@ fn accept_language_from_the_system_list() {
         Some(proto::domain::Locale::ZhCn)
     );
 }
+
+/// 服务端的错误码原样交给 App（11.9）：这个版本不认识的码（以后加的）也是接口错误，不是解析失败。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn server_error_codes_reach_the_app_verbatim() {
+    let (base, _) = stub(vec![
+        (
+            "POST /v1/instances",
+            409,
+            r#"{"code":"instance_limit","message":"at most 2 instances per account"}"#,
+        ),
+        (
+            "GET /v1/me",
+            409,
+            r#"{"code":"future_thing","message":"x"}"#,
+        ),
+        ("GET /v1/instances", 409, "not json"),
+        (
+            "GET /v1/inbox",
+            401,
+            r#"{"code":"unauthenticated","message":"expired"}"#,
+        ),
+        (
+            "POST /v1/auth/refresh",
+            409,
+            r#"{"code":"future_thing","message":"later"}"#,
+        ),
+    ])
+    .await;
+    let a = api(&base, None);
+    let err = a.adopt("claude", "x", None).await.unwrap_err();
+    assert_eq!(
+        err,
+        ClientError::Api {
+            status: 409,
+            code: "instance_limit".into(),
+            detail: "at most 2 instances per account".into(),
+            retry_after_secs: None,
+        }
+    );
+    assert!(!err.retryable());
+    assert!(matches!(
+        a.me().await,
+        Err(ClientError::Api { status: 409, code, .. }) if code == "future_thing"
+    ));
+    assert!(matches!(
+        a.instances().await,
+        Err(ClientError::Decode { .. })
+    ));
+    // 刷新令牌时回了不认识的码：照样是接口错误，登录状态不丢。
+    assert!(matches!(
+        a.inbox(None, 10, false).await,
+        Err(ClientError::Api { code, .. }) if code == "future_thing"
+    ));
+    assert!(a.session().is_some());
+}

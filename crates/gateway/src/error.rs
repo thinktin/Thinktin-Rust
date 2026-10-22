@@ -127,6 +127,7 @@ impl From<control::Error> for ApiError {
             }
             Error::Deleted => Self::not_found("instance"),
             Error::Busy => Self::conflict(e.to_string()),
+            Error::InstanceLimit { .. } => Self::new(ErrorCode::InstanceLimit, e.to_string()),
             Error::Store(s) => s.into(),
             Error::Timeout(_) | Error::Sandbox(_) => {
                 error!(error = %e, "sandbox operation failed");

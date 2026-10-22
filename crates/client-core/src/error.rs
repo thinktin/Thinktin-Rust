@@ -16,7 +16,9 @@ pub enum ClientError {
     /// 账号被冻结（风控、运维，4.6）：提示联系客服。登录状态保留，解冻后接着用。
     #[error("account frozen")]
     AccountFrozen,
-    /// 服务端返回的错误。`code` 是 [`ErrorCode`] 的字符串形式（not_found、conflict、invalid……）。
+    /// 服务端返回的错误。`code` 是服务端给的错误码原样（[`ErrorCode`] 的字符串形式：not_found、conflict、invalid……），
+    /// 这个版本不认识的码（服务端以后加的）也原样放进来，按 `status` 给通用提示。以 `_limit` 结尾的是数量到了上限
+    /// （409，比如 `instance_limit`：删掉一个实例再领养）。
     #[error("{code}: {detail}")]
     Api {
         status: u16,

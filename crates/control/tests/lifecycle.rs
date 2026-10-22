@@ -545,3 +545,43 @@ async fn instances_on_a_withdrawn_version_move_to_the_current_one() {
         Some(SandboxState::Running)
     );
 }
+
+/// 实例数上限（11.9）：到了上限不能再领养，删掉一个又能；校验照样先做；不限的领养不受影响。
+#[tokio::test]
+async fn adopt_respects_the_instance_cap() {
+    let Some(e) = env().await else { return };
+    let spec = |name| control::AdoptSpec {
+        agent_id: "claude",
+        harness: None,
+        name,
+    };
+    let first = control::adopt_capped(&e.t.db, &BuiltinTemplates, e.user, "user:d", spec("一"), 1)
+        .await
+        .unwrap();
+    assert!(matches!(
+        control::adopt_capped(&e.t.db, &BuiltinTemplates, e.user, "user:d", spec("二"), 1).await,
+        Err(Error::InstanceLimit { max: 1 })
+    ));
+    // 名字不对的照样先报名字不对。
+    assert!(matches!(
+        control::adopt_capped(&e.t.db, &BuiltinTemplates, e.user, "user:d", spec(" "), 1).await,
+        Err(Error::Invalid(_))
+    ));
+    control::adopt(
+        &e.t.db,
+        &BuiltinTemplates,
+        e.user,
+        "user:d",
+        "claude",
+        None,
+        "不限",
+    )
+    .await
+    .unwrap();
+    let mut tx = e.t.db.tenant(e.user).await.unwrap();
+    tx.delete_instance(first.id).await.unwrap();
+    tx.commit().await.unwrap();
+    control::adopt_capped(&e.t.db, &BuiltinTemplates, e.user, "user:d", spec("三"), 2)
+        .await
+        .unwrap();
+}
