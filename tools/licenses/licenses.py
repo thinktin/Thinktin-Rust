@@ -573,7 +573,7 @@ _NOTICE_START = re.compile(
     r"^\s*(?:<program>\s+)?(?:[A-Z][a-z]+(?:\s+[a-z]+)?\s+)?(?:"
     r"(?:[Cc]opyright|COPYRIGHT)\s*(?:\([cC]\)|©|\d|[<\[{])"
     r"|Copyright\s+(?!(?:Holders?|Owners?|Notices?|Act|Laws?|Licen[cs]es?|Agent|Office|Statement|Policy|Protection|Treaty|Treaties|"
-    r"Conventions?)\b)[A-Z]"
+    r"Conventions?)\b)[A-Z]|Copyright\s+[a-z][\w.-]*,?\s+(?:Inc|LLC|Ltd|GmbH|Corp)\b"
     r"|©|\([cC]\)\s*(?:\d|[Cc]opyright\b)|SPDX-FileCopyrightText:)"
 )
 # OFL 的版权行常把“with Reserved Font Name …”折到下一行：这一行也算版权声明。
@@ -596,8 +596,25 @@ _LIMITING = set(
     "purchased purchaser customer customers revoke revoked revocable revocation terminate terminated termination void "
     "agreement agreements eula proprietary confidential must require requires required obtain".split()
 )
+# 加条件的常见说法里的词（“Redistribution needs written approval”“Resale disallowed”“production deployments”）：
+# 许可证标准文本里多出来这些词也算限制性的。真实的许可证文件里从来不多出这些词（语料里核对过）。
+# 常是名字一部分的（Research、Enterprise、Production）不在这里：多出来的整句话、授权句里多出来的词另有规则。
+_CONDITION_WORDS = set(
+    "need needs needed approval approvals approve approved consents barred disallow disallowed disallows resale resell "
+    "reseller resellers seat seats deployment deployments hosted saas employees contractors".split()
+)
+_LIMITING |= _CONDITION_WORDS
+# 讲使用、复制、分发的词：标准文本已经授了权，文件里多出来这些词就是对使用加的条件（“For academic research use”）。
+# 真实的许可证文件里从来不多出这些词（语料里核对过；单复数不同、行尾拆开的不算多出来）。
+_USAGE_WORDS = set(
+    "use used uses using usage copy copies modify distribute distributed redistribute redistributed redistribution "
+    "redistributions sell sold sublicense sublicensed permission permitted granted grant grants reproduce publish merge".split()
+)
+# copyleft、限制性许可证的名字：标准文本里没提到的、文件里多出来的（“Licensed under the GNU Affero …”）算限制性的。
+_COPYLEFT_NAMES = set("gnu gpl lgpl agpl affero copyleft eupl sspl busl".split())
 # 版权声明里出现这些，就不当成版权声明去掉（照常核对）：版权行里藏的限制。公司名常带的 Limited 不算。
-_NOTICE_LIMITING = _LIMITING - {"limited", "limit", "limits"} | {"may", "shall", "subject", "terms"}
+# 加条件的说法里的词（_CONDITION_WORDS）在版权声明里按 _NOTICE_CLAUSE 看（Nous Research、Manufacturing Consent 是名字）。
+_NOTICE_LIMITING = _LIMITING - _CONDITION_WORDS - {"limited", "limit", "limits"} | {"may", "shall", "subject", "terms"}
 # 讲授权、使用条件的词：版权声明里只有名字、年份、邮箱，有这些词的是条款（“Copyright 2024 Foo, licensed for academic
 # research …”），不当版权声明去掉。_NOTICE_NAMEABLE 里的也常是名字的一部分（Nous Research、Public Sans、Pydantic
 # Services），只有小写时才算。
@@ -609,15 +626,25 @@ _NOTICE_CLAUSE = set(
     "conditions provided purpose purposes deploy deployed deployment deployments hosted hosting embed embedded embedding "
     "install installed installation seat seats need needs needed separately separate employees contractors under eula gnu gpl "
     "lgpl agpl affero charge price buy bought valid research academic educational public free service services program "
-    "general key keys production university universities".split()
-)
+    "general key keys production university universities enterprise enterprises military government governments".split()
+) | _CONDITION_WORDS
 _NOTICE_NAMEABLE = set("research academic educational public free service services program general key keys production "
-                       "university universities consent".split())
+                       "university universities consent enterprise enterprises government governments grant".split())
 # 标准文本里缺了这些词就对不上：授权的范围被删了。
 _GRANT_WORDS = set(
     "use copy modify merge publish distribute sublicense sell redistribute redistribution redistributions permission "
     "permitted granted grant grants hereby royalty perpetual irrevocable worldwide reproduce derivative".split()
 )
+# 授权的那几句（标准文本里有 hereby、grant、granted、permitted 的句子，“Permission is hereby granted …”“Redistribution
+# and use … are permitted provided that …”）：缺了、多了实词都对不上（授权的范围被改了：Apache 删掉 make、have made、
+# import，加上“for academic research”）。虚词、网址、单个字母不算。
+_GRANT_SENTENCE = re.compile(r"[^\s.:;](?:(?!\n\s*\n)[^.:;])*?\b(?:hereby|grants?|granted|permitted)\b(?:(?!\n\s*\n)[^.:;])*", re.I)
+_GRANT_MARK, _GRANT_STOP = "qqgrantqq", "qqgrantendqq"
+_FUNCTION_WORDS = set("a an the and or of to in on at by for with as well is are be any all each this that these those such its "
+                      "it their them you your http https www com org".split())
+# 句子结束（. ! ? ; 后面是空白）：核对时记下文件里哪些词后面句子结束了，多出来一整句话（“Resale disallowed.”）就看得出来。
+_SENT_END = re.compile(r"(?<=[^\W_])[.!?;](?=\s|$)")
+_END = "qqendqq"
 # 核对时文件里可以多出来的“无害”的词：标题、SPDX 标识行、“All rights reserved”。
 _BENIGN_WORDS = set(
     "the a an and or of license licence licensed mit x11 expat isc bsd new simplified modified clause apache version v "
@@ -825,21 +852,31 @@ def _known_placeholder():
     return _KNOWN_PLACEHOLDER
 
 
-def _words(text, template=False):
+def _words(text, template=False, ends=None):
     """核对用的词（小写；占位处是 _SLOT）：去掉注释前缀和版权声明。标准文本里的占位写法都是占位；文件里只有
-    标准文本里出现过的占位写法（GNU 原文里的 <year>、Apache 附录的 [yyyy]）算占位，别的尖括号里的字照常核对。"""
+    标准文本里出现过的占位写法（GNU 原文里的 <year>、Apache 附录的 [yyyy]）算占位，别的尖括号里的字照常核对。
+    ends（集合）：后面句子结束了的词的下标。"""
     text = _strip_comments(_fold(text).replace("\r", ""))
     text = "\n".join(_drop_notices(line, template) if _NOTICE_START.match(line) or _RFN.match(line) else line
                      for line in text.splitlines())
     text = (_PLACEHOLDER if template else _known_placeholder()).sub(" %s " % _SLOT, text)
-    return _tokens(text)
+    if ends is None:
+        return _tokens(text)
+    out = []
+    for w in _tokens(_SENT_END.sub(" %s " % _END, text)):
+        if w == _END:
+            if out:
+                ends.add(len(out) - 1)
+        else:
+            out.append(w)
+    return out
 
 
 _TEMPLATES = {}
 
 
 def _template_words(lid):
-    """lid 的标准文本（和标准头部）：[(词, 可以省的词的下标集合)]。"""
+    """lid 的标准文本（和标准头部）：[(词, 可以省的词的下标集合, 授权的句子里的词的下标集合)]。"""
     if lid not in _TEMPLATES:
         out = []
         path = SPDX_DIR / ("%s.txt" % lid)
@@ -852,13 +889,13 @@ def _template_words(lid):
             for variant in [text] + [text.replace(a, b) for a, b in _TEMPLATE_VARIANTS.get(lid, []) if a in text]:
                 out.append(_template_parts(lid, variant))
         if lid in _HEADERS:
-            out.append((_words(_HEADERS[lid], template=True), set()))
+            out.append(_mark_grants(_words(_grant_marked(_HEADERS[lid]), template=True), set()))
         _TEMPLATES[lid] = out
     return _TEMPLATES[lid]
 
 
 def _template_parts(lid, text):
-    """一份标准文本的 (词, 可以省的词的下标集合)：按可以省的部分（_OPTIONAL_SPANS、开头结尾）切开。"""
+    """一份标准文本的 (词, 可以省的词的下标, 授权的句子里的词的下标)：按可以省的部分（_OPTIONAL_SPANS、开头结尾）切开。"""
     parts, pos = [], 0
     for start, end in _OPTIONAL_SPANS.get(lid, []):
         a = text.find(start, max(pos, 1))
@@ -875,19 +912,47 @@ def _template_parts(lid, text):
     parts = [(head, True)] + parts + [(text[pos:], False), (tail, True)]
     words, optional = [], set()
     for part, opt in parts:
-        w = _words(part, template=True)
+        w = _words(_grant_marked(part), template=True)
         if opt:
             optional.update(range(len(words), len(words) + len(w)))
         words += w
-    return words, optional
+    return _mark_grants(words, optional)
 
 
-def _aligns(got, want, optional):
-    """文件的词 got 和标准文本的词 want 逐段对照（见上面的说明）。"""
+def _mark_grants(words, optional):
+    """去掉 _GRANT_MARK、_GRANT_STOP，返回 (词, 可以省的下标, 授权的句子里的词的下标)。"""
+    out, opt, grant, inside = [], set(), set(), False
+    for i, w in enumerate(words):
+        if w in (_GRANT_MARK, _GRANT_STOP):
+            inside = w == _GRANT_MARK
+            continue
+        if i in optional:
+            opt.add(len(out))
+        if inside:
+            grant.add(len(out))
+        out.append(w)
+    return out, opt, grant
+
+
+def _grant_marked(text):
+    """标准文本里授权的句子前后加上标记（_template_parts、_HEADERS 用）。"""
+    return _GRANT_SENTENCE.sub(lambda m: " %s %s %s " % (_GRANT_MARK, m.group(0), _GRANT_STOP), text)
+
+
+def _content(w):
+    """实词：不是虚词、网址、单个字母、数字。"""
+    return len(w) > 1 and not w.isdigit() and w not in _FUNCTION_WORDS and w not in _BENIGN_WORDS
+
+
+def _aligns(got, want, optional, grant=frozenset(), ends=frozenset()):
+    """文件的词 got 和标准文本的词 want 逐段对照（见上面的说明）。grant：标准文本里授权的句子的词的下标；ends：文件里
+    后面句子结束了的词的下标。"""
     import difflib
 
     sm = difflib.SequenceMatcher(None, got, want, autojunk=False)
     required = sum(1 for i, w in enumerate(want) if w != _SLOT and i not in optional and not w.isdigit())
+    vocabulary = set(want)
+    names = _COPYLEFT_NAMES - vocabulary
     extra_total = missing_total = 0
     pa = pb = 0
     for b in sm.get_matching_blocks():
@@ -899,7 +964,17 @@ def _aligns(got, want, optional):
             # 同一个词拆开、连起来写（行尾连字符 dis-/tribute、non-exclusive 和 nonexclusive），单复数不同
             pa, pb = b.a + b.size, b.b + b.size
             continue
-        if any(w in _LIMITING or _foreign(w) for w in extras):
+        if any(w in _LIMITING or w in _USAGE_WORDS or w in names or _foreign(w) for w in extras):
+            return False
+        # 授权的句子里缺了实词、多了实词：授权的范围被改了
+        in_grant = any(i in grant for i in gap) or (pb - 1 in grant and pb in grant)
+        if any(i in grant and want[i] != _SLOT and i not in optional and _content(want[i]) for i in gap):
+            return False
+        if in_grant and any(_content(w) and w not in vocabulary for w in extras) and not any(want[i] == _SLOT for i in gap):
+            return False
+        # 多出来一整句话（前一个词后面句子结束，多出来的词里又有句子结束、有实词，标准文本这里什么也没缺）：附加的条件
+        if pa - 1 in ends and not missing and any(k in ends for k in range(pa, b.a)) and any(_content(w) for w in extras) \
+                and not any(want[i] == _SLOT for i in gap):
             return False
         if any(want[i] == _SLOT for i in gap):
             if len(extras) > VERIFY_FILL_WORDS:
@@ -922,10 +997,11 @@ def verify_text(text, lid):
         return False
     for pat in _PREAMBLES.get(lid, []):
         text = re.sub(pat.replace(" ", r"\s+"), " ", text, flags=re.I)
-    got = _words(text)
+    ends = set()
+    got = _words(text, ends=ends)
     if not any(w != _SLOT for w in got):
         return False
-    return any(_aligns(got, want, optional) for want, optional in _template_words(lid) if want)
+    return any(_aligns(got, want, optional, grant, ends) for want, optional, grant in _template_words(lid) if want)
 
 
 def examine(text):
@@ -3426,6 +3502,30 @@ def self_test():
     hyphenated = MIT_TEXT.replace("distribute,", "dis-\ntribute,").replace("following", "fol-\nlowing")
     eq((hyphenated != MIT_TEXT, detect_text(hyphenated)), (True, "MIT"), "行尾连字符拆开的词（dis-/tribute）")
     eq(detect_text(BSD3_TEXT.replace("Redistributions in binary form", "Redistribution in binary form")), "BSD-3-Clause", "单复数不同")
+    # 不用那几个限制性的词写的条件：多出来的整句话、讲使用的词、授权句里加的或删的实词、没提到的 copyleft 名字
+    for tail in ["Redistribution needs written approval.", "Resale disallowed.", "Use by governments is barred.",
+                 "Companies need a license.", "One seat per license.", "Production deployments need a Foo Enterprise license.",
+                 "Redistribution in a SaaS offering is reserved.", "Licensed under the GNU Affero General Public License version 3.",
+                 "Military use is disallowed."]:
+        eq((detect_text(MIT_TEXT + "\n" + tail + "\n"), detect_text(tail + "\n\n" + MIT_TEXT)), (None, None),
+           "前后加的条件核对不上：%s" % tail)
+    eq(detect_text("For academic research use.\n\n" + MIT_TEXT), None, "开头加的“For academic research use.”核对不上")
+    for a, b in [("to deal in the Software", "to deal in the Software on Foo hardware"),
+                 ("copies of the Software,", "copies of the Software for academic research,")]:
+        eq(detect_text(MIT_TEXT.replace(a, b, 1)), None, "授权句里加的话核对不上：%s" % b)
+    for pat, new in [(r"make,\s+have\s+made,\s+", ""), (r"import,\s+and\s+otherwise\s+transfer", "and transfer"),
+                     (r"publicly\s+display,\s+publicly\s+perform,\s+", ""), (r"non-exclusive,\s+no-charge,\s+", "")]:
+        narrowed = re.sub(pat, new, APACHE_TEXT)
+        eq((narrowed != APACHE_TEXT, detect_text(narrowed)), (True, None), "Apache 的授权删了词核对不上：%s" % pat)
+    for name, text, want in [
+            ("BSD 授权句里多了“as well as documentation”",
+             BSD3_TEXT.replace("binary forms, with", "binary forms of the software as well as documentation, with"), "BSD-3-Clause"),
+            ("OFL 旧的前言（font names of derivative works are changed）",
+             ofl.replace("provided that any reserved names are not used by derivative works", "provided that the font names of "
+                         "derivative works are changed"), "OFL-1.1"),
+            ("版权方叫 Grant", "Copyright 2014-2019 Grant Jenks\n\n" + mit_body, "MIT"),
+            ("版权方是小写的 npm, Inc.", ISC_TEXT.replace("2024 Someone", "npm, Inc.").replace("Copyright (c)", "Copyright"), "ISC")]:
+        eq(detect_text(text), want, "真实原文的写法核对得上：%s" % name)
     # GPL、LGPL 原文前面有好几段说明（Linux、git、libgit2 的 COPYING）：按文件里任何位置的正文标题提名
     preface = ("NOTE! This copyright does *not* cover programs that merely use the services of this project through its "
                "public interfaces - that is considered normal use, and does *not* fall under the heading of \"derived work\". "
