@@ -706,6 +706,8 @@ async fn a_run_goes_from_queue_to_success_with_a_log_and_a_notification() {
     let message = events.iter().find(|(k, _)| k == "agent.message").unwrap();
     assert_eq!(message.1["text"], "Hello world", "chunks are coalesced");
     assert_eq!(events.last().unwrap().1["state"], "succeeded");
+    // 不在等的时候没有等待原因（事件内容和以前一样）。
+    assert!(events.last().unwrap().1.get("wait_code").is_none());
     assert_eq!(e.outbox_kinds().await, ["run_finished"]);
     // 收件箱留一条，推送里带着它的 id。
     let inbox = e.inbox().await;
@@ -1458,12 +1460,11 @@ async fn a_run_stuck_on_its_model_key_waits_until_a_key_is_added() {
         "{:?}",
         e.inbox().await
     );
-    assert!(
-        e.events(run)
-            .await
-            .iter()
-            .any(|(k, p)| k == "run.state" && p["state"] == "waiting_quota")
-    );
+    // 结构化的原因：key 无效，要用户换（接口和事件里都有）。
+    assert_eq!(rec.run.wait_code.as_deref(), Some("invalid"));
+    assert!(e.events(run).await.iter().any(|(k, p)| k == "run.state"
+        && p["state"] == "waiting_quota"
+        && p["wait_code"] == "invalid"));
     // 还没补上 key：领不到。
     assert!(e.exec.claim().await.unwrap().is_none());
 
@@ -1478,6 +1479,7 @@ async fn a_run_stuck_on_its_model_key_waits_until_a_key_is_added() {
     let rec = e.state(run).await;
     assert_eq!(rec.run.state, RunState::Succeeded, "{:?}", rec.run);
     assert_eq!((rec.run.attempt, rec.max_attempts), (2, 4));
+    assert_eq!(rec.run.wait_code, None);
     let prompts = e.fake.rec.lock().unwrap().prompts.clone();
     assert!(prompts[1].contains("续跑说明"), "{prompts:?}");
 }
@@ -1500,6 +1502,7 @@ async fn rate_limits_wait_a_few_minutes_without_a_push() {
         .unwrap();
     let rec = e.state(run).await;
     assert_eq!(rec.run.state, RunState::WaitingQuota, "{:?}", rec.run);
+    assert_eq!(rec.run.wait_code.as_deref(), Some("rate_limited"));
     assert!(rec.not_before > chrono::Utc::now() + chrono::Duration::minutes(4));
     assert!(e.inbox().await.iter().all(|i| i.kind != "run_failed"));
     assert!(e.exec.claim().await.unwrap().is_none());
@@ -2198,6 +2201,7 @@ async fn a_run_waits_for_the_computer_to_come_online() {
     e.run_to_end().await;
     let rec = e.state(run).await;
     assert_eq!(rec.run.state, RunState::WaitingDevice, "{:?}", rec.run);
+    assert_eq!(rec.run.wait_code.as_deref(), Some("device_offline"));
     assert_eq!(rec.lease_owner, None);
     assert!(
         e.inbox()

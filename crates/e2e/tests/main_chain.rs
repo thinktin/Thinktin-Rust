@@ -336,6 +336,7 @@ impl Platform {
                     platform: DevicePlatform::Ios,
                     device_name: "iPhone".into(),
                     timeout: Duration::from_secs(10),
+                    accept_language: None,
                 },
                 Arc::new(MemorySessionStore::default()),
             )

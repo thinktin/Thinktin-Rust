@@ -8,21 +8,12 @@ pub async fn list() -> Json<Value> {
     let vendors: Vec<Value> = VENDORS
         .iter()
         .map(|v| {
-            let mut protocols = Vec::new();
-            if v.anthropic_base.is_some() {
-                protocols.push("anthropic");
-            }
-            if v.openai_base.is_some() {
-                protocols.push("chat");
-            }
-            if v.responses_base.is_some() {
-                protocols.push("responses");
-            }
             json!({
                 "id": v.id,
                 "name": v.name,
-                // agent 用哪种协议：Claude 走 anthropic，Codex 只会 responses，其余走 chat。
-                "protocols": protocols,
+                // agent 用哪种协议看 `/v1/agents` 的 `active_protocol`：Claude 走 anthropic，Codex 只会 responses，
+                // 其余走 chat。
+                "protocols": v.protocols(),
                 "models": v.models,
                 "notes": v.notes,
             })

@@ -57,6 +57,33 @@ pub struct ClientConfig {
     /// 设备名（“张三的 iPhone”），显示在设备管理里。
     pub device_name: String,
     pub timeout_secs: u32,
+    /// 设备的语言偏好，`Accept-Language` 的写法（`zh-Hans-CN, en-US;q=0.9`），可以用 [`accept_language_header`] 从
+    /// 系统的语言列表拼。每个请求都带上；服务端在新用户注册时按它定推送和收件箱的语言。App 里切换语言后调
+    /// `set_accept_language`。
+    #[uniffi(default = None)]
+    pub accept_language: Option<String>,
+}
+
+/// 把系统的语言列表（按偏好排好，比如 `["zh-Hans-CN", "en-US", "en"]`）拼成 `Accept-Language`：
+/// `zh-Hans-CN, en-US;q=0.9, en;q=0.8`。最多 10 个；不像语言标签的跳过。
+#[uniffi::export]
+pub fn accept_language_header(tags: Vec<String>) -> String {
+    tags.iter()
+        .map(|t| t.trim())
+        .filter(|t| {
+            !t.is_empty()
+                && t.len() <= 35
+                && t.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        })
+        .take(10)
+        .enumerate()
+        .map(|(i, t)| match i {
+            0 => t.replace('_', "-"),
+            i => format!("{};q=0.{}", t.replace('_', "-"), 10 - i),
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -186,6 +213,22 @@ pub struct AgentInfo {
     pub default_harness: String,
     /// 可以用的版本，当前版本在前：实例的版本不是第一个时可以提示升级。
     pub versions: Vec<String>,
+    /// 一句话介绍，按设备语言（`accept_language`）给；老的服务端为空。
+    #[uniffi(default = "")]
+    pub description: String,
+    /// 上游仓库（https）。
+    #[uniffi(default = "")]
+    pub upstream: String,
+    /// 许可说明（专有许可证必有），按设备语言给。
+    #[uniffi(default = None)]
+    pub license_note: Option<String>,
+    /// 能说的协议，按优先级：anthropic、chat、responses（和 `VendorInfo.protocols`、`Credential.protocols` 同一套名字）。
+    #[uniffi(default = [])]
+    pub protocols: Vec<String>,
+    /// 运行时实际用的协议：这个 agent 的实例配的每把 key（包括降级的）都要支持它，选 key 时按它过滤
+    /// （`Credential.protocols` 里要有它）。
+    #[uniffi(default = None)]
+    pub active_protocol: Option<String>,
 }
 
 impl From<api::AgentInfo> for AgentInfo {
@@ -199,6 +242,11 @@ impl From<api::AgentInfo> for AgentInfo {
             harnesses: a.harnesses,
             default_harness: a.default_harness,
             versions: a.versions,
+            description: a.description,
+            upstream: a.upstream,
+            license_note: a.license_note,
+            protocols: a.protocols,
+            active_protocol: a.active_protocol,
         }
     }
 }
@@ -268,6 +316,12 @@ pub struct Run {
     pub created_at_ms: i64,
     pub started_at_ms: Option<i64>,
     pub finished_at_ms: Option<i64>,
+    /// 等的是什么，只在 waiting_quota / waiting_device 时有：invalid（key 无效，去换 key）、no_balance（欠费：充值或
+    /// 换 key，每小时也自己再试）、unavailable（没有能用的 key：停用了或当天额度用完，每小时也自己再试）、
+    /// rate_limited / overloaded（几分钟后自己继续，不用处理）、device_offline（等电脑上线）。以后可能加新值，
+    /// 不认识的按 state 显示。
+    #[uniffi(default = None)]
+    pub wait_code: Option<String>,
 }
 
 impl From<d::Run> for Run {
@@ -291,6 +345,7 @@ impl From<d::Run> for Run {
             created_at_ms: ms(r.created_at),
             started_at_ms: ms_opt(r.started_at),
             finished_at_ms: ms_opt(r.finished_at),
+            wait_code: r.wait_code,
         }
     }
 }
@@ -776,6 +831,9 @@ pub struct Credential {
     pub daily_token_limit: Option<u64>,
     pub disabled: bool,
     pub created_at_ms: i64,
+    /// 能用哪些协议（anthropic、chat、responses）：选 key 时要包含 agent 的 `active_protocol`。
+    #[uniffi(default = [])]
+    pub protocols: Vec<String>,
 }
 
 impl From<d::Credential> for Credential {
@@ -788,6 +846,7 @@ impl From<d::Credential> for Credential {
             daily_token_limit: c.daily_token_limit,
             disabled: c.disabled,
             created_at_ms: ms(c.created_at),
+            protocols: c.protocols,
         }
     }
 }
@@ -814,6 +873,20 @@ impl From<api::VendorInfo> for VendorInfo {
             notes: v.notes,
         }
     }
+}
+
+/// 跨实例列运行的条件（11.8）。都有默认值：`RunFilter()` 是全部。
+#[derive(Debug, Clone, Default, uniffi::Record)]
+pub struct RunFilter {
+    /// 只要这个计划的（包括流水线的步骤；配合 `roots_only` 一次触发一行）。
+    #[uniffi(default = None)]
+    pub plan_id: Option<String>,
+    /// 只要没结束的（排队、运行、等待、退避）：抽屉里的“进行中”、实时活动用。
+    #[uniffi(default = false)]
+    pub active_only: bool,
+    /// 只要根运行（不要流水线的步骤、委派的子任务）。
+    #[uniffi(default = false)]
+    pub roots_only: bool,
 }
 
 /// 一条内容举报（5.5）和它的处理结果。
@@ -1308,6 +1381,7 @@ impl ThinktinClient {
                 platform,
                 device_name: config.device_name,
                 timeout: Duration::from_secs(u64::from(config.timeout_secs.max(5))),
+                accept_language: config.accept_language,
             },
             sessions,
         )?;
@@ -1321,6 +1395,19 @@ impl ThinktinClient {
     /// 已经登录（有会话）。
     pub fn signed_in(&self) -> bool {
         self.inner.api.session().is_some()
+    }
+
+    /// App 里切换了语言：之后的请求带新的 `Accept-Language`（`None` 不带）。不联网。
+    pub fn set_accept_language(&self, accept_language: Option<String>) -> Result<()> {
+        self.inner
+            .api
+            .set_accept_language(accept_language.as_deref())
+    }
+
+    /// 服务端说过这个版本太老了（任何请求返回 `UpgradeRequired`、事件流握手被拒）。之后事件流以 `Stopped` 结束、
+    /// 不再重连；界面进升级页。一直有效（升级就是重装）。
+    pub fn upgrade_required(&self) -> bool {
+        self.inner.api.upgrade_required()
     }
 
     // ---------- 账号 ----------
@@ -1629,6 +1716,37 @@ impl ThinktinClient {
     }
 
     /// 更早的一页运行：`before_run_id` 之前的（列表往下翻）。
+    /// 跨实例的运行（11.8），新的在前：某个计划的运行历史、所有没结束的运行。`before_run_id` 往下翻
+    /// （上一页最后一个的 id）。
+    pub async fn list_runs(
+        &self,
+        filter: RunFilter,
+        before_run_id: Option<String>,
+        limit: u32,
+    ) -> Result<Vec<Run>> {
+        let f = api::RunFilter {
+            plan: filter
+                .plan_id
+                .as_deref()
+                .map(|p| parse(p, "plan"))
+                .transpose()?,
+            active: filter.active_only,
+            roots: filter.roots_only,
+        };
+        let before: Option<d::RunId> = before_run_id
+            .as_deref()
+            .map(|b| parse(b, "run"))
+            .transpose()?;
+        self.run(|c| async move {
+            Ok(c.list_runs(&f, before, limit)
+                .await?
+                .into_iter()
+                .map(Into::into)
+                .collect())
+        })
+        .await
+    }
+
     pub async fn older_runs(
         &self,
         instance_id: String,
@@ -1671,7 +1789,9 @@ impl ThinktinClient {
     }
 
     /// 这个运行开了实时活动（10.6），或者远程开启的拿到了令牌：登记它的推送令牌（ActivityKit 的
-    /// `pushTokenUpdates`，十六进制），之后运行的状态、步数变了、结束了，后台推送更新。令牌变了再调一次。
+    /// `pushTokenUpdates`，十六进制），之后运行的状态、步数变了、结束了，后台推送更新。令牌变了再调一次；App 启动、
+    /// 回到前台时把每个开着的实时活动（`Activity<RunActivityAttributes>.activities`）现在的令牌再报一次：没变的什么
+    /// 都不做，后台连着失败放弃了的从头来。运行结束 10 分钟以上的返回 422（App 在本地结束它）。
     pub async fn register_live_activity(&self, run_id: String, token: String) -> Result<()> {
         let id: d::RunId = parse(&run_id, "run")?;
         self.run(|c| async move { c.api.register_live_activity(id, &token).await })
@@ -1772,6 +1892,23 @@ impl ThinktinClient {
         Ok(self
             .inner
             .cached_events(id, after_seq, limit)?
+            .iter()
+            .map(Into::into)
+            .collect())
+    }
+
+    /// 缓存里往前翻：`before_seq` 之前的最多 `limit` 条，旧的在前。打开页面时传 nil 拿最后一屏，往上翻时传已经显示的
+    /// 最小的序号。缓存里每个实例最多留 2000 条，更早的、事件流重置（`on_reset`）丢掉的翻不到。
+    pub fn cached_events_before(
+        &self,
+        instance_id: String,
+        before_seq: Option<u64>,
+        limit: u32,
+    ) -> Result<Vec<InstanceEvent>> {
+        let id: d::InstanceId = parse(&instance_id, "instance")?;
+        Ok(self
+            .inner
+            .cached_events_before(id, before_seq, limit)?
             .iter()
             .map(Into::into)
             .collect())

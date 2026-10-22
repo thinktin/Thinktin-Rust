@@ -228,13 +228,14 @@ async fn login_refresh_logout_and_errors() {
 async fn instances_keys_and_routes_are_per_user() {
     let Some(a) = api().await else { return };
     let (_, agents) = a.call(Method::GET, "/v1/agents", None, None).await;
-    assert!(
-        agents["agents"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|x| x["id"] == "claude")
-    );
+    let claude = agents["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|x| x["id"] == "claude")
+        .unwrap()
+        .clone();
+    assert_eq!(claude["active_protocol"], "anthropic");
 
     let alice = a.login("13800138000").await;
     let bob = a.login("13900139000").await;
@@ -265,6 +266,10 @@ async fn instances_keys_and_routes_are_per_user() {
         .await;
     assert_eq!(st, StatusCode::CREATED, "{cred}");
     assert_eq!(cred["last4"], "1234");
+    assert_eq!(
+        cred["protocols"],
+        json!(proto::vendors::vendor("anthropic").unwrap().protocols())
+    );
     assert!(
         !cred.to_string().contains("secret"),
         "the key never comes back"
@@ -329,6 +334,22 @@ async fn instances_keys_and_routes_are_per_user() {
         )
         .await;
     assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    // 自定义端点：配了哪几个地址就能用哪几种协议（地址本身不返回）。
+    let (st, custom) = a
+        .call(
+            Method::POST,
+            "/v1/credentials",
+            Some(&alice.access),
+            Some(json!({
+                "vendor": "custom",
+                "api_key": "sk-x-12345678",
+                "anthropic_base": "https://llm.example.com/anthropic"
+            })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{custom}");
+    assert_eq!(custom["protocols"], json!(["anthropic"]));
+    assert!(!custom.to_string().contains("llm.example.com"));
 
     // 预置厂商（9.12）：App 从这里选；不认识的厂商、订阅类 key、套餐专用地址都拒绝。
     let (st, vendors) = a.call(Method::GET, "/v1/vendors", None, None).await;
@@ -470,6 +491,24 @@ async fn runs_plans_and_approvals() {
         .await;
     assert_eq!(st, StatusCode::OK);
     assert_eq!(runs["runs"].as_array().unwrap().len(), 1);
+    // 跨实例的列表：全部、没结束的。
+    let count = |path: &'static str| {
+        let a = &a;
+        let tok = u.access.clone();
+        async move {
+            let (st, body) = a.call(Method::GET, path, Some(&tok), None).await;
+            assert_eq!(st, StatusCode::OK, "{body}");
+            body["runs"].as_array().unwrap().len()
+        }
+    };
+    assert_eq!(
+        (count("/v1/runs").await, count("/v1/runs?active=true").await),
+        (1, 1)
+    );
+    let (st, _) = a
+        .call(Method::GET, "/v1/runs?plan_id=nope", Some(&u.access), None)
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
     let (st, cancelled) = a
         .call(
             Method::POST,
@@ -481,6 +520,10 @@ async fn runs_plans_and_approvals() {
     assert_eq!(
         (st, cancelled["state"].as_str()),
         (StatusCode::OK, Some("cancelled"))
+    );
+    assert_eq!(
+        (count("/v1/runs").await, count("/v1/runs?active=true").await),
+        (1, 0)
     );
     let (st, body) = a
         .call(
@@ -1492,6 +1535,8 @@ async fn other_users_objects_are_invisible() {
         "/v1/teams",
         "/v1/team-templates",
         "/v1/inbox",
+        "/v1/runs",
+        "/v1/runs?active=true",
     ] {
         let (st, body) = a.call(Method::GET, path, t2, None).await;
         assert_eq!(st, StatusCode::OK, "{path}");

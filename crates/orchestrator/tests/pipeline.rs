@@ -561,3 +561,32 @@ async fn scheduled_pipelines_start_one_live_activity() {
             .unwrap();
     assert_eq!(rows, vec![(root.0, "push".to_owned())]);
 }
+
+/// 第一步就起不来（步骤用的实例被删了）：这个流水线失败，别的流水线照常推进（之前每一轮都在这里出错回滚）。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_pipeline_whose_first_step_cannot_start_fails_alone() {
+    let Some(e) = env().await else { return };
+    let broken = e.plan(vec![step("only", &e.b, "write", &[])]).await;
+    let fine = e
+        .plan(vec![step("only", &e.a, "find three facts", &[])])
+        .await;
+    Scheduler::new(e.t.db.clone(), SchedulerConfig::default())
+        .tick(Utc::now())
+        .await
+        .unwrap();
+    let mut tx = e.t.db.tenant(e.user).await.unwrap();
+    tx.cancel_instance_runs(e.b.id, "instance deleted")
+        .await
+        .unwrap();
+    tx.revoke_instance_grants(e.b.id, "instance deleted")
+        .await
+        .unwrap();
+    tx.delete_instance(e.b.id).await.unwrap();
+    tx.commit().await.unwrap();
+    let broken_root = e.root_of(broken).await;
+    let fine_root = e.root_of(fine).await;
+    e.driver.tick().await.unwrap();
+    assert_eq!(e.record(broken_root).await.run.state, RunState::Failed);
+    let done = e.drive(fine_root).await;
+    assert_eq!(done.run.state, RunState::Succeeded, "{:?}", done.run);
+}

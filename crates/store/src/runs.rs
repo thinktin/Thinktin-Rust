@@ -78,6 +78,16 @@ pub struct RunChange {
     pub release_lease: bool,
     /// 进入等待电脑、等待 key（7.11）时：最晚等到什么时候，过了按计划策略结束。
     pub wait_deadline: Option<DateTime<Utc>>,
+    /// 等的是什么（`proto::domain::wait_code`）。每次换状态都按它覆盖：不给就清掉。
+    pub wait_code: Option<&'static str>,
+}
+
+/// 跨实例列运行（11.8）：某个计划的、还没结束的、只要根运行（不要流水线的步骤、委派的子任务）。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RunFilter {
+    pub plan: Option<PlanId>,
+    pub active: bool,
+    pub roots: bool,
 }
 
 /// 后台看到的运行：带租约、预算等执行细节。
@@ -138,13 +148,14 @@ struct Row {
     created_at: DateTime<Utc>,
     started_at: Option<DateTime<Utc>>,
     finished_at: Option<DateTime<Utc>>,
+    wait_code: Option<String>,
 }
 
 macro_rules! columns {
     () => {
         "id, kind, step_key, user_id, instance_id, plan_id, trigger_id, fire_time, parent_run_id, root_run_id, source, prompt, \
          state, state_reason, attempt, max_attempts, not_before, lease_owner, lease_expires_at, agent_version, \
-         run_grant_id, budget, tokens_used, steps, summary, error, created_at, started_at, finished_at"
+         run_grant_id, budget, tokens_used, steps, summary, error, created_at, started_at, finished_at, wait_code"
     };
 }
 
@@ -154,6 +165,11 @@ fn small(v: i32, what: &str) -> Result<u32> {
 
 impl Row {
     fn into_record(self) -> Result<RunRecord> {
+        let state: RunState = parse(&self.state)?;
+        // 只有等 key、等电脑时有：上一版的副本既不写也不清，别处忘了清也看不到旧值。
+        let wait_code = self
+            .wait_code
+            .filter(|_| matches!(state, RunState::WaitingQuota | RunState::WaitingDevice));
         let run = Run {
             id: self.id.into(),
             kind: parse(&self.kind)?,
@@ -164,7 +180,7 @@ impl Row {
             step_key: self.step_key,
             source: parse(&self.source)?,
             prompt: self.prompt,
-            state: parse(&self.state)?,
+            state,
             state_reason: self.state_reason,
             attempt: small(self.attempt, "attempt")?,
             tokens_used: unsigned(self.tokens_used, "tokens_used")?,
@@ -173,6 +189,7 @@ impl Row {
             created_at: self.created_at,
             started_at: self.started_at,
             finished_at: self.finished_at,
+            wait_code,
         };
         Ok(RunRecord {
             run,
@@ -308,6 +325,47 @@ impl Tx<Tenant> {
         rows.into_iter().map(Row::into_run).collect()
     }
 
+    /// 这个用户的运行（跨实例），新的在前，`before` 往下翻。四种组合各是一条固定的语句，分别用得上
+    /// runs_plan、runs_user_active、runs_user_recent 这几个索引；“没结束”的写法要和索引的条件一模一样。
+    pub async fn list_runs(
+        &mut self,
+        f: RunFilter,
+        before: Option<RunId>,
+        limit: i64,
+    ) -> Result<Vec<Run>> {
+        macro_rules! list {
+            ($where:literal) => {
+                concat!(
+                    "SELECT ",
+                    columns!(),
+                    " FROM runs WHERE user_id = app_user_id() AND ",
+                    $where,
+                    " AND ($2::bool OR parent_run_id IS NULL) \
+                     AND id < coalesce($3::uuid, 'ffffffff-ffff-ffff-ffff-ffffffffffff'::uuid) \
+                     ORDER BY id DESC LIMIT $4"
+                )
+            };
+        }
+        let sql = match (f.plan.is_some(), f.active) {
+            (true, true) => {
+                list!("plan_id = $1 AND state NOT IN ('succeeded', 'failed', 'cancelled')")
+            }
+            (true, false) => list!("plan_id = $1"),
+            (false, true) => {
+                list!("$1::uuid IS NULL AND state NOT IN ('succeeded', 'failed', 'cancelled')")
+            }
+            (false, false) => list!("$1::uuid IS NULL"),
+        };
+        let rows: Vec<Row> = sqlx::query_as(sql)
+            .bind(f.plan.map(|p| p.0))
+            .bind(!f.roots)
+            .bind(before.map(|r| r.0))
+            .bind(limit)
+            .fetch_all(self.conn())
+            .await?;
+        rows.into_iter().map(Row::into_run).collect()
+    }
+
     /// 用户取消。执行中的副本续租失败后停下 agent 这一轮。
     pub async fn cancel_run(&mut self, id: RunId, reason: Option<&str>) -> Result<Run> {
         // FOR NO KEY UPDATE 而不是 FOR UPDATE：执行器写运行日志时先更新实例行（事件序号），再插入引用这个运行的
@@ -330,7 +388,7 @@ impl Tx<Tenant> {
             .execute(self.conn())
             .await?;
         let row: Row = sqlx::query_as(concat!(
-            "UPDATE runs SET state = 'cancelled', state_reason = $2, lease_owner = NULL, lease_expires_at = NULL, \
+            "UPDATE runs SET state = 'cancelled', state_reason = $2, wait_code = NULL, lease_owner = NULL, lease_expires_at = NULL, \
                finished_at = now(), updated_at = now() WHERE id = $1 RETURNING ",
             columns!()
         ))
@@ -350,7 +408,7 @@ impl Tx<Tenant> {
             .execute(self.conn())
             .await?;
         let done = sqlx::query(
-            "UPDATE runs SET state = 'cancelled', state_reason = $2, lease_owner = NULL, lease_expires_at = NULL, \
+            "UPDATE runs SET state = 'cancelled', state_reason = $2, wait_code = NULL, lease_owner = NULL, lease_expires_at = NULL, \
                finished_at = now(), updated_at = now() \
              WHERE root_run_id = $1 AND state NOT IN ('succeeded', 'failed', 'cancelled')",
         )
@@ -400,7 +458,7 @@ impl Tx<Tenant> {
         .execute(self.conn())
         .await?;
         let done = sqlx::query(
-            "UPDATE runs SET state = 'cancelled', state_reason = $2, lease_owner = NULL, lease_expires_at = NULL, \
+            "UPDATE runs SET state = 'cancelled', state_reason = $2, wait_code = NULL, lease_owner = NULL, lease_expires_at = NULL, \
                finished_at = now(), updated_at = now() \
              WHERE (instance_id = $1 \
                     OR root_run_id IN (SELECT id FROM runs WHERE instance_id = $1 AND parent_run_id IS NULL)) \
@@ -438,7 +496,7 @@ impl Tx<Worker> {
             .execute(self.conn())
             .await?;
         let done = sqlx::query(
-            "UPDATE runs SET state = 'cancelled', state_reason = $2, lease_owner = NULL, lease_expires_at = NULL, \
+            "UPDATE runs SET state = 'cancelled', state_reason = $2, wait_code = NULL, lease_owner = NULL, lease_expires_at = NULL, \
                finished_at = now(), updated_at = now() \
              WHERE user_id = $1 AND state NOT IN ('succeeded', 'failed', 'cancelled')",
         )
@@ -501,7 +559,8 @@ impl Tx<Worker> {
                 "UPDATE runs SET state = 'starting', attempt = attempt + 1, \
                    max_attempts = max_attempts + CASE WHEN state IN ('waiting_quota', 'waiting_device', \
                      'waiting_children') THEN 1 ELSE 0 END, \
-                   lease_owner = $2, lease_expires_at = now() + make_interval(secs => $3), updated_at = now() \
+                   lease_owner = $2, lease_expires_at = now() + make_interval(secs => $3), \
+                   wait_code = NULL, updated_at = now() \
                  WHERE id = $1 RETURNING ",
                 columns!()
             ))
@@ -606,7 +665,7 @@ impl Tx<Worker> {
             "WITH RECURSIVE tree AS ( \
                SELECT id FROM runs WHERE parent_run_id = $1 \
                UNION SELECT r.id FROM runs r JOIN tree t ON r.parent_run_id = t.id) \
-             UPDATE runs SET state = 'cancelled', state_reason = $2, lease_owner = NULL, lease_expires_at = NULL, \
+             UPDATE runs SET state = 'cancelled', state_reason = $2, wait_code = NULL, lease_owner = NULL, lease_expires_at = NULL, \
                finished_at = now(), updated_at = now() \
              WHERE id IN (SELECT id FROM tree) AND state NOT IN ('succeeded', 'failed', 'cancelled')",
         )
@@ -773,7 +832,7 @@ impl Tx<Worker> {
                lease_expires_at = CASE WHEN $8 THEN NULL ELSE lease_expires_at END, \
                started_at = CASE WHEN $2 = 'running' THEN coalesce(started_at, now()) ELSE started_at END, \
                finished_at = CASE WHEN $9 THEN now() ELSE finished_at END, \
-               updated_at = now() \
+               wait_code = $11, updated_at = now() \
              WHERE id = $1 RETURNING ",
             columns!()
         ))
@@ -787,6 +846,7 @@ impl Tx<Worker> {
         .bind(release)
         .bind(to.is_terminal())
         .bind(change.wait_deadline)
+        .bind(change.wait_code)
         .fetch_one(self.conn())
         .await?;
         row.into_record()
@@ -882,7 +942,7 @@ impl Tx<Worker> {
                summary = coalesce($5, summary), error = coalesce($6, error), \
                started_at = CASE WHEN $3 = 'waiting_children' THEN coalesce(started_at, now()) ELSE started_at END, \
                finished_at = CASE WHEN $3 IN ('succeeded', 'failed', 'cancelled') THEN now() ELSE finished_at END, \
-               updated_at = now() \
+               wait_code = NULL, updated_at = now() \
              WHERE id = $1 AND state = $2 AND lease_owner IS NULL RETURNING ",
             columns!()
         ))
@@ -910,7 +970,7 @@ impl Tx<Worker> {
             .execute(self.conn())
             .await?;
         let done = sqlx::query(
-            "UPDATE runs SET state = 'cancelled', state_reason = $2, lease_owner = NULL, lease_expires_at = NULL, \
+            "UPDATE runs SET state = 'cancelled', state_reason = $2, wait_code = NULL, lease_owner = NULL, lease_expires_at = NULL, \
                finished_at = now(), updated_at = now() \
              WHERE parent_run_id = $1 AND state NOT IN ('succeeded', 'failed', 'cancelled')",
         )

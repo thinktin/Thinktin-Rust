@@ -76,6 +76,7 @@ pub fn router() -> Router<AppState> {
             "/v1/instances/{id}/runs",
             get(runs::list).post(runs::create),
         )
+        .route("/v1/runs", get(runs::list_all))
         .route("/v1/runs/{id}", get(runs::get))
         .route("/v1/runs/{id}/cancel", post(runs::cancel))
         .route("/v1/runs/{id}/tree", get(runs::tree))

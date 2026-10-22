@@ -129,6 +129,20 @@ impl Client {
         Ok(runs)
     }
 
+    /// 跨实例的运行（11.8），顺便更新缓存（每个实例的 `cached_runs` 也跟着新）。
+    pub async fn list_runs(
+        &self,
+        f: &crate::api::RunFilter,
+        before: Option<RunId>,
+        limit: u32,
+    ) -> Result<Vec<Run>> {
+        let runs = self.signed_out_clears(self.api.all_runs(f, before, limit).await)?;
+        if let Some(c) = &self.cache {
+            c.put_runs(&runs)?;
+        }
+        Ok(runs)
+    }
+
     pub fn cached_runs(&self, instance: InstanceId, limit: u32) -> Result<Vec<Run>> {
         match self.signed_in_cache() {
             Some(c) => c.runs(instance, limit),
@@ -165,6 +179,19 @@ impl Client {
     ) -> Result<Vec<InstanceEvent>> {
         match self.signed_in_cache() {
             Some(c) => c.events(instance, after, limit),
+            None => Ok(Vec::new()),
+        }
+    }
+
+    /// 缓存里 `before` 之前的最多 `limit` 条（旧的在前）；`None` 是最新的那几条。
+    pub fn cached_events_before(
+        &self,
+        instance: InstanceId,
+        before: Option<u64>,
+        limit: u32,
+    ) -> Result<Vec<InstanceEvent>> {
+        match self.signed_in_cache() {
+            Some(c) => c.events_before(instance, before, limit),
             None => Ok(Vec::new()),
         }
     }

@@ -4,10 +4,10 @@ use auth::service::Principal;
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use proto::domain::{InstanceId, Run, RunId, RunKind, RunSource};
+use proto::domain::{InstanceId, PlanId, Run, RunId, RunKind, RunSource};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use store::{NewRun, Tenant, Tx};
+use store::{NewRun, RunFilter, Tenant, Tx};
 
 use super::{check_len, default_scope, parse_id};
 use crate::{ApiJson, ApiResult, AppState, Authed};
@@ -91,6 +91,53 @@ pub async fn list(
     let mut t = s.db.tenant(who.user).await?;
     t.instance(id).await?;
     let runs = t.runs(id, before, limit).await?;
+    t.rollback().await?;
+    Ok(Json(json!({ "runs": runs })))
+}
+
+#[derive(Deserialize)]
+pub struct ListAllQuery {
+    plan_id: Option<String>,
+    /// 只要没结束的（排队、运行、等待、退避）：抽屉里的“进行中”、实时活动用。
+    #[serde(default)]
+    active: bool,
+    /// 只要根运行（不要流水线的步骤、委派的子任务）：计划的运行历史一次触发一行。
+    #[serde(default)]
+    roots: bool,
+    before: Option<String>,
+    limit: Option<i64>,
+}
+
+/// 跨实例的运行列表（11.8）：某个计划的、没结束的，新的在前，`before` 往下翻。不查计划存不存在：删了的计划的
+/// 运行照样看得到，别人的计划和不存在的一样是空的。
+pub async fn list_all(
+    State(s): State<AppState>,
+    Authed(who): Authed,
+    Query(q): Query<ListAllQuery>,
+) -> ApiResult<Json<Value>> {
+    let plan = q
+        .plan_id
+        .as_deref()
+        .map(|p| parse_id::<PlanId>(p, "plan"))
+        .transpose()?;
+    let before = q
+        .before
+        .as_deref()
+        .map(|b| parse_id::<RunId>(b, "run"))
+        .transpose()?;
+    let limit = q.limit.unwrap_or(50).clamp(1, 200);
+    let mut t = s.db.tenant(who.user).await?;
+    let runs = t
+        .list_runs(
+            RunFilter {
+                plan,
+                active: q.active,
+                roots: q.roots,
+            },
+            before,
+            limit,
+        )
+        .await?;
     t.rollback().await?;
     Ok(Json(json!({ "runs": runs })))
 }
@@ -187,7 +234,8 @@ impl LiveActivityReq {
 }
 
 /// App 开了这个运行的实时活动（10.6），或者远程开启的那个拿到了令牌：登记它的推送令牌（这台设备的），
-/// 之后运行的状态变了、结束了就推送更新。再登记一次就换令牌，现在的状态马上重发一次。
+/// 之后运行的状态变了、结束了就推送更新。换了令牌（新的实时活动）：现在的状态再发一次；同一个令牌再报一次什么都不变
+/// （连着失败放弃了的从头来）。运行结束 10 分钟以上的 422。
 pub async fn register_live_activity(
     State(s): State<AppState>,
     Authed(who): Authed,

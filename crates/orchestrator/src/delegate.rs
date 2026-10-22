@@ -303,6 +303,7 @@ mod tests {
             created_at: chrono::Utc::now(),
             started_at: None,
             finished_at: None,
+            wait_code: None,
         };
         let children = [
             (

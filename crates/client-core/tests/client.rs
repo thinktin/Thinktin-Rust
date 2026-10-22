@@ -87,6 +87,7 @@ impl Env {
                 platform: DevicePlatform::Ios,
                 device_name: "iPhone".into(),
                 timeout: Duration::from_secs(10),
+                accept_language: None,
             },
             store,
         )
@@ -282,6 +283,13 @@ async fn event_stream_resumes_dedupes_and_refreshes() {
     assert_eq!(sink2.texts(), [4]);
     let cached = client.cached_events(inst, 0, 100).unwrap();
     assert_eq!(texts(&cached), [1, 2, 3, 4]);
+    // 往前翻：最后一屏、再往上一屏。
+    let tail = client.cached_events_before(inst, None, 2).unwrap();
+    assert_eq!(tail, cached[cached.len() - 2..]);
+    let above = client
+        .cached_events_before(inst, Some(tail[0].seq), 100)
+        .unwrap();
+    assert_eq!(above, cached[..cached.len() - 2]);
 
     // 访问令牌过期：握手被拒（401），刷新后连上。
     let s = store.load().unwrap();
@@ -504,6 +512,7 @@ async fn ffi_client_round_trip() {
         platform: "android".into(),
         device_name: "Pixel".into(),
         timeout_secs: 10,
+        accept_language: None,
     };
     assert!(matches!(
         ffi::ThinktinClient::new(
@@ -531,7 +540,12 @@ async fn ffi_client_round_trip() {
     assert!(r.new_user);
     assert!(c.signed_in());
     let agents = c.agents().await.unwrap();
-    assert!(agents.iter().any(|a| a.id == "claude"));
+    let claude = agents.iter().find(|a| a.id == "claude").unwrap();
+    assert_eq!(
+        (claude.protocols.clone(), claude.active_protocol.as_deref()),
+        (vec!["anthropic".to_string()], Some("anthropic"))
+    );
+    assert!(!claude.description.is_empty() && claude.upstream.starts_with("https://"));
     let inst = c.adopt("claude".into(), "助手".into(), None).await.unwrap();
     assert_eq!(c.instances().await.unwrap().len(), 1);
     assert_eq!(c.cached_instances().unwrap()[0].id, inst.id);
@@ -592,10 +606,20 @@ async fn ffi_client_round_trip() {
     );
     sub.stop();
     assert!(!c.cached_events(inst.id.clone(), 0, 100).unwrap().is_empty());
+    assert!(
+        !c.cached_events_before(inst.id.clone(), None, 10)
+            .unwrap()
+            .is_empty()
+    );
 
     c.logout().await.unwrap();
     assert!(!c.signed_in());
     assert!(c.cached_instances().unwrap().is_empty());
+    assert!(
+        c.cached_events_before(inst.id.clone(), None, 10)
+            .unwrap()
+            .is_empty()
+    );
     drop(c);
 }
 
@@ -787,6 +811,7 @@ async fn phones_and_computers_exchange_messages() {
             platform: DevicePlatform::Macos,
             device_name: "MacBook".into(),
             timeout: Duration::from_secs(10),
+            accept_language: None,
         },
         Arc::new(MemorySessionStore::default()),
     )
@@ -952,6 +977,7 @@ async fn ffi_login(
             platform: platform.into(),
             device_name: device.into(),
             timeout_secs: 10,
+            accept_language: None,
         },
         store.clone(),
     )
@@ -1449,4 +1475,148 @@ fn ffi_plan_policy_defaults_match_the_server() {
         (0, 86400, "pause_plan", None, 21600, None, None, 86400)
     );
     assert_eq!(proto::domain::CatchUp::default().as_str(), "once");
+}
+
+/// 新用户的语言按设备的 `Accept-Language` 定（11.8），已有的用户不变。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn new_users_get_the_device_language() {
+    let Some(e) = env().await else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let client = |lang: &str| {
+        ffi::ThinktinClient::new(
+            ffi::ClientConfig {
+                base_url: e.base.clone(),
+                cache_path: Some(dir.path().join("c.db").display().to_string()),
+                platform: "ios".into(),
+                device_name: "iPhone".into(),
+                timeout_secs: 10,
+                accept_language: Some(ffi::accept_language_header(vec![lang.into(), "en".into()])),
+            },
+            Arc::new(MemorySessionStore::default()),
+        )
+        .unwrap()
+    };
+    let sms = &e.sms;
+    let login = |c: Arc<ffi::ThinktinClient>| async move {
+        c.send_code("13800138523".into()).await.unwrap();
+        let code = sms.last_code("+8613800138523").unwrap();
+        c.login("13800138523".into(), code, None, None)
+            .await
+            .unwrap()
+    };
+    let first = login(client("en-GB")).await;
+    assert!(first.new_user);
+    assert_eq!(first.user.locale, "en");
+    let again = login(client("zh-Hans-CN")).await;
+    assert_eq!((again.new_user, again.user.locale.as_str()), (false, "en"));
+}
+
+/// 运行在等什么（11.8）：等 key 的运行带着结构化的原因。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ffi_runs_say_what_they_wait_for() {
+    use proto::domain::{RunId, RunState};
+    use store::RunChange;
+    let Some(e) = env().await else { return };
+    let (c, _store, _d) = ffi_login(&e, "13800138524", "ios", "iPhone").await;
+    let inst = c.adopt("claude".into(), "助手".into(), None).await.unwrap();
+    let run = c
+        .create_run(inst.id.clone(), "整理邮件".into())
+        .await
+        .unwrap();
+    assert_eq!(run.wait_code, None);
+    let id: RunId = run.id.parse().unwrap();
+    let mut w = e.t.db.worker().await.unwrap();
+    w.claim_next_run("n1", std::time::Duration::from_secs(60))
+        .await
+        .unwrap()
+        .unwrap();
+    w.transition_run(id, "n1", RunState::Running, &RunChange::default())
+        .await
+        .unwrap();
+    w.transition_run(
+        id,
+        "n1",
+        RunState::WaitingQuota,
+        &RunChange {
+            reason: Some("欠费".into()),
+            release_lease: true,
+            wait_code: Some("no_balance"),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    w.commit().await.unwrap();
+    assert_eq!(
+        c.get_run(run.id.clone())
+            .await
+            .unwrap()
+            .wait_code
+            .as_deref(),
+        Some("no_balance")
+    );
+    let listed = c.runs(inst.id.clone(), 10).await.unwrap();
+    assert_eq!(listed[0].wait_code.as_deref(), Some("no_balance"));
+}
+
+/// 跨实例的运行列表（11.8）：全部、没结束的、往下翻；顺便更新每个实例的缓存。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ffi_runs_across_instances() {
+    let Some(e) = env().await else { return };
+    let (c, _store, _d) = ffi_login(&e, "13800138525", "ios", "iPhone").await;
+    let a = c.adopt("claude".into(), "助手".into(), None).await.unwrap();
+    let b = c.adopt("codex".into(), "写手".into(), None).await.unwrap();
+    let mut ids = Vec::new();
+    for (inst, p) in [(&a, "一"), (&a, "二"), (&b, "三")] {
+        ids.push(c.create_run(inst.id.clone(), p.into()).await.unwrap().id);
+    }
+    let all = c
+        .list_runs(ffi::RunFilter::default(), None, 10)
+        .await
+        .unwrap();
+    assert_eq!(
+        all.iter().map(|r| r.id.clone()).collect::<Vec<_>>(),
+        ids.iter().rev().cloned().collect::<Vec<_>>()
+    );
+    c.cancel_run(ids[0].clone(), false).await.unwrap();
+    let active = c
+        .list_runs(
+            ffi::RunFilter {
+                active_only: true,
+                ..Default::default()
+            },
+            None,
+            10,
+        )
+        .await
+        .unwrap();
+    assert_eq!(active.len(), 2);
+    let page = c
+        .list_runs(ffi::RunFilter::default(), None, 2)
+        .await
+        .unwrap();
+    let rest = c
+        .list_runs(ffi::RunFilter::default(), Some(page[1].id.clone()), 10)
+        .await
+        .unwrap();
+    assert_eq!(rest.len(), 1);
+    assert_eq!(rest[0].id, ids[0]);
+    assert!(
+        c.cached_runs(b.id.clone(), 10)
+            .unwrap()
+            .iter()
+            .any(|r| r.id == ids[2])
+    );
+    assert!(matches!(
+        c.list_runs(
+            ffi::RunFilter {
+                plan_id: Some("nope".into()),
+                ..Default::default()
+            },
+            None,
+            10
+        )
+        .await,
+        Err(ClientError::InvalidArgument { .. })
+    ));
 }

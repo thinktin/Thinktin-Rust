@@ -8,6 +8,7 @@ name = "Codex"
 upstream = "https://github.com/agentclientprotocol/codex-acp"
 version = "2.2.2"  # codex-acp；内含 @openai/codex 0.160.1
 license = "Apache-2.0"
+description = { zh-CN = "使用 OpenAI Codex 的编程 agent；默认只读，改文件、执行命令都要你批准。", en = "Coding agent using OpenAI Codex; it starts read-only, so edits and commands need your approval." }
 sites = ["cn", "global"]
 
 [runtime]

@@ -113,6 +113,8 @@ pub enum Outcome {
         deadline: Option<chrono::DateTime<Utc>>,
         /// 要用户处理的发通知。
         notify: bool,
+        /// 等的是什么（`proto::domain::wait_code`），等子任务时没有。
+        code: Option<&'static str>,
     },
 }
 
@@ -947,6 +949,7 @@ impl Executor {
                 retry_at,
                 deadline,
                 notify,
+                code,
             } => (
                 wait,
                 RunChange {
@@ -955,6 +958,7 @@ impl Executor {
                     not_before: retry_at.or(deadline),
                     release_lease: true,
                     wait_deadline: deadline,
+                    wait_code: code,
                     ..Default::default()
                 },
                 notify.then(|| (PushKind::RunFailed, PushBody::Ready(truncate(&reason, 100)))),
@@ -989,7 +993,13 @@ impl Executor {
             rec.run.instance_id,
             Some(run),
             "run.state",
-            &json!({ "state": to, "reason": done.run.state_reason, "attempt": done.run.attempt }),
+            &{
+                let mut p = json!({ "state": to, "reason": done.run.state_reason, "attempt": done.run.attempt });
+                if let Some(code) = &done.run.wait_code {
+                    p["wait_code"] = json!(code);
+                }
+                p
+            },
         )
         .await?;
         // 流水线的步骤不单独通知：整条流水线结束时由根运行通知（8.3）。等 key 要用户处理，照样通知。
@@ -1243,6 +1253,7 @@ impl Exec<'_> {
                     retry_at: Some(Utc::now()),
                     deadline: None,
                     notify: false,
+                    code: None,
                 })
             }
             Err(e) => {
@@ -1333,6 +1344,7 @@ impl Exec<'_> {
             retry_at: None,
             deadline: Some(deadline),
             notify: true,
+            code: Some(proto::domain::wait_code::DEVICE_OFFLINE),
         }
     }
 
@@ -1348,6 +1360,7 @@ impl Exec<'_> {
             retry_at: problem.retry_after().map(later),
             deadline: Some(later(Duration::from_secs(self.policy.wait_timeout_secs))),
             notify: !problem.transient(),
+            code: Some(problem.code()),
         }
     }
 

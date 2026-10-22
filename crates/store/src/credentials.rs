@@ -40,13 +40,15 @@ struct Row {
     daily_token_limit: Option<i64>,
     disabled: bool,
     created_at: DateTime<Utc>,
+    has_anthropic: bool,
+    has_chat: bool,
+    has_responses: bool,
 }
 
 impl Row {
     fn into_credential(self) -> Result<Credential> {
         Ok(Credential {
             id: self.id.into(),
-            vendor: self.vendor,
             label: self.label,
             last4: self.last4,
             daily_token_limit: self
@@ -55,13 +57,27 @@ impl Row {
                 .transpose()?,
             disabled: self.disabled,
             created_at: self.created_at,
+            protocols: match proto::vendors::vendor(&self.vendor) {
+                Some(v) => v.protocols(),
+                None => proto::vendors::protocols_of(
+                    self.has_anthropic,
+                    self.has_chat,
+                    self.has_responses,
+                ),
+            }
+            .into_iter()
+            .map(String::from)
+            .collect(),
+            vendor: self.vendor,
         })
     }
 }
 
 macro_rules! columns {
     () => {
-        "id, vendor, label, last4, daily_token_limit, disabled, created_at"
+        "id, vendor, label, last4, daily_token_limit, disabled, created_at, \
+         anthropic_base IS NOT NULL AS has_anthropic, openai_base IS NOT NULL AS has_chat, \
+         responses_base IS NOT NULL AS has_responses"
     };
 }
 

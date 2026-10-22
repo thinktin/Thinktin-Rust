@@ -3,6 +3,7 @@
 //!
 //! 会话（含刷新令牌）交给原生端的 [`SessionStore`] 保存（Keychain / Keystore），这里只在内存里留一份。
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
@@ -16,6 +17,7 @@ use proto::domain::{
     VaultItem, VaultItemId, VaultRequest, VaultRequestId,
 };
 use reqwest::Method;
+use reqwest::header::HeaderValue;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -67,6 +69,9 @@ pub struct ApiConfig {
     pub platform: DevicePlatform,
     pub device_name: String,
     pub timeout: Duration,
+    /// 设备的语言偏好，`Accept-Language` 的写法（`zh-Hans-CN, en-US;q=0.9`）。每个请求都带上；服务端在新用户
+    /// 注册时按它定推送和收件箱的语言。
+    pub accept_language: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -103,6 +108,24 @@ pub struct AgentInfo {
     /// 可以用的版本，当前版本在前。
     #[serde(default)]
     pub versions: Vec<String>,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub upstream: String,
+    #[serde(default)]
+    pub license_note: Option<String>,
+    #[serde(default)]
+    pub protocols: Vec<String>,
+    #[serde(default)]
+    pub active_protocol: Option<String>,
+}
+
+/// 跨实例列运行的条件（11.8）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RunFilter {
+    pub plan: Option<PlanId>,
+    pub active: bool,
+    pub roots: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -331,6 +354,28 @@ pub struct Api {
     refreshing: tokio::sync::Mutex<()>,
     /// 会话没了（退出、被吊销、刷新失败）时调用：清掉上一个人的本地缓存。
     on_signed_out: RwLock<Option<SignedOutHook>>,
+    /// 事件流的 TLS 配置（系统证书校验，和接口请求一样）。
+    ws_tls: Arc<rustls::ClientConfig>,
+    accept_language: RwLock<Option<HeaderValue>>,
+    /// 服务端说这个版本太老了（426）：之后的事件流不再连，界面提示升级。一直有效（升级就是重装）。
+    upgrade_required: AtomicBool,
+}
+
+/// 检查 `Accept-Language`：去掉首尾空白，空的当没有；最长 256 字节，不能有换行之类的字符。
+fn accept_language_header(v: Option<&str>) -> Result<Option<HeaderValue>> {
+    let Some(v) = v.map(str::trim).filter(|v| !v.is_empty()) else {
+        return Ok(None);
+    };
+    if v.len() > 256 {
+        return Err(ClientError::InvalidArgument {
+            message: "accept_language is longer than 256 bytes".into(),
+        });
+    }
+    HeaderValue::from_str(v)
+        .map(Some)
+        .map_err(|_| ClientError::InvalidArgument {
+            message: "accept_language has characters a header cannot carry".into(),
+        })
 }
 
 type SignedOutHook = Arc<dyn Fn() + Send + Sync>;
@@ -344,11 +389,20 @@ enum Refreshed {
 impl Api {
     pub fn new(cfg: ApiConfig, store: Arc<dyn SessionStore>) -> Result<Self> {
         crate::install_crypto();
+        if cfg.base_url.starts_with("https://") && !crate::tls::platform_ready() {
+            return Err(ClientError::Internal {
+                message: "call cn.thinktin.core.TlsInit.initialize(context) before creating \
+                          ThinktinClient (https on Android)"
+                    .into(),
+            });
+        }
         let http = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(10))
             .timeout(cfg.timeout)
             .build()
             .map_err(ClientError::network)?;
+        let ws_tls = crate::tls::ws_client_config().map_err(ClientError::network)?;
+        let accept_language = accept_language_header(cfg.accept_language.as_deref())?;
         let session = store.load();
         Ok(Self {
             base: cfg.base_url.trim_end_matches('/').to_owned(),
@@ -358,11 +412,56 @@ impl Api {
             session: RwLock::new(session),
             refreshing: tokio::sync::Mutex::new(()),
             on_signed_out: RwLock::new(None),
+            ws_tls,
+            accept_language: RwLock::new(accept_language),
+            upgrade_required: AtomicBool::new(false),
         })
     }
 
     pub fn base_url(&self) -> &str {
         &self.base
+    }
+
+    pub(crate) fn ws_tls(&self) -> Arc<rustls::ClientConfig> {
+        self.ws_tls.clone()
+    }
+
+    /// 换设备语言（App 里切换了语言）。之后的请求带新的 `Accept-Language`；`None` 不带。
+    pub fn set_accept_language(&self, v: Option<&str>) -> Result<()> {
+        let h = accept_language_header(v)?;
+        *self
+            .accept_language
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = h;
+        Ok(())
+    }
+
+    pub(crate) fn accept_language(&self) -> Option<HeaderValue> {
+        self.accept_language
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// 服务端说过这个版本太老了（任何请求、事件流的握手收到 426）。
+    pub fn upgrade_required(&self) -> bool {
+        self.upgrade_required.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn mark_upgrade_required(&self) {
+        self.upgrade_required.store(true, Ordering::Relaxed);
+    }
+
+    /// 所有请求的公共部分：版本头、语言。
+    fn request(&self, method: Method, url: String) -> reqwest::RequestBuilder {
+        let req = self
+            .http
+            .request(method, url)
+            .header(VERSION_HEADER, API_VERSION.to_string());
+        match self.accept_language() {
+            Some(lang) => req.header(reqwest::header::ACCEPT_LANGUAGE, lang),
+            None => req,
+        }
     }
 
     pub fn session(&self) -> Option<Session> {
@@ -415,10 +514,7 @@ impl Api {
     ) -> Result<reqwest::Response> {
         for attempt in 0..2 {
             let token = if auth { Some(self.bearer()?) } else { None };
-            let mut req = self
-                .http
-                .request(method.clone(), format!("{}{path}", self.base))
-                .header(VERSION_HEADER, API_VERSION.to_string());
+            let mut req = self.request(method.clone(), format!("{}{path}", self.base));
             if let Some(t) = &token {
                 req = req.bearer_auth(t);
             }
@@ -436,7 +532,10 @@ impl Api {
                 Err(e) => return Err(ClientError::decode(format!("status {status}: {e}"))),
             };
             match err.code {
-                ErrorCode::UpgradeRequired => return Err(ClientError::UpgradeRequired),
+                ErrorCode::UpgradeRequired => {
+                    self.mark_upgrade_required();
+                    return Err(ClientError::UpgradeRequired);
+                }
                 ErrorCode::AccountFrozen => return Err(ClientError::AccountFrozen),
                 ErrorCode::Unauthenticated if attempt == 0 && token.is_some() => {
                     // 令牌过期：刷新后重试。别人已经刷新过就直接重试。
@@ -472,14 +571,17 @@ impl Api {
             return Ok(Refreshed::Ok);
         }
         let resp = self
-            .http
-            .post(format!("{}/v1/auth/refresh", self.base))
-            .header(VERSION_HEADER, API_VERSION.to_string())
+            .request(Method::POST, format!("{}/v1/auth/refresh", self.base))
             .json(&json!({ "refresh_token": current.refresh_token }))
             .send()
             .await
             .map_err(ClientError::network)?;
         let status = resp.status().as_u16();
+        // 426 不一定带错误体。
+        if status == 426 {
+            self.mark_upgrade_required();
+            return Err(ClientError::UpgradeRequired);
+        }
         if status == 200 {
             let t: Tokens = resp.json().await.map_err(ClientError::decode)?;
             self.set_session(Some(Session {
@@ -863,6 +965,33 @@ impl Api {
         Ok(self.json::<R>(Method::GET, &path, None).await?.runs)
     }
 
+    /// 跨实例的运行（11.8），新的在前。
+    pub async fn all_runs(
+        &self,
+        f: &RunFilter,
+        before: Option<RunId>,
+        limit: u32,
+    ) -> Result<Vec<Run>> {
+        #[derive(Deserialize)]
+        struct R {
+            runs: Vec<Run>,
+        }
+        let mut path = format!("/v1/runs?limit={limit}");
+        if let Some(p) = f.plan {
+            path.push_str(&format!("&plan_id={p}"));
+        }
+        if f.active {
+            path.push_str("&active=true");
+        }
+        if f.roots {
+            path.push_str("&roots=true");
+        }
+        if let Some(b) = before {
+            path.push_str(&format!("&before={b}"));
+        }
+        Ok(self.json::<R>(Method::GET, &path, None).await?.runs)
+    }
+
     pub async fn run(&self, id: RunId) -> Result<Run> {
         self.json(Method::GET, &format!("/v1/runs/{id}"), None)
             .await
@@ -879,7 +1008,8 @@ impl Api {
     }
 
     /// 这个运行在这台设备上开了实时活动（10.6），或者远程开启的那个拿到了令牌：登记它的推送令牌
-    /// （ActivityKit 的 `pushTokenUpdates`）。令牌变了再调一次。
+    /// （ActivityKit 的 `pushTokenUpdates`）。令牌变了再调一次；App 启动、回到前台时把每个开着的实时活动现在的令牌
+    /// 再报一次（没变的什么都不做，连着失败放弃了的从头来）。
     pub async fn register_live_activity(&self, id: RunId, token: &str) -> Result<()> {
         self.empty(
             Method::PUT,

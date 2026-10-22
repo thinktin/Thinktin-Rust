@@ -62,7 +62,7 @@ pub fn attributes(run: RunId, instance: &str, title: &str) -> Value {
 pub struct LiveConfig {
     pub tick: Duration,
     pub batch: i64,
-    /// 一个用户一次最多领几个（几个账号刷不满整批）。
+    /// 一个用户一次最多领几个（先轮每个用户的第一个，再轮第二个）。
     pub per_user: i64,
     /// 同时发几条。
     pub concurrency: usize,
@@ -71,7 +71,7 @@ pub struct LiveConfig {
     pub state_gap: Duration,
     /// 只是步数变了：离上次发至少隔这么久。
     pub step_gap: Duration,
-    /// 连着失败几次就不再发（默认按退避算一个多小时：苹果那边短时间出问题，实时活动不能就此停住）。
+    /// 连着失败几次就不再发（默认 13 次，按退避算一个小时出头：苹果那边短时间出问题，实时活动不能就此停住）。
     pub max_attempts: u32,
     pub backoff_base: Duration,
     pub backoff_max: Duration,
@@ -87,7 +87,7 @@ impl Default for LiveConfig {
             lock_for: Duration::from_secs(60),
             state_gap: Duration::from_secs(2),
             step_gap: Duration::from_secs(20),
-            max_attempts: 12,
+            max_attempts: 13,
             backoff_base: Duration::from_secs(5),
             backoff_max: Duration::from_secs(600),
         }
@@ -152,13 +152,24 @@ impl LiveDispatcher {
 
     async fn handle(&self, a: LiveActivity) -> store::Result<()> {
         // 前面的发得慢，锁可能已经过期、被别的副本领去发了：续不上锁就不发（远程开启发两次就是两个实时活动）。
+        // 领了以后不该发了的（App 关掉了、同一台手机换了账号、关掉了远程开启）也不发；锁会过期，下一轮再看。
+        let start_token = a
+            .start_token
+            .as_deref()
+            .filter(|_| a.push_token.is_none() && !a.start_sent);
         let mut w = self.db.worker().await?;
         let mine = w
-            .extend_live_lock(a.device_id, a.run_id, &self.node_id, self.cfg.lock_for)
+            .extend_live_lock(
+                a.device_id,
+                a.run_id,
+                &self.node_id,
+                self.cfg.lock_for,
+                start_token,
+            )
             .await?;
         w.commit().await?;
         if !mine {
-            warn!(run = %a.run_id, "live activity lock expired before sending");
+            info!(run = %a.run_id, "live activity no longer due when its turn came");
             return Ok(());
         }
         let settle = match a.push_token.clone() {
