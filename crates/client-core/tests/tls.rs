@@ -99,6 +99,7 @@ fn api(port: u16) -> Arc<Api> {
                 platform: DevicePlatform::Ios,
                 device_name: "test".into(),
                 timeout: Duration::from_secs(5),
+                accept_language: None,
             },
             store,
         )

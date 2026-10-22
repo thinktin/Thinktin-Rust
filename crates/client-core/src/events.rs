@@ -5,10 +5,11 @@
 //!
 //! 收到的事件先写进缓存（推进续传位置），再交给 [`EventSink`]，界面从缓存读也不会漏。
 
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::time::Duration;
 
-use futures_util::StreamExt;
+use futures_util::{FutureExt, StreamExt};
 use proto::api::{API_VERSION, VERSION_HEADER};
 use proto::domain::{InstanceEvent, InstanceId};
 use serde::Deserialize;
@@ -43,6 +44,8 @@ pub enum StreamStatus {
     NotFound,
     /// 账号被冻结（4.6），事件流停止；提示联系客服。
     AccountFrozen,
+    /// 调用方停的；或者这个版本太老了，服务端不再接受（这时 `ThinktinClient::upgrade_required()` 是 true，
+    /// 界面进升级页）。
     Stopped,
 }
 
@@ -112,7 +115,14 @@ pub fn spawn(
 ) -> StreamHandle {
     let (stop, rx) = watch::channel(false);
     rt.spawn(async move {
-        let status = run(api, cache, instance, after, sink.clone(), cfg, rx).await;
+        // 任务里 panic 了也要给界面一个结束的状态，不然一直显示“连接中”。
+        let status = AssertUnwindSafe(run(api, cache, instance, after, sink.clone(), cfg, rx))
+            .catch_unwind()
+            .await
+            .unwrap_or_else(|_| {
+                warn!("event stream task panicked");
+                StreamStatus::Stopped
+            });
         sink.on_status(status);
     });
     StreamHandle { stop }
@@ -145,6 +155,8 @@ enum Ended {
     AccountFrozen,
     /// 握手被拒（403），原因要问接口。
     Forbidden,
+    /// 这个版本太老了（426）。
+    UpgradeRequired,
     /// 网络问题：退避后重连。`progressed` 表示这次连上后收到过消息（退避重新从头算）。
     Dropped {
         progressed: bool,
@@ -170,7 +182,8 @@ async fn run(
     let mut backoff = cfg.min_backoff;
     let mut refreshed_in_a_row = 0;
     loop {
-        if *stop.borrow() {
+        // 这个版本太老了（别的请求、别的事件流发现的）：不再连。
+        if *stop.borrow() || api.upgrade_required() {
             return StreamStatus::Stopped;
         }
         sink.on_status(StreamStatus::Connecting);
@@ -188,6 +201,10 @@ async fn run(
             Ended::Stopped => return StreamStatus::Stopped,
             Ended::NotFound => return StreamStatus::NotFound,
             Ended::AccountFrozen => return StreamStatus::AccountFrozen,
+            Ended::UpgradeRequired => {
+                api.mark_upgrade_required();
+                return StreamStatus::Stopped;
+            }
             Ended::Unauthenticated => {
                 refreshed_in_a_row += 1;
                 match api.refresh().await {
@@ -196,6 +213,7 @@ async fn run(
                     Ok(()) => {}
                     Err(ClientError::SignedOut) => return StreamStatus::SignedOut,
                     Err(ClientError::AccountFrozen) => return StreamStatus::AccountFrozen,
+                    Err(ClientError::UpgradeRequired) => return StreamStatus::Stopped,
                     Err(e) => debug!(error = %e, "token refresh failed"),
                 }
             }
@@ -204,6 +222,7 @@ async fn run(
                 match api.me().await {
                     Err(ClientError::AccountFrozen) => return StreamStatus::AccountFrozen,
                     Err(ClientError::SignedOut) => return StreamStatus::SignedOut,
+                    Err(ClientError::UpgradeRequired) => return StreamStatus::Stopped,
                     Ok(_) => {}
                     Err(e) => debug!(error = %e, "checking the account failed"),
                 }
@@ -276,6 +295,11 @@ async fn connect_once(
     if let Ok(v) = HeaderValue::from_str(&API_VERSION.to_string()) {
         headers.insert(VERSION_HEADER, v);
     }
+    if let Some(lang) = api.accept_language()
+        && let Ok(v) = HeaderValue::from_bytes(lang.as_bytes())
+    {
+        headers.insert("accept-language", v);
+    }
     // wss 用系统证书校验（和接口请求一样），ws（本地开发）不加密。
     let connect = tokio::time::timeout(
         cfg.connect_timeout,
@@ -295,6 +319,10 @@ async fn connect_once(
                     401 => Ended::Unauthenticated,
                     403 => Ended::Forbidden,
                     404 => Ended::NotFound,
+                    426 => {
+                        warn!("event stream refused: this app version is too old (426)");
+                        Ended::UpgradeRequired
+                    }
                     s => {
                         debug!(status = s, "event stream refused");
                         Ended::Dropped { progressed: false }

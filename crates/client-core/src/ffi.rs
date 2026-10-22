@@ -57,6 +57,33 @@ pub struct ClientConfig {
     /// 设备名（“张三的 iPhone”），显示在设备管理里。
     pub device_name: String,
     pub timeout_secs: u32,
+    /// 设备的语言偏好，`Accept-Language` 的写法（`zh-Hans-CN, en-US;q=0.9`），可以用 [`accept_language_header`] 从
+    /// 系统的语言列表拼。每个请求都带上；服务端在新用户注册时按它定推送和收件箱的语言。App 里切换语言后调
+    /// `set_accept_language`。
+    #[uniffi(default = None)]
+    pub accept_language: Option<String>,
+}
+
+/// 把系统的语言列表（按偏好排好，比如 `["zh-Hans-CN", "en-US", "en"]`）拼成 `Accept-Language`：
+/// `zh-Hans-CN, en-US;q=0.9, en;q=0.8`。最多 10 个；不像语言标签的跳过。
+#[uniffi::export]
+pub fn accept_language_header(tags: Vec<String>) -> String {
+    tags.iter()
+        .map(|t| t.trim())
+        .filter(|t| {
+            !t.is_empty()
+                && t.len() <= 35
+                && t.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        })
+        .take(10)
+        .enumerate()
+        .map(|(i, t)| match i {
+            0 => t.replace('_', "-"),
+            i => format!("{};q=0.{}", t.replace('_', "-"), 10 - i),
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -1308,6 +1335,7 @@ impl ThinktinClient {
                 platform,
                 device_name: config.device_name,
                 timeout: Duration::from_secs(u64::from(config.timeout_secs.max(5))),
+                accept_language: config.accept_language,
             },
             sessions,
         )?;
@@ -1321,6 +1349,19 @@ impl ThinktinClient {
     /// 已经登录（有会话）。
     pub fn signed_in(&self) -> bool {
         self.inner.api.session().is_some()
+    }
+
+    /// App 里切换了语言：之后的请求带新的 `Accept-Language`（`None` 不带）。不联网。
+    pub fn set_accept_language(&self, accept_language: Option<String>) -> Result<()> {
+        self.inner
+            .api
+            .set_accept_language(accept_language.as_deref())
+    }
+
+    /// 服务端说过这个版本太老了（任何请求返回 `UpgradeRequired`、事件流握手被拒）。之后事件流以 `Stopped` 结束、
+    /// 不再重连；界面进升级页。一直有效（升级就是重装）。
+    pub fn upgrade_required(&self) -> bool {
+        self.inner.api.upgrade_required()
     }
 
     // ---------- 账号 ----------

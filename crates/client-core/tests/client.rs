@@ -87,6 +87,7 @@ impl Env {
                 platform: DevicePlatform::Ios,
                 device_name: "iPhone".into(),
                 timeout: Duration::from_secs(10),
+                accept_language: None,
             },
             store,
         )
@@ -504,6 +505,7 @@ async fn ffi_client_round_trip() {
         platform: "android".into(),
         device_name: "Pixel".into(),
         timeout_secs: 10,
+        accept_language: None,
     };
     assert!(matches!(
         ffi::ThinktinClient::new(
@@ -787,6 +789,7 @@ async fn phones_and_computers_exchange_messages() {
             platform: DevicePlatform::Macos,
             device_name: "MacBook".into(),
             timeout: Duration::from_secs(10),
+            accept_language: None,
         },
         Arc::new(MemorySessionStore::default()),
     )
@@ -952,6 +955,7 @@ async fn ffi_login(
             platform: platform.into(),
             device_name: device.into(),
             timeout_secs: 10,
+            accept_language: None,
         },
         store.clone(),
     )
@@ -1449,4 +1453,38 @@ fn ffi_plan_policy_defaults_match_the_server() {
         (0, 86400, "pause_plan", None, 21600, None, None, 86400)
     );
     assert_eq!(proto::domain::CatchUp::default().as_str(), "once");
+}
+
+/// 新用户的语言按设备的 `Accept-Language` 定（11.8），已有的用户不变。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn new_users_get_the_device_language() {
+    let Some(e) = env().await else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let client = |lang: &str| {
+        ffi::ThinktinClient::new(
+            ffi::ClientConfig {
+                base_url: e.base.clone(),
+                cache_path: Some(dir.path().join("c.db").display().to_string()),
+                platform: "ios".into(),
+                device_name: "iPhone".into(),
+                timeout_secs: 10,
+                accept_language: Some(ffi::accept_language_header(vec![lang.into(), "en".into()])),
+            },
+            Arc::new(MemorySessionStore::default()),
+        )
+        .unwrap()
+    };
+    let sms = &e.sms;
+    let login = |c: Arc<ffi::ThinktinClient>| async move {
+        c.send_code("13800138523".into()).await.unwrap();
+        let code = sms.last_code("+8613800138523").unwrap();
+        c.login("13800138523".into(), code, None, None)
+            .await
+            .unwrap()
+    };
+    let first = login(client("en-GB")).await;
+    assert!(first.new_user);
+    assert_eq!(first.user.locale, "en");
+    let again = login(client("zh-Hans-CN")).await;
+    assert_eq!((again.new_user, again.user.locale.as_str()), (false, "en"));
 }
