@@ -273,12 +273,64 @@ Keystore 失效……）都显示“无法加载核心库”页（原因 + 重�
   `:app` 的 `ApprovalViewModelTest`（列表、详情、过期 / 已处理、生物识别成功 / 取消 / 锁定 / 无凭证、拒绝直接发、重试不再验证、
   作废）和 `ApprovalUiTest`（抽屉进审批中心、批准经假的 gate、拒绝直接发、无锁屏提示、深链打开详情 / 过期 / 不存在）。
 
+## 对话与运行过程（13.5）
+
+- **归并**（`:data` 的 `model/Conversation.kt`，纯函数 `ConversationBuilder.build(runs, events, approvals, vaultRequests, window)`）：
+  按 run_id 把事件归到运行区块，区块内按 seq 排序、重复的 seq 只算一次；相邻的 `agent.message` 拼成一段 Markdown，相邻的
+  `agent.thought` 拼成一个折叠块；`agent.tool_call` + `tool_call_update` 按 `tool_call_id` 合成一张卡（更新先到也只有一张）；
+  `agent.platform_tool_call` 卡；`agent.plan` 清单（后来的覆盖前面的）；审批事件交给 13.16 的 `ApprovalCards.reconcile`
+  （关联键 (run_id, attempt, request_id)、`approval_state` 优先于 `by`、旧尝试的待处理卡作废）；`vault.requested` / `fulfilled` /
+  `declined` 合成填写请求卡（和 `vaultRequests(all = true)` 的记录对上，终态不会被旧记录改回待处理）；`artifact.published`
+  产出物卡；`pipeline.step_started` / `delegate.started` 子运行入口；`run.state` 只有等待 / 重试 / 失败 / 取消 / 新的一次尝试才出
+  状态行（带 `wait_code`）；`plan.needs_confirmation` / `plan.cancelled` 计划卡；`agent.error` / `session_lost` / `exited` /
+  `run.log_truncated` / 异常的 `stop_reason` 是系统行。`agent.usage`、`turn_started` / `turn_ended`、`ready`、`update`、
+  `instance.state` 不进时间线（`turn_ended` 结束流式状态，usage 记在区块上）。不认识的 kind 是灰色系统行；payload 缺字段、类型不对不崩。
+  没有 run_id 的（计划卡等）按时间插在运行之间。运行树（`model/RunTree.kt` 的 `RunTrees.build`）：平铺 → 缩进树，卡在等 key /
+  等电脑 / 等审批的子孙冒泡到祖先（等 key、等电脑排在等审批前面）。
+- **对话页**（`chat/{instanceId}?runId=…`，入口：抽屉实例、首页输入框、首页“最近运行”（带 runId，定位到那个运行；不在已加载的
+  范围里时往前翻最多 5 页去找））：
+  - 打开先 `cachedInstances` + `cachedRuns` + `cachedEventsBefore`（最后一屏）渲染，再订阅 `events(instanceId)` 实时追加，同时
+    联网刷新实例、运行、待处理审批、保险箱请求；补发的事件按批归并（排到主线程队列后面，缓冲里已到的先收完）。上拉到顶：
+    `cachedEventsBefore` 往前翻一屏 + `olderRuns`。比已加载的最早事件还早的运行等翻到再显示；缓存翻到头的标“本机没有过程记录”。
+  - `on_reset`：清空事件、保留运行并重新 `runs()`；比 `oldest_seq` 早的运行只显示 prompt / summary / error，标“过程记录已超过保留期”。
+  - 顶部细条：连接中 / 重连中 / 事件流断了（“重新连接”）/ 离线显示缓存。`NotFound` 和 404 回首页；`SignedOut`、
+    `AccountFrozen`、`UpgradeRequired` 由服务的 `authState` / `upgradeState` 换整个界面。
+  - 顶栏：实例名 + 状态点（点进实例设置），更多：运行树（当前运行，没有就最新的）、实例设置。
+  - 时间线：`LazyColumn(reverseLayout = true)` 锚定底部；用户在底部时新内容跟着滚，往上翻时不抢，右下角“回到底部”。每个运行：
+    区块头（来源 你 / 计划 / 流水线 / 委派、状态、耗时、token，点进运行页）→ 提问（用户的右侧气泡；委派、流水线的 prompt 标 AI
+    生成、不显示成“你”）→ 过程 → 摘要（标 AI）/ 失败原因（平台诊断，不标）。
+  - agent 文本：左侧无气泡，`:design` 的 `MarkdownText`（commonmark 解析 + Compose 渲染，不用 WebView：标题、列表、引用、
+    代码块（横向滚动、复制按钮）、行内代码、链接、粗斜体、删除线、表格（简化成网格）、图片只显示替代文字、HTML 原样当文字）。
+    长按复制（读屏是自定义操作“复制”），复制的文字末尾追加 `【AI 生成】` / `[AI-generated]`；代码块的复制同样追加。
+  - 工具调用卡：`:design` 的 `ToolCallCard`（按 kind 选图标：读 / 改 / 搜 / 执行 / 出网 / 电脑……，展开看原始内容）；审批卡嵌
+    13.16 的 `ApprovalCardItem`（决定经 `ApprovalActions` → `ApprovalGate`）；产出物卡（名字、大小、版本；打开 / 分享：
+    `artifactContent` 下载到 `cacheDir/artifacts/<id>/<名字>`，FileProvider 交给系统，只转圈，超过 20 MiB 提示不下载）；
+    填写请求卡（agent 写的用途标 AI，“填写” / “拒绝”，已填写 / 已拒绝 / 已过期）；子运行入口；计划卡（“去确认”）。
+  - 等待类横幅（警告色，输入框上方）：等审批 → 去审批（本页有能点的卡就滚过去，没有去审批中心）；等 key → 按 `wait_code`
+    去配 key / 去配模型（限频、过载只提示）；等电脑 → 查看设备。运行中顶部细进度条，输入框为空时发送键变停止
+    （`cancelRun(wholeTree = true)`）。
+  - 发送：`detectSecrets` 有命中 → 盖在页面上的底部表单（不是对话框）：名字（`uniqueVaultName` 避开已有条目，冲突 409 再换一个）、
+    用途、账号、密码（预填命中值）→ `saveSecretFromMessage` → 换成 `[vault:名字]` 的文本放回输入框，还有命中接着弹；
+    私钥（`storable = false`）只提示不发；“仍然发送”二次确认后 `sendMessage(allowSecrets = true)`；`sendMessage` 抛
+    `ContainsSecrets` 同样处理。发出后新运行马上进时间线（乐观），失败回填输入框并给“重试”。首页输入框拦下密码时把消息转给
+    对话页（`DraftHandoff`），在那里弹表单。
+  - agent 的填写请求：底部表单（账号、密码、用途）→ `fulfillVaultRequest`，或 `declineVaultRequest`；已处理 / 过期的重新取记录。
+- **运行页**（`run/{runId}`，深链 `thinktin://run/{id}`）：详情（状态、来源、第几次尝试、耗时、token、输入 / 输出 token（本机
+  缓存里最近一次 `agent.usage`）、摘要 / 错误、产出物列表）+ 运行树（`runTree(rootRunId)`：缩进，每行状态点、实例名、耗时，
+  点节点换详情；单个停止 `cancelRun(id, false)`，“停止整棵树”二次确认后从根 `cancelRun(root, true)`）。卡在等 key 的子步骤冒泡到
+  根节点显示横幅（去配模型）。深链指向子运行时取整棵树、选中那个节点（标“当前”）。“在对话中查看”回对话页并定位。
+- 测试：`:data` 的 `ConversationBuilderTest`（8.2 表里每种 kind、乱序 / 重复 seq、未知 kind、坏 payload、审批关联键与作废、
+  超时、on_reset 与翻页的缺口、流式状态、委派 prompt 的 AI 标识……）、`RunTreesTest`；`:design` 的 `MarkdownTest`；
+  `:app` 的 `ChatViewModelTest`（打开、补发按批、续传、on_reset、状态细条、翻页、定位、发送 / 乐观 / 失败、拦截 / 重名 / 仍然发送 /
+  私钥、取消、等待横幅、审批经 gate、填写请求、产出物）、`RunViewModelTest` 和 Robolectric 的 `ChatUiTest`（最近运行定位、
+  Mock 的各类事件、复制带 AI 标识、发送后出气泡、拦截弹表单、填写请求、运行页运行树、更多菜单进运行树并停止）。
+
 ## 深链
 
 `thinktin://run/{id}`、`approval/{id}`、`plan/{id}`、`instance/{id}`、`vault/request/{id}`、`inbox`、`inbox/{id}`（第 3 节）。
 `MainActivity` 是 `singleTask`：冷启动（`onCreate`）和 App 已在运行时（`onNewIntent`）收到的深链都放进 `DeepLinkInbox`，
 由 `MainNavigation` 在导航图建好后交给 `NavController.handleDeepLink`，返回栈是“首页 → 目标页”。未登录时先留着，登录后再跳；
-同一条只处理一次。测试：`DeepLinkTest`（5 种骨架页的冷启动）+ `CatalogUiTest`（`instance/{id}`）、`ApprovalUiTest`（`approval/{id}`）、`AppUiTest`（热启动）、`AppRootTest`（登录后再跳）。
+同一条只处理一次。测试：`DeepLinkTest`（4 种骨架页的冷启动）+ `CatalogUiTest`（`instance/{id}`）、`ApprovalUiTest`（`approval/{id}`）、`ChatUiTest`（`run/{id}`）、`AppUiTest`（热启动）、`AppRootTest`（登录后再跳）。
 
 ## CI
 
@@ -302,6 +354,7 @@ abortOnError 开着，不用 baseline；release 包跑一遍 R8）→ 解开 rel
 | AndroidX（core-ktx、activity-compose、lifecycle、navigation-compose、datastore、security-crypto）、Jetpack Compose（BOM、Material 3、图标） | 基础框架与界面 | Apache-2.0 |
 | `androidx.biometric:biometric`（13.16） | 批准审批前的 BiometricPrompt | Apache-2.0 |
 | `androidx.appcompat:appcompat`（13.16） | biometric 在 API 26–27 的指纹对话框要 AppCompat 主题（也带来 `androidx.fragment` 的 FragmentActivity） | Apache-2.0 |
+| `org.commonmark:commonmark`、`commonmark-ext-gfm-tables`、`commonmark-ext-gfm-strikethrough`（13.5） | 对话页 agent 文本的 Markdown 解析（Compose 自己渲染） | BSD-2-Clause |
 | kotlinx-coroutines、kotlinx-serialization-json | 协程、JSON | Apache-2.0 |
 | JNA（`net.java.dev.jna:jna`） | UniFFI 绑定调 client-core | Apache-2.0 / LGPL-2.1 双许可，按 Apache-2.0 使用 |
 | `org.rustls:rustls-platform-verifier` | client-core 的系统证书校验（JNI） | Apache-2.0 / MIT |
@@ -332,8 +385,9 @@ abortOnError 开着，不用 baseline；release 包跑一遍 R8）→ 解开 rel
 - 服务调用只抛 `ServiceError`（`CoreThinktinService` 把 `ClientException` 之外的异常，包括 Rust panic 的 `InternalException`，
   也包成 `ServiceError.Other`；取消照常抛出）；ViewModel 里只 catch `ServiceError`，catch 宽异常时先放行 `CancellationException`。
 - `cached*` 是挂起函数（真实实现在 IO 线程上读 SQLite），ViewModel 在协程里调，不在构造时同步读。
-- AI 生成标识（第 8.4 节）用 `:design` 的 `AiGeneratedLabel`；首页最近运行的 `summary`、委派子运行的 `prompt` 已经标了，
-  `error` 等 13.5 能区分 agent 写的部分后再标。
+- AI 生成标识（第 8.4 节）用 `:design` 的 `AiGeneratedLabel`：agent 文本 / 思考 / 计划按 `ai_generated`；工具调用和平台
+  工具调用的标题、审批标题、填写请求的用途、委派标题、委派 / 流水线子运行的 prompt、`Run.summary`、`plan.needs_confirmation`
+  的标题由 App 补标；`Run.error`（平台诊断）、用户自己的 prompt、平台文案不标。复制 agent 输出时末尾追加标识文字。
 
 ## 已知问题
 

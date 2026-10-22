@@ -7,6 +7,7 @@ import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasSetTextAction
@@ -21,6 +22,7 @@ import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
+import cn.thinktin.app.ui.chat.CHAT_AGENT_TEXT_TEST_TAG
 import cn.thinktin.app.ui.chat.CHAT_ARTIFACT_TEST_TAG
 import cn.thinktin.app.ui.chat.CHAT_LIST_TEST_TAG
 import cn.thinktin.app.ui.chat.CHAT_RUN_HEADER_TEST_TAG
@@ -103,7 +105,8 @@ class ChatUiTest {
         compose.onNode(hasText("把 README 翻译成英文") and hasAnyAncestor(hasTestTag(CHAT_USER_PROMPT_TEST_TAG)), useUnmergedTree = true)
             .assertExists()
         // 顶栏是实例名（点进实例设置）。
-        compose.onNode(hasText("小码") and hasClickAction()).assertExists()
+        compose.onNode(hasText("小码") and hasClickAction() and hasAnyAncestor(hasTestTag(CHAT_SCREEN_TEST_TAG + "inst-coder")))
+            .assertExists()
         compose.onNode(hasContentDescription("返回")).performClick()
         waitFor(hasText("最近运行"))
     }
@@ -115,7 +118,10 @@ class ChatUiTest {
         scrollTo(hasText("思考过程"))
         scrollTo(hasText("计划清单"))
         scrollTo(hasText("读取 README.md"))
-        compose.onNode(hasTestTag(TOOL_CALL_CARD_TEST_TAG) and hasAnyAncestor(list)).assertExists()
+        compose.onNode(
+            hasTestTag(TOOL_CALL_CARD_TEST_TAG) and hasAnyAncestor(list) and hasAnyDescendant(hasText("读取 README.md")),
+            useUnmergedTree = true,
+        ).assertExists()
         scrollTo(hasText("你已批准", substring = true))
         scrollTo(hasText("改动"))
         scrollTo(hasTestTag(MARKDOWN_CODE_TEST_TAG))
@@ -141,6 +147,22 @@ class ChatUiTest {
         // 等审批的横幅、运行中的停止按钮。
         compose.onNode(hasText("等待你批准")).assertIsDisplayed()
         compose.onNode(hasContentDescription("停止")).assertIsDisplayed()
+    }
+
+    @Test
+    fun copyingAgentTextAppendsAiLabel() {
+        openCoderChatAt("把 README 翻译成英文")
+        val text = hasTestTag(CHAT_AGENT_TEXT_TEST_TAG) and hasAnyDescendant(hasText("README 已翻译成英文，", substring = true))
+        scrollTo(text)
+        // 读屏的自定义操作“复制”（长按同一个效果）。
+        val node = compose.onNode(text, useUnmergedTree = true).fetchSemanticsNode()
+        val copy = node.config[SemanticsActions.CustomActions].single { it.label == "复制" }
+        compose.runOnUiThread { copy.action() }
+        waitFor(hasText("已复制"))
+        val clipboard = app.getSystemService(android.content.ClipboardManager::class.java)
+        val copied = clipboard.primaryClip?.getItemAt(0)?.text?.toString().orEmpty()
+        assertTrue(copied, copied.startsWith("README 已翻译成英文，"))
+        assertTrue(copied, copied.endsWith("\n\n【AI 生成】"))
     }
 
     @Test
