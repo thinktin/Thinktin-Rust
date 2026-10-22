@@ -6,7 +6,8 @@
 #
 #   tools/apple/uicheck/run.sh            UIKit 版（ThinktinUI + App target + 测试）
 #   tools/apple/uicheck/run.sh appkit     AppKit 版（ThinktinUI 的 macOS 代码路径）
-#   tools/apple/uicheck/run.sh test       UIKit 版之外再跑 ThinktinUITests（逻辑测试有意义，视图测试只证明能编）
+#   tools/apple/uicheck/run.sh test       UIKit 版之外再跑 ThinktinUITests（逻辑测试有意义，视图测试只证明能编；
+#                                         桩的 sizeThatFits 总是返回提议尺寸，“抽屉：打开和关闭”在这里会失败，以 macOS CI 为准）
 #
 # 前提：target/linux/ThinktinCore 已生成（tools/client-core/build-linux-swift.sh）。
 # 桩模块缺某个 SwiftUI API 时会报“找不到成员”：照 Apple 文档的签名在 Stubs/ 里补上，别为了过检查改 App 代码。

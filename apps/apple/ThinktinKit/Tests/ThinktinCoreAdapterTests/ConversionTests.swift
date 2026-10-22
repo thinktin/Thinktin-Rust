@@ -96,15 +96,22 @@ struct ConversionTests {
 
     // MARK: 计划
 
-    @Test("Plan：三种触发规则、步骤、策略 JSON")
+    @Test("Plan：三种触发规则、步骤、结构化的策略和补跑方式")
     func plan() throws {
         let onceMs: Int64 = 1_767_225_600_000  // 2026-01-01 00:00 UTC
         let core = ThinktinCore.Plan(
             id: F.planID, instanceId: F.instanceID, title: "早报", goal: "每天早上汇总新闻", paused: false,
             createdBy: "agent", awaitingConfirmation: true, revision: 3,
-            policyJson:
-                #"{"preauthorized_tools":["read","search"],"approval_timeout_secs":600,"on_approval_timeout":"skip"}"#,
-            createdAtMs: F.createdMs,
+            policyJson: """
+                {"preauthorized_tools":["read","search"],"approval_timeout_secs":600,"on_approval_timeout":"skip",\
+                "budget":{"max_tokens":200000,"max_duration_secs":3600,"max_steps":50},"daily_token_limit":1000000,\
+                "wait_timeout_secs":7200}
+                """,
+            policy: ThinktinCore.PlanPolicy(
+                preauthorizedTools: ["read", "search"], approvalTimeoutSecs: 600, onApprovalTimeout: "skip",
+                maxTokens: 200_000, maxDurationSecs: 3600, maxSteps: 50, dailyTokenLimit: 1_000_000,
+                waitTimeoutSecs: 7200),
+            catchUp: "skip", createdAtMs: F.createdMs,
             triggers: [
                 ThinktinCore.Trigger(
                     id: "t-cron", schedule: .cron(expr: "0 8 * * *", tz: "Asia/Shanghai"), enabled: true,
@@ -152,13 +159,59 @@ struct ConversionTests {
         #expect(plan.steps[1].instanceID == InstanceID(F.rootRunID))
         #expect(plan.steps[1].dependsOn == ["fetch"])
 
-        // 策略 JSON 原样保留，由 ThinktinKit 解析（缺的字段用默认值）。
-        #expect(plan.policyJSON == core.policyJson)
-        let policy = try #require(plan.policy)
+        // 策略取结构化的 `policy`；平的预算字段收进 `budget`。
+        let policy = plan.policy
         #expect(policy.preauthorizedTools == ["read", "search"])
         #expect(policy.approvalTimeoutSecs == 600)
         #expect(policy.onApprovalTimeout == .skip)
-        #expect(policy.waitTimeoutSecs == 24 * 3600)
+        #expect(policy.budget == ThinktinKit.RunBudget(maxTokens: 200_000, maxDurationSecs: 3600, maxSteps: 50))
+        #expect(policy.dailyTokenLimit == 1_000_000)
+        #expect(policy.waitTimeoutSecs == 7200)
+        #expect(policy.isValid)
+        #expect(plan.catchUp == .skip)
+        // `policyJSON` 由 `policy` 重新编出来（键排过序，和 client-core 的文本不逐字相同），解析出来是同一份策略；
+        // client-core 给的 `policy_json` 用 ThinktinKit 解析也一样。
+        #expect(ThinktinKit.PlanPolicy(json: plan.policyJSON) == policy)
+        #expect(ThinktinKit.PlanPolicy(json: core.policyJson) == policy)
+    }
+
+    @Test("Plan：没给 policy、catchUp 时取 UniFFI 的默认值，和 ThinktinKit 的默认策略一样")
+    func planDefaults() {
+        let core = ThinktinCore.Plan(
+            id: F.planID, instanceId: F.instanceID, title: "t", goal: "g", paused: true, createdBy: "user",
+            awaitingConfirmation: false, revision: 1, policyJson: "{}", createdAtMs: F.createdMs, triggers: [],
+            steps: [])
+        let plan = ThinktinKit.Plan(core: core)
+        #expect(plan.policy == ThinktinKit.PlanPolicy())
+        #expect(plan.catchUp == .once)
+        #expect(plan.isPaused)
+        #expect(!plan.isPipeline)
+        #expect(plan.nextFireAt == nil)
+    }
+
+    @Test("Plan：不认识的补跑方式、超时动作原样保留；超出 Int 的数截断")
+    func planUnknownValues() {
+        let core = ThinktinCore.Plan(
+            id: F.planID, instanceId: F.instanceID, title: "t", goal: "g", paused: false, createdBy: "system",
+            awaitingConfirmation: false, revision: UInt32.max, policyJson: "{}",
+            policy: ThinktinCore.PlanPolicy(
+                onApprovalTimeout: "escalate", maxTokens: UInt64.max, maxDurationSecs: UInt64.max,
+                maxSteps: UInt32.max, dailyTokenLimit: UInt64.max),
+            catchUp: "weekly", createdAtMs: F.createdMs, triggers: [], steps: [])
+        let plan = ThinktinKit.Plan(core: core)
+        #expect(plan.createdBy == .unknown("system"))
+        #expect(plan.catchUp == .unknown("weekly"))
+        #expect(plan.catchUp.rawValue == "weekly")
+        #expect(plan.policy.onApprovalTimeout == .unknown("escalate"))
+        #expect(plan.revision == Int(UInt32.max))
+        #expect(plan.policy.budget.maxTokens == Int.max)
+        #expect(plan.policy.budget.maxDurationSecs == Int.max)
+        #expect(plan.policy.budget.maxSteps == Int(UInt32.max))
+        #expect(plan.policy.dailyTokenLimit == Int.max)
+        // 没给的字段是 UniFFI 的默认值。
+        #expect(plan.policy.preauthorizedTools.isEmpty)
+        #expect(plan.policy.approvalTimeoutSecs == 24 * 3600)
+        #expect(plan.policy.waitTimeoutSecs == 24 * 3600)
     }
 
     @Test("Schedule：ThinktinKit → ThinktinCore → ThinktinKit 来回不变")

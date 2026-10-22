@@ -5,8 +5,12 @@ import ThinktinKit
 // - 时间：Unix 毫秒（Int64）↔ `Date`；
 // - id：字符串 ↔ 强类型 `EntityID`；
 // - 服务端的字符串枚举 ↔ `OpenStringEnum`（不认识的取值保留在 `unknown(String)` 里，不丢）；
-// - 无符号整数 ↔ `Int`（`clamping`，超出范围截断，不崩溃）；
-// - 结构不固定的部分（工具调用、计划策略、事件载荷）原样保留 JSON 文本，由 ThinktinKit 解析。
+// - 无符号整数 ↔ `Int`（`clamping`，超出范围截断，不崩溃；反过来负数当 0，交给 client-core / 服务端校验范围）；
+// - 结构不固定的部分（工具调用、事件载荷、设备消息的内容）原样保留 JSON 文本，由 ThinktinKit 解析。
+//   计划策略用结构化的 `PlanPolicy` 记录（11.7），不再经 `policy_json`。
+//
+// 只做用得到的方向：接口返回的记录（`DeviceInfo`、`Team`、`ContentReport`……）只有 ThinktinCore → ThinktinKit；
+// 只往接口发的（`NewPlan`、`PlanChange`）只有反向；两边都走的（`PlanPolicy`、`TeamMember`、`TemplateMember`）两个方向都有。
 //
 // 两个模块里大部分类型同名。本文件只 import ThinktinKit，但同名类型一律写全 `ThinktinKit.X`，
 // ThinktinCore 的类型一律经 `Core.X`（Core.swift），以后哪个文件同时 import 了两个模块也不会有歧义。
@@ -66,6 +70,26 @@ extension ThinktinKit.Session {
     var core: Core.Session {
         Core.Session(
             userId: userID.rawValue, deviceId: deviceID.rawValue, accessToken: accessToken, refreshToken: refreshToken)
+    }
+}
+
+// MARK: - 登录设备与设备消息（14.1）
+
+extension ThinktinKit.DeviceInfo {
+    init(core d: Core.DeviceInfo) {
+        self.init(
+            id: DeviceID(d.id), platform: DevicePlatform(rawValue: d.platform), name: d.name,
+            pushChannel: d.pushChannel.map { PushChannel(rawValue: $0) }, isCurrent: d.current, isOnline: d.online,
+            createdAt: Date(ms: d.createdAtMs), lastSeenAt: Date(ms: d.lastSeenAtMs))
+    }
+}
+
+extension ThinktinKit.DeviceMessage {
+    init(core m: Core.DeviceMessage) {
+        self.init(
+            id: DeviceMessageID(m.id), fromDeviceID: DeviceID(m.fromDeviceId), toDeviceID: DeviceID(m.toDeviceId),
+            kind: DeviceMessageKind(rawValue: m.kind), bodyJSON: m.bodyJson, createdAt: Date(ms: m.createdAtMs),
+            expiresAt: Date(ms: m.expiresAtMs))
     }
 }
 
@@ -192,22 +216,111 @@ extension ThinktinKit.PlanStep {
     }
 }
 
+extension ThinktinKit.PlanPolicy {
+    /// ThinktinCore 的 `PlanPolicy` 是平的（`maxTokens`、`maxDurationSecs`、`maxSteps` 和别的字段并列），
+    /// ThinktinKit 照服务端的 JSON 把每次运行的上限收在 `budget` 里。
+    init(core p: Core.PlanPolicy) {
+        self.init(
+            preauthorizedTools: p.preauthorizedTools, approvalTimeoutSecs: Int(clamping: p.approvalTimeoutSecs),
+            onApprovalTimeout: ApprovalTimeoutAction(rawValue: p.onApprovalTimeout),
+            budget: ThinktinKit.RunBudget(
+                maxTokens: p.maxTokens.map { Int(clamping: $0) }, maxDurationSecs: Int(clamping: p.maxDurationSecs),
+                maxSteps: p.maxSteps.map { Int(clamping: $0) }),
+            dailyTokenLimit: p.dailyTokenLimit.map { Int(clamping: $0) },
+            waitTimeoutSecs: Int(clamping: p.waitTimeoutSecs))
+    }
+
+    /// 负数当 0（服务端按范围拒绝，抛 invalid）；不认识的超时动作原样发出，client-core 拒绝（`invalidArgument`）。
+    var core: Core.PlanPolicy {
+        Core.PlanPolicy(
+            preauthorizedTools: preauthorizedTools, approvalTimeoutSecs: UInt64(clamping: approvalTimeoutSecs),
+            onApprovalTimeout: onApprovalTimeout.rawValue, maxTokens: budget.maxTokens.map { UInt64(clamping: $0) },
+            maxDurationSecs: UInt64(clamping: budget.maxDurationSecs),
+            maxSteps: budget.maxSteps.map { UInt32(clamping: $0) },
+            dailyTokenLimit: dailyTokenLimit.map { UInt64(clamping: $0) },
+            waitTimeoutSecs: UInt64(clamping: waitTimeoutSecs))
+    }
+}
+
 extension ThinktinKit.Plan {
+    /// 策略取结构化的 `policy`；`policy_json` 是同一份策略的 JSON（留给老版本 App），这里不再读
+    /// （ThinktinKit 的 `Plan.policyJSON` 由 `policy` 重新编出来）。
     init(core p: Core.Plan) {
         self.init(
             id: PlanID(p.id), instanceID: InstanceID(p.instanceId), title: p.title, goal: p.goal, isPaused: p.paused,
             createdBy: PlanAuthor(rawValue: p.createdBy), awaitingConfirmation: p.awaitingConfirmation,
-            revision: Int(clamping: p.revision), policyJSON: p.policyJson, createdAt: Date(ms: p.createdAtMs),
+            revision: Int(clamping: p.revision), policy: ThinktinKit.PlanPolicy(core: p.policy),
+            catchUp: CatchUp(rawValue: p.catchUp), createdAt: Date(ms: p.createdAtMs),
             triggers: p.triggers.map { ThinktinKit.Trigger(core: $0) },
             steps: p.steps.map { ThinktinKit.PlanStep(core: $0) })
     }
 }
 
 extension ThinktinKit.NewPlan {
+    /// `policy`、`catchUp` 为 nil 时不发，用服务端默认的。
     var core: Core.NewPlan {
         Core.NewPlan(
             instanceId: instanceID.rawValue, title: title, goal: goal, triggers: triggers.map(\.core),
-            steps: steps.map(\.core))
+            steps: steps.map(\.core), policy: policy?.core, catchUp: catchUp?.rawValue)
+    }
+}
+
+extension ThinktinKit.PlanChange {
+    /// 只带给了的字段，其余为 nil（client-core 不发，服务端不改）。`steps` 给空数组就是变回单个 agent 的计划。
+    var core: Core.PlanChange {
+        Core.PlanChange(
+            title: title, goal: goal, policy: policy?.core, catchUp: catchUp?.rawValue, steps: steps?.map(\.core))
+    }
+}
+
+// MARK: - 团队与团队模板（8.1）
+
+extension ThinktinKit.TeamMember {
+    init(core m: Core.TeamMember) {
+        self.init(
+            instanceID: InstanceID(m.instanceId), role: TeamRole(rawValue: m.role), position: Int(clamping: m.position))
+    }
+
+    var core: Core.TeamMember {
+        Core.TeamMember(instanceId: instanceID.rawValue, role: role.rawValue, position: UInt32(clamping: position))
+    }
+}
+
+extension ThinktinKit.Team {
+    init(core t: Core.Team) {
+        self.init(
+            id: TeamID(t.id), name: t.name, members: t.members.map { ThinktinKit.TeamMember(core: $0) },
+            createdAt: Date(ms: t.createdAtMs))
+    }
+}
+
+extension ThinktinKit.TemplateMember {
+    init(core m: Core.TemplateMember) {
+        self.init(agentID: AgentID(m.agentId), harness: m.harness, name: m.name, role: TeamRole(rawValue: m.role))
+    }
+
+    var core: Core.TemplateMember {
+        Core.TemplateMember(agentId: agentID.rawValue, harness: harness, name: name, role: role.rawValue)
+    }
+}
+
+extension ThinktinKit.TeamTemplate {
+    init(core t: Core.TeamTemplate) {
+        self.init(
+            id: TeamTemplateID(t.id), name: t.name, members: t.members.map { ThinktinKit.TemplateMember(core: $0) },
+            createdAt: Date(ms: t.createdAtMs))
+    }
+}
+
+// MARK: - 内容举报（5.5）
+
+extension ThinktinKit.ContentReport {
+    init(core r: Core.ContentReport) {
+        self.init(
+            id: ContentReportID(r.id), runID: RunID(r.runId), instanceID: InstanceID(r.instanceId),
+            eventSeq: r.eventSeq, artifactID: r.artifactId.map { ArtifactID($0) },
+            reason: ReportReason(rawValue: r.reason), note: r.note, state: ReportState(rawValue: r.state),
+            resolution: r.resolution, createdAt: Date(ms: r.createdAtMs), handledAt: r.handledAtMs.date)
     }
 }
 

@@ -120,7 +120,7 @@ Claude App 的特点：暖色纸张底色、极少的强调色、标题用衬线
 | `Api(status, code, …)` | `rate_limited` 按 `retry_after_secs` 提示；`conflict` 刷新后重试；`invalid` 显示表单错误；`not_found` 回上一级 |
 | `Network` | 行内可重试的提示；列表页显示缓存数据并标“离线” |
 | `ContainsSecrets(count)` | 发送前的密码拦截弹层（11.6）：一键存进保险箱并换成引用，或坚持发送 |
-| `Unsupported(feature)` | 只在 Swift 侧有：client-core 还没导出的方法（11.7 落地前）由 `CoreClient` 抛出，`MockClient` 照常实现。提示“暂未开放”、不重试（`ErrorRecovery.featureUnavailable`），入口最好直接隐藏或置灰 |
+| `unsupported(feature)` | 协议里先加了、client-core 还没导出的方法才会抛（11.7 合入后现在没有这种方法）；界面显示“这个功能还没开放”，不给重试 |
 | 其他 | 通用错误提示，带“复制详情” |
 
 接口的 `message` 是英文、给开发者看的，界面显示按错误码本地化的文案。

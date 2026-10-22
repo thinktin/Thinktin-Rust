@@ -27,6 +27,16 @@ enum AdapterFixture {
     static let planID = "0199f1e2-3c4d-7e8f-9a0b-1c2d3e4f5a06"
     static let approvalID = "0199f1e2-3c4d-7e8f-9a0b-1c2d3e4f5a07"
     static let itemID = "0199f1e2-3c4d-7e8f-9a0b-1c2d3e4f5a08"
+    /// 另一台登录着的设备（电脑）。
+    static let otherDeviceID = "0199f1e2-3c4d-7e8f-9a0b-1c2d3e4f5a09"
+    static let teamID = "0199f1e2-3c4d-7e8f-9a0b-1c2d3e4f5a0a"
+    static let reportID = "0199f1e2-3c4d-7e8f-9a0b-1c2d3e4f5a0b"
+    static let messageID = "0199f1e2-3c4d-7e8f-9a0b-1c2d3e4f5a0c"
+    static let artifactID = "0199f1e2-3c4d-7e8f-9a0b-1c2d3e4f5a0d"
+    static let triggerID = "0199f1e2-3c4d-7e8f-9a0b-1c2d3e4f5a0e"
+    /// 第二个实例（团队、流水线里用）。
+    static let otherInstanceID = "0199f1e2-3c4d-7e8f-9a0b-1c2d3e4f5a0f"
+    static let templateID = "0199f1e2-3c4d-7e8f-9a0b-1c2d3e4f5a10"
 
     /// 一个看起来已经登录的会话（令牌是假的，只在本机用）。
     static var session: ThinktinKit.Session {

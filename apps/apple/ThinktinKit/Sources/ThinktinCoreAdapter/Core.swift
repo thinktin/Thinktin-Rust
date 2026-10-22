@@ -24,6 +24,8 @@ enum Core {
     typealias LoginResult = ThinktinCore.LoginResult
     typealias StopAllResult = ThinktinCore.StopAllResult
     typealias SignOutOthersResult = ThinktinCore.SignOutOthersResult
+    typealias DeviceInfo = ThinktinCore.DeviceInfo
+    typealias DeviceMessage = ThinktinCore.DeviceMessage
     typealias AgentInfo = ThinktinCore.AgentInfo
     typealias Instance = ThinktinCore.Instance
     typealias ModelRoute = ThinktinCore.ModelRoute
@@ -35,8 +37,15 @@ enum Core {
     typealias Schedule = ThinktinCore.Schedule
     typealias Trigger = ThinktinCore.Trigger
     typealias PlanStep = ThinktinCore.PlanStep
+    typealias PlanPolicy = ThinktinCore.PlanPolicy
     typealias Plan = ThinktinCore.Plan
     typealias NewPlan = ThinktinCore.NewPlan
+    typealias PlanChange = ThinktinCore.PlanChange
+    typealias Team = ThinktinCore.Team
+    typealias TeamMember = ThinktinCore.TeamMember
+    typealias TeamTemplate = ThinktinCore.TeamTemplate
+    typealias TemplateMember = ThinktinCore.TemplateMember
+    typealias ContentReport = ThinktinCore.ContentReport
     typealias InboxItem = ThinktinCore.InboxItem
     typealias InboxPage = ThinktinCore.InboxPage
     typealias InstanceEvent = ThinktinCore.InstanceEvent

@@ -11,10 +11,11 @@
 - `docs/gen_wbs.py`：补回 1.6、9.11、9.12、11.6、13.12 五行（逐字照 wbs.md），重新生成 wbs.md / wbs.csv。
 - WBS 细化（`21a824f`）：12.x 从 11 个包 54 人日细化为 23 个包 114 人日（P1 89）；后端前置 4.7、5.5、5.6、10.6、10.7、11.7、11.8；每包的实现要点在 `docs/ios-packages.md`，开发顺序和目录分工在 `docs/ios.md` 第 8、9 节。
 - 12.1（`66ebc7e`，macOS CI 待确认）：ThinktinKit（模型、ClientProtocol、ClientError、MockClient、ConversationReducer、格式化）、ThinktinCoreAdapter（CoreClient、桥接）、ThinktinUI（设计令牌、基础组件、欢迎页 RootView）、XcodeGen 工程与 App 骨架（Keychain 会话、隐私清单、文案表）、`.github/workflows/ios.yml`（Linux + macOS 两个作业）、`apps/apple/.swift-format`、`tools/apple/uicheck`（Linux 上用桩 SwiftUI 类型检查界面和 App 代码）。Linux 上 187 个测试通过，严格格式检查干净。
-- 合进 backend-core（`a4e8ba2`）：带进 11.7（33 个新方法）和 10.6（实时活动）。
+- 合进 backend-core（`a4e8ba2`、`d448aeb`）：带进 11.7（33 个新方法）、10.6（实时活动，含评审修复）、4.7（审核账号，App 不用改）、5.5（内容举报）。
+- 11.7 / 10.6 / 5.5 接入：ThinktinKit 新模型（设备、设备消息、结构化计划策略、计划修改、补跑、团队与模板、内容举报、实时活动限制），ClientProtocol 共 97 个方法，MockClient 全部实现并按服务端规则校验；CoreClient 全部接上真实核心，不再有 `unsupported`；Linux 上 277 个测试通过，严格格式检查、uicheck 两种都过。审查修了一处：下线本机时设备 id 按大小写比较，没退出本地登录。
 
 进行中：
-- 11.7 / 10.6 / 5.5 接入：ThinktinKit 加新模型、ClientProtocol 加 35 个方法、MockClient 实现；CoreClient 接上；测试（工作流 wf_5342d9a0-b42；第一次 wf_e31bb6fd-adb 被用量限额打断，做了一半的已提交为 `00860a7`）。合进了 backend-core 的 4.7、5.5、10.6 评审修复（`d448aeb`）。
+- iOS CI：确认 11.7 接入这次推送在 macOS 上全绿。
 - iOS CI 第一次完整跑（run 39687813304，`66ebc7e`）的结果：Linux 作业全绿；macOS 上 Rust 交叉编译与打包（约 9 分钟）、真实 SwiftUI 编译 ThinktinKit + ThinktinUI、xcodegen、Xcode 26.6 编译 App 并在 iPhone 17 Pro 模拟器（iOS 26.5）上跑 App 冒烟测试都通过；214 个测试里只有“抽屉：打开和关闭”失败（关着的抽屉理想宽度本来就是 0，测试断言写错了），已修，随 11.7 接入一起推送。
 
 下一步：
@@ -23,6 +24,8 @@
 3. W2：12.13、12.10、12.20、12.21、12.19；12.11 最后；12.9 随 macOS（P3）。
 
 坑和决定：
+- `CoreClient.revokeDevice` 下线本机时额外调一次 `core.logout()` 清本地会话和缓存（client-core 的 `revoke_device` 只发 DELETE）；已建议 backend-core 在 client-core 里做，做了之后这行可以删。
+- `tools/apple/uicheck/run.sh test` 在 Linux 上抽屉测试会失败：桩 SwiftUI 的 `sizeThatFits` 总是返回提议的尺寸，关着的抽屉测不出 0。以 macOS CI 为准。
 - 后端前置包（2026-10-22）：backend-core 已认领 11.8、10.7、4.7、5.5（`docs/progress.md` 7b085b7），顺序 10.6 评审 → 11.8 → 10.7 → 4.7 → 5.5；11.8 顺带做计划列表带下次触发时间、Run / run.state 的结构化等待原因码、跨实例的进行中运行列表。5.6 运行附件等 1.1 拍板。新接口只加不改，做完在 `docs/progress.md` 已完成表里写 FFI 新增了什么，本分支合 backend-core 时接上。
 - 12.10 实时活动的约定（backend-core 10.6，83f68ba…39234ba，详见 backend-core 的 `docs/live-activities.md` 第 3 节）：类型名必须是 `RunActivityAttributes`，静态属性 `runId`、`instanceId`、`title`；`ContentState` 是 `state`（运行状态字符串）、`steps`（Int）、`startedAt`、`endedAt`（可选，Unix 秒整数，驼峰键名，ActivityKit 用默认 JSONDecoder 解）。client-core 新方法：`register_live_activity(run_id, token)`（`pushTokenUpdates`，十六进制，变了再调）、`end_live_activity(run_id)`、`set_live_activity_start_token(token?)`（`pushToStartTokenUpdates`，用户打开“计划运行时显示实时活动”才登记，关掉传 nil）；只有 iPhone / iPad 能登记。服务端只远程开启计划到点的根运行，用户自己发起的由 App 自己开；远程开启的在 `Activity<RunActivityAttributes>.activityUpdates` 里拿到后照样 `register_live_activity`。推送里没有摘要和 agent 文字。
 - client-core 没导出的接口（设备列表与下线、注销、改计划与触发器、团队与模板、换 key、产出物列表与删除、收件箱删除和标未读、runs 分页）：2026-10-22 backend-core 会话已认领 11.7（P1，记在 `docs/progress.md`，c2c3825；只加不改已有签名，做完一组提交一组）；实时活动推送 10.6（P2）等 11.7 做完再定，在那之前没人认领。两行由本分支加进 `gen_wbs.py`。落地前 Swift 的 `ClientProtocol` 先定义这些方法、`MockClient` 实现、`CoreClient` 抛 `ClientError.unsupported`。

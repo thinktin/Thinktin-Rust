@@ -5,13 +5,16 @@ import ThinktinKit
 /// （网络、令牌刷新、事件流续传、SQLite 缓存、密码识别都在那边）。
 ///
 /// 这里只做三件事：参数从领域模型换成 ThinktinCore 的形式（强类型 id → 字符串、`Date` → 毫秒、枚举 → 字符串），
-/// 结果换回领域模型（Conversions.swift），错误一律换成 ThinktinKit 的 `ClientError`。
+/// 结果换回领域模型（Conversions.swift），错误一律换成 ThinktinKit 的 `ClientError`。唯一多做的一步在 `revokeDevice`：
+/// 吊销当前这台时接着退出登录，让本地状态和 `ClientProtocol` 的约定一致（见那里的说明）。
 ///
 /// client-core 的网络操作跑在它自己的 tokio 运行时上，这里的 async 方法只是等结果，可以从任何线程、任何 actor 调；
 /// 不带 async 的方法只读本地缓存。事件回调在 client-core 的后台线程上（见 `subscribe`）。
 public final class CoreClient: ClientProtocol {
     public let secretDetector: any SecretDetector
     private let core: Core.Client
+    /// 和交给 client-core 的是同一个存储：client-core 每次换会话都写进去，这里只读（`revokeDevice` 判断是不是这台）。
+    private let sessions: any SessionStoring
 
     /// - Parameters:
     ///   - baseURL: 接口地址，比如 `https://api.thinktin.cn`。
@@ -34,6 +37,7 @@ public final class CoreClient: ClientProtocol {
         } catch {
             throw ThinktinKit.ClientError(error)
         }
+        self.sessions = sessions
         secretDetector = CoreSecretDetector()
     }
 
@@ -66,11 +70,8 @@ public final class CoreClient: ClientProtocol {
         return UInt32(min(max(interval.rounded(.up), 0), Double(UInt32.max)))
     }
 
-    /// client-core 还没导出的接口（WBS 11.7 落地前）：`ClientProtocol` 里有、`ThinktinClient` 里没有的方法
-    /// 一律 `try unsupported()`，抛 `ClientError.unsupported`（界面提示“暂未开放”，见 docs/ios.md 第 6 节）。
-    private func unsupported<T>(_ feature: String = #function) throws -> T {
-        throw ThinktinKit.ClientError.unsupported(feature: feature)
-    }
+    // `ClientProtocol` 的每个方法 client-core 都有对应的。协议先于 client-core 加方法时，那个方法在这里临时抛
+    // `ClientError.unsupported(feature:)`（界面提示“暂未开放”，见 docs/ios.md 第 6 节）。
 
     // MARK: 账号
 
@@ -116,6 +117,71 @@ public final class CoreClient: ClientProtocol {
         }
     }
 
+    public func updateProfile(displayName: String?) async throws -> ThinktinKit.User {
+        try await perform { ThinktinKit.User(core: try await core.updateProfile(displayName: displayName)) }
+    }
+
+    public func sendSelfCode(purpose: SelfCodePurpose) async throws {
+        try await perform { try await core.sendSelfCode(purpose: purpose.rawValue) }
+    }
+
+    /// 成功后 client-core 清掉本地会话（经 `SessionStoring.save(nil)`）和缓存；失败（验证码不对）时什么都不动。
+    public func deleteAccount(code: String) async throws {
+        try await perform { try await core.deleteAccount(code: code) }
+    }
+
+    // MARK: 登录设备与设备消息（14.1）
+
+    public func devices() async throws -> [ThinktinKit.DeviceInfo] {
+        try await perform { try await core.devices().map { ThinktinKit.DeviceInfo(core: $0) } }
+    }
+
+    /// 吊销当前这台等于退出登录：client-core 只发吊销请求，本地会话要等下一个请求被拒（401）才清，所以这里接着调一次
+    /// `logout`，让本地的登录状态和缓存马上清掉（和 `MockClient` 一样，`signedIn()` 立即变成 false）。
+    /// 这一步的错误不抛：吊销已经成功，`logout` 无论成败都会清掉本地会话。是不是这台在发请求前判断（请求期间别的调用
+    /// 被拒、会话先清掉了，也照样清缓存）。id 按 UUID 比，不分大小写（client-core 解析 id 时也不分）。
+    public func revokeDevice(_ deviceID: DeviceID) async throws {
+        let isCurrent = sessions.load()?.deviceID.rawValue.lowercased() == deviceID.rawValue.lowercased()
+        try await perform { try await core.revokeDevice(deviceId: deviceID.rawValue) }
+        if isCurrent {
+            try? await core.logout()
+        }
+    }
+
+    public func sendDeviceMessage(to deviceID: DeviceID, kind: DeviceMessageKind, bodyJSON: String) async throws
+        -> ThinktinKit.DeviceMessage
+    {
+        try await perform {
+            ThinktinKit.DeviceMessage(
+                core: try await core.sendDeviceMessage(
+                    toDeviceId: deviceID.rawValue, kind: kind.rawValue, bodyJson: bodyJSON))
+        }
+    }
+
+    public func deviceMessages() async throws -> [ThinktinKit.DeviceMessage] {
+        try await perform { try await core.deviceMessages().map { ThinktinKit.DeviceMessage(core: $0) } }
+    }
+
+    public func ackDeviceMessages(ids: [DeviceMessageID]) async throws -> Int {
+        try await perform { Int(clamping: try await core.ackDeviceMessages(ids: ids.map(\.rawValue))) }
+    }
+
+    // MARK: 实时活动（10.6）
+
+    public func setLiveActivityStartToken(_ token: String?) async throws {
+        try await perform { try await core.setLiveActivityStartToken(token: token) }
+    }
+
+    /// 同一个令牌再登记服务端什么都不变（不重发）；运行结束 10 分钟以上的抛 `api(status: 422, code: .invalid)`，
+    /// App 在本地结束这个实时活动（`LiveActivityLimits.isTooLateToRegister` 可以先判断，省一次请求）。
+    public func registerLiveActivity(runID: RunID, token: String) async throws {
+        try await perform { try await core.registerLiveActivity(runId: runID.rawValue, token: token) }
+    }
+
+    public func endLiveActivity(runID: RunID) async throws {
+        try await perform { try await core.endLiveActivity(runId: runID.rawValue) }
+    }
+
     // MARK: agent 与实例
 
     public func agents() async throws -> [ThinktinKit.AgentInfo] {
@@ -124,6 +190,10 @@ public final class CoreClient: ClientProtocol {
 
     public func instances() async throws -> [ThinktinKit.Instance] {
         try await perform { try await core.instances().map { ThinktinKit.Instance(core: $0) } }
+    }
+
+    public func instance(_ instanceID: InstanceID) async throws -> ThinktinKit.Instance {
+        try await perform { ThinktinKit.Instance(core: try await core.instance(instanceId: instanceID.rawValue)) }
     }
 
     public func cachedInstances() throws -> [ThinktinKit.Instance] {
@@ -181,6 +251,14 @@ public final class CoreClient: ClientProtocol {
         }
     }
 
+    public func olderRuns(instanceID: InstanceID, before: RunID, limit: Int) async throws -> [ThinktinKit.Run] {
+        try await perform {
+            let runs = try await core.olderRuns(
+                instanceId: instanceID.rawValue, beforeRunId: before.rawValue, limit: Self.count(limit))
+            return runs.map { ThinktinKit.Run(core: $0) }
+        }
+    }
+
     public func cachedRuns(instanceID: InstanceID, limit: Int) throws -> [ThinktinKit.Run] {
         try performSync {
             try core.cachedRuns(instanceId: instanceID.rawValue, limit: Self.count(limit)).map {
@@ -209,8 +287,20 @@ public final class CoreClient: ClientProtocol {
         }
     }
 
+    public func instanceArtifacts(_ instanceID: InstanceID, limit: Int) async throws -> [ThinktinKit.Artifact] {
+        try await perform {
+            try await core.instanceArtifacts(instanceId: instanceID.rawValue, limit: Self.count(limit)).map {
+                ThinktinKit.Artifact(core: $0)
+            }
+        }
+    }
+
     public func artifactContent(_ artifactID: ArtifactID) async throws -> Data {
         try await perform { try await core.artifactContent(artifactId: artifactID.rawValue) }
+    }
+
+    public func deleteArtifact(_ artifactID: ArtifactID) async throws {
+        try await perform { try await core.deleteArtifact(artifactId: artifactID.rawValue) }
     }
 
     // MARK: 事件流
@@ -266,6 +356,22 @@ public final class CoreClient: ClientProtocol {
         try await perform { ThinktinKit.Plan(core: try await core.createPlan(plan: plan.core)) }
     }
 
+    public func updatePlan(_ planID: PlanID, change: ThinktinKit.PlanChange) async throws -> ThinktinKit.Plan {
+        try await perform {
+            ThinktinKit.Plan(core: try await core.updatePlan(planId: planID.rawValue, change: change.core))
+        }
+    }
+
+    public func addTrigger(planID: PlanID, schedule: ThinktinKit.Schedule) async throws -> ThinktinKit.Trigger {
+        try await perform {
+            ThinktinKit.Trigger(core: try await core.addTrigger(planId: planID.rawValue, schedule: schedule.core))
+        }
+    }
+
+    public func deleteTrigger(_ triggerID: TriggerID) async throws {
+        try await perform { try await core.deleteTrigger(triggerId: triggerID.rawValue) }
+    }
+
     public func setPlanPaused(_ planID: PlanID, paused: Bool) async throws -> ThinktinKit.Plan {
         try await perform {
             ThinktinKit.Plan(core: try await core.setPlanPaused(planId: planID.rawValue, paused: paused))
@@ -315,6 +421,78 @@ public final class CoreClient: ClientProtocol {
         }
     }
 
+    public func inboxItem(_ itemID: InboxItemID) async throws -> ThinktinKit.InboxItem {
+        try await perform { ThinktinKit.InboxItem(core: try await core.inboxItem(itemId: itemID.rawValue)) }
+    }
+
+    /// 有缓存时未读数取缓存里的（改完本地的那条），没有缓存时 client-core 再问一次服务端。
+    public func markInboxUnread(_ itemID: InboxItemID) async throws -> Int {
+        try await perform { Int(clamping: try await core.markInboxUnread(itemId: itemID.rawValue)) }
+    }
+
+    public func deleteInboxItem(_ itemID: InboxItemID) async throws {
+        try await perform { try await core.deleteInboxItem(itemId: itemID.rawValue) }
+    }
+
+    // MARK: 团队与团队模板（8.1）
+
+    public func teams() async throws -> [ThinktinKit.Team] {
+        try await perform { try await core.teams().map { ThinktinKit.Team(core: $0) } }
+    }
+
+    public func team(_ teamID: TeamID) async throws -> ThinktinKit.Team {
+        try await perform { ThinktinKit.Team(core: try await core.team(teamId: teamID.rawValue)) }
+    }
+
+    public func createTeam(name: String, members: [ThinktinKit.TeamMember]) async throws -> ThinktinKit.Team {
+        try await perform {
+            ThinktinKit.Team(core: try await core.createTeam(name: name, members: members.map(\.core)))
+        }
+    }
+
+    public func updateTeam(_ teamID: TeamID, name: String?, members: [ThinktinKit.TeamMember]?) async throws
+        -> ThinktinKit.Team
+    {
+        try await perform {
+            ThinktinKit.Team(
+                core: try await core.updateTeam(teamId: teamID.rawValue, name: name, members: members?.map(\.core)))
+        }
+    }
+
+    public func deleteTeam(_ teamID: TeamID) async throws {
+        try await perform { try await core.deleteTeam(teamId: teamID.rawValue) }
+    }
+
+    public func teamTemplates() async throws -> [ThinktinKit.TeamTemplate] {
+        try await perform { try await core.teamTemplates().map { ThinktinKit.TeamTemplate(core: $0) } }
+    }
+
+    public func createTeamTemplate(name: String, members: [ThinktinKit.TemplateMember]) async throws
+        -> ThinktinKit.TeamTemplate
+    {
+        try await perform {
+            ThinktinKit.TeamTemplate(
+                core: try await core.createTeamTemplate(name: name, members: members.map(\.core)))
+        }
+    }
+
+    public func createTeamTemplateFromTeam(name: String, teamID: TeamID) async throws -> ThinktinKit.TeamTemplate {
+        try await perform {
+            ThinktinKit.TeamTemplate(
+                core: try await core.createTeamTemplateFromTeam(name: name, teamId: teamID.rawValue))
+        }
+    }
+
+    public func deleteTeamTemplate(_ templateID: TeamTemplateID) async throws {
+        try await perform { try await core.deleteTeamTemplate(templateId: templateID.rawValue) }
+    }
+
+    public func adoptTeamTemplate(_ templateID: TeamTemplateID, name: String?) async throws -> ThinktinKit.Team {
+        try await perform {
+            ThinktinKit.Team(core: try await core.adoptTeamTemplate(templateId: templateID.rawValue, name: name))
+        }
+    }
+
     // MARK: 用量
 
     public func usage(group: UsageGroup, from: Date?, to: Date?, timeZone: TimeZone?) async throws
@@ -342,8 +520,45 @@ public final class CoreClient: ClientProtocol {
         try await perform { ThinktinKit.Credential(core: try await core.addCredential(credential: credential.core)) }
     }
 
+    public func updateCredential(_ credentialID: CredentialID, label: String?, disabled: Bool?) async throws
+        -> ThinktinKit.Credential
+    {
+        try await perform {
+            ThinktinKit.Credential(
+                core: try await core.updateCredential(
+                    credentialId: credentialID.rawValue, label: label, disabled: disabled))
+        }
+    }
+
+    public func replaceCredentialSecret(_ credentialID: CredentialID, apiKey: String) async throws
+        -> ThinktinKit.Credential
+    {
+        try await perform {
+            ThinktinKit.Credential(
+                core: try await core.replaceCredentialSecret(credentialId: credentialID.rawValue, apiKey: apiKey))
+        }
+    }
+
     public func deleteCredential(_ credentialID: CredentialID) async throws {
         try await perform { try await core.deleteCredential(credentialId: credentialID.rawValue) }
+    }
+
+    // MARK: 内容举报（5.5）
+
+    /// `reason` 是不认识的取值（`.unknown`）时 client-core 不发请求，抛 `invalidArgument`。
+    public func reportContent(
+        runID: RunID, eventSeq: UInt64?, artifactID: ArtifactID?, reason: ReportReason, note: String?
+    ) async throws -> ThinktinKit.ContentReport {
+        try await perform {
+            ThinktinKit.ContentReport(
+                core: try await core.reportContent(
+                    runId: runID.rawValue, eventSeq: eventSeq, artifactId: artifactID?.rawValue,
+                    reason: reason.rawValue, note: note))
+        }
+    }
+
+    public func reports() async throws -> [ThinktinKit.ContentReport] {
+        try await perform { try await core.reports().map { ThinktinKit.ContentReport(core: $0) } }
     }
 
     // MARK: IM 渠道

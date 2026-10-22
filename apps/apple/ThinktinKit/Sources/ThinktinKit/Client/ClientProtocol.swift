@@ -195,8 +195,9 @@ public protocol ClientProtocol: AnyObject, Sendable {
     // MARK: 内容举报（5.5）
 
     /// 举报 agent 的输出（长按回复或产出物）：`eventSeq` 是那条事件的序号，`artifactID` 是产出物，都不给就是整个运行。
-    /// `note` 最多 1000 个字符（去掉首尾空白后为空的当作没写）。只能举报自己的运行（别人的、不存在的抛 not_found，
-    /// 事件、产出物不属于这个运行也是）。同一条内容还有待处理的举报时，再举报一次返回那一条（不重复建）。
+    /// `note` 最多 1000 个字符（去掉首尾空白后为空的当作没写）。只能举报自己的运行（别人的、不存在的抛 not_found；
+    /// 事件不属于这个运行、产出物不属于这个运行所在的实例也是）。同一条内容还有待处理的举报时，再举报一次返回那一条
+    /// （不重复建）。
     /// 每人每小时 30 次，超了抛 rate_limited。处理结果发到收件箱和推送。`reason` 是不认识的取值时抛 `invalidArgument`。
     func reportContent(runID: RunID, eventSeq: UInt64?, artifactID: ArtifactID?, reason: ReportReason, note: String?)
         async throws -> ContentReport
