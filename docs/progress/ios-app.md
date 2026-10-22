@@ -15,7 +15,8 @@
 - 11.7 / 10.6 / 5.5 接入：ThinktinKit 新模型（设备、设备消息、结构化计划策略、计划修改、补跑、团队与模板、内容举报、实时活动限制），ClientProtocol 共 97 个方法，MockClient 全部实现并按服务端规则校验；CoreClient 全部接上真实核心，不再有 `unsupported`；Linux 上 277 个测试通过，严格格式检查、uicheck 两种都过。审查修了一处：下线本机时设备 id 按大小写比较，没退出本地登录。
 
 进行中：
-- iOS CI：确认 11.7 接入这次推送在 macOS 上全绿。
+- iOS CI：确认 11.7 接入这次推送（`b015212`）在 macOS 上全绿。
+- W1 第一轮（工作流 wf_4136b616-413）：先在 ios-app 上做 12.16 应用框架（路由、深链、抽屉、全局状态、每个功能目录的 `XxxDestination` 接入点），然后 12.2、12.3、12.5、12.6 在各自的 git worktree 里并行，分别提交到 `ios-w1/12.2-account`、`ios-w1/12.3-agents`、`ios-w1/12.5-conversation`、`ios-w1/12.6-plans`，由本会话合并回 ios-app。
 - iOS CI 第一次完整跑（run 39687813304，`66ebc7e`）的结果：Linux 作业全绿；macOS 上 Rust 交叉编译与打包（约 9 分钟）、真实 SwiftUI 编译 ThinktinKit + ThinktinUI、xcodegen、Xcode 26.6 编译 App 并在 iPhone 17 Pro 模拟器（iOS 26.5）上跑 App 冒烟测试都通过；214 个测试里只有“抽屉：打开和关闭”失败（关着的抽屉理想宽度本来就是 0，测试断言写错了），已修，随 11.7 接入一起推送。
 
 下一步：
