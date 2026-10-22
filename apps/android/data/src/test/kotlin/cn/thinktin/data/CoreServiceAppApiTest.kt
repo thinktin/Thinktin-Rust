@@ -5,7 +5,10 @@ import cn.thinktin.core.NoHandle
 import cn.thinktin.core.ThinktinClient
 import cn.thinktin.core.ThinktinClientInterface
 import cn.thinktin.data.core.CoreThinktinService
+import cn.thinktin.data.model.ApprovalKey
+import cn.thinktin.data.model.ApprovalState
 import cn.thinktin.data.model.CatchUp
+import cn.thinktin.data.model.InboxKind
 import cn.thinktin.data.model.CredentialUpdate
 import cn.thinktin.data.model.DeviceMessageKind
 import cn.thinktin.data.model.PlanChange
@@ -27,6 +30,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
+import cn.thinktin.core.Approval as CoreApproval
 import cn.thinktin.core.Artifact as CoreArtifact
 import cn.thinktin.core.ContentReport as CoreContentReport
 import cn.thinktin.core.Credential as CoreCredential
@@ -218,9 +222,21 @@ class CoreServiceAppApiTest {
             return team.copy(name = name ?: template.name)
         }
 
+        override suspend fun getApproval(approvalId: String): CoreApproval {
+            record("getApproval", approvalId)
+            return CoreApproval(
+                id = approvalId, runId = "r1", instanceId = "i1", title = "t", options = emptyList(),
+                toolCallJson = "{}", state = "expired", expiresAtMs = 2, createdAtMs = 1,
+                requestId = "perm-3", attempt = 2u, decidedOption = null, decidedAtMs = null,
+            )
+        }
+
         override suspend fun inboxItem(itemId: String): CoreInboxItem {
             record("inboxItem", itemId)
-            return CoreInboxItem(itemId, null, null, null, null, "info", "标题", "正文", false, true, 1)
+            return CoreInboxItem(
+                itemId, null, null, null, null, "vault_request", "标题", "正文", false, true, 1,
+                subtype = null, vaultRequestId = "vr1",
+            )
         }
 
         override suspend fun markInboxUnread(itemId: String): Long {
@@ -321,8 +337,19 @@ class CoreServiceAppApiTest {
         s.setAcceptLanguage(emptyList())
         assertEquals(listOf(listOf("setAcceptLanguage", null)), fake.calls)
         assertEquals(false, s.upgradeRequired())
+        assertEquals(false, s.upgradeState.value)
         fake.upgrade = true
         assertEquals(true, s.upgradeRequired())
+        assertEquals("查到了就同步给可观察的状态", true, s.upgradeState.value)
+    }
+
+    @Test
+    fun getApprovalAnyState() = runTest {
+        val s = CoreThinktinService(fake)
+        val approval = s.getApproval("a9")
+        assertEquals(ApprovalState.Expired, approval.state)
+        assertEquals(ApprovalKey("r1", 2, "perm-3"), approval.key)
+        assertEquals(listOf(listOf("getApproval", "a9")), fake.calls)
     }
 
     @Test
@@ -487,7 +514,10 @@ class CoreServiceAppApiTest {
     @Test
     fun inboxCredentialsAndReports() = runTest {
         val s = CoreThinktinService(fake)
-        assertTrue(s.inboxItem("n1").read)
+        val item = s.inboxItem("n1")
+        assertTrue(item.read)
+        assertEquals(InboxKind.VaultRequest, item.kind)
+        assertEquals("vr1", item.vaultRequestId)
         assertEquals(7L, s.markInboxUnread("n1"))
         s.deleteInboxItem("n1")
         assertEquals(true, s.updateCredential("c1", CredentialUpdate(disabled = true)).disabled)

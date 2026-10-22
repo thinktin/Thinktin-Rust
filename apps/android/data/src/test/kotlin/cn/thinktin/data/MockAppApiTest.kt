@@ -2,7 +2,9 @@ package cn.thinktin.data
 
 import cn.thinktin.data.mock.MockData
 import cn.thinktin.data.mock.MockThinktinService
+import cn.thinktin.data.model.ApprovalState
 import cn.thinktin.data.model.ApprovalTimeoutAction
+import cn.thinktin.data.model.EventKinds
 import cn.thinktin.data.model.CatchUp
 import cn.thinktin.data.model.CredentialUpdate
 import cn.thinktin.data.model.DeviceMessageKind
@@ -346,5 +348,40 @@ class MockAppApiTest {
         s.setAcceptLanguage(listOf("zh-CN", "en"))
         assertEquals(listOf("zh-CN", "en"), s.acceptLanguageTags)
         assertFalse(s.upgradeRequired())
+        assertFalse(s.upgradeState.value)
+        s.simulateUpgradeRequired()
+        assertTrue(s.upgradeRequired())
+        assertTrue(s.upgradeState.value)
+    }
+
+    @Test
+    fun approvalsListPendingAndGetApprovalAnyState() = runTest {
+        val s = service()
+        val pending = s.approvals()
+        assertTrue("只列待处理的", pending.all { it.state == ApprovalState.Pending })
+        val current = pending.single { it.id == MockData.APPROVAL_PENDING }
+        val stale = s.getApproval(MockData.APPROVAL_STALE)
+        assertEquals(ApprovalState.Cancelled, stale.state)
+        // 同一个运行、同一个 request_id，靠 attempt 分开（shim 每次尝试从 perm-1 重新编号）。
+        assertEquals(current.runId, stale.runId)
+        assertEquals(current.requestId, stale.requestId)
+        assertTrue(stale.attempt < current.attempt)
+        assertTrue(current.key != stale.key)
+        assertEquals(current.attempt, s.getRun(current.runId).attempt)
+        assertEquals("allow", s.getApproval(MockData.APPROVAL_DONE).decidedOption)
+        expectApi(404) { s.getApproval("approval-nope") }
+        expectApi(409) { s.decideApproval(MockData.APPROVAL_STALE, "allow") }
+        expectApi(422) { s.decideApproval(MockData.APPROVAL_PENDING, "nope") }
+
+        val decided = s.decideApproval(MockData.APPROVAL_PENDING, "reject")
+        assertEquals(ApprovalState.Rejected, decided.state)
+        assertEquals("reject", decided.decidedOption)
+        assertEquals(now, decided.decidedAtMs)
+        assertEquals(decided, s.getApproval(MockData.APPROVAL_PENDING))
+        assertTrue(s.approvals().none { it.id == MockData.APPROVAL_PENDING })
+        expectApi(409) { s.decideApproval(MockData.APPROVAL_PENDING, "allow") }
+        val event = s.cachedEventsBefore(decided.instanceId, null, 5).last { it.kind == EventKinds.APPROVAL_DECIDED }
+        assertEquals("perm-1", event.payload.string("request_id"))
+        assertEquals(current.attempt.toLong(), event.payload.long("attempt"))
     }
 }

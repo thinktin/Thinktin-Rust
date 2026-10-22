@@ -87,14 +87,14 @@ class MockThinktinServiceTest {
     }
 
     @Test
-    fun inboxCoversFiveKinds() = runTest {
+    fun inboxCoversAllKinds() = runTest {
         val s = service()
         val page = s.syncInbox()
         val kinds = page.items.map { it.kind }.toSet()
-        assertEquals(
-            setOf(InboxKind.RunFinished, InboxKind.RunFailed, InboxKind.Approval, InboxKind.ComputerApproval, InboxKind.Info),
-            kinds,
-        )
+        assertEquals(InboxKind.entries.toSet(), kinds)
+        val vault = page.items.single { it.kind == InboxKind.VaultRequest }
+        assertTrue(s.vaultRequests().any { it.id == vault.vaultRequestId })
+        assertTrue("等待提醒带 wait_code", page.items.any { it.subtype == "no_balance" })
         assertEquals(page.unread, s.cachedUnread())
         assertEquals(3L, page.unread)
         assertEquals(0L, s.markInboxRead(emptyList(), upToId = page.items.first().id))

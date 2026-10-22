@@ -23,6 +23,7 @@ import cn.thinktin.app.ui.login.LoginFlow
 import cn.thinktin.app.ui.status.CoreUnavailableScreen
 import cn.thinktin.app.ui.status.FrozenAccountScreen
 import cn.thinktin.app.ui.status.LoadingScreen
+import cn.thinktin.app.ui.status.UpgradeRequiredScreen
 import cn.thinktin.data.service.AuthState
 import cn.thinktin.data.service.ThinktinService
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,7 +31,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
 /**
- * 根界面：按设置选服务（演示 / 真实），按登录状态显示登录流、冻结页或主界面。
+ * 根界面：按设置选服务（演示 / 真实），按登录状态显示登录流、冻结页或主界面；
+ * 服务端说版本太老（[ThinktinService.upgradeState]）时什么都不显示，只有升级页。
  * 真实服务在后台创建：创建中显示加载，失败显示“核心库不可用”页。
  * 切换演示模式会换服务，主界面整个重建（新的 NavController 和 ViewModel）。
  */
@@ -63,6 +65,7 @@ fun AppRoot(container: AppContainer, settings: AppSettings?, deepLinks: DeepLink
 @Composable
 private fun ServiceContent(container: AppContainer, service: ThinktinService, deepLinks: DeepLinkInbox) {
     val auth by service.authState.collectAsStateWithLifecycle()
+    val upgradeRequired by service.upgradeState.collectAsStateWithLifecycle()
     CompositionLocalProvider(
         LocalAppContainer provides container,
         LocalThinktinService provides service,
@@ -70,6 +73,7 @@ private fun ServiceContent(container: AppContainer, service: ThinktinService, de
     ) {
         key(service) {
             when {
+                upgradeRequired -> UpgradeRequiredScreen()
                 auth == AuthState.Frozen -> FrozenAccountScreen(service)
                 auth == AuthState.SignedOut && !service.isDemo -> LoginFlow()
                 else -> MainNavigation()

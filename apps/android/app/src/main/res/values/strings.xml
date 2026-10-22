@@ -138,6 +138,11 @@
     <string name="core_unavailable_message">ThinkTin 核心库加载失败，暂时连不上服务。可以重试；仍然不行请更新或重新安装 App。</string>
     <string name="core_unavailable_detail">原因：%1$s</string>
 
+    <string name="upgrade_title">请升级</string>
+    <string name="upgrade_message">当前版本太旧，请更新 App。</string>
+    <string name="upgrade_action">更新 App</string>
+    <string name="upgrade_action_pending">应用内更新还没上线，请先到应用商店更新</string>
+
     <!-- 设置 -->
     <string name="settings_appearance">外观</string>
     <string name="settings_appearance_system">跟随系统</string>

@@ -50,6 +50,8 @@ class CoreThinktinServiceTest {
 
         override fun signedIn(): Boolean = true
 
+        override fun upgradeRequired(): Boolean = false
+
         override suspend fun instances(): List<CoreInstance> {
             instancesError?.let { throw it }
             return listOf(CoreInstance("i1", "a1", "1.0", "codex", "小码", "paused", 1, 2))
@@ -175,8 +177,41 @@ class CoreThinktinServiceTest {
     }
 
     @Test
+    fun streamUpgradeRequiredFlipsUpgradeStateAndEnds() = runTest {
+        val fake = FakeClient()
+        val s = CoreThinktinService(fake)
+        assertEquals(false, s.upgradeState.value)
+        s.events("i1").test {
+            fake.listener!!.onStatus(StreamStatus.UpgradeRequired)
+            assertEquals(EventStreamItem.Status(StreamState.UpgradeRequired), awaitItem())
+            awaitComplete()
+        }
+        assertTrue("握手 426：界面进升级页", s.upgradeState.value)
+        assertTrue(s.upgradeRequired())
+        assertEquals("升级不改登录状态", AuthState.SignedIn, s.authState.value)
+        assertTrue(fake.stopped)
+    }
+
+    @Test
+    fun upgradeRequiredErrorFlipsUpgradeState() = runTest {
+        val fake = FakeClient()
+        val s = CoreThinktinService(fake)
+        fake.instancesError = ClientException.UpgradeRequired()
+        try {
+            s.instances()
+            fail("应该抛 UpgradeRequired")
+        } catch (_: ServiceError.UpgradeRequired) {
+        }
+        assertTrue(s.upgradeState.value)
+    }
+
+    @Test
     fun terminalStatusEndsStreamAndReleasesSubscription() = runTest {
-        for (terminal in listOf(StreamStatus.NotFound, StreamStatus.Stopped, StreamStatus.AccountFrozen)) {
+        for (
+            terminal in listOf(
+                StreamStatus.NotFound, StreamStatus.Stopped, StreamStatus.AccountFrozen, StreamStatus.UpgradeRequired,
+            )
+        ) {
             val fake = FakeClient()
             val s = CoreThinktinService(fake)
             s.events("i1").test {

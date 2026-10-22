@@ -39,7 +39,9 @@ class StatesTest {
         assertEquals(RunState.Unknown, RunState.fromWire("RUNNING"))
         assertEquals(RunSource.Unknown, RunSource.fromWire("cron"))
         assertEquals(RunKind.Unknown, RunKind.fromWire("workflow"))
-        assertEquals(InboxKind.Unknown, InboxKind.fromWire("promo"))
+        // 收件箱例外：不认识的按 info 显示（client-core 的约定）。
+        assertEquals(InboxKind.Info, InboxKind.fromWire("promo"))
+        assertEquals(InboxKind.Info, InboxKind.fromWire(""))
         assertEquals(ApprovalState.Unknown, ApprovalState.fromWire("maybe"))
         assertEquals(OptionKind.Unknown, OptionKind.fromWire("allow_sometimes"))
         assertEquals(VaultRequestStatus.Unknown, VaultRequestStatus.fromWire("lost"))
@@ -74,8 +76,10 @@ class StatesTest {
         assertEquals(RunSource.Delegate, RunSource.fromWire("delegate"))
         assertEquals(RunKind.Pipeline, RunKind.fromWire("pipeline"))
         assertEquals(
-            listOf(InboxKind.RunFinished, InboxKind.RunFailed, InboxKind.Approval, InboxKind.ComputerApproval, InboxKind.Info),
-            listOf("run_finished", "run_failed", "approval", "computer_approval", "info").map { InboxKind.fromWire(it) },
+            InboxKind.entries.toList(),
+            listOf(
+                "run_finished", "run_failed", "approval", "computer_approval", "vault_request", "plan_confirm", "info",
+            ).map { InboxKind.fromWire(it) },
         )
         assertEquals(ApprovalState.Expired, ApprovalState.fromWire("expired"))
         assertEquals(OptionKind.RejectAlways, OptionKind.fromWire("reject_always"))

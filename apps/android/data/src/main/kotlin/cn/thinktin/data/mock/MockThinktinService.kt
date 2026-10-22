@@ -230,7 +230,16 @@ class MockThinktinService(
         acceptLanguageTags = languageTags.toList()
     }
 
-    override fun upgradeRequired(): Boolean = false
+    /** 演示模式不联网，版本永远够新；测试可以调 [simulateUpgradeRequired] 看升级页。 */
+    private val upgrade = MutableStateFlow(false)
+    override val upgradeState: StateFlow<Boolean> = upgrade.asStateFlow()
+
+    override fun upgradeRequired(): Boolean = upgrade.value
+
+    /** 模拟服务端说版本太老（测试用；和真实服务一样，置上之后不再变回）。 */
+    fun simulateUpgradeRequired() {
+        upgrade.value = true
+    }
 
     override suspend fun sendSelfCode(purpose: SelfCodePurpose) {
         lag(); requireSignedIn()
@@ -584,7 +593,15 @@ class MockThinktinService(
 
     override suspend fun approvals(): List<Approval> {
         lag()
-        return synchronized(lock) { approvalList.sortedByDescending { it.createdAtMs } }
+        // 和服务端一样只列待处理的。
+        return synchronized(lock) {
+            approvalList.filter { it.state == ApprovalState.Pending }.sortedByDescending { it.createdAtMs }
+        }
+    }
+
+    override suspend fun getApproval(approvalId: String): Approval {
+        lag()
+        return synchronized(lock) { approvalList.firstOrNull { it.id == approvalId } } ?: notFound("approval", approvalId)
     }
 
     override suspend fun decideApproval(approvalId: String, optionId: String): Approval {
@@ -593,9 +610,13 @@ class MockThinktinService(
             val i = approvalList.indexOfFirst { it.id == approvalId }
             if (i < 0) notFound("approval", approvalId)
             val approval = approvalList[i]
-            val option = approval.options.firstOrNull { it.optionId == optionId } ?: notFound("option", optionId)
+            if (approval.state != ApprovalState.Pending) {
+                throw ServiceError.Api(409, "conflict", "approval is already ${approval.state.wire}", null)
+            }
+            val option = approval.options.firstOrNull { it.optionId == optionId }
+                ?: throw ServiceError.Api(422, "invalid", "unknown option $optionId", null)
             val state = if (option.kind.isAllow) ApprovalState.Approved else ApprovalState.Rejected
-            approval.copy(state = state).also {
+            approval.copy(state = state, decidedOption = optionId, decidedAtMs = clock()).also {
                 approvalList[i] = it
                 val r = runList.indexOfFirst { run -> run.id == approval.runId }
                 if (r >= 0 && runList[r].state == RunState.WaitingApproval) {
@@ -608,7 +629,10 @@ class MockThinktinService(
         }
         append(
             decided.instanceId, decided.runId, EventKinds.APPROVAL_DECIDED,
-            buildJsonObject { put("approval_id", approvalId); put("state", decided.state.wire); put("option_id", optionId) },
+            buildJsonObject {
+                put("approval_id", approvalId); put("state", decided.state.wire); put("option_id", optionId)
+                put("request_id", decided.requestId); put("attempt", decided.attempt)
+            },
         )
         return decided
     }

@@ -147,8 +147,8 @@ internal class MockData(private val baseMs: Long) {
             RUN_LIVE, INSTANCE_CODER, "给登录页加单元测试", RunState.Running, 2, null, tokens = 3_420,
         ),
         run(
-            RUN_WAITING, INSTANCE_CODER, "清理 build 目录里的旧产物", RunState.WaitingApproval, 20, null,
-            tokens = 1_830, reason = "等待你批准删除文件",
+            RUN_WAITING, INSTANCE_CODER, "清理 build 目录里的旧产物", RunState.WaitingApproval, 26, null,
+            tokens = 1_830, reason = "等待你批准删除文件", attempt = 2,
         ),
         run(
             RUN_DONE, INSTANCE_CODER, "把 README 翻译成英文", RunState.Succeeded, 180, 4, tokens = 12_840,
@@ -290,7 +290,7 @@ internal class MockData(private val baseMs: Long) {
             rawToolCall("Write", "edit", buildJsonObject { put("path", "README.en.md") })
         }
         ev(c, RUN_DONE, EventKinds.AGENT_PERMISSION_REQUESTED, 178) {
-            put("request_id", APPROVAL_DONE); put("title", "写入 README.en.md")
+            put("request_id", "perm-1"); put("attempt", 1); put("approval_id", APPROVAL_DONE); put("title", "写入 README.en.md")
             putJsonArray("options") {
                 addJsonObject { put("option_id", "allow"); put("name", "批准"); put("kind", OptionKind.AllowOnce.wire) }
                 addJsonObject { put("option_id", "reject"); put("name", "拒绝"); put("kind", OptionKind.RejectOnce.wire) }
@@ -299,9 +299,11 @@ internal class MockData(private val baseMs: Long) {
         }
         ev(c, RUN_DONE, EventKinds.APPROVAL_DECIDED, 177, ai = false) {
             put("approval_id", APPROVAL_DONE); put("state", ApprovalState.Approved.wire); put("option_id", "allow")
+            put("request_id", "perm-1"); put("attempt", 1)
         }
         ev(c, RUN_DONE, EventKinds.AGENT_PERMISSION_RESOLVED, 177) {
-            put("request_id", APPROVAL_DONE); put("option_id", "allow"); put("by", "user")
+            put("request_id", "perm-1"); put("option_id", "allow"); put("by", "user")
+            put("attempt", 1); put("approval_id", APPROVAL_DONE); put("approval_state", ApprovalState.Approved.wire)
         }
         ev(c, RUN_DONE, EventKinds.AGENT_TOOL_CALL_UPDATE, 177) { put("tool_call_id", "tc-write"); put("status", "completed") }
         ev(c, RUN_DONE, EventKinds.AGENT_MESSAGE, 177) { put("text", "README 已翻译成英文，") }
@@ -315,8 +317,20 @@ internal class MockData(private val baseMs: Long) {
         ev(c, RUN_DONE, EventKinds.AGENT_TURN_ENDED, 176) { put("stop_reason", "end_turn") }
         ev(c, RUN_DONE, EventKinds.RUN_STATE, 176, payload = stateEvent(RunState.Succeeded))
 
-        // 小码：等待审批（二十分钟前）
-        ev(c, RUN_WAITING, EventKinds.RUN_STATE, 20, payload = stateEvent(RunState.Running))
+        // 小码：等待审批。第 1 次尝试在等审批时沙箱退出了（那条审批随尝试结束被取消，卡片作废）；
+        // 第 2 次尝试（二十分钟前）shim 又从 perm-1 编号：要用 (run_id, attempt, request_id) 才分得开。
+        ev(c, RUN_WAITING, EventKinds.RUN_STATE, 26, payload = stateEvent(RunState.Running, attempt = 1))
+        ev(c, RUN_WAITING, EventKinds.AGENT_PERMISSION_REQUESTED, 25) {
+            put("request_id", "perm-1"); put("attempt", 1); put("approval_id", APPROVAL_STALE)
+            put("title", "删除 build/ 下 30 天前的文件")
+            putJsonArray("options") {
+                addJsonObject { put("option_id", "allow"); put("name", "批准"); put("kind", OptionKind.AllowOnce.wire) }
+                addJsonObject { put("option_id", "reject"); put("name", "拒绝"); put("kind", OptionKind.RejectOnce.wire) }
+            }
+            putJsonObject("tool_call") { put("tool_call_id", "tc-rm-1") }
+        }
+        ev(c, RUN_WAITING, EventKinds.RUN_STATE, 21, payload = stateEvent(RunState.Backoff, "沙箱意外退出，稍后重试", attempt = 1))
+        ev(c, RUN_WAITING, EventKinds.RUN_STATE, 20, payload = stateEvent(RunState.Running, attempt = 2))
         ev(c, RUN_WAITING, EventKinds.AGENT_TURN_STARTED, 20)
         ev(c, RUN_WAITING, EventKinds.AGENT_TOOL_CALL, 19) {
             put("tool_call_id", "tc-rm"); put("title", "删除 build/ 下 30 天前的文件"); put("kind", "execute")
@@ -324,7 +338,8 @@ internal class MockData(private val baseMs: Long) {
             rawToolCall("Bash", "execute", buildJsonObject { put("command", "find build -mtime +30 -delete") })
         }
         ev(c, RUN_WAITING, EventKinds.AGENT_PERMISSION_REQUESTED, 19) {
-            put("request_id", APPROVAL_PENDING); put("title", "删除 build/ 下 30 天前的文件")
+            put("request_id", "perm-1"); put("attempt", 2); put("approval_id", APPROVAL_PENDING)
+            put("title", "删除 build/ 下 30 天前的文件")
             putJsonArray("options") {
                 addJsonObject { put("option_id", "allow"); put("name", "批准"); put("kind", OptionKind.AllowOnce.wire) }
                 addJsonObject { put("option_id", "always"); put("name", "一直允许"); put("kind", OptionKind.AllowAlways.wire) }
@@ -332,7 +347,7 @@ internal class MockData(private val baseMs: Long) {
             }
             putJsonObject("tool_call") { put("tool_call_id", "tc-rm") }
         }
-        ev(c, RUN_WAITING, EventKinds.RUN_STATE, 19, payload = stateEvent(RunState.WaitingApproval, "等待你批准删除文件"))
+        ev(c, RUN_WAITING, EventKinds.RUN_STATE, 19, payload = stateEvent(RunState.WaitingApproval, "等待你批准删除文件", attempt = 2))
 
         // 小码：正在运行（两分钟前开始）
         ev(c, RUN_LIVE, EventKinds.RUN_STATE, 2, payload = stateEvent(RunState.Running))
@@ -407,6 +422,7 @@ internal class MockData(private val baseMs: Long) {
                 putJsonObject("rawInput") { put("command", "find build -mtime +30 -delete") }
             },
             state = ApprovalState.Pending, expiresAtMs = ago(19) + 24 * 60 * MINUTE, createdAtMs = ago(19),
+            requestId = "perm-1", attempt = 2,
         ),
         Approval(
             id = APPROVAL_DONE, runId = RUN_DONE, instanceId = INSTANCE_CODER, title = "写入 README.en.md",
@@ -420,6 +436,23 @@ internal class MockData(private val baseMs: Long) {
                 putJsonObject("rawInput") { put("path", "README.en.md") }
             },
             state = ApprovalState.Approved, expiresAtMs = ago(178) + 24 * 60 * MINUTE, createdAtMs = ago(178),
+            requestId = "perm-1", attempt = 1, decidedOption = "allow", decidedAtMs = ago(177),
+        ),
+        // 第 1 次尝试的审批：尝试结束时没处理，被取消（和待处理的那条 request_id 一样，attempt 不同）。
+        Approval(
+            id = APPROVAL_STALE, runId = RUN_WAITING, instanceId = INSTANCE_CODER,
+            title = "删除 build/ 下 30 天前的文件",
+            options = listOf(
+                ApprovalOption("allow", "批准", OptionKind.AllowOnce),
+                ApprovalOption("reject", "拒绝", OptionKind.RejectOnce),
+            ),
+            toolCallJson = """{"title":"Bash","kind":"execute","rawInput":{"command":"find build -mtime +30 -delete"}}""",
+            toolCall = buildJsonObject {
+                put("title", "Bash"); put("kind", "execute")
+                putJsonObject("rawInput") { put("command", "find build -mtime +30 -delete") }
+            },
+            state = ApprovalState.Cancelled, expiresAtMs = ago(25) + 24 * 60 * MINUTE, createdAtMs = ago(25),
+            requestId = "perm-1", attempt = 1,
         ),
     )
 
@@ -469,6 +502,11 @@ internal class MockData(private val baseMs: Long) {
             aiGenerated = false, read = false, createdAtMs = ago(19),
         ),
         InboxItem(
+            id = "inbox-7", instanceId = INSTANCE_RESEARCH, runId = null, planId = null, approvalId = null,
+            kind = InboxKind.VaultRequest, title = "研究员需要阿里云 OSS 的账号", body = "上传调研报告要用，填一次存进保险箱。",
+            aiGenerated = false, read = true, createdAtMs = ago(180), vaultRequestId = VAULT_REQUEST_PENDING,
+        ),
+        InboxItem(
             id = "inbox-4", instanceId = INSTANCE_RESEARCH, runId = null, planId = null, approvalId = null,
             kind = InboxKind.ComputerApproval, title = "研究员请求操作你的电脑", body = "打开“下载”文件夹里的 report.pdf。",
             aiGenerated = false, read = false, createdAtMs = ago(60),
@@ -484,8 +522,13 @@ internal class MockData(private val baseMs: Long) {
             aiGenerated = false, read = true, createdAtMs = ago(60L * 24 - 3),
         ),
         InboxItem(
+            id = "inbox-6", instanceId = INSTANCE_RESEARCH, runId = RUN_QUOTA, planId = PLAN_WEEKLY, approvalId = null,
+            kind = InboxKind.Info, title = "研究员在等 key", body = "DeepSeek 的 key 余额不足，充值或换一把 key 后继续。",
+            aiGenerated = false, read = true, createdAtMs = ago(44), subtype = WaitCode.NoBalance.wire,
+        ),
+        InboxItem(
             id = "inbox-1", instanceId = INSTANCE_RESEARCH, runId = null, planId = PLAN_WEEKLY, approvalId = null,
-            kind = InboxKind.Info, title = "研究员建议了一个新计划", body = "“每周一整理行业新闻”等你确认。",
+            kind = InboxKind.PlanConfirm, title = "研究员建议了一个新计划", body = "“每周一整理行业新闻”等你确认。",
             aiGenerated = true, read = false, createdAtMs = ago(60L * 25),
         ),
     )
@@ -657,6 +700,7 @@ internal class MockData(private val baseMs: Long) {
 
         const val APPROVAL_PENDING = "approval-pending"
         const val APPROVAL_DONE = "approval-done"
+        const val APPROVAL_STALE = "approval-stale"
 
         const val PLAN_DAILY = "plan-daily"
         const val PLAN_WEEKLY = "plan-weekly"

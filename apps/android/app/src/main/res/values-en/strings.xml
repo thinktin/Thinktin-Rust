@@ -139,6 +139,11 @@
     <string name="core_unavailable_message">The ThinkTin core library failed to load, so the service is unavailable. Try again; if it keeps failing, update or reinstall the app.</string>
     <string name="core_unavailable_detail">Reason: %1$s</string>
 
+    <string name="upgrade_title">Update required</string>
+    <string name="upgrade_message">This version is too old. Please update the app.</string>
+    <string name="upgrade_action">Update app</string>
+    <string name="upgrade_action_pending">In-app updates are not available yet. Please update from your app store.</string>
+
     <!-- Settings -->
     <string name="settings_appearance">Appearance</string>
     <string name="settings_appearance_system">System default</string>

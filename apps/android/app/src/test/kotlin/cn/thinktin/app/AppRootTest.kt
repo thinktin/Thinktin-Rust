@@ -10,6 +10,7 @@ import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
+import cn.thinktin.data.mock.MockThinktinService
 import cn.thinktin.data.service.AuthState
 import cn.thinktin.data.service.ServiceError
 import cn.thinktin.data.service.ThinktinService
@@ -67,6 +68,21 @@ class AppRootTest {
         compose.onNode(hasText("退出登录")).performClick()
         waitFor(hasText("欢迎使用 ThinkTin"))
         assertEquals(1, fake.logoutCalls)
+    }
+
+    @Test
+    fun upgradeRequiredReplacesEverythingWithUpgradePage() {
+        val mock = MockThinktinService(clock = { DemoTestApp.FIXED_CLOCK.millis() })
+        launch({ FakeThinktinService(mock = mock) })
+        waitFor(hasText("最近运行"))
+        // 某个请求返回 UpgradeRequired、或事件流握手 426：整个界面换成升级页。
+        mock.simulateUpgradeRequired()
+        waitFor(hasText("请升级"))
+        compose.onNode(hasText("当前版本太旧，请更新 App。")).assertIsDisplayed()
+        compose.onAllNodes(hasText("最近运行")).assertCountEquals(0)
+        // 按钮先占位（13.12 接应用内更新）。
+        compose.onNode(hasText("更新 App")).performClick()
+        waitFor(hasText("应用内更新还没上线", substring = true))
     }
 
     @Test

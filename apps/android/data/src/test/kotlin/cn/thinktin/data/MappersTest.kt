@@ -6,6 +6,7 @@ import cn.thinktin.data.core.toLongClamped
 import cn.thinktin.data.core.toUIntNonNegative
 import cn.thinktin.data.core.toULongNonNegative
 import cn.thinktin.data.core.toModel
+import cn.thinktin.data.model.ApprovalKey
 import cn.thinktin.data.model.CatchUp
 import cn.thinktin.data.model.EmptyJsonObject
 import cn.thinktin.data.model.PlanPolicy
@@ -104,7 +105,16 @@ class MappersTest {
     fun inboxKindAndUnknownKind() {
         val item = CoreInboxItem("n1", null, "r1", null, null, "run_failed", "t", "b", false, false, now)
         assertEquals(InboxKind.RunFailed, item.toModel().kind)
-        assertEquals(InboxKind.Unknown, item.copy(kind = "marketing").toModel().kind)
+        assertNull(item.toModel().subtype)
+        assertNull(item.toModel().vaultRequestId)
+        // 不认识的按 info 显示（client-core 的约定）。
+        assertEquals(InboxKind.Info, item.copy(kind = "marketing").toModel().kind)
+        val vault = item.copy(kind = "vault_request", vaultRequestId = "vr1").toModel()
+        assertEquals(InboxKind.VaultRequest, vault.kind)
+        assertEquals("vr1", vault.vaultRequestId)
+        val waiting = item.copy(kind = "info", subtype = "no_balance").toModel()
+        assertEquals("no_balance", waiting.subtype)
+        assertEquals(InboxKind.PlanConfirm, item.copy(kind = "plan_confirm").toModel().kind)
     }
 
     @Test
@@ -118,6 +128,21 @@ class MappersTest {
         assertEquals(listOf(OptionKind.AllowOnce, OptionKind.Unknown), approval.options.map { it.kind })
         assertEquals("Bash", approval.toolCall.string("title"))
         assertEquals(now + 1, approval.expiresAtMs)
+        // 老数据：没有 request_id / attempt / 决定。
+        assertEquals("", approval.requestId)
+        assertEquals(0, approval.attempt)
+        assertNull(approval.decidedOption)
+        assertNull(approval.decidedAtMs)
+
+        val decided = core.copy(
+            state = "approved", requestId = "perm-1", attempt = 2u, decidedOption = "o1", decidedAtMs = now + 5,
+        ).toModel()
+        assertEquals("perm-1", decided.requestId)
+        assertEquals(2, decided.attempt)
+        assertEquals("o1", decided.decidedOption)
+        assertEquals(now + 5, decided.decidedAtMs)
+        assertEquals(ApprovalKey(runId = "r1", attempt = 2, requestId = "perm-1"), decided.key)
+        assertEquals(Int.MAX_VALUE, core.copy(attempt = UInt.MAX_VALUE).toModel().attempt)
     }
 
     @Test
@@ -179,11 +204,18 @@ class MappersTest {
             CoreStreamStatus.SignedOut to StreamState.SignedOut,
             CoreStreamStatus.NotFound to StreamState.NotFound,
             CoreStreamStatus.AccountFrozen to StreamState.AccountFrozen,
+            CoreStreamStatus.UpgradeRequired to StreamState.UpgradeRequired,
             CoreStreamStatus.Stopped to StreamState.Stopped,
         )
         for ((core, expected) in table) assertEquals("$core", expected, core.toModel())
         val terminal = table.map { it.second }.filter { it.isTerminal }.toSet()
-        assertEquals(setOf(StreamState.SignedOut, StreamState.NotFound, StreamState.AccountFrozen, StreamState.Stopped), terminal)
+        assertEquals(
+            setOf(
+                StreamState.SignedOut, StreamState.NotFound, StreamState.AccountFrozen, StreamState.UpgradeRequired,
+                StreamState.Stopped,
+            ),
+            terminal,
+        )
     }
 
     @Test
