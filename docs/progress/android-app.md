@@ -11,7 +11,7 @@
 - **13.1 工程搭建**（`37088ca` 搭建，`b37536f`…修复）：`apps/android` Gradle 多模块工程（`:app`、`:core`、`:design`、`:data`，Kotlin 2.1 / AGP 8.7.3 / Compose BOM 2024.12）；`:core` 放 UniFFI 生成的 `client_core.kt`（经 `scripts/patch-bindings.py` 修 Kotlin 2 下错误类型 `message` 字段与 `Throwable.message` 的冲突），jniLibs 与许可证资源由 `scripts/sync-core.sh` 同步（不提交）；`:design` 主题（设计规范 2.1 色值、衬线标题）与通用组件（含 AI 生成标识）；`:data` 模型与映射、`ThinktinService` 接口、`CoreThinktinService`（异常统一转 `ServiceError`）、`MockThinktinService`（覆盖全部事件种类）、`SecureSessionStore`（Keystore 失效 / 文件损坏时清空重建）、`ClientFactory`；`:app` cn / global 风味、`AppContainer`（后台初始化、核心库不可用页）、抽屉与全部路由、冷启动与热启动（`onNewIntent`）深链、首页、各页骨架、中英文文案；150 个 JVM / Robolectric 测试（含经 JNA 真调本机 .so 的 `CoreSmokeTest`）、lint 0 错误；`.github/workflows/android.yml`（绑定一致性检查 + test + lint + assembleDebug）。四维评审 35 条确认发现已修复（CI 不打三个 ABI 的 .so 是有意的，见 README）。
 
 进行中：
-- 合并 `backend-core`（11.7 补齐的 App 接口、Plan 默认值），重新生成绑定与 .so，`CoreThinktinService` 接上新方法；等 backend-core 推上 11.8 的 `TlsInit` JNI 导出后补 Kotlin 一半（Android 上 HTTPS 需要先初始化 rustls-platform-verifier，否则首个握手 panic）。
+- `backend-core` 已合并（`dc726b1`），绑定与 .so 已按合并后的 client-core 重新生成（`be95b09`）。Workflow `wf_9a2820f6-af2`（2026-10-22 11:50 起，北京时间）：接上 11.7 的新接口 + TlsInit（Android 上 HTTPS 的系统证书校验要先经 JNI 初始化）→ 13.2 注册登录与设备管理 → 四维评审 → 反方核实 → 修复 → 最终验证。中断时用 `resumeFromRunId: "wf_9a2820f6-af2"` 恢复。
 
 下一步：
 1. 13.2 登录与设备管理（含 TlsInit、真实 HTTPS 联调前的准备）。
