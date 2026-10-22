@@ -20,6 +20,7 @@ struct Row {
     tool_call: Value,
     state: String,
     decided_option: Option<String>,
+    decided_at: Option<DateTime<Utc>>,
     expires_at: DateTime<Utc>,
     created_at: DateTime<Utc>,
 }
@@ -28,12 +29,31 @@ struct Row {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ApprovalRecord {
     pub approval: Approval,
+    /// 库里存的键（[`approval_key`]：`第几次尝试:shim 的请求 id`），不是 `approval.request_id`。
     pub request_id: String,
     pub decided_option: Option<String>,
 }
 
+/// 库里存的审批键：shim 每次启动都从 perm-1 重新编号，加上第几次尝试，重试时不会撞上旧的。
+pub fn approval_key(attempt: u32, request_id: &str) -> String {
+    format!("{attempt}:{request_id}")
+}
+
+/// 拆开 [`approval_key`]：`(第几次尝试, shim 的请求 id)`。不是这个格式的（老数据、测试）是 `(0, 原样)`。
+pub fn split_approval_key(key: &str) -> (u32, &str) {
+    match key.split_once(':') {
+        Some((n, id)) => match n.parse() {
+            Ok(n) => (n, id),
+            Err(_) => (0, key),
+        },
+        None => (0, key),
+    }
+}
+
 impl Row {
     fn into_record(self) -> Result<ApprovalRecord> {
+        let (attempt, shim_id) = split_approval_key(&self.request_id);
+        let (attempt, shim_id) = (attempt, shim_id.to_owned());
         Ok(ApprovalRecord {
             approval: Approval {
                 id: self.id.into(),
@@ -45,6 +65,10 @@ impl Row {
                 state: parse(&self.state)?,
                 expires_at: self.expires_at,
                 created_at: self.created_at,
+                request_id: shim_id,
+                attempt,
+                decided_option: self.decided_option.clone(),
+                decided_at: self.decided_at,
             },
             request_id: self.request_id,
             decided_option: self.decided_option,
@@ -54,7 +78,8 @@ impl Row {
 
 macro_rules! columns {
     () => {
-        "id, run_id, instance_id, request_id, title, options, tool_call, state, decided_option, expires_at, created_at"
+        "id, run_id, instance_id, request_id, title, options, tool_call, state, decided_option, decided_at, \
+         expires_at, created_at"
     };
 }
 
@@ -190,6 +215,19 @@ impl Tx<Tenant> {
             .collect()
     }
 
+    /// 一条审批，什么状态都行（点推送、收件箱进来时先查：已处理、已过期的给提示）。别人的是 [`Error::NotFound`]。
+    pub async fn approval(&mut self, id: ApprovalId) -> Result<Approval> {
+        let row: Row = sqlx::query_as(concat!(
+            "SELECT ",
+            columns!(),
+            " FROM approvals WHERE id = $1"
+        ))
+        .bind(id.0)
+        .fetch_one(self.conn())
+        .await?;
+        Ok(row.into_record()?.approval)
+    }
+
     /// 用户做决定：选项必须是这个请求给出的选项之一；已决定、已过期的不能再改。
     pub async fn decide_approval(
         &mut self,
@@ -243,5 +281,22 @@ impl Tx<Tenant> {
         .await?;
         self.settle_approval_inbox(id).await?;
         Ok(row.into_record()?.approval)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn approval_keys_split_back() {
+        assert_eq!(split_approval_key("3:perm-1"), (3, "perm-1"));
+        assert_eq!(split_approval_key("p1"), (0, "p1"));
+        assert_eq!(split_approval_key("x:p"), (0, "x:p"));
+        assert_eq!(split_approval_key("1:a:b"), (1, "a:b"));
+        assert_eq!(
+            split_approval_key(&approval_key(7, "perm-2")),
+            (7, "perm-2")
+        );
     }
 }

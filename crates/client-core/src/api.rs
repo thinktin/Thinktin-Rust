@@ -1066,6 +1066,12 @@ impl Api {
             .approvals)
     }
 
+    /// 一条审批（什么状态都行）。
+    pub async fn approval(&self, id: ApprovalId) -> Result<Approval> {
+        self.json(Method::GET, &format!("/v1/approvals/{id}"), None)
+            .await
+    }
+
     pub async fn decide_approval(&self, id: ApprovalId, option_id: &str) -> Result<Approval> {
         self.json(
             Method::POST,

@@ -44,7 +44,7 @@ use proto::domain::UserId;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::{PgConnection, PgPool, Postgres, Transaction};
 
-pub use approvals::{ApprovalRecord, NewApproval};
+pub use approvals::{ApprovalRecord, NewApproval, approval_key, split_approval_key};
 pub use artifacts::{NewArtifact, StoredArtifact};
 pub use credentials::{NewCredential, SealedCredential};
 pub use device_relay::{

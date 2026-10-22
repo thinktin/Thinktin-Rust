@@ -704,7 +704,8 @@ async fn runs_plans_and_approvals() {
         user: rec.user_id,
         instance: inst,
         run: run2,
-        request_id: "p1",
+        // 执行器存的键是 `第几次尝试:shim 的请求 id`，API 拆开给。
+        request_id: "2:perm-1",
         title: Some("Delete files"),
         options: &json!([{ "option_id": "allow", "name": "Allow", "kind": "allow_once" },
                          { "option_id": "deny", "name": "Deny", "kind": "reject_once" }]),
@@ -718,6 +719,31 @@ async fn runs_plans_and_approvals() {
         .call(Method::GET, "/v1/approvals", Some(&u.access), None)
         .await;
     let approval_id = list["approvals"][0]["id"].as_str().unwrap().to_owned();
+    assert_eq!(
+        (
+            &list["approvals"][0]["request_id"],
+            &list["approvals"][0]["attempt"]
+        ),
+        (&json!("perm-1"), &json!(2))
+    );
+    let one = |tok: String| {
+        let a = &a;
+        let path = format!("/v1/approvals/{approval_id}");
+        async move { a.call(Method::GET, &path, Some(&tok), None).await }
+    };
+    let (st, got) = one(u.access.clone()).await;
+    assert_eq!(st, StatusCode::OK, "{got}");
+    assert_eq!(
+        (&got["state"], &got["decided_option"], &got["decided_at"]),
+        (&json!(ApprovalState::Pending), &Value::Null, &Value::Null)
+    );
+    let other = a.login("13800138009").await;
+    let (st, _) = one(other.access.clone()).await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "someone else's approval");
+    let (st, _) = a
+        .call(Method::GET, "/v1/approvals/nope", Some(&u.access), None)
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
     let (st, decided) = a
         .call(
             Method::POST,
@@ -737,6 +763,14 @@ async fn runs_plans_and_approvals() {
         )
         .await;
     assert_eq!(st, StatusCode::CONFLICT, "decided once");
+    // 处理过的也查得到：点旧推送进来时给“已拒绝”的提示。
+    let (st, got) = one(u.access.clone()).await;
+    assert_eq!(st, StatusCode::OK, "{got}");
+    assert_eq!(
+        (&got["state"], &got["decided_option"]),
+        (&json!(ApprovalState::Rejected), &json!("deny"))
+    );
+    assert!(got["decided_at"].is_string(), "{got}");
 }
 
 async fn ws_connect(

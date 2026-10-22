@@ -1642,3 +1642,50 @@ async fn ffi_runs_across_instances() {
         Err(ClientError::InvalidArgument { .. })
     ));
 }
+
+/// 单条审批（11.8）：点推送进来先查；带上 shim 的请求 id 和第几次尝试，处理过的也查得到。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ffi_single_approval() {
+    use proto::domain::RunId;
+    let Some(e) = env().await else { return };
+    let (c, _store, _d) = ffi_login(&e, "13800138526", "ios", "iPhone").await;
+    let inst = c.adopt("claude".into(), "助手".into(), None).await.unwrap();
+    let run = c.create_run(inst.id.clone(), "清理".into()).await.unwrap();
+    let run_id: RunId = run.id.parse().unwrap();
+    let mut w = e.t.db.worker().await.unwrap();
+    let rec = w.run_record(run_id).await.unwrap();
+    w.create_approval(&store::NewApproval {
+        user: rec.user_id,
+        instance: inst.id.parse().unwrap(),
+        run: run_id,
+        request_id: &store::approval_key(1, "perm-1"),
+        title: Some("删除文件"),
+        options: &json!([{ "option_id": "allow", "name": "允许", "kind": "allow_once" },
+                         { "option_id": "deny", "name": "拒绝", "kind": "reject_once" }]),
+        tool_call: &json!({}),
+        expires_in: Duration::from_secs(3600),
+    })
+    .await
+    .unwrap();
+    w.commit().await.unwrap();
+    let listed = c.approvals().await.unwrap();
+    let got = c.get_approval(listed[0].id.clone()).await.unwrap();
+    assert_eq!(
+        (got.request_id.as_str(), got.attempt, got.state.as_str()),
+        ("perm-1", 1, "pending")
+    );
+    assert_eq!((got.decided_option, got.decided_at_ms), (None, None));
+    c.decide_approval(got.id.clone(), "deny".into())
+        .await
+        .unwrap();
+    let got = c.get_approval(got.id).await.unwrap();
+    assert_eq!(
+        (got.state.as_str(), got.decided_option.as_deref()),
+        ("rejected", Some("deny"))
+    );
+    assert!(got.decided_at_ms.is_some());
+    assert!(matches!(
+        c.get_approval("nope".into()).await,
+        Err(ClientError::InvalidArgument { .. })
+    ));
+}

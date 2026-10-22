@@ -345,7 +345,16 @@ fn bound_payload(v: &Value) -> Value {
     let bounded = walk(v);
     let size = serde_json::to_vec(&bounded).map_or(0, |b| b.len());
     if size > MAX_EVENT_PAYLOAD {
-        json!({ "type": v.get("type").cloned().unwrap_or(Value::Null), "truncated": true, "bytes": size })
+        let mut stub = json!({ "type": v.get("type").cloned().unwrap_or(Value::Null), "truncated": true, "bytes": size });
+        // 认得出是哪一个的几个键留着（App 靠它们把审批卡片、工具调用对上），只留不长的字符串。
+        for key in ["run_id", "request_id", "tool_call_id", "call_id"] {
+            if let Some(Value::String(s)) = v.get(key)
+                && s.len() <= 256
+            {
+                stub[key] = Value::String(strip_nul(s.clone()));
+            }
+        }
+        stub
     } else {
         bounded
     }
@@ -1035,7 +1044,7 @@ impl Executor {
 impl Exec<'_> {
     /// 审批记录里的请求 id：shim 每次启动都从 perm-1 重新编号，加上第几次尝试，重试时不会撞上旧的。
     fn approval_key(&self, request_id: &str) -> String {
-        format!("{}:{request_id}", self.rec.run.attempt)
+        store::approval_key(self.rec.run.attempt, request_id)
     }
 
     async fn send(&mut self, cmd: ShimCommand) -> bool {
@@ -2174,5 +2183,15 @@ mod tests {
         assert_eq!(v["truncated"], true);
         assert_eq!(v["type"], "plan");
         assert!(serde_json::to_vec(&v).unwrap().len() < 200);
+        // 很大的审批请求：截掉以后还认得出是哪一个。
+        let v = bound_payload(&json!({
+            "type": "permission_requested", "run_id": "r", "request_id": "perm-1",
+            "tool_call": { "content": many },
+        }));
+        assert_eq!(
+            (&v["truncated"], &v["request_id"], &v["run_id"]),
+            (&json!(true), &json!("perm-1"), &json!("r"))
+        );
+        assert!(serde_json::to_vec(&v).unwrap().len() < 400);
     }
 }

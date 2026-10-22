@@ -370,6 +370,18 @@ pub struct Approval {
     pub state: String,
     pub expires_at_ms: i64,
     pub created_at_ms: i64,
+    /// shim 给的请求 id（和 `agent.permission_requested` 事件里的一样）。shim 每次尝试从 perm-1 重新编号，所以要
+    /// 和 `attempt` 一起用（`run_id`、`attempt`、`request_id` 三个对上才是同一个）。
+    #[uniffi(default = "")]
+    pub request_id: String,
+    /// 第几次尝试（和 `run.state` 事件的 `attempt` 一样）；0 是不知道（老数据）。
+    #[uniffi(default = 0)]
+    pub attempt: u32,
+    /// 选了哪个选项（`option_id`）；没处理、过期了的为空。
+    #[uniffi(default = None)]
+    pub decided_option: Option<String>,
+    #[uniffi(default = None)]
+    pub decided_at_ms: Option<i64>,
 }
 
 impl From<d::Approval> for Approval {
@@ -403,6 +415,10 @@ impl From<d::Approval> for Approval {
             state: a.state.to_string(),
             expires_at_ms: ms(a.expires_at),
             created_at_ms: ms(a.created_at),
+            request_id: a.request_id,
+            attempt: a.attempt,
+            decided_option: a.decided_option,
+            decided_at_ms: ms_opt(a.decided_at),
         }
     }
 }
@@ -1941,6 +1957,14 @@ impl ThinktinClient {
                 .collect())
         })
         .await
+    }
+
+    /// 一条审批（什么状态都行）。点审批推送、收件箱条目进来时先查：已处理、已过期的给提示，不要报错；推送里“拒绝”的
+    /// 快捷操作先查它还是不是待处理。
+    pub async fn get_approval(&self, approval_id: String) -> Result<Approval> {
+        let id: d::ApprovalId = parse(&approval_id, "approval")?;
+        self.run(|c| async move { Ok(c.api.approval(id).await?.into()) })
+            .await
     }
 
     /// 选一个选项。注意：批准前原生端要先做生物识别确认。

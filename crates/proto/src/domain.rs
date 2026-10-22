@@ -768,6 +768,17 @@ pub struct Approval {
     pub state: ApprovalState,
     pub expires_at: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
+    /// shim 给的请求 id（和 `agent.permission_requested` 事件里的一样）。shim 每次尝试都从 perm-1 重新编号，
+    /// 所以要和 `attempt` 一起才对得上。
+    #[serde(default)]
+    pub request_id: String,
+    /// 第几次尝试（和 `run.state` 事件的 `attempt` 一样）；0 是不知道（老数据）。
+    #[serde(default)]
+    pub attempt: u32,
+    #[serde(default)]
+    pub decided_option: Option<String>,
+    #[serde(default)]
+    pub decided_at: Option<DateTime<Utc>>,
 }
 
 /// 团队（8.1）：同一用户的几个实例。
