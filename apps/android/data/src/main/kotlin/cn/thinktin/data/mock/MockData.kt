@@ -532,7 +532,7 @@ internal class MockData(private val baseMs: Long) {
     val usageDays: List<UsageBucket> = (6 downTo 0).map { daysAgo ->
         val factor = (7 - daysAgo).toLong()
         UsageBucket(
-            key = usageDay(daysAgo), requests = 12 * factor, inputTokens = 8_000 * factor,
+            key = usageDay(daysAgo.toLong()), requests = 12 * factor, inputTokens = 8_000 * factor,
             cacheReadTokens = 2_000 * factor, cacheWriteTokens = 500 * factor, outputTokens = 1_500 * factor,
             chargedTokens = 12_000 * factor, estimatedRequests = if (daysAgo == 2) 1 else 0,
             failedRequests = if (daysAgo == 1) 3 else 0,

@@ -44,6 +44,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
@@ -248,6 +249,7 @@ private fun KeyRow(
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     val status = stringResource(if (credential.disabled) R.string.keys_status_disabled else R.string.keys_status_active)
+                    val statusDescription = stringResource(R.string.keys_status_a11y, status)
                     Text(
                         text = status,
                         style = MaterialTheme.typography.labelMedium,
@@ -257,7 +259,7 @@ private fun KeyRow(
                         } else {
                             ThinktinTheme.extendedColors.success
                         },
-                        modifier = Modifier.semantics { contentDescription = statusLabel(credential) },
+                        modifier = Modifier.clearAndSetSemantics { contentDescription = statusDescription },
                     )
                     credential.protocols.forEach { protocol ->
                         val label = protocolLabel(protocol)
@@ -318,12 +320,6 @@ private fun KeyRow(
         )
     }
 }
-
-@Composable
-private fun statusLabel(credential: Credential): String = stringResource(
-    R.string.keys_status_a11y,
-    stringResource(if (credential.disabled) R.string.keys_status_disabled else R.string.keys_status_active),
-)
 
 /** 删除确认：有别名在用时列出“实例：别名（主 key / 降级）”，并说明删除前会先把它拿掉、只靠它的实例会等 key。 */
 @Composable
