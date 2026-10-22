@@ -425,3 +425,36 @@ async fn slow_sends_do_not_outlive_their_lock() {
     assert_eq!(d.tick().await.unwrap(), 1);
     assert_eq!(rec.sent().len(), 1);
 }
+
+/// 开发包（10.7）：设备登记的是 APNs 沙盒环境的推送令牌，实时活动也发到沙盒环境；推送令牌换回生产环境的就发到生产环境。
+#[tokio::test]
+async fn sandbox_devices_get_live_pushes_from_the_sandbox() {
+    let Some(s) = setup("+8613800000069", "调研助手").await else {
+        return;
+    };
+    let mut tx = s.t.db.tenant(s.user).await.unwrap();
+    tx.set_push_token(s.phone, proto::domain::PushChannelKind::ApnsSandbox, "0a0b")
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let run = s.run(RunSource::User).await;
+    s.set(&run, "running", 1).await;
+    s.register(&run, PHONE).await;
+    let (production, sandbox) = (
+        Arc::new(Recording::default()),
+        Arc::new(Recording::default()),
+    );
+    let d = s
+        .dispatcher(production.clone(), eager())
+        .with_sandbox(sandbox.clone());
+    assert_eq!(d.tick().await.unwrap(), 1);
+    assert_eq!((production.sent().len(), sandbox.sent().len()), (0, 1));
+    let mut tx = s.t.db.tenant(s.user).await.unwrap();
+    tx.set_push_token(s.phone, proto::domain::PushChannelKind::Apns, "0c0d")
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    s.set(&run, "waiting_approval", 2).await;
+    assert_eq!(d.tick().await.unwrap(), 1);
+    assert_eq!((production.sent().len(), sandbox.sent().len()), (1, 0));
+}

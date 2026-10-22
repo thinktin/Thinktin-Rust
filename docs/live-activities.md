@@ -60,7 +60,8 @@ struct RunActivityAttributes: ActivityAttributes {
 ## 4. 推送
 
 - 主题 `<bundle id>.push-type.liveactivity`，`apns-push-type: liveactivity`，和普通推送同一把 .p8 密钥、同一个
-  `[push.apns]` 配置；配了 APNs 就开（后台任务 `live-activities`）。
+  `[push.apns]` 配置；配了 APNs 就开（后台任务 `live-activities`）。设备的推送令牌登记为 `apns_sandbox`（开发包，10.7）
+  的，实时活动也发到沙盒环境（`sandbox_endpoint`）；没有推送令牌的（被清掉了）按生产环境发。
 - 载荷 `{"aps": {"timestamp": <秒>, "event": "start" | "update" | "end", "content-state": {...}}}`：
   - **start**（远程开启）：发到推送开启令牌，加 `attributes-type`、`attributes`、`alert`（标题是实例名，正文“计划开始运行了”，
     按用户的语言）和 `input-push-token: 1`（iOS 18 起系统把新实时活动的令牌交给 App）。

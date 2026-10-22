@@ -31,6 +31,8 @@ pub struct LiveActivity {
     pub push_token: Option<String>,
     /// 设备的推送开启令牌（远程开启用）。
     pub start_token: Option<String>,
+    /// 设备登记的是 APNs 沙盒环境的推送令牌（开发包，10.7）：实时活动也发到沙盒环境。
+    pub sandbox: bool,
     pub start_sent: bool,
     pub sent_state: Option<RunState>,
     pub sent_steps: Option<u32>,
@@ -50,6 +52,7 @@ impl std::fmt::Debug for LiveActivity {
             .field("device_id", &self.device_id)
             .field("run_id", &self.run_id)
             .field("pushed", &self.pushed)
+            .field("sandbox", &self.sandbox)
             .field("has_push_token", &self.push_token.is_some())
             .field("start_sent", &self.start_sent)
             .field("sent_state", &self.sent_state)
@@ -89,6 +92,7 @@ struct Row {
     sent_steps: Option<i32>,
     attempts: i32,
     activity_start_token: Option<String>,
+    sandbox: bool,
     instance_id: Uuid,
     name: String,
     state: String,
@@ -109,6 +113,7 @@ impl Row {
             pushed: self.origin == "push",
             push_token: self.push_token,
             start_token: self.activity_start_token,
+            sandbox: self.sandbox,
             start_sent: self.start_sent_at.is_some(),
             sent_state: self.sent_state.as_deref().map(parse).transpose()?,
             sent_steps: self.sent_steps.map(|n| count(n, "steps")).transpose()?,
@@ -346,7 +351,8 @@ impl Tx<Worker> {
                FROM due WHERE la.device_id = due.device_id AND la.run_id = due.run_id \
                RETURNING la.device_id, la.run_id, la.user_id, la.origin, la.push_token, la.start_sent_at, \
                  la.sent_state, la.sent_steps, la.attempts) \
-             SELECT c.*, d.activity_start_token, r.instance_id, i.name, r.state, due.steps, r.started_at, \
+             SELECT c.*, d.activity_start_token, coalesce(d.push_channel = 'apns_sandbox', false) AS sandbox, \
+               r.instance_id, i.name, r.state, due.steps, r.started_at, \
                r.finished_at \
              FROM claimed c JOIN due ON due.device_id = c.device_id AND due.run_id = c.run_id \
                JOIN runs r ON r.id = c.run_id JOIN instances i ON i.id = r.instance_id \

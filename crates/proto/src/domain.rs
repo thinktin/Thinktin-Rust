@@ -126,7 +126,10 @@ str_enum!(
 str_enum!(
     /// 推送通道（8.3）。
     PushChannelKind {
-        Apns = "apns", Fcm = "fcm", Hms = "hms", Honor = "honor", Mi = "mi", Oppo = "oppo", Vivo = "vivo",
+        Apns = "apns",
+        /// 开发证书签名的包（Xcode 直装）拿到的是 APNs 沙盒环境的令牌，要发到沙盒环境（10.7）。
+        ApnsSandbox = "apns_sandbox",
+        Fcm = "fcm", Hms = "hms", Honor = "honor", Mi = "mi", Oppo = "oppo", Vivo = "vivo",
         /// 统一推送服务（个推、极光之类）。
         Unipush = "unipush",
     }

@@ -135,6 +135,29 @@ async fn delivers_to_devices_and_clears_dead_tokens() {
     assert_eq!(d.tick().await.unwrap(), Default::default(), "sent once");
 }
 
+/// 开发包的令牌（APNs 沙盒环境，10.7）发到沙盒环境，正式包的发到生产环境。
+#[tokio::test]
+async fn sandbox_tokens_go_to_the_sandbox() {
+    let Some(t) = TestDb::new().await else { return };
+    let user = user_with_devices(
+        &t,
+        &[
+            (PushChannelKind::Apns, "tok-store"),
+            (PushChannelKind::ApnsSandbox, "tok-xcode"),
+        ],
+    )
+    .await;
+    let (production, sandbox) = (Arc::new(Scripted::default()), Arc::new(Scripted::default()));
+    let d = dispatcher(&t, production.clone(), DispatcherConfig::default())
+        .with_channel(PushChannelKind::ApnsSandbox, sandbox.clone());
+    enqueue(&t, user, &message(None), "run_finished:1").await;
+    d.tick().await.unwrap();
+    assert_eq!(
+        (production.sent(), sandbox.sent()),
+        (vec!["tok-store".to_owned()], vec!["tok-xcode".to_owned()])
+    );
+}
+
 #[tokio::test]
 async fn retries_then_gives_up_and_drops_expired() {
     let Some(t) = TestDb::new().await else { return };

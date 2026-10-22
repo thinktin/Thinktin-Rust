@@ -489,9 +489,12 @@ fn default_results_channel() -> String {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Apns {
-    /// 默认生产环境；测试包用 https://api.sandbox.push.apple.com。
+    /// 登记为 `apns` 的设备发到这里，默认生产环境（TestFlight、App Store 的包）。
     #[serde(default = "default_apns_endpoint")]
     pub endpoint: String,
+    /// 登记为 `apns_sandbox` 的设备（开发证书签名、Xcode 直装的包）发到这里，默认沙盒环境。
+    #[serde(default = "default_apns_sandbox_endpoint")]
+    pub sandbox_endpoint: String,
     /// App 的 bundle id。
     pub topic: String,
     pub team_id: String,
@@ -501,7 +504,11 @@ pub struct Apns {
 }
 
 fn default_apns_endpoint() -> String {
-    "https://api.push.apple.com".into()
+    notify::apns::PRODUCTION.into()
+}
+
+fn default_apns_sandbox_endpoint() -> String {
+    notify::apns::SANDBOX.into()
 }
 
 impl Default for Worker {
@@ -1293,9 +1300,13 @@ mod tests {
         assert_eq!(jpush.default_channel, "tt_results");
         assert_eq!(jpush.vendors.huawei_category.as_deref(), Some("WORK"));
         assert!(cfg.worker.enabled);
+        let apns = cfg.push.apns.unwrap();
         assert_eq!(
-            cfg.push.apns.unwrap().endpoint,
-            "https://api.push.apple.com"
+            (apns.endpoint.as_str(), apns.sandbox_endpoint.as_str()),
+            (
+                "https://api.push.apple.com",
+                "https://api.sandbox.push.apple.com"
+            )
         );
         std::fs::remove_dir_all(dir).ok();
     }

@@ -1448,7 +1448,8 @@ impl ThinktinClient {
             .await
     }
 
-    /// `push_channel` 是 apns / unipush / fcm……，和 `push_token` 一起给，或都不给。
+    /// `push_channel` 是 apns / apns_sandbox / unipush / fcm……，和 `push_token` 一起给，或都不给。开发证书签名的
+    /// 包（Xcode 直装，`aps-environment` 是 development）拿到的是沙盒环境的令牌，要报 `apns_sandbox`。
     pub async fn login(
         &self,
         phone: String,
@@ -1565,7 +1566,7 @@ impl ThinktinClient {
             .await
     }
 
-    /// 推送令牌变了（重装、系统重置）时更新。
+    /// 推送令牌变了（重装、系统重置）时更新。`channel` 同 [`Self::login`] 的 `push_channel`。
     pub async fn set_push_token(&self, channel: String, token: String) -> Result<()> {
         let channel: d::PushChannelKind = from_enum_str(&channel, "push channel")?;
         self.run(|c| async move { c.api.set_push(channel, &token).await })

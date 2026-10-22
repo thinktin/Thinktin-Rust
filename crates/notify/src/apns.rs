@@ -430,38 +430,39 @@ mod tests {
                 id: Some("abc-123".into())
             }
         );
-        let seen = fake.seen.lock().unwrap();
-        let (token, headers, body) = &seen[0];
-        assert_eq!(token, TOKEN);
-        assert_eq!(headers["apns-topic"], "com.thinktin.app");
-        assert_eq!(headers["apns-push-type"], "alert");
-        assert_eq!(headers["apns-priority"], "10");
-        assert_eq!(headers["apns-collapse-id"], "approval-9");
-        assert_ne!(headers["apns-expiration"], "0");
-        assert_eq!(body["aps"]["category"], "APPROVAL");
-        assert_eq!(body["aps"]["interruption-level"], "time-sensitive");
-        assert_eq!(body["aps"]["thread-id"], "run-1");
-        assert_eq!(
-            body["tt"],
-            json!({"kind": "approval", "instance": "inst-1", "run": "run-1", "approval": "appr-9"})
-        );
-        // JWT 用 ES256 签名，验得过。
-        let jwt = headers["authorization"]
-            .to_str()
-            .unwrap()
-            .strip_prefix("bearer ")
+        {
+            let seen = fake.seen.lock().unwrap();
+            let (token, headers, body) = &seen[0];
+            assert_eq!(token, TOKEN);
+            assert_eq!(headers["apns-topic"], "com.thinktin.app");
+            assert_eq!(headers["apns-push-type"], "alert");
+            assert_eq!(headers["apns-priority"], "10");
+            assert_eq!(headers["apns-collapse-id"], "approval-9");
+            assert_ne!(headers["apns-expiration"], "0");
+            assert_eq!(body["aps"]["category"], "APPROVAL");
+            assert_eq!(body["aps"]["interruption-level"], "time-sensitive");
+            assert_eq!(body["aps"]["thread-id"], "run-1");
+            assert_eq!(
+                body["tt"],
+                json!({"kind": "approval", "instance": "inst-1", "run": "run-1", "approval": "appr-9"})
+            );
+            // JWT 用 ES256 签名，验得过。
+            let jwt = headers["authorization"]
+                .to_str()
+                .unwrap()
+                .strip_prefix("bearer ")
+                .unwrap();
+            let (input, sig) = jwt.rsplit_once('.').unwrap();
+            let sig = Signature::from_slice(&URL_SAFE_NO_PAD.decode(sig).unwrap()).unwrap();
+            vk.verify(input.as_bytes(), &sig).unwrap();
+            let header: Value = serde_json::from_slice(
+                &URL_SAFE_NO_PAD
+                    .decode(input.split('.').next().unwrap())
+                    .unwrap(),
+            )
             .unwrap();
-        let (input, sig) = jwt.rsplit_once('.').unwrap();
-        let sig = Signature::from_slice(&URL_SAFE_NO_PAD.decode(sig).unwrap()).unwrap();
-        vk.verify(input.as_bytes(), &sig).unwrap();
-        let header: Value = serde_json::from_slice(
-            &URL_SAFE_NO_PAD
-                .decode(input.split('.').next().unwrap())
-                .unwrap(),
-        )
-        .unwrap();
-        assert_eq!(header, json!({"alg": "ES256", "kid": "KEY1234567"}));
-        drop(seen);
+            assert_eq!(header, json!({"alg": "ES256", "kid": "KEY1234567"}));
+        }
         // 没给有效期的：APNs 存一天（手机离线时不丢），不是 0。
         let mut m = message(PushKind::RunFinished);
         m.ttl = None;

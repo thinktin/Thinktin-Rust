@@ -176,20 +176,30 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
     }
     let mut live = None;
     if let Some(apns) = &cfg.push.apns {
-        let key = std::fs::read_to_string(&apns.key_path)
-            .with_context(|| format!("reading APNs key {}", apns.key_path.display()))?;
-        let client = ApnsClient::new(ApnsConfig {
-            endpoint: apns.endpoint.clone(),
-            topic: apns.topic.clone(),
-            team_id: apns.team_id.clone(),
-            key_id: apns.key_id.clone(),
-            key_pem: Zeroizing::new(key),
-        })
-        .context("APNs client")?;
-        let client = Arc::new(client);
-        dispatcher = dispatcher.with_channel(PushChannelKind::Apns, client.clone());
+        let key = Zeroizing::new(
+            std::fs::read_to_string(&apns.key_path)
+                .with_context(|| format!("reading APNs key {}", apns.key_path.display()))?,
+        );
+        // 生产环境和沙盒环境（开发包，10.7）用同一把密钥，按设备登记的通道分开发。
+        let client = |endpoint: &str| {
+            ApnsClient::new(ApnsConfig {
+                endpoint: endpoint.to_owned(),
+                topic: apns.topic.clone(),
+                team_id: apns.team_id.clone(),
+                key_id: apns.key_id.clone(),
+                key_pem: key.clone(),
+            })
+            .map(Arc::new)
+            .context("APNs client")
+        };
+        let production = client(&apns.endpoint)?;
+        let sandbox = client(&apns.sandbox_endpoint)?;
+        dispatcher = dispatcher
+            .with_channel(PushChannelKind::Apns, production.clone())
+            .with_channel(PushChannelKind::ApnsSandbox, sandbox.clone());
         // 实时活动（10.6）也走 APNs。
-        let mut d = LiveDispatcher::new(db.clone(), node_id, client, LiveConfig::default());
+        let mut d = LiveDispatcher::new(db.clone(), node_id, production, LiveConfig::default())
+            .with_sandbox(sandbox);
         if let Some(filter) = &push_filter {
             d = d.with_filter(filter.clone());
         }
