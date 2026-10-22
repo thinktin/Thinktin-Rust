@@ -386,6 +386,9 @@ _TITLE_RULES = [
     ("OSL-3.0", ["open software license"]),
     ("RPL-1.5", ["reciprocal public license"]),
     ("CPAL-1.0", ["common public attribution license"]),
+    ("GFDL-1.3-only", ["gnu free documentation license", "version 1.3"]),
+    ("GFDL-1.2-only", ["gnu free documentation license", "version 1.2"]),
+    ("GFDL-1.1-only", ["gnu free documentation license", "version 1.1"]),
     ("LGPL-2.1-only", ["gnu lesser general public license", "version 2.1"]),
     ("LGPL-3.0-only", ["gnu lesser general public license"]),
     ("LGPL-2.0-only", ["gnu library general public license"]),
@@ -413,6 +416,24 @@ _TITLE_RULES = [
     ("FSL-1.1-MIT", ["functional source license", "mit future license"]),
     ("FSL-1.1-ALv2", ["functional source license"]),
 ]
+# 只有许可证正文自己才有的标题（带版本和日期），文件任何位置出现都算按标题提名：GPL 原文前面有好几段说明
+# （Linux、git、libgit2 的 COPYING），标题就不在开头。
+_HEADINGS = [
+    ("GPL-3.0-only", ["gnu general public license version 3, 29 june 2007"]),
+    ("GPL-2.0-only", ["gnu general public license version 2, june 1991"]),
+    ("LGPL-3.0-only", ["gnu lesser general public license version 3, 29 june 2007"]),
+    ("LGPL-2.1-only", ["gnu lesser general public license version 2.1, february 1999"]),
+    ("LGPL-2.0-only", ["gnu library general public license version 2, june 1991"]),
+    ("GFDL-1.3-only", ["gnu free documentation license version 1.3, 3 november 2008"]),
+    ("GFDL-1.2-only", ["gnu free documentation license version 1.2, november 2002"]),
+    ("GFDL-1.1-only", ["gnu free documentation license version 1.1, march 2000"]),
+    # CPython 发布的 LICENSE：PSF 的协议加上 BeOpen、CNRI 1.6.1、CWI 的历史协议（SPDX 的 Python-2.0.1）。
+    ("Python-2.0.1", ["python software foundation license", "cnri license agreement for python 1.6.1"]),
+]
+# Creative Commons 的标题：Attribution[-NonCommercial][-ShareAlike|-NoDerivatives] <版本>，creativecommons.org
+# 发的 legalcode.txt 开头就是这一行（“Attribution 4.0 International”），前面没有“Creative Commons”。
+_CC_TITLE = re.compile(r"\battribution((?:-(?:noncommercial|sharealike|noderivatives|noderivs)){0,2}) ([1-4]\.[05])\b")
+_CC_PARTS = {"noncommercial": "-NC", "sharealike": "-SA", "noderivatives": "-ND", "noderivs": "-ND"}
 _GRANT_MIT = "permission is hereby granted, free of charge, to any person obtaining a copy"
 _BODY_RULES = [
     ("Apache-2.0", ["licensed under the apache license, version 2.0"]),
@@ -490,6 +511,10 @@ _PREAMBLES = {
     "OFL-1.1": [r"This Font Software is licensed under the SIL Open Font License,? Version 1\.1\.?\s+This license is copied "
                 r"below, and is also available with a FAQ at:?\s+<?https?://(?:scripts\.sil\.org/OFL|openfontlicense\.org)/?>?(?=\s|$)"],
     "CC0-1.0": [r"For more information, please see\s+<?https?://creativecommons\.org/publicdomain/zero/1\.0/?>?"],
+    # creativecommons.org 发的 legalcode.txt：说明里两个 wiki 地址、最后声明里的一句
+    "CC-BY-4.0": [r"(?<=\s)wiki\.creativecommons\.org/Considerations_for_licens(?:ors|ees)(?=\s)",
+                  r"The\s+text\s+of\s+the\s+Creative\s+Commons\s+public\s+licenses\s+is\s+dedicated\s+to\s+the\s+public\s+domain\s+"
+                  r"under\s+the\s+CC0\s+Public\s+Domain\s+Dedication\."],
 }
 # 标准文本里可以省的部分（附录、“How to Apply”、Exhibit、CC 的说明和免责声明）：(从这一句, 到这一句之前)，
 # 到结尾的写 None。
@@ -507,6 +532,10 @@ _OPTIONAL_SPANS = {
     "CC-BY-4.0": [("Creative Commons is not a party", None)],
     "CC0-1.0": [("CREATIVE COMMONS CORPORATION IS NOT A LAW FIRM", "Statement of Purpose")],
 }
+# 官方发布的文件比 SPDX 标准文本多出来的开头、结尾（可以有、可以没有，有的话照常核对）：CPython 的 LICENSE 开头的
+# 历史说明（spdx/Python-2.0.1.history，取自 CPython 3.14 的 LICENSE）、结尾文档里代码的 0BSD 许可。
+_OPTIONAL_HEAD_FILES = {"Python-2.0.1": "Python-2.0.1.history"}
+_OPTIONAL_TAIL_FILES = {"Python-2.0.1": ("ZERO-CLAUSE BSD LICENSE FOR CODE IN THE PYTHON DOCUMENTATION\n\n", "0BSD.txt")}
 # GNU 发布的 GPL-2.0 原文最后一段，SPDX 的标准文本里没有（在可以省的部分里）。
 _OPTIONAL_TAIL = {
     "GPL-2.0-only": "This General Public License does not permit incorporating your program into proprietary programs. "
@@ -657,19 +686,32 @@ def _license_lines(text):
     return out
 
 
-def candidates(text):
-    """按标题或固定句子猜原文可能是哪些许可证（没核对过），按规则顺序。"""
+def _proposals(text, full=None):
+    """(提名列表, 按标题提名的集合)：开头的标题（_TITLE_RULES、Creative Commons 的标题），文件任何位置的正文标题
+    （_HEADINGS），再是开头 8000 个字符里的固定句子（_BODY_RULES）。full 是整个文件的 _normalized（算过的话）。"""
     t = _normalized(text)
     head = t[:TITLE_WINDOW]
-    out = [spdx for spdx, needles in _TITLE_RULES if _matches(head, needles)]
-    out += [spdx for spdx, needles in _BODY_RULES if _matches(t, needles)]
-    return list(dict.fromkeys(out))
+    titled = [spdx for spdx, needles in _TITLE_RULES if _matches(head, needles)]
+    if "creative commons" in head:
+        for m in _CC_TITLE.finditer(head):
+            lid = "CC-BY%s-%s" % ("".join(_CC_PARTS[p] for p in m.group(1).split("-")[1:]), m.group(2))
+            if lid in LICENSE_IDS:
+                titled.append(lid)
+    full = _normalized(text, limit=None) if full is None else full
+    titled += [spdx for spdx, needles in _HEADINGS if _matches(full, needles)]
+    out = titled + [spdx for spdx, needles in _BODY_RULES if _matches(t, needles)]
+    return list(dict.fromkeys(out)), set(titled)
 
 
-def deny_sections(text):
-    """文件里任何位置出现的禁止名单许可证的正文标题、授权声明（_DENY_SECTIONS），和“License: X”行里的许可证
-    （什么许可证都记，检查时只有禁止名单里的、声明里又没有的才报）。"""
-    t = _normalized(text, limit=None)
+def candidates(text):
+    """按标题或固定句子猜原文可能是哪些许可证（没核对过），按规则顺序。"""
+    return _proposals(text)[0]
+
+
+def deny_sections(text, full=None):
+    """文件里任何位置出现的禁止名单许可证的正文标题、授权声明（_DENY_SECTIONS），和“License: X”行里禁止名单那一类的
+    许可证。"""
+    t = _normalized(text, limit=None) if full is None else full
     found = [spdx for spdx, needles in _DENY_SECTIONS if _matches(t, needles)]
     return list(dict.fromkeys(found + _license_lines(text)))
 
@@ -765,7 +807,12 @@ def _template_words(lid):
                     raise SystemExit("spdx/%s.txt 里找不到可以省的部分（%s）" % (lid, start))
                 parts += [(text[pos:a], False), (text[a:b], True)]
                 pos = b
-            parts += [(text[pos:], False), (_OPTIONAL_TAIL.get(lid, ""), True)]
+            tail = _OPTIONAL_TAIL.get(lid, "")
+            if lid in _OPTIONAL_TAIL_FILES:
+                prefix, name = _OPTIONAL_TAIL_FILES[lid]
+                tail += prefix + (SPDX_DIR / name).read_text(encoding="utf-8")
+            head = (SPDX_DIR / _OPTIONAL_HEAD_FILES[lid]).read_text(encoding="utf-8") if lid in _OPTIONAL_HEAD_FILES else ""
+            parts = [(head, True)] + parts + [(text[pos:], False), (tail, True)]
             words, optional = [], set()
             for part, opt in parts:
                 w = _words(part, template=True)
@@ -823,16 +870,15 @@ def verify_text(text, lid):
 def examine(text):
     """一份原文：提名（proposed）、核对过没有（verified）、提名是不是来自标题（titled）、所有提名和文件里任何位置
     出现的禁止名单许可证（candidates）。proposed 是第一个核对得上的提名；都对不上时是第一个提名。"""
-    found = candidates(text)
-    head = _normalized(text)[:TITLE_WINDOW]
-    titled = {spdx for spdx, needles in _TITLE_RULES if _matches(head, needles)}
+    full = _normalized(text, limit=None)
+    found, titled = _proposals(text, full)
     lid, ok = (found[0] if found else None), False
     for x in found:
         if verify_text(text, x):
             lid, ok = x, True
             break
     return {"proposed": lid, "verified": ok, "titled": lid in titled,
-            "candidates": list(dict.fromkeys(found + deny_sections(text)))}
+            "candidates": list(dict.fromkeys(found + deny_sections(text, full)))}
 
 
 def identify(text):
@@ -1730,7 +1776,7 @@ def upstream_cargo_key(entries):
     """缓存的 crates/ 还能不能用：[[cargo]] 的每一项（含 manifest、target）、扫描程序本身和 SPDX 标准文本
     （改了扫描规则、核对用的标准文本都要重新生成）。"""
     h = hashlib.sha256(Path(__file__).read_bytes())
-    for path in sorted(SPDX_DIR.glob("*.txt")):
+    for path in sorted(p for p in SPDX_DIR.iterdir() if p.is_file()):
         h.update(path.name.encode() + b"\0" + path.read_bytes() + b"\0")
     return json.dumps({"entries": entries, "tool": h.hexdigest()[:16], "schema": SCHEMA}, sort_keys=True)
 
@@ -3269,6 +3315,62 @@ def self_test():
     eq(detect_text(MIT_TEXT.replace("2024 Someone", "2024 Søren Łukasz, Jürgen Straße, Barış Çelik")), "MIT",
        "名字里的 ø ł ß ı ç 不算外文")
     eq(detect_text("﻿" + MIT_TEXT), "MIT", "开头的 BOM 不算")
+    # GPL、LGPL 原文前面有好几段说明（Linux、git、libgit2 的 COPYING）：按文件里任何位置的正文标题提名
+    preface = ("NOTE! This copyright does *not* cover programs that merely use the services of this project through its "
+               "public interfaces - that is considered normal use, and does *not* fall under the heading of \"derived work\". "
+               "Also note that the only valid version of the GPL as far as this project is concerned is _this_ particular "
+               "version of the license (ie v2, not v2.2 or v3.x or whatever), unless explicitly otherwise stated.\n\n"
+               "In addition to the permissions in the GNU General Public License, the authors give you unlimited permission "
+               "to link the compiled version of this library into combinations with other programs, and to distribute those "
+               "combinations without any restriction coming from the use of this file.\n\n----------\n\n")
+    with tempfile.TemporaryDirectory() as tmp:
+        nm = Path(tmp) / "node_modules"
+        cases = {}
+        for lid in ("GPL-2.0-only", "GPL-3.0-only", "LGPL-2.1-only", "LGPL-2.0-only"):
+            text = preface + _spdx_text(lid)
+            eq((candidates(text)[:1], examine(text)["titled"]), ([lid], True), "%s 前面有长说明照样按标题提名" % lid)
+            cases["preface-root-%s" % lid.lower()] = {"COPYING": text}
+            cases["preface-bundled-%s" % lid.lower()] = {"vendor/libgit2/COPYING": text}
+        cc = {"CC-BY-SA-4.0": "Attribution-ShareAlike 4.0 International", "CC-BY-ND-4.0": "Attribution-NoDerivatives 4.0 International",
+              "CC-BY-NC-SA-4.0": "Attribution-NonCommercial-ShareAlike 4.0 International", "CC-BY-SA-3.0": "Attribution-ShareAlike 3.0 Unported"}
+        for lid, title in cc.items():
+            text = "%s\n\n=======\n\nCreative Commons Corporation (\"Creative Commons\") is not a law firm.\n" % title
+            eq(candidates(text), [lid], "Creative Commons 的标题：%s" % lid)
+            cases["cc-%s" % lid.lower()] = {"assets/emoji/LICENSE.txt": text}
+        if Path("/usr/share/common-licenses/GFDL-1.3").is_file():
+            gfdl = Path("/usr/share/common-licenses/GFDL-1.3").read_text(encoding="utf-8")
+            eq(identify(gfdl)[0], "GFDL-1.3-only", "GFDL-1.3")
+            cases["gfdl-docs"] = {"docs/COPYING.FDL": gfdl}
+        cases["ccbysa-declared-ccby"] = {"LICENSE": "Attribution-ShareAlike 4.0 International\n\nCreative Commons Corporation is not a law firm.\n"}
+        for name, files in cases.items():
+            d = nm / name
+            decl = "CC-BY-4.0" if name == "ccbysa-declared-ccby" else "MIT"
+            for fname, text in dict({"LICENSE": MIT_TEXT}, **files, **{"package.json": json.dumps({"name": name, "version": "1.0.0", "license": decl})}).items():
+                (d / fname).parent.mkdir(parents=True, exist_ok=True)
+                (d / fname).write_text(text)
+        inv = Inventory(Path(tmp) / "out", "families")
+        scan_npm(inv, nm)
+        errors, _, _ = check(inv.write(), Policy(dict(tomllib.loads(TEST_POLICY), allow=["MIT", "CC-BY-4.0"])))
+        for name in cases:
+            eq(any(" %s@" % name in e for e in errors), True, "声明里没有的要拦：%s（%s）" % (name, inv.components[("npm", name, "1.0.0")]["file_licenses"]))
+    # creativecommons.org 发的 CC-BY-4.0 legalcode.txt；CPython 的 LICENSE（Python-2.0.1，前面有历史说明、后面有 0BSD）
+    ccby = (SPDX_DIR / "CC-BY-4.0.txt").read_text(encoding="utf-8")
+    legalcode = ccby.replace("Creative Commons Attribution 4.0 International", "Attribution 4.0 International\n\n" + "=" * 70, 1)
+    for who in ("licensors", "licensees"):
+        legalcode = legalcode.replace("More considerations for %s." % who,
+                                      "More considerations for %s:\n    wiki.creativecommons.org/Considerations_for_%s\n" % (who, who))
+    legalcode = legalcode.replace("considered the “Licensor.”", "considered the “Licensor.” The text of the Creative Commons public "
+                                  "licenses is dedicated to the public domain under the CC0 Public Domain Dedication.")
+    eq(identify(legalcode), ("CC-BY-4.0", True), "creativecommons.org 的 CC-BY-4.0 legalcode.txt")
+    eq(identify(legalcode + "\nCommercial use of the Licensed Material requires a separate paid license.\n")[1], False,
+       "legalcode 后面加条件核对不上")
+    cpython = ((SPDX_DIR / "Python-2.0.1.history").read_text(encoding="utf-8") + (SPDX_DIR / "Python-2.0.1.txt").read_text(encoding="utf-8")
+               + "\nZERO-CLAUSE BSD LICENSE FOR CODE IN THE PYTHON DOCUMENTATION\n----------\n\n"
+               + ZERO_BSD_TEXT.split("\n\n", 1)[1])
+    eq(identify(cpython), ("Python-2.0.1", True), "CPython 的 LICENSE")
+    eq(identify((SPDX_DIR / "Python-2.0.1.txt").read_text(encoding="utf-8")), ("Python-2.0.1", True), "没有历史说明的 Python-2.0.1")
+    eq(identify(cpython.replace("Thanks to the many outside volunteers", "Commercial redistribution requires a paid license. Thanks "
+                                "to the many outside volunteers"))[1], False, "历史说明里加的条件照样核对")
     deny_pats = tomllib.loads(Path(__file__).with_name("policy.toml").read_text(encoding="utf-8")).get("deny", [])
     eq([p for p in deny_pats if not _DENY_CLASS.match(p.rstrip("*").rstrip("-") or "x")], [],
        "policy.toml 禁止名单里的每一类，_DENY_CLASS 都认（文件任何位置提到都记下）")

@@ -146,6 +146,16 @@ license = "Apache-2.0 OR MIT"
 reason = "带着的 dbus 源码不编进去（没开 vendored）；dbus 是 AFL-2.1 或 GPL-2.0-or-later 任选"
 agents = ["codex"]
 
+# petgraph 的 assets/images/ 是项目的吉祥物图片 Graphosaurus（CC-BY-SA-4.0，assets/images/LICENSE.md），只给文档和
+# 仓库用；src/ 里没有 include_bytes!，不编进程序（2026-10-22 按这个版本核对）。
+[[exception]]
+ecosystem = "cargo"
+name = "petgraph"
+version = "0.8.3"
+license = "MIT OR Apache-2.0"
+reason = "CC-BY-SA-4.0 的只有吉祥物图片 assets/images/，不编进去"
+agents = ["codex"]
+
 # Codex 带的 zsh：zsh 自己的宽松许可（保留版权声明和免责的两段即可使用、修改、分发，没有 SPDX 标识）。
 # LICENCE 里提到个别 shell 函数是 GPL，Codex 只带了 bin/zsh，没带函数文件。
 [[exception]]
