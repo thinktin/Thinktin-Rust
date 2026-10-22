@@ -21,6 +21,7 @@
 - iOS CI 第一次完整跑（run 39687813304，`66ebc7e`）的结果：Linux 作业全绿；macOS 上 Rust 交叉编译与打包（约 9 分钟）、真实 SwiftUI 编译 ThinktinKit + ThinktinUI、xcodegen、Xcode 26.6 编译 App 并在 iPhone 17 Pro 模拟器（iOS 26.5）上跑 App 冒烟测试都通过；214 个测试里只有“抽屉：打开和关闭”失败（关着的抽屉理想宽度本来就是 0，测试断言写错了），已修，随 11.7 接入一起推送。
 
 下一步：
+0. W1 第一轮合并后：合 backend-core（b61abc5 之后：client-core 下线本机自己清会话 → 去掉 `CoreClient.revokeDevice` 的兜底 `logout()`；Credential.protocols / AgentInfo.active_protocol（12.4 按协议过滤 key）；计划列表带 triggers / next_fire_at_ms / invalid_triggers、Trigger.disabled_reason（12.6）；审批 request_id / get_approval（12.15））；后端约好的一批破坏性改动（ClientError / PairingError 的 message 改名、StreamStatus 加 UpgradeRequired）也在那次一起改适配层。
 1. 修 macOS CI 暴露的问题直到全绿，然后 12.1 的公共文件（ClientProtocol、模型、Theme）只加不改。
 2. W1 四条线并行（`docs/ios.md` 第 8 节）：A 12.16 → 12.2 → 12.12 → 12.17；B 12.3 → 12.4 → 12.8；C 12.5 → 12.18；D 12.6 → 12.7；12.15 由先空的线做。
 3. W2：12.13、12.10、12.20、12.21、12.19；12.11 最后；12.9 随 macOS（P3）。
