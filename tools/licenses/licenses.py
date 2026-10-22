@@ -713,11 +713,17 @@ def _fold(text):
     return _deaccent(unicodedata.normalize("NFKC", text).translate(_FOLD))
 
 
-def _deaccent_letter(m):
-    c = m.group(0)
-    if "LATIN" not in unicodedata.name(c, ""):
-        return c
-    return "".join(ch for ch in unicodedata.normalize("NFKD", c) if not unicodedata.combining(ch)).translate(_LATIN_EXTRA)
+_DEACCENTED = {}
+
+
+def _deaccent_char(c):
+    out = _DEACCENTED.get(c)
+    if out is None:
+        out = c
+        if "LATIN" in unicodedata.name(c, ""):
+            out = "".join(ch for ch in unicodedata.normalize("NFKD", c) if not unicodedata.combining(ch)).translate(_LATIN_EXTRA)
+        _DEACCENTED[c] = out
+    return out
 
 
 def _deaccent(text):
@@ -725,7 +731,8 @@ def _deaccent(text):
     换成最接近的（ł → l、ß → ss）。别的文字（中文、俄文）不动。"""
     if text.isascii():
         return text
-    text = re.sub(r"[^\x00-\x7f]", _deaccent_letter, text)
+    table = {ord(c): _deaccent_char(c) for c in set(text) if ord(c) > 127}
+    text = text.translate({k: v for k, v in table.items() if v != chr(k)})
     return re.sub(r"(?<=[A-Za-z])[\u0300-\u036f]+", "", text)
 
 
@@ -752,7 +759,9 @@ def _normalized(text, limit=8000):
 
 
 # 打包工具生成的第三方清单里每个依赖一行的许可证（rollup / vite 的 “License: MIT”、源文件头的 SPDX-License-Identifier）。
-_LICENSE_LINE = re.compile(r"(?im)^[\s*#/>-]*(?:SPDX-License-Identifier|Licen[cs]es?(?:\s+type)?)\s*[:=]\s*\**\s*(.+?)\s*\**\s*$")
+# 只在一行之内匹配（[ \t]，不用 \s）：很长的分隔线、空白不会让正则来回回溯。
+_LICENSE_LINE = re.compile(r"(?im)^[ \t*#/>-]*(?:SPDX-License-Identifier|Licen[cs]es?(?:[ \t]+type)?)[ \t]*[:=][ \t]*\**[ \t]*"
+                           r"([^\n]+?)[ \t]*\**[ \t]*$")
 # 禁止名单那一类许可证（网络 copyleft、限制商用或托管）：文件任何位置提到都要记下的。policy.toml 的 deny 加了新的一类，
 # 这里也要加（内置测试会查）。
 _DENY_CLASS = re.compile(r"^(?:LicenseRef-)?(?:AGPL|SSPL|OSL|EUPL|RPL|CPAL|BUSL|Elastic|PolyForm|FSL|CC-BY-NC|Commons-Clause|"
@@ -3576,6 +3585,13 @@ def self_test():
             ("版权方叫 Grant", "Copyright 2014-2019 Grant Jenks\n\n" + mit_body, "MIT"),
             ("版权方是小写的 npm, Inc.", ISC_TEXT.replace("2024 Someone", "npm, Inc.").replace("Copyright (c)", "Copyright"), "ISC")]:
         eq(detect_text(text), want, "真实原文的写法核对得上：%s" % name)
+    # 很长的分隔线、空白不能让正则来回回溯（找“License: X”行时曾经是平方级的）
+    import time
+
+    started = time.time()
+    deny_sections(("-" * 100 + "\n") * 3000 + "License: AGPL-3.0-only\n")
+    restricted_in_dashes = _restricted_in((" " * 100 + "\n") * 3000)
+    eq((time.time() - started < 3, restricted_in_dashes), (True, []), "几千行分隔线、空白几秒内扫完")
     # PyPI：常见的 License 字段写法；很长、多行的 License 字段当原文核对；只有含糊的分类时认不出的原文照样算
     for text, want in [("BSD 3-Clause License", "BSD-3-Clause"), ("BSD-3-Clause License", "BSD-3-Clause"), ("Expat license", "MIT"),
                        ("Expat (MIT/X11)", "MIT"), ("Simplified BSD License", "BSD-2-Clause"), ("Revised BSD License", "BSD-3-Clause"),
