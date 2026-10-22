@@ -540,7 +540,12 @@ async fn ffi_client_round_trip() {
     assert!(r.new_user);
     assert!(c.signed_in());
     let agents = c.agents().await.unwrap();
-    assert!(agents.iter().any(|a| a.id == "claude"));
+    let claude = agents.iter().find(|a| a.id == "claude").unwrap();
+    assert_eq!(
+        (claude.protocols.clone(), claude.active_protocol.as_deref()),
+        (vec!["anthropic".to_string()], Some("anthropic"))
+    );
+    assert!(!claude.description.is_empty() && claude.upstream.starts_with("https://"));
     let inst = c.adopt("claude".into(), "助手".into(), None).await.unwrap();
     assert_eq!(c.instances().await.unwrap().len(), 1);
     assert_eq!(c.cached_instances().unwrap()[0].id, inst.id);
@@ -1009,6 +1014,20 @@ async fn ffi_account_and_devices() {
     phone.revoke_device(mac.id.clone()).await.unwrap();
     assert!(matches!(laptop.me().await, Err(ClientError::SignedOut)));
     assert_eq!(phone.devices().await.unwrap().len(), 1);
+    // 吊销的是这台自己（id 大小写不同也算）：本地马上退出登录，缓存清掉。
+    let (tablet, _ts, _td) = ffi_login(&e, "13800138507", "ios", "iPad").await;
+    tablet.instances().await.unwrap();
+    let me = tablet
+        .devices()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|d| d.current)
+        .unwrap();
+    tablet.revoke_device(me.id.to_uppercase()).await.unwrap();
+    assert!(!tablet.signed_in());
+    assert!(tablet.cached_instances().unwrap().is_empty());
+    assert_eq!(phone.devices().await.unwrap().len(), 1);
 
     // 注销：验证码发到自己的手机号；错的码不行；成功后本地也退出登录。
     phone.send_self_code("delete_account".into()).await.unwrap();
@@ -1086,6 +1105,14 @@ async fn ffi_plan_editing_and_triggers() {
     );
     assert_eq!(edited.policy.on_approval_timeout, "fail");
     assert_eq!(edited.triggers.len(), 1);
+    // 列表里也有触发器和下次运行时间（11.8）；暂停了就没有下次。
+    let listed = c.plans(Some(inst.id.clone())).await.unwrap();
+    assert_eq!(listed[0].triggers.len(), 1);
+    assert_eq!(
+        (listed[0].next_fire_at_ms, listed[0].invalid_triggers),
+        (listed[0].triggers[0].next_fire_at_ms, 0)
+    );
+    assert!(listed[0].next_fire_at_ms.is_some());
     assert!(matches!(
         c.update_plan(
             plan.id.clone(),
@@ -1504,4 +1531,114 @@ async fn new_users_get_the_device_language() {
     assert_eq!(first.user.locale, "en");
     let again = login(client("zh-Hans-CN")).await;
     assert_eq!((again.new_user, again.user.locale.as_str()), (false, "en"));
+}
+
+/// 运行在等什么（11.8）：等 key 的运行带着结构化的原因。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ffi_runs_say_what_they_wait_for() {
+    use proto::domain::{RunId, RunState};
+    use store::RunChange;
+    let Some(e) = env().await else { return };
+    let (c, _store, _d) = ffi_login(&e, "13800138524", "ios", "iPhone").await;
+    let inst = c.adopt("claude".into(), "助手".into(), None).await.unwrap();
+    let run = c
+        .create_run(inst.id.clone(), "整理邮件".into())
+        .await
+        .unwrap();
+    assert_eq!(run.wait_code, None);
+    let id: RunId = run.id.parse().unwrap();
+    let mut w = e.t.db.worker().await.unwrap();
+    w.claim_next_run("n1", std::time::Duration::from_secs(60))
+        .await
+        .unwrap()
+        .unwrap();
+    w.transition_run(id, "n1", RunState::Running, &RunChange::default())
+        .await
+        .unwrap();
+    w.transition_run(
+        id,
+        "n1",
+        RunState::WaitingQuota,
+        &RunChange {
+            reason: Some("欠费".into()),
+            release_lease: true,
+            wait_code: Some("no_balance"),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    w.commit().await.unwrap();
+    assert_eq!(
+        c.get_run(run.id.clone())
+            .await
+            .unwrap()
+            .wait_code
+            .as_deref(),
+        Some("no_balance")
+    );
+    let listed = c.runs(inst.id.clone(), 10).await.unwrap();
+    assert_eq!(listed[0].wait_code.as_deref(), Some("no_balance"));
+}
+
+/// 跨实例的运行列表（11.8）：全部、没结束的、往下翻；顺便更新每个实例的缓存。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ffi_runs_across_instances() {
+    let Some(e) = env().await else { return };
+    let (c, _store, _d) = ffi_login(&e, "13800138525", "ios", "iPhone").await;
+    let a = c.adopt("claude".into(), "助手".into(), None).await.unwrap();
+    let b = c.adopt("codex".into(), "写手".into(), None).await.unwrap();
+    let mut ids = Vec::new();
+    for (inst, p) in [(&a, "一"), (&a, "二"), (&b, "三")] {
+        ids.push(c.create_run(inst.id.clone(), p.into()).await.unwrap().id);
+    }
+    let all = c
+        .list_runs(ffi::RunFilter::default(), None, 10)
+        .await
+        .unwrap();
+    assert_eq!(
+        all.iter().map(|r| r.id.clone()).collect::<Vec<_>>(),
+        ids.iter().rev().cloned().collect::<Vec<_>>()
+    );
+    c.cancel_run(ids[0].clone(), false).await.unwrap();
+    let active = c
+        .list_runs(
+            ffi::RunFilter {
+                active_only: true,
+                ..Default::default()
+            },
+            None,
+            10,
+        )
+        .await
+        .unwrap();
+    assert_eq!(active.len(), 2);
+    let page = c
+        .list_runs(ffi::RunFilter::default(), None, 2)
+        .await
+        .unwrap();
+    let rest = c
+        .list_runs(ffi::RunFilter::default(), Some(page[1].id.clone()), 10)
+        .await
+        .unwrap();
+    assert_eq!(rest.len(), 1);
+    assert_eq!(rest[0].id, ids[0]);
+    assert!(
+        c.cached_runs(b.id.clone(), 10)
+            .unwrap()
+            .iter()
+            .any(|r| r.id == ids[2])
+    );
+    assert!(matches!(
+        c.list_runs(
+            ffi::RunFilter {
+                plan_id: Some("nope".into()),
+                ..Default::default()
+            },
+            None,
+            10
+        )
+        .await,
+        Err(ClientError::InvalidArgument { .. })
+    ));
 }

@@ -148,7 +148,7 @@ pub struct DeviceMessage {
     pub id: String,
     pub from_device_id: String,
     pub to_device_id: String,
-    /// pair_response、pair_confirm、approval_request、approval_decision、capability、revoke……
+    /// pair_response、pair_confirm、approval_request、approval_decision、capability、revocation……
     pub kind: String,
     /// 消息内容（JSON）。
     pub body_json: String,
@@ -213,6 +213,22 @@ pub struct AgentInfo {
     pub default_harness: String,
     /// 可以用的版本，当前版本在前：实例的版本不是第一个时可以提示升级。
     pub versions: Vec<String>,
+    /// 一句话介绍，按设备语言（`accept_language`）给；老的服务端为空。
+    #[uniffi(default = "")]
+    pub description: String,
+    /// 上游仓库（https）。
+    #[uniffi(default = "")]
+    pub upstream: String,
+    /// 许可说明（专有许可证必有），按设备语言给。
+    #[uniffi(default = None)]
+    pub license_note: Option<String>,
+    /// 能说的协议，按优先级：anthropic、chat、responses（和 `VendorInfo.protocols`、`Credential.protocols` 同一套名字）。
+    #[uniffi(default = [])]
+    pub protocols: Vec<String>,
+    /// 运行时实际用的协议：这个 agent 的实例配的每把 key（包括降级的）都要支持它，选 key 时按它过滤
+    /// （`Credential.protocols` 里要有它）。
+    #[uniffi(default = None)]
+    pub active_protocol: Option<String>,
 }
 
 impl From<api::AgentInfo> for AgentInfo {
@@ -226,6 +242,11 @@ impl From<api::AgentInfo> for AgentInfo {
             harnesses: a.harnesses,
             default_harness: a.default_harness,
             versions: a.versions,
+            description: a.description,
+            upstream: a.upstream,
+            license_note: a.license_note,
+            protocols: a.protocols,
+            active_protocol: a.active_protocol,
         }
     }
 }
@@ -295,6 +316,12 @@ pub struct Run {
     pub created_at_ms: i64,
     pub started_at_ms: Option<i64>,
     pub finished_at_ms: Option<i64>,
+    /// 等的是什么，只在 waiting_quota / waiting_device 时有：invalid（key 无效，去换 key）、no_balance（欠费：充值或
+    /// 换 key，每小时也自己再试）、unavailable（没有能用的 key：停用了或当天额度用完，每小时也自己再试）、
+    /// rate_limited / overloaded（几分钟后自己继续，不用处理）、device_offline（等电脑上线）。以后可能加新值，
+    /// 不认识的按 state 显示。
+    #[uniffi(default = None)]
+    pub wait_code: Option<String>,
 }
 
 impl From<d::Run> for Run {
@@ -318,6 +345,7 @@ impl From<d::Run> for Run {
             created_at_ms: ms(r.created_at),
             started_at_ms: ms_opt(r.started_at),
             finished_at_ms: ms_opt(r.finished_at),
+            wait_code: r.wait_code,
         }
     }
 }
@@ -430,6 +458,9 @@ pub struct Trigger {
     pub enabled: bool,
     pub next_fire_at_ms: Option<i64>,
     pub last_fire_at_ms: Option<i64>,
+    /// 后台停用它的原因：invalid_rule（规则失效了，比如时区没了；删掉重新加）。没被停用时为空。
+    #[uniffi(default = None)]
+    pub disabled_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
@@ -561,9 +592,16 @@ pub struct Plan {
     #[uniffi(default = "once")]
     pub catch_up: String,
     pub created_at_ms: i64,
-    /// 列表接口里为空，详情里有。
+    /// 列表和详情里都有。
     pub triggers: Vec<Trigger>,
     pub steps: Vec<PlanStep>,
+    /// 下一次按时运行的名义时间（实际可能因削峰晚几分钟）：在用的触发器里最早的；暂停了、等确认、没有会再触发的
+    /// 规则时为空。
+    #[uniffi(default = None)]
+    pub next_fire_at_ms: Option<i64>,
+    /// 规则失效、被后台停用的触发器有几个：详情页提示“规则已失效”，给“修改规则”的入口。
+    #[uniffi(default = 0)]
+    pub invalid_triggers: u32,
 }
 
 impl From<d::Plan> for Plan {
@@ -583,6 +621,8 @@ impl From<d::Plan> for Plan {
             created_at_ms: ms(p.created_at),
             triggers: Vec::new(),
             steps: Vec::new(),
+            next_fire_at_ms: None,
+            invalid_triggers: 0,
         }
     }
 }
@@ -592,6 +632,8 @@ impl From<api::PlanView> for Plan {
         Self {
             triggers: v.triggers.into_iter().map(trigger_record).collect(),
             steps: v.steps.into_iter().map(Into::into).collect(),
+            next_fire_at_ms: ms_opt(v.next_fire_at),
+            invalid_triggers: v.invalid_triggers,
             ..v.plan.into()
         }
     }
@@ -620,6 +662,7 @@ fn trigger_record(t: d::Trigger) -> Trigger {
         enabled: t.enabled,
         next_fire_at_ms: ms_opt(t.next_fire_at),
         last_fire_at_ms: ms_opt(t.last_fire_at),
+        disabled_reason: t.disabled_reason,
     }
 }
 
@@ -803,6 +846,9 @@ pub struct Credential {
     pub daily_token_limit: Option<u64>,
     pub disabled: bool,
     pub created_at_ms: i64,
+    /// 能用哪些协议（anthropic、chat、responses）：选 key 时要包含 agent 的 `active_protocol`。
+    #[uniffi(default = [])]
+    pub protocols: Vec<String>,
 }
 
 impl From<d::Credential> for Credential {
@@ -815,6 +861,7 @@ impl From<d::Credential> for Credential {
             daily_token_limit: c.daily_token_limit,
             disabled: c.disabled,
             created_at_ms: ms(c.created_at),
+            protocols: c.protocols,
         }
     }
 }
@@ -841,6 +888,20 @@ impl From<api::VendorInfo> for VendorInfo {
             notes: v.notes,
         }
     }
+}
+
+/// 跨实例列运行的条件（11.8）。都有默认值：`RunFilter()` 是全部。
+#[derive(Debug, Clone, Default, uniffi::Record)]
+pub struct RunFilter {
+    /// 只要这个计划的（包括流水线的步骤；配合 `roots_only` 一次触发一行）。
+    #[uniffi(default = None)]
+    pub plan_id: Option<String>,
+    /// 只要没结束的（排队、运行、等待、退避）：抽屉里的“进行中”、实时活动用。
+    #[uniffi(default = false)]
+    pub active_only: bool,
+    /// 只要根运行（不要流水线的步骤、委派的子任务）。
+    #[uniffi(default = false)]
+    pub roots_only: bool,
 }
 
 /// 一条内容举报（5.5）和它的处理结果。
@@ -1670,6 +1731,37 @@ impl ThinktinClient {
     }
 
     /// 更早的一页运行：`before_run_id` 之前的（列表往下翻）。
+    /// 跨实例的运行（11.8），新的在前：某个计划的运行历史、所有没结束的运行。`before_run_id` 往下翻
+    /// （上一页最后一个的 id）。
+    pub async fn list_runs(
+        &self,
+        filter: RunFilter,
+        before_run_id: Option<String>,
+        limit: u32,
+    ) -> Result<Vec<Run>> {
+        let f = api::RunFilter {
+            plan: filter
+                .plan_id
+                .as_deref()
+                .map(|p| parse(p, "plan"))
+                .transpose()?,
+            active: filter.active_only,
+            roots: filter.roots_only,
+        };
+        let before: Option<d::RunId> = before_run_id
+            .as_deref()
+            .map(|b| parse(b, "run"))
+            .transpose()?;
+        self.run(|c| async move {
+            Ok(c.list_runs(&f, before, limit)
+                .await?
+                .into_iter()
+                .map(Into::into)
+                .collect())
+        })
+        .await
+    }
+
     pub async fn older_runs(
         &self,
         instance_id: String,

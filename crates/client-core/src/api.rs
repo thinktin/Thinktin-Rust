@@ -108,6 +108,24 @@ pub struct AgentInfo {
     /// 可以用的版本，当前版本在前。
     #[serde(default)]
     pub versions: Vec<String>,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub upstream: String,
+    #[serde(default)]
+    pub license_note: Option<String>,
+    #[serde(default)]
+    pub protocols: Vec<String>,
+    #[serde(default)]
+    pub active_protocol: Option<String>,
+}
+
+/// 跨实例列运行的条件（11.8）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RunFilter {
+    pub plan: Option<PlanId>,
+    pub active: bool,
+    pub roots: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -118,6 +136,10 @@ pub struct PlanView {
     pub triggers: Vec<Trigger>,
     #[serde(default)]
     pub steps: Vec<PlanStep>,
+    #[serde(default)]
+    pub next_fire_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default)]
+    pub invalid_triggers: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -722,10 +744,19 @@ impl Api {
         Ok(())
     }
 
-    /// 吊销一台设备（丢了的手机、不用的电脑）：它的登录会话立即失效。
+    /// 吊销一台设备（丢了的手机、不用的电脑）：它的登录会话立即失效。吊销的是这台自己：本地的登录状态（和缓存）
+    /// 马上清掉，不用等下一个请求被拒。
     pub async fn revoke_device(&self, id: DeviceId) -> Result<()> {
+        let mine = self
+            .session()
+            .and_then(|s| s.device_id.parse::<DeviceId>().ok())
+            .is_some_and(|d| d == id);
         self.empty(Method::DELETE, &format!("/v1/devices/{id}"), None)
-            .await
+            .await?;
+        if mine {
+            self.set_session(None);
+        }
+        Ok(())
     }
 
     pub async fn set_push(&self, channel: PushChannelKind, token: &str) -> Result<()> {
@@ -947,6 +978,33 @@ impl Api {
         Ok(self.json::<R>(Method::GET, &path, None).await?.runs)
     }
 
+    /// 跨实例的运行（11.8），新的在前。
+    pub async fn all_runs(
+        &self,
+        f: &RunFilter,
+        before: Option<RunId>,
+        limit: u32,
+    ) -> Result<Vec<Run>> {
+        #[derive(Deserialize)]
+        struct R {
+            runs: Vec<Run>,
+        }
+        let mut path = format!("/v1/runs?limit={limit}");
+        if let Some(p) = f.plan {
+            path.push_str(&format!("&plan_id={p}"));
+        }
+        if f.active {
+            path.push_str("&active=true");
+        }
+        if f.roots {
+            path.push_str("&roots=true");
+        }
+        if let Some(b) = before {
+            path.push_str(&format!("&before={b}"));
+        }
+        Ok(self.json::<R>(Method::GET, &path, None).await?.runs)
+    }
+
     pub async fn run(&self, id: RunId) -> Result<Run> {
         self.json(Method::GET, &format!("/v1/runs/{id}"), None)
             .await
@@ -1019,10 +1077,11 @@ impl Api {
 
     // ---------- 计划 ----------
 
-    pub async fn plans(&self, instance: Option<InstanceId>) -> Result<Vec<Plan>> {
+    /// 计划列表，带着每个计划的触发器、步骤、下次运行时间（老的服务端只有计划本身，其余为空）。
+    pub async fn plans(&self, instance: Option<InstanceId>) -> Result<Vec<PlanView>> {
         #[derive(Deserialize)]
         struct R {
-            plans: Vec<Plan>,
+            plans: Vec<PlanView>,
         }
         let path = match instance {
             Some(i) => format!("/v1/plans?instance_id={i}"),

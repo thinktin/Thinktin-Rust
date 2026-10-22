@@ -228,13 +228,14 @@ async fn login_refresh_logout_and_errors() {
 async fn instances_keys_and_routes_are_per_user() {
     let Some(a) = api().await else { return };
     let (_, agents) = a.call(Method::GET, "/v1/agents", None, None).await;
-    assert!(
-        agents["agents"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|x| x["id"] == "claude")
-    );
+    let claude = agents["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|x| x["id"] == "claude")
+        .unwrap()
+        .clone();
+    assert_eq!(claude["active_protocol"], "anthropic");
 
     let alice = a.login("13800138000").await;
     let bob = a.login("13900139000").await;
@@ -265,6 +266,10 @@ async fn instances_keys_and_routes_are_per_user() {
         .await;
     assert_eq!(st, StatusCode::CREATED, "{cred}");
     assert_eq!(cred["last4"], "1234");
+    assert_eq!(
+        cred["protocols"],
+        json!(proto::vendors::vendor("anthropic").unwrap().protocols())
+    );
     assert!(
         !cred.to_string().contains("secret"),
         "the key never comes back"
@@ -329,6 +334,22 @@ async fn instances_keys_and_routes_are_per_user() {
         )
         .await;
     assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    // 自定义端点：配了哪几个地址就能用哪几种协议（地址本身不返回）。
+    let (st, custom) = a
+        .call(
+            Method::POST,
+            "/v1/credentials",
+            Some(&alice.access),
+            Some(json!({
+                "vendor": "custom",
+                "api_key": "sk-x-12345678",
+                "anthropic_base": "https://llm.example.com/anthropic"
+            })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{custom}");
+    assert_eq!(custom["protocols"], json!(["anthropic"]));
+    assert!(!custom.to_string().contains("llm.example.com"));
 
     // 预置厂商（9.12）：App 从这里选；不认识的厂商、订阅类 key、套餐专用地址都拒绝。
     let (st, vendors) = a.call(Method::GET, "/v1/vendors", None, None).await;
@@ -470,6 +491,24 @@ async fn runs_plans_and_approvals() {
         .await;
     assert_eq!(st, StatusCode::OK);
     assert_eq!(runs["runs"].as_array().unwrap().len(), 1);
+    // 跨实例的列表：全部、没结束的。
+    let count = |path: &'static str| {
+        let a = &a;
+        let tok = u.access.clone();
+        async move {
+            let (st, body) = a.call(Method::GET, path, Some(&tok), None).await;
+            assert_eq!(st, StatusCode::OK, "{body}");
+            body["runs"].as_array().unwrap().len()
+        }
+    };
+    assert_eq!(
+        (count("/v1/runs").await, count("/v1/runs?active=true").await),
+        (1, 1)
+    );
+    let (st, _) = a
+        .call(Method::GET, "/v1/runs?plan_id=nope", Some(&u.access), None)
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
     let (st, cancelled) = a
         .call(
             Method::POST,
@@ -481,6 +520,10 @@ async fn runs_plans_and_approvals() {
     assert_eq!(
         (st, cancelled["state"].as_str()),
         (StatusCode::OK, Some("cancelled"))
+    );
+    assert_eq!(
+        (count("/v1/runs").await, count("/v1/runs?active=true").await),
+        (1, 0)
     );
     let (st, body) = a
         .call(
@@ -538,6 +581,28 @@ async fn runs_plans_and_approvals() {
             .ends_with("T00:00:00Z")
     );
     let plan_id = plan["id"].as_str().unwrap().to_owned();
+    assert_eq!(plan["next_fire_at"], plan["triggers"][0]["next_fire_at"]);
+    // 列表里也有触发器、下次运行时间（之前列表里是空的）。
+    let listed = |tok: String| {
+        let a = &a;
+        let plan_id = plan_id.clone();
+        async move {
+            let (_, body) = a.call(Method::GET, "/v1/plans", Some(&tok), None).await;
+            body["plans"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|p| p["id"] == plan_id.as_str())
+                .unwrap()
+                .clone()
+        }
+    };
+    let row = listed(u.access.clone()).await;
+    assert_eq!(row["triggers"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        (row["next_fire_at"].clone(), row["invalid_triggers"].clone()),
+        (plan["triggers"][0]["next_fire_at"].clone(), json!(0))
+    );
     let (_, paused) = a
         .call(
             Method::POST,
@@ -547,6 +612,7 @@ async fn runs_plans_and_approvals() {
         )
         .await;
     assert_eq!(paused["paused"], true);
+    assert!(listed(u.access.clone()).await["next_fire_at"].is_null());
     let (_, resumed) = a
         .call(
             Method::POST,
@@ -556,6 +622,35 @@ async fn runs_plans_and_approvals() {
         )
         .await;
     assert_eq!(resumed["paused"], false);
+    assert!(listed(u.access.clone()).await["next_fire_at"].is_string());
+    // 规则后来解析不了了（时区没了）：恢复时停用它、说明原因，列表里提示有几个失效的。
+    sqlx::query(
+        "UPDATE triggers SET spec = '{\"kind\":\"cron\",\"expr\":\"0 8 * * *\",\"tz\":\"Mars/Base\"}' \
+         WHERE plan_id = $1::uuid",
+    )
+    .bind(&plan_id)
+    .execute(a.t.db.pool())
+    .await
+    .unwrap();
+    for action in ["pause", "resume"] {
+        a.call(
+            Method::POST,
+            &format!("/v1/plans/{plan_id}/{action}"),
+            Some(&u.access),
+            None,
+        )
+        .await;
+    }
+    let row = listed(u.access.clone()).await;
+    assert_eq!(
+        (
+            row["triggers"][0]["enabled"].clone(),
+            row["triggers"][0]["disabled_reason"].clone(),
+            row["invalid_triggers"].clone(),
+            row["next_fire_at"].clone()
+        ),
+        (json!(false), json!("invalid_rule"), json!(1), Value::Null)
+    );
     let (st, updated) = a
         .call(
             Method::PATCH,
@@ -1492,6 +1587,8 @@ async fn other_users_objects_are_invisible() {
         "/v1/teams",
         "/v1/team-templates",
         "/v1/inbox",
+        "/v1/runs",
+        "/v1/runs?active=true",
     ] {
         let (st, body) = a.call(Method::GET, path, t2, None).await;
         assert_eq!(st, StatusCode::OK, "{path}");

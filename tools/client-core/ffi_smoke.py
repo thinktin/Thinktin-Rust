@@ -12,12 +12,18 @@ class Store(cc.SessionStore):
     def load(self): return self.s
     def save(self, session): self.s = session; self.saves += 1
 
+class LogSink(cc.LogSink):
+    def __init__(self): self.records = []
+    def log(self, record): self.records.append(record)
+
 class L(cc.EventListener):
     def on_event(self, e): pass
     def on_reset(self, o, l): pass
     def on_status(self, s): print("status", s)
 
 async def main():
+    logs = LogSink()
+    assert cc.init_logging(logs, cc.LogLevel.DEBUG) is True
     # 记录类型上加的字段带默认值：App 里自己构造的地方（测试、预览）不用改。
     p = cc.PlanPolicy()
     assert (p.approval_timeout_secs, p.on_approval_timeout, p.max_duration_secs, p.preauthorized_tools) == \
@@ -38,6 +44,7 @@ async def main():
     c = cc.ThinktinClient(cfg, store)
     print("signed_in", c.signed_in())
     assert c.upgrade_required() is False
+    assert cc.RunFilter().active_only is False
     c.set_accept_language("en-US, en;q=0.9")
     assert cc.accept_language_header(["zh-Hans-CN", "en"]) == "zh-Hans-CN, en;q=0.9"
     print("cached", c.cached_instances(), c.cached_unread())
@@ -77,6 +84,7 @@ async def main():
     assert red == "我的 github 密码是 [vault:github]，帮我登录", red
     assert cc.detect_secrets(red) == []
     assert cc.unique_vault_name("GitHub", ["github"]) == "github_2"
+    assert any(r.target.startswith("client_core") for r in logs.records), [r.message for r in logs.records]
     print("ok")
 
 asyncio.run(main())

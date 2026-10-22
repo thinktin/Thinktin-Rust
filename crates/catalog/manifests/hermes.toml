@@ -6,6 +6,7 @@ name = "Hermes Agent"
 upstream = "https://github.com/NousResearch/hermes-agent"
 version = "0.19.0"
 license = "MIT"
+description = { zh-CN = "Nous Research 的 Hermes Agent，会积累技能和记忆的通用 agent。", en = "Hermes Agent from Nous Research, a general-purpose agent that builds up skills and memory." }
 sites = ["cn", "global"]
 
 [runtime]

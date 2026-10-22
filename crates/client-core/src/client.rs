@@ -129,6 +129,20 @@ impl Client {
         Ok(runs)
     }
 
+    /// 跨实例的运行（11.8），顺便更新缓存（每个实例的 `cached_runs` 也跟着新）。
+    pub async fn list_runs(
+        &self,
+        f: &crate::api::RunFilter,
+        before: Option<RunId>,
+        limit: u32,
+    ) -> Result<Vec<Run>> {
+        let runs = self.signed_out_clears(self.api.all_runs(f, before, limit).await)?;
+        if let Some(c) = &self.cache {
+            c.put_runs(&runs)?;
+        }
+        Ok(runs)
+    }
+
     pub fn cached_runs(&self, instance: InstanceId, limit: u32) -> Result<Vec<Run>> {
         match self.signed_in_cache() {
             Some(c) => c.runs(instance, limit),

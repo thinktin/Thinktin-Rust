@@ -37,6 +37,8 @@ thiserror.workspace = true
 tokio.workspace = true
 tokio-tungstenite = { version = "0.29.0", features = ["rustls-tls-webpki-roots"] }
 tracing.workspace = true
+# 日志交给 App（`logging.rs`）：只要 registry，不要 env-filter、ansi 这些（不用 workspace 里的那份）。
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["registry", "std"] }
 uniffi = { version = "0.32.2", features = ["tokio"] }
 url.workspace = true
 uuid.workspace = true
