@@ -213,6 +213,22 @@ pub struct AgentInfo {
     pub default_harness: String,
     /// 可以用的版本，当前版本在前：实例的版本不是第一个时可以提示升级。
     pub versions: Vec<String>,
+    /// 一句话介绍，按设备语言（`accept_language`）给；老的服务端为空。
+    #[uniffi(default = "")]
+    pub description: String,
+    /// 上游仓库（https）。
+    #[uniffi(default = "")]
+    pub upstream: String,
+    /// 许可说明（专有许可证必有），按设备语言给。
+    #[uniffi(default = None)]
+    pub license_note: Option<String>,
+    /// 能说的协议，按优先级：anthropic、chat、responses（和 `VendorInfo.protocols`、`Credential.protocols` 同一套名字）。
+    #[uniffi(default = [])]
+    pub protocols: Vec<String>,
+    /// 运行时实际用的协议：这个 agent 的实例配的每把 key（包括降级的）都要支持它，选 key 时按它过滤
+    /// （`Credential.protocols` 里要有它）。
+    #[uniffi(default = None)]
+    pub active_protocol: Option<String>,
 }
 
 impl From<api::AgentInfo> for AgentInfo {
@@ -226,6 +242,11 @@ impl From<api::AgentInfo> for AgentInfo {
             harnesses: a.harnesses,
             default_harness: a.default_harness,
             versions: a.versions,
+            description: a.description,
+            upstream: a.upstream,
+            license_note: a.license_note,
+            protocols: a.protocols,
+            active_protocol: a.active_protocol,
         }
     }
 }
@@ -803,6 +824,9 @@ pub struct Credential {
     pub daily_token_limit: Option<u64>,
     pub disabled: bool,
     pub created_at_ms: i64,
+    /// 能用哪些协议（anthropic、chat、responses）：选 key 时要包含 agent 的 `active_protocol`。
+    #[uniffi(default = [])]
+    pub protocols: Vec<String>,
 }
 
 impl From<d::Credential> for Credential {
@@ -815,6 +839,7 @@ impl From<d::Credential> for Credential {
             daily_token_limit: c.daily_token_limit,
             disabled: c.disabled,
             created_at_ms: ms(c.created_at),
+            protocols: c.protocols,
         }
     }
 }

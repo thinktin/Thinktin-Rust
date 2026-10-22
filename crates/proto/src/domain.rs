@@ -521,6 +521,10 @@ pub struct Credential {
     pub daily_token_limit: Option<u64>,
     pub disabled: bool,
     pub created_at: DateTime<Utc>,
+    /// 这把 key 能用哪些协议（anthropic、chat、responses）：预置厂商按厂商算，自定义端点按配了哪几个地址算。
+    /// 选 key 时按 agent 的 `active_protocol` 过滤。
+    #[serde(default)]
+    pub protocols: Vec<String>,
 }
 
 /// 保险箱条目（9.11）：账号和密码按用户 DEK 加密，接口从不返回密码。

@@ -32,8 +32,12 @@ pub struct AgentSection {
     pub version: String,
     /// SPDX 标识；非开源许可证写 `LicenseRef-...`，并在 `license_note` 说明。
     pub license: String,
+    /// 许可说明，给用户看（领养页上显示）。
     #[serde(default)]
-    pub license_note: Option<String>,
+    pub license_note: Option<Localized>,
+    /// 一句话介绍，给用户看。
+    #[serde(default)]
+    pub description: Option<Localized>,
     /// 只能在哪些站点上架（第 11 节）。
     pub sites: Vec<Site>,
 }
@@ -209,6 +213,66 @@ pub enum LlmProtocol {
     OpenaiResponses,
 }
 
+impl LlmProtocol {
+    /// 接口里的名字，和模型厂商的 `protocols`（`proto::vendors`）同一套：anthropic、chat、responses。
+    pub fn api_name(self) -> &'static str {
+        match self {
+            Self::AnthropicMessages => "anthropic",
+            Self::OpenaiCompletions => "chat",
+            Self::OpenaiResponses => "responses",
+        }
+    }
+}
+
+/// 给用户看的文字：一种写法（`"..."`），或者按语言分开写（`{ zh-CN = "...", en = "..." }`）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Localized {
+    Same(String),
+    PerLocale(BTreeMap<String, String>),
+}
+
+impl Localized {
+    /// 支持的语言，和 `proto::domain::Locale` 一致。
+    pub const LOCALES: [&'static str; 2] = ["zh-CN", "en"];
+
+    /// 这个语言的；没有就用中文，再没有就随便一个。
+    pub fn get(&self, locale: &str) -> &str {
+        match self {
+            Self::Same(s) => s,
+            Self::PerLocale(m) => m
+                .get(locale)
+                .or_else(|| m.get("zh-CN"))
+                .or_else(|| m.values().next())
+                .map_or("", String::as_str),
+        }
+    }
+
+    fn check(&self, what: &str, max: usize, problems: &mut Vec<String>) {
+        let values: Vec<&String> = match self {
+            Self::Same(s) => vec![s],
+            Self::PerLocale(m) => {
+                for k in m.keys() {
+                    if !Self::LOCALES.contains(&k.as_str()) {
+                        problems.push(format!("{what} 的语言 `{k}` 不认识（只有 zh-CN、en）"));
+                    }
+                }
+                if m.is_empty() {
+                    problems.push(format!("{what} 不能为空"));
+                }
+                m.values().collect()
+            }
+        };
+        for v in values {
+            if v.trim().is_empty() {
+                problems.push(format!("{what} 不能为空"));
+            } else if v.chars().count() > max {
+                problems.push(format!("{what} 最多 {max} 个字"));
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ConfigGenerator {
@@ -302,13 +366,23 @@ impl Manifest {
         self.harnesses.iter().find(|h| h.id == id)
     }
 
-    /// 选一个配置生成器能写、agent 也能说的协议。`preferred` 为空时按清单顺序取第一个。
+    /// agent 能说、配置生成器也能写的协议，按清单的优先级。
+    pub fn usable_protocols(&self) -> impl Iterator<Item = LlmProtocol> + '_ {
+        let supported = self.llm.config.supported_protocols();
+        self.llm
+            .protocols
+            .iter()
+            .copied()
+            .filter(move |p| supported.contains(p))
+    }
+
+    /// 选一个配置生成器能写、agent 也能说的协议。`preferred` 为空时按清单顺序取第一个（运行时用的就是它：
+    /// 实例配的每把 key 都要支持它，模型网关不在协议之间转换）。
     pub fn pick_protocol(&self, preferred: Option<LlmProtocol>) -> Option<LlmProtocol> {
-        let usable = |p: &LlmProtocol| self.llm.config.supported_protocols().contains(p);
         match preferred {
-            Some(p) if self.llm.protocols.contains(&p) && usable(&p) => Some(p),
+            Some(p) if self.usable_protocols().any(|u| u == p) => Some(p),
             Some(_) => None,
-            None => self.llm.protocols.iter().copied().find(usable),
+            None => self.usable_protocols().next(),
         }
     }
 
@@ -343,6 +417,16 @@ impl Manifest {
             "非开源许可证必须写 agent.license_note".into(),
         );
         check(!a.sites.is_empty(), "agent.sites 不能为空".into());
+        let mut texts = Vec::new();
+        if let Some(d) = &a.description {
+            d.check("agent.description", 300, &mut texts);
+        }
+        if let Some(n) = &a.license_note {
+            n.check("agent.license_note", 1000, &mut texts);
+        }
+        for t in texts {
+            check(false, t);
+        }
 
         let r = &self.runtime;
         check(
@@ -775,5 +859,43 @@ mod tests {
             "sites = [\"cn\"]\nlicense_note = \"上架前需法务确认\"",
         );
         assert!(Manifest::from_toml(&text).is_ok());
+    }
+
+    #[test]
+    fn user_facing_texts_are_per_locale() {
+        let with =
+            |line: &str| MINIMAL.replace("sites = [\"cn\"]", &format!("sites = [\"cn\"]\n{line}"));
+        let m =
+            Manifest::from_toml(&with(r#"description = { zh-CN = "演示", en = "Demo" }"#)).unwrap();
+        let d = m.agent.description.unwrap();
+        assert_eq!(
+            (d.get("zh-CN"), d.get("en"), d.get("ja")),
+            ("演示", "Demo", "演示")
+        );
+        let plain = Manifest::from_toml(&with(r#"description = "只有一种""#)).unwrap();
+        assert_eq!(plain.agent.description.unwrap().get("en"), "只有一种");
+        for bad in [
+            r#"description = { fr = "x" }"#,
+            r#"description = """#,
+            r#"description = { zh-CN = " " }"#,
+            r#"description = {}"#,
+        ] {
+            assert!(Manifest::from_toml(&with(bad)).is_err(), "{bad}");
+        }
+        let long = format!("description = \"{}\"", "长".repeat(301));
+        assert!(Manifest::from_toml(&with(&long)).is_err());
+    }
+
+    #[test]
+    fn protocol_api_names_match_vendor_names() {
+        assert_eq!(
+            [
+                LlmProtocol::AnthropicMessages,
+                LlmProtocol::OpenaiCompletions,
+                LlmProtocol::OpenaiResponses
+            ]
+            .map(LlmProtocol::api_name),
+            ["anthropic", "chat", "responses"]
+        );
     }
 }

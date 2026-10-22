@@ -8,6 +8,7 @@ name = "OpenClaw"
 upstream = "https://github.com/openclaw/openclaw"
 version = "2026.10.3"
 license = "MIT"
+description = { zh-CN = "OpenClaw 个人助理 agent；本平台关闭了它的技能市场。", en = "OpenClaw personal-assistant agent; its skills marketplace is turned off here." }
 sites = ["cn", "global"]
 
 [runtime]

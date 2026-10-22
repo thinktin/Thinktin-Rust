@@ -52,6 +52,29 @@ pub struct Vendor {
 /// 自定义端点（vLLM、OneAPI 等）：地址由凭证提供。
 pub const CUSTOM: &str = "custom";
 
+/// 模型协议的名字（接口里的）：Anthropic Messages、Chat Completions、Responses。顺序就是界面上显示的顺序。
+pub const PROTOCOLS: [&str; 3] = ["anthropic", "chat", "responses"];
+
+impl Vendor {
+    /// 这家厂商提供哪些协议（按 [`PROTOCOLS`] 的顺序）。
+    pub fn protocols(&self) -> Vec<&'static str> {
+        protocols_of(
+            self.anthropic_base.is_some(),
+            self.openai_base.is_some(),
+            self.responses_base.is_some(),
+        )
+    }
+}
+
+/// 配了哪几种接口地址就提供哪几种协议（自定义端点的 key 也按这个算）。
+pub fn protocols_of(anthropic: bool, chat: bool, responses: bool) -> Vec<&'static str> {
+    [anthropic, chat, responses]
+        .into_iter()
+        .zip(PROTOCOLS)
+        .filter_map(|(has, name)| has.then_some(name))
+        .collect()
+}
+
 const DEEPSEEK_NOTES: &str = "Anthropic 接口会把不认识的模型名静默映射成 deepseek-flash；\
 Chat Completions 默认开思考，带工具的请求必须回传之前每轮的 reasoning_content，否则 400；\
 Responses 无状态（不支持 previous_response_id、store）。用量在最后一个内容分片里，不需要 include_usage";

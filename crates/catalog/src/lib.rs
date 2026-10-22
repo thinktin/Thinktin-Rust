@@ -4,8 +4,8 @@ pub mod manifest;
 
 pub use manifest::{
     AgentSection, ConfigGenerator, Harness, HarnessKind, Heartbeat, InstallSection, LlmProtocol,
-    LlmSection, Manifest, ManifestError, PolicySection, RuntimeSection, SessionSupport, Sidecar,
-    Site,
+    LlmSection, Localized, Manifest, ManifestError, PolicySection, RuntimeSection, SessionSupport,
+    Sidecar, Site,
 };
 
 /// 内置清单，按接入优先级排列。
@@ -231,6 +231,48 @@ mod tests {
             );
         }
         assert!(builtin("nope").is_none());
+    }
+
+    /// 领养页上显示的：每个内置 agent 都有中英文的介绍；专有许可证的许可说明也是中英文的。
+    #[test]
+    fn builtin_texts_cover_every_locale() {
+        for id in builtin_ids() {
+            let m = builtin(id).unwrap();
+            let per_locale = |t: &Localized| match t {
+                Localized::PerLocale(map) => {
+                    Localized::LOCALES.iter().all(|l| map.contains_key(*l))
+                }
+                Localized::Same(_) => false,
+            };
+            assert!(
+                m.agent.description.as_ref().is_some_and(per_locale),
+                "{id}: description"
+            );
+            if let Some(n) = &m.agent.license_note {
+                assert!(per_locale(n), "{id}: license_note");
+            }
+            if m.agent.license.starts_with("LicenseRef-") {
+                assert!(m.agent.license_note.is_some(), "{id}");
+            }
+        }
+    }
+
+    /// 运行时用的协议（实例的 key 都要支持它）和能用的协议，每个内置 agent。
+    #[test]
+    fn usable_protocols_per_agent() {
+        let names = |id: &str| {
+            let m = builtin(id).unwrap();
+            let usable: Vec<&str> = m.usable_protocols().map(LlmProtocol::api_name).collect();
+            let active = m.pick_protocol(None).map(LlmProtocol::api_name);
+            assert_eq!(m.pick_protocol(None), m.usable_protocols().next());
+            (usable, active)
+        };
+        assert_eq!(names("claude"), (vec!["anthropic"], Some("anthropic")));
+        assert_eq!(names("codex"), (vec!["responses"], Some("responses")));
+        assert_eq!(names("hermes"), (vec!["chat", "anthropic"], Some("chat")));
+        for id in builtin_ids() {
+            assert!(names(id).1.is_some(), "{id}");
+        }
     }
 
     #[test]

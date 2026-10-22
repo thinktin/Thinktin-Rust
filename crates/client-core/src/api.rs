@@ -108,6 +108,16 @@ pub struct AgentInfo {
     /// 可以用的版本，当前版本在前。
     #[serde(default)]
     pub versions: Vec<String>,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub upstream: String,
+    #[serde(default)]
+    pub license_note: Option<String>,
+    #[serde(default)]
+    pub protocols: Vec<String>,
+    #[serde(default)]
+    pub active_protocol: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]

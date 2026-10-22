@@ -540,7 +540,12 @@ async fn ffi_client_round_trip() {
     assert!(r.new_user);
     assert!(c.signed_in());
     let agents = c.agents().await.unwrap();
-    assert!(agents.iter().any(|a| a.id == "claude"));
+    let claude = agents.iter().find(|a| a.id == "claude").unwrap();
+    assert_eq!(
+        (claude.protocols.clone(), claude.active_protocol.as_deref()),
+        (vec!["anthropic".to_string()], Some("anthropic"))
+    );
+    assert!(!claude.description.is_empty() && claude.upstream.starts_with("https://"));
     let inst = c.adopt("claude".into(), "助手".into(), None).await.unwrap();
     assert_eq!(c.instances().await.unwrap().len(), 1);
     assert_eq!(c.cached_instances().unwrap()[0].id, inst.id);

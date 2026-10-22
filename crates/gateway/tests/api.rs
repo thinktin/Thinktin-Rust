@@ -228,13 +228,14 @@ async fn login_refresh_logout_and_errors() {
 async fn instances_keys_and_routes_are_per_user() {
     let Some(a) = api().await else { return };
     let (_, agents) = a.call(Method::GET, "/v1/agents", None, None).await;
-    assert!(
-        agents["agents"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|x| x["id"] == "claude")
-    );
+    let claude = agents["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|x| x["id"] == "claude")
+        .unwrap()
+        .clone();
+    assert_eq!(claude["active_protocol"], "anthropic");
 
     let alice = a.login("13800138000").await;
     let bob = a.login("13900139000").await;
@@ -265,6 +266,10 @@ async fn instances_keys_and_routes_are_per_user() {
         .await;
     assert_eq!(st, StatusCode::CREATED, "{cred}");
     assert_eq!(cred["last4"], "1234");
+    assert_eq!(
+        cred["protocols"],
+        json!(proto::vendors::vendor("anthropic").unwrap().protocols())
+    );
     assert!(
         !cred.to_string().contains("secret"),
         "the key never comes back"
@@ -329,6 +334,22 @@ async fn instances_keys_and_routes_are_per_user() {
         )
         .await;
     assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    // 自定义端点：配了哪几个地址就能用哪几种协议（地址本身不返回）。
+    let (st, custom) = a
+        .call(
+            Method::POST,
+            "/v1/credentials",
+            Some(&alice.access),
+            Some(json!({
+                "vendor": "custom",
+                "api_key": "sk-x-12345678",
+                "anthropic_base": "https://llm.example.com/anthropic"
+            })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{custom}");
+    assert_eq!(custom["protocols"], json!(["anthropic"]));
+    assert!(!custom.to_string().contains("llm.example.com"));
 
     // 预置厂商（9.12）：App 从这里选；不认识的厂商、订阅类 key、套餐专用地址都拒绝。
     let (st, vendors) = a.call(Method::GET, "/v1/vendors", None, None).await;
