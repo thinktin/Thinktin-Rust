@@ -102,6 +102,9 @@ pub struct PushMessage {
     /// 是哪一种提醒（[`proto::domain::notice_subtype`]，运行在等什么时是 `wait_code`）：App 据此跳转、刷新。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subtype: Option<String>,
+    /// 应用图标的角标（10.7）：收件人收件箱的未读数，投递时才算（出箱里排着的不带）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub badge: Option<u32>,
 }
 
 impl PushMessage {

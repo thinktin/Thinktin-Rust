@@ -127,6 +127,9 @@ impl ApnsClient {
         if let Some(thread) = &message.thread_id {
             aps["thread-id"] = json!(thread);
         }
+        if let Some(badge) = message.badge {
+            aps["badge"] = json!(badge);
+        }
         if message.kind.waits_for_user() {
             aps["interruption-level"] = json!("time-sensitive");
         }
@@ -419,6 +422,7 @@ mod tests {
             ai_generated: false,
             locale: Default::default(),
             subtype: None,
+            badge: None,
         }
     }
 
@@ -488,6 +492,7 @@ mod tests {
     async fn vault_requests_and_plan_confirmations() {
         let (client, fake, _) = setup().await;
         let mut m = message(PushKind::VaultRequest);
+        m.badge = Some(3);
         m.target = PushTarget {
             run_id: Some("run-1".into()),
             vault_request_id: Some("vr-7".into()),
@@ -503,6 +508,7 @@ mod tests {
         let (_, headers, body) = &seen[0];
         assert_eq!(headers["apns-priority"], "10");
         assert_eq!(body["aps"]["category"], "VAULT_REQUEST");
+        assert_eq!(body["aps"]["badge"], 3);
         assert_eq!(body["aps"]["interruption-level"], "time-sensitive");
         assert_eq!(
             body["tt"],
@@ -510,6 +516,7 @@ mod tests {
         );
         let (_, headers, body) = &seen[1];
         assert_eq!(headers["apns-priority"], "5");
+        assert!(body["aps"].get("badge").is_none(), "no count, no badge key");
         assert_eq!(
             body["tt"],
             json!({"kind": "info", "subtype": "account_restored"})

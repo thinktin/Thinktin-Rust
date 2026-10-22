@@ -305,6 +305,7 @@ pub async fn test(
         ai_generated: false,
         locale,
         subtype: None,
+        badge: None,
     };
     t.enqueue_outbox(&orchestrator::outbox::im_item(id, &message, None))
         .await?;

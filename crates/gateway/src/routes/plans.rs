@@ -331,10 +331,18 @@ async fn reschedule(t: &mut store::Tx<store::Tenant>, id: PlanId) -> ApiResult<(
                     t.set_trigger_enabled(trig.id, true, sch.next_after(now))
                         .await?
                 }
-                // 规则解析不了了（时区没了之类）：停用，说明原因，用户删掉重新加。
+                // 规则解析不了了（时区没了之类）：停用，说明原因，通知用户删掉重新加。
                 Err(_) => {
-                    t.disable_trigger(trig.id, proto::domain::TRIGGER_INVALID_RULE)
-                        .await?;
+                    if t.disable_trigger(trig.id, proto::domain::TRIGGER_INVALID_RULE)
+                        .await?
+                    {
+                        let plan = t.plan(id).await?;
+                        let locale = t.user_locale(t.user()).await?;
+                        let notice = orchestrator::scheduler::trigger_disabled_notice(
+                            locale, &plan, trig.id,
+                        );
+                        orchestrator::outbox::notify_tenant(t, &notice).await?;
+                    }
                 }
             }
         }

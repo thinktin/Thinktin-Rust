@@ -200,6 +200,19 @@ async fn one_shot_and_broken_triggers() {
     );
     // 同一个原因再停用一次：什么都不变（只通知一次）。
     assert!(!tx.disable_trigger(bad.id, "invalid_rule").await.unwrap());
+    // 告诉了用户是哪个计划（10.7）。
+    let notices: Vec<_> = tx
+        .inbox(None, 10, false)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|i| i.subtype.as_deref() == Some("trigger_disabled"))
+        .collect();
+    assert_eq!(notices.len(), 1);
+    assert_eq!(
+        (notices[0].kind.as_str(), notices[0].plan_id),
+        ("info", Some(broken))
+    );
     tx.rollback().await.unwrap();
     // 之后不再触发。
     let report = s.tick(when + Duration::days(2)).await.unwrap();

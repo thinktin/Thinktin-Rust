@@ -7,7 +7,7 @@ use proto::domain::{
 };
 use uuid::Uuid;
 
-use crate::{Error, Result, Tenant, Tx};
+use crate::{Error, Result, Tenant, Tx, Worker};
 
 #[derive(Debug, Clone, Default)]
 pub struct NewInboxItem {
@@ -142,6 +142,19 @@ impl<R> Tx<R> {
         .execute(self.conn())
         .await?;
         Ok(done.rows_affected())
+    }
+}
+
+impl Tx<Worker> {
+    /// 用户收件箱里没读的条数（推送的角标，10.7）。
+    pub async fn unread_inbox_count(&mut self, user: UserId) -> Result<u32> {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM inbox_items WHERE user_id = $1 AND read_at IS NULL",
+        )
+        .bind(user.0)
+        .fetch_one(self.conn())
+        .await?;
+        Ok(u32::try_from(n).unwrap_or(u32::MAX))
     }
 }
 

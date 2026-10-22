@@ -265,6 +265,10 @@ impl FcmClient {
             .as_secs()
             .clamp(60, MAX_TTL_SECS);
         let mut notification = json!({ "channel_id": channel });
+        // 支持角标的桌面把它显示成应用图标上的数字（收件箱的未读数）。
+        if let Some(badge) = message.badge {
+            notification["notification_count"] = json!(badge);
+        }
         let mut android = json!({
             "priority": if urgent { "HIGH" } else { "NORMAL" },
             "ttl": format!("{ttl}s"),

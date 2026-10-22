@@ -351,6 +351,7 @@ mod tests {
             ai_generated: false,
             locale: Default::default(),
             subtype: None,
+            badge: None,
         }
     }
 

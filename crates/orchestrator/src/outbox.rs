@@ -184,6 +184,7 @@ impl Notice {
             ai_generated: self.ai_generated,
             locale,
             subtype: self.subtype.clone(),
+            badge: None,
         }
     }
 }
@@ -535,6 +536,8 @@ impl Dispatcher {
         }
         let mut w = self.db.worker().await?;
         let targets = w.push_targets(item.user_id).await?;
+        // 角标是发的时候的未读数：排队期间用户读了的不算。
+        message.badge = Some(w.unread_inbox_count(item.user_id).await?);
         w.rollback().await?;
         let mut delivered = 0;
         let mut retry: Option<(String, Duration)> = None;

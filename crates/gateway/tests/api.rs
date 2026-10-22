@@ -651,6 +651,17 @@ async fn runs_plans_and_approvals() {
         ),
         (json!(false), json!("invalid_rule"), json!(1), Value::Null)
     );
+    // 也告诉了用户（10.7）：哪个计划、是哪一种提醒。
+    let (_, inbox) = a
+        .call(Method::GET, "/v1/inbox", Some(&u.access), None)
+        .await;
+    let notice = inbox["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["subtype"] == "trigger_disabled")
+        .expect("trigger disabled notice");
+    assert_eq!(notice["plan_id"], json!(plan_id));
     let (st, updated) = a
         .call(
             Method::PATCH,

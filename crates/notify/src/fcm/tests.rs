@@ -203,6 +203,7 @@ fn message(kind: PushKind) -> PushMessage {
         ai_generated: false,
         locale: proto::domain::Locale::En,
         subtype: None,
+        badge: None,
     }
 }
 
@@ -253,7 +254,9 @@ async fn notifications_go_out_with_ids_only_and_one_access_token() {
     let mut m = message(PushKind::VaultRequest);
     m.target.vault_request_id = Some("vr-7".into());
     m.subtype = Some("x_y".into());
+    m.badge = Some(4);
     let p = client.payload(&device("ok"), &m)["message"].clone();
+    assert_eq!(p["android"]["notification"]["notification_count"], 4);
     assert_eq!(
         (
             &p["data"]["tt_kind"],

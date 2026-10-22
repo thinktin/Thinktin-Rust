@@ -271,6 +271,7 @@ async fn delivered_messages_carry_the_brand_label_and_approval_hint() {
             ai_generated: true,
             locale: Locale::En,
             subtype: None,
+            badge: None,
         },
         None,
     ))
