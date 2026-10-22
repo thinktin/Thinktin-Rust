@@ -2374,6 +2374,72 @@ async fn instance_limit_over_http() {
     a.adopt(&other).await;
 }
 
+/// 团队模板整个在一个事务里领养（11.9）：同时领养两次、只放得下一个团队的，一个成、一个 409 `instance_limit`，
+/// 不留下不在团队里的实例；团队名不合法的一个也不领养。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn team_adoption_is_all_or_nothing() {
+    let Some(a) = api_with(GatewayConfig {
+        limits: gateway::LimitConfig {
+            instances_per_user: 4,
+            ..gateway::LimitConfig::default()
+        },
+        ..GatewayConfig::default()
+    })
+    .await
+    else {
+        return;
+    };
+    for round in 0..5 {
+        let u = a.login(&format!("1380013807{round}")).await;
+        let tok = Some(u.access.as_str());
+        let (st, tpl) = a
+            .call(
+                Method::POST,
+                "/v1/team-templates",
+                tok,
+                Some(json!({ "name": "三个人", "spec": { "members": [
+                    { "agent_id": "claude", "name": "主编", "role": "lead" },
+                    { "agent_id": "claude", "name": "写手" },
+                    { "agent_id": "claude", "name": "校对" },
+                ] } })),
+            )
+            .await;
+        assert_eq!(st, StatusCode::CREATED, "{tpl}");
+        let path = format!("/v1/team-templates/{}/adopt", tpl["id"].as_str().unwrap());
+        if round == 0 {
+            let (st, body) = a
+                .call(
+                    Method::POST,
+                    &path,
+                    tok,
+                    Some(json!({ "name": "长".repeat(65) })),
+                )
+                .await;
+            assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+            let (_, list) = a.call(Method::GET, "/v1/instances", tok, None).await;
+            assert_eq!(list["instances"].as_array().unwrap().len(), 0, "{list}");
+        }
+        let ((s1, b1), (s2, b2)) = tokio::join!(
+            a.call(Method::POST, &path, tok, Some(json!({}))),
+            a.call(Method::POST, &path, tok, Some(json!({}))),
+        );
+        let mut got = [(s1, b1["code"].clone()), (s2, b2["code"].clone())];
+        got.sort_by_key(|(st, _)| st.as_u16());
+        assert_eq!(
+            got,
+            [
+                (StatusCode::CREATED, Value::Null),
+                (StatusCode::CONFLICT, json!("instance_limit")),
+            ],
+            "{b1} {b2}"
+        );
+        let (_, list) = a.call(Method::GET, "/v1/instances", tok, None).await;
+        assert_eq!(list["instances"].as_array().unwrap().len(), 3, "{list}");
+        let (_, teams) = a.call(Method::GET, "/v1/teams", tok, None).await;
+        assert_eq!(teams["teams"].as_array().unwrap().len(), 1, "{teams}");
+    }
+}
+
 #[tokio::test]
 async fn rate_limits_and_signup_cap() {
     let Some(a) = api_with(GatewayConfig {
