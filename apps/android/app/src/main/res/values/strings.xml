@@ -596,7 +596,6 @@
     <string name="approval_detail_expires">到期时间</string>
     <string name="approval_detail_decided">处理时间</string>
     <string name="chat_menu_run_tree">运行树</string>
-    <string name="chat_title_a11y">%1$s，%2$s。打开实例设置</string>
     <string name="chat_status_connecting">正在连接实时更新…</string>
     <string name="chat_status_reconnecting">连接断开，正在重连…</string>
     <string name="chat_status_stopped">实时更新已断开</string>
@@ -642,7 +641,9 @@
     <string name="chat_child_delegate">委派给 %1$s</string>
     <string name="chat_child_open">查看运行</string>
     <string name="chat_state_attempt">第 %1$d 次尝试</string>
-    <string name="chat_state_steps">开始 %1$d 个步骤</string>
+    <plurals name="chat_state_steps">
+        <item quantity="other">开始 %1$d 个步骤</item>
+    </plurals>
     <string name="chat_state_reason">原因：%1$s</string>
     <string name="chat_plan_needs_confirmation">agent 新建了计划，等你确认</string>
     <string name="chat_plan_updated">agent 修改了计划，等你确认</string>
@@ -672,7 +673,9 @@
     <string name="chat_secret_title">对话里不收明文密码</string>
     <string name="chat_secret_message">消息里有像密码的内容。存进保险箱后，消息里会换成 [vault:名字]，agent 要用时再取。</string>
     <string name="chat_secret_found">发现：%1$s</string>
-    <string name="chat_secret_remaining">这条消息里还有 %1$d 处，存完这一处再处理</string>
+    <plurals name="chat_secret_remaining">
+        <item quantity="other">这条消息里还有 %1$d 处，存完这一处再处理</item>
+    </plurals>
     <string name="chat_secret_name">名字</string>
     <string name="chat_secret_name_hint">agent 用 [vault:%1$s] 引用它；只给这个 agent 用</string>
     <string name="chat_secret_purpose">用途（可选）</string>
@@ -687,7 +690,9 @@
     <string name="chat_secret_name_taken">“%1$s”已经有了，换了一个名字</string>
     <string name="chat_secret_saved">已存进保险箱：%1$s。消息里已换成引用</string>
     <string name="chat_send_anyway_title">仍然发送？</string>
-    <string name="chat_send_anyway_text">消息里有 %1$d 处像密码的内容。发出去以后 agent 会看到（服务端会尽量换成保险箱里已有的引用）。</string>
+    <plurals name="chat_send_anyway_text">
+        <item quantity="other">消息里有 %1$d 处像密码的内容。发出去以后 agent 会看到（服务端会尽量换成保险箱里已有的引用）。</item>
+    </plurals>
     <string name="chat_private_key_title">不要发送私钥</string>
     <string name="chat_private_key_text">消息里有私钥。私钥存不进保险箱，也不能发给 agent，请删掉后再发。</string>
     <string name="chat_vault_request_title">agent 需要账号密码：%1$s</string>
@@ -706,7 +711,6 @@
     <string name="chat_vault_fulfilled">已填写：%1$s</string>
     <string name="chat_vault_declined">已拒绝填写请求</string>
     <string name="chat_vault_already_handled">这个请求已经处理过了</string>
-    <string name="run_detail_status">状态</string>
     <string name="run_detail_source">来源</string>
     <string name="run_detail_instance">实例</string>
     <string name="run_detail_attempt">尝试次数</string>
@@ -726,7 +730,6 @@
     <string name="run_tree_stop_confirm_text">这棵树里还没结束的运行都会停止。</string>
     <string name="run_tree_stopped">已停止</string>
     <string name="run_tree_child_waiting">“%1$s”%2$s</string>
-    <string name="run_tree_node_a11y">%1$s，%2$s</string>
     <string name="run_tree_current">当前</string>
     <string name="run_not_found_title">找不到这个运行</string>
     <string name="run_not_found_message">它可能已经被删除了。</string>

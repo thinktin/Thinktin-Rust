@@ -36,6 +36,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -43,6 +44,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
@@ -192,13 +194,15 @@ fun AgentTextRow(item: TimelineItem.AgentText, streaming: Boolean, onCopied: () 
         clipboard.setText(AnnotatedString(withLabel(item.text, suffix)))
         onCopied()
     }
+    // 流式输出时文字一直在变：手势里取最新的。
+    val latestCopy by rememberUpdatedState(copy)
     // 长按复制；读屏用自定义操作“复制”。不用 combinedClickable：它会把整段（含代码块、链接）合成一个节点，
     // 还多出一个什么也不做的“点按”。
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .testTag(CHAT_AGENT_TEXT_TEST_TAG)
-            .pointerInput(item.key, suffix) { detectTapGestures(onLongPress = { copy() }) }
+            .pointerInput(item.key) { detectTapGestures(onLongPress = { latestCopy() }) }
             .semantics {
                 customActions = listOf(
                     CustomAccessibilityAction(copyLabel) {
@@ -528,7 +532,7 @@ fun RunStateRow(item: TimelineItem.RunStateLine) {
         if (item.newAttempt) append(stringResource(R.string.chat_state_attempt, item.attempt)).append(" · ")
         append(label)
         if (item.state == RunState.WaitingChildren && item.steps != null) {
-            append(" · ").append(stringResource(R.string.chat_state_steps, item.steps!!))
+            append(" · ").append(pluralStringResource(R.plurals.chat_state_steps, item.steps!!, item.steps!!))
         }
         val wait = WaitText.of(item.waitCode)?.asString()
         if (wait != null) append(" · ").append(wait)

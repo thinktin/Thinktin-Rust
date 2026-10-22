@@ -57,6 +57,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -368,7 +369,7 @@ fun ChatScreen(instanceId: String, focusRunId: String?, navigation: ChatNavigati
         null -> Unit
         is ChatDialog.SendAnyway -> ConfirmDialog(
             title = stringResource(R.string.chat_send_anyway_title),
-            text = stringResource(R.string.chat_send_anyway_text, dialog.count),
+            text = pluralStringResource(R.plurals.chat_send_anyway_text, dialog.count, dialog.count),
             confirm = stringResource(R.string.chat_secret_send_anyway),
             onConfirm = viewModel::confirmSendAnyway,
             onDismiss = viewModel::dismissDialog,
