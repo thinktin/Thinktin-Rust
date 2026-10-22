@@ -33,11 +33,13 @@ object TokenFormat {
     /** 千分位（12,345）。 */
     fun grouped(value: Long): String = String.format(Locale.US, "%,d", value)
 
-    /** 选单位：一万以下不用单位。 */
+    /**
+     * 选单位：一万以下不用单位。按四舍五入之后的数选：999,999 取整是 1,000k，要进到 1M（9,999.9999 万进到 1 亿）。
+     */
     fun unitOf(value: Long, style: Style): Unit? {
         val v = if (value < 0) -value else value
         if (v < 10_000) return null
-        return when (style) {
+        val unit = when (style) {
             Style.Cjk -> if (v < 100_000_000) Unit.TenThousand else Unit.HundredMillion
             Style.Western -> when {
                 v < 1_000_000 -> Unit.Thousand
@@ -45,6 +47,13 @@ object TokenFormat {
                 else -> Unit.Billion
             }
         }
+        val next = when (unit) {
+            Unit.TenThousand -> Unit.HundredMillion
+            Unit.Thousand -> Unit.Million
+            Unit.Million -> Unit.Billion
+            Unit.HundredMillion, Unit.Billion -> null
+        }
+        return if (next != null && rounded(v, unit.divisor) >= BigDecimal.valueOf(next.divisor / unit.divisor)) next else unit
     }
 
     /**
@@ -58,10 +67,14 @@ object TokenFormat {
 
     /** value / unit：小于 100 时留一位小数（去掉末尾的 .0），否则取整；四舍五入。 */
     fun scaled(value: Long, unit: Long): String {
+        val rounded = rounded(value, unit).stripTrailingZeros()
+        return if (rounded.scale() <= 0) grouped(rounded.toBigInteger().toLong()) else rounded.toPlainString()
+    }
+
+    private fun rounded(value: Long, unit: Long): BigDecimal {
         val exact = BigDecimal.valueOf(value).divide(BigDecimal.valueOf(unit))
         val digits = if (exact < BigDecimal.valueOf(100)) 1 else 0
-        val rounded = exact.setScale(digits, RoundingMode.HALF_UP).stripTrailingZeros()
-        return if (rounded.scale() <= 0) grouped(rounded.toBigInteger().toLong()) else rounded.toPlainString()
+        return exact.setScale(digits, RoundingMode.HALF_UP)
     }
 
     fun styleOf(wire: String): Style = if (wire == "western") Style.Western else Style.Cjk

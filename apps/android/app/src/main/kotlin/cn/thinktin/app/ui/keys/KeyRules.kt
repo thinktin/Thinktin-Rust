@@ -100,8 +100,15 @@ object KeyRules {
 
     // ---- 其他字段 ----
 
+    /** 字数按 Unicode 码点算（服务端 check_len 用 chars().count()）：emoji、扩展区汉字算一个。 */
+    fun length(text: String): Int = text.codePointCount(0, text.length)
+
+    /** 按码点截到 [max] 个字（不会把代理对截一半）。 */
+    fun clip(text: String, max: Int): String =
+        if (length(text) <= max) text else text.substring(0, text.offsetByCodePoints(0, max))
+
     fun checkLabel(label: String): UiText? =
-        if (label.length > MAX_LABEL_LENGTH) UiText(R.string.key_error_label_long, listOf(MAX_LABEL_LENGTH)) else null
+        if (length(label) > MAX_LABEL_LENGTH) UiText(R.string.key_error_label_long, listOf(MAX_LABEL_LENGTH)) else null
 
     /** 每日 token 限额：空表示不限；否则正整数（可以带千分位逗号和空格）。 */
     sealed interface DailyLimit {
@@ -252,7 +259,7 @@ object KeyRules {
 
     fun checkModel(model: String): UiText? = when {
         model.isEmpty() -> UiText(R.string.routes_error_model_empty)
-        model.length > MAX_MODEL_LENGTH -> UiText(R.string.routes_error_model_long, listOf(MAX_MODEL_LENGTH))
+        length(model) > MAX_MODEL_LENGTH -> UiText(R.string.routes_error_model_long, listOf(MAX_MODEL_LENGTH))
         else -> null
     }
 

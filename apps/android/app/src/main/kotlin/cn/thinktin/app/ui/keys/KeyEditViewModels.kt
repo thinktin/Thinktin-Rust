@@ -51,8 +51,10 @@ data class KeyEditUiState(
     val disabled: Boolean = false,
     val labelError: UiText? = null,
     val saving: Boolean = false,
+    /** 已经发出 Saved（等页面退出）：不再保存，免得退出动画期间再点一次多弹一层返回栈。 */
+    val finished: Boolean = false,
 ) {
-    val editable: Boolean get() = credential != null && !saving
+    val editable: Boolean get() = credential != null && !saving && !finished
 }
 
 /**
@@ -110,7 +112,7 @@ class KeyEditViewModel(
     fun save() {
         val s = state.value
         val credential = s.credential ?: return
-        if (s.saving) return
+        if (s.saving || s.finished) return
         val label = s.label.trim()
         KeyRules.checkLabel(label)?.let { error ->
             state.value = s.copy(labelError = error)
@@ -121,6 +123,7 @@ class KeyEditViewModel(
             disabled = s.disabled.takeIf { it != credential.disabled },
         )
         if (update.label == null && update.disabled == null) {
+            state.value = s.copy(finished = true)
             eventChannel.trySend(KeyFormEvent.Saved(credential))
             return
         }
@@ -128,7 +131,13 @@ class KeyEditViewModel(
         viewModelScope.launch {
             try {
                 val updated = service.updateCredential(credentialId, update)
-                state.value = state.value.copy(saving = false, credential = updated, label = updated.label, disabled = updated.disabled)
+                state.value = state.value.copy(
+                    saving = false,
+                    finished = true,
+                    credential = updated,
+                    label = updated.label,
+                    disabled = updated.disabled,
+                )
                 eventChannel.send(KeyFormEvent.Saved(updated))
             } catch (e: ServiceError) {
                 state.value = state.value.copy(saving = false)
@@ -150,6 +159,8 @@ data class KeySecretUiState(
     val loadError: UiText? = null,
     val key: KeyInput = KeyInput(),
     val saving: Boolean = false,
+    /** 已经换好（等页面退出）：不再保存。 */
+    val finished: Boolean = false,
 )
 
 /**
@@ -238,7 +249,7 @@ class KeySecretViewModel(
     fun save() {
         val s = state.value
         val credential = s.credential ?: return
-        if (s.saving) return
+        if (s.saving || s.finished) return
         val key = s.key.value.trim()
         KeyRules.checkKey(credential.vendor, key)?.let { error ->
             state.value = s.copy(key = s.key.copy(error = error))
@@ -248,7 +259,7 @@ class KeySecretViewModel(
         viewModelScope.launch {
             try {
                 val updated = service.replaceCredentialSecret(credentialId, key)
-                state.value = state.value.copy(saving = false, credential = updated, key = KeyInput())
+                state.value = state.value.copy(saving = false, finished = true, credential = updated, key = KeyInput())
                 eventChannel.send(KeyFormEvent.Saved(updated))
             } catch (e: ServiceError) {
                 state.value = state.value.copy(saving = false)

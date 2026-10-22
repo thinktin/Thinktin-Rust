@@ -17,7 +17,10 @@ import cn.thinktin.app.ui.instance.InstanceSettingsEvent
 import cn.thinktin.app.ui.instance.InstanceSettingsViewModel
 import cn.thinktin.data.mock.MockThinktinService
 import cn.thinktin.data.model.AgentInfo
+import cn.thinktin.data.model.Credential
+import cn.thinktin.data.model.CredentialUpdate
 import cn.thinktin.data.model.Instance
+import cn.thinktin.data.model.ModelRoute
 import cn.thinktin.data.model.NewPlan
 import cn.thinktin.data.model.Plan
 import cn.thinktin.data.model.PlanStep
@@ -115,6 +118,19 @@ private class CatalogService(
         deleted += instanceId
         maybeFail("deleteInstance")
         mock.deleteInstance(instanceId)
+    }
+
+    override suspend fun credentials(): List<Credential> {
+        maybeFail("credentials")
+        return mock.credentials()
+    }
+
+    val routeSets = mutableListOf<Pair<String, List<ModelRoute>>>()
+
+    override suspend fun setModelRoutes(instanceId: String, routes: List<ModelRoute>) {
+        routeSets += instanceId to routes
+        maybeFail("setModelRoutes")
+        mock.setModelRoutes(instanceId, routes)
     }
 }
 
@@ -274,10 +290,128 @@ class AgentViewModelTest {
             val event = awaitItem() as AgentDetailEvent.Adopted
             assertEquals("我的码农", event.instance.name)
             assertEquals("codex", event.instance.harness)
+            assertFalse("key 列表还没到就提交：当作跳过", event.routesConfigured)
         }
         assertEquals(listOf(Triple("agent-coder", "我的码农", "codex")), service.adoptions)
         assertNull("成功后收起表单", vm.uiState.value.adopt)
         assertTrue(service.mock.instances().any { it.name == "我的码农" })
+    }
+
+    @Test
+    fun adoptWithKeyConfiguresMainAlias() = test {
+        val service = CatalogService()
+        val vm = detail(service)
+        advanceUntilIdle()
+        vm.openAdopt("代码助手 的实例")
+        assertTrue(vm.uiState.value.keys.loading)
+        advanceUntilIdle()
+        // 代码助手用 Anthropic Messages：两把 key 都支持；默认选第一把，预填厂商推荐的第一个模型
+        assertEquals(listOf("cred-work", "cred-home"), vm.uiState.value.keys.usable.map { it.id })
+        var form = vm.uiState.value.adopt!!
+        assertEquals("cred-work", form.credentialId)
+        assertEquals("claude-sonnet-4", form.model)
+
+        // 换 key：模型没改过就换成新厂商推荐的；改过就保留
+        vm.onKeyChange("cred-home")
+        assertEquals("deepseek-chat", vm.uiState.value.adopt!!.model)
+        vm.onModelChange("deepseek-reasoner")
+        vm.onKeyChange("cred-work")
+        assertEquals("deepseek-reasoner", vm.uiState.value.adopt!!.model)
+        vm.onKeyChange("cred-nope")
+        assertEquals("不在可选列表里的 key 不收", "cred-work", vm.uiState.value.adopt!!.credentialId)
+
+        // 模型名本地校验
+        vm.onModelChange("  ")
+        vm.adopt()
+        assertEquals(UiText(R.string.routes_error_model_empty), vm.uiState.value.adopt!!.modelError)
+        advanceUntilIdle()
+        assertTrue(service.adoptions.isEmpty())
+
+        vm.onModelChange(" claude-opus-4 ")
+        form = vm.uiState.value.adopt!!
+        assertNull(form.modelError)
+        vm.events.test {
+            vm.adopt()
+            val event = awaitItem() as AgentDetailEvent.Adopted
+            assertTrue(event.routesConfigured)
+            assertEquals(
+                listOf(ModelRoute("main", "cred-work", "claude-opus-4", emptyList())),
+                service.mock.modelRoutes(event.instance.id),
+            )
+        }
+        assertNull(vm.uiState.value.adopt)
+    }
+
+    @Test
+    fun adoptSkippingModelOpensRoutes() = test {
+        val service = CatalogService()
+        val vm = detail(service)
+        advanceUntilIdle()
+        vm.openAdopt("代码助手 的实例")
+        advanceUntilIdle()
+        vm.onKeyChange(null)
+        assertNull(vm.uiState.value.adopt!!.credentialId)
+        vm.events.test {
+            vm.adopt()
+            val event = awaitItem() as AgentDetailEvent.Adopted
+            assertFalse(event.routesConfigured)
+            assertTrue(service.mock.modelRoutes(event.instance.id).isEmpty())
+        }
+        assertTrue("跳过不调 setModelRoutes", service.routeSets.isEmpty())
+    }
+
+    @Test
+    fun adoptKeyListFiltersByProtocolAndHandlesNoKeys() = test {
+        val service = CatalogService()
+        service.mock.updateCredential("cred-work", CredentialUpdate(disabled = true))
+        val vm = detail(service, "agent-research")
+        advanceUntilIdle()
+        vm.openAdopt("调研助手 的实例")
+        advanceUntilIdle()
+        assertEquals("停用的 key 不能选", listOf("cred-home"), vm.uiState.value.keys.usable.map { it.id })
+        assertEquals("cred-home", vm.uiState.value.adopt!!.credentialId)
+        vm.closeAdopt()
+
+        // 没有能用的 key：只能跳过
+        service.mock.updateCredential("cred-home", CredentialUpdate(disabled = true))
+        val none = detail(service, "agent-research")
+        advanceUntilIdle()
+        none.openAdopt("调研助手 的实例")
+        advanceUntilIdle()
+        assertTrue(none.uiState.value.keys.usable.isEmpty())
+        assertNull(none.uiState.value.adopt!!.credentialId)
+        none.events.test {
+            none.adopt()
+            assertFalse((awaitItem() as AgentDetailEvent.Adopted).routesConfigured)
+        }
+
+        // key 列表加载失败：也当作跳过，下次打开表单重新取
+        val failing = detail(service, "agent-research")
+        advanceUntilIdle()
+        service.fail("credentials", ServiceError.Network("offline"))
+        failing.openAdopt("调研助手 的实例")
+        advanceUntilIdle()
+        assertTrue(failing.uiState.value.keys.failed)
+        assertNull(failing.uiState.value.adopt!!.credentialId)
+        assertTrue(service.routeSets.isEmpty())
+    }
+
+    @Test
+    fun adoptStillSucceedsWhenRoutesFail() = test {
+        val service = CatalogService()
+        val vm = detail(service)
+        advanceUntilIdle()
+        vm.openAdopt("代码助手 的实例")
+        advanceUntilIdle()
+        service.fail("setModelRoutes", ServiceError.Network("offline"))
+        vm.events.test {
+            vm.adopt()
+            val event = awaitItem() as AgentDetailEvent.Adopted
+            assertFalse("配 main 失败：照样算领养成功，界面打开模型别名页", event.routesConfigured)
+            assertTrue(service.mock.instances().any { it.id == event.instance.id })
+        }
+        assertEquals(1, service.routeSets.size)
+        assertNull(vm.uiState.value.adopt)
     }
 
     @Test
@@ -329,6 +463,7 @@ class AgentViewModelTest {
         advanceUntilIdle()
         vm.openAdopt("代码助手 的实例")
 
+        // 409 conflict 和 instance_limit 服务端目前不返回（名字没有唯一约束、没有数量上限），这两条是防将来加上的分支。
         service.fail("adopt", api(409, "conflict", "instance already exists"))
         vm.adopt()
         advanceUntilIdle()
@@ -552,9 +687,9 @@ class AgentViewModelTest {
             assertEquals(InstanceSettingsEvent.Deleted, awaitItem())
         }
         assertEquals(listOf("inst-coder"), service.deleted)
-        // 服务端（Mock 同样）级联：流水线里引用它的步骤、团队里的它都没了
+        // 服务端（Mock 同样）只是软删除：流水线步骤还在（之后运行会失败），团队读取时看不到它
         val pipeline = service.mock.plans().first { it.title == "周报流水线" }
-        assertEquals(listOf("collect"), pipeline.steps.map { it.key })
+        assertEquals(listOf("collect", "code"), pipeline.steps.map { it.key })
         assertTrue(service.mock.teams().none { team -> team.members.any { it.instanceId == "inst-coder" } })
     }
 
@@ -615,6 +750,7 @@ class AgentViewModelTest {
         assertEquals(UiText(R.string.instance_name_required), vm.uiState.value.error)
 
         vm.onNameChange("码农")
+        // 服务端改名目前不返回 409（防御分支）
         service.fail("renameInstance", api(409, "conflict"))
         vm.save()
         advanceUntilIdle()
@@ -626,6 +762,11 @@ class AgentViewModelTest {
             vm.save()
             val saved = awaitItem() as InstanceNameEvent.Saved
             assertEquals("码农", saved.instance?.name)
+            // 保存成功后再点（退出动画期间）：不再发 Saved
+            assertFalse(vm.uiState.value.editable)
+            vm.save()
+            advanceUntilIdle()
+            expectNoEvents()
         }
         assertEquals("码农", service.mock.instance("inst-coder").name)
     }
@@ -639,6 +780,8 @@ class AgentViewModelTest {
             vm.onNameChange(" 小码 ")
             vm.save()
             assertEquals(InstanceNameEvent.Saved(null), awaitItem())
+            vm.save()
+            expectNoEvents()
         }
     }
 
@@ -648,13 +791,14 @@ class AgentViewModelTest {
     fun homeWithoutInstancesShowsFeaturedAgents() = test {
         val service = CatalogService()
         service.mock.instances().forEach { service.mock.deleteInstance(it.id) }
+        val base = service.mock.agents().first()
+        // 目录比精选多：只取前 3 个，顺序不变
+        service.agentsOverride = (1..5).map { base.copy(id = "agent-$it", name = "Agent $it") }
         val vm = HomeViewModel(service, DemoTestApp.FIXED_CLOCK)
         advanceUntilIdle()
         assertTrue(vm.uiState.value.instances.isEmpty())
-        assertEquals(
-            listOf("agent-coder", "agent-research", "agent-writer"),
-            vm.uiState.value.featured.map { it.id },
-        )
+        assertEquals(listOf("agent-1", "agent-2", "agent-3"), vm.uiState.value.featured.map { it.id })
+        service.agentsOverride = null
 
         // 领养后回到首页：重新加载，精选收起
         service.mock.adopt("agent-coder", "新的", null)
@@ -663,6 +807,20 @@ class AgentViewModelTest {
         advanceUntilIdle()
         assertEquals(listOf("新的"), vm.uiState.value.instances.map { it.name })
         assertTrue(vm.uiState.value.featured.isEmpty())
+    }
+
+    @Test
+    fun homeFeaturedFailureIsSilent() = test {
+        val service = CatalogService()
+        service.mock.instances().forEach { service.mock.deleteInstance(it.id) }
+        service.fail("agents", ServiceError.Network("offline"))
+        val vm = HomeViewModel(service, DemoTestApp.FIXED_CLOCK)
+        advanceUntilIdle()
+        val s = vm.uiState.value
+        assertTrue(s.instances.isEmpty())
+        assertTrue(s.featured.isEmpty())
+        assertNull(s.refreshError)
+        assertFalse(s.loading)
     }
 
     @Test
@@ -681,6 +839,13 @@ class AgentViewModelTest {
         advanceUntilIdle()
         assertEquals("代码助手", vm.uiState.value.agentNames["agent-coder"])
         assertEquals("调研助手", vm.uiState.value.agentNames["agent-research"])
+        // 搜索也匹配行上显示的 agent 名（不只是实例名和 agent id）
+        vm.onQueryChange("调研助手")
+        assertEquals(listOf("inst-research"), vm.uiState.value.visibleInstances.map { it.id })
+        vm.onQueryChange("代码")
+        assertEquals(listOf("inst-coder"), vm.uiState.value.visibleInstances.map { it.id })
+        vm.onQueryChange("")
+        assertEquals(2, vm.uiState.value.visibleInstances.size)
 
         // 目录拉不到：照样有实例，名字回退到 id（界面上）
         val failing = CatalogService()

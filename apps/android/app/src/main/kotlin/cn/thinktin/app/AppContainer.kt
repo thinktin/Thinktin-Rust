@@ -180,7 +180,8 @@ class AppContainer(
             /** HTTPS 系统证书校验的状态（Application.onCreate 里已经初始化）；https 地址没初始化时真实服务创建失败。 */
             tls: TlsState,
             forceDemo: Boolean = false,
-            clock: Clock = Clock.systemDefaultZone(),
+            /** 默认跟着系统时区走（进程活着时换时区也跟着变）。 */
+            clock: Clock = SystemZoneClock,
             /** DataStore 的文件名（测试里每个 Application 用自己的，同一进程里不能有两个 DataStore 开同一个文件）。 */
             settingsName: String = "settings",
         ): AppContainer {

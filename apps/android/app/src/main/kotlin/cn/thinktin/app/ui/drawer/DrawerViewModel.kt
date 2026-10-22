@@ -26,12 +26,16 @@ data class DrawerUiState(
     val query: String = "",
     val isDemo: Boolean = false,
 ) {
-    /** 按搜索框过滤后的实例（名字或 agent id 包含关键字）。 */
+    /** 按搜索框过滤后的实例（实例名、agent 的显示名或 agent id 包含关键字，不分大小写）。 */
     val visibleInstances: List<Instance>
-        get() = if (query.isBlank()) {
-            instances
-        } else {
-            instances.filter { it.name.contains(query.trim(), ignoreCase = true) || it.agentId.contains(query.trim(), ignoreCase = true) }
+        get() {
+            val q = query.trim()
+            if (q.isEmpty()) return instances
+            return instances.filter {
+                it.name.contains(q, ignoreCase = true) ||
+                    agentNames[it.agentId].orEmpty().contains(q, ignoreCase = true) ||
+                    it.agentId.contains(q, ignoreCase = true)
+            }
         }
 }
 

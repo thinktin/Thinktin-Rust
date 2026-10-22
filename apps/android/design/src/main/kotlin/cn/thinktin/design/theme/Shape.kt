@@ -13,6 +13,9 @@ object ThinktinShapes {
     /** 用户消息：右下角 4dp。 */
     val UserBubble = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomEnd = 4.dp, bottomStart = 18.dp)
     val Button = RoundedCornerShape(20.dp)
+
+    /** 底部面板（领养表单等）：只有上面两个角是圆的。 */
+    val Sheet = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
 }
 
 /** 第 2.3 节的间距。 */

@@ -22,8 +22,9 @@ import org.robolectric.ParameterizedRobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * 冷启动深链（第 3 节的全部 7 种）：每种都落到对应页面，参数传对，返回键回首页。
- * 这里是还在骨架阶段的页面；`thinktin://instance/{id}`（13.3 已做实例设置页）见 CatalogUiTest。
+ * 冷启动深链（第 3 节除 instance/{id} 外的 6 种）：每种都落到对应页面，参数传对，返回键回首页。
+ * 这里是还在骨架阶段的页面；`thinktin://instance/{id}`（13.3 已做实例设置页）见 CatalogUiTest
+ * （instanceDeepLinkBackReturnsHome 测返回键回首页）。
  * 热启动（App 已在运行，走 onNewIntent）见 AppUiTest。
  */
 @RunWith(ParameterizedRobolectricTestRunner::class)

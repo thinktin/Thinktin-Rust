@@ -70,8 +70,10 @@ data class InstanceNameUiState(
     /** 名字下的提示。 */
     val error: UiText? = null,
     val saving: Boolean = false,
+    /** 已经发出 Saved（等页面退出）：不再保存，免得退出动画期间再点一次多弹一层返回栈。 */
+    val finished: Boolean = false,
 ) {
-    val editable: Boolean get() = !loading && original != null
+    val editable: Boolean get() = !loading && original != null && !finished
 }
 
 sealed interface InstanceNameEvent {
@@ -130,6 +132,7 @@ class InstanceNameViewModel(
         if (current.saving || !current.editable) return
         val name = current.name.trim()
         if (name == current.original) {
+            state.update { it.copy(finished = true) }
             eventChannel.trySend(InstanceNameEvent.Saved(null))
             return
         }
@@ -141,13 +144,14 @@ class InstanceNameViewModel(
         viewModelScope.launch {
             try {
                 val updated = service.renameInstance(instanceId, name)
-                state.update { it.copy(saving = false, original = updated.name, name = updated.name) }
+                state.update { it.copy(saving = false, finished = true, original = updated.name, name = updated.name) }
                 eventChannel.send(InstanceNameEvent.Saved(updated))
             } catch (e: ServiceError) {
                 state.update { it.copy(saving = false) }
                 when {
                     e is ServiceError.Api && e.isInvalid ->
                         state.update { it.copy(error = UiText(R.string.instance_name_too_long, listOf(InstanceNames.MAX_LENGTH))) }
+                    // 服务端改名目前不返回 409（实例名没有唯一约束），留着防将来加约束。
                     e is ServiceError.Api && (e.code == "conflict" || e.status == 409) ->
                         state.update { it.copy(error = UiText(R.string.adopt_conflict)) }
                     else -> eventChannel.send(InstanceNameEvent.Message(ErrorText.of(e)))

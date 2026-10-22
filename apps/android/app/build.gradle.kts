@@ -5,6 +5,9 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+/** 服务端的厂商表（KeyRulesSyncTest 读它，和 KeyRules 比对）。 */
+val vendorsRs: RegularFile = rootProject.layout.projectDirectory.file("../../crates/proto/src/vendors.rs")
+
 /** 后端地址：-PthinktinBaseUrl=... 或 gradle.properties。 */
 val thinktinBaseUrl: String =
     providers.gradleProperty("thinktinBaseUrl").getOrElse("https://api.thinktin.cn")
@@ -63,6 +66,11 @@ android {
 
     testOptions {
         unitTests.isIncludeAndroidResources = true
+        unitTests.all { test ->
+            // KeyRulesSyncTest：KeyRules 里抄的订阅 key 前缀和套餐专用地址要和 proto::vendors 一致（FFI 不带这些）。
+            test.inputs.file(vendorsRs).withPathSensitivity(PathSensitivity.NONE).withPropertyName("vendorsRs")
+            test.systemProperty("thinktin.vendorsRs", vendorsRs.asFile.absolutePath)
+        }
     }
 
     lint {

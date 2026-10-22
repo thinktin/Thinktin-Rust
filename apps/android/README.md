@@ -121,7 +121,7 @@ export ANDROID_HOME=/opt/android-sdk
 # CoreSmokeTest 经 JNA 真调本机的 libclient_core.so（cargo build -p client-core 的输出）；不设就跳过，
 # 再设 THINKTIN_REQUIRE_CORE=1（CI 这么设）则不设库目录时直接失败
 export THINKTIN_CORE_LIB_DIR=$PWD/../../target/debug
-./gradlew test lint assembleDebug        # 全部单元测试、lint、debug 包
+./gradlew test lint assembleDebug :app:assembleCnRelease   # 全部单元测试、lint、debug 包、release 包（R8，和 CI 一样）
 ./gradlew :data:testDebugUnitTest        # 只跑某个模块
 ./gradlew :app:assembleCnDebug           # 只打 cn 渠道的 debug 包
 ```
@@ -236,7 +236,7 @@ Keystore 失效……）都显示“无法加载核心库”页（原因 + 重�
 `thinktin://run/{id}`、`approval/{id}`、`plan/{id}`、`instance/{id}`、`vault/request/{id}`、`inbox`、`inbox/{id}`（第 3 节）。
 `MainActivity` 是 `singleTask`：冷启动（`onCreate`）和 App 已在运行时（`onNewIntent`）收到的深链都放进 `DeepLinkInbox`，
 由 `MainNavigation` 在导航图建好后交给 `NavController.handleDeepLink`，返回栈是“首页 → 目标页”。未登录时先留着，登录后再跳；
-同一条只处理一次。测试：`DeepLinkTest`（7 种冷启动）、`AppUiTest`（热启动）、`AppRootTest`（登录后再跳）。
+同一条只处理一次。测试：`DeepLinkTest`（6 种骨架页的冷启动）+ `CatalogUiTest`（`instance/{id}`）、`AppUiTest`（热启动）、`AppRootTest`（登录后再跳）。
 
 ## CI
 
@@ -289,7 +289,9 @@ abortOnError 开着，不用 baseline；release 包跑一遍 R8）→ 解开 rel
   这些控件在测试里用无障碍点击动作（`SemanticsActions.OnClick`）。
 - 每日 token 限额只能在添加 key 时设：client-core 的 `update_credential` 只有标签和停用（服务端 `PATCH` 也一样），编辑页只读显示。
 - 服务端删除实例只是标记删除，`model_routes` 还留着：被已删除实例的别名引用的 key 永远删不掉（409），App 也查不到那些别名
-  （提示“还有模型别名在用这把 key”）。需要 backend-core 在删除实例时清掉它的别名，或删除 key 时不算已删除的实例。
+  （提示“还有模型别名在用这把 key”，并说明可能是已删除实例留下的、可以先停用）。需要 backend-core 在删除实例时清掉它的别名，
+  或删除 key 时不算已删除的实例。同样，删除实例后其他计划里引用它的流水线步骤也还在（运行到时会失败），只有团队读取时会过滤掉它；
+  设计规范 8.6 写的“级联删除”和后端不一致，待 backend-core 确认以哪边为准。在那之前确认框写“这些步骤之后会运行失败”，Mock 也按软删除实现。
 - 用量按天的 `key` 按日期解析（`yyyy-MM-dd`）；服务端换格式时柱状图会退化成只有表格。
 - CI 的 APK 不含 .so（见“CI”）。启动时 `TlsInit` 加载不到库，`TlsState.failure` 记下 `UnsatisfiedLinkError`，演示模式照常可用。
 - `TlsInit.initialize`（JNI）只能在真机 / 模拟器上验证（云端会话没有模拟器，JVM 上的 .so 是 Linux 版，没有这个 JNI 函数）；

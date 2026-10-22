@@ -236,7 +236,7 @@ private fun VendorLine(testTag: String, name: String, notes: String, protocols: 
 @Composable
 private fun DetailsStep(state: AddKeyUiState, viewModel: AddKeyViewModel) {
     val vendorLabel = if (state.custom) stringResource(R.string.key_vendor_custom) else state.vendor?.name.orEmpty()
-    val enabled = !state.submitting
+    val enabled = state.editable
     Column(
         modifier = Modifier
             .fillMaxSize()

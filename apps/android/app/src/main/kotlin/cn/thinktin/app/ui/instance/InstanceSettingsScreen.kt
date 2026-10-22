@@ -412,7 +412,14 @@ private fun InstanceDialogs(
         }
         is InstanceDialog.DeleteConfirm -> ConfirmDialog(
             title = stringResource(R.string.instance_delete_confirm_title, name),
-            text = stringResource(R.string.instance_delete_confirm_message),
+            // 没有流水线或团队用到它时，不提上一步“列出的”步骤和团队。
+            text = stringResource(
+                if (dialog.impact.pipelinePlans.isEmpty() && dialog.impact.teams.isEmpty()) {
+                    R.string.instance_delete_confirm_message_simple
+                } else {
+                    R.string.instance_delete_confirm_message
+                },
+            ),
             confirm = stringResource(R.string.instance_delete),
             danger = true,
             busy = busy,

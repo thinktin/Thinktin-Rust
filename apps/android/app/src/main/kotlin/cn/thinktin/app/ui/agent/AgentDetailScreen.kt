@@ -20,7 +20,6 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -66,6 +65,7 @@ import cn.thinktin.app.ui.catalog.licenseLabel
 import cn.thinktin.app.ui.catalog.protocolLabel
 import cn.thinktin.app.ui.common.LocalThinktinService
 import cn.thinktin.app.ui.common.asString
+import cn.thinktin.app.ui.keys.credentialOption
 import cn.thinktin.data.model.AgentInfo
 import cn.thinktin.data.model.Instance
 import cn.thinktin.design.component.EmptyState
@@ -74,6 +74,7 @@ import cn.thinktin.design.component.SecondaryButton
 import cn.thinktin.design.component.SectionHeader
 import cn.thinktin.design.component.ThinktinTopBar
 import cn.thinktin.design.component.TopBarIcons
+import cn.thinktin.design.theme.ThinktinShapes
 import cn.thinktin.design.theme.ThinktinSpacing
 import kotlinx.coroutines.launch
 
@@ -83,11 +84,14 @@ const val ADOPT_SHEET_TEST_TAG = "adopt-sheet"
 /**
  * Agent 详情（第 4.4 节，路由 agent/{agentId}）：介绍、接入方式、协议、版本、许可证、上游链接；底部“领养”。
  *
+ * 领养表单：名字、接入方式、默认模型（别名 main：选 key + 上游模型，可以跳过）。选了 key 的领养完配好 main 进对话页；
+ * 跳过或配不上时打开模型别名页（不然第一次运行就卡在等 key）。
+ *
  * 领养表单是盖在页面上的底部面板（不是 ModalBottomSheet / 对话框：弹出窗口里的输入框在 Robolectric 下一直不空闲，
  * 见 README“对话框里不放输入框”）。返回键、点遮罩、“取消”都收起表单（提交中不收）。
  */
 @Composable
-fun AgentDetailScreen(agentId: String, onBack: () -> Unit, onAdopted: (Instance) -> Unit) {
+fun AgentDetailScreen(agentId: String, onBack: () -> Unit, onAdopted: (instance: Instance, routesConfigured: Boolean) -> Unit) {
     val service = LocalThinktinService.current
     val viewModel: AgentDetailViewModel = viewModel(
         key = "agent-$agentId",
@@ -100,7 +104,7 @@ fun AgentDetailScreen(agentId: String, onBack: () -> Unit, onAdopted: (Instance)
     LaunchedEffect(viewModel) {
         viewModel.events.collect { event ->
             when (event) {
-                is AgentDetailEvent.Adopted -> onAdopted(event.instance)
+                is AgentDetailEvent.Adopted -> onAdopted(event.instance, event.routesConfigured)
             }
         }
     }
@@ -201,8 +205,11 @@ fun AgentDetailScreen(agentId: String, onBack: () -> Unit, onAdopted: (Instance)
             AdoptSheet(
                 agent = agent,
                 form = form,
+                keys = state.keys,
                 onNameChange = viewModel::onNameChange,
                 onHarnessChange = viewModel::onHarnessChange,
+                onKeyChange = viewModel::onKeyChange,
+                onModelChange = viewModel::onModelChange,
                 onSubmit = viewModel::adopt,
                 onCancel = viewModel::closeAdopt,
                 modifier = Modifier.align(Alignment.BottomCenter),
@@ -319,21 +326,24 @@ private fun AgentDetailContent(agent: AgentInfo, onOpenUpstream: (String) -> Uni
     }
 }
 
-/** 领养表单：名字（默认“<agent 名> 的实例”）、接入方式（多于一种时选）、领养 / 取消。 */
+/** 领养表单：名字（默认“<agent 名> 的实例”）、接入方式（多于一种时选）、默认模型（可跳过）、领养 / 取消。 */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun AdoptSheet(
     agent: AgentInfo,
     form: AdoptForm,
+    keys: AdoptKeys,
     onNameChange: (String) -> Unit,
     onHarnessChange: (String) -> Unit,
+    onKeyChange: (String?) -> Unit,
+    onModelChange: (String) -> Unit,
     onSubmit: () -> Unit,
     onCancel: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val title = stringResource(R.string.adopt_title, agent.name)
     Surface(
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        shape = ThinktinShapes.Sheet,
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
         modifier = modifier
@@ -393,11 +403,7 @@ private fun AdoptSheet(
                     }
                 }
             }
-            Text(
-                text = stringResource(R.string.adopt_model_hint),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            AdoptModelSection(form = form, keys = keys, onKeyChange = onKeyChange, onModelChange = onModelChange)
             form.error?.let { error ->
                 Text(
                     text = error.asString(),
@@ -423,3 +429,88 @@ private fun AdoptSheet(
         }
     }
 }
+
+/** 领养表单里的默认模型（别名 main）：选一把能用的 key（或跳过）、上游模型（预填厂商推荐的第一个，可以点推荐）。 */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AdoptModelSection(
+    form: AdoptForm,
+    keys: AdoptKeys,
+    onKeyChange: (String?) -> Unit,
+    onModelChange: (String) -> Unit,
+) {
+    Text(
+        text = stringResource(R.string.adopt_model_title),
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.semantics { heading() },
+    )
+    val note: String? = when {
+        keys.loading -> stringResource(R.string.loading)
+        keys.failed -> stringResource(R.string.adopt_model_keys_failed)
+        keys.usable.isEmpty() -> stringResource(R.string.adopt_model_no_keys)
+        form.credentialId == null -> stringResource(R.string.adopt_model_skipped)
+        else -> stringResource(R.string.adopt_model_hint)
+    }
+    if (!keys.loading && keys.usable.isNotEmpty()) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            keys.usable.forEach { credential ->
+                FilterChip(
+                    selected = credential.id == form.credentialId,
+                    onClick = { onKeyChange(credential.id) },
+                    enabled = !form.submitting,
+                    label = { Text(credentialOption(credential, keys.vendors)) },
+                )
+            }
+            FilterChip(
+                selected = form.credentialId == null,
+                onClick = { onKeyChange(null) },
+                enabled = !form.submitting,
+                label = { Text(stringResource(R.string.adopt_model_skip)) },
+            )
+        }
+    }
+    note?.let {
+        Text(
+            text = it,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    val selected = keys.usable.firstOrNull { it.id == form.credentialId } ?: return
+    val modelLabel = stringResource(R.string.routes_field_model)
+    val suggestions = keys.vendors[selected.vendor]?.models.orEmpty().take(MAX_MODEL_SUGGESTIONS)
+    OutlinedTextField(
+        value = form.model,
+        onValueChange = onModelChange,
+        label = { Text(modelLabel) },
+        singleLine = true,
+        enabled = !form.submitting,
+        isError = form.modelError != null,
+        supportingText = {
+            Text(
+                form.modelError?.asString() ?: stringResource(
+                    if (suggestions.isEmpty()) R.string.adopt_model_field_hint else R.string.routes_model_hint,
+                ),
+            )
+        },
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics { contentDescription = modelLabel },
+    )
+    if (suggestions.isNotEmpty()) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            suggestions.forEach { model ->
+                FilterChip(
+                    selected = form.model.trim() == model,
+                    onClick = { onModelChange(model) },
+                    enabled = !form.submitting,
+                    label = { Text(model) },
+                )
+            }
+        }
+    }
+}
+
+/** 领养表单里最多列几个推荐模型。 */
+private const val MAX_MODEL_SUGGESTIONS = 4

@@ -57,7 +57,12 @@ data class AddKeyUiState(
     /** 不属于某个字段的错误（厂商不认识、服务端其他的 invalid）。 */
     val formError: UiText? = null,
     val submitting: Boolean = false,
+    /** 已经加好（等页面退出）：不能再提交，key 明文已经清掉。 */
+    val done: Boolean = false,
 ) {
+    /** 表单能不能改、能不能提交。 */
+    val editable: Boolean get() = !submitting && !done
+
     /** 第一步的分组（自定义接口在界面上单独放最后）。 */
     val groups: List<KeyRules.VendorGroup> get() = KeyRules.groupVendors(vendors)
 
@@ -135,7 +140,7 @@ class AddKeyViewModel(private val service: ThinktinService) : ViewModel() {
 
     /** 第二步按返回：回到选厂商（已经填的保留）。返回真表示处理了。 */
     fun backToVendors(): Boolean {
-        if (state.value.step != AddKeyStep.Details || state.value.submitting) return false
+        if (state.value.step != AddKeyStep.Details || !state.value.editable) return false
         state.update { it.copy(step = AddKeyStep.Vendor, formError = null) }
         return true
     }
@@ -175,7 +180,7 @@ class AddKeyViewModel(private val service: ThinktinService) : ViewModel() {
     /** 本地校验 + 提交。 */
     fun submit() {
         val s = state.value
-        if (s.submitting || s.step != AddKeyStep.Details) return
+        if (!s.editable || s.step != AddKeyStep.Details) return
         val vendorId = s.vendorId
         val key = s.key.value.trim()
         val keyError = KeyRules.checkKey(vendorId, key)
@@ -227,7 +232,8 @@ class AddKeyViewModel(private val service: ThinktinService) : ViewModel() {
         viewModelScope.launch {
             try {
                 val created = service.addCredential(request)
-                state.update { it.copy(submitting = false) }
+                // 页面退出动画期间还能点到按钮：标成已完成，不再提交；key 明文不留在内存里。
+                state.update { it.copy(submitting = false, done = true, key = KeyInput()) }
                 eventChannel.send(AddKeyEvent.Added(created))
             } catch (e: ServiceError) {
                 state.update { it.copy(submitting = false) }
@@ -251,6 +257,8 @@ class AddKeyViewModel(private val service: ThinktinService) : ViewModel() {
                 "openai_base" in detail -> s.copy(errors = s.errors + (AddKeyField.OpenaiBase to baseRejected(detail)))
                 "api_key" in detail || "subscription" in detail || "api key" in detail ->
                     s.copy(key = s.key.copy(error = serverKeyError(e)))
+                // 服务端的“unknown vendor: …, or custom with your own base URLs”里也有 base url，先认厂商。
+                "unknown vendor" in detail -> s.copy(formError = UiText(R.string.key_error_vendor))
                 "base url" in detail -> s.copy(formError = UiText(R.string.key_error_base_rejected))
                 "label" in detail -> s.copy(errors = s.errors + (AddKeyField.Label to UiText(R.string.key_error_label_long, listOf(KeyRules.MAX_LABEL_LENGTH))))
                 "daily_token_limit" in detail -> s.copy(errors = s.errors + (AddKeyField.DailyLimit to UiText(R.string.key_error_limit_positive)))
@@ -276,10 +284,10 @@ class AddKeyViewModel(private val service: ThinktinService) : ViewModel() {
             else -> s.openaiBase
         }
 
-        /** 自定义接口的默认标签：地址的主机名（截到标签上限）。 */
+        /** 自定义接口的默认标签：地址的主机名（按码点截到标签上限）。 */
         fun defaultCustomLabel(url: String?): String {
             val host = url?.let { runCatching { URI(it).host }.getOrNull() }.orEmpty()
-            return host.take(KeyRules.MAX_LABEL_LENGTH)
+            return KeyRules.clip(host, KeyRules.MAX_LABEL_LENGTH)
         }
     }
 }

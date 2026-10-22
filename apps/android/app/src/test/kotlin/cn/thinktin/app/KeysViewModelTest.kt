@@ -25,6 +25,7 @@ import cn.thinktin.data.model.Instance
 import cn.thinktin.data.model.ModelRoute
 import cn.thinktin.data.model.NewCredential
 import cn.thinktin.data.model.RouteFallback
+import cn.thinktin.data.model.UsageBucket
 import cn.thinktin.data.model.UsageGroup
 import cn.thinktin.data.model.UsageSummary
 import cn.thinktin.data.model.VendorInfo
@@ -49,6 +50,8 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.time.Clock
+import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 
@@ -67,6 +70,12 @@ private class KeyService(
     val routeSets = mutableListOf<Pair<String, List<ModelRoute>>>()
     val usageCalls = mutableListOf<UsageCall>()
     val auth = MutableStateFlow(AuthState.SignedIn)
+
+    /** 按实例让 setModelRoutes 抛错（每次都抛，直到移除）。 */
+    val routesFailFor = mutableMapOf<String, ServiceError>()
+
+    /** 设了就用它代替 Mock 的用量（构造 Mock 给不出的数据，比如 key 为空串的分组）。 */
+    var usageOverride: ((UsageGroup) -> UsageSummary)? = null
 
     data class UsageCall(val group: UsageGroup, val fromMs: Long?, val toMs: Long?, val tz: String?)
 
@@ -128,13 +137,14 @@ private class KeyService(
     override suspend fun setModelRoutes(instanceId: String, routes: List<ModelRoute>) {
         routeSets += instanceId to routes
         maybeFail("setModelRoutes")
+        routesFailFor[instanceId]?.let { throw it }
         mock.setModelRoutes(instanceId, routes)
     }
 
     override suspend fun usage(group: UsageGroup, fromMs: Long?, toMs: Long?, tz: String?): UsageSummary {
         usageCalls += UsageCall(group, fromMs, toMs, tz)
         maybeFail("usage")
-        return mock.usage(group, fromMs, toMs, tz)
+        return usageOverride?.invoke(group) ?: mock.usage(group, fromMs, toMs, tz)
     }
 }
 
@@ -246,6 +256,18 @@ class KeysViewModelTest {
     }
 
     @Test
+    fun labelAndModelLengthCountCodePoints() {
+        // 服务端 check_len 按字符（码点）数：emoji、扩展区汉字算一个
+        assertNull(KeyRules.checkLabel("😀".repeat(64)))
+        assertEquals(R.string.key_error_label_long, KeyRules.checkLabel("😀".repeat(65))?.resId)
+        assertNull(KeyRules.checkLabel("𠀀".repeat(64)))
+        assertNull(KeyRules.checkModel("😀".repeat(128)))
+        assertEquals(R.string.routes_error_model_long, KeyRules.checkModel("😀".repeat(129))?.resId)
+        assertEquals("😀".repeat(3), KeyRules.clip("😀".repeat(5), 3))
+        assertEquals("ab", KeyRules.clip("ab", 3))
+    }
+
+    @Test
     fun detachPromotesFirstFallbackAndDropsLonelyAliases() {
         val routes = listOf(
             ModelRoute("main", "k1", "m1", listOf(RouteFallback("k2", "m2"), RouteFallback("k3", "m3"))),
@@ -312,6 +334,14 @@ class KeysViewModelTest {
         assertEquals("1,200 亿", TokenFormat.format(120_000_000_000, TokenFormat.Style.Cjk, cjk))
         assertEquals("3B", TokenFormat.format(3_000_000_000, TokenFormat.Style.Western, western))
         assertEquals("-1.5 万", TokenFormat.format(-15_000, TokenFormat.Style.Cjk, cjk))
+        // 四舍五入到下一个单位时进位换单位，不写成 1,000k / 10,000 万
+        assertEquals("1M", TokenFormat.format(999_999, TokenFormat.Style.Western, western))
+        assertEquals("1M", TokenFormat.format(999_950, TokenFormat.Style.Western, western))
+        assertEquals("999k", TokenFormat.format(999_499, TokenFormat.Style.Western, western))
+        assertEquals("1B", TokenFormat.format(999_999_999, TokenFormat.Style.Western, western))
+        assertEquals("1 亿", TokenFormat.format(99_999_999, TokenFormat.Style.Cjk, cjk))
+        assertEquals("9,999 万", TokenFormat.format(99_994_999, TokenFormat.Style.Cjk, cjk))
+        assertEquals(TokenFormat.Unit.Million, TokenFormat.unitOf(999_999, TokenFormat.Style.Western))
         assertEquals("12,345,678", TokenFormat.grouped(12_345_678))
         assertEquals(TokenFormat.Style.Western, TokenFormat.styleOf("western"))
         assertEquals(TokenFormat.Style.Cjk, TokenFormat.styleOf("cjk"))
@@ -361,6 +391,24 @@ class KeysViewModelTest {
             assertEquals(R.string.keys_enabled_done, (awaitItem() as KeysEvent.Message).text.resId)
             assertFalse(vm.uiState.value.credentials.first { it.id == "cred-work" }.disabled)
         }
+    }
+
+    @Test
+    fun disableFailureKeepsStateAndShowsMessage() = test {
+        val service = KeyService()
+        val vm = KeysViewModel(service)
+        advanceUntilIdle()
+        val work = vm.uiState.value.credentials.first { it.id == "cred-work" }
+        vm.events.test {
+            service.fail("updateCredential", ServiceError.Network("offline"))
+            vm.setDisabled(work, true)
+            assertEquals("cred-work", vm.uiState.value.togglingId)
+            advanceUntilIdle()
+            assertEquals(KeysEvent.Message(UiText(R.string.error_network)), awaitItem())
+        }
+        assertNull(vm.uiState.value.togglingId)
+        assertFalse(vm.uiState.value.credentials.first { it.id == "cred-work" }.disabled)
+        assertFalse(service.mock.credentials().first { it.id == "cred-work" }.disabled)
     }
 
     @Test
@@ -449,6 +497,78 @@ class KeysViewModelTest {
     }
 
     @Test
+    fun deleteBlockedWhenRoutesCannotBeChecked() = test {
+        val service = KeyService()
+        val vm = KeysViewModel(service)
+        advanceUntilIdle()
+        vm.events.test {
+            // 实例列表拿到了，但逐个查别名时失败：看不到影响范围，不让删
+            service.fail("modelRoutes", ServiceError.Network("offline"))
+            vm.askDelete(vm.uiState.value.credentials.first { it.id == "cred-home" })
+            advanceUntilIdle()
+            val message = (awaitItem() as KeysEvent.Message).text
+            assertEquals(UiText(R.string.keys_usage_check_failed, listOf(UiText(R.string.error_network))), message)
+        }
+        assertNull(vm.uiState.value.dialog)
+        assertNull(vm.uiState.value.checkingUsageFor)
+        assertTrue(service.deleted.isEmpty())
+    }
+
+    @Test
+    fun deleteStopsHalfwayWithoutRollback() = test {
+        val service = KeyService()
+        // 第一个实例（小码）的别名能改，第二个（研究员）被拒
+        service.routesFailFor["inst-research"] = api(422, "invalid", "credential cred-x is disabled")
+        val vm = KeysViewModel(service)
+        advanceUntilIdle()
+        vm.events.test {
+            vm.askDelete(vm.uiState.value.credentials.first { it.id == "cred-home" })
+            advanceUntilIdle()
+            vm.confirmDelete()
+            advanceUntilIdle()
+            assertEquals(UiText(R.string.keys_delete_detach_failed, listOf("研究员")), (awaitItem() as KeysEvent.Message).text)
+        }
+        assertEquals(listOf("inst-coder", "inst-research"), service.routeSets.map { it.first })
+        assertTrue(service.deleted.isEmpty())
+        assertNull(vm.uiState.value.dialog)
+        assertFalse(vm.uiState.value.busy)
+        // 不回滚：小码的别名保持改过的样子（降级链里去掉了这把 key），研究员的没变
+        assertEquals(
+            listOf(ModelRoute("main", "cred-work", "claude-sonnet-4", emptyList())),
+            service.mock.modelRoutes("inst-coder"),
+        )
+        assertEquals(
+            listOf(ModelRoute("main", "cred-home", "deepseek-reasoner", emptyList())),
+            service.mock.modelRoutes("inst-research"),
+        )
+        assertTrue(service.mock.credentials().any { it.id == "cred-home" })
+    }
+
+    @Test
+    fun deleteKeyStillUsedByDeletedInstanceIsRejected() = test {
+        val service = KeyService()
+        // 服务端（Mock 同样）删实例只是软删除：研究员的别名还在，还算“在用”这把 key
+        service.mock.deleteInstance("inst-research")
+        val vm = KeysViewModel(service)
+        advanceUntilIdle()
+        vm.events.test {
+            vm.askDelete(vm.uiState.value.credentials.first { it.id == "cred-home" })
+            advanceUntilIdle()
+            // 列表里只看得到没删除的实例（instances() 不返回已删除的）
+            assertEquals(listOf("inst-coder"), vm.uiState.value.dialog!!.usages.map { it.instanceId })
+            vm.confirmDelete()
+            advanceUntilIdle()
+            assertEquals(UiText(R.string.keys_delete_in_use), (awaitItem() as KeysEvent.Message).text)
+        }
+        assertEquals(listOf("cred-home"), service.deleted)
+        assertTrue(service.mock.credentials().any { it.id == "cred-home" })
+        assertEquals(
+            listOf(ModelRoute("main", "cred-home", "deepseek-reasoner", emptyList())),
+            service.mock.modelRoutes("inst-research"),
+        )
+    }
+
+    @Test
     fun deleteConflictAndAlreadyDeleted() = test {
         val service = KeyService()
         val spare = service.mock.addCredential(NewCredential("openai", "备用", "sk-proj-0123456789"))
@@ -499,6 +619,33 @@ class KeysViewModelTest {
             assertEquals(2_000_000L, added.dailyTokenLimit)
         }
         assertEquals(NewCredential("deepseek", "DeepSeek", "sk-0123456789abcdef", dailyTokenLimit = 2_000_000), service.added.single())
+        // 成功后：明文清掉，退出动画期间再点提交不会再加一把
+        val done = vm.uiState.value
+        assertTrue(done.done)
+        assertFalse(done.editable)
+        assertEquals("", done.key.value)
+        vm.events.test {
+            vm.submit()
+            advanceUntilIdle()
+            expectNoEvents()
+        }
+        assertFalse(vm.backToVendors())
+        assertEquals(1, service.added.size)
+    }
+
+    @Test
+    fun addKeyUnknownVendorIsNotABaseUrlError() = test {
+        val service = KeyService()
+        val vm = AddKeyViewModel(service)
+        advanceUntilIdle()
+        // 厂商列表过期（厂商下架）：服务端说 unknown vendor（文案里也有 base URLs）
+        vm.selectVendor(VendorInfo("retired", "已下架厂商", listOf("chat"), emptyList(), ""))
+        vm.onKeyChange("sk-0123456789abcdef")
+        vm.submit()
+        advanceUntilIdle()
+        assertEquals(R.string.key_error_vendor, vm.uiState.value.formError?.resId)
+        assertTrue(vm.uiState.value.errors.isEmpty())
+        assertFalse(vm.uiState.value.submitting)
     }
 
     @Test
@@ -657,6 +804,39 @@ class KeysViewModelTest {
             assertTrue(saved.disabled)
         }
         assertEquals("cred-work" to CredentialUpdate(label = "公司", disabled = true), service.updates.single())
+        // 保存成功后再点（退出动画期间）：不再发 Saved，不再调接口
+        assertFalse(vm.uiState.value.editable)
+        vm.events.test {
+            vm.save()
+            advanceUntilIdle()
+            expectNoEvents()
+        }
+        assertEquals(1, service.updates.size)
+    }
+
+    @Test
+    fun editSaveErrors() = test {
+        val service = KeyService()
+        val vm = KeyEditViewModel(service, "cred-work")
+        advanceUntilIdle()
+        vm.onLabelChange("公司")
+        service.fail("updateCredential", api(422, "invalid", "label must be 0-64 characters"))
+        vm.save()
+        assertTrue(vm.uiState.value.saving)
+        advanceUntilIdle()
+        assertEquals(UiText(R.string.key_error_label_long, listOf(64)), vm.uiState.value.labelError)
+        assertFalse(vm.uiState.value.saving)
+        assertTrue(vm.uiState.value.editable)
+
+        vm.events.test {
+            service.fail("updateCredential", ServiceError.Network("offline"))
+            vm.save()
+            advanceUntilIdle()
+            assertEquals(KeyFormEvent.Message(UiText(R.string.error_network)), awaitItem())
+        }
+        assertFalse(vm.uiState.value.saving)
+        assertTrue(vm.uiState.value.editable)
+        assertEquals("工作 key", service.mock.credentials().first { it.id == "cred-work" }.label)
     }
 
     @Test
@@ -667,6 +847,9 @@ class KeysViewModelTest {
         vm.events.test {
             vm.save()
             assertTrue(awaitItem() is KeyFormEvent.Saved)
+            // 再点一次：不再发 Saved（不会多弹一层返回栈）
+            vm.save()
+            expectNoEvents()
         }
         assertTrue(service.updates.isEmpty())
     }
@@ -703,6 +886,7 @@ class KeysViewModelTest {
         }
         assertEquals("cred-work" to "sk-ant-api03-new-5678", service.replaced.last())
         assertEquals("", vm.uiState.value.key.value)
+        assertTrue(vm.uiState.value.finished)
     }
 
     // ---- 模型别名 ----
@@ -986,5 +1170,93 @@ class KeysViewModelTest {
         advanceUntilIdle()
         assertNull(vm.uiState.value.error)
         assertEquals(3, vm.uiState.value.rows.size)
+    }
+
+    private fun bucket(key: String, tokens: Long) = UsageBucket(key, 1, tokens, 0, 0, 0, tokens, 0, 0)
+
+    @Test
+    fun usageEmptyCredentialKeyIsNotGone() = test {
+        val service = KeyService()
+        // 服务端按 key 分组用 coalesce(credential_id, '')：一把 key 都没用上的请求在 key 为空串的一组
+        service.usageOverride = { group ->
+            if (group == UsageGroup.Credential) {
+                UsageSummary(listOf(bucket("cred-work", 10), bucket("", 5), bucket("cred-gone", 1)), bucket("", 16))
+            } else {
+                UsageSummary(emptyList(), bucket("", 0))
+            }
+        }
+        val vm = UsageViewModel(service, DemoTestApp.FIXED_CLOCK)
+        advanceUntilIdle()
+        vm.selectGroup(UsageGroup.Credential)
+        advanceUntilIdle()
+        val rows = vm.uiState.value.rows.associateBy { it.bucket.key }
+        assertEquals("工作 key", rows.getValue("cred-work").name)
+        assertFalse(rows.getValue("cred-work").gone)
+        assertNull(rows.getValue("").name)
+        assertFalse("空 key 不是“已删除”", rows.getValue("").gone)
+        assertTrue(rows.getValue("cred-gone").gone)
+    }
+
+    @Test
+    fun usageNamesFailureStillShowsRows() = test {
+        val service = KeyService()
+        val vm = UsageViewModel(service, DemoTestApp.FIXED_CLOCK)
+        advanceUntilIdle()
+        service.fail("credentials", ServiceError.Network("offline"))
+        vm.selectGroup(UsageGroup.Credential)
+        advanceUntilIdle()
+        val s = vm.uiState.value
+        assertNull(s.error)
+        assertFalse(s.loading)
+        assertEquals(setOf("cred-work", "cred-home"), s.rows.map { it.bucket.key }.toSet())
+        assertTrue("名字表拉不到：显示 id", s.rows.all { it.name == null })
+        assertTrue("不知道有哪些 key 时不标已删除", s.rows.none { it.gone })
+    }
+
+    /** 时区可以换的时钟（模拟 App 活着时用户换了时区）。 */
+    private class ZoneSwitchClock(private val now: Instant, var zoneId: ZoneId) : Clock() {
+        override fun getZone(): ZoneId = zoneId
+
+        override fun withZone(zone: ZoneId): Clock = Clock.fixed(now, zone)
+
+        override fun instant(): Instant = now
+    }
+
+    @Test
+    fun usageFollowsTimeZoneChange() = test {
+        val service = KeyService()
+        val clock = ZoneSwitchClock(DemoTestApp.FIXED_CLOCK.instant(), zone)
+        val vm = UsageViewModel(service, clock)
+        advanceUntilIdle()
+        assertEquals("Asia/Shanghai", service.usageCalls.last().tz)
+        assertEquals(startOf("2026-10-16"), service.usageCalls.last().fromMs)
+
+        val la = ZoneId.of("America/Los_Angeles")
+        clock.zoneId = la
+        vm.load()
+        advanceUntilIdle()
+        val call = service.usageCalls.last()
+        assertEquals("America/Los_Angeles", call.tz)
+        val today = DemoTestApp.FIXED_CLOCK.instant().atZone(la).toLocalDate()
+        assertEquals(today, vm.today)
+        assertEquals(today.minusDays(6).atStartOfDay(la).toInstant().toEpochMilli(), call.fromMs)
+    }
+
+    @Test
+    fun customSpanAcrossDstIsClampedTo366Days() = test {
+        val service = KeyService()
+        val ny = ZoneId.of("America/New_York")
+        val clock = Clock.fixed(Instant.parse("2026-11-20T12:00:00Z"), ny)
+        val vm = UsageViewModel(service, clock)
+        advanceUntilIdle()
+        fun utc(date: String) = LocalDate.parse(date).atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
+        // 2025-11-01 到 2026-11-01 共 366 天，跨两次回拨、一次拨快：实际多一小时
+        vm.selectRange(UsageRange.Custom)
+        assertNull(vm.applyCustom(utc("2025-11-01"), utc("2026-11-01")))
+        advanceUntilIdle()
+        val call = service.usageCalls.last()
+        val from = LocalDate.parse("2025-11-01").atStartOfDay(ny).toInstant().toEpochMilli()
+        assertEquals(from, call.fromMs)
+        assertEquals("不超过服务端的 366 × 24 小时", from + 366 * 86_400_000L, call.toMs)
     }
 }

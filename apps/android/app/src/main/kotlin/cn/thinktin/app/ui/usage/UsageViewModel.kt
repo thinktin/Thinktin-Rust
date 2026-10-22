@@ -138,20 +138,23 @@ class UsageViewModel(
         else -> null
     }
 
-    /** 当前时间段的日期范围（含首尾）。 */
-    fun spanOf(range: UsageRange): DateSpan = when (range) {
+    /** 当前时间段的日期范围（含首尾）；[today] 是按查询用的时区算的今天。 */
+    fun spanOf(range: UsageRange, today: LocalDate = this.today): DateSpan = when (range) {
         UsageRange.Custom -> customSpan ?: DateSpan(today.minusDays(6), today)
         else -> DateSpan(today.minusDays(range.days - 1), today)
     }
 
     fun load() {
         val s = state.value
-        val span = spanOf(s.range)
+        // 时区每次查询时取（时钟跟着系统时区走，App 活着时换了时区也按新的切天），今天、起止、tz 参数用同一个。
         val zone = clock.zone
+        val now = clock.instant()
+        val span = spanOf(s.range, now.atZone(zone).toLocalDate())
         val fromMs = span.start.atStartOfDay(zone).toInstant().toEpochMilli()
-        // 结束是第二天零点，但不超过现在（服务端要求 from < to）。
+        // 结束是第二天零点，但不超过现在（服务端要求 from < to），
+        // 也不超过 366 × 24 小时（跨夏令时回拨时 366 个日历天会多出一小时，服务端按时长拒绝）。
         val endOfSpan = span.end.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
-        val toMs = minOf(endOfSpan, clock.millis()).coerceAtLeast(fromMs + 1)
+        val toMs = minOf(endOfSpan, now.toEpochMilli(), fromMs + MAX_DAYS * DAY_MS).coerceAtLeast(fromMs + 1)
         val group = s.group
         state.update { it.copy(loading = true, error = null, span = span) }
         job?.cancel()
@@ -221,6 +224,8 @@ class UsageViewModel(
     companion object {
         /** 服务端一次最多查 366 天。 */
         const val MAX_DAYS = 366L
+
+        private const val DAY_MS = 86_400_000L
 
         private fun utcDate(ms: Long): LocalDate =
             java.time.Instant.ofEpochMilli(ms).atZone(java.time.ZoneOffset.UTC).toLocalDate()

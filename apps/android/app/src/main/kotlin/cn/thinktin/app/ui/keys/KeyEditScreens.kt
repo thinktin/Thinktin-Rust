@@ -318,7 +318,7 @@ fun KeySecretScreen(credentialId: String, onBack: () -> Unit, onSaved: () -> Uni
             input = state.key,
             onChange = viewModel::onKeyChange,
             onToggleVisible = viewModel::toggleVisible,
-            enabled = !state.saving,
+            enabled = !state.saving && !state.finished,
             hint = stringResource(R.string.key_hint_payg),
             imeAction = ImeAction.Done,
             onDone = viewModel::save,
@@ -326,7 +326,7 @@ fun KeySecretScreen(credentialId: String, onBack: () -> Unit, onSaved: () -> Uni
         PrimaryButton(
             text = stringResource(R.string.keys_replace),
             onClick = viewModel::save,
-            enabled = !state.saving,
+            enabled = !state.saving && !state.finished,
             loading = state.saving,
             modifier = Modifier
                 .fillMaxWidth()

@@ -345,25 +345,15 @@ class MockThinktinService(
         }
     }
 
-    /** 和服务端一样级联：其他计划里引用它的流水线步骤、团队里的它一起删掉。 */
+    /**
+     * 和服务端一样只是软删除（store 的 delete_instance：state = deleted）：其他计划里引用它的流水线步骤、它的模型别名都留着
+     * （删 key 时这些别名照样算“在用”）；团队成员在读取时过滤（[teams]、[team]，对应 store/teams.rs）。
+     */
     override suspend fun deleteInstance(instanceId: String) {
         lag(); requireSignedIn()
         synchronized(lock) {
             if (instanceList.none { it.id == instanceId && it.state != InstanceState.Deleted }) notFound("instance", instanceId)
             updateInstance(instanceId) { it.copy(state = InstanceState.Deleted) }
-            planList.replaceAll { plan ->
-                val removed = plan.steps.filter { it.instanceId == instanceId }.map { it.key }.toSet()
-                if (removed.isEmpty()) {
-                    plan
-                } else {
-                    plan.copy(
-                        steps = plan.steps.filterNot { it.key in removed }
-                            .map { step -> step.copy(dependsOn = step.dependsOn.filterNot { it in removed }) },
-                    )
-                }
-            }
-            teamList.replaceAll { team -> team.copy(members = team.members.filterNot { it.instanceId == instanceId }) }
-            routes.remove(instanceId)
         }
     }
 
@@ -385,7 +375,7 @@ class MockThinktinService(
                 val used = listOf(route.credentialId to route.upstreamModel) +
                     route.fallbacks.map { it.credentialId to it.upstreamModel }
                 for ((credentialId, model) in used) {
-                    if (model.isEmpty() || model.length > 128) invalid("upstream_model must be 1-128 characters")
+                    if (model.isEmpty() || model.codePointCount(0, model.length) > 128) invalid("upstream_model must be 1-128 characters")
                     val credential = credentialList.firstOrNull { it.id == credentialId } ?: notFound("credential", credentialId)
                     if (credential.disabled) invalid("credential $credentialId is disabled")
                 }
@@ -733,12 +723,19 @@ class MockThinktinService(
 
     override suspend fun teams(): List<Team> {
         lag()
-        return synchronized(lock) { teamList.toList() }
+        return synchronized(lock) { teamList.map(::withoutDeletedMembers) }
     }
 
     override suspend fun team(teamId: String): Team {
         lag()
-        return synchronized(lock) { teamList.firstOrNull { it.id == teamId } } ?: notFound("team", teamId)
+        return synchronized(lock) { teamList.firstOrNull { it.id == teamId }?.let(::withoutDeletedMembers) } ?: notFound("team", teamId)
+    }
+
+    /** 和服务端一样：读取时不列出已删除的实例（store/teams.rs 的 team 查询 JOIN instances 过滤 deleted）。 */
+    private fun withoutDeletedMembers(team: Team): Team {
+        val deleted = instanceList.filter { it.state == InstanceState.Deleted }.map { it.id }.toSet()
+        if (team.members.none { it.instanceId in deleted }) return team
+        return team.copy(members = team.members.filterNot { it.instanceId in deleted })
     }
 
     override suspend fun createTeam(name: String, members: List<TeamMember>): Team {
@@ -983,8 +980,9 @@ class MockThinktinService(
     override suspend fun addCredential(credential: NewCredential): Credential {
         lag()
         val vendor = data.vendors.firstOrNull { it.id == credential.vendor }
-        if (vendor == null && credential.vendor != CUSTOM_VENDOR) invalid("unknown vendor: use an id from GET /v1/vendors")
-        if (credential.label.length > 64) invalid("label must be 0-64 characters")
+        if (vendor == null && credential.vendor != CUSTOM_VENDOR) invalid("unknown vendor: use an id from GET /v1/vendors, or custom with your own base URLs")
+        // 服务端 check_len 按字符（码点）数。
+        if (credential.label.codePointCount(0, credential.label.length) > 64) invalid("label must be 0-64 characters")
         checkKey(credential.vendor, credential.apiKey)
         val bases = listOf(
             "anthropic_base" to credential.anthropicBase,

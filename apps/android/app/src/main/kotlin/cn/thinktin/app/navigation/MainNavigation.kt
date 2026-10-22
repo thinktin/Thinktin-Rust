@@ -171,6 +171,14 @@ private fun MainNavHost(navController: NavHostController, onOpenDrawer: () -> Un
         if (!navController.popBackStack()) navController.navigateTopLevel(Routes.HOME)
     }
 
+    /**
+     * 表单页保存成功后返回：只在 [entry] 还在栈顶时弹。页面退出动画期间仍可点击、LaunchedEffect 仍在收集，
+     * 重复的回调不能再多弹一层（把列表页也弹掉，栈空时跳回首页）。
+     */
+    fun backFrom(entry: NavBackStackEntry): () -> Unit = {
+        if (navController.currentBackStackEntry?.id == entry.id) back()
+    }
+
     @Composable
     fun Placeholder(page: Page, entry: NavBackStackEntry, arg: String? = null) {
         ComingSoonScreen(page = page, argument = arg?.let { entry.arguments?.getString(it) }, onBack = back)
@@ -213,12 +221,14 @@ private fun MainNavHost(navController: NavHostController, onOpenDrawer: () -> Un
             AgentDetailScreen(
                 agentId = entry.arguments?.getString(Routes.ARG_AGENT_ID).orEmpty(),
                 onBack = back,
-                onAdopted = { instance ->
+                onAdopted = { instance, routesConfigured ->
                     onInstancesChanged()
                     // 目录和详情不留在返回栈里：从对话页返回回到首页。
                     navController.navigate(Routes.chat(instance.id)) {
                         popUpTo(Routes.HOME)
                     }
+                    // 没配好默认模型（跳过、没有能用的 key、配 main 失败）：先打开模型别名页，配完返回到对话页。
+                    if (!routesConfigured) navController.navigate(Routes.instanceRoutes(instance.id))
                 },
             )
         }
@@ -250,8 +260,10 @@ private fun MainNavHost(navController: NavHostController, onOpenDrawer: () -> Un
                 instanceId = entry.arguments?.getString(Routes.ARG_INSTANCE_ID).orEmpty(),
                 onBack = back,
                 onSaved = {
-                    onInstancesChanged()
-                    back()
+                    if (navController.currentBackStackEntry?.id == entry.id) {
+                        onInstancesChanged()
+                        back()
+                    }
                 },
             )
         }
@@ -296,13 +308,13 @@ private fun MainNavHost(navController: NavHostController, onOpenDrawer: () -> Un
                 onOpenUsage = { navController.navigate(Routes.USAGE) { launchSingleTop = true } },
             )
         }
-        composable(Routes.KEYS_NEW) { AddKeyScreen(onBack = back, onAdded = back) }
+        composable(Routes.KEYS_NEW) { entry -> AddKeyScreen(onBack = back, onAdded = backFrom(entry)) }
         composable(Routes.KEY_EDIT, arguments = listOf(stringArg(Routes.ARG_CREDENTIAL_ID))) { entry ->
             val credentialId = entry.arguments?.getString(Routes.ARG_CREDENTIAL_ID).orEmpty()
             KeyEditScreen(
                 credentialId = credentialId,
                 onBack = back,
-                onSaved = back,
+                onSaved = backFrom(entry),
                 onReplaceSecret = {
                     // 换 key 页替换编辑页：换完回到列表。
                     navController.navigate(Routes.keySecret(credentialId)) {
@@ -315,7 +327,7 @@ private fun MainNavHost(navController: NavHostController, onOpenDrawer: () -> Un
             KeySecretScreen(
                 credentialId = entry.arguments?.getString(Routes.ARG_CREDENTIAL_ID).orEmpty(),
                 onBack = back,
-                onSaved = back,
+                onSaved = backFrom(entry),
             )
         }
         composable(Routes.USAGE) { UsageScreen(onBack = back) }
