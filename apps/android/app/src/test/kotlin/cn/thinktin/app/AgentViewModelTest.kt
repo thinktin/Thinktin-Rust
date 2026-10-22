@@ -516,7 +516,7 @@ class AgentViewModelTest {
         advanceUntilIdle()
         assertEquals(UiText(R.string.error_network), vm.uiState.value.adopt!!.error)
         assertEquals("失败后表单保留", "代码助手 的实例", vm.uiState.value.adopt!!.name)
-        assertEquals(7, service.adoptions.size)
+        assertEquals(9, service.adoptions.size)
     }
 
     @Test
