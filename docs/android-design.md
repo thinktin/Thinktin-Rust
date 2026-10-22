@@ -17,7 +17,7 @@
 | 本地存储 | 会话令牌：`EncryptedSharedPreferences`（Keystore 主密钥）实现 client-core 的 `SessionStore`；缓存由 client-core 的 SQLite 负责；界面偏好：DataStore |
 | 推送 | 构建变体 `cn`（极光推送）与 `global`（FCM）；SDK 只在对应变体里编译 |
 | 图片 / 二维码 | Coil；扫码用 ML Kit 或 ZXing（13.9 再定） |
-| 测试 | JVM 单元测试（JUnit 5、kotlinx-coroutines-test、Turbine）；Compose UI 测试用 Robolectric 在 JVM 上跑（云端没有模拟器）；每个页面至少一条“渲染 + 主要交互”测试 |
+| 测试 | JVM 单元测试（JUnit 4，Robolectric 与 Compose 测试规则都基于它；kotlinx-coroutines-test、Turbine）；Compose UI 测试用 Robolectric 在 JVM 上跑（云端没有模拟器）；每个页面至少一条“渲染 + 主要交互”测试 |
 | CI | GitHub Actions `android` job：`gradle test`、`lint`、`assembleDebug`；client-core 的 `.so` 用 mobile.yml 的 android job 或本地脚本产出后缓存 |
 
 ## 2. 视觉
