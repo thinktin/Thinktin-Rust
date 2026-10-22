@@ -289,6 +289,30 @@ struct SignInModelTests {
         #expect(!model.isSigningIn)
     }
 
+    @Test("横幅上的“重试”重做出错的那一步")
+    func retry() async {
+        let clock = Locked(Fixture.now)
+        let (mock, app, model) = make(clock: clock)
+        await model.retry()  // 没出过错：什么都不做
+        #expect(model.codeSentTo == nil)
+
+        model.updatePhone("13800138000")
+        mock.failNext(with: .network(message: "offline"))
+        await model.requestCode()
+        #expect(model.error?.isOffline == true)
+        await model.retry()
+        #expect(model.error == nil)
+        #expect(model.codeSentTo == "+8613800138000")
+
+        model.updateCode(mock.state.verificationCode)
+        mock.failNext(with: .network(message: "offline"))
+        await model.signIn()
+        #expect(model.error?.isOffline == true)
+        await model.retry()
+        #expect(model.error == nil)
+        #expect(await eventually { app.phase == .signedIn })
+    }
+
     @Test("换区号：保留号码；“+”开头的按新区号重新认")
     func selectRegion() {
         let (_, _, model) = make()

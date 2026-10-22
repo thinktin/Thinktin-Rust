@@ -30,7 +30,7 @@ struct PhoneEntryView: View {
 
             if let error = model.error {
                 ErrorBanner(
-                    error, onRetry: { Task { await model.requestCode() } }, onDismiss: { model.dismissError() })
+                    error, onRetry: { Task { await model.retry() } }, onDismiss: { model.dismissError() })
             }
 
             TimelineView(.periodic(from: Date(), by: 1)) { context in

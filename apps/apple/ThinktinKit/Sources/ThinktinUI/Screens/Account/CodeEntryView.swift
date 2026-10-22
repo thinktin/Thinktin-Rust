@@ -28,7 +28,7 @@ struct CodeEntryView: View {
             }
 
             if let error = model.error {
-                ErrorBanner(error, onRetry: { Task { await model.signIn() } }, onDismiss: { model.dismissError() })
+                ErrorBanner(error, onRetry: { Task { await model.retry() } }, onDismiss: { model.dismissError() })
             }
 
             Button {

@@ -79,6 +79,12 @@ public final class SignInModel {
     @ObservationIgnored private let pushRegistration: @MainActor @Sendable () async -> PushRegistration?
     /// 最近一次提交的验证码：自动提交时同一个码不重复交（错了要用户改了再交）。
     @ObservationIgnored private var lastSubmittedCode: String?
+    /// 横幅里的错误是哪一步出的（“重试”重做这一步）。
+    @ObservationIgnored private var failedStep: Step?
+
+    private enum Step {
+        case sendCode, signIn
+    }
 
     /// - Parameters:
     ///   - client: 环境里的客户端（`ObservedClient`）。
@@ -187,6 +193,7 @@ public final class SignInModel {
         guard !isSendingCode, secondsUntilResend(at: now()) == 0 else { return }
         isSendingCode = true
         error = nil
+        failedStep = nil
         fieldError = nil
         defer { isSendingCode = false }
         do {
@@ -227,6 +234,7 @@ public final class SignInModel {
         guard let phone = codeSentTo, VerificationCode.isComplete(code), !isSigningIn else { return }
         isSigningIn = true
         error = nil
+        failedStep = nil
         fieldError = nil
         lastSubmittedCode = code
         defer { isSigningIn = false }
@@ -243,12 +251,23 @@ public final class SignInModel {
                 fieldError = .incorrectCode
             } else {
                 self.error = clientError
+                failedStep = .signIn
             }
+        }
+    }
+
+    /// 横幅上的“重试”：重做出错的那一步（发码或登录）。
+    public func retry() async {
+        switch failedStep {
+        case .sendCode: await requestCode()
+        case .signIn: await signIn()
+        case nil: break
         }
     }
 
     public func dismissError() {
         error = nil
+        failedStep = nil
     }
 
     /// 登录成功后接着去哪（界面交给 `router.show(_:)`；还没切到主界面时 `Router` 先记下，切过去再跳）：新用户进引导
@@ -273,6 +292,7 @@ public final class SignInModel {
             return
         }
         self.error = clientError
+        failedStep = .sendCode
     }
 
     private func startCooldown(for phone: String, seconds: TimeInterval) {

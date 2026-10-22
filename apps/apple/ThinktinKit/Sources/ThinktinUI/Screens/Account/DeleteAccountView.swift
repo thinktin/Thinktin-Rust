@@ -68,9 +68,7 @@ struct DeleteAccountView: View {
                 ErrorBanner(error, onDismiss: { model.dismissError() })
             }
 
-            TimelineView(.periodic(from: Date(), by: 1)) { context in
-                codeSection(now: context.date)
-            }
+            codeSection
         }
         .navigationTitle(zh ? "注销账号" : "Delete account")
         #if os(iOS)
@@ -88,18 +86,11 @@ struct DeleteAccountView: View {
         }
     }
 
-    /// 发验证码、输入验证码、注销按钮。
-    @ViewBuilder
-    private func codeSection(now: Date) -> some View {
+    /// 发验证码、输入验证码、注销按钮。只有倒计时的部分每秒刷新（验证码框不跟着重绘）。
+    private var codeSection: some View {
         let zh = language == .chinese
-        let seconds = model.secondsUntilResend(at: now)
-        VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            if let message = model.rateLimitMessage(at: now, language: language) {
-                Label(message, systemImage: "clock.arrow.circlepath")
-                    .font(Typography.footnote.font.monospacedDigit())
-                    .foregroundStyle(StatusTone.waiting.color)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+        return VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
+            CountdownNotice { date in model.rateLimitMessage(at: date, language: language) }
             if model.codeSent {
                 Text(
                     zh
@@ -114,21 +105,23 @@ struct DeleteAccountView: View {
                     FieldMessage(text: DeleteAccountModel.incorrectCodeMessage(language))
                 }
             }
-            Button {
-                Task { await model.sendCode() }
-            } label: {
-                HStack(spacing: Metrics.Spacing.xs) {
-                    if model.isSendingCode {
-                        ProgressView()
-                            .controlSize(.small)
+            TimelineView(.periodic(from: Date(), by: 1)) { context in
+                Button {
+                    Task { await model.sendCode() }
+                } label: {
+                    HStack(spacing: Metrics.Spacing.xs) {
+                        if model.isSendingCode {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
+                        Text(sendTitle(seconds: model.secondsUntilResend(at: context.date)))
+                            .monospacedDigit()
                     }
-                    Text(sendTitle(seconds: seconds))
-                        .monospacedDigit()
+                    .frame(maxWidth: .infinity)
                 }
-                .frame(maxWidth: .infinity)
+                .buttonStyle(.pill(.secondary))
+                .disabled(!model.canSendCode(at: context.date) || app.isOffline)
             }
-            .buttonStyle(.pill(.secondary))
-            .disabled(!model.canSendCode(at: now) || app.isOffline)
             if model.codeSent {
                 Button(role: .destructive) {
                     confirmsDeletion = true
