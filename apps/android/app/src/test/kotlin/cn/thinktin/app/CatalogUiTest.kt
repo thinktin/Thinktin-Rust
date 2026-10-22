@@ -2,9 +2,13 @@ package cn.thinktin.app
 
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.SemanticsNodeInteraction
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
@@ -73,6 +77,12 @@ class CatalogUiTest {
     private fun waitFor(matcher: SemanticsMatcher) {
         compose.waitUntil(timeoutMillis = 10_000) { compose.onAllNodes(matcher).fetchSemanticsNodes().isNotEmpty() }
     }
+
+    /**
+     * 点领养表单里的控件：Robolectric 的触摸注入点不到盖在页面上的面板（落到了下面的遮罩上，和抽屉一样，真机正常），
+     * 用无障碍点击动作。
+     */
+    private fun SemanticsNodeInteraction.tap() = performSemanticsAction(SemanticsActions.OnClick)
 
     private fun card(agentId: String) = hasTestTag(AGENT_CARD_TEST_TAG + agentId)
 
@@ -161,10 +171,11 @@ class CatalogUiTest {
         waitFor(hasTestTag(ADOPT_SHEET_TEST_TAG))
         val nameField = hasContentDescription("实例名字") and hasSetTextAction()
         compose.onNode(nameField and hasText("代码助手 的实例")).assertIsDisplayed()
-        compose.onNode(hasText("codex") and inSheet).performClick()
+        compose.onNode(hasText("codex") and inSheet).tap()
+        compose.onNode(hasText("codex") and inSheet).assertIsSelected()
         compose.onNode(nameField).performTextClearance()
         compose.onNode(nameField).performTextInput("我的码农")
-        compose.onNode(hasText("领养") and inSheet).performClick()
+        compose.onNode(hasText("领养") and inSheet).tap()
 
         // 成功：跳到对话页（13.5 之前是骨架），返回回到首页
         waitFor(hasText("编号：", substring = true))
@@ -189,11 +200,11 @@ class CatalogUiTest {
         // 只有一种接入方式：不让选
         compose.onAllNodes(hasText("接入方式") and inSheet).assertCountEquals(0)
         fake.failNextAdopt(ServiceError.Api(409, "conflict", "exists", null))
-        compose.onNode(hasText("领养") and inSheet).performClick()
+        compose.onNode(hasText("领养") and inSheet).tap()
         waitFor(hasText("和现有的实例冲突，换个名字再试"))
         compose.onNode(hasTestTag(ADOPT_SHEET_TEST_TAG)).assertIsDisplayed()
         // 取消收起表单
-        compose.onNode(hasText("取消") and inSheet).performClick()
+        compose.onNode(hasText("取消") and inSheet).tap()
         waitFor(hasText("领养") and hasClickAction() and !inSheet)
         compose.onNode(hasTestTag(ADOPT_SHEET_TEST_TAG)).assertDoesNotExist()
     }

@@ -5,6 +5,8 @@ import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -46,6 +48,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
@@ -80,8 +83,8 @@ const val ADOPT_SHEET_TEST_TAG = "adopt-sheet"
 /**
  * Agent 详情（第 4.4 节，路由 agent/{agentId}）：介绍、接入方式、协议、版本、许可证、上游链接；底部“领养”。
  *
- * 领养表单是页面底部展开的面板（不是 ModalBottomSheet / 对话框：弹出窗口里的输入框在 Robolectric 下一直不空闲，
- * 见 README“对话框里不放输入框”）。返回键先收起表单。
+ * 领养表单是盖在页面上的底部面板（不是 ModalBottomSheet / 对话框：弹出窗口里的输入框在 Robolectric 下一直不空闲，
+ * 见 README“对话框里不放输入框”）。返回键、点遮罩、“取消”都收起表单（提交中不收）。
  */
 @Composable
 fun AgentDetailScreen(agentId: String, onBack: () -> Unit, onAdopted: (Instance) -> Unit) {
@@ -105,6 +108,7 @@ fun AgentDetailScreen(agentId: String, onBack: () -> Unit, onAdopted: (Instance)
 
     val agent = state.agent
     val noBrowser = stringResource(R.string.agent_no_browser)
+    Box(Modifier.fillMaxSize()) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbar) },
@@ -117,30 +121,18 @@ fun AgentDetailScreen(agentId: String, onBack: () -> Unit, onAdopted: (Instance)
             )
         },
         bottomBar = {
-            if (agent != null) {
-                val form = state.adopt
-                if (form == null) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .navigationBarsPadding()
-                            .padding(horizontal = ThinktinSpacing.Page, vertical = 12.dp),
-                    ) {
-                        val defaultName = stringResource(R.string.adopt_default_name, agent.name)
-                        PrimaryButton(
-                            text = stringResource(R.string.agent_adopt),
-                            onClick = { viewModel.openAdopt(defaultName) },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
-                } else {
-                    AdoptSheet(
-                        agent = agent,
-                        form = form,
-                        onNameChange = viewModel::onNameChange,
-                        onHarnessChange = viewModel::onHarnessChange,
-                        onSubmit = viewModel::adopt,
-                        onCancel = viewModel::closeAdopt,
+            if (agent != null && state.adopt == null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .padding(horizontal = ThinktinSpacing.Page, vertical = 12.dp),
+                ) {
+                    val defaultName = stringResource(R.string.adopt_default_name, agent.name)
+                    PrimaryButton(
+                        text = stringResource(R.string.agent_adopt),
+                        onClick = { viewModel.openAdopt(defaultName) },
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
             }
@@ -192,7 +184,35 @@ fun AgentDetailScreen(agentId: String, onBack: () -> Unit, onAdopted: (Instance)
             }
         }
     }
+    // 领养表单：盖在页面上的底部面板（遮罩点一下收起）。
+    val form = state.adopt
+    if (agent != null && form != null) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.scrim.copy(alpha = SCRIM_ALPHA))
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = viewModel::closeAdopt,
+                )
+                .clearAndSetSemantics {},
+        )
+        AdoptSheet(
+            agent = agent,
+            form = form,
+            onNameChange = viewModel::onNameChange,
+            onHarnessChange = viewModel::onHarnessChange,
+            onSubmit = viewModel::adopt,
+            onCancel = viewModel::closeAdopt,
+            modifier = Modifier.align(Alignment.BottomCenter),
+        )
+    }
+    }
 }
+
+/** 领养表单后面的遮罩透明度（同 Material 底部面板）。 */
+private const val SCRIM_ALPHA = 0.32f
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -309,13 +329,14 @@ private fun AdoptSheet(
     onHarnessChange: (String) -> Unit,
     onSubmit: () -> Unit,
     onCancel: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val title = stringResource(R.string.adopt_title, agent.name)
     Surface(
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .testTag(ADOPT_SHEET_TEST_TAG)
             .semantics { paneTitle = title },
