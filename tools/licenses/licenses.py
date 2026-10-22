@@ -371,7 +371,7 @@ VERIFY_MISSING_RUN = 6
 VERIFY_MISSING = 0.03
 VERIFY_MISSING_MIN = 8
 VERIFY_MAX_CHARS = 200000  # 比这长的原文不核对（不会是一份许可证）：截断核对会漏掉后面附加的条款
-NOTICE_MAX_WORDS = 30
+NOTICE_MAX_WORDS = 16
 _TITLE_RULES = [
     ("MPL-2.0", ["mozilla public license", "2.0"]),
     ("MPL-1.1", ["mozilla public license", "version 1.1"]),
@@ -557,17 +557,24 @@ _TEMPLATE_SLOTS = {
 _FSF_ADDRESS = (r"51\s+Franklin\s+St(?:reet)?,\s*Fifth\s+Floor,\s*"
                 r"Boston,\s*MA\s+02110-1301,?\s+USA", "<fsf address>")
 _TEMPLATE_SLOT_RES = {"GPL-2.0-only": [_FSF_ADDRESS], "LGPL-2.0-only": [_FSF_ADDRESS], "LGPL-2.1-only": [_FSF_ADDRESS]}
-# 版权声明：Copyright (c) …、Copyright 2024 …、Copyright Acme Inc.、© …、(c) 2024 …（区分大小写）。
-# 条款编号“(c) You must retain …”、正文里的“COPYRIGHT HOLDERS AND CONTRIBUTORS”“copyright protection”不算。
+# 版权声明：Copyright (c) …、Copyright 2024 …、Copyright Acme Inc.、© …、(c) 2024 …（区分大小写），前面可以有一两个词
+# （Portions、Modified work、Digitized data copyright (c) …）。条款编号“(c) You must retain …”、正文里的
+# “COPYRIGHT HOLDERS AND CONTRIBUTORS”“copyright protection”“WIPO Copyright Treaty”不算。
 _NOTICE_START = re.compile(
-    r"^\s*(?:<program>\s+)?(?:[Pp]ortions\s+)?(?:"
-    r"(?:[Cc]opyright|COPYRIGHT)\s*(?:\([cC]\)|©|\d|[<\[])"
-    r"|Copyright\s+(?!(?:Holders?|Owners?|Notices?|Act|Laws?|Licen[cs]es?|Agent|Office|Statement|Policy|Protection)\b)[A-Z]"
+    r"^\s*(?:<program>\s+)?(?:[A-Z][a-z]+(?:\s+[a-z]+)?\s+)?(?:"
+    r"(?:[Cc]opyright|COPYRIGHT)\s*(?:\([cC]\)|©|\d|[<\[{])"
+    r"|Copyright\s+(?!(?:Holders?|Owners?|Notices?|Act|Laws?|Licen[cs]es?|Agent|Office|Statement|Policy|Protection|Treaty|Treaties|"
+    r"Conventions?)\b)[A-Z]"
     r"|©|\([cC]\)\s*(?:\d|[Cc]opyright\b)|SPDX-FileCopyrightText:)"
 )
+# OFL 的版权行常把“with Reserved Font Name …”折到下一行：这一行也算版权声明。
+_RFN = re.compile(r"^\s*(?:and\s+)?with\s+reserved\s+font\s+names?\b", re.I)
 # 版权行里常跟着的商标声明（字体：“Source is a trademark of Adobe …”）：和版权声明一起去掉。
 _TRADEMARK = re.compile(r"\b(?:is|are)\s+(?:a\s+|the\s+)?(?:registered\s+)?trademarks?\s+(?:of|owned\s+by)\b", re.I)
-_SENTENCE_END = re.compile(r"(?<=[.!?])\s+(?=[A-Z]|[^\x00-\x7f])|(?<=[;:])\s+")
+# 断句：句号后面是大写字母；名字里的缩写（Nathaniel J. Smith、Isaac Z. Schlueter）不断开。
+_SENTENCE_END = re.compile(r"(?<![\s(.,][A-Z]\.)(?<=[.!?])\s+(?=[A-Z]|[^\x00-\x7f])|(?<=[;:])\s+")
+# 版权声明里的邮箱、网址（scheme 和主机名；路径照常看）：christian@cjohansen.no 的 no 不是限制性的词。
+_EMAIL_URL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+|(?:https?://|www\.)[\w-]+(?:\.[\w-]+)+")
 # 占位写法：<year>、<copyright holders>、[yyyy]。尖括号里的网址、邮箱是正文；Markdown 链接 [x](…) 也是。
 _PLACEHOLDER = re.compile(r"<(?!\s*(?:https?://|mailto:|www\.)|[^<>\s]+@)[^<>\n]{1,60}>|\[(?![^\]\n]*\]\()[^\[\]\n]{1,40}\]")
 _SLOT = "qqslotqq"
@@ -582,6 +589,21 @@ _LIMITING = set(
 )
 # 版权声明里出现这些，就不当成版权声明去掉（照常核对）：版权行里藏的限制。公司名常带的 Limited 不算。
 _NOTICE_LIMITING = _LIMITING - {"limited", "limit", "limits"} | {"may", "shall", "subject", "terms"}
+# 讲授权、使用条件的词：版权声明里只有名字、年份、邮箱，有这些词的是条款（“Copyright 2024 Foo, licensed for academic
+# research …”），不当版权声明去掉。_NOTICE_NAMEABLE 里的也常是名字的一部分（Nous Research、Public Sans、Pydantic
+# Services），只有小写时才算。
+_NOTICE_CLAUSE = set(
+    "license licenses licence licences licensed licensing licensee licensees licensor sublicense sublicensed use used using "
+    "usage user users grant grants granted permission permissions permitted permit permits allow allows allowed disallowed "
+    "distribute distributed distributing distribution redistribute redistributed redistributing redistribution sell sold "
+    "selling resale resell reselling copies approval approve approved consent written agree agreed accept accepted condition "
+    "conditions provided purpose purposes deploy deployed deployment deployments hosted hosting embed embedded embedding "
+    "install installed installation seat seats need needs needed separately separate employees contractors under eula gnu gpl "
+    "lgpl agpl affero charge price buy bought valid research academic educational public free service services program "
+    "general key keys production university universities".split()
+)
+_NOTICE_NAMEABLE = set("research academic educational public free service services program general key keys production "
+                       "university universities consent".split())
 # 标准文本里缺了这些词就对不上：授权的范围被删了。
 _GRANT_WORDS = set(
     "use copy modify merge publish distribute sublicense sell redistribute redistribution redistributions permission "
@@ -739,19 +761,29 @@ def _foreign(w):
     return not w.isascii() and any(ch.isalpha() for ch in w)
 
 
-def _drop_notices(line):
-    """版权行：去掉版权声明本身（最多 NOTICE_MAX_WORDS 个词），同一行后面别的话留着照常核对。版权声明里有
-    限制性的说法（“Copyright 2024 Acme: you may only …”）就不当版权声明，整句照常核对。"""
+def _is_plain_notice(s, template=False):
+    """这一句只是版权声明（名字、年份、邮箱）：名字最多 NOTICE_MAX_WORDS 个词，没有限制性的说法、讲授权和使用条件的词、
+    非拉丁字母的文字。占位去掉（文件里只去标准文本里有的占位，别的尖括号、方括号里的字照常看），邮箱和网址的主机名
+    去掉；限制性的说法在网址的路径里也算，讲授权的词在网址里不算（https://angular.dev/license、github.com/x/public-sans）。"""
+    s = (_PLACEHOLDER if template else _known_placeholder()).sub(" ", s).replace("'", "").replace("’", "")
+    words = _tokens(_EMAIL_URL.sub(" ", s))
+    names = [w for w in words if not w.isdigit() and w not in _BENIGN_WORDS and w not in ("c", "copyright")]
+    if len(names) > NOTICE_MAX_WORDS or any(w in _NOTICE_LIMITING or _foreign(w) for w in words):
+        return False
+    outside_urls = re.findall(r"[^\W_]+", re.sub(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+|(?:https?://|www\.)\S+|\b[\w.-]+\.(?:com|org|net|io|dev)/\S*",
+                                                 " ", s))
+    return not any(w.lower() in _NOTICE_CLAUSE and (w.lower() not in _NOTICE_NAMEABLE or w.islower()) for w in outside_urls)
+
+
+def _drop_notices(line, template=False):
+    """版权行：去掉版权声明本身，同一行后面别的话留着照常核对。版权声明里有限制性的说法、讲授权和使用条件的词
+    （“Copyright 2024 Acme: you may only …”“Copyright 2024 Acme, licensed for academic research …”）或者太长，就不当版权
+    声明，整句照常核对。"""
     keep = []
     for s in _SENTENCE_END.split(line):
-        words = _tokens(_PLACEHOLDER.sub(" ", s))
-        if not _NOTICE_START.match(s) and not (_TRADEMARK.search(s) and len(words) <= NOTICE_MAX_WORDS):
+        notice = _NOTICE_START.match(s) or _RFN.match(s) or _TRADEMARK.search(s)
+        if not (notice and _is_plain_notice(s, template)):
             keep.append(s)
-            continue
-        if any(w in _NOTICE_LIMITING or _foreign(w) for w in words[:NOTICE_MAX_WORDS]):
-            keep.append(s)
-        elif len(words) > NOTICE_MAX_WORDS:
-            keep.append(" ".join(words[NOTICE_MAX_WORDS:]))
     return " ".join(keep)
 
 
@@ -769,18 +801,20 @@ def _known_placeholders():
 _KNOWN_PLACEHOLDER = None
 
 
+def _known_placeholder():
+    global _KNOWN_PLACEHOLDER
+    if _KNOWN_PLACEHOLDER is None:
+        _KNOWN_PLACEHOLDER = _known_placeholders() or re.compile(r"(?!)")
+    return _KNOWN_PLACEHOLDER
+
+
 def _words(text, template=False):
     """核对用的词（小写；占位处是 _SLOT）：去掉注释前缀和版权声明。标准文本里的占位写法都是占位；文件里只有
     标准文本里出现过的占位写法（GNU 原文里的 <year>、Apache 附录的 [yyyy]）算占位，别的尖括号里的字照常核对。"""
-    global _KNOWN_PLACEHOLDER
     text = _strip_comments(_fold(text).replace("\r", ""))
-    text = "\n".join(_drop_notices(line) if _NOTICE_START.match(line) else line for line in text.splitlines())
-    if template:
-        text = _PLACEHOLDER.sub(" %s " % _SLOT, text)
-    else:
-        if _KNOWN_PLACEHOLDER is None:
-            _KNOWN_PLACEHOLDER = _known_placeholders() or re.compile(r"(?!)")
-        text = _KNOWN_PLACEHOLDER.sub(" %s " % _SLOT, text)
+    text = "\n".join(_drop_notices(line, template) if _NOTICE_START.match(line) or _RFN.match(line) else line
+                     for line in text.splitlines())
+    text = (_PLACEHOLDER if template else _known_placeholder()).sub(" %s " % _SLOT, text)
     return _tokens(text)
 
 
@@ -2880,26 +2914,27 @@ def self_test():
         ("HPND 写了持有人的名字", _spdx_text("HPND", "Secret Labs AB and Fredrik Lundh"), "HPND"),
     ]:
         eq(detect_text(text), want, "核对得上：%s" % name)
-    # 标准文本换个折行照样核对得上（版权行判断不能依赖原来的折行）
+    # 标准文本换个折行照样核对得上（版权行判断不能依赖原来的折行：CC-BY 折到行首的“Copyright Treaty”不是版权行）
     for path in sorted(SPDX_DIR.glob("*.txt")):
         if path.stem in ("license-ids", "exception-ids"):
             continue
-        out = []
-        for para in re.split(r"\n\s*\n", path.read_text(encoding="utf-8")):
-            # 版权行还是单独一行（真实的文件里也是），别的重新折行
-            lines, run = [], []
-            for line in para.splitlines() + [None]:
-                if line is None or _NOTICE_START.match(line):
-                    if run:
-                        lines.append(textwrap.fill(" ".join(" ".join(run).split()), 50))
-                        run = []
-                    if line is not None:
-                        lines.append(line.strip())
-                else:
-                    run.append(line)
-            out.append("\n".join(lines))
-        rewrapped = "\n\n".join(out)
-        eq(identify(rewrapped), (path.stem, True), "%s 标准文本换行以后" % path.stem)
+        for width in (50, 62, 66, 78, 82, 95):
+            out = []
+            for para in re.split(r"\n\s*\n", path.read_text(encoding="utf-8")):
+                # 版权行还是单独一行（真实的文件里也是），别的重新折行
+                lines, run = [], []
+                for line in para.splitlines() + [None]:
+                    if line is None or _NOTICE_START.match(line) or _RFN.match(line):
+                        if run:
+                            lines.append(textwrap.fill(" ".join(" ".join(run).split()), width))
+                            run = []
+                        if line is not None:
+                            lines.append(line.strip())
+                    else:
+                        run.append(line)
+                out.append("\n".join(lines))
+            rewrapped = "\n\n".join(out)
+            eq(identify(rewrapped), (path.stem, True), "%s 标准文本按 %d 列换行以后" % (path.stem, width))
     # GNU 现在发布的 GPL-2.0、LGPL-2.1：地址换成了网址（Ubuntu 26.04 的 /usr/share/common-licenses 就是这一版）
     for lid in ("GPL-2.0-only", "LGPL-2.1-only"):
         current = re.sub(r"51 Franklin Street, Fifth Floor, Boston, MA\s+02110-1301,?\s+USA", "<https://fsf.org/>",
@@ -3315,6 +3350,39 @@ def self_test():
     eq(detect_text(MIT_TEXT.replace("2024 Someone", "2024 Søren Łukasz, Jürgen Straße, Barış Çelik")), "MIT",
        "名字里的 ø ł ß ı ç 不算外文")
     eq(detect_text("﻿" + MIT_TEXT), "MIT", "开头的 BOM 不算")
+    # 版权声明里藏的条款：讲授权、使用条件的词，方括号、尖括号里的字，都不当版权声明去掉
+    for notice in [
+            "Copyright (c) 2024 Foo Inc, licensed for academic research and teaching at accredited universities",
+            "Copyright (c) 2024 Foo Inc, for use by Foo employees and contractors on Foo projects",
+            "Copyright (c) 2024 Foo Inc, Licensed For Academic Research",
+            "Copyright (c) 2024 Foo Inc., licensed to holders of a valid Foo Pro license key for use on one seat per key",
+            "Copyright (c) 2024 Foo Inc. © Free for universities and research labs, everyone else needs written approval from Foo Inc.",
+            "Copyright (c) 2024 Foo Inc., production deployments need a Foo Enterprise license from foo.example.",
+            "Copyright (c) 2024 Foo Inc. [Licensed to ACME Corp, internal use only]",
+            "Copyright (c) 2024 Foo Inc. [not for resale] [no commercial use] [evaluation copy, expires 2025]",
+            "Copyright (c) 2024 Foo Inc. <This copy is licensed for non-production evaluation only> <You may not redistribute it>",
+            "Copyright 2024 John Q. Public. Licensed for internal evaluation only.", "Copyright 2024 J. Doe. Do not redistribute.",
+            "Copyright 2024 Foo; use by customers requires a fee", "Copyright (c) 2024 Foo (https://foo.example/only-personal-use)"]:
+        eq(detect_text(notice + "\n\n" + mit_body), None, "版权声明里的条款核对不上：%s" % notice)
+    for notice in [
+            "Copyright (c) 2016 Nathaniel J. Smith <njs@pobox.com> and other contributors",
+            "Copyright (c) Isaac Z. Schlueter, Kat Marchán, npm, Inc., and Contributors",
+            "Copyright (c) 2018 Kyle E. Mitchell & other authors listed in AUTHORS",
+            "Copyright 2010 James Halliday (mail@substack.net); Modified work Copyright 2014 Contributors (ben@npmjs.com)",
+            "Copyright (c) 2010-2017, Christian Johansen, christian@cjohansen.no", "Copyright (c) 2019 Ola Nordmann <ola@example.no>",
+            "Copyright (c) 2025 Nous Research", "Copyright © 2026 to present Pydantic Services Inc. and individual contributors.",
+            "Copyright (c) 2015 holger krekel (rather uses bitbucket/hpk42)", "Copyright (c) 2010-2026 Google LLC. https://angular.dev/license",
+            "Copyright 2015 The Public Sans Project Authors (https://github.com/uswds/public-sans)",
+            "Copyright (c) 2013 Foo Bar. Digitized data copyright (c) 2010-2012 The Baz Foundation and Qux S.A.",
+            "Copyright {yyyy} {name of copyright owner}"]:
+        eq(detect_text(notice + "\n\n" + mit_body), "MIT", "真实的版权声明照样核对得上：%s" % notice)
+    ofl_terms = ofl[ofl.index("SIL OPEN FONT LICENSE"):]
+    eq(detect_text("Copyright (c) 2011, Pablo Impallari (www.impallari.com|impallari@gmail.com),\nwith Reserved Font Name "
+                   "\"Abril Fatface\".\n\n" + ofl_terms), "OFL-1.1", "OFL 的“with Reserved Font Name”折到下一行")
+    for notice in ["Copyright 2024 Foo Type Foundry (foo@example.com),\nwith Reserved Font Name \"Foo Sans\", desktop use licensed separately.",
+                   "Copyright 2024 Foo Type Foundry, with Reserved Font Name Foo Sans, desktop installation and app embedding licensed "
+                   "separately by Foo Type Foundry."]:
+        eq(detect_text(notice + "\n\n" + ofl_terms), None, "OFL 版权行里的条件核对不上：%s" % notice)
     # GPL、LGPL 原文前面有好几段说明（Linux、git、libgit2 的 COPYING）：按文件里任何位置的正文标题提名
     preface = ("NOTE! This copyright does *not* cover programs that merely use the services of this project through its "
                "public interfaces - that is considered normal use, and does *not* fall under the heading of \"derived work\". "
