@@ -3004,6 +3004,39 @@ async fn live_activities_resist_floods_and_races() {
             .unwrap();
         }
     }
+    // 发过一次、之后不停地换假令牌（每次都 BadDeviceToken）：刚换过令牌的排到后面，先轮每个用户的第一个，
+    // 后来的用户第一批就排得上。
+    sqlx::query(
+        "UPDATE live_activities SET sent_at = now() - interval '1 hour' WHERE user_id = $1",
+    )
+    .bind(mallory.0)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    for (n, r) in runs.iter().enumerate() {
+        register(mallory, mphone, *r, ["ab01", "ab02", "ab03", "ab04"][n])
+            .await
+            .unwrap();
+    }
+    let late = queue_run(db, victim, &vinst, "v2").await;
+    register(victim, vphone, late.id, "bc01").await.unwrap();
+    sqlx::query(
+        "UPDATE live_activities SET sent_at = now() - interval '10 seconds' WHERE run_id = $1",
+    )
+    .bind(late.id.0)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    let got = claim(4).await;
+    assert!(
+        got.iter().any(|a| a.run_id == late.id),
+        "{:?}",
+        got.iter().map(|a| a.user_id).collect::<Vec<_>>()
+    );
+    for a in &got {
+        settle_live(db, a, "n1", LiveSettle::End { error: None }).await;
+    }
+
     // 令牌失效后再报同一个：不会重新打开（不会每报一次就发一次）。
     let mut w = db.worker().await.unwrap();
     let ended: i64 = sqlx::query_scalar(
@@ -3165,7 +3198,7 @@ async fn live_activities_follow_the_phone() {
         .unwrap();
     let mut w = db.worker().await.unwrap();
     assert!(
-        !w.extend_live_lock(phone, run.id, "n1", LEASE)
+        !w.extend_live_lock(phone, run.id, "n1", LEASE, None)
             .await
             .unwrap()
     );
@@ -3173,7 +3206,7 @@ async fn live_activities_follow_the_phone() {
     let got = claim_live(db, "n1", Duration::ZERO).await;
     let mut w = db.worker().await.unwrap();
     assert!(
-        w.extend_live_lock(phone, run.id, "n1", LEASE)
+        w.extend_live_lock(phone, run.id, "n1", LEASE, None)
             .await
             .unwrap()
     );
@@ -3210,12 +3243,43 @@ async fn live_activities_follow_the_phone() {
     .unwrap();
     assert!(fresh);
 
-    // 同一台手机换成 bob 登录（推送令牌跟着手机走）：alice 那台不再远程开启，开着的不再更新。
+    // 远程开启领了、还没发：用户关掉了远程开启（或者换了令牌）就不发了。
+    let planned0 = queue_run(db, alice, &inst, "早报").await;
+    let mut w = db.worker().await.unwrap();
+    assert_eq!(w.queue_live_starts(alice, planned0.id, 2).await.unwrap(), 1);
+    w.commit().await.unwrap();
+    let got = claim_live(db, "n1", Duration::ZERO).await;
+    let p = got
+        .iter()
+        .find(|a| a.run_id == planned0.id)
+        .unwrap()
+        .clone();
+    let mut w = db.worker().await.unwrap();
+    assert!(
+        w.extend_live_lock(phone, planned0.id, "n1", LEASE, Some("ee01"))
+            .await
+            .unwrap()
+    );
+    assert!(
+        !w.extend_live_lock(phone, planned0.id, "n1", LEASE, Some("ee99"))
+            .await
+            .unwrap()
+    );
+    w.commit().await.unwrap();
+
+    // 同一台手机换成 bob 登录（推送令牌跟着手机走）：alice 那台不再远程开启，开着的不再更新；已经领了的也不发。
     let mut w = db.worker().await.unwrap();
     w.create_device(bob, DevicePlatform::Ios, "iPhone", apns)
         .await
         .unwrap();
     w.commit().await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    assert!(
+        !w.extend_live_lock(phone, p.run_id, "n1", LEASE, Some("ee01"))
+            .await
+            .unwrap()
+    );
+    w.rollback().await.unwrap();
     let (start, ended): (Option<String>, bool) = sqlx::query_as(
         "SELECT d.activity_start_token, x.ended_at IS NOT NULL FROM devices d \
          JOIN live_activities x ON x.device_id = d.id WHERE d.id = $1",

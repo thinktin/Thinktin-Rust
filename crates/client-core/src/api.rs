@@ -963,7 +963,8 @@ impl Api {
     }
 
     /// 这个运行在这台设备上开了实时活动（10.6），或者远程开启的那个拿到了令牌：登记它的推送令牌
-    /// （ActivityKit 的 `pushTokenUpdates`）。令牌变了再调一次。
+    /// （ActivityKit 的 `pushTokenUpdates`）。令牌变了再调一次；App 启动、回到前台时把每个开着的实时活动现在的令牌
+    /// 再报一次（没变的什么都不做，连着失败放弃了的从头来）。
     pub async fn register_live_activity(&self, id: RunId, token: &str) -> Result<()> {
         self.empty(
             Method::PUT,

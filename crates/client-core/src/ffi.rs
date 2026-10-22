@@ -1712,7 +1712,9 @@ impl ThinktinClient {
     }
 
     /// 这个运行开了实时活动（10.6），或者远程开启的拿到了令牌：登记它的推送令牌（ActivityKit 的
-    /// `pushTokenUpdates`，十六进制），之后运行的状态、步数变了、结束了，后台推送更新。令牌变了再调一次。
+    /// `pushTokenUpdates`，十六进制），之后运行的状态、步数变了、结束了，后台推送更新。令牌变了再调一次；App 启动、
+    /// 回到前台时把每个开着的实时活动（`Activity<RunActivityAttributes>.activities`）现在的令牌再报一次：没变的什么
+    /// 都不做，后台连着失败放弃了的从头来。运行结束 10 分钟以上的返回 422（App 在本地结束它）。
     pub async fn register_live_activity(&self, run_id: String, token: String) -> Result<()> {
         let id: d::RunId = parse(&run_id, "run")?;
         self.run(|c| async move { c.api.register_live_activity(id, &token).await })

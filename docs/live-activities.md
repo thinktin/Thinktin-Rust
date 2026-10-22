@@ -7,7 +7,9 @@
 ## 1. 流程
 
 - **App 自己开的**：用户在运行页面上开实时活动（或者 App 发起运行时自动开），拿到 ActivityKit 给的推送令牌
-  （`activity.pushTokenUpdates`）后调 `register_live_activity(run_id, token)`。令牌变了再调一次。用户划掉、App 结束了
+  （`activity.pushTokenUpdates`）后调 `register_live_activity(run_id, token)`。令牌变了再调一次；App 启动、回到前台时
+  把每个开着的实时活动（`Activity<RunActivityAttributes>.activities`）现在的令牌再报一次（没变的什么都不做，后台连着
+  失败放弃了的从头来）。用户划掉、App 结束了
   调 `end_live_activity(run_id)`。
 - **远程开启的**：用户在设置里打开“计划运行时显示实时活动”，App 把推送开启令牌（`Activity<RunActivityAttributes>
   .pushToStartTokenUpdates`）报上来：`set_live_activity_start_token(token)`；关掉时传 nil。计划到点开始的根运行第一次
@@ -63,18 +65,20 @@ struct RunActivityAttributes: ActivityAttributes {
   - **start**（远程开启）：发到推送开启令牌，加 `attributes-type`、`attributes`、`alert`（标题是实例名，正文“计划开始运行了”，
     按用户的语言）和 `input-push-token: 1`（iOS 18 起系统把新实时活动的令牌交给 App）。
   - **update**：运行没结束时。**end**：运行结束了（成功、失败、取消），之后不再发；系统按默认的时间从锁屏上移走。
-- 合并和限频：后台每秒看一次哪些实时活动的内容和上次发的不一样，只发现在的样子（中间的变化合成一次）。等得最久的
-  先发，一个用户每秒最多 5 个（几个账号刷不满整批）。状态变了的
+- 合并和限频：后台每秒看一次哪些实时活动的内容和上次发的不一样，只发现在的样子（中间的变化合成一次）。先轮每个用户
+  等得最久的那一个，再轮第二个，一个用户一次最多 5 个：刷令牌的账号再多，每个用户的实时活动每一批都排得上（等了多久
+  从上次发、或者换令牌算起，刚换过令牌的排到后面）。状态变了的
   离上次至少 2 秒（同一秒里的两次更新系统会丢掉后一次），优先级 10；只是步数变了的离上次至少 20 秒，优先级 5（苹果对
   优先级 10 的更新有预算）。更新一小时内送不到就算了（`apns-expiration`），反正系统只留最后一条；end 只发一次，等
   8 小时（手机离线久一点也送得到）。
 - 多个后台副本：领了的锁 60 秒，每条发之前续锁；前面的发得慢、锁已经过期的不发（别的副本可能领去发了，远程开启发两次
-  就是两个实时活动），下一轮再领。
+  就是两个实时活动），下一轮再领。领了以后不该发了的（App 关掉了、设备下线了、同一台手机换了账号、远程开启的令牌
+  关掉或换了）也不发。
 - 远程开启的：一台设备同时开着的最多 2 个；开启后 App 一直没报上令牌、运行就结束了的，了结掉（没法发 end，系统 8 小时
   后自己结束）。
 - 结果：推送开启令牌失效（410、`BadDeviceToken`）清掉，这台设备不再远程开启，直到 App 报上新的；实时活动的令牌失效
   （用户划掉了、系统结束了）或者请求被拒，这个实时活动不再发；暂时失败（429、5xx、网络）退避重试（5 秒起翻倍，最多
-  10 分钟），连着 12 次（一个多小时）才不再发；App 再报一次令牌（同一个也行）就从头来。令牌失效、App 关掉了的，同一个令牌再报也不
+  10 分钟），连着 13 次（一个小时出头）才不再发；App 再报一次令牌（同一个也行）就从头来。令牌失效、App 关掉了的，同一个令牌再报也不
   重新打开（换了令牌才算新的）。发送期间 App 换了令牌，这一次的结果不记，新令牌接着发。
 - 实时活动最多显示 8 小时（苹果的上限），开了更久的不再发；一天前的记录由维护任务删掉。
 - 指标：`thinktin_live_activity_total{result=sent|retried|ended|dropped}`。
@@ -84,10 +88,10 @@ struct RunActivityAttributes: ActivityAttributes {
 | 测试 | 位置 |
 |---|---|
 | 登记、换令牌重发、关掉、只有 iPhone、别人的运行、领取的条件（没发过、状态变了、步数隔一阵、重试时间）、锁、远程开启的数量上限、没拿到令牌就结束的了结、开启令牌只属于一台设备、下线清掉 | `crates/store/src/tests.rs`（`live_activities_follow_their_runs_per_device`） |
-| 刷令牌占不满整批（每个用户的份额、等得最久的先领）、同一个令牌不重新打开、放弃了的从头来、早就结束的运行、并发登记和并发远程开启超不过上限 | `crates/store/src/tests.rs`（`live_activities_resist_floods_and_races`） |
-| 步数连同子运行、续锁、换令牌后 8 小时重算、同一台手机换账号 | `crates/store/src/tests.rs`（`live_activities_follow_the_phone`） |
+| 刷令牌占不满整批（每个用户的份额、先轮每个用户的第一个、刚换过令牌的排后面）、同一个令牌不重新打开、放弃了的从头来、早就结束的运行、并发登记和并发远程开启超不过上限 | `crates/store/src/tests.rs`（`live_activities_resist_floods_and_races`） |
+| 步数连同子运行、续锁（领了以后关掉远程开启、换了账号的不发）、换令牌后 8 小时重算、同一台手机换账号 | `crates/store/src/tests.rs`（`live_activities_follow_the_phone`） |
 | 主题、推送类型、优先级、过期时间（end 等得久）、开启的载荷、令牌失效 | `crates/notify/src/apns.rs`（`live_activities_use_their_own_topic_and_payload`） |
 | 跟着运行更新、合并、低优先级的步数更新、end；计划运行远程开启（用户自己发起的不开）、标题过滤；令牌失效、重试和放弃、重新登记；发得慢时锁过期的不发 | `crates/orchestrator/tests/live.rs` |
-| 有步骤的计划：根运行远程开启一个，步骤不单独开 | `crates/orchestrator/tests/pipeline.rs`（`scheduled_pipelines_start_one_live_activity`） |
+| 有步骤的计划：根运行远程开启一个，步骤不单独开；第一步就起不来的流水线自己失败，不影响别的 | `crates/orchestrator/tests/pipeline.rs`（`scheduled_pipelines_start_one_live_activity`、`a_pipeline_whose_first_step_cannot_start_fails_alone`） |
 | 接口 | `crates/gateway/tests/api.rs`（`live_activities_over_http`） |
 | client-core 方法 | `crates/client-core/tests/client.rs`（`ffi_live_activities`） |

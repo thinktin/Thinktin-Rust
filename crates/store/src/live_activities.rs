@@ -301,8 +301,9 @@ impl Tx<Worker> {
 
     /// 领该发的实时活动，锁 `lock_for`。步数连同直接子运行的一起算（流水线的步骤、委派的子任务）。待远程开启的；还没发过的；状态变了、离上次发过了 `state_gap` 的；只是步数变了、
     /// 离上次发过了 `step_gap` 的（步数变得勤，苹果对更新也有预算）；还有远程开启了却一直没拿到令牌、运行已经结束的
-    /// （没法再发，了结掉）。设备下线了、开了太久的不领。等得最久的先领，一个用户一次最多 `per_user` 个（几个账号
-    /// 刷不满整批，别人的照样发得出去）。
+    /// （没法再发，了结掉）。设备下线了、开了太久的不领。先轮一遍每个用户等得最久的那一个，再轮第二个……一个用户
+    /// 一次最多 `per_user` 个：刷令牌的账号再多，每个用户的实时活动每一批都排得上（只要这一批里的用户不比整批多）。
+    /// 等了多久从上次发、或者登记（换了令牌）算起，刚换过令牌的排到后面。
     pub async fn claim_live_activities(
         &mut self,
         owner: &str,
@@ -314,8 +315,8 @@ impl Tx<Worker> {
     ) -> Result<Vec<LiveActivity>> {
         let rows: Vec<Row> = sqlx::query_as(
             "WITH cand AS ( \
-               SELECT x.device_id, x.run_id, coalesce(x.sent_at, x.created_at) AS since, t.steps, \
-                 row_number() OVER (PARTITION BY x.user_id ORDER BY coalesce(x.sent_at, x.created_at)) AS n \
+               SELECT x.device_id, x.run_id, greatest(x.sent_at, x.created_at) AS since, t.steps, \
+                 row_number() OVER (PARTITION BY x.user_id ORDER BY greatest(x.sent_at, x.created_at)) AS n \
                FROM live_activities x \
                JOIN runs r ON r.id = x.run_id \
                CROSS JOIN LATERAL (SELECT r.steps + coalesce((SELECT sum(c.steps) FROM runs c \
@@ -337,7 +338,7 @@ impl Tx<Worker> {
                JOIN cand c ON c.device_id = x.device_id AND c.run_id = x.run_id \
                WHERE c.n <= $7 AND x.ended_at IS NULL \
                  AND (x.locked_until IS NULL OR x.locked_until < now()) \
-               ORDER BY c.since \
+               ORDER BY c.n, c.since \
                LIMIT $3 \
                FOR UPDATE OF x SKIP LOCKED), \
              claimed AS ( \
@@ -363,22 +364,29 @@ impl Tx<Worker> {
         rows.into_iter().map(Row::into_activity).collect()
     }
 
-    /// 发之前续锁：锁还在自己手里就再锁 `lock_for`，返回 `false` 时不要发（锁过期了，别人可能已经领了去发）。
+    /// 发之前续锁：锁还在自己手里、还该发，就再锁 `lock_for`。返回 `false` 时不要发：锁过期了（别人可能已经领了去发），
+    /// 或者领了以后不该发了（App 关掉了、设备下线了、同一台手机换了账号）。`start_token` 是要远程开启时用的推送开启
+    /// 令牌：设备上的已经不是它（用户关掉了、换了账号）也不发。
     pub async fn extend_live_lock(
         &mut self,
         device: DeviceId,
         run: RunId,
         owner: &str,
         lock_for: Duration,
+        start_token: Option<&str>,
     ) -> Result<bool> {
         let done = sqlx::query(
-            "UPDATE live_activities SET locked_until = now() + make_interval(secs => $4) \
-             WHERE device_id = $1 AND run_id = $2 AND locked_by = $3 AND locked_until > now()",
+            "UPDATE live_activities x SET locked_until = now() + make_interval(secs => $4) \
+             FROM devices d \
+             WHERE x.device_id = $1 AND x.run_id = $2 AND x.locked_by = $3 AND x.locked_until > now() \
+               AND x.ended_at IS NULL AND d.id = x.device_id AND d.revoked_at IS NULL \
+               AND ($5::text IS NULL OR d.activity_start_token = $5)",
         )
         .bind(device.0)
         .bind(run.0)
         .bind(owner)
         .bind(secs(lock_for))
+        .bind(start_token)
         .execute(self.conn())
         .await?;
         Ok(done.rows_affected() == 1)
