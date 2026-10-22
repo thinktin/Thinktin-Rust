@@ -28,6 +28,7 @@ if sys.version_info < (3, 11):
 import argparse
 import email.parser
 import fnmatch
+import functools
 import hashlib
 import json
 import os
@@ -756,6 +757,23 @@ def _strip_comments(text):
     return "\n".join(re.sub(r"^\s*(?://+|#+|;+|--+|>+|/?\*+/?)\s?", "", line) for line in text.splitlines())
 
 
+def _text_cache(fn):
+    """按原文缓存结果（最近的 128 份，只缓存不超过 VERIFY_MAX_CHARS 的原文：几百个 crate 的 LICENSE-APACHE 一字不差）。"""
+    cache = {}
+
+    def wrapper(text, *args, **kw):
+        if len(text) > VERIFY_MAX_CHARS:
+            return fn(text, *args, **kw)
+        key = (text, args, tuple(sorted(kw.items())))
+        if key not in cache:
+            if len(cache) >= 128:
+                cache.pop(next(iter(cache)))
+            cache[key] = fn(text, *args, **kw)
+        return cache[key]
+    return functools.wraps(fn)(wrapper)
+
+
+@_text_cache
 def _normalized(text, limit=8000):
     """提名、找禁止名单许可证用的文本：小写、空白合成一个，去掉注释前缀和 Markdown 的格式（**粗体**、# 标题、
     _强调_、`代码`、===== 和 ----- 下划线）。"""
@@ -1052,7 +1070,14 @@ def verify_text(text, lid):
 
 def examine(text):
     """一份原文：提名（proposed）、核对过没有（verified）、提名是不是来自标题（titled）、所有提名和文件里任何位置
-    出现的禁止名单许可证（candidates）。proposed 是第一个核对得上的提名；都对不上时是第一个提名。"""
+    出现的禁止名单许可证（candidates）。proposed 是第一个核对得上的提名；都对不上时是第一个提名。
+    扫描时同一份原文要认两次（认包的许可证、和声明对照），结果按原文缓存。"""
+    r = _examine(text)
+    return dict(r, candidates=list(r["candidates"]))
+
+
+@_text_cache
+def _examine(text):
     full = _normalized(text, limit=None)
     found, titled = _proposals(text, full)
     lid, ok = (found[0] if found else None), False
