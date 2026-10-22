@@ -1188,7 +1188,7 @@ async fn route_fallbacks_round_trip_and_guard_their_keys() {
     b.rollback().await.unwrap();
 
     let mut a = db.tenant(alice).await.unwrap();
-    // 超过 3 个、或者引用停用的 key：整体拒绝，原来的不变。
+    // 超过 3 个、或者新引用停用的 key：整体拒绝，原来的不变。
     let too_many = ModelRoute {
         fallbacks: vec![
             fb(&backup, "a"),
@@ -1204,12 +1204,13 @@ async fn route_fallbacks_round_trip_and_guard_their_keys() {
     ));
     a.rollback().await.unwrap();
     let mut a = db.tenant(alice).await.unwrap();
-    a.set_credential_disabled(spare.id, true).await.unwrap();
+    let idle = a.create_credential(&credential("0004")).await.unwrap();
+    a.set_credential_disabled(idle.id, true).await.unwrap();
     let err = a
         .set_model_routes(
             inst.id,
             &[ModelRoute {
-                fallbacks: vec![fb(&spare, "m")],
+                fallbacks: vec![fb(&idle, "m")],
                 ..route.clone()
             }],
         )
@@ -1230,6 +1231,101 @@ async fn route_fallbacks_round_trip_and_guard_their_keys() {
     assert_eq!(a.model_routes(inst.id).await.unwrap(), vec![bare]);
     a.delete_credential(backup.id).await.unwrap();
     a.commit().await.unwrap();
+}
+
+/// 停用的 key（11.9）：实例原来就用着的可以留在别名里（网关照样跳过它），所以从别名里去掉别的 key 能保存；
+/// 新引用停用的 key（包括别的实例用着的）照样拒绝。
+#[tokio::test]
+async fn disabled_keys_can_stay_in_routes_but_not_be_added() {
+    use proto::domain::RouteFallback;
+
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = user(db, "+8613800000001").await;
+    let (inst, other) = (instance(db, alice).await, instance(db, alice).await);
+    let mut a = db.tenant(alice).await.unwrap();
+    let mut k = Vec::new();
+    for n in 1..=5 {
+        k.push(
+            a.create_credential(&credential(&format!("000{n}")))
+                .await
+                .unwrap()
+                .id,
+        );
+    }
+    let (ka, kb, kc, kd, ke) = (k[0], k[1], k[2], k[3], k[4]);
+    let route = |alias: &str, main, fallbacks: &[proto::domain::CredentialId]| ModelRoute {
+        alias: alias.into(),
+        credential_id: main,
+        upstream_model: "m".into(),
+        fallbacks: fallbacks
+            .iter()
+            .map(|c| RouteFallback {
+                credential_id: *c,
+                upstream_model: "m".into(),
+            })
+            .collect(),
+    };
+    a.set_model_routes(inst.id, &[route("main", ka, &[kb]), route("fast", kc, &[])])
+        .await
+        .unwrap();
+    a.set_model_routes(other.id, &[route("main", ke, &[])])
+        .await
+        .unwrap();
+    a.set_credential_disabled(ka, true).await.unwrap();
+    a.set_credential_disabled(ke, true).await.unwrap();
+    a.commit().await.unwrap();
+
+    // App 删 B 之前先把它从别名里去掉：A 停用着也照样保存，之后 B 能删。
+    let mut a = db.tenant(alice).await.unwrap();
+    let kept = [route("fast", kc, &[]), route("main", ka, &[])];
+    a.set_model_routes(inst.id, &kept).await.unwrap();
+    assert_eq!(a.model_routes(inst.id).await.unwrap(), kept);
+    a.delete_credential(kb).await.unwrap();
+    // 留着的 key 换位置也行（从主路由挪到降级链）。
+    a.set_model_routes(inst.id, &[route("main", kc, &[ka])])
+        .await
+        .unwrap();
+    a.commit().await.unwrap();
+    // 网关读到的照样有它（跳过停用的 key 是网关的事）。
+    let mut g = db.llmgw().await.unwrap();
+    let gi = g.gateway_instance(inst.id).await.unwrap().unwrap();
+    g.rollback().await.unwrap();
+    assert_eq!(gi.routes[0].fallbacks, vec![(ka, "m".to_string())]);
+
+    // 没在用的停用 key、别的实例用着的停用 key：不能新引用，原来的不变。
+    let mut a = db.tenant(alice).await.unwrap();
+    a.set_credential_disabled(kd, true).await.unwrap();
+    a.commit().await.unwrap();
+    for (main, fbs) in [(kd, vec![]), (kc, vec![kd]), (ke, vec![])] {
+        let mut a = db.tenant(alice).await.unwrap();
+        let err = a
+            .set_model_routes(inst.id, &[route("main", main, &fbs)])
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::Invalid(_)), "{err:?}");
+        a.rollback().await.unwrap();
+    }
+    // 去掉以后就不算原来用着的了：再加回来也拒绝。
+    let mut a = db.tenant(alice).await.unwrap();
+    a.set_model_routes(inst.id, &[route("main", kc, &[])])
+        .await
+        .unwrap();
+    a.commit().await.unwrap();
+    let mut a = db.tenant(alice).await.unwrap();
+    assert!(matches!(
+        a.set_model_routes(inst.id, &[route("main", kc, &[ka])])
+            .await
+            .unwrap_err(),
+        Error::Invalid(_)
+    ));
+    a.rollback().await.unwrap();
+    let mut a = db.tenant(alice).await.unwrap();
+    assert_eq!(
+        a.model_routes(inst.id).await.unwrap(),
+        [route("main", kc, &[])]
+    );
+    a.rollback().await.unwrap();
 }
 
 /// 已删除的实例的别名不再占着 key（11.9）：删除实例时别名和降级链一起删；之前留下的删 key 时也不算。
