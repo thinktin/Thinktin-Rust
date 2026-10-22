@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 只给窗口背景和启动图标用；界面颜色在 :design 的 ThinktinTheme 里。 -->
+    <color name="window_background">#F7F5F0</color>
+    <color name="window_background_dark">#1F1E1B</color>
+    <color name="launcher_background">#F7F5F0</color>
+    <color name="brand_primary">#C9653F</color>
+</resources>

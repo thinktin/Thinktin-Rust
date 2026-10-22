@@ -4,8 +4,10 @@ import app.cash.turbine.test
 import cn.thinktin.data.mock.MockThinktinService
 import cn.thinktin.data.model.EventKinds
 import cn.thinktin.data.model.EventStreamItem
+import cn.thinktin.data.model.ImChannelUpdate
 import cn.thinktin.data.model.InboxKind
 import cn.thinktin.data.model.InstanceState
+import cn.thinktin.data.model.NewImChannel
 import cn.thinktin.data.model.RunKind
 import cn.thinktin.data.model.RunSource
 import cn.thinktin.data.model.RunState
@@ -14,11 +16,11 @@ import cn.thinktin.data.service.AuthState
 import cn.thinktin.data.service.ServiceError
 import cn.thinktin.data.service.signedIn
 import kotlinx.coroutines.test.runTest
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
-import org.junit.Assert.fail
-import org.junit.Test
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.fail
+import org.junit.jupiter.api.Test
 
 class MockThinktinServiceTest {
     private val now = 1_760_000_000_000L
@@ -39,7 +41,7 @@ class MockThinktinServiceTest {
     fun everyInstanceHasRuns() = runTest {
         val s = service()
         for (instance in s.instances()) {
-            assertTrue("${instance.id} 没有运行", s.runs(instance.id).isNotEmpty())
+            assertTrue(s.runs(instance.id).isNotEmpty(), "${instance.id} 没有运行")
             assertEquals(s.runs(instance.id), s.cachedRuns(instance.id))
         }
     }
@@ -81,7 +83,7 @@ class MockThinktinServiceTest {
             assertEquals(events.drop(3), s.cachedEvents(instance.id, afterSeq = events[2].seq))
         }
         val missing = EventKinds.ALL.toSet() - kinds
-        assertTrue("没覆盖：$missing", missing.isEmpty())
+        assertTrue(missing.isEmpty(), "没覆盖：$missing")
     }
 
     @Test
@@ -158,7 +160,19 @@ class MockThinktinServiceTest {
         s.events("inst-research").test {
             assertEquals(EventStreamItem.Status(StreamState.Connecting), awaitItem())
             assertEquals(EventStreamItem.Status(StreamState.Live), awaitItem())
+            // 推进虚拟时间（运行中的实例每 1 秒吐一个事件），暂停的实例仍然没有事件。
+            testScheduler.advanceTimeBy(5_000)
+            testScheduler.runCurrent()
             expectNoEvents()
+            cancelAndIgnoreRemainingEvents()
+        }
+        // 对照：运行中的实例推进同样的时间会出事件。
+        s.events("inst-coder").test {
+            assertEquals(EventStreamItem.Status(StreamState.Connecting), awaitItem())
+            assertEquals(EventStreamItem.Status(StreamState.Live), awaitItem())
+            testScheduler.advanceTimeBy(5_000)
+            testScheduler.runCurrent()
+            assertTrue(awaitItem() is EventStreamItem.Event)
             cancelAndIgnoreRemainingEvents()
         }
         s.events("nope").test {
@@ -175,11 +189,106 @@ class MockThinktinServiceTest {
         assertEquals(AuthState.SignedOut, s.authState.value)
         try {
             s.instances()
-            fail()
+            fail("应该抛异常")
         } catch (_: ServiceError.SignedOut) {
         }
         s.login("+8613800000000", "123456")
         assertEquals(AuthState.SignedIn, s.authState.value)
+    }
+
+    @Test
+    fun streamAfterLogoutEndsWithSignedOut() = runTest {
+        val s = service()
+        s.logout()
+        s.events("inst-coder").test {
+            assertEquals(EventStreamItem.Status(StreamState.Connecting), awaitItem())
+            assertEquals(EventStreamItem.Status(StreamState.SignedOut), awaitItem())
+            awaitComplete()
+        }
+    }
+
+    /** 假数据里的外键都指向存在的对象（演示模式的跳转靠它们）。 */
+    @Test
+    fun mockReferencesResolve() = runTest {
+        val s = service()
+        val agents = s.agents().map { it.id }.toSet()
+        val instances = s.instances()
+        val instanceIds = instances.map { it.id }.toSet()
+        val runs = instances.flatMap { s.runs(it.id) }
+        val runIds = runs.map { it.id }.toSet()
+        val plans = s.plans()
+        val planIds = plans.map { it.id }.toSet()
+        val approvals = s.approvals()
+        val approvalIds = approvals.map { it.id }.toSet()
+        val vaultIds = s.vaultItems().map { it.id }.toSet()
+
+        fun check(what: String, ref: String?, ids: Set<String>) {
+            assertTrue(ref == null || ref in ids, "$what 指向不存在的对象：$ref")
+        }
+
+        instances.forEach { check("instance ${it.id}.agentId", it.agentId, agents) }
+        runs.forEach {
+            check("run ${it.id}.instanceId", it.instanceId, instanceIds)
+            check("run ${it.id}.planId", it.planId, planIds)
+            check("run ${it.id}.parentRunId", it.parentRunId, runIds)
+            check("run ${it.id}.rootRunId", it.rootRunId, runIds)
+        }
+        approvals.forEach {
+            check("approval ${it.id}.runId", it.runId, runIds)
+            check("approval ${it.id}.instanceId", it.instanceId, instanceIds)
+        }
+        plans.forEach { plan ->
+            check("plan ${plan.id}.instanceId", plan.instanceId, instanceIds)
+            plan.steps.forEach { check("plan ${plan.id} 步骤 ${it.key}", it.instanceId, instanceIds) }
+        }
+        s.syncInbox().items.forEach {
+            check("inbox ${it.id}.instanceId", it.instanceId, instanceIds)
+            check("inbox ${it.id}.runId", it.runId, runIds)
+            check("inbox ${it.id}.planId", it.planId, planIds)
+            check("inbox ${it.id}.approvalId", it.approvalId, approvalIds)
+        }
+        runs.flatMap { s.runArtifacts(it.id) }.forEach {
+            check("artifact ${it.id}.runId", it.runId, runIds)
+            check("artifact ${it.id}.instanceId", it.instanceId, instanceIds)
+        }
+        instances.flatMap { s.cachedEvents(it.id) }.forEach { check("event ${it.seq}.runId", it.runId, runIds) }
+        s.vaultRequests(all = true).forEach {
+            check("vault request ${it.id}.instanceId", it.instanceId, instanceIds)
+            check("vault request ${it.id}.runId", it.runId, runIds)
+            check("vault request ${it.id}.itemId", it.itemId, vaultIds)
+        }
+        s.vaultItems().forEach { item -> item.instanceIds.forEach { check("vault ${item.id}", it, instanceIds) } }
+        s.teams().forEach { team -> team.members.forEach { check("team ${team.id}", it.instanceId, instanceIds) } }
+        s.teamTemplates().forEach { tpl -> tpl.members.forEach { check("template ${tpl.id}", it.agentId, agents) } }
+    }
+
+    @Test
+    fun imChannelsCrud() = runTest {
+        val s = service()
+        assertEquals(2, s.imChannels().size)
+        val added = s.addImChannel(
+            NewImChannel(webhookUrl = "https://open.feishu.cn/open-apis/bot/v2/hook/abcd1234", label = "新群"),
+        )
+        assertEquals("feishu", added.vendor)
+        assertEquals("1234", added.hint)
+        assertFalse(added.hasSecret)
+        assertEquals(listOf("run_finished", "run_failed", "approval"), added.events)
+        val updated = s.updateImChannel(added.id, ImChannelUpdate(enabled = false, events = listOf("approval")))
+        assertFalse(updated.enabled)
+        assertEquals(listOf("approval"), updated.events)
+        s.testImChannel(added.id)
+        assertEquals(now, s.imChannels().single { it.id == added.id }.lastSentAtMs)
+        val replaced = s.replaceImWebhook(added.id, "https://open.feishu.cn/open-apis/bot/v2/hook/zzzz9876", "sec")
+        assertEquals("9876", replaced.hint)
+        assertTrue(replaced.hasSecret)
+        s.deleteImChannel(added.id)
+        assertEquals(2, s.imChannels().size)
+        try {
+            s.addImChannel(NewImChannel(webhookUrl = "https://example.com/hook", label = "x"))
+            fail("不支持的地址应该被拒绝")
+        } catch (e: ServiceError.Api) {
+            assertEquals(422, e.status)
+        }
     }
 
     @Test

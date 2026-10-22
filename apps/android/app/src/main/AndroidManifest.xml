@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- 令牌存在 Keystore 加密的偏好里，换机恢复也解不开：不备份。 -->
+    <application
+        android:name=".ThinktinApp"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:localeConfig="@xml/locales_config"
+        android:roundIcon="@mipmap/ic_launcher"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Thinktin"
+        tools:targetApi="35">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- 深链（docs/android-design.md 第 3 节）：thinktin://run/{id}、approval/{id}、plan/{id}、
+                 instance/{id}、vault/request/{id}、inbox、inbox/{id}。推送点击用它们跳转。 -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="thinktin" />
+                <data android:host="run" />
+                <data android:host="approval" />
+                <data android:host="plan" />
+                <data android:host="instance" />
+                <data android:host="vault" />
+                <data android:host="inbox" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

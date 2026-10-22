@@ -8,6 +8,8 @@ import cn.thinktin.data.model.CredentialUpdate
 import cn.thinktin.data.model.DetectedSecret
 import cn.thinktin.data.model.Device
 import cn.thinktin.data.model.EventStreamItem
+import cn.thinktin.data.model.ImChannel
+import cn.thinktin.data.model.ImChannelUpdate
 import cn.thinktin.data.model.InboxItem
 import cn.thinktin.data.model.InboxPage
 import cn.thinktin.data.model.Instance
@@ -15,6 +17,7 @@ import cn.thinktin.data.model.InstanceEvent
 import cn.thinktin.data.model.LoginResult
 import cn.thinktin.data.model.ModelRoute
 import cn.thinktin.data.model.NewCredential
+import cn.thinktin.data.model.NewImChannel
 import cn.thinktin.data.model.NewPlan
 import cn.thinktin.data.model.NewVaultItem
 import cn.thinktin.data.model.Plan
@@ -54,7 +57,9 @@ enum class AuthState {
  * - 真实实现 [cn.thinktin.data.core.CoreThinktinService] 经 client-core（UniFFI）调服务端；
  * - 演示实现 [cn.thinktin.data.mock.MockThinktinService] 用确定性的假数据。
  *
- * 所有方法失败时抛 [ServiceError]。`cached*` 只读本地缓存，不联网、不挂起（缓存不可用时返回空）。
+ * 所有方法失败时抛 [ServiceError]（不会抛别的异常；取消照常抛 CancellationException）。
+ * `cached*` 只读本地缓存、不联网，缓存不可用时返回空；它们是挂起函数，真实实现在 IO 线程上读 SQLite，
+ * 调用方不必自己切线程。
  * 标注“client-core 还没有”的方法：服务端已有接口，真实实现暂时抛 [ServiceError.Unsupported]。
  */
 interface ThinktinService {
@@ -102,7 +107,7 @@ interface ThinktinService {
 
     suspend fun instances(): List<Instance>
 
-    fun cachedInstances(): List<Instance>
+    suspend fun cachedInstances(): List<Instance>
 
     suspend fun adopt(agentId: String, name: String, harness: String? = null): Instance
 
@@ -130,7 +135,7 @@ interface ThinktinService {
     /** 更早的运行（分页，client-core 还没有）。 */
     suspend fun olderRuns(instanceId: String, beforeRunId: String, limit: Int = DEFAULT_PAGE): List<Run>
 
-    fun cachedRuns(instanceId: String, limit: Int = DEFAULT_PAGE): List<Run>
+    suspend fun cachedRuns(instanceId: String, limit: Int = DEFAULT_PAGE): List<Run>
 
     suspend fun getRun(runId: String): Run
 
@@ -153,11 +158,15 @@ interface ThinktinService {
 
     /**
      * 订阅实例的事件流。冷流：收集时订阅，取消收集时停止。事件在收集方的协程里交付。
+     *
+     * 终止语义：收到终止状态（[cn.thinktin.data.model.StreamState.NotFound]、`SignedOut`、`AccountFrozen`、
+     * `Stopped`）时先把这个状态发出来，然后流正常结束；`Connecting`、`Live`、`Reconnecting` 之后流继续。
+     * 订阅本身失败时抛 [ServiceError]。
      */
     fun events(instanceId: String): Flow<EventStreamItem>
 
     /** 本地缓存的事件（seq 大于 [afterSeq]，按 seq 升序）。 */
-    fun cachedEvents(instanceId: String, afterSeq: Long = 0, limit: Int = DEFAULT_EVENTS): List<InstanceEvent>
+    suspend fun cachedEvents(instanceId: String, afterSeq: Long = 0, limit: Int = DEFAULT_EVENTS): List<InstanceEvent>
 
     // ---- 审批（13.5） ----
 
@@ -212,9 +221,9 @@ interface ThinktinService {
 
     suspend fun olderInbox(beforeId: String, limit: Int = DEFAULT_PAGE): List<InboxItem>
 
-    fun cachedInbox(beforeId: String? = null, limit: Int = DEFAULT_PAGE): List<InboxItem>
+    suspend fun cachedInbox(beforeId: String? = null, limit: Int = DEFAULT_PAGE): List<InboxItem>
 
-    fun cachedUnread(): Long
+    suspend fun cachedUnread(): Long
 
     /** 标为已读：[ids] 里的，或 [upToId] 及更早的全部。返回剩余未读数。 */
     suspend fun markInboxRead(ids: List<String>, upToId: String? = null): Long
@@ -224,6 +233,22 @@ interface ThinktinService {
 
     /** 删除一条（client-core 还没有）。 */
     suspend fun deleteInboxItem(itemId: String)
+
+    // ---- IM 渠道（13.15） ----
+
+    suspend fun imChannels(): List<ImChannel>
+
+    suspend fun addImChannel(channel: NewImChannel): ImChannel
+
+    suspend fun updateImChannel(channelId: String, update: ImChannelUpdate): ImChannel
+
+    suspend fun deleteImChannel(channelId: String)
+
+    /** 发一条测试消息到群里。 */
+    suspend fun testImChannel(channelId: String)
+
+    /** 换 webhook 地址（和签名密钥）。 */
+    suspend fun replaceImWebhook(channelId: String, webhookUrl: String, secret: String? = null): ImChannel
 
     // ---- 模型 key 与用量（13.4） ----
 

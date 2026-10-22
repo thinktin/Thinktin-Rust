@@ -1,6 +1,10 @@
 package cn.thinktin.data
 
 import cn.thinktin.data.core.toCore
+import cn.thinktin.data.core.toIntClamped
+import cn.thinktin.data.core.toLongClamped
+import cn.thinktin.data.core.toUIntNonNegative
+import cn.thinktin.data.core.toULongNonNegative
 import cn.thinktin.data.core.toModel
 import cn.thinktin.data.model.EmptyJsonObject
 import cn.thinktin.data.model.InboxKind
@@ -11,14 +15,19 @@ import cn.thinktin.data.model.RunSource
 import cn.thinktin.data.model.RunState
 import cn.thinktin.data.model.Schedule
 import cn.thinktin.data.model.StreamState
+import cn.thinktin.data.model.isTerminal
+import cn.thinktin.data.model.NewImChannel
 import cn.thinktin.data.model.long
 import cn.thinktin.data.model.parseJsonObject
 import cn.thinktin.data.model.string
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
 import cn.thinktin.core.Approval as CoreApproval
+import cn.thinktin.core.Artifact as CoreArtifact
+import cn.thinktin.core.ImChannel as CoreImChannel
+import cn.thinktin.core.NewImChannel as CoreNewImChannel
 import cn.thinktin.core.ApprovalOption as CoreApprovalOption
 import cn.thinktin.core.Credential as CoreCredential
 import cn.thinktin.core.InboxItem as CoreInboxItem
@@ -148,10 +157,67 @@ class MappersTest {
     }
 
     @Test
-    fun streamStatus() {
-        assertEquals(StreamState.Live, CoreStreamStatus.Live.toModel())
-        assertEquals(StreamState.Reconnecting(1500), CoreStreamStatus.Reconnecting(1500uL).toModel())
-        assertEquals(StreamState.AccountFrozen, CoreStreamStatus.AccountFrozen.toModel())
-        assertEquals(StreamState.Stopped, CoreStreamStatus.Stopped.toModel())
+    fun streamStatusAllVariants() {
+        val table = listOf(
+            CoreStreamStatus.Connecting to StreamState.Connecting,
+            CoreStreamStatus.Live to StreamState.Live,
+            CoreStreamStatus.Reconnecting(1500uL) to StreamState.Reconnecting(1500),
+            CoreStreamStatus.Reconnecting(ULong.MAX_VALUE) to StreamState.Reconnecting(Long.MAX_VALUE),
+            CoreStreamStatus.SignedOut to StreamState.SignedOut,
+            CoreStreamStatus.NotFound to StreamState.NotFound,
+            CoreStreamStatus.AccountFrozen to StreamState.AccountFrozen,
+            CoreStreamStatus.Stopped to StreamState.Stopped,
+        )
+        for ((core, expected) in table) assertEquals(expected, core.toModel(), "$core")
+        val terminal = table.map { it.second }.filter { it.isTerminal }.toSet()
+        assertEquals(setOf(StreamState.SignedOut, StreamState.NotFound, StreamState.AccountFrozen, StreamState.Stopped), terminal)
+    }
+
+    @Test
+    fun unsignedBoundsAreClamped() {
+        assertEquals(Int.MAX_VALUE, UInt.MAX_VALUE.toIntClamped())
+        assertEquals(Int.MAX_VALUE, (Int.MAX_VALUE.toUInt() + 1u).toIntClamped())
+        assertEquals(7, 7u.toIntClamped())
+        assertEquals(Long.MAX_VALUE, ULong.MAX_VALUE.toLongClamped())
+        assertEquals(0uL, (-1L).toULongNonNegative())
+        assertEquals(0uL, Long.MIN_VALUE.toULongNonNegative())
+        assertEquals(0u, (-5).toUIntNonNegative())
+
+        val run = CoreRun(
+            id = "r1", kind = "agent", instanceId = "i1", planId = null, parentRunId = null, rootRunId = "r1",
+            stepKey = null, source = "user", prompt = "hi", state = "running", stateReason = null,
+            attempt = UInt.MAX_VALUE, tokensUsed = 0uL, summary = null, error = null, createdAtMs = now,
+            startedAtMs = null, finishedAtMs = null,
+        )
+        assertEquals(Int.MAX_VALUE, run.toModel().attempt)
+        val event = CoreInstanceEvent("i1", ULong.MAX_VALUE, null, "agent.message", "{}", false, now).toModel()
+        assertEquals(Long.MAX_VALUE, event.seq)
+        val plan = CorePlan(
+            id = "p1", instanceId = "i1", title = "t", goal = "g", paused = false, createdBy = "user",
+            awaitingConfirmation = false, revision = UInt.MAX_VALUE, policyJson = "{}", createdAtMs = now,
+            triggers = emptyList(), steps = emptyList(),
+        )
+        assertEquals(Int.MAX_VALUE, plan.toModel().revision)
+        val artifact = CoreArtifact(
+            id = "a1", instanceId = "i1", runId = "r1", name = "x.md", version = UInt.MAX_VALUE,
+            contentType = "text/markdown", size = ULong.MAX_VALUE, sha256 = "00", createdAtMs = now,
+        ).toModel()
+        assertEquals(Int.MAX_VALUE, artifact.version)
+        assertEquals(Long.MAX_VALUE, artifact.size)
+    }
+
+    @Test
+    fun imChannelRoundTrip() {
+        val core = CoreImChannel(
+            id = "im1", vendor = "feishu", label = "研发群", hint = "a1b2", hasSecret = true,
+            events = listOf("approval"), enabled = false, lastSentAtMs = null, lastError = "404", createdAtMs = now,
+        )
+        val model = core.toModel()
+        assertEquals("im1", model.id)
+        assertEquals(listOf("approval"), model.events)
+        assertEquals("404", model.lastError)
+        assertNull(model.lastSentAtMs)
+        val out = NewImChannel(webhookUrl = "https://x/hook", secret = null, label = "群", events = null).toCore()
+        assertEquals(CoreNewImChannel("https://x/hook", null, "群", null), out)
     }
 }

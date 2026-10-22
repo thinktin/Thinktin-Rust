@@ -24,6 +24,8 @@ android {
 
     testOptions {
         unitTests.isIncludeAndroidResources = true
+        // Robolectric / Compose 测试是 JUnit 4 写法，经 vintage 引擎跑在 JUnit Platform 上。
+        unitTests.all { it.useJUnitPlatform() }
     }
 
     lint {
@@ -37,14 +39,14 @@ kotlin {
     }
 }
 
+apply(from = rootProject.file("gradle/robolectric.gradle.kts"))
+
 // Compose 测试要 ui-test-manifest 里的 ComponentActivity，只在 debug 里有：release 不跑单元测试。
 androidComponents {
     beforeVariants(selector().withBuildType("release")) { it.enableUnitTest = false }
 }
 
 dependencies {
-    api(project(":data"))
-
     val composeBom = platform(libs.compose.bom)
     api(composeBom)
     api(libs.compose.ui)
@@ -56,7 +58,10 @@ dependencies {
     debugImplementation(libs.compose.ui.test.manifest)
 
     testImplementation(composeBom)
-    testImplementation(libs.junit)
+    testImplementation(platform(libs.junit.bom))
+    testImplementation(libs.junit4)
+    testRuntimeOnly(libs.junit.vintage.engine)
+    testRuntimeOnly(libs.junit.platform.launcher)
     testImplementation(libs.robolectric)
     testImplementation(libs.compose.ui.test.junit4)
     testImplementation(libs.androidx.test.core)

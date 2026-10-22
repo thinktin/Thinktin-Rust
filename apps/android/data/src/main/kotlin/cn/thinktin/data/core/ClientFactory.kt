@@ -5,10 +5,11 @@ import android.os.Build
 import cn.thinktin.core.ClientConfig
 import cn.thinktin.core.SessionStore
 import cn.thinktin.core.ThinktinClient
+import cn.thinktin.data.service.ThinktinService
 import cn.thinktin.data.session.SecureSessionStore
 import java.io.File
 
-/** 按设计规范第 8.3 节构造 client-core 的 [ThinktinClient]。 */
+/** 按设计规范第 8.3 节构造 client-core 的 [ThinktinClient]。对外只暴露 [createService]。 */
 object ClientFactory {
     const val PLATFORM: String = "android"
     const val CACHE_FILE: String = "thinktin.db"
@@ -17,23 +18,26 @@ object ClientFactory {
     /** 设备名默认用 Build.MODEL（显示在设备管理里，用户可改）。 */
     fun defaultDeviceName(): String = Build.MODEL?.takeIf { it.isNotBlank() } ?: "Android"
 
-    fun config(context: Context, baseUrl: String, deviceName: String = defaultDeviceName()): ClientConfig =
+    internal fun config(filesDir: File, baseUrl: String, deviceName: String = defaultDeviceName()): ClientConfig =
         ClientConfig(
             baseUrl = baseUrl,
-            cachePath = File(context.filesDir, CACHE_FILE).absolutePath,
+            cachePath = File(filesDir, CACHE_FILE).absolutePath,
             platform = PLATFORM,
             deviceName = deviceName,
             timeoutSecs = TIMEOUT_SECS,
         )
 
-    /** 会加载 libclient_core.so（JNA）；演示模式不要调用。 */
-    fun create(
+    /** 会加载 libclient_core.so（JNA）、打开 SQLite、读 Keystore：放在后台线程调用；演示模式不要调用。 */
+    internal fun create(
         context: Context,
         baseUrl: String,
         deviceName: String = defaultDeviceName(),
         sessions: SessionStore = SecureSessionStore(context),
-    ): ThinktinClient = ThinktinClient(config(context, baseUrl, deviceName), sessions)
+    ): ThinktinClient = ThinktinClient(config(context.filesDir, baseUrl, deviceName), sessions)
 
-    fun createService(context: Context, baseUrl: String): CoreThinktinService =
-        CoreThinktinService(create(context, baseUrl))
+    /**
+     * 真实服务（client-core）。可能抛异常（安装包里没有 .so、绑定与库的契约版本不一致、缓存打不开……），
+     * 调用方要在后台线程调用并兜住（见 :app 的 AppContainer）。
+     */
+    fun createService(context: Context, baseUrl: String): ThinktinService = CoreThinktinService(create(context, baseUrl))
 }

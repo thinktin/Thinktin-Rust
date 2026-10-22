@@ -20,8 +20,18 @@ android {
 
     testOptions {
         unitTests.all { test ->
+            test.useJUnitPlatform()
             // CoreSmokeTest 经 JNA 加载本机编出的 libclient_core.so（cargo build -p client-core 的 target/debug）。
-            System.getenv("THINKTIN_CORE_LIB_DIR")?.let { test.systemProperty("jna.library.path", it) }
+            val libDir = System.getenv("THINKTIN_CORE_LIB_DIR")?.takeIf { it.isNotBlank() }
+            if (libDir != null) {
+                test.systemProperty("jna.library.path", libDir)
+                // 库文件的内容也是测试的输入（开着构建缓存）：Rust 改了而绑定没变时，不能直接取缓存的测试结果。
+                test.inputs.files(File(libDir, "libclient_core.so"), File(libDir, "libclient_core.dylib"))
+                    .withPathSensitivity(PathSensitivity.NONE)
+                    .withPropertyName("clientCoreLib")
+            }
+            // CI 设 THINKTIN_REQUIRE_CORE=1：拿不到库目录时冒烟测试失败，不再跳过（同 ci.yml 的 THINKTIN_REQUIRE_DB）。
+            test.systemProperty("thinktin.requireCore", System.getenv("THINKTIN_REQUIRE_CORE") == "1")
         }
     }
 
@@ -48,5 +58,7 @@ dependencies {
 
     jnaForTest(libs.jna)
     testImplementation(files(jnaForTest))
-    testImplementation(libs.junit)
+    testImplementation(platform(libs.junit.bom))
+    testImplementation(libs.junit.jupiter)
+    testRuntimeOnly(libs.junit.platform.launcher)
 }

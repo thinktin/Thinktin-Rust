@@ -7,6 +7,8 @@ import cn.thinktin.data.model.ApprovalState
 import cn.thinktin.data.model.Artifact
 import cn.thinktin.data.model.Credential
 import cn.thinktin.data.model.DetectedSecret
+import cn.thinktin.data.model.ImChannel
+import cn.thinktin.data.model.NewImChannel
 import cn.thinktin.data.model.InboxItem
 import cn.thinktin.data.model.InboxKind
 import cn.thinktin.data.model.InboxPage
@@ -48,6 +50,8 @@ import cn.thinktin.core.ApprovalOption as CoreApprovalOption
 import cn.thinktin.core.Artifact as CoreArtifact
 import cn.thinktin.core.Credential as CoreCredential
 import cn.thinktin.core.DetectedSecret as CoreDetectedSecret
+import cn.thinktin.core.ImChannel as CoreImChannel
+import cn.thinktin.core.NewImChannel as CoreNewImChannel
 import cn.thinktin.core.InboxItem as CoreInboxItem
 import cn.thinktin.core.InboxPage as CoreInboxPage
 import cn.thinktin.core.Instance as CoreInstance
@@ -91,7 +95,7 @@ internal fun Long.toULongNonNegative(): ULong = coerceAtLeast(0).toULong()
 
 internal fun Int.toUIntNonNegative(): UInt = coerceAtLeast(0).toUInt()
 
-fun CoreUser.toModel(): User = User(
+internal fun CoreUser.toModel(): User = User(
     id = id,
     phone = phone,
     displayName = displayName,
@@ -100,9 +104,9 @@ fun CoreUser.toModel(): User = User(
     createdAtMs = createdAtMs,
 )
 
-fun CoreLoginResult.toModel(): LoginResult = LoginResult(user = user.toModel(), newUser = newUser)
+internal fun CoreLoginResult.toModel(): LoginResult = LoginResult(user = user.toModel(), newUser = newUser)
 
-fun CoreAgentInfo.toModel(): AgentInfo = AgentInfo(
+internal fun CoreAgentInfo.toModel(): AgentInfo = AgentInfo(
     id = id,
     name = name,
     version = version,
@@ -113,7 +117,7 @@ fun CoreAgentInfo.toModel(): AgentInfo = AgentInfo(
     versions = versions,
 )
 
-fun CoreInstance.toModel(): Instance = Instance(
+internal fun CoreInstance.toModel(): Instance = Instance(
     id = id,
     agentId = agentId,
     agentVersion = agentVersion,
@@ -124,25 +128,25 @@ fun CoreInstance.toModel(): Instance = Instance(
     lastActiveAtMs = lastActiveAtMs,
 )
 
-fun CoreRouteFallback.toModel(): RouteFallback = RouteFallback(credentialId, upstreamModel)
+internal fun CoreRouteFallback.toModel(): RouteFallback = RouteFallback(credentialId, upstreamModel)
 
-fun RouteFallback.toCore(): CoreRouteFallback = CoreRouteFallback(credentialId, upstreamModel)
+internal fun RouteFallback.toCore(): CoreRouteFallback = CoreRouteFallback(credentialId, upstreamModel)
 
-fun CoreModelRoute.toModel(): ModelRoute = ModelRoute(
+internal fun CoreModelRoute.toModel(): ModelRoute = ModelRoute(
     alias = alias,
     credentialId = credentialId,
     upstreamModel = upstreamModel,
     fallbacks = fallbacks.map { it.toModel() },
 )
 
-fun ModelRoute.toCore(): CoreModelRoute = CoreModelRoute(
+internal fun ModelRoute.toCore(): CoreModelRoute = CoreModelRoute(
     alias = alias,
     credentialId = credentialId,
     upstreamModel = upstreamModel,
     fallbacks = fallbacks.map { it.toCore() },
 )
 
-fun CoreRun.toModel(): Run = Run(
+internal fun CoreRun.toModel(): Run = Run(
     id = id,
     kind = RunKind.fromWire(kind),
     instanceId = instanceId,
@@ -163,7 +167,7 @@ fun CoreRun.toModel(): Run = Run(
     finishedAtMs = finishedAtMs,
 )
 
-fun CoreArtifact.toModel(): Artifact = Artifact(
+internal fun CoreArtifact.toModel(): Artifact = Artifact(
     id = id,
     instanceId = instanceId,
     runId = runId,
@@ -175,7 +179,7 @@ fun CoreArtifact.toModel(): Artifact = Artifact(
     createdAtMs = createdAtMs,
 )
 
-fun CoreInstanceEvent.toModel(): InstanceEvent = InstanceEvent(
+internal fun CoreInstanceEvent.toModel(): InstanceEvent = InstanceEvent(
     instanceId = instanceId,
     seq = seq.toLongClamped(),
     runId = runId,
@@ -185,7 +189,7 @@ fun CoreInstanceEvent.toModel(): InstanceEvent = InstanceEvent(
     createdAtMs = createdAtMs,
 )
 
-fun CoreStreamStatus.toModel(): StreamState = when (this) {
+internal fun CoreStreamStatus.toModel(): StreamState = when (this) {
     CoreStreamStatus.Connecting -> StreamState.Connecting
     CoreStreamStatus.Live -> StreamState.Live
     is CoreStreamStatus.Reconnecting -> StreamState.Reconnecting(retryInMs.toLongClamped())
@@ -195,10 +199,10 @@ fun CoreStreamStatus.toModel(): StreamState = when (this) {
     CoreStreamStatus.Stopped -> StreamState.Stopped
 }
 
-fun CoreApprovalOption.toModel(): ApprovalOption =
+internal fun CoreApprovalOption.toModel(): ApprovalOption =
     ApprovalOption(optionId = optionId, name = name, kind = OptionKind.fromWire(kind))
 
-fun CoreApproval.toModel(): Approval = Approval(
+internal fun CoreApproval.toModel(): Approval = Approval(
     id = id,
     runId = runId,
     instanceId = instanceId,
@@ -211,19 +215,19 @@ fun CoreApproval.toModel(): Approval = Approval(
     createdAtMs = createdAtMs,
 )
 
-fun CoreSchedule.toModel(): Schedule = when (this) {
+internal fun CoreSchedule.toModel(): Schedule = when (this) {
     is CoreSchedule.Cron -> Schedule.Cron(expr = expr, tz = tz)
     is CoreSchedule.Rrule -> Schedule.Rrule(rule = rule)
     is CoreSchedule.Once -> Schedule.Once(atMs = atMs)
 }
 
-fun Schedule.toCore(): CoreSchedule = when (this) {
+internal fun Schedule.toCore(): CoreSchedule = when (this) {
     is Schedule.Cron -> CoreSchedule.Cron(expr = expr, tz = tz)
     is Schedule.Rrule -> CoreSchedule.Rrule(rule = rule)
     is Schedule.Once -> CoreSchedule.Once(atMs = atMs)
 }
 
-fun CoreTrigger.toModel(): Trigger = Trigger(
+internal fun CoreTrigger.toModel(): Trigger = Trigger(
     id = id,
     schedule = schedule.toModel(),
     enabled = enabled,
@@ -231,13 +235,13 @@ fun CoreTrigger.toModel(): Trigger = Trigger(
     lastFireAtMs = lastFireAtMs,
 )
 
-fun CorePlanStep.toModel(): PlanStep =
+internal fun CorePlanStep.toModel(): PlanStep =
     PlanStep(key = key, instanceId = instanceId, prompt = prompt, dependsOn = dependsOn)
 
-fun PlanStep.toCore(): CorePlanStep =
+internal fun PlanStep.toCore(): CorePlanStep =
     CorePlanStep(key = key, instanceId = instanceId, prompt = prompt, dependsOn = dependsOn)
 
-fun CorePlan.toModel(): Plan = Plan(
+internal fun CorePlan.toModel(): Plan = Plan(
     id = id,
     instanceId = instanceId,
     title = title,
@@ -253,7 +257,7 @@ fun CorePlan.toModel(): Plan = Plan(
     steps = steps.map { it.toModel() },
 )
 
-fun NewPlan.toCore(): CoreNewPlan = CoreNewPlan(
+internal fun NewPlan.toCore(): CoreNewPlan = CoreNewPlan(
     instanceId = instanceId,
     title = title,
     goal = goal,
@@ -261,7 +265,7 @@ fun NewPlan.toCore(): CoreNewPlan = CoreNewPlan(
     steps = steps.map { it.toCore() },
 )
 
-fun CoreInboxItem.toModel(): InboxItem = InboxItem(
+internal fun CoreInboxItem.toModel(): InboxItem = InboxItem(
     id = id,
     instanceId = instanceId,
     runId = runId,
@@ -275,9 +279,9 @@ fun CoreInboxItem.toModel(): InboxItem = InboxItem(
     createdAtMs = createdAtMs,
 )
 
-fun CoreInboxPage.toModel(): InboxPage = InboxPage(items = items.map { it.toModel() }, unread = unread)
+internal fun CoreInboxPage.toModel(): InboxPage = InboxPage(items = items.map { it.toModel() }, unread = unread)
 
-fun CoreCredential.toModel(): Credential = Credential(
+internal fun CoreCredential.toModel(): Credential = Credential(
     id = id,
     vendor = vendor,
     label = label,
@@ -287,7 +291,7 @@ fun CoreCredential.toModel(): Credential = Credential(
     createdAtMs = createdAtMs,
 )
 
-fun NewCredential.toCore(): CoreNewCredential = CoreNewCredential(
+internal fun NewCredential.toCore(): CoreNewCredential = CoreNewCredential(
     vendor = vendor,
     label = label,
     apiKey = apiKey,
@@ -297,10 +301,10 @@ fun NewCredential.toCore(): CoreNewCredential = CoreNewCredential(
     dailyTokenLimit = dailyTokenLimit?.toULongNonNegative(),
 )
 
-fun CoreVendorInfo.toModel(): VendorInfo =
+internal fun CoreVendorInfo.toModel(): VendorInfo =
     VendorInfo(id = id, name = name, protocols = protocols, models = models, notes = notes)
 
-fun CoreUsageBucket.toModel(): UsageBucket = UsageBucket(
+internal fun CoreUsageBucket.toModel(): UsageBucket = UsageBucket(
     key = key,
     requests = requests.toLongClamped(),
     inputTokens = inputTokens.toLongClamped(),
@@ -312,19 +316,19 @@ fun CoreUsageBucket.toModel(): UsageBucket = UsageBucket(
     failedRequests = failedRequests.toLongClamped(),
 )
 
-fun CoreUsageSummary.toModel(): UsageSummary =
+internal fun CoreUsageSummary.toModel(): UsageSummary =
     UsageSummary(buckets = buckets.map { it.toModel() }, total = total.toModel())
 
-fun CoreStopAllResult.toModel(): StopAllResult = StopAllResult(
+internal fun CoreStopAllResult.toModel(): StopAllResult = StopAllResult(
     runsCancelled = runsCancelled.toLongClamped(),
     grantsRevoked = grantsRevoked.toLongClamped(),
     plansPaused = plansPaused.toLongClamped(),
 )
 
-fun CoreSignOutOthersResult.toModel(): SignOutOthersResult =
+internal fun CoreSignOutOthersResult.toModel(): SignOutOthersResult =
     SignOutOthersResult(devicesSignedOut = devicesSignedOut.toLongClamped(), stopped = stopped?.toModel())
 
-fun CoreDetectedSecret.toModel(): DetectedSecret = DetectedSecret(
+internal fun CoreDetectedSecret.toModel(): DetectedSecret = DetectedSecret(
     kind = kind,
     start = start.toIntClamped(),
     end = end.toIntClamped(),
@@ -334,7 +338,7 @@ fun CoreDetectedSecret.toModel(): DetectedSecret = DetectedSecret(
     storable = storable,
 )
 
-fun CoreVaultItem.toModel(): VaultItem = VaultItem(
+internal fun CoreVaultItem.toModel(): VaultItem = VaultItem(
     id = id,
     name = name,
     purpose = purpose,
@@ -345,9 +349,9 @@ fun CoreVaultItem.toModel(): VaultItem = VaultItem(
     lastUsedAtMs = lastUsedAtMs,
 )
 
-fun CoreVaultItemDetail.toModel(): VaultItemDetail = VaultItemDetail(item = item.toModel(), username = username)
+internal fun CoreVaultItemDetail.toModel(): VaultItemDetail = VaultItemDetail(item = item.toModel(), username = username)
 
-fun NewVaultItem.toCore(): CoreNewVaultItem = CoreNewVaultItem(
+internal fun NewVaultItem.toCore(): CoreNewVaultItem = CoreNewVaultItem(
     name = name,
     purpose = purpose,
     username = username,
@@ -355,16 +359,16 @@ fun NewVaultItem.toCore(): CoreNewVaultItem = CoreNewVaultItem(
     instanceIds = instanceIds,
 )
 
-fun VaultItemUpdate.toCore(): CoreVaultItemUpdate = CoreVaultItemUpdate(
+internal fun VaultItemUpdate.toCore(): CoreVaultItemUpdate = CoreVaultItemUpdate(
     purpose = purpose,
     username = username,
     password = password,
     instanceIds = instanceIds,
 )
 
-fun CoreSavedSecret.toModel(): SavedSecret = SavedSecret(item = item.toModel(), message = message)
+internal fun CoreSavedSecret.toModel(): SavedSecret = SavedSecret(item = item.toModel(), message = message)
 
-fun CoreVaultRequest.toModel(): VaultRequest = VaultRequest(
+internal fun CoreVaultRequest.toModel(): VaultRequest = VaultRequest(
     id = id,
     instanceId = instanceId,
     runId = runId,
@@ -377,3 +381,19 @@ fun CoreVaultRequest.toModel(): VaultRequest = VaultRequest(
     expiresAtMs = expiresAtMs,
     resolvedAtMs = resolvedAtMs,
 )
+
+internal fun CoreImChannel.toModel(): ImChannel = ImChannel(
+    id = id,
+    vendor = vendor,
+    label = label,
+    hint = hint,
+    hasSecret = hasSecret,
+    events = events,
+    enabled = enabled,
+    lastSentAtMs = lastSentAtMs,
+    lastError = lastError,
+    createdAtMs = createdAtMs,
+)
+
+internal fun NewImChannel.toCore(): CoreNewImChannel =
+    CoreNewImChannel(webhookUrl = webhookUrl, secret = secret, label = label, events = events)

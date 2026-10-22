@@ -32,7 +32,8 @@ internal val ThinktinTypography = Typography(
     displaySmall = serif(30),
     headlineLarge = serif(30),
     headlineMedium = serif(28),
-    headlineSmall = serif(24),
+    // 衬线只用在 28–34sp（第 2.2 节）；headlineSmall 是对话框标题的默认样式，用无衬线。
+    headlineSmall = sans(24, 32),
     titleLarge = sans(20, 28, FontWeight.Medium),
     titleMedium = sans(16, 24, FontWeight.Medium),
     titleSmall = sans(14, 20, FontWeight.Medium),

@@ -23,8 +23,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import cn.thinktin.data.model.InstanceState
-import cn.thinktin.data.model.RunState
 import cn.thinktin.design.theme.ThinktinTheme
 
 /** 状态点的样子。 */
@@ -80,35 +78,58 @@ fun StatusDot(
     )
 }
 
-/** 实例状态点（第 8.1 节）：创建中灰闪、运行中绿、已暂停灰、已归档空心、已删除不显示。 */
-@Composable
-fun StatusDot(state: InstanceState, modifier: Modifier = Modifier, contentDescription: String? = null) {
-    val gray = MaterialTheme.colorScheme.onSurfaceVariant
-    when (state) {
-        InstanceState.Provisioning -> StatusDot(gray, modifier, DotStyle.Pulsing, contentDescription)
-        InstanceState.Running -> StatusDot(ThinktinTheme.extendedColors.success, modifier, contentDescription = contentDescription)
-        InstanceState.Paused -> StatusDot(gray, modifier, contentDescription = contentDescription)
-        InstanceState.Archived -> StatusDot(gray, modifier, DotStyle.Hollow, contentDescription)
-        InstanceState.Deleted -> Unit
-        InstanceState.Unknown -> StatusDot(gray.copy(alpha = 0.5f), modifier, DotStyle.Hollow, contentDescription)
-    }
+/**
+ * 状态点的语义色调。:design 不认识服务端的状态（那在 :data），由 :app 把 InstanceState / RunState 映射成色调。
+ */
+enum class StatusTone {
+    /** 运行中、在线：成功绿。 */
+    Online,
+
+    /** 正在干活（运行中的运行）：主色闪烁。 */
+    Working,
+
+    /** 创建中、排队、启动中：灰色闪烁。 */
+    Starting,
+
+    /** 已暂停、已取消：灰色。 */
+    Idle,
+
+    /** 已归档：灰色空心。 */
+    Archived,
+
+    /** 等待用户处理（审批、电脑、key）或重试等待：警告色。 */
+    Attention,
+
+    /** 等待子任务：信息色（secondary）。 */
+    Waiting,
+
+    /** 成功：绿。 */
+    Success,
+
+    /** 失败：错误色。 */
+    Failure,
+
+    /** 未知取值：淡灰空心。 */
+    Unknown,
 }
 
-/** 运行状态点：运行中主色闪烁、等待用户处理警告色、成功绿、失败红、其余灰。 */
+/** 按色调画状态点（第 8.1 节的配色）。 */
 @Composable
-fun StatusDot(state: RunState, modifier: Modifier = Modifier, contentDescription: String? = null) {
+fun StatusDot(tone: StatusTone, modifier: Modifier = Modifier, contentDescription: String? = null) {
     val colors = MaterialTheme.colorScheme
     val extended = ThinktinTheme.extendedColors
-    val (color, style) = when (state) {
-        RunState.Queued, RunState.Starting -> colors.onSurfaceVariant to DotStyle.Pulsing
-        RunState.Running -> colors.primary to DotStyle.Pulsing
-        RunState.WaitingApproval, RunState.WaitingDevice, RunState.WaitingQuota, RunState.Backoff ->
-            extended.warning to DotStyle.Filled
-        RunState.WaitingChildren -> colors.secondary to DotStyle.Filled
-        RunState.Succeeded -> extended.success to DotStyle.Filled
-        RunState.Failed -> colors.error to DotStyle.Filled
-        RunState.Cancelled -> colors.onSurfaceVariant to DotStyle.Filled
-        RunState.Unknown -> colors.onSurfaceVariant to DotStyle.Hollow
+    val gray = colors.onSurfaceVariant
+    val (color, style) = when (tone) {
+        StatusTone.Online -> extended.success to DotStyle.Filled
+        StatusTone.Working -> colors.primary to DotStyle.Pulsing
+        StatusTone.Starting -> gray to DotStyle.Pulsing
+        StatusTone.Idle -> gray to DotStyle.Filled
+        StatusTone.Archived -> gray to DotStyle.Hollow
+        StatusTone.Attention -> extended.warning to DotStyle.Filled
+        StatusTone.Waiting -> colors.secondary to DotStyle.Filled
+        StatusTone.Success -> extended.success to DotStyle.Filled
+        StatusTone.Failure -> colors.error to DotStyle.Filled
+        StatusTone.Unknown -> gray.copy(alpha = 0.5f) to DotStyle.Hollow
     }
     StatusDot(color, modifier, style, contentDescription)
 }
@@ -118,8 +139,7 @@ fun StatusDot(state: RunState, modifier: Modifier = Modifier, contentDescription
 internal fun StatusDotPreview() {
     ThinktinTheme {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            InstanceState.entries.forEach { StatusDot(it) }
-            RunState.entries.forEach { StatusDot(it) }
+            StatusTone.entries.forEach { StatusDot(it) }
         }
     }
 }

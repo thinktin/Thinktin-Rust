@@ -11,6 +11,7 @@ import cn.thinktin.data.model.DevicePlatform
 import cn.thinktin.data.model.EventKinds
 import cn.thinktin.data.model.InboxItem
 import cn.thinktin.data.model.InboxKind
+import cn.thinktin.data.model.ImChannel
 import cn.thinktin.data.model.Instance
 import cn.thinktin.data.model.InstanceEvent
 import cn.thinktin.data.model.InstanceState
@@ -521,6 +522,19 @@ internal class MockData(private val baseMs: Long) {
                 TeamMember(INSTANCE_CODER, TeamRole.Member, 1),
             ),
             createdAtMs = ago(60L * 24 * 5),
+        ),
+    )
+
+    val imChannels = listOf(
+        ImChannel(
+            id = "im-feishu", vendor = "feishu", label = "研发群", hint = "a1b2", hasSecret = true,
+            events = listOf("run_finished", "run_failed", "approval"), enabled = true, lastSentAtMs = ago(30),
+            lastError = null, createdAtMs = ago(60L * 24 * 10),
+        ),
+        ImChannel(
+            id = "im-wecom", vendor = "wecom", label = "周报群", hint = "9z8y", hasSecret = false,
+            events = listOf("run_failed"), enabled = false, lastSentAtMs = ago(60L * 24 * 2),
+            lastError = "webhook returned 404", createdAtMs = ago(60L * 24 * 20),
         ),
     )
 

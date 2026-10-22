@@ -11,4 +11,5 @@
     <string name="design_tool_in_progress">In progress</string>
     <string name="design_tool_completed">Completed</string>
     <string name="design_tool_failed">Failed</string>
+    <string name="design_ai_generated">[AI-generated]</string>
 </resources>

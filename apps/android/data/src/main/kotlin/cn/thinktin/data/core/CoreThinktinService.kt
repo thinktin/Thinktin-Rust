@@ -12,6 +12,8 @@ import cn.thinktin.data.model.CredentialUpdate
 import cn.thinktin.data.model.DetectedSecret
 import cn.thinktin.data.model.Device
 import cn.thinktin.data.model.EventStreamItem
+import cn.thinktin.data.model.ImChannel
+import cn.thinktin.data.model.ImChannelUpdate
 import cn.thinktin.data.model.InboxItem
 import cn.thinktin.data.model.InboxPage
 import cn.thinktin.data.model.Instance
@@ -19,6 +21,7 @@ import cn.thinktin.data.model.InstanceEvent
 import cn.thinktin.data.model.LoginResult
 import cn.thinktin.data.model.ModelRoute
 import cn.thinktin.data.model.NewCredential
+import cn.thinktin.data.model.NewImChannel
 import cn.thinktin.data.model.NewPlan
 import cn.thinktin.data.model.NewVaultItem
 import cn.thinktin.data.model.Plan
@@ -41,10 +44,14 @@ import cn.thinktin.data.model.VaultItemDetail
 import cn.thinktin.data.model.VaultItemUpdate
 import cn.thinktin.data.model.VaultRequest
 import cn.thinktin.data.model.VendorInfo
+import cn.thinktin.data.model.isTerminal
 import cn.thinktin.data.service.AuthState
 import cn.thinktin.data.service.ServiceError
 import cn.thinktin.data.service.ThinktinService
 import cn.thinktin.data.service.toServiceError
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -53,33 +60,51 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.withContext
 import cn.thinktin.core.InstanceEvent as CoreInstanceEvent
 import cn.thinktin.core.detectSecrets as coreDetectSecrets
 
 /**
  * ThinktinService 的真实实现：把 client-core（UniFFI 生成的 [ThinktinClientInterface]）适配成 App 模型。
- * 构造用 [ClientFactory.create]；参数用接口类型，测试可以传假对象。
+ * 只在本模块里构造（[ClientFactory.createService]）；参数用接口类型，测试可以传假对象。
  *
  * - ClientException → [ServiceError]；SignedOut / AccountFrozen 同时更新 [authState]。
+ * - 其他异常（Rust panic 变成的 InternalException、JNA 的错误……）也包成 [ServiceError.Other]，不冲出 ViewModel。
+ * - `cached*` 是同步的 JNA + SQLite 调用，切到 [io] 上执行，不占主线程。
  * - client-core 还没有的操作抛 [ServiceError.Unsupported]。
  */
-class CoreThinktinService(private val client: ThinktinClientInterface) : ThinktinService {
+internal class CoreThinktinService(
+    private val client: ThinktinClientInterface,
+    private val io: CoroutineDispatcher = Dispatchers.IO,
+) : ThinktinService {
 
     override val isDemo: Boolean = false
 
-    // 惰性：第一次用到时才问 client-core（测试里的假对象不必实现 signedIn）。
+    // 惰性：第一次用到时才问 client-core（测试里的假对象不必实现 signedIn）。读不出来按未登录。
     private val auth: MutableStateFlow<AuthState> by lazy {
-        MutableStateFlow(if (client.signedIn()) AuthState.SignedIn else AuthState.SignedOut)
+        val signedIn = try {
+            client.signedIn()
+        } catch (_: Exception) {
+            false
+        }
+        MutableStateFlow(if (signedIn) AuthState.SignedIn else AuthState.SignedOut)
     }
 
     override val authState: StateFlow<AuthState> get() = auth.asStateFlow()
 
-    /** 调 client-core，把异常换成 ServiceError，并据此更新登录状态。 */
+    /** 调 client-core，把异常换成 ServiceError，并据此更新登录状态。取消照常抛出。 */
     private inline fun <T> call(block: () -> T): T =
         try {
             block()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: ServiceError) {
+            throw e
         } catch (e: ClientException) {
             throw onError(e.toServiceError())
+        } catch (e: Exception) {
+            // InternalException（Rust 里 panic、回调抛异常）、JNA 的 RuntimeException 等。
+            throw ServiceError.Other(e::class.java.simpleName, e.message.orEmpty(), e)
         }
 
     private fun onError(error: ServiceError): ServiceError {
@@ -91,11 +116,13 @@ class CoreThinktinService(private val client: ThinktinClientInterface) : Thinkti
         return error
     }
 
-    /** 缓存读失败不打断界面：返回 [fallback]。 */
-    private inline fun <T> cached(fallback: T, block: () -> T): T =
+    /** 缓存读（同步 JNA + SQLite）放到 IO 线程；失败不打断界面：返回 [fallback]。 */
+    private suspend fun <T> cached(fallback: T, block: () -> T): T =
         try {
-            block()
-        } catch (_: ClientException) {
+            withContext(io) { block() }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
             fallback
         }
 
@@ -141,7 +168,7 @@ class CoreThinktinService(private val client: ThinktinClientInterface) : Thinkti
 
     override suspend fun instances(): List<Instance> = call { client.instances().map { it.toModel() } }
 
-    override fun cachedInstances(): List<Instance> = cached(emptyList()) { client.cachedInstances().map { it.toModel() } }
+    override suspend fun cachedInstances(): List<Instance> = cached(emptyList()) { client.cachedInstances().map { it.toModel() } }
 
     override suspend fun adopt(agentId: String, name: String, harness: String?): Instance =
         call { client.adopt(agentId, name, harness).toModel() }
@@ -174,7 +201,7 @@ class CoreThinktinService(private val client: ThinktinClientInterface) : Thinkti
     override suspend fun olderRuns(instanceId: String, beforeRunId: String, limit: Int): List<Run> =
         unsupported("olderRuns")
 
-    override fun cachedRuns(instanceId: String, limit: Int): List<Run> =
+    override suspend fun cachedRuns(instanceId: String, limit: Int): List<Run> =
         cached(emptyList()) { client.cachedRuns(instanceId, limit.toUIntNonNegative()).map { it.toModel() } }
 
     override suspend fun getRun(runId: String): Run = call { client.getRun(runId).toModel() }
@@ -214,13 +241,22 @@ class CoreThinktinService(private val client: ThinktinClientInterface) : Thinkti
                     else -> Unit
                 }
                 trySend(EventStreamItem.Status(state))
+                // 终止状态之后不会再有事件：结束流（和 Mock 一致，见 ThinktinService.events 的说明）。
+                if (state.isTerminal) channel.close()
             }
         }
         val subscription = call { client.subscribe(instanceId, listener) }
-        awaitClose { subscription.stop() }
+        awaitClose {
+            // stop 让 client-core 停掉后台任务；close 立即释放原生句柄（不等 Cleaner）。
+            try {
+                subscription.stop()
+            } finally {
+                subscription.close()
+            }
+        }
     }.buffer(Channel.UNLIMITED)
 
-    override fun cachedEvents(instanceId: String, afterSeq: Long, limit: Int): List<InstanceEvent> =
+    override suspend fun cachedEvents(instanceId: String, afterSeq: Long, limit: Int): List<InstanceEvent> =
         cached(emptyList()) {
             client.cachedEvents(instanceId, afterSeq.toULongNonNegative(), limit.toUIntNonNegative()).map { it.toModel() }
         }
@@ -281,10 +317,10 @@ class CoreThinktinService(private val client: ThinktinClientInterface) : Thinkti
     override suspend fun olderInbox(beforeId: String, limit: Int): List<InboxItem> =
         call { client.olderInbox(beforeId, limit.toUIntNonNegative()).map { it.toModel() } }
 
-    override fun cachedInbox(beforeId: String?, limit: Int): List<InboxItem> =
+    override suspend fun cachedInbox(beforeId: String?, limit: Int): List<InboxItem> =
         cached(emptyList()) { client.cachedInbox(beforeId, limit.toUIntNonNegative()).map { it.toModel() } }
 
-    override fun cachedUnread(): Long = cached(0L) { client.cachedUnread() }
+    override suspend fun cachedUnread(): Long = cached(0L) { client.cachedUnread() }
 
     override suspend fun markInboxRead(ids: List<String>, upToId: String?): Long =
         call { client.markInboxRead(ids, upToId) }
@@ -292,6 +328,23 @@ class CoreThinktinService(private val client: ThinktinClientInterface) : Thinkti
     override suspend fun markInboxUnread(itemId: String) = unsupported("markInboxUnread")
 
     override suspend fun deleteInboxItem(itemId: String) = unsupported("deleteInboxItem")
+
+    // ---- IM 渠道 ----
+
+    override suspend fun imChannels(): List<ImChannel> = call { client.imChannels().map { it.toModel() } }
+
+    override suspend fun addImChannel(channel: NewImChannel): ImChannel =
+        call { client.addImChannel(channel.toCore()).toModel() }
+
+    override suspend fun updateImChannel(channelId: String, update: ImChannelUpdate): ImChannel =
+        call { client.updateImChannel(channelId, update.label, update.events, update.enabled).toModel() }
+
+    override suspend fun deleteImChannel(channelId: String) = call { client.deleteImChannel(channelId) }
+
+    override suspend fun testImChannel(channelId: String) = call { client.testImChannel(channelId) }
+
+    override suspend fun replaceImWebhook(channelId: String, webhookUrl: String, secret: String?): ImChannel =
+        call { client.replaceImWebhook(channelId, webhookUrl, secret).toModel() }
 
     // ---- key 与用量 ----
 
@@ -312,7 +365,7 @@ class CoreThinktinService(private val client: ThinktinClientInterface) : Thinkti
 
     // ---- 保险箱 ----
 
-    override fun detectSecrets(text: String): List<DetectedSecret> = coreDetectSecrets(text).map { it.toModel() }
+    override fun detectSecrets(text: String): List<DetectedSecret> = call { coreDetectSecrets(text).map { it.toModel() } }
 
     override suspend fun saveSecretFromMessage(message: String, value: String, item: NewVaultItem): SavedSecret =
         call { client.saveSecretFromMessage(message, value, item.toCore()).toModel() }

@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Common -->
+    <string name="action_back">Back</string>
+    <string name="action_open_menu">Open menu</string>
+    <string name="action_more">More</string>
+    <string name="coming_soon_title">Coming soon</string>
+    <string name="coming_soon_message">This page is still being built.</string>
+    <string name="coming_soon_argument">ID: %1$s</string>
+
+    <!-- Page titles -->
+    <string name="page_login">Sign in</string>
+    <string name="page_login_code">Enter code</string>
+    <string name="page_chat">Chat</string>
+    <string name="page_run">Run details</string>
+    <string name="page_catalog">Agent catalog</string>
+    <string name="page_agent">Agent details</string>
+    <string name="page_instance">Instance settings</string>
+    <string name="page_plans">Plans</string>
+    <string name="page_plan">Plan details</string>
+    <string name="page_teams">Teams &amp; pipelines</string>
+    <string name="page_team">Team details</string>
+    <string name="page_inbox">Inbox</string>
+    <string name="page_approvals">Approvals</string>
+    <string name="page_approval">Approval details</string>
+    <string name="page_keys">Model keys &amp; usage</string>
+    <string name="page_vault">Password vault</string>
+    <string name="page_devices">Devices</string>
+    <string name="page_settings">Settings</string>
+
+    <!-- Drawer -->
+    <string name="drawer_search">Search</string>
+    <string name="drawer_new_chat">New chat</string>
+    <string name="drawer_inbox">Inbox</string>
+    <string name="drawer_plans">Plans</string>
+    <string name="drawer_teams">Teams &amp; pipelines</string>
+    <string name="drawer_my_agents">My agents</string>
+    <string name="drawer_no_agents">No agents yet</string>
+    <string name="drawer_settings">Settings</string>
+    <string name="drawer_unread">Unread: %1$d</string>
+    <string name="drawer_demo_user">Demo user</string>
+
+    <!-- Home -->
+    <string name="home_greeting_morning">Good morning</string>
+    <string name="home_greeting_afternoon">Good afternoon</string>
+    <string name="home_greeting_evening">Good evening</string>
+    <string name="home_greeting_with_name">%1$s, %2$s</string>
+    <string name="home_recent_runs">Recent runs</string>
+    <string name="home_no_runs">No runs yet. Tell your agent what to do below.</string>
+    <string name="home_no_instances_message">Adopt an agent from the catalog. It keeps working for you in the cloud.</string>
+    <string name="home_adopt">Adopt an agent</string>
+    <string name="home_switch_instance">Switch instance</string>
+    <string name="home_instance_settings">Instance settings</string>
+    <string name="home_catalog">Agent catalog</string>
+    <string name="home_composer_placeholder">Ask %1$s to do something</string>
+    <string name="home_demo_banner">Demo mode: sample data, no network.</string>
+    <string name="home_offline_banner">Offline, showing cached content</string>
+    <string name="home_run_subtitle">%1$s · %2$s</string>
+
+    <!-- Instance states -->
+    <string name="instance_state_provisioning">Provisioning</string>
+    <string name="instance_state_running">Running</string>
+    <string name="instance_state_paused">Paused</string>
+    <string name="instance_state_archived">Archived</string>
+    <string name="instance_state_deleted">Deleted</string>
+    <string name="instance_state_unknown">Unknown</string>
+
+    <!-- Run states -->
+    <string name="run_state_queued">Queued</string>
+    <string name="run_state_starting">Starting</string>
+    <string name="run_state_running">Running</string>
+    <string name="run_state_waiting_approval">Needs approval</string>
+    <string name="run_state_waiting_device">Waiting for computer</string>
+    <string name="run_state_waiting_quota">Waiting for key</string>
+    <string name="run_state_waiting_children">Waiting for subtasks</string>
+    <string name="run_state_backoff">Retrying soon</string>
+    <string name="run_state_succeeded">Succeeded</string>
+    <string name="run_state_failed">Failed</string>
+    <string name="run_state_cancelled">Cancelled</string>
+    <string name="run_state_unknown">Unknown</string>
+
+    <!-- Relative time -->
+    <string name="time_just_now">Just now</string>
+    <plurals name="time_minutes_ago">
+        <item quantity="one">%1$d min ago</item>
+        <item quantity="other">%1$d min ago</item>
+    </plurals>
+    <plurals name="time_hours_ago">
+        <item quantity="one">%1$d hour ago</item>
+        <item quantity="other">%1$d hours ago</item>
+    </plurals>
+    <string name="time_yesterday">Yesterday %1$s</string>
+    <plurals name="time_days_ago">
+        <item quantity="one">%1$d day ago</item>
+        <item quantity="other">%1$d days ago</item>
+    </plurals>
+
+    <!-- Sign in -->
+    <string name="login_welcome">Welcome to ThinkTin</string>
+    <string name="login_coming_soon">Phone sign-in is coming soon. Try demo mode in the meantime.</string>
+    <string name="login_next">Next</string>
+    <string name="login_use_demo">Use demo mode</string>
+
+    <!-- Frozen / core unavailable -->
+    <string name="frozen_title">Account frozen</string>
+    <string name="frozen_message">Your account is temporarily unavailable. Please contact support. You stay signed in and can continue once it is unfrozen.</string>
+    <string name="action_sign_out">Sign out</string>
+    <string name="core_unavailable_title">Core library unavailable</string>
+    <string name="core_unavailable_message">This build does not include the ThinkTin core library (libclient_core.so). Only demo mode is available.</string>
+
+    <!-- Settings -->
+    <string name="settings_appearance">Appearance</string>
+    <string name="settings_appearance_system">System default</string>
+    <string name="settings_appearance_light">Light</string>
+    <string name="settings_appearance_dark">Dark</string>
+    <string name="settings_demo_mode">Demo mode</string>
+    <string name="settings_demo_mode_summary">Use sample data without network (debug builds only)</string>
+    <string name="settings_account">Account</string>
+    <string name="settings_more_coming">Language, notifications, devices, open-source licenses and more are coming soon.</string>
+    <string name="settings_version">Version %1$s (%2$s)</string>
+
+    <!-- Errors -->
+    <string name="error_network">Network unavailable. Please try again later.</string>
+    <string name="error_signed_out">Your session has expired. Please sign in again.</string>
+    <string name="error_upgrade_required">This version is too old. Please update the app.</string>
+    <string name="error_account_frozen">Your account is frozen. Please contact support.</string>
+    <string name="error_rate_limited">Too many requests. Try again in %1$d s.</string>
+    <string name="error_rate_limited_plain">Too many requests. Please try again later.</string>
+    <string name="error_not_found">This item does not exist or has been deleted.</string>
+    <string name="error_conflict">This item has changed. Refresh and try again.</string>
+    <string name="error_invalid">Some of the information is not valid.</string>
+    <string name="error_forbidden">You do not have permission to do this.</string>
+    <string name="error_quota">Quota used up.</string>
+    <string name="error_server">Something went wrong on the server (%1$s).</string>
+    <string name="error_contains_secrets">Your message seems to contain passwords or keys (%1$d found) and was not sent. Save them to the vault first.</string>
+    <string name="error_unsupported">This feature is not available yet.</string>
+    <string name="error_other">Something went wrong. Please try again.</string>
+</resources>

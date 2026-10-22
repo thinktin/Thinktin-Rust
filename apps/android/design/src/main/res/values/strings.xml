@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools" tools:locale="zh">
     <string name="design_composer_placeholder">给 agent 发消息</string>
     <string name="design_attach">添加附件</string>
     <string name="design_send">发送</string>
@@ -11,4 +11,5 @@
     <string name="design_tool_in_progress">进行中</string>
     <string name="design_tool_completed">已完成</string>
     <string name="design_tool_failed">失败</string>
+    <string name="design_ai_generated">【AI 生成】</string>
 </resources>

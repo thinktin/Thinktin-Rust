@@ -39,7 +39,7 @@ sealed class ServiceError(message: String, cause: Throwable? = null) : Exception
 }
 
 /** ClientException（UniFFI）→ ServiceError。 */
-fun ClientException.toServiceError(): ServiceError = when (this) {
+internal fun ClientException.toServiceError(): ServiceError = when (this) {
     is ClientException.Network -> ServiceError.Network(message, this)
     is ClientException.SignedOut -> ServiceError.SignedOut(this)
     is ClientException.UpgradeRequired -> ServiceError.UpgradeRequired(this)

@@ -163,6 +163,13 @@ sealed interface StreamState {
     data object Stopped : StreamState
 }
 
+/** 终止状态：之后不会再有事件，events() 的流在发出它之后结束。 */
+val StreamState.isTerminal: Boolean
+    get() = when (this) {
+        StreamState.NotFound, StreamState.SignedOut, StreamState.AccountFrozen, StreamState.Stopped -> true
+        StreamState.Connecting, StreamState.Live, is StreamState.Reconnecting -> false
+    }
+
 /** ThinktinService.events() 吐出的东西：事件、续传重置、连接状态。 */
 sealed interface EventStreamItem {
     data class Event(val event: InstanceEvent) : EventStreamItem
@@ -411,4 +418,36 @@ data class TeamTemplate(
     val name: String,
     val members: List<TemplateMember>,
     val createdAtMs: Long,
+)
+
+/** IM 群机器人（10.5，13.15 的界面）。token 和签名密钥服务端从不返回，[hint] 是 token 后 4 位。 */
+data class ImChannel(
+    val id: String,
+    /** feishu、lark、wecom、dingtalk。 */
+    val vendor: String,
+    val label: String,
+    val hint: String,
+    val hasSecret: Boolean,
+    /** run_finished、run_failed、approval 中的若干个。 */
+    val events: List<String>,
+    val enabled: Boolean,
+    val lastSentAtMs: Long?,
+    /** 最近一次推送失败的原因（服务端诊断，英文，不是本地化文案）。 */
+    val lastError: String?,
+    val createdAtMs: Long,
+)
+
+data class NewImChannel(
+    val webhookUrl: String,
+    val secret: String? = null,
+    val label: String,
+    /** null 表示全部事件。 */
+    val events: List<String>? = null,
+)
+
+/** 修改 IM 渠道；null 表示不改。 */
+data class ImChannelUpdate(
+    val label: String? = null,
+    val events: List<String>? = null,
+    val enabled: Boolean? = null,
 )

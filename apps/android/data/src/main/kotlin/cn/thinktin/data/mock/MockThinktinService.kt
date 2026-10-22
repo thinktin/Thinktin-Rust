@@ -10,6 +10,8 @@ import cn.thinktin.data.model.DetectedSecret
 import cn.thinktin.data.model.Device
 import cn.thinktin.data.model.EventKinds
 import cn.thinktin.data.model.EventStreamItem
+import cn.thinktin.data.model.ImChannel
+import cn.thinktin.data.model.ImChannelUpdate
 import cn.thinktin.data.model.InboxItem
 import cn.thinktin.data.model.InboxPage
 import cn.thinktin.data.model.Instance
@@ -18,6 +20,7 @@ import cn.thinktin.data.model.InstanceState
 import cn.thinktin.data.model.LoginResult
 import cn.thinktin.data.model.ModelRoute
 import cn.thinktin.data.model.NewCredential
+import cn.thinktin.data.model.NewImChannel
 import cn.thinktin.data.model.NewPlan
 import cn.thinktin.data.model.NewVaultItem
 import cn.thinktin.data.model.Plan
@@ -98,6 +101,7 @@ class MockThinktinService(
     private val deviceList = data.devices.toMutableList()
     private val teamList = data.teams.toMutableList()
     private val templateList = data.teamTemplates.toMutableList()
+    private val imChannelList = data.imChannels.toMutableList()
     private var idCounter = 0
     private var scriptStep = 0
 
@@ -216,7 +220,7 @@ class MockThinktinService(
         return cachedInstances()
     }
 
-    override fun cachedInstances(): List<Instance> =
+    override suspend fun cachedInstances(): List<Instance> =
         synchronized(lock) { instanceList.filter { it.state != InstanceState.Deleted } }
 
     override suspend fun adopt(agentId: String, name: String, harness: String?): Instance {
@@ -311,7 +315,7 @@ class MockThinktinService(
     private fun sortedRuns(instanceId: String): List<Run> =
         runList.filter { it.instanceId == instanceId }.sortedByDescending { it.createdAtMs }
 
-    override fun cachedRuns(instanceId: String, limit: Int): List<Run> =
+    override suspend fun cachedRuns(instanceId: String, limit: Int): List<Run> =
         synchronized(lock) { sortedRuns(instanceId).take(limit) }
 
     override suspend fun getRun(runId: String): Run {
@@ -407,6 +411,10 @@ class MockThinktinService(
     override fun events(instanceId: String): Flow<EventStreamItem> = channelFlow {
         send(EventStreamItem.Status(StreamState.Connecting))
         lag()
+        if (auth.value == AuthState.SignedOut) {
+            send(EventStreamItem.Status(StreamState.SignedOut))
+            return@channelFlow
+        }
         val instance = synchronized(lock) { instanceList.firstOrNull { it.id == instanceId } }
         if (instance == null || instance.state == InstanceState.Deleted) {
             send(EventStreamItem.Status(StreamState.NotFound))
@@ -427,7 +435,7 @@ class MockThinktinService(
         }
     }
 
-    override fun cachedEvents(instanceId: String, afterSeq: Long, limit: Int): List<InstanceEvent> =
+    override suspend fun cachedEvents(instanceId: String, afterSeq: Long, limit: Int): List<InstanceEvent> =
         synchronized(lock) {
             eventList.filter { it.instanceId == instanceId && it.seq > afterSeq }.sortedBy { it.seq }.take(limit)
         }
@@ -625,13 +633,13 @@ class MockThinktinService(
         return cachedInbox(beforeId, limit)
     }
 
-    override fun cachedInbox(beforeId: String?, limit: Int): List<InboxItem> = synchronized(lock) {
+    override suspend fun cachedInbox(beforeId: String?, limit: Int): List<InboxItem> = synchronized(lock) {
         val sorted = inboxList.sortedByDescending { it.createdAtMs }
         val from = if (beforeId == null) 0 else sorted.indexOfFirst { it.id == beforeId }.let { if (it < 0) sorted.size else it + 1 }
         sorted.drop(from).take(limit)
     }
 
-    override fun cachedUnread(): Long = synchronized(lock) { unreadLocked() }
+    override suspend fun cachedUnread(): Long = synchronized(lock) { unreadLocked() }
 
     override suspend fun markInboxRead(ids: List<String>, upToId: String?): Long {
         lag()
@@ -652,6 +660,68 @@ class MockThinktinService(
     override suspend fun deleteInboxItem(itemId: String) {
         lag()
         synchronized(lock) { inboxList.removeAll { it.id == itemId } }
+    }
+
+    // ---- IM 渠道 ----
+
+    override suspend fun imChannels(): List<ImChannel> {
+        lag()
+        return synchronized(lock) { imChannelList.toList() }
+    }
+
+    override suspend fun addImChannel(channel: NewImChannel): ImChannel {
+        lag()
+        val vendor = IM_VENDORS.entries.firstOrNull { channel.webhookUrl.contains(it.key) }?.value
+            ?: throw ServiceError.Api(422, "invalid_webhook_url", "unsupported webhook host", null)
+        val token = channel.webhookUrl.substringAfterLast('/')
+        val created = ImChannel(
+            id = newId("im"), vendor = vendor, label = channel.label, hint = token.takeLast(4),
+            hasSecret = !channel.secret.isNullOrEmpty(), events = channel.events ?: IM_EVENTS, enabled = true,
+            lastSentAtMs = null, lastError = null, createdAtMs = clock(),
+        )
+        synchronized(lock) { imChannelList.add(created) }
+        return created
+    }
+
+    override suspend fun updateImChannel(channelId: String, update: ImChannelUpdate): ImChannel {
+        lag()
+        return synchronized(lock) {
+            val i = imChannelList.indexOfFirst { it.id == channelId }
+            if (i < 0) notFound("im channel", channelId)
+            val old = imChannelList[i]
+            old.copy(
+                label = update.label ?: old.label,
+                events = update.events ?: old.events,
+                enabled = update.enabled ?: old.enabled,
+            ).also { imChannelList[i] = it }
+        }
+    }
+
+    override suspend fun deleteImChannel(channelId: String) {
+        lag()
+        synchronized(lock) { imChannelList.removeAll { it.id == channelId } }
+    }
+
+    override suspend fun testImChannel(channelId: String) {
+        lag()
+        synchronized(lock) {
+            val i = imChannelList.indexOfFirst { it.id == channelId }
+            if (i < 0) notFound("im channel", channelId)
+            imChannelList[i] = imChannelList[i].copy(lastSentAtMs = clock(), lastError = null)
+        }
+    }
+
+    override suspend fun replaceImWebhook(channelId: String, webhookUrl: String, secret: String?): ImChannel {
+        lag()
+        return synchronized(lock) {
+            val i = imChannelList.indexOfFirst { it.id == channelId }
+            if (i < 0) notFound("im channel", channelId)
+            imChannelList[i].copy(
+                hint = webhookUrl.substringAfterLast('/').takeLast(4),
+                hasSecret = !secret.isNullOrEmpty(),
+                lastError = null,
+            ).also { imChannelList[i] = it }
+        }
     }
 
     // ---- key 与用量 ----
@@ -852,6 +922,13 @@ class MockThinktinService(
 
     companion object {
         const val DEFAULT_EVENT_INTERVAL_MS: Long = 2_000
+        private val IM_EVENTS = listOf("run_finished", "run_failed", "approval")
+        private val IM_VENDORS = mapOf(
+            "open.feishu.cn" to "feishu",
+            "open.larksuite.com" to "lark",
+            "qyapi.weixin.qq.com" to "wecom",
+            "oapi.dingtalk.com" to "dingtalk",
+        )
         private const val SCRIPT_LENGTH = 5
 
         private val LABELED = Regex("""(?i)(password|passwd|pwd|密码|口令|token|secret)\s*[:：=]\s*(\S{6,})""")

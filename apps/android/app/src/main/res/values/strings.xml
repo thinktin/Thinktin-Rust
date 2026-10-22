@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools" tools:locale="zh">
+    <string name="app_name" translatable="false">ThinkTin</string>
+
+    <!-- 通用 -->
+    <string name="action_back">返回</string>
+    <string name="action_open_menu">打开菜单</string>
+    <string name="action_more">更多</string>
+    <string name="coming_soon_title">即将推出</string>
+    <string name="coming_soon_message">这个页面还在开发中，敬请期待。</string>
+    <string name="coming_soon_argument">编号：%1$s</string>
+
+    <!-- 页面标题 -->
+    <string name="page_login">登录</string>
+    <string name="page_login_code">输入验证码</string>
+    <string name="page_chat">对话</string>
+    <string name="page_run">运行详情</string>
+    <string name="page_catalog">Agent 目录</string>
+    <string name="page_agent">Agent 详情</string>
+    <string name="page_instance">实例设置</string>
+    <string name="page_plans">计划</string>
+    <string name="page_plan">计划详情</string>
+    <string name="page_teams">团队与流水线</string>
+    <string name="page_team">团队详情</string>
+    <string name="page_inbox">收件箱</string>
+    <string name="page_approvals">审批</string>
+    <string name="page_approval">审批详情</string>
+    <string name="page_keys">模型 key 与用量</string>
+    <string name="page_vault">密码保险箱</string>
+    <string name="page_devices">设备</string>
+    <string name="page_settings">设置</string>
+
+    <!-- 抽屉 -->
+    <string name="drawer_search">搜索</string>
+    <string name="drawer_new_chat">新对话</string>
+    <string name="drawer_inbox">收件箱</string>
+    <string name="drawer_plans">计划</string>
+    <string name="drawer_teams">团队与流水线</string>
+    <string name="drawer_my_agents">我的 agent</string>
+    <string name="drawer_no_agents">还没有 agent</string>
+    <string name="drawer_settings">设置</string>
+    <string name="drawer_unread">%1$d 条未读</string>
+    <string name="drawer_demo_user">演示用户</string>
+
+    <!-- 首页 -->
+    <string name="home_greeting_morning">早上好</string>
+    <string name="home_greeting_afternoon">下午好</string>
+    <string name="home_greeting_evening">晚上好</string>
+    <string name="home_greeting_with_name">%1$s，%2$s</string>
+    <string name="home_recent_runs">最近运行</string>
+    <string name="home_no_runs">还没有运行。在下面输入你想让 agent 做的事。</string>
+    <string name="home_no_instances_message">从目录里领养一个 agent，它会一直在云端替你干活。</string>
+    <string name="home_adopt">领养一个 agent</string>
+    <string name="home_switch_instance">切换实例</string>
+    <string name="home_instance_settings">实例设置</string>
+    <string name="home_catalog">Agent 目录</string>
+    <string name="home_composer_placeholder">让 %1$s 做点什么</string>
+    <string name="home_demo_banner">演示模式：显示的是假数据，不会联网。</string>
+    <string name="home_offline_banner">离线，显示的是缓存内容</string>
+    <string name="home_run_subtitle">%1$s · %2$s</string>
+
+    <!-- 实例状态 -->
+    <string name="instance_state_provisioning">创建中</string>
+    <string name="instance_state_running">运行中</string>
+    <string name="instance_state_paused">已暂停</string>
+    <string name="instance_state_archived">已归档</string>
+    <string name="instance_state_deleted">已删除</string>
+    <string name="instance_state_unknown">未知状态</string>
+
+    <!-- 运行状态 -->
+    <string name="run_state_queued">排队中</string>
+    <string name="run_state_starting">启动中</string>
+    <string name="run_state_running">运行中</string>
+    <string name="run_state_waiting_approval">等待审批</string>
+    <string name="run_state_waiting_device">等待电脑</string>
+    <string name="run_state_waiting_quota">等待 key</string>
+    <string name="run_state_waiting_children">等待子任务</string>
+    <string name="run_state_backoff">重试等待</string>
+    <string name="run_state_succeeded">成功</string>
+    <string name="run_state_failed">失败</string>
+    <string name="run_state_cancelled">已取消</string>
+    <string name="run_state_unknown">未知状态</string>
+
+    <!-- 相对时间 -->
+    <string name="time_just_now">刚刚</string>
+    <plurals name="time_minutes_ago">
+        <item quantity="other">%1$d 分钟前</item>
+    </plurals>
+    <plurals name="time_hours_ago">
+        <item quantity="other">%1$d 小时前</item>
+    </plurals>
+    <string name="time_yesterday">昨天 %1$s</string>
+    <plurals name="time_days_ago">
+        <item quantity="other">%1$d 天前</item>
+    </plurals>
+
+    <!-- 登录 -->
+    <string name="login_welcome">欢迎使用 ThinkTin</string>
+    <string name="login_coming_soon">手机号登录即将推出。现在可以先用演示模式看看。</string>
+    <string name="login_next">下一步</string>
+    <string name="login_use_demo">使用演示模式</string>
+
+    <!-- 冻结 / 核心库不可用 -->
+    <string name="frozen_title">账号已冻结</string>
+    <string name="frozen_message">你的账号暂时无法使用，请联系客服。登录状态会保留，解冻后可以接着用。</string>
+    <string name="action_sign_out">退出登录</string>
+    <string name="core_unavailable_title">无法加载核心库</string>
+    <string name="core_unavailable_message">这个安装包里没有 ThinkTin 核心库（libclient_core.so），只能使用演示模式。</string>
+
+    <!-- 设置 -->
+    <string name="settings_appearance">外观</string>
+    <string name="settings_appearance_system">跟随系统</string>
+    <string name="settings_appearance_light">浅色</string>
+    <string name="settings_appearance_dark">深色</string>
+    <string name="settings_demo_mode">演示模式</string>
+    <string name="settings_demo_mode_summary">使用假数据，不联网（仅调试版）</string>
+    <string name="settings_account">账号</string>
+    <string name="settings_more_coming">语言、通知、设备、开源许可等设置即将推出。</string>
+    <string name="settings_version">版本 %1$s（%2$s）</string>
+
+    <!-- 错误 -->
+    <string name="error_network">网络不通，请稍后重试</string>
+    <string name="error_signed_out">登录已失效，请重新登录</string>
+    <string name="error_upgrade_required">当前版本太旧，请升级 App</string>
+    <string name="error_account_frozen">账号已被冻结，请联系客服</string>
+    <string name="error_rate_limited">操作太频繁，请 %1$d 秒后再试</string>
+    <string name="error_rate_limited_plain">操作太频繁，请稍后再试</string>
+    <string name="error_not_found">内容不存在或已被删除</string>
+    <string name="error_conflict">内容已被修改，请刷新后重试</string>
+    <string name="error_invalid">填写的内容不正确</string>
+    <string name="error_forbidden">没有权限执行这个操作</string>
+    <string name="error_quota">额度已用完</string>
+    <string name="error_server">服务出错了（%1$s）</string>
+    <string name="error_contains_secrets">消息里像是有 %1$d 处密码或 key，没有发出。请先存进保险箱。</string>
+    <string name="error_unsupported">这个功能暂不可用</string>
+    <string name="error_other">出了点问题，请重试</string>
+</resources>

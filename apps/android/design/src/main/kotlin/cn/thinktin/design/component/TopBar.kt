@@ -2,8 +2,8 @@ package cn.thinktin.design.component
 
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -57,10 +57,10 @@ fun ThinktinTopBar(
     )
 }
 
-/** 常用的导航图标。 */
+/** 常用的导航图标（第 2.4 节：Material Symbols Outlined）。 */
 object TopBarIcons {
-    val Back: ImageVector get() = Icons.AutoMirrored.Filled.ArrowBack
-    val Menu: ImageVector get() = Icons.Filled.Menu
+    val Back: ImageVector get() = Icons.AutoMirrored.Outlined.ArrowBack
+    val Menu: ImageVector get() = Icons.Outlined.Menu
 }
 
 @Preview(showBackground = true)
