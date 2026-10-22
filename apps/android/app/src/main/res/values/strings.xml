@@ -27,7 +27,7 @@
     <string name="page_approval">审批详情</string>
     <string name="page_keys">模型 key 与用量</string>
     <string name="page_vault">密码保险箱</string>
-    <string name="page_devices">设备</string>
+    <string name="page_devices">设备与账号</string>
     <string name="page_settings">设置</string>
 
     <!-- 抽屉 -->
@@ -96,16 +96,43 @@
 
     <!-- 登录 -->
     <string name="login_welcome">欢迎使用 ThinkTin</string>
-    <string name="login_coming_soon">手机号登录即将推出。现在可以先用演示模式看看。</string>
-    <string name="login_coming_soon_plain">手机号登录即将推出。</string>
-    <string name="login_next">下一步</string>
+    <string name="login_subtitle">用手机号登录，没有账号会自动注册。</string>
+    <string name="login_phone_label">手机号</string>
+    <string name="login_phone_invalid">手机号格式不对，请检查国家或地区和号码</string>
+    <string name="login_get_code">获取验证码</string>
+    <string name="login_agreement">继续即表示你已阅读并同意《用户协议》和《隐私政策》。</string>
+    <string name="login_region_description">国家或地区：%1$s +%2$s</string>
+    <string name="login_region_option">%1$s +%2$s</string>
+    <string name="login_code_title">输入验证码</string>
+    <string name="login_code_sent_to">6 位验证码已发送至 %1$s</string>
+    <string name="login_code_label">6 位验证码</string>
+    <string name="login_code_invalid">验证码错误或已过期，请重新输入</string>
+    <string name="login_code_incomplete">请输入 6 位验证码</string>
+    <string name="login_code_resent">验证码已重新发送</string>
+    <string name="login_verifying">正在登录</string>
+    <string name="login_resend">重新获取验证码</string>
+    <string name="login_resend_in">%1$d 秒后可重新获取</string>
+    <string name="login_change_phone">更换手机号</string>
     <string name="login_use_demo">使用演示模式</string>
+    <string name="region_cn">中国大陆</string>
+    <string name="region_hk">中国香港</string>
+    <string name="region_mo">中国澳门</string>
+    <string name="region_tw">中国台湾</string>
+    <string name="region_sg">新加坡</string>
+    <string name="region_jp">日本</string>
+    <string name="region_us">美国 / 加拿大</string>
+    <string name="region_gb">英国</string>
 
     <!-- 冻结 / 核心库不可用 -->
     <string name="action_retry">重试</string>
     <string name="loading">正在加载</string>
     <string name="frozen_title">账号已冻结</string>
-    <string name="frozen_message">你的账号暂时无法使用，请联系客服。登录状态会保留，解冻后可以接着用。</string>
+    <string name="frozen_message">你的账号暂时无法使用，请联系客服。登录状态会保留，解冻后点“重新检查”就能接着用。</string>
+    <string name="frozen_login_message">这个账号已被冻结，暂时无法登录。请联系客服处理。</string>
+    <string name="frozen_contact">如有疑问，请联系 ThinkTin 客服。</string>
+    <string name="frozen_check_again">重新检查</string>
+    <string name="frozen_still">账号仍处于冻结状态</string>
+    <string name="frozen_back_to_login">返回登录</string>
     <string name="action_sign_out">退出登录</string>
     <string name="core_unavailable_title">无法加载核心库</string>
     <string name="core_unavailable_message">ThinkTin 核心库加载失败，暂时连不上服务。可以重试；仍然不行请更新或重新安装 App。</string>
@@ -119,8 +146,83 @@
     <string name="settings_demo_mode">演示模式</string>
     <string name="settings_demo_mode_summary">使用假数据，不联网（仅调试版）</string>
     <string name="settings_account">账号</string>
-    <string name="settings_more_coming">语言、通知、设备、开源许可等设置即将推出。</string>
+    <string name="settings_security">安全</string>
+    <string name="settings_devices_summary">登录设备、远程下线、注销账号</string>
+    <string name="settings_danger">危险操作</string>
+    <string name="settings_more_coming">语言、通知、开源许可等设置即将推出。</string>
     <string name="settings_version">版本 %1$s（%2$s）</string>
+
+    <!-- 通用按钮 -->
+    <string name="action_cancel">取消</string>
+    <string name="action_continue">继续</string>
+    <string name="action_next">下一步</string>
+    <string name="action_previous">上一步</string>
+    <string name="action_save">保存</string>
+    <string name="action_ok">知道了</string>
+    <string name="loading_short">加载中…</string>
+
+    <!-- 个人资料 -->
+    <string name="profile_phone">手机号</string>
+    <string name="profile_name">昵称</string>
+    <string name="profile_name_unset">未设置</string>
+    <string name="profile_name_edit">修改昵称</string>
+    <string name="profile_name_hint">留空表示不设昵称</string>
+    <string name="profile_name_too_long">昵称最多 %1$d 个字</string>
+    <string name="profile_name_saved">昵称已保存</string>
+
+    <!-- 设备与账号 -->
+    <string name="devices_section_profile">个人资料</string>
+    <string name="devices_section_devices">登录设备</string>
+    <string name="devices_section_security">安全</string>
+    <string name="devices_load_failed">设备列表加载失败</string>
+    <string name="devices_this_device">本机</string>
+    <string name="devices_online">在线</string>
+    <string name="devices_offline">离线</string>
+    <string name="devices_last_seen">最后活跃 %1$s</string>
+    <string name="devices_platform_and_seen">%1$s · %2$s</string>
+    <string name="devices_revoke_description">下线 %1$s</string>
+    <string name="devices_revoke_title">下线“%1$s”？</string>
+    <string name="devices_revoke_message">这台设备会立即退出登录，需要重新用手机号登录才能再用。</string>
+    <string name="devices_revoke_confirm">下线</string>
+    <string name="devices_revoked">已下线“%1$s”</string>
+    <string name="devices_sign_out_others">下线其他设备</string>
+    <string name="devices_sign_out_others_summary">除了这台，其他设备全部退出登录</string>
+    <string name="devices_sign_out_others_message">除了这台手机，其他登录着的设备都会立即退出登录。</string>
+    <string name="devices_also_stop_agents">同时停止全部 agent</string>
+    <string name="devices_sign_out_others_confirm_title">确定下线其他设备？</string>
+    <string name="devices_sign_out_others_confirm">其他设备会立即退出登录，这个操作不能撤销。</string>
+    <string name="devices_sign_out_others_confirm_stop">其他设备会立即退出登录，并且停止全部 agent：取消所有进行中的运行、吊销已批准的授权、暂停所有计划。这个操作不能撤销。</string>
+    <string name="devices_sign_out_others_confirm_action">确定下线</string>
+    <string name="devices_signed_out_others">已下线 %1$d 台设备</string>
+    <string name="devices_signed_out_others_and_stopped">已下线 %1$d 台设备；已停止全部 agent：取消 %2$d 个运行，吊销 %3$d 个授权，暂停 %4$d 个计划</string>
+    <string name="devices_stop_all">全部停止</string>
+    <string name="devices_stop_all_summary">紧急情况下立即停止所有 agent</string>
+    <string name="devices_stop_all_message">会取消所有进行中的运行、吊销已批准的授权、暂停所有计划。账号和设备的登录状态不受影响。</string>
+    <string name="devices_stop_all_confirm_title">确定全部停止？</string>
+    <string name="devices_stop_all_confirm">这是危险操作，不能撤销：正在做的事会中断，计划要你手动恢复。</string>
+    <string name="devices_stop_all_confirm_action">全部停止</string>
+    <string name="devices_stop_all_done_title">已全部停止</string>
+    <string name="devices_stop_all_done_runs">取消的运行：%1$d 个</string>
+    <string name="devices_stop_all_done_grants">吊销的授权：%1$d 个</string>
+    <string name="devices_stop_all_done_plans">暂停的计划：%1$d 个</string>
+    <string name="devices_sign_out_summary">只退出这台设备，其他设备不受影响</string>
+    <string name="devices_sign_out_message">只退出这台设备，其他设备和正在运行的 agent 不受影响。本机的缓存会一并清掉。</string>
+    <string name="platform_android">Android</string>
+    <string name="platform_ios">iPhone / iPad</string>
+    <string name="platform_macos">Mac</string>
+    <string name="platform_unknown">未知设备</string>
+
+    <!-- 注销账号 -->
+    <string name="account_delete">注销账号</string>
+    <string name="account_delete_summary">永久删除账号和全部数据，不可恢复</string>
+    <string name="account_delete_step1_title">注销账号（第 1 步，共 3 步）</string>
+    <string name="account_delete_step1_message">注销后，你的账号、全部 agent 实例、运行记录、计划、团队、模型 key 和收件箱都会被永久删除，不能恢复。密码保险箱的加密密钥（DEK）会一并销毁，里面存的密码再也无法解密。所有设备都会退出登录。\n\n要继续，我们会给你的手机号发一条验证码。</string>
+    <string name="account_delete_send_code">发送验证码</string>
+    <string name="account_delete_step2_title">输入验证码（第 2 步，共 3 步）</string>
+    <string name="account_delete_step2_message">验证码已发送到你登录用的手机号。</string>
+    <string name="account_delete_step3_title">最后确认（第 3 步，共 3 步）</string>
+    <string name="account_delete_step3_message">确定永久注销账号吗？账号和全部数据会被删除，保险箱密钥会被销毁，之后不能恢复，也不能撤销。</string>
+    <string name="account_delete_confirm">永久注销</string>
 
     <!-- 错误 -->
     <string name="error_network">网络不通，请稍后重试</string>

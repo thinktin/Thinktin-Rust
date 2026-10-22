@@ -25,7 +25,7 @@
     <string name="page_approval">Approval details</string>
     <string name="page_keys">Model keys &amp; usage</string>
     <string name="page_vault">Password vault</string>
-    <string name="page_devices">Devices</string>
+    <string name="page_devices">Devices and account</string>
     <string name="page_settings">Settings</string>
 
     <!-- Drawer -->
@@ -97,16 +97,43 @@
 
     <!-- Sign in -->
     <string name="login_welcome">Welcome to ThinkTin</string>
-    <string name="login_coming_soon">Phone sign-in is coming soon. Try demo mode in the meantime.</string>
-    <string name="login_coming_soon_plain">Phone sign-in is coming soon.</string>
-    <string name="login_next">Next</string>
+    <string name="login_subtitle">Sign in with your phone number. New numbers get an account automatically.</string>
+    <string name="login_phone_label">Phone number</string>
+    <string name="login_phone_invalid">This phone number does not look right. Check the country or region and the number.</string>
+    <string name="login_get_code">Get code</string>
+    <string name="login_agreement">By continuing, you confirm that you have read and agree to the Terms of Service and the Privacy Policy.</string>
+    <string name="login_region_description">Country or region: %1$s +%2$s</string>
+    <string name="login_region_option">%1$s +%2$s</string>
+    <string name="login_code_title">Enter the code</string>
+    <string name="login_code_sent_to">We sent a 6-digit code to %1$s</string>
+    <string name="login_code_label">6-digit code</string>
+    <string name="login_code_invalid">The code is wrong or has expired. Please enter it again.</string>
+    <string name="login_code_incomplete">Enter the 6-digit code</string>
+    <string name="login_code_resent">A new code has been sent</string>
+    <string name="login_verifying">Signing in</string>
+    <string name="login_resend">Resend code</string>
+    <string name="login_resend_in">Resend in %1$d s</string>
+    <string name="login_change_phone">Change phone number</string>
     <string name="login_use_demo">Use demo mode</string>
+    <string name="region_cn">Chinese mainland</string>
+    <string name="region_hk">Hong Kong, China</string>
+    <string name="region_mo">Macao, China</string>
+    <string name="region_tw">Taiwan, China</string>
+    <string name="region_sg">Singapore</string>
+    <string name="region_jp">Japan</string>
+    <string name="region_us">United States / Canada</string>
+    <string name="region_gb">United Kingdom</string>
 
     <!-- Frozen / core unavailable -->
     <string name="action_retry">Try again</string>
     <string name="loading">Loading</string>
     <string name="frozen_title">Account frozen</string>
-    <string name="frozen_message">Your account is temporarily unavailable. Please contact support. You stay signed in and can continue once it is unfrozen.</string>
+    <string name="frozen_message">Your account is temporarily unavailable. Please contact support. You stay signed in: once it is unfrozen, tap “Check again” to continue.</string>
+    <string name="frozen_login_message">This account is frozen and cannot sign in right now. Please contact support.</string>
+    <string name="frozen_contact">If you have questions, please contact ThinkTin support.</string>
+    <string name="frozen_check_again">Check again</string>
+    <string name="frozen_still">The account is still frozen</string>
+    <string name="frozen_back_to_login">Back to sign in</string>
     <string name="action_sign_out">Sign out</string>
     <string name="core_unavailable_title">Core library unavailable</string>
     <string name="core_unavailable_message">The ThinkTin core library failed to load, so the service is unavailable. Try again; if it keeps failing, update or reinstall the app.</string>
@@ -120,8 +147,83 @@
     <string name="settings_demo_mode">Demo mode</string>
     <string name="settings_demo_mode_summary">Use sample data without network (debug builds only)</string>
     <string name="settings_account">Account</string>
-    <string name="settings_more_coming">Language, notifications, devices, open-source licenses and more are coming soon.</string>
+    <string name="settings_security">Security</string>
+    <string name="settings_devices_summary">Signed-in devices, remote sign-out, delete account</string>
+    <string name="settings_danger">Danger zone</string>
+    <string name="settings_more_coming">Language, notifications, open-source licenses and more are coming soon.</string>
     <string name="settings_version">Version %1$s (%2$s)</string>
+
+    <!-- Common buttons -->
+    <string name="action_cancel">Cancel</string>
+    <string name="action_continue">Continue</string>
+    <string name="action_next">Next</string>
+    <string name="action_previous">Back</string>
+    <string name="action_save">Save</string>
+    <string name="action_ok">OK</string>
+    <string name="loading_short">Loading…</string>
+
+    <!-- Profile -->
+    <string name="profile_phone">Phone number</string>
+    <string name="profile_name">Nickname</string>
+    <string name="profile_name_unset">Not set</string>
+    <string name="profile_name_edit">Edit nickname</string>
+    <string name="profile_name_hint">Leave empty to remove the nickname</string>
+    <string name="profile_name_too_long">A nickname can have at most %1$d characters</string>
+    <string name="profile_name_saved">Nickname saved</string>
+
+    <!-- Devices and account -->
+    <string name="devices_section_profile">Profile</string>
+    <string name="devices_section_devices">Signed-in devices</string>
+    <string name="devices_section_security">Security</string>
+    <string name="devices_load_failed">Could not load devices</string>
+    <string name="devices_this_device">This device</string>
+    <string name="devices_online">Online</string>
+    <string name="devices_offline">Offline</string>
+    <string name="devices_last_seen">Last active %1$s</string>
+    <string name="devices_platform_and_seen">%1$s · %2$s</string>
+    <string name="devices_revoke_description">Sign out %1$s</string>
+    <string name="devices_revoke_title">Sign out “%1$s”?</string>
+    <string name="devices_revoke_message">This device will be signed out right away and needs to sign in with the phone number again.</string>
+    <string name="devices_revoke_confirm">Sign out</string>
+    <string name="devices_revoked">Signed out “%1$s”</string>
+    <string name="devices_sign_out_others">Sign out other devices</string>
+    <string name="devices_sign_out_others_summary">Sign out every device except this one</string>
+    <string name="devices_sign_out_others_message">Every other signed-in device will be signed out right away.</string>
+    <string name="devices_also_stop_agents">Also stop all agents</string>
+    <string name="devices_sign_out_others_confirm_title">Sign out other devices?</string>
+    <string name="devices_sign_out_others_confirm">Other devices will be signed out right away. This cannot be undone.</string>
+    <string name="devices_sign_out_others_confirm_stop">Other devices will be signed out right away, and all agents will stop: running work is cancelled, approved grants are revoked and all plans are paused. This cannot be undone.</string>
+    <string name="devices_sign_out_others_confirm_action">Sign out</string>
+    <string name="devices_signed_out_others">Devices signed out: %1$d</string>
+    <string name="devices_signed_out_others_and_stopped">Devices signed out: %1$d. All agents stopped: runs cancelled %2$d, grants revoked %3$d, plans paused %4$d.</string>
+    <string name="devices_stop_all">Stop everything</string>
+    <string name="devices_stop_all_summary">Stop all agents at once in an emergency</string>
+    <string name="devices_stop_all_message">This cancels all running work, revokes approved grants and pauses all plans. Your account and devices stay signed in.</string>
+    <string name="devices_stop_all_confirm_title">Stop everything?</string>
+    <string name="devices_stop_all_confirm">This is a dangerous action and cannot be undone: ongoing work is interrupted and you have to resume plans yourself.</string>
+    <string name="devices_stop_all_confirm_action">Stop everything</string>
+    <string name="devices_stop_all_done_title">Everything stopped</string>
+    <string name="devices_stop_all_done_runs">Runs cancelled: %1$d</string>
+    <string name="devices_stop_all_done_grants">Grants revoked: %1$d</string>
+    <string name="devices_stop_all_done_plans">Plans paused: %1$d</string>
+    <string name="devices_sign_out_summary">Sign out of this device only</string>
+    <string name="devices_sign_out_message">Only this device is signed out. Other devices and running agents are not affected. The local cache on this device is cleared.</string>
+    <string name="platform_android">Android</string>
+    <string name="platform_ios">iPhone / iPad</string>
+    <string name="platform_macos">Mac</string>
+    <string name="platform_unknown">Unknown device</string>
+
+    <!-- Delete account -->
+    <string name="account_delete">Delete account</string>
+    <string name="account_delete_summary">Permanently delete your account and all data</string>
+    <string name="account_delete_step1_title">Delete account (step 1 of 3)</string>
+    <string name="account_delete_step1_message">Deleting your account permanently removes your account, all agent instances, runs, plans, teams, model keys and inbox. This cannot be undone. The password vault\'s encryption key (DEK) is destroyed too, so the passwords in it can never be decrypted again. All devices are signed out.\n\nTo continue, we will send a code to your phone number.</string>
+    <string name="account_delete_send_code">Send code</string>
+    <string name="account_delete_step2_title">Enter the code (step 2 of 3)</string>
+    <string name="account_delete_step2_message">We sent a code to the phone number you sign in with.</string>
+    <string name="account_delete_step3_title">Final confirmation (step 3 of 3)</string>
+    <string name="account_delete_step3_message">Permanently delete your account? Your account and all data are deleted and the vault key is destroyed. This cannot be recovered or undone.</string>
+    <string name="account_delete_confirm">Delete forever</string>
 
     <!-- Errors -->
     <string name="error_network">Network unavailable. Please try again later.</string>
