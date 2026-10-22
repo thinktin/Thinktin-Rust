@@ -1426,6 +1426,99 @@ async fn deleted_instances_do_not_hold_keys() {
     a.commit().await.unwrap();
 }
 
+/// 删除实例时一并处理它的计划（11.9）：它自己的计划标记删除、触发器停掉；别的实例的流水线有一步在它上面的暂停，
+/// 改了步骤才能恢复；别的计划不动。
+#[tokio::test]
+async fn deleting_an_instance_retires_its_plans() {
+    use proto::domain::{PlanId, PlanStep};
+
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = user(db, "+8613800000001").await;
+    let (x, y) = (instance(db, alice).await, instance(db, alice).await);
+    let mut a = db.tenant(alice).await.unwrap();
+    let plan = |instance: &Instance, title: &str| NewPlan {
+        instance_id: instance.id,
+        title: title.into(),
+        goal: "g".into(),
+        policy: PlanPolicy::default(),
+        catch_up: CatchUp::Once,
+        created_by: PlanAuthor::User,
+        run_grant_id: None,
+    };
+    let cron = ScheduleSpec::Cron {
+        expr: "0 8 * * *".into(),
+        tz: "Asia/Shanghai".into(),
+    };
+    let soon = Utc::now() - Days::minutes(1);
+    let later = Utc::now() + Days::days(1);
+    let px = a.create_plan(&plan(&x, "x 自己的")).await.unwrap();
+    a.add_trigger(px.id, &cron, Some(soon)).await.unwrap();
+    let px2 = a.create_plan(&plan(&x, "x 的第二个")).await.unwrap();
+    let py = a.create_plan(&plan(&y, "y 上有一步在 x")).await.unwrap();
+    a.set_plan_steps(
+        py.id,
+        &[PlanStep {
+            key: "a".into(),
+            instance_id: x.id,
+            prompt: "p".into(),
+            depends_on: vec![],
+        }],
+    )
+    .await
+    .unwrap();
+    a.add_trigger(py.id, &cron, Some(soon)).await.unwrap();
+    let pz = a.create_plan(&plan(&y, "y 自己的")).await.unwrap();
+    a.add_trigger(pz.id, &cron, Some(later)).await.unwrap();
+    a.commit().await.unwrap();
+
+    let mut a = db.tenant(alice).await.unwrap();
+    let retired = a.retire_instance_plans(x.id).await.unwrap();
+    a.delete_instance(x.id).await.unwrap();
+    a.commit().await.unwrap();
+    let mut deleted = retired.deleted.clone();
+    deleted.sort_by_key(|p| p.0);
+    let mut want = vec![px.id, px2.id];
+    want.sort_by_key(|p| p.0);
+    assert_eq!((deleted, retired.paused), (want, vec![py.id]));
+
+    let mut a = db.tenant(alice).await.unwrap();
+    // 同一个事务里建的计划创建时间一样：按 id 比。
+    let mut listed: Vec<(PlanId, bool)> = a
+        .plans(None)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|p| (p.id, p.paused))
+        .collect();
+    listed.sort_by_key(|(id, _)| id.0);
+    let mut want = vec![(py.id, true), (pz.id, false)];
+    want.sort_by_key(|(id, _)| id.0);
+    assert_eq!(listed, want);
+    assert!(a.plans(Some(x.id)).await.unwrap().is_empty());
+    assert!(matches!(a.plan(px.id).await, Err(Error::NotFound)));
+    assert!(a.triggers(px.id).await.unwrap().iter().all(|t| !t.enabled));
+    assert_eq!(a.deleted_step(py.id).await.unwrap().as_deref(), Some("a"));
+    assert_eq!(a.deleted_step(pz.id).await.unwrap(), None);
+    // 再来一次什么都不变。
+    assert_eq!(
+        a.retire_instance_plans(x.id).await.unwrap(),
+        crate::RetiredPlans::default()
+    );
+    a.rollback().await.unwrap();
+    // 只剩 y 自己的计划会触发。
+    let mut w = db.worker().await.unwrap();
+    let due: Vec<PlanId> = w
+        .due_triggers(Utc::now() + Days::days(2), 100)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|d| d.plan.id)
+        .collect();
+    w.rollback().await.unwrap();
+    assert_eq!(due, [pz.id]);
+}
+
 /// 删除实例：从它的授权收窄给别的实例的子授权一起吊销；根在它上面的运行树里、在别的实例上跑的步骤一起取消。
 /// 父授权失效后，子授权也换不到沙箱令牌、模型网关也不认。
 #[tokio::test]

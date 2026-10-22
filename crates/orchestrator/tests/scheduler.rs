@@ -331,3 +331,35 @@ async fn frozen_accounts_are_not_scheduled_and_catch_up_when_unfrozen() {
         "only the latest missed fire"
     );
 }
+
+/// 删除了的实例上的计划不再触发（11.9）：删除时一并标记删除、停掉触发器；调度本来也跳过已删除的实例。
+#[tokio::test]
+async fn plans_of_deleted_instances_never_fire() {
+    let Some(f) = fixture().await else { return };
+    let due = at("2026-10-14T00:00:00Z");
+    let (plan, trig) = plan_with_trigger(&f, CatchUp::Once, daily_8am_shanghai(), due).await;
+    let mut tx = f.t.db.tenant(f.user).await.unwrap();
+    // 和接入网关的删除接口一样的顺序。
+    let retired = tx.retire_instance_plans(f.instance).await.unwrap();
+    tx.cancel_instance_runs(f.instance, "instance deleted")
+        .await
+        .unwrap();
+    tx.delete_instance(f.instance).await.unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(retired.deleted, [plan]);
+    let report = scheduler(&f)
+        .tick(at("2026-10-15T00:00:01Z"))
+        .await
+        .unwrap();
+    assert_eq!((report.triggers, report.runs_created), (0, 0));
+    let mut tx = f.t.db.tenant(f.user).await.unwrap();
+    let t = tx.triggers(plan).await.unwrap();
+    assert_eq!((t[0].id, t[0].enabled), (trig, false));
+    let runs: i64 = sqlx::query_scalar("SELECT count(*) FROM runs WHERE plan_id = $1")
+        .bind(plan.0)
+        .fetch_one(f.t.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(runs, 0);
+    tx.rollback().await.unwrap();
+}

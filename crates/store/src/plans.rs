@@ -20,6 +20,15 @@ pub struct NewPlan {
     pub run_grant_id: Option<GrantId>,
 }
 
+/// 删除实例时处理掉的计划（[`Tx::retire_instance_plans`]）。
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RetiredPlans {
+    /// 实例自己的计划：标记删除，触发器停掉。
+    pub deleted: Vec<PlanId>,
+    /// 别的实例的流水线计划、有一步在这个实例上：暂停，等用户改了步骤再恢复。
+    pub paused: Vec<PlanId>,
+}
+
 /// 到点的触发器，连同它的计划。
 #[derive(Debug, Clone, PartialEq)]
 pub struct DueTrigger {
@@ -278,6 +287,40 @@ impl Tx<Tenant> {
         Ok(())
     }
 
+    /// 删除实例时一并处理它的计划（11.9）：它自己的计划标记删除、触发器停掉；别的实例的流水线计划有一步在它上面的
+    /// 暂停（用户改了步骤再恢复）。要在取消实例的运行之前调：先停触发器（和调度的 `FOR UPDATE` 互斥），正在触发的
+    /// 那一次提交以后才轮到这里，它建的运行接着被取消。已经生成的运行不在这里处理。
+    pub async fn retire_instance_plans(&mut self, instance: InstanceId) -> Result<RetiredPlans> {
+        sqlx::query(
+            "UPDATE triggers SET enabled = false, updated_at = now() \
+             WHERE enabled AND plan_id IN (SELECT id FROM plans WHERE instance_id = $1 AND status <> 'deleted')",
+        )
+        .bind(instance.0)
+        .execute(self.conn())
+        .await?;
+        let deleted: Vec<Uuid> = sqlx::query_scalar(
+            "UPDATE plans SET status = 'deleted', updated_at = now() \
+             WHERE instance_id = $1 AND status <> 'deleted' RETURNING id",
+        )
+        .bind(instance.0)
+        .fetch_all(self.conn())
+        .await?;
+        // plan_steps 没有按实例的索引：按计划查（主键前缀）。
+        let paused: Vec<Uuid> = sqlx::query_scalar(
+            "UPDATE plans p SET status = 'paused', updated_at = now() \
+             WHERE p.status = 'active' AND p.instance_id <> $1 \
+               AND EXISTS (SELECT 1 FROM plan_steps s WHERE s.plan_id = p.id AND s.instance_id = $1) \
+             RETURNING p.id",
+        )
+        .bind(instance.0)
+        .fetch_all(self.conn())
+        .await?;
+        Ok(RetiredPlans {
+            deleted: deleted.into_iter().map(PlanId).collect(),
+            paused: paused.into_iter().map(PlanId).collect(),
+        })
+    }
+
     /// 给计划加一个触发器。`next_fire_at` 由调用方按 spec 算好（没有下一次时为 None）。
     pub async fn add_trigger(
         &mut self,
@@ -338,6 +381,17 @@ impl Tx<Tenant> {
 
 /// 两种角色都能用；业务角色下 RLS 只放行当前用户的行。
 impl<R> Tx<R> {
+    /// 计划里第一个在已删除的实例上的步骤（11.9）：有的话恢复、确认前要先改步骤。
+    pub async fn deleted_step(&mut self, plan: PlanId) -> Result<Option<String>> {
+        Ok(sqlx::query_scalar(
+            "SELECT s.key FROM plan_steps s JOIN instances i ON i.id = s.instance_id \
+             WHERE s.plan_id = $1 AND i.state = 'deleted' ORDER BY s.position LIMIT 1",
+        )
+        .bind(plan.0)
+        .fetch_optional(self.conn())
+        .await?)
+    }
+
     /// 后台停用一个触发器，记下原因（[`proto::domain::TRIGGER_INVALID_RULE`]）。已经因为同一个原因停用了的返回
     /// `false`（只通知一次）。
     pub async fn disable_trigger(&mut self, id: TriggerId, reason: &str) -> Result<bool> {

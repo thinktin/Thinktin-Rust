@@ -1739,6 +1739,9 @@ impl ThinktinClient {
             .await
     }
 
+    /// 删除实例：没结束的运行取消，它的模型别名一起删；它自己的计划一起删掉，别的实例的流水线计划有一步在它上面的
+    /// 暂停（恢复 `set_plan_paused(.., false)`、`confirm_plan` 报 409，改了步骤才能恢复）。确认框可以按 `Plan.instance_id` 和
+    /// `Plan.steps[].instance_id` 分成这两组列出来。
     pub async fn delete_instance(&self, instance_id: String) -> Result<()> {
         let id: d::InstanceId = parse(&instance_id, "instance")?;
         self.run(|c| async move { c.api.delete_instance(id).await })

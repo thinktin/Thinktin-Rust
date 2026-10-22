@@ -474,6 +474,120 @@ async fn instances_keys_and_routes_are_per_user() {
     assert_eq!(st, StatusCode::NO_CONTENT, "{body}");
 }
 
+/// 删除实例时一并处理它的计划（11.9）：它自己的计划没了；别的实例的流水线有一步在它上面的暂停，改了步骤才能恢复。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn deleting_an_instance_deletes_its_plans_and_pauses_pipelines() {
+    let Some(a) = api().await else { return };
+    let u = a.login("13800138031").await;
+    let (gone, stays) = (a.adopt(&u).await, a.adopt(&u).await);
+    let tok = Some(u.access.as_str());
+    let triggers = json!([{ "kind": "cron", "expr": "0 8 * * *", "tz": "Asia/Shanghai" }]);
+    let create = |body: Value| {
+        let a = &a;
+        async move {
+            let (st, plan) = a.call(Method::POST, "/v1/plans", tok, Some(body)).await;
+            assert_eq!(st, StatusCode::CREATED, "{plan}");
+            plan["id"].as_str().unwrap().to_owned()
+        }
+    };
+    let own =
+        create(json!({ "instance_id": gone, "title": "早报", "goal": "g", "triggers": triggers }))
+            .await;
+    let pipeline = create(json!({
+        "instance_id": stays, "title": "周报", "goal": "g", "triggers": triggers,
+        "steps": [
+            { "key": "r", "instance_id": gone, "prompt": "查资料" },
+            { "key": "w", "instance_id": stays, "prompt": "写稿", "depends_on": ["r"] },
+        ],
+    }))
+    .await;
+    let other =
+        create(json!({ "instance_id": stays, "title": "晚报", "goal": "g", "triggers": triggers }))
+            .await;
+
+    let (st, _) = a
+        .call(Method::DELETE, &format!("/v1/instances/{gone}"), tok, None)
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let (_, list) = a.call(Method::GET, "/v1/plans", tok, None).await;
+    let by_id = |id: &str| {
+        list["plans"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["id"] == id)
+            .cloned()
+    };
+    assert!(by_id(&own).is_none(), "{list}");
+    let paused = by_id(&pipeline).unwrap();
+    assert_eq!(
+        (&paused["paused"], &paused["next_fire_at"]),
+        (&json!(true), &Value::Null)
+    );
+    assert_eq!(by_id(&other).unwrap()["paused"], false);
+    let (_, mine) = a
+        .call(
+            Method::GET,
+            &format!("/v1/plans?instance_id={gone}"),
+            tok,
+            None,
+        )
+        .await;
+    assert_eq!(mine["plans"], json!([]));
+    for (method, path) in [
+        (Method::GET, format!("/v1/plans/{own}")),
+        (Method::POST, format!("/v1/plans/{own}/resume")),
+    ] {
+        let (st, body) = a.call(method, &path, tok, None).await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "{path}: {body}");
+    }
+    // 流水线：步骤还在已删除的实例上时不能恢复；改掉那一步就行。
+    let (st, body) = a
+        .call(
+            Method::POST,
+            &format!("/v1/plans/{pipeline}/resume"),
+            tok,
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::CONFLICT, "{body}");
+    assert!(
+        body["message"].as_str().unwrap().contains("step r"),
+        "{body}"
+    );
+    let (st, body) = a
+        .call(
+            Method::PATCH,
+            &format!("/v1/plans/{pipeline}"),
+            tok,
+            Some(json!({ "steps": [{ "key": "w", "instance_id": stays, "prompt": "写稿" }] })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let (st, body) = a
+        .call(
+            Method::POST,
+            &format!("/v1/plans/{pipeline}/resume"),
+            tok,
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert!(body["next_fire_at"].is_string(), "{body}");
+    // 审计里记着处理了哪些计划。
+    let details: Value = sqlx::query_scalar(
+        "SELECT detail FROM audit_log WHERE action = 'instance.delete' AND target = $1",
+    )
+    .bind(gone.to_string())
+    .fetch_one(a.t.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        details,
+        json!({ "plans_deleted": [own], "plans_paused": [pipeline] })
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn runs_plans_and_approvals() {
     let Some(a) = api().await else { return };
