@@ -1162,6 +1162,15 @@ async fn ffi_keys_runs_artifacts_and_inbox_items() {
     let (c, store, _d) = ffi_login(&e, "13800138509", "ios", "iPhone").await;
     let user: UserId = store.load().unwrap().user_id.parse().unwrap();
 
+    // 厂商（11.9）：带上订阅类 key 的前缀和套餐专用地址，App 不用自己抄一份。
+    let vendors = c.vendors().await.unwrap();
+    assert_eq!(vendors.len(), proto::vendors::VENDORS.len());
+    for v in &vendors {
+        let p = proto::vendors::vendor(&v.id).unwrap();
+        assert_eq!(v.subscription_key_prefixes, p.subscription_key_prefixes);
+        assert_eq!(v.plan_only_bases, p.plan_only_bases);
+    }
+
     // key：改备注、停用、换 key（只显示新的后 4 位）。
     let cred = c
         .add_credential(ffi::NewCredential {
@@ -1721,4 +1730,13 @@ async fn ffi_single_approval() {
         c.get_approval("nope".into()).await,
         Err(ClientError::InvalidArgument { .. })
     ));
+}
+
+/// 老的服务端（11.9 之前）不给前缀和套餐地址：照样解得开，是空的。
+#[test]
+fn older_servers_vendor_info_decodes() {
+    let v: client_core::api::VendorInfo =
+        serde_json::from_value(json!({ "id": "x", "name": "X", "protocols": ["chat"] })).unwrap();
+    let v = ffi::VendorInfo::from(v);
+    assert!(v.subscription_key_prefixes.is_empty() && v.plan_only_bases.is_empty());
 }

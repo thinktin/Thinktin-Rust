@@ -910,6 +910,14 @@ pub struct VendorInfo {
     /// 推荐的上游模型，以厂商控制台为准。
     pub models: Vec<String>,
     pub notes: String,
+    /// 订阅类 key 的前缀（11.9）：选这家时，粘贴的 key（去掉首尾空白）以其中一个开头（区分大小写）的服务端不收，
+    /// 可以先在本地提示。空的就不用查。
+    #[uniffi(default = [])]
+    pub subscription_key_prefixes: Vec<String>,
+    /// 这家套餐专用地址的前缀（11.9）：自定义端点（`custom`）的地址去掉首尾空白、转小写后等于**任何一家**的其中
+    /// 一个、或者接着是 `/` 的，服务端不收。只是提前提示，服务端照样检查。
+    #[uniffi(default = [])]
+    pub plan_only_bases: Vec<String>,
 }
 
 impl From<api::VendorInfo> for VendorInfo {
@@ -920,6 +928,8 @@ impl From<api::VendorInfo> for VendorInfo {
             protocols: v.protocols,
             models: v.models,
             notes: v.notes,
+            subscription_key_prefixes: v.subscription_key_prefixes,
+            plan_only_bases: v.plan_only_bases,
         }
     }
 }

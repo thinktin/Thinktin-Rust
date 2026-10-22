@@ -235,6 +235,12 @@ pub struct VendorInfo {
     pub models: Vec<String>,
     #[serde(default)]
     pub notes: String,
+    /// 订阅类 key 的前缀（11.9）：这家的 key 以它们开头的服务端不收。
+    #[serde(default)]
+    pub subscription_key_prefixes: Vec<String>,
+    /// 这家套餐专用地址的前缀（11.9）：自定义端点填了任何一家的这些地址服务端不收。
+    #[serde(default)]
+    pub plan_only_bases: Vec<String>,
 }
 
 #[derive(Clone, Default, Serialize)]

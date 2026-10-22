@@ -42,8 +42,12 @@ pub struct Vendor {
     pub chat_stream_usage: bool,
     /// 推荐的上游模型（给配置界面用，以厂商文档为准，变化很快）。
     pub models: &'static [&'static str],
-    /// 订阅类 key（编程套餐等）的前缀。这类 key 按厂商条款只能在官方工具里用，不能经第三方平台中转，保存时拒绝。
+    /// 订阅类 key（编程套餐等）的前缀。这类 key 按厂商条款只能在官方工具里用，不能经第三方平台中转，保存时拒绝
+    /// （区分大小写，只查这家厂商的 key；自定义端点不查）。
     pub subscription_key_prefixes: &'static [&'static str],
+    /// 这家厂商编程套餐、订阅套餐的专用地址（前缀，小写、不带结尾的 `/`）。自定义端点填了任何一家的这些地址时拒绝
+    /// （去掉首尾空白、转小写后等于它或者接着是 `/`；见 [`plan_only_base`]）。只防误填，不是安全边界。
+    pub plan_only_bases: &'static [&'static str],
     /// 校验 key 用的模型列表接口（Bearer），没有就为空（9.8）。
     pub models_url: Option<&'static str>,
     pub notes: &'static str,
@@ -132,6 +136,7 @@ pub static VENDORS: &[Vendor] = &[
         chat_stream_usage: false,
         models: &["deepseek-v4-pro", "deepseek-flash"],
         subscription_key_prefixes: &[],
+        plan_only_bases: &[],
         models_url: Some("https://api.deepseek.com/models"),
         notes: DEEPSEEK_NOTES,
     },
@@ -145,6 +150,7 @@ pub static VENDORS: &[Vendor] = &[
         chat_stream_usage: true,
         models: &["qwen3.8-max", "qwen3.8-flash", "qwen3.7-plus"],
         subscription_key_prefixes: &["sk-sp-"],
+        plan_only_bases: &[],
         models_url: None,
         notes: QWEN_NOTES,
     },
@@ -158,6 +164,7 @@ pub static VENDORS: &[Vendor] = &[
         chat_stream_usage: true,
         models: &["qwen3.8-max", "qwen3.8-flash", "qwen3.7-plus"],
         subscription_key_prefixes: &["sk-sp-"],
+        plan_only_bases: &[],
         models_url: None,
         notes: QWEN_NOTES,
     },
@@ -171,6 +178,7 @@ pub static VENDORS: &[Vendor] = &[
         chat_stream_usage: true,
         models: &["qwen3.8-max", "qwen3.8-flash", "qwen3.7-plus"],
         subscription_key_prefixes: &["sk-sp-"],
+        plan_only_bases: &[],
         models_url: None,
         notes: QWEN_NOTES,
     },
@@ -184,6 +192,7 @@ pub static VENDORS: &[Vendor] = &[
         chat_stream_usage: true,
         models: &["qwen3.8-max", "qwen3.8-flash", "qwen3.7-plus"],
         subscription_key_prefixes: &["sk-sp-"],
+        plan_only_bases: &[],
         models_url: None,
         notes: QWEN_NOTES,
     },
@@ -197,6 +206,7 @@ pub static VENDORS: &[Vendor] = &[
         chat_stream_usage: false,
         models: &["glm-5.3", "glm-5.3-flash"],
         subscription_key_prefixes: &[],
+        plan_only_bases: &["https://open.bigmodel.cn/api/coding"],
         models_url: None,
         notes: GLM_NOTES,
     },
@@ -210,6 +220,7 @@ pub static VENDORS: &[Vendor] = &[
         chat_stream_usage: false,
         models: &["glm-5.3", "glm-5.3-flash"],
         subscription_key_prefixes: &[],
+        plan_only_bases: &["https://api.z.ai/api/coding"],
         models_url: None,
         notes: GLM_NOTES,
     },
@@ -223,6 +234,7 @@ pub static VENDORS: &[Vendor] = &[
         chat_stream_usage: true,
         models: &["kimi-k3"],
         subscription_key_prefixes: &[],
+        plan_only_bases: &[],
         models_url: Some("https://api.moonshot.cn/v1/models"),
         notes: KIMI_NOTES,
     },
@@ -236,6 +248,7 @@ pub static VENDORS: &[Vendor] = &[
         chat_stream_usage: true,
         models: &["kimi-k3"],
         subscription_key_prefixes: &[],
+        plan_only_bases: &[],
         models_url: Some("https://api.moonshot.ai/v1/models"),
         notes: KIMI_NOTES,
     },
@@ -249,6 +262,7 @@ pub static VENDORS: &[Vendor] = &[
         chat_stream_usage: true,
         models: &["MiniMax-M3"],
         subscription_key_prefixes: &["sk-cp-"],
+        plan_only_bases: &[],
         models_url: Some("https://api.minimax.cn/v1/models"),
         notes: MINIMAX_NOTES,
     },
@@ -262,6 +276,7 @@ pub static VENDORS: &[Vendor] = &[
         chat_stream_usage: true,
         models: &["MiniMax-M3"],
         subscription_key_prefixes: &["sk-cp-"],
+        plan_only_bases: &[],
         models_url: Some("https://api.minimax.io/v1/models"),
         notes: MINIMAX_NOTES,
     },
@@ -281,6 +296,7 @@ pub static VENDORS: &[Vendor] = &[
             "claude-fable-5-1",
         ],
         subscription_key_prefixes: &["sk-ant-oat", "sk-ant-ort"],
+        plan_only_bases: &[],
         models_url: None,
         notes: ANTHROPIC_NOTES,
     },
@@ -294,6 +310,7 @@ pub static VENDORS: &[Vendor] = &[
         chat_stream_usage: true,
         models: &["gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna"],
         subscription_key_prefixes: &[],
+        plan_only_bases: &[],
         models_url: Some("https://api.openai.com/v1/models"),
         notes: OPENAI_NOTES,
     },
@@ -311,6 +328,7 @@ pub static VENDORS: &[Vendor] = &[
             "gemini-3.5-flash-lite",
         ],
         subscription_key_prefixes: &[],
+        plan_only_bases: &[],
         models_url: Some("https://generativelanguage.googleapis.com/v1beta/openai/models"),
         notes: GEMINI_NOTES,
     },
@@ -324,6 +342,7 @@ pub static VENDORS: &[Vendor] = &[
         chat_stream_usage: false,
         models: &["grok-4.7"],
         subscription_key_prefixes: &[],
+        plan_only_bases: &[],
         models_url: Some("https://api.x.ai/v1/models"),
         notes: XAI_NOTES,
     },
@@ -341,6 +360,7 @@ pub static VENDORS: &[Vendor] = &[
             "mistral-small-latest",
         ],
         subscription_key_prefixes: &[],
+        plan_only_bases: &[],
         models_url: Some("https://api.mistral.ai/v1/models"),
         notes: MISTRAL_NOTES,
     },
@@ -355,6 +375,10 @@ pub static VENDORS: &[Vendor] = &[
         chat_stream_usage: true,
         models: &["doubao-seed-2-1-pro-260628"],
         subscription_key_prefixes: &[],
+        plan_only_bases: &[
+            "https://ark.cn-beijing.volces.com/api/coding",
+            "https://ark.cn-beijing.volces.com/api/plan",
+        ],
         models_url: None,
         notes: DOUBAO_NOTES,
     },
@@ -368,6 +392,7 @@ pub static VENDORS: &[Vendor] = &[
         chat_stream_usage: true,
         models: &[],
         subscription_key_prefixes: &[],
+        plan_only_bases: &["https://ark.ap-southeast.bytepluses.com/api/coding"],
         models_url: None,
         notes: BYTEPLUS_NOTES,
     },
@@ -381,6 +406,10 @@ pub static VENDORS: &[Vendor] = &[
         chat_stream_usage: false,
         models: &[],
         subscription_key_prefixes: &[],
+        plan_only_bases: &[
+            "https://qianfan.baidubce.com/v2/coding",
+            "https://qianfan.baidubce.com/anthropic/coding",
+        ],
         models_url: None,
         notes: ERNIE_NOTES,
     },
@@ -394,6 +423,7 @@ pub static VENDORS: &[Vendor] = &[
         chat_stream_usage: true,
         models: &["hy3", "hy4-preview"],
         subscription_key_prefixes: &["sk-tp-"],
+        plan_only_bases: &["https://api.lkeap.cloud.tencent.com/plan"],
         models_url: None,
         notes: HUNYUAN_NOTES,
     },
@@ -407,6 +437,7 @@ pub static VENDORS: &[Vendor] = &[
         chat_stream_usage: true,
         models: &["hy3", "hy4-preview"],
         subscription_key_prefixes: &["sk-tp-"],
+        plan_only_bases: &["https://tokenhub-intl.tencentcloudmaas.com/plan"],
         models_url: None,
         notes: HUNYUAN_NOTES,
     },
@@ -420,13 +451,15 @@ pub static VENDORS: &[Vendor] = &[
         chat_stream_usage: false,
         models: &["step-5-preview", "step-3.7-flash"],
         subscription_key_prefixes: &[],
+        plan_only_bases: &["https://api.stepfun.com/step_plan"],
         models_url: None,
         notes: STEPFUN_NOTES,
     },
 ];
 
 /// 编程套餐、订阅套餐的专用地址（前缀）。套餐额度按各家条款只能在官方支持的编程工具里用，
-/// 平台不接：用户按自定义端点填这些地址时拒绝。只防误填，不是安全边界。
+/// 平台不接：用户按自定义端点填这些地址时拒绝。只防误填，不是安全边界。和各厂商的 `plan_only_bases`
+/// 合起来一样（测试保证）：接口按厂商给出（11.9），App 不用再抄这一份。
 pub const PLAN_ONLY_BASES: &[&str] = &[
     "https://ark.cn-beijing.volces.com/api/coding",
     "https://ark.cn-beijing.volces.com/api/plan",
@@ -483,6 +516,39 @@ pub fn check_key(vendor_id: &str, key: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plan_only_bases_are_per_vendor() {
+        let mut union: Vec<&str> = VENDORS
+            .iter()
+            .flat_map(|v| v.plan_only_bases.iter().copied())
+            .collect();
+        let mut all = PLAN_ONLY_BASES.to_vec();
+        union.sort_unstable();
+        all.sort_unstable();
+        assert_eq!(
+            union, all,
+            "each plan-only base belongs to exactly one vendor"
+        );
+        for v in VENDORS {
+            for &b in v.plan_only_bases {
+                assert!(b.starts_with("https://") && !b.ends_with('/'), "{b}");
+                assert_eq!(b, b.to_ascii_lowercase(), "{b}");
+                assert_eq!(plan_only_base(b), Some(b));
+            }
+            for p in v.subscription_key_prefixes {
+                assert!(p.bytes().all(|c| (0x21..=0x7e).contains(&c)), "{p}");
+            }
+        }
+        assert_eq!(
+            vendor("doubao-cn").unwrap().plan_only_bases,
+            [
+                "https://ark.cn-beijing.volces.com/api/coding",
+                "https://ark.cn-beijing.volces.com/api/plan"
+            ]
+        );
+        assert!(vendor("deepseek").unwrap().plan_only_bases.is_empty());
+    }
 
     #[test]
     fn table_is_consistent() {

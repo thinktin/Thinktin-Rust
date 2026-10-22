@@ -364,6 +364,52 @@ async fn instances_keys_and_routes_are_per_user() {
         assert!(ids.contains(&id), "{id} missing from {ids:?}");
     }
     assert_eq!(vendors["custom"], "custom");
+    // 每家带上订阅类 key 的前缀和套餐专用地址（11.9），和服务端检查的是同一份：按它们填的都被拒绝。
+    for v in proto::vendors::VENDORS {
+        let entry = vendors["vendors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["id"] == v.id)
+            .unwrap();
+        assert_eq!(
+            entry["subscription_key_prefixes"],
+            json!(v.subscription_key_prefixes)
+        );
+        assert_eq!(entry["plan_only_bases"], json!(v.plan_only_bases));
+        for prefix in v.subscription_key_prefixes {
+            let (st, body) = a
+                .call(
+                    Method::POST,
+                    "/v1/credentials",
+                    Some(&alice.access),
+                    Some(json!({ "vendor": v.id, "api_key": format!("{prefix}0000000000000000") })),
+                )
+                .await;
+            assert_eq!(
+                st,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "{} {prefix}: {body}",
+                v.id
+            );
+        }
+        for base in v.plan_only_bases {
+            let (st, body) = a
+                .call(
+                    Method::POST,
+                    "/v1/credentials",
+                    Some(&alice.access),
+                    Some(json!({ "vendor": "custom", "api_key": "sk-x-12345678", "openai_base": format!("{base}/v3") })),
+                )
+                .await;
+            assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{base}: {body}");
+        }
+    }
+    let deepseek = &vendors["vendors"].as_array().unwrap()[0];
+    assert_eq!(
+        (&deepseek["id"], &deepseek["plan_only_bases"]),
+        (&json!("deepseek"), &json!([]))
+    );
     for bad in [
         json!({ "vendor": "deepseek:cn", "api_key": "sk-ds-000000009999" }),
         json!({ "vendor": "anthropic", "api_key": "sk-ant-oat01-0000000000000000" }),
