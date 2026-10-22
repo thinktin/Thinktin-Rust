@@ -60,12 +60,13 @@ jobs:
 
       # lint 的 abortOnError 开着，不用 baseline。CoreSmokeTest 经 JNA 调 target/debug 里的 libclient_core.so；
       # THINKTIN_REQUIRE_CORE=1：拿不到库目录时冒烟测试失败而不是跳过（同 ci.yml 的 THINKTIN_REQUIRE_DB）。
+      # :app:assembleCnRelease 跑一遍 R8：UniFFI / JNA / TlsInit / rustls 支持包的保留规则漏了会在这里失败。
       - name: Test, lint, assemble
         working-directory: apps/android
         env:
           THINKTIN_CORE_LIB_DIR: ${{ github.workspace }}/target/debug
           THINKTIN_REQUIRE_CORE: "1"
-        run: ./gradlew --no-daemon test lint assembleDebug
+        run: ./gradlew --no-daemon test lint assembleDebug :app:assembleCnRelease
 
       - name: Upload reports
         if: failure()

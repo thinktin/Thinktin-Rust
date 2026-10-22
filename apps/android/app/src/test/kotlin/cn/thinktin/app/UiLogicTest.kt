@@ -3,7 +3,9 @@ package cn.thinktin.app
 import cn.thinktin.app.ui.common.ErrorText
 import cn.thinktin.app.ui.common.RelativeTime
 import cn.thinktin.app.ui.common.UiText
+import cn.thinktin.app.ui.common.WaitText
 import cn.thinktin.app.ui.home.Greeting
+import cn.thinktin.data.model.WaitCode
 import cn.thinktin.data.service.ServiceError
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -12,6 +14,19 @@ import java.time.Instant
 import java.time.ZoneId
 
 class UiLogicTest {
+    @Test
+    fun waitTextCoversEveryKnownCode() {
+        assertEquals(UiText(R.string.wait_invalid_key), WaitText.of(WaitCode.Invalid))
+        assertEquals(UiText(R.string.wait_no_balance), WaitText.of(WaitCode.NoBalance))
+        assertEquals(UiText(R.string.wait_key_unavailable), WaitText.of(WaitCode.Unavailable))
+        assertEquals(UiText(R.string.wait_rate_limited), WaitText.of(WaitCode.RateLimited))
+        assertEquals(UiText(R.string.wait_overloaded), WaitText.of(WaitCode.Overloaded))
+        assertEquals(UiText(R.string.wait_device_offline), WaitText.of(WaitCode.DeviceOffline))
+        // 不认识的码、没有码：按运行状态显示。
+        assertEquals(null, WaitText.of(WaitCode.Unknown))
+        assertEquals(null, WaitText.of(null as WaitCode?))
+    }
+
     @Test
     fun errorTextMapsServiceErrors() {
         assertEquals(UiText(R.string.error_network), ErrorText.of(ServiceError.Network("timeout")))

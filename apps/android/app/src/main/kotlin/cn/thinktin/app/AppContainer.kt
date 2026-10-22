@@ -7,10 +7,13 @@ import androidx.datastore.preferences.preferencesDataStoreFile
 import cn.thinktin.app.settings.AppLanguage
 import cn.thinktin.app.settings.AppSettings
 import cn.thinktin.app.settings.AppSettingsRepository
+import cn.thinktin.app.settings.serverLocale
 import cn.thinktin.data.core.AcceptLanguage
 import cn.thinktin.data.core.ClientFactory
 import cn.thinktin.data.core.TlsState
 import cn.thinktin.data.mock.MockThinktinService
+import cn.thinktin.data.model.User
+import cn.thinktin.data.service.ServiceError
 import cn.thinktin.data.service.ThinktinService
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -22,10 +25,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.time.Clock
+import java.util.Locale
 
 /** 服务的创建状态：真实服务要加载 .so、打开 SQLite、读 Keystore，在后台线程上创建。 */
 sealed interface ServiceState {
@@ -54,6 +59,8 @@ class AppContainer(
     private val io: CoroutineDispatcher = Dispatchers.IO,
     /** App 语言 → 请求头 Accept-Language 的语言列表（默认：选的语言在前，再接系统的语言列表）。 */
     private val languageTags: (AppLanguage) -> List<String> = { AcceptLanguage.tags(it.tag) },
+    /** 系统首选语言（ISO 639，跟随系统时用来决定告诉服务端的语言）。 */
+    private val systemLanguage: () -> String = { Locale.getDefault().language },
 ) {
     private val scope = CoroutineScope(SupervisorJob() + io)
     private val mock: ThinktinService by lazy(createMock)
@@ -94,6 +101,11 @@ class AppContainer(
         }
     }
 
+    /** 切换演示模式（登录页、核心库不可用页的“使用演示模式”）：在容器的作用域里写设置，不受页面销毁影响。 */
+    fun launchSetDemoMode(enabled: Boolean) {
+        scope.launch { settingsRepository.setDemoMode(enabled) }
+    }
+
     /** 系统语言变了（Application.onConfigurationChanged）：重新告诉真实服务 Accept-Language。 */
     fun onSystemLocalesChanged() {
         localeChanges.update { it + 1 }
@@ -111,6 +123,26 @@ class AppContainer(
             coreState.value = state
             if (state is ServiceState.Ready) followLanguage(state.service)
         }
+    }
+
+    /**
+     * 登录成功后（13.2）：服务端记的语言（[User.locale]，推送、收件箱用）和 App 当前的语言不一致就改过来。
+     * 在容器的作用域里跑：登录一成功界面就换成主界面，登录页的 ViewModel 随之销毁，不能放在它的作用域里。
+     */
+    fun syncServerLocale(service: ThinktinService, user: User) {
+        scope.launch { syncServerLocaleNow(service, user) }
+    }
+
+    /** [syncServerLocale] 的本体；改了返回要改成的语言，不用改返回 null。失败只记日志（不影响登录）。 */
+    internal suspend fun syncServerLocaleNow(service: ThinktinService, user: User): String? {
+        val wanted = settings.first().language.serverLocale(systemLanguage())
+        if (user.locale.equals(wanted, ignoreCase = true)) return null
+        try {
+            service.setLocale(wanted)
+        } catch (e: ServiceError) {
+            Log.w(TAG, "同步服务端语言失败", e)
+        }
+        return wanted
     }
 
     /** App 语言切换、系统语言变了时，把新的语言列表交给 [service]（之后的请求带新的 Accept-Language）。 */

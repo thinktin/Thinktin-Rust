@@ -137,8 +137,17 @@ internal class CoreThinktinService(
 
     override suspend fun sendCode(phone: String) = call { client.sendCode(phone) }
 
-    override suspend fun login(phone: String, code: String, pushChannel: String?, pushToken: String?): LoginResult =
-        call { client.login(phone, code, pushChannel, pushToken).toModel() }.also { auth.value = AuthState.SignedIn }
+    override suspend fun login(phone: String, code: String, pushChannel: String?, pushToken: String?): LoginResult {
+        val result = try {
+            call { client.login(phone, code, pushChannel, pushToken).toModel() }
+        } catch (e: ServiceError.AccountFrozen) {
+            // 登录时报冻结：没有建会话，本地仍是未登录（登录流自己显示冻结说明），不进“登录态保留”的冻结页。
+            if (!stillSignedIn()) auth.value = AuthState.SignedOut
+            throw e
+        }
+        auth.value = AuthState.SignedIn
+        return result
+    }
 
     override suspend fun logout() {
         try {
@@ -148,7 +157,10 @@ internal class CoreThinktinService(
         }
     }
 
-    override suspend fun me(): User = call { client.me().toModel() }
+    override suspend fun me(): User = call { client.me().toModel() }.also {
+        // 冻结页的“重新检查”：能取到自己的资料说明已经解冻，接着用。
+        if (auth.value == AuthState.Frozen) auth.value = AuthState.SignedIn
+    }
 
     override suspend fun setLocale(locale: String): User = call { client.setLocale(locale).toModel() }
 

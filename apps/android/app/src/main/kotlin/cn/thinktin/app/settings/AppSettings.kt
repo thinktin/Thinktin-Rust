@@ -19,6 +19,13 @@ enum class AppLanguage(val tag: String?) {
     English("en"),
 }
 
+/**
+ * 告诉服务端的语言（`set_locale` 只认 zh-CN / en；推送、收件箱用它）：选了语言就用选的，
+ * 跟随系统时看系统首选语言（[systemLanguage] 是 ISO 639 语言码，比如 zh、en、ja），中文以外一律 en。
+ */
+fun AppLanguage.serverLocale(systemLanguage: String): String =
+    tag ?: if (systemLanguage.equals("zh", ignoreCase = true)) "zh-CN" else "en"
+
 /** 界面偏好（存在 DataStore，不进服务端）。 */
 data class AppSettings(
     val language: AppLanguage = AppLanguage.System,

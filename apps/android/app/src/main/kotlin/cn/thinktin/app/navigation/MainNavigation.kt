@@ -28,6 +28,8 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.navArgument
 import androidx.navigation.navDeepLink
 import cn.thinktin.app.ui.common.LocalThinktinService
+import cn.thinktin.app.ui.devices.DevicesAction
+import cn.thinktin.app.ui.devices.DevicesScreen
 import cn.thinktin.app.ui.drawer.AppDrawer
 import cn.thinktin.app.ui.drawer.DrawerDestination
 import cn.thinktin.app.ui.drawer.DrawerViewModel
@@ -202,8 +204,18 @@ private fun MainNavHost(navController: NavHostController, onOpenDrawer: () -> Un
             arguments = listOf(optionalStringArg(Routes.ARG_REQUEST_ID)),
             deepLinks = listOf(navDeepLink { uriPattern = DeepLinks.VAULT_REQUEST }),
         ) { Placeholder(Page.Vault, it, Routes.ARG_REQUEST_ID) }
-        composable(Routes.DEVICES) { Placeholder(Page.Devices, it) }
-        composable(Routes.SETTINGS) { SettingsScreen(onBack = back) }
+        composable(Routes.DEVICES, arguments = listOf(optionalStringArg(Routes.ARG_ACTION))) { entry ->
+            DevicesScreen(
+                action = DevicesAction.fromWire(entry.arguments?.getString(Routes.ARG_ACTION)),
+                onBack = back,
+            )
+        }
+        composable(Routes.SETTINGS) {
+            SettingsScreen(
+                onBack = back,
+                onOpenDevices = { action -> navController.navigate(Routes.devices(action?.wire)) },
+            )
+        }
     }
 }
 

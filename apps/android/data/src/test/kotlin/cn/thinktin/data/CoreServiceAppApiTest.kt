@@ -78,6 +78,26 @@ class CoreServiceAppApiTest {
             return listOf(run("r9").copy(state = "waiting_quota", waitCode = "no_balance"))
         }
 
+        var loginError: Exception? = null
+        var meError: Exception? = null
+
+        override suspend fun login(
+            phone: String,
+            code: String,
+            pushChannel: String?,
+            pushToken: String?,
+        ): cn.thinktin.core.LoginResult {
+            record("login", phone, code, pushChannel, pushToken)
+            loginError?.let { throw it }
+            signedIn = true
+            return cn.thinktin.core.LoginResult(CoreUser("u1", phone, null, "active", "en", 1), true)
+        }
+
+        override suspend fun me(): CoreUser {
+            meError?.let { throw it }
+            return CoreUser("u1", "+86 138", null, "active", "zh-CN", 1)
+        }
+
         override suspend fun updateProfile(displayName: String?): CoreUser {
             record("updateProfile", displayName)
             return CoreUser("u1", "+86 138", displayName, "active", "zh-CN", 1)
@@ -319,6 +339,42 @@ class CoreServiceAppApiTest {
         fake.deleteAccountError = null
         s.deleteAccount("123456")
         assertEquals(AuthState.SignedOut, s.authState.value)
+    }
+
+    @Test
+    fun loginFrozenStaysSignedOutAndSuccessSignsIn() = runTest {
+        fake.signedIn = false
+        val s = CoreThinktinService(fake)
+        assertEquals(AuthState.SignedOut, s.authState.value)
+        // 登录时报冻结：没有会话，仍是未登录（登录流自己显示冻结说明），不进“登录态保留”的冻结页。
+        fake.loginError = ClientException.AccountFrozen()
+        try {
+            s.login("+8613800138000", "123456")
+            fail("冻结应该抛异常")
+        } catch (_: ServiceError.AccountFrozen) {
+        }
+        assertEquals(AuthState.SignedOut, s.authState.value)
+        fake.loginError = null
+        val result = s.login("+8613800138000", "123456")
+        assertEquals("en", result.user.locale)
+        assertEquals(true, result.newUser)
+        assertEquals(AuthState.SignedIn, s.authState.value)
+        assertEquals(listOf("login", "+8613800138000", "123456", null, null), fake.calls.last())
+    }
+
+    @Test
+    fun meAfterFrozenUnfreezes() = runTest {
+        val s = CoreThinktinService(fake)
+        fake.meError = ClientException.AccountFrozen()
+        try {
+            s.me()
+            fail("冻结应该抛异常")
+        } catch (_: ServiceError.AccountFrozen) {
+        }
+        assertEquals("已登录的账号被冻结：登录态保留", AuthState.Frozen, s.authState.value)
+        fake.meError = null
+        s.me()
+        assertEquals("解冻后“重新检查”回到已登录", AuthState.SignedIn, s.authState.value)
     }
 
     @Test

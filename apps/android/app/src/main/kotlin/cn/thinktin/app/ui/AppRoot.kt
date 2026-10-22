@@ -21,11 +21,10 @@ import cn.thinktin.app.ui.common.LocalAppContainer
 import cn.thinktin.app.ui.common.LocalThinktinService
 import cn.thinktin.app.ui.login.LoginFlow
 import cn.thinktin.app.ui.status.CoreUnavailableScreen
-import cn.thinktin.app.ui.status.FrozenScreen
+import cn.thinktin.app.ui.status.FrozenAccountScreen
 import cn.thinktin.app.ui.status.LoadingScreen
 import cn.thinktin.data.service.AuthState
 import cn.thinktin.data.service.ThinktinService
-import cn.thinktin.data.service.logoutQuietly
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -63,7 +62,6 @@ fun AppRoot(container: AppContainer, settings: AppSettings?, deepLinks: DeepLink
 
 @Composable
 private fun ServiceContent(container: AppContainer, service: ThinktinService, deepLinks: DeepLinkInbox) {
-    val scope = rememberCoroutineScope()
     val auth by service.authState.collectAsStateWithLifecycle()
     CompositionLocalProvider(
         LocalAppContainer provides container,
@@ -72,7 +70,7 @@ private fun ServiceContent(container: AppContainer, service: ThinktinService, de
     ) {
         key(service) {
             when {
-                auth == AuthState.Frozen -> FrozenScreen(onSignOut = { scope.launch { service.logoutQuietly() } })
+                auth == AuthState.Frozen -> FrozenAccountScreen(service)
                 auth == AuthState.SignedOut && !service.isDemo -> LoginFlow()
                 else -> MainNavigation()
             }

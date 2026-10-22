@@ -43,7 +43,6 @@ enum class Page(@StringRes val titleRes: Int) {
     Approval(R.string.page_approval),
     Keys(R.string.page_keys),
     Vault(R.string.page_vault),
-    Devices(R.string.page_devices),
 }
 
 data class ComingSoonUiState(val page: Page, val argument: String?)

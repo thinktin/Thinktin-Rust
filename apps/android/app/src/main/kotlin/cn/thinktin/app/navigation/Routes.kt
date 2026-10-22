@@ -3,11 +3,14 @@ package cn.thinktin.app.navigation
 import android.net.Uri
 
 /**
- * 路由（第 3 节）。登录流（login → login/code）是独立的导航图，未登录时替换整个主区。
+ * 路由（第 3 节）。登录流（login → login/code、login/frozen）是独立的导航图，未登录时替换整个主区。
  */
 object Routes {
     const val LOGIN = "login"
     const val LOGIN_CODE = "login/code"
+
+    /** 登录时服务端说账号被冻结（还没有登录态）。 */
+    const val LOGIN_FROZEN = "login/frozen"
 
     const val HOME = "home"
     const val CHAT = "chat/{instanceId}"
@@ -28,7 +31,8 @@ object Routes {
 
     /** 密码保险箱；requestId 可选（填写请求）。 */
     const val VAULT = "vault?requestId={requestId}"
-    const val DEVICES = "devices"
+    /** 设备与账号；action 可选：从设置页直接打开某个操作（见 DevicesAction）。 */
+    const val DEVICES = "devices?action={action}"
     const val SETTINGS = "settings"
 
     const val ARG_INSTANCE_ID = "instanceId"
@@ -39,6 +43,7 @@ object Routes {
     const val ARG_ITEM_ID = "itemId"
     const val ARG_APPROVAL_ID = "approvalId"
     const val ARG_REQUEST_ID = "requestId"
+    const val ARG_ACTION = "action"
 
     fun chat(instanceId: String) = "chat/${Uri.encode(instanceId)}"
     fun run(runId: String) = "run/${Uri.encode(runId)}"
@@ -48,6 +53,7 @@ object Routes {
     fun team(teamId: String) = "team/${Uri.encode(teamId)}"
     fun approval(approvalId: String) = "approval/${Uri.encode(approvalId)}"
     fun inbox(itemId: String? = null) = if (itemId == null) "inbox" else "inbox?itemId=${Uri.encode(itemId)}"
+    fun devices(action: String? = null) = if (action == null) "devices" else "devices?action=${Uri.encode(action)}"
     fun vault(requestId: String? = null) = if (requestId == null) "vault" else "vault?requestId=${Uri.encode(requestId)}"
 
     /** 抽屉直达的顶级目的地（返回栈弹到 home）。 */

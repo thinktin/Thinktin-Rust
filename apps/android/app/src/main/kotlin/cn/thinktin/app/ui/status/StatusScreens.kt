@@ -23,19 +23,6 @@ import cn.thinktin.app.R
 import cn.thinktin.design.component.EmptyState
 import cn.thinktin.design.theme.ThinktinSpacing
 
-/** 账号被冻结（AccountFrozen）：说明 + 退出登录。 */
-@Composable
-fun FrozenScreen(onSignOut: () -> Unit) {
-    CenteredState {
-        EmptyState(
-            title = stringResource(R.string.frozen_title),
-            message = stringResource(R.string.frozen_message),
-            actionLabel = stringResource(R.string.action_sign_out),
-            onAction = onSignOut,
-        )
-    }
-}
-
 /**
  * 真实服务创建失败（安装包里没有 libclient_core.so、契约版本不一致、缓存或 Keystore 打不开……）：
  * 说明 + 原因 + 重试；[onUseDemo] 只在 debug 包里给（release 不提供演示模式入口）。

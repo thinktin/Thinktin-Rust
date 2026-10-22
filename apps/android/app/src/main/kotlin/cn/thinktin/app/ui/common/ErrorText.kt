@@ -26,17 +26,32 @@ object ErrorText {
     }
 
     private fun api(error: ServiceError.Api): UiText = when {
-        error.code == "rate_limited" || error.status == 429 ->
+        error.isRateLimited ->
             error.retryAfterSecs?.let { UiText(R.string.error_rate_limited, listOf(it.toInt())) }
                 ?: UiText(R.string.error_rate_limited_plain)
         error.code == "not_found" || error.status == 404 -> UiText(R.string.error_not_found)
         error.code == "conflict" || error.status == 409 -> UiText(R.string.error_conflict)
         error.code == "forbidden" || error.status == 403 -> UiText(R.string.error_forbidden)
         error.code.startsWith("quota") || error.code == "budget_exceeded" -> UiText(R.string.error_quota)
-        error.code.startsWith("invalid") || error.status == 400 || error.status == 422 -> UiText(R.string.error_invalid)
+        error.isInvalid -> UiText(R.string.error_invalid)
         else -> UiText(R.string.error_server, listOf(error.code.ifEmpty { error.status.toString() }))
     }
 }
+
+/** 限频（rate_limited / 429）：[ServiceError.Api.retryAfterSecs] 是剩余秒数。 */
+val ServiceError.Api.isRateLimited: Boolean get() = code == "rate_limited" || status == 429
+
+/** 请求不合法（invalid…、400、422）：表单页按字段提示。 */
+val ServiceError.Api.isInvalid: Boolean get() = code.startsWith("invalid") || status == 400 || status == 422
+
+/** 限频的剩余秒数（没给时为 null），换成 Int 方便倒计时。 */
+val ServiceError.Api.retryAfterSeconds: Int?
+    get() = retryAfterSecs?.takeIf { it > 0 }?.coerceAtMost(Int.MAX_VALUE.toLong())?.toInt()
+
+/** 值得原样重试的错误（网络不通、服务暂时不可用）：Snackbar 带“重试”。 */
+val ServiceError.isRetryable: Boolean
+    get() = this is ServiceError.Network ||
+        (this is ServiceError.Api && (code == "unavailable" || code == "internal" || status >= 500))
 
 @Composable
 fun UiText.asString(): String = stringResource(resId, *args.toTypedArray())

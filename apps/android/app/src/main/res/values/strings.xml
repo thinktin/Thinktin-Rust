@@ -138,5 +138,11 @@
     <string name="error_contains_secrets">消息里像是有 %1$d 处密码或 key，没有发出。请先存进保险箱。</string>
     <string name="error_unsupported">这个功能暂不可用</string>
     <string name="error_tls_unavailable">无法建立安全连接（系统证书校验没有初始化）</string>
+    <string name="wait_invalid_key">模型 key 无效，请换一把 key</string>
+    <string name="wait_no_balance">模型 key 余额不足：充值或换一把 key（每小时会自动再试）</string>
+    <string name="wait_key_unavailable">没有能用的模型 key（停用了或今天的额度用完了，每小时会自动再试）</string>
+    <string name="wait_rate_limited">模型服务限流，几分钟后自动继续</string>
+    <string name="wait_overloaded">模型服务繁忙，几分钟后自动继续</string>
+    <string name="wait_device_offline">等电脑上线</string>
     <string name="error_other">出了点问题，请重试</string>
 </resources>

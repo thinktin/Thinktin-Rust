@@ -59,11 +59,33 @@ apps/android/scripts/sync-core.sh --check                # 只检查提交的绑
 `scripts/patch-bindings.py` 会自动修，见该文件开头的说明。`core/src/main/kotlin/cn/thinktin/core/TlsInit.kt`
 是手写的（见下一节），脚本不碰它。
 
-client-core 的 App 接口（11.7、11.8 的 `cachedEventsBefore`、5.5 的举报）已全部接进 `ThinktinService`：
-`CoreThinktinService` 里没有再抛 `ServiceError.Unsupported` 的方法（这个类型留给以后新加、还没接的接口）。
+client-core 的 App 接口已全部接进 `ThinktinService`，`CoreThinktinService` 里没有再抛 `ServiceError.Unsupported` 的方法
+（这个类型留给以后新加、还没接的接口）：
+
+- 11.7：资料、设备列表与吊销、注销账号、实例详情、运行翻页、产出物、改计划与触发器、收件箱单条 / 标未读 / 删除、
+  团队与模板、改 key / 换 key、手机和电脑之间的消息、`cachedEventsBefore`（对话页先显示最后一屏）；5.5 的举报。
+- 11.8：`ClientConfig.acceptLanguage` + `setAcceptLanguage`（见下一节“启动顺序”）、`initLogging`（`:data` 的 `CoreLogging`）、
+  `upgradeRequired()`、跨实例的 `listRuns(RunFilter, before, limit)`、`Run.waitCode`（`WaitCode` 枚举，界面按码出文案）、
+  `Plan.nextFireAtMs` / `invalidTriggers`、`Trigger.disabledReason`、`AgentInfo` 的介绍 / 上游 / 许可说明 / 协议、
+  `Credential.protocols`。吊销本机设备时 client-core 自己清登录态，`authState` 跟着变成未登录（回登录页）。
+
 只给 iOS 的实时活动（`registerLiveActivity`、`endLiveActivity`、`setLiveActivityStartToken`）不接。
 Rust 接口再变时：`sync-core.sh --bindings-only` → 在 `:data` 的模型、`Mappers.kt`（两个方向）、
 `ThinktinService`、`CoreThinktinService`、`MockThinktinService` 里跟上 → 补映射和服务的单测。
+
+## 启动顺序（日志、TLS、语言）
+
+`ThinktinApp.onCreate`：
+
+1. `initializeLogging()`：`CoreLogging.install(verbose = BuildConfig.DEBUG)` 把 client-core 的日志（已抹掉敏感内容）
+   接到 `android.util.Log`（tag `ThinktinCore`），debug 包到 Debug 级别、release 只要 Warn 以上。会加载 .so；失败只记一条警告。
+2. `initializeTls()`：见下一节。
+3. `createContainer()`：`AppContainer` 很轻，真实服务第一次用到时在后台创建。
+
+Accept-Language：`:data` 的 `AcceptLanguage.tags(appLanguage)` 用 `LocaleList` 拼语言列表（App 设置里选的语言在前），
+`AcceptLanguage.header` 交给 client-core 的 `accept_language_header` 拼成请求头（q 值、上限和 iOS 共用 Rust 的实现）。
+建客户端时放进 `ClientConfig.acceptLanguage`；之后 `AppContainer` 跟着设置里的语言和系统语言
+（`ThinktinApp.onConfigurationChanged` → `onSystemLocalesChanged`）调 `ThinktinService.setAcceptLanguage`。
 
 ## TLS 初始化（Android 上的 HTTPS）
 
@@ -136,8 +158,8 @@ Keystore 失效……）都显示“无法加载核心库”页（原因 + 重�
 
 `.github/workflows/android.yml`（名为 Android）：改动 `apps/android/**`、`crates/client-core/**`、`crates/proto/**`、
 `tools/client-core/**`、`Cargo.toml`、`Cargo.lock` 时触发，也可以手动触发。步骤：`sync-core.sh --check`（绑定一致，同时编出本机 .so）→
-`./gradlew test lint assembleDebug`（`THINKTIN_REQUIRE_CORE=1`，CoreSmokeTest 必须真跑；lint 的 abortOnError 开着，不用 baseline）
-→ 上传 `app-cn-debug.apk`。
+`./gradlew test lint assembleDebug :app:assembleCnRelease`（`THINKTIN_REQUIRE_CORE=1`，CoreSmokeTest 必须真跑；lint 的
+abortOnError 开着，不用 baseline；release 包跑一遍 R8，检查保留规则）→ 上传 `app-cn-debug.apk`。
 
 **有意**不在这个 workflow 里交叉编译三个 ABI 的 .so（NDK + cargo-ndk 每次几十分钟，每个 PR 都跑不划算），所以这个 APK
 **不含 jniLibs**，只能用演示模式（关掉演示模式会显示“无法加载核心库”页）。绑定和库是否对得上由 `--check` 和 CoreSmokeTest 保证。
@@ -171,7 +193,6 @@ Keystore 失效……）都显示“无法加载核心库”页（原因 + 重�
 - `tools/client-core/build-android.sh` 没有“跳过 AAR”的开关，`sync-core.sh` 用 PATH 垫片绕过（见上）。以后给它加一个开关
   （比如 `THINKTIN_SKIP_AAR=1`）并去掉 `jvmToolchain(17)` 的硬要求后，删掉垫片。
 - CI 的 APK 不含 .so（见“CI”）。启动时 `TlsInit` 加载不到库，`TlsState.failure` 记下 `UnsatisfiedLinkError`，演示模式照常可用。
-- `TlsInit.initialize` 的 JNI 调用只能在真机 / 模拟器上验证（云端会话没有模拟器，JVM 上的 .so 是 Linux 版）：
-  第一次真机联调 https 时确认没有 `TlsUnavailable`、事件流能连上。
-- 计划列表（`plans`）里的 `triggers`、`steps` 为空（服务端列表接口不带），`Plan.nextFireAtMs` 在列表里是 null；
-  要显示下次触发时间得取详情（`getPlan`），13.6 做计划页时处理。演示数据的列表里带着触发器，和真实服务不完全一样。
+- `TlsInit.initialize`、`initLogging`、`accept_language_header` 的原生调用只能在真机 / 模拟器上验证（云端会话没有模拟器，
+  JVM 上的 .so 是 Linux 版，`:data` 的单测不加载 .so）：第一次真机联调 https 时确认没有 `TlsUnavailable`、事件流能连上、
+  logcat 里有 `ThinktinCore` 的日志、请求带着 `Accept-Language`。

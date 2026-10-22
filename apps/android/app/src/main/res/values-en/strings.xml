@@ -139,5 +139,11 @@
     <string name="error_contains_secrets">Your message seems to contain passwords or keys (count: %1$d) and was not sent. Save them to the vault first.</string>
     <string name="error_unsupported">This feature is not available yet.</string>
     <string name="error_tls_unavailable">Cannot set up a secure connection (system certificate checks are not initialized).</string>
+    <string name="wait_invalid_key">The model key is invalid. Replace it with another key.</string>
+    <string name="wait_no_balance">The model key is out of credit. Top up or use another key (retries every hour).</string>
+    <string name="wait_key_unavailable">No usable model key (disabled or today\'s limit reached; retries every hour).</string>
+    <string name="wait_rate_limited">The model service is rate limiting. Continues automatically in a few minutes.</string>
+    <string name="wait_overloaded">The model service is busy. Continues automatically in a few minutes.</string>
+    <string name="wait_device_offline">Waiting for your computer to come online.</string>
     <string name="error_other">Something went wrong. Please try again.</string>
 </resources>
