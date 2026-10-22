@@ -206,13 +206,15 @@ struct SystemNoticeView: View {
     }
 }
 
-/// 运行状态行：状态点、本地化的主文案、说明；等待类状态给一键跳转（去审批、去处理 key、看运行树）。点主文案进运行详情。
-/// agent 写的审批标题、英文诊断放进可以展开的详情（`RunStatusPresentation`）。
+/// 运行状态行：状态点、本地化的主文案、说明；等待类状态给一键跳转（去审批、去处理 key、看运行树），失败、取消的
+/// 给“重试”（`onRetry` 不为 nil 时）。点主文案进运行详情。agent 写的审批标题、英文诊断放进可以展开的详情
+/// （`RunStatusPresentation`）。
 struct RunStatusLineView: View {
     let runID: RunID?
     let line: RunStatusLine
     let instanceState: InstanceState?
     let onAction: (RunStatusAction) -> Void
+    var onRetry: (@MainActor () -> Void)? = nil
 
     @Environment(Router.self) private var router
     @Environment(\.displayLanguage) private var language
@@ -251,6 +253,11 @@ struct RunStatusLineView: View {
                 Spacer(minLength: 0)
                 if let action = p.action, let title = p.actionTitle {
                     PillButton(title, kind: .secondary, size: .compact) { onAction(action) }
+                }
+                if let onRetry {
+                    PillButton(
+                        ConversationText.retry(language), systemImage: "arrow.clockwise", kind: .secondary,
+                        size: .compact, action: onRetry)
                 }
                 if p.reason != nil {
                     Button {
@@ -346,6 +353,39 @@ struct HistoryNoteView: View {
 
     var body: some View {
         NoticeText(text: ConversationText.historyNote(note, language: language), tone: .muted)
+    }
+}
+
+/// 没有过程记录的运行（超过保留期、本机没缓存）：说明，加上结果（`Run.summary`，agent 最后的回答，Markdown，带“AI 生成”
+/// 标识）。长按结果：复制、分享（带标识）、举报这次运行。
+struct HistoryRecordView: View {
+    let note: TurnHistoryNote
+    let summary: String?
+    let runID: RunID?
+    let onReport: (ContentReportTarget) -> Void
+
+    @Environment(\.displayLanguage) private var language
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
+            HistoryNoteView(note: note)
+            if let summary {
+                Text(ConversationText.resultLabel(language))
+                    .typography(.caption)
+                    .foregroundStyle(Theme.inkSecondary)
+                    .accessibilityAddTraits(.isHeader)
+                MarkdownView(blocks: MarkdownParser.parse(summary))
+                AIGeneratedLabel()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .contextMenu {
+            if let summary {
+                MessageMenu(text: summary, target: runID.map(ContentReportTarget.run), onReport: onReport)
+            }
+        }
     }
 }
 

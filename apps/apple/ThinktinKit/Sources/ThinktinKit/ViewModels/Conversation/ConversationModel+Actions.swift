@@ -56,6 +56,7 @@ extension ConversationModel {
         let text = draft
         guard canSend else { return }
         sendError = nil
+        interceptionResends = false
         let found = client.detectSecrets(in: text)
         if !found.isEmpty {
             await intercept(message: text, secrets: found, serverCount: nil)
@@ -73,6 +74,7 @@ extension ConversationModel {
     /// 关掉拦截弹层（回去改消息）。
     public func dismissInterception() {
         interception = nil
+        interceptionResends = false
     }
 
     /// 关掉发送失败的提示。
@@ -88,6 +90,7 @@ extension ConversationModel {
 
     /// 把拦下的一处存进保险箱（`saveSecretFromMessage`）：成功后消息里的值换成 `[vault:名字]` 放回输入框；
     /// 剩下的按新消息重新认，都处理完了弹层自动关掉（之后用户自己点发送）。重名时提示换个名字（预填一个不重复的）。
+    /// 拦下的是“再发一次”的任务时不动输入框，都处理完了直接把换成引用的任务发出去。
     @discardableResult
     public func saveSecret(_ id: SecretInterception.Entry.ID) async -> Bool {
         guard let current = interception, let entry = current.entry(id), entry.canSave else { return false }
@@ -98,7 +101,7 @@ extension ConversationModel {
         do {
             let saved = try await client.saveSecretFromMessage(
                 message: current.message, value: entry.secret.value, item: entry.newItem(instanceID: instanceID))
-            draft = saved.message
+            if !interceptionResends { draft = saved.message }
             guard var next = interception else { return true }
             let detector = client.secretDetector
             next.didSave(
@@ -106,6 +109,10 @@ extension ConversationModel {
                 secrets: detector.detectSecrets(in: saved.message), takenNames: [],
                 uniqueName: { detector.uniqueVaultName(base: $0, taken: $1) })
             interception = next.isResolved ? nil : next
+            if next.isResolved && interceptionResends {
+                interceptionResends = false
+                await submit(saved.message, allowSecrets: false)
+            }
             return true
         } catch {
             let failure = ConversationErrors.from(error)
@@ -153,6 +160,28 @@ extension ConversationModel {
     /// 关掉停止失败的提示。
     public func clearStopError() {
         stopError = nil
+    }
+
+    /// 能不能“再发一次”（docs/ios-packages.md 12.5 的消息操作“重试”）：用户自己发的、已经结束的运行。计划、流水线、委派的
+    /// 任务不是用户写的，不在对话里重发；“只看本次过程”里不能发消息。
+    public func canRetry(_ turn: ConversationTurn) -> Bool {
+        guard focusRunID == nil, !isMissing, let run = turn.run, run.source == .user else { return false }
+        let state = turn.state ?? run.state
+        return state.isTerminal && !run.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// 再发一次：用同一个任务再起一个运行（`sendMessage`，和发送一样先在本机检查像密码的内容，命中时弹保险箱表单，
+    /// 存好以后直接发）。输入框里正在写的字不动。
+    public func retry(_ runID: RunID) async {
+        guard !isSending, let turn = turn(for: runID), canRetry(turn), let prompt = turn.run?.prompt else { return }
+        sendError = nil
+        interceptionResends = true
+        let found = client.detectSecrets(in: prompt)
+        if !found.isEmpty {
+            await intercept(message: prompt, secrets: found, serverCount: nil)
+            return
+        }
+        await submit(prompt, allowSecrets: false)
     }
 
     // MARK: 内部
@@ -211,7 +240,8 @@ extension ConversationModel {
             return
         }
         approvalErrors[item.id] = nil
-        if option.kind.isAllow {
+        // 不是明确拒绝的都先验证（认不出的种类也算批准类）。
+        if !option.kind.isReject {
             let result = await biometricGate.authorize(reason: reason)
             switch result {
             case .cancelled:

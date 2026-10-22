@@ -3,9 +3,12 @@ import ThinktinKit
 
 /// 用户消息（运行的任务，取自 `Run.prompt`）：靠右的浅色圆角卡片，不渲染 Markdown。委派的任务是负责人 agent 写的、
 /// 流水线步骤附了上游摘要，带“AI 生成”标识（`AIGeneratedField.prompt(of:)`）。很长的任务先折起来。
+///
+/// 长按：复制（agent 写的任务带标识）、再发一次（用户自己发的、已经结束的运行，`onSendAgain` 不为 nil 时）。
 struct UserMessageView: View {
     let message: UserMessage
     let isAIGenerated: Bool
+    var onSendAgain: (@MainActor () -> Void)? = nil
 
     @Environment(\.displayLanguage) private var language
     @State private var isExpanded = false
@@ -42,14 +45,44 @@ struct UserMessageView: View {
                 .padding(.horizontal, Metrics.Spacing.m)
                 .padding(.vertical, Metrics.Spacing.s)
                 .background(
-                    Theme.userBubble, in: RoundedRectangle(cornerRadius: Metrics.Radius.card, style: .continuous))
+                    Theme.userBubble, in: RoundedRectangle(cornerRadius: Metrics.Radius.card, style: .continuous)
+                )
+                .contentShape(
+                    .contextMenuPreview, RoundedRectangle(cornerRadius: Metrics.Radius.card, style: .continuous)
+                )
+                .contextMenu {
+                    Button {
+                        Pasteboard.copy(copiedText)
+                    } label: {
+                        Label(ConversationText.copy(language), systemImage: "doc.on.doc")
+                    }
+                    if let onSendAgain {
+                        Button(action: onSendAgain) {
+                            Label(ConversationText.sendAgain(language), systemImage: "arrow.clockwise")
+                        }
+                    }
+                }
             }
             if isAIGenerated { AIGeneratedLabel() }
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(
-            Text(verbatim: ConversationText.promptAuthor(message.source, language: language) + "：" + message.text))
+        .accessibilityLabel(Text(verbatim: accessibilityText))
+        .accessibilityAction(named: Text(ConversationText.copy(language))) {
+            Pasteboard.copy(copiedText)
+        }
+        .accessibilityAction(named: Text(ConversationText.sendAgain(language)), ifAvailable: onSendAgain)
+    }
+
+    /// 复制出去的文字：agent 写的任务（委派、流水线步骤）末尾加标识，用户自己写的原样。
+    private var copiedText: String {
+        isAIGenerated ? ConversationText.copyText(message.text, language: language) : message.text
+    }
+
+    /// 读屏：“你：任务”“负责人 agent 委派的任务：……”。
+    private var accessibilityText: String {
+        let author = ConversationText.promptAuthor(message.source, language: language)
+        return author + (language == .chinese ? "：" : ": ") + message.text
     }
 }
 
@@ -186,9 +219,26 @@ private struct MessageAccessibilityActions: ViewModifier {
             .accessibilityAction(named: Text(ConversationText.copy(language))) {
                 Pasteboard.copy(ConversationText.copyText(text, language: language))
             }
-            .accessibilityAction(named: Text(ConversationText.report(language))) {
-                if let target { onReport(target) }
-            }
+            .accessibilityAction(named: Text(ConversationText.report(language)), ifAvailable: report)
+    }
+
+    /// 能举报时的操作。
+    private var report: (@MainActor () -> Void)? {
+        guard let target else { return nil }
+        let onReport = self.onReport
+        return { onReport(target) }
+    }
+}
+
+extension View {
+    /// 有 `action` 时才加这个读屏的自定义操作（没有时不出现在操作列表里）。
+    @ViewBuilder
+    func accessibilityAction(named name: Text, ifAvailable action: (@MainActor () -> Void)?) -> some View {
+        if let action {
+            accessibilityAction(named: name) { action() }
+        } else {
+            self
+        }
     }
 }
 

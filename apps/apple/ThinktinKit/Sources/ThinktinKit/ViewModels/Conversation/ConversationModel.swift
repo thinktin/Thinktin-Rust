@@ -66,6 +66,8 @@ public final class ConversationModel {
     public private(set) var approvalRecords: [ApprovalID: Approval] = [:]
     /// 这个实例的保险箱填写请求（过期时间、处理结果）。
     public internal(set) var vaultRecords: [VaultRequestID: VaultRequest] = [:]
+    /// 默认模型（`main` 路由）：输入框上的模型标签（不能逐条消息换模型，点开去模型路由）。
+    public private(set) var mainRoute: MainRouteState = .unknown
 
     // MARK: 输入框（ConversationModel+Actions.swift）
 
@@ -75,6 +77,8 @@ public final class ConversationModel {
     public internal(set) var sendError: ClientError?
     /// 发送前拦下了像密码的内容：弹保险箱表单。
     public internal(set) var interception: SecretInterception?
+    /// 拦下的是“再发一次”的任务（不是输入框里的字）：存好以后直接发出去，不放回输入框（免得盖掉正在写的字）。
+    @ObservationIgnored var interceptionResends = false
     /// 最近发出去的运行（界面滚到底）。
     public internal(set) var lastSentRunID: RunID?
     public internal(set) var isStopping = false
@@ -158,11 +162,12 @@ public final class ConversationModel {
         stopSubscription()
     }
 
-    /// 回前台：补上缓存里新到的事件，续订，再刷新运行。
+    /// 回前台：补上缓存里新到的事件，续订，再刷新运行和保险箱请求（在后台的时候可能过期了，过期没有事件）。
     public func resume() async {
         isPaused = false
         subscribeIfNeeded()
         await refreshRuns()
+        hasLoadedVaultRecords = false
         await loadRecords()
     }
 
@@ -181,7 +186,7 @@ public final class ConversationModel {
     /// 平铺的对话列表。
     public var items: [ConversationItem] { turns.flatMap(\.items) }
 
-    /// 一段回复解析好的块（流式追加时前面的块不变，只重新解析最后一块）。
+    /// 一段回复解析好的块（流式追加时前面的块不变，只重新解析最后两块，见 `MarkdownStream`）。
     public func markdownBlocks(for item: ConversationItem) -> [MarkdownBlockItem] {
         if let cached = markdown[item.id] { return cached.blocks }
         guard case .assistantText(let text) = item.content else { return [] }
@@ -215,6 +220,14 @@ public final class ConversationModel {
         // 还没翻到它的事件（缓存里可能还有）不算。
         if hasOlderEvents { return nil }
         return now().timeIntervalSince(run.createdAt) > Self.eventRetention ? .expired : .notCached
+    }
+
+    /// 没有过程记录的运行的结果（`Run.summary`，agent 最后的回答，带 AI 生成标识）：只有任务和结果的运行（`historyNote`
+    /// 不为 nil）显示它，免得只剩一条用户消息；有过程记录的运行，回答本来就在时间线里。
+    public func historySummary(for turn: ConversationTurn) -> String? {
+        guard historyNote(for: turn) != nil, let summary = turn.run?.summary else { return nil }
+        let trimmed = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     /// 计划触发的运行的计划（拉到了的话）。
@@ -372,7 +385,7 @@ public final class ConversationModel {
             let fresh = older.filter { e in !events.contains { $0.seq == e.seq } }
             events = (fresh + events).sorted { $0.seq < $1.seq }
             hasOlderEvents = older.count >= Self.eventPageSize
-            noteInstanceStates(fresh)
+            // 更早的事件说的实例状态是旧的，不用（页头没收到过时用实例列表里的）。
             rebuild()
             await fetchRunsForEvents()
             rebuild()
@@ -526,11 +539,19 @@ public final class ConversationModel {
 
     // MARK: 审批记录、保险箱请求、计划
 
-    /// 打开页面（和重置之后）各查一次：卡片上的审批、没关联上的待处理审批、保险箱请求、计划标题。
+    /// 打开页面（和重置之后）各查一次：卡片上的审批、没关联上的待处理审批、保险箱请求、计划标题、默认模型。
     func loadRecords() async {
         await checkApprovals()
         await loadVaultRecords()
         await loadPlans()
+        await loadMainRoute()
+    }
+
+    /// 默认模型（`main` 路由的上游模型）。每次回到页面都查（可能刚去路由页改过）；拉不到时保持原样。
+    private func loadMainRoute() async {
+        guard focusRunID == nil, !isMissing, let routes = try? await client.modelRoutes(instanceID: instanceID)
+        else { return }
+        mainRoute = routes.first(where: \.isMain).map { .configured(model: $0.upstreamModel) } ?? .missing
     }
 
     /// 查审批记录：卡片上有审批 id 的（待处理的、结论还不确定的）各查一次 `getApproval`；有没关联上的待处理卡片时拉
@@ -628,6 +649,16 @@ public final class ConversationModel {
         }
         for key in markdown.keys where !seen.contains(key) { markdown[key] = nil }
     }
+}
+
+/// 实例的默认模型（`main` 路由）。
+public enum MainRouteState: Hashable, Sendable {
+    /// 还没拉到（离线、刚打开）：不显示。
+    case unknown
+    /// 配了：上游模型名。
+    case configured(model: String)
+    /// 没配 `main`：发了也只会停在“等 key”，提示去配。
+    case missing
 }
 
 /// 只有任务和结果、没有过程记录的运行旁边的说明。

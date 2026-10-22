@@ -97,7 +97,7 @@ struct ApprovalCardView: View {
                     PillButton(
                         option.name.isEmpty
                             ? ConversationText.approvalOptionName(option.kind, language: language) : option.name,
-                        systemImage: option.kind.isAllow ? "checkmark" : "xmark",
+                        systemImage: option.kind.isReject ? "xmark" : "checkmark",
                         kind: option.id == primaryOptionID ? .primary : .secondary
                     ) {
                         Task {

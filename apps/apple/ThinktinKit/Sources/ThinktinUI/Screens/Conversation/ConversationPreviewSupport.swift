@@ -208,7 +208,7 @@ struct SecretInterceptionPreview: View {
 
         var body: some View {
             let model = self.model
-            SecretInterceptionSheet(model: model)
+            SecretInterceptionSheet(model: model, onOpenRoute: { _ in })
                 .task {
                     await model.load()
                     model.draft = message

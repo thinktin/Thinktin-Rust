@@ -150,4 +150,23 @@ struct ConversationTextTests {
             ConversationText.sourceHeader(source: .pipeline, planTitle: nil, stepKey: "review", language: .english)
                 == "Pipeline step · review")
     }
+
+    @Test("agent 回复里的链接：深链在 App 里打开，网址、邮件交给系统，别的不打开")
+    func links() {
+        func handling(_ string: String) -> ConversationLinks.Handling {
+            URL(string: string).map(ConversationLinks.handling(of:)) ?? .blocked
+        }
+        #expect(handling("https://example.com/a?b=1") == .external)
+        #expect(handling("HTTP://example.com") == .external)
+        #expect(handling("mailto:dev@example.com") == .external)
+        #expect(handling("thinktin://run/abc") == .inApp)
+        #expect(handling("tel:10086") == .blocked)
+        #expect(handling("sms:10086") == .blocked)
+        #expect(handling("javascript:alert(1)") == .blocked)
+        #expect(handling("file:///etc/hosts") == .blocked)
+        #expect(handling("weixin://dl/business") == .blocked)
+        #expect(handling("https:foo") == .blocked, "没有主机")
+        #expect(handling("mailto:") == .blocked, "没有收件人")
+        #expect(handling("relative/path") == .blocked)
+    }
 }

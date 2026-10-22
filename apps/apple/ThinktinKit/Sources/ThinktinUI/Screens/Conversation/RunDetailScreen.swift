@@ -4,7 +4,8 @@ import ThinktinKit
 /// 运行详情（`.run(id)`：状态行、收件箱、推送、计划的运行历史进来；对应 Claude Code 的会话详情）：
 ///
 /// - 状态和说明（等待类给一键跳转）、任务（委派、流水线的带 AI 标识）、来源、所属计划、尝试次数、已用 token、时间；
-/// - 摘要（AI 生成标识）、失败原因（正文只说失败，英文诊断折起来）、最近一轮用量；
+/// - 等审批时，待处理的审批卡片直接放在状态下面（在这里就能批，“去审批”滚到它）；
+/// - 摘要（Markdown，AI 生成标识）、失败原因（正文只说失败，英文诊断折起来）、最近一轮用量；
 /// - 只看本次过程（同一个视图模型的时间线）、运行树（有子运行时）、产出物、打开对话、停止 / 停止整棵树、举报。
 ///
 /// 状态跟着事件流变（`RunDetailModel.process` 订阅着实例的事件流），进后台停订阅、回前台续订。
@@ -43,27 +44,30 @@ private struct RunDetailContent: View {
 
     var body: some View {
         let model = self.model
-        ScrollView {
-            VStack(alignment: .leading, spacing: Metrics.Spacing.m) {
-                if let error = model.error, !error.isOffline {
-                    ErrorBanner(error) { Task { await model.load() } }
-                }
-                if let run = model.run, !model.isMissing {
-                    content(run)
-                } else if model.isMissing {
-                    EmptyStateView(
-                        systemImage: "questionmark.square.dashed", title: ConversationText.runMissing(language),
-                        actionTitle: language == .chinese ? "返回" : "Go back"
-                    ) {
-                        router.pop()
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: Metrics.Spacing.m) {
+                    if let error = model.error, !error.isOffline {
+                        ErrorBanner(error) { Task { await model.load() } }
                     }
-                } else {
-                    ConversationLoadingView()
+                    if let run = model.run, !model.isMissing {
+                        content(run, proxy: proxy)
+                    } else if model.isMissing {
+                        EmptyStateView(
+                            systemImage: "questionmark.square.dashed", title: ConversationText.runMissing(language),
+                            actionTitle: language == .chinese ? "返回" : "Go back"
+                        ) {
+                            router.pop()
+                        }
+                    } else {
+                        ConversationLoadingView()
+                    }
                 }
+                .padding(Metrics.Spacing.m)
+                .frame(maxWidth: Metrics.readableWidth)
+                .frame(maxWidth: .infinity)
+                .conversationLinkHandling(router)
             }
-            .padding(Metrics.Spacing.m)
-            .frame(maxWidth: Metrics.readableWidth)
-            .frame(maxWidth: .infinity)
         }
         .background(Theme.paper)
         .navigationTitle(AppRoute.run(model.runID).title(language))
@@ -123,14 +127,29 @@ private struct RunDetailContent: View {
     }
 
     @ViewBuilder
-    private func content(_ run: Run) -> some View {
+    private func content(_ run: Run, proxy: ScrollViewProxy) -> some View {
         let model = self.model
+        let pending = model.pendingApprovalItems
         if let line = model.statusLine {
             RunStatusLineView(runID: nil, line: line, instanceState: nil) { action in
                 switch action {
-                case .scrollToApproval: router.open(.conversation(run.instanceID))
+                case .scrollToApproval:
+                    // 待处理的审批卡片就在下面；还没对上（事件没到）时去对话里找。
+                    if let first = pending.first {
+                        withAnimation { proxy.scrollTo(first.id, anchor: .center) }
+                    } else {
+                        router.open(.conversation(run.instanceID))
+                    }
                 case .openModelRoutes: router.open(.modelRoutes(run.instanceID))
                 case .openRunTree: router.open(.runTree(run.id))
+                }
+            }
+        }
+        if let process = model.process {
+            ForEach(pending) { item in
+                if case .approval(let card) = item.content {
+                    ApprovalCardView(item: item, card: card, model: process)
+                        .id(item.id)
                 }
             }
         }
@@ -152,10 +171,7 @@ private struct RunDetailContent: View {
                 Text(ConversationText.detailLabel(.summary, language: language))
                     .typography(.caption)
                     .foregroundStyle(Theme.inkSecondary)
-                Text(verbatim: summary)
-                    .typography(.body)
-                    .foregroundStyle(Theme.ink)
-                    .fixedSize(horizontal: false, vertical: true)
+                MarkdownView(blocks: MarkdownParser.parse(summary))
                 AIGeneratedLabel()
             }
             .contextMenu {
@@ -408,10 +424,18 @@ struct RunProcessScreen: View {
     RunDetailScreen(runID: DemoData.postRunID).previewShell(.english)
 }
 
-#Preview("只看本次过程 · 深色中文") {
+#Preview("只看本次过程 · 浅色中文") {
     RunProcessScreen(
         model: ConversationModel(
             client: MockClient(autoReply: false), instanceID: DemoData.writerID, focusRunID: DemoData.weeklyRunID)
     )
-    .previewShell(.chinese, scheme: .dark)
+    .previewShell()
+}
+
+#Preview("只看本次过程 · 深色英文") {
+    RunProcessScreen(
+        model: ConversationModel(
+            client: MockClient(autoReply: false), instanceID: DemoData.writerID, focusRunID: DemoData.postRunID)
+    )
+    .previewShell(.english, scheme: .dark)
 }

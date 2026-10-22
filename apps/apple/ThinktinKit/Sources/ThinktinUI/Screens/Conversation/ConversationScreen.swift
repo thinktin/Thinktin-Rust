@@ -24,6 +24,8 @@ struct ConversationScreen: View {
 private struct ConversationContent: View {
     @State private var model: ConversationModel
     @State private var reportRequest: ReportRequest?
+    /// 密码拦截弹层关掉之后要去的页面（“添加为模型 key”）。
+    @State private var routeAfterInterception: AppRoute?
     @FocusState private var isComposerFocused: Bool
 
     @Environment(AppModel.self) private var app
@@ -63,7 +65,7 @@ private struct ConversationContent: View {
                 ConversationComposer(
                     model: model,
                     placeholder: ConversationText.placeholder(instanceName: instance?.name, language: language),
-                    isFocused: $isComposerFocused)
+                    isFocused: $isComposerFocused, onOpenModelRoutes: { router.open(.modelRoutes(model.instanceID)) })
             }
             .onChange(of: model.lastSentRunID) {
                 withAnimation { proxy.scrollTo(ConversationScroll.bottomID, anchor: .bottom) }
@@ -122,12 +124,19 @@ private struct ConversationContent: View {
         }
         .sheet(
             isPresented: Binding(
-                get: { model.interception != nil }, set: { if !$0 { model.dismissInterception() } })
+                get: { model.interception != nil }, set: { if !$0 { model.dismissInterception() } }),
+            onDismiss: openRouteAfterInterception
         ) {
-            SecretInterceptionSheet(model: model)
-                .environment(router)
+            SecretInterceptionSheet(model: model, onOpenRoute: { routeAfterInterception = $0 })
                 .environment(\.displayLanguage, language)
         }
+    }
+
+    /// 密码拦截弹层关掉之后，去用户在弹层里选的页面（弹层还在时弹不出另一个 sheet）。
+    private func openRouteAfterInterception() {
+        guard let route = routeAfterInterception else { return }
+        routeAfterInterception = nil
+        router.open(route)
     }
 
     /// 时间线最上面：实例状态（正在唤醒、正在创建）、找不到实例、还没有任务、加载中、拉不到运行的错误。

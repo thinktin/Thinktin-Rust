@@ -172,6 +172,61 @@ struct ConversationComposerTests {
         #expect(model.interception?.entry(entry.id)?.canSave == false)
     }
 
+    @Test("再发一次：用户自己发的、已经结束的运行用同一个任务再起一个运行，输入框不动；没结束的、计划触发的不能")
+    func retry() async throws {
+        let mock = ConversationFixture.mock()
+        let model = ConversationModel(client: mock, instanceID: writer)
+        await model.start()
+        let weekly = try #require(model.turn(for: DemoData.weeklyRunID))
+        #expect(model.canRetry(weekly))
+        #expect(!model.canRetry(try #require(model.turn(for: DemoData.digestRunID))), "计划触发的")
+        #expect(!model.canRetry(try #require(model.turn(for: DemoData.postRunID))), "还在等审批")
+        model.draft = "写了一半"
+        await model.retry(DemoData.postRunID)
+        #expect(model.lastSentRunID == nil, "没结束的不重发")
+        await model.retry(DemoData.weeklyRunID)
+        let sent = try #require(model.lastSentRunID)
+        #expect(sent != DemoData.weeklyRunID)
+        #expect(mock.state.runs.first { $0.id == sent }?.prompt == weekly.run?.prompt)
+        #expect(model.draft == "写了一半", "输入框里正在写的不动")
+        #expect(model.turns.last?.runID == sent)
+        #expect(model.turn(for: sent)?.state == .queued, "前一个还在等审批，排队")
+        // 只看本次过程里不能重发。
+        let focus = ConversationModel(client: mock, instanceID: writer, focusRunID: DemoData.weeklyRunID)
+        await focus.start()
+        #expect(!focus.canRetry(try #require(focus.turn(for: DemoData.weeklyRunID))))
+    }
+
+    @Test("再发一次也先在本机查密码：命中时弹保险箱表单，不发；存好以后直接发换成引用的任务，输入框不动")
+    func retryIntercepts() async throws {
+        var state = DemoData.state()
+        let token = "ghp_" + String(repeating: "a1B2", count: 6)
+        state.runs.append(
+            Run(id: "run-secret", instanceID: writer, prompt: "推送用 \(token)", state: .failed, createdAt: Date()))
+        let mock = ConversationFixture.mock(state: state)
+        let model = ConversationModel(client: mock, instanceID: writer)
+        await model.start()
+        model.draft = "正在写别的"
+        let count = mock.state.runs.count
+        await model.retry("run-secret")
+        let interception = try #require(model.interception)
+        #expect(interception.entries.count == 1)
+        #expect(interception.message == "推送用 \(token)")
+        #expect(mock.state.runs.count == count, "没发出去")
+        #expect(await model.saveSecret(try #require(interception.entries.first?.id)))
+        #expect(model.interception == nil)
+        #expect(model.draft == "正在写别的", "输入框里正在写的字不被盖掉")
+        let sent = try #require(model.lastSentRunID)
+        #expect(mock.state.runs.first { $0.id == sent }?.prompt == "推送用 [vault:github_2]")
+        // 之后照常从输入框发：存好的引用放回输入框，不自动发。
+        model.draft = "再推一次：\(token)"
+        await model.send()
+        let again = try #require(model.interception?.entries.first)
+        #expect(await model.saveSecret(again.id))
+        #expect(model.draft.hasPrefix("再推一次：[vault:"))
+        #expect(model.lastSentRunID == sent)
+    }
+
     @Test("发送失败：显示错误，输入框里的字还在")
     func sendFailure() async {
         let mock = ConversationFixture.mock()
@@ -225,6 +280,20 @@ struct ConversationCardActionsTests {
         await model.decide(try approvalItem(model), option: try option("reject"), reason: "")
         #expect(gate.reasons.isEmpty)
         #expect(mock.state.approvals.first?.state == .rejected)
+    }
+
+    @Test("认不出种类的选项（以后的协议）按批准类处理：先过本机验证")
+    func unknownOptionKind() async throws {
+        let mock = ConversationFixture.mock()
+        let gate = ScriptedBiometricGate(result: .failed)
+        let model = ConversationModel(client: mock, instanceID: writer, biometricGate: gate)
+        await model.start()
+        let item = try approvalItem(model)
+        let odd = ApprovalOption(id: "allow", name: "这次可以", kind: .unknown("permit_session"))
+        await model.decide(item, option: odd, reason: "r")
+        #expect(gate.reasons == ["r"])
+        #expect(model.approvalErrors[item.id] == .verificationFailed)
+        #expect(mock.state.approvals.first?.isPending == true)
     }
 
     @Test("本机验证取消了什么都不做；没通过提示一句、不批准；设备没法验证照常批准")

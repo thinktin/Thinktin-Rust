@@ -30,6 +30,26 @@ struct RunScreensTests {
         #expect(abs((model.duration ?? 0) - 90) < 0.01)
     }
 
+    @Test("等审批的运行：待处理的审批卡片直接放在运行详情里，在这里就能批")
+    func pendingApprovalsInDetail() async throws {
+        let mock = ConversationFixture.mock()
+        let model = RunDetailModel(client: mock, runID: DemoData.postRunID)
+        await model.load()
+        #expect(model.statusLine?.state == .waitingApproval)
+        #expect(model.pendingApprovalItems.count == 1)
+        let item = try #require(model.pendingApprovalItems.first)
+        let card = try #require(item.content.approval)
+        #expect(card.approvalID == DemoData.pendingApprovalID)
+        let allow = try #require(card.options.first { $0.kind.isAllow })
+        let process = try #require(model.process)
+        await process.decide(item, option: allow, reason: "批准")
+        #expect(await eventually { model.pendingApprovalItems.isEmpty })
+        // 已经完成的运行没有待处理的卡片。
+        let done = RunDetailModel(client: mock, runID: DemoData.weeklyRunID)
+        await done.load()
+        #expect(done.pendingApprovalItems.isEmpty)
+    }
+
     @Test("计划触发的运行：拉到所属计划；计划删掉了不算出错")
     func planLink() async throws {
         let mock = ConversationFixture.mock()

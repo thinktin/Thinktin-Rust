@@ -138,3 +138,43 @@ extension AttributedString {
         self.init(markdown)
     }
 }
+
+// MARK: - 链接怎么打开（iOS 15 的 OpenURLAction）
+
+public struct OpenURLAction: Sendable {
+    public struct Result: Sendable {
+        let tag: Int
+        public static let handled = Result(tag: 0)
+        public static let discarded = Result(tag: 1)
+        public static let systemAction = Result(tag: 2)
+        public static func systemAction(_ url: URL) -> Result { Result(tag: 3) }
+    }
+
+    public init(handler: @escaping (URL) -> Result) {}
+
+    public func callAsFunction(_ url: URL) {}
+}
+
+extension EnvironmentValues {
+    public var openURL: OpenURLAction {
+        get { OpenURLAction { _ in .systemAction } }
+        set {}
+    }
+}
+
+// MARK: - 长按菜单预览的形状（iOS 15）
+
+public struct ContentShapeKinds: OptionSet, Sendable {
+    public let rawValue: Int
+    public init(rawValue: Int) { self.rawValue = rawValue }
+    public static let interaction = ContentShapeKinds(rawValue: 1)
+    public static let dragPreview = ContentShapeKinds(rawValue: 2)
+    public static let contextMenuPreview = ContentShapeKinds(rawValue: 4)
+    public static let hoverEffect = ContentShapeKinds(rawValue: 8)
+}
+
+extension View {
+    public func contentShape<S: Shape>(_ kind: ContentShapeKinds, _ shape: S, eoFill: Bool = false) -> some View {
+        _m()
+    }
+}

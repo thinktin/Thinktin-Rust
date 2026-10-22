@@ -30,6 +30,28 @@ struct ConversationModelTests {
         #expect(model.items.first { $0.id == approvalItem }?.content.approval?.approvalID == DemoData.pendingApprovalID)
     }
 
+    @Test("输入框上的默认模型：main 路由的上游模型；没配 main 时提示；去路由页改了，回来再查")
+    func mainRoute() async {
+        let mock = ConversationFixture.mock()
+        let model = ConversationModel(client: mock, instanceID: writer)
+        #expect(model.mainRoute == .unknown)
+        await model.start()
+        #expect(model.mainRoute == .configured(model: "claude-sonnet-5-5"))
+        mock.update { $0.routes[writer] = [] }
+        await model.start()
+        #expect(model.mainRoute == .missing)
+        // 拉不到（离线）时保持原样。
+        mock.failNext(with: .network(message: "offline"))
+        await model.start()
+        #expect(model.mainRoute == .missing)
+        // 只看本次过程不查。
+        let focus = ConversationModel(client: mock, instanceID: writer, focusRunID: DemoData.weeklyRunID)
+        await focus.start()
+        #expect(focus.mainRoute == .unknown)
+        #expect(ConversationText.modelLabel(.missing, language: .english) == "No model set up")
+        #expect(ConversationText.modelLabel(.unknown, language: .chinese) == nil)
+    }
+
     @Test("离线：运行拉不到也照样显示已有的，错误记在 loadError 里，联网后再拉就好了")
     func offline() async {
         let mock = ConversationFixture.mock()
@@ -151,6 +173,41 @@ struct ConversationModelTests {
         #expect(model.turns.count == 40)
     }
 
+    @Test("往前翻到的旧事件里的实例状态是旧的：不拿来当页头")
+    func olderInstanceState() async {
+        let mock = ConversationFixture.manyRuns(count: 40, eventsPerRun: 10)
+        mock.update { s in
+            guard var list = s.events[writer], let i = list.firstIndex(where: { $0.seq == 3 }) else { return }
+            list[i] = InstanceEvent(
+                instanceID: writer, seq: 3, runID: nil, kind: InstanceEventKind(rawValue: "instance.state"),
+                payloadJSON: #"{"state":"archived"}"#, createdAt: list[i].createdAt)
+            s.events[writer] = list
+        }
+        let model = ConversationModel(client: mock, instanceID: writer)
+        await model.start()
+        #expect(model.instanceState == nil)
+        await model.loadOlder()
+        #expect(model.turns.count == 40)
+        #expect(model.instanceState == nil, "一个月前归档过，不代表现在是归档的")
+    }
+
+    @Test("回前台时重新拉保险箱请求：在后台时过期了的（过期没有事件）卡片显示已过期")
+    func resumeRefreshesVaultRequests() async throws {
+        let mock = ConversationFixture.mock()
+        let model = ConversationModel(client: mock, instanceID: ConversationFixture.reviewer)
+        await model.start()
+        let card = try #require(model.items.compactMap(\.content.vaultRequest).first)
+        #expect(model.vaultStatus(for: card) == .pending)
+        model.pause()
+        mock.update { s in
+            if let i = s.vaultRequests.firstIndex(where: { $0.id == card.requestID }) {
+                s.vaultRequests[i].status = .expired
+            }
+        }
+        await model.resume()
+        #expect(model.vaultStatus(for: card) == .expired)
+    }
+
     @Test("没有过程记录的运行：超过保留期的、本机没缓存的各有说明")
     func historyNotes() async {
         let now = Date()
@@ -171,6 +228,10 @@ struct ConversationModelTests {
         #expect(recent.flatMap(model.historyNote(for:)) == .notCached)
         #expect(model.turn(for: DemoData.weeklyRunID).flatMap(model.historyNote(for:)) == nil)
         #expect(model.turns.first?.runID == "run-old", "按创建时间排")
+        // 只剩任务和结果的运行显示结果（摘要）；有过程记录的、没有摘要的不显示。
+        #expect(old.flatMap(model.historySummary(for:)) == "做完了")
+        #expect(recent.flatMap(model.historySummary(for:)) == nil)
+        #expect(model.turn(for: DemoData.weeklyRunID).flatMap(model.historySummary(for:)) == nil)
     }
 
     @Test("只看本次过程：只有这个运行的事件，不能发消息")

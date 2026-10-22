@@ -476,6 +476,8 @@ private struct TurnState: Sendable {
     }
 
     private mutating func appendText(_ text: String, event: InstanceEvent, thought: Bool) {
+        // 没有文字的分片（载荷里缺 `text`）：不建空的一项（界面上会是一段空白加一个 AI 标识）。
+        guard !text.isEmpty else { return }
         if let last = entries.indices.last {
             switch entries[last].content {
             case .assistantText(var t) where !thought:

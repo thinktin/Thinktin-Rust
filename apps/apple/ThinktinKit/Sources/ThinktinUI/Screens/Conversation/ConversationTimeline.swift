@@ -53,6 +53,7 @@ struct ConversationTimeline<Header: View>: View {
                 .id(ConversationScroll.bottomID)
                 .accessibilityHidden(true)
         }
+        .conversationLinkHandling(router)
     }
 
     /// 状态行上的一键跳转。
@@ -78,7 +79,8 @@ enum ConversationScroll {
     static let bottomID = "conversation-bottom"
 }
 
-/// 一个运行那一组。
+/// 一个运行那一组：来源分隔头、用户消息、agent 的输出和卡片；没有过程记录的运行（超过保留期、本机没缓存）在状态行前面
+/// 补一句说明和结果（`Run.summary`）；最后是状态行。
 struct ConversationTurnView: View {
     let turn: ConversationTurn
     let model: ConversationModel
@@ -87,21 +89,35 @@ struct ConversationTurnView: View {
     let onStatusAction: (RunStatusAction) -> Void
 
     var body: some View {
+        // 状态行总是这一组的最后一项（`ConversationReducer`）。
+        let status = turn.items.last.flatMap { item -> ConversationItem? in
+            if case .runStatus = item.content { return item }
+            return nil
+        }
+        let entries = status == nil ? turn.items : Array(turn.items.dropLast())
         VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
             if let run = turn.run, run.source != .user {
                 SourceHeaderView(run: run, plan: model.plan(for: turn))
             }
-            ForEach(turn.items) { item in
-                ConversationItemView(
-                    item: item, turn: turn, model: model, instanceState: instanceState, onReport: onReport,
-                    onStatusAction: onStatusAction
-                )
-                .id(item.id)
+            ForEach(entries) { item in
+                itemView(item)
             }
             if let note = model.historyNote(for: turn) {
-                HistoryNoteView(note: note)
+                HistoryRecordView(
+                    note: note, summary: model.historySummary(for: turn), runID: turn.runID, onReport: onReport)
+            }
+            if let status {
+                itemView(status)
             }
         }
+    }
+
+    private func itemView(_ item: ConversationItem) -> some View {
+        ConversationItemView(
+            item: item, turn: turn, model: model, instanceState: instanceState, onReport: onReport,
+            onStatusAction: onStatusAction
+        )
+        .id(item.id)
     }
 }
 
@@ -117,7 +133,7 @@ struct ConversationItemView: View {
     var body: some View {
         switch item.content {
         case .userMessage(let message):
-            UserMessageView(message: message, isAIGenerated: promptIsAIGenerated)
+            UserMessageView(message: message, isAIGenerated: promptIsAIGenerated, onSendAgain: sendAgain)
         case .assistantText(let text):
             AssistantTextView(item: item, text: text, blocks: model.markdownBlocks(for: item), onReport: onReport)
         case .thought(let thought):
@@ -131,7 +147,9 @@ struct ConversationItemView: View {
         case .vaultRequest(let card):
             VaultRequestCardView(card: card, model: model)
         case .runStatus(let line):
-            RunStatusLineView(runID: turn.runID, line: line, instanceState: instanceState, onAction: onStatusAction)
+            RunStatusLineView(
+                runID: turn.runID, line: line, instanceState: instanceState, onAction: onStatusAction,
+                onRetry: line.state == .failed || line.state == .cancelled ? sendAgain : nil)
         case .artifact(let card):
             ArtifactCardView(item: item, card: card, instanceID: model.instanceID, onReport: onReport)
         case .childRun(let card):
@@ -141,6 +159,13 @@ struct ConversationItemView: View {
         case .systemNotice(let notice):
             SystemNoticeView(notice: notice)
         }
+    }
+
+    /// 再发一次这个任务（用户自己发的、已经结束的运行才有，`ConversationModel.canRetry`）。
+    private var sendAgain: (@MainActor () -> Void)? {
+        guard let runID = turn.runID, model.canRetry(turn) else { return nil }
+        let model = self.model
+        return { Task { await model.retry(runID) } }
     }
 
     /// 任务要不要带“AI 生成”标识（委派、流水线步骤、agent 建的计划触发的）。

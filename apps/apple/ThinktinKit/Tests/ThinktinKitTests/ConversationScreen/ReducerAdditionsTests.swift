@@ -4,7 +4,7 @@ import Testing
 @testable import ThinktinKit
 
 // 12.5 给对话归并补的几处（ConversationReducer 的增量修改）：状态行带等待原因码、提前结束的一轮显示提示行、
-// 审批记录补到已经按事件关联上的卡片上。
+// 审批记录补到已经按事件关联上的卡片上、没有文字的分片不建空的一项。
 
 private let runA = Fixture.runA
 
@@ -42,6 +42,20 @@ struct ReducerAdditionsTests {
         #expect(line.nextStep == .waitForComputer)
         // 状态不对应的原因码不带。
         #expect(RunStatusLine(state: .running, waitCode: .invalid).waitCode == nil)
+    }
+
+    @Test("没有文字的分片（载荷里缺 text、是空串）：不建空的一项，也不打断前后的文字")
+    func emptyChunks() {
+        var r = ConversationReducer(runs: [Fixture.run(runA)])
+        var ev = Events()
+        r.apply(ev.add(.agentMessage, runA, ["type": "message_chunk"]))
+        r.apply(ev.add(.agentThought, runA, ["text": ""]))
+        #expect(r.items.compactMap(\.content.assistantText).isEmpty)
+        #expect(r.items.compactMap(\.content.thought).isEmpty)
+        r.apply(ev.add(.agentMessage, runA, ["text": "前半"]))
+        r.apply(ev.add(.agentMessage, runA, ["text": ""]))
+        r.apply(ev.add(.agentMessage, runA, ["text": "后半"]))
+        #expect(r.items.compactMap(\.content.assistantText).map(\.text) == ["前半后半"])
     }
 
     @Test("agent.turn_ended：拒绝回答、输出到上限、步数到上限显示提示行；正常结束、取消不显示")

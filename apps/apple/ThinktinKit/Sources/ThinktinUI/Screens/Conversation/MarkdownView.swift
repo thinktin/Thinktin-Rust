@@ -3,9 +3,10 @@ import ThinktinKit
 
 /// agent 回复的 Markdown（块级由 `MarkdownParser` 解析，行内的加粗、斜体、行内代码、链接交给
 /// `AttributedString(markdown:)` 的 inline 模式）。一块一个视图、按块的 id 排：流式追加时前面的块不变（`Equatable`），
-/// 只有最后一块重新排版。
+/// 通常只有最后一块重新排版。
 ///
 /// 不用系统的文字选择（`.textSelection`）：系统复制带不上“AI 生成”标识，复制走消息的菜单（`ConversationText.copyText`）。
+/// 链接点了怎么办由外面的 `conversationLinkHandling(_:)` 管（agent 写的链接只放行网址、邮件和 App 自己的深链）。
 struct MarkdownView: View {
     let blocks: [MarkdownBlockItem]
 
@@ -68,6 +69,23 @@ struct MarkdownBlockView: View, Equatable {
         case 2: Typography.title3.font
         default: Typography.headline.font
         }
+    }
+}
+
+extension View {
+    /// agent 内容里的链接（`ConversationLinks`）：`thinktin://` 的深链在 App 里打开（`Router.handle(url:)`），网址、邮件
+    /// 交给系统，别的（打电话、别的 App 的 scheme、`javascript:`）不打开。
+    @MainActor
+    func conversationLinkHandling(_ router: Router) -> some View {
+        environment(
+            \.openURL,
+            OpenURLAction { url in
+                switch ConversationLinks.handling(of: url) {
+                case .inApp: router.handle(url: url) ? .handled : .discarded
+                case .external: .systemAction
+                case .blocked: .discarded
+                }
+            })
     }
 }
 

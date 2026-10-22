@@ -102,6 +102,31 @@ struct ConversationScreensTests {
             renderInBothAppearances(SystemNoticeView(notice: SystemNotice(kind: kind, message: "detail")))
         }
         renderInBothAppearances(HistoryNoteView(note: .expired))
+        renderInBothAppearances(
+            HistoryRecordView(
+                note: .expired, summary: "## 结果\n\n- 做完了\n- 发到了群里", runID: DemoData.weeklyRunID,
+                onReport: { _ in }))
+        renderInBothAppearances(
+            HistoryRecordView(note: .notCached, summary: nil, runID: DemoData.weeklyRunID, onReport: { _ in }))
+        renderInBothAppearances(
+            UserMessageView(message: UserMessage(text: "再整理一次周报。"), isAIGenerated: false, onSendAgain: {}))
+    }
+
+    @Test("失败、取消的状态行带“重试”；运行详情里等审批的卡片；agent 内容里的链接接管")
+    func retryAndLinks() {
+        for state in [RunState.failed, .cancelled] {
+            hostAndLayout(
+                RunStatusLineView(
+                    runID: DemoData.reviewRunID, line: RunStatusLine(state: state, error: "boom"), instanceState: nil,
+                    onAction: { _ in }, onRetry: {}
+                )
+                .previewShell())
+        }
+        hostAndLayout(RunDetailScreen(runID: DemoData.postRunID).previewShell(.english, scheme: .dark))
+        hostAndLayout(
+            MarkdownView(blocks: MarkdownParser.parse("看 [计划](thinktin://plan/abc) 和 [文档](https://example.com)"))
+                .conversationLinkHandling(Router())
+                .previewShell())
     }
 
     @Test("运行状态行：每一种状态（含等待原因码）都能布局")

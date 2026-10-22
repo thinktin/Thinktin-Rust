@@ -74,6 +74,14 @@ public final class RunDetailModel {
             error: run.error, startedAt: run.startedAt, finishedAt: run.finishedAt, waitCode: run.waitCode)
     }
 
+    /// 这个运行里还没决定的审批卡片：运行详情直接显示，在这里就能批（状态行上的“去审批”滚到它们）。
+    public var pendingApprovalItems: [ConversationItem] {
+        (turn?.items ?? []).filter {
+            if case .approval(let card) = $0.content { return card.isPending }
+            return false
+        }
+    }
+
     /// 还没结束：可以停止。
     public var canStop: Bool { state?.isActive ?? false }
 

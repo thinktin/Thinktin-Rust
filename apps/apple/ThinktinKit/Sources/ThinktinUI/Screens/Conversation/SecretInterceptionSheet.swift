@@ -4,10 +4,13 @@ import ThinktinKit
 /// 发送前的密码拦截弹层（11.6，docs/vault.md 第 7 节）：消息里认出来的每一处一张卡片——能存的预填建议名、用途、账号，
 /// “存进保险箱并换成引用”后引用放回输入框；私钥这类存不进的只提示删掉；像模型厂商的 key 提示“添加为模型 key”。
 /// 底部“仍然发送”（二次确认后带 `allowSecrets` 发）。
+///
+/// “添加为模型 key”要去别的页面：交给 `onOpenRoute`，由弹出它的页面在弹层关掉之后再跳（弹层还在时弹不出另一个 sheet）。
 struct SecretInterceptionSheet: View {
     let model: ConversationModel
+    /// 关掉弹层后去的页面。
+    let onOpenRoute: (AppRoute) -> Void
 
-    @Environment(Router.self) private var router
     @Environment(\.displayLanguage) private var language
     @State private var isConfirmingSend = false
 
@@ -30,8 +33,8 @@ struct SecretInterceptionSheet: View {
                         }
                         ForEach(interception.entries) { entry in
                             SecretEntryCard(entry: entry, model: model) {
+                                onOpenRoute(.addCredential)
                                 model.dismissInterception()
-                                router.open(.addCredential)
                             }
                         }
                     }

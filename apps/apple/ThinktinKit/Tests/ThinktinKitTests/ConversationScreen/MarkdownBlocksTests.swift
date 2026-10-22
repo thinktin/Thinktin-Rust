@@ -103,7 +103,7 @@ struct MarkdownBlocksTests {
         #expect(items.map(\.id) == [0, 1])
     }
 
-    @Test("流式追加：前面的块和 id 不变，只重新解析最后一块；结果和整段解析一样")
+    @Test("流式追加：前面的块和 id 不变，只重新解析最后两块；结果和整段解析一样")
     func streaming() {
         let chunks = [
             "# 结果\n\n", "第一段", "说完了。\n\n- 一\n", "- 二\n\n```py\nprint(1)", "\n```\n\n| a | b |\n",
@@ -127,5 +127,64 @@ struct MarkdownBlocksTests {
         stream.update("别的")
         #expect(stream.fullParses == 2)
         #expect(stream.blocks.map(\.block) == [.paragraph("别的")])
+    }
+
+    @Test("流式追加：最后一行没收全时它的解读会变，连带上一块的结尾（#include、表格的分隔行）")
+    func streamingPartialLine() {
+        let cases: [[String]] = [
+            // “#”先像标题，接上“include”就是段落的续行。
+            ["段落\n#", "include <stdio.h>"],
+            // “|--”先像表格的分隔行，接上“x”就不是了，上面的“| a | b |”也回到段落里。
+            ["说明\n| a | b |\n|--", "x"],
+            // “-”先是空的列表项，接成“---”是分隔线。
+            ["- 一\n\n-", "--"],
+        ]
+        for chunks in cases {
+            var stream = MarkdownStream()
+            var text = ""
+            for chunk in chunks {
+                text += chunk
+                #expect(stream.update(text) == MarkdownParser.parse(text), "增量结果和整段解析一致：\(text)")
+            }
+            #expect(stream.fullParses == 1)
+        }
+    }
+
+    @Test("流式追加：一个字一个字地追加，每一步都和整段解析一样")
+    func streamingEveryCharacter() {
+        let sample = """
+            # 标题
+
+            第一段，**加粗**和 `代码`。
+            续行
+            #include 不是标题
+
+            1. 一
+            2. 二
+               - 嵌套
+            - [x] 完成
+
+            > 引用
+            懒续行
+
+            ```swift
+            let a = 1
+
+            print(a)
+            ```
+
+            | 列 | 值 |
+            |:---|---:|
+            | a | 1 |
+            ---
+            结尾
+            """
+        var stream = MarkdownStream()
+        var text = ""
+        for ch in sample {
+            text.append(ch)
+            #expect(stream.update(text) == MarkdownParser.parse(text), "增量结果和整段解析一致：\(text.debugDescription)")
+        }
+        #expect(stream.fullParses == 1)
     }
 }

@@ -442,8 +442,12 @@ public enum MarkdownParser {
     }
 }
 
-/// 流式输出时的增量解析：文字只在后面追加时，前面的块不变（`id` 也不变），只重新解析最后一块开始的那部分，界面只重排最后一块。
-/// 文字被整个换掉（不是追加）时从头解析。
+/// 流式输出时的增量解析：文字只在后面追加时，前面的块不变（`id` 也不变），只重新解析最后两块开始的那部分；界面的块视图
+/// 按内容比较（`Equatable`），没变的块不重排，通常只有最后一块重排。文字被整个换掉（不是追加）时从头解析。
+///
+/// 为什么是两块：最后一行可能还没收全，它的解读会变，连带改变上一块在哪儿结束。比如“段落\n#”里的“#”先被认成标题、
+/// 段落在它前面结束；后面接上“include”变成“#include”就不是标题了，应该和上面的段落是同一段。再往前的块是在完整的行上
+/// 结束的，不受影响。
 public struct MarkdownStream: Hashable, Sendable {
     public private(set) var text = ""
     public private(set) var blocks: [MarkdownBlockItem] = []
@@ -460,8 +464,10 @@ public struct MarkdownStream: Hashable, Sendable {
     @discardableResult
     public mutating func update(_ newText: String) -> [MarkdownBlockItem] {
         if newText == text, !(text.isEmpty && blocks.isEmpty && fullParses == 0) { return blocks }
-        if !text.isEmpty, newText.hasPrefix(text), let last = blocks.last {
-            blocks = Array(blocks.dropLast()) + MarkdownParser.parse(newText, from: last.offset, firstID: last.id)
+        if !text.isEmpty, newText.hasPrefix(text), !blocks.isEmpty {
+            let keep = max(0, blocks.count - 2)
+            let start = blocks[keep]
+            blocks = Array(blocks.prefix(keep)) + MarkdownParser.parse(newText, from: start.offset, firstID: start.id)
         } else {
             blocks = MarkdownParser.parse(newText)
             fullParses += 1

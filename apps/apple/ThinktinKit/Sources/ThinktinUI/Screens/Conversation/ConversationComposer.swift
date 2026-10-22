@@ -7,13 +7,16 @@ import ThinktinKit
 /// - 有运行没结束、输入框是空的：发送键变成停止（`cancelRun`）；有字时照常发送，上面提示“前一个任务还在进行，新消息会排队”；
 /// - 32000 字上限：快到时显示字数，超了标红、不能发；
 /// - 发送前的密码拦截在视图模型里（`ConversationModel.send()`，命中时弹 `SecretInterceptionSheet`）；
-/// - 发送、停止失败的错误显示在输入框上面（`ErrorBanner`）。
+/// - 发送、停止失败的错误显示在输入框上面（`ErrorBanner`）；
+/// - 上面一行是默认模型的标签（`main` 路由的上游模型；没配时提示），点开去这个实例的模型路由（不能逐条消息换模型）。
 ///
 /// `ComposerBar` 是 12.1 的公共组件，还没有停止键和排队提示；等它有了，这里换回去用它。
 struct ConversationComposer: View {
     @Bindable var model: ConversationModel
     let placeholder: String
     var isFocused: FocusState<Bool>.Binding
+    /// 点模型标签：去模型路由。
+    let onOpenModelRoutes: @MainActor () -> Void
 
     @Environment(\.displayLanguage) private var language
     @Environment(\.displayScale) private var displayScale
@@ -33,6 +36,7 @@ struct ConversationComposer: View {
                     .foregroundStyle(Theme.inkSecondary)
                     .padding(.horizontal, Metrics.Spacing.s)
             }
+            modelLabel
             HStack(alignment: .bottom, spacing: Metrics.Spacing.xs) {
                 TextField(
                     placeholder, text: $model.draft, prompt: Text(placeholder).foregroundStyle(Theme.inkTertiary),
@@ -76,6 +80,33 @@ struct ConversationComposer: View {
         .frame(maxWidth: Metrics.readableWidth)
         .frame(maxWidth: .infinity)
         .background(Theme.paper)
+    }
+
+    /// 默认模型的标签：配了显示模型名，没配用警告色提示；还没拉到时不显示。
+    @ViewBuilder
+    private var modelLabel: some View {
+        if let text = ConversationText.modelLabel(model.mainRoute, language: language) {
+            let missing = model.mainRoute == .missing
+            Button(action: onOpenModelRoutes) {
+                HStack(spacing: Metrics.Spacing.xxs) {
+                    Image(systemName: missing ? "exclamationmark.triangle" : "cpu")
+                        .imageScale(.small)
+                    Text(verbatim: text)
+                        .lineLimit(1)
+                    Image(systemName: "chevron.right")
+                        .imageScale(.small)
+                }
+                .typography(.caption)
+                .foregroundStyle(missing ? Theme.warning : Theme.inkSecondary)
+                .padding(.horizontal, Metrics.Spacing.s)
+                .frame(minHeight: Metrics.minTapTarget)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(Text(ConversationText.modelLabelAccessibility(model.mainRoute, language: language)))
+            .accessibilityAddTraits(.isButton)
+        }
     }
 
     /// 发送 / 停止 / 转圈。
