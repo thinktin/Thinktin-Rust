@@ -37,4 +37,5 @@
     <string name="design_approval_state_cancelled">已取消：运行已结束或已停止</string>
     <string name="design_approval_state_superseded">已作废：运行已重试，这次请求不再有效</string>
     <string name="design_approval_state_unknown">状态未知</string>
+    <string name="design_copy_code">复制代码</string>
 </resources>

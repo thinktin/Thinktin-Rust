@@ -70,6 +70,7 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.withContext
 import cn.thinktin.core.InstanceEvent as CoreInstanceEvent
 import cn.thinktin.core.detectSecrets as coreDetectSecrets
+import cn.thinktin.core.uniqueVaultName as coreUniqueVaultName
 
 /**
  * ThinktinService 的真实实现：把 client-core（UniFFI 生成的 [ThinktinClientInterface]）适配成 App 模型。
@@ -490,6 +491,8 @@ internal class CoreThinktinService(
 
     override suspend fun saveSecretFromMessage(message: String, value: String, item: NewVaultItem): SavedSecret =
         call { client.saveSecretFromMessage(message, value, item.toCore()).toModel() }
+
+    override fun uniqueVaultName(base: String, taken: List<String>): String = call { coreUniqueVaultName(base, taken) }
 
     override suspend fun vaultItems(): List<VaultItem> = call { client.vaultItems().map { it.toModel() } }
 

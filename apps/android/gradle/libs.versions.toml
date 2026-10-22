@@ -13,6 +13,7 @@ serializationJson = "1.7.3"
 securityCrypto = "1.1.0-alpha06"
 datastore = "1.1.1"
 jna = "5.15.0"
+commonmark = "0.24.0"
 junit = "4.13.2"
 robolectric = "4.14.1"
 turbine = "1.2.0"
@@ -30,6 +31,11 @@ androidx-datastore-preferences = { module = "androidx.datastore:datastore-prefer
 # 批准审批前的生物识别 / 锁屏密码确认（BiometricPrompt，13.16）；它要 FragmentActivity，API 26–27 的指纹对话框要 AppCompat 主题。
 androidx-biometric = { module = "androidx.biometric:biometric", version.ref = "biometric" }
 androidx-appcompat = { module = "androidx.appcompat:appcompat", version.ref = "appcompat" }
+
+# 对话页的 Markdown（13.5）：commonmark 解析，Compose 自己渲染（不用 WebView）。BSD-2-Clause。
+commonmark = { module = "org.commonmark:commonmark", version.ref = "commonmark" }
+commonmark-ext-gfm-tables = { module = "org.commonmark:commonmark-ext-gfm-tables", version.ref = "commonmark" }
+commonmark-ext-gfm-strikethrough = { module = "org.commonmark:commonmark-ext-gfm-strikethrough", version.ref = "commonmark" }
 
 compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
 compose-ui = { module = "androidx.compose.ui:ui" }

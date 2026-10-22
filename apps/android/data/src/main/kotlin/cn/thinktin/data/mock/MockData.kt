@@ -3,6 +3,7 @@ package cn.thinktin.data.mock
 import cn.thinktin.data.model.AgentInfo
 import cn.thinktin.data.model.Approval
 import cn.thinktin.data.model.ApprovalOption
+import cn.thinktin.data.model.ConversationBuilder
 import cn.thinktin.data.model.ApprovalState
 import cn.thinktin.data.model.Artifact
 import cn.thinktin.data.model.ApprovalTimeoutAction
@@ -212,7 +213,7 @@ internal class MockData(private val baseMs: Long) {
         runId: String?,
         kind: String,
         minutesAgo: Long,
-        ai: Boolean = kind.startsWith("agent."),
+        ai: Boolean = kind in ConversationBuilder.AI_GENERATED_KINDS,
         payload: JsonObjectBuilder.() -> Unit = {},
     ) {
         val seq = (seqByInstance[instanceId] ?: 0L) + 1

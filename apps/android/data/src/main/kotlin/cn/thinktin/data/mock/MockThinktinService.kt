@@ -5,6 +5,7 @@ import cn.thinktin.data.model.Approval
 import cn.thinktin.data.model.ApprovalState
 import cn.thinktin.data.model.Artifact
 import cn.thinktin.data.model.ContentReport
+import cn.thinktin.data.model.ConversationBuilder
 import cn.thinktin.data.model.Credential
 import cn.thinktin.data.model.CredentialUpdate
 import cn.thinktin.data.model.DetectedSecret
@@ -520,7 +521,7 @@ class MockThinktinService(
             nextSeq[instanceId] = seq
             InstanceEvent(
                 instanceId = instanceId, seq = seq, runId = runId, kind = kind, payload = payload,
-                aiGenerated = kind.startsWith("agent."), createdAtMs = clock(),
+                aiGenerated = kind in ConversationBuilder.AI_GENERATED_KINDS, createdAtMs = clock(),
             ).also { eventList.add(it) }
         }
         appended.tryEmit(event)
@@ -1120,8 +1121,15 @@ class MockThinktinService(
 
     override fun detectSecrets(text: String): List<DetectedSecret> {
         val found = mutableListOf<DetectedSecret>()
+        PRIVATE_KEY.findAll(text).forEach { m ->
+            found += DetectedSecret(
+                kind = "private_key", start = m.range.first, end = m.range.last + 1, value = m.value,
+                suggestedName = "private_key", service = "", storable = false,
+            )
+        }
         LABELED.findAll(text).forEach { m ->
             val value = m.groups[2] ?: return@forEach
+            if (found.any { value.range.first >= it.start && value.range.first < it.end }) return@forEach
             found += DetectedSecret(
                 kind = "labeled", start = value.range.first, end = value.range.last + 1, value = value.value,
                 suggestedName = "password", service = "", storable = true,
@@ -1141,6 +1149,15 @@ class MockThinktinService(
     override suspend fun saveSecretFromMessage(message: String, value: String, item: NewVaultItem): SavedSecret {
         val saved = createVaultItem(item)
         return SavedSecret(item = saved, message = message.replace(value, "[vault:${saved.name}]"))
+    }
+
+    override fun uniqueVaultName(base: String, taken: List<String>): String {
+        // 和 client-core 的规则一样（简化版）：小写、只留字母数字和下划线，重名加 _2、_3……
+        val clean = base.lowercase().replace(Regex("[^a-z0-9_]+"), "_").trim('_').take(MAX_VAULT_NAME).ifEmpty { "secret" }
+        if (clean !in taken) return clean
+        return generateSequence(2) { it + 1 }
+            .map { n -> val suffix = "_$n"; clean.take(MAX_VAULT_NAME - suffix.length) + suffix }
+            .first { it !in taken }
     }
 
     override suspend fun vaultItems(): List<VaultItem> {
@@ -1256,6 +1273,10 @@ class MockThinktinService(
         private const val SCRIPT_LENGTH = 5
 
         private val LABELED = Regex("""(?i)(password|passwd|pwd|密码|口令|token|secret)\s*[:：=]\s*(\S{6,})""")
+        private val PRIVATE_KEY = Regex("""-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----""")
+
+        /** 保险箱条目名的最大长度（和 client-core 一样）。 */
+        private const val MAX_VAULT_NAME = 64
         private val API_KEY = Regex("""\b(sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,})""")
 
         private const val DEVICE_MESSAGE_TTL_MS: Long = 10 * 60_000

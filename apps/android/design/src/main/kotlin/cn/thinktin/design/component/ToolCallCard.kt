@@ -10,7 +10,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.DriveFileMove
 import androidx.compose.material.icons.outlined.Build
+import androidx.compose.material.icons.outlined.Computer
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Psychology
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.ExpandLess
@@ -30,6 +35,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
@@ -60,11 +66,19 @@ fun toolCallIcon(kind: String?): ImageVector = when (kind) {
     "search" -> Icons.Outlined.Search
     "execute" -> Icons.Outlined.Terminal
     "fetch" -> Icons.Outlined.Public
+    "delete" -> Icons.Outlined.Delete
+    "move" -> Icons.AutoMirrored.Outlined.DriveFileMove
+    "think" -> Icons.Outlined.Psychology
+    "switch_mode" -> Icons.Outlined.Tune
+    "computer" -> Icons.Outlined.Computer
     else -> Icons.Outlined.Build
 }
 
+const val TOOL_CALL_CARD_TEST_TAG = "tool-call-card"
+
 /**
- * 工具调用卡片（占位版，13.5 再细化）：头部“图标 + 标题 + 状态”，点开显示参数与结果（等宽）。
+ * 工具调用卡片（第 4.3 节）：头部“图标 + 标题 + 一句话摘要 + 状态”，点开显示原始内容（等宽）。
+ * 标题是 agent 写的：[aiGenerated] 时标题前加 AI 生成标识（第 8.4 节）。[summary] 是参数的一句话（命令、路径、网址）。
  */
 @Composable
 fun ToolCallCard(
@@ -74,11 +88,15 @@ fun ToolCallCard(
     status: ToolCallStatus = ToolCallStatus.Pending,
     details: String? = null,
     initiallyExpanded: Boolean = false,
+    summary: String? = null,
+    aiGenerated: Boolean = false,
 ) {
     var expanded by rememberSaveable { mutableStateOf(initiallyExpanded) }
     val canExpand = !details.isNullOrEmpty()
     Surface(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag(TOOL_CALL_CARD_TEST_TAG),
         shape = ThinktinShapes.Card,
         color = MaterialTheme.colorScheme.surfaceVariant,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
@@ -99,13 +117,24 @@ fun ToolCallCard(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Icon(toolCallIcon(kind), contentDescription = null, modifier = Modifier.size(18.dp))
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
+                Column(Modifier.weight(1f)) {
+                    if (aiGenerated) AiGeneratedLabel()
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (!summary.isNullOrBlank()) {
+                        Text(
+                            text = summary,
+                            style = ThinktinTextStyles.Code,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
                 ToolCallStatusLabel(status)
                 if (canExpand) {
                     Icon(

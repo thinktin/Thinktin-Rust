@@ -382,6 +382,12 @@ interface ThinktinService {
 
     suspend fun saveSecretFromMessage(message: String, value: String, item: NewVaultItem): SavedSecret
 
+    /**
+     * 保险箱条目名被占用时换一个不重复的（`github` → `github_2`，不联网）。[taken] 是现有条目的名字
+     * （[vaultItems]）；[base] 会先按保险箱的命名规则整理（空的变成 `secret`）。
+     */
+    fun uniqueVaultName(base: String, taken: List<String>): String
+
     suspend fun vaultItems(): List<VaultItem>
 
     suspend fun vaultItem(itemId: String): VaultItemDetail

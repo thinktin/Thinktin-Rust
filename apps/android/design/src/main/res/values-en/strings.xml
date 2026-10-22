@@ -37,4 +37,5 @@
     <string name="design_approval_state_cancelled">Cancelled: the run ended or was stopped</string>
     <string name="design_approval_state_superseded">Void: the run was retried, this request no longer applies</string>
     <string name="design_approval_state_unknown">Unknown state</string>
+    <string name="design_copy_code">Copy code</string>
 </resources>
