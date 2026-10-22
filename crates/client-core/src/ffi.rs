@@ -28,7 +28,7 @@ fn ms_opt(t: Option<DateTime<Utc>>) -> Option<i64> {
 
 fn parse<T: FromStr>(raw: &str, what: &str) -> Result<T> {
     raw.parse().map_err(|_| ClientError::InvalidArgument {
-        message: format!("bad {what} id {raw:?}"),
+        detail: format!("bad {what} id {raw:?}"),
     })
 }
 
@@ -39,7 +39,7 @@ fn parse_opt<T: FromStr>(raw: &Option<String>, what: &str) -> Result<Option<T>> 
 fn from_enum_str<T: serde::de::DeserializeOwned>(raw: &str, what: &str) -> Result<T> {
     serde_json::from_value(serde_json::Value::String(raw.to_owned())).map_err(|_| {
         ClientError::InvalidArgument {
-            message: format!("unknown {what} {raw:?}"),
+            detail: format!("unknown {what} {raw:?}"),
         }
     })
 }
@@ -467,7 +467,7 @@ impl TryFrom<Schedule> for d::ScheduleSpec {
             Schedule::Once { at_ms } => Self::Once {
                 at: Utc.timestamp_millis_opt(at_ms).single().ok_or_else(|| {
                     ClientError::InvalidArgument {
-                        message: format!("bad time {at_ms}"),
+                        detail: format!("bad time {at_ms}"),
                     }
                 })?,
             },
@@ -1405,7 +1405,7 @@ impl ThinktinClient {
             .spawn(fut)
             .await
             .map_err(|e| ClientError::Internal {
-                message: e.to_string(),
+                detail: e.to_string(),
             })?
     }
 }
@@ -1422,7 +1422,7 @@ impl ThinktinClient {
             .enable_all()
             .build()
             .map_err(|e| ClientError::Internal {
-                message: e.to_string(),
+                detail: e.to_string(),
             })?;
         let api = Api::new(
             ApiConfig {
@@ -1453,8 +1453,8 @@ impl ThinktinClient {
             .set_accept_language(accept_language.as_deref())
     }
 
-    /// 服务端说过这个版本太老了（任何请求返回 `UpgradeRequired`、事件流握手被拒）。之后事件流以 `Stopped` 结束、
-    /// 不再重连；界面进升级页。一直有效（升级就是重装）。
+    /// 服务端说过这个版本太老了（任何请求返回 `UpgradeRequired`、事件流握手被拒）。之后事件流以
+    /// `StreamStatus::UpgradeRequired` 结束、不再重连；界面进升级页。一直有效（升级就是重装）。
     pub fn upgrade_required(&self) -> bool {
         self.inner.api.upgrade_required()
     }
@@ -1480,7 +1480,7 @@ impl ThinktinClient {
             (None, None) => None,
             _ => {
                 return Err(ClientError::InvalidArgument {
-                    message: "push_channel and push_token go together".into(),
+                    detail: "push_channel and push_token go together".into(),
                 });
             }
         };
@@ -1542,7 +1542,7 @@ impl ThinktinClient {
         let kind: d::DeviceMessageKind = from_enum_str(&kind, "device message kind")?;
         let body: serde_json::Value =
             serde_json::from_str(&body_json).map_err(|e| ClientError::InvalidArgument {
-                message: format!("body_json is not JSON: {e}"),
+                detail: format!("body_json is not JSON: {e}"),
             })?;
         self.run(|c| async move { Ok(c.api.send_device_message(to, kind, &body).await?.into()) })
             .await
@@ -2303,7 +2303,7 @@ impl ThinktinClient {
                     .single()
                     .map(|t| t.to_rfc3339())
                     .ok_or_else(|| ClientError::InvalidArgument {
-                        message: format!("bad time {m}"),
+                        detail: format!("bad time {m}"),
                     })
             })
             .transpose()

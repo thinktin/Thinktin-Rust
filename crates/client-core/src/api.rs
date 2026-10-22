@@ -375,13 +375,13 @@ fn accept_language_header(v: Option<&str>) -> Result<Option<HeaderValue>> {
     };
     if v.len() > MAX_ACCEPT_LANGUAGE {
         return Err(ClientError::InvalidArgument {
-            message: "accept_language is longer than 256 bytes".into(),
+            detail: "accept_language is longer than 256 bytes".into(),
         });
     }
     HeaderValue::from_str(v)
         .map(Some)
         .map_err(|_| ClientError::InvalidArgument {
-            message: "accept_language has characters a header cannot carry".into(),
+            detail: "accept_language has characters a header cannot carry".into(),
         })
 }
 
@@ -398,7 +398,7 @@ impl Api {
         crate::install_crypto();
         if cfg.base_url.starts_with("https://") && !crate::tls::platform_ready() {
             return Err(ClientError::Internal {
-                message: "call cn.thinktin.core.TlsInit.initialize(context) before creating \
+                detail: "call cn.thinktin.core.TlsInit.initialize(context) before creating \
                           ThinktinClient (https on Android)"
                     .into(),
             });

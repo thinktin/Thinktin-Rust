@@ -50,13 +50,13 @@ pub struct Cache {
 
 fn to_json<T: Serialize>(v: &T) -> Result<String> {
     serde_json::to_string(v).map_err(|e| ClientError::Cache {
-        message: e.to_string(),
+        detail: e.to_string(),
     })
 }
 
 fn from_json<T: DeserializeOwned>(s: &str) -> Result<T> {
     serde_json::from_str(s).map_err(|e| ClientError::Cache {
-        message: e.to_string(),
+        detail: e.to_string(),
     })
 }
 

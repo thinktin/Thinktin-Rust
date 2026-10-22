@@ -44,6 +44,9 @@ pub async fn queue_starts(w: &mut Tx<Worker>, rec: &RunRecord) -> store::Result<
 /// 实时活动的动态内容。
 pub fn content_state(a: &LiveActivity) -> Value {
     let mut v = json!({"state": a.state.as_str(), "steps": a.steps});
+    if let Some(code) = a.wait_code.as_deref().filter(|_| a.state.is_waiting()) {
+        v["waitCode"] = json!(code);
+    }
     if let Some(t) = a.started_at {
         v["startedAt"] = json!(t.timestamp());
     }

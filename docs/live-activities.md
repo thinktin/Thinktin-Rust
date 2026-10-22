@@ -45,6 +45,9 @@ struct RunActivityAttributes: ActivityAttributes {
         var steps: Int         // 已经走了几步（工具调用），连同直接子运行的（流水线的步骤、委派的子任务）
         var startedAt: Int?    // 开始时间，Unix 秒；还没开始时没有
         var endedAt: Int?      // 结束时间，Unix 秒；还没结束时没有
+        var waitCode: String?  // 等的是什么（10.7，和 Run.wait_code 一样）：invalid、no_balance、unavailable、
+                               // rate_limited、overloaded（waiting_quota）、device_offline（waiting_device）；
+                               // 不在等、或者等的是审批和子任务时没有。以后会加新值，不认识的按 state 显示
     }
     var runId: String
     var instanceId: String

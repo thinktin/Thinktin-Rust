@@ -44,8 +44,10 @@ pub enum StreamStatus {
     NotFound,
     /// 账号被冻结（4.6），事件流停止；提示联系客服。
     AccountFrozen,
-    /// 调用方停的；或者这个版本太老了，服务端不再接受（这时 `ThinktinClient::upgrade_required()` 是 true，
-    /// 界面进升级页）。
+    /// 这个版本太老了，服务端不再接受（握手或别的请求回了 426），事件流停止；界面进升级页
+    /// （`ThinktinClient::upgrade_required()` 也是 true）。
+    UpgradeRequired,
+    /// 调用方停的。
     Stopped,
 }
 
@@ -183,8 +185,11 @@ async fn run(
     let mut refreshed_in_a_row = 0;
     loop {
         // 这个版本太老了（别的请求、别的事件流发现的）：不再连。
-        if *stop.borrow() || api.upgrade_required() {
+        if *stop.borrow() {
             return StreamStatus::Stopped;
+        }
+        if api.upgrade_required() {
+            return StreamStatus::UpgradeRequired;
         }
         sink.on_status(StreamStatus::Connecting);
         let ended = connect_once(
@@ -203,7 +208,7 @@ async fn run(
             Ended::AccountFrozen => return StreamStatus::AccountFrozen,
             Ended::UpgradeRequired => {
                 api.mark_upgrade_required();
-                return StreamStatus::Stopped;
+                return StreamStatus::UpgradeRequired;
             }
             Ended::Unauthenticated => {
                 refreshed_in_a_row += 1;
@@ -213,7 +218,7 @@ async fn run(
                     Ok(()) => {}
                     Err(ClientError::SignedOut) => return StreamStatus::SignedOut,
                     Err(ClientError::AccountFrozen) => return StreamStatus::AccountFrozen,
-                    Err(ClientError::UpgradeRequired) => return StreamStatus::Stopped,
+                    Err(ClientError::UpgradeRequired) => return StreamStatus::UpgradeRequired,
                     Err(e) => debug!(error = %e, "token refresh failed"),
                 }
             }
@@ -222,7 +227,7 @@ async fn run(
                 match api.me().await {
                     Err(ClientError::AccountFrozen) => return StreamStatus::AccountFrozen,
                     Err(ClientError::SignedOut) => return StreamStatus::SignedOut,
-                    Err(ClientError::UpgradeRequired) => return StreamStatus::Stopped,
+                    Err(ClientError::UpgradeRequired) => return StreamStatus::UpgradeRequired,
                     Ok(_) => {}
                     Err(e) => debug!(error = %e, "checking the account failed"),
                 }

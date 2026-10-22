@@ -41,6 +41,8 @@ pub struct LiveActivity {
     pub instance_id: InstanceId,
     pub instance_name: String,
     pub state: RunState,
+    /// 运行在等什么（`proto::domain::wait_code`），等 key、等电脑时有。
+    pub wait_code: Option<String>,
     pub steps: u32,
     pub started_at: Option<DateTime<Utc>>,
     pub finished_at: Option<DateTime<Utc>>,
@@ -96,6 +98,7 @@ struct Row {
     instance_id: Uuid,
     name: String,
     state: String,
+    wait_code: Option<String>,
     steps: i32,
     started_at: Option<DateTime<Utc>>,
     finished_at: Option<DateTime<Utc>>,
@@ -121,6 +124,7 @@ impl Row {
             instance_id: self.instance_id.into(),
             instance_name: self.name,
             state: parse(&self.state)?,
+            wait_code: self.wait_code,
             steps: count(self.steps, "steps")?,
             started_at: self.started_at,
             finished_at: self.finished_at,
@@ -352,7 +356,7 @@ impl Tx<Worker> {
                RETURNING la.device_id, la.run_id, la.user_id, la.origin, la.push_token, la.start_sent_at, \
                  la.sent_state, la.sent_steps, la.attempts) \
              SELECT c.*, d.activity_start_token, coalesce(d.push_channel = 'apns_sandbox', false) AS sandbox, \
-               r.instance_id, i.name, r.state, due.steps, r.started_at, \
+               r.instance_id, i.name, r.state, r.wait_code, due.steps, r.started_at, \
                r.finished_at \
              FROM claimed c JOIN due ON due.device_id = c.device_id AND due.run_id = c.run_id \
                JOIN runs r ON r.id = c.run_id JOIN instances i ON i.id = r.instance_id \

@@ -1,5 +1,5 @@
 //! 请求的公共部分（11.8）：每个请求都带 `Accept-Language`；服务端说版本太老（426）时，接口报 `UpgradeRequired`、
-//! 事件流以 `Stopped` 结束、不再重连。用一个只会按路径回固定响应的 HTTP 桩，不需要数据库。
+//! 事件流以 `UpgradeRequired` 结束、不再重连。用一个只会按路径回固定响应的 HTTP 桩，不需要数据库。
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -227,7 +227,7 @@ async fn an_old_app_stops_instead_of_reconnecting() {
     );
     assert_eq!(
         finished(&sink).await,
-        vec![StreamStatus::Connecting, StreamStatus::Stopped]
+        vec![StreamStatus::Connecting, StreamStatus::UpgradeRequired]
     );
     assert!(a.upgrade_required());
     let sink = Arc::new(Sink::default());
@@ -240,7 +240,7 @@ async fn an_old_app_stops_instead_of_reconnecting() {
         sink.clone(),
         fast(),
     );
-    assert_eq!(finished(&sink).await, vec![StreamStatus::Stopped]);
+    assert_eq!(finished(&sink).await, vec![StreamStatus::UpgradeRequired]);
     assert_eq!(seen.lock().unwrap().len(), 1);
 
     // 令牌过期、刷新时才说太老（不带错误体）：一样结束。
@@ -263,7 +263,7 @@ async fn an_old_app_stops_instead_of_reconnecting() {
     let statuses = finished(&sink).await;
     assert_eq!(
         statuses.last(),
-        Some(&StreamStatus::Stopped),
+        Some(&StreamStatus::UpgradeRequired),
         "{statuses:?}"
     );
     assert!(
