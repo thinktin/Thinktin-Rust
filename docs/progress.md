@@ -95,14 +95,14 @@
 
 ## 进行中
 
-- **client-core 的破坏性改动（2026-10-22，和 iOS、Android 会话约好的一批，`d6f850c` 之后那个提交）**：
+- **client-core 的破坏性改动（2026-10-22，和 iOS、Android 会话约好的一批，`339e191`）**：
   1. `ClientError`（`Network`、`Api`、`Decode`、`Cache`、`InvalidArgument`、`Internal`）和 `PairingError::Malformed` 里的
      `message` 字段改名 `detail`（Kotlin 的异常类自带 `message`，同名编译不过；Android 的 `patch-bindings.py` 可以去掉了）。
   2. `StreamStatus` 加了 `UpgradeRequired`：服务端说这个版本太老（握手或别的请求回 426）时事件流以它结束，不再是 `Stopped`
      （`Stopped` 只表示调用方停的）。`upgrade_required()` 照旧。
   同时加的（不破坏）：实时活动的 `ContentState` 多了可选的 `waitCode`（见 [实时活动](live-activities.md) 第 3 节）。
 
-- **10.7 APNs 补齐（iOS 会话提的后端前置包，见 `ios-app` 分支的 `docs/ios-packages.md`）**：主会话在做（2026-10-22 06:30 认领，北京时间）。代码都推了（`9a099bd`…`8b36e20`），约定写在 [推送](push.md)：没给有效期的推送存 24 小时；设备按 `apns` / `apns_sandbox` 分生产和沙盒环境（实时活动也跟着走，`[push.apns] sandbox_endpoint`）；保险箱请求、计划待确认有自己的种类（`VAULT_REQUEST`、`PLAN_CONFIRM`，优先级 10，`tt.vault_request`）；提醒带子类型（`tt.subtype` 和收件箱的 `subtype`，账号冻结 / 恢复、触发器失效等，等 key 的是 `wait_code`）；角标是发的时候的未读数；触发规则失效时通知用户。正在做 11.8 和 10.7 的对抗式评审，改完后告诉 iOS、Android 会话。没做的：macOS 的 topic（P3）、极光的角标。同一批的 11.8、4.7、5.5 已完成（见上表）；5.6 运行附件等 1.1 拍板，先不做。11.8 里留给别的包的可选项：运行带自动重试时间和最晚等到的时间、实时活动的 ContentState 加 `waitCode`。
+- **10.7 APNs 补齐（iOS 会话提的后端前置包，见 `ios-app` 分支的 `docs/ios-packages.md`）**：主会话在做（2026-10-22 06:30 认领，北京时间）。代码都推了（`9a099bd`…`8b36e20`），约定写在 [推送](push.md)：没给有效期的推送存 24 小时；设备按 `apns` / `apns_sandbox` 分生产和沙盒环境（实时活动也跟着走，`[push.apns] sandbox_endpoint`）；保险箱请求、计划待确认有自己的种类（`VAULT_REQUEST`、`PLAN_CONFIRM`，优先级 10，`tt.vault_request`）；提醒带子类型（`tt.subtype` 和收件箱的 `subtype`，账号冻结 / 恢复、触发器失效等，等 key 的是 `wait_code`）；角标是发的时候的未读数；触发规则失效时通知用户。11.8 和 10.7 的对抗式评审确认了 12 条，都修了（`6ac24a8`、`d6f850c`），正在复核修复。没做的：macOS 的 topic（P3）、极光的通知替换。同一批的 11.8、4.7、5.5 已完成（见上表）；5.6 运行附件等 1.1 拍板，先不做。11.8 里留给别的包的可选项：运行带自动重试时间和最晚等到的时间（实时活动的 `waitCode` 已加）。
 - **16.5 第三轮评审的修复**：主会话在做（2026-10-22 00:30 起，北京时间）。32 条确认的发现都修了（`ac03807`…`fc6169b`）：按位置算容差的原文核对、版权行只去版权声明、非拉丁文字和限制性的词核对不上、GNU 的 GPL 原文核对得上、每个提名都和声明对照、登记过的例外照样查禁止名单和限制性说法、合并带上包内原文、同一个包的几份都记、PyPI 声明、隐藏目录、字体格式、缓存的键。Codex 的 zstd-sys、rust-stemmers、libdbus-sys 登记了。4635 份真实原文的回归：2 份改过措辞的 BSD 不再核对得上，15 份 GPL / Unicode 原文新核对得上。修复后的对抗式验证又确认了 30 条（合并的第三方许可清单不查禁止名单和限制性说法、版权句子藏条款、长前言后的 GPL、PyPI 长字段、几类许可证认不出、真实原文的误报等），第四轮都修了（`wip/16.5-round4` 合进来了，`de02700`…`35ccaba`）：只剩两处有意不修、写进了 licenses.md 第 8 节（中日韩、西里尔字母写的权利人名字仍会让版权行核对不过；用新词写在授权句以外的条件仍可能核对通过）。语料回归：几个语料都没有丢掉原本核对通过的，新增的都确实是那个许可证。合并后 Codex 的 crate 清单要重新生成（build.sh 会做），模板的许可证检查看 CI（templates.yml）。以后有 PyPI 包用很长的 License 字段（pandas、scipy 等，现在的镜像里没有）要登记。
 - **16.5 剩下的（人的部分）**：上线前法务复核，问题列在 [许可证说明](licenses.md) 第 6 节：Claude（Anthropic 专有）按 legal-and-compliance 页面的条件在托管沙箱里运行、平台形态算不算“居间”；各 agent 的名字和商标；LGPL、MPL 组件的源码义务（交镜像给客户时）；Bun 静态链接的各库要不要逐个补原文；App 的“开源许可”页面（12.x、13.x 做界面时接上）。看不全的地方记在说明第 8 节（包里编译好的原生代码、打包好的 JavaScript 等）。分支 `wip/16.5-license-inventory`（旧主会话的半成品）已被 `backend-core` 上的实现取代，可以删掉。
 - **6.14 接入其他 agent**：按 10-14 拍板的“暂不接其他 agent”先不做；以后要接，优先 DeepSeek。
