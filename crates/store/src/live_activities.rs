@@ -111,6 +111,7 @@ impl Row {
         let count = |n: i32, what: &str| {
             u32::try_from(n).map_err(|_| Error::Corrupt(format!("negative {what}")))
         };
+        let state: RunState = parse(&self.state)?;
         Ok(LiveActivity {
             device_id: self.device_id.into(),
             run_id: self.run_id.into(),
@@ -125,8 +126,11 @@ impl Row {
             attempts: count(self.attempts, "attempts")?,
             instance_id: self.instance_id.into(),
             instance_name: self.name,
-            state: parse(&self.state)?,
-            wait_code: self.wait_code,
+            state,
+            // 只在等 key、等电脑时算数（和 `RunRecord` 一样）：老版本的副本不清这一列，别的状态下可能还留着。
+            wait_code: self
+                .wait_code
+                .filter(|_| matches!(state, RunState::WaitingQuota | RunState::WaitingDevice)),
             steps: count(self.steps, "steps")?,
             started_at: self.started_at,
             finished_at: self.finished_at,
@@ -341,7 +345,9 @@ impl Tx<Worker> {
                        x.origin = 'push' AND ((x.start_sent_at IS NULL AND d.activity_start_token IS NOT NULL) \
                          OR r.state IN ('succeeded', 'failed', 'cancelled')) \
                      ELSE x.sent_at IS NULL \
-                       OR ((r.state IS DISTINCT FROM x.sent_state OR r.wait_code IS DISTINCT FROM x.sent_wait_code) \
+                       OR ((r.state IS DISTINCT FROM x.sent_state \
+                            OR (CASE WHEN r.state IN ('waiting_quota', 'waiting_device') THEN r.wait_code END) \
+                               IS DISTINCT FROM x.sent_wait_code) \
                            AND x.sent_at <= now() - make_interval(secs => $4)) \
                        OR (t.steps IS DISTINCT FROM x.sent_steps AND x.sent_at <= now() - make_interval(secs => $5)) \
                      END), \

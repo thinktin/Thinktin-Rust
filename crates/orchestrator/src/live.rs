@@ -56,9 +56,9 @@ pub fn content_state(a: &LiveActivity) -> Value {
     v
 }
 
-/// 内容里的 `waitCode`：运行在等 key、等电脑时等的是什么。
+/// 内容里的 `waitCode`：运行在等 key、等电脑时等的是什么（领的时候已经按状态过滤过）。
 fn sent_wait_code(a: &LiveActivity) -> Option<String> {
-    a.wait_code.clone().filter(|_| a.state.is_waiting())
+    a.wait_code.clone()
 }
 
 /// 远程开启时的静态属性。
