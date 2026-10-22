@@ -19,7 +19,7 @@ PR：[#7](https://github.com/thinktin/Thinktin-Rust/pull/7)（草稿，叠在 #5
 - **13.16 云端审批**（`69f75db`）：`ApprovalCards`（从审批记录或事件流归并出卡片，含作废与 `approval_state` 优先规则）、`:design` 的 ApprovalCard、审批中心与详情（`getApproval` 对已处理 / 过期不报错）、`ApprovalGate`（BiometricPrompt：BIOMETRIC_STRONG 或 DEVICE_CREDENTIAL，无锁屏凭证不允许批准；拒绝不验证）；360 个 debug 测试。
 
 进行中：
-- 13.5 对话与运行过程：Workflow `wf_2830c5a3-21b` 恢复运行（2026-10-23 06:38 起，北京时间；适配与 13.16 已缓存，13.5 在上次中断的部分改动上继续）→ 四维评审 → 反方核实 → 修复 → 最终验证。中断时用 `resumeFromRunId: "wf_2830c5a3-21b"` 恢复。
+- 13.5 对话与运行过程：Workflow `wf_2830c5a3-21b` 按用户要求暂停 4 小时（2026-10-23 07:03 起，北京时间；预约 11:20 恢复）。已完成的适配与 13.16 已缓存；13.5 的部分改动已作为快照提交（`ba78a8d`：ConversationBuilder、对话页、运行页、测试的一部分）。恢复命令：`Workflow({scriptPath: "<会话目录>/workflows/scripts/android-adapt-13-16-13-5-wf_2830c5a3-21b.js", resumeFromRunId: "wf_2830c5a3-21b"})`，恢复前把脚本里任务 C 的“注意”段改成描述当前工作区状态。之后：四维评审 → 反方核实 → 修复 → 最终验证。
 
 下一步：
 1. 13.16 云端审批 → 13.5 对话 → 13.6 计划 → 13.8 推送与收件箱 → 13.13 设置 → 13.7 团队与流水线 → 13.11 / 13.12，再做 P2 的 13.10、13.14。
