@@ -964,6 +964,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_set_accept_language(
     ): Int
+    external fun uniffi_client_core_checksum_method_thinktinclient_set_credential_daily_limit(
+    ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_set_instance_version(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_set_live_activity_start_token(
@@ -1229,6 +1231,8 @@ internal object UniffiLib {
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_set_accept_language(`ptr`: Long,`acceptLanguage`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
+    external fun uniffi_client_core_fn_method_thinktinclient_set_credential_daily_limit(`ptr`: Long,`credentialId`: RustBuffer.ByValue,`dailyTokenLimit`: RustBuffer.ByValue,
+    ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_set_instance_version(`ptr`: Long,`instanceId`: RustBuffer.ByValue,`version`: RustBuffer.ByValue,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_set_live_activity_start_token(`ptr`: Long,`token`: RustBuffer.ByValue,
@@ -1611,7 +1615,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_delete_inbox_item() and 0xFFFF) != 7581) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_client_core_checksum_method_thinktinclient_delete_instance() and 0xFFFF) != 7907) {
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_delete_instance() and 0xFFFF) != 64860) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_delete_plan() and 0xFFFF) != 51470) {
@@ -1741,6 +1745,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_set_accept_language() and 0xFFFF) != 57462) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_set_credential_daily_limit() and 0xFFFF) != 1631) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_set_instance_version() and 0xFFFF) != 9209) {
@@ -3757,6 +3764,11 @@ public interface ThinktinClientInterface {
     
     suspend fun `deleteInboxItem`(`itemId`: kotlin.String)
     
+    /**
+     * 删除实例：没结束的运行取消，它的模型别名一起删；它自己的计划一起删掉，别的实例的流水线计划有一步在它上面的
+     * 暂停（恢复 `set_plan_paused(.., false)`、`confirm_plan` 报 409，改了步骤才能恢复）。确认框可以按 `Plan.instance_id` 和
+     * `Plan.steps[].instance_id` 分成这两组列出来。
+     */
     suspend fun `deleteInstance`(`instanceId`: kotlin.String)
     
     suspend fun `deletePlan`(`planId`: kotlin.String)
@@ -3927,6 +3939,12 @@ public interface ThinktinClientInterface {
      * App 里切换了语言：之后的请求带新的 `Accept-Language`（`None` 不带）。不联网。
      */
     fun `setAcceptLanguage`(`acceptLanguage`: kotlin.String?)
+    
+    /**
+     * 改每日 token 上限（11.9）：`None` 取消上限，必须大于 0（0 报 422）。放宽或取消时等 key 的运行会接着跑；
+     * 模型网关几秒内用上新的上限。
+     */
+    suspend fun `setCredentialDailyLimit`(`credentialId`: kotlin.String, `dailyTokenLimit`: kotlin.ULong?): Credential
     
     /**
      * 升级（不给版本）或回滚到旧版本：下次唤醒时生效，工作区保留。
@@ -4861,6 +4879,11 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
     }
 
     
+    /**
+     * 删除实例：没结束的运行取消，它的模型别名一起删；它自己的计划一起删掉，别的实例的流水线计划有一步在它上面的
+     * 暂停（恢复 `set_plan_paused(.., false)`、`confirm_plan` 报 409，改了步骤才能恢复）。确认框可以按 `Plan.instance_id` 和
+     * `Plan.steps[].instance_id` 分成这两组列出来。
+     */
     @Throws(ClientException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
     override suspend fun `deleteInstance`(`instanceId`: kotlin.String) {
@@ -5936,6 +5959,33 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
     }
     
     
+
+    
+    /**
+     * 改每日 token 上限（11.9）：`None` 取消上限，必须大于 0（0 报 422）。放宽或取消时等 key 的运行会接着跑；
+     * 模型网关几秒内用上新的上限。
+     */
+    @Throws(ClientException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `setCredentialDailyLimit`(`credentialId`: kotlin.String, `dailyTokenLimit`: kotlin.ULong?) : Credential {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_client_core_fn_method_thinktinclient_set_credential_daily_limit(
+                uniffiHandle,
+                
+        FfiConverterString.lower(`credentialId`),
+        FfiConverterOptionalULong.lower(`dailyTokenLimit`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_client_core_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeCredential.lift(it) },
+        // Error FFI converter
+        ClientException.ErrorHandler,
+    )
+    }
 
     
     /**
@@ -9896,6 +9946,18 @@ data class VendorInfo (
     var `models`: List<kotlin.String>
     , 
     var `notes`: kotlin.String
+    , 
+    /**
+     * 订阅类 key 的前缀（11.9）：选这家时，粘贴的 key（去掉首尾空白）以其中一个开头（区分大小写）的服务端不收，
+     * 可以先在本地提示。空的就不用查。
+     */
+    var `subscriptionKeyPrefixes`: List<kotlin.String> = listOf() 
+    , 
+    /**
+     * 这家套餐专用地址的前缀（11.9）：自定义端点（`custom`）的地址去掉首尾空白、转小写后等于**任何一家**的其中
+     * 一个、或者接着是 `/` 的，服务端不收。只是提前提示，服务端照样检查。
+     */
+    var `planOnlyBases`: List<kotlin.String> = listOf() 
     
 ){
     
@@ -9917,6 +9979,8 @@ public object FfiConverterTypeVendorInfo: FfiConverterRustBuffer<VendorInfo> {
             FfiConverterSequenceString.read(buf),
             FfiConverterSequenceString.read(buf),
             FfiConverterString.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterSequenceString.read(buf),
         )
     }
 
@@ -9925,7 +9989,9 @@ public object FfiConverterTypeVendorInfo: FfiConverterRustBuffer<VendorInfo> {
             FfiConverterString.allocationSize(value.`name`) +
             FfiConverterSequenceString.allocationSize(value.`protocols`) +
             FfiConverterSequenceString.allocationSize(value.`models`) +
-            FfiConverterString.allocationSize(value.`notes`)
+            FfiConverterString.allocationSize(value.`notes`) +
+            FfiConverterSequenceString.allocationSize(value.`subscriptionKeyPrefixes`) +
+            FfiConverterSequenceString.allocationSize(value.`planOnlyBases`)
     )
 
     override fun write(value: VendorInfo, buf: ByteBuffer) {
@@ -9934,6 +10000,8 @@ public object FfiConverterTypeVendorInfo: FfiConverterRustBuffer<VendorInfo> {
             FfiConverterSequenceString.write(value.`protocols`, buf)
             FfiConverterSequenceString.write(value.`models`, buf)
             FfiConverterString.write(value.`notes`, buf)
+            FfiConverterSequenceString.write(value.`subscriptionKeyPrefixes`, buf)
+            FfiConverterSequenceString.write(value.`planOnlyBases`, buf)
     }
 }
 
@@ -9982,7 +10050,9 @@ sealed class ClientException: kotlin.Exception() {
     }
     
     /**
-     * 服务端返回的错误。`code` 是 [`ErrorCode`] 的字符串形式（not_found、conflict、invalid……）。
+     * 服务端返回的错误。`code` 是服务端给的错误码原样（[`ErrorCode`] 的字符串形式：not_found、conflict、invalid……），
+     * 这个版本不认识的码（服务端以后加的）也原样放进来，按 `status` 给通用提示。以 `_limit` 结尾的是数量到了上限
+     * （409，比如 `instance_limit`：删掉一个实例再领养）。
      */
     class Api(
         
