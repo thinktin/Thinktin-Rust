@@ -12,6 +12,7 @@
 - WBS 细化（`21a824f`）：12.x 从 11 个包 54 人日细化为 23 个包 114 人日（P1 89）；后端前置 4.7、5.5、5.6、10.6、10.7、11.7、11.8；每包的实现要点在 `docs/ios-packages.md`，开发顺序和目录分工在 `docs/ios.md` 第 8、9 节。
 - 12.1（`66ebc7e`，macOS CI 待确认）：ThinktinKit（模型、ClientProtocol、ClientError、MockClient、ConversationReducer、格式化）、ThinktinCoreAdapter（CoreClient、桥接）、ThinktinUI（设计令牌、基础组件、欢迎页 RootView）、XcodeGen 工程与 App 骨架（Keychain 会话、隐私清单、文案表）、`.github/workflows/ios.yml`（Linux + macOS 两个作业）、`apps/apple/.swift-format`、`tools/apple/uicheck`（Linux 上用桩 SwiftUI 类型检查界面和 App 代码）。Linux 上 187 个测试通过，严格格式检查干净。
 - 合进 backend-core（`a4e8ba2`、`d448aeb`）：带进 11.7（33 个新方法）、10.6（实时活动，含评审修复）、4.7（审核账号，App 不用改）、5.5（内容举报）。
+- 12.2 登录与设备管理（`91da5f1`，合并 `d16ac5a`）、12.3 Agent 目录与领养（`5beeb6a`，合并 `515a851`）：两个分支各自补的 uicheck 桩有重复声明，合并后去重（`2e34c08`）。Linux 上 493 个测试通过。12.5、12.6 这一轮被用量限额打断（没留下改动），挪到第二轮重做。
 - 12.16 应用框架与导航（`1c2504a`、合 11.8 后 `ea0c1ed`）：AppRoute（全部页面）、thinktin:// 深链与推送 tt 解析、Router、AppModel（登录 / 冻结 / 强制升级状态、连接与离线横幅、抽屉角标：未读、待审批、进行中（listRuns activeOnly）、待确认计划）、AppShell（侧边抽屉、实例切换、全局状态页）、每个功能目录的 `XxxDestination` 接入点、URL scheme；启动时检查 upgradeRequired、装 client-core 日志（os_log）、按设备语言发 Accept-Language。
 - 11.8 前半接入（分支 `ios-w1/11.8`，`bf9a016`，合并 `0a05461`）：listRuns、cachedEventsBefore、setAcceptLanguage、upgradeRequired、Run.waitCode、Credential.activeProtocol、AgentInfo 的介绍 / 上游 / 许可说明、OSLogSink。Linux 上 398 个测试通过。
 - iOS CI 第一次全绿（run 39720152852，`b015212`）：Linux 作业、macOS 上 Xcode 26.6 编 App 和模拟器测试都通过。
@@ -21,7 +22,8 @@
 - 11.8 接入合进 ios-app（merge `ios-w1/11.8`，`bf9a016`）并让 12.16 用上：`ClientProtocol` 101 个方法，`ObservedClient` 补了 4 个转发（`upgradeRequired()` 停过事件流也算）；“进行中”角标和抽屉实例行的“等你处理”改用 `listRuns(filter: .active)`（一次跨实例请求，一页 200；启动时先用每个实例缓存里最近 20 条凑数）；`upgradeRequired()` 在建 `AppModel`（第一帧就是升级页）、`start()`、回到前台、事件流以 `stopped` 结束时查；App 用真核心时建核心前 `CoreLogging.install`（Debug 到 debug，Release 到 info），请求带“界面语言打头、后面跟设备语言偏好”的 Accept-Language，Mock 也设同一个值。Linux 上 398 个测试通过，uicheck 两种和 `test`（33 个）都过，严格格式检查 0 条。
 
 进行中：
-- W1 第一轮（工作流 wf_54cd35af-e50）：12.16 和 11.8 已完成并合并；现在（路由、深链、抽屉、全局状态、每个功能目录的 `XxxDestination` 接入点），然后 12.2、12.3、12.5、12.6 在各自的 git worktree 里并行，分别提交到 `ios-w1/12.2-account`、`ios-w1/12.3-agents`、`ios-w1/12.5-conversation`、`ios-w1/12.6-plans`，由本会话合并回 ios-app。
+- W1 第二轮（工作流 wf_f1f40517-bee）：先在 ios-app 上做同步（合 backend-core 到 f9f87b3：破坏性改动、去掉兜底 logout、审批 request_id / attempt / getApproval 与 ConversationReducer 的审批卡关联修复、计划列表带触发器、推送新种类与子类型、实时活动 ContentState），再在 worktree 里并行 12.4（`ios-w2/12.4-models`）、12.5（`ios-w2/12.5-conversation`）、12.6（`ios-w2/12.6-plans`）、12.12（`ios-w2/12.12-settings`），每个做完由审查者在同一分支上对抗式审查并修。
+- （已完成）W1 第一轮（工作流 wf_54cd35af-e50）：12.16 和 11.8 已完成并合并；（路由、深链、抽屉、全局状态、每个功能目录的 `XxxDestination` 接入点），然后 12.2、12.3、12.5、12.6 在各自的 git worktree 里并行，分别提交到 `ios-w1/12.2-account`、`ios-w1/12.3-agents`、`ios-w1/12.5-conversation`、`ios-w1/12.6-plans`，由本会话合并回 ios-app。
 - iOS CI 第一次完整跑（run 39687813304，`66ebc7e`）的结果：Linux 作业全绿；macOS 上 Rust 交叉编译与打包（约 9 分钟）、真实 SwiftUI 编译 ThinktinKit + ThinktinUI、xcodegen、Xcode 26.6 编译 App 并在 iPhone 17 Pro 模拟器（iOS 26.5）上跑 App 冒烟测试都通过；214 个测试里只有“抽屉：打开和关闭”失败（关着的抽屉理想宽度本来就是 0，测试断言写错了），已修，随 11.7 接入一起推送。
 
 下一步：
