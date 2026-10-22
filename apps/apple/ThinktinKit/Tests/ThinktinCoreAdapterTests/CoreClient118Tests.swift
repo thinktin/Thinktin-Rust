@@ -116,6 +116,9 @@ struct CoreClient118Tests {
             [String(repeating: "a", count: 35), String(repeating: "b", count: 36), "fr"],
             (0..<12).map { "l\($0)" },
             ["\tde-DE\n", "pt_BR", "zh-Hant-TW"],
+            // 放不进 256 字节的后面几个不要（f9f87b3 起 client-core 自己截）。
+            (0..<10).map { String(format: "x%02d", $0) + String(repeating: "y", count: 32) },
+            Array(repeating: "zh-Hans-CN-" + String(repeating: "x", count: 24), count: 12),
         ]
         for tags in cases {
             #expect(AcceptLanguage.header(tags: tags) == (CoreClient.acceptLanguageHeader(tags: tags) ?? ""), "\(tags)")

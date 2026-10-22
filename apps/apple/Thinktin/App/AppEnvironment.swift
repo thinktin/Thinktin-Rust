@@ -59,16 +59,11 @@ final class AppEnvironment {
     /// 中文时中文，其余英文）。服务端只认中文和英文，按排第一的定新用户推送、收件箱的语言，agent 目录的介绍也按它给，
     /// 这样和界面一致——只带设备偏好的话，系统语言是日语时界面是英文，服务端却认不出、按中文。
     ///
-    /// client-core 拒收超过 256 字节的值（`CoreClient` 建不起来）：语言偏好又多又长时从后往前去掉，直到放得下。
+    /// client-core 拒收超过 256 字节的值（`CoreClient` 建不起来）：`AcceptLanguage.header` 和 client-core 的
+    /// `accept_language_header` 一样，放不下的后面几个不要，界面语言总在第一个。
     nonisolated static func acceptLanguage(preferredLanguages: [String] = Locale.preferredLanguages) -> String {
         let language = preferredLanguages.first.map(DisplayLanguage.init(languageTag:)) ?? .chinese
-        var tags = preferredLanguages
-        var header = AcceptLanguage.header(for: language, systemTags: tags)
-        while header.utf8.count > AcceptLanguage.maxLength, !tags.isEmpty {
-            tags.removeLast()
-            header = AcceptLanguage.header(for: language, systemTags: tags)
-        }
-        return header
+        return AcceptLanguage.header(for: language, systemTags: preferredLanguages)
     }
 
     /// client-core 日志的级别：调试版到 debug，发布版到 info（`CoreLogging` 的建议）。

@@ -18,7 +18,8 @@ struct AppModelPushTests {
     func accountFrozenPush() async {
         let (mock, model) = make()
         await model.start()
-        let push = PushPayload(kind: .info, subtype: .accountFrozen, inboxItemID: "0192f3a0-0000-7000-8000-000000001009")
+        let push = PushPayload(
+            kind: .info, subtype: .accountFrozen, inboxItemID: "0192f3a0-0000-7000-8000-000000001009")
         mock.update { $0.user.status = .frozen }
         await model.open(push: push)
         #expect(model.phase == .frozen)

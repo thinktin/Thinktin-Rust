@@ -635,7 +635,9 @@ struct ConversationApprovalAttemptTests {
     private func requested(
         _ ev: inout Events, _ requestID: String, attempt: Int?, approvalID: String?, title: String = "删除 build/"
     ) -> InstanceEvent {
-        var payload: [String: JSONValue] = ["request_id": .string(requestID), "title": .string(title), "options": options]
+        var payload: [String: JSONValue] = [
+            "request_id": .string(requestID), "title": .string(title), "options": options,
+        ]
         if let attempt { payload["attempt"] = .number(Double(attempt)) }
         if let approvalID { payload["approval_id"] = .string(approvalID) }
         return ev.add(.permissionRequested, runA, .object(payload))
@@ -729,7 +731,10 @@ struct ConversationApprovalAttemptTests {
         r.apply(
             ev.add(
                 .permissionResolved, runA,
-                ["request_id": "perm-1", "by": "user", "attempt": 1, "approval_id": "ap-1", "approval_state": "expired"]
+                [
+                    "request_id": "perm-1", "by": "user", "attempt": 1, "approval_id": "ap-1",
+                    "approval_state": "expired",
+                ]
             ))
         r.apply(
             ev.add(
@@ -774,7 +779,10 @@ struct ConversationApprovalAttemptTests {
         r.apply(
             ev.add(
                 .permissionResolved, runA,
-                ["request_id": "perm-1", "by": "user", "attempt": 1, "approval_id": "ap-1", "approval_state": "expired"]
+                [
+                    "request_id": "perm-1", "by": "user", "attempt": 1, "approval_id": "ap-1",
+                    "approval_state": "expired",
+                ]
             ))
         #expect(cards(r)[0].resolution?.outcome == .expired)
 
@@ -806,7 +814,8 @@ struct ConversationApprovalAttemptTests {
         r.apply(start(&ev, attempt: 2))
         r.apply(requested(&ev, "perm-1", attempt: nil, approvalID: nil))
         #expect(cards(r)[0].attempt == 2)
-        r.apply(ev.add(.permissionResolved, runA, ["request_id": "perm-1", "option_id": "ok", "by": "user", "attempt": 2]))
+        r.apply(
+            ev.add(.permissionResolved, runA, ["request_id": "perm-1", "option_id": "ok", "by": "user", "attempt": 2]))
         #expect(cards(r).count == 1)
         #expect(cards(r)[0].resolution?.outcome == .approvedByUser)
         // 尝试不知道的卡片，带了 attempt 的结果也认（老数据和新数据混着）。
@@ -842,7 +851,9 @@ struct ConversationApprovalAttemptTests {
         guessed.link(approvals: [approval("ap-x", requestID: "", attempt: 0, title: "同名")])
         #expect(cards(guessed).map(\.approvalID) == ["ap-x", nil])
         guessed.apply(
-            ev2.add(.permissionResolved, runA, ["request_id": "r2", "option_id": "ok", "by": "user", "approval_id": "ap-x"]))
+            ev2.add(
+                .permissionResolved, runA, ["request_id": "r2", "option_id": "ok", "by": "user", "approval_id": "ap-x"])
+        )
         #expect(cards(guessed).map(\.approvalID) == [nil, "ap-x"])
     }
 
@@ -856,7 +867,9 @@ struct ConversationApprovalAttemptTests {
         #expect(Res(optionID: nil, optionName: nil, by: .timeout, isApproved: false).outcome == .expired)
         #expect(Res(optionID: nil, optionName: nil, by: .user, isApproved: false, state: .expired).outcome == .expired)
         #expect(Res(optionID: nil, optionName: nil, by: .cancelled, isApproved: false).outcome == .cancelled)
-        #expect(Res(optionID: nil, optionName: nil, by: .unknown(""), isApproved: false, state: .cancelled).outcome == .cancelled)
+        #expect(
+            Res(optionID: nil, optionName: nil, by: .unknown(""), isApproved: false, state: .cancelled).outcome
+                == .cancelled)
     }
 
     private func approval(

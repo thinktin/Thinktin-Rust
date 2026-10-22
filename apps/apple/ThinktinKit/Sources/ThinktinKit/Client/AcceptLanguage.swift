@@ -15,14 +15,19 @@ public enum AcceptLanguage {
     public static let maxTagLength = 35
 
     /// 把语言列表（按偏好排好，比如 `["zh-Hans-CN", "en-US", "en"]`）拼成请求头：`zh-Hans-CN, en-US;q=0.9, en;q=0.8`。
-    /// 去掉首尾空白；跳过空的、超过 35 个字符的、有字母数字和 `-`、`_` 以外字符的；`_` 换成 `-`；最多 10 个。
-    /// 一个都不剩时是空串。
+    /// 去掉首尾空白；跳过空的、超过 35 个字符的、有字母数字和 `-`、`_` 以外字符的；`_` 换成 `-`；最多 10 个；
+    /// 放不进 256 字节（`maxLength`）的后面几个不要（和 client-core 的 `accept_language_header` 一样，结果总能直接交给
+    /// `setAcceptLanguage`）。一个都不剩时是空串。
     public static func header(tags: [String]) -> String {
         let usable = tags.lazy.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter(isTag).prefix(maxTags)
-        return usable.enumerated().map { i, tag in
+        var out = ""
+        for (i, tag) in usable.enumerated() {
             let tag = tag.replacingOccurrences(of: "_", with: "-")
-            return i == 0 ? tag : "\(tag);q=0.\(maxTags - i)"
-        }.joined(separator: ", ")
+            let item = i == 0 ? tag : ", \(tag);q=0.\(maxTags - i)"
+            if out.utf8.count + item.utf8.count > maxLength { break }
+            out += item
+        }
+        return out
     }
 
     /// 系统的语言偏好（`Locale.preferredLanguages`）拼成的请求头；一个能用的都没有时为 nil（不带这个头）。

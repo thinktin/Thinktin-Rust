@@ -48,6 +48,17 @@ struct AppConfiguration: Equatable, Sendable {
         )
     }
 
+    /// 这个构建的 APNs 令牌是不是沙盒环境的（docs/push.md 第 1 节，按编译条件定）：Debug 构建用开发证书签名
+    /// （`aps-environment` 是 development），报 `apns_sandbox`；Release（TestFlight、App Store）报 `apns`。
+    /// 用法见 `PushRegistration.forThisBuild(deviceToken:)`。
+    static var usesAPNsSandbox: Bool {
+        #if DEBUG
+            true
+        #else
+            false
+        #endif
+    }
+
     static func clientKind(environment: [String: String], isDebugBuild: Bool) -> ClientKind {
         switch environment[mockEnvironmentKey]?.trimmingCharacters(in: .whitespaces).lowercased() {
         case "1", "true", "yes": return .mock

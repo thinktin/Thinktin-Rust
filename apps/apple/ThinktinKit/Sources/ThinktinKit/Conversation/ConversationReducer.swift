@@ -366,7 +366,8 @@ private struct TurnState: Sendable {
                 // 按预授权策略直接决定的请求没有 requested 事件，只有 resolved：补一张已决的卡片。
                 card = ApprovalKey(attempt: attempt(of: p.attempt), requestID: p.requestID)
                 addApprovalCard(
-                    card, event: event, ApprovalCard(requestID: p.requestID, attempt: card.attempt, title: nil, options: []))
+                    card, event: event,
+                    ApprovalCard(requestID: p.requestID, attempt: card.attempt, title: nil, options: []))
             }
             resolveApproval(card, optionID: p.optionID, by: p.by, state: p.approvalState)
         case .approvalDecided:

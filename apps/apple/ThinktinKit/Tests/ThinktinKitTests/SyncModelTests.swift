@@ -136,7 +136,8 @@ struct RunActivityContentStateTests {
 
         let waiting = try JSONDecoder().decode(
             RunActivityContentState.self,
-            from: Data(#"{"state":"waiting_device","steps":3,"startedAt":1700000000,"waitCode":"device_offline"}"#.utf8))
+            from: Data(#"{"state":"waiting_device","steps":3,"startedAt":1700000000,"waitCode":"device_offline"}"#.utf8)
+        )
         #expect(waiting.runState == .waitingDevice)
         #expect(waiting.runWaitCode == .deviceOffline)
         #expect(waiting.endDate == nil)

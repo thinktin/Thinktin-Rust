@@ -202,6 +202,13 @@ struct AcceptLanguageTests {
         #expect(parts.count == AcceptLanguage.maxTags)
         #expect(parts.first == "l0")
         #expect(parts.last == "l9;q=0.1")
+        // 放不进 256 字节的后面几个不要（和 client-core 一样，结果总能交给 setAcceptLanguage）。
+        let long = (0..<10).map { String(format: "t%02d", $0) + String(repeating: "x", count: 32) }
+        let trimmed = AcceptLanguage.header(tags: long)
+        #expect(trimmed.utf8.count <= AcceptLanguage.maxLength)
+        #expect(trimmed.components(separatedBy: ", ").count == 6)
+        #expect(trimmed.hasPrefix("t00"))
+        #expect(throws: Never.self) { try AcceptLanguage.validated(trimmed) }
     }
 
     @Test("header(for:)：App 里选的语言排第一，后面跟系统的")

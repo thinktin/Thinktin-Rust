@@ -707,7 +707,8 @@ struct ModelComputationTests {
         #expect(p.nextFireAt == nil, "等确认的没有下一次")
         p.awaitingConfirmation = false
         p.triggers.append(
-            Trigger(id: "t4", schedule: .cron(expression: "0 9 * * *", timeZone: "Mars/Olympus"), isEnabled: false,
+            Trigger(
+                id: "t4", schedule: .cron(expression: "0 9 * * *", timeZone: "Mars/Olympus"), isEnabled: false,
                 disabledReason: .invalidRule))
         p.refreshSchedule()
         #expect(p.invalidTriggers == 1)

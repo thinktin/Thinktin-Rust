@@ -54,6 +54,11 @@ struct AppSmokeTests {
         #expect(AppConfiguration.current.client == .mock)
     }
 
+    @Test("推送通道：测试跑的是 Debug 构建（开发证书签名），APNs 令牌报 apns_sandbox（docs/push.md 第 1 节）")
+    func pushChannel() {
+        #expect(AppConfiguration.usesAPNsSandbox)
+    }
+
     @Test("客户端选择：环境变量优先，没有时 Debug 用 Mock、Release 用真核心")
     func clientKind() {
         #expect(AppConfiguration.clientKind(environment: [:], isDebugBuild: true) == .mock)

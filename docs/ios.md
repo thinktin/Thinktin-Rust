@@ -92,7 +92,7 @@ Claude App 的特点：暖色纸张底色、极少的强调色、标题用衬线
 | `agent.tool_call` / `agent.tool_call_update` | `{tool_call_id, title, kind, status, raw}` | 工具调用卡片：标题、状态（进行中 / 完成 / 失败），展开看 `raw` |
 | `agent.platform_tool_call` | `{call_id, name, arguments}` | 同上，显示为“平台工具：计划 / 产出物 / 委派 / 保险箱” |
 | `agent.plan` | `{entries}` | agent 的待办清单卡片，带“AI 生成”标识 |
-| `agent.permission_requested` / `agent.permission_resolved` | `{request_id, title, options, tool_call}` / `{request_id, option_id, by}` | 审批卡片：未决时显示选项按钮（调 `decide_approval`），已决显示结果和由谁决定（用户 / 策略 / 超时） |
+| `agent.permission_requested` / `agent.permission_resolved` | `{request_id, title, options, tool_call, attempt, approval_id}` / `{request_id, option_id, by, attempt, approval_id, approval_state}` | 审批卡片：未决时显示选项按钮（调 `decide_approval`），已决显示结论（`ApprovalOutcome`：你批准了 / 你拒绝了 / 按预授权 / 已过期 / 已作废）。一个运行里按 `(attempt, request_id)` 认（shim 每次尝试都从 `perm-1` 重新编号）；有 `approval_id` 直接关联审批记录；`approval_state` 是 `expired` 的显示已过期（平台判的超时 shim 回的是 `by: user`）；尝试比运行当前的小的、运行已经结束的待处理卡片作废（backend-core 的 docs/agent-integration.md 第 6 节） |
 | `vault.requested` / `vault.fulfilled` / `vault.declined` | `{request_id, name, purpose, fields}` | 保险箱表单卡片（填账号密码，只进保险箱）；已处理显示结果 |
 | `run.state` | `{state, reason, attempt}` | 运行状态行：等待类状态显示原因和下一步（去配 key、去审批、等电脑上线） |
 | `artifact.published` | `{artifact_id, name, version, size}` | 产出物卡片，点开预览 / 分享 |
@@ -100,14 +100,16 @@ Claude App 的特点：暖色纸张底色、极少的强调色、标题用衬线
 | `plan.needs_confirmation` | `{plan_id, title, change}` | “agent 新建 / 修改了计划，待确认”卡片，跳到计划页 |
 | `plan.cancelled` | `{plan_id, title}` | “agent 取消了计划 X”系统行 |
 | `instance.state` | `{state}`，没有 `run_id` | 不进时间线：更新对话页页头和抽屉里的实例状态（“正在唤醒”，已归档的从模板重建会慢一些） |
-| `approval.decided` | `{approval_id, state, option_id}` | 更新对应的审批卡（按运行关联，见 ios-packages.md 12.15） |
+| `approval.decided` | `{approval_id, state, option_id, request_id, attempt}` | 更新对应的审批卡：先按已关联的审批 id，再按 `(attempt, request_id)`，老的服务端没有这两个键时这个运行里只有一张未决卡片才算它 |
 | `vault.used` / `agent.vault_reveal` | `{names}` / `{call_id, refs}` | “用了保险箱里的 github”提示行（只有名字） |
 | `agent.usage`、`agent.turn_started`、`agent.turn_ended`、`agent.ready`、`agent.update` | — | 不进时间线（`turn_ended` 结束流式状态，`stop_reason` 为 refusal / max_tokens / max_turn_requests 时显示提示行；`usage` 显示在运行详情） |
 | `agent.error`、`agent.session_lost`、`agent.exited`、`run.log_truncated` | `{message}` 等 | 系统提示行 |
 
 - 事件流的回调在后台线程，视图模型切回主线程再更新。
 - `on_reset(oldest_seq, latest_seq)`：本地事件作废，清空后从 `cached_events` / 服务端重新加载。
-- `StreamStatus`：`connecting` / `reconnecting` 在顶部显示细条；`signed_out` 回登录页；`account_frozen` 显示冻结页；`not_found` 回实例列表。
+- `StreamStatus`：`connecting` / `reconnecting` 在顶部显示细条；`signed_out` 回登录页；`account_frozen` 显示冻结页；`not_found` 回实例列表；
+  `upgrade_required`（服务端回 426，339e191 起）进升级页、停掉所有事件流（`AppModel` 统一处理）；`stopped` 只表示调用方自己停的。
+- 账号解冻后要重新订阅：从冻结页回来的页面本来就会重新出现；一直留着的页面看 `AppModel.resubscribeRequest`（`onChange` 时重新订阅）。
 
 ## 6. 错误处理
 
@@ -124,7 +126,8 @@ Claude App 的特点：暖色纸张底色、极少的强调色、标题用衬线
 | `unsupported(feature)` | 协议里先加了、client-core 还没导出的方法才会抛（11.7 合入后现在没有这种方法）；界面显示“这个功能还没开放”，不给重试 |
 | 其他 | 通用错误提示，带“复制详情” |
 
-接口的 `message` 是英文、给开发者看的，界面显示按错误码本地化的文案。
+接口的说明（ThinktinCore 里 339e191 起叫 `detail`，ThinktinKit 的 `ClientError` 里还叫 `message`）是英文、给开发者看的，
+界面显示按错误码本地化的文案。
 
 ## 6.1 深链与推送
 
@@ -134,14 +137,20 @@ Claude App 的特点：暖色纸张底色、极少的强调色、标题用衬线
 `notify` 定义，两端共用。Universal Links 等上线前再配。
 
 实现在 `ThinktinKit/Navigation`（12.16）：`DeepLink` 解析深链（认不出的格式、多余的路径段、不像 id 的 id 一律不认），
-`PushPayload` 解析推送的 `userInfo`（`tt` 下的 `kind`、`instance`、`run`、`approval`、`plan`、`inbox`，见 crates/notify/src/apns.rs），
-`Router` 跳转。规则：
+`PushPayload` 解析推送的 `userInfo`（`tt` 下的 `kind`、`subtype`、`instance`、`run`、`approval`、`plan`、`inbox`、`vault_request`，
+约定见 backend-core 的 docs/push.md 第 3、4 节），`Router` 跳转；推送送达、点开都先交给 `AppModel.receive(push:)` / `open(push:)`。规则：
 
 - 深链和推送打开后，返回栈是“根（当前实例的对话）→ 目标页”，和安卓的冷启动一致；`thinktin://instance/{id}` 打开实例详情
   （安卓也是实例设置页），并把它设成当前实例。
 - 推送去哪：审批 → 审批详情（没有审批 id 时运行详情，再没有就是审批中心）；运行完成 / 失败 → 运行详情（没有运行 id 时实例的对话，
-  再没有就是收件箱里的那一条）；其他提醒 → 计划 → 运行 → 实例的对话 → 收件箱里的那一条 → 收件箱，取第一个有 id 的。推送里有实例 id
-  时顺带切到这个实例。`PushPayload.inboxItemID` 给 12.8 标已读。保险箱请求 id 等 10.7 加进 `tt` 再接。
+  再没有就是收件箱里的那一条）；保险箱请求（`vault_request`）→ 填写请求页（`.vaultRequest`，没有请求 id 时同运行完成）；计划待确认
+  （`plan_confirm`）→ 计划确认页（`.confirmPlan`，没有计划 id 时计划列表）；其他提醒 → 先看子类型（`approval_skipped` 去运行详情，
+  `im_channel_disabled` 去 IM 渠道设置），再按计划 → 运行 → 实例的对话 → 收件箱里的那一条 → 收件箱，取第一个有 id 的。推送里有实例 id
+  时顺带切到这个实例。`PushPayload.inboxItemID` 给 12.8 标已读。
+- 子类型（`NotificationSubtype`，开放字符串，收件箱条目的 `subtype` 同一套）：`account_frozen` 显示冻结页；`account_restored` 重查账号、
+  重新订阅事件流、同步收件箱；`stopped_all` 刷新角标；都在 `AppModel.receive(push:)` 里，各功能不用管。
+- 推送通道：Debug 构建（开发证书签名，`aps-environment` 是 development）报 `apns_sandbox`，Release 报 `apns`
+  （`AppConfiguration.usesAPNsSandbox`、`PushRegistration.forThisBuild(deviceToken:)`）。
 - 没登录、冻结、要升级时深链和推送先记下（`Router.pendingRoute`），回到正常状态再跳，同一条只跳一次。
 
 ## 6.2 离线时每个页面怎么显示

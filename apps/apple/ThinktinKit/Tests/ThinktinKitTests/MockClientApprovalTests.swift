@@ -112,7 +112,9 @@ struct MockClientApprovalTests {
         #expect(expired.decidedAt != nil)
         #expect(mock.expireApproval(DemoData.pendingApprovalID) == nil, "已经不是待处理的")
         #expect(mock.state.inbox.first { $0.approvalID == DemoData.pendingApprovalID }?.isRead == true)
-        #expect(await code { _ = try await mock.decideApproval(DemoData.pendingApprovalID, optionID: "allow") } == .conflict)
+        #expect(
+            await code { _ = try await mock.decideApproval(DemoData.pendingApprovalID, optionID: "allow") } == .conflict
+        )
 
         let events = mock.state.events[writer] ?? []
         let resolved = try #require(events.last { $0.kind == .permissionResolved })

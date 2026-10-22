@@ -81,7 +81,8 @@ struct PushPayloadTests {
                     "vault_request": "vreq-1"}}
             """
         let object = try JSONSerialization.jsonObject(with: Data(json.utf8))
-        let vault = try #require(PushPayload(userInfo: try #require(object as? [AnyHashable: Any])))
+        let userInfo = try #require(object as? [AnyHashable: Any])
+        let vault = try #require(PushPayload(userInfo: userInfo))
         #expect(vault.kind == .vaultRequest)
         #expect(vault.vaultRequestID == "vreq-1")
         #expect(vault.subtype == nil)
@@ -94,17 +95,20 @@ struct PushPayloadTests {
         let restored = try #require(PushPayload(userInfo: ["tt": ["kind": "info", "subtype": "account_restored"]]))
         #expect(restored.subtype == .accountRestored)
         #expect(restored.subtype?.changesAccountState == true)
-        let waiting = try #require(PushPayload(userInfo: ["tt": ["kind": "run_failed", "subtype": "invalid", "run": "r1"]]))
+        let waiting = try #require(
+            PushPayload(userInfo: ["tt": ["kind": "run_failed", "subtype": "invalid", "run": "r1"]]))
         #expect(waiting.subtype == .waiting(.invalid))
         #expect(waiting.route == .run("r1"))
         // 不认识的子类型原样保留、按种类跳；空的、不是字符串的当作没有。
-        let future = try #require(PushPayload(userInfo: ["tt": ["kind": "info", "subtype": "quota_soon", "plan": "p1"]]))
+        let future = try #require(
+            PushPayload(userInfo: ["tt": ["kind": "info", "subtype": "quota_soon", "plan": "p1"]]))
         #expect(future.subtype == .unknown("quota_soon"))
         #expect(future.route == .plan("p1"))
         #expect(PushPayload(userInfo: ["tt": ["kind": "info", "subtype": " "]])?.subtype == nil)
         #expect(PushPayload(userInfo: ["tt": ["kind": "info", "subtype": 7]])?.subtype == nil)
         // 不像 id 的保险箱请求 id 当作没有。
-        #expect(PushPayload(userInfo: ["tt": ["kind": "vault_request", "vault_request": "a/b"]])?.vaultRequestID == nil)
+        #expect(
+            PushPayload(userInfo: ["tt": ["kind": "vault_request", "vault_request": "a/b"]])?.vaultRequestID == nil)
     }
 
     @Test("10.7 的种类和子类型去哪")

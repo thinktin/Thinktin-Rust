@@ -64,8 +64,10 @@ public enum NotificationSubtype: OpenStringEnum {
     case unknown(String)
 
     public static let knownCases: [NotificationSubtype] =
-        [.accountFrozen, .accountRestored, .stoppedAll, .approvalSkipped, .triggerDisabled, .imChannelDisabled,
-         .reportHandled] + RunWaitCode.knownCases.map(NotificationSubtype.waiting)
+        [
+            .accountFrozen, .accountRestored, .stoppedAll, .approvalSkipped, .triggerDisabled, .imChannelDisabled,
+            .reportHandled,
+        ] + RunWaitCode.knownCases.map(NotificationSubtype.waiting)
 
     public var rawValue: String {
         switch self {
