@@ -17,7 +17,7 @@ PR：[#7](https://github.com/thinktin/Thinktin-Rust/pull/7)（草稿，叠在 #5
 - **13.4 模型 key 配置**（`47eeab6`…）：key 列表（厂商、标签、后 4 位、限额、状态、协议）、编辑 / 换 key / 停用 / 删除（删除前查出引用该 key 的实例别名，先从别名里移除再删）、两步添加（按协议分组的厂商 + 自定义端点；粘贴清洗、订阅类 key 前缀与套餐专用地址的本地校验与 `proto::vendors` 一致）、按实例的模型别名与降级链编辑（main 必填、未配置时警告）、用量看板（时间段 / 分组、总计卡片、按天柱状图、token 格式化）。四维评审 20 条确认发现已修复（领养默认模型、重复提交防抖、Mock 不再虚构级联删除、错误路径测试等）。306 个 debug 测试 + 112 个 release 变体，lint 0 错误。
 
 进行中：
-- 合并 backend-core 的破坏性一批（`message → detail`、`StreamStatus.UpgradeRequired`）与 11.8 收尾（审批字段、`get_approval`），重新生成绑定，去掉 `patch-bindings.py`；随后 13.16 云端审批 + 13.5 对话与运行过程。
+- backend-core 已合并到 `ff0d55c`（破坏性一批：`message → detail`、`StreamStatus.UpgradeRequired`；11.8 收尾：审批 `request_id` / `attempt` / `decided_*`、`get_approval`；10.7 收件箱 `subtype` / `vault_request_id`），绑定已重新生成（`ba4b81b`）。Workflow `wf_2830c5a3-21b`（2026-10-23 01:45 起，北京时间）：适配破坏性改动（去掉 `patch-bindings.py`）→ 13.16 云端审批 → 13.5 对话与运行过程 → 四维评审 → 反方核实 → 修复 → 最终验证。中断时用 `resumeFromRunId: "wf_2830c5a3-21b"` 恢复。
 
 下一步：
 1. 13.16 云端审批 → 13.5 对话 → 13.6 计划 → 13.8 推送与收件箱 → 13.13 设置 → 13.7 团队与流水线 → 13.11 / 13.12，再做 P2 的 13.10、13.14。
