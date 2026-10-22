@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 占位图标：赭橙色的圆 + 白色横条（简单几何形，正式标志由 1.4 视觉规范定）。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="@color/brand_primary"
+        android:pathData="M54,30a24,24 0,1 1,0 48a24,24 0,1 1,0 -48z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M42,50h24v4h-24z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M52,50h4v16h-4z" />
+</vector>

@@ -1,0 +1,8 @@
+# 四个工作负载。单独成一层，灰度（overlays/production-canary）复用它，名字加 -canary、标签 track: canary。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - api.yaml
+  - worker.yaml
+  - llm-gw.yaml
+  - relay.yaml

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 生成的 UniFFI 绑定只在运行时检测到 java.lang.ref.Cleaner（API 33+）时才用它，否则退回 JNA 的 Cleaner
+     （见 client_core.kt 的 UniffiCleaner.create）：NewApi 是误报。只对这个生成文件忽略，不是 baseline。 -->
+<lint>
+    <issue id="NewApi">
+        <ignore path="src/main/kotlin/cn/thinktin/core/client_core.kt" />
+    </issue>
+</lint>
