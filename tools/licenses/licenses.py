@@ -447,6 +447,9 @@ _BODY_RULES = [
     ("PSF-2.0", ["python software foundation license agreement"]),
     ("Zlib", ["this software is provided 'as-is', without any express or implied warranty",
               "altered source versions must be plainly marked as such"]),
+    # OFL 的授权句和 MIT 的开头一样（“Permission is hereby granted, free of charge, to any person obtaining a copy of
+    # the Font Software”）：标题不在开头时也先认 OFL。
+    ("OFL-1.1", ["sil open font license", "permission is hereby granted, free of charge, to any person obtaining a copy of the font software"]),
     # 先认含 MIT 授权句的特殊许可证：JSON（“用于善不用于恶”，有使用限制）、Unicode 的数据文件许可。
     ("JSON", [_GRANT_MIT, "shall be used for good, not evil"]),
     ("Unicode-DFS-2016", [_GRANT_MIT, "unicode data files"]),
@@ -506,9 +509,10 @@ _HEADERS = {
         "distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/."
     ),
 }
-# 许可证官方发布的文件里有、SPDX 标准文本里没有的固定句子：核对前去掉（只去一字不差的这几句，网址只认官方的）。
+# 许可证官方发布的文件里有、SPDX 标准文本里没有的固定句子：核对前去掉（只去一字不差的这几句，网址只认官方的；
+# 句子里的空格可以是任何空白，折行不同也认）。
 _PREAMBLES = {
-    "OFL-1.1": [r"This Font Software is licensed under the SIL Open Font License,? Version 1\.1\.?\s+This license is copied "
+    "OFL-1.1": [r"This Font Software is licensed under the SIL Open Font License,? Version 1\.1[.,]?\s+This license is copied "
                 r"below, and is also available with a FAQ at:?\s+<?https?://(?:scripts\.sil\.org/OFL|openfontlicense\.org)/?>?(?=\s|$)"],
     "CC0-1.0": [r"For more information, please see\s+<?https?://creativecommons\.org/publicdomain/zero/1\.0/?>?"],
     # creativecommons.org 发的 legalcode.txt：说明里两个 wiki 地址、最后声明里的一句
@@ -546,6 +550,11 @@ _OPTIONAL_TAIL = {
 # SPDX 的模板里标成可变、纯文本版里却写成默认值的地方：换成占位，名字换了也对得上。
 _BSD_SLOTS = [("THE COPYRIGHT HOLDERS AND CONTRIBUTORS", "<copyright holders and contributors>"),
               ("THE COPYRIGHT HOLDER OR CONTRIBUTORS", "<copyright holder or contributors>")]
+# 标准文本的另一种常见写法（核对时也认）：BSD-3 第三条写成“The name of the author may not be used to endorse …”，
+# 主语是占位（换成名字），后面一字不差。
+_TEMPLATE_VARIANTS = {
+    "BSD-3-Clause": [("Neither the name of <copyright holder> nor the names of its contributors may be used", "<name> may not be used")],
+}
 _TEMPLATE_SLOTS = {
     "BSD-3-Clause": [("Neither the name of the copyright holder nor", "Neither the name of <copyright holder> nor")] + _BSD_SLOTS,
     "BSD-2-Clause": _BSD_SLOTS,
@@ -712,13 +721,21 @@ def _proposals(text, full=None):
     """(提名列表, 按标题提名的集合)：开头的标题（_TITLE_RULES、Creative Commons 的标题），文件任何位置的正文标题
     （_HEADINGS），再是开头 8000 个字符里的固定句子（_BODY_RULES）。full 是整个文件的 _normalized（算过的话）。"""
     t = _normalized(text)
-    head = t[:TITLE_WINDOW]
-    titled = [spdx for spdx, needles in _TITLE_RULES if _matches(head, needles)]
-    if "creative commons" in head:
-        for m in _CC_TITLE.finditer(head):
-            lid = "CC-BY%s-%s" % ("".join(_CC_PARTS[p] for p in m.group(1).split("-")[1:]), m.group(2))
-            if lid in LICENSE_IDS:
-                titled.append(lid)
+    heads = [t[:TITLE_WINDOW]]
+    # 开头的版权声明很长（字体常列好几个版权方）时，标题会被挤出窗口：跳过开头的版权行再看一次。
+    lines = text[:20000].splitlines()
+    i = 0
+    while i < len(lines) and (not lines[i].strip() or _NOTICE_START.match(_fold(lines[i])) or _RFN.match(_fold(lines[i]))):
+        i += 1
+    if i:
+        heads.append(_normalized("\n".join(lines[i:]), limit=TITLE_WINDOW * 4)[:TITLE_WINDOW])
+    titled = [spdx for spdx, needles in _TITLE_RULES if any(_matches(head, needles) for head in heads)]
+    for head in heads:
+        if "creative commons" in head:
+            for m in _CC_TITLE.finditer(head):
+                lid = "CC-BY%s-%s" % ("".join(_CC_PARTS[p] for p in m.group(1).split("-")[1:]), m.group(2))
+                if lid in LICENSE_IDS:
+                    titled.append(lid)
     full = _normalized(text, limit=None) if full is None else full
     titled += [spdx for spdx, needles in _HEADINGS if _matches(full, needles)]
     out = titled + [spdx for spdx, needles in _BODY_RULES if _matches(t, needles)]
@@ -832,32 +849,37 @@ def _template_words(lid):
                 text = text.replace(old, new)
             for pat, new in _TEMPLATE_SLOT_RES.get(lid, []):
                 text = re.sub(pat, new, text)
-            # 按可以省的部分切开：[(这一段, 可以省吗)]
-            parts, pos = [], 0
-            for start, end in _OPTIONAL_SPANS.get(lid, []):
-                a = text.find(start, max(pos, 1))
-                b = text.find(end, a) if end and a >= 0 else len(text)
-                if a < 0 or b < 0:
-                    raise SystemExit("spdx/%s.txt 里找不到可以省的部分（%s）" % (lid, start))
-                parts += [(text[pos:a], False), (text[a:b], True)]
-                pos = b
-            tail = _OPTIONAL_TAIL.get(lid, "")
-            if lid in _OPTIONAL_TAIL_FILES:
-                prefix, name = _OPTIONAL_TAIL_FILES[lid]
-                tail += prefix + (SPDX_DIR / name).read_text(encoding="utf-8")
-            head = (SPDX_DIR / _OPTIONAL_HEAD_FILES[lid]).read_text(encoding="utf-8") if lid in _OPTIONAL_HEAD_FILES else ""
-            parts = [(head, True)] + parts + [(text[pos:], False), (tail, True)]
-            words, optional = [], set()
-            for part, opt in parts:
-                w = _words(part, template=True)
-                if opt:
-                    optional.update(range(len(words), len(words) + len(w)))
-                words += w
-            out.append((words, optional))
+            for variant in [text] + [text.replace(a, b) for a, b in _TEMPLATE_VARIANTS.get(lid, []) if a in text]:
+                out.append(_template_parts(lid, variant))
         if lid in _HEADERS:
             out.append((_words(_HEADERS[lid], template=True), set()))
         _TEMPLATES[lid] = out
     return _TEMPLATES[lid]
+
+
+def _template_parts(lid, text):
+    """一份标准文本的 (词, 可以省的词的下标集合)：按可以省的部分（_OPTIONAL_SPANS、开头结尾）切开。"""
+    parts, pos = [], 0
+    for start, end in _OPTIONAL_SPANS.get(lid, []):
+        a = text.find(start, max(pos, 1))
+        b = text.find(end, a) if end and a >= 0 else len(text)
+        if a < 0 or b < 0:
+            raise SystemExit("spdx/%s.txt 里找不到可以省的部分（%s）" % (lid, start))
+        parts += [(text[pos:a], False), (text[a:b], True)]
+        pos = b
+    tail = _OPTIONAL_TAIL.get(lid, "")
+    if lid in _OPTIONAL_TAIL_FILES:
+        prefix, name = _OPTIONAL_TAIL_FILES[lid]
+        tail += prefix + (SPDX_DIR / name).read_text(encoding="utf-8")
+    head = (SPDX_DIR / _OPTIONAL_HEAD_FILES[lid]).read_text(encoding="utf-8") if lid in _OPTIONAL_HEAD_FILES else ""
+    parts = [(head, True)] + parts + [(text[pos:], False), (tail, True)]
+    words, optional = [], set()
+    for part, opt in parts:
+        w = _words(part, template=True)
+        if opt:
+            optional.update(range(len(words), len(words) + len(w)))
+        words += w
+    return words, optional
 
 
 def _aligns(got, want, optional):
@@ -872,6 +894,11 @@ def _aligns(got, want, optional):
         gap = range(pb, b.b)
         extras = [w for w in got[pa:b.a] if w != _SLOT and w not in _BENIGN_WORDS and not w.isdigit()]
         missing = [want[i] for i in gap if want[i] != _SLOT and i not in optional and not want[i].isdigit()]
+        joined, need = "".join(extras), "".join(missing)
+        if extras and missing and (joined == need or joined + "s" == need or joined == need + "s"):
+            # 同一个词拆开、连起来写（行尾连字符 dis-/tribute、non-exclusive 和 nonexclusive），单复数不同
+            pa, pb = b.a + b.size, b.b + b.size
+            continue
         if any(w in _LIMITING or _foreign(w) for w in extras):
             return False
         if any(want[i] == _SLOT for i in gap):
@@ -894,7 +921,7 @@ def verify_text(text, lid):
     if len(text) > VERIFY_MAX_CHARS:
         return False
     for pat in _PREAMBLES.get(lid, []):
-        text = re.sub(pat, " ", text, flags=re.I)
+        text = re.sub(pat.replace(" ", r"\s+"), " ", text, flags=re.I)
     got = _words(text)
     if not any(w != _SLOT for w in got):
         return False
@@ -3383,6 +3410,22 @@ def self_test():
                    "Copyright 2024 Foo Type Foundry, with Reserved Font Name Foo Sans, desktop installation and app embedding licensed "
                    "separately by Foo Type Foundry."]:
         eq(detect_text(notice + "\n\n" + ofl_terms), None, "OFL 版权行里的条件核对不上：%s" % notice)
+    # 真实原文的写法：OFL 的说明折行不同、开头的版权声明很长；BSD 第三条写成“may not be used to endorse”；行尾连字符
+    ofl_head = "Copyright 2012 Google Inc. All Rights Reserved.\n\n"
+    eq(detect_text(ofl_head + "This Font Software is licensed under the SIL Open Font License,\nVersion 1.1.\n\nThis license is copied "
+                   "below, and is also available with a FAQ at:\nhttps://openfontlicense.org\n\n" + ofl_terms), "OFL-1.1", "OFL 的说明折了行")
+    eq(detect_text(ofl_head + "This Font Software is licensed under the SIL Open Font License, Version 1.1,\nThis license is copied "
+                   "below, and is also available with a FAQ at: https://openfontlicense.org\n\n" + ofl_terms), "OFL-1.1", "OFL 的说明“Version 1.1,”")
+    long_header = " ".join("Copyright (c) %d, Foundry Number %d (https://foundry%d.example)." % (2000 + i, i, i) for i in range(8))
+    eq(identify(long_header + "\n\n" + ofl), ("OFL-1.1", True), "版权声明比提名窗口长的 OFL")
+    bsd_author = BSD3_TEXT.replace("Neither the name of the copyright holder nor the names of its contributors may be used",
+                                   "The name of the author may not be used")
+    eq(bsd_author != BSD3_TEXT and detect_text(bsd_author) == "BSD-3-Clause", True, "BSD-3 第三条“The name of the author may not be used”")
+    eq(detect_text(bsd_author.replace("may not be used to endorse", "may not be used for commercial purposes or to endorse")), None,
+       "第三条里加的限制照样核对")
+    hyphenated = MIT_TEXT.replace("distribute,", "dis-\ntribute,").replace("following", "fol-\nlowing")
+    eq((hyphenated != MIT_TEXT, detect_text(hyphenated)), (True, "MIT"), "行尾连字符拆开的词（dis-/tribute）")
+    eq(detect_text(BSD3_TEXT.replace("Redistributions in binary form", "Redistribution in binary form")), "BSD-3-Clause", "单复数不同")
     # GPL、LGPL 原文前面有好几段说明（Linux、git、libgit2 的 COPYING）：按文件里任何位置的正文标题提名
     preface = ("NOTE! This copyright does *not* cover programs that merely use the services of this project through its "
                "public interfaces - that is considered normal use, and does *not* fall under the heading of \"derived work\". "
