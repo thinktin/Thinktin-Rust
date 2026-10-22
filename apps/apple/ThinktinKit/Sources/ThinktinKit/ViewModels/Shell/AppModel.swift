@@ -7,10 +7,12 @@ import Observation
 ///   切换 `phase`（docs/ios.md 第 6 节）；`login` 成功、退出登录、注销、下线本机也会自动切换。
 /// - 启动时先看 `upgradeRequired()`（不联网；说过要升级就直接进升级页），再读缓存（实例、未读数、每个实例最近的运行）
 ///   再刷新：先 `me()` 确认账号状态，再拉实例和角标（ios-packages.md 12.16：先确认没冻结、不用升级，再订阅事件流）。
-/// - 冻结：显示冻结页，登录状态保留；“重新检查”、回到前台时调 `me()`，解冻后照常（刷新实例和角标，对话页重新出现时
-///   重新订阅事件流）。
-/// - 要升级：任何调用抛 `upgradeRequired`、事件流以 `stopped` 结束而客户端说要升级（11.8：握手被拒）、启动和回到前台时
-///   `upgradeRequired()` 是 true，都停掉所有事件流（`ObservedClient.haltStreams()`），之后一直停在升级页（升级就是重装）。
+/// - 冻结：显示冻结页，登录状态保留；“重新检查”、回到前台、收到“账号已恢复”的推送时调 `me()`，解冻后照常（刷新实例和
+///   角标，对话页重新出现时重新订阅事件流，一直留着的页面看 `resubscribeRequest`）。
+/// - 要升级：任何调用抛 `upgradeRequired`、事件流以 `upgradeRequired` 结束（服务端回 426，339e191 起 client-core 不再用
+///   `stopped` 表示它）、启动和回到前台时 `upgradeRequired()` 是 true，都停掉所有事件流（`ObservedClient.haltStreams()`），
+///   之后一直停在升级页（升级就是重装）。
+/// - 推送（`receive(push:)`、`open(push:)`）：子类型是账号冻结、解冻的先处理账号状态（docs/push.md 第 4 节）。
 /// - 没登录、冻结、要升级时，深链和推送由 `Router` 先记下，回到正常状态再跳。
 ///
 /// “进行中”的角标和实例行的“等你处理”用 11.8 的 `listRuns(filter: .active)`：跨实例、只要没结束的，一次请求；
@@ -65,6 +67,9 @@ public final class AppModel {
     public private(set) var isCheckingAccount = false
     /// “重新检查”失败（比如网络不通）。
     public private(set) var accountCheckError: ClientError?
+    /// 要重新订阅事件流的次数（账号解冻后加一）：订阅了事件流的页面（对话页、运行详情）`onChange(of:)` 时重新订阅。
+    /// 从冻结页回来的页面本来就会重新出现、重新订阅；这个给一直留着的页面用（收到“账号已恢复”时还在正常状态）。
+    public private(set) var resubscribeRequest = 0
 
     private let observed: ObservedClient
     private let selection: InstanceSelectionStore
@@ -216,7 +221,7 @@ public final class AppModel {
     // MARK: 账号
 
     /// 冻结页的“重新检查”（也在回到前台、收到“账号已恢复”的推送时调）：`me()` 说解冻了就回到正常，
-    /// 刷新实例和角标。
+    /// 刷新实例和角标（同步收件箱）。
     public func recheckAccount() async {
         guard phase == .frozen, !isCheckingAccount else { return }
         isCheckingAccount = true
@@ -256,6 +261,50 @@ public final class AppModel {
         case 0: router.openFromDrawer(.agentCatalog)
         case 1: router.requestNewTask(in: instances[0].id)
         default: router.present(.newTask)
+        }
+    }
+
+    // MARK: 推送
+
+    /// 收到一条推送（App 在前台时送达，或者用户点开了它）：按子类型处理账号状态（docs/push.md 第 4 节）。
+    ///
+    /// - `account_frozen`：显示冻结页（回到前台、点“重新检查”时会再问服务端，晚到的旧推送不会一直卡住）；
+    /// - `account_restored`：重查账号；解冻了就回到正常、重新订阅事件流（`resubscribeRequest`），刷新实例、角标，同步收件箱；
+    /// - `stopped_all`：刷新角标（进行中的运行、待确认的计划）。
+    ///
+    /// 跳转由 `open(push:)` 做。
+    public func receive(push: PushPayload) async {
+        switch push.subtype {
+        case .accountFrozen?:
+            if phase == .signedIn, client.signedIn() { enter(.frozen) }
+        case .accountRestored?:
+            await accountRestored()
+        case .stoppedAll?:
+            await refreshBadges()
+        default:
+            break
+        }
+    }
+
+    /// 点开推送：先按 `receive(push:)` 处理账号状态，再跳到 `push.route`（没登录、冻结、要升级时 `Router` 先记下，
+    /// 回到正常状态再跳）。
+    public func open(push: PushPayload) async {
+        await receive(push: push)
+        router.handle(push: push)
+    }
+
+    /// 账号解冻：冻结页上就重新检查（解冻了回到正常）；已经在正常状态就确认一下账号，让页面重新订阅，再刷新。
+    private func accountRestored() async {
+        switch phase {
+        case .frozen:
+            await recheckAccount()
+        case .signedIn:
+            await verifyAccount()
+            guard phase == .signedIn else { return }
+            resubscribeRequest += 1
+            await refresh()
+        case .signedOut, .upgradeRequired:
+            break
         }
     }
 
@@ -334,6 +383,7 @@ public final class AppModel {
     /// 切换全局状态。升级页是终点：之后什么都不再切换。
     private func enter(_ next: Phase) {
         guard phase != next, phase != .upgradeRequired else { return }
+        let previous = phase
         phase = next
         router.isHoldingRoutes = next != .signedIn
         switch next {
@@ -357,7 +407,8 @@ public final class AppModel {
             // 事件流以 4003 关闭、自己停了；连接横幅不再显示。
             resetStreams()
         case .signedIn:
-            break
+            // 解冻：冻结期间事件流都停了，页面重新订阅。
+            if previous == .frozen { resubscribeRequest += 1 }
         }
     }
 
@@ -471,9 +522,12 @@ public final class AppModel {
         case .notFound:
             // 实例被删了（或不属于这个账号）：从列表里拿掉，回到别的实例，再刷新一次。
             instanceDisappeared(instanceID)
+        case .upgradeRequired:
+            // 服务端说这个版本太老（握手或别的请求回 426）：进升级页，停掉所有事件流。
+            enter(.upgradeRequired)
         case .stopped:
-            // 调用方停的，或者握手说版本太老（11.8：client-core 不再重连、以 stopped 结束，`upgradeRequired()` 变成 true）。
-            _ = checkUpgradeRequired()
+            // 调用方自己停的：只是这一条结束了。
+            break
         }
         if status.isFinal {
             streams[token] = nil

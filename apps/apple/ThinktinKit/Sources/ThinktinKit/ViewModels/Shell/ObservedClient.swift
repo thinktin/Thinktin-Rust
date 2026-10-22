@@ -21,7 +21,8 @@ public enum ClientActivity: Sendable {
 /// `AppModel` 把它交给所有页面（`AppModel.client`、界面环境里的 `\.client`），所以任何功能的任何调用遇到
 /// 登录失效、账号冻结、要升级都会切换全局状态，各功能不用自己处理；`login` 成功、`logout` / `deleteAccount` /
 /// 下线本机之后也会自动切到对应的页面。事件流的连接状态汇总成顶部的连接横幅；强制升级时 `haltStreams()` 停掉
-/// 所有事件流，之后的订阅直接抛 `upgradeRequired`，`upgradeRequired()` 也一直是 true。
+/// 所有事件流（每个订阅的一方收到一次 `.upgradeRequired`），之后的订阅直接抛 `upgradeRequired`，
+/// `upgradeRequired()` 也一直是 true。
 ///
 /// **`ClientProtocol` 加了方法，这里要加对应的转发**（编译器会提示：不实现就不符合协议）。
 public final class ObservedClient: ClientProtocol, Sendable {
@@ -52,7 +53,7 @@ public final class ObservedClient: ClientProtocol, Sendable {
     }
 
     /// 停掉所有事件流（强制升级，ios-packages.md 12.16），之后的订阅直接抛 `upgradeRequired`。
-    /// 每个订阅的一方会收到一次 `.stopped`。
+    /// 每个订阅的一方会收到一次 `.upgradeRequired`（和 client-core 遇到 426 时一样；`.stopped` 只表示调用方停的）。
     public func haltStreams() {
         let stopped = state.withLock { s in
             s.isHalted = true
@@ -61,7 +62,7 @@ public final class ObservedClient: ClientProtocol, Sendable {
         }
         for (token, entry) in stopped {
             entry.handle?.stop()
-            entry.relay.listener.onStatus(.stopped)
+            entry.relay.listener.onStatus(.upgradeRequired)
             report(.streamEnded(subscription: token))
         }
     }
@@ -372,6 +373,10 @@ public final class ObservedClient: ClientProtocol, Sendable {
 
     public func approvals() async throws -> [Approval] {
         try await observe { try await base.approvals() }
+    }
+
+    public func getApproval(_ approvalID: ApprovalID) async throws -> Approval {
+        try await observe { try await base.getApproval(approvalID) }
     }
 
     public func decideApproval(_ approvalID: ApprovalID, optionID: String) async throws -> Approval {

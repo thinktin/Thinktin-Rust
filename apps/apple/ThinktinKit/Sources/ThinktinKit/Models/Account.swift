@@ -81,9 +81,11 @@ public struct PushRegistration: Hashable, Codable, Sendable {
         self.token = token
     }
 
-    /// APNs 的设备令牌（`Data` 转十六进制）。
-    public static func apns(deviceToken: Data) -> PushRegistration {
-        PushRegistration(channel: .apns, token: deviceToken.map { String(format: "%02x", $0) }.joined())
+    /// APNs 的设备令牌（`Data` 转十六进制）。`sandbox`：令牌是 APNs 沙盒环境的（开发证书签名的包，
+    /// `aps-environment` 是 development），报 `apns_sandbox`；App 里按编译条件定（Debug 是 true，docs/push.md 第 1 节）。
+    public static func apns(deviceToken: Data, sandbox: Bool = false) -> PushRegistration {
+        PushRegistration(
+            channel: sandbox ? .apnsSandbox : .apns, token: deviceToken.map { String(format: "%02x", $0) }.joined())
     }
 }
 

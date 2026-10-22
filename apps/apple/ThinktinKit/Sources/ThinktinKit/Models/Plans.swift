@@ -17,15 +17,39 @@ public struct Trigger: Identifiable, Hashable, Codable, Sendable {
     public var isEnabled: Bool
     public var nextFireAt: Date?
     public var lastFireAt: Date?
+    /// 后台停用它的原因（11.8）：`invalidRule` 是规则失效了（比如时区没了），要删掉重新加。没被停用、
+    /// 用户自己停的为 nil。
+    public var disabledReason: TriggerDisabledReason?
 
     public init(
-        id: TriggerID, schedule: Schedule, isEnabled: Bool = true, nextFireAt: Date? = nil, lastFireAt: Date? = nil
+        id: TriggerID, schedule: Schedule, isEnabled: Bool = true, nextFireAt: Date? = nil, lastFireAt: Date? = nil,
+        disabledReason: TriggerDisabledReason? = nil
     ) {
         self.id = id
         self.schedule = schedule
         self.isEnabled = isEnabled
         self.nextFireAt = nextFireAt
         self.lastFireAt = lastFireAt
+        self.disabledReason = disabledReason
+    }
+
+    /// 规则失效、被后台停用了：详情页提示“规则已失效”，给“修改规则”（删掉重加）的入口。
+    public var isInvalid: Bool { disabledReason == .invalidRule }
+}
+
+/// 触发器被后台停用的原因（11.8，`Trigger.disabled_reason`）。以后可能加新值，不认识的按“已停用”显示。
+public enum TriggerDisabledReason: OpenStringEnum {
+    /// 规则失效了（比如时区没了）：删掉重新加。
+    case invalidRule
+    case unknown(String)
+
+    public static let knownCases: [TriggerDisabledReason] = [.invalidRule]
+
+    public var rawValue: String {
+        switch self {
+        case .invalidRule: "invalid_rule"
+        case .unknown(let raw): raw
+        }
     }
 }
 
@@ -75,9 +99,15 @@ public struct Plan: Identifiable, Hashable, Codable, Sendable {
     /// 错过的触发怎么补。
     public var catchUp: CatchUp
     public var createdAt: Date
-    /// 列表接口里为空，详情里有。
+    /// 列表和详情里都有（11.8 起；老的服务端列表里为空）。
     public var triggers: [Trigger]
     public var steps: [PlanStep]
+    /// 下一次按时运行的名义时间（11.8，服务端的 `next_fire_at`；实际可能因削峰晚几分钟）：在用的触发器里最早的；
+    /// 暂停了、等确认、没有会再触发的规则时为 nil。构造时按同样的规则从 `triggers` 算（`nominalNextFireAt`），
+    /// 接口返回的以服务端为准；自己改了触发器、暂停状态后调 `refreshSchedule()`。
+    public var nextFireAt: Date?
+    /// 规则失效、被后台停用的触发器有几个（11.8）：详情页、列表提示“规则已失效”，给“修改规则”的入口。
+    public var invalidTriggers: Int
 
     public init(
         id: PlanID, instanceID: InstanceID, title: String, goal: String, isPaused: Bool = false,
@@ -98,6 +128,9 @@ public struct Plan: Identifiable, Hashable, Codable, Sendable {
         self.createdAt = createdAt
         self.triggers = triggers
         self.steps = steps
+        self.nextFireAt = nil
+        self.invalidTriggers = 0
+        refreshSchedule()
     }
 
     /// 一个计划最多几个触发器。
@@ -119,9 +152,20 @@ public struct Plan: Identifiable, Hashable, Codable, Sendable {
     /// 是流水线（多个步骤）。
     public var isPipeline: Bool { !steps.isEmpty }
 
-    /// 最近一次要触发的时间（所有启用的触发器里最早的）。
-    public var nextFireAt: Date? {
-        triggers.filter(\.isEnabled).compactMap(\.nextFireAt).min()
+    /// 有规则失效、被后台停用的触发器。
+    public var hasInvalidTriggers: Bool { invalidTriggers > 0 }
+
+    /// 按服务端的规则（crates/gateway/src/routes/plans.rs 的 `PlanView`）重新算 `nextFireAt`、`invalidTriggers`。
+    public mutating func refreshSchedule() {
+        nextFireAt = Self.nominalNextFireAt(
+            triggers: triggers, isPaused: isPaused, awaitingConfirmation: awaitingConfirmation)
+        invalidTriggers = triggers.filter(\.isInvalid).count
+    }
+
+    /// 下一次按时运行的名义时间：暂停了、等确认时为 nil，否则是启用的触发器里最早的下一次。
+    public static func nominalNextFireAt(triggers: [Trigger], isPaused: Bool, awaitingConfirmation: Bool) -> Date? {
+        guard !isPaused, !awaitingConfirmation else { return nil }
+        return triggers.filter(\.isEnabled).compactMap(\.nextFireAt).min()
     }
 }
 

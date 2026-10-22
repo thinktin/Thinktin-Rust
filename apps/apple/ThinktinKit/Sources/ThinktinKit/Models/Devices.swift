@@ -110,3 +110,49 @@ public enum LiveActivityLimits {
         return now.timeIntervalSince(finished) > lateRegistration
     }
 }
+
+/// 实时活动（10.6、10.7）推送里的内容，和后台的约定见 docs/live-activities.md 第 3 节：12.10 的
+/// `RunActivityAttributes.ContentState` 就用它（ActivityKit 只在 App 和小组件里有，这里是纯 Swift 的同一份字段）。
+///
+/// ActivityKit 用默认的 `JSONDecoder` 解：键名和属性名一模一样（驼峰，和接口的下划线不同），时间是 Unix 秒的整数
+/// （默认的 `Date` 解码按 2001 年起算，对不上，所以存整数，用 `startDate`、`endDate` 转）。新加的字段要是可选的，
+/// 老版本的 App 才解得开。
+public struct RunActivityContentState: Codable, Hashable, Sendable {
+    /// 运行状态（`RunState` 的原始字符串：queued、running、waiting_approval……），用 `runState` 读。
+    public var state: String
+    /// 已经走了几步（工具调用），连同直接子运行的（流水线的步骤、委派的子任务）。
+    public var steps: Int
+    /// 开始时间，Unix 秒；还没开始时为 nil。耗时由 App 用它自己算（`Text(timerInterval:)`）。
+    public var startedAt: Int?
+    /// 结束时间，Unix 秒；还没结束时为 nil。
+    public var endedAt: Int?
+    /// 等的是什么（10.7，和 `Run.waitCode` 一样）：只在等 key（waiting_quota）、等电脑（waiting_device）时有，
+    /// 用 `runWaitCode` 读；不认识的按 `state` 显示。
+    public var waitCode: String?
+
+    public init(state: String, steps: Int, startedAt: Int? = nil, endedAt: Int? = nil, waitCode: String? = nil) {
+        self.state = state
+        self.steps = steps
+        self.startedAt = startedAt
+        self.endedAt = endedAt
+        self.waitCode = waitCode
+    }
+
+    /// 从运行记录拼（App 自己开启的实时活动的第一帧）；`steps` 运行记录里没有，由调用方给。
+    public init(run: Run, steps: Int = 0) {
+        self.init(
+            state: run.state.rawValue, steps: steps, startedAt: run.startedAt.map(Self.unixSeconds),
+            endedAt: run.finishedAt.map(Self.unixSeconds),
+            waitCode: RunWaitCode.applies(to: run.state) ? run.waitCode?.rawValue : nil)
+    }
+
+    public var runState: RunState { RunState(rawValue: state) }
+    public var runWaitCode: RunWaitCode? { waitCode.map { RunWaitCode(rawValue: $0) } }
+    public var startDate: Date? { startedAt.map { Date(timeIntervalSince1970: TimeInterval($0)) } }
+    public var endDate: Date? { endedAt.map { Date(timeIntervalSince1970: TimeInterval($0)) } }
+
+    /// `Date` → Unix 秒（向下取整，和后台的 `timestamp()` 一样）。
+    public static func unixSeconds(_ date: Date) -> Int {
+        Int(date.timeIntervalSince1970.rounded(.down))
+    }
+}

@@ -54,6 +54,9 @@ public enum AppRoute: Hashable, Sendable, Codable {
     /// 新建计划；`instanceID` 是预选的实例（从实例详情、对话里进来时）。
     case newPlan(instanceID: InstanceID?)
     case editPlan(PlanID)
+    /// agent 新建或修改了计划、等用户确认（10.7 的 `plan_confirm` 推送、收件箱、对话里的待确认卡片、计划列表的
+    /// “待确认”分区）：标题、目标、触发规则、策略、流水线步骤，确认（`confirmPlan` 带 `revision`）或删掉。
+    case confirmPlan(PlanID)
 
     // MARK: 团队与流水线（12.7）
 
@@ -141,7 +144,7 @@ extension AppRoute {
         case .home, .conversation, .run, .runTree, .activeRuns: .conversation
         case .agentCatalog, .agent, .instance: .agents
         case .credentials, .addCredential, .credential, .modelRoutes, .usage: .models
-        case .plans, .plan, .newPlan, .editPlan: .plans
+        case .plans, .plan, .newPlan, .editPlan, .confirmPlan: .plans
         case .teams, .team, .teamTemplates, .pipelineEditor: .teams
         case .inbox, .inboxItem: .inbox
         case .approvals, .approval: .approvals

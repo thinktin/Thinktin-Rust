@@ -29,6 +29,7 @@ extension AppRoute {
         case .plan: ("计划详情", "Plan details")
         case .newPlan: ("新建计划", "New plan")
         case .editPlan: ("编辑计划", "Edit plan")
+        case .confirmPlan: ("确认计划", "Review plan")
         case .teams: ("团队", "Teams")
         case .team: ("团队详情", "Team details")
         case .teamTemplates: ("团队模板", "Team templates")

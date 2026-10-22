@@ -136,7 +136,11 @@ public protocol ClientProtocol: AnyObject, Sendable {
 
     // MARK: 审批
 
+    /// 待处理的审批。
     func approvals() async throws -> [Approval]
+    /// 一条审批（11.8，什么状态都能查）：点审批推送、收件箱条目进来时先查它，已处理、已过期的给提示而不是报错；
+    /// 推送里“拒绝”的快捷操作先查它还是不是待处理。不存在、不是这个用户的抛 `not_found`。
+    func getApproval(_ approvalID: ApprovalID) async throws -> Approval
     /// 选一个选项。批准前 App 要先做生物识别确认。
     func decideApproval(_ approvalID: ApprovalID, optionID: String) async throws -> Approval
 

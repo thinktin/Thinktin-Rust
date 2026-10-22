@@ -5,16 +5,14 @@ import ThinktinKit
 /// （网络、令牌刷新、事件流续传、SQLite 缓存、密码识别都在那边）。
 ///
 /// 这里只做三件事：参数从领域模型换成 ThinktinCore 的形式（强类型 id → 字符串、`Date` → 毫秒、枚举 → 字符串），
-/// 结果换回领域模型（Conversions.swift），错误一律换成 ThinktinKit 的 `ClientError`。唯一多做的一步在 `revokeDevice`：
-/// 吊销当前这台时接着退出登录，让本地状态和 `ClientProtocol` 的约定一致（见那里的说明）。
+/// 结果换回领域模型（Conversions.swift），错误一律换成 ThinktinKit 的 `ClientError`。不多做别的：吊销当前这台时
+/// 清本地会话和缓存也是 client-core 自己做（b61abc5 起）。
 ///
 /// client-core 的网络操作跑在它自己的 tokio 运行时上，这里的 async 方法只是等结果，可以从任何线程、任何 actor 调；
 /// 不带 async 的方法只读本地缓存。事件回调在 client-core 的后台线程上（见 `subscribe`）。
 public final class CoreClient: ClientProtocol {
     public let secretDetector: any SecretDetector
     private let core: Core.Client
-    /// 和交给 client-core 的是同一个存储：client-core 每次换会话都写进去，这里只读（`revokeDevice` 判断是不是这台）。
-    private let sessions: any SessionStoring
 
     /// - Parameters:
     ///   - baseURL: 接口地址，比如 `https://api.thinktin.cn`。
@@ -41,7 +39,6 @@ public final class CoreClient: ClientProtocol {
         } catch {
             throw ThinktinKit.ClientError(error)
         }
-        self.sessions = sessions
         secretDetector = CoreSecretDetector()
     }
 
@@ -77,7 +74,8 @@ public final class CoreClient: ClientProtocol {
     // MARK: 请求语言（11.8）
 
     /// 语言列表（按偏好排好，比如 `["zh-Hans-CN", "en-US"]`）拼成 `Accept-Language`（client-core 的
-    /// `accept_language_header`：`zh-Hans-CN, en-US;q=0.9`，最多 10 个，不像语言标签的跳过）；一个能用的都没有时为 nil。
+    /// `accept_language_header`：`zh-Hans-CN, en-US;q=0.9`，最多 10 个，不像语言标签的跳过，放不进 256 字节的
+    /// 后面几个不要）；一个能用的都没有时为 nil。
     /// 和 ThinktinKit 的 `AcceptLanguage.header(tags:)` 结果一样。
     public static func acceptLanguageHeader(tags: [String]) -> String? {
         let header = Core.acceptLanguageHeader(tags)
@@ -166,16 +164,10 @@ public final class CoreClient: ClientProtocol {
         try await perform { try await core.devices().map { ThinktinKit.DeviceInfo(core: $0) } }
     }
 
-    /// 吊销当前这台等于退出登录：client-core 只发吊销请求，本地会话要等下一个请求被拒（401）才清，所以这里接着调一次
-    /// `logout`，让本地的登录状态和缓存马上清掉（和 `MockClient` 一样，`signedIn()` 立即变成 false）。
-    /// 这一步的错误不抛：吊销已经成功，`logout` 无论成败都会清掉本地会话。是不是这台在发请求前判断（请求期间别的调用
-    /// 被拒、会话先清掉了，也照样清缓存）。id 按 UUID 比，不分大小写（client-core 解析 id 时也不分）。
+    /// 吊销当前这台等于退出登录：client-core 吊销成功后自己清掉本地会话和缓存（按 UUID 比 id，不分大小写），
+    /// `signedIn()` 立即变成 false（和 `MockClient` 一样）。
     public func revokeDevice(_ deviceID: DeviceID) async throws {
-        let isCurrent = sessions.load()?.deviceID.rawValue.lowercased() == deviceID.rawValue.lowercased()
         try await perform { try await core.revokeDevice(deviceId: deviceID.rawValue) }
-        if isCurrent {
-            try? await core.logout()
-        }
     }
 
     public func sendDeviceMessage(to deviceID: DeviceID, kind: DeviceMessageKind, bodyJSON: String) async throws
@@ -381,6 +373,10 @@ public final class CoreClient: ClientProtocol {
 
     public func approvals() async throws -> [ThinktinKit.Approval] {
         try await perform { try await core.approvals().map { ThinktinKit.Approval(core: $0) } }
+    }
+
+    public func getApproval(_ approvalID: ApprovalID) async throws -> ThinktinKit.Approval {
+        try await perform { ThinktinKit.Approval(core: try await core.getApproval(approvalId: approvalID.rawValue)) }
     }
 
     public func decideApproval(_ approvalID: ApprovalID, optionID: String) async throws -> ThinktinKit.Approval {

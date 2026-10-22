@@ -48,16 +48,24 @@ extension DevicePlatform {
     }
 }
 
-/// 推送通道（8.3）。iOS 只用 `apns`。
+/// 推送通道（8.3、10.7，docs/push.md 第 1 节）。iOS 用 `apns`（TestFlight、App Store 的包）或 `apnsSandbox`
+/// （开发证书签名的包，`aps-environment` 是 development，令牌是 APNs 沙盒环境的；报错了会被 APNs 判成
+/// `BadDeviceToken` 清掉）。
 public enum PushChannel: OpenStringEnum {
-    case apns, fcm, hms, honor, mi, oppo, vivo, unipush
+    case apns
+    /// APNs 沙盒环境（Xcode 直装的 Debug 构建）。
+    case apnsSandbox
+    case fcm, hms, honor, mi, oppo, vivo, unipush
     case unknown(String)
 
-    public static let knownCases: [PushChannel] = [.apns, .fcm, .hms, .honor, .mi, .oppo, .vivo, .unipush]
+    public static let knownCases: [PushChannel] = [
+        .apns, .apnsSandbox, .fcm, .hms, .honor, .mi, .oppo, .vivo, .unipush,
+    ]
 
     public var rawValue: String {
         switch self {
         case .apns: "apns"
+        case .apnsSandbox: "apns_sandbox"
         case .fcm: "fcm"
         case .hms: "hms"
         case .honor: "honor"
@@ -529,18 +537,30 @@ public enum ReportState: OpenStringEnum {
     }
 }
 
-/// 收件箱条目的种类。
+/// 收件箱条目的种类（和推送的 `tt.kind` 一样，docs/push.md 第 2 节）。以后可能加新的，不认识的按 `info` 显示。
 public enum InboxKind: OpenStringEnum {
-    case runFinished, runFailed, approval, info
+    case runFinished, runFailed, approval
+    /// 电脑上的高危操作请手机批准（12.9）。
+    case computerApproval
+    /// agent 请用户往保险箱里填账号密码，运行等着（10.7，带 `vaultRequestID`）。
+    case vaultRequest
+    /// agent 建了或改了计划，等用户确认（10.7，带 `planID`）。
+    case planConfirm
+    case info
     case unknown(String)
 
-    public static let knownCases: [InboxKind] = [.runFinished, .runFailed, .approval, .info]
+    public static let knownCases: [InboxKind] = [
+        .runFinished, .runFailed, .approval, .computerApproval, .vaultRequest, .planConfirm, .info,
+    ]
 
     public var rawValue: String {
         switch self {
         case .runFinished: "run_finished"
         case .runFailed: "run_failed"
         case .approval: "approval"
+        case .computerApproval: "computer_approval"
+        case .vaultRequest: "vault_request"
+        case .planConfirm: "plan_confirm"
         case .info: "info"
         case .unknown(let raw): raw
         }

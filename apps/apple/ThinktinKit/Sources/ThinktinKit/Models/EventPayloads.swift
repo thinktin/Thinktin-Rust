@@ -262,24 +262,39 @@ public struct AgentPlanEntry: Hashable, Codable, Sendable {
     }
 }
 
-/// `agent.permission_requested`：`{request_id, title, options, tool_call}`。
+/// `agent.permission_requested`：`{request_id, title, options, tool_call, attempt, approval_id}`。
+///
+/// 平台等审批记录建好、推送发出后才写这条（11.8，docs/agent-integration.md 第 6 节），带上第几次尝试和审批 id
+/// （建审批失败的只有 `attempt`）。shim 每次尝试都从 `perm-1` 重新编号，所以要 `(run_id, attempt, request_id)` 一起认。
 public struct PermissionRequestedPayload: Hashable, Codable, Sendable {
     public var requestID: String
+    /// agent 写的标题：显示时带“AI 生成”标识。
     public var title: String?
     public var options: [ApprovalOption]
     public var toolCall: JSONValue?
+    /// 第几次尝试（11.8）；老的服务端没有。
+    public var attempt: Int?
+    /// 对应的审批记录（11.8）：决定时用它；建审批失败、老的服务端没有。
+    public var approvalID: ApprovalID?
 
-    public init(requestID: String, title: String?, options: [ApprovalOption], toolCall: JSONValue? = nil) {
+    public init(
+        requestID: String, title: String?, options: [ApprovalOption], toolCall: JSONValue? = nil, attempt: Int? = nil,
+        approvalID: ApprovalID? = nil
+    ) {
         self.requestID = requestID
         self.title = title
         self.options = options
         self.toolCall = toolCall
+        self.attempt = attempt
+        self.approvalID = approvalID
     }
 
     enum CodingKeys: String, CodingKey {
         case requestID = "request_id"
         case title, options
         case toolCall = "tool_call"
+        case attempt
+        case approvalID = "approval_id"
     }
 
     private struct Option: Decodable {
@@ -302,6 +317,9 @@ public struct PermissionRequestedPayload: Hashable, Codable, Sendable {
                 id: $0.optionID, name: $0.name ?? $0.optionID, kind: ApprovalOptionKind(rawValue: $0.kind ?? ""))
         }
         toolCall = try c.decodeIfPresent(JSONValue.self, forKey: .toolCall)
+        // 这两个是平台加的键，类型不对时当作没有（不让整条审批卡丢掉）。
+        attempt = (try? c.decodeIfPresent(Int.self, forKey: .attempt)) ?? nil
+        approvalID = (try? c.decodeIfPresent(ApprovalID.self, forKey: .approvalID)) ?? nil
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -313,25 +331,44 @@ public struct PermissionRequestedPayload: Hashable, Codable, Sendable {
         }
         try c.encode(opts, forKey: .options)
         try c.encodeIfPresent(toolCall, forKey: .toolCall)
+        try c.encodeIfPresent(attempt, forKey: .attempt)
+        try c.encodeIfPresent(approvalID, forKey: .approvalID)
     }
 }
 
-/// `agent.permission_resolved`：`{request_id, option_id, by}`。`option_id` 为空表示放弃作答。
+/// `agent.permission_resolved`：`{request_id, option_id, by, attempt, approval_id, approval_state}`。`option_id` 为空表示放弃作答。
+///
+/// 平台加的键（11.8）：`attempt`；有审批记录的带 `approval_id`；平台把结果交给 shim 的再带 `approval_state`
+/// （approved、rejected、expired）。平台判的超时 shim 回的是 `by: user`，要看 `approval_state` 才不会显示成用户拒绝。
 public struct PermissionResolvedPayload: Hashable, Codable, Sendable {
     public var requestID: String
     public var optionID: String?
     public var by: DecisionSource
+    /// 第几次尝试（11.8）；老的服务端没有。
+    public var attempt: Int?
+    /// 对应的审批记录（11.8）；按预授权策略决定的、老的服务端没有。
+    public var approvalID: ApprovalID?
+    /// 平台交给 shim 的结果（11.8）：approved、rejected、expired；不是平台交的（策略、取消）没有。
+    public var approvalState: ApprovalState?
 
-    public init(requestID: String, optionID: String?, by: DecisionSource) {
+    public init(
+        requestID: String, optionID: String?, by: DecisionSource, attempt: Int? = nil, approvalID: ApprovalID? = nil,
+        approvalState: ApprovalState? = nil
+    ) {
         self.requestID = requestID
         self.optionID = optionID
         self.by = by
+        self.attempt = attempt
+        self.approvalID = approvalID
+        self.approvalState = approvalState
     }
 
     enum CodingKeys: String, CodingKey {
         case requestID = "request_id"
         case optionID = "option_id"
-        case by
+        case by, attempt
+        case approvalID = "approval_id"
+        case approvalState = "approval_state"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -339,25 +376,47 @@ public struct PermissionResolvedPayload: Hashable, Codable, Sendable {
         requestID = try c.decode(String.self, forKey: .requestID)
         optionID = try c.decodeIfPresent(String.self, forKey: .optionID)
         by = try c.decodeIfPresent(DecisionSource.self, forKey: .by) ?? .unknown("")
+        attempt = (try? c.decodeIfPresent(Int.self, forKey: .attempt)) ?? nil
+        approvalID = (try? c.decodeIfPresent(ApprovalID.self, forKey: .approvalID)) ?? nil
+        approvalState = (try? c.decodeIfPresent(ApprovalState.self, forKey: .approvalState)) ?? nil
     }
 }
 
-/// `approval.decided`：用户在 App 里决定后服务端记的（`{approval_id, state, option_id}`）。
+/// `approval.decided`：用户在 App 里决定后服务端记的（`{approval_id, state, option_id, request_id, attempt}`）。
 public struct ApprovalDecidedPayload: Hashable, Codable, Sendable {
     public var approvalID: ApprovalID
     public var state: ApprovalState
     public var optionID: String?
+    /// shim 的请求 id（11.8）；老的服务端没有。
+    public var requestID: String?
+    /// 第几次尝试（11.8）；老的服务端没有。
+    public var attempt: Int?
 
-    public init(approvalID: ApprovalID, state: ApprovalState, optionID: String?) {
+    public init(
+        approvalID: ApprovalID, state: ApprovalState, optionID: String?, requestID: String? = nil, attempt: Int? = nil
+    ) {
         self.approvalID = approvalID
         self.state = state
         self.optionID = optionID
+        self.requestID = requestID
+        self.attempt = attempt
     }
 
     enum CodingKeys: String, CodingKey {
         case approvalID = "approval_id"
         case state
         case optionID = "option_id"
+        case requestID = "request_id"
+        case attempt
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        approvalID = try c.decode(ApprovalID.self, forKey: .approvalID)
+        state = try c.decode(ApprovalState.self, forKey: .state)
+        optionID = try c.decodeIfPresent(String.self, forKey: .optionID)
+        requestID = (try? c.decodeIfPresent(String.self, forKey: .requestID)) ?? nil
+        attempt = (try? c.decodeIfPresent(Int.self, forKey: .attempt)) ?? nil
     }
 }
 

@@ -148,8 +148,10 @@ public enum StreamStatus: Hashable, Sendable {
     case notFound
     /// 账号被冻结（4.6），事件流停止：显示冻结页。
     case accountFrozen
-    /// 调用方停的；或者这个版本太老了，服务端不再接受（11.8：这时 `ClientProtocol.upgradeRequired()` 是 true，
-    /// 界面进升级页，之后的订阅也直接以它结束、不再连）。
+    /// 这个版本太老了，服务端不再接受（握手或别的请求回 426），事件流停止：界面进升级页
+    /// （`ClientProtocol.upgradeRequired()` 也是 true），之后的订阅也直接以它结束、不再连。
+    case upgradeRequired
+    /// 调用方停的（`stop()`）。
     case stopped
 
     /// 连接中或重连中：顶部显示细条。
@@ -163,7 +165,7 @@ public enum StreamStatus: Hashable, Sendable {
     /// 事件流已经停止，不会再收到事件。
     public var isFinal: Bool {
         switch self {
-        case .signedOut, .notFound, .accountFrozen, .stopped: true
+        case .signedOut, .notFound, .accountFrozen, .upgradeRequired, .stopped: true
         default: false
         }
     }

@@ -183,7 +183,8 @@ extension ThinktinKit.Approval {
             id: ApprovalID(a.id), runID: RunID(a.runId), instanceID: InstanceID(a.instanceId), title: a.title,
             options: a.options.map { ThinktinKit.ApprovalOption(core: $0) }, toolCallJSON: a.toolCallJson,
             state: ApprovalState(rawValue: a.state), expiresAt: Date(ms: a.expiresAtMs),
-            createdAt: Date(ms: a.createdAtMs))
+            createdAt: Date(ms: a.createdAtMs), requestID: a.requestId, attempt: Int(clamping: a.attempt),
+            decidedOption: a.decidedOption, decidedAt: a.decidedAtMs.date)
     }
 }
 
@@ -211,7 +212,8 @@ extension ThinktinKit.Trigger {
     init(core t: Core.Trigger) {
         self.init(
             id: TriggerID(t.id), schedule: ThinktinKit.Schedule(core: t.schedule), isEnabled: t.enabled,
-            nextFireAt: t.nextFireAtMs.date, lastFireAt: t.lastFireAtMs.date)
+            nextFireAt: t.nextFireAtMs.date, lastFireAt: t.lastFireAtMs.date,
+            disabledReason: t.disabledReason.map { TriggerDisabledReason(rawValue: $0) })
     }
 }
 
@@ -254,6 +256,9 @@ extension ThinktinKit.PlanPolicy {
 extension ThinktinKit.Plan {
     /// 策略取结构化的 `policy`；`policy_json` 是同一份策略的 JSON（留给老版本 App），这里不再读
     /// （ThinktinKit 的 `Plan.policyJSON` 由 `policy` 重新编出来）。
+    ///
+    /// `nextFireAt`、`invalidTriggers` 以服务端的为准（11.8）；老的服务端没给 `next_fire_at` 时按同样的规则从触发器算
+    /// （`Plan.init` 已经算好）。
     init(core p: Core.Plan) {
         self.init(
             id: PlanID(p.id), instanceID: InstanceID(p.instanceId), title: p.title, goal: p.goal, isPaused: p.paused,
@@ -262,6 +267,8 @@ extension ThinktinKit.Plan {
             catchUp: CatchUp(rawValue: p.catchUp), createdAt: Date(ms: p.createdAtMs),
             triggers: p.triggers.map { ThinktinKit.Trigger(core: $0) },
             steps: p.steps.map { ThinktinKit.PlanStep(core: $0) })
+        if let next = p.nextFireAtMs.date { nextFireAt = next }
+        invalidTriggers = Int(clamping: p.invalidTriggers)
     }
 }
 
@@ -340,8 +347,9 @@ extension ThinktinKit.InboxItem {
         self.init(
             id: InboxItemID(i.id), instanceID: i.instanceId.map { InstanceID($0) }, runID: i.runId.map { RunID($0) },
             planID: i.planId.map { PlanID($0) }, approvalID: i.approvalId.map { ApprovalID($0) },
-            kind: InboxKind(rawValue: i.kind), title: i.title, body: i.body, isAIGenerated: i.aiGenerated,
-            isRead: i.read, createdAt: Date(ms: i.createdAtMs))
+            vaultRequestID: i.vaultRequestId.map { VaultRequestID($0) }, kind: InboxKind(rawValue: i.kind),
+            subtype: i.subtype.map { NotificationSubtype(rawValue: $0) }, title: i.title, body: i.body,
+            isAIGenerated: i.aiGenerated, isRead: i.read, createdAt: Date(ms: i.createdAtMs))
     }
 }
 
@@ -371,6 +379,7 @@ extension ThinktinKit.StreamStatus {
         case .signedOut: self = .signedOut
         case .notFound: self = .notFound
         case .accountFrozen: self = .accountFrozen
+        case .upgradeRequired: self = .upgradeRequired
         case .stopped: self = .stopped
         }
     }
@@ -514,27 +523,29 @@ extension ThinktinKit.ClientError {
         }
     }
 
+    /// ThinktinCore 的 `detail`（339e191 起，原来叫 `message`）放进 ThinktinKit 的 `message`：都是英文、给开发者看的
+    /// 说明，界面不显示（按错误码本地化，`localizedMessage`）。
     init(core e: Core.ClientError) {
         switch e {
-        case .Network(let message): self = .network(message: message)
+        case .Network(let detail): self = .network(message: detail)
         case .SignedOut: self = .signedOut
         case .UpgradeRequired: self = .upgradeRequired
         case .AccountFrozen: self = .accountFrozen
-        case .Api(let status, let code, let message, let retryAfterSecs):
+        case .Api(let status, let code, let detail, let retryAfterSecs):
             self = .api(
-                status: Int(status), code: APIErrorCode(rawValue: code), message: message,
+                status: Int(status), code: APIErrorCode(rawValue: code), message: detail,
                 retryAfterSecs: retryAfterSecs.map { Int(clamping: $0) })
-        case .Decode(let message): self = .decode(message: message)
-        case .Cache(let message): self = .cache(message: message)
+        case .Decode(let detail): self = .decode(message: detail)
+        case .Cache(let detail): self = .cache(message: detail)
         case .ContainsSecrets(let count): self = .containsSecrets(count: Int(clamping: count))
-        case .InvalidArgument(let message): self = .invalidArgument(message: message)
-        case .Internal(let message): self = .internal(message: message)
+        case .InvalidArgument(let detail): self = .invalidArgument(message: detail)
+        case .Internal(let detail): self = .internal(message: detail)
         }
     }
 
     init(core e: Core.PairingError) {
         switch e {
-        case .Malformed(let message): self = .malformed(message: message)
+        case .Malformed(let detail): self = .malformed(message: detail)
         case .Expired: self = .expired
         case .BadSignature: self = .badSignature
         }
