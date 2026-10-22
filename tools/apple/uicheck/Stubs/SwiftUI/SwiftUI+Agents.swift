@@ -2,26 +2,13 @@
 // 和主桩文件一样只用来在 Linux 上做类型检查：签名照 iOS 17 / macOS 14 SDK 的写，实现全是空的。
 // 单独放一个文件，免得和别的功能同时往 SwiftUI.swift 里加东西时合并冲突。
 
-// MARK: - 文字输入（iOS 13）
-
-extension TextField where Label == Text {
-    public init(_ titleKey: LocalizedStringKey, text: Binding<String>) {}
-    @_disfavoredOverload public init<S: StringProtocol>(_ title: S, text: Binding<String>) {}
-}
+// TextField(_:text:)、Visibility、refreshable(action:)、带 message 的 confirmationDialog 在 SwiftUI+Account.swift（12.2 先加的），这里不再重复声明。
 
 // MARK: - 确认框（iOS 15）
 
-public enum Visibility: Hashable, CaseIterable, Sendable {
-    case automatic, visible, hidden
-}
-
+// 带 message 的那几个重载在 SwiftUI+Account.swift，这里只补不带 message 的。
 extension View {
-    public func confirmationDialog<S: StringProtocol, A: View, M: View>(
-        _ title: S, isPresented: Binding<Bool>, titleVisibility: Visibility = .automatic,
-        @ViewBuilder actions: () -> A, @ViewBuilder message: () -> M
-    ) -> some View { _m() }
-
-    public func confirmationDialog<S: StringProtocol, A: View>(
+    @_disfavoredOverload public func confirmationDialog<S: StringProtocol, A: View>(
         _ title: S, isPresented: Binding<Bool>, titleVisibility: Visibility = .automatic,
         @ViewBuilder actions: () -> A
     ) -> some View { _m() }
@@ -30,7 +17,6 @@ extension View {
 // MARK: - 下拉刷新（iOS 15）、sheet 不让划走（iOS 15）
 
 extension View {
-    public func refreshable(action: @escaping @Sendable () async -> Void) -> some View { _m() }
     public func interactiveDismissDisabled(_ isDisabled: Bool = true) -> some View { _m() }
 }
 

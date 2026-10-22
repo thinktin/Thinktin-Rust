@@ -11,6 +11,7 @@
 #
 # 前提：target/linux/ThinktinCore 已生成（tools/client-core/build-linux-swift.sh）。
 # 桩模块缺某个 SwiftUI API 时会报“找不到成员”：照 Apple 文档的签名在 Stubs/ 里补上，别为了过检查改 App 代码。
+# 补之前先 grep 整个 Stubs/ 有没有同名声明：并行开发的功能各自加桩，合并后重复声明会报 invalid redeclaration。
 set -euo pipefail
 cd "$(dirname "$0")"
 [[ -d ../../../target/linux/ThinktinCore ]] || { echo "先跑 tools/client-core/build-linux-swift.sh target/linux" >&2; exit 1; }
