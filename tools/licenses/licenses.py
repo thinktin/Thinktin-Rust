@@ -380,7 +380,7 @@ _TITLE_RULES = [
     ("Elastic-2.0", ["elastic license 2.0"]),
     ("PolyForm-Noncommercial-1.0.0", ["polyform noncommercial license"]),
     ("AGPL-3.0-only", ["gnu affero general public license"]),
-    ("AGPL-1.0-only", ["affero general public license"]),  # 2002 年 Affero 公司的第 1 版，标题没有 GNU
+    ("AGPL-1.0-only", ["affero general public license", "!gnu affero"]),  # 2002 年 Affero 公司的第 1 版，标题没有 GNU
     ("EUPL-1.1", ["european union public licen", "1.1"]),
     ("EUPL-1.2", ["european union public licen"]),
     ("OSL-3.0", ["open software license"]),
@@ -563,14 +563,52 @@ _BENIGN_WORDS = set(
     "the a an and or of license licence licensed mit x11 expat isc bsd new simplified modified clause apache version v "
     "spdx identifier all rights reserved software".split()
 )
-_HOMOGLYPHS = str.maketrans(dict(zip("аеорсухіјѕԁһАВЕКМНОРСТХοαειινρτυχΑΒΕΖΗΙΚΜΝΟΡΤΥΧ",
-                                      "aeopcyxijsdhABEKMHOPCTXoaeiivptuxABEZHIKMNOPTYX")))
+
+
+def _fold_table():
+    """_fold 用的替换表：长得和拉丁字母一样的西里尔、希腊字母，拉丁字母的小型大写（ᴏ ɪ ꜱ）、无点的 ı 这些，和不显示的
+    格式字符（BOM、软连字符、零宽空格……，直接去掉）。小写的像拉丁字母的，大写也换（І：先 fold 再 lower 也不漏）；
+    只有大写像的（В、Н、Т）小写不换，整个词都是西里尔字母的照样算外文。"""
+    lower = dict(zip("аеорсухіјѕԁһүӏԛԝοαειινρτυχϲϳıȷᴀʙᴄᴅᴇꜰɢʜɪᴊᴋʟᴍɴᴏᴘʀꜱᴛᴜᴠᴡʏᴢɑɡɩ",
+                     "aeopcyxijsdhylqwoaeiivptuxcjijabcdefghijklmnoprstuvwyzagi"))
+    upper = dict(zip("АВЕКМНОРСТХΑΒΕΖΗΙΚΜΝΟΡΤΥΧӀ", "ABEKMHOPCTXABEZHIKMNOPTYXI"))
+    table = {ord(s): d for s, d in list(upper.items()) + list(lower.items())}
+    for s, d in lower.items():
+        if len(s.upper()) == 1 and not s.upper().isascii():
+            table.setdefault(ord(s.upper()), d.upper())
+    for c in list(range(0x10000)) + list(range(0xE0000, 0xE0080)):
+        if unicodedata.category(chr(c)) == "Cf":
+            table[c] = None
+    return table
+
+
+_FOLD = _fold_table()
+# 没有分解形式的拉丁字母：换成最接近的 ASCII（Søren、Łukasz、Straße 这样的名字里有）。
+_LATIN_EXTRA = str.maketrans({"ß": "ss", "æ": "ae", "Æ": "AE", "ø": "o", "Ø": "O", "œ": "oe", "Œ": "OE", "đ": "d", "Đ": "D",
+                              "ł": "l", "Ł": "L", "þ": "th", "Þ": "Th", "ð": "d", "Ð": "D", "ħ": "h", "Ħ": "H", "ŋ": "ng",
+                              "Ŋ": "Ng", "ĸ": "k", "ə": "e", "Ə": "E"})
 _CJK = r"぀-ヿ㐀-䶿一-鿿가-힯豈-﫿"
 
 
 def _fold(text):
-    """NFKC（全角字母、连字 ﬀ 换成普通字母），再把长得和拉丁字母一样的西里尔、希腊字母换成拉丁字母。"""
-    return unicodedata.normalize("NFKC", text).translate(_HOMOGLYPHS)
+    """NFKC（全角字母、连字 ﬀ 换成普通字母），按 _FOLD 换掉长得像拉丁字母的字母、去掉格式字符，再去掉拉丁字母的附加符号。"""
+    return _deaccent(unicodedata.normalize("NFKC", text).translate(_FOLD))
+
+
+def _deaccent_letter(m):
+    c = m.group(0)
+    if "LATIN" not in unicodedata.name(c, ""):
+        return c
+    return "".join(ch for ch in unicodedata.normalize("NFKD", c) if not unicodedata.combining(ch)).translate(_LATIN_EXTRA)
+
+
+def _deaccent(text):
+    """带附加符号的拉丁字母换成不带的（commercíal、COMMERCİAL、Marchán → commercial、COMMERCIAL、Marchan），没有分解形式的
+    换成最接近的（ł → l、ß → ss）。别的文字（中文、俄文）不动。"""
+    if text.isascii():
+        return text
+    text = re.sub(r"[^\x00-\x7f]", _deaccent_letter, text)
+    return re.sub(r"(?<=[A-Za-z])[\u0300-\u036f]+", "", text)
 
 
 def _matches(t, needles):
@@ -654,8 +692,9 @@ def _tokens(text):
 
 
 def _foreign(w):
-    """非拉丁字母的词（中文、俄文……）：许可证标准文本都是英文，多出来的这种词多半是附加条款。"""
-    return not w.isascii() and any(ch.isalpha() and "LATIN" not in unicodedata.name(ch, "") for ch in w)
+    """非拉丁字母的词（中文、俄文……）：许可证标准文本都是英文，多出来的这种词多半是附加条款。词已经过 _fold
+    （带附加符号的拉丁字母、长得像拉丁字母的字母都换成了 ASCII），还剩非 ASCII 的字母就算。"""
+    return not w.isascii() and any(ch.isalpha() for ch in w)
 
 
 def _drop_notices(line):
@@ -1003,7 +1042,8 @@ def restricted_terms(paths):
         if len(text.encode("utf-8", errors="replace")) > SCAN_MAX_BYTES:
             hits.append("file too large to scan: %s" % Path(p).name)
             continue
-        t = re.sub(r"[\s_\-]+", " ", _fold(text).lower())
+        # 只留字母、数字和断句的标点：Markdown 的 **粗体**、> 引用、// 注释前缀、各种连字符都当空格，说法拆不开。
+        t = re.sub(r"[^\w.!?;:,]+|_+", " ", _fold(text).lower())
         t = re.sub(r"\bcommercial,? (or|and) non ?commercial\b|\bnon ?commercial,? (or|and) commercial\b", "", t)
         for phrase in _RESTRICTED_PHRASES:
             if phrase in t and phrase not in hits:
@@ -3207,6 +3247,28 @@ def self_test():
        (True, True, True, True, True, False, False, False), "3rdpartylicenses.txt、EULA、TERMS 是原文，名字里带 terms 的别的文件不是")
     eq(identify(agpl_1)[0], "AGPL-1.0-only", "AGPL-1.0（标题没有 GNU）")
     eq(identify(AGPL_TEXT)[0], "AGPL-3.0-only", "GNU 的 AGPL 还是 AGPL-3.0")
+    # 限制性说法：Markdown 的强调、引用、注释前缀、各种连字符拆不开；长得像拉丁字母的字母、附加符号、格式字符藏不住
+    with tempfile.TemporaryDirectory() as tmp:
+        for i, (tail, want) in enumerate([
+                ("This software may **not** be used for commercial purposes.", "may not be used for commercial"),
+                ("**NOT** for commercial use.", "not for commercial"), ("Licensed for non-*commercial* use.", "non commercial"),
+                ("> This software may not be used for\n> commercial purposes.", "may not be used for commercial"),
+                ("Business Source\n// License 1.1.", "business source license"),
+                ("non‑commercial use only", "non commercial"), ("non–commercial use", "non commercial"),
+                ("non­commercial use", "noncommercial use"), ("non−commercial use", "non commercial"),
+                ("Free for nón-commercíal use only.", "non commercial"), ("Free for non-commercıal use.", "non commercial"),
+                ("Business Sóurce License", "business source license"), ("Commons​ Clause", "commons clause")]):
+            f = Path(tmp) / ("LICENSE%d" % i)
+            f.write_text(MIT_TEXT + "\n" + tail + "\n")
+            eq(want in restricted_terms([f]), True, "限制性说法照样找得到：%r" % tail)
+    for tail in ["Nᴏt for commercıal use.", "Nót for commercíal use.", "NOT FOR COMMERCİAL USE.", "N​ot for comm​ercial use."]:
+        eq(detect_text(MIT_TEXT + "\n" + tail + "\n"), None, "换了字母写的限制核对不上：%r" % tail)
+    agpl_glyph = AGPL_TEXT.replace("PUBLIC", "PUBLІC") + "\nunder the terms of the GNU Affero General Publıc License as published by\n"
+    eq(("AGPL-3.0-only" in candidates(agpl_glyph), "AGPL-3.0-only" in deny_sections(MIT_TEXT * 3 + agpl_glyph)), (True, True),
+       "大写的 І、无点的 ı 写的 AGPL 照样认")
+    eq(detect_text(MIT_TEXT.replace("2024 Someone", "2024 Søren Łukasz, Jürgen Straße, Barış Çelik")), "MIT",
+       "名字里的 ø ł ß ı ç 不算外文")
+    eq(detect_text("﻿" + MIT_TEXT), "MIT", "开头的 BOM 不算")
     deny_pats = tomllib.loads(Path(__file__).with_name("policy.toml").read_text(encoding="utf-8")).get("deny", [])
     eq([p for p in deny_pats if not _DENY_CLASS.match(p.rstrip("*").rstrip("-") or "x")], [],
        "policy.toml 禁止名单里的每一类，_DENY_CLASS 都认（文件任何位置提到都记下）")
