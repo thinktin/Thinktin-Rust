@@ -438,19 +438,28 @@ impl TryFrom<PlanStep> for d::PlanStep {
 
 /// 计划的策略（4.4、4.7、7.11）。
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
+/// 每个字段都有默认值（和服务端的默认策略一样），`PlanPolicy()` 就是默认策略。
 pub struct PlanPolicy {
     /// 预授权的工具种类（ACP 的 tool kind：read、edit、search、execute……），用到时不用审批。
+    #[uniffi(default)]
     pub preauthorized_tools: Vec<String>,
+    #[uniffi(default = 86400)]
     pub approval_timeout_secs: u64,
     /// 审批（和等电脑、等 key）超时以后：skip（拒绝这一步，接着干）、pause_plan（暂停计划）、fail（这次失败）。
+    #[uniffi(default = "pause_plan")]
     pub on_approval_timeout: String,
     /// 每次运行的上限：token 数、时长、步数。
+    #[uniffi(default = None)]
     pub max_tokens: Option<u64>,
+    #[uniffi(default = 21600)]
     pub max_duration_secs: u64,
+    #[uniffi(default = None)]
     pub max_steps: Option<u32>,
     /// 整个计划每天最多用多少 token。
+    #[uniffi(default = None)]
     pub daily_token_limit: Option<u64>,
     /// 等电脑上线、等补上 key 最多等多久。
+    #[uniffi(default = 86400)]
     pub wait_timeout_secs: u64,
 }
 
@@ -518,8 +527,11 @@ pub struct Plan {
     pub revision: u32,
     /// 策略（预授权工具、审批超时、预算），JSON。和 `policy` 一样，留着给老版本的 App 用。
     pub policy_json: String,
+    /// 11.7 加的字段都有默认值：App 里自己构造 `Plan`（测试、预览）的代码不用改。
+    #[uniffi(default)]
     pub policy: PlanPolicy,
     /// 错过的触发怎么补：once、all、skip。
+    #[uniffi(default = "once")]
     pub catch_up: String,
     pub created_at_ms: i64,
     /// 列表接口里为空，详情里有。
