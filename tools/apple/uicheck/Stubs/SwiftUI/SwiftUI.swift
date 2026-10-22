@@ -1,6 +1,7 @@
 // 只用来在 Linux 上做类型检查的 SwiftUI 桩：签名照 iOS 17 SDK 的写，实现全是空的。
 @_exported import CoreGraphics
 @_exported import Foundation
+import Observation
 
 #if canImport(UIKit)
     @_exported import UIKit
@@ -178,6 +179,7 @@ public struct Font: Hashable, Sendable {
     public static func system(_ style: TextStyle, design: Design? = nil, weight: Weight? = nil) -> Font { Font(tag: 0) }
     public static func system(size: CGFloat, weight: Weight? = nil, design: Design? = nil) -> Font { Font(tag: 0) }
     public func weight(_ weight: Weight) -> Font { self }
+    public func monospacedDigit() -> Font { self }
     public static let body = Font(tag: 1)
     public static let footnote = Font(tag: 2)
     public static let largeTitle = Font(tag: 3)
@@ -211,12 +213,25 @@ public struct EnvironmentValues {
         get { .light }
         set {}
     }
+    public var scenePhase: ScenePhase {
+        get { .active }
+        set {}
+    }
+}
+
+public enum ScenePhase: Comparable, Hashable, Sendable {
+    case background, inactive, active
 }
 
 @propertyWrapper
 public struct Environment<Value>: DynamicProperty {
     public init(_ keyPath: KeyPath<EnvironmentValues, Value>) {}
     public var wrappedValue: Value { fatalError() }
+}
+
+extension Environment where Value: AnyObject & Observable {
+    /// iOS 17：从环境里取 `@Observable` 的对象（没注入时崩溃）。
+    public init(_ objectType: Value.Type) {}
 }
 
 @propertyWrapper
@@ -267,6 +282,7 @@ public func withAnimation<Result>(_ animation: Animation? = .default, _ body: ()
 public struct AnyTransition: Sendable {
     public static let opacity = AnyTransition()
     public static func move(edge: Edge) -> AnyTransition { AnyTransition() }
+    public func combined(with other: AnyTransition) -> AnyTransition { self }
 }
 
 // MARK: - 无障碍
@@ -278,6 +294,7 @@ public struct AccessibilityTraits: SetAlgebra, Sendable {
     public static let isHeader = AccessibilityTraits(1)
     public static let isModal = AccessibilityTraits(2)
     public static let isButton = AccessibilityTraits(3)
+    public static let isSelected = AccessibilityTraits(4)
     public func union(_ other: Self) -> Self { Self() }
     public func intersection(_ other: Self) -> Self { Self() }
     public func symmetricDifference(_ other: Self) -> Self { Self() }
@@ -385,6 +402,8 @@ extension ForEach where Data.Element: Identifiable, ID == Data.Element.ID {
 
 public struct NavigationStack<Root: View> {
     public init(@ViewBuilder root: () -> Root) {}
+    public init<Data>(path: Binding<Data>, @ViewBuilder root: () -> Root)
+    where Data: MutableCollection, Data: RandomAccessCollection, Data: RangeReplaceableCollection, Data.Element: Hashable {}
 }
 
 // MARK: - 时间线
@@ -393,6 +412,15 @@ public protocol TimelineSchedule {}
 public struct EveryMinuteTimelineSchedule: TimelineSchedule {}
 extension TimelineSchedule where Self == EveryMinuteTimelineSchedule {
     public static var everyMinute: EveryMinuteTimelineSchedule { EveryMinuteTimelineSchedule() }
+}
+
+public struct PeriodicTimelineSchedule: TimelineSchedule {
+    public init(from startDate: Date, by interval: TimeInterval) {}
+}
+extension TimelineSchedule where Self == PeriodicTimelineSchedule {
+    public static func periodic(from startDate: Date, by interval: TimeInterval) -> PeriodicTimelineSchedule {
+        PeriodicTimelineSchedule(from: startDate, by: interval)
+    }
 }
 
 public struct TimelineViewDefaultContext {
@@ -504,6 +532,10 @@ public struct ToolbarItemPlacement: Sendable {
     public static let automatic = ToolbarItemPlacement()
     public static let navigation = ToolbarItemPlacement()
     public static let primaryAction = ToolbarItemPlacement()
+    public static let principal = ToolbarItemPlacement()
+    public static let cancellationAction = ToolbarItemPlacement()
+    public static let confirmationAction = ToolbarItemPlacement()
+    public static let destructiveAction = ToolbarItemPlacement()
     #if os(iOS)
         public static let topBarLeading = ToolbarItemPlacement()
     #endif
@@ -513,9 +545,16 @@ public struct ToolbarItem<ID, Content: View>: ToolbarContent {
     public init(placement: ToolbarItemPlacement = .automatic, @ViewBuilder content: () -> Content) where ID == () {}
 }
 
+public struct TupleToolbarContent<T>: ToolbarContent {
+    public init(_ value: T) {}
+}
+
 @resultBuilder
 public struct ToolbarContentBuilder {
     public static func buildBlock<C: ToolbarContent>(_ content: C) -> C { content }
+    public static func buildBlock<each C: ToolbarContent>(_ content: repeat each C) -> TupleToolbarContent<(repeat each C)> {
+        TupleToolbarContent((repeat each content))
+    }
 }
 
 // MARK: - 修饰符
@@ -568,7 +607,9 @@ extension View {
     public func onChange<V: Equatable>(of value: V, initial: Bool = false, _ action: @escaping () -> Void) -> some View {
         _m()
     }
-    public func task(priority: TaskPriority = .userInitiated, _ action: @escaping @isolated(any) @Sendable () async -> Void)
+    public func task(
+        priority: TaskPriority = .userInitiated, @_inheritActorContext _ action: @escaping @isolated(any) @Sendable () async -> Void
+    )
         -> some View
     { _m() }
     public func onTapGesture(count: Int = 1, perform action: @escaping () -> Void) -> some View { _m() }
@@ -588,6 +629,114 @@ extension View {
     public func accessibilityAction(_ actionKind: AccessibilityActionKind = .default, _ handler: @escaping () -> Void)
         -> some View
     { _m() }
+}
+
+// MARK: - 导航、菜单、链接、手势、sheet（WBS 12.16 起用到的）
+
+public struct Menu<Label: View, Content: View> {
+    public init(@ViewBuilder content: () -> Content, @ViewBuilder label: () -> Label) {}
+}
+
+extension Menu where Label == Text {
+    public init(_ titleKey: LocalizedStringKey, @ViewBuilder content: () -> Content) {}
+    @_disfavoredOverload public init<S: StringProtocol>(_ title: S, @ViewBuilder content: () -> Content) {}
+}
+
+public struct Divider {
+    public init() {}
+}
+
+public struct Link<Label: View> {
+    public init(destination: URL, @ViewBuilder label: () -> Label) {}
+}
+
+extension Link where Label == Text {
+    public init(_ titleKey: LocalizedStringKey, destination: URL) {}
+    @_disfavoredOverload public init<S: StringProtocol>(_ title: S, destination: URL) {}
+}
+
+public enum ControlSize: CaseIterable, Hashable, Sendable {
+    case mini, small, regular, large, extraLarge
+}
+
+public struct PresentationDetent: Hashable, Sendable {
+    let v: Double
+    public static let medium = PresentationDetent(v: 0.5)
+    public static let large = PresentationDetent(v: 1)
+    public static func fraction(_ fraction: CGFloat) -> PresentationDetent { PresentationDetent(v: Double(fraction)) }
+    public static func height(_ height: CGFloat) -> PresentationDetent { PresentationDetent(v: Double(height)) }
+}
+
+public struct GestureMask: OptionSet, Sendable {
+    public let rawValue: UInt8
+    public init(rawValue: UInt8) { self.rawValue = rawValue }
+    public static let none = GestureMask([])
+    public static let gesture = GestureMask(rawValue: 1)
+    public static let subviews = GestureMask(rawValue: 2)
+    public static let all = GestureMask(rawValue: 3)
+}
+
+@MainActor @preconcurrency
+public protocol Gesture {
+    associatedtype Value
+}
+
+public struct DragGesture: Gesture {
+    public struct Value: Equatable, Sendable {
+        public var time: Date
+        public var location: CGPoint
+        public var startLocation: CGPoint
+        public var translation: CGSize
+        public var velocity: CGSize
+        public var predictedEndLocation: CGPoint
+        public var predictedEndTranslation: CGSize
+    }
+    public var minimumDistance: CGFloat
+    public init(minimumDistance: CGFloat = 10) { self.minimumDistance = minimumDistance }
+}
+
+public struct _EndedGesture<Content: Gesture>: Gesture {
+    public typealias Value = Content.Value
+}
+
+public struct _ChangedGesture<Content: Gesture>: Gesture {
+    public typealias Value = Content.Value
+}
+
+extension Gesture {
+    public func onEnded(_ action: @escaping (Value) -> Void) -> _EndedGesture<Self> { _EndedGesture() }
+}
+
+extension Gesture where Value: Equatable {
+    public func onChanged(_ action: @escaping (Value) -> Void) -> _ChangedGesture<Self> { _ChangedGesture() }
+}
+
+extension View {
+    public func navigationTitle(_ title: Text) -> some View { _m() }
+    public func navigationTitle(_ titleKey: LocalizedStringKey) -> some View { _m() }
+    @_disfavoredOverload public func navigationTitle<S: StringProtocol>(_ title: S) -> some View { _m() }
+    public func navigationDestination<D: Hashable, C: View>(
+        for data: D.Type, @ViewBuilder destination: @escaping (D) -> C
+    ) -> some View { _m() }
+
+    public func sheet<Item: Identifiable, Content: View>(
+        item: Binding<Item?>, onDismiss: (() -> Void)? = nil, @ViewBuilder content: @escaping (Item) -> Content
+    ) -> some View { _m() }
+    public func sheet<Content: View>(
+        isPresented: Binding<Bool>, onDismiss: (() -> Void)? = nil, @ViewBuilder content: @escaping () -> Content
+    ) -> some View { _m() }
+    public func presentationDetents(_ detents: Set<PresentationDetent>) -> some View { _m() }
+
+    public func id<ID: Hashable>(_ id: ID) -> some View { _m() }
+    public func controlSize(_ controlSize: ControlSize) -> some View { _m() }
+    public func onOpenURL(perform action: @escaping (URL) -> ()) -> some View { _m() }
+    public func environment<T: AnyObject & Observable>(_ object: T?) -> some View { _m() }
+
+    public func gesture<T: Gesture>(_ gesture: T, including mask: GestureMask = .all) -> some View { _m() }
+    public func simultaneousGesture<T: Gesture>(_ gesture: T, including mask: GestureMask = .all) -> some View { _m() }
+
+    public func accessibilityValue(_ valueDescription: Text) -> some View { _m() }
+    public func accessibilityHint(_ hint: Text) -> some View { _m() }
 }
 
 // MARK: - 渲染与宿主
@@ -660,6 +809,9 @@ extension EmptyView: View { public var body: Never { fatalError() } }
 extension ProgressView: View { public var body: Never { fatalError() } }
 extension ForEach: View { public var body: Never { fatalError() } }
 extension NavigationStack: View { public var body: Never { fatalError() } }
+extension Menu: View { public var body: Never { fatalError() } }
+extension Divider: View { public var body: Never { fatalError() } }
+extension Link: View { public var body: Never { fatalError() } }
 extension TimelineView: View { public var body: Never { fatalError() } }
 extension Button: View { public var body: Never { fatalError() } }
 extension TextField: View { public var body: Never { fatalError() } }

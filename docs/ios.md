@@ -30,8 +30,9 @@ apps/apple/
     Thinktin.entitlements
   ThinktinKit/                Swift Package（iOS / macOS 共享）
     Package.swift
-    Sources/ThinktinKit/      纯 Swift：Models、Client（ClientProtocol、MockClient）、ViewModels、Formatting、Conversation（事件归并）
-    Sources/ThinktinUI/       SwiftUI：Design（令牌、组件）、Screens（按功能分目录）、Previews
+    Sources/ThinktinKit/      纯 Swift：Models、Client（ClientProtocol、MockClient）、Navigation（路由、深链）、ViewModels、
+                              Formatting、Conversation（事件归并）
+    Sources/ThinktinUI/       SwiftUI：Design（令牌）、Components、Shell（应用框架）、Screens（按功能分目录，每个功能一个接入点）
     Sources/ThinktinCoreAdapter/  ClientProtocol 的 ThinktinCore 实现（依赖 ThinktinCore 包）
     Tests/ThinktinKitTests/   Linux 和 macOS 都跑
     Tests/ThinktinCoreAdapterTests/  Linux 和 macOS 都跑（经真实的 Rust 核心）
@@ -132,6 +133,30 @@ Claude App 的特点：暖色纸张底色、极少的强调色、标题用衬线
 `thinktin://vault/request/{id}`、`thinktin://instance/{id}`。推送 payload 里的字段（收件箱 id、运行 id、审批 id）由服务端
 `notify` 定义，两端共用。Universal Links 等上线前再配。
 
+实现在 `ThinktinKit/Navigation`（12.16）：`DeepLink` 解析深链（认不出的格式、多余的路径段、不像 id 的 id 一律不认），
+`PushPayload` 解析推送的 `userInfo`（`tt` 下的 `kind`、`instance`、`run`、`approval`、`plan`、`inbox`，见 crates/notify/src/apns.rs），
+`Router` 跳转。规则：
+
+- 深链和推送打开后，返回栈是“根（当前实例的对话）→ 目标页”，和安卓的冷启动一致；`thinktin://instance/{id}` 打开实例详情
+  （安卓也是实例设置页），并把它设成当前实例。
+- 推送去哪：审批 → 审批详情（没有审批 id 时运行详情，再没有就是审批中心）；运行完成 / 失败 → 运行详情（没有运行 id 时实例的对话，
+  再没有就是收件箱里的那一条）；其他提醒 → 计划 → 运行 → 实例的对话 → 收件箱里的那一条 → 收件箱，取第一个有 id 的。推送里有实例 id
+  时顺带切到这个实例。`PushPayload.inboxItemID` 给 12.8 标已读。保险箱请求 id 等 10.7 加进 `tt` 再接。
+- 没登录、冻结、要升级时深链和推送先记下（`Router.pendingRoute`），回到正常状态再跳，同一条只跳一次。
+
+## 6.2 离线时每个页面怎么显示
+
+client-core 只缓存实例、运行、事件、收件箱（cache.rs 的几张表）。所有页面用同一个离线横幅（`AppShell` 统一放在页面顶部，
+文案按 `AppRoute.offlinePolicy`），离线时写操作一律禁用，只有收件箱标已读例外（先在本地生效，联网后补发）。
+
+| 策略 | 页面 | 横幅 |
+|---|---|---|
+| 有缓存（`cached`） | 首页、实例对话、运行详情、运行树、进行中、实例详情、收件箱 | “离线，显示的是缓存内容” |
+| 没有缓存（`unavailable`） | 计划、审批、模型 key、模型路由、用量、保险箱、团队、agent 目录、产出物、IM 渠道、登录设备、账号 | “离线，暂无数据。联网后会自动刷新。”，页面显示空状态 |
+| 不用联网（`local`） | 设置中心、关于、开源许可、搜索（只搜本机缓存）、登录、冻结页、升级页 | 不显示 |
+
+退出登录和注销都会清掉缓存，换账号后不能显示上一个账号的数据（`AppModel` 同时清掉实例、角标和导航）。
+
 ## 7. 构建与测试
 
 - **本机（macOS）**：`brew install xcodegen`，`tools/client-core/build-apple.sh target/apple`，`cd apps/apple && xcodegen generate`，
@@ -167,13 +192,13 @@ Claude App 的特点：暖色纸张底色、极少的强调色、标题用衬线
 | 工作包 | ThinktinKit（纯 Swift） | ThinktinUI（SwiftUI） |
 |---|---|---|
 | 12.1 | `Models/`、`Client/`、`Conversation/`、`Formatting/`、`Support/` | `Design/`、`Components/`、`RootView.swift` |
-| 12.16 | `Navigation/`（路由、深链解析、全局状态） | `Shell/`（抽屉、实例切换、全局横幅） |
+| 12.16 | `Navigation/`（路由、深链、推送解析、`Router`）、`ViewModels/Shell/`（`AppModel`、`ObservedClient`） | `Shell/`（`AppShell`、抽屉、实例切换、全局横幅、冻结页、升级页、占位页） |
 | 12.2 | `ViewModels/Account/` | `Screens/Account/`（登录、设备、注销） |
 | 12.3 | `ViewModels/Agents/` | `Screens/Agents/`（目录、领养、实例详情） |
 | 12.4 | `ViewModels/Models/` | `Screens/Models/`（key、路由、用量） |
-| 12.5 | `ViewModels/Conversation/` | `Screens/Conversation/`（时间线、输入框、事件卡片、运行详情） |
+| 12.5 | `ViewModels/Conversation/` | `Screens/Conversation/`（首页、时间线、输入框、事件卡片、运行详情、运行树、进行中） |
 | 12.6 | `ViewModels/Plans/` | `Screens/Plans/` |
-| 12.7 | `ViewModels/Teams/` | `Screens/Teams/`（团队、流水线编辑器、运行树） |
+| 12.7 | `ViewModels/Teams/` | `Screens/Teams/`（团队、团队模板、流水线编辑器；运行树用 12.5 的，补流水线节点） |
 | 12.8 | `ViewModels/Inbox/` | `Screens/Inbox/`；推送注册在 App 的 `Platform/` |
 | 12.12 | `ViewModels/Settings/` | `Screens/Settings/`（设置中心、开源许可、关于） |
 | 12.13 | `ViewModels/Vault/` | `Screens/Vault/` |
@@ -181,6 +206,44 @@ Claude App 的特点：暖色纸张底色、极少的强调色、标题用衬线
 | 12.15 | `ViewModels/Approvals/` | `Screens/Approvals/`（审批卡组件给 12.5 嵌入） |
 | 12.17 | `ViewModels/Onboarding/` | `Screens/Onboarding/` |
 | 12.18 | `ViewModels/Artifacts/` | `Screens/Artifacts/` |
+| 12.21 | `ViewModels/Search/` | `Screens/Search/` |
 | 12.10、12.20 | — | App 的 Widget Extension target（`project.yml` 里另起 target） |
 
 每个工作包的测试放在对应的 `Tests/ThinktinKitTests/<功能>/`（视图模型，Linux 能跑）和 `Tests/ThinktinUITests/<功能>/`（只在 macOS 跑）。
+
+### 9.1 接入点：各功能只改自己的目录（12.16 起）
+
+应用框架（12.16）把所有页面都定义成 `AppRoute`（`ThinktinKit/Navigation/AppRoute.swift`），每个页面属于一个功能
+（`AppRoute.feature` → `AppFeature`）。每个功能有一个接入点文件 `ThinktinUI/Screens/<功能>/<功能>Destination.swift`：
+
+```swift
+struct PlansDestination: View {
+    let route: AppRoute          // .plans、.plan(id)、.newPlan(instanceID:)、.editPlan(id)
+    var body: some View { … }    // 按 route 分派到本目录里的页面
+}
+```
+
+`AppShell` 的导航栈根、`navigationDestination(for: AppRoute.self)`、sheet 都经过 `Shell/AppDestination.swift`，按 `route.feature`
+交给对应的接入点，并在页面顶部统一放连接横幅和离线横幅。做一个功能时：
+
+1. 只改 `Screens/<功能>/`、`ViewModels/<功能>/`、`Tests/ThinktinKitTests/<功能>/`、`Tests/ThinktinUITests/<功能>/` 里的文件，
+   把接入点的占位页（`DestinationPlaceholder`）换成真页面；不改 `Shell/`、`Navigation/`、`RootView.swift`。
+2. 环境里取全局状态和工具：`@Environment(AppModel.self)`（当前实例、实例列表、角标、离线、`refreshBadges()`）、
+   `@Environment(Router.self)`（跳转）、`@Environment(\.client)`（调接口）。视图模型照常 `init(client: any ClientProtocol)`，
+   传进去的就是环境里的这个。
+3. 跳到别的功能的页面：`router.open(.run(id))`（按 `presentation` 压栈 / 弹 sheet / 回到根，会关掉抽屉和 sheet），或
+   `NavigationLink(value: AppRoute.run(id))`。打开 `.conversation(id)` 等于切换当前实例、回到根。sheet 页（`.newPlan`、`.editPlan`、
+   `.addCredential`、`.onboarding`、`.newTask`）自带导航栈，关掉用 `router.dismissSheet()`。
+4. 只在本功能里用、不要深链的子页面（向导的第二步、选择器）不用加 `AppRoute`：在自己的目录里用
+   `NavigationLink { 子页面 } label: { … }` 或本地 sheet。要跨功能跳转、要深链的页面才加 case，那是 `Navigation/` 的改动，
+   在合并时统一加（加了 case 要补 `feature`、`presentation`、`offlinePolicy`、`title`，`AppRouteTests` 会逐个检查）。
+5. 错误：页面只管行内错误（`ErrorBanner`）。登录失效、冻结、要升级不用处理：环境里的客户端是 `ObservedClient`，任何调用遇到
+   这些错误都会报给 `AppModel` 切换整页状态；`login` 成功、`logout` / `deleteAccount` / 下线本机之后也会自动切换（12.2 的登录页
+   调完 `client.login(...)` 就行）。事件流照常 `client.subscribe(...)`，连接状态会自动汇总成顶部的横幅。
+6. 对话页（12.5）的根有导航栏的抽屉按钮和实例切换菜单（`AppShell` 加的），页面自己的按钮放 `.primaryAction`；
+   `router.newTaskRequest` 变了时把焦点放进输入框（抽屉里的“新任务”）。
+7. 预览用 `.previewShell()`（`.previewShell(.english, scheme: .dark)`）：放进导航栈，注入 Mock 客户端的 `AppModel`、`Router`。
+   界面测试的工具在 `Tests/ThinktinUITests/UITestSupport.swift`（`renderInBothAppearances`、`hostAndLayout`）。
+
+`ObservedClient` 要转发 `ClientProtocol` 的每个方法：协议加了方法（比如合 11.8），`ViewModels/Shell/ObservedClient.swift` 要加对应的
+一行转发，不加编译不过。
