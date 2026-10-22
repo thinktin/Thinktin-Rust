@@ -81,17 +81,19 @@ enum class RunKind(override val wire: String) : WireEnum {
     }
 }
 
+/** 收件箱条目的种类。服务端以后可能加新的：不认识的按 [Info] 显示（client-core 的约定），所以没有 Unknown。 */
 enum class InboxKind(override val wire: String) : WireEnum {
     RunFinished("run_finished"),
     RunFailed("run_failed"),
     Approval("approval"),
     ComputerApproval("computer_approval"),
+    VaultRequest("vault_request"),
+    PlanConfirm("plan_confirm"),
     Info("info"),
-    Unknown(""),
     ;
 
     companion object {
-        fun fromWire(value: String): InboxKind = parseWire(value, Unknown)
+        fun fromWire(value: String): InboxKind = parseWire(value, Info)
     }
 }
 

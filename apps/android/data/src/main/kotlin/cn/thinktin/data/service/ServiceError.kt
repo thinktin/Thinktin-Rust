@@ -50,14 +50,14 @@ sealed class ServiceError(message: String, cause: Throwable? = null) : Exception
 
 /** ClientException（UniFFI）→ ServiceError。 */
 internal fun ClientException.toServiceError(): ServiceError = when (this) {
-    is ClientException.Network -> ServiceError.Network(message, this)
+    is ClientException.Network -> ServiceError.Network(detail, this)
     is ClientException.SignedOut -> ServiceError.SignedOut(this)
     is ClientException.UpgradeRequired -> ServiceError.UpgradeRequired(this)
     is ClientException.AccountFrozen -> ServiceError.AccountFrozen(this)
     is ClientException.Api -> ServiceError.Api(
         status = status.toInt(),
         code = code,
-        detail = message,
+        detail = detail,
         retryAfterSecs = retryAfterSecs?.let { if (it > Long.MAX_VALUE.toULong()) Long.MAX_VALUE else it.toLong() },
         cause = this,
     )
@@ -65,10 +65,10 @@ internal fun ClientException.toServiceError(): ServiceError = when (this) {
         count = if (count > Int.MAX_VALUE.toUInt()) Int.MAX_VALUE else count.toInt(),
         cause = this,
     )
-    is ClientException.Decode -> ServiceError.Other("decode", message, this)
-    is ClientException.Cache -> ServiceError.Other("cache", message, this)
-    is ClientException.InvalidArgument -> ServiceError.Other("invalid_argument", message, this)
-    is ClientException.Internal -> ServiceError.Other("internal", message, this)
+    is ClientException.Decode -> ServiceError.Other("decode", detail, this)
+    is ClientException.Cache -> ServiceError.Other("cache", detail, this)
+    is ClientException.InvalidArgument -> ServiceError.Other("invalid_argument", detail, this)
+    is ClientException.Internal -> ServiceError.Other("internal", detail, this)
 }
 
 /** 任意异常 → ServiceError（已经是的原样返回）。 */

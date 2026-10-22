@@ -242,6 +242,7 @@ internal fun CoreStreamStatus.toModel(): StreamState = when (this) {
     CoreStreamStatus.SignedOut -> StreamState.SignedOut
     CoreStreamStatus.NotFound -> StreamState.NotFound
     CoreStreamStatus.AccountFrozen -> StreamState.AccountFrozen
+    CoreStreamStatus.UpgradeRequired -> StreamState.UpgradeRequired
     CoreStreamStatus.Stopped -> StreamState.Stopped
 }
 
@@ -259,6 +260,10 @@ internal fun CoreApproval.toModel(): Approval = Approval(
     state = ApprovalState.fromWire(state),
     expiresAtMs = expiresAtMs,
     createdAtMs = createdAtMs,
+    requestId = requestId,
+    attempt = attempt.toIntClamped(),
+    decidedOption = decidedOption,
+    decidedAtMs = decidedAtMs,
 )
 
 internal fun CoreSchedule.toModel(): Schedule = when (this) {
@@ -359,6 +364,8 @@ internal fun CoreInboxItem.toModel(): InboxItem = InboxItem(
     aiGenerated = aiGenerated,
     read = read,
     createdAtMs = createdAtMs,
+    subtype = subtype,
+    vaultRequestId = vaultRequestId,
 )
 
 internal fun CoreInboxPage.toModel(): InboxPage = InboxPage(items = items.map { it.toModel() }, unread = unread)

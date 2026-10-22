@@ -172,13 +172,20 @@ sealed interface StreamState {
     data object SignedOut : StreamState
     data object NotFound : StreamState
     data object AccountFrozen : StreamState
+
+    /** 握手被拒（426）：App 版本太老，不再重连；界面进升级页（[cn.thinktin.data.service.ThinktinService.upgradeState]）。 */
+    data object UpgradeRequired : StreamState
+
+    /** 调用方停的，或后台任务意外退出。 */
     data object Stopped : StreamState
 }
 
 /** 终止状态：之后不会再有事件，events() 的流在发出它之后结束。 */
 val StreamState.isTerminal: Boolean
     get() = when (this) {
-        StreamState.NotFound, StreamState.SignedOut, StreamState.AccountFrozen, StreamState.Stopped -> true
+        StreamState.NotFound, StreamState.SignedOut, StreamState.AccountFrozen, StreamState.UpgradeRequired,
+        StreamState.Stopped,
+        -> true
         StreamState.Connecting, StreamState.Live, is StreamState.Reconnecting -> false
     }
 
@@ -205,7 +212,23 @@ data class Approval(
     val state: ApprovalState,
     val expiresAtMs: Long,
     val createdAtMs: Long,
-)
+    /**
+     * shim 给的请求 id（和 `agent.permission_requested` 事件里的一样）。shim 每次尝试从 perm-1 重新编号，
+     * 所以要用 [key]（`runId`、`attempt`、`requestId` 三个一起）认同一条审批。老数据为空串。
+     */
+    val requestId: String = "",
+    /** 第几次尝试（和 `run.state` 事件的 `attempt` 一样）；0 是不知道（老数据）。 */
+    val attempt: Int = 0,
+    /** 选了哪个选项（`optionId`）；没处理、过期了的为 null。 */
+    val decidedOption: String? = null,
+    val decidedAtMs: Long? = null,
+) {
+    /** 认审批的关联键（docs/agent-integration.md 第 6 节）。 */
+    val key: ApprovalKey get() = ApprovalKey(runId = runId, attempt = attempt, requestId = requestId)
+}
+
+/** 审批的关联键：`runId`、`attempt`、`requestId` 三个对上才是同一条审批。 */
+data class ApprovalKey(val runId: String, val attempt: Int, val requestId: String)
 
 sealed interface Schedule {
     /** 五段 cron，按 [tz]（IANA 名称）的本地时间。 */
@@ -321,6 +344,13 @@ data class InboxItem(
     val aiGenerated: Boolean,
     val read: Boolean,
     val createdAtMs: Long,
+    /**
+     * 是哪一种提醒（10.7）：account_frozen、account_restored、stopped_all、approval_skipped、trigger_disabled、
+     * im_channel_disabled、report_handled；运行进入等待时是 [Run.waitCode] 的取值。和推送的 `tt.subtype` 一样。
+     */
+    val subtype: String? = null,
+    /** 保险箱请求（[kind] 是 [InboxKind.VaultRequest] 时，`thinktin://vault/request/{id}`）。 */
+    val vaultRequestId: String? = null,
 )
 
 data class InboxPage(val items: List<InboxItem>, val unread: Long)

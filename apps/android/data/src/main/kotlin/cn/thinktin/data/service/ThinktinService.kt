@@ -93,7 +93,7 @@ interface ThinktinService {
     suspend fun updateProfile(displayName: String?): User
 
     /**
-     * [channel] 是服务端的推送通道：apns、fcm、hms、honor、mi、oppo、vivo、unipush（极光、个推这类统一推送走 unipush）。
+     * [channel] 是服务端的推送通道：apns（apns_sandbox 是 iOS 开发包用的）、fcm、hms、honor、mi、oppo、vivo、unipush（极光、个推这类统一推送走 unipush）。
      * 不认识的通道 client-core 报参数错误。
      */
     suspend fun setPushToken(channel: String, token: String)
@@ -128,9 +128,15 @@ interface ThinktinService {
 
     /**
      * 服务端说过这个版本太老（某个请求抛过 [ServiceError.UpgradeRequired]，或事件流握手被拒）。之后事件流以
-     * `Stopped` 结束、不再重连；界面进升级页。一直有效（升级就是重装）。
+     * [cn.thinktin.data.model.StreamState.UpgradeRequired] 结束、不再重连；界面进升级页。一直有效（升级就是重装）。
      */
     fun upgradeRequired(): Boolean
+
+    /**
+     * [upgradeRequired] 的可观察版本：AppRoot 收集它，变成 true 时整个界面换成升级页。
+     * 任何请求抛 [ServiceError.UpgradeRequired]、事件流以 `UpgradeRequired` 结束时置 true，之后不再变回。
+     */
+    val upgradeState: StateFlow<Boolean>
 
     // ---- 手机和电脑之间的消息（14.1，13.9） ----
 
@@ -214,7 +220,7 @@ interface ThinktinService {
      * 订阅实例的事件流。冷流：收集时订阅，取消收集时停止。事件在收集方的协程里交付。
      *
      * 终止语义：收到终止状态（[cn.thinktin.data.model.StreamState.NotFound]、`SignedOut`、`AccountFrozen`、
-     * `Stopped`）时先把这个状态发出来，然后流正常结束；`Connecting`、`Live`、`Reconnecting` 之后流继续。
+     * `UpgradeRequired`、`Stopped`）时先把这个状态发出来，然后流正常结束；`Connecting`、`Live`、`Reconnecting` 之后流继续。
      * 订阅本身失败时抛 [ServiceError]。
      */
     fun events(instanceId: String): Flow<EventStreamItem>
@@ -235,7 +241,14 @@ interface ThinktinService {
 
     // ---- 审批（13.5） ----
 
+    /** 待处理的审批。 */
     suspend fun approvals(): List<Approval>
+
+    /**
+     * 一条审批，什么状态都能查（已批准、已拒绝、已过期、已取消）。点审批推送、收件箱条目进来时先查：
+     * 已处理、已过期的给提示，不报错；推送里“拒绝”的快捷操作先查它还是不是待处理。
+     */
+    suspend fun getApproval(approvalId: String): Approval
 
     suspend fun decideApproval(approvalId: String, optionId: String): Approval
 

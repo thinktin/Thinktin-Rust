@@ -12,7 +12,6 @@ apps/android/
 ├─ gradle/libs.versions.toml      版本目录（AGP 8.7.3、Kotlin 2.1.0、Compose BOM 2024.12.01……）
 ├─ gradle/robolectric.gradle.kts  Robolectric 用的 android-all 经 Gradle 解析、离线使用
 ├─ scripts/sync-core.sh           同步 client-core 的绑定、.so、许可证资源
-├─ scripts/patch-bindings.py      给生成的绑定打 Kotlin 2 兼容补丁（sync-core.sh 调用）
 ├─ core/    :core   client-core 的 UniFFI Kotlin 绑定（cn.thinktin.core）+ 手写的 TlsInit + jniLibs，见 core/README.md
 ├─ data/    :data   App 模型、ThinktinService 接口、CoreThinktinService（真实）、MockThinktinService（演示）、
 │                   SecureSessionStore、ClientFactory、TlsState
@@ -55,9 +54,8 @@ apps/android/scripts/sync-core.sh --check                # 只检查提交的绑
 用完删掉（见“已知问题”）。
 
 `client_core.kt` 提交进 git；`core/src/main/jniLibs/`（约 20 MB）和 `core/src/main/assets/thinktin-licenses/`
-是生成物，不提交。UniFFI 0.32 给错误里名叫 `message` 的字段生成的代码过不了 Kotlin 2 的编译，
-`scripts/patch-bindings.py` 会自动修，见该文件开头的说明。`core/src/main/kotlin/cn/thinktin/core/TlsInit.kt`
-是手写的（见下一节），脚本不碰它。
+是生成物，不提交。生成结果原样提交、不打补丁（client-core 的错误字段叫 `detail`，避开了 Kotlin 异常自带的 `message`），
+`--check` 直接逐字节比对。`core/src/main/kotlin/cn/thinktin/core/TlsInit.kt` 是手写的（见下一节），脚本不碰它。
 
 client-core 的 App 接口已全部接进 `ThinktinService`，`CoreThinktinService` 里没有再抛 `ServiceError.Unsupported` 的方法
 （这个类型留给以后新加、还没接的接口）：

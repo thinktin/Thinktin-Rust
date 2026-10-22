@@ -99,6 +99,18 @@ internal class CoreThinktinService(
 
     override val authState: StateFlow<AuthState> get() = auth.asStateFlow()
 
+    // 惰性：第一次用到时问 client-core 是否已经知道版本太老（读不出来按否）。
+    private val upgrade: MutableStateFlow<Boolean> by lazy {
+        val required = try {
+            client.upgradeRequired()
+        } catch (_: Exception) {
+            false
+        }
+        MutableStateFlow(required)
+    }
+
+    override val upgradeState: StateFlow<Boolean> get() = upgrade.asStateFlow()
+
     /** 调 client-core，把异常换成 ServiceError，并据此更新登录状态。取消照常抛出。 */
     private inline fun <T> call(block: () -> T): T =
         try {
@@ -118,6 +130,7 @@ internal class CoreThinktinService(
         when (error) {
             is ServiceError.SignedOut -> auth.value = AuthState.SignedOut
             is ServiceError.AccountFrozen -> auth.value = AuthState.Frozen
+            is ServiceError.UpgradeRequired -> upgrade.value = true
             else -> Unit
         }
         return error
@@ -191,10 +204,14 @@ internal class CoreThinktinService(
         client.setAcceptLanguage(AcceptLanguage.header(languageTags))
     }
 
-    override fun upgradeRequired(): Boolean = try {
-        client.upgradeRequired()
-    } catch (_: Exception) {
-        false
+    override fun upgradeRequired(): Boolean {
+        val required = try {
+            client.upgradeRequired()
+        } catch (_: Exception) {
+            false
+        }
+        if (required) upgrade.value = true
+        return required || upgrade.value
     }
 
     override suspend fun sendSelfCode(purpose: SelfCodePurpose) = call { client.sendSelfCode(purpose.wire) }
@@ -303,6 +320,7 @@ internal class CoreThinktinService(
                 when (state) {
                     StreamState.SignedOut -> auth.value = AuthState.SignedOut
                     StreamState.AccountFrozen -> auth.value = AuthState.Frozen
+                    StreamState.UpgradeRequired -> upgrade.value = true
                     else -> Unit
                 }
                 trySend(EventStreamItem.Status(state))
@@ -335,6 +353,9 @@ internal class CoreThinktinService(
     // ---- 审批 ----
 
     override suspend fun approvals(): List<Approval> = call { client.approvals().map { it.toModel() } }
+
+    override suspend fun getApproval(approvalId: String): Approval =
+        call { client.getApproval(approvalId).toModel() }
 
     override suspend fun decideApproval(approvalId: String, optionId: String): Approval =
         call { client.decideApproval(approvalId, optionId).toModel() }
