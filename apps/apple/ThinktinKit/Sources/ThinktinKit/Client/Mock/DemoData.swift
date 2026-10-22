@@ -162,7 +162,7 @@ public enum DemoData {
         writerEvents.add(.turnEnded, digestRunID, ["stop_reason": "end_turn"], at: digest.finishedAt!)
         writerEvents.add(.runState, digestRunID, ["state": "succeeded"], at: digest.finishedAt!)
         // 发到团队群（等审批）
-        writerEvents.add(.runState, postRunID, ["state": "running"], at: post.startedAt!)
+        writerEvents.add(.runState, postRunID, ["state": "running", "attempt": 1], at: post.startedAt!)
         writerEvents.add(.turnStarted, postRunID, [:], at: post.startedAt!)
         writerEvents.add(
             .agentMessage, postRunID, ["text": "好的，我把周报要点发到飞书的「研发群」。"],
@@ -182,10 +182,11 @@ public enum DemoData {
             .permissionRequested, postRunID,
             [
                 "request_id": .string(pendingPermissionRequestID), "title": "发送消息到「研发群」",
-                "options": approvalOptionsJSON, "tool_call": postToolCall,
+                "options": approvalOptionsJSON, "tool_call": postToolCall, "attempt": 1,
+                "approval_id": .string(pendingApprovalID.rawValue),
             ], at: post.startedAt!.addingTimeInterval(9))
         writerEvents.add(
-            .runState, postRunID, ["state": "waiting_approval", "reason": "发送消息到「研发群」"],
+            .runState, postRunID, ["state": "waiting_approval", "reason": "发送消息到「研发群」", "attempt": 1],
             at: post.startedAt!.addingTimeInterval(9))
 
         var reviewerEvents = EventBuilder(instanceID: reviewerID)
@@ -231,7 +232,7 @@ public enum DemoData {
                 id: pendingApprovalID, runID: postRunID, instanceID: writerID, title: "发送消息到「研发群」",
                 options: approvalOptions, toolCallJSON: postToolCall.compactString(), state: .pending,
                 expiresAt: post.startedAt!.addingTimeInterval(24 * hour),
-                createdAt: post.startedAt!.addingTimeInterval(9))
+                createdAt: post.startedAt!.addingTimeInterval(9), requestID: pendingPermissionRequestID, attempt: 1)
         ]
 
         let plans = [
@@ -266,8 +267,9 @@ public enum DemoData {
                 approvalID: pendingApprovalID, kind: .approval, title: "写作助手 等你审批", body: "发送消息到「研发群」",
                 isAIGenerated: true, isRead: false, createdAt: post.startedAt!.addingTimeInterval(9)),
             InboxItem(
-                id: "0192f3a0-0000-7000-8000-000000001002", instanceID: reviewerID, runID: publishRunID, kind: .info,
-                title: "代码审查 需要账号密码", body: "npm：发布 @thinktin/sdk 0.4.0 到 npm", isAIGenerated: true,
+                id: "0192f3a0-0000-7000-8000-000000001002", instanceID: reviewerID, runID: publishRunID,
+                vaultRequestID: npmVaultRequestID, kind: .vaultRequest, title: "代码审查 需要账号密码",
+                body: "npm：发布 @thinktin/sdk 0.4.0 到 npm", isAIGenerated: true,
                 isRead: false, createdAt: publish.startedAt!.addingTimeInterval(8)),
             InboxItem(
                 id: "0192f3a0-0000-7000-8000-000000001003", instanceID: writerID, runID: digestRunID,
@@ -278,7 +280,8 @@ public enum DemoData {
                 kind: .runFailed, title: "代码审查 运行失败", body: "上游模型限流，重试 2 次后放弃。", isRead: false,
                 createdAt: review.finishedAt!),
             InboxItem(
-                id: "0192f3a0-0000-7000-8000-000000001005", instanceID: reviewerID, planID: agentPlanID, kind: .info,
+                id: "0192f3a0-0000-7000-8000-000000001005", instanceID: reviewerID, planID: agentPlanID,
+                kind: .planConfirm,
                 title: "代码审查 新建了计划，待确认", body: "每周依赖升级检查", isAIGenerated: true, isRead: true,
                 createdAt: ago(2 * day)),
         ]

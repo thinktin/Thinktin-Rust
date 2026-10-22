@@ -125,6 +125,28 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
         }
     }
 
+    /// 模拟平台判的审批超时（4.7）：审批变成已过期、收件箱里那一条标已读，运行日志里记一条 `permission_resolved`
+    /// （shim 回的是 `by: user`、不带选项，平台加上 `approval_state: expired`，docs/agent-integration.md 第 6 节）。
+    /// 不是待处理的、找不到的返回 nil。
+    @discardableResult
+    public func expireApproval(_ approvalID: ApprovalID, at date: Date = Date()) -> Approval? {
+        inner.withLock { s in
+            guard let i = s.state.approvals.firstIndex(where: { $0.id == approvalID }), s.state.approvals[i].isPending
+            else { return nil }
+            s.state.approvals[i].state = .expired
+            s.state.approvals[i].decidedAt = date
+            let approval = s.state.approvals[i]
+            s.permissions[approvalID] = nil
+            for j in s.state.inbox.indices where s.state.inbox[j].approvalID == approvalID {
+                s.state.inbox[j].isRead = true
+            }
+            s.emit(
+                .permissionResolved, payload: ["request_id": .string(approval.requestID), "by": "user"],
+                runID: approval.runID, instanceID: approval.instanceID, at: date)
+            return approval
+        }
+    }
+
     /// 等所有正在播放的脚本播完（包括播放中又触发的）。
     public func waitForPlayback() async {
         while true {
@@ -600,9 +622,9 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
         let (stream, continuation) = AsyncStream.makeStream(of: EventStreamElement.self, bufferingPolicy: .unbounded)
         let id = UUID()
         let script = try syncCall(signedIn: false) { s -> MockEventScript? in
-            // 版本太老（11.8）：和 client-core 一样不再连，直接以 stopped 结束。
+            // 版本太老（11.8）：和 client-core 一样不再连，直接以 upgradeRequired 结束。
             guard !s.state.isUpgradeRequired else {
-                continuation.yield(.status(.stopped))
+                continuation.yield(.status(.upgradeRequired))
                 continuation.finish()
                 return nil
             }
@@ -664,6 +686,16 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
         try await call { s in s.state.approvals.filter(\.isPending) }
     }
 
+    /// 什么状态都能查；没有这条审批抛 `not_found`（服务端对别人的审批也是 `not_found`）。
+    public func getApproval(_ approvalID: ApprovalID) async throws -> Approval {
+        try await call { s in
+            guard let approval = s.state.approvals.first(where: { $0.id == approvalID }) else {
+                throw MockErrors.notFound("approval")
+            }
+            return approval
+        }
+    }
+
     public func decideApproval(_ approvalID: ApprovalID, optionID: String) async throws -> Approval {
         let (approval, script) = try await call { s -> (Approval, MockEventScript?) in
             guard let i = s.state.approvals.firstIndex(where: { $0.id == approvalID }) else {
@@ -673,14 +705,18 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
             guard let option = s.state.approvals[i].options.first(where: { $0.id == optionID }) else {
                 throw MockErrors.invalid("unknown option \(optionID)")
             }
+            let now = Date()
             s.state.approvals[i].state = option.kind.isAllow ? .approved : .rejected
+            s.state.approvals[i].decidedOption = optionID
+            s.state.approvals[i].decidedAt = now
             let approval = s.state.approvals[i]
             s.emit(
                 .approvalDecided,
                 payload: [
                     "approval_id": .string(approvalID.rawValue), "state": .string(approval.state.rawValue),
-                    "option_id": .string(optionID),
-                ], runID: approval.runID, instanceID: approval.instanceID, at: Date())
+                    "option_id": .string(optionID), "request_id": .string(approval.requestID),
+                    "attempt": .number(Double(approval.attempt)),
+                ], runID: approval.runID, instanceID: approval.instanceID, at: now)
             for j in s.state.inbox.indices where s.state.inbox[j].approvalID == approvalID {
                 s.state.inbox[j].isRead = true
             }
@@ -698,20 +734,15 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
 
     // MARK: 计划
 
+    /// 和接口一致（11.8）：列表里也带触发器、步骤、下一次运行的时间和失效的触发器数。
     public func plans(instanceID: InstanceID?) async throws -> [Plan] {
         try await call { s in
-            // 和接口一致：列表里没有触发器和步骤，详情里才有。
-            s.state.plans.filter { instanceID == nil || $0.instanceID == instanceID }.map { plan in
-                var p = plan
-                p.triggers = []
-                p.steps = []
-                return p
-            }
+            s.state.plans.filter { instanceID == nil || $0.instanceID == instanceID }.map(Inner.planView)
         }
     }
 
     public func getPlan(_ planID: PlanID) async throws -> Plan {
-        try await call { s in s.state.plans[try s.planIndex(planID)] }
+        try await call { s in Inner.planView(s.state.plans[try s.planIndex(planID)]) }
     }
 
     public func createPlan(_ plan: NewPlan) async throws -> Plan {
@@ -729,7 +760,7 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
                 policy: plan.policy ?? PlanPolicy(), catchUp: plan.catchUp ?? .default, createdAt: Date(),
                 triggers: try plan.triggers.map { try Inner.makeTrigger($0) }, steps: plan.steps)
             s.state.plans.append(created)
-            return created
+            return Inner.planView(created)
         }
     }
 
@@ -744,7 +775,7 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
                 title: plan.title, goal: plan.goal, policy: change.policy, catchUp: change.catchUp, steps: change.steps)
             plan.revision += 1
             s.state.plans[i] = plan
-            return plan
+            return Inner.planView(plan)
         }
     }
 
@@ -776,7 +807,7 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
                 throw MockErrors.conflict("the plan is awaiting confirmation")
             }
             s.state.plans[i].isPaused = paused
-            return s.state.plans[i]
+            return Inner.planView(s.state.plans[i])
         }
     }
 
@@ -786,7 +817,7 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
             guard s.state.plans[i].awaitingConfirmation else { throw MockErrors.conflict("nothing to confirm") }
             guard s.state.plans[i].revision == revision else { throw MockErrors.conflict("the plan changed") }
             s.state.plans[i].awaitingConfirmation = false
-            return s.state.plans[i]
+            return Inner.planView(s.state.plans[i])
         }
     }
 
@@ -1263,14 +1294,24 @@ private struct Inner: Sendable {
         self.state = state
     }
 
-    /// 把现有的未决审批和事件里的 `permission_requested` 对上（按运行和标题）。
+    /// 把现有的未决审批和事件里的 `permission_requested` 对上：有审批 id 的按它，否则按请求 id（和尝试），
+    /// 老数据（审批没有请求 id）按运行和标题。
     mutating func indexPendingPermissions() {
         for approval in state.approvals where approval.isPending {
             let requested = (state.events[approval.instanceID] ?? []).filter {
                 $0.runID == approval.runID && $0.kind == .permissionRequested
             }
             for e in requested {
-                guard case .permissionRequested(let p) = e.payload, p.title == approval.title else { continue }
+                guard case .permissionRequested(let p) = e.payload else { continue }
+                let matches: Bool
+                if let id = p.approvalID {
+                    matches = id == approval.id
+                } else if !approval.requestID.isEmpty {
+                    matches = p.requestID == approval.requestID && (p.attempt == nil || p.attempt == approval.attempt)
+                } else {
+                    matches = p.title == approval.title
+                }
+                guard matches else { continue }
                 permissions[approval.id] = PendingPermission(
                     requestID: p.requestID, toolCallID: p.toolCall?["toolCallId"]?.stringValue)
             }
@@ -1287,6 +1328,7 @@ private struct Inner: Sendable {
     mutating func emit(
         _ kind: InstanceEventKind, payload: JSONValue, runID: RunID?, instanceID: InstanceID, at date: Date
     ) -> InstanceEvent {
+        let payload = addPlatformKeys(kind, to: payload, runID: runID, instanceID: instanceID, at: date)
         let event = InstanceEvent(
             instanceID: instanceID, seq: state.lastSeq(of: instanceID) + 1, runID: runID, kind: kind,
             payloadJSON: payload.compactString(), createdAt: date)
@@ -1294,6 +1336,81 @@ private struct Inner: Sendable {
         applySideEffects(of: event)
         broadcast(.event(event), to: instanceID)
         return event
+    }
+
+    /// 平台写运行日志时给审批事件加的键（11.8，docs/agent-integration.md 第 6 节）；脚本里已经写了的不动：
+    ///
+    /// - `permission_requested`：先建审批记录（和收件箱里的提醒），再带上 `attempt`（运行当前的尝试）和 `approval_id`；
+    /// - `permission_resolved`：带上 `attempt`；对得上审批记录的带 `approval_id`，记录已经有结果（用户决定、超时）的
+    ///   再带 `approval_state`（平台把结果交给 shim 的情况）。
+    private mutating func addPlatformKeys(
+        _ kind: InstanceEventKind, to payload: JSONValue, runID: RunID?, instanceID: InstanceID, at date: Date
+    ) -> JSONValue {
+        guard kind == .permissionRequested || kind == .permissionResolved, let runID,
+            var object = payload.objectValue, let requestID = object["request_id"]?.stringValue
+        else { return payload }
+        let attempt = object["attempt"]?.intValue ?? state.runs.first(where: { $0.id == runID })?.attempt ?? 1
+        object["attempt"] = .number(Double(attempt))
+        let existing = state.approvals.lastIndex {
+            $0.runID == runID && $0.attempt == attempt && $0.requestID == requestID
+        }
+        if kind == .permissionRequested {
+            let index: Int
+            if let existing {
+                index = existing
+            } else {
+                guard let p = EventPayload.decode(PermissionRequestedPayload.self, from: payload.compactString()) else {
+                    return .object(object)
+                }
+                index = createApproval(p, attempt: attempt, runID: runID, instanceID: instanceID, at: date)
+            }
+            if object["approval_id"] == nil { object["approval_id"] = .string(state.approvals[index].id.rawValue) }
+        } else if let existing {
+            let approval = state.approvals[existing]
+            if object["approval_id"] == nil { object["approval_id"] = .string(approval.id.rawValue) }
+            switch approval.state {
+            case .approved, .rejected, .expired:
+                if object["approval_state"] == nil { object["approval_state"] = .string(approval.state.rawValue) }
+            default:
+                break
+            }
+        }
+        return .object(object)
+    }
+
+    /// 作废这个运行里还没处理、符合条件的审批，收件箱里对应的提醒标已读。
+    private mutating func cancelPendingApprovals(runID: RunID, at date: Date, where matches: (Approval) -> Bool) {
+        var cancelled: Set<ApprovalID> = []
+        for j in state.approvals.indices
+        where state.approvals[j].runID == runID && state.approvals[j].isPending && matches(state.approvals[j]) {
+            state.approvals[j].state = .cancelled
+            state.approvals[j].decidedAt = date
+            permissions[state.approvals[j].id] = nil
+            cancelled.insert(state.approvals[j].id)
+        }
+        for j in state.inbox.indices where state.inbox[j].approvalID.map(cancelled.contains) ?? false {
+            state.inbox[j].isRead = true
+        }
+    }
+
+    /// 建一条待处理的审批（平台收到 `permission_requested` 时做的）和收件箱里的提醒。返回审批的下标。
+    private mutating func createApproval(
+        _ p: PermissionRequestedPayload, attempt: Int, runID: RunID, instanceID: InstanceID, at date: Date
+    ) -> Int {
+        let instanceName = state.instances.first { $0.id == instanceID }?.name ?? ""
+        let approval = Approval(
+            id: .random(), runID: runID, instanceID: instanceID, title: p.title, options: p.options,
+            toolCallJSON: p.toolCall?.compactString() ?? "{}", state: .pending,
+            expiresAt: date.addingTimeInterval(24 * 3600), createdAt: date, requestID: p.requestID, attempt: attempt)
+        state.approvals.append(approval)
+        permissions[approval.id] = PendingPermission(
+            requestID: p.requestID, toolCallID: p.toolCall?["toolCallId"]?.stringValue)
+        state.inbox.insert(
+            InboxItem(
+                id: .random(), instanceID: instanceID, runID: runID, approvalID: approval.id, kind: .approval,
+                title: "\(instanceName) 等你审批", body: p.title ?? "", isAIGenerated: p.title != nil, createdAt: date),
+            at: 0)
+        return state.approvals.count - 1
     }
 
     /// 事件对状态的影响（服务端做的那部分）。
@@ -1311,17 +1428,14 @@ private struct Inner: Sendable {
             state.runs[i].waitCode = RunWaitCode.applies(to: p.state) ? p.waitCode : nil
             if let attempt = p.attempt { state.runs[i].attempt = attempt }
             if p.state == .running && state.runs[i].startedAt == nil { state.runs[i].startedAt = event.createdAt }
+            // 一次尝试结束时它没处理的审批会被取消：新的尝试开始了，旧尝试的待处理审批作废。
+            let attempt = state.runs[i].attempt
+            cancelPendingApprovals(runID: runID, at: event.createdAt) { $0.attempt > 0 && $0.attempt < attempt }
             guard p.state.isTerminal else { return }
             state.runs[i].finishedAt = event.createdAt
             // 运行结束时还没决定的审批一并作废，收件箱里的审批提醒标已读（和服务端的 cancel_run_approvals 一致；
             // 之后再决定返回 conflict）。
-            for j in state.approvals.indices where state.approvals[j].runID == runID && state.approvals[j].isPending {
-                state.approvals[j].state = .cancelled
-                permissions[state.approvals[j].id] = nil
-            }
-            for j in state.inbox.indices where state.inbox[j].runID == runID && state.inbox[j].approvalID != nil {
-                state.inbox[j].isRead = true
-            }
+            cancelPendingApprovals(runID: runID, at: event.createdAt) { _ in true }
             let run = state.runs[i]
             let text = (state.events[event.instanceID] ?? []).filter { $0.runID == runID && $0.kind == .agentMessage }
                 .compactMap { e -> String? in
@@ -1337,20 +1451,6 @@ private struct Inner: Sendable {
                     kind: succeeded ? .runFinished : .runFailed,
                     title: succeeded ? "\(instanceName) 已完成" : "\(instanceName) 运行失败",
                     body: succeeded ? (state.runs[i].summary ?? "") : (p.reason ?? ""), isAIGenerated: succeeded,
-                    createdAt: event.createdAt), at: 0)
-        case .permissionRequested(let p):
-            guard let runID = event.runID else { return }
-            let approval = Approval(
-                id: .random(), runID: runID, instanceID: event.instanceID, title: p.title, options: p.options,
-                toolCallJSON: p.toolCall?.compactString() ?? "{}", state: .pending,
-                expiresAt: event.createdAt.addingTimeInterval(24 * 3600), createdAt: event.createdAt)
-            state.approvals.append(approval)
-            permissions[approval.id] = PendingPermission(
-                requestID: p.requestID, toolCallID: p.toolCall?["toolCallId"]?.stringValue)
-            state.inbox.insert(
-                InboxItem(
-                    id: .random(), instanceID: event.instanceID, runID: runID, approvalID: approval.id, kind: .approval,
-                    title: "\(instanceName) 等你审批", body: p.title ?? "", isAIGenerated: p.title != nil,
                     createdAt: event.createdAt), at: 0)
         case .vaultRequested(let p):
             guard !state.vaultRequests.contains(where: { $0.id == p.requestID }) else { return }
@@ -1597,6 +1697,13 @@ private struct Inner: Sendable {
             remaining.removeAll { done.contains($0.key) }
         }
         for step in steps { _ = try instanceIndex(step.instanceID) }
+    }
+
+    /// 接口返回的计划：下一次运行的时间、失效的触发器数按服务端的规则重新算（状态里的触发器、暂停状态可能被直接改过）。
+    static func planView(_ plan: Plan) -> Plan {
+        var p = plan
+        p.refreshSchedule()
+        return p
     }
 
     /// 新的触发器：一次性的要在将来，cron 要五段、时区认得，rrule 不能为空。下一次触发时间只有一次性的算得出来。

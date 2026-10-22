@@ -131,6 +131,189 @@ public struct AgentPlanCard: Hashable, Sendable {
 }
 
 /// 审批卡片：未决时显示选项按钮（调 `decideApproval`，要先拿到 `approvalID`），已决显示结果和由谁决定。
+///
+/// 一个运行里按 `(attempt, requestID)` 认（shim 每次尝试都从 `perm-1` 重新编号，docs/agent-integration.md 第 6 节）。
+public struct ApprovalCard: Hashable, Sendable {
+    /// agent 那边的请求 id（事件里的 `request_id`）。同一个运行的不同尝试可能重复，要和 `attempt` 一起用。
+    public var requestID: String
+    /// 第几次尝试（事件里的 `attempt`，老的服务端没有时取这之前最近一条 `run.state` 的）；0 是不知道。
+    public var attempt: Int
+    /// 审批记录的 id（事件带了 `approval_id`，或者 `ConversationReducer.link(approvals:)` 关联上之后才有）：决定时用它。
+    public var approvalID: ApprovalID?
+    /// agent 写的标题：显示时带“AI 生成”标识（docs/ios-packages.md 12.5 的规则表）。
+    public var title: String?
+    public var options: [ApprovalOption]
+    public var toolCall: JSONValue?
+    /// 已决时有。
+    public var resolution: Resolution?
+
+    public init(
+        requestID: String, attempt: Int = 0, approvalID: ApprovalID? = nil, title: String?, options: [ApprovalOption],
+        toolCall: JSONValue? = nil, resolution: Resolution? = nil
+    ) {
+        self.requestID = requestID
+        self.attempt = attempt
+        self.approvalID = approvalID
+        self.title = title
+        self.options = options
+        self.toolCall = toolCall
+        self.resolution = resolution
+    }
+
+    public var isPending: Bool { resolution == nil }
+
+    /// 审批的结果。
+    public struct Resolution: Hashable, Sendable {
+        /// 选中的选项；为 nil 表示放弃作答（超时、取消）。
+        public var optionID: String?
+        /// 选项的名字（找得到的话）。
+        public var optionName: String?
+        /// 由谁决定。平台判的超时（`approval_state` 是 expired）一律是 `.timeout`，不管 shim 报的 `by`；
+        /// 旧的尝试、已经结束的运行里没处理的是 `.cancelled`（平台把它们取消了）。
+        public var by: DecisionSource
+        /// 批准了（选的是 allow 类选项）；没有选项时按审批记录的结果。
+        public var isApproved: Bool
+        /// 审批记录的结果（`approval_state`、`approval.decided` 的 `state`、审批记录的 `state`）；按策略决定的没有。
+        public var state: ApprovalState?
+
+        public init(
+            optionID: String?, optionName: String?, by: DecisionSource, isApproved: Bool, state: ApprovalState? = nil
+        ) {
+            self.optionID = optionID
+            self.optionName = optionName
+            self.by = by
+            self.isApproved = isApproved
+            self.state = state
+        }
+
+        /// 卡片上显示的结论。
+        public var outcome: ApprovalOutcome {
+            if by == .timeout || state == .expired { return .expired }
+            if by == .cancelled || state == .cancelled { return .cancelled }
+            if by == .policy { return isApproved ? .approvedByPolicy : .rejectedByPolicy }
+            return isApproved ? .approvedByUser : .rejectedByUser
+        }
+    }
+}
+
+/// 审批卡上显示的结论（12.5 的对话、12.15 的审批卡按它选文案）。
+public enum ApprovalOutcome: Hashable, Sendable {
+    /// 你批准了。
+    case approvedByUser
+    /// 你拒绝了。
+    case rejectedByUser
+    /// 已按预授权批准（4.7）。
+    case approvedByPolicy
+    /// 按策略拒绝了。
+    case rejectedByPolicy
+    /// 已过期（审批超时）：不是“你拒绝了”。
+    case expired
+    /// 已作废：这一轮被取消、这次尝试已经结束（运行重试了）、运行已经结束。
+    case cancelled
+}
+
+/// 保险箱表单卡片。
+        case vaultRequest(VaultRequestCard)
+        /// 运行状态行。
+        case runStatus(RunStatusLine)
+        /// 产出物卡片。
+        case artifact(ArtifactCard)
+        /// 子运行链接卡片（流水线步骤、委派）。
+        case childRun(ChildRunCard)
+        /// “agent 新建 / 修改了计划，待确认”卡片。
+        case planActivity(PlanActivityCard)
+        /// 系统提示行。
+        case systemNotice(SystemNotice)
+    }
+}
+
+/// 用户消息（运行的任务）。计划、流水线、委派发起的运行也显示成“用户消息”，用 `source` 区分。
+public struct UserMessage: Hashable, Sendable {
+    public var text: String
+    public var source: RunSource
+    public var planID: PlanID?
+    /// 流水线步骤名。
+    public var stepKey: String?
+
+    public init(text: String, source: RunSource = .user, planID: PlanID? = nil, stepKey: String? = nil) {
+        self.text = text
+        self.source = source
+        self.planID = planID
+        self.stepKey = stepKey
+    }
+}
+
+/// assistant 的回复文本。
+public struct AssistantText: Hashable, Sendable {
+    public var text: String
+    /// 还在输出（这一轮没结束，而且是最后一项）。
+    public var isStreaming: Bool
+    /// 显示“AI 生成”标识（16.3）。
+    public var isAIGenerated: Bool
+
+    public init(text: String, isStreaming: Bool = false, isAIGenerated: Bool = true) {
+        self.text = text
+        self.isStreaming = isStreaming
+        self.isAIGenerated = isAIGenerated
+    }
+}
+
+/// agent 的思考过程。
+public struct Thought: Hashable, Sendable {
+    public var text: String
+    public var isStreaming: Bool
+    public var isAIGenerated: Bool
+
+    public init(text: String, isStreaming: Bool = false, isAIGenerated: Bool = true) {
+        self.text = text
+        self.isStreaming = isStreaming
+        self.isAIGenerated = isAIGenerated
+    }
+}
+
+/// 工具调用卡片：标题、状态，展开看 `raw`。
+public struct ToolCallCard: Hashable, Sendable {
+    /// agent 工具是 `tool_call_id`，平台工具是 `call_id`。
+    public var toolCallID: String
+    public var title: String
+    /// ACP 的 tool kind（read、edit、execute……）；平台工具为 nil。
+    public var kind: String?
+    /// 平台工具没有状态（为 nil）。
+    public var status: ToolCallStatus?
+    /// 原始内容（agent 工具是合并过更新的 ACP tool_call，平台工具是参数）。
+    public var raw: JSONValue?
+    /// 平台工具的类别；agent 自己的工具为 nil。
+    public var platformCategory: PlatformToolCategory?
+
+    public init(
+        toolCallID: String, title: String, kind: String? = nil, status: ToolCallStatus? = nil, raw: JSONValue? = nil,
+        platformCategory: PlatformToolCategory? = nil
+    ) {
+        self.toolCallID = toolCallID
+        self.title = title
+        self.kind = kind
+        self.status = status
+        self.raw = raw
+        self.platformCategory = platformCategory
+    }
+
+    public var isPlatformTool: Bool { platformCategory != nil }
+}
+
+/// agent 的待办清单（每次更新都是完整清单，原地替换）。
+public struct AgentPlanCard: Hashable, Sendable {
+    public var entries: [AgentPlanEntry]
+    public var isAIGenerated: Bool
+
+    public init(entries: [AgentPlanEntry], isAIGenerated: Bool = true) {
+        self.entries = entries
+        self.isAIGenerated = isAIGenerated
+    }
+
+    public var completedCount: Int { entries.filter { $0.status == .completed }.count }
+}
+
+/// 审批卡片：未决时显示选项按钮（调 `decideApproval`，要先拿到 `approvalID`），已决显示结果和由谁决定。
 public struct ApprovalCard: Hashable, Sendable {
     /// agent 那边的请求 id（事件里的 `request_id`）。
     public var requestID: String
