@@ -1820,6 +1820,23 @@ impl ThinktinClient {
             .collect())
     }
 
+    /// 缓存里往前翻：`before_seq` 之前的最多 `limit` 条，旧的在前。打开页面时传 nil 拿最后一屏，往上翻时传已经显示的
+    /// 最小的序号。缓存里每个实例最多留 2000 条，更早的、事件流重置（`on_reset`）丢掉的翻不到。
+    pub fn cached_events_before(
+        &self,
+        instance_id: String,
+        before_seq: Option<u64>,
+        limit: u32,
+    ) -> Result<Vec<InstanceEvent>> {
+        let id: d::InstanceId = parse(&instance_id, "instance")?;
+        Ok(self
+            .inner
+            .cached_events_before(id, before_seq, limit)?
+            .iter()
+            .map(Into::into)
+            .collect())
+    }
+
     // ---------- 审批 ----------
 
     pub async fn approvals(&self) -> Result<Vec<Approval>> {

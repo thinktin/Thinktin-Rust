@@ -260,6 +260,27 @@ impl Cache {
         rows.iter().map(|j| from_json(j)).collect()
     }
 
+    /// `before` 之前的最多 `limit` 条，旧的在前（往上翻）；`None` 是最新的 `limit` 条（打开页面时的最后一屏）。
+    pub fn events_before(
+        &self,
+        instance: InstanceId,
+        before: Option<u64>,
+        limit: u32,
+    ) -> Result<Vec<InstanceEvent>> {
+        let before = before.map_or(i64::MAX, |b| i64::try_from(b).unwrap_or(i64::MAX));
+        let rows: Vec<String> = self.with(|c| {
+            let mut st = c.prepare(
+                "SELECT json FROM (SELECT seq, json FROM events WHERE instance_id = ?1 AND seq < ?2 \
+                 ORDER BY seq DESC LIMIT ?3) ORDER BY seq",
+            )?;
+            st.query_map(params![instance.to_string(), before, limit], |r| {
+                r.get(0)
+            })?
+            .collect()
+        })?;
+        rows.iter().map(|j| from_json(j)).collect()
+    }
+
     // ---------- 收件箱 ----------
 
     /// 合并服务端的条目。本地已标已读、还没同步上去的，保持已读。
@@ -440,6 +461,41 @@ mod tests {
         c.reset_events(i, 5000).unwrap();
         assert_eq!(c.cursor(i).unwrap(), Some(4999));
         assert!(c.events(i, 0, 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn events_read_backwards() {
+        let c = Cache::in_memory().unwrap();
+        let i = InstanceId::new();
+        let other = InstanceId::new();
+        c.put_events(i, &(1..=10).map(|s| event(i, s)).collect::<Vec<_>>())
+            .unwrap();
+        c.put_events(other, &[event(other, 11)]).unwrap();
+        let seqs = |before, limit| {
+            c.events_before(i, before, limit)
+                .unwrap()
+                .iter()
+                .map(|e| e.seq)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(seqs(None, 3), [8, 9, 10]);
+        assert_eq!(seqs(Some(8), 3), [5, 6, 7]);
+        assert_eq!(seqs(Some(2), 5), [1]);
+        assert!(seqs(Some(1), 5).is_empty());
+        assert_eq!(seqs(Some(u64::MAX), 3), [8, 9, 10]);
+        assert!(seqs(None, 0).is_empty());
+        c.reset_events(i, 20).unwrap();
+        assert!(seqs(None, 5).is_empty());
+        let gaps = InstanceId::new();
+        c.put_events(gaps, &[event(gaps, 1), event(gaps, 5), event(gaps, 9)])
+            .unwrap();
+        let got: Vec<u64> = c
+            .events_before(gaps, Some(9), 5)
+            .unwrap()
+            .iter()
+            .map(|e| e.seq)
+            .collect();
+        assert_eq!(got, [1, 5]);
     }
 
     #[test]

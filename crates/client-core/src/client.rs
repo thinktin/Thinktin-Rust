@@ -169,6 +169,19 @@ impl Client {
         }
     }
 
+    /// 缓存里 `before` 之前的最多 `limit` 条（旧的在前）；`None` 是最新的那几条。
+    pub fn cached_events_before(
+        &self,
+        instance: InstanceId,
+        before: Option<u64>,
+        limit: u32,
+    ) -> Result<Vec<InstanceEvent>> {
+        match self.signed_in_cache() {
+            Some(c) => c.events_before(instance, before, limit),
+            None => Ok(Vec::new()),
+        }
+    }
+
     // ---------- 收件箱 ----------
 
     /// 先把离线时标的已读补发，再拉最新一页并合并进缓存。返回服务端的这一页（已读状态以本地为准）。

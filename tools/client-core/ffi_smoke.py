@@ -41,6 +41,7 @@ async def main():
     c.set_accept_language("en-US, en;q=0.9")
     assert cc.accept_language_header(["zh-Hans-CN", "en"]) == "zh-Hans-CN, en;q=0.9"
     print("cached", c.cached_instances(), c.cached_unread())
+    assert c.cached_events_before("01890000-0000-7000-8000-000000000000", None, 10) == []
     try:
         await c.me()
     except cc.ClientError.SignedOut:

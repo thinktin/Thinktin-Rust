@@ -283,6 +283,13 @@ async fn event_stream_resumes_dedupes_and_refreshes() {
     assert_eq!(sink2.texts(), [4]);
     let cached = client.cached_events(inst, 0, 100).unwrap();
     assert_eq!(texts(&cached), [1, 2, 3, 4]);
+    // 往前翻：最后一屏、再往上一屏。
+    let tail = client.cached_events_before(inst, None, 2).unwrap();
+    assert_eq!(tail, cached[cached.len() - 2..]);
+    let above = client
+        .cached_events_before(inst, Some(tail[0].seq), 100)
+        .unwrap();
+    assert_eq!(above, cached[..cached.len() - 2]);
 
     // 访问令牌过期：握手被拒（401），刷新后连上。
     let s = store.load().unwrap();
@@ -594,10 +601,20 @@ async fn ffi_client_round_trip() {
     );
     sub.stop();
     assert!(!c.cached_events(inst.id.clone(), 0, 100).unwrap().is_empty());
+    assert!(
+        !c.cached_events_before(inst.id.clone(), None, 10)
+            .unwrap()
+            .is_empty()
+    );
 
     c.logout().await.unwrap();
     assert!(!c.signed_in());
     assert!(c.cached_instances().unwrap().is_empty());
+    assert!(
+        c.cached_events_before(inst.id.clone(), None, 10)
+            .unwrap()
+            .is_empty()
+    );
     drop(c);
 }
 
