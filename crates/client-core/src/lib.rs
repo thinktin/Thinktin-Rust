@@ -6,6 +6,7 @@
 //! - [`secrets`]：发送前识别消息里的密码、key，换成保险箱引用（11.6）；
 //! - [`pairing`]：手机和电脑的配对、审批签名、能力令牌的编码与验签（11.5）；
 //! - `tls`：接口和事件流都用系统的证书校验，Android 上要先初始化（11.8）；
+//! - [`logging`]：日志抹掉敏感内容后交给 App 写进系统日志（11.8）；
 //! - [`ffi`]：给原生端的接口（UniFFI 生成 Swift / Kotlin 绑定，见 `tools/client-core/`）。
 
 pub mod api;
@@ -14,6 +15,7 @@ pub mod client;
 pub mod error;
 pub mod events;
 pub mod ffi;
+pub mod logging;
 pub mod pairing;
 pub mod secrets;
 mod tls;

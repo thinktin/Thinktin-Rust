@@ -189,7 +189,7 @@ copyright 文件里，一并带上）、dpkg 装的包、Node.js 本身、agent-
 | `agents/pi:1.2.0` | 477（cargo 76、deb 141、npm 258、runtime 1、upstream 1） | 通过；删掉了 DOOM 演示扩展 |
 | `agents/openclaw:2026.10.3` | 766（cargo 76、deb 141、npm 547、runtime 1、upstream 1） | 通过；网页界面的 9 个 OFL 字体家族、Playwright 的 codicon 字体登记 |
 | `agents/hermes:0.19.0` | 437（cargo 76、deb 141、npm 146、pypi 72、runtime 1、upstream 1） | 通过；删掉了网页界面的商用字体，JetBrains Mono 登记 |
-| 服务端、agent-shim、客户端核心、电脑端工具服务 | 355、106、278、279 个 crate（不限平台） | 通过 |
+| 服务端、agent-shim、客户端核心、电脑端工具服务 | 355、106、289、290 个 crate（不限平台） | 通过 |
 
 没有发现网络 copyleft 或限制商用的许可证。非用不可的 copyleft（`A OR B` 里有宽松一支的不算；Debian 包不算）：
 
