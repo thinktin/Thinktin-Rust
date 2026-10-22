@@ -102,7 +102,7 @@ class ApprovalUiTest {
         assertEquals(OptionKind.AllowAlways, gate.requests.single().optionKind)
         assertEquals(listOf(APPROVAL_PENDING to "always"), service.decisions)
         // 已经没有待处理的：组标题只剩名字
-        compose.onNode(hasText("小码") and hasTestTag(APPROVAL_GROUP_TEST_TAG + "inst-coder")).assertExists()
+        compose.onNode(hasText("小码") and hasAnyAncestor(hasTestTag(APPROVAL_GROUP_TEST_TAG + "inst-coder"))).assertExists()
     }
 
     @Test

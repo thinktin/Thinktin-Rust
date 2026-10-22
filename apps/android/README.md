@@ -15,7 +15,7 @@ apps/android/
 ├─ core/    :core   client-core 的 UniFFI Kotlin 绑定（cn.thinktin.core）+ 手写的 TlsInit + jniLibs，见 core/README.md
 ├─ data/    :data   App 模型、ThinktinService 接口、CoreThinktinService（真实）、MockThinktinService（演示）、
 │                   SecureSessionStore、ClientFactory、TlsState
-├─ design/  :design ThinktinTheme（色板、字体、形状）与通用组件（顶栏、主按钮、状态点、输入框、消息、横幅……）
+├─ design/  :design ThinktinTheme（色板、字体、形状）与通用组件（顶栏、主按钮、状态点、输入框、消息、横幅、审批卡片……）
 └─ app/     :app    Application、MainActivity、抽屉 + 导航、各页面与 ViewModel
 ```
 
@@ -235,12 +235,50 @@ Keystore 失效……）都显示“无法加载核心库”页（原因 + 重�
   （名字 + 记账 token，下一行请求 / 输入 / 输出 / 缓存 / 失败）。实例名、key 标签、厂商名只用来显示，拉不到显示 id，已删除的标出来。
 - 文案都在 strings.xml；token 的写法（万 / k）由资源 `number_style` 决定。key 标签、实例名是用户起的，厂商说明是平台写的，都不标 AI 生成。
 
+## 云端审批（13.16）
+
+- **卡片**（`:design` 的 `ApprovalCard`，界面模型 `ApprovalCardUi`；对话页 13.5 直接嵌入）：AI 生成标识 + agent 写的标题
+  （第 8.4 节）、工具调用摘要（图标、标题、类别、参数一句话：`command` / `path` / `url`……，最多 200 字；“查看原始请求”展开
+  排好版的 JSON）、选项按钮（`allow_once` / `allow_always` 主按钮在前，`reject_once` / `reject_always` 次按钮；四种已知的用本地文案
+  “批准 / 一直允许 / 拒绝 / 一直拒绝”，不认识的 kind 用 agent 给的名字、按批准类处理要验证）、到期倒计时（不到 1 小时警告色）；
+  决定之后换成结果：谁决定的（你 / 预授权策略 / 超时 / 运行结束）、选了什么（只在“一直……”和不认识的选项时说）、相对时间；
+  作废（待处理但 `attempt` 比运行当前的尝试小）显示“已作废：运行已重试”，不能点。
+- **数据**（`:data` 的 `model/ApprovalCards.kt`）：`ApprovalCards.fromApproval(approval, currentAttempt)` 给审批中心；
+  `ApprovalCards.reconcile(events, approvals, runAttempts)` 给对话页：`agent.permission_requested` 出卡片，键是
+  (run_id, attempt, request_id)（`ApprovalKey.matches`，老数据 attempt 为 0 时只比另外两个）；`agent.permission_resolved` 以
+  `approval_state` 为准（平台判的超时 `by` 是 user、`approval_state` 是 expired → 过期 / 超时），没有时按 `by` 和选项 kind；
+  按策略直接决定的没有请求、不出卡片；`approval.decided` 是别处做的决定；审批记录按键或 `approval_id` 对上，补上审批 id、到期时间、
+  完整的工具调用（事件里常常只有 `tool_call_id`），事件已经是终态的不会被旧列表改回待处理；`run.state` 的 `attempt` 和传进来的
+  `Run.attempt` 取大的判作废。`applyDecision` 用 `decideApproval` / `getApproval` 返回的记录更新卡片。
+- **审批中心**（路由 `approvals`，入口：抽屉“审批”（待处理数角标）、收件箱审批条目、推送深链）：`approvals()` 的待处理列表，
+  每条查一次所在运行（`getRun`，查不到的不判作废），按实例分组（组里最新的在前，组标题“实例名 · N 条待处理”，拉不到实例名显示
+  “已删除的实例”），下拉刷新（Material 3 的 `PullToRefreshBox`）；加载失败且没有列表时整页错误 + 重试，有列表时 Snackbar；
+  从详情页回来重新取。决定之后卡片原地变成结果，下次刷新才移走。
+- **审批详情**（`approval/{id}`，深链 `thinktin://approval/{id}`）：`getApproval` 什么状态都能查，已处理 / 过期 / 取消的显示结果、
+  不报错；404 显示“找不到这条审批”。卡片（原始请求默认展开）+ 实例（点进对话）、运行（状态，点进运行详情）、第几次尝试
+  （运行已到更新的尝试时标出来）、请求 / 到期 / 处理时间。
+- **决定**（`ApprovalActions` + `ApprovalDecider`，三个地方共用）：拒绝类直接发（不验证，没有锁屏也能拒绝）；批准类先查
+  `ApprovalGate.availability()`：没有锁屏凭证 → “先设置锁屏密码”（“去设置”打开 `ACTION_SET_NEW_PASSWORD`，退到安全设置），
+  做不了 → “无法验证身份”；可以 → 确认框（`allow_always` 加一句“同类操作不再询问”）→ `BiometricPrompt` → `decideApproval`。
+  用户取消什么都不发；锁定 / 失败提示，不发。服务端 409 / 404 / 410 / expired → 重新 `getApproval`，显示最新结果
+  （“已经处理过了” / “已过期” / “已取消”），查不到就移走；网络等可重试的错误 Snackbar 带“重试”，重试同一个决定时不再验证一次。
+- **身份确认**（`ApprovalGate`，`AppContainer.approvalGate`，测试里换成假的）：`BiometricApprovalGate` 用 androidx.biometric，
+  允许 `BIOMETRIC_STRONG or DEVICE_CREDENTIAL`（没有生物识别时用锁屏密码）；API 28–29 系统不支持这个组合，用
+  `BIOMETRIC_WEAK or DEVICE_CREDENTIAL`。它不持有 Activity：`MainActivity.onCreate` 把自己登记到 `AppContainer`（弱引用），
+  弹提示框时才取，旋转屏幕后 ViewModel 里的 gate 照样能用。所以 `MainActivity` 是 `FragmentActivity`，窗口主题的父主题换成
+  AppCompat（API 26–27 的指纹对话框是 AppCompat 的，非 AppCompat 主题会崩）。提示框的描述里 agent 写的标题加 AI 生成标识。
+- **收件箱条目去哪**：`navigation/InboxTargets.kt` 的 `InboxItem.targetRoute()`（审批 → `approval/{id}`，没有 id → 审批中心；
+  保险箱请求、计划待确认、运行……），收件箱页面（13.8）点条目时用它。
+- 测试：`:data` 的 `ApprovalCardsTest`（对上、作废、超时、策略、旧列表不回退、摘要）、`:design` 的 `ApprovalCardTest`、
+  `:app` 的 `ApprovalViewModelTest`（列表、详情、过期 / 已处理、生物识别成功 / 取消 / 锁定 / 无凭证、拒绝直接发、重试不再验证、
+  作废）和 `ApprovalUiTest`（抽屉进审批中心、批准经假的 gate、拒绝直接发、无锁屏提示、深链打开详情 / 过期 / 不存在）。
+
 ## 深链
 
 `thinktin://run/{id}`、`approval/{id}`、`plan/{id}`、`instance/{id}`、`vault/request/{id}`、`inbox`、`inbox/{id}`（第 3 节）。
 `MainActivity` 是 `singleTask`：冷启动（`onCreate`）和 App 已在运行时（`onNewIntent`）收到的深链都放进 `DeepLinkInbox`，
 由 `MainNavigation` 在导航图建好后交给 `NavController.handleDeepLink`，返回栈是“首页 → 目标页”。未登录时先留着，登录后再跳；
-同一条只处理一次。测试：`DeepLinkTest`（6 种骨架页的冷启动）+ `CatalogUiTest`（`instance/{id}`）、`AppUiTest`（热启动）、`AppRootTest`（登录后再跳）。
+同一条只处理一次。测试：`DeepLinkTest`（5 种骨架页的冷启动）+ `CatalogUiTest`（`instance/{id}`）、`ApprovalUiTest`（`approval/{id}`）、`AppUiTest`（热启动）、`AppRootTest`（登录后再跳）。
 
 ## CI
 
@@ -254,6 +292,22 @@ abortOnError 开着，不用 baseline；release 包跑一遍 R8）→ 解开 rel
 **不含 jniLibs**，只能用演示模式（关掉演示模式会显示“无法加载核心库”页）。绑定和库是否对得上由 `--check` 和 CoreSmokeTest 保证。
 带 .so 的完整包：手动跑 `mobile.yml` 的 android job，把产物 `thinktin-core-android` 解压成 `<目录>/thinktin-core/`，
 `sync-core.sh --from <目录>` 后打包；本地直接 `sync-core.sh`（或先跑 `build-android.sh` 再 `--from target/android`）。
+
+## 第三方依赖与许可证
+
+只用 Apache-2.0 / MIT / BSD 类许可证的库（打进 App 的；版本见 `gradle/libs.versions.toml`）。新增依赖先在这里登记。
+
+| 依赖 | 用途 | 许可证 |
+|---|---|---|
+| AndroidX（core-ktx、activity-compose、lifecycle、navigation-compose、datastore、security-crypto）、Jetpack Compose（BOM、Material 3、图标） | 基础框架与界面 | Apache-2.0 |
+| `androidx.biometric:biometric`（13.16） | 批准审批前的 BiometricPrompt | Apache-2.0 |
+| `androidx.appcompat:appcompat`（13.16） | biometric 在 API 26–27 的指纹对话框要 AppCompat 主题（也带来 `androidx.fragment` 的 FragmentActivity） | Apache-2.0 |
+| kotlinx-coroutines、kotlinx-serialization-json | 协程、JSON | Apache-2.0 |
+| JNA（`net.java.dev.jna:jna`） | UniFFI 绑定调 client-core | Apache-2.0 / LGPL-2.1 双许可，按 Apache-2.0 使用 |
+| `org.rustls:rustls-platform-verifier` | client-core 的系统证书校验（JNI） | Apache-2.0 / MIT |
+| client-core 依赖的 Rust crate | 见 `assets/thinktin-licenses/`（`sync-core.sh` 生成） | 见清单 |
+
+只在测试里用、不打进 App：JUnit 4（EPL-1.0）、Robolectric（MIT）、Turbine（Apache-2.0）、androidx.test（Apache-2.0）。
 
 ## 约定
 
@@ -289,6 +343,9 @@ abortOnError 开着，不用 baseline；release 包跑一遍 R8）→ 解开 rel
 
 - `tools/client-core/build-android.sh` 没有“跳过 AAR”的开关，`sync-core.sh` 用 PATH 垫片绕过（见上）。以后给它加一个开关
   （比如 `THINKTIN_SKIP_AAR=1`）并去掉 `jvmToolchain(17)` 的硬要求后，删掉垫片。
+- 审批的身份确认（`BiometricApprovalGate`）只在 JVM 上测了映射（认证方式、错误码），提示框本身要真机验证：
+  有指纹 / 面容、只有锁屏密码、没有锁屏（应提示先设置）、API 28–29（WEAK + 凭证）、API 26–27（AppCompat 指纹对话框）、
+  提示框弹出时旋转屏幕。通知上的“拒绝”快捷操作随 13.8 推送一起做（先 `getApproval` 确认还是待处理再发）。
 - Robolectric 的触摸注入点不到盖在页面上的层（抽屉、领养面板）：触摸落到了下面的内容 / 遮罩上（真机正常），
   这些控件在测试里用无障碍点击动作（`SemanticsActions.OnClick`）。
 - 每日 token 限额只能在添加 key 时设：client-core 的 `update_credential` 只有标签和停用（服务端 `PATCH` 也一样），编辑页只读显示。

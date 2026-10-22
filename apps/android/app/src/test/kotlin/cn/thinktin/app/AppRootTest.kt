@@ -127,7 +127,7 @@ class AppRootTest {
         waitFor(hasText("欢迎使用 ThinkTin"))
         // 登录后才跳（推送点进来时还没登录）
         fake.auth.value = AuthState.SignedIn
-        waitFor(hasText("编号：approval-pending"))
+        waitFor(hasText("删除 build/ 下 30 天前的文件"))
         compose.onNode(hasText("审批详情")).assertIsDisplayed()
     }
 
