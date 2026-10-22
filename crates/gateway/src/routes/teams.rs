@@ -178,7 +178,8 @@ pub struct AdoptReq {
     name: Option<String>,
 }
 
-/// 按模板领养一整个团队：每个成员领养一个新实例（带运行授权），再编成团队。
+/// 按模板领养一整个团队：每个成员领养一个新实例（带运行授权），再编成团队。放不下整个团队（实例数上限）的
+/// 先拒绝（409 `instance_limit`），不会只领养一半。
 pub async fn adopt_template(
     State(s): State<AppState>,
     Authed(who): Authed,
@@ -186,19 +187,26 @@ pub async fn adopt_template(
     ApiJson(req): ApiJson<AdoptReq>,
 ) -> ApiResult<(StatusCode, Json<Team>)> {
     let id: TeamTemplateId = parse_id(&id, "template")?;
+    let max = u64::from(s.limits().config().instances_per_user);
     let mut t = s.db.tenant(who.user).await?;
     let tpl = t.team_template(id).await?;
+    if max > 0 && t.lock_instance_count().await? + tpl.spec.members.len() as u64 > max {
+        return Err(control::Error::InstanceLimit { max }.into());
+    }
     t.rollback().await?;
     let mut members = Vec::new();
     for (i, m) in tpl.spec.members.iter().enumerate() {
-        let instance = control::adopt(
+        let instance = control::adopt_capped(
             &s.db,
             s.templates.as_ref(),
             who.user,
             &who.actor(),
-            &m.agent_id,
-            m.harness.as_deref(),
-            &m.name,
+            control::AdoptSpec {
+                agent_id: &m.agent_id,
+                harness: m.harness.as_deref(),
+                name: &m.name,
+            },
+            max,
         )
         .await?;
         let mut t = s.db.tenant(who.user).await?;

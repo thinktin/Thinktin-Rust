@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use proto::api::{API_VERSION, ErrorBody, ErrorCode, VERSION_HEADER};
+use proto::api::{API_VERSION, ErrorCode, VERSION_HEADER};
 use proto::domain::{
     Approval, ApprovalId, Artifact, ArtifactId, CatchUp, ContentReport, Credential, CredentialId,
     Device, DeviceId, DeviceMessage, DeviceMessageId, DeviceMessageKind, DevicePlatform, ImChannel,
@@ -374,6 +374,32 @@ pub struct Api {
 /// `Accept-Language` 最长多少字节。
 pub const MAX_ACCEPT_LANGUAGE: usize = 256;
 
+/// 服务端的错误体。`code` 先按字符串收：服务端以后加了这个版本不认识的码（比如 11.9 的 `instance_limit`），照样当
+/// 接口错误交给 App（按状态码给通用提示），而不是当成解析失败。
+#[derive(Deserialize)]
+struct WireError {
+    code: String,
+    #[serde(default)]
+    message: String,
+    #[serde(default)]
+    retry_after_secs: Option<u64>,
+}
+
+impl WireError {
+    fn known(&self) -> Option<ErrorCode> {
+        serde_json::from_value(Value::String(self.code.clone())).ok()
+    }
+
+    fn into_api(self, status: u16) -> ClientError {
+        ClientError::Api {
+            status,
+            code: self.code,
+            detail: self.message,
+            retry_after_secs: self.retry_after_secs,
+        }
+    }
+}
+
 /// 检查 `Accept-Language`：去掉首尾空白，空的当没有；最长 [`MAX_ACCEPT_LANGUAGE`] 字节，不能有换行之类的字符。
 fn accept_language_header(v: Option<&str>) -> Result<Option<HeaderValue>> {
     let Some(v) = v.map(str::trim).filter(|v| !v.is_empty()) else {
@@ -539,36 +565,32 @@ impl Api {
             if (200..300).contains(&status) {
                 return Ok(resp);
             }
-            let err = match resp.json::<ErrorBody>().await {
+            let err = match resp.json::<WireError>().await {
                 Ok(e) => e,
-                Err(_) if status == 426 => ErrorBody::new(ErrorCode::UpgradeRequired, ""),
-                Err(e) => return Err(ClientError::decode(format!("status {status}: {e}"))),
-            };
-            match err.code {
-                ErrorCode::UpgradeRequired => {
+                Err(_) if status == 426 => {
                     self.mark_upgrade_required();
                     return Err(ClientError::UpgradeRequired);
                 }
-                ErrorCode::AccountFrozen => return Err(ClientError::AccountFrozen),
-                ErrorCode::Unauthenticated if attempt == 0 && token.is_some() => {
+                Err(e) => return Err(ClientError::decode(format!("status {status}: {e}"))),
+            };
+            match err.known() {
+                Some(ErrorCode::UpgradeRequired) => {
+                    self.mark_upgrade_required();
+                    return Err(ClientError::UpgradeRequired);
+                }
+                Some(ErrorCode::AccountFrozen) => return Err(ClientError::AccountFrozen),
+                Some(ErrorCode::Unauthenticated) if attempt == 0 && token.is_some() => {
                     // 令牌过期：刷新后重试。别人已经刷新过就直接重试。
                     match self.refresh_from(token.as_deref()).await? {
                         Refreshed::Ok => continue,
                         Refreshed::SignedOut => return Err(ClientError::SignedOut),
                     }
                 }
-                ErrorCode::Unauthenticated | ErrorCode::SessionRevoked if auth => {
+                Some(ErrorCode::Unauthenticated | ErrorCode::SessionRevoked) if auth => {
                     self.set_session(None);
                     return Err(ClientError::SignedOut);
                 }
-                code => {
-                    return Err(ClientError::api(
-                        status,
-                        code,
-                        err.message,
-                        err.retry_after_secs,
-                    ));
-                }
+                _ => return Err(err.into_api(status)),
             }
         }
         Err(ClientError::SignedOut)
@@ -604,8 +626,10 @@ impl Api {
             }));
             return Ok(Refreshed::Ok);
         }
-        let err = resp.json::<ErrorBody>().await.ok();
-        match err.as_ref().map(|e| e.code) {
+        let Ok(err) = resp.json::<WireError>().await else {
+            return Err(ClientError::decode(format!("refresh: status {status}")));
+        };
+        match err.known() {
             Some(ErrorCode::Unauthenticated | ErrorCode::SessionRevoked) => {
                 self.set_session(None);
                 Ok(Refreshed::SignedOut)
@@ -613,16 +637,7 @@ impl Api {
             Some(ErrorCode::UpgradeRequired) => Err(ClientError::UpgradeRequired),
             // 冻结不清会话：解冻后用同一个刷新令牌接着用。
             Some(ErrorCode::AccountFrozen) => Err(ClientError::AccountFrozen),
-            Some(code) => {
-                let e = err.unwrap_or_else(|| ErrorBody::new(code, ""));
-                Err(ClientError::api(
-                    status,
-                    code,
-                    e.message,
-                    e.retry_after_secs,
-                ))
-            }
-            None => Err(ClientError::decode(format!("refresh: status {status}"))),
+            _ => Err(err.into_api(status)),
         }
     }
 

@@ -2298,6 +2298,82 @@ async fn cancelling_a_pipeline_root_stops_its_steps() {
     w.rollback().await.unwrap();
 }
 
+/// 实例数上限（11.9）：到了上限领养报 409 `instance_limit`；放不下整个团队的模板领养先拒绝，不领养一半；
+/// 删掉一个又能领养；别的用户不受影响。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn instance_limit_over_http() {
+    let Some(a) = api_with(GatewayConfig {
+        limits: gateway::LimitConfig {
+            instances_per_user: 2,
+            ..gateway::LimitConfig::default()
+        },
+        ..GatewayConfig::default()
+    })
+    .await
+    else {
+        return;
+    };
+    let u = a.login("13800138033").await;
+    let tok = Some(u.access.as_str());
+    let first = a.adopt(&u).await;
+    let count = || async {
+        let (_, list) = a.call(Method::GET, "/v1/instances", tok, None).await;
+        list["instances"].as_array().unwrap().len()
+    };
+    let (st, tpl) = a
+        .call(
+            Method::POST,
+            "/v1/team-templates",
+            tok,
+            Some(json!({ "name": "两个人", "spec": { "members": [
+                { "agent_id": "claude", "name": "主编", "role": "lead" },
+                { "agent_id": "claude", "name": "写手" },
+            ] } })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{tpl}");
+    let (st, body) = a
+        .call(
+            Method::POST,
+            &format!("/v1/team-templates/{}/adopt", tpl["id"].as_str().unwrap()),
+            tok,
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(
+        (st, &body["code"]),
+        (StatusCode::CONFLICT, &json!("instance_limit")),
+        "{body}"
+    );
+    assert_eq!(count().await, 1, "no half team");
+    a.adopt(&u).await;
+    let adopt = || async {
+        a.call(
+            Method::POST,
+            "/v1/instances",
+            tok,
+            Some(json!({ "agent_id": "claude", "name": "第三个" })),
+        )
+        .await
+    };
+    let (st, body) = adopt().await;
+    assert_eq!(
+        (st, &body["code"]),
+        (StatusCode::CONFLICT, &json!("instance_limit")),
+        "{body}"
+    );
+    assert!(body["message"].as_str().unwrap().contains('2'), "{body}");
+    assert_eq!(count().await, 2);
+    let (st, _) = a
+        .call(Method::DELETE, &format!("/v1/instances/{first}"), tok, None)
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let (st, body) = adopt().await;
+    assert_eq!(st, StatusCode::CREATED, "{body}");
+    let other = a.login("13800138034").await;
+    a.adopt(&other).await;
+}
+
 #[tokio::test]
 async fn rate_limits_and_signup_cap() {
     let Some(a) = api_with(GatewayConfig {

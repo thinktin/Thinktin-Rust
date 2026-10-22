@@ -24,20 +24,24 @@ pub struct AdoptReq {
     name: String,
 }
 
-/// 领养：建实例，并签发它的运行授权（用户直接下的任务用它；和登录会话无关）。
+/// 领养：建实例，并签发它的运行授权（用户直接下的任务用它；和登录会话无关）。实例数到了账号的上限
+/// （`[api.limits] instances_per_user`）报 409 `instance_limit`。
 pub async fn adopt(
     State(s): State<AppState>,
     Authed(who): Authed,
     ApiJson(req): ApiJson<AdoptReq>,
 ) -> ApiResult<(StatusCode, Json<Instance>)> {
-    let instance = control::adopt(
+    let instance = control::adopt_capped(
         &s.db,
         s.templates.as_ref(),
         who.user,
         &who.actor(),
-        &req.agent_id,
-        req.harness.as_deref(),
-        &req.name,
+        control::AdoptSpec {
+            agent_id: &req.agent_id,
+            harness: req.harness.as_deref(),
+            name: &req.name,
+        },
+        u64::from(s.limits().config().instances_per_user),
     )
     .await?;
     let mut t = s.db.tenant(who.user).await?;

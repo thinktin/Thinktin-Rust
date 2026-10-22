@@ -41,6 +41,9 @@ pub enum Error {
     },
     #[error("instance is deleted")]
     Deleted,
+    /// 实例数到了账号的上限（11.9）。
+    #[error("at most {max} instances per account")]
+    InstanceLimit { max: u64 },
     #[error("instance has a run in progress")]
     Busy,
     #[error("sandbox {0} timed out")]
@@ -138,7 +141,7 @@ pub struct SweepReport {
     pub failed: usize,
 }
 
-/// 领养（不需要沙箱后端，接口层直接调用）：锁定 agent 当前版本和接入方式，建实例记录。
+/// 领养（不需要沙箱后端，接口层直接调用）：锁定 agent 当前版本和接入方式，建实例记录。不限实例数。
 pub async fn adopt(
     db: &Db,
     templates: &dyn Templates,
@@ -148,6 +151,37 @@ pub async fn adopt(
     harness: Option<&str>,
     name: &str,
 ) -> Result<Instance> {
+    let spec = AdoptSpec {
+        agent_id,
+        harness,
+        name,
+    };
+    adopt_capped(db, templates, user, actor, spec, 0).await
+}
+
+/// 领养什么。
+#[derive(Debug, Clone, Copy)]
+pub struct AdoptSpec<'a> {
+    pub agent_id: &'a str,
+    pub harness: Option<&'a str>,
+    pub name: &'a str,
+}
+
+/// 同 [`adopt`]，账号最多 `max_instances` 个没删除的实例（0 不限）：到了上限是 [`Error::InstanceLimit`]。
+/// 按用户加锁再数，并发领养不会一起超过。
+pub async fn adopt_capped(
+    db: &Db,
+    templates: &dyn Templates,
+    user: UserId,
+    actor: &str,
+    spec: AdoptSpec<'_>,
+    max_instances: u64,
+) -> Result<Instance> {
+    let AdoptSpec {
+        agent_id,
+        harness,
+        name,
+    } = spec;
     let m = templates
         .current(agent_id)
         .ok_or_else(|| Error::UnknownAgent(agent_id.into()))?;
@@ -168,6 +202,9 @@ pub async fn adopt(
         return Err(Error::Invalid("name must be 1-64 characters".into()));
     }
     let mut t = db.tenant(user).await?;
+    if max_instances > 0 && t.lock_instance_count().await? >= max_instances {
+        return Err(Error::InstanceLimit { max: max_instances });
+    }
     let instance = t
         .create_instance(&NewInstance {
             agent_id: m.agent.id.clone(),

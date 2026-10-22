@@ -154,6 +154,21 @@ pub(crate) async fn route_fallbacks(
 }
 
 impl Tx<Tenant> {
+    /// 按用户加锁（到事务结束），再数没删除的实例（归档的也算）。领养前查上限用：并发领养的排着队数，
+    /// 不会一起超过上限（11.9）。
+    pub async fn lock_instance_count(&mut self) -> Result<u64> {
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(format!("instances/{}", self.user()))
+            .execute(self.conn())
+            .await?;
+        let n: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM instances WHERE user_id = app_user_id() AND state <> 'deleted'",
+        )
+        .fetch_one(self.conn())
+        .await?;
+        crate::unsigned(n, "instance count")
+    }
+
     pub async fn create_instance(&mut self, new: &NewInstance) -> Result<Instance> {
         let row: Row = sqlx::query_as(concat!(
             "INSERT INTO instances (id, user_id, agent_id, agent_version, harness, name, workspace_id, limits) \
