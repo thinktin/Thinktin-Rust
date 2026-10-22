@@ -6,6 +6,7 @@ import cn.thinktin.data.model.ApprovalTimeoutAction
 import cn.thinktin.data.model.CatchUp
 import cn.thinktin.data.model.CredentialUpdate
 import cn.thinktin.data.model.DeviceMessageKind
+import cn.thinktin.data.model.ModelRoute
 import cn.thinktin.data.model.NewCredential
 import cn.thinktin.data.model.NewPlan
 import cn.thinktin.data.model.PlanChange
@@ -20,6 +21,7 @@ import cn.thinktin.data.model.WaitCode
 import cn.thinktin.data.model.SelfCodePurpose
 import cn.thinktin.data.model.TeamRole
 import cn.thinktin.data.model.TemplateMember
+import cn.thinktin.data.model.UsageGroup
 import cn.thinktin.data.model.long
 import cn.thinktin.data.model.obj
 import cn.thinktin.data.model.parseJsonObject
@@ -215,6 +217,53 @@ class MockAppApiTest {
         assertEquals("公司", replaced.label)
         expectApi(422) { s.replaceCredentialSecret("cred-work", "short") }
         expectApi(404) { s.replaceCredentialSecret("cred-nope", "sk-long-enough") }
+    }
+
+    /** 13.4：Mock 的 key 与别名和服务端一样拒绝订阅类 key、不合规的地址、停用的 key、删除在用的 key。 */
+    @Test
+    fun credentialsAndRoutesFollowServerRules() = runTest {
+        val s = service()
+        expectApi(422) { s.addCredential(NewCredential("qwen-cn", "", "sk-sp-0123456789")) }
+        expectApi(422) { s.addCredential(NewCredential("anthropic", "", "sk-ant-oat01-0123456789")) }
+        expectApi(422) { s.addCredential(NewCredential("nope", "", "sk-0123456789")) }
+        expectApi(422) { s.addCredential(NewCredential("custom", "", "sk-0123456789")) }
+        expectApi(422) { s.addCredential(NewCredential("custom", "", "sk-0123456789", openaiBase = "http://relay.example.com/v1")) }
+        expectApi(422) { s.addCredential(NewCredential("deepseek", "", "sk-0123456789", openaiBase = "https://relay.example.com/v1")) }
+        expectApi(422) { s.addCredential(NewCredential("deepseek", "", "sk-0123456789", dailyTokenLimit = 0)) }
+        val custom = s.addCredential(
+            NewCredential("custom", "relay", "sk-0123456789", anthropicBase = "https://relay.example.com/anthropic", responsesBase = "https://relay.example.com/v1"),
+        )
+        assertEquals(listOf("anthropic", "responses"), custom.protocols)
+        expectApi(422) { s.replaceCredentialSecret("cred-work", "sk-ant-oat01-0123456789") }
+
+        // 在用的 key 不能删（409）；别名里不能用停用的 key
+        expectApi(409) { s.deleteCredential("cred-home") }
+        expectApi(404) { s.deleteCredential("cred-nope") }
+        s.updateCredential("cred-work", CredentialUpdate(disabled = true))
+        expectApi(422) { s.setModelRoutes("inst-research", listOf(ModelRoute("main", "cred-work", "m", emptyList()))) }
+        expectApi(422) { s.setModelRoutes("inst-research", listOf(ModelRoute("Main", "cred-home", "m", emptyList()))) }
+        expectApi(404) { s.setModelRoutes("inst-research", listOf(ModelRoute("main", "cred-nope", "m", emptyList()))) }
+        s.setModelRoutes("inst-research", emptyList())
+        s.setModelRoutes("inst-coder", listOf(ModelRoute("main", custom.id, "m", emptyList())))
+        s.deleteCredential("cred-home")
+        assertTrue(s.credentials().none { it.id == "cred-home" })
+    }
+
+    @Test
+    fun usageIsGroupedAndFilteredByTime() = runTest {
+        val s = service()
+        val days = s.usage(UsageGroup.Day)
+        assertEquals(7, days.buckets.size)
+        assertTrue(days.buckets.all { it.key.matches(Regex("""\d{4}-\d{2}-\d{2}""")) })
+        assertEquals(days.buckets.sumOf { it.chargedTokens }, days.total.chargedTokens)
+        val models = s.usage(UsageGroup.Model)
+        assertTrue(models.buckets.all { '/' in it.key })
+        // 只要今天（北京时间）
+        val today = java.time.Instant.ofEpochMilli(now).atZone(MockData.USAGE_ZONE).toLocalDate()
+        val start = today.atStartOfDay(MockData.USAGE_ZONE).toInstant().toEpochMilli()
+        val one = s.usage(UsageGroup.Day, start, now)
+        assertEquals(listOf(today.toString()), one.buckets.map { it.key })
+        expectApi(422) { s.usage(UsageGroup.Day, now, now) }
     }
 
     @Test

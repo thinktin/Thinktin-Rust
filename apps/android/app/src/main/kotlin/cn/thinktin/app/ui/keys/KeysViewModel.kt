@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import cn.thinktin.app.R
 import cn.thinktin.app.ui.common.ErrorText
 import cn.thinktin.app.ui.common.UiText
+import cn.thinktin.app.ui.common.isInvalid
 import cn.thinktin.data.model.Credential
 import cn.thinktin.data.model.CredentialUpdate
 import cn.thinktin.data.model.InstanceState
@@ -156,10 +157,20 @@ class KeysViewModel(private val service: ThinktinService) : ViewModel() {
         val id = dialog.credential.id
         viewModelScope.launch {
             try {
-                for (instanceId in dialog.usages.map { it.instanceId }.distinct()) {
+                for ((instanceId, name) in dialog.usages.map { it.instanceId to it.instanceName }.distinct()) {
                     val routes = service.modelRoutes(instanceId)
                     val detached = KeyRules.detachCredential(routes, id)
-                    if (detached != routes) service.setModelRoutes(instanceId, detached)
+                    if (detached == routes) continue
+                    try {
+                        service.setModelRoutes(instanceId, detached)
+                    } catch (e: ServiceError.Api) {
+                        // 服务端整表替换时会重新检查每把 key：那个实例的别名里还有停用的 key 时整个被拒。
+                        if (!e.isInvalid) throw e
+                        state.update { it.copy(dialog = null) }
+                        message(UiText(R.string.keys_delete_detach_failed, listOf(name)))
+                        load()
+                        return@launch
+                    }
                 }
                 try {
                     service.deleteCredential(id)

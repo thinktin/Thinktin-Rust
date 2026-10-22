@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectableGroup
@@ -76,6 +77,9 @@ import java.time.ZoneOffset
 
 /** 测试用：柱状图的 testTag。 */
 const val USAGE_CHART_TEST_TAG = "usage-chart"
+
+/** 测试用：内容列表。 */
+const val USAGE_LIST_TEST_TAG = "usage-list"
 
 /** 测试用：表格行的 testTag 前缀（后接 bucket 的 key）。 */
 const val USAGE_ROW_TEST_TAG = "usage-row-"
@@ -186,7 +190,13 @@ private fun UsageContent(state: UsageUiState, onRetry: () -> Unit, modifier: Mod
                 onAction = onRetry,
                 modifier = Modifier.align(Alignment.Center),
             )
-            summary != null -> LazyColumn(modifier = Modifier.fillMaxSize()) {
+            // 换分组或时间段后回到顶部。
+            summary != null -> LazyColumn(
+                state = remember(state.group, state.range, state.span) { LazyListState() },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .testTag(USAGE_LIST_TEST_TAG),
+            ) {
                 item {
                     state.span?.let { span ->
                         val text = if (span.start == span.end) {
@@ -402,7 +412,12 @@ private fun TableHeader(group: UsageGroup) {
     ) {
         val style = MaterialTheme.typography.labelMedium
         val color = MaterialTheme.colorScheme.onSurfaceVariant
-        Text(stringResource(groupLabel(group)), style = style, color = color, modifier = Modifier.weight(1f))
+        Text(
+            stringResource(if (group == UsageGroup.Day) R.string.usage_column_date else R.string.usage_column_name),
+            style = style,
+            color = color,
+            modifier = Modifier.weight(1f),
+        )
         Text(stringResource(R.string.usage_charged), style = style, color = color)
     }
 }
@@ -413,6 +428,7 @@ private fun UsageTableRow(row: UsageRow, group: UsageGroup) {
     val b = row.bucket
     val name = when {
         group == UsageGroup.Day -> row.date?.let { formatDate(it) } ?: b.key
+        group == UsageGroup.Credential && b.key.isEmpty() -> stringResource(R.string.usage_no_key)
         row.gone && group == UsageGroup.Instance -> stringResource(R.string.usage_instance_gone, b.key)
         row.gone && group == UsageGroup.Credential -> stringResource(R.string.usage_credential_gone)
         else -> row.name ?: b.key

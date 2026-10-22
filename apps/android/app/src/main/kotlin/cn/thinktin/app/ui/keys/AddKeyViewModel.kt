@@ -245,11 +245,12 @@ class AddKeyViewModel(private val service: ThinktinService) : ViewModel() {
         val detail = e.detail.lowercase()
         state.update { s ->
             when {
-                "api_key" in detail || "subscription" in detail || "api key" in detail ->
-                    s.copy(key = s.key.copy(error = serverKeyError(e)))
+                // 地址的错误先认（套餐地址的说明里也有 subscription 这个词）。
                 "anthropic_base" in detail -> s.copy(errors = s.errors + (AddKeyField.AnthropicBase to baseRejected(detail)))
                 "responses_base" in detail -> s.copy(errors = s.errors + (AddKeyField.ResponsesBase to baseRejected(detail)))
                 "openai_base" in detail -> s.copy(errors = s.errors + (AddKeyField.OpenaiBase to baseRejected(detail)))
+                "api_key" in detail || "subscription" in detail || "api key" in detail ->
+                    s.copy(key = s.key.copy(error = serverKeyError(e)))
                 "base url" in detail -> s.copy(formError = UiText(R.string.key_error_base_rejected))
                 "label" in detail -> s.copy(errors = s.errors + (AddKeyField.Label to UiText(R.string.key_error_label_long, listOf(KeyRules.MAX_LABEL_LENGTH))))
                 "daily_token_limit" in detail -> s.copy(errors = s.errors + (AddKeyField.DailyLimit to UiText(R.string.key_error_limit_positive)))

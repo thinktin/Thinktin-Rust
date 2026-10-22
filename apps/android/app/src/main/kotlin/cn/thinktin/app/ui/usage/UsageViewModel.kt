@@ -204,7 +204,8 @@ class UsageViewModel(
                 name = credential?.let { it.label.ifBlank { vendorName(it.vendor) } },
                 vendor = credential?.let { vendorName(it.vendor) },
                 last4 = credential?.last4,
-                gone = known != null && credential == null,
+                // key 为空：请求一把 key 都没用上（都停用了、额度用完了）。
+                gone = known != null && credential == null && bucket.key.isNotEmpty(),
             )
         }.sortedByDescending { it.bucket.chargedTokens }
         // 模型：key 是“厂商/模型”，厂商换成显示名。

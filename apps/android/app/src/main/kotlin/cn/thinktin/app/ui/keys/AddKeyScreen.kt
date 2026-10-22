@@ -70,6 +70,9 @@ import cn.thinktin.design.theme.ThinktinSpacing
 /** 测试用：第一步厂商行的 testTag 前缀（后接厂商 id；自定义接口是 custom）。 */
 const val VENDOR_ROW_TEST_TAG = "vendor-row-"
 
+/** 测试用：第一步的厂商列表。 */
+const val VENDOR_LIST_TEST_TAG = "vendor-list"
+
 /** 添加 key（第 4.5 节，路由 keys/new）：两步，独立页面（有输入框，不用对话框）。成功后 [onAdded] 回列表。 */
 @Composable
 fun AddKeyScreen(onBack: () -> Unit, onAdded: () -> Unit) {
@@ -134,7 +137,7 @@ fun AddKeyScreen(onBack: () -> Unit, onAdded: () -> Unit) {
 /** 第一步：按协议分组的预置厂商，最后是自定义接口。 */
 @Composable
 private fun VendorStep(state: AddKeyUiState, viewModel: AddKeyViewModel) {
-    LazyColumn(modifier = Modifier.fillMaxSize()) {
+    LazyColumn(modifier = Modifier.fillMaxSize().testTag(VENDOR_LIST_TEST_TAG)) {
         item {
             Text(
                 text = stringResource(R.string.add_key_vendor_intro),

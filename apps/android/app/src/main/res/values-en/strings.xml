@@ -399,7 +399,7 @@
     <string name="key_field_daily_limit">Daily token limit (optional)</string>
     <string name="key_field_enabled">Enabled</string>
     <string name="key_enabled_hint">Disabled keys are skipped and the next key in the fallback chain is used; if none works, tasks wait for a key.</string>
-    <string name="key_label_hint">So you can recognise it; up to %1$d characters</string>
+    <string name="key_label_hint">So you can recognise it. Maximum length: %1$d</string>
     <string name="key_daily_limit_hint">Days run on Beijing time. Leave empty for no limit. Once used up, tasks switch to a fallback key or wait.</string>
     <string name="key_limit_fixed_hint">The daily limit can only be set when adding a key. To change it, delete the key and add it again.</string>
     <string name="key_hint_payg">Pay-as-you-go API keys only.</string>
@@ -412,18 +412,18 @@
     <string name="key_replace_intro">Replace the key for “%1$s” (%2$s · …%3$s). It stays the same record, so model aliases don\'t change; tasks waiting for a key will continue.</string>
     <string name="key_error_key_empty">Enter the API key</string>
     <string name="key_error_key_chars">The key can\'t contain spaces, line breaks or non-ASCII characters</string>
-    <string name="key_error_key_short">The key is too short (at least %1$d characters). Check that you copied all of it.</string>
-    <string name="key_error_key_long">The key is too long (at most %1$d characters)</string>
+    <string name="key_error_key_short">The key is too short (minimum length: %1$d). Check that you copied all of it.</string>
+    <string name="key_error_key_long">The key is too long (maximum length: %1$d)</string>
     <string name="key_error_subscription">This is a subscription key (%1$s…) that only works in the vendor\'s own tools. Use a pay-as-you-go API key.</string>
     <string name="key_error_subscription_server">This is a subscription key that only works in the vendor\'s own tools. Use a pay-as-you-go API key.</string>
     <string name="key_error_key_rejected">The server didn\'t accept this key. Check its format.</string>
-    <string name="key_error_label_long">Labels are at most %1$d characters</string>
+    <string name="key_error_label_long">The label is too long (maximum length: %1$d)</string>
     <string name="key_error_limit_number">Digits only</string>
     <string name="key_error_limit_positive">The limit must be above 0. Leave it empty for no limit.</string>
     <string name="key_error_limit_too_large">That limit is too large</string>
     <string name="key_error_base_empty">Enter the endpoint URL</string>
     <string name="key_error_base_https">Only https:// URLs are supported</string>
-    <string name="key_error_base_long">The URL is too long (at most %1$d characters)</string>
+    <string name="key_error_base_long">The URL is too long (maximum length: %1$d)</string>
     <string name="key_error_base_invalid">That URL isn\'t valid</string>
     <string name="key_error_base_extra">The URL can\'t include a username, password, query (?…) or #</string>
     <string name="key_error_base_private">Only public addresses: localhost, internal host names and private IPs aren\'t allowed</string>
@@ -472,11 +472,11 @@
     <string name="routes_fallbacks_title">Fallback chain</string>
     <string name="routes_fallbacks_empty">No fallbacks: if the primary key can\'t be used, tasks wait for a key.</string>
     <string name="routes_fallback_title">Fallback %1$d</string>
-    <string name="routes_fallback_up">Move fallback %1$d up</string>
-    <string name="routes_fallback_down">Move fallback %1$d down</string>
+    <string name="routes_fallback_up">Move up: fallback %1$d</string>
+    <string name="routes_fallback_down">Move down: fallback %1$d</string>
     <string name="routes_fallback_remove">Remove fallback %1$d</string>
-    <string name="routes_field_fallback_key">Fallback %1$d key</string>
-    <string name="routes_field_fallback_model">Fallback %1$d upstream model</string>
+    <string name="routes_field_fallback_key">Key for fallback %1$d</string>
+    <string name="routes_field_fallback_model">Upstream model for fallback %1$d</string>
     <string name="routes_add_fallback">Add a fallback for %1$s</string>
     <string name="routes_add_alias">Add alias</string>
     <string name="routes_discard">Discard changes</string>
@@ -489,10 +489,10 @@
     <string name="routes_error_key_disabled">This key is disabled: choose another, or enable it in the key list first</string>
     <string name="routes_error_key_protocol">This key doesn\'t support %1$s, so this agent can\'t use it</string>
     <string name="routes_error_model_empty">Enter the upstream model</string>
-    <string name="routes_error_model_long">Model names are at most %1$d characters</string>
+    <string name="routes_error_model_long">The model name is too long (maximum length: %1$d)</string>
     <string name="routes_error_fallback_same">Same key and model as the primary, so it can\'t act as a fallback</string>
     <string name="routes_error_main_required">The default alias main is required</string>
-    <string name="routes_error_too_many">At most %1$d aliases</string>
+    <string name="routes_error_too_many">Too many aliases (maximum: %1$d)</string>
     <string name="routes_error_rejected">The server didn\'t accept this: a key may have just been disabled or deleted. Check and save again.</string>
 
     <string name="usage_range">Period</string>
@@ -509,7 +509,7 @@
     <string name="usage_custom_pick">Pick a start date first</string>
     <string name="usage_custom_order">The end date can\'t be before the start date</string>
     <string name="usage_custom_future">Dates after today can\'t be chosen</string>
-    <string name="usage_custom_too_long">At most %1$d days at a time</string>
+    <string name="usage_custom_too_long">Choose a shorter period. Maximum number of days: %1$d</string>
     <string name="usage_load_failed">Couldn\'t load usage</string>
     <string name="usage_date">%1$d/%2$d</string>
     <string name="usage_span">%1$s – %2$s</string>
@@ -525,8 +525,8 @@
     <string name="usage_stat_a11y">%1$s: %2$s</string>
     <string name="usage_estimated_hint">Some requests had no usage reported by the vendor and were charged by a conservative estimate (this only affects daily limits, not what the vendor bills).</string>
     <string name="usage_chart_title">Charged tokens per day (peak %1$s)</string>
-    <string name="usage_chart_a11y">Daily bar chart: %1$d days; the busiest was %2$s with %3$s tokens</string>
-    <string name="usage_chart_empty_a11y">Daily bar chart: %1$d days, no usage</string>
+    <string name="usage_chart_a11y">Daily bar chart, number of days: %1$d. The busiest was %2$s with %3$s tokens</string>
+    <string name="usage_chart_empty_a11y">Daily bar chart, number of days: %1$d. No usage</string>
     <string name="usage_table_day">By day</string>
     <string name="usage_table_instance">By instance</string>
     <string name="usage_table_model">By model</string>
@@ -536,4 +536,8 @@
     <string name="usage_row_failed">%1$s failed</string>
     <string name="usage_instance_gone">Deleted instance (%1$s)</string>
     <string name="usage_credential_gone">Deleted key</string>
+    <string name="usage_column_date">Date</string>
+    <string name="usage_column_name">Name</string>
+    <string name="keys_delete_detach_failed">Couldn\'t remove it from “%1$s”\'s model aliases because they still use a disabled key. Enable that key, or replace it on “%1$s”\'s model aliases page, then delete again.</string>
+    <string name="usage_no_key">No key used (all disabled or out of quota)</string>
 </resources>

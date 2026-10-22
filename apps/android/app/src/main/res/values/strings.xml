@@ -536,4 +536,8 @@
     <string name="usage_row_failed">失败 %1$s 次</string>
     <string name="usage_instance_gone">已删除的实例（%1$s）</string>
     <string name="usage_credential_gone">已删除的 key</string>
+    <string name="usage_column_date">日期</string>
+    <string name="usage_column_name">名称</string>
+    <string name="keys_delete_detach_failed">没能把它从“%1$s”的模型别名里拿掉：那里还用着停用的 key。先启用那把 key，或到“%1$s”的模型别名页换掉它，再删除。</string>
+    <string name="usage_no_key">没用上 key（都停用了或额度用完了）</string>
 </resources>
