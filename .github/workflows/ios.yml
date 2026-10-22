@@ -10,8 +10,9 @@
 name: iOS
 
 on:
+  # ios-app 有 PR（#8），由 pull_request 触发，不再按 push 重复跑一遍（macOS 作业 20 分钟以上）。
   push:
-    branches: [ios-app, main]
+    branches: [main]
     paths:
       - apps/apple/**
       - crates/client-core/**

@@ -604,7 +604,7 @@ public final class ObservedClient: ClientProtocol, Sendable {
 }
 
 /// 转发事件流回调，顺带把连接状态报给 `ObservedClient`。
-final class RelayListener: EventListening, Sendable {
+private final class RelayListener: EventListening, Sendable {
     let listener: any EventListening
     private let statusChanged: @Sendable (StreamStatus) -> Void
 

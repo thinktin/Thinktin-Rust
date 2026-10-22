@@ -4,30 +4,16 @@ import ThinktinKit
 
 @testable import ThinktinUI
 
-#if canImport(UIKit)
-    import UIKit
-#elseif canImport(AppKit)
-    import AppKit
-#endif
-
 /// 根页面和每个组件都能实例化、能布局、能渲染（浅色、深色，中文、英文），保证界面层编得过、跑得起来。
-/// 快照对比在 12.x 的页面做完后再加。
+/// 快照对比在 12.x 的页面做完后再加。应用框架（抽屉、全局状态页、接入点）的测试在 Shell/AppShellTests.swift。
 @MainActor
 @Suite("界面冒烟测试")
 struct ViewSmokeTests {
-    static let size = CGSize(width: 390, height: 844)
-
     @Test("RootView 用 MockClient 能放进宿主控制器并布局")
     func rootView() {
         let root = RootView(client: MockClient(autoReply: false))
         host(root)
         host(root.environment(\.displayLanguage, .english).preferredColorScheme(.dark))
-    }
-
-    @Test("欢迎页的占位文案")
-    func welcomeCopy() {
-        #expect(WelcomeView.composerPlaceholder(.chinese) == "给 agent 布置一个任务")
-        #expect(!WelcomeView.composerPlaceholder(.english).isEmpty)
     }
 
     @Test("状态点：所有运行状态和实例状态")
@@ -91,54 +77,14 @@ struct ViewSmokeTests {
         #expect(!ComposerBar(text: .constant(" \n "), placeholder: "") {}.canSend)
     }
 
-    @Test("抽屉：打开和关闭")
-    func drawer() {
-        let open = host(InstanceDrawer(client: MockClient(autoReply: false), isOpen: .constant(true)))
-        #expect(open.width > 0)
-        // 关着的抽屉什么都不画（空的 ZStack），理想尺寸本来就是 0。
-        let closed = host(
-            InstanceDrawer(client: MockClient(autoReply: false), isOpen: .constant(false)), expectContent: false)
-        #expect(closed.width == 0)
-    }
-
     // MARK: 工具
 
-    /// 浅色中文、深色英文各渲染一次，确认能出图。
     private func render(_ view: some View, sourceLocation: SourceLocation = #_sourceLocation) {
-        for (scheme, language) in [(ColorScheme.light, DisplayLanguage.chinese), (.dark, .english)] {
-            let content =
-                view
-                .padding()
-                .background(Theme.paper)
-                .environment(\.colorScheme, scheme)
-                .environment(\.displayLanguage, language)
-            let renderer = ImageRenderer(content: content)
-            renderer.proposedSize = ProposedViewSize(width: Self.size.width, height: nil)
-            #expect(renderer.cgImage != nil, sourceLocation: sourceLocation)
-        }
+        renderInBothAppearances(view, sourceLocation: sourceLocation)
     }
 
-    /// 放进平台的宿主控制器并布局（带导航栈、输入框这类 `ImageRenderer` 画不了的视图用它），返回理想尺寸。
-    /// `expectContent` 为真时要求宽度大于 0；本来就可能什么都不画的视图（关着的抽屉）传 false，由调用方自己断言。
     @discardableResult
-    private func host(
-        _ view: some View, expectContent: Bool = true, sourceLocation: SourceLocation = #_sourceLocation
-    ) -> CGSize {
-        #if canImport(UIKit)
-            let controller = UIHostingController(rootView: view)
-            controller.view.frame = CGRect(origin: .zero, size: Self.size)
-            controller.view.setNeedsLayout()
-            controller.view.layoutIfNeeded()
-            let size = controller.sizeThatFits(in: Self.size)
-        #elseif canImport(AppKit)
-            let controller = NSHostingController(rootView: view)
-            controller.view.frame = CGRect(origin: .zero, size: Self.size)
-            controller.view.layoutSubtreeIfNeeded()
-            let size = controller.sizeThatFits(in: Self.size)
-        #endif
-        if expectContent {
-            #expect(size.width > 0, sourceLocation: sourceLocation)
-        }
-        return size
+    private func host(_ view: some View, sourceLocation: SourceLocation = #_sourceLocation) -> CGSize {
+        hostAndLayout(view, sourceLocation: sourceLocation)
     }
 }

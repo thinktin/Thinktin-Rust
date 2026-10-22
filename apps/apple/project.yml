@@ -82,9 +82,11 @@ targets:
         # 推送带 content-available 时后台拉收件箱、刷新运行状态（12.8）。
         UIBackgroundModes: [remote-notification]
         NSFaceIDUsageDescription: 用面容 ID 确认审批、签名等高风险操作。
-        # 深链（docs/ios.md 第 6.1 节，和安卓端同一套）：thinktin://run/{id}、thinktin://approval/{id}……
+        # 深链（docs/ios.md 第 6.1 节，和安卓端同一套）：thinktin://run/{id}、approval/{id}、plan/{id}、instance/{id}、
+        # inbox、inbox/{id}、vault/request/{id}。App 的 onOpenURL 交给 Router（ThinktinKit/Navigation，WBS 12.16）解析。
         CFBundleURLTypes:
           - CFBundleURLName: $(PRODUCT_BUNDLE_IDENTIFIER)
+            CFBundleTypeRole: Viewer
             CFBundleURLSchemes: [thinktin]
         ThinktinAPIBaseURL: $(THINKTIN_API_BASE_URL)
     entitlements:

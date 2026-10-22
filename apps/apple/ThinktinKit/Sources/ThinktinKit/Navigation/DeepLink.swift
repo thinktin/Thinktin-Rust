@@ -60,7 +60,8 @@ public enum DeepLink {
         guard (1...maxIDLength).contains(id.utf8.count) else { return false }
         return id.utf8.allSatisfy { b in
             (b >= UInt8(ascii: "a") && b <= UInt8(ascii: "z")) || (b >= UInt8(ascii: "A") && b <= UInt8(ascii: "Z"))
-                || (b >= UInt8(ascii: "0") && b <= UInt8(ascii: "9")) || b == UInt8(ascii: "-") || b == UInt8(ascii: "_")
+                || (b >= UInt8(ascii: "0") && b <= UInt8(ascii: "9")) || b == UInt8(ascii: "-")
+                || b == UInt8(ascii: "_")
         }
     }
 

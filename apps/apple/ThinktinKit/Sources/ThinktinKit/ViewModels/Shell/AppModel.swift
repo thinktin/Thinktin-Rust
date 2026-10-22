@@ -66,6 +66,8 @@ public final class AppModel {
     private let now: () -> Date
     private let activityContinuation: AsyncStream<ClientActivity>.Continuation
     @ObservationIgnored private var started = false
+    /// `start()` 正在进行（回到前台的刷新跳过，免得启动时拉两遍）。
+    @ObservationIgnored private var isStarting = false
     @ObservationIgnored private var lastBadgeRefresh: Date?
     /// 每个事件流最近的连接状态（汇总成 `connection`）。
     @ObservationIgnored private var streams: [UUID: StreamStatus] = [:]
@@ -124,7 +126,10 @@ public final class AppModel {
         guard !started else { return }
         started = true
         guard phase == .signedIn else { return }
+        isStarting = true
+        defer { isStarting = false }
         loadCachedState()
+        guard phase == .signedIn else { return }
         await verifyAccount()
         await refresh()
     }
@@ -189,6 +194,7 @@ public final class AppModel {
         case .frozen:
             await recheckAccount()
         case .signedIn:
+            if isStarting { return }
             if let last = lastBadgeRefresh, now().timeIntervalSince(last) < Self.badgeMaxAge { return }
             await refresh()
         case .signedOut, .upgradeRequired:
@@ -213,7 +219,7 @@ public final class AppModel {
             await refresh()
         } catch {
             if error is CancellationError { return }
-            if !handle(error) { accountCheckError = ClientError(error) }
+            if !handle(error) { accountCheckError = Self.clientError(error) }
         }
     }
 
@@ -230,6 +236,16 @@ public final class AppModel {
     /// 切换当前实例并回到它的对话。
     public func selectInstance(_ instanceID: InstanceID) {
         router.selectInstance(instanceID)
+    }
+
+    /// 抽屉里的“新任务”：只有一个实例时直接回到它的对话、把焦点放进输入框；有好几个时弹出选择（`.newTask`）；
+    /// 还没有实例时去 agent 目录领养。
+    public func startNewTask() {
+        switch instances.count {
+        case 0: router.openFromDrawer(.agentCatalog)
+        case 1: router.requestNewTask(in: instances[0].id)
+        default: router.present(.newTask)
+        }
     }
 
     // MARK: 错误
@@ -354,27 +370,38 @@ public final class AppModel {
         } catch {
             // 页面关了（任务被取消）不算出错。
             if error is CancellationError || handle(error) { return }
-            let clientError = ClientError(error)
+            let clientError = Self.clientError(error)
             if !clientError.isOffline { refreshError = clientError }
         }
     }
 
-    /// 读缓存：实例、未读数、每个实例最近的运行（离线、启动时先显示）。
+    /// 读缓存：实例、未读数、每个实例最近的运行（离线、启动时先显示）。读缓存出错（缓存坏了）就当没有缓存；
+    /// 全局错误当场切换。
     private func loadCachedState() {
-        if let cached = try? client.cachedInstances(), !cached.isEmpty {
+        if let cached = cached({ try client.cachedInstances() }), !cached.isEmpty {
             apply(instances: cached)
             hasLoadedInstances = true
         }
         var badges = self.badges
-        if let unread = try? client.cachedUnread() { badges.inboxUnread = unread }
+        if let unread = cached({ try client.cachedUnread() }) { badges.inboxUnread = unread }
         var activity: [InstanceID: InstanceActivity] = [:]
         for instance in instances {
-            if let runs = try? client.cachedRuns(instanceID: instance.id, limit: Self.runsPerInstance) {
+            if let runs = cached({ try client.cachedRuns(instanceID: instance.id, limit: Self.runsPerInstance) }) {
                 activity[instance.id] = InstanceActivity(runs: runs)
             }
         }
         setActivity(activity, badges: &badges)
         self.badges = badges
+    }
+
+    private func cached<T>(_ body: () throws -> T) -> T? {
+        guard phase == .signedIn else { return nil }
+        do {
+            return try body()
+        } catch {
+            handle(error)
+            return nil
+        }
     }
 
     private func setActivity(_ activity: [InstanceID: InstanceActivity], badges: inout ShellBadges) {
@@ -486,10 +513,10 @@ public final class AppModel {
     }
 }
 
-extension ClientError {
+extension AppModel {
     /// 任意错误转成 `ClientError`（不是的按内部错误）。
-    init(_ error: any Error) {
-        self = (error as? ClientError) ?? .internal(message: String(describing: error))
+    private static func clientError(_ error: any Error) -> ClientError {
+        (error as? ClientError) ?? .internal(message: String(describing: error))
     }
 }
 

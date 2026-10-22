@@ -11,8 +11,9 @@ public struct ShellBadges: Hashable, Sendable {
     /// agent 建的、等用户确认的计划。
     public var plansAwaitingConfirmation: Int
 
-    public init(inboxUnread: Int = 0, pendingApprovals: Int = 0, activeRuns: Int = 0, plansAwaitingConfirmation: Int = 0)
-    {
+    public init(
+        inboxUnread: Int = 0, pendingApprovals: Int = 0, activeRuns: Int = 0, plansAwaitingConfirmation: Int = 0
+    ) {
         self.inboxUnread = inboxUnread
         self.pendingApprovals = pendingApprovals
         self.activeRuns = activeRuns

@@ -21,6 +21,27 @@ struct AppSmokeTests {
         #expect(AppConfiguration.baseURL(infoDictionary: info).scheme == "https")
     }
 
+    @Test("Info.plist 注册了深链的 URL scheme（thinktin://，docs/ios.md 第 6.1 节）")
+    func urlScheme() throws {
+        let info = try #require(Bundle.main.infoDictionary)
+        let types = try #require(info["CFBundleURLTypes"] as? [[String: Any]])
+        let schemes = types.flatMap { ($0["CFBundleURLSchemes"] as? [String]) ?? [] }
+        #expect(schemes.contains("thinktin"))
+        // 生成的 Info.plist 里构建设置已经展开。
+        #expect(types.allSatisfy { ($0["CFBundleURLName"] as? String)?.contains("$(") != true })
+    }
+
+    @Test("装配好全局状态：深链交给它的 router")
+    @MainActor
+    func appModelWiring() throws {
+        // 测试宿主用 Mock（演示数据，已登录）。
+        let environment = AppEnvironment.live()
+        #expect(environment.appModel.phase == .signedIn)
+        let url = try #require(URL(string: "thinktin://run/0192f3a0-0000-7000-8000-000000000201"))
+        #expect(environment.appModel.router.handle(url: url))
+        #expect(environment.appModel.router.path == [.run("0192f3a0-0000-7000-8000-000000000201")])
+    }
+
     @Test("隐私清单和多语言资源打进了 App")
     func bundledResources() throws {
         #expect(Bundle.main.url(forResource: "PrivacyInfo", withExtension: "xcprivacy") != nil)

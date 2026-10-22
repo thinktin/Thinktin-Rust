@@ -5,14 +5,16 @@ import ThinktinKit
 import UIKit
 
 /// App 的依赖装配（WBS 12.1，docs/ios.md 第 1、3 节）：启动时按 `AppConfiguration` 选客户端，
-/// 建好平台层的实现（Keychain、推送、生物识别），交给界面。界面和视图模型只认 `ClientProtocol` 和
-/// 平台层的协议，不知道背后是 Mock 还是真核心。
+/// 建好平台层的实现（Keychain、推送、生物识别）和应用框架的全局状态（`AppModel`，12.16），交给界面。
+/// 界面和视图模型只认 `ClientProtocol` 和平台层的协议，不知道背后是 Mock 还是真核心。
 @MainActor
 final class AppEnvironment {
     let configuration: AppConfiguration
     let client: any ClientProtocol
     let pushRegistrar: any PushRegistrar
     let biometricSigner: any BiometricSigner
+    /// 全局状态和导航（登录状态、实例、角标、`router`）。深链（`onOpenURL`）、推送点开（12.8）都交给它的 `router`。
+    let appModel: AppModel
 
     private static let log = Logger(subsystem: "cn.thinktin.app", category: "environment")
 
@@ -26,6 +28,7 @@ final class AppEnvironment {
         self.client = client
         self.pushRegistrar = pushRegistrar
         self.biometricSigner = biometricSigner
+        self.appModel = AppModel(client: client)
     }
 
     /// 正式运行用的装配。推送（12.8）和签名（12.9）先用空实现。
