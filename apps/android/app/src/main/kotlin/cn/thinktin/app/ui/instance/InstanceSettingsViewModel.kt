@@ -25,22 +25,22 @@ import kotlinx.coroutines.launch
 import java.time.Clock
 
 /**
- * 删除实例会影响到的东西（第 8.6 节）。服务端删实例只是软删除（state = deleted）：团队读取时不再列出它；
- * 其他计划里引用它的流水线步骤和它的模型别名都还留着（步骤之后运行会失败）。确认框照样列出来，让用户知道去改哪些计划。
- * 设计规范 8.6 写的“级联删除”和后端实现不一致，待 backend-core 确认以哪边为准。
+ * 删除实例会影响到的东西（第 8.6 节）。服务端（11.9）删除实例时：它自己的计划标记删除（触发器停掉）；别的实例的流水线
+ * 有一步在它上面的暂停，恢复、确认会报 409，要先改掉那些步骤；它的模型别名一起删掉；团队读取时不再列出它。
+ * 确认框把计划和团队列出来，让用户知道之后要去改哪些流水线。
  */
 data class DeleteImpact(
-    /** 这个实例自己的计划（实例删了就不会再运行）。 */
+    /** 这个实例自己的计划：会被删除。 */
     val ownPlans: List<Plan> = emptyList(),
-    /** 别的计划里有步骤用到它：这些步骤之后运行会失败（服务端不会自动删掉）。 */
+    /** 别的计划里有步骤用到它：会被暂停，改了这些步骤才能恢复。 */
     val pipelinePlans: List<Plan> = emptyList(),
     /** 它是成员的团队：会从团队里移除。 */
     val teams: List<Team> = emptyList(),
 ) {
     val isEmpty: Boolean get() = ownPlans.isEmpty() && pipelinePlans.isEmpty() && teams.isEmpty()
 
-    /** [plan] 里引用这个实例的步骤数。 */
-    fun removedSteps(plan: Plan, instanceId: String): Int = plan.steps.count { it.instanceId == instanceId }
+    /** [plan] 里在这个实例上的步骤数（要改掉的）。 */
+    fun affectedSteps(plan: Plan, instanceId: String): Int = plan.steps.count { it.instanceId == instanceId }
 
     companion object {
         /** 从全部计划和团队里找出引用 [instanceId] 的。 */

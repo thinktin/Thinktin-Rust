@@ -3,11 +3,15 @@ package cn.thinktin.app
 import cn.thinktin.app.ui.common.ErrorText
 import cn.thinktin.app.ui.common.RelativeTime
 import cn.thinktin.app.ui.common.UiText
+import cn.thinktin.app.ui.common.isLimitReached
+import cn.thinktin.app.ui.common.isRetryable
 import cn.thinktin.app.ui.common.WaitText
 import cn.thinktin.app.ui.home.Greeting
 import cn.thinktin.data.model.WaitCode
 import cn.thinktin.data.service.ServiceError
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.Clock
 import java.time.Instant
@@ -54,6 +58,27 @@ class UiLogicTest {
         assertEquals(UiText(R.string.error_invalid), ErrorText.of(ServiceError.Api(400, "", "", null)))
         // code 为空时显示状态码
         assertEquals(UiText(R.string.error_server, listOf("500")), ErrorText.of(ServiceError.Api(500, "", "", null)))
+    }
+
+    @Test
+    fun limitCodesAndUnknownCodes() {
+        // 11.9：数量上限的码以 _limit 结尾、409；先于 conflict 认出来
+        val instanceLimit = ServiceError.Api(409, "instance_limit", "at most 5 instances", null)
+        assertTrue(instanceLimit.isLimitReached)
+        assertEquals(UiText(R.string.error_limit_reached), ErrorText.of(instanceLimit))
+        assertEquals(UiText(R.string.error_limit_reached), ErrorText.of(ServiceError.Api(409, "vault_item_limit", "", null)))
+        assertFalse("限频不是数量上限", ServiceError.Api(429, "rate_limited", "", null).isLimitReached)
+        assertFalse(ServiceError.Api(409, "conflict", "", null).isLimitReached)
+        assertFalse(ServiceError.Api(422, "limit", "", null).isLimitReached)
+        // 不认识的码（client-core 原样放进 code）按状态给通用文案，状态也不认识的显示码，不崩
+        assertEquals(UiText(R.string.error_conflict), ErrorText.of(ServiceError.Api(409, "brand_new_code", "", null)))
+        assertEquals(UiText(R.string.error_not_found), ErrorText.of(ServiceError.Api(404, "gone_forever", "", null)))
+        assertEquals(UiText(R.string.error_invalid), ErrorText.of(ServiceError.Api(422, "brand_new_code", "", null)))
+        assertEquals(
+            UiText(R.string.error_server, listOf("teapot")),
+            ErrorText.of(ServiceError.Api(418, "teapot", "", null)),
+        )
+        assertFalse(ServiceError.Api(418, "teapot", "", null).isRetryable)
     }
 
     @Test

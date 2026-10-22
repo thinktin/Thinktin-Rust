@@ -463,7 +463,7 @@ class AgentViewModelTest {
         advanceUntilIdle()
         vm.openAdopt("代码助手 的实例")
 
-        // 409 conflict 和 instance_limit 服务端目前不返回（名字没有唯一约束、没有数量上限），这两条是防将来加上的分支。
+        // 409 conflict 服务端目前不返回（名字没有唯一约束），是防将来加上的分支。
         service.fail("adopt", api(409, "conflict", "instance already exists"))
         vm.adopt()
         advanceUntilIdle()
@@ -479,10 +479,22 @@ class AgentViewModelTest {
         assertNull(form.nameError)
         assertEquals(UiText(R.string.adopt_rate_limited, listOf(30)), form.error)
 
-        service.fail("adopt", api(422, "instance_limit", "too many instances"))
+        // 11.9：实例数到了上限是 409 instance_limit（不是“名字冲突”）；以后别的 *_limit 也按上限处理
+        service.fail("adopt", api(409, "instance_limit", "at most 5 instances per account"))
+        vm.adopt()
+        advanceUntilIdle()
+        form = vm.uiState.value.adopt!!
+        assertEquals(UiText(R.string.adopt_limit_reached), form.error)
+        assertNull(form.nameError)
+        service.fail("adopt", api(409, "team_limit", "future"))
         vm.adopt()
         advanceUntilIdle()
         assertEquals(UiText(R.string.adopt_limit_reached), vm.uiState.value.adopt!!.error)
+        // 不再按 limit / quota 字样猜：rate_limited 是限频，quota_x 交给通用文案
+        service.fail("adopt", api(402, "quota_exceeded", "no"))
+        vm.adopt()
+        advanceUntilIdle()
+        assertEquals(UiText(R.string.error_quota), vm.uiState.value.adopt!!.error)
 
         service.fail("adopt", api(422, "invalid", "name must be 1-64 characters"))
         vm.adopt()
@@ -645,7 +657,7 @@ class AgentViewModelTest {
         val impact = DeleteImpact.of(coder, plans + pipeline, teams)
         assertEquals(listOf("plan-daily"), impact.ownPlans.map { it.id })
         assertEquals(listOf("plan-pipe"), impact.pipelinePlans.map { it.id })
-        assertEquals(2, impact.removedSteps(pipeline, coder))
+        assertEquals(2, impact.affectedSteps(pipeline, coder))
         assertEquals(listOf("调研小组"), impact.teams.map { it.name })
         assertFalse(impact.isEmpty)
 
@@ -687,9 +699,13 @@ class AgentViewModelTest {
             assertEquals(InstanceSettingsEvent.Deleted, awaitItem())
         }
         assertEquals(listOf("inst-coder"), service.deleted)
-        // 服务端（Mock 同样）只是软删除：流水线步骤还在（之后运行会失败），团队读取时看不到它
+        // 服务端（Mock 同样，11.9）：它自己的计划删除；别的流水线暂停、步骤留着（改了步骤才能恢复）；别名删除；
+        // 团队读取时看不到它
+        assertTrue(service.mock.plans().none { it.title == "每日依赖检查" })
         val pipeline = service.mock.plans().first { it.title == "周报流水线" }
+        assertTrue(pipeline.paused)
         assertEquals(listOf("collect", "code"), pipeline.steps.map { it.key })
+        assertTrue(service.mock.modelRoutes("inst-coder").isEmpty())
         assertTrue(service.mock.teams().none { team -> team.members.any { it.instanceId == "inst-coder" } })
     }
 

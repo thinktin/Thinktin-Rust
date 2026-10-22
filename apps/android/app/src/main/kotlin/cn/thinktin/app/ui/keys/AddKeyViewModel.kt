@@ -69,8 +69,11 @@ data class AddKeyUiState(
     /** 厂商 id（提交用）。 */
     val vendorId: String get() = if (custom) KeyRules.CUSTOM_VENDOR else vendor?.id.orEmpty()
 
-    /** 有订阅类 key 前缀要拒绝的厂商：输入框下提示“只接按量付费 key”。 */
-    val refusesSubscriptionKeys: Boolean get() = KeyRules.SUBSCRIPTION_PREFIXES.containsKey(vendorId)
+    /** 有订阅类 key 前缀要拒绝的厂商（厂商表里的 subscriptionKeyPrefixes）：输入框下提示“只接按量付费 key”。 */
+    val refusesSubscriptionKeys: Boolean get() = !custom && vendor?.subscriptionKeyPrefixes.orEmpty().isNotEmpty()
+
+    /** 自定义接口不能填的套餐专用地址：所有厂商的 planOnlyBases 合在一起。 */
+    val planOnlyBases: List<String> get() = KeyRules.planOnlyBases(vendors)
 }
 
 sealed interface AddKeyEvent {
@@ -118,7 +121,7 @@ class AddKeyViewModel(private val service: ThinktinService) : ViewModel() {
                 label = if (keepLabel) s.label else vendor.name,
                 errors = emptyMap(),
                 formError = null,
-                key = s.key.copy(error = s.key.value.takeIf { it.isNotEmpty() }?.let { KeyRules.checkKey(vendor.id, it) }),
+                key = s.key.copy(error = s.key.value.takeIf { it.isNotEmpty() }?.let { KeyRules.checkKey(vendor, it) }),
             )
         }
     }
@@ -146,7 +149,7 @@ class AddKeyViewModel(private val service: ThinktinService) : ViewModel() {
     }
 
     fun onKeyChange(raw: String) {
-        state.update { s -> s.copy(key = s.key.change(raw, s.vendorId), formError = null) }
+        state.update { s -> s.copy(key = s.key.change(raw, s.vendor.takeUnless { s.custom }), formError = null) }
     }
 
     fun toggleKeyVisible() {
@@ -183,7 +186,7 @@ class AddKeyViewModel(private val service: ThinktinService) : ViewModel() {
         if (!s.editable || s.step != AddKeyStep.Details) return
         val vendorId = s.vendorId
         val key = s.key.value.trim()
-        val keyError = KeyRules.checkKey(vendorId, key)
+        val keyError = KeyRules.checkKey(s.vendor.takeUnless { s.custom }, key)
         val errors = mutableMapOf<AddKeyField, UiText>()
         val label = s.label.trim()
         KeyRules.checkLabel(label)?.let { errors[AddKeyField.Label] = it }
@@ -202,7 +205,7 @@ class AddKeyViewModel(private val service: ThinktinService) : ViewModel() {
             if (s.customProtocols.isEmpty()) errors[AddKeyField.Protocols] = UiText(R.string.key_error_protocols_empty)
             for (protocol in KeyRules.PROTOCOLS.filter { it in s.customProtocols }) {
                 val url = baseOf(s, protocol).trim().trimEnd('/')
-                val error = KeyRules.checkBase(url)
+                val error = KeyRules.checkBase(url, s.planOnlyBases)
                 if (error != null) {
                     errors[fieldOf(protocol)] = error
                 } else {

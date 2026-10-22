@@ -244,6 +244,7 @@
     <string name="error_invalid">填写的内容不正确</string>
     <string name="error_forbidden">没有权限执行这个操作</string>
     <string name="error_quota">额度已用完</string>
+    <string name="error_limit_reached">已经到了数量上限，删掉一些再试</string>
     <string name="error_server">服务出错了（%1$s）</string>
     <string name="error_contains_secrets">消息里像是有 %1$d 处密码或 key，没有发出。请先存进保险箱。</string>
     <string name="error_unsupported">这个功能暂不可用</string>
@@ -342,12 +343,12 @@
     <string name="instance_delete_no_impact">没有计划或团队用到这个实例。删除后不能恢复。</string>
     <string name="instance_delete_impact">删除会影响下面这些计划和团队：</string>
     <string name="instance_delete_confirm_title">确定删除“%1$s”？</string>
-    <string name="instance_delete_confirm_message">实例会被永久删除，进行中的运行会被取消。它会从上一步列出的团队里移出；流水线里引用它的步骤不会自动删掉，之后运行到这些步骤会失败，需要去计划里改。这个操作不能撤销。</string>
-    <string name="instance_delete_confirm_message_simple">实例会被永久删除，进行中的运行会被取消。这个操作不能撤销。</string>
+    <string name="instance_delete_confirm_message">实例会被永久删除，进行中的运行会被取消，它的模型别名一起删除。上一步列出的计划和团队会照那里说的处理。这个操作不能撤销。</string>
+    <string name="instance_delete_confirm_message_simple">实例会被永久删除，进行中的运行会被取消，它的模型别名一起删除。这个操作不能撤销。</string>
     <string name="instance_delete_impact_failed">查不到受影响的计划和团队，暂时不能删除：%1$s</string>
-    <string name="instance_impact_own_plans">它自己的计划（不会再运行）</string>
-    <string name="instance_impact_pipeline_plans">有步骤用到它的流水线（这些步骤之后会运行失败）</string>
-    <string name="instance_impact_teams">会把它移出的团队</string>
+    <string name="instance_impact_own_plans">它自己的计划（将被删除）</string>
+    <string name="instance_impact_pipeline_plans">有步骤用到它的流水线（将被暂停，需改步骤后才能恢复）</string>
+    <string name="instance_impact_teams">它所在的团队（将把它移出）</string>
     <string name="instance_impact_bullet">•</string>
     <string name="instance_impact_item">• %1$s</string>
     <string name="instance_impact_plan_detail">%1$s（%2$s）</string>
@@ -402,7 +403,7 @@
     <string name="keys_usage_fallback">降级</string>
     <string name="keys_delete_wait_warning">删除前会先把它从这些别名里拿掉：降级链里的直接去掉；它是主 key 时第一个备用顶上；没有备用的别名会被删掉，这些实例的任务会等 key，直到你配好新的。</string>
     <string name="keys_delete_detach">移除并删除</string>
-    <string name="keys_delete_in_use">还有模型别名在用这把 key，没有删除。可能是已删除的实例留下的别名（服务端会保留），这种情况没法移除；不想再用可以把它停用。</string>
+    <string name="keys_delete_in_use">还有模型别名在用这把 key，没有删除：可能刚有实例的别名改成了用它。刷新后再试。</string>
 
     <string name="key_vendor_custom">自定义接口</string>
     <string name="key_option">%1$s（%2$s · …%3$s）</string>
@@ -413,7 +414,7 @@
     <string name="key_enabled_hint">停用后任务不会用这把 key，会换降级链里的下一把；都不能用时任务等 key。</string>
     <string name="key_label_hint">方便你认出它，最多 %1$d 个字</string>
     <string name="key_daily_limit_hint">按北京时间切天；不填就是不限。用完后当天的任务会换备用 key 或等 key。</string>
-    <string name="key_limit_fixed_hint">每日限额只能在添加时设置；要改的话，删掉这把 key 再重新添加。</string>
+    <string name="key_limit_edit_hint">按北京时间切天；清空就是不限。放宽或取消后，等这把 key 的任务会接着跑。</string>
     <string name="key_hint_payg">只填按量付费的 API key。</string>
     <string name="key_hint_no_subscription">只收按量付费的 API key；编程套餐、订阅套餐的 key 按厂商条款不能经第三方平台使用。</string>
     <string name="key_show">显示 key</string>
@@ -498,14 +499,15 @@
     <string name="routes_error_alias_duplicate">别名重复了</string>
     <string name="routes_error_key_empty">请选一把 key</string>
     <string name="routes_error_key_missing">这把 key 已删除，请重选</string>
-    <string name="routes_error_key_disabled">这把 key 已停用：换一把，或先到 key 列表里启用</string>
+    <string name="routes_error_key_disabled">这把 key 已停用，不能新选：换一把，或先到 key 列表里启用</string>
+    <string name="routes_warning_key_disabled">这把 key 已停用，运行时会跳过它（有备用就换备用，没有就等 key）。可以留着，启用后照常使用。</string>
     <string name="routes_error_key_protocol">这把 key 不支持 %1$s，这个 agent 用不了</string>
     <string name="routes_error_model_empty">请填上游模型</string>
     <string name="routes_error_model_long">模型名最多 %1$d 个字符</string>
     <string name="routes_error_fallback_same">和主 key、主模型一样，起不到降级的作用</string>
     <string name="routes_error_main_required">默认别名 main 必须配置</string>
     <string name="routes_error_too_many">最多 %1$d 个别名</string>
-    <string name="routes_error_rejected">服务端不接受：可能有 key 刚被停用或删除，检查后再保存</string>
+    <string name="routes_error_rejected">服务端不接受：可能有 key 刚被停用或删除（停用的 key 只有这个实例原来就在用时才能留着），检查后再保存</string>
 
     <string name="usage_range">时间段</string>
     <string name="usage_range_today">今天</string>
@@ -550,7 +552,7 @@
     <string name="usage_credential_gone">已删除的 key</string>
     <string name="usage_column_date">日期</string>
     <string name="usage_column_name">名称</string>
-    <string name="keys_delete_detach_failed">没能把它从“%1$s”的模型别名里拿掉：那里还用着停用的 key。先启用那把 key，或到“%1$s”的模型别名页换掉它，再删除。</string>
+    <string name="keys_delete_detach_failed">没能把它从“%1$s”的模型别名里拿掉：服务端不接受改过的别名。到“%1$s”的模型别名页换掉它，再删除。</string>
     <string name="usage_no_key">没用上 key（都停用了或额度用完了）</string>
     <!-- 13.16 云端审批 -->
     <string name="drawer_approvals">审批</string>

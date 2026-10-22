@@ -90,6 +90,11 @@ class MockThinktinService(
     private val delayMs: Long = 0,
     private val eventIntervalMs: Long = DEFAULT_EVENT_INTERVAL_MS,
     private val clock: () -> Long = System::currentTimeMillis,
+    /**
+     * 账号的实例数上限（服务端的 `[api.limits] instances_per_user`，11.9）：0 不限（服务端的默认值）。
+     * 到了上限领养报 409 `instance_limit`。
+     */
+    private val instanceLimit: Int = 0,
 ) : ThinktinService {
 
     private val data = MockData(clock())
@@ -316,19 +321,37 @@ class MockThinktinService(
 
     override suspend fun adopt(agentId: String, name: String, harness: String?): Instance {
         lag(); requireSignedIn()
+        return synchronized(lock) {
+            checkInstanceLimit(1)
+            newInstanceLocked(checkAdopt(agentId, name, harness))
+        }
+    }
+
+    /** 领养前的检查（control 的 adopt）：agent 在目录里、名字 1–64 字、接入方式是它有的。返回要建的实例（还没加进列表）。 */
+    private fun checkAdopt(agentId: String, name: String, harness: String?): Instance {
         val agent = agentList.firstOrNull { it.id == agentId } ?: notFound("agent", agentId)
         val checked = checkInstanceName(name)
         if (harness != null && harness !in agent.harnesses) {
             throw ServiceError.Api(status = 422, code = "invalid", detail = "$agentId has no harness $harness", retryAfterSecs = null)
         }
         val now = clock()
-        val instance = Instance(
-            id = newId("inst"), agentId = agent.id, agentVersion = agent.version,
+        return Instance(
+            id = "", agentId = agent.id, agentVersion = agent.version,
             harness = harness ?: agent.defaultHarness, name = checked, state = InstanceState.Running,
             createdAtMs = now, lastActiveAtMs = now,
         )
-        synchronized(lock) { instanceList.add(instance) }
-        return instance
+    }
+
+    private fun newInstanceLocked(spec: Instance): Instance =
+        spec.copy(id = newId("inst")).also { instanceList.add(it) }
+
+    /** 再领养 [adding] 个就超过实例数上限（没删除的才算）时报 409 `instance_limit`（和服务端一样）。 */
+    private fun checkInstanceLimit(adding: Int) {
+        if (instanceLimit <= 0) return
+        val count = instanceList.count { it.state != InstanceState.Deleted }
+        if (count + adding > instanceLimit) {
+            throw ServiceError.Api(409, INSTANCE_LIMIT, "at most $instanceLimit instances per account", null)
+        }
     }
 
     private fun updateInstance(instanceId: String, change: (Instance) -> Instance): Instance = synchronized(lock) {
@@ -356,13 +379,20 @@ class MockThinktinService(
     }
 
     /**
-     * 和服务端一样只是软删除（store 的 delete_instance：state = deleted）：其他计划里引用它的流水线步骤、它的模型别名都留着
-     * （删 key 时这些别名照样算“在用”）；团队成员在读取时过滤（[teams]、[team]，对应 store/teams.rs）。
+     * 和服务端一样（11.9，接入网关的 instances::delete）：实例标记删除（state = deleted）；它自己的计划标记删除（这里直接
+     * 从列表里拿掉，plans() 和 getPlan 都看不到）；别的实例的流水线有一步在它上面、还在跑的暂停（恢复、确认报 409，
+     * 改了步骤才行，见 [refuseDeletedSteps]）；它的模型别名和降级链一起删掉；团队成员在读取时过滤（[teams]、[team]，
+     * 对应 store/teams.rs）。
      */
     override suspend fun deleteInstance(instanceId: String) {
         lag(); requireSignedIn()
         synchronized(lock) {
             if (instanceList.none { it.id == instanceId && it.state != InstanceState.Deleted }) notFound("instance", instanceId)
+            planList.removeAll { it.instanceId == instanceId }
+            planList.replaceAll { plan ->
+                if (!plan.paused && plan.steps.any { it.instanceId == instanceId }) plan.copy(paused = true).withSchedule() else plan
+            }
+            routes.remove(instanceId)
             updateInstance(instanceId) { it.copy(state = InstanceState.Deleted) }
         }
     }
@@ -372,11 +402,17 @@ class MockThinktinService(
         return synchronized(lock) { routes[instanceId].orEmpty() }
     }
 
-    /** 和服务端一样：最多 16 个别名、每个最多 3 个备用，别名格式按库里的约束，key 必须存在且没停用。 */
+    /**
+     * 和服务端一样：最多 16 个别名、每个最多 3 个备用，别名格式按库里的约束，key 必须存在；新引用的 key 不能是停用的，
+     * 实例原来就用着（主 key 或降级链）的停用 key 可以留着（11.9）。
+     */
     override suspend fun setModelRoutes(instanceId: String, routes: List<ModelRoute>) {
         lag()
         synchronized(lock) {
             if (instanceList.none { it.id == instanceId && it.state != InstanceState.Deleted }) notFound("instance", instanceId)
+            val kept = this.routes[instanceId].orEmpty()
+                .flatMap { route -> listOf(route.credentialId) + route.fallbacks.map { it.credentialId } }
+                .toSet()
             if (routes.size > 16) invalid("at most 16 model aliases")
             if (routes.map { it.alias }.toSet().size != routes.size) invalid("duplicate model alias")
             for (route in routes) {
@@ -387,7 +423,7 @@ class MockThinktinService(
                 for ((credentialId, model) in used) {
                     if (model.isEmpty() || model.codePointCount(0, model.length) > 128) invalid("upstream_model must be 1-128 characters")
                     val credential = credentialList.firstOrNull { it.id == credentialId } ?: notFound("credential", credentialId)
-                    if (credential.disabled) invalid("credential $credentialId is disabled")
+                    if (credential.disabled && credentialId !in kept) invalid("credential $credentialId is disabled")
                 }
             }
             this.routes[instanceId] = routes
@@ -706,12 +742,26 @@ class MockThinktinService(
 
     override suspend fun setPlanPaused(planId: String, paused: Boolean): Plan {
         lag()
-        return updatePlanLocked(planId) { it.copy(paused = paused) }
+        return updatePlanLocked(planId) { plan ->
+            if (!paused) refuseDeletedSteps(plan)
+            plan.copy(paused = paused)
+        }
+    }
+
+    /**
+     * 流水线有一步在已删除的实例上（删除实例时暂停了它，11.9）：恢复、确认都报 409 conflict，先改步骤（updatePlan）才行。
+     */
+    private fun refuseDeletedSteps(plan: Plan) {
+        val deleted = instanceList.filter { it.state == InstanceState.Deleted }.map { it.id }.toSet()
+        plan.steps.firstOrNull { it.instanceId in deleted }?.let { step ->
+            throw ServiceError.Api(409, "conflict", "step ${step.key} runs on a deleted instance; change the steps first", null)
+        }
     }
 
     override suspend fun confirmPlan(planId: String, revision: Int): Plan {
         lag()
         return updatePlanLocked(planId) { plan ->
+            refuseDeletedSteps(plan)
             if (plan.revision != revision) {
                 throw ServiceError.Api(409, "conflict", "plan revision changed", null)
             }
@@ -815,14 +865,23 @@ class MockThinktinService(
         synchronized(lock) { templateList.removeAll { it.id == templateId } }
     }
 
+    /**
+     * 和服务端一样（11.9）全成或全不成：团队名不合法（1–64 字）报 422；放不下整个团队报 409 `instance_limit`；
+     * 有成员领养不了（agent 下架、接入方式不对）也一个都不建。
+     */
     override suspend fun adoptTeamTemplate(templateId: String, name: String?): Team {
-        val template = synchronized(lock) { templateList.firstOrNull { it.id == templateId } }
-            ?: notFound("template", templateId)
-        val members = template.members.mapIndexed { index, m ->
-            val instance = adopt(m.agentId, m.name, m.harness)
-            TeamMember(instance.id, m.role, index)
+        lag(); requireSignedIn()
+        return synchronized(lock) {
+            val template = templateList.firstOrNull { it.id == templateId } ?: notFound("template", templateId)
+            val teamName = (name ?: template.name).trim()
+            if (teamName.codePointCount(0, teamName.length) !in 1..64) invalid("name must be 1-64 characters")
+            checkInstanceLimit(template.members.size)
+            val specs = template.members.map { checkAdopt(it.agentId, it.name, it.harness) }
+            val members = specs.mapIndexed { index, spec ->
+                TeamMember(newInstanceLocked(spec).id, template.members[index].role, index)
+            }
+            Team(newId("team"), teamName, members, clock()).also { teamList.add(it) }
         }
-        return createTeam(name ?: template.name, members)
     }
 
     // ---- 收件箱 ----
@@ -1016,6 +1075,12 @@ class MockThinktinService(
         )
         for ((field, base) in bases) {
             if (base != null && !base.startsWith("https://")) invalid("$field must be an https URL")
+            base?.let(::planOnlyBase)?.let { plan ->
+                invalid(
+                    "$field: $plan is a coding or subscription plan address, which only works in the vendor's own tools; " +
+                        "use the pay-as-you-go address",
+                )
+            }
         }
         val hasBase = bases.any { it.second != null }
         if ((credential.vendor == CUSTOM_VENDOR) != hasBase) {
@@ -1041,7 +1106,7 @@ class MockThinktinService(
     private fun checkKey(vendor: String, apiKey: String) {
         if (apiKey.length < 8 || apiKey.length > 4096) invalid("api_key must be 8-4096 bytes")
         if (apiKey.any { it.isWhitespace() || it.isISOControl() }) invalid("api_key must not contain spaces or control characters")
-        SUBSCRIPTION_PREFIXES[vendor]?.firstOrNull { apiKey.startsWith(it) }?.let { prefix ->
+        data.vendors.firstOrNull { it.id == vendor }?.subscriptionKeyPrefixes?.firstOrNull { apiKey.startsWith(it) }?.let { prefix ->
             invalid("subscription keys ($prefix...) can only be used in the vendor's own tools; use a pay-as-you-go API key")
         }
     }
@@ -1061,6 +1126,24 @@ class MockThinktinService(
         }
     }
 
+    /** 套餐专用地址（任何一家的 planOnlyBases）：去掉首尾空白、转小写后等于它或接着是 `/`（proto::vendors::plan_only_base）。 */
+    private fun planOnlyBase(base: String): String? {
+        val url = base.trim().lowercase()
+        return data.vendors.flatMap { it.planOnlyBases }.firstOrNull { prefix ->
+            url.startsWith(prefix) && (url.length == prefix.length || url[prefix.length] == '/')
+        }
+    }
+
+    override suspend fun setCredentialDailyLimit(credentialId: String, dailyTokenLimit: Long?): Credential {
+        lag()
+        if (dailyTokenLimit != null && dailyTokenLimit <= 0) invalid("daily_token_limit must be positive")
+        return synchronized(lock) {
+            val i = credentialList.indexOfFirst { it.id == credentialId }
+            if (i < 0) notFound("credential", credentialId)
+            credentialList[i].copy(dailyTokenLimit = dailyTokenLimit).also { credentialList[i] = it }
+        }
+    }
+
     override suspend fun replaceCredentialSecret(credentialId: String, apiKey: String): Credential {
         lag()
         val vendor = synchronized(lock) { credentialList.firstOrNull { it.id == credentialId }?.vendor }
@@ -1073,12 +1156,13 @@ class MockThinktinService(
         }
     }
 
-    /** 和服务端一样：还有别名（主 key 或降级链）在用就拒绝（409），先改路由。 */
+    /** 和服务端一样：还有没删除的实例的别名（主 key 或降级链）在用就拒绝（409），先改路由。 */
     override suspend fun deleteCredential(credentialId: String) {
         lag()
         synchronized(lock) {
             if (credentialList.none { it.id == credentialId }) notFound("credential", credentialId)
-            val used = routes.values.sumOf { list ->
+            val deleted = instanceList.filter { it.state == InstanceState.Deleted }.map { it.id }.toSet()
+            val used = routes.filterKeys { it !in deleted }.values.sumOf { list ->
                 list.count { it.credentialId == credentialId } +
                     list.sumOf { route -> route.fallbacks.count { it.credentialId == credentialId } }
             }
@@ -1259,12 +1343,8 @@ class MockThinktinService(
         /** 模型别名的格式（库里的 CHECK 约束）。 */
         private val ALIAS = Regex("^[a-z0-9][a-z0-9._-]{0,63}$")
 
-        /** 订阅类 key 的前缀（crates/proto/src/vendors.rs）：只列演示厂商里有的。 */
-        private val SUBSCRIPTION_PREFIXES = mapOf(
-            "qwen-cn" to listOf("sk-sp-"),
-            "minimax-cn" to listOf("sk-cp-"),
-            "anthropic" to listOf("sk-ant-oat", "sk-ant-ort"),
-        )
+        /** 实例数到了上限的错误码（409；数量上限的码都以 `_limit` 结尾）。 */
+        const val INSTANCE_LIMIT = "instance_limit"
         private val IM_EVENTS = listOf("run_finished", "run_failed", "approval")
         private val IM_VENDORS = mapOf(
             "open.feishu.cn" to "feishu",

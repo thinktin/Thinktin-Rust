@@ -12,6 +12,8 @@ data class UiText(@StringRes val resId: Int, val args: List<Any> = emptyList())
 
 /**
  * ServiceError → 界面文案（第 5 节：服务端错误按 code 映射到本地文案，message 只进日志）。
+ * 服务端以后会加新的码，client-core 原样放进 code（docs/i18n.md 第 3 节）：不认识的按 HTTP 状态给通用文案，
+ * 状态也不认识的显示“服务出错了（code）”，不会崩。
  */
 object ErrorText {
     fun of(error: ServiceError): UiText = when (error) {
@@ -31,6 +33,8 @@ object ErrorText {
             error.retryAfterSecs?.let { UiText(R.string.error_rate_limited, listOf(it.toInt())) }
                 ?: UiText(R.string.error_rate_limited_plain)
         error.code == "not_found" || error.status == 404 -> UiText(R.string.error_not_found)
+        // 数量上限也是 409：先认它，不当成“内容已被修改”。
+        error.isLimitReached -> UiText(R.string.error_limit_reached)
         error.code == "conflict" || error.status == 409 -> UiText(R.string.error_conflict)
         error.code == "forbidden" || error.status == 403 -> UiText(R.string.error_forbidden)
         error.code.startsWith("quota") || error.code == "budget_exceeded" -> UiText(R.string.error_quota)
@@ -41,6 +45,12 @@ object ErrorText {
 
 /** 限频（rate_limited / 429）：[ServiceError.Api.retryAfterSecs] 是剩余秒数。 */
 val ServiceError.Api.isRateLimited: Boolean get() = code == "rate_limited" || status == 429
+
+/**
+ * 数量到了上限（11.9 起统一的约定，docs/i18n.md 第 3 节）：码以 `_limit` 结尾、状态 409，原样重试没用，删掉一些再建。
+ * 现在有 `instance_limit`（账号的实例数）。`rate_limited`（限频）不是：它结尾是 `_limited`。
+ */
+val ServiceError.Api.isLimitReached: Boolean get() = code.endsWith("_limit")
 
 /** 请求不合法（invalid…、400、422）：表单页按字段提示。 */
 val ServiceError.Api.isInvalid: Boolean get() = code.startsWith("invalid") || status == 400 || status == 422

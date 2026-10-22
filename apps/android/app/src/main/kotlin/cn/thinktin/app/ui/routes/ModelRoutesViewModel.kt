@@ -72,6 +72,19 @@ data class ModelRoutesUiState(
     /** 可以选的 key：没停用、支持 agent 的协议。 */
     val usableCredentials: List<Credential> get() = credentials.filter { KeyRules.usable(it, activeProtocol) }
 
+    /**
+     * 实例原来就用着的 key（服务端现在的别名里的主 key 和降级项）：停用了也可以留着（11.9），保存时服务端只拒绝
+     * 新引用的停用 key。
+     */
+    val keptCredentialIds: Set<String>
+        get() = saved.flatMap { route -> listOf(route.credentialId) + route.fallbacks.map { it.credentialId } }.toSet()
+
+    /** 选的 key 已停用、但实例原来就用着：不算错，只提示运行时会跳过它。 */
+    fun keyWarning(credentialId: String?): UiText? {
+        val credential = credentials.firstOrNull { it.id == credentialId } ?: return null
+        return if (credential.disabled && credential.id in keptCredentialIds) UiText(R.string.routes_warning_key_disabled) else null
+    }
+
     val canAddRoute: Boolean get() = drafts.size < KeyRules.MAX_ALIASES
 
     /** 和服务端的不一样（有没保存的改动）。 */
@@ -84,7 +97,8 @@ sealed interface ModelRoutesEvent {
 
 /**
  * 按实例的模型别名（13.4，路由 instance/{instanceId}/routes）：别名 → key + 上游模型，每个别名最多 3 个降级项（可排序）；
- * 默认别名 main 必填；保存调 setModelRoutes（整表替换）。key 按 agent 的协议过滤，停用的不能选（服务端也拒绝）。
+ * 默认别名 main 必填；保存调 setModelRoutes（整表替换）。key 按 agent 的协议过滤；停用的不能新选（服务端也拒绝），
+ * 实例原来就用着的停用 key 可以留着（11.9，只提示运行时会跳过它）。
  */
 class ModelRoutesViewModel(
     private val service: ThinktinService,
@@ -340,7 +354,8 @@ class ModelRoutesViewModel(
             if (credentialId == null) return UiText(R.string.routes_error_key_empty)
             val credential = s.credentials.firstOrNull { it.id == credentialId } ?: return UiText(R.string.routes_error_key_missing)
             return when {
-                credential.disabled -> UiText(R.string.routes_error_key_disabled)
+                // 实例原来就用着的停用 key 可以留着（服务端 11.9 起也不拒）；新选的不行。
+                credential.disabled && credential.id !in s.keptCredentialIds -> UiText(R.string.routes_error_key_disabled)
                 !KeyRules.supports(credential, s.activeProtocol) ->
                     UiText(R.string.routes_error_key_protocol, listOf(protocolText(s.activeProtocol.orEmpty())))
                 else -> null

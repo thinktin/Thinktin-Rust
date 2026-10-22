@@ -41,6 +41,17 @@ class ServiceErrorTest {
     }
 
     @Test
+    fun unknownApiCodesPassThrough() {
+        // 11.9：client-core 把不认识的错误码原样放进 ClientError.Api 的 code（不再报解析失败）；这里也原样带着，不崩
+        for ((status, code) in listOf(409u to "instance_limit", 409u to "some_future_limit", 418u to "brand_new_code", 0u to "")) {
+            val mapped = ClientException.Api(status.toUShort(), code, "detail", null).toServiceError() as ServiceError.Api
+            assertEquals(status.toInt(), mapped.status)
+            assertEquals(code, mapped.code)
+            assertEquals("detail", mapped.detail)
+        }
+    }
+
+    @Test
     fun networkKeepsDetail() {
         val error = ClientException.Network("dns failed").toServiceError() as ServiceError.Network
         assertEquals("dns failed", error.detail)

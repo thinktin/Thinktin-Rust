@@ -11,7 +11,9 @@ import java.net.URI
 
 /**
  * 保存 key、填自定义接口地址、配模型别名之前的本地校验（和服务端一致，见 docs/llm-gateway.md 第 8、11 节：
- * gateway 的 credentials.rs、proto 的 vendors.rs、store 的别名约束）。服务端照样会查，这里只是早点在字段下提示。
+ * gateway 的 credentials.rs、store 的别名约束）。订阅类 key 前缀和套餐专用地址不在 App 里抄一份，用 `vendors()`
+ * 返回的 [VendorInfo.subscriptionKeyPrefixes]、[VendorInfo.planOnlyBases]（11.9）；厂商表拉不到时就不查这两项。
+ * 服务端照样会查，这里只是早点在字段下提示。
  */
 object KeyRules {
     /** 自定义接口（vLLM、OneAPI、中转站等）的厂商 id。 */
@@ -34,36 +36,6 @@ object KeyRules {
     /** 协议名，顺序就是界面上的顺序（proto::vendors::PROTOCOLS）。 */
     val PROTOCOLS = listOf("anthropic", "chat", "responses")
 
-    /**
-     * 订阅类 key（编程套餐、订阅套餐）的前缀：按厂商条款只能在官方工具里用，平台不能中转，保存时拒绝
-     * （proto::vendors 的 subscription_key_prefixes）。
-     */
-    val SUBSCRIPTION_PREFIXES: Map<String, List<String>> = mapOf(
-        "qwen-cn" to listOf("sk-sp-"),
-        "qwen-intl" to listOf("sk-sp-"),
-        "qwen-us" to listOf("sk-sp-"),
-        "qwen-hk" to listOf("sk-sp-"),
-        "minimax-cn" to listOf("sk-cp-"),
-        "minimax-intl" to listOf("sk-cp-"),
-        "anthropic" to listOf("sk-ant-oat", "sk-ant-ort"),
-        "hunyuan-cn" to listOf("sk-tp-"),
-        "hunyuan-intl" to listOf("sk-tp-"),
-    )
-
-    /** 套餐专用地址（proto::vendors::PLAN_ONLY_BASES）：自定义接口填这些地址时拒绝。 */
-    val PLAN_ONLY_BASES = listOf(
-        "https://ark.cn-beijing.volces.com/api/coding",
-        "https://ark.cn-beijing.volces.com/api/plan",
-        "https://ark.ap-southeast.bytepluses.com/api/coding",
-        "https://qianfan.baidubce.com/v2/coding",
-        "https://qianfan.baidubce.com/anthropic/coding",
-        "https://api.lkeap.cloud.tencent.com/plan",
-        "https://tokenhub-intl.tencentcloudmaas.com/plan",
-        "https://api.stepfun.com/step_plan",
-        "https://open.bigmodel.cn/api/coding",
-        "https://api.z.ai/api/coding",
-    )
-
     /** 模型别名的格式（库里的 CHECK 约束）：小写字母或数字开头，最多 64 个字符。 */
     private val ALIAS = Regex("^[a-z0-9][a-z0-9._-]{0,63}$")
 
@@ -72,8 +44,10 @@ object KeyRules {
 
     // ---- key ----
 
-    /** 检查一把 key；没问题返回 null。[vendor] 是厂商 id（自定义接口不查订阅前缀）。 */
-    fun checkKey(vendor: String, key: String): UiText? {
+    /**
+     * 检查一把 key；没问题返回 null。[vendor] 是选的厂商（自定义接口、厂商表拉不到时为 null：不查订阅前缀）。
+     */
+    fun checkKey(vendor: VendorInfo?, key: String): UiText? {
         if (key.isEmpty()) return UiText(R.string.key_error_key_empty)
         // 服务端按字节数算；可打印 ASCII 以外的字符本来就不允许，先查字符。
         if (key.any { it.code !in 0x21..0x7e }) return UiText(R.string.key_error_key_chars)
@@ -83,9 +57,18 @@ object KeyRules {
         return null
     }
 
-    /** [key] 是 [vendor] 的订阅类 key 时返回命中的前缀。 */
-    fun subscriptionPrefix(vendor: String, key: String): String? =
-        SUBSCRIPTION_PREFIXES[vendor]?.firstOrNull { key.startsWith(it) }
+    /**
+     * [key] 是 [vendor] 的订阅类 key 时返回命中的前缀（[VendorInfo.subscriptionKeyPrefixes]：去掉首尾空白后比，
+     * 区分大小写）。
+     */
+    fun subscriptionPrefix(vendor: VendorInfo?, key: String): String? {
+        val trimmed = key.trim()
+        return vendor?.subscriptionKeyPrefixes?.firstOrNull { it.isNotEmpty() && trimmed.startsWith(it) }
+    }
+
+    /** 所有厂商的套餐专用地址合在一起（自定义接口的地址等于任何一家的都不收）。 */
+    fun planOnlyBases(vendors: Collection<VendorInfo>): List<String> =
+        vendors.flatMap { it.planOnlyBases }.map { it.trim().lowercase() }.filter { it.isNotEmpty() }.distinct()
 
     /**
      * 粘贴进来的 key 常带着多余的东西：首尾空白和换行、引号、`Bearer `、`export NAME=` / `NAME=`。去掉它们。
@@ -137,9 +120,10 @@ object KeyRules {
 
     /**
      * 检查自定义接口地址：只收 https、不带用户名密码 / 查询串 / 片段、主机是公网（不是 localhost、内网域名、
-     * 私网 / 回环 / 链路本地 / 运营商 NAT / 保留的 IP），也不是套餐专用地址。服务端在请求时还会按解析结果再拦一次（SSRF）。
+     * 私网 / 回环 / 链路本地 / 运营商 NAT / 保留的 IP），也不是套餐专用地址（[planOnlyBases]：用同名函数从厂商表合出来）。
+     * 服务端在请求时还会按解析结果再拦一次（SSRF）。
      */
-    fun checkBase(url: String): UiText? {
+    fun checkBase(url: String, planOnlyBases: List<String> = emptyList()): UiText? {
         val text = url.trim()
         if (text.isEmpty()) return UiText(R.string.key_error_base_empty)
         if (!text.startsWith("https://")) return UiText(R.string.key_error_base_https)
@@ -154,7 +138,7 @@ object KeyRules {
         }
         val host = hostOf(uri, text) ?: return UiText(R.string.key_error_base_invalid)
         if (!isPublicHost(host)) return UiText(R.string.key_error_base_private)
-        planOnlyBase(text)?.let { return UiText(R.string.key_error_base_plan, listOf(it)) }
+        planOnlyBase(text, planOnlyBases)?.let { return UiText(R.string.key_error_base_plan, listOf(it)) }
         return null
     }
 
@@ -171,11 +155,13 @@ object KeyRules {
         return host.lowercase().takeIf { it.isNotEmpty() && it.all { c -> c.isLetterOrDigit() || c in ".-_:" } }
     }
 
-    /** 地址是不是套餐专用地址（按路径段匹配，不区分大小写），是的话返回命中的前缀。 */
-    fun planOnlyBase(url: String): String? {
+    /**
+     * 地址是不是套餐专用地址（去掉首尾空白、转小写后等于 [planOnlyBases] 的一个或接着是 `/`），是的话返回命中的前缀。
+     */
+    fun planOnlyBase(url: String, planOnlyBases: List<String>): String? {
         val base = url.trim().lowercase()
-        return PLAN_ONLY_BASES.firstOrNull { prefix ->
-            base.startsWith(prefix) && (base.length == prefix.length || base[prefix.length] == '/')
+        return planOnlyBases.map { it.trim().lowercase() }.firstOrNull { prefix ->
+            prefix.isNotEmpty() && base.startsWith(prefix) && (base.length == prefix.length || base[prefix.length] == '/')
         }
     }
 

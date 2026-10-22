@@ -20,6 +20,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextReplacement
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import cn.thinktin.app.ui.keys.KEY_ROW_TEST_TAG
@@ -30,6 +31,7 @@ import cn.thinktin.app.ui.usage.USAGE_CHART_TEST_TAG
 import cn.thinktin.app.ui.usage.USAGE_LIST_TEST_TAG
 import cn.thinktin.app.ui.usage.USAGE_ROW_TEST_TAG
 import cn.thinktin.data.mock.MockThinktinService
+import cn.thinktin.data.model.CredentialUpdate
 import cn.thinktin.data.model.ModelRoute
 import cn.thinktin.data.model.RouteFallback
 import kotlinx.coroutines.runBlocking
@@ -118,24 +120,47 @@ class KeysUiTest {
         compose.onNode(hasText("这些实例的模型别名在用这把 key：") and inDialog).assertIsDisplayed()
         compose.onNode(hasText("• 小码：main（降级）") and inDialog).assertIsDisplayed()
         compose.onNode(hasText("• 研究员：main（主 key）") and inDialog).assertIsDisplayed()
-        compose.onNode(hasText("移除并删除") and inDialog).performClick()
-        // 小码的别名里还用着刚停用的工作 key：服务端整表替换时会拒绝，提示先启用或换掉
-        waitFor(hasText("没能把它从“小码”的模型别名里拿掉", substring = true))
-        compose.onNode(keyRow("cred-home")).assertExists()
-
-        // 重新启用工作 key 再删
-        compose.onNode(hasContentDescription("“工作 key”的更多操作")).performClick()
-        compose.onNode(hasText("启用") and inPopup).performClick()
-        waitGone(hasContentDescription("状态：已停用"))
-        compose.onNode(hasContentDescription("“个人”的更多操作")).performClick()
-        compose.onNode(hasText("删除 key") and inPopup).performClick()
-        waitFor(hasText("移除并删除") and inDialog)
+        // 小码的别名里还用着刚停用的工作 key：11.9 起它原来就在用，可以留着，所以拿掉“个人”不会被拒
         compose.onNode(hasText("移除并删除") and inDialog).performClick()
         waitGone(keyRow("cred-home"))
+        waitFor(hasText("已删除“个人”"))
         assertTrue(runBlocking { mock.credentials() }.none { it.id == "cred-home" })
         assertTrue(runBlocking { mock.modelRoutes("inst-research") }.isEmpty())
         assertEquals(
             listOf(ModelRoute("main", "cred-work", "claude-sonnet-4", emptyList())),
+            runBlocking { mock.modelRoutes("inst-coder") },
+        )
+    }
+
+    @Test
+    fun editKeyChangesDailyLimit() {
+        openKeys()
+        compose.onNode(keyRow("cred-work")).performClick()
+        waitFor(hasContentDescription("每日 token 限额（可选）") and hasText("2000000"))
+        // 编辑页能改上限（11.9），不再提示“删了重加”
+        compose.onNode(hasText("每日限额只能在添加时设置", substring = true)).assertDoesNotExist()
+        compose.onNode(hasText("清空就是不限", substring = true)).assertExists()
+        compose.onNode(hasContentDescription("每日 token 限额（可选）")).performTextReplacement("3,000,000")
+        compose.onNode(hasText("保存")).performScrollTo().performClick()
+        // 回到列表：显示新的上限
+        waitFor(hasText("每日限额 300 万 token"))
+        assertEquals(3_000_000L, runBlocking { mock.credentials() }.first { it.id == "cred-work" }.dailyTokenLimit)
+    }
+
+    @Test
+    fun routesKeepDisabledKeyWithWarning() {
+        // 小码的降级项用着“个人”，把它停用：别名页不报错、只提示，照样能保存
+        runBlocking { mock.updateCredential("cred-home", CredentialUpdate(disabled = true)) }
+        launch("thinktin://instance/inst-coder")
+        waitFor(hasText("模型别名与降级"))
+        compose.onNode(hasText("模型别名与降级")).performScrollTo().performClick()
+        waitFor(hasText("这把 key 已停用，运行时会跳过它", substring = true))
+        compose.onNode(hasText("这把 key 已停用，不能新选", substring = true)).assertDoesNotExist()
+        compose.onNode(hasText("claude-opus-4") and hasClickAction()).performScrollTo().performClick()
+        compose.onNode(hasText("保存")).performScrollTo().performClick()
+        waitFor(hasText("模型别名已保存，等 key 的任务会接着跑"))
+        assertEquals(
+            listOf(ModelRoute("main", "cred-work", "claude-opus-4", listOf(RouteFallback("cred-home", "deepseek-chat")))),
             runBlocking { mock.modelRoutes("inst-coder") },
         )
     }

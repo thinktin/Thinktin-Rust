@@ -36,6 +36,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -65,6 +66,7 @@ private class KeyService(
     private val failures = mutableMapOf<String, ServiceError>()
     val added = mutableListOf<NewCredential>()
     val updates = mutableListOf<Pair<String, CredentialUpdate>>()
+    val limits = mutableListOf<Pair<String, Long?>>()
     val replaced = mutableListOf<Pair<String, String>>()
     val deleted = mutableListOf<String>()
     val routeSets = mutableListOf<Pair<String, List<ModelRoute>>>()
@@ -115,6 +117,12 @@ private class KeyService(
         updates += credentialId to update
         maybeFail("updateCredential")
         return mock.updateCredential(credentialId, update)
+    }
+
+    override suspend fun setCredentialDailyLimit(credentialId: String, dailyTokenLimit: Long?): Credential {
+        limits += credentialId to dailyTokenLimit
+        maybeFail("setCredentialDailyLimit")
+        return mock.setCredentialDailyLimit(credentialId, dailyTokenLimit)
     }
 
     override suspend fun replaceCredentialSecret(credentialId: String, apiKey: String): Credential {
@@ -169,12 +177,18 @@ class KeysViewModelTest {
 
     // ---- 本地校验 ----
 
+    /** Mock 的厂商表（11.9 起订阅前缀、套餐地址都从 vendors() 来，和服务端同一份数据）。 */
+    private val mockVendors: List<VendorInfo> = runBlocking { MockThinktinService().vendors() }
+
+    private fun vendor(id: String): VendorInfo = mockVendors.first { it.id == id }
+
     @Test
     fun baseUrlMustBeHttpsAndPublic() {
-        assertNull(KeyRules.checkBase("https://api.example.com/v1"))
-        assertNull(KeyRules.checkBase("https://8.8.8.8/v1"))
-        assertNull(KeyRules.checkBase("https://[2606:4700::1111]/v1"))
-        assertNull(KeyRules.checkBase("https://my_relay.example.com:8443/openai"))
+        val plans = KeyRules.planOnlyBases(mockVendors)
+        assertNull(KeyRules.checkBase("https://api.example.com/v1", plans))
+        assertNull(KeyRules.checkBase("https://8.8.8.8/v1", plans))
+        assertNull(KeyRules.checkBase("https://[2606:4700::1111]/v1", plans))
+        assertNull(KeyRules.checkBase("https://my_relay.example.com:8443/openai", plans))
         assertEquals(R.string.key_error_base_empty, KeyRules.checkBase("  ")?.resId)
         assertEquals(R.string.key_error_base_https, KeyRules.checkBase("http://api.example.com/v1")?.resId)
         assertEquals(R.string.key_error_base_https, KeyRules.checkBase("HTTPS://api.example.com")?.resId)
@@ -190,36 +204,59 @@ class KeysViewModelTest {
             "https://[fd00::1]/v1", "https://[fe80::1]/v1", "https://[2001:db8::1]/v1", "https://[::ffff:10.0.0.1]/v1",
             "https://0x7f.1/v1", "https://2130706433/v1", "https://127.1/v1",
         )
-        for (url in private) assertEquals(url, R.string.key_error_base_private, KeyRules.checkBase(url)?.resId)
-        // 套餐专用地址（按路径段匹配）
-        val plan = KeyRules.checkBase("https://ark.cn-beijing.volces.com/api/coding/v3")
+        for (url in private) assertEquals(url, R.string.key_error_base_private, KeyRules.checkBase(url, plans)?.resId)
+    }
+
+    @Test
+    fun planOnlyBasesComeFromVendorData() {
+        // 任何一家的套餐地址都不收（合在一起查）；按路径段匹配，不区分大小写
+        val plans = KeyRules.planOnlyBases(mockVendors)
+        assertTrue("https://open.bigmodel.cn/api/coding" in plans)
+        assertTrue("https://ark.cn-beijing.volces.com/api/plan" in plans)
+        val plan = KeyRules.checkBase("https://ark.cn-beijing.volces.com/api/coding/v3", plans)
         assertEquals(R.string.key_error_base_plan, plan?.resId)
         assertEquals(listOf("https://ark.cn-beijing.volces.com/api/coding"), plan?.args)
-        assertNull(KeyRules.checkBase("https://ark.cn-beijing.volces.com/api/codingx"))
-        assertNull(KeyRules.checkBase("https://ark.cn-beijing.volces.com/api/v3"))
+        assertEquals(R.string.key_error_base_plan, KeyRules.checkBase("https://OPEN.bigmodel.cn/api/coding", plans)?.resId)
+        assertNull(KeyRules.checkBase("https://ark.cn-beijing.volces.com/api/codingx", plans))
+        assertNull(KeyRules.checkBase("https://ark.cn-beijing.volces.com/api/v3", plans))
+        // 厂商表里没有的不拦（服务端照样查）；厂商表拉不到时也不拦
+        assertNull(KeyRules.checkBase("https://api.stepfun.com/step_plan", plans))
+        assertNull(KeyRules.checkBase("https://open.bigmodel.cn/api/coding"))
+        // 厂商数据里带空白、大写的也认
+        val messy = listOf(VendorInfo("x", "X", listOf("chat"), emptyList(), "", planOnlyBases = listOf(" HTTPS://Plan.Example.com/Coding ")))
+        assertEquals(
+            listOf("https://plan.example.com/coding"),
+            KeyRules.checkBase("https://plan.example.com/coding/v1", KeyRules.planOnlyBases(messy))?.args,
+        )
     }
 
     @Test
     fun keyFormatAndSubscriptionPrefixes() {
-        assertNull(KeyRules.checkKey("deepseek", "sk-0123456789abcdef"))
-        assertEquals(R.string.key_error_key_empty, KeyRules.checkKey("deepseek", "")?.resId)
-        assertEquals(R.string.key_error_key_short, KeyRules.checkKey("deepseek", "sk-1234")?.resId)
-        assertEquals(R.string.key_error_key_chars, KeyRules.checkKey("deepseek", "sk-abc def123")?.resId)
-        assertEquals(R.string.key_error_key_chars, KeyRules.checkKey("deepseek", "sk-密钥12345678")?.resId)
-        assertEquals(R.string.key_error_key_long, KeyRules.checkKey("deepseek", "k".repeat(4097))?.resId)
-        val qwen = KeyRules.checkKey("qwen-cn", "sk-sp-abcdef0123456789")
+        val deepseek = vendor("deepseek")
+        assertNull(KeyRules.checkKey(deepseek, "sk-0123456789abcdef"))
+        assertEquals(R.string.key_error_key_empty, KeyRules.checkKey(deepseek, "")?.resId)
+        assertEquals(R.string.key_error_key_short, KeyRules.checkKey(deepseek, "sk-1234")?.resId)
+        assertEquals(R.string.key_error_key_chars, KeyRules.checkKey(deepseek, "sk-abc def123")?.resId)
+        assertEquals(R.string.key_error_key_chars, KeyRules.checkKey(deepseek, "sk-密钥12345678")?.resId)
+        assertEquals(R.string.key_error_key_long, KeyRules.checkKey(deepseek, "k".repeat(4097))?.resId)
+        // 前缀来自厂商数据（Mock 和服务端一样带着 subscriptionKeyPrefixes）
+        val qwen = KeyRules.checkKey(vendor("qwen-cn"), "sk-sp-abcdef0123456789")
         assertEquals(R.string.key_error_subscription, qwen?.resId)
         assertEquals(listOf("sk-sp-"), qwen?.args)
-        assertEquals(R.string.key_error_subscription, KeyRules.checkKey("qwen-intl", "sk-sp-abcdef0123")?.resId)
-        assertEquals(R.string.key_error_subscription, KeyRules.checkKey("minimax-cn", "sk-cp-abcdef0123")?.resId)
-        assertNull(KeyRules.checkKey("minimax-cn", "sk-api-abcdef0123"))
-        assertEquals(R.string.key_error_subscription, KeyRules.checkKey("hunyuan-intl", "sk-tp-abcdef0123")?.resId)
-        assertEquals(R.string.key_error_subscription, KeyRules.checkKey("anthropic", "sk-ant-oat01-abcdef")?.resId)
-        assertEquals(R.string.key_error_subscription, KeyRules.checkKey("anthropic", "sk-ant-ort01-abcdef")?.resId)
-        assertNull(KeyRules.checkKey("anthropic", "sk-ant-api03-abcdef"))
-        // 自定义接口、别的厂商不按前缀拒
-        assertNull(KeyRules.checkKey(KeyRules.CUSTOM_VENDOR, "sk-sp-whatever"))
-        assertNull(KeyRules.checkKey("deepseek", "sk-sp-whatever"))
+        assertEquals(R.string.key_error_subscription, KeyRules.checkKey(vendor("minimax-cn"), "sk-cp-abcdef0123")?.resId)
+        assertNull(KeyRules.checkKey(vendor("minimax-cn"), "sk-api-abcdef0123"))
+        val anthropic = vendor("anthropic")
+        assertEquals(R.string.key_error_subscription, KeyRules.checkKey(anthropic, "sk-ant-oat01-abcdef")?.resId)
+        assertEquals(R.string.key_error_subscription, KeyRules.checkKey(anthropic, "sk-ant-ort01-abcdef")?.resId)
+        assertNull(KeyRules.checkKey(anthropic, "sk-ant-api03-abcdef"))
+        // 区分大小写（和服务端一样）
+        assertNull(KeyRules.checkKey(vendor("qwen-cn"), "SK-SP-abcdef0123"))
+        // 自定义接口、厂商表拉不到（null）、没有前缀的厂商都不按前缀拒
+        assertNull(KeyRules.checkKey(null, "sk-sp-whatever"))
+        assertNull(KeyRules.checkKey(deepseek, "sk-sp-whatever"))
+        // 厂商表里新加的前缀不用改 App
+        val future = VendorInfo("future", "Future", listOf("chat"), emptyList(), "", subscriptionKeyPrefixes = listOf("fx-plan-"))
+        assertEquals(listOf("fx-plan-"), KeyRules.checkKey(future, "fx-plan-0123456789")?.args)
     }
 
     @Test
@@ -460,9 +497,9 @@ class KeysViewModelTest {
     }
 
     @Test
-    fun deleteStopsWhenDetachIsRejected() = test {
+    fun deleteWorksWhenInstanceKeepsDisabledKey() = test {
         val service = KeyService()
-        // 小码的主 key 停用了：整表替换小码的别名时服务端（Mock 同样）会拒绝
+        // 小码的主 key 停用了：11.9 起实例原来就用着的停用 key 可以留着，从小码的降级链里去掉 cred-home 不会被拒
         service.mock.updateCredential("cred-work", CredentialUpdate(disabled = true))
         val vm = KeysViewModel(service)
         advanceUntilIdle()
@@ -471,12 +508,16 @@ class KeysViewModelTest {
             advanceUntilIdle()
             vm.confirmDelete()
             advanceUntilIdle()
-            assertEquals(UiText(R.string.keys_delete_detach_failed, listOf("小码")), (awaitItem() as KeysEvent.Message).text)
+            assertEquals(R.string.keys_deleted, (awaitItem() as KeysEvent.Message).text.resId)
         }
         assertNull(vm.uiState.value.dialog)
         assertFalse(vm.uiState.value.busy)
-        assertTrue(service.deleted.isEmpty())
-        assertTrue(service.mock.credentials().any { it.id == "cred-home" })
+        assertEquals(listOf("cred-home"), service.deleted)
+        assertTrue(service.mock.credentials().none { it.id == "cred-home" })
+        assertEquals(
+            listOf(ModelRoute("main", "cred-work", "claude-sonnet-4", emptyList())),
+            service.mock.modelRoutes("inst-coder"),
+        )
     }
 
     @Test
@@ -545,27 +586,25 @@ class KeysViewModelTest {
     }
 
     @Test
-    fun deleteKeyStillUsedByDeletedInstanceIsRejected() = test {
+    fun deleteKeyNoLongerBlockedByDeletedInstance() = test {
         val service = KeyService()
-        // 服务端（Mock 同样）删实例只是软删除：研究员的别名还在，还算“在用”这把 key
+        // 11.9：删除实例时它的别名一起删掉，删 key 也不再算已删除实例的别名
         service.mock.deleteInstance("inst-research")
+        assertTrue(service.mock.modelRoutes("inst-research").isEmpty())
         val vm = KeysViewModel(service)
         advanceUntilIdle()
         vm.events.test {
             vm.askDelete(vm.uiState.value.credentials.first { it.id == "cred-home" })
             advanceUntilIdle()
-            // 列表里只看得到没删除的实例（instances() 不返回已删除的）
+            // 只列没删除的实例，也只需要改它们的别名
             assertEquals(listOf("inst-coder"), vm.uiState.value.dialog!!.usages.map { it.instanceId })
             vm.confirmDelete()
             advanceUntilIdle()
-            assertEquals(UiText(R.string.keys_delete_in_use), (awaitItem() as KeysEvent.Message).text)
+            assertEquals(R.string.keys_deleted, (awaitItem() as KeysEvent.Message).text.resId)
         }
+        assertEquals(listOf("inst-coder"), service.routeSets.map { it.first })
         assertEquals(listOf("cred-home"), service.deleted)
-        assertTrue(service.mock.credentials().any { it.id == "cred-home" })
-        assertEquals(
-            listOf(ModelRoute("main", "cred-home", "deepseek-reasoner", emptyList())),
-            service.mock.modelRoutes("inst-research"),
-        )
+        assertTrue(service.mock.credentials().none { it.id == "cred-home" })
     }
 
     @Test
@@ -716,6 +755,12 @@ class KeysViewModelTest {
         vm.onBaseChange("chat", "https://192.168.1.5/v1")
         vm.submit()
         assertEquals(R.string.key_error_base_private, vm.uiState.value.errors[AddKeyField.OpenaiBase]?.resId)
+        // 套餐专用地址：用厂商表（vendors() 的 planOnlyBases）在本地拦下
+        vm.onBaseChange("chat", "https://open.bigmodel.cn/api/coding/paas/v4")
+        vm.submit()
+        val plan = vm.uiState.value.errors[AddKeyField.OpenaiBase]
+        assertEquals(R.string.key_error_base_plan, plan?.resId)
+        assertEquals(listOf("https://open.bigmodel.cn/api/coding"), plan?.args)
         vm.toggleProtocol("chat")
         vm.submit()
         assertEquals(R.string.key_error_protocols_empty, vm.uiState.value.errors[AddKeyField.Protocols]?.resId)
@@ -804,6 +849,7 @@ class KeysViewModelTest {
             assertTrue(saved.disabled)
         }
         assertEquals("cred-work" to CredentialUpdate(label = "公司", disabled = true), service.updates.single())
+        assertTrue("每日上限没改：不调 setCredentialDailyLimit", service.limits.isEmpty())
         // 保存成功后再点（退出动画期间）：不再发 Saved，不再调接口
         assertFalse(vm.uiState.value.editable)
         vm.events.test {
@@ -852,6 +898,94 @@ class KeysViewModelTest {
             expectNoEvents()
         }
         assertTrue(service.updates.isEmpty())
+        assertTrue(service.limits.isEmpty())
+    }
+
+    @Test
+    fun editDailyLimitChangesAndClears() = test {
+        val service = KeyService()
+        val vm = KeyEditViewModel(service, "cred-work")
+        advanceUntilIdle()
+        // 现在的上限显示在输入框里（不带千分位）
+        assertEquals("2000000", vm.uiState.value.dailyLimit)
+        vm.onDailyLimitChange("3,000,000")
+        vm.events.test {
+            vm.save()
+            advanceUntilIdle()
+            assertEquals(3_000_000L, (awaitItem() as KeyFormEvent.Saved).credential.dailyTokenLimit)
+        }
+        // 只改上限：只调 setCredentialDailyLimit，不调 updateCredential
+        assertEquals(listOf("cred-work" to 3_000_000L), service.limits)
+        assertTrue(service.updates.isEmpty())
+        assertEquals(3_000_000L, service.mock.credentials().first { it.id == "cred-work" }.dailyTokenLimit)
+
+        // 清空 = 取消上限（传 null）
+        val again = KeyEditViewModel(service, "cred-work")
+        advanceUntilIdle()
+        again.onDailyLimitChange("  ")
+        again.save()
+        advanceUntilIdle()
+        assertEquals("cred-work" to null, service.limits.last())
+        assertNull(service.mock.credentials().first { it.id == "cred-work" }.dailyTokenLimit)
+
+        // 原来不限的加上上限
+        val home = KeyEditViewModel(service, "cred-home")
+        advanceUntilIdle()
+        assertEquals("", home.uiState.value.dailyLimit)
+        home.onDailyLimitChange("500000")
+        home.save()
+        advanceUntilIdle()
+        assertEquals("cred-home" to 500_000L, service.limits.last())
+    }
+
+    @Test
+    fun editDailyLimitValidationAndServerErrors() = test {
+        val service = KeyService()
+        val vm = KeyEditViewModel(service, "cred-work")
+        advanceUntilIdle()
+        // 本地：0、非数字都不提交
+        vm.onDailyLimitChange("0")
+        vm.save()
+        assertEquals(R.string.key_error_limit_positive, vm.uiState.value.dailyLimitError?.resId)
+        vm.onDailyLimitChange("12abc")
+        assertNull("改了就清掉错误", vm.uiState.value.dailyLimitError)
+        vm.save()
+        assertEquals(R.string.key_error_limit_number, vm.uiState.value.dailyLimitError?.resId)
+        assertTrue(service.limits.isEmpty())
+        // 服务端 422（Mock 对 0 也是这样）：挂在上限下面
+        vm.onDailyLimitChange("100")
+        service.fail("setCredentialDailyLimit", api(422, "invalid", "daily_token_limit must be positive"))
+        vm.save()
+        advanceUntilIdle()
+        assertEquals(UiText(R.string.key_error_limit_positive), vm.uiState.value.dailyLimitError)
+        assertNull(vm.uiState.value.labelError)
+        assertTrue(vm.uiState.value.editable)
+    }
+
+    @Test
+    fun editLabelAndLimitAreSavedSeparately() = test {
+        val service = KeyService()
+        val vm = KeyEditViewModel(service, "cred-work")
+        advanceUntilIdle()
+        vm.onLabelChange("公司")
+        vm.onDailyLimitChange("1000")
+        vm.events.test {
+            // 标签保存成功、上限失败：页面上的 key 换成新标签的，提示错误
+            service.fail("setCredentialDailyLimit", ServiceError.Network("offline"))
+            vm.save()
+            advanceUntilIdle()
+            assertEquals(KeyFormEvent.Message(UiText(R.string.error_network)), awaitItem())
+            assertEquals("公司", vm.uiState.value.credential?.label)
+            assertTrue(vm.uiState.value.editable)
+            // 再保存：只重试上限
+            vm.save()
+            advanceUntilIdle()
+            val saved = (awaitItem() as KeyFormEvent.Saved).credential
+            assertEquals("公司", saved.label)
+            assertEquals(1000L, saved.dailyTokenLimit)
+        }
+        assertEquals(listOf("cred-work" to CredentialUpdate(label = "公司")), service.updates)
+        assertEquals(listOf("cred-work" to 1000L, "cred-work" to 1000L), service.limits)
     }
 
     @Test
@@ -964,8 +1098,10 @@ class KeysViewModelTest {
         var errors = vm.uiState.value.errors
         assertEquals(R.string.routes_error_alias_duplicate, errors.getValue(second.id).alias?.resId)
         assertEquals(R.string.routes_error_key_protocol, errors.getValue(second.id).credential?.resId)
-        // 主 key 的降级项用了停用的 key
-        assertEquals(R.string.routes_error_key_disabled, errors.getValue(main.id).fallbacks.getValue(0).first?.resId)
+        // 主 key 的降级项是停用的 cred-home，但实例原来就用着它：11.9 起可以留着，不算错，只提示
+        assertNull(errors[main.id])
+        assertEquals(UiText(R.string.routes_warning_key_disabled), vm.uiState.value.keyWarning("cred-home"))
+        assertNull(vm.uiState.value.keyWarning("cred-work"))
 
         vm.removeRoute(second.id)
         vm.removeFallback(main.id, 0)
@@ -976,6 +1112,41 @@ class KeysViewModelTest {
         errors = vm.uiState.value.errors
         assertEquals(R.string.routes_error_fallback_same, errors.getValue(main.id).fallbacks.getValue(0).first?.resId)
         assertTrue(service.routeSets.isEmpty())
+    }
+
+    @Test
+    fun routesKeepDisabledKeyButRejectNewOne() = test {
+        val service = KeyService()
+        service.mock.updateCredential("cred-home", CredentialUpdate(disabled = true))
+        val spare = service.mock.addCredential(NewCredential("anthropic", "备用", "sk-ant-api03-0123456789"))
+        service.mock.updateCredential(spare.id, CredentialUpdate(disabled = true))
+        val vm = ModelRoutesViewModel(service, "inst-coder")
+        advanceUntilIdle()
+        assertEquals(setOf("cred-work", "cred-home"), vm.uiState.value.keptCredentialIds)
+        val main = vm.uiState.value.drafts.single()
+        // 新引用一把停用的 key：本地就报错（服务端也会 422）
+        vm.addFallback(main.id)
+        vm.onFallbackCredentialChange(main.id, 1, spare.id)
+        vm.save()
+        assertEquals(
+            R.string.routes_error_key_disabled,
+            vm.uiState.value.errors.getValue(main.id).fallbacks.getValue(1).first?.resId,
+        )
+        assertNull("原来就用着的不报错", vm.uiState.value.errors.getValue(main.id).fallbacks[0])
+        assertNull("新选的停用 key 是错误，不是提示", vm.uiState.value.keyWarning(spare.id))
+        assertTrue(service.routeSets.isEmpty())
+        // 去掉新加的：留着原来的停用 key 保存成功（Mock 和服务端一样只拒绝新引用的）
+        vm.removeFallback(main.id, 1)
+        vm.onModelChange(main.id, "claude-opus-4")
+        vm.events.test {
+            vm.save()
+            advanceUntilIdle()
+            assertEquals(UiText(R.string.routes_saved), (awaitItem() as ModelRoutesEvent.Message).text)
+        }
+        assertEquals(
+            listOf(ModelRoute("main", "cred-work", "claude-opus-4", listOf(RouteFallback("cred-home", "deepseek-chat")))),
+            service.mock.modelRoutes("inst-coder"),
+        )
     }
 
     @Test

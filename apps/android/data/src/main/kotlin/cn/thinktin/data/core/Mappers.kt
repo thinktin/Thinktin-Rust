@@ -391,8 +391,15 @@ internal fun NewCredential.toCore(): CoreNewCredential = CoreNewCredential(
     dailyTokenLimit = dailyTokenLimit?.toULongNonNegative(),
 )
 
-internal fun CoreVendorInfo.toModel(): VendorInfo =
-    VendorInfo(id = id, name = name, protocols = protocols, models = models, notes = notes)
+internal fun CoreVendorInfo.toModel(): VendorInfo = VendorInfo(
+    id = id,
+    name = name,
+    protocols = protocols,
+    models = models,
+    notes = notes,
+    subscriptionKeyPrefixes = subscriptionKeyPrefixes,
+    planOnlyBases = planOnlyBases,
+)
 
 internal fun CoreUsageBucket.toModel(): UsageBucket = UsageBucket(
     key = key,

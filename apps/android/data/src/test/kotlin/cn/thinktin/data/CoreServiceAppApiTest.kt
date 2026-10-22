@@ -27,6 +27,7 @@ import cn.thinktin.data.service.ServiceError
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -249,6 +250,11 @@ class CoreServiceAppApiTest {
         override suspend fun updateCredential(credentialId: String, label: String?, disabled: Boolean?): CoreCredential {
             record("updateCredential", credentialId, label, disabled)
             return credential.copy(label = label ?: credential.label, disabled = disabled ?: credential.disabled)
+        }
+
+        override suspend fun setCredentialDailyLimit(credentialId: String, dailyTokenLimit: ULong?): CoreCredential {
+            record("setCredentialDailyLimit", credentialId, dailyTokenLimit)
+            return credential.copy(dailyTokenLimit = dailyTokenLimit)
         }
 
         override suspend fun replaceCredentialSecret(credentialId: String, apiKey: String): CoreCredential {
@@ -521,6 +527,8 @@ class CoreServiceAppApiTest {
         assertEquals(7L, s.markInboxUnread("n1"))
         s.deleteInboxItem("n1")
         assertEquals(true, s.updateCredential("c1", CredentialUpdate(disabled = true)).disabled)
+        assertEquals(3_000_000L, s.setCredentialDailyLimit("c1", 3_000_000).dailyTokenLimit)
+        assertNull(s.setCredentialDailyLimit("c1", null).dailyTokenLimit)
         assertEquals("9876", s.replaceCredentialSecret("c1", "sk-new-key-9876").last4)
         val report = s.reportContent("r1", ReportReason.Harmful, eventSeq = 12, note = "危险")
         assertEquals(ReportReason.Harmful, report.reason)
@@ -532,6 +540,8 @@ class CoreServiceAppApiTest {
                 listOf("markInboxUnread", "n1"),
                 listOf("deleteInboxItem", "n1"),
                 listOf("updateCredential", "c1", null, true),
+                listOf("setCredentialDailyLimit", "c1", 3_000_000uL),
+                listOf("setCredentialDailyLimit", "c1", null),
                 listOf("replaceCredentialSecret", "c1", "sk-new-key-9876"),
                 listOf("reportContent", "r1", 12uL, null, "harmful", "危险"),
                 listOf("reports"),

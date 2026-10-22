@@ -389,6 +389,16 @@ data class VendorInfo(
     val protocols: List<String>,
     val models: List<String>,
     val notes: String,
+    /**
+     * 订阅类 key 的前缀（11.9）：选这家时，key（去掉首尾空白）以其中一个开头（区分大小写）的服务端不收。
+     * 空的就不用查。
+     */
+    val subscriptionKeyPrefixes: List<String> = emptyList(),
+    /**
+     * 这家套餐专用地址的前缀（11.9）：自定义接口的地址（去掉首尾空白、转小写）等于**任何一家**的其中一个、
+     * 或者接着是 `/` 的，服务端不收。
+     */
+    val planOnlyBases: List<String> = emptyList(),
 )
 
 data class UsageBucket(

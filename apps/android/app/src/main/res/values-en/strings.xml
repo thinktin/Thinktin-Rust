@@ -243,6 +243,7 @@
     <string name="error_invalid">Some of the information is not valid.</string>
     <string name="error_forbidden">You do not have permission to do this.</string>
     <string name="error_quota">Quota used up.</string>
+    <string name="error_limit_reached">You\'ve reached the limit. Delete some and try again.</string>
     <string name="error_server">Something went wrong on the server (%1$s).</string>
     <string name="error_contains_secrets">Your message seems to contain passwords or keys (count: %1$d) and was not sent. Save them to the vault first.</string>
     <string name="error_unsupported">This feature is not available yet.</string>
@@ -341,12 +342,12 @@
     <string name="instance_delete_no_impact">No plans or teams use this instance. Deleting can\'t be undone.</string>
     <string name="instance_delete_impact">Deleting affects these plans and teams:</string>
     <string name="instance_delete_confirm_title">Really delete “%1$s”?</string>
-    <string name="instance_delete_confirm_message">The instance will be permanently deleted and its running tasks cancelled. It leaves the teams listed in the previous step. Pipeline steps that use it aren\'t removed automatically and will fail when they run, so update those plans. This can\'t be undone.</string>
-    <string name="instance_delete_confirm_message_simple">The instance will be permanently deleted and its running tasks cancelled. This can\'t be undone.</string>
+    <string name="instance_delete_confirm_message">The instance will be permanently deleted, its running tasks cancelled and its model aliases removed. The plans and teams listed in the previous step are handled as described there. This can\'t be undone.</string>
+    <string name="instance_delete_confirm_message_simple">The instance will be permanently deleted, its running tasks cancelled and its model aliases removed. This can\'t be undone.</string>
     <string name="instance_delete_impact_failed">Couldn\'t check which plans and teams are affected, so it can\'t be deleted yet: %1$s</string>
-    <string name="instance_impact_own_plans">Its own plans (will stop running)</string>
-    <string name="instance_impact_pipeline_plans">Pipelines with steps that use it (those steps will fail)</string>
-    <string name="instance_impact_teams">Teams it will be removed from</string>
+    <string name="instance_impact_own_plans">Its own plans (will be deleted)</string>
+    <string name="instance_impact_pipeline_plans">Pipelines with steps that use it (will be paused; change those steps before resuming)</string>
+    <string name="instance_impact_teams">Teams it\'s in (it will be removed)</string>
     <string name="instance_impact_bullet">•</string>
     <string name="instance_impact_item">• %1$s</string>
     <string name="instance_impact_plan_detail">%1$s (%2$s)</string>
@@ -402,7 +403,7 @@
     <string name="keys_usage_fallback">fallback</string>
     <string name="keys_delete_wait_warning">It will first be removed from these aliases: dropped from fallback chains; where it\'s the primary key, the first fallback takes over; aliases with no fallback are removed, and those instances\' tasks will wait for a key until you set up a new one.</string>
     <string name="keys_delete_detach">Remove and delete</string>
-    <string name="keys_delete_in_use">A model alias still uses this key, so it wasn\'t deleted. It may belong to a deleted instance (the server keeps its aliases), which can\'t be changed; disable the key if you no longer want it used.</string>
+    <string name="keys_delete_in_use">A model alias still uses this key, so it wasn\'t deleted. An instance\'s aliases may have just been changed to use it. Refresh and try again.</string>
 
     <string name="key_vendor_custom">Custom endpoint</string>
     <string name="key_option">%1$s (%2$s · …%3$s)</string>
@@ -413,7 +414,7 @@
     <string name="key_enabled_hint">Disabled keys are skipped and the next key in the fallback chain is used; if none works, tasks wait for a key.</string>
     <string name="key_label_hint">So you can recognise it. Maximum length: %1$d</string>
     <string name="key_daily_limit_hint">Days run on Beijing time. Leave empty for no limit. Once used up, tasks switch to a fallback key or wait.</string>
-    <string name="key_limit_fixed_hint">The daily limit can only be set when adding a key. To change it, delete the key and add it again.</string>
+    <string name="key_limit_edit_hint">Days run on Beijing time. Clear it for no limit. After raising or removing the limit, tasks waiting for this key continue.</string>
     <string name="key_hint_payg">Pay-as-you-go API keys only.</string>
     <string name="key_hint_no_subscription">Pay-as-you-go API keys only. Coding-plan and subscription keys may not be used through third-party platforms under the vendor\'s terms.</string>
     <string name="key_show">Show key</string>
@@ -498,14 +499,15 @@
     <string name="routes_error_alias_duplicate">This alias is used twice</string>
     <string name="routes_error_key_empty">Choose a key</string>
     <string name="routes_error_key_missing">This key has been deleted; choose another</string>
-    <string name="routes_error_key_disabled">This key is disabled: choose another, or enable it in the key list first</string>
+    <string name="routes_error_key_disabled">This key is disabled and can\'t be newly chosen: pick another, or enable it in the key list first</string>
+    <string name="routes_warning_key_disabled">This key is disabled, so runs skip it (using a fallback if there is one, otherwise waiting for a key). You can keep it here; it works again once enabled.</string>
     <string name="routes_error_key_protocol">This key doesn\'t support %1$s, so this agent can\'t use it</string>
     <string name="routes_error_model_empty">Enter the upstream model</string>
     <string name="routes_error_model_long">The model name is too long (maximum length: %1$d)</string>
     <string name="routes_error_fallback_same">Same key and model as the primary, so it can\'t act as a fallback</string>
     <string name="routes_error_main_required">The default alias main is required</string>
     <string name="routes_error_too_many">Too many aliases (maximum: %1$d)</string>
-    <string name="routes_error_rejected">The server didn\'t accept this: a key may have just been disabled or deleted. Check and save again.</string>
+    <string name="routes_error_rejected">The server didn\'t accept this: a key may have just been disabled or deleted (a disabled key can only stay if this instance already used it). Check and save again.</string>
 
     <string name="usage_range">Period</string>
     <string name="usage_range_today">Today</string>
@@ -550,7 +552,7 @@
     <string name="usage_credential_gone">Deleted key</string>
     <string name="usage_column_date">Date</string>
     <string name="usage_column_name">Name</string>
-    <string name="keys_delete_detach_failed">Couldn\'t remove it from “%1$s”\'s model aliases because they still use a disabled key. Enable that key, or replace it on “%1$s”\'s model aliases page, then delete again.</string>
+    <string name="keys_delete_detach_failed">Couldn\'t remove it from “%1$s”\'s model aliases because the server rejected the change. Replace it on “%1$s”\'s model aliases page, then delete again.</string>
     <string name="usage_no_key">No key used (all disabled or out of quota)</string>
     <!-- 13.16 cloud approvals -->
     <string name="drawer_approvals">Approvals</string>

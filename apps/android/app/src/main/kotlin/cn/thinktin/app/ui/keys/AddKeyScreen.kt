@@ -343,7 +343,7 @@ private fun ErrorLine(text: UiText) {
 }
 
 @Composable
-private fun FormField(
+internal fun FormField(
     label: String,
     value: String,
     onValueChange: (String) -> Unit,

@@ -281,6 +281,7 @@ private fun RouteCard(
                 selectedId = draft.credentialId,
                 state = state,
                 error = errors?.credential,
+                warning = state.keyWarning(draft.credentialId),
                 enabled = enabled,
                 onSelect = { viewModel.onCredentialChange(draft.id, it) },
             )
@@ -336,6 +337,7 @@ private fun RouteCard(
                         selectedId = fallback.credentialId,
                         state = state,
                         error = fallbackErrors?.first,
+                        warning = state.keyWarning(fallback.credentialId),
                         enabled = enabled,
                         onSelect = { viewModel.onFallbackCredentialChange(draft.id, i, it) },
                     )
@@ -361,7 +363,7 @@ private fun RouteCard(
 
 /**
  * 选 key：按钮显示当前选的（“工作 key（Anthropic · …a1b2）”），点开列出能用的 key；当前选的不能用了（停用、协议不对、删了）
- * 也照样显示，错误在下面。
+ * 也照样显示，错误在下面；实例原来就用着的停用 key 不算错，下面是 [warning]。
  */
 @Composable
 private fun KeySelector(
@@ -369,6 +371,7 @@ private fun KeySelector(
     selectedId: String?,
     state: ModelRoutesUiState,
     error: UiText?,
+    warning: UiText?,
     enabled: Boolean,
     onSelect: (String) -> Unit,
 ) {
@@ -417,6 +420,12 @@ private fun KeySelector(
                 color = MaterialTheme.colorScheme.error,
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+            )
+        } else if (warning != null) {
+            Text(
+                text = warning.asString(),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
             )
         }
     }

@@ -557,7 +557,10 @@ internal class MockData(private val baseMs: Long) {
         ),
     )
 
-    /** 预置厂商（和 crates/proto/src/vendors.rs 的一部分一致，notes 缩短了）。 */
+    /**
+     * 预置厂商（和 crates/proto/src/vendors.rs 的一部分一致，notes 缩短了）：订阅 key 前缀、套餐专用地址（11.9 起
+     * `GET /v1/vendors` 带着）和服务端一样，App 的本地校验（KeyRules）用的就是这两张表。
+     */
     val vendors = listOf(
         VendorInfo(
             "deepseek", "DeepSeek", listOf("anthropic", "chat", "responses"),
@@ -567,17 +570,30 @@ internal class MockData(private val baseMs: Long) {
         VendorInfo(
             "qwen-cn", "阿里云百炼（北京）", listOf("anthropic", "chat", "responses"), listOf("qwen3-max", "qwen3-coder-plus"),
             "key 绑定区域，跨区域 401；编程套餐（sk-sp-）的 key 不能用",
+            subscriptionKeyPrefixes = listOf("sk-sp-"),
         ),
         VendorInfo(
             "minimax-cn", "MiniMax（国内）", listOf("anthropic", "chat", "responses"), listOf("MiniMax-M3"),
             "订阅 key（sk-cp-）和按量 key（sk-api-）不能混用",
+            subscriptionKeyPrefixes = listOf("sk-cp-"),
+        ),
+        VendorInfo(
+            "glm-cn", "智谱 BigModel", listOf("anthropic", "chat", "responses"), listOf("glm-5.3", "glm-5.3-flash"),
+            "编程套餐的 key 和按量付费共用地址，只填按量付费 key；套餐专用地址（/api/coding）不能用",
+            planOnlyBases = listOf("https://open.bigmodel.cn/api/coding"),
         ),
         VendorInfo(
             "anthropic", "Anthropic", listOf("anthropic", "chat"), listOf("claude-sonnet-4", "claude-opus-4"),
             "原生 Messages 接口；Claude 订阅的 OAuth 令牌（sk-ant-oat…）不能用",
+            subscriptionKeyPrefixes = listOf("sk-ant-oat", "sk-ant-ort"),
         ),
         VendorInfo("openai", "OpenAI", listOf("chat", "responses"), listOf("gpt-4.1", "o3"), "Responses 有状态"),
         VendorInfo("gemini", "Google Gemini", listOf("chat"), listOf("gemini-2.5-pro"), "只接 Gemini API 的 key；没有 Responses"),
+        VendorInfo(
+            "doubao-cn", "火山方舟（豆包）", listOf("anthropic", "chat", "responses"), listOf("doubao-seed-2-1-pro-260628"),
+            "Coding Plan、Agent Plan 用专属 key 和专属地址，这里只接按量付费 key",
+            planOnlyBases = listOf("https://ark.cn-beijing.volces.com/api/coding", "https://ark.cn-beijing.volces.com/api/plan"),
+        ),
     )
 
     val credentials = listOf(

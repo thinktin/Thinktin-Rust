@@ -6,6 +6,7 @@ import cn.thinktin.app.R
 import cn.thinktin.app.ui.common.ErrorText
 import cn.thinktin.app.ui.common.UiText
 import cn.thinktin.app.ui.common.isInvalid
+import cn.thinktin.app.ui.common.isLimitReached
 import cn.thinktin.app.ui.common.isRateLimited
 import cn.thinktin.app.ui.common.retryAfterSeconds
 import cn.thinktin.app.ui.keys.KeyRules
@@ -266,12 +267,12 @@ class AgentDetailViewModel(
 
     companion object {
         /**
-         * 领养失败 → （名字下的提示, 表单级错误）。服务端（control 的 adopt）目前只会返回：
+         * 领养失败 → （名字下的提示, 表单级错误）。服务端（control 的 adopt_capped）会返回：
+         * - 409 `instance_limit`（实例数到了账号的上限，11.9；数量上限的码都以 `_limit` 结尾，见 [isLimitReached]）：表单级。
          * - 404 not_found：agent 不在目录里（已下架）。
          * - 422 invalid：名字不对时提示在名字下；其余（版本下架、版本不存在、接入方式不对）是表单级。
-         * 另外通用的限频（429）、网络错误照常处理。
-         * 409 conflict 和 instance_limit / quota 这类数量上限服务端现在不返回（实例名没有唯一约束，也没有数量上限），
-         * 分支留着防将来加上。
+         * 另外通用的限频（429）、网络错误照常处理；不认识的码交给 [ErrorText]。409 conflict 现在不返回（实例名没有
+         * 唯一约束），分支留着防将来加上。团队模板领养（13.7）也用这个映射：放不下整个团队时同样是 `instance_limit`。
          */
         fun adoptError(e: ServiceError): Pair<UiText?, UiText?> {
             if (e !is ServiceError.Api) return null to ErrorText.of(e)
@@ -280,8 +281,7 @@ class AgentDetailViewModel(
                     e.retryAfterSeconds?.let { UiText(R.string.adopt_rate_limited, listOf(it)) }
                         ?: UiText(R.string.adopt_rate_limited_plain)
                     )
-                e.code.contains("limit") || e.code.startsWith("quota") ->
-                    null to UiText(R.string.adopt_limit_reached)
+                e.isLimitReached -> null to UiText(R.string.adopt_limit_reached)
                 e.code == "conflict" || e.status == 409 -> UiText(R.string.adopt_conflict) to null
                 e.code == "not_found" || e.status == 404 -> null to UiText(R.string.adopt_agent_gone)
                 e.isInvalid && e.detail.contains("name", ignoreCase = true) ->

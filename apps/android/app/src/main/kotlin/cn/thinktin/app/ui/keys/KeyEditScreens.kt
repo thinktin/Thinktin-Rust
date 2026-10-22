@@ -233,8 +233,7 @@ fun KeyEditScreen(credentialId: String, onBack: () -> Unit, onSaved: () -> Unit,
             supportingText = {
                 Text(state.labelError?.asString() ?: stringResource(R.string.key_label_hint, KeyRules.MAX_LABEL_LENGTH))
             },
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-            keyboardActions = KeyboardActions(onDone = { viewModel.save() }),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
             modifier = Modifier
                 .fillMaxWidth()
                 .semantics { contentDescription = label },
@@ -251,13 +250,20 @@ fun KeyEditScreen(credentialId: String, onBack: () -> Unit, onSaved: () -> Unit,
                 onValueChange = { enabled -> viewModel.onDisabledChange(!enabled) },
             ),
         )
+        // 每日上限（11.9 起能改）：清空就是不限；下面一行是现在生效的值。
+        FormField(
+            label = stringResource(R.string.key_field_daily_limit),
+            value = state.dailyLimit,
+            onValueChange = viewModel::onDailyLimitChange,
+            error = state.dailyLimitError,
+            hint = stringResource(R.string.key_limit_edit_hint),
+            enabled = state.editable,
+            keyboardType = KeyboardType.Number,
+            imeAction = ImeAction.Done,
+        )
         Text(
             text = credential.dailyTokenLimit?.let { stringResource(R.string.keys_daily_limit, formatTokens(it)) }
                 ?: stringResource(R.string.keys_no_limit),
-            style = MaterialTheme.typography.bodyLarge,
-        )
-        Text(
-            text = stringResource(R.string.key_limit_fixed_hint),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

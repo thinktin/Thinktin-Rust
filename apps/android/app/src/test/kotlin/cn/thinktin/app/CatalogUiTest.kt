@@ -292,8 +292,13 @@ class CatalogUiTest {
         compose.onNode(hasText("每日依赖检查") and inDialog).assertIsDisplayed()
         compose.onNode(hasText("周报流水线（1 个步骤）") and inDialog).assertIsDisplayed()
         compose.onNode(hasText("• 调研小组") and inDialog).assertIsDisplayed()
+        // 11.9 的语义：自己的计划删除、流水线暂停（改步骤才能恢复）、团队移出
+        compose.onNode(hasText("它自己的计划（将被删除）") and inDialog).assertIsDisplayed()
+        compose.onNode(hasText("有步骤用到它的流水线（将被暂停，需改步骤后才能恢复）") and inDialog).assertIsDisplayed()
+        compose.onNode(hasText("它所在的团队（将把它移出）") and inDialog).assertIsDisplayed()
         compose.onNode(hasText("继续") and inDialog).performClick()
         waitFor(hasText("确定删除“码农”？"))
+        compose.onNode(hasText("它的模型别名一起删除", substring = true) and inDialog).assertIsDisplayed()
         assertTrue("第一步不删", runBlocking { mock.instances() }.any { it.id == "inst-coder" })
         compose.onNode(hasText("删除实例") and inDialog).performClick()
 
@@ -302,9 +307,11 @@ class CatalogUiTest {
         waitFor(hasContentDescription("让 研究员 做点什么"))
         val left = runBlocking { mock.instances() }
         assertTrue(left.none { it.id == "inst-coder" || it.state == InstanceState.Deleted })
-        // 服务端（Mock 同样）只是软删除：流水线步骤还在（之后运行会失败）
+        // 服务端（Mock 同样）：流水线暂停、步骤留着（改了步骤才能恢复）；自己的计划没了
         val pipeline = runBlocking { mock.plans() }.single { it.title == "周报流水线" }
         assertEquals(listOf("collect", "code"), pipeline.steps.map { it.key })
+        assertTrue(pipeline.paused)
+        assertTrue(runBlocking { mock.plans() }.none { it.title == "每日依赖检查" })
     }
 
     @Test
@@ -326,6 +333,8 @@ class CatalogUiTest {
         compose.onNode(hasText("没有计划或团队用到这个实例。删除后不能恢复。") and inDialog).assertIsDisplayed()
         compose.onNode(hasText("继续") and inDialog).performClick()
         waitFor(hasText("确定删除“写手”？"))
-        compose.onNode(hasText("实例会被永久删除，进行中的运行会被取消。这个操作不能撤销。") and inDialog).assertIsDisplayed()
+        compose.onNode(
+            hasText("实例会被永久删除，进行中的运行会被取消，它的模型别名一起删除。这个操作不能撤销。") and inDialog,
+        ).assertIsDisplayed()
     }
 }

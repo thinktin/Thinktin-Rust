@@ -42,6 +42,7 @@ import cn.thinktin.core.Team as CoreTeam
 import cn.thinktin.core.TeamMember as CoreTeamMember
 import cn.thinktin.core.TeamTemplate as CoreTeamTemplate
 import cn.thinktin.core.TemplateMember as CoreTemplateMember
+import cn.thinktin.core.VendorInfo as CoreVendorInfo
 
 /** 11.7 / 11.8 / 5.5 新接口的映射（两个方向）。 */
 class AppApiMappersTest {
@@ -266,6 +267,22 @@ class AppApiMappersTest {
             listOf(WaitCode.Invalid, WaitCode.NoBalance, WaitCode.Unavailable, WaitCode.DeviceOffline),
             WaitCode.entries.filter { it.needsUserAction },
         )
+    }
+
+    @Test
+    fun vendorInfoCarriesPrefixesAndPlanBases() {
+        val core = CoreVendorInfo(
+            "glm-cn", "智谱", listOf("anthropic", "chat"), listOf("glm-5.3"), "n",
+            subscriptionKeyPrefixes = listOf("sk-x-"), planOnlyBases = listOf("https://open.bigmodel.cn/api/coding"),
+        )
+        val model = core.toModel()
+        assertEquals(listOf("sk-x-"), model.subscriptionKeyPrefixes)
+        assertEquals(listOf("https://open.bigmodel.cn/api/coding"), model.planOnlyBases)
+        assertEquals(listOf("anthropic", "chat"), model.protocols)
+        // 老服务端不带这两项：默认空
+        val old = CoreVendorInfo("deepseek", "DeepSeek", listOf("chat"), emptyList(), "").toModel()
+        assertTrue(old.subscriptionKeyPrefixes.isEmpty())
+        assertTrue(old.planOnlyBases.isEmpty())
     }
 
     @Test

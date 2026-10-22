@@ -49,7 +49,10 @@ data class KeyEditUiState(
     val loadError: UiText? = null,
     val label: String = "",
     val disabled: Boolean = false,
+    /** 每日 token 上限（输入框里的文字）：空表示不限。 */
+    val dailyLimit: String = "",
     val labelError: UiText? = null,
+    val dailyLimitError: UiText? = null,
     val saving: Boolean = false,
     /** 已经发出 Saved（等页面退出）：不再保存，免得退出动画期间再点一次多弹一层返回栈。 */
     val finished: Boolean = false,
@@ -58,8 +61,9 @@ data class KeyEditUiState(
 }
 
 /**
- * 编辑 key（路由 keys/{credentialId}/edit）：标签、停用 / 启用（updateCredential，给了才改）。
- * 每日限额服务端只能在添加时设（updateCredential 没有这个字段），这里只显示。
+ * 编辑 key（路由 keys/{credentialId}/edit）：标签、停用 / 启用（updateCredential，给了才改）、每日 token 上限
+ * （setCredentialDailyLimit，11.9：清空就是取消上限）。两个接口分开调，只调改了的；前一个成功、后一个失败时，
+ * 页面上的 key 换成前一个的结果，再点保存只重试没成功的那个。
  */
 class KeyEditViewModel(
     private val service: ThinktinService,
@@ -93,6 +97,7 @@ class KeyEditViewModel(
                         missing = false,
                         label = if (untouched) credential.label else s.label,
                         disabled = if (untouched) credential.disabled else s.disabled,
+                        dailyLimit = if (untouched) limitText(credential.dailyTokenLimit) else s.dailyLimit,
                     )
                 }
             } catch (e: ServiceError) {
@@ -109,45 +114,80 @@ class KeyEditViewModel(
         state.value = state.value.copy(disabled = disabled)
     }
 
+    fun onDailyLimitChange(text: String) {
+        state.value = state.value.copy(dailyLimit = text, dailyLimitError = null)
+    }
+
     fun save() {
         val s = state.value
         val credential = s.credential ?: return
         if (s.saving || s.finished) return
         val label = s.label.trim()
-        KeyRules.checkLabel(label)?.let { error ->
-            state.value = s.copy(labelError = error)
+        val labelError = KeyRules.checkLabel(label)
+        val limit = when (val parsed = KeyRules.parseDailyLimit(s.dailyLimit)) {
+            KeyRules.DailyLimit.None -> null
+            is KeyRules.DailyLimit.Value -> parsed.tokens
+            is KeyRules.DailyLimit.Invalid -> {
+                state.value = s.copy(labelError = labelError, dailyLimitError = parsed.error)
+                return
+            }
+        }
+        if (labelError != null) {
+            state.value = s.copy(labelError = labelError)
             return
         }
         val update = CredentialUpdate(
             label = label.takeIf { it != credential.label },
             disabled = s.disabled.takeIf { it != credential.disabled },
         )
-        if (update.label == null && update.disabled == null) {
+        val updateNeeded = update.label != null || update.disabled != null
+        val limitChanged = limit != credential.dailyTokenLimit
+        if (!updateNeeded && !limitChanged) {
             state.value = s.copy(finished = true)
             eventChannel.trySend(KeyFormEvent.Saved(credential))
             return
         }
-        state.value = s.copy(saving = true, labelError = null)
+        state.value = s.copy(saving = true, labelError = null, dailyLimitError = null)
         viewModelScope.launch {
+            var current = credential
+            // 标签、停用保存好了（或者不用改）：之后的 invalid 只能是每日上限的。
+            var updateDone = !updateNeeded
             try {
-                val updated = service.updateCredential(credentialId, update)
+                if (updateNeeded) {
+                    current = service.updateCredential(credentialId, update)
+                    updateDone = true
+                    state.value = state.value.copy(credential = current)
+                }
+                if (limitChanged) {
+                    current = service.setCredentialDailyLimit(credentialId, limit)
+                }
                 state.value = state.value.copy(
                     saving = false,
                     finished = true,
-                    credential = updated,
-                    label = updated.label,
-                    disabled = updated.disabled,
+                    credential = current,
+                    label = current.label,
+                    disabled = current.disabled,
+                    dailyLimit = limitText(current.dailyTokenLimit),
                 )
-                eventChannel.send(KeyFormEvent.Saved(updated))
+                eventChannel.send(KeyFormEvent.Saved(current))
             } catch (e: ServiceError) {
                 state.value = state.value.copy(saving = false)
-                if (e is ServiceError.Api && e.isInvalid) {
-                    state.value = state.value.copy(labelError = UiText(R.string.key_error_label_long, listOf(KeyRules.MAX_LABEL_LENGTH)))
-                } else {
-                    eventChannel.send(KeyFormEvent.Message(ErrorText.of(e)))
+                when {
+                    e is ServiceError.Api && e.isInvalid && updateDone ->
+                        state.value = state.value.copy(dailyLimitError = UiText(R.string.key_error_limit_positive))
+                    e is ServiceError.Api && e.isInvalid ->
+                        state.value = state.value.copy(
+                            labelError = UiText(R.string.key_error_label_long, listOf(KeyRules.MAX_LABEL_LENGTH)),
+                        )
+                    else -> eventChannel.send(KeyFormEvent.Message(ErrorText.of(e)))
                 }
             }
         }
+    }
+
+    companion object {
+        /** 上限 → 输入框里的文字（不带千分位，免得编辑时光标乱跳）；不限是空的。 */
+        fun limitText(limit: Long?): String = limit?.toString().orEmpty()
     }
 }
 
@@ -175,10 +215,10 @@ data class KeyInput(
     val error: UiText? = null,
 ) {
     /**
-     * 输入框的值变了：一次多出 [PASTE_THRESHOLD] 个以上字符当作粘贴，整理一下并马上检查（订阅类 key 当场提示）；
-     * 手打的不打扰，提交时再查。
+     * 输入框的值变了：一次多出 [PASTE_THRESHOLD] 个以上字符当作粘贴，整理一下并马上检查（订阅类 key 按 [vendor] 的
+     * 前缀当场提示；自定义接口、厂商表拉不到时为 null，不查前缀）；手打的不打扰，提交时再查。
      */
-    fun change(raw: String, vendor: String): KeyInput {
+    fun change(raw: String, vendor: VendorInfo?): KeyInput {
         val pastedNow = raw.length - value.length >= PASTE_THRESHOLD
         if (!pastedNow) return copy(value = raw, pasted = false, cleaned = false, error = null)
         val cleanedValue = KeyRules.cleanPastedKey(raw)
@@ -238,8 +278,8 @@ class KeySecretViewModel(
     }
 
     fun onKeyChange(raw: String) {
-        val vendor = state.value.credential?.vendor ?: return
-        state.value = state.value.copy(key = state.value.key.change(raw, vendor))
+        val credential = state.value.credential ?: return
+        state.value = state.value.copy(key = state.value.key.change(raw, state.value.vendors[credential.vendor]))
     }
 
     fun toggleVisible() {
@@ -251,7 +291,7 @@ class KeySecretViewModel(
         val credential = s.credential ?: return
         if (s.saving || s.finished) return
         val key = s.key.value.trim()
-        KeyRules.checkKey(credential.vendor, key)?.let { error ->
+        KeyRules.checkKey(s.vendors[credential.vendor], key)?.let { error ->
             state.value = s.copy(key = s.key.copy(error = error))
             return
         }

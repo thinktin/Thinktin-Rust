@@ -72,6 +72,14 @@ client-core 的 App 接口已全部接进 `ThinktinService`，`CoreThinktinServi
   `Approval.requestId` / `attempt` / `decidedOption` / `decidedAtMs` 与 `getApproval`（什么状态都能查），
   审批按 `Approval.key`（`runId`、`attempt`、`requestId`）认；`InboxItem.subtype` / `vaultRequestId`，
   `InboxKind` 加 `VaultRequest` / `PlanConfirm`（不认识的按 `Info`，所以收件箱种类没有 Unknown）。
+- 11.9（合并 backend-core `ce9c7cf`）：`setCredentialDailyLimit`（null 取消上限，0 报 422；放宽、取消后等这把 key 的运行接着跑）
+  → `ThinktinService.setCredentialDailyLimit`，编辑 key 页能改上限；`VendorInfo.subscriptionKeyPrefixes` / `planOnlyBases`
+  → `KeyRules` 的本地校验直接用厂商数据（App 里不再抄 `proto::vendors` 的表，`KeyRulesSyncTest` 删了）；错误码 `instance_limit`
+  （409，数量上限的码都以 `_limit` 结尾）→ `isLimitReached`，领养按它报“已达上限”；client-core 把不认识的错误码原样放进
+  `ClientError.Api.code`，`ServiceError.Api` 原样带着，`ErrorText` 按状态给通用文案。服务端行为变化（Mock 已同步）：删除实例时
+  它自己的计划删除、别的流水线有一步在它上面的暂停（恢复、确认报 409 conflict，改了步骤才行）、它的模型别名一起删；删 key
+  不再被已删除实例的别名挡住；保存别名时实例原来就用着的停用 key 可以留着（新引用停用的照样 422）；团队模板领养全成或全不成
+  （放不下整个团队 409 `instance_limit`，团队名不合法 422）。
 
 只给 iOS 的实时活动（`registerLiveActivity`、`endLiveActivity`、`setLiveActivityStartToken`）不接。
 Rust 接口再变时：`sync-core.sh --bindings-only` → 在 `:data` 的模型、`Mappers.kt`（两个方向）、
@@ -193,14 +201,16 @@ Keystore 失效……）都显示“无法加载核心库”页（原因 + 重�
 - **领养**：盖在页面上的底部面板（遮罩、返回键、“取消”收起；不是 `ModalBottomSheet`，弹出窗口里的输入框在 Robolectric 下
   测不了）。名字默认“<agent 名> 的实例”（截到 64 个码点），接入方式多于一种时用 FilterChip 选（默认 `defaultHarness`，
   只有一种时不传，让服务端用默认）。本地先校验 1–64 字（和服务端一致）。失败映射：`conflict` 和说名字不对的 `invalid`
-  提示在名字下；限频（剩余秒数）、数量上限（code 含 `limit`）、`not_found`（已下架）、其余 `invalid`（版本下架、接入方式停用）
-  是表单级。成功后刷新抽屉，跳到 `chat/{instanceId}`，返回栈弹到首页（返回回首页，首页显示时重新取实例列表）。
+  提示在名字下；限频（剩余秒数）、数量上限（409 `instance_limit`，按 `_limit` 结尾认：`isLimitReached`，不再按 limit / quota
+  字样猜）、`not_found`（已下架）、其余 `invalid`（版本下架、接入方式停用）是表单级。成功后刷新抽屉，跳到 `chat/{instanceId}`，
+  返回栈弹到首页（返回回首页，首页显示时重新取实例列表）。
 - **实例设置**（`instance/{instanceId}`，入口：对话页顶栏的“实例设置”、首页溢出菜单、抽屉实例行的长按或“更多”、深链）：
   先用缓存渲染再联网；名字（`instance/{id}/name` 单独页面）、agent 与接入方式（点进详情）、状态点 + 文字、最后活跃；
   版本：当前版本、不是最新时“升级到最新”（`setInstanceVersion(null)`）、`versions` 里的其他版本可回滚 / 切换，确认框提示
   “下次唤醒生效，工作区保留”；目录拉不到时只是没有版本选项。模型别名入口指向 `instance/{id}/routes`，旁边是 key 列表入口（13.4）。
-- **删除实例**（第 8.6 节）：先 `plans()` + `teams()` 算出影响（`DeleteImpact`：它自己的计划、别的计划里引用它的流水线步骤数、
-  它是成员的团队），确认框列出计划和团队名（agent 建的计划标题标 AI 生成），“继续”后二次确认再 `deleteInstance`；
+- **删除实例**（第 8.6 节）：先 `plans()` + `teams()` 算出影响（`DeleteImpact`：它自己的计划“将被删除”、别的计划里在它上面的
+  流水线步骤数，这些流水线“将被暂停，需改步骤后才能恢复”、它是成员的团队“将把它移出”），确认框列出计划和团队名（agent 建的
+  计划标题标 AI 生成），“继续”后二次确认（说明它的模型别名一起删除）再 `deleteInstance`；
   查不到影响范围就不让删（Snackbar 说明原因）；已经被删（404）当作成功。成功后刷新抽屉、回首页（首页重新创建）。
 - **首页**：没有实例时显示衬线问候 + “领养一个 agent” + 目录前 3 个精选卡片；抽屉实例行显示名字、agent 显示名（目录拉不到时
   显示 id）、状态点，长按或右侧“更多”进实例设置。
@@ -213,19 +223,23 @@ Keystore 失效……）都显示“无法加载核心库”页（原因 + 重�
 - **删除**：先 `instances()` + 每个实例的 `modelRoutes()` 找出在用这把 key 的别名（查不到就不让删）。服务端在有别名（主 key 或
   降级链）用着时拒绝删除（409），所以确认框列出“实例：别名（主 key / 降级）”，确认后先按 `KeyRules.detachCredential` 改这些实例的
   别名（降级链里的去掉；它是主 key 时第一个备用顶上；没有备用的别名删掉，那个实例会等 key），再 `deleteCredential`；404 当作成功。
-  整表替换时服务端会重新检查每把 key，那个实例的别名里还有停用的 key 时会被拒（invalid）：提示先启用或去别名页换掉。
+  只查没删除的实例：已删除实例的别名服务端已经一起删了（11.9），也不再挡着删 key。整表替换时实例原来就用着的停用 key 可以留着，
+  所以这一步一般不会被拒；万一被拒（invalid）就停下，提示去那个实例的别名页手动改。
 - **添加**（`keys/new`，单独页面，两步）：第一步 `vendors()` 按协议分组（协议多的组在前），最后是“自定义接口”；第二步 key
   （密码输入、可切换显示、关自动更正；一次进来 8 个字符以上当作粘贴：去掉首尾空白、引号、`Bearer `、`NAME=`，并马上检查订阅前缀）、
   标签（默认厂商名；自定义接口默认地址的主机名）、自定义接口按勾选的协议填 `anthropicBase` / `openaiBase` / `responsesBase`、
-  可选每日 token 限额（正整数，可带千分位）。本地校验（`KeyRules`，和服务端一致）：key 8–4096 个可打印 ASCII、各厂商的订阅类前缀
-  （百炼 `sk-sp-`、MiniMax `sk-cp-`、腾讯 `sk-tp-`、Claude 订阅 `sk-ant-oat` / `sk-ant-ort`）；地址只收 `https://`、不带用户名密码 /
+  可选每日 token 限额（正整数，可带千分位）。本地校验（`KeyRules`，和服务端一致）：key 8–4096 个可打印 ASCII、选的厂商的订阅类前缀
+  （`VendorInfo.subscriptionKeyPrefixes`，比如百炼 `sk-sp-`、Claude 订阅 `sk-ant-oat`）；地址只收 `https://`、不带用户名密码 /
   查询串 / 片段、主机是公网（不是 localhost、`.local` 等内网后缀、单段主机名、私网 / 回环 / 链路本地 / 运营商 NAT / 文档 / 组播 IP，
-  IPv6 只收 2000::/3 且排除 Teredo、6to4、文档段；`0x7f.1`、`2130706433` 这类写法不收）、不是套餐专用地址。服务端返回的 invalid
+  IPv6 只收 2000::/3 且排除 Teredo、6to4、文档段；`0x7f.1`、`2130706433` 这类写法不收）、不是套餐专用地址（所有厂商的
+  `VendorInfo.planOnlyBases` 合在一起）。两张表都来自 `vendors()`，App 里不抄；厂商表拉不到时不查这两项（服务端照样查）。服务端返回的 invalid
   按 detail 里的字段名挂到对应字段下（detail 只用来定位，显示的是本地文案）。成功回列表。
-- **编辑**（`keys/{id}/edit`）：标签、启用开关；**换 key**（`keys/{id}/secret`）：密码输入，同样的本地检查，模型别名不用改。
-  每日限额 `updateCredential` 改不了，编辑页只显示并说明“删掉重新添加”。
+- **编辑**（`keys/{id}/edit`）：标签、启用开关（`updateCredential`）、每日 token 上限（`setCredentialDailyLimit`，清空是取消上限；
+  放宽、取消后等这把 key 的运行接着跑）。两个接口分开调、只调改了的；前一个成功后一个失败时，页面上的 key 换成前一个的结果，
+  再保存只重试失败的那个。**换 key**（`keys/{id}/secret`）：密码输入，同样的本地检查，模型别名不用改。
 - **模型别名**（`instance/{id}/routes`）：每个别名一张卡片：别名（`^[a-z0-9][a-z0-9._-]{0,63}$`）、key（下拉，只列没停用且支持
-  agent `activeProtocol` 的；已选的不能用了照样显示并报错）、上游模型（手填，下面是这家厂商 `models` 的推荐，选 key 时自动填第一个）、
+  agent `activeProtocol` 的；已选的不能用了照样显示并报错；实例原来就用着的停用 key 可以留着，只提示“运行时会跳过它”，
+  新选停用的 key 报错，和服务端 11.9 一致）、上游模型（手填，下面是这家厂商 `models` 的推荐，选 key 时自动填第一个）、
   降级链（最多 3 个，上移 / 下移 / 删除）。默认别名 `main` 必填（服务端没有 main 时顶部警告“未配置模型（main），运行会等待 key”），
   最多 16 个别名，别名不能重复，降级项不能和主 key + 主模型完全一样。保存 `setModelRoutes`（整表替换，main 在前）后重新取；
   服务端拒绝时刷新 key 列表并提示。从 key 页回来时重新取 key（不动正在编辑的内容）。
@@ -375,7 +389,8 @@ abortOnError 开着，不用 baseline；release 包跑一遍 R8）→ 解开 rel
 - 一个页面一个 ViewModel（`StateFlow<UiState>`，一次性事件用 Channel），用 `viewModel(factory = viewModelFactory { … })`
   从 `LocalThinktinService` / `LocalAppContainer` 取依赖；不引入 Hilt。
 - 错误：服务调用抛 `ServiceError`；文案由 `:app` 的 `ErrorText` 映射（`isRateLimited`、`isInvalid`、`isRetryable` 给表单页
-  做字段级提示和“重试”）；`SignedOut` 回登录流，`AccountFrozen` 显示冻结页（由 `ThinktinService.authState` 驱动）。
+  做字段级提示和“重试”，`isLimitReached` 认数量上限：码以 `_limit` 结尾、409）；不认识的码按 HTTP 状态给通用文案（docs/i18n.md
+  第 3 节）；`SignedOut` 回登录流，`AccountFrozen` 显示冻结页（由 `ThinktinService.authState` 驱动）。
 - 按钮用 `:design` 的 `PrimaryButton` / `DangerButton`（错误色，注销、删除）/ `SecondaryButton`（描边），统一 20dp 圆角、
   24/12 内边距和转圈；不直接用 M3 的 `Button` / `OutlinedButton`（默认是胶囊形）。
 - 倒计时（验证码重发、限频剩余秒数）用 `ui/common/Countdown`，跑在 viewModelScope 上，测试里用 TestCoroutineScheduler 推进。
@@ -402,11 +417,10 @@ abortOnError 开着，不用 baseline；release 包跑一遍 R8）→ 解开 rel
   提示框弹出时旋转屏幕。通知上的“拒绝”快捷操作随 13.8 推送一起做（先 `getApproval` 确认还是待处理再发）。
 - Robolectric 的触摸注入点不到盖在页面上的层（抽屉、领养面板）：触摸落到了下面的内容 / 遮罩上（真机正常），
   这些控件在测试里用无障碍点击动作（`SemanticsActions.OnClick`）。
-- 每日 token 限额只能在添加 key 时设：client-core 的 `update_credential` 只有标签和停用（服务端 `PATCH` 也一样），编辑页只读显示。
-- 服务端删除实例只是标记删除，`model_routes` 还留着：被已删除实例的别名引用的 key 永远删不掉（409），App 也查不到那些别名
-  （提示“还有模型别名在用这把 key”，并说明可能是已删除实例留下的、可以先停用）。需要 backend-core 在删除实例时清掉它的别名，
-  或删除 key 时不算已删除的实例。同样，删除实例后其他计划里引用它的流水线步骤也还在（运行到时会失败），只有团队读取时会过滤掉它；
-  设计规范 8.6 写的“级联删除”和后端不一致，待 backend-core 确认以哪边为准。在那之前确认框写“这些步骤之后会运行失败”，Mock 也按软删除实现。
+- 删除实例后别的流水线只是暂停、步骤留着（11.9 的服务端语义），设计规范 8.6 写的“级联删除”和它不一致；App 和 Mock 按服务端的写。
+  计划页（13.6）还没做，恢复这种流水线时的 409 conflict 现在只有通用文案，到时按“先改步骤”给专门的提示和入口。
+- 团队模板领养（13.7）还没有界面：Mock 已按 11.9 全成或全不成，`AgentDetailViewModel.adoptError` 的 `instance_limit` 映射到时复用，
+  “放不下整个团队”的专门文案随 13.7 加。
 - 用量按天的 `key` 按日期解析（`yyyy-MM-dd`）；服务端换格式时柱状图会退化成只有表格。
 - CI 的 APK 不含 .so（见“CI”）。启动时 `TlsInit` 加载不到库，`TlsState.failure` 记下 `UnsatisfiedLinkError`，演示模式照常可用。
 - `TlsInit.initialize`（JNI）只能在真机 / 模拟器上验证（云端会话没有模拟器，JVM 上的 .so 是 Linux 版，没有这个 JNI 函数）；

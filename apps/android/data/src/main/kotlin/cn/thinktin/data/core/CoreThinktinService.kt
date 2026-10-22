@@ -465,6 +465,9 @@ internal class CoreThinktinService(
     override suspend fun updateCredential(credentialId: String, update: CredentialUpdate): Credential =
         call { client.updateCredential(credentialId, update.label, update.disabled).toModel() }
 
+    override suspend fun setCredentialDailyLimit(credentialId: String, dailyTokenLimit: Long?): Credential =
+        call { client.setCredentialDailyLimit(credentialId, dailyTokenLimit?.toULongNonNegative()).toModel() }
+
     override suspend fun replaceCredentialSecret(credentialId: String, apiKey: String): Credential =
         call { client.replaceCredentialSecret(credentialId, apiKey).toModel() }
 

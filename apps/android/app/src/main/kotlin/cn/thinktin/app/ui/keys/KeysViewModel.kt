@@ -164,7 +164,8 @@ class KeysViewModel(private val service: ThinktinService) : ViewModel() {
                     try {
                         service.setModelRoutes(instanceId, detached)
                     } catch (e: ServiceError.Api) {
-                        // 服务端整表替换时会重新检查每把 key：那个实例的别名里还有停用的 key 时整个被拒。
+                        // 服务端整表替换时会重新检查每把 key。实例原来就用着的停用 key 可以留着（11.9），所以这里一般不会被拒；
+                        // 万一被拒（比如别的设备刚改了别名），停下来让用户去别名页手动改。
                         if (!e.isInvalid) throw e
                         state.update { it.copy(dialog = null) }
                         message(UiText(R.string.keys_delete_detach_failed, listOf(name)))

@@ -412,9 +412,9 @@ private fun InstanceDialogs(
         }
         is InstanceDialog.DeleteConfirm -> ConfirmDialog(
             title = stringResource(R.string.instance_delete_confirm_title, name),
-            // 没有流水线或团队用到它时，不提上一步“列出的”步骤和团队。
+            // 上一步没有列出计划或团队时，不提“上一步列出的”。
             text = stringResource(
-                if (dialog.impact.pipelinePlans.isEmpty() && dialog.impact.teams.isEmpty()) {
+                if (dialog.impact.isEmpty) {
                     R.string.instance_delete_confirm_message_simple
                 } else {
                     R.string.instance_delete_confirm_message
@@ -445,7 +445,7 @@ private fun ImpactList(impact: DeleteImpact, instanceId: String) {
         if (impact.pipelinePlans.isNotEmpty()) {
             ImpactHeader(stringResource(R.string.instance_impact_pipeline_plans))
             impact.pipelinePlans.forEach { plan ->
-                val steps = impact.removedSteps(plan, instanceId)
+                val steps = impact.affectedSteps(plan, instanceId)
                 PlanLine(
                     plan.title,
                     plan.createdBy == "agent",

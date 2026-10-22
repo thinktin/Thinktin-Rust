@@ -353,6 +353,12 @@ interface ThinktinService {
     /** 改备注、停用或重新启用一把 key；给了才改。 */
     suspend fun updateCredential(credentialId: String, update: CredentialUpdate): Credential
 
+    /**
+     * 改每日 token 上限（11.9）：null 取消上限，必须大于 0（0 报 422 invalid）。放宽或取消时等这把 key 的运行接着跑；
+     * 模型网关几秒内用上新的上限。
+     */
+    suspend fun setCredentialDailyLimit(credentialId: String, dailyTokenLimit: Long?): Credential
+
     /** 换 key（同一个厂商、同一条记录：模型路由不用改）。等 key 的运行会接着跑。 */
     suspend fun replaceCredentialSecret(credentialId: String, apiKey: String): Credential
 
