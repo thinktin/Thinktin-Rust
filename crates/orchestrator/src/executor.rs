@@ -1034,6 +1034,8 @@ impl Executor {
                 plan: rec.run.plan_id,
                 thread_id: Some(run.to_string()),
                 dedupe_key: Some(format!("run:{run}:{to}")),
+                // 等 key、等电脑的：App 按等的是什么跳转（去换 key、去开电脑）。
+                subtype: done.run.wait_code.clone().filter(|_| to.is_waiting()),
                 // 成功时正文是 agent 写的摘要；失败原因是平台写的。
                 ai_generated: kind == PushKind::RunFinished,
                 ..Notice::new(kind, title, body)
@@ -1973,6 +1975,7 @@ impl Exec<'_> {
                 approval: Some(id),
                 thread_id: Some(self.rec.run.id.to_string()),
                 dedupe_key: Some(format!("approval:{id}:skipped")),
+                subtype: Some(proto::domain::notice_subtype::APPROVAL_SKIPPED.into()),
                 // 正文是 agent 给工具调用起的标题。
                 ai_generated: title.is_some(),
                 ..Notice::new(

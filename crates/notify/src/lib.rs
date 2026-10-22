@@ -28,7 +28,11 @@ pub enum PushKind {
     Approval,
     /// 电脑上的高危操作请手机批准（14.2）：批准和拒绝都要打开 App 用私钥签名，通知上没有按钮。
     ComputerApproval,
-    /// 其他提醒。
+    /// agent 请用户往保险箱里填账号密码（10.7，目标里有 `vault_request_id`）：运行等着，高优先级。
+    VaultRequest,
+    /// agent 改了计划、等用户确认（10.7，目标里有 `plan_id`）。
+    PlanConfirm,
+    /// 其他提醒（`subtype` 说是哪一种）。
     Info,
 }
 
@@ -40,6 +44,8 @@ impl PushKind {
             Self::RunFailed => "run_failed",
             Self::Approval => "approval",
             Self::ComputerApproval => "computer_approval",
+            Self::VaultRequest => "vault_request",
+            Self::PlanConfirm => "plan_confirm",
             Self::Info => "info",
         }
     }
@@ -51,13 +57,20 @@ impl PushKind {
             Self::RunFailed => "RUN_FAILED",
             Self::Approval => "APPROVAL",
             Self::ComputerApproval => "COMPUTER_APPROVAL",
+            Self::VaultRequest => "VAULT_REQUEST",
+            Self::PlanConfirm => "PLAN_CONFIRM",
             Self::Info => "INFO",
         }
     }
 
-    /// 等用户批准的：高优先级，走审批的通知渠道。
+    /// 等用户批准的。
     pub fn is_approval(self) -> bool {
         matches!(self, Self::Approval | Self::ComputerApproval)
+    }
+
+    /// 运行停下来等用户（审批、填保险箱）：iOS 上是 time-sensitive，Android 走审批的通知渠道、高优先级。
+    pub fn waits_for_user(self) -> bool {
+        self.is_approval() || self == Self::VaultRequest
     }
 }
 
@@ -86,6 +99,9 @@ pub struct PushMessage {
     /// 收件人的语言（1.6）：标题、正文已经按它生成，显式标识也按它显示。
     #[serde(default)]
     pub locale: proto::domain::Locale,
+    /// 是哪一种提醒（[`proto::domain::notice_subtype`]，运行在等什么时是 `wait_code`）：App 据此跳转、刷新。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subtype: Option<String>,
 }
 
 impl PushMessage {
@@ -109,6 +125,9 @@ pub struct PushTarget {
     pub approval_id: Option<String>,
     pub plan_id: Option<String>,
     pub inbox_id: Option<String>,
+    /// 保险箱请求（10.7，`thinktin://vault/request/{id}`）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vault_request_id: Option<String>,
 }
 
 /// 发送结果。
@@ -208,6 +227,8 @@ mod tests {
             PushKind::RunFailed,
             PushKind::Approval,
             PushKind::ComputerApproval,
+            PushKind::VaultRequest,
+            PushKind::PlanConfirm,
             PushKind::Info,
         ] {
             assert_eq!(
@@ -217,5 +238,9 @@ mod tests {
         }
         assert!(PushKind::ComputerApproval.is_approval());
         assert!(!PushKind::RunFailed.is_approval());
+        assert!(PushKind::VaultRequest.waits_for_user() && !PushKind::VaultRequest.is_approval());
+        assert!(!PushKind::PlanConfirm.waits_for_user());
+        assert_eq!(PushKind::VaultRequest.category(), "VAULT_REQUEST");
+        assert_eq!(PushKind::PlanConfirm.category(), "PLAN_CONFIRM");
     }
 }

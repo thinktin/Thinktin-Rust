@@ -119,7 +119,8 @@ async fn agents_register_plans_that_wait_for_the_user() {
         .unwrap();
     w.rollback().await.unwrap();
     assert_eq!(pushes.len(), 1);
-    assert_eq!(pushes[0].payload["kind"], "info");
+    assert_eq!(pushes[0].payload["kind"], "plan_confirm");
+    assert_eq!(pushes[0].payload["target"]["plan_id"], created["plan_id"]);
 
     let listed = body(&tools.call(&ctx, "schedule_list", &json!({})).await);
     assert_eq!(listed["plans"][0]["plan_id"], created["plan_id"]);
@@ -365,6 +366,25 @@ async fn vault_tools_list_names_and_ask_the_user() {
     let inbox = tx.inbox(None, 10, false).await.unwrap();
     assert_eq!(inbox.len(), 1);
     assert!(inbox[0].ai_generated && inbox[0].body.contains("read the weekly report"));
+    // 推送和收件箱都带上保险箱请求（App 跳到 thinktin://vault/request/{id}）。
+    assert_eq!(
+        (inbox[0].kind.as_str(), inbox[0].vault_request_id),
+        ("vault_request", Some(pending[0].id))
+    );
+    let mut w = t.db.worker().await.unwrap();
+    let pushes = w
+        .claim_outbox("probe", Duration::from_secs(1), 10)
+        .await
+        .unwrap();
+    w.rollback().await.unwrap();
+    let push = pushes
+        .iter()
+        .find(|p| p.payload["kind"] == "vault_request")
+        .expect("vault request push");
+    assert_eq!(
+        push.payload["target"]["vault_request_id"],
+        json!(pending[0].id)
+    );
     assert_eq!(
         tx.run_event_count(ctx.run, "vault.requested")
             .await

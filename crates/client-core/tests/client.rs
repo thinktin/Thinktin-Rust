@@ -1224,6 +1224,7 @@ async fn ffi_keys_runs_artifacts_and_inbox_items() {
                 &NewInboxItem {
                     kind: "info".into(),
                     title: format!("通知 {n}"),
+                    subtype: Some("account_restored".into()),
                     ..NewInboxItem::default()
                 },
             )
@@ -1239,7 +1240,12 @@ async fn ffi_keys_runs_artifacts_and_inbox_items() {
         c.mark_inbox_read(vec![ids[0].clone()], None).await.unwrap(),
         1
     );
-    assert!(c.inbox_item(ids[0].clone()).await.unwrap().read);
+    let item = c.inbox_item(ids[0].clone()).await.unwrap();
+    assert!(item.read);
+    assert_eq!(
+        (item.subtype.as_deref(), item.vault_request_id),
+        (Some("account_restored"), None)
+    );
     assert_eq!(c.mark_inbox_unread(ids[0].clone()).await.unwrap(), 2);
     assert!(!c.inbox_item(ids[0].clone()).await.unwrap().read);
     assert_eq!(c.cached_unread().unwrap(), 2);

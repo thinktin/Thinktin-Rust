@@ -246,13 +246,15 @@ impl FcmClient {
             ("tt_approval", &t.approval_id),
             ("tt_plan", &t.plan_id),
             ("tt_inbox", &t.inbox_id),
+            ("tt_vault_request", &t.vault_request_id),
+            ("tt_subtype", &message.subtype),
         ] {
             if let Some(v) = v {
                 data.insert(k.into(), json!(v));
             }
         }
-        let urgent = message.kind.is_approval() || message.kind == PushKind::RunFailed;
-        let channel = if message.kind.is_approval() {
+        let urgent = message.kind.waits_for_user() || message.kind == PushKind::RunFailed;
+        let channel = if message.kind.waits_for_user() {
             &self.approval_channel
         } else {
             &self.default_channel

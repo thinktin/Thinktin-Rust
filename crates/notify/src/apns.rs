@@ -127,7 +127,7 @@ impl ApnsClient {
         if let Some(thread) = &message.thread_id {
             aps["thread-id"] = json!(thread);
         }
-        if message.kind.is_approval() {
+        if message.kind.waits_for_user() {
             aps["interruption-level"] = json!("time-sensitive");
         }
         let mut tt = json!({"kind": message.kind});
@@ -138,6 +138,8 @@ impl ApnsClient {
             ("approval", &t.approval_id),
             ("plan", &t.plan_id),
             ("inbox", &t.inbox_id),
+            ("vault_request", &t.vault_request_id),
+            ("subtype", &message.subtype),
         ] {
             if let Some(v) = v {
                 tt[k] = json!(v);
@@ -411,10 +413,12 @@ mod tests {
                 approval_id: Some("appr-9".into()),
                 plan_id: None,
                 inbox_id: None,
+                vault_request_id: None,
             },
             ttl: Some(Duration::from_secs(3600)),
             ai_generated: false,
             locale: Default::default(),
+            subtype: None,
         }
     }
 
@@ -477,6 +481,43 @@ mod tests {
             (crate::DEFAULT_TTL.as_secs() - 60..=crate::DEFAULT_TTL.as_secs()).contains(&left),
             "{left}"
         );
+    }
+
+    /// 保险箱请求、计划待确认（10.7）：自己的类别、高优先级，跳转目标和子类型在 `tt` 里。
+    #[tokio::test]
+    async fn vault_requests_and_plan_confirmations() {
+        let (client, fake, _) = setup().await;
+        let mut m = message(PushKind::VaultRequest);
+        m.target = PushTarget {
+            run_id: Some("run-1".into()),
+            vault_request_id: Some("vr-7".into()),
+            ..PushTarget::default()
+        };
+        client.send(TOKEN, &m).await;
+        let mut m = message(PushKind::Info);
+        m.subtype = Some("account_restored".into());
+        m.target = PushTarget::default();
+        client.send(TOKEN, &m).await;
+        client.send(TOKEN, &message(PushKind::PlanConfirm)).await;
+        let seen = fake.seen.lock().unwrap();
+        let (_, headers, body) = &seen[0];
+        assert_eq!(headers["apns-priority"], "10");
+        assert_eq!(body["aps"]["category"], "VAULT_REQUEST");
+        assert_eq!(body["aps"]["interruption-level"], "time-sensitive");
+        assert_eq!(
+            body["tt"],
+            json!({"kind": "vault_request", "run": "run-1", "vault_request": "vr-7"})
+        );
+        let (_, headers, body) = &seen[1];
+        assert_eq!(headers["apns-priority"], "5");
+        assert_eq!(
+            body["tt"],
+            json!({"kind": "info", "subtype": "account_restored"})
+        );
+        let (_, headers, body) = &seen[2];
+        assert_eq!(headers["apns-priority"], "10");
+        assert_eq!(body["aps"]["category"], "PLAN_CONFIRM");
+        assert!(body["aps"].get("interruption-level").is_none());
     }
 
     #[tokio::test]

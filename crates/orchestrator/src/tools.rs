@@ -182,7 +182,7 @@ impl ScheduleTools {
             collapse_id: Some(format!("plan-confirm:{}", plan.id)),
             // 计划标题是 agent 起的。
             ai_generated: true,
-            ..Notice::new(PushKind::Info, title, body)
+            ..Notice::new(PushKind::PlanConfirm, title, body)
         };
         notify_tenant(t, &notice).await?;
         t.append_event(

@@ -792,7 +792,8 @@ pub struct InboxItem {
     pub run_id: Option<String>,
     pub plan_id: Option<String>,
     pub approval_id: Option<String>,
-    /// run_finished / run_failed / approval / info
+    /// run_finished / run_failed / approval / computer_approval / vault_request / plan_confirm / info。以后可能有新的，
+    /// 不认识的按 info 显示。
     pub kind: String,
     pub title: String,
     pub body: String,
@@ -800,6 +801,13 @@ pub struct InboxItem {
     pub ai_generated: bool,
     pub read: bool,
     pub created_at_ms: i64,
+    /// 是哪一种提醒（10.7）：account_frozen、account_restored、stopped_all、approval_skipped、trigger_disabled、
+    /// im_channel_disabled、report_handled；运行进入等待时是 `Run.wait_code` 的值。和推送的 `tt.subtype` 一样。
+    #[uniffi(default = None)]
+    pub subtype: Option<String>,
+    /// 保险箱请求（`kind` 是 vault_request 时，`thinktin://vault/request/{id}`）。
+    #[uniffi(default = None)]
+    pub vault_request_id: Option<String>,
 }
 
 impl From<d::InboxItem> for InboxItem {
@@ -816,6 +824,8 @@ impl From<d::InboxItem> for InboxItem {
             ai_generated: i.ai_generated,
             read: i.read,
             created_at_ms: ms(i.created_at),
+            subtype: i.subtype,
+            vault_request_id: i.vault_request_id.map(|x| x.to_string()),
         }
     }
 }

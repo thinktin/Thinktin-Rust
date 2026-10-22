@@ -53,6 +53,7 @@ fn message(ttl: Option<Duration>) -> PushMessage {
         ttl,
         ai_generated: false,
         locale: Default::default(),
+        subtype: None,
     }
 }
 

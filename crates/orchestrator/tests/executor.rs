@@ -1510,9 +1510,12 @@ async fn a_run_stuck_on_its_model_key_waits_until_a_key_is_added() {
         "{:?}",
         rec.run.state_reason
     );
-    // 要用户处理：通知用户换 key。
+    // 要用户处理：通知用户换 key；提醒带上等的是什么，App 直接跳到换 key。
     assert!(
-        e.inbox().await.iter().any(|i| i.body.contains("更换 key")),
+        e.inbox()
+            .await
+            .iter()
+            .any(|i| i.body.contains("更换 key") && i.subtype.as_deref() == Some("invalid")),
         "{:?}",
         e.inbox().await
     );

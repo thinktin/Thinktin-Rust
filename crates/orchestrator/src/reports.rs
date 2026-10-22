@@ -31,7 +31,9 @@ pub async fn close(
     let account = w.user(user).await?;
     if account.status != UserStatus::Deleted {
         let (title, body) = texts::report_handled(account.locale, resolution);
-        notify(&mut w, user, &Notice::new(PushKind::Info, title, body)).await?;
+        let notice = Notice::new(PushKind::Info, title, body)
+            .subtype(proto::domain::notice_subtype::REPORT_HANDLED);
+        notify(&mut w, user, &notice).await?;
     }
     w.commit().await?;
     Ok(closed)

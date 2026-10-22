@@ -348,7 +348,7 @@ impl Tx<Tenant> {
         row.into_request()
     }
 
-    /// 处理请求：填好了（`item` 是存进去的条目）或者拒绝。已经处理过、过期了返回冲突。
+    /// 处理请求：填好了（`item` 是存进去的条目）或者拒绝；收件箱里的提醒算已读。已经处理过、过期了返回冲突。
     pub async fn resolve_vault_request(
         &mut self,
         id: VaultRequestId,
@@ -370,7 +370,11 @@ impl Tx<Tenant> {
         .fetch_optional(self.conn())
         .await?;
         match row {
-            Some(r) => r.into_request(),
+            Some(r) => {
+                // 处理完了，收件箱里那条提醒算已读（和审批一样）。
+                self.settle_vault_request_inbox(id).await?;
+                r.into_request()
+            }
             None => {
                 let current = self.vault_request(id).await?;
                 Err(Error::Conflict(format!(

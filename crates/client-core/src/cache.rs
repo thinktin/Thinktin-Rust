@@ -428,6 +428,8 @@ mod tests {
             ai_generated: true,
             read,
             created_at: Utc::now(),
+            subtype: None,
+            vault_request_id: None,
         }
     }
 
