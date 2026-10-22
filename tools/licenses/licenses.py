@@ -239,6 +239,17 @@ FREE_TEXT = {
     "bsd-2": "BSD-2-Clause",
     "isc license": "ISC",
     "isc license (iscl)": "ISC",
+    "iscl": "ISC",
+    "revised bsd": "BSD-3-Clause",
+    "bsd (3-clause)": "BSD-3-Clause",
+    "bsd (2-clause)": "BSD-2-Clause",
+    "apache license v2.0": "Apache-2.0",
+    "apache license v2": "Apache-2.0",
+    "apache license (2.0)": "Apache-2.0",
+    "cc0 1.0 universal": "CC0-1.0",
+    "zpl 2.1": "ZPL-2.1",
+    "gnu lgpl": "LicenseRef-LGPL-Unspecified",
+    "gnu gpl": "LicenseRef-GPL-Unspecified",
     "psf": "PSF-2.0",
     "psfl": "PSF-2.0",
     "psf license": "PSF-2.0",
@@ -326,6 +337,26 @@ def normalize_declared(text):
     c = canonical_spdx(text)
     if c:
         return c
+    # GNU、MPL 的简写：LGPLv3、LGPL v2.1+、GPL-3 or later、MPLv2、MPL v2.0
+    m = re.fullmatch(r"(?:gnu\s+)?(a|l)?gpl[\s-]*v?(\d)(?:\.(\d))?(\+|\s+or\s+later)?", key)
+    if m:
+        lid = "%sGPL-%s.%s-%s" % ((m.group(1) or "").upper(), m.group(2), m.group(3) or "0", "or-later" if m.group(4) else "only")
+        return lid if lid in LICENSE_IDS else None
+    m = re.fullmatch(r"mpl[\s-]*v?(\d)(?:\.(\d))?", key)
+    if m:
+        lid = "MPL-%s.%s" % (m.group(1), m.group(2) or "0")
+        return lid if lid in LICENSE_IDS else None
+    # 结尾多一个 License（“BSD 3-Clause License”“Expat license”“Apache-2.0 license”）
+    m = re.fullmatch(r"(.+?)\s+licen[cs]e", key)
+    if m and normalize_declared(m.group(1)):
+        return normalize_declared(m.group(1))
+    # 括号里是同一个许可证的别名（“Expat (MIT/X11)”“ISC License (ISCL)”）；括号里是别的话（“MIT (non-commercial use
+    # only)”）不认
+    m = re.fullmatch(r"(.+?)\s*\(([^()]+)\)", text)
+    if m:
+        outer, inner = normalize_declared(m.group(1)), normalize_declared(m.group(2))
+        if outer and outer == inner:
+            return outer
     if "/" in text:  # Cargo 早期用 / 表示“任选其一”：`MIT/Apache-2.0`、`Apache-2.0 / MIT`
         c = canonical_spdx(" OR ".join(p.strip() for p in text.split("/")))
         if c:
@@ -1225,13 +1256,16 @@ def restricted_terms(paths):
         if len(text.encode("utf-8", errors="replace")) > SCAN_MAX_BYTES:
             hits.append("file too large to scan: %s" % Path(p).name)
             continue
-        # 只留字母、数字和断句的标点：Markdown 的 **粗体**、> 引用、// 注释前缀、各种连字符都当空格，说法拆不开。
-        t = re.sub(r"[^\w.!?;:,]+|_+", " ", _fold(text).lower())
-        t = re.sub(r"\bcommercial,? (or|and) non ?commercial\b|\bnon ?commercial,? (or|and) commercial\b", "", t)
-        for phrase in _RESTRICTED_PHRASES:
-            if phrase in t and phrase not in hits:
-                hits.append(phrase)
+        hits += [h for h in _restricted_in(text) if h not in hits]
     return hits
+
+
+def _restricted_in(text):
+    """一段原文里的限制性说法。只留字母、数字和断句的标点：Markdown 的 **粗体**、> 引用、// 注释前缀、各种连字符都当
+    空格，说法拆不开。"""
+    t = re.sub(r"[^\w.!?;:,]+|_+", " ", _fold(text).lower())
+    t = re.sub(r"\bcommercial,? (or|and) non ?commercial\b|\bnon ?commercial,? (or|and) commercial\b", "", t)
+    return [phrase for phrase in _RESTRICTED_PHRASES if phrase in t]
 
 
 # ---------------------------------------------------------------------------
@@ -1254,9 +1288,10 @@ class Inventory:
         self.components = {}
 
     def add(self, ecosystem, name, version, declared, license, license_from, files, path, root_level=False, extra=None,
-            authors=None, bundled=None, fonts=None, source_url=None, asset_base=None):
+            authors=None, bundled=None, fonts=None, source_url=None, asset_base=None, texts=None):
         """files：包根目录的许可证文件（拿来认许可证）；bundled：子目录里的（打包进来的第三方代码、字体的原文，
-        只拿来和声明对照、找限制性说法）；fonts：包里的字体（相对 path 记下来，检查时要有登记）。
+        只拿来和声明对照、找限制性说法）；fonts：包里的字体（相对 path 记下来，检查时要有登记）；texts：不是文件的
+        许可证原文 [(名字, 原文)]（PyPI 的 License 字段里的整篇正文），和根目录的许可证文件一样和声明对照、找限制性说法。
 
         同名同版本的包在别的位置又出现一次（npm 的依赖树里常见）：这一份的原文、字体也记上（可能被打过补丁、
         或者构建时只删了一份里的字体），许可证认得不一样时两个都算（AND）。"""
@@ -1270,8 +1305,10 @@ class Inventory:
             dict({"file": self._where.get(Path(src), str(src)), "path": _relative(src, base)}, **r, **({"bundled": True} if b else {}))
             for b, group in ((False, files), (True, bundled)) if checked
             for src, r in file_detections(group or [])
-        ]
+        ] + [dict({"file": label, "path": label}, **examine(text)) for label, text in (texts or []) if checked]
         restricted = restricted_terms(list(files or []) + list(bundled or [])) if checked else []
+        for _, text in (texts or []) if checked else []:
+            restricted += [h for h in _restricted_in(text) if h not in restricted]
         if restricted and license:
             try:
                 wrap = parse_spdx(license)[0] == "or"
@@ -1529,12 +1566,15 @@ def resolve_license(declared_list, files, classifiers=(), see_file=None):
     if any(not _is_vague(c) for c in classifiers):
         return _and(classifiers), "classifier"
     from_text = license_from_files(files)
+    if classifiers:
+        # 分类都含糊（“BSD License”）：和含糊的声明一样，核对过的同一类原文细化它，别的（包括认不出的原文）一起算（AND）
+        if from_text and len(classifiers) == 1 and _same_family(classifiers[0], from_text):
+            return from_text, "text"
+        return _and(([from_text] if from_text else []) + list(classifiers)), "classifier"
     if from_text == "LicenseRef-Unrecognized":
-        from_text = None  # 一个也认不出：许可证未知（要登记），不是“认出来一半”
+        return None, "none"  # 一个也认不出：许可证未知（要登记），不是“认出来一半”
     if from_text:
         return from_text, "text"
-    if classifiers:
-        return _and(classifiers), "classifier"
     return None, "none"
 
 
@@ -1683,22 +1723,32 @@ def scan_python(inv, site_packages, root_names=()):
             continue
         declared = []
         expr = msg.get("License-Expression")
+        raw_expr = expr.strip() if expr else None
         if expr:
             declared.append(expr.strip())
             # 认得出的 License-Expression 为准（PEP 639：有它就不看 License 字段和许可证分类）；认不出时一起报
             expr = expr if normalize_declared(expr) else None
-        lic = msg.get("License")
-        # 有的包把整篇许可证正文塞进 License 字段：太长或多行的不当声明用，靠原文识别。
-        short_lic = lic.strip() if lic and len(lic.strip()) <= 120 and "\n" not in lic.strip() else None
-        if short_lic and _norm_text(short_lic).rstrip(".") not in _NOT_A_DECLARATION:
-            declared.append(short_lic)
+        lic = (msg.get("License") or "").strip()
+        texts, shown_lic = [], []
+        if len(lic) <= 120 and "\n" not in lic:
+            if lic and _norm_text(lic).rstrip(".") not in _NOT_A_DECLARATION:
+                declared.append(lic)
+                shown_lic.append(lic)
+        else:
+            # 有的包把整篇许可证正文塞进 License 字段（setuptools 的 license=open("LICENSE").read()）：当一份原文核对，
+            # 核对得上就是那个许可证的声明，对不上就是认不出的声明；照样和声明对照、找限制性说法。
+            body = re.sub(r"\n {7}\|?|\n {8}", "\n", lic)
+            texts.append(("METADATA:License", body))
+            lid = detect_text(body)
+            declared.append(lid or "License text (unrecognized)")
+            shown_lic.append("License: %s…" % re.sub(r"\s+", " ", body)[:60])
         classifiers = [c.split("::")[-1].strip() for c in msg.get_all("Classifier") or [] if c.startswith("License ::")]
         classifiers = [c for c in classifiers if c.lower() != "osi approved"]
         mapped = [CLASSIFIERS[c.lower()] for c in classifiers if c.lower() in CLASSIFIERS]
         # 对照表里没有的许可证分类当成认不出的声明（可能正是限制性的），除非有明确的 License-Expression。
         declared += ["Classifier: %s" % c for c in classifiers if c.lower() not in CLASSIFIERS]
         if expr:
-            declared, mapped = declared[:1], []
+            declared, mapped, shown_lic = declared[:1], [], []
         files = legal_files(dist) if dist.is_dir() else []
         # venv 里的 pip、setuptools 是 Debian 的 python3-pip-whl / python3-setuptools-whl 那个 wheel 装的，
         # 它们 vendored 的第三方包（pip/_vendor：certifi、requests、urllib3……）的版权和许可证在 Debian 的 copyright 文件里。
@@ -1727,12 +1777,12 @@ def scan_python(inv, site_packages, root_names=()):
             more = [m for m in mapped if not all(_covers(license, i) for i in spdx_ids(parse_spdx(m)))]
             if more:
                 license = _and([license] + more)
-        shown = "; ".join([d for d in declared if not d.startswith("Classifier: ")] + ["Classifier: %s" % c for c in classifiers]) or None
+        shown = "; ".join(([raw_expr] if raw_expr else []) + shown_lic + ["Classifier: %s" % c for c in classifiers]) or None
         authors = msg.get("Author") or msg.get("Author-email") or msg.get("Maintainer") or msg.get("Maintainer-email")
         inv.add("pypi", name, version, shown, license, source, files, dist, pypi_norm(name) in roots, extra=extra or None,
                 authors=authors.strip() if authors and authors.strip().upper() != "UNKNOWN" else None,
                 bundled=[f for f in bundled if f not in files], fonts=fonts, asset_base=site_packages,
-                source_url=pypi_source(msg, name, version))
+                source_url=pypi_source(msg, name, version), texts=texts)
 
 
 def record_files(dist, site_packages):
@@ -3526,6 +3576,53 @@ def self_test():
             ("版权方叫 Grant", "Copyright 2014-2019 Grant Jenks\n\n" + mit_body, "MIT"),
             ("版权方是小写的 npm, Inc.", ISC_TEXT.replace("2024 Someone", "npm, Inc.").replace("Copyright (c)", "Copyright"), "ISC")]:
         eq(detect_text(text), want, "真实原文的写法核对得上：%s" % name)
+    # PyPI：常见的 License 字段写法；很长、多行的 License 字段当原文核对；只有含糊的分类时认不出的原文照样算
+    for text, want in [("BSD 3-Clause License", "BSD-3-Clause"), ("BSD-3-Clause License", "BSD-3-Clause"), ("Expat license", "MIT"),
+                       ("Expat (MIT/X11)", "MIT"), ("Simplified BSD License", "BSD-2-Clause"), ("Revised BSD License", "BSD-3-Clause"),
+                       ("BSD (3-clause)", "BSD-3-Clause"), ("Apache 2.0 License", "Apache-2.0"), ("Apache License v2.0", "Apache-2.0"),
+                       ("Apache License (2.0)", "Apache-2.0"), ("Apache-2.0 license", "Apache-2.0"), ("MPL v2", "MPL-2.0"),
+                       ("MPLv2.0", "MPL-2.0"), ("ISCL", "ISC"), ("CC0 1.0 Universal", "CC0-1.0"), ("ZPL 2.1", "ZPL-2.1"),
+                       ("LGPLv3", "LGPL-3.0-only"), ("LGPL v3", "LGPL-3.0-only"), ("LGPLv3+", "LGPL-3.0-or-later"),
+                       ("GNU LGPL", "LicenseRef-LGPL-Unspecified"), ("GPLv2+", "GPL-2.0-or-later"), ("The MIT License (MIT)", "MIT"),
+                       ("MIT (non-commercial use only)", None), ("Apache 2.0 (with Commons Clause)", None), ("Elastic License", None),
+                       ("MIT No Attribution License", None), ("Business Source License", None)]:
+        eq(normalize_declared(text), want, "PyPI 的 License 写法：%s" % text)
+    with tempfile.TemporaryDirectory() as tmp:
+        sp = Path(tmp) / "sp"
+        eula = ("This software is the confidential property of Foo Corp. Use of this software requires a separate written agreement "
+                "with Foo Corp; redistribution is not permitted.")
+        nc = "Free for non-commercial use. Commercial use requires a paid license from Foo Inc.; contact licensing@foo.example for details."
+        mit_cls = "Classifier: License :: OSI Approved :: MIT License\n"
+        bsd_cls = "Classifier: License :: OSI Approved :: BSD License\n"
+        fold = lambda t: t.strip().replace("\n", "\n        ")
+        for name, headers, files in [
+                ("long-commons", "License: %s\n%s" % (fold(MIT_TEXT + "\n\"Commons Clause\" License Condition v1.0\n"), mit_cls), {}),
+                ("long-eula", "License: %s\n%s" % (eula, mit_cls), {}),
+                ("long-eula-file", "License: %s\n" % eula, {"LICENSE": MIT_TEXT}),
+                ("long-nc", "License: %s\n%s" % (nc, mit_cls), {"LICENSE": MIT_TEXT}),
+                ("long-ccnc", "License: %s\n%s" % (fold("Attribution-NonCommercial 4.0 International\n\nCreative Commons Corporation "
+                                                       "is not a law firm.\n"), mit_cls), {}),
+                ("vague-proprietary", bsd_cls, {"LICENSE": "Copyright (c) 2024 Acme Corp. All rights reserved. " + eula}),
+                ("vague-bsd3", bsd_cls, {"LICENSE": BSD3_TEXT}),
+                ("vague-mit", bsd_cls, {"LICENSE": MIT_TEXT})]:
+            d = sp / ("%s-1.0.dist-info" % name.replace("-", "_"))
+            d.mkdir(parents=True)
+            (d / "METADATA").write_text("Metadata-Version: 2.1\nName: %s\nVersion: 1.0\n%s\nx\n" % (name, headers))
+            for fn, text in files.items():
+                (d / fn).write_text(text)
+        inv = Inventory(Path(tmp) / "out", "pypi")
+        scan_python(inv, sp)
+        got = {k[1]: v for k, v in inv.components.items()}
+        errors, _, _ = check(inv.write(), pol)
+        for name in ("long-commons", "long-eula", "long-eula-file", "long-nc", "long-ccnc", "vague-proprietary"):
+            eq(any("pypi %s@" % name in e for e in errors), True, "PyPI 要拦：%s（%s）" % (name, got[name]["license"]))
+        eq(got["long-commons"]["restricted_terms"] is not None and got["long-ccnc"]["restricted_terms"] is not None, True,
+           "License 字段里的限制性说法也找")
+        eq((got["long-eula"]["license"], got["long-eula"]["declared"].startswith("License: This software is the confidential")), (None, True),
+           "很长的 License 字段核对不上就是认不出的声明，清单里也列出来")
+        eq((got["vague-proprietary"]["license"], got["vague-bsd3"]["license"], got["vague-mit"]["license"]),
+           ("LicenseRef-Unrecognized AND LicenseRef-BSD-Unspecified", "BSD-3-Clause", "MIT AND LicenseRef-BSD-Unspecified"),
+           "只有含糊的分类：同一类的原文细化，别的原文（包括认不出的）一起算")
     # GPL、LGPL 原文前面有好几段说明（Linux、git、libgit2 的 COPYING）：按文件里任何位置的正文标题提名
     preface = ("NOTE! This copyright does *not* cover programs that merely use the services of this project through its "
                "public interfaces - that is considered normal use, and does *not* fall under the heading of \"derived work\". "
