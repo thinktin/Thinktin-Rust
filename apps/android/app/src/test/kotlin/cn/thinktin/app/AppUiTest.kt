@@ -5,15 +5,15 @@ import android.net.Uri
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.hasAnyAncestor
-import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isPopup
 import androidx.compose.ui.test.isSelectable
+import androidx.compose.ui.test.isSelected
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.junit4.ComposeTestRule
@@ -29,6 +29,7 @@ import cn.thinktin.design.theme.Appearance
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -125,11 +126,12 @@ class AppUiTest {
         launch()
         openSettingsFromDrawer()
         val dark = hasText("深色")
-        compose.onNode(dark).performClick()
-        compose.waitUntil(timeoutMillis = 10_000) {
-            runBlocking { app().container.settings.first().appearance } == Appearance.Dark
-        }
-        compose.onNode(isSelectable() and hasAnyDescendant(dark)).assertIsSelected()
+        compose.waitForIdle()
+        compose.onNode(dark).performSemanticsAction(SemanticsActions.OnClick)
+        // 等界面上“深色”变成选中（同步主线程；DataStore 的 transform 要在主线程上跑），再确认存进了设置
+        compose.waitFor(dark and isSelectable() and isSelected())
+        compose.onNode(hasText("跟随系统")).assertIsNotSelected()
+        assertEquals(Appearance.Dark, runBlocking { app().container.settings.first().appearance })
         // debug 包里有演示模式开关，演示模式下没有“退出登录”
         compose.onNode(hasText("演示模式")).assertIsDisplayed()
         compose.onAllNodes(hasText("退出登录")).assertCountEquals(0)

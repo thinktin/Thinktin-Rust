@@ -102,11 +102,13 @@ class AppContainer(
             context: Context,
             forceDemo: Boolean = false,
             clock: Clock = Clock.systemDefaultZone(),
+            /** DataStore 的文件名（测试里每个 Application 用自己的，同一进程里不能有两个 DataStore 开同一个文件）。 */
+            settingsName: String = "settings",
         ): AppContainer {
             val app = context.applicationContext
             val store = PreferenceDataStoreFactory.create(
                 scope = CoroutineScope(Dispatchers.IO + SupervisorJob()),
-                produceFile = { app.preferencesDataStoreFile("settings") },
+                produceFile = { app.preferencesDataStoreFile(settingsName) },
             )
             return AppContainer(
                 settingsRepository = AppSettingsRepository(

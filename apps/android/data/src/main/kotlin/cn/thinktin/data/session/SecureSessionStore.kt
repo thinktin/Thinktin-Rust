@@ -32,6 +32,7 @@ class SecureSessionStore internal constructor(private val prefs: SharedPreferenc
     /** 令牌能落盘（加密偏好可用）。 */
     val persistent: Boolean get() = prefs != null
 
+    @SuppressLint("ApplySharedPref") // 清掉读不出的令牌要立即落盘，同 save。
     override fun load(): Session? {
         val prefs = prefs ?: return memory
         return try {

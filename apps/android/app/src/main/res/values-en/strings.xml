@@ -136,7 +136,7 @@
     <string name="error_forbidden">You do not have permission to do this.</string>
     <string name="error_quota">Quota used up.</string>
     <string name="error_server">Something went wrong on the server (%1$s).</string>
-    <string name="error_contains_secrets">Your message seems to contain passwords or keys (%1$d found) and was not sent. Save them to the vault first.</string>
+    <string name="error_contains_secrets">Your message seems to contain passwords or keys (count: %1$d) and was not sent. Save them to the vault first.</string>
     <string name="error_unsupported">This feature is not available yet.</string>
     <string name="error_other">Something went wrong. Please try again.</string>
 </resources>

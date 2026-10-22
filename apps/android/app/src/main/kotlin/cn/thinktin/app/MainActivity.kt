@@ -19,8 +19,9 @@ import cn.thinktin.design.theme.Appearance
 import cn.thinktin.design.theme.ThinktinTheme
 
 /**
- * 唯一的 Activity（singleTask）。深链（第 3 节）不交给 NavController 自己从 Activity 的 intent 里读：
- * 冷启动（onCreate）和 App 已在运行时（onNewIntent）都放进 [deepLinks]，由主界面统一处理，见 [DeepLinkInbox]。
+ * 唯一的 Activity（singleTask）。深链（第 3 节）不让 NavController 自己从 Activity 的 intent 里读
+ * （主界面的 NavController 不绑 Activity，见 rememberAppNavController）：冷启动（onCreate）和 App 已在运行时
+ * （onNewIntent）都放进 [deepLinks]，由主界面统一处理，见 [DeepLinkInbox]。
  */
 class MainActivity : ComponentActivity() {
     internal val deepLinks = DeepLinkInbox()
@@ -34,7 +35,6 @@ class MainActivity : ComponentActivity() {
             // 重建（旋转、进程被杀后恢复）：intent 还是当初那条，已经处理过；只恢复还没处理的。
             deepLinks.restore(savedInstanceState.getString(KEY_PENDING_DEEP_LINK)?.let(Uri::parse))
         }
-        intent = intent.withoutDeepLink()
         val container = (application as ThinktinApp).container
         setContent {
             val settings by container.settings.collectAsStateWithLifecycle(initialValue = null)
@@ -56,10 +56,6 @@ class MainActivity : ComponentActivity() {
         super.onSaveInstanceState(outState)
         deepLinks.current.value?.let { outState.putString(KEY_PENDING_DEEP_LINK, it.toString()) }
     }
-
-    /** 去掉深链的 intent：NavController 建图时会读 Activity 的 intent，不能让它再跳一次。 */
-    private fun Intent.withoutDeepLink(): Intent =
-        if (action == Intent.ACTION_VIEW) Intent(this).setAction(Intent.ACTION_MAIN).setData(null) else this
 
     /** 状态栏、导航栏图标的深浅跟着 App 的外观设置走（不只是系统的）。 */
     @Composable

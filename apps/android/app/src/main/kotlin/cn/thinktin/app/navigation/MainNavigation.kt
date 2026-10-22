@@ -1,5 +1,6 @@
 package cn.thinktin.app.navigation
 
+import android.content.Context
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.rememberDrawerState
@@ -7,7 +8,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
@@ -16,10 +20,11 @@ import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
+import androidx.navigation.compose.ComposeNavigator
+import androidx.navigation.compose.DialogNavigator
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
-import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import androidx.navigation.navDeepLink
 import cn.thinktin.app.ui.common.LocalThinktinService
@@ -36,9 +41,30 @@ import kotlinx.coroutines.launch
 /** 当前的深链收件箱（MainActivity 提供；预览和测试里没有就是空的）。 */
 val LocalDeepLinks = staticCompositionLocalOf { DeepLinkInbox() }
 
+/**
+ * 主界面的 NavController。和 rememberNavController 一样，只是用 Application 的 Context 构造：NavController 拿不到
+ * Activity，就不会在建图时自己处理 Activity intent 里的深链（否则每次主界面重建——退出再登录、切换演示模式——
+ * 都会把冷启动时的那条深链再跳一遍）。深链统一由 [DeepLinkInbox] 交给 [NavHostController.handleDeepLink]。
+ */
+@Composable
+fun rememberAppNavController(): NavHostController {
+    val context = LocalContext.current.applicationContext
+    return rememberSaveable(
+        saver = Saver(
+            save = { it.saveState() },
+            restore = { state -> createNavController(context).apply { restoreState(state) } },
+        ),
+    ) { createNavController(context) }
+}
+
+private fun createNavController(context: Context): NavHostController = NavHostController(context).apply {
+    navigatorProvider.addNavigator(ComposeNavigator())
+    navigatorProvider.addNavigator(DialogNavigator())
+}
+
 /** 已登录（或演示模式）时的主界面：抽屉 + NavHost（第 3 节）。 */
 @Composable
-fun MainNavigation(navController: NavHostController = rememberNavController()) {
+fun MainNavigation(navController: NavHostController = rememberAppNavController()) {
     val service = LocalThinktinService.current
     val deepLinks = LocalDeepLinks.current
     val pendingDeepLink by deepLinks.current.collectAsStateWithLifecycle()

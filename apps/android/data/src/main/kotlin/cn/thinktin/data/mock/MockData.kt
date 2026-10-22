@@ -491,9 +491,11 @@ internal class MockData(private val baseMs: Long) {
     val vaultItems = listOf(
         VaultItem("vault-github", "github", "推送代码到 GitHub", true, listOf(INSTANCE_CODER), ago(60L * 24 * 7), ago(60L * 24 * 7), ago(2)),
         VaultItem("vault-npm", "npm_token", "发布 npm 包", false, emptyList(), ago(60L * 24 * 3), ago(60L * 24), null),
+        // vreq-done 填写后存下的条目
+        VaultItem("vault-zotero", "zotero", "同步文献库", false, listOf(INSTANCE_RESEARCH), ago(115), ago(115), ago(110)),
     )
 
-    val vaultUsernames: Map<String, String> = mapOf("vault-github" to "demo-user", "vault-npm" to "")
+    val vaultUsernames: Map<String, String> = mapOf("vault-github" to "demo-user", "vault-npm" to "", "vault-zotero" to "")
 
     val vaultRequests = listOf(
         VaultRequest(

@@ -6,16 +6,17 @@
 
 已完成：
 - 分支与进度文件（本文件）。
-- WBS 13.x 对齐：`docs/gen_wbs.py` 里补回 `backend-core` 手改进 `wbs.md` 的 1.6、9.11、9.12、11.6、13.12；13.1–13.12 的“同 12.x”改成明确交付物；新增 13.13 设置 / 多语言 / 开源许可、13.14 密码保险箱界面、13.15 IM 渠道设置；重新生成 `wbs.md`、`wbs.csv`。
-- 安卓端设计规范 `docs/android-design.md`。
+- WBS 13.x 对齐：`docs/gen_wbs.py` 里补回 `backend-core` 手改进 `wbs.md` 的 1.6、9.11、9.12、11.6、13.12；13.1–13.12 的“同 12.x”改成明确交付物；新增 13.13 设置 / 多语言 / 开源许可、13.14 密码保险箱界面、13.15 IM 渠道设置、13.16 云端审批；13.9 改为电脑高危操作的签名审批（P3）；重新生成 `wbs.md`、`wbs.csv`。
+- 安卓端设计规范 `docs/android-design.md`（含第 8 节数据契约：状态取值、事件流种类与载荷、调用约定、AI 标识规则、审批与生物识别、易漏交互）。
+- **13.1 工程搭建**（`37088ca` 搭建，`b37536f`…修复）：`apps/android` Gradle 多模块工程（`:app`、`:core`、`:design`、`:data`，Kotlin 2.1 / AGP 8.7.3 / Compose BOM 2024.12）；`:core` 放 UniFFI 生成的 `client_core.kt`（经 `scripts/patch-bindings.py` 修 Kotlin 2 下错误类型 `message` 字段与 `Throwable.message` 的冲突），jniLibs 与许可证资源由 `scripts/sync-core.sh` 同步（不提交）；`:design` 主题（设计规范 2.1 色值、衬线标题）与通用组件（含 AI 生成标识）；`:data` 模型与映射、`ThinktinService` 接口、`CoreThinktinService`（异常统一转 `ServiceError`）、`MockThinktinService`（覆盖全部事件种类）、`SecureSessionStore`（Keystore 失效 / 文件损坏时清空重建）、`ClientFactory`；`:app` cn / global 风味、`AppContainer`（后台初始化、核心库不可用页）、抽屉与全部路由、冷启动与热启动（`onNewIntent`）深链、首页、各页骨架、中英文文案；150 个 JVM / Robolectric 测试（含经 JNA 真调本机 .so 的 `CoreSmokeTest`）、lint 0 错误；`.github/workflows/android.yml`（绑定一致性检查 + test + lint + assembleDebug）。四维评审 35 条确认发现已修复（CI 不打三个 ABI 的 .so 是有意的，见 README）。
 
 进行中：
-- 13.1 工程搭建：Workflow（Opus 5.5 的 agent：搭建 → 四维评审 → 反方核实 → 修复 → 干净构建验证）2026-10-22 01:50（北京时间）启动，运行 id `wf_a7649acd-0c0`。若会话中断，恢复命令：`Workflow({scriptPath: "<会话目录>/workflows/scripts/android-13-1-scaffold-wf_a7649acd-0c0.js", resumeFromRunId: "wf_a7649acd-0c0"})`；容器已回收时按 `apps/android/README.md` 重装环境后从 `autosave/android-app` 恢复工作区再接着做。
+- 合并 `backend-core`（11.7 补齐的 App 接口、Plan 默认值），重新生成绑定与 .so，`CoreThinktinService` 接上新方法；等 backend-core 推上 11.8 的 `TlsInit` JNI 导出后补 Kotlin 一半（Android 上 HTTPS 需要先初始化 rustls-platform-verifier，否则首个握手 panic）。
 
 下一步：
-1. 13.1 工程：`apps/android` Gradle 工程（Kotlin DSL、版本目录）、`core` 模块（client-core 绑定）、`app` 模块（Compose、主题、导航、Mock 客户端）、JVM 单元测试与 Compose（Robolectric）测试、GitHub Actions `android` job。
-2. 13.2 → 13.3 → 13.4 → 13.5 → 13.6 → 13.8 → 13.13 → 13.7 → 13.11 / 13.12，再做 P2 的 13.9、13.10、13.14。
-3. 每个工作包：实现 → 评审 → 测试 → 提交推送 → 更新本文件。
+1. 13.2 登录与设备管理（含 TlsInit、真实 HTTPS 联调前的准备）。
+2. 13.3 → 13.4 → 13.16 → 13.5 → 13.6 → 13.8 → 13.13 → 13.7 → 13.11 / 13.12，再做 P2 的 13.10、13.14。
+3. 每个工作包：Workflow（实现 → 多维评审 → 反方核实 → 修复 → 最终验证）→ 提交推送 → 更新本文件。
 
 坑和决定：
 - 云端会话没有 KVM，跑不了模拟器：界面测试用 Robolectric 跑 Compose UI 测试，业务逻辑用 JVM 单元测试；真机联调靠 CI 产出的 APK。
@@ -24,4 +25,6 @@
 - 本机 Gradle 一律先走阿里云镜像（`~/.gradle/init.d/aliyun-mirror.gradle`，只影响这台机器），否则 Maven Central 会 429；同一时间只跑一个 Gradle 构建。
 - client-core 还没导出、服务端已有的接口（设备列表与下线、注销、update_plan / add_trigger / delete_trigger、团队与模板、update_credential、产出物列表与删除、收件箱删除和标未读、runs 分页）：App 侧的 `ThinktinService` 先定义、Mock 实现、真核心适配层返回“暂不支持”，等 backend-core 的 11.7 落地后接上（iOS 会话同样处理）。
 - 分支约定同 `CLAUDE.md`：小步提交马上推送，`autosave/android-app` 兜底。
-- 用量限制后由预约的提醒叫醒本会话接着做。
+- 用量限制后由预约的提醒叫醒本会话接着做（五小时窗口由三个会话共用，比预期更早触顶；Workflow 被中断后用 `resumeFromRunId` 恢复，已完成的 agent 直接回放）。
+- 13.1 的有意偏差：测试框架用 JUnit 4（Robolectric、Compose 测试规则所需）；CI 的 debug APK 不含 .so（完整包走 `mobile.yml` 或本地 `sync-core.sh`）；Robolectric 的 android-all 经 Gradle 依赖离线取（Maven Central 直连会 429）；`sync-core.sh` 全量模式用不含 gradle 的 PATH 调 `build-android.sh` 跳过 AAR（本机没有 JDK 17）。
+- 建议 client-core 把 `ClientError` / `PairingError` 里的 `message` 字段改名，这样 Kotlin 绑定不需要补丁（已告知 backend-core 会话）。
