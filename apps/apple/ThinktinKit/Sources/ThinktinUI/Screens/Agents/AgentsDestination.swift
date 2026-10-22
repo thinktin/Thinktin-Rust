@@ -3,17 +3,25 @@ import ThinktinKit
 
 /// Agent 目录与领养（WBS 12.3）的接入点：`AppShell` 把 `route.feature == .agents` 的页面都交给它。
 ///
-/// 页面：Agent 目录（`.agentCatalog`）、Agent 详情（`.agent`）、实例详情（`.instance`：状态说明、改名、升级 / 回滚、删除）。
+/// 页面：Agent 目录（`.agentCatalog`，`AgentCatalogScreen`）、Agent 详情（`.agent`，`AgentDetailScreen`，“领养”弹出
+/// `AdoptAgentSheet`）、实例详情（`.instance`，`InstanceDetailScreen`：状态说明、改名、升级 / 回滚、模型路由、
+/// 计划和产出物入口、删除前列出级联影响的 `InstanceDeleteSheet`）。视图模型在 `ThinktinKit/ViewModels/Agents/`。
 ///
-/// 现在是占位页。做 12.3 时在 `Screens/Agents/` 里写页面，把 `body` 换成按 `route` 分派到各页面；视图模型放
-/// `ThinktinKit/ViewModels/Agents/`，测试放 `Tests/ThinktinKitTests/Agents/` 和 `Tests/ThinktinUITests/Agents/`。
-/// 全局状态、跳转、客户端从环境里取（`@Environment(AppModel.self)`、`@Environment(Router.self)`、`@Environment(\.client)`），
-/// 规则见 docs/ios.md 第 9 节。
+/// 每个页面按 id 重建（`.id`），从一个实例的详情跳到另一个实例的详情时不沿用上一个的状态。
 struct AgentsDestination: View {
     let route: AppRoute
 
     var body: some View {
-        DestinationPlaceholder(route: route)
+        switch route {
+        case .agentCatalog:
+            AgentCatalogScreen()
+        case .agent(let id):
+            AgentDetailScreen(agentID: id).id(id)
+        case .instance(let id):
+            InstanceDetailScreen(instanceID: id).id(id)
+        default:
+            DestinationPlaceholder(route: route)
+        }
     }
 }
 
