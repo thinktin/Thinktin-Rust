@@ -5,7 +5,9 @@
 //! Android 上系统的证书校验要经 JNI 调 Java，所以 App 建 [`ThinktinClient`](crate::ffi::ThinktinClient) 之前要先调
 //! `cn.thinktin.core.TlsInit.initialize(applicationContext)`（Kotlin：`object TlsInit { init { System.loadLibrary(
 //! "client_core") } @JvmStatic external fun initialize(context: android.content.Context) }`），没调的话 https 的地址
-//! 建客户端时直接报错（不然第一次握手时才 panic）。
+//! 建客户端时直接报错（不然第一次握手时才 panic）。校验时调的是 rustls-platform-verifier 的 Kotlin 组件
+//! `org.rustls:rustls-platform-verifier`：`tools/client-core/build-android.sh` 生成的库工程带着这个依赖和混淆规则，
+//! 引入库工程的 App 要在 settings.gradle.kts 里加它的 Maven 仓库；缺了它每次握手都失败（找不到类）。
 
 use std::sync::Arc;
 

@@ -6,6 +6,11 @@
 #
 # 输出：<out>/thinktin-core/（Android 库工程：Kotlin 绑定 + jniLibs），
 #       <out>/thinktin-core/build/outputs/aar/*.aar（有 gradle 时）。
+#
+# 校验证书用系统的证书库（rustls-platform-verifier），在 Android 上要配套它的 Kotlin 组件
+# `org.rustls:rustls-platform-verifier`（版本和 Cargo.lock 里的 rustls-platform-verifier-android 一样），从它在 GitHub
+# 上的 Maven 仓库拿。库工程已经声明了这个依赖和保留它的混淆规则；App 把库工程当子工程引入时，App 的
+# settings.gradle.kts 里也要加上同一个 Maven 仓库（见 settings.gradle.kts），直接用 AAR 文件的要自己声明这个依赖。
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 : "${ANDROID_NDK_HOME:?set ANDROID_NDK_HOME to the Android NDK}"
@@ -16,6 +21,8 @@ abis=(arm64-v8a armeabi-v7a x86_64)
 
 rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
 mod="$out/thinktin-core"
+verifier=$(awk '$0 == "name = \"rustls-platform-verifier-android\"" { getline; gsub(/version = |"/, ""); print; exit }' Cargo.lock)
+[ -n "$verifier" ] || { echo "rustls-platform-verifier-android is not in Cargo.lock" >&2; exit 1; }
 rm -rf "$out"
 mkdir -p "$mod/src/main/jniLibs" "$mod/src/main/kotlin"
 # Android 15 起要求 16 KB 页对齐（新版 NDK 默认就是，老版本靠这个参数）。
@@ -41,7 +48,11 @@ plugins {
 android {
     namespace = "cn.thinktin.core"
     compileSdk = 35
-    defaultConfig { minSdk = 26 }
+    defaultConfig {
+        minSdk = 26
+        // 系统证书校验的 Kotlin 组件只从 JNI 调用，混淆时会被当成没用的删掉。
+        consumerProguardFiles("consumer-rules.pro")
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -54,11 +65,25 @@ dependencies {
     // UniFFI 的 Kotlin 绑定经 JNA 调用 Rust，async 函数是挂起函数。
     implementation("net.java.dev.jna:jna:5.15.0@aar")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
+    // 系统证书校验（rustls-platform-verifier）的 Kotlin 组件，版本必须和 Rust 那边的一样。
+    implementation("org.rustls:rustls-platform-verifier:@VERIFIER@")
 }
 GRADLE
+sed "s/@VERIFIER@/$verifier/" "$mod/build.gradle.kts" > "$mod/build.gradle.kts.tmp"
+mv "$mod/build.gradle.kts.tmp" "$mod/build.gradle.kts"
+cat > "$mod/consumer-rules.pro" <<'PRO'
+-keep, includedescriptorclasses class org.rustls.platformverifier.** { *; }
+PRO
 cat > "$mod/settings.gradle.kts" <<'GRADLE'
 pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
-dependencyResolutionManagement { repositories { google(); mavenCentral() } }
+dependencyResolutionManagement {
+    repositories {
+        google()
+        mavenCentral()
+        // rustls-platform-verifier 的 Kotlin 组件（引入这个库工程的 App 也要加这一个仓库）。
+        maven { url = uri("https://github.com/rustls/rustls-platform-verifier/raw/maven-archive/android-release-support/maven/") }
+    }
+}
 rootProject.name = "thinktin-core"
 GRADLE
 if command -v gradle >/dev/null; then

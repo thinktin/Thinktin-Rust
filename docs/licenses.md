@@ -249,7 +249,8 @@ copyright 文件里，一并带上）、dpkg 装的包、Node.js 本身、agent-
   以声明为准、没声明的包大多核对不上要人看。
 - **版权声明里非拉丁字母的名字**（“Copyright (c) 2020 张三”）：中文、日文、韩文、俄文写的限制也就几个字，分不开，这样的
   版权行照常核对，核对不上（没声明的包要登记；有声明的包不受影响）。
-- **Android 库工程的 JVM 依赖**（JNA、kotlinx-coroutines）不在清单里：`build-android.sh` 只生成了 Rust 客户端核心的清单，
+- **Android 库工程的 JVM 依赖**（JNA、kotlinx-coroutines、rustls-platform-verifier 的 Kotlin 组件
+  `org.rustls:rustls-platform-verifier`，许可证和同名 crate 一样）不在清单里：`build-android.sh` 只生成了 Rust 客户端核心的清单，
   App 工程（13.x）接入时要加上 Gradle 依赖的许可证。
 - **Codex 的 1071 个 crate** 按上游 `rust-v0.160.1` 标签的 Cargo.lock 解析（不加 `--locked`，因为上游发布时只改工作区版本号），
   和 OpenAI 实际构建用的可能有出入。

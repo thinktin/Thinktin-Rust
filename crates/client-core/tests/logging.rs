@@ -104,4 +104,29 @@ async fn client_core_logs_reach_the_app() {
     let got = second.0.lock().unwrap().clone();
     assert!(got.iter().all(|r| r.level <= LogLevel::Warn), "{got:?}");
     assert!(got.iter().any(|r| r.message == "shown"), "{got:?}");
+
+    // 用 `log` 打日志的依赖库（系统不信任证书时 rustls-platform-verifier 说的原因）：warn 以上的也交给 App，
+    // 模块名是原来的，转换时带的出处字段不拼进正文。
+    log::warn!(target: "rustls_platform_verifier::android", "certificate was not trusted: expired");
+    log::info!(target: "reqwest::connect", "dependency chatter");
+    let got = second.0.lock().unwrap().clone();
+    let from_log: Vec<_> = got
+        .iter()
+        .filter(|r| {
+            r.target.starts_with("rustls_platform_verifier") || r.target.starts_with("reqwest")
+        })
+        .collect();
+    assert_eq!(from_log.len(), 1, "{got:?}");
+    assert_eq!(
+        (
+            from_log[0].level,
+            from_log[0].target.as_str(),
+            from_log[0].message.as_str()
+        ),
+        (
+            LogLevel::Warn,
+            "rustls_platform_verifier::android",
+            "certificate was not trusted: expired"
+        )
+    );
 }

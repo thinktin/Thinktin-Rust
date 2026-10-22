@@ -365,12 +365,15 @@ pub struct Api {
     upgrade_required: AtomicBool,
 }
 
-/// 检查 `Accept-Language`：去掉首尾空白，空的当没有；最长 256 字节，不能有换行之类的字符。
+/// `Accept-Language` 最长多少字节。
+pub const MAX_ACCEPT_LANGUAGE: usize = 256;
+
+/// 检查 `Accept-Language`：去掉首尾空白，空的当没有；最长 [`MAX_ACCEPT_LANGUAGE`] 字节，不能有换行之类的字符。
 fn accept_language_header(v: Option<&str>) -> Result<Option<HeaderValue>> {
     let Some(v) = v.map(str::trim).filter(|v| !v.is_empty()) else {
         return Ok(None);
     };
-    if v.len() > 256 {
+    if v.len() > MAX_ACCEPT_LANGUAGE {
         return Err(ClientError::InvalidArgument {
             message: "accept_language is longer than 256 bytes".into(),
         });

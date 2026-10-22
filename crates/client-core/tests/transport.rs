@@ -310,6 +310,24 @@ fn accept_language_from_the_system_list() {
     assert_eq!(accept_language_header(vec![]), "");
     let many: Vec<String> = (0..15).map(|i| format!("l{i}")).collect();
     assert_eq!(accept_language_header(many).split(", ").count(), 10);
+    // 长的语言标签（带地区偏好的扩展）：只留放得下 256 字节的前几个，结果总能直接用。
+    let long: Vec<String> = (0..10)
+        .map(|i| format!("en-US-u-fw-mon-mu-celsius-x-ab{i:02}"))
+        .collect();
+    let header = accept_language_header(long);
+    assert!(
+        header.len() <= 256 && header.split(", ").count() == 6,
+        "{header}"
+    );
+    assert!(header.ends_with(";q=0.5"), "{header}");
+    let cfg = ApiConfig {
+        base_url: "https://api.example.com".into(),
+        platform: DevicePlatform::Ios,
+        device_name: "test".into(),
+        timeout: Duration::from_secs(5),
+        accept_language: Some(header),
+    };
+    assert!(Api::new(cfg, Arc::new(MemorySessionStore::default())).is_ok());
     assert_eq!(
         proto::domain::Locale::from_accept_language("zh-Hans-CN, en-US;q=0.9"),
         Some(proto::domain::Locale::ZhCn)

@@ -6,7 +6,9 @@
 //! 和发消息前识别密码用的是同一套）换成 `[redacted]`；一行最长 4096 字节。所以 iOS 那边可以用 `privacy: .public`
 //! 记（不然 sysdiagnose 里只看得到 `<private>`）。
 //!
-//! client-core 自己的日志按设的级别输出，依赖库（h2、hyper、rustls……）的只输出 warn 和 error。
+//! client-core 自己的日志按设的级别输出，依赖库的只输出 warn 和 error：用 `tracing` 的（h2、hyper-util）直接收，
+//! 用 `log` 的（rustls-platform-verifier 说证书为什么不被信任、reqwest、tungstenite）经 `tracing-log` 转过来。
+//! rustls、hyper 没开日志功能，什么都不输出。
 
 use std::cell::Cell;
 use std::fmt::Write as _;
@@ -16,6 +18,7 @@ use std::sync::{Arc, OnceLock, RwLock};
 
 use tracing::field::{Field, Visit};
 use tracing::{Event, Level, Metadata, Subscriber};
+use tracing_log::NormalizeEvent;
 use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
 
 /// 一行最长多少字节（超过的截断，末尾加 `…`）。
@@ -119,7 +122,15 @@ pub fn init_logging(sink: Arc<dyn LogSink>, max_level: LogLevel) -> bool {
         let subscriber = tracing_subscriber::registry().with(ForeignLayer {
             state: state.clone(),
         });
-        tracing::subscriber::set_global_default(subscriber).is_ok()
+        let ok = tracing::subscriber::set_global_default(subscriber).is_ok();
+        if ok {
+            // `log` 的记录转成 `tracing` 的事件（依赖库的只要 warn 以上）。App 里别的库已经设了 `log` 的
+            // 接收方时转不过来，不影响 client-core 自己的日志。
+            let _ = tracing_log::LogTracer::builder()
+                .with_max_level(tracing_log::log::LevelFilter::Warn)
+                .init();
+        }
+        ok
     });
     // 级别变了：让各处的日志重新判断要不要输出。
     tracing::callsite::rebuild_interest_cache();
@@ -179,11 +190,17 @@ impl<S: Subscriber> Layer<S> for ForeignLayer {
         let Some(sink) = self.state.sink() else {
             return;
         };
+        // 从 `log` 转过来的事件：用原来的模块名（`rustls_platform_verifier::…`），不是 `log`。
+        let normalized = event.normalized_metadata();
+        let meta = normalized.as_ref().unwrap_or_else(|| event.metadata());
+        if !self.wanted(meta) {
+            return;
+        }
         let mut line = Line::default();
         event.record(&mut line);
         let record = LogRecord {
-            level: LogLevel::of(event.metadata().level()),
-            target: event.metadata().target().to_owned(),
+            level: LogLevel::of(meta.level()),
+            target: meta.target().to_owned(),
             message: scrub(&line.finish()),
         };
         IN_SINK.with(|f| f.set(true));
@@ -208,6 +225,10 @@ impl Line {
     }
 
     fn push(&mut self, field: &Field, value: &dyn std::fmt::Display) {
+        // `log.target`、`log.file` 这些是转换时带上的出处，模块名已经在 `target` 里。
+        if field.name().starts_with("log.") {
+            return;
+        }
         if field.name() == "message" {
             let _ = write!(self.message, "{value}");
         } else if SECRET_FIELDS.contains(&field.name()) {

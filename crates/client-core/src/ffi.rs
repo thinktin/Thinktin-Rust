@@ -65,10 +65,13 @@ pub struct ClientConfig {
 }
 
 /// 把系统的语言列表（按偏好排好，比如 `["zh-Hans-CN", "en-US", "en"]`）拼成 `Accept-Language`：
-/// `zh-Hans-CN, en-US;q=0.9, en;q=0.8`。最多 10 个；不像语言标签的跳过。
+/// `zh-Hans-CN, en-US;q=0.9, en;q=0.8`。最多 10 个；不像语言标签的跳过；放不进 256 字节（`ClientConfig` 的上限）的
+/// 后面几个不要，结果总能直接交给 `ClientConfig.accept_language`、`set_accept_language`。
 #[uniffi::export]
 pub fn accept_language_header(tags: Vec<String>) -> String {
-    tags.iter()
+    let mut out = String::new();
+    let tags = tags
+        .iter()
         .map(|t| t.trim())
         .filter(|t| {
             !t.is_empty()
@@ -76,14 +79,19 @@ pub fn accept_language_header(tags: Vec<String>) -> String {
                 && t.bytes()
                     .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
         })
-        .take(10)
-        .enumerate()
-        .map(|(i, t)| match i {
-            0 => t.replace('_', "-"),
-            i => format!("{};q=0.{}", t.replace('_', "-"), 10 - i),
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
+        .take(10);
+    for (i, t) in tags.enumerate() {
+        let tag = t.replace('_', "-");
+        let item = match i {
+            0 => tag,
+            i => format!(", {tag};q=0.{}", 10 - i),
+        };
+        if out.len() + item.len() > crate::api::MAX_ACCEPT_LANGUAGE {
+            break;
+        }
+        out.push_str(&item);
+    }
+    out
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -1757,7 +1765,6 @@ impl ThinktinClient {
         .await
     }
 
-    /// 更早的一页运行：`before_run_id` 之前的（列表往下翻）。
     /// 跨实例的运行（11.8），新的在前：某个计划的运行历史、所有没结束的运行。`before_run_id` 往下翻
     /// （上一页最后一个的 id）。
     pub async fn list_runs(
@@ -1789,6 +1796,7 @@ impl ThinktinClient {
         .await
     }
 
+    /// 更早的一页运行：`before_run_id` 之前的（列表往下翻）。
     pub async fn older_runs(
         &self,
         instance_id: String,
