@@ -11,9 +11,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.outlined.Badge
+import androidx.compose.material.icons.outlined.BarChart
 import androidx.compose.material.icons.outlined.DeleteForever
 import androidx.compose.material.icons.outlined.Devices
 import androidx.compose.material.icons.outlined.DevicesOther
+import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Phone
 import androidx.compose.material.icons.outlined.StopCircle
 import androidx.compose.material3.ListItem
@@ -128,6 +130,8 @@ fun SettingsScreen(
     onOpenDevices: (DevicesAction?) -> Unit = {},
     onEditName: () -> Unit = {},
     onDeleteAccount: () -> Unit = {},
+    onOpenKeys: () -> Unit = {},
+    onOpenUsage: () -> Unit = {},
 ) {
     val container = LocalAppContainer.current
     val service = LocalThinktinService.current
@@ -218,6 +222,20 @@ fun SettingsScreen(
                     ),
                 )
             }
+            // 模型 key 与用量（13.4）：放在外观和演示模式之后。
+            Section(R.string.settings_models)
+            AccountRow(
+                icon = Icons.Outlined.Key,
+                title = stringResource(R.string.settings_keys),
+                value = stringResource(R.string.settings_keys_summary),
+                onClick = onOpenKeys,
+            )
+            AccountRow(
+                icon = Icons.Outlined.BarChart,
+                title = stringResource(R.string.page_usage),
+                value = stringResource(R.string.settings_usage_summary),
+                onClick = onOpenUsage,
+            )
             Text(
                 text = stringResource(R.string.settings_more_coming),
                 style = MaterialTheme.typography.bodyMedium,

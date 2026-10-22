@@ -74,6 +74,7 @@ fun InstanceSettingsScreen(
     onOpenModelRoutes: () -> Unit,
     onDeleted: () -> Unit,
     onChanged: () -> Unit = {},
+    onOpenKeys: () -> Unit = {},
 ) {
     val service = LocalThinktinService.current
     val container = LocalAppContainer.current
@@ -120,6 +121,7 @@ fun InstanceSettingsScreen(
                     onRename = onRename,
                     onOpenAgent = onOpenAgent,
                     onOpenModelRoutes = onOpenModelRoutes,
+                    onOpenKeys = onOpenKeys,
                     viewModel = viewModel,
                 )
                 state.loading -> {
@@ -159,6 +161,7 @@ private fun InstanceSettingsContent(
     onRename: () -> Unit,
     onOpenAgent: (String) -> Unit,
     onOpenModelRoutes: () -> Unit,
+    onOpenKeys: () -> Unit,
     viewModel: InstanceSettingsViewModel,
 ) {
     val zone = LocalAppContainer.current.clock.zone
@@ -276,6 +279,12 @@ private fun InstanceSettingsContent(
             value = stringResource(R.string.instance_model_routes_summary),
             onClick = onOpenModelRoutes,
             clickLabel = stringResource(R.string.instance_model_routes),
+        )
+        InfoRow(
+            title = stringResource(R.string.settings_keys),
+            value = stringResource(R.string.instance_keys_summary),
+            onClick = onOpenKeys,
+            clickLabel = stringResource(R.string.settings_keys),
         )
 
         Section(R.string.instance_section_danger)

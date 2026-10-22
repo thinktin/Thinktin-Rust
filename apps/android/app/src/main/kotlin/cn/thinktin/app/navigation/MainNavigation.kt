@@ -46,9 +46,15 @@ import cn.thinktin.app.ui.drawer.DrawerViewModel
 import cn.thinktin.app.ui.home.HomeScreen
 import cn.thinktin.app.ui.instance.InstanceNameScreen
 import cn.thinktin.app.ui.instance.InstanceSettingsScreen
+import cn.thinktin.app.ui.keys.AddKeyScreen
+import cn.thinktin.app.ui.keys.KeyEditScreen
+import cn.thinktin.app.ui.keys.KeySecretScreen
+import cn.thinktin.app.ui.keys.KeysScreen
 import cn.thinktin.app.ui.placeholder.ComingSoonScreen
 import cn.thinktin.app.ui.placeholder.Page
+import cn.thinktin.app.ui.routes.ModelRoutesScreen
 import cn.thinktin.app.ui.settings.SettingsScreen
+import cn.thinktin.app.ui.usage.UsageScreen
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -228,6 +234,7 @@ private fun MainNavHost(navController: NavHostController, onOpenDrawer: () -> Un
                 onRename = { navController.navigate(Routes.instanceName(instanceId)) },
                 onOpenAgent = { navController.navigate(Routes.agent(it)) },
                 onOpenModelRoutes = { navController.navigate(Routes.instanceRoutes(instanceId)) },
+                onOpenKeys = { navController.navigate(Routes.KEYS) },
                 onChanged = onInstancesChanged,
                 onDeleted = {
                     onInstancesChanged()
@@ -248,8 +255,13 @@ private fun MainNavHost(navController: NavHostController, onOpenDrawer: () -> Un
                 },
             )
         }
-        composable(Routes.INSTANCE_ROUTES, arguments = listOf(stringArg(Routes.ARG_INSTANCE_ID))) {
-            Placeholder(Page.ModelRoutes, it, Routes.ARG_INSTANCE_ID)
+        composable(Routes.INSTANCE_ROUTES, arguments = listOf(stringArg(Routes.ARG_INSTANCE_ID))) { entry ->
+            ModelRoutesScreen(
+                instanceId = entry.arguments?.getString(Routes.ARG_INSTANCE_ID).orEmpty(),
+                onBack = back,
+                onOpenKeys = { navController.navigate(Routes.KEYS) },
+                onAddKey = { navController.navigate(Routes.KEYS_NEW) },
+            )
         }
         composable(Routes.PLANS) { Placeholder(Page.Plans, it) }
         composable(
@@ -275,7 +287,38 @@ private fun MainNavHost(navController: NavHostController, onOpenDrawer: () -> Un
             arguments = listOf(stringArg(Routes.ARG_APPROVAL_ID)),
             deepLinks = listOf(navDeepLink { uriPattern = DeepLinks.APPROVAL }),
         ) { Placeholder(Page.Approval, it, Routes.ARG_APPROVAL_ID) }
-        composable(Routes.KEYS) { Placeholder(Page.Keys, it) }
+        composable(Routes.KEYS) {
+            KeysScreen(
+                onBack = back,
+                onAdd = { navController.navigate(Routes.KEYS_NEW) },
+                onEdit = { navController.navigate(Routes.keyEdit(it)) },
+                onReplaceSecret = { navController.navigate(Routes.keySecret(it)) },
+                onOpenUsage = { navController.navigate(Routes.USAGE) { launchSingleTop = true } },
+            )
+        }
+        composable(Routes.KEYS_NEW) { AddKeyScreen(onBack = back, onAdded = back) }
+        composable(Routes.KEY_EDIT, arguments = listOf(stringArg(Routes.ARG_CREDENTIAL_ID))) { entry ->
+            val credentialId = entry.arguments?.getString(Routes.ARG_CREDENTIAL_ID).orEmpty()
+            KeyEditScreen(
+                credentialId = credentialId,
+                onBack = back,
+                onSaved = back,
+                onReplaceSecret = {
+                    // 换 key 页替换编辑页：换完回到列表。
+                    navController.navigate(Routes.keySecret(credentialId)) {
+                        popUpTo(Routes.KEY_EDIT) { inclusive = true }
+                    }
+                },
+            )
+        }
+        composable(Routes.KEY_SECRET, arguments = listOf(stringArg(Routes.ARG_CREDENTIAL_ID))) { entry ->
+            KeySecretScreen(
+                credentialId = entry.arguments?.getString(Routes.ARG_CREDENTIAL_ID).orEmpty(),
+                onBack = back,
+                onSaved = back,
+            )
+        }
+        composable(Routes.USAGE) { UsageScreen(onBack = back) }
         composable(
             Routes.VAULT,
             arguments = listOf(optionalStringArg(Routes.ARG_REQUEST_ID)),
@@ -295,6 +338,8 @@ private fun MainNavHost(navController: NavHostController, onOpenDrawer: () -> Un
                 onOpenDevices = { action -> navController.navigate(Routes.devices(action?.wire)) },
                 onEditName = { navController.navigate(Routes.ACCOUNT_NAME) },
                 onDeleteAccount = { navController.navigate(Routes.DELETE_ACCOUNT) },
+                onOpenKeys = { navController.navigate(Routes.KEYS) },
+                onOpenUsage = { navController.navigate(Routes.USAGE) },
             )
         }
         composable(Routes.ACCOUNT_NAME) { EditNameScreen(onBack = back) }

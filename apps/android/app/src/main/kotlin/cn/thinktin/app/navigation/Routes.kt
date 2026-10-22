@@ -22,7 +22,7 @@ object Routes {
     /** 改实例名（实例设置页进入；有输入框，单独成页）。 */
     const val INSTANCE_NAME = "instance/{instanceId}/name"
 
-    /** 实例的模型别名与降级链（13.4 做页面；13.3 先放入口）。 */
+    /** 实例的模型别名与降级链（13.4）。 */
     const val INSTANCE_ROUTES = "instance/{instanceId}/routes"
     const val PLANS = "plans"
     const val PLAN = "plan/{planId}"
@@ -33,7 +33,20 @@ object Routes {
     const val INBOX = "inbox?itemId={itemId}"
     const val APPROVALS = "approvals"
     const val APPROVAL = "approval/{approvalId}"
+    /** 模型 key 列表（13.4）。 */
     const val KEYS = "keys"
+
+    /** 添加 key（两步，有输入框，单独成页）。 */
+    const val KEYS_NEW = "keys/new"
+
+    /** 编辑 key（标签、启用 / 停用）。 */
+    const val KEY_EDIT = "keys/{credentialId}/edit"
+
+    /** 换 key（密码输入）。 */
+    const val KEY_SECRET = "keys/{credentialId}/secret"
+
+    /** 用量看板（13.4）。 */
+    const val USAGE = "usage"
 
     /** 密码保险箱；requestId 可选（填写请求）。 */
     const val VAULT = "vault?requestId={requestId}"
@@ -54,6 +67,7 @@ object Routes {
     const val ARG_APPROVAL_ID = "approvalId"
     const val ARG_REQUEST_ID = "requestId"
     const val ARG_ACTION = "action"
+    const val ARG_CREDENTIAL_ID = "credentialId"
 
     fun chat(instanceId: String) = "chat/${Uri.encode(instanceId)}"
     fun run(runId: String) = "run/${Uri.encode(runId)}"
@@ -61,6 +75,8 @@ object Routes {
     fun instance(instanceId: String) = "instance/${Uri.encode(instanceId)}"
     fun instanceName(instanceId: String) = "instance/${Uri.encode(instanceId)}/name"
     fun instanceRoutes(instanceId: String) = "instance/${Uri.encode(instanceId)}/routes"
+    fun keyEdit(credentialId: String) = "keys/${Uri.encode(credentialId)}/edit"
+    fun keySecret(credentialId: String) = "keys/${Uri.encode(credentialId)}/secret"
     fun plan(planId: String) = "plan/${Uri.encode(planId)}"
     fun team(teamId: String) = "team/${Uri.encode(teamId)}"
     fun approval(approvalId: String) = "approval/${Uri.encode(approvalId)}"

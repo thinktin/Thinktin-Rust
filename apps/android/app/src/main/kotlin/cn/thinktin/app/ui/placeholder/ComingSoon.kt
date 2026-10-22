@@ -32,7 +32,6 @@ import kotlinx.coroutines.flow.asStateFlow
 enum class Page(@StringRes val titleRes: Int) {
     Chat(R.string.page_chat),
     Run(R.string.page_run),
-    ModelRoutes(R.string.page_model_routes),
     Plans(R.string.page_plans),
     Plan(R.string.page_plan),
     Teams(R.string.page_teams),
@@ -40,7 +39,6 @@ enum class Page(@StringRes val titleRes: Int) {
     Inbox(R.string.page_inbox),
     Approvals(R.string.page_approvals),
     Approval(R.string.page_approval),
-    Keys(R.string.page_keys),
     Vault(R.string.page_vault),
 }
 
