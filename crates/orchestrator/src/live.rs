@@ -30,11 +30,11 @@ pub const MAX_PUSHED_OPEN: u32 = 2;
 /// App 一台设备同时开着的最多几个（登记令牌时检查）。
 pub const MAX_OPEN: u32 = 10;
 
-/// 计划到点开始的根运行（第一次领取时）：给开了远程开启的设备记下待开启的实时活动。和领取运行在同一个事务里。
-/// 用户自己发起的运行由 App 自己开；子运行、流水线的步骤不单独开。
+/// 计划到点开始的根运行（第一次领取时；有步骤的计划是流水线开始时）：给开了远程开启的设备记下待开启的实时活动。
+/// 和领取运行在同一个事务里。用户自己发起的运行由 App 自己开；子运行、流水线的步骤不单独开（步数算在根运行上）。
 pub async fn queue_starts(w: &mut Tx<Worker>, rec: &RunRecord) -> store::Result<()> {
     let run = &rec.run;
-    if run.attempt == 1 && run.parent_run_id.is_none() && run.source == RunSource::Plan {
+    if run.attempt <= 1 && run.parent_run_id.is_none() && run.source == RunSource::Plan {
         w.queue_live_starts(rec.user_id, run.id, MAX_PUSHED_OPEN)
             .await?;
     }
@@ -71,7 +71,7 @@ pub struct LiveConfig {
     pub state_gap: Duration,
     /// 只是步数变了：离上次发至少隔这么久。
     pub step_gap: Duration,
-    /// 连着失败几次就不再发。
+    /// 连着失败几次就不再发（默认按退避算一个多小时：苹果那边短时间出问题，实时活动不能就此停住）。
     pub max_attempts: u32,
     pub backoff_base: Duration,
     pub backoff_max: Duration,
@@ -87,7 +87,7 @@ impl Default for LiveConfig {
             lock_for: Duration::from_secs(60),
             state_gap: Duration::from_secs(2),
             step_gap: Duration::from_secs(20),
-            max_attempts: 5,
+            max_attempts: 12,
             backoff_base: Duration::from_secs(5),
             backoff_max: Duration::from_secs(600),
         }
@@ -151,6 +151,16 @@ impl LiveDispatcher {
     }
 
     async fn handle(&self, a: LiveActivity) -> store::Result<()> {
+        // 前面的发得慢，锁可能已经过期、被别的副本领去发了：续不上锁就不发（远程开启发两次就是两个实时活动）。
+        let mut w = self.db.worker().await?;
+        let mine = w
+            .extend_live_lock(a.device_id, a.run_id, &self.node_id, self.cfg.lock_for)
+            .await?;
+        w.commit().await?;
+        if !mine {
+            warn!(run = %a.run_id, "live activity lock expired before sending");
+            return Ok(());
+        }
         let settle = match a.push_token.clone() {
             Some(token) => self.update(&a, &token).await,
             None => self.start(&a).await?,

@@ -23,6 +23,8 @@ const START: &str = "5747a77ec0de5747a77ec0de5747a77ec0de5747a77ec0de5747a77ec0d
 struct Recording {
     outcomes: Mutex<HashMap<String, PushOutcome>>,
     sent: Mutex<Vec<(String, LivePush)>>,
+    /// 每次发要多久（APNs 很慢的时候）。
+    delay: Mutex<Duration>,
 }
 
 impl Recording {
@@ -37,6 +39,8 @@ impl Recording {
 #[async_trait]
 impl LiveActivityChannel for Recording {
     async fn send_live(&self, token: &str, push: &LivePush) -> PushOutcome {
+        let delay = *self.delay.lock().unwrap();
+        tokio::time::sleep(delay).await;
         self.sent
             .lock()
             .unwrap()
@@ -392,4 +396,32 @@ async fn dead_tokens_retries_and_giving_up() {
         5,
         "start, dead token, two retries, the fresh one"
     );
+}
+
+#[tokio::test]
+async fn slow_sends_do_not_outlive_their_lock() {
+    let Some(s) = setup("+8613800000064", "调研助手").await else {
+        return;
+    };
+    let first = s.run(RunSource::User).await;
+    s.register(&first, PHONE).await;
+    let second = s.run(RunSource::User).await;
+    s.register(&second, PHONE2).await;
+    let rec = Arc::new(Recording::default());
+    *rec.delay.lock().unwrap() = Duration::from_millis(1500);
+    // 一次只发一个、锁一秒：第一个发完时第二个的锁已经过期（别的副本可能领去发了），不发。
+    let d = s.dispatcher(
+        rec.clone(),
+        LiveConfig {
+            concurrency: 1,
+            lock_for: Duration::from_secs(1),
+            ..eager()
+        },
+    );
+    assert_eq!(d.tick().await.unwrap(), 2);
+    assert_eq!(rec.sent().len(), 1);
+    // 下一轮再领、再发。
+    *rec.delay.lock().unwrap() = Duration::ZERO;
+    assert_eq!(d.tick().await.unwrap(), 1);
+    assert_eq!(rec.sent().len(), 1);
 }

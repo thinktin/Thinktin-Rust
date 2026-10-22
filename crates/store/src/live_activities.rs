@@ -125,7 +125,7 @@ impl Row {
 
 impl Tx<Tenant> {
     /// App 开了一个实时活动（或者远程开启的那个拿到了令牌）：登记它的推送令牌。一台设备一个运行只有一个：
-    /// 换了令牌就把发过的内容清掉，现在的状态再发一次（离上次发照样要隔一阵）；同一个令牌再报一次什么都不变
+    /// 换了令牌（新的实时活动）就把发过的内容清掉、8 小时从现在算，现在的状态再发一次（离上次发照样要隔一阵）；同一个令牌再报一次什么都不变
     /// （放弃了的从头来）。只有 iPhone、iPad 有实时活动；一台设备同时开着的最多 `max_open` 个；运行结束很久了的
     /// 不能登记。
     pub async fn register_live_activity(
@@ -184,7 +184,9 @@ impl Tx<Tenant> {
              SELECT d.id, $2, d.user_id, 'app', $3 FROM devices d WHERE d.id = $1 \
              ON CONFLICT (device_id, run_id) DO UPDATE SET push_token = EXCLUDED.push_token, \
                sent_state = NULL, sent_steps = NULL, attempts = 0, retry_at = NULL, last_error = NULL, \
-               ended_at = NULL, gave_up = false \
+               ended_at = NULL, gave_up = false, \
+               created_at = CASE WHEN live_activities.push_token IS DISTINCT FROM EXCLUDED.push_token \
+                 THEN now() ELSE live_activities.created_at END \
              WHERE live_activities.push_token IS DISTINCT FROM EXCLUDED.push_token OR live_activities.gave_up",
         )
         .bind(device.0)
@@ -297,7 +299,7 @@ impl Tx<Worker> {
         Ok(done.rows_affected())
     }
 
-    /// 领该发的实时活动，锁 `lock_for`：待远程开启的；还没发过的；状态变了、离上次发过了 `state_gap` 的；只是步数变了、
+    /// 领该发的实时活动，锁 `lock_for`。步数连同直接子运行的一起算（流水线的步骤、委派的子任务）。待远程开启的；还没发过的；状态变了、离上次发过了 `state_gap` 的；只是步数变了、
     /// 离上次发过了 `step_gap` 的（步数变得勤，苹果对更新也有预算）；还有远程开启了却一直没拿到令牌、运行已经结束的
     /// （没法再发，了结掉）。设备下线了、开了太久的不领。等得最久的先领，一个用户一次最多 `per_user` 个（几个账号
     /// 刷不满整批，别人的照样发得出去）。
@@ -312,10 +314,12 @@ impl Tx<Worker> {
     ) -> Result<Vec<LiveActivity>> {
         let rows: Vec<Row> = sqlx::query_as(
             "WITH cand AS ( \
-               SELECT x.device_id, x.run_id, coalesce(x.sent_at, x.created_at) AS since, \
+               SELECT x.device_id, x.run_id, coalesce(x.sent_at, x.created_at) AS since, t.steps, \
                  row_number() OVER (PARTITION BY x.user_id ORDER BY coalesce(x.sent_at, x.created_at)) AS n \
                FROM live_activities x \
                JOIN runs r ON r.id = x.run_id \
+               CROSS JOIN LATERAL (SELECT r.steps + coalesce((SELECT sum(c.steps) FROM runs c \
+                 WHERE c.parent_run_id = r.id), 0)::int AS steps) t \
                JOIN devices d ON d.id = x.device_id \
                WHERE x.ended_at IS NULL AND d.revoked_at IS NULL \
                  AND x.created_at > now() - make_interval(secs => $6) \
@@ -326,10 +330,10 @@ impl Tx<Worker> {
                          OR r.state IN ('succeeded', 'failed', 'cancelled')) \
                      ELSE x.sent_at IS NULL \
                        OR (r.state IS DISTINCT FROM x.sent_state AND x.sent_at <= now() - make_interval(secs => $4)) \
-                       OR (r.steps IS DISTINCT FROM x.sent_steps AND x.sent_at <= now() - make_interval(secs => $5)) \
+                       OR (t.steps IS DISTINCT FROM x.sent_steps AND x.sent_at <= now() - make_interval(secs => $5)) \
                      END), \
              due AS ( \
-               SELECT x.device_id, x.run_id FROM live_activities x \
+               SELECT x.device_id, x.run_id, c.steps FROM live_activities x \
                JOIN cand c ON c.device_id = x.device_id AND c.run_id = x.run_id \
                WHERE c.n <= $7 AND x.ended_at IS NULL \
                  AND (x.locked_until IS NULL OR x.locked_until < now()) \
@@ -341,9 +345,10 @@ impl Tx<Worker> {
                FROM due WHERE la.device_id = due.device_id AND la.run_id = due.run_id \
                RETURNING la.device_id, la.run_id, la.user_id, la.origin, la.push_token, la.start_sent_at, \
                  la.sent_state, la.sent_steps, la.attempts) \
-             SELECT c.*, d.activity_start_token, r.instance_id, i.name, r.state, r.steps, r.started_at, \
+             SELECT c.*, d.activity_start_token, r.instance_id, i.name, r.state, due.steps, r.started_at, \
                r.finished_at \
-             FROM claimed c JOIN runs r ON r.id = c.run_id JOIN instances i ON i.id = r.instance_id \
+             FROM claimed c JOIN due ON due.device_id = c.device_id AND due.run_id = c.run_id \
+               JOIN runs r ON r.id = c.run_id JOIN instances i ON i.id = r.instance_id \
                JOIN devices d ON d.id = c.device_id",
         )
         .bind(owner)
@@ -356,6 +361,27 @@ impl Tx<Worker> {
         .fetch_all(self.conn())
         .await?;
         rows.into_iter().map(Row::into_activity).collect()
+    }
+
+    /// 发之前续锁：锁还在自己手里就再锁 `lock_for`，返回 `false` 时不要发（锁过期了，别人可能已经领了去发）。
+    pub async fn extend_live_lock(
+        &mut self,
+        device: DeviceId,
+        run: RunId,
+        owner: &str,
+        lock_for: Duration,
+    ) -> Result<bool> {
+        let done = sqlx::query(
+            "UPDATE live_activities SET locked_until = now() + make_interval(secs => $4) \
+             WHERE device_id = $1 AND run_id = $2 AND locked_by = $3 AND locked_until > now()",
+        )
+        .bind(device.0)
+        .bind(run.0)
+        .bind(owner)
+        .bind(secs(lock_for))
+        .execute(self.conn())
+        .await?;
+        Ok(done.rows_affected() == 1)
     }
 
     /// 记下发送结果，放开锁。`token` 是这次发给的实时活动令牌（远程开启的那一次是 `None`）：发送期间 App 换了令牌，

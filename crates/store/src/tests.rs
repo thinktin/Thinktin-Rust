@@ -3118,3 +3118,115 @@ async fn live_activities_resist_floods_and_races() {
     }
     assert_eq!(queued, 1);
 }
+
+#[tokio::test]
+async fn live_activities_follow_the_phone() {
+    use proto::domain::{DevicePlatform, PushChannelKind, SessionId};
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let hour = Duration::from_secs(3600);
+    let alice = user(db, "+8613800000071").await;
+    let bob = user(db, "+8613800000072").await;
+    let apns = Some((PushChannelKind::Apns, "0a0b"));
+    let mut w = db.worker().await.unwrap();
+    let phone = w
+        .create_device(alice, DevicePlatform::Ios, "iPhone", apns)
+        .await
+        .unwrap();
+    w.create_session(SessionId::new(), alice, phone, b"r1", hour)
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+    let inst = instance(db, alice).await;
+    let run = queue_run(db, alice, &inst, "长任务").await;
+    let child = queue_run(db, alice, &inst, "子任务").await;
+    sqlx::query("UPDATE runs SET parent_run_id = $2, steps = 4 WHERE id = $1")
+        .bind(child.id.0)
+        .bind(run.id.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let mut tx = db.tenant(alice).await.unwrap();
+    tx.set_activity_start_token(phone, Some("ee01"))
+        .await
+        .unwrap();
+    tx.register_live_activity(phone, run.id, "aa01", 5)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+
+    // 步数连同直接子运行的一起算（流水线的步骤、委派的子任务）。
+    let got = claim_live(db, "n1", Duration::ZERO).await;
+    assert_eq!(got[0].steps, 4);
+    // 前面的发得慢、锁过期了：续不上，不发。
+    sqlx::query("UPDATE live_activities SET locked_until = now() - interval '1 second'")
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let mut w = db.worker().await.unwrap();
+    assert!(
+        !w.extend_live_lock(phone, run.id, "n1", LEASE)
+            .await
+            .unwrap()
+    );
+    w.rollback().await.unwrap();
+    let got = claim_live(db, "n1", Duration::ZERO).await;
+    let mut w = db.worker().await.unwrap();
+    assert!(
+        w.extend_live_lock(phone, run.id, "n1", LEASE)
+            .await
+            .unwrap()
+    );
+    w.commit().await.unwrap();
+    settle_live(
+        db,
+        &got[0],
+        "n1",
+        crate::LiveSettle::Sent {
+            state: got[0].state,
+            steps: 4,
+            started: false,
+            ended: false,
+        },
+    )
+    .await;
+
+    // 换了令牌（新的实时活动）：8 小时从现在算。
+    sqlx::query("UPDATE live_activities SET created_at = now() - interval '7 hours'")
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let mut tx = db.tenant(alice).await.unwrap();
+    tx.register_live_activity(phone, run.id, "aa02", 5)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let fresh: bool = sqlx::query_scalar(
+        "SELECT created_at > now() - interval '1 minute' FROM live_activities WHERE run_id = $1",
+    )
+    .bind(run.id.0)
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert!(fresh);
+
+    // 同一台手机换成 bob 登录（推送令牌跟着手机走）：alice 那台不再远程开启，开着的不再更新。
+    let mut w = db.worker().await.unwrap();
+    w.create_device(bob, DevicePlatform::Ios, "iPhone", apns)
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+    let (start, ended): (Option<String>, bool) = sqlx::query_as(
+        "SELECT d.activity_start_token, x.ended_at IS NOT NULL FROM devices d \
+         JOIN live_activities x ON x.device_id = d.id WHERE d.id = $1",
+    )
+    .bind(phone.0)
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert_eq!((start, ended), (None, true));
+    let planned = queue_run(db, alice, &inst, "每日新闻").await;
+    let mut w = db.worker().await.unwrap();
+    assert_eq!(w.queue_live_starts(alice, planned.id, 2).await.unwrap(), 0);
+    w.rollback().await.unwrap();
+}

@@ -4,6 +4,8 @@
 
 -- 推送开启令牌：一个 App 安装一个，用户在 App 里打开“计划运行时显示实时活动”才报上来。和推送令牌一样只属于一台设备。
 ALTER TABLE devices ADD COLUMN activity_start_token text CHECK (length(activity_start_token) <= 512);
+-- 登记时把同一个令牌从别的设备上拿掉（同一台手机换了账号）。
+CREATE INDEX devices_activity_start_token ON devices (activity_start_token) WHERE activity_start_token IS NOT NULL;
 
 CREATE TABLE live_activities (
     device_id     uuid NOT NULL,
@@ -43,7 +45,8 @@ ALTER TABLE live_activities FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant ON live_activities TO thinktin_app USING (user_id = app_user_id()) WITH CHECK (user_id = app_user_id());
 
 GRANT SELECT, INSERT ON live_activities TO thinktin_app;
--- 业务接口只登记令牌、关掉（上次发的时间、锁只有后台写）；换了令牌时把发过的内容清掉，现在的状态重发一次。
-GRANT UPDATE (push_token, sent_state, sent_steps, attempts, retry_at, last_error, ended_at, gave_up)
+-- 业务接口只登记令牌、关掉（上次发的时间、锁只有后台写）；换了令牌（新的实时活动）时把发过的内容清掉、从现在起
+-- 算 8 小时，现在的状态重发一次。
+GRANT UPDATE (push_token, sent_state, sent_steps, attempts, retry_at, last_error, ended_at, gave_up, created_at)
     ON live_activities TO thinktin_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON live_activities TO thinktin_worker;
