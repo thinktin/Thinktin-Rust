@@ -12,11 +12,12 @@
 - WBS 细化（`21a824f`）：12.x 从 11 个包 54 人日细化为 23 个包 114 人日（P1 89）；后端前置 4.7、5.5、5.6、10.6、10.7、11.7、11.8；每包的实现要点在 `docs/ios-packages.md`，开发顺序和目录分工在 `docs/ios.md` 第 8、9 节。
 - 12.1（`66ebc7e`，macOS CI 待确认）：ThinktinKit（模型、ClientProtocol、ClientError、MockClient、ConversationReducer、格式化）、ThinktinCoreAdapter（CoreClient、桥接）、ThinktinUI（设计令牌、基础组件、欢迎页 RootView）、XcodeGen 工程与 App 骨架（Keychain 会话、隐私清单、文案表）、`.github/workflows/ios.yml`（Linux + macOS 两个作业）、`apps/apple/.swift-format`、`tools/apple/uicheck`（Linux 上用桩 SwiftUI 类型检查界面和 App 代码）。Linux 上 187 个测试通过，严格格式检查干净。
 - 合进 backend-core（`a4e8ba2`、`d448aeb`）：带进 11.7（33 个新方法）、10.6（实时活动，含评审修复）、4.7（审核账号，App 不用改）、5.5（内容举报）。
+- iOS CI 第一次全绿（run 39720152852，`b015212`）：Linux 作业、macOS 上 Xcode 26.6 编 App 和模拟器测试都通过。
+- 合进 backend-core 的 11.8 前半（`ccf928f`）：listRuns、cachedEventsBefore、setAcceptLanguage、upgradeRequired、日志接口、Run.waitCode、Credential.activeProtocol、AgentInfo 的介绍 / 上游 / 许可说明；现有代码不用改就能编。
 - 11.7 / 10.6 / 5.5 接入：ThinktinKit 新模型（设备、设备消息、结构化计划策略、计划修改、补跑、团队与模板、内容举报、实时活动限制），ClientProtocol 共 97 个方法，MockClient 全部实现并按服务端规则校验；CoreClient 全部接上真实核心，不再有 `unsupported`；Linux 上 277 个测试通过，严格格式检查、uicheck 两种都过。审查修了一处：下线本机时设备 id 按大小写比较，没退出本地登录。
 
 进行中：
-- iOS CI：确认 11.7 接入这次推送（`b015212`）在 macOS 上全绿。
-- W1 第一轮（工作流 wf_4136b616-413）：先在 ios-app 上做 12.16 应用框架（路由、深链、抽屉、全局状态、每个功能目录的 `XxxDestination` 接入点），然后 12.2、12.3、12.5、12.6 在各自的 git worktree 里并行，分别提交到 `ios-w1/12.2-account`、`ios-w1/12.3-agents`、`ios-w1/12.5-conversation`、`ios-w1/12.6-plans`，由本会话合并回 ios-app。
+- W1 第一轮（工作流 wf_54cd35af-e50；第一次 wf_4136b616-413 被用量限额打断，没留下改动）：11.8 接入（worktree，分支 `ios-w1/11.8`）和 12.16 应用框架同时做，合并后再（路由、深链、抽屉、全局状态、每个功能目录的 `XxxDestination` 接入点），然后 12.2、12.3、12.5、12.6 在各自的 git worktree 里并行，分别提交到 `ios-w1/12.2-account`、`ios-w1/12.3-agents`、`ios-w1/12.5-conversation`、`ios-w1/12.6-plans`，由本会话合并回 ios-app。
 - iOS CI 第一次完整跑（run 39687813304，`66ebc7e`）的结果：Linux 作业全绿；macOS 上 Rust 交叉编译与打包（约 9 分钟）、真实 SwiftUI 编译 ThinktinKit + ThinktinUI、xcodegen、Xcode 26.6 编译 App 并在 iPhone 17 Pro 模拟器（iOS 26.5）上跑 App 冒烟测试都通过；214 个测试里只有“抽屉：打开和关闭”失败（关着的抽屉理想宽度本来就是 0，测试断言写错了），已修，随 11.7 接入一起推送。
 
 下一步：
