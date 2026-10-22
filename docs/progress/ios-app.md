@@ -14,8 +14,8 @@
 - 合进 backend-core（`a4e8ba2`）：带进 11.7（33 个新方法）和 10.6（实时活动）。
 
 进行中：
-- 11.7 / 10.6 接入：ThinktinKit 加新模型、ClientProtocol 加 33 个方法、MockClient 实现；CoreClient 接上；测试（工作流 wf_e31bb6fd-adb）。
-- iOS CI 第一次完整跑（run 39687813304，`66ebc7e`）：看 macOS 上真实 SwiftUI / Xcode 的编译结果。
+- 11.7 / 10.6 / 5.5 接入：ThinktinKit 加新模型、ClientProtocol 加 35 个方法、MockClient 实现；CoreClient 接上；测试（工作流 wf_5342d9a0-b42；第一次 wf_e31bb6fd-adb 被用量限额打断，做了一半的已提交为 `00860a7`）。合进了 backend-core 的 4.7、5.5、10.6 评审修复（`d448aeb`）。
+- iOS CI 第一次完整跑（run 39687813304，`66ebc7e`）的结果：Linux 作业全绿；macOS 上 Rust 交叉编译与打包（约 9 分钟）、真实 SwiftUI 编译 ThinktinKit + ThinktinUI、xcodegen、Xcode 26.6 编译 App 并在 iPhone 17 Pro 模拟器（iOS 26.5）上跑 App 冒烟测试都通过；214 个测试里只有“抽屉：打开和关闭”失败（关着的抽屉理想宽度本来就是 0，测试断言写错了），已修，随 11.7 接入一起推送。
 
 下一步：
 1. 修 macOS CI 暴露的问题直到全绿，然后 12.1 的公共文件（ClientProtocol、模型、Theme）只加不改。

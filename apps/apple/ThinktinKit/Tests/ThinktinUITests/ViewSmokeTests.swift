@@ -93,8 +93,12 @@ struct ViewSmokeTests {
 
     @Test("抽屉：打开和关闭")
     func drawer() {
-        host(InstanceDrawer(client: MockClient(autoReply: false), isOpen: .constant(true)))
-        host(InstanceDrawer(client: MockClient(autoReply: false), isOpen: .constant(false)))
+        let open = host(InstanceDrawer(client: MockClient(autoReply: false), isOpen: .constant(true)))
+        #expect(open.width > 0)
+        // 关着的抽屉什么都不画（空的 ZStack），理想尺寸本来就是 0。
+        let closed = host(
+            InstanceDrawer(client: MockClient(autoReply: false), isOpen: .constant(false)), expectContent: false)
+        #expect(closed.width == 0)
     }
 
     // MARK: 工具
@@ -114,19 +118,27 @@ struct ViewSmokeTests {
         }
     }
 
-    /// 放进平台的宿主控制器并布局（带导航栈、输入框这类 `ImageRenderer` 画不了的视图用它）。
-    private func host(_ view: some View) {
+    /// 放进平台的宿主控制器并布局（带导航栈、输入框这类 `ImageRenderer` 画不了的视图用它），返回理想尺寸。
+    /// `expectContent` 为真时要求宽度大于 0；本来就可能什么都不画的视图（关着的抽屉）传 false，由调用方自己断言。
+    @discardableResult
+    private func host(
+        _ view: some View, expectContent: Bool = true, sourceLocation: SourceLocation = #_sourceLocation
+    ) -> CGSize {
         #if canImport(UIKit)
             let controller = UIHostingController(rootView: view)
             controller.view.frame = CGRect(origin: .zero, size: Self.size)
             controller.view.setNeedsLayout()
             controller.view.layoutIfNeeded()
-            #expect(controller.sizeThatFits(in: Self.size).width > 0)
+            let size = controller.sizeThatFits(in: Self.size)
         #elseif canImport(AppKit)
             let controller = NSHostingController(rootView: view)
             controller.view.frame = CGRect(origin: .zero, size: Self.size)
             controller.view.layoutSubtreeIfNeeded()
-            #expect(controller.sizeThatFits(in: Self.size).width > 0)
+            let size = controller.sizeThatFits(in: Self.size)
         #endif
+        if expectContent {
+            #expect(size.width > 0, sourceLocation: sourceLocation)
+        }
+        return size
     }
 }
