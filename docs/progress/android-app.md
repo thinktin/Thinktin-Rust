@@ -2,6 +2,8 @@
 
 目标：Android App（WBS 13.x）。Kotlin + Jetpack Compose（Material 3）原生开发，信息架构与视觉参考 Claude Android App（见 [安卓端设计规范](../android-design.md)）；经 UniFFI 调 `crates/client-core`（`cn.thinktin.core` Kotlin 绑定 + jniLibs，由 `tools/client-core/build-android.sh` 打出）。分支从 `backend-core`（`82b60b5`）切出，后端接口以那里为准。
 
+PR：[#7](https://github.com/thinktin/Thinktin-Rust/pull/7)（草稿，叠在 #5 之上；#5 合并后差异只剩 Android 部分；13.2、13.3 做完后转为可评审）。
+
 认领：Android 会话（session_01T2zubC6hDr9ZZR3ihhPP5b）在做，2026-10-22 01:15 起（北京时间）。13.x 全部由本分支负责；`backend-core`、`ios-app` 会话请不要重做 13.x。client-core（11.x）接口如有变动，请在 `docs/progress.md` 里记一句，本分支定期合 `backend-core`。
 
 已完成：
