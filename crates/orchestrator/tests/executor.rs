@@ -758,6 +758,7 @@ async fn approvals_wait_for_the_user() {
         .await
         .unwrap();
     tx.commit().await.unwrap();
+    let approval_id = pending[0].id;
     tokio::time::timeout(Duration::from_secs(20), h)
         .await
         .unwrap()
@@ -765,6 +766,44 @@ async fn approvals_wait_for_the_user() {
     let rec = e.state(run).await;
     assert_eq!(rec.run.state, RunState::Succeeded);
     assert_eq!(rec.run.summary.as_deref(), Some("approved"));
+    // 审批事件带上对得上审批记录的键。
+    let events = e.events(run).await;
+    let payload = |kind: &str| {
+        events
+            .iter()
+            .find(|(k, _)| k == kind)
+            .unwrap_or_else(|| panic!("no {kind}"))
+            .1
+            .clone()
+    };
+    let asked = payload("agent.permission_requested");
+    assert_eq!(
+        (
+            &asked["attempt"],
+            &asked["approval_id"],
+            &asked["request_id"]
+        ),
+        (
+            &json!(1),
+            &json!(approval_id),
+            &json!(pending[0].request_id)
+        )
+    );
+    let resolved = payload("agent.permission_resolved");
+    assert_eq!(
+        (
+            &resolved["attempt"],
+            &resolved["approval_id"],
+            &resolved["approval_state"]
+        ),
+        (&json!(1), &json!(approval_id), &json!("approved"))
+    );
+    // 先有审批请求，再进入等审批。
+    let at = |want: &dyn Fn(&(String, Value)) -> bool| events.iter().position(want).unwrap();
+    assert!(
+        at(&|(k, _)| k == "agent.permission_requested")
+            < at(&|(k, p)| k == "run.state" && p["state"] == "waiting_approval")
+    );
     let mut tx = e.t.db.tenant(e.user).await.unwrap();
     assert!(tx.pending_approvals().await.unwrap().is_empty());
     tx.rollback().await.unwrap();
@@ -1152,6 +1191,23 @@ async fn interrupted_approvals_are_asked_again_on_the_next_attempt() {
         .unwrap();
     let rec = e.state(run).await;
     assert_eq!((rec.run.state, rec.run.attempt), (RunState::Succeeded, 2));
+    // 两次尝试的请求 id 一样（shim 每次从 perm-1 编号），靠 attempt 和审批 id 分开。
+    let asked: Vec<Value> = e
+        .events(run)
+        .await
+        .into_iter()
+        .filter(|(k, _)| k == "agent.permission_requested")
+        .map(|(_, p)| p)
+        .collect();
+    assert_eq!(asked.len(), 2);
+    assert_eq!(asked[0]["request_id"], asked[1]["request_id"]);
+    assert_eq!(
+        (&asked[0]["attempt"], &asked[1]["attempt"]),
+        (&json!(1), &json!(2))
+    );
+    assert!(
+        asked[0]["approval_id"].is_string() && asked[0]["approval_id"] != asked[1]["approval_id"]
+    );
 }
 
 /// 等审批的运行让出执行名额：只有一个名额时，别的运行照样能跑；批准后它拿回名额接着跑完。
@@ -1634,6 +1690,22 @@ async fn expired_approvals_are_skipped_by_policy() {
     assert_eq!(
         approval.approval.state,
         proto::domain::ApprovalState::Expired
+    );
+    // 平台判的超时，shim 回的是 by=user：事件里带上平台交过去的结果，时间线才不会显示成用户拒绝。
+    let resolved = e
+        .events(run)
+        .await
+        .into_iter()
+        .find(|(k, _)| k == "agent.permission_resolved")
+        .unwrap()
+        .1;
+    assert_eq!(
+        (&resolved["attempt"], &resolved["approval_id"]),
+        (&json!(1), &json!(approval.approval.id))
+    );
+    assert!(
+        resolved["by"] == "timeout" || resolved["approval_state"] == "expired",
+        "{resolved}"
     );
     let inbox = e.inbox().await;
     assert!(

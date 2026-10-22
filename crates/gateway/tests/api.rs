@@ -771,6 +771,29 @@ async fn runs_plans_and_approvals() {
         (&json!(ApprovalState::Rejected), &json!("deny"))
     );
     assert!(got["decided_at"].is_string(), "{got}");
+    // 决定事件带上和 agent.permission_* 对得上的键。
+    let (_, page) = a
+        .call(
+            Method::GET,
+            &format!("/v1/instances/{inst}/events"),
+            Some(&u.access),
+            None,
+        )
+        .await;
+    let decided = page["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["kind"] == "approval.decided")
+        .expect("approval.decided event");
+    assert_eq!(
+        (
+            &decided["payload"]["request_id"],
+            &decided["payload"]["attempt"],
+            &decided["payload"]["approval_id"],
+        ),
+        (&json!("perm-1"), &json!(2), &json!(approval_id))
+    );
 }
 
 async fn ws_connect(

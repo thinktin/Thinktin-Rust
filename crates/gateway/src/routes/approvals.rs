@@ -47,7 +47,14 @@ pub async fn decide(
         approval.instance_id,
         Some(approval.run_id),
         "approval.decided",
-        &json!({ "approval_id": approval.id, "state": approval.state, "option_id": req.option_id }),
+        // request_id + attempt 和 agent.permission_* 事件对得上（shim 每次尝试从 perm-1 重新编号）。
+        &json!({
+            "approval_id": approval.id,
+            "state": approval.state,
+            "option_id": req.option_id,
+            "request_id": approval.request_id,
+            "attempt": approval.attempt,
+        }),
     )
     .await?;
     t.audit(
