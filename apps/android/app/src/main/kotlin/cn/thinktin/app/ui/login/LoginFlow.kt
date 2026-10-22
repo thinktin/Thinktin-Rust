@@ -101,7 +101,7 @@ private fun LoginScreen(step: LoginStep, onNext: () -> Unit, onBack: (() -> Unit
                 modifier = Modifier.semantics { heading() },
             )
             Text(
-                text = stringResource(R.string.login_coming_soon),
+                text = stringResource(if (container.demoAllowed) R.string.login_coming_soon else R.string.login_coming_soon_plain),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
@@ -109,7 +109,10 @@ private fun LoginScreen(step: LoginStep, onNext: () -> Unit, onBack: (() -> Unit
             if (state.step == LoginStep.Phone) {
                 OutlinedButton(onClick = onNext) { Text(stringResource(R.string.login_next)) }
             }
-            PrimaryButton(text = stringResource(R.string.login_use_demo), onClick = viewModel::useDemo)
+            // 演示模式只在 debug 包里提供（第 7 节）：release 进去了就回不到真实账号。
+            if (container.demoAllowed) {
+                PrimaryButton(text = stringResource(R.string.login_use_demo), onClick = viewModel::useDemo)
+            }
         }
     }
 }

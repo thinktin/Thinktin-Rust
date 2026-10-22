@@ -63,8 +63,6 @@ android {
 
     testOptions {
         unitTests.isIncludeAndroidResources = true
-        // 纯逻辑测试（ViewModel 等）用 JUnit 5；Robolectric / Compose 测试是 JUnit 4 写法，经 vintage 引擎跑。
-        unitTests.all { it.useJUnitPlatform() }
     }
 
     lint {
@@ -116,11 +114,7 @@ dependencies {
     debugImplementation(libs.compose.ui.test.manifest)
 
     testImplementation(composeBom)
-    testImplementation(platform(libs.junit.bom))
-    testImplementation(libs.junit.jupiter)
-    testImplementation(libs.junit4)
-    testRuntimeOnly(libs.junit.vintage.engine)
-    testRuntimeOnly(libs.junit.platform.launcher)
+    testImplementation(libs.junit)
     testImplementation(libs.robolectric)
     testImplementation(libs.compose.ui.test.junit4)
     testImplementation(libs.androidx.test.core)

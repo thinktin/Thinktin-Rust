@@ -20,7 +20,6 @@ android {
 
     testOptions {
         unitTests.all { test ->
-            test.useJUnitPlatform()
             // CoreSmokeTest 经 JNA 加载本机编出的 libclient_core.so（cargo build -p client-core 的 target/debug）。
             val libDir = System.getenv("THINKTIN_CORE_LIB_DIR")?.takeIf { it.isNotBlank() }
             if (libDir != null) {
@@ -58,7 +57,5 @@ dependencies {
 
     jnaForTest(libs.jna)
     testImplementation(files(jnaForTest))
-    testImplementation(platform(libs.junit.bom))
-    testImplementation(libs.junit.jupiter)
-    testRuntimeOnly(libs.junit.platform.launcher)
+    testImplementation(libs.junit)
 }

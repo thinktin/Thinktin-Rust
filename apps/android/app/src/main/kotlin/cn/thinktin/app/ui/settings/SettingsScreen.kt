@@ -34,7 +34,9 @@ import cn.thinktin.app.settings.AppSettings
 import cn.thinktin.app.settings.AppSettingsRepository
 import cn.thinktin.app.ui.common.LocalAppContainer
 import cn.thinktin.app.ui.common.LocalThinktinService
+import cn.thinktin.data.service.ServiceError
 import cn.thinktin.data.service.ThinktinService
+import cn.thinktin.data.service.logoutQuietly
 import cn.thinktin.design.component.SectionHeader
 import cn.thinktin.design.component.ThinktinTopBar
 import cn.thinktin.design.component.TopBarIcons
@@ -60,7 +62,13 @@ class SettingsViewModel(
 ) : ViewModel() {
     private val user = flow {
         emit(null)
-        emit(runCatching { service.me() }.getOrNull())
+        emit(
+            try {
+                service.me()
+            } catch (_: ServiceError) {
+                null
+            },
+        )
     }
 
     val uiState: StateFlow<SettingsUiState> = combine(repository.settings, user) { settings, me ->
@@ -76,7 +84,7 @@ class SettingsViewModel(
     }
 
     fun signOut() {
-        viewModelScope.launch { runCatching { service.logout() } }
+        viewModelScope.launch { service.logoutQuietly() }
     }
 }
 
@@ -138,7 +146,8 @@ fun SettingsScreen(onBack: () -> Unit) {
                     )
                 }
             }
-            if (BuildConfig.DEBUG) {
+            // 演示模式开关只在 debug 包里有（第 7 节）。
+            if (container.demoAllowed) {
                 val demo = state.settings?.demoMode ?: state.isDemo
                 ListItem(
                     headlineContent = { Text(stringResource(R.string.settings_demo_mode)) },

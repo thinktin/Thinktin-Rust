@@ -3,19 +3,31 @@ package cn.thinktin.app
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isPopup
+import androidx.compose.ui.test.isSelectable
+import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.junit4.ComposeTestRule
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.getOrNull
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import cn.thinktin.app.ui.drawer.DRAWER_TEST_TAG
+import cn.thinktin.design.theme.Appearance
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Rule
 import org.junit.Test
@@ -51,6 +63,10 @@ class AppUiTest {
 
     private val inDrawer = hasAnyAncestor(hasTestTag(DRAWER_TEST_TAG))
 
+    private fun hasClickLabel(label: String) = SemanticsMatcher("onClickLabel = $label") {
+        it.config.getOrNull(SemanticsActions.OnClick)?.label == label
+    }
+
     private fun ComposeTestRule.waitFor(matcher: SemanticsMatcher) {
         waitUntil(timeoutMillis = 10_000) { onAllNodes(matcher).fetchSemanticsNodes().isNotEmpty() }
     }
@@ -64,8 +80,112 @@ class AppUiTest {
         compose.waitFor(hasText("把 README 翻译成英文"))
         compose.onNode(hasText("把 README 翻译成英文")).assertIsDisplayed()
         compose.onNode(hasText("给登录页加单元测试")).assertIsDisplayed()
-        // 底部输入框带着当前实例的名字
-        compose.onNode(hasText("让 小码 做点什么")).assertIsDisplayed()
+        // 底部输入框带着当前实例的名字（是输入框自己的无障碍名字）
+        compose.onNode(hasContentDescription("让 小码 做点什么") and hasSetTextAction()).assertIsDisplayed()
+        // agent 写的摘要带“AI 生成”标识（第 8.4 节）
+        compose.onAllNodes(hasText("【AI 生成】")).onFirst().assertIsDisplayed()
+        compose.onNode(hasText("已翻译并提交 README.en.md")).assertIsDisplayed()
+    }
+
+    @Test
+    fun clickRecentRunOpensRunDetail() {
+        launch()
+        compose.waitFor(hasText("把 README 翻译成英文"))
+        compose.onNode(hasText("把 README 翻译成英文")).performClick()
+        compose.waitFor(hasText("编号：run-done"))
+        compose.onNode(hasText("运行详情")).assertIsDisplayed()
+        // 返回回到首页
+        compose.onNode(hasContentDescription("返回")).performClick()
+        compose.waitFor(hasText("最近运行"))
+    }
+
+    @Test
+    fun sendFromHomeOpensChat() {
+        launch()
+        val field = hasContentDescription("让 小码 做点什么") and hasSetTextAction()
+        compose.waitFor(field)
+        compose.onNode(field).performTextInput("帮我看看 CI")
+        compose.onNode(hasContentDescription("发送")).performClick()
+        compose.waitFor(hasText("编号：inst-coder"))
+        compose.onNode(hasText("对话")).assertIsDisplayed()
+    }
+
+    @Test
+    fun switchingInstanceShowsItsRuns() {
+        launch()
+        compose.waitFor(hasClickLabel("切换实例"))
+        compose.onNode(hasClickLabel("切换实例")).performClick()
+        compose.onNode(hasText("研究员") and hasAnyAncestor(isPopup())).performClick()
+        compose.waitFor(hasContentDescription("让 研究员 做点什么"))
+        compose.waitFor(hasText("查一下登录页用到的测试框架的最新版本"))
+    }
+
+    @Test
+    fun settingsSwitchesAppearance() {
+        launch()
+        openSettingsFromDrawer()
+        val dark = hasText("深色")
+        compose.onNode(dark).performClick()
+        compose.waitUntil(timeoutMillis = 10_000) {
+            runBlocking { app().container.settings.first().appearance } == Appearance.Dark
+        }
+        compose.onNode(isSelectable() and hasAnyDescendant(dark)).assertIsSelected()
+        // debug 包里有演示模式开关，演示模式下没有“退出登录”
+        compose.onNode(hasText("演示模式")).assertIsDisplayed()
+        compose.onAllNodes(hasText("退出登录")).assertCountEquals(0)
+    }
+
+    @Test
+    fun deepLinkWhileRunningNavigates() {
+        launch()
+        compose.waitFor(hasText("最近运行"))
+        deliver("thinktin://run/run-done")
+        compose.waitFor(hasText("编号：run-done"))
+        compose.onNode(hasText("运行详情")).assertIsDisplayed()
+        // 返回栈是“首页 → 目标页”，和冷启动一样
+        compose.onNode(hasContentDescription("返回")).performClick()
+        compose.waitFor(hasText("最近运行"))
+        // 再来一条：从首页跳到保险箱的填写请求
+        deliver("thinktin://vault/request/vreq-pending")
+        compose.waitFor(hasText("编号：vreq-pending"))
+        compose.onNode(hasText("密码保险箱")).assertIsDisplayed()
+    }
+
+    @Test
+    fun deepLinkWhileRunningClosesOpenDrawer() {
+        launch()
+        compose.waitFor(hasContentDescription("打开菜单"))
+        compose.onNode(hasContentDescription("打开菜单")).performClick()
+        compose.waitForIdle()
+        deliver("thinktin://inbox/inbox-3")
+        compose.waitFor(hasText("编号：inbox-3"))
+        compose.onNode(hasText("收件箱") and !inDrawer).assertIsDisplayed()
+    }
+
+    @Test
+    fun nonDeepLinkIntentIsIgnored() {
+        launch()
+        compose.waitFor(hasText("最近运行"))
+        deliver("https://thinktin.cn/run/run-done")
+        compose.waitForIdle()
+        compose.onNode(hasText("最近运行")).assertIsDisplayed()
+        compose.onAllNodes(hasText("编号：run-done")).assertCountEquals(0)
+    }
+
+    private fun app(): DemoTestApp = ApplicationProvider.getApplicationContext()
+
+    /** App 已在运行时收到深链（singleTask 走 onNewIntent）。 */
+    private fun deliver(uri: String) {
+        scenario!!.onActivity { it.onNewIntent(Intent(Intent.ACTION_VIEW, Uri.parse(uri))) }
+    }
+
+    private fun openSettingsFromDrawer() {
+        compose.waitFor(hasContentDescription("打开菜单"))
+        compose.onNode(hasContentDescription("打开菜单")).performClick()
+        compose.waitForIdle()
+        // Robolectric 的触摸注入点不到 ModalNavigationDrawer 里的条目（真机正常），用无障碍点击动作。
+        compose.onNode(hasContentDescription("设置") and inDrawer).performSemanticsAction(SemanticsActions.OnClick)
+        compose.waitFor(hasText("外观"))
     }
 
     @Test
@@ -77,35 +197,18 @@ class AppUiTest {
         compose.onNode(hasText("我的 agent") and inDrawer).assertIsDisplayed()
         compose.onNode(hasText("小码") and inDrawer).assertIsDisplayed()
         compose.onNode(hasText("研究员") and inDrawer).assertIsDisplayed()
+        // 第二行是 agent（第 3 节：名字、agent、状态点）
+        compose.onNode(hasText("agent-coder") and inDrawer).assertIsDisplayed()
+        compose.onNode(hasText("agent-research") and inDrawer).assertIsDisplayed()
         compose.onNode(hasText("收件箱") and inDrawer).assertIsDisplayed()
     }
 
     @Test
     fun drawerOpensSettings() {
         launch()
-        compose.waitFor(hasContentDescription("打开菜单"))
-        compose.onNode(hasContentDescription("打开菜单")).performClick()
-        compose.waitForIdle()
-        // Robolectric 的触摸注入点不到 ModalNavigationDrawer 里的条目（真机正常），用无障碍点击动作。
-        compose.onNode(hasContentDescription("设置") and inDrawer).performSemanticsAction(SemanticsActions.OnClick)
-        compose.waitFor(hasText("外观"))
+        openSettingsFromDrawer()
         compose.onNode(hasText("设置") and !inDrawer).assertIsDisplayed()
         compose.onNode(hasText("外观")).assertIsDisplayed()
     }
 
-    @Test
-    fun deepLinkOpensInbox() {
-        launch("thinktin://inbox")
-        compose.waitFor(hasText("即将推出"))
-        compose.onNode(hasText("收件箱") and !inDrawer).assertIsDisplayed()
-        compose.onNode(hasText("即将推出")).assertIsDisplayed()
-        compose.onNode(hasContentDescription("返回")).assertIsDisplayed()
-    }
-
-    @Test
-    fun deepLinkWithIdOpensRun() {
-        launch("thinktin://run/run-done")
-        compose.waitFor(hasText("运行详情"))
-        compose.onNode(hasText("编号：run-done")).assertIsDisplayed()
-    }
 }

@@ -137,7 +137,17 @@ fun AppDrawer(
                     val stateLabel = stringResource(instance.state.labelRes())
                     NavigationDrawerItem(
                         label = {
-                            Text(instance.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            // 名字 + agent（第 3 节）；13.3 有了 agent 的显示名后换成显示名。
+                            Column {
+                                Text(instance.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(
+                                    text = instance.agentId,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
                         },
                         icon = { StatusDot(instance.state, contentDescription = stateLabel) },
                         selected = false,

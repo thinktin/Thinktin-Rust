@@ -11,8 +11,7 @@ serializationJson = "1.7.3"
 securityCrypto = "1.1.0-alpha06"
 datastore = "1.1.1"
 jna = "5.15.0"
-junit4 = "4.13.2"
-junit5 = "5.11.3"
+junit = "4.13.2"
 robolectric = "4.14.1"
 turbine = "1.2.0"
 androidxTestCore = "1.6.1"
@@ -44,12 +43,8 @@ kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serializa
 
 jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
 
-# 纯 JVM 测试用 JUnit 5（Jupiter）；Robolectric、Compose 规则只支持 JUnit 4，经 vintage 引擎跑在同一个 JUnit Platform 上。
-junit-bom = { module = "org.junit:junit-bom", version.ref = "junit5" }
-junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
-junit-vintage-engine = { module = "org.junit.vintage:junit-vintage-engine" }
-junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
-junit4 = { module = "junit:junit", version.ref = "junit4" }
+# 测试统一用 JUnit 4：Robolectric 和 Compose 的测试规则（createComposeRule）都基于它（docs/android-design.md 第 1 节）。
+junit = { module = "junit:junit", version.ref = "junit" }
 robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
 turbine = { module = "app.cash.turbine:turbine", version.ref = "turbine" }
 androidx-test-core = { module = "androidx.test:core", version.ref = "androidxTestCore" }

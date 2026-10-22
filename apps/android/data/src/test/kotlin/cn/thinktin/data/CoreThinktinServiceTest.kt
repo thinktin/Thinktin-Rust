@@ -21,10 +21,10 @@ import cn.thinktin.data.service.ServiceError
 import cn.thinktin.data.service.ThinktinService
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
-import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertTrue
-import org.junit.jupiter.api.fail
-import org.junit.jupiter.api.Test
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
+import org.junit.Test
 import cn.thinktin.core.ImChannel as CoreImChannel
 import cn.thinktin.core.Instance as CoreInstance
 import cn.thinktin.core.NewImChannel as CoreNewImChannel
@@ -193,8 +193,8 @@ class CoreThinktinServiceTest {
             assertEquals(EventStreamItem.Status(StreamState.Reconnecting(250)), awaitItem())
             cancelAndIgnoreRemainingEvents()
         }
-        assertTrue(fake.stopped, "取消收集时要 stop()")
-        assertTrue(fake.closed, "取消收集时要 close()")
+        assertTrue("取消收集时要 stop()", fake.stopped)
+        assertTrue("取消收集时要 close()", fake.closed)
     }
 
     @Test
@@ -221,8 +221,8 @@ class CoreThinktinServiceTest {
                 assertTrue((awaitItem() as EventStreamItem.Status).state.isTerminal)
                 awaitComplete()
             }
-            assertTrue(fake.stopped, "$terminal 之后要 stop()")
-            assertTrue(fake.closed, "$terminal 之后要 close() 释放原生句柄")
+            assertTrue("$terminal 之后要 stop()", fake.stopped)
+            assertTrue("$terminal 之后要 close() 释放原生句柄", fake.closed)
         }
     }
 

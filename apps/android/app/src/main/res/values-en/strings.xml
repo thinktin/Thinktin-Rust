@@ -98,15 +98,19 @@
     <!-- Sign in -->
     <string name="login_welcome">Welcome to ThinkTin</string>
     <string name="login_coming_soon">Phone sign-in is coming soon. Try demo mode in the meantime.</string>
+    <string name="login_coming_soon_plain">Phone sign-in is coming soon.</string>
     <string name="login_next">Next</string>
     <string name="login_use_demo">Use demo mode</string>
 
     <!-- Frozen / core unavailable -->
+    <string name="action_retry">Try again</string>
+    <string name="loading">Loading</string>
     <string name="frozen_title">Account frozen</string>
     <string name="frozen_message">Your account is temporarily unavailable. Please contact support. You stay signed in and can continue once it is unfrozen.</string>
     <string name="action_sign_out">Sign out</string>
     <string name="core_unavailable_title">Core library unavailable</string>
-    <string name="core_unavailable_message">This build does not include the ThinkTin core library (libclient_core.so). Only demo mode is available.</string>
+    <string name="core_unavailable_message">The ThinkTin core library failed to load, so the service is unavailable. Try again; if it keeps failing, update or reinstall the app.</string>
+    <string name="core_unavailable_detail">Reason: %1$s</string>
 
     <!-- Settings -->
     <string name="settings_appearance">Appearance</string>

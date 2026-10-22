@@ -5,11 +5,15 @@ import androidx.lifecycle.viewModelScope
 import cn.thinktin.data.model.Instance
 import cn.thinktin.data.model.InstanceState
 import cn.thinktin.data.model.User
+import cn.thinktin.data.service.AuthState
 import cn.thinktin.data.service.ServiceError
 import cn.thinktin.data.service.ThinktinService
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -29,33 +33,59 @@ data class DrawerUiState(
         }
 }
 
-/** 抽屉：实例列表、未读数、头像与名字。先缓存、再联网。 */
+/**
+ * 抽屉：实例列表、未读数、头像与名字。先缓存（cached* 在 IO 线程上读）、再联网。
+ *
+ * 抽屉的 ViewModel 在 Activity 作用域里，退出登录后不会销毁：跟着 [ThinktinService.authState] 走，
+ * 变成未登录时清空上一个账号的数据，重新登录后再加载，不会显示旧账号的东西。
+ */
 class DrawerViewModel(private val service: ThinktinService) : ViewModel() {
-    private val state = MutableStateFlow(
-        DrawerUiState(
-            instances = service.cachedInstances().visible(),
-            unread = service.cachedUnread(),
-            isDemo = service.isDemo,
-        ),
-    )
+    private val state = MutableStateFlow(DrawerUiState(isDemo = service.isDemo))
     val uiState: StateFlow<DrawerUiState> = state.asStateFlow()
 
+    private var loadJob: Job? = null
+
     init {
-        refresh()
+        viewModelScope.launch {
+            service.authState
+                .map { it != AuthState.SignedOut }
+                .distinctUntilChanged()
+                .collect { signedIn ->
+                    if (signedIn) {
+                        load()
+                    } else {
+                        loadJob?.cancel()
+                        state.value = DrawerUiState(isDemo = service.isDemo, query = state.value.query)
+                    }
+                }
+        }
+    }
+
+    /** 新会话：先显示缓存，再联网刷新。 */
+    private fun load() {
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
+            val cached = service.cachedInstances().visible()
+            val unread = service.cachedUnread()
+            state.update { it.copy(instances = cached, unread = unread) }
+            refreshNow()
+        }
     }
 
     fun refresh() {
-        viewModelScope.launch {
-            try {
-                val instances = service.instances().visible()
-                state.update { it.copy(instances = instances) }
-                val page = service.syncInbox(limit = 1)
-                state.update { it.copy(unread = page.unread) }
-                val user = service.me()
-                state.update { it.copy(user = user) }
-            } catch (_: ServiceError) {
-                // 抽屉只是导航：刷新失败就继续显示缓存，错误由各页面自己提示。
-            }
+        viewModelScope.launch { refreshNow() }
+    }
+
+    private suspend fun refreshNow() {
+        try {
+            val instances = service.instances().visible()
+            state.update { it.copy(instances = instances) }
+            val page = service.syncInbox(limit = 1)
+            state.update { it.copy(unread = page.unread) }
+            val user = service.me()
+            state.update { it.copy(user = user) }
+        } catch (_: ServiceError) {
+            // 抽屉只是导航：刷新失败就继续显示缓存，错误由各页面自己提示。
         }
     }
 

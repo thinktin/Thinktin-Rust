@@ -20,10 +20,10 @@ import cn.thinktin.data.model.NewImChannel
 import cn.thinktin.data.model.long
 import cn.thinktin.data.model.parseJsonObject
 import cn.thinktin.data.model.string
-import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertNull
-import org.junit.jupiter.api.Assertions.assertTrue
-import org.junit.jupiter.api.Test
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
 import cn.thinktin.core.Approval as CoreApproval
 import cn.thinktin.core.Artifact as CoreArtifact
 import cn.thinktin.core.ImChannel as CoreImChannel
@@ -168,7 +168,7 @@ class MappersTest {
             CoreStreamStatus.AccountFrozen to StreamState.AccountFrozen,
             CoreStreamStatus.Stopped to StreamState.Stopped,
         )
-        for ((core, expected) in table) assertEquals(expected, core.toModel(), "$core")
+        for ((core, expected) in table) assertEquals("$core", expected, core.toModel())
         val terminal = table.map { it.second }.filter { it.isTerminal }.toSet()
         assertEquals(setOf(StreamState.SignedOut, StreamState.NotFound, StreamState.AccountFrozen, StreamState.Stopped), terminal)
     }

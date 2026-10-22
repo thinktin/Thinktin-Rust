@@ -1,5 +1,10 @@
-# Android App（WBS 13.x）：绑定一致性、单元测试（含 Robolectric 界面测试）、lint、debug 包。
-# 这里打的 APK 不含 client-core 的 .so（只能用演示模式）；带 .so 的完整包见 mobile.yml + apps/android/scripts/sync-core.sh。
+# Android App（WBS 13.x）：绑定一致性、单元测试（含 Robolectric 界面测试和经 JNA 真调 Rust 的冒烟测试）、lint、debug 包。
+#
+# 有意不在这里交叉编译三个 ABI 的 .so（NDK + cargo-ndk 一次要几十分钟，每个 PR 都跑不划算）：
+# 这里上传的 app-cn-debug.apk 不含 client-core 的 .so，只能用演示模式（关掉会显示“无法加载核心库”页）。
+# 绑定和 Rust 是否一致由 `sync-core.sh --check` 把关，绑定和库能否真正对上由 CoreSmokeTest 经 JNA 调本机 .so 把关。
+# 带 .so 的完整包：手动跑 mobile.yml 的 android job（产出 target/android），下载后
+# 解压成 `<目录>/thinktin-core/`，`apps/android/scripts/sync-core.sh --from <目录>` 再 assembleDebug；本地见 apps/android/README.md。
 name: Android
 
 on:
@@ -10,6 +15,9 @@ on:
       - "crates/client-core/**"
       - "crates/proto/**"
       - "tools/client-core/**"
+      # 依赖版本（如 uniffi）由 Cargo.lock 决定：只改锁文件也可能改变生成的绑定。
+      - "Cargo.toml"
+      - "Cargo.lock"
       - ".github/workflows/android.yml"
   pull_request:
     paths:
@@ -17,7 +25,10 @@ on:
       - "crates/client-core/**"
       - "crates/proto/**"
       - "tools/client-core/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
       - ".github/workflows/android.yml"
+  workflow_dispatch:
 
 concurrency:
   group: android-${{ github.ref }}
@@ -47,10 +58,14 @@ jobs:
       - name: 绑定一致
         run: apps/android/scripts/sync-core.sh --check
 
-      # lint 的 abortOnError 开着，不用 baseline。CoreSmokeTest 经 JNA 调 target/debug 里的 libclient_core.so。
+      # lint 的 abortOnError 开着，不用 baseline。CoreSmokeTest 经 JNA 调 target/debug 里的 libclient_core.so；
+      # THINKTIN_REQUIRE_CORE=1：拿不到库目录时冒烟测试失败而不是跳过（同 ci.yml 的 THINKTIN_REQUIRE_DB）。
       - name: Test, lint, assemble
         working-directory: apps/android
-        run: THINKTIN_CORE_LIB_DIR=$GITHUB_WORKSPACE/target/debug ./gradlew --no-daemon test lint assembleDebug
+        env:
+          THINKTIN_CORE_LIB_DIR: ${{ github.workspace }}/target/debug
+          THINKTIN_REQUIRE_CORE: "1"
+        run: ./gradlew --no-daemon test lint assembleDebug
 
       - name: Upload reports
         if: failure()
@@ -62,6 +77,7 @@ jobs:
             apps/android/*/build/test-results/
           if-no-files-found: ignore
 
+      # 不含 .so 的演示包（见文件开头的说明）。
       - uses: actions/upload-artifact@v4
         with:
           name: app-cn-debug.apk

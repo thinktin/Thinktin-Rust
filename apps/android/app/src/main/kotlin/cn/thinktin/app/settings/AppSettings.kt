@@ -31,6 +31,11 @@ class AppSettingsRepository(
     private val store: DataStore<Preferences>,
     /** 没设置过演示模式时的默认值（debug 为 true）。 */
     private val demoDefault: Boolean,
+    /**
+     * 允许演示模式（只有 debug 包，第 7 节）。为假时演示模式恒为关：即使存过 demo_mode=true（比如从 debug 包
+     * 覆盖安装成 release）也忽略，release 用户不会困在演示数据里。
+     */
+    val demoAllowed: Boolean = true,
 ) {
     val settings: Flow<AppSettings> = store.data
         .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
@@ -38,7 +43,7 @@ class AppSettingsRepository(
             AppSettings(
                 language = prefs[KEY_LANGUAGE].toEnum(AppLanguage.System),
                 appearance = prefs[KEY_APPEARANCE].toEnum(Appearance.System),
-                demoMode = prefs[KEY_DEMO] ?: demoDefault,
+                demoMode = demoAllowed && (prefs[KEY_DEMO] ?: demoDefault),
             )
         }
 
@@ -51,6 +56,7 @@ class AppSettingsRepository(
     }
 
     suspend fun setDemoMode(enabled: Boolean) {
+        if (enabled && !demoAllowed) return
         store.edit { it[KEY_DEMO] = enabled }
     }
 

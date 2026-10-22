@@ -97,15 +97,19 @@
     <!-- 登录 -->
     <string name="login_welcome">欢迎使用 ThinkTin</string>
     <string name="login_coming_soon">手机号登录即将推出。现在可以先用演示模式看看。</string>
+    <string name="login_coming_soon_plain">手机号登录即将推出。</string>
     <string name="login_next">下一步</string>
     <string name="login_use_demo">使用演示模式</string>
 
     <!-- 冻结 / 核心库不可用 -->
+    <string name="action_retry">重试</string>
+    <string name="loading">正在加载</string>
     <string name="frozen_title">账号已冻结</string>
     <string name="frozen_message">你的账号暂时无法使用，请联系客服。登录状态会保留，解冻后可以接着用。</string>
     <string name="action_sign_out">退出登录</string>
     <string name="core_unavailable_title">无法加载核心库</string>
-    <string name="core_unavailable_message">这个安装包里没有 ThinkTin 核心库（libclient_core.so），只能使用演示模式。</string>
+    <string name="core_unavailable_message">ThinkTin 核心库加载失败，暂时连不上服务。可以重试；仍然不行请更新或重新安装 App。</string>
+    <string name="core_unavailable_detail">原因：%1$s</string>
 
     <!-- 设置 -->
     <string name="settings_appearance">外观</string>

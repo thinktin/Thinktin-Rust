@@ -30,6 +30,14 @@ class UiLogicTest {
         assertEquals(UiText(R.string.error_conflict), ErrorText.of(ServiceError.Api(409, "conflict", "", null)))
         assertEquals(UiText(R.string.error_invalid), ErrorText.of(ServiceError.Api(422, "invalid_base_url", "", null)))
         assertEquals(UiText(R.string.error_server, listOf("internal")), ErrorText.of(ServiceError.Api(500, "internal", "", null)))
+        assertEquals(UiText(R.string.error_forbidden), ErrorText.of(ServiceError.Api(403, "forbidden", "", null)))
+        assertEquals(UiText(R.string.error_forbidden), ErrorText.of(ServiceError.Api(403, "", "", null)))
+        assertEquals(UiText(R.string.error_quota), ErrorText.of(ServiceError.Api(402, "quota_exceeded", "", null)))
+        assertEquals(UiText(R.string.error_quota), ErrorText.of(ServiceError.Api(402, "budget_exceeded", "", null)))
+        assertEquals(UiText(R.string.error_rate_limited_plain), ErrorText.of(ServiceError.Api(429, "", "", null)))
+        assertEquals(UiText(R.string.error_invalid), ErrorText.of(ServiceError.Api(400, "", "", null)))
+        // code 为空时显示状态码
+        assertEquals(UiText(R.string.error_server, listOf("500")), ErrorText.of(ServiceError.Api(500, "", "", null)))
     }
 
     @Test

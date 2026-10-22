@@ -16,11 +16,11 @@ import cn.thinktin.data.service.AuthState
 import cn.thinktin.data.service.ServiceError
 import cn.thinktin.data.service.signedIn
 import kotlinx.coroutines.test.runTest
-import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertFalse
-import org.junit.jupiter.api.Assertions.assertTrue
-import org.junit.jupiter.api.fail
-import org.junit.jupiter.api.Test
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
+import org.junit.Test
 
 class MockThinktinServiceTest {
     private val now = 1_760_000_000_000L
@@ -41,7 +41,7 @@ class MockThinktinServiceTest {
     fun everyInstanceHasRuns() = runTest {
         val s = service()
         for (instance in s.instances()) {
-            assertTrue(s.runs(instance.id).isNotEmpty(), "${instance.id} 没有运行")
+            assertTrue("${instance.id} 没有运行", s.runs(instance.id).isNotEmpty())
             assertEquals(s.runs(instance.id), s.cachedRuns(instance.id))
         }
     }
@@ -83,7 +83,7 @@ class MockThinktinServiceTest {
             assertEquals(events.drop(3), s.cachedEvents(instance.id, afterSeq = events[2].seq))
         }
         val missing = EventKinds.ALL.toSet() - kinds
-        assertTrue(missing.isEmpty(), "没覆盖：$missing")
+        assertTrue("没覆盖：$missing", missing.isEmpty())
     }
 
     @Test
@@ -223,7 +223,7 @@ class MockThinktinServiceTest {
         val vaultIds = s.vaultItems().map { it.id }.toSet()
 
         fun check(what: String, ref: String?, ids: Set<String>) {
-            assertTrue(ref == null || ref in ids, "$what 指向不存在的对象：$ref")
+            assertTrue("$what 指向不存在的对象：$ref", ref == null || ref in ids)
         }
 
         instances.forEach { check("instance ${it.id}.agentId", it.agentId, agents) }

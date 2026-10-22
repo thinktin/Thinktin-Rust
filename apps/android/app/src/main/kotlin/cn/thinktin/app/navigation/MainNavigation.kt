@@ -7,6 +7,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
@@ -29,12 +30,18 @@ import cn.thinktin.app.ui.home.HomeScreen
 import cn.thinktin.app.ui.placeholder.ComingSoonScreen
 import cn.thinktin.app.ui.placeholder.Page
 import cn.thinktin.app.ui.settings.SettingsScreen
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+
+/** 当前的深链收件箱（MainActivity 提供；预览和测试里没有就是空的）。 */
+val LocalDeepLinks = staticCompositionLocalOf { DeepLinkInbox() }
 
 /** 已登录（或演示模式）时的主界面：抽屉 + NavHost（第 3 节）。 */
 @Composable
 fun MainNavigation(navController: NavHostController = rememberNavController()) {
     val service = LocalThinktinService.current
+    val deepLinks = LocalDeepLinks.current
+    val pendingDeepLink by deepLinks.current.collectAsStateWithLifecycle()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val drawerViewModel: DrawerViewModel = viewModel(
@@ -44,6 +51,15 @@ fun MainNavigation(navController: NavHostController = rememberNavController()) {
     val drawerUi by drawerViewModel.uiState.collectAsStateWithLifecycle()
     val backStack by navController.currentBackStackEntryAsState()
     val currentRoute = backStack?.destination?.route
+
+    // 深链（冷启动、App 已在运行时的推送点击）：等导航图建好再交给 NavController，处理完清掉。
+    LaunchedEffect(pendingDeepLink) {
+        val uri = pendingDeepLink ?: return@LaunchedEffect
+        navController.currentBackStackEntryFlow.first()
+        drawerState.close()
+        navController.handleDeepLink(DeepLinkInbox.navigationIntent(uri))
+        deepLinks.consume(uri)
+    }
 
     // 打开抽屉时刷新实例和未读数。
     LaunchedEffect(drawerState.isOpen) {

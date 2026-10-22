@@ -17,8 +17,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowDropDown
-import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.outlined.ArrowDropDown
+import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -62,7 +62,9 @@ import cn.thinktin.app.ui.common.asString
 import cn.thinktin.app.ui.common.errorText
 import cn.thinktin.app.ui.common.labelRes
 import cn.thinktin.data.model.Run
+import cn.thinktin.data.model.RunSource
 import cn.thinktin.data.service.ServiceError
+import cn.thinktin.design.component.AiGeneratedLabel
 import cn.thinktin.design.component.BannerTone
 import cn.thinktin.design.component.Composer
 import cn.thinktin.design.component.EmptyState
@@ -185,7 +187,7 @@ private fun HomeTopBar(
                     ) {
                         StatusDot(selected.state)
                         Text(selected.name, style = MaterialTheme.typography.titleMedium, maxLines = 1)
-                        Icon(Icons.Filled.ArrowDropDown, contentDescription = null)
+                        Icon(Icons.Outlined.ArrowDropDown, contentDescription = null)
                     }
                     DropdownMenu(expanded = switcherOpen, onDismissRequest = { switcherOpen = false }) {
                         state.instances.forEach { instance ->
@@ -205,7 +207,7 @@ private fun HomeTopBar(
         actions = {
             Box {
                 IconButton(onClick = { overflowOpen = true }) {
-                    Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.action_more))
+                    Icon(Icons.Outlined.MoreVert, contentDescription = stringResource(R.string.action_more))
                 }
                 DropdownMenu(expanded = overflowOpen, onDismissRequest = { overflowOpen = false }) {
                     state.selectedInstanceId?.let { id ->
@@ -328,21 +330,28 @@ private fun RunRow(run: Run, nowMs: Long, zone: ZoneId, onClick: () -> Unit) {
     ) {
         StatusDot(run.state, contentDescription = stateLabel)
         Column(Modifier.weight(1f)) {
-            Text(
-                text = run.prompt,
-                style = MaterialTheme.typography.bodyLarge,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            val summary = run.summary ?: run.error
-            if (summary != null) {
+            // 第 8.4 节：委派出来的子运行，prompt 是上游 agent 写的，要标 AI 生成。
+            LabelledLine(aiGenerated = run.source == RunSource.Delegate) {
                 Text(
-                    text = summary,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    text = run.prompt,
+                    style = MaterialTheme.typography.bodyLarge,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+            }
+            // summary 是 agent 写的，标 AI 生成；error 里分不清 agent 写的和平台诊断，13.5 再细分，先不标。
+            val summary = run.summary
+            val error = run.error
+            if (summary != null || error != null) {
+                LabelledLine(aiGenerated = summary != null) {
+                    Text(
+                        text = summary ?: error.orEmpty(),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
             Text(
                 text = stringResource(
@@ -354,6 +363,19 @@ private fun RunRow(run: Run, nowMs: Long, zone: ZoneId, onClick: () -> Unit) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
+}
+
+/** 一行文字，[aiGenerated] 时前面带“【AI 生成】”标识。 */
+@Composable
+private fun LabelledLine(aiGenerated: Boolean, content: @Composable () -> Unit) {
+    if (!aiGenerated) {
+        content()
+        return
+    }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        AiGeneratedLabel()
+        Box(Modifier.weight(1f)) { content() }
     }
 }
 

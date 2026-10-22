@@ -4,11 +4,11 @@ import cn.thinktin.core.ClientException
 import cn.thinktin.data.service.ServiceError
 import cn.thinktin.data.service.asServiceError
 import cn.thinktin.data.service.toServiceError
-import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertNull
-import org.junit.jupiter.api.Assertions.assertSame
-import org.junit.jupiter.api.Assertions.assertTrue
-import org.junit.jupiter.api.Test
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
+import org.junit.Test
 
 class ServiceErrorTest {
     @Test

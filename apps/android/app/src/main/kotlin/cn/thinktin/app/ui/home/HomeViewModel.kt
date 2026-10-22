@@ -8,6 +8,7 @@ import cn.thinktin.data.model.Run
 import cn.thinktin.data.service.ServiceError
 import cn.thinktin.data.service.ThinktinService
 import cn.thinktin.data.service.asServiceError
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -78,26 +79,35 @@ class HomeViewModel(
     val uiEvents: Flow<HomeEvent> = events.receiveAsFlow()
 
     init {
-        val cached = service.cachedInstances()
-        if (cached.isNotEmpty()) applyInstances(cached, fromCache = true)
-        refresh()
-    }
-
-    fun refresh() {
+        // 先缓存（cached* 在 IO 线程上读 SQLite），再联网；两步在同一个协程里，联网结果不会被缓存覆盖。
         viewModelScope.launch {
-            state.update { it.copy(greeting = Greeting.at(clock), nowMs = clock.millis()) }
-            try {
-                applyInstances(service.instances(), fromCache = false)
-                state.value.selectedInstanceId?.let { loadRuns(it, network = true) }
-                val name = runCatching { service.me().displayName }.getOrNull()
-                state.update { it.copy(userName = name, refreshError = null, loading = false) }
-            } catch (e: ServiceError) {
-                state.update { it.copy(refreshError = e, loading = false) }
-            }
+            val cached = service.cachedInstances()
+            if (cached.isNotEmpty() && state.value.loading) applyInstances(cached, fromCache = true)
+            refreshNow()
         }
     }
 
-    private fun applyInstances(list: List<Instance>, fromCache: Boolean) {
+    fun refresh() {
+        viewModelScope.launch { refreshNow() }
+    }
+
+    private suspend fun refreshNow() {
+        state.update { it.copy(greeting = Greeting.at(clock), nowMs = clock.millis()) }
+        try {
+            applyInstances(service.instances(), fromCache = false)
+            state.value.selectedInstanceId?.let { loadRuns(it, network = true) }
+            val name = try {
+                service.me().displayName
+            } catch (_: ServiceError) {
+                null
+            }
+            state.update { it.copy(userName = name, refreshError = null, loading = false) }
+        } catch (e: ServiceError) {
+            state.update { it.copy(refreshError = e, loading = false) }
+        }
+    }
+
+    private suspend fun applyInstances(list: List<Instance>, fromCache: Boolean) {
         val visible = list.filter { it.state != InstanceState.Deleted }
         val current = state.value.selectedInstanceId
         val selected = current?.takeIf { id -> visible.any { it.id == id } } ?: defaultInstance(visible)?.id
@@ -109,7 +119,8 @@ class HomeViewModel(
             )
         }
         if (selected != null && fromCache) {
-            state.update { it.copy(recentRuns = service.cachedRuns(selected, RECENT_LIMIT)) }
+            val runs = service.cachedRuns(selected, RECENT_LIMIT)
+            state.update { it.copy(recentRuns = runs) }
         }
     }
 
@@ -119,7 +130,8 @@ class HomeViewModel(
             ?: list.maxByOrNull { it.lastActiveAtMs }
 
     private suspend fun loadRuns(instanceId: String, network: Boolean) {
-        state.update { it.copy(recentRuns = service.cachedRuns(instanceId, RECENT_LIMIT)) }
+        val cached = service.cachedRuns(instanceId, RECENT_LIMIT)
+        if (state.value.selectedInstanceId == instanceId) state.update { it.copy(recentRuns = cached) }
         if (!network) return
         val runs = service.runs(instanceId, RECENT_LIMIT)
         if (state.value.selectedInstanceId == instanceId) state.update { it.copy(recentRuns = runs) }
@@ -156,6 +168,8 @@ class HomeViewModel(
                 state.update { it.copy(draft = "", sending = false) }
                 loadRuns(instanceId, network = false)
                 events.send(HomeEvent.OpenChat(instanceId))
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 state.update { it.copy(sending = false) }
                 events.send(HomeEvent.ShowError(e.asServiceError()))

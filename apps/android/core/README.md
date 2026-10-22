@@ -13,8 +13,8 @@ apps/android/scripts/sync-core.sh --check           # 只检查提交的 .kt 和
 不提交（见 `apps/android/.gitignore`），由脚本复制进来：
 
 ```bash
-apps/android/scripts/sync-core.sh                      # 交叉编译（NDK + cargo-ndk）后同步
-apps/android/scripts/sync-core.sh --from target/android # 已经有 build-android.sh 的输出时直接同步
+apps/android/scripts/sync-core.sh --from target/android # 已经有 build-android.sh 的输出时直接同步（本机推荐）
+apps/android/scripts/sync-core.sh                      # 交叉编译（NDK + cargo-ndk）后同步（跳过 build-android.sh 的 AAR）
 ```
 
 没有 .so 也能编译和跑 JVM 单元测试，只是装到手机上调用 Rust 会因找不到库而崩溃（演示模式不调 Rust）。
@@ -23,4 +23,5 @@ apps/android/scripts/sync-core.sh --from target/android # 已经有 build-androi
 
 `src/test` 里的 `CoreSmokeTest` 用 JNA 加载本机的 `libclient_core.so`：Gradle 把环境变量
 `THINKTIN_CORE_LIB_DIR`（如 `$REPO/target/debug`，`cargo build -p client-core` 的输出）作为
-`jna.library.path` 传给测试；没设置时跳过。
+`jna.library.path` 传给测试，并把库文件声明为测试任务的输入（开着构建缓存，Rust 改了要重跑）；没设置时跳过，
+同时设了 `THINKTIN_REQUIRE_CORE=1`（CI）时失败。

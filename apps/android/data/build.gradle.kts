@@ -22,7 +22,6 @@ android {
     testOptions {
         // android.util.Log 等在 JVM 单元测试里返回默认值，不抛 “not mocked”。
         unitTests.isReturnDefaultValues = true
-        unitTests.all { it.useJUnitPlatform() }
     }
 
     lint {
@@ -44,9 +43,7 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.androidx.security.crypto)
 
-    testImplementation(platform(libs.junit.bom))
-    testImplementation(libs.junit.jupiter)
-    testRuntimeOnly(libs.junit.platform.launcher)
+    testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.turbine)
 }

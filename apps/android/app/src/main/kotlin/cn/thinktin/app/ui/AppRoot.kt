@@ -12,6 +12,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.thinktin.app.AppContainer
+import cn.thinktin.app.ServiceState
+import cn.thinktin.app.navigation.DeepLinkInbox
+import cn.thinktin.app.navigation.LocalDeepLinks
 import cn.thinktin.app.navigation.MainNavigation
 import cn.thinktin.app.settings.AppSettings
 import cn.thinktin.app.ui.common.LocalAppContainer
@@ -19,32 +22,59 @@ import cn.thinktin.app.ui.common.LocalThinktinService
 import cn.thinktin.app.ui.login.LoginFlow
 import cn.thinktin.app.ui.status.CoreUnavailableScreen
 import cn.thinktin.app.ui.status.FrozenScreen
+import cn.thinktin.app.ui.status.LoadingScreen
 import cn.thinktin.data.service.AuthState
+import cn.thinktin.data.service.ThinktinService
+import cn.thinktin.data.service.logoutQuietly
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
 /**
  * 根界面：按设置选服务（演示 / 真实），按登录状态显示登录流、冻结页或主界面。
+ * 真实服务在后台创建：创建中显示加载，失败显示“核心库不可用”页。
  * 切换演示模式会换服务，主界面整个重建（新的 NavController 和 ViewModel）。
  */
 @Composable
-fun AppRoot(container: AppContainer, settings: AppSettings?) {
+fun AppRoot(container: AppContainer, settings: AppSettings?, deepLinks: DeepLinkInbox = remember { DeepLinkInbox() }) {
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         // 设置还没读出来：只显示背景（和窗口背景同色），通常只有一帧。
         if (settings == null) return@Surface
         val scope = rememberCoroutineScope()
-        val service = remember(settings.demoMode) { container.service(settings.demoMode) }
-        if (service == null) {
-            CoreUnavailableScreen(onUseDemo = { scope.launch { container.settingsRepository.setDemoMode(true) } })
-            return@Surface
+        val serviceFlow: StateFlow<ServiceState> = remember(settings.demoMode) {
+            if (settings.demoMode) MutableStateFlow(ServiceState.Ready(container.demoService())) else container.coreService()
         }
-        val auth by service.authState.collectAsStateWithLifecycle()
-        CompositionLocalProvider(LocalAppContainer provides container, LocalThinktinService provides service) {
-            key(service) {
-                when {
-                    auth == AuthState.Frozen -> FrozenScreen(onSignOut = { scope.launch { runCatching { service.logout() } } })
-                    auth == AuthState.SignedOut && !service.isDemo -> LoginFlow()
-                    else -> MainNavigation()
-                }
+        val serviceState by serviceFlow.collectAsStateWithLifecycle()
+        when (val current = serviceState) {
+            ServiceState.Loading -> LoadingScreen()
+            is ServiceState.Failed -> CoreUnavailableScreen(
+                error = current.error,
+                onRetry = container::retryCore,
+                onUseDemo = if (container.demoAllowed) {
+                    { scope.launch { container.settingsRepository.setDemoMode(true) } }
+                } else {
+                    null
+                },
+            )
+            is ServiceState.Ready -> ServiceContent(container, current.service, deepLinks)
+        }
+    }
+}
+
+@Composable
+private fun ServiceContent(container: AppContainer, service: ThinktinService, deepLinks: DeepLinkInbox) {
+    val scope = rememberCoroutineScope()
+    val auth by service.authState.collectAsStateWithLifecycle()
+    CompositionLocalProvider(
+        LocalAppContainer provides container,
+        LocalThinktinService provides service,
+        LocalDeepLinks provides deepLinks,
+    ) {
+        key(service) {
+            when {
+                auth == AuthState.Frozen -> FrozenScreen(onSignOut = { scope.launch { service.logoutQuietly() } })
+                auth == AuthState.SignedOut && !service.isDemo -> LoginFlow()
+                else -> MainNavigation()
             }
         }
     }

@@ -297,3 +297,15 @@ interface ThinktinService {
 
 /** 当前是否已登录（冻结也算登录：登录状态保留）。 */
 val ThinktinService.signedIn: Boolean get() = authState.value != AuthState.SignedOut
+
+/**
+ * 退出登录，服务端调用失败（断网等）也不抛：两个实现都会先清掉本地会话、把 [ThinktinService.authState] 置为未登录。
+ * 取消照常抛出。
+ */
+suspend fun ThinktinService.logoutQuietly() {
+    try {
+        logout()
+    } catch (_: ServiceError) {
+        // 本地已经退出，服务端那边的会话会过期。
+    }
+}
