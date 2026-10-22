@@ -672,6 +672,9 @@ internal interface UniffiCallbackInterfaceEventListenerMethod1 : com.sun.jna.Cal
 internal interface UniffiCallbackInterfaceEventListenerMethod2 : com.sun.jna.Callback {
     fun callback(`uniffiHandle`: Long,`status`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
 }
+internal interface UniffiCallbackInterfaceLogSinkMethod0 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`record`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
 @Structure.FieldOrder("uniffiFree", "uniffiClone", "load", "save")
 internal open class UniffiVTableCallbackInterfaceSessionStore(
     @JvmField internal var `uniffiFree`: UniffiCallbackInterfaceFree? = null,
@@ -719,6 +722,25 @@ internal open class UniffiVTableCallbackInterfaceEventListener(
     }
 
 }
+@Structure.FieldOrder("uniffiFree", "uniffiClone", "log")
+internal open class UniffiVTableCallbackInterfaceLogSink(
+    @JvmField internal var `uniffiFree`: UniffiCallbackInterfaceFree? = null,
+    @JvmField internal var `uniffiClone`: UniffiCallbackInterfaceClone? = null,
+    @JvmField internal var `log`: UniffiCallbackInterfaceLogSinkMethod0? = null,
+) : Structure() {
+    class UniffiByValue(
+        `uniffiFree`: UniffiCallbackInterfaceFree? = null,
+        `uniffiClone`: UniffiCallbackInterfaceClone? = null,
+        `log`: UniffiCallbackInterfaceLogSinkMethod0? = null,
+    ): UniffiVTableCallbackInterfaceLogSink(`uniffiFree`,`uniffiClone`,`log`,), Structure.ByValue
+
+   internal fun uniffiSetValue(other: UniffiVTableCallbackInterfaceLogSink) {
+        `uniffiFree` = other.`uniffiFree`
+        `uniffiClone` = other.`uniffiClone`
+        `log` = other.`log`
+    }
+
+}
 
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
@@ -751,6 +773,8 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_client_core_checksum_func_redact_message(
     ): Int
     external fun uniffi_client_core_checksum_func_unique_vault_name(
+    ): Int
+    external fun uniffi_client_core_checksum_func_init_logging(
     ): Int
     external fun uniffi_client_core_checksum_func_approval_message(
     ): Int
@@ -886,6 +910,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_instances(
     ): Int
+    external fun uniffi_client_core_checksum_method_thinktinclient_list_runs(
+    ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_login(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_logout(
@@ -990,6 +1016,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_vendors(
     ): Int
+    external fun uniffi_client_core_checksum_method_logsink_log(
+    ): Int
     external fun uniffi_client_core_checksum_constructor_thinktinclient_new(
     ): Int
     external fun ffi_client_core_uniffi_contract_version(
@@ -1009,6 +1037,7 @@ internal object UniffiLib {
     init {
         Native.register(UniffiLib::class.java, findLibraryName(componentName = "client_core"))
         uniffiCallbackInterfaceEventListener.register(this)
+        uniffiCallbackInterfaceLogSink.register(this)
         uniffiCallbackInterfaceSessionStore.register(this)
         
     }
@@ -1144,6 +1173,8 @@ internal object UniffiLib {
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_instances(`ptr`: Long,
     ): Long
+    external fun uniffi_client_core_fn_method_thinktinclient_list_runs(`ptr`: Long,`filter`: RustBuffer.ByValue,`beforeRunId`: RustBuffer.ByValue,`limit`: Int,
+    ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_login(`ptr`: Long,`phone`: RustBuffer.ByValue,`code`: RustBuffer.ByValue,`pushChannel`: RustBuffer.ByValue,`pushToken`: RustBuffer.ByValue,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_logout(`ptr`: Long,
@@ -1248,6 +1279,14 @@ internal object UniffiLib {
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_vendors(`ptr`: Long,
     ): Long
+    external fun uniffi_client_core_fn_clone_logsink(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): Long
+    external fun uniffi_client_core_fn_free_logsink(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_client_core_fn_init_callback_vtable_logsink(`vtable`: UniffiVTableCallbackInterfaceLogSink,
+    ): Unit
+    external fun uniffi_client_core_fn_method_logsink_log(`ptr`: Long,`record`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
     external fun uniffi_client_core_fn_func_accept_language_header(`tags`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_client_core_fn_func_detect_secrets(`text`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -1256,6 +1295,8 @@ internal object UniffiLib {
     ): RustBuffer.ByValue
     external fun uniffi_client_core_fn_func_unique_vault_name(`base`: RustBuffer.ByValue,`taken`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
+    external fun uniffi_client_core_fn_func_init_logging(`sink`: Long,`maxLevel`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Byte
     external fun uniffi_client_core_fn_func_approval_message(`request`: RustBuffer.ByValue,`approve`: Byte,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_client_core_fn_func_arguments_digest(`argumentsJson`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -1411,6 +1452,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_func_unique_vault_name() and 0xFFFF) != 18491) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_client_core_checksum_func_init_logging() and 0xFFFF) != 8291) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_func_approval_message() and 0xFFFF) != 28681) {
@@ -1614,6 +1658,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_instances() and 0xFFFF) != 31253) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_list_runs() and 0xFFFF) != 55152) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_login() and 0xFFFF) != 20795) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1635,7 +1682,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_older_inbox() and 0xFFFF) != 6607) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_client_core_checksum_method_thinktinclient_older_runs() and 0xFFFF) != 39421) {
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_older_runs() and 0xFFFF) != 41930) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_plans() and 0xFFFF) != 27034) {
@@ -1768,6 +1815,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_vendors() and 0xFFFF) != 43023) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_client_core_checksum_method_logsink_log() and 0xFFFF) != 16238) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_constructor_thinktinclient_new() and 0xFFFF) != 43331) {
@@ -2934,6 +2984,323 @@ public object FfiConverterTypeEventSubscription: FfiConverter<EventSubscription,
 
 
 /**
+ * App 实现：把一条日志写进系统日志。在 client-core 的任意线程上调用，要很快返回，不要再调回 client-core。
+ */
+public interface LogSink {
+    
+    fun `log`(`record`: LogRecord)
+    
+    companion object
+}
+
+/**
+ * App 实现：把一条日志写进系统日志。在 client-core 的任意线程上调用，要很快返回，不要再调回 client-core。
+ */
+open class LogSinkImpl: Disposable, AutoCloseable, LogSink
+{
+
+    @Suppress("UNUSED_PARAMETER")
+    /**
+     * @suppress
+     */
+    constructor(withHandle: UniffiWithHandle, handle: Long) {
+        this.handle = handle
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(handle))
+    }
+
+    /**
+     * @suppress
+     *
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    constructor(noHandle: NoHandle) {
+        this.handle = 0
+        this.cleanable = null
+    }
+
+    protected val handle: Long
+    protected val cleanable: UniffiCleaner.Cleanable?
+
+    private val wasDestroyed = AtomicBoolean(false)
+    private val callCounter = AtomicLong(1)
+
+    /**
+     * Whether the current object has been destroyed and its reference is gone in the Rust side.
+     */
+    val uniffiIsDestroyed: Boolean get() = wasDestroyed.get()
+
+    override fun destroy() {
+        // Only allow a single call to this method.
+        // TODO: maybe we should log a warning if called more than once?
+        if (this.wasDestroyed.compareAndSet(false, true)) {
+            // This decrement always matches the initial count of 1 given at creation time.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    @Synchronized
+    override fun close() {
+        this.destroy()
+    }
+
+    internal inline fun <R> callWithHandle(block: (handle: Long) -> R): R {
+        // Check and increment the call counter, to keep the object alive.
+        // This needs a compare-and-set retry loop in case of concurrent updates.
+        do {
+            val c = this.callCounter.get()
+            if (c == 0L) {
+                throw IllegalStateException("${this.javaClass.simpleName} object has already been destroyed")
+            }
+            if (c == Long.MAX_VALUE) {
+                throw IllegalStateException("${this.javaClass.simpleName} call counter would overflow")
+            }
+        } while (! this.callCounter.compareAndSet(c, c + 1L))
+        // Now we can safely do the method call without the handle being freed concurrently.
+        try {
+            return block(this.uniffiCloneHandle())
+        } finally {
+            // This decrement always matches the increment we performed above.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    // Use a static inner class instead of a closure so as not to accidentally
+    // capture `this` as part of the cleanable's action.
+    private class UniffiCleanAction(private val handle: Long) : Runnable {
+        override fun run() {
+            if (handle == 0.toLong()) {
+                // Fake object created with `NoHandle`, don't try to free.
+                return;
+            }
+            uniffiRustCall { status ->
+                UniffiLib.uniffi_client_core_fn_free_logsink(handle, status)
+            }
+        }
+    }
+
+    /**
+     * @suppress
+     */
+    fun uniffiCloneHandle(): Long {
+        if (handle == 0.toLong()) {
+            throw InternalException("uniffiCloneHandle() called on NoHandle object");
+        }
+        return uniffiRustCall() { status ->
+            UniffiLib.uniffi_client_core_fn_clone_logsink(handle, status)
+        }
+    }
+
+    override fun `log`(`record`: LogRecord)
+        = 
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_client_core_fn_method_logsink_log(
+        it,
+        
+        FfiConverterTypeLogRecord.lower(`record`),_status)
+}
+    }
+    
+    
+
+    
+
+    
+
+
+    
+    
+    /**
+     * @suppress
+     */
+    companion object
+    
+}
+
+
+
+// Put the implementation in an object so we don't pollute the top-level namespace
+internal object uniffiCallbackInterfaceLogSink {
+    internal object `log`: UniffiCallbackInterfaceLogSinkMethod0 {
+        override fun callback(`uniffiHandle`: Long,`record`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeLogSink.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`log`(
+                    FfiConverterTypeLogRecord.lift(`record`),
+                )
+            }
+            val writeReturn = { _: Unit -> Unit }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+
+    internal object uniffiFree: UniffiCallbackInterfaceFree {
+        override fun callback(handle: Long) {
+            FfiConverterTypeLogSink.handleMap.remove(handle)
+        }
+    }
+
+    internal object uniffiClone: UniffiCallbackInterfaceClone {
+        override fun callback(handle: Long): Long {
+            return FfiConverterTypeLogSink.handleMap.clone(handle)
+        }
+    }
+
+    internal var vtable = UniffiVTableCallbackInterfaceLogSink.UniffiByValue(
+        uniffiFree,
+        uniffiClone,
+        `log`,
+    )
+
+    // Registers the foreign callback with the Rust side.
+    // This method is generated for each callback interface.
+    internal fun register(lib: UniffiLib) {
+        lib.uniffi_client_core_fn_init_callback_vtable_logsink(vtable)
+    }
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeLogSink: FfiConverter<LogSink, Long> {
+    internal val handleMap = UniffiHandleMap<LogSink>()
+
+    override fun lower(value: LogSink): Long {
+        if (value is LogSinkImpl) {
+             // Rust-implemented object.  Clone the handle and return it
+            return value.uniffiCloneHandle()
+         } else {
+            // Kotlin object, generate a new vtable handle and return that.
+            return handleMap.insert(value)
+         }
+    }
+
+    override fun lift(value: Long): LogSink {
+        if ((value and 1.toLong()) == 0.toLong()) {
+            // Rust-generated handle, construct a new class that uses the handle to implement the
+            // interface
+            return LogSinkImpl(UniffiWithHandle, value)
+        } else {
+            // Kotlin-generated handle, get the object from the handle map
+            return handleMap.remove(value)
+        }
+    }
+
+    override fun read(buf: ByteBuffer): LogSink {
+        return lift(buf.getLong())
+    }
+
+    override fun allocationSize(value: LogSink) = 8UL
+
+    override fun write(value: LogSink, buf: ByteBuffer) {
+        buf.putLong(lower(value))
+    }
+}
+
+
+// This template implements a class for working with a Rust struct via a handle
+// to the live Rust struct on the other side of the FFI.
+//
+// There's some subtlety here, because we have to be careful not to operate on a Rust
+// struct after it has been dropped, and because we must expose a public API for freeing
+// theq Kotlin wrapper object in lieu of reliable finalizers. The core requirements are:
+//
+//   * Each instance holds an opaque handle to the underlying Rust struct.
+//     Method calls need to read this handle from the object's state and pass it in to
+//     the Rust FFI.
+//
+//   * When an instance is no longer needed, its handle should be passed to a
+//     special destructor function provided by the Rust FFI, which will drop the
+//     underlying Rust struct.
+//
+//   * Given an instance, calling code is expected to call the special
+//     `destroy` method in order to free it after use, either by calling it explicitly
+//     or by using a higher-level helper like the `use` method. Failing to do so risks
+//     leaking the underlying Rust struct.
+//
+//   * We can't assume that calling code will do the right thing, and must be prepared
+//     to handle Kotlin method calls executing concurrently with or even after a call to
+//     `destroy`, and to handle multiple (possibly concurrent!) calls to `destroy`.
+//
+//   * We must never allow Rust code to operate on the underlying Rust struct after
+//     the destructor has been called, and must never call the destructor more than once.
+//     Doing so may trigger memory unsafety.
+//
+//   * To mitigate many of the risks of leaking memory and use-after-free unsafety, a `Cleaner`
+//     is implemented to call the destructor when the Kotlin object becomes unreachable.
+//     This is done in a background thread. This is not a panacea, and client code should be aware that
+//      1. the thread may starve if some there are objects that have poorly performing
+//     `drop` methods or do significant work in their `drop` methods.
+//      2. the thread is shared across the whole library. This can be tuned by using `android_cleaner = true`,
+//         or `android = true` in the [`kotlin` section of the `uniffi.toml` file](https://mozilla.github.io/uniffi-rs/kotlin/configuration.html).
+//
+// If we try to implement this with mutual exclusion on access to the handle, there is the
+// possibility of a race between a method call and a concurrent call to `destroy`:
+//
+//    * Thread A starts a method call, reads the value of the handle, but is interrupted
+//      before it can pass the handle over the FFI to Rust.
+//    * Thread B calls `destroy` and frees the underlying Rust struct.
+//    * Thread A resumes, passing the already-read handle value to Rust and triggering
+//      a use-after-free.
+//
+// One possible solution would be to use a `ReadWriteLock`, with each method call taking
+// a read lock (and thus allowed to run concurrently) and the special `destroy` method
+// taking a write lock (and thus blocking on live method calls). However, we aim not to
+// generate methods with any hidden blocking semantics, and a `destroy` method that might
+// block if called incorrectly seems to meet that bar.
+//
+// So, we achieve our goals by giving each instance an associated `AtomicLong` counter to track
+// the number of in-flight method calls, and an `AtomicBoolean` flag to indicate whether `destroy`
+// has been called. These are updated according to the following rules:
+//
+//    * The initial value of the counter is 1, indicating a live object with no in-flight calls.
+//      The initial value for the flag is false.
+//
+//    * At the start of each method call, we atomically check the counter.
+//      If it is 0 then the underlying Rust struct has already been destroyed and the call is aborted.
+//      If it is nonzero them we atomically increment it by 1 and proceed with the method call.
+//
+//    * At the end of each method call, we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+//    * When `destroy` is called, we atomically flip the flag from false to true.
+//      If the flag was already true we silently fail.
+//      Otherwise we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+// Astute readers may observe that this all sounds very similar to the way that Rust's `Arc<T>` works,
+// and indeed it is, with the addition of a flag to guard against multiple calls to `destroy`.
+//
+// The overall effect is that the underlying Rust struct is destroyed only when `destroy` has been
+// called *and* all in-flight method calls have completed, avoiding violating any of the expectations
+// of the underlying Rust code.
+//
+// This makes a cleaner a better alternative to _not_ calling `destroy()` as
+// and when the object is finished with, but the abstraction is not perfect: if the Rust object's `drop`
+// method is slow, and/or there are many objects to cleanup, and it's on a low end Android device, then the cleaner
+// thread may be starved, and the app will leak memory.
+//
+// In this case, `destroy`ing manually may be a better solution.
+//
+// The cleaner can live side by side with the manual calling of `destroy`. In the order of responsiveness, uniffi objects
+// with Rust peers are reclaimed:
+//
+// 1. By calling the `destroy` method of the object, which calls `rustObject.free()`. If that doesn't happen:
+// 2. When the object becomes unreachable, AND the Cleaner thread gets to call `rustObject.free()`. If the thread is starved then:
+// 3. The memory is reclaimed when the process terminates.
+//
+// [1] https://stackoverflow.com/questions/24376768/can-java-finalize-an-object-when-it-is-still-in-scope/24380219
+//
+
+
+/**
  * 原生端实现：把会话存进 Keychain / Keystore。`save(None)` 表示退出登录或会话失效，要删掉。
  */
 public interface SessionStore {
@@ -3442,6 +3809,13 @@ public interface ThinktinClientInterface {
     suspend fun `instances`(): List<Instance>
     
     /**
+     * 更早的一页运行：`before_run_id` 之前的（列表往下翻）。
+     * 跨实例的运行（11.8），新的在前：某个计划的运行历史、所有没结束的运行。`before_run_id` 往下翻
+     * （上一页最后一个的 id）。
+     */
+    suspend fun `listRuns`(`filter`: RunFilter, `beforeRunId`: kotlin.String?, `limit`: kotlin.UInt): List<Run>
+    
+    /**
      * `push_channel` 是 apns / unipush / fcm……，和 `push_token` 一起给，或都不给。
      */
     suspend fun `login`(`phone`: kotlin.String, `code`: kotlin.String, `pushChannel`: kotlin.String?, `pushToken`: kotlin.String?): LoginResult
@@ -3464,9 +3838,6 @@ public interface ThinktinClientInterface {
     
     suspend fun `olderInbox`(`beforeId`: kotlin.String, `limit`: kotlin.UInt): List<InboxItem>
     
-    /**
-     * 更早的一页运行：`before_run_id` 之前的（列表往下翻）。
-     */
     suspend fun `olderRuns`(`instanceId`: kotlin.String, `beforeRunId`: kotlin.String, `limit`: kotlin.UInt): List<Run>
     
     suspend fun `plans`(`instanceId`: kotlin.String?): List<Plan>
@@ -4880,6 +5251,35 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
 
     
     /**
+     * 更早的一页运行：`before_run_id` 之前的（列表往下翻）。
+     * 跨实例的运行（11.8），新的在前：某个计划的运行历史、所有没结束的运行。`before_run_id` 往下翻
+     * （上一页最后一个的 id）。
+     */
+    @Throws(ClientException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `listRuns`(`filter`: RunFilter, `beforeRunId`: kotlin.String?, `limit`: kotlin.UInt) : List<Run> {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_client_core_fn_method_thinktinclient_list_runs(
+                uniffiHandle,
+                
+        FfiConverterTypeRunFilter.lower(`filter`),
+        FfiConverterOptionalString.lower(`beforeRunId`),
+        FfiConverterUInt.lower(`limit`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_client_core_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterSequenceTypeRun.lift(it) },
+        // Error FFI converter
+        ClientException.ErrorHandler,
+    )
+    }
+
+    
+    /**
      * `push_channel` 是 apns / unipush / fcm……，和 `push_token` 一起给，或都不给。
      */
     @Throws(ClientException::class)
@@ -5046,9 +5446,6 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
     }
 
     
-    /**
-     * 更早的一页运行：`before_run_id` 之前的（列表往下翻）。
-     */
     @Throws(ClientException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
     override suspend fun `olderRuns`(`instanceId`: kotlin.String, `beforeRunId`: kotlin.String, `limit`: kotlin.UInt) : List<Run> {
@@ -6201,6 +6598,32 @@ data class AgentInfo (
      * 可以用的版本，当前版本在前：实例的版本不是第一个时可以提示升级。
      */
     var `versions`: List<kotlin.String>
+    , 
+    /**
+     * 一句话介绍，按设备语言（`accept_language`）给；老的服务端为空。
+     */
+    var `description`: kotlin.String = "" 
+    , 
+    /**
+     * 上游仓库（https）。
+     */
+    var `upstream`: kotlin.String = "" 
+    , 
+    /**
+     * 许可说明（专有许可证必有），按设备语言给。
+     */
+    var `licenseNote`: kotlin.String? = null 
+    , 
+    /**
+     * 能说的协议，按优先级：anthropic、chat、responses（和 `VendorInfo.protocols`、`Credential.protocols` 同一套名字）。
+     */
+    var `protocols`: List<kotlin.String> = listOf() 
+    , 
+    /**
+     * 运行时实际用的协议：这个 agent 的实例配的每把 key（包括降级的）都要支持它，选 key 时按它过滤
+     * （`Credential.protocols` 里要有它）。
+     */
+    var `activeProtocol`: kotlin.String? = null 
     
 ){
     
@@ -6225,6 +6648,11 @@ public object FfiConverterTypeAgentInfo: FfiConverterRustBuffer<AgentInfo> {
             FfiConverterSequenceString.read(buf),
             FfiConverterString.read(buf),
             FfiConverterSequenceString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterOptionalString.read(buf),
         )
     }
 
@@ -6236,7 +6664,12 @@ public object FfiConverterTypeAgentInfo: FfiConverterRustBuffer<AgentInfo> {
             FfiConverterSequenceString.allocationSize(value.`sites`) +
             FfiConverterSequenceString.allocationSize(value.`harnesses`) +
             FfiConverterString.allocationSize(value.`defaultHarness`) +
-            FfiConverterSequenceString.allocationSize(value.`versions`)
+            FfiConverterSequenceString.allocationSize(value.`versions`) +
+            FfiConverterString.allocationSize(value.`description`) +
+            FfiConverterString.allocationSize(value.`upstream`) +
+            FfiConverterOptionalString.allocationSize(value.`licenseNote`) +
+            FfiConverterSequenceString.allocationSize(value.`protocols`) +
+            FfiConverterOptionalString.allocationSize(value.`activeProtocol`)
     )
 
     override fun write(value: AgentInfo, buf: ByteBuffer) {
@@ -6248,6 +6681,11 @@ public object FfiConverterTypeAgentInfo: FfiConverterRustBuffer<AgentInfo> {
             FfiConverterSequenceString.write(value.`harnesses`, buf)
             FfiConverterString.write(value.`defaultHarness`, buf)
             FfiConverterSequenceString.write(value.`versions`, buf)
+            FfiConverterString.write(value.`description`, buf)
+            FfiConverterString.write(value.`upstream`, buf)
+            FfiConverterOptionalString.write(value.`licenseNote`, buf)
+            FfiConverterSequenceString.write(value.`protocols`, buf)
+            FfiConverterOptionalString.write(value.`activeProtocol`, buf)
     }
 }
 
@@ -6773,6 +7211,11 @@ data class Credential (
     var `disabled`: kotlin.Boolean
     , 
     var `createdAtMs`: kotlin.Long
+    , 
+    /**
+     * 能用哪些协议（anthropic、chat、responses）：选 key 时要包含 agent 的 `active_protocol`。
+     */
+    var `protocols`: List<kotlin.String> = listOf() 
     
 ){
     
@@ -6796,6 +7239,7 @@ public object FfiConverterTypeCredential: FfiConverterRustBuffer<Credential> {
             FfiConverterOptionalULong.read(buf),
             FfiConverterBoolean.read(buf),
             FfiConverterLong.read(buf),
+            FfiConverterSequenceString.read(buf),
         )
     }
 
@@ -6806,7 +7250,8 @@ public object FfiConverterTypeCredential: FfiConverterRustBuffer<Credential> {
             FfiConverterString.allocationSize(value.`last4`) +
             FfiConverterOptionalULong.allocationSize(value.`dailyTokenLimit`) +
             FfiConverterBoolean.allocationSize(value.`disabled`) +
-            FfiConverterLong.allocationSize(value.`createdAtMs`)
+            FfiConverterLong.allocationSize(value.`createdAtMs`) +
+            FfiConverterSequenceString.allocationSize(value.`protocols`)
     )
 
     override fun write(value: Credential, buf: ByteBuffer) {
@@ -6817,6 +7262,7 @@ public object FfiConverterTypeCredential: FfiConverterRustBuffer<Credential> {
             FfiConverterOptionalULong.write(value.`dailyTokenLimit`, buf)
             FfiConverterBoolean.write(value.`disabled`, buf)
             FfiConverterLong.write(value.`createdAtMs`, buf)
+            FfiConverterSequenceString.write(value.`protocols`, buf)
     }
 }
 
@@ -6994,7 +7440,7 @@ data class DeviceMessage (
     var `toDeviceId`: kotlin.String
     , 
     /**
-     * pair_response、pair_confirm、approval_request、approval_decision、capability、revoke……
+     * pair_response、pair_confirm、approval_request、approval_decision、capability、revocation……
      */
     var `kind`: kotlin.String
     , 
@@ -7401,6 +7847,58 @@ public object FfiConverterTypeInstanceEvent: FfiConverterRustBuffer<InstanceEven
             FfiConverterString.write(value.`payloadJson`, buf)
             FfiConverterBoolean.write(value.`aiGenerated`, buf)
             FfiConverterLong.write(value.`createdAtMs`, buf)
+    }
+}
+
+
+
+/**
+ * 一条日志。用记录而不是几个参数：以后加字段（时间之类）不用改 App 里的实现。
+ */
+data class LogRecord (
+    var `level`: LogLevel
+    , 
+    /**
+     * 哪个模块（`client_core::events`），iOS 可以当 `Logger` 的 category。
+     */
+    var `target`: kotlin.String
+    , 
+    /**
+     * 已经抹掉敏感内容的一行。
+     */
+    var `message`: kotlin.String
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeLogRecord: FfiConverterRustBuffer<LogRecord> {
+    override fun read(buf: ByteBuffer): LogRecord {
+        return LogRecord(
+            FfiConverterTypeLogLevel.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: LogRecord) = (
+            FfiConverterTypeLogLevel.allocationSize(value.`level`) +
+            FfiConverterString.allocationSize(value.`target`) +
+            FfiConverterString.allocationSize(value.`message`)
+    )
+
+    override fun write(value: LogRecord, buf: ByteBuffer) {
+            FfiConverterTypeLogLevel.write(value.`level`, buf)
+            FfiConverterString.write(value.`target`, buf)
+            FfiConverterString.write(value.`message`, buf)
     }
 }
 
@@ -7844,11 +8342,22 @@ data class Plan (
     var `createdAtMs`: kotlin.Long
     , 
     /**
-     * 列表接口里为空，详情里有。
+     * 列表和详情里都有。
      */
     var `triggers`: List<Trigger>
     , 
     var `steps`: List<PlanStep>
+    , 
+    /**
+     * 下一次按时运行的名义时间（实际可能因削峰晚几分钟）：在用的触发器里最早的；暂停了、等确认、没有会再触发的
+     * 规则时为空。
+     */
+    var `nextFireAtMs`: kotlin.Long? = null 
+    , 
+    /**
+     * 规则失效、被后台停用的触发器有几个：详情页提示“规则已失效”，给“修改规则”的入口。
+     */
+    var `invalidTriggers`: kotlin.UInt = 0u 
     
 ){
     
@@ -7879,6 +8388,8 @@ public object FfiConverterTypePlan: FfiConverterRustBuffer<Plan> {
             FfiConverterLong.read(buf),
             FfiConverterSequenceTypeTrigger.read(buf),
             FfiConverterSequenceTypePlanStep.read(buf),
+            FfiConverterOptionalLong.read(buf),
+            FfiConverterUInt.read(buf),
         )
     }
 
@@ -7896,7 +8407,9 @@ public object FfiConverterTypePlan: FfiConverterRustBuffer<Plan> {
             FfiConverterString.allocationSize(value.`catchUp`) +
             FfiConverterLong.allocationSize(value.`createdAtMs`) +
             FfiConverterSequenceTypeTrigger.allocationSize(value.`triggers`) +
-            FfiConverterSequenceTypePlanStep.allocationSize(value.`steps`)
+            FfiConverterSequenceTypePlanStep.allocationSize(value.`steps`) +
+            FfiConverterOptionalLong.allocationSize(value.`nextFireAtMs`) +
+            FfiConverterUInt.allocationSize(value.`invalidTriggers`)
     )
 
     override fun write(value: Plan, buf: ByteBuffer) {
@@ -7914,6 +8427,8 @@ public object FfiConverterTypePlan: FfiConverterRustBuffer<Plan> {
             FfiConverterLong.write(value.`createdAtMs`, buf)
             FfiConverterSequenceTypeTrigger.write(value.`triggers`, buf)
             FfiConverterSequenceTypePlanStep.write(value.`steps`, buf)
+            FfiConverterOptionalLong.write(value.`nextFireAtMs`, buf)
+            FfiConverterUInt.write(value.`invalidTriggers`, buf)
     }
 }
 
@@ -8193,6 +8708,14 @@ data class Run (
     var `startedAtMs`: kotlin.Long?
     , 
     var `finishedAtMs`: kotlin.Long?
+    , 
+    /**
+     * 等的是什么，只在 waiting_quota / waiting_device 时有：invalid（key 无效，去换 key）、no_balance（欠费：充值或
+     * 换 key，每小时也自己再试）、unavailable（没有能用的 key：停用了或当天额度用完，每小时也自己再试）、
+     * rate_limited / overloaded（几分钟后自己继续，不用处理）、device_offline（等电脑上线）。以后可能加新值，
+     * 不认识的按 state 显示。
+     */
+    var `waitCode`: kotlin.String? = null 
     
 ){
     
@@ -8227,6 +8750,7 @@ public object FfiConverterTypeRun: FfiConverterRustBuffer<Run> {
             FfiConverterLong.read(buf),
             FfiConverterOptionalLong.read(buf),
             FfiConverterOptionalLong.read(buf),
+            FfiConverterOptionalString.read(buf),
         )
     }
 
@@ -8248,7 +8772,8 @@ public object FfiConverterTypeRun: FfiConverterRustBuffer<Run> {
             FfiConverterOptionalString.allocationSize(value.`error`) +
             FfiConverterLong.allocationSize(value.`createdAtMs`) +
             FfiConverterOptionalLong.allocationSize(value.`startedAtMs`) +
-            FfiConverterOptionalLong.allocationSize(value.`finishedAtMs`)
+            FfiConverterOptionalLong.allocationSize(value.`finishedAtMs`) +
+            FfiConverterOptionalString.allocationSize(value.`waitCode`)
     )
 
     override fun write(value: Run, buf: ByteBuffer) {
@@ -8270,6 +8795,62 @@ public object FfiConverterTypeRun: FfiConverterRustBuffer<Run> {
             FfiConverterLong.write(value.`createdAtMs`, buf)
             FfiConverterOptionalLong.write(value.`startedAtMs`, buf)
             FfiConverterOptionalLong.write(value.`finishedAtMs`, buf)
+            FfiConverterOptionalString.write(value.`waitCode`, buf)
+    }
+}
+
+
+
+/**
+ * 跨实例列运行的条件（11.8）。都有默认值：`RunFilter()` 是全部。
+ */
+data class RunFilter (
+    /**
+     * 只要这个计划的（包括流水线的步骤；配合 `roots_only` 一次触发一行）。
+     */
+    var `planId`: kotlin.String? = null 
+    , 
+    /**
+     * 只要没结束的（排队、运行、等待、退避）：抽屉里的“进行中”、实时活动用。
+     */
+    var `activeOnly`: kotlin.Boolean = false 
+    , 
+    /**
+     * 只要根运行（不要流水线的步骤、委派的子任务）。
+     */
+    var `rootsOnly`: kotlin.Boolean = false 
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRunFilter: FfiConverterRustBuffer<RunFilter> {
+    override fun read(buf: ByteBuffer): RunFilter {
+        return RunFilter(
+            FfiConverterOptionalString.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: RunFilter) = (
+            FfiConverterOptionalString.allocationSize(value.`planId`) +
+            FfiConverterBoolean.allocationSize(value.`activeOnly`) +
+            FfiConverterBoolean.allocationSize(value.`rootsOnly`)
+    )
+
+    override fun write(value: RunFilter, buf: ByteBuffer) {
+            FfiConverterOptionalString.write(value.`planId`, buf)
+            FfiConverterBoolean.write(value.`activeOnly`, buf)
+            FfiConverterBoolean.write(value.`rootsOnly`, buf)
     }
 }
 
@@ -8713,6 +9294,11 @@ data class Trigger (
     var `nextFireAtMs`: kotlin.Long?
     , 
     var `lastFireAtMs`: kotlin.Long?
+    , 
+    /**
+     * 后台停用它的原因：invalid_rule（规则失效了，比如时区没了；删掉重新加）。没被停用时为空。
+     */
+    var `disabledReason`: kotlin.String? = null 
     
 ){
     
@@ -8734,6 +9320,7 @@ public object FfiConverterTypeTrigger: FfiConverterRustBuffer<Trigger> {
             FfiConverterBoolean.read(buf),
             FfiConverterOptionalLong.read(buf),
             FfiConverterOptionalLong.read(buf),
+            FfiConverterOptionalString.read(buf),
         )
     }
 
@@ -8742,7 +9329,8 @@ public object FfiConverterTypeTrigger: FfiConverterRustBuffer<Trigger> {
             FfiConverterTypeSchedule.allocationSize(value.`schedule`) +
             FfiConverterBoolean.allocationSize(value.`enabled`) +
             FfiConverterOptionalLong.allocationSize(value.`nextFireAtMs`) +
-            FfiConverterOptionalLong.allocationSize(value.`lastFireAtMs`)
+            FfiConverterOptionalLong.allocationSize(value.`lastFireAtMs`) +
+            FfiConverterOptionalString.allocationSize(value.`disabledReason`)
     )
 
     override fun write(value: Trigger, buf: ByteBuffer) {
@@ -8751,6 +9339,7 @@ public object FfiConverterTypeTrigger: FfiConverterRustBuffer<Trigger> {
             FfiConverterBoolean.write(value.`enabled`, buf)
             FfiConverterOptionalLong.write(value.`nextFireAtMs`, buf)
             FfiConverterOptionalLong.write(value.`lastFireAtMs`, buf)
+            FfiConverterOptionalString.write(value.`disabledReason`, buf)
     }
 }
 
@@ -9521,6 +10110,43 @@ public object FfiConverterTypeClientError : FfiConverterRustBuffer<ClientExcepti
     }
 
 }
+
+
+
+
+enum class LogLevel {
+    
+    ERROR,
+    WARN,
+    INFO,
+    DEBUG,
+    TRACE;
+
+    
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeLogLevel: FfiConverterRustBuffer<LogLevel> {
+    override fun read(buf: ByteBuffer) = try {
+        LogLevel.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: LogLevel) = 4UL
+
+    override fun write(value: LogLevel, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
 
 
 
@@ -11157,6 +11783,22 @@ public object FfiConverterSequenceTypeSchedule: FfiConverterRustBuffer<List<Sche
         
         FfiConverterString.lower(`base`),
         FfiConverterSequenceString.lower(`taken`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * 把 client-core 的日志交给 `sink`，自己的日志输出到 `max_level`（依赖库的只到 warn）。在 App 启动时调；再调一次
+         * 是换掉交给谁、改级别。进程里已经有别的 `tracing` 订阅者（桌面端、测试）时返回 false，日志不交出去。
+         */ fun `initLogging`(`sink`: LogSink, `maxLevel`: LogLevel): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_client_core_fn_func_init_logging(
+    
+        
+        FfiConverterTypeLogSink.lower(`sink`),
+        FfiConverterTypeLogLevel.lower(`maxLevel`),_status)
 }
     )
     }
