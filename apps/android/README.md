@@ -66,6 +66,12 @@ client-core 的 App 接口已全部接进 `ThinktinService`，`CoreThinktinServi
   `upgradeRequired()`、跨实例的 `listRuns(RunFilter, before, limit)`、`Run.waitCode`（`WaitCode` 枚举，界面按码出文案）、
   `Plan.nextFireAtMs` / `invalidTriggers`、`Trigger.disabledReason`、`AgentInfo` 的介绍 / 上游 / 许可说明 / 协议、
   `Credential.protocols`。吊销本机设备时 client-core 自己清登录态，`authState` 跟着变成未登录（回登录页）。
+- 11.8 收尾 / 10.7（合并 backend-core `ff0d55c`）：错误字段 `message` → `detail`（不再给绑定打补丁）；
+  `StreamStatus.UpgradeRequired`（握手 426，事件流以它结束、不再重连）→ `StreamState.UpgradeRequired`，
+  和请求返回的 `UpgradeRequired` 一起置 `ThinktinService.upgradeState`，AppRoot 换成升级页；
+  `Approval.requestId` / `attempt` / `decidedOption` / `decidedAtMs` 与 `getApproval`（什么状态都能查），
+  审批按 `Approval.key`（`runId`、`attempt`、`requestId`）认；`InboxItem.subtype` / `vaultRequestId`，
+  `InboxKind` 加 `VaultRequest` / `PlanConfirm`（不认识的按 `Info`，所以收件箱种类没有 Unknown）。
 
 只给 iOS 的实时活动（`registerLiveActivity`、`endLiveActivity`、`setLiveActivityStartToken`）不接。
 Rust 接口再变时：`sync-core.sh --bindings-only` → 在 `:data` 的模型、`Mappers.kt`（两个方向）、
@@ -135,7 +141,7 @@ export THINKTIN_CORE_LIB_DIR=$PWD/../../target/debug
 ## 演示模式
 
 debug 包默认开着演示模式（`BuildConfig.DEMO_DEFAULT`）：用 `MockThinktinService` 的确定性假数据（3 个目录 agent、
-2 个实例、覆盖全部事件类型的运行、5 种收件箱条目、计划、key、保险箱、团队与模板、登录设备、设备消息、举报……），
+2 个实例、覆盖全部事件类型的运行、全部 7 种收件箱条目、计划、key、保险箱、团队与模板、登录设备、设备消息、举报……），
 不联网；启动时只有日志接入（`CoreLogging.install`，经 JNA 调 `initLogging`）和 TLS 初始化（`TlsInit`）会加载
 `libclient_core.so`（见“启动顺序”），没有 .so 时两者都只记下失败、不崩溃。
 设置页里可以关掉，关掉后走 `CoreThinktinService` → client-core → 服务端，未登录时显示登录流；登录页和“核心库不可用”页
