@@ -522,6 +522,8 @@ impl Dispatcher {
             if age > ttl {
                 return Ok(Some(Settle::Done(Some("expired before delivery".into()))));
             }
+            // 推送服务只再存剩下的时间：排队、重试过的审批提醒不能比审批本身活得久。
+            message.ttl = Some(ttl - age);
         }
         Ok(None)
     }

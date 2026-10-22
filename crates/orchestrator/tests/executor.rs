@@ -1567,6 +1567,42 @@ async fn rate_limits_wait_a_few_minutes_without_a_push() {
     assert!(e.exec.claim().await.unwrap().is_none());
 }
 
+/// 先是 key 无效、换了 key 又欠费（10.7）：两次等待各提醒一次，子类型不同；同一个原因不重复提醒。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn each_new_wait_reason_is_announced() {
+    let Some(e) = env().await else { return };
+    let run = e.queue("loop forever", None, 3).await;
+    for (status, code) in [(401, "invalid"), (402, "no_balance")] {
+        let (_stop, h) = e.spawn().await;
+        e.wait_state(run, RunState::Running).await;
+        model_call_failed(&e, status).await;
+        model_call_failed(&e, status).await;
+        tokio::time::timeout(Duration::from_secs(20), h)
+            .await
+            .unwrap()
+            .unwrap();
+        let rec = e.state(run).await;
+        assert_eq!(
+            (rec.run.state, rec.run.wait_code.as_deref()),
+            (RunState::WaitingQuota, Some(code)),
+            "{:?}",
+            rec.run
+        );
+        // 用户补上 key：接着跑。
+        let mut tx = e.t.db.tenant(e.user).await.unwrap();
+        tx.wake_waiting_runs(RunState::WaitingQuota).await.unwrap();
+        tx.commit().await.unwrap();
+    }
+    let waits: Vec<String> = e
+        .inbox()
+        .await
+        .into_iter()
+        .filter(|i| i.kind == "run_failed")
+        .map(|i| i.subtype.unwrap_or_default())
+        .collect();
+    assert_eq!(waits, ["no_balance", "invalid"]);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn waits_time_out_by_the_plan_policy() {
     let Some(e) = env().await else { return };
@@ -1712,9 +1748,11 @@ async fn expired_approvals_are_skipped_by_policy() {
     );
     let inbox = e.inbox().await;
     assert!(
-        inbox
-            .iter()
-            .any(|i| i.title == "审批超时，已跳过这一步" && i.body == "Delete old reports"),
+        inbox.iter().any(|i| i.title == "审批超时，已跳过这一步"
+                && i.body == "Delete old reports"
+                // 运行结束时只有审批本身那条算已读，这条留给之后回来的用户。
+                && !i.read
+                && i.subtype.as_deref() == Some("approval_skipped")),
         "{inbox:?}"
     );
 }

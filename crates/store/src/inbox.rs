@@ -125,7 +125,8 @@ impl<R> Tx<R> {
     /// 保险箱请求处理完（填了、拒绝了）后，对应的收件箱条目算已读。
     pub async fn settle_vault_request_inbox(&mut self, request: VaultRequestId) -> Result<u64> {
         let done = sqlx::query(
-            "UPDATE inbox_items SET read_at = now() WHERE vault_request_id = $1 AND read_at IS NULL",
+            "UPDATE inbox_items SET read_at = now() \
+             WHERE vault_request_id = $1 AND kind = 'vault_request' AND read_at IS NULL",
         )
         .bind(request.0)
         .execute(self.conn())
@@ -133,10 +134,11 @@ impl<R> Tx<R> {
         Ok(done.rows_affected())
     }
 
-    /// 审批处理完（批准、拒绝、超时、运行结束）后，对应的收件箱条目算已读。
+    /// 审批处理完（批准、拒绝、超时、运行结束）后，审批那条收件箱条目算已读（同一个审批的其他提醒不动）。
     pub async fn settle_approval_inbox(&mut self, approval: ApprovalId) -> Result<u64> {
         let done = sqlx::query(
-            "UPDATE inbox_items SET read_at = now() WHERE approval_id = $1 AND read_at IS NULL",
+            "UPDATE inbox_items SET read_at = now() \
+             WHERE approval_id = $1 AND kind = 'approval' AND read_at IS NULL",
         )
         .bind(approval.0)
         .execute(self.conn())

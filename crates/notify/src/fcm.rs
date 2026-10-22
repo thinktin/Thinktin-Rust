@@ -264,11 +264,9 @@ impl FcmClient {
             .unwrap_or(crate::DEFAULT_TTL)
             .as_secs()
             .clamp(60, MAX_TTL_SECS);
+        // 不带角标数：Android 的 `notification_count` 是“这一条通知代表几件事”，桌面把通知栏里每一条的加起来，
+        // 填未读总数会越加越多。Android 的角标由桌面按通知栏里的通知自己算。
         let mut notification = json!({ "channel_id": channel });
-        // 支持角标的桌面把它显示成应用图标上的数字（收件箱的未读数）。
-        if let Some(badge) = message.badge {
-            notification["notification_count"] = json!(badge);
-        }
         let mut android = json!({
             "priority": if urgent { "HIGH" } else { "NORMAL" },
             "ttl": format!("{ttl}s"),

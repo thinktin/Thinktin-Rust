@@ -74,8 +74,8 @@ impl PushKind {
     }
 }
 
-/// 没给有效期的推送在推送服务那里最多等多久（手机关机、没信号时先存着，开机后送到）。各家推送服务都只给一个
-/// 应用留最后一条，所以不会攒一堆旧通知；收件箱里一直都在。
+/// 没给有效期的推送在推送服务那里最多等多久（手机关机、没信号时先存着，开机后送到）。APNs 只给一个应用留最后
+/// 一条；FCM 不带 collapse_key 的每条都存着（每台设备最多 100 条），开机后都会送到。收件箱里一直都在。
 pub const DEFAULT_TTL: Duration = Duration::from_secs(24 * 3600);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -102,7 +102,7 @@ pub struct PushMessage {
     /// 是哪一种提醒（[`proto::domain::notice_subtype`]，运行在等什么时是 `wait_code`）：App 据此跳转、刷新。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subtype: Option<String>,
-    /// 应用图标的角标（10.7）：收件人收件箱的未读数，投递时才算（出箱里排着的不带）。
+    /// 应用图标的角标（10.7）：收件人收件箱的未读数，投递时才算（出箱里排着的不带）。只有 APNs 用。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub badge: Option<u32>,
 }

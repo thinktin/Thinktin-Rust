@@ -63,8 +63,8 @@ APNs：
   `tt_plan`、`tt_inbox`、`tt_vault_request`、`tt_subtype`。
 - 正文是 agent 写的（运行摘要、工具调用的标题、保险箱请求的用途）带“AI 生成”标识（16.3），按用户的语言。命中内容过滤的
   换成中性提示，原文留在收件箱。
-- 同一个运行的通知 `thread-id` 相同；审批、保险箱请求、计划待确认带 `apns-collapse-id`（Android 的 `collapse_key` /
-  `tag`），状态变了新通知替换旧的。
+- 同一个运行的通知 `thread-id` 相同；审批、保险箱请求、计划待确认带 `apns-collapse-id`（FCM 的 `collapse_key` /
+  `tag`），新通知替换旧的。极光还不替换（同一个计划改了几次，就有几条“计划待确认”）。
 - 推送里没有用户 id：退出登录、换账号时 App 清掉已送达的通知、角标设成 0。
 
 ## 4. 子类型
@@ -81,21 +81,29 @@ APNs：
 | `trigger_disabled` | `info` | 计划的触发规则失效、被停用（带 `plan`） | 进计划详情，让用户删掉重加 |
 | `im_channel_disabled` | `info` | IM 群机器人失效、渠道被停用 | 进 IM 渠道设置 |
 | `report_handled` | `info` | 内容举报处理完 | 进举报记录 |
-| `invalid`、`no_balance`、`unavailable`、`rate_limited`、`overloaded`、`device_offline` | `run_failed` | 运行进入等待（和 `Run.wait_code` 一样） | 去换 key、充值、开电脑，或者等它自己继续 |
+| `invalid`、`no_balance`、`unavailable`、`device_offline` | `run_failed` | 运行进入要用户处理的等待（和 `Run.wait_code` 一样） | 去换 key、充值、开电脑 |
+
+等待的提醒按原因分开：先缺 key、补上后又欠费，两次都提醒。只能等用户处理的（`invalid`、`device_offline`）每次尝试都提醒
+（用户处理了又出同样的问题）；每小时自己再试的（`no_balance`、`unavailable`）同一个运行只提醒一次。几分钟后自己继续的
+（`rate_limited`、`overloaded`）不提醒，只在 `Run.wait_code` 和 `run.state` 事件里。
 
 ## 5. 有效期
 
-- 设备离线时推送服务先存着，开机后送到；各家都只给一个应用留最后一条。没指定的存 24 小时（`notify::DEFAULT_TTL`）。
-- 审批存到审批过期；保险箱请求存到请求过期（7 天，极光最多 3 天）。排队超过有效期的不发了，收件箱里照样有。
+- 设备离线时推送服务先存着，开机后送到。APNs 只给一个应用留最后一条；FCM 不带 `collapse_key` 的每条都存着（每台设备
+  最多 100 条），开机后都会送到。没指定的存 24 小时（`notify::DEFAULT_TTL`）。
+- 审批存到审批过期；保险箱请求存到请求过期（7 天，极光最多 3 天）。有效期从通知产生时算：排队、重试过的只再存剩下的时间，
+  过了的不发，收件箱里照样有。
 - 处理过的审批（别的设备上批了、过期了、运行结束了）不再推。
 
 ## 6. 角标和已读
 
-- 角标是发的时候收件箱的未读数（排队期间读了的不算）：APNs 的 `aps.badge`，FCM 的 `notification_count`（支持角标的
-  桌面显示）。极光要配 `badge_class` 才能设角标，还没接。App 在前台时用 `cached_unread()` 自己设。
-- 审批处理完（批准、拒绝、超时、运行结束）、保险箱请求处理完（填了、拒绝了），收件箱里那条自动算已读。
+- iOS：角标是发的时候收件箱的未读数（排队期间读了的不算），在 `aps.badge` 里。App 在前台时用 `cached_unread()` 自己设。
+- Android：推送不带角标数（FCM 的 `notification_count` 是“这一条通知代表几件事”，桌面会把通知栏里的加起来），桌面按
+  通知栏里的通知自己算；App 要显示未读数就用 `cached_unread()`。
+- 审批处理完（批准、拒绝、超时、运行结束）、保险箱请求处理完（填了、拒绝了），收件箱里审批、保险箱请求那一条自动算已读；
+  同一个审批的其他提醒（“审批超时、已跳过”）不动。电脑审批平台看不到结果，那条要 App 标已读。
 
 ## 7. 还没做的
 
 - macOS App（P3）的 bundle id 不同，要按平台配 `apns-topic`。
-- 极光的角标（`badge_class`）。
+- 极光的通知替换（要按 collapse id 记下 msg_id，用 `override_msg_id`）。

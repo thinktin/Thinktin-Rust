@@ -159,7 +159,7 @@ impl Tx<Worker> {
         sqlx::query(
             "UPDATE inbox_items SET read_at = now() \
              WHERE approval_id IN (SELECT id FROM approvals WHERE run_id = $1 AND request_id = $2) \
-               AND read_at IS NULL",
+               AND kind = 'approval' AND read_at IS NULL",
         )
         .bind(run.0)
         .bind(request_id)
@@ -188,10 +188,11 @@ impl Tx<Worker> {
         .bind(run.0)
         .execute(self.conn())
         .await?;
-        // 收件箱里这个运行的审批提醒都处理完了。
+        // 收件箱里这个运行的审批提醒都处理完了。只是审批本身那条：“审批超时、已跳过”的提醒也带着审批 id，
+        // 是给之后回来的用户看的，不能跟着标成已读。
         sqlx::query(
             "UPDATE inbox_items SET read_at = now() \
-             WHERE run_id = $1 AND approval_id IS NOT NULL AND read_at IS NULL",
+             WHERE run_id = $1 AND approval_id IS NOT NULL AND kind = 'approval' AND read_at IS NULL",
         )
         .bind(run.0)
         .execute(self.conn())

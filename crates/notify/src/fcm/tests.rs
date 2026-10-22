@@ -256,7 +256,12 @@ async fn notifications_go_out_with_ids_only_and_one_access_token() {
     m.subtype = Some("x_y".into());
     m.badge = Some(4);
     let p = client.payload(&device("ok"), &m)["message"].clone();
-    assert_eq!(p["android"]["notification"]["notification_count"], 4);
+    // 角标数只给 APNs（Android 的 notification_count 会被桌面加起来）。
+    assert!(
+        p["android"]["notification"]
+            .get("notification_count")
+            .is_none()
+    );
     assert_eq!(
         (
             &p["data"]["tt_kind"],

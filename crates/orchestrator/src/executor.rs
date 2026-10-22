@@ -21,7 +21,7 @@ use notify::PushKind;
 use proto::computer::ComputerTool;
 use proto::domain::{
     ApprovalId, ApprovalState, ApprovalTimeoutAction, GrantId, InstanceEvent, Locale, PlanPolicy,
-    RunId, RunSource, RunState, UserId, VaultItemId, valid_vault_name,
+    RunId, RunSource, RunState, UserId, VaultItemId, valid_vault_name, wait_code,
 };
 use proto::shim::{DecisionSource, SecretValues, ShimCommand, ShimEvent, StopReason};
 use serde_json::{Value, json};
@@ -321,6 +321,19 @@ fn push_capped(s: &mut String, text: &str, cap: usize) {
         end -= 1;
     }
     s.push_str(&text[..end]);
+}
+
+/// 运行结果提醒的去重键：同一件事只提醒一次。进入等待的按等的是什么分开（先缺 key、补上后又欠费，两次都要说）；
+/// 只能等用户处理的（key 无效、电脑离线）每次尝试都说一次（用户处理了、又出同样的问题），每小时自己再试的
+/// （欠费、没有可用的 key）同一个原因只说一次。
+fn wait_notice_key(run: RunId, to: RunState, attempt: u32, wait: Option<&str>) -> String {
+    match wait {
+        Some(code @ (wait_code::INVALID | wait_code::DEVICE_OFFLINE)) => {
+            format!("run:{run}:{to}:{code}:{attempt}")
+        }
+        Some(code) => format!("run:{run}:{to}:{code}"),
+        None => format!("run:{run}:{to}"),
+    }
 }
 
 /// 写进运行日志之前限制大小：长字符串截断，整条还太大就换成占位。
@@ -1017,6 +1030,7 @@ impl Executor {
         // 流水线的步骤不单独通知：整条流水线结束时由根运行通知（8.3）。等 key 要用户处理，照样通知。
         let step_quiet = (rec.run.step_key.is_some() || rec.run.source == RunSource::Delegate)
             && !to.is_waiting();
+        let wait = done.run.wait_code.as_deref().filter(|_| to.is_waiting());
         if let Some((kind, body)) = push.filter(|_| !step_quiet) {
             let title = match rec.run.plan_id {
                 Some(plan) => w.plan(plan).await.map(|p| p.title).unwrap_or_default(),
@@ -1033,9 +1047,9 @@ impl Executor {
                 run: Some(run),
                 plan: rec.run.plan_id,
                 thread_id: Some(run.to_string()),
-                dedupe_key: Some(format!("run:{run}:{to}")),
+                dedupe_key: Some(wait_notice_key(run, to, done.run.attempt, wait)),
                 // 等 key、等电脑的：App 按等的是什么跳转（去换 key、去开电脑）。
-                subtype: done.run.wait_code.clone().filter(|_| to.is_waiting()),
+                subtype: wait.map(str::to_owned),
                 // 成功时正文是 agent 写的摘要；失败原因是平台写的。
                 ai_generated: kind == PushKind::RunFinished,
                 ..Notice::new(kind, title, body)
