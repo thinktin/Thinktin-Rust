@@ -55,7 +55,7 @@ struct OpenStringEnumTests {
         try checkOpenEnum(DecisionSource.self)
         try checkOpenEnum(ApprovalTimeoutAction.self)
         try checkOpenEnum(PlanAuthor.self)
-        try checkOpenEnum(PlanChange.self)
+        try checkOpenEnum(PlanChangeKind.self)
         try checkOpenEnum(InboxKind.self, unknown: "plan_paused")
         try checkOpenEnum(VaultRequestStatus.self)
         try checkOpenEnum(VaultField.self, unknown: "otp")

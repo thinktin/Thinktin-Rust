@@ -25,14 +25,52 @@ public protocol ClientProtocol: AnyObject, Sendable {
     func setPushToken(_ push: PushRegistration) async throws
     /// 全部停止（4.6）：取消所有运行、吊销全部运行授权、暂停全部计划。
     func stopAll() async throws -> StopAllResult
-    /// 下线其他设备（4.6）。`stopAgents` 时顺带全部停止（怀疑账号被盗时）。
+    /// 下线其他设备（4.6），只留当前这台。`stopAgents` 时顺带全部停止（怀疑账号被盗时）。
     func signOutOtherDevices(stopAgents: Bool) async throws -> SignOutOthersResult
+    /// 改昵称；传 nil 清掉（界面上显示打码的手机号）。最长 64 个字符。
+    func updateProfile(displayName: String?) async throws -> User
+    /// 给自己的手机号发验证码，做敏感操作前确认（注销账号、换手机号）。
+    func sendSelfCode(purpose: SelfCodePurpose) async throws
+    /// 注销账号（16.4）：用 `sendSelfCode(purpose: .deleteAccount)` 发来的验证码确认。内容全部删除、不能恢复；
+    /// 成功后本地的登录状态和缓存一起清掉（`signedIn()` 变成 false，缓存类方法返回空）。
+    func deleteAccount(code: String) async throws
+
+    // MARK: 登录设备与设备消息（14.1）
+
+    /// 登录着的设备，最近活跃的在前；`isCurrent` 的是这台。
+    func devices() async throws -> [DeviceInfo]
+    /// 吊销一台设备（丢了的手机、不用的电脑）：它的登录会话立即失效。吊销当前这台等于退出登录。
+    func revokeDevice(_ deviceID: DeviceID) async throws
+    /// 发给自己的另一台设备（手机发给电脑：配对应答、审批决定、能力令牌、吊销）。`bodyJSON` 是消息内容的 JSON，
+    /// 格式和签名见 docs/pairing.md。电脑不在线时排队，连上设备中继后投递。不是 JSON 时抛 `invalidArgument`；
+    /// 发给自己、方向不对（手机发给手机、电脑才能发的种类）时抛 invalid；对方不存在或已吊销时抛 not_found。
+    func sendDeviceMessage(to deviceID: DeviceID, kind: DeviceMessageKind, bodyJSON: String) async throws
+        -> DeviceMessage
+    /// 别的设备发给这台、还没收下的消息（电脑发来的配对确认、审批请求），按发出的顺序；过期的不再返回。
+    func deviceMessages() async throws -> [DeviceMessage]
+    /// 收下了这些消息（验过签、处理完），之后不再返回。一次 1 到 200 条。返回确认的条数。
+    func ackDeviceMessages(ids: [DeviceMessageID]) async throws -> Int
+
+    // MARK: 实时活动（10.6，只有 iPhone、iPad）
+
+    /// 推送开启令牌（ActivityKit 的 `pushToStartTokenUpdates`，十六进制，见 `LiveActivityToken`）：用户打开
+    /// “计划运行时显示实时活动”时登记，计划到点开始的运行就在这台设备上远程开启实时活动；传 nil 清掉。
+    /// 只有 iPhone、iPad 能登记（别的设备、格式不对抛 invalid）。
+    func setLiveActivityStartToken(_ token: String?) async throws
+    /// 这个运行开了实时活动，或者远程开启的拿到了令牌：登记它的推送令牌（ActivityKit 的 `pushTokenUpdates`，
+    /// 十六进制）。之后运行的状态、步数变了、结束了，后台推送更新；令牌变了再调一次（换令牌，马上重发一次现在的状态）。
+    /// 一台设备同时最多 10 个。只有 iPhone、iPad。
+    func registerLiveActivity(runID: RunID, token: String) async throws
+    /// 这个运行的实时活动关掉了（用户划掉了、App 自己结束了）：后台不再推送。没登记过也算成功。
+    func endLiveActivity(runID: RunID) async throws
 
     // MARK: agent 与实例
 
     func agents() async throws -> [AgentInfo]
     /// 拉实例列表（同时更新缓存）。
     func instances() async throws -> [Instance]
+    /// 一个实例（从推送、深链进来时用）。
+    func instance(_ instanceID: InstanceID) async throws -> Instance
     /// 缓存里的实例列表（离线、启动时先显示）。
     func cachedInstances() throws -> [Instance]
     func adopt(agentID: AgentID, name: String, harness: String?) async throws -> Instance
@@ -47,14 +85,20 @@ public protocol ClientProtocol: AnyObject, Sendable {
     // MARK: 运行
 
     func createRun(instanceID: InstanceID, prompt: String) async throws -> Run
+    /// 实例最新的一页运行，新的在前（同时更新缓存）。
     func runs(instanceID: InstanceID, limit: Int) async throws -> [Run]
+    /// 更早的一页运行：`before` 之前的（列表往下翻），新的在前。
+    func olderRuns(instanceID: InstanceID, before: RunID, limit: Int) async throws -> [Run]
     func cachedRuns(instanceID: InstanceID, limit: Int) throws -> [Run]
     func getRun(_ runID: RunID) async throws -> Run
     /// 取消；`wholeTree` 时停掉整棵运行树（流水线）。
     func cancelRun(_ runID: RunID, wholeTree: Bool) async throws -> Run
     func runTree(_ runID: RunID) async throws -> [Run]
     func runArtifacts(_ runID: RunID) async throws -> [Artifact]
+    /// 实例的产出物，新的在前（最多 `limit` 个，上限 500）。
+    func instanceArtifacts(_ instanceID: InstanceID, limit: Int) async throws -> [Artifact]
     func artifactContent(_ artifactID: ArtifactID) async throws -> Data
+    func deleteArtifact(_ artifactID: ArtifactID) async throws
 
     // MARK: 事件流
 
@@ -77,6 +121,12 @@ public protocol ClientProtocol: AnyObject, Sendable {
     func plans(instanceID: InstanceID?) async throws -> [Plan]
     func getPlan(_ planID: PlanID) async throws -> Plan
     func createPlan(_ plan: NewPlan) async throws -> Plan
+    /// 改计划：标题、目标、策略、补跑方式、流水线步骤，给了才改（见 `PlanChange`）。返回改完的计划（带触发器和步骤），
+    /// 版本号加一。
+    func updatePlan(_ planID: PlanID, change: PlanChange) async throws -> Plan
+    /// 给计划加一个触发器（一个计划最多 10 个）。
+    func addTrigger(planID: PlanID, schedule: Schedule) async throws -> Trigger
+    func deleteTrigger(_ triggerID: TriggerID) async throws
     /// 暂停或恢复用户自己的计划。等确认的计划要用 `confirmPlan`。
     func setPlanPaused(_ planID: PlanID, paused: Bool) async throws -> Plan
     /// 确认 agent 新建或修改的计划。`revision` 是界面上展示的那个版本，之后又被改过会返回冲突。
@@ -92,6 +142,32 @@ public protocol ClientProtocol: AnyObject, Sendable {
     func cachedUnread() throws -> Int
     /// 标已读（没网也立即生效，联网后补发）。`ids` 为空表示全部已读，到 `upTo` 为止。返回未读数。
     func markInboxRead(ids: [InboxItemID], upTo: InboxItemID?) async throws -> Int
+    /// 一条通知（从推送点进来时用），同时更新缓存。
+    func inboxItem(_ itemID: InboxItemID) async throws -> InboxItem
+    /// 标回未读（要联网：先补发离线时标的已读，免得之后又被标成已读）。返回未读数。
+    func markInboxUnread(_ itemID: InboxItemID) async throws -> Int
+    /// 删一条通知（缓存里一起删）。
+    func deleteInboxItem(_ itemID: InboxItemID) async throws
+
+    // MARK: 团队与团队模板（8.1）
+
+    /// 全部团队，先建的在前。
+    func teams() async throws -> [Team]
+    func team(_ teamID: TeamID) async throws -> Team
+    /// 把几个实例编成团队：1 到 12 个成员，最多一个负责人（`role = .lead`）。名字 1 到 64 个字符。
+    func createTeam(name: String, members: [TeamMember]) async throws -> Team
+    /// 改名、换成员（整体替换）；给了才改。
+    func updateTeam(_ teamID: TeamID, name: String?, members: [TeamMember]?) async throws -> Team
+    /// 删团队（实例不删）。
+    func deleteTeam(_ teamID: TeamID) async throws
+    func teamTemplates() async throws -> [TeamTemplate]
+    /// 新建团队模板，直接给成员（1 到 12 个，agent 要在目录里）。
+    func createTeamTemplate(name: String, members: [TemplateMember]) async throws -> TeamTemplate
+    /// 从现有团队生成模板（每个成员记下它的 agent、接入方式、名字、角色）。
+    func createTeamTemplateFromTeam(name: String, teamID: TeamID) async throws -> TeamTemplate
+    func deleteTeamTemplate(_ templateID: TeamTemplateID) async throws
+    /// 一键领养一整个团队：每个成员领养一个新实例（还没有模型路由，要再配），再编成团队。`name` 不给就用模板的名字。
+    func adoptTeamTemplate(_ templateID: TeamTemplateID, name: String?) async throws -> Team
 
     // MARK: 用量
 
@@ -104,6 +180,10 @@ public protocol ClientProtocol: AnyObject, Sendable {
     func vendors() async throws -> [VendorInfo]
     func credentials() async throws -> [Credential]
     func addCredential(_ credential: NewCredential) async throws -> Credential
+    /// 改备注（最长 64 个字符，可以为空）、停用或重新启用一把 key；给了才改。
+    func updateCredential(_ credentialID: CredentialID, label: String?, disabled: Bool?) async throws -> Credential
+    /// 换 key（同一个厂商、同一条记录：模型路由不用改）。等 key 的运行会接着跑。
+    func replaceCredentialSecret(_ credentialID: CredentialID, apiKey: String) async throws -> Credential
     func deleteCredential(_ credentialID: CredentialID) async throws
 
     // MARK: IM 渠道（10.5）
@@ -152,6 +232,18 @@ extension ClientProtocol {
 
     public func usage(group: UsageGroup) async throws -> UsageSummary {
         try await usage(group: group, from: nil, to: nil, timeZone: nil)
+    }
+
+    /// 发设备消息，内容给 `JSONValue`（编成紧凑的 JSON 文本）。
+    public func sendDeviceMessage(to deviceID: DeviceID, kind: DeviceMessageKind, body: JSONValue) async throws
+        -> DeviceMessage
+    {
+        try await sendDeviceMessage(to: deviceID, kind: kind, bodyJSON: body.compactString())
+    }
+
+    /// 实时活动的推送令牌直接给 ActivityKit 的 `Data`。
+    public func registerLiveActivity(runID: RunID, token: Data) async throws {
+        try await registerLiveActivity(runID: runID, token: LiveActivityToken.hex(token))
     }
 
     public func detectSecrets(in text: String) -> [DetectedSecret] {

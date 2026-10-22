@@ -46,6 +46,9 @@ public enum IDTag {
     public enum VaultItem {}
     public enum VaultRequest {}
     public enum ImChannel {}
+    public enum Team {}
+    public enum TeamTemplate {}
+    public enum DeviceMessage {}
 }
 
 public typealias UserID = EntityID<IDTag.User>
@@ -63,3 +66,7 @@ public typealias ArtifactID = EntityID<IDTag.Artifact>
 public typealias VaultItemID = EntityID<IDTag.VaultItem>
 public typealias VaultRequestID = EntityID<IDTag.VaultRequest>
 public typealias ImChannelID = EntityID<IDTag.ImChannel>
+public typealias TeamID = EntityID<IDTag.Team>
+public typealias TeamTemplateID = EntityID<IDTag.TeamTemplate>
+/// 手机和电脑之间转发的一条消息（`DeviceMessage`）。
+public typealias DeviceMessageID = EntityID<IDTag.DeviceMessage>

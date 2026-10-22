@@ -296,7 +296,7 @@ public struct PlanActivityCard: Hashable, Sendable {
     }
 
     public enum Activity: Hashable, Sendable {
-        case needsConfirmation(PlanChange)
+        case needsConfirmation(PlanChangeKind)
         case cancelled
     }
 }

@@ -510,9 +510,9 @@ public struct DelegateStartedPayload: Hashable, Codable, Sendable {
 public struct PlanNeedsConfirmationPayload: Hashable, Codable, Sendable {
     public var planID: PlanID
     public var title: String
-    public var change: PlanChange
+    public var change: PlanChangeKind
 
-    public init(planID: PlanID, title: String, change: PlanChange) {
+    public init(planID: PlanID, title: String, change: PlanChangeKind) {
         self.planID = planID
         self.title = title
         self.change = change

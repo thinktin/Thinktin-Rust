@@ -336,11 +336,13 @@ public enum PlanAuthor: OpenStringEnum {
 }
 
 /// agent 对计划做了什么（`plan.needs_confirmation` 的 `change`）。
-public enum PlanChange: OpenStringEnum {
+///
+/// 不叫 `PlanChange`：那个名字给了 `updatePlan` 的部分修改（和 ThinktinCore 的记录同名）。
+public enum PlanChangeKind: OpenStringEnum {
     case created, updated
     case unknown(String)
 
-    public static let knownCases: [PlanChange] = [.created, .updated]
+    public static let knownCases: [PlanChangeKind] = [.created, .updated]
 
     public var rawValue: String {
         switch self {
@@ -349,6 +351,99 @@ public enum PlanChange: OpenStringEnum {
         case .unknown(let raw): raw
         }
     }
+}
+
+/// 计划错过的触发（暂停、停机期间该触发没触发的）怎么补（4.4）。
+public enum CatchUp: OpenStringEnum {
+    /// 错过几次都只补一次（默认）。
+    case once
+    /// 错过几次补几次。
+    case all
+    /// 不补，等下一次。
+    case skip
+    case unknown(String)
+
+    public static let knownCases: [CatchUp] = [.once, .all, .skip]
+
+    /// 新建计划不指定时服务端用的。
+    public static let `default`: CatchUp = .once
+
+    public var rawValue: String {
+        switch self {
+        case .once: "once"
+        case .all: "all"
+        case .skip: "skip"
+        case .unknown(let raw): raw
+        }
+    }
+}
+
+/// 团队成员的角色（8.1）。
+public enum TeamRole: OpenStringEnum {
+    /// 负责人：委派时由它分工（8.7）。一个团队最多一个。
+    case lead
+    case member
+    case unknown(String)
+
+    public static let knownCases: [TeamRole] = [.lead, .member]
+
+    public var rawValue: String {
+        switch self {
+        case .lead: "lead"
+        case .member: "member"
+        case .unknown(let raw): raw
+        }
+    }
+}
+
+/// 手机和电脑之间经平台转发的消息的种类（14.1，内容和签名见 docs/pairing.md）。
+/// 平台只转发：内容由两端用安全芯片里的私钥签名。
+public enum DeviceMessageKind: OpenStringEnum {
+    /// 手机 → 电脑：扫码后的配对应答。
+    case pairResponse
+    /// 电脑 → 手机：确认配对。
+    case pairConfirm
+    /// 电脑 → 手机：高危操作，请手机签名批准。
+    case approvalRequest
+    /// 手机 → 电脑：签了名的批准或拒绝。
+    case approvalDecision
+    /// 手机 → 电脑：普通操作的能力令牌。
+    case capability
+    /// 手机 → 电脑：吊销能力令牌。
+    case revocation
+    case unknown(String)
+
+    public static let knownCases: [DeviceMessageKind] = [
+        .pairResponse, .pairConfirm, .approvalRequest, .approvalDecision, .capability, .revocation,
+    ]
+
+    public var rawValue: String {
+        switch self {
+        case .pairResponse: "pair_response"
+        case .pairConfirm: "pair_confirm"
+        case .approvalRequest: "approval_request"
+        case .approvalDecision: "approval_decision"
+        case .capability: "capability"
+        case .revocation: "revocation"
+        case .unknown(let raw): raw
+        }
+    }
+
+    /// 由电脑发给手机（否则由手机发给电脑）。和服务端的 `from_computer` 一致；不认识的种类按 false 算。
+    public var isFromComputer: Bool {
+        switch self {
+        case .pairConfirm, .approvalRequest: true
+        default: false
+        }
+    }
+}
+
+/// 给自己的手机号发验证码的用途（`sendSelfCode`）。是客户端发出去的参数，所以不需要 `unknown`。
+public enum SelfCodePurpose: String, Sendable, Hashable, Codable, CaseIterable {
+    /// 注销账号（16.4）：验证码交给 `deleteAccount`。
+    case deleteAccount = "delete_account"
+    /// 换手机号。
+    case changePhone = "change_phone"
 }
 
 /// 收件箱条目的种类。
