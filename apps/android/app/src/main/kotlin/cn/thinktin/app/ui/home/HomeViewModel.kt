@@ -2,6 +2,7 @@ package cn.thinktin.app.ui.home
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import cn.thinktin.app.ui.chat.DraftHandoff
 import cn.thinktin.data.model.AgentInfo
 import cn.thinktin.data.model.Instance
 import cn.thinktin.data.model.InstanceState
@@ -71,6 +72,8 @@ sealed interface HomeEvent {
 class HomeViewModel(
     private val service: ThinktinService,
     private val clock: Clock,
+    /** 拦下密码时把消息转给对话页（那里有保险箱表单）；null 时只提示。 */
+    private val draftHandoff: DraftHandoff? = null,
 ) : ViewModel() {
 
     private val state = MutableStateFlow(
@@ -191,9 +194,15 @@ class HomeViewModel(
         state.update { it.copy(sending = true) }
         viewModelScope.launch {
             try {
-                // 密码拦截（11.6）：有命中先不发，13.5 弹保险箱表单；这里先提示。
+                // 密码拦截（11.6）：有命中先不发。首页没有保险箱表单：把消息转给对话页，在那里弹表单（13.5）。
                 val secrets = service.detectSecrets(text)
-                if (secrets.isNotEmpty()) throw ServiceError.ContainsSecrets(secrets.size)
+                if (secrets.isNotEmpty()) {
+                    if (draftHandoff == null) throw ServiceError.ContainsSecrets(secrets.size)
+                    draftHandoff.put(instanceId, text)
+                    state.update { it.copy(draft = "", sending = false) }
+                    events.send(HomeEvent.OpenChat(instanceId))
+                    return@launch
+                }
                 service.sendMessage(instanceId, text)
                 state.update { it.copy(draft = "", sending = false) }
                 loadRuns(instanceId, network = false)

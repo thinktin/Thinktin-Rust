@@ -30,8 +30,6 @@ import kotlinx.coroutines.flow.asStateFlow
 
 /** 还没做的页面（13.2–13.14 逐个替换成真页面）。 */
 enum class Page(@StringRes val titleRes: Int) {
-    Chat(R.string.page_chat),
-    Run(R.string.page_run),
     Plans(R.string.page_plans),
     Plan(R.string.page_plan),
     Teams(R.string.page_teams),

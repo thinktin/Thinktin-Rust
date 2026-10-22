@@ -308,7 +308,13 @@ internal class MockData(private val baseMs: Long) {
         }
         ev(c, RUN_DONE, EventKinds.AGENT_TOOL_CALL_UPDATE, 177) { put("tool_call_id", "tc-write"); put("status", "completed") }
         ev(c, RUN_DONE, EventKinds.AGENT_MESSAGE, 177) { put("text", "README 已翻译成英文，") }
-        ev(c, RUN_DONE, EventKinds.AGENT_MESSAGE, 177) { put("text", "写在 `README.en.md`，代码块保持原样。") }
+        ev(c, RUN_DONE, EventKinds.AGENT_MESSAGE, 177) {
+            put(
+                "text",
+                "写在 `README.en.md`，代码块保持原样。\n\n## 改动\n\n- 标题和段落**逐句**翻译\n- 链接见 [README.en.md](https://example.com/README.en.md)\n\n" +
+                    "```bash\ngit show --stat HEAD\n```\n",
+            )
+        }
         ev(c, RUN_DONE, EventKinds.ARTIFACT_PUBLISHED, 176, ai = false) {
             put("artifact_id", "art-readme"); put("name", "README.en.md"); put("version", 1); put("size", 4_812)
         }

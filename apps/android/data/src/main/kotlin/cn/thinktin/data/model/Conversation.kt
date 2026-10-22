@@ -650,7 +650,8 @@ object ConversationBuilder {
 
         private fun runState(e: InstanceEvent) {
             val p = e.payload
-            val state = RunState.fromWire(p.string("state").orEmpty())
+            // 没有 state（坏数据）的不算；不认识的取值（服务端新加的）照样记成 Unknown。
+            val state = RunState.fromWire(p.string("state") ?: return)
             val attempt = p.long("attempt")?.toInt() ?: lastState?.attempt ?: 0
             val waitCode = p.string("wait_code")?.let(WaitCode::fromWire)
             val previous = lastState

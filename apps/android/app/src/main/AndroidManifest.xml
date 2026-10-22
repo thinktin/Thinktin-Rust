@@ -42,5 +42,16 @@
                 <data android:host="inbox" />
             </intent-filter>
         </activity>
+
+        <!-- 对话页的产出物：下载到缓存后用 content:// 交给其他应用打开 / 分享（13.5）。 -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 </manifest>

@@ -83,7 +83,8 @@ import java.time.ZoneId
 fun HomeScreen(
     onOpenDrawer: () -> Unit,
     onOpenChat: (String) -> Unit,
-    onOpenRun: (String) -> Unit,
+    /** 最近运行：进对话页并定位到那个运行。 */
+    onOpenRun: (instanceId: String, runId: String) -> Unit,
     onOpenCatalog: () -> Unit,
     onOpenInstanceSettings: (String) -> Unit,
     onOpenAgent: (String) -> Unit = {},
@@ -91,7 +92,7 @@ fun HomeScreen(
     val service = LocalThinktinService.current
     val container = LocalAppContainer.current
     val viewModel: HomeViewModel = viewModel(
-        factory = viewModelFactory { initializer { HomeViewModel(service, container.clock) } },
+        factory = viewModelFactory { initializer { HomeViewModel(service, container.clock, container.draftHandoff) } },
     )
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
@@ -251,7 +252,7 @@ private fun greetingText(state: HomeUiState): String {
 }
 
 @Composable
-private fun HomeContent(state: HomeUiState, modifier: Modifier, onOpenRun: (String) -> Unit) {
+private fun HomeContent(state: HomeUiState, modifier: Modifier, onOpenRun: (String, String) -> Unit) {
     val zone: ZoneId = LocalAppContainer.current.clock.zone
     LazyColumn(
         modifier = modifier.fillMaxSize(),
@@ -285,7 +286,7 @@ private fun HomeContent(state: HomeUiState, modifier: Modifier, onOpenRun: (Stri
             }
         }
         items(state.recentRuns, key = { it.id }) { run ->
-            RunRow(run = run, nowMs = state.nowMs, zone = zone, onClick = { onOpenRun(run.id) })
+            RunRow(run = run, nowMs = state.nowMs, zone = zone, onClick = { onOpenRun(run.instanceId, run.id) })
             HorizontalDivider(
                 modifier = Modifier.padding(start = ThinktinSpacing.Page + 22.dp),
                 color = MaterialTheme.colorScheme.outline,

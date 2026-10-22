@@ -1,11 +1,7 @@
 package cn.thinktin.app.navigation
 
 import android.content.Context
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.DrawerValue
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
@@ -16,7 +12,6 @@ import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
@@ -32,13 +27,14 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.navArgument
 import androidx.navigation.navDeepLink
-import cn.thinktin.app.R
 import cn.thinktin.app.ui.account.DeleteAccountScreen
 import cn.thinktin.app.ui.account.EditNameScreen
 import cn.thinktin.app.ui.agent.AgentDetailScreen
 import cn.thinktin.app.ui.approval.ApprovalCenterScreen
 import cn.thinktin.app.ui.approval.ApprovalDetailScreen
 import cn.thinktin.app.ui.catalog.CatalogScreen
+import cn.thinktin.app.ui.chat.ChatNavigation
+import cn.thinktin.app.ui.chat.ChatScreen
 import cn.thinktin.app.ui.common.LocalThinktinService
 import cn.thinktin.app.ui.devices.DevicesAction
 import cn.thinktin.app.ui.devices.DevicesScreen
@@ -55,6 +51,7 @@ import cn.thinktin.app.ui.keys.KeysScreen
 import cn.thinktin.app.ui.placeholder.ComingSoonScreen
 import cn.thinktin.app.ui.placeholder.Page
 import cn.thinktin.app.ui.routes.ModelRoutesScreen
+import cn.thinktin.app.ui.run.RunScreen
 import cn.thinktin.app.ui.settings.SettingsScreen
 import cn.thinktin.app.ui.usage.UsageScreen
 import kotlinx.coroutines.flow.first
@@ -192,31 +189,50 @@ private fun MainNavHost(navController: NavHostController, onOpenDrawer: () -> Un
             HomeScreen(
                 onOpenDrawer = onOpenDrawer,
                 onOpenChat = { navController.navigate(Routes.chat(it)) },
-                onOpenRun = { navController.navigate(Routes.run(it)) },
+                // 最近运行：进对话页并定位到那个运行（13.5）。
+                onOpenRun = { instanceId, runId -> navController.navigate(Routes.chat(instanceId, runId)) },
                 onOpenCatalog = { navController.navigate(Routes.CATALOG) },
                 onOpenAgent = { navController.navigate(Routes.agent(it)) },
                 onOpenInstanceSettings = { navController.navigate(Routes.instance(it)) },
             )
         }
-        composable(Routes.CHAT, arguments = listOf(stringArg(Routes.ARG_INSTANCE_ID))) { entry ->
-            // 对话页在 13.5 做；顶栏先放“实例设置”入口。
+        composable(
+            Routes.CHAT,
+            arguments = listOf(stringArg(Routes.ARG_INSTANCE_ID), optionalStringArg(Routes.ARG_RUN_ID)),
+        ) { entry ->
             val instanceId = entry.arguments?.getString(Routes.ARG_INSTANCE_ID).orEmpty()
-            ComingSoonScreen(
-                page = Page.Chat,
-                argument = instanceId,
-                onBack = back,
-                actions = {
-                    IconButton(onClick = { navController.navigate(Routes.instance(instanceId)) }) {
-                        Icon(Icons.Outlined.Tune, contentDescription = stringResource(R.string.home_instance_settings))
-                    }
-                },
+            ChatScreen(
+                instanceId = instanceId,
+                focusRunId = entry.arguments?.getString(Routes.ARG_RUN_ID),
+                navigation = ChatNavigation(
+                    onBack = back,
+                    onOpenInstanceSettings = { navController.navigate(Routes.instance(it)) },
+                    onOpenRun = { navController.navigate(Routes.run(it)) },
+                    onOpenPlan = { navController.navigate(Routes.plan(it)) },
+                    onOpenApprovals = { navController.navigate(Routes.APPROVALS) },
+                    onOpenApproval = { navController.navigate(Routes.approval(it)) },
+                    onOpenKeys = { navController.navigate(Routes.KEYS) },
+                    onOpenModelRoutes = { navController.navigate(Routes.instanceRoutes(it)) },
+                    onOpenDevices = { navController.navigate(Routes.devices()) },
+                    onInstanceGone = {
+                        onInstancesChanged()
+                        navController.navigate(Routes.HOME) { popUpTo(Routes.HOME) { inclusive = true } }
+                    },
+                ),
             )
         }
         composable(
             Routes.RUN,
             arguments = listOf(stringArg(Routes.ARG_RUN_ID)),
             deepLinks = listOf(navDeepLink { uriPattern = DeepLinks.RUN }),
-        ) { Placeholder(Page.Run, it, Routes.ARG_RUN_ID) }
+        ) { entry ->
+            RunScreen(
+                runId = entry.arguments?.getString(Routes.ARG_RUN_ID).orEmpty(),
+                onBack = back,
+                onOpenChat = { instanceId, runId -> navController.navigate(Routes.chat(instanceId, runId)) },
+                onOpenModelRoutes = { navController.navigate(Routes.instanceRoutes(it)) },
+            )
+        }
         composable(Routes.CATALOG) {
             CatalogScreen(onBack = back, onOpenAgent = { navController.navigate(Routes.agent(it)) })
         }

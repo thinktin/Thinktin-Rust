@@ -85,7 +85,8 @@ fun ToolCallCard(
     title: String,
     modifier: Modifier = Modifier,
     kind: String? = null,
-    status: ToolCallStatus = ToolCallStatus.Pending,
+    /** null：不显示状态（平台工具调用没有状态）。 */
+    status: ToolCallStatus? = ToolCallStatus.Pending,
     details: String? = null,
     initiallyExpanded: Boolean = false,
     summary: String? = null,
@@ -135,7 +136,7 @@ fun ToolCallCard(
                         )
                     }
                 }
-                ToolCallStatusLabel(status)
+                if (status != null) ToolCallStatusLabel(status)
                 if (canExpand) {
                     Icon(
                         imageVector = if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,

@@ -13,7 +13,8 @@ object Routes {
     const val LOGIN_FROZEN = "login/frozen"
 
     const val HOME = "home"
-    const val CHAT = "chat/{instanceId}"
+    /** 对话；runId 可选：首页“最近运行”点进来时定位到那个运行。 */
+    const val CHAT = "chat/{instanceId}?runId={runId}"
     const val RUN = "run/{runId}"
     const val CATALOG = "catalog"
     const val AGENT = "agent/{agentId}"
@@ -72,7 +73,8 @@ object Routes {
     const val ARG_ACTION = "action"
     const val ARG_CREDENTIAL_ID = "credentialId"
 
-    fun chat(instanceId: String) = "chat/${Uri.encode(instanceId)}"
+    fun chat(instanceId: String, runId: String? = null) =
+        if (runId == null) "chat/${Uri.encode(instanceId)}" else "chat/${Uri.encode(instanceId)}?runId=${Uri.encode(runId)}"
     fun run(runId: String) = "run/${Uri.encode(runId)}"
     fun agent(agentId: String) = "agent/${Uri.encode(agentId)}"
     fun instance(instanceId: String) = "instance/${Uri.encode(instanceId)}"

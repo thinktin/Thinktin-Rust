@@ -1130,6 +1130,8 @@ class MockThinktinService(
         LABELED.findAll(text).forEach { m ->
             val value = m.groups[2] ?: return@forEach
             if (found.any { value.range.first >= it.start && value.range.first < it.end }) return@forEach
+            // 已经换成保险箱引用的不算（和 client-core 一样）。
+            if (value.value.startsWith("[vault:")) return@forEach
             found += DetectedSecret(
                 kind = "labeled", start = value.range.first, end = value.range.last + 1, value = value.value,
                 suggestedName = "password", service = "", storable = true,

@@ -11,6 +11,9 @@ import cn.thinktin.app.settings.AppSettingsRepository
 import cn.thinktin.app.settings.serverLocale
 import cn.thinktin.app.ui.approval.ApprovalGate
 import cn.thinktin.app.ui.approval.BiometricApprovalGate
+import cn.thinktin.app.ui.chat.ArtifactFiles
+import cn.thinktin.app.ui.chat.CacheArtifactFiles
+import cn.thinktin.app.ui.chat.DraftHandoff
 import cn.thinktin.data.core.AcceptLanguage
 import cn.thinktin.data.core.ClientFactory
 import cn.thinktin.data.core.TlsState
@@ -33,6 +36,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.io.File
 import java.lang.ref.WeakReference
 import java.time.Clock
 import java.util.Locale
@@ -68,7 +72,16 @@ class AppContainer(
     private val systemLanguage: () -> String = { Locale.getDefault().language },
     /** 批准审批前的身份确认；null 用 BiometricPrompt（测试里换成假的）。 */
     approvalGate: ApprovalGate? = null,
+    /** 产出物下载到哪；null 用系统临时目录（[create] 传 App 的缓存目录）。 */
+    artifactFiles: ArtifactFiles? = null,
 ) {
+    /** 对话页下载产出物的位置（13.5）。 */
+    val artifactFiles: ArtifactFiles =
+        artifactFiles ?: CacheArtifactFiles(File(System.getProperty("java.io.tmpdir") ?: ".", "thinktin"))
+
+    /** 首页拦下密码后转交给对话页的消息（13.5）。 */
+    val draftHandoff = DraftHandoff()
+
     /** 当前的 MainActivity（弱引用，[attachActivity]）：BiometricPrompt 要它。 */
     @Volatile
     private var activityRef: WeakReference<FragmentActivity>? = null
@@ -226,6 +239,7 @@ class AppContainer(
                 createCore = { ClientFactory.createService(app, BuildConfig.BASE_URL, tls) },
                 createMock = { MockThinktinService(clock = { clock.millis() }) },
                 forceDemo = forceDemo,
+                artifactFiles = CacheArtifactFiles(app.cacheDir),
             )
         }
     }
