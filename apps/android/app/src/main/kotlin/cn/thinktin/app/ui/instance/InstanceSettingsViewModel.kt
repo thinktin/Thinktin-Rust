@@ -111,6 +111,9 @@ sealed interface InstanceSettingsEvent {
     /** 删掉了：回首页，刷新抽屉。 */
     data object Deleted : InstanceSettingsEvent
 
+    /** 实例变了（换了版本）：刷新抽屉。 */
+    data object Changed : InstanceSettingsEvent
+
     data class Message(val text: UiText) : InstanceSettingsEvent
 }
 
@@ -203,6 +206,7 @@ class InstanceSettingsViewModel(
         runDialogAction {
             val updated = service.setInstanceVersion(instanceId, dialog.version)
             state.update { it.copy(dialog = null, instance = updated) }
+            eventChannel.send(InstanceSettingsEvent.Changed)
             message(UiText(R.string.instance_version_changed, listOf(updated.agentVersion)))
         }
     }

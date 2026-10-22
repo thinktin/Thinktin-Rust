@@ -1,7 +1,11 @@
 package cn.thinktin.app.navigation
 
 import android.content.Context
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
@@ -12,6 +16,7 @@ import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
@@ -27,8 +32,11 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.navArgument
 import androidx.navigation.navDeepLink
+import cn.thinktin.app.R
 import cn.thinktin.app.ui.account.DeleteAccountScreen
 import cn.thinktin.app.ui.account.EditNameScreen
+import cn.thinktin.app.ui.agent.AgentDetailScreen
+import cn.thinktin.app.ui.catalog.CatalogScreen
 import cn.thinktin.app.ui.common.LocalThinktinService
 import cn.thinktin.app.ui.devices.DevicesAction
 import cn.thinktin.app.ui.devices.DevicesScreen
@@ -36,6 +44,8 @@ import cn.thinktin.app.ui.drawer.AppDrawer
 import cn.thinktin.app.ui.drawer.DrawerDestination
 import cn.thinktin.app.ui.drawer.DrawerViewModel
 import cn.thinktin.app.ui.home.HomeScreen
+import cn.thinktin.app.ui.instance.InstanceNameScreen
+import cn.thinktin.app.ui.instance.InstanceSettingsScreen
 import cn.thinktin.app.ui.placeholder.ComingSoonScreen
 import cn.thinktin.app.ui.placeholder.Page
 import cn.thinktin.app.ui.settings.SettingsScreen
@@ -113,6 +123,7 @@ fun MainNavigation(navController: NavHostController = rememberAppNavController()
                     closeDrawerThen {
                         val route = when (destination) {
                             DrawerDestination.NewChat -> Routes.HOME
+                            DrawerDestination.Catalog -> Routes.CATALOG
                             DrawerDestination.Inbox -> Routes.inbox()
                             DrawerDestination.Plans -> Routes.PLANS
                             DrawerDestination.Teams -> Routes.TEAMS
@@ -122,10 +133,17 @@ fun MainNavigation(navController: NavHostController = rememberAppNavController()
                     }
                 },
                 onOpenInstance = { instance -> closeDrawerThen { navController.navigate(Routes.chat(instance.id)) } },
+                onOpenInstanceSettings = { instance ->
+                    closeDrawerThen { navController.navigate(Routes.instance(instance.id)) }
+                },
             )
         },
     ) {
-        MainNavHost(navController = navController, onOpenDrawer = { scope.launch { drawerState.open() } })
+        MainNavHost(
+            navController = navController,
+            onOpenDrawer = { scope.launch { drawerState.open() } },
+            onInstancesChanged = drawerViewModel::refresh,
+        )
     }
 }
 
@@ -138,8 +156,11 @@ fun NavHostController.navigateTopLevel(route: String) {
     }
 }
 
+/**
+ * [onInstancesChanged]：领养、改名、换版本、删除之后刷新抽屉里的实例列表（首页回到前台时自己刷新）。
+ */
 @Composable
-private fun MainNavHost(navController: NavHostController, onOpenDrawer: () -> Unit) {
+private fun MainNavHost(navController: NavHostController, onOpenDrawer: () -> Unit, onInstancesChanged: () -> Unit) {
     val back: () -> Unit = {
         if (!navController.popBackStack()) navController.navigateTopLevel(Routes.HOME)
     }
@@ -156,26 +177,80 @@ private fun MainNavHost(navController: NavHostController, onOpenDrawer: () -> Un
                 onOpenChat = { navController.navigate(Routes.chat(it)) },
                 onOpenRun = { navController.navigate(Routes.run(it)) },
                 onOpenCatalog = { navController.navigate(Routes.CATALOG) },
+                onOpenAgent = { navController.navigate(Routes.agent(it)) },
                 onOpenInstanceSettings = { navController.navigate(Routes.instance(it)) },
             )
         }
-        composable(Routes.CHAT, arguments = listOf(stringArg(Routes.ARG_INSTANCE_ID))) {
-            Placeholder(Page.Chat, it, Routes.ARG_INSTANCE_ID)
+        composable(Routes.CHAT, arguments = listOf(stringArg(Routes.ARG_INSTANCE_ID))) { entry ->
+            // 对话页在 13.5 做；顶栏先放“实例设置”入口。
+            val instanceId = entry.arguments?.getString(Routes.ARG_INSTANCE_ID).orEmpty()
+            ComingSoonScreen(
+                page = Page.Chat,
+                argument = instanceId,
+                onBack = back,
+                actions = {
+                    IconButton(onClick = { navController.navigate(Routes.instance(instanceId)) }) {
+                        Icon(Icons.Outlined.Tune, contentDescription = stringResource(R.string.home_instance_settings))
+                    }
+                },
+            )
         }
         composable(
             Routes.RUN,
             arguments = listOf(stringArg(Routes.ARG_RUN_ID)),
             deepLinks = listOf(navDeepLink { uriPattern = DeepLinks.RUN }),
         ) { Placeholder(Page.Run, it, Routes.ARG_RUN_ID) }
-        composable(Routes.CATALOG) { Placeholder(Page.Catalog, it) }
-        composable(Routes.AGENT, arguments = listOf(stringArg(Routes.ARG_AGENT_ID))) {
-            Placeholder(Page.Agent, it, Routes.ARG_AGENT_ID)
+        composable(Routes.CATALOG) {
+            CatalogScreen(onBack = back, onOpenAgent = { navController.navigate(Routes.agent(it)) })
+        }
+        composable(Routes.AGENT, arguments = listOf(stringArg(Routes.ARG_AGENT_ID))) { entry ->
+            AgentDetailScreen(
+                agentId = entry.arguments?.getString(Routes.ARG_AGENT_ID).orEmpty(),
+                onBack = back,
+                onAdopted = { instance ->
+                    onInstancesChanged()
+                    // 目录和详情不留在返回栈里：从对话页返回回到首页。
+                    navController.navigate(Routes.chat(instance.id)) {
+                        popUpTo(Routes.HOME)
+                    }
+                },
+            )
         }
         composable(
             Routes.INSTANCE,
             arguments = listOf(stringArg(Routes.ARG_INSTANCE_ID)),
             deepLinks = listOf(navDeepLink { uriPattern = DeepLinks.INSTANCE }),
-        ) { Placeholder(Page.Instance, it, Routes.ARG_INSTANCE_ID) }
+        ) { entry ->
+            val instanceId = entry.arguments?.getString(Routes.ARG_INSTANCE_ID).orEmpty()
+            InstanceSettingsScreen(
+                instanceId = instanceId,
+                onBack = back,
+                onRename = { navController.navigate(Routes.instanceName(instanceId)) },
+                onOpenAgent = { navController.navigate(Routes.agent(it)) },
+                onOpenModelRoutes = { navController.navigate(Routes.instanceRoutes(instanceId)) },
+                onChanged = onInstancesChanged,
+                onDeleted = {
+                    onInstancesChanged()
+                    // 回首页，并清掉返回栈里指向这个实例的页面（对话页等）；首页重新加载。
+                    navController.navigate(Routes.HOME) {
+                        popUpTo(Routes.HOME) { inclusive = true }
+                    }
+                },
+            )
+        }
+        composable(Routes.INSTANCE_NAME, arguments = listOf(stringArg(Routes.ARG_INSTANCE_ID))) { entry ->
+            InstanceNameScreen(
+                instanceId = entry.arguments?.getString(Routes.ARG_INSTANCE_ID).orEmpty(),
+                onBack = back,
+                onSaved = {
+                    onInstancesChanged()
+                    back()
+                },
+            )
+        }
+        composable(Routes.INSTANCE_ROUTES, arguments = listOf(stringArg(Routes.ARG_INSTANCE_ID))) {
+            Placeholder(Page.ModelRoutes, it, Routes.ARG_INSTANCE_ID)
+        }
         composable(Routes.PLANS) { Placeholder(Page.Plans, it) }
         composable(
             Routes.PLAN,

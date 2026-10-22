@@ -73,6 +73,7 @@ fun InstanceSettingsScreen(
     onOpenAgent: (String) -> Unit,
     onOpenModelRoutes: () -> Unit,
     onDeleted: () -> Unit,
+    onChanged: () -> Unit = {},
 ) {
     val service = LocalThinktinService.current
     val container = LocalAppContainer.current
@@ -88,6 +89,7 @@ fun InstanceSettingsScreen(
         viewModel.events.collect { event ->
             when (event) {
                 InstanceSettingsEvent.Deleted -> onDeleted()
+                InstanceSettingsEvent.Changed -> onChanged()
                 is InstanceSettingsEvent.Message ->
                     snackbar.showSnackbar(event.text.resolve(context), duration = SnackbarDuration.Long)
             }
@@ -240,6 +242,7 @@ private fun InstanceSettingsContent(
         }
         state.otherVersions.forEach { option ->
             val action = stringResource(if (option.older) R.string.instance_rollback else R.string.instance_switch)
+            val actionLabel = stringResource(R.string.instance_version_action_a11y, action, option.version)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -255,7 +258,7 @@ private fun InstanceSettingsContent(
                 TextButton(
                     onClick = { viewModel.askVersion(option) },
                     modifier = Modifier.semantics {
-                        contentDescription = "$action ${option.version}"
+                        contentDescription = actionLabel
                     },
                 ) { Text(action) }
             }
