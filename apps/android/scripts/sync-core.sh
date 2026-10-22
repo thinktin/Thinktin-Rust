@@ -6,7 +6,6 @@
 #   apps/android/scripts/sync-core.sh --bindings-only # 只重新生成并同步 Kotlin 绑定（只需要 cargo）
 #   apps/android/scripts/sync-core.sh --check         # 同上但不写入：提交的绑定和 Rust 不一致时非零退出（CI 用）
 #
-# 生成的绑定先过 scripts/patch-bindings.py（UniFFI 0.32 的 `message` 字段与 Kotlin 2 冲突，见该文件）。
 # 绑定（client_core.kt）提交进 git；jniLibs 和 assets/thinktin-licenses 是生成物，已在 .gitignore 里。
 set -euo pipefail
 
@@ -42,7 +41,6 @@ sync_bindings() { # $1 = 含 kotlin/cn/thinktin/core/client_core.kt 的目录
   [[ -f "$src" ]] || { echo "找不到绑定：$src" >&2; exit 1; }
   mkdir -p "$core/kotlin/cn/thinktin/core"
   cp "$src" "$core/$kt_rel"
-  python3 "$here/patch-bindings.py" "$core/$kt_rel"
   echo "绑定 → apps/android/core/src/main/$kt_rel"
 }
 
@@ -102,9 +100,7 @@ case "$mode" in
     ;;
   check)
     "$repo/tools/client-core/gen-bindings.sh" "$repo/target/bindings"
-    expected="$repo/target/bindings/client_core.patched.kt"
-    cp "$repo/target/bindings/$kt_rel" "$expected"
-    python3 "$here/patch-bindings.py" "$expected" >/dev/null
+    expected="$repo/target/bindings/$kt_rel"
     if ! diff -u "$core/$kt_rel" "$expected" > "$repo/target/bindings/client_core.kt.diff"; then
       head -n 60 "$repo/target/bindings/client_core.kt.diff" >&2
       echo >&2
