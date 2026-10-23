@@ -13,6 +13,9 @@ import Observation
 ///   `stopped` 表示它）、启动和回到前台时 `upgradeRequired()` 是 true，都停掉所有事件流（`ObservedClient.haltStreams()`），
 ///   之后一直停在升级页（升级就是重装）。
 /// - 推送（`receive(push:)`、`open(push:)`）：子类型是账号冻结、解冻的先处理账号状态（docs/push.md 第 4 节）。
+/// - 语言（12.12，传了 `preferences` 时）：启动时最先把请求语言换成界面语言打头的（没登录也要，新用户按它注册）；
+///   确认完账号、登录成功之后比较服务端的用户语言（`me().locale`）和界面语言，不一致就调 `setLocale`
+///   （`LanguageSettingsModel.syncOnLaunch(user:)`，静默进行，失败了下次启动再试）。
 /// - 没登录、冻结、要升级时，深链和推送由 `Router` 先记下，回到正常状态再跳。
 ///
 /// “进行中”的角标和实例行的“等你处理”用 11.8 的 `listRuns(filter: .active)`：跨实例、只要没结束的，一次请求；
@@ -72,6 +75,8 @@ public final class AppModel {
     public private(set) var resubscribeRequest = 0
 
     private let observed: ObservedClient
+    /// 界面语言和服务端、请求语言的同步（12.12）；没传 `preferences` 时为 nil，不同步。
+    private let language: LanguageSettingsModel?
     private let selection: InstanceSelectionStore
     private let now: () -> Date
     private let activityContinuation: AsyncStream<ClientActivity>.Continuation
@@ -87,15 +92,19 @@ public final class AppModel {
     ///   - client: Mock 或真核心；这里会包一层 `ObservedClient`。
     ///   - router: 导航状态（测试里可以传自己的）。
     ///   - defaults: 记住上次选的实例；传 nil 不记（测试、预览）。
+    ///   - preferences: 外观与语言的偏好（12.12，App 里是 `SettingsPreferences.shared`）：启动、登录后按它的界面语言
+    ///     设请求语言、同步服务端的用户语言。nil 不同步（测试、预览）。
     ///   - now: 现在的时间（测试传固定值）。
     public init(
         client: any ClientProtocol, router: Router = Router(), defaults: UserDefaults? = .standard,
-        now: @escaping () -> Date = Date.init
+        preferences: SettingsPreferences? = nil, now: @escaping () -> Date = Date.init
     ) {
         let (stream, continuation) = AsyncStream.makeStream(of: ClientActivity.self, bufferingPolicy: .unbounded)
         let observed = ObservedClient(client) { activity in continuation.yield(activity) }
         self.observed = observed
         self.client = observed
+        // 经过 ObservedClient：同步时遇到登录失效、冻结这类全局错误照样报到这里。
+        self.language = preferences.map { LanguageSettingsModel(client: observed, preferences: $0) }
         self.router = router
         self.selection = InstanceSelectionStore(defaults: defaults)
         self.now = now
@@ -137,10 +146,13 @@ public final class AppModel {
 
     // MARK: 启动与刷新
 
-    /// 启动（`AppShell` 的 `.task`，只做一次）：先读缓存，再确认账号状态，再刷新实例和角标。
+    /// 启动（`AppShell` 的 `.task`，只做一次）：先换请求语言，再读缓存，再确认账号状态（和服务端的用户语言），
+    /// 再刷新实例和角标。
     public func start() async {
         guard !started else { return }
         started = true
+        // 请求语言换成界面语言打头的（不联网）：在登录判断之前，没登录时新用户也按界面语言注册（12.12）。
+        language?.applyAcceptLanguage()
         // 建好之后、启动之前就有调用说过要升级（比如 App 的平台层直接用了被包的客户端）。
         if checkUpgradeRequired() { return }
         guard phase == .signedIn else { return }
@@ -149,6 +161,7 @@ public final class AppModel {
         loadCachedState()
         guard phase == .signedIn else { return }
         await verifyAccount()
+        await syncLanguage()
         await refresh()
     }
 
@@ -369,7 +382,10 @@ public final class AppModel {
         }
         enter(.signedIn)
         loadCachedState()
-        Task { await refresh() }
+        Task {
+            await syncLanguage()
+            await refresh()
+        }
     }
 
     /// 客户端说过要升级（`upgradeRequired()`，不联网）就进升级页。返回进没进。
@@ -427,6 +443,16 @@ public final class AppModel {
         } catch {
             handle(error)
         }
+    }
+
+    /// 服务端的用户语言和界面语言不一致就改（12.12，`LanguageSettingsModel.syncOnLaunch(user:)`）：启动时确认完账号、
+    /// 登录成功之后各一次。静默进行（网络不通、服务端出错都不提示，下次启动再试）；不在正常状态（冻结了、退出了）时不做。
+    private func syncLanguage() async {
+        guard let language, phase == .signedIn else { return }
+        let synced = await language.syncOnLaunch(user: user)
+        // 等的时候退出登录、换了账号的不用。
+        guard phase == .signedIn, let synced, user == nil || user?.id == synced.id else { return }
+        user = synced
     }
 
     private func refreshInstances() async {

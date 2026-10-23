@@ -14,6 +14,7 @@ final class AppEnvironment {
     let pushRegistrar: any PushRegistrar
     let biometricSigner: any BiometricSigner
     /// 全局状态和导航（登录状态、实例、角标、`router`）。深链（`onOpenURL`）、推送点开（12.8）都交给它的 `router`。
+    /// 启动、登录后按设置里的界面语言（`SettingsPreferences.shared`，12.12）换请求语言、同步服务端的用户语言。
     let appModel: AppModel
 
     private static let log = Logger(subsystem: "cn.thinktin.app", category: "environment")
@@ -28,7 +29,7 @@ final class AppEnvironment {
         self.client = client
         self.pushRegistrar = pushRegistrar
         self.biometricSigner = biometricSigner
-        self.appModel = AppModel(client: client)
+        self.appModel = AppModel(client: client, preferences: .shared)
     }
 
     /// 正式运行用的装配。推送（12.8）和签名（12.9）先用空实现。
@@ -36,7 +37,7 @@ final class AppEnvironment {
         log.info(
             "client: \(configuration.client.rawValue, privacy: .public), api: \(configuration.baseURL.absoluteString, privacy: .public)"
         )
-        let acceptLanguage = acceptLanguage()
+        let acceptLanguage = acceptLanguage(displayLanguage: SettingsPreferences.shared.displayLanguage)
         let client: any ClientProtocol
         switch configuration.client {
         case .mock:
@@ -55,14 +56,19 @@ final class AppEnvironment {
 
     // MARK: 请求语言与日志（11.8）
 
-    /// 每个请求带的 `Accept-Language`：设备的语言偏好，前面再放 App 界面用的语言（`DisplayLanguage`：系统首选语言是
-    /// 中文时中文，其余英文）。服务端只认中文和英文，按排第一的定新用户推送、收件箱的语言，agent 目录的介绍也按它给，
-    /// 这样和界面一致——只带设备偏好的话，系统语言是日语时界面是英文，服务端却认不出、按中文。
+    /// 每个请求带的 `Accept-Language`：App 界面用的语言打头，后面跟设备的语言偏好。界面语言是设置里选的
+    /// （`SettingsPreferences.shared.displayLanguage`，12.12：选了中文或英文就是它，跟随系统时是系统给 App 定的语言）；
+    /// 没给时按设备首选语言算（中文时中文，其余英文）。服务端只认中文和英文，按排第一的定新用户推送、收件箱的语言，
+    /// agent 目录的介绍也按它给，这样和界面一致——只带设备偏好的话，系统语言是日语时界面是英文，服务端却认不出、按中文；
+    /// App 里选了英文、系统是中文时也一样。
     ///
     /// client-core 拒收超过 256 字节的值（`CoreClient` 建不起来）：`AcceptLanguage.header` 和 client-core 的
     /// `accept_language_header` 一样，放不下的后面几个不要，界面语言总在第一个。
-    nonisolated static func acceptLanguage(preferredLanguages: [String] = Locale.preferredLanguages) -> String {
-        let language = preferredLanguages.first.map(DisplayLanguage.init(languageTag:)) ?? .chinese
+    nonisolated static func acceptLanguage(
+        displayLanguage: DisplayLanguage? = nil, preferredLanguages: [String] = Locale.preferredLanguages
+    ) -> String {
+        let language =
+            displayLanguage ?? preferredLanguages.first.map(DisplayLanguage.init(languageTag:)) ?? .chinese
         return AcceptLanguage.header(for: language, systemTags: preferredLanguages)
     }
 

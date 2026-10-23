@@ -476,10 +476,13 @@ public enum DemoData {
         vendors.first { $0.id == id }?.modelProtocols ?? []
     }
 
+    /// 订阅类 key 的前缀、套餐专用地址和服务端的厂商表（crates/proto/src/vendors.rs）一致（11.9）；这四家都没有套餐
+    /// 专用地址（智谱、火山方舟这些才有）。
     public static let vendors: [VendorInfo] = [
         VendorInfo(
             id: "anthropic", name: "Anthropic (Claude)", protocols: ["anthropic", "chat"],
-            models: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]),
+            models: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
+            subscriptionKeyPrefixes: ["sk-ant-oat", "sk-ant-ort"]),
         VendorInfo(
             id: "openai", name: "OpenAI", protocols: ["chat", "responses"], models: ["gpt-6-astra", "gpt-6.1-sol"]),
         VendorInfo(
@@ -487,7 +490,8 @@ public enum DemoData {
             models: ["deepseek-v4-pro", "deepseek-flash"]),
         VendorInfo(
             id: "qwen-cn", name: "阿里云百炼（北京）", protocols: ["anthropic", "chat", "responses"],
-            models: ["qwen3.8-max", "qwen3.8-flash"], notes: "Token Plan 的 key（sk-tp-）不能用于 API 调用。"),
+            models: ["qwen3.8-max", "qwen3.8-flash"], notes: "Token Plan 的 key（sk-tp-）不能用于 API 调用。",
+            subscriptionKeyPrefixes: ["sk-sp-"]),
     ]
 
     public static let approvalOptions: [ApprovalOption] = [

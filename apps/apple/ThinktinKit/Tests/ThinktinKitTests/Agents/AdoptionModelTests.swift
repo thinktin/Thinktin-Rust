@@ -106,6 +106,25 @@ struct AdoptionModelTests {
         #expect(model.error == nil)
     }
 
+    @Test("实例数到了上限（11.9，409 instance_limit）：领养失败，横幅说先删掉不用的实例，不给重试")
+    func adoptOverInstanceLimit() async {
+        let mock = AgentsFixture.mock { $0.instancesPerUser = 2 }
+        let model = AdoptionModel(client: mock, agent: claude)
+        #expect(await model.adopt() == nil)
+        let error = model.error
+        #expect(error?.apiCode == .instanceLimit)
+        #expect(error?.isQuantityLimit == true && error?.isRetryable == false)
+        #expect(error?.recovery == .limitReached)
+        // 领养页的 ErrorBanner 显示的就是这句（ErrorPresentation 用 localizedMessage）。
+        #expect(error?.localizedMessage(.chinese) == "实例数已达上限，删掉不用的实例再领养。")
+        #expect(model.adopted == nil && model.canSubmit)
+        #expect(mock.state.instances.count == 2)
+        // 删掉一个以后再领养就行。
+        try? await mock.deleteInstance(DemoData.reviewerID)
+        #expect(await model.adopt() != nil)
+        #expect(model.error == nil)
+    }
+
     @Test("老的服务端没给协议：不知道要哪种接口时也给说明")
     func unknownProtocols() async throws {
         let agent = AgentsFixture.agent("legacy", name: "Legacy")

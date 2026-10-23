@@ -406,7 +406,9 @@ extension ThinktinKit.NewCredential {
 
 extension ThinktinKit.VendorInfo {
     init(core v: Core.VendorInfo) {
-        self.init(id: v.id, name: v.name, protocols: v.protocols, models: v.models, notes: v.notes)
+        self.init(
+            id: v.id, name: v.name, protocols: v.protocols, models: v.models, notes: v.notes,
+            subscriptionKeyPrefixes: v.subscriptionKeyPrefixes, planOnlyBases: v.planOnlyBases)
     }
 }
 

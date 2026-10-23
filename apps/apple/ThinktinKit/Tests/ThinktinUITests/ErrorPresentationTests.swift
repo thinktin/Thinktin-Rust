@@ -47,6 +47,25 @@ struct ErrorPresentationTests {
         #expect(ErrorPresentation(ClientError.signedOut).recovery == .signIn)
     }
 
+    @Test("数量到了上限（*_limit，11.9）：不给重试按钮，文案说先删掉一些")
+    func quantityLimit() {
+        let instances = ErrorPresentation(
+            ClientError.api(status: 409, code: .instanceLimit, message: "at most 5", retryAfterSecs: nil),
+            language: .chinese)
+        #expect(instances.recovery == .limitReached)
+        #expect(instances.action == .none)
+        #expect(instances.tone == .waiting)
+        #expect(instances.message == "实例数已达上限，删掉不用的实例再领养。")
+        #expect(instances.details == "api 409 instance_limit: at most 5")
+
+        let future = ErrorPresentation(
+            ClientError.api(status: 409, code: .unknown("vault_item_limit"), message: "", retryAfterSecs: nil),
+            language: .english)
+        #expect(future.recovery == .limitReached)
+        #expect(future.action == .none)
+        #expect(future.message.hasPrefix("You've reached the limit."))
+    }
+
     @Test("其他错误：复制详情，详情是英文原文")
     func generic() {
         let p = ErrorPresentation(ClientError.internal(message: "boom"), language: .chinese)

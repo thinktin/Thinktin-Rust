@@ -92,18 +92,52 @@ public struct VendorInfo: Identifiable, Hashable, Codable, Sendable {
     /// 推荐的上游模型。
     public var models: [String]
     public var notes: String
+    /// 订阅类 key 的前缀（11.9）：选这家时，粘贴的 key（去掉首尾空白）以其中一个开头（区分大小写）的服务端不收，
+    /// 添加 key 时可以先在本地提示（服务端照样检查）。空的就不用查；老的服务端没给时也是空的。
+    public var subscriptionKeyPrefixes: [String]
+    /// 这家套餐专用地址的前缀（11.9，小写、不带结尾的 `/`）：自定义端点（`custom`）的地址去掉首尾空白、转小写后等于
+    /// **任何一家**的其中一个、或者接着是 `/` 的，服务端不收。只是提前提示，服务端照样检查。
+    public var planOnlyBases: [String]
 
-    public init(id: String, name: String, protocols: [String], models: [String], notes: String = "") {
+    public init(
+        id: String, name: String, protocols: [String], models: [String], notes: String = "",
+        subscriptionKeyPrefixes: [String] = [], planOnlyBases: [String] = []
+    ) {
         self.id = id
         self.name = name
         self.protocols = protocols
         self.models = models
         self.notes = notes
+        self.subscriptionKeyPrefixes = subscriptionKeyPrefixes
+        self.planOnlyBases = planOnlyBases
     }
 
     /// `protocols` 换成 `ModelProtocol`（和 `AgentInfo.activeProtocol`、`Credential.protocols` 比较用）。
     public var modelProtocols: [ModelProtocol] {
         protocols.map { ModelProtocol(rawValue: $0) }
+    }
+
+    /// 粘贴的 key 是这家的订阅类 key（11.9，服务端不收）：去掉首尾空白后以 `subscriptionKeyPrefixes` 里的一个开头
+    /// （区分大小写）。返回命中的前缀；不是为 nil。只用来提前提示，服务端照样检查。
+    public func subscriptionKeyPrefix(of apiKey: String) -> String? {
+        let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        // 按字节比（和服务端的 `starts_with` 一样）。
+        return subscriptionKeyPrefixes.first { !$0.isEmpty && key.utf8.starts(with: $0.utf8) }
+    }
+
+    /// 自定义端点的地址是某一家的套餐专用地址（11.9，服务端不收）：去掉首尾空白、转小写（只转 ASCII，和服务端一样）后
+    /// 等于 `vendors` 里任何一家的 `planOnlyBases` 的一个，或者接着是 `/`。返回命中的前缀；不是为 nil。
+    public static func planOnlyBase(of url: String, vendors: [VendorInfo]) -> String? {
+        // 按字节比（和服务端的 `strip_prefix` 一样），大写的 ASCII 字母换成小写。
+        let base = url.trimmingCharacters(in: .whitespacesAndNewlines).utf8.map {
+            (65...90).contains($0) ? $0 + 32 : $0
+        }
+        for prefix in vendors.lazy.flatMap(\.planOnlyBases) where !prefix.isEmpty {
+            let head = Array(prefix.utf8)
+            guard base.starts(with: head) else { continue }
+            if base.count == head.count || base[head.count] == UInt8(ascii: "/") { return prefix }
+        }
+        return nil
     }
 }
 

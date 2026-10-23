@@ -110,6 +110,21 @@ struct AppSmokeTests {
         #expect(current.utf8.count <= 256)
     }
 
+    @Test("请求语言：设置里选的界面语言打头，不管设备首选语言是什么（12.12）")
+    func acceptLanguageFromSettings() {
+        #expect(
+            AppEnvironment.acceptLanguage(displayLanguage: .english, preferredLanguages: ["zh-Hans-CN", "en-US"])
+                == "en, zh-Hans-CN;q=0.9, en-US;q=0.8")
+        #expect(
+            AppEnvironment.acceptLanguage(displayLanguage: .chinese, preferredLanguages: ["ja-JP"])
+                == "zh-CN, ja-JP;q=0.9")
+        #expect(AppEnvironment.acceptLanguage(displayLanguage: .english, preferredLanguages: []) == "en")
+        let long = Array(repeating: "zh-Hans-CN-" + String(repeating: "x", count: 24), count: 12)
+        let trimmed = AppEnvironment.acceptLanguage(displayLanguage: .english, preferredLanguages: long)
+        #expect(trimmed.utf8.count <= 256)
+        #expect(trimmed.hasPrefix("en, zh-Hans-CN-"))
+    }
+
     @Test("client-core 的日志接进系统日志，装两次也没事（11.8）")
     @MainActor
     func coreLogging() {

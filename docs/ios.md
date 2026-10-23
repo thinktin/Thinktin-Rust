@@ -1,6 +1,6 @@
 # iOS App 工程说明（WBS 12.x）
 
-> 更新日期：2026-10-22　｜　分支 `ios-app`　｜　进度见 [docs/progress/ios-app.md](progress/ios-app.md)
+> 更新日期：2026-10-23　｜　分支 `ios-app`　｜　进度见 [docs/progress/ios-app.md](progress/ios-app.md)
 
 iOS App 用 Swift + SwiftUI 原生开发，界面参考 Claude 官方 iOS App 的信息架构和视觉；iOS 与 macOS 共享 `ThinktinKit`；
 所有网络、续传、缓存、密码识别、配对验签都在 Rust 的 `client-core` 里（架构方案第 8 节），Swift 经 UniFFI 生成的
@@ -121,13 +121,17 @@ Claude App 的特点：暖色纸张底色、极少的强调色、标题用衬线
 | `AccountFrozen` | 冻结提示页（保留登录态，解冻后照常） |
 | `UpgradeRequired` | 全屏“请升级”，带 App Store 链接 |
 | `Api(status, code, …)` | `rate_limited` 按 `retry_after_secs` 提示；`conflict` 刷新后重试；`invalid` 显示表单错误；`not_found` 回上一级 |
+| `Api(409, *_limit, …)` | 数量到了上限（11.9 起的约定：码以 `_limit` 结尾、状态 409，`APIErrorCode.isQuantityLimit`）：`ErrorRecovery.limitReached`，横幅不给重试按钮（原样重试没用），文案说先删掉一些。`instance_limit`（实例数，领养、团队模板领养）是“实例数已达上限，删掉不用的实例再领养”；这个版本不认识的 `*_limit` 用通用的“数量已达上限” |
 | `Network` | 行内可重试的提示；列表页显示缓存数据并标“离线” |
 | `ContainsSecrets(count)` | 发送前的密码拦截弹层（11.6）：一键存进保险箱并换成引用，或坚持发送 |
 | `unsupported(feature)` | 协议里先加了、client-core 还没导出的方法才会抛（11.7 合入后现在没有这种方法）；界面显示“这个功能还没开放”，不给重试 |
 | 其他 | 通用错误提示，带“复制详情” |
 
 接口的说明（ThinktinCore 里 339e191 起叫 `detail`，ThinktinKit 的 `ClientError` 里还叫 `message`）是英文、给开发者看的，
-界面显示按错误码本地化的文案。
+界面显示按错误码本地化的文案（`ClientError.localizedMessage`，横幅经 `ErrorPresentation`）。服务端以后还会加错误码：
+client-core（11.9 起）把不认识的码原样放进 `Api.code`，ThinktinKit 里是 `APIErrorCode.unknown(原文)`，按上表的分类处理
+（`*_limit` 按数量上限，其他按通用错误），不会当成解析失败。IM 渠道、保险箱条目、实时活动的上限现在还是 422 `invalid`，
+以后改成 `*_limit` 时自动走上面那一行。
 
 ## 6.1 深链与推送
 
@@ -256,3 +260,18 @@ struct PlansDestination: View {
 
 `ObservedClient` 要转发 `ClientProtocol` 的每个方法：协议加了方法（比如合 11.8），`ViewModels/Shell/ObservedClient.swift` 要加对应的
 一行转发，不加编译不过。
+
+### 9.2 外观与界面语言（12.12）
+
+- 偏好在 `ThinktinKit/ViewModels/Settings/SettingsPreferences.swift`：`SettingsPreferences`（`@Observable`，存 UserDefaults，只是本机的
+  显示偏好）有外观（跟随系统 / 浅色 / 深色）和界面语言（跟随系统 / 中文 / English，`displayLanguage` 是实际用的）。App 用
+  `SettingsPreferences.shared`；预览、测试 `SettingsPreferences(defaults: nil, systemLanguage: { … })` 只放内存。
+- 生效：ThinktinUI 的 `.settingsPreferences()`（`Screens/Settings/SettingsEnvironment.swift`）按外观设 `preferredColorScheme`、按
+  界面语言设 `\.displayLanguage`，并把偏好放进环境给设置页。它套在 App 的 `WindowGroup` 里 `RootView(model:)` 上
+  （`Thinktin/App/ThinktinApp.swift`），不放进 `RootView` / `AppShell`：预览和界面测试要自己设 `\.displayLanguage` 和深浅色
+  （`.previewShell(.english, scheme: .dark)`），放在里面会被盖掉。页面里取界面语言照旧用 `@Environment(\.displayLanguage)`。
+- 和服务端同步：`AppModel(client:preferences:)`（App 的 `AppEnvironment` 传 `.shared`，测试、预览不传就不同步）在 `start()` 最开头
+  （登录判断之前）调 `LanguageSettingsModel.applyAcceptLanguage()`，新用户按界面语言注册；确认完账号（`me()`）、登录成功之后各调一次
+  `syncOnLaunch(user:)`，`me().locale` 和界面语言不一致才调 `setLocale`，静默进行。设置页换语言由 `LanguageSettingsModel.select(_:)` 同步。
+- 建客户端时的 `Accept-Language`：`AppEnvironment.acceptLanguage(displayLanguage:)` 用 `SettingsPreferences.shared.displayLanguage`
+  打头，后面跟设备的语言偏好，照 client-core 的规则截到 256 字节内（`AcceptLanguage.header`）。

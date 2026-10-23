@@ -2,7 +2,8 @@ import SwiftUI
 import ThinktinKit
 
 /// 行内的错误横幅：按 `ClientError` 的分类（`ErrorPresentation`）显示图标、文案和按钮——网络不通、限流给“重试”，
-/// 冲突给“刷新”，其他错误给“复制详情”；回登录页、冻结、升级这类整页处理的错误只给一句说明。
+/// 冲突给“刷新”，其他错误给“复制详情”；回登录页、冻结、升级这类整页处理的错误、数量到了上限（`*_limit`，重试没用）
+/// 只给一句说明。
 ///
 /// “重试”“刷新”只在传了 `onRetry` 时显示；传了 `onDismiss` 时右边有关闭按钮。
 public struct ErrorBanner: View {
@@ -108,6 +109,7 @@ public struct ErrorBanner: View {
             ErrorBanner(
                 .api(status: 409, code: .conflict, message: "revision mismatch", retryAfterSecs: nil), onRetry: {})
             ErrorBanner(.api(status: 422, code: .invalid, message: "bad name", retryAfterSecs: nil))
+            ErrorBanner(.api(status: 409, code: .instanceLimit, message: "at most 5", retryAfterSecs: nil), onRetry: {})
             ErrorBanner(.unsupported(feature: "listDevices"))
             ErrorBanner(.internal(message: "boom"), onDismiss: {})
         }

@@ -27,6 +27,8 @@ struct ClientErrorTests {
             (api(.invalid, status: 422), .showFormError),
             (.invalidArgument(message: "bad id"), .showFormError),
             (api(.notFound, status: 404), .goBack),
+            (api(.instanceLimit, status: 409), .limitReached),
+            (api(.unknown("vault_item_limit"), status: 409), .limitReached),
             (.network(message: "timed out"), .offline),
             (.containsSecrets(count: 2), .interceptSecrets(count: 2)),
             (.unsupported(feature: "listDevices"), .featureUnavailable),
@@ -93,6 +95,7 @@ struct ClientErrorTests {
         let all: [ClientError] = [
             .network(message: "m"), .signedOut, .upgradeRequired, .accountFrozen, api(.forbidden), api(.conflict),
             api(.invalid), api(.unavailable), api(.unauthenticated), api(.internal), api(.unknown("x")),
+            api(.instanceLimit), api(.unknown("x_limit")),
             .decode(message: "m"), .cache(message: "m"), .containsSecrets(count: 1), .invalidArgument(message: "m"),
             .internal(message: "m"), .malformed(message: "m"), .expired, .badSignature, .unsupported(feature: "m"),
         ]
@@ -103,6 +106,31 @@ struct ClientErrorTests {
                 #expect(!text.contains("dev message"), "\(e)")
             }
         }
+    }
+
+    @Test("数量上限（*_limit，11.9）：不可重试；instance_limit 有专门的文案，其他的用通用的")
+    func quantityLimits() {
+        let instances = api(.instanceLimit, status: 409)
+        #expect(instances.isQuantityLimit)
+        #expect(!instances.isRetryable && !instances.isConflict)
+        #expect(instances.recovery == .limitReached)
+        #expect(instances.localizedMessage(.chinese) == "实例数已达上限，删掉不用的实例再领养。")
+        #expect(
+            instances.localizedMessage(.english)
+                == "You've reached the instance limit. Delete an instance you no longer use, then adopt again.")
+
+        // 服务端以后加的上限（这个版本不认识）：通用的“数量已达上限”。
+        let future = api(.unknown("vault_item_limit"), status: 409)
+        #expect(future.isQuantityLimit && !future.isRetryable)
+        #expect(future.localizedMessage(.chinese) == "数量已达上限，删掉一些不用的再试。")
+        #expect(future.localizedMessage(.english).hasPrefix("You've reached the limit."))
+        #expect(future.debugDetails == "api 409 vault_item_limit: dev message")
+
+        // 不是 *_limit 的不算：冲突、限流、别的不认识的码照旧。
+        #expect(!api(.conflict, status: 409).isQuantityLimit)
+        #expect(!api(.rateLimited, status: 429).isQuantityLimit)
+        #expect(!ClientError.network(message: "x").isQuantityLimit)
+        #expect(api(.unknown("teapot"), status: 418).localizedMessage(.chinese) == "出了点问题，请稍后重试。")
     }
 
     @Test("开发者详情（“复制详情”）")

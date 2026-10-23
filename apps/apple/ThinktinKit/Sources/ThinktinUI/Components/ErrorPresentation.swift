@@ -45,6 +45,9 @@ public struct ErrorPresentation: Hashable, Sendable {
             (systemImage, tone, action) = ("exclamationmark.circle", .failure, .none)
         case .goBack:
             (systemImage, tone, action) = ("questionmark.circle", .neutral, .none)
+        case .limitReached:
+            // 数量到了上限：原样重试没用，不给按钮，文案里说先删掉一些。
+            (systemImage, tone, action) = ("gauge.with.dots.needle.100percent", .waiting, .none)
         case .signIn:
             (systemImage, tone, action) = ("person.crop.circle.badge.exclamationmark", .failure, .none)
         case .accountFrozen:

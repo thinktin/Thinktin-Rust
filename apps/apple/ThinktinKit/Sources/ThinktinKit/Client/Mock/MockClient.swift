@@ -9,6 +9,7 @@ import Foundation
 /// - `failNext(with:)` 让下一次调用抛错；`latency` 模拟网络延迟；抛过 `upgradeRequired` 之后 `upgradeRequired()`
 ///   一直是 true（也可以直接设 `MockState.isUpgradeRequired`）；
 /// - `deliverDeviceMessage(from:kind:body:)` 模拟电脑发来的消息，`resolveReport(_:resolution:)` 模拟运营处理了举报；
+/// - `callCount(_:)` 数某个方法被调了几次（测试里确认“没调 setLocale”这类）；
 /// - 规则尽量和服务端一致：没登录抛 `signedOut`，找不到抛 `not_found`，状态不对抛 `conflict`，参数不对抛 `invalid`。
 public final class MockClient: ClientProtocol, @unchecked Sendable {
     public let secretDetector: any SecretDetector
@@ -147,6 +148,12 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
         }
     }
 
+    /// 某个方法被调了几次（包括被 `failNext` 拦下、没登录被拒的）。`method` 是方法名，和 `#function` 一样写，比如
+    /// `"setLocale(_:)"`、`"me()"`。只数经过 Mock 的调用：`signedIn()`、`upgradeRequired()`、`subscribe` 不数。
+    public func callCount(_ method: String) -> Int {
+        inner.withLock { $0.callCounts[method] ?? 0 }
+    }
+
     /// 等所有正在播放的脚本播完（包括播放中又触发的）。
     public func waitForPlayback() async {
         while true {
@@ -161,14 +168,20 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
 
     // MARK: 内部
 
-    private func call<R>(signedIn required: Bool = true, _ body: (inout Inner) throws -> R) async throws -> R {
+    /// `method` 是调用它的方法名（默认参数 `#function` 取的是调用方的名字），记进 `callCount(_:)`。
+    private func call<R>(
+        signedIn required: Bool = true, method: String = #function, _ body: (inout Inner) throws -> R
+    ) async throws -> R {
         let latency = inner.withLock { $0.latency }
         if latency > 0 { try? await Task.sleep(nanoseconds: UInt64(latency * 1_000_000_000)) }
-        return try syncCall(signedIn: required, body)
+        return try syncCall(signedIn: required, method: method, body)
     }
 
-    private func syncCall<R>(signedIn required: Bool = true, _ body: (inout Inner) throws -> R) throws -> R {
+    private func syncCall<R>(
+        signedIn required: Bool = true, method: String = #function, _ body: (inout Inner) throws -> R
+    ) throws -> R {
         try inner.withLock { s in
+            s.callCounts[method, default: 0] += 1
             if !s.failures.isEmpty {
                 let failure = s.failures.removeFirst()
                 // 和 client-core 一样：任何请求说过版本太老，之后一直记着（11.8）。
@@ -445,8 +458,13 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
         try syncCall(signedIn: false) { s in s.state.instances }
     }
 
+    /// 和服务端一样先查 agent、名字、接入方式，再查实例数上限（`MockState.instancesPerUser`，到了抛 409 `instance_limit`）。
     public func adopt(agentID: AgentID, name: String, harness: String?) async throws -> Instance {
-        try await call { s in try s.adoptInstance(agentID: agentID, name: name, harness: harness) }
+        try await call { s in
+            _ = try s.checkAdoption(agentID: agentID, name: name, harness: harness)
+            try s.checkInstanceCapacity(adding: 1)
+            return try s.adoptInstance(agentID: agentID, name: name, harness: harness)
+        }
     }
 
     public func renameInstance(_ instanceID: InstanceID, name: String) async throws -> Instance {
@@ -479,31 +497,44 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
         }
     }
 
+    /// 整体替换。key 要是自己的、没删除的；新引用的不能是停用的（422），实例原来就用着的停用 key（主路由或降级链，
+    /// 任何别名）可以留着（11.9，服务端照样在运行时跳过它），所以从别名里去掉别的 key 不会因为它保存不了。
     public func setModelRoutes(instanceID: InstanceID, routes: [ModelRoute]) async throws {
         try await call { s in
             _ = try s.instanceIndex(instanceID)
-            let known = Set(s.state.credentials.map(\.id))
             guard Set(routes.map(\.alias)).count == routes.count else { throw MockErrors.invalid("duplicate alias") }
+            let kept = Set(
+                (s.state.routes[instanceID] ?? []).flatMap { [$0.credentialID] + $0.fallbacks.map(\.credentialID) })
             for r in routes {
                 guard !r.alias.isEmpty else { throw MockErrors.invalid("empty alias") }
                 guard r.fallbacks.count <= ModelRoute.maxFallbacks else {
                     throw MockErrors.invalid("too many fallbacks")
                 }
-                guard known.contains(r.credentialID), r.fallbacks.allSatisfy({ known.contains($0.credentialID) }) else {
-                    throw MockErrors.invalid("unknown credential")
+                for id in [r.credentialID] + r.fallbacks.map(\.credentialID) {
+                    guard let key = s.state.credentials.first(where: { $0.id == id }) else {
+                        throw MockErrors.invalid("credential \(id) is not usable")
+                    }
+                    if key.isDisabled && !kept.contains(id) { throw MockErrors.invalid("credential \(id) is disabled") }
                 }
             }
             s.state.routes[instanceID] = routes
         }
     }
 
+    /// 和服务端一致（11.9）：模型别名一起删（只有它用着的 key 之后能删了）；它自己的计划一起删掉（服务端是标记删除，
+    /// 列表和详情里都没有了，Mock 直接拿掉）；别的实例的流水线计划有一步在它上面、没暂停的暂停，之后恢复、确认报 409，
+    /// 改了步骤才行（`setPlanPaused`、`confirmPlan`）；删掉的实例自动移出团队（团队留着）。
     public func deleteInstance(_ instanceID: InstanceID) async throws {
         try await call { s in
             let i = try s.instanceIndex(instanceID)
             s.state.instances.remove(at: i)
             s.state.routes[instanceID] = nil
             s.state.plans.removeAll { $0.instanceID == instanceID }
-            // 和服务端一致：删掉的实例自动移出团队（团队留着）。
+            for p in s.state.plans.indices
+            where !s.state.plans[p].isPaused && s.state.plans[p].steps.contains(where: { $0.instanceID == instanceID })
+            {
+                s.state.plans[p].isPaused = true
+            }
             for t in s.state.teams.indices { s.state.teams[t].members.removeAll { $0.instanceID == instanceID } }
         }
     }
@@ -800,9 +831,11 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
         }
     }
 
+    /// 恢复时流水线有一步在已删除的实例上抛 409（11.9：先改步骤）；暂停不查。
     public func setPlanPaused(_ planID: PlanID, paused: Bool) async throws -> Plan {
         try await call { s in
             let i = try s.planIndex(planID)
+            if !paused { try s.refuseDeletedSteps(s.state.plans[i]) }
             if s.state.plans[i].awaitingConfirmation && !paused {
                 throw MockErrors.conflict("the plan is awaiting confirmation")
             }
@@ -811,9 +844,11 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
         }
     }
 
+    /// 流水线有一步在已删除的实例上时抛 409（11.9：先改步骤）。
     public func confirmPlan(_ planID: PlanID, revision: Int) async throws -> Plan {
         try await call { s in
             let i = try s.planIndex(planID)
+            try s.refuseDeletedSteps(s.state.plans[i])
             guard s.state.plans[i].awaitingConfirmation else { throw MockErrors.conflict("nothing to confirm") }
             guard s.state.plans[i].revision == revision else { throw MockErrors.conflict("the plan changed") }
             s.state.plans[i].awaitingConfirmation = false
@@ -948,11 +983,13 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
         try await call { s in _ = s.state.teamTemplates.remove(at: try s.templateIndex(templateID)) }
     }
 
-    /// 每个成员新领养一个实例（没有模型路由），再编成团队。先全部校验再领养：中途出错不会留下半个团队的实例。
+    /// 每个成员新领养一个实例（没有模型路由），再编成团队。和服务端一样全成或全不成（11.9）：先查团队名（422），
+    /// 再查放不放得下整个团队（实例数上限，409 `instance_limit`），再查每个成员，都过了才领养，不会留下半个团队的实例。
     public func adoptTeamTemplate(_ templateID: TeamTemplateID, name: String?) async throws -> Team {
         try await call { s in
             let template = s.state.teamTemplates[try s.templateIndex(templateID)]
             let teamName = try Inner.checkName(name ?? template.name)
+            try s.checkInstanceCapacity(adding: template.members.count)
             for m in template.members { _ = try s.checkAdoption(agentID: m.agentID, name: m.name, harness: m.harness) }
             var members: [TeamMember] = []
             for (i, m) in template.members.enumerated() {
@@ -1015,6 +1052,27 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
         }
     }
 
+    /// 和服务端一样（11.9）：nil 取消上限；0、超出范围抛 invalid（先查这个，再查 key 在不在）。服务端放宽或取消上限时
+    /// 唤醒等 key 的运行；Mock 没有唤醒等 key 的运行这套机制（启用、换 key 也不唤醒），这里只改上限。
+    public func setCredentialDailyLimit(_ credentialID: CredentialID, dailyTokenLimit: UInt64?) async throws
+        -> Credential
+    {
+        try await call { s in
+            var limit: Int?
+            if let dailyTokenLimit {
+                guard dailyTokenLimit > 0 else { throw MockErrors.invalid("daily_token_limit must be positive") }
+                // 服务端存成 i64：超过 Int64.max（64 位平台上就是 Int.max）的不收。
+                guard let value = Int(exactly: dailyTokenLimit) else {
+                    throw MockErrors.invalid("daily_token_limit too large: \(dailyTokenLimit)")
+                }
+                limit = value
+            }
+            let i = try s.credentialIndex(credentialID)
+            s.state.credentials[i].dailyTokenLimit = limit
+            return s.state.credentials[i]
+        }
+    }
+
     public func replaceCredentialSecret(_ credentialID: CredentialID, apiKey: String) async throws -> Credential {
         try await call { s in
             let i = try s.credentialIndex(credentialID)
@@ -1026,8 +1084,18 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
         }
     }
 
+    /// 还有实例的别名（主路由或降级链）用着时抛 409（和服务端一样，已删除实例的别名不算：删除实例时一起删掉了）。
     public func deleteCredential(_ credentialID: CredentialID) async throws {
-        try await call { s in _ = s.state.credentials.remove(at: try s.credentialIndex(credentialID)) }
+        try await call { s in
+            let i = try s.credentialIndex(credentialID)
+            let live = Set(s.state.instances.filter { $0.state != .deleted }.map(\.id))
+            let used = s.state.routes.filter { live.contains($0.key) }.values.joined().reduce(0) { n, route in
+                n + (route.credentialID == credentialID ? 1 : 0)
+                    + route.fallbacks.filter { $0.credentialID == credentialID }.count
+            }
+            guard used == 0 else { throw MockErrors.conflict("credential is used by \(used) model route(s)") }
+            s.state.credentials.remove(at: i)
+        }
     }
 
     // MARK: 内容举报
@@ -1289,6 +1357,8 @@ private struct Inner: Sendable {
     var selfCodes: Set<SelfCodePurpose> = []
     /// 最近一小时的举报时间（每人每小时 30 次）。
     var reportAttempts: [Date] = []
+    /// 每个方法被调了几次（`MockClient.callCount(_:)`）。
+    var callCounts: [String: Int] = [:]
 
     init(state: MockState) {
         self.state = state
@@ -1613,7 +1683,7 @@ private struct Inner: Sendable {
         state = MockState(
             user: User(id: .random(), phone: "", createdAt: Date()), verificationCode: state.verificationCode,
             agents: state.agents, vendors: state.vendors, acceptLanguage: state.acceptLanguage,
-            isUpgradeRequired: state.isUpgradeRequired)
+            isUpgradeRequired: state.isUpgradeRequired, instancesPerUser: state.instancesPerUser)
         permissions = [:]
         scripts = [:]
         reportAttempts = []
@@ -1639,6 +1709,15 @@ private struct Inner: Sendable {
             throw MockErrors.invalid("unknown harness \(harness)")
         }
         return (agent, name, harness)
+    }
+
+    /// 实例数上限（11.9，`MockState.instancesPerUser`，0 不限）：没删除的实例（归档的也算）再加 `count` 个超过上限时
+    /// 抛 409 `instance_limit`。
+    func checkInstanceCapacity(adding count: Int) throws {
+        let max = state.instancesPerUser
+        guard max > 0 else { return }
+        let existing = state.instances.filter { $0.state != .deleted }.count
+        if existing + count > max { throw MockErrors.instanceLimit(max: max) }
     }
 
     /// 领养一个新实例（还没有模型路由）。
@@ -1697,6 +1776,15 @@ private struct Inner: Sendable {
             remaining.removeAll { done.contains($0.key) }
         }
         for step in steps { _ = try instanceIndex(step.instanceID) }
+    }
+
+    /// 流水线有一步在已删除的实例上（删除实例时暂停了它，11.9）：恢复、确认前要先改步骤，抛 409。Mock 里删掉的实例
+    /// 直接从列表里拿掉，所以“不在实例列表里”就是删掉了。
+    func refuseDeletedSteps(_ plan: Plan) throws {
+        let live = Set(state.instances.filter { $0.state != .deleted }.map(\.id))
+        if let step = plan.steps.first(where: { !live.contains($0.instanceID) }) {
+            throw MockErrors.conflict("step \(step.key) runs on a deleted instance; change the steps first")
+        }
     }
 
     /// 接口返回的计划：下一次运行的时间、失效的触发器数按服务端的规则重新算（状态里的触发器、暂停状态可能被直接改过）。
@@ -1876,6 +1964,11 @@ enum MockErrors {
 
     static func invalid(_ message: String) -> ClientError {
         .api(status: 422, code: .invalid, message: message, retryAfterSecs: nil)
+    }
+
+    /// 实例数到了账号的上限（11.9）。
+    static func instanceLimit(max: Int) -> ClientError {
+        .api(status: 409, code: .instanceLimit, message: "at most \(max) instances per account", retryAfterSecs: nil)
     }
 
     static func rateLimited(_ message: String, retryAfter: Int?) -> ClientError {

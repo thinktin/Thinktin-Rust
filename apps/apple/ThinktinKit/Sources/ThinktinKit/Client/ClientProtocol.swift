@@ -211,6 +211,10 @@ public protocol ClientProtocol: AnyObject, Sendable {
     func addCredential(_ credential: NewCredential) async throws -> Credential
     /// 改备注（最长 64 个字符，可以为空）、停用或重新启用一把 key；给了才改。
     func updateCredential(_ credentialID: CredentialID, label: String?, disabled: Bool?) async throws -> Credential
+    /// 改每日 token 上限（11.9，`PATCH /v1/credentials/{id}` 的 `daily_token_limit`）：nil 取消上限；给了必须大于 0
+    /// （0 抛 invalid，422）。放宽（比原来的大）或取消原来有的上限时，服务端唤醒等 key 的运行（等这把 key 的接着跑）；
+    /// 收紧、原来就没有上限时不唤醒。模型网关几秒内用上新的上限。返回改完的 key。
+    func setCredentialDailyLimit(_ credentialID: CredentialID, dailyTokenLimit: UInt64?) async throws -> Credential
     /// 换 key（同一个厂商、同一条记录：模型路由不用改）。等 key 的运行会接着跑。
     func replaceCredentialSecret(_ credentialID: CredentialID, apiKey: String) async throws -> Credential
     func deleteCredential(_ credentialID: CredentialID) async throws

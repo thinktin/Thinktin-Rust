@@ -523,6 +523,12 @@ public final class ObservedClient: ClientProtocol, Sendable {
         try await observe { try await base.updateCredential(credentialID, label: label, disabled: disabled) }
     }
 
+    public func setCredentialDailyLimit(_ credentialID: CredentialID, dailyTokenLimit: UInt64?) async throws
+        -> Credential
+    {
+        try await observe { try await base.setCredentialDailyLimit(credentialID, dailyTokenLimit: dailyTokenLimit) }
+    }
+
     public func replaceCredentialSecret(_ credentialID: CredentialID, apiKey: String) async throws -> Credential {
         try await observe { try await base.replaceCredentialSecret(credentialID, apiKey: apiKey) }
     }

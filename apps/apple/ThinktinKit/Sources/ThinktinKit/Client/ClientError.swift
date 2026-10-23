@@ -50,6 +50,8 @@ public enum ErrorRecovery: Hashable, Sendable {
     case showFormError
     /// 对象不存在：回上一级。
     case goBack
+    /// 数量到了上限（`*_limit`，11.9，比如实例数）：说明要先删掉一些，不给重试（原样重试没用）。
+    case limitReached
     /// 网络问题：行内可重试的提示，列表页显示缓存并标“离线”。
     case offline
     /// 发送前的密码拦截弹层。
@@ -110,6 +112,8 @@ extension ClientError {
     public var isNotFound: Bool { apiCode == .notFound }
     public var isConflict: Bool { apiCode == .conflict }
     public var isRateLimited: Bool { apiCode == .rateLimited }
+    /// 数量到了上限（`instance_limit` 和以后的 `*_limit`，11.9）：不可重试，要先删掉一些。
+    public var isQuantityLimit: Bool { apiCode?.isQuantityLimit == true }
 
     /// 表单错误（参数不对）。
     public var isInvalidInput: Bool {
@@ -142,6 +146,7 @@ extension ClientError {
         case .invalidArgument: return .showFormError
         case .unsupported: return .featureUnavailable
         case .api(_, let code, _, let secs):
+            if code.isQuantityLimit { return .limitReached }
             switch code {
             case .rateLimited, .unavailable: return .retryLater(after: secs.map(TimeInterval.init))
             case .conflict: return .refreshAndRetry
@@ -212,6 +217,14 @@ extension ClientError {
             case .accountFrozen: return zh ? "账号已被冻结，请联系客服。" : "Your account is frozen. Please contact support."
             case .upgradeRequired:
                 return zh ? "当前版本过旧，请到 App Store 更新。" : "This version is too old. Please update from the App Store."
+            case .instanceLimit:
+                return zh
+                    ? "实例数已达上限，删掉不用的实例再领养。"
+                    : "You've reached the instance limit. Delete an instance you no longer use, then adopt again."
+            // 服务端以后加的数量上限（`*_limit`），这个版本还不认识具体是什么。
+            case .unknown where code.isQuantityLimit:
+                return zh
+                    ? "数量已达上限，删掉一些不用的再试。" : "You've reached the limit. Delete some you no longer need, then try again."
             case .internal, .unknown: return zh ? "出了点问题，请稍后重试。" : "Something went wrong. Please try again."
             }
         }

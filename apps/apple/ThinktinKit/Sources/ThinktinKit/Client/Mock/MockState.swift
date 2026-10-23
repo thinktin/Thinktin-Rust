@@ -47,6 +47,9 @@ public struct MockState: Sendable {
     /// 服务端说过这个版本太老了（11.8，`upgradeRequired()`）：任何调用抛过 `upgradeRequired` 后一直是 true，之后的
     /// 订阅直接以 `stopped` 结束。预览升级页时可以直接设成 true。
     public var isUpgradeRequired: Bool
+    /// 账号最多几个没删除的实例（11.9，服务端的 `[api.limits] instances_per_user`）；0 不限（默认，和服务端一样）。
+    /// 到了上限领养抛 409 `instance_limit`，团队模板放不下整个团队时一个也不领养。
+    public var instancesPerUser: Int
 
     public init(
         session: Session? = nil, user: User, verificationCode: String = "123456", agents: [AgentInfo] = [],
@@ -58,7 +61,7 @@ public struct MockState: Sendable {
         imChannels: [ImChannel] = [], devices: [DeviceInfo] = [], deviceMessages: [DeviceMessage] = [],
         liveActivities: [RunID: MockLiveActivity] = [:], liveActivityStartToken: String? = nil, teams: [Team] = [],
         teamTemplates: [TeamTemplate] = [], reports: [ContentReport] = [], acceptLanguage: String? = nil,
-        isUpgradeRequired: Bool = false
+        isUpgradeRequired: Bool = false, instancesPerUser: Int = 0
     ) {
         self.session = session
         self.user = user
@@ -89,6 +92,7 @@ public struct MockState: Sendable {
         self.reports = reports
         self.acceptLanguage = acceptLanguage
         self.isUpgradeRequired = isUpgradeRequired
+        self.instancesPerUser = instancesPerUser
     }
 
     /// 按 `acceptLanguage` 认出的语言（服务端的规则，认不出时用中文）。

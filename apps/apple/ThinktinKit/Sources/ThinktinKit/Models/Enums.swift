@@ -697,7 +697,9 @@ public enum StopReason: OpenStringEnum {
     }
 }
 
-/// 服务端的错误码（`ClientError.api` 的 `code`，见 crates/proto/src/api.rs 的 `ErrorCode`）。
+/// 服务端的错误码（`ClientError.api` 的 `code`，见 crates/proto/src/api.rs 的 `ErrorCode`）。服务端以后还会加新的码，
+/// client-core 不认识的也原样交过来（`unknown`），界面按 HTTP 状态给通用提示。数量到了上限的码都以 `_limit` 结尾、
+/// 状态 409（`isQuantityLimit`，11.9）：原样重试没用，删掉一些再建。
 public enum APIErrorCode: OpenStringEnum {
     /// 没登录或访问令牌过期（client-core 会自己刷新，一般到不了界面）。
     case unauthenticated
@@ -716,11 +718,13 @@ public enum APIErrorCode: OpenStringEnum {
     /// 暂时不可用：退避重试。
     case unavailable
     case `internal`
+    /// 实例数到了账号的上限（11.9，409）：删掉不用的实例再领养。
+    case instanceLimit
     case unknown(String)
 
     public static let knownCases: [APIErrorCode] = [
         .unauthenticated, .sessionRevoked, .accountFrozen, .forbidden, .notFound, .conflict, .invalid,
-        .rateLimited, .upgradeRequired, .unavailable, .internal,
+        .rateLimited, .upgradeRequired, .unavailable, .internal, .instanceLimit,
     ]
 
     public var rawValue: String {
@@ -736,9 +740,19 @@ public enum APIErrorCode: OpenStringEnum {
         case .upgradeRequired: "upgrade_required"
         case .unavailable: "unavailable"
         case .internal: "internal"
+        case .instanceLimit: "instance_limit"
         case .unknown(let raw): raw
         }
     }
+
+    /// 数量到了上限（11.9 起的约定：码以 `_limit` 结尾，状态 409）：`instance_limit` 和服务端以后加的、这个版本还不认识的
+    /// `*_limit`（`unknown`）都算。原样重试没用，要先删掉一些。
+    public var isQuantityLimit: Bool {
+        rawValue.hasSuffix(Self.quantityLimitSuffix) && rawValue.count > Self.quantityLimitSuffix.count
+    }
+
+    /// 数量上限类错误码的后缀。
+    public static let quantityLimitSuffix = "_limit"
 }
 
 /// 用量的分组方式（`usage(group:)`）。是客户端发出去的参数，所以不需要 `unknown`。

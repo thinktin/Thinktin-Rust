@@ -576,6 +576,16 @@ public final class CoreClient: ClientProtocol {
         }
     }
 
+    public func setCredentialDailyLimit(_ credentialID: CredentialID, dailyTokenLimit: UInt64?) async throws
+        -> ThinktinKit.Credential
+    {
+        try await perform {
+            ThinktinKit.Credential(
+                core: try await core.setCredentialDailyLimit(
+                    credentialId: credentialID.rawValue, dailyTokenLimit: dailyTokenLimit))
+        }
+    }
+
     public func replaceCredentialSecret(_ credentialID: CredentialID, apiKey: String) async throws
         -> ThinktinKit.Credential
     {
