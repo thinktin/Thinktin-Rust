@@ -87,22 +87,13 @@ public struct GridRow<Content: View> {
 extension Grid: View { public var body: Never { fatalError() } }
 extension GridRow: View { public var body: Never { fatalError() } }
 
-// MARK: - 输入框（iOS 16 的多行、iOS 13 的密码框）
+// MARK: - 输入框（iOS 16 的多行）
 
 extension TextField where Label == Text {
     @_disfavoredOverload public init<S: StringProtocol>(_ title: S, text: Binding<String>, axis: Axis) {}
 }
 
-public struct SecureField<Label: View> {}
-
-extension SecureField where Label == Text {
-    public init(_ titleKey: LocalizedStringKey, text: Binding<String>) {}
-    @_disfavoredOverload public init<S: StringProtocol>(_ title: S, text: Binding<String>) {}
-    public init(_ titleKey: LocalizedStringKey, text: Binding<String>, prompt: Text?) {}
-    @_disfavoredOverload public init<S: StringProtocol>(_ title: S, text: Binding<String>, prompt: Text?) {}
-}
-
-extension SecureField: View { public var body: Never { fatalError() } }
+// SecureField 在 SwiftUI+Models.swift 里（12.4 先加的）。
 
 // MARK: - Markdown（Foundation 的 API，iOS 15）
 
