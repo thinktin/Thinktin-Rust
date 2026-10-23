@@ -340,11 +340,13 @@ struct ModelRoutesModelTests {
         model.setModel("claude-opus-5-5", forRoute: fast.id)
         #expect(model.isValid && model.canSave)
         #expect(await model.save(consented: true))
-        #expect(mock.state.routes[DemoData.writerID]?.first?.fallbacks.first?.credentialID == DemoData.deepseekCredentialID)
+        #expect(
+            mock.state.routes[DemoData.writerID]?.first?.fallbacks.first?.credentialID == DemoData.deepseekCredentialID)
 
-        // 没在用的停用 key（百炼）新选上：要换。
-        model.setCredential(DemoData.qwenCredentialID, forRoute: fast.id)
-        #expect(model.problems(forRoute: fast.id).contains(.keyDisabled))
+        // 没在用的停用 key（百炼）新选上：要换。保存后草稿重新按服务端的建过。
+        let savedFast = try #require(model.drafts.first { $0.isFast })
+        model.setCredential(DemoData.qwenCredentialID, forRoute: savedFast.id)
+        #expect(model.problems(forRoute: savedFast.id).contains(.keyDisabled))
         #expect(!model.keepsDisabledKey(DemoData.qwenCredentialID))
     }
 

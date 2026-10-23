@@ -6,8 +6,8 @@ import Foundation
 /// - 状态可以直接读写（`state`、`update(_:)`），也可以整体换掉（`MockClient(state:)`）；
 /// - 发消息（`sendMessage` / `createRun`）后自动播放一段 agent 回答（`DemoData.replyScript`），
 ///   审批、保险箱请求处理后接着播；`setScript(_:for:)` 设定下一次订阅时回放的事件；
-/// - `failNext(with:)` 让下一次调用抛错（`failNext(_:with:)` 只拦某个方法的下一次）；`latency` 模拟网络延迟；抛过 `upgradeRequired` 之后 `upgradeRequired()`
-///   一直是 true（也可以直接设 `MockState.isUpgradeRequired`）；
+/// - `failNext(with:)` 让下一次调用抛错（`failNext(_:with:)` 只拦某个方法的下一次）；`latency` 模拟网络延迟；
+///   抛过 `upgradeRequired` 之后 `upgradeRequired()` 一直是 true（也可以直接设 `MockState.isUpgradeRequired`）；
 /// - `deliverDeviceMessage(from:kind:body:)` 模拟电脑发来的消息，`resolveReport(_:resolution:)` 模拟运营处理了举报；
 /// - `callCount(_:)` 数某个方法被调了几次（测试里确认“没调 setLocale”这类）；
 /// - 规则尽量和服务端一致：没登录抛 `signedOut`，找不到抛 `not_found`，状态不对抛 `conflict`，参数不对抛 `invalid`。
