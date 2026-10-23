@@ -279,29 +279,85 @@ struct AddCredentialModelTests {
         #expect(model.rejection == nil)
     }
 
-    @Test("订阅类 key 被拒：显示原因，改了 key 后原因消失")
+    @Test("订阅类 key 被拒（厂商表里还没有这个前缀，服务端说的）：显示原因，改了 key 后原因消失")
     func subscriptionRejected() async {
         let (mock, model, consent) = make()
         await model.load()
-        model.choice = .preset("anthropic")
-        model.apiKey = "sk-ant-oat01-0123456789"
+        model.choice = .preset("deepseek")
+        model.apiKey = "sk-plan-0123456789"
         model.hasConsented = true
+        #expect(model.localRejections.isEmpty)
         mock.failNext(
             with: .api(
                 status: 422, code: .invalid,
-                message: "Anthropic (Claude) subscription keys (sk-ant-oat...) can only be used in the vendor's own "
+                message: "DeepSeek subscription keys (sk-plan-...) can only be used in the vendor's own "
                     + "tools; use a pay-as-you-go API key", retryAfterSecs: nil))
         #expect(await model.submit() == nil)
         #expect(model.rejection == .subscriptionKey)
         #expect(model.rejection(for: .apiKey) == .subscriptionKey && model.formRejection == nil)
         #expect(model.error == nil)
         #expect(model.created == nil)
-        #expect(!consent.hasConsented(to: "anthropic"))
+        #expect(!consent.hasConsented(to: "deepseek"))
         #expect(
             model.rejection?.message(vendorName: model.vendorName(.chinese), language: .chinese).contains(
-                "Anthropic (Claude) 的订阅类 key") == true)
-        model.apiKey = "sk-ant-api03-0123456789"
+                "DeepSeek 的订阅类 key") == true)
+        model.apiKey = "sk-0123456789"
         #expect(model.rejection == nil)
+    }
+
+    @Test("订阅类 key（11.9）：按选的厂商的前缀边输边提示，保存不了、不发请求；换成按量的 key 就好了")
+    func subscriptionKeyHint() async {
+        let (mock, model, _) = make()
+        await model.load()
+        model.choice = .preset("anthropic")
+        model.apiKey = "  sk-ant-oat01-0123456789"
+        model.hasConsented = true
+        #expect(model.localRejections == [.apiKey: .subscriptionKey])
+        #expect(model.rejection(for: .apiKey) == .subscriptionKey)
+        #expect(model.rejection == nil, "不是服务端说的")
+        #expect(!model.canSubmit)
+        #expect(await model.submit() == nil)
+        #expect(mock.callCount("addCredential(_:)") == 0)
+        #expect(
+            model.rejection(for: .apiKey)?.message(vendorName: model.vendorName(.chinese), language: .chinese)
+                .contains("Anthropic (Claude) 的订阅类 key") == true)
+        // 只查选的这家：别的厂商不提示（服务端也只查这家）。
+        model.choice = .preset("openai")
+        model.hasConsented = true
+        #expect(model.localRejections.isEmpty)
+        model.choice = .preset("anthropic")
+        model.hasConsented = true
+        model.apiKey = "sk-ant-api03-0123456789"
+        #expect(model.localRejections.isEmpty && model.canSubmit)
+        #expect(await model.submit() != nil)
+    }
+
+    @Test("套餐专用地址（11.9）：自定义地址填了任何一家的，提示在那个地址下面，保存不了")
+    func planOnlyBaseHint() async {
+        let glm = VendorInfo(
+            id: "glm-cn", name: "智谱 BigModel", protocols: ["anthropic", "chat"], models: ["glm-5.3"],
+            planOnlyBases: ["https://open.bigmodel.cn/api/coding"])
+        let mock = ModelsFixture.mock { $0.vendors.append(glm) }
+        let (_, model, _) = make(mock)
+        await model.load()
+        model.choice = .custom
+        model.apiKey = "gw-0123456789"
+        model.anthropicBase = "https://open.bigmodel.cn/api/anthropic"
+        model.openaiBase = " HTTPS://open.bigmodel.cn/api/coding/paas/v4 "
+        model.hasConsented = true
+        #expect(model.localRejections == [.endpoint(.openai): .planOnlyEndpoint(field: .openai)])
+        #expect(model.rejection(for: .endpoint(.openai)) == .planOnlyEndpoint(field: .openai))
+        #expect(model.rejection(for: .endpoint(.anthropic)) == nil)
+        #expect(!model.canSubmit)
+        #expect(await model.submit() == nil)
+        #expect(mock.callCount("addCredential(_:)") == 0)
+        // 只是前缀相同、路径段不同的不算（和服务端一样按路径段）。
+        model.openaiBase = "https://open.bigmodel.cn/api/codingx"
+        #expect(model.localRejections.isEmpty)
+        // 选了预置厂商就不查地址（地址只给自定义厂商）。
+        model.openaiBase = "https://open.bigmodel.cn/api/coding"
+        model.choice = .preset("glm-cn")
+        #expect(model.localRejections.isEmpty)
     }
 
     @Test("别的错误（网络）照常显示，可以重试")

@@ -6,7 +6,7 @@ import Foundation
 /// - 状态可以直接读写（`state`、`update(_:)`），也可以整体换掉（`MockClient(state:)`）；
 /// - 发消息（`sendMessage` / `createRun`）后自动播放一段 agent 回答（`DemoData.replyScript`），
 ///   审批、保险箱请求处理后接着播；`setScript(_:for:)` 设定下一次订阅时回放的事件；
-/// - `failNext(with:)` 让下一次调用抛错；`latency` 模拟网络延迟；抛过 `upgradeRequired` 之后 `upgradeRequired()`
+/// - `failNext(with:)` 让下一次调用抛错（`failNext(_:with:)` 只拦某个方法的下一次）；`latency` 模拟网络延迟；抛过 `upgradeRequired` 之后 `upgradeRequired()`
 ///   一直是 true（也可以直接设 `MockState.isUpgradeRequired`）；
 /// - `deliverDeviceMessage(from:kind:body:)` 模拟电脑发来的消息，`resolveReport(_:resolution:)` 模拟运营处理了举报；
 /// - `callCount(_:)` 数某个方法被调了几次（测试里确认“没调 setLocale”这类）；
@@ -45,6 +45,12 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
     /// 下一次调用（任何方法）抛这个错误。可以连续排几个。
     public func failNext(with error: ClientError) {
         inner.withLock { $0.failures.append(error) }
+    }
+
+    /// 只让这个方法的下一次调用抛错（别的方法照常），可以连续排几个。`method` 的写法和 `callCount(_:)` 一样，比如
+    /// `"me()"`、`"setLocale(_:)"`。`failNext(with:)` 排着的先抛。
+    public func failNext(_ method: String, with error: ClientError) {
+        inner.withLock { $0.methodFailures[method, default: []].append(error) }
     }
 
     /// 下一次订阅这个实例时，补发完历史事件后回放这段脚本（只用一次）。
@@ -182,8 +188,14 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
     ) throws -> R {
         try inner.withLock { s in
             s.callCounts[method, default: 0] += 1
+            var failure: ClientError?
             if !s.failures.isEmpty {
-                let failure = s.failures.removeFirst()
+                failure = s.failures.removeFirst()
+            } else if var queued = s.methodFailures[method], !queued.isEmpty {
+                failure = queued.removeFirst()
+                s.methodFailures[method] = queued.isEmpty ? nil : queued
+            }
+            if let failure {
                 // 和 client-core 一样：任何请求说过版本太老，之后一直记着（11.8）。
                 if failure.requiresUpgrade { s.state.isUpgradeRequired = true }
                 throw failure
@@ -522,8 +534,9 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
     }
 
     /// 和服务端一致（11.9）：模型别名一起删（只有它用着的 key 之后能删了）；它自己的计划一起删掉（服务端是标记删除，
-    /// 列表和详情里都没有了，Mock 直接拿掉）；别的实例的流水线计划有一步在它上面、没暂停的暂停，之后恢复、确认报 409，
-    /// 改了步骤才行（`setPlanPaused`、`confirmPlan`）；删掉的实例自动移出团队（团队留着）。
+    /// 列表和详情里都没有了，Mock 直接拿掉）；别的实例的流水线计划有一步在它上面、正在生效的（没暂停、不在等确认，服务端的
+    /// `status = 'active'`）暂停，已经暂停、等确认的不动；之后恢复、确认都报 409，改了步骤才行（`setPlanPaused`、
+    /// `confirmPlan`）；删掉的实例自动移出团队（团队留着）。
     public func deleteInstance(_ instanceID: InstanceID) async throws {
         try await call { s in
             let i = try s.instanceIndex(instanceID)
@@ -531,7 +544,8 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
             s.state.routes[instanceID] = nil
             s.state.plans.removeAll { $0.instanceID == instanceID }
             for p in s.state.plans.indices
-            where !s.state.plans[p].isPaused && s.state.plans[p].steps.contains(where: { $0.instanceID == instanceID })
+            where !s.state.plans[p].isPaused && !s.state.plans[p].awaitingConfirmation
+                && s.state.plans[p].steps.contains(where: { $0.instanceID == instanceID })
             {
                 s.state.plans[p].isPaused = true
             }
@@ -1018,11 +1032,24 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
         try await call { s in s.state.credentials }
     }
 
+    /// 和服务端一样拒收这家的订阅类 key、填了套餐专用地址的（11.9 起厂商表带着前缀和地址，按 `MockState.vendors` 查）。
     public func addCredential(_ credential: NewCredential) async throws -> Credential {
         try await call { s in
             let key = credential.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
             guard key.count >= 8 else { throw MockErrors.invalid("api key is too short") }
             let vendor = s.state.vendors.first { $0.id == credential.vendor }
+            try Inner.checkSubscriptionKey(key, vendor: vendor)
+            let bases = [
+                ("anthropic_base", credential.anthropicBase), ("openai_base", credential.openaiBase),
+                ("responses_base", credential.responsesBase),
+            ]
+            for case (let field, let base?) in bases {
+                if let plan = VendorInfo.planOnlyBase(of: base, vendors: s.state.vendors) {
+                    throw MockErrors.invalid(
+                        "\(field): \(plan) is a coding or subscription plan address, which only works in the vendor's "
+                            + "own tools; use the pay-as-you-go address")
+                }
+            }
             if vendor == nil {
                 guard credential.vendor == NewCredential.customVendor,
                     credential.anthropicBase != nil || credential.openaiBase != nil || credential.responsesBase != nil
@@ -1079,6 +1106,8 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
             guard (8...4096).contains(apiKey.utf8.count), !apiKey.contains(where: { $0.isWhitespace }) else {
                 throw MockErrors.invalid("api_key must be 8-4096 bytes without spaces")
             }
+            let vendor = s.state.vendors.first { $0.id == s.state.credentials[i].vendor }
+            try Inner.checkSubscriptionKey(apiKey, vendor: vendor)
             s.state.credentials[i].last4 = String(apiKey.suffix(4))
             return s.state.credentials[i]
         }
@@ -1347,6 +1376,8 @@ private struct Inner: Sendable {
     var stepDelay: TimeInterval = 0.35
     var autoReply = true
     var failures: [ClientError] = []
+    /// 只拦某个方法的错误（`failNext(_:with:)`），按方法名。
+    var methodFailures: [String: [ClientError]] = [:]
     var scripts: [InstanceID: MockEventScript] = [:]
     var subscribers: [UUID: Subscriber] = [:]
     var playbacks: [UUID: Playback] = [:]
@@ -1709,6 +1740,14 @@ private struct Inner: Sendable {
             throw MockErrors.invalid("unknown harness \(harness)")
         }
         return (agent, name, harness)
+    }
+
+    /// 这家的订阅类 key（服务端 `check_key` 的说法，`CredentialRejection` 认得出）。
+    static func checkSubscriptionKey(_ key: String, vendor: VendorInfo?) throws {
+        guard let vendor, let prefix = vendor.subscriptionKeyPrefix(of: key) else { return }
+        throw MockErrors.invalid(
+            "\(vendor.name) subscription keys (\(prefix)...) can only be used in the vendor's own tools; use a "
+                + "pay-as-you-go API key")
     }
 
     /// 实例数上限（11.9，`MockState.instancesPerUser`，0 不限）：没删除的实例（归档的也算）再加 `count` 个超过上限时

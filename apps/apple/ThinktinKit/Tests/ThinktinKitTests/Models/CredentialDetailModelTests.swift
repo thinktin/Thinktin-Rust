@@ -79,7 +79,7 @@ struct CredentialDetailModelTests {
         #expect(model.deleteErrorMessage(.chinese) == nil)
     }
 
-    @Test("服务端说还在用（409），可现有的实例里都没用它（已删除实例留下的路由）：说明原因，不再让删")
+    @Test("服务端说还在用（409），可重新查了一个都没有（路由刚变过）：说明原因，先不让删，刷新后能再删")
     func deleteConflictHidden() async {
         let mock = ModelsFixture.mock()
         let model = CredentialDetailModel(client: mock, credentialID: DemoData.qwenCredentialID)
@@ -91,12 +91,18 @@ struct CredentialDetailModelTests {
         #expect(!(await model.delete()))
         #expect(model.references == [] && model.hasHiddenReferences)
         #expect(!model.canDelete)
-        #expect(model.deleteBlockedReason(.chinese)?.contains("已删除的实例") == true)
-        #expect(model.deleteBlockedReason(.english)?.contains("Disable it") == true)
+        #expect(model.deleteBlockedReason(.chinese)?.contains("下拉刷新") == true)
+        #expect(model.deleteBlockedReason(.chinese)?.contains("已删除") == false, "11.9 起已删除实例的别名不挡着")
+        #expect(model.deleteBlockedReason(.english)?.contains("refresh") == true)
         #expect(model.deleteErrorMessage(.chinese) == nil)
         // 不发第二次删除请求。
         #expect(!(await model.delete()))
         #expect(mock.state.credentials.contains { $0.id == DemoData.qwenCredentialID })
+        // 刷新之后重新查过引用，能删了。
+        await model.load()
+        #expect(!model.hasHiddenReferences && model.canDelete)
+        #expect(await model.delete())
+        #expect(!mock.state.credentials.contains { $0.id == DemoData.qwenCredentialID })
     }
 
     @Test("删除失败的其他错误照常按错误码说")
@@ -195,6 +201,60 @@ struct CredentialDetailModelTests {
         #expect(model.wakeResult?.message(.chinese)?.contains("还有") == false)
     }
 
+    @Test("改每日上限（11.9）：放宽、取消时数一下等 key 的运行，收紧、原来不限的不数；没变、不合法的不发请求")
+    func dailyLimit() async {
+        let mock = ModelsFixture.mockWithWaitingRun(instanceID: DemoData.writerID)
+        let model = CredentialDetailModel(client: mock, credentialID: DemoData.claudeCredentialID)
+        await model.load()
+        let method = "setCredentialDailyLimit(_:dailyTokenLimit:)"
+        #expect(model.credential?.dailyTokenLimit == 2_000_000)
+        #expect(await model.setDailyLimit("2,000,000"), "没变：直接算成功")
+        #expect(!(await model.setDailyLimit("0")))
+        #expect(!(await model.setDailyLimit("两百万")))
+        #expect(mock.callCount(method) == 0)
+
+        #expect(await model.setDailyLimit("500000"))
+        #expect(model.credential?.dailyTokenLimit == 500_000)
+        #expect(!model.didWake && model.wakeResult == nil, "收紧不唤醒")
+
+        #expect(await model.setDailyLimit("3 000 000"))
+        #expect(mock.state.credentials.first { $0.id == DemoData.claudeCredentialID }?.dailyTokenLimit == 3_000_000)
+        #expect(model.didWake && model.wakeResult == KeyWakeResult(retried: 1), "放宽：等 key 的任务马上重试")
+
+        #expect(await model.setDailyLimit(""))
+        #expect(model.credential?.dailyTokenLimit == nil)
+        #expect(model.summary(.chinese)?.dailyLimit == "不限")
+        #expect(model.didWake && model.wakeResult == KeyWakeResult(retried: 1), "取消上限也唤醒")
+
+        #expect(await model.setDailyLimit("1000"))
+        #expect(!model.didWake && model.wakeResult == nil, "原来不限：设上限不唤醒")
+        #expect(mock.callCount(method) == 4)
+    }
+
+    @Test("改每日上限失败：记下错误，上限不变")
+    func dailyLimitFails() async {
+        let mock = ModelsFixture.mock()
+        let model = CredentialDetailModel(client: mock, credentialID: DemoData.claudeCredentialID)
+        await model.load()
+        mock.failNext("setCredentialDailyLimit(_:dailyTokenLimit:)", with: .network(message: "offline"))
+        #expect(!(await model.setDailyLimit("100")))
+        #expect(model.dailyLimitError == .network(message: "offline"))
+        #expect(model.credential?.dailyTokenLimit == 2_000_000)
+        #expect(!model.isSettingDailyLimit)
+        model.clearDailyLimitError()
+        #expect(model.dailyLimitError == nil)
+    }
+
+    @Test("改上限会不会唤醒等 key 的运行：和服务端一样，原来有上限、改成不限或更大的才唤醒")
+    func limitChangeWakes() {
+        #expect(CredentialDetailModel.limitChangeWakes(from: 100, to: nil))
+        #expect(CredentialDetailModel.limitChangeWakes(from: 100, to: 101))
+        #expect(!CredentialDetailModel.limitChangeWakes(from: 100, to: 100))
+        #expect(!CredentialDetailModel.limitChangeWakes(from: 100, to: 50))
+        #expect(!CredentialDetailModel.limitChangeWakes(from: nil, to: 50))
+        #expect(!CredentialDetailModel.limitChangeWakes(from: nil, to: nil))
+    }
+
     @Test("启用前没数到等 key 的运行：只说通用的一句")
     func wakeUncounted() async {
         let mock = ModelsFixture.mock()
@@ -209,23 +269,38 @@ struct CredentialDetailModelTests {
     @Test("换 key 被拒（订阅类 key）：显示原因")
     func replaceRejected() async {
         let mock = ModelsFixture.mock()
-        let model = CredentialDetailModel(client: mock, credentialID: DemoData.claudeCredentialID)
+        let model = CredentialDetailModel(client: mock, credentialID: DemoData.deepseekCredentialID)
         await model.load()
         // 换 key 前先数等 key 的运行（第一个调用，失败了只是不数），第二个调用才是换 key。
         mock.failNext(with: .network(message: "offline"))
         mock.failNext(
             with: .api(
                 status: 422, code: .invalid,
-                message:
-                    "Anthropic (Claude) subscription keys (sk-ant-oat...) can only be used in the vendor's own tools",
+                message: "DeepSeek subscription keys (sk-plan-...) can only be used in the vendor's own tools",
                 retryAfterSecs: nil))
-        #expect(!(await model.replaceSecret("sk-ant-oat01-0123456789")))
+        #expect(model.keyRejection(for: "sk-plan-0123456789") == nil, "厂商表里没有这个前缀：服务端才知道")
+        #expect(!(await model.replaceSecret("sk-plan-0123456789")))
         #expect(model.replaceRejection == .subscriptionKey)
         #expect(model.replaceError == nil)
         #expect(!model.didReplace)
-        #expect(model.credential?.last4 == "Q7mA")
+        #expect(model.credential?.last4 == "x9Lk")
         model.clearReplaceErrors()
         #expect(model.replaceRejection == nil)
+    }
+
+    @Test("换成这家的订阅类 key（11.9，厂商表的前缀）：本地就拦下，不发请求")
+    func replaceSubscriptionKeyLocally() async {
+        let mock = ModelsFixture.mock()
+        let model = CredentialDetailModel(client: mock, credentialID: DemoData.claudeCredentialID)
+        await model.load()
+        #expect(model.keyRejection(for: " sk-ant-oat01-0123456789") == .subscriptionKey)
+        #expect(model.keyRejection(for: "sk-ant-api03-0123456789") == nil)
+        #expect(!(await model.replaceSecret("sk-ant-oat01-0123456789")))
+        #expect(model.replaceRejection == .subscriptionKey)
+        #expect(mock.callCount("replaceCredentialSecret(_:apiKey:)") == 0)
+        #expect(model.credential?.last4 == "Q7mA")
+        #expect(await model.replaceSecret("sk-ant-api03-0123456789"))
+        #expect(model.replaceRejection == nil && model.credential?.last4 == "6789")
     }
 
     @Test("路由查不全：算失败，不让删")

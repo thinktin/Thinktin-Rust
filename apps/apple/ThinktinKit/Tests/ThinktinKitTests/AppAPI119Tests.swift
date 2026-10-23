@@ -280,6 +280,32 @@ struct MockRoutesAndKeysTests {
             ]))
         #expect(try await client.setPlanPaused(pipeline.id, paused: false).isPaused == false)
     }
+
+    @Test("删实例：等确认的流水线不改成暂停（服务端只暂停 active 的），确认要先改步骤；改完确认后照常生效")
+    func deleteInstanceAwaitingPlan() async throws {
+        let client = makeClient()
+        let planID: PlanID = "awaiting-pipeline"
+        client.update { state in
+            state.plans.append(
+                Plan(
+                    id: planID, instanceID: writer, title: "agent 改过的流水线", goal: "写完再审", createdBy: .agent,
+                    awaitingConfirmation: true, revision: 2, createdAt: Date(),
+                    steps: [
+                        PlanStep(key: "write", instanceID: writer, prompt: "写"),
+                        PlanStep(key: "review", instanceID: reviewer, prompt: "审", dependsOn: ["write"]),
+                    ]))
+        }
+        try await client.deleteInstance(reviewer)
+        let plan = try await client.getPlan(planID)
+        #expect(plan.awaitingConfirmation)
+        #expect(!plan.isPaused, "等确认的不动")
+        #expect(await failure { _ = try await client.confirmPlan(planID, revision: 2) }?.code == .conflict)
+
+        let changed = try await client.updatePlan(
+            planID, change: PlanChange(steps: [PlanStep(key: "write", instanceID: writer, prompt: "写")]))
+        let confirmed = try await client.confirmPlan(planID, revision: changed.revision)
+        #expect(!confirmed.awaitingConfirmation && !confirmed.isPaused, "确认后照常生效，不会留在暂停里")
+    }
 }
 
 // MARK: - 实例数上限
@@ -373,5 +399,77 @@ struct MockCallCountTests {
         _ = client.upgradeRequired()
         #expect(client.callCount("signedIn()") == 0 && client.callCount("upgradeRequired()") == 0)
         #expect(client.callCount("setLocale(_:)") == 0)
+    }
+}
+
+@Suite("MockClient：只拦某个方法的错误")
+struct MockMethodFailureTests {
+    @Test("failNext(_:with:) 只让那个方法的下一次抛错，别的方法照常；failNext(with:) 排着的先抛")
+    func methodFailures() async throws {
+        let client = makeClient()
+        client.failNext("me()", with: .network(message: "offline"))
+        _ = try client.cachedInstances()
+        _ = try await client.instances()
+        await #expect(throws: ClientError.network(message: "offline")) { _ = try await client.me() }
+        _ = try await client.me()
+
+        client.failNext("me()", with: .network(message: "second"))
+        client.failNext(with: .network(message: "first"))
+        await #expect(throws: ClientError.network(message: "first")) { _ = try await client.me() }
+        await #expect(throws: ClientError.network(message: "second")) { _ = try await client.me() }
+        _ = try await client.me()
+    }
+}
+
+@Suite("MockClient：订阅类 key、套餐专用地址（11.9，按厂商表）")
+struct MockVendorRuleTests {
+    @Test("添加、换 key：这家的订阅类 key 抛 invalid，说法和服务端一样（CredentialRejection 认得出）")
+    func subscriptionKeys() async throws {
+        let client = makeClient()
+        let added = await failure {
+            _ = try await client.addCredential(
+                NewCredential(vendor: "anthropic", label: "", apiKey: "sk-ant-oat01-0123456789"))
+        }
+        #expect(added?.status == 422 && added?.code == .invalid)
+        do {
+            _ = try await client.addCredential(NewCredential(vendor: "qwen-cn", label: "", apiKey: "sk-sp-0123456789"))
+            Issue.record("应该被拒")
+        } catch let error as ClientError {
+            #expect(CredentialRejection(error) == .subscriptionKey)
+        }
+        // 别家的前缀不管；按量的 key 照收。
+        _ = try await client.addCredential(NewCredential(vendor: "openai", label: "", apiKey: "sk-sp-0123456789"))
+        _ = try await client.addCredential(
+            NewCredential(vendor: "anthropic", label: "", apiKey: "sk-ant-api03-0123456789"))
+
+        let replaced = await failure {
+            _ = try await client.replaceCredentialSecret(DemoData.claudeCredentialID, apiKey: "sk-ant-ort01-0123456789")
+        }
+        #expect(replaced?.code == .invalid)
+        #expect(client.state.credentials.first { $0.id == DemoData.claudeCredentialID }?.last4 == "Q7mA")
+    }
+
+    @Test("自定义地址填了任何一家的套餐专用地址：抛 invalid，认得出是哪个地址")
+    func planOnlyBases() async throws {
+        let client = makeClient()
+        client.update {
+            $0.vendors.append(
+                VendorInfo(
+                    id: "glm-cn", name: "智谱", protocols: ["anthropic"], models: [],
+                    planOnlyBases: ["https://open.bigmodel.cn/api/coding"]))
+        }
+        do {
+            _ = try await client.addCredential(
+                NewCredential(
+                    vendor: NewCredential.customVendor, label: "", apiKey: "gw-0123456789",
+                    anthropicBase: "https://open.bigmodel.cn/api/coding/anthropic"))
+            Issue.record("应该被拒")
+        } catch let error as ClientError {
+            #expect(CredentialRejection(error) == .planOnlyEndpoint(field: .anthropic))
+        }
+        _ = try await client.addCredential(
+            NewCredential(
+                vendor: NewCredential.customVendor, label: "", apiKey: "gw-0123456789",
+                anthropicBase: "https://open.bigmodel.cn/api/anthropic"))
     }
 }

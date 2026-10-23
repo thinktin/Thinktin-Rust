@@ -145,9 +145,9 @@ extension ClientError {
         case .containsSecrets(let n): return .interceptSecrets(count: n)
         case .invalidArgument: return .showFormError
         case .unsupported: return .featureUnavailable
-        case .api(_, let code, _, let secs):
+        case .api(let status, let code, _, let secs):
             if code.isQuantityLimit { return .limitReached }
-            switch code {
+            switch code.handling(status: status) {
             case .rateLimited, .unavailable: return .retryLater(after: secs.map(TimeInterval.init))
             case .conflict: return .refreshAndRetry
             case .invalid: return .showFormError
@@ -200,8 +200,8 @@ extension ClientError {
         case .unsupported: return zh ? "这个功能暂未开放，敬请期待。" : "This feature isn't available yet."
         case .decode, .cache, .internal:
             return zh ? "出了点问题，请稍后重试。" : "Something went wrong. Please try again."
-        case .api(_, let code, _, let secs):
-            switch code {
+        case .api(let status, let code, _, let secs):
+            switch code.handling(status: status) {
             case .rateLimited:
                 if let s = secs {
                     return zh ? "操作太频繁，请 \(s) 秒后再试。" : "Too many requests. Try again in \(s) seconds."

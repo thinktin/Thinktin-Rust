@@ -9,6 +9,8 @@ import Observation
 ///   之后配路由时不再问这个厂商。
 /// - 服务端拒收时（订阅类 key、套餐专用地址、不是 https……）按 `CredentialRejection` 显示本地化的原因，不显示接口的英文说明；
 ///   能认出是哪个字段的显示在那个字段下面（`rejection(for:)`，和安卓一样是字段级提示），改了那个字段就清掉。
+/// - 订阅类 key、套餐专用地址不用等服务端（11.9）：厂商表里每家带着 `subscriptionKeyPrefixes`、`planOnlyBases`，按服务端的
+///   规则边输边提示在那个字段下面（`localRejections`），有的时候保存不了；服务端照样检查。
 /// - 从某个实例的模型路由页过来时（`targetAgentID`），提示这把 key 能不能给这个 agent 用（协议对不上时运行会卡在等 key）。
 /// - 加好以后服务端会唤醒等 key 的运行，界面提示一句。
 @Observable @MainActor
@@ -242,7 +244,28 @@ public final class AddCredentialModel {
 
     /// 能点保存。
     public var canSubmit: Bool {
-        problems.isEmpty && !isSubmitting && created == nil
+        problems.isEmpty && localRejections.isEmpty && !isSubmitting && created == nil
+    }
+
+    // MARK: 本地提前提示（11.9）
+
+    /// 不用等服务端就知道会被拒的（规则和 crates/proto/src/vendors.rs 的 `check_key`、`plan_only_base` 一样）：选的厂商的
+    /// 订阅类 key（`VendorInfo.subscriptionKeyPrefix(of:)`，只查这家），自定义地址填了任何一家的套餐专用地址
+    /// （`VendorInfo.planOnlyBase(of:vendors:)`）。显示在那个字段下面，有的时候保存不了。
+    public var localRejections: [Field: CredentialRejection] {
+        var out: [Field: CredentialRejection] = [:]
+        if let vendor = selectedVendor, vendor.subscriptionKeyPrefix(of: apiKey) != nil {
+            out[.apiKey] = .subscriptionKey
+        }
+        if isCustom {
+            let bases: [(CredentialEndpointField, String)] = [
+                (.anthropic, anthropicBase), (.openai, openaiBase), (.responses, responsesBase),
+            ]
+            for (field, text) in bases where VendorInfo.planOnlyBase(of: text, vendors: vendors) != nil {
+                out[.endpoint(field)] = .planOnlyEndpoint(field: field)
+            }
+        }
+        return out
     }
 
     // MARK: 服务端拒收的原因
@@ -261,10 +284,10 @@ public final class AddCredentialModel {
         }
     }
 
-    /// 这个字段下面要显示的拒收原因。
+    /// 这个字段下面要显示的拒收原因：服务端说的，没有时是本地就看得出的（`localRejections`）。
     public func rejection(for field: Field) -> CredentialRejection? {
-        guard let rejection, Self.field(of: rejection) == field else { return nil }
-        return rejection
+        if let rejection, Self.field(of: rejection) == field { return rejection }
+        return localRejections[field]
     }
 
     /// 不属于哪个字段的拒收原因（显示在表单下面）。

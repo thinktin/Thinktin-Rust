@@ -9,6 +9,8 @@ import Observation
 /// - 确认带上用户看到的版本号（`confirmPlan(revision:)`）。返回冲突时重新拉一次：还在等确认就换成新内容、标出和刚才
 ///   看的那个版本比改了哪几处，让用户再看一遍再确认；已经不用确认了（在别的设备上确认过）就告诉用户。
 /// - 等确认的计划不能用暂停 / 恢复绕过去，这一页只有确认、修改后确认（编辑页保存后回来按新版本确认）和删除。
+/// - 流水线有步骤在已删除的实例上（11.9）：确认报 409，重新拉到的还是同一个版本。这不是又被改过了：查一次实例列表
+///   认出来（`blockedSteps`），说要先改步骤（`PlanBlockedSteps`），不标“刚才又改了”。
 @Observable @MainActor
 public final class PlanConfirmModel {
     /// 确认的结果。
@@ -28,6 +30,8 @@ public final class PlanConfirmModel {
     public private(set) var baseline: Plan?
     /// 确认时发现又被改过：和刚才看的版本比改了哪几处。
     public private(set) var conflictChanges: [PlanChangeItem]?
+    /// 确认被挡住了（11.9）：这些步骤在已删除的实例上，先改步骤才能确认。换上新的计划时只留还在的。
+    public private(set) var blockedSteps: [PlanStep] = []
 
     public private(set) var hasLoaded = false
     public private(set) var isLoading = false
@@ -83,6 +87,7 @@ public final class PlanConfirmModel {
     private func show(_ plan: Plan) {
         self.plan = plan
         baseline = snapshots.baseline(for: plan.id, before: plan.revision)
+        blockedSteps = blockedSteps.filter(plan.steps.contains)
     }
 
     private func noteFailure(_ error: any Error) {
@@ -156,6 +161,15 @@ public final class PlanConfirmModel {
     private func refetchAfterConflict(reviewed: Plan) async {
         do {
             let fresh = try await client.getPlan(planID)
+            // 还是同一个版本：不是又被改过了，多半是步骤在已删除的实例上（11.9）。
+            if fresh.awaitingConfirmation, fresh.revision == reviewed.revision,
+                let steps = await PlanBlockedSteps.find(in: fresh, client: client), !steps.isEmpty
+            {
+                show(fresh)
+                conflictChanges = nil
+                blockedSteps = steps
+                return
+            }
             if fresh.awaitingConfirmation {
                 plan = fresh
                 baseline = snapshots.baseline(for: fresh.id, before: fresh.revision)

@@ -129,8 +129,11 @@ Claude App 的特点：暖色纸张底色、极少的强调色、标题用衬线
 
 接口的说明（ThinktinCore 里 339e191 起叫 `detail`，ThinktinKit 的 `ClientError` 里还叫 `message`）是英文、给开发者看的，
 界面显示按错误码本地化的文案（`ClientError.localizedMessage`，横幅经 `ErrorPresentation`）。服务端以后还会加错误码：
-client-core（11.9 起）把不认识的码原样放进 `Api.code`，ThinktinKit 里是 `APIErrorCode.unknown(原文)`，按上表的分类处理
-（`*_limit` 按数量上限，其他按通用错误），不会当成解析失败。IM 渠道、保险箱条目、实时活动的上限现在还是 422 `invalid`，
+client-core（11.9 起）把不认识的码原样放进 `Api.code`，ThinktinKit 里是 `APIErrorCode.unknown(原文)`，不会当成解析失败。
+界面怎么处理（`recovery`、文案）：`*_limit` 按数量上限；别的按 HTTP 状态归到上表认识的码（`APIErrorCode.handling(status:)`，
+docs/i18n.md 第 3 节“不认识的按状态给通用文案”）：404 / 410 当不存在、409 当冲突、400 / 422 当填写不对、403 当没权限、
+429 / 503 稍后再试，其余（包括 401，登录失效由 client-core 按码判断）是通用错误。码本身原样留着，`isNotFound` 这类判断、
+能不能重试（`isRetryable`，和 client-core 一样只看码）不受影响。IM 渠道、保险箱条目、实时活动的上限现在还是 422 `invalid`，
 以后改成 `*_limit` 时自动走上面那一行。
 
 ## 6.1 深链与推送
@@ -271,7 +274,11 @@ struct PlansDestination: View {
   （`Thinktin/App/ThinktinApp.swift`），不放进 `RootView` / `AppShell`：预览和界面测试要自己设 `\.displayLanguage` 和深浅色
   （`.previewShell(.english, scheme: .dark)`），放在里面会被盖掉。页面里取界面语言照旧用 `@Environment(\.displayLanguage)`。
 - 和服务端同步：`AppModel(client:preferences:)`（App 的 `AppEnvironment` 传 `.shared`，测试、预览不传就不同步）在 `start()` 最开头
-  （登录判断之前）调 `LanguageSettingsModel.applyAcceptLanguage()`，新用户按界面语言注册；确认完账号（`me()`）、登录成功之后各调一次
-  `syncOnLaunch(user:)`，`me().locale` 和界面语言不一致才调 `setLocale`，静默进行。设置页换语言由 `LanguageSettingsModel.select(_:)` 同步。
+  （登录判断之前）调 `LanguageSettingsModel.applyAcceptLanguage()`，新用户按界面语言注册；确认完账号（`me()`）、登录成功、解冻之后各调一次
+  `syncOnLaunch(user:)`，`me().locale` 和界面语言不一致才调 `setLocale`，静默进行，失败不挡启动；启动时 `me()` 没拿到（离线）就不同步，
+  不再多等一次 `me()`。设置页换语言由 `LanguageSettingsModel.select(_:)` 同步。
+- `AppModel.user` 跟着最新的走：任何页面调 `me()`、`setLocale`、`updateProfile` 成功后，`ObservedClient` 报 `.userUpdated`，同一个账号
+  还登录着就换上。设置页每次进语言页都按它新建 `LanguageSettingsModel(user:)`：用旧的用户会以为服务端还是原来的语言，换回来时不调
+  `setLocale`。
 - 建客户端时的 `Accept-Language`：`AppEnvironment.acceptLanguage(displayLanguage:)` 用 `SettingsPreferences.shared.displayLanguage`
   打头，后面跟设备的语言偏好，照 client-core 的规则截到 256 字节内（`AcceptLanguage.header`）。

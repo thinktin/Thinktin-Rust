@@ -174,6 +174,7 @@
 - **删除实例会连带删掉其他计划里的流水线步骤和团队成员**（审查，P1，+0.5 人日）
   DELETE /v1/instances/{id} 不返回 conflict，它会直接做三件事：取消实例上正在跑的运行、吊销授权、删除。外键是 ON DELETE CASCADE，所以下面这些也会被删：别的计划里指定这个实例的流水线步骤（plan_steps）、这个实例的团队成员身份、它自己的计划和产出物。剩下的步骤如果 depends_on 被删掉的那一步，下次触发时 order_steps 会失败，整条流水线判失败。四个视角只写了“二次确认”。12.3 的删除确认要做到：先列出会受影响的计划（plans() 加 get_plan 看 steps）和团队（teams()），写明“会停掉正在跑的任务、会从这些流水线和团队里移除”；删完刷新计划列表和团队列表。
   依据：crates/gateway/src/routes/instances.rs:125-145；crates/store/migrations/0002_collaboration.sql:16-24（team_members）、56-67（plan_steps 的外键级联）；crates/store/migrations/0001_init.sql:178-192（plans）；crates/gateway/src/routes/plans.rs:69-88（order_steps）
+  （2026-10-23，backend-core 11.9 起）实例是标记删除，外键不级联：步骤留在流水线里、指着已删除的实例；它自己的计划标记删除，模型别名一起删；别的实例的流水线有一步在它上面的（正在生效的）暂停，恢复、确认报 409，改了步骤才行；团队列表不再列出它。删除确认页按这个说（`InstanceDeletionImpact.PipelineImpact.effect`），计划详情、确认页遇到这种 409 说要先改步骤（`PlanBlockedSteps`）。依据：crates/client-core/src/ffi.rs 的 `delete_instance`、crates/store/src/plans.rs 的 `retire_instance_plans`、crates/gateway/src/routes/plans.rs 的 `refuse_deleted_steps`。
 
 - **Agent 目录、领养与实例详情页**（界面，P1，+1 人日）
   页面清单（都在 12.3）：
@@ -211,6 +212,7 @@
   - 降级链最多 3 个备用。
   5. 用量看板。入口：设置、对话页的用量按钮（对应 Claude 对话里的用量按钮）。按天、实例、模型、key 分组，用 Swift Charts 画，标出估算和失败次数。
   依据：ffi.rs:544 VendorInfo.protocols、:1516 vendors、:1535 add_credential、:175-189 ModelRoute / RouteFallback、:1481 usage；routes/mod.rs:116-127；docs/architecture-v3.md 5.3；docs/progress.md:61（7.11 启用、换 key 时唤醒）
+  （2026-10-23，backend-core 11.9 起）每日上限能改、能取消（`setCredentialDailyLimit`，放宽、取消时唤醒等 key 的运行），key 详情里改；`vendors()` 每家带 `subscriptionKeyPrefixes`、`planOnlyBases`，添加 key、换 key 时本地边输边提示（服务端照样检查）；删 key 只数没删除的实例的别名。
 
 - **密码保险箱界面（并入 12.4，原估算没算）**（界面，P1，+3 人日）
   页面清单：

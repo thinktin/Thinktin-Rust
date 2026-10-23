@@ -86,8 +86,19 @@ struct AgentsScreensTests {
                 ]))
         let impact = InstanceDeletionImpact.compute(
             instanceID: DemoData.reviewerID, plans: state.plans, teams: state.teams, runs: state.runs, artifactCount: 3)
-        #expect(impact.breaksPipelines)
+        #expect(impact.pipelinesToPause.count == 1)
         renderInBothAppearances(InstanceDeletionImpactView(impact: impact))
+        // 已经暂停、在等确认的流水线（11.9：状态不改，同样要先改步骤）。
+        var paused = state.plans[state.plans.count - 1]
+        paused.isPaused = true
+        var awaiting = paused
+        awaiting.id = "awaiting"
+        awaiting.isPaused = false
+        awaiting.awaitingConfirmation = true
+        let held = InstanceDeletionImpact.compute(
+            instanceID: DemoData.reviewerID, plans: [paused, awaiting], teams: [], runs: [], artifactCount: nil)
+        #expect(held.pipelines.map(\.effect) == [.stillPaused, .confirmationBlocked])
+        renderInBothAppearances(InstanceDeletionImpactView(impact: held))
         renderInBothAppearances(InstanceDeletionImpactView(impact: InstanceDeletionImpact(instanceID: "lonely")))
     }
 

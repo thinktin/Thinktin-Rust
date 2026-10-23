@@ -9,7 +9,7 @@ import Observation
 /// - 版本：`AgentInfo.versions` 的第一个是最新版本，实例不是它时提示升级；也可以换回旧版本（回滚）。
 ///   `setInstanceVersion` 只记下目标版本，下次唤醒沙箱时按新版本重建，工作区保留（`versionChange` 给界面提示）。
 /// - 删除：先 `prepareDeletion()` 查影响（`InstanceDeletionImpact`：会停掉的运行、一起删掉的计划和产出物、
-///   会被移除的流水线步骤、团队成员身份），界面列出来、二次确认后再 `delete()`。
+///   会停下来等改步骤的别的流水线（11.9）、团队成员身份），界面列出来、二次确认后再 `delete()`。
 @Observable @MainActor
 public final class InstanceDetailModel {
     public let instanceID: InstanceID

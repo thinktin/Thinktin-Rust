@@ -1,15 +1,16 @@
 import Foundation
 
-/// 删除一个实例会连带影响什么（ios-packages.md 12.3 “删除实例会连带删掉其他计划里的流水线步骤和团队成员”）。
+/// 删除一个实例会连带影响什么（ios-packages.md 12.3：删除确认页列出别的计划里的流水线步骤和团队成员身份）。
 ///
-/// `DELETE /v1/instances/{id}` 不会因为实例忙而拒绝：它直接取消实例上没结束的运行、吊销授权、删除实例；外键级联会删掉
-/// 别的计划里指定这个实例的流水线步骤、这个实例的团队成员身份、它自己的计划和产出物。剩下的步骤要是依赖被删掉的那一步，
-/// 下次触发时排不出顺序，整条流水线会失败。删除确认页把这些都列出来。
+/// `DELETE /v1/instances/{id}` 不会因为实例忙而拒绝（11.9 起的规则，见 crates/client-core/src/ffi.rs 的 `delete_instance`）：
+/// 它直接取消实例上没结束的运行、吊销授权、删除实例，模型别名一起删；它自己的计划一起删掉；别的实例的流水线计划有一步
+/// 在它上面的，步骤留着（指着已删除的实例），正在生效的计划暂停，之后恢复、确认都报 409，要先把这些步骤改到别的实例上；
+/// 团队里不再列出它。删除确认页按 `Plan.instanceID` 和 `Plan.steps[].instanceID` 分成这两组列出来。
 public struct InstanceDeletionImpact: Hashable, Sendable {
     public var instanceID: InstanceID
     /// 这个实例自己的计划（一起删掉；列表接口里的，没有步骤）。
     public var ownPlans: [Plan]
-    /// 别的计划里指定了这个实例的流水线步骤（会被删掉），按计划分组。
+    /// 别的实例的流水线计划里在这个实例上的步骤，按计划分组：删除后这些计划停下来，改了步骤才能恢复。
     public var pipelines: [PipelineImpact]
     /// 这个实例在哪些团队里（会被移出）。
     public var teams: [TeamImpact]
@@ -33,28 +34,57 @@ public struct InstanceDeletionImpact: Hashable, Sendable {
         self.isIncomplete = isIncomplete
     }
 
-    /// 一个别的计划里会被删掉的步骤。
+    /// 一个别的实例的流水线计划、有步骤在这个实例上（11.9）。
     public struct PipelineImpact: Identifiable, Hashable, Sendable {
+        /// 删除后这条流水线会怎样。
+        public enum Effect: Hashable, Sendable {
+            /// 正在生效（没暂停、不在等确认）：服务端把它暂停。
+            case paused
+            /// 已经暂停了：保持暂停。
+            case stillPaused
+            /// 在等确认（agent 建的、改的）：确认前要先改步骤。
+            case confirmationBlocked
+
+            /// 删除确认页上这条流水线下面的一句话。
+            public func message(_ language: DisplayLanguage = .current) -> String {
+                let zh = language == .chinese
+                switch self {
+                case .paused:
+                    return zh
+                        ? "删除后这条流水线会暂停，把这些步骤改到别的实例上才能恢复。"
+                        : "This pipeline will be paused. Move these steps to another instance to resume it."
+                case .stillPaused:
+                    return zh
+                        ? "它已经暂停了，把这些步骤改到别的实例上才能恢复。"
+                        : "It's already paused. Move these steps to another instance to resume it."
+                case .confirmationBlocked:
+                    return zh
+                        ? "它在等你确认，确认之前要先把这些步骤改到别的实例上。"
+                        : "It's waiting for your confirmation. Move these steps to another instance before confirming."
+                }
+            }
+        }
+
         /// 计划（详情接口拉的，带步骤）。标题是 agent 写的时要带 AI 生成标识（`AgentsText.isAIGenerated(_:)`）。
         public var plan: Plan
-        /// 指定了这个实例、会被删掉的步骤。
-        public var removedSteps: [PlanStep]
-        /// 剩下的步骤里依赖被删步骤的：流水线下次触发会失败，要去改。
-        public var brokenSteps: [PlanStep]
-        /// 删完还剩几步。
-        public var remainingSteps: Int
+        /// 在这个实例上的步骤：删除后留在流水线里、指着已删除的实例，改到别的实例上之前计划恢复、确认都报 409。
+        public var stepsOnInstance: [PlanStep]
 
         public var id: PlanID { plan.id }
 
-        public init(plan: Plan, removedSteps: [PlanStep], brokenSteps: [PlanStep], remainingSteps: Int) {
+        public init(plan: Plan, stepsOnInstance: [PlanStep]) {
             self.plan = plan
-            self.removedSteps = removedSteps
-            self.brokenSteps = brokenSteps
-            self.remainingSteps = remainingSteps
+            self.stepsOnInstance = stepsOnInstance
         }
 
-        /// 删完之后这条流水线下次触发会失败（有步骤依赖被删掉的步骤）。
-        public var breaksPipeline: Bool { !brokenSteps.isEmpty }
+        /// 按计划现在的状态（和服务端一样：只暂停正在生效的，等确认的在服务端本来就算暂停）。
+        public var effect: Effect {
+            if plan.awaitingConfirmation { return .confirmationBlocked }
+            return plan.isPaused ? .stillPaused : .paused
+        }
+
+        /// 删除时会被暂停（现在正在生效）。
+        public var willPause: Bool { effect == .paused }
     }
 
     /// 一个会少一个成员的团队。
@@ -76,11 +106,11 @@ public struct InstanceDeletionImpact: Hashable, Sendable {
         }
     }
 
-    /// 会从别的流水线、团队里移除（要特别提醒的级联删除）。
+    /// 会影响别的流水线、团队（要特别提醒的级联）。
     public var hasCascade: Bool { !pipelines.isEmpty || !teams.isEmpty }
 
-    /// 删完有流水线会失败。
-    public var breaksPipelines: Bool { pipelines.contains(where: \.breaksPipeline) }
+    /// 删除时会被暂停的流水线（现在正在生效的）。
+    public var pipelinesToPause: [PipelineImpact] { pipelines.filter(\.willPause) }
 
     // MARK: 计算
 
@@ -97,13 +127,8 @@ public struct InstanceDeletionImpact: Hashable, Sendable {
     ) -> InstanceDeletionImpact {
         let ownPlans = plans.filter { $0.instanceID == instanceID }
         let pipelines = plans.filter { $0.instanceID != instanceID }.compactMap { plan -> PipelineImpact? in
-            let removed = plan.steps.filter { $0.instanceID == instanceID }
-            guard !removed.isEmpty else { return nil }
-            let removedKeys = Set(removed.map(\.key))
-            let remaining = plan.steps.filter { $0.instanceID != instanceID }
-            let broken = remaining.filter { !removedKeys.isDisjoint(with: $0.dependsOn) }
-            return PipelineImpact(
-                plan: plan, removedSteps: removed, brokenSteps: broken, remainingSteps: remaining.count)
+            let steps = plan.steps.filter { $0.instanceID == instanceID }
+            return steps.isEmpty ? nil : PipelineImpact(plan: plan, stepsOnInstance: steps)
         }
         let teamImpacts = teams.compactMap { team -> TeamImpact? in
             guard let member = team.members.first(where: { $0.instanceID == instanceID }) else { return nil }

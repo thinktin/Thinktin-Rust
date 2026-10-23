@@ -35,6 +35,13 @@ struct ClientErrorTests {
             (api(.forbidden, status: 403), .generic),
             (api(.internal, status: 500), .generic),
             (api(.unknown("teapot"), status: 418), .generic),
+            // 这个版本不认识的码按 HTTP 状态（11.9 起 client-core 原样交过来）。
+            (api(.unknown("plan_gone"), status: 404), .goBack),
+            (api(.unknown("bad_cron"), status: 422), .showFormError),
+            (api(.unknown("stale_revision"), status: 409), .refreshAndRetry),
+            (api(.unknown("slow_down"), status: 429, retryAfter: 7), .retryLater(after: 7)),
+            (api(.unknown("maintenance"), status: 503), .retryLater(after: nil)),
+            (api(.unknown("token_expired"), status: 401), .generic),
             (.decode(message: "x"), .generic),
             (.cache(message: "x"), .generic),
             (.internal(message: "x"), .generic),
@@ -131,6 +138,27 @@ struct ClientErrorTests {
         #expect(!api(.rateLimited, status: 429).isQuantityLimit)
         #expect(!ClientError.network(message: "x").isQuantityLimit)
         #expect(api(.unknown("teapot"), status: 418).localizedMessage(.chinese) == "出了点问题，请稍后重试。")
+    }
+
+    @Test("不认识的错误码（不是 *_limit）：按 HTTP 状态给通用文案，不显示接口的说明，重试照 client-core 只看码")
+    func unknownCodesByStatus() {
+        #expect(api(.unknown("plan_gone"), status: 404).localizedMessage(.chinese) == "内容不存在或已被删除。")
+        #expect(
+            api(.unknown("bad_cron"), status: 422).localizedMessage(.english) == "Some of the details aren't valid.")
+        #expect(api(.unknown("bad_cron"), status: 400).recovery == .showFormError)
+        #expect(api(.unknown("no_entry"), status: 403).localizedMessage(.chinese) == "没有权限执行这个操作。")
+        #expect(api(.unknown("slow_down"), status: 429, retryAfter: 7).localizedMessage(.chinese) == "操作太频繁，请 7 秒后再试。")
+        #expect(api(.unknown("stale"), status: 409).localizedMessage(.chinese) == "内容已被修改，请刷新后重试。")
+        // 401 不说“登录已失效”（登录失效由 client-core 按码判断）。
+        #expect(api(.unknown("token_expired"), status: 401).localizedMessage(.chinese) == "出了点问题，请稍后重试。")
+        #expect(!api(.unknown("token_expired"), status: 401).requiresSignIn)
+        // 只影响界面怎么处理：码原样留着，判断类的属性、能不能重试照旧按码。
+        let unknown404 = api(.unknown("plan_gone"), status: 404)
+        #expect(unknown404.apiCode == .unknown("plan_gone") && !unknown404.isNotFound)
+        #expect(!api(.unknown("maintenance"), status: 503).isRetryable)
+        #expect(APIErrorCode.unknown("x_limit").handling(status: 409) == .unknown("x_limit"))
+        #expect(APIErrorCode.conflict.handling(status: 500) == .conflict)
+        #expect(APIErrorCode.unknown("teapot").handling(status: 418) == .internal)
     }
 
     @Test("开发者详情（“复制详情”）")

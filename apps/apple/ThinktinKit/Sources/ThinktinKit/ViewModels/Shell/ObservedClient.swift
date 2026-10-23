@@ -8,6 +8,9 @@ public enum ClientActivity: Sendable {
     case reachable
     /// 登录成功（`login`）。
     case signedIn(LoginResult)
+    /// 拿到了最新的用户（`me()`、`setLocale`、`updateProfile` 成功）：`AppModel.user` 跟着换（12.12：设置里换了语言、
+    /// 账号页改了昵称之后，别的页面再拿 `AppModel.user` 不是旧的）。
+    case userUpdated(User)
     /// 本地的登录状态没了：退出登录、注销账号、下线了这台设备。
     case signedOut
     /// 一个事件流的连接状态变了。
@@ -194,11 +197,15 @@ public final class ObservedClient: ClientProtocol, Sendable {
     }
 
     public func me() async throws -> User {
-        try await observe { try await base.me() }
+        let user = try await observe { try await base.me() }
+        report(.userUpdated(user))
+        return user
     }
 
     public func setLocale(_ locale: UserLocale) async throws -> User {
-        try await observe { try await base.setLocale(locale) }
+        let user = try await observe { try await base.setLocale(locale) }
+        report(.userUpdated(user))
+        return user
     }
 
     public func setPushToken(_ push: PushRegistration) async throws {
@@ -214,7 +221,9 @@ public final class ObservedClient: ClientProtocol, Sendable {
     }
 
     public func updateProfile(displayName: String?) async throws -> User {
-        try await observe { try await base.updateProfile(displayName: displayName) }
+        let user = try await observe { try await base.updateProfile(displayName: displayName) }
+        report(.userUpdated(user))
+        return user
     }
 
     public func sendSelfCode(purpose: SelfCodePurpose) async throws {

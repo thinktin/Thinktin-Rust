@@ -5,7 +5,7 @@ import ThinktinKit
 ///
 /// - 会停掉的、还没结束的任务；
 /// - 一起删掉的：这个实例自己的计划（agent 建的带 AI 生成标识）、产出物、模型路由、工作区和对话记录；
-/// - 会从别的流水线里移除的步骤，以及删完会失败的流水线（剩下的步骤依赖被删的那一步）；
+/// - 别的实例的流水线里在它上面的步骤（11.9）：步骤留着，正在生效的流水线暂停，改了步骤才能恢复、确认；
 /// - 会从哪些团队里移除（是负责人的、删完团队没人了的单独提醒）。
 ///
 /// “删除实例”之后还有一次系统确认框（二次确认）。删掉了就关掉，实例详情页负责离开、刷新实例列表。
@@ -119,8 +119,8 @@ struct InstanceDeleteSheet: View {
             parts.append(zh ? "停掉 \(impact.activeRuns) 个正在进行的任务" : "stop \(impact.activeRuns) running task(s)")
         }
         if !impact.pipelines.isEmpty {
-            parts.append(
-                zh ? "从 \(impact.pipelines.count) 条流水线里移除" : "remove it from \(impact.pipelines.count) pipeline(s)")
+            let count = impact.pipelines.count
+            parts.append(zh ? "让 \(count) 条流水线停下来，等你改步骤" : "hold \(count) pipeline(s) until you change their steps")
         }
         if !impact.teams.isEmpty {
             parts.append(zh ? "从 \(impact.teams.count) 个团队里移除" : "remove it from \(impact.teams.count) team(s)")
@@ -178,7 +178,7 @@ struct InstanceDeletionImpactView: View {
             }
 
             if !impact.pipelines.isEmpty {
-                AgentsSectionHeader(title: zh ? "会从这些流水线里移除" : "Will be removed from these pipelines")
+                AgentsSectionHeader(title: zh ? "这些流水线有步骤在它上面" : "Pipelines with steps on it")
                 AgentsGroup {
                     ForEach(impact.pipelines) { pipeline in
                         if pipeline.id != impact.pipelines.first?.id { Divider() }
@@ -214,7 +214,7 @@ struct InstanceDeletionImpactView: View {
     }
 }
 
-/// 一条流水线：被删的步骤，删完会不会失败。
+/// 一条流水线：在这个实例上的步骤，删除后流水线怎样（11.9：步骤留着，改到别的实例上之前恢复、确认都不行）。
 private struct InstancePipelineImpactRow: View {
     let pipeline: InstanceDeletionImpact.PipelineImpact
 
@@ -222,28 +222,17 @@ private struct InstancePipelineImpactRow: View {
 
     var body: some View {
         let zh = language == .chinese
-        let removed = AgentsText.list(pipeline.removedSteps.map(\.key), language: language)
+        let steps = AgentsText.list(pipeline.stepsOnInstance.map(\.key), language: language)
         AgentsRow(
-            systemImage: pipeline.breaksPipeline ? "exclamationmark.triangle" : "flowchart",
+            systemImage: pipeline.willPause ? "pause.circle" : "flowchart",
             title: pipeline.plan.title,
-            detail: zh ? "移除步骤：\(removed)" : "Steps removed: \(removed)",
+            detail: zh ? "在它上面的步骤：\(steps)" : "Steps on it: \(steps)",
             accessory: {
                 if AgentsText.isAIGenerated(pipeline.plan) { AIGeneratedLabel() }
-                if pipeline.breaksPipeline {
-                    let broken = AgentsText.list(pipeline.brokenSteps.map(\.key), language: language)
-                    Text(
-                        zh
-                            ? "步骤 \(broken) 依赖被移除的步骤，这条流水线下次运行会失败，需要去改。"
-                            : "Step \(broken) depends on a removed step, so this pipeline will fail next time until you edit it."
-                    )
+                Text(pipeline.effect.message(language))
                     .typography(.footnote)
                     .foregroundStyle(StatusTone.waiting.color)
                     .fixedSize(horizontal: false, vertical: true)
-                } else if pipeline.remainingSteps == 0 {
-                    Text(zh ? "流水线的步骤都会被移除。" : "All of the pipeline's steps are removed.")
-                        .typography(.footnote)
-                        .foregroundStyle(StatusTone.waiting.color)
-                }
             })
     }
 }

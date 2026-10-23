@@ -7,6 +7,8 @@ import Observation
 /// - 运行历史用 `listRuns(filter: .plan(id))`（11.8，服务端按计划过滤，跨实例，流水线的步骤在别的实例上跑也列得全），
 ///   只要根运行（一次触发一行，步骤在运行树里看），按 `before` 往下翻。
 /// - 等确认的计划不能直接恢复：`canResume` 为 false，界面给“去确认”（`confirmPlan` 带 revision）。
+/// - 流水线有步骤在已删除的实例上（11.9）：恢复报 409，查一次实例列表认出来（`blockedSteps`），说要先改步骤，不说
+///   “内容被改过了”（`PlanBlockedSteps`）。
 /// - “修改规则”：服务端没有改触发器的接口，是加一条新的、再删掉旧的；已经满 10 条时先删再加。
 @Observable @MainActor
 public final class PlanDetailModel {
@@ -32,6 +34,9 @@ public final class PlanDetailModel {
     public private(set) var actionError: ClientError?
     /// 删掉了：界面离开这一页。
     public private(set) var isDeleted = false
+    /// 恢复被挡住了（11.9）：这些步骤在已删除的实例上，服务端报 409，先改步骤才能恢复。恢复报冲突后查实例列表填上；
+    /// 换上新的计划（重新拉到、编辑页保存）时只留还在的。
+    public private(set) var blockedSteps: [PlanStep] = []
 
     /// 运行历史一页几个。
     public static let runsPageSize = 20
@@ -90,6 +95,7 @@ public final class PlanDetailModel {
     public func apply(_ plan: Plan) {
         guard plan.id == planID else { return }
         self.plan = plan
+        blockedSteps = blockedSteps.filter(plan.steps.contains)
         error = nil
         isMissing = false
         snapshots.record(plan)
@@ -173,9 +179,17 @@ public final class PlanDetailModel {
     @discardableResult
     public func setPaused(_ paused: Bool) async -> Bool {
         guard !isUpdating, paused ? canPause : canResume else { return false }
-        return await perform {
+        let ok = await perform {
             self.apply(try await self.client.setPlanPaused(self.planID, paused: paused))
         }
+        // 恢复报冲突：多半是步骤在已删除的实例上（11.9），认出来就换成专门的说明。
+        if !ok, !paused, actionError?.isConflict == true, let plan,
+            let steps = await PlanBlockedSteps.find(in: plan, client: client), !steps.isEmpty
+        {
+            blockedSteps = steps
+            actionError = nil
+        }
+        return ok
     }
 
     /// 删除（界面先二次确认）。已经不在了也算删掉了。

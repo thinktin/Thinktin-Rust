@@ -753,6 +753,23 @@ public enum APIErrorCode: OpenStringEnum {
 
     /// 数量上限类错误码的后缀。
     public static let quantityLimitSuffix = "_limit"
+
+    /// 界面按哪个码处理（`ClientError.recovery`、`localizedMessage`）：认识的码、数量上限（`*_limit`）就是它自己；
+    /// 这个版本不认识的别的码按 HTTP 状态归到一个认识的码（proto 的 `ErrorCode`、docs/i18n.md 第 3 节：客户端不认识的
+    /// 按状态给通用提示），比如以后加的 404 当“不存在”、422 当“填写的内容不正确”。归不进去的（418、500……）是 `internal`。
+    /// 401 不归到“登录失效”：登录失效由 client-core 按码判断、清会话，只改文案会说错。
+    public func handling(status: Int) -> APIErrorCode {
+        guard case .unknown = self, !isQuantityLimit else { return self }
+        switch status {
+        case 400, 422: return .invalid
+        case 403: return .forbidden
+        case 404, 410: return .notFound
+        case 409: return .conflict
+        case 429: return .rateLimited
+        case 503: return .unavailable
+        default: return .internal
+        }
+    }
 }
 
 /// 用量的分组方式（`usage(group:)`）。是客户端发出去的参数，所以不需要 `unknown`。

@@ -1,18 +1,18 @@
 import Foundation
 import Observation
 
-/// key 详情（WBS 12.4，`.credential(id)`）：改备注、启用 / 停用、换 key（`replaceCredentialSecret`）、每日上限、删除，
+/// key 详情（WBS 12.4，`.credential(id)`）：改备注、启用 / 停用、换 key（`replaceCredentialSecret`）、改每日上限、删除，
 /// 以及哪些实例的哪些别名在用它、最近 30 天的用量。
 ///
-/// - 启用、换 key 后服务端会唤醒等 key 的运行（7.11）：操作前数一下用这把 key 的实例上等 key 的运行，
-///   界面说“N 个任务马上重试”（`wakeResult`，为什么不数操作后的见 `KeyWaitProbe`）。界面再调一次
+/// - 启用、换 key、放宽或取消每日上限后服务端会唤醒等 key 的运行（7.11、11.9）：操作前数一下用这把 key 的实例上
+///   等 key 的运行，界面说“N 个任务马上重试”（`wakeResult`，为什么不数操作后的见 `KeyWaitProbe`）。界面再调一次
 ///   `AppModel.refreshBadges()`，抽屉跟着变。
 /// - 删除：服务端不让删还在路由里的 key（409）。先列出用它的别名（`references`），有的话不让删、给“去改路由”的入口。
-///   服务端数的路由包括已删除实例留下的（App 看不到），这时 409 之后说明原因、不再让删（`hasHiddenReferences`），
-///   建议停用。
+///   服务端只数没删除的实例（归档的也算）的别名（11.9 起，删除实例时别名一起删了）；409 之后重新查还是一个都没有，
+///   多半是刚有别处改了路由，说明原因、不再让删（`hasHiddenReferences`），刷新页面再看。
 /// - 停用还在用的 key 前提醒：用它的别名会改用备用 key，没有备用的任务会停在“等待 key”。还没查到有没有路由在用时
 ///   也提醒（说得笼统些），只有确定没人用才直接停用。
-/// - 每日上限只在添加时能设（`PATCH /v1/credentials/{id}` 不收它），这里只显示。
+/// - 每日上限（11.9，`setCredentialDailyLimit`）：可以改、可以取消（不限）。
 @Observable @MainActor
 public final class CredentialDetailModel {
     public let credentialID: CredentialID
@@ -44,11 +44,14 @@ public final class CredentialDetailModel {
     public private(set) var wakeResult: KeyWakeResult?
     /// 启用、换 key 成功了，但没数到等 key 的运行（拉不到）：界面只说通用的一句。
     public private(set) var didWake = false
+    public private(set) var isSettingDailyLimit = false
+    public private(set) var dailyLimitError: ClientError?
 
     public private(set) var isDeleting = false
     public private(set) var deleteError: ClientError?
     public private(set) var isDeleted = false
-    /// 服务端说还有路由在用（409），可 App 看得到的实例里一个都没有：多半是已删除实例留下的路由。这时不再让删。
+    /// 服务端说还有路由在用（409），可重新查了实例的路由一个都没有：多半是刚有别处改了路由。这时先不让删，刷新
+    /// （`load()`）后再说。11.9 起已删除实例的别名一起删了，不会再一直挡着。
     public private(set) var hasHiddenReferences = false
 
     @ObservationIgnored private let client: any ClientProtocol
@@ -89,6 +92,8 @@ public final class CredentialDetailModel {
             hasLoaded = true
             return
         }
+        // 重新查过引用：上次删除时“查不到却说在用”的不算了。
+        hasHiddenReferences = false
         await loadDetails()
         hasLoaded = true
     }
@@ -171,9 +176,9 @@ public final class CredentialDetailModel {
         }
         if references.isEmpty && hasHiddenReferences {
             return zh
-                ? "服务端说还有模型路由在用它，但不在你现有的实例里（可能是已删除的实例留下的），暂时删不了。不想再用它的话可以停用。"
-                : "The server says model routes still use it, but none of your current instances do (they may belong "
-                    + "to a deleted instance), so it can't be deleted for now. Disable it if you no longer want it used."
+                ? "服务端说还有模型路由在用它，但你的实例里没找到，可能刚有别处改了路由。下拉刷新后再试。"
+                : "The server says a model route still uses it, but none of your instances do. Routes may have just "
+                    + "changed elsewhere; pull to refresh and try again."
         }
         guard !references.isEmpty else { return nil }
         let count = Set(references.map(\.instanceID)).count
@@ -245,13 +250,61 @@ public final class CredentialDetailModel {
         return true
     }
 
+    // MARK: 每日上限
+
+    /// 改每日上限（11.9）：`text` 是输入框里的，规则和添加 key 一样（`CredentialRules.parseDailyLimit`：留空是不限，
+    /// 能写千分位）；不对的不发请求。没变直接算成功。放宽（比原来的大）或取消原来有的上限时，服务端唤醒等 key 的运行，
+    /// 和启用一样数一下（`wakeResult`）；收紧、原来就不限的不唤醒。
+    @discardableResult
+    public func setDailyLimit(_ text: String) async -> Bool {
+        guard let credential, !isSettingDailyLimit, case .success(let limit) = CredentialRules.parseDailyLimit(text)
+        else { return false }
+        if limit == credential.dailyTokenLimit { return true }
+        let wakes = Self.limitChangeWakes(from: credential.dailyTokenLimit, to: limit)
+        isSettingDailyLimit = true
+        dailyLimitError = nil
+        wakeResult = nil
+        didWake = false
+        defer { isSettingDailyLimit = false }
+        var before: Int?
+        if wakes { before = await waitingRuns() }
+        do {
+            self.credential = try await client.setCredentialDailyLimit(
+                credentialID, dailyTokenLimit: limit.map { UInt64($0) })
+        } catch {
+            dailyLimitError = AgentsErrors.from(error)
+            return false
+        }
+        if wakes { await noteWake(before: before) }
+        return true
+    }
+
+    /// 关掉改上限的表单时清掉上次的错误。
+    public func clearDailyLimitError() {
+        dailyLimitError = nil
+    }
+
+    /// 改上限后服务端会不会唤醒等 key 的运行（和 crates/gateway/src/routes/credentials.rs 一样）：原来有上限，改成不限
+    /// 或者比原来大。
+    public nonisolated static func limitChangeWakes(from old: Int?, to new: Int?) -> Bool {
+        guard let old else { return false }
+        guard let new else { return true }
+        return new > old
+    }
+
     // MARK: 换 key
 
-    /// 换 key（同一个厂商、同一条记录，路由不用改）。
+    /// 换 key（同一个厂商、同一条记录，路由不用改）。这家的订阅类 key 本地就认得出（`keyRejection(for:)`）：不发请求，
+    /// 原因记进 `replaceRejection`。
     @discardableResult
     public func replaceSecret(_ newKey: String) async -> Bool {
         let key = CredentialRules.normalizedKey(newKey)
         guard credential != nil, !isReplacing, CredentialRules.keyProblem(key) == nil else { return false }
+        if let rejection = keyRejection(for: key) {
+            replaceRejection = rejection
+            replaceError = nil
+            return false
+        }
         isReplacing = true
         replaceRejection = nil
         replaceError = nil
@@ -273,6 +326,13 @@ public final class CredentialDetailModel {
         }
         await noteWake(before: before)
         return true
+    }
+
+    /// 换 key 时本地就看得出会被拒的（11.9，规则和服务端的 `check_key` 一样）：这把 key 的厂商的订阅类 key
+    /// （`VendorInfo.subscriptionKeyPrefix(of:)`）。厂商表还没拉到、不是订阅类 key 时为 nil。服务端照样检查。
+    public func keyRejection(for newKey: String) -> CredentialRejection? {
+        guard let credential, let vendor = vendors.first(where: { $0.id == credential.vendor }) else { return nil }
+        return vendor.subscriptionKeyPrefix(of: newKey) == nil ? nil : .subscriptionKey
     }
 
     /// 关掉换 key 的表单时清掉上次的错误。
@@ -300,7 +360,7 @@ public final class CredentialDetailModel {
             } else {
                 deleteError = failure
                 // 别处刚把它配进了路由（409）：重新查一次引用，界面换成“先改路由”。查完还是一个都没有：
-                // 是看不到的路由（已删除实例留下的），不再让删。
+                // 多半是路由又变了，先不让删，刷新后再说。
                 if failure.isConflict,
                     case .success(let refs) = await Self.findReferences(to: credentialID, client: client)
                 {

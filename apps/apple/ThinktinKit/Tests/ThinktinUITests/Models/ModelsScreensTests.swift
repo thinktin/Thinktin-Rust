@@ -46,7 +46,7 @@ struct ModelsScreensTests {
                 .previewShell(.english, scheme: .dark, client: ModelsPreviewClients.customKey()))
     }
 
-    @Test("改备注、换 key 的表单")
+    @Test("改备注、换 key、改每日上限的表单")
     func sheets() {
         let mock = MockClient(autoReply: false)
         let model = CredentialDetailModel(
@@ -54,6 +54,12 @@ struct ModelsScreensTests {
         hostAndLayout(CredentialRenameSheet(model: model) {}.previewShell())
         hostAndLayout(ReplaceCredentialSheet(model: model) {}.previewShell(.english, scheme: .dark))
         hostAndLayout(ReplaceCredentialSheet(model: model) {}.previewShell().dynamicTypeSize(.accessibility3))
+        hostAndLayout(CredentialDailyLimitSheet(model: model) {}.previewShell())
+        hostAndLayout(CredentialDailyLimitSheet(model: model) {}.previewShell(.english, scheme: .dark))
+        // 输入框里的问题：不是正整数的才算，留空是不限。
+        #expect(CredentialDailyLimitSheet.problem("0") == .notPositiveInteger)
+        #expect(CredentialDailyLimitSheet.problem("") == nil)
+        #expect(CredentialDailyLimitSheet.problem("2,000,000") == nil)
     }
 
     @Test("key 的一行、表格的一行、总计卡片、图能出图")

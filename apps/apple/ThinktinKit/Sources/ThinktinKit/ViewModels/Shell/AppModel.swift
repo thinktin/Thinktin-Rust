@@ -14,8 +14,10 @@ import Observation
 ///   之后一直停在升级页（升级就是重装）。
 /// - 推送（`receive(push:)`、`open(push:)`）：子类型是账号冻结、解冻的先处理账号状态（docs/push.md 第 4 节）。
 /// - 语言（12.12，传了 `preferences` 时）：启动时最先把请求语言换成界面语言打头的（没登录也要，新用户按它注册）；
-///   确认完账号、登录成功之后比较服务端的用户语言（`me().locale`）和界面语言，不一致就调 `setLocale`
+///   确认完账号、登录成功、解冻之后比较服务端的用户语言（`me().locale`）和界面语言，不一致就调 `setLocale`
 ///   （`LanguageSettingsModel.syncOnLaunch(user:)`，静默进行，失败了下次启动再试）。
+/// - 用户（`user`）：启动、登录时拿到，之后任何页面调 `me()`、`setLocale`、`updateProfile` 成功了都换上新的
+///   （`ClientActivity.userUpdated`），设置页、账号页拿到的不是旧的（比如刚换过的语言）。
 /// - 没登录、冻结、要升级时，深链和推送由 `Router` 先记下，回到正常状态再跳。
 ///
 /// “进行中”的角标和实例行的“等你处理”用 11.8 的 `listRuns(filter: .active)`：跨实例、只要没结束的，一次请求；
@@ -245,6 +247,8 @@ public final class AppModel {
             user = me
             guard me.status != .frozen, phase == .frozen else { return }
             enter(.signedIn)
+            // 冻结着启动（或登录）的没同步过语言。
+            await syncLanguage()
             await refresh()
         } catch {
             if error is CancellationError { return }
@@ -357,6 +361,8 @@ public final class AppModel {
             isOffline = false
         case .signedIn(let result):
             didSignIn(result)
+        case .userUpdated(let updated):
+            userUpdated(updated)
         case .signedOut:
             enter(.signedOut)
         case .stream(let status, let instanceID, let token):
@@ -386,6 +392,13 @@ public final class AppModel {
             await syncLanguage()
             await refresh()
         }
+    }
+
+    /// 别的页面拿到了最新的用户：同一个账号、还登录着（正常或冻结）才换上。冻结、解冻由 `verifyAccount`、
+    /// `recheckAccount` 判断，这里只换用户。
+    private func userUpdated(_ updated: User) {
+        guard phase == .signedIn || phase == .frozen, user == nil || user?.id == updated.id else { return }
+        user = updated
     }
 
     /// 客户端说过要升级（`upgradeRequired()`，不联网）就进升级页。返回进没进。
@@ -446,12 +459,13 @@ public final class AppModel {
     }
 
     /// 服务端的用户语言和界面语言不一致就改（12.12，`LanguageSettingsModel.syncOnLaunch(user:)`）：启动时确认完账号、
-    /// 登录成功之后各一次。静默进行（网络不通、服务端出错都不提示，下次启动再试）；不在正常状态（冻结了、退出了）时不做。
+    /// 登录成功、解冻之后各一次。静默进行（网络不通、服务端出错都不提示，下次启动再试）；不在正常状态（冻结了、退出了）
+    /// 时不做。还不知道用户（启动时 `me()` 失败了，多半是离线）也不做：不再多等一次 `me()`，实例和角标的刷新不被它耽误。
     private func syncLanguage() async {
-        guard let language, phase == .signedIn else { return }
-        let synced = await language.syncOnLaunch(user: user)
+        guard let language, phase == .signedIn, let known = user else { return }
+        let synced = await language.syncOnLaunch(user: known)
         // 等的时候退出登录、换了账号的不用。
-        guard phase == .signedIn, let synced, user == nil || user?.id == synced.id else { return }
+        guard phase == .signedIn, let synced, user?.id == synced.id else { return }
         user = synced
     }
 

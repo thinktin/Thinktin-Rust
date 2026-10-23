@@ -5,7 +5,8 @@ import ThinktinKit
 ///
 /// - 头部：厂商首字头像、名字（改备注）、厂商和后 4 位；
 /// - 启用开关：停用还在用的 key 前先确认；启用、换 key 后服务端唤醒等 key 的任务，页面说唤醒了几个；
-/// - 换 key（`replaceCredentialSecret`，路由不用改）；信息：厂商、协议、每日上限（只能添加时设）、添加时间；
+/// - 换 key（`replaceCredentialSecret`，路由不用改）；信息：厂商、协议、每日上限（点了改，11.9；放宽、取消后等 key 的任务
+///   马上重试）、添加时间；
 /// - 最近 30 天的用量；用在哪些实例的哪些别名（点开去那个实例的路由）；
 /// - 删除：还在路由里的不让删，先去改路由。
 struct CredentialDetailScreen: View {
@@ -22,6 +23,7 @@ private struct CredentialDetailContent: View {
     @State private var model: CredentialDetailModel
     @State private var isRenaming = false
     @State private var isReplacing = false
+    @State private var isEditingLimit = false
     @State private var isConfirmingDisable = false
     @State private var isConfirmingDelete = false
 
@@ -80,6 +82,11 @@ private struct CredentialDetailContent: View {
                             isReplacing = true
                         } label: {
                             Label(zh ? "换 key" : "Replace key", systemImage: "arrow.triangle.2.circlepath")
+                        }
+                        Button {
+                            isEditingLimit = true
+                        } label: {
+                            Label(zh ? "改每日上限" : "Change daily limit", systemImage: "gauge.with.dots.needle.33percent")
                         }
                         Button(role: .destructive) {
                             isConfirmingDelete = true
@@ -142,6 +149,16 @@ private struct CredentialDetailContent: View {
             content: {
                 NavigationStack {
                     ReplaceCredentialSheet(model: model) { isReplacing = false }
+                }
+                .shellEnvironment(app)
+                .tint(Theme.accent)
+            }
+        )
+        .sheet(
+            isPresented: $isEditingLimit, onDismiss: { model.clearDailyLimitError() },
+            content: {
+                NavigationStack {
+                    CredentialDailyLimitSheet(model: model) { isEditingLimit = false }
                 }
                 .shellEnvironment(app)
                 .tint(Theme.accent)
@@ -283,7 +300,8 @@ private struct CredentialDetailContent: View {
                 Divider()
                 AgentsRow(
                     systemImage: "gauge.with.dots.needle.33percent", title: zh ? "每日上限" : "Daily limit",
-                    detail: ModelsText.dailyLimit(credential?.dailyTokenLimit, language: language))
+                    detail: ModelsText.dailyLimit(credential?.dailyTokenLimit, language: language),
+                    action: canWrite ? { @MainActor in isEditingLimit = true } : nil)
                 Divider()
                 AgentsRow(
                     systemImage: "calendar.badge.plus", title: zh ? "添加于" : "Added",
@@ -425,6 +443,72 @@ struct CredentialRenameSheet: View {
     }
 }
 
+/// 改每日上限（key 详情弹出，11.9 的 `setCredentialDailyLimit`）：留空是不限，规则和添加 key 时一样；放宽或取消后
+/// 服务端唤醒等 key 的任务，详情页的启用开关下面说唤醒了几个。
+struct CredentialDailyLimitSheet: View {
+    let model: CredentialDetailModel
+    let onClose: @MainActor () -> Void
+
+    @State private var draft: String
+    @Environment(AppModel.self) private var app
+    @Environment(\.displayLanguage) private var language
+
+    init(model: CredentialDetailModel, onClose: @escaping @MainActor () -> Void) {
+        self.model = model
+        self.onClose = onClose
+        _draft = State(initialValue: model.credential?.dailyTokenLimit.map(String.init) ?? "")
+    }
+
+    var body: some View {
+        let zh = language == .chinese
+        let problem = Self.problem(draft)
+        ScrollView {
+            VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
+                ModelsField(
+                    title: zh ? "每日上限（token 数）" : "Daily limit (tokens)", text: $draft,
+                    prompt: zh ? "不限" : "No limit", kind: .number, problem: problem?.message(language),
+                    hint: zh
+                        ? "留空就是不限。放宽或取消后，等 key 的任务马上重试。"
+                        : "Leave it empty for no limit. Raising or removing it lets tasks waiting for a key retry right away."
+                )
+                if let error = model.dailyLimitError {
+                    ErrorBanner(error)
+                }
+            }
+            .agentsPageLayout()
+        }
+        .background(Theme.paper)
+        .agentsNavigationTitle(zh ? "每日上限" : "Daily limit")
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button(zh ? "取消" : "Cancel") { onClose() }
+                    .disabled(model.isSettingDailyLimit)
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button(model.isSettingDailyLimit ? (zh ? "正在保存…" : "Saving…") : (zh ? "保存" : "Save")) {
+                    let text = draft
+                    let app = self.app
+                    Task {
+                        guard await model.setDailyLimit(text) else { return }
+                        onClose()
+                        // 放宽、取消上限后服务端唤醒等 key 的任务：抽屉里的等待状态跟着变。
+                        if model.didWake { await app.refreshBadges() }
+                    }
+                }
+                .disabled(problem != nil || model.isSettingDailyLimit || app.isOffline)
+            }
+        }
+        .interactiveDismissDisabled(model.isSettingDailyLimit)
+        .presentationDetents([.medium, .large])
+    }
+
+    /// 输入框里的有什么问题（不是正整数）；留空、没问题为 nil。
+    static func problem(_ text: String) -> CredentialFieldProblem? {
+        if case .failure(let problem) = CredentialRules.parseDailyLimit(text) { return problem }
+        return nil
+    }
+}
+
 /// 换 key（key 详情弹出）：打码输入新 key，被拒时显示原因。
 struct ReplaceCredentialSheet: View {
     let model: CredentialDetailModel
@@ -441,9 +525,11 @@ struct ReplaceCredentialSheet: View {
             ModelsText.vendorName($0.vendor, vendors: model.vendors, language: language)
         }
         let localProblem = CredentialRules.keyProblem(newKey)
+        // 这家的订阅类 key 边输边提示（11.9，厂商表的前缀），换不了。
+        let localRejection = model.keyRejection(for: newKey)
         let shownProblem: String? = {
             if let localProblem, localProblem != .required || didAttempt { return localProblem.message(language) }
-            if let rejection = model.replaceRejection, rejection.concernsKey {
+            if let rejection = localRejection ?? model.replaceRejection, rejection.concernsKey {
                 return rejection.message(vendorName: vendor ?? "", language: language)
             }
             return nil
@@ -493,7 +579,7 @@ struct ReplaceCredentialSheet: View {
                         await app.refreshBadges()
                     }
                 }
-                .disabled(model.isReplacing)
+                .disabled(model.isReplacing || localRejection != nil)
             }
         }
         .interactiveDismissDisabled(model.isReplacing)

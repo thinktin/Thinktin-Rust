@@ -97,9 +97,9 @@ public enum ModelsText {
     /// 每日上限只能在添加时设（服务端改不了）。
     public static func dailyLimitFootnote(_ language: DisplayLanguage = .current) -> String {
         language == .chinese
-            ? "每日上限在添加 key 时设定，之后不能改；要换上限，请重新添加一把。用完当天的额度后，这把 key 当天不再用，降级链里有备用 key 时改用备用的。"
-            : "The daily limit is set when you add a key and can't be changed later; add the key again to use a different "
-                + "limit. Once a day's budget is used up, the key is skipped for the rest of the day and fallbacks take over."
+            ? "用完当天的额度后，这把 key 当天不再用，降级链里有备用 key 时改用备用的。上限随时可以改，放宽或取消后等 key 的任务马上重试。"
+            : "Once a day's budget is used up, the key is skipped for the rest of the day and fallbacks take over. You can "
+                + "change the limit any time; raising or removing it lets tasks waiting for a key retry right away."
     }
 
     // MARK: 别名

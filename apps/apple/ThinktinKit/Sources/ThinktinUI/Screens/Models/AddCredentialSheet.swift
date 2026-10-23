@@ -129,8 +129,9 @@ private struct AddCredentialContent: View {
                 kind: .number,
                 problem: fieldProblem(.dailyLimit),
                 hint: zh
-                    ? "当天用满这么多 token 后不再用这把 key（有备用的改用备用）。添加后不能改。"
-                    : "Once a day's tokens reach this, the key is skipped (fallbacks take over). Can't be changed later."
+                    ? "当天用满这么多 token 后不再用这把 key（有备用的改用备用）。之后可以在 key 详情里改。"
+                    : "Once a day's tokens reach this, the key is skipped (fallbacks take over). You can change it later "
+                        + "in the key's details."
             )
             consentSection
         }

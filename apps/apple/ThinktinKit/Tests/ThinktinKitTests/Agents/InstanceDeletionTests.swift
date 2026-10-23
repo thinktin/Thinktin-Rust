@@ -3,12 +3,12 @@ import Testing
 
 @testable import ThinktinKit
 
-// 删除实例：先列出会被级联删掉的流水线步骤和团队成员身份，二次确认后再删。
+// 删除实例：先列出受影响的别的流水线（11.9：步骤留着，计划停下来等改步骤）和团队成员身份，二次确认后再删。
 
 @MainActor
 @Suite("删除实例")
 struct InstanceDeletionTests {
-    @Test("算影响：被删的步骤、依赖它的步骤、团队成员身份、没结束的运行")
+    @Test("算影响：在它上面的步骤、删除后流水线暂停、团队成员身份、没结束的运行")
     func compute() {
         let plans = [AgentsFixture.pipelinePlan, DemoData.state().plans[1]]
         let teams =
@@ -31,11 +31,9 @@ struct InstanceDeletionTests {
         #expect(impact.pipelines.count == 1)
         let pipeline = impact.pipelines[0]
         #expect(pipeline.id == AgentsFixture.pipelinePlanID)
-        #expect(pipeline.removedSteps.map(\.key) == ["review"])
-        #expect(pipeline.brokenSteps.map(\.key) == ["notes"])
-        #expect(pipeline.remainingSteps == 3)
-        #expect(pipeline.breaksPipeline)
-        #expect(impact.breaksPipelines)
+        #expect(pipeline.stepsOnInstance.map(\.key) == ["review"])
+        #expect(pipeline.effect == .paused && pipeline.willPause)
+        #expect(impact.pipelinesToPause.map(\.id) == [AgentsFixture.pipelinePlanID])
         #expect(impact.teams.map(\.teamName) == ["发版小组", "独行"])
         #expect(impact.teams.map(\.isLead) == [true, true])
         #expect(impact.teams.map(\.remainingMembers) == [1, 0])
@@ -52,23 +50,52 @@ struct InstanceDeletionTests {
             artifactCount: nil)
         #expect(impact.ownPlans.isEmpty)
         #expect(!impact.hasCascade)
-        #expect(!impact.breaksPipelines)
+        #expect(impact.pipelinesToPause.isEmpty)
         #expect(impact.activeRuns == 0)
         #expect(impact.artifactCount == nil)
     }
 
-    @Test("步骤都在这个实例上、没人依赖它：移除但不会让流水线失败")
-    func removalWithoutBreakage() {
-        var plan = AgentsFixture.pipelinePlan
-        plan.steps = [
-            PlanStep(key: "a", instanceID: DemoData.writerID, prompt: "a"),
-            PlanStep(key: "b", instanceID: DemoData.reviewerID, prompt: "b", dependsOn: ["a"]),
-        ]
+    @Test("已经暂停、在等确认的流水线：服务端不改状态（只暂停正在生效的），但同样要先改步骤")
+    func pausedAndAwaitingPipelines() {
+        var paused = AgentsFixture.pipelinePlan
+        paused.isPaused = true
+        var awaiting = AgentsFixture.pipelinePlan
+        awaiting.id = "awaiting"
+        awaiting.awaitingConfirmation = true
         let impact = InstanceDeletionImpact.compute(
-            instanceID: DemoData.reviewerID, plans: [plan], teams: [], runs: [], artifactCount: 0)
-        #expect(impact.pipelines.first?.removedSteps.map(\.key) == ["b"])
-        #expect(impact.pipelines.first?.breaksPipeline == false)
-        #expect(impact.pipelines.first?.remainingSteps == 1)
+            instanceID: DemoData.reviewerID, plans: [paused, awaiting], teams: [], runs: [], artifactCount: 0)
+        #expect(impact.pipelines.map(\.effect) == [.stillPaused, .confirmationBlocked])
+        #expect(impact.pipelines.allSatisfy { $0.stepsOnInstance.map(\.key) == ["review"] })
+        #expect(impact.pipelinesToPause.isEmpty)
+        #expect(impact.hasCascade)
+    }
+
+    @Test("影响的说明：中英文都有，说清楚要先改步骤")
+    func effectMessages() {
+        typealias Effect = InstanceDeletionImpact.PipelineImpact.Effect
+        #expect(Effect.paused.message(.chinese) == "删除后这条流水线会暂停，把这些步骤改到别的实例上才能恢复。")
+        #expect(
+            Effect.paused.message(.english)
+                == "This pipeline will be paused. Move these steps to another instance to resume it.")
+        for effect in [Effect.paused, .stillPaused, .confirmationBlocked] {
+            #expect(effect.message(.chinese).contains("改到别的实例上"))
+            #expect(effect.message(.english).contains("Move these steps to another instance"))
+        }
+        #expect(Effect.confirmationBlocked.message(.chinese).contains("确认"))
+    }
+
+    @Test("删除之后和 Mock 一致：步骤留着，正在生效的流水线暂停，恢复报 409")
+    func deletionMatchesMock() async throws {
+        let mock = AgentsFixture.mockWithPipeline()
+        let result = try #require(await InstanceDeletionImpact.check(instanceID: DemoData.reviewerID, client: mock))
+        #expect(result.impact.pipelinesToPause.map(\.id) == [AgentsFixture.pipelinePlanID])
+        try await mock.deleteInstance(DemoData.reviewerID)
+        let plan = try await mock.getPlan(AgentsFixture.pipelinePlanID)
+        #expect(plan.isPaused)
+        #expect(plan.steps.map(\.key) == ["collect", "review", "notes", "notify"], "步骤留着")
+        await #expect(throws: ClientError.self) {
+            _ = try await mock.setPlanPaused(AgentsFixture.pipelinePlanID, paused: false)
+        }
     }
 
     @Test("查影响：别的计划要拉详情才看得到步骤")
@@ -80,7 +107,7 @@ struct InstanceDeletionTests {
         #expect(!impact.isIncomplete)
         #expect(impact.ownPlans.map(\.id) == [DemoData.agentPlanID])
         #expect(impact.pipelines.map(\.id) == [AgentsFixture.pipelinePlanID])
-        #expect(impact.pipelines.first?.brokenSteps.map(\.key) == ["notes"])
+        #expect(impact.pipelines.first?.stepsOnInstance.map(\.key) == ["review"])
         #expect(impact.teams.map(\.teamID) == [DemoData.releaseTeamID])
         #expect(impact.teams.first?.isLead == true)
         // npm 发布还在跑；PR 检查已经失败了。

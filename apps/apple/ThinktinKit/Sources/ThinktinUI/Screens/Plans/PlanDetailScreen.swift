@@ -227,6 +227,12 @@ private struct PlanDetailContent: View {
                 }
             }
         }
+        let blocked = blockedSteps(plan)
+        if !blocked.isEmpty {
+            AgentsNotice(
+                systemImage: "exclamationmark.triangle", tone: .waiting,
+                text: PlanBlockedSteps.message(blocked, confirming: plan.awaitingConfirmation, language: language))
+        }
         if plan.hasInvalidTriggers {
             AgentsNotice(
                 systemImage: "exclamationmark.triangle", tone: .failure,
@@ -338,11 +344,19 @@ private struct PlanDetailContent: View {
         }
     }
 
+    /// 在已删除的实例上的步骤（11.9，恢复、确认会报 409）：恢复报过冲突的用查到的；没有时按应用框架的实例列表看
+    /// （拿到过才看，只看暂停、等确认的）。
+    private func blockedSteps(_ plan: Plan) -> [PlanStep] {
+        if !model.blockedSteps.isEmpty { return model.blockedSteps }
+        guard plan.isPipeline, plan.isPaused || plan.awaitingConfirmation, app.hasLoadedInstances else { return [] }
+        return PlanBlockedSteps.steps(in: plan, liveInstances: Set(app.instances.map(\.id)))
+    }
+
     private func actions(_ plan: Plan) -> some View {
         let zh = language == .chinese
         let model = self.model
         return VStack(spacing: Metrics.Spacing.s) {
-            if model.canResume {
+            if model.canResume, blockedSteps(plan).isEmpty {
                 PillButton(zh ? "恢复" : "Resume", systemImage: "play") {
                     Task { await model.setPaused(false) }
                 }
@@ -372,7 +386,7 @@ private struct PlanDetailContent: View {
                 Label(zh ? "编辑" : "Edit", systemImage: "pencil")
             }
             .disabled(!canWrite)
-            if model.canResume {
+            if model.canResume, model.plan.map(blockedSteps)?.isEmpty ?? true {
                 Button {
                     Task { await model.setPaused(false) }
                 } label: {

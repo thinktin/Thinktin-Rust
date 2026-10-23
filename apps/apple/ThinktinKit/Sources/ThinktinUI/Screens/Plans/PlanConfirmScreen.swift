@@ -7,7 +7,8 @@ import ThinktinKit
 /// - 顶上说 agent 做了什么（新建 / 改了），有 App 见过的旧版本时列出改了什么（之前 → 现在），没有时请用户完整核对；
 /// - 标题、目标（agent 写的，带 AI 生成标识）、实例、触发规则（说成人话，确认后的下一次在本地预测）、策略、流水线步骤，
 ///   改过的地方标“改过”；
-/// - “确认生效”按看到的版本确认；确认时发现又被改过，换成最新的内容、标出改动，请用户再看一遍；
+/// - “确认生效”按看到的版本确认；确认时发现又被改过，换成最新的内容、标出改动，请用户再看一遍；流水线有步骤在已删除的
+///   实例上时（11.9）说要先改步骤，不能确认；
 /// - “修改后确认”打开编辑页，保存后回到这里按新版本确认；“删除”二次确认后删掉。
 ///
 /// 等确认的计划不能用暂停 / 恢复绕过去，这一页没有那两个按钮。
@@ -129,6 +130,12 @@ private struct PlanConfirmContent: View {
         if case .updated(let changes) = kind, !changes.isEmpty {
             changesCard(changes, title: zh ? "改了什么" : "What changed", plan: plan)
         }
+        let blocked = blockedSteps(plan)
+        if !blocked.isEmpty {
+            AgentsNotice(
+                systemImage: "exclamationmark.triangle", tone: .waiting,
+                text: PlanBlockedSteps.message(blocked, confirming: true, language: language))
+        }
         if let error = model.actionError {
             ErrorBanner(error, onDismiss: { model.clearActionError() })
         }
@@ -239,6 +246,13 @@ private struct PlanConfirmContent: View {
         }
     }
 
+    /// 在已删除的实例上的步骤（11.9，确认会报 409）：确认报过冲突的用查到的；没有时按应用框架的实例列表看（拿到过才看）。
+    private func blockedSteps(_ plan: Plan) -> [PlanStep] {
+        if !model.blockedSteps.isEmpty { return model.blockedSteps }
+        guard plan.isPipeline, app.hasLoadedInstances else { return [] }
+        return PlanBlockedSteps.steps(in: plan, liveInstances: Set(app.instances.map(\.id)))
+    }
+
     private func actions(_ plan: Plan) -> some View {
         let zh = language == .chinese
         let model = self.model
@@ -249,7 +263,7 @@ private struct PlanConfirmContent: View {
             ) {
                 Task { await model.confirm() }
             }
-            .disabled(!model.canConfirm || !canWrite)
+            .disabled(!model.canConfirm || !canWrite || !blockedSteps(plan).isEmpty)
             PillButton(zh ? "修改后确认" : "Edit, then confirm", systemImage: "pencil", kind: .secondary) {
                 isEditing = true
             }
