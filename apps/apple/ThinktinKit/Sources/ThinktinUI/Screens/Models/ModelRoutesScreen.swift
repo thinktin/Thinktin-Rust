@@ -344,6 +344,8 @@ private struct RouteCard: View {
                 }
                 if let problem = model.keyProblem(draft.credentialID) {
                     FieldMessage(text: problem.message(language))
+                } else if model.keepsDisabledKey(draft.credentialID) {
+                    RouteKeptKeyNotice()
                 }
                 RouteModelField(
                     model: model,
@@ -427,6 +429,8 @@ private struct FallbackEditor: View {
             }
             if let problem = model.keyProblem(fallback.credentialID) {
                 FieldMessage(text: problem.message(language))
+            } else if model.keepsDisabledKey(fallback.credentialID) {
+                RouteKeptKeyNotice()
             }
             RouteModelField(
                 model: model,
@@ -591,4 +595,17 @@ private struct RouteModelField: View {
 #Preview("模型路由 · 没有 key · 深色英文") {
     ModelRoutesScreen(instanceID: DemoData.writerID)
         .previewShell(.english, scheme: .dark, client: ModelsPreviewClients.noKeys())
+}
+
+/// 别名里留着的停用 key（11.9：实例原来就用着的可以留着）：提示一句，不是错误。
+private struct RouteKeptKeyNotice: View {
+    @Environment(\.displayLanguage) private var language
+
+    var body: some View {
+        Label(ModelsText.keptDisabledKeyNotice(language), systemImage: "pause.circle")
+            .typography(.footnote)
+            .foregroundStyle(Theme.inkSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
 }

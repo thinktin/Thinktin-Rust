@@ -8,7 +8,9 @@ import Observation
 ///   别的别名按格式自己加，一个实例最多 16 个。
 /// - 每个别名一把主 key 加最多 3 个备用（降级链），上游模型可以选厂商推荐的，也可以手填（1 到 128 个字符）。
 /// - 可选的 key 按 `agent.canUse(_:)` 过滤（key 的协议要包含 agent 的 `activeProtocol`；模型网关不在协议之间转换，
-///   配错了运行会卡在等 key），停用的也不列；已经配上的停用、删掉、不兼容的 key 标成问题，改好才能保存。
+///   配错了运行会卡在等 key），停用的也不列；删掉、不兼容的 key 和新选的停用 key 标成问题，改好才能保存。实例原来就用着
+///   的停用 key（主 key 或备用，任何别名）可以留着（11.9，服务端照样收，运行时跳过它），只提示一句（`keepsDisabledKey`），
+///   不挡着改别的别名。
 /// - 保存是整体替换（`setModelRoutes`）。保存前路由里有没同意过的厂商时，界面先确认数据共享（`vendorsNeedingConsent`，
 ///   App Store 5.1.2(i)）。保存后服务端唤醒卡在等 key 的运行：重新拉这个实例的运行（刷新缓存，对话页跟着变），
 ///   界面说保存前在等的几个会马上重试（`saveResult`，为什么不数保存后的见 `KeyWaitProbe`），再调
@@ -387,15 +389,27 @@ public final class ModelRoutesModel {
 
     // MARK: 校验
 
-    /// 一把 key 能不能用在这里；能用为 nil。
+    /// 一把 key 能不能用在这里；能用为 nil。停用的 key 只有实例原来就用着的才能留着（11.9，`keepsDisabledKey`）。
     public func keyProblem(_ credentialID: CredentialID?) -> RouteProblem? {
         guard let credentialID else { return .keyMissing }
         guard let credential = credential(credentialID) else { return .keyDeleted }
-        if credential.isDisabled { return .keyDisabled }
+        if credential.isDisabled && !keptCredentialIDs.contains(credentialID) { return .keyDisabled }
         if !canUse(credential), let required = requiredProtocol {
             return .keyIncompatible(agentName: agentName, required: required)
         }
         return nil
+    }
+
+    /// 停用了、但实例原来就用着（服务端现在的路由里，主 key 或备用）的 key：可以留着（11.9，运行时跳过它，有备用的改用
+    /// 备用），界面提示一句（`ModelsText.keptDisabledKeyNotice`），不算问题。
+    public func keepsDisabledKey(_ credentialID: CredentialID?) -> Bool {
+        guard let credentialID, let credential = credential(credentialID), credential.isDisabled else { return false }
+        return keptCredentialIDs.contains(credentialID)
+    }
+
+    /// 实例现在就用着的 key（服务端的路由，和服务端 `set_model_routes` 的 kept 一样）。
+    private var keptCredentialIDs: Set<CredentialID> {
+        Set(savedRoutes.flatMap { [$0.credentialID] + $0.fallbacks.map(\.credentialID) })
     }
 
     /// 上游模型名有什么问题；没问题为 nil。
@@ -630,7 +644,7 @@ public enum RouteProblem: Hashable, Sendable {
     case aliasInvalid
     case aliasDuplicate
     case keyMissing
-    /// 选的 key 停用了（服务端不收停用的 key）。
+    /// 选的 key 停用了（服务端不收新引用的停用 key；实例原来就用着的可以留着，不算这个问题）。
     case keyDisabled
     /// 选的 key 删掉了。
     case keyDeleted

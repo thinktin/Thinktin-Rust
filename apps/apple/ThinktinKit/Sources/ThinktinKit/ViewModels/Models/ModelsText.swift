@@ -102,6 +102,14 @@ public enum ModelsText {
                 + "change the limit any time; raising or removing it lets tasks waiting for a key retry right away."
     }
 
+    /// 别名里留着的停用 key 下面那句（11.9：实例原来就用着的可以留着）。
+    public static func keptDisabledKeyNotice(_ language: DisplayLanguage = .current) -> String {
+        language == .chinese
+            ? "这把 key 已经停用了，运行时会跳过它（有备用的改用备用）。可以先留着，也可以换一把。"
+            : "This key is disabled, so it's skipped when tasks run (fallbacks take over). You can keep it here or "
+                + "pick another."
+    }
+
     // MARK: 别名
 
     /// 别名的标签：main 是“默认”，fast 是“轻量”，别的没有。

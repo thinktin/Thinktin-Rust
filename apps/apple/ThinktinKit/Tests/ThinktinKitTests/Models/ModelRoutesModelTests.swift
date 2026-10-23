@@ -296,14 +296,19 @@ struct ModelRoutesModelTests {
         #expect(model.saveResult?.wake == KeyWakeResult(retried: 1))
     }
 
-    @Test("服务端不收（key 刚被停用）：显示错误，重新拉 key 把问题标出来")
+    @Test("服务端不收（新选的 key 刚被停用）：显示错误，重新拉 key 把问题标出来")
     func saveRejected() async throws {
-        let mock = ModelsFixture.mock()
+        let spare = Credential(
+            id: "spare-claude", vendor: "anthropic", label: "备用 Claude", last4: "zzzz", createdAt: Date(),
+            protocols: [.anthropic, .chat])
+        let mock = ModelsFixture.mock { $0.credentials.append(spare) }
         let (_, model, _) = make(mock)
         await model.load()
         let fast = try #require(model.drafts.first { $0.isFast })
+        model.setCredential(spare.id, forRoute: fast.id)
         model.setModel("claude-opus-5-5", forRoute: fast.id)
-        mock.update { $0.credentials[0].isDisabled = true }
+        #expect(model.problems(forRoute: fast.id).isEmpty)
+        mock.update { $0.credentials[3].isDisabled = true }
         // 保存前先数等 key 的运行（第一个调用），第二个调用才是保存。
         mock.failNext(with: .network(message: "offline"))
         mock.failNext(
@@ -312,6 +317,35 @@ struct ModelRoutesModelTests {
         #expect(model.saveError?.isInvalidInput == true)
         #expect(model.problems(forRoute: fast.id).contains(.keyDisabled))
         #expect(!model.isValid)
+    }
+
+    @Test("实例原来就用着的停用 key 可以留着（11.9）：不挡保存，提示一句；新选的停用 key 照样要换")
+    func keepsDisabledKey() async throws {
+        // 写作助手的 main 用 DeepSeek 当备用 1；DeepSeek 停用了。
+        let mock = ModelsFixture.mock { $0.credentials[1].isDisabled = true }
+        let (_, model, _) = make(mock)
+        await model.load()
+        let main = try #require(model.drafts.first(where: \.isMain))
+        let fallback = try #require(main.fallbacks.first)
+        #expect(fallback.credentialID == DemoData.deepseekCredentialID)
+        #expect(model.problems(forFallback: fallback).isEmpty)
+        #expect(model.keepsDisabledKey(fallback.credentialID))
+        #expect(model.keyProblem(DemoData.deepseekCredentialID) == nil)
+        #expect(!model.keepsDisabledKey(DemoData.claudeCredentialID), "没停用的不提示")
+        #expect(ModelsText.keptDisabledKeyNotice(.chinese).contains("可以先留着"))
+        #expect(ModelsText.keptDisabledKeyNotice(.english).contains("keep it"))
+
+        // 改别的别名照样能存（服务端也收）。
+        let fast = try #require(model.drafts.first { $0.isFast })
+        model.setModel("claude-opus-5-5", forRoute: fast.id)
+        #expect(model.isValid && model.canSave)
+        #expect(await model.save(consented: true))
+        #expect(mock.state.routes[DemoData.writerID]?.first?.fallbacks.first?.credentialID == DemoData.deepseekCredentialID)
+
+        // 没在用的停用 key（百炼）新选上：要换。
+        model.setCredential(DemoData.qwenCredentialID, forRoute: fast.id)
+        #expect(model.problems(forRoute: fast.id).contains(.keyDisabled))
+        #expect(!model.keepsDisabledKey(DemoData.qwenCredentialID))
     }
 
     @Test("路由拉不到：不能编辑；实例删掉了：找不到")
