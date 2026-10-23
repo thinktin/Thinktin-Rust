@@ -1,0 +1,17 @@
+# 服务端在 Kubernetes 上的部署（WBS 2.9，流程见 docs/release.md）：
+#
+#   thinktin-api      控制面的接口副本          镜像 thinktin-server
+#   thinktin-worker   控制面的后台副本          镜像 thinktin-server
+#   thinktin-llm-gw   模型网关                  镜像 thinktin-llm-gw
+#   thinktin-relay    设备中继                  镜像 thinktin-relay
+#
+# 各环境（overlays/）给出命名空间、副本数、镜像版本、控制面配置（ConfigMap thinktin-server）、
+# 模型网关和中继的公钥（ConfigMap thinktin-llm-gw、thinktin-relay）。
+# 密钥不在仓库里：由运维建 Secret thinktin-api、thinktin-worker、thinktin-llm-gw、thinktin-relay、
+# thinktin-migrate、thinktin-push（键见 docs/release.md 第 5 节）。迁移不在这里，见 ../migrate。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - workloads
+  - services.yaml
+  - pdb.yaml

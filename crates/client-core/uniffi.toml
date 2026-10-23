@@ -1,0 +1,10 @@
+# 绑定生成配置（WBS 11.1）。
+
+[bindings.kotlin]
+package_name = "cn.thinktin.core"
+cdylib_name = "client_core"
+
+[bindings.swift]
+module_name = "ThinktinCore"
+ffi_module_name = "ThinktinCoreFFI"
+ffi_module_filename = "ThinktinCoreFFI"

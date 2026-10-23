@@ -1,0 +1,93 @@
+# 模型网关：沙箱拿沙箱令牌来，换成用户的 key 流式转给厂商。用户 key 的明文只在这里出现。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: thinktin-llm-gw
+  labels:
+    app.kubernetes.io/name: thinktin-llm-gw
+    app.kubernetes.io/part-of: thinktin
+    track: stable
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: thinktin-llm-gw
+      track: stable
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: thinktin-llm-gw
+        app.kubernetes.io/part-of: thinktin
+        track: stable
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+    spec:
+      # 流式响应可能持续几分钟：停机时先照常接 5 秒新连接（--drain-secs），再等进行中的请求最多 240 秒
+      # （--grace-secs），用量都落库后退出。
+      terminationGracePeriodSeconds: 300
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: llm-gw
+          image: thinktin-llm-gw
+          # 沙箱令牌的验签公钥（kid=公钥）来自 ConfigMap thinktin-llm-gw；用阿里云 KMS 时环境的 overlay 加
+          # --aliyun-kms-endpoint、--aliyun-kms-key-id。
+          args:
+            - serve
+            - --listen=0.0.0.0:8790
+            - --metrics-listen=0.0.0.0:9090
+            - --log-json
+            - --grace-secs=240
+            - --token-key=$(THINKTIN_SANDBOX_TOKEN_KEY)
+          envFrom:
+            - configMapRef:
+                name: thinktin-llm-gw
+            # DATABASE_URL（thinktin_llmgw 角色的登录账号）、KMS 的密钥。
+            - secretRef:
+                name: thinktin-llm-gw
+          ports:
+            - name: http
+              containerPort: 8790
+            - name: metrics
+              containerPort: 9090
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 2
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

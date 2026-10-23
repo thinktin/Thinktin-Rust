@@ -1,0 +1,141 @@
+# agent 的沙箱模板（WBS 6.8，说明见 docs/templates.md）。
+#
+# - 改了清单、agent-shim、模板、冒烟脚本、许可证策略（推到 main、backend-core）：每个内置 agent 构建模板镜像，
+#   在断网的容器里冒烟，按许可证策略检查镜像里的第三方组件（16.5，docs/licenses.md）。不推送。
+# - 打 v* 标签：同样构建、冒烟，再推到镜像仓库：<前缀>/agents/<id>:<agent 版本>，另打一个带平台版本的
+#   标签 <agent 版本>-<平台版本>（模板里的 agent-shim 是这个平台版本的）。前缀同 release.yml。
+# - 每周一：看上游有没有新版本，写在运行的摘要页里。
+name: Templates
+
+on:
+  push:
+    tags: ["v*"]
+    branches: [main, backend-core]
+    paths:
+      - crates/catalog/**
+      - crates/agent-shim/**
+      - deploy/templates/**
+      - tools/smoke/**
+      - tools/mock-llm/**
+      - tools/licenses/**
+      - .dockerignore
+      - Cargo.lock
+      - .github/workflows/templates.yml
+  schedule:
+    - cron: "17 1 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: templates-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+permissions:
+  contents: read
+
+jobs:
+  templates:
+    if: github.event_name != 'schedule'
+    # agent-shim 在主机上编译、放进 Debian trixie（glibc 2.41）的镜像：主机的 glibc 不能比它新。
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: write
+    env:
+      REGISTRY: ${{ vars.IMAGE_REGISTRY || 'ghcr.io' }}
+      NAMESPACE: ${{ vars.IMAGE_NAMESPACE || github.repository_owner }}
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: templates
+      # 主机上编一次 agent-shim，五个镜像共用（不在每个镜像里各编一遍），连同它依赖的 crate 的许可证清单。
+      - name: Build agent-shim
+        run: |
+          cargo build --release --locked -p agent-shim
+          mkdir -p "$RUNNER_TEMP/shim/out"
+          cp target/release/agent-shim "$RUNNER_TEMP/shim/out/"
+          python3 tools/licenses/licenses.py cargo -p agent-shim --subject agent-shim \
+            --target "$(rustc -vV | sed -n 's/^host: //p')" --out "$RUNNER_TEMP/shim/out/licenses"
+      - name: Build and smoke-test the templates
+        env:
+          SHIM_DIR: ${{ runner.temp }}/shim
+          IMAGE_PREFIX: thinktin-test
+        run: |
+          set -euo pipefail
+          agents=$(python3 -c 'import pathlib; print(" ".join(sorted(p.stem for p in pathlib.Path("crates/catalog/manifests").glob("*.toml"))))')
+          failed=()
+          for agent in $agents; do
+            echo "::group::$agent"
+            image=$(deploy/templates/build.sh "$agent")
+            echo "$image" >> "$RUNNER_TEMP/images"
+            size=$(docker image inspect --format '{{.Size}}' "$image" | awk '{printf "%.0f MB", $1/1e6}')
+            # 清单里的每个接入方式都跑一遍（Claude 有 acp 和 cli 两种）。
+            harnesses=$(python3 -c 'import sys, tomllib; print(" ".join(h["id"] for h in tomllib.load(open(sys.argv[1], "rb"))["harness"]))' \
+              "crates/catalog/manifests/$agent.toml")
+            out=""
+            result=passed
+            for harness in $harnesses; do
+              if o=$(deploy/templates/smoke.sh "$image" "$agent" --harness "$harness" 2>&1); then
+                :
+              else
+                result=FAILED
+                failed+=("$agent/$harness")
+              fi
+              out+="harness: $harness"$'\n'"$o"$'\n'
+            done
+            echo "$out"
+            # 镜像里的第三方许可证清单（构建时生成）按策略检查；问题写成注解，汇总写进摘要页。
+            docker run --rm "$image" cat /usr/share/thinktin/licenses/inventory.json > "$RUNNER_TEMP/licenses-$agent.json"
+            if ! python3 tools/licenses/licenses.py check "$RUNNER_TEMP/licenses-$agent.json" \
+                --manifest "crates/catalog/manifests/$agent.toml"; then
+              result="$result, licenses FAILED"
+              failed+=("$agent (licenses)")
+            fi
+            echo "::endgroup::"
+            # 结果写成注解，在 PR 页面和接口里直接看得到。
+            summary=$(grep -E '^(agent|reply|requests|stop):|\[(ok|FAIL)\]' <<< "$out" | head -20 || true)
+            level=notice; [ "$result" = passed ] || level=error
+            python3 - "$level" "$agent $image ($size): smoke test $result" "$summary" <<'PY'
+          import sys
+          esc = lambda s: s.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          level, title, body = sys.argv[1:4]
+          print(f"::{level} title={esc(title).replace(':', '%3A').replace(',', '%2C')}::{esc(body or title)}")
+          PY
+          done
+          docker images --format '{{.Repository}}:{{.Tag}} {{.Size}}' | grep '^thinktin-test/' || true
+          [ ${#failed[@]} -eq 0 ] || { echo "failed: ${failed[*]}"; exit 1; }
+
+      - name: Log in to the registry
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.IMAGE_REGISTRY_USERNAME || github.actor }}
+          password: ${{ secrets.IMAGE_REGISTRY_PASSWORD || secrets.GITHUB_TOKEN }}
+      - name: Push
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          prefix="${REGISTRY}/${NAMESPACE,,}"
+          platform="${GITHUB_REF_NAME#v}"
+          while read -r image; do
+            name="${image#thinktin-test/}"           # agents/claude:0.90.0
+            for tag in "$prefix/$name" "$prefix/$name-$platform"; do
+              docker tag "$image" "$tag"
+              docker push "$tag"
+            done
+            digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$prefix/$name")
+            echo "- \`$digest\`" >> "$GITHUB_STEP_SUMMARY"
+          done < "$RUNNER_TEMP/images"
+
+  upstream:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Newer upstream versions
+        run: python3 deploy/templates/upstream.py

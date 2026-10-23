@@ -1,0 +1,51 @@
+# 数据库迁移：每次发布先跑它（用表的属主账号），成功了再更新程序。发布包里名字带版本
+# （thinktin-migrate-0-2-0 这样），见 docs/release.md：
+#
+#   kubectl apply -f thinktin-production-migrate-<版本>.yaml
+#   kubectl -n thinktin wait --for=condition=complete --timeout=15m job/thinktin-migrate-<版本>
+#
+# 多个迁移同时跑由 sqlx 的咨询锁串行化；失败不重试（backoffLimit 0），看日志、修好后删掉这个 Job 再跑。
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: thinktin-migrate
+  labels:
+    app.kubernetes.io/name: thinktin-migrate
+    app.kubernetes.io/part-of: thinktin
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 3600
+  ttlSecondsAfterFinished: 604800
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: thinktin-migrate
+        app.kubernetes.io/part-of: thinktin
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          image: thinktin-server
+          args: ["migrate"]
+          # DATABASE_URL：迁移账号（表的属主）。只有这个 Job 拿得到。
+          envFrom:
+            - secretRef:
+                name: thinktin-migrate
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
