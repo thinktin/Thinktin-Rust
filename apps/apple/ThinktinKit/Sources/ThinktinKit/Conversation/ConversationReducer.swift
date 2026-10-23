@@ -105,8 +105,14 @@ public struct ConversationReducer: Sendable {
     ///   按预授权策略决定的卡片没有审批记录，不参与。
     ///
     /// 关联上之后卡片有 `approvalID`，可以调 `decideApproval`；审批已经有结果、卡片还没有（或只是推断作废的）时补上结果。
+    /// 已经关联上的（事件带了 `approval_id`、之前关联过的）照样把记录补到那张卡片上：卡片的状态以审批记录为准
+    /// （`getApproval` 说已过期、已处理的，卡片跟着变）。
     public mutating func link(approvals: [Approval]) {
-        for approval in approvals.sorted(by: { $0.createdAt < $1.createdAt }) where approvalLinks[approval.id] == nil {
+        for approval in approvals.sorted(by: { $0.createdAt < $1.createdAt }) {
+            if let ref = approvalLinks[approval.id] {
+                if let t = turnIndex[ref.turnKey] { turns[t].apply(record: approval, to: ref.card) }
+                continue
+            }
             guard let t = turnIndex[approval.runID.rawValue], let card = candidateCard(for: approval, in: t) else {
                 continue
             }
@@ -297,12 +303,16 @@ private struct TurnState: Sendable {
         max(eventAttempt ?? 0, run?.attempt ?? 0)
     }
 
-    /// 当前的运行状态：运行记录已经结束时以它为准，否则以最新的 `run.state` 事件为准。
-    var effectiveState: (state: RunState, reason: String?, attempt: Int?)? {
+    /// 当前的运行状态：运行记录已经结束时以它为准，否则以最新的 `run.state` 事件为准。等待原因码跟着状态的来源取
+    /// （事件没带时，运行记录是同一个状态才用记录里的）。
+    var effectiveState: (state: RunState, reason: String?, attempt: Int?, waitCode: RunWaitCode?)? {
         if let run, run.state.isTerminal || status == nil {
-            return (run.state, run.stateReason ?? status?.reason, run.attempt)
+            return (run.state, run.stateReason ?? status?.reason, run.attempt, run.waitCode)
         }
-        if let s = status { return (s.state, s.reason, s.attempt ?? run?.attempt) }
+        if let s = status {
+            let code = s.waitCode ?? (run?.state == s.state ? run?.waitCode : nil)
+            return (s.state, s.reason, s.attempt ?? run?.attempt, code)
+        }
         return nil
     }
 
@@ -420,9 +430,13 @@ private struct TurnState: Sendable {
         case .planCancelled(let p):
             let card = PlanActivityCard(planID: p.planID, title: p.title, activity: .cancelled)
             append(id: "seq-\(event.seq)", event: event, .planActivity(card))
-        case .turnEnded:
+        case .turnEnded(let p):
             turnEnded = true
             streaming = false
+            // 拒绝回答、输出到上限、步数到上限：提示一行（正常结束、取消不提示）。
+            if let reason = p.stopReason, [.refusal, .maxTokens, .maxTurnRequests].contains(reason) {
+                append(id: "seq-\(event.seq)", event: event, .systemNotice(SystemNotice(kind: .turnStopped(reason))))
+            }
         case .agentError(let p):
             append(
                 id: "seq-\(event.seq)", event: event, .systemNotice(SystemNotice(kind: .agentError, message: p.message))
@@ -462,6 +476,8 @@ private struct TurnState: Sendable {
     }
 
     private mutating func appendText(_ text: String, event: InstanceEvent, thought: Bool) {
+        // 没有文字的分片（载荷里缺 `text`）：不建空的一项（界面上会是一段空白加一个 AI 标识）。
+        guard !text.isEmpty else { return }
         if let last = entries.indices.last {
             switch entries[last].content {
             case .assistantText(var t) where !thought:
@@ -633,7 +649,7 @@ private struct TurnState: Sendable {
         if let state {
             let line = RunStatusLine(
                 state: state.state, reason: state.reason, attempt: state.attempt, tokensUsed: run?.tokensUsed,
-                error: run?.error, startedAt: run?.startedAt, finishedAt: run?.finishedAt)
+                error: run?.error, startedAt: run?.startedAt, finishedAt: run?.finishedAt, waitCode: state.waitCode)
             let at = statusAt ?? run?.finishedAt ?? run?.startedAt ?? run?.createdAt ?? firstAt
             items.append(
                 ConversationItem(id: "run-\(key)-status", runID: runID, createdAt: at, content: .runStatus(line)))

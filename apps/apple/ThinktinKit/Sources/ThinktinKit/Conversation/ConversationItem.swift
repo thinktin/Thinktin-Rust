@@ -245,10 +245,12 @@ public struct RunStatusLine: Hashable, Sendable {
     public var error: String?
     public var startedAt: Date?
     public var finishedAt: Date?
+    /// 等的是什么（11.8，`run.state` 事件的 `wait_code`、`Run.waitCode`）：只在等 key、等电脑时有。
+    public var waitCode: RunWaitCode?
 
     public init(
         state: RunState, reason: String? = nil, attempt: Int? = nil, tokensUsed: Int? = nil, error: String? = nil,
-        startedAt: Date? = nil, finishedAt: Date? = nil
+        startedAt: Date? = nil, finishedAt: Date? = nil, waitCode: RunWaitCode? = nil
     ) {
         self.state = state
         self.reason = reason
@@ -257,13 +259,14 @@ public struct RunStatusLine: Hashable, Sendable {
         self.error = error
         self.startedAt = startedAt
         self.finishedAt = finishedAt
+        self.waitCode = RunWaitCode.applies(to: state) ? waitCode : nil
     }
 
-    /// 等待类状态的下一步。
+    /// 等待类状态的下一步。等 key 时按等待原因码分：限流、服务繁忙会自己继续（`waitForRetry`），其余要去处理 key。
     public var nextStep: RunNextStep? {
         switch state {
         case .waitingApproval: .approve
-        case .waitingQuota: .configureKey
+        case .waitingQuota: waitCode?.isTransient == true ? .waitForRetry : .configureKey
         case .waitingDevice: .waitForComputer
         case .waitingChildren: .waitForSubtasks
         default: nil
@@ -277,6 +280,8 @@ public enum RunNextStep: String, Hashable, Sendable {
     case approve
     /// 去配 key（额度用完或 key 失效）。
     case configureKey
+    /// 不用处理，几分钟后自己继续（模型服务限流、繁忙，`RunWaitCode.isTransient`）。
+    case waitForRetry
     /// 等电脑上线。
     case waitForComputer
     /// 等子任务完成。
@@ -360,6 +365,8 @@ public struct SystemNotice: Hashable, Sendable {
         case logTruncated
         /// 用了保险箱里的条目。
         case vaultUsed([String])
+        /// 这一轮提前结束了（`agent.turn_ended` 的 `stop_reason` 是 refusal、max_tokens、max_turn_requests）。
+        case turnStopped(StopReason)
     }
 }
 
