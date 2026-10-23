@@ -47,9 +47,7 @@ struct UserMessageView: View {
                 .background(
                     Theme.userBubble, in: RoundedRectangle(cornerRadius: Metrics.Radius.card, style: .continuous)
                 )
-                .contentShape(
-                    .contextMenuPreview, RoundedRectangle(cornerRadius: Metrics.Radius.card, style: .continuous)
-                )
+                .contextMenuPreviewShape(RoundedRectangle(cornerRadius: Metrics.Radius.card, style: .continuous))
                 .contextMenu {
                     Button {
                         Pasteboard.copy(copiedText)
@@ -281,4 +279,16 @@ extension View {
     .background(Theme.paper)
     .environment(\.displayLanguage, .english)
     .preferredColorScheme(.dark)
+}
+
+extension View {
+    /// 长按菜单预览的形状：只有 iOS 有（macOS 的右键菜单没有预览，`.contextMenuPreview` 在 macOS 上不可用）。
+    @ViewBuilder
+    fileprivate func contextMenuPreviewShape(_ shape: some Shape) -> some View {
+        #if os(iOS)
+            contentShape(.contextMenuPreview, shape)
+        #else
+            self
+        #endif
+    }
 }

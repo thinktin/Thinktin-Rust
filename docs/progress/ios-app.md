@@ -34,6 +34,7 @@
 3. W1 第三轮：12.7 团队与流水线（含团队模板领养的 instance_limit 文案、流水线改步骤）、12.8 推送与收件箱、12.15 审批中心、12.17 引导与空状态、12.18 产出物（每个包在自己的 worktree 里实现，再由审查者在同一分支上对抗式审查并修；iOS 会话的 scratchpad 里有脚本草稿 ios-w1-round3.js，换了会话就照 W1 第二轮的写法重写）。
 4. W2：12.13、12.10、12.20、12.21、12.19；12.11 最后；12.9 随 macOS（P3）。
 5. 每次合并后看 PR #8 的 iOS CI（macOS 上真实 SwiftUI / Charts / LocalAuthentication / UserNotifications 编译，Linux 的桩查不到这些）。
+6. uicheck 的盲区：Linux 上 `#if os(iOS)` / `#if os(macOS)` 都是假，两种桩都只检查 `#else` 分支，平台专属的 API 漏到 macOS CI 才报（`51bd9e8` 的 `.contextMenuPreview` 在 macOS 上不可用）。改法：prep.py 把 `#if` / `#elseif` 行里的 `os(iOS)` 换成 `canImport(UIKit)`、`os(macOS)` 换成 `canImport(AppKit)`（试过，要先补 iOS 专属的桩：`navigationBarTitleDisplayMode`、`toolbar(_:for:)` 的 `.visible`、`ToolbarItemPlacement.bottomBar` / `.topBarLeading`、`presentationDetents` 的 `.medium` / `.large` 等约 50 处），并把 `.contextMenuPreview` 这类只有 iOS 有的桩放进 `#if canImport(UIKit)`。
 
 坑和决定：
 - （已解决，f9f87b3）`accept_language_header` 现在自己截到 256 字节内，`AcceptLanguage.header` 照同样的规则截，`CoreClient.systemAcceptLanguage` 默认值也安全了。
