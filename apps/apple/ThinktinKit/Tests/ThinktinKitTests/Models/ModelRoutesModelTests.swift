@@ -325,7 +325,7 @@ struct ModelRoutesModelTests {
         let mock = ModelsFixture.mock { $0.credentials[1].isDisabled = true }
         let (_, model, _) = make(mock)
         await model.load()
-        let main = try #require(model.drafts.first(where: \.isMain))
+        let main = try #require(model.drafts.first { $0.isMain })
         let fallback = try #require(main.fallbacks.first)
         #expect(fallback.credentialID == DemoData.deepseekCredentialID)
         #expect(model.problems(forFallback: fallback).isEmpty)
