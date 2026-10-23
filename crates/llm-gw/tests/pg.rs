@@ -473,3 +473,45 @@ async fn vault_items_are_loaded_for_scrubbing() {
     );
     assert!(dir.vault_items("not-a-uuid").await.unwrap().is_empty());
 }
+
+/// 别名里留着的停用 key（11.9：保存别名时允许留着）：网关跳过它，不发到上游；重新启用后照常用。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn disabled_keys_left_in_routes_are_skipped() {
+    let Some(e) = env().await else { return };
+    let token = e.token("sbx-1");
+    assert_eq!(e.chat(&token).await.0, 200);
+    let route = ModelRoute {
+        alias: "main".into(),
+        credential_id: e.credential,
+        upstream_model: "up-model".into(),
+        fallbacks: vec![],
+    };
+    let set_disabled = |disabled: bool| {
+        let (db, user, inst, cred, route) = (
+            e.t.db.clone(),
+            e.user,
+            e.instance,
+            e.credential,
+            route.clone(),
+        );
+        async move {
+            let mut tx = db.tenant(user).await.unwrap();
+            tx.set_credential_disabled(cred, disabled).await.unwrap();
+            tx.set_model_routes(inst, &[route]).await.unwrap();
+            tx.commit().await.unwrap();
+        }
+    };
+    set_disabled(true).await;
+    tokio::time::sleep(TTL + Duration::from_millis(50)).await;
+    let sent = e.up.auth.lock().unwrap().len();
+    let (st, body) = e.chat(&token).await;
+    assert_eq!(st, 403, "{body}");
+    assert_eq!(
+        e.up.auth.lock().unwrap().len(),
+        sent,
+        "nothing went upstream"
+    );
+    set_disabled(false).await;
+    tokio::time::sleep(TTL + Duration::from_millis(50)).await;
+    assert_eq!(e.chat(&token).await.0, 200);
+}

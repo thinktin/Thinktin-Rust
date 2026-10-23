@@ -263,7 +263,8 @@ impl FcmClient {
             .ttl
             .unwrap_or(crate::DEFAULT_TTL)
             .as_secs()
-            .clamp(60, MAX_TTL_SECS);
+            // 剩下的有效期原样给（排队、重试过的审批提醒不能比审批活得久）；0 是在线就送、不在线就算了。
+            .min(MAX_TTL_SECS);
         // 不带角标数：Android 的 `notification_count` 是“这一条通知代表几件事”，桌面把通知栏里每一条的加起来，
         // 填未读总数会越加越多。Android 的角标由桌面按通知栏里的通知自己算。
         let mut notification = json!({ "channel_id": channel });

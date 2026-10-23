@@ -59,7 +59,7 @@ pub use instances::{InstanceRuntime, NewInstance};
 pub use live_activities::{LiveActivity, LiveSettle};
 pub use llmgw::{GatewayInstance, GatewayRoute};
 pub use outbox::{NewOutboxItem, OutboxItem};
-pub use plans::{DueTrigger, NewPlan};
+pub use plans::{DueTrigger, NewPlan, RetiredPlans};
 pub use reports::{NewReport, ReportRecord};
 pub use runs::{ModelCall, NewRun, RunChange, RunFilter, RunRecord};
 pub use schema::MigrationStatus;

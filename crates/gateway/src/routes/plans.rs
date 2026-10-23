@@ -161,6 +161,11 @@ pub async fn create(
         .map(|spec| next_fire(&s, spec, now))
         .collect::<ApiResult<Vec<_>>>()?;
     let mut t = s.db.tenant(who.user).await?;
+    // 先拿实例的共享锁（和删除实例互斥，见 share_instances），再查实例、建计划。
+    t.share_instances(
+        std::iter::once(req.instance_id).chain(req.steps.iter().map(|st| st.instance_id)),
+    )
+    .await?;
     let plan = t
         .create_plan(&NewPlan {
             instance_id: req.instance_id,
@@ -282,6 +287,9 @@ pub async fn update(
     check_policy(&policy)?;
     if let Some(steps) = &req.steps {
         check_steps(steps)?;
+        // 锁计划行（update_plan）之前拿步骤实例的共享锁：和删除实例互斥，见 share_instances。
+        t.share_instances(steps.iter().map(|st| st.instance_id))
+            .await?;
     }
     let plan = t
         .update_plan(
@@ -351,6 +359,17 @@ async fn reschedule(t: &mut store::Tx<store::Tenant>, id: PlanId) -> ApiResult<(
 }
 
 /// 恢复用户自己暂停的计划。agent 新建、修改过、等确认的计划要用 `confirm`（409）。
+/// 流水线有一步在已删除的实例上（删除实例时暂停了它，11.9）：先改步骤才能恢复、确认。要在事务一开始调
+/// （deleted_step 先拿步骤实例的共享锁，之后才能锁计划行）。
+async fn refuse_deleted_steps(t: &mut store::Tx<store::Tenant>, id: PlanId) -> ApiResult<()> {
+    match t.deleted_step(id).await? {
+        Some(key) => Err(ApiError::conflict(format!(
+            "step {key} runs on a deleted instance; change the steps first"
+        ))),
+        None => Ok(()),
+    }
+}
+
 pub async fn resume(
     State(s): State<AppState>,
     Authed(who): Authed,
@@ -358,6 +377,7 @@ pub async fn resume(
 ) -> ApiResult<Json<PlanView>> {
     let id: PlanId = parse_id(&id, "plan")?;
     let mut t = s.db.tenant(who.user).await?;
+    refuse_deleted_steps(&mut t, id).await?;
     t.set_plan_paused(id, false).await?;
     let plan = t.plan(id).await?;
     // “全部停止”（4.6）吊销了计划的授权，或者授权过期了：恢复时重新签发。
@@ -422,6 +442,7 @@ pub async fn confirm(
 ) -> ApiResult<Json<PlanView>> {
     let id: PlanId = parse_id(&id, "plan")?;
     let mut t = s.db.tenant(who.user).await?;
+    refuse_deleted_steps(&mut t, id).await?;
     let plan = t.confirm_plan(id, req.revision).await?;
     ensure_plan_grant(
         &s,

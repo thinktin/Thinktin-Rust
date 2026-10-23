@@ -24,20 +24,24 @@ pub struct AdoptReq {
     name: String,
 }
 
-/// 领养：建实例，并签发它的运行授权（用户直接下的任务用它；和登录会话无关）。
+/// 领养：建实例，并签发它的运行授权（用户直接下的任务用它；和登录会话无关）。实例数到了账号的上限
+/// （`[api.limits] instances_per_user`）报 409 `instance_limit`。
 pub async fn adopt(
     State(s): State<AppState>,
     Authed(who): Authed,
     ApiJson(req): ApiJson<AdoptReq>,
 ) -> ApiResult<(StatusCode, Json<Instance>)> {
-    let instance = control::adopt(
+    let instance = control::adopt_capped(
         &s.db,
         s.templates.as_ref(),
         who.user,
         &who.actor(),
-        &req.agent_id,
-        req.harness.as_deref(),
-        &req.name,
+        control::AdoptSpec {
+            agent_id: &req.agent_id,
+            harness: req.harness.as_deref(),
+            name: &req.name,
+        },
+        u64::from(s.limits().config().instances_per_user),
     )
     .await?;
     let mut t = s.db.tenant(who.user).await?;
@@ -121,7 +125,8 @@ pub async fn set_version(
     Ok((StatusCode::ACCEPTED, Json(instance)))
 }
 
-/// 删除：取消没结束的运行、吊销授权、标记删除；沙箱和工作区卷由后台回收。
+/// 删除：它的计划标记删除（别的实例的流水线有一步在它上面的暂停）、取消没结束的运行、吊销授权、标记删除（别名一起删）；
+/// 沙箱和工作区卷由后台回收。先处理计划：正在触发的那一次提交以后，它建的运行接着被取消。
 pub async fn delete(
     State(s): State<AppState>,
     Authed(who): Authed,
@@ -130,6 +135,7 @@ pub async fn delete(
     let id: InstanceId = parse_id(&id, "instance")?;
     let mut t = s.db.tenant(who.user).await?;
     t.instance(id).await?;
+    let retired = t.retire_instance_plans(id).await?;
     t.cancel_instance_runs(id, "instance deleted").await?;
     t.revoke_instance_grants(id, "instance deleted").await?;
     t.delete_instance(id).await?;
@@ -137,7 +143,7 @@ pub async fn delete(
         &who.actor(),
         "instance.delete",
         Some(&id.to_string()),
-        &json!({}),
+        &json!({ "plans_deleted": retired.deleted, "plans_paused": retired.paused }),
     )
     .await?;
     t.commit().await?;

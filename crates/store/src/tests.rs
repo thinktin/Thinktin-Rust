@@ -1188,7 +1188,7 @@ async fn route_fallbacks_round_trip_and_guard_their_keys() {
     b.rollback().await.unwrap();
 
     let mut a = db.tenant(alice).await.unwrap();
-    // 超过 3 个、或者引用停用的 key：整体拒绝，原来的不变。
+    // 超过 3 个、或者新引用停用的 key：整体拒绝，原来的不变。
     let too_many = ModelRoute {
         fallbacks: vec![
             fb(&backup, "a"),
@@ -1204,12 +1204,13 @@ async fn route_fallbacks_round_trip_and_guard_their_keys() {
     ));
     a.rollback().await.unwrap();
     let mut a = db.tenant(alice).await.unwrap();
-    a.set_credential_disabled(spare.id, true).await.unwrap();
+    let idle = a.create_credential(&credential("0004")).await.unwrap();
+    a.set_credential_disabled(idle.id, true).await.unwrap();
     let err = a
         .set_model_routes(
             inst.id,
             &[ModelRoute {
-                fallbacks: vec![fb(&spare, "m")],
+                fallbacks: vec![fb(&idle, "m")],
                 ..route.clone()
             }],
         )
@@ -1230,6 +1231,530 @@ async fn route_fallbacks_round_trip_and_guard_their_keys() {
     assert_eq!(a.model_routes(inst.id).await.unwrap(), vec![bare]);
     a.delete_credential(backup.id).await.unwrap();
     a.commit().await.unwrap();
+}
+
+/// key 的每日上限可以改、可以取消（11.9）；0、太大的不行；别人的、删了的找不到。
+#[tokio::test]
+async fn credential_daily_limit_can_be_changed_and_cleared() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = user(db, "+8613800000001").await;
+    let bob = user(db, "+8613800000002").await;
+    let mut a = db.tenant(alice).await.unwrap();
+    let id = a.create_credential(&credential("0001")).await.unwrap().id;
+    assert_eq!(
+        a.set_credential_daily_limit(id, Some(5)).await.unwrap(),
+        Some(1_000_000)
+    );
+    assert_eq!(a.credential(id).await.unwrap().daily_token_limit, Some(5));
+    assert_eq!(
+        a.set_credential_daily_limit(id, None).await.unwrap(),
+        Some(5)
+    );
+    assert_eq!(a.credential(id).await.unwrap().daily_token_limit, None);
+    assert_eq!(
+        a.set_credential_daily_limit(id, Some(7)).await.unwrap(),
+        None
+    );
+    a.commit().await.unwrap();
+    // 模型网关读到新的上限。
+    let mut w = db.worker().await.unwrap();
+    let sealed = w.sealed_credential(id).await.unwrap().unwrap();
+    w.rollback().await.unwrap();
+    assert_eq!(sealed.daily_token_limit, Some(7));
+    for bad in [0, u64::MAX] {
+        let mut a = db.tenant(alice).await.unwrap();
+        assert!(matches!(
+            a.set_credential_daily_limit(id, Some(bad)).await,
+            Err(Error::Invalid(_))
+        ));
+        a.rollback().await.unwrap();
+    }
+    let mut b = db.tenant(bob).await.unwrap();
+    assert!(matches!(
+        b.set_credential_daily_limit(id, Some(1)).await,
+        Err(Error::NotFound)
+    ));
+    b.rollback().await.unwrap();
+    let mut a = db.tenant(alice).await.unwrap();
+    a.delete_credential(id).await.unwrap();
+    assert!(matches!(
+        a.set_credential_daily_limit(id, Some(1)).await,
+        Err(Error::NotFound)
+    ));
+    a.rollback().await.unwrap();
+}
+
+/// 停用的 key（11.9）：实例原来就用着的可以留在别名里（网关照样跳过它），所以从别名里去掉别的 key 能保存；
+/// 新引用停用的 key（包括别的实例用着的）照样拒绝。
+#[tokio::test]
+async fn disabled_keys_can_stay_in_routes_but_not_be_added() {
+    use proto::domain::RouteFallback;
+
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = user(db, "+8613800000001").await;
+    let (inst, other) = (instance(db, alice).await, instance(db, alice).await);
+    let mut a = db.tenant(alice).await.unwrap();
+    let mut k = Vec::new();
+    for n in 1..=5 {
+        k.push(
+            a.create_credential(&credential(&format!("000{n}")))
+                .await
+                .unwrap()
+                .id,
+        );
+    }
+    let (ka, kb, kc, kd, ke) = (k[0], k[1], k[2], k[3], k[4]);
+    let route = |alias: &str, main, fallbacks: &[proto::domain::CredentialId]| ModelRoute {
+        alias: alias.into(),
+        credential_id: main,
+        upstream_model: "m".into(),
+        fallbacks: fallbacks
+            .iter()
+            .map(|c| RouteFallback {
+                credential_id: *c,
+                upstream_model: "m".into(),
+            })
+            .collect(),
+    };
+    a.set_model_routes(inst.id, &[route("main", ka, &[kb]), route("fast", kc, &[])])
+        .await
+        .unwrap();
+    a.set_model_routes(other.id, &[route("main", ke, &[])])
+        .await
+        .unwrap();
+    a.set_credential_disabled(ka, true).await.unwrap();
+    a.set_credential_disabled(ke, true).await.unwrap();
+    a.commit().await.unwrap();
+
+    // App 删 B 之前先把它从别名里去掉：A 停用着也照样保存，之后 B 能删。
+    let mut a = db.tenant(alice).await.unwrap();
+    let kept = [route("fast", kc, &[]), route("main", ka, &[])];
+    a.set_model_routes(inst.id, &kept).await.unwrap();
+    assert_eq!(a.model_routes(inst.id).await.unwrap(), kept);
+    a.delete_credential(kb).await.unwrap();
+    // 留着的 key 换位置也行（从主路由挪到降级链）。
+    a.set_model_routes(inst.id, &[route("main", kc, &[ka])])
+        .await
+        .unwrap();
+    a.commit().await.unwrap();
+    // 网关读到的照样有它（跳过停用的 key 是网关的事）。
+    let mut g = db.llmgw().await.unwrap();
+    let gi = g.gateway_instance(inst.id).await.unwrap().unwrap();
+    g.rollback().await.unwrap();
+    assert_eq!(gi.routes[0].fallbacks, vec![(ka, "m".to_string())]);
+
+    // 没在用的停用 key、别的实例用着的停用 key：不能新引用，原来的不变。
+    let mut a = db.tenant(alice).await.unwrap();
+    a.set_credential_disabled(kd, true).await.unwrap();
+    a.commit().await.unwrap();
+    for (main, fbs) in [(kd, vec![]), (kc, vec![kd]), (ke, vec![])] {
+        let mut a = db.tenant(alice).await.unwrap();
+        let err = a
+            .set_model_routes(inst.id, &[route("main", main, &fbs)])
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::Invalid(_)), "{err:?}");
+        a.rollback().await.unwrap();
+    }
+    // 去掉以后就不算原来用着的了：再加回来也拒绝。
+    let mut a = db.tenant(alice).await.unwrap();
+    a.set_model_routes(inst.id, &[route("main", kc, &[])])
+        .await
+        .unwrap();
+    a.commit().await.unwrap();
+    let mut a = db.tenant(alice).await.unwrap();
+    assert!(matches!(
+        a.set_model_routes(inst.id, &[route("main", kc, &[ka])])
+            .await
+            .unwrap_err(),
+        Error::Invalid(_)
+    ));
+    a.rollback().await.unwrap();
+    let mut a = db.tenant(alice).await.unwrap();
+    assert_eq!(
+        a.model_routes(inst.id).await.unwrap(),
+        [route("main", kc, &[])]
+    );
+    a.rollback().await.unwrap();
+}
+
+/// 已删除的实例的别名不再占着 key（11.9）：删除实例时别名和降级链一起删；之前留下的删 key 时也不算。
+#[tokio::test]
+async fn deleted_instances_do_not_hold_keys() {
+    use proto::domain::RouteFallback;
+
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = user(db, "+8613800000001").await;
+    let (gone, legacy, live) = (
+        instance(db, alice).await,
+        instance(db, alice).await,
+        instance(db, alice).await,
+    );
+    let mut a = db.tenant(alice).await.unwrap();
+    let mut keys = Vec::new();
+    for n in 1..=5 {
+        keys.push(
+            a.create_credential(&credential(&format!("000{n}")))
+                .await
+                .unwrap(),
+        );
+    }
+    let route = |main: usize, fallback: Option<usize>| ModelRoute {
+        alias: "main".into(),
+        credential_id: keys[main].id,
+        upstream_model: "m".into(),
+        fallbacks: fallback
+            .map(|f| {
+                vec![RouteFallback {
+                    credential_id: keys[f].id,
+                    upstream_model: "m".into(),
+                }]
+            })
+            .unwrap_or_default(),
+    };
+    a.set_model_routes(gone.id, &[route(0, Some(1))])
+        .await
+        .unwrap();
+    a.set_model_routes(legacy.id, &[route(2, Some(3))])
+        .await
+        .unwrap();
+    a.set_model_routes(live.id, &[route(4, None)])
+        .await
+        .unwrap();
+    a.commit().await.unwrap();
+
+    let count = |table: &'static str, inst: proto::domain::InstanceId| async move {
+        let sql = match table {
+            "model_routes" => "SELECT count(*) FROM model_routes WHERE instance_id = $1",
+            _ => "SELECT count(*) FROM model_route_fallbacks WHERE instance_id = $1",
+        };
+        sqlx::query_scalar::<_, i64>(sql)
+            .bind(inst.0)
+            .fetch_one(db.pool())
+            .await
+            .unwrap()
+    };
+    // 删除实例：别名和降级链一起删掉，它们指着的 key 可以删了。
+    let mut a = db.tenant(alice).await.unwrap();
+    a.delete_instance(gone.id).await.unwrap();
+    a.commit().await.unwrap();
+    assert_eq!(
+        (
+            count("model_routes", gone.id).await,
+            count("model_route_fallbacks", gone.id).await
+        ),
+        (0, 0)
+    );
+    // 之前的版本删除实例时不删别名：留下的不算引用。
+    sqlx::query("UPDATE instances SET state = 'deleted', deleted_at = now() WHERE id = $1")
+        .bind(legacy.id.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(count("model_routes", legacy.id).await, 1);
+    let mut a = db.tenant(alice).await.unwrap();
+    for k in &keys[..4] {
+        a.delete_credential(k.id).await.unwrap();
+    }
+    // 还在用的实例的别名照样占着。
+    assert!(
+        a.delete_credential(keys[4].id)
+            .await
+            .unwrap_err()
+            .is_conflict()
+    );
+    // 已删除的实例的别名看不到也改不了。
+    assert!(matches!(
+        a.model_routes(gone.id).await,
+        Err(Error::NotFound)
+    ));
+    assert!(matches!(
+        a.set_model_routes(legacy.id, &[]).await,
+        Err(Error::NotFound)
+    ));
+    a.commit().await.unwrap();
+}
+
+/// 删除实例时一并处理它的计划（11.9）：它自己的计划标记删除、触发器停掉；别的实例的流水线有一步在它上面的暂停，
+/// 改了步骤才能恢复；别的计划不动。
+#[tokio::test]
+async fn deleting_an_instance_retires_its_plans() {
+    use proto::domain::{PlanId, PlanStep};
+
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = user(db, "+8613800000001").await;
+    let (x, y) = (instance(db, alice).await, instance(db, alice).await);
+    let mut a = db.tenant(alice).await.unwrap();
+    let plan = |instance: &Instance, title: &str| NewPlan {
+        instance_id: instance.id,
+        title: title.into(),
+        goal: "g".into(),
+        policy: PlanPolicy::default(),
+        catch_up: CatchUp::Once,
+        created_by: PlanAuthor::User,
+        run_grant_id: None,
+    };
+    let cron = ScheduleSpec::Cron {
+        expr: "0 8 * * *".into(),
+        tz: "Asia/Shanghai".into(),
+    };
+    let soon = Utc::now() - Days::minutes(1);
+    let later = Utc::now() + Days::days(1);
+    let px = a.create_plan(&plan(&x, "x 自己的")).await.unwrap();
+    a.add_trigger(px.id, &cron, Some(soon)).await.unwrap();
+    let px2 = a.create_plan(&plan(&x, "x 的第二个")).await.unwrap();
+    let py = a.create_plan(&plan(&y, "y 上有一步在 x")).await.unwrap();
+    a.set_plan_steps(
+        py.id,
+        &[PlanStep {
+            key: "a".into(),
+            instance_id: x.id,
+            prompt: "p".into(),
+            depends_on: vec![],
+        }],
+    )
+    .await
+    .unwrap();
+    a.add_trigger(py.id, &cron, Some(soon)).await.unwrap();
+    let pz = a.create_plan(&plan(&y, "y 自己的")).await.unwrap();
+    a.add_trigger(pz.id, &cron, Some(later)).await.unwrap();
+    a.commit().await.unwrap();
+
+    let mut a = db.tenant(alice).await.unwrap();
+    let retired = a.retire_instance_plans(x.id).await.unwrap();
+    a.delete_instance(x.id).await.unwrap();
+    a.commit().await.unwrap();
+    let mut deleted = retired.deleted.clone();
+    deleted.sort_by_key(|p| p.0);
+    let mut want = vec![px.id, px2.id];
+    want.sort_by_key(|p| p.0);
+    assert_eq!((deleted, retired.paused), (want, vec![py.id]));
+
+    let mut a = db.tenant(alice).await.unwrap();
+    // 同一个事务里建的计划创建时间一样：按 id 比。
+    let mut listed: Vec<(PlanId, bool)> = a
+        .plans(None)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|p| (p.id, p.paused))
+        .collect();
+    listed.sort_by_key(|(id, _)| id.0);
+    let mut want = vec![(py.id, true), (pz.id, false)];
+    want.sort_by_key(|(id, _)| id.0);
+    assert_eq!(listed, want);
+    assert!(a.plans(Some(x.id)).await.unwrap().is_empty());
+    assert!(matches!(a.plan(px.id).await, Err(Error::NotFound)));
+    assert!(a.triggers(px.id).await.unwrap().iter().all(|t| !t.enabled));
+    assert_eq!(a.deleted_step(py.id).await.unwrap().as_deref(), Some("a"));
+    assert_eq!(a.deleted_step(pz.id).await.unwrap(), None);
+    // 再来一次什么都不变。
+    assert_eq!(
+        a.retire_instance_plans(x.id).await.unwrap(),
+        crate::RetiredPlans::default()
+    );
+    a.rollback().await.unwrap();
+    // 只剩 y 自己的计划会触发。
+    let mut w = db.worker().await.unwrap();
+    let due: Vec<PlanId> = w
+        .due_triggers(Utc::now() + Days::days(2), 100)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|d| d.plan.id)
+        .collect();
+    w.rollback().await.unwrap();
+    assert_eq!(due, [pz.id]);
+}
+
+/// 接口删除实例的那几步（gateway routes/instances.rs）。
+async fn delete_instance_like_the_api(
+    db: Db,
+    user: UserId,
+    id: proto::domain::InstanceId,
+) -> crate::Result<crate::RetiredPlans> {
+    let mut t = db.tenant(user).await?;
+    t.instance(id).await?;
+    let retired = t.retire_instance_plans(id).await?;
+    t.cancel_instance_runs(id, "instance deleted").await?;
+    t.revoke_instance_grants(id, "instance deleted").await?;
+    t.delete_instance(id).await?;
+    t.commit().await?;
+    Ok(retired)
+}
+
+fn plan_on(instance: &Instance) -> NewPlan {
+    NewPlan {
+        instance_id: instance.id,
+        title: "t".into(),
+        goal: "g".into(),
+        policy: PlanPolicy::default(),
+        catch_up: CatchUp::Once,
+        created_by: PlanAuthor::User,
+        run_grant_id: None,
+    }
+}
+
+fn step_on(instance: &Instance) -> proto::domain::PlanStep {
+    proto::domain::PlanStep {
+        key: "a".into(),
+        instance_id: instance.id,
+        prompt: "p".into(),
+        depends_on: vec![],
+    }
+}
+
+/// 删除实例和删除、恢复计划同时发生，两个互相有一步在对方上的实例同时删除（11.9）：锁的顺序一样（计划 →
+/// 触发器，计划按 id），不会死锁成 500。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn deleting_instances_and_plans_together_does_not_deadlock() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = t.db.clone();
+    let alice = user(&db, "+8613800000001").await;
+    let cron = ScheduleSpec::Cron {
+        expr: "0 8 * * *".into(),
+        tz: "Asia/Shanghai".into(),
+    };
+    let later = Utc::now() + Days::days(1);
+
+    // 删除计划、恢复计划的请求先锁住计划，再动它的触发器；删除实例这时开始，等它提交。
+    for resume in [false, true] {
+        let x = instance(&db, alice).await;
+        let mut a = db.tenant(alice).await.unwrap();
+        let p = a.create_plan(&plan_on(&x)).await.unwrap();
+        let trigger = a.add_trigger(p.id, &cron, Some(later)).await.unwrap();
+        a.commit().await.unwrap();
+        let mut r = db.tenant(alice).await.unwrap();
+        r.set_plan_paused(p.id, !resume).await.unwrap();
+        let d = tokio::spawn(delete_instance_like_the_api(db.clone(), alice, x.id));
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        if resume {
+            r.set_trigger_enabled(trigger.id, true, Some(later))
+                .await
+                .unwrap();
+        } else {
+            r.delete_plan(p.id).await.unwrap();
+        }
+        r.commit().await.unwrap();
+        let retired = d.await.unwrap().unwrap();
+        assert_eq!(retired.deleted.is_empty(), !resume, "{retired:?}");
+        let mut a = db.tenant(alice).await.unwrap();
+        assert!(matches!(a.plan(p.id).await, Err(Error::NotFound)));
+        assert!(a.triggers(p.id).await.unwrap().iter().all(|t| !t.enabled));
+        a.rollback().await.unwrap();
+    }
+
+    // x 的流水线有一步在 y 上，y 的有一步在 x 上，两个同时删除。
+    for _ in 0..10 {
+        let (x, y) = (instance(&db, alice).await, instance(&db, alice).await);
+        let mut a = db.tenant(alice).await.unwrap();
+        let px = a.create_plan(&plan_on(&x)).await.unwrap();
+        a.set_plan_steps(px.id, &[step_on(&y)]).await.unwrap();
+        let py = a.create_plan(&plan_on(&y)).await.unwrap();
+        a.set_plan_steps(py.id, &[step_on(&x)]).await.unwrap();
+        a.commit().await.unwrap();
+        let (rx, ry) = tokio::join!(
+            tokio::spawn(delete_instance_like_the_api(db.clone(), alice, x.id)),
+            tokio::spawn(delete_instance_like_the_api(db.clone(), alice, y.id)),
+        );
+        rx.unwrap().unwrap();
+        ry.unwrap().unwrap();
+        let mut a = db.tenant(alice).await.unwrap();
+        assert!(matches!(a.plan(px.id).await, Err(Error::NotFound)));
+        assert!(matches!(a.plan(py.id).await, Err(Error::NotFound)));
+        a.rollback().await.unwrap();
+    }
+}
+
+async fn blocked<T>(h: &tokio::task::JoinHandle<T>) {
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(!h.is_finished(), "should wait for the other transaction");
+}
+
+/// 恢复、确认前查步骤，改步骤时查实例，都和删除实例互斥（11.9）：先查的那边提交以后删除才处理计划（暂停刚恢复的、
+/// 刚加了它上面的步骤的流水线）；删除先开始的，查的那边等它提交，看到实例已经删了。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn plan_step_checks_and_instance_deletion_take_turns() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = t.db.clone();
+    let alice = user(&db, "+8613800000001").await;
+    let y = instance(&db, alice).await;
+    let paused_pipeline = |x: Instance| {
+        let db = db.clone();
+        let y = y.clone();
+        async move {
+            let mut a = db.tenant(alice).await.unwrap();
+            let p = a.create_plan(&plan_on(&y)).await.unwrap();
+            a.set_plan_steps(p.id, &[step_on(&x)]).await.unwrap();
+            a.set_plan_paused(p.id, true).await.unwrap();
+            a.commit().await.unwrap();
+            p.id
+        }
+    };
+
+    // 恢复先查过步骤：删除等它提交，再把它暂停。
+    let x = instance(&db, alice).await;
+    let p = paused_pipeline(x.clone()).await;
+    let mut r = db.tenant(alice).await.unwrap();
+    assert_eq!(r.deleted_step(p).await.unwrap(), None);
+    let d = tokio::spawn(delete_instance_like_the_api(db.clone(), alice, x.id));
+    blocked(&d).await;
+    r.set_plan_paused(p, false).await.unwrap();
+    r.commit().await.unwrap();
+    assert_eq!(d.await.unwrap().unwrap().paused, [p]);
+    let mut a = db.tenant(alice).await.unwrap();
+    assert!(a.plan(p).await.unwrap().paused);
+    a.rollback().await.unwrap();
+
+    // 删除先开始：恢复等它提交，看到那一步的实例删了。
+    let x = instance(&db, alice).await;
+    let p = paused_pipeline(x.clone()).await;
+    let mut d = db.tenant(alice).await.unwrap();
+    assert_eq!(d.retire_instance_plans(x.id).await.unwrap().paused, []);
+    d.delete_instance(x.id).await.unwrap();
+    let r = tokio::spawn({
+        let db = db.clone();
+        async move {
+            let mut r = db.tenant(alice).await.unwrap();
+            r.deleted_step(p).await
+        }
+    });
+    blocked(&r).await;
+    d.commit().await.unwrap();
+    assert_eq!(r.await.unwrap().unwrap().as_deref(), Some("a"));
+
+    // 改步骤先查过实例：删除等它提交，再暂停这个在跑的流水线。
+    let x = instance(&db, alice).await;
+    let mut a = db.tenant(alice).await.unwrap();
+    let p = a.create_plan(&plan_on(&y)).await.unwrap().id;
+    a.commit().await.unwrap();
+    let mut s = db.tenant(alice).await.unwrap();
+    s.set_plan_steps(p, &[step_on(&x)]).await.unwrap();
+    let d = tokio::spawn(delete_instance_like_the_api(db.clone(), alice, x.id));
+    blocked(&d).await;
+    s.commit().await.unwrap();
+    assert_eq!(d.await.unwrap().unwrap().paused, [p]);
+
+    // 删除先开始：改步骤等它提交，实例已经删了。
+    let x = instance(&db, alice).await;
+    let mut d = db.tenant(alice).await.unwrap();
+    d.retire_instance_plans(x.id).await.unwrap();
+    d.delete_instance(x.id).await.unwrap();
+    let s = tokio::spawn({
+        let db = db.clone();
+        let x = x.clone();
+        async move {
+            let mut s = db.tenant(alice).await.unwrap();
+            s.set_plan_steps(p, &[step_on(&x)]).await
+        }
+    });
+    blocked(&s).await;
+    d.commit().await.unwrap();
+    assert!(matches!(s.await.unwrap(), Err(Error::NotFound)));
 }
 
 /// 删除实例：从它的授权收窄给别的实例的子授权一起吊销；根在它上面的运行树里、在别的实例上跑的步骤一起取消。
@@ -2761,6 +3286,7 @@ async fn live_activities_follow_their_runs_per_device() {
         steps,
         started: false,
         ended,
+        wait_code: None,
     };
     settle_live(db, &a, "n1", sent(RunState::Queued, 0, false)).await;
     assert!(
@@ -2869,6 +3395,7 @@ async fn live_activities_follow_their_runs_per_device() {
             steps: 0,
             started: true,
             ended: false,
+            wait_code: None,
         },
     )
     .await;
@@ -2909,6 +3436,7 @@ async fn live_activities_follow_their_runs_per_device() {
             steps: 0,
             started: true,
             ended: false,
+            wait_code: None,
         },
     )
     .await;
@@ -3251,6 +3779,7 @@ async fn live_activities_follow_the_phone() {
             steps: 4,
             started: false,
             ended: false,
+            wait_code: None,
         },
     )
     .await;

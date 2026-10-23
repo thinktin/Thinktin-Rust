@@ -910,6 +910,14 @@ pub struct VendorInfo {
     /// 推荐的上游模型，以厂商控制台为准。
     pub models: Vec<String>,
     pub notes: String,
+    /// 订阅类 key 的前缀（11.9）：选这家时，粘贴的 key（去掉首尾空白）以其中一个开头（区分大小写）的服务端不收，
+    /// 可以先在本地提示。空的就不用查。
+    #[uniffi(default = [])]
+    pub subscription_key_prefixes: Vec<String>,
+    /// 这家套餐专用地址的前缀（11.9）：自定义端点（`custom`）的地址去掉首尾空白、转小写后等于**任何一家**的其中
+    /// 一个、或者接着是 `/` 的，服务端不收。只是提前提示，服务端照样检查。
+    #[uniffi(default = [])]
+    pub plan_only_bases: Vec<String>,
 }
 
 impl From<api::VendorInfo> for VendorInfo {
@@ -920,6 +928,8 @@ impl From<api::VendorInfo> for VendorInfo {
             protocols: v.protocols,
             models: v.models,
             notes: v.notes,
+            subscription_key_prefixes: v.subscription_key_prefixes,
+            plan_only_bases: v.plan_only_bases,
         }
     }
 }
@@ -1739,6 +1749,9 @@ impl ThinktinClient {
             .await
     }
 
+    /// 删除实例：没结束的运行取消，它的模型别名一起删；它自己的计划一起删掉，别的实例的流水线计划有一步在它上面的
+    /// 暂停（恢复 `set_plan_paused(.., false)`、`confirm_plan` 报 409，改了步骤才能恢复）。确认框可以按 `Plan.instance_id` 和
+    /// `Plan.steps[].instance_id` 分成这两组列出来。
     pub async fn delete_instance(&self, instance_id: String) -> Result<()> {
         let id: d::InstanceId = parse(&instance_id, "instance")?;
         self.run(|c| async move { c.api.delete_instance(id).await })
@@ -2369,6 +2382,23 @@ impl ThinktinClient {
         self.run(|c| async move {
             Ok(c.api
                 .update_credential(id, label.as_deref(), disabled)
+                .await?
+                .into())
+        })
+        .await
+    }
+
+    /// 改每日 token 上限（11.9）：`None` 取消上限，必须大于 0（0 报 422）。放宽或取消时等 key 的运行会接着跑；
+    /// 模型网关几秒内用上新的上限。
+    pub async fn set_credential_daily_limit(
+        &self,
+        credential_id: String,
+        daily_token_limit: Option<u64>,
+    ) -> Result<Credential> {
+        let id: d::CredentialId = parse(&credential_id, "credential")?;
+        self.run(|c| async move {
+            Ok(c.api
+                .set_credential_daily_limit(id, daily_token_limit)
                 .await?
                 .into())
         })

@@ -21,7 +21,7 @@ use notify::PushKind;
 use proto::computer::ComputerTool;
 use proto::domain::{
     ApprovalId, ApprovalState, ApprovalTimeoutAction, GrantId, InstanceEvent, Locale, PlanPolicy,
-    RunId, RunSource, RunState, UserId, VaultItemId, valid_vault_name, wait_code,
+    RunId, RunSource, RunState, UserId, VaultItemId, valid_vault_name,
 };
 use proto::shim::{DecisionSource, SecretValues, ShimCommand, ShimEvent, StopReason};
 use serde_json::{Value, json};
@@ -323,14 +323,11 @@ fn push_capped(s: &mut String, text: &str, cap: usize) {
     s.push_str(&text[..end]);
 }
 
-/// 运行结果提醒的去重键：同一件事只提醒一次。进入等待的按等的是什么分开（先缺 key、补上后又欠费，两次都要说）；
-/// 只能等用户处理的（key 无效、电脑离线）每次尝试都说一次（用户处理了、又出同样的问题），每小时自己再试的
-/// （欠费、没有可用的 key）同一个原因只说一次。
-fn wait_notice_key(run: RunId, to: RunState, attempt: u32, wait: Option<&str>) -> String {
+/// 运行结果提醒的去重键：同一件事只提醒一次。进入等待的按等的是什么分开（先缺 key、补上后又欠费，两次都要说），
+/// 同一个原因一个运行只说一次：唤醒等待中的运行的不只是用户处理了它（加了别的实例的 key、电脑的连接断了又连上），
+/// 按尝试次数说会一遍遍推同一件事。之后再等同一个原因只在 `Run.wait_code` 和 `run.state` 事件里。
+fn wait_notice_key(run: RunId, to: RunState, wait: Option<&str>) -> String {
     match wait {
-        Some(code @ (wait_code::INVALID | wait_code::DEVICE_OFFLINE)) => {
-            format!("run:{run}:{to}:{code}:{attempt}")
-        }
         Some(code) => format!("run:{run}:{to}:{code}"),
         None => format!("run:{run}:{to}"),
     }
@@ -1047,7 +1044,7 @@ impl Executor {
                 run: Some(run),
                 plan: rec.run.plan_id,
                 thread_id: Some(run.to_string()),
-                dedupe_key: Some(wait_notice_key(run, to, done.run.attempt, wait)),
+                dedupe_key: Some(wait_notice_key(run, to, wait)),
                 // 等 key、等电脑的：App 按等的是什么跳转（去换 key、去开电脑）。
                 subtype: wait.map(str::to_owned),
                 // 成功时正文是 agent 写的摘要；失败原因是平台写的。

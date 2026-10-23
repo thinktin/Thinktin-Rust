@@ -154,6 +154,21 @@ pub(crate) async fn route_fallbacks(
 }
 
 impl Tx<Tenant> {
+    /// 按用户加锁（到事务结束），再数没删除的实例（归档的也算）。领养前查上限用：并发领养的排着队数，
+    /// 不会一起超过上限（11.9）。
+    pub async fn lock_instance_count(&mut self) -> Result<u64> {
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(format!("instances/{}", self.user()))
+            .execute(self.conn())
+            .await?;
+        let n: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM instances WHERE user_id = app_user_id() AND state <> 'deleted'",
+        )
+        .fetch_one(self.conn())
+        .await?;
+        crate::unsigned(n, "instance count")
+    }
+
     pub async fn create_instance(&mut self, new: &NewInstance) -> Result<Instance> {
         let row: Row = sqlx::query_as(concat!(
             "INSERT INTO instances (id, user_id, agent_id, agent_version, harness, name, workspace_id, limits) \
@@ -210,7 +225,6 @@ impl Tx<Tenant> {
         Ok(())
     }
 
-    /// 标记删除。沙箱和工作区由后台的生命周期管理回收。
     /// 换模板版本（升级或回滚）：记下新版本，下次唤醒时重建沙箱。版本是否存在由调用方核对。
     pub async fn request_instance_version(
         &mut self,
@@ -229,6 +243,8 @@ impl Tx<Tenant> {
         row.ok_or(Error::NotFound)?.into_instance()
     }
 
+    /// 标记删除。沙箱和工作区由后台的生命周期管理回收；模型别名和降级链一起删掉（已删除的实例的别名看不到也改不了，
+    /// 留着会让它们指着的 key 删不掉）。实例的计划、运行、授权由调用方处理（接入网关的删除接口）。
     pub async fn delete_instance(&mut self, id: InstanceId) -> Result<()> {
         let done = sqlx::query(
             "UPDATE instances SET state = 'deleted', deleted_at = now(), updated_at = now() \
@@ -240,10 +256,16 @@ impl Tx<Tenant> {
         if done.rows_affected() == 0 {
             return Err(Error::NotFound);
         }
+        // 降级链随主路由级联删除。
+        sqlx::query("DELETE FROM model_routes WHERE instance_id = $1")
+            .bind(id.0)
+            .execute(self.conn())
+            .await?;
         Ok(())
     }
 
-    /// 整体替换实例的模型别名（连同各自的降级链）。凭证必须是自己的、没删除、没停用。
+    /// 整体替换实例的模型别名（连同各自的降级链）。凭证必须是自己的、没删除；新引用的不能是停用的，实例原来就用着的
+    /// 停用 key 可以留着（网关照样跳过它），所以从别名里去掉别的 key 不会因为它保存不了。
     pub async fn set_model_routes(
         &mut self,
         instance: InstanceId,
@@ -258,13 +280,24 @@ impl Tx<Tenant> {
         }
         // 锁住实例行：并发替换时后到的等前一个提交，不会交错成两份的并集。
         self.instance_for_update(instance).await?;
+        // 实例原来就用着的 key（主路由或降级链）：停用了也可以留着。
+        let kept: std::collections::HashSet<Uuid> = sqlx::query_scalar::<_, Uuid>(
+            "SELECT credential_id FROM model_routes WHERE instance_id = $1 \
+             UNION SELECT credential_id FROM model_route_fallbacks WHERE instance_id = $1",
+        )
+        .bind(instance.0)
+        .fetch_all(self.conn())
+        .await?
+        .into_iter()
+        .collect();
         // 备用项随主路由级联删除。
         sqlx::query("DELETE FROM model_routes WHERE instance_id = $1")
             .bind(instance.0)
             .execute(self.conn())
             .await?;
         for route in routes {
-            self.lock_usable_credential(route.credential_id).await?;
+            self.lock_usable_credential(route.credential_id, kept.contains(&route.credential_id.0))
+                .await?;
             sqlx::query(
                 "INSERT INTO model_routes (instance_id, alias, user_id, credential_id, upstream_model) \
                  VALUES ($1, $2, app_user_id(), $3, $4)",
@@ -276,7 +309,8 @@ impl Tx<Tenant> {
             .execute(self.conn())
             .await?;
             for (i, fb) in route.fallbacks.iter().enumerate() {
-                self.lock_usable_credential(fb.credential_id).await?;
+                self.lock_usable_credential(fb.credential_id, kept.contains(&fb.credential_id.0))
+                    .await?;
                 sqlx::query(
                     "INSERT INTO model_route_fallbacks \
                        (instance_id, alias, position, user_id, credential_id, upstream_model) \
@@ -318,18 +352,25 @@ impl Tx<Tenant> {
             .collect())
     }
 
-    /// 路由要用的 key：自己的、没删除、没停用。`FOR SHARE` 和删除 key 互斥，检查之后不会被删掉。
-    async fn lock_usable_credential(&mut self, id: CredentialId) -> Result<()> {
-        let usable: Option<bool> = sqlx::query_scalar(
-            "SELECT deleted_at IS NULL AND NOT disabled FROM credentials WHERE id = $1 FOR SHARE",
+    /// 路由要用的 key：自己的、没删除；`keep_disabled` 时（实例原来就用着）停用的也行。`FOR SHARE` 和删除 key 互斥，
+    /// 检查之后不会被删掉。
+    async fn lock_usable_credential(
+        &mut self,
+        id: CredentialId,
+        keep_disabled: bool,
+    ) -> Result<()> {
+        let state: Option<(bool, bool)> = sqlx::query_as(
+            "SELECT deleted_at IS NULL, disabled FROM credentials WHERE id = $1 FOR SHARE",
         )
         .bind(id.0)
         .fetch_optional(self.conn())
         .await?;
-        if usable != Some(true) {
-            return Err(Error::Invalid(format!("credential {id} is not usable")));
+        match state {
+            Some((true, false)) => Ok(()),
+            Some((true, true)) if keep_disabled => Ok(()),
+            Some((true, true)) => Err(Error::Invalid(format!("credential {id} is disabled"))),
+            _ => Err(Error::Invalid(format!("credential {id} is not usable"))),
         }
-        Ok(())
     }
 
     async fn instance_for_update(&mut self, id: InstanceId) -> Result<()> {

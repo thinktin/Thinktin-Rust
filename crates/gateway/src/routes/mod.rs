@@ -183,6 +183,15 @@ pub(crate) fn parse_id<T: std::str::FromStr>(raw: &str, what: &str) -> Result<T,
     raw.parse().map_err(|_| crate::ApiError::not_found(what))
 }
 
+/// 区分“没带”和“带了 null”：带了的（包括 null）都是 `Some`（配合 `#[serde(default, deserialize_with = "present")]`）。
+pub(crate) fn present<'de, D, T>(d: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    <Option<T> as serde::Deserialize>::deserialize(d).map(Some)
+}
+
 /// 检查文本长度（按字符）。
 pub(crate) fn check_len(
     field: &str,

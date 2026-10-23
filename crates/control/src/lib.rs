@@ -21,7 +21,7 @@ use sandbox::{
     CreateSpec, NetworkPolicy, Resources, SandboxId, SandboxInfo, SandboxProvider, SandboxState,
 };
 use serde_json::json;
-use store::{Db, InstanceRuntime, NewInstance, Tx, Worker};
+use store::{Db, InstanceRuntime, NewInstance, Tenant, Tx, Worker};
 use tracing::{info, warn};
 
 #[derive(Debug, thiserror::Error)]
@@ -41,6 +41,9 @@ pub enum Error {
     },
     #[error("instance is deleted")]
     Deleted,
+    /// 实例数到了账号的上限（11.9）。
+    #[error("at most {max} instances per account")]
+    InstanceLimit { max: u64 },
     #[error("instance has a run in progress")]
     Busy,
     #[error("sandbox {0} timed out")]
@@ -138,7 +141,7 @@ pub struct SweepReport {
     pub failed: usize,
 }
 
-/// 领养（不需要沙箱后端，接口层直接调用）：锁定 agent 当前版本和接入方式，建实例记录。
+/// 领养（不需要沙箱后端，接口层直接调用）：锁定 agent 当前版本和接入方式，建实例记录。不限实例数。
 pub async fn adopt(
     db: &Db,
     templates: &dyn Templates,
@@ -148,6 +151,69 @@ pub async fn adopt(
     harness: Option<&str>,
     name: &str,
 ) -> Result<Instance> {
+    let spec = AdoptSpec {
+        agent_id,
+        harness,
+        name,
+    };
+    adopt_capped(db, templates, user, actor, spec, 0).await
+}
+
+/// 领养什么。
+#[derive(Debug, Clone, Copy)]
+pub struct AdoptSpec<'a> {
+    pub agent_id: &'a str,
+    pub harness: Option<&'a str>,
+    pub name: &'a str,
+}
+
+/// 同 [`adopt`]，账号最多 `max_instances` 个没删除的实例（0 不限）：到了上限是 [`Error::InstanceLimit`]。
+/// 按用户加锁再数，并发领养不会一起超过。
+pub async fn adopt_capped(
+    db: &Db,
+    templates: &dyn Templates,
+    user: UserId,
+    actor: &str,
+    spec: AdoptSpec<'_>,
+    max_instances: u64,
+) -> Result<Instance> {
+    let resolved = resolve(templates, spec)?;
+    let mut t = db.tenant(user).await?;
+    if max_instances > 0 && t.lock_instance_count().await? >= max_instances {
+        return Err(Error::InstanceLimit { max: max_instances });
+    }
+    let instance = insert(&mut t, actor, &resolved).await?;
+    t.commit().await?;
+    info!(instance = %instance.id, agent = %resolved.agent_id, "instance adopted");
+    Ok(instance)
+}
+
+/// 在调用方的事务里领养，不提交、不查上限：一次领养好几个的（团队模板）在同一个事务里全成或全不成，上限由调用方
+/// 在同一个事务里用 `lock_instance_count` 查（锁到提交）。
+pub async fn adopt_in(
+    t: &mut Tx<Tenant>,
+    templates: &dyn Templates,
+    actor: &str,
+    spec: AdoptSpec<'_>,
+) -> Result<Instance> {
+    let resolved = resolve(templates, spec)?;
+    insert(t, actor, &resolved).await
+}
+
+/// 查过的领养请求：agent 的当前版本和接入方式。
+struct Resolved {
+    agent_id: String,
+    version: String,
+    harness: String,
+    name: String,
+}
+
+fn resolve(templates: &dyn Templates, spec: AdoptSpec<'_>) -> Result<Resolved> {
+    let AdoptSpec {
+        agent_id,
+        harness,
+        name,
+    } = spec;
     let m = templates
         .current(agent_id)
         .ok_or_else(|| Error::UnknownAgent(agent_id.into()))?;
@@ -167,13 +233,21 @@ pub async fn adopt(
     if name.trim().is_empty() || name.chars().count() > 64 {
         return Err(Error::Invalid("name must be 1-64 characters".into()));
     }
-    let mut t = db.tenant(user).await?;
+    Ok(Resolved {
+        agent_id: m.agent.id.clone(),
+        version: m.agent.version.clone(),
+        harness: harness.id.clone(),
+        name: name.trim().into(),
+    })
+}
+
+async fn insert(t: &mut Tx<Tenant>, actor: &str, r: &Resolved) -> Result<Instance> {
     let instance = t
         .create_instance(&NewInstance {
-            agent_id: m.agent.id.clone(),
-            agent_version: m.agent.version.clone(),
-            harness: harness.id.clone(),
-            name: name.trim().into(),
+            agent_id: r.agent_id.clone(),
+            agent_version: r.version.clone(),
+            harness: r.harness.clone(),
+            name: r.name.clone(),
             workspace_id: format!("ws-{}", uuid::Uuid::now_v7().simple()),
             limits: InstanceLimits::default(),
         })
@@ -189,11 +263,9 @@ pub async fn adopt(
         actor,
         "instance.adopt",
         Some(&instance.id.to_string()),
-        &json!({ "agent": m.agent.id, "version": m.agent.version, "harness": harness.id }),
+        &json!({ "agent": r.agent_id, "version": r.version, "harness": r.harness }),
     )
     .await?;
-    t.commit().await?;
-    info!(instance = %instance.id, agent = %m.agent.id, "instance adopted");
     Ok(instance)
 }
 

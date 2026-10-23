@@ -486,4 +486,49 @@ async fn waiting_runs_say_what_they_wait_for() {
         ),
         (&json!("waiting_quota"), &json!("no_balance"))
     );
+    assert_eq!(d.tick().await.unwrap(), 0, "nothing changed");
+    // 状态没变、只是等的原因变了：也发一次。
+    sqlx::query("UPDATE runs SET wait_code = 'rate_limited' WHERE id = $1")
+        .bind(run.id.0)
+        .execute(s.t.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(d.tick().await.unwrap(), 1);
+    assert_eq!(rec.sent()[0].1.content_state["waitCode"], "rate_limited");
+    assert_eq!(d.tick().await.unwrap(), 0);
+}
+
+/// 老版本的副本不清 `wait_code`（10.7）：不在等 key、等电脑时留着的不发、也不会让它一遍遍重发。
+#[tokio::test]
+async fn leftover_wait_codes_are_ignored() {
+    let Some(s) = setup("+8613800000071", "调研助手").await else {
+        return;
+    };
+    let run = s.run(RunSource::User).await;
+    s.set(&run, "running", 1).await;
+    s.register(&run, PHONE).await;
+    let rec = Arc::new(Recording::default());
+    let d = s.dispatcher(rec.clone(), eager());
+    assert_eq!(d.tick().await.unwrap(), 1);
+    rec.sent();
+    // 状态没变（只留着码）：不发；状态变了：发一次，不带 waitCode；之后都不再发。
+    for (state, want) in [("running", 0), ("waiting_approval", 1)] {
+        sqlx::query("UPDATE runs SET state = $2, wait_code = 'no_balance' WHERE id = $1")
+            .bind(run.id.0)
+            .bind(state)
+            .execute(s.t.db.pool())
+            .await
+            .unwrap();
+        let mut n = 0;
+        for _ in 0..3 {
+            n += d.tick().await.unwrap();
+        }
+        assert_eq!(n, want, "{state}");
+        assert!(
+            rec.sent()
+                .iter()
+                .all(|(_, p)| p.content_state.get("waitCode").is_none()),
+            "{state}"
+        );
+    }
 }
