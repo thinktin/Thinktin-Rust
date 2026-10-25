@@ -161,9 +161,12 @@ struct DetailSection: View {
     }
 }
 
-/// agent 的待办清单：每项的状态，完成了几项，带“AI 生成”标识。
+/// agent 的待办清单：每项的状态，完成了几项，带“AI 生成”标识；长按复制、分享、举报（和 agent 的回复一样）。
 struct AgentPlanCardView: View {
     let card: AgentPlanCard
+    /// 时间线里的那一项（举报用它的事件序号）；预览里没有。
+    var item: ConversationItem?
+    var onReport: (ContentReportTarget) -> Void = { _ in }
 
     @Environment(\.displayLanguage) private var language
 
@@ -200,6 +203,14 @@ struct AgentPlanCardView: View {
             }
             if card.isAIGenerated { AIGeneratedLabel() }
         }
+        .contextMenu {
+            MessageMenu(text: card.plainText, target: reportTarget, onReport: onReport)
+        }
+        .messageAccessibilityActions(text: card.plainText, target: reportTarget, onReport: onReport)
+    }
+
+    private var reportTarget: ContentReportTarget? {
+        item.flatMap(ContentReportTarget.init(item:))
     }
 
     static func symbol(_ status: ToolCallStatus?) -> String {

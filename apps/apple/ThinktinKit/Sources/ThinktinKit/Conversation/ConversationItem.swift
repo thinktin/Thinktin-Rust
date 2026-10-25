@@ -128,6 +128,11 @@ public struct AgentPlanCard: Hashable, Sendable {
     }
 
     public var completedCount: Int { entries.filter { $0.status == .completed }.count }
+
+    /// 复制、分享用的纯文本：Markdown 任务列表，一项一行。
+    public var plainText: String {
+        entries.map { ($0.status == .completed ? "- [x] " : "- [ ] ") + $0.content }.joined(separator: "\n")
+    }
 }
 
 /// 审批卡片：未决时显示选项按钮（调 `decideApproval`，要先拿到 `approvalID`），已决显示结果和由谁决定。

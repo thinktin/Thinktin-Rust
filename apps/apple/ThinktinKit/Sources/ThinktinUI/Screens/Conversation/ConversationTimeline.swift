@@ -141,7 +141,7 @@ struct ConversationItemView: View {
         case .toolCall(let card):
             ToolCallCardView(card: card)
         case .agentPlan(let card):
-            AgentPlanCardView(card: card)
+            AgentPlanCardView(card: card, item: item, onReport: onReport)
         case .approval(let card):
             ApprovalCardView(item: item, card: card, model: model)
         case .vaultRequest(let card):

@@ -77,6 +77,22 @@ struct RunScreensTests {
         #expect(!model.canStop)
     }
 
+    @Test("停止已经结束的运行（冲突）：页面换成最新状态，停止按钮消失，不提示错误")
+    func stopFinished() async throws {
+        let mock = ConversationFixture.mock()
+        let model = RunDetailModel(client: mock, runID: DemoData.postRunID)
+        await model.load()
+        #expect(model.canStop)
+        // 别的设备上已经结束了，事件还没到。
+        mock.update { s in
+            if let i = s.runs.firstIndex(where: { $0.id == DemoData.postRunID }) { s.runs[i].state = .succeeded }
+        }
+        await model.stop(wholeTree: false)
+        #expect(model.stopError == nil)
+        #expect(model.run?.state == .succeeded)
+        #expect(!model.canStop)
+    }
+
     @Test("委派的子运行：树里有两个，任务带 AI 生成标识，可以停止整棵树")
     func delegatedTree() async throws {
         var state = DemoData.state()

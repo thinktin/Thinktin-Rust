@@ -60,8 +60,11 @@ public final class ContentReportModel {
         self.target = target
     }
 
-    /// 说明超长了。
-    public var isNoteTooLong: Bool { note.count > ContentReport.maxNoteLength }
+    /// 说明超长了：和服务端一样，去掉首尾空白后按 Unicode 标量数（crates/gateway/src/routes/reports.rs 的 `check_len`），
+    /// 不按字形簇（表情、组合字符一个字形可能是好几个标量）。
+    public var isNoteTooLong: Bool {
+        note.trimmingCharacters(in: .whitespacesAndNewlines).unicodeScalars.count > ContentReport.maxNoteLength
+    }
 
     public var canSubmit: Bool { reason != nil && !isNoteTooLong && !isSubmitting && report == nil }
 

@@ -347,7 +347,10 @@ struct ConversationOutputTests {
         #expect(card.entries[0].status == .completed)
         #expect(card.completedCount == 1)
         #expect(card.isAIGenerated)
-        #expect(out[0].id == "plan-run-a")
+        // id 是第一条 agent.plan 事件的序号（原地替换时不变），举报带它。
+        #expect(out[0].id == "seq-1")
+        #expect(ContentReportTarget(item: out[0]) == .message(runID: runA, seq: 1))
+        #expect(card.plainText == "- [x] 读代码\n- [ ] 写测试")
     }
 
     @Test("artifact.published：产出物卡片")

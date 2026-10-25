@@ -198,7 +198,9 @@ public final class RunDetailModel {
         } catch {
             guard let failure = ConversationErrors.from(error) else { return }
             if failure.isConflict {
+                // 已经结束了：`run` 先看 `process` 里的记录，两边都要更新，不然停止按钮还在。
                 if let fresh = try? await client.getRun(runID) { fetchedRun = fresh }
+                if let process { await process.fetchRuns([runID]) }
             } else {
                 stopError = failure
             }

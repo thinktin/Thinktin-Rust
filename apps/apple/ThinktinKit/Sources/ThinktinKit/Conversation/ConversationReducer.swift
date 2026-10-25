@@ -350,7 +350,8 @@ private struct TurnState: Sendable {
                 entries[i].content = .agentPlan(card)
             } else {
                 agentPlanIndex = entries.count
-                append(id: "plan-\(key)", event: event, .agentPlan(card))
+                // 和别的 agent 输出一样以第一条事件的序号为 id（举报带这个序号，`ConversationItem.eventSeq`）。
+                append(id: "seq-\(event.seq)", event: event, .agentPlan(card))
             }
         case .permissionRequested(let p):
             let card = ApprovalKey(attempt: attempt(of: p.attempt), requestID: p.requestID)

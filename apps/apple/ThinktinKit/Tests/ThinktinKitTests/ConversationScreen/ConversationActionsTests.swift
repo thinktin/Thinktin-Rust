@@ -450,6 +450,12 @@ struct ContentReportModelTests {
         model.reason = .other
         model.note = String(repeating: "长", count: ContentReport.maxNoteLength + 1)
         #expect(model.isNoteTooLong && !model.canSubmit)
+        // 和服务端一样按去掉首尾空白后的 Unicode 标量数：一家人的表情是 1 个字形、5 个标量。
+        let family = "👨‍👩‍👧"
+        model.note = String(repeating: family, count: 201)
+        #expect(model.note.count == 201 && model.isNoteTooLong)
+        model.note = "  " + String(repeating: "长", count: ContentReport.maxNoteLength) + "\n"
+        #expect(!model.isNoteTooLong)
         model.note = ""
         #expect(await model.submit())
         #expect(mock.state.reports.first?.target == .run)
