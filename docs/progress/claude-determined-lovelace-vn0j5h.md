@@ -57,9 +57,11 @@ P1 后端核心（M1–M9）和 P2 里能在代码层面完成的包都做完了
 - iOS 12.8 推送与收件箱（`691e1ab`）：收件箱和单条通知页、点开推送标已读、通知上的“拒绝”、APNs 令牌上报、角标和退出登录清通知、
   `AppDelegate`；uicheck 加了 UserNotifications 的桩，App 的推送代码在 Linux 上也做类型检查。866 个测试。
 
+- 安卓 13.8 推送与收件箱：收件箱页面、通知渠道（`tt_approval` / `tt_results`）、推送点开跳转和标已读、令牌上报流程；推送 SDK 没接（要人定，见下）。
+  全量 test（app 292）/ lint / 打包通过。
+
 进行中：
-- 安卓 13.8 推送与收件箱（2026-10-25 22:58 开始）：收件箱页面、通知渠道（服务端用 `tt_approval` / `tt_results`）、推送点开跳转和标已读、
-  令牌上报（极光报 `unipush`、FCM 报 `fcm`）。
+- iOS 12.18 产出物（2026-10-25 开始）。
 
 环境（容器回收后要重装）：Swift 6.2 装在 `/opt/swift`（swift.org 的包，验签）；Android SDK 在 `/opt/android-sdk`（cmdline-tools、platform 35、build-tools 35.0.0，不用 NDK）；`cargo build -p client-core --lib` 出本机库，`tools/client-core/build-linux-swift.sh target/linux` 出 Linux 版 Swift 包。Gradle 直连 Maven Central 没被限流。Gradle 和 Swift 一起跑时 Robolectric 偶尔超时，分开跑。
 
@@ -67,4 +69,5 @@ P1 后端核心（M1–M9）和 P2 里能在代码层面完成的包都做完了
 - 原来三个会话（backend `session_016LgPcdynywrhrjCq8VVFLt`、iOS `session_01GuCp3KRgqaK6Kzynw6udRn`、安卓 `session_01T2zubC6hDr9ZZR3ihhPP5b`）查不到了，它们 scratchpad 里的工作流脚本和缓存也没了，按各进度文件重新来。
 - 定时任务 `trig_01LULryki4Z7mPLXhgSXGWMP`（每小时第 58 分）：叫醒本会话、读本文件接着做；全部做完或用户叫停时删掉。
 - 要人定的：iOS 批准审批时设备没设锁屏密码照常批准（`BiometricGateResult.unavailable`），安卓是不许批准，两端不一致。
+- 要人定的：安卓推送 SDK（极光闭源、FCM 带 Play 服务许可，和安卓“只用宽松许可证”的约定冲突；极光的权限和 Robolectric 不兼容），详见 `docs/progress/android-app.md`。现在两个渠道的 `FlavorPush` 是空实现。
 - Robolectric 的触摸点不到盖在页面上的面板（会落到遮罩上，真机正常）：面板里的控件在测试里用 `SemanticsActions.OnClick`（安卓 README 已知问题）。
