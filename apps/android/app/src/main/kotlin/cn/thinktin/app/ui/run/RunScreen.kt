@@ -187,10 +187,11 @@ private fun RunContent(
     onOpenModelRoutes: (String) -> Unit,
 ) {
     val listState = rememberLazyListState()
-    // 深链指向子运行：树上的那个节点滚到可见。
+    // 深链指向子运行：树上的那个节点滚到可见。节点前面还有详情、（可能有的）横幅和树的标题三行。
     LaunchedEffect(state.nodes.size) {
         val index = state.nodes.indexOfFirst { it.run.id == state.selectedId }
-        if (index > 0) listState.scrollToItem(index + 1)
+        val rowsBefore = 2 + if (state.rootAttention != null) 1 else 0
+        if (index > 0) listState.scrollToItem(index + rowsBefore)
     }
     LazyColumn(
         state = listState,

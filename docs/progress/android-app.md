@@ -18,12 +18,13 @@ PR：[#7](https://github.com/thinktin/Thinktin-Rust/pull/7)（草稿，叠在 #5
 - **破坏性改动适配**（`ca2eac3`）：去掉 `patch-bindings.py`，`ServiceError` 读 `detail`，`StreamStatus.UpgradeRequired` → 升级页，`Approval` 关联键（`run_id, attempt, request_id`）、`getApproval`，收件箱 `subtype` / `vault_request_id` 与新 kind；311 个 debug 测试。
 - **13.16 云端审批**（`69f75db`）：`ApprovalCards`（从审批记录或事件流归并出卡片，含作废与 `approval_state` 优先规则）、`:design` 的 ApprovalCard、审批中心与详情（`getApproval` 对已处理 / 过期不报错）、`ApprovalGate`（BiometricPrompt：BIOMETRIC_STRONG 或 DEVICE_CREDENTIAL，无锁屏凭证不允许批准；拒绝不验证）；360 个 debug 测试。
 - **与 backend-core 同步对齐（用户 2026-10-23 07:28 的要求）**：合并到 `67f9e7a`（11.9），绑定重生成（`c90ec76`），App 适配（`8115eba`…`92957c3`）：`setCredentialDailyLimit` 接上、13.4 编辑页每日限额可改；`KeyRules` 改用 `VendorInfo.subscriptionKeyPrefixes` / `planOnlyBases`，删掉复制自 `proto::vendors` 的表和 `KeyRulesSyncTest`（已告知 backend-core 可去掉 `PLAN_ONLY_BASES`）；`instance_limit` / `_limit` 错误码判断“已达上限”，未知错误码按 HTTP 状态显示；删实例的确认文案与 Mock 语义（自己的计划删除、他人流水线暂停需改步骤、别名一起删）；别名页允许保留原有的停用 key；Mock 的模板领养全成或全不成。437 个 debug 测试 + 163 个 release 变体，lint 0 错误。
+- **13.5 对话与运行过程**（2026-10-25 由集成分支 `claude/determined-lovelace-vn0j5h` 上的会话收尾）：上一轮停在部分改动的快照上，核对下来代码已经齐了（按实例的运行时间线与翻页、全部事件种类的渲染与 AI 标识、密码拦截与保险箱表单、agent 的填写请求、停止、断线续传与 on_reset、离线缓存、运行树入口），对照 WBS 13.5 和设计规范第 4.3、8.2–8.4 节逐项看过视图模型和界面；修了运行页深链定位子运行时少算了横幅那一行。`:app` 257 个、`:design` 17 个、`:core` 8 个测试过（和 iOS 的 Swift 编译抢 CPU 时 Robolectric 跑挂过一次，单独再跑就过了）。
 
 进行中：
 - 无。按用户要求（“让各会话把代码都同步对齐先，后面我再安排工作”）已停下等安排；03:20 UTC 的自动恢复提醒已停用。
 
 下一步（等用户安排后）：
-1. 恢复 13.5 对话与运行过程：`Workflow({scriptPath: "<会话目录>/workflows/scripts/android-adapt-13-16-13-5-wf_2830c5a3-21b.js", resumeFromRunId: "wf_2830c5a3-21b"})`（适配与 13.16 已缓存；13.5 的部分改动在 `ba78a8d`，恢复前把脚本里任务 C 的“注意”段改成描述当前工作区状态），之后四维评审 → 反方核实 → 修复 → 最终验证。
+1. ~~恢复 13.5 对话与运行过程~~（2026-10-25 已收尾，见上）：`Workflow({scriptPath: "<会话目录>/workflows/scripts/android-adapt-13-16-13-5-wf_2830c5a3-21b.js", resumeFromRunId: "wf_2830c5a3-21b"})`（适配与 13.16 已缓存；13.5 的部分改动在 `ba78a8d`，恢复前把脚本里任务 C 的“注意”段改成描述当前工作区状态），之后四维评审 → 反方核实 → 修复 → 最终验证。
 2. 13.6 计划 → 13.8 推送与收件箱 → 13.13 设置 → 13.7 团队与流水线 → 13.11 / 13.12，再做 P2 的 13.10、13.14。
 3. 每个工作包：Workflow → 提交推送 → 更新本文件。
 

@@ -30,7 +30,7 @@
 - 无。2026-10-23 用户要求：各会话先把代码同步对齐（上面两条），之后暂停所有工作，等用户通知再继续——不开新的工作包、不跑审查、不恢复预约的任务。定期续跑检查 `trig_01Wt6oEwQkA7pisCjcDZQZJB` 已停用（全部 12.x 完成前，用户让继续时再启用）。
 
 下一步（等用户通知后）：
-1. 对抗式审查 12.5、12.6、12.12（W1 第二轮的审查步骤，脚本 ios-w1-round2.js 的 review 阶段；工作流 wf_f1f40517-bee 里实现结果有缓存）。
+1. ~~对抗式审查 12.5、12.6、12.12~~（2026-10-25 审过并修了，见已完成）（W1 第二轮的审查步骤，脚本 ios-w1-round2.js 的 review 阶段；工作流 wf_f1f40517-bee 里实现结果有缓存）。
 2. 合并后留下的小项：ComposerBar 加停止键 / 排队提示 / 字数（12.5 现在自己复制了一份）；`InstanceEventKind` 加 `.instanceState`；`AppRoute.artifact(id)`（12.18）；BiometricGate 在 App 的 Platform 里实现并注入；12.3 的 Agents* 组件挪到 `Components/` 改通用名；`MockClient.makeTrigger` 用 `ScheduleForecast` 算 cron / RRULE 的 `nextFireAt`；Mock 不模拟唤醒等 key 的运行；12.4 的“200 万 tokens”和 12.5 / 12.6 的“token”用词统一；设置里 12.12 的入口跳 12.4（`.credentials`、`.usage`）、12.5 等 key 跳 `.modelRoutes`。
 3. W1 第三轮：12.7 团队与流水线（含团队模板领养的 instance_limit 文案、流水线改步骤）、12.8 推送与收件箱、12.15 审批中心、12.17 引导与空状态、12.18 产出物（每个包在自己的 worktree 里实现，再由审查者在同一分支上对抗式审查并修；iOS 会话的 scratchpad 里有脚本草稿 ios-w1-round3.js，换了会话就照 W1 第二轮的写法重写）。
 4. W2：12.13、12.10、12.20、12.21、12.19；12.11 最后；12.9 随 macOS（P3）。
