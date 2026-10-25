@@ -5,17 +5,23 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.thinktin.app.AppContainer
 import cn.thinktin.app.ServiceState
 import cn.thinktin.app.navigation.DeepLinkInbox
 import cn.thinktin.app.navigation.LocalDeepLinks
 import cn.thinktin.app.navigation.MainNavigation
+import cn.thinktin.app.push.FlavorPush
+import cn.thinktin.app.push.PushNotifier
 import cn.thinktin.app.settings.AppSettings
 import cn.thinktin.app.ui.common.LocalAppContainer
 import cn.thinktin.app.ui.common.LocalThinktinService
@@ -28,6 +34,7 @@ import cn.thinktin.data.service.AuthState
 import cn.thinktin.data.service.ThinktinService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 /**
@@ -66,6 +73,7 @@ fun AppRoot(container: AppContainer, settings: AppSettings?, deepLinks: DeepLink
 private fun ServiceContent(container: AppContainer, service: ThinktinService, deepLinks: DeepLinkInbox) {
     val auth by service.authState.collectAsStateWithLifecycle()
     val upgradeRequired by service.upgradeState.collectAsStateWithLifecycle()
+    PushSync(container, service, auth)
     CompositionLocalProvider(
         LocalAppContainer provides container,
         LocalThinktinService provides service,
@@ -78,6 +86,31 @@ private fun ServiceContent(container: AppContainer, service: ThinktinService, de
                 auth == AuthState.SignedOut && !service.isDemo -> LoginFlow()
                 else -> MainNavigation()
             }
+        }
+    }
+}
+
+/**
+ * 推送（13.8）：真实服务登录后（同意了隐私政策）才启动推送 SDK，拿到的令牌交给 [AppContainer.push]；登录着时把令牌
+ * 报给服务端、点开过的通知标已读（令牌、待标已读变了再来一次）；从登录变成退出登录时清掉通知栏里的（推送里没有用户 id，
+ * 不能留着上一个账号的）。演示模式不接推送。
+ */
+@Composable
+private fun PushSync(container: AppContainer, service: ThinktinService, auth: AuthState) {
+    val context = LocalContext.current
+    var wasSignedIn by remember(service) { mutableStateOf(false) }
+    LaunchedEffect(service, auth) {
+        if (auth == AuthState.SignedIn) {
+            wasSignedIn = true
+            if (!service.isDemo) {
+                FlavorPush.start(context.applicationContext) { token -> container.push.onNewToken(FlavorPush.channel, token) }
+            }
+            combine(container.push.token, container.push.pendingReads) { _, _ -> }
+                .collect { container.push.sync(service) }
+        } else {
+            if (wasSignedIn && auth == AuthState.SignedOut) PushNotifier.cancelAll(context)
+            if (auth == AuthState.SignedOut) wasSignedIn = false
+            container.push.sync(service)
         }
     }
 }

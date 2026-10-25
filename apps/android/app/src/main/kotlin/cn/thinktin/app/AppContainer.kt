@@ -5,6 +5,7 @@ import android.util.Log
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.preferencesDataStoreFile
 import androidx.fragment.app.FragmentActivity
+import cn.thinktin.app.push.PushCoordinator
 import cn.thinktin.app.settings.AppLanguage
 import cn.thinktin.app.settings.AppSettings
 import cn.thinktin.app.settings.AppSettingsRepository
@@ -81,6 +82,9 @@ class AppContainer(
 
     /** 首页拦下密码后转交给对话页的消息（13.5）。 */
     val draftHandoff = DraftHandoff()
+
+    /** 推送令牌和点开过的通知（13.8）：推送 SDK、MainActivity 交进来，根界面登录着时报给服务端、标已读。 */
+    val push = PushCoordinator()
 
     /** 当前的 MainActivity（弱引用，[attachActivity]）：BiometricPrompt 要它。 */
     @Volatile

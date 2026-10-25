@@ -20,16 +20,18 @@ PR：[#7](https://github.com/thinktin/Thinktin-Rust/pull/7)（草稿，叠在 #5
 - **与 backend-core 同步对齐（用户 2026-10-23 07:28 的要求）**：合并到 `67f9e7a`（11.9），绑定重生成（`c90ec76`），App 适配（`8115eba`…`92957c3`）：`setCredentialDailyLimit` 接上、13.4 编辑页每日限额可改；`KeyRules` 改用 `VendorInfo.subscriptionKeyPrefixes` / `planOnlyBases`，删掉复制自 `proto::vendors` 的表和 `KeyRulesSyncTest`（已告知 backend-core 可去掉 `PLAN_ONLY_BASES`）；`instance_limit` / `_limit` 错误码判断“已达上限”，未知错误码按 HTTP 状态显示；删实例的确认文案与 Mock 语义（自己的计划删除、他人流水线暂停需改步骤、别名一起删）；别名页允许保留原有的停用 key；Mock 的模板领养全成或全不成。437 个 debug 测试 + 163 个 release 变体，lint 0 错误。
 - **13.5 对话与运行过程**（2026-10-25 由集成分支 `claude/determined-lovelace-vn0j5h` 上的会话收尾）：上一轮停在部分改动的快照上，核对下来代码已经齐了（按实例的运行时间线与翻页、全部事件种类的渲染与 AI 标识、密码拦截与保险箱表单、agent 的填写请求、停止、断线续传与 on_reset、离线缓存、运行树入口），对照 WBS 13.5 和设计规范第 4.3、8.2–8.4 节逐项看过视图模型和界面；修了运行页深链定位子运行时少算了横幅那一行。`:app` 257 个、`:design` 17 个、`:core` 8 个测试过（和 iOS 的 Swift 编译抢 CPU 时 Robolectric 跑挂过一次，单独再跑就过了）。
 - **13.6 计划**（2026-10-25，集成分支 `claude/determined-lovelace-vn0j5h`）：`:data` 的 `schedule/`（cron / RRULE 的本地预测和触发器草稿，照 iOS 的 `ScheduleForecast` / `TriggerDraft` 移植到 java.time；期望值由 Python zoneinfo 独立算出），`:app` 的 `ui/plans/`：列表（等确认置顶、查看并确认 / 拒绝，在跑 / 已暂停，开关暂停恢复）、详情（触发规则描述与下一次、策略、补跑、步骤只读、运行历史；确认带版本号，冲突换新版本、步骤在已删除实例上的 409 按实例列表认出）、新建 / 编辑（实例、标题、目标、触发规则面板：写法、TimeInput、DatePicker、星期 / 日期、cron / RRULE、时区、接下来 5 次预览；策略按小时；只发改了的字段，触发器先删后加，失败后只做剩下的），路由 `plans`、`plan/{id}`、`plans/new?instanceId=`、`plan/{id}/edit`，深链 `thinktin://plan/{id}` 不再是骨架页。说明见 README“计划（13.6）”。`ScheduleTest` 14 个、`PlansViewModelTest` 18 个、`PlansUiTest` 3 个；全量 `test lint assembleDebug :app:assembleCnRelease` 通过（`:app` 277 个、`:data` 338 个含 release 变体、`:design` 17 个、`:core` 16 个，lint 0 错误）。
+- **13.8 推送与收件箱**（2026-10-25，集成分支 `claude/determined-lovelace-vn0j5h`）：收件箱页（`ui/inbox/`：先缓存再同步、最新一页换开头、滚到底翻页、按天分组、未读加粗 / 圆点、种类图标、AI 标识、每行的标已读 / 未读与删除、全部已读、没有更具体页面的和推送进来的在面板里打开）；`push/`：`PushMessage`（`tt_*` 解析，和 iOS、收件箱同一套深链规则）、`PushCoordinator`（令牌登录着才报、同一个只报一次、点开过的通知等登录着标已读、断网重试）、`NotificationChannels`（`tt_approval` / `tt_results`，和服务端默认一致）、`PushNotifier`（前台自己发通知）、通知权限登录后问一次、`MainActivity` 把带 `tt_kind` 的 Intent 换成深链、退出登录清通知；`PushProvider` + 各渠道的 `FlavorPush`（现在是空实现，见“坑和决定”）。测试 `PushTest`、`InboxViewModelTest`、`InboxUiTest`，`DeepLinkTest` / `AppUiTest` 改成真收件箱。
 
 进行中：
 - 无。按用户要求（“让各会话把代码都同步对齐先，后面我再安排工作”）已停下等安排；03:20 UTC 的自动恢复提醒已停用。
 
 下一步（等用户安排后）：
 1. ~~恢复 13.5 对话与运行过程~~（2026-10-25 已收尾，见上）：`Workflow({scriptPath: "<会话目录>/workflows/scripts/android-adapt-13-16-13-5-wf_2830c5a3-21b.js", resumeFromRunId: "wf_2830c5a3-21b"})`（适配与 13.16 已缓存；13.5 的部分改动在 `ba78a8d`，恢复前把脚本里任务 C 的“注意”段改成描述当前工作区状态），之后四维评审 → 反方核实 → 修复 → 最终验证。
-2. ~~13.6 计划~~（已完成）→ 13.8 推送与收件箱 → 13.13 设置 → 13.7 团队与流水线 → 13.11 / 13.12，再做 P2 的 13.10、13.14。
+2. ~~13.6 计划~~、~~13.8 推送与收件箱~~（已完成，SDK 等人定）→ 13.13 设置 → 13.7 团队与流水线 → 13.11 / 13.12，再做 P2 的 13.10、13.14。
 3. 每个工作包：Workflow → 提交推送 → 更新本文件。
 
 坑和决定：
+- **推送 SDK 要人定（13.8）**：试接过极光 6.2.1（jcore 钉 5.5.7，极光的 pom 里 jcore 是开放区间）和 firebase-messaging 24.1.0（不用 google-services 插件，key 走构建属性），代码能编过，但没有提交：(1) 极光是闭源 SDK，FCM 带 Play 服务的 SDK 许可，和 README“只用 Apache / MIT / BSD 类许可证”的约定冲突，要法务（16.5）点头并登记；(2) 极光清单带着定位、读手机状态、`QUERY_ALL_PACKAGES`、存储等权限，要在 `src/cn` 清单里去掉（lint 仍报 QueryAllPackagesPermission，要 `tools:ignore`），隐私政策要写明第三方 SDK；(3) 极光的混淆字节码让 Robolectric 抛 VerifyError，cnDebug 的界面测试全挂，要么单元测试改跑 globalDebug、要么极光只进 release；(4) 要极光 AppKey、Firebase 项目。定了之后只改各渠道的 `FlavorPush`、清单和依赖（`PushProvider` 的接口、登录后启动、令牌上报都在）。
 - 云端会话没有 KVM，跑不了模拟器：界面测试用 Robolectric 跑 Compose UI 测试，业务逻辑用 JVM 单元测试；真机联调靠 CI 产出的 APK。
 - Android SDK、NDK（r27c）、cargo-ndk 在会话里装在 `/opt/android-sdk`（容器回收后要重装，见 `apps/android/README.md`）。
 - `tools/client-core/build-android.sh` 在本会话实跑通过：三个 ABI 的 `libclient_core.so`（共 20 MB）、Kotlin 绑定（`cn.thinktin.core`，与 `gen-bindings.sh` 的输出逐字节一致）、许可证资源（278 个 crate，2.4 MB）都产出；最后的 `gradle assembleRelease` 一步在本机因 Maven Central 对代理出口限流（429）失败，与脚本无关。另外该库工程用 `jvmToolchain(17)`，本机只有 JDK 21（GitHub 的 runner 预装 JDK 17，CI 不受影响）。

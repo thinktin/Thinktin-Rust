@@ -900,4 +900,36 @@
     <plurals name="trigger_problem_too_frequent">
         <item quantity="other">太频繁了：两次触发至少隔 %1$d 分钟。</item>
     </plurals>
+    <!-- 收件箱与推送（13.8） -->
+    <string name="inbox_empty_title">收件箱是空的</string>
+    <string name="inbox_empty_message">运行完成、失败，agent 要你审批、填账号密码、确认计划时，这里和通知里都会出现。</string>
+    <string name="inbox_load_failed">收件箱加载失败</string>
+    <string name="inbox_mark_all_read">全部已读</string>
+    <string name="inbox_mark_read">标为已读</string>
+    <string name="inbox_mark_unread">标为未读</string>
+    <string name="inbox_delete">删除</string>
+    <string name="inbox_deleted">已删除</string>
+    <string name="inbox_more_actions">“%1$s”的更多操作</string>
+    <string name="inbox_unread">未读</string>
+    <string name="inbox_all_read">都读过了</string>
+    <string name="inbox_today">今天</string>
+    <string name="inbox_yesterday">昨天</string>
+    <string name="inbox_open_target">查看</string>
+    <string name="inbox_item_missing_title">找不到这条通知</string>
+    <string name="inbox_item_missing_message">可能已经在别的设备上删掉了。</string>
+    <string name="inbox_loading_more">正在加载更早的通知</string>
+    <string name="inbox_kind_run_finished">运行完成</string>
+    <string name="inbox_kind_run_failed">要你处理</string>
+    <string name="inbox_kind_approval">待审批</string>
+    <string name="inbox_kind_computer_approval">电脑审批</string>
+    <string name="inbox_kind_vault_request">保险箱请求</string>
+    <string name="inbox_kind_plan_confirm">计划待确认</string>
+    <string name="inbox_kind_info">提醒</string>
+    <string name="notification_channel_approvals">审批与请求</string>
+    <string name="notification_channel_approvals_description">agent 等你批准、填账号密码时提醒，过期前要处理。</string>
+    <string name="notification_channel_results">运行结果与提醒</string>
+    <string name="notification_channel_results_description">运行完成、失败，计划待确认和账号提醒。</string>
+    <plurals name="inbox_unread_count">
+        <item quantity="other">%1$d 条未读</item>
+    </plurals>
 </resources>

@@ -73,10 +73,8 @@ class DeepLinkTest(
         @JvmStatic
         @ParameterizedRobolectricTestRunner.Parameters(name = "{0}")
         fun links(): List<Array<Any?>> = listOf(
-            // 可选参数：vault/request/{id} → vault?requestId=…，inbox/{id} → inbox?itemId=…
+            // 可选参数：vault/request/{id} → vault?requestId=…（收件箱的 inbox/{id} 在 InboxUiTest 里测）
             arrayOf("thinktin://vault/request/vreq-pending", "密码保险箱", "vreq-pending"),
-            arrayOf("thinktin://inbox", "收件箱", null),
-            arrayOf("thinktin://inbox/inbox-3", "收件箱", "inbox-3"),
         )
     }
 }

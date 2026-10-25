@@ -3,6 +3,8 @@ package cn.thinktin.app
 import android.app.Application
 import android.content.res.Configuration
 import android.util.Log
+import cn.thinktin.app.push.FlavorPush
+import cn.thinktin.app.push.NotificationChannels
 import cn.thinktin.data.core.CoreLogging
 import cn.thinktin.data.core.SystemTls
 import cn.thinktin.data.core.TlsState
@@ -26,12 +28,17 @@ open class ThinktinApp : Application() {
         initializeLogging()
         tlsState = initializeTls()
         container = createContainer()
+        // 通知渠道（13.8）：推送里带着渠道 id，收到推送之前就要有。
+        NotificationChannels.ensure(this)
+        // 推送 SDK：登录（同意隐私政策）之前不收集信息、不注册（见 AppRoot 的 PushSync）。
+        FlavorPush.prepare(this)
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        // 系统语言可能变了：Accept-Language 跟着变。
+        // 系统语言可能变了：Accept-Language 跟着变，通知渠道的名字也跟着变。
         if (::container.isInitialized) container.onSystemLocalesChanged()
+        NotificationChannels.ensure(this)
     }
 
     /**

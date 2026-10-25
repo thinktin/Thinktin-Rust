@@ -85,7 +85,13 @@ fun LoginFlow() {
     val viewModel: LoginViewModel = viewModel(
         key = "login-${System.identityHashCode(service)}",
         factory = viewModelFactory {
-            initializer { LoginViewModel(service, onSignedIn = { user -> container.syncServerLocale(service, user) }) }
+            initializer {
+                LoginViewModel(
+                    service,
+                    onSignedIn = { user -> container.syncServerLocale(service, user) },
+                    pushToken = { container.push.token.value },
+                )
+            }
         },
     )
     // 新进登录流（不是旋转后恢复）时清掉上一次的号码和倒计时：rememberSaveable 的初始化只在没有保存的状态时跑。

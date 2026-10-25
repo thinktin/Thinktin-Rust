@@ -145,8 +145,8 @@ MainActivity
 ### 4.8 收件箱与推送（13.8）
 
 - 收件箱：按天分组，未读加粗，类型图标（完成 / 失败 / 审批 / 计划待确认 / 填写请求）；点击跳转；下拉同步，上拉加载更多；全部已读。
-- 通知渠道：`approvals`（高优先级，有声音）、`results`（默认）、`progress`（低，常驻通知用）。
-- 推送令牌：登录后与应用启动时 `set_push_token(channel, token)`，`channel` 为 `jpush` 或 `fcm`。
+- 通知渠道：`tt_approval`（审批、电脑审批、保险箱请求，高优先级，有声音）、`tt_results`（其余，默认），id 和服务端 `[push.fcm]` / `[push.jpush]` 的默认值一致；常驻通知的 `progress`（低）等用到时再加。
+- 推送令牌：登录后与应用启动时 `set_push_token(channel, token)`，`channel` 为 `unipush`（极光）或 `fcm`（服务端的 `PushChannelKind`）。推送 SDK 在用户登录（同意隐私政策）之后才启动。
 
 ### 4.9 设置（13.13）
 

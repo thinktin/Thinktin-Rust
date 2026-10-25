@@ -3,6 +3,8 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 推送的系统通知（13.8，Android 13 起要用户允许，登录后问一次）。 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- 令牌存在 Keystore 加密的偏好里，换机恢复也解不开：不备份。 -->
     <application

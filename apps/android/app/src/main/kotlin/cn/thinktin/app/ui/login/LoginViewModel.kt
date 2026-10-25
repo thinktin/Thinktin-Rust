@@ -3,6 +3,7 @@ package cn.thinktin.app.ui.login
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import cn.thinktin.app.R
+import cn.thinktin.app.push.PushToken
 import cn.thinktin.app.ui.common.Countdown
 import cn.thinktin.app.ui.common.ErrorText
 import cn.thinktin.app.ui.common.UiText
@@ -80,6 +81,8 @@ sealed interface LoginEvent {
 class LoginViewModel(
     private val service: ThinktinService,
     private val onSignedIn: (User) -> Unit = {},
+    /** 登录时带上的推送令牌（13.8，推送 SDK 给的；还没有就登录后再报）。 */
+    private val pushToken: () -> PushToken? = { null },
 ) : ViewModel() {
     private val state = MutableStateFlow(LoginUiState())
     val uiState: StateFlow<LoginUiState> = state.asStateFlow()
@@ -173,7 +176,7 @@ class LoginViewModel(
         if (digits.length == CODE_LENGTH) submit()
     }
 
-    /** 提交验证码登录（推送令牌在 13.8 接，现在传 null）。 */
+    /** 提交验证码登录（带上推送令牌，13.8）。 */
     fun submit() {
         val current = state.value
         val phone = current.sentTo ?: return
@@ -182,7 +185,8 @@ class LoginViewModel(
         state.update { it.copy(verifying = true, codeError = null) }
         viewModelScope.launch {
             try {
-                val result = service.login(phone, code, pushChannel = null, pushToken = null)
+                val push = pushToken()
+                val result = service.login(phone, code, pushChannel = push?.channel, pushToken = push?.token)
                 countdown.cancel()
                 state.update { it.copy(verifying = false) }
                 onSignedIn(result.user)

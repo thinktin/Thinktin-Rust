@@ -139,7 +139,7 @@ export THINKTIN_CORE_LIB_DIR=$PWD/../../target/debug
 ```
 
 - 产物：`app/build/outputs/apk/{cn,global}/debug/app-*-debug.apk`。
-- 渠道（`dist` 维度）：`cn`（极光推送）、`global`（FCM），推送 SDK 在 13.8 接；`BuildConfig.DIST` 区分。
+- 渠道（`dist` 维度）：`cn`（极光推送）、`global`（FCM），各自的源码目录里是 `FlavorPush`（13.8）；`BuildConfig.DIST` 区分。
 - 后端地址：`BuildConfig.BASE_URL`，默认 `https://api.thinktin.cn`，用 `-PthinktinBaseUrl=...` 覆盖。
 - 云端会话没有模拟器：界面测试是 Robolectric 跑的 Compose 测试（`app`、`design` 的 `src/test`），
   只跑 debug（`app` 只跑 cnDebug）。Robolectric 要的 android-all jar 由 `gradle/robolectric.gradle.kts`
@@ -371,12 +371,39 @@ Keystore 失效……）都显示“无法加载核心库”页（原因 + 重�
   面板里拦下太频繁的规则、编辑只发改了的并删旧加新、失败后只做剩下的、放弃修改、策略草稿）和 Robolectric 的 `PlansUiTest`
   （抽屉进列表并用开关暂停、深链进详情确认后返回首页、编辑触发规则并保存）。
 
+## 推送与收件箱（13.8）
+
+- **收件箱**（`inbox?itemId=`，抽屉“收件箱”，深链 `thinktin://inbox`、`inbox/{id}`）：先显示缓存（`cachedInbox`、`cachedUnread`），
+  再 `syncInbox`；最新一页换掉开头，已经翻出来的留着；滚到底 `olderInbox`（断网时翻缓存）。按天分组（今天 / 昨天 / 日期），
+  未读的加粗、带圆点，种类图标，agent 写的带 AI 标识。点一条：标已读，去对应的页面（`InboxTargets.targetRoute`）；没有更具体页面的
+  （和带 `itemId` 进来的）在盖在页面上的面板里打开（全文、“查看”、标回未读、删除）。每行“更多”里标已读 / 未读、删除；顶栏“全部已读”
+  （只到最上面那条）。标已读断网也行（client-core 联网后补发），标回未读、删除要联网。
+- **推送载荷**（`push/PushMessage`）：FCM 的 `data`、极光的 extras、点开通知的 Intent 里都是 `tt_*`；`deepLink()` 和 iOS 的
+  `PushPayload.route`、收件箱同一套规则（审批 → 审批详情 → 运行 → 那一条；保险箱请求 → 填写请求；计划待确认 → 计划；其余运行 → 计划 →
+  那一条 → 收件箱）。不像 id 的 id 当作没有。
+- **点开通知**：`MainActivity` 认出 Intent 里的 `tt_kind`，换成深链交给 `DeepLinkInbox`（没登录先留着），那条收件箱通知交给
+  `AppContainer.push`，登录着时标已读（`PushCoordinator`，断网留着下次再标）。
+- **令牌**（`PushCoordinator`）：推送 SDK 给的令牌登录着就 `set_push_token`（同一个服务同一个令牌只报一次，退出再登录重报），
+  登录时带上（`LoginViewModel`）。
+- **通知渠道**（`push/NotificationChannels`，Application 启动时建）：`tt_approval`（审批、电脑审批、保险箱请求，高）、`tt_results`
+  （其余，默认），和服务端 `[push.fcm]` / `[push.jpush]` 的默认渠道 id 一致。App 在前台时 FCM 不显示通知，由 `PushNotifier` 照推送发一条
+  （点开同样带 `tt_*`）。退出登录清掉通知栏里的。
+- **通知权限**（Android 13 起）：真实服务登录进主界面后问一次（`RequestNotificationPermissionOnce`），演示模式不问。
+- **推送 SDK**（`PushProvider`，各渠道源码目录里的 `FlavorPush`，登录即同意隐私政策之后才 `start`）：**还没接**，两个渠道现在都是
+  空实现（`configured = false`），收件箱照样能用。试接过（极光 6.2.1 + jcore 5.5.7、firebase-messaging 24.1.0）：极光是闭源 SDK，
+  不符合下面“只用 Apache / MIT / BSD 类许可证”的约定；它的清单带着定位、读手机状态、应用列表、存储等权限（要在 `src/cn` 的清单里
+  `tools:node="remove"`，lint 的 QueryAllPackagesPermission 仍会报）；它的混淆字节码让 Robolectric 抛 VerifyError（cnDebug 的界面测试
+  全挂）。所以等人定：许可证与隐私政策（16.5）、两边的应用 key、单元测试是否改跑 globalDebug。
+- 测试：`PushTest`（载荷解析、深链规则、extras / 极光 JSON 往返、渠道、前台通知要权限、令牌只报一次与重报、点开的标已读和断网重试）、
+  `InboxViewModelTest`（翻页与同步合并、标已读 / 未读 / 全部已读 / 删除、失败回滚、去对应页面或面板、推送进来的那一条、离线）、
+  Robolectric 的 `InboxUiTest`（未读数与全部已读、点一条进审批详情再返回、面板里删除、点开推送跳审批详情并标已读）。
+
 ## 深链
 
 `thinktin://run/{id}`、`approval/{id}`、`plan/{id}`、`instance/{id}`、`vault/request/{id}`、`inbox`、`inbox/{id}`（第 3 节）。
 `MainActivity` 是 `singleTask`：冷启动（`onCreate`）和 App 已在运行时（`onNewIntent`）收到的深链都放进 `DeepLinkInbox`，
 由 `MainNavigation` 在导航图建好后交给 `NavController.handleDeepLink`，返回栈是“首页 → 目标页”。未登录时先留着，登录后再跳；
-同一条只处理一次。测试：`DeepLinkTest`（3 种骨架页的冷启动）+ `CatalogUiTest`（`instance/{id}`）、`ApprovalUiTest`（`approval/{id}`）、`ChatUiTest`（`run/{id}`）、`PlansUiTest`（`plan/{id}`）、`AppUiTest`（热启动）、`AppRootTest`（登录后再跳）。
+同一条只处理一次。推送点开的 Intent（带 `tt_*`）先换成深链再走这条路（13.8）。测试：`DeepLinkTest`（骨架页的冷启动）+ `CatalogUiTest`（`instance/{id}`）、`ApprovalUiTest`（`approval/{id}`）、`ChatUiTest`（`run/{id}`）、`PlansUiTest`（`plan/{id}`）、`InboxUiTest`（`inbox/{id}`、推送）、`AppUiTest`（热启动）、`AppRootTest`（登录后再跳）。
 
 ## CI
 

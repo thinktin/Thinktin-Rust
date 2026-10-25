@@ -907,4 +907,37 @@
         <item quantity="one">Too frequent: runs need to be at least %1$d minute apart.</item>
         <item quantity="other">Too frequent: runs need to be at least %1$d minutes apart.</item>
     </plurals>
+    <!-- Inbox and push (13.8) -->
+    <string name="inbox_empty_title">Your inbox is empty</string>
+    <string name="inbox_empty_message">Finished and failed runs, approvals, vault requests and plans to confirm show up here and in notifications.</string>
+    <string name="inbox_load_failed">Couldn\'t load the inbox</string>
+    <string name="inbox_mark_all_read">Mark all as read</string>
+    <string name="inbox_mark_read">Mark as read</string>
+    <string name="inbox_mark_unread">Mark as unread</string>
+    <string name="inbox_delete">Delete</string>
+    <string name="inbox_deleted">Deleted</string>
+    <string name="inbox_more_actions">More for “%1$s”</string>
+    <string name="inbox_unread">Unread</string>
+    <string name="inbox_all_read">All caught up</string>
+    <string name="inbox_today">Today</string>
+    <string name="inbox_yesterday">Yesterday</string>
+    <string name="inbox_open_target">Open</string>
+    <string name="inbox_item_missing_title">Notification not found</string>
+    <string name="inbox_item_missing_message">It may have been deleted on another device.</string>
+    <string name="inbox_loading_more">Loading older notifications</string>
+    <string name="inbox_kind_run_finished">Run finished</string>
+    <string name="inbox_kind_run_failed">Needs attention</string>
+    <string name="inbox_kind_approval">Approval</string>
+    <string name="inbox_kind_computer_approval">Computer approval</string>
+    <string name="inbox_kind_vault_request">Vault request</string>
+    <string name="inbox_kind_plan_confirm">Plan to confirm</string>
+    <string name="inbox_kind_info">Notice</string>
+    <string name="notification_channel_approvals">Approvals and requests</string>
+    <string name="notification_channel_approvals_description">When an agent needs your OK or a login. Handle them before they expire.</string>
+    <string name="notification_channel_results">Run results and notices</string>
+    <string name="notification_channel_results_description">Finished and failed runs, plans to confirm and account notices.</string>
+    <plurals name="inbox_unread_count">
+        <item quantity="one">%1$d unread</item>
+        <item quantity="other">%1$d unread</item>
+    </plurals>
 </resources>

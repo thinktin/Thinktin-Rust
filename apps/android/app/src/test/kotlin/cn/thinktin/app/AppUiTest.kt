@@ -166,7 +166,8 @@ class AppUiTest {
         compose.onNode(hasContentDescription("打开菜单")).performClick()
         compose.waitForIdle()
         deliver("thinktin://inbox/inbox-3")
-        compose.waitFor(hasText("编号：inbox-3"))
+        // 收件箱打开，那一条在面板里（13.8）。
+        compose.waitFor(hasText("已翻译并提交 README.en.md。") and !inDrawer)
         compose.onNode(hasText("收件箱") and !inDrawer).assertIsDisplayed()
     }
 

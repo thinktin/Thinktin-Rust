@@ -27,6 +27,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.navArgument
 import androidx.navigation.navDeepLink
+import cn.thinktin.app.push.RequestNotificationPermissionOnce
 import cn.thinktin.app.ui.account.DeleteAccountScreen
 import cn.thinktin.app.ui.account.EditNameScreen
 import cn.thinktin.app.ui.agent.AgentDetailScreen
@@ -42,6 +43,7 @@ import cn.thinktin.app.ui.drawer.AppDrawer
 import cn.thinktin.app.ui.drawer.DrawerDestination
 import cn.thinktin.app.ui.drawer.DrawerViewModel
 import cn.thinktin.app.ui.home.HomeScreen
+import cn.thinktin.app.ui.inbox.InboxScreen
 import cn.thinktin.app.ui.instance.InstanceNameScreen
 import cn.thinktin.app.ui.instance.InstanceSettingsScreen
 import cn.thinktin.app.ui.keys.AddKeyScreen
@@ -110,6 +112,9 @@ fun MainNavigation(navController: NavHostController = rememberAppNavController()
         navController.handleDeepLink(DeepLinkInbox.navigationIntent(uri))
         deepLinks.consume(uri)
     }
+
+    // 通知权限（13.8）：真实服务登录进来后问一次。
+    RequestNotificationPermissionOnce(enabled = !service.isDemo)
 
     // 打开抽屉时刷新实例和未读数。
     LaunchedEffect(drawerState.isOpen) {
@@ -352,7 +357,13 @@ private fun MainNavHost(navController: NavHostController, onOpenDrawer: () -> Un
                 navDeepLink { uriPattern = DeepLinks.INBOX },
                 navDeepLink { uriPattern = DeepLinks.INBOX_ITEM },
             ),
-        ) { Placeholder(Page.Inbox, it, Routes.ARG_ITEM_ID) }
+        ) { entry ->
+            InboxScreen(
+                itemId = entry.arguments?.getString(Routes.ARG_ITEM_ID),
+                onBack = back,
+                onNavigate = { navController.navigate(it) },
+            )
+        }
         composable(Routes.APPROVALS) {
             ApprovalCenterScreen(onBack = back, onOpenApproval = { navController.navigate(Routes.approval(it)) })
         }

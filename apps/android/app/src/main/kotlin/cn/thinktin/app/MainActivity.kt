@@ -14,6 +14,7 @@ import androidx.compose.runtime.getValue
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.thinktin.app.navigation.DeepLinkInbox
+import cn.thinktin.app.push.PushMessage
 import cn.thinktin.app.ui.AppRoot
 import cn.thinktin.design.theme.Appearance
 import cn.thinktin.design.theme.ThinktinTheme
@@ -22,6 +23,9 @@ import cn.thinktin.design.theme.ThinktinTheme
  * 唯一的 Activity（singleTask）。深链（第 3 节）不让 NavController 自己从 Activity 的 intent 里读
  * （主界面的 NavController 不绑 Activity，见 rememberAppNavController）：冷启动（onCreate）和 App 已在运行时
  * （onNewIntent）都放进 [deepLinks]，由主界面统一处理，见 [DeepLinkInbox]。
+ *
+ * 点开推送（13.8）：FCM 在后台时系统发的通知、[cn.thinktin.app.push.PushNotifier] 发的、极光转过来的，Intent 里都带
+ * `tt_*`（[PushMessage]）：换成它的深链交给 [deepLinks]，那条收件箱通知交给 [AppContainer.push] 等登录着时标已读。
  *
  * 是 FragmentActivity（不是 ComponentActivity）：批准审批前的 BiometricPrompt 要它（13.16，见 ApprovalGate）。
  */
@@ -32,7 +36,7 @@ class MainActivity : FragmentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         if (savedInstanceState == null) {
-            deepLinks.offer(intent)
+            receive(intent)
         } else {
             // 重建（旋转、进程被杀后恢复）：intent 还是当初那条，已经处理过；只恢复还没处理的。
             deepLinks.restore(savedInstanceState.getString(KEY_PENDING_DEEP_LINK)?.let(Uri::parse))
@@ -57,7 +61,18 @@ class MainActivity : FragmentActivity() {
     /** App 已在运行时点推送或外部链接（singleTask）。public 是为了测试能直接投递。 */
     public override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        deepLinks.offer(intent)
+        receive(intent)
+    }
+
+    /** 推送点开的换成深链；其余照常交给 [deepLinks]。 */
+    private fun receive(intent: Intent?) {
+        val push = PushMessage.fromIntent(intent)
+        if (push == null) {
+            deepLinks.offer(intent)
+            return
+        }
+        (application as ThinktinApp).container.push.onOpened(push)
+        deepLinks.offer(Intent(Intent.ACTION_VIEW, push.deepLink()))
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
