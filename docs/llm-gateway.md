@@ -259,7 +259,7 @@ GW=1 PROMPT='MOCK_TOOL:Bash:{"command": "touch x", "description": "touch"}' EXPE
 **订阅类 key 和套餐地址不收**。编程套餐、订阅套餐的额度按各家条款只能在官方支持的编程工具里用，平台替用户中转属于违规：
 
 - 按前缀拒绝的 key：百炼编程套餐 `sk-sp-`、MiniMax 订阅 `sk-cp-`、腾讯 Token Plan `sk-tp-`（条款写明“严禁 API 调用”）、Claude 订阅（Free、Pro、Max）的 OAuth 令牌 `sk-ant-oat…` / `sk-ant-ort…`（Anthropic 条款不允许第三方平台收集、保存或居间 Claude 账号凭证）。
-- 自定义端点填了套餐专用地址就拒绝（每家的 `plan_only_bases`，合起来是 `PLAN_ONLY_BASES`；去掉首尾空白、转小写后等于它或接着是 `/`；只防误填，不是安全边界）：火山方舟 `/api/coding`、`/api/plan`，BytePlus `/api/coding`，千帆 `/v2/coding`、`/anthropic/coding`，腾讯 `api.lkeap.cloud.tencent.com/plan`、`tokenhub-intl…/plan`，阶跃 `/step_plan`，智谱 `/api/coding`。
+- 自定义端点填了套餐专用地址就拒绝（每家的 `plan_only_bases`，`proto::vendors::plan_only_base` 逐家查；去掉首尾空白、转小写后等于它或接着是 `/`；只防误填，不是安全边界）：火山方舟 `/api/coding`、`/api/plan`，BytePlus `/api/coding`，千帆 `/v2/coding`、`/anthropic/coding`，腾讯 `api.lkeap.cloud.tencent.com/plan`、`tokenhub-intl…/plan`，阶跃 `/step_plan`，智谱 `/api/coding`。
 - 没法按前缀分辨的：智谱编程套餐的 key 和按量付费共用 Anthropic 地址；火山方舟套餐用专属 key（前缀没公开）；阶跃 Step Plan 和按量付费是同一把 key、按地址计费。预置地址都是按量付费地址，界面上提示用户只填按量付费 key。千帆的套餐 key 调普通接口会被千帆自己拒绝（401）。
 
 **会影响 agent 的差异**（详见表里每家的 `notes`）：

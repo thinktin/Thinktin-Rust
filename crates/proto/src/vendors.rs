@@ -457,22 +457,6 @@ pub static VENDORS: &[Vendor] = &[
     },
 ];
 
-/// 编程套餐、订阅套餐的专用地址（前缀）。套餐额度按各家条款只能在官方支持的编程工具里用，
-/// 平台不接：用户按自定义端点填这些地址时拒绝。只防误填，不是安全边界。和各厂商的 `plan_only_bases`
-/// 合起来一样（测试保证）：接口按厂商给出（11.9），App 不用再抄这一份。
-pub const PLAN_ONLY_BASES: &[&str] = &[
-    "https://ark.cn-beijing.volces.com/api/coding",
-    "https://ark.cn-beijing.volces.com/api/plan",
-    "https://ark.ap-southeast.bytepluses.com/api/coding",
-    "https://qianfan.baidubce.com/v2/coding",
-    "https://qianfan.baidubce.com/anthropic/coding",
-    "https://api.lkeap.cloud.tencent.com/plan",
-    "https://tokenhub-intl.tencentcloudmaas.com/plan",
-    "https://api.stepfun.com/step_plan",
-    "https://open.bigmodel.cn/api/coding",
-    "https://api.z.ai/api/coding",
-];
-
 pub fn vendor(id: &str) -> Option<&'static Vendor> {
     VENDORS.iter().find(|v| v.id == id)
 }
@@ -482,13 +466,18 @@ pub fn is_known(id: &str) -> bool {
     id == CUSTOM || vendor(id).is_some()
 }
 
-/// 地址是不是某家的套餐专用地址，是的话返回命中的前缀（不区分大小写，按路径段匹配）。
+/// 地址是不是某家的套餐专用地址（各厂商的 `plan_only_bases`），是的话返回命中的前缀（不区分大小写，按路径段匹配）。
+/// 套餐额度按各家条款只能在官方支持的编程工具里用，平台不接：用户按自定义端点填这些地址时拒绝。
+/// 只防误填，不是安全边界。
 pub fn plan_only_base(base: &str) -> Option<&'static str> {
     let base = base.trim().to_ascii_lowercase();
-    PLAN_ONLY_BASES.iter().copied().find(|&prefix| {
-        base.strip_prefix(prefix)
-            .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
-    })
+    VENDORS
+        .iter()
+        .flat_map(|v| v.plan_only_bases.iter().copied())
+        .find(|&prefix| {
+            base.strip_prefix(prefix)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+        })
 }
 
 /// 保存 key 前的检查：不能是订阅类 key，不能带空白或控制字符（会被拼进请求头）。
@@ -519,17 +508,11 @@ mod tests {
 
     #[test]
     fn plan_only_bases_are_per_vendor() {
-        let mut union: Vec<&str> = VENDORS
-            .iter()
-            .flat_map(|v| v.plan_only_bases.iter().copied())
-            .collect();
-        let mut all = PLAN_ONLY_BASES.to_vec();
-        union.sort_unstable();
-        all.sort_unstable();
-        assert_eq!(
-            union, all,
-            "each plan-only base belongs to exactly one vendor"
-        );
+        let mut seen = std::collections::HashSet::new();
+        for b in VENDORS.iter().flat_map(|v| v.plan_only_bases.iter()) {
+            assert!(seen.insert(*b), "{b} belongs to more than one vendor");
+        }
+        assert_eq!(seen.len(), 10);
         for v in VENDORS {
             for &b in v.plan_only_bases {
                 assert!(b.starts_with("https://") && !b.ends_with('/'), "{b}");
