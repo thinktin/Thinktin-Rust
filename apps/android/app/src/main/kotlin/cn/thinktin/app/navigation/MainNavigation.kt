@@ -50,6 +50,11 @@ import cn.thinktin.app.ui.keys.KeySecretScreen
 import cn.thinktin.app.ui.keys.KeysScreen
 import cn.thinktin.app.ui.placeholder.ComingSoonScreen
 import cn.thinktin.app.ui.placeholder.Page
+import cn.thinktin.app.ui.plans.PlanDetailNavigation
+import cn.thinktin.app.ui.plans.PlanDetailScreen
+import cn.thinktin.app.ui.plans.PlanEditMode
+import cn.thinktin.app.ui.plans.PlanEditScreen
+import cn.thinktin.app.ui.plans.PlansScreen
 import cn.thinktin.app.ui.routes.ModelRoutesScreen
 import cn.thinktin.app.ui.run.RunScreen
 import cn.thinktin.app.ui.settings.SettingsScreen
@@ -294,12 +299,48 @@ private fun MainNavHost(navController: NavHostController, onOpenDrawer: () -> Un
                 onAddKey = { navController.navigate(Routes.KEYS_NEW) },
             )
         }
-        composable(Routes.PLANS) { Placeholder(Page.Plans, it) }
+        composable(Routes.PLANS) {
+            PlansScreen(
+                onBack = back,
+                onOpenPlan = { navController.navigate(Routes.plan(it)) },
+                onNewPlan = { navController.navigate(Routes.planNew()) },
+                onOpenCatalog = { navController.navigate(Routes.CATALOG) },
+            )
+        }
         composable(
             Routes.PLAN,
             arguments = listOf(stringArg(Routes.ARG_PLAN_ID)),
             deepLinks = listOf(navDeepLink { uriPattern = DeepLinks.PLAN }),
-        ) { Placeholder(Page.Plan, it, Routes.ARG_PLAN_ID) }
+        ) { entry ->
+            PlanDetailScreen(
+                planId = entry.arguments?.getString(Routes.ARG_PLAN_ID).orEmpty(),
+                navigation = PlanDetailNavigation(
+                    onBack = back,
+                    onEdit = { navController.navigate(Routes.planEdit(it)) },
+                    onOpenRun = { navController.navigate(Routes.run(it)) },
+                    onDeleted = backFrom(entry),
+                ),
+            )
+        }
+        composable(Routes.PLAN_NEW, arguments = listOf(optionalStringArg(Routes.ARG_INSTANCE_ID))) { entry ->
+            PlanEditScreen(
+                mode = PlanEditMode.Create(entry.arguments?.getString(Routes.ARG_INSTANCE_ID)),
+                onClose = backFrom(entry),
+                onSaved = { plan, _ ->
+                    // 新建的换成它的详情页（返回回到列表）。
+                    if (navController.currentBackStackEntry?.id == entry.id) {
+                        navController.navigate(Routes.plan(plan.id)) { popUpTo(Routes.PLAN_NEW) { inclusive = true } }
+                    }
+                },
+            )
+        }
+        composable(Routes.PLAN_EDIT, arguments = listOf(stringArg(Routes.ARG_PLAN_ID))) { entry ->
+            PlanEditScreen(
+                mode = PlanEditMode.Edit(entry.arguments?.getString(Routes.ARG_PLAN_ID).orEmpty()),
+                onClose = backFrom(entry),
+                onSaved = { _, _ -> backFrom(entry)() },
+            )
+        }
         composable(Routes.TEAMS) { Placeholder(Page.Teams, it) }
         composable(Routes.TEAM, arguments = listOf(stringArg(Routes.ARG_TEAM_ID))) {
             Placeholder(Page.Team, it, Routes.ARG_TEAM_ID)

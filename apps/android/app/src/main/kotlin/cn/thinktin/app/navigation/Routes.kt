@@ -27,6 +27,12 @@ object Routes {
     const val INSTANCE_ROUTES = "instance/{instanceId}/routes"
     const val PLANS = "plans"
     const val PLAN = "plan/{planId}"
+
+    /** 新建计划（13.6）；instanceId 可选：从实例进来时预选它。有输入框，单独成页。 */
+    const val PLAN_NEW = "plans/new?instanceId={instanceId}"
+
+    /** 编辑计划（13.6）。 */
+    const val PLAN_EDIT = "plan/{planId}/edit"
     const val TEAMS = "teams"
     const val TEAM = "team/{teamId}"
 
@@ -83,6 +89,9 @@ object Routes {
     fun keyEdit(credentialId: String) = "keys/${Uri.encode(credentialId)}/edit"
     fun keySecret(credentialId: String) = "keys/${Uri.encode(credentialId)}/secret"
     fun plan(planId: String) = "plan/${Uri.encode(planId)}"
+    fun planEdit(planId: String) = "plan/${Uri.encode(planId)}/edit"
+    fun planNew(instanceId: String? = null) =
+        if (instanceId == null) "plans/new" else "plans/new?instanceId=${Uri.encode(instanceId)}"
     fun team(teamId: String) = "team/${Uri.encode(teamId)}"
     fun approval(approvalId: String) = "approval/${Uri.encode(approvalId)}"
     fun inbox(itemId: String? = null) = if (itemId == null) "inbox" else "inbox?itemId=${Uri.encode(itemId)}"

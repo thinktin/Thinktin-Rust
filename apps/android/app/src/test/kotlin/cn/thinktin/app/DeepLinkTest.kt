@@ -22,10 +22,10 @@ import org.robolectric.ParameterizedRobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * 冷启动深链（第 3 节除 instance/{id}、approval/{id}、run/{id} 外的 4 种）：每种都落到对应页面，参数传对，返回键回首页。
- * 这里是还在骨架阶段的页面；`thinktin://instance/{id}`（13.3 已做实例设置页）见 CatalogUiTest
+ * 冷启动深链（第 3 节除 instance/{id}、approval/{id}、run/{id}、plan/{id} 外的 3 种）：每种都落到对应页面，参数传对，
+ * 返回键回首页。这里是还在骨架阶段的页面；`thinktin://instance/{id}`（13.3 已做实例设置页）见 CatalogUiTest
  * （instanceDeepLinkBackReturnsHome 测返回键回首页），`thinktin://approval/{id}`（13.16）见 ApprovalUiTest，
- * `thinktin://run/{id}`（13.5 运行页）见 ChatUiTest。
+ * `thinktin://run/{id}`（13.5 运行页）见 ChatUiTest，`thinktin://plan/{id}`（13.6 计划详情）见 PlansUiTest。
  * 热启动（App 已在运行，走 onNewIntent）见 AppUiTest。
  */
 @RunWith(ParameterizedRobolectricTestRunner::class)
@@ -73,7 +73,6 @@ class DeepLinkTest(
         @JvmStatic
         @ParameterizedRobolectricTestRunner.Parameters(name = "{0}")
         fun links(): List<Array<Any?>> = listOf(
-            arrayOf("thinktin://plan/plan-daily", "计划详情", "plan-daily"),
             // 可选参数：vault/request/{id} → vault?requestId=…，inbox/{id} → inbox?itemId=…
             arrayOf("thinktin://vault/request/vreq-pending", "密码保险箱", "vreq-pending"),
             arrayOf("thinktin://inbox", "收件箱", null),

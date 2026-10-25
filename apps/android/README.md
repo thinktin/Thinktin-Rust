@@ -339,12 +339,44 @@ Keystore 失效……）都显示“无法加载核心库”页（原因 + 重�
   私钥、取消、等待横幅、审批经 gate、填写请求、产出物）、`RunViewModelTest` 和 Robolectric 的 `ChatUiTest`（最近运行定位、
   Mock 的各类事件、复制带 AI 标识、发送后出气泡、拦截弹表单、填写请求、运行页运行树、更多菜单进运行树并停止）。
 
+## 计划（13.6）
+
+- **触发规则的本地计算**（`:data` 的 `schedule/`，纯 Kotlin + java.time，和 iOS 的 `ScheduleForecast` / `TriggerDraft` 同一套规则）：
+  `CronSchedule`（五段 cron，croner 的语义：“日”和“周”都限定时满足一个就算；夏令时跳过的那段里的固定时刻在跳过之后的第一刻触发，
+  重复的那段取较早的一次；`L`、`W`、`#`、`@daily` 算不了）、`RecurrenceRule`（RRULE 的子集：YEARLY / MONTHLY / WEEKLY / DAILY /
+  HOURLY，INTERVAL、COUNT、UNTIL、BYMONTH、BYMONTHDAY（可为负）、BYDAY（MONTHLY、带 BYMONTH 的 YEARLY 里可以带序号）、
+  BYHOUR、BYMINUTE、WKST；DTSTART 不符合规则时不算一次）、`ScheduleForecast`（接下来几次、最小间隔、能不能预测）。
+  `TriggerDraft` 是编辑中的一条规则：每天 / 每周几 / 每月几号 / 一次性 / cron / RRULE，换写法时带上已经填的（常用写法 ↔ cron ↔ RRULE），
+  `problem(now)` 和服务端的 `Schedule::parse_new` 逐条对应（DTSTART 在昨天到一年后、RRULE 不超过 1000 字节、一条 RRULE、不许
+  RDATE / SECONDLY、DTSTART 带时区）并在本地拦下“不会再触发”“比 5 分钟更频繁”。App 算不了的写法不拦，只说“保存时由服务端检查”。
+- **列表**（`plans`，抽屉“计划”）：等确认的置顶（agent 建的标题带 AI 标识；“查看并确认”进详情，“拒绝”= 删除，二次确认），
+  其余分“在跑”（按下一次触发排）和“已暂停”；每行实例 · 下一次触发（服务端的 `nextFireAtMs`）、规则失效的提示，开关直接暂停 / 恢复
+  （等确认的计划没有开关，服务端也会 409）。没有实例时引导去领养。
+- **详情**（`plan/{id}`，深链 `thinktin://plan/{id}`，对话里计划卡的“去确认”也进这里）：状态、实例、下一次；目标（agent 建的带 AI 标识）；
+  每条触发规则（一句话描述：每天 / 工作日 / 周末 / 每周几 / 每月几号 / 一次 / cron / 重复规则，时区和设备不同时带上；下一次、上一次；
+  后台停用的说“规则已失效”）；执行策略（审批超时与超时后的做法、等待上限、单次最长、token / 步数 / 每天上限、预授权的操作、补跑）；
+  流水线步骤（只读，编辑随 13.7）；运行历史（`listRuns(RunFilter(planId, rootsOnly = true))`，一页 20 个，点进运行页）。
+  暂停 / 恢复、编辑、删除。等确认的：“确认，开始按时运行”（带看到的 `revision`）和“修改”（进编辑页，回来按新版本确认）。确认 409 时
+  重新取：版本变了 → 换成新内容、红色横幅“agent 刚又改了，请再看一遍”；版本没变 → 流水线有步骤在已删除的实例上（11.9，按实例列表认，
+  不看服务端的英文说明），说先改步骤，同时确认按钮灰掉；已经不用确认 → 说一声。
+- **新建 / 编辑**（`plans/new?instanceId=…`、`plan/{id}/edit`，单独的页面）：实例（新建时选，只有一个就直接选它）、标题（100 字）、
+  目标（8000 字，都按码点数、去掉首尾空白，和服务端一样）、触发规则（1 到 10 条，盖在页面上的面板里编：写法、时间（`TimeInput`，
+  24 小时）、日期（`DatePicker`，一次性和 RRULE 的开始日期）、每周几 / 每月几号、cron / RRULE 文本、时区（默认设备的，“用设备的时区”
+  一键改回）、接下来 5 次预览；“完成”时按 `problem` 检查，有问题留在面板上提示）、执行策略（时长按小时、可带小数，没动过的保留原来的秒数；
+  上限留空是不限）、补跑方式。编辑时只发改了的字段（`updatePlan`），触发器没有“改”：删掉的 `deleteTrigger`、新加和改过的 `addTrigger`，
+  先删后加；中途失败的话已经做完的不重做，提示“部分改动已经保存了”。有改动时返回先问“放弃修改？”。新建保存后换成它的详情页。
+- 测试：`:data` 的 `ScheduleTest`（期望的时刻由 Python zoneinfo 独立算出：cron 的名字 / 范围 / 步长、日和周“满足一个就算”、
+  纽约夏令时的跳过与重复、RRULE 的 BYDAY / 最后一个周五 / COUNT / UNTIL / 不支持的写法、最小间隔、草稿的拆回与换写法、各条问题）；
+  `:app` 的 `PlansViewModelTest`（分组、开关、拒绝、步骤在已删除实例上的 409、确认 / 冲突换新版本 / 别处已确认、暂停与删除、新建、
+  面板里拦下太频繁的规则、编辑只发改了的并删旧加新、失败后只做剩下的、放弃修改、策略草稿）和 Robolectric 的 `PlansUiTest`
+  （抽屉进列表并用开关暂停、深链进详情确认后返回首页、编辑触发规则并保存）。
+
 ## 深链
 
 `thinktin://run/{id}`、`approval/{id}`、`plan/{id}`、`instance/{id}`、`vault/request/{id}`、`inbox`、`inbox/{id}`（第 3 节）。
 `MainActivity` 是 `singleTask`：冷启动（`onCreate`）和 App 已在运行时（`onNewIntent`）收到的深链都放进 `DeepLinkInbox`，
 由 `MainNavigation` 在导航图建好后交给 `NavController.handleDeepLink`，返回栈是“首页 → 目标页”。未登录时先留着，登录后再跳；
-同一条只处理一次。测试：`DeepLinkTest`（4 种骨架页的冷启动）+ `CatalogUiTest`（`instance/{id}`）、`ApprovalUiTest`（`approval/{id}`）、`ChatUiTest`（`run/{id}`）、`AppUiTest`（热启动）、`AppRootTest`（登录后再跳）。
+同一条只处理一次。测试：`DeepLinkTest`（3 种骨架页的冷启动）+ `CatalogUiTest`（`instance/{id}`）、`ApprovalUiTest`（`approval/{id}`）、`ChatUiTest`（`run/{id}`）、`PlansUiTest`（`plan/{id}`）、`AppUiTest`（热启动）、`AppRootTest`（登录后再跳）。
 
 ## CI
 

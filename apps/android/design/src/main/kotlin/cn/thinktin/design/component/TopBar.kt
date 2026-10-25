@@ -3,6 +3,7 @@ package cn.thinktin.design.component
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -61,6 +62,7 @@ fun ThinktinTopBar(
 object TopBarIcons {
     val Back: ImageVector get() = Icons.AutoMirrored.Outlined.ArrowBack
     val Menu: ImageVector get() = Icons.Outlined.Menu
+    val Close: ImageVector get() = Icons.Outlined.Close
 }
 
 @Preview(showBackground = true)
