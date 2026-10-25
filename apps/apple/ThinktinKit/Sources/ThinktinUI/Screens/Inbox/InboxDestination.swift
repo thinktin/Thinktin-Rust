@@ -3,17 +3,18 @@ import ThinktinKit
 
 /// 推送与收件箱（WBS 12.8）的接入点：`AppShell` 把 `route.feature == .inbox` 的页面都交给它。
 ///
-/// 页面：收件箱（`.inbox`）、收件箱里的一条（`.inboxItem`，推送和深链 `thinktin://inbox/{id}` 点进来）。
-///
-/// 现在是占位页。做 12.8 时在 `Screens/Inbox/` 里写页面，把 `body` 换成按 `route` 分派到各页面；视图模型放
-/// `ThinktinKit/ViewModels/Inbox/`，测试放 `Tests/ThinktinKitTests/Inbox/` 和 `Tests/ThinktinUITests/Inbox/`。
-/// 全局状态、跳转、客户端从环境里取（`@Environment(AppModel.self)`、`@Environment(Router.self)`、`@Environment(\.client)`），
-/// 规则见 docs/ios.md 第 9 节。
+/// 页面：收件箱（`.inbox`，`InboxScreen`）、收件箱里的一条（`.inboxItem`，推送和深链 `thinktin://inbox/{id}` 点进来，
+/// `InboxItemScreen`）。视图模型在 `ThinktinKit/ViewModels/Inbox/`；推送的系统回调在 App 的 `AppDelegate`，
+/// 交给 `AppModel`（`open(push:)`、`receive(push:)`、`rejectFromNotification`、`didReceivePushToken`）。
 struct InboxDestination: View {
     let route: AppRoute
 
     var body: some View {
-        DestinationPlaceholder(route: route)
+        switch route {
+        case .inbox: InboxScreen()
+        case .inboxItem(let id): InboxItemScreen(itemID: id).id(id)
+        default: DestinationPlaceholder(route: route)
+        }
     }
 }
 

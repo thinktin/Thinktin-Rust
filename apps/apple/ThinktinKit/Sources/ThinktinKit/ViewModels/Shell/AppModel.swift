@@ -12,7 +12,9 @@ import Observation
 /// - 要升级：任何调用抛 `upgradeRequired`、事件流以 `upgradeRequired` 结束（服务端回 426，339e191 起 client-core 不再用
 ///   `stopped` 表示它）、启动和回到前台时 `upgradeRequired()` 是 true，都停掉所有事件流（`ObservedClient.haltStreams()`），
 ///   之后一直停在升级页（升级就是重装）。
-/// - 推送（`receive(push:)`、`open(push:)`）：子类型是账号冻结、解冻的先处理账号状态（docs/push.md 第 4 节）。
+/// - 推送（`receive(push:)`、`open(push:)`）：子类型是账号冻结、解冻的先处理账号状态（docs/push.md 第 4 节）；点开的
+///   标已读。通知上的“拒绝”（`rejectFromNotification`）不用打开 App。APNs 令牌（`didReceivePushToken`）登录着就报给
+///   服务端，没登录时登录带上（`pushRegistration`）。退出登录清掉已送达的通知、角标设成 0（`notifications`，12.8）。
 /// - 语言（12.12，传了 `preferences` 时）：启动时最先把请求语言换成界面语言打头的（没登录也要，新用户按它注册）；
 ///   确认完账号、登录成功、解冻之后比较服务端的用户语言（`me().locale`）和界面语言，不一致就调 `setLocale`
 ///   （`LanguageSettingsModel.syncOnLaunch(user:)`，静默进行，失败了下次启动再试）。
@@ -75,8 +77,12 @@ public final class AppModel {
     /// 要重新订阅事件流的次数（账号解冻后加一）：订阅了事件流的页面（对话页、运行详情）`onChange(of:)` 时重新订阅。
     /// 从冻结页回来的页面本来就会重新出现、重新订阅；这个给一直留着的页面用（收到“账号已恢复”时还在正常状态）。
     public private(set) var resubscribeRequest = 0
+    /// APNs 给的推送令牌（12.8，App 代理收到后交给 `didReceivePushToken`）：登录时带上。
+    public private(set) var pushRegistration: PushRegistration?
 
     private let observed: ObservedClient
+    /// 系统通知中心（12.8）：退出登录时清掉已送达的通知，角标跟着收件箱的未读数。nil 不管（测试、预览）。
+    private let notifications: (any DeliveredNotifications)?
     /// 界面语言和服务端、请求语言的同步（12.12）；没传 `preferences` 时为 nil，不同步。
     private let language: LanguageSettingsModel?
     private let selection: InstanceSelectionStore
@@ -89,6 +95,10 @@ public final class AppModel {
     /// 每个事件流最近的连接状态（汇总成 `connection`）。
     @ObservationIgnored private var streams: [UUID: StreamStatus] = [:]
     @ObservationIgnored private var streamRetryAt: [UUID: Date] = [:]
+    /// 这次登录已经报给服务端的推送令牌（同一个不重复报）。
+    @ObservationIgnored private var reportedPushRegistration: PushRegistration?
+    /// 最近设到 App 图标上的角标（一样的不重复设）。
+    @ObservationIgnored private var appBadge: Int?
 
     /// - Parameters:
     ///   - client: Mock 或真核心；这里会包一层 `ObservedClient`。
@@ -96,10 +106,12 @@ public final class AppModel {
     ///   - defaults: 记住上次选的实例；传 nil 不记（测试、预览）。
     ///   - preferences: 外观与语言的偏好（12.12，App 里是 `SettingsPreferences.shared`）：启动、登录后按它的界面语言
     ///     设请求语言、同步服务端的用户语言。nil 不同步（测试、预览）。
+    ///   - notifications: 系统通知中心（12.8，App 里是 `UNUserNotificationCenter`）；nil 不管。
     ///   - now: 现在的时间（测试传固定值）。
     public init(
         client: any ClientProtocol, router: Router = Router(), defaults: UserDefaults? = .standard,
-        preferences: SettingsPreferences? = nil, now: @escaping () -> Date = Date.init
+        preferences: SettingsPreferences? = nil, notifications: (any DeliveredNotifications)? = nil,
+        now: @escaping () -> Date = Date.init
     ) {
         let (stream, continuation) = AsyncStream.makeStream(of: ClientActivity.self, bufferingPolicy: .unbounded)
         let observed = ObservedClient(client) { activity in continuation.yield(activity) }
@@ -109,6 +121,7 @@ public final class AppModel {
         self.language = preferences.map { LanguageSettingsModel(client: observed, preferences: $0) }
         self.router = router
         self.selection = InstanceSelectionStore(defaults: defaults)
+        self.notifications = notifications
         self.now = now
         self.activityContinuation = continuation
         // 版本太老（11.8，不联网）：第一帧就是升级页，事件流一个都不连。
@@ -165,6 +178,7 @@ public final class AppModel {
         await verifyAccount()
         await syncLanguage()
         await refresh()
+        await reportPushToken()
     }
 
     /// 刷新实例列表和角标（下拉、回到前台、解冻后）。
@@ -210,6 +224,14 @@ public final class AppModel {
         case .failure(let error): handle(error)
         }
         self.badges = badges
+        updateAppBadge()
+    }
+
+    /// 收件箱的页面标了已读 / 未读、删了之后告诉这里新的未读数（抽屉的角标、App 图标的角标马上变）。
+    public func inboxUnreadChanged(_ count: Int) {
+        guard phase == .signedIn else { return }
+        badges.inboxUnread = max(0, count)
+        updateAppBadge()
     }
 
     /// 角标超过 `badgeMaxAge` 没刷新就刷新（打开抽屉时）。
@@ -247,9 +269,10 @@ public final class AppModel {
             user = me
             guard me.status != .frozen, phase == .frozen else { return }
             enter(.signedIn)
-            // 冻结着启动（或登录）的没同步过语言。
+            // 冻结着启动（或登录）的没同步过语言、推送令牌。
             await syncLanguage()
             await refresh()
+            await reportPushToken()
         } catch {
             if error is CancellationError { return }
             if !handle(error) { accountCheckError = Self.clientError(error) }
@@ -308,6 +331,61 @@ public final class AppModel {
     public func open(push: PushPayload) async {
         await receive(push: push)
         router.handle(push: push)
+        await markRead(push)
+    }
+
+    /// 通知上的“拒绝”（审批推送的 `REJECT`，docs/push.md 第 2 节；App 可能在后台、没有界面）：拒绝不用本机验证。
+    /// 先查一次审批，还待处理就选它的拒绝选项；已经处理过、过期了、没有拒绝选项的什么都不做。这条通知标已读、刷新角标。
+    /// 返回拒绝了没有。
+    @discardableResult
+    public func rejectFromNotification(_ push: PushPayload) async -> Bool {
+        guard phase == .signedIn, push.kind == .approval, let approvalID = push.approvalID else { return false }
+        await markRead(push)
+        defer { Task { await refreshBadges() } }
+        do {
+            let approval = try await client.getApproval(approvalID)
+            guard approval.isPending, !approval.isExpired(now: now()),
+                let reject = approval.options.first(where: { $0.kind.isReject })
+            else { return false }
+            _ = try await client.decideApproval(approvalID, optionID: reject.id)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// APNs 给了设备令牌（App 代理的 `didRegisterForRemoteNotificationsWithDeviceToken`，每次启动都有）：记下，登录着就
+    /// 报给服务端（`setPushToken`，令牌会变）；没登录时登录带上（`pushRegistration`）。
+    public func didReceivePushToken(_ registration: PushRegistration) async {
+        pushRegistration = registration
+        await reportPushToken()
+    }
+
+    /// 推送对应的收件箱条目标已读（点开、在通知上处理了）。没登录、冻结时不标（收件箱里打开时再标）。
+    private func markRead(_ push: PushPayload) async {
+        guard phase == .signedIn, let id = push.inboxItemID else { return }
+        guard let unread = try? await client.markInboxRead(ids: [id], upTo: nil) else { return }
+        inboxUnreadChanged(unread)
+    }
+
+    /// 推送令牌报给服务端：登录着、有令牌、这次登录还没报过这个。失败了下次启动、登录、收到令牌时再报。
+    private func reportPushToken() async {
+        guard phase == .signedIn, let registration = pushRegistration, registration != reportedPushRegistration
+        else { return }
+        do {
+            try await client.setPushToken(registration)
+            reportedPushRegistration = registration
+        } catch {
+            // 全局错误（登录失效、冻结）`ObservedClient` 已经报过；其余的下次再试。
+        }
+    }
+
+    /// App 图标的角标跟着收件箱的未读数（docs/push.md 第 6 节：App 在前台时自己设）。
+    private func updateAppBadge() {
+        guard let notifications, appBadge != badges.inboxUnread else { return }
+        let count = badges.inboxUnread
+        appBadge = count
+        Task { await notifications.setBadge(count) }
     }
 
     /// 账号解冻：冻结页上就重新检查（解冻了回到正常）；已经在正常状态就确认一下账号，让页面重新订阅，再刷新。
@@ -391,6 +469,8 @@ public final class AppModel {
         Task {
             await syncLanguage()
             await refresh()
+            // 登录时可能已经带上了（`SignInModel`），再报一次也没关系；令牌是登录之后才到的就靠这里。
+            await reportPushToken()
         }
     }
 
@@ -427,8 +507,17 @@ public final class AppModel {
             accountCheckError = nil
             isOffline = false
             lastBadgeRefresh = nil
+            reportedPushRegistration = nil
             router.reset()
             resetStreams()
+            // 推送里没有用户 id：上一个账号的通知、角标都清掉（docs/push.md 第 3 节）。
+            if let notifications {
+                appBadge = 0
+                Task {
+                    await notifications.removeAllDelivered()
+                    await notifications.setBadge(0)
+                }
+            }
         case .upgradeRequired:
             observed.haltStreams()
             resetStreams()
@@ -502,6 +591,7 @@ public final class AppModel {
         }
         setActivity(activity, badges: &badges)
         self.badges = badges
+        updateAppBadge()
     }
 
     private func cached<T>(_ body: () throws -> T) -> T? {

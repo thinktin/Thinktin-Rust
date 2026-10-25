@@ -79,8 +79,6 @@ targets:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
-        # 推送带 content-available 时后台拉收件箱、刷新运行状态（12.8）。
-        UIBackgroundModes: [remote-notification]
         NSFaceIDUsageDescription: 用面容 ID 确认审批、签名等高风险操作。
         # 深链（docs/ios.md 第 6.1 节，和安卓端同一套）：thinktin://run/{id}、approval/{id}、plan/{id}、instance/{id}、
         # inbox、inbox/{id}、vault/request/{id}。App 的 onOpenURL 交给 Router（ThinktinKit/Navigation，WBS 12.16）解析。
@@ -94,6 +92,8 @@ targets:
       properties:
         # 开发环境的 APNs；导出 App Store 包时 Xcode 按发布用的描述文件换成 production。
         aps-environment: development
+        # 审批、电脑审批、保险箱请求的推送是 time-sensitive（docs/push.md 第 2 节），专注模式下也能送到。
+        com.apple.developer.usernotifications.time-sensitive: true
 
   ThinktinTests:
     type: bundle.unit-test

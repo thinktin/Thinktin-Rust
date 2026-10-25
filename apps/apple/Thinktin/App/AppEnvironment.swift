@@ -13,7 +13,7 @@ final class AppEnvironment {
     let client: any ClientProtocol
     let pushRegistrar: any PushRegistrar
     let biometricSigner: any BiometricSigner
-    /// 全局状态和导航（登录状态、实例、角标、`router`）。深链（`onOpenURL`）、推送点开（12.8）都交给它的 `router`。
+    /// 全局状态和导航（登录状态、实例、角标、`router`）。深链（`onOpenURL`）、推送（12.8，`AppDelegate`）都交给它。
     /// 启动、登录后按设置里的界面语言（`SettingsPreferences.shared`，12.12）换请求语言、同步服务端的用户语言。
     let appModel: AppModel
 
@@ -23,16 +23,17 @@ final class AppEnvironment {
         configuration: AppConfiguration,
         client: any ClientProtocol,
         pushRegistrar: any PushRegistrar = NoopPushRegistrar(),
+        notifications: (any DeliveredNotifications)? = nil,
         biometricSigner: any BiometricSigner = UnavailableBiometricSigner()
     ) {
         self.configuration = configuration
         self.client = client
         self.pushRegistrar = pushRegistrar
         self.biometricSigner = biometricSigner
-        self.appModel = AppModel(client: client, preferences: .shared)
+        self.appModel = AppModel(client: client, preferences: .shared, notifications: notifications)
     }
 
-    /// 正式运行用的装配。推送（12.8）和签名（12.9）先用空实现。
+    /// 正式运行用的装配：推送用系统的通知中心（12.8）；签名（12.9）先用空实现。
     static func live(_ configuration: AppConfiguration = .current) -> AppEnvironment {
         log.info(
             "client: \(configuration.client.rawValue, privacy: .public), api: \(configuration.baseURL.absoluteString, privacy: .public)"
@@ -51,7 +52,12 @@ final class AppEnvironment {
             installCoreLogging()
             client = makeCoreClient(configuration, acceptLanguage: acceptLanguage)
         }
-        return AppEnvironment(configuration: configuration, client: client)
+        // 不在 App 包里（命令行跑的测试）时用不了通知中心。
+        let inAppBundle = Bundle.main.bundleURL.pathExtension == "app"
+        return AppEnvironment(
+            configuration: configuration, client: client,
+            pushRegistrar: inAppBundle ? SystemPushRegistrar() : NoopPushRegistrar(),
+            notifications: inAppBundle ? SystemDeliveredNotifications() : nil)
     }
 
     // MARK: 请求语言与日志（11.8）

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Linux 上对 ThinktinUI 和 iOS App target 做类型检查（WBS 12.1，docs/ios.md 第 7 节）。
 #
-# 云端会话没有 Xcode，SwiftUI / UIKit / AppKit / Security / OSLog 用 Stubs/ 里的桩模块代替（签名照 iOS 17 / macOS 14 SDK），
+# 云端会话没有 Xcode，SwiftUI / UIKit / AppKit / Security / OSLog / UserNotifications 用 Stubs/ 里的桩模块代替（签名照 iOS 17 / macOS 14 SDK），
 # 所以这里只能发现类型错误、并发检查的问题，不能代替 macOS CI 上的真实编译和模拟器测试。推送前跑一遍，省一轮 CI。
 #
 #   tools/apple/uicheck/run.sh            UIKit 版（ThinktinUI + App target + 测试）

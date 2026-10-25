@@ -1,30 +1,33 @@
 import Foundation
 import ThinktinKit
+import UIKit
+import UserNotifications
 
-/// APNs 推送注册（WBS 12.8 实现，这里先放协议和空实现，让 App 的装配和视图模型的注入点先定下来）。
+/// 通知权限和 APNs 注册（WBS 12.8，docs/push.md 第 1 节）。
 ///
-/// 流程（12.8）：请求通知权限 → `UIApplication.registerForRemoteNotifications()` → App 代理收到设备令牌
-/// → `PushRegistration.forThisBuild(deviceToken:)` 转成十六进制、按构建选好通道（`apns` / `apns_sandbox`），交给
-/// client-core 的 `set_push_token`（登录时也可以随 `login` 一起带上）。推送送达、点开时交给 `AppModel.receive(push:)`、
-/// `AppModel.open(push:)`（先处理账号冻结 / 解冻，再按 docs/ios.md 第 6.1 节跳转）。
-///
-/// 视图模型（ThinktinKit）要用到时，把协议挪进 ThinktinKit，实现留在这里。
+/// 流程：App 每次启动都向 APNs 注册（`AppDelegate`，不用等用户允许通知：令牌先拿到，允许之后推送就能显示）→ App 代理
+/// 收到设备令牌 → `PushRegistration.forThisBuild(deviceToken:)` 转成十六进制、按构建选好通道（`apns` / `apns_sandbox`）→
+/// `AppModel.didReceivePushToken`：登录着就 `setPushToken`，没登录时登录带上。请求通知权限（`register()`）在用到时
+/// 才做（12.17 的引导、发第一个任务之后）。
 protocol PushRegistrar: Sendable {
-    /// 请求通知权限并向 APNs 注册。返回用户是否允许通知。
+    /// 请求通知权限（还没问过时弹系统框）并向 APNs 注册。返回用户是否允许通知。
     func register() async -> Bool
-
-    /// APNs 回调的设备令牌（App 代理转过来），上报给服务端。
-    func didRegister(deviceToken: Data) async
-
-    /// 注册失败（模拟器、没有推送权限的描述文件等）。
-    func didFailToRegister(error: any Error) async
 }
 
-/// 空实现：不请求权限、不注册。12.8 之前和 Mock 模式下用。
+/// 空实现：不请求权限、不注册（预览、测试）。
 struct NoopPushRegistrar: PushRegistrar {
     func register() async -> Bool { false }
-    func didRegister(deviceToken: Data) async {}
-    func didFailToRegister(error: any Error) async {}
+}
+
+/// 系统的实现：`UNUserNotificationCenter` 请求权限，`UIApplication` 向 APNs 注册。
+struct SystemPushRegistrar: PushRegistrar {
+    func register() async -> Bool {
+        let granted =
+            (try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]))
+            ?? false
+        await MainActor.run { UIApplication.shared.registerForRemoteNotifications() }
+        return granted
+    }
 }
 
 extension PushRegistration {
@@ -33,5 +36,33 @@ extension PushRegistration {
     /// 报错了环境，令牌会被 APNs 判成 `BadDeviceToken`、服务端清掉。
     static func forThisBuild(deviceToken: Data) -> PushRegistration {
         .apns(deviceToken: deviceToken, sandbox: AppConfiguration.usesAPNsSandbox)
+    }
+}
+
+/// 系统通知中心（`AppModel(notifications:)`）：退出登录时清掉已送达的通知，App 图标的角标跟着收件箱的未读数。
+struct SystemDeliveredNotifications: DeliveredNotifications {
+    func removeAllDelivered() async {
+        UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+    }
+
+    func setBadge(_ count: Int) async {
+        try? await UNUserNotificationCenter.current().setBadgeCount(count)
+    }
+}
+
+/// 通知类别（docs/push.md 第 2 节，`PushCategory`）：启动时登记，按钮的文字跟着界面语言（换了语言下次启动生效）。
+enum NotificationCategories {
+    static func register(language: DisplayLanguage) {
+        let categories = PushCategory.allCases.map { category in
+            UNNotificationCategory(
+                identifier: category.rawValue,
+                actions: category.actions.map { action in
+                    UNNotificationAction(
+                        identifier: action.rawValue, title: action.title(language),
+                        options: action.isDestructive ? [.destructive] : [])
+                },
+                intentIdentifiers: [], options: [])
+        }
+        UNUserNotificationCenter.current().setNotificationCategories(Set(categories))
     }
 }

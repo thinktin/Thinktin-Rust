@@ -1,5 +1,6 @@
 // swift-tools-version: 6.0
-// Linux 上给 ThinktinUI 和 App target 做类型检查的包（tools/apple/uicheck/run.sh）：SwiftUI / UIKit / AppKit / Security / OSLog / Charts 用桩模块代替。
+// Linux 上给 ThinktinUI 和 App target 做类型检查的包（tools/apple/uicheck/run.sh）：SwiftUI / UIKit / AppKit / Security / OSLog / Charts /
+// UserNotifications 用桩模块代替。
 import PackageDescription
 import Foundation
 
@@ -12,8 +13,11 @@ var targets: [Target] = [
     .target(name: "SwiftUI", dependencies: ["CoreGraphics", .target(name: platformStub)], path: "Stubs/SwiftUI"),
     // Swift Charts 的桩（12.4 的用量看板）。
     .target(name: "Charts", dependencies: ["SwiftUI"], path: "Stubs/Charts"),
+    // 通知中心的桩（12.8 推送、12.12 读通知权限）。
+    .target(name: "UserNotifications", path: "Stubs/UserNotifications"),
     .target(name: "ThinktinKit", path: "Gen/ThinktinKit"),
-    .target(name: "ThinktinUI", dependencies: ["ThinktinKit", "SwiftUI", "Charts"], path: "Gen/ThinktinUI"),
+    .target(
+        name: "ThinktinUI", dependencies: ["ThinktinKit", "SwiftUI", "Charts", "UserNotifications"], path: "Gen/ThinktinUI"),
     .testTarget(name: "ThinktinUITests", dependencies: ["ThinktinUI", "ThinktinKit", "SwiftUI"], path: "Gen/ThinktinUITests"),
 ]
 var dependencies: [Package.Dependency] = []
@@ -28,7 +32,10 @@ if withApp {
             path: "Gen/ThinktinCoreAdapter"),
         .executableTarget(
             name: "Thinktin",
-            dependencies: ["ThinktinKit", "ThinktinUI", "ThinktinCoreAdapter", "SwiftUI", "UIKit", "Security", "OSLog"],
+            dependencies: [
+                "ThinktinKit", "ThinktinUI", "ThinktinCoreAdapter", "SwiftUI", "UIKit", "Security", "OSLog",
+                "UserNotifications",
+            ],
             path: "Gen/Thinktin"),
         .testTarget(name: "ThinktinTests", dependencies: ["Thinktin"], path: "Gen/ThinktinTests"),
     ]

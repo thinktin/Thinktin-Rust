@@ -7,20 +7,23 @@ import ThinktinUI
 /// `Accept-Language`），连同全局状态交给 `RootView`。
 ///
 /// 深链（`thinktin://…`，project.yml 的 `CFBundleURLTypes` 注册了 scheme）交给 `Router`（WBS 12.16）：没登录、
-/// 冻结时先记下，回到正常再跳。
+/// 冻结时先记下，回到正常再跳。推送（12.8）的系统回调在 `AppDelegate`，装配（`AppEnvironment`）也由它建：冷启动点开
+/// 通知时，回调可能比界面先到。登录时带上 APNs 令牌（`\.signInPushRegistration`）。
 ///
 /// 设置里选的外观和界面语言（WBS 12.12，`SettingsPreferences.shared`）由 `.settingsPreferences()` 套在根视图上生效：
 /// 放在这里而不是 `RootView` 里，预览和界面测试照样能自己设 `\.displayLanguage` 和深浅色。
 @main
 struct ThinktinApp: App {
-    @State private var environment = AppEnvironment.live()
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
     var body: some Scene {
+        let model = delegate.environment.appModel
         WindowGroup {
-            RootView(model: environment.appModel)
+            RootView(model: model)
                 .settingsPreferences()
+                .environment(\.signInPushRegistration, SignInPushRegistration { model.pushRegistration })
                 .onOpenURL { url in
-                    _ = environment.appModel.router.handle(url: url)
+                    _ = model.router.handle(url: url)
                 }
         }
     }

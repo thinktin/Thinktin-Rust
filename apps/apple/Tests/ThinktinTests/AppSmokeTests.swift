@@ -13,7 +13,8 @@ struct AppSmokeTests {
         #expect(info["CFBundleDisplayName"] as? String == "ThinkTin")
         #expect(info["CFBundleDevelopmentRegion"] as? String == "zh-Hans")
         #expect(info["ITSAppUsesNonExemptEncryption"] as? Bool == false)
-        #expect((info["UIBackgroundModes"] as? [String])?.contains("remote-notification") == true)
+        // 推送不带 content-available（docs/push.md 第 3 节），用不上后台模式（12.8 去掉了）。
+        #expect(info["UIBackgroundModes"] == nil)
         #expect(info["NSFaceIDUsageDescription"] as? String != nil)
         // 构建设置 THINKTIN_API_BASE_URL 展开进来了，解析出来是 https 的地址。
         let raw = try #require(info[AppConfiguration.baseURLInfoKey] as? String)
