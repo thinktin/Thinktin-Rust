@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FileProvider 只开放缓存里的产出物目录（对话页下载后交给系统打开 / 分享，13.5）。 -->
+<paths>
+    <cache-path name="artifacts" path="artifacts/" />
+</paths>

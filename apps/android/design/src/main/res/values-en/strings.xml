@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="design_composer_placeholder">Message your agent</string>
+    <string name="design_attach">Add attachment</string>
+    <string name="design_send">Send</string>
+    <string name="design_stop">Stop</string>
+    <string name="design_expand">Expand</string>
+    <string name="design_collapse">Collapse</string>
+    <string name="design_loading">Loading</string>
+    <string name="design_tool_pending">Pending</string>
+    <string name="design_tool_in_progress">In progress</string>
+    <string name="design_tool_completed">Completed</string>
+    <string name="design_tool_failed">Failed</string>
+    <string name="design_ai_generated">[AI-generated]</string>
+    <string name="design_approval_heading">Needs your approval</string>
+    <string name="design_approval_untitled">The agent wants to run an action</string>
+    <string name="design_approval_tool_call">Tool call</string>
+    <string name="design_approval_show_raw">Show raw request</string>
+    <string name="design_approval_hide_raw">Hide raw request</string>
+    <string name="design_approval_allow_once">Approve</string>
+    <string name="design_approval_allow_always">Always allow</string>
+    <string name="design_approval_reject_once">Reject</string>
+    <string name="design_approval_reject_always">Always reject</string>
+    <string name="design_approval_option_unnamed">(Unnamed option)</string>
+    <string name="design_approval_expires_hm">Expires in %1$dh %2$dm</string>
+    <string name="design_approval_expires_m">Expires in %1$d min</string>
+    <string name="design_approval_expiring">Expires in less than a minute</string>
+    <string name="design_approval_overdue">Expired, waiting for the platform</string>
+    <string name="design_approval_state_pending">Pending</string>
+    <string name="design_approval_approved_you">You approved</string>
+    <string name="design_approval_approved_you_option">You approved (%1$s)</string>
+    <string name="design_approval_rejected_you">You rejected</string>
+    <string name="design_approval_rejected_you_option">You rejected (%1$s)</string>
+    <string name="design_approval_approved_policy">Allowed by your pre-approval policy</string>
+    <string name="design_approval_rejected_policy">Rejected by your pre-approval policy</string>
+    <string name="design_approval_state_expired">Expired: nobody answered in time</string>
+    <string name="design_approval_state_cancelled">Cancelled: the run ended or was stopped</string>
+    <string name="design_approval_state_superseded">Void: the run was retried, this request no longer applies</string>
+    <string name="design_approval_state_unknown">Unknown state</string>
+    <string name="design_copy_code">Copy code</string>
+</resources>

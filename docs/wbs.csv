@@ -119,18 +119,22 @@
 12 iOS App,12.21,搜索,在本机缓存里搜实例、运行的提示词与摘要、收件箱、计划、产出物名，分组显示、点开跳转,12.16,2,P2,iOS / macOS
 12 iOS App,12.22,运行附件（待 1.1 拍板）,输入框“+”菜单（拍照、相册、文件）、上传进度、附件在时间线里显示,"12.5, 5.6",2,P2,iOS / macOS
 12 iOS App,12.23,App 内购买（待 1.1 拍板）,StoreKit 2 订阅与消耗型项目、恢复购买、显示权益；iOS 上不出现站外购买引导（后端计费包未编号，待定）,12.12,4,P4,iOS / macOS
-13 Android App,13.1,工程搭建,Gradle、Compose、接入 client-core AAR,11.1,4,P1,Android
-13 Android App,13.2,注册登录与设备管理,同 12.2,"13.1, 4.2",4,P1,Android
-13 Android App,13.3,Agent 目录与领养,同 12.3,"13.1, 5.1",5,P1,Android
-13 Android App,13.4,模型 key 配置,同 12.4,"13.1, 9.8",4,P1,Android
-13 Android App,13.5,对话与运行过程,同 12.5,"13.1, 11.3",8,P1,Android
-13 Android App,13.6,计划管理,同 12.6,"13.1, 7.1",6,P1,Android
-13 Android App,13.7,团队与流水线,同 12.7,"13.6, 8.3",8,P1,Android
-13 Android App,13.8,推送与收件箱,厂商推送 SDK 接入、通知渠道、收件箱,"13.1, 10.3",6,P1,Android
-13 Android App,13.9,审批与签名,Keystore / StrongBox P-256、生物识别,"13.8, 11.5",5,P2,Android
-13 Android App,13.10,常驻通知,运行进度常驻通知,13.5,2,P2,Android
-13 Android App,13.11,上架,华为、小米、OPPO、vivo、应用宝等商店上架,13.8,5,P1,Android
+13 Android App,13.1,工程搭建,Gradle（Kotlin DSL、版本目录）、Jetpack Compose + Material 3；core 模块接入 client-core 的 Kotlin 绑定与 jniLibs（tools/client-core/build-android.sh）；设计系统（主题、字体、通用组件，信息架构与视觉参考 Claude Android App）；导航骨架；Mock 客户端；单元测试与 Compose 测试；GitHub Actions 构建与测试,11.1,5,P1,Android
+13 Android App,13.2,注册登录与设备管理,手机号验证码登录；会话存 Keystore 加密的安全存储（SessionStore）；设备列表、远程下线、下线其他设备（可选全部停止）、全部停止；账号冻结提示；注销,"13.1, 4.2",4,P1,Android
+13 Android App,13.3,Agent 目录与领养,目录浏览与详情（许可证、接入方式、版本）、领养、实例列表（抽屉）、重命名、升级 / 回滚版本、删除实例、实例状态显示,"13.1, 5.1",5,P1,Android
+13 Android App,13.4,模型 key 配置,厂商列表与预置品牌、添加 key（自定义接口地址）、key 列表与删除、按实例配置模型别名与降级链、用量看板（按天 / 实例 / 模型 / key）,"13.1, 9.8",5,P1,Android
+13 Android App,13.5,对话与运行过程,按实例的对话（运行时间线、翻页）、流式事件渲染（文字、思考、工具调用卡片、产出物、系统提示行）、AI 生成标识规则表、发送前密码拦截与保险箱表单、agent 的账号密码填写请求卡片、取消运行、断线续传与 on_reset 重载、离线缓存、运行树视图入口,"13.1, 11.3",9,P1,Android
+13 Android App,13.6,计划管理,计划列表、新建 / 编辑（cron、RRULE、一次性，带时区）、暂停 / 恢复、确认 agent 创建的计划、删除、运行历史,"13.1, 7.1",6,P1,Android
+13 Android App,13.7,团队与流水线,组建团队与模板、流水线编辑（步骤、依赖、指定实例）、运行树视图（整树 / 单个子运行停止）、产出物查看与下载,"13.6, 8.3",8,P1,Android
+13 Android App,13.8,推送与收件箱,极光推送 SDK（国内构建变体）与 FCM（海外变体）、推送令牌注册、通知渠道（审批高优先级）、通知点击跳转、收件箱（同步、翻页、已读、未读角标）,"13.1, 10.3",6,P1,Android
+13 Android App,13.9,审批与签名（电脑高危操作）,Keystore / StrongBox P-256 密钥、扫码配对电脑、审批消息签名、能力令牌签发与吊销、重新配对,"13.16, 11.5, 14.2",5,P3,Android
+13 Android App,13.10,常驻通知,运行进度常驻通知（前台按事件流更新，后台按推送更新）,13.5,2,P2,Android
+13 Android App,13.11,上架,华为、小米、OPPO、vivo、应用宝等商店上架；隐私政策、权限说明、第三方 SDK 披露、各商店审核材料,13.8,5,P1,Android
 13 Android App,13.12,APK 直接分发,官网下载安装包、签名校验、应用内检查更新、厂商推送参数（不依赖应用商店）,13.8,3,P1,Android
+13 Android App,13.13,设置、多语言与开源许可,设置页（账号、语言切换 zh-CN / en、关于、注销）；开源许可页面读 client-core 带的许可证清单与原文；界面文案中英文；无障碍（TalkBack、字号缩放）,13.2,3,P1,Android
+13 Android App,13.14,密码保险箱界面,保险箱条目列表 / 新建 / 修改 / 删除、按实例授权；“待填写”请求列表（表单与对话里的填写卡片共用 13.5 的组件）,"13.5, 9.11, 11.6",2,P2,Android
+13 Android App,13.15,IM 渠道设置,飞书 / 企业微信 / 钉钉群机器人渠道的添加、事件选择、测试、换地址、停用、删除,"13.13, 10.5",2,P4,Android
+13 Android App,13.16,云端审批（审批卡与审批中心）,对话内的审批卡组件（选项、倒计时、已决状态）、跨实例的审批中心、批准前 BiometricPrompt（无生物识别退到锁屏密码）、通知上的直接拒绝；13.5 嵌入、13.8 复用拒绝逻辑,"13.1, 6.13",3,P1,Android
 14 macOS App 与电脑控制,14.1,relay：设备中继,wss 长连接、按会话绑定路由、离线检测,4.2,6,P3,Rust 后端
 14 macOS App 与电脑控制,14.2,desktop：MCP 工具服务,rmcp 工具服务框架、能力令牌校验、本地审计日志,14.1,5,P3,Rust 后端
 14 macOS App 与电脑控制,14.3,desktop：只读工具,看文件、截图（ScreenCaptureKit）,14.2,5,P3,Rust 后端
