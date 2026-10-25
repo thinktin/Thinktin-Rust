@@ -39,6 +39,7 @@ extension AppRoute {
         case .approvals: ("审批", "Approvals")
         case .approval: ("审批详情", "Approval")
         case .artifacts: ("产出物", "Artifacts")
+        case .artifact: ("产出物详情", "Artifact")
         case .vault: ("密码保险箱", "Vault")
         case .vaultItem: ("保险箱条目", "Vault item")
         case .vaultRequest: ("填写请求", "Vault request")

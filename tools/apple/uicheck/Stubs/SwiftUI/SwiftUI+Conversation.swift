@@ -169,3 +169,8 @@ extension View {
         _m()
     }
 }
+
+// 12.18：分享一个文件（产出物下载到本机后）。
+extension ShareLink {
+    public init(item: URL, subject: Text? = nil, message: Text? = nil, @ViewBuilder label: () -> Label) {}
+}

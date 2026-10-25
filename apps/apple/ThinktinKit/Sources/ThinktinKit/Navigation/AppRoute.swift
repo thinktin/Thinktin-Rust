@@ -82,6 +82,8 @@ public enum AppRoute: Hashable, Sendable, Codable {
 
     /// 产出物库；`instanceID` 为 nil 时是全部实例的。
     case artifacts(instanceID: InstanceID?)
+    /// 一个产出物（对话、运行详情、产出物库点进来）：预览、分享、存到“文件”、删除。带上所属的运行（按运行取产出物）。
+    case artifact(ArtifactID, runID: RunID)
 
     // MARK: 保险箱（12.13）
 
@@ -148,7 +150,7 @@ extension AppRoute {
         case .teams, .team, .teamTemplates, .pipelineEditor: .teams
         case .inbox, .inboxItem: .inbox
         case .approvals, .approval: .approvals
-        case .artifacts: .artifacts
+        case .artifacts, .artifact: .artifacts
         case .vault, .vaultItem, .vaultRequest: .vault
         case .settings, .licenses, .about: .settings
         case .imChannels: .imChannels

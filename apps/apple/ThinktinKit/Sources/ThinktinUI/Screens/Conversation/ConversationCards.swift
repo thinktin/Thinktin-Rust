@@ -1,7 +1,7 @@
 import SwiftUI
 import ThinktinKit
 
-/// 产出物卡片：名字（agent 起的，带“AI 生成”标识）、版本和大小；点开去产出物（12.18 做预览和分享），长按举报。
+/// 产出物卡片：名字（agent 起的，带“AI 生成”标识）、版本和大小；点开去产出物详情（12.18：预览、分享、删除），长按举报。
 struct ArtifactCardView: View {
     let item: ConversationItem
     let card: ArtifactCard
@@ -13,7 +13,12 @@ struct ArtifactCardView: View {
 
     var body: some View {
         Button {
-            router.open(.artifacts(instanceID: instanceID))
+            // 卡片都在某个运行里；万一没有运行就去这个实例的产出物库。
+            if let runID = item.runID {
+                router.open(.artifact(card.artifactID, runID: runID))
+            } else {
+                router.open(.artifacts(instanceID: instanceID))
+            }
         } label: {
             HStack(spacing: Metrics.Spacing.s) {
                 Image(systemName: card.name.hasSuffix(".png") || card.name.hasSuffix(".jpg") ? "photo" : "doc.richtext")

@@ -17,7 +17,7 @@ enum RouteSamples {
         .teams, .team("team-1"), .teamTemplates, .pipelineEditor(planID: nil, teamID: "team-1"),
         .inbox, .inboxItem("inbox-1"),
         .approvals, .approval("appr-1"),
-        .artifacts(instanceID: nil),
+        .artifacts(instanceID: nil), .artifact("art-1", runID: "run-1"),
         .vault, .vaultItem("vault-1"), .vaultRequest("vreq-1"),
         .settings, .licenses, .about,
         .imChannels,
@@ -26,7 +26,7 @@ enum RouteSamples {
         .newTask, .frozen, .upgrade,
     ]
 
-    static let caseCount = 42
+    static let caseCount = 43
 
     static func index(of route: AppRoute) -> Int {
         switch route {
@@ -60,18 +60,19 @@ enum RouteSamples {
         case .approvals: 27
         case .approval: 28
         case .artifacts: 29
-        case .vault: 30
-        case .vaultItem: 31
-        case .vaultRequest: 32
-        case .settings: 33
-        case .licenses: 34
-        case .about: 35
-        case .imChannels: 36
-        case .onboarding: 37
-        case .search: 38
-        case .newTask: 39
-        case .frozen: 40
-        case .upgrade: 41
+        case .artifact: 30
+        case .vault: 31
+        case .vaultItem: 32
+        case .vaultRequest: 33
+        case .settings: 34
+        case .licenses: 35
+        case .about: 36
+        case .imChannels: 37
+        case .onboarding: 38
+        case .search: 39
+        case .newTask: 40
+        case .frozen: 41
+        case .upgrade: 42
         }
     }
 }
@@ -110,7 +111,7 @@ struct AppRouteTests {
             .pipelineEditor(planID: "p", teamID: nil): .teams,
             .inbox: .inbox, .inboxItem("x"): .inbox,
             .approvals: .approvals, .approval("a"): .approvals,
-            .artifacts(instanceID: "i"): .artifacts,
+            .artifacts(instanceID: "i"): .artifacts, .artifact("a", runID: "r"): .artifacts,
             .vault: .vault, .vaultItem("v"): .vault, .vaultRequest("v"): .vault,
             .settings: .settings, .licenses: .settings, .about: .settings,
             .imChannels: .imChannels, .onboarding: .onboarding, .search: .search,
