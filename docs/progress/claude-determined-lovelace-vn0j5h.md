@@ -48,11 +48,19 @@ P1 后端核心（M1–M9）和 P2 里能在代码层面完成的包都做完了
 4. 后端的两个小项穿插着做。
 
 已完成：
-- 集成分支（`6375b05`）；本文件。
+- 集成分支（`6375b05`）；本文件（`276f2c5`）。
+- 后端：去掉 `PLAN_ONLY_BASES`，`plan_only_base` 逐家查（`854c017`）。
+- iOS 审查 12.5 / 12.6 / 12.12，修三处（`85cd7e3`，详见 iOS 进度文件）：举报说明按标量数、agent 待办清单能举报、运行详情停止冲突后刷新。
+- 安卓 13.5 收尾（`f93ad4c`）：代码已齐，修运行页深链定位少算一行。
+- 安卓 13.6 计划（`21fdc49` 及之前的 `schedule/`）：列表、详情、新建 / 编辑、触发规则面板，本地的 cron / RRULE 预测。全量 test / lint / 打包通过。
 
 进行中：
-- 环境：Swift 6.2（`/opt/swift`）、Android SDK（`/opt/android-sdk`，platform 35、build-tools 35.0.0）已装；client-core 本机库在编。
+- iOS 12.15 审批中心与审批详情：视图模型、文案、界面、测试写好了，Linux 上 854 个测试过，正在跑 uicheck 和格式检查。
+
+环境（容器回收后要重装）：Swift 6.2 装在 `/opt/swift`（swift.org 的包，验签）；Android SDK 在 `/opt/android-sdk`（cmdline-tools、platform 35、build-tools 35.0.0，不用 NDK）；`cargo build -p client-core --lib` 出本机库，`tools/client-core/build-linux-swift.sh target/linux` 出 Linux 版 Swift 包。Gradle 直连 Maven Central 没被限流。Gradle 和 Swift 一起跑时 Robolectric 偶尔超时，分开跑。
 
 坑和决定：
 - 原来三个会话（backend `session_016LgPcdynywrhrjCq8VVFLt`、iOS `session_01GuCp3KRgqaK6Kzynw6udRn`、安卓 `session_01T2zubC6hDr9ZZR3ihhPP5b`）查不到了，它们 scratchpad 里的工作流脚本和缓存也没了，按各进度文件重新来。
 - 定时任务 `trig_01LULryki4Z7mPLXhgSXGWMP`（每小时第 58 分）：叫醒本会话、读本文件接着做；全部做完或用户叫停时删掉。
+- 要人定的：iOS 批准审批时设备没设锁屏密码照常批准（`BiometricGateResult.unavailable`），安卓是不许批准，两端不一致。
+- Robolectric 的触摸点不到盖在页面上的面板（会落到遮罩上，真机正常）：面板里的控件在测试里用 `SemanticsActions.OnClick`（安卓 README 已知问题）。
