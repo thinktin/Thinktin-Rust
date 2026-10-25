@@ -53,9 +53,13 @@ P1 后端核心（M1–M9）和 P2 里能在代码层面完成的包都做完了
 - iOS 审查 12.5 / 12.6 / 12.12，修三处（`85cd7e3`，详见 iOS 进度文件）：举报说明按标量数、agent 待办清单能举报、运行详情停止冲突后刷新。
 - 安卓 13.5 收尾（`f93ad4c`）：代码已齐，修运行页深链定位少算一行。
 - 安卓 13.6 计划（`21fdc49` 及之前的 `schedule/`）：列表、详情、新建 / 编辑、触发规则面板，本地的 cron / RRULE 预测。全量 test / lint / 打包通过。
+- iOS 12.15 审批中心与审批详情（`0ea8a8e`）。
+- iOS 12.8 推送与收件箱（`691e1ab`）：收件箱和单条通知页、点开推送标已读、通知上的“拒绝”、APNs 令牌上报、角标和退出登录清通知、
+  `AppDelegate`；uicheck 加了 UserNotifications 的桩，App 的推送代码在 Linux 上也做类型检查。866 个测试。
 
 进行中：
-- iOS 12.15 审批中心与审批详情：视图模型、文案、界面、测试写好了，Linux 上 854 个测试过，正在跑 uicheck 和格式检查。
+- 安卓 13.8 推送与收件箱（2026-10-25 22:58 开始）：收件箱页面、通知渠道（服务端用 `tt_approval` / `tt_results`）、推送点开跳转和标已读、
+  令牌上报（极光报 `unipush`、FCM 报 `fcm`）。
 
 环境（容器回收后要重装）：Swift 6.2 装在 `/opt/swift`（swift.org 的包，验签）；Android SDK 在 `/opt/android-sdk`（cmdline-tools、platform 35、build-tools 35.0.0，不用 NDK）；`cargo build -p client-core --lib` 出本机库，`tools/client-core/build-linux-swift.sh target/linux` 出 Linux 版 Swift 包。Gradle 直连 Maven Central 没被限流。Gradle 和 Swift 一起跑时 Robolectric 偶尔超时，分开跑。
 
