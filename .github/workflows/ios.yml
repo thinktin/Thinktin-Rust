@@ -18,6 +18,7 @@ on:
       - crates/client-core/**
       - crates/proto/**
       - tools/client-core/**
+      - tools/apple/**
       # client-core 的依赖版本、打包脚本调用的许可证清单工具
       - Cargo.toml
       - Cargo.lock
@@ -29,6 +30,7 @@ on:
       - crates/client-core/**
       - crates/proto/**
       - tools/client-core/**
+      - tools/apple/**
       - Cargo.toml
       - Cargo.lock
       - tools/licenses/**
@@ -103,6 +105,9 @@ jobs:
           set -o pipefail
           swift build 2>&1 | tee "$RUNNER_TEMP/swift-build.log"
           swift test 2>&1 | tee "$RUNNER_TEMP/swift-test.log"
+      - name: Privacy scanner tests
+        if: ${{ !cancelled() }}
+        run: python3 -m unittest tools/apple/privacy/test_scan.py
       # 代码风格（配置在 apps/apple/.swift-format：4 格缩进、120 列）。测试挂了也照样跑，两边的问题一次看全。
       # 不过时在本地 `swift format -i -r apps/apple` 再提交。
       - name: swift format lint
@@ -197,6 +202,16 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             COMPILER_INDEX_STORE_ENABLE=NO \
             build test 2>&1 | tee "$RUNNER_TEMP/xcodebuild.log" | "${fmt[@]}"
+      # 隐私清单（12.11）：Rust 核心和 App 二进制里用到的需要声明理由的 API 都要在 PrivacyInfo.xcprivacy 里声明，
+      # 不然上传时 App Store Connect 报 ITMS-91053。
+      - name: Check required-reason APIs against the privacy manifest
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          app="$RUNNER_TEMP/DerivedData/Build/Products/Debug-iphonesimulator/Thinktin.app/Thinktin"
+          bins=(target/apple/sim/libclient_core.a)
+          [[ -f "$app" ]] && bins+=("$app")
+          python3 tools/apple/privacy/scan.py --manifest apps/apple/Thinktin/Resources/PrivacyInfo.xcprivacy "${bins[@]}"
       # ThinktinKit 的全部测试在 macOS 本机再跑一遍：ThinktinCoreAdapterTests 经 macOS 切片的真核心跑
       # （StubHTTPServer 的 Darwin 分支只有这里编译、运行），ThinktinUITests 走 AppKit 分支。放在 xcodebuild
       # 后面、它失败了也照跑，两边的问题一次看全。
