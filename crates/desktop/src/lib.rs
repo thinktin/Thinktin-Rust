@@ -12,6 +12,7 @@
 
 pub mod audit;
 pub mod files;
+pub mod pairing;
 pub mod policy;
 
 use std::collections::HashMap;
@@ -22,8 +23,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use client_core::pairing::{
     ApprovalDecisionBody, ApprovalRequest, ApprovalRequestBody, CapabilityBody, CapabilityGrant,
-    RevocationBody, approval_message, arguments_digest, decode_signature, verify_approval,
-    verify_capability,
+    MAX_OFFER_TTL_SECS, PairConfirmBody, PairResponseBody, PairingOffer, RevocationBody,
+    approval_message, arguments_digest, decode_signature, encode_public_key, encode_signature,
+    pairing_confirmation_message, pairing_offer_uri, verify_approval, verify_capability,
+    verify_pairing_response,
 };
 use futures_util::{SinkExt, StreamExt};
 use proto::domain::{DeviceCallId, DeviceId, DeviceMessage, DeviceMessageKind, RunId};
@@ -37,6 +40,7 @@ use tracing::{debug, info, warn};
 use crate::audit::{Audit, Decision, Entry};
 use crate::policy::{Need, State};
 
+pub use pairing::{PairingKey, PairingStatus, SoftwareKey};
 pub use policy::PairedPhone;
 
 /// 工具的结果：MCP 的 content 数组；工具自己出错时 `is_error` 为真。
@@ -130,6 +134,9 @@ pub enum DesktopError {
     Replaced,
     #[error("local state: {0}")]
     State(String),
+    /// 出不了配对二维码（电脑的密钥不对、设备 id 不对）。
+    #[error("pairing: {0}")]
+    Pairing(String),
 }
 
 /// 连接状态（给 App 显示“正在被控制”的提示用）。
@@ -152,6 +159,12 @@ enum SessionEnd {
 /// 等手机批准的高危操作：请求和回信的通道。
 type Pending = HashMap<String, (ApprovalRequest, oneshot::Sender<(bool, Vec<u8>)>)>;
 
+/// 正在显示的配对邀请和签确认用的密钥。
+struct Offer {
+    offer: PairingOffer,
+    key: Arc<dyn PairingKey>,
+}
+
 struct Inner {
     cfg: DesktopConfig,
     tokens: Arc<dyn TokenSource>,
@@ -159,6 +172,8 @@ struct Inner {
     audit: Audit,
     state: Mutex<State>,
     pending: Mutex<Pending>,
+    offer: Mutex<Option<Offer>>,
+    pairing: watch::Sender<PairingStatus>,
     status: watch::Sender<Status>,
     stop: watch::Sender<bool>,
 }
@@ -208,6 +223,8 @@ impl Desktop {
                 audit,
                 state: Mutex::new(state),
                 pending: Mutex::new(HashMap::new()),
+                offer: Mutex::new(None),
+                pairing: watch::channel(PairingStatus::Idle).0,
                 status: watch::channel(Status::Offline).0,
                 stop: watch::channel(false).0,
             }),
@@ -223,6 +240,58 @@ impl Desktop {
         }
         st.phone = Some(phone);
         self.inner.save(&st)
+    }
+
+    /// 开始配对（App 的“配对手机”）：出一个新的邀请，返回二维码的内容（`thinktin-pair:v1?…`）。邀请 [`ttl`](Duration)
+    /// 后过期（最长 10 分钟）；之前的邀请作废。手机扫码回复后，这边验签、用 `key` 签确认发回，记下手机
+    /// （[`Desktop::watch_pairing`] 变成 [`PairingStatus::Paired`]）。要连着中继才收得到回复。
+    pub fn start_pairing(
+        &self,
+        key: Arc<dyn PairingKey>,
+        ttl: Duration,
+    ) -> Result<String, DesktopError> {
+        let inner = &self.inner;
+        let mut nonce = [0u8; 32];
+        getrandom::fill(&mut nonce).map_err(|e| DesktopError::Pairing(e.to_string()))?;
+        let desktop_key = encode_public_key(key.public_key())
+            .map_err(|e| DesktopError::Pairing(e.to_string()))?;
+        let expires_at = unix_now() + ttl.as_secs().clamp(1, MAX_OFFER_TTL_SECS);
+        let offer = PairingOffer {
+            desktop_id: inner.cfg.desktop_id.clone(),
+            desktop_key,
+            nonce: encode_signature(&nonce),
+            expires_at,
+        };
+        let uri =
+            pairing_offer_uri(offer.clone()).map_err(|e| DesktopError::Pairing(e.to_string()))?;
+        *inner.offer.lock().unwrap_or_else(|e| e.into_inner()) = Some(Offer { offer, key });
+        inner.pairing.send_replace(PairingStatus::Waiting {
+            uri: uri.clone(),
+            expires_at,
+        });
+        info!("showing a pairing code");
+        Ok(uri)
+    }
+
+    /// 不配了（关掉二维码）：邀请作废。
+    pub fn cancel_pairing(&self) {
+        self.inner
+            .offer
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        self.inner.pairing.send_replace(PairingStatus::Idle);
+    }
+
+    /// 配对进行到哪了（App 的配对界面跟着它变）。
+    pub fn watch_pairing(&self) -> watch::Receiver<PairingStatus> {
+        self.inner.pairing.subscribe()
+    }
+
+    /// 配对的手机（没配对时为 `None`）。
+    pub fn paired_phone(&self) -> Option<PairedPhone> {
+        let st = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
+        st.phone.clone()
     }
 
     /// 解除配对：之后普通操作、高危操作都不做。
@@ -425,7 +494,7 @@ impl Desktop {
                 });
             }
             RelayFrame::Message { message } => {
-                self.on_message(&message);
+                self.on_message(&message, out);
                 let _ = out.send(ComputerFrame::Ack {
                     message: message.id,
                 });
@@ -587,8 +656,8 @@ impl Desktop {
         Ok(())
     }
 
-    /// 手机发来的消息：能力令牌、吊销、审批决定。
-    fn on_message(&self, m: &DeviceMessage) {
+    /// 手机发来的消息：配对回复、能力令牌、吊销、审批决定。
+    fn on_message(&self, m: &DeviceMessage, out: &mpsc::UnboundedSender<ComputerFrame>) {
         let inner = &self.inner;
         let phone = {
             let st = inner.state.lock().unwrap_or_else(|e| e.into_inner());
@@ -598,6 +667,7 @@ impl Desktop {
             .as_ref()
             .is_some_and(|p| p.device_id == m.from_device.to_string());
         match m.kind {
+            DeviceMessageKind::PairResponse => self.on_pair_response(m, out),
             DeviceMessageKind::Capability => {
                 let (Some(phone), true) = (phone, from_phone) else {
                     warn!(from = %m.from_device, "a capability not from the paired phone was dropped");
@@ -669,6 +739,73 @@ impl Desktop {
             }
             other => debug!(kind = %other, "a message the tool service does not handle"),
         }
+    }
+
+    /// 手机扫码后的配对回复：对上正在显示的邀请、验手机的签名，签确认发回，记下手机。
+    /// 验不过时邀请作废（一个二维码只认一次回复），要重新出二维码。
+    fn on_pair_response(&self, m: &DeviceMessage, out: &mpsc::UnboundedSender<ComputerFrame>) {
+        let inner = &self.inner;
+        let Ok(body) = serde_json::from_value::<PairResponseBody>(m.body.clone()) else {
+            warn!("a malformed pairing response was dropped");
+            return;
+        };
+        let current = {
+            let mut offer = inner.offer.lock().unwrap_or_else(|e| e.into_inner());
+            match offer.as_ref() {
+                Some(o) if o.offer.nonce == body.nonce => offer.take(),
+                _ => None,
+            }
+        };
+        let Some(Offer { offer, key }) = current else {
+            debug!(from = %m.from_device, "a pairing response for no current pairing code");
+            return;
+        };
+        let phone_id = m.from_device.to_string();
+        let fail = |reason: String| {
+            warn!(from = %phone_id, %reason, "a pairing response was refused");
+            inner.pairing.send_replace(PairingStatus::Failed { reason });
+        };
+        let verified = decode_signature(&body.signature).and_then(|signature| {
+            verify_pairing_response(
+                offer.clone(),
+                phone_id.clone(),
+                body.phone_key.clone(),
+                signature,
+            )
+        });
+        if let Err(e) = verified {
+            return fail(e.to_string());
+        }
+        let confirmation =
+            match pairing_confirmation_message(offer, phone_id.clone(), body.phone_key.clone()) {
+                Ok(message) => key.sign(&message),
+                Err(e) => Err(e.to_string()),
+            };
+        let signature = match confirmation {
+            Ok(signature) => signature,
+            Err(e) => return fail(format!("cannot sign the confirmation: {e}")),
+        };
+        if let Err(e) = self.pair(PairedPhone {
+            device_id: phone_id.clone(),
+            public_key: body.phone_key,
+        }) {
+            return fail(e.to_string());
+        }
+        let confirm = serde_json::to_value(PairConfirmBody {
+            nonce: body.nonce.clone(),
+            signature: encode_signature(&signature),
+        })
+        .unwrap_or_default();
+        let _ = out.send(ComputerFrame::Send {
+            to: m.from_device,
+            kind: DeviceMessageKind::PairConfirm,
+            body: confirm,
+            reference: Some(body.nonce),
+        });
+        info!(phone = %phone_id, "paired with a phone");
+        inner
+            .pairing
+            .send_replace(PairingStatus::Paired { phone_id });
     }
 }
 

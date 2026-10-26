@@ -51,6 +51,12 @@ macOS App 的后台进程里跑一个 `Desktop`：
 - **审计日志**：每个调用一行 JSON（`audit.jsonl`）：时间、调用、发起的运行、工具、参数的摘要（和审批签的是同一个摘要）、
   权限结论（允许 / 拒绝 / 批准 / 不批准）、执行结果。不记参数原文，也不记读到、写进的内容。
 - **本地状态**（`desktop-state.json`）：配对的手机（设备 id、公钥）、能力令牌、吊销过的令牌 id。换了手机，之前的令牌作废。
+- **配对**（14.8 的 Rust 部分，`pairing`）：App 的“配对手机”调 `start_pairing(电脑的密钥, 有效期)`，拿到二维码的内容
+  （`thinktin-pair:v1?…`，32 字节随机数，最长 10 分钟）；手机扫码后签名回复（`pair_response`）经中继到电脑，电脑对上
+  正在显示的邀请（随机数）、用 client-core 验手机的签名，先记下手机，再用电脑的密钥签确认（`pair_confirm`）发回。
+  一次只有一个邀请，重新开始会作废上一个；回复验不过时这个二维码作废，要重新出。App 跟着 `watch_pairing()` 显示
+  等待、配好、失败（`PairingStatus`），关掉二维码调 `cancel_pairing()`。电脑的密钥由 App 放在钥匙串 / Secure Enclave
+  里（实现 `PairingKey`），`SoftwareKey` 给测试和开发用。
 
 工具本身由 `ToolBackend` 实现：看目录、读写文件、删除（挪进 `~/.Trash`）、执行命令（`/bin/sh -c`，最多两分钟，
 输出各留 64 KiB）用 Rust 实现（`files::FileTools`）；截图（ScreenCaptureKit）、键鼠、打开应用要用 macOS 的系统接口，
@@ -58,9 +64,10 @@ macOS App 的后台进程里跑一个 `Desktop`：
 
 ## 4. 还没做的
 
-- macOS App（14.5–14.9）：菜单栏界面、后台登录项、“正在被控制”的提示和一键停止、系统权限引导、配对界面。
+- macOS App（14.5–14.9）：菜单栏界面、后台登录项、“正在被控制”的提示和一键停止、系统权限引导、配对界面
+  （显示 `start_pairing` 给的二维码、钥匙串里的电脑密钥）。
   `Desktop` 的 UniFFI 接口随 App 一起加（和 client-core 打进同一个静态库）。
 - 截图、键鼠、打开应用的实现（14.3、14.4）。
-- 手机的审批界面（12.9、13.9、14.8）：收到 `computer_approval` 推送或进前台时拉
-  `GET /v1/devices/current/messages`，显示请求、用 client-core 的 `pairing` 签批准或拒绝（签的是显示的说明和参数的摘要），发回电脑。
+- ~~手机的配对和审批界面（12.9、13.9）~~：已做（iOS、安卓）：扫码配对、收到 `computer_approval` 推送或进前台时拉
+  `GET /v1/devices/current/messages`，显示请求、签批准或拒绝（签的是显示的说明和参数的摘要），发回电脑；签发、吊销能力令牌。
 - 电脑发的说明现在是英文的（`desktop` 按工具拼的），随 App 的语言设置本地化（14.5）。

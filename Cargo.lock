@@ -946,6 +946,7 @@ dependencies = [
  "base64 0.23.1",
  "client-core",
  "futures-util",
+ "getrandom 0.4.3",
  "orchestrator",
  "p256",
  "proto",

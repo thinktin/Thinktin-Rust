@@ -10,6 +10,8 @@ async-trait.workspace = true
 base64.workspace = true
 client-core = { path = "../client-core" }
 futures-util.workspace = true
+getrandom.workspace = true
+p256.workspace = true
 proto = { path = "../proto" }
 serde.workspace = true
 serde_json.workspace = true
@@ -22,7 +24,6 @@ uuid.workspace = true
 [dev-dependencies]
 auth = { path = "../auth" }
 orchestrator = { path = "../orchestrator" }
-p256.workspace = true
 relay = { path = "../relay" }
 store = { path = "../store", features = ["testing"] }
 tempfile.workspace = true

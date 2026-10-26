@@ -9,11 +9,15 @@ use async_trait::async_trait;
 use auth::access_token::{AccessTokenIssuer, AccessTokenVerifier};
 use auth::signed::{Signer25519, Verifier25519};
 use client_core::pairing::{
-    ApprovalDecisionBody, ApprovalRequestBody, CapabilityBody, CapabilityGrant, RevocationBody,
-    approval_message, capability_message, encode_signature,
+    ApprovalDecisionBody, ApprovalRequestBody, CapabilityBody, CapabilityGrant, PairConfirmBody,
+    PairResponseBody, PairingOffer, RevocationBody, approval_message, capability_message,
+    decode_signature, encode_public_key, encode_signature, pairing_response_message,
+    parse_pairing_offer, verify_pairing_confirmation,
 };
 use desktop::files::FileTools;
-use desktop::{Desktop, DesktopConfig, PairedPhone, Status, TokenSource};
+use desktop::{
+    Desktop, DesktopConfig, PairedPhone, PairingStatus, SoftwareKey, Status, TokenSource,
+};
 use orchestrator::computer::{CallOutput, DeviceCalls};
 use p256::ecdsa::signature::Signer;
 use p256::ecdsa::{Signature, SigningKey};
@@ -429,4 +433,150 @@ async fn risky_tools_wait_for_the_phone_to_approve() {
         .map(|l| l["decision"].as_str().unwrap().to_owned())
         .collect();
     assert_eq!(decisions, ["approved", "declined", "declined"]);
+}
+
+/// 配对（14.8）：电脑出二维码，手机扫码签名回复，电脑验签、签确认发回、记下手机（之前的令牌作废）。
+/// 签名不对的回复让这个二维码作废；不是当前二维码的回复不理。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn pairs_with_a_phone_that_scanned_the_code() {
+    let Some(e) = env().await else { return };
+    // 先有一张旧手机给的令牌：换了手机就作废。
+    let grant = CapabilityGrant {
+        desktop_id: e.mac.to_string(),
+        token_id: "old-token".into(),
+        dirs: vec![e.home.join("Documents").display().to_string()],
+        apps: vec![],
+        expires_at: now() + 3600,
+    };
+    e.phone_sends(
+        DeviceMessageKind::Capability,
+        serde_json::to_value(CapabilityBody {
+            signature: phone_sign(&capability_message(grant.clone()).unwrap()),
+            grant,
+        })
+        .unwrap(),
+    )
+    .await;
+    e.wait_grants(1).await;
+
+    let new_phone = SigningKey::from_slice(&[8u8; 32]).unwrap();
+    let new_phone_key = encode_public_key(
+        new_phone
+            .verifying_key()
+            .to_sec1_point(false)
+            .as_bytes()
+            .to_vec(),
+    )
+    .unwrap();
+    let respond = |offer: &PairingOffer, key: &SigningKey, nonce: &str| {
+        let message =
+            pairing_response_message(offer.clone(), e.phone.to_string(), new_phone_key.clone())
+                .unwrap();
+        let sig: Signature = key.sign(&message);
+        serde_json::to_value(PairResponseBody {
+            nonce: nonce.to_owned(),
+            phone_key: new_phone_key.clone(),
+            signature: encode_signature(&sig.to_bytes()),
+        })
+        .unwrap()
+    };
+    let mut pairing = e.desktop.watch_pairing();
+
+    // 签名不对：这个二维码作废，手机没换。
+    let uri = e
+        .desktop
+        .start_pairing(Arc::new(SoftwareKey::generate()), Duration::from_secs(300))
+        .unwrap();
+    let offer = parse_pairing_offer(uri).unwrap();
+    assert_eq!(offer.desktop_id, e.mac.to_string());
+    let stranger = SigningKey::from_slice(&[9u8; 32]).unwrap();
+    e.phone_sends(
+        DeviceMessageKind::PairResponse,
+        respond(&offer, &stranger, &offer.nonce),
+    )
+    .await;
+    tokio::time::timeout(
+        WAIT,
+        pairing.wait_for(|s| matches!(s, PairingStatus::Failed { .. })),
+    )
+    .await
+    .expect("the bad response is refused")
+    .unwrap();
+    assert_eq!(e.desktop.paired_phone().unwrap().public_key, PHONE_KEY);
+
+    // 重新出二维码，手机签对了：记下新手机，签确认发回。旧二维码的回复不理。
+    let desktop_key = Arc::new(SoftwareKey::generate());
+    let uri = e
+        .desktop
+        .start_pairing(desktop_key, Duration::from_secs(300))
+        .unwrap();
+    let fresh = parse_pairing_offer(uri).unwrap();
+    assert_ne!(fresh.nonce, offer.nonce);
+    e.phone_sends(
+        DeviceMessageKind::PairResponse,
+        respond(&offer, &new_phone, &offer.nonce),
+    )
+    .await;
+    e.phone_sends(
+        DeviceMessageKind::PairResponse,
+        respond(&fresh, &new_phone, &fresh.nonce),
+    )
+    .await;
+    let status = tokio::time::timeout(
+        WAIT,
+        pairing.wait_for(|s| matches!(s, PairingStatus::Paired { .. })),
+    )
+    .await
+    .expect("the phone is paired")
+    .unwrap()
+    .clone();
+    assert_eq!(
+        status,
+        PairingStatus::Paired {
+            phone_id: e.phone.to_string()
+        }
+    );
+    assert_eq!(
+        e.desktop.paired_phone(),
+        Some(PairedPhone {
+            device_id: e.phone.to_string(),
+            public_key: new_phone_key.clone(),
+        })
+    );
+    assert!(
+        e.desktop.grants().is_empty(),
+        "the old phone's grants are gone"
+    );
+
+    // 手机收到电脑签的确认，用二维码里的电脑公钥验得过。
+    let confirm = tokio::time::timeout(WAIT, async {
+        loop {
+            let mut t = e.t.db.tenant(e.user).await.unwrap();
+            let inbox = t.pending_device_messages(e.phone, 10).await.unwrap();
+            if let Some(m) = inbox
+                .iter()
+                .find(|m| m.kind == DeviceMessageKind::PairConfirm)
+            {
+                t.ack_device_messages(e.phone, &[m.id]).await.unwrap();
+                t.commit().await.unwrap();
+                return serde_json::from_value::<PairConfirmBody>(m.body.clone()).unwrap();
+            }
+            t.rollback().await.unwrap();
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the confirmation reaches the phone");
+    assert_eq!(confirm.nonce, fresh.nonce);
+    verify_pairing_confirmation(
+        fresh,
+        e.phone.to_string(),
+        new_phone_key,
+        decode_signature(&confirm.signature).unwrap(),
+    )
+    .unwrap();
+
+    // 关掉二维码：回到没在配对。
+    e.desktop.cancel_pairing();
+    assert_eq!(*e.desktop.watch_pairing().borrow(), PairingStatus::Idle);
 }
