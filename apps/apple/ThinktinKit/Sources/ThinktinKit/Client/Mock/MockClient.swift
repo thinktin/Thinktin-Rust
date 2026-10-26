@@ -1279,8 +1279,15 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
         try await call { s in
             let i = try s.vaultIndex(itemID)
             // 先校验再改：出错时状态不动。
-            if let password = change.password, password.isEmpty { throw MockErrors.invalid("empty password") }
-            if let purpose = change.purpose { s.state.vaultItems[i].purpose = purpose }
+            if let purpose = change.purpose { try Inner.checkVaultText(purpose, max: VaultRules.maxPurpose) }
+            if let username = change.username { try Inner.checkVaultText(username, max: VaultRules.maxUsername) }
+            if let password = change.password { try Inner.checkVaultPassword(password) }
+            if let ids = change.instanceIDs, ids.count > VaultRules.maxInstances {
+                throw MockErrors.invalid("at most \(VaultRules.maxInstances) instance_ids")
+            }
+            if let purpose = change.purpose {
+                s.state.vaultItems[i].purpose = purpose.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
             if let username = change.username {
                 s.state.vaultUsernames[itemID] = username
                 s.state.vaultItems[i].hasUsername = !username.isEmpty
@@ -1310,13 +1317,30 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
         let request = try await call { s -> VaultRequest in
             let i = try s.vaultRequestIndex(requestID)
             let request = s.state.vaultRequests[i]
+            try Inner.checkVaultText(username, max: VaultRules.maxUsername)
+            try Inner.checkVaultPassword(password)
+            if let purpose { try Inner.checkVaultText(purpose, max: VaultRules.maxPurpose) }
             guard request.status == .pending else { throw MockErrors.conflict("request already handled") }
-            guard !password.isEmpty else { throw MockErrors.invalid("empty password") }
-            let name = detector.uniqueVaultName(base: request.name, taken: s.state.vaultItems.map(\.name))
-            let item = try s.createVaultItem(
-                NewVaultItem(
-                    name: name, purpose: purpose ?? request.purpose, username: username, password: password,
-                    instanceIDs: [request.instanceID]))
+            let item: VaultItem
+            // 和服务端一样：已经有同名的条目就更新它（换账号密码、用途；限定了实例的把这个实例加上），没有才新建。
+            if let j = s.state.vaultItems.firstIndex(where: { $0.name == request.name }) {
+                s.state.vaultItems[j].purpose = (purpose ?? request.purpose).trimmingCharacters(
+                    in: .whitespacesAndNewlines)
+                s.state.vaultItems[j].hasUsername = !username.isEmpty
+                s.state.vaultUsernames[s.state.vaultItems[j].id] = username.isEmpty ? nil : username
+                if !s.state.vaultItems[j].instanceIDs.isEmpty,
+                    !s.state.vaultItems[j].instanceIDs.contains(request.instanceID)
+                {
+                    s.state.vaultItems[j].instanceIDs.append(request.instanceID)
+                }
+                s.state.vaultItems[j].updatedAt = Date()
+                item = s.state.vaultItems[j]
+            } else {
+                item = try s.createVaultItem(
+                    NewVaultItem(
+                        name: request.name, purpose: purpose ?? request.purpose, username: username, password: password,
+                        instanceIDs: [request.instanceID]))
+            }
             s.state.vaultRequests[i].status = .fulfilled
             s.state.vaultRequests[i].itemID = item.id
             s.state.vaultRequests[i].resolvedAt = Date()
@@ -1852,6 +1876,23 @@ private struct Inner: Sendable {
         return Trigger(id: .random(), schedule: schedule, nextFireAt: next)
     }
 
+    // MARK: 保险箱
+
+    /// 用途、账号：最多 `max` 个字符，不能有控制字符（服务端的 `check_text`）。
+    static func checkVaultText(_ text: String, max: Int) throws {
+        guard text.unicodeScalars.count <= max else { throw MockErrors.invalid("at most \(max) characters") }
+        guard !text.unicodeScalars.contains(where: { $0.properties.generalCategory == .control }) else {
+            throw MockErrors.invalid("control characters")
+        }
+    }
+
+    /// 密码：至少 4 个字符、最多 4096 字节、不能有控制字符（服务端的 `check_password`）。
+    static func checkVaultPassword(_ password: String) throws {
+        guard VaultRules.passwordProblem(password) == nil else {
+            throw MockErrors.invalid("password must be \(VaultRules.minPassword) characters to 4096 bytes")
+        }
+    }
+
     // MARK: 团队
 
     /// 团队名、模板名：去掉首尾空白后 1 到 64 个字符。
@@ -1915,17 +1956,27 @@ private struct Inner: Sendable {
         return run
     }
 
+    /// 和服务端（gateway `routes/vault.rs`）一样的顺序：名字、用途、账号、密码、实例数，再看条数上限，最后才是重名。
     mutating func createVaultItem(_ item: NewVaultItem) throws -> VaultItem {
-        guard !item.name.isEmpty, item.name == MockSecretDetector.sanitizeName(item.name) else {
+        guard VaultNameProblem.check(item.name) == nil, item.name == item.name.trimmingCharacters(in: .whitespaces)
+        else {
             throw MockErrors.invalid("bad name \(item.name)")
+        }
+        try Inner.checkVaultText(item.purpose, max: VaultRules.maxPurpose)
+        try Inner.checkVaultText(item.username, max: VaultRules.maxUsername)
+        try Inner.checkVaultPassword(item.password)
+        guard item.instanceIDs.count <= VaultRules.maxInstances else {
+            throw MockErrors.invalid("at most \(VaultRules.maxInstances) instance_ids")
+        }
+        guard state.vaultItems.count < VaultRules.maxItems else {
+            throw MockErrors.invalid("the vault holds at most \(VaultRules.maxItems) items")
         }
         guard !state.vaultItems.contains(where: { $0.name == item.name }) else {
             throw MockErrors.conflict("name \(item.name) is taken")
         }
-        guard !item.password.isEmpty else { throw MockErrors.invalid("empty password") }
         let created = VaultItem(
-            id: .random(), name: item.name, purpose: item.purpose, hasUsername: !item.username.isEmpty,
-            instanceIDs: item.instanceIDs, createdAt: Date())
+            id: .random(), name: item.name, purpose: item.purpose.trimmingCharacters(in: .whitespacesAndNewlines),
+            hasUsername: !item.username.isEmpty, instanceIDs: Array(Set(item.instanceIDs)).sorted(), createdAt: Date())
         state.vaultItems.append(created)
         if !item.username.isEmpty { state.vaultUsernames[created.id] = item.username }
         return created

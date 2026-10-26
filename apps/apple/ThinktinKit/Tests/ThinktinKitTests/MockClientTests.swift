@@ -637,7 +637,7 @@ struct MockVaultTests {
 
         #expect(
             await apiCode {
-                _ = try await client.createVaultItem(NewVaultItem(name: "npm", purpose: "", password: "x"))
+                _ = try await client.createVaultItem(NewVaultItem(name: "npm", purpose: "", password: "npm_other"))
             } == .conflict)
         #expect(
             await apiCode {
@@ -646,6 +646,20 @@ struct MockVaultTests {
         #expect(
             await apiCode {
                 _ = try await client.createVaultItem(NewVaultItem(name: "pypi", purpose: "", password: ""))
+            } == .invalid)
+        // 和服务端一样：密码至少 4 个字符，不能有换行；用途最多 200 个字。
+        #expect(
+            await apiCode {
+                _ = try await client.createVaultItem(NewVaultItem(name: "pypi", purpose: "", password: "abc"))
+            } == .invalid)
+        #expect(
+            await apiCode {
+                _ = try await client.createVaultItem(NewVaultItem(name: "pypi", purpose: "", password: "abc\nd"))
+            } == .invalid)
+        #expect(
+            await apiCode {
+                _ = try await client.createVaultItem(
+                    NewVaultItem(name: "pypi", purpose: String(repeating: "长", count: 201), password: "abcd"))
             } == .invalid)
 
         let detail = try await client.vaultItem(DemoData.githubVaultID)
@@ -701,11 +715,11 @@ struct MockVaultTests {
         #expect(
             await apiCode {
                 _ = try await client.fulfillVaultRequest(
-                    DemoData.npmVaultRequestID, username: "", password: "x", purpose: nil)
+                    DemoData.npmVaultRequestID, username: "", password: "npm_again", purpose: nil)
             } == .conflict)
     }
 
-    @Test("agent 请填的表单：重名时换个名字；拒绝")
+    @Test("agent 请填的表单：已有同名条目时更新它（和服务端一样）；拒绝")
     func declineRequest() async throws {
         let client = makeClient()
         // agent 又要一个叫 github 的（已经有了）。
@@ -717,11 +731,14 @@ struct MockVaultTests {
             runID: DemoData.publishRunID, instanceID: reviewer)
         let request = try #require(try await client.vaultRequests(all: false).first { $0.id == "vr-gh" })
         #expect(request.needsUsername)
-        let filled = try await client.fulfillVaultRequest("vr-gh", username: "me", password: "pw", purpose: "另一个仓库")
+        let filled = try await client.fulfillVaultRequest("vr-gh", username: "me", password: "pw12", purpose: "另一个仓库")
         let item = try #require(try await client.vaultItems().first { $0.id == filled.itemID })
-        #expect(item.name == "github_2")
+        #expect(item.id == DemoData.githubVaultID)
+        #expect(item.name == "github")
         #expect(item.purpose == "另一个仓库")
         #expect(item.hasUsername)
+        #expect(try await client.vaultItem(item.id).username == "me")
+        #expect(try await client.vaultItems().count == 2)
         await client.waitForPlayback()
 
         client.emit(
@@ -781,7 +798,8 @@ struct MockVaultTests {
         #expect(
             await apiCode {
                 _ = try await client.saveSecretFromMessage(
-                    message: message, value: first.value, item: NewVaultItem(name: "github", purpose: "", password: "x")
+                    message: message, value: first.value,
+                    item: NewVaultItem(name: "github", purpose: "", password: "xxxx")
                 )
             } == .conflict)
     }
