@@ -1,4 +1,4 @@
-"""把 ThinktinUI、App target 的源文件接进桩模块包（Gen/ 目录，生成物不提交）。
+"""把 ThinktinUI、App target（iOS、macOS）的源文件接进桩模块包（Gen/ 目录，生成物不提交）。
 
 ThinktinKit、ThinktinCoreAdapter、App 的 App/、Platform/、Intents/ 和小组件扩展用符号链接；ThinktinUI 和它的测试复制一份，
 顺便把 #Preview 宏换成普通的 @ViewBuilder 函数（桩 SwiftUI 没有宏），这样预览里的代码也会被类型检查；
@@ -23,6 +23,13 @@ os.symlink(os.path.join(app, "ThinktinWidgets"), os.path.join(gen, "ThinktinWidg
 for target in ["Thinktin", "ThinktinWidgets"]:
     os.symlink(os.path.join(app, "Shared"), os.path.join(gen, target, "Shared"))
 os.symlink(os.path.join(app, "Tests/ThinktinTests"), os.path.join(gen, "ThinktinTests"))
+# macOS App（14.5）：自己的 App/、Platform/、Views/，加上和 iOS 共用的两个文件（project.yml 里也是这样接的）。
+os.symlink(os.path.join(root, "Sources/ThinktinDesktopAdapter"), os.path.join(gen, "ThinktinDesktopAdapter"))
+os.makedirs(os.path.join(gen, "ThinktinMac", "Shared"))
+for d in ["App", "Platform", "Views"]:
+    os.symlink(os.path.join(app, "ThinktinMac", d), os.path.join(gen, "ThinktinMac", d))
+for f in ["App/AppConfiguration.swift", "Platform/KeychainSessionStore.swift"]:
+    os.symlink(os.path.join(app, "Thinktin", f), os.path.join(gen, "ThinktinMac", "Shared", os.path.basename(f)))
 counter = [0]
 def platform_conditions(text):
     """Linux 上 os(iOS)、os(macOS) 都是假，两个分支都查不到：在 #if / #elseif 行里换成按桩模块判断，

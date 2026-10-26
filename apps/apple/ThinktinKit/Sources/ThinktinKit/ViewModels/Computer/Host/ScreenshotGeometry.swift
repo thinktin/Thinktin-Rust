@@ -25,6 +25,13 @@ public struct ScreenshotGeometry: Hashable, Sendable {
         imageHeight = max(1, Int((height * shrink).rounded()))
     }
 
+    /// 截出来的图和要的大小不一样时按实际大小算。
+    public init(displayFrame: CGRect, imageWidth: Int, imageHeight: Int) {
+        self.displayFrame = displayFrame
+        self.imageWidth = max(1, imageWidth)
+        self.imageHeight = max(1, imageHeight)
+    }
+
     /// 图上的像素换成全局坐标（像素的中心）；不在图里时是 nil。
     public func point(x: Int, y: Int) -> CGPoint? {
         guard (0..<imageWidth).contains(x), (0..<imageHeight).contains(y) else { return nil }

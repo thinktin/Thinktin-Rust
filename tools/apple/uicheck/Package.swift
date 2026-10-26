@@ -1,12 +1,14 @@
 // swift-tools-version: 6.0
-// Linux 上给 ThinktinUI、App target 和小组件扩展做类型检查的包（tools/apple/uicheck/run.sh）：SwiftUI / UIKit / AppKit / Security /
+// Linux 上给 ThinktinUI、App target、小组件扩展和 macOS App 做类型检查的包（tools/apple/uicheck/run.sh）：SwiftUI / UIKit / AppKit / Security /
 // OSLog / Charts / UserNotifications / WidgetKit / AppIntents / ActivityKit / LocalAuthentication / CryptoKit
 // 用桩模块代替。
 import PackageDescription
 import Foundation
 
 let platformStub = ProcessInfo.processInfo.environment["UISTUB_PLATFORM"] ?? "UIKit"
+/// UIKit 版查 iOS App 和小组件扩展；AppKit 版查 macOS App（14.5，ThinktinCore 用 `build-linux-swift.sh --desktop` 打的包）。
 let withApp = platformStub == "UIKit"
+let withMac = platformStub == "AppKit"
 
 var targets: [Target] = [
     .target(name: "CoreGraphics", path: "Stubs/CoreGraphics"),
@@ -24,12 +26,19 @@ var targets: [Target] = [
         path: "Gen/ThinktinUI"),
     .testTarget(name: "ThinktinUITests", dependencies: ["ThinktinUI", "ThinktinKit", "SwiftUI"], path: "Gen/ThinktinUITests"),
 ]
-var dependencies: [Package.Dependency] = []
+// 两个 App 都要的：钥匙串、系统日志、CryptoKit（iOS 的 Secure Enclave 签名密钥、Mac 的配对密钥）、真核心的适配层。
+let core: Target.Dependency = .product(name: "ThinktinCore", package: "ThinktinCore")
+var dependencies: [Package.Dependency] = [
+    .package(name: "ThinktinCore", path: withMac ? "../../../target/linux-desktop/ThinktinCore" : "../../../target/linux/ThinktinCore")
+]
+targets += [
+    .target(name: "Security", dependencies: ["CoreGraphics"], path: "Stubs/Security"),
+    .target(name: "OSLog", path: "Stubs/OSLog"),
+    .target(name: "CryptoKit", dependencies: ["Security", "LocalAuthentication"], path: "Stubs/CryptoKit"),
+    .target(name: "ThinktinCoreAdapter", dependencies: ["ThinktinKit", core], path: "Gen/ThinktinCoreAdapter"),
+]
 if withApp {
-    dependencies.append(.package(name: "ThinktinCore", path: "../../../target/linux/ThinktinCore"))
     targets += [
-        .target(name: "Security", path: "Stubs/Security"),
-        .target(name: "OSLog", path: "Stubs/OSLog"),
         // 主屏小组件、快捷指令的桩（12.20）。
         // 实时活动的桩（12.10）。
         .target(name: "ActivityKit", path: "Stubs/ActivityKit"),
@@ -38,12 +47,6 @@ if withApp {
         // 扫配对二维码（12.9）。
         .target(name: "Vision", path: "Stubs/Vision"),
         .target(name: "VisionKit", dependencies: ["UIKit", "Vision"], path: "Stubs/VisionKit"),
-        // Secure Enclave 的签名密钥（12.9）。
-        .target(name: "CryptoKit", dependencies: ["Security", "LocalAuthentication"], path: "Stubs/CryptoKit"),
-        .target(
-            name: "ThinktinCoreAdapter",
-            dependencies: ["ThinktinKit", .product(name: "ThinktinCore", package: "ThinktinCore")],
-            path: "Gen/ThinktinCoreAdapter"),
         .executableTarget(
             name: "Thinktin",
             dependencies: [
@@ -56,6 +59,24 @@ if withApp {
             name: "ThinktinWidgets", dependencies: ["ThinktinKit", "SwiftUI", "WidgetKit", "ActivityKit"],
             path: "Gen/ThinktinWidgets"),
         .testTarget(name: "ThinktinTests", dependencies: ["Thinktin"], path: "Gen/ThinktinTests"),
+    ]
+}
+if withMac {
+    targets += [
+        // 截图、键鼠、辅助功能权限、登录项、配对二维码（14.3–14.8）。
+        .target(name: "ApplicationServices", dependencies: ["CoreGraphics"], path: "Stubs/ApplicationServices"),
+        .target(name: "ScreenCaptureKit", dependencies: ["CoreGraphics"], path: "Stubs/ScreenCaptureKit"),
+        .target(name: "ServiceManagement", path: "Stubs/ServiceManagement"),
+        .target(name: "CoreImage", dependencies: ["CoreGraphics"], path: "Stubs/CoreImage"),
+        .target(name: "ThinktinDesktopAdapter", dependencies: ["ThinktinKit", core], path: "Gen/ThinktinDesktopAdapter"),
+        .executableTarget(
+            name: "ThinktinMac",
+            dependencies: [
+                "ThinktinKit", "ThinktinUI", "ThinktinCoreAdapter", "ThinktinDesktopAdapter", "SwiftUI", "AppKit",
+                "Security", "OSLog", "CryptoKit", "ApplicationServices", "ScreenCaptureKit", "ServiceManagement",
+                "CoreImage",
+            ],
+            path: "Gen/ThinktinMac"),
     ]
 }
 

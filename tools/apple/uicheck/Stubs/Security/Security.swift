@@ -1,11 +1,5 @@
-@_exported import Foundation
-
-public typealias OSStatus = Int32
-public typealias CFTypeRef = AnyObject
-public typealias CFString = String
-public protocol _CFDictionaryLike {}
-extension Dictionary: _CFDictionaryLike {}
-public typealias CFDictionary = any _CFDictionaryLike
+// CF 的类型（CFDictionary、CFString……）在 CoreGraphics 的桩里：macOS App 的辅助功能权限也要用。
+@_exported import CoreGraphics
 
 public let errSecSuccess: OSStatus = 0
 public let errSecItemNotFound: OSStatus = -25300

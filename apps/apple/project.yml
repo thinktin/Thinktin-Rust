@@ -13,6 +13,8 @@ options:
   bundleIdPrefix: cn.thinktin
   deploymentTarget:
     iOS: "17.0"
+    # macOS App（14.5）：SMAppService、ScreenCaptureKit 的截图（SCScreenshotManager）要 14。
+    macOS: "14.0"
   xcodeVersion: "26.0"
   # 工程的开发语言和 knownRegions；和 Info.plist 的 CFBundleDevelopmentRegion 一致。
   developmentLanguage: zh-Hans
@@ -138,6 +140,64 @@ targets:
       properties:
         com.apple.security.application-groups: [group.cn.thinktin.Thinktin]
 
+  # macOS App（WBS 14.5–14.8，docs/macos.md）：菜单栏常驻（LSUIElement），后台跑电脑端的工具服务（Rust 的 desktop，经
+  # ThinktinDesktopAdapter），主窗口复用 ThinktinUI。和 iOS 共用 AppConfiguration、KeychainSessionStore 两个文件。
+  # 不开 App Sandbox：要控制别的应用（辅助功能、CGEvent）、读写手机授权的任意目录、执行用户批准的命令，沙盒里做不了；
+  # 用 Developer ID 签名、公证后在官网分发（14.9），不上 Mac App Store。
+  ThinktinMac:
+    type: application
+    platform: macOS
+    sources:
+      - path: ThinktinMac
+      - path: Thinktin/App/AppConfiguration.swift
+        group: ThinktinMac/Shared
+      - path: Thinktin/Platform/KeychainSessionStore.swift
+        group: ThinktinMac/Shared
+    dependencies:
+      - package: ThinktinKit
+        products:
+          - ThinktinUI
+          - ThinktinKit
+          - ThinktinCoreAdapter
+          - ThinktinDesktopAdapter
+    settings:
+      base:
+        PRODUCT_NAME: ThinkTin
+        PRODUCT_BUNDLE_IDENTIFIER: cn.thinktin.mac
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        # 公证要求开 Hardened Runtime（14.9）。工具服务是静态库，不用关库校验。
+        ENABLE_HARDENED_RUNTIME: YES
+        COMBINE_HIDPI_IMAGES: YES
+        # 接口地址和设备中继的地址，展开进 Info.plist（AppConfiguration 读）。连测试环境时 xcodebuild 覆盖。
+        THINKTIN_API_BASE_URL: https://api.thinktin.cn
+        THINKTIN_RELAY_URL: wss://relay.thinktin.cn/v1/connect
+    info:
+      path: ThinktinMac/Info.plist
+      properties:
+        CFBundleDisplayName: ThinkTin
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleDevelopmentRegion: zh-Hans
+        CFBundleLocalizations: [zh-Hans, en]
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        LSApplicationCategoryType: public.app-category.productivity
+        # 只在菜单栏，没有程序坞图标（主窗口从菜单栏打开）。
+        LSUIElement: true
+        ITSAppUsesNonExemptEncryption: false
+        # 深链和 iOS 一样（thinktin://run/{id} 这些）；Mac 不扫配对码，不注册 thinktin-pair。
+        CFBundleURLTypes:
+          - CFBundleURLName: $(PRODUCT_BUNDLE_IDENTIFIER)
+            CFBundleTypeRole: Viewer
+            CFBundleURLSchemes: [thinktin]
+        ThinktinAPIBaseURL: $(THINKTIN_API_BASE_URL)
+        ThinktinRelayURL: $(THINKTIN_RELAY_URL)
+    entitlements:
+      path: ThinktinMac/ThinktinMac.entitlements
+      properties:
+        # 没有沙盒，Hardened Runtime 下也不用额外的例外。
+        com.apple.security.app-sandbox: false
+
   ThinktinTests:
     type: bundle.unit-test
     platform: iOS
@@ -152,6 +212,23 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
 
 schemes:
+  ThinktinMac:
+    build:
+      targets:
+        ThinktinMac: all
+    run:
+      config: Debug
+      environmentVariables:
+        # 和 iOS 一样：Debug 默认用 Mock（菜单栏里的手机控制是假的服务）；勾上这一项连真接口和真中继。
+        - variable: THINKTIN_MOCK
+          value: "0"
+          isEnabled: false
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release
   Thinktin:
     build:
       targets:

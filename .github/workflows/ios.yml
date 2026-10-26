@@ -2,10 +2,11 @@
 #
 # - kit-linux：Linux 上的 Swift 6.2 编 ThinktinKit 的纯 Swift 部分和 ThinktinCore 适配层，跑 swift test
 #   （ThinktinCore 用本机的 libclient_core.so，tools/client-core/build-linux-swift.sh 生成）。和云端会话
-#   本地跑的是同一套。
+#   本地跑的是同一套。再用 libdesktop 打的包跑 macOS App 的工具服务适配层（ThinktinDesktopAdapterTests）。
 # - app-macos：Xcode 26 上打 ThinktinCore（只要模拟器和 macOS 的 arm64 切片，build-apple.sh --ci），
 #   swift build 整个 ThinktinKit（macOS 原生，含 ThinktinUI 和测试目标），xcodegen 生成工程，在 iPhone 模拟器上
-#   build + test（App 的 ThinktinTests 和 ThinktinKit 的 ThinktinUITests），最后在 macOS 本机 swift test。
+#   build + test（App 的 ThinktinTests 和 ThinktinKit 的 ThinktinUITests），编 macOS App（ThinktinMac，14.5），
+#   最后在 macOS 本机 swift test。
 #   日志和结果包传成 artifact。
 name: iOS
 
@@ -105,6 +106,19 @@ jobs:
           set -o pipefail
           swift build 2>&1 | tee "$RUNNER_TEMP/swift-build.log"
           swift test 2>&1 | tee "$RUNNER_TEMP/swift-test.log"
+      # macOS App 的工具服务适配层（14.5）：ThinktinCore 换成 libdesktop 那种（里面也有 client-core），
+      # 只跑 ThinktinDesktopAdapterTests（其余测试上一步跑过了）。单独的构建目录，不和上一步的包混。
+      - name: swift test ThinktinDesktopAdapter (desktop core)
+        if: ${{ !cancelled() }}
+        working-directory: apps/apple/ThinktinKit
+        env:
+          THINKTIN_DESKTOP: "1"
+          LD_LIBRARY_PATH: ${{ github.workspace }}/target/debug
+        run: |
+          set -o pipefail
+          ../../../tools/client-core/build-linux-swift.sh --desktop
+          swift test --scratch-path .build-desktop --filter ThinktinDesktopAdapterTests 2>&1 \
+            | tee "$RUNNER_TEMP/swift-test-desktop.log"
       - name: Privacy scanner tests
         if: ${{ !cancelled() }}
         run: python3 -m unittest tools/apple/privacy/test_scan.py
@@ -202,6 +216,24 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             COMPILER_INDEX_STORE_ENABLE=NO \
             build test 2>&1 | tee "$RUNNER_TEMP/xcodebuild.log" | "${fmt[@]}"
+      # macOS App（14.5–14.8）：只编译。它的逻辑（登录状态、按键、截图坐标、工具服务的适配层）在 ThinktinKit 里测；
+      # 截图、键鼠要系统权限，CI 的机器上跑不了。iOS 那一步失败了也照编，两边的问题一次看全。
+      - name: xcodebuild build ThinktinMac (macOS)
+        if: ${{ !cancelled() }}
+        working-directory: apps/apple
+        run: |
+          set -o pipefail
+          fmt=(cat)
+          if command -v xcbeautify >/dev/null; then fmt=(xcbeautify --renderer github-actions); fi
+          xcodebuild \
+            -project Thinktin.xcodeproj \
+            -scheme ThinktinMac \
+            -destination "platform=macOS,arch=arm64" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            build 2>&1 | tee "$RUNNER_TEMP/xcodebuild-mac.log" | "${fmt[@]}"
       # 隐私清单（12.11）：Rust 核心和 App 二进制里用到的需要声明理由的 API 都要在 PrivacyInfo.xcprivacy 里声明，
       # 不然上传时 App Store Connect 报 ITMS-91053。
       - name: Check required-reason APIs against the privacy manifest
@@ -233,6 +265,7 @@ jobs:
           name: app-macos-logs
           path: |
             ${{ runner.temp }}/xcodebuild.log
+            ${{ runner.temp }}/xcodebuild-mac.log
             ${{ runner.temp }}/swift-build-macos.log
             ${{ runner.temp }}/swift-test-macos.log
             ${{ runner.temp }}/Thinktin.xcresult.zip
