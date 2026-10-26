@@ -340,3 +340,43 @@ struct ComputerLinkModelTests {
         #expect(PairingEncoding.base64url(Data([0xfb, 0xff])) == "-_8")
     }
 }
+
+@Suite("电脑审批的说明按手机的语言说（12.9）")
+struct ComputerApprovalDescriptionTests {
+    private func request(_ tool: String, _ arguments: String, summary: String = "from the Mac")
+        -> ComputerApprovalRequest
+    {
+        ComputerApprovalRequest(
+            desktopID: DemoData.macDeviceID, requestID: "r1", tool: tool, argumentsJSON: arguments, summary: summary,
+            issuedAt: Date(), expiresAt: Date().addingTimeInterval(600))
+    }
+
+    @Test("执行命令、删除按参数说，理由照原话附上；英文和电脑的说明一样")
+    func runAndDelete() {
+        let run = request(
+            "computer_run", #"{"command":"rm -rf build","cwd":"/Users/a/app","reason":"clean"}"#,
+            summary: "Run a command on your computer (in /Users/a/app): rm -rf build\nWhy: clean")
+        #expect(
+            ComputerLinkText.approvalDescription(run, language: .chinese)
+                == "在电脑上执行命令（在 /Users/a/app）：rm -rf build\n理由：clean")
+        #expect(ComputerLinkText.approvalDescription(run, language: .english) == run.summary)
+        let delete = request("computer_delete", #"{"path":"/Users/a/x.zip","reason":""}"#)
+        #expect(ComputerLinkText.approvalDescription(delete, language: .chinese) == "把电脑上的这个移到废纸篓：/Users/a/x.zip")
+        #expect(
+            ComputerLinkText.approvalDescription(request("computer_run", #"{"command":"ls"}"#), language: .english)
+                == "Run a command on your computer: ls")
+    }
+
+    @Test("别的工具、参数不全、参数不是 JSON：用电脑给的说明")
+    func fallsBack() {
+        #expect(
+            ComputerLinkText.approvalDescription(request("computer_type", #"{"text":"hi"}"#), language: .chinese)
+                == "from the Mac")
+        #expect(
+            ComputerLinkText.approvalDescription(request("computer_run", #"{"cwd":"/"}"#), language: .chinese)
+                == "from the Mac")
+        #expect(
+            ComputerLinkText.approvalDescription(request("computer_delete", "not json"), language: .chinese)
+                == "from the Mac")
+    }
+}

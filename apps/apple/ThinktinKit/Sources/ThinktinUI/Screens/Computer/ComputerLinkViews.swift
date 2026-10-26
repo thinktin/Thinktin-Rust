@@ -456,7 +456,7 @@ private struct ComputerApprovalsContent: View {
                         .typography(.caption)
                         .foregroundStyle(Theme.inkSecondary)
                 }
-                Text(request.summary)
+                Text(ComputerLinkText.approvalDescription(request, language: language))
                     .typography(.body)
                     .foregroundStyle(Theme.ink)
                 AIGeneratedLabel()

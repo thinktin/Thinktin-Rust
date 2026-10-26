@@ -35,6 +35,30 @@ public enum ComputerLinkText {
         return language == .chinese ? "已配对 · \(when)" : "Paired \(when)"
     }
 
+    /// 电脑高危操作的审批说明，按手机的界面语言说（电脑发来的 `summary` 是英文的）。执行命令、删除按参数说——参数在签名
+    /// 覆盖的范围里（`args-sha256`），说的和电脑要做的对得上；别的工具、参数不全时用电脑给的说明（也在签名里）。
+    /// agent 写的理由照原话附在后面。英文和电脑的 `summary` 一字不差（desktop 的 `summary()`）。
+    public static func approvalDescription(_ request: ComputerApprovalRequest, language: DisplayLanguage) -> String {
+        let zh = language == .chinese
+        let arguments =
+            (try? JSONSerialization.jsonObject(with: Data(request.argumentsJSON.utf8))) as? [String: Any] ?? [:]
+        let what: String
+        switch (request.tool, arguments["command"] as? String, arguments["path"] as? String) {
+        case ("computer_run", let command?, _):
+            if let cwd = arguments["cwd"] as? String {
+                what = zh ? "在电脑上执行命令（在 \(cwd)）：\(command)" : "Run a command on your computer (in \(cwd)): \(command)"
+            } else {
+                what = zh ? "在电脑上执行命令：\(command)" : "Run a command on your computer: \(command)"
+            }
+        case ("computer_delete", _, let path?):
+            what = zh ? "把电脑上的这个移到废纸篓：\(path)" : "Move to the Trash on your computer: \(path)"
+        default:
+            return request.summary
+        }
+        guard let reason = arguments["reason"] as? String, !reason.isEmpty else { return what }
+        return zh ? "\(what)\n理由：\(reason)" : "\(what)\nWhy: \(reason)"
+    }
+
     public static func notPaired(_ language: DisplayLanguage) -> String {
         language == .chinese ? "没有配对" : "Not paired"
     }
