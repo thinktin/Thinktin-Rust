@@ -1215,4 +1215,6 @@
     <string name="run_progress_toggle_summary">只显示状态、步数和用时，结束后自动消失。</string>
     <string name="settings_progress_notifications">发起任务时显示进度通知</string>
     <string name="settings_progress_notifications_summary">在对话里发起的任务，在通知栏显示状态和用时。</string>
+    <string name="settings_icp_filing">App 备案号</string>
+    <string name="settings_icp_filing_pending">办理中</string>
 </resources>

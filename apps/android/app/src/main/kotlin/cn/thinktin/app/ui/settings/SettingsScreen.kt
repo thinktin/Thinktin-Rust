@@ -21,6 +21,7 @@ import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Policy
 import androidx.compose.material.icons.outlined.PrivacyTip
 import androidx.compose.material.icons.outlined.SystemUpdate
+import androidx.compose.material.icons.outlined.VerifiedUser
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Phone
@@ -346,6 +347,17 @@ fun SettingsScreen(
                 value = TERMS_URL,
                 onClick = { openUrl(context, TERMS_URL) },
             )
+            // App 备案号（16.1，工信部要求在显著位置标明，能点开去查）：办下来之前显示“办理中”。
+            AccountRow(
+                icon = Icons.Outlined.VerifiedUser,
+                title = stringResource(R.string.settings_icp_filing),
+                value = ICP_FILING_NUMBER ?: stringResource(R.string.settings_icp_filing_pending),
+                onClick = if (ICP_FILING_NUMBER != null) {
+                    { openUrl(context, ICP_LOOKUP_URL) }
+                } else {
+                    null
+                },
+            )
             AccountRow(
                 icon = Icons.Outlined.PrivacyTip,
                 title = stringResource(R.string.page_privacy_info),
@@ -403,6 +415,12 @@ fun SettingsScreen(
         )
     }
 }
+
+/** App 备案号：16.1 办下来后填在这里（和 iOS 的 `AppInfo.icpFilingNumber`、商店后台填的一致）。 */
+val ICP_FILING_NUMBER: String? = null
+
+/** 工信部的备案查询网站。 */
+const val ICP_LOOKUP_URL = "https://beian.miit.gov.cn/"
 
 /** 隐私政策、用户协议（和 iOS 一样的地址）。 */
 const val PRIVACY_POLICY_URL = "https://thinktin.cn/legal/privacy"

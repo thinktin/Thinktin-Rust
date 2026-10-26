@@ -1227,4 +1227,6 @@
     <string name="run_progress_toggle_summary">Only the state, steps and time. Removed when it finishes.</string>
     <string name="settings_progress_notifications">Progress notification for new tasks</string>
     <string name="settings_progress_notifications_summary">Tasks you start in a chat show their state and time in the notification shade.</string>
+    <string name="settings_icp_filing">ICP filing</string>
+    <string name="settings_icp_filing_pending">Pending</string>
 </resources>
