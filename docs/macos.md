@@ -112,5 +112,6 @@ GitHub Release。手动触发时不发布；没配证书时只做不签名的归
 
 - 真机上没跑过（云端会话没有 Mac）：截图、键鼠、登录项、Secure Enclave 密钥、Sparkle 都要在 Mac 上过一遍；第一次 CI 编译
   可能还有桩模块没覆盖到的 SDK 差异要修。
-- 电脑发给手机的审批说明还是英文的（`desktop` 按工具拼的），跟着 App 的语言设置本地化。
+- 电脑发给手机的审批说明是英文的：手机已经按自己的界面语言说执行命令、删除（照签名覆盖的参数）；以后加别的高危工具时
+  两个手机端一起加（iOS `ComputerLinkText.approvalDescription`、安卓 `ComputerApprovalRequest.action()`）。
 - Mac 上的推送（审批、收件箱）：现在 Mac 不注册 APNs，审批都在手机上做；要的话加 `aps-environment` 和注册。
