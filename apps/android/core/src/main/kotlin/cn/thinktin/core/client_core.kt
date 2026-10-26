@@ -814,6 +814,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_client_core_checksum_method_eventsubscription_stop(
     ): Int
+    external fun uniffi_client_core_checksum_method_thinktinclient_access_token(
+    ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_ack_device_messages(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_add_credential(
@@ -1080,6 +1082,8 @@ internal object UniffiLib {
     external fun uniffi_client_core_fn_free_thinktinclient(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_client_core_fn_constructor_thinktinclient_new(`config`: RustBuffer.ByValue,`sessions`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): Long
+    external fun uniffi_client_core_fn_method_thinktinclient_access_token(`ptr`: Long,`refresh`: Byte,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_ack_device_messages(`ptr`: Long,`ids`: RustBuffer.ByValue,
     ): Long
@@ -1520,6 +1524,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_eventsubscription_stop() and 0xFFFF) != 1615) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_access_token() and 0xFFFF) != 19010) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_ack_device_messages() and 0xFFFF) != 10778) {
@@ -3661,6 +3668,13 @@ public object FfiConverterTypeSessionStore: FfiConverter<SessionStore, Long> {
 public interface ThinktinClientInterface {
     
     /**
+     * 这台设备现在的访问令牌：macOS App 交给电脑端的工具服务（`desktop`）连设备中继用（14.5）。`refresh` 为真时
+     * 先用刷新令牌换一个新的（中继以“令牌过期”关了连接、定时换新）。没登录时 `SignedOut`。
+     * 令牌只交给同一个 App 里的工具服务，不要写日志、不要发给别处。
+     */
+    suspend fun `accessToken`(`refresh`: kotlin.Boolean): kotlin.String
+    
+    /**
      * 收下了这些消息（验过签、处理完），之后不再返回。返回确认的条数。
      */
     suspend fun `ackDeviceMessages`(`ids`: List<kotlin.String>): kotlin.ULong
@@ -4177,6 +4191,33 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
         return uniffiRustCall() { status ->
             UniffiLib.uniffi_client_core_fn_clone_thinktinclient(handle, status)
         }
+    }
+
+    
+    /**
+     * 这台设备现在的访问令牌：macOS App 交给电脑端的工具服务（`desktop`）连设备中继用（14.5）。`refresh` 为真时
+     * 先用刷新令牌换一个新的（中继以“令牌过期”关了连接、定时换新）。没登录时 `SignedOut`。
+     * 令牌只交给同一个 App 里的工具服务，不要写日志、不要发给别处。
+     */
+    @Throws(ClientException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `accessToken`(`refresh`: kotlin.Boolean) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_client_core_fn_method_thinktinclient_access_token(
+                uniffiHandle,
+                
+        FfiConverterBoolean.lower(`refresh`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_client_core_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        ClientException.ErrorHandler,
+    )
     }
 
     

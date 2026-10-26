@@ -1508,6 +1508,22 @@ impl ThinktinClient {
         self.run(|c| async move { c.logout().await }).await
     }
 
+    /// 这台设备现在的访问令牌：macOS App 交给电脑端的工具服务（`desktop`）连设备中继用（14.5）。`refresh` 为真时
+    /// 先用刷新令牌换一个新的（中继以“令牌过期”关了连接、定时换新）。没登录时 `SignedOut`。
+    /// 令牌只交给同一个 App 里的工具服务，不要写日志、不要发给别处。
+    pub async fn access_token(&self, refresh: bool) -> Result<String> {
+        self.run(move |c| async move {
+            if refresh {
+                c.api.refresh().await?;
+            }
+            c.api
+                .session()
+                .map(|s| s.access_token)
+                .ok_or(ClientError::SignedOut)
+        })
+        .await
+    }
+
     pub async fn me(&self) -> Result<User> {
         self.run(|c| async move { Ok(c.me().await?.into()) }).await
     }

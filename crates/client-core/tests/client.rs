@@ -988,6 +988,25 @@ async fn ffi_login(
     (c, store, dir)
 }
 
+/// 14.5：电脑的工具服务从客户端拿访问令牌（连中继用）；要求刷新时换一个新的，旧的作废前新的照常能用；退出登录后没有。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ffi_access_token_for_the_desktop_service() {
+    let Some(e) = env().await else { return };
+    let (mac, _store, _dir) = ffi_login(&e, "13800138509", "macos", "MacBook").await;
+    let first = mac.access_token(false).await.unwrap();
+    assert!(!first.is_empty());
+    assert_eq!(mac.access_token(false).await.unwrap(), first);
+    let fresh = mac.access_token(true).await.unwrap();
+    assert_ne!(fresh, first);
+    assert_eq!(mac.access_token(false).await.unwrap(), fresh);
+    mac.me().await.unwrap();
+    mac.logout().await.unwrap();
+    assert!(matches!(
+        mac.access_token(false).await,
+        Err(ClientError::SignedOut)
+    ));
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn ffi_account_and_devices() {
     let Some(e) = env().await else { return };
