@@ -71,6 +71,9 @@ object Routes {
     /** 个人信息与权限（13.11）。 */
     const val PRIVACY_INFO = "privacy"
 
+    /** 检查更新（13.12，只有官网安装包有）。 */
+    const val UPDATE = "update"
+
     /** 开源许可（13.13）与一份原文。 */
     const val LICENSES = "licenses"
     const val LICENSE_TEXT = "licenses/text?path={path}&title={title}"

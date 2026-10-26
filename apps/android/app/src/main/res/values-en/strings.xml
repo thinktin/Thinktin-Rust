@@ -140,8 +140,6 @@
 
     <string name="upgrade_title">Update required</string>
     <string name="upgrade_message">This version is too old. Please update the app.</string>
-    <string name="upgrade_action">Update app</string>
-    <string name="upgrade_action_pending">In-app updates are not available yet. Please update from your app store.</string>
 
     <!-- Settings -->
     <string name="settings_appearance">Appearance</string>
@@ -1129,4 +1127,30 @@
     <string name="login_agree_required_title">Agree to continue</string>
     <string name="login_agree_required_message">Signing in uses your phone number. Agree to the Terms of Service and Privacy Policy to continue.</string>
     <string name="login_agree_and_continue">Agree and continue</string>
+    <!-- In-app updates (13.12, website download) -->
+    <string name="settings_check_update">Check for updates</string>
+    <string name="update_current_version">Current version %1$s</string>
+    <string name="update_checking">Checking…</string>
+    <string name="update_up_to_date">You\'re up to date</string>
+    <string name="update_available">Version %1$s is available</string>
+    <string name="update_size">Download size %1$s</string>
+    <string name="update_notes_title">What\'s new</string>
+    <string name="update_download">Download and install</string>
+    <string name="update_downloading">Downloading %1$s of %2$s</string>
+    <string name="update_ready">Downloaded and verified. Tap Install to hand it to the system installer.</string>
+    <string name="update_install">Install</string>
+    <string name="update_needs_permission">Allow ThinkTin to install apps in system settings, then tap Install again.</string>
+    <string name="update_install_unavailable">Couldn\'t open the system installer. You can download the app from the website.</string>
+    <string name="update_check_again">Check again</string>
+    <string name="update_open_website">Download from the website</string>
+    <string name="update_later">Later</string>
+    <string name="update_prompt_title">Version %1$s is available</string>
+    <string name="update_error_network">Couldn\'t reach the update server. Check your connection and try again.</string>
+    <string name="update_error_manifest">The update information is invalid. Try again later or download from the website.</string>
+    <string name="update_error_device">The new version needs a newer Android version than this device has.</string>
+    <string name="update_error_checksum">The download was incomplete or altered, so it was deleted. Try again.</string>
+    <string name="update_error_apk">The download isn\'t a ThinkTin update, so it was deleted.</string>
+    <string name="update_error_signature">The download isn\'t signed like this app, so it was deleted. Download from the website instead.</string>
+    <string name="update_error_storage">Not enough storage. Free up some space and try again.</string>
+    <string name="upgrade_store">Update in the app store</string>
 </resources>

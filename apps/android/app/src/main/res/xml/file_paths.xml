@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- FileProvider 只开放缓存里的产出物目录（对话页下载后交给系统打开 / 分享，13.5）。 -->
+<!-- FileProvider 只开放缓存里的两个目录：产出物（对话页下载后交给系统打开 / 分享，13.5）、下载好的更新包（交给系统安装，13.12）。 -->
 <paths>
     <cache-path name="artifacts" path="artifacts/" />
+    <cache-path name="updates" path="updates/" />
 </paths>

@@ -36,6 +36,7 @@ import cn.thinktin.app.ui.approval.ApprovalDetailScreen
 import cn.thinktin.app.ui.catalog.CatalogScreen
 import cn.thinktin.app.ui.chat.ChatNavigation
 import cn.thinktin.app.ui.chat.ChatScreen
+import cn.thinktin.app.ui.common.LocalAppContainer
 import cn.thinktin.app.ui.common.LocalThinktinService
 import cn.thinktin.app.ui.devices.DevicesAction
 import cn.thinktin.app.ui.devices.DevicesScreen
@@ -61,6 +62,7 @@ import cn.thinktin.app.ui.routes.ModelRoutesScreen
 import cn.thinktin.app.ui.run.RunScreen
 import cn.thinktin.app.ui.settings.SettingsScreen
 import cn.thinktin.app.ui.privacy.PrivacyInfoScreen
+import cn.thinktin.app.update.UpdateScreen
 import cn.thinktin.app.ui.settings.licenses.LicenseTextScreen
 import cn.thinktin.app.ui.settings.licenses.LicensesScreen
 import cn.thinktin.app.ui.teams.TeamDetailScreen
@@ -478,9 +480,14 @@ private fun MainNavHost(navController: NavHostController, onOpenDrawer: () -> Un
                 onOpenUsage = { navController.navigate(Routes.USAGE) },
                 onOpenLicenses = { navController.navigate(Routes.LICENSES) },
                 onOpenPrivacyInfo = { navController.navigate(Routes.PRIVACY_INFO) },
+                onOpenUpdate = { navController.navigate(Routes.UPDATE) },
             )
         }
         composable(Routes.PRIVACY_INFO) { PrivacyInfoScreen(onBack = back) }
+        composable(Routes.UPDATE) {
+            val updater = LocalAppContainer.current.updater
+            if (updater != null) UpdateScreen(updater, onBack = back) else LaunchedEffect(Unit) { back() }
+        }
         composable(Routes.LICENSES) {
             LicensesScreen(onBack = back, onOpenText = { path, title -> navController.navigate(Routes.licenseText(path, title)) })
         }

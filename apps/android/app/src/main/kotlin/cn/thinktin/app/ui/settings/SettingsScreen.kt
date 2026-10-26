@@ -20,6 +20,7 @@ import androidx.compose.material.icons.outlined.Gavel
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Policy
 import androidx.compose.material.icons.outlined.PrivacyTip
+import androidx.compose.material.icons.outlined.SystemUpdate
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Phone
 import androidx.compose.material.icons.outlined.StopCircle
@@ -158,6 +159,7 @@ fun SettingsScreen(
     onOpenUsage: () -> Unit = {},
     onOpenLicenses: () -> Unit = {},
     onOpenPrivacyInfo: () -> Unit = {},
+    onOpenUpdate: () -> Unit = {},
 ) {
     val container = LocalAppContainer.current
     val context = LocalContext.current
@@ -330,6 +332,15 @@ fun SettingsScreen(
                 value = stringResource(R.string.settings_licenses_summary),
                 onClick = onOpenLicenses,
             )
+            // 应用内更新只有官网安装包有（13.12）；商店的包由商店更新。
+            if (container.updater != null) {
+                AccountRow(
+                    icon = Icons.Outlined.SystemUpdate,
+                    title = stringResource(R.string.settings_check_update),
+                    value = stringResource(R.string.update_current_version, BuildConfig.VERSION_NAME),
+                    onClick = onOpenUpdate,
+                )
+            }
             // 演示模式没有退出登录和注销：关掉演示模式就是“退出”。
             if (!state.isDemo) {
                 Section(R.string.settings_danger)

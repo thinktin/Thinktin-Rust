@@ -34,6 +34,7 @@ import cn.thinktin.app.ui.status.CoreUnavailableScreen
 import cn.thinktin.app.ui.status.FrozenAccountScreen
 import cn.thinktin.app.ui.status.LoadingScreen
 import cn.thinktin.app.ui.status.UpgradeRequiredScreen
+import cn.thinktin.app.update.UpdatePrompt
 import cn.thinktin.data.service.AuthState
 import cn.thinktin.data.service.ThinktinService
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -91,12 +92,14 @@ private fun ServiceContent(container: AppContainer, service: ThinktinService, de
     ) {
         key(service) {
             when {
-                upgradeRequired -> UpgradeRequiredScreen()
+                upgradeRequired -> UpgradeRequiredScreen(container.updater)
                 auth == AuthState.Frozen -> FrozenAccountScreen(service)
                 auth == AuthState.SignedOut && !service.isDemo -> LoginFlow()
                 else -> MainNavigation()
             }
         }
+        // 官网安装包：一天最多自动检查一次，有新版本弹一次（13.12）。升级页自己会查，不重复弹。
+        if (!upgradeRequired) container.updater?.let { UpdatePrompt(it) }
     }
 }
 

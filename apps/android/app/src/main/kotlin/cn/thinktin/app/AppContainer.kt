@@ -1,6 +1,7 @@
 package cn.thinktin.app
 
 import android.content.Context
+import android.os.Build
 import android.util.Log
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.preferencesDataStoreFile
@@ -15,6 +16,9 @@ import cn.thinktin.app.ui.approval.BiometricApprovalGate
 import cn.thinktin.app.ui.chat.ArtifactFiles
 import cn.thinktin.app.ui.chat.CacheArtifactFiles
 import cn.thinktin.app.ui.chat.DraftHandoff
+import cn.thinktin.app.update.PackageManagerApkInspector
+import cn.thinktin.app.update.SharedUpdatePrefs
+import cn.thinktin.app.update.Updater
 import cn.thinktin.data.core.AcceptLanguage
 import cn.thinktin.data.core.ClientFactory
 import cn.thinktin.data.core.TlsState
@@ -75,6 +79,8 @@ class AppContainer(
     approvalGate: ApprovalGate? = null,
     /** 产出物下载到哪；null 用系统临时目录（[create] 传 App 的缓存目录）。 */
     artifactFiles: ArtifactFiles? = null,
+    /** 应用内更新（13.12）：只有官网安装包有（`BuildConfig.SELF_UPDATE`），应用商店的包为 null。 */
+    val updater: Updater? = null,
 ) {
     /** 对话页下载产出物的位置（13.5）。 */
     val artifactFiles: ArtifactFiles =
@@ -263,6 +269,18 @@ class AppContainer(
                 createMock = { MockThinktinService(clock = { clock.millis() }) },
                 forceDemo = forceDemo,
                 artifactFiles = CacheArtifactFiles(app.cacheDir),
+                updater = if (BuildConfig.SELF_UPDATE) {
+                    Updater(
+                        manifestUrl = BuildConfig.UPDATE_MANIFEST_URL,
+                        currentVersionCode = BuildConfig.VERSION_CODE.toLong(),
+                        sdkInt = Build.VERSION.SDK_INT,
+                        dir = File(app.cacheDir, "updates"),
+                        inspector = PackageManagerApkInspector(app),
+                        prefs = SharedUpdatePrefs.of(app),
+                    )
+                } else {
+                    null
+                },
             )
         }
     }

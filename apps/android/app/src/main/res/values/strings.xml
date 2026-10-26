@@ -139,8 +139,6 @@
 
     <string name="upgrade_title">请升级</string>
     <string name="upgrade_message">当前版本太旧，请更新 App。</string>
-    <string name="upgrade_action">更新 App</string>
-    <string name="upgrade_action_pending">应用内更新还没上线，请先到应用商店更新</string>
 
     <!-- 设置 -->
     <string name="settings_appearance">外观</string>
@@ -1118,4 +1116,30 @@
     <string name="login_agree_required_title">请先同意用户协议和隐私政策</string>
     <string name="login_agree_required_message">登录要用你的手机号。同意《用户协议》和《隐私政策》后才能继续。</string>
     <string name="login_agree_and_continue">同意并继续</string>
+    <!-- 应用内更新（13.12，官网安装包） -->
+    <string name="settings_check_update">检查更新</string>
+    <string name="update_current_version">当前版本 %1$s</string>
+    <string name="update_checking">正在检查…</string>
+    <string name="update_up_to_date">已经是最新版本</string>
+    <string name="update_available">有新版本 %1$s</string>
+    <string name="update_size">安装包 %1$s</string>
+    <string name="update_notes_title">更新内容</string>
+    <string name="update_download">下载并安装</string>
+    <string name="update_downloading">正在下载 %1$s / %2$s</string>
+    <string name="update_ready">下载好了，也校验过了。点“安装”交给系统安装。</string>
+    <string name="update_install">安装</string>
+    <string name="update_needs_permission">先在系统设置里允许 ThinkTin 安装应用，回来再点“安装”。</string>
+    <string name="update_install_unavailable">打不开系统的安装程序，可以去官网下载安装。</string>
+    <string name="update_check_again">再检查一次</string>
+    <string name="update_open_website">去官网下载</string>
+    <string name="update_later">以后再说</string>
+    <string name="update_prompt_title">发现新版本 %1$s</string>
+    <string name="update_error_network">连不上更新服务器，检查一下网络再试。</string>
+    <string name="update_error_manifest">更新信息有误，请稍后再试，或者去官网下载。</string>
+    <string name="update_error_device">新版本需要更高的 Android 版本，这台设备装不了。</string>
+    <string name="update_error_checksum">下载的文件不完整或者被改过，已经删掉了。请重试。</string>
+    <string name="update_error_apk">下载的不是 ThinkTin 的更新包，已经删掉了。</string>
+    <string name="update_error_signature">下载的安装包签名和现在的 App 不一样，已经删掉了。请去官网下载。</string>
+    <string name="update_error_storage">手机空间不够，清理一下再试。</string>
+    <string name="upgrade_store">去应用商店更新</string>
 </resources>
