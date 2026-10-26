@@ -1,12 +1,18 @@
 package cn.thinktin.app
 
 import app.cash.turbine.test
+import cn.thinktin.app.computer.ComputerLinkStore
+import cn.thinktin.app.computer.InMemoryComputerLinkStorage
 import cn.thinktin.app.ui.drawer.DrawerViewModel
 import cn.thinktin.app.ui.home.HomeEvent
 import cn.thinktin.app.ui.home.HomeViewModel
 import cn.thinktin.data.mock.MockThinktinService
+import cn.thinktin.data.model.ComputerApprovalRequest
+import cn.thinktin.data.model.DeviceMessageKind
 import cn.thinktin.data.model.Instance
 import cn.thinktin.data.model.InstanceState
+import cn.thinktin.data.model.PairedComputer
+import cn.thinktin.data.model.parseJsonObject
 import cn.thinktin.data.model.Run
 import cn.thinktin.data.service.AuthState
 import cn.thinktin.data.service.ServiceError
@@ -221,5 +227,37 @@ class ViewModelTest {
         assertEquals(listOf("inst-research"), vm.uiState.value.visibleInstances.map { it.id })
         vm.onQueryChange("小码")
         assertEquals(listOf("inst-coder"), vm.uiState.value.visibleInstances.map { it.id })
+    }
+
+    @Test
+    fun drawerBadgeCountsComputerApprovals() = test {
+        val mock = MockThinktinService(clock = { DemoTestApp.FIXED_CLOCK.millis() })
+        val links = ComputerLinkStore(InMemoryComputerLinkStorage())
+        val now = DemoTestApp.FIXED_CLOCK.millis() / 1000
+        val userId = mock.me().id
+        links.update(userId) {
+            it.copy(computers = listOf(PairedComputer("dev-mac", "k", "p", DemoTestApp.FIXED_CLOCK.millis())))
+        }
+        val body = """{"request":{"desktop_id":"dev-mac","request_id":"req-1","tool":"computer_run",
+            "arguments_json":"{\"command\":\"ls\"}","summary":"ls","issued_at":$now,"expires_at":${now + 600}}}"""
+        mock.deliverDeviceMessage("dev-mac", DeviceMessageKind.ApprovalRequest, body)
+        // 没配对的电脑发来的不算。
+        mock.deliverDeviceMessage("dev-other", DeviceMessageKind.ApprovalRequest, body.replace("dev-mac", "dev-other"))
+
+        val vm = DrawerViewModel(ScriptedService(mock), links, nowSecs = { now })
+        advanceUntilIdle()
+        // 演示数据里这台 Mac 已经发来一条（cap-1），加上新的一条。
+        val cloud = vm.uiState.value.pendingApprovals
+        assertEquals(2, vm.uiState.value.computerApprovals)
+        assertEquals(cloud + 2, vm.uiState.value.approvalsBadge)
+
+        // 审批中心收下了（存进本机，这里只留一条）：只数存着的；批准之后（从本机删掉）就没了，不会按之前取的消息再数一遍。
+        val request = ComputerApprovalRequest.fromBody(parseJsonObject(body))!!
+        links.update(userId) { it.copy(requests = listOf(request)) }
+        advanceUntilIdle()
+        assertEquals(1, vm.uiState.value.computerApprovals)
+        links.update(userId) { it.copy(requests = emptyList()) }
+        advanceUntilIdle()
+        assertEquals(0, vm.uiState.value.computerApprovals)
     }
 }

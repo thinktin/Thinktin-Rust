@@ -44,6 +44,9 @@
   Secure Enclave 的配对密钥；CoreImage 二维码；`MacNativeTools`（ScreenCaptureKit 截图、CGEvent 点击 / 打字 / 按键、NSWorkspace 打开，
   点到别的应用的窗口、打开就会运行的文件都拒绝）；SMAppService 登录项；Sparkle 2.6.4；`macos-release.yml`。说明在 `docs/macos.md`。
   只在 uicheck 的 AppKit 桩上查过，真实 SDK 等 macOS CI。
+- 12.9 补两处（2026-10-26）：电脑审批的说明按界面语言说（`ComputerLinkText.approvalDescription`，执行命令、删除照签名覆盖的参数说，
+  英文和电脑的说明一字不差）；审批角标也数电脑发来的（`ComputerLinkState.pendingApprovals`，`AppModel.refreshBadges` 多取一次设备消息，只数不确认）。
+  Mac 菜单栏跟着真的工具调用显示“agent 正在使用这台电脑”（`ComputerHostEvent.activity`）。
 
 进行中：
 - 无。2026-10-23 用户要求：各会话先把代码同步对齐（上面两条），之后暂停所有工作，等用户通知再继续——不开新的工作包、不跑审查、不恢复预约的任务。定期续跑检查 `trig_01Wt6oEwQkA7pisCjcDZQZJB` 已停用（全部 12.x 完成前，用户让继续时再启用）。

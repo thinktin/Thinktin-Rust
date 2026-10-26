@@ -109,13 +109,14 @@ private fun createNavController(context: Context): NavHostController = NavHostCo
 @Composable
 fun MainNavigation(navController: NavHostController = rememberAppNavController()) {
     val service = LocalThinktinService.current
+    val container = LocalAppContainer.current
     val deepLinks = LocalDeepLinks.current
     val pendingDeepLink by deepLinks.current.collectAsStateWithLifecycle()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val drawerViewModel: DrawerViewModel = viewModel(
         key = "drawer-${System.identityHashCode(service)}",
-        factory = viewModelFactory { initializer { DrawerViewModel(service) } },
+        factory = viewModelFactory { initializer { DrawerViewModel(service, container.computerLinks) } },
     )
     val drawerUi by drawerViewModel.uiState.collectAsStateWithLifecycle()
     val backStack by navController.currentBackStackEntryAsState()

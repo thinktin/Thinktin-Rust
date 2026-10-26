@@ -128,8 +128,8 @@ fun AppDrawer(
                 onClick = { onNavigate(DrawerDestination.Inbox) },
                 modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
             )
-            val pendingLabel = if (state.pendingApprovals > 0) {
-                pluralStringResource(R.plurals.drawer_approvals_pending, state.pendingApprovals, state.pendingApprovals)
+            val pendingLabel = if (state.approvalsBadge > 0) {
+                pluralStringResource(R.plurals.drawer_approvals_pending, state.approvalsBadge, state.approvalsBadge)
             } else {
                 null
             }
@@ -137,9 +137,9 @@ fun AppDrawer(
                 label = { Text(stringResource(R.string.drawer_approvals)) },
                 icon = { Icon(Icons.Outlined.VerifiedUser, contentDescription = null) },
                 badge = {
-                    if (state.pendingApprovals > 0) {
+                    if (state.approvalsBadge > 0) {
                         Badge(Modifier.semantics { contentDescription = pendingLabel.orEmpty() }) {
-                            Text(if (state.pendingApprovals > 99) "99+" else state.pendingApprovals.toString())
+                            Text(if (state.approvalsBadge > 99) "99+" else state.approvalsBadge.toString())
                         }
                     }
                 },

@@ -127,6 +127,12 @@ P1 后端核心（M1–M9）和 P2 里能在代码层面完成的包都做完了
   （`0b22795`）；发版工作流 `macos-release.yml`（Developer ID、公证、appcast）和 `docs/macos.md`。uicheck 的 AppKit 版查整个
   Mac target（新桩：ScreenCaptureKit、ServiceManagement、ApplicationServices、CoreImage、Sparkle）；CI 在 macOS 上编它、
   Linux 上跑 ThinktinDesktopAdapterTests。975 个 Kit 测试。
+- “正在被控制”跟着真的工具调用走：`desktop` 报正在执行的工具（`watch_activity`、FFI 的 `on_activity`），Mac 菜单栏图标和
+  状态行跟着变（`9414895`）。ThinktinDesktopAdapterTests 的假令牌改成 0.2 秒后才报错（原来“正在连接”一闪就过，测试必挂）；
+  `.build-desktop/` 加进 .gitignore（350 MB 的构建目录之前会被自动保存扫进快照，推送失败）。
+- 电脑审批的说明按手机的界面语言说（iOS `4872597`、安卓 `cd8ce84`）：执行命令、删除照签名覆盖的参数说，理由照原话。
+- 审批的角标也数电脑发来的（iOS `f8c54ed`，快捷指令的待审批数也是；安卓随本条进度一起提交）：存着的加上服务端还没收下的新请求，只数不确认。安卓全量 test 747 个、lint 通过；Kit 981 个。
+- 在本分支上手动触发了 iOS 工作流（run 40391238132），第一次在 macOS 上真编 `ThinktinMac`。
 
 进行中：
 - 无。
@@ -136,8 +142,7 @@ P1 后端核心（M1–M9）和 P2 里能在代码层面完成的包都做完了
    截图、键鼠、登录项、Secure Enclave、Sparkle 要在 Mac 上过一遍；`macos-release.yml` 没跑过（证书、公证密钥、Sparkle 密钥、
    更新源地址要人准备，见 `docs/macos.md` 第 6 节）。还能在这里做的小项见 `docs/macos.md` 第 8 节（工具调用中的提示、
    审批说明本地化）。
-2. 抽屉角标还不算电脑发来的审批（iOS、安卓都是）；iOS 控制中心的“全部停止”要让小组件扩展共享登录会话（钥匙串共享），
-   要人定安全上能不能这样。
+2. iOS 控制中心的“全部停止”要让小组件扩展共享登录会话（钥匙串共享），要人定安全上能不能这样。
 3. 要人定的事见下面“坑和决定”（推送 SDK、上架材料、审批不设锁屏密码时两端不一致等）。
 
 环境（容器回收后要重装）：Swift 6.2 装在 `/opt/swift`（swift.org 的包，验签）；Android SDK 在 `/opt/android-sdk`（cmdline-tools、platform 35、build-tools 35.0.0，不用 NDK）；`cargo build -p client-core --lib` 出本机库，`tools/client-core/build-linux-swift.sh target/linux` 出 Linux 版 Swift 包。Gradle 直连 Maven Central 没被限流。Gradle 和 Swift 一起跑时 Robolectric 偶尔超时，分开跑。

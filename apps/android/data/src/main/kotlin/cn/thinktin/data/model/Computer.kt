@@ -226,3 +226,19 @@ data class ComputerLinkState(
     val requests: List<ComputerApprovalRequest> = emptyList(),
     val grants: List<IssuedGrant> = emptyList(),
 )
+
+/**
+ * 等这台手机批准的电脑操作有几个（抽屉的角标）：存着的没过期的请求，加上服务端还没收下的新请求（配好的电脑发来的、
+ * 没过期的、没存过的）。只是数一数：收下、确认掉在审批中心（`ComputerLinkViewModel`）里做。和 iOS 一样。
+ */
+fun ComputerLinkState.pendingApprovals(messages: List<DeviceMessage>, nowSecs: Long): Int {
+    val ids = requests.filter { !it.isExpired(nowSecs) }.mapTo(HashSet()) { it.requestId }
+    for (message in messages) {
+        if (message.kind != DeviceMessageKind.ApprovalRequest) continue
+        val request = ComputerApprovalRequest.fromBody(message.body) ?: continue
+        if (request.desktopId != message.fromDeviceId || request.isExpired(nowSecs)) continue
+        if (computers.none { it.desktopId == request.desktopId }) continue
+        ids += request.requestId
+    }
+    return ids.size
+}
