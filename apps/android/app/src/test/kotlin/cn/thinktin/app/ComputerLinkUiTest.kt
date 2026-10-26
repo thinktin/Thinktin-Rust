@@ -175,20 +175,24 @@ class ComputerLinkUiTest {
                 put(
                     "request",
                     buildJsonObject {
-                        put("desktop_id", "dev-mac"); put("request_id", "req-9"); put("tool", "delete_files")
-                        put("arguments_json", """{"paths":["/Users/me/old"]}"""); put("summary", "删除旧的下载文件")
+                        put("desktop_id", "dev-mac"); put("request_id", "req-9"); put("tool", "computer_run")
+                        put("arguments_json", """{"command":"rm -rf ~/Downloads/old","reason":"清理旧的下载"}""")
+                        put("summary", "Run a command on your computer: rm -rf ~/Downloads/old\nWhy: 清理旧的下载")
                         put("issued_at", nowSecs); put("expires_at", nowSecs + 600)
                     },
                 )
             }.toString(),
         )
         scenario?.onActivity { it.onNewIntent(Intent(Intent.ACTION_VIEW, Uri.parse("thinktin://approvals"))) }
-        waitFor(hasText("删除旧的下载文件"))
+        // 电脑发来的说明是英文的：手机按界面语言、照签名覆盖的参数说，理由照原话。
+        val described = "在电脑上执行命令：rm -rf ~/Downloads/old\n理由：清理旧的下载"
+        waitFor(hasText(described))
+        compose.onNode(hasText("Run a command", substring = true)).assertDoesNotExist()
         compose.onNode(hasText("电脑上的操作")).assertExists()
-        compose.onNode(hasText("delete_files")).assertExists()
+        compose.onNode(hasText("computer_run")).assertExists()
         compose.onNode(hasText("批准") and hasAnyAncestor(hasTestTag(COMPUTER_APPROVAL_CARD_TEST_TAG + "req-9"))).performScrollTo().performClick()
         waitFor(hasText("已批准，电脑会接着做。"))
-        waitGone(hasText("删除旧的下载文件"))
+        waitGone(hasText(described))
         val decision = mock.sentDeviceMessages().last()
         assertEquals(DeviceMessageKind.ApprovalDecision, decision.kind)
         assertEquals("req-9", decision.body.string("request_id"))

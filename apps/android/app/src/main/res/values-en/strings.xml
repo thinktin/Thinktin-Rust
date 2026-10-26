@@ -1330,6 +1330,10 @@
     <string name="computer_expires_days">Expires in %1$d d</string>
     <string name="computer_approvals_title">On your computer</string>
     <string name="computer_approval_unknown">Computer</string>
+    <string name="computer_approval_run">Run a command on your computer: %1$s</string>
+    <string name="computer_approval_run_in">Run a command on your computer (in %1$s): %2$s</string>
+    <string name="computer_approval_delete">Move to the Trash on your computer: %1$s</string>
+    <string name="computer_approval_reason">Why: %1$s</string>
     <string name="computer_approve">Approve</string>
     <string name="computer_reject">Reject</string>
     <string name="computer_approved">Approved. Your computer will carry on.</string>

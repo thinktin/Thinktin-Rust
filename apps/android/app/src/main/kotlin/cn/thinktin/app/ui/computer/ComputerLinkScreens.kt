@@ -70,6 +70,7 @@ import cn.thinktin.app.ui.common.RelativeTime
 import cn.thinktin.app.ui.common.UiText
 import cn.thinktin.app.ui.common.asString
 import cn.thinktin.data.model.CapabilityGrant
+import cn.thinktin.data.model.ComputerAction
 import cn.thinktin.data.model.CapabilityRules
 import cn.thinktin.data.model.ComputerApprovalRequest
 import cn.thinktin.data.model.DeviceInfo
@@ -627,7 +628,7 @@ private fun ComputerApprovalCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Text(request.summary, style = MaterialTheme.typography.bodyLarge)
+            Text(approvalDescription(request), style = MaterialTheme.typography.bodyLarge)
             AiGeneratedLabel()
             Text(request.tool, style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace))
             Text(
@@ -654,6 +655,20 @@ private fun ComputerApprovalCard(
             }
         }
     }
+}
+
+/** 审批卡片的说明：执行命令、删除按手机的界面语言说，理由照原话附上；别的工具用电脑给的说明。和 iOS 一样。 */
+@Composable
+private fun approvalDescription(request: ComputerApprovalRequest): String {
+    val what = when (val action = request.action()) {
+        is ComputerAction.Run ->
+            action.cwd?.let { cwd -> stringResource(R.string.computer_approval_run_in, cwd, action.command) }
+                ?: stringResource(R.string.computer_approval_run, action.command)
+        is ComputerAction.Delete -> stringResource(R.string.computer_approval_delete, action.path)
+        null -> return request.summary
+    }
+    val reason = request.reason() ?: return what
+    return what + "\n" + stringResource(R.string.computer_approval_reason, reason)
 }
 
 private val prettyJson = Json { prettyPrint = true }

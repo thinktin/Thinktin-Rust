@@ -1,6 +1,7 @@
 package cn.thinktin.data.model
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -39,6 +40,25 @@ data class ComputerApprovalRequest(
 ) {
     fun isExpired(nowSecs: Long): Boolean = expiresAt <= nowSecs
 
+    /**
+     * 执行命令、删除要做什么（从参数里取；参数在签名覆盖的范围里，手机按界面语言说出来和电脑要做的对得上——电脑发来的
+     * [summary] 是英文的）。别的工具、参数不全、不是 JSON 时为 null，界面用 [summary]（也在签名里）。
+     */
+    fun action(): ComputerAction? {
+        val args = arguments() ?: return null
+        return when (tool) {
+            "computer_run" -> args.string("command")?.let { ComputerAction.Run(it, args.string("cwd")) }
+            "computer_delete" -> args.string("path")?.let { ComputerAction.Delete(it) }
+            else -> null
+        }
+    }
+
+    /** agent 写的理由（原话；空的不算）。 */
+    fun reason(): String? = arguments()?.string("reason")?.takeIf { it.isNotEmpty() }
+
+    private fun arguments(): JsonObject? =
+        runCatching { Json.parseToJsonElement(argumentsJson) as? JsonObject }.getOrNull()
+
     companion object {
         /** 从消息正文解析；格式不对时为 null。 */
         fun fromBody(body: JsonObject): ComputerApprovalRequest? {
@@ -54,6 +74,13 @@ data class ComputerApprovalRequest(
             )
         }
     }
+}
+
+/** 电脑高危操作要做的事（审批卡片按手机的界面语言说）。 */
+sealed interface ComputerAction {
+    data class Run(val command: String, val cwd: String?) : ComputerAction
+
+    data class Delete(val path: String) : ComputerAction
 }
 
 /** 手机签发给电脑的能力令牌：普通操作能碰哪些目录、哪些应用，到什么时候。 */

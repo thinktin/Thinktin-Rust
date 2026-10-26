@@ -1,6 +1,7 @@
 package cn.thinktin.data
 
 import cn.thinktin.data.model.CapabilityRules
+import cn.thinktin.data.model.ComputerAction
 import cn.thinktin.data.model.ComputerApprovalRequest
 import cn.thinktin.data.model.parseJsonObject
 import org.junit.Assert.assertEquals
@@ -33,5 +34,24 @@ class CapabilityRulesTest {
         assertEquals("r1", request.requestId)
         assertEquals(1_760_000_600L, request.expiresAt)
         assertNull(ComputerApprovalRequest.fromBody(parseJsonObject("""{"request":"x"}""")))
+    }
+
+    @Test
+    fun runAndDeleteAreReadFromTheSignedArguments() {
+        fun request(tool: String, arguments: String) = ComputerApprovalRequest(
+            desktopId = "mac-1", requestId = "r1", tool = tool, argumentsJson = arguments, summary = "from the Mac",
+            issuedAt = 1_760_000_000, expiresAt = 1_760_000_600,
+        )
+        val run = request("computer_run", """{"command":"rm -rf build","cwd":"/Users/a/app","reason":"clean"}""")
+        assertEquals(ComputerAction.Run("rm -rf build", "/Users/a/app"), run.action())
+        assertEquals("clean", run.reason())
+        assertEquals(ComputerAction.Run("ls", null), request("computer_run", """{"command":"ls"}""").action())
+        val delete = request("computer_delete", """{"path":"/Users/a/x.zip","reason":""}""")
+        assertEquals(ComputerAction.Delete("/Users/a/x.zip"), delete.action())
+        assertNull("空的理由不算", delete.reason())
+        // 别的工具、参数不全、不是 JSON：界面用电脑给的说明。
+        assertNull(request("computer_type", """{"text":"hi"}""").action())
+        assertNull(request("computer_run", """{"cwd":"/"}""").action())
+        assertNull(request("computer_delete", "not json").action())
     }
 }

@@ -1318,6 +1318,10 @@
     <string name="computer_expires_days">%1$d 天后到期</string>
     <string name="computer_approvals_title">电脑上的操作</string>
     <string name="computer_approval_unknown">电脑</string>
+    <string name="computer_approval_run">在电脑上执行命令：%1$s</string>
+    <string name="computer_approval_run_in">在电脑上执行命令（在 %1$s）：%2$s</string>
+    <string name="computer_approval_delete">把电脑上的这个移到废纸篓：%1$s</string>
+    <string name="computer_approval_reason">理由：%1$s</string>
     <string name="computer_approve">批准</string>
     <string name="computer_reject">拒绝</string>
     <string name="computer_approved">已批准，电脑会接着做。</string>
