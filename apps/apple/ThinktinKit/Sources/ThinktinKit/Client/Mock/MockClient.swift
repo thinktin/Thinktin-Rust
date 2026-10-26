@@ -226,6 +226,24 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
         play(DemoData.replyScript(for: run), instanceID: run.instanceID)
     }
 
+    /// 等额度的运行马上接着跑（服务端的 `wake_waiting_runs(waiting_quota)`：加了 key、启用、放宽或取消每日上限、换 key、
+    /// 改模型路由之后，7.11）。开着自动回答时从头播一遍回答；不然只记一条“开始”（之后的进展由测试自己播）。
+    private func wakeRunsWaitingForQuota() {
+        let (woken, replay) = inner.withLock { s -> ([Run], Bool) in
+            let waiting = s.state.runs.filter { $0.state == .waitingQuota }
+            if !s.autoReply {
+                for run in waiting {
+                    _ = s.emit(
+                        .runState, payload: ["state": "starting"], runID: run.id, instanceID: run.instanceID, at: Date()
+                    )
+                }
+            }
+            return (waiting, s.autoReply)
+        }
+        guard replay else { return }
+        for run in woken { play(DemoData.replyScript(for: run), instanceID: run.instanceID) }
+    }
+
     // MARK: 账号
 
     public func signedIn() -> Bool {
@@ -531,6 +549,8 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
             }
             s.state.routes[instanceID] = routes
         }
+        // 换了 key 或者加了备用 key：等额度的运行接着跑。
+        wakeRunsWaitingForQuota()
     }
 
     /// 和服务端一致（11.9）：模型别名一起删（只有它用着的 key 之后能删了）；它自己的计划一起删掉（服务端是标记删除，
@@ -1034,7 +1054,7 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
 
     /// 和服务端一样拒收这家的订阅类 key、填了套餐专用地址的（11.9 起厂商表带着前缀和地址，按 `MockState.vendors` 查）。
     public func addCredential(_ credential: NewCredential) async throws -> Credential {
-        try await call { s in
+        let added = try await call { s in
             let key = credential.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
             guard key.count >= 8 else { throw MockErrors.invalid("api key is too short") }
             let vendor = s.state.vendors.first { $0.id == credential.vendor }
@@ -1063,12 +1083,14 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
             s.state.credentials.append(created)
             return created
         }
+        wakeRunsWaitingForQuota()
+        return added
     }
 
     public func updateCredential(_ credentialID: CredentialID, label: String?, disabled: Bool?) async throws
         -> Credential
     {
-        try await call { s in
+        let updated = try await call { s in
             let i = try s.credentialIndex(credentialID)
             if let label, label.unicodeScalars.count > Credential.maxLabelLength {
                 throw MockErrors.invalid("label must be 0-\(Credential.maxLabelLength) characters")
@@ -1077,14 +1099,17 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
             if let disabled { s.state.credentials[i].isDisabled = disabled }
             return s.state.credentials[i]
         }
+        // 重新启用了：等额度的运行接着跑。
+        if disabled == false { wakeRunsWaitingForQuota() }
+        return updated
     }
 
-    /// 和服务端一样（11.9）：nil 取消上限；0、超出范围抛 invalid（先查这个，再查 key 在不在）。服务端放宽或取消上限时
-    /// 唤醒等 key 的运行；Mock 没有唤醒等 key 的运行这套机制（启用、换 key 也不唤醒），这里只改上限。
+    /// 和服务端一样（11.9）：nil 取消上限；0、超出范围抛 invalid（先查这个，再查 key 在不在）。放宽或取消上限时
+    /// 等额度的运行接着跑。
     public func setCredentialDailyLimit(_ credentialID: CredentialID, dailyTokenLimit: UInt64?) async throws
         -> Credential
     {
-        try await call { s in
+        let (changed, raised) = try await call { s -> (Credential, Bool) in
             var limit: Int?
             if let dailyTokenLimit {
                 guard dailyTokenLimit > 0 else { throw MockErrors.invalid("daily_token_limit must be positive") }
@@ -1095,13 +1120,22 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
                 limit = value
             }
             let i = try s.credentialIndex(credentialID)
+            let old = s.state.credentials[i].dailyTokenLimit
             s.state.credentials[i].dailyTokenLimit = limit
-            return s.state.credentials[i]
+            let raised: Bool =
+                switch (old, limit) {
+                case (.some, nil): true
+                case (.some(let old), .some(let new)): new > old
+                default: false
+                }
+            return (s.state.credentials[i], raised)
         }
+        if raised { wakeRunsWaitingForQuota() }
+        return changed
     }
 
     public func replaceCredentialSecret(_ credentialID: CredentialID, apiKey: String) async throws -> Credential {
-        try await call { s in
+        let replaced = try await call { s in
             let i = try s.credentialIndex(credentialID)
             guard (8...4096).contains(apiKey.utf8.count), !apiKey.contains(where: { $0.isWhitespace }) else {
                 throw MockErrors.invalid("api_key must be 8-4096 bytes without spaces")
@@ -1111,6 +1145,8 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
             s.state.credentials[i].last4 = String(apiKey.suffix(4))
             return s.state.credentials[i]
         }
+        wakeRunsWaitingForQuota()
+        return replaced
     }
 
     /// 还有实例的别名（主路由或降级链）用着时抛 409（和服务端一样，已删除实例的别名不算：删除实例时一起删掉了）。

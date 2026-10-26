@@ -195,8 +195,7 @@ struct CredentialDetailModelTests {
         #expect(await model.replaceSecret("  sk-new-key-0123WXYZ\n"))
         #expect(model.credential?.last4 == "WXYZ")
         #expect(model.didReplace)
-        // 和真的服务端一样：刚唤醒时运行的状态还没变（Mock 不模拟唤醒），也只说操作前在等的那 1 个马上重试，
-        // 不说“还有 1 个在等”。
+        // 只说操作前在等的那 1 个马上重试，不说“还有 1 个在等”（真的服务端刚唤醒时运行的状态还没变）。
         #expect(model.wakeResult == KeyWakeResult(retried: 1))
         #expect(model.wakeResult?.message(.chinese)?.contains("还有") == false)
     }
@@ -220,7 +219,15 @@ struct CredentialDetailModelTests {
         #expect(await model.setDailyLimit("3 000 000"))
         #expect(mock.state.credentials.first { $0.id == DemoData.claudeCredentialID }?.dailyTokenLimit == 3_000_000)
         #expect(model.didWake && model.wakeResult == KeyWakeResult(retried: 1), "放宽：等 key 的任务马上重试")
+        #expect(mock.state.runs.first { $0.id == ModelsFixture.waitingRunID }?.state == .starting, "Mock 也唤醒了它")
 
+        // 它又卡住了（比如还是欠费）：取消上限时再唤醒一次。
+        mock.update { s in
+            if let i = s.runs.firstIndex(where: { $0.id == ModelsFixture.waitingRunID }) {
+                s.runs[i].state = .waitingQuota
+                s.runs[i].waitCode = .noBalance
+            }
+        }
         #expect(await model.setDailyLimit(""))
         #expect(model.credential?.dailyTokenLimit == nil)
         #expect(model.summary(.chinese)?.dailyLimit == "不限")

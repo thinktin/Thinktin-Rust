@@ -876,6 +876,54 @@ struct MockSecretDetectorTests {
 
 @Suite("MockClient：模型 key、用量、IM 渠道")
 struct MockSettingsTests {
+    @Test("等额度的运行：加 key、启用、放宽上限、换 key、改路由后接着跑（和服务端的 wake_waiting_runs 一样）")
+    func keyChangesWakeWaitingRuns() async throws {
+        let client = makeClient(autoReply: false)
+        let runID = try #require(client.state.runs.first?.id)
+        func wait(_ code: RunWaitCode = .noBalance) {
+            client.update { s in
+                guard let i = s.runs.firstIndex(where: { $0.id == runID }) else { return }
+                s.runs[i].state = .waitingQuota
+                s.runs[i].waitCode = code
+            }
+        }
+        func woke() -> Bool {
+            let run = client.state.runs.first { $0.id == runID }
+            return run?.state == .starting && run?.waitCode == nil
+        }
+        let key = DemoData.deepseekCredentialID
+
+        wait()
+        _ = try await client.addCredential(NewCredential(vendor: "deepseek", label: "备用", apiKey: "sk-12345678abcd"))
+        #expect(woke())
+
+        wait()
+        _ = try await client.updateCredential(key, label: nil, disabled: true)
+        #expect(!woke(), "停用不唤醒")
+        _ = try await client.updateCredential(key, label: nil, disabled: false)
+        #expect(woke())
+
+        wait()
+        _ = try await client.setCredentialDailyLimit(key, dailyTokenLimit: 1000)
+        _ = try await client.setCredentialDailyLimit(key, dailyTokenLimit: 500)
+        #expect(!woke(), "设上限、调低不唤醒")
+        _ = try await client.setCredentialDailyLimit(key, dailyTokenLimit: 2000)
+        #expect(woke())
+        wait()
+        _ = try await client.setCredentialDailyLimit(key, dailyTokenLimit: nil)
+        #expect(woke())
+
+        wait(.invalid)
+        _ = try await client.replaceCredentialSecret(key, apiKey: "sk-87654321dcba")
+        #expect(woke())
+
+        wait(.rateLimited)
+        try await client.setModelRoutes(
+            instanceID: writer, routes: [ModelRoute(alias: "main", credentialID: key, upstreamModel: "deepseek-v4-pro")]
+        )
+        #expect(woke())
+    }
+
     @Test("模型 key：添加、删除；厂商")
     func credentials() async throws {
         let client = makeClient()

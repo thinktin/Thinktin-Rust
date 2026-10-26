@@ -42,7 +42,7 @@ enum ModelsFixture {
     }
 
     /// 服务端一样唤醒等 key 的运行：等 `trigger` 成立（比如路由已经存进去了）就把等 key 的运行改成排队。
-    /// MockClient 自己不模拟唤醒（7.11），测试用它在“保存之后、重新拉运行之前”改状态（Mock 要设 `latency`）。
+    /// MockClient 自己也唤醒（改成“开始”），测试用它在“保存之后、重新拉运行之前”改成别的状态（Mock 要设 `latency`）。
     @discardableResult
     static func wakeWaitingRuns(
         in mock: MockClient, when trigger: @escaping @Sendable (MockState) -> Bool
