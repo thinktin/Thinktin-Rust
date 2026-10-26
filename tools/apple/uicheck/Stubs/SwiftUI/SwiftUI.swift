@@ -612,6 +612,10 @@ extension View {
     )
         -> some View
     { _m() }
+    public func task<T: Equatable>(
+        id value: T, priority: TaskPriority = .userInitiated,
+        @_inheritActorContext _ action: @escaping @isolated(any) @Sendable () async -> Void
+    ) -> some View { _m() }
     public func onTapGesture(count: Int = 1, perform action: @escaping () -> Void) -> some View { _m() }
 
     public func toolbar<Content: ToolbarContent>(@ToolbarContentBuilder content: () -> Content) -> some View { _m() }

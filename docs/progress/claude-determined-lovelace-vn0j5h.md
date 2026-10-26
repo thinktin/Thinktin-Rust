@@ -66,8 +66,11 @@ P1 后端核心（M1–M9）和 P2 里能在代码层面完成的包都做完了
 
 - 安卓 13.7 团队与流水线：团队、模板、团队编辑、计划编辑页里的流水线步骤（本地 DAG 规则同服务端）。app 测试 308 个。
 
+- iOS 12.7 团队与流水线：团队、模板、团队编辑、流水线编辑器（本地 DAG 规则同服务端），运行树补停止、等待提示和定时刷新；
+  Mock 新建计划允许没有触发规则（和服务端一致）。906 个测试。
+
 进行中：
-- iOS 12.7 团队与流水线（2026-10-26 开始）：团队、模板、团队编辑、流水线编辑器、运行树补停止和等待提示。之后安卓 13.11 / 13.12、iOS 12.13 / 12.10 等。
+- 安卓 13.11 / 13.12（2026-10-26 开始）。之后 iOS 12.13 / 12.10、安卓 13.10 / 13.14、iOS 12.20 / 12.21 / 12.19 / 12.11。
 
 环境（容器回收后要重装）：Swift 6.2 装在 `/opt/swift`（swift.org 的包，验签）；Android SDK 在 `/opt/android-sdk`（cmdline-tools、platform 35、build-tools 35.0.0，不用 NDK）；`cargo build -p client-core --lib` 出本机库，`tools/client-core/build-linux-swift.sh target/linux` 出 Linux 版 Swift 包。Gradle 直连 Maven Central 没被限流。Gradle 和 Swift 一起跑时 Robolectric 偶尔超时，分开跑。
 

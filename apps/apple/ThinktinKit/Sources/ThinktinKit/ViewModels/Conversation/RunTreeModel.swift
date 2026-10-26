@@ -34,8 +34,10 @@ public struct RunTreeNode: Identifiable, Hashable, Sendable {
     }
 }
 
-/// 运行树（`.runTree(id)`：流水线、委派的子运行；`id` 是树里任意一个运行，页面定位到它所在的节点）。12.7 的流水线
-/// 编辑器复用它，补流水线节点。
+/// 运行树（`.runTree(id)`：流水线、委派的子运行；`id` 是树里任意一个运行，页面定位到它所在的节点）。
+///
+/// 12.7 补上：单个节点停止（`stop`）、整棵树停止（`stopTree`，`cancelRun(wholeTree:)`）；子步骤在等用户处理（审批、key、
+/// 电脑）时冒泡到页面顶上（`attention`）；还有没结束的运行时页面定时刷新，新加的子运行会出现。
 @Observable @MainActor
 public final class RunTreeModel {
     public let runID: RunID
@@ -44,6 +46,9 @@ public final class RunTreeModel {
     public private(set) var isLoading = false
     public private(set) var error: ClientError?
     public private(set) var isMissing = false
+    /// 正在停止的运行（整树停止时是根）。
+    public private(set) var stopping: Set<RunID> = []
+    public private(set) var stopError: ClientError?
 
     @ObservationIgnored private let client: any ClientProtocol
 
@@ -57,6 +62,52 @@ public final class RunTreeModel {
 
     /// 根运行。
     public var root: Run? { nodes.first?.run }
+
+    /// 子孙里第一个在等用户处理的运行（审批、key、电脑）：冒泡到页面顶上，点了去它的运行详情。
+    public var attention: Run? {
+        nodes.first { node in
+            node.depth > 0 && [.waitingApproval, .waitingQuota, .waitingDevice].contains(node.run.state)
+        }?.run
+    }
+
+    /// 有没结束的运行时每隔 `interval` 刷新一次，都结束了就停（页面的 `.task` 跑，离开页面取消）。
+    public func refreshWhileActive(every interval: Duration = .seconds(5)) async {
+        while hasActiveRuns, !Task.isCancelled {
+            try? await Task.sleep(for: interval)
+            guard !Task.isCancelled else { return }
+            await load()
+        }
+    }
+
+    /// 只停这一个运行（服务端：流水线的根运行停了就是整条停）。
+    public func stop(_ runID: RunID) async {
+        await cancel(runID, wholeTree: false)
+    }
+
+    /// 整棵树都停。
+    public func stopTree() async {
+        guard let root else { return }
+        await cancel(root.id, wholeTree: true)
+    }
+
+    public func clearStopError() {
+        stopError = nil
+    }
+
+    private func cancel(_ runID: RunID, wholeTree: Bool) async {
+        guard !stopping.contains(runID) else { return }
+        stopping.insert(runID)
+        stopError = nil
+        defer { stopping.remove(runID) }
+        do {
+            _ = try await client.cancelRun(runID, wholeTree: wholeTree)
+        } catch {
+            guard let failure = ConversationErrors.from(error) else { return }
+            // 已经结束了（冲突）：刷新就能看到。
+            if !failure.isConflict { stopError = failure }
+        }
+        await load()
+    }
 
     public func load() async {
         guard !isLoading else { return }

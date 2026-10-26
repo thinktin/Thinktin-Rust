@@ -796,7 +796,7 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
             let title = plan.title.trimmingCharacters(in: .whitespacesAndNewlines)
             let goal = plan.goal.trimmingCharacters(in: .whitespacesAndNewlines)
             try s.checkPlan(title: title, goal: goal, policy: plan.policy, catchUp: plan.catchUp, steps: plan.steps)
-            guard !plan.triggers.isEmpty else { throw MockErrors.invalid("a plan needs at least one trigger") }
+            // 和服务端一样可以没有触发规则（团队建的流水线先建好，再去计划详情加）。
             guard plan.triggers.count <= Plan.maxTriggers else {
                 throw MockErrors.invalid("at most \(Plan.maxTriggers) triggers")
             }

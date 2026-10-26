@@ -554,7 +554,7 @@ struct MockPlanTests {
         #expect(await apiCode { try await client.deletePlan(plan.id) } == .notFound)
     }
 
-    @Test("新建的校验：标题、触发器、实例")
+    @Test("新建的校验：标题、实例；触发规则可以没有")
     func validation() async {
         let client = makeClient()
         let cron = Schedule.cron(expression: "0 8 * * *", timeZone: "Asia/Shanghai")
@@ -562,10 +562,9 @@ struct MockPlanTests {
             await apiCode {
                 _ = try await client.createPlan(NewPlan(instanceID: writer, title: " ", goal: "g", triggers: [cron]))
             } == .invalid)
-        #expect(
-            await apiCode {
-                _ = try await client.createPlan(NewPlan(instanceID: writer, title: "t", goal: "g", triggers: []))
-            } == .invalid)
+        // 没有触发规则也能建（和服务端一样）。
+        let bare = try? await client.createPlan(NewPlan(instanceID: writer, title: "t", goal: "g", triggers: []))
+        #expect(bare?.triggers.isEmpty == true)
         #expect(
             await apiCode {
                 _ = try await client.createPlan(NewPlan(instanceID: "missing", title: "t", goal: "g", triggers: [cron]))

@@ -323,7 +323,8 @@ public enum PlanTextProblem: Hashable, Sendable {
         text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    static func length(_ text: String) -> Int {
+    /// 计入上限的字数（页面上的“12/100”）。
+    public static func length(_ text: String) -> Int {
         normalized(text).unicodeScalars.count
     }
 

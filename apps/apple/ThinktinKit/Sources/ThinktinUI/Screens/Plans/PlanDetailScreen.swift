@@ -94,6 +94,10 @@ private struct PlanDetailContent: View {
         .onChange(of: app.resubscribeRequest) {
             Task { await model.load() }
         }
+        .onChange(of: router.topRoute) {
+            // 从流水线编辑器（压栈的页面）回来：步骤可能改了。
+            if router.topRoute == .plan(model.planID) && model.hasLoaded { Task { await model.reloadPlan() } }
+        }
         .onChange(of: model.isDeleted) {
             if model.isDeleted { leave() }
         }
