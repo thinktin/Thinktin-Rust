@@ -4,7 +4,7 @@
 //! - [`DesktopTokens`]：这台电脑的访问令牌（App 用 client-core 的 `ThinktinClient` 管会话，刷新也在那边）；
 //! - [`NativeTools`]：截图、键鼠、打开应用这些要用 macOS 系统接口的工具（14.3、14.4），文件和命令由 [`FileTools`] 做；
 //! - [`PairingSigner`]：电脑的配对密钥（钥匙串 / Secure Enclave，14.8）；
-//! - [`DesktopObserver`]：连接状态、配对进度、停下的原因（菜单栏的“正在被控制”、配对界面）。
+//! - [`DesktopObserver`]：连接状态、配对进度、停下的原因、正在执行的工具（菜单栏的“正在被控制”、配对界面）。
 //!
 //! 和 client-core 打进同一个库（App 链接 `libdesktop`，绑定按库生成，两个模块都有）。回调在后台线程上，
 //! 界面更新要切回主线程。
@@ -177,6 +177,8 @@ pub trait DesktopObserver: Send + Sync {
     fn on_pairing(&self, state: PairingState);
     /// [`DesktopService::start`] 之后服务停了。
     fn on_stopped(&self, reason: StopReason);
+    /// 正在执行的工具（菜单栏的“正在被控制”）；都结束了是 `None`。等手机批准的不算。
+    fn on_activity(&self, tool: Option<String>);
 }
 
 struct Tokens(Arc<dyn DesktopTokens>);
@@ -296,6 +298,14 @@ impl DesktopService {
             while pairing.changed().await.is_ok() {
                 let now = pairing.borrow_and_update().clone();
                 to_app.on_pairing(now.into());
+            }
+        });
+        let mut activity = desktop.watch_activity();
+        let to_app = observer.clone();
+        rt.spawn(async move {
+            while activity.changed().await.is_ok() {
+                let tool = activity.borrow_and_update().tool.clone();
+                to_app.on_activity(tool);
             }
         });
         Ok(Arc::new(Self {

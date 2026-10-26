@@ -6,7 +6,8 @@
 
     @testable import ThinktinDesktopAdapter
 
-    /// 拿不到令牌的服务（中继地址是关着的端口）：一直重连，直到 stop。
+    /// 拿不到令牌的服务（中继地址是关着的端口）：一直重连，直到 stop。令牌过 0.2 秒才报错：马上报错时“正在连接”一闪
+    /// 就过（中继的状态只留最新的），测试看不到。
     private struct NoTokens: Error {}
 
     private struct Tools: ComputerNativeTools {
@@ -28,7 +29,10 @@
             return try DesktopServiceHost(
                 relayURL: "ws://127.0.0.1:9/v1/connect", desktopID: "0192f3a0-0000-7000-8000-0000000000aa",
                 appVersion: "1.0", dataDirectory: dir, homeDirectory: dir,
-                accessToken: { _ in throw NoTokens() }, native: Tools(), pairingKey: BadKey())
+                accessToken: { _ in
+                    try await Task.sleep(nanoseconds: 200_000_000)
+                    throw NoTokens()
+                }, native: Tools(), pairingKey: BadKey())
         }
 
         @Test("开始、停止：状态经事件流回来；没配对、没授权；坏的密钥出不了二维码")

@@ -150,6 +150,39 @@ pub enum Status {
     Connected,
 }
 
+/// 正在这台电脑上执行的工具（App 的“正在被控制”提示）。等手机批准的不算，批准了开始执行才算。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Activity {
+    /// 正在执行的调用数。
+    pub running: u32,
+    /// 最近开始的那个工具；都结束了是 `None`。
+    pub tool: Option<String>,
+}
+
+/// 执行期间计数：结束（包括调用被取消、连接断了）时减回去。
+struct Running<'a>(&'a watch::Sender<Activity>);
+
+impl<'a> Running<'a> {
+    fn start(activity: &'a watch::Sender<Activity>, tool: &str) -> Self {
+        activity.send_modify(|a| {
+            a.running += 1;
+            a.tool = Some(tool.to_owned());
+        });
+        Self(activity)
+    }
+}
+
+impl Drop for Running<'_> {
+    fn drop(&mut self) {
+        self.0.send_modify(|a| {
+            a.running = a.running.saturating_sub(1);
+            if a.running == 0 {
+                a.tool = None;
+            }
+        });
+    }
+}
+
 /// 一次连接为什么结束。
 #[derive(Debug)]
 enum SessionEnd {
@@ -178,6 +211,7 @@ struct Inner {
     offer: Mutex<Option<Offer>>,
     pairing: watch::Sender<PairingStatus>,
     status: watch::Sender<Status>,
+    activity: watch::Sender<Activity>,
     stop: watch::Sender<bool>,
 }
 
@@ -229,6 +263,7 @@ impl Desktop {
                 offer: Mutex::new(None),
                 pairing: watch::channel(PairingStatus::Idle).0,
                 status: watch::channel(Status::Offline).0,
+                activity: watch::channel(Activity::default()).0,
                 stop: watch::channel(false).0,
             }),
         })
@@ -318,6 +353,11 @@ impl Desktop {
     /// 状态变化（App 显示“正在被控制”、断线提示）。
     pub fn watch_status(&self) -> watch::Receiver<Status> {
         self.inner.status.subscribe()
+    }
+
+    /// 正在执行的工具（App 的“正在被控制”提示）。
+    pub fn watch_activity(&self) -> watch::Receiver<Activity> {
+        self.inner.activity.subscribe()
     }
 
     /// 让 [`Desktop::run`] 断开连接、返回。
@@ -572,7 +612,10 @@ impl Desktop {
             }
         };
         info!(call = %id, tool, ?decision, "running a tool on this computer");
-        let result = inner.backend.call(tool, &arguments).await;
+        let result = {
+            let _running = Running::start(&inner.activity, tool);
+            inner.backend.call(tool, &arguments).await
+        };
         let detail = result.is_error.then(|| {
             result
                 .content

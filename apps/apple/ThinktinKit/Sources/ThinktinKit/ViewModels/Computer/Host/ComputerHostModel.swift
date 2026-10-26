@@ -16,6 +16,8 @@ public final class ComputerHostModel {
     public private(set) var grants: [CapabilityGrant] = []
     /// 服务停下的原因（用户自己停的不算）。
     public private(set) var stopReason: HostStopReason?
+    /// agent 正在这台电脑上执行的工具（菜单栏的“正在被控制”，14.6）；没有在执行时是 nil。
+    public private(set) var activeTool: String?
     /// 用户想让它连着（点了开始，没点停止）。
     public private(set) var isEnabled = false
     public var error: ComputerHostError?
@@ -73,7 +75,7 @@ public final class ComputerHostModel {
         switch event {
         case .connection(let c):
             connection = c
-            if c == .connected { stopReason = nil }
+            if c == .connected { stopReason = nil } else { activeTool = nil }
         case .pairing(let p):
             pairing = p
             if case .paired = p {
@@ -83,7 +85,10 @@ public final class ComputerHostModel {
         case .stopped(let reason):
             connection = .offline
             isEnabled = false
+            activeTool = nil
             stopReason = reason == .requested ? nil : reason
+        case .activity(let tool):
+            activeTool = tool
         }
     }
 
@@ -118,6 +123,7 @@ public final class ComputerHostModel {
     /// 退出登录、账号冻结时停下：不算用户点了停止（不改记下的开关）。
     public func suspend() {
         isEnabled = false
+        activeTool = nil
         host.stop()
     }
 

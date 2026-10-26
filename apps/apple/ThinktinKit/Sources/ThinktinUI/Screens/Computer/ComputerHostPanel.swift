@@ -75,6 +75,7 @@ public struct ComputerHostPanel: View {
 
     private var tone: StatusTone {
         if model.stopReason != nil { return .failure }
+        if model.activeTool != nil { return .active }
         switch model.connection {
         case .offline: return .muted
         case .connecting: return .neutral

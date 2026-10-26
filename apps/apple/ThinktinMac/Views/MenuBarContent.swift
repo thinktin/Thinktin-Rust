@@ -3,8 +3,8 @@ import SwiftUI
 import ThinktinKit
 import ThinktinUI
 
-/// 菜单栏图标（WBS 14.6 的“正在被控制”提示）：配好了手机、连着中继时换成“电脑和手机”，手机随时能让 agent 用这台电脑。
-/// 它一直在，所以由它接打开主窗口的请求（`MacEnvironment.mainWindowRequests`）。
+/// 菜单栏图标（WBS 14.6 的“正在被控制”提示）：配好了手机、连着中继时换成“电脑和手机”，手机随时能让 agent 用这台电脑；
+/// agent 正在执行工具时换成“移动的指针”。它一直在，所以由它接打开主窗口的请求（`MacEnvironment.mainWindowRequests`）。
 struct MenuBarIcon: View {
     let environment: MacEnvironment
 
@@ -12,9 +12,13 @@ struct MenuBarIcon: View {
     @Environment(\.displayLanguage) private var language
 
     var body: some View {
-        let controllable = environment.host.model?.isControllable == true
-        Image(systemName: controllable ? "macbook.and.iphone" : "macbook")
-            .accessibilityLabel(Text(MacText.menuBarLabel(controllable: controllable, language: language)))
+        let model = environment.host.model
+        let controllable = model?.isControllable == true
+        let inUse = model?.activeTool != nil
+        Image(systemName: inUse ? "cursorarrow.motionlines" : controllable ? "macbook.and.iphone" : "macbook")
+            .accessibilityLabel(
+                Text(MacText.menuBarLabel(controllable: controllable, inUse: inUse, language: language))
+            )
             .onChange(of: environment.mainWindowRequests, initial: true) {
                 guard environment.mainWindowRequests > 0 else { return }
                 openWindow(id: MacEnvironment.mainWindowID)
@@ -167,9 +171,11 @@ struct MacPermissionsSection: View {
 
 /// 菜单栏的文案。
 enum MacText {
-    static func menuBarLabel(controllable: Bool, language: DisplayLanguage) -> String {
-        if language == .chinese { return controllable ? "ThinkTin：手机可以控制这台电脑" : "ThinkTin" }
-        return controllable ? "ThinkTin: your phone can control this Mac" : "ThinkTin"
+    static func menuBarLabel(controllable: Bool, inUse: Bool, language: DisplayLanguage) -> String {
+        let zh = language == .chinese
+        if inUse { return zh ? "ThinkTin：agent 正在使用这台电脑" : "ThinkTin: an agent is using this Mac" }
+        if controllable { return zh ? "ThinkTin：手机可以控制这台电脑" : "ThinkTin: your phone can control this Mac" }
+        return "ThinkTin"
     }
 
     static func hostUnavailable(phase: AppModel.Phase, language: DisplayLanguage) -> String {

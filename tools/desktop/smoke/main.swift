@@ -20,6 +20,7 @@ final class Observer: DesktopObserver, @unchecked Sendable {
     func onStatus(status: ConnectionStatus) { lock.withLock { events.append("status \(status)") } }
     func onPairing(state: PairingState) { lock.withLock { events.append("pairing \(state)") } }
     func onStopped(reason: StopReason) { lock.withLock { events.append("stopped \(reason)") } }
+    func onActivity(tool: String?) { lock.withLock { events.append("activity \(tool ?? "-")") } }
     var snapshot: [String] { lock.withLock { events } }
 }
 final class BadKey: PairingSigner, @unchecked Sendable {

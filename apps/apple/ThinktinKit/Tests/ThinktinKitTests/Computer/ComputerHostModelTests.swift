@@ -37,6 +37,30 @@ struct ComputerHostModelTests {
         #expect(model.connection == .offline)
     }
 
+    @Test("agent 正在执行工具：状态行说在做什么；结束、断线、停下时清掉")
+    func activity() async {
+        let host = FakeComputerHost(phone: HostPhone(deviceID: phone, publicKey: "k"))
+        let model = ComputerHostModel(host: host)
+        model.start()
+        await model.apply(.connection(.connected))
+        await model.apply(.activity("computer_screenshot"))
+        #expect(model.activeTool == "computer_screenshot")
+        #expect(ComputerHostText.status(model, language: .chinese).contains("正在使用这台电脑：截图"))
+        #expect(ComputerHostText.status(model, language: .english).contains("taking a screenshot"))
+        await model.apply(.activity(nil))
+        #expect(model.activeTool == nil)
+        #expect(ComputerHostText.status(model, language: .chinese).hasPrefix("已连接："))
+
+        await model.apply(.activity("computer_run"))
+        await model.apply(.connection(.connecting))
+        #expect(model.activeTool == nil, "断线时调用都断了")
+        await model.apply(.connection(.connected))
+        await model.apply(.activity("computer_click"))
+        await model.apply(.stopped(.replaced))
+        #expect(model.activeTool == nil)
+        #expect(ComputerHostText.toolName("computer_something", language: .chinese) == "computer_something")
+    }
+
     @Test("被中继拒绝、被顶掉：停下并说清楚，不自动重启；再开始时清掉")
     func stopReasons() async {
         let host = FakeComputerHost()

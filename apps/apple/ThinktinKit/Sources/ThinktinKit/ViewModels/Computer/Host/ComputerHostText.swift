@@ -20,9 +20,32 @@ public enum ComputerHostText {
             guard model.phone != nil else {
                 return zh ? "已连接，还没配对手机。" : "Connected. No phone is paired yet."
             }
+            if let tool = model.activeTool {
+                return zh
+                    ? "agent 正在使用这台电脑：\(toolName(tool, language: language))。点“停止”马上断开。"
+                    : "An agent is using this Mac: \(toolName(tool, language: language)). Click Stop to disconnect now."
+            }
             return zh
                 ? "已连接：agent 可以按手机给的授权使用这台电脑，高危操作要在手机上批准。"
                 : "Connected: agents can use this Mac within the access your phone grants; risky actions need your approval on the phone."
+        }
+    }
+
+    /// 正在执行的工具说成人话（菜单栏的状态行）。
+    public static func toolName(_ tool: String, language: DisplayLanguage) -> String {
+        let zh = language == .chinese
+        switch tool {
+        case "computer_screenshot": return zh ? "截图" : "taking a screenshot"
+        case "computer_click": return zh ? "点击" : "clicking"
+        case "computer_type": return zh ? "打字" : "typing"
+        case "computer_key": return zh ? "按键" : "pressing keys"
+        case "computer_open": return zh ? "打开网页或应用" : "opening a page or an app"
+        case "computer_list_dir": return zh ? "看文件夹" : "looking at a folder"
+        case "computer_read_file": return zh ? "读文件" : "reading a file"
+        case "computer_write_file": return zh ? "写文件" : "writing a file"
+        case "computer_delete": return zh ? "删除你批准的文件" : "deleting what you approved"
+        case "computer_run": return zh ? "执行你批准的命令" : "running the command you approved"
+        default: return tool
         }
     }
 

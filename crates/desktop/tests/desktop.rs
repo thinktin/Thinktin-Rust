@@ -16,7 +16,7 @@ use client_core::pairing::{
 };
 use desktop::files::FileTools;
 use desktop::{
-    Desktop, DesktopConfig, PairedPhone, PairingStatus, SoftwareKey, Status, TokenSource,
+    Activity, Desktop, DesktopConfig, PairedPhone, PairingStatus, SoftwareKey, Status, TokenSource,
 };
 use orchestrator::computer::{CallOutput, DeviceCalls};
 use p256::ecdsa::signature::Signer;
@@ -251,6 +251,7 @@ async fn ordinary_tools_need_a_capability_from_the_phone() {
     let Some(e) = env().await else { return };
     let plan = e.home.join("Documents/plan.md");
     let read = json!({ "path": plan.to_str().unwrap() });
+    let mut activity = e.desktop.watch_activity();
 
     let out = e.call("computer_read_file", read.clone()).await;
     assert!(
@@ -258,6 +259,7 @@ async fn ordinary_tools_need_a_capability_from_the_phone() {
         "{out:?}"
     );
     assert_eq!(out.device, e.mac);
+    assert!(!activity.has_changed().unwrap(), "拒绝的调用不算正在执行");
 
     let grant = CapabilityGrant {
         desktop_id: e.mac.to_string(),
@@ -290,6 +292,9 @@ async fn ordinary_tools_need_a_capability_from_the_phone() {
 
     let out = e.call("computer_read_file", read.clone()).await;
     assert_eq!((text(&out), out.is_error), ("ship it", false));
+    // 执行时报过“正在执行”，结束后回到空闲（菜单栏的“正在被控制”）。
+    assert!(activity.has_changed().unwrap());
+    assert_eq!(*activity.borrow_and_update(), Activity::default());
     let out = e
         .call(
             "computer_write_file",

@@ -187,5 +187,9 @@
         func onStopped(reason: DesktopCore.StopReason) {
             continuation.yield(.stopped(DesktopServiceHost.map(reason)))
         }
+
+        func onActivity(tool: String?) {
+            continuation.yield(.activity(tool))
+        }
     }
 #endif

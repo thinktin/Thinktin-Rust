@@ -35,6 +35,8 @@ public enum ComputerHostEvent: Hashable, Sendable {
     case connection(HostConnection)
     case pairing(HostPairing)
     case stopped(HostStopReason)
+    /// 正在执行的工具（`computer_*` 的全名）；都结束了是 nil。等手机批准的不算。
+    case activity(String?)
 }
 
 /// 配对的手机。
@@ -151,7 +153,7 @@ public final class FakeComputerHost: ComputerHost, @unchecked Sendable {
                 s.phone = HostPhone(deviceID: phoneID, publicKey: "phone-key")
                 s.grants = []
             case .stopped: s.connection = .offline
-            case .pairing: break
+            case .pairing, .activity: break
             }
         }
         continuation.yield(event)
