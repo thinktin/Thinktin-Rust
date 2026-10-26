@@ -12,7 +12,10 @@ final class AppEnvironment {
     let configuration: AppConfiguration
     let client: any ClientProtocol
     let pushRegistrar: any PushRegistrar
-    let biometricSigner: any BiometricSigner
+    /// 安全芯片里的签名密钥（12.9，配对电脑、批准电脑上的高危操作）。
+    let deviceSigner: any DeviceSigner
+    /// client-core 的配对与验签（12.9）。
+    let pairingCodec: any PairingCodec = CorePairingCodec()
     /// 全局状态和导航（登录状态、实例、角标、`router`）。深链（`onOpenURL`）、推送（12.8，`AppDelegate`）都交给它。
     /// 启动、登录后按设置里的界面语言（`SettingsPreferences.shared`，12.12）换请求语言、同步服务端的用户语言。
     let appModel: AppModel
@@ -30,12 +33,12 @@ final class AppEnvironment {
         notifications: (any DeliveredNotifications)? = nil,
         widgets: (any WidgetSnapshotSink)? = nil,
         liveActivities: SystemLiveActivities? = nil,
-        biometricSigner: any BiometricSigner = UnavailableBiometricSigner()
+        deviceSigner: any DeviceSigner = SecureEnclaveSigner()
     ) {
         self.configuration = configuration
         self.client = client
         self.pushRegistrar = pushRegistrar
-        self.biometricSigner = biometricSigner
+        self.deviceSigner = deviceSigner
         self.appModel = AppModel(
             client: client, preferences: .shared, notifications: notifications, widgets: widgets,
             liveActivities: liveActivities)
@@ -43,7 +46,7 @@ final class AppEnvironment {
     }
 
     /// 正式运行用的装配：推送用系统的通知中心（12.8）；主屏小组件的快照写进 App Group（12.20）；实时活动用 ActivityKit
-    /// （12.10）；签名（12.9）先用空实现。
+    /// （12.10）；签名用 Secure Enclave（12.9）。
     static func live(_ configuration: AppConfiguration = .current) -> AppEnvironment {
         log.info(
             "client: \(configuration.client.rawValue, privacy: .public), api: \(configuration.baseURL.absoluteString, privacy: .public)"

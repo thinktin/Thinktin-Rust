@@ -25,3 +25,25 @@ public func SecItemCopyMatching(_ query: CFDictionary, _ result: UnsafeMutablePo
 public func SecItemAdd(_ attributes: CFDictionary, _ result: UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus { 0 }
 public func SecItemUpdate(_ query: CFDictionary, _ attributesToUpdate: CFDictionary) -> OSStatus { 0 }
 public func SecItemDelete(_ query: CFDictionary) -> OSStatus { 0 }
+
+// Secure Enclave 的访问控制（12.9）。
+public let kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly: CFString = "akpu"
+
+public final class SecAccessControl: @unchecked Sendable {}
+public final class CFError {}
+public typealias CFAllocator = AnyObject
+
+public struct SecAccessControlCreateFlags: OptionSet, Sendable {
+    public let rawValue: UInt
+    public init(rawValue: UInt) { self.rawValue = rawValue }
+    public static let userPresence = SecAccessControlCreateFlags(rawValue: 1 << 0)
+    public static let biometryAny = SecAccessControlCreateFlags(rawValue: 1 << 1)
+    public static let biometryCurrentSet = SecAccessControlCreateFlags(rawValue: 1 << 3)
+    public static let devicePasscode = SecAccessControlCreateFlags(rawValue: 1 << 4)
+    public static let privateKeyUsage = SecAccessControlCreateFlags(rawValue: 1 << 30)
+}
+
+public func SecAccessControlCreateWithFlags(
+    _ allocator: CFAllocator?, _ protection: CFString, _ flags: SecAccessControlCreateFlags,
+    _ error: UnsafeMutablePointer<Unmanaged<CFError>?>?
+) -> SecAccessControl? { SecAccessControl() }

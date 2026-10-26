@@ -1,6 +1,7 @@
 // swift-tools-version: 6.0
 // Linux 上给 ThinktinUI、App target 和小组件扩展做类型检查的包（tools/apple/uicheck/run.sh）：SwiftUI / UIKit / AppKit / Security /
-// OSLog / Charts / UserNotifications / WidgetKit / AppIntents / ActivityKit 用桩模块代替。
+// OSLog / Charts / UserNotifications / WidgetKit / AppIntents / ActivityKit / LocalAuthentication / CryptoKit
+// 用桩模块代替。
 import PackageDescription
 import Foundation
 
@@ -15,9 +16,12 @@ var targets: [Target] = [
     .target(name: "Charts", dependencies: ["SwiftUI"], path: "Stubs/Charts"),
     // 通知中心的桩（12.8 推送、12.12 读通知权限）。
     .target(name: "UserNotifications", path: "Stubs/UserNotifications"),
+    // 本机验证的桩（12.5 批准前、12.9 签名前）。
+    .target(name: "LocalAuthentication", path: "Stubs/LocalAuthentication"),
     .target(name: "ThinktinKit", path: "Gen/ThinktinKit"),
     .target(
-        name: "ThinktinUI", dependencies: ["ThinktinKit", "SwiftUI", "Charts", "UserNotifications"], path: "Gen/ThinktinUI"),
+        name: "ThinktinUI", dependencies: ["ThinktinKit", "SwiftUI", "Charts", "UserNotifications", "LocalAuthentication"],
+        path: "Gen/ThinktinUI"),
     .testTarget(name: "ThinktinUITests", dependencies: ["ThinktinUI", "ThinktinKit", "SwiftUI"], path: "Gen/ThinktinUITests"),
 ]
 var dependencies: [Package.Dependency] = []
@@ -31,6 +35,8 @@ if withApp {
         .target(name: "ActivityKit", path: "Stubs/ActivityKit"),
         .target(name: "WidgetKit", dependencies: ["SwiftUI", "ActivityKit"], path: "Stubs/WidgetKit"),
         .target(name: "AppIntents", path: "Stubs/AppIntents"),
+        // Secure Enclave 的签名密钥（12.9）。
+        .target(name: "CryptoKit", dependencies: ["Security", "LocalAuthentication"], path: "Stubs/CryptoKit"),
         .target(
             name: "ThinktinCoreAdapter",
             dependencies: ["ThinktinKit", .product(name: "ThinktinCore", package: "ThinktinCore")],
@@ -39,7 +45,7 @@ if withApp {
             name: "Thinktin",
             dependencies: [
                 "ThinktinKit", "ThinktinUI", "ThinktinCoreAdapter", "SwiftUI", "UIKit", "Security", "OSLog",
-                "UserNotifications", "WidgetKit", "AppIntents", "ActivityKit",
+                "UserNotifications", "WidgetKit", "AppIntents", "ActivityKit", "CryptoKit", "LocalAuthentication",
             ],
             path: "Gen/Thinktin"),
         .executableTarget(

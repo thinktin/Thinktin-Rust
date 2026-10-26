@@ -57,7 +57,7 @@ Linux 上 `tools/client-core/build-linux-swift.sh target/linux`（本机 `libcli
 | 视图模型 | `ThinktinKit/ViewModels` | `@Observable` 类，持有 `ClientProtocol`，暴露界面状态；不 import SwiftUI | 任何平台 |
 | 适配层 | `ThinktinCoreAdapter` | `CoreClient: ClientProtocol`，包装 `ThinktinClient`；`EventListener` 桥接；`KeychainSessionStore` 在 App 的 Platform 里 | 任何平台（Linux 用 .so） |
 | 界面 | `ThinktinUI` | 设计令牌、通用组件、各页面；只依赖视图模型 | 仅 Apple |
-| 平台层 | `Thinktin/Platform` | 系统能力的实现，注入给视图模型（协议化：`PushRegistrar`、`BiometricSigner`、`LiveActivityController`） | 仅 iOS |
+| 平台层 | `Thinktin/Platform` | 系统能力的实现，注入给视图模型（协议化：`PushRegistrar`、`DeviceSigner`（Secure Enclave）、`LiveActivityControlling`） | 仅 iOS |
 
 ## 4. 设计令牌（参考 Claude iOS App）
 
