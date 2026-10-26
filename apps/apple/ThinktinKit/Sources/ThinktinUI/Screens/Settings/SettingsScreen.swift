@@ -53,6 +53,10 @@ private struct SettingsContent: View {
                     }
                 }
             }
+            // 实时活动（12.10，只在支持的设备上有）。
+            if let live = app.liveActivities {
+                LiveActivitySettingsSection(model: live)
+            }
             SettingsFootnote(text: model.appInfo.footer(language))
         }
         .settingsNavigationTitle(AppRoute.settings.title(language))

@@ -29,7 +29,8 @@ apps/apple/
     Intents/                  快捷指令和 Siri（App Intents，12.20）
     Resources/                Assets.xcassets、Localizable.xcstrings、PrivacyInfo.xcprivacy、Info.plist 补充项
     Thinktin.entitlements
-  ThinktinWidgets/            Widget Extension（主屏、锁屏小组件，12.20；以后放实时活动 12.10）
+  ThinktinWidgets/            Widget Extension（主屏、锁屏小组件 12.20；实时活动的锁屏、灵动岛 12.10）
+  Shared/                     App 和扩展共用的源文件（实时活动属性 `RunActivityAttributes`）
   ThinktinKit/                Swift Package（iOS / macOS 共享）
     Package.swift
     Sources/ThinktinKit/      纯 Swift：Models、Client（ClientProtocol、MockClient）、Navigation（路由、深链）、ViewModels、
@@ -186,6 +187,29 @@ docs/i18n.md 第 3 节“不认识的按状态给通用文案”）：404 / 410 
 - **没做的**：控制中心的“全部停止”（iOS 18 的 `ControlWidget`，按钮的意图在扩展的进程里跑，要把会话放进共享的 Keychain 访问组、
   扩展里另建客户端，等最低版本升到 iOS 18 或真要做时再说）；分享扩展（docs/ios-packages.md 12.20 一节提过，WBS 没列）。
 
+## 6.4 实时活动（12.10）
+
+约定见 backend-core 的 docs/live-activities.md（类型名 `RunActivityAttributes`、驼峰键名、Unix 秒）。
+
+- **属性**：`apps/apple/Shared/RunActivityAttributes.swift`，App 和 `ThinktinWidgets` 两个 target 都编它（project.yml 的
+  `sources` 里都有 `Shared`）；`ContentState` 就是 ThinktinKit 的 `RunActivityContentState`。App 的 Info.plist 有
+  `NSSupportsLiveActivities`。
+- **逻辑**在 ThinktinKit 的 `LiveActivityModel`（`AppModel.liveActivities`，Linux 上有测试），系统那一侧藏在
+  `LiveActivityControlling` 后面；App 的 `SystemLiveActivities` 用 ActivityKit 实现它，并把推送令牌（`pushTokenUpdates`）、
+  用户划掉（`activityStateUpdates`）、远程开启的新活动（`activityUpdates`）、推送开启令牌（iOS 17.2 起）转给模型。
+  - 自己发的任务（`ObservedClient` 看到 `sendMessage` 成功，报 `ClientActivity.runStarted`）自动开，设置里能关；运行页上
+    “在锁屏上显示”手动开。只开根运行。
+  - 拿到令牌就 `registerLiveActivity`；服务端拒绝（运行结束 10 分钟以上、不是自己的）就在本地马上结束。用户划掉了
+    `endLiveActivity`。启动、回到前台（`AppModel.sceneDidBecomeActive`）、登录后 `resume()`：对一遍开着的、令牌再报一次。
+  - 前台跟事件流（每个有实时活动的实例一条）：状态马上变，每个工具调用加一步（子运行的步数等后台推送，推过来的数是准的），
+    运行结束在本地结束；进后台（`sceneDidEnterBackground`）停掉，靠后台推送。
+  - 设置里“计划运行时也显示”（默认关）：打开才把推送开启令牌报给服务端，关掉时清掉；报过的记在 `UserDefaults`，不重报，
+    失败了下次 `resume` 再报。
+  - 退出登录、换账号：开着的都在本地马上结束（标题是上一个账号的实例名）。
+- **界面**（`ThinktinWidgets/RunLiveActivity.swift`）：锁屏横幅和灵动岛只有实例名、状态（和对话里的状态行同一套说法，
+  `LiveActivityText`）、步数、耗时（还在跑的用 `Text(timerInterval:)`，不用推送也会走）；等审批、key 要处理时图标是橙色。
+  点开去运行详情。
+
 ## 6.2 离线时每个页面怎么显示
 
 client-core 只缓存实例、运行、事件、收件箱（cache.rs 的几张表）。所有页面用同一个离线横幅（`AppShell` 统一放在页面顶部，
@@ -214,7 +238,7 @@ client-core 只缓存实例、运行、事件、收件箱（cache.rs 的几张�
 - 代码风格：`swift format`（Swift 6 工具链自带），配置在 `apps/apple/.swift-format`（App 和 ThinktinKit 共用，4 格缩进、120 列、
   其余是 swift-format 6.2 的默认规则全量导出）。CI 跑严格模式的 lint，**提交前先 `swift format -i -r apps/apple`**。
 - **Linux 上检查界面代码**：`tools/apple/uicheck/run.sh`（`appkit` 查 macOS 路径，`test` 顺带跑 ThinktinUITests；UIKit 版连 App target 和
-  小组件扩展一起查）。SwiftUI、UIKit、AppKit、Security、OSLog、UserNotifications、Charts、WidgetKit、AppIntents 换成桩模块（签名照 iOS 17 / macOS 14 SDK），能发现类型错误和并发检查问题，代替不了 macOS CI 的真实编译。
+  小组件扩展一起查）。SwiftUI、UIKit、AppKit、Security、OSLog、UserNotifications、Charts、WidgetKit、AppIntents、ActivityKit 换成桩模块（签名照 iOS 17 / macOS 14 SDK），能发现类型错误和并发检查问题，代替不了 macOS CI 的真实编译。
   桩模块缺 API 时照 Apple 文档补进 `tools/apple/uicheck/Stubs/`，不要为了过检查改 App 代码。写完界面推送前跑一遍。
 
 ## 8. 工作包与开发顺序
@@ -250,7 +274,7 @@ client-core 只缓存实例、运行、事件、收件箱（cache.rs 的几张�
 | 12.18 | `ViewModels/Artifacts/` | `Screens/Artifacts/` |
 | 12.21 | `ViewModels/Search/` | `Screens/Search/` |
 | 12.20 | `ViewModels/Widgets/`（快照、`QuickActions`） | App 的 `Intents/`、`Platform/WidgetSnapshotWriter.swift`；`ThinktinWidgets/`（Widget Extension） |
-| 12.10 | — | `ThinktinWidgets/`（实时活动和小组件同一个扩展） |
+| 12.10 | `ViewModels/LiveActivities/`（`LiveActivityModel`、`LiveActivityText`） | `Screens/Settings/LiveActivitySettingsSection.swift`（设置里的一组、运行页的按钮）；App 的 `Platform/SystemLiveActivities.swift`、`Shared/`；`ThinktinWidgets/RunLiveActivity.swift` |
 
 每个工作包的测试放在对应的 `Tests/ThinktinKitTests/<功能>/`（视图模型，Linux 能跑）和 `Tests/ThinktinUITests/<功能>/`（只在 macOS 跑）。
 

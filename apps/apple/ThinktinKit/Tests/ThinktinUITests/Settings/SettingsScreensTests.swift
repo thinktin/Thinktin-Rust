@@ -25,6 +25,18 @@ struct SettingsScreensTests {
         layoutBoth(SettingsDestination(route: .licenses).environment(\.licensesDirectory, nil))
     }
 
+    @Test("实时活动（12.10）：设置里的一组（含系统设置里关了）、运行页的按钮")
+    func liveActivities() async throws {
+        let mock = ShellPreviewClients.signedIn()
+        let model = LiveActivityModel(client: mock, system: NoLiveActivities(), defaults: nil)
+        layoutBoth(LiveActivitySettingsSection(model: model), client: mock)
+        await model.resume()
+        #expect(model.isSystemDisabled)
+        layoutBoth(LiveActivitySettingsSection(model: model), client: mock)
+        let run = try await mock.getRun(DemoData.postRunID)
+        layoutBoth(LiveActivityRunButton(model: model, run: run, title: "写手"), client: mock)
+    }
+
     @Test("子页面：外观、语言（含没同步上）")
     func displayPages() async {
         layoutBoth(AppearanceSettingsView(preferences: SettingsPreviewSupport.preferences(appearance: .dark)))
@@ -80,4 +92,13 @@ struct SettingsScreensTests {
         #expect(!SystemNotificationPermission.isAppBundle(URL(fileURLWithPath: "/usr/bin"), identifier: "a.b"))
         #expect(await FixedNotificationPermission(.denied).currentPermission() == .denied)
     }
+}
+
+/// 系统设置里关掉了实时活动的设备。
+private struct NoLiveActivities: LiveActivityControlling {
+    func areActivitiesEnabled() async -> Bool { false }
+    func openActivities() async -> [LiveActivityRun] { [] }
+    func start(_ activity: LiveActivityRun) async -> Bool { false }
+    func update(runID: RunID, state: RunActivityContentState) async {}
+    func end(runID: RunID, state: RunActivityContentState?, immediately: Bool) async {}
 }

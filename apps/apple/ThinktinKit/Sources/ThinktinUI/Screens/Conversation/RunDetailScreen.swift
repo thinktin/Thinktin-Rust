@@ -145,6 +145,11 @@ private struct RunDetailContent: View {
                 }
             }
         }
+        // 实时活动（12.10，只在支持的设备上有）。
+        if let live = app.liveActivities {
+            LiveActivityRunButton(
+                model: live, run: run, title: app.instances.first { $0.id == run.instanceID }?.name ?? AppInfo.appName)
+        }
         if let process = model.process {
             ForEach(pending) { item in
                 if case .approval(let card) = item.content {
