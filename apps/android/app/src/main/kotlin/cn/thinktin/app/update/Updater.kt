@@ -107,20 +107,26 @@ class Updater(
     val updateState: StateFlow<UpdateState> = state.asStateFlow()
     private var job: Job? = null
 
+    /** 最近一次检查是自动的（[checkIfDue]）：只有自动检查发现的新版本才弹提示，手动检查的结果显示在发起的页面上。 */
+    private var automatic = false
+
     /** 自动检查发现的、用户还没点过“以后再说”的新版本（根界面弹提示）。 */
     val shouldPrompt: Boolean
-        get() = (state.value as? UpdateState.Available)?.manifest?.versionCode?.let { it != prefs.dismissedVersion } == true
+        get() = automatic &&
+            (state.value as? UpdateState.Available)?.manifest?.versionCode?.let { it != prefs.dismissedVersion } == true
 
     /** 手动检查（设置 → 检查更新、升级页）。正在检查、下载时什么都不做。 */
     fun check() {
         if (job?.isActive == true) return
+        automatic = false
         job = scope.launch { checkNow() }
     }
 
     /** 自动检查：离上次检查超过一天才查。 */
     fun checkIfDue() {
-        if (clock() - prefs.lastCheckMs < DAY_MS) return
-        check()
+        if (clock() - prefs.lastCheckMs < DAY_MS || job?.isActive == true) return
+        automatic = true
+        job = scope.launch { checkNow() }
     }
 
     internal suspend fun checkNow() {

@@ -80,9 +80,10 @@ class AppRootTest {
         waitFor(hasText("请升级"))
         compose.onNode(hasText("当前版本太旧，请更新 App。")).assertIsDisplayed()
         compose.onAllNodes(hasText("最近运行")).assertCountEquals(0)
-        // 按钮先占位（13.12 接应用内更新）。
-        compose.onNode(hasText("更新 App")).performClick()
-        waitFor(hasText("应用内更新还没上线", substring = true))
+        // 应用商店的包：去商店的详情页（13.12）。
+        compose.onNode(hasText("去应用商店更新")).performClick()
+        val intent = org.robolectric.Shadows.shadowOf(app).nextStartedActivity
+        assertEquals("market://details?id=cn.thinktin.app", intent.dataString)
     }
 
     @Test

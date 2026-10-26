@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import cn.thinktin.app.settings.AppLanguage
 import cn.thinktin.app.settings.AppSettingsRepository
 import cn.thinktin.app.ui.approval.ApprovalGate
+import cn.thinktin.app.update.Updater
 import cn.thinktin.data.core.AcceptLanguage
 import cn.thinktin.data.mock.MockThinktinService
 import cn.thinktin.data.model.AgentInfo
@@ -166,6 +167,8 @@ fun testContainer(
     approvalGate: ApprovalGate? = null,
     /** 已经同意过隐私政策（默认是：大多数测试不看首次启动的隐私政策页）。 */
     privacyAccepted: Boolean = true,
+    /** 应用内更新（官网安装包才有；默认没有，和测试跑的 cn 渠道一样）。 */
+    updater: Updater? = null,
 ): AppContainer {
     val store = PreferenceDataStoreFactory.create(
         scope = CoroutineScope(Dispatchers.IO + SupervisorJob()),
@@ -184,5 +187,6 @@ fun testContainer(
         languageTags = languageTags ?: { AcceptLanguage.tags(it.tag) },
         systemLanguage = { systemLanguage },
         approvalGate = approvalGate,
+        updater = updater,
     )
 }
