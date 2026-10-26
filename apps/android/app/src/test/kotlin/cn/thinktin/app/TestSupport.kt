@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import cn.thinktin.app.settings.AppLanguage
 import cn.thinktin.app.settings.AppSettingsRepository
 import cn.thinktin.app.ui.approval.ApprovalGate
+import cn.thinktin.app.progress.ProgressNotifier
 import cn.thinktin.app.update.Updater
 import cn.thinktin.data.core.AcceptLanguage
 import cn.thinktin.data.mock.MockThinktinService
@@ -169,6 +170,8 @@ fun testContainer(
     privacyAccepted: Boolean = true,
     /** 应用内更新（官网安装包才有；默认没有，和测试跑的 cn 渠道一样）。 */
     updater: Updater? = null,
+    /** 常驻通知（默认什么都不发）。 */
+    progressNotifier: ProgressNotifier? = null,
 ): AppContainer {
     val store = PreferenceDataStoreFactory.create(
         scope = CoroutineScope(Dispatchers.IO + SupervisorJob()),
@@ -188,5 +191,6 @@ fun testContainer(
         systemLanguage = { systemLanguage },
         approvalGate = approvalGate,
         updater = updater,
+        progressNotifier = progressNotifier,
     )
 }
