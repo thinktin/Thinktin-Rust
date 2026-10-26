@@ -3,8 +3,8 @@ import ThinktinKit
 
 // 计划管理（WBS 12.6）几个页面共用的小组件。名字都带 Plan / Plans 前缀，不和别的功能重名。
 //
-// 分组的卡片、行、小标题、提示、加载中、页面版式沿用 12.3 的 `AgentsGroup`、`AgentsRow`、`AgentsSectionHeader`、
-// `AgentsNotice`、`AgentsLoadingView`、`agentsPageLayout()`（同一个模块里的通用写法，不另造一套）。
+// 分组的卡片、行、小标题、提示、加载中、页面版式沿用 12.3 的 `GroupedSection`、`ListRow`、`SectionHeader`、
+// `InlineNotice`、`LoadingStateView`、`pageLayout()`（同一个模块里的通用写法，不另造一套）。
 
 extension PlanStatus {
     /// 状态的色调：待确认 `warning`，暂停 `inkTertiary`，规则失效 `danger`，按时运行 `accent`，不会再运行 `inkSecondary`。
@@ -206,7 +206,7 @@ struct PlanMetaLine: View {
 
     var body: some View {
         let status = plan.status
-        AgentsTagRow {
+        TagChipRow {
             PlanStatusLabel(status: status)
             Text(instanceName)
                 .typography(.footnote)
@@ -296,29 +296,29 @@ struct PlanPolicyRows: View {
     var body: some View {
         let zh = language == .chinese
         let policy = plan.policy
-        AgentsGroup {
-            AgentsRow(
+        GroupedSection {
+            ListRow(
                 systemImage: "checkmark.shield", title: zh ? "预授权的工具" : "Pre-approved tools",
                 detail: PlansText.toolsSummary(policy.preauthorizedTools, language: language),
                 detailTone: policy.preauthorizedTools.contains(where: PlansText.isRiskyTool) ? .waiting : nil)
             Divider()
-            AgentsRow(
+            ListRow(
                 systemImage: "hand.raised", title: zh ? "审批" : "Approvals",
                 detail: PlansText.approvalSummary(policy, language: language))
             Divider()
-            AgentsRow(
+            ListRow(
                 systemImage: "gauge.with.dots.needle.33percent", title: zh ? "每次运行的上限" : "Per-run limits",
                 detail: PlansText.budgetSummary(policy.budget, language: language))
             Divider()
-            AgentsRow(
+            ListRow(
                 systemImage: "calendar.day.timeline.left", title: zh ? "每日 token 上限" : "Daily token limit",
                 detail: PlansText.dailyLimitSummary(policy.dailyTokenLimit, language: language))
             Divider()
-            AgentsRow(
+            ListRow(
                 systemImage: "hourglass", title: zh ? "等待" : "Waiting",
                 detail: PlansText.waitSummary(policy, language: language))
             Divider()
-            AgentsRow(
+            ListRow(
                 systemImage: "arrow.uturn.backward.circle", title: zh ? "错过的怎么补" : "Missed runs",
                 detail: PlansText.catchUpName(plan.catchUp, language: language)
                     + (PlansText.catchUpDetail(plan.catchUp, language: language).map { (zh ? "：" : ": ") + $0 } ?? ""))
@@ -399,7 +399,7 @@ struct PlanRunRow: View {
                 StatusDot(run.state)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
-                    AgentsTagRow {
+                    TagChipRow {
                         Text(run.state.localizedName(language))
                             .typography(.subheadline)
                             .foregroundStyle(Theme.ink)

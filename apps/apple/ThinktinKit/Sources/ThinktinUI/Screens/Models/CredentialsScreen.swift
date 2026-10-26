@@ -29,27 +29,27 @@ private struct CredentialsContent: View {
         let model = self.model
         ScrollView {
             VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                AgentsPageHeader(
+                PageHeader(
                     title: AppRoute.credentials.title(language),
                     message: zh
                         ? "agent 用你自己在厂商那里开的 API key 调模型，费用由厂商直接结算。key 加密保存，只显示后 4 位。"
                         : "Agents call models with API keys from your own vendor accounts, billed by the vendor directly. "
                             + "Keys are stored encrypted and only the last 4 characters are shown.")
-                if model.hasLoaded, let error = agentsVisibleError(model.error) {
+                if model.hasLoaded, let error = visibleError(model.error) {
                     ErrorBanner(error) { Task { await model.load() } }
                 }
                 if model.hasLoaded {
                     list
                 } else if model.isLoading || model.error == nil {
-                    AgentsLoadingView()
+                    LoadingStateView()
                 } else {
                     ModelsUnavailableView(error: model.error) { Task { await model.load() } }
                 }
             }
-            .agentsPageLayout()
+            .pageLayout()
         }
         .background(Theme.paper)
-        .agentsNavigationTitle(AppRoute.credentials.title(language))
+        .inlineNavigationTitle(AppRoute.credentials.title(language))
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -92,9 +92,9 @@ private struct CredentialsContent: View {
                 section(zh ? "已停用" : "Disabled", credentials: model.disabledCredentials)
             }
         }
-        AgentsSectionHeader(title: zh ? "用量" : "Usage")
-        AgentsGroup {
-            AgentsRow(
+        SectionHeader(title: zh ? "用量" : "Usage")
+        GroupedSection {
+            ListRow(
                 systemImage: "chart.bar", title: AppRoute.usage.title(language),
                 detail: zh ? "按天、实例、模型、key 看 token 用量" : "Token usage by day, instance, model and key",
                 action: { router.open(.usage) })
@@ -105,8 +105,8 @@ private struct CredentialsContent: View {
 
     private func section(_ title: String, credentials: [Credential]) -> some View {
         VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            AgentsSectionHeader(title: title)
-            AgentsGroup {
+            SectionHeader(title: title)
+            GroupedSection {
                 ForEach(credentials) { credential in
                     if credential.id != credentials.first?.id { Divider() }
                     ModelsCredentialRow(summary: model.summary(of: credential, language: language)) {

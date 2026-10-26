@@ -41,8 +41,8 @@ private struct SearchContent: View {
                         NoticeText(text: SearchText.cacheOnly(language), tone: .muted)
                     }
                     ForEach(model.groups) { group in
-                        AgentsSectionHeader(title: SearchText.groupTitle(group.kind, language: language))
-                        AgentsGroup {
+                        SectionHeader(title: SearchText.groupTitle(group.kind, language: language))
+                        GroupedSection {
                             ForEach(group.results) { result in
                                 if result.id != group.results.first?.id { Divider() }
                                 SearchResultRow(result: result) { router.open(result.route) }
@@ -57,11 +57,11 @@ private struct SearchContent: View {
                     }
                 }
             }
-            .agentsPageLayout()
+            .pageLayout()
         }
         .scrollDismissesKeyboard(.interactively)
         .background(Theme.paper)
-        .agentsNavigationTitle(AppRoute.search.title(language))
+        .inlineNavigationTitle(AppRoute.search.title(language))
         .searchable(text: $model.query, prompt: Text(SearchText.prompt(language)))
         .task {
             model.loadCache()

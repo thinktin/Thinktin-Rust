@@ -95,7 +95,7 @@ private struct LicensesContent: View {
                         ErrorBanner(error, onRetry: { Task { await model.loadAgents() } })
                     }
                 } else if model.isLoadingAgents || !model.hasLoadedAgents {
-                    AgentsLoadingView()
+                    LoadingStateView()
                 } else {
                     Text(zh ? "目录里还没有 agent。" : "No agents in the catalog yet.")
                         .typography(.footnote)
@@ -144,7 +144,7 @@ private struct LicensesContent: View {
                     count: model.inventory.map { _ in groups.reduce(0) { $0 + $1.components.count } })
                 switch model.inventoryState {
                 case .loading:
-                    AgentsLoadingView()
+                    LoadingStateView()
                 case .failed(let error):
                     Card {
                         Label(error.message(language), systemImage: "exclamationmark.triangle")

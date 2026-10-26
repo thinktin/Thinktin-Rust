@@ -2,8 +2,8 @@ import SwiftUI
 import ThinktinKit
 
 // 模型 key、路由、用量（WBS 12.4）共用的小组件。名字都带 Models 前缀，不和别的功能重名。
-// 分组、行、小标签、页头、加载中、提示条沿用 12.3 的 `AgentsGroup`、`AgentsRow`、`AgentsTag`、`AgentsPageHeader`、
-// `AgentsLoadingView`、`AgentsNotice`，勾选框沿用 12.2 的 `CheckboxRow`、红字沿用 `FieldMessage`。
+// 分组、行、小标签、页头、加载中、提示条沿用 12.3 的 `GroupedSection`、`ListRow`、`TagChip`、`PageHeader`、
+// `LoadingStateView`、`InlineNotice`，勾选框沿用 12.2 的 `CheckboxRow`、红字沿用 `FieldMessage`。
 
 /// 表单里的一个输入框：上面一行小标题，输入框（普通、密码、标识、网址、数字），下面是问题（危险色）或提示。
 struct ModelsField: View {
@@ -134,10 +134,10 @@ struct ModelsCredentialRow: View {
                     .typography(.subheadline)
                     .foregroundStyle(Theme.inkSecondary)
                     .fixedSize(horizontal: false, vertical: true)
-                AgentsTagRow {
-                    if summary.isDisabled { AgentsTag(text: summary.statusName) }
-                    AgentsTag(text: summary.dailyLimit)
-                    if let protocols = summary.protocols { AgentsTag(text: protocols) }
+                TagChipRow {
+                    if summary.isDisabled { TagChip(text: summary.statusName) }
+                    TagChip(text: summary.dailyLimit)
+                    if let protocols = summary.protocols { TagChip(text: protocols) }
                 }
                 .padding(.top, Metrics.Spacing.xxs)
             }
@@ -207,7 +207,7 @@ struct ModelsOfflineNote: View {
 #Preview("key 的一行 · 浅色中文") {
     let mock = MockClient(autoReply: false)
     VStack(spacing: Metrics.Spacing.s) {
-        AgentsGroup {
+        GroupedSection {
             ForEach(mock.state.credentials) { credential in
                 ModelsCredentialRow(summary: CredentialSummary(credential: credential, vendors: DemoData.vendors)) {}
             }
@@ -224,7 +224,7 @@ struct ModelsOfflineNote: View {
 #Preview("key 的一行 · 深色英文") {
     let mock = MockClient(autoReply: false)
     VStack(spacing: Metrics.Spacing.s) {
-        AgentsGroup {
+        GroupedSection {
             ForEach(mock.state.credentials) { credential in
                 ModelsCredentialRow(
                     summary: CredentialSummary(credential: credential, vendors: DemoData.vendors, language: .english))

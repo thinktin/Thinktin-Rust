@@ -33,7 +33,7 @@ private struct UsageContent: View {
         let model = self.model
         ScrollView {
             VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                AgentsPageHeader(
+                PageHeader(
                     title: AppRoute.usage.title(language),
                     message: zh
                         ? "模型网关记下的 token 用量，费用由厂商按你的 key 结算。"
@@ -52,7 +52,7 @@ private struct UsageContent: View {
                     }
                 }
                 .pickerStyle(.segmented)
-                if model.hasLoaded, let error = agentsVisibleError(model.error) {
+                if model.hasLoaded, let error = visibleError(model.error) {
                     ErrorBanner(error) { Task { await model.load() } }
                 }
                 if model.hasLoaded {
@@ -67,15 +67,15 @@ private struct UsageContent: View {
                         dashboard
                     }
                 } else if model.isLoading || model.error == nil {
-                    AgentsLoadingView()
+                    LoadingStateView()
                 } else {
                     ModelsUnavailableView(error: model.error) { Task { await model.load() } }
                 }
             }
-            .agentsPageLayout()
+            .pageLayout()
         }
         .background(Theme.paper)
-        .agentsNavigationTitle(AppRoute.usage.title(language))
+        .inlineNavigationTitle(AppRoute.usage.title(language))
         .refreshable { await model.load() }
         .task { await model.load() }
         .onChange(of: app.isOffline) {
@@ -88,7 +88,7 @@ private struct UsageContent: View {
         let zh = language == .chinese
         let model = self.model
         UsageTotalCard(total: model.total, period: model.period)
-        AgentsSectionHeader(title: zh ? "每天" : "Per day")
+        SectionHeader(title: zh ? "每天" : "Per day")
         Card {
             UsageChart(points: model.dayPoints, timeZone: model.timeZone)
             if let peak = model.peakDay {
@@ -97,7 +97,7 @@ private struct UsageContent: View {
                     .foregroundStyle(Theme.inkSecondary)
             }
         }
-        AgentsSectionHeader(title: zh ? "明细" : "Breakdown")
+        SectionHeader(title: zh ? "明细" : "Breakdown")
         Picker(
             zh ? "分组" : "Group by",
             selection: Binding(
@@ -112,16 +112,16 @@ private struct UsageContent: View {
             }
         }
         .pickerStyle(.segmented)
-        if let error = agentsVisibleError(model.groupError) {
+        if let error = visibleError(model.groupError) {
             ErrorBanner(error) { Task { await model.load() } }
         }
         let rows = model.rows(language: language)
         if rows.isEmpty {
             if model.isLoading {
-                AgentsLoadingView()
+                LoadingStateView()
             }
         } else {
-            AgentsGroup {
+            GroupedSection {
                 ForEach(rows) { row in
                     if row.id != rows.first?.id { Divider() }
                     UsageRowView(row: row, action: action(for: row))

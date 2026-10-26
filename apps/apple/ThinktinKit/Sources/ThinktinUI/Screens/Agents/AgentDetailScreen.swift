@@ -36,7 +36,7 @@ private struct AgentDetailContent: View {
         let model = self.model
         ScrollView {
             VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                if let error = agentsVisibleError(model.error) {
+                if let error = visibleError(model.error) {
                     ErrorBanner(error) { Task { await model.load() } }
                 }
                 if let agent = model.agent {
@@ -57,17 +57,17 @@ private struct AgentDetailContent: View {
                         router.open(.agentCatalog)
                     }
                 } else if model.isLoading || model.error == nil {
-                    AgentsLoadingView()
+                    LoadingStateView()
                 } else {
                     EmptyStateView(
                         systemImage: model.error?.isOffline == true ? "wifi.slash" : "exclamationmark.triangle",
                         title: language == .chinese ? "暂时拉不到这个 agent" : "Couldn't load this agent")
                 }
             }
-            .agentsPageLayout()
+            .pageLayout()
         }
         .background(Theme.paper)
-        .agentsNavigationTitle(model.agent == nil ? AppRoute.agent(model.agentID).title(language) : model.displayName)
+        .inlineNavigationTitle(model.agent == nil ? AppRoute.agent(model.agentID).title(language) : model.displayName)
         .refreshable { await model.load() }
         .task { await model.load() }
         .onChange(of: app.isOffline) {
@@ -151,20 +151,20 @@ private struct AgentDetailBody: View {
             versionSection
             protocolSection
             if !agent.sites.isEmpty {
-                AgentsSectionHeader(title: zh ? "能用的地区" : "Available in")
-                AgentsGroup {
-                    AgentsRow(
+                SectionHeader(title: zh ? "能用的地区" : "Available in")
+                GroupedSection {
+                    ListRow(
                         systemImage: "globe",
                         title: AgentsText.list(
                             agent.sites.map { AgentsText.siteName($0, language: language) }, language: language))
                 }
             }
             if !instances.isEmpty {
-                AgentsSectionHeader(title: zh ? "你领养的" : "Your instances")
-                AgentsGroup {
+                SectionHeader(title: zh ? "你领养的" : "Your instances")
+                GroupedSection {
                     ForEach(instances) { instance in
                         if instance.id != instances.first?.id { Divider() }
-                        AgentsRow(
+                        ListRow(
                             title: instance.name,
                             detail: AgentsText.versionLabel(instance.agentVersion) + " · "
                                 + instance.state.localizedName(language),
@@ -179,16 +179,16 @@ private struct AgentDetailBody: View {
         let zh = language == .chinese
         let proprietary = AgentsText.isProprietary(agent.license)
         return VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            AgentsSectionHeader(title: zh ? "许可证" : "License")
-            AgentsGroup {
-                AgentsRow(
+            SectionHeader(title: zh ? "许可证" : "License")
+            GroupedSection {
+                ListRow(
                     systemImage: proprietary ? "exclamationmark.shield" : "checkmark.shield",
                     title: AgentsText.licenseName(agent.license, language: language),
                     detail: agent.licenseNote)
                 if let url = agent.upstreamURL {
                     Divider()
                     Link(destination: url) {
-                        AgentsRow(
+                        ListRow(
                             systemImage: "arrow.up.right.square", title: zh ? "上游仓库" : "Upstream repository",
                             detail: url.host ?? url.absoluteString, showsChevron: false)
                     }
@@ -201,17 +201,17 @@ private struct AgentDetailBody: View {
     private var harnessSection: some View {
         let zh = language == .chinese
         return VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            AgentsSectionHeader(title: zh ? "接入方式" : "How it runs")
-            AgentsGroup {
+            SectionHeader(title: zh ? "接入方式" : "How it runs")
+            GroupedSection {
                 ForEach(agent.catalogHarnesses, id: \.self) { harness in
                     if harness != agent.catalogHarnesses.first { Divider() }
-                    AgentsRow(
+                    ListRow(
                         systemImage: "point.3.connected.trianglepath.dotted",
                         title: AgentsText.harnessName(harness, language: language),
                         detail: AgentsText.harnessDetail(harness, language: language),
                         accessory: {
                             if harness == agent.defaultHarness && agent.harnesses.count > 1 {
-                                AgentsTag(text: zh ? "默认" : "Default")
+                                TagChip(text: zh ? "默认" : "Default")
                             }
                         })
                 }
@@ -223,9 +223,9 @@ private struct AgentDetailBody: View {
         let zh = language == .chinese
         let versions = agent.catalogVersions.map(AgentsText.versionLabel)
         return VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            AgentsSectionHeader(title: zh ? "版本" : "Versions")
-            AgentsGroup {
-                AgentsRow(
+            SectionHeader(title: zh ? "版本" : "Versions")
+            GroupedSection {
+                ListRow(
                     systemImage: "shippingbox",
                     title: (zh ? "最新 " : "Latest ") + AgentsText.versionLabel(agent.catalogLatestVersion),
                     detail: zh
@@ -241,9 +241,9 @@ private struct AgentDetailBody: View {
         let zh = language == .chinese
         let needed = agent.activeProtocol.map { [$0] } ?? agent.protocols
         if !needed.isEmpty {
-            AgentsSectionHeader(title: zh ? "模型接口" : "Model API")
-            AgentsGroup {
-                AgentsRow(
+            SectionHeader(title: zh ? "模型接口" : "Model API")
+            GroupedSection {
+                ListRow(
                     systemImage: "key",
                     title: AgentsText.list(needed.map(AgentsText.protocolName), language: language),
                     detail: zh

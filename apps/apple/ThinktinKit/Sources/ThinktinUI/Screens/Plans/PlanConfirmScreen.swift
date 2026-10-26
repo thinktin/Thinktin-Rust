@@ -40,7 +40,7 @@ private struct PlanConfirmContent: View {
         let model = self.model
         ScrollView {
             VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                if let error = agentsVisibleError(model.error) {
+                if let error = visibleError(model.error) {
                     ErrorBanner(error) { Task { await model.load() } }
                 }
                 if let outcome = model.outcome {
@@ -57,17 +57,17 @@ private struct PlanConfirmContent: View {
                 } else if let plan = model.plan {
                     review(plan)
                 } else if model.isLoading || model.error == nil {
-                    AgentsLoadingView()
+                    LoadingStateView()
                 } else {
                     EmptyStateView(
                         systemImage: model.error?.isOffline == true ? "wifi.slash" : "exclamationmark.triangle",
                         title: zh ? "暂时拉不到这个计划" : "Couldn't load this plan")
                 }
             }
-            .agentsPageLayout()
+            .pageLayout()
         }
         .background(Theme.paper)
-        .agentsNavigationTitle(AppRoute.confirmPlan(model.planID).title(language))
+        .inlineNavigationTitle(AppRoute.confirmPlan(model.planID).title(language))
         .refreshable { await model.load() }
         .task { await model.load() }
         .onChange(of: app.isOffline) {
@@ -119,11 +119,11 @@ private struct PlanConfirmContent: View {
     private func review(_ plan: Plan) -> some View {
         let zh = language == .chinese
         let kind = model.reviewKind
-        AgentsPageHeader(
+        PageHeader(
             title: PlansText.reviewHeadline(kind, language: language),
             message: PlansText.reviewMessage(kind, language: language))
         if let conflict = model.conflictChanges {
-            AgentsNotice(
+            InlineNotice(
                 systemImage: "arrow.triangle.2.circlepath", tone: .waiting, text: PlansText.conflictMessage(language))
             if !conflict.isEmpty { changesCard(conflict, title: zh ? "刚才又改了" : "Just changed", plan: plan) }
         }
@@ -132,7 +132,7 @@ private struct PlanConfirmContent: View {
         }
         let blocked = blockedSteps(plan)
         if !blocked.isEmpty {
-            AgentsNotice(
+            InlineNotice(
                 systemImage: "exclamationmark.triangle", tone: .waiting,
                 text: PlanBlockedSteps.message(blocked, confirming: true, language: language))
         }
@@ -151,15 +151,15 @@ private struct PlanConfirmContent: View {
         PlanTextBlock(text: plan.goal, isAIGenerated: PlansText.isAIGenerated(.goal, in: plan))
 
         sectionTitle(zh ? "什么时候运行" : "When it runs", changed: model.isChanged(.triggers))
-        AgentsGroup {
+        GroupedSection {
             if plan.triggers.isEmpty {
-                AgentsRow(
+                ListRow(
                     systemImage: "clock.badge.questionmark", title: zh ? "没有触发规则" : "No schedule",
                     detail: zh ? "确认了也不会自动运行。" : "It won't run on its own even after you confirm.")
             }
             ForEach(plan.triggers) { trigger in
                 if trigger.id != plan.triggers.first?.id { Divider() }
-                AgentsRow(
+                ListRow(
                     systemImage: "clock", title: ScheduleDescription.describe(trigger.schedule, language: language),
                     detail: firstFire(trigger.schedule))
             }
@@ -168,7 +168,7 @@ private struct PlanConfirmContent: View {
         sectionTitle(zh ? "策略" : "Policy", changed: model.isChanged(.policy) || model.isChanged(.catchUp))
         PlanPolicyRows(plan: plan)
         if plan.policy.preauthorizedTools.contains(where: PlansText.isRiskyTool) {
-            AgentsNotice(
+            InlineNotice(
                 systemImage: "exclamationmark.shield", tone: .waiting,
                 text: zh
                     ? "预授权里有会改文件、删文件或跑命令的工具，按时运行时用到不会再问你。确认前想清楚。"
@@ -195,7 +195,7 @@ private struct PlanConfirmContent: View {
 
     private func sectionTitle(_ title: String, changed: Bool) -> some View {
         HStack(spacing: Metrics.Spacing.xs) {
-            AgentsSectionHeader(title: title)
+            SectionHeader(title: title)
             if changed {
                 PlanChangedTag()
                     .padding(.top, Metrics.Spacing.s)

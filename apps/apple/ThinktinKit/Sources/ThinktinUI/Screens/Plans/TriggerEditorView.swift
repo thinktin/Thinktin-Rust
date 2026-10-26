@@ -65,11 +65,11 @@ struct TriggerEditorView: View {
                 if draft.kind != .once && !(draft.kind == .rrule && draft.rruleHasOwnStart) { timeZoneRow }
                 preview(problem: problem)
             }
-            .agentsPageLayout()
+            .pageLayout()
         }
         .scrollDismissesKeyboard(.interactively)
         .background(Theme.paper)
-        .agentsNavigationTitle(title)
+        .inlineNavigationTitle(title)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 if let onCancel {
@@ -138,7 +138,7 @@ struct TriggerEditorView: View {
 
     private var timeRow: some View {
         let zh = language == .chinese
-        return AgentsGroup {
+        return GroupedSection {
             HStack {
                 Label(zh ? "时间" : "Time", systemImage: "clock")
                     .typography(.body)
@@ -156,7 +156,7 @@ struct TriggerEditorView: View {
     private var onceRow: some View {
         let zh = language == .chinese
         return VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
-            AgentsGroup {
+            GroupedSection {
                 DatePicker(zh ? "日期和时间" : "Date and time", selection: $draft.onceAt, in: now...)
                     .typography(.body)
                     .padding(.horizontal, Metrics.Spacing.m)
@@ -292,7 +292,7 @@ struct TriggerEditorView: View {
                     : "An iCalendar RRULE, for example every other Monday: FREQ=WEEKLY;INTERVAL=2;BYDAY=MO. "
                         + "You can also paste a full rule with DTSTART.", monospaced: true)
             if !hasStart {
-                AgentsGroup {
+                GroupedSection {
                     HStack {
                         Label(zh ? "从哪天开始" : "Starts", systemImage: "calendar")
                             .typography(.body)
@@ -315,11 +315,11 @@ struct TriggerEditorView: View {
     private var timeZoneRow: some View {
         let zh = language == .chinese
         let isDevice = draft.timeZoneID == TimeZone.current.identifier
-        return AgentsGroup {
+        return GroupedSection {
             NavigationLink {
                 TimeZonePickerView(selection: $draft.timeZoneID)
             } label: {
-                AgentsRow(
+                ListRow(
                     systemImage: "globe", title: zh ? "时区" : "Time zone",
                     detail: plansTimeZoneName(draft.timeZoneID, language: language)
                         + (isDevice ? (zh ? " · 本机" : " · this device") : ""))
@@ -334,7 +334,7 @@ struct TriggerEditorView: View {
     private func preview(problem: TriggerProblem?) -> some View {
         let zh = language == .chinese
         let schedule = draft.schedule
-        AgentsSectionHeader(title: zh ? "预览" : "Preview")
+        SectionHeader(title: zh ? "预览" : "Preview")
         Card {
             Text(ScheduleDescription.describe(schedule, language: language))
                 .typography(.headline)
@@ -434,11 +434,11 @@ struct TimeZonePickerView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: Metrics.Spacing.s) {
                 if trimmed.isEmpty {
-                    AgentsSectionHeader(title: zh ? "本机" : "This device")
+                    SectionHeader(title: zh ? "本机" : "This device")
                     group([device])
-                    AgentsSectionHeader(title: zh ? "常用" : "Common")
+                    SectionHeader(title: zh ? "常用" : "Common")
                     group(Self.common.filter { $0 != device })
-                    AgentsSectionHeader(title: zh ? "全部" : "All")
+                    SectionHeader(title: zh ? "全部" : "All")
                     group(TimeZone.knownTimeZoneIdentifiers)
                 } else {
                     let matches = (["UTC"] + TimeZone.knownTimeZoneIdentifiers).filter { matchesQuery($0, trimmed) }
@@ -449,18 +449,18 @@ struct TimeZonePickerView: View {
                     }
                 }
             }
-            .agentsPageLayout()
+            .pageLayout()
         }
         .background(Theme.paper)
-        .agentsNavigationTitle(zh ? "时区" : "Time zone")
+        .inlineNavigationTitle(zh ? "时区" : "Time zone")
         .searchable(text: $query, prompt: Text(zh ? "城市或地区，比如 Shanghai" : "City or region, e.g. London"))
     }
 
     private func group(_ ids: [String]) -> some View {
-        AgentsGroup {
+        GroupedSection {
             ForEach(ids, id: \.self) { id in
                 if id != ids.first { Divider() }
-                AgentsChoiceRow(
+                ChoiceRow(
                     title: plansTimeZoneName(id, language: language), detail: offset(id), isSelected: id == selection
                 ) {
                     selection = id

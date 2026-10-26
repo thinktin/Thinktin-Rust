@@ -391,7 +391,7 @@ private struct ComputerApprovalsContent: View {
         let zh = language == .chinese
         if !model.pendingRequests.isEmpty {
             VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                AgentsSectionHeader(title: zh ? "电脑上的操作" : "On your computer")
+                SectionHeader(title: zh ? "电脑上的操作" : "On your computer")
                 if let error = model.error {
                     Text(ComputerLinkText.error(error, language: language))
                         .typography(.footnote)

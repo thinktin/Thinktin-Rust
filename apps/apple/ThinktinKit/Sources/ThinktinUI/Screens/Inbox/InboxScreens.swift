@@ -27,10 +27,10 @@ private struct InboxContent: View {
         let model = self.model
         ScrollView {
             LazyVStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                AgentsPageHeader(
+                PageHeader(
                     title: AppRoute.inbox.title(language),
                     message: model.hasLoaded ? InboxText.unreadCount(model.unread, language: language) : nil)
-                if let error = agentsVisibleError(model.error) {
+                if let error = visibleError(model.error) {
                     ErrorBanner(error) { Task { await model.load() } }
                 }
                 if let error = model.actionError {
@@ -42,10 +42,10 @@ private struct InboxContent: View {
                             systemImage: "tray", title: InboxText.emptyTitle(language),
                             message: InboxText.emptyMessage(language))
                     } else {
-                        AgentsLoadingView()
+                        LoadingStateView()
                     }
                 } else {
-                    AgentsGroup {
+                    GroupedSection {
                         ForEach(model.items) { item in
                             if item.id != model.items.first?.id { Divider() }
                             InboxRow(
@@ -74,10 +74,10 @@ private struct InboxContent: View {
                     }
                 }
             }
-            .agentsPageLayout()
+            .pageLayout()
         }
         .background(Theme.paper)
-        .agentsNavigationTitle(AppRoute.inbox.title(language))
+        .inlineNavigationTitle(AppRoute.inbox.title(language))
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -282,16 +282,16 @@ private struct InboxItemContent: View {
                         }
                         .frame(maxWidth: .infinity)
                     }
-                } else if let error = agentsVisibleError(model.error) {
+                } else if let error = visibleError(model.error) {
                     ErrorBanner(error) { Task { await model.load() } }
                 } else {
-                    AgentsLoadingView()
+                    LoadingStateView()
                 }
             }
-            .agentsPageLayout()
+            .pageLayout()
         }
         .background(Theme.paper)
-        .agentsNavigationTitle(AppRoute.inboxItem(model.itemID).title(language))
+        .inlineNavigationTitle(AppRoute.inboxItem(model.itemID).title(language))
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 if let item = model.item {

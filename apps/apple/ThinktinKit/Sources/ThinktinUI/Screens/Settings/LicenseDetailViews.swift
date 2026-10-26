@@ -25,7 +25,7 @@ struct AgentLicenseCard: View {
                     }
                 }
                 Spacer(minLength: Metrics.Spacing.xs)
-                AgentsTag(text: entry.version)
+                TagChip(text: entry.version)
             }
             Label(entry.licenseName, systemImage: entry.isProprietary ? "exclamationmark.shield" : "checkmark.shield")
                 .typography(.subheadline)

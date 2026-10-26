@@ -37,13 +37,13 @@ private struct PlanListContent: View {
         let sections = model.sections
         ScrollView {
             VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                AgentsPageHeader(
+                PageHeader(
                     title: AppRoute.plans.title(language),
                     message: zh
                         ? "让 agent 按时干活。agent 自己安排的计划要你确认后才会运行。"
                         : "Have agents work on a schedule. Plans an agent sets up run only after you confirm them.")
                 if !model.plans.isEmpty { filterBar }
-                if let error = agentsVisibleError(model.error) {
+                if let error = visibleError(model.error) {
                     ErrorBanner(error) { Task { await model.load() } }
                 }
                 if let error = model.actionError {
@@ -58,10 +58,10 @@ private struct PlanListContent: View {
                 }
                 if sections.isEmpty { emptyState }
             }
-            .agentsPageLayout()
+            .pageLayout()
         }
         .background(Theme.paper)
-        .agentsNavigationTitle(AppRoute.plans.title(language))
+        .inlineNavigationTitle(AppRoute.plans.title(language))
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -147,7 +147,7 @@ private struct PlanListContent: View {
         let zh = language == .chinese
         return VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
             HStack(spacing: Metrics.Spacing.xs) {
-                AgentsSectionHeader(title: zh ? "待确认" : "Needs review")
+                SectionHeader(title: zh ? "待确认" : "Needs review")
                 PlansCountBadge(count: plans.count)
                     .padding(.top, Metrics.Spacing.s)
             }
@@ -166,8 +166,8 @@ private struct PlanListContent: View {
 
     private func planSection(title: String, plans: [Plan]) -> some View {
         VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            AgentsSectionHeader(title: title)
-            AgentsGroup {
+            SectionHeader(title: title)
+            GroupedSection {
                 ForEach(plans) { plan in
                     if plan.id != plans.first?.id { Divider() }
                     PlanListRow(
@@ -190,7 +190,7 @@ private struct PlanListContent: View {
     private var emptyState: some View {
         let zh = language == .chinese
         if !model.hasLoaded && model.isLoading {
-            AgentsLoadingView()
+            LoadingStateView()
         } else if model.plans.isEmpty && model.error != nil {
             EmptyStateView(
                 systemImage: model.error?.isOffline == true ? "wifi.slash" : "exclamationmark.triangle",

@@ -43,7 +43,7 @@ private struct ModelRoutesContent: View {
         let isDirty = model.hasUserEdits && model.hasChanges
         ScrollView {
             VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                if let error = agentsVisibleError(model.error), model.isEditable {
+                if let error = visibleError(model.error), model.isEditable {
                     ErrorBanner(error) { Task { await model.load() } }
                 }
                 if model.isMissing {
@@ -58,15 +58,15 @@ private struct ModelRoutesContent: View {
                 } else if model.isEditable {
                     editor
                 } else if model.isLoading || model.error == nil {
-                    AgentsLoadingView()
+                    LoadingStateView()
                 } else {
                     ModelsUnavailableView(error: model.error) { Task { await model.load() } }
                 }
             }
-            .agentsPageLayout()
+            .pageLayout()
         }
         .background(Theme.paper)
-        .agentsNavigationTitle(AppRoute.modelRoutes(model.instanceID).title(language))
+        .inlineNavigationTitle(AppRoute.modelRoutes(model.instanceID).title(language))
         .navigationBarBackButtonHidden(isDirty)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
@@ -137,15 +137,15 @@ private struct ModelRoutesContent: View {
         let zh = language == .chinese
         let model = self.model
         header
-        if let error = agentsVisibleError(model.detailsError) {
+        if let error = visibleError(model.detailsError) {
             ErrorBanner(error) { Task { await model.load() } }
         }
-        AgentsNotice(
+        InlineNotice(
             systemImage: "arrow.up.right.circle", tone: .neutral,
             text: ModelsText.routesDataSharing(
                 instanceName: displayName, vendorNames: model.usedVendors(language).map(\.name), language: language))
         if let waiting = model.waitingRuns, waiting > 0, model.saveResult == nil {
-            AgentsNotice(
+            InlineNotice(
                 systemImage: "hourglass", tone: .waiting,
                 text: zh
                     ? "有 \(waiting) 个任务在等 key，配好保存后会接着跑。"
@@ -168,7 +168,7 @@ private struct ModelRoutesContent: View {
         }
         addAliasSection
         if let result = model.saveResult {
-            AgentsNotice(systemImage: "checkmark.circle", tone: .success, text: result.message(language))
+            InlineNotice(systemImage: "checkmark.circle", tone: .success, text: result.message(language))
         }
         if let error = model.saveError {
             ErrorBanner(error)
@@ -201,7 +201,7 @@ private struct ModelRoutesContent: View {
                 ? " · 要支持 \(ModelsText.protocolName(required)) 的 key"
                 : " · needs keys that support \(ModelsText.protocolName(required))"
         }
-        return AgentsPageHeader(title: displayName, message: message.isEmpty ? nil : message)
+        return PageHeader(title: displayName, message: message.isEmpty ? nil : message)
     }
 
     /// 实例的名字；实例本身没拉到（只拉到了路由）时写“这个实例”。
@@ -242,16 +242,16 @@ private struct ModelRoutesContent: View {
         let zh = language == .chinese
         let model = self.model
         return VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            AgentsSectionHeader(title: zh ? "更多别名" : "More aliases")
-            AgentsGroup {
+            SectionHeader(title: zh ? "更多别名" : "More aliases")
+            GroupedSection {
                 if !model.hasFast {
-                    AgentsRow(
+                    ListRow(
                         systemImage: "hare", title: zh ? "加 fast 别名" : "Add the fast alias",
                         detail: ModelsText.fastPurpose(language),
                         action: model.canAddAlias && canWrite ? { @MainActor in _ = model.addFast() } : nil)
                     Divider()
                 }
-                AgentsRow(
+                ListRow(
                     systemImage: "plus", title: zh ? "加自定义别名" : "Add a custom alias",
                     detail: zh
                         ? "agent 按名字调用的别名，最多 \(RouteRules.maxAliases) 个。"
@@ -313,7 +313,7 @@ private struct RouteCard: View {
                         .foregroundStyle(Theme.ink)
                         .accessibilityAddTraits(.isHeader)
                     if let tag = ModelsText.aliasTag(draft.alias, language: language) {
-                        AgentsTag(text: tag)
+                        TagChip(text: tag)
                     }
                     Spacer(minLength: Metrics.Spacing.xs)
                     if !draft.isMain {

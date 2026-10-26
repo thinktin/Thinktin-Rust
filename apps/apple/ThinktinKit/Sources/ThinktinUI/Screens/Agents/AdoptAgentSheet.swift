@@ -33,10 +33,10 @@ struct AdoptAgentSheet: View {
                     form
                 }
             }
-            .agentsPageLayout()
+            .pageLayout()
         }
         .background(Theme.paper)
-        .agentsNavigationTitle(
+        .inlineNavigationTitle(
             model.adopted == nil
                 ? (zh
                     ? "领养 \(AgentsText.displayName(of: model.agent))"
@@ -74,7 +74,7 @@ struct AdoptAgentSheet: View {
         let zh = language == .chinese
         let model = self.model
         // 名字。
-        AgentsSectionHeader(title: zh ? "名字" : "Name")
+        SectionHeader(title: zh ? "名字" : "Name")
         AgentsNameField(
             title: zh ? "实例的名字" : "Instance name",
             text: Binding(get: { model.name }, set: { model.name = $0 }),
@@ -85,11 +85,11 @@ struct AdoptAgentSheet: View {
 
         // 接入方式（多于一个时）。
         if model.showsHarnessChoice {
-            AgentsSectionHeader(title: zh ? "接入方式" : "How it runs")
-            AgentsGroup {
+            SectionHeader(title: zh ? "接入方式" : "How it runs")
+            GroupedSection {
                 ForEach(model.harnessOptions, id: \.self) { harness in
                     if harness != model.harnessOptions.first { Divider() }
-                    AgentsChoiceRow(
+                    ChoiceRow(
                         title: AgentsText.harnessName(harness, language: language),
                         detail: AgentsText.harnessDetail(harness, language: language),
                         tag: harness == model.agent.defaultHarness ? (zh ? "默认" : "Default") : nil,
@@ -103,7 +103,7 @@ struct AdoptAgentSheet: View {
 
         // 许可说明（专有许可证必有）：领养前要给用户看。
         if let note = model.agent.licenseNote {
-            AgentsSectionHeader(title: zh ? "许可说明" : "License terms")
+            SectionHeader(title: zh ? "许可说明" : "License terms")
             Card {
                 Text(AgentsText.licenseName(model.agent.license, language: language))
                     .typography(.headline)
@@ -245,47 +245,6 @@ struct AgentsNameField: View {
                 .foregroundStyle(problem == nil ? Theme.inkSecondary : StatusTone.failure.color)
                 .accessibilityHidden(true)
         }
-    }
-}
-
-/// 单选的一行：左边圆圈（选中时实心对勾），标题、说明、标签。
-struct AgentsChoiceRow: View {
-    let title: String
-    var detail: String?
-    var tag: String?
-    let isSelected: Bool
-    let action: @MainActor () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(alignment: .firstTextBaseline, spacing: Metrics.Spacing.s) {
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(isSelected ? Theme.accent : Theme.inkTertiary)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
-                    HStack(spacing: Metrics.Spacing.xs) {
-                        Text(title)
-                            .typography(.body)
-                            .foregroundStyle(Theme.ink)
-                        if let tag { AgentsTag(text: tag) }
-                    }
-                    if let detail {
-                        Text(detail)
-                            .typography(.subheadline)
-                            .foregroundStyle(Theme.inkSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, Metrics.Spacing.m)
-            .padding(.vertical, Metrics.Spacing.s)
-            .frame(minHeight: Metrics.minTapTarget)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 }
 

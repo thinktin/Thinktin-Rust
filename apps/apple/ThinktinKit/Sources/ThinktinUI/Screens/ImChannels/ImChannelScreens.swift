@@ -30,27 +30,27 @@ private struct ImChannelsContent: View {
         let model = self.model
         ScrollView {
             VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                AgentsPageHeader(
+                PageHeader(
                     title: AppRoute.imChannels.title(language), message: ImChannelText.emptyMessage(language))
-                if let error = agentsVisibleError(model.error) {
+                if let error = visibleError(model.error) {
                     ErrorBanner(error, onDismiss: { model.error = nil })
                 }
                 if let notice = model.notice {
-                    AgentsNotice(
+                    InlineNotice(
                         systemImage: notice == .testRateLimited || notice == .turnOnFirst
                             ? "exclamationmark.triangle" : "paperplane",
                         tone: notice == .testRateLimited || notice == .turnOnFirst ? .waiting : .success,
                         text: text(notice))
                 }
                 if !model.hasLoaded {
-                    if model.error == nil { AgentsLoadingView() }
+                    if model.error == nil { LoadingStateView() }
                 } else if model.channels.isEmpty {
-                    AgentsNotice(
+                    InlineNotice(
                         systemImage: "bubble.left.and.bubble.right", tone: .neutral,
                         text: ImChannelText.emptyTitle(language))
                 } else {
                     if !model.canAdd {
-                        AgentsNotice(
+                        InlineNotice(
                             systemImage: "exclamationmark.triangle", tone: .waiting,
                             text: ImChannelText.limitReached(language))
                     }
@@ -59,10 +59,10 @@ private struct ImChannelsContent: View {
                     }
                 }
             }
-            .agentsPageLayout()
+            .pageLayout()
         }
         .background(Theme.paper)
-        .agentsNavigationTitle(AppRoute.imChannels.title(language))
+        .inlineNavigationTitle(AppRoute.imChannels.title(language))
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -110,8 +110,8 @@ private struct ImChannelsContent: View {
             channel.lastSentAt.map { ImChannelText.lastSent($0, now: Date(), language: language) },
         ].compactMap { $0 }.joined(separator: " · ")
         return VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
-            AgentsGroup {
-                AgentsRow(
+            GroupedSection {
+                ListRow(
                     systemImage: "bubble.left.and.bubble.right",
                     title: ImChannelText.title(channel, language: language),
                     detail: detail, showsChevron: false,
@@ -143,7 +143,7 @@ private struct ImChannelsContent: View {
                 .padding(Metrics.Spacing.s)
             }
             if let error = channel.lastError {
-                AgentsNotice(
+                InlineNotice(
                     systemImage: "exclamationmark.triangle", tone: .waiting,
                     text: ImChannelText.lastError(error, language: language))
             }
@@ -201,8 +201,8 @@ private struct ImChannelEditorContent: View {
                     ErrorBanner(error, onDismiss: { model.error = nil })
                 }
                 if let original = model.original {
-                    AgentsGroup {
-                        AgentsRow(
+                    GroupedSection {
+                        ListRow(
                             systemImage: "bubble.left.and.bubble.right",
                             title: "\(ImChannelText.vendor(original.vendor, language: language)) \(original.hint)",
                             detail: original.hasSecret ? (zh ? "有签名密钥" : "Signed") : nil, showsChevron: false,
@@ -213,7 +213,7 @@ private struct ImChannelEditorContent: View {
                             })
                     }
                 } else {
-                    AgentsNotice(systemImage: "info.circle", tone: .neutral, text: ImChannelText.setupHint(language))
+                    InlineNotice(systemImage: "info.circle", tone: .neutral, text: ImChannelText.setupHint(language))
                 }
                 if model.editsWebhook {
                     PlansTextField(
@@ -235,8 +235,8 @@ private struct ImChannelEditorContent: View {
                     limit: ImChannelRules.maxLabelLength,
                     count: model.label.trimmingCharacters(in: .whitespacesAndNewlines).unicodeScalars.count,
                     problem: shows ? model.labelProblem.map { ImChannelText.problem($0, language: language) } : nil)
-                AgentsSectionHeader(title: zh ? "发哪些消息" : "Send messages for")
-                AgentsGroup {
+                SectionHeader(title: zh ? "发哪些消息" : "Send messages for")
+                GroupedSection {
                     ForEach(ImEvent.knownCases, id: \.self) { event in
                         if event != ImEvent.knownCases.first { Divider() }
                         Toggle(
@@ -256,11 +256,11 @@ private struct ImChannelEditorContent: View {
                         .foregroundStyle(StatusTone.failure.color)
                 }
             }
-            .agentsPageLayout()
+            .pageLayout()
         }
         .scrollDismissesKeyboard(.interactively)
         .background(Theme.paper)
-        .agentsNavigationTitle(model.isNew ? (zh ? "绑定群机器人" : "Add a group bot") : (zh ? "修改" : "Edit"))
+        .inlineNavigationTitle(model.isNew ? (zh ? "绑定群机器人" : "Add a group bot") : (zh ? "修改" : "Edit"))
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button(zh ? "取消" : "Cancel") { onFinish(nil) }

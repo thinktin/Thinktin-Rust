@@ -42,24 +42,24 @@ private struct TeamsContent: View {
         let route: AppRoute = templatesOnly ? .teamTemplates : .teams
         ScrollView {
             VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                AgentsPageHeader(title: route.title(language), message: TeamsText.intro(language))
-                if let error = agentsVisibleError(model.error) {
+                PageHeader(title: route.title(language), message: TeamsText.intro(language))
+                if let error = visibleError(model.error) {
                     ErrorBanner(error) { Task { await model.load() } }
                 }
                 if let error = model.actionError {
                     ErrorBanner(error, onDismiss: { model.clearActionError() })
                 }
                 if !model.hasLoaded {
-                    AgentsLoadingView()
+                    LoadingStateView()
                 } else {
                     if !templatesOnly { teamsSection }
                     templatesSection
                 }
             }
-            .agentsPageLayout()
+            .pageLayout()
         }
         .background(Theme.paper)
-        .agentsNavigationTitle(route.title(language))
+        .inlineNavigationTitle(route.title(language))
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 if !templatesOnly {
@@ -106,16 +106,16 @@ private struct TeamsContent: View {
     private var teamsSection: some View {
         let zh = language == .chinese
         let model = self.model
-        AgentsSectionHeader(title: zh ? "我的团队" : "My teams")
+        SectionHeader(title: zh ? "我的团队" : "My teams")
         if model.teams.isEmpty {
-            AgentsNotice(
+            InlineNotice(
                 systemImage: "person.3", tone: .neutral,
                 text: zh ? "还没有团队。右上角新建，或者领养一个模板。" : "No teams yet. Create one, or adopt a template.")
         } else {
-            AgentsGroup {
+            GroupedSection {
                 ForEach(model.teams) { team in
                     if team.id != model.teams.first?.id { Divider() }
-                    AgentsRow(
+                    ListRow(
                         systemImage: "person.3", title: team.name,
                         detail: [
                             team.lead.flatMap { model.instanceName($0.instanceID) }.map {
@@ -135,13 +135,13 @@ private struct TeamsContent: View {
     private var templatesSection: some View {
         let zh = language == .chinese
         let model = self.model
-        AgentsSectionHeader(title: zh ? "团队模板" : "Team templates")
+        SectionHeader(title: zh ? "团队模板" : "Team templates")
         if model.templates.isEmpty {
-            AgentsNotice(
+            InlineNotice(
                 systemImage: "square.on.square", tone: .neutral,
                 text: zh ? "还没有模板。在团队详情里“存为模板”。" : "No templates yet. Use “Save as template” on a team.")
         } else {
-            AgentsGroup {
+            GroupedSection {
                 ForEach(model.templates) { template in
                     if template.id != model.templates.first?.id { Divider() }
                     TemplateRow(
@@ -269,11 +269,11 @@ private struct TeamDetailContent: View {
                         NoticeText(text: zh ? "已存为模板。" : "Saved as a template.", tone: .success)
                             .onTapGesture { model.clearSavedTemplate() }
                     }
-                    AgentsSectionHeader(title: TeamsText.memberCount(team.members.count, language: language))
-                    AgentsGroup {
+                    SectionHeader(title: TeamsText.memberCount(team.members.count, language: language))
+                    GroupedSection {
                         ForEach(model.members) { member in
                             if member.id != model.members.first?.id { Divider() }
-                            AgentsRow(
+                            ListRow(
                                 systemImage: member.isLead ? "star" : "person",
                                 title: model.instanceName(member.instanceID) ?? (zh ? "已删除的实例" : "Deleted instance"),
                                 detail: TeamsText.role(member.role, language: language),
@@ -292,7 +292,7 @@ private struct TeamDetailContent: View {
                             }
                         }
                     }
-                    AgentsNotice(
+                    InlineNotice(
                         systemImage: "cpu", tone: .neutral,
                         text: zh
                             ? "刚领养的团队要给每个成员选默认模型（main），点“配模型”。"
@@ -319,16 +319,16 @@ private struct TeamDetailContent: View {
                     .buttonStyle(.plain)
                     .foregroundStyle(StatusTone.failure.color)
                     .disabled(app.isOffline || model.isWorking)
-                } else if let error = agentsVisibleError(model.error) {
+                } else if let error = visibleError(model.error) {
                     ErrorBanner(error) { Task { await model.load() } }
                 } else {
-                    AgentsLoadingView()
+                    LoadingStateView()
                 }
             }
-            .agentsPageLayout()
+            .pageLayout()
         }
         .background(Theme.paper)
-        .agentsNavigationTitle(model.team?.name ?? AppRoute.team(model.teamID).title(language))
+        .inlineNavigationTitle(model.team?.name ?? AppRoute.team(model.teamID).title(language))
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 if model.team != nil {
@@ -410,7 +410,7 @@ private struct TeamEditorContent: View {
                     if let error = model.error {
                         ErrorBanner(error) { Task { await model.load() } }
                     } else {
-                        AgentsLoadingView()
+                        LoadingStateView()
                     }
                 } else {
                     PlansTextField(
@@ -420,7 +420,7 @@ private struct TeamEditorContent: View {
                         problem: problems.first { $0 == .nameEmpty || $0 == .nameTooLong }.map {
                             TeamsText.teamProblem($0, language: language)
                         })
-                    AgentsSectionHeader(
+                    SectionHeader(
                         title: zh
                             ? "成员（最多 \(TeamEditorModel.maxMembers) 个）" : "Members (up to \(TeamEditorModel.maxMembers))"
                     )
@@ -430,11 +430,11 @@ private struct TeamEditorContent: View {
                             .foregroundStyle(StatusTone.failure.color)
                     }
                     if model.instances.isEmpty {
-                        AgentsNotice(
+                        InlineNotice(
                             systemImage: "exclamationmark.triangle", tone: .waiting,
                             text: zh ? "还没有实例，先去 agent 目录领养。" : "No instances yet. Adopt one from the catalog first.")
                     } else {
-                        AgentsGroup {
+                        GroupedSection {
                             ForEach(model.instances) { instance in
                                 if instance.id != model.instances.first?.id { Divider() }
                                 memberRow(instance)
@@ -443,10 +443,10 @@ private struct TeamEditorContent: View {
                     }
                 }
             }
-            .agentsPageLayout()
+            .pageLayout()
         }
         .background(Theme.paper)
-        .agentsNavigationTitle(model.teamID == nil ? (zh ? "新建团队" : "New team") : (zh ? "编辑团队" : "Edit team"))
+        .inlineNavigationTitle(model.teamID == nil ? (zh ? "新建团队" : "New team") : (zh ? "编辑团队" : "Edit team"))
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button(zh ? "取消" : "Cancel") { onFinish(nil) }

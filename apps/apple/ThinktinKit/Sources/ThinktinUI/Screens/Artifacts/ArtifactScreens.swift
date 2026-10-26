@@ -35,9 +35,9 @@ private struct ArtifactLibraryContent: View {
         let title = AppRoute.artifacts(instanceID: model.instanceID).title(language)
         ScrollView {
             VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                AgentsPageHeader(title: title, message: ArtifactsText.intro(language))
+                PageHeader(title: title, message: ArtifactsText.intro(language))
                 if model.instanceID == nil, model.filterInstances.count > 1 { filterBar }
-                if let error = agentsVisibleError(model.error) {
+                if let error = visibleError(model.error) {
                     ErrorBanner(error) { Task { await model.load() } }
                 }
                 if let error = model.actionError {
@@ -50,10 +50,10 @@ private struct ArtifactLibraryContent: View {
                             systemImage: "doc.text", title: ArtifactsText.emptyTitle(language),
                             message: ArtifactsText.emptyMessage(language))
                     } else {
-                        AgentsLoadingView()
+                        LoadingStateView()
                     }
                 } else {
-                    AgentsGroup {
+                    GroupedSection {
                         ForEach(list) { artifact in
                             if artifact.id != list.first?.id { Divider() }
                             ArtifactRow(
@@ -72,10 +72,10 @@ private struct ArtifactLibraryContent: View {
                     }
                 }
             }
-            .agentsPageLayout()
+            .pageLayout()
         }
         .background(Theme.paper)
-        .agentsNavigationTitle(title)
+        .inlineNavigationTitle(title)
         .refreshable { await model.load() }
         // 每次回到这一页都重新拉（详情页里可能删了）。
         .task { await model.load() }
@@ -280,16 +280,16 @@ private struct ArtifactDetailContent: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(Theme.accent)
-                } else if let error = agentsVisibleError(model.error) {
+                } else if let error = visibleError(model.error) {
                     ErrorBanner(error) { Task { await model.load() } }
                 } else {
-                    AgentsLoadingView()
+                    LoadingStateView()
                 }
             }
-            .agentsPageLayout()
+            .pageLayout()
         }
         .background(Theme.paper)
-        .agentsNavigationTitle(
+        .inlineNavigationTitle(
             model.artifact?.name ?? AppRoute.artifact(model.artifactID, runID: model.runID).title(language)
         )
         .toolbar {

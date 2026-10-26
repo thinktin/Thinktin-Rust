@@ -43,7 +43,7 @@ private struct PlanDetailContent: View {
         let model = self.model
         ScrollView {
             VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                if let error = agentsVisibleError(model.error) {
+                if let error = visibleError(model.error) {
                     ErrorBanner(error) { Task { await model.load() } }
                 }
                 if let plan = model.plan, !model.isMissing {
@@ -52,10 +52,10 @@ private struct PlanDetailContent: View {
                         ErrorBanner(error, onDismiss: { model.clearActionError() })
                     }
                     notices(plan)
-                    AgentsSectionHeader(title: zh ? "目标" : "Goal")
+                    SectionHeader(title: zh ? "目标" : "Goal")
                     PlanTextBlock(text: plan.goal, isAIGenerated: PlansText.isAIGenerated(.goal, in: plan))
                     triggersSection(plan)
-                    AgentsSectionHeader(title: zh ? "策略" : "Policy")
+                    SectionHeader(title: zh ? "策略" : "Policy")
                     PlanPolicyRows(plan: plan)
                     if plan.isPipeline { stepsSection(plan) }
                     historySection
@@ -70,17 +70,17 @@ private struct PlanDetailContent: View {
                         router.open(.plans)
                     }
                 } else if model.isLoading || model.error == nil {
-                    AgentsLoadingView()
+                    LoadingStateView()
                 } else {
                     EmptyStateView(
                         systemImage: model.error?.isOffline == true ? "wifi.slash" : "exclamationmark.triangle",
                         title: zh ? "暂时拉不到这个计划" : "Couldn't load this plan")
                 }
             }
-            .agentsPageLayout()
+            .pageLayout()
         }
         .background(Theme.paper)
-        .agentsNavigationTitle(AppRoute.plan(model.planID).title(language))
+        .inlineNavigationTitle(AppRoute.plan(model.planID).title(language))
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 if model.plan != nil && !model.isMissing { moreMenu }
@@ -186,7 +186,7 @@ private struct PlanDetailContent: View {
         VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
             PlanTitleText(plan: plan, style: .title)
                 .accessibilityAddTraits(.isHeader)
-            AgentsTagRow {
+            TagChipRow {
                 PlanStatusLabel(status: plan.status)
                 Button {
                     router.open(.instance(plan.instanceID))
@@ -233,12 +233,12 @@ private struct PlanDetailContent: View {
         }
         let blocked = blockedSteps(plan)
         if !blocked.isEmpty {
-            AgentsNotice(
+            InlineNotice(
                 systemImage: "exclamationmark.triangle", tone: .waiting,
                 text: PlanBlockedSteps.message(blocked, confirming: plan.awaitingConfirmation, language: language))
         }
         if plan.hasInvalidTriggers {
-            AgentsNotice(
+            InlineNotice(
                 systemImage: "exclamationmark.triangle", tone: .failure,
                 text: zh
                     ? "有 \(plan.invalidTriggers) 条规则已失效、被停用了，不会再触发。在下面改一下规则。"
@@ -250,10 +250,10 @@ private struct PlanDetailContent: View {
     private func triggersSection(_ plan: Plan) -> some View {
         let zh = language == .chinese
         return VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            AgentsSectionHeader(title: zh ? "触发规则" : "Schedule")
-            AgentsGroup {
+            SectionHeader(title: zh ? "触发规则" : "Schedule")
+            GroupedSection {
                 if plan.triggers.isEmpty {
-                    AgentsRow(
+                    ListRow(
                         systemImage: "clock.badge.questionmark", title: zh ? "没有触发规则" : "No schedule",
                         detail: zh ? "不会自动运行。编辑计划加一条吧。" : "It won't run on its own. Edit the plan to add one.")
                 }
@@ -285,7 +285,7 @@ private struct PlanDetailContent: View {
     private func stepsSection(_ plan: Plan) -> some View {
         let zh = language == .chinese
         return VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            AgentsSectionHeader(title: zh ? "流水线（\(plan.steps.count) 步）" : "Pipeline (\(plan.steps.count) steps)")
+            SectionHeader(title: zh ? "流水线（\(plan.steps.count) 步）" : "Pipeline (\(plan.steps.count) steps)")
             PlanStepsView(plan: plan, instanceName: instanceName)
             PillButton(
                 zh ? "在流水线编辑器里改" : "Edit in pipeline editor", systemImage: "point.3.connected.trianglepath.dotted",
@@ -301,17 +301,17 @@ private struct PlanDetailContent: View {
         let zh = language == .chinese
         let model = self.model
         return VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            AgentsSectionHeader(title: zh ? "运行历史" : "Run history")
-            if let error = agentsVisibleError(model.runsError) {
+            SectionHeader(title: zh ? "运行历史" : "Run history")
+            if let error = visibleError(model.runsError) {
                 ErrorBanner(error) { Task { await model.reloadRuns() } }
             }
-            AgentsGroup {
+            GroupedSection {
                 if model.runsLoaded && model.runs.isEmpty {
-                    AgentsRow(
+                    ListRow(
                         systemImage: "clock.arrow.circlepath", title: zh ? "还没有运行过" : "No runs yet",
                         detail: zh ? "到点触发后会出现在这里。" : "Runs show up here once the plan fires.")
                 } else if !model.runsLoaded {
-                    AgentsLoadingView()
+                    LoadingStateView()
                 }
                 ForEach(model.runs) { run in
                     if run.id != model.runs.first?.id { Divider() }

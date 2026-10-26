@@ -30,8 +30,8 @@ private struct ApprovalCenterContent: View {
         let model = self.model
         ScrollView {
             VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                AgentsPageHeader(title: AppRoute.approvals.title(language), message: ApprovalsText.intro(language))
-                if let error = agentsVisibleError(model.error) {
+                PageHeader(title: AppRoute.approvals.title(language), message: ApprovalsText.intro(language))
+                if let error = visibleError(model.error) {
                     ErrorBanner(error) { Task { await model.load() } }
                 }
                 if let notice = model.notice {
@@ -48,7 +48,7 @@ private struct ApprovalCenterContent: View {
                                 systemImage: "checkmark.shield", title: ApprovalsText.emptyTitle(language),
                                 message: ApprovalsText.emptyMessage(language))
                         } else {
-                            AgentsLoadingView()
+                            LoadingStateView()
                         }
                     } else {
                         VStack(spacing: Metrics.Spacing.s) {
@@ -73,10 +73,10 @@ private struct ApprovalCenterContent: View {
                     }
                 }
             }
-            .agentsPageLayout()
+            .pageLayout()
         }
         .background(Theme.paper)
-        .agentsNavigationTitle(AppRoute.approvals.title(language))
+        .inlineNavigationTitle(AppRoute.approvals.title(language))
         .refreshable { await model.load() }
         // 每次回到这一页都重新拉（详情页、对话里可能处理过）。
         .task { await model.load() }
@@ -141,16 +141,16 @@ private struct ApprovalDetailContent: View {
                             onClearError: { model.clearDecideError() }, onOpen: nil)
                     }
                     links(approval)
-                } else if let error = agentsVisibleError(model.error) {
+                } else if let error = visibleError(model.error) {
                     ErrorBanner(error) { Task { await model.load() } }
                 } else {
-                    AgentsLoadingView()
+                    LoadingStateView()
                 }
             }
-            .agentsPageLayout()
+            .pageLayout()
         }
         .background(Theme.paper)
-        .agentsNavigationTitle(AppRoute.approval(model.approvalID).title(language))
+        .inlineNavigationTitle(AppRoute.approval(model.approvalID).title(language))
         .refreshable { await model.load() }
         .task { await model.load() }
     }

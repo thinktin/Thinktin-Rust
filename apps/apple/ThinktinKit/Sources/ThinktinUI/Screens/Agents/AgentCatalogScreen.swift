@@ -29,21 +29,21 @@ private struct AgentCatalogContent: View {
         let model = self.model
         ScrollView {
             LazyVStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                AgentsPageHeader(
+                PageHeader(
                     title: zh ? "领养一个 agent" : "Adopt an agent",
                     message: zh
                         ? "每个 agent 都在自己的沙箱里运行，用你配置的模型 key。领养后可以随时改名、升级或删除。"
                         : "Each agent runs in its own sandbox with the model keys you set up. You can rename, upgrade "
                             + "or delete it any time after adopting.")
-                if let error = agentsVisibleError(model.error) {
+                if let error = visibleError(model.error) {
                     ErrorBanner(error) { Task { await model.load() } }
                 }
                 content
             }
-            .agentsPageLayout()
+            .pageLayout()
         }
         .background(Theme.paper)
-        .agentsNavigationTitle(AppRoute.agentCatalog.title(language))
+        .inlineNavigationTitle(AppRoute.agentCatalog.title(language))
         .refreshable { await model.load() }
         .task { await model.load() }
         .onChange(of: app.isOffline) {
@@ -61,7 +61,7 @@ private struct AgentCatalogContent: View {
                 message: zh ? "稍后再来看看。" : "Check back later.")
         } else if model.hasNothingToShow {
             if model.isLoading || model.error == nil {
-                AgentsLoadingView()
+                LoadingStateView()
             } else {
                 EmptyStateView(
                     systemImage: model.error?.isOffline == true ? "wifi.slash" : "exclamationmark.triangle",
@@ -118,10 +118,10 @@ struct AgentCatalogCardView: View {
                     .foregroundStyle(Theme.inkSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            AgentsTagRow {
-                AgentsTag(text: card.versionLabel)
+            TagChipRow {
+                TagChip(text: card.versionLabel)
                 if let adopted = card.adoptedLabel(language) {
-                    AgentsTag(text: adopted)
+                    TagChip(text: adopted)
                 }
             }
             // 许可证名字可能很长（“Anthropic 商业条款（专有）”），单独一行，能换行。

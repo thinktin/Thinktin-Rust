@@ -42,7 +42,7 @@ private struct InstanceDetailContent: View {
         let model = self.model
         ScrollView {
             VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                if let error = agentsVisibleError(model.error) {
+                if let error = visibleError(model.error) {
                     ErrorBanner(error) { Task { await model.load() } }
                 }
                 if let instance = model.instance, !model.isMissing {
@@ -54,7 +54,7 @@ private struct InstanceDetailContent: View {
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, Metrics.Spacing.xs)
-                    if let error = agentsVisibleError(model.detailsError) {
+                    if let error = visibleError(model.detailsError) {
                         ErrorBanner(error) { Task { await model.load() } }
                     }
                     modelSection(instance)
@@ -73,17 +73,17 @@ private struct InstanceDetailContent: View {
                         router.pop()
                     }
                 } else if model.isLoading || model.error == nil {
-                    AgentsLoadingView()
+                    LoadingStateView()
                 } else {
                     EmptyStateView(
                         systemImage: model.error?.isOffline == true ? "wifi.slash" : "exclamationmark.triangle",
                         title: zh ? "暂时拉不到这个实例" : "Couldn't load this instance")
                 }
             }
-            .agentsPageLayout()
+            .pageLayout()
         }
         .background(Theme.paper)
-        .agentsNavigationTitle(model.instance?.name ?? AppRoute.instance(model.instanceID).title(language))
+        .inlineNavigationTitle(model.instance?.name ?? AppRoute.instance(model.instanceID).title(language))
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 if model.instance != nil && !model.isMissing {
@@ -166,9 +166,9 @@ private struct InstanceDetailContent: View {
         let zh = language == .chinese
         let status = model.routeStatus
         return VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            AgentsSectionHeader(title: zh ? "模型" : "Model")
-            AgentsGroup {
-                AgentsRow(
+            SectionHeader(title: zh ? "模型" : "Model")
+            GroupedSection {
+                ListRow(
                     systemImage: status.needsAttention ? "exclamationmark.triangle" : "slider.horizontal.3",
                     title: AppRoute.modelRoutes(instance.id).title(language),
                     detail: status.summary(language), detailTone: status.needsAttention ? .waiting : nil,
@@ -181,18 +181,18 @@ private struct InstanceDetailContent: View {
         let zh = language == .chinese
         let options = model.versionOptions
         return VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            AgentsSectionHeader(title: zh ? "版本" : "Version")
+            SectionHeader(title: zh ? "版本" : "Version")
             if let change = model.versionChange {
-                AgentsNotice(systemImage: "clock.arrow.circlepath", tone: .active, text: change.message(language))
+                InlineNotice(systemImage: "clock.arrow.circlepath", tone: .active, text: change.message(language))
             } else if !model.isCurrentVersionListed, let latest = model.latestVersion {
-                AgentsNotice(
+                InlineNotice(
                     systemImage: "exclamationmark.triangle", tone: .waiting,
                     text: zh
                         ? "现在用的 \(AgentsText.versionLabel(instance.agentVersion)) 已经不在目录里了，建议升级到 \(AgentsText.versionLabel(latest))。"
                         : "\(AgentsText.versionLabel(instance.agentVersion)) is no longer listed. Upgrading to "
                             + "\(AgentsText.versionLabel(latest)) is recommended.")
             } else if model.upgradeAvailable, let latest = model.latestVersion {
-                AgentsNotice(
+                InlineNotice(
                     systemImage: "arrow.up.circle", tone: .active,
                     text: zh
                         ? "有新版本 \(AgentsText.versionLabel(latest))，升级后下次唤醒时生效。"
@@ -202,9 +202,9 @@ private struct InstanceDetailContent: View {
             if let error = model.versionError {
                 ErrorBanner(error)
             }
-            AgentsGroup {
+            GroupedSection {
                 if options.isEmpty {
-                    AgentsRow(
+                    ListRow(
                         systemImage: "shippingbox", title: AgentsText.versionLabel(instance.agentVersion),
                         detail: zh ? "正在使用" : "In use")
                 }
@@ -223,27 +223,27 @@ private struct InstanceDetailContent: View {
         let zh = language == .chinese
         let plans = model.plans ?? []
         return VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            AgentsSectionHeader(title: zh ? "计划和产出物" : "Plans and artifacts")
-            AgentsGroup {
+            SectionHeader(title: zh ? "计划和产出物" : "Plans and artifacts")
+            GroupedSection {
                 ForEach(plans) { plan in
                     InstancePlanRow(plan: plan) { router.open(.plan(plan.id)) }
                     Divider()
                 }
                 if model.plans != nil && plans.isEmpty {
-                    AgentsRow(
+                    ListRow(
                         systemImage: "calendar", title: zh ? "还没有计划" : "No plans yet",
                         detail: zh
                             ? "可以新建一个，也可以直接对它说“每天 8 点…”。"
                             : "Create one, or just tell it something like “every day at 8…”.")
                     Divider()
                 }
-                AgentsRow(
+                ListRow(
                     systemImage: "plus", title: zh ? "新建计划" : "New plan",
                     action: { router.open(.newPlan(instanceID: instance.id)) }
                 )
                 .disabled(!canWrite)
                 Divider()
-                AgentsRow(
+                ListRow(
                     systemImage: "doc.on.doc", title: AppRoute.artifacts(instanceID: instance.id).title(language),
                     detail: zh ? "这个实例发布的文件" : "Files this instance published",
                     action: { router.open(.artifacts(instanceID: instance.id)) })
@@ -255,11 +255,11 @@ private struct InstanceDetailContent: View {
     private var teamSection: some View {
         let zh = language == .chinese
         if let teams = model.teams, !teams.isEmpty {
-            AgentsSectionHeader(title: zh ? "所在团队" : "Teams")
-            AgentsGroup {
+            SectionHeader(title: zh ? "所在团队" : "Teams")
+            GroupedSection {
                 ForEach(teams) { team in
                     if team.id != teams.first?.id { Divider() }
-                    AgentsRow(
+                    ListRow(
                         systemImage: "person.3", title: team.name,
                         detail: model.role(in: team) == .lead ? (zh ? "负责人" : "Lead") : (zh ? "成员" : "Member"),
                         action: { router.open(.team(team.id)) })
@@ -271,17 +271,17 @@ private struct InstanceDetailContent: View {
     private func infoSection(_ instance: Instance) -> some View {
         let zh = language == .chinese
         return VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            AgentsSectionHeader(title: zh ? "信息" : "Details")
-            AgentsGroup {
-                AgentsRow(
+            SectionHeader(title: zh ? "信息" : "Details")
+            GroupedSection {
+                ListRow(
                     systemImage: "point.3.connected.trianglepath.dotted", title: zh ? "接入方式" : "Runs via",
                     detail: AgentsText.harnessName(instance.harness, language: language))
                 Divider()
-                AgentsRow(
+                ListRow(
                     systemImage: "calendar.badge.plus", title: zh ? "领养于" : "Adopted",
                     detail: Formatting.dateTime(instance.createdAt, language: language))
                 Divider()
-                AgentsRow(
+                ListRow(
                     systemImage: "clock", title: zh ? "最近活动" : "Last active",
                     detail: Formatting.relativeTime(instance.lastActiveAt, language: language))
             }
@@ -393,16 +393,16 @@ private struct InstanceVersionRow: View {
 
     var body: some View {
         let zh = language == .chinese
-        AgentsRow(
+        ListRow(
             systemImage: option.isCurrent ? "checkmark.circle.fill" : "shippingbox",
             title: AgentsText.versionLabel(option.version),
             detail: option.isCurrent ? nil : option.actionTitle(language),
             detailTone: option.change == .upgrade ? .active : nil,
             action: option.isCurrent || !canChange || isBusy ? nil : onChoose,
             accessory: {
-                AgentsTagRow {
-                    if option.isLatest { AgentsTag(text: zh ? "最新" : "Latest") }
-                    if option.isCurrent { AgentsTag(text: zh ? "正在使用" : "In use") }
+                TagChipRow {
+                    if option.isLatest { TagChip(text: zh ? "最新" : "Latest") }
+                    if option.isCurrent { TagChip(text: zh ? "正在使用" : "In use") }
                 }
             })
     }
@@ -417,7 +417,7 @@ private struct InstancePlanRow: View {
 
     var body: some View {
         let zh = language == .chinese
-        AgentsRow(
+        ListRow(
             systemImage: "calendar", title: plan.title,
             detail: plan.awaitingConfirmation
                 ? (zh ? "待确认" : "Needs confirmation") : (plan.isPaused ? (zh ? "已暂停" : "Paused") : nil),
@@ -426,30 +426,6 @@ private struct InstancePlanRow: View {
             accessory: {
                 if AgentsText.isAIGenerated(plan) { AIGeneratedLabel() }
             })
-    }
-}
-
-/// 一条提示（换了版本、有新版本、版本下架了）。
-struct AgentsNotice: View {
-    let systemImage: String
-    let tone: StatusTone
-    let text: String
-
-    var body: some View {
-        Label {
-            Text(text)
-                .typography(.subheadline)
-                .foregroundStyle(Theme.ink)
-                .fixedSize(horizontal: false, vertical: true)
-        } icon: {
-            Image(systemName: systemImage)
-                .foregroundStyle(tone.color)
-                .accessibilityHidden(true)
-        }
-        .padding(Metrics.Spacing.s)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.paperElevated, in: RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous))
-        .accessibilityElement(children: .combine)
     }
 }
 
@@ -480,10 +456,10 @@ struct InstanceRenameSheet: View {
                     ErrorBanner(error)
                 }
             }
-            .agentsPageLayout()
+            .pageLayout()
         }
         .background(Theme.paper)
-        .agentsNavigationTitle(zh ? "改名" : "Rename")
+        .inlineNavigationTitle(zh ? "改名" : "Rename")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button(zh ? "取消" : "Cancel") { onClose() }

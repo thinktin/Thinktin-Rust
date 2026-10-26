@@ -47,14 +47,14 @@ private struct PipelineEditorContent: View {
                 } else if let error = model.error {
                     ErrorBanner(error) { Task { await model.load() } }
                 } else {
-                    AgentsLoadingView()
+                    LoadingStateView()
                 }
             }
-            .agentsPageLayout()
+            .pageLayout()
         }
         .scrollDismissesKeyboard(.interactively)
         .background(Theme.paper)
-        .agentsNavigationTitle(AppRoute.pipelineEditor(planID: model.planID, teamID: model.teamID).title(language))
+        .inlineNavigationTitle(AppRoute.pipelineEditor(planID: model.planID, teamID: model.teamID).title(language))
         .navigationBarBackButtonHidden(model.hasChanges || model.isSaving)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
@@ -112,8 +112,8 @@ private struct PipelineEditorContent: View {
             .padding(.horizontal, Metrics.Spacing.xs)
         if model.isEditing {
             if let plan = model.plan {
-                AgentsGroup {
-                    AgentsRow(
+                GroupedSection {
+                    ListRow(
                         systemImage: "calendar", title: plan.title,
                         detail: model.instanceName(plan.instanceID).map { zh ? "挂在：\($0)" : "Runs on: \($0)" })
                 }
@@ -121,7 +121,7 @@ private struct PipelineEditorContent: View {
         } else {
             basics
         }
-        AgentsSectionHeader(
+        SectionHeader(
             title: zh
                 ? "步骤（\(model.steps.count)/\(PipelineRules.maxSteps)）"
                 : "Steps (\(model.steps.count)/\(PipelineRules.maxSteps))")
@@ -129,7 +129,7 @@ private struct PipelineEditorContent: View {
             problemText(TeamsText.stepProblem(problem, language: language))
         }
         if model.instances.isEmpty {
-            AgentsNotice(
+            InlineNotice(
                 systemImage: "exclamationmark.triangle", tone: .waiting,
                 text: zh ? "还没有实例，先去 agent 目录领养。" : "No instances yet. Adopt one from the catalog first.")
         }
@@ -154,7 +154,7 @@ private struct PipelineEditorContent: View {
     private var basics: some View {
         let zh = language == .chinese
         let model = self.model
-        AgentsSectionHeader(title: zh ? "计划" : "Plan")
+        SectionHeader(title: zh ? "计划" : "Plan")
         PlansTextField(
             title: zh ? "标题" : "Title", text: $model.title, prompt: zh ? "比如：每周竞品调研" : "For example: Weekly research",
             limit: Plan.maxTitleLength, count: PlanTextProblem.length(model.title),
@@ -165,15 +165,15 @@ private struct PipelineEditorContent: View {
             limit: Plan.maxGoalLength, count: PlanTextProblem.length(model.goal),
             problem: model.showsProblems ? model.goalProblem.map { PlanFormProblem.goal($0).message(language) } : nil)
         if let host = model.instanceName(model.hostInstanceID) {
-            AgentsGroup {
-                AgentsRow(
+            GroupedSection {
+                ListRow(
                     systemImage: "star", title: zh ? "挂在：\(host)" : "Runs on: \(host)",
                     detail: zh
                         ? "计划挂在这个实例上（团队的负责人），建好后不能换。"
                         : "The plan belongs to this instance (the team's lead). It can't be changed later.")
             }
         }
-        AgentsNotice(systemImage: "clock", tone: .neutral, text: TeamsText.newPipelineNote(language))
+        InlineNotice(systemImage: "clock", tone: .neutral, text: TeamsText.newPipelineNote(language))
     }
 
     private func problemText(_ text: String) -> some View {
@@ -203,7 +203,7 @@ struct PipelineStepCard: View {
         let others = model.steps.filter { $0.id != step.id }
         let keys = Set(others.map { $0.key.trimmingCharacters(in: .whitespaces) })
         let unknown = step.dependsOn.filter { !keys.contains($0) }
-        AgentsGroup {
+        GroupedSection {
             VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
                 HStack(spacing: Metrics.Spacing.xxs) {
                     Text(zh ? "第 \(index + 1) 步" : "Step \(index + 1)")

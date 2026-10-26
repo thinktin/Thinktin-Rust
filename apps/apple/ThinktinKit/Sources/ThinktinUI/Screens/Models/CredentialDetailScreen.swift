@@ -40,7 +40,7 @@ private struct CredentialDetailContent: View {
         let model = self.model
         ScrollView {
             VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                if let error = agentsVisibleError(model.error), model.credential != nil {
+                if let error = visibleError(model.error), model.credential != nil {
                     ErrorBanner(error) { Task { await model.load() } }
                 }
                 if let summary = model.summary(language), !model.isMissing {
@@ -60,15 +60,15 @@ private struct CredentialDetailContent: View {
                         router.pop()
                     }
                 } else if model.isLoading || model.error == nil {
-                    AgentsLoadingView()
+                    LoadingStateView()
                 } else {
                     ModelsUnavailableView(error: model.error) { Task { await model.load() } }
                 }
             }
-            .agentsPageLayout()
+            .pageLayout()
         }
         .background(Theme.paper)
-        .agentsNavigationTitle(model.summary(language)?.name ?? AppRoute.credential(model.credentialID).title(language))
+        .inlineNavigationTitle(model.summary(language)?.name ?? AppRoute.credential(model.credentialID).title(language))
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 if model.credential != nil && !model.isMissing {
@@ -252,7 +252,7 @@ private struct CredentialDetailContent: View {
     private var wakeNotice: some View {
         let zh = language == .chinese
         if model.didWake {
-            AgentsNotice(
+            InlineNotice(
                 systemImage: "arrow.clockwise.circle", tone: .success,
                 text: model.wakeResult?.message(language)
                     ?? (model.wakeResult == nil
@@ -264,14 +264,14 @@ private struct CredentialDetailContent: View {
     private var keySection: some View {
         let zh = language == .chinese
         return VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            AgentsSectionHeader(title: zh ? "key" : "Key")
+            SectionHeader(title: zh ? "key" : "Key")
             if model.didReplace, let credential = model.credential {
-                AgentsNotice(
+                InlineNotice(
                     systemImage: "checkmark.circle", tone: .success,
                     text: zh ? "已换成 \(credential.maskedKey)。" : "Replaced with \(credential.maskedKey).")
             }
-            AgentsGroup {
-                AgentsRow(
+            GroupedSection {
+                ListRow(
                     systemImage: "arrow.triangle.2.circlepath", title: zh ? "换 key" : "Replace key",
                     detail: zh
                         ? "在厂商那边换了 key、旧的泄露了时用，模型路由不用改。"
@@ -285,25 +285,25 @@ private struct CredentialDetailContent: View {
         let zh = language == .chinese
         let credential = model.credential
         return VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            AgentsSectionHeader(title: zh ? "信息" : "Details")
-            AgentsGroup {
-                AgentsRow(
+            SectionHeader(title: zh ? "信息" : "Details")
+            GroupedSection {
+                ListRow(
                     systemImage: "building.2", title: zh ? "厂商" : "Vendor",
                     detail: credential.map {
                         ModelsText.vendorName($0.vendor, vendors: model.vendors, language: language)
                     })
                 Divider()
-                AgentsRow(
+                ListRow(
                     systemImage: "point.3.connected.trianglepath.dotted", title: zh ? "支持的协议" : "Protocols",
                     detail: credential.flatMap { ModelsText.protocolList($0.protocols, language: language) }
                         ?? (zh ? "服务端没给" : "Not reported"))
                 Divider()
-                AgentsRow(
+                ListRow(
                     systemImage: "gauge.with.dots.needle.33percent", title: zh ? "每日上限" : "Daily limit",
                     detail: ModelsText.dailyLimit(credential?.dailyTokenLimit, language: language),
                     action: canWrite ? { @MainActor in isEditingLimit = true } : nil)
                 Divider()
-                AgentsRow(
+                ListRow(
                     systemImage: "calendar.badge.plus", title: zh ? "添加于" : "Added",
                     detail: credential.map { Formatting.dateTime($0.createdAt, language: language) })
             }
@@ -322,9 +322,9 @@ private struct CredentialDetailContent: View {
             detail = zh ? "正在统计…" : "Loading…"
         }
         return VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            AgentsSectionHeader(title: zh ? "用量" : "Usage")
-            AgentsGroup {
-                AgentsRow(
+            SectionHeader(title: zh ? "用量" : "Usage")
+            GroupedSection {
+                ListRow(
                     systemImage: "chart.bar",
                     title: zh
                         ? "最近 \(CredentialDetailModel.usageDays) 天" : "Last \(CredentialDetailModel.usageDays) days",
@@ -336,27 +336,27 @@ private struct CredentialDetailContent: View {
     private var referencesSection: some View {
         let zh = language == .chinese
         return VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            AgentsSectionHeader(title: zh ? "用在哪里" : "Used by")
-            if let error = agentsVisibleError(model.detailsError) {
+            SectionHeader(title: zh ? "用在哪里" : "Used by")
+            if let error = visibleError(model.detailsError) {
                 ErrorBanner(error) { Task { await model.load() } }
             }
-            AgentsGroup {
+            GroupedSection {
                 if let references = model.references {
                     if references.isEmpty {
-                        AgentsRow(
+                        ListRow(
                             systemImage: "slider.horizontal.3", title: zh ? "还没有实例用它" : "No instance uses it yet",
                             detail: zh ? "在实例的模型路由里选它。" : "Pick it in an instance's model routes.")
                     }
                     ForEach(references) { reference in
                         if reference.id != references.first?.id { Divider() }
-                        AgentsRow(
+                        ListRow(
                             systemImage: reference.isFallback ? "arrow.turn.down.right" : "slider.horizontal.3",
                             title: reference.instanceName + " · " + reference.alias,
                             detail: reference.role(language),
                             action: { router.open(.modelRoutes(reference.instanceID)) })
                     }
                 } else {
-                    AgentsRow(
+                    ListRow(
                         systemImage: "hourglass", title: zh ? "正在查模型路由…" : "Checking model routes…",
                         showsChevron: false)
                 }
@@ -368,7 +368,7 @@ private struct CredentialDetailContent: View {
         let zh = language == .chinese
         return VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
             if let message = model.deleteErrorMessage(language) {
-                AgentsNotice(systemImage: "exclamationmark.triangle", tone: .failure, text: message)
+                InlineNotice(systemImage: "exclamationmark.triangle", tone: .failure, text: message)
             }
             PillButton(zh ? "删除 key" : "Delete key", systemImage: "trash", kind: .destructive) {
                 isConfirmingDelete = true
@@ -419,10 +419,10 @@ struct CredentialRenameSheet: View {
                     ErrorBanner(error)
                 }
             }
-            .agentsPageLayout()
+            .pageLayout()
         }
         .background(Theme.paper)
-        .agentsNavigationTitle(zh ? "改备注" : "Edit note")
+        .inlineNavigationTitle(zh ? "改备注" : "Edit note")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button(zh ? "取消" : "Cancel") { onClose() }
@@ -475,10 +475,10 @@ struct CredentialDailyLimitSheet: View {
                     ErrorBanner(error)
                 }
             }
-            .agentsPageLayout()
+            .pageLayout()
         }
         .background(Theme.paper)
-        .agentsNavigationTitle(zh ? "每日上限" : "Daily limit")
+        .inlineNavigationTitle(zh ? "每日上限" : "Daily limit")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button(zh ? "取消" : "Cancel") { onClose() }
@@ -550,7 +550,7 @@ struct ReplaceCredentialSheet: View {
                     prompt: zh ? "粘贴新的 key" : "Paste the new key", kind: .secret, problem: shownProblem,
                     hint: zh ? "旧的 key 会被覆盖。" : "The old key is overwritten.")
                 if let rejection = model.replaceRejection, !rejection.concernsKey {
-                    AgentsNotice(
+                    InlineNotice(
                         systemImage: "exclamationmark.octagon", tone: .failure,
                         text: rejection.message(vendorName: vendor ?? "", language: language))
                 }
@@ -558,10 +558,10 @@ struct ReplaceCredentialSheet: View {
                     ErrorBanner(error)
                 }
             }
-            .agentsPageLayout()
+            .pageLayout()
         }
         .background(Theme.paper)
-        .agentsNavigationTitle(zh ? "换 key" : "Replace key")
+        .inlineNavigationTitle(zh ? "换 key" : "Replace key")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button(zh ? "取消" : "Cancel") { onClose() }

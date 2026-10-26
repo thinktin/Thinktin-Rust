@@ -52,10 +52,10 @@ private struct AddCredentialContent: View {
                     form
                 }
             }
-            .agentsPageLayout()
+            .pageLayout()
         }
         .background(Theme.paper)
-        .agentsNavigationTitle(
+        .inlineNavigationTitle(
             model.created == nil ? AppRoute.addCredential.title(language) : (zh ? "加好了" : "Key added")
         )
         .toolbar {
@@ -98,7 +98,7 @@ private struct AddCredentialContent: View {
             VendorInfoCard(vendor: vendor, notes: model.vendorNotes)
         }
         if let compatibility = model.compatibility {
-            AgentsNotice(
+            InlineNotice(
                 systemImage: compatibility.isCompatible ? "checkmark.circle" : "exclamationmark.triangle",
                 tone: compatibility.isCompatible ? .success : .waiting, text: compatibility.message(language))
         }
@@ -106,7 +106,7 @@ private struct AddCredentialContent: View {
             endpointSection
         }
         if model.choice != nil {
-            AgentsSectionHeader(title: zh ? "key" : "Key")
+            SectionHeader(title: zh ? "key" : "Key")
             ModelsField(
                 title: "API key",
                 text: Binding(get: { model.apiKey }, set: { model.apiKey = $0 }),
@@ -136,7 +136,7 @@ private struct AddCredentialContent: View {
             consentSection
         }
         if let rejection = model.formRejection {
-            AgentsNotice(
+            InlineNotice(
                 systemImage: "exclamationmark.octagon", tone: .failure,
                 text: rejection.message(vendorName: model.vendorName(language), language: language))
         }
@@ -170,16 +170,16 @@ private struct AddCredentialContent: View {
     private var vendorSection: some View {
         let zh = language == .chinese
         let model = self.model
-        AgentsSectionHeader(title: zh ? "厂商" : "Vendor")
-        if let error = agentsVisibleError(model.vendorsError) {
+        SectionHeader(title: zh ? "厂商" : "Vendor")
+        if let error = visibleError(model.vendorsError) {
             ErrorBanner(error) { Task { await model.load() } }
         }
         if !model.hasLoadedVendors && model.vendors.isEmpty && model.vendorsError == nil {
-            AgentsLoadingView()
+            LoadingStateView()
         } else {
-            AgentsGroup {
+            GroupedSection {
                 ForEach(model.vendors) { vendor in
-                    AgentsChoiceRow(
+                    ChoiceRow(
                         title: vendor.name,
                         detail: ModelsText.protocolList(vendor.modelProtocols, language: language),
                         isSelected: model.choice == .preset(vendor.id)
@@ -188,7 +188,7 @@ private struct AddCredentialContent: View {
                     }
                     Divider()
                 }
-                AgentsChoiceRow(
+                ChoiceRow(
                     title: ModelsText.customVendorName(language),
                     detail: zh
                         ? "自己的网关或兼容接口：填 https 的接口地址"
@@ -209,7 +209,7 @@ private struct AddCredentialContent: View {
     @ViewBuilder
     private var endpointSection: some View {
         let zh = language == .chinese
-        AgentsSectionHeader(title: zh ? "接口地址" : "Endpoints")
+        SectionHeader(title: zh ? "接口地址" : "Endpoints")
         ModelsFootnote(
             text: zh
                 ? "至少填一个，只支持 https。填了哪个地址，这把 key 就能用对应的协议；地址本身之后不再显示。"
@@ -246,7 +246,7 @@ private struct AddCredentialContent: View {
         let zh = language == .chinese
         let model = self.model
         let vendor = model.vendorName(language)
-        AgentsSectionHeader(title: zh ? "数据去向" : "Where your data goes")
+        SectionHeader(title: zh ? "数据去向" : "Where your data goes")
         Card {
             Label {
                 Text(ModelsText.dataSharingNotice(vendorNames: [vendor], language: language))
@@ -348,12 +348,12 @@ private struct AddCredentialDoneView: View {
                     .foregroundStyle(Theme.inkSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            AgentsGroup {
+            GroupedSection {
                 ModelsCredentialRow(
                     summary: CredentialSummary(credential: credential, vendors: model.vendors, language: language))
             }
             if let compatibility = model.compatibility {
-                AgentsNotice(
+                InlineNotice(
                     systemImage: compatibility.isCompatible ? "checkmark.circle" : "exclamationmark.triangle",
                     tone: compatibility.isCompatible ? .success : .waiting, text: compatibility.message(language))
             }

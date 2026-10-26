@@ -28,41 +28,41 @@ private struct VaultContent: View {
         let model = self.model
         ScrollView {
             VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                AgentsPageHeader(title: AppRoute.vault.title(language), message: VaultText.intro(language))
-                if let error = agentsVisibleError(model.error) {
+                PageHeader(title: AppRoute.vault.title(language), message: VaultText.intro(language))
+                if let error = visibleError(model.error) {
                     ErrorBanner(error) { Task { await model.load() } }
                 }
                 if let error = model.actionError {
                     ErrorBanner(error, onDismiss: { model.clearActionError() })
                 }
                 if !model.hasLoaded {
-                    if model.error == nil { AgentsLoadingView() }
+                    if model.error == nil { LoadingStateView() }
                 } else {
                     if !model.pendingRequests.isEmpty {
-                        AgentsSectionHeader(title: zh ? "等你填写" : "Waiting for you")
-                        AgentsGroup {
+                        SectionHeader(title: zh ? "等你填写" : "Waiting for you")
+                        GroupedSection {
                             ForEach(model.pendingRequests) { request in
                                 if request.id != model.pendingRequests.first?.id { Divider() }
                                 requestRow(request)
                             }
                         }
                     }
-                    AgentsSectionHeader(title: VaultText.count(model.items.count, language: language))
+                    SectionHeader(title: VaultText.count(model.items.count, language: language))
                     if model.isFull {
-                        AgentsNotice(
+                        InlineNotice(
                             systemImage: "exclamationmark.triangle", tone: .waiting, text: VaultText.full(language))
                     }
                     if model.items.isEmpty {
-                        AgentsNotice(
+                        InlineNotice(
                             systemImage: "key", tone: .neutral,
                             text: zh
                                 ? "还没有条目。右上角新建，或者在对话里填 agent 要的账号密码。"
                                 : "Nothing saved yet. Add one, or fill in what an agent asks for in a chat.")
                     } else {
-                        AgentsGroup {
+                        GroupedSection {
                             ForEach(model.items) { item in
                                 if item.id != model.items.first?.id { Divider() }
-                                AgentsRow(
+                                ListRow(
                                     systemImage: "key", title: item.name,
                                     detail: [
                                         item.purpose.isEmpty ? nil : item.purpose,
@@ -75,8 +75,8 @@ private struct VaultContent: View {
                         }
                     }
                     if !model.pastRequests.isEmpty {
-                        AgentsSectionHeader(title: zh ? "处理过的请求" : "Past requests")
-                        AgentsGroup {
+                        SectionHeader(title: zh ? "处理过的请求" : "Past requests")
+                        GroupedSection {
                             ForEach(model.pastRequests) { request in
                                 if request.id != model.pastRequests.first?.id { Divider() }
                                 requestRow(request)
@@ -85,10 +85,10 @@ private struct VaultContent: View {
                     }
                 }
             }
-            .agentsPageLayout()
+            .pageLayout()
         }
         .background(Theme.paper)
-        .agentsNavigationTitle(AppRoute.vault.title(language))
+        .inlineNavigationTitle(AppRoute.vault.title(language))
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -118,7 +118,7 @@ private struct VaultContent: View {
 
     private func requestRow(_ request: VaultRequest) -> some View {
         let status = model.status(of: request)
-        return AgentsRow(
+        return ListRow(
             systemImage: status == .pending ? "key.horizontal" : "clock.arrow.circlepath", title: request.name,
             detail: [
                 model.instanceNames[request.instanceID],
@@ -172,16 +172,16 @@ private struct VaultItemContent: View {
                         ErrorBanner(error, onDismiss: { model.clearActionError() })
                     }
                     content(detail)
-                } else if let error = agentsVisibleError(model.error) {
+                } else if let error = visibleError(model.error) {
                     ErrorBanner(error) { Task { await model.load() } }
                 } else {
-                    AgentsLoadingView()
+                    LoadingStateView()
                 }
             }
-            .agentsPageLayout()
+            .pageLayout()
         }
         .background(Theme.paper)
-        .agentsNavigationTitle(model.detail?.item.name ?? AppRoute.vaultItem(model.itemID).title(language))
+        .inlineNavigationTitle(model.detail?.item.name ?? AppRoute.vaultItem(model.itemID).title(language))
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 if model.detail != nil {
@@ -228,8 +228,8 @@ private struct VaultItemContent: View {
     private func content(_ detail: VaultItemDetail) -> some View {
         let zh = language == .chinese
         let item = detail.item
-        AgentsGroup {
-            AgentsRow(
+        GroupedSection {
+            ListRow(
                 systemImage: "curlybraces", title: item.reference,
                 detail: copied
                     ? (zh ? "已复制" : "Copied") : (zh ? "在消息里这样写，agent 就能用它" : "Write this in a message to use it"),
@@ -240,28 +240,28 @@ private struct VaultItemContent: View {
             }
             if !item.purpose.isEmpty {
                 Divider()
-                AgentsRow(systemImage: "text.alignleft", title: zh ? "用途" : "Purpose", detail: item.purpose)
+                ListRow(systemImage: "text.alignleft", title: zh ? "用途" : "Purpose", detail: item.purpose)
             }
             Divider()
-            AgentsRow(
+            ListRow(
                 systemImage: "person", title: zh ? "账号" : "Username",
                 detail: detail.username.isEmpty ? (zh ? "没有账号" : "None") : detail.username)
             Divider()
-            AgentsRow(
+            ListRow(
                 systemImage: "lock", title: zh ? "密码" : "Password",
                 detail: zh ? "已加密保存，谁都看不到明文（包括你）" : "Stored encrypted. Nobody can see it, including you.")
             Divider()
-            AgentsRow(
+            ListRow(
                 systemImage: "cpu", title: zh ? "能用它的实例" : "Instances",
                 detail: VaultText.instances(item, names: model.instanceNames, language: language))
         }
-        AgentsSectionHeader(title: zh ? "时间" : "Dates")
-        AgentsGroup {
-            AgentsRow(title: zh ? "创建" : "Created", detail: Formatting.relativeTime(item.createdAt, language: language))
+        SectionHeader(title: zh ? "时间" : "Dates")
+        GroupedSection {
+            ListRow(title: zh ? "创建" : "Created", detail: Formatting.relativeTime(item.createdAt, language: language))
             Divider()
-            AgentsRow(title: zh ? "修改" : "Updated", detail: Formatting.relativeTime(item.updatedAt, language: language))
+            ListRow(title: zh ? "修改" : "Updated", detail: Formatting.relativeTime(item.updatedAt, language: language))
             Divider()
-            AgentsRow(
+            ListRow(
                 title: zh ? "上次使用" : "Last used",
                 detail: item.lastUsedAt.map { Formatting.relativeTime($0, language: language) }
                     ?? (zh ? "还没用过" : "Never"))
@@ -317,16 +317,16 @@ private struct VaultItemEditorContent: View {
                     if let error = model.error {
                         ErrorBanner(error) { Task { await model.load() } }
                     } else {
-                        AgentsLoadingView()
+                        LoadingStateView()
                     }
                 } else {
                     if problems.contains(.full) {
-                        AgentsNotice(
+                        InlineNotice(
                             systemImage: "exclamationmark.triangle", tone: .waiting, text: VaultText.full(language))
                     }
                     if model.isEditing {
-                        AgentsGroup {
-                            AgentsRow(
+                        GroupedSection {
+                            ListRow(
                                 systemImage: "key", title: model.name,
                                 detail: zh ? "名字建好后不能改" : "The name can't be changed")
                         }
@@ -354,11 +354,11 @@ private struct VaultItemEditorContent: View {
                     instancesSection(problems)
                 }
             }
-            .agentsPageLayout()
+            .pageLayout()
         }
         .scrollDismissesKeyboard(.interactively)
         .background(Theme.paper)
-        .agentsNavigationTitle(model.isEditing ? (zh ? "修改条目" : "Edit item") : (zh ? "新建条目" : "New item"))
+        .inlineNavigationTitle(model.isEditing ? (zh ? "修改条目" : "Edit item") : (zh ? "新建条目" : "New item"))
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button(zh ? "取消" : "Cancel") { onFinish(nil) }
@@ -414,13 +414,13 @@ private struct VaultItemEditorContent: View {
     private func instancesSection(_ problems: [VaultFormProblem]) -> some View {
         let zh = language == .chinese
         let model = self.model
-        AgentsSectionHeader(title: zh ? "能用它的实例" : "Instances that can use it")
-        AgentsGroup {
-            AgentsChoiceRow(title: zh ? "所有实例" : "All instances", isSelected: model.allInstances) {
+        SectionHeader(title: zh ? "能用它的实例" : "Instances that can use it")
+        GroupedSection {
+            ChoiceRow(title: zh ? "所有实例" : "All instances", isSelected: model.allInstances) {
                 model.allInstances = true
             }
             Divider()
-            AgentsChoiceRow(title: zh ? "只给选中的实例" : "Only the ones I pick", isSelected: !model.allInstances) {
+            ChoiceRow(title: zh ? "只给选中的实例" : "Only the ones I pick", isSelected: !model.allInstances) {
                 model.allInstances = false
             }
         }
@@ -431,7 +431,7 @@ private struct VaultItemEditorContent: View {
                     .foregroundStyle(StatusTone.failure.color)
                     .padding(.horizontal, Metrics.Spacing.xs)
             }
-            AgentsGroup {
+            GroupedSection {
                 ForEach(model.instances) { instance in
                     if instance.id != model.instances.first?.id { Divider() }
                     let isOn = model.selected.contains(instance.id)
@@ -495,17 +495,17 @@ private struct VaultRequestContent: View {
                         ErrorBanner(error, onDismiss: { model.clearActionError() })
                     }
                     content(request)
-                } else if let error = agentsVisibleError(model.error) {
+                } else if let error = visibleError(model.error) {
                     ErrorBanner(error) { Task { await model.load() } }
                 } else {
-                    AgentsLoadingView()
+                    LoadingStateView()
                 }
             }
-            .agentsPageLayout()
+            .pageLayout()
         }
         .scrollDismissesKeyboard(.interactively)
         .background(Theme.paper)
-        .agentsNavigationTitle(AppRoute.vaultRequest(model.requestID).title(language))
+        .inlineNavigationTitle(AppRoute.vaultRequest(model.requestID).title(language))
         .refreshable { await model.load() }
         .task { await model.load() }
     }
@@ -516,8 +516,8 @@ private struct VaultRequestContent: View {
         let model = self.model
         let status = model.status ?? request.status
         let problems = model.visibleProblems
-        AgentsGroup {
-            AgentsRow(
+        GroupedSection {
+            ListRow(
                 systemImage: "key", title: ConversationText.vaultItemName(request.name, language: language),
                 detail: model.instanceNames[request.instanceID].map { zh ? "实例：\($0)" : "Instance: \($0)" })
             if !request.purpose.isEmpty {
@@ -534,7 +534,7 @@ private struct VaultRequestContent: View {
             }
             if let runID = request.runID {
                 Divider()
-                AgentsRow(systemImage: "list.bullet.rectangle", title: zh ? "来自这次运行" : "From this run") {
+                ListRow(systemImage: "list.bullet.rectangle", title: zh ? "来自这次运行" : "From this run") {
                     router.open(.run(runID))
                 }
             }
@@ -543,7 +543,7 @@ private struct VaultRequestContent: View {
             NoticeText(
                 text: VaultText.requestExpires(request.expiresAt, now: Date(), language: language), tone: .waiting)
             if let existing = model.existingItem {
-                AgentsNotice(
+                InlineNotice(
                     systemImage: "arrow.triangle.2.circlepath", tone: .waiting,
                     text: VaultText.requestReplaces(existing.name, language: language))
             }

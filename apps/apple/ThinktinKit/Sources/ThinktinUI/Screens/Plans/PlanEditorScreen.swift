@@ -53,17 +53,17 @@ private struct PlanEditorContent: View {
                     if let error = model.loadError {
                         ErrorBanner(error) { Task { await model.load() } }
                     } else {
-                        AgentsLoadingView()
+                        LoadingStateView()
                     }
                 } else {
                     form
                 }
             }
-            .agentsPageLayout()
+            .pageLayout()
         }
         .scrollDismissesKeyboard(.interactively)
         .background(Theme.paper)
-        .agentsNavigationTitle(
+        .inlineNavigationTitle(
             model.isEditing ? AppRoute.editPlan("").title(language) : AppRoute.newPlan(instanceID: nil).title(language)
         )
         .toolbar {
@@ -115,7 +115,7 @@ private struct PlanEditorContent: View {
         let model = self.model
         if let error = model.saveError {
             if model.isPartiallySaved {
-                AgentsNotice(
+                InlineNotice(
                     systemImage: "exclamationmark.triangle", tone: .waiting,
                     text: zh
                         ? "一部分改动已经保存了，剩下的没存上。再点一次保存只做剩下的。"
@@ -124,7 +124,7 @@ private struct PlanEditorContent: View {
             ErrorBanner(error, onDismiss: { model.clearSaveError() })
         }
         if let original = model.original, original.awaitingConfirmation {
-            AgentsNotice(
+            InlineNotice(
                 systemImage: "hourglass", tone: .waiting,
                 text: zh
                     ? "这个计划在等你确认。保存后回到确认页，按改好的内容确认。"
@@ -136,8 +136,8 @@ private struct PlanEditorContent: View {
         policySection
         catchUpSection
         if !model.steps.isEmpty {
-            AgentsSectionHeader(title: zh ? "流水线" : "Pipeline")
-            AgentsNotice(
+            SectionHeader(title: zh ? "流水线" : "Pipeline")
+            InlineNotice(
                 systemImage: "point.3.connected.trianglepath.dotted", tone: .neutral,
                 text: zh
                     ? "这个计划是 \(model.steps.count) 步的流水线。步骤在流水线编辑器里改，这里保存不会动它们。"
@@ -150,22 +150,22 @@ private struct PlanEditorContent: View {
     private var instanceSection: some View {
         let zh = language == .chinese
         let model = self.model
-        AgentsSectionHeader(title: zh ? "在哪个实例上运行" : "Runs on")
+        SectionHeader(title: zh ? "在哪个实例上运行" : "Runs on")
         if model.isEditing {
-            AgentsGroup {
-                AgentsRow(
+            GroupedSection {
+                ListRow(
                     systemImage: "cpu", title: instanceName(model.instanceID),
                     detail: zh ? "计划建好后不能换实例。" : "A plan's instance can't be changed.")
             }
         } else if app.instances.isEmpty {
-            AgentsNotice(
+            InlineNotice(
                 systemImage: "exclamationmark.triangle", tone: .waiting,
                 text: zh ? "还没有实例。先领养一个 agent。" : "You don't have any instances yet. Adopt an agent first.")
         } else {
-            AgentsGroup {
+            GroupedSection {
                 ForEach(app.instances) { instance in
                     if instance.id != app.instances.first?.id { Divider() }
-                    AgentsChoiceRow(
+                    ChoiceRow(
                         title: instance.name, detail: AgentsText.displayName(agentID: instance.agentID),
                         isSelected: model.instanceID == instance.id
                     ) {
@@ -184,7 +184,7 @@ private struct PlanEditorContent: View {
     @ViewBuilder
     private var basicsSection: some View {
         let zh = language == .chinese
-        AgentsSectionHeader(title: zh ? "做什么" : "What it does")
+        SectionHeader(title: zh ? "做什么" : "What it does")
         PlansTextField(
             title: zh ? "标题" : "Title", text: $model.title, prompt: zh ? "比如：每日新闻摘要" : "For example: Daily news digest",
             limit: Plan.maxTitleLength, count: model.titleLength,
@@ -202,8 +202,8 @@ private struct PlanEditorContent: View {
     private var triggersSection: some View {
         let zh = language == .chinese
         let model = self.model
-        AgentsSectionHeader(title: zh ? "什么时候运行" : "When it runs")
-        AgentsGroup {
+        SectionHeader(title: zh ? "什么时候运行" : "When it runs")
+        GroupedSection {
             ForEach(model.triggers) { item in
                 PlanEditorTriggerRow(item: item, draft: model.draft(for: item.id)) { schedule in
                     model.updateTrigger(item.id, to: schedule)
@@ -219,7 +219,7 @@ private struct PlanEditorContent: View {
                     model.addTrigger(schedule)
                 }
             } label: {
-                AgentsRow(
+                ListRow(
                     systemImage: "plus", title: zh ? "添加触发规则" : "Add schedule",
                     detail: model.canAddTrigger
                         ? nil : (zh ? "最多 \(Plan.maxTriggers) 条" : "Up to \(Plan.maxTriggers)"))
@@ -240,12 +240,12 @@ private struct PlanEditorContent: View {
         let zh = language == .chinese
         let model = self.model
         let policy = model.policy
-        AgentsSectionHeader(title: zh ? "策略" : "Policy")
-        AgentsGroup {
+        SectionHeader(title: zh ? "策略" : "Policy")
+        GroupedSection {
             NavigationLink {
                 PlanToolsPicker(policy: $model.policy)
             } label: {
-                AgentsRow(
+                ListRow(
                     systemImage: "checkmark.shield", title: zh ? "预授权的工具" : "Pre-approved tools",
                     detail: PlansText.toolsSummary(policy.preauthorizedTools, language: language),
                     detailTone: policy.preauthorizedTools.contains(where: PlansText.isRiskyTool) ? .waiting : nil)
@@ -270,8 +270,8 @@ private struct PlanEditorContent: View {
                 options: PlansText.presets(PlansText.timeoutPresets, including: policy.waitTimeoutSecs),
                 selection: $model.policy.waitTimeoutSecs, name: { PlansText.duration($0, language: language) })
         }
-        AgentsSectionHeader(title: zh ? "每次运行的上限" : "Per-run limits")
-        AgentsGroup {
+        SectionHeader(title: zh ? "每次运行的上限" : "Per-run limits")
+        GroupedSection {
             PlansMenuRow(
                 systemImage: "timer", title: zh ? "最长跑多久" : "Longest run",
                 options: PlansText.presets(PlansText.durationPresets, including: policy.maxDurationSecs),
@@ -301,11 +301,11 @@ private struct PlanEditorContent: View {
         let model = self.model
         let options =
             CatchUp.knownCases.contains(model.catchUp) ? CatchUp.knownCases : CatchUp.knownCases + [model.catchUp]
-        AgentsSectionHeader(title: zh ? "错过的怎么补（平台停机时）" : "Missed runs (during downtime)")
-        AgentsGroup {
+        SectionHeader(title: zh ? "错过的怎么补（平台停机时）" : "Missed runs (during downtime)")
+        GroupedSection {
             ForEach(options, id: \.self) { option in
                 if option != options.first { Divider() }
-                AgentsChoiceRow(
+                ChoiceRow(
                     title: PlansText.catchUpName(option, language: language),
                     detail: PlansText.catchUpDetail(option, language: language), isSelected: model.catchUp == option
                 ) {
@@ -333,7 +333,7 @@ private struct PlanEditorTriggerRow: View {
                     draft: draft ?? TriggerDraft(), title: zh ? "修改触发规则" : "Edit schedule", dismissOnSave: true,
                     onSave: onChange)
             } label: {
-                AgentsRow(
+                ListRow(
                     systemImage: item.trigger?.isInvalid == true ? "exclamationmark.triangle" : "clock",
                     title: ScheduleDescription.describe(item.schedule, language: language), detail: detail,
                     detailTone: item.trigger?.isInvalid == true ? .failure : nil)
@@ -385,7 +385,7 @@ struct PlanToolsPicker: View {
                 .typography(.subheadline)
                 .foregroundStyle(Theme.inkSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-                AgentsGroup {
+                GroupedSection {
                     ForEach(kinds, id: \.self) { kind in
                         if kind != kinds.first { Divider() }
                         Toggle(isOn: binding(for: kind)) {
@@ -414,10 +414,10 @@ struct PlanToolsPicker: View {
                         .foregroundStyle(StatusTone.failure.color)
                 }
             }
-            .agentsPageLayout()
+            .pageLayout()
         }
         .background(Theme.paper)
-        .agentsNavigationTitle(zh ? "预授权的工具" : "Pre-approved tools")
+        .inlineNavigationTitle(zh ? "预授权的工具" : "Pre-approved tools")
         .tint(Theme.accent)
     }
 

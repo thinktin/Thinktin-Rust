@@ -29,12 +29,12 @@ private struct OnboardingContent: View {
         let model = self.model
         ScrollView {
             VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                AgentsPageHeader(title: OnboardingText.title(language), message: OnboardingText.intro(language))
-                if let error = agentsVisibleError(model.error) {
+                PageHeader(title: OnboardingText.title(language), message: OnboardingText.intro(language))
+                if let error = visibleError(model.error) {
                     ErrorBanner(error) { Task { await model.load() } }
                 }
                 if !model.hasLoaded {
-                    AgentsLoadingView()
+                    LoadingStateView()
                 } else {
                     ForEach(OnboardingStep.allCases, id: \.self) { step in
                         OnboardingStepCard(
@@ -59,10 +59,10 @@ private struct OnboardingContent: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(Theme.accent)
             }
-            .agentsPageLayout()
+            .pageLayout()
         }
         .background(Theme.paper)
-        .agentsNavigationTitle(AppRoute.onboarding.title(language))
+        .inlineNavigationTitle(AppRoute.onboarding.title(language))
         .task { await model.load() }
     }
 

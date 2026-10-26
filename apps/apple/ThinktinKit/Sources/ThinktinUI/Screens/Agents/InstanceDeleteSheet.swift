@@ -47,7 +47,7 @@ struct InstanceDeleteSheet: View {
                 if let impact = model.deletionImpact {
                     InstanceDeletionImpactView(impact: impact)
                     if impact.isIncomplete {
-                        AgentsNotice(
+                        InlineNotice(
                             systemImage: "exclamationmark.triangle", tone: .waiting,
                             text: zh
                                 ? "有些信息没查到，可能还有别的计划或团队受影响。可以重试，也可以照样删除。"
@@ -58,7 +58,7 @@ struct InstanceDeleteSheet: View {
                         }
                     }
                 } else if model.isCheckingImpact {
-                    AgentsLoadingView()
+                    LoadingStateView()
                 }
 
                 if let error = model.deleteError {
@@ -75,10 +75,10 @@ struct InstanceDeleteSheet: View {
                 .frame(maxWidth: .infinity)
                 .padding(.top, Metrics.Spacing.s)
             }
-            .agentsPageLayout()
+            .pageLayout()
         }
         .background(Theme.paper)
-        .agentsNavigationTitle(zh ? "删除实例" : "Delete instance")
+        .inlineNavigationTitle(zh ? "删除实例" : "Delete instance")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button(zh ? "取消" : "Cancel") { onClose() }
@@ -144,9 +144,9 @@ struct InstanceDeletionImpactView: View {
         let zh = language == .chinese
         VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
             if impact.activeRuns > 0 {
-                AgentsSectionHeader(title: zh ? "会停掉" : "Will be stopped")
-                AgentsGroup {
-                    AgentsRow(
+                SectionHeader(title: zh ? "会停掉" : "Will be stopped")
+                GroupedSection {
+                    ListRow(
                         systemImage: "stop.circle",
                         title: zh ? "\(impact.activeRuns) 个还没结束的任务" : "\(impact.activeRuns) unfinished task(s)",
                         detail: zh ? "正在跑的、排队的、等审批的都会取消。" : "Running, queued and waiting tasks are cancelled.",
@@ -154,10 +154,10 @@ struct InstanceDeletionImpactView: View {
                 }
             }
 
-            AgentsSectionHeader(title: zh ? "会一起删掉" : "Will be deleted")
-            AgentsGroup {
+            SectionHeader(title: zh ? "会一起删掉" : "Will be deleted")
+            GroupedSection {
                 ForEach(impact.ownPlans) { plan in
-                    AgentsRow(
+                    ListRow(
                         systemImage: "calendar", title: plan.title, detail: zh ? "这个实例的计划" : "This instance's plan",
                         accessory: {
                             if AgentsText.isAIGenerated(plan) { AIGeneratedLabel() }
@@ -167,19 +167,19 @@ struct InstanceDeletionImpactView: View {
                 if let count = impact.artifactCount, count > 0 {
                     // 只数到接口的上限，到了上限写“500+”。
                     let countText = count >= InstanceDeletionImpact.artifactsToCheck ? "\(count)+" : "\(count)"
-                    AgentsRow(
+                    ListRow(
                         systemImage: "doc.on.doc", title: zh ? "\(countText) 个产出物" : "\(countText) artifact(s)")
                     Divider()
                 }
-                AgentsRow(
+                ListRow(
                     systemImage: "shippingbox",
                     title: zh ? "沙箱、工作区和对话记录" : "The sandbox, its workspace and chat history",
                     detail: zh ? "模型路由也会一起删掉；你的模型 key 不受影响。" : "Its model routes go too; your model keys stay.")
             }
 
             if !impact.pipelines.isEmpty {
-                AgentsSectionHeader(title: zh ? "这些流水线有步骤在它上面" : "Pipelines with steps on it")
-                AgentsGroup {
+                SectionHeader(title: zh ? "这些流水线有步骤在它上面" : "Pipelines with steps on it")
+                GroupedSection {
                     ForEach(impact.pipelines) { pipeline in
                         if pipeline.id != impact.pipelines.first?.id { Divider() }
                         InstancePipelineImpactRow(pipeline: pipeline)
@@ -188,11 +188,11 @@ struct InstanceDeletionImpactView: View {
             }
 
             if !impact.teams.isEmpty {
-                AgentsSectionHeader(title: zh ? "会从这些团队里移除" : "Will be removed from these teams")
-                AgentsGroup {
+                SectionHeader(title: zh ? "会从这些团队里移除" : "Will be removed from these teams")
+                GroupedSection {
                     ForEach(impact.teams) { team in
                         if team.id != impact.teams.first?.id { Divider() }
-                        AgentsRow(
+                        ListRow(
                             systemImage: "person.3", title: team.teamName, detail: teamDetail(team),
                             detailTone: team.isLead || team.remainingMembers == 0 ? .waiting : nil)
                     }
@@ -223,7 +223,7 @@ private struct InstancePipelineImpactRow: View {
     var body: some View {
         let zh = language == .chinese
         let steps = AgentsText.list(pipeline.stepsOnInstance.map(\.key), language: language)
-        AgentsRow(
+        ListRow(
             systemImage: pipeline.willPause ? "pause.circle" : "flowchart",
             title: pipeline.plan.title,
             detail: zh ? "在它上面的步骤：\(steps)" : "Steps on it: \(steps)",
