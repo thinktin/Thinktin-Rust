@@ -8,7 +8,8 @@ import cn.thinktin.data.model.InboxKind
  * - 审批：审批详情 `approval/{id}`（13.16；已处理、过期的在详情里显示结果）；没有审批 id 的去审批中心；
  * - 保险箱填写请求：`vault?requestId=…`；
  * - 计划待确认：计划详情；
- * - 运行完成 / 失败、其他提醒：有运行去运行详情，有计划去计划，有实例去对话；
+ * - 运行完成 / 失败、其他提醒：有运行去运行详情，有计划去计划，有实例去对话；IM 渠道被停用的提醒（子类型
+ *   `im_channel_disabled`）去 IM 渠道设置（13.15，和 iOS 一样）；
  * - 电脑审批（13.9，P3）还没有页面：有运行去运行详情，否则不跳。
  * 返回 null 表示没有可去的页面（只标已读）。
  */
@@ -18,5 +19,12 @@ fun InboxItem.targetRoute(): String? = when (kind) {
     InboxKind.PlanConfirm -> planId?.let(Routes::plan) ?: Routes.PLANS
     InboxKind.ComputerApproval -> runId?.let(Routes::run)
     InboxKind.RunFinished, InboxKind.RunFailed, InboxKind.Info ->
-        runId?.let(Routes::run) ?: planId?.let(Routes::plan) ?: instanceId?.let(Routes::chat)
+        if (subtype == SUBTYPE_IM_CHANNEL_DISABLED) {
+            Routes.IM_CHANNELS
+        } else {
+            runId?.let(Routes::run) ?: planId?.let(Routes::plan) ?: instanceId?.let(Routes::chat)
+        }
 }
+
+/** IM 渠道的机器人失效、被后台停用了（10.5）。 */
+const val SUBTYPE_IM_CHANNEL_DISABLED = "im_channel_disabled"

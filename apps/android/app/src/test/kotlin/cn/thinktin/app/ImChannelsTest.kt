@@ -15,6 +15,7 @@ import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
+import cn.thinktin.app.navigation.targetRoute
 import cn.thinktin.app.ui.drawer.DRAWER_TEST_TAG
 import cn.thinktin.app.ui.imchannels.IM_CHANNEL_ROW_TEST_TAG
 import cn.thinktin.app.ui.imchannels.ImChannelEditorViewModel
@@ -168,6 +169,15 @@ class ImChannelsTest {
             imLastErrorRes("wecom 93000: the webhook is invalid or the bot was removed from the group"),
         )
         assertNull(imLastErrorRes("feishu http 418: odd"))
+    }
+
+    @Test
+    fun disabledChannelNoticesOpenImChannels() = runTest(dispatcher) {
+        val item = mock().syncInbox().items.first().copy(
+            kind = cn.thinktin.data.model.InboxKind.Info, subtype = "im_channel_disabled", runId = "run-done",
+        )
+        assertEquals(cn.thinktin.app.navigation.Routes.IM_CHANNELS, item.targetRoute())
+        assertEquals("run/run-done", item.copy(subtype = null).targetRoute())
     }
 
     @Test
