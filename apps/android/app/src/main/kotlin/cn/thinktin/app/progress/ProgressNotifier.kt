@@ -39,8 +39,13 @@ class SystemProgressNotifier(private val context: Context) : ProgressNotifier {
         if (!hasNotificationPermission(context)) return false
         val manager = NotificationManagerCompat.from(context)
         if (!manager.areNotificationsEnabled()) return false
-        manager.notify(TAG, progress.runId.hashCode(), build(progress))
-        return true
+        return try {
+            manager.notify(TAG, progress.runId.hashCode(), build(progress))
+            true
+        } catch (_: SecurityException) {
+            // 刚好在检查之后被收回了权限。
+            false
+        }
     }
 
     override fun cancel(runId: String) {

@@ -80,8 +80,12 @@ P1 后端核心（M1–M9）和 P2 里能在代码层面完成的包都做完了
 
 - iOS 12.21 搜索：本机缓存里搜实例、运行、收件箱，联网时加上计划和产出物；分组、片段、AI 标识。921 个测试。
 
+- 安卓 13.10 常驻通知：对话里发起的运行（设置能关）、运行页打开的根运行，通知栏显示状态 / 步数 / 计时，事件流更新，结束撤掉。
+- iOS 12.19 TestFlight：`ios-v*` 标签触发 `.github/workflows/ios-release.yml`（全目标 ThinktinCore、API key 自动签名、上传），
+  说明在 `docs/ios-release.md`。密钥、App 记录要人准备，工作流还没在 macOS 上跑过。
+
 进行中：
-- 安卓 13.10 常驻通知（2026-10-26 开始）。之后 iOS 12.20 / 12.10 / 12.19 / 12.11。
+- iOS 12.11 上架（2026-10-26 开始）：隐私清单补全、required-reason API 扫描、审核材料文档。之后 iOS 12.20 / 12.10。
 
 环境（容器回收后要重装）：Swift 6.2 装在 `/opt/swift`（swift.org 的包，验签）；Android SDK 在 `/opt/android-sdk`（cmdline-tools、platform 35、build-tools 35.0.0，不用 NDK）；`cargo build -p client-core --lib` 出本机库，`tools/client-core/build-linux-swift.sh target/linux` 出 Linux 版 Swift 包。Gradle 直连 Maven Central 没被限流。Gradle 和 Swift 一起跑时 Robolectric 偶尔超时，分开跑。
 
