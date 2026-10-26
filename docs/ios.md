@@ -257,7 +257,8 @@ client-core 只缓存实例、运行、事件、收件箱（cache.rs 的几张�
   `kit-linux` 最后还有严格模式的 `swift format lint`。
 - 代码风格：`swift format`（Swift 6 工具链自带），配置在 `apps/apple/.swift-format`（App 和 ThinktinKit 共用，4 格缩进、120 列、
   其余是 swift-format 6.2 的默认规则全量导出）。CI 跑严格模式的 lint，**提交前先 `swift format -i -r apps/apple`**。
-- **Linux 上检查界面代码**：`tools/apple/uicheck/run.sh`（`appkit` 查 macOS 路径，`test` 顺带跑 ThinktinUITests；UIKit 版连 App target 和
+- **Linux 上检查界面代码**：`tools/apple/uicheck/run.sh`（`appkit` 查 macOS 路径和 macOS App target（要先
+  `build-linux-swift.sh --desktop`，见 [macOS App](macos.md) 第 7 节），`test` 顺带跑 ThinktinUITests；UIKit 版连 App target 和
   小组件扩展一起查）。SwiftUI、UIKit、AppKit、Security、OSLog、UserNotifications、Charts、WidgetKit、AppIntents、ActivityKit 换成桩模块（签名照 iOS 17 / macOS 14 SDK），能发现类型错误和并发检查问题，代替不了 macOS CI 的真实编译。
   桩模块缺 API 时照 Apple 文档补进 `tools/apple/uicheck/Stubs/`，不要为了过检查改 App 代码。写完界面推送前跑一遍。
   `prep.py` 把 ThinktinUI 里 `#if` 行的 `os(iOS)` / `os(macOS)` 换成 `canImport(UIKit)` / `canImport(AppKit)`：UIKit 版查 iOS

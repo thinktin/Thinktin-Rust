@@ -82,10 +82,10 @@ desktop 的绑定直接用 client-core 的类型，所以两份放进同一个 S
 
 ## 5. 还没做的
 
-- macOS App（14.5–14.9）：菜单栏界面、后台登录项、“正在被控制”的提示和一键停止、系统权限引导、配对界面
-  （显示 `start_pairing` 给的二维码、钥匙串里的电脑密钥）；macOS 的 xcframework 打包（`build-apple.sh` 加 macOS 的
-  `libdesktop`，按上面的样子生成绑定）。
-- 截图、键鼠、打开应用的实现（14.3、14.4）。
+- ~~macOS App（14.5–14.9）~~、~~截图、键鼠、打开应用（14.3、14.4）~~：代码已写（菜单栏、登录项、权限引导、钥匙串里的
+  配对密钥和二维码、ScreenCaptureKit / CGEvent / NSWorkspace 的系统工具、Developer ID + 公证 + Sparkle 的发版），见
+  [macOS App](macos.md)；还没在 Mac 上跑过，第 8 节是剩下的。
 - ~~手机的配对和审批界面（12.9、13.9）~~：已做（iOS、安卓）：扫码配对、收到 `computer_approval` 推送或进前台时拉
   `GET /v1/devices/current/messages`，显示请求、签批准或拒绝（签的是显示的说明和参数的摘要），发回电脑；签发、吊销能力令牌。
 - 电脑发的说明现在是英文的（`desktop` 按工具拼的），随 App 的语言设置本地化（14.5）。
+- 正在执行工具时的回调（`DesktopObserver` 加“开始 / 结束调用”），菜单栏按它显示“正在被控制”（现在按“配好手机、连着中继”）。

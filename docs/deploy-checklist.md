@@ -30,6 +30,7 @@ Redis：WBS 2.5 里列了，现在的代码没用到，可以先不建。
 |---|---|---|
 | 阿里云 RAM 子账号 | 只给 KMS（加解密这把主密钥）、短信、OSS（这个桶）的权限，各一对 AccessKey | Secret：`THINKTIN_ALIYUN_KMS_ACCESS_KEY_*`、`THINKTIN_ALIYUN_SMS_ACCESS_KEY_*`、`THINKTIN_S3_*` |
 | Apple 开发者 | APNs 推送密钥（.p8）、Team ID、Key ID；App 的 bundle id；App Store Connect API 密钥（TestFlight 发版） | `[push.apns]`、Secret `thinktin-push` 的 `apns.p8`；GitHub 的 `testflight` 环境（[iOS 发版](ios-release.md)） |
+| Apple 开发者（Mac 版） | “Developer ID Application”证书（.p12）；公证用的 App Store Connect API 密钥（同上）；Sparkle 的 EdDSA 密钥对；更新源的地址（放 `appcast.xml`） | GitHub 的 `macos-release` 环境和仓库变量（[macOS App](macos.md) 第 6 节） |
 | 极光推送（安卓，如果定了用它） | AppKey、Master Secret | `[push.jpush]` 的 `app_key`、Secret `thinktin-worker` 的 `THINKTIN_JPUSH_MASTER_SECRET` |
 | Firebase（海外安卓，可选） | 服务账号 JSON | Secret `thinktin-push` 的 `fcm.json` |
 | 安卓签名 | release 签名的 keystore | [安卓发版](android-release.md) |
@@ -128,6 +129,8 @@ kubectl -n $ns create secret generic thinktin-relay --from-literal=DATABASE_URL=
 - 压测：按 [压测说明](loadtest.md) 跑出正式数字，再配自动扩缩。
 - 出网策略（2.7）：沙箱只能连模型网关；集群内的 NetworkPolicy。
 - 客户端：把 App 的接口地址指到预发，跑一遍真机（推送、生物识别、Keystore、配对电脑）。
+- Mac 版：接口地址、中继地址（`THINKTIN_RELAY_URL`）指到预发，在 Mac 上过一遍截图、键鼠、登录项、配对和高危审批
+  （[macOS App](macos.md) 第 8 节）。
 
 做联调要能连到预发：一个预发的接口地址和测试账号（手机号能收到验证码，或者临时配一个审核用的固定码），
 需要看集群时给一个只读的 kubeconfig。

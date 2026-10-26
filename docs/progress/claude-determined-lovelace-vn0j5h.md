@@ -118,16 +118,24 @@ P1 后端核心（M1–M9）和 P2 里能在代码层面完成的包都做完了
   `ComputerHostPanel`（菜单栏弹出的面板，二维码的图由 App 注入）。968 个 Kit 测试，uicheck 108 个，两种桩都过。
 - iOS 也认 `thinktin-pair:`（系统相机扫电脑上的二维码打开配对，和安卓一样）。
 
+- 部署准备（10-26 用户去准备部署环境）：`docs/deploy-checklist.md`（云资源、账号、密钥、配置、第一次上线顺序）和
+  `thinktin-server gen-secrets`（`4b78911`）。
+- macOS App（14.3–14.9，P3，2026-10-26）：client-core 把访问令牌交给工具服务（`1dd3578`）；`build-apple.sh` 的 macOS 切片
+  换成 libdesktop、两份绑定进同一个模块（`739630e`）；`ThinktinDesktopAdapter`（`3cb48b0`）；Kit 的 `ComputerHostLifecycle`
+  （跟着登录状态建服务、按设备记开关）、`KeyCombination`、`ScreenshotGeometry`（`3e13fb1`）；`ThinktinMac` target：菜单栏、
+  钥匙串配对密钥、二维码、截图 / 键鼠 / 打开、权限引导、登录项（`b08cc27`）；Sparkle 自动更新、`build-apple.sh --macos`
+  （`0b22795`）；发版工作流 `macos-release.yml`（Developer ID、公证、appcast）和 `docs/macos.md`。uicheck 的 AppKit 版查整个
+  Mac target（新桩：ScreenCaptureKit、ServiceManagement、ApplicationServices、CoreImage、Sparkle）；CI 在 macOS 上编它、
+  Linux 上跑 ThinktinDesktopAdapterTests。975 个 Kit 测试。
+
 进行中：
 - 无。
 
 下一步（要 macOS 才能验，或者要人定）：
-1. macOS App 的第三步：project.yml 的 macOS 目标（菜单栏应用、`LSUIElement`）、ThinktinKit 包加 macOS 平台、
-   `build-apple.sh` 出 macOS 的 `libdesktop`（里面也有 client-core，绑定按 `tools/desktop/swift-smoke.sh` 的样子放进同一个
-   Swift 模块）、`DesktopService` 接 `ComputerHost` 的适配、钥匙串 / Secure Enclave 里的配对密钥、CoreImage 画二维码、
-   截图（ScreenCaptureKit）/ 键鼠（CGEvent）/ 打开应用（NSWorkspace）= 14.3、14.4、登录项（SMAppService）= 14.6、
-   系统权限引导 = 14.7、分发 = 14.9。这些在 Linux 上验不了（没有 AppKit、ScreenCaptureKit 的真实接口），要在 Mac 或
-   macOS CI 上做。
+1. macOS App 只在 Linux 的桩上查过：第一次 macOS CI（PR 或合到 main 后）编 `ThinktinMac` 时可能有桩没覆盖的 SDK 差异要修；
+   截图、键鼠、登录项、Secure Enclave、Sparkle 要在 Mac 上过一遍；`macos-release.yml` 没跑过（证书、公证密钥、Sparkle 密钥、
+   更新源地址要人准备，见 `docs/macos.md` 第 6 节）。还能在这里做的小项见 `docs/macos.md` 第 8 节（工具调用中的提示、
+   审批说明本地化）。
 2. 抽屉角标还不算电脑发来的审批（iOS、安卓都是）；iOS 控制中心的“全部停止”要让小组件扩展共享登录会话（钥匙串共享），
    要人定安全上能不能这样。
 3. 要人定的事见下面“坑和决定”（推送 SDK、上架材料、审批不设锁屏密码时两端不一致等）。
@@ -136,7 +144,8 @@ P1 后端核心（M1–M9）和 P2 里能在代码层面完成的包都做完了
 
 坑和决定：
 - 原来三个会话（backend `session_016LgPcdynywrhrjCq8VVFLt`、iOS `session_01GuCp3KRgqaK6Kzynw6udRn`、安卓 `session_01T2zubC6hDr9ZZR3ihhPP5b`）查不到了，它们 scratchpad 里的工作流脚本和缓存也没了，按各进度文件重新来。
-- 定时任务 `trig_01LULryki4Z7mPLXhgSXGWMP`（每小时第 58 分）：叫醒本会话、读本文件接着做；全部做完或用户叫停时删掉。
+- 定时任务 `trig_01J9YurHAZJ35AugopCVXWKZ`（“ThinkTin 续跑检查”，每小时第 58 分；旧的 `trig_01LULryki4Z7mPLXhgSXGWMP` 已删）：
+  叫醒本会话、读本文件接着做；能在这里做的都做完（只剩要部署环境、要人定的）或用户叫停时删掉。
 - 要人定的：iOS 批准审批时设备没设锁屏密码照常批准（`BiometricGateResult.unavailable`），安卓是不许批准，两端不一致。
 - 要人定的（上架，docs/android-release.md 第 2.2、4、5 节）：审核账号（服务端要有固定验证码的审核账号）、生成式 AI 的备案 / 登记材料、
   APP 备案号、Play 是否用同一把签名密钥。
