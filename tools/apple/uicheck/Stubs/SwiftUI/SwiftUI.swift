@@ -536,7 +536,7 @@ public struct ToolbarItemPlacement: Sendable {
     public static let cancellationAction = ToolbarItemPlacement()
     public static let confirmationAction = ToolbarItemPlacement()
     public static let destructiveAction = ToolbarItemPlacement()
-    #if os(iOS)
+    #if canImport(UIKit)
         public static let topBarLeading = ToolbarItemPlacement()
     #endif
 }
@@ -619,7 +619,7 @@ extension View {
     public func onTapGesture(count: Int = 1, perform action: @escaping () -> Void) -> some View { _m() }
 
     public func toolbar<Content: ToolbarContent>(@ToolbarContentBuilder content: () -> Content) -> some View { _m() }
-    #if os(iOS)
+    #if canImport(UIKit)
         public func navigationBarTitleDisplayMode(_ mode: NavigationBarItem.TitleDisplayMode) -> some View { _m() }
     #endif
 

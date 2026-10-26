@@ -240,6 +240,8 @@ client-core 只缓存实例、运行、事件、收件箱（cache.rs 的几张�
 - **Linux 上检查界面代码**：`tools/apple/uicheck/run.sh`（`appkit` 查 macOS 路径，`test` 顺带跑 ThinktinUITests；UIKit 版连 App target 和
   小组件扩展一起查）。SwiftUI、UIKit、AppKit、Security、OSLog、UserNotifications、Charts、WidgetKit、AppIntents、ActivityKit 换成桩模块（签名照 iOS 17 / macOS 14 SDK），能发现类型错误和并发检查问题，代替不了 macOS CI 的真实编译。
   桩模块缺 API 时照 Apple 文档补进 `tools/apple/uicheck/Stubs/`，不要为了过检查改 App 代码。写完界面推送前跑一遍。
+  `prep.py` 把 ThinktinUI 里 `#if` 行的 `os(iOS)` / `os(macOS)` 换成 `canImport(UIKit)` / `canImport(AppKit)`：UIKit 版查 iOS
+  分支、AppKit 版查 macOS 分支（之前 Linux 上两个都是假，只查了 `#else`）。只有 iOS 有的接口在桩里放进 `#if canImport(UIKit)`。
 
 ## 8. 工作包与开发顺序
 
