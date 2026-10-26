@@ -901,7 +901,7 @@ struct MockSettingsTests {
         let channel = try await client.addImChannel(
             NewImChannel(webhookURL: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=abcd1234", label: "运维群"))
         #expect(channel.vendor == .wecom)
-        #expect(channel.hint == "1234")
+        #expect(channel.hint == "…1234")
         #expect(!channel.hasSecret)
         #expect(channel.events == ImEvent.knownCases)
         #expect(
@@ -919,15 +919,30 @@ struct MockSettingsTests {
         #expect(
             await apiCode { _ = try await client.updateImChannel(channel.id, label: nil, events: [], enabled: nil) }
                 == .invalid)
-        #expect(await apiCode { try await client.testImChannel(channel.id) } == .conflict)
+        // 关着的不发测试消息（和服务端一样是 invalid）。
+        #expect(await apiCode { try await client.testImChannel(channel.id) } == .invalid)
         _ = try await client.updateImChannel(channel.id, label: nil, events: nil, enabled: true)
         try await client.testImChannel(channel.id)
         #expect(try await client.imChannels().last?.lastSentAt != nil)
 
         let moved = try await client.replaceImWebhook(
-            channel.id, webhookURL: "https://oapi.dingtalk.com/robot/send?access_token=zz99", secret: "SEC")
+            channel.id, webhookURL: "https://oapi.dingtalk.com/robot/send?access_token=zz99zz99", secret: "SEC12345")
         #expect(moved.vendor == .dingtalk)
+        #expect(moved.hint == "…zz99")
         #expect(moved.hasSecret)
+        // 钉钉的密钥要以 SEC 开头；企业微信没有密钥。
+        #expect(
+            await apiCode {
+                _ = try await client.replaceImWebhook(
+                    channel.id, webhookURL: "https://oapi.dingtalk.com/robot/send?access_token=zz99zz99",
+                    secret: "12345678")
+            } == .invalid)
+        #expect(
+            await apiCode {
+                _ = try await client.replaceImWebhook(
+                    channel.id, webhookURL: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=abcd1234",
+                    secret: "SEC12345")
+            } == .invalid)
         try await client.deleteImChannel(channel.id)
         #expect(try await client.imChannels().count == 1)
     }

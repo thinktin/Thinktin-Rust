@@ -27,6 +27,8 @@ public struct MockState: Sendable {
     public var vaultUsernames: [VaultItemID: String]
     public var vaultRequests: [VaultRequest]
     public var imChannels: [ImChannel]
+    /// 最近一小时发过的 IM 测试消息（每小时最多 10 条）。
+    public var imTests: [Date] = []
     /// 登录着的设备（吊销了的删掉）。当前这台是 `session.deviceID` 那台，`isCurrent` 读出来时按会话算。
     public var devices: [DeviceInfo]
     /// 设备之间转发、还没收下的消息（发给谁的都在这里）。

@@ -1186,11 +1186,20 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
 
     public func addImChannel(_ channel: NewImChannel) async throws -> ImChannel {
         try await call { s in
-            let vendor = try MockErrors.imVendor(webhookURL: channel.webhookURL)
+            let (vendor, token) = try MockErrors.imWebhook(channel.webhookURL, secret: channel.secret)
+            if ImChannelRules.checkLabel(channel.label) != nil {
+                throw MockErrors.invalid("label must be 0-64 characters")
+            }
+            if let events = channel.events, events.isEmpty {
+                throw MockErrors.invalid("events must name at least one of run_finished, run_failed, approval")
+            }
+            guard s.state.imChannels.count < ImChannelRules.maxChannels else {
+                throw MockErrors.invalid("at most \(ImChannelRules.maxChannels) IM channels per account")
+            }
             let created = ImChannel(
-                id: .random(), vendor: vendor, label: channel.label, hint: String(channel.webhookURL.suffix(4)),
-                hasSecret: !(channel.secret ?? "").isEmpty, events: channel.events ?? ImEvent.knownCases,
-                createdAt: Date())
+                id: .random(), vendor: vendor, label: channel.label, hint: ImChannelRules.hint(token),
+                hasSecret: !(channel.secret ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                events: channel.events ?? ImEvent.knownCases, createdAt: Date())
             s.state.imChannels.append(created)
             return created
         }
@@ -1200,35 +1209,51 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
         async throws -> ImChannel
     {
         try await call { s in
+            if let label, ImChannelRules.checkLabel(label) != nil {
+                throw MockErrors.invalid("label must be 0-64 characters")
+            }
+            if let events, events.isEmpty {
+                throw MockErrors.invalid("events must name at least one of run_finished, run_failed, approval")
+            }
             let i = try s.channelIndex(channelID)
             if let label { s.state.imChannels[i].label = label }
-            if let events {
-                guard !events.isEmpty else { throw MockErrors.invalid("pick at least one event") }
-                s.state.imChannels[i].events = events
-            }
+            if let events { s.state.imChannels[i].events = events }
             if let enabled { s.state.imChannels[i].isEnabled = enabled }
             return s.state.imChannels[i]
         }
     }
 
+    /// 换地址：清掉之前的错误；机器人失效被后台停掉的（Mock 里按“关着、有错误”算）重新打开，用户自己关的还关着。
     public func replaceImWebhook(_ channelID: ImChannelID, webhookURL: String, secret: String?) async throws
         -> ImChannel
     {
         try await call { s in
+            let (vendor, token) = try MockErrors.imWebhook(webhookURL, secret: secret)
             let i = try s.channelIndex(channelID)
-            s.state.imChannels[i].vendor = try MockErrors.imVendor(webhookURL: webhookURL)
-            s.state.imChannels[i].hint = String(webhookURL.suffix(4))
-            s.state.imChannels[i].hasSecret = !(secret ?? "").isEmpty
+            let wasAutoDisabled = !s.state.imChannels[i].isEnabled && s.state.imChannels[i].lastError != nil
+            s.state.imChannels[i].vendor = vendor
+            s.state.imChannels[i].hint = ImChannelRules.hint(token)
+            s.state.imChannels[i].hasSecret = !(secret ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             s.state.imChannels[i].lastError = nil
+            if wasAutoDisabled { s.state.imChannels[i].isEnabled = true }
             return s.state.imChannels[i]
         }
     }
 
+    /// 测试消息：关着的不发；每小时最多 10 条（多了 429）。
     public func testImChannel(_ channelID: ImChannelID) async throws {
         try await call { s in
             let i = try s.channelIndex(channelID)
-            guard s.state.imChannels[i].isEnabled else { throw MockErrors.conflict("channel is disabled") }
-            s.state.imChannels[i].lastSentAt = Date()
+            guard s.state.imChannels[i].isEnabled else {
+                throw MockErrors.invalid("the channel is turned off; turn it on first")
+            }
+            let now = Date()
+            s.state.imTests = s.state.imTests.filter { now.timeIntervalSince($0) < 3600 }
+            guard s.state.imTests.count < ImChannelRules.testsPerHour else {
+                throw MockErrors.rateLimited("too many IM test messages", retryAfter: 3600)
+            }
+            s.state.imTests.append(now)
+            s.state.imChannels[i].lastSentAt = now
         }
     }
 
@@ -2069,14 +2094,21 @@ enum MockErrors {
     static let badLiveActivityToken = invalid("token must be the hex push token ActivityKit gave the app")
 
     /// 从 webhook 地址认出 IM 平台。
-    static func imVendor(webhookURL: String) throws -> ImVendor {
-        guard let url = URL(string: webhookURL), url.scheme == "https", let host = url.host else {
-            throw invalid("webhook must be an https URL")
+    /// webhook 地址和签名密钥，按服务端的规则（`ImChannelRules`）查。
+    static func imWebhook(_ url: String, secret: String?) throws -> (ImVendor, String) {
+        guard url.count <= 512 else { throw invalid("webhook_url must be 1-512 characters") }
+        switch ImChannelRules.parseWebhook(url) {
+        case .failure(.badToken):
+            throw invalid("webhook_url: the token after the address is missing or malformed")
+        case .failure:
+            throw invalid(
+                "webhook_url must be a Feishu, Lark, WeCom or DingTalk group bot webhook address, copied as is")
+        case .success(let parsed):
+            switch ImChannelRules.checkSecret(secret ?? "", vendor: parsed.vendor) {
+            case .secretNotSupported?: throw invalid("secret: WeCom bots have no signing secret")
+            case .some: throw invalid("secret must be 8-128 visible characters (DingTalk secrets start with SEC)")
+            case nil: return (parsed.vendor, parsed.token)
+            }
         }
-        if host.hasSuffix("feishu.cn") { return .feishu }
-        if host.hasSuffix("larksuite.com") { return .lark }
-        if host == "qyapi.weixin.qq.com" { return .wecom }
-        if host == "oapi.dingtalk.com" { return .dingtalk }
-        throw invalid("unsupported webhook host \(host)")
     }
 }

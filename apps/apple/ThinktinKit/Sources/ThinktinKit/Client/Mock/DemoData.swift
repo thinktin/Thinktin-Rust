@@ -393,7 +393,7 @@ public enum DemoData {
 
         let channels = [
             ImChannel(
-                id: feishuChannelID, vendor: .feishu, label: "研发群", hint: "x7k2", hasSecret: true,
+                id: feishuChannelID, vendor: .feishu, label: "研发群", hint: "…x7k2", hasSecret: true,
                 events: [.runFinished, .runFailed, .approval], lastSentAt: digest.finishedAt, createdAt: ago(18 * day))
         ]
 
