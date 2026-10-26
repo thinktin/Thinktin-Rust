@@ -23,6 +23,8 @@ public final class ComputerHostModel {
     @ObservationIgnored private let host: any ComputerHost
     @ObservationIgnored private let client: (any ClientProtocol)?
     @ObservationIgnored private let now: () -> Date
+    /// 用户点了开始 / 停止（`ComputerHostLifecycle` 记下来，下次登录、开机时照着开）。
+    @ObservationIgnored public var onEnabledChange: (@MainActor (Bool) -> Void)?
 
     /// 配对二维码的有效期（client-core 最长 10 分钟）。
     public static let pairingTTL: TimeInterval = 5 * 60
@@ -104,9 +106,17 @@ public final class ComputerHostModel {
         isEnabled = true
         stopReason = nil
         host.start()
+        onEnabledChange?(true)
     }
 
     public func stop() {
+        isEnabled = false
+        host.stop()
+        onEnabledChange?(false)
+    }
+
+    /// 退出登录、账号冻结时停下：不算用户点了停止（不改记下的开关）。
+    public func suspend() {
         isEnabled = false
         host.stop()
     }
