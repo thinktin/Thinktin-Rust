@@ -29,12 +29,16 @@ object Routes {
     const val PLAN = "plan/{planId}"
 
     /** 新建计划（13.6）；instanceId 可选：从实例进来时预选它。有输入框，单独成页。 */
-    const val PLAN_NEW = "plans/new?instanceId={instanceId}"
+    const val PLAN_NEW = "plans/new?instanceId={instanceId}&teamId={teamId}"
 
     /** 编辑计划（13.6）。 */
     const val PLAN_EDIT = "plan/{planId}/edit"
     const val TEAMS = "teams"
     const val TEAM = "team/{teamId}"
+
+    /** 新建、编辑团队（13.7，单独的页面）。 */
+    const val TEAM_NEW = "teams/new"
+    const val TEAM_EDIT = "team/{teamId}/edit"
 
     /** 收件箱；itemId 可选（推送点进某一条）。 */
     const val INBOX = "inbox?itemId={itemId}"
@@ -96,9 +100,15 @@ object Routes {
     fun keySecret(credentialId: String) = "keys/${Uri.encode(credentialId)}/secret"
     fun plan(planId: String) = "plan/${Uri.encode(planId)}"
     fun planEdit(planId: String) = "plan/${Uri.encode(planId)}/edit"
-    fun planNew(instanceId: String? = null) =
-        if (instanceId == null) "plans/new" else "plans/new?instanceId=${Uri.encode(instanceId)}"
+    fun planNew(instanceId: String? = null, teamId: String? = null): String {
+        val query = listOfNotNull(
+            instanceId?.let { "instanceId=${Uri.encode(it)}" },
+            teamId?.let { "teamId=${Uri.encode(it)}" },
+        )
+        return if (query.isEmpty()) "plans/new" else "plans/new?" + query.joinToString("&")
+    }
     fun team(teamId: String) = "team/${Uri.encode(teamId)}"
+    fun teamEdit(teamId: String) = "team/${Uri.encode(teamId)}/edit"
     fun approval(approvalId: String) = "approval/${Uri.encode(approvalId)}"
     fun inbox(itemId: String? = null) = if (itemId == null) "inbox" else "inbox?itemId=${Uri.encode(itemId)}"
     fun devices(action: String? = null) = if (action == null) "devices" else "devices?action=${Uri.encode(action)}"

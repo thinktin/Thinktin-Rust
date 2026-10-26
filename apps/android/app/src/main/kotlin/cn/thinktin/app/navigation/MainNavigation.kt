@@ -62,6 +62,9 @@ import cn.thinktin.app.ui.run.RunScreen
 import cn.thinktin.app.ui.settings.SettingsScreen
 import cn.thinktin.app.ui.settings.licenses.LicenseTextScreen
 import cn.thinktin.app.ui.settings.licenses.LicensesScreen
+import cn.thinktin.app.ui.teams.TeamDetailScreen
+import cn.thinktin.app.ui.teams.TeamEditScreen
+import cn.thinktin.app.ui.teams.TeamsScreen
 import cn.thinktin.app.ui.usage.UsageScreen
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -329,9 +332,15 @@ private fun MainNavHost(navController: NavHostController, onOpenDrawer: () -> Un
                 ),
             )
         }
-        composable(Routes.PLAN_NEW, arguments = listOf(optionalStringArg(Routes.ARG_INSTANCE_ID))) { entry ->
+        composable(
+            Routes.PLAN_NEW,
+            arguments = listOf(optionalStringArg(Routes.ARG_INSTANCE_ID), optionalStringArg(Routes.ARG_TEAM_ID)),
+        ) { entry ->
             PlanEditScreen(
-                mode = PlanEditMode.Create(entry.arguments?.getString(Routes.ARG_INSTANCE_ID)),
+                mode = PlanEditMode.Create(
+                    entry.arguments?.getString(Routes.ARG_INSTANCE_ID),
+                    entry.arguments?.getString(Routes.ARG_TEAM_ID),
+                ),
                 onClose = backFrom(entry),
                 onSaved = { plan, _ ->
                     // 新建的换成它的详情页（返回回到列表）。
@@ -348,9 +357,41 @@ private fun MainNavHost(navController: NavHostController, onOpenDrawer: () -> Un
                 onSaved = { _, _ -> backFrom(entry)() },
             )
         }
-        composable(Routes.TEAMS) { Placeholder(Page.Teams, it) }
-        composable(Routes.TEAM, arguments = listOf(stringArg(Routes.ARG_TEAM_ID))) {
-            Placeholder(Page.Team, it, Routes.ARG_TEAM_ID)
+        composable(Routes.TEAMS) {
+            TeamsScreen(
+                onBack = back,
+                onOpenTeam = { navController.navigate(Routes.team(it)) },
+                onNewTeam = { navController.navigate(Routes.TEAM_NEW) },
+            )
+        }
+        composable(Routes.TEAM, arguments = listOf(stringArg(Routes.ARG_TEAM_ID))) { entry ->
+            val teamId = entry.arguments?.getString(Routes.ARG_TEAM_ID).orEmpty()
+            TeamDetailScreen(
+                teamId = teamId,
+                onBack = backFrom(entry),
+                onEdit = { navController.navigate(Routes.teamEdit(teamId)) },
+                onOpenInstance = { navController.navigate(Routes.instance(it)) },
+                onOpenRoutes = { navController.navigate(Routes.instanceRoutes(it)) },
+                onNewPipeline = { team -> navController.navigate(Routes.planNew(teamId = team.id)) },
+            )
+        }
+        composable(Routes.TEAM_NEW) { entry ->
+            TeamEditScreen(
+                teamId = null,
+                onClose = backFrom(entry),
+                onSaved = { id ->
+                    if (navController.currentBackStackEntry?.id == entry.id) {
+                        navController.navigate(Routes.team(id)) { popUpTo(Routes.TEAM_NEW) { inclusive = true } }
+                    }
+                },
+            )
+        }
+        composable(Routes.TEAM_EDIT, arguments = listOf(stringArg(Routes.ARG_TEAM_ID))) { entry ->
+            TeamEditScreen(
+                teamId = entry.arguments?.getString(Routes.ARG_TEAM_ID).orEmpty(),
+                onClose = backFrom(entry),
+                onSaved = { backFrom(entry)() },
+            )
         }
         composable(
             Routes.INBOX,

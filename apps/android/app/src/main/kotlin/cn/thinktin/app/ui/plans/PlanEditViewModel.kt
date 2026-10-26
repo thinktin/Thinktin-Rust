@@ -27,8 +27,8 @@ import java.time.Clock
 
 /** 新建还是编辑。 */
 sealed interface PlanEditMode {
-    /** 新建；[instanceId] 是预选的实例。 */
-    data class Create(val instanceId: String?) : PlanEditMode
+    /** 新建；[instanceId] 是预选的实例，[teamId] 给了就用这个团队建流水线（13.7）。 */
+    data class Create(val instanceId: String?, val teamId: String? = null) : PlanEditMode
     data class Edit(val planId: String) : PlanEditMode
 }
 
@@ -43,6 +43,9 @@ sealed interface PlanFormProblem {
     data object NoTriggers : PlanFormProblem
     data object TooManyTriggers : PlanFormProblem
     data class Policy(val problem: PolicyProblem) : PlanFormProblem
+
+    /** 流水线的步骤有问题（13.7，[Pipeline.problems]）。 */
+    data object Steps : PlanFormProblem
 }
 
 data class PlanEditUiState(
@@ -58,8 +61,10 @@ data class PlanEditUiState(
     val triggers: List<TriggerItem> = emptyList(),
     val policy: PlanPolicyDraft = PlanPolicyDraft(),
     val catchUp: CatchUp = CatchUp.Once,
-    /** 流水线的步骤（只读；编辑在 13.7）。 */
-    val steps: List<PlanStep> = emptyList(),
+    /** 流水线的步骤（13.7）：空的是普通计划（在 [instanceId] 上按目标跑）。 */
+    val steps: List<StepDraft> = emptyList(),
+    /** 保存时显示步骤的问题（点过保存之后）。 */
+    val showStepProblems: Boolean = false,
     /** 编辑时：接口上现在的计划（保存了一部分之后会更新）。 */
     val original: Plan? = null,
     /** 编辑时删掉的已有触发器（保存时 deleteTrigger）。 */
@@ -85,7 +90,18 @@ data class PlanEditUiState(
             if (triggers.isEmpty()) add(PlanFormProblem.NoTriggers)
             if (triggers.size > PlanLimits.MAX_TRIGGERS) add(PlanFormProblem.TooManyTriggers)
             policy.problems.forEach { add(PlanFormProblem.Policy(it)) }
+            if (stepProblems.isNotEmpty()) add(PlanFormProblem.Steps)
         }
+
+    /** 步骤的问题（实例按还在的算）。 */
+    val stepProblems: List<StepProblem>
+        get() = if (steps.isEmpty()) emptyList() else Pipeline.problems(steps, instances.map { it.id }.toSet())
+
+    /** 要保存的步骤。 */
+    val planSteps: List<PlanStep> get() = steps.map { it.toStep() }
+
+    /** 编辑时步骤改了没有。 */
+    val stepsChanged: Boolean get() = original != null && planSteps != original.steps
 
     /** 编辑时：标题、目标、策略、补跑方式里改了的（没改的不带）。 */
     val change: PlanChange
@@ -99,6 +115,7 @@ data class PlanEditUiState(
                 goal = g.takeIf { it != o.goal },
                 policy = p?.takeIf { it != o.policy },
                 catchUp = catchUp.takeIf { it != o.catchUp },
+                steps = planSteps.takeIf { stepsChanged },
             )
         }
 
@@ -107,12 +124,16 @@ data class PlanEditUiState(
             change != PlanChange() || removedTriggerIds.isNotEmpty() || triggers.any { it.isNew }
         } else {
             title.isNotBlank() || goal.isNotBlank() || triggers.isNotEmpty() || policy != PlanPolicyDraft() ||
-                catchUp != CatchUp.Once
+                catchUp != CatchUp.Once || steps.any { it.prompt.isNotBlank() }
         }
 
     val canAddTrigger: Boolean get() = triggers.size < PlanLimits.MAX_TRIGGERS
 
-    val canSave: Boolean get() = problems.isEmpty() && !saving && !needsLoad && (!isEditing || hasChanges)
+    /** 步骤的问题不灰掉保存：点保存时再标出来（[showStepProblems]），免得用户不知道哪里不对。 */
+    val canSave: Boolean
+        get() = problems.none { it != PlanFormProblem.Steps } && !saving && !needsLoad && (!isEditing || hasChanges)
+
+    val canAddStep: Boolean get() = steps.size < MAX_PIPELINE_STEPS
 }
 
 sealed interface PlanEditEvent {
@@ -125,7 +146,8 @@ sealed interface PlanEditEvent {
 
 /**
  * 新建、编辑计划（13.6，路由 plans/new、plan/{id}/edit）：实例（新建时选）、标题（最多 100 字）、目标（最多 8000 字）、
- * 触发规则（1 到 10 条，用 [TriggerDraft] 编）、策略、补跑方式。流水线的步骤只读（编辑在 13.7），保存时不动。
+ * 触发规则（1 到 10 条，用 [TriggerDraft] 编）、策略、补跑方式、流水线的步骤（13.7：每步选实例、写提示词、勾依赖，本地
+ * 按服务端的规则查键名、依赖和环，[Pipeline]）。从团队建（`plans/new?teamId=`）时按成员预填步骤，计划挂在负责人上。
  *
  * 保存：新建 `createPlan`；编辑 `updatePlan` 只带改了的字段，触发器服务端没有“改”：删掉的 `deleteTrigger`、新加的
  * （包括改过的，改一条 = 删旧的、加新的）`addTrigger`，先删后加（免得满 10 条加不进去）。中途失败时已经做完的不再重做，
@@ -160,6 +182,7 @@ class PlanEditViewModel(
                 val picked = s.instanceId ?: instances.singleOrNull()?.id?.takeIf { !s.isEditing }
                 s.copy(instances = instances, instanceId = picked)
             }
+            (state.value.mode as? PlanEditMode.Create)?.teamId?.let { prefillFromTeam(it) }
             val mode = state.value.mode as? PlanEditMode.Edit ?: return@launch
             if (state.value.original != null) return@launch
             state.update { it.copy(loading = true, loadError = null) }
@@ -186,10 +209,61 @@ class PlanEditViewModel(
                 triggers = plan.triggers.map(TriggerItem::existing),
                 policy = PlanPolicyDraft(plan.policy),
                 catchUp = plan.catchUp.takeIf { c -> c != CatchUp.Unknown } ?: CatchUp.Once,
-                steps = plan.steps,
+                steps = plan.steps.mapIndexed { i, step -> StepDraft.from(step, nextStepId + i) }
+                    .also { list -> nextStepId += list.size },
                 removedTriggerIds = emptyList(),
             )
         }
+    }
+
+    /** 本地步骤 id（改键名时认得出是哪一步）。 */
+    private var nextStepId = 1L
+
+    /** 用团队建流水线：每个成员一步，负责人最后汇总；计划挂在负责人上。拉不到团队就当普通新建。 */
+    private suspend fun prefillFromTeam(teamId: String) {
+        if (state.value.steps.isNotEmpty()) return
+        val team = try {
+            service.team(teamId)
+        } catch (_: ServiceError) {
+            return
+        }
+        val drafts = Pipeline.fromTeam(team, nextStepId)
+        nextStepId += drafts.size
+        val lead = team.members.firstOrNull { it.role == cn.thinktin.data.model.TeamRole.Lead }?.instanceId
+        state.update { it.copy(steps = drafts, instanceId = lead ?: it.instanceId ?: drafts.firstOrNull()?.instanceId) }
+    }
+
+    // ---- 流水线步骤（13.7） ----
+
+    fun addStep() {
+        if (!state.value.canAddStep) return
+        state.update { s ->
+            val instance = s.steps.lastOrNull()?.instanceId ?: s.instanceId
+            s.copy(steps = s.steps + StepDraft(nextStepId++, Pipeline.nextKey(s.steps), instance, ""), saveError = null)
+        }
+    }
+
+    fun removeStep(id: Long) = state.update { it.copy(steps = Pipeline.remove(it.steps, id), saveError = null) }
+
+    fun moveStep(id: Long, delta: Int) = state.update { it.copy(steps = Pipeline.move(it.steps, id, delta)) }
+
+    /** 改键名：只收小写字母、数字、`_`、`-`（大写转小写），依赖它的步骤跟着改。 */
+    fun setStepKey(id: Long, key: String) {
+        val cleaned = key.lowercase().filter { it in 'a'..'z' || it in '0'..'9' || it == '_' || it == '-' }.take(32)
+        state.update { it.copy(steps = Pipeline.rename(it.steps, id, cleaned), saveError = null) }
+    }
+
+    fun setStepInstance(id: Long, instanceId: String) = updateStep(id) { it.copy(instanceId = instanceId) }
+
+    fun setStepPrompt(id: Long, prompt: String) = updateStep(id) { it.copy(prompt = prompt) }
+
+    /** 勾 / 取消一个依赖。 */
+    fun toggleDependency(id: Long, key: String) = updateStep(id) { s ->
+        s.copy(dependsOn = if (key in s.dependsOn) s.dependsOn - key else s.dependsOn + key)
+    }
+
+    private fun updateStep(id: Long, transform: (StepDraft) -> StepDraft) = state.update { s ->
+        s.copy(steps = s.steps.map { if (it.id == id) transform(it) else it }, saveError = null)
     }
 
     // ---- 表单 ----
@@ -294,6 +368,10 @@ class PlanEditViewModel(
     fun save() {
         val s = state.value
         if (!s.canSave) return
+        if (s.stepProblems.isNotEmpty()) {
+            state.update { it.copy(showStepProblems = true) }
+            return
+        }
         val policy = s.policy.policy ?: return
         state.update { it.copy(saving = true, saveError = null) }
         viewModelScope.launch {
@@ -316,6 +394,7 @@ class PlanEditViewModel(
                     triggers = s.triggers.map { it.schedule },
                     policy = policy,
                     catchUp = s.catchUp,
+                    steps = s.planSteps,
                 ),
             )
             eventChannel.trySend(PlanEditEvent.Saved(plan, created = true))

@@ -291,11 +291,7 @@ private fun PlanForm(state: PlanEditUiState, viewModel: PlanEditViewModel, zone:
             )
         }
 
-        if (state.steps.isNotEmpty()) {
-            SectionHeader(title = stringResource(R.string.plan_section_steps))
-            Text(stringResource(R.string.plan_steps_readonly), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            state.steps.forEach { step -> Text("${step.key}: ${step.prompt.lineSequence().firstOrNull().orEmpty()}", style = MaterialTheme.typography.bodySmall) }
-        }
+        PipelineStepsEditor(state, viewModel)
 
         if (state.partiallySaved) {
             Text(stringResource(R.string.plan_partially_saved), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)

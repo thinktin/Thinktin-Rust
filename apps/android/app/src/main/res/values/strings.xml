@@ -786,7 +786,6 @@
     <string name="plan_runs_empty">还没有运行过。</string>
     <string name="plan_runs_more">加载更多</string>
     <string name="plan_step_depends">依赖：%1$s</string>
-    <string name="plan_steps_readonly">步骤在“团队与流水线”里编辑。</string>
     <string name="plan_trigger_invalid">规则已失效、已停用：删掉重新加一条。</string>
     <string name="plan_trigger_disabled">已停用</string>
     <string name="plan_list_separator">、</string>
@@ -967,4 +966,69 @@
     <plurals name="licenses_group_title">
         <item quantity="other">%1$s（%2$d）</item>
     </plurals>
+    <!-- 团队与流水线（13.7） -->
+    <string name="action_edit">编辑</string>
+    <string name="action_delete">删除</string>
+    <string name="teams_load_failed">团队加载失败</string>
+    <string name="teams_intro">几个实例编成一组：负责人分工，成员各做一块。存成模板以后能一键领养一整套。</string>
+    <string name="teams_section_mine">我的团队</string>
+    <string name="teams_section_templates">团队模板</string>
+    <string name="teams_empty">还没有团队。</string>
+    <string name="team_templates_empty">还没有模板。在团队详情里“存为模板”。</string>
+    <string name="team_new">新建团队</string>
+    <string name="team_edit">编辑团队</string>
+    <string name="team_lead_is">负责人：%1$s</string>
+    <string name="team_template_adopt">领养</string>
+    <string name="team_more_actions">“%1$s”的更多操作</string>
+    <string name="team_template_delete_title">删除模板“%1$s”？</string>
+    <string name="team_template_delete_message">已经领养的团队和实例不受影响。</string>
+    <string name="team_template_deleted">模板已删除</string>
+    <string name="team_role_lead">负责人</string>
+    <string name="team_role_member">成员</string>
+    <string name="team_member_routes">配模型</string>
+    <string name="team_routes_hint">刚领养的团队要给每个成员选默认模型（main），点“配模型”。</string>
+    <string name="team_new_pipeline">用这个团队建流水线</string>
+    <string name="team_save_as_template">存为模板</string>
+    <string name="team_saved_as_template">已存为模板</string>
+    <string name="team_delete">删除团队</string>
+    <string name="team_delete_title">删除团队“%1$s”？</string>
+    <string name="team_delete_message">只删团队，成员实例和它们的对话、计划都还在。</string>
+    <string name="team_not_found_title">找不到这个团队</string>
+    <string name="team_not_found_message">可能已经删掉了。</string>
+    <string name="team_name">团队名</string>
+    <string name="team_name_empty">给团队起个名字</string>
+    <string name="team_name_too_long">最多 %1$d 个字</string>
+    <string name="team_members_pick">成员（最多 %1$d 个）</string>
+    <string name="team_no_members">至少选一个成员</string>
+    <string name="team_too_many_members">最多 %1$d 个成员</string>
+    <string name="team_no_lead">选一个负责人</string>
+    <string name="team_no_instances">还没有实例，先去 agent 目录领养。</string>
+    <string name="team_pick_member">选“%1$s”</string>
+    <string name="team_make_lead">让“%1$s”当负责人</string>
+    <plurals name="team_member_count">
+        <item quantity="other">%1$d 个成员</item>
+    </plurals>
+    <!-- 流水线编辑（13.7） -->
+    <string name="pipeline_intro_empty">不加步骤就是普通计划：在上面选的实例上按目标跑。加了步骤就是流水线：按依赖顺序在各个实例上跑。</string>
+    <string name="pipeline_intro">按依赖顺序跑：没有依赖的一起开始，依赖的步骤做完才轮到它，前面的产出物会交给它。</string>
+    <string name="step_add">添加步骤</string>
+    <string name="step_add_first">加步骤，变成流水线</string>
+    <string name="step_key">第 %1$d 步的键名</string>
+    <string name="step_instance">在哪个实例上跑</string>
+    <string name="step_prompt">这一步做什么</string>
+    <string name="step_depends_on">等这些步骤做完</string>
+    <string name="step_move_up">把 %1$s 往上挪</string>
+    <string name="step_move_down">把 %1$s 往下挪</string>
+    <string name="step_remove">删掉 %1$s</string>
+    <string name="step_problem_bad_key">键名只能用小写字母、数字、_、-，以字母或数字开头，最多 32 个</string>
+    <string name="step_problem_duplicate_key">键名重复了</string>
+    <string name="step_problem_no_instance">选一个实例</string>
+    <string name="step_problem_deleted_instance">这个实例已经删掉了，换一个</string>
+    <string name="step_problem_empty_prompt">写一下这一步做什么</string>
+    <string name="step_problem_prompt_too_long">最多 %1$d 个字</string>
+    <string name="step_problem_unknown_dependency">依赖的步骤“%1$s”不在了</string>
+    <string name="step_problem_self_dependency">不能依赖自己</string>
+    <string name="step_problem_cycle">步骤之间的依赖绕成了一个圈，去掉一个依赖</string>
+    <string name="step_problem_too_many">最多 %1$d 步</string>
+    <string name="plan_problem_steps">流水线的步骤有问题，见下面标红的地方</string>
 </resources>

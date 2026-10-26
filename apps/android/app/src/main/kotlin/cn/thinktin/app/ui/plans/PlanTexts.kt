@@ -145,6 +145,7 @@ fun PlanFormProblem.message(): String = when (this) {
     PlanFormProblem.NoTriggers -> stringResource(R.string.plan_problem_no_triggers)
     PlanFormProblem.TooManyTriggers -> stringResource(R.string.plan_problem_too_many_triggers, PlanLimits.MAX_TRIGGERS)
     is PlanFormProblem.Policy -> problem.message()
+    PlanFormProblem.Steps -> stringResource(R.string.plan_problem_steps)
 }
 
 @Composable

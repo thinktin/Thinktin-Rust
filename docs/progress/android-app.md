@@ -22,13 +22,14 @@ PR：[#7](https://github.com/thinktin/Thinktin-Rust/pull/7)（草稿，叠在 #5
 - **13.6 计划**（2026-10-25，集成分支 `claude/determined-lovelace-vn0j5h`）：`:data` 的 `schedule/`（cron / RRULE 的本地预测和触发器草稿，照 iOS 的 `ScheduleForecast` / `TriggerDraft` 移植到 java.time；期望值由 Python zoneinfo 独立算出），`:app` 的 `ui/plans/`：列表（等确认置顶、查看并确认 / 拒绝，在跑 / 已暂停，开关暂停恢复）、详情（触发规则描述与下一次、策略、补跑、步骤只读、运行历史；确认带版本号，冲突换新版本、步骤在已删除实例上的 409 按实例列表认出）、新建 / 编辑（实例、标题、目标、触发规则面板：写法、TimeInput、DatePicker、星期 / 日期、cron / RRULE、时区、接下来 5 次预览；策略按小时；只发改了的字段，触发器先删后加，失败后只做剩下的），路由 `plans`、`plan/{id}`、`plans/new?instanceId=`、`plan/{id}/edit`，深链 `thinktin://plan/{id}` 不再是骨架页。说明见 README“计划（13.6）”。`ScheduleTest` 14 个、`PlansViewModelTest` 18 个、`PlansUiTest` 3 个；全量 `test lint assembleDebug :app:assembleCnRelease` 通过（`:app` 277 个、`:data` 338 个含 release 变体、`:design` 17 个、`:core` 16 个，lint 0 错误）。
 - **13.8 推送与收件箱**（2026-10-25，集成分支 `claude/determined-lovelace-vn0j5h`）：收件箱页（`ui/inbox/`：先缓存再同步、最新一页换开头、滚到底翻页、按天分组、未读加粗 / 圆点、种类图标、AI 标识、每行的标已读 / 未读与删除、全部已读、没有更具体页面的和推送进来的在面板里打开）；`push/`：`PushMessage`（`tt_*` 解析，和 iOS、收件箱同一套深链规则）、`PushCoordinator`（令牌登录着才报、同一个只报一次、点开过的通知等登录着标已读、断网重试）、`NotificationChannels`（`tt_approval` / `tt_results`，和服务端默认一致）、`PushNotifier`（前台自己发通知）、通知权限登录后问一次、`MainActivity` 把带 `tt_kind` 的 Intent 换成深链、退出登录清通知；`PushProvider` + 各渠道的 `FlavorPush`（现在是空实现，见“坑和决定”）。测试 `PushTest`、`InboxViewModelTest`、`InboxUiTest`，`DeepLinkTest` / `AppUiTest` 改成真收件箱。
 - **13.13 设置、多语言与开源许可**（2026-10-26，集成分支）：设置页补上语言（跟随系统语言 / 中文 / English，先存再 `AppCompatDelegate.setApplicationLocales`，`MainActivity` 改成 `AppCompatActivity`，清单加 `AppLocalesMetadataHolderService`，系统设置里改过“应用语言”的以系统为准）、通知（是否允许，去系统设置）、关于（隐私政策、用户协议、开源许可）；开源许可页（App 自己的库＋客户端核心清单，移植 iOS 的 `LicenseInventory`：分组、搜索、组件详情、原文页）。测试 `LicensesTest`、`SettingsUiTest`。
+- **13.7 团队与流水线**（2026-10-26，集成分支）：团队列表与模板（一键领养、删除）、团队详情（成员、配模型、存为模板、删除、用团队建流水线）、新建 / 编辑团队（成员 1–12、一个负责人）；计划编辑页里的流水线步骤编辑（`Pipeline`：键名、依赖、环、提示词长度和服务端一致，改名 / 删除时依赖跟着变；从团队预填，负责人汇总）。运行树的整树 / 单个停止、产出物在 13.5 里已有。测试 `TeamsTest`、`TeamsUiTest`。
 
 进行中：
 - 无。按用户要求（“让各会话把代码都同步对齐先，后面我再安排工作”）已停下等安排；03:20 UTC 的自动恢复提醒已停用。
 
 下一步（等用户安排后）：
 1. ~~恢复 13.5 对话与运行过程~~（2026-10-25 已收尾，见上）：`Workflow({scriptPath: "<会话目录>/workflows/scripts/android-adapt-13-16-13-5-wf_2830c5a3-21b.js", resumeFromRunId: "wf_2830c5a3-21b"})`（适配与 13.16 已缓存；13.5 的部分改动在 `ba78a8d`，恢复前把脚本里任务 C 的“注意”段改成描述当前工作区状态），之后四维评审 → 反方核实 → 修复 → 最终验证。
-2. ~~13.6 计划~~、~~13.8 推送与收件箱~~（已完成，SDK 等人定）→ ~~13.13 设置~~ → 13.7 团队与流水线 → 13.11 / 13.12，再做 P2 的 13.10、13.14。
+2. ~~13.6 计划~~、~~13.8 推送与收件箱~~（已完成，SDK 等人定）→ ~~13.13 设置~~ → ~~13.7 团队与流水线~~ → 13.11 / 13.12，再做 P2 的 13.10、13.14。
 3. 每个工作包：Workflow → 提交推送 → 更新本文件。
 
 坑和决定：
