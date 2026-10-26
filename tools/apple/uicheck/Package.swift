@@ -1,6 +1,6 @@
 // swift-tools-version: 6.0
-// Linux 上给 ThinktinUI 和 App target 做类型检查的包（tools/apple/uicheck/run.sh）：SwiftUI / UIKit / AppKit / Security / OSLog / Charts /
-// UserNotifications 用桩模块代替。
+// Linux 上给 ThinktinUI、App target 和小组件扩展做类型检查的包（tools/apple/uicheck/run.sh）：SwiftUI / UIKit / AppKit / Security /
+// OSLog / Charts / UserNotifications / WidgetKit / AppIntents 用桩模块代替。
 import PackageDescription
 import Foundation
 
@@ -26,6 +26,9 @@ if withApp {
     targets += [
         .target(name: "Security", path: "Stubs/Security"),
         .target(name: "OSLog", path: "Stubs/OSLog"),
+        // 主屏小组件、快捷指令的桩（12.20）。
+        .target(name: "WidgetKit", dependencies: ["SwiftUI"], path: "Stubs/WidgetKit"),
+        .target(name: "AppIntents", path: "Stubs/AppIntents"),
         .target(
             name: "ThinktinCoreAdapter",
             dependencies: ["ThinktinKit", .product(name: "ThinktinCore", package: "ThinktinCore")],
@@ -34,9 +37,11 @@ if withApp {
             name: "Thinktin",
             dependencies: [
                 "ThinktinKit", "ThinktinUI", "ThinktinCoreAdapter", "SwiftUI", "UIKit", "Security", "OSLog",
-                "UserNotifications",
+                "UserNotifications", "WidgetKit", "AppIntents",
             ],
             path: "Gen/Thinktin"),
+        .executableTarget(
+            name: "ThinktinWidgets", dependencies: ["ThinktinKit", "SwiftUI", "WidgetKit"], path: "Gen/ThinktinWidgets"),
         .testTarget(name: "ThinktinTests", dependencies: ["Thinktin"], path: "Gen/ThinktinTests"),
     ]
 }

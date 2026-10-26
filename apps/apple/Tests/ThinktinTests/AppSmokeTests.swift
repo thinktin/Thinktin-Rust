@@ -50,6 +50,17 @@ struct AppSmokeTests {
         #expect(en.localizedString(forKey: "取消", value: nil, table: nil) == "Cancel")
     }
 
+    @Test("主屏小组件的扩展打进了 App，Siri 短语的英文在包里（12.20）")
+    func widgetsAndShortcuts() throws {
+        let plugins = try #require(Bundle.main.builtInPlugInsURL)
+        let widgets = try #require(Bundle(url: plugins.appendingPathComponent("ThinktinWidgets.appex")))
+        let point = (widgets.infoDictionary?["NSExtension"] as? [String: Any])?["NSExtensionPointIdentifier"]
+        #expect(point as? String == "com.apple.widgetkit-extension")
+        let en = try #require(Bundle.main.path(forResource: "en", ofType: "lproj").flatMap(Bundle.init(path:)))
+        #expect(en.localizedString(forKey: "全部停止", value: nil, table: nil) == "Stop Everything")
+        #expect(ThinktinShortcuts.appShortcuts.count == 4)
+    }
+
     @Test("测试宿主用 Mock 客户端（scheme 的测试环境变量 THINKTIN_MOCK=1）")
     func hostUsesMockClient() {
         #expect(AppConfiguration.current.client == .mock)

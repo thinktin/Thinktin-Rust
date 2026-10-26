@@ -2,6 +2,8 @@
 /Thinktin.xcodeproj/
 /Thinktin/Resources/Info.plist
 /Thinktin/Thinktin.entitlements
+/ThinktinWidgets/Info.plist
+/ThinktinWidgets/ThinktinWidgets.entitlements
 
 # Xcode 的用户数据和构建产物
 xcuserdata/

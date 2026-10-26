@@ -19,21 +19,27 @@ final class AppEnvironment {
 
     private static let log = Logger(subsystem: "cn.thinktin.app", category: "environment")
 
+    /// 进程里唯一的一份：App 代理（界面、推送）和快捷指令（12.20，可能在后台拉起 App，界面还没建）共用，
+    /// 不会建出两个客户端。
+    static let shared = AppEnvironment.live()
+
     init(
         configuration: AppConfiguration,
         client: any ClientProtocol,
         pushRegistrar: any PushRegistrar = NoopPushRegistrar(),
         notifications: (any DeliveredNotifications)? = nil,
+        widgets: (any WidgetSnapshotSink)? = nil,
         biometricSigner: any BiometricSigner = UnavailableBiometricSigner()
     ) {
         self.configuration = configuration
         self.client = client
         self.pushRegistrar = pushRegistrar
         self.biometricSigner = biometricSigner
-        self.appModel = AppModel(client: client, preferences: .shared, notifications: notifications)
+        self.appModel = AppModel(
+            client: client, preferences: .shared, notifications: notifications, widgets: widgets)
     }
 
-    /// 正式运行用的装配：推送用系统的通知中心（12.8）；签名（12.9）先用空实现。
+    /// 正式运行用的装配：推送用系统的通知中心（12.8）；主屏小组件的快照写进 App Group（12.20）；签名（12.9）先用空实现。
     static func live(_ configuration: AppConfiguration = .current) -> AppEnvironment {
         log.info(
             "client: \(configuration.client.rawValue, privacy: .public), api: \(configuration.baseURL.absoluteString, privacy: .public)"
@@ -52,12 +58,13 @@ final class AppEnvironment {
             installCoreLogging()
             client = makeCoreClient(configuration, acceptLanguage: acceptLanguage)
         }
-        // 不在 App 包里（命令行跑的测试）时用不了通知中心。
+        // 不在 App 包里（命令行跑的测试）时用不了通知中心，也没有 App Group。
         let inAppBundle = Bundle.main.bundleURL.pathExtension == "app"
         return AppEnvironment(
             configuration: configuration, client: client,
             pushRegistrar: inAppBundle ? SystemPushRegistrar() : NoopPushRegistrar(),
-            notifications: inAppBundle ? SystemDeliveredNotifications() : nil)
+            notifications: inAppBundle ? SystemDeliveredNotifications() : nil,
+            widgets: inAppBundle ? AppGroupWidgetSink() : nil)
     }
 
     // MARK: 请求语言与日志（11.8）

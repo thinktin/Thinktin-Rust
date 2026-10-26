@@ -1,6 +1,6 @@
 """把 ThinktinUI、App target 的源文件接进桩模块包（Gen/ 目录，生成物不提交）。
 
-ThinktinKit、ThinktinCoreAdapter、App 的 App/、Platform/ 用符号链接；ThinktinUI 和它的测试复制一份，
+ThinktinKit、ThinktinCoreAdapter、App 的 App/、Platform/、Intents/ 和小组件扩展用符号链接；ThinktinUI 和它的测试复制一份，
 顺便把 #Preview 宏换成普通的 @ViewBuilder 函数（桩 SwiftUI 没有宏），这样预览里的代码也会被类型检查。
 """
 import os, re, shutil, sys
@@ -14,8 +14,10 @@ os.symlink(os.path.join(root, "Sources/ThinktinKit"), os.path.join(gen, "Thinkti
 os.symlink(os.path.join(root, "Sources/ThinktinCoreAdapter"), os.path.join(gen, "ThinktinCoreAdapter"))
 app = os.path.join(root, "..")
 os.makedirs(os.path.join(gen, "Thinktin"))
-for d in ["App", "Platform"]:
+for d in ["App", "Platform", "Intents"]:
     os.symlink(os.path.join(app, "Thinktin", d), os.path.join(gen, "Thinktin", d))
+# 小组件扩展（12.20）。
+os.symlink(os.path.join(app, "ThinktinWidgets"), os.path.join(gen, "ThinktinWidgets"))
 os.symlink(os.path.join(app, "Tests/ThinktinTests"), os.path.join(gen, "ThinktinTests"))
 counter = [0]
 def transform(text):

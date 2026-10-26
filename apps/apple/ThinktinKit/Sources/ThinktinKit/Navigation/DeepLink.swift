@@ -11,6 +11,8 @@ import Foundation
 /// | `thinktin://instance/{id}` | 实例详情（安卓也是实例设置页） |
 /// | `thinktin://inbox`、`thinktin://inbox/{id}` | 收件箱、收件箱里的一条 |
 /// | `thinktin://vault/request/{id}` | 保险箱的填写请求 |
+/// | `thinktin://approvals` | 审批中心（小组件的“待审批”，12.20） |
+/// | `thinktin://active` | 进行中（小组件的“进行中”，12.20；安卓没有这一页，不认） |
 ///
 /// 打开后返回栈是“根（当前实例的对话）→ 目标页”，和安卓的冷启动一致（`Router.show(_:in:)`）。
 /// 深链是外部输入：认不出的格式、多余的路径段、不像 id 的 id 一律不认（返回 nil），查询参数和片段忽略。
@@ -49,6 +51,8 @@ public enum DeepLink {
         case .inbox: segments = ["inbox"]
         case .inboxItem(let id): segments = ["inbox", id.rawValue]
         case .vaultRequest(let id): segments = ["vault", "request", id.rawValue]
+        case .approvals: segments = ["approvals"]
+        case .activeRuns: segments = ["active"]
         default: return nil
         }
         guard segments.dropFirst().allSatisfy({ isValidID($0) || $0 == "request" }) else { return nil }
@@ -81,6 +85,8 @@ public enum DeepLink {
         case "inbox":
             if rest.isEmpty { return .inbox }
             return id().map { .inboxItem(InboxItemID($0)) }
+        case "approvals": return rest.isEmpty ? .approvals : nil
+        case "active": return rest.isEmpty ? .activeRuns : nil
         case "vault":
             guard rest.count == 2, rest[0].lowercased() == "request", isValidID(rest[1]) else { return nil }
             return .vaultRequest(VaultRequestID(rest[1]))

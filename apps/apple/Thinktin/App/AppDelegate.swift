@@ -11,9 +11,10 @@ import UserNotifications
 /// - 点开通知（冷启动、后台）：`AppModel.open(push:)` 跳过去、标已读；点通知上的“拒绝”：`rejectFromNotification`，
 ///   不打开 App。
 ///
-/// `AppEnvironment` 由它建（SwiftUI 的 `App` 从 `delegate.environment` 拿），这样冷启动时通知回调来得比界面早也有地方交。
+/// `AppEnvironment` 用进程里唯一的一份（`AppEnvironment.shared`，SwiftUI 的 `App` 从 `delegate.environment` 拿，快捷指令也用它），
+/// 第一次用到时才建，这样冷启动时通知回调来得比界面早也有地方交。
 final class AppDelegate: NSObject, UIApplicationDelegate {
-    @MainActor lazy var environment = AppEnvironment.live()
+    @MainActor var environment: AppEnvironment { .shared }
 
     private static let log = Logger(subsystem: "cn.thinktin.app", category: "push")
 

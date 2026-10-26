@@ -3,6 +3,9 @@ import Foundation
 /// 主屏小组件读的快照（WBS 12.20）：App 在角标变了、登录状态变了时写进 App Group 的共享目录，小组件只读这个文件，
 /// 不连服务端、不带客户端核心。只有几个数，没有任务原文、实例名这些（锁屏、主屏谁都看得见）。
 public struct WidgetSnapshot: Codable, Hashable, Sendable {
+    /// 主屏小组件的 kind（App 写完快照按它让 WidgetKit 刷新）。
+    public static let widgetKind = "ThinktinStatus"
+
     public var signedIn: Bool
     public var inboxUnread: Int
     public var pendingApprovals: Int
@@ -28,6 +31,11 @@ public struct WidgetSnapshot: Codable, Hashable, Sendable {
         WidgetSnapshot(signedIn: false, updatedAt: date)
     }
 
+    /// 小组件库里预览用的数。
+    public static func placeholder(at date: Date) -> WidgetSnapshot {
+        WidgetSnapshot(signedIn: true, inboxUnread: 3, pendingApprovals: 1, activeRuns: 2, updatedAt: date)
+    }
+
     /// 只比较数，不比时间（数没变就不重写文件、不刷新小组件）。
     public func sameCounts(as other: WidgetSnapshot) -> Bool {
         signedIn == other.signedIn && inboxUnread == other.inboxUnread && pendingApprovals == other.pendingApprovals
@@ -42,6 +50,8 @@ public protocol WidgetSnapshotSink: Sendable {
 
 /// App Group 共享目录里的 `widget-snapshot.json`：App 写、小组件读。
 public struct WidgetSnapshotFile: Sendable {
+    /// App 和小组件共用的 App Group（project.yml 里两个 target 的 entitlements）。bundle id 定下来后跟着改。
+    public static let appGroup = "group.cn.thinktin.Thinktin"
     public static let fileName = "widget-snapshot.json"
     public let url: URL
 
@@ -68,10 +78,6 @@ public struct WidgetSnapshotFile: Sendable {
 
 /// 小组件上的文案（中英文，跟着系统语言：小组件读不到 App 里选的语言）。
 public enum WidgetText {
-    public static func title(_ language: DisplayLanguage) -> String {
-        language == .chinese ? "ThinkTin" : "ThinkTin"
-    }
-
     public static func unread(_ language: DisplayLanguage) -> String { language == .chinese ? "未读" : "Unread" }
 
     public static func approvals(_ language: DisplayLanguage) -> String {

@@ -6,6 +6,42 @@
       "extractionState" : "manual",
       "shouldTranslate" : false
     },
+    "下任务" : {
+      "comment" : "快捷指令（12.20）：下任务的短标题。",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Send Task"
+          }
+        }
+      }
+    },
+    "任务" : {
+      "comment" : "快捷指令（12.20）：参数名，要交给实例的任务。",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Task"
+          }
+        }
+      }
+    },
+    "全部停止" : {
+      "comment" : "快捷指令（12.20）：全部停止的标题和短标题。",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stop Everything"
+          }
+        }
+      }
+    },
     "取消" : {
       "comment" : "通用按钮：取消当前操作。",
       "extractionState" : "manual",
@@ -18,6 +54,18 @@
         }
       }
     },
+    "取消所有正在进行的运行、暂停所有计划、收回预授权。" : {
+      "comment" : "快捷指令（12.20）：全部停止的说明。",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancels every running task, pauses all plans and revokes pre-approvals."
+          }
+        }
+      }
+    },
     "完成" : {
       "comment" : "通用按钮：完成编辑、关闭弹层。",
       "extractionState" : "manual",
@@ -26,6 +74,138 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Done"
+          }
+        }
+      }
+    },
+    "实例" : {
+      "comment" : "快捷指令（12.20）：参数名和类型名，agent 实例。",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Instance"
+          }
+        }
+      }
+    },
+    "待审批" : {
+      "comment" : "快捷指令（12.20）：查待审批数的短标题。",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Approvals"
+          }
+        }
+      }
+    },
+    "把一个任务交给选中的 agent 实例。任务里像有密码或 key 时不发，要在 App 里先存进保险箱。" : {
+      "comment" : "快捷指令（12.20）：下任务的说明。",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gives a task to the chosen agent instance. Tasks that look like they contain a password or key aren't sent: save those to the vault in the app first."
+          }
+        }
+      }
+    },
+    "暂停" : {
+      "comment" : "快捷指令（12.20）：参数名，开着是暂停、关着是恢复。",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pause"
+          }
+        }
+      }
+    },
+    "暂停一个计划（到点不再运行），或者恢复它。" : {
+      "comment" : "快捷指令（12.20）：暂停 / 恢复计划的说明。",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pauses a plan so it stops running on schedule, or resumes it."
+          }
+        }
+      }
+    },
+    "暂停或恢复计划" : {
+      "comment" : "快捷指令（12.20）：暂停 / 恢复计划的标题。",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pause or Resume a Plan"
+          }
+        }
+      }
+    },
+    "暂停计划" : {
+      "comment" : "快捷指令（12.20）：暂停计划的短标题。",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pause Plan"
+          }
+        }
+      }
+    },
+    "有几个 agent 的操作在等你批准（过期的不算）。" : {
+      "comment" : "快捷指令（12.20）：查待审批数的说明。",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "How many agent actions are waiting for your approval (expired ones don't count)."
+          }
+        }
+      }
+    },
+    "查看待审批数" : {
+      "comment" : "快捷指令（12.20）：查待审批数的标题。",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Check Pending Approvals"
+          }
+        }
+      }
+    },
+    "给实例下任务" : {
+      "comment" : "快捷指令（12.20）：给实例下任务的标题。",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Send a Task"
+          }
+        }
+      }
+    },
+    "计划" : {
+      "comment" : "快捷指令（12.20）：参数名和类型名，定时计划。",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Plan"
           }
         }
       }

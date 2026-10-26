@@ -11,7 +11,7 @@ struct DeepLinkTests {
         DeepLink.route(from: string)
     }
 
-    @Test("文档里的七种格式")
+    @Test("文档里的格式")
     func documentedFormats() {
         let id = "0192f3a0-0000-7000-8000-000000000201"
         #expect(route("thinktin://run/\(id)") == .run(RunID(id)))
@@ -22,6 +22,9 @@ struct DeepLinkTests {
         #expect(route("thinktin://vault/request/req-7") == .vaultRequest("req-7"))
         // 和安卓一致：实例深链打开实例详情。
         #expect(route("thinktin://instance/inst-1") == .instance("inst-1"))
+        // 小组件用的（12.20）。
+        #expect(route("thinktin://approvals") == .approvals)
+        #expect(route("thinktin://active") == .activeRuns)
     }
 
     @Test("宽松的地方：大小写、结尾斜杠、查询参数、没有 host 的写法")
@@ -51,6 +54,8 @@ struct DeepLinkTests {
             "thinktin://run/%E4%BD%A0",  // 非 ASCII
             "thinktin://run/" + String(repeating: "a", count: 129),  // 太长
             "thinktin://inbox/a/b",
+            "thinktin://approvals/a1",  // 审批详情是 approval/{id}
+            "thinktin://active/x",
         ] {
             #expect(route(bad) == nil, "\(bad)")
         }
@@ -73,6 +78,7 @@ struct DeepLinkTests {
     func roundTrip() throws {
         let linkable: [AppRoute] = [
             .run("r1"), .approval("a1"), .plan("p1"), .instance("i1"), .inbox, .inboxItem("x1"), .vaultRequest("v1"),
+            .approvals, .activeRuns,
         ]
         for route in linkable {
             let url = try #require(DeepLink.url(for: route), "\(route)")

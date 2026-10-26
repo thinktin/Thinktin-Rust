@@ -49,6 +49,8 @@ targets:
           - ThinktinUI
           - ThinktinKit
           - ThinktinCoreAdapter
+      # 主屏小组件（12.20），打进 App 的 PlugIns。
+      - target: ThinktinWidgets
     # 包 id 由 bundleIdPrefix 生成（cn.thinktin.Thinktin）；上架前定下来后再显式写 PRODUCT_BUNDLE_IDENTIFIER，
     # 服务端 push.apns.topic 要和它一致。
     settings:
@@ -94,6 +96,40 @@ targets:
         aps-environment: development
         # 审批、电脑审批、保险箱请求的推送是 time-sensitive（docs/push.md 第 2 节），专注模式下也能送到。
         com.apple.developer.usernotifications.time-sensitive: true
+        # 和小组件共享快照文件（12.20，`WidgetSnapshotFile.appGroup`）。
+        com.apple.security.application-groups: [group.cn.thinktin.Thinktin]
+
+  # 主屏、锁屏小组件（WBS 12.20，docs/ios.md）：只读 App 写进 App Group 的快照，不连服务端、不带客户端核心，
+  # 所以只依赖纯 Swift 的 ThinktinKit。以后实时活动（12.10）也放这里。
+  ThinktinWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: ThinktinWidgets
+    dependencies:
+      - package: ThinktinKit
+        products:
+          - ThinktinKit
+    settings:
+      base:
+        TARGETED_DEVICE_FAMILY: "1"
+        # 扩展的包 id 要以 App 的包 id 打头；App 的包 id 定下来后一起改。
+        PRODUCT_BUNDLE_IDENTIFIER: cn.thinktin.Thinktin.Widgets
+        SKIP_INSTALL: YES
+    info:
+      path: ThinktinWidgets/Info.plist
+      properties:
+        CFBundleDisplayName: ThinkTin
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleDevelopmentRegion: zh-Hans
+        CFBundleLocalizations: [zh-Hans, en]
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: ThinktinWidgets/ThinktinWidgets.entitlements
+      properties:
+        com.apple.security.application-groups: [group.cn.thinktin.Thinktin]
 
   ThinktinTests:
     type: bundle.unit-test
