@@ -44,6 +44,13 @@
                 <data android:host="inbox" />
                 <data android:host="approvals" />
             </intent-filter>
+            <!-- 电脑上的配对二维码（13.9，docs/pairing.md）：thinktin-pair:v1?…，系统相机扫到后打开这里。 -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="thinktin-pair" />
+            </intent-filter>
         </activity>
 
         <!-- 设置里选的界面语言在 Android 13 以前由 AppCompat 记下（13.13，AppLocales）。 -->

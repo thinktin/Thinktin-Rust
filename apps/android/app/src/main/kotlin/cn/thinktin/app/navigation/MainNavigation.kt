@@ -38,6 +38,7 @@ import cn.thinktin.app.ui.chat.ChatNavigation
 import cn.thinktin.app.ui.chat.ChatScreen
 import cn.thinktin.app.ui.common.LocalAppContainer
 import cn.thinktin.app.ui.common.LocalThinktinService
+import cn.thinktin.app.ui.computer.ComputersScreen
 import cn.thinktin.app.ui.devices.DevicesAction
 import cn.thinktin.app.ui.devices.DevicesScreen
 import cn.thinktin.app.ui.drawer.AppDrawer
@@ -123,7 +124,11 @@ fun MainNavigation(navController: NavHostController = rememberAppNavController()
         val uri = pendingDeepLink ?: return@LaunchedEffect
         navController.currentBackStackEntryFlow.first()
         drawerState.close()
-        navController.handleDeepLink(DeepLinkInbox.navigationIntent(uri))
+        if (uri.scheme == DeepLinks.PAIR_SCHEME) {
+            navController.navigate(Routes.computers(code = uri.toString()))
+        } else {
+            navController.handleDeepLink(DeepLinkInbox.navigationIntent(uri))
+        }
         deepLinks.consume(uri)
     }
 
@@ -515,7 +520,11 @@ private fun MainNavHost(navController: NavHostController, onOpenDrawer: () -> Un
                 onBack = back,
                 onEditName = { navController.navigate(Routes.ACCOUNT_NAME) },
                 onDeleteAccount = { navController.navigate(Routes.DELETE_ACCOUNT) },
+                onOpenComputers = { navController.navigate(Routes.computers()) },
             )
+        }
+        composable(Routes.COMPUTERS, arguments = listOf(optionalStringArg(Routes.ARG_CODE))) { entry ->
+            ComputersScreen(pairingCode = entry.arguments?.getString(Routes.ARG_CODE), onBack = back)
         }
         composable(Routes.SETTINGS) {
             SettingsScreen(

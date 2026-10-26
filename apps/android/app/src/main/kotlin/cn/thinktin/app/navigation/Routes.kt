@@ -76,6 +76,9 @@ object Routes {
     const val IM_CHANNEL_EDIT = "im-channels/{channelId}/edit"
     /** 设备与账号；action 可选：从设置页直接打开某个操作（见 DevicesAction）。 */
     const val DEVICES = "devices?action={action}"
+
+    /** 电脑（13.9）：配对、授权；code 是从二维码（`thinktin-pair:` 深链）带进来的配对码。 */
+    const val COMPUTERS = "computers?code={code}"
     const val SETTINGS = "settings"
 
     /** 个人信息与权限（13.11）。 */
@@ -105,6 +108,7 @@ object Routes {
     const val ARG_CHANNEL_ID = "channelId"
     const val ARG_PATH = "path"
     const val ARG_TITLE = "title"
+    const val ARG_CODE = "code"
 
     fun chat(instanceId: String, runId: String? = null) =
         if (runId == null) "chat/${Uri.encode(instanceId)}" else "chat/${Uri.encode(instanceId)}?runId=${Uri.encode(runId)}"
@@ -129,6 +133,7 @@ object Routes {
     fun approval(approvalId: String) = "approval/${Uri.encode(approvalId)}"
     fun inbox(itemId: String? = null) = if (itemId == null) "inbox" else "inbox?itemId=${Uri.encode(itemId)}"
     fun devices(action: String? = null) = if (action == null) "devices" else "devices?action=${Uri.encode(action)}"
+    fun computers(code: String? = null) = if (code == null) "computers" else "computers?code=${Uri.encode(code)}"
     fun vaultItem(itemId: String) = "vault/item/${Uri.encode(itemId)}"
 
     fun vaultEdit(itemId: String) = "vault/item/${Uri.encode(itemId)}/edit"
@@ -155,4 +160,10 @@ object DeepLinks {
 
     /** 审批中心（iOS 的小组件用，12.20；两端都认）。 */
     const val APPROVALS = "$SCHEME://approvals"
+
+    /**
+     * 电脑上的配对二维码（13.9，docs/pairing.md）：`thinktin-pair:v1?d=…&k=…&n=…&e=…`。用系统相机扫到后打开 App，
+     * 整条交给“电脑”页当配对码（不经 NavController 的深链匹配：它不认这种不带 // 的地址）。
+     */
+    const val PAIR_SCHEME = "thinktin-pair"
 }

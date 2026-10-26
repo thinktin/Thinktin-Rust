@@ -7,7 +7,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * 待处理的深链（thinktin://…）。冷启动（onCreate）和热启动（singleTask 的 onNewIntent）都放进这里，
+ * 待处理的深链（thinktin://…，还有电脑配对码 thinktin-pair:…）。冷启动（onCreate）和热启动（singleTask 的 onNewIntent）都放进这里，
  * 由主界面（[MainNavigation]）在导航图建好之后交给 NavController 处理，处理完就清掉。
  *
  * 未登录时主界面不在，深链先留着，登录后再跳；同一条深链只处理一次（不会因为主界面重建而重复跳转）。
@@ -20,7 +20,7 @@ class DeepLinkInbox {
     /** 是我们的深链就收下并返回真。 */
     fun offer(intent: Intent?): Boolean {
         val uri = intent?.takeIf { it.action == Intent.ACTION_VIEW }?.data ?: return false
-        if (uri.scheme != DeepLinks.SCHEME) return false
+        if (uri.scheme != DeepLinks.SCHEME && uri.scheme != DeepLinks.PAIR_SCHEME) return false
         pending.value = uri
         return true
     }

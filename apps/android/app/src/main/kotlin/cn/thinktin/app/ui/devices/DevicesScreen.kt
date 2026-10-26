@@ -79,6 +79,7 @@ fun DevicesScreen(
     onBack: () -> Unit,
     onEditName: () -> Unit,
     onDeleteAccount: () -> Unit,
+    onOpenComputers: () -> Unit = {},
 ) {
     val container = LocalAppContainer.current
     val service = LocalThinktinService.current
@@ -153,6 +154,15 @@ fun DevicesScreen(
                 }
             }
             item { Section(R.string.devices_section_security) }
+            // 手机控制电脑（13.9）：配对、授权、签名审批在单独的页面。
+            item {
+                AccountRow(
+                    icon = Icons.Outlined.Laptop,
+                    title = stringResource(R.string.devices_computers),
+                    value = stringResource(R.string.devices_computers_summary),
+                    onClick = onOpenComputers,
+                )
+            }
             item {
                 AccountRow(
                     icon = Icons.Outlined.DevicesOther,

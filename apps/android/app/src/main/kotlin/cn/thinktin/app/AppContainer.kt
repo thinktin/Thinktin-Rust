@@ -6,6 +6,12 @@ import android.util.Log
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.preferencesDataStoreFile
 import androidx.fragment.app.FragmentActivity
+import cn.thinktin.app.computer.ComputerLinkStorage
+import cn.thinktin.app.computer.ComputerLinkStore
+import cn.thinktin.app.computer.InMemoryComputerLinkStorage
+import cn.thinktin.app.computer.KeystoreSigner
+import cn.thinktin.app.computer.SharedPrefsComputerLinkStorage
+import cn.thinktin.app.computer.UnavailableSigner
 import cn.thinktin.app.progress.NoProgressNotifier
 import cn.thinktin.app.progress.ProgressNotifier
 import cn.thinktin.app.progress.RunProgressTracker
@@ -25,8 +31,11 @@ import cn.thinktin.app.update.SharedUpdatePrefs
 import cn.thinktin.app.update.Updater
 import cn.thinktin.data.core.AcceptLanguage
 import cn.thinktin.data.core.ClientFactory
+import cn.thinktin.data.core.CorePairingCodec
 import cn.thinktin.data.core.TlsState
 import cn.thinktin.data.mock.MockThinktinService
+import cn.thinktin.data.model.DeviceSigner
+import cn.thinktin.data.model.PairingCodec
 import cn.thinktin.data.model.Run
 import cn.thinktin.data.model.User
 import cn.thinktin.data.service.AuthState
@@ -88,6 +97,12 @@ class AppContainer(
     val updater: Updater? = null,
     /** 常驻通知怎么发（13.10）；null 什么都不发（测试）。 */
     progressNotifier: ProgressNotifier? = null,
+    /** 手机控制电脑（13.9）的签名密钥；拿到当前 Activity 的办法交进去。null 时没有（签不了名）。 */
+    signerFactory: ((activity: () -> FragmentActivity?) -> DeviceSigner)? = null,
+    /** 配对与验签（13.9）；默认用 client-core 的。测试里换成假的（JVM 测试不加载 .so）。 */
+    codecFactory: (() -> PairingCodec)? = null,
+    /** 配对好的电脑、收到的审批请求、签发的令牌存在哪；null 存在内存里（测试）。 */
+    computerLinkStorage: ComputerLinkStorage? = null,
 ) {
     /** 对话页下载产出物的位置（13.5）。 */
     val artifactFiles: ArtifactFiles =
@@ -108,6 +123,15 @@ class AppContainer(
      * MainActivity，所以旋转屏幕后（ViewModel 还在、Activity 换了）照样能用。
      */
     val approvalGate: ApprovalGate = approvalGate ?: BiometricApprovalGate({ activityRef?.get() })
+
+    /** Keystore 里的签名密钥（13.9）：和 [approvalGate] 一样每次签名时才找当前的 Activity。 */
+    val deviceSigner: DeviceSigner = signerFactory?.invoke { activityRef?.get() } ?: UnavailableSigner
+
+    /** client-core 的配对与验签（13.9）：第一次用到时才建（要加载 .so）。 */
+    val pairingCodec: PairingCodec by lazy { codecFactory?.invoke() ?: CorePairingCodec() }
+
+    /** 手机和电脑之间的状态（13.9）：App 里只有一份，设备页和审批中心共用。 */
+    val computerLinks = ComputerLinkStore(computerLinkStorage ?: InMemoryComputerLinkStorage())
 
     /** MainActivity.onCreate 时登记自己（BiometricPrompt 要在当前的 Activity 上弹出）。 */
     fun attachActivity(activity: FragmentActivity) {
@@ -276,6 +300,10 @@ class AppContainer(
             settingsName: String = "settings",
             /** 测试用：没存过同意记录时当成已同意隐私政策（不显示首次启动的隐私政策页）。 */
             privacyPreaccepted: Boolean = false,
+            /** 测试用：换掉 Keystore 签名（Robolectric 没有 AndroidKeyStore）。 */
+            deviceSigner: ((activity: () -> FragmentActivity?) -> DeviceSigner)? = null,
+            /** 测试用：换掉 client-core 的配对编码（测试不加载 .so）。 */
+            pairingCodec: (() -> PairingCodec)? = null,
         ): AppContainer {
             val app = context.applicationContext
             val store = PreferenceDataStoreFactory.create(
@@ -295,6 +323,9 @@ class AppContainer(
                 forceDemo = forceDemo,
                 artifactFiles = CacheArtifactFiles(app.cacheDir),
                 progressNotifier = SystemProgressNotifier(app),
+                signerFactory = deviceSigner ?: { activity -> KeystoreSigner(app, activity) },
+                codecFactory = pairingCodec,
+                computerLinkStorage = SharedPrefsComputerLinkStorage.of(app),
                 updater = if (BuildConfig.SELF_UPDATE) {
                     Updater(
                         manifestUrl = BuildConfig.UPDATE_MANIFEST_URL,

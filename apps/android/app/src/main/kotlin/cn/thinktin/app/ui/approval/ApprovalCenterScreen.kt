@@ -37,6 +37,10 @@ import cn.thinktin.app.ui.common.LocalAppContainer
 import cn.thinktin.app.ui.common.LocalThinktinService
 import cn.thinktin.app.ui.common.asString
 import cn.thinktin.app.ui.common.resolve
+import cn.thinktin.app.ui.computer.ComputerLinkEvent
+import cn.thinktin.app.ui.computer.computerApprovalItems
+import cn.thinktin.app.ui.computer.computerLinkViewModel
+import cn.thinktin.data.model.ComputerApprovalRequest
 import cn.thinktin.design.component.EmptyState
 import cn.thinktin.design.component.SectionHeader
 import cn.thinktin.design.component.ThinktinTopBar
@@ -66,6 +70,22 @@ fun ApprovalCenterScreen(onBack: () -> Unit, onOpenApproval: (String) -> Unit) {
     LaunchedEffect(viewModel) { viewModel.notices.collect { snackbar.showSnackbar(it.resolve(context)) } }
     ApprovalMessages(viewModel.actions, snackbar)
     val now by rememberNowMs(container.clock)
+    // 电脑发来的高危操作（13.9）：签名批准，和云端审批放在一起。
+    val computer = computerLinkViewModel()
+    val computerState by computer.uiState.collectAsStateWithLifecycle()
+    val computerRequests = computerState.pendingRequests(now)
+    LaunchedEffect(computer) { computer.onShown() }
+    LaunchedEffect(computer) {
+        computer.events.collect { event ->
+            if (event is ComputerLinkEvent.Decided) {
+                snackbar.showSnackbar(context.getString(if (event.approve) R.string.computer_approved else R.string.computer_rejected))
+            }
+        }
+    }
+    val decideOnComputer = { request: ComputerApprovalRequest, approve: Boolean ->
+        val name = computerState.name(request.desktopId) ?: context.getString(R.string.computer_approval_unknown)
+        computer.decide(request, approve, context.getString(if (approve) R.string.computer_sign_approve else R.string.computer_sign_reject, name))
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -81,21 +101,24 @@ fun ApprovalCenterScreen(onBack: () -> Unit, onOpenApproval: (String) -> Unit) {
     ) { padding ->
         PullToRefreshBox(
             isRefreshing = state.refreshing,
-            onRefresh = viewModel::refresh,
+            onRefresh = {
+                viewModel.refresh()
+                computer.load()
+            },
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
         ) {
             val error = state.loadError
             when {
-                state.loading && state.isEmpty -> {
+                state.loading && state.isEmpty && computerRequests.isEmpty() -> {
                     val label = stringResource(R.string.loading)
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator(Modifier.semantics { contentDescription = label })
                     }
                 }
                 // 空状态和错误也放在可滚动的列表里：下拉刷新要靠嵌套滚动触发。
-                error != null && state.isEmpty -> LazyColumn(Modifier.fillMaxSize()) {
+                error != null && state.isEmpty && computerRequests.isEmpty() -> LazyColumn(Modifier.fillMaxSize()) {
                     item {
                         EmptyState(
                             title = stringResource(R.string.approvals_load_failed),
@@ -106,7 +129,7 @@ fun ApprovalCenterScreen(onBack: () -> Unit, onOpenApproval: (String) -> Unit) {
                         )
                     }
                 }
-                state.isEmpty -> LazyColumn(Modifier.fillMaxSize()) {
+                state.isEmpty && computerRequests.isEmpty() -> LazyColumn(Modifier.fillMaxSize()) {
                     item {
                         EmptyState(
                             title = stringResource(R.string.approvals_empty_title),
@@ -122,6 +145,7 @@ fun ApprovalCenterScreen(onBack: () -> Unit, onOpenApproval: (String) -> Unit) {
                     contentPadding = PaddingValues(ThinktinSpacing.Page),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
+                    computerApprovalItems(computerRequests, computerState, now, decideOnComputer)
                     for (group in state.groups) {
                         item(key = "group-${group.instanceId}") {
                             val name = group.instanceName ?: stringResource(R.string.approvals_instance_unknown)
