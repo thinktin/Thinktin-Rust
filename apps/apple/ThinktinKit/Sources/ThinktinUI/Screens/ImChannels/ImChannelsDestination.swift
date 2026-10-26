@@ -3,17 +3,18 @@ import ThinktinKit
 
 /// IM 渠道设置（WBS 12.14）的接入点：`AppShell` 把 `route.feature == .imChannels` 的页面都交给它。
 ///
-/// 页面：IM 渠道（`.imChannels`）。
-///
-/// 现在是占位页。做 12.14 时在 `Screens/ImChannels/` 里写页面，把 `body` 换成按 `route` 分派到各页面；视图模型放
-/// `ThinktinKit/ViewModels/ImChannels/`，测试放 `Tests/ThinktinKitTests/ImChannels/` 和 `Tests/ThinktinUITests/ImChannels/`。
-/// 全局状态、跳转、客户端从环境里取（`@Environment(AppModel.self)`、`@Environment(Router.self)`、`@Environment(\.client)`），
-/// 规则见 docs/ios.md 第 9 节。
+/// 页面：IM 渠道（`.imChannels`，`ImChannelsScreen`；新建、修改是 sheet）。视图模型在
+/// `ThinktinKit/ViewModels/ImChannels/`。
 struct ImChannelsDestination: View {
     let route: AppRoute
 
     var body: some View {
-        DestinationPlaceholder(route: route)
+        switch route {
+        case .imChannels:
+            ImChannelsScreen()
+        default:
+            DestinationPlaceholder(route: route)
+        }
     }
 }
 

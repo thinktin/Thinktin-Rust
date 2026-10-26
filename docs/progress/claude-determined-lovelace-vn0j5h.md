@@ -94,9 +94,11 @@ P1 后端核心（M1–M9）和 P2 里能在代码层面完成的包都做完了
 
 - iOS 12.10 实时活动：Kit 的 `LiveActivityModel`（自己发的任务自动开、令牌登记、前台跟事件流、计划运行的推送开启令牌、
   退出登录全部结束）、App 的 ActivityKit 适配、扩展里的锁屏横幅和灵动岛、设置里的开关、运行页的按钮。942 个 Kit 测试。
+- iOS 12.14 IM 渠道设置：列表（开关、测试消息、删除、失败原因换成怎么处理）、新建 / 修改（认出平台、签名密钥、备注、事件、换地址），
+  规则和 Mock 跟服务端一致。951 个 Kit 测试。
 
 进行中：
-- 无。
+- 安卓 13.15 IM 渠道设置（照 iOS 12.14）。
 
 环境（容器回收后要重装）：Swift 6.2 装在 `/opt/swift`（swift.org 的包，验签）；Android SDK 在 `/opt/android-sdk`（cmdline-tools、platform 35、build-tools 35.0.0，不用 NDK）；`cargo build -p client-core --lib` 出本机库，`tools/client-core/build-linux-swift.sh target/linux` 出 Linux 版 Swift 包。Gradle 直连 Maven Central 没被限流。Gradle 和 Swift 一起跑时 Robolectric 偶尔超时，分开跑。
 
