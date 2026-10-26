@@ -44,7 +44,7 @@
 
 下一步（等用户通知后）：
 1. ~~对抗式审查 12.5、12.6、12.12~~（2026-10-25 审过并修了，见已完成）（W1 第二轮的审查步骤，脚本 ios-w1-round2.js 的 review 阶段；工作流 wf_f1f40517-bee 里实现结果有缓存）。
-2. 合并后留下的小项：ComposerBar 加停止键 / 排队提示 / 字数（12.5 现在自己复制了一份）；`InstanceEventKind` 加 `.instanceState`；~~`AppRoute.artifact(id)`（12.18）~~（已加，带 runID）；BiometricGate 在 App 的 Platform 里实现并注入；12.3 的 Agents* 组件挪到 `Components/` 改通用名；`MockClient.makeTrigger` 用 `ScheduleForecast` 算 cron / RRULE 的 `nextFireAt`；Mock 不模拟唤醒等 key 的运行；12.4 的“200 万 tokens”和 12.5 / 12.6 的“token”用词统一；设置里 12.12 的入口跳 12.4（`.credentials`、`.usage`）、12.5 等 key 跳 `.modelRoutes`。
+2. ~~合并后留下的小项~~（2026-10-26 在集成分支上做完）：`ComposerBar` 有了发送 / 停止 / 转圈、超限标红、焦点，对话页的输入框套在它外面；`InstanceEventKind.instanceState`；~~`AppRoute.artifact(id)`~~；BiometricGate 原来就由 ThinktinUI 的 `SystemBiometricGate`（LocalAuthentication）按客户端自动选，不用 App 另外注入；12.3 的共用组件挪到 `Components/ListComponents.swift`、去掉 Agents 前缀（`ListRow`、`GroupedSection`、`SectionHeader`、`TagChip`、`ChoiceRow`、`InlineNotice`、`PageHeader`、`LoadingStateView`、`pageLayout()`、`inlineNavigationTitle`、`visibleError`；`AgentMonogram` 留在 agent 页面）；`MockClient.makeTrigger` 用 `ScheduleForecast` 算 cron / RRULE 的 `nextFireAt`（算不了的留空，再也不触发的不收）；Mock 和服务端一样在加 key、启用、放宽或取消上限、换 key、改路由后唤醒等额度的运行（安卓 Mock 同样）；中文里统一说 token；设置里的入口原来就跳 `.credentials`、`.usage`，等 key 跳 `.modelRoutes`。
 3. ~~W1 第三轮：12.7、12.8、12.15、12.17、12.18~~（2026-10-25 到 26 在集成分支上做完，见已完成；没跑多人对抗式审查）。
 4. W2：~~12.13~~、~~12.10~~、~~12.20~~、~~12.21~~、~~12.19~~；~~12.11~~（代码部分）；~~12.9~~（手机这边）随 macOS（P3）。
 5. 每次合并后看 PR #8 的 iOS CI（macOS 上真实 SwiftUI / Charts / LocalAuthentication / UserNotifications 编译，Linux 的桩查不到这些）。
