@@ -1215,4 +1215,16 @@
     <string name="vault_request_replaces">Your vault already has “%1$s”. Saving replaces its username and password.</string>
     <string name="vault_request_note">It goes straight into your vault. The agent only gets the name, never the password.</string>
     <string name="vault_view_item">View item</string>
+    <!-- Ongoing run-progress notification (13.10) -->
+    <string name="notification_channel_progress">Run progress</string>
+    <string name="notification_channel_progress_description">Tasks in progress: state, steps and time. Removed when they finish.</string>
+    <string name="progress_public">A task is in progress</string>
+    <plurals name="progress_steps">
+        <item quantity="one">%1$d step</item>
+        <item quantity="other">%1$d steps</item>
+    </plurals>
+    <string name="run_progress_toggle">Show progress in notifications</string>
+    <string name="run_progress_toggle_summary">Only the state, steps and time. Removed when it finishes.</string>
+    <string name="settings_progress_notifications">Progress notification for new tasks</string>
+    <string name="settings_progress_notifications_summary">Tasks you start in a chat show their state and time in the notification shade.</string>
 </resources>

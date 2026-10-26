@@ -123,6 +123,7 @@ data class ChatNavigation(
 fun ChatScreen(instanceId: String, focusRunId: String?, navigation: ChatNavigation) {
     val container = LocalAppContainer.current
     val service = LocalThinktinService.current
+    val appName = stringResource(R.string.app_name)
     val viewModel: ChatViewModel = viewModel(
         key = "chat-$instanceId-${System.identityHashCode(service)}",
         factory = viewModelFactory {
@@ -135,6 +136,7 @@ fun ChatScreen(instanceId: String, focusRunId: String?, navigation: ChatNavigati
                     focusRunId = focusRunId,
                     artifactFiles = container.artifactFiles,
                     initialDraft = container.draftHandoff.take(instanceId),
+                    onRunStarted = { run -> container.trackStartedRun(service, run, appName) },
                 )
             }
         },

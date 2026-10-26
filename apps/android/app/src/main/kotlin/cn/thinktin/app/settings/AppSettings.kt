@@ -35,6 +35,8 @@ data class AppSettings(
     val demoMode: Boolean,
     /** 同意了现在这版隐私政策（[PrivacyPolicy.VERSION]，13.11）。没同意之前只显示首次启动的隐私政策页。 */
     val privacyAccepted: Boolean = true,
+    /** 在对话里发起的运行，在通知栏显示进度（13.10，默认开）。 */
+    val progressNotifications: Boolean = true,
 )
 
 /** 隐私政策的版本（13.11）：政策有实质改动时加一，用户下次打开 App 要重新同意。 */
@@ -63,6 +65,7 @@ class AppSettingsRepository(
                 demoMode = demoAllowed && (prefs[KEY_DEMO] ?: demoDefault),
                 privacyAccepted = (prefs[KEY_PRIVACY] ?: if (privacyPreaccepted) PrivacyPolicy.VERSION else 0) >=
                     PrivacyPolicy.VERSION,
+                progressNotifications = prefs[KEY_PROGRESS] ?: true,
             )
         }
 
@@ -79,6 +82,10 @@ class AppSettingsRepository(
         store.edit { it[KEY_DEMO] = enabled }
     }
 
+    suspend fun setProgressNotifications(enabled: Boolean) {
+        store.edit { it[KEY_PROGRESS] = enabled }
+    }
+
     /** 首次启动（或政策更新后）同意了隐私政策。 */
     suspend fun acceptPrivacy() {
         store.edit { it[KEY_PRIVACY] = PrivacyPolicy.VERSION }
@@ -91,6 +98,7 @@ class AppSettingsRepository(
 
     private companion object {
         val KEY_PRIVACY = intPreferencesKey("privacy_version")
+        val KEY_PROGRESS = booleanPreferencesKey("progress_notifications")
         val KEY_LANGUAGE = stringPreferencesKey("language")
         val KEY_APPEARANCE = stringPreferencesKey("appearance")
         val KEY_DEMO = booleanPreferencesKey("demo_mode")

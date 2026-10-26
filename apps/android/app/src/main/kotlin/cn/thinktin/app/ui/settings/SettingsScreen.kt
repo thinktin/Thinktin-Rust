@@ -131,6 +131,10 @@ class SettingsViewModel(
         }
     }
 
+    fun setProgressNotifications(enabled: Boolean) {
+        viewModelScope.launch { repository.setProgressNotifications(enabled) }
+    }
+
     fun setDemoMode(enabled: Boolean) {
         viewModelScope.launch { repository.setDemoMode(enabled) }
     }
@@ -279,6 +283,19 @@ fun SettingsScreen(
                     if (notificationsOn) R.string.settings_notifications_on else R.string.settings_notifications_off,
                 ),
                 onClick = { openNotificationSettings(context) },
+            )
+            // 运行进度的常驻通知（13.10）。
+            val progress = state.settings?.progressNotifications ?: true
+            ListItem(
+                headlineContent = { Text(stringResource(R.string.settings_progress_notifications)) },
+                supportingContent = { Text(stringResource(R.string.settings_progress_notifications_summary)) },
+                trailingContent = { Switch(checked = progress, onCheckedChange = null) },
+                colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.background),
+                modifier = Modifier.toggleable(
+                    value = progress,
+                    role = Role.Switch,
+                    onValueChange = viewModel::setProgressNotifications,
+                ),
             )
             // 演示模式开关只在 debug 包里有（第 7 节）。
             if (container.demoAllowed) {

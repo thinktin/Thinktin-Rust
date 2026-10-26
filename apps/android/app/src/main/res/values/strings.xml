@@ -1204,4 +1204,15 @@
     <string name="vault_request_replaces">保险箱里已经有“%1$s”了：填好后会换掉它的账号密码。</string>
     <string name="vault_request_note">只存进保险箱，agent 只拿到名字，看不到明文。</string>
     <string name="vault_view_item">查看条目</string>
+    <!-- 运行进度的常驻通知（13.10） -->
+    <string name="notification_channel_progress">运行进度</string>
+    <string name="notification_channel_progress_description">正在进行的任务：状态、步数和用时，结束后自动消失。</string>
+    <string name="progress_public">有任务在进行</string>
+    <plurals name="progress_steps">
+        <item quantity="other">%1$d 步</item>
+    </plurals>
+    <string name="run_progress_toggle">在通知栏显示进度</string>
+    <string name="run_progress_toggle_summary">只显示状态、步数和用时，结束后自动消失。</string>
+    <string name="settings_progress_notifications">发起任务时显示进度通知</string>
+    <string name="settings_progress_notifications_summary">在对话里发起的任务，在通知栏显示状态和用时。</string>
 </resources>

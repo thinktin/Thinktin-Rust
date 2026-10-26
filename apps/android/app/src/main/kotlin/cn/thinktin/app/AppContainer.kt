@@ -6,6 +6,10 @@ import android.util.Log
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.preferencesDataStoreFile
 import androidx.fragment.app.FragmentActivity
+import cn.thinktin.app.progress.NoProgressNotifier
+import cn.thinktin.app.progress.ProgressNotifier
+import cn.thinktin.app.progress.RunProgressTracker
+import cn.thinktin.app.progress.SystemProgressNotifier
 import cn.thinktin.app.push.PushCoordinator
 import cn.thinktin.app.settings.AppLanguage
 import cn.thinktin.app.settings.AppSettings
@@ -23,6 +27,7 @@ import cn.thinktin.data.core.AcceptLanguage
 import cn.thinktin.data.core.ClientFactory
 import cn.thinktin.data.core.TlsState
 import cn.thinktin.data.mock.MockThinktinService
+import cn.thinktin.data.model.Run
 import cn.thinktin.data.model.User
 import cn.thinktin.data.service.AuthState
 import cn.thinktin.data.service.ServiceError
@@ -81,6 +86,8 @@ class AppContainer(
     artifactFiles: ArtifactFiles? = null,
     /** 应用内更新（13.12）：只有官网安装包有（`BuildConfig.SELF_UPDATE`），应用商店的包为 null。 */
     val updater: Updater? = null,
+    /** 常驻通知怎么发（13.10）；null 什么都不发（测试）。 */
+    progressNotifier: ProgressNotifier? = null,
 ) {
     /** 对话页下载产出物的位置（13.5）。 */
     val artifactFiles: ArtifactFiles =
@@ -113,6 +120,24 @@ class AppContainer(
     }
 
     private val scope = CoroutineScope(SupervisorJob() + io)
+
+    /** 运行进度的常驻通知（13.10）。 */
+    val progress = RunProgressTracker(scope, progressNotifier ?: NoProgressNotifier)
+
+    /**
+     * 在对话里发起了运行：设置里开着“在通知栏显示进度”就跟它。标题是实例名（先看缓存，没有就用 App 名）。
+     */
+    fun trackStartedRun(service: ThinktinService, run: Run, fallbackTitle: String) {
+        scope.launch {
+            if (!settings.first().progressNotifications) return@launch
+            val title = try {
+                service.cachedInstances().firstOrNull { it.id == run.instanceId }?.name
+            } catch (_: ServiceError) {
+                null
+            }
+            progress.track(service, run, title ?: fallbackTitle)
+        }
+    }
     private val mock: ThinktinService by lazy(createMock)
     private val coreState = MutableStateFlow<ServiceState>(ServiceState.Loading)
     private var coreStarted = false
@@ -269,6 +294,7 @@ class AppContainer(
                 createMock = { MockThinktinService(clock = { clock.millis() }) },
                 forceDemo = forceDemo,
                 artifactFiles = CacheArtifactFiles(app.cacheDir),
+                progressNotifier = SystemProgressNotifier(app),
                 updater = if (BuildConfig.SELF_UPDATE) {
                     Updater(
                         manifestUrl = BuildConfig.UPDATE_MANIFEST_URL,

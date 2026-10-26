@@ -1,5 +1,7 @@
 package cn.thinktin.app.ui.run
 
+import androidx.compose.material3.Switch
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -313,11 +315,43 @@ private fun RunDetail(state: RunUiState, run: Run, nowMs: Long, onOpenChat: (Str
                 }
             }
         }
+        // 根运行没结束时可以在通知栏显示进度（13.10）。
+        if (run.state.isActive && run.parentRunId == null) {
+            ProgressToggle(run, state.instanceNames[run.instanceId] ?: stringResource(R.string.app_name))
+        }
         SecondaryButton(
             text = stringResource(R.string.run_detail_open_chat),
             onClick = { onOpenChat(run.instanceId, run.id) },
             modifier = Modifier.padding(top = 4.dp),
         )
+    }
+}
+
+/** “在通知栏显示进度”开关：开了发常驻通知并跟着事件流更新，关了撤掉。 */
+@Composable
+private fun ProgressToggle(run: Run, title: String) {
+    val container = LocalAppContainer.current
+    val service = LocalThinktinService.current
+    val tracked by container.progress.tracked.collectAsStateWithLifecycle()
+    val on = run.id in tracked
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .toggleable(value = on, role = Role.Switch) { enable ->
+                if (enable) container.progress.track(service, run, title) else container.progress.stop(run.id)
+            }
+            .padding(vertical = 4.dp),
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(stringResource(R.string.run_progress_toggle), style = MaterialTheme.typography.bodyMedium)
+            Text(
+                stringResource(R.string.run_progress_toggle_summary),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(checked = on, onCheckedChange = null)
     }
 }
 

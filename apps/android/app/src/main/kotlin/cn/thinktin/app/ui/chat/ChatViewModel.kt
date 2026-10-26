@@ -159,6 +159,8 @@ class ChatViewModel(
     private val artifactFiles: ArtifactFiles = ArtifactFiles { _, _, _ -> error("no artifact storage") },
     /** 首页拦下密码后转过来的消息（打开时直接走拦截流程）。 */
     initialDraft: String? = null,
+    /** 发出去了、有了运行（常驻通知跟它，13.10）。 */
+    private val onRunStarted: (Run) -> Unit = {},
 ) : ViewModel() {
     private val state = MutableStateFlow(ChatUiState(instanceId = instanceId))
     val uiState: StateFlow<ChatUiState> = state.asStateFlow()
@@ -588,6 +590,7 @@ class ChatViewModel(
         viewModelScope.launch {
             try {
                 val run = service.sendMessage(instanceId, text, allowSecrets)
+                onRunStarted(run)
                 // 乐观：新运行马上进时间线（事件流的 run.state 随后到）。
                 runs[run.id] = run
                 rebuild()

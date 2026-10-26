@@ -17,6 +17,9 @@ object NotificationChannels {
     /** 运行完成、失败、计划待确认、其他提醒。 */
     const val RESULTS = "tt_results"
 
+    /** 运行进度的常驻通知（13.10，本地发的，服务端不用）：低优先级，不响不震。 */
+    const val PROGRESS = "tt_progress"
+
     fun ensure(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         manager.createNotificationChannels(
@@ -31,6 +34,11 @@ object NotificationChannels {
                     context.getString(R.string.notification_channel_results),
                     NotificationManager.IMPORTANCE_DEFAULT,
                 ).apply { description = context.getString(R.string.notification_channel_results_description) },
+                NotificationChannel(
+                    PROGRESS,
+                    context.getString(R.string.notification_channel_progress),
+                    NotificationManager.IMPORTANCE_LOW,
+                ).apply { description = context.getString(R.string.notification_channel_progress_description) },
             ),
         )
     }
