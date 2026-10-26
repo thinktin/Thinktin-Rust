@@ -125,6 +125,29 @@ struct QuickActionsTests {
         #expect(QuickActionText.pendingApprovals(2, language: .chinese) == "有 2 个待审批。")
     }
 
+    @Test("待审批数也数配好的电脑发来的")
+    func pendingComputerApprovals() async throws {
+        let mock = makeShellMock()
+        let now = Date()
+        let cloud = try await QuickActions(client: mock).pendingApprovals(now: now)
+        var links = ComputerLinkState()
+        links.computers = [
+            PairedComputer(desktopID: DemoData.macDeviceID, desktopKey: "k", phoneKey: "p", pairedAt: now)
+        ]
+        let seconds = now.timeIntervalSince1970.rounded(.down)
+        mock.deliverDeviceMessage(
+            from: DemoData.macDeviceID, kind: .approvalRequest,
+            body: [
+                "request": [
+                    "desktop_id": .string(DemoData.macDeviceID.rawValue), "request_id": "r1", "tool": "computer_run",
+                    "arguments_json": #"{"command":"ls"}"#, "summary": "ls", "issued_at": .number(seconds),
+                    "expires_at": .number(seconds + 600),
+                ]
+            ])
+        #expect(try await QuickActions(client: mock, computerLinks: links).pendingApprovals(now: now) == cloud + 1)
+        #expect(try await QuickActions(client: mock).pendingApprovals(now: now) == cloud, "不给本机状态时只数云端的")
+    }
+
     @Test("下任务：去掉首尾空白再发；空的、像密码的不发")
     func sendTask() async throws {
         let mock = makeShellMock()

@@ -27,9 +27,11 @@ enum IntentContext {
         _ body: @Sendable (QuickActions) async throws(QuickActionError) -> T
     ) async throws -> T {
         let environment = AppEnvironment.shared
+        // 电脑发来的审批存在本机（12.9），按登录的账号取；快捷指令冷启动 App、还没读到账号时只数云端的。
+        let computerLinks = environment.appModel.user.map { ComputerLinkStore(defaults: .standard).load(userID: $0.id) }
         let value: T
         do {
-            value = try await body(QuickActions(client: environment.client))
+            value = try await body(QuickActions(client: environment.client, computerLinks: computerLinks))
         } catch {
             throw QuickActionFailure(message: QuickActionText.error(error, language: language))
         }
