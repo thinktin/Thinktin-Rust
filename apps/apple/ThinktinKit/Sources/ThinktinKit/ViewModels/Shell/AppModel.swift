@@ -86,6 +86,8 @@ public final class AppModel {
     /// 界面语言和服务端、请求语言的同步（12.12）；没传 `preferences` 时为 nil，不同步。
     private let language: LanguageSettingsModel?
     private let selection: InstanceSelectionStore
+    /// 换了新手机时弹一次引导（12.17）。
+    private let onboardingCheck: OnboardingCheck
     private let now: () -> Date
     private let activityContinuation: AsyncStream<ClientActivity>.Continuation
     @ObservationIgnored private var started = false
@@ -121,6 +123,7 @@ public final class AppModel {
         self.language = preferences.map { LanguageSettingsModel(client: observed, preferences: $0) }
         self.router = router
         self.selection = InstanceSelectionStore(defaults: defaults)
+        self.onboardingCheck = OnboardingCheck(defaults: defaults)
         self.notifications = notifications
         self.now = now
         self.activityContinuation = continuation
@@ -179,6 +182,7 @@ public final class AppModel {
         await syncLanguage()
         await refresh()
         await reportPushToken()
+        await presentOnboardingIfNeeded()
     }
 
     /// 刷新实例列表和角标（下拉、回到前台、解冻后）。
@@ -380,6 +384,14 @@ public final class AppModel {
         }
     }
 
+    /// 这台设备第一次登录进来、账号还没有实例或 key（换了新手机）：弹一次引导（12.17）。新用户登录时 `SignInModel`
+    /// 已经要弹了，不重复。
+    private func presentOnboardingIfNeeded() async {
+        guard phase == .signedIn, router.sheet != .onboarding, router.pendingRoute?.route != .onboarding else { return }
+        guard await onboardingCheck.shouldPresent(client: client), phase == .signedIn else { return }
+        if router.sheet == nil { router.present(.onboarding) }
+    }
+
     /// App 图标的角标跟着收件箱的未读数（docs/push.md 第 6 节：App 在前台时自己设）。
     private func updateAppBadge() {
         guard let notifications, appBadge != badges.inboxUnread else { return }
@@ -471,6 +483,7 @@ public final class AppModel {
             await refresh()
             // 登录时可能已经带上了（`SignInModel`），再报一次也没关系；令牌是登录之后才到的就靠这里。
             await reportPushToken()
+            await presentOnboardingIfNeeded()
         }
     }
 

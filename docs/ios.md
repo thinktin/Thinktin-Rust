@@ -156,10 +156,10 @@ docs/i18n.md 第 3 节“不认识的按状态给通用文案”）：404 / 410 
   时顺带切到这个实例。点开后 `AppModel.open(push:)` 把 `PushPayload.inboxItemID` 那一条标已读（12.8）。
 - 推送的系统回调（12.8）在 App 的 `AppDelegate`（`@UIApplicationDelegateAdaptor`，`AppEnvironment` 也由它建，冷启动点开通知时
   回调可能比界面先到）：启动时设通知中心的代理、登记通知类别（`PushCategory`，docs/push.md 第 2 节，只有 `APPROVAL` 有“拒绝”按钮）、
-  每次都向 APNs 注册（不等用户允许通知，令牌先拿到）；设备令牌交给 `AppModel.didReceivePushToken`（登录着就 `setPushToken`，
+  登录之后（同意了隐私政策，12.17）每次启动都向 APNs 注册（不等用户允许通知，令牌先拿到；`ThinktinApp` 跟着 `AppModel.phase`）；设备令牌交给 `AppModel.didReceivePushToken`（登录着就 `setPushToken`，
   同一个不重复报，没登录时登录带上）；前台送达的照样显示横幅，`receive(push:)` 后刷新角标；点通知上的“拒绝”调
   `AppModel.rejectFromNotification`（查一次审批，还待处理才选拒绝选项，不用本机验证、不打开 App）。请求通知权限
-  （`SystemPushRegistrar.register()`）在用到时才做（12.17）。
+  （`SystemPushRegistrar.register()`）在用到时才做：引导的最后一步（12.17，`\.notificationAuthorizer`）。
 - 角标和已送达的通知（`DeliveredNotifications`，App 里是 `UNUserNotificationCenter`）：App 图标的角标跟着收件箱的未读数；
   退出登录、换账号时清掉已送达的通知、角标设成 0（推送里没有用户 id）。推送不带 `content-available`，没有后台模式。
 - 子类型（`NotificationSubtype`，开放字符串，收件箱条目的 `subtype` 同一套）：`account_frozen` 显示冻结页；`account_restored` 重查账号、

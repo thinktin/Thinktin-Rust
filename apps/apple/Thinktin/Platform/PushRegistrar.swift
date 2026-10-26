@@ -5,10 +5,10 @@ import UserNotifications
 
 /// 通知权限和 APNs 注册（WBS 12.8，docs/push.md 第 1 节）。
 ///
-/// 流程：App 每次启动都向 APNs 注册（`AppDelegate`，不用等用户允许通知：令牌先拿到，允许之后推送就能显示）→ App 代理
+/// 流程：登录之后每次启动都向 APNs 注册（`ThinktinApp`，不用等用户允许通知：令牌先拿到，允许之后推送就能显示）→ App 代理
 /// 收到设备令牌 → `PushRegistration.forThisBuild(deviceToken:)` 转成十六进制、按构建选好通道（`apns` / `apns_sandbox`）→
-/// `AppModel.didReceivePushToken`：登录着就 `setPushToken`，没登录时登录带上。请求通知权限（`register()`）在用到时
-/// 才做（12.17 的引导、发第一个任务之后）。
+/// `AppModel.didReceivePushToken`：登录着就 `setPushToken`。请求通知权限（`register()`）在用到时才做（12.17 引导的
+/// 最后一步，`PushAuthorizer`）。
 protocol PushRegistrar: Sendable {
     /// 请求通知权限（还没问过时弹系统框）并向 APNs 注册。返回用户是否允许通知。
     func register() async -> Bool
@@ -27,6 +27,15 @@ struct SystemPushRegistrar: PushRegistrar {
             ?? false
         await MainActor.run { UIApplication.shared.registerForRemoteNotifications() }
         return granted
+    }
+}
+
+/// 引导里“打开通知”用的（`\.notificationAuthorizer`，12.17）：弹系统的权限框并向 APNs 注册。
+struct PushAuthorizer: NotificationAuthorizing {
+    let registrar: any PushRegistrar
+
+    func requestAuthorization() async -> Bool {
+        await registrar.register()
     }
 }
 

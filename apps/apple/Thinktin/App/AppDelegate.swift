@@ -5,8 +5,8 @@ import UserNotifications
 
 /// App 代理（WBS 12.8）：推送的系统回调都在这里，转给 `AppModel`。
 ///
-/// - 启动时（冷启动点开通知也是先走这里）设好通知中心的代理、登记通知类别、向 APNs 注册；设备令牌交给
-///   `AppModel.didReceivePushToken`。
+/// - 启动时（冷启动点开通知也是先走这里）设好通知中心的代理、登记通知类别；登录之后（同意了隐私政策，12.17）才向 APNs
+///   注册（`ThinktinApp`），设备令牌交给 `AppModel.didReceivePushToken`。
 /// - App 在前台时送达的推送：照样显示横幅，`AppModel.receive(push:)` 处理账号冻结 / 解冻，刷新角标。
 /// - 点开通知（冷启动、后台）：`AppModel.open(push:)` 跳过去、标已读；点通知上的“拒绝”：`rejectFromNotification`，
 ///   不打开 App。
@@ -26,7 +26,6 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         guard Bundle.main.bundleURL.pathExtension == "app" else { return true }
         UNUserNotificationCenter.current().delegate = self
         NotificationCategories.register(language: SettingsPreferences.shared.displayLanguage)
-        application.registerForRemoteNotifications()
         return true
     }
 

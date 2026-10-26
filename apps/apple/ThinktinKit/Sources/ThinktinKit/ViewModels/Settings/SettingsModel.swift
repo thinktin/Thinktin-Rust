@@ -169,6 +169,10 @@ public final class SettingsModel {
                     SettingsRow(
                         id: "licenses", systemImage: "doc.text", title: AppRoute.licenses.title(language),
                         action: .open(.licenses)),
+                    // 上手引导（12.17）：随时能再看一遍。
+                    SettingsRow(
+                        id: "onboarding", systemImage: "sparkles", title: OnboardingText.settingsRow(language),
+                        action: .open(.onboarding)),
                 ]),
         ]
     }
