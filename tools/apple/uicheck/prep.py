@@ -1,7 +1,8 @@
 """把 ThinktinUI、App target 的源文件接进桩模块包（Gen/ 目录，生成物不提交）。
 
 ThinktinKit、ThinktinCoreAdapter、App 的 App/、Platform/、Intents/ 和小组件扩展用符号链接；ThinktinUI 和它的测试复制一份，
-顺便把 #Preview 宏换成普通的 @ViewBuilder 函数（桩 SwiftUI 没有宏），这样预览里的代码也会被类型检查。
+顺便把 #Preview 宏换成普通的 @ViewBuilder 函数（桩 SwiftUI 没有宏），这样预览里的代码也会被类型检查；
+`#if os(iOS)` / `os(macOS)` 换成 `canImport(UIKit)` / `canImport(AppKit)`，平台专属的分支也查得到。
 """
 import os, re, shutil, sys
 # 仓库根目录按本文件的位置推出来：tools/apple/uicheck/prep.py
@@ -23,11 +24,18 @@ for target in ["Thinktin", "ThinktinWidgets"]:
     os.symlink(os.path.join(app, "Shared"), os.path.join(gen, target, "Shared"))
 os.symlink(os.path.join(app, "Tests/ThinktinTests"), os.path.join(gen, "ThinktinTests"))
 counter = [0]
+def platform_conditions(text):
+    """Linux 上 os(iOS)、os(macOS) 都是假，两个分支都查不到：在 #if / #elseif 行里换成按桩模块判断，
+    UIKit 版查 iOS 分支，AppKit 版查 macOS 分支（和真实 SDK 上一样只编一边）。"""
+    def repl(m):
+        line = m.group(0)
+        return line.replace("os(iOS)", "canImport(UIKit)").replace("os(macOS)", "canImport(AppKit)")
+    return re.sub(r'^[ \t]*#(?:if|elseif)\b.*$', repl, text, flags=re.M)
 def transform(text):
     def repl(m):
         counter[0] += 1
         return "@MainActor @ViewBuilder func __preview_%d() -> some View {" % counter[0]
-    return re.sub(r'^#Preview(\(.*\))? \{$', repl, text, flags=re.M)
+    return platform_conditions(re.sub(r'^#Preview(\(.*\))? \{$', repl, text, flags=re.M))
 for src, dst in [("Sources/ThinktinUI", "ThinktinUI"), ("Tests/ThinktinUITests", "ThinktinUITests")]:
     for dirpath, _, files in os.walk(os.path.join(root, src)):
         for f in files:

@@ -187,7 +187,7 @@ public final class ImChannelEditorModel {
     /// 修改时有没有改动。
     public var hasChanges: Bool {
         guard let original else { return true }
-        return isReplacingWebhook || trimmedLabel != original.label || events != original.events
+        return isReplacingWebhook || trimmedLabel != original.label || Set(events) != Set(original.events)
     }
 
     private var trimmedLabel: String { label.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -213,7 +213,7 @@ public final class ImChannelEditorModel {
             }
             var saved = original
             let labelChanged = trimmedLabel != original.label
-            let eventsChanged = events != original.events
+            let eventsChanged = Set(events) != Set(original.events)
             if labelChanged || eventsChanged {
                 saved = try await client.updateImChannel(
                     original.id, label: labelChanged ? trimmedLabel : nil, events: eventsChanged ? events : nil,
