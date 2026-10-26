@@ -338,3 +338,20 @@ fn high_s_signatures_are_normalized() {
     sub[31] = 1;
     assert_eq!(sub_be(&ORDER, &sub)[31], 0x50);
 }
+
+#[test]
+fn pairing_bodies_have_the_documented_wire_format() {
+    let response = PairResponseBody {
+        nonce: "bm9uY2U".into(),
+        phone_key: "a2V5".into(),
+        signature: "c2ln".into(),
+    };
+    assert_eq!(
+        serde_json::to_value(&response).unwrap(),
+        serde_json::json!({"nonce": "bm9uY2U", "phone_key": "a2V5", "signature": "c2ln"})
+    );
+    let confirm: PairConfirmBody =
+        serde_json::from_str(r#"{"nonce":"bm9uY2U","signature":"c2ln"}"#).unwrap();
+    assert_eq!(confirm.signature, "c2ln");
+    assert_eq!(confirm.nonce, "bm9uY2U");
+}

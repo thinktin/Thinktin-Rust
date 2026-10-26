@@ -567,6 +567,28 @@ pub fn encode_public_key(sec1: Vec<u8>) -> Result<String, PairingError> {
 // 手机和电脑之间的消息由平台转发（`proto::domain::DeviceMessageKind`），正文是下面这些 JSON。
 // 签名都是 base64url（不带填充）编码的 DER 或 r‖s。
 
+/// 手机 → 电脑（`pair_response`）：扫码后的配对回复。手机 id 就是发消息的设备（平台核对过），
+/// 电脑用 `verify_pairing_response(offer, 发件设备, phone_key, signature)` 验，[`nonce`](Self::nonce) 对上自己发出的邀请。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PairResponseBody {
+    /// 邀请里的随机数（电脑据此找到是哪一个邀请）。
+    pub nonce: String,
+    /// 手机的公钥（SEC1，base64url）。
+    pub phone_key: String,
+    /// 手机对 [`pairing_response_message`] 的签名。
+    pub signature: String,
+}
+
+/// 电脑 → 手机（`pair_confirm`）：配对确认。手机用二维码里的电脑公钥
+/// `verify_pairing_confirmation(offer, 自己的 id, 自己的公钥, signature)` 验。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PairConfirmBody {
+    /// 邀请里的随机数（手机据此对上自己扫的是哪一个邀请）。
+    pub nonce: String,
+    /// 电脑对 [`pairing_confirmation_message`] 的签名。
+    pub signature: String,
+}
+
 /// 手机 → 电脑（`capability`）：签过名的能力令牌。
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CapabilityBody {

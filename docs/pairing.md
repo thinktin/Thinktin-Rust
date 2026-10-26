@@ -71,6 +71,8 @@ sequenceDiagram
 
 | `kind` | 方向 | 正文 |
 |---|---|---|
+| `pair_response` | 手机 → 电脑 | `{"nonce": …, "phone_key": …, "signature": …}`，签的是 `pairing_response_message(offer, 发件设备 id, phone_key)`；电脑按 `nonce` 找到自己发出的邀请 |
+| `pair_confirm` | 电脑 → 手机 | `{"nonce": …, "signature": …}`，签的是 `pairing_confirmation_message(offer, 手机 id, phone_key)`；手机用二维码里的电脑公钥验 |
 | `capability` | 手机 → 电脑 | `{"grant": CapabilityGrant, "signature": …}`，签的是 `capability_message(grant)` |
 | `revocation` | 手机 → 电脑 | `{"token_id": …}`，不用签名：吊销只会收紧权限，平台伪造了也只能让电脑少做事 |
 | `approval_request` | 电脑 → 手机 | `{"request": ApprovalRequest}` |
