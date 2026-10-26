@@ -12,6 +12,7 @@ extension AppRoute {
         case .signIn: ("登录", "Sign in")
         case .account: ("账号", "Account")
         case .devices: ("登录设备", "Devices")
+        case .pairComputer: ("配对电脑", "Pair a computer")
         case .home: ("首页", "Home")
         case .conversation: ("对话", "Conversation")
         case .run: ("运行详情", "Run details")

@@ -27,6 +27,15 @@ struct DeepLinkTests {
         #expect(route("thinktin://active") == .activeRuns)
     }
 
+    @Test("电脑的配对二维码（thinktin-pair:）：整条交给配对页；太长的不认；不能反过来生成")
+    func pairingCodes() {
+        let code = "thinktin-pair:v1?d=0192f3a0-0000-7000-8000-0000000000d2&k=BKey&n=nonce&e=1793000000"
+        #expect(route(code) == .pairComputer(code: code))
+        #expect(route("THINKTIN-PAIR:v1?d=x") == .pairComputer(code: "THINKTIN-PAIR:v1?d=x"))
+        #expect(route("thinktin-pair:v1?d=" + String(repeating: "a", count: 1100)) == nil)
+        #expect(DeepLink.url(for: .pairComputer(code: code)) == nil)
+    }
+
     @Test("宽松的地方：大小写、结尾斜杠、查询参数、没有 host 的写法")
     func lenientForms() {
         #expect(route("THINKTIN://RUN/AbC") == .run("AbC"))  // 种类不分大小写，id 原样保留

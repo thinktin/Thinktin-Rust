@@ -13,18 +13,28 @@ import Foundation
 /// | `thinktin://vault/request/{id}` | 保险箱的填写请求 |
 /// | `thinktin://approvals` | 审批中心（小组件的“待审批”，12.20） |
 /// | `thinktin://active` | 进行中（小组件的“进行中”，12.20；安卓没有这一页，不认） |
+/// | `thinktin-pair:v1?…` | 和电脑配对（12.9）：电脑上的二维码，用系统相机扫到时打开；整条深链就是配对码 |
 ///
 /// 打开后返回栈是“根（当前实例的对话）→ 目标页”，和安卓的冷启动一致（`Router.show(_:in:)`）。
 /// 深链是外部输入：认不出的格式、多余的路径段、不像 id 的 id 一律不认（返回 nil），查询参数和片段忽略。
 public enum DeepLink {
     /// URL scheme（project.yml 的 `CFBundleURLTypes` 注册了它）。
     public static let scheme = "thinktin"
+    /// 电脑配对二维码的 scheme（docs/pairing.md 第 2 节；也注册了）。
+    public static let pairingScheme = "thinktin-pair"
+    /// 配对码最长几个字符（正常的不到 300）。
+    static let maxPairingCodeLength = 1024
 
     /// id 最长几个字符。
     static let maxIDLength = 128
 
     /// 解析深链；不是 `thinktin://` 或认不出时返回 nil。
     public static func route(from url: URL) -> AppRoute? {
+        if url.scheme?.lowercased() == pairingScheme {
+            // 内容由配对页交给 client-core 解析、校验；这里只挡掉太长的。
+            let code = url.absoluteString
+            return code.count <= maxPairingCodeLength ? .pairComputer(code: code) : nil
+        }
         guard url.scheme?.lowercased() == scheme,
             let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         else { return nil }

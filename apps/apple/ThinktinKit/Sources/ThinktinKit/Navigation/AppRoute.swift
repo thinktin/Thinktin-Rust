@@ -17,6 +17,8 @@ public enum AppRoute: Hashable, Sendable, Codable {
     case account
     /// 登录设备：列表、下线、下线其他设备。
     case devices
+    /// 和电脑配对（12.9）：用系统相机扫电脑上的二维码时，`thinktin-pair:` 深链带着配对码打开（`code` 是整条深链）。
+    case pairComputer(code: String)
 
     // MARK: 对话与运行（12.5）
 
@@ -142,7 +144,7 @@ extension AppRoute {
     /// 由哪个功能（工作包）负责这个页面。
     public var feature: AppFeature {
         switch self {
-        case .signIn, .account, .devices: .account
+        case .signIn, .account, .devices, .pairComputer: .account
         case .home, .conversation, .run, .runTree, .activeRuns: .conversation
         case .agentCatalog, .agent, .instance: .agents
         case .credentials, .addCredential, .credential, .modelRoutes, .usage: .models
@@ -165,7 +167,7 @@ extension AppRoute {
         switch self {
         case .home, .conversation: .root
         case .signIn, .frozen, .upgrade: .global
-        case .newTask, .addCredential, .newPlan, .editPlan, .onboarding: .sheet
+        case .newTask, .addCredential, .newPlan, .editPlan, .onboarding, .pairComputer: .sheet
         default: .push
         }
     }

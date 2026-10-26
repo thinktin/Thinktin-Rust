@@ -24,9 +24,10 @@ enum RouteSamples {
         .onboarding,
         .search,
         .newTask, .frozen, .upgrade,
+        .pairComputer(code: "thinktin-pair:v1?d=mac"),
     ]
 
-    static let caseCount = 43
+    static let caseCount = 44
 
     static func index(of route: AppRoute) -> Int {
         switch route {
@@ -73,6 +74,7 @@ enum RouteSamples {
         case .newTask: 40
         case .frozen: 41
         case .upgrade: 42
+        case .pairComputer: 43
         }
     }
 }
@@ -100,7 +102,7 @@ struct AppRouteTests {
     @Test("页面归哪个功能（工作包）")
     func features() {
         let expected: [AppRoute: AppFeature] = [
-            .signIn: .account, .devices: .account, .account: .account,
+            .signIn: .account, .devices: .account, .account: .account, .pairComputer(code: "c"): .account,
             .home: .conversation, .conversation("i"): .conversation, .run("r"): .conversation,
             .runTree("r"): .conversation, .activeRuns: .conversation,
             .agentCatalog: .agents, .agent("a"): .agents, .instance("i"): .agents,
@@ -131,7 +133,10 @@ struct AppRouteTests {
         for route in [AppRoute.signIn, .frozen, .upgrade] {
             #expect(route.presentation == .global)
         }
-        for route in [AppRoute.newTask, .addCredential, .newPlan(instanceID: nil), .editPlan("p"), .onboarding] {
+        for route in [
+            AppRoute.newTask, .addCredential, .newPlan(instanceID: nil), .editPlan("p"), .onboarding,
+            .pairComputer(code: "c"),
+        ] {
             #expect(route.presentation == .sheet, "\(route)")
         }
         for route in [

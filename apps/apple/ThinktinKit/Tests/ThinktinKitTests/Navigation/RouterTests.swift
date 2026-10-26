@@ -112,6 +112,12 @@ struct RouterTests {
         #expect(!router.handle(url: try #require(URL(string: "https://example.com"))))
         #expect(router.path == [.instance("i5")])
 
+        // 系统相机扫了电脑上的配对二维码：弹出配对。
+        let pair = "thinktin-pair:v1?d=mac&k=key&n=nonce&e=1"
+        #expect(router.handle(url: try #require(URL(string: pair))))
+        #expect(router.sheet == .pairComputer(code: pair))
+        router.dismissSheet()
+
         router.show(.conversation("i7"))
         #expect(router.currentInstanceID == "i7")
         #expect(router.path.isEmpty)

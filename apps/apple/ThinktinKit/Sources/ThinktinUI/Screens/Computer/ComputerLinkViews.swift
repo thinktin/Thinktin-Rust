@@ -229,16 +229,46 @@ private struct ComputerLinkSectionContent: View {
     }
 }
 
-/// 配对一台电脑：扫码（或粘贴配对码）→ 面容 ID 签名 → 等电脑确认。
+/// 系统相机扫了电脑上的二维码（`thinktin-pair:` 深链，`.pairComputer`）：还不知道是哪台电脑，配对码已经填好。
+struct PairComputerRoute: View {
+    let code: String
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        ComputerLinkGate { model in
+            PairComputerSheet(model: model, computer: nil, initialCode: code) { dismiss() }
+        }
+    }
+}
+
+/// 配对一台电脑：扫码（或粘贴配对码）→ 面容 ID 签名 → 等电脑确认。`computer` 为 nil 是从深链来的。
 struct PairComputerSheet: View {
     let model: ComputerLinkModel
-    let computer: DeviceInfo
+    let computer: DeviceInfo?
     let onClose: @MainActor () -> Void
 
     @Environment(\.displayLanguage) private var language
     @Environment(\.pairingScanner) private var scanner
-    @State private var code = ""
+    @State private var code: String
     @State private var finished = false
+    /// 发出配对回复的那台电脑（配码里的）：等到它的确认才算配好。
+    @State private var pairingID: DeviceID?
+
+    init(
+        model: ComputerLinkModel, computer: DeviceInfo?, initialCode: String = "",
+        onClose: @escaping @MainActor () -> Void
+    ) {
+        self.model = model
+        self.computer = computer
+        self.onClose = onClose
+        _code = State(initialValue: initialCode)
+    }
+
+    /// 标题、签名说明里的电脑名字。
+    private var computerName: String {
+        computer?.name ?? pairingID.flatMap { model.name(of: $0) } ?? (language == .chinese ? "电脑" : "computer")
+    }
 
     var body: some View {
         let zh = language == .chinese
@@ -247,7 +277,7 @@ struct PairComputerSheet: View {
                 Text(ComputerLinkText.pairInstructions(language))
                     .typography(.subheadline)
                     .foregroundStyle(Theme.inkSecondary)
-                if finished, model.paired(computer.id) != nil, !model.isPairing {
+                if finished, let id = pairingID ?? computer?.id, model.paired(id) != nil, !model.isPairing {
                     Label(zh ? "配对好了" : "Paired", systemImage: "checkmark.circle.fill")
                         .typography(.headline)
                         .foregroundStyle(StatusTone.success.color)
@@ -278,13 +308,17 @@ struct PairComputerSheet: View {
                             .foregroundStyle(StatusTone.failure.color)
                     }
                     PillButton(zh ? "配对" : "Pair", systemImage: "link") { submit() }
-                        .disabled(code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isWorking)
+                        .disabled(
+                            code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isWorking
+                                || !model.hasLoaded)
                 }
             }
             .padding(Metrics.Spacing.m)
         }
         .background(Theme.paper)
-        .navigationTitle(zh ? "配对“\(computer.name)”" : "Pair “\(computer.name)”")
+        .navigationTitle(
+            computer.map { zh ? "配对“\($0.name)”" : "Pair “\($0.name)”" } ?? (zh ? "配对电脑" : "Pair a computer")
+        )
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 Button(zh ? "完成" : "Done") { onClose() }
@@ -293,9 +327,10 @@ struct PairComputerSheet: View {
     }
 
     private func submit() {
-        let reason = ComputerLinkText.signReason(.pair, computer: computer.name, language: language)
+        let reason = ComputerLinkText.signReason(.pair, computer: computerName, language: language)
         Task {
             guard await model.pair(code: code, reason: reason) else { return }
+            pairingID = model.state.pending?.offer.desktopID
             await model.awaitConfirmation()
             finished = true
         }

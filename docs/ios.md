@@ -144,7 +144,8 @@ docs/i18n.md 第 3 节“不认识的按状态给通用文案”）：404 / 410 
 和安卓端（[docs/android-design.md](android-design.md) 第 3 节）用同一套深链，推送点击、收件箱跳转、实时活动都走它：
 `thinktin://run/{id}`、`thinktin://approval/{id}`、`thinktin://plan/{id}`、`thinktin://inbox`（可带 `/{id}`）、
 `thinktin://vault/request/{id}`、`thinktin://instance/{id}`；小组件还用 `thinktin://approvals`（审批中心，安卓也认）和
-`thinktin://active`（进行中，只有 iOS 有这一页）。推送 payload 里的字段（收件箱 id、运行 id、审批 id）由服务端
+`thinktin://active`（进行中，只有 iOS 有这一页）。电脑上的配对二维码 `thinktin-pair:v1?…`（12.9）也注册了：
+用系统相机扫到时打开 App，弹出配对（`.pairComputer`，配对码填好），和安卓一样。推送 payload 里的字段（收件箱 id、运行 id、审批 id）由服务端
 `notify` 定义，两端共用。Universal Links 等上线前再配。
 
 实现在 `ThinktinKit/Navigation`（12.16）：`DeepLink` 解析深链（认不出的格式、多余的路径段、不像 id 的 id 一律不认），

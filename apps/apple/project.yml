@@ -93,7 +93,7 @@ targets:
         CFBundleURLTypes:
           - CFBundleURLName: $(PRODUCT_BUNDLE_IDENTIFIER)
             CFBundleTypeRole: Viewer
-            CFBundleURLSchemes: [thinktin]
+            CFBundleURLSchemes: [thinktin, thinktin-pair]
         ThinktinAPIBaseURL: $(THINKTIN_API_BASE_URL)
     entitlements:
       path: Thinktin/Thinktin.entitlements
