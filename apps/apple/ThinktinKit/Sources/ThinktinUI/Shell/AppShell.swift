@@ -30,8 +30,10 @@ public struct AppShell: View {
             .tint(Theme.accent)
             .task { await model.start() }
             .onChange(of: scenePhase) {
-                if scenePhase == .active {
-                    Task { await model.sceneDidBecomeActive() }
+                switch scenePhase {
+                case .active: Task { await model.sceneDidBecomeActive() }
+                case .background: model.sceneDidEnterBackground()
+                default: break
                 }
             }
     }

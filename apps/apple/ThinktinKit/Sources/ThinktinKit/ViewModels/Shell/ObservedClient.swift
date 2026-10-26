@@ -17,6 +17,8 @@ public enum ClientActivity: Sendable {
     case stream(StreamStatus, instanceID: InstanceID, subscription: UUID)
     /// 一个事件流停了（调用方 `stop()`、收到终止状态、强制升级时被停掉）。
     case streamEnded(subscription: UUID)
+    /// 用户发了一个任务（`sendMessage` 成功，12.10：设置里开着就开实时活动）。
+    case runStarted(Run)
 }
 
 /// 包一层的客户端（WBS 12.16）：每个调用原样转给 `base`，同时把结果报给应用框架（`report`）。
@@ -596,7 +598,11 @@ public final class ObservedClient: ClientProtocol, Sendable {
     // MARK: 消息与保险箱
 
     public func sendMessage(instanceID: InstanceID, text: String, allowSecrets: Bool) async throws -> Run {
-        try await observe { try await base.sendMessage(instanceID: instanceID, text: text, allowSecrets: allowSecrets) }
+        let run = try await observe {
+            try await base.sendMessage(instanceID: instanceID, text: text, allowSecrets: allowSecrets)
+        }
+        report(.runStarted(run))
+        return run
     }
 
     public func saveSecretFromMessage(message: String, value: String, item: NewVaultItem) async throws

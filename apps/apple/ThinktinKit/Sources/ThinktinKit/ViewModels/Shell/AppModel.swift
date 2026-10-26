@@ -84,6 +84,8 @@ public final class AppModel {
     /// 系统通知中心（12.8）：退出登录时清掉已送达的通知，角标跟着收件箱的未读数。nil 不管（测试、预览）。
     private let notifications: (any DeliveredNotifications)?
     private let widgets: (any WidgetSnapshotSink)?
+    /// 实时活动（12.10）；没传 `liveActivities` 时为 nil（测试、预览、不支持的平台）。
+    public let liveActivities: LiveActivityModel?
     /// 上次写给小组件的（数没变就不重写）。
     private var lastWidgetSnapshot: WidgetSnapshot?
     /// 上一次写快照的任务：一个接一个写，后写的不会被先写的盖掉。
@@ -115,11 +117,13 @@ public final class AppModel {
     ///     设请求语言、同步服务端的用户语言。nil 不同步（测试、预览）。
     ///   - notifications: 系统通知中心（12.8，App 里是 `UNUserNotificationCenter`）；nil 不管。
     ///   - widgets: 主屏小组件的快照（12.20，App 里写 App Group 的文件再刷新小组件）；nil 不管。
+    ///   - liveActivities: 系统的实时活动（12.10，App 里是 ActivityKit）；nil 不开实时活动。
     ///   - now: 现在的时间（测试传固定值）。
     public init(
         client: any ClientProtocol, router: Router = Router(), defaults: UserDefaults? = .standard,
         preferences: SettingsPreferences? = nil, notifications: (any DeliveredNotifications)? = nil,
-        widgets: (any WidgetSnapshotSink)? = nil, now: @escaping () -> Date = Date.init
+        widgets: (any WidgetSnapshotSink)? = nil, liveActivities: (any LiveActivityControlling)? = nil,
+        now: @escaping () -> Date = Date.init
     ) {
         let (stream, continuation) = AsyncStream.makeStream(of: ClientActivity.self, bufferingPolicy: .unbounded)
         let observed = ObservedClient(client) { activity in continuation.yield(activity) }
@@ -132,6 +136,7 @@ public final class AppModel {
         self.onboardingCheck = OnboardingCheck(defaults: defaults)
         self.notifications = notifications
         self.widgets = widgets
+        self.liveActivities = liveActivities.map { LiveActivityModel(client: observed, system: $0, defaults: defaults) }
         self.now = now
         self.activityContinuation = continuation
         // 版本太老（11.8，不联网）：第一帧就是升级页，事件流一个都不连。
@@ -193,6 +198,7 @@ public final class AppModel {
         await syncLanguage()
         await refresh()
         await reportPushToken()
+        await liveActivities?.resume()
         await presentOnboardingIfNeeded()
     }
 
@@ -263,11 +269,17 @@ public final class AppModel {
             await recheckAccount()
         case .signedIn:
             if isStarting { return }
+            await liveActivities?.resume()
             if let last = lastBadgeRefresh, now().timeIntervalSince(last) < Self.badgeMaxAge { return }
             await refresh()
         case .signedOut, .upgradeRequired:
             break
         }
+    }
+
+    /// App 进后台：实时活动不再跟前台的事件流（之后靠后台推送，12.10）。
+    public func sceneDidEnterBackground() {
+        liveActivities?.pause()
     }
 
     // MARK: 账号
@@ -288,6 +300,7 @@ public final class AppModel {
             await syncLanguage()
             await refresh()
             await reportPushToken()
+            await liveActivities?.resume()
         } catch {
             if error is CancellationError { return }
             if !handle(error) { accountCheckError = Self.clientError(error) }
@@ -487,7 +500,16 @@ public final class AppModel {
             streams[token] = nil
             streamRetryAt[token] = nil
             updateConnection()
+        case .runStarted(let run):
+            runStarted(run)
         }
+    }
+
+    /// 自己发了任务：设置里开着就开实时活动（12.10），标题是实例名。
+    private func runStarted(_ run: Run) {
+        guard phase == .signedIn, let liveActivities else { return }
+        let title = instances.first { $0.id == run.instanceID }?.name ?? "ThinkTin"
+        Task { await liveActivities.runStarted(run, title: title) }
     }
 
     private func didSignIn(_ result: LoginResult) {
@@ -509,6 +531,7 @@ public final class AppModel {
             await refresh()
             // 登录时可能已经带上了（`SignInModel`），再报一次也没关系；令牌是登录之后才到的就靠这里。
             await reportPushToken()
+            await liveActivities?.resume()
             await presentOnboardingIfNeeded()
         }
     }
@@ -542,6 +565,7 @@ public final class AppModel {
             activity = [:]
             badges = .zero
             publishWidgetSnapshot()
+            if let liveActivities { Task { await liveActivities.signedOut() } }
             hasLoadedInstances = false
             refreshError = nil
             accountCheckError = nil
