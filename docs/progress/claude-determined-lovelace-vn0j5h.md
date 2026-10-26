@@ -73,8 +73,11 @@ P1 后端核心（M1–M9）和 P2 里能在代码层面完成的包都做完了
 - 安卓 13.12 官网安装包：`direct` 渠道、应用内更新（清单 → 下载 → SHA-256 / 包名 / 版本 / 签名校验 → 系统安装）、升级页接上、
   release 签名读环境变量、`scripts/update-manifest.py`。发版和上架材料见 `docs/android-release.md`。
 
+- iOS 12.13 密码保险箱：列表、条目、新建 / 修改（重名换名、200 条上限、限定实例）、填写请求（已有同名条目先提示）；Mock 的保险箱规则和
+  服务端对齐。916 个测试。安卓全量：test 691 个 / lint / 三个渠道的 debug 包 / cn、direct 的 release 包都过。
+
 进行中：
-- iOS 12.13（2026-10-26 开始）。之后 iOS 12.10、安卓 13.10 / 13.14、iOS 12.20 / 12.21 / 12.19 / 12.11。
+- 安卓 13.14 密码保险箱（2026-10-26 开始，和 iOS 12.13 对齐）。之后 iOS 12.10、安卓 13.10、iOS 12.20 / 12.21 / 12.19 / 12.11。
 
 环境（容器回收后要重装）：Swift 6.2 装在 `/opt/swift`（swift.org 的包，验签）；Android SDK 在 `/opt/android-sdk`（cmdline-tools、platform 35、build-tools 35.0.0，不用 NDK）；`cargo build -p client-core --lib` 出本机库，`tools/client-core/build-linux-swift.sh target/linux` 出 Linux 版 Swift 包。Gradle 直连 Maven Central 没被限流。Gradle 和 Swift 一起跑时 Robolectric 偶尔超时，分开跑。
 
