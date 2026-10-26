@@ -38,6 +38,8 @@ import cn.thinktin.app.ui.chat.ChatNavigation
 import cn.thinktin.app.ui.chat.ChatScreen
 import cn.thinktin.app.ui.common.LocalAppContainer
 import cn.thinktin.app.ui.common.LocalThinktinService
+import cn.thinktin.app.ui.computer.ComputerGrantScreen
+import cn.thinktin.app.ui.computer.ComputerPairScreen
 import cn.thinktin.app.ui.computer.ComputersScreen
 import cn.thinktin.app.ui.devices.DevicesAction
 import cn.thinktin.app.ui.devices.DevicesScreen
@@ -125,7 +127,7 @@ fun MainNavigation(navController: NavHostController = rememberAppNavController()
         navController.currentBackStackEntryFlow.first()
         drawerState.close()
         if (uri.scheme == DeepLinks.PAIR_SCHEME) {
-            navController.navigate(Routes.computers(code = uri.toString()))
+            navController.navigate(Routes.computerPair(code = uri.toString()))
         } else {
             navController.handleDeepLink(DeepLinkInbox.navigationIntent(uri))
         }
@@ -520,11 +522,28 @@ private fun MainNavHost(navController: NavHostController, onOpenDrawer: () -> Un
                 onBack = back,
                 onEditName = { navController.navigate(Routes.ACCOUNT_NAME) },
                 onDeleteAccount = { navController.navigate(Routes.DELETE_ACCOUNT) },
-                onOpenComputers = { navController.navigate(Routes.computers()) },
+                onOpenComputers = { navController.navigate(Routes.COMPUTERS) },
             )
         }
-        composable(Routes.COMPUTERS, arguments = listOf(optionalStringArg(Routes.ARG_CODE))) { entry ->
-            ComputersScreen(pairingCode = entry.arguments?.getString(Routes.ARG_CODE), onBack = back)
+        composable(Routes.COMPUTERS) {
+            ComputersScreen(
+                onBack = back,
+                onPair = { navController.navigate(Routes.computerPair(computerId = it)) },
+                onGrant = { navController.navigate(Routes.computerGrant(it)) },
+            )
+        }
+        composable(
+            Routes.COMPUTER_PAIR,
+            arguments = listOf(optionalStringArg(Routes.ARG_COMPUTER_ID), optionalStringArg(Routes.ARG_CODE)),
+        ) { entry ->
+            ComputerPairScreen(
+                computerId = entry.arguments?.getString(Routes.ARG_COMPUTER_ID),
+                pairingCode = entry.arguments?.getString(Routes.ARG_CODE),
+                onBack = back,
+            )
+        }
+        composable(Routes.COMPUTER_GRANT, arguments = listOf(stringArg(Routes.ARG_COMPUTER_ID))) { entry ->
+            ComputerGrantScreen(computerId = entry.arguments?.getString(Routes.ARG_COMPUTER_ID).orEmpty(), onBack = back)
         }
         composable(Routes.SETTINGS) {
             SettingsScreen(

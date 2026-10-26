@@ -11,8 +11,10 @@ import cn.thinktin.data.core.AcceptLanguage
 import cn.thinktin.data.mock.MockThinktinService
 import cn.thinktin.data.model.AgentInfo
 import cn.thinktin.data.model.DeviceInfo
+import cn.thinktin.data.model.DeviceSigner
 import cn.thinktin.data.model.Instance
 import cn.thinktin.data.model.LoginResult
+import cn.thinktin.data.model.PairingCodec
 import cn.thinktin.data.model.SelfCodePurpose
 import cn.thinktin.data.model.SignOutOthersResult
 import cn.thinktin.data.model.StopAllResult
@@ -172,6 +174,9 @@ fun testContainer(
     updater: Updater? = null,
     /** 常驻通知（默认什么都不发）。 */
     progressNotifier: ProgressNotifier? = null,
+    /** 手机控制电脑（13.9）的签名、编码（默认签不了名；编码不加载 .so）。 */
+    deviceSigner: DeviceSigner? = null,
+    pairingCodec: PairingCodec = FakeCodec { DemoTestApp.FIXED_CLOCK.millis() / 1000 },
 ): AppContainer {
     val store = PreferenceDataStoreFactory.create(
         scope = CoroutineScope(Dispatchers.IO + SupervisorJob()),
@@ -192,5 +197,7 @@ fun testContainer(
         approvalGate = approvalGate,
         updater = updater,
         progressNotifier = progressNotifier,
+        signerFactory = deviceSigner?.let { signer -> { _ -> signer } },
+        codecFactory = { pairingCodec },
     )
 }

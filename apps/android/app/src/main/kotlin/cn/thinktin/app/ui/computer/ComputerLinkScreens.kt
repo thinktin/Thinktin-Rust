@@ -18,9 +18,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.HourglassEmpty
 import androidx.compose.material.icons.outlined.Laptop
 import androidx.compose.material.icons.outlined.MoreVert
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -56,8 +56,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
@@ -95,9 +93,6 @@ import kotlinx.serialization.json.JsonElement
 
 const val COMPUTER_ROW_TEST_TAG = "computer-row-"
 const val COMPUTER_PAIR_CODE_TEST_TAG = "computer-pair-code"
-
-/** 配对框的“任意电脑”：从二维码（深链）打开时还不知道是哪台。 */
-private const val ANY_COMPUTER = ""
 
 /** 建 [ComputerLinkViewModel]：依赖都在 AppContainer 里。换了服务（演示 / 真实）就是另一个。 */
 @Composable
@@ -142,26 +137,18 @@ fun ComputerLinkError.toUiText(): UiText = when (this) {
 }
 
 /**
- * “电脑”页（路由 computers，从设备与账号页进）：这个账号登录着的每台电脑的配对状态、在线状态；配对、授权（能力令牌）、
- * 吊销、解除配对。[pairingCode] 是从二维码（`thinktin-pair:` 深链）带进来的配对码：打开时直接弹配对框。
+ * “电脑”页（路由 computers，从设备与账号页进）：这个账号登录着的每台电脑的配对状态、在线状态；授权、吊销、解除配对。
+ * 配对、授权各是单独的页面（[ComputerPairScreen]、[ComputerGrantScreen]：有输入框，不做成对话框）。
  */
 @Composable
-fun ComputersScreen(pairingCode: String?, onBack: () -> Unit) {
+fun ComputersScreen(onBack: () -> Unit, onPair: (computerId: String) -> Unit, onGrant: (computerId: String) -> Unit) {
     val container = LocalAppContainer.current
     val viewModel = computerLinkViewModel()
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val now by rememberNowMs(container.clock)
     LaunchedEffect(viewModel) { viewModel.onShown() }
-
-    // 打开着的配对框（电脑 id；ANY_COMPUTER 是从二维码进来的）、授权框；重建（旋转）后还在。
-    var pairTarget by rememberSaveable { mutableStateOf(if (pairingCode != null) ANY_COMPUTER else null) }
-    var code by rememberSaveable { mutableStateOf(pairingCode.orEmpty()) }
-    var grantTarget by rememberSaveable { mutableStateOf<String?>(null) }
     var unpairing by remember { mutableStateOf<DeviceInfo?>(null) }
     var confirmReset by remember { mutableStateOf(false) }
-    LaunchedEffect(viewModel) {
-        viewModel.events.collect { if (it is ComputerLinkEvent.GrantIssued) grantTarget = null }
-    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -187,9 +174,7 @@ fun ComputersScreen(pairingCode: String?, onBack: () -> Unit) {
                     modifier = Modifier.padding(horizontal = ThinktinSpacing.Page, vertical = 8.dp),
                 )
             }
-            // 配对框、授权框开着时错误显示在框里。
-            val error = state.error
-            if (error != null && pairTarget == null && grantTarget == null) {
+            state.error?.let { error ->
                 item { Notice(error.toUiText().asString(), MaterialTheme.colorScheme.error) }
             }
             if (!state.canSign) {
@@ -227,14 +212,8 @@ fun ComputersScreen(pairingCode: String?, onBack: () -> Unit) {
                         computer = computer,
                         state = state,
                         nowMs = now,
-                        onPair = {
-                            viewModel.clearError()
-                            pairTarget = computer.id
-                        },
-                        onGrant = {
-                            viewModel.clearError()
-                            grantTarget = computer.id
-                        },
+                        onPair = { onPair(computer.id) },
+                        onGrant = { onGrant(computer.id) },
                         onUnpair = { unpairing = computer },
                         onRevoke = viewModel::revoke,
                     )
@@ -244,25 +223,6 @@ fun ComputersScreen(pairingCode: String?, onBack: () -> Unit) {
         }
     }
 
-    pairTarget?.let { target ->
-        PairDialog(
-            computer = state.computers.firstOrNull { it.id == target },
-            state = state,
-            code = code,
-            onCodeChange = { code = it },
-            viewModel = viewModel,
-            onClose = {
-                pairTarget = null
-                code = ""
-            },
-        )
-    }
-    grantTarget?.let { target ->
-        val computer = state.computers.firstOrNull { it.id == target }
-        if (computer != null) {
-            GrantEditorDialog(computer = computer, state = state, viewModel = viewModel, onClose = { grantTarget = null })
-        }
-    }
     unpairing?.let { computer ->
         ConfirmDialog(
             title = stringResource(R.string.computer_unpair_title, computer.name),
@@ -429,155 +389,172 @@ private fun durationText(seconds: Long): String {
 }
 
 /**
- * 配对一台电脑：粘贴配对码（或者从二维码深链带进来）→ 生物识别签名 → 等电脑确认。等的时候每隔几秒收一次消息，
- * 框关了就不等了（配对邀请留着，下次打开页面时还会收确认，过期了自己清掉）。
+ * 配对一台电脑（路由 computers/pair）：粘贴配对码（或者从二维码深链带进来）→ 生物识别签名 → 等电脑确认。等的时候每隔几秒
+ * 收一次消息，离开这页就不等了（配对邀请留着，下次打开电脑页时还会收确认，过期了自己清掉）。[computerId] 为 null 是从二维码
+ * 进来的：还不知道是哪台。
  */
 @Composable
-private fun PairDialog(
-    computer: DeviceInfo?,
-    state: ComputerLinkUiState,
-    code: String,
-    onCodeChange: (String) -> Unit,
-    viewModel: ComputerLinkViewModel,
-    onClose: () -> Unit,
-) {
+fun ComputerPairScreen(computerId: String?, pairingCode: String?, onBack: () -> Unit) {
     val context = LocalContext.current
     val clock = LocalAppContainer.current.clock
-    // 框打开之后配好的才算“这次配好了”。
+    val viewModel = computerLinkViewModel()
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+    var code by rememberSaveable { mutableStateOf(pairingCode.orEmpty()) }
+    // 这页打开之后配好的才算“这次配好了”。
     val openedAtMs by rememberSaveable { mutableLongStateOf(clock.millis()) }
+    val computer = computerId?.let { id -> state.computers.firstOrNull { it.id == id } }
     val done = !state.isPairing && state.link.computers.any {
-        it.pairedAtMs >= openedAtMs && (computer == null || it.desktopId == computer.id)
+        it.pairedAtMs >= openedAtMs && (computerId == null || it.desktopId == computerId)
     }
     LaunchedEffect(state.isPairing) {
         if (state.isPairing) viewModel.awaitConfirmation()
     }
     val name = computer?.name ?: stringResource(R.string.computer_approval_unknown)
-    AlertDialog(
-        onDismissRequest = onClose,
-        title = {
-            Text(
-                computer?.let { stringResource(R.string.computer_pair_title, it.name) }
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        topBar = {
+            ThinktinTopBar(
+                title = computer?.let { stringResource(R.string.computer_pair_title, it.name) }
                     ?: stringResource(R.string.computer_pair_title_any),
+                navigationIcon = TopBarIcons.Back,
+                navigationContentDescription = stringResource(R.string.action_back),
+                onNavigationClick = onBack,
             )
         },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.verticalScroll(rememberScrollState())) {
-                when {
-                    done -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    ) { padding ->
+        Column(
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+                .padding(ThinktinSpacing.Page),
+        ) {
+            Text(
+                stringResource(R.string.computer_pair_instructions),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            when {
+                done -> {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Icon(Icons.Outlined.CheckCircle, contentDescription = null, tint = ThinktinTheme.extendedColors.success)
                         Text(stringResource(R.string.computer_pair_done), style = MaterialTheme.typography.titleMedium)
                     }
-                    state.isPairing -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        CircularProgressIndicator(Modifier.size(24.dp))
+                    PrimaryButton(text = stringResource(R.string.action_close), onClick = onBack, modifier = Modifier.fillMaxWidth())
+                }
+                // 等的时间可能很长（电脑不在线）：用静态的沙漏，不放一直转的圈。
+                state.isPairing -> {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Icon(Icons.Outlined.HourglassEmpty, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                         Text(stringResource(R.string.computer_pair_waiting), style = MaterialTheme.typography.bodyMedium)
                     }
-                    else -> {
-                        Text(stringResource(R.string.computer_pair_instructions), style = MaterialTheme.typography.bodyMedium)
-                        OutlinedTextField(
-                            value = code,
-                            onValueChange = onCodeChange,
-                            label = { Text(stringResource(R.string.computer_pair_code)) },
-                            placeholder = { Text("thinktin-pair:v1?…") },
-                            textStyle = TextStyle(fontFamily = FontFamily.Monospace),
-                            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false),
-                            maxLines = 4,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag(COMPUTER_PAIR_CODE_TEST_TAG),
-                        )
-                    }
+                    SecondaryButton(
+                        text = stringResource(R.string.computer_pair_stop_waiting),
+                        onClick = viewModel::cancelPairing,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                 }
-                state.error?.let {
-                    Text(it.toUiText().asString(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                }
-            }
-        },
-        confirmButton = {
-            when {
-                done -> TextButton(onClick = onClose) { Text(stringResource(R.string.action_close)) }
-                state.isPairing -> TextButton(onClick = viewModel::cancelPairing) {
-                    Text(stringResource(R.string.computer_pair_stop_waiting))
-                }
-                else -> TextButton(
-                    onClick = { viewModel.pair(code, context.getString(R.string.computer_sign_pair, name)) },
-                    enabled = code.isNotBlank() && !state.working && state.hasLoaded,
-                ) {
-                    Text(stringResource(R.string.computer_pair))
+                else -> {
+                    OutlinedTextField(
+                        value = code,
+                        onValueChange = { code = it },
+                        label = { Text(stringResource(R.string.computer_pair_code)) },
+                        placeholder = { Text("thinktin-pair:v1?…") },
+                        textStyle = TextStyle(fontFamily = FontFamily.Monospace),
+                        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false),
+                        maxLines = 4,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag(COMPUTER_PAIR_CODE_TEST_TAG),
+                    )
+                    PrimaryButton(
+                        text = stringResource(R.string.computer_pair),
+                        onClick = { viewModel.pair(code, context.getString(R.string.computer_sign_pair, name)) },
+                        enabled = code.isNotBlank() && state.hasLoaded && state.canSign,
+                        loading = state.working,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                 }
             }
-        },
-        dismissButton = if (done) {
-            null
-        } else {
-            { TextButton(onClick = onClose) { Text(stringResource(R.string.action_cancel)) } }
-        },
-    )
+            state.error?.let {
+                Text(it.toUiText().asString(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            }
+            if (!state.canSign) {
+                Text(
+                    stringResource(R.string.computer_cannot_sign),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
 }
 
-/** 给配好的电脑授权：能碰的目录、应用（一行一个）和有效期，签名发过去。签发成功后页面关掉它。 */
+/** 给配好的电脑授权（路由 computers/{id}/grant）：能碰的目录、应用（一行一个）和有效期，签名发过去，发出去就回电脑页。 */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun GrantEditorDialog(
-    computer: DeviceInfo,
-    state: ComputerLinkUiState,
-    viewModel: ComputerLinkViewModel,
-    onClose: () -> Unit,
-) {
+fun ComputerGrantScreen(computerId: String, onBack: () -> Unit) {
     val context = LocalContext.current
+    val viewModel = computerLinkViewModel()
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
     var dirs by rememberSaveable { mutableStateOf("") }
     var apps by rememberSaveable { mutableStateOf("") }
     var duration by rememberSaveable { mutableLongStateOf(CapabilityRules.DURATIONS[1]) }
-    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Scaffold(
-            containerColor = MaterialTheme.colorScheme.background,
-            topBar = {
-                ThinktinTopBar(
-                    title = stringResource(R.string.computer_grant_title, computer.name),
-                    navigationIcon = TopBarIcons.Close,
-                    navigationContentDescription = stringResource(R.string.action_cancel),
-                    onNavigationClick = onClose,
-                )
-            },
-        ) { padding ->
-            Column(
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .verticalScroll(rememberScrollState())
-                    .padding(ThinktinSpacing.Page),
-            ) {
-                Text(
-                    stringResource(R.string.computer_grant_intro),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                LinesField(dirs, { dirs = it }, stringResource(R.string.computer_grant_dirs), "/Users/me/Documents")
-                LinesField(apps, { apps = it }, stringResource(R.string.computer_grant_apps), "com.apple.Safari")
-                Text(stringResource(R.string.computer_grant_duration), style = MaterialTheme.typography.labelLarge)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    for (option in CapabilityRules.DURATIONS) {
-                        FilterChip(selected = option == duration, onClick = { duration = option }, label = { Text(durationText(option)) })
-                    }
+    LaunchedEffect(viewModel) {
+        viewModel.events.collect { if (it is ComputerLinkEvent.GrantIssued) onBack() }
+    }
+    val name = state.name(computerId) ?: stringResource(R.string.computer_approval_unknown)
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        topBar = {
+            ThinktinTopBar(
+                title = stringResource(R.string.computer_grant_title, name),
+                navigationIcon = TopBarIcons.Back,
+                navigationContentDescription = stringResource(R.string.action_back),
+                onNavigationClick = onBack,
+            )
+        },
+    ) { padding ->
+        Column(
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+                .padding(ThinktinSpacing.Page),
+        ) {
+            Text(
+                stringResource(R.string.computer_grant_intro),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            LinesField(dirs, { dirs = it }, stringResource(R.string.computer_grant_dirs), "/Users/me/Documents")
+            LinesField(apps, { apps = it }, stringResource(R.string.computer_grant_apps), "com.apple.Safari")
+            Text(stringResource(R.string.computer_grant_duration), style = MaterialTheme.typography.labelLarge)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (option in CapabilityRules.DURATIONS) {
+                    FilterChip(selected = option == duration, onClick = { duration = option }, label = { Text(durationText(option)) })
                 }
-                state.error?.let {
-                    Text(it.toUiText().asString(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                }
-                PrimaryButton(
-                    text = stringResource(R.string.computer_grant_sign),
-                    loading = state.working,
-                    onClick = {
-                        viewModel.issueGrant(
-                            desktopId = computer.id,
-                            dirs = dirs.lines(),
-                            apps = apps.lines(),
-                            durationSecs = duration,
-                            reason = context.getString(R.string.computer_sign_grant, computer.name),
-                        )
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                )
             }
+            state.error?.let {
+                Text(it.toUiText().asString(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            }
+            PrimaryButton(
+                text = stringResource(R.string.computer_grant_sign),
+                loading = state.working,
+                enabled = state.hasLoaded && state.canSign,
+                onClick = {
+                    viewModel.issueGrant(
+                        desktopId = computerId,
+                        dirs = dirs.lines(),
+                        apps = apps.lines(),
+                        durationSecs = duration,
+                        reason = context.getString(R.string.computer_sign_grant, name),
+                    )
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
     }
 }
@@ -619,6 +596,8 @@ fun LazyListScope.computerApprovalItems(
     }
 }
 
+const val COMPUTER_APPROVAL_CARD_TEST_TAG = "computer-approval-"
+
 @Composable
 private fun ComputerApprovalCard(
     request: ComputerApprovalRequest,
@@ -629,7 +608,9 @@ private fun ComputerApprovalCard(
     val computer = state.name(request.desktopId) ?: stringResource(R.string.computer_approval_unknown)
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(COMPUTER_APPROVAL_CARD_TEST_TAG + request.requestId),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {

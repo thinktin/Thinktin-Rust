@@ -77,8 +77,10 @@ object Routes {
     /** 设备与账号；action 可选：从设置页直接打开某个操作（见 DevicesAction）。 */
     const val DEVICES = "devices?action={action}"
 
-    /** 电脑（13.9）：配对、授权；code 是从二维码（`thinktin-pair:` 深链）带进来的配对码。 */
-    const val COMPUTERS = "computers?code={code}"
+    /** 电脑（13.9）：列表；配对（computerId 为空是从二维码进来的，code 是 `thinktin-pair:` 深链带进来的配对码）；授权。 */
+    const val COMPUTERS = "computers"
+    const val COMPUTER_PAIR = "computers/pair?computerId={computerId}&code={code}"
+    const val COMPUTER_GRANT = "computers/{computerId}/grant"
     const val SETTINGS = "settings"
 
     /** 个人信息与权限（13.11）。 */
@@ -109,6 +111,7 @@ object Routes {
     const val ARG_PATH = "path"
     const val ARG_TITLE = "title"
     const val ARG_CODE = "code"
+    const val ARG_COMPUTER_ID = "computerId"
 
     fun chat(instanceId: String, runId: String? = null) =
         if (runId == null) "chat/${Uri.encode(instanceId)}" else "chat/${Uri.encode(instanceId)}?runId=${Uri.encode(runId)}"
@@ -133,7 +136,14 @@ object Routes {
     fun approval(approvalId: String) = "approval/${Uri.encode(approvalId)}"
     fun inbox(itemId: String? = null) = if (itemId == null) "inbox" else "inbox?itemId=${Uri.encode(itemId)}"
     fun devices(action: String? = null) = if (action == null) "devices" else "devices?action=${Uri.encode(action)}"
-    fun computers(code: String? = null) = if (code == null) "computers" else "computers?code=${Uri.encode(code)}"
+    fun computerPair(computerId: String? = null, code: String? = null): String {
+        val query = listOfNotNull(
+            computerId?.let { "computerId=${Uri.encode(it)}" },
+            code?.let { "code=${Uri.encode(it)}" },
+        )
+        return if (query.isEmpty()) "computers/pair" else "computers/pair?" + query.joinToString("&")
+    }
+    fun computerGrant(computerId: String) = "computers/${Uri.encode(computerId)}/grant"
     fun vaultItem(itemId: String) = "vault/item/${Uri.encode(itemId)}"
 
     fun vaultEdit(itemId: String) = "vault/item/${Uri.encode(itemId)}/edit"
