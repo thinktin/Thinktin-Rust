@@ -156,8 +156,8 @@ class AppUiTest {
         compose.waitFor(hasText("最近运行"))
         // 再来一条：从首页跳到保险箱的填写请求
         deliver("thinktin://vault/request/vreq-pending")
-        compose.waitFor(hasText("编号：vreq-pending"))
-        compose.onNode(hasText("密码保险箱")).assertIsDisplayed()
+        compose.waitFor(hasText("上传调研报告"))
+        compose.onNode(hasText("填写请求")).assertIsDisplayed()
     }
 
     @Test

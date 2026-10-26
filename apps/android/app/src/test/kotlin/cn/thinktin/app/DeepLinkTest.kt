@@ -3,7 +3,6 @@ package cn.thinktin.app
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.ui.test.SemanticsMatcher
-import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasContentDescription
@@ -22,8 +21,8 @@ import org.robolectric.ParameterizedRobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * 冷启动深链（第 3 节除 instance/{id}、approval/{id}、run/{id}、plan/{id} 外的 3 种）：每种都落到对应页面，参数传对，
- * 返回键回首页。这里是还在骨架阶段的页面；`thinktin://instance/{id}`（13.3 已做实例设置页）见 CatalogUiTest
+ * 冷启动深链（第 3 节除 instance/{id}、approval/{id}、run/{id}、plan/{id} 外的）：落到对应页面，参数传对，
+ * 返回键回首页。`thinktin://instance/{id}`（13.3 已做实例设置页）见 CatalogUiTest
  * （instanceDeepLinkBackReturnsHome 测返回键回首页），`thinktin://approval/{id}`（13.16）见 ApprovalUiTest，
  * `thinktin://run/{id}`（13.5 运行页）见 ChatUiTest，`thinktin://plan/{id}`（13.6 计划详情）见 PlansUiTest。
  * 热启动（App 已在运行，走 onNewIntent）见 AppUiTest。
@@ -57,14 +56,10 @@ class DeepLinkTest(
             .setData(Uri.parse(uri))
         scenario = ActivityScenario.launch(intent)
         val page = hasText(title) and !hasAnyAncestor(hasTestTag(DRAWER_TEST_TAG))
-        waitFor(hasText("即将推出"))
+        waitFor(page)
         compose.onNode(page).assertIsDisplayed()
-        compose.onNode(hasText("即将推出")).assertIsDisplayed()
-        if (argument != null) {
-            compose.onNode(hasText("编号：$argument")).assertIsDisplayed()
-        } else {
-            compose.onAllNodes(hasText("编号：", substring = true)).assertCountEquals(0)
-        }
+        // 参数传对了：页面上有那条记录的内容。
+        if (argument != null) waitFor(hasText(argument))
         compose.onNode(hasContentDescription("返回")).performClick()
         waitFor(hasText("最近运行"))
     }
@@ -73,8 +68,9 @@ class DeepLinkTest(
         @JvmStatic
         @ParameterizedRobolectricTestRunner.Parameters(name = "{0}")
         fun links(): List<Array<Any?>> = listOf(
-            // 可选参数：vault/request/{id} → vault?requestId=…（收件箱的 inbox/{id} 在 InboxUiTest 里测）
-            arrayOf("thinktin://vault/request/vreq-pending", "密码保险箱", "vreq-pending"),
+            // 可选参数：vault/request/{id} → vault?requestId=…，直接是填写请求页（13.14）；参数对了能看到请求的用途。
+            // 收件箱的 inbox/{id} 在 InboxUiTest 里测。
+            arrayOf("thinktin://vault/request/vreq-pending", "填写请求", "上传调研报告"),
         )
     }
 }
