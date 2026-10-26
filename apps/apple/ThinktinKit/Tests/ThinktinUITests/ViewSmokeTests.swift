@@ -75,6 +75,13 @@ struct ViewSmokeTests {
         #expect(!ComposerBar(text: .constant("整理周报"), placeholder: "").canSend)
         #expect(ComposerBar(text: .constant("整理周报"), placeholder: "") {}.canSend)
         #expect(!ComposerBar(text: .constant(" \n "), placeholder: "") {}.canSend)
+        // 对话页用的：停止、转圈；能不能发由调用方定（超了字数、实例删了）。
+        render(ComposerBar(text: .constant(""), placeholder: "", action: .stop {}))
+        render(ComposerBar(text: .constant(""), placeholder: "", action: .busy))
+        #expect(!ComposerBar(text: .constant("长"), placeholder: "", action: .send(isEnabled: false) {}).canSend)
+        #expect(ComposerBar(text: .constant(""), placeholder: "", action: .send(isEnabled: true) {}).canSend)
+        #expect(!ComposerBar(text: .constant("x"), placeholder: "", action: .send {}, isDisabled: true).canSend)
+        #expect(!ComposerBar(text: .constant("x"), placeholder: "", action: .stop {}).canSend)
     }
 
     // MARK: 工具
