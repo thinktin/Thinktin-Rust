@@ -309,11 +309,11 @@ public struct UsageDayPoint: Identifiable, Hashable, Sendable {
         return "\(m)/\(d)"
     }
 
-    /// 读屏念的：“10月22日，3.6 万 tokens，40 次请求”。
+    /// 读屏念的：“10月22日，3.6 万 token，40 次请求”（中文的 token 不加复数）。
     public func accessibilityValue(_ language: DisplayLanguage = .current) -> String {
         let zh = language == .chinese
         var parts = [
-            Formatting.tokens(tokens, language: language) + " tokens",
+            Formatting.tokens(tokens, language: language) + (zh ? " token" : " tokens"),
             zh ? "\(bucket.requests) 次请求" : "\(bucket.requests) requests",
         ]
         if bucket.failedRequests > 0 {
@@ -355,7 +355,7 @@ public struct UsageRow: Identifiable, Hashable, Sendable {
         let zh = language == .chinese
         var parts = [title]
         if let subtitle { parts.append(subtitle) }
-        parts.append(tokens(language) + " tokens")
+        parts.append(tokens(language) + (zh ? " token" : " tokens"))
         parts.append(detail(language))
         return parts.joined(separator: zh ? "，" : ", ")
     }

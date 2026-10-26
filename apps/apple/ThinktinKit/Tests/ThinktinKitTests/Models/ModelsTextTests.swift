@@ -37,7 +37,7 @@ struct ModelsTextTests {
 
     @Test("每日上限、状态")
     func limits() {
-        #expect(ModelsText.dailyLimit(2_000_000, language: .chinese) == "每天最多 200 万 tokens")
+        #expect(ModelsText.dailyLimit(2_000_000, language: .chinese) == "每天最多 200 万 token")
         #expect(ModelsText.dailyLimit(2_000_000, language: .english) == "Up to 2M tokens a day")
         #expect(ModelsText.dailyLimit(nil, language: .chinese) == "不限")
         #expect(ModelsText.statusName(isDisabled: true, language: .chinese) == "已停用")

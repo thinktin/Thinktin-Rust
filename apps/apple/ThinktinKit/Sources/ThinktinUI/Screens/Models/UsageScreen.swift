@@ -131,12 +131,12 @@ private struct UsageContent: View {
         ModelsFootnote(text: UsageText.footnote(language))
     }
 
-    /// “最多的一天：10月20日，3.6 万 tokens”。
+    /// “最多的一天：10月20日，3.6 万 token”。
     private func peakText(_ peak: UsageDayPoint) -> String {
         let day = Formatting.shortDate(
             peak.date, language: language, calendar: UsageChartFormat.calendar(model.timeZone))
         let tokens = Formatting.tokens(peak.tokens, language: language)
-        return language == .chinese ? "最多的一天：\(day)，\(tokens) tokens" : "Busiest day: \(day), \(tokens) tokens"
+        return language == .chinese ? "最多的一天：\(day)，\(tokens) token" : "Busiest day: \(day), \(tokens) tokens"
     }
 
     /// 表格一行点开去哪（实例 → 模型路由，key → key 详情）；按天、按模型的不能点。

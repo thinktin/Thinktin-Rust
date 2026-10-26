@@ -22,7 +22,7 @@ struct CredentialsModelTests {
         #expect(claude.vendorName == "Anthropic (Claude)")
         #expect(claude.subtitle == "Anthropic (Claude) · ••••Q7mA")
         #expect(claude.monogram == "A")
-        #expect(claude.dailyLimit == "每天最多 200 万 tokens")
+        #expect(claude.dailyLimit == "每天最多 200 万 token")
         #expect(claude.protocols == "Anthropic Messages、OpenAI Chat Completions")
         #expect(claude.statusName == "使用中")
         #expect(claude.accessibilityLabel(.chinese).contains("尾号 Q 7 m A"))

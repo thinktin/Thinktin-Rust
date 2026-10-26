@@ -53,12 +53,12 @@ public enum ModelsText {
 
     // MARK: key
 
-    /// 每日上限：“每天最多 200 万 tokens” / “Up to 2M tokens a day”；没设为“不限”。
+    /// 每日上限：“每天最多 200 万 token” / “Up to 2M tokens a day”；没设为“不限”。
     public static func dailyLimit(_ limit: Int?, language: DisplayLanguage = .current) -> String {
         let zh = language == .chinese
         guard let limit else { return zh ? "不限" : "No limit" }
         let amount = Formatting.tokens(limit, language: language)
-        return zh ? "每天最多 \(amount) tokens" : "Up to \(amount) tokens a day"
+        return zh ? "每天最多 \(amount) token" : "Up to \(amount) tokens a day"
     }
 
     /// 启用状态的名字。

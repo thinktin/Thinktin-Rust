@@ -56,7 +56,7 @@ struct UsageModelTests {
         #expect(points[1].axisLabel == "10/17")
         #expect(points[1].date == Fixture.date(2026, 10, 17))
         #expect(model.peakDay?.key == "2026-10-20")
-        #expect(points[4].accessibilityValue(.chinese) == "3.6 万 tokens，40 次请求，失败 3 次")
+        #expect(points[4].accessibilityValue(.chinese) == "3.6 万 token，40 次请求，失败 3 次")
         #expect(model.total.requests == 55)
         #expect(model.total.totalTokens == 38_600)
         #expect(model.total.failedRequests == 3)
