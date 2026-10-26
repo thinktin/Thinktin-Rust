@@ -113,11 +113,24 @@ P1 后端核心（M1–M9）和 P2 里能在代码层面完成的包都做完了
 - 后端 14.5 / 14.6 的 Rust 部分：`desktop` 的 UniFFI 接口（`DesktopService` + App 实现的令牌、系统工具、配对密钥、观察者），
   和 client-core 打进同一个库；`tools/desktop/swift-smoke.sh` 在 Linux 上用 Swift 跑通。
 
+- macOS App 的前两步（14.5、14.6、14.8，P3）：ThinktinKit 的 `ComputerHostModel`（对着 `ComputerHost` 协议：连接状态、
+  开始 / 停止、会过期的配对二维码、配对的手机和名字、手机给的授权、停下的原因）和 `FakeComputerHost`；ThinktinUI 的
+  `ComputerHostPanel`（菜单栏弹出的面板，二维码的图由 App 注入）。968 个 Kit 测试，uicheck 108 个，两种桩都过。
+- iOS 也认 `thinktin-pair:`（系统相机扫电脑上的二维码打开配对，和安卓一样）。
+
 进行中：
-- macOS App（14.5 起，P3）。顺序：(1) ThinktinKit 里 Mac 这一侧的视图模型（连接状态、配对二维码、配对的手机、令牌、
-  开始 / 停止），对着协议写、Linux 上测；(2) ThinktinUI 的菜单栏和配对界面（uicheck 的 AppKit 桩查类型）；
-  (3) App 目标（project.yml 的 macOS 目标、MenuBarExtra、钥匙串里的配对密钥、截图 / 键鼠 / 打开应用 = 14.3、14.4）
-  和 macOS 的打包（`build-apple.sh` 出 macOS 的 `libdesktop`）只能在 macOS 上验，写好等 CI。
+- 无。
+
+下一步（要 macOS 才能验，或者要人定）：
+1. macOS App 的第三步：project.yml 的 macOS 目标（菜单栏应用、`LSUIElement`）、ThinktinKit 包加 macOS 平台、
+   `build-apple.sh` 出 macOS 的 `libdesktop`（里面也有 client-core，绑定按 `tools/desktop/swift-smoke.sh` 的样子放进同一个
+   Swift 模块）、`DesktopService` 接 `ComputerHost` 的适配、钥匙串 / Secure Enclave 里的配对密钥、CoreImage 画二维码、
+   截图（ScreenCaptureKit）/ 键鼠（CGEvent）/ 打开应用（NSWorkspace）= 14.3、14.4、登录项（SMAppService）= 14.6、
+   系统权限引导 = 14.7、分发 = 14.9。这些在 Linux 上验不了（没有 AppKit、ScreenCaptureKit 的真实接口），要在 Mac 或
+   macOS CI 上做。
+2. 抽屉角标还不算电脑发来的审批（iOS、安卓都是）；iOS 控制中心的“全部停止”要让小组件扩展共享登录会话（钥匙串共享），
+   要人定安全上能不能这样。
+3. 要人定的事见下面“坑和决定”（推送 SDK、上架材料、审批不设锁屏密码时两端不一致等）。
 
 环境（容器回收后要重装）：Swift 6.2 装在 `/opt/swift`（swift.org 的包，验签）；Android SDK 在 `/opt/android-sdk`（cmdline-tools、platform 35、build-tools 35.0.0，不用 NDK）；`cargo build -p client-core --lib` 出本机库，`tools/client-core/build-linux-swift.sh target/linux` 出 Linux 版 Swift 包。Gradle 直连 Maven Central 没被限流。Gradle 和 Swift 一起跑时 Robolectric 偶尔超时，分开跑。
 
