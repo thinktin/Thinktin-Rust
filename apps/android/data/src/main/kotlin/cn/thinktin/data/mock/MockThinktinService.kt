@@ -120,6 +120,7 @@ class MockThinktinService(
     private val vaultRequestList = data.vaultRequests.toMutableList()
     private val deviceList = data.devices.toMutableList()
     private val deviceMessageList = data.deviceMessages.toMutableList()
+    private val sentDeviceMessageList = mutableListOf<DeviceMessage>()
     private val reportList = data.reports.toMutableList()
     private val teamList = data.teams.toMutableList()
     private val templateList = data.teamTemplates.toMutableList()
@@ -274,10 +275,29 @@ class MockThinktinService(
             deviceList.first { it.current }.id
         }
         val now = clock()
-        return DeviceMessage(
+        val message = DeviceMessage(
             id = newId("dmsg"), fromDeviceId = from, toDeviceId = toDeviceId, kind = kind, bodyJson = bodyJson,
             body = body, createdAtMs = now, expiresAtMs = now + DEVICE_MESSAGE_TTL_MS,
         )
+        synchronized(lock) { sentDeviceMessageList += message }
+        return message
+    }
+
+    /** 本机发出去的消息（测试看发了什么；演示模式里没有电脑收）。 */
+    fun sentDeviceMessages(): List<DeviceMessage> = synchronized(lock) { sentDeviceMessageList.toList() }
+
+    /** 模拟另一台设备（比如在线的 Mac）发来一条消息，之后 [deviceMessages] 能收到（不校验方向和签名）。 */
+    fun deliverDeviceMessage(fromDeviceId: String, kind: DeviceMessageKind, bodyJson: String): DeviceMessage {
+        val now = clock()
+        return synchronized(lock) {
+            val message = DeviceMessage(
+                id = "dmsg-demo-${++idCounter}", fromDeviceId = fromDeviceId, toDeviceId = deviceList.first { it.current }.id,
+                kind = kind, bodyJson = bodyJson, body = parseJsonObject(bodyJson), createdAtMs = now,
+                expiresAtMs = now + DEVICE_MESSAGE_TTL_MS,
+            )
+            deviceMessageList += message
+            message
+        }
     }
 
     override suspend fun deviceMessages(): List<DeviceMessage> {

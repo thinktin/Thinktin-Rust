@@ -654,17 +654,23 @@ internal class MockData(private val baseMs: Long) {
         DeviceInfo(DEVICE_MAC, DevicePlatform.Macos, "MacBook Air", null, false, true, ago(60L * 24 * 90), ago(2)),
     )
 
-    /** 电脑发来、等手机签名批准的高危操作（13.9）。 */
+    /**
+     * 电脑发来、等手机签名批准的高危操作（13.9，格式见 docs/pairing.md）。演示模式里电脑没配对，这条收下后不显示。
+     */
     val deviceMessages = listOf(
-        DeviceMessage(
-            id = "dmsg-approval", fromDeviceId = DEVICE_MAC, toDeviceId = DEVICE_THIS,
-            kind = DeviceMessageKind.ApprovalRequest,
-            bodyJson = """{"request_id":"cap-1","action":"shell","summary":"rm -rf ~/Downloads/old"}""",
-            body = buildJsonObject {
-                put("request_id", "cap-1"); put("action", "shell"); put("summary", "rm -rf ~/Downloads/old")
-            },
-            createdAtMs = ago(3), expiresAtMs = ago(3) + 10 * MINUTE,
-        ),
+        run {
+            val request = buildJsonObject {
+                put("desktop_id", DEVICE_MAC); put("request_id", "cap-1"); put("tool", "run_command")
+                put("arguments_json", """{"command":"rm -rf ~/Downloads/old"}""")
+                put("summary", "清理下载目录里的旧文件"); put("issued_at", ago(3) / 1000); put("expires_at", (ago(3) + 10 * MINUTE) / 1000)
+            }
+            val body = buildJsonObject { put("request", request) }
+            DeviceMessage(
+                id = "dmsg-approval", fromDeviceId = DEVICE_MAC, toDeviceId = DEVICE_THIS,
+                kind = DeviceMessageKind.ApprovalRequest, bodyJson = body.toString(), body = body,
+                createdAtMs = ago(3), expiresAtMs = ago(3) + 10 * MINUTE,
+            )
+        },
     )
 
     /** 一条已处理的举报。 */

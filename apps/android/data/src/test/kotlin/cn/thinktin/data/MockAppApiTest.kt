@@ -7,6 +7,7 @@ import cn.thinktin.data.model.ApprovalTimeoutAction
 import cn.thinktin.data.model.EventKinds
 import cn.thinktin.data.model.CatchUp
 import cn.thinktin.data.model.CredentialUpdate
+import cn.thinktin.data.model.ComputerApprovalRequest
 import cn.thinktin.data.model.DeviceMessageKind
 import cn.thinktin.data.model.ModelRoute
 import cn.thinktin.data.model.NewCredential
@@ -91,13 +92,17 @@ class MockAppApiTest {
         val inbox = s.deviceMessages()
         assertEquals(DeviceMessageKind.ApprovalRequest, inbox.single().kind)
         assertEquals("dev-mac", inbox.single().fromDeviceId)
-        assertTrue(inbox.single().body.string("summary")!!.isNotEmpty())
+        assertEquals("cap-1", ComputerApprovalRequest.fromBody(inbox.single().body)?.requestId)
         assertEquals(1L, s.ackDeviceMessages(listOf(inbox.single().id, "unknown")))
         assertTrue(s.deviceMessages().isEmpty())
 
         val sent = s.sendDeviceMessage("dev-mac", DeviceMessageKind.ApprovalDecision, """{"approved":true}""")
         assertEquals("dev-this", sent.fromDeviceId)
         assertTrue(sent.expiresAtMs > sent.createdAtMs)
+        assertEquals(listOf(sent), s.sentDeviceMessages())
+        val delivered = s.deliverDeviceMessage("dev-mac", DeviceMessageKind.PairConfirm, """{"nonce":"n1"}""")
+        assertEquals("dev-this", delivered.toDeviceId)
+        assertEquals(listOf(delivered.id), s.deviceMessages().map { it.id })
         expectApi(404) { s.sendDeviceMessage("dev-nope", DeviceMessageKind.Capability, "{}") }
         expectApi(422) { s.sendDeviceMessage("dev-mac", DeviceMessageKind.Unknown, "{}") }
     }

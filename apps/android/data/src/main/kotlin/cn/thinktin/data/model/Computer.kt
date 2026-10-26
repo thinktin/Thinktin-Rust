@@ -111,6 +111,9 @@ sealed class DeviceSignerException(message: String) : Exception(message) {
 
     /** 密钥失效了（录入了新的指纹、人脸）：要重新生成、重新配对。 */
     class KeyInvalidated : DeviceSignerException("key invalidated")
+
+    /** 生物识别失败次数太多被锁定了：稍后再试（或先用锁屏密码解锁）。 */
+    class Lockout : DeviceSignerException("lockout")
     class Failed(val detail: String) : DeviceSignerException(detail)
 }
 

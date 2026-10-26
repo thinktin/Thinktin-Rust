@@ -523,7 +523,12 @@ data class DeviceMessage(
     val body: JsonObject,
     val createdAtMs: Long,
     val expiresAtMs: Long,
-)
+) {
+    companion object {
+        /** 一次最多确认这么多条（服务端的上限）。 */
+        const val MAX_ACK_COUNT = 200
+    }
+}
 
 /** 团队里的一个实例。 */
 data class TeamMember(
