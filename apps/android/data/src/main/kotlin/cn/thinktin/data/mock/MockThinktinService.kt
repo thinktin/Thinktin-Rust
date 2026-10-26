@@ -15,7 +15,9 @@ import cn.thinktin.data.model.DeviceMessageKind
 import cn.thinktin.data.model.EventKinds
 import cn.thinktin.data.model.EventStreamItem
 import cn.thinktin.data.model.ImChannel
+import cn.thinktin.data.model.ImChannelRules
 import cn.thinktin.data.model.ImChannelUpdate
+import cn.thinktin.data.model.ImEvents
 import cn.thinktin.data.model.InboxItem
 import cn.thinktin.data.model.InboxPage
 import cn.thinktin.data.model.Instance
@@ -122,6 +124,9 @@ class MockThinktinService(
     private val teamList = data.teams.toMutableList()
     private val templateList = data.teamTemplates.toMutableList()
     private val imChannelList = data.imChannels.toMutableList()
+
+    /** 最近一小时发过的 IM 测试消息（毫秒时间）。 */
+    private val imTests = mutableListOf<Long>()
     private var idCounter = 0
     private var scriptStep = 0
 
@@ -946,23 +951,50 @@ class MockThinktinService(
         return synchronized(lock) { imChannelList.toList() }
     }
 
+    /** webhook 地址和签名密钥，按服务端的规则（[ImChannelRules]）查。 */
+    private fun checkImWebhook(url: String, secret: String?): ImChannelRules.ParsedWebhook {
+        if (url.length > ImChannelRules.MAX_WEBHOOK) invalid("webhook_url must be 1-512 characters")
+        val parsed = ImChannelRules.parseWebhook(url) ?: when (ImChannelRules.webhookProblem(url)) {
+            ImChannelRules.Problem.BadToken -> invalid("webhook_url: the token after the address is missing or malformed")
+            else -> invalid("webhook_url must be a Feishu, Lark, WeCom or DingTalk group bot webhook address, copied as is")
+        }
+        when (ImChannelRules.secretProblem(secret.orEmpty(), parsed.vendor)) {
+            ImChannelRules.Problem.SecretNotSupported -> invalid("secret: WeCom bots have no signing secret")
+            null -> {}
+            else -> invalid("secret must be 8-128 visible characters (DingTalk secrets start with SEC)")
+        }
+        return parsed
+    }
+
+    private fun checkImLabelAndEvents(label: String?, events: List<String>?) {
+        if (label != null && ImChannelRules.labelProblem(label) != null) invalid("label must be 0-64 characters")
+        if (events != null) {
+            if (events.isEmpty()) invalid("events must name at least one of run_finished, run_failed, approval")
+            events.firstOrNull { it !in ImEvents.ALL }?.let { invalid("unknown event \"$it\"") }
+        }
+    }
+
     override suspend fun addImChannel(channel: NewImChannel): ImChannel {
         lag()
-        val vendor = IM_VENDORS.entries.firstOrNull { channel.webhookUrl.contains(it.key) }?.value
-            ?: throw ServiceError.Api(422, "invalid_webhook_url", "unsupported webhook host", null)
-        val token = channel.webhookUrl.substringAfterLast('/')
-        val created = ImChannel(
-            id = newId("im"), vendor = vendor, label = channel.label, hint = token.takeLast(4),
-            hasSecret = !channel.secret.isNullOrEmpty(), events = channel.events ?: IM_EVENTS, enabled = true,
-            lastSentAtMs = null, lastError = null, createdAtMs = clock(),
-        )
-        synchronized(lock) { imChannelList.add(created) }
-        return created
+        return synchronized(lock) {
+            val parsed = checkImWebhook(channel.webhookUrl, channel.secret)
+            checkImLabelAndEvents(channel.label, channel.events)
+            if (imChannelList.size >= ImChannelRules.MAX_CHANNELS) {
+                invalid("at most ${ImChannelRules.MAX_CHANNELS} IM channels per account")
+            }
+            ImChannel(
+                id = newId("im"), vendor = parsed.vendor, label = channel.label,
+                hint = ImChannelRules.hint(parsed.token), hasSecret = !channel.secret.isNullOrBlank(),
+                events = channel.events ?: ImEvents.ALL, enabled = true, lastSentAtMs = null, lastError = null,
+                createdAtMs = clock(),
+            ).also { imChannelList.add(it) }
+        }
     }
 
     override suspend fun updateImChannel(channelId: String, update: ImChannelUpdate): ImChannel {
         lag()
         return synchronized(lock) {
+            checkImLabelAndEvents(update.label, update.events)
             val i = imChannelList.indexOfFirst { it.id == channelId }
             if (i < 0) notFound("im channel", channelId)
             val old = imChannelList[i]
@@ -976,27 +1008,42 @@ class MockThinktinService(
 
     override suspend fun deleteImChannel(channelId: String) {
         lag()
-        synchronized(lock) { imChannelList.removeAll { it.id == channelId } }
+        synchronized(lock) {
+            if (!imChannelList.removeAll { it.id == channelId }) notFound("im channel", channelId)
+        }
     }
 
+    /** 测试消息：关着的不发；每小时最多 10 条（多了 429）。 */
     override suspend fun testImChannel(channelId: String) {
         lag()
         synchronized(lock) {
             val i = imChannelList.indexOfFirst { it.id == channelId }
             if (i < 0) notFound("im channel", channelId)
-            imChannelList[i] = imChannelList[i].copy(lastSentAtMs = clock(), lastError = null)
+            if (!imChannelList[i].enabled) invalid("the channel is turned off; turn it on first")
+            val now = clock()
+            imTests.removeAll { now - it >= HOUR_MS }
+            if (imTests.size >= ImChannelRules.TESTS_PER_HOUR) {
+                throw ServiceError.Api(429, "rate_limited", "too many IM test messages", 3600)
+            }
+            imTests.add(now)
+            imChannelList[i] = imChannelList[i].copy(lastSentAtMs = now)
         }
     }
 
+    /** 换地址：清掉之前的错误；机器人失效被后台停掉的（Mock 里按“关着、有错误”算）重新打开，用户自己关的还关着。 */
     override suspend fun replaceImWebhook(channelId: String, webhookUrl: String, secret: String?): ImChannel {
         lag()
         return synchronized(lock) {
+            val parsed = checkImWebhook(webhookUrl, secret)
             val i = imChannelList.indexOfFirst { it.id == channelId }
             if (i < 0) notFound("im channel", channelId)
-            imChannelList[i].copy(
-                hint = webhookUrl.substringAfterLast('/').takeLast(4),
-                hasSecret = !secret.isNullOrEmpty(),
+            val old = imChannelList[i]
+            old.copy(
+                vendor = parsed.vendor,
+                hint = ImChannelRules.hint(parsed.token),
+                hasSecret = !secret.isNullOrBlank(),
                 lastError = null,
+                enabled = old.enabled || old.lastError != null,
             ).also { imChannelList[i] = it }
         }
     }
@@ -1408,14 +1455,8 @@ class MockThinktinService(
 
         /** 实例数到了上限的错误码（409；数量上限的码都以 `_limit` 结尾）。 */
         const val INSTANCE_LIMIT = "instance_limit"
-        private val IM_EVENTS = listOf("run_finished", "run_failed", "approval")
-        private val IM_VENDORS = mapOf(
-            "open.feishu.cn" to "feishu",
-            "open.larksuite.com" to "lark",
-            "qyapi.weixin.qq.com" to "wecom",
-            "oapi.dingtalk.com" to "dingtalk",
-        )
         private const val SCRIPT_LENGTH = 5
+        private const val HOUR_MS = 60L * 60 * 1000
 
         private val LABELED = Regex("""(?i)(password|passwd|pwd|密码|口令|token|secret)\s*[:：=]\s*(\S{6,})""")
         private val PRIVATE_KEY = Regex("""-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----""")

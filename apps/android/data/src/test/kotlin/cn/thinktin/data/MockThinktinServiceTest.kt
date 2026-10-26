@@ -270,17 +270,28 @@ class MockThinktinServiceTest {
             NewImChannel(webhookUrl = "https://open.feishu.cn/open-apis/bot/v2/hook/abcd1234", label = "新群"),
         )
         assertEquals("feishu", added.vendor)
-        assertEquals("1234", added.hint)
+        assertEquals("…1234", added.hint)
         assertFalse(added.hasSecret)
         assertEquals(listOf("run_finished", "run_failed", "approval"), added.events)
         val updated = s.updateImChannel(added.id, ImChannelUpdate(enabled = false, events = listOf("approval")))
         assertFalse(updated.enabled)
         assertEquals(listOf("approval"), updated.events)
+        // 关着的不发测试消息（和服务端一样是 invalid）。
+        try {
+            s.testImChannel(added.id)
+            fail("关着的渠道不能发测试消息")
+        } catch (e: ServiceError.Api) {
+            assertEquals(422, e.status)
+        }
+        s.updateImChannel(added.id, ImChannelUpdate(enabled = true))
         s.testImChannel(added.id)
         assertEquals(now, s.imChannels().single { it.id == added.id }.lastSentAtMs)
-        val replaced = s.replaceImWebhook(added.id, "https://open.feishu.cn/open-apis/bot/v2/hook/zzzz9876", "sec")
-        assertEquals("9876", replaced.hint)
+        s.updateImChannel(added.id, ImChannelUpdate(enabled = false))
+        val replaced = s.replaceImWebhook(added.id, "https://open.feishu.cn/open-apis/bot/v2/hook/zzzz9876", "secret12")
+        assertEquals("…9876", replaced.hint)
         assertTrue(replaced.hasSecret)
+        // 用户自己关的，换了地址还关着。
+        assertFalse(replaced.enabled)
         s.deleteImChannel(added.id)
         assertEquals(2, s.imChannels().size)
         try {

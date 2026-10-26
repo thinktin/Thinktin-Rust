@@ -689,14 +689,14 @@ internal class MockData(private val baseMs: Long) {
 
     val imChannels = listOf(
         ImChannel(
-            id = "im-feishu", vendor = "feishu", label = "研发群", hint = "a1b2", hasSecret = true,
+            id = "im-feishu", vendor = "feishu", label = "研发群", hint = "…a1b2", hasSecret = true,
             events = listOf("run_finished", "run_failed", "approval"), enabled = true, lastSentAtMs = ago(30),
             lastError = null, createdAtMs = ago(60L * 24 * 10),
         ),
         ImChannel(
-            id = "im-wecom", vendor = "wecom", label = "周报群", hint = "9z8y", hasSecret = false,
+            id = "im-wecom", vendor = "wecom", label = "周报群", hint = "…9z8y", hasSecret = false,
             events = listOf("run_failed"), enabled = false, lastSentAtMs = ago(60L * 24 * 2),
-            lastError = "webhook returned 404", createdAtMs = ago(60L * 24 * 20),
+            lastError = "wecom 93000: the webhook is invalid or the bot was removed from the group", createdAtMs = ago(60L * 24 * 20),
         ),
     )
 
