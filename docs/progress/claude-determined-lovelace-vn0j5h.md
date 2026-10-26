@@ -99,9 +99,11 @@ P1 后端核心（M1–M9）和 P2 里能在代码层面完成的包都做完了
 
 - 安卓 13.15 IM 渠道设置：和 iOS 12.14 同一套（列表、开关、测试消息、删除、失败原因、绑定 / 修改、换地址），`:data` 的
   `ImChannelRules`，Mock 跟服务端一致。
+- iOS 12.9 手机控制电脑（手机这边，P3）：配对（扫码、面容 ID 签名、验电脑确认）、电脑高危操作的签名审批、能力令牌、
+  Secure Enclave 密钥；client-core 补了配对消息正文。电脑那边（14.8）还没做。
 
 进行中：
-- 无。
+- 安卓 13.9 手机控制电脑（照 iOS 12.9：Keystore / StrongBox、扫码、签名审批、能力令牌）。
 
 环境（容器回收后要重装）：Swift 6.2 装在 `/opt/swift`（swift.org 的包，验签）；Android SDK 在 `/opt/android-sdk`（cmdline-tools、platform 35、build-tools 35.0.0，不用 NDK）；`cargo build -p client-core --lib` 出本机库，`tools/client-core/build-linux-swift.sh target/linux` 出 Linux 版 Swift 包。Gradle 直连 Maven Central 没被限流。Gradle 和 Swift 一起跑时 Robolectric 偶尔超时，分开跑。
 
