@@ -23,6 +23,7 @@ import androidx.compose.material.icons.outlined.PrivacyTip
 import androidx.compose.material.icons.outlined.SystemUpdate
 import androidx.compose.material.icons.outlined.VerifiedUser
 import androidx.compose.material.icons.outlined.Key
+import androidx.compose.material.icons.outlined.Forum
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Phone
 import androidx.compose.material.icons.outlined.StopCircle
@@ -167,6 +168,7 @@ fun SettingsScreen(
     onOpenPrivacyInfo: () -> Unit = {},
     onOpenUpdate: () -> Unit = {},
     onOpenVault: () -> Unit = {},
+    onOpenImChannels: () -> Unit = {},
 ) {
     val container = LocalAppContainer.current
     val context = LocalContext.current
@@ -333,6 +335,13 @@ fun SettingsScreen(
                 title = stringResource(R.string.page_vault),
                 value = stringResource(R.string.settings_vault_summary),
                 onClick = onOpenVault,
+            )
+            // IM 渠道（13.15）：任务完成、失败、需要审批时发到群里。
+            AccountRow(
+                icon = Icons.Outlined.Forum,
+                title = stringResource(R.string.page_im_channels),
+                value = stringResource(R.string.settings_im_channels_summary),
+                onClick = onOpenImChannels,
             )
             Section(R.string.settings_about)
             AccountRow(

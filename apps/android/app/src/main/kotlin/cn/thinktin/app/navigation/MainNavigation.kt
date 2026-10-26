@@ -63,6 +63,8 @@ import cn.thinktin.app.ui.run.RunScreen
 import cn.thinktin.app.ui.settings.SettingsScreen
 import cn.thinktin.app.ui.privacy.PrivacyInfoScreen
 import cn.thinktin.app.update.UpdateScreen
+import cn.thinktin.app.ui.imchannels.ImChannelEditorScreen
+import cn.thinktin.app.ui.imchannels.ImChannelsScreen
 import cn.thinktin.app.ui.vault.VaultEditorScreen
 import cn.thinktin.app.ui.vault.VaultItemScreen
 import cn.thinktin.app.ui.vault.VaultRequestScreen
@@ -490,6 +492,19 @@ private fun MainNavHost(navController: NavHostController, onOpenDrawer: () -> Un
                 onEdit = { navController.navigate(Routes.vaultEdit(it)) },
             )
         }
+        composable(Routes.IM_CHANNELS) {
+            ImChannelsScreen(
+                onBack = back,
+                onNew = { navController.navigate(Routes.IM_CHANNEL_NEW) },
+                onEdit = { navController.navigate(Routes.imChannelEdit(it)) },
+            )
+        }
+        composable(Routes.IM_CHANNEL_NEW) { ImChannelEditorScreen(channelId = null, onBack = back, onSaved = { back() }) }
+        composable(Routes.IM_CHANNEL_EDIT, arguments = listOf(stringArg(Routes.ARG_CHANNEL_ID))) { entry ->
+            ImChannelEditorScreen(
+                channelId = entry.arguments?.getString(Routes.ARG_CHANNEL_ID).orEmpty(), onBack = back, onSaved = { back() },
+            )
+        }
         composable(Routes.VAULT_NEW) { VaultEditorScreen(itemId = null, onBack = back, onSaved = { back() }) }
         composable(Routes.VAULT_EDIT, arguments = listOf(stringArg(Routes.ARG_ITEM_ID))) { entry ->
             VaultEditorScreen(itemId = entry.arguments?.getString(Routes.ARG_ITEM_ID).orEmpty(), onBack = back, onSaved = { back() })
@@ -514,6 +529,7 @@ private fun MainNavHost(navController: NavHostController, onOpenDrawer: () -> Un
                 onOpenPrivacyInfo = { navController.navigate(Routes.PRIVACY_INFO) },
                 onOpenUpdate = { navController.navigate(Routes.UPDATE) },
                 onOpenVault = { navController.navigate(Routes.vault()) },
+                onOpenImChannels = { navController.navigate(Routes.IM_CHANNELS) },
             )
         }
         composable(Routes.PRIVACY_INFO) { PrivacyInfoScreen(onBack = back) }

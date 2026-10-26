@@ -69,6 +69,11 @@ object Routes {
     const val VAULT_ITEM = "vault/item/{itemId}"
     const val VAULT_NEW = "vault/new"
     const val VAULT_EDIT = "vault/item/{itemId}/edit"
+
+    /** IM 渠道（13.15）：列表、绑定、修改。 */
+    const val IM_CHANNELS = "im-channels"
+    const val IM_CHANNEL_NEW = "im-channels/new"
+    const val IM_CHANNEL_EDIT = "im-channels/{channelId}/edit"
     /** 设备与账号；action 可选：从设置页直接打开某个操作（见 DevicesAction）。 */
     const val DEVICES = "devices?action={action}"
     const val SETTINGS = "settings"
@@ -97,6 +102,7 @@ object Routes {
     const val ARG_REQUEST_ID = "requestId"
     const val ARG_ACTION = "action"
     const val ARG_CREDENTIAL_ID = "credentialId"
+    const val ARG_CHANNEL_ID = "channelId"
     const val ARG_PATH = "path"
     const val ARG_TITLE = "title"
 
@@ -126,6 +132,8 @@ object Routes {
     fun vaultItem(itemId: String) = "vault/item/${Uri.encode(itemId)}"
 
     fun vaultEdit(itemId: String) = "vault/item/${Uri.encode(itemId)}/edit"
+
+    fun imChannelEdit(channelId: String) = "im-channels/${Uri.encode(channelId)}/edit"
 
     fun vault(requestId: String? = null) = if (requestId == null) "vault" else "vault?requestId=${Uri.encode(requestId)}"
     fun licenseText(path: String, title: String) = "licenses/text?path=${Uri.encode(path)}&title=${Uri.encode(title)}"
