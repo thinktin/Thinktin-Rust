@@ -110,8 +110,14 @@ P1 后端核心（M1–M9）和 P2 里能在代码层面完成的包都做完了
   `Components/`、Mock 的触发器下次时间和唤醒等额度的运行（安卓 Mock 也补了唤醒）、token 用词。963 个 Kit 测试，uicheck 107 个，
   安卓 744 个。
 
+- 后端 14.5 / 14.6 的 Rust 部分：`desktop` 的 UniFFI 接口（`DesktopService` + App 实现的令牌、系统工具、配对密钥、观察者），
+  和 client-core 打进同一个库；`tools/desktop/swift-smoke.sh` 在 Linux 上用 Swift 跑通。
+
 进行中：
-- 无（见下一步）。
+- macOS App（14.5 起，P3）。顺序：(1) ThinktinKit 里 Mac 这一侧的视图模型（连接状态、配对二维码、配对的手机、令牌、
+  开始 / 停止），对着协议写、Linux 上测；(2) ThinktinUI 的菜单栏和配对界面（uicheck 的 AppKit 桩查类型）；
+  (3) App 目标（project.yml 的 macOS 目标、MenuBarExtra、钥匙串里的配对密钥、截图 / 键鼠 / 打开应用 = 14.3、14.4）
+  和 macOS 的打包（`build-apple.sh` 出 macOS 的 `libdesktop`）只能在 macOS 上验，写好等 CI。
 
 环境（容器回收后要重装）：Swift 6.2 装在 `/opt/swift`（swift.org 的包，验签）；Android SDK 在 `/opt/android-sdk`（cmdline-tools、platform 35、build-tools 35.0.0，不用 NDK）；`cargo build -p client-core --lib` 出本机库，`tools/client-core/build-linux-swift.sh target/linux` 出 Linux 版 Swift 包。Gradle 直连 Maven Central 没被限流。Gradle 和 Swift 一起跑时 Robolectric 偶尔超时，分开跑。
 
