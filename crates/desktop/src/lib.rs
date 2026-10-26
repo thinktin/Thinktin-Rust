@@ -11,9 +11,12 @@
 //! 连接协议见 `proto::relay`，消息正文见 `client_core::pairing`，部署和路由见 docs/relay.md。
 
 pub mod audit;
+pub mod ffi;
 pub mod files;
 pub mod pairing;
 pub mod policy;
+
+uniffi::setup_scaffolding!();
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -320,6 +323,11 @@ impl Desktop {
     /// 让 [`Desktop::run`] 断开连接、返回。
     pub fn stop(&self) {
         self.inner.stop.send_replace(true);
+    }
+
+    /// [`Desktop::stop`] 之后要再 [`Desktop::run`]：先清掉停止标记。
+    pub fn resume(&self) {
+        self.inner.stop.send_replace(false);
     }
 
     /// 连着中继，断了按退避重连，直到 [`Desktop::stop`]。账号被冻结、这台电脑在别处又连了一次时

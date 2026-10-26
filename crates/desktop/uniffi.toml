@@ -1,0 +1,6 @@
+# 绑定生成配置（macOS App 用，14.5）：和 client-core 的绑定一起按库生成。
+
+[bindings.swift]
+module_name = "ThinktinDesktop"
+ffi_module_name = "ThinktinDesktopFFI"
+ffi_module_filename = "ThinktinDesktopFFI"

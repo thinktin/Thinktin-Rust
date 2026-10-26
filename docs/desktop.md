@@ -62,11 +62,29 @@ macOS App 的后台进程里跑一个 `Desktop`：
 输出各留 64 KiB）用 Rust 实现（`files::FileTools`）；截图（ScreenCaptureKit）、键鼠、打开应用要用 macOS 的系统接口，
 由 App 实现（14.3、14.4），和 `FileTools` 组合起来交给 `Desktop`。访问令牌由 App 用 client-core 管（`TokenSource`）。
 
-## 4. 还没做的
+## 4. macOS App 用的接口（UniFFI）
+
+`desktop/src/ffi.rs`：App 的后台进程建一个 `DesktopService(settings, tokens, native, observer)`，它在自己的 tokio 运行时里跑
+`Desktop`。`start()` 连中继（一直连着，断了重连），`stop()` 断开；`start_pairing(signer, ttl)` 出配对二维码，
+`cancel_pairing()`、`paired_phone()`、`unpair()`、`grants()` 给菜单栏和配对界面。App 实现四个接口：
+
+| 接口 | 做什么 |
+|---|---|
+| `DesktopTokens` | 这台电脑的访问令牌（App 用 client-core 的 `ThinktinClient` 管会话） |
+| `NativeTools` | 截图、键鼠、打开应用（14.3、14.4）；文件和命令由 Rust 的 `FileTools` 做，App 报的同名工具不会覆盖它们 |
+| `PairingSigner` | 电脑的配对密钥（钥匙串 / Secure Enclave） |
+| `DesktopObserver` | 连接状态、配对进度、停下的原因（`Requested`、`Refused`、`Replaced`）；回调在后台线程上 |
+
+打包：`desktop` 编成静态库（里面也有 client-core），绑定按库生成两份（`ThinktinCore.swift`、`ThinktinDesktop.swift`）。
+desktop 的绑定直接用 client-core 的类型，所以两份放进同一个 Swift 模块；C 头文件放在一个模块映射里的两个模块
+（`ThinktinCoreFFI`、`ThinktinDesktopFFI`），都链接 `libdesktop`。iOS App 照旧只用 client-core。
+`tools/desktop/swift-smoke.sh` 在 Linux 上按这个样子编出来，用 Swift 实现这几个接口跑一遍（开始、停止、状态回调、错误两个方向）。
+
+## 5. 还没做的
 
 - macOS App（14.5–14.9）：菜单栏界面、后台登录项、“正在被控制”的提示和一键停止、系统权限引导、配对界面
-  （显示 `start_pairing` 给的二维码、钥匙串里的电脑密钥）。
-  `Desktop` 的 UniFFI 接口随 App 一起加（和 client-core 打进同一个静态库）。
+  （显示 `start_pairing` 给的二维码、钥匙串里的电脑密钥）；macOS 的 xcframework 打包（`build-apple.sh` 加 macOS 的
+  `libdesktop`，按上面的样子生成绑定）。
 - 截图、键鼠、打开应用的实现（14.3、14.4）。
 - ~~手机的配对和审批界面（12.9、13.9）~~：已做（iOS、安卓）：扫码配对、收到 `computer_approval` 推送或进前台时拉
   `GET /v1/devices/current/messages`，显示请求、签批准或拒绝（签的是显示的说明和参数的摘要），发回电脑；签发、吊销能力令牌。

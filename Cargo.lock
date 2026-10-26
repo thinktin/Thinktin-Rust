@@ -959,6 +959,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "tracing",
+ "uniffi",
  "uuid",
 ]
 
