@@ -454,6 +454,8 @@ class MockThinktinService(
             }
             this.routes[instanceId] = routes
         }
+        // 换了 key 或者加了备用 key：等额度的运行接着跑。
+        wakeRunsWaitingForQuota()
     }
 
     // ---- 运行 ----
@@ -576,6 +578,21 @@ class MockThinktinService(
     }
 
     // ---- 事件 ----
+
+    /**
+     * 等额度的运行马上接着跑（服务端的 `wake_waiting_runs(waiting_quota)`，7.11）：加了 key、启用、放宽或取消每日上限、
+     * 换 key、改模型路由之后。演示里改成“开始”，记一条运行状态事件。
+     */
+    private fun wakeRunsWaitingForQuota() {
+        val woken = synchronized(lock) {
+            runList.indices.filter { runList[it].state == RunState.WaitingQuota }.map { i ->
+                runList[i].copy(state = RunState.Starting, stateReason = null, waitCode = null).also { runList[i] = it }
+            }
+        }
+        for (run in woken) {
+            append(run.instanceId, run.id, EventKinds.RUN_STATE, buildJsonObject { put("state", RunState.Starting.wire) })
+        }
+    }
 
     private fun append(instanceId: String, runId: String?, kind: String, payload: JsonObject): InstanceEvent {
         val event = synchronized(lock) {
@@ -1167,6 +1184,7 @@ class MockThinktinService(
             protocols = protocols,
         )
         synchronized(lock) { credentialList.add(created) }
+        wakeRunsWaitingForQuota()
         return created
     }
 
@@ -1183,7 +1201,7 @@ class MockThinktinService(
 
     override suspend fun updateCredential(credentialId: String, update: CredentialUpdate): Credential {
         lag()
-        return synchronized(lock) {
+        val updated = synchronized(lock) {
             val i = credentialList.indexOfFirst { it.id == credentialId }
             if (i < 0) notFound("credential", credentialId)
             val old = credentialList[i]
@@ -1192,6 +1210,9 @@ class MockThinktinService(
                 disabled = update.disabled ?: old.disabled,
             ).also { credentialList[i] = it }
         }
+        // 重新启用了：等额度的运行接着跑。
+        if (update.disabled == false) wakeRunsWaitingForQuota()
+        return updated
     }
 
     /** 套餐专用地址（任何一家的 planOnlyBases）：去掉首尾空白、转小写后等于它或接着是 `/`（proto::vendors::plan_only_base）。 */
@@ -1205,11 +1226,16 @@ class MockThinktinService(
     override suspend fun setCredentialDailyLimit(credentialId: String, dailyTokenLimit: Long?): Credential {
         lag()
         if (dailyTokenLimit != null && dailyTokenLimit <= 0) invalid("daily_token_limit must be positive")
-        return synchronized(lock) {
+        val (changed, raised) = synchronized(lock) {
             val i = credentialList.indexOfFirst { it.id == credentialId }
             if (i < 0) notFound("credential", credentialId)
-            credentialList[i].copy(dailyTokenLimit = dailyTokenLimit).also { credentialList[i] = it }
+            val old = credentialList[i].dailyTokenLimit
+            // 放宽或取消上限才唤醒；原来就不限的、收紧的不唤醒（和服务端一样）。
+            val raised = old != null && (dailyTokenLimit == null || dailyTokenLimit > old)
+            credentialList[i].copy(dailyTokenLimit = dailyTokenLimit).also { credentialList[i] = it } to raised
         }
+        if (raised) wakeRunsWaitingForQuota()
+        return changed
     }
 
     override suspend fun replaceCredentialSecret(credentialId: String, apiKey: String): Credential {
@@ -1217,11 +1243,13 @@ class MockThinktinService(
         val vendor = synchronized(lock) { credentialList.firstOrNull { it.id == credentialId }?.vendor }
             ?: notFound("credential", credentialId)
         checkKey(vendor, apiKey)
-        return synchronized(lock) {
+        val replaced = synchronized(lock) {
             val i = credentialList.indexOfFirst { it.id == credentialId }
             if (i < 0) notFound("credential", credentialId)
             credentialList[i].copy(last4 = apiKey.takeLast(4)).also { credentialList[i] = it }
         }
+        wakeRunsWaitingForQuota()
+        return replaced
     }
 
     /** 和服务端一样：还有没删除的实例的别名（主 key 或降级链）在用就拒绝（409），先改路由。 */

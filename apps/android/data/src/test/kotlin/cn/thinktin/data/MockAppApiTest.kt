@@ -34,6 +34,7 @@ import cn.thinktin.data.service.ServiceError
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -313,6 +314,24 @@ class MockAppApiTest {
         assertEquals(all.take(2), first)
         assertEquals(all.drop(2).take(2), s.listRuns(beforeRunId = first.last().id, limit = 2))
         assertTrue("不认识的游标：空页", s.listRuns(beforeRunId = "nope").isEmpty())
+    }
+
+    @Test
+    fun keyChangesWakeRunsWaitingForQuota() = runTest {
+        val s = service()
+        suspend fun quota() = s.getRun(MockData.RUN_QUOTA)
+        val key = s.credentials().first().id
+        s.updateCredential(key, CredentialUpdate(disabled = true))
+        s.setCredentialDailyLimit(key, 1000)
+        assertEquals("停用、设上限都不唤醒", RunState.WaitingQuota, quota().state)
+
+        s.setCredentialDailyLimit(key, 5000)
+        val woken = quota()
+        assertEquals("放宽上限：接着跑（和服务端的 wake_waiting_runs 一样）", RunState.Starting, woken.state)
+        assertNull(woken.waitCode)
+        val event = s.cachedEvents(MockData.INSTANCE_RESEARCH, afterSeq = 0, limit = 10_000).last()
+        assertEquals(EventKinds.RUN_STATE, event.kind)
+        assertEquals(MockData.RUN_QUOTA, event.runId)
     }
 
     @Test
