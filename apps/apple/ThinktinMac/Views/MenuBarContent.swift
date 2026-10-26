@@ -23,7 +23,7 @@ struct MenuBarIcon: View {
     }
 }
 
-/// 菜单栏点开的面板：手机控制（ThinktinUI 的 `ComputerHostPanel`）、系统权限和开机自动打开、打开主窗口、退出。
+/// 菜单栏点开的面板：手机控制（ThinktinUI 的 `ComputerHostPanel`）、系统权限和开机自动打开、打开主窗口、检查更新、退出。
 struct MenuBarContent: View {
     let environment: MacEnvironment
 
@@ -54,6 +54,9 @@ struct MenuBarContent: View {
             Divider()
             VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
                 Button(zh ? "打开 ThinkTin" : "Open ThinkTin") { environment.requestMainWindow() }
+                if environment.updater.isAvailable {
+                    Button(zh ? "检查更新…" : "Check for Updates…") { environment.updater.checkForUpdates() }
+                }
                 Button(zh ? "退出 ThinkTin" : "Quit ThinkTin") { NSApp.terminate(nil) }
             }
             .typography(.subheadline)

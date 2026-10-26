@@ -20,6 +20,8 @@ final class MacEnvironment {
     let appModel: AppModel
     let host: ComputerHostLifecycle
     let permissions = MacPermissions()
+    /// 自动更新（14.9）；发版没配密钥时不可用。
+    let updater = MacUpdater()
     /// 要打开主窗口的次数（菜单栏图标看着它变，调 `openWindow`）。
     private(set) var mainWindowRequests = 0
 

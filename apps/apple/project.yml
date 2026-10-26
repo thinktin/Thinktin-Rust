@@ -35,9 +35,13 @@ settings:
     ENABLE_USER_SCRIPT_SANDBOXING: YES
 
 packages:
-  # iOS / macOS 共享的 Swift Package（产品 ThinktinKit、ThinktinUI、ThinktinCoreAdapter）。
+  # iOS / macOS 共享的 Swift Package（产品 ThinktinKit、ThinktinUI、ThinktinCoreAdapter、ThinktinDesktopAdapter）。
   ThinktinKit:
     path: ThinktinKit
+  # macOS App 的自动更新（14.9）。版本钉死：发版工作流用这个包里带的 generate_appcast 给更新包签名。
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: 2.6.4
 
 targets:
   Thinktin:
@@ -160,6 +164,7 @@ targets:
           - ThinktinKit
           - ThinktinCoreAdapter
           - ThinktinDesktopAdapter
+      - package: Sparkle
     settings:
       base:
         PRODUCT_NAME: ThinkTin
@@ -172,6 +177,10 @@ targets:
         # 接口地址和设备中继的地址，展开进 Info.plist（AppConfiguration 读）。连测试环境时 xcodebuild 覆盖。
         THINKTIN_API_BASE_URL: https://api.thinktin.cn
         THINKTIN_RELAY_URL: wss://relay.thinktin.cn/v1/connect
+        # 自动更新（14.9，docs/macos.md 第 6 节）：更新源和 EdDSA 公钥。公钥空着时 App 不启动更新器（本机开发版）；
+        # 发版工作流从仓库变量传进来。
+        SPARKLE_FEED_URL: https://download.thinktin.cn/mac/appcast.xml
+        SPARKLE_PUBLIC_ED_KEY: ""
     info:
       path: ThinktinMac/Info.plist
       properties:
@@ -192,6 +201,10 @@ targets:
             CFBundleURLSchemes: [thinktin]
         ThinktinAPIBaseURL: $(THINKTIN_API_BASE_URL)
         ThinktinRelayURL: $(THINKTIN_RELAY_URL)
+        SUFeedURL: $(SPARKLE_FEED_URL)
+        SUPublicEDKey: $(SPARKLE_PUBLIC_ED_KEY)
+        # 默认自己定期查更新，不在第二次打开时问用户。
+        SUEnableAutomaticChecks: true
     entitlements:
       path: ThinktinMac/ThinktinMac.entitlements
       properties:

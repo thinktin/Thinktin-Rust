@@ -2,7 +2,7 @@
 # 打 iOS / macOS 用的 xcframework 和 Swift Package（WBS 11.1）。只能在 macOS 上跑，需要 Xcode。
 # aws-lc-rs（TLS）交叉编译需要 cmake。
 #
-#   tools/client-core/build-apple.sh [输出目录，默认 target/apple] [--ci]
+#   tools/client-core/build-apple.sh [输出目录，默认 target/apple] [--ci] [--macos]
 #
 # 输出：<out>/ThinktinCore/（Swift Package：ThinktinCoreFFI.xcframework + ThinktinCore.swift），
 # App 工程里按本地包引用。
@@ -15,17 +15,28 @@
 # --ci：只编 aarch64-apple-ios-sim 和 aarch64-apple-darwin 两个 Rust 目标，xcframework 只有模拟器和
 # macOS 两个 arm64 切片（GitHub 的 macos runner 是 Apple Silicon，CI 只在模拟器上跑测试、在本机编
 # ThinktinKit；见 .github/workflows/ios.yml）。少编三个目标，省一大半时间。打不出真机包，发布不要用。
+#
+# --macos：只打 macOS 的切片（arm64 + x86_64 的胖库），给 macOS App 发版用（14.9，.github/workflows/macos-release.yml）。
+# 和 --ci 一起用时只有 arm64。
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 [[ "$(uname)" == "Darwin" ]] || { echo "needs macOS with Xcode" >&2; exit 1; }
 ci=0
+macos_only=0
 args=()
 for a in "$@"; do
-  if [[ "$a" == "--ci" ]]; then ci=1; else args+=("$a"); fi
+  case "$a" in
+    --ci) ci=1 ;;
+    --macos) macos_only=1 ;;
+    *) args+=("$a") ;;
+  esac
 done
 out="${args[0]:-target/apple}"
 profile=mobile
-if (( ci )); then
+if (( macos_only )); then
+  targets=(aarch64-apple-darwin)
+  (( ci )) || targets+=(x86_64-apple-darwin)
+elif (( ci )); then
   targets=(aarch64-apple-ios-sim aarch64-apple-darwin)
 else
   targets=(aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios aarch64-apple-darwin x86_64-apple-darwin)
@@ -47,11 +58,11 @@ lib() {
 
 rm -rf "$out"
 mkdir -p "$out/sim" "$out/macos" "$out/headers"
-sim_libs=("$(lib aarch64-apple-ios-sim)")
 macos_libs=("$(lib aarch64-apple-darwin)")
-if (( ! ci )); then
-  sim_libs+=("$(lib x86_64-apple-ios)")
-  macos_libs+=("$(lib x86_64-apple-darwin)")
+(( ci )) || macos_libs+=("$(lib x86_64-apple-darwin)")
+if (( ! macos_only )); then
+  sim_libs=("$(lib aarch64-apple-ios-sim)")
+  (( ci )) || sim_libs+=("$(lib x86_64-apple-ios)")
 fi
 # 多个架构合成一个胖库；--ci 只有一个架构，直接复制。
 merge() {
@@ -59,7 +70,7 @@ merge() {
   shift
   if (( $# == 1 )); then cp "$1" "$dest"; else lipo -create "$@" -output "$dest"; fi
 }
-merge "$out/sim/libclient_core.a" "${sim_libs[@]}"
+(( macos_only )) || merge "$out/sim/libclient_core.a" "${sim_libs[@]}"
 # xcframework 里每个切片的库同名：macOS 的 libdesktop 也叫 libclient_core.a。
 merge "$out/macos/libclient_core.a" "${macos_libs[@]}"
 
@@ -80,10 +91,10 @@ MAP
 pkg="$out/ThinktinCore"
 mkdir -p "$pkg/Sources/ThinktinCore"
 slices=()
-if (( ! ci )); then
-  slices+=(-library "$(lib aarch64-apple-ios)" -headers "$out/headers")
+if (( ! macos_only )); then
+  (( ci )) || slices+=(-library "$(lib aarch64-apple-ios)" -headers "$out/headers")
+  slices+=(-library "$out/sim/libclient_core.a" -headers "$out/headers")
 fi
-slices+=(-library "$out/sim/libclient_core.a" -headers "$out/headers")
 slices+=(-library "$out/macos/libclient_core.a" -headers "$out/headers")
 xcodebuild -create-xcframework "${slices[@]}" -output "$pkg/ThinktinCoreFFI.xcframework"
 cp "$out/bindings/swift/ThinktinCore.swift" "$pkg/Sources/ThinktinCore/"

@@ -68,13 +68,15 @@ if withMac {
         .target(name: "ScreenCaptureKit", dependencies: ["CoreGraphics"], path: "Stubs/ScreenCaptureKit"),
         .target(name: "ServiceManagement", path: "Stubs/ServiceManagement"),
         .target(name: "CoreImage", dependencies: ["CoreGraphics"], path: "Stubs/CoreImage"),
+        // 自动更新（14.9）。
+        .target(name: "Sparkle", path: "Stubs/Sparkle"),
         .target(name: "ThinktinDesktopAdapter", dependencies: ["ThinktinKit", core], path: "Gen/ThinktinDesktopAdapter"),
         .executableTarget(
             name: "ThinktinMac",
             dependencies: [
                 "ThinktinKit", "ThinktinUI", "ThinktinCoreAdapter", "ThinktinDesktopAdapter", "SwiftUI", "AppKit",
                 "Security", "OSLog", "CryptoKit", "ApplicationServices", "ScreenCaptureKit", "ServiceManagement",
-                "CoreImage",
+                "CoreImage", "Sparkle",
             ],
             path: "Gen/ThinktinMac"),
     ]
