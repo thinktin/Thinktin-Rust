@@ -69,8 +69,12 @@ P1 后端核心（M1–M9）和 P2 里能在代码层面完成的包都做完了
 - iOS 12.7 团队与流水线：团队、模板、团队编辑、流水线编辑器（本地 DAG 规则同服务端），运行树补停止、等待提示和定时刷新；
   Mock 新建计划允许没有触发规则（和服务端一致）。906 个测试。
 
+- 安卓 13.11 上架（App 里的部分）：首次启动的隐私政策页、登录页同意勾选框（默认不勾）、个人信息与权限页（清单、权限、撤回同意）。
+- 安卓 13.12 官网安装包：`direct` 渠道、应用内更新（清单 → 下载 → SHA-256 / 包名 / 版本 / 签名校验 → 系统安装）、升级页接上、
+  release 签名读环境变量、`scripts/update-manifest.py`。发版和上架材料见 `docs/android-release.md`。
+
 进行中：
-- 安卓 13.11 / 13.12（2026-10-26 开始）。之后 iOS 12.13 / 12.10、安卓 13.10 / 13.14、iOS 12.20 / 12.21 / 12.19 / 12.11。
+- iOS 12.13（2026-10-26 开始）。之后 iOS 12.10、安卓 13.10 / 13.14、iOS 12.20 / 12.21 / 12.19 / 12.11。
 
 环境（容器回收后要重装）：Swift 6.2 装在 `/opt/swift`（swift.org 的包，验签）；Android SDK 在 `/opt/android-sdk`（cmdline-tools、platform 35、build-tools 35.0.0，不用 NDK）；`cargo build -p client-core --lib` 出本机库，`tools/client-core/build-linux-swift.sh target/linux` 出 Linux 版 Swift 包。Gradle 直连 Maven Central 没被限流。Gradle 和 Swift 一起跑时 Robolectric 偶尔超时，分开跑。
 
@@ -78,5 +82,7 @@ P1 后端核心（M1–M9）和 P2 里能在代码层面完成的包都做完了
 - 原来三个会话（backend `session_016LgPcdynywrhrjCq8VVFLt`、iOS `session_01GuCp3KRgqaK6Kzynw6udRn`、安卓 `session_01T2zubC6hDr9ZZR3ihhPP5b`）查不到了，它们 scratchpad 里的工作流脚本和缓存也没了，按各进度文件重新来。
 - 定时任务 `trig_01LULryki4Z7mPLXhgSXGWMP`（每小时第 58 分）：叫醒本会话、读本文件接着做；全部做完或用户叫停时删掉。
 - 要人定的：iOS 批准审批时设备没设锁屏密码照常批准（`BiometricGateResult.unavailable`），安卓是不许批准，两端不一致。
+- 要人定的（上架，docs/android-release.md 第 2.2、4、5 节）：审核账号（服务端要有固定验证码的审核账号）、生成式 AI 的备案 / 登记材料、
+  APP 备案号、Play 是否用同一把签名密钥。
 - 要人定的：安卓推送 SDK（极光闭源、FCM 带 Play 服务许可，和安卓“只用宽松许可证”的约定冲突；极光的权限和 Robolectric 不兼容），详见 `docs/progress/android-app.md`。现在两个渠道的 `FlavorPush` 是空实现。
 - Robolectric 的触摸点不到盖在页面上的面板（会落到遮罩上，真机正常）：面板里的控件在测试里用 `SemanticsActions.OnClick`（安卓 README 已知问题）。

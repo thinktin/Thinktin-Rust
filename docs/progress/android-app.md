@@ -23,13 +23,15 @@ PR：[#7](https://github.com/thinktin/Thinktin-Rust/pull/7)（草稿，叠在 #5
 - **13.8 推送与收件箱**（2026-10-25，集成分支 `claude/determined-lovelace-vn0j5h`）：收件箱页（`ui/inbox/`：先缓存再同步、最新一页换开头、滚到底翻页、按天分组、未读加粗 / 圆点、种类图标、AI 标识、每行的标已读 / 未读与删除、全部已读、没有更具体页面的和推送进来的在面板里打开）；`push/`：`PushMessage`（`tt_*` 解析，和 iOS、收件箱同一套深链规则）、`PushCoordinator`（令牌登录着才报、同一个只报一次、点开过的通知等登录着标已读、断网重试）、`NotificationChannels`（`tt_approval` / `tt_results`，和服务端默认一致）、`PushNotifier`（前台自己发通知）、通知权限登录后问一次、`MainActivity` 把带 `tt_kind` 的 Intent 换成深链、退出登录清通知；`PushProvider` + 各渠道的 `FlavorPush`（现在是空实现，见“坑和决定”）。测试 `PushTest`、`InboxViewModelTest`、`InboxUiTest`，`DeepLinkTest` / `AppUiTest` 改成真收件箱。
 - **13.13 设置、多语言与开源许可**（2026-10-26，集成分支）：设置页补上语言（跟随系统语言 / 中文 / English，先存再 `AppCompatDelegate.setApplicationLocales`，`MainActivity` 改成 `AppCompatActivity`，清单加 `AppLocalesMetadataHolderService`，系统设置里改过“应用语言”的以系统为准）、通知（是否允许，去系统设置）、关于（隐私政策、用户协议、开源许可）；开源许可页（App 自己的库＋客户端核心清单，移植 iOS 的 `LicenseInventory`：分组、搜索、组件详情、原文页）。测试 `LicensesTest`、`SettingsUiTest`。
 - **13.7 团队与流水线**（2026-10-26，集成分支）：团队列表与模板（一键领养、删除）、团队详情（成员、配模型、存为模板、删除、用团队建流水线）、新建 / 编辑团队（成员 1–12、一个负责人）；计划编辑页里的流水线步骤编辑（`Pipeline`：键名、依赖、环、提示词长度和服务端一致，改名 / 删除时依赖跟着变；从团队预填，负责人汇总）。运行树的整树 / 单个停止、产出物在 13.5 里已有。测试 `TeamsTest`、`TeamsUiTest`。
+- **13.11 上架（App 里的部分）**（2026-10-26，集成分支）：首次启动的隐私政策页（同意前不建客户端、不联网；“不同意”先说明、可以再看看或退出；按 `PrivacyPolicy.VERSION` 记同意，政策改版要重新同意）、登录页的同意勾选框（默认不勾、两个链接，没勾就点“获取验证码”先问一句）、设置 → 个人信息与权限（收集清单、第三方共享清单、SDK 清单、按安装包实际申请的权限列出说明和状态、撤回同意后退出登录回到隐私政策页）。商店材料、备案、审核账号、生成式 AI 的材料这些要人准备的写在 [docs/android-release.md](../android-release.md) 第 2 节。测试 `PrivacyTest`，`AuthUiTest` 改成先勾选。
+- **13.12 官网安装包与应用内更新**（2026-10-26，集成分支）：新渠道 `direct`（推送同 `cn`、共用 `src/cn/kotlin`；只有它申请 `REQUEST_INSTALL_PACKAGES`、`BuildConfig.SELF_UPDATE`）；`update/`：官网的静态更新清单（`UPDATE_MANIFEST_URL`，只认 https 的 thinktin.cn 及子域名）→ 下载到缓存的 `updates/`（边下边算 SHA-256、超过大小就停）→ 对大小、SHA-256、包名、版本号、签名证书 → `FileProvider` 交给系统安装（没允许安装应用时先去系统设置）。设置里“检查更新”（只有官网包）、每天最多自动检查一次并提示一次（“以后再说”的版本不再自动提示；手动检查不弹提示）、升级页直接在页面上更新（商店包跳 `market://`，没有商店去官网下载页）。release 签名从环境变量读（没设时不签名）。`scripts/update-manifest.py` 生成 `latest.json`。发版步骤见 docs/android-release.md 第 3、4 节。测试 `UpdateTest`。厂商推送参数随推送 SDK 一起定（要人定）。
 
 进行中：
 - 无。按用户要求（“让各会话把代码都同步对齐先，后面我再安排工作”）已停下等安排；03:20 UTC 的自动恢复提醒已停用。
 
 下一步（等用户安排后）：
 1. ~~恢复 13.5 对话与运行过程~~（2026-10-25 已收尾，见上）：`Workflow({scriptPath: "<会话目录>/workflows/scripts/android-adapt-13-16-13-5-wf_2830c5a3-21b.js", resumeFromRunId: "wf_2830c5a3-21b"})`（适配与 13.16 已缓存；13.5 的部分改动在 `ba78a8d`，恢复前把脚本里任务 C 的“注意”段改成描述当前工作区状态），之后四维评审 → 反方核实 → 修复 → 最终验证。
-2. ~~13.6 计划~~、~~13.8 推送与收件箱~~（已完成，SDK 等人定）→ ~~13.13 设置~~ → ~~13.7 团队与流水线~~ → 13.11 / 13.12，再做 P2 的 13.10、13.14。
+2. ~~13.6 计划~~、~~13.8 推送与收件箱~~（已完成，SDK 等人定）→ ~~13.13 设置~~ → ~~13.7 团队与流水线~~ → ~~13.11 / 13.12~~ → P2 的 13.10、13.14。
 3. 每个工作包：Workflow → 提交推送 → 更新本文件。
 
 坑和决定：
