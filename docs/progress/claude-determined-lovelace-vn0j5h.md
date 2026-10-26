@@ -132,7 +132,9 @@ P1 后端核心（M1–M9）和 P2 里能在代码层面完成的包都做完了
   `.build-desktop/` 加进 .gitignore（350 MB 的构建目录之前会被自动保存扫进快照，推送失败）。
 - 电脑审批的说明按手机的界面语言说（iOS `4872597`、安卓 `cd8ce84`）：执行命令、删除照签名覆盖的参数说，理由照原话。
 - 审批的角标也数电脑发来的（iOS `f8c54ed`，快捷指令的待审批数也是；安卓随本条进度一起提交）：存着的加上服务端还没收下的新请求，只数不确认。安卓全量 test 747 个、lint 通过；Kit 981 个。
-- 在本分支上手动触发了 iOS 工作流（run 40391238132），第一次在 macOS 上真编 `ThinktinMac`。
+- 在本分支上手动触发了 iOS 工作流（run 40391238132）想第一次在 macOS 上真编：Linux 作业全绿（含新的 ThinktinDesktopAdapterTests
+  一步），macOS 作业两次都没排到机器（GitHub 的 macOS arm64 机器不够，“not acquired by Runner”，15 分钟后被取消），所以
+  `ThinktinMac` 和 10-25 以来本分支的 iOS 界面都还没在真 Xcode 上编过。2026-10-27 00:00（UTC）再在最新提交上试一次，还排不到就不再试。
 
 进行中：
 - 无。
@@ -149,8 +151,8 @@ P1 后端核心（M1–M9）和 P2 里能在代码层面完成的包都做完了
 
 坑和决定：
 - 原来三个会话（backend `session_016LgPcdynywrhrjCq8VVFLt`、iOS `session_01GuCp3KRgqaK6Kzynw6udRn`、安卓 `session_01T2zubC6hDr9ZZR3ihhPP5b`）查不到了，它们 scratchpad 里的工作流脚本和缓存也没了，按各进度文件重新来。
-- 定时任务 `trig_01J9YurHAZJ35AugopCVXWKZ`（“ThinkTin 续跑检查”，每小时第 58 分；旧的 `trig_01LULryki4Z7mPLXhgSXGWMP` 已删）：
-  叫醒本会话、读本文件接着做；能在这里做的都做完（只剩要部署环境、要人定的）或用户叫停时删掉。
+- 定时任务：每小时的“ThinkTin 续跑检查”（`trig_01J9YurHAZJ35AugopCVXWKZ`）10-26 20:59 删了——能在这里做的都做完了，剩下的要部署
+  环境、Mac 或人定。只留一个一次性的（`trig_01DETKesHETCes53ejqYTebT`，10-27 00:00 UTC）：在最新提交上再触发一次 iOS 工作流。
 - 要人定的：iOS 批准审批时设备没设锁屏密码照常批准（`BiometricGateResult.unavailable`），安卓是不许批准，两端不一致。
 - 要人定的（上架，docs/android-release.md 第 2.2、4、5 节）：审核账号（服务端要有固定验证码的审核账号）、生成式 AI 的备案 / 登记材料、
   APP 备案号、Play 是否用同一把签名密钥。
