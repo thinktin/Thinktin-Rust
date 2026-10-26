@@ -86,6 +86,26 @@ struct ViewSmokeTests {
 
     // MARK: 工具
 
+    @Test("Mac 的手机控制面板：没配对、等扫码、配好了（14.5、14.8）")
+    func computerHostPanel() {
+        render(ComputerHostPanel(model: ComputerHostModel(host: FakeComputerHost())))
+        let waiting = ComputerHostModel(host: FakeComputerHost())
+        waiting.startPairing()
+        #expect(waiting.pairingCode != nil)
+        render(
+            ComputerHostPanel(model: waiting)
+                .environment(\.pairingCodeImage, PairingCodeImage { _ in Image(systemName: "qrcode") }))
+        let paired = ComputerHostModel(
+            host: FakeComputerHost(
+                phone: HostPhone(deviceID: DemoData.deviceID, publicKey: "k"),
+                grants: [
+                    CapabilityGrant(
+                        desktopID: DemoData.macDeviceID, tokenID: "t1", dirs: ["/Users/me"], apps: [],
+                        expiresAt: Date().addingTimeInterval(3600))
+                ]))
+        render(ComputerHostPanel(model: paired).environment(\.displayLanguage, .english))
+    }
+
     private func render(_ view: some View, sourceLocation: SourceLocation = #_sourceLocation) {
         renderInBothAppearances(view, sourceLocation: sourceLocation)
     }

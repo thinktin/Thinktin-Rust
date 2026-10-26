@@ -41,7 +41,9 @@ public struct ViewBuilder {
     public static func buildExpression<Content: View>(_ content: Content) -> Content { content }
     public static func buildBlock() -> EmptyView { EmptyView() }
     public static func buildBlock<Content: View>(_ content: Content) -> Content { content }
-    public static func buildBlock<each Content: View>(_ content: repeat each Content) -> TupleView<(repeat each Content)> {
+    public static func buildBlock<each Content: View>(_ content: repeat each Content) -> TupleView<
+        (repeat each Content)
+    > {
         TupleView((repeat each content))
     }
     public static func buildIf<Content: View>(_ content: Content?) -> Content? { content }
@@ -261,7 +263,9 @@ public struct Binding<Value> {
         nonmutating set {}
     }
     public var projectedValue: Binding<Value> { self }
-    public subscript<Subject>(dynamicMember keyPath: WritableKeyPath<Value, Subject>) -> Binding<Subject> { fatalError() }
+    public subscript<Subject>(dynamicMember keyPath: WritableKeyPath<Value, Subject>) -> Binding<Subject> {
+        fatalError()
+    }
 }
 
 // MARK: - 动画与过渡
@@ -329,7 +333,9 @@ public struct LocalizedStringKey: ExpressibleByStringInterpolation, Equatable, S
 }
 
 public struct Text: Equatable, Sendable {
-    public init(_ key: LocalizedStringKey, tableName: String? = nil, bundle: Bundle? = nil, comment: StaticString? = nil) {}
+    public init(
+        _ key: LocalizedStringKey, tableName: String? = nil, bundle: Bundle? = nil, comment: StaticString? = nil
+    ) {}
     @_disfavoredOverload public init<S: StringProtocol>(_ content: S) {}
     public init(verbatim content: String) {}
     public func foregroundStyle<S: ShapeStyle>(_ style: S) -> Text { self }
@@ -338,7 +344,10 @@ public struct Text: Equatable, Sendable {
 
 public struct Image: Equatable, Sendable {
     public enum Scale: Hashable, Sendable { case small, medium, large }
+    public enum Interpolation: Hashable, Sendable { case none, low, medium, high }
     public init(systemName: String) {}
+    public func interpolation(_ interpolation: Interpolation) -> Image { self }
+    public func resizable() -> Image { self }
 }
 
 public struct Label<Title: View, Icon: View> {
@@ -357,7 +366,8 @@ public struct HStack<Content: View> {
 }
 
 public struct VStack<Content: View> {
-    public init(alignment: HorizontalAlignment = .center, spacing: CGFloat? = nil, @ViewBuilder content: () -> Content) {}
+    public init(alignment: HorizontalAlignment = .center, spacing: CGFloat? = nil, @ViewBuilder content: () -> Content)
+    {}
 }
 
 public struct ZStack<Content: View> {
@@ -393,7 +403,8 @@ public struct ProgressView {
 }
 
 public struct ForEach<Data: RandomAccessCollection, ID: Hashable, Content: View> {
-    public init(_ data: Data, id: KeyPath<Data.Element, ID>, @ViewBuilder content: @escaping (Data.Element) -> Content) {}
+    public init(_ data: Data, id: KeyPath<Data.Element, ID>, @ViewBuilder content: @escaping (Data.Element) -> Content)
+    {}
 }
 
 extension ForEach where Data.Element: Identifiable, ID == Data.Element.ID {
@@ -403,7 +414,9 @@ extension ForEach where Data.Element: Identifiable, ID == Data.Element.ID {
 public struct NavigationStack<Root: View> {
     public init(@ViewBuilder root: () -> Root) {}
     public init<Data>(path: Binding<Data>, @ViewBuilder root: () -> Root)
-    where Data: MutableCollection, Data: RandomAccessCollection, Data: RangeReplaceableCollection, Data.Element: Hashable {}
+    where
+        Data: MutableCollection, Data: RandomAccessCollection, Data: RangeReplaceableCollection, Data.Element: Hashable
+    {}
 }
 
 // MARK: - 时间线
@@ -519,7 +532,8 @@ extension Shape {
 }
 
 extension InsettableShape {
-    public func strokeBorder<S: ShapeStyle>(_ content: S, lineWidth: CGFloat = 1, antialiased: Bool = true) -> some View {
+    public func strokeBorder<S: ShapeStyle>(_ content: S, lineWidth: CGFloat = 1, antialiased: Bool = true) -> some View
+    {
         _m()
     }
 }
@@ -552,7 +566,9 @@ public struct TupleToolbarContent<T>: ToolbarContent {
 @resultBuilder
 public struct ToolbarContentBuilder {
     public static func buildBlock<C: ToolbarContent>(_ content: C) -> C { content }
-    public static func buildBlock<each C: ToolbarContent>(_ content: repeat each C) -> TupleToolbarContent<(repeat each C)> {
+    public static func buildBlock<each C: ToolbarContent>(_ content: repeat each C) -> TupleToolbarContent<
+        (repeat each C)
+    > {
         TupleToolbarContent((repeat each content))
     }
 }
@@ -563,11 +579,14 @@ extension View {
     public func padding(_ edges: Edge.Set = .all, _ length: CGFloat? = nil) -> some View { _m() }
     public func padding(_ length: CGFloat) -> some View { _m() }
 
-    public func frame(width: CGFloat? = nil, height: CGFloat? = nil, alignment: Alignment = .center) -> some View { _m() }
+    public func frame(width: CGFloat? = nil, height: CGFloat? = nil, alignment: Alignment = .center) -> some View {
+        _m()
+    }
     public func frame(
         minWidth: CGFloat? = nil, idealWidth: CGFloat? = nil, maxWidth: CGFloat? = nil, minHeight: CGFloat? = nil,
         idealHeight: CGFloat? = nil, maxHeight: CGFloat? = nil, alignment: Alignment = .center
     ) -> some View { _m() }
+    public func scaledToFit() -> some View { _m() }
     public func fixedSize() -> some View { _m() }
     public func fixedSize(horizontal: Bool, vertical: Bool) -> some View { _m() }
     public func containerRelativeFrame(
@@ -604,11 +623,13 @@ extension View {
     ) -> some View { _m() }
 
     public func onAppear(perform action: (() -> Void)? = nil) -> some View { _m() }
-    public func onChange<V: Equatable>(of value: V, initial: Bool = false, _ action: @escaping () -> Void) -> some View {
+    public func onChange<V: Equatable>(of value: V, initial: Bool = false, _ action: @escaping () -> Void) -> some View
+    {
         _m()
     }
     public func task(
-        priority: TaskPriority = .userInitiated, @_inheritActorContext _ action: @escaping @isolated(any) @Sendable () async -> Void
+        priority: TaskPriority = .userInitiated,
+        @_inheritActorContext _ action: @escaping @isolated(any) @Sendable () async -> Void
     )
         -> some View
     { _m() }
@@ -733,7 +754,7 @@ extension View {
 
     public func id<ID: Hashable>(_ id: ID) -> some View { _m() }
     public func controlSize(_ controlSize: ControlSize) -> some View { _m() }
-    public func onOpenURL(perform action: @escaping (URL) -> ()) -> some View { _m() }
+    public func onOpenURL(perform action: @escaping (URL) -> Void) -> some View { _m() }
     public func environment<T: AnyObject & Observable>(_ object: T?) -> some View { _m() }
 
     public func gesture<T: Gesture>(_ gesture: T, including mask: GestureMask = .all) -> some View { _m() }
@@ -792,7 +813,6 @@ public protocol App {
     @SceneBuilder var body: Body { get }
     init()
 }
-
 
 // 视图、形状的协议一致性放在扩展里：主声明里的成员不继承 View 的 @MainActor（和 SDK 的行为一致）。
 extension TupleView: View { public var body: Never { fatalError() } }
