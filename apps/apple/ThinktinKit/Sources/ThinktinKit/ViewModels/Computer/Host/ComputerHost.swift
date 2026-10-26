@@ -56,6 +56,50 @@ public enum ComputerHostError: Error, Hashable, Sendable {
     case state(String)
 }
 
+/// 系统工具的结果：MCP 的 content 数组（JSON 文本）；工具自己出错时 `isError` 为真。
+public struct NativeToolOutput: Hashable, Sendable {
+    public var contentJSON: String
+    public var isError: Bool
+
+    public init(contentJSON: String, isError: Bool = false) {
+        self.contentJSON = contentJSON
+        self.isError = isError
+    }
+
+    /// 一段文字（`[{"type":"text","text":…}]`）。
+    public static func text(_ text: String, isError: Bool = false) -> NativeToolOutput {
+        let item: [String: String] = ["type": "text", "text": text]
+        let data = (try? JSONSerialization.data(withJSONObject: [item])) ?? Data("[]".utf8)
+        return NativeToolOutput(contentJSON: String(decoding: data, as: UTF8.self), isError: isError)
+    }
+
+    /// 一张图（`[{"type":"image","data":<base64>,"mimeType":…}]`）。
+    public static func image(_ data: Data, mimeType: String) -> NativeToolOutput {
+        let item: [String: String] = ["type": "image", "data": data.base64EncodedString(), "mimeType": mimeType]
+        let json = (try? JSONSerialization.data(withJSONObject: [item])) ?? Data("[]".utf8)
+        return NativeToolOutput(contentJSON: String(decoding: json, as: UTF8.self))
+    }
+}
+
+/// 要用 macOS 系统接口的工具（14.3、14.4）：截图、键鼠、打开应用和网页。文件和命令由 Rust 的工具服务做。
+/// 权限（手机给的授权、前台应用）在调用之前已经核对过；这里只管做。
+public protocol ComputerNativeTools: Sendable {
+    /// 现在能用的（`computer_*` 的全名，随系统权限变化：没给屏幕录制权限就没有截图）。
+    func available() -> [String]
+    /// 前台应用的 bundle id。
+    func frontmostApp() -> String?
+    /// `argumentsJSON` 是工具参数（JSON 对象）。
+    func call(tool: String, argumentsJSON: String) async -> NativeToolOutput
+}
+
+/// 电脑的配对密钥（P-256，钥匙串 / Secure Enclave 里，14.8）。
+public protocol ComputerPairingKey: Sendable {
+    /// 公钥（SEC1）。
+    func publicKey() throws(ComputerHostError) -> Data
+    /// ECDSA P-256 + SHA-256 签名，DER 或 r‖s。
+    func sign(_ message: Data) throws(ComputerHostError) -> Data
+}
+
 /// 电脑端的工具服务。
 public protocol ComputerHost: AnyObject, Sendable {
     /// 状态、配对进度、停下的原因。只有一个读者（`ComputerHostModel`）。

@@ -88,7 +88,13 @@ public enum ThinktinCoreResources {
 }
 RES
 # 依赖的 crate 的许可证清单（和 build-apple.sh 一样放进包资源，App 的“开源许可”页面读）。
-python3 tools/licenses/licenses.py cargo -p "$crate" --subject "$crate" --out "$pkg/Sources/ThinktinCore/Licenses"
+# --desktop 时按 client-core 和 desktop 的合集列（名字还叫 client-core，和 build-apple.sh 一样）。
+if (( desktop )); then
+  python3 tools/licenses/licenses.py cargo -p client-core -p desktop --subject client-core \
+    --out "$pkg/Sources/ThinktinCore/Licenses"
+else
+  python3 tools/licenses/licenses.py cargo -p client-core --subject client-core --out "$pkg/Sources/ThinktinCore/Licenses"
+fi
 cat > "$pkg/Package.swift" <<SWIFT
 // swift-tools-version:5.9
 // 由 tools/client-core/build-linux-swift.sh 生成，不要手改。

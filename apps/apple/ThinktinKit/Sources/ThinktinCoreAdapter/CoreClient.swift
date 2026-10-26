@@ -112,6 +112,12 @@ public final class CoreClient: ClientProtocol {
         try await perform { try await core.logout() }
     }
 
+    /// 这台设备现在的访问令牌（macOS App 交给电脑端的工具服务连设备中继用，14.5）。`refresh` 为真时先换一个新的。
+    /// 只交给同一个 App 里的工具服务，不要记日志。
+    public func accessToken(refresh: Bool) async throws -> String {
+        try await perform { try await core.accessToken(refresh: refresh) }
+    }
+
     public func me() async throws -> ThinktinKit.User {
         try await perform { ThinktinKit.User(core: try await core.me()) }
     }

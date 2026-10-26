@@ -113,7 +113,9 @@ enum SettingsFixture {
         var root = URL(fileURLWithPath: #filePath)
         // Tests/ThinktinKitTests/Settings/这个文件 → 仓库根：往上七级。
         for _ in 0..<7 { root.deleteLastPathComponent() }
-        for platform in ["linux", "apple"] {
+        // 和 Package.swift 一样：THINKTIN_DESKTOP=1 时用的是 macOS App 那种包（target/linux-desktop）。
+        let desktop = ProcessInfo.processInfo.environment["THINKTIN_DESKTOP"] == "1"
+        for platform in desktop ? ["linux-desktop", "apple"] : ["linux", "apple"] {
             let directory = root.appendingPathComponent("target/\(platform)/ThinktinCore/Sources/ThinktinCore/Licenses")
             if FileManager.default.fileExists(atPath: directory.appendingPathComponent(LicenseInventory.fileName).path)
             {

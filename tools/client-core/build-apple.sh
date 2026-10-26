@@ -104,8 +104,8 @@ public enum ThinktinCoreResources {
 RES
 # 客户端核心依赖的 crate 的许可证原文和清单（WBS 16.5，docs/licenses.md），App 的“开源许可”页面
 # 从 Bundle.module 的 Licenses 目录读。
-# macOS 上多了 desktop 的依赖：清单按两边的合集列。
-python3 tools/licenses/licenses.py cargo -p client-core -p desktop --subject "client-core, desktop" \
+# macOS 上多了 desktop 的依赖：清单按两边的合集列（名字还叫 client-core，App 的“开源许可”页面按它认）。
+python3 tools/licenses/licenses.py cargo -p client-core -p desktop --subject client-core \
   --out "$pkg/Sources/ThinktinCore/Licenses"
 cat > "$pkg/Package.swift" <<'SWIFT'
 // swift-tools-version:5.9

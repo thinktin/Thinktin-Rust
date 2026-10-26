@@ -3,15 +3,21 @@
 //
 // - ThinktinKit：纯 Swift（只依赖 Foundation）：领域模型、客户端协议与 Mock、对话归并、格式化。
 // - ThinktinCoreAdapter：用 UniFFI 生成的 ThinktinCore 包实现 ClientProtocol。
+// - ThinktinDesktopAdapter：macOS App 的电脑端工具服务（ThinktinCore 里的 `DesktopService`）接上 `ComputerHost`。
 // - ThinktinUI：SwiftUI 界面（只在 Apple 平台编译；Linux 上排除）。
 //
 // ThinktinCore 包不提交，构建时生成：macOS 上 tools/client-core/build-apple.sh target/apple，
 // Linux 上 tools/client-core/build-linux-swift.sh target/linux。两者接口一致。
 import PackageDescription
 
+/// macOS App 的电脑端工具服务（14.5）：ThinktinDesktopAdapter 要 macOS 那种 ThinktinCore（libdesktop，里面也有
+/// client-core）。macOS 上本来就是；Linux 上设 `THINKTIN_DESKTOP=1`，用 `build-linux-swift.sh --desktop` 打的包。
 #if os(Linux)
-    let corePackagePath = "../../../target/linux/ThinktinCore"
+    let withDesktop = Context.environment["THINKTIN_DESKTOP"] == "1"
+    let corePackagePath =
+        withDesktop ? "../../../target/linux-desktop/ThinktinCore" : "../../../target/linux/ThinktinCore"
 #else
+    let withDesktop = true
     let corePackagePath = "../../../target/apple/ThinktinCore"
 #endif
 
@@ -54,6 +60,29 @@ var targets: [Target] = [
         swiftSettings: strictConcurrency
     ),
 ]
+
+if withDesktop {
+    products.append(.library(name: "ThinktinDesktopAdapter", targets: ["ThinktinDesktopAdapter"]))
+    targets.append(contentsOf: [
+        .target(
+            name: "ThinktinDesktopAdapter",
+            dependencies: [
+                "ThinktinKit",
+                .product(name: "ThinktinCore", package: "ThinktinCore"),
+            ],
+            swiftSettings: strictConcurrency
+        ),
+        .testTarget(
+            name: "ThinktinDesktopAdapterTests",
+            dependencies: [
+                "ThinktinDesktopAdapter",
+                "ThinktinKit",
+                .product(name: "ThinktinCore", package: "ThinktinCore"),
+            ],
+            swiftSettings: strictConcurrency
+        ),
+    ])
+}
 
 // SwiftUI 只在 Apple 平台有：Linux 上（云端会话、CI 的 kit-linux）不编界面层。
 #if !os(Linux)
