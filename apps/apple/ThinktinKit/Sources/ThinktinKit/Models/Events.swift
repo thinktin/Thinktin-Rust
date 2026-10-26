@@ -82,6 +82,8 @@ public enum InstanceEventKind: OpenStringEnum {
     case vaultFulfilled
     case vaultDeclined
     case vaultUsed
+    /// 实例状态变化（control 写的，没有运行 id，不进时间线）。
+    case instanceState
     case unknown(String)
 
     public static let knownCases: [InstanceEventKind] = [
@@ -89,7 +91,7 @@ public enum InstanceEventKind: OpenStringEnum {
         .agentPlan, .agentUsage, .permissionRequested, .permissionResolved, .agentUpdate, .turnStarted,
         .platformToolCall, .vaultReveal, .turnEnded, .agentError, .runState, .runLogTruncated, .approvalDecided,
         .artifactPublished, .delegateStarted, .pipelineStepStarted, .planNeedsConfirmation, .planCancelled,
-        .vaultRequested, .vaultFulfilled, .vaultDeclined, .vaultUsed,
+        .vaultRequested, .vaultFulfilled, .vaultDeclined, .vaultUsed, .instanceState,
     ]
 
     public var rawValue: String {
@@ -123,6 +125,7 @@ public enum InstanceEventKind: OpenStringEnum {
         case .vaultFulfilled: "vault.fulfilled"
         case .vaultDeclined: "vault.declined"
         case .vaultUsed: "vault.used"
+        case .instanceState: "instance.state"
         case .unknown(let raw): raw
         }
     }

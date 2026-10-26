@@ -1884,11 +1884,8 @@ private struct Inner: Sendable {
 
     /// 新的触发器：一次性的要在将来，cron 要五段、时区认得，rrule 不能为空。下一次触发时间只有一次性的算得出来。
     static func makeTrigger(_ schedule: Schedule, now: Date = Date()) throws -> Trigger {
-        var next: Date?
         switch schedule {
-        case .once(let at):
-            guard at > now else { throw MockErrors.invalid("the schedule never fires after now") }
-            next = at
+        case .once: break
         case .cron(let expression, let timeZone):
             guard expression.split(separator: " ").count == 5, TimeZone(identifier: timeZone) != nil else {
                 throw MockErrors.invalid("bad cron schedule")
@@ -1898,7 +1895,10 @@ private struct Inner: Sendable {
                 throw MockErrors.invalid("empty rrule")
             }
         }
-        return Trigger(id: .random(), schedule: schedule, nextFireAt: next)
+        // 下次触发时间和服务端一样按规则算（本地算不了的写法留空，服务端会算）；再也不会触发的规则不收。
+        let next = ScheduleForecast.nextFires(schedule, after: now, count: 1)
+        if next?.isEmpty == true { throw MockErrors.invalid("the schedule never fires after now") }
+        return Trigger(id: .random(), schedule: schedule, nextFireAt: next?.first)
     }
 
     // MARK: 保险箱

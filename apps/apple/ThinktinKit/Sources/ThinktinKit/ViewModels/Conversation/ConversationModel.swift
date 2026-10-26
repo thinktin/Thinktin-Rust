@@ -525,7 +525,7 @@ public final class ConversationModel {
 
     /// `instance.state` 事件（没有运行 id，不进时间线）：记下实例状态。是这种事件返回 true。
     private func noteInstanceState(_ event: InstanceEvent) -> Bool {
-        guard event.kind.rawValue == Self.instanceStateKind else { return false }
+        guard event.kind == .instanceState else { return false }
         if let raw = event.payloadValue?["state"]?.stringValue { instanceState = InstanceState(rawValue: raw) }
         return true
     }
@@ -533,9 +533,6 @@ public final class ConversationModel {
     private func noteInstanceStates(_ list: [InstanceEvent]) {
         for event in list { _ = noteInstanceState(event) }
     }
-
-    /// 实例状态变化的事件（control 写的，crates/control/src/lib.rs）。
-    nonisolated static let instanceStateKind = "instance.state"
 
     // MARK: 审批记录、保险箱请求、计划
 

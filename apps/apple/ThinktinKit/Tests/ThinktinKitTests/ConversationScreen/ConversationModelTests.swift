@@ -92,7 +92,7 @@ struct ConversationModelTests {
         await model.start()
         let count = model.items.count
         mock.emit(
-            InstanceEventKind(rawValue: "instance.state"), payload: ["state": "archived"], runID: nil,
+            .instanceState, payload: ["state": "archived"], runID: nil,
             instanceID: writer)
         #expect(await eventually { model.instanceState == .archived })
         #expect(model.items.count == count)
@@ -179,7 +179,7 @@ struct ConversationModelTests {
         mock.update { s in
             guard var list = s.events[writer], let i = list.firstIndex(where: { $0.seq == 3 }) else { return }
             list[i] = InstanceEvent(
-                instanceID: writer, seq: 3, runID: nil, kind: InstanceEventKind(rawValue: "instance.state"),
+                instanceID: writer, seq: 3, runID: nil, kind: .instanceState,
                 payloadJSON: #"{"state":"archived"}"#, createdAt: list[i].createdAt)
             s.events[writer] = list
         }

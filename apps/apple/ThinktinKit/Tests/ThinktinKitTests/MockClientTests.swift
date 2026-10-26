@@ -530,13 +530,18 @@ struct MockPlanTests {
         #expect(!plan.awaitingConfirmation)
         #expect(plan.revision == 1)
         #expect(plan.triggers.count == 2)
-        #expect(plan.nextFireAt == at)
+        // cron 的下次触发时间也算出来（和服务端一样，12.6 的本地预测）；计划的下一次是最早的那个。
+        let cron = try #require(plan.triggers.first { if case .cron = $0.schedule { true } else { false } })
+        let cronNext = try #require(cron.nextFireAt)
+        #expect(cronNext > Date() && cronNext <= Date().addingTimeInterval(86400))
+        let next = min(at, cronNext)
+        #expect(plan.nextFireAt == next)
         #expect(plan.policy == PlanPolicy())
 
         let list = try await client.plans(instanceID: writer)
         let listed = try #require(list.first { $0.id == plan.id })
         #expect(listed.triggers.count == 2, "列表接口里也有触发器（11.8）")
-        #expect(listed.nextFireAt == at)
+        #expect(listed.nextFireAt == next)
         #expect(listed.invalidTriggers == 0)
         #expect(try await client.plans(instanceID: reviewer).allSatisfy { $0.instanceID == reviewer })
         #expect(try await client.plans(instanceID: nil).count == 3)
@@ -548,10 +553,28 @@ struct MockPlanTests {
         #expect(try await client.plans(instanceID: writer).first { $0.id == plan.id }?.nextFireAt == nil)
         let resumed = try await client.setPlanPaused(plan.id, paused: false)
         #expect(resumed.isPaused == false)
-        #expect(resumed.nextFireAt == at)
+        #expect(resumed.nextFireAt == next)
         try await client.deletePlan(plan.id)
         #expect(await apiCode { _ = try await client.getPlan(plan.id) } == .notFound)
         #expect(await apiCode { try await client.deletePlan(plan.id) } == .notFound)
+    }
+
+    @Test("触发器的下次时间按规则算（本地算不了的留空）；再也不会触发的不收")
+    func triggerNextFire() async throws {
+        let client = makeClient()
+        let plan = try await client.createPlan(NewPlan(instanceID: writer, title: "周报", goal: "每周一汇总", triggers: []))
+        let weekly = try await client.addTrigger(
+            planID: plan.id, schedule: .rrule("DTSTART;TZID=Asia/Shanghai:20260105T090000\nRRULE:FREQ=WEEKLY;BYDAY=MO"))
+        let next = try #require(weekly.nextFireAt)
+        #expect(next > Date() && next <= Date().addingTimeInterval(7 * 86400))
+        #expect(
+            await apiCode {
+                _ = try await client.addTrigger(
+                    planID: plan.id, schedule: .rrule("DTSTART:20200101T090000Z\nRRULE:FREQ=DAILY;COUNT=1"))
+            } == .invalid)
+        let odd = try await client.addTrigger(
+            planID: plan.id, schedule: .cron(expression: "0 8 L * *", timeZone: "Asia/Shanghai"))
+        #expect(odd.nextFireAt == nil)
     }
 
     @Test("新建的校验：标题、实例；触发规则可以没有")
