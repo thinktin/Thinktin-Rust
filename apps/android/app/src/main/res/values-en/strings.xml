@@ -155,7 +155,6 @@
     <string name="settings_security">Security</string>
     <string name="settings_devices_summary">Signed-in devices, remote sign-out, delete account</string>
     <string name="settings_danger">Danger zone</string>
-    <string name="settings_more_coming">Language, notifications, open-source licenses and more are coming soon.</string>
     <string name="settings_version">Version %1$s (%2$s)</string>
 
     <!-- Common buttons -->
@@ -939,5 +938,43 @@
     <plurals name="inbox_unread_count">
         <item quantity="one">%1$d unread</item>
         <item quantity="other">%1$d unread</item>
+    </plurals>
+    <!-- Settings, languages and open-source licenses (13.13) -->
+    <string name="settings_language">Language</string>
+    <string name="settings_language_system">System language</string>
+    <string name="settings_language_chinese">中文</string>
+    <string name="settings_language_english">English</string>
+    <string name="settings_language_summary">Used for the app, notifications and your inbox.</string>
+    <string name="settings_notifications">Notifications</string>
+    <string name="settings_notifications_on">On: you\'ll hear about approvals and run results</string>
+    <string name="settings_notifications_off">Off: tap to turn them on in system settings</string>
+    <string name="settings_about">About</string>
+    <string name="settings_privacy">Privacy policy</string>
+    <string name="settings_terms">Terms of service</string>
+    <string name="settings_licenses_summary">Open-source components and their licenses</string>
+    <string name="page_licenses">Open-source licenses</string>
+    <string name="licenses_intro">Open-source components ThinkTin uses. Tap one to see its version, authors, source and license text.</string>
+    <string name="licenses_search">Search components or licenses</string>
+    <string name="licenses_app_section">Libraries in the app</string>
+    <string name="licenses_core_section">Client core (Rust)</string>
+    <string name="licenses_no_results">No matching components</string>
+    <string name="licenses_undeclared">No license declared</string>
+    <string name="licenses_expand">Collapsed</string>
+    <string name="licenses_collapse">Expanded</string>
+    <string name="licenses_authors">Authors: %1$s</string>
+    <string name="licenses_source">Source</string>
+    <string name="licenses_text_bundled">Bundled: %1$s</string>
+    <string name="licenses_text_standard">SPDX text: %1$s</string>
+    <string name="licenses_not_bundled">This build doesn\'t include the client core\'s license list (development build).</string>
+    <string name="licenses_text_missing">This text isn\'t included in the app.</string>
+    <string name="licenses_malformed">The license list couldn\'t be read.</string>
+    <string name="licenses_too_large">This text is too large to show in the app.</string>
+    <plurals name="licenses_core_summary">
+        <item quantity="one">%1$d component, %2$d licenses</item>
+        <item quantity="other">%1$d components, %2$d licenses</item>
+    </plurals>
+    <plurals name="licenses_group_title">
+        <item quantity="one">%1$s (%2$d)</item>
+        <item quantity="other">%1$s (%2$d)</item>
     </plurals>
 </resources>

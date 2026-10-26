@@ -45,6 +45,16 @@
             </intent-filter>
         </activity>
 
+        <!-- 设置里选的界面语言在 Android 13 以前由 AppCompat 记下（13.13，AppLocales）。 -->
+        <service
+            android:name="androidx.appcompat.app.AppLocalesMetadataHolderService"
+            android:enabled="false"
+            android:exported="false">
+            <meta-data
+                android:name="autoStoreLocales"
+                android:value="true" />
+        </service>
+
         <!-- 对话页的产出物：下载到缓存后用 content:// 交给其他应用打开 / 分享（13.5）。 -->
         <provider
             android:name="androidx.core.content.FileProvider"

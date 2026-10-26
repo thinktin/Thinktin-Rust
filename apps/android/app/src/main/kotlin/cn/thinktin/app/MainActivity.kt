@@ -11,10 +11,11 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
-import androidx.fragment.app.FragmentActivity
+import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.thinktin.app.navigation.DeepLinkInbox
 import cn.thinktin.app.push.PushMessage
+import cn.thinktin.app.settings.AppLocales
 import cn.thinktin.app.ui.AppRoot
 import cn.thinktin.design.theme.Appearance
 import cn.thinktin.design.theme.ThinktinTheme
@@ -27,9 +28,10 @@ import cn.thinktin.design.theme.ThinktinTheme
  * 点开推送（13.8）：FCM 在后台时系统发的通知、[cn.thinktin.app.push.PushNotifier] 发的、极光转过来的，Intent 里都带
  * `tt_*`（[PushMessage]）：换成它的深链交给 [deepLinks]，那条收件箱通知交给 [AppContainer.push] 等登录着时标已读。
  *
- * 是 FragmentActivity（不是 ComponentActivity）：批准审批前的 BiometricPrompt 要它（13.16，见 ApprovalGate）。
+ * 是 AppCompatActivity（FragmentActivity 的子类）：批准审批前的 BiometricPrompt 要 FragmentActivity（13.16，见 ApprovalGate），
+ * 设置里换界面语言（13.13，[cn.thinktin.app.settings.AppLocales]）在 Android 13 以前靠 AppCompat。
  */
-class MainActivity : FragmentActivity() {
+class MainActivity : AppCompatActivity() {
     internal val deepLinks = DeepLinkInbox()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -43,6 +45,8 @@ class MainActivity : FragmentActivity() {
         }
         val container = (application as ThinktinApp).container
         container.attachActivity(this)
+        // 系统设置里改过“应用语言”的话，以系统的为准（请求语言、服务端语言跟着变）。
+        container.followSystemAppLanguage(AppLocales.current())
         setContent {
             val settings by container.settings.collectAsStateWithLifecycle(initialValue = null)
             val appearance = settings?.appearance ?: Appearance.System

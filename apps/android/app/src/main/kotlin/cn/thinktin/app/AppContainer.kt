@@ -145,6 +145,17 @@ class AppContainer(
         }
     }
 
+    /**
+     * 系统里的“应用语言”（[cn.thinktin.app.settings.AppLocales.current]）和存的不一样（用户在系统设置里改过）：以系统的为准。
+     * 系统里没设（跟随系统）时不动存的值：Android 13 以前没有系统设置，AppCompat 记下的就是设置里选的。
+     */
+    fun followSystemAppLanguage(language: AppLanguage) {
+        if (language == AppLanguage.System) return
+        scope.launch {
+            if (settings.first().language != language) settingsRepository.setLanguage(language)
+        }
+    }
+
     /** 切换演示模式（登录页、核心库不可用页的“使用演示模式”）：在容器的作用域里写设置，不受页面销毁影响。 */
     fun launchSetDemoMode(enabled: Boolean) {
         scope.launch { settingsRepository.setDemoMode(enabled) }

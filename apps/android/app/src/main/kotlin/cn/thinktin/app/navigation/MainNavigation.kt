@@ -60,6 +60,8 @@ import cn.thinktin.app.ui.plans.PlansScreen
 import cn.thinktin.app.ui.routes.ModelRoutesScreen
 import cn.thinktin.app.ui.run.RunScreen
 import cn.thinktin.app.ui.settings.SettingsScreen
+import cn.thinktin.app.ui.settings.licenses.LicenseTextScreen
+import cn.thinktin.app.ui.settings.licenses.LicensesScreen
 import cn.thinktin.app.ui.usage.UsageScreen
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -432,6 +434,20 @@ private fun MainNavHost(navController: NavHostController, onOpenDrawer: () -> Un
                 onDeleteAccount = { navController.navigate(Routes.DELETE_ACCOUNT) },
                 onOpenKeys = { navController.navigate(Routes.KEYS) },
                 onOpenUsage = { navController.navigate(Routes.USAGE) },
+                onOpenLicenses = { navController.navigate(Routes.LICENSES) },
+            )
+        }
+        composable(Routes.LICENSES) {
+            LicensesScreen(onBack = back, onOpenText = { path, title -> navController.navigate(Routes.licenseText(path, title)) })
+        }
+        composable(
+            Routes.LICENSE_TEXT,
+            arguments = listOf(optionalStringArg(Routes.ARG_PATH), optionalStringArg(Routes.ARG_TITLE)),
+        ) { entry ->
+            LicenseTextScreen(
+                path = entry.arguments?.getString(Routes.ARG_PATH).orEmpty(),
+                title = entry.arguments?.getString(Routes.ARG_TITLE).orEmpty(),
+                onBack = back,
             )
         }
         composable(Routes.ACCOUNT_NAME) { EditNameScreen(onBack = back) }

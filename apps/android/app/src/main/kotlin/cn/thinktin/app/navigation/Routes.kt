@@ -64,6 +64,10 @@ object Routes {
     const val DEVICES = "devices?action={action}"
     const val SETTINGS = "settings"
 
+    /** 开源许可（13.13）与一份原文。 */
+    const val LICENSES = "licenses"
+    const val LICENSE_TEXT = "licenses/text?path={path}&title={title}"
+
     /** 改昵称、注销账号（设置页和设备与账号页进入）。 */
     const val ACCOUNT_NAME = "account/name"
     const val DELETE_ACCOUNT = "account/delete"
@@ -78,6 +82,8 @@ object Routes {
     const val ARG_REQUEST_ID = "requestId"
     const val ARG_ACTION = "action"
     const val ARG_CREDENTIAL_ID = "credentialId"
+    const val ARG_PATH = "path"
+    const val ARG_TITLE = "title"
 
     fun chat(instanceId: String, runId: String? = null) =
         if (runId == null) "chat/${Uri.encode(instanceId)}" else "chat/${Uri.encode(instanceId)}?runId=${Uri.encode(runId)}"
@@ -97,6 +103,7 @@ object Routes {
     fun inbox(itemId: String? = null) = if (itemId == null) "inbox" else "inbox?itemId=${Uri.encode(itemId)}"
     fun devices(action: String? = null) = if (action == null) "devices" else "devices?action=${Uri.encode(action)}"
     fun vault(requestId: String? = null) = if (requestId == null) "vault" else "vault?requestId=${Uri.encode(requestId)}"
+    fun licenseText(path: String, title: String) = "licenses/text?path=${Uri.encode(path)}&title=${Uri.encode(title)}"
 
     /** 抽屉直达的顶级目的地（返回栈弹到 home）。 */
     val TOP_LEVEL: Set<String> = setOf(HOME, INBOX, APPROVALS, PLANS, TEAMS, SETTINGS, CATALOG)

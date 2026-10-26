@@ -15,6 +15,10 @@ import androidx.compose.material.icons.outlined.BarChart
 import androidx.compose.material.icons.outlined.DeleteForever
 import androidx.compose.material.icons.outlined.Devices
 import androidx.compose.material.icons.outlined.DevicesOther
+import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.Gavel
+import androidx.compose.material.icons.outlined.Notifications
+import androidx.compose.material.icons.outlined.Policy
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Phone
 import androidx.compose.material.icons.outlined.StopCircle
@@ -28,11 +32,16 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -40,6 +49,9 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import cn.thinktin.app.BuildConfig
 import cn.thinktin.app.R
+import cn.thinktin.app.push.hasNotificationPermission
+import cn.thinktin.app.settings.AppLanguage
+import cn.thinktin.app.settings.AppLocales
 import cn.thinktin.app.settings.AppSettings
 import cn.thinktin.app.settings.AppSettingsRepository
 import cn.thinktin.app.ui.common.LocalAppContainer
@@ -74,14 +86,17 @@ data class SettingsUiState(
 )
 
 /**
- * 设置（13.2 的骨架升级；语言、通知、关于等完整版在 13.13）：账号（手机号、昵称）、安全（设备与账号、下线其他设备、
- * 全部停止）、外观、演示模式（仅调试版）、危险操作（退出登录、注销账号）。
+ * 设置（13.2 起，13.13 补全）：账号（手机号、昵称）、安全（设备与账号、下线其他设备、全部停止）、语言（跟随系统 / 中文 /
+ * English）、外观、通知（是否允许，点了去系统设置）、演示模式（仅调试版）、模型、关于（隐私政策、用户协议、开源许可、版本）、
+ * 危险操作（退出登录、注销账号）。
  * 下线其他设备、全部停止在“设备与账号”页里做（[DevicesAction]），改昵称、注销账号是单独的页面，这里只是入口；
  * 退出登录直接在这里确认。
  */
 class SettingsViewModel(
     private val repository: AppSettingsRepository,
     private val service: ThinktinService,
+    /** 把界面语言交给系统（[AppLocales.apply]，Activity 会重建）；测试里换成记录。 */
+    private val applyLocales: (AppLanguage) -> Unit = AppLocales::apply,
 ) : ViewModel() {
     private val user = MutableStateFlow<User?>(null)
     private val local = MutableStateFlow(SettingsUiState(isDemo = service.isDemo))
@@ -103,6 +118,14 @@ class SettingsViewModel(
 
     fun setAppearance(appearance: Appearance) {
         viewModelScope.launch { repository.setAppearance(appearance) }
+    }
+
+    /** 换界面语言（13.13）：先存（请求语言、服务端语言跟着变），再交给系统（界面重建成新语言）。 */
+    fun setLanguage(language: AppLanguage) {
+        viewModelScope.launch {
+            repository.setLanguage(language)
+            applyLocales(language)
+        }
     }
 
     fun setDemoMode(enabled: Boolean) {
@@ -132,8 +155,17 @@ fun SettingsScreen(
     onDeleteAccount: () -> Unit = {},
     onOpenKeys: () -> Unit = {},
     onOpenUsage: () -> Unit = {},
+    onOpenLicenses: () -> Unit = {},
 ) {
     val container = LocalAppContainer.current
+    val context = LocalContext.current
+    // 通知权限：回到这页（从系统设置回来）时重新看一次。
+    var notificationsOn by remember { mutableStateOf(hasNotificationPermission(context)) }
+    LifecycleResumeEffect(Unit) {
+        notificationsOn = hasNotificationPermission(context) &&
+            androidx.core.app.NotificationManagerCompat.from(context).areNotificationsEnabled()
+        onPauseOrDispose {}
+    }
     val service = LocalThinktinService.current
     val viewModel: SettingsViewModel = viewModel(
         factory = viewModelFactory { initializer { SettingsViewModel(container.settingsRepository, service) } },
@@ -187,6 +219,32 @@ fun SettingsScreen(
                 onClick = { onOpenDevices(DevicesAction.StopAll) },
                 danger = true,
             )
+            Section(R.string.settings_language)
+            val language = state.settings?.language ?: AppLanguage.System
+            Column(Modifier.selectableGroup()) {
+                listOf(
+                    AppLanguage.System to R.string.settings_language_system,
+                    AppLanguage.Chinese to R.string.settings_language_chinese,
+                    AppLanguage.English to R.string.settings_language_english,
+                ).forEach { (option, label) ->
+                    ListItem(
+                        headlineContent = { Text(stringResource(label)) },
+                        leadingContent = { RadioButton(selected = language == option, onClick = null) },
+                        colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.background),
+                        modifier = Modifier.selectable(
+                            selected = language == option,
+                            role = Role.RadioButton,
+                            onClick = { if (language != option) viewModel.setLanguage(option) },
+                        ),
+                    )
+                }
+            }
+            Text(
+                text = stringResource(R.string.settings_language_summary),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = ThinktinSpacing.Page),
+            )
             Section(R.string.settings_appearance)
             val current = state.settings?.appearance ?: Appearance.System
             Column(Modifier.selectableGroup()) {
@@ -207,6 +265,15 @@ fun SettingsScreen(
                     )
                 }
             }
+            Section(R.string.settings_notifications)
+            AccountRow(
+                icon = Icons.Outlined.Notifications,
+                title = stringResource(R.string.settings_notifications),
+                value = stringResource(
+                    if (notificationsOn) R.string.settings_notifications_on else R.string.settings_notifications_off,
+                ),
+                onClick = { openNotificationSettings(context) },
+            )
             // 演示模式开关只在 debug 包里有（第 7 节）。
             if (container.demoAllowed) {
                 val demo = state.settings?.demoMode ?: state.isDemo
@@ -236,11 +303,24 @@ fun SettingsScreen(
                 value = stringResource(R.string.settings_usage_summary),
                 onClick = onOpenUsage,
             )
-            Text(
-                text = stringResource(R.string.settings_more_coming),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(ThinktinSpacing.Page),
+            Section(R.string.settings_about)
+            AccountRow(
+                icon = Icons.Outlined.Policy,
+                title = stringResource(R.string.settings_privacy),
+                value = PRIVACY_POLICY_URL,
+                onClick = { openUrl(context, PRIVACY_POLICY_URL) },
+            )
+            AccountRow(
+                icon = Icons.Outlined.Gavel,
+                title = stringResource(R.string.settings_terms),
+                value = TERMS_URL,
+                onClick = { openUrl(context, TERMS_URL) },
+            )
+            AccountRow(
+                icon = Icons.Outlined.Description,
+                title = stringResource(R.string.page_licenses),
+                value = stringResource(R.string.settings_licenses_summary),
+                onClick = onOpenLicenses,
             )
             // 演示模式没有退出登录和注销：关掉演示模式就是“退出”。
             if (!state.isDemo) {
@@ -277,6 +357,21 @@ fun SettingsScreen(
             onDismiss = viewModel::dismissSignOut,
         )
     }
+}
+
+/** 隐私政策、用户协议（和 iOS 一样的地址）。 */
+const val PRIVACY_POLICY_URL = "https://thinktin.cn/legal/privacy"
+const val TERMS_URL = "https://thinktin.cn/legal/terms"
+
+private fun openUrl(context: android.content.Context, url: String) {
+    runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))) }
+}
+
+/** 系统设置里这个 App 的通知页。 */
+private fun openNotificationSettings(context: android.content.Context) {
+    val intent = android.content.Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+        .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+    runCatching { context.startActivity(intent) }
 }
 
 @Composable

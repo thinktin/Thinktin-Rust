@@ -398,6 +398,22 @@ Keystore 失效……）都显示“无法加载核心库”页（原因 + 重�
   `InboxViewModelTest`（翻页与同步合并、标已读 / 未读 / 全部已读 / 删除、失败回滚、去对应页面或面板、推送进来的那一条、离线）、
   Robolectric 的 `InboxUiTest`（未读数与全部已读、点一条进审批详情再返回、面板里删除、点开推送跳审批详情并标已读）。
 
+## 设置、多语言与开源许可（13.13）
+
+- **设置**（`settings`）：账号（手机号、昵称）、安全（设备与账号、下线其他设备、全部停止）、**语言**（跟随系统语言 / 中文 / English）、
+  外观、**通知**（是否允许；点了去系统的 App 通知设置，回到页面重新看）、演示模式（仅调试版）、模型、**关于**（隐私政策、用户协议、
+  开源许可）、危险操作（退出登录、注销账号）、版本。
+- **界面语言**（`settings/AppLocales`）：选了之后先存进 `AppSettings.language`（请求的 Accept-Language、服务端记的语言跟着变，推送和
+  收件箱用它），再 `AppCompatDelegate.setApplicationLocales` 交给系统，Activity 重建成新语言。`MainActivity` 因此是 `AppCompatActivity`
+  （仍是 FragmentActivity，BiometricPrompt 照常），清单里有 `AppLocalesMetadataHolderService`（Android 13 以前由 AppCompat 记下选的语言）。
+  Android 13 起系统设置里也能改“应用语言”（`locales_config`）：启动时以系统的为准（`AppContainer.followSystemAppLanguage`）。
+- **开源许可**（`licenses`、`licenses/text?path=`，`ui/settings/licenses/`）：App 自己用的库（下面那张表）＋客户端核心的清单
+  （`:core` assets 里的 `thinktin-licenses/inventory.json`，`sync-core.sh` 放进去；和 iOS 的 `LicenseInventory` 同一套宽松解析：按许可证分组、
+  “MIT OR Apache-2.0”和“Apache-2.0 OR MIT”算一组、组件多的组在前、没声明的放最后；搜索名字 / 版本 / 许可证 / 作者；点开组件看许可证、
+  作者、源码链接、原文）。原文分段显示（路径不能出清单目录，2 MiB 以上不显示）。包里没带清单（CI 的 debug 包）时说一声。
+- 测试：`LicensesTest`（清单解析、分组与排序、搜索、坏格式、路径与分段、视图模型、语言取值、设置里换语言先存再交给系统）、
+  Robolectric 的 `SettingsUiTest`（语言、通知、关于几行；开源许可页没有清单时的提示和 App 的库、返回）。
+
 ## 深链
 
 `thinktin://run/{id}`、`approval/{id}`、`plan/{id}`、`instance/{id}`、`vault/request/{id}`、`inbox`、`inbox/{id}`（第 3 节）。

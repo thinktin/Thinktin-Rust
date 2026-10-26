@@ -19,6 +19,7 @@ import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.junit4.ComposeTestRule
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.getOrNull
@@ -139,7 +140,7 @@ class AppUiTest {
         compose.onNode(hasText("跟随系统")).assertIsNotSelected()
         assertEquals(Appearance.Dark, runBlocking { app().container.settings.first().appearance })
         // debug 包里有演示模式开关，演示模式下没有“退出登录”
-        compose.onNode(hasText("演示模式")).assertIsDisplayed()
+        compose.onNode(hasText("演示模式")).performScrollTo().assertIsDisplayed()
         compose.onAllNodes(hasText("退出登录")).assertCountEquals(0)
     }
 

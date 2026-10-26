@@ -154,7 +154,6 @@
     <string name="settings_security">安全</string>
     <string name="settings_devices_summary">登录设备、远程下线、注销账号</string>
     <string name="settings_danger">危险操作</string>
-    <string name="settings_more_coming">语言、通知、开源许可等设置即将推出。</string>
     <string name="settings_version">版本 %1$s（%2$s）</string>
 
     <!-- 通用按钮 -->
@@ -931,5 +930,41 @@
     <string name="notification_channel_results_description">运行完成、失败，计划待确认和账号提醒。</string>
     <plurals name="inbox_unread_count">
         <item quantity="other">%1$d 条未读</item>
+    </plurals>
+    <!-- 设置、多语言与开源许可（13.13） -->
+    <string name="settings_language">语言</string>
+    <string name="settings_language_system">跟随系统语言</string>
+    <string name="settings_language_chinese">中文</string>
+    <string name="settings_language_english">English</string>
+    <string name="settings_language_summary">界面、推送和收件箱都用这个语言。</string>
+    <string name="settings_notifications">通知</string>
+    <string name="settings_notifications_on">已允许：审批、运行结果会提醒你</string>
+    <string name="settings_notifications_off">未允许：点这里去系统设置打开</string>
+    <string name="settings_about">关于</string>
+    <string name="settings_privacy">隐私政策</string>
+    <string name="settings_terms">用户协议</string>
+    <string name="settings_licenses_summary">用到的开源组件和它们的许可证</string>
+    <string name="page_licenses">开源许可</string>
+    <string name="licenses_intro">ThinkTin 用到的开源组件。点开组件看版本、作者、来源和许可证原文。</string>
+    <string name="licenses_search">搜索组件或许可证</string>
+    <string name="licenses_app_section">App 用到的库</string>
+    <string name="licenses_core_section">客户端核心（Rust）</string>
+    <string name="licenses_no_results">没有匹配的组件</string>
+    <string name="licenses_undeclared">未声明许可证</string>
+    <string name="licenses_expand">已收起</string>
+    <string name="licenses_collapse">已展开</string>
+    <string name="licenses_authors">作者：%1$s</string>
+    <string name="licenses_source">源码</string>
+    <string name="licenses_text_bundled">包内：%1$s</string>
+    <string name="licenses_text_standard">SPDX 标准文本：%1$s</string>
+    <string name="licenses_not_bundled">这个安装包没有带客户端核心的许可证清单（开发包）。</string>
+    <string name="licenses_text_missing">这份原文没有打包进 App。</string>
+    <string name="licenses_malformed">许可证清单的格式认不出来。</string>
+    <string name="licenses_too_large">这份原文太大，App 里不显示。</string>
+    <plurals name="licenses_core_summary">
+        <item quantity="other">%1$d 个组件，%2$d 种许可证</item>
+    </plurals>
+    <plurals name="licenses_group_title">
+        <item quantity="other">%1$s（%2$d）</item>
     </plurals>
 </resources>
