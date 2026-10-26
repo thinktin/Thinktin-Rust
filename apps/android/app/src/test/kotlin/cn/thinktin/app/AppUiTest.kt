@@ -25,6 +25,7 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.getOrNull
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
+import cn.thinktin.app.ui.approval.APPROVAL_LIST_TEST_TAG
 import cn.thinktin.app.ui.chat.CHAT_RUN_HEADER_TEST_TAG
 import cn.thinktin.app.ui.chat.CHAT_SCREEN_TEST_TAG
 import cn.thinktin.app.ui.chat.CHAT_USER_PROMPT_TEST_TAG
@@ -158,6 +159,11 @@ class AppUiTest {
         deliver("thinktin://vault/request/vreq-pending")
         compose.waitFor(hasText("上传调研报告"))
         compose.onNode(hasText("填写请求")).assertIsDisplayed()
+        // 审批中心（iOS 小组件用的深链，两端都认）
+        compose.onNode(hasContentDescription("返回")).performClick()
+        compose.waitFor(hasText("最近运行"))
+        deliver("thinktin://approvals")
+        compose.waitFor(hasTestTag(APPROVAL_LIST_TEST_TAG))
     }
 
     @Test

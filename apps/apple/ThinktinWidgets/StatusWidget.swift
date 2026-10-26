@@ -66,7 +66,7 @@ struct StatusWidgetView: View {
 
     var body: some View {
         content
-            .containerBackground(for: .widget) { Color.clear }
+            .containerBackground(.fill.tertiary, for: .widget)
             .widgetURL(DeepLink.url(for: .inbox))
     }
 
@@ -118,9 +118,10 @@ struct StatusWidgetView: View {
         VStack(alignment: .leading, spacing: 2) {
             Text("ThinkTin").font(.headline)
             Text(
-                "\(WidgetText.unread(language)) \(snapshot.inboxUnread) · \(WidgetText.approvals(language)) \(snapshot.pendingApprovals)"
+                verbatim:
+                    "\(WidgetText.unread(language)) \(snapshot.inboxUnread) · \(WidgetText.approvals(language)) \(snapshot.pendingApprovals)"
             )
-            Text("\(WidgetText.active(language)) \(snapshot.activeRuns)")
+            Text(verbatim: "\(WidgetText.active(language)) \(snapshot.activeRuns)")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

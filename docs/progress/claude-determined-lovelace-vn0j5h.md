@@ -86,8 +86,14 @@ P1 后端核心（M1–M9）和 P2 里能在代码层面完成的包都做完了
 
 - iOS 12.11 上架（代码部分）：隐私清单补全、CI 扫描需声明理由的 API、`docs/ios-appstore.md`；安卓关于页加了备案号一行。
 
+- iOS 12.20 小组件与快捷指令：Widget Extension `ThinktinWidgets`（未读、待审批、进行中，读 App Group 里的快照）、App Intents
+  （全部停止、查待审批数、下任务、暂停 / 恢复计划）、`thinktin://approvals` / `active` 深链（安卓也认 `approvals`）。932 个 Kit 测试。
+  App Intents、WidgetKit 只在桩上查过，真实 SDK 等 macOS CI。控制中心的“全部停止”没做（要 iOS 18 + 共享会话）。
+- 后端 11.9 复查：store 的 2 个、gateway 的 `team_adoption_is_all_or_nothing` 在本机 Postgres 上都过。剩一个很窄的三方竞态
+  （恢复计划、同时改步骤、同时删实例），判断不值得为它再加锁，先记在这里。
+
 进行中：
-- iOS 12.20 小组件与快捷指令（2026-10-26 开始）。之后 iOS 12.10 实时活动。
+- iOS 12.10 实时活动（2026-10-26 开始）。
 
 环境（容器回收后要重装）：Swift 6.2 装在 `/opt/swift`（swift.org 的包，验签）；Android SDK 在 `/opt/android-sdk`（cmdline-tools、platform 35、build-tools 35.0.0，不用 NDK）；`cargo build -p client-core --lib` 出本机库，`tools/client-core/build-linux-swift.sh target/linux` 出 Linux 版 Swift 包。Gradle 直连 Maven Central 没被限流。Gradle 和 Swift 一起跑时 Robolectric 偶尔超时，分开跑。
 

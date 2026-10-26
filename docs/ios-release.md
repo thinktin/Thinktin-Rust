@@ -7,7 +7,9 @@ App Store Connect，进 TestFlight。上架 App Store 的材料（审核备注�
 
 1. **Apple 开发者账号**（公司账号）和团队 id（10 位）。
 2. **App Store Connect 里建 App 记录**：bundle id `cn.thinktin.Thinktin`（`apps/apple/project.yml` 的 `bundleIdPrefix` 生成；
-   要换的话先在 project.yml 显式写 `PRODUCT_BUNDLE_IDENTIFIER`），开 Push Notifications 能力。App 的 Apple ID 拿到后填进
+   要换的话先在 project.yml 显式写 `PRODUCT_BUNDLE_IDENTIFIER`），开 Push Notifications、App Groups 能力。小组件扩展
+   （12.20）的 bundle id 是 `cn.thinktin.Thinktin.Widgets`，也开 App Groups；两个都加进 App Group `group.cn.thinktin.Thinktin`
+   （自动签名一般会自己登记，第一次归档失败时到开发者网站手动建）。换 bundle id 时 App Group 名（`WidgetSnapshotFile.appGroup`）一起改。App 的 Apple ID 拿到后填进
    `ShellLinks.appStore`（升级页的“去 App Store 更新”）。
 3. **App Store Connect API key**：用户和访问 → 集成 → App Store Connect API，新建一个“App 管理”角色的 key，下载 .p8（只能下一次）。
 4. **GitHub 的 `testflight` 环境**（Settings → Environments）：加上“需要审批的人”（发版要人点一下），放四个密钥：

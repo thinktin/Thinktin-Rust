@@ -25,9 +25,11 @@ apps/apple/
   project.yml                 XcodeGen 工程定义（不提交 .xcodeproj；本机和 CI 都 `xcodegen generate`）
   Thinktin/                   iOS App target
     App/                      入口、根导航、依赖装配（AppEnvironment）
-    Platform/                 Keychain 会话存储、APNs、LocalAuthentication、Secure Enclave、实时活动、深链
+    Platform/                 Keychain 会话存储、APNs、LocalAuthentication、Secure Enclave、小组件快照、实时活动、深链
+    Intents/                  快捷指令和 Siri（App Intents，12.20）
     Resources/                Assets.xcassets、Localizable.xcstrings、PrivacyInfo.xcprivacy、Info.plist 补充项
     Thinktin.entitlements
+  ThinktinWidgets/            Widget Extension（主屏、锁屏小组件，12.20；以后放实时活动 12.10）
   ThinktinKit/                Swift Package（iOS / macOS 共享）
     Package.swift
     Sources/ThinktinKit/      纯 Swift：Models、Client（ClientProtocol、MockClient）、Navigation（路由、深链）、ViewModels、
@@ -140,7 +142,8 @@ docs/i18n.md 第 3 节“不认识的按状态给通用文案”）：404 / 410 
 
 和安卓端（[docs/android-design.md](android-design.md) 第 3 节）用同一套深链，推送点击、收件箱跳转、实时活动都走它：
 `thinktin://run/{id}`、`thinktin://approval/{id}`、`thinktin://plan/{id}`、`thinktin://inbox`（可带 `/{id}`）、
-`thinktin://vault/request/{id}`、`thinktin://instance/{id}`。推送 payload 里的字段（收件箱 id、运行 id、审批 id）由服务端
+`thinktin://vault/request/{id}`、`thinktin://instance/{id}`；小组件还用 `thinktin://approvals`（审批中心，安卓也认）和
+`thinktin://active`（进行中，只有 iOS 有这一页）。推送 payload 里的字段（收件箱 id、运行 id、审批 id）由服务端
 `notify` 定义，两端共用。Universal Links 等上线前再配。
 
 实现在 `ThinktinKit/Navigation`（12.16）：`DeepLink` 解析深链（认不出的格式、多余的路径段、不像 id 的 id 一律不认），
@@ -167,6 +170,21 @@ docs/i18n.md 第 3 节“不认识的按状态给通用文案”）：404 / 410 
 - 推送通道：Debug 构建（开发证书签名，`aps-environment` 是 development）报 `apns_sandbox`，Release 报 `apns`
   （`AppConfiguration.usesAPNsSandbox`、`PushRegistration.forThisBuild(deviceToken:)`）。
 - 没登录、冻结、要升级时深链和推送先记下（`Router.pendingRoute`），回到正常状态再跳，同一条只跳一次。
+
+## 6.3 小组件与快捷指令（12.20）
+
+- **主屏、锁屏小组件**（`ThinktinWidgets`，小号、中号、锁屏长方形）：未读、待审批、进行中三个数。扩展不连服务端、不带客户端核心，
+  只读 App 写进 App Group（`group.cn.thinktin.Thinktin`，两个 target 的 entitlements）的快照 `widget-snapshot.json`
+  （`WidgetSnapshot`，只有几个数和时间，没有任务原文、实例名：锁屏谁都看得见）。`AppModel` 在角标变了、退出登录、启动时没登录时写
+  （数没变不重写；一个接一个写，后写的不被先写的盖掉），App 的 `AppGroupWidgetSink` 写完让 WidgetKit 刷新。扩展每半小时自己再读一次
+  （“几分钟前更新”）。文案跟着系统语言（扩展读不到 App 里选的语言）。点小组件打开收件箱，中号的三格各自深链到收件箱、审批中心、进行中。
+- **快捷指令和 Siri**（App 的 `Intents/`）：全部停止、查待审批数、给实例下任务、暂停 / 恢复计划；逻辑在 ThinktinKit 的 `QuickActions`
+  （有测试），App Intents 只是外壳。都在 App 的进程里跑（快捷指令在后台拉起 App，不打开界面），和界面共用 `AppEnvironment.shared`
+  的同一个客户端，所以不用把 Keychain 里的会话、缓存库共享给扩展；做完刷新角标，小组件跟着变。下任务时任务里像有密码或 key 就不发
+  （快捷指令里弹不了拦截面板，要在 App 里先存进保险箱）。“全部停止”不再问一遍：它是急停按钮。标题、参数名、短语是中文，英文在
+  `Localizable.xcstrings`、`AppShortcuts.xcstrings`；做完说的话跟着 App 里选的界面语言（`QuickActionText`）。
+- **没做的**：控制中心的“全部停止”（iOS 18 的 `ControlWidget`，按钮的意图在扩展的进程里跑，要把会话放进共享的 Keychain 访问组、
+  扩展里另建客户端，等最低版本升到 iOS 18 或真要做时再说）；分享扩展（docs/ios-packages.md 12.20 一节提过，WBS 没列）。
 
 ## 6.2 离线时每个页面怎么显示
 
@@ -195,8 +213,8 @@ client-core 只缓存实例、运行、事件、收件箱（cache.rs 的几张�
   `kit-linux` 最后还有严格模式的 `swift format lint`。
 - 代码风格：`swift format`（Swift 6 工具链自带），配置在 `apps/apple/.swift-format`（App 和 ThinktinKit 共用，4 格缩进、120 列、
   其余是 swift-format 6.2 的默认规则全量导出）。CI 跑严格模式的 lint，**提交前先 `swift format -i -r apps/apple`**。
-- **Linux 上检查界面代码**：`tools/apple/uicheck/run.sh`（`appkit` 查 macOS 路径，`test` 顺带跑 ThinktinUITests）。SwiftUI、UIKit、AppKit、
-  Security、OSLog 换成桩模块（签名照 iOS 17 / macOS 14 SDK），能发现类型错误和并发检查问题，代替不了 macOS CI 的真实编译。
+- **Linux 上检查界面代码**：`tools/apple/uicheck/run.sh`（`appkit` 查 macOS 路径，`test` 顺带跑 ThinktinUITests；UIKit 版连 App target 和
+  小组件扩展一起查）。SwiftUI、UIKit、AppKit、Security、OSLog、UserNotifications、Charts、WidgetKit、AppIntents 换成桩模块（签名照 iOS 17 / macOS 14 SDK），能发现类型错误和并发检查问题，代替不了 macOS CI 的真实编译。
   桩模块缺 API 时照 Apple 文档补进 `tools/apple/uicheck/Stubs/`，不要为了过检查改 App 代码。写完界面推送前跑一遍。
 
 ## 8. 工作包与开发顺序
@@ -231,7 +249,8 @@ client-core 只缓存实例、运行、事件、收件箱（cache.rs 的几张�
 | 12.17 | `ViewModels/Onboarding/` | `Screens/Onboarding/` |
 | 12.18 | `ViewModels/Artifacts/` | `Screens/Artifacts/` |
 | 12.21 | `ViewModels/Search/` | `Screens/Search/` |
-| 12.10、12.20 | — | App 的 Widget Extension target（`project.yml` 里另起 target） |
+| 12.20 | `ViewModels/Widgets/`（快照、`QuickActions`） | App 的 `Intents/`、`Platform/WidgetSnapshotWriter.swift`；`ThinktinWidgets/`（Widget Extension） |
+| 12.10 | — | `ThinktinWidgets/`（实时活动和小组件同一个扩展） |
 
 每个工作包的测试放在对应的 `Tests/ThinktinKitTests/<功能>/`（视图模型，Linux 能跑）和 `Tests/ThinktinUITests/<功能>/`（只在 macOS 跑）。
 

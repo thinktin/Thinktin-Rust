@@ -144,4 +144,7 @@ object DeepLinks {
     const val VAULT_REQUEST = "$SCHEME://vault/request/{requestId}"
     const val INBOX = "$SCHEME://inbox"
     const val INBOX_ITEM = "$SCHEME://inbox/{itemId}"
+
+    /** 审批中心（iOS 的小组件用，12.20；两端都认）。 */
+    const val APPROVALS = "$SCHEME://approvals"
 }

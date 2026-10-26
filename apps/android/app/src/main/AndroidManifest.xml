@@ -42,6 +42,7 @@
                 <data android:host="instance" />
                 <data android:host="vault" />
                 <data android:host="inbox" />
+                <data android:host="approvals" />
             </intent-filter>
         </activity>
 

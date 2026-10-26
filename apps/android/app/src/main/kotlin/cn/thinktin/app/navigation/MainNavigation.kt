@@ -414,7 +414,7 @@ private fun MainNavHost(navController: NavHostController, onOpenDrawer: () -> Un
                 onNavigate = { navController.navigate(it) },
             )
         }
-        composable(Routes.APPROVALS) {
+        composable(Routes.APPROVALS, deepLinks = listOf(navDeepLink { uriPattern = DeepLinks.APPROVALS })) {
             ApprovalCenterScreen(onBack = back, onOpenApproval = { navController.navigate(Routes.approval(it)) })
         }
         composable(
