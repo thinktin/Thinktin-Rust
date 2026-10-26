@@ -26,6 +26,10 @@ struct ThinktinApp: App {
                 .settingsPreferences()
                 .environment(\.signInPushRegistration, SignInPushRegistration { model.pushRegistration })
                 .environment(\.notificationAuthorizer, PushAuthorizer(registrar: environment.pushRegistrar))
+                // 手机控制电脑（12.9）：安全芯片里的签名密钥、client-core 的编码、扫码。
+                .environment(\.deviceSigner, environment.deviceSigner)
+                .environment(\.pairingCodec, environment.pairingCodec)
+                .environment(\.pairingScanner, PairingCodeScanner.environmentValue)
                 .onChange(of: model.phase, initial: true) {
                     if model.phase == .signedIn, Bundle.main.bundleURL.pathExtension == "app" {
                         UIApplication.shared.registerForRemoteNotifications()

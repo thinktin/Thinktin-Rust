@@ -210,6 +210,25 @@ docs/i18n.md 第 3 节“不认识的按状态给通用文案”）：404 / 410 
   `LiveActivityText`）、步数、耗时（还在跑的用 `Text(timerInterval:)`，不用推送也会走）；等审批、key 要处理时图标是橙色。
   点开去运行详情。
 
+## 6.5 手机控制电脑（12.9）
+
+协议见 docs/pairing.md（配对、审批、能力令牌；消息经设备中继，第 6 节的正文格式），手机这边：
+
+- **逻辑**在 ThinktinKit 的 `ComputerLinkModel`（`ViewModels/Computer/`，Linux 上有测试）：编码、验签藏在 `PairingCodec`
+  后面（适配层的 `CorePairingCodec` 调 client-core，测试向量和 Rust 一致），签名藏在 `DeviceSigner` 后面（App 的
+  `SecureEnclaveSigner`）。状态按账号存在 `UserDefaults`：配好的电脑（电脑公钥、配对时手机的公钥）、等确认的配对、收下的审批请求
+  （服务端收下就确认掉了，处理了或过期了再删）、签发过的令牌。
+- **配对**：设置 → 登录设备 → 电脑 → 配对：扫码（VisionKit，`PairingCodeScanner`；不能扫时粘贴配对码）→ 确认是自己账号的电脑 →
+  面容 ID 签配对回复（`pair_response`）→ 每 3 秒收一次消息等电脑的确认（`pair_confirm`，用二维码里的电脑公钥验）→ 记下电脑。
+  邀请过期还没等到算失败。
+- **审批**：电脑的高危操作（`approval_request`，推送 `computer_approval` 打开审批中心）在审批中心最上面一组：说明（AI 生成）、
+  工具、参数；批准、拒绝都要面容 ID 签名（`approval_decision`）。只收配好的电脑发来的、没过期的。
+- **能力令牌**：配好的电脑右边“更多”→ 授权目录和应用（完整路径、bundle id、有效期 1 小时到 7 天）→ 签名发过去（`capability`）；
+  列表里随时吊销（`revocation`，不用签名）。解除配对时先吊销发给它的令牌。
+- **密钥**：Secure Enclave 的 P-256（`.biometryCurrentSet`），句柄存 Keychain。录入了新面容（生物识别的登记状态变了）就失效，
+  页面提示生成新密钥、重新配对。没有 Secure Enclave（模拟器）或没设生物识别时不能签，页面说明原因。
+- 电脑那边（14.8，macOS App）还没做：要照 docs/pairing.md 第 6 节显示二维码、验 `pair_response`、回 `pair_confirm`。
+
 ## 6.2 离线时每个页面怎么显示
 
 client-core 只缓存实例、运行、事件、收件箱（cache.rs 的几张表）。所有页面用同一个离线横幅（`AppShell` 统一放在页面顶部，

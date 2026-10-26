@@ -51,3 +51,8 @@ extension ShapeStyle {
     public var secondary: some ShapeStyle { self }
     public var tertiary: some ShapeStyle { self }
 }
+
+// 12.9 的扫码框用到的。
+extension View {
+    public func clipShape<S: Shape>(_ shape: S, style: FillStyle = FillStyle()) -> some View { _m() }
+}

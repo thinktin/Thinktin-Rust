@@ -18,6 +18,8 @@ struct AppSmokeTests {
         #expect(info["NSFaceIDUsageDescription"] as? String != nil)
         // 运行的实时活动（12.10）。
         #expect(info["NSSupportsLiveActivities"] as? Bool == true)
+        // 扫电脑上的配对二维码（12.9）。
+        #expect(info["NSCameraUsageDescription"] as? String != nil)
         // 构建设置 THINKTIN_API_BASE_URL 展开进来了，解析出来是 https 的地址。
         let raw = try #require(info[AppConfiguration.baseURLInfoKey] as? String)
         #expect(!raw.contains("$("))

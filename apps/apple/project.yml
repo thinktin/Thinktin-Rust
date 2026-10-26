@@ -84,6 +84,8 @@ targets:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
         NSFaceIDUsageDescription: 用面容 ID 确认审批、签名等高风险操作。
+        # 扫电脑上的配对二维码（12.9）。
+        NSCameraUsageDescription: 扫电脑上的配对二维码，和电脑配对。
         # 运行的实时活动（12.10，docs/live-activities.md 第 3 节）。
         NSSupportsLiveActivities: true
         # 深链（docs/ios.md 第 6.1 节，和安卓端同一套）：thinktin://run/{id}、approval/{id}、plan/{id}、instance/{id}、

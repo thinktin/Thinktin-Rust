@@ -35,6 +35,9 @@ if withApp {
         .target(name: "ActivityKit", path: "Stubs/ActivityKit"),
         .target(name: "WidgetKit", dependencies: ["SwiftUI", "ActivityKit"], path: "Stubs/WidgetKit"),
         .target(name: "AppIntents", path: "Stubs/AppIntents"),
+        // 扫配对二维码（12.9）。
+        .target(name: "Vision", path: "Stubs/Vision"),
+        .target(name: "VisionKit", dependencies: ["UIKit", "Vision"], path: "Stubs/VisionKit"),
         // Secure Enclave 的签名密钥（12.9）。
         .target(name: "CryptoKit", dependencies: ["Security", "LocalAuthentication"], path: "Stubs/CryptoKit"),
         .target(
@@ -45,7 +48,8 @@ if withApp {
             name: "Thinktin",
             dependencies: [
                 "ThinktinKit", "ThinktinUI", "ThinktinCoreAdapter", "SwiftUI", "UIKit", "Security", "OSLog",
-                "UserNotifications", "WidgetKit", "AppIntents", "ActivityKit", "CryptoKit", "LocalAuthentication",
+                "UserNotifications", "WidgetKit", "AppIntents", "ActivityKit", "CryptoKit", "LocalAuthentication", "Vision",
+                "VisionKit",
             ],
             path: "Gen/Thinktin"),
         .executableTarget(

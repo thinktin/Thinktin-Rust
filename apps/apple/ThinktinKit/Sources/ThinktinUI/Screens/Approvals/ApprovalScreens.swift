@@ -38,6 +38,8 @@ private struct ApprovalCenterContent: View {
                     NoticeText(text: ApprovalsText.notice(notice, language: language), tone: .success)
                         .onTapGesture { model.clearNotice() }
                 }
+                // 电脑发来的高危操作（12.9，经设备中继，要手机签名批准；只在能签名的设备上有）。
+                ComputerApprovalsSection()
                 TimelineView(.periodic(from: Date(), by: 30)) { context in
                     let list = model.visible(now: context.date)
                     if list.isEmpty {

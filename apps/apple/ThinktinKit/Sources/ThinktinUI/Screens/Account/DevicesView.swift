@@ -69,6 +69,8 @@ private struct DevicesContent: View {
                     .disabled(app.isOffline || model.isSigningOutOthers)
                     .frame(maxWidth: .infinity)
                 }
+                // 电脑：配对、授权、解除配对（12.9，只在能签名的设备上有）。
+                ComputerLinkSection()
             } else if let error = model.loadError {
                 if error.isOffline {
                     AccountOfflineState()
