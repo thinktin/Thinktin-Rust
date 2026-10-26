@@ -95,6 +95,8 @@ public final class AppModel {
     private let selection: InstanceSelectionStore
     /// 换了新手机时弹一次引导（12.17）。
     private let onboardingCheck: OnboardingCheck
+    /// 手机控制电脑存在本机的状态（12.9）：角标里数电脑发来的审批。
+    private let computerLinks: ComputerLinkStore
     private let now: () -> Date
     private let activityContinuation: AsyncStream<ClientActivity>.Continuation
     @ObservationIgnored private var started = false
@@ -133,6 +135,7 @@ public final class AppModel {
         self.language = preferences.map { LanguageSettingsModel(client: observed, preferences: $0) }
         self.router = router
         self.selection = InstanceSelectionStore(defaults: defaults)
+        self.computerLinks = ComputerLinkStore(defaults: defaults)
         self.onboardingCheck = OnboardingCheck(defaults: defaults)
         self.notifications = notifications
         self.widgets = widgets
@@ -220,7 +223,10 @@ public final class AppModel {
         async let approvals = Self.attempt { try await client.approvals() }
         async let plans = Self.attempt { try await client.plans(instanceID: nil) }
         async let runs = Self.attempt { try await client.listRuns(filter: .active, limit: Self.activeRunsLimit) }
+        async let deviceMessages = Self.attempt { try await client.deviceMessages() }
         let (unreadResult, approvalsResult, plansResult, runsResult) = await (unread, approvals, plans, runs)
+        // 电脑发来的审批（12.9）：拉不到消息就只数存着的，不报错（审批中心打开时会再收）。
+        let messages = (try? await deviceMessages.get()) ?? []
         guard phase == .signedIn else { return }
 
         var badges = self.badges
@@ -231,7 +237,9 @@ public final class AppModel {
         switch approvalsResult {
         case .success(let list):
             let now = self.now()
-            badges.pendingApprovals = list.filter { $0.isPending && !$0.isExpired(now: now) }.count
+            let computer =
+                user.map { computerLinks.load(userID: $0.id).pendingApprovals(messages: messages, now: now) } ?? 0
+            badges.pendingApprovals = list.filter { $0.isPending && !$0.isExpired(now: now) }.count + computer
         case .failure(let error): handle(error)
         }
         switch plansResult {

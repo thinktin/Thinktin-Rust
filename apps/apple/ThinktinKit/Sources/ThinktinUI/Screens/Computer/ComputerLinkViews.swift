@@ -482,6 +482,10 @@ private struct ComputerApprovalsContent: View {
 
     private func decide(_ request: ComputerApprovalRequest, approve: Bool, computer: String) {
         let reason = ComputerLinkText.signReason(approve ? .approve : .reject, computer: computer, language: language)
-        Task { await model.decide(request, approve: approve, reason: reason) }
+        Task {
+            _ = await model.decide(request, approve: approve, reason: reason)
+            // 抽屉里审批的角标也数电脑发来的。
+            await app.refreshBadges()
+        }
     }
 }

@@ -380,3 +380,69 @@ struct ComputerApprovalDescriptionTests {
                 == "from the Mac")
     }
 }
+
+@MainActor
+@Suite("审批的角标也数电脑发来的（12.9）")
+struct ComputerApprovalBadgeTests {
+    private let mac = DemoData.macDeviceID
+    private let other = DeviceID("0192f3a0-0000-7000-8000-0000000000ee")
+
+    private func body(_ id: String, from desktop: DeviceID, expires: TimeInterval = 600) -> JSONValue {
+        let now = Date().timeIntervalSince1970.rounded(.down)
+        return [
+            "request": [
+                "desktop_id": .string(desktop.rawValue), "request_id": .string(id), "tool": "computer_run",
+                "arguments_json": #"{"command":"ls"}"#, "summary": "ls", "issued_at": .number(now),
+                "expires_at": .number(now + expires),
+            ]
+        ]
+    }
+
+    private func message(_ body: JSONValue, from: DeviceID, kind: DeviceMessageKind = .approvalRequest) -> DeviceMessage
+    {
+        DeviceMessage(
+            id: .random(), fromDeviceID: from, toDeviceID: DemoData.deviceID, kind: kind,
+            bodyJSON: body.compactString(),
+            createdAt: Date())
+    }
+
+    private func pairedState(requests: [ComputerApprovalRequest] = []) -> ComputerLinkState {
+        var state = ComputerLinkState()
+        state.computers = [PairedComputer(desktopID: mac, desktopKey: "k", phoneKey: "p", pairedAt: Date())]
+        state.requests = requests
+        return state
+    }
+
+    @Test("存着的没过期的，加上服务端还没收下的新请求；配好的电脑、没过期、不重复才算")
+    func counts() throws {
+        let stored = try #require(ComputerApprovalRequest(body: body("r1", from: mac)))
+        let expired = try #require(ComputerApprovalRequest(body: body("r0", from: mac, expires: -1)))
+        let state = pairedState(requests: [stored, expired])
+        let messages = [
+            message(body("r1", from: mac), from: mac),  // 已经存着
+            message(body("r2", from: mac), from: mac),  // 新的
+            message(body("r3", from: other), from: other),  // 没配对的电脑
+            message(body("r4", from: mac, expires: -1), from: mac),  // 过期了
+            message(body("r5", from: other), from: mac),  // 冒充别的电脑
+            message(["nonce": "n"], from: mac, kind: .pairConfirm),
+        ]
+        #expect(state.pendingApprovals(messages: messages, now: Date()) == 2)
+        #expect(ComputerLinkState().pendingApprovals(messages: messages, now: Date()) == 0, "没配对时一个都不算")
+    }
+
+    @Test("应用框架的角标：云端的审批加上电脑发来的")
+    func shellBadge() async throws {
+        let name = "badge-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: name))
+        defaults.removePersistentDomain(forName: name)
+        let mock = makeShellMock(signedIn: true)
+        let app = AppModel(client: mock, defaults: defaults)
+        await app.start()
+        let cloud = app.badges.pendingApprovals
+        let user = try #require(app.user)
+        ComputerLinkStore(defaults: defaults).save(pairedState(), userID: user.id)
+        mock.deliverDeviceMessage(from: mac, kind: .approvalRequest, body: body("r9", from: mac))
+        await app.refreshBadges()
+        #expect(app.badges.pendingApprovals == cloud + 1)
+    }
+}

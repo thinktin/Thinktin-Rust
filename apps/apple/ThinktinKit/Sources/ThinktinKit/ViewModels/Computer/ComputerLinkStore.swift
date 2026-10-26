@@ -58,6 +58,19 @@ public struct ComputerLinkState: Hashable, Codable, Sendable {
     public var grants: [IssuedGrant] = []
 
     public init() {}
+
+    /// 等这台手机批准的电脑操作有几个（抽屉、审批中心的角标）：存着的没过期的请求，加上服务端还没收下的新请求（配好的电脑
+    /// 发来的、没过期的、没存过的）。只是数一数：收下、确认掉在 `ComputerLinkModel.sync()` 里，打开审批中心时做。
+    public func pendingApprovals(messages: [DeviceMessage], now: Date) -> Int {
+        var ids = Set(requests.filter { !$0.isExpired(now: now) }.map(\.requestID))
+        for message in messages where message.kind == .approvalRequest {
+            guard let request = ComputerApprovalRequest(body: message.body), request.desktopID == message.fromDeviceID,
+                computers.contains(where: { $0.desktopID == request.desktopID }), !request.isExpired(now: now)
+            else { continue }
+            ids.insert(request.requestID)
+        }
+        return ids.count
+    }
 }
 
 /// 存取 `ComputerLinkState`。键里带用户 id：同一台手机换了账号，看不到上一个账号的电脑。
