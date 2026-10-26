@@ -59,6 +59,7 @@ import cn.thinktin.data.model.VaultItemDetail
 import cn.thinktin.data.model.VaultItemUpdate
 import cn.thinktin.data.model.VaultRequest
 import cn.thinktin.data.model.VaultRequestStatus
+import cn.thinktin.data.model.VaultRules
 import cn.thinktin.data.model.VendorInfo
 import cn.thinktin.data.model.parseJsonObject
 import cn.thinktin.data.service.AuthState
@@ -1259,20 +1260,41 @@ class MockThinktinService(
         }
     }
 
+    /** 用途、账号：长度和控制字符（服务端的 `check_text`）。 */
+    private fun checkVaultText(text: String, max: Int) {
+        if (VaultRules.length(text) > max) invalid("at most $max characters")
+        if (VaultRules.hasControlCharacters(text)) invalid("must not contain control characters")
+    }
+
+    private fun checkVaultPassword(password: String) {
+        if (VaultRules.passwordProblem(password) != null) {
+            invalid("password must be ${VaultRules.MIN_PASSWORD} characters to ${VaultRules.MAX_PASSWORD_BYTES} bytes")
+        }
+    }
+
+    /** 和服务端一样的顺序：名字、用途、账号、密码、实例数，再看条数上限，最后才是重名。调用方持有 [lock]。 */
+    private fun createVaultItemLocked(item: NewVaultItem): VaultItem {
+        if (!VaultRules.isValidName(item.name)) invalid("bad vault name ${item.name}")
+        checkVaultText(item.purpose, VaultRules.MAX_PURPOSE)
+        checkVaultText(item.username, VaultRules.MAX_USERNAME)
+        checkVaultPassword(item.password)
+        if (item.instanceIds.size > VaultRules.MAX_INSTANCES) invalid("at most ${VaultRules.MAX_INSTANCES} instance_ids")
+        if (vaultList.size >= VaultRules.MAX_ITEMS) invalid("the vault holds at most ${VaultRules.MAX_ITEMS} items")
+        if (vaultList.any { it.name == item.name }) throw ServiceError.Api(409, "conflict", "name taken", null)
+        val now = clock()
+        val created = VaultItem(
+            id = "vault-demo-${++idCounter}", name = item.name, purpose = item.purpose.trim(),
+            hasUsername = item.username.isNotEmpty(), instanceIds = item.instanceIds.distinct().sorted(), createdAtMs = now,
+            updatedAtMs = now, lastUsedAtMs = null,
+        )
+        vaultList.add(created)
+        vaultUsernames[created.id] = item.username
+        return created
+    }
+
     override suspend fun createVaultItem(item: NewVaultItem): VaultItem {
         lag()
-        val now = clock()
-        return synchronized(lock) {
-            if (vaultList.any { it.name == item.name }) throw ServiceError.Api(409, "conflict", "name taken", null)
-            val created = VaultItem(
-                id = "vault-demo-${++idCounter}", name = item.name, purpose = item.purpose,
-                hasUsername = item.username.isNotEmpty(), instanceIds = item.instanceIds, createdAtMs = now,
-                updatedAtMs = now, lastUsedAtMs = null,
-            )
-            vaultList.add(created)
-            vaultUsernames[created.id] = item.username
-            created
-        }
+        return synchronized(lock) { createVaultItemLocked(item) }
     }
 
     override suspend fun updateVaultItem(itemId: String, change: VaultItemUpdate): VaultItem {
@@ -1280,10 +1302,15 @@ class MockThinktinService(
         return synchronized(lock) {
             val i = vaultList.indexOfFirst { it.id == itemId }
             if (i < 0) notFound("vault item", itemId)
+            // 先校验再改：出错时什么都不动。
+            change.purpose?.let { checkVaultText(it, VaultRules.MAX_PURPOSE) }
+            change.username?.let { checkVaultText(it, VaultRules.MAX_USERNAME) }
+            change.password?.let { checkVaultPassword(it) }
+            if ((change.instanceIds?.size ?: 0) > VaultRules.MAX_INSTANCES) invalid("at most ${VaultRules.MAX_INSTANCES} instance_ids")
             change.username?.let { vaultUsernames[itemId] = it }
             val old = vaultList[i]
             old.copy(
-                purpose = change.purpose ?: old.purpose,
+                purpose = change.purpose?.trim() ?: old.purpose,
                 hasUsername = vaultUsernames[itemId].orEmpty().isNotEmpty(),
                 instanceIds = change.instanceIds ?: old.instanceIds,
                 updatedAtMs = clock(),
@@ -1301,26 +1328,59 @@ class MockThinktinService(
         return synchronized(lock) { vaultRequestList.filter { all || it.status == VaultRequestStatus.Pending } }
     }
 
-    private fun resolveRequest(requestId: String, status: VaultRequestStatus, itemId: String?): VaultRequest =
-        synchronized(lock) {
-            val i = vaultRequestList.indexOfFirst { it.id == requestId }
-            if (i < 0) notFound("vault request", requestId)
-            vaultRequestList[i].copy(status = status, itemId = itemId, resolvedAtMs = clock())
-                .also { vaultRequestList[i] = it }
-        }
+    /** 把请求标成处理过了；已经不是等待中的报 409（服务端一样）。调用方持有 [lock]。 */
+    private fun resolveRequestLocked(requestId: String, status: VaultRequestStatus, itemId: String?): VaultRequest {
+        val i = vaultRequestList.indexOfFirst { it.id == requestId }
+        if (i < 0) notFound("vault request", requestId)
+        return vaultRequestList[i].copy(status = status, itemId = itemId, resolvedAtMs = clock())
+            .also { vaultRequestList[i] = it }
+    }
 
+    private fun pendingRequestLocked(requestId: String): VaultRequest {
+        val request = vaultRequestList.firstOrNull { it.id == requestId } ?: notFound("vault request", requestId)
+        if (request.status != VaultRequestStatus.Pending) {
+            throw ServiceError.Api(409, "conflict", "the request is already ${request.status.wire}", null)
+        }
+        return request
+    }
+
+    /**
+     * 和服务端一样：先校验账号密码，再看请求还在等；已经有同名条目就更新它（换账号密码和用途，限定了实例的把这个实例加上），
+     * 没有才新建。
+     */
     override suspend fun fulfillVaultRequest(
         requestId: String,
         username: String,
         password: String,
         purpose: String?,
     ): VaultRequest {
-        val request = synchronized(lock) { vaultRequestList.firstOrNull { it.id == requestId } }
-            ?: notFound("vault request", requestId)
-        val item = createVaultItem(
-            NewVaultItem(request.name, purpose ?: request.purpose, username, password, listOf(request.instanceId)),
-        )
-        val resolved = resolveRequest(requestId, VaultRequestStatus.Fulfilled, item.id)
+        lag()
+        val (request, resolved) = synchronized(lock) {
+            checkVaultText(username, VaultRules.MAX_USERNAME)
+            checkVaultPassword(password)
+            purpose?.let { checkVaultText(it, VaultRules.MAX_PURPOSE) }
+            val request = pendingRequestLocked(requestId)
+            val j = vaultList.indexOfFirst { it.name == request.name }
+            val item = if (j >= 0) {
+                val old = vaultList[j]
+                vaultUsernames[old.id] = username
+                old.copy(
+                    purpose = (purpose ?: request.purpose).trim(),
+                    hasUsername = username.isNotEmpty(),
+                    instanceIds = if (old.instanceIds.isEmpty() || request.instanceId in old.instanceIds) {
+                        old.instanceIds
+                    } else {
+                        old.instanceIds + request.instanceId
+                    },
+                    updatedAtMs = clock(),
+                ).also { vaultList[j] = it }
+            } else {
+                createVaultItemLocked(
+                    NewVaultItem(request.name, purpose ?: request.purpose, username, password, listOf(request.instanceId)),
+                )
+            }
+            request to resolveRequestLocked(requestId, VaultRequestStatus.Fulfilled, item.id)
+        }
         append(request.instanceId, request.runId, EventKinds.VAULT_FULFILLED, buildJsonObject {
             put("request_id", requestId); put("name", request.name)
         })
@@ -1329,7 +1389,10 @@ class MockThinktinService(
 
     override suspend fun declineVaultRequest(requestId: String): VaultRequest {
         lag()
-        val resolved = resolveRequest(requestId, VaultRequestStatus.Declined, null)
+        val resolved = synchronized(lock) {
+            pendingRequestLocked(requestId)
+            resolveRequestLocked(requestId, VaultRequestStatus.Declined, null)
+        }
         append(resolved.instanceId, resolved.runId, EventKinds.VAULT_DECLINED, buildJsonObject { put("request_id", requestId) })
         return resolved
     }
@@ -1358,7 +1421,7 @@ class MockThinktinService(
         private val PRIVATE_KEY = Regex("""-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----""")
 
         /** 保险箱条目名的最大长度（和 client-core 一样）。 */
-        private const val MAX_VAULT_NAME = 64
+        private const val MAX_VAULT_NAME = VaultRules.MAX_NAME
         private val API_KEY = Regex("""\b(sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,})""")
 
         private const val DEVICE_MESSAGE_TTL_MS: Long = 10 * 60_000
