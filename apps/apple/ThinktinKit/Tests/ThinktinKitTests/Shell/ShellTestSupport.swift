@@ -20,6 +20,16 @@ func eventually(_ condition: () -> Bool) async -> Bool {
     return condition()
 }
 
+/// 等到异步条件成立（最多约 5 秒）。
+@MainActor
+func eventuallyAsync(_ condition: () async -> Bool) async -> Bool {
+    for _ in 0..<500 {
+        if await condition() { return true }
+        try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+    return await condition()
+}
+
 /// 收事件流回调（回调在后台线程上）。
 final class StatusCollector: EventListening, Sendable {
     let statuses = Locked<[StreamStatus]>([])

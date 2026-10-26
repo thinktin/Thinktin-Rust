@@ -83,6 +83,11 @@ public final class AppModel {
     private let observed: ObservedClient
     /// 系统通知中心（12.8）：退出登录时清掉已送达的通知，角标跟着收件箱的未读数。nil 不管（测试、预览）。
     private let notifications: (any DeliveredNotifications)?
+    private let widgets: (any WidgetSnapshotSink)?
+    /// 上次写给小组件的（数没变就不重写）。
+    private var lastWidgetSnapshot: WidgetSnapshot?
+    /// 上一次写快照的任务：一个接一个写，后写的不会被先写的盖掉。
+    private var widgetTask: Task<Void, Never>?
     /// 界面语言和服务端、请求语言的同步（12.12）；没传 `preferences` 时为 nil，不同步。
     private let language: LanguageSettingsModel?
     private let selection: InstanceSelectionStore
@@ -109,11 +114,12 @@ public final class AppModel {
     ///   - preferences: 外观与语言的偏好（12.12，App 里是 `SettingsPreferences.shared`）：启动、登录后按它的界面语言
     ///     设请求语言、同步服务端的用户语言。nil 不同步（测试、预览）。
     ///   - notifications: 系统通知中心（12.8，App 里是 `UNUserNotificationCenter`）；nil 不管。
+    ///   - widgets: 主屏小组件的快照（12.20，App 里写 App Group 的文件再刷新小组件）；nil 不管。
     ///   - now: 现在的时间（测试传固定值）。
     public init(
         client: any ClientProtocol, router: Router = Router(), defaults: UserDefaults? = .standard,
         preferences: SettingsPreferences? = nil, notifications: (any DeliveredNotifications)? = nil,
-        now: @escaping () -> Date = Date.init
+        widgets: (any WidgetSnapshotSink)? = nil, now: @escaping () -> Date = Date.init
     ) {
         let (stream, continuation) = AsyncStream.makeStream(of: ClientActivity.self, bufferingPolicy: .unbounded)
         let observed = ObservedClient(client) { activity in continuation.yield(activity) }
@@ -125,6 +131,7 @@ public final class AppModel {
         self.selection = InstanceSelectionStore(defaults: defaults)
         self.onboardingCheck = OnboardingCheck(defaults: defaults)
         self.notifications = notifications
+        self.widgets = widgets
         self.now = now
         self.activityContinuation = continuation
         // 版本太老（11.8，不联网）：第一帧就是升级页，事件流一个都不连。
@@ -173,7 +180,11 @@ public final class AppModel {
         language?.applyAcceptLanguage()
         // 建好之后、启动之前就有调用说过要升级（比如 App 的平台层直接用了被包的客户端）。
         if checkUpgradeRequired() { return }
-        guard phase == .signedIn else { return }
+        guard phase == .signedIn else {
+            // 小组件上可能还是上次登录时的数（登录在别处失效了）。
+            publishWidgetSnapshot()
+            return
+        }
         isStarting = true
         defer { isStarting = false }
         loadCachedState()
@@ -392,12 +403,27 @@ public final class AppModel {
         if router.sheet == nil { router.present(.onboarding) }
     }
 
-    /// App 图标的角标跟着收件箱的未读数（docs/push.md 第 6 节：App 在前台时自己设）。
+    /// App 图标的角标跟着收件箱的未读数（docs/push.md 第 6 节：App 在前台时自己设）；主屏小组件跟着角标（12.20）。
     private func updateAppBadge() {
+        publishWidgetSnapshot()
         guard let notifications, appBadge != badges.inboxUnread else { return }
         let count = badges.inboxUnread
         appBadge = count
         Task { await notifications.setBadge(count) }
+    }
+
+    /// 把角标的数写给小组件（12.20）：登录着时是现在的数，否则是“没登录”。数没变不重写。
+    private func publishWidgetSnapshot() {
+        guard let widgets else { return }
+        let snapshot =
+            phase == .signedIn ? WidgetSnapshot(badges: badges, updatedAt: now()) : .signedOut(at: now())
+        if let last = lastWidgetSnapshot, last.sameCounts(as: snapshot) { return }
+        lastWidgetSnapshot = snapshot
+        let previous = widgetTask
+        widgetTask = Task {
+            await previous?.value
+            await widgets.publish(snapshot)
+        }
     }
 
     /// 账号解冻：冻结页上就重新检查（解冻了回到正常）；已经在正常状态就确认一下账号，让页面重新订阅，再刷新。
@@ -515,6 +541,7 @@ public final class AppModel {
             instances = []
             activity = [:]
             badges = .zero
+            publishWidgetSnapshot()
             hasLoadedInstances = false
             refreshError = nil
             accountCheckError = nil

@@ -101,13 +101,3 @@ struct PushHandlingTests {
         #expect(PushNotificationAction.reject.title(.chinese) == "拒绝")
     }
 }
-
-/// 等到异步条件成立（最多约 5 秒）。
-@MainActor
-private func eventuallyAsync(_ condition: () async -> Bool) async -> Bool {
-    for _ in 0..<500 {
-        if await condition() { return true }
-        try? await Task.sleep(nanoseconds: 10_000_000)
-    }
-    return await condition()
-}
