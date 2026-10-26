@@ -63,6 +63,10 @@ import cn.thinktin.app.ui.run.RunScreen
 import cn.thinktin.app.ui.settings.SettingsScreen
 import cn.thinktin.app.ui.privacy.PrivacyInfoScreen
 import cn.thinktin.app.update.UpdateScreen
+import cn.thinktin.app.ui.vault.VaultEditorScreen
+import cn.thinktin.app.ui.vault.VaultItemScreen
+import cn.thinktin.app.ui.vault.VaultRequestScreen
+import cn.thinktin.app.ui.vault.VaultScreen
 import cn.thinktin.app.ui.settings.licenses.LicenseTextScreen
 import cn.thinktin.app.ui.settings.licenses.LicensesScreen
 import cn.thinktin.app.ui.teams.TeamDetailScreen
@@ -461,7 +465,35 @@ private fun MainNavHost(navController: NavHostController, onOpenDrawer: () -> Un
             Routes.VAULT,
             arguments = listOf(optionalStringArg(Routes.ARG_REQUEST_ID)),
             deepLinks = listOf(navDeepLink { uriPattern = DeepLinks.VAULT_REQUEST }),
-        ) { Placeholder(Page.Vault, it, Routes.ARG_REQUEST_ID) }
+        ) { entry ->
+            val requestId = entry.arguments?.getString(Routes.ARG_REQUEST_ID)
+            if (requestId.isNullOrEmpty()) {
+                VaultScreen(
+                    onBack = back,
+                    onOpenItem = { navController.navigate(Routes.vaultItem(it)) },
+                    onOpenRequest = { navController.navigate(Routes.vault(it)) },
+                    onNewItem = { navController.navigate(Routes.VAULT_NEW) },
+                )
+            } else {
+                VaultRequestScreen(
+                    requestId = requestId,
+                    onBack = back,
+                    onOpenItem = { navController.navigate(Routes.vaultItem(it)) },
+                    onOpenRun = { navController.navigate(Routes.run(it)) },
+                )
+            }
+        }
+        composable(Routes.VAULT_ITEM, arguments = listOf(stringArg(Routes.ARG_ITEM_ID))) { entry ->
+            VaultItemScreen(
+                itemId = entry.arguments?.getString(Routes.ARG_ITEM_ID).orEmpty(),
+                onBack = back,
+                onEdit = { navController.navigate(Routes.vaultEdit(it)) },
+            )
+        }
+        composable(Routes.VAULT_NEW) { VaultEditorScreen(itemId = null, onBack = back, onSaved = { back() }) }
+        composable(Routes.VAULT_EDIT, arguments = listOf(stringArg(Routes.ARG_ITEM_ID))) { entry ->
+            VaultEditorScreen(itemId = entry.arguments?.getString(Routes.ARG_ITEM_ID).orEmpty(), onBack = back, onSaved = { back() })
+        }
         composable(Routes.DEVICES, arguments = listOf(optionalStringArg(Routes.ARG_ACTION))) { entry ->
             DevicesScreen(
                 action = DevicesAction.fromWire(entry.arguments?.getString(Routes.ARG_ACTION)),
@@ -481,6 +513,7 @@ private fun MainNavHost(navController: NavHostController, onOpenDrawer: () -> Un
                 onOpenLicenses = { navController.navigate(Routes.LICENSES) },
                 onOpenPrivacyInfo = { navController.navigate(Routes.PRIVACY_INFO) },
                 onOpenUpdate = { navController.navigate(Routes.UPDATE) },
+                onOpenVault = { navController.navigate(Routes.vault()) },
             )
         }
         composable(Routes.PRIVACY_INFO) { PrivacyInfoScreen(onBack = back) }

@@ -22,6 +22,7 @@ import androidx.compose.material.icons.outlined.Policy
 import androidx.compose.material.icons.outlined.PrivacyTip
 import androidx.compose.material.icons.outlined.SystemUpdate
 import androidx.compose.material.icons.outlined.Key
+import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Phone
 import androidx.compose.material.icons.outlined.StopCircle
 import androidx.compose.material3.ListItem
@@ -160,6 +161,7 @@ fun SettingsScreen(
     onOpenLicenses: () -> Unit = {},
     onOpenPrivacyInfo: () -> Unit = {},
     onOpenUpdate: () -> Unit = {},
+    onOpenVault: () -> Unit = {},
 ) {
     val container = LocalAppContainer.current
     val context = LocalContext.current
@@ -306,6 +308,13 @@ fun SettingsScreen(
                 title = stringResource(R.string.page_usage),
                 value = stringResource(R.string.settings_usage_summary),
                 onClick = onOpenUsage,
+            )
+            // 密码保险箱（13.14）：agent 代你登录网站用的账号密码。
+            AccountRow(
+                icon = Icons.Outlined.Lock,
+                title = stringResource(R.string.page_vault),
+                value = stringResource(R.string.settings_vault_summary),
+                onClick = onOpenVault,
             )
             Section(R.string.settings_about)
             AccountRow(

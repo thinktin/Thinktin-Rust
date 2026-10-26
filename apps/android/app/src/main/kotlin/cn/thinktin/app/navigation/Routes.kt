@@ -62,8 +62,13 @@ object Routes {
     /** 用量看板（13.4）。 */
     const val USAGE = "usage"
 
-    /** 密码保险箱；requestId 可选（填写请求）。 */
+    /** 密码保险箱；requestId 可选（填写请求：推送、收件箱、深链进来直接显示请求页）。 */
     const val VAULT = "vault?requestId={requestId}"
+
+    /** 保险箱条目、新建、修改（13.14）。 */
+    const val VAULT_ITEM = "vault/item/{itemId}"
+    const val VAULT_NEW = "vault/new"
+    const val VAULT_EDIT = "vault/item/{itemId}/edit"
     /** 设备与账号；action 可选：从设置页直接打开某个操作（见 DevicesAction）。 */
     const val DEVICES = "devices?action={action}"
     const val SETTINGS = "settings"
@@ -118,6 +123,10 @@ object Routes {
     fun approval(approvalId: String) = "approval/${Uri.encode(approvalId)}"
     fun inbox(itemId: String? = null) = if (itemId == null) "inbox" else "inbox?itemId=${Uri.encode(itemId)}"
     fun devices(action: String? = null) = if (action == null) "devices" else "devices?action=${Uri.encode(action)}"
+    fun vaultItem(itemId: String) = "vault/item/${Uri.encode(itemId)}"
+
+    fun vaultEdit(itemId: String) = "vault/item/${Uri.encode(itemId)}/edit"
+
     fun vault(requestId: String? = null) = if (requestId == null) "vault" else "vault?requestId=${Uri.encode(requestId)}"
     fun licenseText(path: String, title: String) = "licenses/text?path=${Uri.encode(path)}&title=${Uri.encode(title)}"
 
