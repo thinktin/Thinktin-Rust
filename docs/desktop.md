@@ -73,7 +73,7 @@ macOS App 的后台进程里跑一个 `Desktop`：
 | `DesktopTokens` | 这台电脑的访问令牌（App 用 client-core 的 `ThinktinClient` 管会话） |
 | `NativeTools` | 截图、键鼠、打开应用（14.3、14.4）；文件和命令由 Rust 的 `FileTools` 做，App 报的同名工具不会覆盖它们 |
 | `PairingSigner` | 电脑的配对密钥（钥匙串 / Secure Enclave） |
-| `DesktopObserver` | 连接状态、配对进度、停下的原因（`Requested`、`Refused`、`Replaced`）；回调在后台线程上 |
+| `DesktopObserver` | 连接状态、配对进度、停下的原因（`Requested`、`Refused`、`Replaced`）、正在执行的工具（`on_activity`，菜单栏的“正在被控制”）；回调在后台线程上 |
 
 打包：`desktop` 编成静态库（里面也有 client-core），绑定按库生成两份（`ThinktinCore.swift`、`ThinktinDesktop.swift`）。
 desktop 的绑定直接用 client-core 的类型，所以两份放进同一个 Swift 模块；C 头文件放在一个模块映射里的两个模块
@@ -88,4 +88,4 @@ desktop 的绑定直接用 client-core 的类型，所以两份放进同一个 S
 - ~~手机的配对和审批界面（12.9、13.9）~~：已做（iOS、安卓）：扫码配对、收到 `computer_approval` 推送或进前台时拉
   `GET /v1/devices/current/messages`，显示请求、签批准或拒绝（签的是显示的说明和参数的摘要），发回电脑；签发、吊销能力令牌。
 - 电脑发的说明现在是英文的（`desktop` 按工具拼的），随 App 的语言设置本地化（14.5）。
-- 正在执行工具时的回调（`DesktopObserver` 加“开始 / 结束调用”），菜单栏按它显示“正在被控制”（现在按“配好手机、连着中继”）。
+
