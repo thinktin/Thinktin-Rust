@@ -15,6 +15,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowDropDown
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.LinearProgressIndicator
@@ -45,9 +46,13 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -62,8 +67,11 @@ import cn.thinktin.app.R
 import cn.thinktin.app.navigation.Routes
 import cn.thinktin.app.ui.common.LocalAppContainer
 import cn.thinktin.app.ui.common.LocalThinktinService
+import cn.thinktin.app.ui.common.ConfirmDialog
 import cn.thinktin.app.ui.common.UiText
 import cn.thinktin.app.ui.common.asString
+import cn.thinktin.app.ui.settings.PRIVACY_POLICY_URL
+import cn.thinktin.app.ui.settings.TERMS_URL
 import cn.thinktin.app.ui.status.LoginFrozenScreen
 import cn.thinktin.design.component.PrimaryButton
 import cn.thinktin.design.component.SecondaryButton
@@ -151,6 +159,10 @@ private fun PhoneScreen(
     onUseDemo: () -> Unit,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    // 同意协议的勾选框（13.11）：默认不勾；没勾就点“获取验证码”先问一句（收集手机号之前必须先同意）。
+    var agreed by rememberSaveable { mutableStateOf(false) }
+    var askAgree by rememberSaveable { mutableStateOf(false) }
+    val request = { if (agreed) viewModel.requestCode() else askAgree = true }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbar) },
@@ -206,7 +218,7 @@ private fun PhoneScreen(
                         }
                     },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone, imeAction = ImeAction.Next),
-                    keyboardActions = KeyboardActions(onNext = { viewModel.requestCode() }),
+                    keyboardActions = KeyboardActions(onNext = { request() }),
                     modifier = Modifier
                         .weight(1f)
                         .semantics { contentDescription = phoneLabel },
@@ -214,20 +226,12 @@ private fun PhoneScreen(
             }
             PrimaryButton(
                 text = stringResource(R.string.login_get_code),
-                onClick = viewModel::requestCode,
+                onClick = request,
                 enabled = state.canRequestCode,
                 loading = state.sending,
                 modifier = Modifier.fillMaxWidth(),
             )
-            Text(
-                text = stringResource(R.string.login_agreement),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp),
-            )
+            AgreementRow(agreed = agreed, onChange = { agreed = it })
             // 演示模式只在 debug 包里提供（第 7 节）：release 进去了就回不到真实账号。
             if (demoAllowed) {
                 TextButton(onClick = onUseDemo, modifier = Modifier.align(Alignment.CenterHorizontally)) {
@@ -235,6 +239,44 @@ private fun PhoneScreen(
                 }
             }
         }
+    }
+    if (askAgree) {
+        ConfirmDialog(
+            title = stringResource(R.string.login_agree_required_title),
+            text = stringResource(R.string.login_agree_required_message),
+            confirm = stringResource(R.string.login_agree_and_continue),
+            onConfirm = {
+                askAgree = false
+                agreed = true
+                viewModel.requestCode()
+            },
+            onDismiss = { askAgree = false },
+        )
+    }
+}
+
+/** “我已阅读并同意《用户协议》和《隐私政策》”：勾选框加两个链接（点链接在浏览器里打开，不会顺带勾上）。 */
+@Composable
+private fun AgreementRow(agreed: Boolean, onChange: (Boolean) -> Unit) {
+    val linkStyle = TextLinkStyles(SpanStyle(color = MaterialTheme.colorScheme.primary))
+    val text = buildAnnotatedString {
+        append(stringResource(R.string.login_agree_prefix))
+        withLink(LinkAnnotation.Url(TERMS_URL, linkStyle)) { append(stringResource(R.string.login_agree_terms)) }
+        append(stringResource(R.string.login_agree_and))
+        withLink(LinkAnnotation.Url(PRIVACY_POLICY_URL, linkStyle)) { append(stringResource(R.string.login_agree_privacy)) }
+    }
+    val label = stringResource(R.string.login_agree_a11y)
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Checkbox(
+            checked = agreed,
+            onCheckedChange = onChange,
+            modifier = Modifier.semantics { contentDescription = label },
+        )
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

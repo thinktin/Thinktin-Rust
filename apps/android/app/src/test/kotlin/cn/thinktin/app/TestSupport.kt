@@ -164,13 +164,20 @@ fun testContainer(
     languageTags: ((AppLanguage) -> List<String>)? = null,
     systemLanguage: String = "zh",
     approvalGate: ApprovalGate? = null,
+    /** 已经同意过隐私政策（默认是：大多数测试不看首次启动的隐私政策页）。 */
+    privacyAccepted: Boolean = true,
 ): AppContainer {
     val store = PreferenceDataStoreFactory.create(
         scope = CoroutineScope(Dispatchers.IO + SupervisorJob()),
         produceFile = { File(context.filesDir, "test-settings-${UUID.randomUUID()}.preferences_pb") },
     )
     return AppContainer(
-        settingsRepository = AppSettingsRepository(store, demoDefault = demoDefault, demoAllowed = demoAllowed),
+        settingsRepository = AppSettingsRepository(
+            store,
+            demoDefault = demoDefault,
+            demoAllowed = demoAllowed,
+            privacyPreaccepted = privacyAccepted,
+        ),
         clock = DemoTestApp.FIXED_CLOCK,
         createCore = createCore,
         createMock = { MockThinktinService(clock = { DemoTestApp.FIXED_CLOCK.millis() }) },

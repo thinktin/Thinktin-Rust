@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import cn.thinktin.design.theme.Appearance
 import kotlinx.coroutines.flow.Flow
@@ -32,7 +33,14 @@ data class AppSettings(
     val appearance: Appearance = Appearance.System,
     /** 演示模式：用 Mock 数据，不联网。 */
     val demoMode: Boolean,
+    /** 同意了现在这版隐私政策（[PrivacyPolicy.VERSION]，13.11）。没同意之前只显示首次启动的隐私政策页。 */
+    val privacyAccepted: Boolean = true,
 )
+
+/** 隐私政策的版本（13.11）：政策有实质改动时加一，用户下次打开 App 要重新同意。 */
+object PrivacyPolicy {
+    const val VERSION = 1
+}
 
 class AppSettingsRepository(
     private val store: DataStore<Preferences>,
@@ -43,6 +51,8 @@ class AppSettingsRepository(
      * 覆盖安装成 release）也忽略，release 用户不会困在演示数据里。
      */
     val demoAllowed: Boolean = true,
+    /** 没存过同意记录时当成已同意（测试用，正式包是假：第一次打开先同意隐私政策）。 */
+    private val privacyPreaccepted: Boolean = false,
 ) {
     val settings: Flow<AppSettings> = store.data
         .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
@@ -51,6 +61,8 @@ class AppSettingsRepository(
                 language = prefs[KEY_LANGUAGE].toEnum(AppLanguage.System),
                 appearance = prefs[KEY_APPEARANCE].toEnum(Appearance.System),
                 demoMode = demoAllowed && (prefs[KEY_DEMO] ?: demoDefault),
+                privacyAccepted = (prefs[KEY_PRIVACY] ?: if (privacyPreaccepted) PrivacyPolicy.VERSION else 0) >=
+                    PrivacyPolicy.VERSION,
             )
         }
 
@@ -67,7 +79,18 @@ class AppSettingsRepository(
         store.edit { it[KEY_DEMO] = enabled }
     }
 
+    /** 首次启动（或政策更新后）同意了隐私政策。 */
+    suspend fun acceptPrivacy() {
+        store.edit { it[KEY_PRIVACY] = PrivacyPolicy.VERSION }
+    }
+
+    /** 撤回同意（设置 → 个人信息与权限）：下次显示首次启动的隐私政策页。 */
+    suspend fun withdrawPrivacy() {
+        store.edit { it[KEY_PRIVACY] = 0 }
+    }
+
     private companion object {
+        val KEY_PRIVACY = intPreferencesKey("privacy_version")
         val KEY_LANGUAGE = stringPreferencesKey("language")
         val KEY_APPEARANCE = stringPreferencesKey("appearance")
         val KEY_DEMO = booleanPreferencesKey("demo_mode")

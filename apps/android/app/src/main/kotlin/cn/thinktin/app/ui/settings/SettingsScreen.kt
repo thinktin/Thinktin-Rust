@@ -19,6 +19,7 @@ import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Gavel
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Policy
+import androidx.compose.material.icons.outlined.PrivacyTip
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Phone
 import androidx.compose.material.icons.outlined.StopCircle
@@ -87,7 +88,7 @@ data class SettingsUiState(
 
 /**
  * 设置（13.2 起，13.13 补全）：账号（手机号、昵称）、安全（设备与账号、下线其他设备、全部停止）、语言（跟随系统 / 中文 /
- * English）、外观、通知（是否允许，点了去系统设置）、演示模式（仅调试版）、模型、关于（隐私政策、用户协议、开源许可、版本）、
+ * English）、外观、通知（是否允许，点了去系统设置）、演示模式（仅调试版）、模型、关于（隐私政策、用户协议、个人信息与权限、开源许可、版本）、
  * 危险操作（退出登录、注销账号）。
  * 下线其他设备、全部停止在“设备与账号”页里做（[DevicesAction]），改昵称、注销账号是单独的页面，这里只是入口；
  * 退出登录直接在这里确认。
@@ -156,6 +157,7 @@ fun SettingsScreen(
     onOpenKeys: () -> Unit = {},
     onOpenUsage: () -> Unit = {},
     onOpenLicenses: () -> Unit = {},
+    onOpenPrivacyInfo: () -> Unit = {},
 ) {
     val container = LocalAppContainer.current
     val context = LocalContext.current
@@ -317,6 +319,12 @@ fun SettingsScreen(
                 onClick = { openUrl(context, TERMS_URL) },
             )
             AccountRow(
+                icon = Icons.Outlined.PrivacyTip,
+                title = stringResource(R.string.page_privacy_info),
+                value = stringResource(R.string.settings_privacy_info_summary),
+                onClick = onOpenPrivacyInfo,
+            )
+            AccountRow(
                 icon = Icons.Outlined.Description,
                 title = stringResource(R.string.page_licenses),
                 value = stringResource(R.string.settings_licenses_summary),
@@ -363,7 +371,7 @@ fun SettingsScreen(
 const val PRIVACY_POLICY_URL = "https://thinktin.cn/legal/privacy"
 const val TERMS_URL = "https://thinktin.cn/legal/terms"
 
-private fun openUrl(context: android.content.Context, url: String) {
+internal fun openUrl(context: android.content.Context, url: String) {
     runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))) }
 }
 

@@ -1,5 +1,8 @@
 package cn.thinktin.app.ui
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -26,6 +29,7 @@ import cn.thinktin.app.settings.AppSettings
 import cn.thinktin.app.ui.common.LocalAppContainer
 import cn.thinktin.app.ui.common.LocalThinktinService
 import cn.thinktin.app.ui.login.LoginFlow
+import cn.thinktin.app.ui.privacy.PrivacyConsentScreen
 import cn.thinktin.app.ui.status.CoreUnavailableScreen
 import cn.thinktin.app.ui.status.FrozenAccountScreen
 import cn.thinktin.app.ui.status.LoadingScreen
@@ -38,7 +42,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 /**
- * 根界面：按设置选服务（演示 / 真实），按登录状态显示登录流、冻结页或主界面；
+ * 根界面：没同意隐私政策时只有隐私政策页（13.11）；按设置选服务（演示 / 真实），按登录状态显示登录流、冻结页或主界面；
  * 服务端说版本太老（[ThinktinService.upgradeState]）时什么都不显示，只有升级页。
  * 真实服务在后台创建：创建中显示加载，失败显示“核心库不可用”页。
  * 切换演示模式会换服务，主界面整个重建（新的 NavController 和 ViewModel）。
@@ -48,6 +52,12 @@ fun AppRoot(container: AppContainer, settings: AppSettings?, deepLinks: DeepLink
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         // 设置还没读出来：只显示背景（和窗口背景同色），通常只有一帧。
         if (settings == null) return@Surface
+        // 首次启动（或隐私政策改版、撤回同意后）：同意之前什么都不建、不联网（13.11）。
+        if (!settings.privacyAccepted) {
+            val context = LocalContext.current
+            PrivacyConsentScreen(onAccept = container::launchAcceptPrivacy, onExit = { context.findActivity()?.finishAffinity() })
+            return@Surface
+        }
         val scope = rememberCoroutineScope()
         val serviceFlow: StateFlow<ServiceState> = remember(settings.demoMode) {
             if (settings.demoMode) MutableStateFlow(ServiceState.Ready(container.demoService())) else container.coreService()
@@ -113,4 +123,11 @@ private fun PushSync(container: AppContainer, service: ThinktinService, auth: Au
             container.push.sync(service)
         }
     }
+}
+
+/** Compose 里的 context 可能是包了一层的（语言、主题）：往里找到 Activity。 */
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }

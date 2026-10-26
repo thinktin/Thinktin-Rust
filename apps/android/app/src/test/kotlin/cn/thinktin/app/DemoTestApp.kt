@@ -23,6 +23,7 @@ class DemoTestApp : ThinktinApp() {
         forceDemo = true,
         clock = FIXED_CLOCK,
         settingsName = "settings-${UUID.randomUUID()}",
+        privacyPreaccepted = true,
     )
 
     companion object {

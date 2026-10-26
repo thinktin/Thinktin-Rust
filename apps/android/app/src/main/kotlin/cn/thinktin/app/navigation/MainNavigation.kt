@@ -60,6 +60,7 @@ import cn.thinktin.app.ui.plans.PlansScreen
 import cn.thinktin.app.ui.routes.ModelRoutesScreen
 import cn.thinktin.app.ui.run.RunScreen
 import cn.thinktin.app.ui.settings.SettingsScreen
+import cn.thinktin.app.ui.privacy.PrivacyInfoScreen
 import cn.thinktin.app.ui.settings.licenses.LicenseTextScreen
 import cn.thinktin.app.ui.settings.licenses.LicensesScreen
 import cn.thinktin.app.ui.teams.TeamDetailScreen
@@ -476,8 +477,10 @@ private fun MainNavHost(navController: NavHostController, onOpenDrawer: () -> Un
                 onOpenKeys = { navController.navigate(Routes.KEYS) },
                 onOpenUsage = { navController.navigate(Routes.USAGE) },
                 onOpenLicenses = { navController.navigate(Routes.LICENSES) },
+                onOpenPrivacyInfo = { navController.navigate(Routes.PRIVACY_INFO) },
             )
         }
+        composable(Routes.PRIVACY_INFO) { PrivacyInfoScreen(onBack = back) }
         composable(Routes.LICENSES) {
             LicensesScreen(onBack = back, onOpenText = { path, title -> navController.navigate(Routes.licenseText(path, title)) })
         }

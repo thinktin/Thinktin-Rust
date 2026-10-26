@@ -15,6 +15,9 @@ interface PushProvider {
     /** 这个构建配了 SDK 的 key。 */
     val configured: Boolean
 
+    /** 隐私清单里要披露的这个 SDK（13.11，设置 → 个人信息与权限）；没接 SDK 时为 null。 */
+    val disclosure: cn.thinktin.app.ui.privacy.ThirdPartySdk? get() = null
+
     /** Application.onCreate：用户同意之前不让 SDK 收集信息。 */
     fun prepare(context: Context)
 

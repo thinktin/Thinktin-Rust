@@ -156,6 +156,11 @@ class AppContainer(
         }
     }
 
+    /** 首次启动的隐私政策页点了“同意”（13.11）：在容器的作用域里写设置。 */
+    fun launchAcceptPrivacy() {
+        scope.launch { settingsRepository.acceptPrivacy() }
+    }
+
     /** 切换演示模式（登录页、核心库不可用页的“使用演示模式”）：在容器的作用域里写设置，不受页面销毁影响。 */
     fun launchSetDemoMode(enabled: Boolean) {
         scope.launch { settingsRepository.setDemoMode(enabled) }
@@ -238,6 +243,8 @@ class AppContainer(
             clock: Clock = SystemZoneClock,
             /** DataStore 的文件名（测试里每个 Application 用自己的，同一进程里不能有两个 DataStore 开同一个文件）。 */
             settingsName: String = "settings",
+            /** 测试用：没存过同意记录时当成已同意隐私政策（不显示首次启动的隐私政策页）。 */
+            privacyPreaccepted: Boolean = false,
         ): AppContainer {
             val app = context.applicationContext
             val store = PreferenceDataStoreFactory.create(
@@ -249,6 +256,7 @@ class AppContainer(
                     store,
                     demoDefault = BuildConfig.DEMO_DEFAULT,
                     demoAllowed = BuildConfig.DEBUG,
+                    privacyPreaccepted = privacyPreaccepted,
                 ),
                 clock = clock,
                 createCore = { ClientFactory.createService(app, BuildConfig.BASE_URL, tls) },

@@ -78,11 +78,17 @@ class AuthUiTest {
     private fun enterPhoneAndRequestCode() {
         waitFor(phoneField)
         compose.onNode(hasText("欢迎使用 ThinkTin")).assertIsDisplayed()
-        compose.onNode(hasText("继续即表示你已阅读并同意《用户协议》和《隐私政策》。")).assertIsDisplayed()
+        compose.onNode(hasText("我已阅读并同意《用户协议》和《隐私政策》")).assertIsDisplayed()
         compose.onNode(hasContentDescription("国家或地区：中国大陆 +86")).assertIsDisplayed()
         compose.onNode(phoneField).performTextInput("13800138000")
+        agree()
         compose.onNode(hasText("获取验证码")).performClick()
         waitFor(hasText("6 位验证码已发送至 +86 13800138000"))
+    }
+
+    /** 勾上“同意用户协议和隐私政策”（默认不勾，13.11）。 */
+    private fun agree() {
+        compose.onNode(hasContentDescription("同意用户协议和隐私政策")).performClick()
     }
 
     @Test
@@ -119,11 +125,33 @@ class AuthUiTest {
     }
 
     @Test
+    fun requestingCodeWithoutAgreementAsksFirst() {
+        val fake = FakeThinktinService(initial = AuthState.SignedOut)
+        launch(fake)
+        waitFor(phoneField)
+        compose.onNode(phoneField).performTextInput("13800138000")
+        compose.onNode(hasText("获取验证码")).performClick()
+        waitFor(hasText("请先同意用户协议和隐私政策"))
+        assertEquals(emptyList<String>(), fake.sentCodes)
+        // 取消：不发码
+        compose.onNode(hasText("取消")).performClick()
+        waitGone(hasText("请先同意用户协议和隐私政策"))
+        assertEquals(emptyList<String>(), fake.sentCodes)
+        // 同意并继续：勾上并发码
+        compose.onNode(hasText("获取验证码")).performClick()
+        waitFor(hasText("同意并继续"))
+        compose.onNode(hasText("同意并继续")).performClick()
+        waitFor(hasText("6 位验证码已发送至 +86 13800138000"))
+        assertEquals(listOf("+8613800138000"), fake.sentCodes)
+    }
+
+    @Test
     fun invalidPhoneFormatShowsFieldError() {
         val fake = FakeThinktinService(initial = AuthState.SignedOut)
         launch(fake)
         waitFor(phoneField)
         compose.onNode(phoneField).performTextInput("12345")
+        agree()
         compose.onNode(hasText("获取验证码")).performClick()
         waitFor(hasText("手机号格式不对，请检查国家或地区和号码"))
         assertEquals(emptyList<String>(), fake.sentCodes)
@@ -136,6 +164,7 @@ class AuthUiTest {
         launch(fake)
         waitFor(phoneField)
         compose.onNode(phoneField).performTextInput("13800138000")
+        agree()
         compose.onNode(hasText("获取验证码")).performClick()
         waitFor(hasText("操作太频繁，请", substring = true))
         compose.onNode(hasText("秒后再试", substring = true)).assertIsDisplayed()
