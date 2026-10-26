@@ -14,10 +14,12 @@ aliyun = { path = "../aliyun" }
 anyhow.workspace = true
 auth = { path = "../auth" }
 axum.workspace = true
+base64.workspace = true
 chrono.workspace = true
 clap.workspace = true
 control = { path = "../control" }
 gateway = { path = "../gateway" }
+getrandom.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
 keyvault = { path = "../keyvault" }

@@ -12,6 +12,7 @@ ThinkTin 平台：托管多个开源 agent，用户领养后常驻云端、按�
 - [agent 的沙箱模板](docs/templates.md)：清单里锁定的包、模板镜像的构建、断网冒烟、上架新版本的步骤
 - [第三方许可证](docs/licenses.md)：镜像和 App 里带的许可证原文和清单、许可证策略和 CI 检查、留给法务复核的问题
 - [发布流程](docs/release.md)：版本和镜像、数据库迁移的规则和检查、预发和生产的上线步骤（灰度、全量）、密钥、回滚
+- [部署环境准备清单](docs/deploy-checklist.md)：要建的云资源和账号、生成密钥（`thinktin-server gen-secrets`）、要填的配置、第一次上线的顺序
 - [工作分解结构（WBS）](docs/wbs.md) · [CSV](docs/wbs.csv)
 - [架构方案 v2](docs/architecture-v2.md) · [讨论记录 2026-10-14](docs/discussion-2026-10-14.md)
 

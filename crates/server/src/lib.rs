@@ -10,6 +10,7 @@ mod http;
 mod lifecycle;
 mod listen;
 pub mod observability;
+pub mod secrets;
 mod workers;
 
 use std::future::Future;

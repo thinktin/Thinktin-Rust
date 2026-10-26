@@ -26,6 +26,16 @@ enum Command {
     Migrate,
     /// 检查配置并打印生效的值（不打印数据库连接串和密钥；打印访问令牌的公钥，配设备中继用）
     CheckConfig,
+    /// 给一个新环境生成密钥（访问令牌、沙箱令牌的签名种子，验证码密钥）和对应的公钥，打印出来就退出。
+    /// 不读配置、不连数据库；密钥只显示这一次（docs/deploy-checklist.md 第 3 节）。
+    GenSecrets {
+        /// 访问令牌的密钥编号（和 server.toml 的 `api.access_token_kid` 一致）
+        #[arg(long, default_value = "a1")]
+        access_kid: String,
+        /// 沙箱令牌的密钥编号（和 server.toml 的 `sandbox.token_kid` 一致）
+        #[arg(long, default_value = "k1")]
+        sandbox_kid: String,
+    },
     /// 运维操作：冻结、解冻、查看账号（冻结和解冻记审计、通知用户）
     Admin {
         #[command(subcommand)]
@@ -87,6 +97,13 @@ enum AdminCommand {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    if let Some(Command::GenSecrets {
+        access_kid,
+        sandbox_kid,
+    }) = &cli.command
+    {
+        return gen_secrets(access_kid, sandbox_kid);
+    }
     let cfg = Config::load(cli.config.as_deref(), &ProcessEnv)?;
     init_logging(&cfg);
     match cli.command.unwrap_or(Command::Serve) {
@@ -144,6 +161,8 @@ async fn main() -> anyhow::Result<()> {
             }
             Ok(())
         }
+        // 在读配置之前就处理了。
+        Command::GenSecrets { .. } => Ok(()),
         Command::Admin { action } => {
             let db = store::Db::connect(cfg.database_url(), 2)
                 .await
@@ -174,6 +193,13 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     }
+}
+
+/// `gen-secrets`：生成一套新密钥打印出来（server::secrets）。
+fn gen_secrets(access_kid: &str, sandbox_kid: &str) -> anyhow::Result<()> {
+    let secrets = server::secrets::generate(access_kid, sandbox_kid)?;
+    print!("{}", server::secrets::render(&secrets));
+    Ok(())
 }
 
 fn init_logging(cfg: &Config) {

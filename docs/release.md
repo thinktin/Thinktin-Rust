@@ -67,7 +67,8 @@ CREATE ROLE thinktin_relay_login LOGIN PASSWORD '…';    -- 设备中继
 GRANT thinktin_relay TO thinktin_relay_login;
 ```
 
-登录账号要继承角色的权限（默认就是 `INHERIT`）：启动核对读 `_sqlx_migrations`，权限来自角色（迁移 0016）。
+登录账号要继承角色的权限（默认就是 `INHERIT`）：启动核对读 `_sqlx_migrations`，权限来自角色（迁移 0016）。托管数据库（RDS）的属主账号通常建不了 `BYPASSRLS` 的角色：用高权限账号先把四个角色建好，迁移遇到已有的会跳过
+（[部署环境准备清单](deploy-checklist.md) 第 3 节）。
 
 ## 4. 上线步骤
 
@@ -115,7 +116,8 @@ kubectl -n thinktin-staging rollout status deploy/thinktin-api deploy/thinktin-w
 （CI 也跑）确认这一版能解析、按两种角色都通过校验。模型网关和中继要的公钥在 overlay 的 ConfigMap 里
 （不是密钥）：沙箱令牌的公钥（`llm-gw keygen` 生成密钥时打印）、访问令牌的公钥（`thinktin-server check-config` 打印）。
 
-密钥由运维在每个命名空间里建 Secret（键就是环境变量名）：
+密钥由运维在每个命名空间里建 Secret（键就是环境变量名）。签名种子、验证码密钥、数据库密码和对应的公钥用
+`thinktin-server gen-secrets` 生成（每个环境一套）：
 
 | Secret | 键 | 给谁 |
 |---|---|---|
