@@ -64,8 +64,10 @@ P1 后端核心（M1–M9）和 P2 里能在代码层面完成的包都做完了
 - 安卓 13.13 设置、多语言与开源许可（`c2f3b66`）：语言（AppCompat 的应用语言）、通知、关于、开源许可页。app 测试 301 个。
 - iOS 12.17 引导：五步清单、换新机检查、登录后才注册 APNs、通知权限在引导最后一步问。876 个测试。
 
+- 安卓 13.7 团队与流水线：团队、模板、团队编辑、计划编辑页里的流水线步骤（本地 DAG 规则同服务端）。app 测试 308 个。
+
 进行中：
-- 接下来：安卓 13.7 团队与流水线、iOS 12.7 团队与流水线（两个都大），之后安卓 13.11 / 13.12、iOS 12.13 / 12.10 等。
+- iOS 12.7 团队与流水线（2026-10-26 开始）：团队、模板、团队编辑、流水线编辑器、运行树补停止和等待提示。之后安卓 13.11 / 13.12、iOS 12.13 / 12.10 等。
 
 环境（容器回收后要重装）：Swift 6.2 装在 `/opt/swift`（swift.org 的包，验签）；Android SDK 在 `/opt/android-sdk`（cmdline-tools、platform 35、build-tools 35.0.0，不用 NDK）；`cargo build -p client-core --lib` 出本机库，`tools/client-core/build-linux-swift.sh target/linux` 出 Linux 版 Swift 包。Gradle 直连 Maven Central 没被限流。Gradle 和 Swift 一起跑时 Robolectric 偶尔超时，分开跑。
 
