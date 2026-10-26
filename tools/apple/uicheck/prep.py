@@ -16,8 +16,11 @@ app = os.path.join(root, "..")
 os.makedirs(os.path.join(gen, "Thinktin"))
 for d in ["App", "Platform", "Intents"]:
     os.symlink(os.path.join(app, "Thinktin", d), os.path.join(gen, "Thinktin", d))
-# 小组件扩展（12.20）。
-os.symlink(os.path.join(app, "ThinktinWidgets"), os.path.join(gen, "ThinktinWidgets"))
+# 小组件扩展（12.20、12.10）；App 和扩展共用的实时活动属性（Shared/）两边都接上，和 project.yml 一样。
+os.makedirs(os.path.join(gen, "ThinktinWidgets"))
+os.symlink(os.path.join(app, "ThinktinWidgets"), os.path.join(gen, "ThinktinWidgets", "Widgets"))
+for target in ["Thinktin", "ThinktinWidgets"]:
+    os.symlink(os.path.join(app, "Shared"), os.path.join(gen, target, "Shared"))
 os.symlink(os.path.join(app, "Tests/ThinktinTests"), os.path.join(gen, "ThinktinTests"))
 counter = [0]
 def transform(text):

@@ -16,6 +16,8 @@ struct AppSmokeTests {
         // 推送不带 content-available（docs/push.md 第 3 节），用不上后台模式（12.8 去掉了）。
         #expect(info["UIBackgroundModes"] == nil)
         #expect(info["NSFaceIDUsageDescription"] as? String != nil)
+        // 运行的实时活动（12.10）。
+        #expect(info["NSSupportsLiveActivities"] as? Bool == true)
         // 构建设置 THINKTIN_API_BASE_URL 展开进来了，解析出来是 https 的地址。
         let raw = try #require(info[AppConfiguration.baseURLInfoKey] as? String)
         #expect(!raw.contains("$("))

@@ -43,6 +43,8 @@ targets:
     platform: iOS
     sources:
       - path: Thinktin
+      # 和小组件扩展共用的实时活动属性（12.10，`RunActivityAttributes`）。
+      - path: Shared
     dependencies:
       - package: ThinktinKit
         products:
@@ -82,6 +84,8 @@ targets:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
         NSFaceIDUsageDescription: 用面容 ID 确认审批、签名等高风险操作。
+        # 运行的实时活动（12.10，docs/live-activities.md 第 3 节）。
+        NSSupportsLiveActivities: true
         # 深链（docs/ios.md 第 6.1 节，和安卓端同一套）：thinktin://run/{id}、approval/{id}、plan/{id}、instance/{id}、
         # inbox、inbox/{id}、vault/request/{id}。App 的 onOpenURL 交给 Router（ThinktinKit/Navigation，WBS 12.16）解析。
         CFBundleURLTypes:
@@ -100,12 +104,13 @@ targets:
         com.apple.security.application-groups: [group.cn.thinktin.Thinktin]
 
   # 主屏、锁屏小组件（WBS 12.20，docs/ios.md）：只读 App 写进 App Group 的快照，不连服务端、不带客户端核心，
-  # 所以只依赖纯 Swift 的 ThinktinKit。以后实时活动（12.10）也放这里。
+  # 所以只依赖纯 Swift 的 ThinktinKit。运行的实时活动（12.10）的锁屏、灵动岛界面也在这里。
   ThinktinWidgets:
     type: app-extension
     platform: iOS
     sources:
       - path: ThinktinWidgets
+      - path: Shared
     dependencies:
       - package: ThinktinKit
         products:

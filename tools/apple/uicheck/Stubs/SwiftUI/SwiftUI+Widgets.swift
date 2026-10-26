@@ -6,6 +6,8 @@ extension Font {
     public static let headline = Font(tag: 12)
     public static let caption = Font(tag: 13)
     public static let caption2 = Font(tag: 14)
+    public static let title2 = Font(tag: 15)
+    public static let subheadline = Font(tag: 16)
     public func bold() -> Font { self }
 }
 
@@ -13,6 +15,16 @@ extension Color {
     public static let primary = Color(red: 0, green: 0, blue: 0)
     public static let secondary = Color(red: 0.5, green: 0.5, blue: 0.5)
     public static let accentColor = Color(red: 0, green: 0.5, blue: 1)
+    public static let orange = Color(red: 1, green: 0.6, blue: 0)
+}
+
+extension Text {
+    /// 系统计时器（实时活动的耗时，12.10）。
+    public init(
+        timerInterval: ClosedRange<Date>, pauseTime: Date? = nil, countsDown: Bool = true, showsHours: Bool = true
+    ) {
+        self.init(verbatim: "")
+    }
 }
 
 public struct HierarchicalShapeStyle: ShapeStyle {

@@ -29,6 +29,7 @@ final class AppEnvironment {
         pushRegistrar: any PushRegistrar = NoopPushRegistrar(),
         notifications: (any DeliveredNotifications)? = nil,
         widgets: (any WidgetSnapshotSink)? = nil,
+        liveActivities: SystemLiveActivities? = nil,
         biometricSigner: any BiometricSigner = UnavailableBiometricSigner()
     ) {
         self.configuration = configuration
@@ -36,10 +37,13 @@ final class AppEnvironment {
         self.pushRegistrar = pushRegistrar
         self.biometricSigner = biometricSigner
         self.appModel = AppModel(
-            client: client, preferences: .shared, notifications: notifications, widgets: widgets)
+            client: client, preferences: .shared, notifications: notifications, widgets: widgets,
+            liveActivities: liveActivities)
+        if let liveActivities, let model = appModel.liveActivities { liveActivities.observe(model) }
     }
 
-    /// 正式运行用的装配：推送用系统的通知中心（12.8）；主屏小组件的快照写进 App Group（12.20）；签名（12.9）先用空实现。
+    /// 正式运行用的装配：推送用系统的通知中心（12.8）；主屏小组件的快照写进 App Group（12.20）；实时活动用 ActivityKit
+    /// （12.10）；签名（12.9）先用空实现。
     static func live(_ configuration: AppConfiguration = .current) -> AppEnvironment {
         log.info(
             "client: \(configuration.client.rawValue, privacy: .public), api: \(configuration.baseURL.absoluteString, privacy: .public)"
@@ -64,7 +68,8 @@ final class AppEnvironment {
             configuration: configuration, client: client,
             pushRegistrar: inAppBundle ? SystemPushRegistrar() : NoopPushRegistrar(),
             notifications: inAppBundle ? SystemDeliveredNotifications() : nil,
-            widgets: inAppBundle ? AppGroupWidgetSink() : nil)
+            widgets: inAppBundle ? AppGroupWidgetSink() : nil,
+            liveActivities: inAppBundle ? SystemLiveActivities() : nil)
     }
 
     // MARK: 请求语言与日志（11.8）

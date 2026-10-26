@@ -244,3 +244,38 @@ struct LiveActivityModelTests {
         #expect(live.openRunIDs.isEmpty)
     }
 }
+
+@Suite("实时活动的文案（12.10）")
+struct LiveActivityTextTests {
+    @Test("状态和对话里的运行状态行同一套说法；等审批、key 要处理时醒目")
+    func headline() {
+        let approval = RunActivityContentState(state: "waiting_approval", steps: 3)
+        #expect(LiveActivityText.headline(approval, language: .chinese) == "等你审批")
+        #expect(LiveActivityText.needsAttention(approval))
+        let noBalance = RunActivityContentState(state: "waiting_quota", steps: 0, waitCode: "no_balance")
+        #expect(LiveActivityText.headline(noBalance, language: .chinese) == "模型 key 欠费或额度用完了")
+        #expect(LiveActivityText.needsAttention(noBalance))
+        // 限流会自己继续，不用用户做什么。
+        let limited = RunActivityContentState(state: "waiting_quota", steps: 0, waitCode: "rate_limited")
+        #expect(!LiveActivityText.needsAttention(limited))
+        #expect(!LiveActivityText.needsAttention(RunActivityContentState(state: "running", steps: 1)))
+        #expect(
+            LiveActivityText.headline(RunActivityContentState(state: "succeeded", steps: 9), language: .english)
+                == "Done")
+        // 不认识的状态也有图标。
+        #expect(LiveActivityText.symbol(RunState(rawValue: "paused_by_admin")) == "circle.dotted")
+        #expect(LiveActivityText.symbol(.waitingApproval) == "hand.raised.fill")
+    }
+
+    @Test("步数、结束了的耗时（还在跑的用系统计时器）")
+    func stepsAndElapsed() {
+        #expect(LiveActivityText.steps(1, language: .english) == "1 step")
+        #expect(LiveActivityText.steps(4, language: .english) == "4 steps")
+        #expect(LiveActivityText.steps(4, language: .chinese) == "4 步")
+        let running = RunActivityContentState(state: "running", steps: 2, startedAt: 1_800_000_000)
+        #expect(LiveActivityText.elapsed(running, language: .chinese) == nil)
+        let done = RunActivityContentState(
+            state: "succeeded", steps: 2, startedAt: 1_800_000_000, endedAt: 1_800_000_095)
+        #expect(LiveActivityText.elapsed(done, language: .chinese) == Formatting.duration(95, language: .chinese))
+    }
+}
