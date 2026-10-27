@@ -18,6 +18,11 @@ struct AppConfiguration: Equatable, Sendable {
     /// 缓存数据库：Application Support/Thinktin/cache.sqlite（client-core 的 SQLite 缓存，可以随时重建）。
     static let cacheDirectoryName = "Thinktin"
     static let cacheFileName = "cache.sqlite"
+    /// 截图用（tools/apple/screenshots.sh，只在 Debug 构建里认）：启动后打开这个 `thinktin://` 深链。模拟器上
+    /// `simctl openurl` 每次都先弹系统的“在 ThinkTin 中打开？”确认框，挡住页面。
+    static let launchURLEnvironmentKey = "THINKTIN_OPEN_URL"
+    /// 截图用：`1` 时启动后打开侧边抽屉。
+    static let launchDrawerEnvironmentKey = "THINKTIN_OPEN_DRAWER"
 
     var client: ClientKind
     var baseURL: URL
@@ -65,6 +70,20 @@ struct AppConfiguration: Equatable, Sendable {
         case "0", "false", "no": return .core
         default: return isDebugBuild ? .mock : .core
         }
+    }
+
+    /// 启动后要打开的深链（`THINKTIN_OPEN_URL`）；没设、不是 `thinktin://` 的为 nil。
+    static func launchURL(environment: [String: String]) -> URL? {
+        guard let raw = environment[launchURLEnvironmentKey]?.trimmingCharacters(in: .whitespaces),
+            let url = URL(string: raw), url.scheme?.lowercased() == "thinktin"
+        else { return nil }
+        return url
+    }
+
+    /// 启动后打开侧边抽屉（`THINKTIN_OPEN_DRAWER=1`）。
+    static func opensDrawerAtLaunch(environment: [String: String]) -> Bool {
+        let value = environment[launchDrawerEnvironmentKey]?.trimmingCharacters(in: .whitespaces).lowercased() ?? ""
+        return ["1", "true", "yes"].contains(value)
     }
 
     /// Info.plist 里的地址；没有、为空、没展开（`$(...)`）或不是 http(s) 的绝对地址时用默认地址。

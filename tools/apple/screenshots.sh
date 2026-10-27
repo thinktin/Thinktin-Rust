@@ -5,7 +5,8 @@
 #
 #   tools/apple/screenshots.sh [输出目录，默认 target/screenshots]
 #
-# 每张图都重新启动 App 再开深链（上一张打开的页面、弹出的面板不会叠在下一张上）。中文界面，状态栏固定成 9:41、满电。
+# 每张图都重新启动 App，用环境变量 THINKTIN_OPEN_URL / THINKTIN_OPEN_DRAWER 指定启动后的页面（只有 Debug 构建认，见
+# AppConfiguration）：`simctl openurl` 会先弹系统的确认框挡住页面。中文界面，状态栏固定成 9:41、满电。
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 [[ "$(uname)" == "Darwin" ]] || { echo "needs macOS with Xcode" >&2; exit 1; }
@@ -46,19 +47,19 @@ xcrun simctl install "$udid" "$app"
 xcrun simctl status_bar "$udid" override --time 9:41 --dataNetwork wifi --wifiBars 3 --cellularBars 4 \
   --batteryState charged --batteryLevel 100
 
+# 重新启动 App（上一张打开的页面、弹出的面板不会叠到下一张上）。参数是额外给 App 的环境变量（SIMCTL_CHILD_NAME=value）。
 launch() {
   xcrun simctl terminate "$udid" "$bundle" >/dev/null 2>&1 || true
-  SIMCTL_CHILD_THINKTIN_MOCK=1 xcrun simctl launch "$udid" "$bundle" -AppleLanguages "(zh-Hans)" -AppleLocale zh_CN >/dev/null
-  sleep 5
+  env SIMCTL_CHILD_THINKTIN_MOCK=1 "$@" \
+    xcrun simctl launch "$udid" "$bundle" -AppleLanguages "(zh-Hans)" -AppleLocale zh_CN >/dev/null
+  sleep 6
 }
 shot() {
   xcrun simctl io "$udid" screenshot --type=png "$out/$1.png" >/dev/null
   echo "$out/$1.png"
 }
 open_and_shot() {
-  launch
-  xcrun simctl openurl "$udid" "$2"
-  sleep 3
+  launch "SIMCTL_CHILD_THINKTIN_OPEN_URL=$2"
   shot "$1"
 }
 
@@ -71,16 +72,20 @@ npm_request=0192f3a0-0000-7000-8000-000000000801
 
 launch
 shot 01-home
-open_and_shot 02-instance "thinktin://instance/$writer"
-open_and_shot 03-run "thinktin://run/$weekly_run"
-open_and_shot 04-approvals "thinktin://approvals"
-open_and_shot 05-approval "thinktin://approval/$pending_approval"
-open_and_shot 06-plan "thinktin://plan/$digest_plan"
-open_and_shot 07-inbox "thinktin://inbox"
-open_and_shot 08-active "thinktin://active"
-open_and_shot 09-vault-request "thinktin://vault/request/$npm_request"
-# 深色模式的首页。
+launch SIMCTL_CHILD_THINKTIN_OPEN_DRAWER=1
+shot 02-drawer
+open_and_shot 03-instance "thinktin://instance/$writer"
+open_and_shot 04-run "thinktin://run/$weekly_run"
+open_and_shot 05-approvals "thinktin://approvals"
+open_and_shot 06-approval "thinktin://approval/$pending_approval"
+open_and_shot 07-plan "thinktin://plan/$digest_plan"
+open_and_shot 08-inbox "thinktin://inbox"
+open_and_shot 09-active "thinktin://active"
+open_and_shot 10-vault-request "thinktin://vault/request/$npm_request"
+# 深色模式的首页和抽屉。
 xcrun simctl ui "$udid" appearance dark
 launch
-shot 10-home-dark
+shot 11-home-dark
+launch SIMCTL_CHILD_THINKTIN_OPEN_DRAWER=1
+shot 12-drawer-dark
 xcrun simctl ui "$udid" appearance light
