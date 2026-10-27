@@ -177,7 +177,11 @@ def main():
                     empty = float(str(data.available_amount).replace(",", "")) <= 0
                 except ValueError:
                     empty = False
-                note = "（余额为 0：按量付费的资源要先充值，或国际站账号先绑定信用卡，否则下单会失败）" if empty else ""
+                note = (
+                    "（余额为 0：国际站绑了信用卡就从卡里扣，是正常的；没绑卡也没充值的话，付费资源会下单失败）"
+                    if empty
+                    else ""
+                )
                 return f"可用余额 {data.available_amount} {data.currency}{note}"
             except Exception as err:  # noqa: BLE001
                 last = err
