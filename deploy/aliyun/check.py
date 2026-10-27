@@ -31,7 +31,7 @@ KEY_SECRET = "ALIBABA_CLOUD_ACCESS_KEY_SECRET"
 # 服务机的候选规格（4 核 8G，按顺序优先），见部署计划第 2 节。
 SERVER_TYPES = ["ecs.u1-c1m2.xlarge", "ecs.c8i.xlarge", "ecs.c7.xlarge", "ecs.c9i.xlarge"]
 
-# 接口报“没权限”时，子账号 thinktin-deploy 缺的系统策略（部署计划第 3 节）。
+# 接口报“没权限”时，子账号（部署计划里叫 thinktin-deploy，国内站账号上建的叫 claude-deploy）缺的系统策略（部署计划第 3 节）。
 POLICY = {
     "sts": "无（任何 Key 都能查自己的身份）",
     "ecs": "AliyunECSFullAccess",
@@ -55,11 +55,11 @@ def explain(product, err):
     message = getattr(err, "message", None) or str(err)
     hint = ""
     if code in ("InvalidAccessKeyId", "InvalidAccessKeyId.NotFound", "InvalidAccessKeyId.Inactive"):
-        hint = "Key 不存在或被禁用：在 RAM 里看 thinktin-deploy 的 AccessKey，环境变量里的 ID 是否对得上"
+        hint = "Key 不存在或被禁用：在 RAM 里看子账号的 AccessKey，环境变量里的 ID 是否对得上（ID 以 LTAI 开头，别填成 Secret）"
     elif code in ("SignatureDoesNotMatch", "IncompleteSignature"):
         hint = "Secret 不对：重新复制 AccessKey Secret 填进环境变量，注意前后不要有空格"
-    elif "Forbidden" in code or "NoPermission" in code or code in ("AccessDenied", "403"):
-        hint = f"子账号没权限：在 RAM 给 thinktin-deploy 加 {POLICY[product]}"
+    elif "Forbidden" in code or "NoPermission" in code or code in ("AccessDenied", "NotAuthorized", "403"):
+        hint = f"子账号没权限：在 RAM 给这个子账号（身份见第一项）加 {POLICY[product]}"
     elif "NotOpen" in code or "NotActivated" in code or "ServiceNotEnable" in code or "NotApply" in code:
         hint = "产品还没开通：到控制台开通（第一次开通要本人同意协议、授权服务角色）"
     elif code == "UserDisable":

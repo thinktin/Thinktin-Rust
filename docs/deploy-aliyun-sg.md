@@ -136,6 +136,7 @@
 
 | 阶段 | 状态 | 资源 |
 |---|---|---|
+| 检查（国内站，东京） | **2026-10-28**：Key 是 RAM 子账号 `claude-deploy`。通过：东京 4 核 8G 的 `ecs.u1-c1m2.xlarge`（a、b、c）、RDS PostgreSQL 16（a、b）、ACS 接口能调。不通过：VPC（缺 `AliyunVPCFullAccess`）、OSS（缺 `AliyunOSSFullAccess`）、余额（缺 `AliyunBSSReadOnlyAccess`）。**东京还没有集群**（香港、杭州、上海、北京、深圳、硅谷也没有） | — |
 | 容器版脚本 | **2026-10-28 写好，等 Key 和集群**：`run.sh acs`（找集群、看 / 装沙箱组件，OpenAPI，云端会话能跑）、`run.sh acs --pool`、`run.sh sandbox --acs`（要 kubectl，只能在集群 VPC 里的机器上跑：云端会话的代理只放行 443，API Server 在 6443、要客户端证书、port-forward 要 WebSocket）。只在本机用假服务验过私有协议的地址，没连过真集群。下一步见 [交接文档](handoff.md) 第 4 节 | — |
 | 检查 | 2026-10-27 全部通过（OSS 已开通；余额 0 USD，付费资源下单前要绑卡或充值） | — |
 | 1. 网络 | **2026-10-27 已建**（`deploy/aliyun/run.sh network --apply`，不收费） | VPC `thinktin-sg` vpc-t4nnamzms0ug1sro2xnsh（10.10.0.0/16）；交换机 `thinktin-svc-a` vsw-t4nkrp5vkmskd7u8l3iym（10.10.1.0/24）、`thinktin-sbx-a` vsw-t4noo1zilrxuce545tf2w（10.10.16.0/20），都在 ap-southeast-1a；安全组 `thinktin-svc` sg-t4ng934e0iz30f7mdie9（入方向 80、443） |
