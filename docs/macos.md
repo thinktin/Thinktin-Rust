@@ -104,7 +104,8 @@ GitHub Release。手动触发时不发布；没配证书时只做不签名的归
   Sparkle……）给 ThinktinUI 的 macOS 路径和整个 `ThinktinMac` target 做类型检查。只能发现类型错误和并发检查的问题，
   以 macOS CI 的真实编译为准。逻辑在 ThinktinKit 里测（`swift test`，`THINKTIN_DESKTOP=1` 时连 ThinktinDesktopAdapterTests）。
 - **CI**：`ios.yml` 的 kit-linux 作业跑 ThinktinDesktopAdapterTests；app-macos 作业 xcodegen 后编 `ThinktinMac`
-  （`CODE_SIGNING_ALLOWED=NO`）。截图、键鼠要系统权限，CI 上不跑。
+  （`CODE_SIGNING_ALLOWED=NO`）。截图、键鼠要系统权限，CI 上不跑。GitHub 的 macOS 机器排不上时用 Codemagic：仓库根目录的
+  `codemagic.yaml`（`apple-check`，做同样的事，M2 约 6 分钟一轮），在 Codemagic 网页或 API 上对着分支发起。
 - **本机（Mac）**：`tools/client-core/build-apple.sh target/apple`，`cd apps/apple && xcodegen generate`，Xcode 里选 ThinktinMac
   scheme 运行。第一次跑要在系统设置里给屏幕录制、辅助功能权限（每次重新签名的开发版可能要重新给）。
 

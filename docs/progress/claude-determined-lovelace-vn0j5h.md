@@ -137,6 +137,11 @@ P1 后端核心（M1–M9）和 P2 里能在代码层面完成的包都做完了
   修了三处 Linux 上查不出来的：`build-apple.sh` 把 `#endif` 接在生成文件最后一行的注释后面（整个 ThinktinCore 编不过）、
   `ScreenshotGeometry` 要 `import CoreGraphics` 且 CGRect 在 Apple 上不是 Hashable、隐私清单扫描在 nm 读不了静态库某个成员时
   直接崩；还有一个测试的表达式类型推断超时。之后 iOS App 在模拟器上 build + test 通过、`ThinktinMac` 编译通过。
+  macOS 上的 Kit 测试还查出一个真的竞态（`34056d1`）：冻结时重查成功之前排着的“冻结”报告晚到，会把刚解冻的界面又冻上；
+  报告编了号，重查确认没冻结之前发出的“冻结”报告不再处理。GitHub（run 40428238188）和 Codemagic 都全绿：Kit 1092 个测试、
+  iOS App 的测试、`ThinktinMac`、隐私清单检查。
+- 三条线对齐（2026-10-27，用户同意）：`backend-core`、`ios-app`、`android-app` 都快进到本分支（`34056d1`，没有强推、没有合并提交），
+  四个分支内容一样。PR #5（`backend-core` → `main`）、#7、#8 跟着带上了新提交；以后合一个就行（比如 #5），另外两个可以关掉。
 
 进行中：
 - 无。
