@@ -44,7 +44,7 @@
 | 公网流量 | 按流量 | ¥20–50 | 新加坡约 ¥0.53/GB（第三方整理，待核实），只算出方向 |
 | RDS PostgreSQL 16 | 基础系列 2 核 4G，50–100G，自动备份 | ¥300–450 | 海外价格没查到官方数，按国内价加五成估；只开内网 |
 | OSS | 一个私有桶，标准存储，按量 | < ¥10 | 产出物 |
-| ACS 集群 | 不收管理费；Agent Sandbox 的管理组件约 0.5–1 核、1–2G | ¥60–130 | 海外通用算力每核每小时 ¥0.089、每 GB 每小时 ¥0.044 |
+| ACS 集群 | 不收管理费；Agent Sandbox 的管理组件：测试配置（`run.sh acs --addons`）约 1 核 2G，组件默认配置 4 核 8G 起 | 测试 ¥130；默认 ¥500 以上 | 海外通用算力每核每小时 ¥0.089、每 GB 每小时 ¥0.044；正式要几个副本、多大，压测后定 |
 | Agent 沙箱 | 每个 agent 1 核 2G，用时计费 | 每个活跃用户约 ¥16–18 | 海外每核每小时 ¥0.123、每 GB 每小时 ¥0.062；休眠只收存储 |
 | 容器镜像服务 ACR | 个人版 | ¥0 | 放 agent 模板镜像（沙箱要求镜像在同一地域）。服务镜像继续用 GitHub 的 ghcr.io |
 | 域名 | 一个 | ¥60–100/年 | 海外部署不用 ICP 备案 |
@@ -67,7 +67,9 @@
    （它只会把 Key 原样塞进请求头，阿里云的 Key 是拿来给请求签名的，用不了）。**存好后开新会话**，仓库选 `thinktin/Thinktin-Rust`，
    环境选存了 Key 的那个；会话只在虚拟机启动时读环境变量，老会话读不到。
 6. **域名**：买一个（或用已有的），要两个子域名，比如 `api.<域名>`、`relay.<域名>`。域名在阿里云就把 DNS 权限给子账号；不在阿里云的话，Claude 会给出要加的 DNS 记录，由你去加。
-7. **GitHub 仓库的密钥**（第 4 阶段要）：ACR 的登录用户名和密码加到仓库的 Actions secrets，用来把 agent 模板镜像推进 ACR。会话里的 GitHub 工具不能设仓库密钥。
+7. **集群里的权限**（用 kubectl 时要）：ACS 控制台 → 授权管理 → RAM 用户 `thinktin-deploy` → 选集群、所有命名空间、管理员。
+   RAM 策略只管 OpenAPI，集群里面的权限要单独给。
+8. **GitHub 仓库的密钥**（第 4 阶段要）：ACR 的登录用户名和密码加到仓库的 Actions secrets，用来把 agent 模板镜像推进 ACR。会话里的 GitHub 工具不能设仓库密钥。
 
 ## 4. Claude 的部署步骤
 
@@ -134,6 +136,7 @@
 
 | 阶段 | 状态 | 资源 |
 |---|---|---|
+| 容器版脚本 | **2026-10-28 写好，等 Key 和集群**：`run.sh acs`（找集群、看 / 装沙箱组件，OpenAPI，云端会话能跑）、`run.sh acs --pool`、`run.sh sandbox --acs`（要 kubectl，只能在集群 VPC 里的机器上跑：云端会话的代理只放行 443，API Server 在 6443、要客户端证书、port-forward 要 WebSocket）。只在本机用假服务验过私有协议的地址，没连过真集群。下一步见 [交接文档](handoff.md) 第 4 节 | — |
 | 检查 | 2026-10-27 全部通过（OSS 已开通；余额 0 USD，付费资源下单前要绑卡或充值） | — |
 | 1. 网络 | **2026-10-27 已建**（`deploy/aliyun/run.sh network --apply`，不收费） | VPC `thinktin-sg` vpc-t4nnamzms0ug1sro2xnsh（10.10.0.0/16）；交换机 `thinktin-svc-a` vsw-t4nkrp5vkmskd7u8l3iym（10.10.1.0/24）、`thinktin-sbx-a` vsw-t4noo1zilrxuce545tf2w（10.10.16.0/20），都在 ap-southeast-1a；安全组 `thinktin-svc` sg-t4ng934e0iz30f7mdie9（入方向 80、443） |
 | 沙箱测试 | **直接测容器版**（2026-10-27 用户定：正式就用容器版，不绕道极速版）。新加坡 ACS 的组件列表里有 `ack-agent-sandbox-controller` 和 `ack-sandbox-manager`（2026-10-27 用 ListAddons 查到，ACS 1.37.1）。测试不建 ALB、不要域名和证书：集群 API Server 开公网（绑一个按流量的 EIP），从云端会话 `kubectl port-forward` 到 sandbox-manager，用私有协议走 HTTP；E2B 的 Key 是装 `ack-sandbox-manager` 时自己设的 `adminApiKey`，不用去控制台建。预热池设 1 个。测完删沙箱，集群留不留再定。`deploy/aliyun/run.sh sandbox` 改成能连 port-forward 的地址后复用 | **卡在实名认证**：国际站账号开通产品前要实名，用户在选国际站认证还是换国内站 aliyun.com 账号（第 1 阶段网络可在新账号重建，不收费）。认证后用户在控制台开通 ACS（第一次要本人同意协议、授权服务角色），其余由 Claude 用 AccessKey 建 |
@@ -142,7 +145,8 @@
 
 - 两个地址都在，没 Key 都返回 401：`api.ap-southeast-1.sandbox.aliyuncs.com`（智能体沙箱）和 `api.ap-southeast-1.e2b.fc.aliyuncs.com`（函数计算云沙箱）。
   Key 是哪边控制台建的就用哪边，`run.sh sandbox` 会自动找；也可以用环境变量 `ALIYUN_SANDBOX_DOMAIN` 指定。
-- SDK 用阿里云文档测过的 `e2b==2.31.0`；Key 不是 `e2b_` 开头，要关掉 SDK 的 Key 格式校验。
+- SDK：极速版文档测的是 `e2b==2.31.0`；`requirements.txt` 10-28 起钉容器版要的 `2.50.0`，极速版只是备选，没再测。
+  极速版的 Key 不是 `e2b_` 开头，要关掉 SDK 的 Key 格式校验。
 - [兼容接口列表](https://help.aliyun.com/en/functioncompute/e2b-sdk-compatible-api-list)里：建、删、列、设超时、跑命令、读写文件、端口访问都兼容；
   **暂停要申请白名单**，恢复用 `connect`（没有单独的恢复接口）；超时被回收的沙箱连不上。快照、卷、自定义域名不支持。
   文档没写暂停最长保留多久、暂停怎么收费、超时到期能不能自动暂停——这几条正好是第 6 节要实测的，也要问阿里云。

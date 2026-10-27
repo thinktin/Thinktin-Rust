@@ -3,6 +3,10 @@
 上一个会话（session_01JYVuTJTo78Zrenhct8Bkw5）用量快满了，下一个 agent 从这里接着干。分支是 `claude/determined-lovelace-vn0j5h`，
 PR #14 是开着的（部署脚本和文档）。**用户说“合并”才合。**
 
+10-28 接手的会话（session_016LgPcdynywrhrjCq8VVFLt）环境里没有阿里云的 Key（会话比环境变量早），只做了不要 Key 的部分：
+容器版的脚本 `deploy/aliyun/acs.py`、`sandbox.py --acs`，评审修了一轮，并且发现**云端会话连不上 ACS 集群的 API Server**
+（见第 3 节）。用户换好国内站的 Key 后要**开新会话**才读得到。
+
 和用户说话用中文、说人话，用户不是做底层技术的。用户想让 Claude 在云端全面负责部署，自己只做“只能本人点”的事。
 
 ## 1. 规矩（必须遵守）
@@ -43,6 +47,17 @@ PR #14 是开着的（部署脚本和文档）。**用户说“合并”才合�
 - 日志服务、Prometheus、事件中心都不勾；
 - 不装 Ingress。
 
+**10-28 发现的限制：云端会话连不上集群的 API Server。** 会话的出网代理只放行 443 端口的 HTTPS，不支持非 443 端口、客户端证书
+和 WebSocket（`/root/.ccr/README.md`，规定是“报告，不要绕过”）。API Server 在 6443、kubeconfig 用客户端证书、port-forward
+要 WebSocket，三样都不行（10-28 实测 8443 端口被代理断开）。所以：
+
+- “用 EIP 暴露 API Server”对我们没用（勾了的话 EIP 在收一点钱，以后可以解绑）。
+- 阿里云的 OpenAPI 走 443，能用：找集群、装沙箱组件（`run.sh acs --addons`）都在云端会话里做。
+- 要 kubectl 的（建预热池、port-forward 测沙箱）得在**集群 VPC 里的一台机器**上跑。建议：把计划里的服务机 ECS 提前建在集群的
+  VPC 里（本来就要带按流量的公网 IP，能自己下 kubectl 和 Python 包），用 ECS 云助手（RunCommand，也走 443 的 OpenAPI）在它上面跑
+  `run.sh acs --pool` 和 `run.sh sandbox --acs`，读回输出。ECS 要收费，**先列费用、用户同意再建**；云助手的驱动脚本还没写。
+  另一条路是给 sandbox-manager 配 ALB + 域名 + 证书从公网连，正式环境用不上（服务机在 VPC 里直接连），不推荐。
+
 建好后，用户要做这几件事：
 
 1. 在**国内站账号**的 RAM 里建子账号 `thinktin-deploy`，只开 OpenAPI 调用，授权以下策略，然后建 AccessKey：
@@ -54,47 +69,54 @@ PR #14 是开着的（部署脚本和文档）。**用户说“合并”才合�
    - `AliyunContainerRegistryFullAccess`
    - `AliyunBSSReadOnlyAccess`
 2. 把云端环境“环境变量”里的 `ALIBABA_CLOUD_ACCESS_KEY_ID` 和 `ALIBABA_CLOUD_ACCESS_KEY_SECRET` **换成新账号的**，变量名不变。
+   （用户 10-28 说已经换了。）
 3. 开新会话。环境变量只在虚拟机启动时读，老会话读不到新值。
+4. 到 kubectl 那一步时：ACS 控制台 → 授权管理 → RAM 用户 `thinktin-deploy` → 选这个集群、所有命名空间、**管理员**。
+   RAM 的策略只管 OpenAPI，集群里面的权限要单独给，不然 kubectl 报 Forbidden。
 
 **现在环境变量里还是国际站账号的 Key。** 那个账号在新加坡建过一套不收费的网络（ID 见部署文档第 8.6 节），以后经用户同意删掉。
 
 ## 4. 下一步（按顺序）
 
-1. **确认新 Key**：跑 `deploy/aliyun/run.sh check --region ap-northeast-1`。
-   - 身份应该是新账号的 RAM 子账号。
-   - 第一次跑会在 `target/aliyun-venv` 装 SDK，约半分钟。
-   - 余额要大于 0；国内站是预付，没充值的话付费资源会下单失败。
-2. **找到集群**：用 CS 的 `DescribeClustersV1` 查东京的集群。
-   - 用 `DescribeClusterUserKubeconfig` 拿公网的 kubeconfig，存到 `target/`，不要打印。
-   - kubectl 要自己装：下载固定版本的二进制到 `target/bin`。
-   - 如果 API Server 没开公网，就告诉用户，或者经用户同意后绑一个按流量计费的 EIP。
-3. **装沙箱组件**：用 CS 的 `InstallClusterAddons` 装 `ack-agent-sandbox-controller` 和 `ack-sandbox-manager`。
-   - 先用 `DescribeAddon` 看配置项长什么样。
-   - 测试不要 Ingress，TLS 关掉。
-   - `adminApiKey` 自己生成，格式要是 `e2b_` 加十六进制（比如 `"e2b_" + secrets.token_hex(20)`），存到 `target/`。
-   - 参考：<https://help.aliyun.com/zh/cs/user-guide/connect-to-agent-sandbox-using-the-e2b-sdk>
-4. **预热池**：kubectl apply 一个 SandboxSet，名字叫 `code-interpreter`，命名空间 `default`，**replicas 设 1**（文档例子是 4，测试用 1 省钱）。
-5. **连上沙箱管理器**：跑 `kubectl port-forward services/sandbox-manager 8080:7788 -n sandbox-system`，走私有协议的 HTTP。
-   - 客户端要装 openkruise 的补丁包 `git+https://github.com/openkruise/agents.git#subdirectory=sdk/customized_e2b`（钉到某个提交）。
-   - **在 import e2b 之前**调用 `patch_e2b(https=False)`。
-   - `E2B_DOMAIN` 设成和组件里的 domain 一样。
-   - 文档配的版本是 `e2b==2.50.0`、`e2b-code-interpreter==2.9.2`。`deploy/aliyun/requirements.txt` 现在钉的是给极速版用的 2.31.0，要改。
-6. **改测试脚本** `deploy/aliyun/sandbox.py`：现在它只会连极速版的地址。
-   - 加容器版模式：补丁、域名、Key 从 `target/` 读。
-   - 容器版的暂停是 `beta_pause`，恢复用 `connect`。
-   - 然后按部署文档**第 6 节**逐条测：
-     - 冷启动多久，给了几核几 G；
-     - 读写文件；
-     - 连不连得上元数据地址 `100.100.100.200`（应该连不上）；
-     - **建两个沙箱，测它们之间通不通**（应该不通）；
-     - 出网（没有 NAT，应该连不上外网；正式环境沙箱只连服务机上的模型网关）；
-     - 暂停、恢复，文件还在不在；
-     - 长时间没输出会不会被断。
-7. **记结果**：写进部署文档第 8.6 节，提交、推送。删掉测试沙箱。
-   - 问用户集群留不留：一直在收钱的有组件的容器、预热池的 1 个沙箱、EIP。
-8. **后面的阶段**：服务机 ECS（k3s）、RDS、OSS、正式用的 ALB、域名、证书，都是**先列费用、用户同意再建**。顺序见部署文档第 4 节。
+脚本都在 `deploy/aliyun/`，默认东京，花钱的都要加 `--apply`，不加只打印计划和费用估算。
 
-如果沙箱拉不下镜像（没有 NAT 出不去），先看能不能用 ACR 的 VPC 地址；不行再列 NAT 网关的费用请用户确认。
+1. **确认新 Key**：`deploy/aliyun/run.sh check`（默认东京）。
+   - 身份应该是新账号的 RAM 子账号；余额要大于 0（国内站是预付，没充值的话付费资源会下单失败）。
+   - 第一次跑会在 `target/aliyun-venv` 装 SDK，约半分钟。
+2. **看集群和组件**（云端会话里，只读）：`run.sh acs`。
+   - 找东京的集群（不止一个就加 `--cluster`），打出 API Server 的内网、公网地址，列两个沙箱组件装没装、可装的版本、
+     配置项（schema 存在 `target/aliyun-acs/`）。
+3. **装沙箱组件**（云端会话里，要收费）：先 `run.sh acs --addons`，看打印的配置（Key 打码）和费用估算。
+   - 测试配置：domain `localhost`，adminApiKey 自己生成（`e2b_` 加十六进制），关 TLS 和 Ingress，副本 1，组件容器各 0.5 核 1G，
+     估算约 1 核 2G、每月约 ¥130。组件的默认配置是 4 核 8G 起、每月 ¥500 以上。
+   - 配置项是按 schema 里的名字找的（`domain`、`adminApiKey`、名字带 tls / ingress 的开关、`replicaCount`、resources 下的
+     cpu / memory）；打印出来的配置不对就改 `acs.py` 的 `manager_config`。
+   - 用户同意后 `run.sh acs --addons --apply`。第一次装控制器要在控制台授权 `AliyunCSManagedAgentSandboxRole`，失败就请用户去点。
+   - Key 存在 `target/aliyun-acs/sandbox.json`，容器回收丢了的话重跑 `--addons` 会从已装组件的配置里读回来，不会换新的。
+   - 参考：<https://help.aliyun.com/zh/cs/user-guide/connect-to-agent-sandbox-using-the-e2b-sdk>
+4. **请用户定 kubectl 在哪儿跑**（见第 3 节），建议提前建服务机 ECS（集群的 VPC、按流量的公网 IP），列费用请用户同意。
+   - 还要写一个用云助手在 ECS 上跑命令、读输出的小脚本（ECS 的 RunCommand / DescribeInvocationResults，云端会话能调）；
+     把仓库的 `deploy/aliyun/` 传上去（文件小，云助手的 SendFile 就行，或者 ECS 直接从 GitHub 拉）。
+   - 用户给 `thinktin-deploy` 开集群里的管理员权限（第 3 节第 4 条）。
+5. **在 ECS 上建预热池**：`run.sh acs --pool`（只读，打印费用）→ 用户同意 → `run.sh acs --pool --apply`。
+   - SandboxSet `code-interpreter`，命名空间 `default`，replicas 1，镜像默认 `registry-ap-northeast-1-vpc.ack.aliyuncs.com/acs/code-interpreter:v1.6`
+     （文档示例的地域换成东京、走 VPC 地址；地址不对就用 `--image` 换）。
+   - kubeconfig 用内网地址，存在 `target/aliyun-acs/kubeconfig`（1 天后失效）；kubectl 钉 v1.36.5、核对 SHA-256，放 `target/bin`。
+   - 拉不下镜像（没有 NAT）先试 ACR 的 VPC 地址；不行再列 NAT 网关的费用请用户确认。不测了：`run.sh acs --pool-delete --apply`。
+6. **在 ECS 上测沙箱**：`run.sh sandbox --acs`（只读，列现有沙箱）→ 用户同意 → `run.sh sandbox --acs --apply`。
+   - 自己起 `kubectl port-forward` 到 sandbox-manager（本机 80 端口），走 OpenKruise 的私有协议（HTTP）。私有协议是
+     `sandbox.py` 里的 `kruise_patch`（改 E2B SDK 的两个地址），**没装** OpenKruise 的 `kruise_agents` 包：从 GitHub 装它被
+     自动审查拦了（外部代码），功能就这两处地址，自己写了。
+   - E2B SDK 钉 `e2b==2.50.0`、`e2b-code-interpreter==2.9.2`（文档要求；2.51 起建、连沙箱走 v2 接口，容器版不认）。
+   - 测：冷启动多久、给了几核几 G；读写文件；元数据地址 `100.100.100.200`（应该不通）；**两个沙箱之间通不通**（应该不通，
+     先在 A 起监听、A 自己连通了才作数）；出网（没有 NAT 应该不通）；暂停（`beta_pause`）、恢复（`connect`）、文件还在不在；
+     300 秒没输出会不会被断（`--idle`）。收尾按标记删掉这次建的所有沙箱。
+   - 云端会话里跑 `sandbox --acs` 会直接说连不上，不会去试。
+7. **记结果**：写进部署文档第 8.6 节，提交、推送。
+   - 问用户集群留不留：一直在收钱的有组件的容器、预热池的 1 个沙箱、（如果勾了的）API Server 的 EIP。
+8. **后面的阶段**：RDS、OSS、正式用的 ALB、域名、证书，都是**先列费用、用户同意再建**。顺序见部署文档第 4 节。
+   - 第 1 阶段网络 `run.sh network` 改成默认东京、**用 ACS 集群的 VPC**（服务机、数据库、沙箱在一个 VPC 里），只在里面加服务机的
+     交换机（自动挑空的 /24）和安全组；地域里没有集群时才自己建 VPC。新加坡那套（国际站账号）以后经用户同意删掉。
 
 ## 5. 其他线（不急）
 
@@ -106,6 +128,10 @@ PR #14 是开着的（部署脚本和文档）。**用户说“合并”才合�
 ## 6. 环境里要知道的
 
 - 出网走代理，`SSL_CERT_FILE` 已经设好，阿里云 Python SDK 和 e2b SDK 都能用。
-- `deploy/aliyun/run.sh <check|network|sandbox>`：自动建 venv，按 `requirements.txt` 装依赖。`network` 默认只打印计划，加 `--apply` 才建；按名字找资源，重跑不会重复建。
+- `deploy/aliyun/run.sh <check|network|acs|sandbox>`：自动建 venv，按 `requirements.txt` 装依赖（只从 PyPI 装钉死的版本）。
+  不加 `--apply` 只打印计划；按名字找资源，重跑不会重复建。
+- 云端会话**只能连 443 端口的 HTTPS**：阿里云 OpenAPI、OSS 能用；集群的 API Server（6443）、kubectl、port-forward 不行。
+- 每小时的定时任务“Thinktin 后端自动续跑”（`trig_01KGPvNBHsmuQxk3phCmsUaE`）还在叫醒老的后端会话，提示词过时了，那边直接跳过；
+  停不停由用户定。
 - `git push` 删不了远程分支（代理返回 403），删分支要用户在网页上操作。
 - 想盯 PR #14 的话，先 `subscribe_pr_activity`。
