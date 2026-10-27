@@ -114,3 +114,39 @@ workflows:
           echo "All Apple builds and tests passed."
     artifacts:
       - logs/*.log
+
+  # 完整的 ThinktinCore（真机 arm64、模拟器、macOS 的胖库），和 mobile.yml、ios-release.yml 打的一样：发版前在这里先验。
+  apple-package:
+    name: ThinktinCore for every Apple target
+    instance_type: mac_mini_m2
+    max_build_duration: 90
+    environment:
+      xcode: latest
+      vars:
+        CARGO_INCREMENTAL: "0"
+    cache:
+      cache_paths:
+        - $HOME/.cargo/registry
+        - $HOME/.cargo/git
+    scripts:
+      - name: Tools (Rust, cmake)
+        script: |
+          set -euo pipefail
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          fi
+          echo "PATH=$HOME/.cargo/bin:$PATH" >> "$CM_ENV"
+          export PATH="$HOME/.cargo/bin:$PATH"
+          brew install cmake
+          if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)'; then
+            brew install python@3.12
+            echo "PATH=$(brew --prefix python@3.12)/libexec/bin:$PATH" >> "$CM_ENV"
+          fi
+      - name: Build ThinktinCore (all Apple targets)
+        script: |
+          set -o pipefail
+          mkdir -p "$CM_BUILD_DIR/logs"
+          tools/client-core/build-apple.sh target/apple 2>&1 | tee "$CM_BUILD_DIR/logs/build-apple.log"
+          ls -R target/apple/ThinktinCore/ThinktinCoreFFI.xcframework | head -30
+    artifacts:
+      - logs/*.log

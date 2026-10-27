@@ -42,6 +42,11 @@ else
   targets=(aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios aarch64-apple-darwin x86_64-apple-darwin)
 fi
 
+# 最低系统版本和 Swift 包（下面的 Package.swift：iOS 16、macOS 13）一致。不设时 rustc 链接 iOS 10，C 依赖（aws-lc）却按
+# SDK 的最新版本编，真机的 cdylib 链接时缺 `___chkstk_darwin`（2026-10-27 mobile.yml 在 main 上的失败）。
+export IPHONEOS_DEPLOYMENT_TARGET=16.0
+export MACOSX_DEPLOYMENT_TARGET=13.0
+
 rustup target add "${targets[@]}"
 for t in "${targets[@]}"; do
   case "$t" in
