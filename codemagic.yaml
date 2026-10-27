@@ -1,0 +1,116 @@
+# Codemagic（https://codemagic.io）上的 Apple 构建：GitHub 的 macOS 机器排不上时的另一个去处（docs/macos.md 第 7 节）。
+# 做的事和 .github/workflows/ios.yml 的 app-macos 作业一样：打 ThinktinCore（模拟器 + macOS 的 arm64 切片）、macOS 上编整个
+# ThinktinKit、xcodegen 生成工程、iPhone 模拟器上 build + test、编 macOS App（ThinktinMac）、macOS 本机 swift test。
+# 后面几步失败了也接着跑（问题一次看全），最后一步按记下的失败报错。
+#
+# 触发：在 Codemagic 网页上选分支手动开始，或者用 API（POST https://api.codemagic.io/builds，workflowId 是 apple-check）。
+# 机器自带 Xcode、Homebrew、Python；Rust 在第一步装。
+workflows:
+  apple-check:
+    name: Apple apps (iOS simulator + macOS)
+    instance_type: mac_mini_m2
+    max_build_duration: 120
+    environment:
+      xcode: latest
+      vars:
+        CARGO_INCREMENTAL: "0"
+        CARGO_TERM_COLOR: always
+    cache:
+      cache_paths:
+        - $HOME/.cargo/registry
+        - $HOME/.cargo/git
+    scripts:
+      - name: Tools (Rust, cmake, XcodeGen)
+        script: |
+          set -euo pipefail
+          xcodebuild -version
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          fi
+          echo "PATH=$HOME/.cargo/bin:$PATH" >> "$CM_ENV"
+          export PATH="$HOME/.cargo/bin:$PATH"
+          rustup target add aarch64-apple-ios-sim aarch64-apple-darwin
+          brew install cmake xcodegen
+          # 许可证清单工具要 Python 3.11 以上。
+          if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)'; then
+            brew install python@3.12
+            echo "PATH=$(brew --prefix python@3.12)/libexec/bin:$PATH" >> "$CM_ENV"
+          fi
+          rustc --version; xcodegen --version; python3 --version
+          mkdir -p "$CM_BUILD_DIR/logs"
+      - name: Build ThinktinCore (simulator + macOS arm64)
+        script: tools/client-core/build-apple.sh target/apple --ci
+      - name: swift build ThinktinKit (macOS, includes ThinktinUI and the tests)
+        working_directory: apps/apple/ThinktinKit
+        ignore_failure: true
+        script: |
+          set -o pipefail
+          swift build --build-tests 2>&1 | tee "$CM_BUILD_DIR/logs/swift-build-macos.log" \
+            || echo "swift build" >> "$CM_BUILD_DIR/logs/failed"
+      - name: Generate the Xcode project
+        working_directory: apps/apple
+        script: xcodegen generate
+      - name: iOS app on the simulator (build + test)
+        working_directory: apps/apple
+        ignore_failure: true
+        script: |
+          set -o pipefail
+          # 选中的 Xcode 支持的最新 iOS 运行时里第一个可用的 iPhone（和 ios.yml 一样）。
+          SDK_VERSION=$(xcrun --sdk iphonesimulator --show-sdk-version)
+          export SDK_VERSION
+          udid=$(xcrun simctl list --json devices available | python3 -c '
+          import json, os, sys
+          devices = json.load(sys.stdin)["devices"]
+          sdk = tuple(int(p) for p in os.environ["SDK_VERSION"].split(".") if p.isdigit())
+          def version(runtime):
+              return tuple(int(p) for p in runtime.rsplit("iOS-", 1)[1].split("-") if p.isdigit())
+          runtimes = sorted(
+              (r for r in devices if ".SimRuntime.iOS-" in r and version(r) <= sdk), key=version, reverse=True)
+          for runtime in runtimes:
+              for d in devices[runtime]:
+                  if d.get("isAvailable", True) and d["name"].startswith("iPhone"):
+                      print(d["udid"])
+                      sys.exit(0)
+          sys.exit("no available iPhone simulator")
+          ')
+          xcodebuild \
+            -project Thinktin.xcodeproj \
+            -scheme Thinktin \
+            -destination "id=$udid" \
+            -derivedDataPath "$CM_BUILD_DIR/DerivedData" \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            build test 2>&1 | tee "$CM_BUILD_DIR/logs/xcodebuild-ios.log" \
+            || echo "iOS xcodebuild" >> "$CM_BUILD_DIR/logs/failed"
+      - name: macOS app (ThinktinMac)
+        working_directory: apps/apple
+        ignore_failure: true
+        script: |
+          set -o pipefail
+          xcodebuild \
+            -project Thinktin.xcodeproj \
+            -scheme ThinktinMac \
+            -destination "platform=macOS,arch=arm64" \
+            -derivedDataPath "$CM_BUILD_DIR/DerivedData" \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            build 2>&1 | tee "$CM_BUILD_DIR/logs/xcodebuild-mac.log" \
+            || echo "ThinktinMac xcodebuild" >> "$CM_BUILD_DIR/logs/failed"
+      - name: swift test ThinktinKit (macOS)
+        working_directory: apps/apple/ThinktinKit
+        ignore_failure: true
+        script: |
+          set -o pipefail
+          swift test 2>&1 | tee "$CM_BUILD_DIR/logs/swift-test-macos.log" \
+            || echo "swift test" >> "$CM_BUILD_DIR/logs/failed"
+      - name: Result
+        script: |
+          if [ -s "$CM_BUILD_DIR/logs/failed" ]; then
+            echo "Failed steps:"; cat "$CM_BUILD_DIR/logs/failed"
+            exit 1
+          fi
+          echo "All Apple builds and tests passed."
+    artifacts:
+      - logs/*.log
