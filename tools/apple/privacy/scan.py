@@ -60,7 +60,14 @@ def undefined_symbols(path: str) -> set:
         magic = f.read(4)
     if magic == b"\x7fELF" and path.endswith(".so"):
         args = ["nm", "-D", "--undefined-only", path]
-    out = subprocess.run(args, check=True, capture_output=True, text=True).stdout
+    proc = subprocess.run(args, capture_output=True, text=True)
+    if proc.returncode != 0:
+        # 静态库里有 nm 读不了的成员（比如 Rust 的 lib.rmeta）时，别的成员的符号照样列出来，只是退出码不是 0：
+        # 报出来接着查；一个符号都没读到才算失败。
+        print(f"warning: nm exited {proc.returncode} on {path}: {proc.stderr.strip()[:800]}", file=sys.stderr)
+        if not proc.stdout.strip():
+            raise SystemExit(f"nm could not read any symbols from {path}")
+    out = proc.stdout
     symbols = set()
     for line in out.splitlines():
         parts = line.split()
