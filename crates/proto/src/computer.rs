@@ -73,7 +73,7 @@ pub const TOOLS: &[ComputerTool] = &[
         description: "List a folder on the user's own computer: names, kinds, sizes and modification times. \
             Only folders the user allowed from their phone can be read.",
         risk: Risk::ReadOnly,
-        schema: r#"{"type":"object","properties":{"path":{"type":"string","description":"Absolute path, e.g. /Users/me/Documents"}},"required":["path"],"additionalProperties":false}"#,
+        schema: r#"{"type":"object","properties":{"path":{"type":"string","description":"Absolute path, e.g. /Users/me/Documents on a Mac or C:\\Users\\me\\Documents on Windows"}},"required":["path"],"additionalProperties":false}"#,
     },
     ComputerTool {
         name: "computer_read_file",
@@ -97,9 +97,10 @@ pub const TOOLS: &[ComputerTool] = &[
     },
     ComputerTool {
         name: "computer_open",
-        description: "Open a web page, an app (by bundle id, e.g. com.apple.Safari) or a file on the user's computer.",
+        description: "Open a web page, an app or a file on the user's computer. Apps are named by bundle id on a Mac \
+            (e.g. com.apple.Safari) and by program name on Windows (e.g. chrome.exe).",
         risk: Risk::Normal,
-        schema: r#"{"type":"object","properties":{"target":{"type":"string","description":"An https URL, an app bundle id or an absolute file path"}},"required":["target"],"additionalProperties":false}"#,
+        schema: r#"{"type":"object","properties":{"target":{"type":"string","description":"An https URL, an app (bundle id or program name) or an absolute file path"}},"required":["target"],"additionalProperties":false}"#,
     },
     ComputerTool {
         name: "computer_click",
@@ -116,7 +117,8 @@ pub const TOOLS: &[ComputerTool] = &[
     },
     ComputerTool {
         name: "computer_key",
-        description: "Press a key or a key combination on the user's computer, e.g. return, cmd+s, cmd+shift+t.",
+        description: "Press a key or a key combination on the user's computer, e.g. return, cmd+s, cmd+shift+t \
+            (on Windows: ctrl+s, ctrl+shift+t, win+e).",
         risk: Risk::Normal,
         schema: r#"{"type":"object","properties":{"keys":{"type":"string"}},"required":["keys"],"additionalProperties":false}"#,
     },

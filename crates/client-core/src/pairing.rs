@@ -495,7 +495,7 @@ pub fn capability_message(grant: CapabilityGrant) -> Result<Vec<u8>, PairingErro
     check_id("desktop_id", &grant.desktop_id)?;
     check_id("token_id", &grant.token_id)?;
     for d in &grant.dirs {
-        if !d.starts_with('/') || d.split('/').any(|seg| seg == "..") {
+        if DirPath::parse(d).is_none() {
             return Err(malformed(format!(
                 "{d:?} must be an absolute path without .."
             )));
@@ -539,20 +539,82 @@ fn verify_capability_at(
 }
 
 /// 令牌允不允许碰这个路径：在某个目录之内（按路径段比较，`/a/bc` 不在 `/a/b` 里）、不含 `..`。
+/// macOS 的路径（`/Users/me/Documents`）和 Windows 的路径（`C:\Users\me\Documents`）都认，见 [`DirPath`]。
 #[uniffi::export]
 pub fn capability_allows_path(grant: CapabilityGrant, path: String) -> bool {
-    if !path.starts_with('/') || path.split('/').any(|seg| seg == "..") {
+    let Some(path) = DirPath::parse(&path) else {
         return false;
+    };
+    grant
+        .dirs
+        .iter()
+        .any(|d| DirPath::parse(d).is_some_and(|d| d.contains(&path)))
+}
+
+/// 绝对路径的规范形式：根加上路径段。
+///
+/// - macOS / Linux：以 `/` 开头，段区分大小写；
+/// - Windows：盘符（`C:\…`、`c:/…`，还有 `canonicalize` 给出的 `\\?\C:\…`）或 UNC 共享（`\\server\share\…`），
+///   `\` 和 `/` 都算分隔符，段不分大小写（NTFS 默认不分）。
+///
+/// 相对路径、带 `..` 的、带换行的都不是。两种根不互相包含。
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DirPath {
+    root: String,
+    segments: Vec<String>,
+}
+
+impl DirPath {
+    fn parse(path: &str) -> Option<Self> {
+        if path.contains('\n') {
+            return None;
+        }
+        if let Some(rest) = path.strip_prefix('/') {
+            let segments: Vec<String> = rest
+                .split('/')
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+                .collect();
+            if segments.iter().any(|s| s == "..") {
+                return None;
+            }
+            return Some(Self {
+                root: "/".into(),
+                segments,
+            });
+        }
+        let p = path.strip_prefix(r"\\?\").unwrap_or(path);
+        let b = p.as_bytes();
+        let (root, rest) = if b.len() >= 3
+            && b[0].is_ascii_alphabetic()
+            && b[1] == b':'
+            && matches!(b[2], b'\\' | b'/')
+        {
+            (format!("{}:", b[0].to_ascii_uppercase() as char), &p[3..])
+        } else {
+            let mut parts = p.strip_prefix(r"\\")?.splitn(3, ['\\', '/']);
+            let server = parts.next().filter(|s| !s.is_empty())?;
+            let share = parts.next().filter(|s| !s.is_empty())?;
+            (
+                format!(r"\\{}\{}", server.to_lowercase(), share.to_lowercase()),
+                parts.next().unwrap_or(""),
+            )
+        };
+        let segments: Vec<String> = rest
+            .split(['\\', '/'])
+            .filter(|s| !s.is_empty())
+            .map(str::to_lowercase)
+            .collect();
+        if segments.iter().any(|s| s == "..") {
+            return None;
+        }
+        Some(Self { root, segments })
     }
-    let path = path.trim_end_matches('/');
-    grant.dirs.iter().any(|d| {
-        let d = d.trim_end_matches('/');
-        d.is_empty()
-            || path == d
-            || path
-                .strip_prefix(d)
-                .is_some_and(|rest| rest.starts_with('/'))
-    })
+
+    /// `other` 是不是在这个目录之内（或者就是它）。
+    fn contains(&self, other: &Self) -> bool {
+        self.root == other.root && other.segments.starts_with(&self.segments)
+    }
 }
 
 /// 给原生端用：把公钥字节（SEC1）编成传输用的 base64url，顺便检查是不是 P-256 公钥。
