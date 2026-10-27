@@ -143,7 +143,7 @@ P1 后端核心（M1–M9）和 P2 里能在代码层面完成的包都做完了
 - 三条线对齐（2026-10-27，用户同意）：`backend-core`、`ios-app`、`android-app` 都快进到本分支（`34056d1`，没有强推、没有合并提交），
   四个分支内容一样。PR #5（`backend-core` → `main`）、#7、#8 跟着带上了新提交；以后合一个就行（比如 #5），另外两个可以关掉。
 - 合进 main（2026-10-27，用户让按正常流程合）：PR #5 合并提交 `b38cc13`，#2、#3、#4、#7、#8 随之自动标成已合并；#6（宣传视频，
-  多一个提交）没动，等用户定。main 上手动跑 `mobile.yml`（run 40434187317）：安卓过了，Apple 挂在 `___chkstk_darwin` 找不到——rustc 默认
+  `promo/thinktin-promo.mp4`，8 MB）用户同意后也合了（`8e57096`）。main 上手动跑 `mobile.yml`（run 40434187317）：安卓过了，Apple 挂在 `___chkstk_darwin` 找不到——rustc 默认
   按 iOS 10 编，和 Xcode 26 编的 C 依赖（目标 26.5）链不到一起。PR #9 修：`build-apple.sh` 导出 `IPHONEOS_DEPLOYMENT_TARGET=16.0`、
   `MACOSX_DEPLOYMENT_TARGET=13.0`（和 project.yml 一致），Codemagic 的 `apple-package` 打全部切片验过。PR #9 合并（`b53467d`）后
   main 上重跑 `mobile.yml`（run 40440703056）：Apple、安卓都过了。
