@@ -128,6 +128,14 @@
 - **不通过**：OSS 报 `UserDisable`，OSS 还没开通（或账号欠费）。
 - **余额 0.00 USD**：是**国际站**账号（按美元计价），下单前要绑定付款方式或充值。第 2 节的人民币估算照汇率换算即可。
 
+## 8.6 进度
+
+| 阶段 | 状态 | 资源 |
+|---|---|---|
+| 检查 | 2026-10-27 全部通过（OSS 已开通；余额 0 USD，付费资源下单前要绑卡或充值） | — |
+| 1. 网络 | **2026-10-27 已建**（`deploy/aliyun/run.sh network --apply`，不收费） | VPC `thinktin-sg` vpc-t4nnamzms0ug1sro2xnsh（10.10.0.0/16）；交换机 `thinktin-svc-a` vsw-t4nkrp5vkmskd7u8l3iym（10.10.1.0/24）、`thinktin-sbx-a` vsw-t4noo1zilrxuce545tf2w（10.10.16.0/20），都在 ap-southeast-1a；安全组 `thinktin-svc` sg-t4ng934e0iz30f7mdie9（入方向 80、443） |
+| 沙箱测试 | 下一步：**先用智能体沙箱极速版**（全托管，不用建 ACS 集群、负载均衡和域名，按秒计费，经济型每核每小时约 ¥0.08）。容器版要先建 ACS 集群、装两个组件，还要一个 ALB 和 E2B 域名与证书，正式上线再定 | 要用户在智能体沙箱控制台开通极速版、建一个 API Key（E2B 接口用它，不是 AccessKey），放进环境变量 `ALIYUN_SANDBOX_API_KEY` |
+
 ## 9. 接手（新会话）
 
 开新会话读 Key 时：先看本文件和 `docs/progress/claude-determined-lovelace-vn0j5h.md`，然后跑只读检查：
