@@ -47,6 +47,12 @@ git push origin ios-v0.2.0
 - 处理完（App Store Connect 里十几分钟）内部测试组的人在 TestFlight 里就能装。
 - 手动触发（Actions → iOS release → Run workflow）默认只归档不上传，用来验证工程能签名、能归档。
 
+## 2.1 演示版（服务器上线前先看界面）
+
+手动触发时勾上 `demo`：构建设置 `THINKTIN_CLIENT=mock` 展开进 Info.plist 的 `ThinktinClient`，App 用 ThinktinKit 的
+`MockClient` 和演示数据（一打开就是登录好的，有实例、对话、计划、审批；退出后登录的验证码是 `123456`），不连服务器、
+不收推送。只能手动触发，标签发版永远连服务器。版本号和正式版共用，构建号照样递增；TestFlight 的“测试内容”里写明是演示版。
+
 ## 3. 出问题时
 
 - 归档失败：看 artifact `ios-release-logs` 里的 `archive.log`。第一次跑通前要确认真机 arm64 的 ThinktinCore 能打出来

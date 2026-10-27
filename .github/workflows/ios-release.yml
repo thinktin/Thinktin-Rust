@@ -21,6 +21,10 @@ on:
         description: 上传到 App Store Connect（不勾只归档）
         type: boolean
         default: false
+      demo:
+        description: 演示版：用演示数据、不连服务器（服务器上线前在 TestFlight 上先看界面）
+        type: boolean
+        default: false
 
 # 同时只发一个版本，不取消正在上传的。
 concurrency:
@@ -44,6 +48,8 @@ jobs:
     environment: testflight
     env:
       UPLOAD: ${{ github.event_name == 'push' || inputs.upload }}
+      # 标签发版永远连服务器；演示版只能手动触发。
+      CLIENT: ${{ github.event_name == 'workflow_dispatch' && inputs.demo && 'mock' || '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -63,6 +69,7 @@ jobs:
             exit 1
           fi
           echo "marketing=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$CLIENT" == "mock" ]]; then echo "::notice::演示版：用演示数据，不连服务器"; fi
           echo "build=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
           echo "版本 ${version}，构建号 ${{ github.run_number }}"
 
@@ -152,6 +159,7 @@ jobs:
             -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
             DEVELOPMENT_TEAM="$TEAM_ID" \
             CODE_SIGN_STYLE=Automatic \
+            THINKTIN_CLIENT="$CLIENT" \
             MARKETING_VERSION="${{ steps.version.outputs.marketing }}" \
             CURRENT_PROJECT_VERSION="${{ steps.version.outputs.build }}" \
             2>&1 | tee "$RUNNER_TEMP/archive.log" | "${fmt[@]}"

@@ -6,12 +6,16 @@
 - 用户建好了 App Group `group.cn.thinktin.Thinktin`；团队 id `5BUH46M229`（Siting (Shenzhen)）。
 - `ios-release.yml`：私钥可以直接粘贴 `.p8` 内容（`ASC_KEY_P8`，换行丢了也行，读不出私钥时报错；旧的 `ASC_KEY_P8_BASE64` 照样认），团队 id 不配就用 `TEAM_ID_DEFAULT`；`docs/ios-release.md` 第 1 节改成新的准备步骤。
 
-进行中：等用户建 App Store Connect API key（Admin），在 GitHub 的 `testflight` 环境里放 `ASC_KEY_ID`、`ASC_ISSUER_ID`、`ASC_KEY_P8`。
+- 用户建好了 App 记录（ThinkTin，`cn.thinktin.Thinktin`）、API key，`testflight` 环境里放了三个密钥（2026-10-28）。
+- 发布工作流第一次跑就停在算版本号：macOS 的 /bin/bash 3.2 把 `$version` 后面的中文逗号当成变量名（`4c84bcb` 加大括号，macos-release.yml 同样两处）。
+- 演示版开关：构建设置 `THINKTIN_CLIENT` → Info.plist `ThinktinClient`，`AppConfiguration.clientKind` 认它（环境变量优先，空的按构建配置）；发布工作流手动触发加 `demo` 选项。服务器（`api.thinktin.cn`）还没上线，给用户先试的 TestFlight 版用演示数据。
+
+进行中：只归档的试跑（run 40565563995，`4c84bcb`）确认密钥和签名。
 
 下一步：
-1. 用户配好后，在本分支手动触发 iOS release（不上传）：确认能归档，自动签名登记 bundle id 和能力。
-2. 用户在 App Store Connect 建 App 记录（`cn.thinktin.Thinktin`）。
-3. 勾上传再跑一次，或打 `ios-v0.1.0` 标签；内部测试组加用户本人。
+1. 试跑通过后，手动触发 demo + upload，传第一个演示版到 TestFlight；内部测试组加用户本人。
+2. 服务器上线后打 `ios-v0.1.0` 标签发连服务器的版本。
+3. `uicheck/run.sh test` 只编不跑 ThinktinTests（App 的测试，要 App 包的那些在 Linux 上本来就过不了）；单独跑 `swift test --skip-build --filter ThinktinTests.*clientKind`。
 4. 跑通后开 PR 合进 main（用户说合并才合）。
 
 坑和决定：
