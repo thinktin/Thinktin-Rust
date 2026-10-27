@@ -18,7 +18,7 @@
 - **接入**：沙箱里放一个 Rust 写的 `agent-shim`，优先用 ACP（Agent Client Protocol）驱动各家 agent，再用 MCP 把平台工具和用户电脑的工具注入进去。
 - **客户端（v3）**：iOS 和 macOS 用 Swift + SwiftUI，Android 用 Kotlin + Jetpack Compose。三端共用一个 Rust 写的 `client-core`，通过 UniFFI 自动生成 Swift 和 Kotlin 绑定。
 - **成本**：用户自带 key 后，token 由用户直接付给厂商，平台的最大成本变成沙箱算力。用"逻辑常驻、物理按需"（空闲暂停、事件唤醒）来压低。
-- **合规**：国内站只接入已备案的国内模型。OpenAI、Anthropic 对中国有访问限制，海外厂商只放在独立的海外站。
+- **合规**：国内站只接入已备案的国内模型。OpenAI、Anthropic 对中国有访问限制，海外厂商只放在独立的海外站。**2026-10-27 起步方案**：整套先部署在阿里云新加坡，所有模型厂商直连（含 OpenAI、Anthropic、xAI），暂不进国内应用商店、不做备案；以后要进国内商店再单独部署一套只接国内模型的国内版（[新加坡部署计划](deploy-aliyun-sg.md)）。
 
 ## 1. 需求与本版变化
 
