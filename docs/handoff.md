@@ -80,19 +80,23 @@ PR #14 是开着的（部署脚本和文档）。**用户说“合并”才合�
 
 脚本都在 `deploy/aliyun/`，默认东京，花钱的都要加 `--apply`，不加只打印计划和费用估算。
 
-1. **确认新 Key**：`deploy/aliyun/run.sh check`（默认东京）。
+1. **确认新 Key**：`deploy/aliyun/run.sh check`（默认东京）。**10-28 全部通过**（子账号 `claude-deploy`，用户给了
+   `AdministratorAccess`），但**余额 0.00 元**：国内站是预付，付费资源下单前要用户充值。
    - 身份应该是新账号的 RAM 子账号；余额要大于 0（国内站是预付，没充值的话付费资源会下单失败）。
    - 第一次跑会在 `target/aliyun-venv` 装 SDK，约半分钟。
 2. **看集群和组件**（云端会话里，只读）：`run.sh acs`。
    - 找东京的集群（不止一个就加 `--cluster`），打出 API Server 的内网、公网地址，列两个沙箱组件装没装、可装的版本、
      配置项（schema 存在 `target/aliyun-acs/`）。
 3. **装沙箱组件**（云端会话里，要收费）：先 `run.sh acs --addons`，看打印的配置（Key 打码）和费用估算。
-   - 测试配置：domain `localhost`，adminApiKey 自己生成（`e2b_` 加十六进制），关 TLS 和 Ingress，副本 1，组件容器各 0.5 核 1G，
-     估算约 1 核 2G、每月约 ¥130。组件的默认配置是 4 核 8G 起、每月 ¥500 以上。
-   - 配置项是按 schema 里的名字找的（`domain`、`adminApiKey`、名字带 tls / ingress 的开关、`replicaCount`、resources 下的
-     cpu / memory）；打印出来的配置不对就改 `acs.py` 的 `manager_config`。
+   - 东京集群（10-28 建好，`Thinktin-Rust`，ACS 1.36.2）可装 `ack-agent-sandbox-controller` v0.6.6-release.5、
+     `ack-sandbox-manager` v0.6.13-release.1。sandbox-manager 不改配置的话是 sandbox-manager 3 个 × 8 核 8G、
+     sandbox-gateway 3 个 × 4 核 8G、日志进 SLS，约 36 核 48G、**每月约 ¥3,900**。
+   - 测试配置（`acs.py` 的 `manager_config`，按真实配置项名逐项改）：domain `localhost`、adminApiKey 自己生成（`e2b_` 加十六进制）、
+     关 TLS、**数据面也走 sandbox-manager**（`ingress.dataplaneService`，port-forward 只转发它）、两边各 1 个副本 0.5 核 1G、不收日志。
+     估算约 1.2 核 2G、**每月约 ¥146**。控制器用默认配置（它给每个沙箱加的流量代理 0.2 核 128M 另算）。
    - 用户同意后 `run.sh acs --addons --apply`。第一次装控制器要在控制台授权 `AliyunCSManagedAgentSandboxRole`，失败就请用户去点。
    - Key 存在 `target/aliyun-acs/sandbox.json`，容器回收丢了的话重跑 `--addons` 会从已装组件的配置里读回来，不会换新的。
+   - sandbox-gateway 的 `streamIdleTimeout` 默认 600 秒：正式环境 agent 等审批可能几个小时没输出，要看它和 sandbox-manager 的超时。
    - 参考：<https://help.aliyun.com/zh/cs/user-guide/connect-to-agent-sandbox-using-the-e2b-sdk>
 4. **请用户定 kubectl 在哪儿跑**（见第 3 节），建议提前建服务机 ECS（集群的 VPC、按流量的公网 IP），列费用请用户同意。
    - 还要写一个用云助手在 ECS 上跑命令、读输出的小脚本（ECS 的 RunCommand / DescribeInvocationResults，云端会话能调）；

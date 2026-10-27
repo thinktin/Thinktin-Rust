@@ -136,6 +136,7 @@
 
 | 阶段 | 状态 | 资源 |
 |---|---|---|
+| 检查（国内站，东京，第二次） | **2026-10-28**：全部通过（用户给 `claude-deploy` 加了 `AdministratorAccess`）；余额 0.00 元（国内站预付，付费资源下单前要充值）。集群 `Thinktin-Rust`（ce2dbb6f0799b4a65bbb31821d8a4623b，ACS 1.36.2，VPC vpc-6weeobj130h915q49t32h，API Server 公网 47.74.56.251:6443、内网 172.29.47.77:6443）。沙箱组件都没装：controller v0.6.6-release.5、manager v0.6.13-release.1；manager 默认约 36 核 48G、每月约 ¥3,900，测试配置约 1.2 核 2G、每月约 ¥146（`run.sh acs --addons` 打印） | — |
 | 检查（国内站，东京） | **2026-10-28**：Key 是 RAM 子账号 `claude-deploy`。通过：东京 4 核 8G 的 `ecs.u1-c1m2.xlarge`（a、b、c）、RDS PostgreSQL 16（a、b）、ACS 接口能调。不通过：VPC（缺 `AliyunVPCFullAccess`）、OSS（缺 `AliyunOSSFullAccess`）、余额（缺 `AliyunBSSReadOnlyAccess`）。**东京还没有集群**（香港、杭州、上海、北京、深圳、硅谷也没有） | — |
 | 容器版脚本 | **2026-10-28 写好，等 Key 和集群**：`run.sh acs`（找集群、看 / 装沙箱组件，OpenAPI，云端会话能跑）、`run.sh acs --pool`、`run.sh sandbox --acs`（要 kubectl，只能在集群 VPC 里的机器上跑：云端会话的代理只放行 443，API Server 在 6443、要客户端证书、port-forward 要 WebSocket）。只在本机用假服务验过私有协议的地址，没连过真集群。下一步见 [交接文档](handoff.md) 第 4 节 | — |
 | 检查 | 2026-10-27 全部通过（OSS 已开通；余额 0 USD，付费资源下单前要绑卡或充值） | — |

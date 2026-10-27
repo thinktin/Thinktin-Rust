@@ -169,26 +169,33 @@ def find_leaf(cfg, name):
 
 
 def manager_config(schema, domain, api_key):
-    """ack-sandbox-manager 的测试配置：默认值上改 domain、adminApiKey，关掉 TLS 和 Ingress，副本减到 1，容器资源调小省钱。
-    找不到 domain 或 adminApiKey 这两项就不装（配置项名字变了，先看 schema 再改这里）。"""
-    cfg = defaults(schema)
-    found = {"domain": False, "adminapikey": False}
-    for path, kind, _ in leaves(schema):
-        if not path:
-            continue
-        leaf = path[-1].lower()
-        if leaf in found:
-            put(cfg, path, domain if leaf == "domain" else api_key)
-            found[leaf] = True
-        elif kind == "boolean" and ("tls" in leaf or "ingress" in leaf):
-            put(cfg, path, False)
-        elif leaf == "replicacount" and kind in ("integer", "number"):
-            put(cfg, path, 1)
-        elif "resources" in (p.lower() for p in path[:-1]) and leaf in ("cpu", "memory"):
-            put(cfg, path, TEST_CPU if leaf == "cpu" else TEST_MEMORY)
-    missing = [k for k, v in found.items() if not v]
+    """ack-sandbox-manager 的测试配置：默认值上逐项改（v0.6.13-release.1 的配置项，2026-10-28 从东京集群的 schema 读的）。
+    默认是 sandbox-manager 3 个 × 8 核 8G、sandbox-gateway 3 个 × 4 核 8G、日志进 SLS，测试用不着：
+    - domain localhost、自己生成的 adminApiKey，关 TLS（port-forward 走 HTTP）
+    - 数据面也走 sandbox-manager（port-forward 只转发它一个）
+    - 两边各 1 个副本、0.5 核 1G；不收日志
+    哪项在 schema 里找不到就不装（组件改版了，先看 schema 再改这里）。"""
+    overrides = {
+        "sandboxManager.e2b.domain": domain,
+        "sandboxManager.e2b.adminApiKey": api_key,
+        "sandboxManager.e2b.enableTLS": False,
+        "ingress.tls": False,
+        "ingress.dataplaneService": "sandbox-manager",
+        "sls.enabled": False,
+        "sandboxManager.replicaCount": 1,
+        "sandboxManager.controller.resources.cpu": TEST_CPU,
+        "sandboxManager.controller.resources.memory": TEST_MEMORY,
+        "sandboxGateway.replicaCount": 1,
+        "sandboxGateway.resources.cpu": TEST_CPU,
+        "sandboxGateway.resources.memory": TEST_MEMORY,
+    }
+    known = {".".join(path) for path, _, _ in leaves(schema)}
+    missing = [p for p in overrides if p not in known]
     if missing:
-        raise RuntimeError(f"{MANAGER} 的配置项里没找到 {missing}：看 {ACS_DIR}/{MANAGER}.schema.json 再改 manager_config")
+        raise RuntimeError(f"{MANAGER} 的配置项里没有 {missing}：看 {ACS_DIR}/{MANAGER}.schema.json 再改 manager_config")
+    cfg = defaults(schema)
+    for path, value in overrides.items():
+        put(cfg, tuple(path.split(".")), value)
     return cfg
 
 
@@ -207,21 +214,28 @@ def gib(value):
 
 
 def estimate(cfg):
-    """配置里每组 resources（requests、limits 取大的）加起来的核数、内存和每月费用。副本数没算进去。"""
+    """配置里写明的资源加起来（核数、内存、每月费用）：每组 resources 取 requests、limits 里大的（或直接写的 cpu、memory），
+    乘它所在层或上层的副本数；enabled 是 false 的部分不算。"""
     total_cpu = total_mem = 0.0
 
-    def walk(node):
+    def amount(res):
+        parts = [res, res.get("requests") or {}, res.get("limits") or {}]
+        cpu = max((cores(p["cpu"]) for p in parts if "cpu" in p), default=0)
+        mem = max((gib(p["memory"]) for p in parts if "memory" in p), default=0)
+        return cpu, mem
+
+    def walk(node, replicas=1):
         nonlocal total_cpu, total_mem
-        if not isinstance(node, dict):
+        if not isinstance(node, dict) or node.get("enabled") is False:
             return
+        # 副本数写在上层（sandboxManager.replicaCount），资源可能在下层（sandboxManager.controller.resources）。
+        replicas = node.get("replicaCount", node.get("replicas", replicas))
         for key, value in node.items():
-            if key.lower() == "resources" and isinstance(value, dict):
-                parts = [value.get("requests") or {}, value.get("limits") or {}]
-                cpu = max((cores(p["cpu"]) for p in parts if "cpu" in p), default=0)
-                mem = max((gib(p["memory"]) for p in parts if "memory" in p), default=0)
-                total_cpu, total_mem = total_cpu + cpu, total_mem + mem
+            if key == "resources" and isinstance(value, dict):
+                cpu, mem = amount(value)
+                total_cpu, total_mem = total_cpu + cpu * replicas, total_mem + mem * replicas
             else:
-                walk(value)
+                walk(value, replicas)
 
     walk(cfg)
     monthly = (total_cpu * PRICE_CPU_HOUR + total_mem * PRICE_GIB_HOUR) * HOURS_PER_MONTH
@@ -337,8 +351,10 @@ def addons(cs, cid, region, args):
             cpu, mem, monthly = cpu + c, mem + m, monthly + y
             shown = masked(cfg, api_key) if cfg is manager_cfg else json.dumps(cfg, ensure_ascii=False)
             print(f"  {name} {schemas[name][0]}：配置 {shown}")
-        print(f"  费用估算：配置里写明的资源约 {cpu:g} 核 {mem:g}G，每月约 ¥{monthly:.0f}（海外通用算力价；没写资源的容器、"
-              "副本数、控制器自带的容器没算进去，装完用 ACS 控制台的费用核对）")
+        print(f"  费用估算：配置里写明的资源约 {cpu:g} 核 {mem:g}G，每月约 ¥{monthly:.0f}（海外通用算力价，按副本数算；"
+              "没写资源的容器、控制器给每个沙箱加的流量代理没算进去，装完用 ACS 控制台的费用核对）")
+        default_cpu, default_mem, default_monthly = estimate(defaults(schemas[MANAGER][1]))
+        print(f"  （{MANAGER} 不改配置的话约 {default_cpu:g} 核 {default_mem:g}G，每月约 ¥{default_monthly:.0f}）")
         if not args.apply:
             print("组件的容器装上就一直在收钱：用户同意了再加 --apply。")
             return 0
