@@ -1,0 +1,48 @@
+# iPhone 模拟器上演示模式（Mock 数据，不联网）的截图（tools/apple/screenshots.sh）：给人看界面、和参考的设计对比，
+# 也是上架截图的底稿。和 codemagic.yaml 的 ios-screenshots 做同样的事；只能手动触发，截图在 artifact `ios-screenshots`。
+name: iOS screenshots
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  screenshots:
+    name: Screenshots on the iPhone simulator
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode
+        run: |
+          if [[ -d /Applications/Xcode_26.6.app ]]; then
+            sudo xcode-select -s /Applications/Xcode_26.6.app
+          fi
+          xcodebuild -version
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios-sim,aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install cmake and XcodeGen
+        env:
+          HOMEBREW_NO_INSTALL_CLEANUP: "1"
+        run: brew install cmake xcodegen
+      - name: Build ThinktinCore (simulator + macOS arm64)
+        run: tools/client-core/build-apple.sh target/apple --ci
+      - name: Screenshots
+        run: tools/apple/screenshots.sh "$RUNNER_TEMP/screenshots"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-screenshots
+          path: ${{ runner.temp }}/screenshots/*.png
+          if-no-files-found: warn
