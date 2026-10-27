@@ -1,0 +1,59 @@
+# Windows 电脑端（docs/windows.md）：在 Windows 上 lint、测试 desktop 库和托盘应用，顺手打一个未签名的 exe。
+# 云端会话只能交叉编译（MinGW）做检查，MSVC 目标的真实编译以这里为准。
+name: Windows
+
+on:
+  push:
+    branches: [main, backend-core]
+    paths:
+      - "apps/windows/**"
+      - "crates/desktop/**"
+      - "crates/client-core/**"
+      - "crates/proto/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/windows.yml"
+  pull_request:
+    paths:
+      - "apps/windows/**"
+      - "crates/desktop/**"
+      - "crates/client-core/**"
+      - "crates/proto/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/windows.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Lint
+        run: cargo clippy -p desktop -p thinktin-windows --all-targets -- -D warnings
+      # desktop 的端到端测试要平台和沙箱，只在 Linux 上跑；这里是单元测试（文件、命令、按键、截图编码）。
+      - name: Test
+        run: cargo test -p desktop -p thinktin-windows
+      - name: Build
+        run: cargo build --release -p thinktin-windows
+      - uses: actions/upload-artifact@v4
+        with:
+          name: thinktin-windows-unsigned
+          path: target/release/thinktin.exe
+          if-no-files-found: error

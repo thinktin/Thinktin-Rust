@@ -9,12 +9,16 @@
 - **后端认 Windows 是电脑**：`DevicePlatform::Windows` + `is_computer()`（中继、设备消息方向、网关登录唤醒等电脑的运行、执行器的提示文案），迁移 `0023_windows_devices.sql` 放宽 `devices.platform` 的约束；client-core 的 `capability_allows_path` / `capability_message` 认 Windows 路径（盘符、UNC、两种分隔符、不分大小写、`\\?\` 前缀，`DirPath`）；iOS / 安卓授权页的目录校验也收 `C:\…`（没法在这里跑 Swift / Gradle，改动只有几行）。`cargo test` 过（store、relay、gateway、client-core、orchestrator、desktop）。
 - **`desktop` 库跨平台**：命令在 Windows 上走 PowerShell（不开控制台、UTF-8 输出、带回原生退出码），删除进回收站（`SHFileOperationW`），`policy::resolve` 去掉 `\\?\`，`computer_open` 按 `Path::is_absolute` 分路径和应用；新模块 `keys`（按键写法解析，跨平台）、`screenshot`（缩放和 JPEG 编码，跨平台）、`windows`（GDI 截图、`SendInput` 键鼠、`ShellExecuteW` 打开、前台程序名、点到别的程序的窗口上拒绝、打开就会运行的文件不开）；`ToolSet` 把几个后端合成一个。端到端测试的依赖只在非 Windows 上编。`cargo clippy --target x86_64-pc-windows-gnu` 和 `cargo test --no-run`（MinGW 链接）都过；Linux 上单元测试过。
 
+- **`apps/windows` 托盘应用**（工作区成员 `thinktin-windows`，egui 0.31 + tray-icon 0.21，说明见 [docs/windows.md](../windows.md)）：登录页（验证码、60 秒重发）、手机控制（状态、开始 / 停止、正在执行的工具、被顶掉 / 被拒的提示）、手机（配对二维码带倒计时、解除配对）、授权列表、设置（开机自启写注册表 Run 键、退出登录）；托盘图标颜色随状态，菜单打开 / 开始停止 / 退出，关窗口收进托盘；`state.bin` 经 DPAPI 存会话、配对私钥、开关；`--background` 启动不显示窗口，按上次开关恢复；中英文按系统语言，加载系统中文字体。Linux 上 clippy 和单元测试过；`x86_64-pc-windows-gnu` 上 clippy 过、release 构建出了 `thinktin.exe`（MinGW 链接）。
+- **CI、发版、文档**：`windows.yml`（windows-latest 上 fmt、clippy、测试、未签名 exe）、`windows-release.yml`（`windows-v*` 标签：构建、有证书就签名、Inno Setup 安装包 `apps/windows/installer/thinktin.iss`、GitHub Release）；`docs/windows.md`；README、架构方案 8.6 和待决问题、relay / pairing / desktop 文档里的“只有 macOS”；WBS 14.10–14.14；许可证检查加 Windows 程序（只算 Windows 平台的依赖，允许 Ubuntu 字体许可证）。
+
 进行中：
-- `apps/windows`：Rust 的托盘应用（登录、状态、配对二维码、授权列表、开机自启、DPAPI 存会话和配对密钥）。
+- 在 GitHub Actions 的 windows-latest 上跑 `windows.yml`（MSVC 目标的真实编译），按结果修。
 
 下一步：
-3. CI：`windows.yml` 在 windows-latest 上编译、测试；发版工作流出安装包。
-4. 文档：`docs/windows.md`、README、架构方案 8.6 和待决问题、WBS 14.10–14.14、许可证检查加 Windows 程序。
+1. 看 `windows.yml` 的结果，修 MSVC 上的问题。
+2. 要人做的：在 Windows 真机上跑一遍（托盘、登录、配对、截图、键鼠、开机自启）；准备代码签名证书（docs/windows.md 第 6 节）；定接口和中继的正式域名。
+3. 以后：对话和计划的主窗口；应用内检查更新；单实例互斥量；截图排除自己的窗口；配对密钥放 TPM。
 
 坑和决定：
 - 云端会话是 Linux，没有 Windows 机器。`apt-get update` 之后能装 `gcc-mingw-w64-x86-64`，加上 `rustup target add x86_64-pc-windows-gnu`，就能在这里对着 Windows 目标 `cargo clippy` 和 `cargo test --no-run`（环境变量 `CC_x86_64_pc_windows_gnu=x86_64-w64-mingw32-gcc`、`AR_…=x86_64-w64-mingw32-ar`、`CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc`；aws-lc-sys 这样交叉也能编）。跑不了：真机上的截图、键鼠、托盘要人试，MSVC 目标的编译靠 GitHub Actions 的 windows-latest。

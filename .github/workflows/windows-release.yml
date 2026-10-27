@@ -1,0 +1,75 @@
+# Windows 电脑端发版（docs/windows.md 第 6 节）：打 `windows-v<版本>` 标签时在 Windows 上 release 构建、
+# （有证书时）签名、Inno Setup 打安装包、发到这个标签的 GitHub Release。手动触发时只构建不发布。
+name: Windows release
+
+on:
+  push:
+    tags: ["windows-v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    environment: windows-release
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-release
+      - name: Version
+        id: version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/windows-v* ]]; then
+            v="${GITHUB_REF#refs/tags/windows-v}"
+          else
+            v="$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')-dev.${GITHUB_RUN_NUMBER}"
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - name: Build
+        run: cargo build --release -p thinktin-windows
+      # 代码签名：环境里有证书时给 exe 签（没有的话 SmartScreen 会拦，只能内部试用）。
+      - name: Sign exe
+        if: env.WINDOWS_SIGNING_PFX_BASE64 != ''
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_PFX_BASE64: ${{ secrets.WINDOWS_SIGNING_PFX_BASE64 }}
+          WINDOWS_SIGNING_PFX_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PFX_PASSWORD }}
+        run: |
+          [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\sign.pfx", [Convert]::FromBase64String($env:WINDOWS_SIGNING_PFX_BASE64))
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" | Select-Object -Last 1
+          & $signtool.FullName sign /f "$env:RUNNER_TEMP\sign.pfx" /p $env:WINDOWS_SIGNING_PFX_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 target\release\thinktin.exe
+      - name: Installer
+        shell: pwsh
+        run: |
+          iscc /DAppVersion=${{ steps.version.outputs.version }} /DSourceExe=..\..\target\release\thinktin.exe apps\windows\installer\thinktin.iss
+      - name: Sign installer
+        if: env.WINDOWS_SIGNING_PFX_BASE64 != ''
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_PFX_BASE64: ${{ secrets.WINDOWS_SIGNING_PFX_BASE64 }}
+          WINDOWS_SIGNING_PFX_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PFX_PASSWORD }}
+        run: |
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" | Select-Object -Last 1
+          & $signtool.FullName sign /f "$env:RUNNER_TEMP\sign.pfx" /p $env:WINDOWS_SIGNING_PFX_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 (Get-ChildItem target\installer\*.exe).FullName
+      - uses: actions/upload-artifact@v4
+        with:
+          name: thinktin-windows-${{ steps.version.outputs.version }}
+          path: |
+            target/installer/*.exe
+            target/release/thinktin.exe
+          if-no-files-found: error
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/windows-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: target/installer/*.exe
+          generate_release_notes: true

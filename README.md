@@ -1,6 +1,6 @@
 # Thinktin-Rust
 
-ThinkTin 平台：托管多个开源 agent，用户领养后常驻云端、按计划执行、可多 agent 协同。服务端和客户端核心用 Rust，iOS、macOS、Android 用原生开发。
+ThinkTin 平台：托管多个开源 agent，用户领养后常驻云端、按计划执行、可多 agent 协同。服务端和客户端核心用 Rust，iOS、macOS、Android 用原生开发，Windows 电脑端用 Rust。
 
 ## 文档
 
@@ -10,6 +10,7 @@ ThinkTin 平台：托管多个开源 agent，用户领养后常驻云端、按�
 - [设备中继](docs/relay.md)：电脑的长连接、电脑工具调用按会话绑定路由、手机和电脑之间的配对审批消息、部署
 - [电脑工具](docs/desktop.md)：agent 用的 `computer_*` 工具、能力令牌和手机签名审批、电脑端的工具服务和审计日志
 - [macOS App](docs/macos.md)：菜单栏常驻的工具服务、系统权限和登录项、截图和键鼠、配对密钥、Developer ID 签名公证和 Sparkle 自动更新
+- [Windows 电脑端](docs/windows.md)：托盘常驻的工具服务（Rust 写的窗口和托盘）、Win32 的截图和键鼠、DPAPI 存会话和配对密钥、开机自启、Inno Setup 安装包
 - [agent 的沙箱模板](docs/templates.md)：清单里锁定的包、模板镜像的构建、断网冒烟、上架新版本的步骤
 - [第三方许可证](docs/licenses.md)：镜像和 App 里带的许可证原文和清单、许可证策略和 CI 检查、留给法务复核的问题
 - [发布流程](docs/release.md)：版本和镜像、数据库迁移的规则和检查、预发和生产的上线步骤（灰度、全量）、密钥、回滚
@@ -35,10 +36,10 @@ ThinkTin 平台：托管多个开源 agent，用户领养后常驻云端、按�
 | llm-gw | bin | 模型网关：沙箱令牌换用户 key、流式透传、计量、限额 |
 | relay | bin | 设备中继 `thinktin-relay`：电脑主动连出的长连接，转电脑工具调用和手机电脑之间的消息（[说明](docs/relay.md)） |
 | agent-shim | bin | 沙箱内守护进程：驱动 agent（ACP、Claude Code stream-json）、配置注入、审批转发 |
-| desktop | lib | 电脑端工具服务：连设备中继、按手机签发的能力令牌和签名审批把关、执行、本地审计日志（[说明](docs/desktop.md)） |
+| desktop | lib | 电脑端工具服务：连设备中继、按手机签发的能力令牌和签名审批把关、执行、本地审计日志（[说明](docs/desktop.md)）；Windows 的系统工具也在这里（`windows.rs`） |
 | client-core | lib | 客户端共享核心（UniFFI） |
 
-原生客户端在 `apps/apple`（iOS + macOS）和 `apps/android`。服务端的镜像和 Kubernetes 清单在 `deploy/`
+原生客户端在 `apps/apple`（iOS + macOS）和 `apps/android`；Windows 电脑端是 Rust 写的 `apps/windows`（见 [Windows 电脑端](docs/windows.md)）。服务端的镜像和 Kubernetes 清单在 `deploy/`
 （见[发布流程](docs/release.md)），agent 的沙箱模板在 `deploy/templates`（见[沙箱模板](docs/templates.md)）。
 
 ## 开发工具
