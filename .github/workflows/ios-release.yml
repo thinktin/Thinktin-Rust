@@ -80,13 +80,71 @@ jobs:
           fi
           xcodebuild -version
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # 密钥先装、先验：有问题一分钟内就报，不用等 Rust 编完。
+      - name: Install the App Store Connect API key
+        id: key
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$ASC_KEY_ID" || -z "$ASC_ISSUER_ID" || ( -z "$ASC_KEY_P8" && -z "$ASC_KEY_P8_BASE64" ) ]]; then
+            echo "::error::testflight 环境里要配 ASC_KEY_ID、ASC_ISSUER_ID 和 ASC_KEY_P8（见 docs/ios-release.md）"
+            exit 1
+          fi
+          # 从网页上复制时常带上空格、换行：去掉。
+          key_id=$(printf '%s' "$ASC_KEY_ID" | tr -d '[:space:]')
+          issuer_id=$(printf '%s' "$ASC_ISSUER_ID" | tr -d '[:space:]' | tr 'A-F' 'a-f')
+          if ! [[ "$key_id" =~ ^[A-Z0-9]{10}$ ]]; then
+            echo "::error::ASC_KEY_ID 不像密钥 ID（应该是 10 位大写字母和数字，现在是 ${#key_id} 个字符）：填团队密钥列表里那一行的“密钥 ID”"
+            exit 1
+          fi
+          if ! [[ "$issuer_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+            echo "::error::ASC_ISSUER_ID 不像 Issuer ID（应该是 8-4-4-4-12 位的一串，现在是 ${#issuer_id} 个字符）：填团队密钥页面顶上的 Issuer ID"
+            exit 1
+          fi
+          echo "::add-mask::$key_id"
+          echo "::add-mask::$issuer_id"
+          {
+            echo "KEY_ID=$key_id"
+            echo "ISSUER_ID=$issuer_id"
+          } >> "$GITHUB_ENV"
+          path="$RUNNER_TEMP/AuthKey.p8"
+          (
+            umask 077
+            if [[ -n "$ASC_KEY_P8" ]]; then
+              # 粘贴时换行可能丢了或变成空格：去掉首尾两行和所有空白，按 64 个字符一行重排成 PEM。
+              body=$(printf '%s' "$ASC_KEY_P8" | sed -e 's/-----BEGIN PRIVATE KEY-----//' -e 's/-----END PRIVATE KEY-----//' | tr -d ' \t\r\n')
+              { echo "-----BEGIN PRIVATE KEY-----"; printf '%s\n' "$body" | fold -w 64; echo "-----END PRIVATE KEY-----"; } > "$path"
+            else
+              printf '%s' "$ASC_KEY_P8_BASE64" | base64 --decode > "$path"
+            fi
+          )
+          if ! openssl pkey -in "$path" -noout 2>/dev/null; then
+            echo "::error::ASC_KEY_P8 读不出私钥：用文本编辑打开 .p8 文件，全选复制（从 -----BEGIN 到 END-----）再粘贴一次"
+            exit 1
+          fi
+          echo "path=$path" >> "$GITHUB_OUTPUT"
+
+      - name: Check the API key with App Store Connect
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet 'pyjwt[crypto]==2.10.1'
+          python tools/apple/asc_key_check.py "$KEY_ID" "$ISSUER_ID" "${{ steps.key.outputs.path }}" cn.thinktin.Thinktin
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios,aarch64-apple-darwin,x86_64-apple-darwin
       - uses: Swatinem/rust-cache@v2
-      - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          # 打包、上传失败时也留下 Rust 的缓存，重跑不用再编十几分钟。
+          cache-on-failure: true
       - name: Install cmake and XcodeGen
         env:
           HOMEBREW_NO_INSTALL_CLEANUP: "1"
@@ -105,42 +163,10 @@ jobs:
           plutil -replace aps-environment -string production Thinktin/Thinktin.entitlements
           plutil -p Thinktin/Thinktin.entitlements
 
-      - name: Install the App Store Connect API key
-        id: key
-        env:
-          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
-          ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
-        run: |
-          set -euo pipefail
-          if [[ -z "$ASC_KEY_ID" || -z "$ASC_ISSUER_ID" || ( -z "$ASC_KEY_P8" && -z "$ASC_KEY_P8_BASE64" ) ]]; then
-            echo "::error::testflight 环境里要配 ASC_KEY_ID、ASC_ISSUER_ID 和 ASC_KEY_P8（见 docs/ios-release.md）"
-            exit 1
-          fi
-          path="$RUNNER_TEMP/AuthKey_${ASC_KEY_ID}.p8"
-          (
-            umask 077
-            if [[ -n "$ASC_KEY_P8" ]]; then
-              # 粘贴时换行可能丢了或变成空格：去掉首尾两行和所有空白，按 64 个字符一行重排成 PEM。
-              body=$(printf '%s' "$ASC_KEY_P8" | sed -e 's/-----BEGIN PRIVATE KEY-----//' -e 's/-----END PRIVATE KEY-----//' | tr -d ' \t\r\n')
-              { echo "-----BEGIN PRIVATE KEY-----"; printf '%s\n' "$body" | fold -w 64; echo "-----END PRIVATE KEY-----"; } > "$path"
-            else
-              printf '%s' "$ASC_KEY_P8_BASE64" | base64 --decode > "$path"
-            fi
-          )
-          if ! openssl pkey -in "$path" -noout 2>/dev/null; then
-            echo "::error::ASC_KEY_P8 读不出私钥：用文本编辑打开 .p8 文件，全选复制（从 -----BEGIN 到 END-----）再粘贴一次"
-            exit 1
-          fi
-          echo "path=$path" >> "$GITHUB_OUTPUT"
-
       - name: Archive
         working-directory: apps/apple
         env:
           TEAM_ID: ${{ secrets.APPLE_TEAM_ID || env.TEAM_ID_DEFAULT }}
-          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
         run: |
           set -o pipefail
           fmt=(cat)
@@ -155,8 +181,8 @@ jobs:
             -skipPackagePluginValidation \
             -allowProvisioningUpdates \
             -authenticationKeyPath "${{ steps.key.outputs.path }}" \
-            -authenticationKeyID "$ASC_KEY_ID" \
-            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            -authenticationKeyID "$KEY_ID" \
+            -authenticationKeyIssuerID "$ISSUER_ID" \
             DEVELOPMENT_TEAM="$TEAM_ID" \
             CODE_SIGN_STYLE=Automatic \
             THINKTIN_CLIENT="$CLIENT" \
@@ -169,8 +195,6 @@ jobs:
         working-directory: apps/apple
         env:
           TEAM_ID: ${{ secrets.APPLE_TEAM_ID || env.TEAM_ID_DEFAULT }}
-          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
         run: |
           set -o pipefail
           options="$RUNNER_TEMP/ExportOptions.plist"
@@ -190,13 +214,13 @@ jobs:
             -exportPath "$RUNNER_TEMP/export" \
             -allowProvisioningUpdates \
             -authenticationKeyPath "${{ steps.key.outputs.path }}" \
-            -authenticationKeyID "$ASC_KEY_ID" \
-            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            -authenticationKeyID "$KEY_ID" \
+            -authenticationKeyIssuerID "$ISSUER_ID" \
             2>&1 | tee "$RUNNER_TEMP/export.log"
 
       - name: Remove the API key
         if: always()
-        run: rm -f "$RUNNER_TEMP"/AuthKey_*.p8
+        run: rm -f "$RUNNER_TEMP"/AuthKey*.p8
 
       - uses: actions/upload-artifact@v4
         if: always()

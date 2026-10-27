@@ -10,7 +10,12 @@
 - 发布工作流第一次跑就停在算版本号：macOS 的 /bin/bash 3.2 把 `$version` 后面的中文逗号当成变量名（`4c84bcb` 加大括号，macos-release.yml 同样两处）。
 - 演示版开关：构建设置 `THINKTIN_CLIENT` → Info.plist `ThinktinClient`，`AppConfiguration.clientKind` 认它（环境变量优先，空的按构建配置）；发布工作流手动触发加 `demo` 选项。服务器（`api.thinktin.cn`）还没上线，给用户先试的 TestFlight 版用演示数据。
 
-进行中：只归档的试跑（run 40565563995，`4c84bcb`）确认密钥和签名。
+- 试跑 run 40565563995：密钥文件读得出来，但 xcodebuild 连苹果时 401（`listTeams.action`），说明密钥 ID / Issuer ID / .p8 对不上
+  或密钥类型不对。工作流改成：两个 ID 去空白、查格式，先用 `tools/apple/asc_key_check.py` 问 App Store Connect（几秒钟），
+  再编 Rust；Rust 缓存失败时也保存。
+- 截图工作流 `ios-screenshots.yml`（推到 `ios-screenshots` 分支触发）：和 Claude 的界面对比用。
+
+进行中：重跑（demo + upload）看密钥检查的结论。
 
 下一步：
 1. 试跑通过后，手动触发 demo + upload，传第一个演示版到 TestFlight；内部测试组加用户本人。

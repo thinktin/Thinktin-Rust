@@ -57,7 +57,10 @@ git push origin ios-v0.2.0
 
 - 归档失败：看 artifact `ios-release-logs` 里的 `archive.log`。第一次跑通前要确认真机 arm64 的 ThinktinCore 能打出来
   （`mobile.yml` 手动触发也能单独验证）。
-- 签名失败：API key 的角色不够（要“App 管理”或以上），或者 App 记录、bundle id 没建。
+- 密钥检查（`tools/apple/asc_key_check.py`，在编 Rust 之前跑）：401 是密钥 ID、Issuer ID 和 .p8 对不上（或者是个人密钥、
+  已撤销），403 是权限不够（自动签名要“管理（Admin）”）；两个 ID 首尾的空格、换行工作流会去掉，格式不对直接报错。
+- 签名失败：API key 的角色不够（要“管理（Admin）”），或者 App 记录、bundle id 没建。xcodebuild 报
+  `Communication with Apple failed ... (401) ... listTeams.action` 也是密钥本身不被认（第一次试跑就是这样）。
 - 上传后 App Store Connect 报 ITMS-91053（缺必需理由 API 的声明）：补隐私清单（12.11，`PrivacyInfo.xcprivacy`）。
 - 出口合规：Info.plist 里 `ITSAppUsesNonExemptEncryption = false`（只用系统 TLS 和认证用的签名，属于豁免），上传后不用再答问卷。
 
