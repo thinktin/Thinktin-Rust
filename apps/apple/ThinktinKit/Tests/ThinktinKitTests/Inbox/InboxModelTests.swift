@@ -14,10 +14,12 @@ struct InboxModelTests {
     private func state(count: Int) -> MockState {
         var state = DemoData.state()
         let now = Date()
-        state.inbox = (0..<count).map { i in
-            InboxItem(
-                id: InboxItemID(String(format: "0192f3a0-0000-7000-8000-%012d", 900_000 - i)), kind: .info,
-                title: "第 \(i) 条", body: "", isRead: i % 2 == 1, createdAt: now.addingTimeInterval(Double(-i * 60)))
+        // 分开写：一个表达式里全写完，macOS 上的编译器类型推断超时。
+        state.inbox = (0..<count).map { (i: Int) -> InboxItem in
+            let id = InboxItemID(String(format: "0192f3a0-0000-7000-8000-%012d", 900_000 - i))
+            let createdAt = now.addingTimeInterval(TimeInterval(-i * 60))
+            return InboxItem(
+                id: id, kind: .info, title: "第 \(i) 条", body: "", isRead: i % 2 == 1, createdAt: createdAt)
         }
         return state
     }
