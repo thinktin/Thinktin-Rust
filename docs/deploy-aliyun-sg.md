@@ -150,6 +150,8 @@
 
 ## 9. 接手（新会话）
 
+先读 [交接文档](handoff.md)（2026-10-28，东京、容器版的下一步都在那里）。
+
 开新会话读 Key 时：先看本文件和 `docs/progress/claude-determined-lovelace-vn0j5h.md`，然后跑只读检查：
 
 ```sh

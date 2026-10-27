@@ -1,5 +1,7 @@
 # claude/determined-lovelace-vn0j5h
 
+> **接手先读 [交接文档](../handoff.md)**（2026-10-28）：现在在做阿里云部署（国内站账号、东京、ACS 容器版沙箱实测），下一步和规矩都在那里。
+
 目标：2026-10-25 用户让“看上一个 agent 的进度，把工作梳理清楚，继续开干，不用停；额度恢复就自动开干”。三条线（后端 `backend-core`、iOS `ios-app`、安卓 `android-app`）10-23 起按用户要求暂停，原来的三个会话已经找不到了，由本会话（session_01JYVuTJTo78Zrenhct8Bkw5）接着做。
 
 ## 分支
