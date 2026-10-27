@@ -5,24 +5,31 @@ App Store Connect，进 TestFlight。上架 App Store 的材料（审核备注�
 
 ## 1. 一次性准备（要人做）
 
-1. **Apple 开发者账号**（公司账号）和团队 id（10 位）。
-2. **App Store Connect 里建 App 记录**：bundle id `cn.thinktin.Thinktin`（`apps/apple/project.yml` 的 `bundleIdPrefix` 生成；
-   要换的话先在 project.yml 显式写 `PRODUCT_BUNDLE_IDENTIFIER`），开 Push Notifications、App Groups 能力。小组件扩展
-   （12.20）的 bundle id 是 `cn.thinktin.Thinktin.Widgets`，也开 App Groups；两个都加进 App Group `group.cn.thinktin.Thinktin`
-   （自动签名一般会自己登记，第一次归档失败时到开发者网站手动建）。换 bundle id 时 App Group 名（`WidgetSnapshotFile.appGroup`）一起改。App 的 Apple ID 拿到后填进
-   `ShellLinks.appStore`（升级页的“去 App Store 更新”）。
-3. **App Store Connect API key**：用户和访问 → 集成 → App Store Connect API，新建一个“App 管理”角色的 key，下载 .p8（只能下一次）。
-4. **GitHub 的 `testflight` 环境**（Settings → Environments）：加上“需要审批的人”（发版要人点一下），放四个密钥：
+1. **Apple 开发者账号**：团队是 Siting (Shenzhen)，团队 id `5BUH46M229`（工作流里的 `TEAM_ID_DEFAULT`，团队 id 不是密钥）。
+2. **App Store Connect API key**：用户和访问 → 集成 → App Store Connect API → 团队密钥 → “+”，权限选**管理（Admin）**
+   （自动签名要它登记 bundle id、能力和描述文件），下载 .p8（只能下一次）。
+3. **GitHub 的 `testflight` 环境**（Settings → Environments → New environment）：可以加“需要审批的人”（发版要人点一下），
+   在 Environment secrets 里放三个：
 
    | 名字 | 内容 |
    | --- | --- |
-   | `APPLE_TEAM_ID` | 团队 id |
-   | `ASC_KEY_ID` | API key 的 id |
+   | `ASC_KEY_ID` | API key 的密钥 id |
    | `ASC_ISSUER_ID` | issuer id（API key 页面顶上） |
-   | `ASC_KEY_P8_BASE64` | `base64 -i AuthKey_XXXX.p8` 的输出 |
+   | `ASC_KEY_P8` | 用文本编辑打开 .p8，整段复制粘贴（换行丢了也行，工作流会重排；读不出私钥会报错） |
 
-   仓库是公开的，这些只放在环境里，不进代码、不进日志（工作流结束时删掉解出来的 .p8）。
-5. **TestFlight 测试组**：内部测试组（团队成员，最多 100 人，不用审核）；外部测试组要过 Beta 审核（见第 4 节）。
+   以前的 `ASC_KEY_P8_BASE64`（.p8 的 base64）照样认；`APPLE_TEAM_ID` 可选，配了就用它。仓库是公开的，这些只放在
+   环境里，不进代码、不进日志（工作流结束时删掉解出来的 .p8）。
+4. **Bundle id 和能力不用手动建**：App `cn.thinktin.Thinktin`（推送、App Groups、Time Sensitive Notifications）、小组件
+   `cn.thinktin.Thinktin.Widgets`（App Groups）、App Group `group.cn.thinktin.Thinktin` 在第一次归档时由自动签名用
+   API key 登记（`-allowProvisioningUpdates`）。App Group 已经在开发者网站建好了（2026-10-28）。换 bundle id 时先在
+   project.yml 显式写 `PRODUCT_BUNDLE_IDENTIFIER`，App Group 名（`WidgetSnapshotFile.appGroup`）一起改。
+5. **App Store Connect 里建 App 记录**（只能在网页上建，API 不支持）：App → “+” → 新建 App，iOS，名字 ThinkTin，
+   简体中文，套装 ID 选 `cn.thinktin.Thinktin`（第一次归档登记之后才能选到），SKU `thinktin-ios`。App 的 Apple ID
+   拿到后填进 `ShellLinks.appStore`（升级页的“去 App Store 更新”）。
+6. **TestFlight 测试组**：内部测试组（团队成员，最多 100 人，不用审核）；外部测试组要过 Beta 审核（见第 4 节）。
+
+顺序：先配好 2、3，手动触发一次只归档（Actions → iOS release → Run workflow，不勾上传），它会登记 bundle id；
+再建 App 记录（5），然后勾上传再跑一次，或者打标签发版。
 
 ## 2. 发一个版本
 

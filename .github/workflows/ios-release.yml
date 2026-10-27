@@ -5,10 +5,11 @@
 # 版本号取标签，构建号是这个工作流的运行序号（只增不减）。也能手动触发（不上传，只验证能归档）。
 #
 # 要的密钥都放在 GitHub 的 testflight 环境里（仓库是公开的，不进代码）：
-#   APPLE_TEAM_ID        开发者团队 id（10 位）
 #   ASC_KEY_ID           App Store Connect API key 的 id
 #   ASC_ISSUER_ID        API key 的 issuer id
-#   ASC_KEY_P8_BASE64    .p8 私钥文件的 base64
+#   ASC_KEY_P8           .p8 私钥文件的内容（用文本编辑打开、整段复制粘贴；换行丢了也行）
+#                        或者 ASC_KEY_P8_BASE64：.p8 文件的 base64（以前的写法，照样认）
+#   APPLE_TEAM_ID        可选：开发者团队 id，不配就用 TEAM_ID_DEFAULT（团队 id 不是密钥，签名的 App 里都看得到）
 name: iOS release
 
 on:
@@ -32,6 +33,8 @@ permissions:
 env:
   CARGO_INCREMENTAL: "0"
   CARGO_TERM_COLOR: always
+  # Siting (Shenzhen) 的开发者团队。
+  TEAM_ID_DEFAULT: 5BUH46M229
 
 jobs:
   testflight:
@@ -99,22 +102,36 @@ jobs:
         id: key
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
           ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
         run: |
           set -euo pipefail
-          if [[ -z "$ASC_KEY_ID" || -z "$ASC_KEY_P8_BASE64" ]]; then
-            echo "::error::testflight 环境里没配 ASC_KEY_ID / ASC_KEY_P8_BASE64（见 docs/ios-release.md）"
+          if [[ -z "$ASC_KEY_ID" || -z "$ASC_ISSUER_ID" || ( -z "$ASC_KEY_P8" && -z "$ASC_KEY_P8_BASE64" ) ]]; then
+            echo "::error::testflight 环境里要配 ASC_KEY_ID、ASC_ISSUER_ID 和 ASC_KEY_P8（见 docs/ios-release.md）"
             exit 1
           fi
           path="$RUNNER_TEMP/AuthKey_${ASC_KEY_ID}.p8"
-          echo "$ASC_KEY_P8_BASE64" | base64 --decode > "$path"
-          chmod 600 "$path"
+          (
+            umask 077
+            if [[ -n "$ASC_KEY_P8" ]]; then
+              # 粘贴时换行可能丢了或变成空格：去掉首尾两行和所有空白，按 64 个字符一行重排成 PEM。
+              body=$(printf '%s' "$ASC_KEY_P8" | sed -e 's/-----BEGIN PRIVATE KEY-----//' -e 's/-----END PRIVATE KEY-----//' | tr -d ' \t\r\n')
+              { echo "-----BEGIN PRIVATE KEY-----"; printf '%s\n' "$body" | fold -w 64; echo "-----END PRIVATE KEY-----"; } > "$path"
+            else
+              printf '%s' "$ASC_KEY_P8_BASE64" | base64 --decode > "$path"
+            fi
+          )
+          if ! openssl pkey -in "$path" -noout 2>/dev/null; then
+            echo "::error::ASC_KEY_P8 读不出私钥：用文本编辑打开 .p8 文件，全选复制（从 -----BEGIN 到 END-----）再粘贴一次"
+            exit 1
+          fi
           echo "path=$path" >> "$GITHUB_OUTPUT"
 
       - name: Archive
         working-directory: apps/apple
         env:
-          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID || env.TEAM_ID_DEFAULT }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
         run: |
@@ -143,7 +160,7 @@ jobs:
         if: ${{ env.UPLOAD == 'true' }}
         working-directory: apps/apple
         env:
-          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID || env.TEAM_ID_DEFAULT }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
         run: |
