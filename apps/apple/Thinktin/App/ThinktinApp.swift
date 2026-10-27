@@ -38,6 +38,18 @@ struct ThinktinApp: App {
                 .onOpenURL { url in
                     _ = model.router.handle(url: url)
                 }
+                .task {
+                    // 截图脚本（tools/apple/screenshots.sh）用环境变量指定启动后打开的页面，只有 Debug 构建认。
+                    #if DEBUG
+                        let environment = ProcessInfo.processInfo.environment
+                        if let url = AppConfiguration.launchURL(environment: environment) {
+                            _ = model.router.handle(url: url)
+                        }
+                        if AppConfiguration.opensDrawerAtLaunch(environment: environment) {
+                            model.router.isDrawerOpen = true
+                        }
+                    #endif
+                }
         }
     }
 }

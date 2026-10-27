@@ -83,6 +83,18 @@ struct AppSmokeTests {
         #expect(AppConfiguration.clientKind(environment: ["THINKTIN_MOCK": "0"], isDebugBuild: true) == .core)
     }
 
+    @Test("截图用的启动参数：深链只认 thinktin://，抽屉认 1/true/yes")
+    func launchOptions() {
+        #expect(AppConfiguration.launchURL(environment: [:]) == nil)
+        #expect(AppConfiguration.launchURL(environment: ["THINKTIN_OPEN_URL": "https://example.com"]) == nil)
+        #expect(
+            AppConfiguration.launchURL(environment: ["THINKTIN_OPEN_URL": " thinktin://approvals "])?.absoluteString
+                == "thinktin://approvals")
+        #expect(!AppConfiguration.opensDrawerAtLaunch(environment: [:]))
+        #expect(!AppConfiguration.opensDrawerAtLaunch(environment: ["THINKTIN_OPEN_DRAWER": "0"]))
+        #expect(AppConfiguration.opensDrawerAtLaunch(environment: ["THINKTIN_OPEN_DRAWER": "1"]))
+    }
+
     @Test("接口地址：没有、没展开、不是 http(s) 时用默认地址")
     func baseURLFallback() {
         let fallback = AppConfiguration.defaultBaseURL
