@@ -1,10 +1,16 @@
 import Foundation
 
+// Apple 平台上 CGRect 的 width、minX 这些在 CoreGraphics 里（只 import Foundation 看不到）；Linux 上在 Foundation 里。
+#if canImport(CoreGraphics)
+    import CoreGraphics
+#endif
+
 /// 截图和点击的坐标换算（WBS 14.3、14.4）：`computer_click` 的坐标是最近一张 `computer_screenshot` 的像素。
 ///
 /// 截的是主显示器。图按显示器的点数乘缩放比例算像素，长边超过 `maxLongEdge` 时等比缩小（模型看大图也会先缩小，
 /// 传原图只是浪费流量）；点击时按同样的比例换回全局坐标（点，左上角原点，`CGEvent` 用的坐标）。
-public struct ScreenshotGeometry: Hashable, Sendable {
+/// Apple 平台上 CGRect 不是 Hashable，这里只要 Equatable。
+public struct ScreenshotGeometry: Equatable, Sendable {
     /// 模型看图的长边上限（像素）。
     public static let maxLongEdge = 1568
 

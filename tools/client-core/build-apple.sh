@@ -98,10 +98,11 @@ fi
 slices+=(-library "$out/macos/libclient_core.a" -headers "$out/headers")
 xcodebuild -create-xcframework "${slices[@]}" -output "$pkg/ThinktinCoreFFI.xcframework"
 cp "$out/bindings/swift/ThinktinCore.swift" "$pkg/Sources/ThinktinCore/"
+# 生成的文件最后一行没有换行：`#endif` 前面补一个，不然接在 `// swiftlint:enable all` 后面成了注释。
 {
   echo "#if os(macOS)"
   sed 's/ThinktinDesktopFFI/ThinktinCoreFFI/g' "$out/bindings/swift/ThinktinDesktop.swift"
-  echo "#endif"
+  printf '\n#endif\n'
 } > "$pkg/Sources/ThinktinCore/ThinktinDesktop.swift"
 # 和 build-linux-swift.sh 打出来的包接口一致：包资源（许可证）给外面的模块用，SwiftPM 生成的
 # Bundle.module 是 internal 的。
