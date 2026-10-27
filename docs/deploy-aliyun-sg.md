@@ -60,8 +60,11 @@
    `AliyunECSFullAccess`、`AliyunVPCFullAccess`、`AliyunRDSFullAccess`、`AliyunOSSFullAccess`、`AliyunCSFullAccess`、
    `AliyunContainerRegistryFullAccess`、`AliyunBSSReadOnlyAccess`（只读账单），域名在阿里云时加 `AliyunDNSFullAccess`；
    用极速版时再加函数计算的权限。然后创建 AccessKey。
-5. **把 Key 放进云端环境，不要发到聊天里**：会话标题栏的云端环境菜单 → Edit → Network secrets（老版本叫 API credentials；没有就加环境变量），
-   名字用 `ALIBABA_CLOUD_ACCESS_KEY_ID`、`ALIBABA_CLOUD_ACCESS_KEY_SECRET`。**存好后开新会话**，新会话才读得到。
+5. **把 Key 放进云端环境，不要发到聊天里**：网页版 claude.ai/code，会话标题后的 ▾ → Edit cloud environment（或新建会话页输入框下面的
+   环境选择器 → 环境那一行的齿轮）→ **环境变量**（Environment variables）里填两行 `ALIBABA_CLOUD_ACCESS_KEY_ID=…`、
+   `ALIBABA_CLOUD_ACCESS_KEY_SECRET=…`，保存。**不要**填进“设置脚本”（那里设的变量脚本跑完就没了），也**不要**用 Network secrets
+   （它只会把 Key 原样塞进请求头，阿里云的 Key 是拿来给请求签名的，用不了）。**存好后开新会话**，仓库选 `thinktin/Thinktin-Rust`，
+   环境选存了 Key 的那个；会话只在虚拟机启动时读环境变量，老会话读不到。
 6. **域名**：买一个（或用已有的），要两个子域名，比如 `api.<域名>`、`relay.<域名>`。域名在阿里云就把 DNS 权限给子账号；不在阿里云的话，Claude 会给出要加的 DNS 记录，由你去加。
 7. **GitHub 仓库的密钥**（第 4 阶段要）：ACR 的登录用户名和密码加到仓库的 Actions secrets，用来把 agent 模板镜像推进 ACR。会话里的 GitHub 工具不能设仓库密钥。
 
@@ -118,5 +121,13 @@
 
 ## 9. 接手（新会话）
 
-开新会话读 Key 时：先看本文件和 `docs/progress/claude-determined-lovelace-vn0j5h.md`，确认 `ALIBABA_CLOUD_ACCESS_KEY_ID` 在环境里，
-然后从第 4 节第 1 阶段开始：先列资源和费用请用户确认，再动手。每完成一个阶段，在本文件和进度文件里记一笔、提交推送。
+开新会话读 Key 时：先看本文件和 `docs/progress/claude-determined-lovelace-vn0j5h.md`，然后跑只读检查：
+
+```sh
+deploy/aliyun/run.sh check        # 第一次会在 target/aliyun-venv 装阿里云 SDK，约半分钟
+```
+
+它查 Key 和身份（应是 RAM 子账号，不是主账号）、新加坡有没有服务机的 4 核 8G 规格、VPC、RDS 的 PostgreSQL 16、OSS、ACS、账户余额，
+只调查询接口、不建资源、不打印密钥；不通过的项会说该去哪儿处理（缺哪条权限、哪个产品没开通）。2026-10-27 只用假 Key 测过错误路径
+（7 项都能连到阿里云、提示正确），成功路径第一次用真 Key 时核对输出。全部通过后从第 4 节第 1 阶段开始：先列资源和费用请用户确认，
+再动手。每完成一个阶段，在本文件和进度文件里记一笔、提交推送。
