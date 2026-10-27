@@ -145,7 +145,8 @@ P1 后端核心（M1–M9）和 P2 里能在代码层面完成的包都做完了
 - 合进 main（2026-10-27，用户让按正常流程合）：PR #5 合并提交 `b38cc13`，#2、#3、#4、#7、#8 随之自动标成已合并；#6（宣传视频，
   多一个提交）没动，等用户定。main 上手动跑 `mobile.yml`（run 40434187317）：安卓过了，Apple 挂在 `___chkstk_darwin` 找不到——rustc 默认
   按 iOS 10 编，和 Xcode 26 编的 C 依赖（目标 26.5）链不到一起。PR #9 修：`build-apple.sh` 导出 `IPHONEOS_DEPLOYMENT_TARGET=16.0`、
-  `MACOSX_DEPLOYMENT_TARGET=13.0`（和 project.yml 一致），Codemagic 的 `apple-package` 打全部切片验过。
+  `MACOSX_DEPLOYMENT_TARGET=13.0`（和 project.yml 一致），Codemagic 的 `apple-package` 打全部切片验过。PR #9 合并（`b53467d`）后
+  main 上重跑 `mobile.yml`（run 40440703056）：Apple、安卓都过了。
 - iOS 截图（PR #9）：`tools/apple/screenshots.sh`，Codemagic 的 `ios-screenshots`（约 20 分钟，产物是 12 张 PNG）。模拟器上
   `simctl openurl` 每次都弹系统确认框挡住页面，所以 Debug 构建认两个启动环境变量 `THINKTIN_OPEN_URL`（深链）、
   `THINKTIN_OPEN_DRAWER`（`AppConfiguration`），脚本用 `SIMCTL_CHILD_*` 传。看截图发现的小毛病（没改）：首页上滑出去的消息
