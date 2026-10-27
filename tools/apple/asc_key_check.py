@@ -17,12 +17,17 @@ import urllib.request
 API = "https://api.appstoreconnect.apple.com"
 
 
-def token(key_id: str, issuer_id: str, private_key: str) -> str:
+def token(key_id: str, issuer_id: str | None, private_key: str) -> str:
+    """团队密钥的令牌带 iss（Issuer ID）；issuer_id 为 None 时按个人密钥的格式（sub: user，没有 iss）。"""
     import jwt
 
     now = int(time.time())
     # 苹果要求 exp 不超过 20 分钟。
-    claims = {"iss": issuer_id, "iat": now, "exp": now + 600, "aud": "appstoreconnect-v1"}
+    claims: dict = {"iat": now, "exp": now + 600, "aud": "appstoreconnect-v1"}
+    if issuer_id is None:
+        claims["sub"] = "user"
+    else:
+        claims["iss"] = issuer_id
     return jwt.encode(claims, private_key, algorithm="ES256", headers={"kid": key_id, "typ": "JWT"})
 
 
@@ -56,19 +61,29 @@ def main(argv: list[str]) -> int:
     key_id, issuer_id, key_path = argv[1:4]
     bundle_id = argv[4] if len(argv) == 5 else None
     with open(key_path, encoding="utf-8") as handle:
-        bearer = token(key_id, issuer_id, handle.read())
+        private_key = handle.read()
+    bearer = token(key_id, issuer_id, private_key)
 
     status, body = get("/v1/apps?limit=1", bearer)
     if status == 0:
         print(f"::warning::连不上 App Store Connect，跳过密钥检查：{body.get('reason', '')}")
         return 0
     if status == 401:
+        # 按个人密钥的格式再试一次：能用就说明建成了个人密钥（xcodebuild 自动签名要团队密钥）。
+        individual, _ = get("/v1/apps?limit=1", token(key_id, None, private_key))
+        if individual == 200:
+            print(
+                "::error::这是一把“个人密钥”，自动签名要“团队密钥”：到 App Store Connect → 用户和访问 → 集成 → "
+                "App Store Connect API → 团队密钥 新建一把（权限选“管理”），改 GitHub 里的 ASC_KEY_ID、ASC_KEY_P8，"
+                "ASC_ISSUER_ID 填团队密钥页面顶上的 Issuer ID。"
+            )
+            return 1
         print(
             "::error::苹果不认这把 API 密钥（401 "
             + apple_error(body)
-            + "）。最常见：密钥 ID 或 Issuer ID 填错了、和 .p8 文件不是同一把；或者建的是“个人密钥”，要在“团队密钥”里建；"
-            "或者这把密钥已经撤销。到 App Store Connect → 用户和访问 → 集成 → 团队密钥 核对后，改 GitHub 里的 ASC_KEY_ID、"
-            "ASC_ISSUER_ID、ASC_KEY_P8。"
+            + "）。最常见：密钥 ID 和 .p8 文件不是同一把（.p8 的文件名是 AuthKey_<密钥 ID>.p8，对一下），或者 Issuer ID "
+            "不是团队密钥页面顶上的那个，或者这把密钥已经撤销。到 App Store Connect → 用户和访问 → 集成 → 团队密钥 核对后，"
+            "改 GitHub 里的 ASC_KEY_ID、ASC_ISSUER_ID、ASC_KEY_P8。"
         )
         return 1
     if status != 200:
