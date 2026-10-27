@@ -150,3 +150,38 @@ workflows:
           ls -R target/apple/ThinktinCore/ThinktinCoreFFI.xcframework | head -30
     artifacts:
       - logs/*.log
+
+  # iPhone 模拟器上演示模式的截图（tools/apple/screenshots.sh）：首页、实例、运行、审批、计划、收件箱……，看界面、做上架截图的底稿。
+  ios-screenshots:
+    name: iOS screenshots (simulator, demo data)
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    environment:
+      xcode: latest
+      vars:
+        CARGO_INCREMENTAL: "0"
+    cache:
+      cache_paths:
+        - $HOME/.cargo/registry
+        - $HOME/.cargo/git
+    scripts:
+      - name: Tools (Rust, cmake, XcodeGen)
+        script: |
+          set -euo pipefail
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          fi
+          echo "PATH=$HOME/.cargo/bin:$PATH" >> "$CM_ENV"
+          export PATH="$HOME/.cargo/bin:$PATH"
+          rustup target add aarch64-apple-ios-sim aarch64-apple-darwin
+          brew install cmake xcodegen
+          if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)'; then
+            brew install python@3.12
+            echo "PATH=$(brew --prefix python@3.12)/libexec/bin:$PATH" >> "$CM_ENV"
+          fi
+      - name: Build ThinktinCore (simulator + macOS arm64)
+        script: tools/client-core/build-apple.sh target/apple --ci
+      - name: Screenshots
+        script: tools/apple/screenshots.sh "$CM_BUILD_DIR/screenshots"
+    artifacts:
+      - screenshots/*.png
