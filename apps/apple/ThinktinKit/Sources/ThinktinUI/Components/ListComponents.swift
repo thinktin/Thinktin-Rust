@@ -216,7 +216,7 @@ struct InlineNotice: View {
     }
 }
 
-/// 页面的大标题（衬线）和一句说明。
+/// 页面的大标题（衬线）和一句说明。大标题露着的时候，导航栏里同一句标题不显示（`inlineNavigationTitle`）。
 struct PageHeader: View {
     let title: String
     var message: String?
@@ -227,6 +227,7 @@ struct PageHeader: View {
                 .typography(.title)
                 .foregroundStyle(Theme.ink)
                 .accessibilityAddTraits(.isHeader)
+                .reportsPageTitle(title)
             if let message {
                 Text(message)
                     .typography(.subheadline)
@@ -264,13 +265,107 @@ extension View {
             .frame(maxWidth: .infinity)
     }
 
-    /// 页面顶部的行内标题（导航栏标题，iOS 上用小标题样式）。
+    /// 页面顶部的行内标题（导航栏标题，iOS 上用小标题样式）。页面里有同一句话的 `PageHeader` 时，大标题露着就不在
+    /// 导航栏里重复，滚到导航栏下面了才淡入（和系统的大标题一样）。
     func inlineNavigationTitle(_ title: String) -> some View {
+        modifier(InlineNavigationTitle(title: title))
+    }
+
+    /// 报告页面大标题的位置（`PageHeader` 的标题行用）。
+    fileprivate func reportsPageTitle(_ title: String) -> some View {
+        modifier(PageTitleReporter(title: title))
+    }
+
+    /// 滚动内容在导航栏下面用实的边缘（iOS 26 起导航栏是透明的玻璃，默认的柔和边缘会让滚上去的文字从状态栏、
+    /// 导航栏后面透出来）。套在导航栏外面，里面所有页面的滚动视图都生效。
+    @ViewBuilder
+    func solidTopScrollEdge() -> some View {
         #if os(iOS)
-            navigationTitle(title).navigationBarTitleDisplayMode(.inline)
+            if #available(iOS 26.0, *) {
+                scrollEdgeEffectStyle(.hard, for: .top)
+            } else {
+                self
+            }
         #else
-            navigationTitle(title)
+            self
         #endif
+    }
+}
+
+/// 页面大标题（`PageHeader`）露没露在导航栏下面：`inlineNavigationTitle` 建一个放进环境，`PageHeader` 量了自己的
+/// 标题行往里报。
+@Observable @MainActor
+final class PageTitleVisibility {
+    /// 正露着的大标题（没有、已经滚到导航栏下面时为 nil）。
+    private(set) var visibleHeader: String?
+    /// 大标题第一次排版时的上沿（滚动视图的坐标系里，就是导航栏下沿再往下一点）：标题行的下沿滚过这里，就算滚到导航栏
+    /// 下面了。
+    @ObservationIgnored private var restingTop: CGFloat?
+
+    func update(header title: String, frame: CGRect) {
+        let top = restingTop ?? frame.minY
+        restingTop = top
+        let next = frame.maxY > top ? title : nil
+        if visibleHeader != next { visibleHeader = next }
+    }
+
+    /// 大标题不在界面上了（换成了别的内容，或者懒加载的列表把它滚出去了）。上沿不重新量：滚回来时它可能正在导航栏下面。
+    func headerRemoved(_ title: String) {
+        if visibleHeader == title { visibleHeader = nil }
+    }
+}
+
+private struct PageTitleVisibilityKey: EnvironmentKey {
+    static let defaultValue: PageTitleVisibility? = nil
+}
+
+extension EnvironmentValues {
+    fileprivate var pageTitleVisibility: PageTitleVisibility? {
+        get { self[PageTitleVisibilityKey.self] }
+        set { self[PageTitleVisibilityKey.self] = newValue }
+    }
+}
+
+private struct InlineNavigationTitle: ViewModifier {
+    let title: String
+    @State private var visibility = PageTitleVisibility()
+
+    func body(content: Content) -> some View {
+        #if os(iOS)
+            let showsTitle = visibility.visibleHeader != title
+            content
+                .environment(\.pageTitleVisibility, visibility)
+                .navigationTitle(title)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .principal) {
+                        Text(title)
+                            .font(.headline)
+                            .foregroundStyle(Theme.ink)
+                            .lineLimit(1)
+                            .opacity(showsTitle ? 1 : 0)
+                            .animation(.easeInOut(duration: 0.2), value: showsTitle)
+                            .accessibilityHidden(!showsTitle)
+                    }
+                }
+        #else
+            content.navigationTitle(title)
+        #endif
+    }
+}
+
+private struct PageTitleReporter: ViewModifier {
+    let title: String
+    @Environment(\.pageTitleVisibility) private var visibility
+
+    func body(content: Content) -> some View {
+        content
+            .onGeometryChange(for: CGRect.self) { proxy in
+                proxy.frame(in: .scrollView)
+            } action: { frame in
+                visibility?.update(header: title, frame: frame)
+            }
+            .onDisappear { visibility?.headerRemoved(title) }
     }
 }
 

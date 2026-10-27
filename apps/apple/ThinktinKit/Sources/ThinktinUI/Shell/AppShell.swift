@@ -71,6 +71,7 @@ private struct SignedInShell: View {
                 RootPage(model: model)
                     .appRouteDestinations()
             }
+            .solidTopScrollEdge()
             ShellDrawer(model: model)
         }
         .sheet(item: Binding(get: { router.sheet }, set: { router.sheet = $0 })) { route in
@@ -78,6 +79,7 @@ private struct SignedInShell: View {
                 AppDestination(route: route)
                     .appRouteDestinations()
             }
+            .solidTopScrollEdge()
             .shellEnvironment(model)
             .tint(Theme.accent)
         }
