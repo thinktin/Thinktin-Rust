@@ -3,8 +3,8 @@
 查 Key 能不能用、是哪个身份、选定地域有没有服务机要用的规格、各产品开没开通、账户余额。只调查询接口，不建任何资源，
 不打印密钥。每一项打印“通过 / 不通过”和原因，不通过的给出该去哪儿处理。
 
-    deploy/aliyun/run.sh check                       默认新加坡 ap-southeast-1
-    deploy/aliyun/run.sh check --region ap-northeast-1
+    deploy/aliyun/run.sh check                       默认东京 ap-northeast-1
+    deploy/aliyun/run.sh check --region ap-southeast-1
 """
 
 import argparse
@@ -80,7 +80,7 @@ def check(name, product, fn):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--region", default="ap-southeast-1")
+    parser.add_argument("--region", default="ap-northeast-1")
     args = parser.parse_args()
     region = args.region
 
@@ -163,7 +163,7 @@ def main():
         clusters = body.clusters or []
         listed = [f"{c.name}（{c.cluster_type}/{c.profile or '-'}）" for c in clusters]
         return f"已有 {len(clusters)} 个集群" + (f"：{', '.join(listed)}" if listed else "") + \
-            "。新加坡能不能开 Agent Sandbox 要在 ACS 控制台确认"
+            "（沙箱组件用 run.sh acs 查、装）"
 
     check("容器计算 ACS", "cs", acs_clusters)
 
@@ -178,7 +178,7 @@ def main():
                 except ValueError:
                     empty = False
                 note = (
-                    "（余额为 0：国际站绑了信用卡就从卡里扣，是正常的；没绑卡也没充值的话，付费资源会下单失败）"
+                    "（余额为 0：国内站是预付，没充值的话付费资源会下单失败；国际站绑了信用卡就从卡里扣，是正常的）"
                     if empty
                     else ""
                 )

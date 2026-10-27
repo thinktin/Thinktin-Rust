@@ -9,5 +9,7 @@ alibabacloud-rds20140815==16.0.2
 alibabacloud-cs20151215==7.2.3
 alibabacloud-bssopenapi20171214==5.1.2
 oss2==2.19.1
-# 沙箱实测用的 E2B SDK，阿里云文档测过的版本。
-e2b==2.31.0
+# 沙箱实测用的 E2B SDK：ACS 容器版文档配的版本（2.51.0 起建、连沙箱改走 v2 接口，容器版还不认）。极速版文档测的是
+# 2.31.0，极速版现在只是备选，跟着用这个版本。容器版的私有协议补丁在 sandbox.py 里（kruise_patch），不装 OpenKruise 的包。
+e2b==2.50.0
+e2b-code-interpreter==2.9.2
