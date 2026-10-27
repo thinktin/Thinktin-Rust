@@ -142,6 +142,14 @@ P1 后端核心（M1–M9）和 P2 里能在代码层面完成的包都做完了
   iOS App 的测试、`ThinktinMac`、隐私清单检查。
 - 三条线对齐（2026-10-27，用户同意）：`backend-core`、`ios-app`、`android-app` 都快进到本分支（`34056d1`，没有强推、没有合并提交），
   四个分支内容一样。PR #5（`backend-core` → `main`）、#7、#8 跟着带上了新提交；以后合一个就行（比如 #5），另外两个可以关掉。
+- 合进 main（2026-10-27，用户让按正常流程合）：PR #5 合并提交 `b38cc13`，#2、#3、#4、#7、#8 随之自动标成已合并；#6（宣传视频，
+  多一个提交）没动，等用户定。main 上手动跑 `mobile.yml`（run 40434187317）：安卓过了，Apple 挂在 `___chkstk_darwin` 找不到——rustc 默认
+  按 iOS 10 编，和 Xcode 26 编的 C 依赖（目标 26.5）链不到一起。PR #9 修：`build-apple.sh` 导出 `IPHONEOS_DEPLOYMENT_TARGET=16.0`、
+  `MACOSX_DEPLOYMENT_TARGET=13.0`（和 project.yml 一致），Codemagic 的 `apple-package` 打全部切片验过。
+- iOS 截图（PR #9）：`tools/apple/screenshots.sh`，Codemagic 的 `ios-screenshots`（约 20 分钟，产物是 12 张 PNG）。模拟器上
+  `simctl openurl` 每次都弹系统确认框挡住页面，所以 Debug 构建认两个启动环境变量 `THINKTIN_OPEN_URL`（深链）、
+  `THINKTIN_OPEN_DRAWER`（`AppConfiguration`），脚本用 `SIMCTL_CHILD_*` 传。看截图发现的小毛病（没改）：首页上滑出去的消息
+  从导航栏后面透出来；审批、收件箱这类页面导航栏标题和大标题重复。
 
 进行中：
 - 无。
@@ -160,7 +168,7 @@ P1 后端核心（M1–M9）和 P2 里能在代码层面完成的包都做完了
 - 定时任务：每小时的“ThinkTin 续跑检查”（`trig_01J9YurHAZJ35AugopCVXWKZ`）10-26 20:59 删了——能在这里做的都做完了，剩下的要部署
   环境、Mac 或人定。
 - Codemagic：API 令牌用户在聊天里给的，只存在会话的临时目录（不进仓库）；用完要在 Codemagic 上作废换新的。应用 id
-  `6adfea4501e42548bf7801f4`；`POST https://api.codemagic.io/builds`（`appId`、`workflowId: apple-check`、`branch`）发起，
+  `6adfea4501e42548bf7801f4`；`POST https://api.codemagic.io/builds`（`appId`、`workflowId`（`apple-check` / `apple-package` / `ios-screenshots`）、`branch`）发起，
   `GET /builds/<id>` 看状态，日志在每一步的 `subactions[].logUrl` 和日志包（`artefacts`）里。免费额度每月 500 分钟。
 - 要人定的：iOS 批准审批时设备没设锁屏密码照常批准（`BiometricGateResult.unavailable`），安卓是不许批准，两端不一致。
 - 要人定的（上架，docs/android-release.md 第 2.2、4、5 节）：审核账号（服务端要有固定验证码的审核账号）、生成式 AI 的备案 / 登记材料、

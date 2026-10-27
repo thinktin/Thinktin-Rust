@@ -255,6 +255,9 @@ client-core 只缓存实例、运行、事件、收件箱（cache.rs 的几张�
      `swift build --build-tests` 整个 `ThinktinKit`（含 ThinktinUI）；`xcodegen generate`；挑一个不高于所选 Xcode 模拟器 SDK 的 iPhone，
      `xcodebuild test` 跑 App 的 `ThinktinTests` 和 `ThinktinUITests`；最后 macOS 本机 `swift test`（适配层经 macOS 切片跑一遍）。日志传成 artifact。
   `kit-linux` 最后还有严格模式的 `swift format lint`。
+- **截图**（macOS）：`tools/apple/screenshots.sh [输出目录]` 在 iPhone 模拟器上跑演示模式，按深链截首页、抽屉、实例、运行、审批、
+  计划、收件箱、保险箱请求和深色模式共 12 张；Codemagic 上是 `codemagic.yaml` 的 `ios-screenshots`。`simctl openurl` 会弹系统确认框，
+  所以页面用启动环境变量指定：`THINKTIN_OPEN_URL=thinktin://…`、`THINKTIN_OPEN_DRAWER=1`（只有 Debug 构建认，`AppConfiguration`）。
 - 代码风格：`swift format`（Swift 6 工具链自带），配置在 `apps/apple/.swift-format`（App 和 ThinktinKit 共用，4 格缩进、120 列、
   其余是 swift-format 6.2 的默认规则全量导出）。CI 跑严格模式的 lint，**提交前先 `swift format -i -r apps/apple`**。
 - **Linux 上检查界面代码**：`tools/apple/uicheck/run.sh`（`appkit` 查 macOS 路径和 macOS App target（要先
