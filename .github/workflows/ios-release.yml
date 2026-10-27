@@ -64,7 +64,7 @@ jobs:
           fi
           echo "marketing=$version" >> "$GITHUB_OUTPUT"
           echo "build=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
-          echo "版本 $version，构建号 ${{ github.run_number }}"
+          echo "版本 ${version}，构建号 ${{ github.run_number }}"
 
       - name: Select Xcode
         run: |
