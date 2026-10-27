@@ -119,6 +119,15 @@
 - 平台的密钥（访问令牌、沙箱令牌、主密钥、数据库密码）在服务机上生成、直接写进 Kubernetes Secret，不出现在聊天和仓库里。要备份时由用户在控制台或云助手里导出，存进密码管理器。
 - 上次在聊天里贴过的 Codemagic 密钥，用户去 Codemagic 作废换新。
 
+## 8.5 第一次检查结果（2026-10-27，用户的阿里云账号）
+
+`deploy/aliyun/run.sh check` 在新会话里用真 Key 跑过（只读）：
+
+- **通过**：Key 是 RAM 子账号 `thinktin-deploy`；新加坡有 4 核 8G 的 `ecs.u1-c1m2.xlarge`（可用区 a、b、c）和 `ecs.c9i.xlarge`（a、d）；
+  还没有 VPC；RDS 的 PostgreSQL 16 在 a、b、c 可买；ACS 接口能调、还没有集群。
+- **不通过**：OSS 报 `UserDisable`，OSS 还没开通（或账号欠费）。
+- **余额 0.00 USD**：是**国际站**账号（按美元计价），下单前要绑定付款方式或充值。第 2 节的人民币估算照汇率换算即可。
+
 ## 9. 接手（新会话）
 
 开新会话读 Key 时：先看本文件和 `docs/progress/claude-determined-lovelace-vn0j5h.md`，然后跑只读检查：

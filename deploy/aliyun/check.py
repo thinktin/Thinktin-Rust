@@ -62,6 +62,8 @@ def explain(product, err):
         hint = f"子账号没权限：在 RAM 给 thinktin-deploy 加 {POLICY[product]}"
     elif "NotOpen" in code or "NotActivated" in code or "ServiceNotEnable" in code or "NotApply" in code:
         hint = "产品还没开通：到控制台开通（第一次开通要本人同意协议、授权服务角色）"
+    elif code == "UserDisable":
+        hint = "OSS 还没开通，或账号欠费、被停用：到 OSS 控制台开通（国际站账号先绑定付款方式）"
     return f"{code}: {message.splitlines()[0][:200]}" + (f"\n      → {hint}" if hint else "")
 
 
@@ -171,7 +173,12 @@ def main():
         for endpoint in ("business.aliyuncs.com", "business.ap-southeast-1.aliyuncs.com"):
             try:
                 data = Bss(config(endpoint, region)).query_account_balance().body.data
-                return f"可用余额 {data.available_amount} {data.currency}"
+                try:
+                    empty = float(str(data.available_amount).replace(",", "")) <= 0
+                except ValueError:
+                    empty = False
+                note = "（余额为 0：按量付费的资源要先充值，或国际站账号先绑定信用卡，否则下单会失败）" if empty else ""
+                return f"可用余额 {data.available_amount} {data.currency}{note}"
             except Exception as err:  # noqa: BLE001
                 last = err
         raise last
