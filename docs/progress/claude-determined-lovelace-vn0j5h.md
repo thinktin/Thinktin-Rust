@@ -149,8 +149,13 @@ P1 后端核心（M1–M9）和 P2 里能在代码层面完成的包都做完了
   main 上重跑 `mobile.yml`（run 40440703056）：Apple、安卓都过了。
 - iOS 截图（PR #9）：`tools/apple/screenshots.sh`，Codemagic 的 `ios-screenshots`（约 20 分钟，产物是 12 张 PNG）。模拟器上
   `simctl openurl` 每次都弹系统确认框挡住页面，所以 Debug 构建认两个启动环境变量 `THINKTIN_OPEN_URL`（深链）、
-  `THINKTIN_OPEN_DRAWER`（`AppConfiguration`），脚本用 `SIMCTL_CHILD_*` 传。看截图发现的小毛病（没改）：首页上滑出去的消息
-  从导航栏后面透出来；审批、收件箱这类页面导航栏标题和大标题重复。
+  `THINKTIN_OPEN_DRAWER`（`AppConfiguration`），脚本用 `SIMCTL_CHILD_*` 传。看截图发现的两个小毛病随后改了（`9daeafe`）：
+  iOS 26 的玻璃导航栏让首页上滑出去的消息从状态栏后面透出来——导航栈外面套 `solidTopScrollEdge()`（顶部用实的滚动边缘）；
+  审批、收件箱这类页面导航栏标题和 `PageHeader` 大标题重复——`inlineNavigationTitle` 改成主位置的标题，同一句话的大标题
+  露着时不显示，滚到导航栏下面才淡入（`PageHeader` 在滚动视图坐标系里报自己的位置）。Codemagic 截图核对过，`apple-check` 全绿
+  （Kit 1092、App 15 + 108、ThinktinMac）。
+- 清理（2026-10-27，用户在网页上删的，代理不让会话删分支）：已合并的 13 个旧分支和三个 `autosave/*`、`claude/autosave-handoff`；
+  剩 `main`、三条线、本分支（和它的 autosave）、`claude/promo-video`（宣传片的制作源码，没进 main，留着）。
 
 进行中：
 - 无。
