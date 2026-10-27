@@ -6,15 +6,20 @@
 //!   能力令牌覆盖（[`policy`]）。
 //! - **高危操作**（删除、执行命令）：每次都给配对的手机发审批请求，等用户在手机上用私钥签名批准，
 //!   电脑本地验签通过才做；拒绝、超时、签名不对都不做（架构方案 4.7、7）。
-//! - 工具本身由 [`ToolBackend`] 实现：文件和命令用 [`files::FileTools`]，截图、键鼠、打开应用由 App 用系统接口实现。
+//! - 工具本身由 [`ToolBackend`] 实现：文件和命令用 [`files::FileTools`]，截图、键鼠、打开应用要用系统接口：
+//!   macOS 由 App 实现（经 [`ffi`]），Windows 在 [`windows`] 里直接用 Win32 实现；几部分用 [`ToolSet`] 合起来。
 //!
 //! 连接协议见 `proto::relay`，消息正文见 `client_core::pairing`，部署和路由见 docs/relay.md。
 
 pub mod audit;
 pub mod ffi;
 pub mod files;
+pub mod keys;
 pub mod pairing;
 pub mod policy;
+pub mod screenshot;
+#[cfg(windows)]
+pub mod windows;
 
 uniffi::setup_scaffolding!();
 
@@ -74,11 +79,44 @@ impl ToolResult {
 pub trait ToolBackend: Send + Sync {
     /// 现在能用的工具（`computer_*` 的全名），随系统权限变化；连上中继时报给平台。
     fn available(&self) -> Vec<String>;
-    /// 前台应用的 bundle id：键鼠操作只能对着手机授权过的应用。
+    /// 前台应用（macOS 的 bundle id，Windows 的程序名）：键鼠操作只能对着手机授权过的应用。
     fn frontmost_app(&self) -> Option<String> {
         None
     }
     async fn call(&self, tool: &str, arguments: &Value) -> ToolResult;
+}
+
+/// 几个 [`ToolBackend`] 合成一个：工具取并集（前面的优先），前台应用取第一个知道的。
+pub struct ToolSet(pub Vec<Arc<dyn ToolBackend>>);
+
+#[async_trait]
+impl ToolBackend for ToolSet {
+    fn available(&self) -> Vec<String> {
+        let mut tools: Vec<String> = Vec::new();
+        for backend in &self.0 {
+            for tool in backend.available() {
+                if !tools.contains(&tool) {
+                    tools.push(tool);
+                }
+            }
+        }
+        tools
+    }
+
+    fn frontmost_app(&self) -> Option<String> {
+        self.0.iter().find_map(|b| b.frontmost_app())
+    }
+
+    async fn call(&self, tool: &str, arguments: &Value) -> ToolResult {
+        match self
+            .0
+            .iter()
+            .find(|b| b.available().iter().any(|t| t == tool))
+        {
+            Some(backend) => backend.call(tool, arguments).await,
+            None => ToolResult::error(format!("{tool} is not available on this computer")),
+        }
+    }
 }
 
 /// 这台电脑的访问令牌（设备会话），由 App 用 client-core 管：保存、刷新。

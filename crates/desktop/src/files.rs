@@ -1,7 +1,10 @@
-//! 用 Rust 实现的电脑工具：看目录、读写文件、删除（挪进废纸篓）、执行命令。
-//! 截图、键鼠、打开应用要用 macOS 的系统接口，由 App 实现（14.3、14.4），和这些组合起来交给 [`crate::Desktop`]。
+//! 用 Rust 实现的电脑工具：看目录、读写文件、删除（挪进废纸篓 / 回收站）、执行命令。
+//! 截图、键鼠、打开应用要用系统接口：macOS 由 App 实现（14.3、14.4），Windows 在 [`crate::windows`]；
+//! 和这些组合起来交给 [`crate::Desktop`]。
 //!
 //! 权限在调用之前已经核对过（[`crate::policy`]），这里只管做事；路径一律是解开符号链接后的绝对路径。
+//! 命令在 macOS 上交给 `/bin/sh -c`，Windows 上交给 PowerShell（`-NoProfile -NonInteractive -Command`，
+//! 不开控制台窗口，输出按 UTF-8 收）。
 
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -32,7 +35,7 @@ const MAX_ENTRIES: usize = 1000;
 const MAX_OUTPUT: usize = 64 << 10;
 
 pub struct FileTools {
-    /// 删除的东西挪到这里（macOS 上是 `~/.Trash`）。
+    /// 删除的东西挪到这里（macOS 上是 `~/.Trash`；Windows 上不用，进系统的回收站）。
     pub trash: PathBuf,
     /// 命令没传 `cwd` 时在哪儿跑。
     pub home: PathBuf,
@@ -41,7 +44,7 @@ pub struct FileTools {
 }
 
 impl FileTools {
-    /// 用户目录下的默认设置：废纸篓 `~/.Trash`，命令最多跑两分钟。
+    /// 用户目录下的默认设置：废纸篓 `~/.Trash`（Windows 不用），命令最多跑两分钟。
     pub fn for_home(home: impl Into<PathBuf>) -> Self {
         let home = home.into();
         Self {
@@ -229,6 +232,23 @@ fn delete(args: &Value, trash: &Path) -> Result<ToolResult, String> {
     if !path.exists() {
         return Err(format!("{} does not exist", path.display()));
     }
+    #[cfg(windows)]
+    {
+        let _ = trash;
+        crate::windows::recycle(&path)?;
+        Ok(ToolResult::text(format!(
+            "Moved {} to the Recycle Bin",
+            path.display()
+        )))
+    }
+    #[cfg(not(windows))]
+    {
+        move_to_trash(&path, trash)
+    }
+}
+
+#[cfg(not(windows))]
+fn move_to_trash(path: &Path, trash: &Path) -> Result<ToolResult, String> {
     std::fs::create_dir_all(trash).map_err(|e| format!("cannot open the Trash: {e}"))?;
     let name = path
         .file_name()
@@ -240,12 +260,34 @@ fn delete(args: &Value, trash: &Path) -> Result<ToolResult, String> {
         target = trash.join(format!("{name} {n}"));
         n += 1;
     }
-    std::fs::rename(&path, &target)
+    std::fs::rename(path, &target)
         .map_err(|e| format!("cannot move {} to the Trash: {e}", path.display()))?;
     Ok(ToolResult::text(format!(
         "Moved {} to the Trash",
         path.display()
     )))
+}
+
+/// 跑一条命令的 shell。
+#[cfg(not(windows))]
+fn shell(command: &str) -> tokio::process::Command {
+    let mut cmd = tokio::process::Command::new("/bin/sh");
+    cmd.arg("-c").arg(command);
+    cmd
+}
+
+/// Windows：PowerShell，不开控制台窗口；输出按 UTF-8 收，原生程序的退出码带回来。
+#[cfg(windows)]
+fn shell(command: &str) -> tokio::process::Command {
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let script = format!(
+        "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $OutputEncoding = [System.Text.Encoding]::UTF8; \
+         & {{ {command} }}; if ($null -ne $LASTEXITCODE) {{ exit $LASTEXITCODE }}"
+    );
+    let mut cmd = tokio::process::Command::new("powershell.exe");
+    cmd.args(["-NoProfile", "-NonInteractive", "-Command", &script]);
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd
 }
 
 impl FileTools {
@@ -257,10 +299,8 @@ impl FileTools {
             Some(c) => crate::policy::resolve(Path::new(c))?,
             None => self.home.clone(),
         };
-        let mut cmd = tokio::process::Command::new("/bin/sh");
-        cmd.arg("-c")
-            .arg(command)
-            .current_dir(&cwd)
+        let mut cmd = shell(command);
+        cmd.current_dir(&cwd)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -376,6 +416,7 @@ mod tests {
         let d = tools.call("computer_delete", &json!({ "path": p })).await;
         assert!(!d.is_error, "{d:?}");
         assert!(!file.exists());
+        #[cfg(not(windows))]
         assert!(root.join(".Trash/notes.md").exists());
         let gone = tools
             .call("computer_read_file", &json!({ "path": p }))
@@ -384,16 +425,19 @@ mod tests {
         assert!(tools.call("computer_screenshot", &json!({})).await.is_error);
     }
 
-    #[cfg(unix)]
     #[tokio::test]
     async fn commands_run_with_a_timeout() {
         let home = tempfile::tempdir().unwrap();
         let mut tools = FileTools::for_home(home.path());
+        #[cfg(not(windows))]
+        let (fails, sleeps) = ("echo hi; echo oops >&2; exit 3", "sleep 5");
+        #[cfg(windows)]
+        let (fails, sleeps) = (
+            "Write-Output hi; [Console]::Error.WriteLine('oops'); cmd /c exit 3",
+            "Start-Sleep -Seconds 5",
+        );
         let r = tools
-            .call(
-                "computer_run",
-                &json!({ "command": "echo hi; echo oops >&2; exit 3" }),
-            )
+            .call("computer_run", &json!({ "command": fails }))
             .await;
         assert!(r.is_error);
         let t = text(&r);
@@ -401,7 +445,7 @@ mod tests {
         assert!(t.contains("hi") && t.contains("oops"), "{t}");
         tools.run_timeout = Duration::from_millis(200);
         let r = tools
-            .call("computer_run", &json!({ "command": "sleep 5" }))
+            .call("computer_run", &json!({ "command": sleeps }))
             .await;
         assert!(r.is_error && text(&r).contains("did not finish"), "{r:?}");
     }

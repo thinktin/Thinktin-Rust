@@ -1,5 +1,7 @@
 //! 电脑端工具服务（14.2）的端到端测试：真实数据库、进程里的设备中继、平台一侧的 `DeviceCalls`，
 //! 电脑端用 `Desktop` + 文件工具，手机由测试扮演（用固定的 P-256 私钥签名）。没有 DATABASE_URL 时跳过。
+//! 平台那一侧只在 Linux / macOS 上能编（沙箱），Windows 上不跑这个文件。
+#![cfg(not(windows))]
 
 use std::path::PathBuf;
 use std::sync::Arc;
