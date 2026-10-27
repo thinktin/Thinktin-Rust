@@ -1,9 +1,13 @@
 # iPhone 模拟器上演示模式（Mock 数据，不联网）的截图（tools/apple/screenshots.sh）：给人看界面、和参考的设计对比，
-# 也是上架截图的底稿。和 codemagic.yaml 的 ios-screenshots 做同样的事；只能手动触发，截图在 artifact `ios-screenshots`。
+# 也是上架截图的底稿。和 codemagic.yaml 的 ios-screenshots 做同样的事；截图在 artifact `ios-screenshots`。
+# 手动触发（这个文件要先在默认分支上），或者把要截图的提交推到 ios-screenshots 分支：
+#   git push -f origin HEAD:ios-screenshots
 name: iOS screenshots
 
 on:
   workflow_dispatch:
+  push:
+    branches: [ios-screenshots]
 
 permissions:
   contents: read
