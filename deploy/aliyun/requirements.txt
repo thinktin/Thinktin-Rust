@@ -9,3 +9,5 @@ alibabacloud-rds20140815==16.0.2
 alibabacloud-cs20151215==7.2.3
 alibabacloud-bssopenapi20171214==5.1.2
 oss2==2.19.1
+# 沙箱实测用的 E2B SDK，阿里云文档测过的版本。
+e2b==2.31.0

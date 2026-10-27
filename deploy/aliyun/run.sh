@@ -5,11 +5,13 @@
 #   deploy/aliyun/run.sh check                      只读检查：Key、身份、新加坡的规格、各产品开没开通、余额
 #   deploy/aliyun/run.sh check --region ap-northeast-1
 #   deploy/aliyun/run.sh network [--apply]          第 1 阶段：VPC、交换机、安全组（不收费；不加 --apply 只打印计划）
+#   deploy/aliyun/run.sh sandbox [--apply]          沙箱实测：智能体沙箱极速版建 1 个最小的沙箱，测完删掉（不加 --apply 只读）
 #
 # Key 从环境变量 ALIBABA_CLOUD_ACCESS_KEY_ID、ALIBABA_CLOUD_ACCESS_KEY_SECRET 读（云端环境设置的“环境变量”里填），不打印。
+# 沙箱实测另用 ALIYUN_SANDBOX_API_KEY（智能体沙箱控制台建的 API Key）。
 set -euo pipefail
 cd "$(dirname "$0")/../.."
-cmd="${1:?用法：deploy/aliyun/run.sh <check|network> [参数]}"
+cmd="${1:?用法：deploy/aliyun/run.sh <check|network|sandbox> [参数]}"
 shift
 venv=target/aliyun-venv
 req=deploy/aliyun/requirements.txt

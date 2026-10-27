@@ -161,7 +161,7 @@ P1 后端核心（M1–M9）和 P2 里能在代码层面完成的包都做完了
 - 无。
 
 下一步（要 macOS 才能验，或者要人定）：
-0. **部署到阿里云新加坡**（2026-10-27 定）：用户在开账号、建 RAM 子账号，Key 放进云端环境后开新会话，照 [新加坡部署计划](../deploy-aliyun-sg.md) 第 9 节接手：先列资源和费用请用户确认，再按第 4 节分阶段部署。
+0. **部署到阿里云新加坡**（2026-10-27 定）：只读检查 `deploy/aliyun/run.sh check` 全部通过；第 1 阶段网络已建（不收费，ID 见 [新加坡部署计划](../deploy-aliyun-sg.md) 第 8.6 节）。沙箱实测脚本 `deploy/aliyun/run.sh sandbox [--apply]` 已写好，用假 Key 试过。**卡在实名认证**：国际站账号开通智能体沙箱极速版前要实名，用户在选国际站认证还是换国内站账号。认证、开通、建 API Key 放进环境变量 `ALIYUN_SANDBOX_API_KEY` 后，开新会话先 `run.sh sandbox` 再 `--apply`，结果记进第 8.6 节。暂停要申请白名单（第 8.7 节），实测时一并确认。之后的阶段先列资源和费用请用户确认再动手。
 1. macOS App 已经在真 Xcode 上编过（见上），还没在 Mac 上跑过：截图、键鼠、登录项、Secure Enclave、Sparkle 要在 Mac 上过一遍；`macos-release.yml` 没跑过（证书、公证密钥、Sparkle 密钥、
    更新源地址要人准备，见 `docs/macos.md` 第 6 节）。还能在这里做的小项见 `docs/macos.md` 第 8 节（工具调用中的提示、
    审批说明本地化）。

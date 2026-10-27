@@ -134,7 +134,17 @@
 |---|---|---|
 | 检查 | 2026-10-27 全部通过（OSS 已开通；余额 0 USD，付费资源下单前要绑卡或充值） | — |
 | 1. 网络 | **2026-10-27 已建**（`deploy/aliyun/run.sh network --apply`，不收费） | VPC `thinktin-sg` vpc-t4nnamzms0ug1sro2xnsh（10.10.0.0/16）；交换机 `thinktin-svc-a` vsw-t4nkrp5vkmskd7u8l3iym（10.10.1.0/24）、`thinktin-sbx-a` vsw-t4noo1zilrxuce545tf2w（10.10.16.0/20），都在 ap-southeast-1a；安全组 `thinktin-svc` sg-t4ng934e0iz30f7mdie9（入方向 80、443） |
-| 沙箱测试 | 下一步：**先用智能体沙箱极速版**（全托管，不用建 ACS 集群、负载均衡和域名，按秒计费，经济型每核每小时约 ¥0.08）。容器版要先建 ACS 集群、装两个组件，还要一个 ALB 和 E2B 域名与证书，正式上线再定 | 要用户在智能体沙箱控制台开通极速版、建一个 API Key（E2B 接口用它，不是 AccessKey），放进环境变量 `ALIYUN_SANDBOX_API_KEY` |
+| 沙箱测试 | 脚本已写好：`deploy/aliyun/run.sh sandbox`（只读：找出 Key 能用的接口地址、列模板和现有沙箱），加 `--apply` 用最小的模板建 1 个沙箱，测冷启动、规格、读写文件、元数据地址、出网、暂停和恢复，测完删掉（10 分钟超时到期自动删，几分钟，不到 1 毛钱）。**先用智能体沙箱极速版**：全托管，不用建 ACS 集群、负载均衡和域名，按秒计费。容器版要先建 ACS 集群、装两个组件，还要一个 ALB 和 E2B 域名与证书，正式上线再定 | **卡在实名认证**（2026-10-27）：国际站账号开通极速版前要先做实名认证。用户在选：国际站认证（证件，可能一两天），或换国内站 aliyun.com 账号（支付宝刷脸，几分钟；照样买新加坡，换子账号 Key 即可，第 1 阶段的网络用 `network --apply` 在新账号重建，不收费）。认证后：开通极速版、建 API Key，放进环境变量 `ALIYUN_SANDBOX_API_KEY`（不是 AccessKey） |
+
+### 8.7 极速版的 E2B 接口（2026-10-27 查文档、用假 Key 试过）
+
+- 两个地址都在，没 Key 都返回 401：`api.ap-southeast-1.sandbox.aliyuncs.com`（智能体沙箱）和 `api.ap-southeast-1.e2b.fc.aliyuncs.com`（函数计算云沙箱）。
+  Key 是哪边控制台建的就用哪边，`run.sh sandbox` 会自动找；也可以用环境变量 `ALIYUN_SANDBOX_DOMAIN` 指定。
+- SDK 用阿里云文档测过的 `e2b==2.31.0`；Key 不是 `e2b_` 开头，要关掉 SDK 的 Key 格式校验。
+- [兼容接口列表](https://help.aliyun.com/en/functioncompute/e2b-sdk-compatible-api-list)里：建、删、列、设超时、跑命令、读写文件、端口访问都兼容；
+  **暂停要申请白名单**，恢复用 `connect`（没有单独的恢复接口）；超时被回收的沙箱连不上。快照、卷、自定义域名不支持。
+  文档没写暂停最长保留多久、暂停怎么收费、超时到期能不能自动暂停——这几条正好是第 6 节要实测的，也要问阿里云。
+- **对我们的影响**：架构里“空闲 10 分钟暂停、7 天内唤醒”靠暂停。白名单开不了、或暂停保留不到 7 天，就要改成第 5 节说的“删沙箱前把工作区存进 OSS、下次重建时放回”。
 
 ## 9. 接手（新会话）
 
@@ -142,6 +152,7 @@
 
 ```sh
 deploy/aliyun/run.sh check        # 第一次会在 target/aliyun-venv 装阿里云 SDK，约半分钟
+deploy/aliyun/run.sh sandbox      # 有 ALIYUN_SANDBOX_API_KEY 时：只读看接口和模板；加 --apply 建 1 个沙箱测完删掉
 ```
 
 它查 Key 和身份（应是 RAM 子账号，不是主账号）、新加坡有没有服务机的 4 核 8G 规格、VPC、RDS 的 PostgreSQL 16、OSS、ACS、账户余额，
