@@ -132,16 +132,17 @@ P1 后端核心（M1–M9）和 P2 里能在代码层面完成的包都做完了
   `.build-desktop/` 加进 .gitignore（350 MB 的构建目录之前会被自动保存扫进快照，推送失败）。
 - 电脑审批的说明按手机的界面语言说（iOS `4872597`、安卓 `cd8ce84`）：执行命令、删除照签名覆盖的参数说，理由照原话。
 - 审批的角标也数电脑发来的（iOS `f8c54ed`，快捷指令的待审批数也是；安卓随本条进度一起提交）：存着的加上服务端还没收下的新请求，只数不确认。安卓全量 test 747 个、lint 通过；Kit 981 个。
-- 在本分支上手动触发了 iOS 工作流（run 40391238132）想第一次在 macOS 上真编：Linux 作业全绿（含新的 ThinktinDesktopAdapterTests
-  一步），macOS 作业两次都没排到机器（GitHub 的 macOS arm64 机器不够，“not acquired by Runner”，15 分钟后被取消），所以
-  `ThinktinMac` 和 10-25 以来本分支的 iOS 界面都还没在真 Xcode 上编过。2026-10-27 00:00（UTC）再在最新提交上试一次，还排不到就不再试。
+- 第一次在真 Xcode 上编（2026-10-27）：GitHub 的 macOS 机器前两次排不上（run 40391238132），10-27 00:00 那次排上了；同时接了
+  Codemagic（用户的账号，仓库根目录 `codemagic.yaml` 的 `apple-check`，M2，约 6 分钟一轮，API 能发起构建、读每一步的日志）。
+  修了三处 Linux 上查不出来的：`build-apple.sh` 把 `#endif` 接在生成文件最后一行的注释后面（整个 ThinktinCore 编不过）、
+  `ScreenshotGeometry` 要 `import CoreGraphics` 且 CGRect 在 Apple 上不是 Hashable、隐私清单扫描在 nm 读不了静态库某个成员时
+  直接崩；还有一个测试的表达式类型推断超时。之后 iOS App 在模拟器上 build + test 通过、`ThinktinMac` 编译通过。
 
 进行中：
 - 无。
 
 下一步（要 macOS 才能验，或者要人定）：
-1. macOS App 只在 Linux 的桩上查过：第一次 macOS CI（PR 或合到 main 后）编 `ThinktinMac` 时可能有桩没覆盖的 SDK 差异要修；
-   截图、键鼠、登录项、Secure Enclave、Sparkle 要在 Mac 上过一遍；`macos-release.yml` 没跑过（证书、公证密钥、Sparkle 密钥、
+1. macOS App 已经在真 Xcode 上编过（见上），还没在 Mac 上跑过：截图、键鼠、登录项、Secure Enclave、Sparkle 要在 Mac 上过一遍；`macos-release.yml` 没跑过（证书、公证密钥、Sparkle 密钥、
    更新源地址要人准备，见 `docs/macos.md` 第 6 节）。还能在这里做的小项见 `docs/macos.md` 第 8 节（工具调用中的提示、
    审批说明本地化）。
 2. iOS 控制中心的“全部停止”要让小组件扩展共享登录会话（钥匙串共享），要人定安全上能不能这样。
@@ -152,7 +153,10 @@ P1 后端核心（M1–M9）和 P2 里能在代码层面完成的包都做完了
 坑和决定：
 - 原来三个会话（backend `session_016LgPcdynywrhrjCq8VVFLt`、iOS `session_01GuCp3KRgqaK6Kzynw6udRn`、安卓 `session_01T2zubC6hDr9ZZR3ihhPP5b`）查不到了，它们 scratchpad 里的工作流脚本和缓存也没了，按各进度文件重新来。
 - 定时任务：每小时的“ThinkTin 续跑检查”（`trig_01J9YurHAZJ35AugopCVXWKZ`）10-26 20:59 删了——能在这里做的都做完了，剩下的要部署
-  环境、Mac 或人定。只留一个一次性的（`trig_01DETKesHETCes53ejqYTebT`，10-27 00:00 UTC）：在最新提交上再触发一次 iOS 工作流。
+  环境、Mac 或人定。
+- Codemagic：API 令牌用户在聊天里给的，只存在会话的临时目录（不进仓库）；用完要在 Codemagic 上作废换新的。应用 id
+  `6adfea4501e42548bf7801f4`；`POST https://api.codemagic.io/builds`（`appId`、`workflowId: apple-check`、`branch`）发起，
+  `GET /builds/<id>` 看状态，日志在每一步的 `subactions[].logUrl` 和日志包（`artefacts`）里。免费额度每月 500 分钟。
 - 要人定的：iOS 批准审批时设备没设锁屏密码照常批准（`BiometricGateResult.unavailable`），安卓是不许批准，两端不一致。
 - 要人定的（上架，docs/android-release.md 第 2.2、4、5 节）：审核账号（服务端要有固定验证码的审核账号）、生成式 AI 的备案 / 登记材料、
   APP 备案号、Play 是否用同一把签名密钥。
