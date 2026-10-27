@@ -1,0 +1,15 @@
+# Hermes 模板要额外带的原文（16.5，docs/licenses.md 第 3 节）。
+#
+# hermes-agent 的网页界面（hermes_cli/web_dist/fonts-terminal/）带了 JetBrains Mono 字体（OFL-1.1），包里没有 OFL 原文。
+# 从上游取，钉在标签 v2.304 上（Hermes 没写用的哪个版本；OFL 原文和版权行各版本一样）。
+# 2026-10-21 按 hermes-agent 0.19.0 核对；升级后 applies_to 对不上，CI 会报错，要重新核对。
+
+applies_to = ["pypi:hermes-agent@0.19.0"]
+
+[[file]]
+component = "jetbrains-mono"
+version = "2.304"
+license = "OFL-1.1"
+path = "jetbrains-mono-OFL.txt"
+url = "https://raw.githubusercontent.com/JetBrains/JetBrainsMono/v2.304/OFL.txt"
+source = "https://github.com/JetBrains/JetBrainsMono/tree/v2.304"

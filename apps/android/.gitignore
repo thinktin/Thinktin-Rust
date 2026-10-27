@@ -1,0 +1,20 @@
+# Gradle / IDE 产物
+build/
+.gradle/
+.kotlin/
+local.properties
+*.iml
+.idea/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# 由 scripts/sync-core.sh 从 Rust 构建产物复制进来（体积大，不提交）
+core/src/main/jniLibs/
+core/src/main/assets/thinktin-licenses/
+
+# 根目录 .gitignore 的 `debug`、`target`（不带斜杠，给 Cargo 用）会误伤 Android 的 src/debug 源集和名叫 debug / target 的包，
+# 这里重新包含（父目录没被排除，所以有效）。上面的 build/ 仍然忽略构建产物。
+!**/src/debug/
+!**/debug/
+!**/target/

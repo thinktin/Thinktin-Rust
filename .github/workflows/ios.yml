@@ -1,0 +1,272 @@
+# iOS App（WBS 12.1，说明见 docs/ios.md 第 7 节）。
+#
+# - kit-linux：Linux 上的 Swift 6.2 编 ThinktinKit 的纯 Swift 部分和 ThinktinCore 适配层，跑 swift test
+#   （ThinktinCore 用本机的 libclient_core.so，tools/client-core/build-linux-swift.sh 生成）。和云端会话
+#   本地跑的是同一套。再用 libdesktop 打的包跑 macOS App 的工具服务适配层（ThinktinDesktopAdapterTests）。
+# - app-macos：Xcode 26 上打 ThinktinCore（只要模拟器和 macOS 的 arm64 切片，build-apple.sh --ci），
+#   swift build 整个 ThinktinKit（macOS 原生，含 ThinktinUI 和测试目标），xcodegen 生成工程，在 iPhone 模拟器上
+#   build + test（App 的 ThinktinTests 和 ThinktinKit 的 ThinktinUITests），编 macOS App（ThinktinMac，14.5），
+#   最后在 macOS 本机 swift test。
+#   日志和结果包传成 artifact。
+name: iOS
+
+on:
+  # ios-app 有 PR（#8），由 pull_request 触发，不再按 push 重复跑一遍（macOS 作业 20 分钟以上）。
+  push:
+    branches: [main]
+    paths:
+      - apps/apple/**
+      - crates/client-core/**
+      - crates/proto/**
+      - tools/client-core/**
+      - tools/apple/**
+      # client-core 的依赖版本、打包脚本调用的许可证清单工具
+      - Cargo.toml
+      - Cargo.lock
+      - tools/licenses/**
+      - .github/workflows/ios.yml
+  pull_request:
+    paths:
+      - apps/apple/**
+      - crates/client-core/**
+      - crates/proto/**
+      - tools/client-core/**
+      - tools/apple/**
+      - Cargo.toml
+      - Cargo.lock
+      - tools/licenses/**
+      - .github/workflows/ios.yml
+  workflow_dispatch:
+
+# 同一分支的运行排队、不互相取消：仓库要求小步频繁推送（CLAUDE.md），取消正在跑的会让 macOS 作业（20 分钟以上）
+# 一直出不了结果。排队时只留最新的一个，中间的推送会被跳过。
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  kit-linux:
+    name: ThinktinKit on Linux
+    # Swift 按 Ubuntu 24.04 的包下载，runner 固定 24.04，ubuntu-latest 换代时不跟着坏。
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      # 和云端会话的 /opt/swift 同一版本；升级时两边一起改。
+      SWIFT_VERSION: "6.2"
+    steps:
+      - uses: actions/checkout@v4
+      # 直接用 swift.org 的发布包，用 swift.org 公布的公钥（all-keys.asc）验签（6.x 的签名密钥 2028 年才过期），不依赖
+      # keyserver（setup-swift@v2 每次都要去 keyserver 刷新公钥，偶尔超时）。
+      - name: Install Swift ${{ env.SWIFT_VERSION }}
+        id: swift
+        run: |
+          set -euo pipefail
+          name="swift-${SWIFT_VERSION}-RELEASE-ubuntu24.04"
+          url="https://download.swift.org/swift-${SWIFT_VERSION}-release/ubuntu2404/swift-${SWIFT_VERSION}-RELEASE/$name.tar.gz"
+          cd "$RUNNER_TEMP"
+          curl -fsSL --retry 5 --retry-all-errors -o swift.tar.gz "$url"
+          curl -fsSL --retry 5 --retry-all-errors -o swift.tar.gz.sig "$url.sig"
+          # swift.org 的 CDN 有时把公钥按 gzip 压缩发回来（2026-10-22 两次遇到：文件以 1f 8b 开头，gpg 报 no valid OpenPGP
+          # data）。curl 带 --compressed 自动解压；响应头没标压缩时按文件头认出 gzip 再解；还不是公钥就退避重试。
+          for attempt in 1 2 3 4 5; do
+            curl -fsSL --compressed --retry 5 --retry-all-errors -o swift-keys.asc https://www.swift.org/keys/all-keys.asc || true
+            if [ "$(head -c 2 swift-keys.asc 2>/dev/null | od -An -tx1 | tr -d ' \n')" = "1f8b" ]; then
+              gunzip -c swift-keys.asc > swift-keys.asc.plain && mv swift-keys.asc.plain swift-keys.asc || true
+            fi
+            if grep -q -- "-----BEGIN PGP PUBLIC KEY BLOCK-----" swift-keys.asc 2>/dev/null; then break; fi
+            echo "::warning::all-keys.asc is not a PGP key block (attempt $attempt), first bytes: $(head -c 16 swift-keys.asc 2>/dev/null | od -An -tx1 | tr -d '\n')"
+            sleep $((attempt * 15))
+          done
+          grep -q -- "-----BEGIN PGP PUBLIC KEY BLOCK-----" swift-keys.asc
+          # gpgv 只验签，不用 gpg-agent 和钥匙环目录。
+          gpg --batch --dearmor < swift-keys.asc > swift-keys.gpg
+          gpgv --keyring "$RUNNER_TEMP/swift-keys.gpg" swift.tar.gz.sig swift.tar.gz
+          mkdir -p "$RUNNER_TEMP/swift"
+          tar -xzf swift.tar.gz -C "$RUNNER_TEMP/swift" --strip-components=1
+          rm swift.tar.gz
+          echo "$RUNNER_TEMP/swift/usr/bin" >> "$GITHUB_PATH"
+      - run: swift --version
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build client-core and the Linux ThinktinCore package
+        run: tools/client-core/build-linux-swift.sh target/linux
+      - name: swift build / swift test
+        working-directory: apps/apple/ThinktinKit
+        env:
+          # 包里已经写了 rpath，这里再兜一层。
+          LD_LIBRARY_PATH: ${{ github.workspace }}/target/debug
+        run: |
+          set -o pipefail
+          swift build 2>&1 | tee "$RUNNER_TEMP/swift-build.log"
+          swift test 2>&1 | tee "$RUNNER_TEMP/swift-test.log"
+      # macOS App 的工具服务适配层（14.5）：ThinktinCore 换成 libdesktop 那种（里面也有 client-core），
+      # 只跑 ThinktinDesktopAdapterTests（其余测试上一步跑过了）。单独的构建目录，不和上一步的包混。
+      - name: swift test ThinktinDesktopAdapter (desktop core)
+        if: ${{ !cancelled() }}
+        working-directory: apps/apple/ThinktinKit
+        env:
+          THINKTIN_DESKTOP: "1"
+          LD_LIBRARY_PATH: ${{ github.workspace }}/target/debug
+        run: |
+          set -o pipefail
+          ../../../tools/client-core/build-linux-swift.sh --desktop
+          swift test --scratch-path .build-desktop --filter ThinktinDesktopAdapterTests 2>&1 \
+            | tee "$RUNNER_TEMP/swift-test-desktop.log"
+      - name: Privacy scanner tests
+        if: ${{ !cancelled() }}
+        run: python3 -m unittest tools/apple/privacy/test_scan.py
+      # 代码风格（配置在 apps/apple/.swift-format：4 格缩进、120 列）。测试挂了也照样跑，两边的问题一次看全。
+      # 不过时在本地 `swift format -i -r apps/apple` 再提交。
+      - name: swift format lint
+        if: ${{ !cancelled() && steps.swift.outcome == 'success' }}
+        run: swift format lint --strict --recursive --parallel apps/apple
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kit-linux-logs
+          path: ${{ runner.temp }}/swift-*.log
+          if-no-files-found: ignore
+
+  app-macos:
+    name: iOS app on the simulator
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode
+        run: |
+          # 有 26.6 就用它，否则用镜像默认的 Xcode。
+          if [[ -d /Applications/Xcode_26.6.app ]]; then
+            sudo xcode-select -s /Applications/Xcode_26.6.app
+          fi
+          xcode-select -p
+          xcodebuild -version
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios-sim,aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      # build-apple.sh 里的许可证清单工具要 Python 3.11 以上。
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install cmake and XcodeGen
+        env:
+          HOMEBREW_NO_INSTALL_CLEANUP: "1"
+        run: |
+          brew install cmake xcodegen
+          xcodegen --version
+      - name: Build ThinktinCore (simulator + macOS arm64)
+        run: tools/client-core/build-apple.sh target/apple --ci
+      # macOS 原生编整个 ThinktinKit（含 ThinktinUI 的 AppKit 分支）和全部测试目标；测试在后面单独跑。
+      - name: swift build ThinktinKit (macOS, includes ThinktinUI and the tests)
+        id: kit_macos
+        working-directory: apps/apple/ThinktinKit
+        run: |
+          set -o pipefail
+          swift build --build-tests 2>&1 | tee "$RUNNER_TEMP/swift-build-macos.log"
+      - name: Generate the Xcode project
+        working-directory: apps/apple
+        run: xcodegen generate
+      - name: Pick an iPhone simulator
+        id: sim
+        run: |
+          set -euo pipefail
+          # 选中的 Xcode 支持的最新 iOS 运行时（不高于它的模拟器 SDK，镜像里装了更新的测试版运行时也不会挑到）
+          # 里第一个可用的 iPhone。
+          SDK_VERSION=$(xcrun --sdk iphonesimulator --show-sdk-version)
+          export SDK_VERSION
+          echo "iphonesimulator SDK $SDK_VERSION"
+          udid=$(xcrun simctl list --json devices available | python3 -c '
+          import json, os, sys
+          devices = json.load(sys.stdin)["devices"]
+          sdk = tuple(int(p) for p in os.environ["SDK_VERSION"].split(".") if p.isdigit())
+          def version(runtime):
+              return tuple(int(p) for p in runtime.rsplit("iOS-", 1)[1].split("-") if p.isdigit())
+          runtimes = sorted(
+              (r for r in devices if ".SimRuntime.iOS-" in r and version(r) <= sdk), key=version, reverse=True)
+          for runtime in runtimes:
+              for d in devices[runtime]:
+                  if d.get("isAvailable", True) and d["name"].startswith("iPhone"):
+                      print(d["udid"], runtime, d["name"], file=sys.stderr)
+                      print(d["udid"])
+                      sys.exit(0)
+          sys.exit("no available iPhone simulator")
+          ')
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+      - name: xcodebuild build test
+        working-directory: apps/apple
+        run: |
+          set -o pipefail
+          fmt=(cat)
+          if command -v xcbeautify >/dev/null; then fmt=(xcbeautify --renderer github-actions); fi
+          xcodebuild \
+            -project Thinktin.xcodeproj \
+            -scheme Thinktin \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -resultBundlePath "$RUNNER_TEMP/Thinktin.xcresult" \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            build test 2>&1 | tee "$RUNNER_TEMP/xcodebuild.log" | "${fmt[@]}"
+      # macOS App（14.5–14.8）：只编译。它的逻辑（登录状态、按键、截图坐标、工具服务的适配层）在 ThinktinKit 里测；
+      # 截图、键鼠要系统权限，CI 的机器上跑不了。iOS 那一步失败了也照编，两边的问题一次看全。
+      - name: xcodebuild build ThinktinMac (macOS)
+        if: ${{ !cancelled() }}
+        working-directory: apps/apple
+        run: |
+          set -o pipefail
+          fmt=(cat)
+          if command -v xcbeautify >/dev/null; then fmt=(xcbeautify --renderer github-actions); fi
+          xcodebuild \
+            -project Thinktin.xcodeproj \
+            -scheme ThinktinMac \
+            -destination "platform=macOS,arch=arm64" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            build 2>&1 | tee "$RUNNER_TEMP/xcodebuild-mac.log" | "${fmt[@]}"
+      # 隐私清单（12.11）：Rust 核心和 App 二进制里用到的需要声明理由的 API 都要在 PrivacyInfo.xcprivacy 里声明，
+      # 不然上传时 App Store Connect 报 ITMS-91053。
+      - name: Check required-reason APIs against the privacy manifest
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          app="$RUNNER_TEMP/DerivedData/Build/Products/Debug-iphonesimulator/Thinktin.app/Thinktin"
+          bins=(target/apple/sim/libclient_core.a)
+          [[ -f "$app" ]] && bins+=("$app")
+          python3 tools/apple/privacy/scan.py --manifest apps/apple/Thinktin/Resources/PrivacyInfo.xcprivacy "${bins[@]}"
+      # ThinktinKit 的全部测试在 macOS 本机再跑一遍：ThinktinCoreAdapterTests 经 macOS 切片的真核心跑
+      # （StubHTTPServer 的 Darwin 分支只有这里编译、运行），ThinktinUITests 走 AppKit 分支。放在 xcodebuild
+      # 后面、它失败了也照跑，两边的问题一次看全。
+      - name: swift test ThinktinKit (macOS)
+        if: ${{ !cancelled() && steps.kit_macos.outcome == 'success' }}
+        working-directory: apps/apple/ThinktinKit
+        run: |
+          set -o pipefail
+          swift test 2>&1 | tee "$RUNNER_TEMP/swift-test-macos.log"
+      - name: Pack the result bundle
+        if: always()
+        run: |
+          if [[ -d "$RUNNER_TEMP/Thinktin.xcresult" ]]; then
+            ditto -c -k --keepParent "$RUNNER_TEMP/Thinktin.xcresult" "$RUNNER_TEMP/Thinktin.xcresult.zip"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: app-macos-logs
+          path: |
+            ${{ runner.temp }}/xcodebuild.log
+            ${{ runner.temp }}/xcodebuild-mac.log
+            ${{ runner.temp }}/swift-build-macos.log
+            ${{ runner.temp }}/swift-test-macos.log
+            ${{ runner.temp }}/Thinktin.xcresult.zip
+          if-no-files-found: ignore

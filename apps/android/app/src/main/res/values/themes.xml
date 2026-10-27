@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 窗口主题：只决定 Compose 画出来之前的背景色。父主题是 AppCompat：BiometricPrompt 在 API 26–27 上
+         用 AppCompat 的对话框显示指纹提示，非 AppCompat 主题会崩（13.16）。 -->
+    <style name="Theme.Thinktin" parent="Theme.AppCompat.Light.NoActionBar">
+        <item name="android:windowBackground">@color/window_background</item>
+    </style>
+</resources>

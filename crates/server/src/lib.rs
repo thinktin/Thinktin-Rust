@@ -1,0 +1,265 @@
+//! 控制面主程序（WBS 3.5）：模块化单体，把接入网关、编排、通知等模块组装到一个进程里。
+//!
+//! 停机顺序：收到信号 → 就绪检查转为 503、后台任务停止领取新工作 → 等 `drain`（负载均衡摘除）
+//! → 停止接新连接，等进行中的请求 → 等后台任务收尾（最多 `grace`）→ 关闭数据库连接池。
+
+pub mod admin;
+mod api;
+pub mod config;
+mod http;
+mod lifecycle;
+mod listen;
+pub mod observability;
+pub mod secrets;
+mod workers;
+
+use std::future::Future;
+use std::time::Duration;
+
+use std::sync::Arc;
+
+use anyhow::Context;
+use keyvault::{CachingKms, Kms, KmsRing, LocalKms};
+use listen::ListenOptions;
+use orchestrator::artifacts::{ArtifactStore, BlobStore, LocalBlobStore};
+use orchestrator::s3::{S3BlobStore, S3Config};
+use store::Db;
+use tokio::net::TcpListener;
+use tracing::{error, info, warn};
+
+pub use config::Config;
+pub use lifecycle::{Background, ShutdownListener, ShutdownSignal};
+
+/// 程序的版本：发布构建由流水线按标签传 `THINKTIN_VERSION`（见 deploy/docker/Dockerfile），
+/// 本地构建用 crate 的版本。`/version`、启动日志和 `thinktin_build_info` 指标里都是它，灰度时据此区分新旧副本。
+pub const VERSION: &str = match option_env!("THINKTIN_VERSION") {
+    Some(v) if !v.is_empty() => v,
+    _ => env!("CARGO_PKG_VERSION"),
+};
+
+/// 测试用的替换件（生产用 [`serve`]，全部默认）。
+#[derive(Default, Clone)]
+pub struct Hooks {
+    /// 短信发送：端到端测试用 `auth::sms::RecordingSms` 读验证码。
+    pub sms: Option<std::sync::Arc<dyn auth::sms::SmsSender>>,
+}
+
+/// 连接数据库、按需迁移、监听端口，一直运行到收到停机信号。
+pub async fn run(cfg: Config) -> anyhow::Result<()> {
+    let db = Db::connect(cfg.database_url(), cfg.database.max_connections)
+        .await
+        .context("connect to database")?;
+    if cfg.database.migrate_on_start {
+        db.migrate().await.context("migrate")?;
+        info!("migrations applied");
+    }
+    // 这一版要的迁移都执行过才启动（2.9）：生产上迁移由发布流程先执行。
+    db.check_migrations()
+        .await
+        .context("checking the database migrations")?;
+    let listener = TcpListener::bind(cfg.listen)
+        .await
+        .with_context(|| format!("listen on {}", cfg.listen))?;
+    serve(&cfg, db, listener, os_signal()).await
+}
+
+/// 在给定的监听上运行，`stop` 完成时开始停机。测试直接调用它。
+pub async fn serve(
+    cfg: &Config,
+    db: Db,
+    listener: TcpListener,
+    stop: impl Future<Output = ()> + Send,
+) -> anyhow::Result<()> {
+    serve_with(cfg, db, listener, stop, Hooks::default()).await
+}
+
+/// 同 [`serve`]，带测试用的替换件。
+pub async fn serve_with(
+    cfg: &Config,
+    db: Db,
+    listener: TcpListener,
+    stop: impl Future<Output = ()> + Send,
+    hooks: Hooks,
+) -> anyhow::Result<()> {
+    let node_id = cfg.node_id();
+    let addr = listener.local_addr()?;
+    let shutdown = ShutdownSignal::new();
+    let mut background = Background::new(shutdown.clone());
+    if let Some(addr) = cfg.observability.metrics_listen {
+        match observability::handle() {
+            Some(handle) => {
+                let listener = TcpListener::bind(addr)
+                    .await
+                    .with_context(|| format!("metrics listen on {addr}"))?;
+                info!(addr = %listener.local_addr()?, "metrics endpoint started");
+                let app = observability::router(handle);
+                background.spawn("metrics", move |mut stop| async move {
+                    axum::serve(listener, app)
+                        .with_graceful_shutdown(async move { stop.wait().await })
+                        .await?;
+                    Ok(())
+                });
+            }
+            None => warn!("metrics recorder unavailable, /metrics is not served"),
+        }
+    }
+    if cfg.worker.enabled {
+        workers::spawn(cfg, &db, &node_id, &mut background)?;
+    }
+    let api = if cfg.api.enabled {
+        Some(api::build(cfg, &db, &mut background, &hooks)?)
+    } else {
+        None
+    };
+    let router = http::router(
+        http::AppState {
+            db: db.clone(),
+            shutdown: shutdown.subscribe(),
+        },
+        api,
+    );
+    let drain = cfg.drain();
+    let mut draining = shutdown.subscribe();
+    let server = listen::serve(listener, router, ListenOptions::default(), async move {
+        draining.wait().await;
+        tokio::time::sleep(drain).await;
+    });
+    let mut server = tokio::spawn(server);
+    metrics::gauge!("thinktin_build_info", "version" => VERSION).set(1.0);
+    info!(%addr, node = %node_id, version = VERSION, "server started");
+
+    let mut failure = None;
+    tokio::select! {
+        () = stop => info!("shutdown requested"),
+        Some((name, result)) = background.next_exit() => {
+            // 后台任务应该一直跑到停机；提前退出说明出了问题，整个副本重启比带病运行好。
+            let err = result.err().unwrap_or_else(|| anyhow::anyhow!("exited early"));
+            error!(task = name, error = %err, "background task stopped, shutting down");
+            failure = Some(err.context(format!("background task {name}")));
+        }
+        res = &mut server => {
+            return match res {
+                Ok(Ok(())) => Err(anyhow::anyhow!("http server stopped unexpectedly")),
+                Ok(Err(e)) => Err(e).context("http server"),
+                Err(e) => Err(e).context("http server task"),
+            };
+        }
+    }
+
+    shutdown.trigger();
+    let grace = cfg.grace();
+    match tokio::time::timeout(drain + grace, &mut server).await {
+        Ok(Ok(Ok(()))) => info!("http server drained"),
+        Ok(Ok(Err(e))) => warn!(error = %e, "http server error during shutdown"),
+        Ok(Err(e)) => warn!(error = %e, "http server task failed"),
+        Err(_) => {
+            warn!(
+                ?grace,
+                "requests still running after grace period, dropping them"
+            );
+            server.abort();
+        }
+    }
+    background.shutdown(grace).await;
+    db.pool().close().await;
+    info!("stopped");
+    match failure {
+        Some(err) => Err(err),
+        None => Ok(()),
+    }
+}
+
+/// 用户 DEK 的包裹密钥（本地 KMS；生产换成云 KMS）。
+fn kms(cfg: &Config) -> anyhow::Result<Arc<dyn Kms>> {
+    let local = cfg
+        .api_secrets
+        .kms_key
+        .as_deref()
+        .map(|hex| {
+            LocalKms::from_hex(cfg.api.kms_key_id.clone(), hex)
+                .context("THINKTIN_KMS_KEY must be 64 hex characters")
+        })
+        .transpose()?;
+    match (cfg.kms.provider.as_str(), &cfg.kms.aliyun) {
+        ("aliyun", Some(a)) => {
+            let client = aliyun::RpcClient::new(
+                a.endpoint.clone(),
+                aliyun::kms::VERSION,
+                cfg.aliyun_kms_access_key_id.clone().unwrap_or_default(),
+                zeroize::Zeroizing::new(
+                    cfg.aliyun_kms_access_key_secret.clone().unwrap_or_default(),
+                ),
+                std::time::Duration::from_secs(10),
+            )
+            .context("kms.aliyun")?;
+            // 新的 DEK 由阿里云 KMS 包裹；迁移前用本地主密钥包裹的老 DEK 照样解得开。
+            let mut ring = KmsRing::new(Arc::new(aliyun::kms::AliyunKms::new(
+                client,
+                a.key_id.clone(),
+            )));
+            if let Some(local) = local {
+                ring = ring.with_older(Arc::new(local));
+            }
+            Ok(Arc::new(CachingKms::new(
+                ring,
+                std::time::Duration::from_secs(cfg.kms.cache_secs),
+            )))
+        }
+        _ => Ok(Arc::new(local.context("THINKTIN_KMS_KEY is not set")?)),
+    }
+}
+
+/// 产出物存储：接口（下载）和后台任务（发布、交接）共用。
+fn artifact_store(cfg: &Config, db: &Db, kms: Arc<dyn Kms>) -> anyhow::Result<Arc<ArtifactStore>> {
+    let blobs: Arc<dyn BlobStore> = match (cfg.storage.provider.as_str(), &cfg.storage.s3) {
+        ("s3", Some(s3)) => Arc::new(
+            S3BlobStore::new(S3Config {
+                endpoint: s3.endpoint.clone(),
+                region: s3.region.clone(),
+                bucket: s3.bucket.clone(),
+                prefix: s3.prefix.clone(),
+                path_style: s3.path_style,
+                access_key_id: cfg.s3_access_key_id.clone().unwrap_or_default(),
+                secret_access_key: cfg.s3_secret_access_key.clone().unwrap_or_default(),
+                timeout: std::time::Duration::from_secs(s3.timeout_secs.max(1)),
+            })
+            .context("storage.s3")?,
+        ),
+        _ => Arc::new(
+            LocalBlobStore::new(&cfg.storage.local_root)
+                .with_context(|| format!("storage root {}", cfg.storage.local_root.display()))?,
+        ),
+    };
+    Ok(Arc::new(ArtifactStore::new(db.clone(), blobs, kms)))
+}
+
+/// SIGTERM（容器编排）或 Ctrl-C。
+async fn os_signal() {
+    let ctrl_c = async {
+        if let Err(e) = tokio::signal::ctrl_c().await {
+            error!(error = %e, "cannot listen for ctrl-c");
+            std::future::pending::<()>().await;
+        }
+    };
+    #[cfg(unix)]
+    let term = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut s) => {
+                s.recv().await;
+            }
+            Err(e) => {
+                error!(error = %e, "cannot listen for SIGTERM");
+                std::future::pending::<()>().await;
+            }
+        }
+    };
+    #[cfg(not(unix))]
+    let term = std::future::pending::<()>();
+    tokio::select! {
+        () = ctrl_c => {}
+        () = term => {}
+    }
+}
+
+/// 就绪检查里数据库探活的上限。
+const READY_PING_TIMEOUT: Duration = Duration::from_secs(2);

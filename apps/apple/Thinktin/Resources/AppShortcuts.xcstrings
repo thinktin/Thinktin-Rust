@@ -1,0 +1,102 @@
+{
+  "sourceLanguage" : "zh-Hans",
+  "strings" : {
+    "${applicationName}全部停止" : {
+      "comment" : "Siri 短语（12.20，ThinktinShortcuts）。${applicationName} 是 App 名。",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "${applicationName} stop everything"
+          }
+        }
+      }
+    },
+    "${applicationName}有几个待审批" : {
+      "comment" : "Siri 短语（12.20，ThinktinShortcuts）。${applicationName} 是 App 名。",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "How many approvals are waiting in ${applicationName}"
+          }
+        }
+      }
+    },
+    "暂停${applicationName}的计划" : {
+      "comment" : "Siri 短语（12.20，ThinktinShortcuts）。${applicationName} 是 App 名。",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pause a ${applicationName} plan"
+          }
+        }
+      }
+    },
+    "查看${applicationName}的待审批" : {
+      "comment" : "Siri 短语（12.20，ThinktinShortcuts）。${applicationName} 是 App 名。",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Check ${applicationName} approvals"
+          }
+        }
+      }
+    },
+    "用${applicationName}下任务" : {
+      "comment" : "Siri 短语（12.20，ThinktinShortcuts）。${applicationName} 是 App 名。",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Send a task with ${applicationName}"
+          }
+        }
+      }
+    },
+    "用${applicationName}全部停止" : {
+      "comment" : "Siri 短语（12.20，ThinktinShortcuts）。${applicationName} 是 App 名。",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stop everything in ${applicationName}"
+          }
+        }
+      }
+    },
+    "用${applicationName}暂停计划" : {
+      "comment" : "Siri 短语（12.20，ThinktinShortcuts）。${applicationName} 是 App 名。",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pause a plan in ${applicationName}"
+          }
+        }
+      }
+    },
+    "给${applicationName}的实例下任务" : {
+      "comment" : "Siri 短语（12.20，ThinktinShortcuts）。${applicationName} 是 App 名。",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Give a ${applicationName} instance a task"
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

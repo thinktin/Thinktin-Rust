@@ -1,0 +1,9 @@
+# SwiftPM 构建产物
+.build/
+.swiftpm/
+/Packages
+*.xcodeproj
+xcuserdata/
+
+# SwiftPM 的另一个构建目录（THINKTIN_DESKTOP=1 时用，见 docs/macos.md 第 7 节）
+.build-desktop/

@@ -1,0 +1,272 @@
+# Thinktin 的 Xcode 工程定义（WBS 12.1，说明见 docs/ios.md 第 2、7 节）。用 XcodeGen 2.46 生成，
+# 不提交 .xcodeproj，本机和 CI 都现生成：
+#
+#   tools/client-core/build-apple.sh target/apple   # 先打 ThinktinCore（ThinktinKit 依赖它）
+#   cd apps/apple && xcodegen generate
+#
+# Info.plist 和 Thinktin.entitlements 也由这里的 info / entitlements 生成（每次 generate 覆盖），
+# 要改就改这里，不要改生成的文件。键名对照 https://github.com/yonaskolb/XcodeGen/blob/2.46.0/Docs/ProjectSpec.md
+name: Thinktin
+
+options:
+  minimumXcodeGenVersion: "2.46.0"
+  bundleIdPrefix: cn.thinktin
+  deploymentTarget:
+    iOS: "17.0"
+    # macOS App（14.5）：SMAppService、ScreenCaptureKit 的截图（SCScreenshotManager）要 14。
+    macOS: "14.0"
+  xcodeVersion: "26.0"
+  # 工程的开发语言和 knownRegions；和 Info.plist 的 CFBundleDevelopmentRegion 一致。
+  developmentLanguage: zh-Hans
+  createIntermediateGroups: true
+
+# 所有 target 共用：Swift 6 语言模式、严格并发检查、自动签名。DEVELOPMENT_TEAM 留空，
+# 本机在 Xcode 里选自己的团队（或 xcodebuild DEVELOPMENT_TEAM=...），CI 不签名。
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: ""
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    LOCALIZATION_PREFERS_STRING_CATALOGS: YES
+    SWIFT_EMIT_LOC_STRINGS: YES
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+
+packages:
+  # iOS / macOS 共享的 Swift Package（产品 ThinktinKit、ThinktinUI、ThinktinCoreAdapter、ThinktinDesktopAdapter）。
+  ThinktinKit:
+    path: ThinktinKit
+  # macOS App 的自动更新（14.9）。版本钉死：发版工作流用这个包里带的 generate_appcast 给更新包签名。
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: 2.6.4
+
+targets:
+  Thinktin:
+    type: application
+    platform: iOS
+    sources:
+      - path: Thinktin
+      # 和小组件扩展共用的实时活动属性（12.10，`RunActivityAttributes`）。
+      - path: Shared
+    dependencies:
+      - package: ThinktinKit
+        products:
+          - ThinktinUI
+          - ThinktinKit
+          - ThinktinCoreAdapter
+      # 主屏小组件（12.20），打进 App 的 PlugIns。
+      - target: ThinktinWidgets
+    # 包 id 由 bundleIdPrefix 生成（cn.thinktin.Thinktin）；上架前定下来后再显式写 PRODUCT_BUNDLE_IDENTIFIER，
+    # 服务端 push.apns.topic 要和它一致。
+    settings:
+      base:
+        # 只做 iPhone（1）；iPad 以后再说。要写在 target 上：XcodeGen 的 iOS 平台预设在 target 一级设成 1,2，
+        # 写在工程一级会被它盖掉。
+        TARGETED_DEVICE_FAMILY: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        # 接口地址，展开进 Info.plist 的 ThinktinAPIBaseURL（AppEnvironment 读）。连测试环境时
+        # xcodebuild THINKTIN_API_BASE_URL=https://... 覆盖，不用改代码。
+        THINKTIN_API_BASE_URL: https://api.thinktin.cn
+    info:
+      path: Thinktin/Resources/Info.plist
+      properties:
+        CFBundleDisplayName: ThinkTin
+        # XcodeGen 默认写死 1.0 / 1，这里改成跟构建设置走。
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleDevelopmentRegion: zh-Hans
+        CFBundleLocalizations: [zh-Hans, en]
+        LSRequiresIPhoneOS: true
+        ITSAppUsesNonExemptEncryption: false
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        NSFaceIDUsageDescription: 用面容 ID 确认审批、签名等高风险操作。
+        # 扫电脑上的配对二维码（12.9）。
+        NSCameraUsageDescription: 扫电脑上的配对二维码，和电脑配对。
+        # 运行的实时活动（12.10，docs/live-activities.md 第 3 节）。
+        NSSupportsLiveActivities: true
+        # 深链（docs/ios.md 第 6.1 节，和安卓端同一套）：thinktin://run/{id}、approval/{id}、plan/{id}、instance/{id}、
+        # inbox、inbox/{id}、vault/request/{id}。App 的 onOpenURL 交给 Router（ThinktinKit/Navigation，WBS 12.16）解析。
+        CFBundleURLTypes:
+          - CFBundleURLName: $(PRODUCT_BUNDLE_IDENTIFIER)
+            CFBundleTypeRole: Viewer
+            CFBundleURLSchemes: [thinktin, thinktin-pair]
+        ThinktinAPIBaseURL: $(THINKTIN_API_BASE_URL)
+    entitlements:
+      path: Thinktin/Thinktin.entitlements
+      properties:
+        # 开发环境的 APNs；导出 App Store 包时 Xcode 按发布用的描述文件换成 production。
+        aps-environment: development
+        # 审批、电脑审批、保险箱请求的推送是 time-sensitive（docs/push.md 第 2 节），专注模式下也能送到。
+        com.apple.developer.usernotifications.time-sensitive: true
+        # 和小组件共享快照文件（12.20，`WidgetSnapshotFile.appGroup`）。
+        com.apple.security.application-groups: [group.cn.thinktin.Thinktin]
+
+  # 主屏、锁屏小组件（WBS 12.20，docs/ios.md）：只读 App 写进 App Group 的快照，不连服务端、不带客户端核心，
+  # 所以只依赖纯 Swift 的 ThinktinKit。运行的实时活动（12.10）的锁屏、灵动岛界面也在这里。
+  ThinktinWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: ThinktinWidgets
+      - path: Shared
+    dependencies:
+      - package: ThinktinKit
+        products:
+          - ThinktinKit
+    settings:
+      base:
+        TARGETED_DEVICE_FAMILY: "1"
+        # 扩展的包 id 要以 App 的包 id 打头；App 的包 id 定下来后一起改。
+        PRODUCT_BUNDLE_IDENTIFIER: cn.thinktin.Thinktin.Widgets
+        SKIP_INSTALL: YES
+    info:
+      path: ThinktinWidgets/Info.plist
+      properties:
+        CFBundleDisplayName: ThinkTin
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleDevelopmentRegion: zh-Hans
+        CFBundleLocalizations: [zh-Hans, en]
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: ThinktinWidgets/ThinktinWidgets.entitlements
+      properties:
+        com.apple.security.application-groups: [group.cn.thinktin.Thinktin]
+
+  # macOS App（WBS 14.5–14.8，docs/macos.md）：菜单栏常驻（LSUIElement），后台跑电脑端的工具服务（Rust 的 desktop，经
+  # ThinktinDesktopAdapter），主窗口复用 ThinktinUI。和 iOS 共用 AppConfiguration、KeychainSessionStore 两个文件。
+  # 不开 App Sandbox：要控制别的应用（辅助功能、CGEvent）、读写手机授权的任意目录、执行用户批准的命令，沙盒里做不了；
+  # 用 Developer ID 签名、公证后在官网分发（14.9），不上 Mac App Store。
+  ThinktinMac:
+    type: application
+    platform: macOS
+    sources:
+      - path: ThinktinMac
+      - path: Thinktin/App/AppConfiguration.swift
+        group: ThinktinMac/Shared
+      - path: Thinktin/Platform/KeychainSessionStore.swift
+        group: ThinktinMac/Shared
+    dependencies:
+      - package: ThinktinKit
+        products:
+          - ThinktinUI
+          - ThinktinKit
+          - ThinktinCoreAdapter
+          - ThinktinDesktopAdapter
+      - package: Sparkle
+    settings:
+      base:
+        PRODUCT_NAME: ThinkTin
+        PRODUCT_BUNDLE_IDENTIFIER: cn.thinktin.mac
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        # 公证要求开 Hardened Runtime（14.9）。工具服务是静态库，不用关库校验。
+        ENABLE_HARDENED_RUNTIME: YES
+        COMBINE_HIDPI_IMAGES: YES
+        # 接口地址和设备中继的地址，展开进 Info.plist（AppConfiguration 读）。连测试环境时 xcodebuild 覆盖。
+        THINKTIN_API_BASE_URL: https://api.thinktin.cn
+        THINKTIN_RELAY_URL: wss://relay.thinktin.cn/v1/connect
+        # 自动更新（14.9，docs/macos.md 第 6 节）：更新源和 EdDSA 公钥。公钥空着时 App 不启动更新器（本机开发版）；
+        # 发版工作流从仓库变量传进来。
+        SPARKLE_FEED_URL: https://download.thinktin.cn/mac/appcast.xml
+        SPARKLE_PUBLIC_ED_KEY: ""
+    info:
+      path: ThinktinMac/Info.plist
+      properties:
+        CFBundleDisplayName: ThinkTin
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleDevelopmentRegion: zh-Hans
+        CFBundleLocalizations: [zh-Hans, en]
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        LSApplicationCategoryType: public.app-category.productivity
+        # 只在菜单栏，没有程序坞图标（主窗口从菜单栏打开）。
+        LSUIElement: true
+        ITSAppUsesNonExemptEncryption: false
+        # 深链和 iOS 一样（thinktin://run/{id} 这些）；Mac 不扫配对码，不注册 thinktin-pair。
+        CFBundleURLTypes:
+          - CFBundleURLName: $(PRODUCT_BUNDLE_IDENTIFIER)
+            CFBundleTypeRole: Viewer
+            CFBundleURLSchemes: [thinktin]
+        ThinktinAPIBaseURL: $(THINKTIN_API_BASE_URL)
+        ThinktinRelayURL: $(THINKTIN_RELAY_URL)
+        SUFeedURL: $(SPARKLE_FEED_URL)
+        SUPublicEDKey: $(SPARKLE_PUBLIC_ED_KEY)
+        # 默认自己定期查更新，不在第二次打开时问用户。
+        SUEnableAutomaticChecks: true
+    entitlements:
+      path: ThinktinMac/ThinktinMac.entitlements
+      properties:
+        # 没有沙盒，Hardened Runtime 下也不用额外的例外。
+        com.apple.security.app-sandbox: false
+
+  ThinktinTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests/ThinktinTests
+    dependencies:
+      # 依赖 App target：XcodeGen 自动设 TEST_HOST / BUNDLE_LOADER，测试跑在 App 进程里。
+      - target: Thinktin
+    settings:
+      base:
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  ThinktinMac:
+    build:
+      targets:
+        ThinktinMac: all
+    run:
+      config: Debug
+      environmentVariables:
+        # 和 iOS 一样：Debug 默认用 Mock（菜单栏里的手机控制是假的服务）；勾上这一项连真接口和真中继。
+        - variable: THINKTIN_MOCK
+          value: "0"
+          isEnabled: false
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release
+  Thinktin:
+    build:
+      targets:
+        Thinktin: all
+        ThinktinTests: [test]
+    run:
+      config: Debug
+      environmentVariables:
+        # Debug 默认用 Mock 客户端（AppEnvironment）；要连真接口就在 scheme 里勾上这一项（0 = 真核心）。
+        - variable: THINKTIN_MOCK
+          value: "0"
+          isEnabled: false
+    test:
+      config: Debug
+      # App 的单元测试，加上 ThinktinKit 里只能在 Apple 平台跑的界面测试（docs/ios.md 第 7 节）；
+      # ThinktinKitTests、ThinktinCoreAdapterTests 在 CI 的 Linux 任务里跑。
+      targets:
+        - name: ThinktinTests
+        - package: ThinktinKit/ThinktinUITests
+      environmentVariables:
+        # 测试宿主 App 一律用 Mock，不碰网络。
+        THINKTIN_MOCK: "1"
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release

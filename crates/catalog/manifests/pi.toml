@@ -1,0 +1,38 @@
+# Pi：经 pi-acp 适配器驱动 `pi --mode rpc`。
+
+[agent]
+id = "pi"
+name = "Pi"
+upstream = "https://github.com/earendil-works/pi"
+version = "1.2.0"  # @earendil-works/pi-coding-agent；适配器 pi-acp 0.0.34（MIT）
+license = "MIT"
+description = { zh-CN = "Pi：轻量、可扩展的编程 agent。", en = "Pi, a lightweight, extensible coding agent." }
+sites = ["cn", "global"]
+
+[runtime]
+template = "agents/pi:1.2.0"
+vcpu = 1
+memory_mb = 1024
+state_dirs = [".pi"]
+
+[[harness]]
+id = "acp"
+kind = "acp"
+command = ["pi-acp"]
+env = { PI_ACP_PI_COMMAND = "pi" }
+session = { restore = true, per_session_mcp = false }
+
+[llm]
+protocols = ["openai-completions", "anthropic-messages", "openai-responses"]
+config = "pi"
+
+[policy]
+heartbeat = "none"
+
+# 模板构建（6.8，deploy/templates）装的包，版本写死；升级时和 agent.version、runtime.template 一起改。
+# 适配器 pi-acp 和 Pi 本身分开装。
+[install]
+npm = ["pi-acp@0.0.34", "@earendil-works/pi-coding-agent@1.2.0"]
+# 删掉 DOOM 演示扩展（16.5，docs/licenses.md）：doom.wasm 是 doomgeneric（GPL-2.0）编出来的，包里没有 GPL 原文和源码，
+# 第一次运行还会下载 id Software 的共享版 WAD（不许商业分发）。只是示例，agent 用不到。
+prune = ["npm:@earendil-works/pi-coding-agent/examples/extensions/doom-overlay"]

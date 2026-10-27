@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 推送的系统通知（13.8，Android 13 起要用户允许，登录后问一次）。 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- 令牌存在 Keystore 加密的偏好里，换机恢复也解不开：不备份。 -->
+    <application
+        android:name=".ThinktinApp"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:localeConfig="@xml/locales_config"
+        android:roundIcon="@mipmap/ic_launcher"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Thinktin"
+        tools:targetApi="35">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- 深链（docs/android-design.md 第 3 节）：thinktin://run/{id}、approval/{id}、plan/{id}、
+                 instance/{id}、vault/request/{id}、inbox、inbox/{id}。推送点击用它们跳转。 -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="thinktin" />
+                <data android:host="run" />
+                <data android:host="approval" />
+                <data android:host="plan" />
+                <data android:host="instance" />
+                <data android:host="vault" />
+                <data android:host="inbox" />
+                <data android:host="approvals" />
+            </intent-filter>
+            <!-- 电脑上的配对二维码（13.9，docs/pairing.md）：thinktin-pair:v1?…，系统相机扫到后打开这里。 -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="thinktin-pair" />
+            </intent-filter>
+        </activity>
+
+        <!-- 设置里选的界面语言在 Android 13 以前由 AppCompat 记下（13.13，AppLocales）。 -->
+        <service
+            android:name="androidx.appcompat.app.AppLocalesMetadataHolderService"
+            android:enabled="false"
+            android:exported="false">
+            <meta-data
+                android:name="autoStoreLocales"
+                android:value="true" />
+        </service>
+
+        <!-- 对话页的产出物：下载到缓存后用 content:// 交给其他应用打开 / 分享（13.5）。 -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+    </application>
+</manifest>

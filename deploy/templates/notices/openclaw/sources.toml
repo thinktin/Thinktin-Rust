@@ -1,0 +1,24 @@
+# OpenClaw 模板要额外带的原文（16.5，docs/licenses.md 第 3 节）。
+#
+# OpenClaw 依赖的 playwright-core 带了 VS Code 的图标字体 codicon（lib/vite/*/codicon*.ttf），包里没有它的许可证。
+# Playwright 源码树里这份字体在 packages/web/src/third_party/vscode/，旁边是 VS Code 的 MIT LICENSE.txt；
+# 字体本身出自 microsoft/vscode-codicons，图标按 CC-BY-4.0 授权（要署名）。两份原文都带上。
+# 2026-10-21 按 playwright-core 1.63.0 核对（镜像里的字体和 Playwright v1.63.0 标签下的 codicon.ttf 一字不差）；
+# 升级后 applies_to 对不上，CI 会报错，要重新核对。
+
+applies_to = ["npm:playwright-core@1.63.0"]
+
+[[file]]
+component = "vscode-codicon"
+version = "playwright v1.63.0 packages/web/src/third_party/vscode"
+license = "MIT AND CC-BY-4.0"
+path = "vscode-LICENSE.txt"
+url = "https://raw.githubusercontent.com/microsoft/playwright/v1.63.0/packages/web/src/third_party/vscode/LICENSE.txt"
+source = "https://github.com/microsoft/vscode-codicons/tree/v0.0.46-9"
+
+[[file]]
+component = "vscode-codicon"
+version = "playwright v1.63.0 packages/web/src/third_party/vscode"
+license = "MIT AND CC-BY-4.0"
+path = "vscode-codicons-LICENSE"
+url = "https://raw.githubusercontent.com/microsoft/vscode-codicons/v0.0.46-9/LICENSE"
