@@ -9,7 +9,7 @@
 #   deploy/aliyun/run.sh sandbox --acs [--apply]    沙箱实测（容器版）：建 2 个沙箱，测完删掉（不加 --apply 只读）
 #   deploy/aliyun/run.sh sandbox [--apply]          沙箱实测（极速版，备选）
 #
-# 默认地域东京 ap-northeast-1（network 还是新加坡，见 docs/handoff.md）。
+# 默认地域东京 ap-northeast-1。
 # Key 从环境变量 ALIBABA_CLOUD_ACCESS_KEY_ID、ALIBABA_CLOUD_ACCESS_KEY_SECRET 读（云端环境设置的“环境变量”里填），不打印。
 # 容器版沙箱的 Key 是装组件时生成的 adminApiKey，存在 target/aliyun-acs/；极速版另用 ALIYUN_SANDBOX_API_KEY。
 set -euo pipefail

@@ -32,7 +32,7 @@ import time
 
 import httpx
 from e2b import ConnectionConfig, Sandbox
-from e2b.exceptions import AuthenticationException
+from e2b.exceptions import AuthenticationException, FileNotFoundException
 
 KEY = "ALIYUN_SANDBOX_API_KEY"
 DOMAIN = "ALIYUN_SANDBOX_DOMAIN"  # 可选：直接指定接口域名，不用自动找
@@ -52,6 +52,8 @@ KUBECTL = "target/bin/kubectl"
 ACS_TEMPLATE = "code-interpreter"  # 预热池 SandboxSet 的名字
 ACS_TIMEOUT = 1800
 PEER_PORT = 8000
+PURPOSE = {"purpose": "thinktin-probe"}  # 建沙箱时打的标记，收尾时按它找漏删的
+COST = "要收费（按秒计，每个沙箱 1 核 1G，测十来分钟；预热池被拿走后会马上补 1 个）：用户同意了再加 --apply"
 
 rows = []
 
@@ -123,9 +125,16 @@ def pause_resume(sbx, opts, token, timeout):
     record("暂停", f"{paused:.1f} 秒")
     state = Sandbox.get_info(sbx.sandbox_id, **opts).state
     record("暂停后状态", str(state))
-    resumed, took = timed(lambda: Sandbox.connect(sbx.sandbox_id, timeout=timeout, **opts))
+    try:
+        resumed, took = timed(lambda: Sandbox.connect(sbx.sandbox_id, timeout=timeout, **opts))
+    except Exception as err:  # noqa: BLE001 —— 恢复失败也要把结果报完
+        record("恢复", f"失败：{type(err).__name__}: {str(err).splitlines()[0][:200]}")
+        return sbx
     record("恢复", f"{took:.1f} 秒")
-    record("恢复后文件", "还在" if resumed.files.read(PROBE_FILE) == token else "丢了")
+    try:
+        record("恢复后文件", "还在" if resumed.files.read(PROBE_FILE) == token else "内容变了")
+    except FileNotFoundException:
+        record("恢复后文件", "丢了")
     return resumed
 
 
@@ -206,7 +215,43 @@ def idle(sbx, seconds):
         record(f"{seconds} 秒没输出", f"{time.monotonic() - start:.0f} 秒时断了：{type(err).__name__}: {str(err).splitlines()[0][:200]}")
 
 
+def in_cloud_session():
+    return os.environ.get("CLAUDE_CODE_REMOTE") == "true"
+
+
+def pool_status():
+    out = subprocess.run([KUBECTL, "--kubeconfig", KUBECONFIG, "get", "sandboxset", ACS_TEMPLATE, "-n", "default",
+                          "--no-headers"], capture_output=True, text=True)
+    return " ".join(out.stdout.split()) or "查不到"
+
+
+def cleanup(opts, before, made):
+    """删掉这次建的沙箱：create 抛错但服务端已经建好的也算（按标记、按建之前没有的 ID 找）。"""
+    for sid in made:
+        with contextlib.suppress(Exception):
+            Sandbox.kill(sid, **opts)
+    try:
+        now = Sandbox.list(**opts).next_items()
+    except Exception as err:  # noqa: BLE001 —— 查不了也要说清楚
+        record("删除", f"没确认（{type(err).__name__}），可能还有沙箱在跑，{ACS_TIMEOUT // 60} 分钟后到期自动删；"
+                     f"用 kubectl 核对：{', '.join(made) or '-'}")
+        return
+    ours = [s.sandbox_id for s in now if s.sandbox_id not in before and (s.metadata or {}).get("purpose") == PURPOSE["purpose"]]
+    for sid in ours:
+        with contextlib.suppress(Exception):
+            Sandbox.kill(sid, **opts)
+    try:
+        left = {s.sandbox_id for s in Sandbox.list(**opts).next_items()} & (set(made) | set(ours))
+    except Exception:  # noqa: BLE001
+        left = set(ours)
+    record("删除", "已删" if not left else f"没删掉，用 kubectl 或控制台手动删 {', '.join(sorted(left))}")
+
+
 def main_acs(args):
+    if in_cloud_session():
+        print("[不通过] 云端会话连不上集群：port-forward 要连 API Server 的 6443 端口、带客户端证书、走 WebSocket，出网代理都不支持。"
+              "要在集群 VPC 里的机器上跑，见 docs/handoff.md。")
+        return 1
     try:
         with open(ACS_STATE) as f:
             state = json.load(f)
@@ -225,33 +270,30 @@ def main_acs(args):
         running = Sandbox.list(**opts).next_items()
         print(f"现有沙箱 {len(running)} 个" + "".join(f"\n  {s.sandbox_id}（{s.template_id}，{s.state}）" for s in running))
         if not args.apply:
-            print(f"\n加 --apply 用模板 {args.template or ACS_TEMPLATE} 建 2 个沙箱（第 1 个从预热池拿），测完删掉。")
+            print(f"\n加 --apply 用模板 {args.template or ACS_TEMPLATE} 建 2 个沙箱，测完删掉。{COST}。")
             return 0
         template = args.template or ACS_TEMPLATE
+        before = {s.sandbox_id for s in running}
         made = []
 
         def create(label):
-            sbx, took = timed(lambda: Sandbox.create(template=template, timeout=ACS_TIMEOUT,
-                                                     metadata={"purpose": "thinktin-probe"}, **opts))
+            pool = pool_status()
+            sbx, took = timed(lambda: Sandbox.create(template=template, timeout=ACS_TIMEOUT, metadata=PURPOSE, **opts))
             made.append(sbx.sandbox_id)
-            record(f"冷启动 {label}", f"{took:.1f} 秒，{sbx.sandbox_id}")
+            record(f"冷启动 {label}", f"{took:.1f} 秒，{sbx.sandbox_id}（建之前预热池：{pool}）")
             return sbx
 
         print(f"\n建沙箱（模板 {template}，{ACS_TIMEOUT // 60} 分钟超时到期删除）：")
         try:
-            a = create("A（预热池）")
+            a = create("A")
             token = basics(a)
-            b = create("B（池子空了，现建）")
+            b = create("B")
             isolation(a, b)
             if args.idle:
                 idle(b, args.idle)
             pause_resume(a, opts, token, ACS_TIMEOUT)
         finally:
-            for sid in made:
-                with contextlib.suppress(Exception):
-                    Sandbox.kill(sid, **opts)
-            left = {s.sandbox_id for s in Sandbox.list(**opts).next_items()} & set(made)
-            record("删除", "已删" if not left else f"没删掉，用 kubectl 或控制台手动删 {', '.join(sorted(left))}")
+            cleanup(opts, before, made)
     report()
     return 0
 
@@ -266,7 +308,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--region", default="ap-northeast-1")
     parser.add_argument("--template", help="模板名或 ID（默认选核数和内存最小的）")
-    parser.add_argument("--apply", action="store_true", help="真的建沙箱，测完删掉（默认只读）")
+    parser.add_argument("--apply", action="store_true", help="真的建沙箱（要收费，先问用户），测完删掉（默认只读）")
     parser.add_argument("--acs", action="store_true", help="测 ACS 容器版（先用 run.sh acs 准备好）")
     parser.add_argument("--idle", type=int, default=300, help="容器版：多少秒没输出的命令（0 不测）")
     args = parser.parse_args()
@@ -305,11 +347,11 @@ def main():
     print(f"\n现有沙箱 {len(running)} 个" + "".join(f"\n  {s.sandbox_id}（{s.template_id}，{s.state}）" for s in running))
 
     if not args.apply:
-        print(f"\n加 --apply 用模板 {template} 建 1 个沙箱，测完删掉。")
+        print(f"\n加 --apply 用模板 {template} 建 1 个沙箱，测完删掉。{COST}。")
         return 0
 
     print(f"\n建沙箱（模板 {template}，{TIMEOUT // 60} 分钟超时到期删除）：")
-    sbx, took = timed(lambda: Sandbox.create(template=template, timeout=TIMEOUT, metadata={"purpose": "thinktin-probe"}, **opts))
+    sbx, took = timed(lambda: Sandbox.create(template=template, timeout=TIMEOUT, metadata=PURPOSE, **opts))
     record("冷启动", f"{took:.1f} 秒，{sbx.sandbox_id}")
     try:
         sbx = probe(sbx, opts)
