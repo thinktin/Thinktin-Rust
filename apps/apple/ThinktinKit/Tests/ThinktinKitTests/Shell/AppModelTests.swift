@@ -125,6 +125,23 @@ struct AppModelTests {
         #expect(model.badges.pendingApprovals == 1)
     }
 
+    @Test("重查说解冻了：之前排着、晚到的“冻结”报告不再把界面冻上；之后的照样冻上")
+    func staleFrozenReports() async {
+        let (mock, model) = make()
+        mock.update { $0.user.status = .frozen }
+        await model.start()
+        #expect(model.phase == .frozen)
+        mock.update { $0.user.status = .active }
+        await model.recheckAccount()
+        #expect(model.phase == .signedIn)
+        // 重查之前发出的（序号 1）：过时了。
+        model.receive(.failed(.accountFrozen), number: 1)
+        #expect(model.phase == .signedIn)
+        // 之后发出的：账号又被冻结了。
+        model.receive(.failed(.accountFrozen), number: .max)
+        #expect(model.phase == .frozen)
+    }
+
     @Test("任何调用遇到冻结、登录失效都切换全局状态")
     func globalErrorsFromAnyCall() async throws {
         let (mock, model) = make()

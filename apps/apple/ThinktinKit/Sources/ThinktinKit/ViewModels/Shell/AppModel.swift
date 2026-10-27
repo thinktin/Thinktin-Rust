@@ -98,7 +98,12 @@ public final class AppModel {
     /// 手机控制电脑存在本机的状态（12.9）：角标里数电脑发来的审批。
     private let computerLinks: ComputerLinkStore
     private let now: () -> Date
-    private let activityContinuation: AsyncStream<ClientActivity>.Continuation
+    private let activityContinuation: AsyncStream<(Int, ClientActivity)>.Continuation
+    /// 报告的序号（`ObservedClient` 发出时编的，从 1 起）：发出过几条。
+    private let reportsSent: Locked<Int>
+    /// 序号不超过它的“冻结”报告已经过时：之后的一次 `me()` 说账号没冻结（报告是异步处理的，重查成功时之前排着的
+    /// “冻结”可能还没处理，晚到了会把刚解冻的界面又冻上）。
+    @ObservationIgnored private var staleFrozenReports = 0
     @ObservationIgnored private var started = false
     /// `start()` 正在进行（回到前台的刷新跳过，免得启动时拉两遍）。
     @ObservationIgnored private var isStarting = false
@@ -127,8 +132,17 @@ public final class AppModel {
         widgets: (any WidgetSnapshotSink)? = nil, liveActivities: (any LiveActivityControlling)? = nil,
         now: @escaping () -> Date = Date.init
     ) {
-        let (stream, continuation) = AsyncStream.makeStream(of: ClientActivity.self, bufferingPolicy: .unbounded)
-        let observed = ObservedClient(client) { activity in continuation.yield(activity) }
+        let (stream, continuation) = AsyncStream.makeStream(
+            of: (Int, ClientActivity).self, bufferingPolicy: .unbounded)
+        let reportsSent = Locked(0)
+        // 编号和入队在同一把锁里，序号和处理的顺序一致。
+        let observed = ObservedClient(client) { activity in
+            reportsSent.withLock { sent in
+                sent += 1
+                continuation.yield((sent, activity))
+            }
+        }
+        self.reportsSent = reportsSent
         self.observed = observed
         self.client = observed
         // 经过 ObservedClient：同步时遇到登录失效、冻结这类全局错误照样报到这里。
@@ -153,9 +167,9 @@ public final class AppModel {
         router.instanceSelectionDidChange = { [weak self] id in self?.selection.save(id) }
         // 报告按发生的顺序在主线程上处理。
         Task { [weak self] in
-            for await activity in stream {
+            for await (number, activity) in stream {
                 guard let self else { return }
-                self.receive(activity)
+                self.receive(activity, number: number)
             }
         }
     }
@@ -303,6 +317,7 @@ public final class AppModel {
             let me = try await client.me()
             user = me
             guard me.status != .frozen, phase == .frozen else { return }
+            staleFrozenReports = reportsSent.withLock { $0 }
             enter(.signedIn)
             // 冻结着启动（或登录）的没同步过语言、推送令牌。
             await syncLanguage()
@@ -490,9 +505,11 @@ public final class AppModel {
 
     // MARK: 内部
 
-    private func receive(_ activity: ClientActivity) {
+    /// `number` 是报告的序号（测试里直接喂报告）。
+    func receive(_ activity: ClientActivity, number: Int) {
         switch activity {
         case .failed(let error):
+            if error.isAccountFrozen, number <= staleFrozenReports { return }
             handle(error)
         case .reachable:
             isOffline = false
@@ -613,7 +630,11 @@ public final class AppModel {
         do {
             let me = try await client.me()
             user = me
-            if me.status == .frozen { enter(.frozen) }
+            if me.status == .frozen {
+                enter(.frozen)
+            } else {
+                staleFrozenReports = reportsSent.withLock { $0 }
+            }
         } catch {
             handle(error)
         }
