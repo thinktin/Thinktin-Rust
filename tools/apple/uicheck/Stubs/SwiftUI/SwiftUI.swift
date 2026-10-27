@@ -1,7 +1,7 @@
 // 只用来在 Linux 上做类型检查的 SwiftUI 桩：签名照 iOS 17 SDK 的写，实现全是空的。
 @_exported import CoreGraphics
 @_exported import Foundation
-import Observation
+@_exported import Observation
 
 #if canImport(UIKit)
     @_exported import UIKit
