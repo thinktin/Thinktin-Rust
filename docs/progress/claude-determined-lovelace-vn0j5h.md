@@ -163,7 +163,14 @@ P1 后端核心（M1–M9）和 P2 里能在代码层面完成的包都做完了
 进行中：
 - 本会话（session_016LgPcdynywrhrjCq8VVFLt）2026-10-28 开始写 ACS 沙箱后端（用户 10-28 定：“1、省钱；2、解绑；3、写”）：
   OpenKruise 私有协议的 `AcsProvider`、模型网关令牌绑定沙箱 IP、空闲计时可配、空闲沙箱删掉前把工作区加密存到 OSS、唤醒时放回。
-  按小步提交推送，第 1 步把 envd 客户端从 `cube.rs` 拆到 `envd.rs`（不改行为）。
+  按小步提交推送。已推：envd 客户端拆到 `envd.rs`（`7beff64`）；`AcsProvider` + 模拟测试，创建时要 Pod IP、拿不到就删掉
+  沙箱（`0d472b5`）；没有卷的后端不归档、不重建，运行中换了地址会记下（`a7ddfe6`）；`[sandbox.acs]` 配置、
+  `THINKTIN_ACS_API_KEY`、`docs/sandbox-acs.md`（`531c38a`）；令牌跟着地址走的测试和文档（`f108708`）；
+  `[sandbox.lifecycle]` 计时可配、`pause_waiting_approval`（`2acd2d9`）；工作区归档的分块加密（`ead254a`）；
+  对象存储的大文件流式上传下载（`37a3745`）；沙箱流式写大文件、本地后端的无卷模式（`077bac4`）。
+  接着做：迁移 0023（实例上记归档）→ 控制服务归档、恢复 → `ObjectWorkspaceStore` → `[sandbox.workspace]` 配置 →
+  东京的部署配置和文档。计划在本会话 scratchpad 的 `plan-acs.md`（容器回收就没了，要点都在这里和 `docs/sandbox-acs.md`）。
+  本机磁盘有限：`~/.cargo/config.toml` 里开发构建只留行号调试信息、不做增量编译（不进仓库）。
 
 下一步（要 macOS 才能验，或者要人定）：
 0. **部署到阿里云新加坡**（2026-10-27 定）：只读检查 `deploy/aliyun/run.sh check` 全部通过；第 1 阶段网络已建（不收费，ID 见 [新加坡部署计划](../deploy-aliyun-sg.md) 第 8.6 节）。沙箱实测脚本 `deploy/aliyun/run.sh sandbox [--apply]` 已写好，用假 Key 试过。**卡在实名认证**：国际站账号开通智能体沙箱极速版前要实名，用户在选国际站认证还是换国内站账号。认证、开通、建 API Key 放进环境变量 `ALIYUN_SANDBOX_API_KEY` 后，开新会话先 `run.sh sandbox` 再 `--apply`，结果记进第 8.6 节。暂停要申请白名单（第 8.7 节），实测时一并确认。之后的阶段先列资源和费用请用户确认再动手。
