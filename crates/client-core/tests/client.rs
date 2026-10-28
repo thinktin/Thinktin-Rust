@@ -1035,6 +1035,41 @@ async fn ffi_board() {
     assert!(c.board(None, true, None, None).await.unwrap().is_empty());
 }
 
+/// 8.12：紧急消息经 UniFFI 发：排在普通消息前面；密码拦截和普通消息一样。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ffi_urgent_message() {
+    let Some(e) = env().await else { return };
+    let (c, _store, _dir) = ffi_login(&e, "13800138539", "ios", "iPhone").await;
+    let inst = c
+        .adopt("claude".into(), "Writer".into(), None)
+        .await
+        .unwrap();
+    c.send_message(inst.id.clone(), "写周报".into(), false)
+        .await
+        .unwrap();
+    let urgent = c
+        .send_urgent_message(inst.id.clone(), "先停一下".into(), false)
+        .await
+        .unwrap();
+    assert_eq!(urgent.prompt, "先停一下");
+    let mut w = e.t.db.worker().await.unwrap();
+    let first = w
+        .claim_next_run("x", std::time::Duration::from_secs(60))
+        .await
+        .unwrap()
+        .unwrap();
+    w.rollback().await.unwrap();
+    assert_eq!(first.run.id.to_string(), urgent.id);
+    let err = c
+        .send_urgent_message(inst.id, "mail 密码是 Abc12345".into(), false)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, ClientError::ContainsSecrets { .. }),
+        "{err:?}"
+    );
+}
+
 /// 8.9：实例的用途说明和“允许其他 agent 查我、问我”，经 UniFFI 改；给了才改。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn ffi_instance_settings() {

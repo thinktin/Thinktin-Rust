@@ -2676,6 +2676,23 @@ impl ThinktinClient {
             .await
     }
 
+    /// 紧急消息（8.12，打断重来）：实例正忙时打断它正在做的、马上处理这条（会话保留，agent 会知道自己被
+    /// 打断了）；空闲时排在别的排队消息前面。密码拦截和 `send_message` 一样。
+    pub async fn send_urgent_message(
+        &self,
+        instance_id: String,
+        text: String,
+        allow_secrets: bool,
+    ) -> Result<Run> {
+        let id: d::InstanceId = parse(&instance_id, "instance")?;
+        self.run(|c| async move {
+            Ok(c.send_urgent_message(id, &text, allow_secrets)
+                .await?
+                .into())
+        })
+        .await
+    }
+
     /// 把消息里拦下的值存进保险箱，返回条目和换成引用后的消息。`value` 是消息里原来的那段，
     /// `item.password` 是表单里确认过的值。重名时返回 conflict，消息不动（可用 `unique_vault_name` 换名）。
     pub async fn save_secret_from_message(

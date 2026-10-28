@@ -1007,6 +1007,16 @@ impl Api {
         .await
     }
 
+    /// 紧急消息（8.12）：实例正忙时打断它正在做的、马上处理这条（会话保留）；空闲时排在别的排队消息前面。
+    pub async fn create_urgent_run(&self, instance: InstanceId, prompt: &str) -> Result<Run> {
+        self.json(
+            Method::POST,
+            &format!("/v1/instances/{instance}/runs"),
+            Some(&json!({ "prompt": prompt, "delivery": "interrupt" })),
+        )
+        .await
+    }
+
     pub async fn runs(
         &self,
         instance: InstanceId,
