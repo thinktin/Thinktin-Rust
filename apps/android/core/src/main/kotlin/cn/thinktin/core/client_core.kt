@@ -834,6 +834,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_artifact_content(
     ): Int
+    external fun uniffi_client_core_checksum_method_thinktinclient_board(
+    ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_cached_events(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_cached_events_before(
@@ -871,6 +873,8 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_client_core_checksum_method_thinktinclient_delete_account(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_delete_artifact(
+    ): Int
+    external fun uniffi_client_core_checksum_method_thinktinclient_delete_board_post(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_delete_credential(
     ): Int
@@ -934,6 +938,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_plans(
     ): Int
+    external fun uniffi_client_core_checksum_method_thinktinclient_post_to_board(
+    ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_register_live_activity(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_rename_instance(
@@ -965,6 +971,8 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_client_core_checksum_method_thinktinclient_send_self_code(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_set_accept_language(
+    ): Int
+    external fun uniffi_client_core_checksum_method_thinktinclient_set_board_post_archived(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_set_credential_daily_limit(
     ): Int
@@ -1105,6 +1113,8 @@ internal object UniffiLib {
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_artifact_content(`ptr`: Long,`artifactId`: RustBuffer.ByValue,
     ): Long
+    external fun uniffi_client_core_fn_method_thinktinclient_board(`ptr`: Long,`tag`: RustBuffer.ByValue,`archived`: Byte,`beforeId`: RustBuffer.ByValue,`limit`: RustBuffer.ByValue,
+    ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_cached_events(`ptr`: Long,`instanceId`: RustBuffer.ByValue,`afterSeq`: Long,`limit`: Int,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_client_core_fn_method_thinktinclient_cached_events_before(`ptr`: Long,`instanceId`: RustBuffer.ByValue,`beforeSeq`: RustBuffer.ByValue,`limit`: Int,uniffi_out_err: UniffiRustCallStatus, 
@@ -1142,6 +1152,8 @@ internal object UniffiLib {
     external fun uniffi_client_core_fn_method_thinktinclient_delete_account(`ptr`: Long,`code`: RustBuffer.ByValue,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_delete_artifact(`ptr`: Long,`artifactId`: RustBuffer.ByValue,
+    ): Long
+    external fun uniffi_client_core_fn_method_thinktinclient_delete_board_post(`ptr`: Long,`postId`: RustBuffer.ByValue,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_delete_credential(`ptr`: Long,`credentialId`: RustBuffer.ByValue,
     ): Long
@@ -1205,6 +1217,8 @@ internal object UniffiLib {
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_plans(`ptr`: Long,`instanceId`: RustBuffer.ByValue,
     ): Long
+    external fun uniffi_client_core_fn_method_thinktinclient_post_to_board(`ptr`: Long,`body`: RustBuffer.ByValue,`tags`: RustBuffer.ByValue,
+    ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_register_live_activity(`ptr`: Long,`runId`: RustBuffer.ByValue,`token`: RustBuffer.ByValue,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_rename_instance(`ptr`: Long,`instanceId`: RustBuffer.ByValue,`name`: RustBuffer.ByValue,
@@ -1237,6 +1251,8 @@ internal object UniffiLib {
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_set_accept_language(`ptr`: Long,`acceptLanguage`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
+    external fun uniffi_client_core_fn_method_thinktinclient_set_board_post_archived(`ptr`: Long,`postId`: RustBuffer.ByValue,`archived`: Byte,
+    ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_set_credential_daily_limit(`ptr`: Long,`credentialId`: RustBuffer.ByValue,`dailyTokenLimit`: RustBuffer.ByValue,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_set_instance_version(`ptr`: Long,`instanceId`: RustBuffer.ByValue,`version`: RustBuffer.ByValue,
@@ -1560,6 +1576,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_artifact_content() and 0xFFFF) != 35353) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_board() and 0xFFFF) != 50352) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_cached_events() and 0xFFFF) != 6727) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1615,6 +1634,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_delete_artifact() and 0xFFFF) != 2898) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_delete_board_post() and 0xFFFF) != 2201) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_delete_credential() and 0xFFFF) != 3317) {
@@ -1710,6 +1732,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_plans() and 0xFFFF) != 27034) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_post_to_board() and 0xFFFF) != 10941) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_register_live_activity() and 0xFFFF) != 32649) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1756,6 +1781,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_set_accept_language() and 0xFFFF) != 57462) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_set_board_post_archived() and 0xFFFF) != 2134) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_set_credential_daily_limit() and 0xFFFF) != 1631) {
@@ -3709,6 +3737,12 @@ public interface ThinktinClientInterface {
     suspend fun `artifactContent`(`artifactId`: kotlin.String): kotlin.ByteArray
     
     /**
+     * 共享看板（8.10），新的在前：`tag` 只看带这个标签的，`archived` 看归档了的（默认没归档的），
+     * `before_id` 往下翻，`limit` 默认 50、最多 200。
+     */
+    suspend fun `board`(`tag`: kotlin.String?, `archived`: kotlin.Boolean, `beforeId`: kotlin.String?, `limit`: kotlin.UInt?): List<BoardPost>
+    
+    /**
      * 缓存里 `after_seq` 之后的事件（打开页面时先显示）。
      */
     fun `cachedEvents`(`instanceId`: kotlin.String, `afterSeq`: kotlin.ULong, `limit`: kotlin.UInt): List<InstanceEvent>
@@ -3778,6 +3812,8 @@ public interface ThinktinClientInterface {
     suspend fun `deleteAccount`(`code`: kotlin.String)
     
     suspend fun `deleteArtifact`(`artifactId`: kotlin.String)
+    
+    suspend fun `deleteBoardPost`(`postId`: kotlin.String)
     
     suspend fun `deleteCredential`(`credentialId`: kotlin.String)
     
@@ -3892,6 +3928,11 @@ public interface ThinktinClientInterface {
     suspend fun `plans`(`instanceId`: kotlin.String?): List<Plan>
     
     /**
+     * 用户自己在看板上写一条：最长 2000 字，最多 8 个标签（字母、数字、-、_）。满了最早的自动归档。
+     */
+    suspend fun `postToBoard`(`body`: kotlin.String, `tags`: List<kotlin.String>): BoardPost
+    
+    /**
      * 这个运行开了实时活动（10.6），或者远程开启的拿到了令牌：登记它的推送令牌（ActivityKit 的
      * `pushTokenUpdates`，十六进制），之后运行的状态、步数变了、结束了，后台推送更新。令牌变了再调一次；App 启动、
      * 回到前台时把每个开着的实时活动（`Activity<RunActivityAttributes>.activities`）现在的令牌再报一次：没变的什么
@@ -3960,6 +4001,11 @@ public interface ThinktinClientInterface {
      * App 里切换了语言：之后的请求带新的 `Accept-Language`（`None` 不带）。不联网。
      */
     fun `setAcceptLanguage`(`acceptLanguage`: kotlin.String?)
+    
+    /**
+     * 归档、取消归档。没归档的已经有 200 条时取消归档报 422（先归档别的）。
+     */
+    suspend fun `setBoardPostArchived`(`postId`: kotlin.String, `archived`: kotlin.Boolean): BoardPost
     
     /**
      * 改每日 token 上限（11.9）：`None` 取消上限，必须大于 0（0 报 422）。放宽或取消时等 key 的运行会接着跑；
@@ -4443,6 +4489,35 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
 
     
     /**
+     * 共享看板（8.10），新的在前：`tag` 只看带这个标签的，`archived` 看归档了的（默认没归档的），
+     * `before_id` 往下翻，`limit` 默认 50、最多 200。
+     */
+    @Throws(ClientException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `board`(`tag`: kotlin.String?, `archived`: kotlin.Boolean, `beforeId`: kotlin.String?, `limit`: kotlin.UInt?) : List<BoardPost> {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_client_core_fn_method_thinktinclient_board(
+                uniffiHandle,
+                
+        FfiConverterOptionalString.lower(`tag`),
+        FfiConverterBoolean.lower(`archived`),
+        FfiConverterOptionalString.lower(`beforeId`),
+        FfiConverterOptionalUInt.lower(`limit`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_client_core_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterSequenceTypeBoardPost.lift(it) },
+        // Error FFI converter
+        ClientException.ErrorHandler,
+    )
+    }
+
+    
+    /**
      * 缓存里 `after_seq` 之后的事件（打开页面时先显示）。
      */
     @Throws(ClientException::class)override fun `cachedEvents`(`instanceId`: kotlin.String, `afterSeq`: kotlin.ULong, `limit`: kotlin.UInt): List<InstanceEvent> {
@@ -4849,6 +4924,29 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
                 uniffiHandle,
                 
         FfiConverterString.lower(`artifactId`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_void(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_client_core_rust_future_complete_void(future, continuation) },
+        { future -> UniffiLib.ffi_client_core_rust_future_free_void(future) },
+        // lift function
+        { },
+        
+        // Error FFI converter
+        ClientException.ErrorHandler,
+    )
+    }
+
+    
+    @Throws(ClientException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `deleteBoardPost`(`postId`: kotlin.String) {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_client_core_fn_method_thinktinclient_delete_board_post(
+                uniffiHandle,
+                
+        FfiConverterString.lower(`postId`),
             )
         },
         { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_void(future, callback, continuation) },
@@ -5614,6 +5712,32 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
 
     
     /**
+     * 用户自己在看板上写一条：最长 2000 字，最多 8 个标签（字母、数字、-、_）。满了最早的自动归档。
+     */
+    @Throws(ClientException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `postToBoard`(`body`: kotlin.String, `tags`: List<kotlin.String>) : BoardPost {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_client_core_fn_method_thinktinclient_post_to_board(
+                uniffiHandle,
+                
+        FfiConverterString.lower(`body`),
+        FfiConverterSequenceString.lower(`tags`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_client_core_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeBoardPost.lift(it) },
+        // Error FFI converter
+        ClientException.ErrorHandler,
+    )
+    }
+
+    
+    /**
      * 这个运行开了实时活动（10.6），或者远程开启的拿到了令牌：登记它的推送令牌（ActivityKit 的
      * `pushTokenUpdates`，十六进制），之后运行的状态、步数变了、结束了，后台推送更新。令牌变了再调一次；App 启动、
      * 回到前台时把每个开着的实时活动（`Activity<RunActivityAttributes>.activities`）现在的令牌再报一次：没变的什么
@@ -6012,6 +6136,32 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
     }
     
     
+
+    
+    /**
+     * 归档、取消归档。没归档的已经有 200 条时取消归档报 422（先归档别的）。
+     */
+    @Throws(ClientException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `setBoardPostArchived`(`postId`: kotlin.String, `archived`: kotlin.Boolean) : BoardPost {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_client_core_fn_method_thinktinclient_set_board_post_archived(
+                uniffiHandle,
+                
+        FfiConverterString.lower(`postId`),
+        FfiConverterBoolean.lower(`archived`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_client_core_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeBoardPost.lift(it) },
+        // Error FFI converter
+        ClientException.ErrorHandler,
+    )
+    }
 
     
     /**
@@ -7163,6 +7313,94 @@ public object FfiConverterTypeArtifact: FfiConverterRustBuffer<Artifact> {
             FfiConverterULong.write(value.`size`, buf)
             FfiConverterString.write(value.`sha256`, buf)
             FfiConverterLong.write(value.`createdAtMs`, buf)
+    }
+}
+
+
+
+/**
+ * 共享看板的一条（8.10）：用户的 agent（或用户自己）写的进展、决定、待别人处理的事。写了不改，只能归档、删除。
+ */
+data class BoardPost (
+    var `id`: kotlin.String
+    , 
+    /**
+     * 哪个实例写的；没有是用户自己写的，或者写它的实例已经删了。
+     */
+    var `authorInstanceId`: kotlin.String?
+    , 
+    /**
+     * 写它的实例的名字（实例删了就没有）。
+     */
+    var `authorName`: kotlin.String?
+    , 
+    /**
+     * 哪次运行写的。
+     */
+    var `runId`: kotlin.String?
+    , 
+    var `body`: kotlin.String
+    , 
+    var `tags`: List<kotlin.String>
+    , 
+    /**
+     * agent 写的：显示时要带“AI 生成”标识（16.3）。用户自己写的是 false。
+     */
+    var `aiGenerated`: kotlin.Boolean
+    , 
+    var `createdAtMs`: kotlin.Long
+    , 
+    var `archivedAtMs`: kotlin.Long?
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeBoardPost: FfiConverterRustBuffer<BoardPost> {
+    override fun read(buf: ByteBuffer): BoardPost {
+        return BoardPost(
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterLong.read(buf),
+            FfiConverterOptionalLong.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: BoardPost) = (
+            FfiConverterString.allocationSize(value.`id`) +
+            FfiConverterOptionalString.allocationSize(value.`authorInstanceId`) +
+            FfiConverterOptionalString.allocationSize(value.`authorName`) +
+            FfiConverterOptionalString.allocationSize(value.`runId`) +
+            FfiConverterString.allocationSize(value.`body`) +
+            FfiConverterSequenceString.allocationSize(value.`tags`) +
+            FfiConverterBoolean.allocationSize(value.`aiGenerated`) +
+            FfiConverterLong.allocationSize(value.`createdAtMs`) +
+            FfiConverterOptionalLong.allocationSize(value.`archivedAtMs`)
+    )
+
+    override fun write(value: BoardPost, buf: ByteBuffer) {
+            FfiConverterString.write(value.`id`, buf)
+            FfiConverterOptionalString.write(value.`authorInstanceId`, buf)
+            FfiConverterOptionalString.write(value.`authorName`, buf)
+            FfiConverterOptionalString.write(value.`runId`, buf)
+            FfiConverterString.write(value.`body`, buf)
+            FfiConverterSequenceString.write(value.`tags`, buf)
+            FfiConverterBoolean.write(value.`aiGenerated`, buf)
+            FfiConverterLong.write(value.`createdAtMs`, buf)
+            FfiConverterOptionalLong.write(value.`archivedAtMs`, buf)
     }
 }
 
@@ -11361,6 +11599,34 @@ public object FfiConverterSequenceTypeArtifact: FfiConverterRustBuffer<List<Arti
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypeArtifact.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeBoardPost: FfiConverterRustBuffer<List<BoardPost>> {
+    override fun read(buf: ByteBuffer): List<BoardPost> {
+        val len = buf.getInt()
+        return List<BoardPost>(len) {
+            FfiConverterTypeBoardPost.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<BoardPost>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeBoardPost.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<BoardPost>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeBoardPost.write(it, buf)
         }
     }
 }
