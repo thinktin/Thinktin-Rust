@@ -388,8 +388,6 @@ pub struct AcsSandbox {
     /// 模板 id → SandboxSet 名字；没列的把模板 id 规整成合法名字（`agents/claude:0.90.0` →
     /// `agents-claude-0-90-0`）。
     pub templates: std::collections::BTreeMap<String, String>,
-    /// 暂停后 sandbox-manager 保留多久（`forever` 或 Go 的时长，如 `720h`），不填用它的默认值。
-    pub paused_retention: Option<String>,
     /// 创建后等 Pod IP 最多多久（秒）。
     pub ip_wait_secs: u64,
     /// 控制面请求的超时（秒）。
@@ -405,7 +403,6 @@ impl Default for AcsSandbox {
             root: d.root,
             user: d.user,
             templates: d.templates,
-            paused_retention: d.paused_retention,
             ip_wait_secs: d.ip_wait.as_secs(),
             request_timeout_secs: d.request_timeout.as_secs(),
         }
@@ -421,7 +418,6 @@ impl AcsSandbox {
             root: self.root.clone(),
             user: self.user.clone(),
             templates: self.templates.clone(),
-            paused_retention: self.paused_retention.clone(),
             ip_wait: Duration::from_secs(self.ip_wait_secs),
             request_timeout: Duration::from_secs(self.request_timeout_secs),
         }
@@ -945,6 +941,15 @@ impl Config {
                             "sandbox.cube.egress_address is not configured (the address the model gateway sees for Cube sandboxes)"
                         );
                     }
+                    if self.sandbox.cube.request_timeout_secs == 0 {
+                        bail!("sandbox.cube.request_timeout_secs must be positive");
+                    }
+                    // 不用卷时销毁沙箱工作区就没了：要先存进对象存储，不然换版本、归档都不敢做。
+                    if !self.sandbox.cube.use_volumes && !self.sandbox.workspace.object() {
+                        bail!(
+                            "sandbox.cube.use_volumes = false keeps no workspace volume: set sandbox.workspace.mode = \"object\""
+                        );
+                    }
                 }
                 "acs" => {
                     let url = &self.sandbox.acs.api_url;
@@ -955,6 +960,20 @@ impl Config {
                     }
                     if self.acs_api_key.is_none() {
                         bail!("sandbox.provider = \"acs\" needs THINKTIN_ACS_API_KEY");
+                    }
+                    if self.sandbox.acs.request_timeout_secs == 0 {
+                        bail!("sandbox.acs.request_timeout_secs must be positive");
+                    }
+                    // ACS 的出网规则只认地址、不分端口：写了端口像是只放行了那个端口，其实整台机器都能连。
+                    if let Some(bad) = self
+                        .sandbox
+                        .network_allow
+                        .iter()
+                        .find(|t| !sandbox::acs::allow_rule_ok(t))
+                    {
+                        bail!(
+                            "sandbox.network_allow {bad:?}: ACS egress rules take an IP, CIDR or host name without a port or wildcard; limit the port with the security group (docs/sandbox-acs.md)"
+                        );
                     }
                 }
                 other => {
@@ -1257,6 +1276,20 @@ mod tests {
         .unwrap();
         let err = Config::load(Some(&path), &env).unwrap_err();
         assert!(err.to_string().contains("egress_address"), "{err}");
+        // 不用卷时工作区要先存进对象存储，不然换版本、归档都会丢文件。
+        let no_volumes = "[worker]\nenabled = true\n[sandbox]\nprovider = \"cube\"\n\
+                          [sandbox.cube]\negress_address = \"10.0.0.20\"\nuse_volumes = false\n";
+        std::fs::write(&path, no_volumes).unwrap();
+        let mut env_kms = env.0.clone();
+        env_kms.insert("THINKTIN_KMS_KEY", "00");
+        let err = Config::load(Some(&path), &MapEnv(env_kms.clone())).unwrap_err();
+        assert!(err.to_string().contains("use_volumes = false"), "{err}");
+        std::fs::write(
+            &path,
+            format!("{no_volumes}[sandbox.workspace]\nmode = \"object\"\n"),
+        )
+        .unwrap();
+        Config::load(Some(&path), &MapEnv(env_kms)).unwrap();
         std::fs::write(
             &path,
             "[worker]\nenabled = true\n[sandbox]\nprovider = \"podman\"\n",
@@ -1275,7 +1308,6 @@ mod tests {
             provider = "acs"
             [sandbox.acs]
             api_url = "http://sbx.internal/kruise/api"
-            paused_retention = "720h"
             [sandbox.acs.templates]
             "agents/claude:0.90.0" = "claude-1c2g"
             "#,
@@ -1287,7 +1319,6 @@ mod tests {
         assert_eq!(c.root, "/sandbox", "unset keys keep defaults");
         assert_eq!(c.user, "user");
         assert_eq!(c.ip_wait, Duration::from_secs(15));
-        assert_eq!(c.paused_retention.as_deref(), Some("720h"));
         assert_eq!(c.templates["agents/claude:0.90.0"], "claude-1c2g");
         assert_eq!(c.api_key.as_deref(), Some("k"));
         assert!(
@@ -1319,6 +1350,29 @@ api_ur = \"x\""
         let err = Config::load(Some(&path), &MapEnv(vars.clone())).unwrap_err();
         assert!(err.to_string().contains("THINKTIN_ACS_API_KEY"), "{err}");
         vars.insert("THINKTIN_ACS_API_KEY", "key");
+        let object = "[sandbox.workspace]\nmode = \"object\"\n";
+        for (extra, want) in [
+            (
+                "[sandbox.acs]\napi_url = \"http://sbx/kruise/api\"\nrequest_timeout_secs = 0\n",
+                "request_timeout_secs",
+            ),
+            (
+                "[sandbox.acs]\napi_url = \"http://sbx/kruise/api\"\n",
+                "without a port",
+            ),
+        ] {
+            let allow = if want == "without a port" {
+                "network_allow = [\"10.0.0.20:8790\"]\n"
+            } else {
+                ""
+            };
+            let text = format!("{worker}{allow}{extra}{object}");
+            std::fs::write(&path, text).unwrap();
+            let err = Config::load(Some(&path), &MapEnv(vars.clone()))
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains(want), "{want}: {err}");
+        }
         std::fs::write(
             &path,
             format!(

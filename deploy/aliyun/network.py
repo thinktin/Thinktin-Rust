@@ -41,6 +41,18 @@ VSWITCHES = [
 ]
 SG_NAME = "thinktin-svc"
 SG_RULES = [("80/80", "HTTP：证书验证、跳转 HTTPS"), ("443/443", "HTTPS：接口和中继")]
+# 模型网关在服务机上监听 8790（主机网络）。ACS 的出网规则只认地址、不分端口，沙箱能不能连服务机的别的端口
+# （数据库、k3s 的 6443、kubelet）全靠这里：只许 VPC 里的地址连 8790。ACS 的 Pod 不要放进这个安全组（同组默认互通）。
+GATEWAY_PORTS = "8790/8790"
+
+
+def wanted_rules(vpc_cidr):
+    """（端口，来源网段，说明）。"""
+    rules = [(ports, "0.0.0.0/0", why) for ports, why in SG_RULES]
+    for block in str(vpc_cidr).split(","):
+        if block.strip():
+            rules.append((GATEWAY_PORTS, block.strip(), "模型网关：只许 VPC 里的沙箱连"))
+    return rules
 
 
 def config(endpoint, region):
@@ -142,6 +154,9 @@ def main():
             ).body.v_switch_id
             print(f"[已建] 交换机 {name} {vsw_id}")
 
+    vpc_cidr = (existing or {}).get("CidrBlock") or VPC_CIDR
+    rules = wanted_rules(vpc_cidr)
+    shown = "、".join(f"{p.split('/')[0]}（{src}）" for p, src, _ in rules)
     groups = []
     if vpc_id:
         body = ecs.describe_security_groups(
@@ -149,24 +164,46 @@ def main():
         ).body.to_map()
         groups = body.get("SecurityGroups", {}).get("SecurityGroup", [])
     if groups:
-        print(f"[已有] 安全组 {SG_NAME} {groups[0]['SecurityGroupId']}")
+        sg_id = groups[0]["SecurityGroupId"]
+        print(f"[已有] 安全组 {SG_NAME} {sg_id}")
+        attrs = ecs.describe_security_group_attribute(
+            ecs_models.DescribeSecurityGroupAttributeRequest(region_id=region, security_group_id=sg_id, direction="ingress")
+        ).body.to_map()
+        have = {
+            (p.get("PortRange"), p.get("SourceCidrIp"))
+            for p in attrs.get("Permissions", {}).get("Permission", [])
+            if str(p.get("IpProtocol", "")).lower() == "tcp" and p.get("Policy", "Accept").lower() == "accept"
+        }
+        for ports, src, why in rules:
+            if (ports, src) in have:
+                continue
+            if not apply:
+                print(f"[要加] 安全组 {SG_NAME} 入方向 TCP {ports} 来自 {src}（{why}）")
+                continue
+            ecs.authorize_security_group(
+                ecs_models.AuthorizeSecurityGroupRequest(
+                    region_id=region, security_group_id=sg_id, ip_protocol="tcp", port_range=ports,
+                    source_cidr_ip=src, policy="accept", description=why,
+                )
+            )
+            print(f"[已加] 安全组 {SG_NAME} 入方向 TCP {ports} 来自 {src}")
     elif not apply:
-        print(f"[要建] 安全组 {SG_NAME}：入方向只开 {', '.join(p for p, _ in SG_RULES)}，不开 22")
+        print(f"[要建] 安全组 {SG_NAME}：入方向只开 {shown}，不开 22")
     else:
         sg_id = ecs.create_security_group(
             ecs_models.CreateSecurityGroupRequest(
                 region_id=region, vpc_id=vpc_id, security_group_name=SG_NAME, security_group_type="normal",
-                description="服务机：只开 80、443",
+                description="服务机：公网只开 80、443，VPC 里只开模型网关 8790",
             )
         ).body.security_group_id
-        for ports, why in SG_RULES:
+        for ports, src, why in rules:
             ecs.authorize_security_group(
                 ecs_models.AuthorizeSecurityGroupRequest(
                     region_id=region, security_group_id=sg_id, ip_protocol="tcp", port_range=ports,
-                    source_cidr_ip="0.0.0.0/0", policy="accept", description=why,
+                    source_cidr_ip=src, policy="accept", description=why,
                 )
             )
-        print(f"[已建] 安全组 {SG_NAME} {sg_id}（入方向 {', '.join(p for p, _ in SG_RULES)}）")
+        print(f"[已建] 安全组 {SG_NAME} {sg_id}（入方向 {shown}）")
 
     print("\n这一阶段的资源都不收费。")
     return 0

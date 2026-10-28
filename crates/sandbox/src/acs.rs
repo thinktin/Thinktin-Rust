@@ -43,11 +43,8 @@ const CONNECT_TIMEOUT_SECS: u32 = 300;
 /// 扩展参数放在 metadata 里，sandbox-manager 解析后从 metadata 里删掉。
 const EXT_NEVER_TIMEOUT: &str = "e2b.agents.kruise.io/never-timeout";
 const EXT_RETURN_IP: &str = "e2b.agents.kruise.io/return-sandbox-ip";
-const EXT_PAUSED_RETENTION: &str = "e2b.agents.kruise.io/reserve-paused-sandbox-duration";
 /// 要了 Pod IP 时 sandbox-manager 在响应的 metadata 里放这个键（写在存储的 metadata 之后，伪造不了）。
 const META_POD_IP: &str = "e2b.agents.kruise.io/sandbox-ip";
-/// 暂停时覆盖暂停后保留多久。
-const HDR_PAUSED_RETENTION: &str = "x-e2b-kruise-reserve-paused-sandbox-duration";
 /// sandbox-manager 保留的 metadata 前缀：调用方不能设，响应里的不对外显示。
 const RESERVED_PREFIXES: [&str; 2] = ["e2b.agents.kruise.io/", "agents.kruise.io/"];
 /// 元数据里记原始模板和工作区（和 Cube 后端一样）。
@@ -73,8 +70,6 @@ pub struct AcsConfig {
     pub user: String,
     /// 模板 id → SandboxSet 名字。没列的按 [`sandboxset_name`] 规整。
     pub templates: BTreeMap<String, String>,
-    /// 暂停后 sandbox-manager 保留多久（`forever` 或 Go 的时长，如 `720h`）。不填用它的默认值。
-    pub paused_retention: Option<String>,
     /// 创建后等 Pod IP 最多多久。
     pub ip_wait: Duration,
     /// 控制面请求的超时（创建要等 Pod 就绪）。
@@ -90,7 +85,6 @@ impl Default for AcsConfig {
             root: "/sandbox".into(),
             user: "user".into(),
             templates: BTreeMap::new(),
-            paused_retention: None,
             ip_wait: Duration::from_secs(15),
             request_timeout: Duration::from_secs(120),
         }
@@ -106,7 +100,6 @@ impl std::fmt::Debug for AcsConfig {
             .field("root", &self.root)
             .field("user", &self.user)
             .field("templates", &self.templates)
-            .field("paused_retention", &self.paused_retention)
             .field("ip_wait", &self.ip_wait)
             .field("request_timeout", &self.request_timeout)
             .finish()
@@ -140,6 +133,13 @@ pub fn sandboxset_name(template: &str) -> String {
     let mut name = out.trim_matches('-').to_owned();
     name.truncate(63);
     name.trim_end_matches('-').to_owned()
+}
+
+/// 出网规则能不能交给 sandbox-manager：只认 IP、CIDR 或域名，不能带端口（它不分端口，带了端口
+/// 看着像只放行那个端口，其实整台机器都放行了），不能用通配符。
+pub fn allow_rule_ok(target: &str) -> bool {
+    let t = target.trim();
+    !t.is_empty() && !t.contains('*') && allow_host(t) == t
 }
 
 fn reserved(key: &str) -> bool {
@@ -318,9 +318,9 @@ impl AcsProvider {
     }
 
     fn create_body(&self, spec: &CreateSpec) -> Result<Value> {
-        if let Some(bad) = spec.network.allow.iter().find(|t| t.contains('*')) {
+        if let Some(bad) = spec.network.allow.iter().find(|t| !allow_rule_ok(t)) {
             return Err(Error::Invalid(format!(
-                "ACS egress rules take no wildcards: {bad:?}"
+                "ACS egress rules take an IP, CIDR or host name without a port or wildcard: {bad:?}"
             )));
         }
         if let Some(bad) = spec.metadata.keys().find(|k| reserved(k)) {
@@ -342,16 +342,7 @@ impl AcsProvider {
         }
         metadata.insert(EXT_NEVER_TIMEOUT.into(), "true".into());
         metadata.insert(EXT_RETURN_IP.into(), "true".into());
-        if let Some(r) = &self.cfg.paused_retention {
-            metadata.insert(EXT_PAUSED_RETENTION.into(), r.clone());
-        }
-        let hosts: Vec<&str> = spec
-            .network
-            .allow
-            .iter()
-            .map(|t| allow_host(t))
-            .filter(|h| !h.is_empty())
-            .collect();
+        let hosts: Vec<&str> = spec.network.allow.iter().map(|t| t.trim()).collect();
         let mut body = json!({
             "templateID": template,
             "timeout": CREATE_TIMEOUT_SECS,
@@ -452,11 +443,9 @@ impl SandboxProvider for AcsProvider {
     async fn pause(&self, id: &SandboxId) -> Result<()> {
         // 暂停后数据面不可用；下次用时重新确认状态、取令牌。
         self.forget(&id.0);
-        let mut rb = self.api(Method::POST, &format!("/sandboxes/{}/pause", id.0));
-        if let Some(r) = &self.cfg.paused_retention {
-            rb = rb.header(HDR_PAUSED_RETENTION, r);
-        }
-        let (status, bytes) = self.call(rb).await?;
+        let (status, bytes) = self
+            .call(self.api(Method::POST, &format!("/sandboxes/{}/pause", id.0)))
+            .await?;
         if status.is_success() {
             return Ok(());
         }

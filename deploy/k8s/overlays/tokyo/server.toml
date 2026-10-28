@@ -32,15 +32,14 @@ retry_backoff_secs = 30
 [sandbox]
 provider = "acs"
 token_kid = "k1"
-# 部署前填：服务机的内网 IP（模型网关用服务机的网络监听 8790）。ACS 的出网规则不收通配符，写 IP。
+# 部署前填：服务机的内网 IP（模型网关用服务机的网络监听 8790）。ACS 的出网规则只认地址、不分端口，
+# 也不收通配符：这里只写 IP，端口由服务机的安全组限住（只许沙箱连 8790，docs/sandbox-acs.md 第 5 节）。
 gateway_url = "http://10.0.1.10:8790"
-network_allow = ["10.0.1.10:8790"]
+network_allow = ["10.0.1.10"]
 
 [sandbox.acs]
 # 部署前填：服务机在 VPC 里访问 sandbox-manager 的地址（docs/sandbox-acs.md 第 3 节）。
 api_url = "http://sandbox-manager.thinktin.internal/kruise/api"
-# 暂停后由我们的巡检决定删不删；sandbox-manager 这边保留 7 天兜底（巡检停了也不会一直收存储费）。
-paused_retention = "168h"
 
 # 省钱（第 8.9 节办法一）：空闲 10 分钟暂停，暂停 1 小时删掉沙箱、工作区存进 OSS，下次用时重建放回。
 [sandbox.lifecycle]

@@ -10,10 +10,10 @@
 
 | `SandboxProvider` | sandbox-manager | 说明 |
 |---|---|---|
-| `create` | `POST /sandboxes` | `templateID` 是 SandboxSet 的名字（见第 2 节）；`timeout: 300`（它只收 30 秒到 30 天）+ 扩展 `e2b.agents.kruise.io/never-timeout: "true"`（不按空闲回收，暂停、归档由控制服务巡检决定）；`allow_internet_access: false` + `network.allowOut`（只放行白名单，不能用通配符）；扩展 `return-sandbox-ip: "true"` 要 Pod IP；配了 `paused_retention` 时加 `reserve-paused-sandbox-duration`；原始模板和工作区记在元数据里。没有卷、`secure`、`allowPublicTraffic` |
+| `create` | `POST /sandboxes` | `templateID` 是 SandboxSet 的名字（见第 2 节）；`timeout: 300`（它只收 30 秒到 30 天）+ 扩展 `e2b.agents.kruise.io/never-timeout: "true"`（不按空闲回收，暂停、归档由控制服务巡检决定）；`allow_internet_access: false` + `network.allowOut`（只放行白名单：IP、CIDR 或域名，不分端口、不能用通配符）；扩展 `return-sandbox-ip: "true"` 要 Pod IP；原始模板和工作区记在元数据里。没有卷、`secure`、`allowPublicTraffic` |
 | `get` | `GET /sandboxes/{id}` | `running`、`paused` 照报；`dead`（到了关机时间之类）先 `DELETE` 再报不存在，免得控制服务重建后留下一个；别的状态报错，不当成暂停 |
 | `exec` | envd `process.Process/Start`（Connect 流） | 同 Cube；这个版本的 envd 没有 `CloseStdin`，标准输入关掉后只是不再转发 |
-| `pause` | `POST /sandboxes/{id}/pause` | 204 成功；配了 `paused_retention` 时带头 `x-e2b-kruise-reserve-paused-sandbox-duration`；409 时查一下，确实暂停了就算成功 |
+| `pause` | `POST /sandboxes/{id}/pause` | 204 成功；409 时查一下，确实暂停了就算成功。不设暂停后的保留时长：never-timeout 的沙箱 sandbox-manager 不按它删（没有关机时间），删不删全由我们的巡检决定 |
 | `resume` | `POST /sandboxes/{id}/connect`（`timeout: 300`） | `timeout` 必须大于 0，never-timeout 的沙箱不会据此改超时；正在暂停时（409、503，或恢复撞上冲突的 400）隔 2 秒重试 5 次；之后再 `GET` 一次，以那时的 Pod IP 为准 |
 | `snapshot`、`restore` | 不支持 | 报错 |
 | `destroy` | `DELETE /sandboxes/{id}` | 不存在也报 204；409、503 重试 |
@@ -34,13 +34,12 @@ SandboxSet 的名字必须是 Kubernetes 的名字，清单里的模板 id（如
 ```toml
 [sandbox]
 provider = "acs"
-network_allow = ["10.0.0.20:8790"]          # 沙箱只能连模型网关；allowOut 不收通配符，用 IP
+network_allow = ["10.0.0.20"]               # 沙箱只能连模型网关：只写地址（allowOut 不分端口，带端口会报错），端口靠安全组
 gateway_url = "http://10.0.0.20:8790"
 
 [sandbox.acs]
 api_url = "http://<sandbox-manager 域名>/kruise/api"
 # data_url = "http://<域名>"                 # 不配就是 api_url 去掉 /kruise/api
-# paused_retention = "forever"              # 暂停后保留多久，不配用 sandbox-manager 的默认值
 # root = "/sandbox"、user = "user"、ip_wait_secs = 15、request_timeout_secs = 120
 
 [sandbox.acs.templates]
@@ -81,7 +80,7 @@ API Key 放环境变量 `THINKTIN_ACS_API_KEY`（sandbox-manager 的 `adminApiKe
 | 暂停的沙箱也收费 | 每个暂停的沙箱按 30 GiB 临时存储计费（约 ¥36/月） | 暂停 `archive_after_secs` 后归档（东京测试环境 1 小时） |
 | 没有快照 | 换机恢复（7.12）用不了 | 不需要：沙箱丢了就从模板重建（接上对象存储后从归档放回） |
 | envd 没有 `CloseStdin` | 关标准输入不会让进程读到 EOF | agent-shim 靠命令或被结束退出 |
-| `allowOut` 不收通配符 | 白名单只能写 IP、CIDR 或具体域名 | 模型网关用 IP |
+| `allowOut` 不收通配符、不分端口 | 白名单只能写 IP、CIDR 或具体域名；放行一个地址就是放行它的所有端口 | 模型网关用 IP；`network_allow` 带端口启动时就报错。服务机的安全组只许沙箱的网段连 8790（数据库、k3s 的 6443、kubelet 都在服务机上），ACS 的 Pod 不要和服务机用同一个安全组（同组默认互通） |
 | 集群内是明文 HTTP | sandbox-manager、envd、模型网关之间的令牌在 VPC 里明文传 | 10 个用户的测试先接受；安全组只放行需要的端口 |
 
 ## 6. 工作区归档（`mode = "object"`）

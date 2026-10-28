@@ -51,7 +51,6 @@ struct Mock {
     created: Mutex<Vec<Value>>,
     connects: Mutex<Vec<Value>>,
     deletes: Mutex<Vec<String>>,
-    pause_headers: Mutex<Vec<Option<String>>>,
     requests: AtomicU32,
     /// 新沙箱的 IP 要再查几次才出现；`u32::MAX` 表示一直没有。
     hide_ip: AtomicU32,
@@ -142,7 +141,6 @@ async fn create(
     let mut metadata = body["metadata"].as_object().cloned().unwrap_or_default();
     let return_ip = metadata.remove(EXT_RETURN_IP) == Some(json!("true"));
     metadata.remove(EXT_NEVER_TIMEOUT);
-    metadata.remove("e2b.agents.kruise.io/reserve-paused-sandbox-duration");
     if metadata
         .keys()
         .any(|k| k.starts_with("e2b.agents.kruise.io/") || k.starts_with("agents.kruise.io/"))
@@ -189,11 +187,6 @@ async fn pause(State(m): State<S>, headers: HeaderMap, Path(id): Path<String>) -
     if let Some(r) = unauthorized(&m, &headers) {
         return r;
     }
-    m.pause_headers.lock().unwrap().push(
-        headers
-            .get("x-e2b-kruise-reserve-paused-sandbox-duration")
-            .map(|v| v.to_str().unwrap().to_owned()),
-    );
     let mut map = m.sandboxes.lock().unwrap();
     match map.get_mut(&id) {
         None => api_err(StatusCode::NOT_FOUND, "sandbox not found"),
@@ -413,7 +406,6 @@ fn provider(url: &str) -> AcsProvider {
     AcsProvider::new(AcsConfig {
         api_url: format!("{url}/kruise/api"),
         api_key: Some(KEY.into()),
-        paused_retention: Some("720h".into()),
         ip_wait: Duration::from_secs(2),
         ..AcsConfig::default()
     })
@@ -425,7 +417,7 @@ fn spec() -> CreateSpec {
         template: "agents/claude:0.90.0".into(),
         workspace: Some("ws-1".into()),
         network: NetworkPolicy {
-            allow: vec!["10.0.0.20:8790".into()],
+            allow: vec!["10.0.0.20".into()],
         },
         metadata: [("instance".to_owned(), "inst-1".to_owned())].into(),
         ..CreateSpec::default()
@@ -458,10 +450,6 @@ async fn sandboxes_processes_and_files() {
     assert_eq!(body["network"], json!({ "allowOut": ["10.0.0.20"] }));
     assert_eq!(body["metadata"][EXT_NEVER_TIMEOUT], "true");
     assert_eq!(body["metadata"][EXT_RETURN_IP], "true");
-    assert_eq!(
-        body["metadata"]["e2b.agents.kruise.io/reserve-paused-sandbox-duration"],
-        "720h"
-    );
     assert!(body.get("volumeMounts").is_none());
     assert!(body.get("secure").is_none());
 
@@ -551,9 +539,8 @@ async fn sandboxes_processes_and_files() {
             .contains_key(&format!("{}:/sandbox/workspace/short", info.id))
     );
 
-    // 暂停带保留时长；暂停后不能执行；重复暂停没问题。
+    // 暂停后不能执行；重复暂停没问题。
     p.pause(&info.id).await.unwrap();
-    assert_eq!(m.pause_headers.lock().unwrap()[0].as_deref(), Some("720h"));
     assert_eq!(
         p.get(&info.id).await.unwrap().unwrap().state,
         SandboxState::Paused
@@ -602,14 +589,19 @@ async fn sandboxes_processes_and_files() {
 async fn bad_requests_fail_early() {
     let (m, url) = mock().await;
     let p = provider(&url);
-    // 出网规则不能用通配符：一个请求都不发。
-    let wildcard = CreateSpec {
-        network: NetworkPolicy {
-            allow: vec!["*.example.com:443".into()],
-        },
-        ..spec()
-    };
-    assert!(matches!(p.create(wildcard).await, Err(Error::Invalid(_))));
+    // 出网规则不能用通配符，也不能带端口（sandbox-manager 不分端口）：一个请求都不发。
+    for bad in ["*.example.com", "10.0.0.20:8790"] {
+        let spec = CreateSpec {
+            network: NetworkPolicy {
+                allow: vec![bad.into()],
+            },
+            ..spec()
+        };
+        assert!(
+            matches!(p.create(spec).await, Err(Error::Invalid(_))),
+            "{bad}"
+        );
+    }
     let reserved = CreateSpec {
         metadata: [(EXT_NEVER_TIMEOUT.to_owned(), "false".to_owned())].into(),
         ..spec()

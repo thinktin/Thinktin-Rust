@@ -221,7 +221,7 @@ def in_cloud_session():
 
 def pool_status():
     out = subprocess.run([KUBECTL, "--kubeconfig", KUBECONFIG, "get", "sandboxset", ACS_TEMPLATE, "-n", "default",
-                          "--no-headers"], capture_output=True, text=True)
+                          "--no-headers"], capture_output=True, text=True, check=False)
     return " ".join(out.stdout.split()) or "查不到"
 
 
