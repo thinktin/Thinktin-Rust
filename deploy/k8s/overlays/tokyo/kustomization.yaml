@@ -52,7 +52,8 @@ patches:
         value:
           type: Recreate
   # 工作区归档的密文临时文件放 /tmp（docs/sandbox-acs.md）：同时存、放各一份最大的归档（temp_budget_bytes 默认 9 GiB）。
-  # 服务机只有 40G 系统盘：要省盘就在 server.toml 里把 max_bytes、temp_budget_bytes 一起调小。
+  # 服务机只有 40G 系统盘：要省盘就在 server.toml 里把 max_bytes、temp_budget_bytes 一起调小（上线前定；已经存下的
+  # 大归档要两边加起来放得下才放得回来，见 docs/sandbox-acs.md 第 6 节）。
   - target:
       kind: Deployment
       labelSelector: app.kubernetes.io/name=thinktin-worker
