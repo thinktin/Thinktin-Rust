@@ -4,11 +4,12 @@
 # 用 App Store Connect API key 自动签名归档、上传到 App Store Connect（进 TestFlight 的内部测试组）。
 # 版本号取标签，构建号是这个工作流的运行序号（只增不减）。也能手动触发（不上传，只验证能归档）。
 #
-# 要的密钥都放在 GitHub 的 testflight 环境里（仓库是公开的，不进代码）：
-#   APPLE_TEAM_ID        开发者团队 id（10 位）
+# 要的密钥都放在 GitHub 的 “Test flight” 环境里（Settings → Environments；仓库是公开的，不进代码）：
 #   ASC_KEY_ID           App Store Connect API key 的 id
 #   ASC_ISSUER_ID        API key 的 issuer id
-#   ASC_KEY_P8_BASE64    .p8 私钥文件的 base64
+#   ASC_KEY_P8           .p8 私钥文件的内容（用文本编辑打开、整段复制粘贴；换行丢了也行）
+#                        或者 ASC_KEY_P8_BASE64：.p8 文件的 base64（以前的写法，照样认）
+#   APPLE_TEAM_ID        可选：开发者团队 id，不配就用 TEAM_ID_DEFAULT（团队 id 不是密钥，签名的 App 里都看得到）
 name: iOS release
 
 on:
@@ -18,6 +19,19 @@ on:
     inputs:
       upload:
         description: 上传到 App Store Connect（不勾只归档）
+        type: boolean
+        default: false
+      demo:
+        description: 演示版：用演示数据、不连服务器（服务器上线前在 TestFlight 上先看界面）
+        type: boolean
+        default: false
+      runner:
+        description: 用哪种 Mac（苹果芯片的排不上队时换 Intel 的）
+        type: choice
+        options: [macos-26, macos-15-intel, macos-15]
+        default: macos-26
+      invite_testers:
+        description: 只做 TestFlight 内部测试：建内部测试组、把团队里的人加进去并发邀请（不打包，在 Linux 上跑）
         type: boolean
         default: false
 
@@ -32,15 +46,20 @@ permissions:
 env:
   CARGO_INCREMENTAL: "0"
   CARGO_TERM_COLOR: always
+  # Siting (Shenzhen) 的开发者团队。
+  TEAM_ID_DEFAULT: 5BUH46M229
 
 jobs:
   testflight:
     name: Archive and upload to TestFlight
-    runs-on: macos-26
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.invite_testers }}
+    runs-on: ${{ inputs.runner || 'macos-26' }}
     timeout-minutes: 150
-    environment: testflight
+    environment: "Test flight"
     env:
       UPLOAD: ${{ github.event_name == 'push' || inputs.upload }}
+      # 标签发版永远连服务器；演示版只能手动触发。
+      CLIENT: ${{ github.event_name == 'workflow_dispatch' && inputs.demo && 'mock' || '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -60,23 +79,98 @@ jobs:
             exit 1
           fi
           echo "marketing=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$CLIENT" == "mock" ]]; then echo "::notice::演示版：用演示数据，不连服务器"; fi
           echo "build=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
-          echo "版本 $version，构建号 ${{ github.run_number }}"
+          echo "版本 ${version}，构建号 ${{ github.run_number }}"
 
+      # 和 ios.yml 一样用 Xcode 26.6；别的镜像（换成 Intel 的 Mac 时）上没有就用装着的最新的 Xcode 26。
       - name: Select Xcode
         run: |
-          if [[ -d /Applications/Xcode_26.6.app ]]; then
-            sudo xcode-select -s /Applications/Xcode_26.6.app
+          xcode=/Applications/Xcode_26.6.app
+          if [[ ! -d "$xcode" ]]; then
+            xcode=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -n 1 || true)
+          fi
+          if [[ -n "$xcode" && -d "$xcode" ]]; then
+            sudo xcode-select -s "$xcode"
           fi
           xcodebuild -version
+          uname -m
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # 密钥先装、先验：有问题一分钟内就报，不用等 Rust 编完。
+      - name: Install the App Store Connect API key
+        id: key
+        env:
+          # 两个 id 不是机密，填在 Environment variables 里也认；私钥只认 secrets。
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID || vars.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID || vars.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
+          P8_IN_VARS: ${{ vars.ASC_KEY_P8 != '' }}
+        run: |
+          set -euo pipefail
+          # 不用数组：macOS 的 /bin/bash 3.2 在 set -u 下碰到空数组会报错。
+          missing=""
+          [[ -n "$ASC_KEY_ID" ]] || missing="$missing ASC_KEY_ID"
+          [[ -n "$ASC_ISSUER_ID" ]] || missing="$missing ASC_ISSUER_ID"
+          [[ -n "$ASC_KEY_P8" || -n "$ASC_KEY_P8_BASE64" ]] || missing="$missing ASC_KEY_P8"
+          if [[ -n "$missing" ]]; then
+            echo "::error::GitHub 的 Test flight 环境里读不到${missing}：Settings → Environments → Test flight → Environment secrets 里加上（名字要一字不差）"
+            if [[ "$P8_IN_VARS" == "true" ]]; then
+              echo "::error::ASC_KEY_P8 填在了 Environment variables 里：私钥要放 Environment secrets（变量谁都看得见），挪过去后把变量删掉"
+            fi
+            exit 1
+          fi
+          # 从网页上复制时常带上空格、换行：去掉。
+          key_id=$(printf '%s' "$ASC_KEY_ID" | tr -d '[:space:]')
+          issuer_id=$(printf '%s' "$ASC_ISSUER_ID" | tr -d '[:space:]' | tr 'A-F' 'a-f')
+          if ! [[ "$key_id" =~ ^[A-Z0-9]{10}$ ]]; then
+            echo "::error::ASC_KEY_ID 不像密钥 ID（应该是 10 位大写字母和数字，现在是 ${#key_id} 个字符）：填团队密钥列表里那一行的“密钥 ID”"
+            exit 1
+          fi
+          if ! [[ "$issuer_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+            echo "::error::ASC_ISSUER_ID 不像 Issuer ID（应该是 8-4-4-4-12 位的一串，现在是 ${#issuer_id} 个字符）：填团队密钥页面顶上的 Issuer ID"
+            exit 1
+          fi
+          echo "::add-mask::$key_id"
+          echo "::add-mask::$issuer_id"
+          {
+            echo "KEY_ID=$key_id"
+            echo "ISSUER_ID=$issuer_id"
+          } >> "$GITHUB_ENV"
+          path="$RUNNER_TEMP/AuthKey.p8"
+          (
+            umask 077
+            if [[ -n "$ASC_KEY_P8" ]]; then
+              # 粘贴时换行可能丢了或变成空格：去掉首尾两行和所有空白，按 64 个字符一行重排成 PEM。
+              body=$(printf '%s' "$ASC_KEY_P8" | sed -e 's/-----BEGIN PRIVATE KEY-----//' -e 's/-----END PRIVATE KEY-----//' | tr -d ' \t\r\n')
+              { echo "-----BEGIN PRIVATE KEY-----"; printf '%s\n' "$body" | fold -w 64; echo "-----END PRIVATE KEY-----"; } > "$path"
+            else
+              printf '%s' "$ASC_KEY_P8_BASE64" | base64 --decode > "$path"
+            fi
+          )
+          if ! openssl pkey -in "$path" -noout 2>/dev/null; then
+            echo "::error::ASC_KEY_P8 读不出私钥：用文本编辑打开 .p8 文件，全选复制（从 -----BEGIN 到 END-----）再粘贴一次"
+            exit 1
+          fi
+          echo "path=$path" >> "$GITHUB_OUTPUT"
+
+      - name: Check the API key with App Store Connect
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet 'pyjwt[crypto]==2.10.1'
+          python tools/apple/asc_key_check.py "$KEY_ID" "$ISSUER_ID" "${{ steps.key.outputs.path }}" cn.thinktin.Thinktin
 
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios,aarch64-apple-darwin,x86_64-apple-darwin
       - uses: Swatinem/rust-cache@v2
-      - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          # 打包、上传失败时也留下 Rust 的缓存，重跑不用再编十几分钟。
+          cache-on-failure: true
       - name: Install cmake and XcodeGen
         env:
           HOMEBREW_NO_INSTALL_CLEANUP: "1"
@@ -95,28 +189,43 @@ jobs:
           plutil -replace aps-environment -string production Thinktin/Thinktin.entitlements
           plutil -p Thinktin/Thinktin.entitlements
 
-      - name: Install the App Store Connect API key
-        id: key
+      # 签名：CI 每次是新机器，Xcode 的自动签名会去申请“这台机器”的开发证书，上一次申请的私钥不在，苹果就拒绝；iOS 26
+      # 的 SDK 又不许临时签名。所以每次用 API key 现建一张分发证书（私钥只在这台机器的临时钥匙串里）和两个 App Store
+      # 描述文件，手动签名，跑完撤销、删掉（tools/apple/asc_signing.py）。
+      - name: Signing certificate and profiles
+        id: signing
         env:
-          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID || env.TEAM_ID_DEFAULT }}
         run: |
           set -euo pipefail
-          if [[ -z "$ASC_KEY_ID" || -z "$ASC_KEY_P8_BASE64" ]]; then
-            echo "::error::testflight 环境里没配 ASC_KEY_ID / ASC_KEY_P8_BASE64（见 docs/ios-release.md）"
-            exit 1
+          out="$RUNNER_TEMP/signing"
+          destination=export
+          if [[ "$UPLOAD" == "true" ]]; then destination=upload; fi
+          python tools/apple/asc_signing.py setup "$KEY_ID" "$ISSUER_ID" "${{ steps.key.outputs.path }}" "$out" \
+            "run ${{ github.run_number }}" "$TEAM_ID" "$destination" cn.thinktin.Thinktin cn.thinktin.Thinktin.Widgets
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password=$(openssl rand -hex 16)
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          # 苹果的中间证书（WWDR G3），镜像里一般有，没有时签名找不到完整的证书链。
+          if curl -fsSL -o "$RUNNER_TEMP/AppleWWDRCAG3.cer" https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer; then
+            security import "$RUNNER_TEMP/AppleWWDRCAG3.cer" -k "$keychain" || true
           fi
-          path="$RUNNER_TEMP/AuthKey_${ASC_KEY_ID}.p8"
-          echo "$ASC_KEY_P8_BASE64" | base64 --decode > "$path"
-          chmod 600 "$path"
-          echo "path=$path" >> "$GITHUB_OUTPUT"
+          security import "$out/signing.p12" -k "$keychain" -P "$(cat "$out/p12-password")" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          security find-identity -v -p codesigning "$keychain"
+          for dir in "$HOME/Library/MobileDevice/Provisioning Profiles" "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"; do
+            mkdir -p "$dir"
+            cp "$out"/*.mobileprovision "$dir"/
+          done
+          echo "dir=$out" >> "$GITHUB_OUTPUT"
 
       - name: Archive
         working-directory: apps/apple
         env:
-          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID || env.TEAM_ID_DEFAULT }}
         run: |
           set -o pipefail
           fmt=(cat)
@@ -129,49 +238,47 @@ jobs:
             -archivePath "$RUNNER_TEMP/Thinktin.xcarchive" \
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
             -skipPackagePluginValidation \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath "${{ steps.key.outputs.path }}" \
-            -authenticationKeyID "$ASC_KEY_ID" \
-            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            -xcconfig "${{ steps.signing.outputs.dir }}/signing.xcconfig" \
             DEVELOPMENT_TEAM="$TEAM_ID" \
-            CODE_SIGN_STYLE=Automatic \
+            THINKTIN_CLIENT="$CLIENT" \
             MARKETING_VERSION="${{ steps.version.outputs.marketing }}" \
             CURRENT_PROJECT_VERSION="${{ steps.version.outputs.build }}" \
             2>&1 | tee "$RUNNER_TEMP/archive.log" | "${fmt[@]}"
+          # 包里带上的 entitlements（推送、App Group、Time Sensitive）：出问题时对照描述文件看。
+          for bundle in "$RUNNER_TEMP"/Thinktin.xcarchive/Products/Applications/*.app \
+            "$RUNNER_TEMP"/Thinktin.xcarchive/Products/Applications/*.app/PlugIns/*.appex; do
+            echo "== ${bundle##*/}"
+            codesign -d --entitlements - --xml "$bundle" 2>/dev/null | plutil -p - || true
+          done
 
+      # 不上传时也导出一次（destination export），验证签名走得通。导出选项由 asc_signing.py 生成（手动签名、两个描述文件）。
       - name: Export and upload
-        if: ${{ env.UPLOAD == 'true' }}
         working-directory: apps/apple
-        env:
-          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
         run: |
           set -o pipefail
-          options="$RUNNER_TEMP/ExportOptions.plist"
-          plutil -create xml1 "$options"
-          plutil -insert method -string app-store-connect "$options"
-          plutil -insert destination -string upload "$options"
-          plutil -insert teamID -string "$TEAM_ID" "$options"
-          plutil -insert signingStyle -string automatic "$options"
-          plutil -insert uploadSymbols -bool true "$options"
-          # 构建号由这里定（运行序号），不让 App Store Connect 改。
-          plutil -insert manageAppVersionAndBuildNumber -bool false "$options"
-          # 为 true 时只能发给内部测试员；这里留着外部测试的可能（加到外部测试组要过 Beta 审核）。
-          plutil -insert testFlightInternalTestingOnly -bool false "$options"
           xcodebuild -exportArchive \
             -archivePath "$RUNNER_TEMP/Thinktin.xcarchive" \
-            -exportOptionsPlist "$options" \
+            -exportOptionsPlist "${{ steps.signing.outputs.dir }}/ExportOptions.plist" \
             -exportPath "$RUNNER_TEMP/export" \
             -allowProvisioningUpdates \
             -authenticationKeyPath "${{ steps.key.outputs.path }}" \
-            -authenticationKeyID "$ASC_KEY_ID" \
-            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            -authenticationKeyID "$KEY_ID" \
+            -authenticationKeyIssuerID "$ISSUER_ID" \
             2>&1 | tee "$RUNNER_TEMP/export.log"
+
+      # 撤销这次的分发证书、删掉描述文件和临时钥匙串（失败了也跑）。
+      - name: Revoke the signing certificate
+        if: always()
+        run: |
+          if [[ -f "$RUNNER_TEMP/signing/state.json" ]]; then
+            python tools/apple/asc_signing.py cleanup "$KEY_ID" "$ISSUER_ID" "$RUNNER_TEMP/AuthKey.p8" "$RUNNER_TEMP/signing" || true
+          fi
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
+          rm -rf "$RUNNER_TEMP/signing"
 
       - name: Remove the API key
         if: always()
-        run: rm -f "$RUNNER_TEMP"/AuthKey_*.p8
+        run: rm -f "$RUNNER_TEMP"/AuthKey*.p8
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -181,3 +288,40 @@ jobs:
             ${{ runner.temp }}/archive.log
             ${{ runner.temp }}/export.log
           if-no-files-found: ignore
+
+  # TestFlight 内部测试员：内部测试员只能是 App Store Connect 团队里的人，所以不收邮箱参数（仓库公开，日志也公开），
+  # 由 tools/apple/asc_testflight.py 读团队用户，加进内部测试组、发邀请邮件。
+  testers:
+    name: Invite the team to TestFlight internal testing
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.invite_testers }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: "Test flight"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Invite testers
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID || vars.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID || vars.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
+        run: |
+          set -euo pipefail
+          key_id=$(printf '%s' "$ASC_KEY_ID" | tr -d '[:space:]')
+          issuer_id=$(printf '%s' "$ASC_ISSUER_ID" | tr -d '[:space:]' | tr 'A-F' 'a-f')
+          path="$RUNNER_TEMP/AuthKey.p8"
+          (
+            umask 077
+            if [[ -n "$ASC_KEY_P8" ]]; then
+              body=$(printf '%s' "$ASC_KEY_P8" | sed -e 's/-----BEGIN PRIVATE KEY-----//' -e 's/-----END PRIVATE KEY-----//' | tr -d ' \t\r\n')
+              { echo "-----BEGIN PRIVATE KEY-----"; printf '%s\n' "$body" | fold -w 64; echo "-----END PRIVATE KEY-----"; } > "$path"
+            else
+              printf '%s' "$ASC_KEY_P8_BASE64" | base64 --decode > "$path"
+            fi
+          )
+          python -m pip install --quiet 'pyjwt[crypto]==2.10.1'
+          python tools/apple/asc_testflight.py "$key_id" "$issuer_id" "$path" cn.thinktin.Thinktin
+          rm -f "$path"
