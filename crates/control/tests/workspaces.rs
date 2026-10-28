@@ -7,12 +7,15 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use control::{ArchiveMeta, BuiltinTemplates, Error, Lifecycle, LifecycleConfig, WorkspaceStore};
+use catalog::Manifest;
+use control::{
+    ArchiveMeta, BuiltinTemplates, Error, Lifecycle, LifecycleConfig, Templates, WorkspaceStore,
+};
 use proto::domain::{
     CatchUp, InstanceId, InstanceState, PlanAuthor, PlanPolicy, ScheduleSpec, UserId,
 };
 use sandbox::local::LocalProvider;
-use sandbox::{SandboxId, SandboxProvider, SandboxState};
+use sandbox::{CreateSpec, SandboxId, SandboxProvider, SandboxState};
 use sha2::{Digest, Sha256};
 use store::WorkspaceArchive;
 use store::testing::TestDb;
@@ -25,6 +28,19 @@ struct MemStore {
     objects: Mutex<HashMap<String, Vec<u8>>>,
     fail_put: AtomicBool,
     corrupt: AtomicBool,
+    /// 存、放在这里停住，直到放行（模拟要传很久）。
+    hold: AtomicBool,
+    held: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+
+impl MemStore {
+    async fn maybe_hold(&self) {
+        if self.hold.load(Ordering::SeqCst) {
+            self.held.notify_one();
+            self.release.notified().await;
+        }
+    }
 }
 
 #[async_trait]
@@ -40,6 +56,7 @@ impl WorkspaceStore for MemStore {
         if self.fail_put.load(Ordering::SeqCst) {
             return Err("object storage is down".into());
         }
+        self.maybe_hold().await;
         let mut buf = Vec::new();
         data.take(max + 1)
             .read_to_end(&mut buf)
@@ -73,6 +90,7 @@ impl WorkspaceStore for MemStore {
         if self.corrupt.load(Ordering::SeqCst) {
             data[10] ^= 0xff;
         }
+        self.maybe_hold().await;
         sink.write_all(&data).await.map_err(|e| e.to_string())?;
         let sha: [u8; 32] = Sha256::digest(&data).into();
         if sha != archive.sha256 || data.len() as u64 != archive.bytes {
@@ -262,10 +280,24 @@ async fn failed_saves_and_restores_lose_nothing() {
     let queued = e.purge_queue().await;
     assert_eq!(queued.len(), 1);
     assert!(e.store.objects.lock().unwrap().is_empty());
+    assert!(e.runtime(inst.id).await.archive_failed_at.is_some());
 
-    // 存好了；放回时归档对不上：唤醒失败，新沙箱删掉，实例还是已归档、归档还在。
+    // 失败过的一段时间内不再试（不然每轮巡检都恢复、打包一遍）。
     e.store.fail_put.store(false, Ordering::SeqCst);
+    let report = lc.sweep().await.unwrap();
+    assert_eq!((report.archived, report.failed), (0, 0));
+    assert!(e.read_paused(&sid).await);
+
+    // 过了重试的时间再试：存好了。放回时归档对不上：唤醒失败，新沙箱删掉，实例还是已归档、归档还在。
+    let lc = lifecycle(
+        &e,
+        LifecycleConfig {
+            archive_retry_after: Duration::ZERO,
+            ..eager()
+        },
+    );
     assert_eq!(lc.sweep().await.unwrap().archived, 1);
+    assert!(e.runtime(inst.id).await.archive_failed_at.is_none());
     e.store.corrupt.store(true, Ordering::SeqCst);
     assert!(matches!(
         lc.ensure_running(inst.id).await,
@@ -315,9 +347,30 @@ async fn too_large_workspaces_stay_paused() {
     assert_eq!((report.archived, report.failed), (0, 1));
     assert_eq!(e.runtime(inst.id).await.state, InstanceState::Paused);
     assert!(e.read_paused(&sid).await);
+    // 下一轮不再恢复、打包一遍。
+    let report = lc.sweep().await.unwrap();
+    assert_eq!((report.archived, report.failed), (0, 0));
+    assert!(e.read_paused(&sid).await);
 }
 
 impl Env {
+    /// 在后端建一个沙箱、记成“正在放回”，然后不管了（模拟唤醒到一半进程没了）。
+    async fn orphan(&self, inst: InstanceId, name: &str) -> SandboxId {
+        let info = self
+            .provider
+            .create(CreateSpec {
+                template: name.into(),
+                workspace: Some("w".into()),
+                ..CreateSpec::default()
+            })
+            .await
+            .unwrap();
+        let mut w = self.t.db.worker().await.unwrap();
+        w.begin_restore(inst, &info.id.0).await.unwrap();
+        w.commit().await.unwrap();
+        info.id
+    }
+
     /// 沙箱还在（暂停着）。
     async fn read_paused(&self, sid: &str) -> bool {
         matches!(
@@ -427,6 +480,185 @@ async fn archived_instances_are_prewarmed_before_their_plans() {
     let sid = rt.sandbox_id.unwrap();
     assert_eq!(
         e.read(&sid, "workspace/notes.txt").await.unwrap(),
+        b"keep me"
+    );
+}
+
+/// 放回工作区时不锁实例，先记下新沙箱：别处的唤醒等着；放了太久（进程中途被杀）就当没人管了，删掉那个沙箱。
+#[tokio::test]
+async fn unfinished_restores_are_waited_for_then_cleaned_up() {
+    let Some(e) = env().await else { return };
+    // 放回最多 2 × 1 + 3 × 1 秒，过了就算没人管。
+    let lc = lifecycle(
+        &e,
+        LifecycleConfig {
+            archive_timeout: Duration::from_secs(1),
+            op_timeout: Duration::from_secs(1),
+            ..LifecycleConfig::default()
+        },
+    );
+    let inst = lc.adopt(e.user, "user:d", "pi", None, "Pi").await.unwrap();
+    let sid = lc
+        .ensure_running(inst.id)
+        .await
+        .unwrap()
+        .sandbox_id
+        .unwrap();
+    e.write(&sid, "workspace/notes.txt", b"keep me").await;
+    assert!(lc.archive(inst.id).await.unwrap());
+
+    // 一次唤醒建好了沙箱、记下了，还没放完就没了下文。
+    let first = e.orphan(inst.id, "a").await;
+    // 唤醒等着，等到算没人管了，删掉它、自己建一个放回去。
+    let started = std::time::Instant::now();
+    let rt = lc.ensure_running(inst.id).await.unwrap();
+    assert!(
+        started.elapsed() >= Duration::from_secs(4),
+        "{:?}",
+        started.elapsed()
+    );
+    let sid = rt.sandbox_id.clone().unwrap();
+    assert_ne!(sid, first.0);
+    assert_eq!(e.provider.get(&first).await.unwrap(), None);
+    assert_eq!(
+        e.read(&sid, "workspace/notes.txt").await.unwrap(),
+        b"keep me"
+    );
+    assert!(e.runtime(inst.id).await.restoring.is_none());
+
+    // 巡检也会清：记下的时间早于放回的上限。
+    assert!(lc.archive(inst.id).await.unwrap());
+    let second = e.orphan(inst.id, "b").await;
+    sqlx::query("UPDATE instances SET restoring_since = now() - interval '1 hour' WHERE id = $1")
+        .bind(inst.id.0)
+        .execute(e.t.db.pool())
+        .await
+        .unwrap();
+    lc.sweep().await.unwrap();
+    assert_eq!(e.provider.get(&second).await.unwrap(), None);
+    assert!(e.runtime(inst.id).await.restoring.is_none());
+}
+
+/// 只有当前版本，再假装有一个旧版本 `0.0.1-old`（同一份清单）。
+struct TwoVersions;
+
+const OLD: &str = "0.0.1-old";
+
+impl Templates for TwoVersions {
+    fn current(&self, agent_id: &str) -> Option<Manifest> {
+        catalog::builtin(agent_id)
+    }
+
+    fn manifest(&self, agent_id: &str, version: &str) -> Option<Manifest> {
+        let mut m = catalog::builtin(agent_id)?;
+        if version == OLD {
+            m.agent.version = OLD.into();
+        }
+        (m.agent.version == version).then_some(m)
+    }
+}
+
+/// 换版本前存不下工作区：先不换，版本改回当前沙箱的版本，旧沙箱照常用（用户过后再试）。
+#[tokio::test]
+async fn version_changes_keep_the_old_version_when_the_workspace_cannot_be_saved() {
+    let Some(e) = env().await else { return };
+    let lc = Lifecycle::new(
+        e.t.db.clone(),
+        e.provider.clone(),
+        Arc::new(TwoVersions),
+        LifecycleConfig::default(),
+    )
+    .with_workspace_store(e.store.clone());
+    let inst = lc.adopt(e.user, "user:d", "pi", None, "Pi").await.unwrap();
+    lc.ensure_running(inst.id).await.unwrap();
+    let old = lc.rebuild(inst.id, Some(OLD)).await.unwrap();
+    assert_eq!(old.sandbox_version.as_deref(), Some(OLD));
+    let sid = old.sandbox_id.unwrap();
+    e.write(&sid, "workspace/notes.txt", b"keep me").await;
+
+    e.store.fail_put.store(true, Ordering::SeqCst);
+    let current = catalog::builtin("pi").unwrap().agent.version;
+    let mut t = e.t.db.tenant(e.user).await.unwrap();
+    t.request_instance_version(inst.id, &current).await.unwrap();
+    t.commit().await.unwrap();
+    let rt = lc.ensure_running(inst.id).await.unwrap();
+    assert_eq!(
+        rt.sandbox_id.as_deref(),
+        Some(sid.as_str()),
+        "the old sandbox keeps running"
+    );
+    assert_eq!(rt.agent_version, OLD);
+    assert!(!rt.rebuild_pending);
+    assert_eq!(
+        e.read(&sid, "workspace/notes.txt").await.unwrap(),
+        b"keep me"
+    );
+    let kept: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE action = 'instance.version.kept' AND target = $1",
+    )
+    .bind(inst.id.to_string())
+    .fetch_one(e.t.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(kept, 1);
+}
+
+/// 存、放要传很久时不锁着实例：这期间用户发消息、记事件这些写实例行的事务照常做（不然 15 秒就超时报错）。
+#[tokio::test]
+async fn long_transfers_do_not_lock_the_instance() {
+    let Some(e) = env().await else { return };
+    let e = Arc::new(e);
+    let lc = Arc::new(lifecycle(&e, LifecycleConfig::default()));
+    let inst = lc.adopt(e.user, "user:d", "pi", None, "Pi").await.unwrap();
+    let sid = lc
+        .ensure_running(inst.id)
+        .await
+        .unwrap()
+        .sandbox_id
+        .unwrap();
+    e.write(&sid, "workspace/notes.txt", b"keep me").await;
+    let write_event = || {
+        let e = e.clone();
+        async move {
+            tokio::time::timeout(Duration::from_secs(3), async {
+                let mut t = e.t.db.tenant(e.user).await.unwrap();
+                t.append_event(inst.id, None, "test.ping", &serde_json::json!({}))
+                    .await
+                    .unwrap();
+                t.commit().await.unwrap();
+            })
+            .await
+        }
+    };
+
+    for step in ["archive", "restore"] {
+        e.store.hold.store(true, Ordering::SeqCst);
+        let held = e.store.held.notified();
+        let task = {
+            let lc = lc.clone();
+            tokio::spawn(async move {
+                if step == "archive" {
+                    lc.archive(inst.id).await.map(|_| ())
+                } else {
+                    lc.ensure_running(inst.id).await.map(|_| ())
+                }
+            })
+        };
+        held.await;
+        assert!(
+            write_event().await.is_ok(),
+            "{step}: the instance row is not locked"
+        );
+        e.store.hold.store(false, Ordering::SeqCst);
+        e.store.release.notify_one();
+        task.await.unwrap().unwrap();
+    }
+    let rt = e.runtime(inst.id).await;
+    assert_eq!(rt.state, InstanceState::Running);
+    assert_eq!(
+        e.read(rt.sandbox_id.as_deref().unwrap(), "workspace/notes.txt")
+            .await
+            .unwrap(),
         b"keep me"
     );
 }

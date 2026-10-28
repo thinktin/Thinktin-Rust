@@ -4013,84 +4013,105 @@ async fn workspace_archives_queue_replaced_objects() {
         let mut w = db.worker().await.unwrap();
         w.instance_runtime(inst.id).await.unwrap().archive
     };
+    let k = |name: &str| format!("workspaces/{}/ws-1/{name}", u.0.simple());
     let id1 = uuid::Uuid::now_v7();
     let sha = [7u8; 32];
 
     let mut w = db.worker().await.unwrap();
-    w.begin_workspace_archive(inst.id, "ws/a1").await.unwrap();
+    w.begin_workspace_archive(inst.id, &k("a1")).await.unwrap();
     w.commit().await.unwrap();
     assert!(archive().await.is_none(), "pending is not an archive yet");
     let mut w = db.worker().await.unwrap();
     assert!(
-        w.finish_workspace_archive(inst.id, "ws/a1", id1, 1234, &sha)
+        w.finish_workspace_archive(inst.id, &k("a1"), id1, 1234, &sha)
             .await
             .unwrap()
     );
     w.commit().await.unwrap();
     let a = archive().await.unwrap();
-    assert_eq!(
-        (a.key.as_str(), a.id, a.bytes, a.sha256),
-        ("ws/a1", id1, 1234, sha)
-    );
+    assert_eq!((a.key, a.id, a.bytes, a.sha256), (k("a1"), id1, 1234, sha));
     assert!(queued().await.is_empty(), "the finished upload is kept");
 
     // 中途被杀的上传：下一次开始时换掉，旧的排进队列；别的副本换掉了待定的对象，完成不生效。
     let mut w = db.worker().await.unwrap();
-    w.begin_workspace_archive(inst.id, "ws/stale")
+    w.begin_workspace_archive(inst.id, &k("stale"))
         .await
         .unwrap();
-    w.begin_workspace_archive(inst.id, "ws/a2").await.unwrap();
+    w.begin_workspace_archive(inst.id, &k("a2")).await.unwrap();
     assert!(
-        !w.finish_workspace_archive(inst.id, "ws/stale", id1, 1, &sha)
+        !w.finish_workspace_archive(inst.id, &k("stale"), id1, 1, &sha)
             .await
             .unwrap()
     );
     w.commit().await.unwrap();
-    assert_eq!(queued().await, ["ws/stale"]);
+    assert_eq!(queued().await, [k("stale")]);
 
     // 新的归档换掉旧的：旧对象排进队列。
     let mut w = db.worker().await.unwrap();
     let id2 = uuid::Uuid::now_v7();
     assert!(
-        w.finish_workspace_archive(inst.id, "ws/a2", id2, 99, &sha)
+        w.finish_workspace_archive(inst.id, &k("a2"), id2, 99, &sha)
             .await
             .unwrap()
     );
     w.commit().await.unwrap();
     assert_eq!(archive().await.unwrap().id, id2);
-    assert_eq!(queued().await, ["ws/a1"]);
+    assert_eq!(queued().await, [k("a1")]);
 
     // 放弃上传：对象排进队列，现有的归档不动。
     let mut w = db.worker().await.unwrap();
-    w.begin_workspace_archive(inst.id, "ws/a3").await.unwrap();
-    w.abort_workspace_archive(inst.id, "ws/a3").await.unwrap();
+    w.begin_workspace_archive(inst.id, &k("a3")).await.unwrap();
+    w.abort_workspace_archive(inst.id, &k("a3")).await.unwrap();
     w.commit().await.unwrap();
-    assert_eq!(queued().await, ["ws/a3"]);
-    assert_eq!(archive().await.unwrap().key, "ws/a2");
+    assert_eq!(queued().await, [k("a3")]);
+    assert_eq!(archive().await.unwrap().key, k("a2"));
 
     // 回收实例：归档和待定的上传都排进队列。
     let mut w = db.worker().await.unwrap();
-    w.begin_workspace_archive(inst.id, "ws/a4").await.unwrap();
+    w.begin_workspace_archive(inst.id, &k("a4")).await.unwrap();
     w.mark_instance_purged(inst.id).await.unwrap();
     w.commit().await.unwrap();
-    assert_eq!(queued().await, ["ws/a2", "ws/a4"]);
+    assert_eq!(queued().await, [k("a2"), k("a4")]);
     assert!(archive().await.is_none());
 
     // 整行删掉（运维清理）：同样排进队列。
     let other = instance(db, u).await;
     let mut w = db.worker().await.unwrap();
-    w.begin_workspace_archive(other.id, "ws/b1").await.unwrap();
+    w.begin_workspace_archive(other.id, &k("b1")).await.unwrap();
     assert!(
-        w.finish_workspace_archive(other.id, "ws/b1", id1, 1, &sha)
+        w.finish_workspace_archive(other.id, &k("b1"), id1, 1, &sha)
             .await
             .unwrap()
     );
-    w.begin_workspace_archive(other.id, "ws/b2").await.unwrap();
+    w.begin_workspace_archive(other.id, &k("b2")).await.unwrap();
     w.commit().await.unwrap();
     sqlx::query("DELETE FROM instances WHERE id = $1")
         .bind(other.id.0)
         .execute(db.pool())
         .await
         .unwrap();
-    assert_eq!(queued().await, ["ws/b1", "ws/b2"]);
+    assert_eq!(queued().await, [k("b1"), k("b2")]);
+
+    // 只排这个用户自己前缀下的键：拿别的键（别人的产出物、归档）来不会被删。
+    let third = instance(db, u).await;
+    let mut w = db.worker().await.unwrap();
+    w.begin_workspace_archive(third.id, "artifacts/someone-else")
+        .await
+        .unwrap();
+    w.abort_workspace_archive(third.id, "artifacts/someone-else")
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+    assert!(queued().await.is_empty());
+
+    // 业务角色改不了归档、沙箱这些列（只有后台角色能写）。
+    let mut t = db.tenant(u).await.unwrap();
+    let denied = sqlx::query("UPDATE instances SET workspace_archive_pending = 'x' WHERE id = $1")
+        .bind(third.id.0)
+        .execute(t.conn())
+        .await;
+    assert!(
+        denied.is_err(),
+        "the tenant role cannot write archive columns"
+    );
 }

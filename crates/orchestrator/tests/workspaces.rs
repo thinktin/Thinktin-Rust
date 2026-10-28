@@ -30,6 +30,7 @@ async fn env() -> Option<Env> {
         Arc::new(LocalBlobStore::new(blobs.path()).unwrap()),
         Arc::new(LocalKms::new("kms", &[9; 32])),
         temp.path(),
+        64 << 20,
         Duration::from_secs(30),
     );
     let mut w = t.db.worker().await.unwrap();
@@ -142,5 +143,37 @@ async fn oversized_archives_are_refused() {
         .unwrap_err();
     assert!(err.contains("larger than"), "{err}");
     assert!(!e.blobs.path().join(&key).exists(), "nothing is uploaded");
+    assert_eq!(e.temp_files(), 0);
+}
+
+/// 只认这个用户自己前缀下的键；临时文件超出预算的不做。
+#[tokio::test]
+async fn keys_must_belong_to_the_user_and_fit_the_temp_budget() {
+    let Some(e) = env().await else { return };
+    let a = e.put(e.alice, b"hello").await.unwrap();
+    let foreign = WorkspaceArchive {
+        key: e.store.key(e.bob, "ws-1", a.id),
+        ..a.clone()
+    };
+    let err = e.restore(e.alice, &foreign).await.unwrap_err();
+    assert!(err.contains("another user"), "{err}");
+    let mut reader = &b"x"[..];
+    let err = e
+        .store
+        .put(e.alice, &foreign.key, a.id, &mut reader, 1 << 20)
+        .await
+        .unwrap_err();
+    assert!(err.contains("another user"), "{err}");
+
+    // 预算 64 MiB：一份最大 128 MiB 的归档不做，也不等。
+    let id = uuid::Uuid::now_v7();
+    let key = e.store.key(e.alice, "ws-1", id);
+    let mut reader = &b"x"[..];
+    let err = e
+        .store
+        .put(e.alice, &key, id, &mut reader, 128 << 20)
+        .await
+        .unwrap_err();
+    assert!(err.contains("temp space"), "{err}");
     assert_eq!(e.temp_files(), 0);
 }

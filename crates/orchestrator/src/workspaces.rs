@@ -13,6 +13,7 @@ use proto::domain::UserId;
 use sha2::{Digest, Sha256};
 use store::{Db, WorkspaceArchive};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use uuid::Uuid;
 
 use crate::artifacts::{BlobStore, user_vault};
@@ -23,24 +24,66 @@ pub struct ObjectWorkspaceStore {
     kms: Arc<dyn Kms>,
     /// 放密文临时文件的目录（后台副本的 /tmp 是单独的临时卷）。
     temp_dir: PathBuf,
+    /// 临时文件一共最多占多少（MiB）：同时有几个存、放时按大小排队，不把临时卷撑爆（撑爆了副本会被驱逐）。
+    temp_budget: Arc<Semaphore>,
+    temp_budget_mib: u32,
     /// 一次上传或下载的上限。
     timeout: Duration,
 }
 
+/// 每块密文比明文多出的字节：帧头、nonce、校验码。
+const FRAME_OVERHEAD: u64 = FRAME_HEADER_LEN as u64 + 28;
+
+/// 明文 `bytes` 字节加密后最多多大（最后可能多一个空块）。
+fn sealed_len(bytes: u64) -> u64 {
+    bytes + (bytes / CHUNK_LEN as u64 + 2) * FRAME_OVERHEAD
+}
+
 impl ObjectWorkspaceStore {
+    /// `temp_budget` 是临时文件一共能占的字节数，要放得下最大的一份归档。
     pub fn new(
         db: Db,
         blobs: Arc<dyn BlobStore>,
         kms: Arc<dyn Kms>,
         temp_dir: impl Into<PathBuf>,
+        temp_budget: u64,
         timeout: Duration,
     ) -> Self {
+        let mib = u32::try_from((temp_budget >> 20).max(1)).unwrap_or(u32::MAX);
         Self {
             db,
             blobs,
             kms,
             temp_dir: temp_dir.into(),
+            temp_budget: Arc::new(Semaphore::new(mib as usize)),
+            temp_budget_mib: mib,
             timeout,
+        }
+    }
+
+    /// 先占好临时文件的空间（放不下时等别的存、放做完）。
+    async fn reserve(&self, bytes: u64) -> Result<OwnedSemaphorePermit, String> {
+        let mib = u32::try_from(sealed_len(bytes).div_ceil(1 << 20)).unwrap_or(u32::MAX);
+        if mib > self.temp_budget_mib {
+            return Err(format!(
+                "the workspace archive needs {mib} MiB of temp space, more than the {} MiB budget",
+                self.temp_budget_mib
+            ));
+        }
+        self.temp_budget
+            .clone()
+            .acquire_many_owned(mib)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    /// 归档只能是这个用户自己的（键是 [`WorkspaceStore::key`] 生成的）。
+    fn check_owner(&self, user: UserId, key: &str) -> Result<(), String> {
+        let own = format!("workspaces/{}/", user.0.simple());
+        if key.starts_with(&own) {
+            Ok(())
+        } else {
+            Err("the workspace archive belongs to another user".into())
         }
     }
 
@@ -77,6 +120,8 @@ impl WorkspaceStore for ObjectWorkspaceStore {
         data: &mut (dyn AsyncRead + Send + Unpin),
         max: u64,
     ) -> Result<ArchiveMeta, String> {
+        self.check_owner(user, key)?;
+        let _space = self.reserve(max).await?;
         let vault = user_vault(&self.db, self.kms.clone(), user, true)
             .await
             .map_err(|e| format!("user key: {e}"))?;
@@ -140,10 +185,10 @@ impl WorkspaceStore for ObjectWorkspaceStore {
         archive: &WorkspaceArchive,
         sink: &mut (dyn AsyncWrite + Send + Unpin),
     ) -> Result<(), String> {
+        self.check_owner(user, &archive.key)?;
+        let _space = self.reserve(archive.bytes).await?;
         let (tmp, _) = self.temp_file()?;
-        // 每块多出帧头、nonce 和校验码，最后可能多一个空块。
-        let frames = archive.bytes / CHUNK_LEN as u64 + 2;
-        let max = archive.bytes + frames * (FRAME_HEADER_LEN as u64 + 28);
+        let max = sealed_len(archive.bytes);
         self.blobs
             .get_to_file(&archive.key, tmp.path(), max, self.timeout)
             .await

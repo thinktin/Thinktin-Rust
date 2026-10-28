@@ -93,6 +93,7 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
             blob_store.clone(),
             kms.clone(),
             &cfg.sandbox.workspace.temp_dir,
+            cfg.sandbox.workspace.temp_budget_bytes,
             Duration::from_secs(cfg.sandbox.workspace.archive_timeout_secs),
         )));
     }

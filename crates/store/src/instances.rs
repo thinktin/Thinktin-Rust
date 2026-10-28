@@ -44,6 +44,19 @@ pub struct InstanceRuntime {
     pub token_epoch: u64,
     /// 最新的工作区归档（没有工作区卷的后端用，见 docs/sandbox-acs.md）。
     pub archive: Option<WorkspaceArchive>,
+    /// 上一次归档失败的时间（之后成功归档会清掉）。
+    pub archive_failed_at: Option<DateTime<Utc>>,
+    /// 当前沙箱是按哪个版本建的；以前建的沙箱没记，是 None。
+    pub sandbox_version: Option<String>,
+    /// 正在往这个沙箱里放回归档（还没绑定到实例）。
+    pub restoring: Option<RestoringSandbox>,
+}
+
+/// 正在放回归档的新沙箱。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RestoringSandbox {
+    pub sandbox_id: String,
+    pub since: DateTime<Utc>,
 }
 
 /// 存在对象存储里的一份工作区归档（tar.gz，按用户 DEK 分块加密）。
@@ -112,6 +125,10 @@ struct RuntimeRow {
     workspace_archive_bytes: Option<i64>,
     workspace_archive_sha256: Option<Vec<u8>>,
     workspace_archived_at: Option<DateTime<Utc>>,
+    workspace_archive_failed_at: Option<DateTime<Utc>>,
+    sandbox_version: Option<String>,
+    restoring_sandbox_id: Option<String>,
+    restoring_since: Option<DateTime<Utc>>,
 }
 
 impl RuntimeRow {
@@ -153,6 +170,12 @@ impl RuntimeRow {
             rebuild_pending: self.rebuild_pending,
             token_epoch: u64::try_from(self.token_epoch).unwrap_or_default(),
             archive,
+            archive_failed_at: self.workspace_archive_failed_at,
+            sandbox_version: self.sandbox_version,
+            restoring: match (self.restoring_sandbox_id, self.restoring_since) {
+                (Some(sandbox_id), Some(since)) => Some(RestoringSandbox { sandbox_id, since }),
+                _ => None,
+            },
         })
     }
 }
@@ -162,7 +185,8 @@ macro_rules! runtime_columns {
         "id, user_id, agent_id, agent_version, harness, state, sandbox_id, \
          host(sandbox_address) AS sandbox_address, workspace_id, snapshot_id, limits, last_active_at, \
          rebuild_pending, token_epoch, workspace_archive_key, workspace_archive_id, \
-         workspace_archive_bytes, workspace_archive_sha256, workspace_archived_at"
+         workspace_archive_bytes, workspace_archive_sha256, workspace_archived_at, \
+         workspace_archive_failed_at, sandbox_version, restoring_sandbox_id, restoring_since"
     };
 }
 
@@ -490,7 +514,8 @@ impl Tx<Worker> {
     ) -> Result<()> {
         let done = sqlx::query(
             "UPDATE instances SET state = $2, sandbox_id = $3, sandbox_address = $4::inet, \
-               snapshot_id = $5, updated_at = now() \
+               snapshot_id = $5, updated_at = now(), \
+               sandbox_version = CASE WHEN $3::text IS NULL THEN NULL ELSE sandbox_version END \
              WHERE id = $1",
         )
         .bind(id.0)
@@ -643,7 +668,8 @@ impl Tx<Worker> {
         sqlx::query(
             "UPDATE instances SET purged_at = now(), sandbox_id = NULL, sandbox_address = NULL, snapshot_id = NULL, \
                workspace_archive_key = NULL, workspace_archive_id = NULL, workspace_archive_bytes = NULL, \
-               workspace_archive_sha256 = NULL, workspace_archived_at = NULL, workspace_archive_pending = NULL \
+               workspace_archive_sha256 = NULL, workspace_archived_at = NULL, workspace_archive_pending = NULL, \
+               sandbox_version = NULL, restoring_sandbox_id = NULL, restoring_since = NULL \
              WHERE id = $1",
         )
         .bind(id.0)
@@ -681,7 +707,8 @@ impl Tx<Worker> {
         let done = sqlx::query(
             "UPDATE instances SET workspace_archive_key = $2, workspace_archive_id = $3, \
                workspace_archive_bytes = $4, workspace_archive_sha256 = $5, \
-               workspace_archived_at = now(), workspace_archive_pending = NULL \
+               workspace_archived_at = now(), workspace_archive_pending = NULL, \
+               workspace_archive_failed_at = NULL, workspace_archive_error = NULL \
              WHERE id = $1 AND workspace_archive_pending = $2",
         )
         .bind(id.0)
@@ -692,6 +719,77 @@ impl Tx<Worker> {
         .execute(self.conn())
         .await?;
         Ok(done.rows_affected() == 1)
+    }
+
+    /// 归档失败了（单独提交）：一段时间内巡检不再试，除非实例又被用过。
+    pub async fn record_workspace_archive_failure(
+        &mut self,
+        id: InstanceId,
+        error: &str,
+    ) -> Result<()> {
+        let error: String = error.chars().take(500).collect();
+        sqlx::query(
+            "UPDATE instances SET workspace_archive_failed_at = now(), workspace_archive_error = $2 \
+             WHERE id = $1",
+        )
+        .bind(id.0)
+        .bind(error)
+        .execute(self.conn())
+        .await?;
+        Ok(())
+    }
+
+    /// 当前沙箱是按这个版本建的。
+    pub async fn set_sandbox_version(&mut self, id: InstanceId, version: &str) -> Result<()> {
+        sqlx::query("UPDATE instances SET sandbox_version = $2 WHERE id = $1")
+            .bind(id.0)
+            .bind(version)
+            .execute(self.conn())
+            .await?;
+        Ok(())
+    }
+
+    /// 要往新建的沙箱里放回归档（单独提交，放回时不锁实例）：记下沙箱，进程中途被杀时巡检能找到、删掉它。
+    pub async fn begin_restore(&mut self, id: InstanceId, sandbox_id: &str) -> Result<()> {
+        sqlx::query(
+            "UPDATE instances SET restoring_sandbox_id = $2, restoring_since = now() WHERE id = $1",
+        )
+        .bind(id.0)
+        .bind(sandbox_id)
+        .execute(self.conn())
+        .await?;
+        Ok(())
+    }
+
+    /// 放回结束（成功或放弃）。记的已经不是这个沙箱时什么都不改，返回 false。
+    pub async fn end_restore(&mut self, id: InstanceId, sandbox_id: &str) -> Result<bool> {
+        let done = sqlx::query(
+            "UPDATE instances SET restoring_sandbox_id = NULL, restoring_since = NULL \
+             WHERE id = $1 AND restoring_sandbox_id = $2",
+        )
+        .bind(id.0)
+        .bind(sandbox_id)
+        .execute(self.conn())
+        .await?;
+        Ok(done.rows_affected() == 1)
+    }
+
+    /// 放回了太久的（进程中途被杀、任务被取消）：巡检删掉那些沙箱。
+    pub async fn stale_restores(
+        &mut self,
+        older_than: Duration,
+        limit: i64,
+    ) -> Result<Vec<InstanceId>> {
+        let ids: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM instances WHERE restoring_sandbox_id IS NOT NULL \
+               AND restoring_since < now() - make_interval(secs => $1) \
+             ORDER BY restoring_since LIMIT $2",
+        )
+        .bind(secs(older_than))
+        .bind(limit)
+        .fetch_all(self.conn())
+        .await?;
+        Ok(ids.into_iter().map(Into::into).collect())
     }
 
     /// 上传失败或不用了：对象由触发器排进 blob_purge。
@@ -720,12 +818,14 @@ impl Tx<Worker> {
     /// 不加锁：调用方逐个锁住、核对状态和活动时间没变再处理。
     /// 有运行正在执行的不算空闲；`also_busy` 里状态的运行也挡着（比如等审批时不暂停）。
     /// 别的等待（等设备、等额度）不挡暂停，事情来了再唤醒。
+    /// `failed_retry`：上次归档失败、之后没被用过的，这么久之内不列出来（归档阶段用，免得每轮都白做一遍）。
     pub async fn idle_instance_ids(
         &mut self,
         state: InstanceState,
         idle: Duration,
         limit: i64,
         also_busy: &[RunState],
+        failed_retry: Duration,
     ) -> Result<Vec<(InstanceId, DateTime<Utc>)>> {
         let busy = busy_states(also_busy);
         let rows: Vec<(Uuid, DateTime<Utc>)> = sqlx::query_as(
@@ -733,12 +833,16 @@ impl Tx<Worker> {
              WHERE state = $1 AND last_active_at < now() - make_interval(secs => $2) \
                AND NOT EXISTS (SELECT 1 FROM runs WHERE runs.instance_id = instances.id \
                                AND runs.state = ANY($4)) \
+               AND (workspace_archive_failed_at IS NULL \
+                    OR workspace_archive_failed_at < last_active_at \
+                    OR workspace_archive_failed_at < now() - make_interval(secs => $5)) \
              ORDER BY last_active_at LIMIT $3",
         )
         .bind(state.as_str())
         .bind(secs(idle))
         .bind(limit)
         .bind(&busy)
+        .bind(secs(failed_retry))
         .fetch_all(self.conn())
         .await?;
         Ok(rows.into_iter().map(|(id, at)| (id.into(), at)).collect())

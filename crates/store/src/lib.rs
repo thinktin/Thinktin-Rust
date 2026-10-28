@@ -55,7 +55,7 @@ pub use error::{Error, Result};
 pub use events::EVENTS_CHANNEL;
 pub use im_channels::{ImChannelChange, ImSlot, ImWebhook, NewImChannel, SealedImChannel};
 pub use inbox::NewInboxItem;
-pub use instances::{InstanceRuntime, NewInstance, WorkspaceArchive};
+pub use instances::{InstanceRuntime, NewInstance, RestoringSandbox, WorkspaceArchive};
 pub use live_activities::{LiveActivity, LiveSettle};
 pub use llmgw::{GatewayInstance, GatewayRoute};
 pub use outbox::{NewOutboxItem, OutboxItem};

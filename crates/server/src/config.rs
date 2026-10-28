@@ -331,8 +331,12 @@ pub struct WorkspaceSettings {
     pub max_bytes: u64,
     /// 打包上传、下载放回各自最多多久（秒）。
     pub archive_timeout_secs: u64,
-    /// 放密文临时文件的目录（后台副本的 /tmp 是单独的临时卷，要放得下最大的归档）。
+    /// 放密文临时文件的目录（后台副本的 /tmp 是单独的临时卷）。
     pub temp_dir: std::path::PathBuf,
+    /// 临时文件一共最多占多少字节（比临时卷小一点）：同时有几个存、放时按大小排队。要放得下 `max_bytes`。
+    pub temp_budget_bytes: u64,
+    /// 归档失败（太大、打包出错、存储不通）后多久再试（秒）；期间被用过的照常再试。
+    pub retry_after_secs: u64,
 }
 
 impl Default for WorkspaceSettings {
@@ -343,6 +347,8 @@ impl Default for WorkspaceSettings {
             max_bytes: d.max_archive_bytes,
             archive_timeout_secs: d.archive_timeout.as_secs(),
             temp_dir: std::env::temp_dir(),
+            temp_budget_bytes: 8 << 30,
+            retry_after_secs: d.archive_retry_after.as_secs(),
         }
     }
 }
@@ -369,6 +375,7 @@ impl Sandbox {
             pause_waiting_approval: l.pause_waiting_approval,
             archive_timeout: Duration::from_secs(self.workspace.archive_timeout_secs),
             max_archive_bytes: self.workspace.max_bytes,
+            archive_retry_after: Duration::from_secs(self.workspace.retry_after_secs),
         }
     }
 }
@@ -1008,6 +1015,12 @@ impl Config {
             if ws.max_bytes == 0 || ws.archive_timeout_secs == 0 {
                 bail!("sandbox.workspace.max_bytes and archive_timeout_secs must be positive");
             }
+            // 加密后比明文略大：留出 1%。
+            if ws.object() && ws.temp_budget_bytes < ws.max_bytes + ws.max_bytes / 100 {
+                bail!(
+                    "sandbox.workspace.temp_budget_bytes must hold the largest archive (max_bytes plus about 1%)"
+                );
+            }
         }
         match self.kms.provider.as_str() {
             "local" => {}
@@ -1502,6 +1515,10 @@ api_ur = \"x\""
             (
                 "[sandbox.workspace]\nmode = \"object\"\nmax_bytes = 0\n",
                 "must be positive",
+            ),
+            (
+                "[sandbox.workspace]\nmode = \"object\"\nmax_bytes = 2000\ntemp_budget_bytes = 2000\n",
+                "temp_budget_bytes",
             ),
         ] {
             std::fs::write(&path, format!("{acs}{extra}")).unwrap();
