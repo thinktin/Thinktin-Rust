@@ -183,7 +183,8 @@ MainActivity
 |---|---|---|
 | `Instance.state` | `provisioning` / `running` / `paused` / `archived` / `deleted` | 状态点：创建中（灰闪）、运行中（绿）、已暂停（灰）、已归档（空心）、已删除（不显示） |
 | `Run.state` | `queued` / `starting` / `running` / `waiting_approval` / `waiting_device` / `waiting_quota` / `waiting_children` / `backoff` / `succeeded` / `failed` / `cancelled` | 排队、启动中、运行中（进度条）、等待审批 / 等待电脑 / 等待 key（警告色横幅）、等待子任务、重试等待、成功（绿）、失败（红）、已取消（灰） |
-| `Run.source` | `user` / `plan` / `pipeline` / `delegate` | 运行区块头：你 / 计划 / 流水线 / 委派 |
+| `Run.source` | `user` / `plan` / `pipeline` / `delegate` / `ask` | 运行区块头：你 / 计划 / 流水线 / 委派 / 队友提问。`ask`（8.11）是别的 agent 问这个实例的问题，`prompt` 是 agent 写的，不能显示成“你”，要标 AI 生成；不认识的来源也不要当成用户发的 |
+| `Run.wait_code` | `invalid` / `no_balance` / `unavailable` / `rate_limited` / `overloaded`（`waiting_quota`）、`device_offline`（`waiting_device`）、`answer`（`waiting_children`，只在等队友回答） | 等待横幅的下一步；不认识的按 `state` 显示 |
 | `Run.kind` | `agent` / `pipeline` | 流水线根运行只显示子运行汇总 |
 | `Approval.state` | 见 `proto::domain::ApprovalState`（`pending` 等） | 待处理 / 已批准 / 已拒绝 / 已超时 |
 | `ApprovalOption.kind` | `allow_once` / `allow_always` / `reject_once` / `reject_always` | 批准 / 一直允许 / 拒绝 / 一直拒绝 |
@@ -206,15 +207,17 @@ MainActivity
 | `agent.usage` | `raw` | 不进时间线；显示在运行详情里（与 iOS 一致） |
 | `agent.permission_requested` | `request_id`、`title`、`options[]{option_id,name,kind}`、`tool_call` | 内嵌审批卡片（真正提交用 `approvals()` / `decide_approval`） |
 | `agent.permission_resolved` | `request_id`、`option_id`、`by`（policy / user / timeout / cancelled） | 审批卡片变为已决定 |
-| `agent.platform_tool_call` | `call_id`、`name`、`arguments` | 平台工具调用卡片（schedule_*、artifact_*、delegate…） |
+| `agent.platform_tool_call` | `call_id`、`name`、`arguments` | 平台工具调用卡片（schedule_*、artifact_*、delegate、agents_list / agent_status、board_read / board_post、ask…） |
 | `agent.vault_reveal` | `call_id`、`refs[]` | “使用了保险箱：名字”提示 |
 | `agent.turn_started` / `agent.turn_ended` | `stop_reason`（end_turn / max_tokens / max_turn_requests / refusal / cancelled） | 不显示；`turn_ended` 用来结束流式状态，异常 stop_reason（max_tokens、refusal）显示一行说明 |
 | `agent.ready` / `agent.session_lost` / `agent.exited` / `agent.update` / `agent.error` | 见 `proto::shim::ShimEvent` | 系统提示行（灰色小字），`agent.error` 用错误色 |
-| `run.state` | `state`、`reason`、`attempt`、`tree?`、`steps?` | 运行区块头的状态；等待类状态显示横幅并给出下一步（去审批、去配 key、等电脑上线）。`reason` 不要当成本地化文案：waiting_quota 的是服务端按用户语言写的，waiting_approval 的是 agent 写的审批标题，失败原因是英文诊断 |
+| `run.state` | `state`、`reason`、`attempt`、`wait_code?`、`tree?`、`steps?` | 运行区块头的状态；等待类状态显示横幅并给出下一步（去审批、去配 key、等电脑上线）。`reason` 不要当成本地化文案：waiting_quota 的是服务端按用户语言写的，waiting_approval 的是 agent 写的审批标题，失败原因是英文诊断（比如 `cancelled` 的 `interrupted by a new message` 是被用户的紧急消息打断了，`no answer in time` 是提问超时） |
 | `instance.state` | `state`（没有 `run_id`） | 不进时间线；更新页头和抽屉里的实例状态点 |
 | `run.log_truncated` | `limit_bytes` | “日志超出上限，后续输出未记录” |
 | `pipeline.step_started` | `step`、`run_id`、`instance_id` | 运行树里的子运行入口 |
 | `delegate.started` | `child_run_id`、`instance_id`、`to`、`title` | 同上 |
+| `ask.sent` | `child_run_id`、`instance_id`、`to`、`question`（问题第一行，agent 写的） | 提问卡片（问谁、问了什么），点进运行树里的回答；标 AI 生成（8.11） |
+| `board.posted` | `post_id`、`tags` | 系统行“发到了看板”，点进看板（8.10） |
 | `artifact.published` | `artifact_id`、`name`、`version`、`size` | 产出物卡片 |
 | `approval.decided` | `approval_id`、`state`、`option_id` | 审批卡片变为已决定 |
 | `plan.needs_confirmation` / `plan.cancelled` | `plan_id`、`title`、`change` | 计划卡片，带“去确认”按钮 |
@@ -230,7 +233,8 @@ MainActivity
 - 打开对话页：`cached_runs` + `cached_events(instance, 0, N)` 先渲染 → `subscribe(instance, listener)`；离开页面 `subscription.stop()`。更早的运行用 `older_runs(instance, before, limit)` 翻页（11.7）。
 - `on_reset(oldest_seq, latest_seq)`：client-core 已删掉本地事件并把续传位置设到 `oldest_seq`，服务端会把保留期内的事件全部补发。App 要：清空归并状态但保留运行记录并重新调 `runs()`；补发会一次涌入很多事件，视图模型按批提交；比 `oldest_seq` 更早的运行没有事件了（默认保留 30 天），只显示 `prompt`、`summary`、`error` 并标注“过程记录已超过保留期”。
 - 11.7 之后 client-core 已导出：`update_profile`、`devices` / `revoke_device`、`send_self_code` + `delete_account`、`instance`、`older_runs`、`instance_artifacts` / `delete_artifact`、`update_plan` / `add_trigger` / `delete_trigger`、`inbox_item` / `mark_inbox_unread` / `delete_inbox_item`、团队与模板（`teams`、`create_team`、`adopt_team_template` 等）、`update_credential` / `replace_credential_secret`、设备消息。App 侧服务接口直接接这些方法，不再需要“暂不支持”。
-- 发送：`detect_secrets(text)` 有命中先弹保险箱表单；`send_message(instance, text, allow_secrets=false)` 抛 `ContainsSecrets` 时同样处理。
+- 发送：`detect_secrets(text)` 有命中先弹保险箱表单；`send_message(instance, text, allow_secrets=false)` 抛 `ContainsSecrets` 时同样处理。实例正忙时可以选“打断”：`send_urgent_message`（8.12，参数同 `send_message`）停下它正在做的、马上处理这条；默认的 `send_message` 排队。
+- agent 交流（8.9–8.12）：`update_instance(id, InstanceChange{name?, purpose?, peer_access?})` 改名字、用途说明、“允许其他 agent 查我、问我”；看板 `board(tag?, archived, before_id?, limit?)` / `post_to_board(body, tags, allow_secrets)`（像密码的内容同样抛 `ContainsSecrets`）/ `set_board_post_archived` / `delete_board_post`。
 - 列表页先用 `cached_*`（实例、运行、收件箱、未读数）渲染，再调网络版刷新。
 
 ### 8.4 AI 生成标识（16.3，App 端）
@@ -245,6 +249,8 @@ MainActivity
 | `VaultRequest.purpose`、`vault.requested.purpose` | 是 | |
 | `created_by = agent` 的计划标题与目标、`plan.needs_confirmation.title` | 是 | 用户建的不标 |
 | `delegate.started.title`、委派子运行的 `Run.prompt` | 是 | 负责人 agent 写的，不能显示成“你说” |
+| `source = ask` 的 `Run.prompt`、`ask.sent.question` | 是 | 队友 agent 写的问题（8.11），不能显示成“你说” |
+| `BoardPost.body` | 按 `ai_generated` | agent 写的标，用户自己写的不标（8.10） |
 | `Run.summary`、`Run.error`（agent 写的部分） | 是 | 失败原因是平台诊断，不标 |
 | 流水线步骤 prompt 里附带的上游摘要、产出物名 | 是 | |
 | 用户自己的 `Run.prompt`、收件箱的系统通知、平台文案 | 否 | |
