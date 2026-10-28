@@ -814,7 +814,10 @@ impl Lifecycle {
         also_busy: &[RunState],
     ) -> Result<bool> {
         let mut w = self.db.worker().await?;
-        let rt = w.lock_instance(id).await?;
+        // 别处正锁着（唤醒、归档中）就跳过，下一轮再看。
+        let Some(rt) = w.try_lock_instance(id).await? else {
+            return Ok(false);
+        };
         if rt.state != InstanceState::Running
             || rt.last_active_at != seen
             || w.instance_busy_with(id, also_busy).await?
@@ -824,6 +827,19 @@ impl Lifecycle {
         self.pause_locked(&mut w, &rt).await?;
         w.commit().await?;
         Ok(true)
+    }
+
+    /// 锁住实例。巡检不等别处的锁（跳过，下一轮再看）；手动归档、重建等着。
+    async fn lock_for(
+        &self,
+        w: &mut Tx<Worker>,
+        id: InstanceId,
+        when: &ArchiveWhen,
+    ) -> Result<Option<InstanceRuntime>> {
+        Ok(match when {
+            ArchiveWhen::Idle { .. } => w.try_lock_instance(id).await?,
+            _ => Some(w.lock_instance(id).await?),
+        })
     }
 
     async fn may_archive(
@@ -858,7 +874,9 @@ impl Lifecycle {
             return self.archive_to_store(store, id, when).await;
         }
         let mut w = self.db.worker().await?;
-        let rt = w.lock_instance(id).await?;
+        let Some(rt) = self.lock_for(&mut w, id, &when).await? else {
+            return Ok(false);
+        };
         if !self.may_archive(&mut w, &rt, &when).await? {
             return Ok(false);
         }
@@ -877,7 +895,9 @@ impl Lifecycle {
         when: ArchiveWhen,
     ) -> Result<bool> {
         let mut w = self.db.worker().await?;
-        let rt = w.lock_instance(id).await?;
+        let Some(rt) = self.lock_for(&mut w, id, &when).await? else {
+            return Ok(false);
+        };
         if !self.may_archive(&mut w, &rt, &when).await? {
             return Ok(false);
         }

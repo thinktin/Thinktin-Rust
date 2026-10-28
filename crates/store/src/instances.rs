@@ -528,6 +528,19 @@ impl Tx<Worker> {
         row.into_runtime()
     }
 
+    /// 和 [`Self::lock_instance`] 一样，但别的事务锁着时不等，返回 None（巡检跳过正在被处理的实例）。
+    pub async fn try_lock_instance(&mut self, id: InstanceId) -> Result<Option<InstanceRuntime>> {
+        let row: Option<RuntimeRow> = sqlx::query_as(concat!(
+            "SELECT ",
+            runtime_columns!(),
+            " FROM instances WHERE id = $1 FOR UPDATE SKIP LOCKED"
+        ))
+        .bind(id.0)
+        .fetch_optional(self.conn())
+        .await?;
+        row.map(RuntimeRow::into_runtime).transpose()
+    }
+
     /// 有正在执行的运行（启动中、运行中）：这时不能暂停或归档。
     pub async fn instance_busy(&mut self, id: InstanceId) -> Result<bool> {
         Ok(sqlx::query_scalar(
