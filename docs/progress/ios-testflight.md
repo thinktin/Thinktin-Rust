@@ -19,7 +19,11 @@
 - GitHub 的苹果芯片 Mac（macos-26）容量不够，两次排队 15 分钟被丢；手动触发加了 `runner` 选项，换 `macos-15-intel`（Xcode 26.3）马上排上。
 - 第一次走到签名（run 40687840884）：证书和描述文件建出来了，但描述文件里没有 App Group，`group.cn.thinktin.Thinktin` 没有关联到 `cn.thinktin.Thinktin` 和 `cn.thinktin.Thinktin.Widgets` 两个 App ID（自动签名用 API key 时不会自己关联，公开 API 也做不了），要在开发者网站上各点一次 App Groups → Configure。
 
-进行中：等用户在开发者网站关联 App Group，然后 demo + upload + macos-15-intel 再跑。
+- 用户关联好了 App Group。下一次（run 40702361190）卡在自动签名：上一台机器申请的开发证书私钥不在（“already has an Apple
+  Development signing certificate for this machine”）。改临时签名（`-`）归档、导出时云端签名：iOS 26 SDK 不许临时签名。
+  最后改成每次用 API 现建分发证书和 App Store 描述文件、手动签名、跑完撤销（`tools/apple/asc_signing.py`）。
+
+进行中：手动签名的第一次运行。
 
 下一步：
 1. 试跑通过后，手动触发 demo + upload，传第一个演示版到 TestFlight；内部测试组加用户本人。

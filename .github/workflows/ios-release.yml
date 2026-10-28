@@ -184,9 +184,39 @@ jobs:
           plutil -replace aps-environment -string production Thinktin/Thinktin.entitlements
           plutil -p Thinktin/Thinktin.entitlements
 
-      # 归档时不用开发证书签名，只做本地临时签名（"-"，把 entitlements 带进包里）：CI 每次是新机器，自动签名会去申请
-      # “这台机器”的开发证书，上一次的私钥不在，苹果就拒绝（“already has an Apple Development signing certificate for
-      # this machine”）。正式签名留给导出：用 API key 让苹果在云端拿分发证书签（cloud signing），本机不需要任何证书。
+      # 签名：CI 每次是新机器，Xcode 的自动签名会去申请“这台机器”的开发证书，上一次申请的私钥不在，苹果就拒绝；iOS 26
+      # 的 SDK 又不许临时签名。所以每次用 API key 现建一张分发证书（私钥只在这台机器的临时钥匙串里）和两个 App Store
+      # 描述文件，手动签名，跑完撤销、删掉（tools/apple/asc_signing.py）。
+      - name: Signing certificate and profiles
+        id: signing
+        env:
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID || env.TEAM_ID_DEFAULT }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/signing"
+          destination=export
+          if [[ "$UPLOAD" == "true" ]]; then destination=upload; fi
+          python tools/apple/asc_signing.py setup "$KEY_ID" "$ISSUER_ID" "${{ steps.key.outputs.path }}" "$out" \
+            "run ${{ github.run_number }}" "$TEAM_ID" "$destination" cn.thinktin.Thinktin cn.thinktin.Thinktin.Widgets
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password=$(openssl rand -hex 16)
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          # 苹果的中间证书（WWDR G3），镜像里一般有，没有时签名找不到完整的证书链。
+          if curl -fsSL -o "$RUNNER_TEMP/AppleWWDRCAG3.cer" https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer; then
+            security import "$RUNNER_TEMP/AppleWWDRCAG3.cer" -k "$keychain" || true
+          fi
+          security import "$out/signing.p12" -k "$keychain" -P "$(cat "$out/p12-password")" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          security find-identity -v -p codesigning "$keychain"
+          for dir in "$HOME/Library/MobileDevice/Provisioning Profiles" "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"; do
+            mkdir -p "$dir"
+            cp "$out"/*.mobileprovision "$dir"/
+          done
+          echo "dir=$out" >> "$GITHUB_OUTPUT"
+
       - name: Archive
         working-directory: apps/apple
         env:
@@ -203,53 +233,43 @@ jobs:
             -archivePath "$RUNNER_TEMP/Thinktin.xcarchive" \
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
             -skipPackagePluginValidation \
+            -xcconfig "${{ steps.signing.outputs.dir }}/signing.xcconfig" \
             DEVELOPMENT_TEAM="$TEAM_ID" \
-            CODE_SIGN_STYLE=Manual \
-            CODE_SIGN_IDENTITY=- \
-            CODE_SIGNING_REQUIRED=NO \
-            PROVISIONING_PROFILE_SPECIFIER= \
             THINKTIN_CLIENT="$CLIENT" \
             MARKETING_VERSION="${{ steps.version.outputs.marketing }}" \
             CURRENT_PROJECT_VERSION="${{ steps.version.outputs.build }}" \
             2>&1 | tee "$RUNNER_TEMP/archive.log" | "${fmt[@]}"
-          # 包里带上的 entitlements（推送、App Group、Time Sensitive）：导出时云端签名照这些来。
+          # 包里带上的 entitlements（推送、App Group、Time Sensitive）：出问题时对照描述文件看。
           for bundle in "$RUNNER_TEMP"/Thinktin.xcarchive/Products/Applications/*.app \
             "$RUNNER_TEMP"/Thinktin.xcarchive/Products/Applications/*.app/PlugIns/*.appex; do
             echo "== ${bundle##*/}"
             codesign -d --entitlements - --xml "$bundle" 2>/dev/null | plutil -p - || true
           done
 
-      # 不上传时也导出一次（destination export），验证云端签名走得通。
+      # 不上传时也导出一次（destination export），验证签名走得通。导出选项由 asc_signing.py 生成（手动签名、两个描述文件）。
       - name: Export and upload
         working-directory: apps/apple
-        env:
-          TEAM_ID: ${{ secrets.APPLE_TEAM_ID || env.TEAM_ID_DEFAULT }}
         run: |
           set -o pipefail
-          options="$RUNNER_TEMP/ExportOptions.plist"
-          plutil -create xml1 "$options"
-          plutil -insert method -string app-store-connect "$options"
-          if [[ "$UPLOAD" == "true" ]]; then
-            plutil -insert destination -string upload "$options"
-          else
-            plutil -insert destination -string export "$options"
-          fi
-          plutil -insert teamID -string "$TEAM_ID" "$options"
-          plutil -insert signingStyle -string automatic "$options"
-          plutil -insert uploadSymbols -bool true "$options"
-          # 构建号由这里定（运行序号），不让 App Store Connect 改。
-          plutil -insert manageAppVersionAndBuildNumber -bool false "$options"
-          # 为 true 时只能发给内部测试员；这里留着外部测试的可能（加到外部测试组要过 Beta 审核）。
-          plutil -insert testFlightInternalTestingOnly -bool false "$options"
           xcodebuild -exportArchive \
             -archivePath "$RUNNER_TEMP/Thinktin.xcarchive" \
-            -exportOptionsPlist "$options" \
+            -exportOptionsPlist "${{ steps.signing.outputs.dir }}/ExportOptions.plist" \
             -exportPath "$RUNNER_TEMP/export" \
             -allowProvisioningUpdates \
             -authenticationKeyPath "${{ steps.key.outputs.path }}" \
             -authenticationKeyID "$KEY_ID" \
             -authenticationKeyIssuerID "$ISSUER_ID" \
             2>&1 | tee "$RUNNER_TEMP/export.log"
+
+      # 撤销这次的分发证书、删掉描述文件和临时钥匙串（失败了也跑）。
+      - name: Revoke the signing certificate
+        if: always()
+        run: |
+          if [[ -f "$RUNNER_TEMP/signing/state.json" ]]; then
+            python tools/apple/asc_signing.py cleanup "$KEY_ID" "$ISSUER_ID" "$RUNNER_TEMP/AuthKey.p8" "$RUNNER_TEMP/signing" || true
+          fi
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
+          rm -rf "$RUNNER_TEMP/signing"
 
       - name: Remove the API key
         if: always()
