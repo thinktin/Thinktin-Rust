@@ -161,7 +161,10 @@ P1 后端核心（M1–M9）和 P2 里能在代码层面完成的包都做完了
   剩 `main`、三条线、本分支（和它的 autosave）、`claude/promo-video`（宣传片的制作源码，没进 main，留着）。
 
 进行中：
-- 无。ACS 沙箱后端这一批（2026-10-28，本会话 session_016LgPcdynywrhrjCq8VVFLt，用户定“1、省钱；2、解绑；3、写”）写完了：
+- **agent 之间的交流 8.9–8.12（2026-10-28 晚开工，本会话 session_016LgPcdynywrhrjCq8VVFLt）**：用户说“不急的几项开干”。
+  顺序 8.9 认识队友与查进度 → 8.10 共享看板 → 8.11 问队友 → 8.12 运行中收消息（只做后端；界面 12.24 / 13.17 之后）；
+  之后事件触发（7.1 的事件部分）、项目与跨用户协作（8.13–8.19）。PR #14 已合并，本分支从 main（`a31080b`）重新开始。
+- 已完成：ACS 沙箱后端这一批（2026-10-28，本会话 session_016LgPcdynywrhrjCq8VVFLt，用户定“1、省钱；2、解绑；3、写”）写完了：
   envd 客户端拆到 `envd.rs`（`7beff64`）；`AcsProvider` + 模拟测试，创建时要 Pod IP、拿不到就删沙箱（`0d472b5`）；没有卷的后端
   不乱删沙箱、运行中换地址会记下（`a7ddfe6`）；`[sandbox.acs]`、`THINKTIN_ACS_API_KEY`、`docs/sandbox-acs.md`（`531c38a`）；
   令牌跟着地址走的测试（`f108708`）；`[sandbox.lifecycle]` 计时、`pause_waiting_approval`（`2acd2d9`）；归档的分块加密
