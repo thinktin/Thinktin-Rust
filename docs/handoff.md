@@ -12,7 +12,7 @@ PR #14 是开着的（部署脚本和文档）。**用户说“合并”才合�
 - Rust 的 ACS 沙箱后端 `AcsProvider`（OpenKruise 私有协议，`crates/sandbox/src/acs.rs`），模型网关的令牌绑到每个沙箱的
   Pod IP；空闲计时可配（`[sandbox.lifecycle]`）；没有卷时把工作区加密打包存 OSS、重建时放回（`[sandbox.workspace] mode = "object"`，
   迁移 0023）；东京的部署配置 `deploy/k8s/overlays/tokyo`。说明在 [ACS 后端](sandbox-acs.md)，实测清单在它第 8 节。
-- 都只对着模拟服务和本机测过，**没连过真集群**。API Server 的 EIP 已解绑，EIP 本身还在收钱，要用户在控制台释放。
+- 都只对着模拟服务和本机测过，**没连过真集群**。API Server 的 EIP 已解绑，10-29 用户在控制台释放了（查过已经没了）。
 - 本机磁盘小：`~/.cargo/config.toml` 里开发构建只留行号调试信息、不做增量（新容器要重设，不进仓库）。
 
 和用户说话用中文、说人话，用户不是做底层技术的。用户想让 Claude 在云端全面负责部署，自己只做“只能本人点”的事。
