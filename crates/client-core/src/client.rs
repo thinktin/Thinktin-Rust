@@ -3,7 +3,8 @@
 use std::sync::Arc;
 
 use proto::domain::{
-    InboxItem, InboxItemId, Instance, InstanceEvent, InstanceId, Run, RunId, User, VaultItem,
+    BoardPost, InboxItem, InboxItemId, Instance, InstanceEvent, InstanceId, Run, RunId, User,
+    VaultItem,
 };
 
 use crate::api::{Api, InboxPage, LoginResult, NewVaultItem};
@@ -323,6 +324,17 @@ impl Client {
     ) -> Result<Run> {
         refuse_secrets(text, allow_secrets)?;
         self.api.create_urgent_run(instance, text).await
+    }
+
+    /// 用户在共享看板上写一条（8.10）。看板上的内容所有 agent 都读得到：像密码、key 的内容和发消息一样拦下。
+    pub async fn post_to_board(
+        &self,
+        body: &str,
+        tags: &[String],
+        allow_secrets: bool,
+    ) -> Result<BoardPost> {
+        refuse_secrets(body, allow_secrets)?;
+        self.api.post_to_board(body, tags).await
     }
 
     /// 把消息里拦下的值存进保险箱，返回条目和换成引用（`[vault:名字]`）后的消息。

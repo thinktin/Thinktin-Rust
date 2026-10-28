@@ -133,7 +133,8 @@ async fn agents_see_their_teammates_and_their_progress() {
         .unwrap();
     w.commit().await.unwrap();
     sqlx::query(
-        "UPDATE runs SET state = 'succeeded', summary = 'Found three papers.', finished_at = now() WHERE id = $1",
+        "UPDATE runs SET state = 'succeeded', summary = 'Found three papers.', started_at = now(), \
+           finished_at = now() WHERE id = $1",
     )
     .bind(done.id.0)
     .execute(t.db.pool())

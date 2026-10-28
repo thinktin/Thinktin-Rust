@@ -41,6 +41,8 @@ pub struct NewRun {
     pub answer_deadline: Option<DateTime<Utc>>,
     /// 用户的紧急消息要打断的运行（8.12），由 [`Tx::queue_urgent_run`] 填。
     pub interrupts_run_id: Option<RunId>,
+    /// 用户的紧急消息（8.12），由 [`Tx::queue_urgent_run`] 填。
+    pub urgent: bool,
 }
 
 impl NewRun {
@@ -67,6 +69,7 @@ impl NewRun {
             max_attempts: 3,
             answer_deadline: None,
             interrupts_run_id: None,
+            urgent: false,
         }
     }
 }
@@ -192,6 +195,12 @@ macro_rules! columns {
     };
 }
 
+/// 这一版程序认识的运行来源。后台领取、接管运行时只要这些：新版本加了来源（比如 8.11 的 ask），回滚到
+/// 老版本时老副本跳过它解析不了的运行，不会卡在队头上谁都领不走（见 docs/release.md 第 3 节）。
+fn known_sources() -> Vec<&'static str> {
+    RunSource::ALL.iter().map(|s| s.as_str()).collect()
+}
+
 fn small(v: i32, what: &str) -> Result<u32> {
     u32::try_from(v).map_err(|_| Error::Corrupt(format!("negative {what}: {v}")))
 }
@@ -269,9 +278,9 @@ impl<R> Tx<R> {
         let row: Option<Row> = sqlx::query_as(concat!(
             "INSERT INTO runs (id, user_id, instance_id, plan_id, trigger_id, fire_time, parent_run_id, root_run_id, \
                source, prompt, agent_version, run_grant_id, budget, not_before, max_attempts, kind, step_key, \
-               answer_deadline, interrupts_run_id) \
+               answer_deadline, interrupts_run_id, urgent) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, coalesce($14, now()), $15, $16, $17, $18, \
-               $19) \
+               $19, $20) \
              ON CONFLICT (plan_id, fire_time) WHERE plan_id IS NOT NULL AND fire_time IS NOT NULL DO NOTHING \
              RETURNING ",
             columns!()
@@ -295,6 +304,7 @@ impl<R> Tx<R> {
         .bind(&new.step_key)
         .bind(new.answer_deadline)
         .bind(new.interrupts_run_id.map(|r| r.0))
+        .bind(new.urgent)
         .fetch_optional(self.conn())
         .await?;
         row.map(Row::into_run).transpose()
@@ -373,6 +383,31 @@ impl<R> Tx<R> {
         .fetch_all(self.conn())
         .await?;
         rows.into_iter().map(Row::into_run).collect()
+    }
+}
+
+impl<R> Tx<R> {
+    /// 按用户串行化“谁在等谁”的检查和新建子运行（委派、提问，8.8、8.11）：两个 agent 同时互相问，
+    /// 检查时都还看不到对方的子运行，不加锁会都通过。关掉实例的交流开关时也拿这把锁（见
+    /// [`Tx::accepts_questions`]）。锁到事务结束。
+    pub async fn lock_run_waits(&mut self, user: UserId) -> Result<()> {
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(format!("run_waits/{user}"))
+            .execute(self.conn())
+            .await?;
+        Ok(())
+    }
+
+    /// 实例还在、开着“允许其他 agent 查我、问我”（8.11）：建提问之前在 [`Tx::lock_run_waits`] 里再查一次，
+    /// 关开关的请求拿着同一把锁，两边不会错过。
+    pub async fn accepts_questions(&mut self, instance: InstanceId) -> Result<bool> {
+        let open: Option<bool> = sqlx::query_scalar(
+            "SELECT peer_access FROM instances WHERE id = $1 AND state <> 'deleted'",
+        )
+        .bind(instance.0)
+        .fetch_optional(self.conn())
+        .await?;
+        Ok(open.unwrap_or(false))
     }
 }
 
@@ -523,8 +558,8 @@ impl Tx<Tenant> {
     }
 
     /// 用户的紧急消息（8.12，打断重来）：建运行，按实例上现在的情况处理占着实例的那个运行（见 [`Urgent`]）。
-    /// 新消息排在这个实例别的排队运行前面（已经有紧急消息在等的，排在它后面）。按实例加锁，同时来的两条
-    /// 不会都去打断。停在等待里的运行被取消时，返回值里有它，调用方给它记运行日志。
+    /// 紧急消息之间先来后到；没有在等的紧急消息时，新的排在这个实例别的排队运行前面，去打断占着实例的那个。
+    /// 按实例加锁，同时来的两条不会都去打断。停在等待里的运行被取消时，返回值里有它，调用方给它记运行日志。
     pub async fn queue_urgent_run(&mut self, new: &NewRun) -> Result<(Run, Urgent)> {
         let instance = new.instance_id;
         self.instance(instance).await?;
@@ -533,26 +568,30 @@ impl Tx<Tenant> {
             .execute(self.conn())
             .await?;
         let mut new = new.clone();
-        let pending: Option<(Uuid, DateTime<Utc>)> = sqlx::query_as(
-            "SELECT id, not_before FROM runs WHERE instance_id = $1 AND state = 'queued' \
-               AND interrupts_run_id IS NOT NULL ORDER BY not_before DESC, id DESC LIMIT 1",
+        new.urgent = true;
+        // 实例上没结束的 agent 运行都锁上，排队的也锁：正被领取（排队 → 启动中、还没提交）的那个要等领取的
+        // 事务提交，这里才看得到它已经占着实例了。
+        let active: Vec<(Uuid, String, bool, bool, DateTime<Utc>)> = sqlx::query_as(
+            "SELECT id, state, lease_owner IS NOT NULL AND lease_expires_at > now(), urgent, not_before \
+             FROM runs WHERE instance_id = $1 AND kind = 'agent' \
+               AND state NOT IN ('succeeded', 'failed', 'cancelled') \
+             ORDER BY id FOR NO KEY UPDATE",
         )
         .bind(instance.0)
-        .fetch_optional(self.conn())
+        .fetch_all(self.conn())
         .await?;
-        let urgent = if let Some((first, at)) = pending {
-            new.not_before = Some(at + chrono::Duration::microseconds(1));
-            Urgent::Behind(first.into())
+        let waiting = active
+            .iter()
+            .filter(|(_, state, _, urgent, _)| *urgent && state == "queued")
+            .max_by_key(|(id, _, _, _, at)| (*at, *id));
+        let urgent = if let Some((first, _, _, _, at)) = waiting {
+            new.not_before = Some(*at + chrono::Duration::microseconds(1));
+            Urgent::Behind((*first).into())
         } else {
-            let holder: Option<(Uuid, bool)> = sqlx::query_as(
-                "SELECT id, lease_owner IS NOT NULL AND lease_expires_at > now() FROM runs \
-                 WHERE instance_id = $1 AND kind = 'agent' AND state IN ('starting', 'running', \
-                   'waiting_approval', 'waiting_device', 'waiting_quota', 'waiting_children', 'backoff') \
-                 FOR NO KEY UPDATE",
-            )
-            .bind(instance.0)
-            .fetch_optional(self.conn())
-            .await?;
+            let holder = active
+                .iter()
+                .find(|(_, state, _, _, _)| state != "queued")
+                .map(|(id, _, live, _, _)| (*id, *live));
             let front: DateTime<Utc> = sqlx::query_scalar(
                 "SELECT least(now(), min(not_before) - interval '1 millisecond') FROM runs \
                  WHERE instance_id = $1 AND state = 'queued'",
@@ -604,6 +643,34 @@ impl Tx<Tenant> {
             .await?
             .ok_or_else(|| Error::Conflict("run already exists".into()))?;
         Ok((run, urgent))
+    }
+
+    /// 占着实例的运行（8.9 查进度用）。
+    pub async fn instance_holder(&mut self, instance: InstanceId) -> Result<Option<Run>> {
+        let row: Option<Row> = sqlx::query_as(concat!(
+            "SELECT ",
+            columns!(),
+            " FROM runs WHERE instance_id = $1 AND kind = 'agent' AND state IN ('starting', 'running', \
+               'waiting_approval', 'waiting_device', 'waiting_quota', 'waiting_children', 'backoff')"
+        ))
+        .bind(instance.0)
+        .fetch_optional(self.conn())
+        .await?;
+        row.map(Row::into_run).transpose()
+    }
+
+    /// 实例上最近一个跑过、已经结束的 agent 运行（8.9 查进度用；排队时就被取消的不算）。
+    pub async fn last_finished_run(&mut self, instance: InstanceId) -> Result<Option<Run>> {
+        let row: Option<Row> = sqlx::query_as(concat!(
+            "SELECT ",
+            columns!(),
+            " FROM runs WHERE instance_id = $1 AND kind = 'agent' AND started_at IS NOT NULL \
+               AND state IN ('succeeded', 'failed', 'cancelled') ORDER BY created_at DESC LIMIT 1"
+        ))
+        .bind(instance.0)
+        .fetch_optional(self.conn())
+        .await?;
+        row.map(Row::into_run).transpose()
     }
 
     /// 运行的预算（agent 在运行里新建计划时，计划沿用这个预算）。
@@ -718,7 +785,7 @@ impl Tx<Worker> {
         for _ in 0..8 {
             let id: Option<Uuid> = sqlx::query_scalar(
                 "SELECT r.id FROM runs r JOIN users u ON u.id = r.user_id AND u.status = 'active' \
-                 WHERE r.kind = 'agent' AND r.not_before <= now() AND ( \
+                 WHERE r.kind = 'agent' AND r.source = ANY($1) AND r.not_before <= now() AND ( \
                    (r.state = 'queued' AND NOT EXISTS ( \
                       SELECT 1 FROM runs a WHERE a.instance_id = r.instance_id AND a.kind = 'agent' AND a.state IN \
                         ('starting', 'running', 'waiting_approval', 'waiting_device', 'waiting_quota', \
@@ -732,6 +799,7 @@ impl Tx<Worker> {
                  ORDER BY r.not_before, r.id LIMIT 1 \
                  FOR UPDATE OF r SKIP LOCKED",
             )
+            .bind(known_sources())
             .fetch_optional(self.conn())
             .await?;
             let Some(id) = id else {
@@ -819,7 +887,7 @@ impl Tx<Worker> {
             "UPDATE runs SET lease_owner = $1, lease_expires_at = now() + make_interval(secs => $2), \
                updated_at = now() \
              WHERE id IN (SELECT id FROM runs WHERE lease_owner IS NOT NULL AND lease_expires_at < now() \
-                            AND state NOT IN ('succeeded', 'failed', 'cancelled') \
+                            AND state NOT IN ('succeeded', 'failed', 'cancelled') AND source = ANY($4) \
                           ORDER BY lease_expires_at LIMIT $3 FOR UPDATE SKIP LOCKED) \
              RETURNING ",
             columns!()
@@ -827,6 +895,7 @@ impl Tx<Worker> {
         .bind(owner)
         .bind(secs(lease))
         .bind(limit)
+        .bind(known_sources())
         .fetch_all(self.conn())
         .await?;
         rows.into_iter().map(Row::into_record).collect()
@@ -882,6 +951,29 @@ impl Tx<Worker> {
         .fetch_all(self.conn())
         .await?;
         rows.into_iter().map(Row::into_run).collect()
+    }
+
+    /// 还没交还的同一个问题（8.11）：同一次运行里问同一个队友一模一样的问题（agent 重试），它还没答完、或者
+    /// 答了还没交还时就是它，不再问一遍；交还了之后再问就是真的再问一次。
+    pub async fn open_ask(
+        &mut self,
+        parent: RunId,
+        instance: InstanceId,
+        prompt: &str,
+    ) -> Result<Option<Run>> {
+        let row: Option<Row> = sqlx::query_as(concat!(
+            "SELECT ",
+            columns!(),
+            " FROM runs WHERE parent_run_id = $1 AND source = 'ask' AND instance_id = $2 AND prompt = $3 \
+               AND (state NOT IN ('succeeded', 'failed', 'cancelled') OR reported_at IS NULL) \
+             ORDER BY created_at, id LIMIT 1"
+        ))
+        .bind(parent.0)
+        .bind(instance.0)
+        .bind(prompt)
+        .fetch_optional(self.conn())
+        .await?;
+        row.map(Row::into_run).transpose()
     }
 
     /// 问队友的子运行（8.11），早的在前。
@@ -941,7 +1033,16 @@ impl Tx<Worker> {
             .collect()
     }
 
-    /// 有用户的紧急消息在等着打断这个运行（8.12）：执行器续租时查。
+    /// 锁住运行（到事务结束）：执行器结束一次尝试前，和建紧急消息互斥（8.12）。
+    pub async fn lock_run(&mut self, run: RunId) -> Result<()> {
+        sqlx::query("SELECT id FROM runs WHERE id = $1 FOR NO KEY UPDATE")
+            .bind(run.0)
+            .fetch_one(self.conn())
+            .await?;
+        Ok(())
+    }
+
+    /// 有用户的紧急消息在等着打断这个运行（8.12）：执行器续租时、结束一次尝试前查。
     pub async fn interrupt_pending(&mut self, run: RunId) -> Result<bool> {
         Ok(sqlx::query_scalar(
             "SELECT EXISTS (SELECT 1 FROM runs WHERE interrupts_run_id = $1 \
@@ -962,7 +1063,7 @@ impl Tx<Worker> {
             "SELECT ",
             columns!(),
             " FROM runs WHERE instance_id = $1 AND state = 'queued' AND source = 'user' \
-               AND announced_at IS NULL AND interrupts_run_id IS NULL ORDER BY not_before, id LIMIT $2"
+               AND announced_at IS NULL AND NOT urgent ORDER BY not_before, id LIMIT $2"
         ))
         .bind(instance.0)
         .bind(limit)
@@ -980,16 +1081,6 @@ impl Tx<Worker> {
         .bind(&ids)
         .execute(self.conn())
         .await?;
-        Ok(())
-    }
-
-    /// 按用户串行化“谁在等谁”的检查和新建子运行（委派、提问，8.8、8.11）：两个 agent 同时互相问，
-    /// 检查时都还看不到对方的子运行，不加锁会都通过。锁到事务结束。
-    pub async fn lock_run_waits(&mut self, user: UserId) -> Result<()> {
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
-            .bind(format!("run_waits/{user}"))
-            .execute(self.conn())
-            .await?;
         Ok(())
     }
 
@@ -1064,7 +1155,7 @@ impl Tx<Worker> {
                updated_at = now() \
              WHERE id IN (SELECT id FROM runs WHERE state IN ('waiting_quota', 'waiting_device') \
                             AND wait_deadline <= now() \
-                            AND (lease_owner IS NULL OR lease_expires_at < now()) \
+                            AND (lease_owner IS NULL OR lease_expires_at < now()) AND source = ANY($4) \
                           ORDER BY wait_deadline LIMIT $3 FOR UPDATE SKIP LOCKED) \
              RETURNING ",
             columns!()
@@ -1072,6 +1163,7 @@ impl Tx<Worker> {
         .bind(owner)
         .bind(secs(lease))
         .bind(limit)
+        .bind(known_sources())
         .fetch_all(self.conn())
         .await?;
         rows.into_iter().map(Row::into_record).collect()

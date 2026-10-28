@@ -187,7 +187,7 @@ struct Exec<'a> {
     attempt_started: chrono::DateTime<Utc>,
     /// 这次运行委派过子任务（8.7）。
     has_children: bool,
-    /// 这次运行问过队友（8.11）。
+    /// 这次运行问过队友、还有没答完的（8.11）。
     has_asks: bool,
     /// 消息前面的说明（8.12）：这条紧急消息打断了什么，或者这条排队的消息之前已经捎带给 agent 看过。
     preface: Option<Preface>,
@@ -260,16 +260,9 @@ enum Preface {
     Announced,
 }
 
-/// 运行的任务的第一行，最多 `max` 个字：委派来的子任务、别人问的问题只取说明后面的任务。
+/// 运行的任务的第一行，最多 `max` 个字。
 fn task_title(run: &Run, max: usize) -> String {
-    let text = match run.source {
-        RunSource::Delegate | RunSource::Ask => run
-            .prompt
-            .split_once("\n\n")
-            .map_or(run.prompt.as_str(), |(_, t)| t),
-        _ => run.prompt.as_str(),
-    };
-    truncate(text.lines().next().unwrap_or_default(), max)
+    truncate(run.prompt.lines().next().unwrap_or_default(), max)
 }
 
 /// 捎带给正忙的 agent 的新消息：一次最多这么多条，每条最多这么多字。
@@ -277,7 +270,8 @@ const MAX_PIGGYBACK: i64 = 3;
 const PIGGYBACK_CHARS: usize = 1000;
 
 /// 有副作用的平台工具（7.13）：同一次运行里参数完全相同的调用只执行一次。
-const SIDE_EFFECT_TOOLS: [&str; 8] = [
+/// `ask` 不在这里：它自己按“同一个问题还没交还”去重（8.11），超时以后可以再问。
+const SIDE_EFFECT_TOOLS: [&str; 7] = [
     "schedule_create",
     "schedule_update",
     "schedule_cancel",
@@ -285,7 +279,6 @@ const SIDE_EFFECT_TOOLS: [&str; 8] = [
     "delegate",
     "vault_request",
     "board_post",
-    "ask",
 ];
 
 /// 续跑简报（7.12）：上一次执行到哪儿了——最近调过的工具、最后说的话、为什么中断。
@@ -780,9 +773,15 @@ impl Executor {
         let preface = match rec.interrupts_run_id {
             Some(h) => {
                 let h = w.run(h).await.map_err(retry)?;
+                // 回答队友、做委派的子任务时被打断：不引用别的 agent 写的原文（平台自己的说明里不放不可信内容）。
+                let task = match h.source {
+                    RunSource::Ask => crate::texts::interrupted_work(locale, true).to_owned(),
+                    RunSource::Delegate => crate::texts::interrupted_work(locale, false).to_owned(),
+                    _ => task_title(&h, 60),
+                };
                 (h.state == RunState::Cancelled
                     && h.state_reason.as_deref() == Some(store::INTERRUPTED_REASON))
-                .then(|| Preface::Interrupted(task_title(&h, 60)))
+                .then_some(Preface::Interrupted(task))
             }
             None => rec.announced_at.map(|_| Preface::Announced),
         };
@@ -939,7 +938,8 @@ impl Executor {
             scrubber: self.scrubber(rec.user_id).await,
             attempt_started,
             has_children: !delegated.is_empty(),
-            has_asks: !asked.is_empty(),
+            // 还有没答完的问题（答完的交还在 resume 里）。
+            has_asks: asked.iter().any(|q| !q.state.is_terminal()),
             preface,
             resume,
             session_restored,
@@ -979,6 +979,29 @@ impl Executor {
         outcome: Outcome,
     ) -> store::Result<()> {
         let run = rec.run.id;
+        // 要转入等待、退避（放掉租约、还占着实例）时，先锁住运行再看用户有没有发来紧急消息（8.12）：
+        // 续租时才查，这一轮在下次续租前结束就错过了，紧急消息要一直等到它等完。锁和建紧急消息互斥：
+        // 消息先到这里看得到，这里先提交那边看到的就是没人在执行、直接取消。
+        let mut parked = None;
+        let parks = match &outcome {
+            Outcome::Waiting { .. } | Outcome::Interrupted => true,
+            Outcome::Retry(_) => rec.run.attempt < rec.max_attempts,
+            _ => false,
+        };
+        let outcome = if parks {
+            let mut w = self.db.worker().await?;
+            w.lock_run(run).await?;
+            let interrupted = w.interrupt_pending(run).await?;
+            parked = Some(w);
+            if interrupted {
+                info!(run = %run, "an urgent message arrived as the turn ended, stopping instead of waiting");
+                Outcome::Superseded
+            } else {
+                outcome
+            }
+        } else {
+            outcome
+        };
         let (to, change, push) = match outcome {
             Outcome::Cancelled => {
                 let mut w = self.db.worker().await?;
@@ -1075,7 +1098,10 @@ impl Executor {
                 notify.then(|| (PushKind::RunFailed, PushBody::Ready(truncate(&reason, 100)))),
             ),
         };
-        let mut w = self.db.worker().await?;
+        let mut w = match parked {
+            Some(w) => w,
+            None => self.db.worker().await?,
+        };
         // 状态机里成功、等 key、等电脑只能从运行中到达，退避不能从等待中到达：先回到运行中。
         let detour = match to {
             RunState::Succeeded => state == RunState::Starting || state.is_waiting(),
@@ -1410,6 +1436,21 @@ impl Exec<'_> {
         }
     }
 
+    /// 用户发来了紧急消息要打断这个运行（8.12）。查不到当作没有（续租时还会再查）。
+    async fn interrupt_pending(&self) -> bool {
+        let found = async {
+            let mut w = self.ex.db.worker().await?;
+            let found = w.interrupt_pending(self.rec.run.id).await?;
+            w.rollback().await?;
+            Ok::<_, store::Error>(found)
+        }
+        .await;
+        found.unwrap_or_else(|e| {
+            warn!(run = %self.rec.run.id, error = %e, "checking for an urgent message failed");
+            false
+        })
+    }
+
     /// 实例上排队、还没给 agent 看过的用户消息（8.12）：在平台工具的结果后面捎带给它，记成已经看过。
     /// 查不到就不捎带。
     async fn new_messages(&self) -> Option<String> {
@@ -1587,8 +1628,11 @@ impl Exec<'_> {
             Some(Preface::Interrupted(task)) => {
                 crate::texts::interrupted(self.locale, task, &self.rec.run.prompt)
             }
-            Some(Preface::Announced) => crate::texts::announced(self.locale, &self.rec.run.prompt),
-            None => self.rec.run.prompt.clone(),
+            // 捎带过的消息：会话接回了 agent 才记得，没接回就当新消息。
+            Some(Preface::Announced) if self.session_restored => {
+                crate::texts::announced(self.locale, &self.rec.run.prompt)
+            }
+            _ => self.rec.run.prompt.clone(),
         };
         if let Some((message, _)) = &self.resume {
             prompt = message.clone();
@@ -1603,6 +1647,10 @@ impl Exec<'_> {
                 self.has_asks,
                 &prompt,
             );
+        }
+        // 启动期间（唤醒沙箱、握手）用户发来了紧急消息（8.12）：这一轮不开始了。
+        if self.interrupt_pending().await {
+            return Outcome::Superseded;
         }
         if !self
             .send(ShimCommand::Prompt {
@@ -1704,18 +1752,6 @@ impl Exec<'_> {
                 {
                     return Some(o);
                 }
-                // agent 收到了子任务的结果：记成已交还，下次不再交。
-                if let Some((_, ids)) = self.resume.take() {
-                    let marked = async {
-                        let mut w = self.ex.db.worker().await?;
-                        w.mark_reported(&ids).await?;
-                        w.commit().await
-                    }
-                    .await;
-                    if let Err(e) = marked {
-                        warn!(run = %self.rec.run.id, error = %e, "marking subtask results as delivered failed");
-                    }
-                }
             }
             ShimEvent::ToolCall { .. } => {
                 self.steps += 1;
@@ -1815,9 +1851,23 @@ impl Exec<'_> {
                 run_id: r,
                 stop_reason,
             } if r == run_id => {
-                // 模型调用一直失败、agent 放弃了这一轮：等 key，而不是算成功或失败。
+                // 模型调用一直失败、agent 放弃了这一轮：等 key，而不是算成功或失败。结果没记成已交还，
+                // 接着跑时再交一次。
                 if let Some(problem) = self.key_problem(true).await {
                     return Some(self.wait_for_key(problem));
+                }
+                // agent 把子任务的结果、队友的回答处理完了这一轮：记成已交还，下次不再交。这一轮中途断了的
+                // （崩溃、停机、被接管）下次重交，免得没接回会话时结果就丢了。
+                if let Some((_, ids)) = self.resume.take() {
+                    let marked = async {
+                        let mut w = self.ex.db.worker().await?;
+                        w.mark_reported(&ids).await?;
+                        w.commit().await
+                    }
+                    .await;
+                    if let Err(e) = marked {
+                        warn!(run = %self.rec.run.id, error = %e, "marking subtask results as delivered failed");
+                    }
                 }
                 // 委派的子任务还没做完、或者做完了还没交还（8.7）：等它们，结果作为新消息交还。
                 if matches!(

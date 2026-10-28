@@ -37,6 +37,10 @@ use tokio::task::JoinHandle;
 struct Recorded {
     launches: Vec<(String, Vec<String>, Vec<String>)>,
     prompts: Vec<String>,
+    /// 就绪时说接回了之前的会话。
+    restore_sessions: bool,
+    /// 收到子任务结果、队友回答的这么多次里，这一轮一开始就崩溃。
+    crash_on_results: u32,
 }
 
 #[derive(Default, Clone)]
@@ -196,6 +200,7 @@ async fn fake_shim(
     ev: mpsc::Sender<ShimEvent>,
     rec: Arc<Mutex<Recorded>>,
 ) {
+    let restored = rec.lock().unwrap().restore_sessions;
     let _ = ev
         .send(ShimEvent::Ready {
             protocol_version: 1,
@@ -203,7 +208,7 @@ async fn fake_shim(
             harness: "acp".into(),
             agent_info: None,
             session_id: "s1".into(),
-            session_restored: false,
+            session_restored: restored,
         })
         .await;
     let mut looping: Option<String> = None;
@@ -237,6 +242,19 @@ async fn fake_shim(
                         run_id: run_id.clone(),
                     })
                     .await;
+                let results = text.contains("子任务都结束了") || text.contains("问题有结果了");
+                if results && {
+                    let mut r = rec.lock().unwrap();
+                    let crash = r.crash_on_results > 0;
+                    r.crash_on_results = r.crash_on_results.saturating_sub(1);
+                    crash
+                } {
+                    return;
+                }
+                // 慢一点再开始（给测试留出在这一轮中间做点什么的时间）。
+                if text.contains("slowly") {
+                    tokio::time::sleep(Duration::from_millis(400)).await;
+                }
                 if text.contains("子任务都结束了") {
                     // 委派的子任务的结果交回来了（8.7）。
                     let _ = ev.send(chunk(&run_id, "got the results")).await;
@@ -1876,12 +1894,16 @@ impl PlatformTools for Late {
 
 /// 负责人（e.instance，名字 Claude）和成员 helper 编成团队，负责人的授权里有委派工具。
 async fn delegation_env() -> Option<(Env, Instance)> {
+    delegation_env_with(fast()).await
+}
+
+async fn delegation_env_with(cfg: ExecutorConfig) -> Option<(Env, Instance)> {
     let late = Late::default();
     let scope = GrantScope {
         platform_tools: DELEGATE_TOOLS.iter().map(|t| t.to_string()).collect(),
         ..GrantScope::default()
     };
-    let e = env_with(fast(), Some(scope), Arc::new(late.clone())).await?;
+    let e = env_with(cfg, Some(scope), Arc::new(late.clone())).await?;
     let _ = late.0.set(Arc::new(DelegateTools::new(e.t.db.clone())));
     let helper = e
         .lifecycle
@@ -2786,6 +2808,7 @@ async fn queued_messages_ride_along_with_platform_tool_results() {
     else {
         return;
     };
+    e.fake.rec.lock().unwrap().restore_sessions = true;
     let busy = e.queue("check news", None, 3).await;
     let (_stop, h) = e.spawn().await;
     e.wait_state(busy, RunState::Running).await;
@@ -2803,14 +2826,110 @@ async fn queued_messages_ride_along_with_platform_tool_results() {
         "{said}"
     );
     assert!(e.state(message).await.announced_at.is_some());
-    // 轮到这条消息时提醒 agent 已经看过。
+    // 轮到这条消息时提醒 agent 可能已经看过（会话接回了才这么说）。
     e.run_to_end().await;
     let prompts = e.fake.rec.lock().unwrap().prompts.clone();
     assert!(
         prompts
             .last()
             .unwrap()
-            .starts_with("（这条消息你在上一个任务进行中已经看过"),
+            .starts_with("（平台在你做上一个任务时"),
         "{prompts:?}"
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_urgent_message_is_not_lost_when_the_turn_ends_in_a_wait() {
+    // 续租很久才一次：紧急消息到的时候这一轮已经在收尾，靠的是结束时的检查。
+    let cfg = ExecutorConfig {
+        renew_every: Duration::from_secs(30),
+        ..fast()
+    };
+    let Some((e, _helper)) = delegation_env_with(cfg).await else {
+        return;
+    };
+    let lead = e
+        .queue("slowly lead the team: loop forever please", None, 3)
+        .await;
+    let (_stop, h) = e.spawn().await;
+    e.wait_state(lead, RunState::Running).await;
+    let (urgent, how) = queue_urgent(&e, "say hello now").await;
+    assert_eq!(how, store::Urgent::Interrupting(lead));
+    tokio::time::timeout(Duration::from_secs(20), h)
+        .await
+        .unwrap()
+        .unwrap();
+    // 这一轮委派完要转入等子任务：改成按打断结束，子任务一起停掉。
+    let rec = e.state(lead).await;
+    assert_eq!(rec.run.state, RunState::Cancelled, "{:?}", rec.run);
+    assert_eq!(
+        rec.run.state_reason.as_deref(),
+        Some(store::INTERRUPTED_REASON)
+    );
+    let kids = children(&e, lead).await;
+    assert_eq!(kids.len(), 1);
+    assert_eq!(kids[0].state, RunState::Cancelled);
+    e.run_to_end().await;
+    assert_eq!(e.state(urgent).await.run.state, RunState::Succeeded);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn answers_are_handed_over_again_if_the_turn_with_them_breaks() {
+    let Some((e, _helper)) = ask_env().await else {
+        return;
+    };
+    let run = e.queue("ask teammate helper: say hello", None, 3).await;
+    e.run_to_end().await;
+    e.run_to_end().await;
+    // 交还回答的这一轮刚开始就崩溃：回答还没记成已交还，下次再交。
+    e.fake.rec.lock().unwrap().crash_on_results = 1;
+    e.run_to_end().await;
+    assert_eq!(e.state(run).await.run.state, RunState::Backoff);
+    sqlx::query("UPDATE runs SET not_before = now() WHERE id = $1")
+        .bind(run.0)
+        .execute(e.t.db.pool())
+        .await
+        .unwrap();
+    e.run_to_end().await;
+    let rec = e.state(run).await;
+    assert_eq!(rec.run.state, RunState::Succeeded, "{:?}", rec.run);
+    assert_eq!(rec.run.summary.as_deref(), Some("got the answers"));
+    let prompts = e.fake.rec.lock().unwrap().prompts.clone();
+    let last = prompts.last().unwrap();
+    assert!(last.contains("回答：Hello world"), "{last}");
+    let mut w = e.t.db.worker().await.unwrap();
+    assert!(w.unreported_children(run).await.unwrap().is_empty());
+    w.rollback().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_question_can_be_asked_again_once_its_outcome_was_handed_over() {
+    let Some((e, _helper)) = ask_env().await else {
+        return;
+    };
+    let run = e.queue("anything", None, 3).await;
+    let id = |o: &ToolOutput| {
+        let v: Value = serde_json::from_str(o.content[0]["text"].as_str().unwrap()).unwrap();
+        v["run_id"].as_str().unwrap().to_owned()
+    };
+    // 还没答完时再问同一个问题：就是那一个（agent 重试）。
+    let first = ask_directly(&e, run, "helper", "where is the data?").await;
+    let again = ask_directly(&e, run, "helper", "where is the data?").await;
+    assert_eq!(id(&first), id(&again));
+    assert_eq!(asks(&e, run).await.len(), 1);
+    // 超时没答上、结果交还了以后再问：真的再问一次。
+    let q = asks(&e, run).await[0].id;
+    sqlx::query("UPDATE runs SET answer_deadline = now() - interval '1 second' WHERE id = $1")
+        .bind(q.0)
+        .execute(e.t.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(e.exec.expire_asks().await.unwrap(), 1);
+    let mut w = e.t.db.worker().await.unwrap();
+    w.mark_reported(&[q]).await.unwrap();
+    w.commit().await.unwrap();
+    let third = ask_directly(&e, run, "helper", "where is the data?").await;
+    assert!(!third.is_error);
+    assert_ne!(id(&third), id(&first));
+    assert_eq!(asks(&e, run).await.len(), 2);
 }

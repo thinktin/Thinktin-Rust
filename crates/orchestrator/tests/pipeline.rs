@@ -11,17 +11,18 @@ use auth::sandbox_token::SandboxTokenIssuer;
 use chrono::Utc;
 use control::{BuiltinTemplates, Lifecycle, LifecycleConfig};
 use keyvault::LocalKms;
-use orchestrator::artifacts::{ArtifactStore, LocalBlobStore};
+use orchestrator::artifacts::{ArtifactStore, LocalBlobStore, Origin};
 use orchestrator::executor::{Executor, ExecutorConfig};
 use orchestrator::pipeline::{HandoffCopier, PipelineConfig, PipelineDriver};
 use orchestrator::scheduler::{Scheduler, SchedulerConfig};
 use orchestrator::shim::{
-    ConnectError, PlatformTools, ShimConnector, ShimLaunch, ShimProcess, ShimSession,
+    ConnectError, PlatformTools, ShimConnector, ShimLaunch, ShimProcess, ShimSession, ToolContext,
+    ToolOutput,
 };
 use orchestrator::tools::{ARTIFACT_TOOLS, ArtifactTools, ToolSet};
 use proto::domain::{
-    CatchUp, GrantScope, Instance, PlanAuthor, PlanId, PlanPolicy, PlanStep, RunId, RunKind,
-    RunState, ScheduleSpec, UserId,
+    CatchUp, GrantId, GrantScope, Instance, PlanAuthor, PlanId, PlanPolicy, PlanStep, RunId,
+    RunKind, RunSource, RunState, ScheduleSpec, UserId,
 };
 use proto::shim::{ShimCommand, ShimEvent, StopReason};
 use sandbox::local::LocalProvider;
@@ -589,4 +590,74 @@ async fn a_pipeline_whose_first_step_cannot_start_fails_alone() {
     assert_eq!(e.record(broken_root).await.run.state, RunState::Failed);
     let done = e.drive(fine_root).await;
     assert_eq!(done.run.state, RunState::Succeeded, "{:?}", done.run);
+}
+
+/// 回答队友的问题（8.11）时只看得到、只写得进这个问题下面的产出物：问的是信息，不是权限。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn answering_a_question_sees_only_its_own_artifacts() {
+    let Some(e) = env().await else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(ArtifactStore::new(
+        e.t.db.clone(),
+        Arc::new(LocalBlobStore::new(dir.path()).unwrap()),
+        Arc::new(LocalKms::new("kms", &[5; 32])),
+    ));
+    let tools = ArtifactTools::new(
+        e.t.db.clone(),
+        store.clone(),
+        e.provider.clone(),
+        "workspace",
+    );
+    // a 在做任务 r，问了 b 一个问题 q。
+    let mut w = e.t.db.worker().await.unwrap();
+    let r = w
+        .create_run(
+            e.user,
+            &store::NewRun::new(e.a.id, RunSource::User, "report", &e.a.agent_version),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let mut q = store::NewRun::new(e.b.id, RunSource::Ask, "q", &e.b.agent_version);
+    q.parent_run_id = Some(r.id);
+    let q = w.create_run(e.user, &q).await.unwrap().unwrap();
+    w.commit().await.unwrap();
+    store
+        .publish(
+            Origin {
+                user: e.user,
+                instance: e.a.id,
+                run: r.id,
+                root: r.id,
+            },
+            "inbox.md",
+            "text/markdown",
+            b"private",
+        )
+        .await
+        .unwrap();
+    let ctx = |instance, run| ToolContext {
+        user: e.user,
+        instance,
+        run,
+        plan: None,
+        grant: GrantId::new(),
+    };
+    let text = |o: &ToolOutput| o.content[0]["text"].as_str().unwrap_or_default().to_owned();
+    let mine = tools
+        .call(&ctx(e.a.id, r.id), "artifact_list", &json!({}))
+        .await;
+    assert!(text(&mine).contains("inbox.md"), "{}", text(&mine));
+    let theirs = tools
+        .call(&ctx(e.b.id, q.id), "artifact_list", &json!({}))
+        .await;
+    assert!(!text(&theirs).contains("inbox.md"), "{}", text(&theirs));
+    let read = tools
+        .call(
+            &ctx(e.b.id, q.id),
+            "artifact_read",
+            &json!({ "name": "inbox.md" }),
+        )
+        .await;
+    assert!(read.is_error, "{}", text(&read));
 }

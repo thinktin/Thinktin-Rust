@@ -9,6 +9,8 @@
 //!   在等自己时不许问（“谁在等谁”和委派共用，按用户加锁检查）；一次运行最多问 [`MAX_ASKS_PER_RUN`] 次，
 //!   回答时再问别人最多 [`MAX_DEPTH`] 层；[`ANSWER_TIMEOUT`] 内没答完的由后台取消，交还“对方没回答”。
 //! - 问题送进对方会话之前抹掉用户保险箱里的值，免得密码经提问到了别的 agent 手里。
+//! - 不走通用的副作用幂等（7.13）：同一个问题还没交还时重复问就是那一个；交还了（比如超时没答上）再问是真的
+//!   再问一次。
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,7 +18,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use chrono::Utc;
 use keyvault::Kms;
-use proto::domain::RunSource;
+use proto::domain::{Run, RunSource};
 use proto::shim::PlatformTool;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -64,7 +66,7 @@ impl AskTools {
         let peers = t.peers(ctx.instance).await.map_err(internal)?;
         let me = t.instance(ctx.instance).await.map_err(internal)?;
         t.rollback().await.map_err(internal)?;
-        // 关了开关的和不存在的回答一样：看不出它在不在（8.9）。
+        // 关了开关的和不存在的回答一样（8.9）。
         let Some(peer) = peers
             .into_iter()
             .find(|p| p.instance.id.to_string() == to || p.instance.name == to)
@@ -74,11 +76,15 @@ impl AskTools {
             ));
         };
         let target = peer.instance;
-        let scrubber = crate::vault::user_scrubber(&self.db, self.kms.clone(), ctx.user).await;
-        let question = scrubber.scrub(&question).unwrap_or(question);
 
         let mut w = self.db.worker().await.map_err(internal)?;
         w.lock_run_waits(ctx.user).await.map_err(internal)?;
+        // 上面看的时候还开着，这时可能刚关掉：在同一把锁里再看一次（关开关的请求也拿这把锁）。
+        if !w.accepts_questions(target.id).await.map_err(internal)? {
+            return Err(format!(
+                "no agent called {to:?} that you can see; agents_list shows the ones you can"
+            ));
+        }
         let chain = w.run_chain(ctx.run).await.map_err(internal)?;
         let depth = chain
             .iter()
@@ -90,6 +96,36 @@ impl AskTools {
                  answer with what you know instead of asking further"
                     .into(),
             );
+        }
+        let locale = w.user_locale(ctx.user).await.map_err(internal)?;
+        // 同一个问题还没交还（agent 重试、重复调用）：就是那一个，不再问一遍。交还以后再问（比如上次没答上）
+        // 是真的再问。到了上限时不抹值就比较，省掉解密保险箱。
+        let asked = w.ask_runs(ctx.run).await.map_err(internal)?;
+        let raw_prompt = crate::texts::ask_question(locale, &me.name, &question);
+        if asked.len() >= MAX_ASKS_PER_RUN {
+            if let Some(open) = w
+                .open_ask(ctx.run, target.id, &raw_prompt)
+                .await
+                .map_err(internal)?
+            {
+                w.rollback().await.map_err(internal)?;
+                return Ok(asked_reply(&open, &target.name, peer.holder.is_some()));
+            }
+            return Err(format!(
+                "at most {MAX_ASKS_PER_RUN} questions per task; put what you still need into one question"
+            ));
+        }
+        // 保险箱里的值不进对方的会话（模型网关转发前也会再抹一遍）。
+        let scrubber = crate::vault::user_scrubber(&self.db, self.kms.clone(), ctx.user).await;
+        let question = scrubber.scrub(&question).unwrap_or(question);
+        let prompt = crate::texts::ask_question(locale, &me.name, &question);
+        if let Some(open) = w
+            .open_ask(ctx.run, target.id, &prompt)
+            .await
+            .map_err(internal)?
+        {
+            w.rollback().await.map_err(internal)?;
+            return Ok(asked_reply(&open, &target.name, peer.holder.is_some()));
         }
         if w.instance_waits_for(target.id, ctx.run)
             .await
@@ -112,14 +148,7 @@ impl AskTools {
                 target.name
             ));
         }
-        if w.ask_runs(ctx.run).await.map_err(internal)?.len() >= MAX_ASKS_PER_RUN {
-            return Err(format!(
-                "at most {MAX_ASKS_PER_RUN} questions per task; put what you still need into one question"
-            ));
-        }
         let parent = w.run_record(ctx.run).await.map_err(internal)?;
-        let locale = w.user_locale(ctx.user).await.map_err(internal)?;
-        let prompt = crate::texts::ask_question(locale, &me.name, &question);
         let mut new = NewRun::new(
             target.id,
             RunSource::Ask,
@@ -153,28 +182,30 @@ impl AskTools {
         .await
         .map_err(internal)?;
         w.commit().await.map_err(internal)?;
-        let minutes = ANSWER_TIMEOUT.as_secs() / 60;
-        let mut next = format!(
-            "Keep working on other parts if you like. When you end your turn, the platform waits for the \
-             answer (at most {minutes} minutes) and sends it to you as a new message. Asking the same \
-             question again in this task only returns this result."
-        );
-        if peer.holder.is_some() {
-            next.insert_str(
-                0,
-                &format!(
-                    "{} is busy, so the question waits until it finishes its current task. ",
-                    target.name
-                ),
-            );
-        }
-        Ok(json!({
-            "run_id": child.id,
-            "to": target.name,
-            "status": "asked",
-            "next": next,
-        }))
+        Ok(asked_reply(&child, &target.name, peer.holder.is_some()))
     }
+}
+
+/// 问出去了（或者同一个问题已经在路上）：告诉 agent 接下来会怎样。
+fn asked_reply(run: &Run, to: &str, busy: bool) -> Value {
+    let minutes = ANSWER_TIMEOUT.as_secs() / 60;
+    let mut next = format!(
+        "Keep working on other parts if you like. When you end your turn, the platform waits for the \
+         answer (at most {minutes} minutes) and sends it to you as a new message. Asking the same \
+         question again before that only returns this result."
+    );
+    if busy {
+        next.insert_str(
+            0,
+            &format!("{to} is busy, so the question waits until it finishes its current task. "),
+        );
+    }
+    json!({
+        "run_id": run.id,
+        "to": to,
+        "status": "asked",
+        "next": next,
+    })
 }
 
 #[derive(Deserialize)]

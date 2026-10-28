@@ -3,7 +3,7 @@
 //!
 //! - 范围是同一用户领养的全部实例，不要求在同一个团队里；库里按用户再核对一次（业务角色的行级安全）。
 //! - 每个实例有个开关“允许其他 agent 查我、问我”（默认打开）：关了的不出现在列表里，查它和查一个不存在的
-//!   实例得到同样的回答，看不出它在不在。
+//!   实例得到同样的回答。开关只管别人查它、问它：它自己照样能查别人、问别人、写看板（看板上署它的名字）。
 //! - 查进度只读对方的运行记录（任务、待办清单、最近调的工具、最后说的话、产出物），不唤醒它、不打扰正在
 //!   干活的那个，几乎不花钱。
 //! - 记录是别的 agent 写的：交给 agent 时注明是信息不是指令，长度都有上限。
@@ -19,8 +19,6 @@ use crate::shim::{PlatformTools, ToolContext, ToolOutput};
 
 pub const PEER_TOOLS: [&str; 2] = ["agents_list", "agent_status"];
 
-/// 查进度时看对方最近几次运行（找正在做的和最近做完的）。
-const RECENT_RUNS: i64 = 10;
 /// 从运行记录里最多读这么多条（待办清单、工具调用、回复）。
 const RECENT_EVENTS: i64 = 80;
 /// 最近调的工具最多列这么多个。
@@ -92,9 +90,10 @@ impl PeerTools {
         };
         let id = peer.instance.id;
         let mut t = self.db.tenant(ctx.user).await.map_err(internal)?;
-        let runs = t.runs(id, None, RECENT_RUNS).await.map_err(internal)?;
-        let current = runs.iter().find(|r| r.state.holds_instance());
-        let finished = runs.iter().find(|r| r.state.is_terminal());
+        // 直接查占着实例的那个：排队的消息、别人的提问再多也找得到。
+        let current = t.instance_holder(id).await.map_err(internal)?;
+        let finished = t.last_finished_run(id).await.map_err(internal)?;
+        let (current, finished) = (current.as_ref(), finished.as_ref());
         let mut out = json!({
             "instance_id": id,
             "name": peer.instance.name,

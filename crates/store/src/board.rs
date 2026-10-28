@@ -1,7 +1,8 @@
 //! 共享看板（WBS 8.10）：每个用户一块，他的所有 agent（和他自己在 App 里）都能读写。
 //!
 //! - 写了的内容不改，只能归档、删除。没归档的最多 [`MAX_BOARD_LIVE_POSTS`] 条：写新的时按用户加锁再数，
-//!   满了先把最早的归档（并发写也不会超）；归档的过 [`BOARD_ARCHIVE_RETENTION`] 由维护任务删掉。
+//!   满了先把最早的归档（并发写也不会超；用户取消归档的按取消归档的时间算）；归档的过
+//!   [`BOARD_ARCHIVE_RETENTION`] 由维护任务删掉。
 //! - 内容是 agent 写的，这里原样存取；交给 agent 时由调用方注明是不可信输入。
 
 use std::time::Duration;
@@ -126,10 +127,11 @@ impl Tx<Tenant> {
             .bind(format!("board/{}", self.user()))
             .execute(self.conn())
             .await?;
+        // 用户取消归档的算新的（按取消归档的时间排），不然看板满着时它又第一个被归档。
         let archived = sqlx::query(
             "UPDATE board_posts SET archived_at = now() WHERE id IN ( \
                SELECT id FROM board_posts WHERE user_id = app_user_id() AND archived_at IS NULL \
-               ORDER BY id DESC OFFSET $1)",
+               ORDER BY coalesce(revived_at, created_at) DESC, id DESC OFFSET $1)",
         )
         .bind(i64::try_from(MAX_BOARD_LIVE_POSTS - 1).unwrap_or(i64::MAX))
         .execute(self.conn())
@@ -185,7 +187,7 @@ impl Tx<Tenant> {
         Ok(rows.into_iter().map(Row::into_post).collect())
     }
 
-    /// 归档、取消归档。取消归档时没归档的已经满了就拒绝（先归档别的）。
+    /// 归档、取消归档。已经是那样的不动（重试不出错）；取消归档时没归档的已经满了就拒绝（先归档别的）。
     pub async fn set_board_post_archived(
         &mut self,
         id: BoardPostId,
@@ -195,6 +197,15 @@ impl Tx<Tenant> {
             .bind(format!("board/{}", self.user()))
             .execute(self.conn())
             .await?;
+        let was_archived: bool =
+            sqlx::query_scalar("SELECT archived_at IS NOT NULL FROM board_posts WHERE id = $1")
+                .bind(id.0)
+                .fetch_optional(self.conn())
+                .await?
+                .ok_or(Error::NotFound)?;
+        if was_archived == archived {
+            return self.board_post(id).await;
+        }
         if !archived {
             let live: i64 = sqlx::query_scalar(
                 "SELECT count(*) FROM board_posts WHERE user_id = app_user_id() AND archived_at IS NULL",
@@ -207,17 +218,15 @@ impl Tx<Tenant> {
                 )));
             }
         }
-        let done = sqlx::query(
-            "UPDATE board_posts SET archived_at = CASE WHEN $2 THEN coalesce(archived_at, now()) END \
+        sqlx::query(
+            "UPDATE board_posts SET archived_at = CASE WHEN $2 THEN now() END, \
+               revived_at = CASE WHEN $2 THEN revived_at ELSE now() END \
              WHERE id = $1",
         )
         .bind(id.0)
         .bind(archived)
         .execute(self.conn())
         .await?;
-        if done.rows_affected() == 0 {
-            return Err(Error::NotFound);
-        }
         self.board_post(id).await
     }
 

@@ -951,7 +951,8 @@ pub mod notice_subtype {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BoardPost {
     pub id: BoardPostId,
-    /// 哪个实例写的；没有是用户自己写的，或者写它的实例已经删了。
+    /// 哪个实例写的；没有是用户自己写的。实例删了 id 还在、`author_name` 没有：用 `ai_generated` 区分用户和
+    /// 删了的 agent。
     pub author_instance_id: Option<InstanceId>,
     /// 写它的实例的名字（实例删了就没有）。
     pub author_name: Option<String>,

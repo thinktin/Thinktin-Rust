@@ -272,7 +272,8 @@ pub struct Instance {
     /// 用途说明（8.9）：用户写的，别的 agent 列出队友时看得到。
     #[uniffi(default = "")]
     pub purpose: String,
-    /// “允许其他 agent 查我、问我”（8.9），默认打开。关了以后别的 agent 列不出它、查不了它的进度。
+    /// “允许其他 agent 查我、问我”（8.9），默认打开。关了以后别的 agent 列不出它、查不了它的进度、问不了它
+    /// （8.11），关的时候别人问它、还没答的问题都取消。它自己照样能看别人、问别人、写看板。
     #[uniffi(default = true)]
     pub peer_access: bool,
 }
@@ -334,6 +335,8 @@ pub struct Run {
     pub parent_run_id: Option<String>,
     pub root_run_id: String,
     pub step_key: Option<String>,
+    /// user / plan / pipeline / delegate / ask。ask 是别的 agent 问这个实例的问题（8.11）：prompt 是 agent 写的，
+    /// 不能显示成用户说的，要带“AI 生成”标识。以后可能加新值，不认识的不要当成用户发的。
     pub source: String,
     pub prompt: String,
     pub state: String,
@@ -345,10 +348,10 @@ pub struct Run {
     pub created_at_ms: i64,
     pub started_at_ms: Option<i64>,
     pub finished_at_ms: Option<i64>,
-    /// 等的是什么，只在 waiting_quota / waiting_device 时有：invalid（key 无效，去换 key）、no_balance（欠费：充值或
+    /// 等的是什么，只在 waiting_quota / waiting_device / waiting_children 时有：invalid（key 无效，去换 key）、no_balance（欠费：充值或
     /// 换 key，每小时也自己再试）、unavailable（没有能用的 key：停用了或当天额度用完，每小时也自己再试）、
-    /// rate_limited / overloaded（几分钟后自己继续，不用处理）、device_offline（等电脑上线）。以后可能加新值，
-    /// 不认识的按 state 显示。
+    /// rate_limited / overloaded（几分钟后自己继续，不用处理）、device_offline（等电脑上线）、answer（等子任务时
+    /// 只在等队友回答，8.11）。以后可能加新值，不认识的按 state 显示。
     #[uniffi(default = None)]
     pub wait_code: Option<String>,
 }
@@ -818,7 +821,8 @@ impl From<d::TeamTemplate> for TeamTemplate {
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct BoardPost {
     pub id: String,
-    /// 哪个实例写的；没有是用户自己写的，或者写它的实例已经删了。
+    /// 哪个实例写的；没有是用户自己写的。实例删了 id 还在、`author_name` 没有：用 `ai_generated` 区分用户和
+    /// 删了的 agent。
     pub author_instance_id: Option<String>,
     /// 写它的实例的名字（实例删了就没有）。
     pub author_name: Option<String>,
@@ -1772,8 +1776,15 @@ impl ThinktinClient {
     }
 
     /// 用户自己在看板上写一条：最长 2000 字，最多 8 个标签（字母、数字、-、_）。满了最早的自动归档。
-    pub async fn post_to_board(&self, body: String, tags: Vec<String>) -> Result<BoardPost> {
-        self.run(|c| async move { Ok(c.api.post_to_board(&body, &tags).await?.into()) })
+    /// 看板上的内容用户所有的 agent 都读得到：有像密码、key 的内容时不发，返回 `ContainsSecrets`（和
+    /// `send_message` 一样），用户确认要发时带 `allow_secrets`；保险箱里有的，服务端还会换成引用。
+    pub async fn post_to_board(
+        &self,
+        body: String,
+        tags: Vec<String>,
+        allow_secrets: bool,
+    ) -> Result<BoardPost> {
+        self.run(|c| async move { Ok(c.post_to_board(&body, &tags, allow_secrets).await?.into()) })
             .await
     }
 

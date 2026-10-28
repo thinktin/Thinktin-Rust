@@ -99,6 +99,24 @@ pub async fn update(
     }
     let mut t = s.db.tenant(who.user).await?;
     let before = t.instance(id).await?;
+    let switched = req.peer_access.filter(|on| *on != before.peer_access);
+    // 关了以后别人问它、还没答的问题也不答了（8.11）：提问方拿到“没问成”。先拿提问用的那把锁，同时在建的
+    // 提问要么已经提交、这里取消得到，要么等这里提交后再看开关、被拒绝；先锁运行再改实例（和执行器同序）。
+    if switched == Some(false) {
+        t.lock_run_waits(who.user).await?;
+        for run in t
+            .cancel_asks_to(id, "the agent stopped taking questions")
+            .await?
+        {
+            t.append_event(
+                run.instance_id,
+                Some(run.id),
+                "run.state",
+                &json!({ "state": run.state, "reason": run.state_reason }),
+            )
+            .await?;
+        }
+    }
     t.update_instance(
         id,
         &InstanceChange {
@@ -109,7 +127,7 @@ pub async fn update(
     )
     .await?;
     // 关掉交流开关是安全相关的改动（能控制电脑、能用保险箱的实例常常要关），记审计。
-    if let Some(on) = req.peer_access.filter(|on| *on != before.peer_access) {
+    if let Some(on) = switched {
         t.audit(
             &who.actor(),
             "instance.peer_access",
@@ -117,21 +135,6 @@ pub async fn update(
             &json!({ "on": on }),
         )
         .await?;
-        // 关了以后别人问它、还没答的问题也不答了（8.11）：提问方拿到“没问成”。
-        if !on {
-            for run in t
-                .cancel_asks_to(id, "the agent stopped taking questions")
-                .await?
-            {
-                t.append_event(
-                    run.instance_id,
-                    Some(run.id),
-                    "run.state",
-                    &json!({ "state": run.state, "reason": run.state_reason }),
-                )
-                .await?;
-            }
-        }
     }
     let instance = t.instance(id).await?;
     t.commit().await?;

@@ -14,7 +14,7 @@ use gateway::{AppState, EventHub, GatewayConfig, Inner, LimitConfig};
 use keyvault::secrecy::ExposeSecret;
 use keyvault::{KeyStore, KeyVault, LocalKms, MemoryKeyStore, SealedSecret, WrappedKey};
 use orchestrator::artifacts::{ArtifactStore, LocalBlobStore, Origin};
-use proto::domain::{ApprovalState, InstanceId, PlanId, RunId, UserId};
+use proto::domain::{ApprovalState, InstanceId, PlanId, RunId, RunSource, RunState, UserId};
 use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};
 use store::testing::TestDb;
@@ -2052,6 +2052,36 @@ async fn board_over_http() {
     assert_eq!(post["tags"], json!(["launch"]));
     assert_eq!(post["ai_generated"], false);
     let id = post["id"].as_str().unwrap().to_owned();
+    // 保险箱里的密码换成引用再上看板：所有 agent 都读得到看板。
+    let (st, _) = a
+        .call(
+            Method::POST,
+            "/v1/vault",
+            tok,
+            Some(json!({ "name": "github", "password": "hunter2-secret" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED);
+    let (st, scrubbed) = a
+        .call(
+            Method::POST,
+            "/v1/board",
+            tok,
+            Some(json!({ "body": "the password is hunter2-secret" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{scrubbed}");
+    assert_eq!(scrubbed["body"], "the password is [vault:github]");
+    let scrubbed_id = scrubbed["id"].as_str().unwrap().to_owned();
+    let (st, _) = a
+        .call(
+            Method::DELETE,
+            &format!("/v1/board/{scrubbed_id}"),
+            tok,
+            None,
+        )
+        .await;
+    assert!(st.is_success());
     let (st, _) = a
         .call(
             Method::POST,
@@ -2138,6 +2168,25 @@ async fn instance_settings_over_http() {
         (body["purpose"].as_str(), body["peer_access"].as_bool()),
         (Some(""), Some(true))
     );
+    // 别的 agent 问它、还没答的问题（8.11）：关掉开关时取消。
+    let asker = a.adopt(&u).await;
+    let user: UserId = {
+        let (_, me) = a.call(Method::GET, "/v1/me", tok, None).await;
+        me["id"].as_str().unwrap().parse().unwrap()
+    };
+    let mut w = a.t.db.worker().await.unwrap();
+    let parent = w
+        .create_run(
+            user,
+            &store::NewRun::new(asker, RunSource::User, "task", "1"),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let mut q = store::NewRun::new(inst, RunSource::Ask, "（说明）\n\n问题", "1");
+    q.parent_run_id = Some(parent.id);
+    let q = w.create_run(user, &q).await.unwrap().unwrap();
+    w.commit().await.unwrap();
 
     let (st, body) = a
         .call(
@@ -2151,6 +2200,31 @@ async fn instance_settings_over_http() {
     assert_eq!(body["purpose"], "Finds sources");
     assert_eq!(body["peer_access"], false);
     assert_eq!(body["name"], "My Claude", "the name is kept");
+    let mut w = a.t.db.worker().await.unwrap();
+    let cancelled = w.run_record(q.id).await.unwrap().run;
+    w.rollback().await.unwrap();
+    assert_eq!(cancelled.state, RunState::Cancelled);
+    assert_eq!(
+        cancelled.state_reason.as_deref(),
+        Some("the agent stopped taking questions")
+    );
+    let logged: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM events WHERE run_id = $1 AND kind = 'run.state'")
+            .bind(q.id.0)
+            .fetch_one(a.t.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(logged, 1);
+    // 再关一次（没变）：不再记审计。
+    let (st, _) = a
+        .call(
+            Method::PATCH,
+            &path,
+            tok,
+            Some(json!({ "peer_access": false })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK);
     // 只改名字：别的不动。
     let (st, body) = a
         .call(

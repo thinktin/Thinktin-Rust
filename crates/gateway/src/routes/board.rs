@@ -59,14 +59,18 @@ pub struct PostReq {
     tags: Vec<String>,
 }
 
-/// 用户自己写一条（作者是用户；满了最早的自动归档）。
+/// 用户自己写一条（作者是用户；满了最早的自动归档）。保险箱里的密码换成引用再存（11.6）：看板上的内容
+/// 所有 agent 都读得到。
 pub async fn create(
     State(s): State<AppState>,
     Authed(who): Authed,
     ApiJson(req): ApiJson<PostReq>,
 ) -> ApiResult<(StatusCode, Json<BoardPost>)> {
-    let body = check_board_body(&req.body)?;
+    check_board_body(&req.body)?;
     let tags = normalize_board_tags(&req.tags)?;
+    // 换成引用以后可能变长：再查一次长度。
+    let body = super::vault::scrub_user_text(&s, who.user, req.body.trim()).await;
+    let body = check_board_body(&body)?;
     let mut t = s.db.tenant(who.user).await?;
     let (post, _) = t
         .post_to_board(&NewBoardPost {

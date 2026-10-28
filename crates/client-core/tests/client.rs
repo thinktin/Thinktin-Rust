@@ -1013,12 +1013,21 @@ async fn ffi_board() {
     let Some(e) = env().await else { return };
     let (c, _store, _dir) = ffi_login(&e, "13800138529", "android", "Pixel").await;
     let post = c
-        .post_to_board("周五发布".into(), vec!["发布".into()])
+        .post_to_board("周五发布".into(), vec!["发布".into()], false)
         .await
         .unwrap();
     assert!(!post.ai_generated);
     assert_eq!(post.tags, ["发布"]);
-    c.post_to_board("其他".into(), vec![]).await.unwrap();
+    c.post_to_board("其他".into(), vec![], false).await.unwrap();
+    // 像密码的不发（11.6）。
+    let err = c
+        .post_to_board("mail 密码是 Abc12345".into(), vec![], false)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, ClientError::ContainsSecrets { .. }),
+        "{err:?}"
+    );
     assert_eq!(c.board(None, false, None, None).await.unwrap().len(), 2);
     let tagged = c
         .board(Some("发布".into()), false, None, None)

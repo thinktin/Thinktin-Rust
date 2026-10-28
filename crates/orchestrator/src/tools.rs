@@ -477,6 +477,14 @@ impl ArtifactTools {
     ) -> Result<(crate::artifacts::Origin, Option<String>), Fail> {
         let mut w = self.db.worker().await?;
         let rec = w.run_record(ctx.run).await?;
+        // 回答队友的问题（8.11）时只看得到、只写得进这个问题下面的产出物：问的是信息，不是权限，回答方
+        // 不能借机读提问方整棵运行树的产出物（可能来自别的、关了交流开关的实例），也不能覆盖它们。
+        let root = w
+            .run_chain(ctx.run)
+            .await?
+            .into_iter()
+            .find(|(_, _, source)| *source == proto::domain::RunSource::Ask)
+            .map_or(rec.run.root_run_id, |(id, _, _)| id);
         let rt = w.instance_runtime(ctx.instance).await?;
         w.rollback().await?;
         Ok((
@@ -484,7 +492,7 @@ impl ArtifactTools {
                 user: ctx.user,
                 instance: ctx.instance,
                 run: ctx.run,
-                root: rec.run.root_run_id,
+                root,
             },
             rt.sandbox_id,
         ))

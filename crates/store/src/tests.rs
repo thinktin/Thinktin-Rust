@@ -4549,3 +4549,117 @@ async fn asks_detect_waits_and_stale_questions_are_cancelled() {
     assert!(tx.cancel_asks_to(c.id, "closed").await.unwrap().is_empty());
     tx.commit().await.unwrap();
 }
+
+/// 看板取消归档（8.10）：已经是那样的不动（重试不报错）；取消归档的算新的，看板满着时下一条不先把它归档。
+#[tokio::test]
+async fn unarchived_board_posts_count_as_new() {
+    use proto::domain::MAX_BOARD_LIVE_POSTS;
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let u = user(db, "+8613800000896").await;
+    let mut tx = db.tenant(u).await.unwrap();
+    let mut ids = Vec::new();
+    for i in 0..MAX_BOARD_LIVE_POSTS {
+        let (p, _) = tx
+            .post_to_board(&crate::NewBoardPost {
+                body: format!("post {i}"),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        ids.push(p.id);
+    }
+    // 满了：取消归档一条本来就没归档的不报错。
+    let live = tx.set_board_post_archived(ids[0], false).await.unwrap();
+    assert_eq!(live.archived_at, None);
+    tx.set_board_post_archived(ids[0], true).await.unwrap();
+    assert!(
+        tx.set_board_post_archived(ids[0], true)
+            .await
+            .unwrap()
+            .archived_at
+            .is_some()
+    );
+    tx.commit().await.unwrap();
+    // 取消归档、再写一条都是单独的请求：归档的是最早的另一条，刚取消归档的那条还在。
+    let mut tx = db.tenant(u).await.unwrap();
+    tx.set_board_post_archived(ids[0], false).await.unwrap();
+    tx.commit().await.unwrap();
+    let mut tx = db.tenant(u).await.unwrap();
+    let (_, archived) = tx
+        .post_to_board(&crate::NewBoardPost {
+            body: "newest".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(archived, 1);
+    assert_eq!(tx.board_post(ids[0]).await.unwrap().archived_at, None);
+    assert!(tx.board_post(ids[1]).await.unwrap().archived_at.is_some());
+    tx.commit().await.unwrap();
+}
+
+/// 紧急消息（8.12）先来后到：实例空闲时连发两条，后一条排在前一条后面；有一条在等着打断时，再来的都排在它后面；
+/// 紧急消息不当普通消息捎带。
+#[tokio::test]
+async fn urgent_messages_keep_their_order() {
+    use crate::Urgent;
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let u = user(db, "+8613800000897").await;
+    let inst = instance(db, u).await;
+    let urgent = |prompt: &'static str| {
+        let inst = inst.clone();
+        async move {
+            let mut tx = db.tenant(u).await.unwrap();
+            let r = tx
+                .queue_urgent_run(&NewRun::new(inst.id, RunSource::User, prompt, "1"))
+                .await
+                .unwrap();
+            tx.commit().await.unwrap();
+            r
+        }
+    };
+    let normal = queue_run(db, u, &inst, "normal").await;
+    let (a, how) = urgent("a").await;
+    assert_eq!(how, Urgent::Free);
+    let (b, how) = urgent("b").await;
+    assert_eq!(how, Urgent::Behind(a.id));
+    let mut w = db.worker().await.unwrap();
+    assert!(
+        w.unannounced_messages(inst.id, 10)
+            .await
+            .unwrap()
+            .iter()
+            .all(|r| r.id == normal.id)
+    );
+    // a 先跑；它跑着的时候再来一条：b 还在等，排在 b 后面，不去打断 a。
+    let first = w.claim_next_run("x", LEASE).await.unwrap().unwrap();
+    assert_eq!(first.run.id, a.id);
+    w.commit().await.unwrap();
+    let (c, how) = urgent("c").await;
+    assert_eq!(how, Urgent::Behind(b.id));
+    let mut w = db.worker().await.unwrap();
+    w.transition_run(a.id, "x", RunState::Running, &RunChange::default())
+        .await
+        .unwrap();
+    w.transition_run(a.id, "x", RunState::Succeeded, &RunChange::default())
+        .await
+        .unwrap();
+    let order: Vec<_> = {
+        let mut got = Vec::new();
+        for _ in 0..3 {
+            let r = w.claim_next_run("x", LEASE).await.unwrap().unwrap();
+            got.push(r.run.id);
+            w.transition_run(r.run.id, "x", RunState::Running, &RunChange::default())
+                .await
+                .unwrap();
+            w.transition_run(r.run.id, "x", RunState::Succeeded, &RunChange::default())
+                .await
+                .unwrap();
+        }
+        got
+    };
+    assert_eq!(order, [b.id, c.id, normal.id]);
+    w.commit().await.unwrap();
+}
