@@ -33,17 +33,25 @@ def token(key_id: str, issuer_id: str | None, private_key: str) -> str:
 
 def get(path: str, bearer: str) -> tuple[int, dict]:
     """返回 (HTTP 状态, JSON)；连不上时状态是 0。"""
-    request = urllib.request.Request(API + path, headers={"Authorization": f"Bearer {bearer}"})
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            return response.status, json.load(response)
-    except urllib.error.HTTPError as error:
+    reason = ""
+    for attempt in range(1, 5):
+        request = urllib.request.Request(API + path, headers={"Authorization": f"Bearer {bearer}"})
         try:
-            return error.code, json.load(error)
-        except ValueError:
-            return error.code, {}
-    except (urllib.error.URLError, TimeoutError) as error:
-        return 0, {"reason": str(error)}
+            with urllib.request.urlopen(request, timeout=30) as response:
+                return response.status, json.load(response)
+        except urllib.error.HTTPError as error:
+            if (error.code == 429 or error.code >= 500) and attempt < 4:
+                time.sleep(attempt * 5)
+                continue
+            try:
+                return error.code, json.load(error)
+            except ValueError:
+                return error.code, {}
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
+            # DNS、断连这类偶发问题：退避重试几次。
+            reason = str(error)
+            time.sleep(attempt * 5)
+    return 0, {"reason": reason}
 
 
 def apple_error(body: dict) -> str:

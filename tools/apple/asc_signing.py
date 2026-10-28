@@ -44,21 +44,34 @@ class Client:
         return jwt.encode(claims, self.private_key, algorithm="ES256", headers={"kid": self.key_id, "typ": "JWT"})
 
     def call(self, method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
+        """连不上（DNS、超时、断连）和 429、5xx 退避重试几次；POST 建证书这类不幂等的，只在请求根本没发出去时重试。"""
         data = json.dumps(body).encode() if body is not None else None
-        request = urllib.request.Request(API + path, data=data, method=method)
-        request.add_header("Authorization", f"Bearer {self.token()}")
-        if data is not None:
-            request.add_header("Content-Type", "application/json")
-        try:
-            with urllib.request.urlopen(request, timeout=60) as response:
-                raw = response.read()
-                return response.status, json.loads(raw) if raw else {}
-        except urllib.error.HTTPError as error:
-            raw = error.read()
+        for attempt in range(1, 6):
+            request = urllib.request.Request(API + path, data=data, method=method)
+            request.add_header("Authorization", f"Bearer {self.token()}")
+            if data is not None:
+                request.add_header("Content-Type", "application/json")
             try:
-                return error.code, json.loads(raw) if raw else {}
-            except ValueError:
-                return error.code, {}
+                with urllib.request.urlopen(request, timeout=60) as response:
+                    raw = response.read()
+                    return response.status, json.loads(raw) if raw else {}
+            except urllib.error.HTTPError as error:
+                raw = error.read()
+                try:
+                    parsed = json.loads(raw) if raw else {}
+                except ValueError:
+                    parsed = {}
+                if (error.code == 429 or error.code >= 500) and method in ("GET", "DELETE") and attempt < 5:
+                    print(f"{method} {path.split('?')[0]} 返回 {error.code}，{attempt * 10} 秒后重试")
+                    time.sleep(attempt * 10)
+                    continue
+                return error.code, parsed
+            except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
+                if attempt == 5:
+                    fail(f"连不上 App Store Connect（{method} {path.split('?')[0]}）：{error}")
+                print(f"连不上 App Store Connect（{error}），{attempt * 10} 秒后重试")
+                time.sleep(attempt * 10)
+        return 0, {}
 
 
 def apple_error(body: dict) -> str:
