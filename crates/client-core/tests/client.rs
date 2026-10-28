@@ -1007,6 +1007,34 @@ async fn ffi_access_token_for_the_desktop_service() {
     ));
 }
 
+/// 8.10：共享看板经 UniFFI 读写、归档、删除。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ffi_board() {
+    let Some(e) = env().await else { return };
+    let (c, _store, _dir) = ffi_login(&e, "13800138529", "android", "Pixel").await;
+    let post = c
+        .post_to_board("周五发布".into(), vec!["发布".into()])
+        .await
+        .unwrap();
+    assert!(!post.ai_generated);
+    assert_eq!(post.tags, ["发布"]);
+    c.post_to_board("其他".into(), vec![]).await.unwrap();
+    assert_eq!(c.board(None, false, None, None).await.unwrap().len(), 2);
+    let tagged = c
+        .board(Some("发布".into()), false, None, None)
+        .await
+        .unwrap();
+    assert_eq!(tagged.len(), 1);
+    let archived = c
+        .set_board_post_archived(post.id.clone(), true)
+        .await
+        .unwrap();
+    assert!(archived.archived_at_ms.is_some());
+    assert_eq!(c.board(None, true, None, None).await.unwrap().len(), 1);
+    c.delete_board_post(post.id).await.unwrap();
+    assert!(c.board(None, true, None, None).await.unwrap().is_empty());
+}
+
 /// 8.9：实例的用途说明和“允许其他 agent 查我、问我”，经 UniFFI 改；给了才改。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn ffi_instance_settings() {

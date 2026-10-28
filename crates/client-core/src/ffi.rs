@@ -814,6 +814,40 @@ impl From<d::TeamTemplate> for TeamTemplate {
     }
 }
 
+/// 共享看板的一条（8.10）：用户的 agent（或用户自己）写的进展、决定、待别人处理的事。写了不改，只能归档、删除。
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct BoardPost {
+    pub id: String,
+    /// 哪个实例写的；没有是用户自己写的，或者写它的实例已经删了。
+    pub author_instance_id: Option<String>,
+    /// 写它的实例的名字（实例删了就没有）。
+    pub author_name: Option<String>,
+    /// 哪次运行写的。
+    pub run_id: Option<String>,
+    pub body: String,
+    pub tags: Vec<String>,
+    /// agent 写的：显示时要带“AI 生成”标识（16.3）。用户自己写的是 false。
+    pub ai_generated: bool,
+    pub created_at_ms: i64,
+    pub archived_at_ms: Option<i64>,
+}
+
+impl From<d::BoardPost> for BoardPost {
+    fn from(p: d::BoardPost) -> Self {
+        Self {
+            id: p.id.to_string(),
+            author_instance_id: p.author_instance_id.map(|i| i.to_string()),
+            author_name: p.author_name,
+            run_id: p.run_id.map(|r| r.to_string()),
+            body: p.body,
+            tags: p.tags,
+            ai_generated: p.ai_generated,
+            created_at_ms: ms(p.created_at),
+            archived_at_ms: p.archived_at.map(ms),
+        }
+    }
+}
+
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct InboxItem {
     pub id: String,
@@ -1711,6 +1745,52 @@ impl ThinktinClient {
     pub async fn rename_instance(&self, instance_id: String, name: String) -> Result<Instance> {
         let id: d::InstanceId = parse(&instance_id, "instance")?;
         self.run(|c| async move { Ok(c.api.rename_instance(id, &name).await?.into()) })
+            .await
+    }
+
+    /// 共享看板（8.10），新的在前：`tag` 只看带这个标签的，`archived` 看归档了的（默认没归档的），
+    /// `before_id` 往下翻，`limit` 默认 50、最多 200。
+    pub async fn board(
+        &self,
+        tag: Option<String>,
+        archived: bool,
+        before_id: Option<String>,
+        limit: Option<u32>,
+    ) -> Result<Vec<BoardPost>> {
+        let before = before_id
+            .map(|b| parse::<d::BoardPostId>(&b, "board post"))
+            .transpose()?;
+        self.run(|c| async move {
+            Ok(c.api
+                .board(tag.as_deref(), archived, before, limit)
+                .await?
+                .into_iter()
+                .map(Into::into)
+                .collect())
+        })
+        .await
+    }
+
+    /// 用户自己在看板上写一条：最长 2000 字，最多 8 个标签（字母、数字、-、_）。满了最早的自动归档。
+    pub async fn post_to_board(&self, body: String, tags: Vec<String>) -> Result<BoardPost> {
+        self.run(|c| async move { Ok(c.api.post_to_board(&body, &tags).await?.into()) })
+            .await
+    }
+
+    /// 归档、取消归档。没归档的已经有 200 条时取消归档报 422（先归档别的）。
+    pub async fn set_board_post_archived(
+        &self,
+        post_id: String,
+        archived: bool,
+    ) -> Result<BoardPost> {
+        let id: d::BoardPostId = parse(&post_id, "board post")?;
+        self.run(|c| async move { Ok(c.api.set_board_post_archived(id, archived).await?.into()) })
+            .await
+    }
+
+    pub async fn delete_board_post(&self, post_id: String) -> Result<()> {
+        let id: d::BoardPostId = parse(&post_id, "board post")?;
+        self.run(|c| async move { c.api.delete_board_post(id).await })
             .await
     }
 

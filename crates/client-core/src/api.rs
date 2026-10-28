@@ -9,12 +9,12 @@ use std::time::Duration;
 
 use proto::api::{API_VERSION, ErrorCode, VERSION_HEADER};
 use proto::domain::{
-    Approval, ApprovalId, Artifact, ArtifactId, CatchUp, ContentReport, Credential, CredentialId,
-    Device, DeviceId, DeviceMessage, DeviceMessageId, DeviceMessageKind, DevicePlatform, ImChannel,
-    ImChannelId, InboxItem, InboxItemId, Instance, InstanceEvent, InstanceId, ModelRoute, Plan,
-    PlanId, PlanPolicy, PlanStep, PushChannelKind, ReportReason, Run, RunId, ScheduleSpec, Team,
-    TeamId, TeamMember, TeamTemplate, TeamTemplateId, TeamTemplateSpec, Trigger, TriggerId, User,
-    VaultItem, VaultItemId, VaultRequest, VaultRequestId,
+    Approval, ApprovalId, Artifact, ArtifactId, BoardPost, BoardPostId, CatchUp, ContentReport,
+    Credential, CredentialId, Device, DeviceId, DeviceMessage, DeviceMessageId, DeviceMessageKind,
+    DevicePlatform, ImChannel, ImChannelId, InboxItem, InboxItemId, Instance, InstanceEvent,
+    InstanceId, ModelRoute, Plan, PlanId, PlanPolicy, PlanStep, PushChannelKind, ReportReason, Run,
+    RunId, ScheduleSpec, Team, TeamId, TeamMember, TeamTemplate, TeamTemplateId, TeamTemplateSpec,
+    Trigger, TriggerId, User, VaultItem, VaultItemId, VaultRequest, VaultRequestId,
 };
 use reqwest::Method;
 use reqwest::header::HeaderValue;
@@ -1217,6 +1217,66 @@ impl Api {
 
     pub async fn mark_inbox_unread(&self, id: InboxItemId) -> Result<()> {
         self.empty(Method::POST, &format!("/v1/inbox/{id}/unread"), None)
+            .await
+    }
+
+    /// 共享看板（8.10），新的在前：`tag` 只看带这个标签的，`archived` 看归档了的，`before` 往下翻。
+    pub async fn board(
+        &self,
+        tag: Option<&str>,
+        archived: bool,
+        before: Option<BoardPostId>,
+        limit: Option<u32>,
+    ) -> Result<Vec<BoardPost>> {
+        #[derive(Deserialize)]
+        struct R {
+            posts: Vec<BoardPost>,
+        }
+        let query = {
+            let mut q = url::form_urlencoded::Serializer::new(String::new());
+            if let Some(t) = tag {
+                q.append_pair("tag", t);
+            }
+            if archived {
+                q.append_pair("archived", "true");
+            }
+            if let Some(b) = before {
+                q.append_pair("before", &b.to_string());
+            }
+            if let Some(l) = limit {
+                q.append_pair("limit", &l.to_string());
+            }
+            q.finish()
+        };
+        Ok(self
+            .json::<R>(Method::GET, &format!("/v1/board?{query}"), None)
+            .await?
+            .posts)
+    }
+
+    /// 用户自己在看板上写一条（满了最早的自动归档）。
+    pub async fn post_to_board(&self, body: &str, tags: &[String]) -> Result<BoardPost> {
+        self.json(
+            Method::POST,
+            "/v1/board",
+            Some(&json!({ "body": body, "tags": tags })),
+        )
+        .await
+    }
+
+    /// 归档、取消归档（没归档的满了时取消归档报 422）。
+    pub async fn set_board_post_archived(
+        &self,
+        id: BoardPostId,
+        archived: bool,
+    ) -> Result<BoardPost> {
+        let action = if archived { "archive" } else { "unarchive" };
+        self.json(Method::POST, &format!("/v1/board/{id}/{action}"), None)
+            .await
+    }
+
+    pub async fn delete_board_post(&self, id: BoardPostId) -> Result<()> {
+        self.empty(Method::DELETE, &format!("/v1/board/{id}"), None)
             .await
     }
 
