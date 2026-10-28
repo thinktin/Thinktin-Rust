@@ -27,7 +27,10 @@
 - **2026-10-28 第一次传上 TestFlight**（run 40714946824，`5c09e23`，Intel 机器 macos-15-intel、Xcode 26.3）：演示版 0.1.0（构建号 16），
   entitlements 里有 production 的推送、Time Sensitive、App Group；临时分发证书和两个描述文件用完都删了（204）。
 
-进行中：无。等苹果处理完，用户在 App Store Connect 的 TestFlight 里建内部测试组、把自己加进去，手机上用 TestFlight 装。
+- 构建 16 处理完（VALID）。工作流加了 `invite_testers`（Linux 上跑）：建了内部测试组「内部测试」（能看到所有构建），团队唯一的用户
+  （账号持有人）加进去、发了邀请邮件（run 40724142583）。
+
+进行中：无。用户在手机上从邀请邮件 / TestFlight 装演示版。
 
 下一步：
 1. 本分支（工作流、签名脚本、演示版开关、截图工作流）开 PR 合进 main，用户说合并才合。
