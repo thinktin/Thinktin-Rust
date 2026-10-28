@@ -8,7 +8,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use control::{ArchiveMeta, BuiltinTemplates, Error, Lifecycle, LifecycleConfig, WorkspaceStore};
-use proto::domain::{InstanceId, InstanceState, UserId};
+use proto::domain::{
+    CatchUp, InstanceId, InstanceState, PlanAuthor, PlanPolicy, ScheduleSpec, UserId,
+};
 use sandbox::local::LocalProvider;
 use sandbox::{SandboxId, SandboxProvider, SandboxState};
 use sha2::{Digest, Sha256};
@@ -360,4 +362,71 @@ async fn version_changes_keep_the_workspace() {
     let third = rebuilt.sandbox_id.unwrap();
     assert_ne!(third, new);
     assert_eq!(e.read(&third, "workspace/notes.md").await.unwrap(), b"v2");
+}
+
+/// 归档了的实例，计划快到点时也提前建好沙箱、放回工作区（6.5 预热）。
+#[tokio::test]
+async fn archived_instances_are_prewarmed_before_their_plans() {
+    let Some(e) = env().await else { return };
+    let lc = lifecycle(
+        &e,
+        LifecycleConfig {
+            keep_if_trigger_within: Duration::ZERO,
+            prewarm_lead: Duration::from_secs(300),
+            ..eager()
+        },
+    );
+    let inst = lc.adopt(e.user, "user:d", "pi", None, "Pi").await.unwrap();
+    let sid = lc
+        .ensure_running(inst.id)
+        .await
+        .unwrap()
+        .sandbox_id
+        .unwrap();
+    e.write(&sid, "workspace/notes.txt", b"keep me").await;
+    assert_eq!(lc.sweep().await.unwrap().archived, 1);
+
+    let mut t = e.t.db.tenant(e.user).await.unwrap();
+    let plan = t
+        .create_plan(&store::NewPlan {
+            instance_id: inst.id,
+            title: "soon".into(),
+            goal: "check".into(),
+            policy: PlanPolicy::default(),
+            catch_up: CatchUp::Once,
+            created_by: PlanAuthor::User,
+            run_grant_id: None,
+        })
+        .await
+        .unwrap();
+    t.add_trigger(
+        plan.id,
+        &ScheduleSpec::Cron {
+            expr: "0 * * * *".into(),
+            tz: "UTC".into(),
+        },
+        Some(chrono::Utc::now() + chrono::Duration::seconds(60)),
+    )
+    .await
+    .unwrap();
+    t.commit().await.unwrap();
+
+    // 换成平常的计时，免得同一轮巡检里预热完又被暂停、归档。
+    let lc = lifecycle(
+        &e,
+        LifecycleConfig {
+            keep_if_trigger_within: Duration::ZERO,
+            prewarm_lead: Duration::from_secs(300),
+            ..LifecycleConfig::default()
+        },
+    );
+    let report = lc.sweep().await.unwrap();
+    assert_eq!((report.prewarmed, report.failed), (1, 0));
+    let rt = e.runtime(inst.id).await;
+    assert_eq!(rt.state, InstanceState::Running);
+    let sid = rt.sandbox_id.unwrap();
+    assert_eq!(
+        e.read(&sid, "workspace/notes.txt").await.unwrap(),
+        b"keep me"
+    );
 }

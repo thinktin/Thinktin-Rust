@@ -549,7 +549,7 @@ impl Lifecycle {
     pub async fn sweep(&self) -> Result<SweepReport> {
         let mut report = SweepReport::default();
 
-        // 预热（6.5）：计划快到点了，它要用的实例（计划自己的、流水线第一批步骤的）还暂停着就提前唤醒。
+        // 预热（6.5）：计划快到点了，它要用的实例（计划自己的、流水线第一批步骤的）还暂停或归档着就提前唤醒。
         // 唤醒时记一次活动，下面的空闲暂停不会马上又把它停掉。
         if !self.cfg.prewarm_lead.is_zero() {
             let mut w = self.db.worker().await?;

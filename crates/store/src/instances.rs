@@ -539,8 +539,8 @@ impl Tx<Worker> {
     }
 
     /// 这段时间内有没有计划要触发（有就不归档，免得到点还要从模板重建）。
-    /// 预热（6.5）：`within` 之内有计划要触发、现在暂停着的实例。包括计划自己的实例，
-    /// 和流水线里第一批（没有依赖、到点就开跑的）步骤的实例。账号冻结的不算。
+    /// 预热（6.5）：`within` 之内有计划要触发、现在暂停或归档着的实例（归档的要从模板重建、放回工作区，
+    /// 更要提前）。包括计划自己的实例，和流水线里第一批（没有依赖、到点就开跑的）步骤的实例。账号冻结的不算。
     pub async fn instances_to_prewarm(
         &mut self,
         within: Duration,
@@ -548,7 +548,7 @@ impl Tx<Worker> {
     ) -> Result<Vec<InstanceId>> {
         let ids: Vec<Uuid> = sqlx::query_scalar(
             "SELECT i.id FROM instances i JOIN users u ON u.id = i.user_id AND u.status = 'active' \
-             WHERE i.state = 'paused' AND i.id IN ( \
+             WHERE i.state IN ('paused', 'archived') AND i.id IN ( \
                SELECT p.instance_id FROM plans p JOIN triggers t ON t.plan_id = p.id \
                  WHERE p.status = 'active' AND t.enabled \
                    AND t.next_fire_at < now() + make_interval(secs => $1) \
