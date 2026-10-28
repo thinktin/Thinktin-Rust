@@ -46,12 +46,19 @@ SG_RULES = [("80/80", "HTTP：证书验证、跳转 HTTPS"), ("443/443", "HTTPS�
 GATEWAY_PORTS = "8790/8790"
 
 
-def wanted_rules(vpc_cidr):
+def vpc_blocks(vpc_entry):
+    """VPC 的全部网段：主网段加上附加网段（ACS 的 Pod 交换机可能在附加网段里）。"""
+    blocks = [b.strip() for b in str(vpc_entry.get("CidrBlock") or "").split(",") if b.strip()]
+    secondary = (vpc_entry.get("SecondaryCidrBlocks") or {}).get("SecondaryCidrBlock") or []
+    blocks += [str(b).strip() for b in secondary if str(b).strip() and str(b).strip() not in blocks]
+    return blocks
+
+
+def wanted_rules(blocks):
     """（端口，来源网段，说明）。"""
     rules = [(ports, "0.0.0.0/0", why) for ports, why in SG_RULES]
-    for block in str(vpc_cidr).split(","):
-        if block.strip():
-            rules.append((GATEWAY_PORTS, block.strip(), "模型网关：只许 VPC 里的沙箱连"))
+    for block in blocks:
+        rules.append((GATEWAY_PORTS, block, "模型网关：只许 VPC 里的沙箱连"))
     return rules
 
 
@@ -74,10 +81,8 @@ def free_cidr(vpc, region, existing):
         vpc_models.DescribeVSwitchesRequest(region_id=region, vpc_id=existing["VpcId"], page_size=50)
     ).body.to_map()
     used = [ipaddress.ip_network(v["CidrBlock"]) for v in body.get("VSwitches", {}).get("VSwitch", []) if v.get("CidrBlock")]
-    for block in str(existing.get("CidrBlock", "")).split(","):
-        if not block.strip():
-            continue
-        for net in ipaddress.ip_network(block.strip()).subnets(new_prefix=24):
+    for block in vpc_blocks(existing):
+        for net in ipaddress.ip_network(block).subnets(new_prefix=24):
             if not any(net.overlaps(u) for u in used):
                 return str(net)
     raise RuntimeError(f"VPC {existing['VpcId']} 的网段里没有空的 /24 了")
@@ -154,8 +159,7 @@ def main():
             ).body.v_switch_id
             print(f"[已建] 交换机 {name} {vsw_id}")
 
-    vpc_cidr = (existing or {}).get("CidrBlock") or VPC_CIDR
-    rules = wanted_rules(vpc_cidr)
+    rules = wanted_rules(vpc_blocks(existing) if existing else [VPC_CIDR])
     shown = "、".join(f"{p.split('/')[0]}（{src}）" for p, src, _ in rules)
     groups = []
     if vpc_id:
