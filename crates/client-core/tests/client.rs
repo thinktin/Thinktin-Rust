@@ -1007,6 +1007,55 @@ async fn ffi_access_token_for_the_desktop_service() {
     ));
 }
 
+/// 8.9：实例的用途说明和“允许其他 agent 查我、问我”，经 UniFFI 改；给了才改。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ffi_instance_settings() {
+    let Some(e) = env().await else { return };
+    let (c, _store, _dir) = ffi_login(&e, "13800138519", "ios", "iPhone").await;
+    let inst = c
+        .adopt("claude".into(), "Writer".into(), None)
+        .await
+        .unwrap();
+    assert_eq!((inst.purpose.as_str(), inst.peer_access), ("", true));
+    let changed = c
+        .update_instance(
+            inst.id.clone(),
+            ffi::InstanceChange {
+                purpose: Some("Drafts the weekly report".into()),
+                peer_access: Some(false),
+                ..ffi::InstanceChange::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(changed.name, "Writer");
+    assert_eq!(changed.purpose, "Drafts the weekly report");
+    assert!(!changed.peer_access);
+    let renamed = c
+        .update_instance(
+            inst.id.clone(),
+            ffi::InstanceChange {
+                name: Some("Reporter".into()),
+                ..ffi::InstanceChange::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        (
+            renamed.name.as_str(),
+            renamed.purpose.as_str(),
+            renamed.peer_access
+        ),
+        ("Reporter", "Drafts the weekly report", false)
+    );
+    assert!(matches!(
+        c.update_instance(inst.id, ffi::InstanceChange::default())
+            .await,
+        Err(ClientError::Api { status: 422, .. })
+    ));
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn ffi_account_and_devices() {
     let Some(e) = env().await else { return };

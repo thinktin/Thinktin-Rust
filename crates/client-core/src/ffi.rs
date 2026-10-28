@@ -269,6 +269,12 @@ pub struct Instance {
     pub state: String,
     pub created_at_ms: i64,
     pub last_active_at_ms: i64,
+    /// 用途说明（8.9）：用户写的，别的 agent 列出队友时看得到。
+    #[uniffi(default = "")]
+    pub purpose: String,
+    /// “允许其他 agent 查我、问我”（8.9），默认打开。关了以后别的 agent 列不出它、查不了它的进度。
+    #[uniffi(default = true)]
+    pub peer_access: bool,
 }
 
 impl From<d::Instance> for Instance {
@@ -282,8 +288,23 @@ impl From<d::Instance> for Instance {
             state: i.state.to_string(),
             created_at_ms: ms(i.created_at),
             last_active_at_ms: ms(i.last_active_at),
+            purpose: i.purpose,
+            peer_access: i.peer_access,
         }
     }
+}
+
+/// 改实例：给了才改。`purpose` 给空串清掉。
+#[derive(Debug, Clone, Default, uniffi::Record)]
+pub struct InstanceChange {
+    #[uniffi(default = None)]
+    pub name: Option<String>,
+    /// 用途说明，最长 200 字。
+    #[uniffi(default = None)]
+    pub purpose: Option<String>,
+    /// “允许其他 agent 查我、问我”。
+    #[uniffi(default = None)]
+    pub peer_access: Option<bool>,
 }
 
 /// 模型别名：agent 用别名调模型，平台按它找到用户的哪把 key、哪个上游模型。
@@ -1690,6 +1711,22 @@ impl ThinktinClient {
     pub async fn rename_instance(&self, instance_id: String, name: String) -> Result<Instance> {
         let id: d::InstanceId = parse(&instance_id, "instance")?;
         self.run(|c| async move { Ok(c.api.rename_instance(id, &name).await?.into()) })
+            .await
+    }
+
+    /// 改名字、用途说明、“允许其他 agent 查我、问我”（8.9），给了才改；什么都没给报 422。
+    pub async fn update_instance(
+        &self,
+        instance_id: String,
+        change: InstanceChange,
+    ) -> Result<Instance> {
+        let id: d::InstanceId = parse(&instance_id, "instance")?;
+        let change = api::InstanceChange {
+            name: change.name,
+            purpose: change.purpose,
+            peer_access: change.peer_access,
+        };
+        self.run(|c| async move { Ok(c.api.update_instance(id, &change).await?.into()) })
             .await
     }
 

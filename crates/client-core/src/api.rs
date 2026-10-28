@@ -173,6 +173,17 @@ pub struct PlanChange {
     pub steps: Option<Vec<PlanStep>>,
 }
 
+/// 改实例：给了才改（名字、用途说明、“允许其他 agent 查我、问我”）。
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct InstanceChange {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub purpose: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peer_access: Option<bool>,
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct InboxPage {
     pub items: Vec<InboxItem>,
@@ -929,6 +940,17 @@ impl Api {
             Some(&json!({ "name": name })),
         )
         .await
+    }
+
+    /// 改实例的名字、用途说明、交流开关（8.9），给了才改。
+    pub async fn update_instance(
+        &self,
+        id: InstanceId,
+        change: &InstanceChange,
+    ) -> Result<Instance> {
+        let body = serde_json::to_value(change).map_err(ClientError::decode)?;
+        self.json(Method::PATCH, &format!("/v1/instances/{id}"), Some(&body))
+            .await
     }
 
     /// 换模板版本（不给就是升级到当前版本）：下次唤醒时重建沙箱，工作区保留。
