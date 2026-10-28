@@ -770,3 +770,58 @@ async fn a_changed_sandbox_address_is_recorded() {
     assert_eq!(rt.sandbox_address, address("10.0.2.7"));
     assert_eq!(stored().await, address("10.0.2.7"));
 }
+
+/// 等审批的运行：默认不挡空闲暂停（agent 进程随沙箱暂停）；关掉 `pause_waiting_approval` 时一直运行。
+/// 归档总是跳过它（销毁沙箱会结束等着的 agent 进程）。
+#[tokio::test]
+async fn approval_waits_can_keep_the_sandbox_running() {
+    let Some(e) = env().await else { return };
+    let cfg = |pause_waiting_approval| LifecycleConfig {
+        idle_pause: Duration::ZERO,
+        archive_after: Duration::ZERO,
+        pause_waiting_approval,
+        ..LifecycleConfig::default()
+    };
+    let inst = lifecycle(&e, cfg(true))
+        .adopt(e.user, "user:d", "pi", None, "Pi")
+        .await
+        .unwrap();
+    let mut t = e.t.db.tenant(e.user).await.unwrap();
+    t.create_run(&NewRun::new(
+        inst.id,
+        RunSource::User,
+        "work",
+        &inst.agent_version,
+    ))
+    .await
+    .unwrap();
+    t.commit().await.unwrap();
+    let mut w = e.t.db.worker().await.unwrap();
+    let run = w
+        .claim_next_run("node-a", Duration::from_secs(60))
+        .await
+        .unwrap()
+        .unwrap();
+    for to in [
+        proto::domain::RunState::Running,
+        proto::domain::RunState::WaitingApproval,
+    ] {
+        w.transition_run(run.run.id, "node-a", to, &Default::default())
+            .await
+            .unwrap();
+    }
+    w.commit().await.unwrap();
+    let state = || async {
+        let mut w = e.t.db.worker().await.unwrap();
+        w.instance_runtime(inst.id).await.unwrap().state
+    };
+
+    let keep = lifecycle(&e, cfg(false));
+    keep.ensure_running(inst.id).await.unwrap();
+    assert_eq!(keep.sweep().await.unwrap().paused, 0);
+    assert_eq!(state().await, InstanceState::Running);
+
+    let report = lifecycle(&e, cfg(true)).sweep().await.unwrap();
+    assert_eq!((report.paused, report.archived), (1, 0));
+    assert_eq!(state().await, InstanceState::Paused);
+}

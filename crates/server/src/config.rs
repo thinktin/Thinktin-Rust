@@ -204,6 +204,8 @@ pub struct Sandbox {
     pub cube: CubeSandbox,
     /// acs 后端（`provider = "acs"` 时用）。API Key 只从环境变量 THINKTIN_ACS_API_KEY 读。
     pub acs: AcsSandbox,
+    /// 实例生命周期的计时（空闲多久暂停、暂停多久归档……），不配用默认值。
+    pub lifecycle: SandboxLifecycle,
     /// 沙箱出网白名单。
     pub network_allow: Vec<String>,
     /// 沙箱里 agent-shim 的路径。
@@ -274,6 +276,62 @@ impl CubeSandbox {
             use_volumes: self.use_volumes,
             volume_driver: self.volume_driver.clone(),
             request_timeout: Duration::from_secs(self.request_timeout_secs),
+        }
+    }
+}
+
+/// 实例生命周期的计时（控制服务的巡检，WBS 6.4）。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SandboxLifecycle {
+    /// 运行中的实例空闲多久（秒）暂停。
+    pub idle_pause_secs: u64,
+    /// 暂停的实例多久（秒）没有活动就归档（销毁沙箱，只留工作区）。
+    pub archive_after_secs: u64,
+    /// 这么久（秒）内有计划要触发的不归档。
+    pub keep_if_trigger_within_secs: u64,
+    /// 计划快到点时提前多久（秒）唤醒实例，0 不预热。
+    pub prewarm_lead_secs: u64,
+    /// 单个沙箱操作的上限（秒）。
+    pub op_timeout_secs: u64,
+    /// 每轮巡检每类最多处理几个实例。
+    pub sweep_batch: i64,
+    /// 沙箱磁盘（MB）。
+    pub disk_mb: u32,
+    /// 等审批的运行不挡空闲暂停。关掉时等审批的实例一直运行（暂停后 agent 进程接不上时用）。
+    pub pause_waiting_approval: bool,
+}
+
+impl Default for SandboxLifecycle {
+    fn default() -> Self {
+        let d = control::LifecycleConfig::default();
+        Self {
+            idle_pause_secs: d.idle_pause.as_secs(),
+            archive_after_secs: d.archive_after.as_secs(),
+            keep_if_trigger_within_secs: d.keep_if_trigger_within.as_secs(),
+            prewarm_lead_secs: d.prewarm_lead.as_secs(),
+            op_timeout_secs: d.op_timeout.as_secs(),
+            sweep_batch: d.sweep_batch,
+            disk_mb: d.disk_mb,
+            pause_waiting_approval: d.pause_waiting_approval,
+        }
+    }
+}
+
+impl Sandbox {
+    /// 控制服务的生命周期配置。
+    pub fn lifecycle_config(&self) -> control::LifecycleConfig {
+        let l = &self.lifecycle;
+        control::LifecycleConfig {
+            idle_pause: Duration::from_secs(l.idle_pause_secs),
+            archive_after: Duration::from_secs(l.archive_after_secs),
+            keep_if_trigger_within: Duration::from_secs(l.keep_if_trigger_within_secs),
+            prewarm_lead: Duration::from_secs(l.prewarm_lead_secs),
+            network_allow: self.network_allow.clone(),
+            disk_mb: l.disk_mb,
+            op_timeout: Duration::from_secs(l.op_timeout_secs),
+            sweep_batch: l.sweep_batch,
+            pause_waiting_approval: l.pause_waiting_approval,
         }
     }
 }
@@ -594,6 +652,7 @@ impl Default for Sandbox {
             local_root: ".thinktin/sandboxes".into(),
             cube: CubeSandbox::default(),
             acs: AcsSandbox::default(),
+            lifecycle: SandboxLifecycle::default(),
             network_allow: Vec::new(),
             shim_path: "agent-shim".into(),
             gateway_url: "http://127.0.0.1:8790".into(),
@@ -872,6 +931,12 @@ impl Config {
             }
             if self.worker.max_concurrent_runs == 0 {
                 bail!("worker.max_concurrent_runs must be positive");
+            }
+            let l = &self.sandbox.lifecycle;
+            if l.op_timeout_secs == 0 || l.sweep_batch <= 0 || l.disk_mb == 0 {
+                bail!(
+                    "sandbox.lifecycle.op_timeout_secs, sweep_batch and disk_mb must be positive"
+                );
             }
         }
         match self.kms.provider.as_str() {
@@ -1205,6 +1270,83 @@ api_ur = \"x\""
         vars.insert("THINKTIN_ACS_API_KEY", "key");
         let cfg = Config::load(Some(&path), &MapEnv(vars)).unwrap();
         assert_eq!(cfg.acs_api_key.as_deref(), Some("key"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn lifecycle_timers() {
+        let d = Config::parse("").unwrap().sandbox.lifecycle_config();
+        let want = control::LifecycleConfig::default();
+        assert_eq!(
+            (
+                d.idle_pause,
+                d.archive_after,
+                d.keep_if_trigger_within,
+                d.prewarm_lead,
+                d.op_timeout,
+                d.sweep_batch,
+                d.disk_mb,
+                d.pause_waiting_approval,
+            ),
+            (
+                want.idle_pause,
+                want.archive_after,
+                want.keep_if_trigger_within,
+                want.prewarm_lead,
+                want.op_timeout,
+                want.sweep_batch,
+                want.disk_mb,
+                want.pause_waiting_approval,
+            ),
+            "defaults come from control"
+        );
+        let cfg = Config::parse(
+            r#"
+            [sandbox]
+            network_allow = ["10.0.0.20:8790"]
+            [sandbox.lifecycle]
+            idle_pause_secs = 600
+            archive_after_secs = 3600
+            keep_if_trigger_within_secs = 0
+            pause_waiting_approval = false
+            "#,
+        )
+        .unwrap();
+        let l = cfg.sandbox.lifecycle_config();
+        assert_eq!(l.idle_pause, Duration::from_secs(600));
+        assert_eq!(l.archive_after, Duration::from_secs(3600));
+        assert_eq!(l.keep_if_trigger_within, Duration::ZERO);
+        assert!(!l.pause_waiting_approval);
+        assert_eq!(
+            l.prewarm_lead, want.prewarm_lead,
+            "unset keys keep defaults"
+        );
+        assert_eq!(l.network_allow, ["10.0.0.20:8790"]);
+        assert!(
+            Config::parse("[sandbox.lifecycle]\nidle_pause = 1").is_err(),
+            "typos are rejected"
+        );
+
+        let dir = std::env::temp_dir().join(format!("tt-lifecycle-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("server.toml");
+        let env = MapEnv(HashMap::from([
+            ("DATABASE_URL", "postgres://x"),
+            ("THINKTIN_SANDBOX_TOKEN_SEED", "seed"),
+            ("THINKTIN_KMS_KEY", "00"),
+        ]));
+        for bad in ["op_timeout_secs = 0", "sweep_batch = 0", "disk_mb = 0"] {
+            std::fs::write(
+                &path,
+                format!("[worker]\nenabled = true\n[sandbox.lifecycle]\n{bad}\n"),
+            )
+            .unwrap();
+            let err = Config::load(Some(&path), &env).unwrap_err();
+            assert!(
+                err.to_string().contains("sandbox.lifecycle"),
+                "{bad}: {err}"
+            );
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 

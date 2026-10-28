@@ -6,7 +6,7 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use proto::domain::{
     CredentialId, Instance, InstanceId, InstanceLimits, InstanceState, MAX_ROUTE_FALLBACKS,
-    ModelRoute, RouteFallback, UserId,
+    ModelRoute, RouteFallback, RunState, UserId,
 };
 use uuid::Uuid;
 
@@ -604,25 +604,33 @@ impl Tx<Worker> {
     }
 
     /// 某个状态下空闲超过 `idle` 的实例（空闲暂停、归档扫描），跳过别的副本正在处理的。
-    /// 有运行正在执行的不算空闲；等审批、等设备的运行不挡暂停（事情来了再唤醒）。
+    /// 有运行正在执行的不算空闲；`also_busy` 里状态的运行也挡着（比如等审批时不暂停）。
+    /// 别的等待（等设备、等额度）不挡暂停，事情来了再唤醒。
     pub async fn idle_instances(
         &mut self,
         state: InstanceState,
         idle: Duration,
         limit: i64,
+        also_busy: &[RunState],
     ) -> Result<Vec<InstanceRuntime>> {
+        let busy: Vec<&str> = [RunState::Starting, RunState::Running]
+            .iter()
+            .chain(also_busy)
+            .map(|s| s.as_str())
+            .collect();
         let rows: Vec<RuntimeRow> = sqlx::query_as(concat!(
             "SELECT ",
             runtime_columns!(),
             " FROM instances \
              WHERE state = $1 AND last_active_at < now() - make_interval(secs => $2) \
                AND NOT EXISTS (SELECT 1 FROM runs WHERE runs.instance_id = instances.id \
-                               AND runs.state IN ('starting', 'running')) \
+                               AND runs.state = ANY($4)) \
              ORDER BY last_active_at LIMIT $3 FOR UPDATE SKIP LOCKED"
         ))
         .bind(state.as_str())
         .bind(secs(idle))
         .bind(limit)
+        .bind(&busy)
         .fetch_all(self.conn())
         .await?;
         rows.into_iter().map(RuntimeRow::into_runtime).collect()

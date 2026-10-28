@@ -7,7 +7,7 @@ use anyhow::Context;
 use auth::grants::{GrantConfig, GrantService};
 use auth::sandbox_token::SandboxTokenIssuer;
 use chrono::{Datelike, NaiveDate, Utc};
-use control::{BuiltinTemplates, Lifecycle, LifecycleConfig};
+use control::{BuiltinTemplates, Lifecycle};
 use notify::apns::{ApnsClient, ApnsConfig};
 use notify::fcm::{FcmClient, FcmConfig, ServiceAccount};
 use notify::filter::KeywordFilter;
@@ -76,10 +76,7 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
         db.clone(),
         provider.clone(),
         Arc::new(BuiltinTemplates),
-        LifecycleConfig {
-            network_allow: cfg.sandbox.network_allow.clone(),
-            ..LifecycleConfig::default()
-        },
+        cfg.sandbox.lifecycle_config(),
     ));
     let seed = cfg
         .sandbox_token_seed

@@ -16,7 +16,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use catalog::Manifest;
-use proto::domain::{Instance, InstanceId, InstanceLimits, InstanceState, UserId};
+use proto::domain::{Instance, InstanceId, InstanceLimits, InstanceState, RunState, UserId};
 use sandbox::{
     CreateSpec, NetworkPolicy, Resources, SandboxId, SandboxInfo, SandboxProvider, SandboxState,
 };
@@ -113,6 +113,8 @@ pub struct LifecycleConfig {
     pub op_timeout: Duration,
     /// 每轮巡检每类最多处理几个实例。
     pub sweep_batch: i64,
+    /// 等审批的运行不挡空闲暂停（agent 进程随沙箱一起暂停，用户批了再恢复）。关掉时等审批的实例一直运行。
+    pub pause_waiting_approval: bool,
 }
 
 impl Default for LifecycleConfig {
@@ -126,6 +128,7 @@ impl Default for LifecycleConfig {
             disk_mb: Resources::default().disk_mb,
             op_timeout: sandbox::DEFAULT_OP_TIMEOUT,
             sweep_batch: 20,
+            pause_waiting_approval: true,
         }
     }
 }
@@ -506,12 +509,18 @@ impl Lifecycle {
             }
         }
 
+        let waiting: &[RunState] = if self.cfg.pause_waiting_approval {
+            &[]
+        } else {
+            &[RunState::WaitingApproval]
+        };
         let mut w = self.db.worker().await?;
         for rt in w
             .idle_instances(
                 InstanceState::Running,
                 self.cfg.idle_pause,
                 self.cfg.sweep_batch,
+                waiting,
             )
             .await?
         {
@@ -532,6 +541,7 @@ impl Lifecycle {
                 InstanceState::Paused,
                 self.cfg.archive_after,
                 self.cfg.sweep_batch,
+                &[RunState::WaitingApproval],
             )
             .await?
         } else {
