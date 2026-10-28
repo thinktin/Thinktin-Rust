@@ -20,8 +20,9 @@ ALTER TABLE instances
     ADD COLUMN restoring_sandbox_id text,
     ADD COLUMN restoring_since timestamptz;
 
--- 业务角色只改它要改的列（以前是整张表的 UPDATE）：沙箱绑定、归档这些列只有后台角色能写。
-REVOKE UPDATE ON instances FROM thinktin_app;
+-- 业务角色只写它要写的列（以前是整张表的 INSERT、UPDATE）：沙箱绑定、归档、放回这些列只有后台角色能写。
+REVOKE INSERT, UPDATE ON instances FROM thinktin_app;
+GRANT INSERT (id, user_id, agent_id, agent_version, harness, name, workspace_id, limits) ON instances TO thinktin_app;
 GRANT UPDATE (name, state, agent_version, rebuild_pending, deleted_at, updated_at, event_seq, token_epoch)
     ON instances TO thinktin_app;
 

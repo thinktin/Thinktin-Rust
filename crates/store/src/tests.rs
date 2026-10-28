@@ -4189,4 +4189,32 @@ async fn workspace_archives_queue_replaced_objects() {
         denied.is_err(),
         "the tenant role cannot write archive columns"
     );
+    t.rollback().await.unwrap();
+    // 新建实例时也写不了（不然能让巡检去删一个它指定的沙箱）。
+    for column in [
+        "sandbox_id",
+        "restoring_sandbox_id",
+        "workspace_archive_pending",
+    ] {
+        let mut t = db.tenant(u).await.unwrap();
+        let denied = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "INSERT INTO instances (id, user_id, agent_id, agent_version, harness, name, workspace_id, {column}) \
+             VALUES (gen_random_uuid(), $1, 'a', '1', 'acp', 'x', 'w', 'victim')"
+        )))
+        .bind(u.0)
+        .execute(t.conn())
+        .await;
+        assert!(denied.is_err(), "the tenant role cannot insert {column}");
+        t.rollback().await.unwrap();
+    }
+    let mut t = db.tenant(u).await.unwrap();
+    sqlx::query(
+        "INSERT INTO instances (id, user_id, agent_id, agent_version, harness, name, workspace_id) \
+         VALUES (gen_random_uuid(), $1, 'a', '1', 'acp', 'x', 'w')",
+    )
+    .bind(u.0)
+    .execute(t.conn())
+    .await
+    .expect("the columns create_instance writes are still allowed");
+    t.rollback().await.unwrap();
 }
