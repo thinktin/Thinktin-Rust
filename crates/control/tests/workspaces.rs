@@ -679,10 +679,23 @@ async fn long_transfers_do_not_lock_the_instance() {
     );
 }
 
-/// 删沙箱可以设成失败一次的本地后端（没有卷）。
+/// 删沙箱可以设成失败一次、或者删完卡住一次的本地后端（没有卷）。
 struct Flaky {
     inner: Arc<LocalProvider>,
     fail_destroy: AtomicBool,
+    stall_destroy: AtomicBool,
+    stalled: tokio::sync::Notify,
+}
+
+impl Flaky {
+    fn new(inner: Arc<LocalProvider>) -> Arc<Self> {
+        Arc::new(Self {
+            inner,
+            fail_destroy: AtomicBool::new(false),
+            stall_destroy: AtomicBool::new(false),
+            stalled: tokio::sync::Notify::new(),
+        })
+    }
 }
 
 #[async_trait]
@@ -733,7 +746,12 @@ impl SandboxProvider for Flaky {
                 "sandbox-manager is unreachable".into(),
             ));
         }
-        self.inner.destroy(id).await
+        self.inner.destroy(id).await?;
+        if self.stall_destroy.swap(false, Ordering::SeqCst) {
+            self.stalled.notify_one();
+            std::future::pending::<()>().await;
+        }
+        Ok(())
     }
 
     async fn delete_workspace(&self, workspace: &str) -> sandbox::Result<()> {
@@ -1033,10 +1051,7 @@ async fn uploads_finished_after_a_purge_are_deleted() {
 #[tokio::test]
 async fn failed_deletes_after_a_save_are_retried_without_saving_again() {
     let Some(e) = env().await else { return };
-    let flaky = Arc::new(Flaky {
-        inner: e.provider.clone(),
-        fail_destroy: AtomicBool::new(false),
-    });
+    let flaky = Flaky::new(e.provider.clone());
     let lc = Lifecycle::new(
         e.t.db.clone(),
         flaky.clone(),
@@ -1069,4 +1084,125 @@ async fn failed_deletes_after_a_save_are_retried_without_saving_again() {
     assert_eq!((report.archived, report.failed), (1, 0));
     assert_eq!(e.store.puts.load(Ordering::SeqCst), 1, "not saved again");
     assert_eq!(e.runtime(inst.id).await.state, InstanceState::Archived);
+}
+
+/// 存好、删沙箱删到一半被打断（运行取消、进程被杀）：归档已经记下了，下次唤醒从新的归档放回，期间的改动不丢。
+#[tokio::test]
+async fn interrupted_deletes_after_a_save_keep_the_new_archive() {
+    let Some(e) = env().await else { return };
+    let flaky = Flaky::new(e.provider.clone());
+    let lc = Arc::new(
+        Lifecycle::new(
+            e.t.db.clone(),
+            flaky.clone(),
+            Arc::new(BuiltinTemplates),
+            LifecycleConfig::default(),
+        )
+        .with_workspace_store(e.store.clone()),
+    );
+    let inst = lc.adopt(e.user, "user:d", "pi", None, "Pi").await.unwrap();
+    let sid = lc
+        .ensure_running(inst.id)
+        .await
+        .unwrap()
+        .sandbox_id
+        .unwrap();
+    e.write(&sid, "workspace/notes.txt", b"v1").await;
+    assert!(lc.archive(inst.id).await.unwrap());
+    let first = e.runtime(inst.id).await.archive.unwrap();
+    let sid = lc
+        .ensure_running(inst.id)
+        .await
+        .unwrap()
+        .sandbox_id
+        .unwrap();
+    e.write(&sid, "workspace/notes.txt", b"v2").await;
+
+    flaky.stall_destroy.store(true, Ordering::SeqCst);
+    let stalled = flaky.stalled.notified();
+    let task = {
+        let lc = lc.clone();
+        tokio::spawn(async move { lc.archive(inst.id).await })
+    };
+    stalled.await;
+    task.abort();
+    let _ = task.await;
+    let rt = e.runtime(inst.id).await;
+    assert_ne!(
+        rt.archive.unwrap().key,
+        first.key,
+        "the new archive is recorded"
+    );
+
+    let woke = lc.ensure_running(inst.id).await.unwrap();
+    assert_eq!(
+        e.read(woke.sandbox_id.as_deref().unwrap(), "workspace/notes.txt")
+            .await
+            .unwrap(),
+        b"v2"
+    );
+}
+
+/// 归档打包到一半被打断：为打包恢复的沙箱暂停回去、待定的上传清掉，下一次归档马上能做。
+#[tokio::test]
+async fn interrupted_saves_clean_up_after_themselves() {
+    let Some(e) = env().await else { return };
+    let e = Arc::new(e);
+    let lc = Arc::new(lifecycle(&e, LifecycleConfig::default()));
+    let inst = lc.adopt(e.user, "user:d", "pi", None, "Pi").await.unwrap();
+    let sid = lc
+        .ensure_running(inst.id)
+        .await
+        .unwrap()
+        .sandbox_id
+        .unwrap();
+    e.write(&sid, "workspace/notes.txt", b"keep me").await;
+    assert!(lc.pause(inst.id).await.unwrap());
+
+    let held = e.hold().await;
+    let task = {
+        let lc = lc.clone();
+        tokio::spawn(async move { lc.archive(inst.id).await })
+    };
+    held.await;
+    assert!(!e.read_paused(&sid).await, "resumed for the export");
+    task.abort();
+    let _ = task.await;
+    e.store.hold.store(false, Ordering::SeqCst);
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while e.runtime(inst.id).await.archive_pending.is_some() || !e.read_paused(&sid).await {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the save is cleaned up"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(e.purge_queue().await.len(), 1);
+
+    let archived = tokio::time::timeout(Duration::from_secs(10), lc.archive(inst.id))
+        .await
+        .expect("the next archive does not wait for the old mark to expire")
+        .unwrap();
+    assert!(archived);
+}
+
+/// 库里暂停着、沙箱其实在跑（上次归档被打断留下的）：这次归档没成也暂停回去，不一直按运行收费。
+#[tokio::test]
+async fn failed_saves_pause_a_sandbox_left_running() {
+    let Some(e) = env().await else { return };
+    let lc = lifecycle(&e, LifecycleConfig::default());
+    let inst = lc.adopt(e.user, "user:d", "pi", None, "Pi").await.unwrap();
+    let sid = lc
+        .ensure_running(inst.id)
+        .await
+        .unwrap()
+        .sandbox_id
+        .unwrap();
+    assert!(lc.pause(inst.id).await.unwrap());
+    e.provider.resume(&SandboxId(sid.clone())).await.unwrap();
+    assert!(!e.read_paused(&sid).await);
+    e.store.fail_put.store(true, Ordering::SeqCst);
+    assert!(lc.archive(inst.id).await.is_err());
+    assert!(e.read_paused(&sid).await);
+    assert_eq!(e.runtime(inst.id).await.state, InstanceState::Paused);
 }
