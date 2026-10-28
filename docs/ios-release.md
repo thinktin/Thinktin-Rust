@@ -28,7 +28,10 @@ App Store Connect，进 TestFlight。上架 App Store 的材料（审核备注�
 5. **App Store Connect 里建 App 记录**（只能在网页上建，API 不支持）：App → “+” → 新建 App，iOS，名字 ThinkTin，
    简体中文，套装 ID 选 `cn.thinktin.Thinktin`（第一次归档登记之后才能选到），SKU `thinktin-ios`。App 的 Apple ID
    拿到后填进 `ShellLinks.appStore`（升级页的“去 App Store 更新”）。
-6. **TestFlight 测试组**：内部测试组（团队成员，最多 100 人，不用审核）；外部测试组要过 Beta 审核（见第 4 节）。
+6. **TestFlight 测试组**：内部测试组（团队成员，最多 100 人，不用审核）；外部测试组要过 Beta 审核（见第 4 节）。内部测试组
+   可以自动建：手动触发 iOS release、只勾 `invite_testers`（Linux 上跑，一两分钟），`tools/apple/asc_testflight.py` 建“内部测试”组
+   （能看到所有构建）、把 App Store Connect 团队里的用户都加进去、发邀请邮件。内部测试员只能是团队用户，所以不收邮箱参数，
+   日志里的邮箱打码（仓库公开）。
 
 顺序：先配好 2、3，手动触发一次只归档（Actions → iOS release → Run workflow，不勾上传），它会登记 bundle id；
 再建 App 记录（5），然后勾上传再跑一次，或者打标签发版。
