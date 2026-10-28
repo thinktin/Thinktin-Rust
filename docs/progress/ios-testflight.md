@@ -23,11 +23,16 @@
   Development signing certificate for this machine”）。改临时签名（`-`）归档、导出时云端签名：iOS 26 SDK 不许临时签名。
   最后改成每次用 API 现建分发证书和 App Store 描述文件、手动签名、跑完撤销（`tools/apple/asc_signing.py`）。
 
-进行中：手动签名的第一次运行。
+- 一次 DNS 抖动（编完 Rust 后第一次连苹果）把整次发版带垮：两个脚本加了退避重试。
+- **2026-10-28 第一次传上 TestFlight**（run 40714946824，`5c09e23`，Intel 机器 macos-15-intel、Xcode 26.3）：演示版 0.1.0（构建号 16），
+  entitlements 里有 production 的推送、Time Sensitive、App Group；临时分发证书和两个描述文件用完都删了（204）。
+
+进行中：无。等苹果处理完，用户在 App Store Connect 的 TestFlight 里建内部测试组、把自己加进去，手机上用 TestFlight 装。
 
 下一步：
-1. 试跑通过后，手动触发 demo + upload，传第一个演示版到 TestFlight；内部测试组加用户本人。
-2. 服务器上线后打 `ios-v0.1.0` 标签发连服务器的版本。
+1. 本分支（工作流、签名脚本、演示版开关、截图工作流）开 PR 合进 main，用户说合并才合。
+2. 服务器上线后打 `ios-v0.1.0` 之类的标签发连服务器的版本（标签发版用 macos-26，排不上队时手动触发选 Intel）。
+3. App Store Connect 里现在是“iOS App 版本 1.0 准备提交”，工程里是 0.1.0：正式提审前统一版本号。
 3. `uicheck/run.sh test` 只编不跑 ThinktinTests（App 的测试，要 App 包的那些在 Linux 上本来就过不了）；单独跑 `swift test --skip-build --filter ThinktinTests.*clientKind`。
 4. 跑通后开 PR 合进 main（用户说合并才合）。
 
