@@ -25,6 +25,11 @@ on:
         description: 演示版：用演示数据、不连服务器（服务器上线前在 TestFlight 上先看界面）
         type: boolean
         default: false
+      runner:
+        description: 用哪种 Mac（苹果芯片的排不上队时换 Intel 的）
+        type: choice
+        options: [macos-26, macos-15-intel, macos-15]
+        default: macos-26
 
 # 同时只发一个版本，不取消正在上传的。
 concurrency:
@@ -43,7 +48,7 @@ env:
 jobs:
   testflight:
     name: Archive and upload to TestFlight
-    runs-on: macos-26
+    runs-on: ${{ inputs.runner || 'macos-26' }}
     timeout-minutes: 150
     environment: "Test flight"
     env:
@@ -73,12 +78,18 @@ jobs:
           echo "build=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
           echo "版本 ${version}，构建号 ${{ github.run_number }}"
 
+      # 和 ios.yml 一样用 Xcode 26.6；别的镜像（换成 Intel 的 Mac 时）上没有就用装着的最新的 Xcode 26。
       - name: Select Xcode
         run: |
-          if [[ -d /Applications/Xcode_26.6.app ]]; then
-            sudo xcode-select -s /Applications/Xcode_26.6.app
+          xcode=/Applications/Xcode_26.6.app
+          if [[ ! -d "$xcode" ]]; then
+            xcode=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -n 1 || true)
+          fi
+          if [[ -n "$xcode" && -d "$xcode" ]]; then
+            sudo xcode-select -s "$xcode"
           fi
           xcodebuild -version
+          uname -m
 
       - uses: actions/setup-python@v5
         with:
