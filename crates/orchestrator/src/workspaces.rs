@@ -52,17 +52,44 @@ impl Pool {
     async fn reserve(&self, bytes: u64) -> Result<OwnedSemaphorePermit, String> {
         let need = mib(sealed_len(bytes));
         if need > self.mib {
-            return Err(format!(
-                "the workspace archive needs {need} MiB of temp space, more than the {} MiB available",
-                self.mib
-            ));
+            return Err(too_big(need, self.mib));
         }
+        self.take(need).await
+    }
+
+    async fn take(&self, mib: u32) -> Result<OwnedSemaphorePermit, String> {
         self.permits
             .clone()
-            .acquire_many_owned(need)
+            .acquire_many_owned(mib)
             .await
             .map_err(|e| e.to_string())
     }
+}
+
+fn too_big(need: u32, have: u32) -> String {
+    format!(
+        "the workspace archive needs {need} MiB of temp space, more than the {have} MiB available"
+    )
+}
+
+/// 放回占的临时空间：一般只从放的一边（`own`）占。比那一边还大的（调小上限之前存的大归档）把这一边全占上，
+/// 不够的再从存的一边（`spill`）占，排在它们后面等：照样放得回来，只是要等。两边加起来都不够才报错。
+/// 总是先占 `own` 再占 `spill`，存的只占 `spill`，不会互相等死。
+async fn reserve_restore(
+    own: &Pool,
+    spill: &Pool,
+    bytes: u64,
+) -> Result<Vec<OwnedSemaphorePermit>, String> {
+    let need = mib(sealed_len(bytes));
+    if need <= own.mib {
+        return Ok(vec![own.take(need).await?]);
+    }
+    if need > own.mib.saturating_add(spill.mib) {
+        return Err(too_big(need, own.mib.saturating_add(spill.mib)));
+    }
+    let all = own.take(own.mib).await?;
+    let rest = spill.take(need - own.mib).await?;
+    Ok(vec![all, rest])
 }
 
 /// 每块密文比明文多出的字节：帧头、nonce、校验码。
@@ -273,7 +300,7 @@ impl WorkspaceStore for ObjectWorkspaceStore {
         sink: &mut (dyn AsyncWrite + Send + Unpin),
     ) -> Result<(), String> {
         self.check_owner(user, &archive.key)?;
-        let _space = self.restores.reserve(archive.bytes).await?;
+        let _space = reserve_restore(&self.restores, &self.puts, archive.bytes).await?;
         let (tmp, _) = self.temp_file()?;
         let max = sealed_len(archive.bytes);
         self.blobs
@@ -357,6 +384,32 @@ mod tests {
         let small = 50u64 << 20;
         assert!(!temp_budget_fits(small, 53_000_000 * 2));
         assert!(temp_budget_fits(small, min_temp_budget(small)));
+    }
+
+    /// 调小上限之前存的大归档：放的一边不够时连存的一边也占上，等存的做完；两边都不够才报错。
+    #[tokio::test]
+    async fn large_restores_borrow_the_save_side() {
+        let (own, spill) = (Pool::new(12), Pool::new(12));
+        let small = reserve_restore(&own, &spill, 4 << 20).await.unwrap();
+        assert_eq!(own.permits.available_permits(), 7);
+        drop(small);
+        let save = spill.reserve(6 << 20).await.unwrap();
+        let big = reserve_restore(&own, &spill, 18 << 20);
+        tokio::pin!(big);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), &mut big)
+                .await
+                .is_err(),
+            "waits for the save to finish"
+        );
+        drop(save);
+        let held = big.await.unwrap();
+        assert_eq!(held.len(), 2);
+        assert_eq!(own.permits.available_permits(), 0);
+        assert_eq!(spill.permits.available_permits(), 5);
+        drop(held);
+        let err = reserve_restore(&own, &spill, 30 << 20).await.unwrap_err();
+        assert!(err.contains("more than the 24 MiB"), "{err}");
     }
 
     #[test]
