@@ -17,6 +17,7 @@ tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+async-trait.workspace = true
 chrono.workspace = true
 sqlx.workspace = true
 store = { path = "../store", features = ["testing"] }

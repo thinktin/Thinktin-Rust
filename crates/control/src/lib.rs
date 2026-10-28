@@ -352,6 +352,7 @@ impl Lifecycle {
                     version: rt.agent_version.clone(),
                 })?;
             if let Some(sid) = &rt.sandbox_id {
+                self.check_workspace_kept()?;
                 self.op("destroy", self.provider.destroy(&SandboxId(sid.clone())))
                     .await?;
             }
@@ -371,6 +372,20 @@ impl Lifecycle {
                     match self.op("get", self.provider.get(&sid)).await? {
                         Some(info) if info.state == SandboxState::Running => {
                             if rt.state == InstanceState::Running {
+                                // 沙箱令牌绑定这个地址：后端报的变了就记下新的（不算状态变化）。
+                                let mut rt = rt;
+                                if info.address != rt.sandbox_address {
+                                    w.set_instance_runtime(
+                                        id,
+                                        InstanceState::Running,
+                                        Some(&info.id.0),
+                                        info.address,
+                                        None,
+                                    )
+                                    .await?;
+                                    rt.sandbox_address = info.address;
+                                    rt.snapshot_id = None;
+                                }
                                 w.touch_instance(id).await?;
                                 w.commit().await?;
                                 return Ok(rt);
@@ -456,6 +471,7 @@ impl Lifecycle {
             rt.agent_version = v.into();
         }
         if let Some(sid) = &rt.sandbox_id {
+            self.check_workspace_kept()?;
             self.op("destroy", self.provider.destroy(&SandboxId(sid.clone())))
                 .await?;
         }
@@ -510,14 +526,18 @@ impl Lifecycle {
         w.commit().await?;
 
         let mut w = self.db.worker().await?;
-        for rt in w
-            .idle_instances(
+        // 工作区留不住（没有卷的后端）时不归档，暂停的沙箱一直留着。
+        let archivable = if self.check_workspace_kept().is_ok() {
+            w.idle_instances(
                 InstanceState::Paused,
                 self.cfg.archive_after,
                 self.cfg.sweep_batch,
             )
             .await?
-        {
+        } else {
+            Vec::new()
+        };
+        for rt in archivable {
             if w.trigger_due_within(rt.id, self.cfg.keep_if_trigger_within)
                 .await?
             {
@@ -661,8 +681,20 @@ impl Lifecycle {
         }
     }
 
+    /// 销毁沙箱前确认工作区留得住：后端没有卷（ACS）时不销毁，免得丢了用户的文件。
+    fn check_workspace_kept(&self) -> Result<()> {
+        if self.provider.workspace_persists() {
+            return Ok(());
+        }
+        Err(Error::Invalid(format!(
+            "the {} sandbox provider keeps no workspace after a sandbox is destroyed",
+            self.provider.name()
+        )))
+    }
+
     async fn archive_locked(&self, w: &mut Tx<Worker>, rt: &InstanceRuntime) -> Result<()> {
         if let Some(sid) = rt.sandbox_id.as_deref() {
+            self.check_workspace_kept()?;
             self.op("destroy", self.provider.destroy(&SandboxId(sid.into())))
                 .await?;
         }
