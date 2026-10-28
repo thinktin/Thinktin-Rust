@@ -26,7 +26,6 @@ use reqwest::{Method, StatusCode};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::cube::allow_host;
 use crate::envd::{self, Envd, Route, Upload, api_error, parse, provider_err};
 use crate::{
     CreateSpec, Error, ExecSpec, Process, Result, SandboxId, SandboxInfo, SandboxProvider,
@@ -135,11 +134,34 @@ pub fn sandboxset_name(template: &str) -> String {
     name.trim_end_matches('-').to_owned()
 }
 
-/// 出网规则能不能交给 sandbox-manager：只认 IP、CIDR 或域名，不能带端口（它不分端口，带了端口
-/// 看着像只放行那个端口，其实整台机器都放行了），不能用通配符。
+/// 出网规则能不能交给 sandbox-manager：和它的校验一样，只认 IP、CIDR 或域名（小写，
+/// `^([a-z0-9-]+\.)+[a-z]{2,}$`）。不能带端口（它不分端口，带了端口看着像只放行那个端口，其实整台机器
+/// 都放行了），不能用通配符、协议头、单段的主机名；不认的建沙箱时会被拒（400），启动时就挡下来。
 pub fn allow_rule_ok(target: &str) -> bool {
     let t = target.trim();
-    !t.is_empty() && !t.contains('*') && allow_host(t) == t
+    if t.parse::<IpAddr>().is_ok() {
+        return true;
+    }
+    if let Some((ip, bits)) = t.split_once('/') {
+        let Ok(ip) = ip.parse::<IpAddr>() else {
+            return false;
+        };
+        let max = if ip.is_ipv4() { 32 } else { 128 };
+        return !bits.is_empty()
+            && bits.len() <= 3
+            && bits.bytes().all(|b| b.is_ascii_digit())
+            && bits.parse::<u8>().is_ok_and(|b| b <= max);
+    }
+    let Some((labels, tld)) = t.rsplit_once('.') else {
+        return false;
+    };
+    tld.len() >= 2
+        && tld.bytes().all(|b| b.is_ascii_lowercase())
+        && labels.split('.').all(|l| {
+            !l.is_empty()
+                && l.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        })
 }
 
 fn reserved(key: &str) -> bool {
@@ -611,6 +633,42 @@ mod tests {
             ..cfg
         };
         assert_eq!(cfg.data_base(), "http://10.0.0.7");
+    }
+
+    #[test]
+    fn egress_rules_match_what_sandbox_manager_takes() {
+        for ok in [
+            "10.0.1.10",
+            "10.0.0.0/8",
+            "10.0.1.10/32",
+            "2001:db8::1",
+            "2001:db8::/32",
+            "gw.internal",
+            "oss-ap-northeast-1-internal.aliyuncs.com",
+            " 10.0.1.10 ",
+        ] {
+            assert!(allow_rule_ok(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            "http://10.0.1.10:8790",
+            "10.0.1.10:8790",
+            "gw.internal:8790",
+            "[2001:db8::1]:443",
+            "llm-gw",
+            "10.0.1.10/33",
+            "10.0.0.0/",
+            "10.0.0.0/+8",
+            "2001:db8::/129",
+            "gw_1.internal",
+            "*.example.com",
+            "GW.internal",
+            "gw..internal",
+            "gw.internal.",
+            "gw.x1",
+        ] {
+            assert!(!allow_rule_ok(bad), "{bad}");
+        }
     }
 
     #[test]
