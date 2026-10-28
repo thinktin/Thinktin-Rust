@@ -332,6 +332,7 @@ impl Sandbox {
             op_timeout: Duration::from_secs(l.op_timeout_secs),
             sweep_batch: l.sweep_batch,
             pause_waiting_approval: l.pause_waiting_approval,
+            ..control::LifecycleConfig::default()
         }
     }
 }

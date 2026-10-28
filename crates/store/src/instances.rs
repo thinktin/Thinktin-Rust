@@ -703,36 +703,64 @@ impl Tx<Worker> {
         Ok(())
     }
 
-    /// 某个状态下空闲超过 `idle` 的实例（空闲暂停、归档扫描），跳过别的副本正在处理的。
+    /// 某个状态下空闲超过 `idle` 的实例（空闲暂停、归档扫描）和它们的最后活动时间，最久没动的在前。
+    /// 不加锁：调用方逐个锁住、核对状态和活动时间没变再处理。
     /// 有运行正在执行的不算空闲；`also_busy` 里状态的运行也挡着（比如等审批时不暂停）。
     /// 别的等待（等设备、等额度）不挡暂停，事情来了再唤醒。
-    pub async fn idle_instances(
+    pub async fn idle_instance_ids(
         &mut self,
         state: InstanceState,
         idle: Duration,
         limit: i64,
         also_busy: &[RunState],
-    ) -> Result<Vec<InstanceRuntime>> {
-        let busy: Vec<&str> = [RunState::Starting, RunState::Running]
-            .iter()
-            .chain(also_busy)
-            .map(|s| s.as_str())
-            .collect();
-        let rows: Vec<RuntimeRow> = sqlx::query_as(concat!(
-            "SELECT ",
-            runtime_columns!(),
-            " FROM instances \
+    ) -> Result<Vec<(InstanceId, DateTime<Utc>)>> {
+        let busy = busy_states(also_busy);
+        let rows: Vec<(Uuid, DateTime<Utc>)> = sqlx::query_as(
+            "SELECT id, last_active_at FROM instances \
              WHERE state = $1 AND last_active_at < now() - make_interval(secs => $2) \
                AND NOT EXISTS (SELECT 1 FROM runs WHERE runs.instance_id = instances.id \
                                AND runs.state = ANY($4)) \
-             ORDER BY last_active_at LIMIT $3 FOR UPDATE SKIP LOCKED"
-        ))
+             ORDER BY last_active_at LIMIT $3",
+        )
         .bind(state.as_str())
         .bind(secs(idle))
         .bind(limit)
         .bind(&busy)
         .fetch_all(self.conn())
         .await?;
-        rows.into_iter().map(RuntimeRow::into_runtime).collect()
+        Ok(rows.into_iter().map(|(id, at)| (id.into(), at)).collect())
     }
+
+    /// 有正在执行的运行，或者有 `also_busy` 里状态的运行。
+    pub async fn instance_busy_with(
+        &mut self,
+        id: InstanceId,
+        also_busy: &[RunState],
+    ) -> Result<bool> {
+        Ok(sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM runs WHERE instance_id = $1 AND state = ANY($2))",
+        )
+        .bind(id.0)
+        .bind(busy_states(also_busy))
+        .fetch_one(self.conn())
+        .await?)
+    }
+
+    /// 下次唤醒时重建沙箱（换了版本）。
+    pub async fn mark_rebuild_pending(&mut self, id: InstanceId) -> Result<()> {
+        sqlx::query("UPDATE instances SET rebuild_pending = true WHERE id = $1")
+            .bind(id.0)
+            .execute(self.conn())
+            .await?;
+        Ok(())
+    }
+}
+
+/// 启动中、运行中，加上调用方给的状态。
+fn busy_states(also: &[RunState]) -> Vec<&'static str> {
+    [RunState::Starting, RunState::Running]
+        .iter()
+        .chain(also)
+        .map(|s| s.as_str())
+        .collect()
 }
