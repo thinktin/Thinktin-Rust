@@ -4433,3 +4433,107 @@ async fn workspace_archives_queue_replaced_objects() {
     .expect("the columns create_instance writes are still allowed");
     t.rollback().await.unwrap();
 }
+
+/// 问队友（8.11）：“谁在等谁”顺着子运行和排队走（A 问了 B、B 正忙，B 再问 A 就会互相等死）；过了回答期限的
+/// 提问连同它的子孙被取消，提问方结束了的提问也取消；结束的提问交还给提问方；只等回答时带等待原因。
+#[tokio::test]
+async fn asks_detect_waits_and_stale_questions_are_cancelled() {
+    use crate::{ANSWER_TIMEOUT_REASON, ASKER_GONE_REASON};
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let u = user(db, "+8613800000895").await;
+    let a = instance(db, u).await;
+    let b = instance(db, u).await;
+    let c = instance(db, u).await;
+    let ra = queue_run(db, u, &a, "a's task").await;
+    let rb = queue_run(db, u, &b, "b's task").await;
+    let mut w = db.worker().await.unwrap();
+    for _ in 0..2 {
+        w.claim_next_run("x", LEASE).await.unwrap().unwrap();
+    }
+    assert!(!w.instance_waits_for(b.id, ra.id).await.unwrap());
+    let ask = |to: &Instance, parent: proto::domain::RunId, deadline: chrono::DateTime<Utc>| {
+        let mut new = NewRun::new(to.id, RunSource::Ask, "（说明）\n\n问题", "1");
+        new.parent_run_id = Some(parent);
+        new.answer_deadline = Some(deadline);
+        new
+    };
+    let later = Utc::now() + Days::minutes(30);
+    let qa = w
+        .create_run(u, &ask(&b, ra.id, later))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!((qa.root_run_id, qa.source), (ra.id, RunSource::Ask));
+    // A 在等 B（提问排在 B 正在跑的运行后面）：B 再问 A 就会互相等死；问 C 没事。
+    assert!(w.instance_waits_for(a.id, rb.id).await.unwrap());
+    assert!(!w.instance_waits_for(c.id, rb.id).await.unwrap());
+    assert!(!w.instance_waits_for(b.id, ra.id).await.unwrap());
+    // 回答方在回答时又委派出去的子孙。
+    let mut sub = NewRun::new(c.id, RunSource::Delegate, "sub", "1");
+    sub.parent_run_id = Some(qa.id);
+    let sub = w.create_run(u, &sub).await.unwrap().unwrap();
+    let qb = w
+        .create_run(u, &ask(&c, rb.id, later))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(w.ask_runs(ra.id).await.unwrap().len(), 1);
+    // 只等回答：等待原因带上。
+    w.transition_run(ra.id, "x", RunState::Running, &RunChange::default())
+        .await
+        .unwrap();
+    let waiting = w
+        .transition_run(
+            ra.id,
+            "x",
+            RunState::WaitingChildren,
+            &RunChange {
+                release_lease: true,
+                wait_code: Some(proto::domain::wait_code::ANSWER),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        waiting.run.wait_code.as_deref(),
+        Some(proto::domain::wait_code::ANSWER)
+    );
+    assert!(w.cancel_stale_asks(10).await.unwrap().is_empty());
+    sqlx::query("UPDATE runs SET answer_deadline = now() - interval '1 second' WHERE id = $1")
+        .bind(qa.id.0)
+        .execute(w.conn())
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+
+    let mut w = db.worker().await.unwrap();
+    let gone = w.cancel_stale_asks(10).await.unwrap();
+    assert_eq!(gone.len(), 1);
+    assert_eq!(gone[0].id, qa.id);
+    assert_eq!(gone[0].state, RunState::Cancelled);
+    assert_eq!(gone[0].state_reason.as_deref(), Some(ANSWER_TIMEOUT_REASON));
+    assert_eq!(w.run(sub.id).await.unwrap().state, RunState::Cancelled);
+    assert_eq!(
+        w.unreported_children(ra.id)
+            .await
+            .unwrap()
+            .iter()
+            .map(|r| r.id)
+            .collect::<Vec<_>>(),
+        [qa.id]
+    );
+    w.commit().await.unwrap();
+    // 提问方被用户取消了：它的提问没人要了。
+    let mut tx = db.tenant(u).await.unwrap();
+    tx.cancel_run(rb.id, None).await.unwrap();
+    tx.commit().await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    let gone = w.cancel_stale_asks(10).await.unwrap();
+    assert_eq!(gone.len(), 1);
+    assert_eq!(gone[0].id, qb.id);
+    assert_eq!(gone[0].state_reason.as_deref(), Some(ASKER_GONE_REASON));
+    assert!(w.cancel_stale_asks(10).await.unwrap().is_empty());
+    w.commit().await.unwrap();
+}

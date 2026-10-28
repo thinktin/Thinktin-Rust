@@ -195,8 +195,14 @@ impl Locale {
 }
 
 str_enum!(
-    /// 运行由什么发起。
-    RunSource { User = "user", Plan = "plan", Pipeline = "pipeline", Delegate = "delegate" }
+    /// 运行由什么发起。`Ask` 是别的 agent 问的问题（8.11），在被问的实例上跑。
+    RunSource {
+        User = "user",
+        Plan = "plan",
+        Pipeline = "pipeline",
+        Delegate = "delegate",
+        Ask = "ask",
+    }
 );
 
 str_enum!(
@@ -744,8 +750,8 @@ pub struct Run {
     pub created_at: DateTime<Utc>,
     pub started_at: Option<DateTime<Utc>>,
     pub finished_at: Option<DateTime<Utc>>,
-    /// 等的是什么（[`wait_code`]），只在 `waiting_quota`、`waiting_device` 时有。是字符串不是枚举：以后加了新值，
-    /// 老的客户端照样解析得了。
+    /// 等的是什么（[`wait_code`]），只在 `waiting_quota`、`waiting_device` 时有；`waiting_children` 时只等
+    /// 队友回答的是 [`wait_code::ANSWER`]。是字符串不是枚举：以后加了新值，老的客户端照样解析得了。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wait_code: Option<String>,
 }
@@ -764,13 +770,16 @@ pub mod wait_code {
     pub const OVERLOADED: &str = "overloaded";
     /// 等用户的电脑上线。
     pub const DEVICE_OFFLINE: &str = "device_offline";
-    pub const ALL: [&str; 6] = [
+    /// 等待子任务时（`waiting_children`）：等的只是队友的回答（8.11），没有委派的子任务。
+    pub const ANSWER: &str = "answer";
+    pub const ALL: [&str; 7] = [
         INVALID,
         NO_BALANCE,
         UNAVAILABLE,
         RATE_LIMITED,
         OVERLOADED,
         DEVICE_OFFLINE,
+        ANSWER,
     ];
 }
 

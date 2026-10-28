@@ -37,6 +37,8 @@ pub struct NewRun {
     /// 抖动后的最早开始时间；None 为立即。
     pub not_before: Option<DateTime<Utc>>,
     pub max_attempts: u32,
+    /// 问队友的问题（8.11）：最晚什么时候答完，过了后台取消它，提问方得到“对方没回答”。
+    pub answer_deadline: Option<DateTime<Utc>>,
 }
 
 impl NewRun {
@@ -61,9 +63,15 @@ impl NewRun {
             budget: RunBudget::default(),
             not_before: None,
             max_attempts: 3,
+            answer_deadline: None,
         }
     }
 }
+
+/// 问队友超时（8.11）：后台取消没按时答完的提问时写的状态说明，交还给提问方时据此说“对方没回答”。
+pub const ANSWER_TIMEOUT_REASON: &str = "no answer in time";
+/// 提问方不在了（被取消、失败）：它的提问没人要了。
+pub const ASKER_GONE_REASON: &str = "the asker stopped";
 
 /// 状态迁移时一并写入的内容。
 #[derive(Debug, Clone, Default)]
@@ -166,10 +174,13 @@ fn small(v: i32, what: &str) -> Result<u32> {
 impl Row {
     fn into_record(self) -> Result<RunRecord> {
         let state: RunState = parse(&self.state)?;
-        // 只有等 key、等电脑时有：上一版的副本既不写也不清，别处忘了清也看不到旧值。
-        let wait_code = self
-            .wait_code
-            .filter(|_| matches!(state, RunState::WaitingQuota | RunState::WaitingDevice));
+        // 只有等 key、等电脑、等子任务（只等回答，8.11）时有：上一版的副本既不写也不清，别处忘了清也看不到旧值。
+        let wait_code = self.wait_code.filter(|_| {
+            matches!(
+                state,
+                RunState::WaitingQuota | RunState::WaitingDevice | RunState::WaitingChildren
+            )
+        });
         let run = Run {
             id: self.id.into(),
             kind: parse(&self.kind)?,
@@ -230,8 +241,9 @@ impl<R> Tx<R> {
         };
         let row: Option<Row> = sqlx::query_as(concat!(
             "INSERT INTO runs (id, user_id, instance_id, plan_id, trigger_id, fire_time, parent_run_id, root_run_id, \
-               source, prompt, agent_version, run_grant_id, budget, not_before, max_attempts, kind, step_key) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, coalesce($14, now()), $15, $16, $17) \
+               source, prompt, agent_version, run_grant_id, budget, not_before, max_attempts, kind, step_key, \
+               answer_deadline) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, coalesce($14, now()), $15, $16, $17, $18) \
              ON CONFLICT (plan_id, fire_time) WHERE plan_id IS NOT NULL AND fire_time IS NOT NULL DO NOTHING \
              RETURNING ",
             columns!()
@@ -253,6 +265,7 @@ impl<R> Tx<R> {
         .bind(i32::try_from(new.max_attempts.max(1)).unwrap_or(i32::MAX))
         .bind(new.kind.as_str())
         .bind(&new.step_key)
+        .bind(new.answer_deadline)
         .fetch_optional(self.conn())
         .await?;
         row.map(Row::into_run).transpose()
@@ -701,12 +714,25 @@ impl Tx<Worker> {
         rows.into_iter().map(Row::into_run).collect()
     }
 
-    /// 已经结束、结果还没交还给父运行的委派子运行（8.7），早的在前。
+    /// 问队友的子运行（8.11），早的在前。
+    pub async fn ask_runs(&mut self, parent: RunId) -> Result<Vec<Run>> {
+        let rows: Vec<Row> = sqlx::query_as(concat!(
+            "SELECT ",
+            columns!(),
+            " FROM runs WHERE parent_run_id = $1 AND source = 'ask' ORDER BY created_at, id"
+        ))
+        .bind(parent.0)
+        .fetch_all(self.conn())
+        .await?;
+        rows.into_iter().map(Row::into_run).collect()
+    }
+
+    /// 已经结束、结果还没交还给父运行的子运行：委派的子任务（8.7）和问队友的问题（8.11），早的在前。
     pub async fn unreported_children(&mut self, parent: RunId) -> Result<Vec<Run>> {
         let rows: Vec<Row> = sqlx::query_as(concat!(
             "SELECT ",
             columns!(),
-            " FROM runs WHERE parent_run_id = $1 AND source = 'delegate' AND reported_at IS NULL \
+            " FROM runs WHERE parent_run_id = $1 AND source IN ('delegate', 'ask') AND reported_at IS NULL \
                AND state IN ('succeeded', 'failed', 'cancelled') ORDER BY created_at, id"
         ))
         .bind(parent.0)
@@ -743,6 +769,104 @@ impl Tx<Worker> {
         rows.into_iter()
             .map(|(id, instance, source)| Ok((id.into(), instance.into(), parse(&source)?)))
             .collect()
+    }
+
+    /// 按用户串行化“谁在等谁”的检查和新建子运行（委派、提问，8.8、8.11）：两个 agent 同时互相问，
+    /// 检查时都还看不到对方的子运行，不加锁会都通过。锁到事务结束。
+    pub async fn lock_run_waits(&mut self, user: UserId) -> Result<()> {
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(format!("run_waits/{user}"))
+            .execute(self.conn())
+            .await?;
+        Ok(())
+    }
+
+    /// `run` 是不是在（直接或间接地）等 `instance`（8.8、8.11）：从 `instance` 上占着实例的运行出发，
+    /// 顺着“等子运行”（没结束的子运行）和“排队等实例”（排队的运行等它实例上占着的那个）走，走得到 `run`
+    /// 就是。这时 `run` 再委派给、问 `instance` 会互相等死。
+    pub async fn instance_waits_for(&mut self, instance: InstanceId, run: RunId) -> Result<bool> {
+        let found: bool = sqlx::query_scalar(
+            "WITH RECURSIVE w(id) AS ( \
+               SELECT h.id FROM runs h WHERE h.instance_id = $1 AND h.kind = 'agent' AND h.state IN \
+                 ('starting', 'running', 'waiting_approval', 'waiting_device', 'waiting_quota', \
+                  'waiting_children', 'backoff') \
+               UNION \
+               SELECT n.id FROM w JOIN runs r ON r.id = w.id \
+               CROSS JOIN LATERAL ( \
+                 SELECT c.id FROM runs c WHERE c.parent_run_id = r.id \
+                   AND c.state NOT IN ('succeeded', 'failed', 'cancelled') \
+                 UNION ALL \
+                 SELECT h.id FROM runs h WHERE r.state = 'queued' AND h.instance_id = r.instance_id \
+                   AND h.kind = 'agent' AND h.state IN ('starting', 'running', 'waiting_approval', \
+                     'waiting_device', 'waiting_quota', 'waiting_children', 'backoff')) n) \
+             SELECT EXISTS (SELECT 1 FROM w WHERE id = $2)",
+        )
+        .bind(instance.0)
+        .bind(run.0)
+        .fetch_one(self.conn())
+        .await?;
+        Ok(found)
+    }
+
+    /// 取消没人等了的提问（8.11），连同回答方在回答时委派、提问出去的子孙：过了回答期限的（状态说明
+    /// [`ANSWER_TIMEOUT_REASON`]），提问方已经结束了的（[`ASKER_GONE_REASON`]）。令牌代数加一，执行中的
+    /// 回答方续租时停下。返回取消的提问（不含子孙），调用方给它们记运行日志。
+    pub async fn cancel_stale_asks(&mut self, limit: i64) -> Result<Vec<Run>> {
+        let picked: Vec<(Uuid, bool)> = sqlx::query_as(
+            "SELECT r.id, r.answer_deadline <= now() FROM runs r \
+             WHERE r.answer_deadline IS NOT NULL AND r.state NOT IN ('succeeded', 'failed', 'cancelled') \
+               AND (r.answer_deadline <= now() OR EXISTS ( \
+                 SELECT 1 FROM runs p WHERE p.id = r.parent_run_id \
+                   AND p.state IN ('succeeded', 'failed', 'cancelled'))) \
+             ORDER BY r.answer_deadline LIMIT $1 FOR NO KEY UPDATE OF r SKIP LOCKED",
+        )
+        .bind(limit)
+        .fetch_all(self.conn())
+        .await?;
+        if picked.is_empty() {
+            return Ok(Vec::new());
+        }
+        let ids: Vec<Uuid> = picked.iter().map(|(id, _)| *id).collect();
+        let overdue: Vec<Uuid> = picked
+            .iter()
+            .filter(|(_, o)| *o)
+            .map(|(id, _)| *id)
+            .collect();
+        sqlx::query(concat!(
+            "WITH RECURSIVE tree AS ( \
+               SELECT unnest($1::uuid[]) AS id \
+               UNION SELECT r.id FROM runs r JOIN tree t ON r.parent_run_id = t.id) ",
+            bump_epochs_where!("id IN (SELECT id FROM tree)")
+        ))
+        .bind(&ids)
+        .execute(self.conn())
+        .await?;
+        sqlx::query(
+            "WITH RECURSIVE tree AS ( \
+               SELECT id FROM runs WHERE parent_run_id = ANY($1) \
+               UNION SELECT r.id FROM runs r JOIN tree t ON r.parent_run_id = t.id) \
+             UPDATE runs SET state = 'cancelled', state_reason = $2, wait_code = NULL, lease_owner = NULL, lease_expires_at = NULL, \
+               finished_at = now(), updated_at = now() \
+             WHERE id IN (SELECT id FROM tree) AND state NOT IN ('succeeded', 'failed', 'cancelled')",
+        )
+        .bind(&ids)
+        .bind("the question it was answering was withdrawn")
+        .execute(self.conn())
+        .await?;
+        let rows: Vec<Row> = sqlx::query_as(concat!(
+            "UPDATE runs SET state = 'cancelled', \
+               state_reason = CASE WHEN id = ANY($2) THEN $3 ELSE $4 END, \
+               wait_code = NULL, lease_owner = NULL, lease_expires_at = NULL, finished_at = now(), updated_at = now() \
+             WHERE id = ANY($1) RETURNING ",
+            columns!()
+        ))
+        .bind(&ids)
+        .bind(&overdue)
+        .bind(ANSWER_TIMEOUT_REASON)
+        .bind(ASKER_GONE_REASON)
+        .fetch_all(self.conn())
+        .await?;
+        rows.into_iter().map(Row::into_run).collect()
     }
 
     /// 等电脑、等 key 超时的运行（7.11）：拿到租约交给执行器按策略结束。没人持有租约的才拿。

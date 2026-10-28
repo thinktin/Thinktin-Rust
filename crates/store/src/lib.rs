@@ -67,7 +67,9 @@ pub use llmgw::{GatewayInstance, GatewayRoute};
 pub use outbox::{NewOutboxItem, OutboxItem};
 pub use plans::{DueTrigger, NewPlan, RetiredPlans};
 pub use reports::{NewReport, ReportRecord};
-pub use runs::{ModelCall, NewRun, RunChange, RunFilter, RunRecord};
+pub use runs::{
+    ANSWER_TIMEOUT_REASON, ASKER_GONE_REASON, ModelCall, NewRun, RunChange, RunFilter, RunRecord,
+};
 pub use schema::MigrationStatus;
 pub use sessions::{LoginCode, SessionRecord, SessionState};
 pub use usage::{NewUsage, UsageBucket, UsageFilter, UsageGroup};
