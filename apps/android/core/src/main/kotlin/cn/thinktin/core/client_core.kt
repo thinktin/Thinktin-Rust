@@ -970,6 +970,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_send_self_code(
     ): Int
+    external fun uniffi_client_core_checksum_method_thinktinclient_send_urgent_message(
+    ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_set_accept_language(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_set_board_post_archived(
@@ -1248,6 +1250,8 @@ internal object UniffiLib {
     external fun uniffi_client_core_fn_method_thinktinclient_send_message(`ptr`: Long,`instanceId`: RustBuffer.ByValue,`text`: RustBuffer.ByValue,`allowSecrets`: Byte,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_send_self_code(`ptr`: Long,`purpose`: RustBuffer.ByValue,
+    ): Long
+    external fun uniffi_client_core_fn_method_thinktinclient_send_urgent_message(`ptr`: Long,`instanceId`: RustBuffer.ByValue,`text`: RustBuffer.ByValue,`allowSecrets`: Byte,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_set_accept_language(`ptr`: Long,`acceptLanguage`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
@@ -1778,6 +1782,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_send_self_code() and 0xFFFF) != 11066) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_send_urgent_message() and 0xFFFF) != 33248) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_set_accept_language() and 0xFFFF) != 57462) {
@@ -3998,6 +4005,12 @@ public interface ThinktinClientInterface {
     suspend fun `sendSelfCode`(`purpose`: kotlin.String)
     
     /**
+     * 紧急消息（8.12，打断重来）：实例正忙时打断它正在做的、马上处理这条（会话保留，agent 会知道自己被
+     * 打断了）；空闲时排在别的排队消息前面。密码拦截和 `send_message` 一样。
+     */
+    suspend fun `sendUrgentMessage`(`instanceId`: kotlin.String, `text`: kotlin.String, `allowSecrets`: kotlin.Boolean): Run
+    
+    /**
      * App 里切换了语言：之后的请求带新的 `Accept-Language`（`None` 不带）。不联网。
      */
     fun `setAcceptLanguage`(`acceptLanguage`: kotlin.String?)
@@ -6115,6 +6128,34 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
         // lift function
         { },
         
+        // Error FFI converter
+        ClientException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * 紧急消息（8.12，打断重来）：实例正忙时打断它正在做的、马上处理这条（会话保留，agent 会知道自己被
+     * 打断了）；空闲时排在别的排队消息前面。密码拦截和 `send_message` 一样。
+     */
+    @Throws(ClientException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `sendUrgentMessage`(`instanceId`: kotlin.String, `text`: kotlin.String, `allowSecrets`: kotlin.Boolean) : Run {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_client_core_fn_method_thinktinclient_send_urgent_message(
+                uniffiHandle,
+                
+        FfiConverterString.lower(`instanceId`),
+        FfiConverterString.lower(`text`),
+        FfiConverterBoolean.lower(`allowSecrets`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_client_core_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeRun.lift(it) },
         // Error FFI converter
         ClientException.ErrorHandler,
     )
