@@ -473,11 +473,16 @@ impl SandboxProvider for AcsProvider {
                         .json(&body),
                 )
                 .await?;
-            if status == StatusCode::NOT_FOUND {
-                return Err(Error::NotFound(id.clone()));
-            }
+            // connect 只认运行中、暂停的沙箱：Pod 起来了但还没就绪时它也报 404，查一下确实没了才算没了，
+            // 不然控制服务会另建一个、把这个连同里面的文件丢下不管。
+            let not_ready = status == StatusCode::NOT_FOUND
+                && match self.detail(id).await? {
+                    None => return Err(Error::NotFound(id.clone())),
+                    Some(_) => true,
+                };
             // 正在暂停之类的生命周期操作进行中（恢复撞上冲突时 sandbox-manager 报 400）：稍后再试。
-            let busy = status == StatusCode::CONFLICT
+            let busy = not_ready
+                || status == StatusCode::CONFLICT
                 || status == StatusCode::SERVICE_UNAVAILABLE
                 || (status == StatusCode::BAD_REQUEST
                     && String::from_utf8_lossy(&bytes).contains("Failed to resume"));

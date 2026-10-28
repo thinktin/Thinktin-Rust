@@ -54,6 +54,8 @@ struct Mock {
     requests: AtomicU32,
     /// 新沙箱的 IP 要再查几次才出现；`u32::MAX` 表示一直没有。
     hide_ip: AtomicU32,
+    /// connect 先报几次 404（Pod 起来了还没就绪时 sandbox-manager 就这样）。
+    connect_not_ready: AtomicU32,
 }
 
 type S = Arc<Mock>;
@@ -209,6 +211,13 @@ async fn connect(
     }
     if body["timeout"].as_i64().unwrap_or(0) <= 0 {
         return api_err(StatusCode::BAD_REQUEST, "timeout must be positive");
+    }
+    if m.sandboxes.lock().unwrap().contains_key(&id)
+        && m.connect_not_ready
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+            .is_ok()
+    {
+        return api_err(StatusCode::NOT_FOUND, "Cannot get sandbox: not ready");
     }
     m.connects.lock().unwrap().push(body);
     let mut map = m.sandboxes.lock().unwrap();
@@ -706,4 +715,20 @@ async fn restarted_control_plane_reconnects() {
         b"a"
     );
     assert!(m.connects.lock().unwrap().is_empty());
+}
+
+/// connect 报 404 不一定是没了：Pod 还没就绪时也这样，查到还在就等等再连；真没了才报不存在。
+#[tokio::test]
+async fn connect_waits_for_a_sandbox_that_is_not_ready() {
+    let (m, url) = mock().await;
+    let p = provider(&url);
+    let info = p.create(spec()).await.unwrap();
+    p.pause(&info.id).await.unwrap();
+    m.connect_not_ready.store(1, Ordering::SeqCst);
+    let resumed = p.resume(&info.id).await.unwrap();
+    assert_eq!(resumed.state, SandboxState::Running);
+    assert!(m.deletes.lock().unwrap().is_empty());
+
+    p.destroy(&info.id).await.unwrap();
+    assert!(matches!(p.resume(&info.id).await, Err(Error::NotFound(_))));
 }

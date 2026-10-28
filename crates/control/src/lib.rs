@@ -462,6 +462,7 @@ impl Lifecycle {
                                     .await?
                             }
                             Err(Error::Sandbox(sandbox::Error::NotFound(_))) => {
+                                self.forget_sandbox(&sid).await;
                                 self.create(&mut w, &rt).await?
                             }
                             Err(e) => return Err(e),
@@ -996,9 +997,19 @@ impl Lifecycle {
             Some(i) if i.state == SandboxState::Running => Ok(Some(false)),
             Some(_) => match self.op("resume", self.provider.resume(sandbox)).await {
                 Ok(_) => Ok(Some(true)),
-                Err(Error::Sandbox(sandbox::Error::NotFound(_))) => Ok(None),
+                Err(Error::Sandbox(sandbox::Error::NotFound(_))) => {
+                    self.forget_sandbox(sandbox).await;
+                    Ok(None)
+                }
                 Err(e) => Err(e),
             },
+        }
+    }
+
+    /// 后端说沙箱没了：保险起见再删一次（万一它其实还在，不留下一个没人管的）。
+    async fn forget_sandbox(&self, sandbox: &SandboxId) {
+        if let Err(e) = self.op("destroy", self.provider.destroy(sandbox)).await {
+            warn!(sandbox = %sandbox, error = %e, "could not remove a sandbox reported as gone");
         }
     }
 
