@@ -42,6 +42,20 @@ pub struct InstanceRuntime {
     pub rebuild_pending: bool,
     /// 沙箱令牌的代数，签进令牌；运行的一次尝试结束时加一，旧令牌随之失效。
     pub token_epoch: u64,
+    /// 最新的工作区归档（没有工作区卷的后端用，见 docs/sandbox-acs.md）。
+    pub archive: Option<WorkspaceArchive>,
+}
+
+/// 存在对象存储里的一份工作区归档（tar.gz，按用户 DEK 分块加密）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceArchive {
+    pub key: String,
+    /// 加密时进 AAD 的归档 id。
+    pub id: Uuid,
+    /// 明文（tar.gz）的大小和 SHA-256。
+    pub bytes: u64,
+    pub sha256: [u8; 32],
+    pub archived_at: DateTime<Utc>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -93,10 +107,36 @@ struct RuntimeRow {
     last_active_at: DateTime<Utc>,
     rebuild_pending: bool,
     token_epoch: i64,
+    workspace_archive_key: Option<String>,
+    workspace_archive_id: Option<Uuid>,
+    workspace_archive_bytes: Option<i64>,
+    workspace_archive_sha256: Option<Vec<u8>>,
+    workspace_archived_at: Option<DateTime<Utc>>,
 }
 
 impl RuntimeRow {
     fn into_runtime(self) -> Result<InstanceRuntime> {
+        let archive = match (
+            self.workspace_archive_key,
+            self.workspace_archive_id,
+            self.workspace_archive_bytes,
+            self.workspace_archive_sha256,
+            self.workspace_archived_at,
+        ) {
+            (Some(key), Some(id), Some(bytes), Some(sha), Some(archived_at)) => {
+                Some(WorkspaceArchive {
+                    key,
+                    id,
+                    bytes: u64::try_from(bytes)
+                        .map_err(|_| Error::Invalid("negative archive size".into()))?,
+                    sha256: sha
+                        .try_into()
+                        .map_err(|_| Error::Invalid("bad archive digest".into()))?,
+                    archived_at,
+                })
+            }
+            _ => None,
+        };
         Ok(InstanceRuntime {
             id: self.id.into(),
             user_id: self.user_id.into(),
@@ -112,6 +152,7 @@ impl RuntimeRow {
             last_active_at: self.last_active_at,
             rebuild_pending: self.rebuild_pending,
             token_epoch: u64::try_from(self.token_epoch).unwrap_or_default(),
+            archive,
         })
     }
 }
@@ -120,7 +161,8 @@ macro_rules! runtime_columns {
     () => {
         "id, user_id, agent_id, agent_version, harness, state, sandbox_id, \
          host(sandbox_address) AS sandbox_address, workspace_id, snapshot_id, limits, last_active_at, \
-         rebuild_pending, token_epoch"
+         rebuild_pending, token_epoch, workspace_archive_key, workspace_archive_id, \
+         workspace_archive_bytes, workspace_archive_sha256, workspace_archived_at"
     };
 }
 
@@ -584,11 +626,69 @@ impl Tx<Worker> {
     }
 
     pub async fn mark_instance_purged(&mut self, id: InstanceId) -> Result<()> {
+        // 工作区归档的对象由触发器排进 blob_purge。
         sqlx::query(
-            "UPDATE instances SET purged_at = now(), sandbox_id = NULL, sandbox_address = NULL, snapshot_id = NULL \
+            "UPDATE instances SET purged_at = now(), sandbox_id = NULL, sandbox_address = NULL, snapshot_id = NULL, \
+               workspace_archive_key = NULL, workspace_archive_id = NULL, workspace_archive_bytes = NULL, \
+               workspace_archive_sha256 = NULL, workspace_archived_at = NULL, workspace_archive_pending = NULL \
              WHERE id = $1",
         )
         .bind(id.0)
+        .execute(self.conn())
+        .await?;
+        Ok(())
+    }
+
+    /// 要上传一份新的工作区归档：先记下对象键（单独提交），上传中途进程被杀时下次能找到、删掉它。
+    /// 上一个没完成的上传由触发器排进 blob_purge。
+    pub async fn begin_workspace_archive(&mut self, id: InstanceId, key: &str) -> Result<()> {
+        let done = sqlx::query(
+            "UPDATE instances SET workspace_archive_pending = $2 WHERE id = $1 AND state <> 'deleted'",
+        )
+        .bind(id.0)
+        .bind(key)
+        .execute(self.conn())
+        .await?;
+        if done.rows_affected() == 0 {
+            return Err(Error::NotFound);
+        }
+        Ok(())
+    }
+
+    /// 上传完成：换成新的归档（旧的由触发器排进 blob_purge）。待定的对象已经不是 `key`
+    /// （别的副本开始了新的上传）时什么都不改，返回 false。
+    pub async fn finish_workspace_archive(
+        &mut self,
+        id: InstanceId,
+        key: &str,
+        archive_id: Uuid,
+        bytes: u64,
+        sha256: &[u8; 32],
+    ) -> Result<bool> {
+        let done = sqlx::query(
+            "UPDATE instances SET workspace_archive_key = $2, workspace_archive_id = $3, \
+               workspace_archive_bytes = $4, workspace_archive_sha256 = $5, \
+               workspace_archived_at = now(), workspace_archive_pending = NULL \
+             WHERE id = $1 AND workspace_archive_pending = $2",
+        )
+        .bind(id.0)
+        .bind(key)
+        .bind(archive_id)
+        .bind(i64::try_from(bytes).map_err(|_| Error::Invalid("archive too large".into()))?)
+        .bind(sha256.as_slice())
+        .execute(self.conn())
+        .await?;
+        Ok(done.rows_affected() == 1)
+    }
+
+    /// 上传失败或不用了：对象由触发器排进 blob_purge。
+    pub async fn abort_workspace_archive(&mut self, id: InstanceId, key: &str) -> Result<()> {
+        sqlx::query(
+            "UPDATE instances SET workspace_archive_pending = NULL \
+             WHERE id = $1 AND workspace_archive_pending = $2",
+        )
+        .bind(id.0)
+        .bind(key)
         .execute(self.conn())
         .await?;
         Ok(())
