@@ -173,10 +173,10 @@ fn status(p: &Peer) -> &'static str {
     }
 }
 
-/// 运行的任务：委派来的子任务的提示词是“平台说明 + 空行 + 任务”，只取任务；第一行，有长度上限。
+/// 运行的任务：委派来的子任务、别人问的问题的提示词是“平台说明 + 空行 + 任务”，只取任务；第一行，有长度上限。
 fn task(run: &Run) -> String {
     let text = match run.source {
-        RunSource::Delegate => run
+        RunSource::Delegate | RunSource::Ask => run
             .prompt
             .split_once("\n\n")
             .map_or(run.prompt.as_str(), |(_, t)| t),

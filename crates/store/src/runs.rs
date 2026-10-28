@@ -307,6 +307,46 @@ macro_rules! bump_epochs_where {
     };
 }
 
+impl<R> Tx<R> {
+    /// 取消这些提问（8.11，调用方已经锁住了它们），连同回答方为回答它们开的子孙；`reasons` 和 `ids`
+    /// 一一对应，是每个提问的状态说明。令牌代数加一，执行中的回答方续租时停下。返回取消的提问。
+    async fn cancel_asks(&mut self, ids: &[Uuid], reasons: &[&str]) -> Result<Vec<Run>> {
+        sqlx::query(concat!(
+            "WITH RECURSIVE tree AS ( \
+               SELECT unnest($1::uuid[]) AS id \
+               UNION SELECT r.id FROM runs r JOIN tree t ON r.parent_run_id = t.id) ",
+            bump_epochs_where!("id IN (SELECT id FROM tree)")
+        ))
+        .bind(ids)
+        .execute(self.conn())
+        .await?;
+        sqlx::query(
+            "WITH RECURSIVE tree AS ( \
+               SELECT id FROM runs WHERE parent_run_id = ANY($1) \
+               UNION SELECT r.id FROM runs r JOIN tree t ON r.parent_run_id = t.id) \
+             UPDATE runs SET state = 'cancelled', state_reason = $2, wait_code = NULL, lease_owner = NULL, lease_expires_at = NULL, \
+               finished_at = now(), updated_at = now() \
+             WHERE id IN (SELECT id FROM tree) AND state NOT IN ('succeeded', 'failed', 'cancelled')",
+        )
+        .bind(ids)
+        .bind("the question it was answering was withdrawn")
+        .execute(self.conn())
+        .await?;
+        let rows: Vec<Row> = sqlx::query_as(concat!(
+            "UPDATE runs SET state = 'cancelled', state_reason = v.ask_reason, wait_code = NULL, \
+               lease_owner = NULL, lease_expires_at = NULL, finished_at = now(), updated_at = now() \
+             FROM unnest($1::uuid[], $2::text[]) AS v(ask_id, ask_reason) \
+             WHERE runs.id = v.ask_id AND runs.state NOT IN ('succeeded', 'failed', 'cancelled') RETURNING ",
+            columns!()
+        ))
+        .bind(ids)
+        .bind(reasons)
+        .fetch_all(self.conn())
+        .await?;
+        rows.into_iter().map(Row::into_run).collect()
+    }
+}
+
 impl Tx<Tenant> {
     /// 用户发起的运行（或用户手动触发计划）。
     pub async fn create_run(&mut self, new: &NewRun) -> Result<Run> {
@@ -434,6 +474,23 @@ impl Tx<Tenant> {
             self.run(root).await?;
         }
         Ok(done.rows_affected())
+    }
+
+    /// 实例关了“允许其他 agent 查我、问我”（8.11）：别人问它、还没答完的问题都取消（连同它为回答开的子孙），
+    /// 提问方拿到“没问成”。返回取消的提问。
+    pub async fn cancel_asks_to(&mut self, instance: InstanceId, reason: &str) -> Result<Vec<Run>> {
+        let ids: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM runs WHERE instance_id = $1 AND source = 'ask' \
+               AND state NOT IN ('succeeded', 'failed', 'cancelled') FOR NO KEY UPDATE",
+        )
+        .bind(instance.0)
+        .fetch_all(self.conn())
+        .await?;
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let reasons = vec![reason; ids.len()];
+        self.cancel_asks(&ids, &reasons).await
     }
 
     /// 运行的预算（agent 在运行里新建计划时，计划沿用这个预算）。
@@ -827,46 +884,17 @@ impl Tx<Worker> {
             return Ok(Vec::new());
         }
         let ids: Vec<Uuid> = picked.iter().map(|(id, _)| *id).collect();
-        let overdue: Vec<Uuid> = picked
+        let reasons: Vec<&str> = picked
             .iter()
-            .filter(|(_, o)| *o)
-            .map(|(id, _)| *id)
+            .map(|(_, overdue)| {
+                if *overdue {
+                    ANSWER_TIMEOUT_REASON
+                } else {
+                    ASKER_GONE_REASON
+                }
+            })
             .collect();
-        sqlx::query(concat!(
-            "WITH RECURSIVE tree AS ( \
-               SELECT unnest($1::uuid[]) AS id \
-               UNION SELECT r.id FROM runs r JOIN tree t ON r.parent_run_id = t.id) ",
-            bump_epochs_where!("id IN (SELECT id FROM tree)")
-        ))
-        .bind(&ids)
-        .execute(self.conn())
-        .await?;
-        sqlx::query(
-            "WITH RECURSIVE tree AS ( \
-               SELECT id FROM runs WHERE parent_run_id = ANY($1) \
-               UNION SELECT r.id FROM runs r JOIN tree t ON r.parent_run_id = t.id) \
-             UPDATE runs SET state = 'cancelled', state_reason = $2, wait_code = NULL, lease_owner = NULL, lease_expires_at = NULL, \
-               finished_at = now(), updated_at = now() \
-             WHERE id IN (SELECT id FROM tree) AND state NOT IN ('succeeded', 'failed', 'cancelled')",
-        )
-        .bind(&ids)
-        .bind("the question it was answering was withdrawn")
-        .execute(self.conn())
-        .await?;
-        let rows: Vec<Row> = sqlx::query_as(concat!(
-            "UPDATE runs SET state = 'cancelled', \
-               state_reason = CASE WHEN id = ANY($2) THEN $3 ELSE $4 END, \
-               wait_code = NULL, lease_owner = NULL, lease_expires_at = NULL, finished_at = now(), updated_at = now() \
-             WHERE id = ANY($1) RETURNING ",
-            columns!()
-        ))
-        .bind(&ids)
-        .bind(&overdue)
-        .bind(ANSWER_TIMEOUT_REASON)
-        .bind(ASKER_GONE_REASON)
-        .fetch_all(self.conn())
-        .await?;
-        rows.into_iter().map(Row::into_run).collect()
+        self.cancel_asks(&ids, &reasons).await
     }
 
     /// 等电脑、等 key 超时的运行（7.11）：拿到租约交给执行器按策略结束。没人持有租约的才拿。

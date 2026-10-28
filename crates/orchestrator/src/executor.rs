@@ -21,7 +21,7 @@ use notify::PushKind;
 use proto::computer::ComputerTool;
 use proto::domain::{
     ApprovalId, ApprovalState, ApprovalTimeoutAction, GrantId, InstanceEvent, Locale, PlanPolicy,
-    RunId, RunSource, RunState, UserId, VaultItemId, valid_vault_name,
+    Run, RunId, RunSource, RunState, UserId, VaultItemId, valid_vault_name, wait_code,
 };
 use proto::shim::{DecisionSource, SecretValues, ShimCommand, ShimEvent, StopReason};
 use serde_json::{Value, json};
@@ -113,7 +113,7 @@ pub enum Outcome {
         deadline: Option<chrono::DateTime<Utc>>,
         /// 要用户处理的发通知。
         notify: bool,
-        /// 等的是什么（`proto::domain::wait_code`），等子任务时没有。
+        /// 等的是什么（`proto::domain::wait_code`）；等子任务时没有，只等队友回答时是 `answer`。
         code: Option<&'static str>,
     },
 }
@@ -184,6 +184,8 @@ struct Exec<'a> {
     attempt_started: chrono::DateTime<Utc>,
     /// 这次运行委派过子任务（8.7）。
     has_children: bool,
+    /// 这次运行问过队友（8.11）。
+    has_asks: bool,
     /// 委派的子任务做完了：交还给 agent 的消息，以及其中的子运行（这一轮开始后记成已交还）。
     resume: Option<(String, Vec<RunId>)>,
     /// agent 接回了之前的会话（还记得之前的对话）。
@@ -246,7 +248,7 @@ fn computer_error(e: &CallError) -> String {
 }
 
 /// 有副作用的平台工具（7.13）：同一次运行里参数完全相同的调用只执行一次。
-const SIDE_EFFECT_TOOLS: [&str; 7] = [
+const SIDE_EFFECT_TOOLS: [&str; 8] = [
     "schedule_create",
     "schedule_update",
     "schedule_cancel",
@@ -254,6 +256,7 @@ const SIDE_EFFECT_TOOLS: [&str; 7] = [
     "delegate",
     "vault_request",
     "board_post",
+    "ask",
 ];
 
 /// 续跑简报（7.12）：上一次执行到哪儿了——最近调过的工具、最后说的话、为什么中断。
@@ -304,8 +307,12 @@ fn idempotency_key(name: &str, arguments: &Value) -> Vec<u8> {
     h.finalize().to_vec()
 }
 
-/// 运行摘要从回复里取，最多留这么多字节（摘要只用前 400 个字）。
+/// 运行摘要从回复里取，最多留这么多字节（摘要只用前 [`SUMMARY_CHARS`] 个字）。
 const MAX_ANSWER: usize = 8 << 10;
+/// 运行摘要最多这么多字。
+const SUMMARY_CHARS: usize = 400;
+/// 回答队友的问题（8.11）：摘要就是交还给提问方的回答，可以长一些（中文也不超过 [`MAX_ANSWER`] 字节）。
+const ANSWER_CHARS: usize = 2000;
 /// 运行日志里单个字符串的上限：agent 的回复、工具输出这类长文本截断。
 const MAX_EVENT_STRING: usize = 16 << 10;
 /// 单条运行日志的上限，截断字符串以后还超过就只留一个占位。
@@ -467,6 +474,9 @@ impl Executor {
                     if let Err(e) = self.expire_waits().await {
                         error!(error = %e, "ending expired waits failed");
                     }
+                    if let Err(e) = self.expire_asks().await {
+                        error!(error = %e, "cancelling stale questions failed");
+                    }
                 }
                 permit = slots.clone().acquire_owned() => {
                     let Ok(permit) = permit else { break };
@@ -575,6 +585,33 @@ impl Executor {
                 .await;
         }
         Ok(n)
+    }
+
+    /// 没人等了的提问（8.11）：过了回答期限的、提问方已经结束了的，连同回答方为它开的子孙一起取消。
+    /// 正在回答的执行器续租时发现被取消、停下 agent；提问方的子运行都结束了，接着被领起来拿到“对方没回答”。
+    pub async fn expire_asks(&self) -> store::Result<usize> {
+        let mut w = self.db.worker().await?;
+        let runs = w.cancel_stale_asks(20).await?;
+        w.commit().await?;
+        for run in &runs {
+            info!(run = %run.id, reason = ?run.state_reason, "question cancelled");
+            let logged = async {
+                let mut w = self.db.worker().await?;
+                w.append_event(
+                    run.instance_id,
+                    Some(run.id),
+                    "run.state",
+                    &json!({ "state": run.state, "reason": run.state_reason, "attempt": run.attempt }),
+                )
+                .await?;
+                w.commit().await
+            }
+            .await;
+            if let Err(e) = logged {
+                warn!(run = %run.id, error = %e, "logging a cancelled question failed");
+            }
+        }
+        Ok(runs.len())
     }
 
     /// 执行一个已领取（启动中）的运行，直到结束。这次执行的日志都挂在一个 `run` span 下（2.8）。
@@ -706,8 +743,9 @@ impl Executor {
             .iter()
             .any(|t| DELEGATE_TOOLS.contains(&t.as_str()))
             && w.is_team_lead(instance).await.map_err(retry)?;
-        // 委派的子任务做完了、结果还没交还：这次接着跑的消息就是它们的结果（8.7）。
+        // 委派的子任务做完了、问的问题有结局了，还没交还：这次接着跑的消息就是它们的结果（8.7、8.11）。
         let delegated = w.delegated_runs(rec.run.id).await.map_err(retry)?;
+        let asked = w.ask_runs(rec.run.id).await.map_err(retry)?;
         let finished = w.unreported_children(rec.run.id).await.map_err(retry)?;
         // 电脑工具（14.2）只给登录着电脑的用户：没电脑的 agent 看不到它们。
         let has_computer =
@@ -862,6 +900,7 @@ impl Executor {
             scrubber: self.scrubber(rec.user_id).await,
             attempt_started,
             has_children: !delegated.is_empty(),
+            has_asks: !asked.is_empty(),
             resume,
             session_restored,
             brief,
@@ -1025,8 +1064,10 @@ impl Executor {
             },
         )
         .await?;
-        // 流水线的步骤不单独通知：整条流水线结束时由根运行通知（8.3）。等 key 要用户处理，照样通知。
-        let step_quiet = (rec.run.step_key.is_some() || rec.run.source == RunSource::Delegate)
+        // 流水线的步骤不单独通知：整条流水线结束时由根运行通知（8.3）；委派的子任务、回答队友的问题也是，
+        // 结果交还给父运行。等 key 要用户处理，照样通知。
+        let step_quiet = (rec.run.step_key.is_some()
+            || matches!(rec.run.source, RunSource::Delegate | RunSource::Ask))
             && !to.is_waiting();
         let wait = done.run.wait_code.as_deref().filter(|_| to.is_waiting());
         if let Some((kind, body)) = push.filter(|_| !step_quiet) {
@@ -1277,41 +1318,41 @@ impl Exec<'_> {
         out
     }
 
-    /// 这一轮结束时还有委派的子任务没做完、或者结果还没交还（8.7）：转入等子任务，放掉租约；
-    /// 子任务都结束后执行器把运行重新领起来，把结果作为新消息交给 agent。查不到当作没有。
+    /// 这一轮结束时还有委派的子任务没做完、问的问题还没答完，或者结果还没交还（8.7、8.11）：转入等子任务，
+    /// 放掉租约；都结束后执行器把运行重新领起来，把结果作为新消息交给 agent。查不到当作没有。
     async fn await_children(&self) -> Option<Outcome> {
         let pending = async {
             let mut w = self.ex.db.worker().await?;
-            let running = w
-                .delegated_runs(self.rec.run.id)
-                .await?
-                .iter()
-                .filter(|c| !c.state.is_terminal())
-                .count();
-            let finished = w.unreported_children(self.rec.run.id).await?.len();
+            let id = self.rec.run.id;
+            let open = |runs: Vec<Run>| runs.iter().filter(|c| !c.state.is_terminal()).count();
+            let delegated = open(w.delegated_runs(id).await?);
+            let asked = open(w.ask_runs(id).await?);
+            let finished = w.unreported_children(id).await?.len();
             w.rollback().await?;
-            Ok::<_, store::Error>((running, finished))
+            Ok::<_, store::Error>((delegated, asked, finished))
         }
         .await;
         match pending {
-            Ok((0, 0)) => None,
-            Ok((running, _)) => {
-                info!(run = %self.rec.run.id, running, "waiting for delegated subtasks");
+            Ok((0, 0, 0)) => None,
+            Ok((delegated, asked, _)) => {
+                info!(run = %self.rec.run.id, delegated, asked, "waiting for subtasks and answers");
+                let reason = match (delegated, asked) {
+                    (0, 0) => "handing the results to the agent".to_owned(),
+                    (0, n) => format!("waiting for {n} answer(s)"),
+                    (n, 0) => format!("waiting for {n} delegated subtask(s)"),
+                    (n, m) => format!("waiting for {n} delegated subtask(s) and {m} answer(s)"),
+                };
                 Some(Outcome::Waiting {
                     state: RunState::WaitingChildren,
-                    reason: if running == 0 {
-                        "handing the subtask results to the agent".to_owned()
-                    } else {
-                        format!("waiting for {running} delegated subtask(s)")
-                    },
+                    reason,
                     retry_at: Some(Utc::now()),
                     deadline: None,
                     notify: false,
-                    code: None,
+                    code: (delegated == 0 && asked > 0).then_some(wait_code::ANSWER),
                 })
             }
             Err(e) => {
-                warn!(run = %self.rec.run.id, error = %e, "reading delegated subtasks failed");
+                warn!(run = %self.rec.run.id, error = %e, "reading subtasks failed");
                 None
             }
         }
@@ -1467,6 +1508,7 @@ impl Exec<'_> {
                 self.rec.run.attempt,
                 brief,
                 self.has_children,
+                self.has_asks,
                 &prompt,
             );
         }
@@ -1692,7 +1734,12 @@ impl Exec<'_> {
                     .scrubber
                     .scrub(&self.answer)
                     .unwrap_or_else(|| self.answer.clone());
-                let summary = Some(truncate(&answer, 400)).filter(|s| !s.is_empty());
+                let cap = if self.rec.run.source == RunSource::Ask {
+                    ANSWER_CHARS
+                } else {
+                    SUMMARY_CHARS
+                };
+                let summary = Some(truncate(&answer, cap)).filter(|s| !s.is_empty());
                 return Some(match stop_reason {
                     StopReason::EndTurn => Outcome::Succeeded {
                         summary,

@@ -2,6 +2,7 @@
 
 pub mod account;
 pub mod artifacts;
+pub mod ask;
 pub mod board;
 pub mod computer;
 pub mod delegate;

@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use auth::grants::{GrantConfig, GrantService};
 use auth::sandbox_token::SandboxTokenIssuer;
 use control::{BuiltinTemplates, Lifecycle, LifecycleConfig};
+use orchestrator::ask::{ASK_TOOLS, AskTools, MAX_ASKS_PER_RUN};
 use orchestrator::computer::DeviceCalls;
 use orchestrator::delegate::{DELEGATE_TOOLS, DelegateTools, MAX_CHILDREN_PER_RUN};
 use orchestrator::executor::{Executor, ExecutorConfig};
@@ -135,6 +136,32 @@ async fn delegate_call(
     }
 }
 
+/// 调平台工具 ask 问队友（8.11），把结果当作回复，结束这一轮。
+async fn ask_call(
+    ev: &mpsc::Sender<ShimEvent>,
+    cmds: &mut mpsc::Receiver<ShimCommand>,
+    run_id: &str,
+    to: &str,
+    question: &str,
+) {
+    let _ = ev
+        .send(ShimEvent::PlatformToolCall {
+            run_id: run_id.into(),
+            call_id: "q1".into(),
+            name: "ask".into(),
+            arguments: json!({ "to": to, "question": question }),
+        })
+        .await;
+    while let Some(c) = cmds.recv().await {
+        if let ShimCommand::PlatformToolResult { content, .. } = c {
+            let text = content[0]["text"].as_str().unwrap_or_default().to_owned();
+            let _ = ev.send(chunk(run_id, &text)).await;
+            let _ = ev.send(ended(run_id, StopReason::EndTurn)).await;
+            break;
+        }
+    }
+}
+
 /// 一轮里调 `n` 次 delegate（任务各不相同，不会被当成重复调用），把最后一次的结果当作回复，结束这一轮。
 async fn fan_out(
     ev: &mpsc::Sender<ShimEvent>,
@@ -207,6 +234,14 @@ async fn fake_shim(
                     // 委派的子任务的结果交回来了（8.7）。
                     let _ = ev.send(chunk(&run_id, "got the results")).await;
                     let _ = ev.send(ended(&run_id, StopReason::EndTurn)).await;
+                } else if text.contains("问题有结果了") {
+                    // 问队友的回答交回来了（8.11）。
+                    let _ = ev.send(chunk(&run_id, "got the answers")).await;
+                    let _ = ev.send(ended(&run_id, StopReason::EndTurn)).await;
+                } else if let Some((_, rest)) = text.split_once("ask teammate ") {
+                    // 问队友（8.11）："ask teammate 名字: 问题"。
+                    let (to, question) = rest.split_once(": ").unwrap_or((rest, "say hello"));
+                    ask_call(&ev, &mut cmds, &run_id, to.trim(), question).await;
                 } else if let Some((_, task)) = text.split_once("lead the team: ") {
                     delegate_call(&ev, &mut cmds, &run_id, "helper", task).await;
                 } else if let Some((_, rest)) = text.split_once("relay to ") {
@@ -2376,4 +2411,251 @@ async fn without_a_computer_there_are_no_computer_tools() {
         rec.run.summary
     );
     assert!(device_call_states(&e).await.is_empty());
+}
+
+// ---------- 问队友（8.11） ----------
+
+/// e.instance（名字 Claude）和 helper 是同一用户的两个实例，不在一个团队里；两个都有自己的授权，里面有提问工具。
+async fn ask_env() -> Option<(Env, Instance)> {
+    let late = Late::default();
+    let scope = GrantScope {
+        platform_tools: ASK_TOOLS.iter().map(|t| t.to_string()).collect(),
+        ..GrantScope::default()
+    };
+    let e = env_with(fast(), Some(scope.clone()), Arc::new(late.clone())).await?;
+    let _ = late.0.set(Arc::new(AskTools::new(e.t.db.clone(), kms())));
+    let helper = e
+        .lifecycle
+        .adopt(e.user, "user:d", "claude", None, "helper")
+        .await
+        .unwrap();
+    let mut tx = e.t.db.tenant(e.user).await.unwrap();
+    tx.create_run_grant(helper.id, None, &scope, Duration::from_secs(3600))
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    Some((e, helper))
+}
+
+async fn asks(e: &Env, parent: RunId) -> Vec<proto::domain::Run> {
+    let mut w = e.t.db.worker().await.unwrap();
+    let runs = w.ask_runs(parent).await.unwrap();
+    w.rollback().await.unwrap();
+    runs
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_teammate_answers_and_the_answer_comes_back() {
+    let Some((e, helper)) = ask_env().await else {
+        return;
+    };
+    let run = e.queue("ask teammate helper: say hello", None, 3).await;
+    // 问完结束这一轮：转入等回答，放掉租约。
+    e.run_to_end().await;
+    let rec = e.state(run).await;
+    assert_eq!(rec.run.state, RunState::WaitingChildren, "{:?}", rec.run);
+    assert_eq!(
+        rec.run.wait_code.as_deref(),
+        Some(proto::domain::wait_code::ANSWER)
+    );
+    assert_eq!(rec.lease_owner, None);
+    let qs = asks(&e, run).await;
+    assert_eq!(qs.len(), 1);
+    let q = &qs[0];
+    assert_eq!(
+        (
+            q.instance_id,
+            q.source,
+            q.parent_run_id,
+            q.root_run_id,
+            q.plan_id
+        ),
+        (helper.id, RunSource::Ask, Some(run), run, None)
+    );
+    assert!(q.prompt.contains("「Claude」") && q.prompt.ends_with("\n\nsay hello"));
+    // 回答方用它自己的授权，不从提问方收窄。
+    assert_eq!(e.state(q.id).await.run_grant_id, None);
+    assert!(
+        e.events(run)
+            .await
+            .iter()
+            .any(|(k, p)| k == "ask.sent" && p["to"] == "helper" && p["question"] == "say hello")
+    );
+
+    // 对方回答：不单独推送。
+    e.run_to_end().await;
+    let answered = e.state(q.id).await.run;
+    assert_eq!(answered.state, RunState::Succeeded);
+    assert_eq!(answered.summary.as_deref(), Some("Hello world"));
+    assert!(e.inbox().await.iter().all(|i| i.run_id != Some(q.id)));
+
+    // 提问方接着跑：回答作为新消息交回去，不占重试次数。
+    e.run_to_end().await;
+    let rec = e.state(run).await;
+    assert_eq!(rec.run.state, RunState::Succeeded, "{:?}", rec.run);
+    assert_eq!(rec.run.summary.as_deref(), Some("got the answers"));
+    assert_eq!((rec.run.attempt, rec.max_attempts), (2, 4));
+    let prompts = e.fake.rec.lock().unwrap().prompts.clone();
+    assert!(
+        prompts[2].contains("问「helper」的「say hello」：回答：Hello world"),
+        "{}",
+        prompts[2]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn asking_back_someone_who_waits_for_you_is_refused() {
+    let Some((e, _helper)) = ask_env().await else {
+        return;
+    };
+    let run = e
+        .queue(
+            "ask teammate helper: ask teammate Claude: say hello",
+            None,
+            3,
+        )
+        .await;
+    e.run_to_end().await;
+    let q = asks(&e, run).await[0].id;
+    // helper 回答时反过来问 Claude：Claude 正等着它，会互相等死，拒绝。
+    e.run_to_end().await;
+    let rec = e.state(q).await;
+    assert_eq!(rec.run.state, RunState::Succeeded);
+    assert!(
+        rec.run
+            .summary
+            .as_deref()
+            .unwrap_or_default()
+            .contains("deadlock"),
+        "{:?}",
+        rec.run.summary
+    );
+    assert!(asks(&e, q).await.is_empty());
+    e.run_to_end().await;
+    assert_eq!(e.state(run).await.run.state, RunState::Succeeded);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn unanswered_questions_time_out() {
+    let Some((e, helper)) = ask_env().await else {
+        return;
+    };
+    // helper 正忙：问题排在它这一轮后面。
+    let busy = {
+        let mut tx = e.t.db.tenant(e.user).await.unwrap();
+        let r = tx
+            .create_run(&NewRun::new(
+                helper.id,
+                RunSource::User,
+                "loop forever",
+                &helper.agent_version,
+            ))
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        r.id
+    };
+    let (_stop, h) = e.spawn().await;
+    e.wait_state(busy, RunState::Running).await;
+    let run = e.queue("ask teammate helper: say hello", None, 3).await;
+    e.run_to_end().await;
+    assert_eq!(e.state(run).await.run.state, RunState::WaitingChildren);
+    let q = asks(&e, run).await[0].id;
+    assert_eq!(e.state(q).await.run.state, RunState::Queued);
+    // 过了回答期限：后台取消它，提问方拿到“对方没回答”。
+    sqlx::query("UPDATE runs SET answer_deadline = now() - interval '1 second' WHERE id = $1")
+        .bind(q.0)
+        .execute(e.t.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(e.exec.expire_asks().await.unwrap(), 1);
+    let rec = e.state(q).await;
+    assert_eq!(rec.run.state, RunState::Cancelled);
+    assert_eq!(
+        rec.run.state_reason.as_deref(),
+        Some(store::ANSWER_TIMEOUT_REASON)
+    );
+    e.run_to_end().await;
+    assert_eq!(e.state(run).await.run.state, RunState::Succeeded);
+    let prompts = e.fake.rec.lock().unwrap().prompts.clone();
+    assert!(
+        prompts.last().unwrap().contains("对方没有在 30 分钟内回答"),
+        "{prompts:?}"
+    );
+    let mut tx = e.t.db.tenant(e.user).await.unwrap();
+    tx.cancel_run(busy, None).await.unwrap();
+    tx.commit().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(20), h)
+        .await
+        .unwrap()
+        .unwrap();
+}
+
+/// 直接调提问工具（不经 agent）：看拒绝的情况。
+async fn ask_directly(e: &Env, run: RunId, to: &str, question: &str) -> ToolOutput {
+    let tools = AskTools::new(e.t.db.clone(), kms());
+    let mut w = e.t.db.worker().await.unwrap();
+    let grant = w
+        .active_grant_for_instance(e.instance.id)
+        .await
+        .unwrap()
+        .unwrap();
+    w.rollback().await.unwrap();
+    let ctx = ToolContext {
+        user: e.user,
+        instance: e.instance.id,
+        run,
+        plan: None,
+        grant,
+    };
+    tools
+        .call(&ctx, "ask", &json!({ "to": to, "question": question }))
+        .await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn questions_respect_the_switch_and_the_cap() {
+    let Some((e, helper)) = ask_env().await else {
+        return;
+    };
+    let run = e.queue("anything", None, 3).await;
+    let text = |o: &ToolOutput| o.content[0]["text"].as_str().unwrap_or_default().to_owned();
+    // 问自己、问不存在的：看不到。
+    for to in ["Claude", "nobody"] {
+        let out = ask_directly(&e, run, to, "hi").await;
+        assert!(
+            out.is_error && text(&out).contains("no agent called"),
+            "{}",
+            text(&out)
+        );
+    }
+    // 一次运行最多问几次。
+    for i in 0..MAX_ASKS_PER_RUN {
+        let out = ask_directly(&e, run, "helper", &format!("question {i}")).await;
+        assert!(!out.is_error, "{}", text(&out));
+    }
+    let out = ask_directly(&e, run, "helper", "one more").await;
+    assert!(
+        out.is_error && text(&out).contains("at most"),
+        "{}",
+        text(&out)
+    );
+    // 关了“允许其他 agent 问我”：和不存在一样。
+    let mut tx = e.t.db.tenant(e.user).await.unwrap();
+    tx.update_instance(
+        helper.id,
+        &store::InstanceChange {
+            peer_access: Some(false),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let out = ask_directly(&e, run, "helper", "hi again").await;
+    assert!(
+        out.is_error && text(&out).contains("no agent called"),
+        "{}",
+        text(&out)
+    );
 }

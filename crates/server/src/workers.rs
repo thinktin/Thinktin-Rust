@@ -143,6 +143,7 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
             db.clone(),
             kms.clone(),
         )),
+        Arc::new(orchestrator::ask::AskTools::new(db.clone(), kms.clone())),
     ];
     // 用户电脑上的工具（14.2）：调用经设备中继转给用户自己的电脑，结果靠数据库通知取回。
     let computer = Arc::new(DeviceCalls::new(db.clone()));

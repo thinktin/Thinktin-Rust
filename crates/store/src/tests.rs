@@ -4535,5 +4535,17 @@ async fn asks_detect_waits_and_stale_questions_are_cancelled() {
     assert_eq!(gone[0].id, qb.id);
     assert_eq!(gone[0].state_reason.as_deref(), Some(ASKER_GONE_REASON));
     assert!(w.cancel_stale_asks(10).await.unwrap().is_empty());
+    // C 关了“允许其他 agent 问我”：问它的、还没答的都取消。
+    let q3 = w
+        .create_run(u, &ask(&c, ra.id, later))
+        .await
+        .unwrap()
+        .unwrap();
     w.commit().await.unwrap();
+    let mut tx = db.tenant(u).await.unwrap();
+    let gone = tx.cancel_asks_to(c.id, "closed").await.unwrap();
+    assert_eq!(gone.iter().map(|r| r.id).collect::<Vec<_>>(), [q3.id]);
+    assert_eq!(gone[0].state_reason.as_deref(), Some("closed"));
+    assert!(tx.cancel_asks_to(c.id, "closed").await.unwrap().is_empty());
+    tx.commit().await.unwrap();
 }

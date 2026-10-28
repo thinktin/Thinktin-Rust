@@ -117,6 +117,21 @@ pub async fn update(
             &json!({ "on": on }),
         )
         .await?;
+        // 关了以后别人问它、还没答的问题也不答了（8.11）：提问方拿到“没问成”。
+        if !on {
+            for run in t
+                .cancel_asks_to(id, "the agent stopped taking questions")
+                .await?
+            {
+                t.append_event(
+                    run.instance_id,
+                    Some(run.id),
+                    "run.state",
+                    &json!({ "state": run.state, "reason": run.state_reason }),
+                )
+                .await?;
+            }
+        }
     }
     let instance = t.instance(id).await?;
     t.commit().await?;
