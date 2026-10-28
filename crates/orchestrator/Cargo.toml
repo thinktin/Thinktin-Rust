@@ -9,6 +9,7 @@ publish.workspace = true
 metrics.workspace = true
 async-trait.workspace = true
 auth = { path = "../auth" }
+bytes.workspace = true
 chrono.workspace = true
 chrono-tz.workspace = true
 control = { path = "../control" }
