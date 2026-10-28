@@ -38,6 +38,8 @@ patches:
   - target:
       kind: Deployment
       labelSelector: app.kubernetes.io/name=thinktin-llm-gw
+    # 用了主机网络，8790、9090 就是服务机的端口：新旧两个 Pod 不能同时在，升级时先停旧的再起新的
+    # （模型网关断一下，最多等进行中的流式请求 300 秒）。
     patch: |-
       - op: add
         path: /spec/template/spec/hostNetwork
@@ -45,6 +47,10 @@ patches:
       - op: add
         path: /spec/template/spec/dnsPolicy
         value: ClusterFirstWithHostNet
+      - op: replace
+        path: /spec/strategy
+        value:
+          type: Recreate
   # 工作区归档的密文临时文件放 /tmp（docs/sandbox-acs.md）：给够最大的归档。
   - target:
       kind: Deployment
