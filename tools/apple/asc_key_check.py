@@ -64,6 +64,8 @@ def main(argv: list[str]) -> int:
         private_key = handle.read()
     bearer = token(key_id, issuer_id, private_key)
 
+    # 只是编号、不是机密：给人对照 App Store Connect 页面和 .p8 的文件名（AuthKey_<密钥 ID>.p8）用。
+    print(f"读到的密钥 ID 末 4 位：{key_id[-4:]}；Issuer ID 前 8 位：{issuer_id[:8]}")
     status, body = get("/v1/apps?limit=1", bearer)
     if status == 0:
         print(f"::warning::连不上 App Store Connect，跳过密钥检查：{body.get('reason', '')}")
