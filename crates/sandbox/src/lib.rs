@@ -1,6 +1,7 @@
 //! 沙箱抽象（架构方案 4.10、6，WBS 6.1）：按 E2B 的接口定义创建、执行进程、暂停、恢复、快照、销毁。
 //!
-//! 控制服务只依赖 [`SandboxProvider`]。生产环境用 [`cube::CubeProvider`]，对接 CubeSandbox 的 E2B 兼容接口（6.2）；
+//! 控制服务只依赖 [`SandboxProvider`]。生产环境用 [`cube::CubeProvider`]，对接 CubeSandbox 的 E2B 兼容接口（6.2），
+//! 或 [`acs::AcsProvider`]，对接阿里云 ACS 上 OpenKruise Agents 的 E2B 兼容私有协议；
 //! 本地开发和端到端测试用 [`local::LocalProvider`]（6.3）：沙箱就是本机上的一个目录加一组进程，没有隔离。
 
 use std::collections::BTreeMap;
@@ -12,6 +13,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
 
+pub mod acs;
 pub mod cube;
 mod envd;
 pub mod local;
@@ -180,8 +182,14 @@ pub trait SandboxProvider: Send + Sync {
     /// 从快照建一个新沙箱（宿主机故障后换机恢复用）。
     async fn restore(&self, snapshot: &SnapshotId, spec: CreateSpec) -> Result<SandboxInfo>;
 
-    /// 销毁沙箱，结束里面的所有进程。工作区卷保留。不存在时直接返回。
+    /// 销毁沙箱，结束里面的所有进程。工作区卷保留（[`Self::workspace_persists`] 为 false 的后端没有卷，
+    /// 工作区随沙箱删掉）。不存在时直接返回。
     async fn destroy(&self, id: &SandboxId) -> Result<()>;
+
+    /// 销毁沙箱后工作区还在不在（同一个工作区重建沙箱时能不能挂回去）。
+    fn workspace_persists(&self) -> bool {
+        true
+    }
 
     /// 删除工作区卷（实例销毁时）。
     async fn delete_workspace(&self, workspace: &str) -> Result<()>;

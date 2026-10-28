@@ -49,7 +49,6 @@ pub(crate) enum Route {
     /// 按泛域名解析 `<scheme>://49983-<沙箱 id>.<域名>`。
     Wildcard { scheme: String, domain: String },
     /// OpenKruise sandbox-manager 的路径路由：`<base>/kruise/<沙箱 id>/49983/<路径>`。
-    #[allow(dead_code)] // ACS 后端接上后去掉
     KruisePath { base: String },
 }
 
@@ -59,7 +58,6 @@ pub(crate) enum Upload {
     /// 先发 `application/octet-stream`，envd 报 400 或 415 再改 multipart（老版本只收 multipart）。
     OctetStreamThenMultipart,
     /// 只发 multipart：ACS 镜像里的 envd 收到别的格式报 500，没法据此回退。
-    #[allow(dead_code)] // ACS 后端接上后去掉
     MultipartOnly,
 }
 

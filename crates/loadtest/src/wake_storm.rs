@@ -62,6 +62,10 @@ impl<P: SandboxProvider> SandboxProvider for Delayed<P> {
         self.inner.name()
     }
 
+    fn workspace_persists(&self) -> bool {
+        self.inner.workspace_persists()
+    }
+
     async fn create(&self, spec: CreateSpec) -> sandbox::Result<SandboxInfo> {
         delay(self.create_latency).await;
         self.creates.fetch_add(1, Ordering::Relaxed);

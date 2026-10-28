@@ -498,6 +498,10 @@ impl SandboxProvider for CubeProvider {
         "cube"
     }
 
+    fn workspace_persists(&self) -> bool {
+        self.cfg.use_volumes
+    }
+
     async fn create(&self, spec: CreateSpec) -> Result<SandboxInfo> {
         if spec.template.is_empty() {
             return Err(Error::Invalid("template is required".into()));
