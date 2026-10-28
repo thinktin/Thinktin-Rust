@@ -206,6 +206,8 @@ pub struct Sandbox {
     pub acs: AcsSandbox,
     /// 实例生命周期的计时（空闲多久暂停、暂停多久归档……），不配用默认值。
     pub lifecycle: SandboxLifecycle,
+    /// 工作区放在哪：卷上（默认），或者沙箱销毁前存进对象存储（没有卷的后端，如 ACS）。
+    pub workspace: WorkspaceSettings,
     /// 沙箱出网白名单。
     pub network_allow: Vec<String>,
     /// 沙箱里 agent-shim 的路径。
@@ -318,6 +320,39 @@ impl Default for SandboxLifecycle {
     }
 }
 
+/// 工作区放在哪（见 docs/sandbox-acs.md）。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct WorkspaceSettings {
+    /// `volume`：工作区在沙箱后端的卷上，销毁沙箱还在（local、cube）。`object`：沙箱销毁前在沙箱里打包、
+    /// 按用户 DEK 加密存进对象存储（`[storage]`），重建时放回（acs 必须用这个）。
+    pub mode: String,
+    /// 工作区归档（tar.gz）的大小上限（字节），超了不归档、沙箱留着。
+    pub max_bytes: u64,
+    /// 打包上传、下载放回各自最多多久（秒）。
+    pub archive_timeout_secs: u64,
+    /// 放密文临时文件的目录（后台副本的 /tmp 是单独的临时卷，要放得下最大的归档）。
+    pub temp_dir: std::path::PathBuf,
+}
+
+impl Default for WorkspaceSettings {
+    fn default() -> Self {
+        let d = control::LifecycleConfig::default();
+        Self {
+            mode: "volume".into(),
+            max_bytes: d.max_archive_bytes,
+            archive_timeout_secs: d.archive_timeout.as_secs(),
+            temp_dir: std::env::temp_dir(),
+        }
+    }
+}
+
+impl WorkspaceSettings {
+    pub fn object(&self) -> bool {
+        self.mode == "object"
+    }
+}
+
 impl Sandbox {
     /// 控制服务的生命周期配置。
     pub fn lifecycle_config(&self) -> control::LifecycleConfig {
@@ -332,7 +367,8 @@ impl Sandbox {
             op_timeout: Duration::from_secs(l.op_timeout_secs),
             sweep_batch: l.sweep_batch,
             pause_waiting_approval: l.pause_waiting_approval,
-            ..control::LifecycleConfig::default()
+            archive_timeout: Duration::from_secs(self.workspace.archive_timeout_secs),
+            max_archive_bytes: self.workspace.max_bytes,
         }
     }
 }
@@ -654,6 +690,7 @@ impl Default for Sandbox {
             cube: CubeSandbox::default(),
             acs: AcsSandbox::default(),
             lifecycle: SandboxLifecycle::default(),
+            workspace: WorkspaceSettings::default(),
             network_allow: Vec::new(),
             shim_path: "agent-shim".into(),
             gateway_url: "http://127.0.0.1:8790".into(),
@@ -938,6 +975,19 @@ impl Config {
                 bail!(
                     "sandbox.lifecycle.op_timeout_secs, sweep_batch and disk_mb must be positive"
                 );
+            }
+            let ws = &self.sandbox.workspace;
+            match ws.mode.as_str() {
+                "volume" if self.sandbox.provider == "acs" => bail!(
+                    "sandbox.provider = \"acs\" keeps no workspace volume: set sandbox.workspace.mode = \"object\""
+                ),
+                "volume" | "object" => {}
+                other => {
+                    bail!("sandbox.workspace.mode {other:?} is not supported (volume or object)")
+                }
+            }
+            if ws.max_bytes == 0 || ws.archive_timeout_secs == 0 {
+                bail!("sandbox.workspace.max_bytes and archive_timeout_secs must be positive");
             }
         }
         match self.kms.provider.as_str() {
@@ -1269,6 +1319,14 @@ api_ur = \"x\""
         let err = Config::load(Some(&path), &MapEnv(vars.clone())).unwrap_err();
         assert!(err.to_string().contains("THINKTIN_ACS_API_KEY"), "{err}");
         vars.insert("THINKTIN_ACS_API_KEY", "key");
+        std::fs::write(
+            &path,
+            format!(
+                "{worker}[sandbox.acs]\napi_url = \"http://sbx/kruise/api\"\n\
+                 [sandbox.workspace]\nmode = \"object\"\n"
+            ),
+        )
+        .unwrap();
         let cfg = Config::load(Some(&path), &MapEnv(vars)).unwrap();
         assert_eq!(cfg.acs_api_key.as_deref(), Some("key"));
         let _ = std::fs::remove_dir_all(&dir);
@@ -1348,6 +1406,60 @@ api_ur = \"x\""
                 "{bad}: {err}"
             );
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn workspace_archive_settings() {
+        let cfg = Config::parse(
+            r#"
+            [sandbox.workspace]
+            mode = "object"
+            max_bytes = 1073741824
+            temp_dir = "/var/tmp/thinktin"
+            "#,
+        )
+        .unwrap();
+        assert!(cfg.sandbox.workspace.object());
+        let l = cfg.sandbox.lifecycle_config();
+        assert_eq!(l.max_archive_bytes, 1 << 30);
+        assert_eq!(
+            l.archive_timeout,
+            control::LifecycleConfig::default().archive_timeout,
+            "unset keys keep defaults"
+        );
+        assert!(!Config::parse("").unwrap().sandbox.workspace.object());
+        assert!(Config::parse("[sandbox.workspace]\nmod = \"x\"").is_err());
+
+        let dir = std::env::temp_dir().join(format!("tt-ws-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("server.toml");
+        let env = MapEnv(HashMap::from([
+            ("DATABASE_URL", "postgres://x"),
+            ("THINKTIN_SANDBOX_TOKEN_SEED", "seed"),
+            ("THINKTIN_KMS_KEY", "00"),
+            ("THINKTIN_ACS_API_KEY", "key"),
+        ]));
+        let acs = "[worker]\nenabled = true\n[sandbox]\nprovider = \"acs\"\n\
+                   [sandbox.acs]\napi_url = \"http://sbx/kruise/api\"\n";
+        for (extra, want) in [
+            ("", "set sandbox.workspace.mode = \"object\""),
+            ("[sandbox.workspace]\nmode = \"disk\"\n", "not supported"),
+            (
+                "[sandbox.workspace]\nmode = \"object\"\nmax_bytes = 0\n",
+                "must be positive",
+            ),
+        ] {
+            std::fs::write(&path, format!("{acs}{extra}")).unwrap();
+            let err = Config::load(Some(&path), &env).unwrap_err().to_string();
+            assert!(err.contains(want), "{extra:?}: {err}");
+        }
+        std::fs::write(
+            &path,
+            format!("{acs}[sandbox.workspace]\nmode = \"object\"\n"),
+        )
+        .unwrap();
+        Config::load(Some(&path), &env).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
     }
 
