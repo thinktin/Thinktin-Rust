@@ -168,20 +168,6 @@ impl<R> Tx<R> {
         rows.into_iter().map(Row::into_stored).collect()
     }
 
-    /// 某几个运行发布的产出物（交接时取上游步骤的），每个名字只取最新版本。
-    pub async fn run_artifacts(&mut self, runs: &[RunId]) -> Result<Vec<StoredArtifact>> {
-        let ids: Vec<Uuid> = runs.iter().map(|r| r.0).collect();
-        let rows: Vec<Row> = sqlx::query_as(concat!(
-            "SELECT DISTINCT ON (name) ",
-            columns!(),
-            " FROM artifacts WHERE run_id = ANY($1) ORDER BY name, version DESC"
-        ))
-        .bind(&ids)
-        .fetch_all(self.conn())
-        .await?;
-        rows.into_iter().map(Row::into_stored).collect()
-    }
-
     /// 树里某个名字的最新版本（或指定版本）。
     pub async fn named_artifact(
         &mut self,
@@ -201,6 +187,23 @@ impl<R> Tx<R> {
         .fetch_one(self.conn())
         .await?;
         row.into_stored()
+    }
+}
+
+impl<R> Tx<R> {
+    /// 某几个运行发布的产出物（交接时取上游步骤的、查进度时列出来的），每个名字只取最新版本。
+    /// 业务角色按行级安全只看得到自己的。
+    pub async fn run_artifacts(&mut self, runs: &[RunId]) -> Result<Vec<StoredArtifact>> {
+        let ids: Vec<Uuid> = runs.iter().map(|r| r.0).collect();
+        let rows: Vec<Row> = sqlx::query_as(concat!(
+            "SELECT DISTINCT ON (name) ",
+            columns!(),
+            " FROM artifacts WHERE run_id = ANY($1) ORDER BY name, version DESC"
+        ))
+        .bind(&ids)
+        .fetch_all(self.conn())
+        .await?;
+        rows.into_iter().map(Row::into_stored).collect()
     }
 }
 

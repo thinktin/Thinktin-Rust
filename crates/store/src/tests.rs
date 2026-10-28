@@ -3993,6 +3993,63 @@ async fn runs_across_instances_by_plan_and_state() {
     assert!(list(bob, of_plan, None, 50).await.is_empty());
 }
 
+/// 认识队友（8.9）：业务角色能改用途说明和交流开关；列队友时只给同一用户、没删除、开着开关的，不含自己。
+#[tokio::test]
+async fn peers_are_the_users_other_instances_that_allow_it() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let u = user(db, "+8613800000891").await;
+    let other = user(db, "+8613800000892").await;
+    let me = instance(db, u).await;
+    let open = instance(db, u).await;
+    let closed = instance(db, u).await;
+    let gone = instance(db, u).await;
+    let _theirs = instance(db, other).await;
+    let mut tx = db.tenant(u).await.unwrap();
+    tx.update_instance(
+        closed.id,
+        &crate::InstanceChange {
+            peer_access: Some(false),
+            purpose: Some("vault and computer".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    tx.delete_instance(gone.id).await.unwrap();
+    tx.commit().await.unwrap();
+    let mut tx = db.tenant(u).await.unwrap();
+    let peers = tx.peers(me.id).await.unwrap();
+    assert_eq!(
+        peers.iter().map(|p| p.instance.id).collect::<Vec<_>>(),
+        [open.id]
+    );
+    assert_eq!(peers[0].holder, None);
+    let closed_now = tx.instance(closed.id).await.unwrap();
+    assert!(!closed_now.peer_access);
+    assert_eq!(closed_now.purpose, "vault and computer");
+    // 用途说明有长度上限（库里也查）；删了的实例改不了。
+    let long = sqlx::query("UPDATE instances SET purpose = repeat('x', 201) WHERE id = $1")
+        .bind(open.id.0)
+        .execute(tx.conn())
+        .await;
+    assert!(long.is_err());
+    tx.rollback().await.unwrap();
+    let mut tx = db.tenant(u).await.unwrap();
+    assert!(matches!(
+        tx.update_instance(
+            gone.id,
+            &crate::InstanceChange {
+                name: Some("x".into()),
+                ..Default::default()
+            }
+        )
+        .await,
+        Err(Error::NotFound)
+    ));
+    tx.rollback().await.unwrap();
+}
+
 /// 工作区归档（没有卷的后端）：实例上只记最新的一份；换掉的、没用上的上传、回收或删掉实例时，
 /// 对象都排进 blob_purge。后台角色能做全部这些。
 #[tokio::test]

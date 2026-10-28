@@ -8,6 +8,7 @@ pub mod exec;
 pub mod executor;
 pub mod live;
 pub mod outbox;
+pub mod peers;
 pub mod pipeline;
 pub mod reports;
 pub mod s3;

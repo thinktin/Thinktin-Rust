@@ -138,6 +138,7 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
         )),
         Arc::new(VaultTools::new(db.clone())),
         Arc::new(DelegateTools::new(db.clone())),
+        Arc::new(orchestrator::peers::PeerTools::new(db.clone())),
     ];
     // 用户电脑上的工具（14.2）：调用经设备中继转给用户自己的电脑，结果靠数据库通知取回。
     let computer = Arc::new(DeviceCalls::new(db.clone()));

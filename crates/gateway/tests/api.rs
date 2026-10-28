@@ -2032,6 +2032,69 @@ async fn instance_versions_can_be_switched() {
     w.rollback().await.unwrap();
 }
 
+/// 实例设置（8.9）：用途说明、“允许其他 agent 查我、问我”，给了才改；关开关记审计。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn instance_settings_over_http() {
+    let Some(a) = api().await else { return };
+    let u = a.login("13800138890").await;
+    let tok = Some(u.access.as_str());
+    let inst = a.adopt(&u).await;
+    let path = format!("/v1/instances/{inst}");
+    let (_, body) = a.call(Method::GET, &path, tok, None).await;
+    assert_eq!(
+        (body["purpose"].as_str(), body["peer_access"].as_bool()),
+        (Some(""), Some(true))
+    );
+
+    let (st, body) = a
+        .call(
+            Method::PATCH,
+            &path,
+            tok,
+            Some(json!({ "purpose": "  Finds sources  ", "peer_access": false })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(body["purpose"], "Finds sources");
+    assert_eq!(body["peer_access"], false);
+    assert_eq!(body["name"], "My Claude", "the name is kept");
+    // 只改名字：别的不动。
+    let (st, body) = a
+        .call(
+            Method::PATCH,
+            &path,
+            tok,
+            Some(json!({ "name": "Researcher" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(
+        (
+            body["name"].as_str(),
+            body["purpose"].as_str(),
+            body["peer_access"].as_bool()
+        ),
+        (Some("Researcher"), Some("Finds sources"), Some(false))
+    );
+    for bad in [
+        json!({}),
+        json!({ "purpose": "x".repeat(201) }),
+        json!({ "purpose": "bad\u{7}" }),
+        json!({ "name": "" }),
+    ] {
+        let (st, body) = a.call(Method::PATCH, &path, tok, Some(bad.clone())).await;
+        assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{bad}: {body}");
+    }
+    let audits: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE action = 'instance.peer_access' AND target = $1",
+    )
+    .bind(inst.to_string())
+    .fetch_one(a.t.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(audits, 1, "only the actual switch is audited");
+}
+
 /// 用量看板（9.10）：按天（用户时区）、实例、模型汇总自己的用量；看不到别人的。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn usage_is_summarised_per_day_instance_and_model() {

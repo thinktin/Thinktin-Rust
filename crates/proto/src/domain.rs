@@ -492,6 +492,19 @@ pub struct Instance {
     pub state: InstanceState,
     pub created_at: DateTime<Utc>,
     pub last_active_at: DateTime<Utc>,
+    /// 用途说明（8.9）：用户写的，别的 agent 用 `agents_list` 看得到。老的服务端没有，按空的算。
+    #[serde(default)]
+    pub purpose: String,
+    /// “允许其他 agent 查我、问我”（8.9），默认打开。老的服务端没有，按打开算。
+    #[serde(default = "default_true")]
+    pub peer_access: bool,
+}
+
+/// 用途说明最长这么多字（8.9）。
+pub const MAX_INSTANCE_PURPOSE_CHARS: usize = 200;
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1229,5 +1242,18 @@ mod tests {
         newer["wait_code"] = serde_json::json!("future_thing");
         let r: Run = serde_json::from_value(newer).unwrap();
         assert_eq!(r.wait_code.as_deref(), Some("future_thing"));
+    }
+
+    /// 老服务端、缓存里的实例没有用途说明和交流开关（8.9）：开关按打开算。
+    #[test]
+    fn instances_parse_without_purpose_or_peer_access() {
+        let old = serde_json::json!({
+            "id": InstanceId::new(), "agent_id": "claude", "agent_version": "1", "harness": "acp",
+            "name": "c", "state": "running", "created_at": "2026-10-28T00:00:00Z",
+            "last_active_at": "2026-10-28T00:00:00Z"
+        });
+        let i: Instance = serde_json::from_value(old).unwrap();
+        assert_eq!(i.purpose, "");
+        assert!(i.peer_access);
     }
 }
