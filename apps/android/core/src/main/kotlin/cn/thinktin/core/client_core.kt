@@ -1002,6 +1002,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_update_im_channel(
     ): Int
+    external fun uniffi_client_core_checksum_method_thinktinclient_update_instance(
+    ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_update_plan(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_update_profile(
@@ -1270,6 +1272,8 @@ internal object UniffiLib {
     external fun uniffi_client_core_fn_method_thinktinclient_update_credential(`ptr`: Long,`credentialId`: RustBuffer.ByValue,`label`: RustBuffer.ByValue,`disabled`: RustBuffer.ByValue,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_update_im_channel(`ptr`: Long,`channelId`: RustBuffer.ByValue,`label`: RustBuffer.ByValue,`events`: RustBuffer.ByValue,`enabled`: RustBuffer.ByValue,
+    ): Long
+    external fun uniffi_client_core_fn_method_thinktinclient_update_instance(`ptr`: Long,`instanceId`: RustBuffer.ByValue,`change`: RustBuffer.ByValue,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_update_plan(`ptr`: Long,`planId`: RustBuffer.ByValue,`change`: RustBuffer.ByValue,
     ): Long
@@ -1806,6 +1810,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_update_im_channel() and 0xFFFF) != 2020) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_update_instance() and 0xFFFF) != 666) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_update_plan() and 0xFFFF) != 13910) {
@@ -4032,6 +4039,11 @@ public interface ThinktinClientInterface {
     suspend fun `updateCredential`(`credentialId`: kotlin.String, `label`: kotlin.String?, `disabled`: kotlin.Boolean?): Credential
     
     suspend fun `updateImChannel`(`channelId`: kotlin.String, `label`: kotlin.String?, `events`: List<kotlin.String>?, `enabled`: kotlin.Boolean?): ImChannel
+    
+    /**
+     * 改名字、用途说明、“允许其他 agent 查我、问我”（8.9），给了才改；什么都没给报 422。
+     */
+    suspend fun `updateInstance`(`instanceId`: kotlin.String, `change`: InstanceChange): Instance
     
     /**
      * 改计划：标题、目标、策略、补跑方式、流水线步骤，给了才改。返回改完的计划（带触发器和步骤）。
@@ -6438,6 +6450,32 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
 
     
     /**
+     * 改名字、用途说明、“允许其他 agent 查我、问我”（8.9），给了才改；什么都没给报 422。
+     */
+    @Throws(ClientException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `updateInstance`(`instanceId`: kotlin.String, `change`: InstanceChange) : Instance {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_client_core_fn_method_thinktinclient_update_instance(
+                uniffiHandle,
+                
+        FfiConverterString.lower(`instanceId`),
+        FfiConverterTypeInstanceChange.lower(`change`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_client_core_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeInstance.lift(it) },
+        // Error FFI converter
+        ClientException.ErrorHandler,
+    )
+    }
+
+    
+    /**
      * 改计划：标题、目标、策略、补跑方式、流水线步骤，给了才改。返回改完的计划（带触发器和步骤）。
      */
     @Throws(ClientException::class)
@@ -7915,6 +7953,16 @@ data class Instance (
     var `createdAtMs`: kotlin.Long
     , 
     var `lastActiveAtMs`: kotlin.Long
+    , 
+    /**
+     * 用途说明（8.9）：用户写的，别的 agent 列出队友时看得到。
+     */
+    var `purpose`: kotlin.String = "" 
+    , 
+    /**
+     * “允许其他 agent 查我、问我”（8.9），默认打开。关了以后别的 agent 列不出它、查不了它的进度。
+     */
+    var `peerAccess`: kotlin.Boolean = true 
     
 ){
     
@@ -7939,6 +7987,8 @@ public object FfiConverterTypeInstance: FfiConverterRustBuffer<Instance> {
             FfiConverterString.read(buf),
             FfiConverterLong.read(buf),
             FfiConverterLong.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterBoolean.read(buf),
         )
     }
 
@@ -7950,7 +8000,9 @@ public object FfiConverterTypeInstance: FfiConverterRustBuffer<Instance> {
             FfiConverterString.allocationSize(value.`name`) +
             FfiConverterString.allocationSize(value.`state`) +
             FfiConverterLong.allocationSize(value.`createdAtMs`) +
-            FfiConverterLong.allocationSize(value.`lastActiveAtMs`)
+            FfiConverterLong.allocationSize(value.`lastActiveAtMs`) +
+            FfiConverterString.allocationSize(value.`purpose`) +
+            FfiConverterBoolean.allocationSize(value.`peerAccess`)
     )
 
     override fun write(value: Instance, buf: ByteBuffer) {
@@ -7962,6 +8014,60 @@ public object FfiConverterTypeInstance: FfiConverterRustBuffer<Instance> {
             FfiConverterString.write(value.`state`, buf)
             FfiConverterLong.write(value.`createdAtMs`, buf)
             FfiConverterLong.write(value.`lastActiveAtMs`, buf)
+            FfiConverterString.write(value.`purpose`, buf)
+            FfiConverterBoolean.write(value.`peerAccess`, buf)
+    }
+}
+
+
+
+/**
+ * 改实例：给了才改。`purpose` 给空串清掉。
+ */
+data class InstanceChange (
+    var `name`: kotlin.String? = null 
+    , 
+    /**
+     * 用途说明，最长 200 字。
+     */
+    var `purpose`: kotlin.String? = null 
+    , 
+    /**
+     * “允许其他 agent 查我、问我”。
+     */
+    var `peerAccess`: kotlin.Boolean? = null 
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeInstanceChange: FfiConverterRustBuffer<InstanceChange> {
+    override fun read(buf: ByteBuffer): InstanceChange {
+        return InstanceChange(
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalBoolean.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: InstanceChange) = (
+            FfiConverterOptionalString.allocationSize(value.`name`) +
+            FfiConverterOptionalString.allocationSize(value.`purpose`) +
+            FfiConverterOptionalBoolean.allocationSize(value.`peerAccess`)
+    )
+
+    override fun write(value: InstanceChange, buf: ByteBuffer) {
+            FfiConverterOptionalString.write(value.`name`, buf)
+            FfiConverterOptionalString.write(value.`purpose`, buf)
+            FfiConverterOptionalBoolean.write(value.`peerAccess`, buf)
     }
 }
 
