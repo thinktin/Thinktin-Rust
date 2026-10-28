@@ -184,6 +184,9 @@ jobs:
           plutil -replace aps-environment -string production Thinktin/Thinktin.entitlements
           plutil -p Thinktin/Thinktin.entitlements
 
+      # 归档时不用开发证书签名，只做本地临时签名（"-"，把 entitlements 带进包里）：CI 每次是新机器，自动签名会去申请
+      # “这台机器”的开发证书，上一次的私钥不在，苹果就拒绝（“already has an Apple Development signing certificate for
+      # this machine”）。正式签名留给导出：用 API key 让苹果在云端拿分发证书签（cloud signing），本机不需要任何证书。
       - name: Archive
         working-directory: apps/apple
         env:
@@ -200,19 +203,24 @@ jobs:
             -archivePath "$RUNNER_TEMP/Thinktin.xcarchive" \
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
             -skipPackagePluginValidation \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath "${{ steps.key.outputs.path }}" \
-            -authenticationKeyID "$KEY_ID" \
-            -authenticationKeyIssuerID "$ISSUER_ID" \
             DEVELOPMENT_TEAM="$TEAM_ID" \
-            CODE_SIGN_STYLE=Automatic \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGNING_REQUIRED=NO \
+            PROVISIONING_PROFILE_SPECIFIER= \
             THINKTIN_CLIENT="$CLIENT" \
             MARKETING_VERSION="${{ steps.version.outputs.marketing }}" \
             CURRENT_PROJECT_VERSION="${{ steps.version.outputs.build }}" \
             2>&1 | tee "$RUNNER_TEMP/archive.log" | "${fmt[@]}"
+          # 包里带上的 entitlements（推送、App Group、Time Sensitive）：导出时云端签名照这些来。
+          for bundle in "$RUNNER_TEMP"/Thinktin.xcarchive/Products/Applications/*.app \
+            "$RUNNER_TEMP"/Thinktin.xcarchive/Products/Applications/*.app/PlugIns/*.appex; do
+            echo "== ${bundle##*/}"
+            codesign -d --entitlements - --xml "$bundle" 2>/dev/null | plutil -p - || true
+          done
 
+      # 不上传时也导出一次（destination export），验证云端签名走得通。
       - name: Export and upload
-        if: ${{ env.UPLOAD == 'true' }}
         working-directory: apps/apple
         env:
           TEAM_ID: ${{ secrets.APPLE_TEAM_ID || env.TEAM_ID_DEFAULT }}
@@ -221,7 +229,11 @@ jobs:
           options="$RUNNER_TEMP/ExportOptions.plist"
           plutil -create xml1 "$options"
           plutil -insert method -string app-store-connect "$options"
-          plutil -insert destination -string upload "$options"
+          if [[ "$UPLOAD" == "true" ]]; then
+            plutil -insert destination -string upload "$options"
+          else
+            plutil -insert destination -string export "$options"
+          fi
           plutil -insert teamID -string "$TEAM_ID" "$options"
           plutil -insert signingStyle -string automatic "$options"
           plutil -insert uploadSymbols -bool true "$options"

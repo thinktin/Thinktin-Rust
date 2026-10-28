@@ -42,6 +42,9 @@ git push origin ios-v0.2.0
 
 - **版本号**取标签（`ios-v0.2.0` → `0.2.0`，1 到 3 段数字），覆盖 project.yml 里的 `MARKETING_VERSION`。
 - **构建号**是这个工作流的运行序号（`github.run_number`），只增不减，同一个版本号重新发（改了东西重打标签）也不会撞。
+- 签名：归档时只做本地临时签名（`CODE_SIGN_IDENTITY=-`，把 entitlements 带进包里），不用开发证书——CI 每次是新机器，自动签名
+  会去申请“这台机器”的开发证书，上一次的私钥不在，苹果就拒绝。导出时用 API key 让苹果在云端拿分发证书签（cloud signing），
+  本机不放任何证书；不上传时也导出一次，验证签名走得通。
 - 工作流：打全部 Apple 目标的 ThinktinCore（含真机 arm64，`build-apple.sh` 不带 `--ci`）→ `xcodegen generate` →
   把 `aps-environment` 改成 `production`（project.yml 里是 Xcode 直装用的 `development`；App 里 Release 构建报 `apns`
   通道，`AppConfiguration.usesAPNsSandbox`）→ `xcodebuild archive`（自动签名，用 API key 管证书和描述文件）→
