@@ -4,6 +4,7 @@ mod account;
 mod agents;
 mod approvals;
 mod artifacts;
+mod board;
 mod credentials;
 mod device_messages;
 mod events;
@@ -165,6 +166,11 @@ pub fn router() -> Router<AppState> {
         .route("/v1/inbox/read", post(inbox::mark_read))
         .route("/v1/inbox/{id}", get(inbox::get).delete(inbox::delete))
         .route("/v1/inbox/{id}/unread", post(inbox::mark_unread))
+        // 共享看板（8.10）
+        .route("/v1/board", get(board::list).post(board::create))
+        .route("/v1/board/{id}", delete(board::delete))
+        .route("/v1/board/{id}/archive", post(board::archive))
+        .route("/v1/board/{id}/unarchive", post(board::unarchive))
         // 事件流（5.2、5.3）
         .route("/v1/instances/{id}/events", get(events::page))
         .route("/v1/instances/{id}/events/ws", get(events::stream))

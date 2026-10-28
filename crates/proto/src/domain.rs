@@ -70,6 +70,7 @@ id_type!(
     DeviceMessageId,
     ImChannelId,
     ReportId,
+    BoardPostId,
 );
 
 /// 字符串枚举的公共实现：和数据库里的取值一一对应。
@@ -935,6 +936,39 @@ pub mod notice_subtype {
     pub const IM_CHANNEL_DISABLED: &str = "im_channel_disabled";
     /// 用户的内容举报处理完了。
     pub const REPORT_HANDLED: &str = "report_handled";
+}
+
+/// 共享看板的一条（8.10）：用户的 agent（或用户自己）写的进展、决定、待别人处理的事。写了不改，只能归档、删除。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BoardPost {
+    pub id: BoardPostId,
+    /// 哪个实例写的；没有是用户自己写的，或者写它的实例已经删了。
+    pub author_instance_id: Option<InstanceId>,
+    /// 写它的实例的名字（实例删了就没有）。
+    pub author_name: Option<String>,
+    /// 哪次运行写的。
+    pub run_id: Option<RunId>,
+    pub body: String,
+    pub tags: Vec<String>,
+    /// agent 写的（App 里按 AI 生成内容标注）；用户自己写的是 false。
+    pub ai_generated: bool,
+    pub created_at: DateTime<Utc>,
+    pub archived_at: Option<DateTime<Utc>>,
+}
+
+/// 看板一条最长这么多字（8.10）。
+pub const MAX_BOARD_BODY_CHARS: usize = 2000;
+/// 看板一条最多这么多个标签。
+pub const MAX_BOARD_TAGS: usize = 8;
+/// 每个用户的看板上没归档的最多这么多条，满了最早的自动归档。
+pub const MAX_BOARD_LIVE_POSTS: u64 = 200;
+
+/// 看板标签的格式：字母（含中文）、数字、`-`、`_`，1–32 个字。比较前转成小写。
+pub fn valid_board_tag(tag: &str) -> bool {
+    (1..=32).contains(&tag.chars().count())
+        && tag
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
 }
 
 /// 提醒子类型的格式（和库里的 CHECK 一样）：小写字母开头，字母和下划线，最长 32。

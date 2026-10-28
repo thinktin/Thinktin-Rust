@@ -2032,6 +2032,99 @@ async fn instance_versions_can_be_switched() {
     w.rollback().await.unwrap();
 }
 
+/// 共享看板（8.10）：用户写、按标签读、归档和取消归档、删除；别人看不到、动不了。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn board_over_http() {
+    let Some(a) = api().await else { return };
+    let u = a.login("13800138891").await;
+    let bob = a.login("13800138892").await;
+    let tok = Some(u.access.as_str());
+    let (st, post) = a
+        .call(
+            Method::POST,
+            "/v1/board",
+            tok,
+            Some(json!({ "body": " Ship on Friday ", "tags": ["Launch"] })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{post}");
+    assert_eq!(post["body"], "Ship on Friday");
+    assert_eq!(post["tags"], json!(["launch"]));
+    assert_eq!(post["ai_generated"], false);
+    let id = post["id"].as_str().unwrap().to_owned();
+    let (st, _) = a
+        .call(
+            Method::POST,
+            "/v1/board",
+            tok,
+            Some(json!({ "body": "untagged" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED);
+    for bad in [
+        json!({ "body": "" }),
+        json!({ "body": "x", "tags": ["no space"] }),
+    ] {
+        let (st, body) = a
+            .call(Method::POST, "/v1/board", tok, Some(bad.clone()))
+            .await;
+        assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{bad}: {body}");
+    }
+
+    let (_, list) = a.call(Method::GET, "/v1/board", tok, None).await;
+    assert_eq!(list["posts"].as_array().unwrap().len(), 2);
+    let (_, tagged) = a.call(Method::GET, "/v1/board?tag=LAUNCH", tok, None).await;
+    assert_eq!(tagged["posts"].as_array().unwrap().len(), 1);
+    let (_, page) = a.call(Method::GET, "/v1/board?limit=1", tok, None).await;
+    let last = page["posts"][0]["id"].as_str().unwrap().to_owned();
+    let (_, next) = a
+        .call(Method::GET, &format!("/v1/board?before={last}"), tok, None)
+        .await;
+    assert_eq!(next["posts"][0]["id"], json!(id));
+
+    // 别人看不到、动不了。
+    let (_, theirs) = a
+        .call(Method::GET, "/v1/board", Some(&bob.access), None)
+        .await;
+    assert!(theirs["posts"].as_array().unwrap().is_empty());
+    for (m, path) in [
+        (Method::POST, format!("/v1/board/{id}/archive")),
+        (Method::DELETE, format!("/v1/board/{id}")),
+    ] {
+        let (st, _) = a.call(m, &path, Some(&bob.access), None).await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "{path}");
+    }
+
+    let (st, archived) = a
+        .call(Method::POST, &format!("/v1/board/{id}/archive"), tok, None)
+        .await;
+    assert_eq!(st, StatusCode::OK, "{archived}");
+    assert!(archived["archived_at"].is_string());
+    let (_, live) = a.call(Method::GET, "/v1/board", tok, None).await;
+    assert_eq!(live["posts"].as_array().unwrap().len(), 1);
+    let (_, old) = a
+        .call(Method::GET, "/v1/board?archived=true", tok, None)
+        .await;
+    assert_eq!(old["posts"][0]["id"], json!(id));
+    let (st, back) = a
+        .call(
+            Method::POST,
+            &format!("/v1/board/{id}/unarchive"),
+            tok,
+            None,
+        )
+        .await;
+    assert_eq!((st, back["archived_at"].is_null()), (StatusCode::OK, true));
+    let (st, _) = a
+        .call(Method::DELETE, &format!("/v1/board/{id}"), tok, None)
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let (st, _) = a
+        .call(Method::DELETE, &format!("/v1/board/{id}"), tok, None)
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+}
+
 /// 实例设置（8.9）：用途说明、“允许其他 agent 查我、问我”，给了才改；关开关记审计。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn instance_settings_over_http() {

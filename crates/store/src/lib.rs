@@ -10,6 +10,7 @@
 
 mod approvals;
 mod artifacts;
+mod board;
 mod credentials;
 mod device_relay;
 mod error;
@@ -46,6 +47,9 @@ use sqlx::{PgConnection, PgPool, Postgres, Transaction};
 
 pub use approvals::{ApprovalRecord, NewApproval, approval_key, split_approval_key};
 pub use artifacts::{NewArtifact, StoredArtifact};
+pub use board::{
+    BOARD_ARCHIVE_RETENTION, BoardFilter, NewBoardPost, check_board_body, normalize_board_tags,
+};
 pub use credentials::{NewCredential, SealedCredential};
 pub use device_relay::{
     ClaimedCall, DEVICE_CALL_CHANNEL, DEVICE_CHANNEL, DeviceCallRecord, LINK_FRESH, NewDeviceCall,

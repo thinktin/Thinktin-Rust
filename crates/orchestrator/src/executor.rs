@@ -246,13 +246,14 @@ fn computer_error(e: &CallError) -> String {
 }
 
 /// 有副作用的平台工具（7.13）：同一次运行里参数完全相同的调用只执行一次。
-const SIDE_EFFECT_TOOLS: [&str; 6] = [
+const SIDE_EFFECT_TOOLS: [&str; 7] = [
     "schedule_create",
     "schedule_update",
     "schedule_cancel",
     "artifact_publish",
     "delegate",
     "vault_request",
+    "board_post",
 ];
 
 /// 续跑简报（7.12）：上一次执行到哪儿了——最近调过的工具、最后说的话、为什么中断。

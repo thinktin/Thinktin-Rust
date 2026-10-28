@@ -503,7 +503,7 @@ pub async fn run_client(socket: &Path) -> anyhow::Result<()> {
                         "protocolVersion": version,
                         "capabilities": {"tools": {"listChanged": true}},
                         "serverInfo": {"name": SERVER_NAME, "version": env!("CARGO_PKG_VERSION")},
-                        "instructions": "Tools provided by the ThinkTin platform (schedules, artifacts, delegation, the user's other agents).",
+                        "instructions": "Tools provided by the ThinkTin platform (schedules, artifacts, delegation, the user's other agents and their shared board).",
                     }),
                 ));
             }

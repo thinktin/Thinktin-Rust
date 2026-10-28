@@ -139,6 +139,7 @@ impl Default for Api {
                 .chain(orchestrator::vault::VAULT_TOOLS.iter())
                 .chain(orchestrator::delegate::DELEGATE_TOOLS.iter())
                 .chain(orchestrator::peers::PEER_TOOLS.iter())
+                .chain(orchestrator::board::BOARD_TOOLS.iter())
                 .map(|s| s.to_string())
                 // 电脑工具（14.2）：只有登录着电脑的用户的 agent 才真的拿到。
                 .chain(proto::computer::names().map(String::from))

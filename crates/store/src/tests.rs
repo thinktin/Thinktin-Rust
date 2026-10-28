@@ -1026,6 +1026,15 @@ async fn erasing_an_account_deletes_its_content() {
         .await
         .unwrap();
         r.commit().await.unwrap();
+        // 共享看板（8.10）。
+        let mut tx = db.tenant(who).await.unwrap();
+        tx.post_to_board(&crate::NewBoardPost {
+            body: "进展".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
     }
 
     // 送达过的推送记录也有正文，注销时一起删。
@@ -1073,6 +1082,7 @@ async fn erasing_an_account_deletes_its_content() {
         "device_calls",
         "device_messages",
         "device_links",
+        "board_posts",
     ] {
         assert_eq!(
             count(table, alice).await,
@@ -4048,6 +4058,142 @@ async fn peers_are_the_users_other_instances_that_allow_it() {
         Err(Error::NotFound)
     ));
     tx.rollback().await.unwrap();
+}
+
+/// 共享看板（8.10）：每个用户一块，按标签读、往下翻；没归档的满了最早的自动归档（并发写也不超）；取消归档
+/// 满了时拒绝；作者名字跟着实例，实例删了条目还在；看不到别人的；归档久了的由维护任务删掉。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_board_is_capped_per_user_and_archives_the_oldest() {
+    use proto::domain::MAX_BOARD_LIVE_POSTS;
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let u = user(db, "+8613800000893").await;
+    let other = user(db, "+8613800000894").await;
+    let inst = instance(db, u).await;
+    let run = queue_run(db, u, &inst, "p").await.id;
+    let post = |body: String,
+                tags: Vec<String>,
+                by: Option<(proto::domain::InstanceId, proto::domain::RunId)>| async move {
+        let mut tx = db.tenant(u).await.unwrap();
+        let r = tx
+            .post_to_board(&crate::NewBoardPost {
+                author_instance_id: by.map(|b| b.0),
+                run_id: by.map(|b| b.1),
+                body,
+                tags,
+            })
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        r
+    };
+    let (first, archived) = post("first".into(), vec!["alpha".into()], Some((inst.id, run))).await;
+    assert_eq!(archived, 0);
+    assert_eq!(first.author_name.as_deref(), Some(inst.name.as_str()));
+    assert!(first.ai_generated);
+    let (mine, _) = post("from the user".into(), vec![], None).await;
+    assert!(!mine.ai_generated);
+    assert_eq!(mine.author_name, None);
+
+    // 标签过滤；别人看不到。
+    let list = |tag: Option<&'static str>, archived: bool, who: UserId| async move {
+        let mut tx = db.tenant(who).await.unwrap();
+        let posts = tx
+            .board_posts(&crate::BoardFilter {
+                tag: tag.map(String::from),
+                archived,
+                before: None,
+                limit: 500,
+            })
+            .await
+            .unwrap();
+        tx.rollback().await.unwrap();
+        posts
+    };
+    assert_eq!(
+        list(Some("alpha"), false, u).await,
+        std::slice::from_ref(&first)
+    );
+    assert_eq!(list(None, false, u).await.len(), 2);
+    assert!(list(None, false, other).await.is_empty());
+
+    // 写满：并发写也不超过上限，多出来的把最早的归档。
+    let n = MAX_BOARD_LIVE_POSTS as usize - 2;
+    for i in 0..n - 4 {
+        post(format!("note {i}"), vec![], None).await;
+    }
+    let mut tasks = Vec::new();
+    for i in 0..8 {
+        let pool = t.db.clone();
+        tasks.push(tokio::spawn(async move {
+            let mut tx = pool.tenant(u).await.unwrap();
+            tx.post_to_board(&crate::NewBoardPost {
+                body: format!("burst {i}"),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+            tx.commit().await.unwrap();
+        }));
+    }
+    for task in tasks {
+        task.await.unwrap();
+    }
+    let live = list(None, false, u).await;
+    assert_eq!(live.len() as u64, MAX_BOARD_LIVE_POSTS);
+    let archived = list(None, true, u).await;
+    assert_eq!(archived.len(), 4);
+    assert_eq!(
+        archived.last().unwrap().id,
+        first.id,
+        "the oldest went first"
+    );
+
+    // 满了取消归档被拒；先归档一条就行。
+    let mut tx = db.tenant(u).await.unwrap();
+    assert!(matches!(
+        tx.set_board_post_archived(first.id, false).await,
+        Err(Error::Invalid(_))
+    ));
+    tx.rollback().await.unwrap();
+    let mut tx = db.tenant(u).await.unwrap();
+    tx.set_board_post_archived(live[0].id, true).await.unwrap();
+    let back = tx.set_board_post_archived(first.id, false).await.unwrap();
+    assert_eq!(back.archived_at, None);
+    tx.commit().await.unwrap();
+
+    // 别人删不了、归档不了；实例删了条目还在，没有作者名字。
+    let mut tx = db.tenant(other).await.unwrap();
+    assert!(matches!(
+        tx.delete_board_post(first.id).await,
+        Err(Error::NotFound)
+    ));
+    assert!(matches!(
+        tx.set_board_post_archived(first.id, true).await,
+        Err(Error::NotFound)
+    ));
+    tx.rollback().await.unwrap();
+    let mut tx = db.tenant(u).await.unwrap();
+    tx.delete_instance(inst.id).await.unwrap();
+    let kept = tx.board_post(first.id).await.unwrap();
+    assert_eq!(kept.author_name, None);
+    assert!(kept.ai_generated);
+    tx.delete_board_post(mine.id).await.unwrap();
+    tx.commit().await.unwrap();
+
+    // 归档久了的由维护任务删掉。
+    sqlx::query("UPDATE board_posts SET archived_at = now() - interval '31 days' WHERE archived_at IS NOT NULL")
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let mut w = db.worker().await.unwrap();
+    let purged = w
+        .purge_archived_board_posts(crate::BOARD_ARCHIVE_RETENTION)
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+    assert_eq!(purged, 3);
+    assert!(list(None, true, u).await.is_empty());
 }
 
 /// 工作区归档（没有卷的后端）：实例上只记最新的一份；换掉的、没用上的上传、回收或删掉实例时，
