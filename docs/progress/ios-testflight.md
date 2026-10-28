@@ -6,7 +6,7 @@
 - 用户建好了 App Group `group.cn.thinktin.Thinktin`；团队 id `5BUH46M229`（Siting (Shenzhen)）。
 - `ios-release.yml`：私钥可以直接粘贴 `.p8` 内容（`ASC_KEY_P8`，换行丢了也行，读不出私钥时报错；旧的 `ASC_KEY_P8_BASE64` 照样认），团队 id 不配就用 `TEAM_ID_DEFAULT`；`docs/ios-release.md` 第 1 节改成新的准备步骤。
 
-- 用户建好了 App 记录（ThinkTin，`cn.thinktin.Thinktin`）、API key，`testflight` 环境里放了三个密钥（2026-10-28）。
+- 用户建好了 App 记录（ThinkTin，`cn.thinktin.Thinktin`）、API key，`testflight` 环境里放了三个密钥（2026-10-28）。后来环境重建成 `Test flight`（带空格），工作流改成用这个名字。
 - 发布工作流第一次跑就停在算版本号：macOS 的 /bin/bash 3.2 把 `$version` 后面的中文逗号当成变量名（`4c84bcb` 加大括号，macos-release.yml 同样两处）。
 - 演示版开关：构建设置 `THINKTIN_CLIENT` → Info.plist `ThinktinClient`，`AppConfiguration.clientKind` 认它（环境变量优先，空的按构建配置）；发布工作流手动触发加 `demo` 选项。服务器（`api.thinktin.cn`）还没上线，给用户先试的 TestFlight 版用演示数据。
 

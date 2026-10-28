@@ -8,7 +8,7 @@ App Store Connect，进 TestFlight。上架 App Store 的材料（审核备注�
 1. **Apple 开发者账号**：团队是 Siting (Shenzhen)，团队 id `5BUH46M229`（工作流里的 `TEAM_ID_DEFAULT`，团队 id 不是密钥）。
 2. **App Store Connect API key**：用户和访问 → 集成 → App Store Connect API → 团队密钥 → “+”，权限选**管理（Admin）**
    （自动签名要它登记 bundle id、能力和描述文件），下载 .p8（只能下一次）。
-3. **GitHub 的 `testflight` 环境**（Settings → Environments → New environment）：可以加“需要审批的人”（发版要人点一下），
+3. **GitHub 的 `Test flight` 环境**（Settings → Environments → New environment；名字要和工作流里的 `environment` 一字不差，包括空格和大小写）：可以加“需要审批的人”（发版要人点一下），
    在 Environment secrets 里放三个：
 
    | 名字 | 内容 |

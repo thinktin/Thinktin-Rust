@@ -4,7 +4,7 @@
 # 用 App Store Connect API key 自动签名归档、上传到 App Store Connect（进 TestFlight 的内部测试组）。
 # 版本号取标签，构建号是这个工作流的运行序号（只增不减）。也能手动触发（不上传，只验证能归档）。
 #
-# 要的密钥都放在 GitHub 的 testflight 环境里（仓库是公开的，不进代码）：
+# 要的密钥都放在 GitHub 的 “Test flight” 环境里（Settings → Environments；仓库是公开的，不进代码）：
 #   ASC_KEY_ID           App Store Connect API key 的 id
 #   ASC_ISSUER_ID        API key 的 issuer id
 #   ASC_KEY_P8           .p8 私钥文件的内容（用文本编辑打开、整段复制粘贴；换行丢了也行）
@@ -45,7 +45,7 @@ jobs:
     name: Archive and upload to TestFlight
     runs-on: macos-26
     timeout-minutes: 150
-    environment: testflight
+    environment: "Test flight"
     env:
       UPLOAD: ${{ github.event_name == 'push' || inputs.upload }}
       # 标签发版永远连服务器；演示版只能手动触发。
@@ -102,7 +102,7 @@ jobs:
           [[ -n "$ASC_ISSUER_ID" ]] || missing="$missing ASC_ISSUER_ID"
           [[ -n "$ASC_KEY_P8" || -n "$ASC_KEY_P8_BASE64" ]] || missing="$missing ASC_KEY_P8"
           if [[ -n "$missing" ]]; then
-            echo "::error::GitHub 的 testflight 环境里读不到${missing}：Settings → Environments → testflight → Environment secrets 里加上（名字要一字不差）"
+            echo "::error::GitHub 的 Test flight 环境里读不到${missing}：Settings → Environments → Test flight → Environment secrets 里加上（名字要一字不差）"
             if [[ "$P8_IN_VARS" == "true" ]]; then
               echo "::error::ASC_KEY_P8 填在了 Environment variables 里：私钥要放 Environment secrets（变量谁都看得见），挪过去后把变量删掉"
             fi
