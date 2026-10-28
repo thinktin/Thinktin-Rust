@@ -4159,6 +4159,18 @@ async fn workspace_archives_queue_replaced_objects() {
     assert_eq!(error, "tar: bad name [31m");
     w.commit().await.unwrap();
 
+    // 记活动用当下的时间，不是事务开始时的：锁着实例等了一会儿的唤醒，记的时间也晚于期间提交的归档。
+    let mut w = db.worker().await.unwrap();
+    let began = w.db_now().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    w.touch_instance(third.id).await.unwrap();
+    let touched = w.instance_runtime(third.id).await.unwrap().last_active_at;
+    assert!(
+        touched >= began + chrono::Duration::milliseconds(150),
+        "{began} {touched}"
+    );
+    w.commit().await.unwrap();
+
     // 放回：记下的时间是当下的；刷新着的不算没人管，太久没刷新的算。
     let mut w = db.worker().await.unwrap();
     w.begin_restore(third.id, "sbx-1").await.unwrap();

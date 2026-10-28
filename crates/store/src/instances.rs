@@ -867,9 +867,10 @@ impl Tx<Worker> {
         Ok(done.rows_affected() == 1)
     }
 
-    /// 记一次活动（运行开始、用户发消息），空闲暂停按它计时。
+    /// 记一次活动（运行开始、用户发消息），空闲暂停按它计时。用当下的时间（不是事务开始时的）：调用方锁着实例，
+    /// 这样总比之前提交的归档时间晚，归档不会被误当成比这次活动新。
     pub async fn touch_instance(&mut self, id: InstanceId) -> Result<()> {
-        sqlx::query("UPDATE instances SET last_active_at = now() WHERE id = $1")
+        sqlx::query("UPDATE instances SET last_active_at = clock_timestamp() WHERE id = $1")
             .bind(id.0)
             .execute(self.conn())
             .await?;
