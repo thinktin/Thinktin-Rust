@@ -35,6 +35,9 @@ pub struct Config {
     /// CubeAPI 的 key，只从环境变量 THINKTIN_CUBE_API_KEY 读（CubeAPI 没开鉴权时不用配）。
     #[serde(skip)]
     pub cube_api_key: Option<String>,
+    /// ACS 上 sandbox-manager 的 API Key，只从环境变量 THINKTIN_ACS_API_KEY 读。
+    #[serde(skip)]
+    pub acs_api_key: Option<String>,
     /// S3 兼容存储的访问密钥，只从环境变量 THINKTIN_S3_ACCESS_KEY_ID、THINKTIN_S3_SECRET_ACCESS_KEY 读。
     #[serde(skip)]
     pub s3_access_key_id: Option<String>,
@@ -78,6 +81,7 @@ impl std::fmt::Debug for Config {
             .field("sandbox_token_seed", &self.sandbox_token_seed.is_some())
             .field("jpush_master_secret", &self.jpush_master_secret.is_some())
             .field("cube_api_key", &self.cube_api_key.is_some())
+            .field("acs_api_key", &self.acs_api_key.is_some())
             .field("s3_access_key_id", &self.s3_access_key_id.is_some())
             .field("s3_secret_access_key", &self.s3_secret_access_key.is_some())
             .field(
@@ -191,12 +195,19 @@ pub struct Worker {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Sandbox {
-    /// 沙箱后端：local（本地开发，没有隔离）或 cube（CubeSandbox，6.2）。
+    /// 沙箱后端：local（本地开发，没有隔离）、cube（CubeSandbox，6.2）或 acs（阿里云 ACS 上的
+    /// OpenKruise Agents，见 docs/sandbox-acs.md）。
     pub provider: String,
     /// local 后端的数据目录。
     pub local_root: std::path::PathBuf,
     /// cube 后端（`provider = "cube"` 时用）。CubeAPI 的 key 只从环境变量 THINKTIN_CUBE_API_KEY 读。
     pub cube: CubeSandbox,
+    /// acs 后端（`provider = "acs"` 时用）。API Key 只从环境变量 THINKTIN_ACS_API_KEY 读。
+    pub acs: AcsSandbox,
+    /// 实例生命周期的计时（空闲多久暂停、暂停多久归档……），不配用默认值。
+    pub lifecycle: SandboxLifecycle,
+    /// 工作区放在哪：卷上（默认），或者沙箱销毁前存进对象存储（没有卷的后端，如 ACS）。
+    pub workspace: WorkspaceSettings,
     /// 沙箱出网白名单。
     pub network_allow: Vec<String>,
     /// 沙箱里 agent-shim 的路径。
@@ -266,6 +277,157 @@ impl CubeSandbox {
             egress_address: self.egress_address,
             use_volumes: self.use_volumes,
             volume_driver: self.volume_driver.clone(),
+            request_timeout: Duration::from_secs(self.request_timeout_secs),
+        }
+    }
+}
+
+/// 实例生命周期的计时（控制服务的巡检，WBS 6.4）。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SandboxLifecycle {
+    /// 运行中的实例空闲多久（秒）暂停。
+    pub idle_pause_secs: u64,
+    /// 暂停的实例多久（秒）没有活动就归档（销毁沙箱，只留工作区）。
+    pub archive_after_secs: u64,
+    /// 这么久（秒）内有计划要触发的不归档。
+    pub keep_if_trigger_within_secs: u64,
+    /// 计划快到点时提前多久（秒）唤醒实例，0 不预热。
+    pub prewarm_lead_secs: u64,
+    /// 单个沙箱操作的上限（秒）。
+    pub op_timeout_secs: u64,
+    /// 每轮巡检每类最多处理几个实例。
+    pub sweep_batch: i64,
+    /// 沙箱磁盘（MB）。
+    pub disk_mb: u32,
+    /// 等审批的运行不挡空闲暂停。关掉时等审批的实例一直运行（暂停后 agent 进程接不上时用）。
+    pub pause_waiting_approval: bool,
+}
+
+impl Default for SandboxLifecycle {
+    fn default() -> Self {
+        let d = control::LifecycleConfig::default();
+        Self {
+            idle_pause_secs: d.idle_pause.as_secs(),
+            archive_after_secs: d.archive_after.as_secs(),
+            keep_if_trigger_within_secs: d.keep_if_trigger_within.as_secs(),
+            prewarm_lead_secs: d.prewarm_lead.as_secs(),
+            op_timeout_secs: d.op_timeout.as_secs(),
+            sweep_batch: d.sweep_batch,
+            disk_mb: d.disk_mb,
+            pause_waiting_approval: d.pause_waiting_approval,
+        }
+    }
+}
+
+/// 工作区放在哪（见 docs/sandbox-acs.md）。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct WorkspaceSettings {
+    /// `volume`：工作区在沙箱后端的卷上，销毁沙箱还在（local、cube）。`object`：沙箱销毁前在沙箱里打包、
+    /// 按用户 DEK 加密存进对象存储（`[storage]`），重建时放回（acs 必须用这个）。
+    pub mode: String,
+    /// 工作区归档（tar.gz）的大小上限（字节），超了不归档、沙箱留着。
+    pub max_bytes: u64,
+    /// 打包上传、下载放回各自最多多久（秒）。
+    pub archive_timeout_secs: u64,
+    /// 放密文临时文件的目录（后台副本的 /tmp 是单独的临时卷）。每个进程在下面建自己的子目录，
+    /// 进程被杀时留下的下次启动时删掉。
+    pub temp_dir: std::path::PathBuf,
+    /// 临时文件一共最多占多少字节（比临时卷小一点）：存、放各一半，各自按大小排队，两边都要放得下一份
+    /// `max_bytes` 的归档（加密后略大，按 MiB 取整），也就是两倍多一点。
+    pub temp_budget_bytes: u64,
+    /// 归档失败（太大、打包出错、存储不通）后多久再试（秒）；期间被用过的照常再试。
+    pub retry_after_secs: u64,
+}
+
+impl Default for WorkspaceSettings {
+    fn default() -> Self {
+        let d = control::LifecycleConfig::default();
+        Self {
+            mode: "volume".into(),
+            max_bytes: d.max_archive_bytes,
+            archive_timeout_secs: d.archive_timeout.as_secs(),
+            temp_dir: std::env::temp_dir(),
+            temp_budget_bytes: 9 << 30,
+            retry_after_secs: d.archive_retry_after.as_secs(),
+        }
+    }
+}
+
+impl WorkspaceSettings {
+    pub fn object(&self) -> bool {
+        self.mode == "object"
+    }
+}
+
+impl Sandbox {
+    /// 控制服务的生命周期配置。
+    pub fn lifecycle_config(&self) -> control::LifecycleConfig {
+        let l = &self.lifecycle;
+        control::LifecycleConfig {
+            idle_pause: Duration::from_secs(l.idle_pause_secs),
+            archive_after: Duration::from_secs(l.archive_after_secs),
+            keep_if_trigger_within: Duration::from_secs(l.keep_if_trigger_within_secs),
+            prewarm_lead: Duration::from_secs(l.prewarm_lead_secs),
+            network_allow: self.network_allow.clone(),
+            disk_mb: l.disk_mb,
+            op_timeout: Duration::from_secs(l.op_timeout_secs),
+            sweep_batch: l.sweep_batch,
+            pause_waiting_approval: l.pause_waiting_approval,
+            archive_timeout: Duration::from_secs(self.workspace.archive_timeout_secs),
+            max_archive_bytes: self.workspace.max_bytes,
+            archive_retry_after: Duration::from_secs(self.workspace.retry_after_secs),
+        }
+    }
+}
+
+/// acs 后端的配置（见 docs/sandbox-acs.md）。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AcsSandbox {
+    /// sandbox-manager 的控制面地址，如 `http://sandbox.example.internal/kruise/api`。
+    pub api_url: String,
+    /// 数据面地址，不填就是 `api_url` 去掉 `/kruise/api`。
+    pub data_url: Option<String>,
+    /// 沙箱里的根目录：`home` 是 HOME，`workspace` 是工作区。
+    pub root: String,
+    /// 沙箱里运行进程的用户。
+    pub user: String,
+    /// 模板 id → SandboxSet 名字；没列的把模板 id 规整成合法名字（`agents/claude:0.90.0` →
+    /// `agents-claude-0-90-0`）。
+    pub templates: std::collections::BTreeMap<String, String>,
+    /// 创建后等 Pod IP 最多多久（秒）。
+    pub ip_wait_secs: u64,
+    /// 控制面请求的超时（秒）。
+    pub request_timeout_secs: u64,
+}
+
+impl Default for AcsSandbox {
+    fn default() -> Self {
+        let d = sandbox::acs::AcsConfig::default();
+        Self {
+            api_url: String::new(),
+            data_url: d.data_url,
+            root: d.root,
+            user: d.user,
+            templates: d.templates,
+            ip_wait_secs: d.ip_wait.as_secs(),
+            request_timeout_secs: d.request_timeout.as_secs(),
+        }
+    }
+}
+
+impl AcsSandbox {
+    pub fn to_config(&self, api_key: Option<String>) -> sandbox::acs::AcsConfig {
+        sandbox::acs::AcsConfig {
+            api_url: self.api_url.clone(),
+            data_url: self.data_url.clone(),
+            api_key,
+            root: self.root.clone(),
+            user: self.user.clone(),
+            templates: self.templates.clone(),
+            ip_wait: Duration::from_secs(self.ip_wait_secs),
             request_timeout: Duration::from_secs(self.request_timeout_secs),
         }
     }
@@ -531,6 +693,9 @@ impl Default for Sandbox {
             provider: "local".into(),
             local_root: ".thinktin/sandboxes".into(),
             cube: CubeSandbox::default(),
+            acs: AcsSandbox::default(),
+            lifecycle: SandboxLifecycle::default(),
+            workspace: WorkspaceSettings::default(),
             network_allow: Vec::new(),
             shim_path: "agent-shim".into(),
             gateway_url: "http://127.0.0.1:8790".into(),
@@ -587,6 +752,7 @@ impl Default for Config {
             sandbox_token_seed: None,
             jpush_master_secret: None,
             cube_api_key: None,
+            acs_api_key: None,
             s3_access_key_id: None,
             s3_secret_access_key: None,
             aliyun_sms_access_key_id: None,
@@ -681,6 +847,7 @@ impl Config {
         cfg.sandbox_token_seed = env.var("THINKTIN_SANDBOX_TOKEN_SEED");
         cfg.jpush_master_secret = env.var("THINKTIN_JPUSH_MASTER_SECRET");
         cfg.cube_api_key = env.var("THINKTIN_CUBE_API_KEY");
+        cfg.acs_api_key = env.var("THINKTIN_ACS_API_KEY");
         cfg.s3_access_key_id = env.var("THINKTIN_S3_ACCESS_KEY_ID");
         cfg.s3_secret_access_key = env.var("THINKTIN_S3_SECRET_ACCESS_KEY");
         cfg.aliyun_sms_access_key_id = env.var("THINKTIN_ALIYUN_SMS_ACCESS_KEY_ID");
@@ -783,8 +950,44 @@ impl Config {
                             "sandbox.cube.egress_address is not configured (the address the model gateway sees for Cube sandboxes)"
                         );
                     }
+                    if self.sandbox.cube.request_timeout_secs == 0 {
+                        bail!("sandbox.cube.request_timeout_secs must be positive");
+                    }
+                    // 不用卷时销毁沙箱工作区就没了：要先存进对象存储，不然换版本、归档都不敢做。
+                    if !self.sandbox.cube.use_volumes && !self.sandbox.workspace.object() {
+                        bail!(
+                            "sandbox.cube.use_volumes = false keeps no workspace volume: set sandbox.workspace.mode = \"object\""
+                        );
+                    }
                 }
-                other => bail!("sandbox.provider {other:?} is not supported (local or cube)"),
+                "acs" => {
+                    let url = &self.sandbox.acs.api_url;
+                    if !(url.starts_with("http://") || url.starts_with("https://")) {
+                        bail!(
+                            "sandbox.acs.api_url is not configured (http(s)://<domain>/kruise/api)"
+                        );
+                    }
+                    if self.acs_api_key.is_none() {
+                        bail!("sandbox.provider = \"acs\" needs THINKTIN_ACS_API_KEY");
+                    }
+                    if self.sandbox.acs.request_timeout_secs == 0 {
+                        bail!("sandbox.acs.request_timeout_secs must be positive");
+                    }
+                    // ACS 的出网规则只认地址、不分端口：写了端口像是只放行了那个端口，其实整台机器都能连。
+                    if let Some(bad) = self
+                        .sandbox
+                        .network_allow
+                        .iter()
+                        .find(|t| !sandbox::acs::allow_rule_ok(t))
+                    {
+                        bail!(
+                            "sandbox.network_allow {bad:?}: ACS egress rules take an IP, CIDR or host name without a port or wildcard; limit the port with the security group (docs/sandbox-acs.md)"
+                        );
+                    }
+                }
+                other => {
+                    bail!("sandbox.provider {other:?} is not supported (local, cube or acs)")
+                }
             }
             if self.kms.provider == "local" && self.api_secrets.kms_key.is_none() {
                 bail!("worker.enabled needs THINKTIN_KMS_KEY (artifacts are encrypted per user)");
@@ -794,6 +997,34 @@ impl Config {
             }
             if self.worker.max_concurrent_runs == 0 {
                 bail!("worker.max_concurrent_runs must be positive");
+            }
+            let l = &self.sandbox.lifecycle;
+            if l.op_timeout_secs == 0 || l.sweep_batch <= 0 || l.disk_mb == 0 {
+                bail!(
+                    "sandbox.lifecycle.op_timeout_secs, sweep_batch and disk_mb must be positive"
+                );
+            }
+            let ws = &self.sandbox.workspace;
+            match ws.mode.as_str() {
+                "volume" if self.sandbox.provider == "acs" => bail!(
+                    "sandbox.provider = \"acs\" keeps no workspace volume: set sandbox.workspace.mode = \"object\""
+                ),
+                "volume" | "object" => {}
+                other => {
+                    bail!("sandbox.workspace.mode {other:?} is not supported (volume or object)")
+                }
+            }
+            if ws.max_bytes == 0 || ws.archive_timeout_secs == 0 {
+                bail!("sandbox.workspace.max_bytes and archive_timeout_secs must be positive");
+            }
+            if ws.object()
+                && !orchestrator::workspaces::temp_budget_fits(ws.max_bytes, ws.temp_budget_bytes)
+            {
+                bail!(
+                    "sandbox.workspace.temp_budget_bytes must hold one save and one restore of the largest archive: at least {} bytes for max_bytes = {}",
+                    orchestrator::workspaces::min_temp_budget(ws.max_bytes),
+                    ws.max_bytes
+                );
             }
         }
         match self.kms.provider.as_str() {
@@ -900,6 +1131,7 @@ mod tests {
         cfg.jpush_master_secret = Some("jpush-secret-xyz".into());
         cfg.api_secrets.kms_key = Some("kms-hex-xyz".into());
         cfg.cube_api_key = Some("cube-key-xyz".into());
+        cfg.acs_api_key = Some("acs-key-xyz".into());
         let s = format!("{cfg:?}");
         for secret in [
             "hunter2",
@@ -907,6 +1139,7 @@ mod tests {
             "jpush-secret-xyz",
             "kms-hex-xyz",
             "cube-key-xyz",
+            "acs-key-xyz",
         ] {
             assert!(!s.contains(secret), "{secret} leaked: {s}");
         }
@@ -971,6 +1204,7 @@ mod tests {
                     ("THINKTIN_KMS_KEY", "00"),
                     ("THINKTIN_SANDBOX_TOKEN_SEED", "seed"),
                     ("THINKTIN_CUBE_API_KEY", "key"),
+                    ("THINKTIN_ACS_API_KEY", "key"),
                     ("THINKTIN_JPUSH_MASTER_SECRET", "secret"),
                     ("THINKTIN_S3_ACCESS_KEY_ID", "id"),
                     ("THINKTIN_S3_SECRET_ACCESS_KEY", "secret"),
@@ -1060,6 +1294,20 @@ mod tests {
         .unwrap();
         let err = Config::load(Some(&path), &env).unwrap_err();
         assert!(err.to_string().contains("egress_address"), "{err}");
+        // 不用卷时工作区要先存进对象存储，不然换版本、归档都会丢文件。
+        let no_volumes = "[worker]\nenabled = true\n[sandbox]\nprovider = \"cube\"\n\
+                          [sandbox.cube]\negress_address = \"10.0.0.20\"\nuse_volumes = false\n";
+        std::fs::write(&path, no_volumes).unwrap();
+        let mut env_kms = env.0.clone();
+        env_kms.insert("THINKTIN_KMS_KEY", "00");
+        let err = Config::load(Some(&path), &MapEnv(env_kms.clone())).unwrap_err();
+        assert!(err.to_string().contains("use_volumes = false"), "{err}");
+        std::fs::write(
+            &path,
+            format!("{no_volumes}[sandbox.workspace]\nmode = \"object\"\n"),
+        )
+        .unwrap();
+        Config::load(Some(&path), &MapEnv(env_kms)).unwrap();
         std::fs::write(
             &path,
             "[worker]\nenabled = true\n[sandbox]\nprovider = \"podman\"\n",
@@ -1067,6 +1315,232 @@ mod tests {
         .unwrap();
         let err = Config::load(Some(&path), &env).unwrap_err();
         assert!(err.to_string().contains("not supported"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn acs_sandbox_settings() {
+        let cfg = Config::parse(
+            r#"
+            [sandbox]
+            provider = "acs"
+            [sandbox.acs]
+            api_url = "http://sbx.internal/kruise/api"
+            [sandbox.acs.templates]
+            "agents/claude:0.90.0" = "claude-1c2g"
+            "#,
+        )
+        .unwrap();
+        let c = cfg.sandbox.acs.to_config(Some("k".into()));
+        assert_eq!(c.api_url, "http://sbx.internal/kruise/api");
+        assert_eq!(c.data_url, None);
+        assert_eq!(c.root, "/sandbox", "unset keys keep defaults");
+        assert_eq!(c.user, "user");
+        assert_eq!(c.ip_wait, Duration::from_secs(15));
+        assert_eq!(c.templates["agents/claude:0.90.0"], "claude-1c2g");
+        assert_eq!(c.api_key.as_deref(), Some("k"));
+        assert!(
+            Config::parse(
+                "[sandbox.acs]
+api_ur = \"x\""
+            )
+            .is_err(),
+            "typos are rejected"
+        );
+
+        let dir = std::env::temp_dir().join(format!("tt-acs-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("server.toml");
+        let mut vars = HashMap::from([
+            ("DATABASE_URL", "postgres://x"),
+            ("THINKTIN_SANDBOX_TOKEN_SEED", "seed"),
+            ("THINKTIN_KMS_KEY", "00"),
+        ]);
+        let worker = "[worker]\nenabled = true\n[sandbox]\nprovider = \"acs\"\n";
+        std::fs::write(&path, worker).unwrap();
+        let err = Config::load(Some(&path), &MapEnv(vars.clone())).unwrap_err();
+        assert!(err.to_string().contains("sandbox.acs.api_url"), "{err}");
+        std::fs::write(
+            &path,
+            format!("{worker}[sandbox.acs]\napi_url = \"http://sbx/kruise/api\"\n"),
+        )
+        .unwrap();
+        let err = Config::load(Some(&path), &MapEnv(vars.clone())).unwrap_err();
+        assert!(err.to_string().contains("THINKTIN_ACS_API_KEY"), "{err}");
+        vars.insert("THINKTIN_ACS_API_KEY", "key");
+        let object = "[sandbox.workspace]\nmode = \"object\"\n";
+        for (extra, want) in [
+            (
+                "[sandbox.acs]\napi_url = \"http://sbx/kruise/api\"\nrequest_timeout_secs = 0\n",
+                "request_timeout_secs",
+            ),
+            (
+                "[sandbox.acs]\napi_url = \"http://sbx/kruise/api\"\n",
+                "without a port",
+            ),
+        ] {
+            let allow = if want == "without a port" {
+                "network_allow = [\"10.0.0.20:8790\"]\n"
+            } else {
+                ""
+            };
+            let text = format!("{worker}{allow}{extra}{object}");
+            std::fs::write(&path, text).unwrap();
+            let err = Config::load(Some(&path), &MapEnv(vars.clone()))
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains(want), "{want}: {err}");
+        }
+        std::fs::write(
+            &path,
+            format!(
+                "{worker}[sandbox.acs]\napi_url = \"http://sbx/kruise/api\"\n\
+                 [sandbox.workspace]\nmode = \"object\"\n"
+            ),
+        )
+        .unwrap();
+        let cfg = Config::load(Some(&path), &MapEnv(vars)).unwrap();
+        assert_eq!(cfg.acs_api_key.as_deref(), Some("key"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn lifecycle_timers() {
+        let d = Config::parse("").unwrap().sandbox.lifecycle_config();
+        let want = control::LifecycleConfig::default();
+        assert_eq!(
+            (
+                d.idle_pause,
+                d.archive_after,
+                d.keep_if_trigger_within,
+                d.prewarm_lead,
+                d.op_timeout,
+                d.sweep_batch,
+                d.disk_mb,
+                d.pause_waiting_approval,
+            ),
+            (
+                want.idle_pause,
+                want.archive_after,
+                want.keep_if_trigger_within,
+                want.prewarm_lead,
+                want.op_timeout,
+                want.sweep_batch,
+                want.disk_mb,
+                want.pause_waiting_approval,
+            ),
+            "defaults come from control"
+        );
+        let cfg = Config::parse(
+            r#"
+            [sandbox]
+            network_allow = ["10.0.0.20:8790"]
+            [sandbox.lifecycle]
+            idle_pause_secs = 600
+            archive_after_secs = 3600
+            keep_if_trigger_within_secs = 0
+            pause_waiting_approval = false
+            "#,
+        )
+        .unwrap();
+        let l = cfg.sandbox.lifecycle_config();
+        assert_eq!(l.idle_pause, Duration::from_secs(600));
+        assert_eq!(l.archive_after, Duration::from_secs(3600));
+        assert_eq!(l.keep_if_trigger_within, Duration::ZERO);
+        assert!(!l.pause_waiting_approval);
+        assert_eq!(
+            l.prewarm_lead, want.prewarm_lead,
+            "unset keys keep defaults"
+        );
+        assert_eq!(l.network_allow, ["10.0.0.20:8790"]);
+        assert!(
+            Config::parse("[sandbox.lifecycle]\nidle_pause = 1").is_err(),
+            "typos are rejected"
+        );
+
+        let dir = std::env::temp_dir().join(format!("tt-lifecycle-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("server.toml");
+        let env = MapEnv(HashMap::from([
+            ("DATABASE_URL", "postgres://x"),
+            ("THINKTIN_SANDBOX_TOKEN_SEED", "seed"),
+            ("THINKTIN_KMS_KEY", "00"),
+        ]));
+        for bad in ["op_timeout_secs = 0", "sweep_batch = 0", "disk_mb = 0"] {
+            std::fs::write(
+                &path,
+                format!("[worker]\nenabled = true\n[sandbox.lifecycle]\n{bad}\n"),
+            )
+            .unwrap();
+            let err = Config::load(Some(&path), &env).unwrap_err();
+            assert!(
+                err.to_string().contains("sandbox.lifecycle"),
+                "{bad}: {err}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn workspace_archive_settings() {
+        let cfg = Config::parse(
+            r#"
+            [sandbox.workspace]
+            mode = "object"
+            max_bytes = 1073741824
+            temp_dir = "/var/tmp/thinktin"
+            "#,
+        )
+        .unwrap();
+        assert!(cfg.sandbox.workspace.object());
+        let l = cfg.sandbox.lifecycle_config();
+        assert_eq!(l.max_archive_bytes, 1 << 30);
+        assert_eq!(
+            l.archive_timeout,
+            control::LifecycleConfig::default().archive_timeout,
+            "unset keys keep defaults"
+        );
+        assert!(!Config::parse("").unwrap().sandbox.workspace.object());
+        assert!(Config::parse("[sandbox.workspace]\nmod = \"x\"").is_err());
+
+        let dir = std::env::temp_dir().join(format!("tt-ws-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("server.toml");
+        let env = MapEnv(HashMap::from([
+            ("DATABASE_URL", "postgres://x"),
+            ("THINKTIN_SANDBOX_TOKEN_SEED", "seed"),
+            ("THINKTIN_KMS_KEY", "00"),
+            ("THINKTIN_ACS_API_KEY", "key"),
+        ]));
+        let acs = "[worker]\nenabled = true\n[sandbox]\nprovider = \"acs\"\n\
+                   [sandbox.acs]\napi_url = \"http://sbx/kruise/api\"\n";
+        for (extra, want) in [
+            ("", "set sandbox.workspace.mode = \"object\""),
+            ("[sandbox.workspace]\nmode = \"disk\"\n", "not supported"),
+            (
+                "[sandbox.workspace]\nmode = \"object\"\nmax_bytes = 0\n",
+                "must be positive",
+            ),
+            (
+                "[sandbox.workspace]\nmode = \"object\"\nmax_bytes = 2000\ntemp_budget_bytes = 2000\n",
+                "temp_budget_bytes",
+            ),
+            // 小上限时按 MiB 取整比 1% 多：和运行时一样算。
+            (
+                "[sandbox.workspace]\nmode = \"object\"\nmax_bytes = 52428800\ntemp_budget_bytes = 106000000\n",
+                "at least 106954752 bytes",
+            ),
+        ] {
+            std::fs::write(&path, format!("{acs}{extra}")).unwrap();
+            let err = Config::load(Some(&path), &env).unwrap_err().to_string();
+            assert!(err.contains(want), "{extra:?}: {err}");
+        }
+        std::fs::write(
+            &path,
+            format!("{acs}[sandbox.workspace]\nmode = \"object\"\n"),
+        )
+        .unwrap();
+        Config::load(Some(&path), &env).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
     }
 

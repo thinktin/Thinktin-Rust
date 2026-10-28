@@ -52,7 +52,7 @@ pub fn build(
         bail!("THINKTIN_CODE_PEPPER must be at least 32 bytes (64 hex characters)");
     }
     let kms = crate::kms(cfg)?;
-    let artifacts = crate::artifact_store(cfg, db, kms.clone())?;
+    let artifacts = crate::artifact_store(db, crate::blob_store(cfg)?, kms.clone());
     // 短信：测试注入的 > 阿里云 > 本地开发打印（配置校验保证没配服务商时开着 dev_sms）。
     let sms: Arc<dyn SmsSender> = match (&hooks.sms, &cfg.sms.aliyun) {
         (Some(sms), _) => sms.clone(),

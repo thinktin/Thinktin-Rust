@@ -397,6 +397,25 @@ async fn grants_outlive_logout_but_not_freeze_or_revocation() {
     assert_eq!(claims.grant, grant.id.to_string());
     assert_eq!(claims.uid, who.user.to_string());
     assert_eq!(cred.expires_in, Duration::from_secs(24 * 3600));
+
+    // 沙箱换了地址（ACS 的 Pod 恢复后换了 IP）：之后的令牌绑新地址；没有地址就不绑。
+    for address in [Some("10.0.2.9"), Some("fd00::7"), None] {
+        let mut w = t.db.worker().await.unwrap();
+        w.set_instance_runtime(
+            instance,
+            InstanceState::Running,
+            Some("sbx-1"),
+            address.map(|a| a.parse().unwrap()),
+            None,
+        )
+        .await
+        .unwrap();
+        w.commit().await.unwrap();
+        let cred = grants.sandbox_token(grant.id, instance).await.unwrap();
+        let claims = verifier.verify(&cred.token, now()).unwrap();
+        assert_eq!(claims.net.as_deref(), address);
+    }
+
     let mut w = t.db.worker().await.unwrap();
     let (_, touched) = w.run_grant(grant.id).await.unwrap();
     assert!(touched.last_used_at.is_some());
