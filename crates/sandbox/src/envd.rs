@@ -195,14 +195,7 @@ impl Envd {
 
     /// 写沙箱里的文件，`full` 是绝对路径。
     pub async fn write(&self, full: &str, data: &[u8]) -> Result<()> {
-        if let Some((parent, _)) = full.rsplit_once('/')
-            && !parent.is_empty()
-        {
-            // 先建上级目录。已经存在时 envd 报错，忽略；真有问题下面写文件时会报出来。
-            let _ = self
-                .unary("filesystem.Filesystem/MakeDir", &json!({ "path": parent }))
-                .await;
-        }
+        self.make_parent(full).await;
         let target = self.files_target(full);
         let multipart_upload = || async {
             let boundary = random_boundary();
@@ -246,6 +239,79 @@ impl Envd {
             return Ok(());
         }
         Err(api_error("write file", status, &bytes))
+    }
+
+    /// 边读边写一个大文件（只发 multipart：没法回退重发）。读到的不够 `len` 时请求失败。不设超时。
+    pub async fn write_stream(
+        &self,
+        full: &str,
+        data: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
+        len: u64,
+    ) -> Result<()> {
+        self.make_parent(full).await;
+        let boundary = random_boundary();
+        let filename = full.rsplit('/').next().unwrap_or("file");
+        let (head, tail) = multipart_parts(&boundary, filename);
+        let total = head.len() as u64 + len + tail.len() as u64;
+        let body = futures_util::stream::unfold(
+            (
+                Some(Bytes::from(head)),
+                data.take(len),
+                0u64,
+                Some(Bytes::from(tail)),
+            ),
+            move |(mut head, mut data, sent, mut tail)| async move {
+                if let Some(h) = head.take() {
+                    return Some((Ok(h), (None, data, sent, tail)));
+                }
+                if sent < len {
+                    let mut buf = vec![0u8; 256 << 10];
+                    return match data.read(&mut buf).await {
+                        Ok(0) => Some((
+                            Err(std::io::Error::new(
+                                std::io::ErrorKind::UnexpectedEof,
+                                format!("stream ended after {sent} of {len} bytes"),
+                            )),
+                            (None, data, len, None),
+                        )),
+                        Ok(n) => {
+                            buf.truncate(n);
+                            Some((Ok(Bytes::from(buf)), (None, data, sent + n as u64, tail)))
+                        }
+                        Err(e) => Some((Err(e), (None, data, len, None))),
+                    };
+                }
+                tail.take().map(|t| (Ok(t), (None, data, sent, None)))
+            },
+        );
+        let resp = self
+            .request(Method::POST, &self.files_target(full))
+            .header(
+                CONTENT_TYPE,
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .header(reqwest::header::CONTENT_LENGTH, total)
+            .body(reqwest::Body::wrap_stream(body))
+            .send()
+            .await
+            .map_err(provider_err)?;
+        let status = resp.status();
+        if status.is_success() {
+            return Ok(());
+        }
+        let bytes = resp.bytes().await.unwrap_or_default();
+        Err(api_error("write file", status, &bytes))
+    }
+
+    /// 先建上级目录。已经存在时 envd 报错，忽略；真有问题写文件时会报出来。
+    async fn make_parent(&self, full: &str) {
+        if let Some((parent, _)) = full.rsplit_once('/')
+            && !parent.is_empty()
+        {
+            let _ = self
+                .unary("filesystem.Filesystem/MakeDir", &json!({ "path": parent }))
+                .await;
+        }
     }
 
     /// 读沙箱里的文件，`full` 是绝对路径，`shown` 是报错里用的相对路径。
@@ -358,21 +424,28 @@ fn envelope(payload: &[u8]) -> Vec<u8> {
     out
 }
 
-fn multipart(boundary: &str, filename: &str, data: &[u8]) -> Vec<u8> {
+/// multipart 正文里文件内容前后的两段。
+fn multipart_parts(boundary: &str, filename: &str) -> (Vec<u8>, Vec<u8>) {
     let filename: String = filename
         .chars()
         .map(|c| if c == '"' || c.is_control() { '_' } else { c })
         .collect();
-    let mut body = Vec::with_capacity(data.len() + 256);
-    body.extend_from_slice(
-        format!(
-            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\n\
-             Content-Type: application/octet-stream\r\n\r\n"
-        )
-        .as_bytes(),
+    let head = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\n\
+         Content-Type: application/octet-stream\r\n\r\n"
     );
+    (
+        head.into_bytes(),
+        format!("\r\n--{boundary}--\r\n").into_bytes(),
+    )
+}
+
+fn multipart(boundary: &str, filename: &str, data: &[u8]) -> Vec<u8> {
+    let (head, tail) = multipart_parts(boundary, filename);
+    let mut body = Vec::with_capacity(head.len() + data.len() + tail.len());
+    body.extend_from_slice(&head);
     body.extend_from_slice(data);
-    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    body.extend_from_slice(&tail);
     body
 }
 

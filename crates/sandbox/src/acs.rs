@@ -570,6 +570,18 @@ impl SandboxProvider for AcsProvider {
         envd.write(&self.abs(path), data).await
     }
 
+    async fn write_file_stream(
+        &self,
+        id: &SandboxId,
+        path: &str,
+        data: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
+        len: u64,
+    ) -> Result<()> {
+        check_relative_path(path)?;
+        let envd = self.running_envd(id).await?;
+        envd.write_stream(&self.abs(path), data, len).await
+    }
+
     async fn read_file(&self, id: &SandboxId, path: &str, max: u64) -> Result<Vec<u8>> {
         check_relative_path(path)?;
         let envd = self.running_envd(id).await?;

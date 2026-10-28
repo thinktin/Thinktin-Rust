@@ -401,6 +401,7 @@ async fn mock() -> (S, String) {
         .route("/kruise/api/sandboxes/{id}/pause", post(pause))
         .route("/kruise/api/sandboxes/{id}/connect", post(connect))
         .route("/kruise/{sid}/{port}/{*rest}", any(data))
+        .layer(axum::extract::DefaultBodyLimit::disable())
         .with_state(m.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -524,6 +525,31 @@ async fn sandboxes_processes_and_files() {
         p.write_file(&info.id, "../escape", b"x").await,
         Err(Error::Invalid(_))
     ));
+    // 大文件边读边传（multipart，写明总长度）；流不够长时失败。
+    let big: Vec<u8> = (0..3 << 20).map(|i: u32| (i % 251) as u8).collect();
+    p.write_file_stream(
+        &info.id,
+        "workspace/.thinktin/restore.tgz",
+        Box::new(std::io::Cursor::new(big.clone())),
+        big.len() as u64,
+    )
+    .await
+    .unwrap();
+    assert!(
+        m.files.lock().unwrap()[&format!("{}:/sandbox/workspace/.thinktin/restore.tgz", info.id)]
+            == big
+    );
+    assert!(
+        p.write_file_stream(&info.id, "workspace/short", Box::new(&b"ab"[..]), 3)
+            .await
+            .is_err()
+    );
+    assert!(
+        !m.files
+            .lock()
+            .unwrap()
+            .contains_key(&format!("{}:/sandbox/workspace/short", info.id))
+    );
 
     // 暂停带保留时长；暂停后不能执行；重复暂停没问题。
     p.pause(&info.id).await.unwrap();
