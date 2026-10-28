@@ -1,0 +1,58 @@
+# 东京 10 人测试环境（docs/deploy-aliyun-sg.md 第 8.9 节）：一台 ECS 上的 k3s 单机，每个服务一个副本；
+# agent 沙箱在同一个 VPC 的 ACS 集群里（docs/sandbox-acs.md）。标了“部署前填”的是占位值。
+# 镜像版本由发布包固定（../../bundle.sh tokyo …），见 overlays/production。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: thinktin
+resources:
+  - ../../base
+configMapGenerator:
+  - name: thinktin-server
+    files:
+      - server.toml
+  # 部署前填：沙箱令牌、访问令牌的公钥（在服务机上生成，见 docs/deploy-aliyun-sg.md 第 8 节）。
+  - name: thinktin-llm-gw
+    literals:
+      - THINKTIN_SANDBOX_TOKEN_KEY=k1=FILL-IN-THE-SANDBOX-TOKEN-PUBLIC-KEY
+  - name: thinktin-relay
+    literals:
+      - THINKTIN_ACCESS_TOKEN_KEYS=a1=FILL-IN-THE-ACCESS-TOKEN-PUBLIC-KEY
+generatorOptions:
+  disableNameSuffixHash: true
+patches:
+  - target:
+      kind: Deployment
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+  - target:
+      kind: PodDisruptionBudget
+    patch: |-
+      - op: replace
+        path: /spec/minAvailable
+        value: 0
+  # 沙箱令牌绑定沙箱的 Pod IP，模型网关要直接看到它：用服务机的网络监听 8790（沙箱经 VPC 内网直连
+  # <服务机内网 IP>:8790），前面不能有 NodePort、负载均衡、Caddy 这类会换来源地址的东西。
+  # 主密钥是本地的（Secret thinktin-llm-gw 里的 THINKTIN_KMS_KEY），不加 KMS 参数。
+  - target:
+      kind: Deployment
+      labelSelector: app.kubernetes.io/name=thinktin-llm-gw
+    patch: |-
+      - op: add
+        path: /spec/template/spec/hostNetwork
+        value: true
+      - op: add
+        path: /spec/template/spec/dnsPolicy
+        value: ClusterFirstWithHostNet
+  # 工作区归档的密文临时文件放 /tmp（docs/sandbox-acs.md）：给够最大的归档。
+  - target:
+      kind: Deployment
+      labelSelector: app.kubernetes.io/name=thinktin-worker
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/volumes/2
+        value:
+          name: tmp
+          emptyDir:
+            sizeLimit: 10Gi
