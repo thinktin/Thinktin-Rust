@@ -40,10 +40,13 @@ def report_builds(client: Client, app: str) -> None:
     for item in body.get("data", []):
         attributes = item["attributes"]
         state = attributes.get("processingState")
-        hint = {"PROCESSING": "苹果还在处理，处理完测试组里就能装", "VALID": "可以装", "INVALID": "苹果判定无效，看邮件"}.get(
-            state, ""
+        _, detail = client.call("GET", f"/v1/builds/{item['id']}/buildBetaDetail")
+        beta = detail.get("data", {}).get("attributes", {})
+        print(
+            f"构建 {attributes.get('version')}：处理 {state}，内部测试 {beta.get('internalBuildState')}，"
+            f"外部测试 {beta.get('externalBuildState')}，加密声明 usesNonExemptEncryption={attributes.get('usesNonExemptEncryption')}，"
+            f"过期 {attributes.get('expired')}（上传于 {attributes.get('uploadedDate')}）"
         )
-        print(f"构建 {attributes.get('version')}：{state} {hint}（上传于 {attributes.get('uploadedDate')}）")
 
 
 def internal_group(client: Client, app: str, name: str) -> str:
@@ -130,8 +133,10 @@ def add_tester(client: Client, app: str, group: str, user: dict) -> None:
             }
         },
     )
-    if status in (201, 409):
-        print(f"{masked(email)}：已在测试组，邀请邮件已发（或之前发过）")
+    if status == 201:
+        print(f"{masked(email)}：已在测试组，刚发了邀请邮件")
+    elif status == 409:
+        print(f"{masked(email)}：已在测试组；苹果说不用再发邀请（{apple_error(body)}）")
     else:
         print(f"::warning::给 {masked(email)} 发邀请失败：{status} {apple_error(body)}（App Store Connect 的 TestFlight 里手动点“邀请”）")
 
@@ -152,7 +157,16 @@ def main(argv: list[str]) -> int:
     users = body.get("data", [])
     print(f"团队里 {len(users)} 个用户")
     for user in users:
+        roles = ",".join(user["attributes"].get("roles") or [])
+        print(f"用户 {masked(user['attributes'].get('username', ''))}：角色 {roles}")
         add_tester(client, app, group, user)
+    status, body = client.call("GET", f"/v1/betaGroups/{group}/betaTesters?limit=200")
+    for tester in body.get("data", []) if status == 200 else []:
+        attributes = tester["attributes"]
+        print(f"测试组里：{masked(attributes.get('email') or '')} 邀请方式 {attributes.get('inviteType')} 状态 {attributes.get('state')}")
+    status, body = client.call("GET", f"/v1/betaGroups/{group}/builds?limit=20")
+    versions = [b["attributes"].get("version") for b in body.get("data", [])] if status == 200 else []
+    print(f"测试组里能装的构建：{versions or '没有（检查 hasAccessToAllBuilds / 内部测试状态）'}")
     print("完成：每个人的邮箱会收到 TestFlight 邀请；手机上装好 TestFlight、用同一个 Apple ID 登录，就能看到 ThinkTin。")
     return 0
 
