@@ -27,14 +27,14 @@ serde_json.workspace = true
 sha2.workspace = true
 sqlx.workspace = true
 store = { path = "../store" }
+tempfile.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+uuid.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
 async-trait.workspace = true
 axum.workspace = true
-uuid.workspace = true
 store = { path = "../store", features = ["testing"] }
-tempfile.workspace = true
