@@ -32,7 +32,7 @@ PR：[#7](https://github.com/thinktin/Thinktin-Rust/pull/7)（草稿，叠在 #5
 - 13.9 补两处（2026-10-26，和 iOS 一起）：电脑审批的说明按界面语言说（`ComputerApprovalRequest.action()`：执行命令、删除照签名覆盖的参数说，理由照原话；别的工具用电脑给的英文说明）；抽屉的审批角标也数电脑发来的（`ComputerLinkState.pendingApprovals`：存着的加上服务端还没收下的新请求，`DrawerViewModel` 跟着 App 里那一份 `ComputerLinkStore` 变，存的状态变了就不再按之前取的消息数）。
 
 进行中：
-- 无。按用户要求（“让各会话把代码都同步对齐先，后面我再安排工作”）已停下等安排；03:20 UTC 的自动恢复提醒已停用。
+- **评审集成分支补上的 13.5–13.15 安卓代码**（Android 会话 session_01T2zubC6hDr9ZZR3ihhPP5b，2026-10-29 00:20 北京时间起）：分支已对齐到 `main`（`a31080b`，PR #14 之后）。按之前每个包的标准走：对照设计规范、后端接口（gateway / proto / client-core）和 iOS 实现找问题 → 反方核实 → 修复确认的 → 全量 test / lint / 打包 → 推送。期间请别的会话不要改 `apps/android/**`。
 
 下一步（等用户安排后）：
 1. ~~恢复 13.5 对话与运行过程~~（2026-10-25 已收尾，见上）：`Workflow({scriptPath: "<会话目录>/workflows/scripts/android-adapt-13-16-13-5-wf_2830c5a3-21b.js", resumeFromRunId: "wf_2830c5a3-21b"})`（适配与 13.16 已缓存；13.5 的部分改动在 `ba78a8d`，恢复前把脚本里任务 C 的“注意”段改成描述当前工作区状态），之后四维评审 → 反方核实 → 修复 → 最终验证。
