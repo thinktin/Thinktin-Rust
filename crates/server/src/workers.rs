@@ -27,6 +27,7 @@ use orchestrator::tools::{ArtifactTools, ScheduleTools, ToolSet};
 use orchestrator::vault::VaultTools;
 use proto::domain::PushChannelKind;
 use sandbox::SandboxProvider;
+use sandbox::acs::AcsProvider;
 use sandbox::cube::CubeProvider;
 use sandbox::local::LocalProvider;
 use store::Db;
@@ -61,6 +62,10 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
         "cube" => Arc::new(
             CubeProvider::new(cfg.sandbox.cube.to_config(cfg.cube_api_key.clone()))
                 .context("sandbox.cube")?,
+        ),
+        "acs" => Arc::new(
+            AcsProvider::new(cfg.sandbox.acs.to_config(cfg.acs_api_key.clone()))
+                .context("sandbox.acs")?,
         ),
         _ => Arc::new(
             LocalProvider::new(&cfg.sandbox.local_root)

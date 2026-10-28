@@ -35,6 +35,9 @@ pub struct Config {
     /// CubeAPI 的 key，只从环境变量 THINKTIN_CUBE_API_KEY 读（CubeAPI 没开鉴权时不用配）。
     #[serde(skip)]
     pub cube_api_key: Option<String>,
+    /// ACS 上 sandbox-manager 的 API Key，只从环境变量 THINKTIN_ACS_API_KEY 读。
+    #[serde(skip)]
+    pub acs_api_key: Option<String>,
     /// S3 兼容存储的访问密钥，只从环境变量 THINKTIN_S3_ACCESS_KEY_ID、THINKTIN_S3_SECRET_ACCESS_KEY 读。
     #[serde(skip)]
     pub s3_access_key_id: Option<String>,
@@ -78,6 +81,7 @@ impl std::fmt::Debug for Config {
             .field("sandbox_token_seed", &self.sandbox_token_seed.is_some())
             .field("jpush_master_secret", &self.jpush_master_secret.is_some())
             .field("cube_api_key", &self.cube_api_key.is_some())
+            .field("acs_api_key", &self.acs_api_key.is_some())
             .field("s3_access_key_id", &self.s3_access_key_id.is_some())
             .field("s3_secret_access_key", &self.s3_secret_access_key.is_some())
             .field(
@@ -191,12 +195,15 @@ pub struct Worker {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Sandbox {
-    /// 沙箱后端：local（本地开发，没有隔离）或 cube（CubeSandbox，6.2）。
+    /// 沙箱后端：local（本地开发，没有隔离）、cube（CubeSandbox，6.2）或 acs（阿里云 ACS 上的
+    /// OpenKruise Agents，见 docs/sandbox-acs.md）。
     pub provider: String,
     /// local 后端的数据目录。
     pub local_root: std::path::PathBuf,
     /// cube 后端（`provider = "cube"` 时用）。CubeAPI 的 key 只从环境变量 THINKTIN_CUBE_API_KEY 读。
     pub cube: CubeSandbox,
+    /// acs 后端（`provider = "acs"` 时用）。API Key 只从环境变量 THINKTIN_ACS_API_KEY 读。
+    pub acs: AcsSandbox,
     /// 沙箱出网白名单。
     pub network_allow: Vec<String>,
     /// 沙箱里 agent-shim 的路径。
@@ -266,6 +273,61 @@ impl CubeSandbox {
             egress_address: self.egress_address,
             use_volumes: self.use_volumes,
             volume_driver: self.volume_driver.clone(),
+            request_timeout: Duration::from_secs(self.request_timeout_secs),
+        }
+    }
+}
+
+/// acs 后端的配置（见 docs/sandbox-acs.md）。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AcsSandbox {
+    /// sandbox-manager 的控制面地址，如 `http://sandbox.example.internal/kruise/api`。
+    pub api_url: String,
+    /// 数据面地址，不填就是 `api_url` 去掉 `/kruise/api`。
+    pub data_url: Option<String>,
+    /// 沙箱里的根目录：`home` 是 HOME，`workspace` 是工作区。
+    pub root: String,
+    /// 沙箱里运行进程的用户。
+    pub user: String,
+    /// 模板 id → SandboxSet 名字；没列的把模板 id 规整成合法名字（`agents/claude:0.90.0` →
+    /// `agents-claude-0-90-0`）。
+    pub templates: std::collections::BTreeMap<String, String>,
+    /// 暂停后 sandbox-manager 保留多久（`forever` 或 Go 的时长，如 `720h`），不填用它的默认值。
+    pub paused_retention: Option<String>,
+    /// 创建后等 Pod IP 最多多久（秒）。
+    pub ip_wait_secs: u64,
+    /// 控制面请求的超时（秒）。
+    pub request_timeout_secs: u64,
+}
+
+impl Default for AcsSandbox {
+    fn default() -> Self {
+        let d = sandbox::acs::AcsConfig::default();
+        Self {
+            api_url: String::new(),
+            data_url: d.data_url,
+            root: d.root,
+            user: d.user,
+            templates: d.templates,
+            paused_retention: d.paused_retention,
+            ip_wait_secs: d.ip_wait.as_secs(),
+            request_timeout_secs: d.request_timeout.as_secs(),
+        }
+    }
+}
+
+impl AcsSandbox {
+    pub fn to_config(&self, api_key: Option<String>) -> sandbox::acs::AcsConfig {
+        sandbox::acs::AcsConfig {
+            api_url: self.api_url.clone(),
+            data_url: self.data_url.clone(),
+            api_key,
+            root: self.root.clone(),
+            user: self.user.clone(),
+            templates: self.templates.clone(),
+            paused_retention: self.paused_retention.clone(),
+            ip_wait: Duration::from_secs(self.ip_wait_secs),
             request_timeout: Duration::from_secs(self.request_timeout_secs),
         }
     }
@@ -531,6 +593,7 @@ impl Default for Sandbox {
             provider: "local".into(),
             local_root: ".thinktin/sandboxes".into(),
             cube: CubeSandbox::default(),
+            acs: AcsSandbox::default(),
             network_allow: Vec::new(),
             shim_path: "agent-shim".into(),
             gateway_url: "http://127.0.0.1:8790".into(),
@@ -587,6 +650,7 @@ impl Default for Config {
             sandbox_token_seed: None,
             jpush_master_secret: None,
             cube_api_key: None,
+            acs_api_key: None,
             s3_access_key_id: None,
             s3_secret_access_key: None,
             aliyun_sms_access_key_id: None,
@@ -681,6 +745,7 @@ impl Config {
         cfg.sandbox_token_seed = env.var("THINKTIN_SANDBOX_TOKEN_SEED");
         cfg.jpush_master_secret = env.var("THINKTIN_JPUSH_MASTER_SECRET");
         cfg.cube_api_key = env.var("THINKTIN_CUBE_API_KEY");
+        cfg.acs_api_key = env.var("THINKTIN_ACS_API_KEY");
         cfg.s3_access_key_id = env.var("THINKTIN_S3_ACCESS_KEY_ID");
         cfg.s3_secret_access_key = env.var("THINKTIN_S3_SECRET_ACCESS_KEY");
         cfg.aliyun_sms_access_key_id = env.var("THINKTIN_ALIYUN_SMS_ACCESS_KEY_ID");
@@ -784,7 +849,20 @@ impl Config {
                         );
                     }
                 }
-                other => bail!("sandbox.provider {other:?} is not supported (local or cube)"),
+                "acs" => {
+                    let url = &self.sandbox.acs.api_url;
+                    if !(url.starts_with("http://") || url.starts_with("https://")) {
+                        bail!(
+                            "sandbox.acs.api_url is not configured (http(s)://<domain>/kruise/api)"
+                        );
+                    }
+                    if self.acs_api_key.is_none() {
+                        bail!("sandbox.provider = \"acs\" needs THINKTIN_ACS_API_KEY");
+                    }
+                }
+                other => {
+                    bail!("sandbox.provider {other:?} is not supported (local, cube or acs)")
+                }
             }
             if self.kms.provider == "local" && self.api_secrets.kms_key.is_none() {
                 bail!("worker.enabled needs THINKTIN_KMS_KEY (artifacts are encrypted per user)");
@@ -900,6 +978,7 @@ mod tests {
         cfg.jpush_master_secret = Some("jpush-secret-xyz".into());
         cfg.api_secrets.kms_key = Some("kms-hex-xyz".into());
         cfg.cube_api_key = Some("cube-key-xyz".into());
+        cfg.acs_api_key = Some("acs-key-xyz".into());
         let s = format!("{cfg:?}");
         for secret in [
             "hunter2",
@@ -907,6 +986,7 @@ mod tests {
             "jpush-secret-xyz",
             "kms-hex-xyz",
             "cube-key-xyz",
+            "acs-key-xyz",
         ] {
             assert!(!s.contains(secret), "{secret} leaked: {s}");
         }
@@ -971,6 +1051,7 @@ mod tests {
                     ("THINKTIN_KMS_KEY", "00"),
                     ("THINKTIN_SANDBOX_TOKEN_SEED", "seed"),
                     ("THINKTIN_CUBE_API_KEY", "key"),
+                    ("THINKTIN_ACS_API_KEY", "key"),
                     ("THINKTIN_JPUSH_MASTER_SECRET", "secret"),
                     ("THINKTIN_S3_ACCESS_KEY_ID", "id"),
                     ("THINKTIN_S3_SECRET_ACCESS_KEY", "secret"),
@@ -1067,6 +1148,63 @@ mod tests {
         .unwrap();
         let err = Config::load(Some(&path), &env).unwrap_err();
         assert!(err.to_string().contains("not supported"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn acs_sandbox_settings() {
+        let cfg = Config::parse(
+            r#"
+            [sandbox]
+            provider = "acs"
+            [sandbox.acs]
+            api_url = "http://sbx.internal/kruise/api"
+            paused_retention = "720h"
+            [sandbox.acs.templates]
+            "agents/claude:0.90.0" = "claude-1c2g"
+            "#,
+        )
+        .unwrap();
+        let c = cfg.sandbox.acs.to_config(Some("k".into()));
+        assert_eq!(c.api_url, "http://sbx.internal/kruise/api");
+        assert_eq!(c.data_url, None);
+        assert_eq!(c.root, "/sandbox", "unset keys keep defaults");
+        assert_eq!(c.user, "user");
+        assert_eq!(c.ip_wait, Duration::from_secs(15));
+        assert_eq!(c.paused_retention.as_deref(), Some("720h"));
+        assert_eq!(c.templates["agents/claude:0.90.0"], "claude-1c2g");
+        assert_eq!(c.api_key.as_deref(), Some("k"));
+        assert!(
+            Config::parse(
+                "[sandbox.acs]
+api_ur = \"x\""
+            )
+            .is_err(),
+            "typos are rejected"
+        );
+
+        let dir = std::env::temp_dir().join(format!("tt-acs-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("server.toml");
+        let mut vars = HashMap::from([
+            ("DATABASE_URL", "postgres://x"),
+            ("THINKTIN_SANDBOX_TOKEN_SEED", "seed"),
+            ("THINKTIN_KMS_KEY", "00"),
+        ]);
+        let worker = "[worker]\nenabled = true\n[sandbox]\nprovider = \"acs\"\n";
+        std::fs::write(&path, worker).unwrap();
+        let err = Config::load(Some(&path), &MapEnv(vars.clone())).unwrap_err();
+        assert!(err.to_string().contains("sandbox.acs.api_url"), "{err}");
+        std::fs::write(
+            &path,
+            format!("{worker}[sandbox.acs]\napi_url = \"http://sbx/kruise/api\"\n"),
+        )
+        .unwrap();
+        let err = Config::load(Some(&path), &MapEnv(vars.clone())).unwrap_err();
+        assert!(err.to_string().contains("THINKTIN_ACS_API_KEY"), "{err}");
+        vars.insert("THINKTIN_ACS_API_KEY", "key");
+        let cfg = Config::load(Some(&path), &MapEnv(vars)).unwrap();
+        assert_eq!(cfg.acs_api_key.as_deref(), Some("key"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
