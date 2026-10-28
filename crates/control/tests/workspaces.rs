@@ -685,6 +685,8 @@ struct Flaky {
     fail_destroy: AtomicBool,
     stall_destroy: AtomicBool,
     stalled: tokio::sync::Notify,
+    /// 删完沙箱后断开这个库里其它开着事务的连接一次（模拟删沙箱期间库连接断了）。
+    drop_connections: Mutex<Option<sqlx::PgPool>>,
 }
 
 impl Flaky {
@@ -694,6 +696,7 @@ impl Flaky {
             fail_destroy: AtomicBool::new(false),
             stall_destroy: AtomicBool::new(false),
             stalled: tokio::sync::Notify::new(),
+            drop_connections: Mutex::new(None),
         })
     }
 }
@@ -747,6 +750,17 @@ impl SandboxProvider for Flaky {
             ));
         }
         self.inner.destroy(id).await?;
+        let pool = self.drop_connections.lock().unwrap().take();
+        if let Some(pool) = pool {
+            sqlx::query(
+                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
+                 WHERE datname = current_database() AND state = 'idle in transaction' \
+                   AND pid <> pg_backend_pid()",
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
         if self.stall_destroy.swap(false, Ordering::SeqCst) {
             self.stalled.notify_one();
             std::future::pending::<()>().await;
@@ -1143,8 +1157,9 @@ async fn interrupted_deletes_after_a_save_keep_the_new_archive() {
     );
 }
 
-/// 归档打包到一半被打断：为打包恢复的沙箱暂停回去、待定的上传清掉，下一次归档马上能做。
-#[tokio::test]
+/// 归档打包到一半被打断：为打包恢复的沙箱暂停回去、待定的上传清掉，下一次归档马上能做。停机时等得到这个收拾
+/// 任务（多线程运行时下，被中止的任务派出的收拾任务和关连接池抢时间）。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn interrupted_saves_clean_up_after_themselves() {
     let Some(e) = env().await else { return };
     let e = Arc::new(e);
@@ -1169,14 +1184,9 @@ async fn interrupted_saves_clean_up_after_themselves() {
     task.abort();
     let _ = task.await;
     e.store.hold.store(false, Ordering::SeqCst);
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    while e.runtime(inst.id).await.archive_pending.is_some() || !e.read_paused(&sid).await {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the save is cleaned up"
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    lc.pending_cleanups().wait(Duration::from_secs(10)).await;
+    assert!(e.runtime(inst.id).await.archive_pending.is_none());
+    assert!(e.read_paused(&sid).await);
     assert_eq!(e.purge_queue().await.len(), 1);
 
     let archived = tokio::time::timeout(Duration::from_secs(10), lc.archive(inst.id))
@@ -1205,4 +1215,51 @@ async fn failed_saves_pause_a_sandbox_left_running() {
     assert!(lc.archive(inst.id).await.is_err());
     assert!(e.read_paused(&sid).await);
     assert_eq!(e.runtime(inst.id).await.state, InstanceState::Paused);
+}
+
+/// 存好了、删沙箱时库连接断了（换版本的唤醒）：归档已经记下，不算存失败，不退回旧版本；下次唤醒照常换过去，
+/// 期间的改动都在。
+#[tokio::test]
+async fn database_errors_after_a_save_do_not_undo_a_version_change() {
+    let Some(e) = env().await else { return };
+    let flaky = Flaky::new(e.provider.clone());
+    let lc = Lifecycle::new(
+        e.t.db.clone(),
+        flaky.clone(),
+        Arc::new(TwoVersions),
+        LifecycleConfig::default(),
+    )
+    .with_workspace_store(e.store.clone());
+    let inst = lc.adopt(e.user, "user:d", "pi", None, "Pi").await.unwrap();
+    lc.ensure_running(inst.id).await.unwrap();
+    let old = lc.rebuild(inst.id, Some(OLD)).await.unwrap();
+    let sid = old.sandbox_id.unwrap();
+    e.write(&sid, "workspace/notes.txt", b"v2").await;
+
+    e.request_current_version(inst.id).await;
+    *flaky.drop_connections.lock().unwrap() = Some(e.t.db.pool().clone());
+    assert!(lc.ensure_running(inst.id).await.is_err());
+    let rt = e.runtime(inst.id).await;
+    assert!(rt.archive_failed_at.is_none(), "the save did not fail");
+    assert!(rt.rebuild_pending, "the version change is still wanted");
+
+    let rt = lc.ensure_running(inst.id).await.unwrap();
+    let current = catalog::builtin("pi").unwrap().agent.version;
+    assert_eq!(rt.agent_version, current);
+    assert_eq!(rt.sandbox_version.as_deref(), Some(current.as_str()));
+    assert!(!rt.rebuild_pending);
+    assert_eq!(
+        e.read(rt.sandbox_id.as_deref().unwrap(), "workspace/notes.txt")
+            .await
+            .unwrap(),
+        b"v2"
+    );
+    let kept: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE action = 'instance.version.kept' AND target = $1",
+    )
+    .bind(inst.id.to_string())
+    .fetch_one(e.t.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(kept, 0);
 }

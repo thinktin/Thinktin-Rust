@@ -105,6 +105,7 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
             })?,
         ));
     }
+    bg.wait_for_cleanups(lifecycle.pending_cleanups());
     let lifecycle = Arc::new(lifecycle);
     let seed = cfg
         .sandbox_token_seed
