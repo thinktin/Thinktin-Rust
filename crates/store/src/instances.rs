@@ -46,6 +46,8 @@ pub struct InstanceRuntime {
     pub archive: Option<WorkspaceArchive>,
     /// 上一次归档失败的时间（之后成功归档会清掉）。
     pub archive_failed_at: Option<DateTime<Utc>>,
+    /// 正在上传（或上传到一半没了下文）的归档对象。
+    pub archive_pending: Option<String>,
     /// 当前沙箱是按哪个版本建的；以前建的沙箱没记，是 None。
     pub sandbox_version: Option<String>,
     /// 正在往这个沙箱里放回归档（还没绑定到实例）。
@@ -126,6 +128,7 @@ struct RuntimeRow {
     workspace_archive_sha256: Option<Vec<u8>>,
     workspace_archived_at: Option<DateTime<Utc>>,
     workspace_archive_failed_at: Option<DateTime<Utc>>,
+    workspace_archive_pending: Option<String>,
     sandbox_version: Option<String>,
     restoring_sandbox_id: Option<String>,
     restoring_since: Option<DateTime<Utc>>,
@@ -171,6 +174,7 @@ impl RuntimeRow {
             token_epoch: u64::try_from(self.token_epoch).unwrap_or_default(),
             archive,
             archive_failed_at: self.workspace_archive_failed_at,
+            archive_pending: self.workspace_archive_pending,
             sandbox_version: self.sandbox_version,
             restoring: match (self.restoring_sandbox_id, self.restoring_since) {
                 (Some(sandbox_id), Some(since)) => Some(RestoringSandbox { sandbox_id, since }),
@@ -186,7 +190,8 @@ macro_rules! runtime_columns {
          host(sandbox_address) AS sandbox_address, workspace_id, snapshot_id, limits, last_active_at, \
          rebuild_pending, token_epoch, workspace_archive_key, workspace_archive_id, \
          workspace_archive_bytes, workspace_archive_sha256, workspace_archived_at, \
-         workspace_archive_failed_at, sandbox_version, restoring_sandbox_id, restoring_since"
+         workspace_archive_failed_at, workspace_archive_pending, sandbox_version, \
+         restoring_sandbox_id, restoring_since"
     };
 }
 
@@ -669,7 +674,8 @@ impl Tx<Worker> {
             "UPDATE instances SET purged_at = now(), sandbox_id = NULL, sandbox_address = NULL, snapshot_id = NULL, \
                workspace_archive_key = NULL, workspace_archive_id = NULL, workspace_archive_bytes = NULL, \
                workspace_archive_sha256 = NULL, workspace_archived_at = NULL, workspace_archive_pending = NULL, \
-               sandbox_version = NULL, restoring_sandbox_id = NULL, restoring_since = NULL \
+               workspace_archive_pending_since = NULL, sandbox_version = NULL, restoring_sandbox_id = NULL, \
+               restoring_since = NULL \
              WHERE id = $1",
         )
         .bind(id.0)
@@ -679,19 +685,40 @@ impl Tx<Worker> {
     }
 
     /// 要上传一份新的工作区归档：先记下对象键（单独提交），上传中途进程被杀时下次能找到、删掉它。
-    /// 上一个没完成的上传由触发器排进 blob_purge。
-    pub async fn begin_workspace_archive(&mut self, id: InstanceId, key: &str) -> Result<()> {
+    /// 一个实例同时只存一份：别处的上传在 `stale_after` 之内刷新过（[`Self::refresh_workspace_archive`]）
+    /// 时什么都不改，返回 false；更早的算没人管了，换掉（由触发器排进 blob_purge）。实例删了也返回 false。
+    pub async fn begin_workspace_archive(
+        &mut self,
+        id: InstanceId,
+        key: &str,
+        stale_after: Duration,
+    ) -> Result<bool> {
         let done = sqlx::query(
-            "UPDATE instances SET workspace_archive_pending = $2 WHERE id = $1 AND state <> 'deleted'",
+            "UPDATE instances SET workspace_archive_pending = $2, \
+               workspace_archive_pending_since = clock_timestamp() \
+             WHERE id = $1 AND state <> 'deleted' \
+               AND (workspace_archive_pending IS NULL OR workspace_archive_pending_since IS NULL \
+                    OR workspace_archive_pending_since < clock_timestamp() - make_interval(secs => $3))",
+        )
+        .bind(id.0)
+        .bind(key)
+        .bind(secs(stale_after))
+        .execute(self.conn())
+        .await?;
+        Ok(done.rows_affected() == 1)
+    }
+
+    /// 上传还在进行：刷新时间（单独提交）。待定的已经不是 `key` 时返回 false。
+    pub async fn refresh_workspace_archive(&mut self, id: InstanceId, key: &str) -> Result<bool> {
+        let done = sqlx::query(
+            "UPDATE instances SET workspace_archive_pending_since = clock_timestamp() \
+             WHERE id = $1 AND workspace_archive_pending = $2",
         )
         .bind(id.0)
         .bind(key)
         .execute(self.conn())
         .await?;
-        if done.rows_affected() == 0 {
-            return Err(Error::NotFound);
-        }
-        Ok(())
+        Ok(done.rows_affected() == 1)
     }
 
     /// 上传完成：换成新的归档（旧的由触发器排进 blob_purge）。待定的对象已经不是 `key`
@@ -708,7 +735,8 @@ impl Tx<Worker> {
             "UPDATE instances SET workspace_archive_key = $2, workspace_archive_id = $3, \
                workspace_archive_bytes = $4, workspace_archive_sha256 = $5, \
                workspace_archived_at = now(), workspace_archive_pending = NULL, \
-               workspace_archive_failed_at = NULL, workspace_archive_error = NULL \
+               workspace_archive_pending_since = NULL, workspace_archive_failed_at = NULL, \
+               workspace_archive_error = NULL \
              WHERE id = $1 AND workspace_archive_pending = $2",
         )
         .bind(id.0)
@@ -721,13 +749,18 @@ impl Tx<Worker> {
         Ok(done.rows_affected() == 1)
     }
 
-    /// 归档失败了（单独提交）：一段时间内巡检不再试，除非实例又被用过。
+    /// 归档失败了（单独提交）：一段时间内巡检不再试，除非实例又被用过。错误信息只留前 500 个字符，
+    /// 控制字符换成空格（报错里可能带着沙箱里打印的东西，Postgres 的 text 存不了 NUL）。
     pub async fn record_workspace_archive_failure(
         &mut self,
         id: InstanceId,
         error: &str,
     ) -> Result<()> {
-        let error: String = error.chars().take(500).collect();
+        let error: String = error
+            .chars()
+            .take(500)
+            .map(|c| if c.is_control() { ' ' } else { c })
+            .collect();
         sqlx::query(
             "UPDATE instances SET workspace_archive_failed_at = now(), workspace_archive_error = $2 \
              WHERE id = $1",
@@ -750,15 +783,43 @@ impl Tx<Worker> {
     }
 
     /// 要往新建的沙箱里放回归档（单独提交，放回时不锁实例）：记下沙箱，进程中途被杀时巡检能找到、删掉它。
+    /// 时间用当下的（不是事务开始时的）：之前锁实例、建沙箱花的时间不算。
     pub async fn begin_restore(&mut self, id: InstanceId, sandbox_id: &str) -> Result<()> {
         sqlx::query(
-            "UPDATE instances SET restoring_sandbox_id = $2, restoring_since = now() WHERE id = $1",
+            "UPDATE instances SET restoring_sandbox_id = $2, restoring_since = clock_timestamp() \
+             WHERE id = $1",
         )
         .bind(id.0)
         .bind(sandbox_id)
         .execute(self.conn())
         .await?;
         Ok(())
+    }
+
+    /// 还在放回：刷新时间（单独提交）。记的已经不是这个沙箱时返回 false。
+    pub async fn refresh_restore(&mut self, id: InstanceId, sandbox_id: &str) -> Result<bool> {
+        let done = sqlx::query(
+            "UPDATE instances SET restoring_since = clock_timestamp() \
+             WHERE id = $1 AND restoring_sandbox_id = $2",
+        )
+        .bind(id.0)
+        .bind(sandbox_id)
+        .execute(self.conn())
+        .await?;
+        Ok(done.rows_affected() == 1)
+    }
+
+    /// 记着的放回 `older_than` 没刷新了（按数据库的时钟）。没有在放回的返回 false。
+    pub async fn restore_is_stale(&mut self, id: InstanceId, older_than: Duration) -> Result<bool> {
+        let stale: Option<bool> = sqlx::query_scalar(
+            "SELECT restoring_since < clock_timestamp() - make_interval(secs => $2) \
+             FROM instances WHERE id = $1",
+        )
+        .bind(id.0)
+        .bind(secs(older_than))
+        .fetch_one(self.conn())
+        .await?;
+        Ok(stale.unwrap_or(false))
     }
 
     /// 放回结束（成功或放弃）。记的已经不是这个沙箱时什么都不改，返回 false。
@@ -774,7 +835,7 @@ impl Tx<Worker> {
         Ok(done.rows_affected() == 1)
     }
 
-    /// 放回了太久的（进程中途被杀、任务被取消）：巡检删掉那些沙箱。
+    /// 太久没刷新的放回（进程中途被杀）：巡检删掉那些沙箱。
     pub async fn stale_restores(
         &mut self,
         older_than: Duration,
@@ -782,7 +843,7 @@ impl Tx<Worker> {
     ) -> Result<Vec<InstanceId>> {
         let ids: Vec<Uuid> = sqlx::query_scalar(
             "SELECT id FROM instances WHERE restoring_sandbox_id IS NOT NULL \
-               AND restoring_since < now() - make_interval(secs => $1) \
+               AND restoring_since < clock_timestamp() - make_interval(secs => $1) \
              ORDER BY restoring_since LIMIT $2",
         )
         .bind(secs(older_than))
@@ -792,17 +853,18 @@ impl Tx<Worker> {
         Ok(ids.into_iter().map(Into::into).collect())
     }
 
-    /// 上传失败或不用了：对象由触发器排进 blob_purge。
-    pub async fn abort_workspace_archive(&mut self, id: InstanceId, key: &str) -> Result<()> {
-        sqlx::query(
-            "UPDATE instances SET workspace_archive_pending = NULL \
+    /// 上传失败或不用了：对象由触发器排进 blob_purge。待定的已经不是 `key`（被当成没人管换掉了、实例回收了）
+    /// 时什么都不改，返回 false：这时排进队列的可能早就删过了，调用方自己删掉传上去的对象。
+    pub async fn abort_workspace_archive(&mut self, id: InstanceId, key: &str) -> Result<bool> {
+        let done = sqlx::query(
+            "UPDATE instances SET workspace_archive_pending = NULL, workspace_archive_pending_since = NULL \
              WHERE id = $1 AND workspace_archive_pending = $2",
         )
         .bind(id.0)
         .bind(key)
         .execute(self.conn())
         .await?;
-        Ok(())
+        Ok(done.rows_affected() == 1)
     }
 
     /// 记一次活动（运行开始、用户发消息），空闲暂停按它计时。

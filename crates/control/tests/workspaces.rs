@@ -2,20 +2,24 @@
 //! （没有 DATABASE_URL 时跳过）。打包、解包用宿主机上的 GNU tar。
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use catalog::Manifest;
 use control::{
-    ArchiveMeta, BuiltinTemplates, Error, Lifecycle, LifecycleConfig, Templates, WorkspaceStore,
+    ArchiveMeta, BuiltinTemplates, Error, Lifecycle, LifecycleConfig, PutTicket, Templates,
+    WorkspaceStore,
 };
 use proto::domain::{
     CatchUp, InstanceId, InstanceState, PlanAuthor, PlanPolicy, ScheduleSpec, UserId,
 };
 use sandbox::local::LocalProvider;
-use sandbox::{CreateSpec, SandboxId, SandboxProvider, SandboxState};
+use sandbox::{
+    CreateSpec, ExecSpec, Process, SandboxId, SandboxInfo, SandboxProvider, SandboxState,
+    SnapshotId,
+};
 use sha2::{Digest, Sha256};
 use store::WorkspaceArchive;
 use store::testing::TestDb;
@@ -32,6 +36,9 @@ struct MemStore {
     hold: AtomicBool,
     held: tokio::sync::Notify,
     release: tokio::sync::Notify,
+    /// 开始过几次上传、删过哪些对象。
+    puts: AtomicUsize,
+    deleted: Mutex<Vec<String>>,
 }
 
 impl MemStore {
@@ -52,7 +59,9 @@ impl WorkspaceStore for MemStore {
         id: Uuid,
         data: &mut (dyn AsyncRead + Send + Unpin),
         max: u64,
+        _ticket: PutTicket,
     ) -> Result<ArchiveMeta, String> {
+        self.puts.fetch_add(1, Ordering::SeqCst);
         if self.fail_put.load(Ordering::SeqCst) {
             return Err("object storage is down".into());
         }
@@ -96,6 +105,12 @@ impl WorkspaceStore for MemStore {
         if sha != archive.sha256 || data.len() as u64 != archive.bytes {
             return Err("archive does not match its record".into());
         }
+        Ok(())
+    }
+
+    async fn delete(&self, _user: UserId, key: &str) -> Result<(), String> {
+        self.objects.lock().unwrap().remove(key);
+        self.deleted.lock().unwrap().push(key.to_owned());
         Ok(())
     }
 }
@@ -484,11 +499,12 @@ async fn archived_instances_are_prewarmed_before_their_plans() {
     );
 }
 
-/// 放回工作区时不锁实例，先记下新沙箱：别处的唤醒等着；放了太久（进程中途被杀）就当没人管了，删掉那个沙箱。
+/// 放回工作区时不锁实例，先记下新沙箱、定时刷新：别处的唤醒等着；不再刷新了（进程中途被杀）就当没人管了，
+/// 删掉那个沙箱。
 #[tokio::test]
 async fn unfinished_restores_are_waited_for_then_cleaned_up() {
     let Some(e) = env().await else { return };
-    // 放回最多 2 × 1 + 3 × 1 秒，过了就算没人管。
+    // 标记 2 × 1 秒没刷新就算没人管。
     let lc = lifecycle(
         &e,
         LifecycleConfig {
@@ -513,7 +529,7 @@ async fn unfinished_restores_are_waited_for_then_cleaned_up() {
     let started = std::time::Instant::now();
     let rt = lc.ensure_running(inst.id).await.unwrap();
     assert!(
-        started.elapsed() >= Duration::from_secs(4),
+        started.elapsed() >= Duration::from_secs(2),
         "{:?}",
         started.elapsed()
     );
@@ -526,7 +542,7 @@ async fn unfinished_restores_are_waited_for_then_cleaned_up() {
     );
     assert!(e.runtime(inst.id).await.restoring.is_none());
 
-    // 巡检也会清：记下的时间早于放回的上限。
+    // 巡检也会清：标记太久没刷新。
     assert!(lc.archive(inst.id).await.unwrap());
     let second = e.orphan(inst.id, "b").await;
     sqlx::query("UPDATE instances SET restoring_since = now() - interval '1 hour' WHERE id = $1")
@@ -661,4 +677,396 @@ async fn long_transfers_do_not_lock_the_instance() {
             .unwrap(),
         b"keep me"
     );
+}
+
+/// 删沙箱可以设成失败一次的本地后端（没有卷）。
+struct Flaky {
+    inner: Arc<LocalProvider>,
+    fail_destroy: AtomicBool,
+}
+
+#[async_trait]
+impl SandboxProvider for Flaky {
+    fn name(&self) -> &'static str {
+        "flaky"
+    }
+
+    fn workspace_persists(&self) -> bool {
+        false
+    }
+
+    async fn create(&self, spec: CreateSpec) -> sandbox::Result<SandboxInfo> {
+        self.inner.create(spec).await
+    }
+
+    async fn get(&self, id: &SandboxId) -> sandbox::Result<Option<SandboxInfo>> {
+        self.inner.get(id).await
+    }
+
+    async fn exec(&self, id: &SandboxId, spec: ExecSpec) -> sandbox::Result<Process> {
+        self.inner.exec(id, spec).await
+    }
+
+    async fn pause(&self, id: &SandboxId) -> sandbox::Result<()> {
+        self.inner.pause(id).await
+    }
+
+    async fn resume(&self, id: &SandboxId) -> sandbox::Result<SandboxInfo> {
+        self.inner.resume(id).await
+    }
+
+    async fn snapshot(&self, id: &SandboxId) -> sandbox::Result<SnapshotId> {
+        self.inner.snapshot(id).await
+    }
+
+    async fn restore(
+        &self,
+        snapshot: &SnapshotId,
+        spec: CreateSpec,
+    ) -> sandbox::Result<SandboxInfo> {
+        self.inner.restore(snapshot, spec).await
+    }
+
+    async fn destroy(&self, id: &SandboxId) -> sandbox::Result<()> {
+        if self.fail_destroy.swap(false, Ordering::SeqCst) {
+            return Err(sandbox::Error::Provider(
+                "sandbox-manager is unreachable".into(),
+            ));
+        }
+        self.inner.destroy(id).await
+    }
+
+    async fn delete_workspace(&self, workspace: &str) -> sandbox::Result<()> {
+        self.inner.delete_workspace(workspace).await
+    }
+
+    async fn write_file(&self, id: &SandboxId, path: &str, data: &[u8]) -> sandbox::Result<()> {
+        self.inner.write_file(id, path, data).await
+    }
+
+    async fn write_file_stream(
+        &self,
+        id: &SandboxId,
+        path: &str,
+        data: Box<dyn AsyncRead + Send + Unpin>,
+        len: u64,
+    ) -> sandbox::Result<()> {
+        self.inner.write_file_stream(id, path, data, len).await
+    }
+
+    async fn read_file(&self, id: &SandboxId, path: &str, max: u64) -> sandbox::Result<Vec<u8>> {
+        self.inner.read_file(id, path, max).await
+    }
+}
+
+impl Env {
+    /// 等 `store` 停在存、放里（[`MemStore::hold`]）。
+    async fn hold(&self) -> impl std::future::Future<Output = ()> + '_ {
+        self.store.hold.store(true, Ordering::SeqCst);
+        self.store.held.notified()
+    }
+
+    fn release(&self) {
+        self.store.hold.store(false, Ordering::SeqCst);
+        self.store.release.notify_one();
+    }
+
+    async fn request_current_version(&self, id: InstanceId) {
+        let current = catalog::builtin("pi").unwrap().agent.version;
+        let mut t = self.t.db.tenant(self.user).await.unwrap();
+        t.request_instance_version(id, &current).await.unwrap();
+        t.commit().await.unwrap();
+    }
+}
+
+/// 一个实例同时只存一份：另一个副本的归档（巡检、手动）看到别处正在存就不做，不去恢复、暂停那个沙箱。
+#[tokio::test]
+async fn one_archive_at_a_time() {
+    let Some(e) = env().await else { return };
+    let e = Arc::new(e);
+    let lc = Arc::new(lifecycle(&e, LifecycleConfig::default()));
+    let other = lifecycle(&e, eager());
+    let inst = lc.adopt(e.user, "user:d", "pi", None, "Pi").await.unwrap();
+    let sid = lc
+        .ensure_running(inst.id)
+        .await
+        .unwrap()
+        .sandbox_id
+        .unwrap();
+    e.write(&sid, "workspace/notes.txt", b"keep me").await;
+    assert!(lc.pause(inst.id).await.unwrap());
+
+    let held = e.hold().await;
+    let first = {
+        let lc = lc.clone();
+        tokio::spawn(async move { lc.archive(inst.id).await })
+    };
+    held.await;
+    // 另一个副本：手动归档、巡检都跳过，不另起上传。
+    assert!(!other.archive(inst.id).await.unwrap());
+    let report = other.sweep().await.unwrap();
+    assert_eq!((report.archived, report.failed), (0, 0));
+    assert_eq!(e.store.puts.load(Ordering::SeqCst), 1);
+
+    e.release();
+    assert!(first.await.unwrap().unwrap());
+    let rt = e.runtime(inst.id).await;
+    assert_eq!(rt.state, InstanceState::Archived);
+    assert!(rt.archive_failed_at.is_none());
+    assert!(rt.archive_pending.is_none());
+    assert!(e.purge_queue().await.is_empty());
+    let woke = lc.ensure_running(inst.id).await.unwrap();
+    assert_eq!(
+        e.read(woke.sandbox_id.as_deref().unwrap(), "workspace/notes.txt")
+            .await
+            .unwrap(),
+        b"keep me"
+    );
+}
+
+/// 手动归档时（打包上传不锁实例）实例被用了：这次归档作废，沙箱和期间的改动都留着，传上去的对象排进清理队列。
+#[tokio::test]
+async fn use_during_an_archive_cancels_it() {
+    let Some(e) = env().await else { return };
+    let e = Arc::new(e);
+    let lc = Arc::new(lifecycle(&e, LifecycleConfig::default()));
+    let inst = lc.adopt(e.user, "user:d", "pi", None, "Pi").await.unwrap();
+    let sid = lc
+        .ensure_running(inst.id)
+        .await
+        .unwrap()
+        .sandbox_id
+        .unwrap();
+    e.write(&sid, "workspace/notes.txt", b"before").await;
+
+    let held = e.hold().await;
+    let task = {
+        let lc = lc.clone();
+        tokio::spawn(async move { lc.archive(inst.id).await })
+    };
+    held.await;
+    let rt = lc.ensure_running(inst.id).await.unwrap();
+    assert_eq!(rt.sandbox_id.as_deref(), Some(sid.as_str()));
+    e.write(&sid, "workspace/notes.txt", b"after").await;
+    e.release();
+    assert!(!task.await.unwrap().unwrap(), "the archive is dropped");
+
+    let rt = e.runtime(inst.id).await;
+    assert_eq!(rt.state, InstanceState::Running);
+    assert_eq!(rt.sandbox_id.as_deref(), Some(sid.as_str()));
+    assert!(rt.archive.is_none());
+    assert!(
+        rt.archive_failed_at.is_none(),
+        "a dropped archive is no failure"
+    );
+    assert_eq!(e.read(&sid, "workspace/notes.txt").await.unwrap(), b"after");
+    assert_eq!(e.purge_queue().await.len(), 1);
+}
+
+/// 换版本时两个唤醒一起来（运行、预热）：只有一个去存工作区，另一个等着，最后拿到同一个新沙箱，
+/// 不会拿到要删掉的旧沙箱。
+#[tokio::test]
+async fn concurrent_wakes_share_one_rebuild() {
+    let Some(e) = env().await else { return };
+    let e = Arc::new(e);
+    let lc = Arc::new(lifecycle(&e, LifecycleConfig::default()));
+    let inst = lc.adopt(e.user, "user:d", "pi", None, "Pi").await.unwrap();
+    let old = lc
+        .ensure_running(inst.id)
+        .await
+        .unwrap()
+        .sandbox_id
+        .unwrap();
+    e.write(&old, "workspace/notes.txt", b"keep me").await;
+    e.request_current_version(inst.id).await;
+
+    let held = e.hold().await;
+    let wake = || {
+        let lc = lc.clone();
+        tokio::spawn(async move { lc.ensure_running(inst.id).await })
+    };
+    let first = wake();
+    held.await;
+    let second = wake();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(!second.is_finished(), "the second wake waits for the save");
+    e.release();
+    let a = first.await.unwrap().unwrap();
+    let b = second.await.unwrap().unwrap();
+    assert_eq!(a.sandbox_id, b.sandbox_id);
+    let new = a.sandbox_id.unwrap();
+    assert_ne!(new, old);
+    assert!(!b.rebuild_pending);
+    assert_eq!(e.store.puts.load(Ordering::SeqCst), 1);
+    assert_eq!(e.provider.get(&SandboxId(old)).await.unwrap(), None);
+    assert_eq!(
+        e.read(&new, "workspace/notes.txt").await.unwrap(),
+        b"keep me"
+    );
+}
+
+/// 放回到一半被取消（运行取消了）：新沙箱删掉、标记清掉，下次唤醒不用等。
+#[tokio::test]
+async fn cancelled_restores_clean_up_after_themselves() {
+    let Some(e) = env().await else { return };
+    let e = Arc::new(e);
+    let lc = Arc::new(lifecycle(&e, LifecycleConfig::default()));
+    let inst = lc.adopt(e.user, "user:d", "pi", None, "Pi").await.unwrap();
+    let sid = lc
+        .ensure_running(inst.id)
+        .await
+        .unwrap()
+        .sandbox_id
+        .unwrap();
+    e.write(&sid, "workspace/notes.txt", b"keep me").await;
+    assert!(lc.archive(inst.id).await.unwrap());
+
+    let held = e.hold().await;
+    let task = {
+        let lc = lc.clone();
+        tokio::spawn(async move { lc.ensure_running(inst.id).await })
+    };
+    held.await;
+    assert!(e.runtime(inst.id).await.restoring.is_some());
+    task.abort();
+    let _ = task.await;
+    e.store.hold.store(false, Ordering::SeqCst);
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while e.runtime(inst.id).await.restoring.is_some() || e.sandboxes() > 0 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the restore is cleaned up"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    let rt = tokio::time::timeout(Duration::from_secs(10), lc.ensure_running(inst.id))
+        .await
+        .expect("the next wake does not wait")
+        .unwrap();
+    assert_eq!(
+        e.read(rt.sandbox_id.as_deref().unwrap(), "workspace/notes.txt")
+            .await
+            .unwrap(),
+        b"keep me"
+    );
+    assert_eq!(e.sandboxes(), 1);
+}
+
+/// 要的就是沙箱现在的版本（重建修故障、换过去又换回来），工作区又存不下：不重建了，接着用现在的沙箱，
+/// 不会每次运行都失败。
+#[tokio::test]
+async fn same_version_requests_keep_the_sandbox_when_the_workspace_cannot_be_saved() {
+    let Some(e) = env().await else { return };
+    let lc = lifecycle(&e, LifecycleConfig::default());
+    let inst = lc.adopt(e.user, "user:d", "pi", None, "Pi").await.unwrap();
+    let sid = lc
+        .ensure_running(inst.id)
+        .await
+        .unwrap()
+        .sandbox_id
+        .unwrap();
+    e.write(&sid, "workspace/notes.txt", b"keep me").await;
+    e.store.fail_put.store(true, Ordering::SeqCst);
+    e.request_current_version(inst.id).await;
+    for _ in 0..2 {
+        let rt = lc.ensure_running(inst.id).await.unwrap();
+        assert_eq!(rt.sandbox_id.as_deref(), Some(sid.as_str()));
+        assert!(!rt.rebuild_pending);
+    }
+    assert_eq!(
+        e.read(&sid, "workspace/notes.txt").await.unwrap(),
+        b"keep me"
+    );
+    let skipped: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE action = 'instance.rebuild.skipped' AND target = $1",
+    )
+    .bind(inst.id.to_string())
+    .fetch_one(e.t.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(skipped, 1);
+}
+
+/// 上传时实例被删除、回收了（待定的对象排进清理队列时还没传上去）：传完发现没人要，自己删掉对象。
+#[tokio::test]
+async fn uploads_finished_after_a_purge_are_deleted() {
+    let Some(e) = env().await else { return };
+    let e = Arc::new(e);
+    let lc = Arc::new(lifecycle(&e, LifecycleConfig::default()));
+    let inst = lc.adopt(e.user, "user:d", "pi", None, "Pi").await.unwrap();
+    let sid = lc
+        .ensure_running(inst.id)
+        .await
+        .unwrap()
+        .sandbox_id
+        .unwrap();
+    e.write(&sid, "workspace/notes.txt", b"secret").await;
+
+    let held = e.hold().await;
+    let task = {
+        let lc = lc.clone();
+        tokio::spawn(async move { lc.archive(inst.id).await })
+    };
+    held.await;
+    let key = e.runtime(inst.id).await.archive_pending.unwrap();
+    let mut t = e.t.db.tenant(e.user).await.unwrap();
+    t.delete_instance(inst.id).await.unwrap();
+    t.commit().await.unwrap();
+    assert_eq!(
+        lifecycle(&e, LifecycleConfig::default())
+            .sweep()
+            .await
+            .unwrap()
+            .purged,
+        1
+    );
+    // 后台的清理先跑了一遍（对象还没传上去，什么都没删到）。
+    assert_eq!(e.purge_queue().await, std::slice::from_ref(&key));
+    e.release();
+    let _ = task.await.unwrap();
+    assert!(!e.store.objects.lock().unwrap().contains_key(&key));
+    assert!(e.store.deleted.lock().unwrap().contains(&key));
+}
+
+/// 存好了、删沙箱失败：不算归档失败（下一轮巡检直接删，不用再存），换版本也不会因此退回旧版本。
+#[tokio::test]
+async fn failed_deletes_after_a_save_are_retried_without_saving_again() {
+    let Some(e) = env().await else { return };
+    let flaky = Arc::new(Flaky {
+        inner: e.provider.clone(),
+        fail_destroy: AtomicBool::new(false),
+    });
+    let lc = Lifecycle::new(
+        e.t.db.clone(),
+        flaky.clone(),
+        Arc::new(BuiltinTemplates),
+        eager(),
+    )
+    .with_workspace_store(e.store.clone());
+    let inst = lc.adopt(e.user, "user:d", "pi", None, "Pi").await.unwrap();
+    let sid = lc
+        .ensure_running(inst.id)
+        .await
+        .unwrap()
+        .sandbox_id
+        .unwrap();
+    e.write(&sid, "workspace/notes.txt", b"keep me").await;
+
+    flaky.fail_destroy.store(true, Ordering::SeqCst);
+    let report = lc.sweep().await.unwrap();
+    assert_eq!((report.paused, report.archived, report.failed), (1, 0, 1));
+    let rt = e.runtime(inst.id).await;
+    assert_eq!(rt.state, InstanceState::Paused);
+    assert!(rt.archive.is_some(), "the workspace is saved");
+    assert!(
+        rt.archive_failed_at.is_none(),
+        "a failed delete is no failed save"
+    );
+    assert!(e.read_paused(&sid).await);
+
+    let report = lc.sweep().await.unwrap();
+    assert_eq!((report.archived, report.failed), (1, 0));
+    assert_eq!(e.store.puts.load(Ordering::SeqCst), 1, "not saved again");
+    assert_eq!(e.runtime(inst.id).await.state, InstanceState::Archived);
 }

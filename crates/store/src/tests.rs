@@ -4017,9 +4017,25 @@ async fn workspace_archives_queue_replaced_objects() {
     let id1 = uuid::Uuid::now_v7();
     let sha = [7u8; 32];
 
-    let mut w = db.worker().await.unwrap();
-    w.begin_workspace_archive(inst.id, &k("a1")).await.unwrap();
-    w.commit().await.unwrap();
+    // 别处的上传在这么久之内刷新过就不另起一份。
+    let fresh = Duration::from_secs(600);
+    let begin = |id: proto::domain::InstanceId, key: String| async move {
+        let mut w = db.worker().await.unwrap();
+        let began = w.begin_workspace_archive(id, &key, fresh).await.unwrap();
+        w.commit().await.unwrap();
+        began
+    };
+    let age_pending = |id: proto::domain::InstanceId| async move {
+        sqlx::query(
+            "UPDATE instances SET workspace_archive_pending_since = now() - interval '1 hour' WHERE id = $1",
+        )
+        .bind(id.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    };
+
+    assert!(begin(inst.id, k("a1")).await);
     assert!(archive().await.is_none(), "pending is not an archive yet");
     let mut w = db.worker().await.unwrap();
     assert!(
@@ -4032,19 +4048,45 @@ async fn workspace_archives_queue_replaced_objects() {
     assert_eq!((a.key, a.id, a.bytes, a.sha256), (k("a1"), id1, 1234, sha));
     assert!(queued().await.is_empty(), "the finished upload is kept");
 
-    // 中途被杀的上传：下一次开始时换掉，旧的排进队列；别的副本换掉了待定的对象，完成不生效。
+    // 一个实例同时只存一份：刷新着的上传挡住别处；太久没刷新的（进程中途被杀）被换掉，旧的排进队列，
+    // 它的完成、刷新、放弃都不再生效。
+    assert!(begin(inst.id, k("stale")).await);
+    assert!(
+        !begin(inst.id, k("other")).await,
+        "another upload is in progress"
+    );
     let mut w = db.worker().await.unwrap();
-    w.begin_workspace_archive(inst.id, &k("stale"))
-        .await
-        .unwrap();
-    w.begin_workspace_archive(inst.id, &k("a2")).await.unwrap();
+    assert!(
+        w.refresh_workspace_archive(inst.id, &k("stale"))
+            .await
+            .unwrap()
+    );
+    w.commit().await.unwrap();
+    assert!(!begin(inst.id, k("other")).await);
+    age_pending(inst.id).await;
+    assert!(
+        begin(inst.id, k("a2")).await,
+        "an abandoned upload is replaced"
+    );
+    let mut w = db.worker().await.unwrap();
     assert!(
         !w.finish_workspace_archive(inst.id, &k("stale"), id1, 1, &sha)
             .await
             .unwrap()
     );
+    assert!(
+        !w.refresh_workspace_archive(inst.id, &k("stale"))
+            .await
+            .unwrap()
+    );
+    assert!(
+        !w.abort_workspace_archive(inst.id, &k("stale"))
+            .await
+            .unwrap()
+    );
     w.commit().await.unwrap();
     assert_eq!(queued().await, [k("stale")]);
+    assert_eq!(archive().await.unwrap().key, k("a1"));
 
     // 新的归档换掉旧的：旧对象排进队列。
     let mut w = db.worker().await.unwrap();
@@ -4058,33 +4100,34 @@ async fn workspace_archives_queue_replaced_objects() {
     assert_eq!(archive().await.unwrap().id, id2);
     assert_eq!(queued().await, [k("a1")]);
 
-    // 放弃上传：对象排进队列，现有的归档不动。
+    // 放弃上传：对象排进队列，现有的归档不动；之后马上能再开始一份。
+    assert!(begin(inst.id, k("a3")).await);
     let mut w = db.worker().await.unwrap();
-    w.begin_workspace_archive(inst.id, &k("a3")).await.unwrap();
-    w.abort_workspace_archive(inst.id, &k("a3")).await.unwrap();
+    assert!(w.abort_workspace_archive(inst.id, &k("a3")).await.unwrap());
     w.commit().await.unwrap();
     assert_eq!(queued().await, [k("a3")]);
     assert_eq!(archive().await.unwrap().key, k("a2"));
 
-    // 回收实例：归档和待定的上传都排进队列。
+    // 回收实例：归档和待定的上传都排进队列；之后上传完成的不算数（调用方自己删掉对象）。
+    assert!(begin(inst.id, k("a4")).await);
     let mut w = db.worker().await.unwrap();
-    w.begin_workspace_archive(inst.id, &k("a4")).await.unwrap();
     w.mark_instance_purged(inst.id).await.unwrap();
+    assert!(!w.abort_workspace_archive(inst.id, &k("a4")).await.unwrap());
     w.commit().await.unwrap();
     assert_eq!(queued().await, [k("a2"), k("a4")]);
     assert!(archive().await.is_none());
 
     // 整行删掉（运维清理）：同样排进队列。
     let other = instance(db, u).await;
+    assert!(begin(other.id, k("b1")).await);
     let mut w = db.worker().await.unwrap();
-    w.begin_workspace_archive(other.id, &k("b1")).await.unwrap();
     assert!(
         w.finish_workspace_archive(other.id, &k("b1"), id1, 1, &sha)
             .await
             .unwrap()
     );
-    w.begin_workspace_archive(other.id, &k("b2")).await.unwrap();
     w.commit().await.unwrap();
+    assert!(begin(other.id, k("b2")).await);
     sqlx::query("DELETE FROM instances WHERE id = $1")
         .bind(other.id.0)
         .execute(db.pool())
@@ -4094,15 +4137,47 @@ async fn workspace_archives_queue_replaced_objects() {
 
     // 只排这个用户自己前缀下的键：拿别的键（别人的产出物、归档）来不会被删。
     let third = instance(db, u).await;
+    assert!(begin(third.id, "artifacts/someone-else".into()).await);
     let mut w = db.worker().await.unwrap();
-    w.begin_workspace_archive(third.id, "artifacts/someone-else")
-        .await
-        .unwrap();
     w.abort_workspace_archive(third.id, "artifacts/someone-else")
         .await
         .unwrap();
     w.commit().await.unwrap();
     assert!(queued().await.is_empty());
+
+    // 失败的原因里带着控制字符（沙箱里打印的）也记得下。
+    let mut w = db.worker().await.unwrap();
+    w.record_workspace_archive_failure(third.id, "tar: bad\0name\u{1b}[31m")
+        .await
+        .unwrap();
+    let error: String =
+        sqlx::query_scalar("SELECT workspace_archive_error FROM instances WHERE id = $1")
+            .bind(third.id.0)
+            .fetch_one(w.conn())
+            .await
+            .unwrap();
+    assert_eq!(error, "tar: bad name [31m");
+    w.commit().await.unwrap();
+
+    // 放回：记下的时间是当下的；刷新着的不算没人管，太久没刷新的算。
+    let mut w = db.worker().await.unwrap();
+    w.begin_restore(third.id, "sbx-1").await.unwrap();
+    assert!(!w.restore_is_stale(third.id, fresh).await.unwrap());
+    assert!(w.refresh_restore(third.id, "sbx-1").await.unwrap());
+    assert!(!w.refresh_restore(third.id, "sbx-2").await.unwrap());
+    w.commit().await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    assert!(w.stale_restores(fresh, 10).await.unwrap().is_empty());
+    sqlx::query("UPDATE instances SET restoring_since = now() - interval '1 hour' WHERE id = $1")
+        .bind(third.id.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    assert!(w.restore_is_stale(third.id, fresh).await.unwrap());
+    assert_eq!(w.stale_restores(fresh, 10).await.unwrap(), [third.id]);
+    assert!(w.end_restore(third.id, "sbx-1").await.unwrap());
+    assert!(!w.restore_is_stale(third.id, fresh).await.unwrap());
+    w.commit().await.unwrap();
 
     // 业务角色改不了归档、沙箱这些列（只有后台角色能写）。
     let mut t = db.tenant(u).await.unwrap();

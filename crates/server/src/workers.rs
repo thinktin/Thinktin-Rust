@@ -88,14 +88,22 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
         cfg.sandbox.lifecycle_config(),
     );
     if cfg.sandbox.workspace.object() {
-        lifecycle = lifecycle.with_workspace_store(Arc::new(ObjectWorkspaceStore::new(
-            db.clone(),
-            blob_store.clone(),
-            kms.clone(),
-            &cfg.sandbox.workspace.temp_dir,
-            cfg.sandbox.workspace.temp_budget_bytes,
-            Duration::from_secs(cfg.sandbox.workspace.archive_timeout_secs),
-        )));
+        lifecycle = lifecycle.with_workspace_store(Arc::new(
+            ObjectWorkspaceStore::new(
+                db.clone(),
+                blob_store.clone(),
+                kms.clone(),
+                &cfg.sandbox.workspace.temp_dir,
+                cfg.sandbox.workspace.temp_budget_bytes,
+                Duration::from_secs(cfg.sandbox.workspace.archive_timeout_secs),
+            )
+            .with_context(|| {
+                format!(
+                    "workspace temp dir {}",
+                    cfg.sandbox.workspace.temp_dir.display()
+                )
+            })?,
+        ));
     }
     let lifecycle = Arc::new(lifecycle);
     let seed = cfg

@@ -2,6 +2,8 @@
 //! 打成 tar.gz，经 [`WorkspaceStore`] 按用户 DEK 加密存进对象存储；从模板重建沙箱时传回沙箱、在沙箱里解开。
 //! 打包、解包都在沙箱里做，服务端只经手数据流和密文，不解析用户的文件。
 
+use std::any::Any;
+
 use async_trait::async_trait;
 use proto::domain::UserId;
 use store::WorkspaceArchive;
@@ -16,6 +18,21 @@ pub struct ArchiveMeta {
     pub sha256: [u8; 32],
 }
 
+/// [`WorkspaceStore::reserve_put`] 占好的资源（临时空间），交给 [`WorkspaceStore::put`]，存完释放。
+#[derive(Default)]
+pub struct PutTicket(Option<Box<dyn Any + Send + Sync>>);
+
+impl PutTicket {
+    pub fn new(held: impl Any + Send + Sync) -> Self {
+        Self(Some(Box::new(held)))
+    }
+
+    /// 什么都没占（默认的 [`WorkspaceStore::reserve_put`]）。
+    pub fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+}
+
 /// 工作区归档放在哪（生产是对象存储，按用户 DEK 加密）。
 #[async_trait]
 pub trait WorkspaceStore: Send + Sync {
@@ -24,7 +41,14 @@ pub trait WorkspaceStore: Send + Sync {
         format!("workspaces/{}/{workspace}/{}", user.0.simple(), id.simple())
     }
 
-    /// 读完 `data`（明文 tar.gz，超过 `max` 字节就报错），加密存到 `key`。
+    /// 存一份最大 `max` 字节的归档之前先占好要用的资源，一时不够时排队。调用方占好了才开始打包，
+    /// 排队的时间不算在存的时限里。默认什么都不占。
+    async fn reserve_put(&self, _max: u64) -> Result<PutTicket, String> {
+        Ok(PutTicket::default())
+    }
+
+    /// 读完 `data`（明文 tar.gz，超过 `max` 字节就报错），加密存到 `key`。`ticket` 是
+    /// [`Self::reserve_put`] 给的，存完释放。
     async fn put(
         &self,
         user: UserId,
@@ -32,7 +56,12 @@ pub trait WorkspaceStore: Send + Sync {
         id: Uuid,
         data: &mut (dyn AsyncRead + Send + Unpin),
         max: u64,
+        ticket: PutTicket,
     ) -> Result<ArchiveMeta, String>;
+
+    /// 删掉一个没记成归档的对象：上传完才发现不用了（待定的被换掉、实例回收了），清理队列里已经没有它。
+    /// 不存在也算成功。
+    async fn delete(&self, user: UserId, key: &str) -> Result<(), String>;
 
     /// 取回、解密，明文写进 `sink`。大小、SHA-256 和记录的对不上就报错（这时已经写出去的不可信，
     /// 调用方要丢掉）。
@@ -71,7 +100,8 @@ pub const CLEANUP_ARGV: &[&str] = &["rm", "-f", ".thinktin/restore.tgz"];
 /// 进程的标准错误留多少（报错时附上）。
 pub(crate) const STDERR_KEEP: usize = 8 << 10;
 
-/// 读完一路输出，只留前 `keep` 字节（读完是为了不让进程卡在写满的管道上）。
+/// 读完一路输出，只留前 `keep` 字节（读完是为了不让进程卡在写满的管道上）。换行、制表符以外的控制字符
+/// 换成空格：报错会写进日志、审计和数据库（Postgres 存不了 NUL）。
 pub(crate) async fn drain(mut r: Box<dyn AsyncRead + Send + Unpin>, keep: usize) -> String {
     let mut kept = Vec::new();
     let mut buf = [0u8; 8192];
@@ -84,5 +114,30 @@ pub(crate) async fn drain(mut r: Box<dyn AsyncRead + Send + Unpin>, keep: usize)
             }
         }
     }
-    String::from_utf8_lossy(&kept).trim().to_owned()
+    String::from_utf8_lossy(&kept)
+        .chars()
+        .map(|c| {
+            if c.is_control() && c != '\n' && c != '\t' {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect::<String>()
+        .trim()
+        .to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn drained_output_has_no_control_characters() {
+        let out = b"tar: a\0b\x1b[31m\r\nnext\tline\n".to_vec();
+        let text = drain(Box::new(std::io::Cursor::new(out)), 1024).await;
+        assert_eq!(text, "tar: a b [31m \nnext\tline");
+        let text = drain(Box::new(std::io::Cursor::new(vec![b'x'; 100])), 10).await;
+        assert_eq!(text, "x".repeat(10));
+    }
 }

@@ -4,7 +4,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use control::WorkspaceStore;
+use control::{PutTicket, WorkspaceStore};
 use keyvault::LocalKms;
 use orchestrator::artifacts::LocalBlobStore;
 use orchestrator::workspaces::ObjectWorkspaceStore;
@@ -32,7 +32,8 @@ async fn env() -> Option<Env> {
         temp.path(),
         64 << 20,
         Duration::from_secs(30),
-    );
+    )
+    .unwrap();
     let mut w = t.db.worker().await.unwrap();
     let (alice, _) = w.upsert_user_by_phone("+8613800000011").await.unwrap();
     let (bob, _) = w.upsert_user_by_phone("+8613800000012").await.unwrap();
@@ -52,7 +53,10 @@ impl Env {
         let id = uuid::Uuid::now_v7();
         let key = self.store.key(user, "ws-1", id);
         let mut reader = data;
-        let meta = self.store.put(user, &key, id, &mut reader, 8 << 20).await?;
+        let meta = self
+            .store
+            .put(user, &key, id, &mut reader, 8 << 20, PutTicket::default())
+            .await?;
         Ok(WorkspaceArchive {
             key,
             id: meta.id,
@@ -72,8 +76,17 @@ impl Env {
         self.blobs.path().join(&a.key)
     }
 
+    /// 临时目录里除了各进程的锁文件还有几个文件。
     fn temp_files(&self) -> usize {
-        std::fs::read_dir(self.temp.path()).unwrap().count()
+        let mut n = 0;
+        for dir in std::fs::read_dir(self.temp.path().join("thinktin-workspaces")).unwrap() {
+            for f in std::fs::read_dir(dir.unwrap().path()).unwrap() {
+                if f.unwrap().file_name() != ".lock" {
+                    n += 1;
+                }
+            }
+        }
+        n
     }
 }
 
@@ -138,7 +151,14 @@ async fn oversized_archives_are_refused() {
     let mut reader = &data[..];
     let err = e
         .store
-        .put(e.alice, &key, id, &mut reader, 2 << 20)
+        .put(
+            e.alice,
+            &key,
+            id,
+            &mut reader,
+            2 << 20,
+            PutTicket::default(),
+        )
         .await
         .unwrap_err();
     assert!(err.contains("larger than"), "{err}");
@@ -160,7 +180,14 @@ async fn keys_must_belong_to_the_user_and_fit_the_temp_budget() {
     let mut reader = &b"x"[..];
     let err = e
         .store
-        .put(e.alice, &foreign.key, a.id, &mut reader, 1 << 20)
+        .put(
+            e.alice,
+            &foreign.key,
+            a.id,
+            &mut reader,
+            1 << 20,
+            PutTicket::default(),
+        )
         .await
         .unwrap_err();
     assert!(err.contains("another user"), "{err}");
@@ -171,9 +198,81 @@ async fn keys_must_belong_to_the_user_and_fit_the_temp_budget() {
     let mut reader = &b"x"[..];
     let err = e
         .store
-        .put(e.alice, &key, id, &mut reader, 128 << 20)
+        .put(
+            e.alice,
+            &key,
+            id,
+            &mut reader,
+            128 << 20,
+            PutTicket::default(),
+        )
         .await
         .unwrap_err();
     assert!(err.contains("temp space"), "{err}");
     assert_eq!(e.temp_files(), 0);
+}
+
+/// 存、放各自排队：等着存的不挡放回（放回时用户在等）。别的进程的临时目录（锁着的）不删。
+#[tokio::test]
+async fn waiting_saves_do_not_hold_up_restores() {
+    let Some(e) = env().await else { return };
+    let a = e.put(e.alice, b"hello").await.unwrap();
+    // 预算 64 MiB，存的一边 32 MiB：占着 20 MiB 时下一份 20 MiB 的排队。
+    let first = e.store.reserve_put(20 << 20).await.unwrap();
+    let waiting = e.store.reserve_put(20 << 20);
+    tokio::pin!(waiting);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), &mut waiting)
+            .await
+            .is_err(),
+        "the second save waits"
+    );
+    let mut out = Vec::new();
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        e.store.restore(e.alice, &a, &mut out),
+    )
+    .await
+    .expect("a restore does not wait behind queued saves")
+    .unwrap();
+    assert_eq!(out, b"hello");
+    drop(first);
+    let second = tokio::time::timeout(Duration::from_secs(5), waiting)
+        .await
+        .unwrap()
+        .unwrap();
+    // 拿着预先占好的空间存：不再另占。
+    let id = uuid::Uuid::now_v7();
+    let key = e.store.key(e.alice, "ws-1", id);
+    let mut reader = &b"again"[..];
+    e.store
+        .put(e.alice, &key, id, &mut reader, 20 << 20, second)
+        .await
+        .unwrap();
+
+    // 删掉没用上的上传：只删自己前缀下的，不存在也算成功。
+    assert!(e.blobs.path().join(&key).exists());
+    e.store.delete(e.alice, &key).await.unwrap();
+    assert!(!e.blobs.path().join(&key).exists());
+    e.store.delete(e.alice, &key).await.unwrap();
+    let err = e.store.delete(e.bob, &key).await.unwrap_err();
+    assert!(err.contains("another user"), "{err}");
+
+    // 同一个临时目录再建一个（另一个进程）：前一个还锁着，它的目录不动。
+    let before = std::fs::read_dir(e.temp.path().join("thinktin-workspaces"))
+        .unwrap()
+        .count();
+    let _other = ObjectWorkspaceStore::new(
+        e._t.db.clone(),
+        Arc::new(LocalBlobStore::new(e.blobs.path()).unwrap()),
+        Arc::new(LocalKms::new("kms", &[9; 32])),
+        e.temp.path(),
+        64 << 20,
+        Duration::from_secs(30),
+    )
+    .unwrap();
+    let after = std::fs::read_dir(e.temp.path().join("thinktin-workspaces"))
+        .unwrap()
+        .count();
+    assert_eq!(after, before + 1);
 }

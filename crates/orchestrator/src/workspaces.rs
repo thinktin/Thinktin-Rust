@@ -2,18 +2,19 @@
 //! 按用户 DEK 分块加密，写进临时文件（只有密文落盘）再整个上传；放回时下载到临时文件，逐块解密写给沙箱。
 //! 和产出物共用一个对象存储（键在 `workspaces/` 下）和一个清理队列。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
-use control::{ArchiveMeta, WorkspaceStore};
+use control::{ArchiveMeta, PutTicket, WorkspaceStore};
 use keyvault::{CHUNK_LEN, FRAME_HEADER_LEN, Kms};
 use proto::domain::UserId;
 use sha2::{Digest, Sha256};
 use store::{Db, WorkspaceArchive};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tracing::warn;
 use uuid::Uuid;
 
 use crate::artifacts::{BlobStore, user_vault};
@@ -22,25 +23,110 @@ pub struct ObjectWorkspaceStore {
     db: Db,
     blobs: Arc<dyn BlobStore>,
     kms: Arc<dyn Kms>,
-    /// 放密文临时文件的目录（后台副本的 /tmp 是单独的临时卷）。
+    /// 这个进程放密文临时文件的目录：`<temp_dir>/thinktin-workspaces/<随机>/`，里面的锁文件一直锁着。
+    /// 进程被杀时来不及删的临时文件，下次启动时连目录删掉（锁随进程释放）。
     temp_dir: PathBuf,
-    /// 临时文件一共最多占多少（MiB）：同时有几个存、放时按大小排队，不把临时卷撑爆（撑爆了副本会被驱逐）。
-    temp_budget: Arc<Semaphore>,
-    temp_budget_mib: u32,
+    _temp_lock: std::fs::File,
+    /// 临时文件的空间（MiB），存、放各占一半，各自按大小排队，不把临时卷撑爆（撑爆了副本会被驱逐）。
+    /// 分开排是因为等着存的不该挡住放回（放回时用户在等）。
+    puts: Pool,
+    restores: Pool,
     /// 一次上传或下载的上限。
     timeout: Duration,
 }
 
+struct Pool {
+    permits: Arc<Semaphore>,
+    mib: u32,
+}
+
+impl Pool {
+    fn new(mib: u32) -> Self {
+        Self {
+            permits: Arc::new(Semaphore::new(mib as usize)),
+            mib,
+        }
+    }
+
+    /// 先占好明文 `bytes` 字节的归档加密后要的空间（不够时等别的做完）。
+    async fn reserve(&self, bytes: u64) -> Result<OwnedSemaphorePermit, String> {
+        let need = mib(sealed_len(bytes));
+        if need > self.mib {
+            return Err(format!(
+                "the workspace archive needs {need} MiB of temp space, more than the {} MiB available",
+                self.mib
+            ));
+        }
+        self.permits
+            .clone()
+            .acquire_many_owned(need)
+            .await
+            .map_err(|e| e.to_string())
+    }
+}
+
 /// 每块密文比明文多出的字节：帧头、nonce、校验码。
 const FRAME_OVERHEAD: u64 = FRAME_HEADER_LEN as u64 + 28;
+
+/// 各进程的临时目录放在 `temp_dir` 下的这里。
+const TEMP_SUBDIR: &str = "thinktin-workspaces";
+const LOCK_FILE: &str = ".lock";
 
 /// 明文 `bytes` 字节加密后最多多大（最后可能多一个空块）。
 fn sealed_len(bytes: u64) -> u64 {
     bytes + (bytes / CHUNK_LEN as u64 + 2) * FRAME_OVERHEAD
 }
 
+fn mib(bytes: u64) -> u32 {
+    u32::try_from(bytes.div_ceil(1 << 20)).unwrap_or(u32::MAX)
+}
+
+/// 临时空间 `budget` 字节（向下取整到 MiB）分给存、放两边。
+fn split_budget(budget: u64) -> (u32, u32) {
+    let total = u32::try_from(budget >> 20).unwrap_or(u32::MAX);
+    (total / 2, total - total / 2)
+}
+
+/// `budget` 字节的临时空间够不够存、放 `max_bytes` 的归档：两边各要放得下一份（和运行时一样算，启动时查）。
+pub fn temp_budget_fits(max_bytes: u64, budget: u64) -> bool {
+    let (puts, restores) = split_budget(budget);
+    let need = mib(sealed_len(max_bytes));
+    puts >= need && restores >= need
+}
+
+/// 放得下 `max_bytes` 的归档最少要多少临时空间（报错时提示用）。
+pub fn min_temp_budget(max_bytes: u64) -> u64 {
+    (u64::from(mib(sealed_len(max_bytes))) * 2) << 20
+}
+
+/// 删掉进程已经没了的临时目录（锁得上说明没人锁着）。刚建、还没来得及锁的目录（一分钟内）不动。
+fn clear_abandoned(base: &Path) {
+    let Ok(entries) = std::fs::read_dir(base) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let dir = entry.path();
+        if !dir.is_dir() {
+            continue;
+        }
+        let abandoned = match std::fs::File::open(dir.join(LOCK_FILE)) {
+            Ok(lock) => lock.try_lock().is_ok(),
+            Err(_) => entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| SystemTime::now().duration_since(t).ok())
+                .is_some_and(|age| age > Duration::from_secs(60)),
+        };
+        if abandoned && let Err(e) = std::fs::remove_dir_all(&dir) {
+            warn!(dir = %dir.display(), error = %e, "could not remove abandoned workspace temp files");
+        }
+    }
+}
+
 impl ObjectWorkspaceStore {
-    /// `temp_budget` 是临时文件一共能占的字节数，要放得下最大的一份归档。
+    /// `temp_budget` 是临时文件一共能占的字节数，存、放各一半，各要放得下最大的一份归档
+    /// （[`temp_budget_fits`]）。在 `temp_dir` 下建这个进程自己的临时目录，顺便删掉进程没了的留下的。
     pub fn new(
         db: Db,
         blobs: Arc<dyn BlobStore>,
@@ -48,33 +134,25 @@ impl ObjectWorkspaceStore {
         temp_dir: impl Into<PathBuf>,
         temp_budget: u64,
         timeout: Duration,
-    ) -> Self {
-        let mib = u32::try_from((temp_budget >> 20).max(1)).unwrap_or(u32::MAX);
-        Self {
+    ) -> std::io::Result<Self> {
+        let base = temp_dir.into().join(TEMP_SUBDIR);
+        std::fs::create_dir_all(&base)?;
+        clear_abandoned(&base);
+        let dir = base.join(Uuid::now_v7().simple().to_string());
+        std::fs::create_dir(&dir)?;
+        let lock = std::fs::File::create(dir.join(LOCK_FILE))?;
+        lock.try_lock().map_err(std::io::Error::from)?;
+        let (puts, restores) = split_budget(temp_budget);
+        Ok(Self {
             db,
             blobs,
             kms,
-            temp_dir: temp_dir.into(),
-            temp_budget: Arc::new(Semaphore::new(mib as usize)),
-            temp_budget_mib: mib,
+            temp_dir: dir,
+            _temp_lock: lock,
+            puts: Pool::new(puts),
+            restores: Pool::new(restores),
             timeout,
-        }
-    }
-
-    /// 先占好临时文件的空间（放不下时等别的存、放做完）。
-    async fn reserve(&self, bytes: u64) -> Result<OwnedSemaphorePermit, String> {
-        let mib = u32::try_from(sealed_len(bytes).div_ceil(1 << 20)).unwrap_or(u32::MAX);
-        if mib > self.temp_budget_mib {
-            return Err(format!(
-                "the workspace archive needs {mib} MiB of temp space, more than the {} MiB budget",
-                self.temp_budget_mib
-            ));
-        }
-        self.temp_budget
-            .clone()
-            .acquire_many_owned(mib)
-            .await
-            .map_err(|e| e.to_string())
+        })
     }
 
     /// 归档只能是这个用户自己的（键是 [`WorkspaceStore::key`] 生成的）。
@@ -112,6 +190,10 @@ fn hex(bytes: &[u8]) -> String {
 
 #[async_trait]
 impl WorkspaceStore for ObjectWorkspaceStore {
+    async fn reserve_put(&self, max: u64) -> Result<PutTicket, String> {
+        Ok(PutTicket::new(self.puts.reserve(max).await?))
+    }
+
     async fn put(
         &self,
         user: UserId,
@@ -119,9 +201,14 @@ impl WorkspaceStore for ObjectWorkspaceStore {
         id: Uuid,
         data: &mut (dyn AsyncRead + Send + Unpin),
         max: u64,
+        ticket: PutTicket,
     ) -> Result<ArchiveMeta, String> {
         self.check_owner(user, key)?;
-        let _space = self.reserve(max).await?;
+        let _space = if ticket.is_empty() {
+            PutTicket::new(self.puts.reserve(max).await?)
+        } else {
+            ticket
+        };
         let vault = user_vault(&self.db, self.kms.clone(), user, true)
             .await
             .map_err(|e| format!("user key: {e}"))?;
@@ -186,7 +273,7 @@ impl WorkspaceStore for ObjectWorkspaceStore {
         sink: &mut (dyn AsyncWrite + Send + Unpin),
     ) -> Result<(), String> {
         self.check_owner(user, &archive.key)?;
-        let _space = self.reserve(archive.bytes).await?;
+        let _space = self.restores.reserve(archive.bytes).await?;
         let (tmp, _) = self.temp_file()?;
         let max = sealed_len(archive.bytes);
         self.blobs
@@ -239,5 +326,59 @@ impl WorkspaceStore for ObjectWorkspaceStore {
         sink.flush()
             .await
             .map_err(|e| format!("writing to the sandbox: {e}"))
+    }
+
+    async fn delete(&self, user: UserId, key: &str) -> Result<(), String> {
+        self.check_owner(user, key)?;
+        self.blobs
+            .delete(key)
+            .await
+            .map_err(|e| format!("deleting: {e}"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn budget_checks_match_the_reservations() {
+        let max = 4u64 << 30;
+        let need = mib(sealed_len(max));
+        assert_eq!(need, 4097);
+        assert!(
+            !temp_budget_fits(max, 8 << 30),
+            "8 GiB holds one save, not one of each"
+        );
+        assert!(temp_budget_fits(max, min_temp_budget(max)));
+        assert!(!temp_budget_fits(max, min_temp_budget(max) - 1));
+        assert!(temp_budget_fits(max, 9 << 30));
+        // 小上限时舍入比 1% 多：按 MiB 算，不按比例。
+        let small = 50u64 << 20;
+        assert!(!temp_budget_fits(small, 53_000_000 * 2));
+        assert!(temp_budget_fits(small, min_temp_budget(small)));
+    }
+
+    #[test]
+    fn temp_dirs_of_dead_processes_are_removed() {
+        let root = tempfile::tempdir().unwrap();
+        let base = root.path().join(TEMP_SUBDIR);
+        // 进程没了：锁文件在，没人锁着。
+        let dead = base.join("dead");
+        std::fs::create_dir_all(&dead).unwrap();
+        std::fs::File::create(dead.join(LOCK_FILE)).unwrap();
+        std::fs::write(dead.join(".tmpabc"), b"ciphertext").unwrap();
+        // 还活着：锁着。
+        let live = base.join("live");
+        std::fs::create_dir_all(&live).unwrap();
+        let lock = std::fs::File::create(live.join(LOCK_FILE)).unwrap();
+        lock.try_lock().unwrap();
+        // 刚建、还没锁上的不动。
+        let young = base.join("young");
+        std::fs::create_dir_all(&young).unwrap();
+        clear_abandoned(&base);
+        assert!(!dead.exists());
+        assert!(live.exists());
+        assert!(young.exists());
     }
 }

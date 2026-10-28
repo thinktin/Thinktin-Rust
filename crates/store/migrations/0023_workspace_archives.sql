@@ -7,13 +7,16 @@ ALTER TABLE instances
     ADD COLUMN workspace_archive_sha256 bytea,
     ADD COLUMN workspace_archived_at timestamptz,
     -- 正在上传的对象：上传前先记下，进程中途被杀时下一次归档会把它换掉（旧的排进清理队列）。
+    -- 上传期间定时刷新时间：刷新着的别处不另起一份（一个实例同时只有一份在存），太久没刷新的算没人管了。
     ADD COLUMN workspace_archive_pending text,
+    ADD COLUMN workspace_archive_pending_since timestamptz,
     -- 上一次归档失败（太大、打包出错、存储不通）：之后一段时间不再试，除非实例又被用过。
     ADD COLUMN workspace_archive_failed_at timestamptz,
     ADD COLUMN workspace_archive_error text,
     -- 当前沙箱是按哪个版本建的（换版本存不下工作区时退回这个版本）。
     ADD COLUMN sandbox_version text,
-    -- 正在往新建的沙箱里放回归档：先记下沙箱 id（单独提交），放回时不锁实例；进程中途被杀时巡检据此删掉它。
+    -- 正在往新建的沙箱里放回归档：先记下沙箱 id（单独提交），放回时不锁实例，定时刷新时间；
+    -- 太久没刷新的（进程中途被杀）巡检据此删掉它。
     ADD COLUMN restoring_sandbox_id text,
     ADD COLUMN restoring_since timestamptz;
 
