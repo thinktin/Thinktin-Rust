@@ -1219,7 +1219,7 @@ internal object UniffiLib {
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_plans(`ptr`: Long,`instanceId`: RustBuffer.ByValue,
     ): Long
-    external fun uniffi_client_core_fn_method_thinktinclient_post_to_board(`ptr`: Long,`body`: RustBuffer.ByValue,`tags`: RustBuffer.ByValue,
+    external fun uniffi_client_core_fn_method_thinktinclient_post_to_board(`ptr`: Long,`body`: RustBuffer.ByValue,`tags`: RustBuffer.ByValue,`allowSecrets`: Byte,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_register_live_activity(`ptr`: Long,`runId`: RustBuffer.ByValue,`token`: RustBuffer.ByValue,
     ): Long
@@ -1736,7 +1736,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_plans() and 0xFFFF) != 27034) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_client_core_checksum_method_thinktinclient_post_to_board() and 0xFFFF) != 10941) {
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_post_to_board() and 0xFFFF) != 25957) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_register_live_activity() and 0xFFFF) != 32649) {
@@ -3936,8 +3936,10 @@ public interface ThinktinClientInterface {
     
     /**
      * 用户自己在看板上写一条：最长 2000 字，最多 8 个标签（字母、数字、-、_）。满了最早的自动归档。
+     * 看板上的内容用户所有的 agent 都读得到：有像密码、key 的内容时不发，返回 `ContainsSecrets`（和
+     * `send_message` 一样），用户确认要发时带 `allow_secrets`；保险箱里有的，服务端还会换成引用。
      */
-    suspend fun `postToBoard`(`body`: kotlin.String, `tags`: List<kotlin.String>): BoardPost
+    suspend fun `postToBoard`(`body`: kotlin.String, `tags`: List<kotlin.String>, `allowSecrets`: kotlin.Boolean): BoardPost
     
     /**
      * 这个运行开了实时活动（10.6），或者远程开启的拿到了令牌：登记它的推送令牌（ActivityKit 的
@@ -5726,10 +5728,12 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
     
     /**
      * 用户自己在看板上写一条：最长 2000 字，最多 8 个标签（字母、数字、-、_）。满了最早的自动归档。
+     * 看板上的内容用户所有的 agent 都读得到：有像密码、key 的内容时不发，返回 `ContainsSecrets`（和
+     * `send_message` 一样），用户确认要发时带 `allow_secrets`；保险箱里有的，服务端还会换成引用。
      */
     @Throws(ClientException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
-    override suspend fun `postToBoard`(`body`: kotlin.String, `tags`: List<kotlin.String>) : BoardPost {
+    override suspend fun `postToBoard`(`body`: kotlin.String, `tags`: List<kotlin.String>, `allowSecrets`: kotlin.Boolean) : BoardPost {
         return uniffiRustCallAsync(
         callWithHandle { uniffiHandle ->
             UniffiLib.uniffi_client_core_fn_method_thinktinclient_post_to_board(
@@ -5737,6 +5741,7 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
                 
         FfiConverterString.lower(`body`),
         FfiConverterSequenceString.lower(`tags`),
+        FfiConverterBoolean.lower(`allowSecrets`),
             )
         },
         { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -7366,7 +7371,8 @@ data class BoardPost (
     var `id`: kotlin.String
     , 
     /**
-     * 哪个实例写的；没有是用户自己写的，或者写它的实例已经删了。
+     * 哪个实例写的；没有是用户自己写的。实例删了 id 还在、`author_name` 没有：用 `ai_generated` 区分用户和
+     * 删了的 agent。
      */
     var `authorInstanceId`: kotlin.String?
     , 
@@ -8239,7 +8245,8 @@ data class Instance (
     var `purpose`: kotlin.String = "" 
     , 
     /**
-     * “允许其他 agent 查我、问我”（8.9），默认打开。关了以后别的 agent 列不出它、查不了它的进度。
+     * “允许其他 agent 查我、问我”（8.9），默认打开。关了以后别的 agent 列不出它、查不了它的进度、问不了它
+     * （8.11），关的时候别人问它、还没答的问题都取消。它自己照样能看别人、问别人、写看板。
      */
     var `peerAccess`: kotlin.Boolean = true 
     
@@ -9256,6 +9263,10 @@ data class Run (
     , 
     var `stepKey`: kotlin.String?
     , 
+    /**
+     * user / plan / pipeline / delegate / ask。ask 是别的 agent 问这个实例的问题（8.11）：prompt 是 agent 写的，
+     * 不能显示成用户说的，要带“AI 生成”标识。以后可能加新值，不认识的不要当成用户发的。
+     */
     var `source`: kotlin.String
     , 
     var `prompt`: kotlin.String
@@ -9279,10 +9290,10 @@ data class Run (
     var `finishedAtMs`: kotlin.Long?
     , 
     /**
-     * 等的是什么，只在 waiting_quota / waiting_device 时有：invalid（key 无效，去换 key）、no_balance（欠费：充值或
+     * 等的是什么，只在 waiting_quota / waiting_device / waiting_children 时有：invalid（key 无效，去换 key）、no_balance（欠费：充值或
      * 换 key，每小时也自己再试）、unavailable（没有能用的 key：停用了或当天额度用完，每小时也自己再试）、
-     * rate_limited / overloaded（几分钟后自己继续，不用处理）、device_offline（等电脑上线）。以后可能加新值，
-     * 不认识的按 state 显示。
+     * rate_limited / overloaded（几分钟后自己继续，不用处理）、device_offline（等电脑上线）、answer（等子任务时
+     * 只在等队友回答，8.11）。以后可能加新值，不认识的按 state 显示。
      */
     var `waitCode`: kotlin.String? = null 
     
