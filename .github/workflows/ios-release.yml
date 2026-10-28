@@ -88,14 +88,24 @@ jobs:
       - name: Install the App Store Connect API key
         id: key
         env:
-          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          # 两个 id 不是机密，填在 Environment variables 里也认；私钥只认 secrets。
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID || vars.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID || vars.ASC_ISSUER_ID }}
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
           ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
+          P8_IN_VARS: ${{ vars.ASC_KEY_P8 != '' }}
         run: |
           set -euo pipefail
-          if [[ -z "$ASC_KEY_ID" || -z "$ASC_ISSUER_ID" || ( -z "$ASC_KEY_P8" && -z "$ASC_KEY_P8_BASE64" ) ]]; then
-            echo "::error::testflight 环境里要配 ASC_KEY_ID、ASC_ISSUER_ID 和 ASC_KEY_P8（见 docs/ios-release.md）"
+          # 不用数组：macOS 的 /bin/bash 3.2 在 set -u 下碰到空数组会报错。
+          missing=""
+          [[ -n "$ASC_KEY_ID" ]] || missing="$missing ASC_KEY_ID"
+          [[ -n "$ASC_ISSUER_ID" ]] || missing="$missing ASC_ISSUER_ID"
+          [[ -n "$ASC_KEY_P8" || -n "$ASC_KEY_P8_BASE64" ]] || missing="$missing ASC_KEY_P8"
+          if [[ -n "$missing" ]]; then
+            echo "::error::GitHub 的 testflight 环境里读不到${missing}：Settings → Environments → testflight → Environment secrets 里加上（名字要一字不差）"
+            if [[ "$P8_IN_VARS" == "true" ]]; then
+              echo "::error::ASC_KEY_P8 填在了 Environment variables 里：私钥要放 Environment secrets（变量谁都看得见），挪过去后把变量删掉"
+            fi
             exit 1
           fi
           # 从网页上复制时常带上空格、换行：去掉。
