@@ -7,7 +7,7 @@ use anyhow::Context;
 use auth::grants::{GrantConfig, GrantService};
 use auth::sandbox_token::SandboxTokenIssuer;
 use chrono::{Datelike, NaiveDate, Utc};
-use control::{BuiltinTemplates, Lifecycle, LifecycleConfig};
+use control::{BuiltinTemplates, Lifecycle};
 use notify::apns::{ApnsClient, ApnsConfig};
 use notify::fcm::{FcmClient, FcmConfig, ServiceAccount};
 use notify::filter::KeywordFilter;
@@ -25,8 +25,10 @@ use orchestrator::scheduler::{Scheduler, SchedulerConfig};
 use orchestrator::shim::PlatformTools;
 use orchestrator::tools::{ArtifactTools, ScheduleTools, ToolSet};
 use orchestrator::vault::VaultTools;
+use orchestrator::workspaces::ObjectWorkspaceStore;
 use proto::domain::PushChannelKind;
 use sandbox::SandboxProvider;
+use sandbox::acs::AcsProvider;
 use sandbox::cube::CubeProvider;
 use sandbox::local::LocalProvider;
 use store::Db;
@@ -62,20 +64,49 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
             CubeProvider::new(cfg.sandbox.cube.to_config(cfg.cube_api_key.clone()))
                 .context("sandbox.cube")?,
         ),
-        _ => Arc::new(
-            LocalProvider::new(&cfg.sandbox.local_root)
-                .with_context(|| format!("sandbox root {}", cfg.sandbox.local_root.display()))?,
+        "acs" => Arc::new(
+            AcsProvider::new(cfg.sandbox.acs.to_config(cfg.acs_api_key.clone()))
+                .context("sandbox.acs")?,
         ),
+        _ => {
+            let local = LocalProvider::new(&cfg.sandbox.local_root)
+                .with_context(|| format!("sandbox root {}", cfg.sandbox.local_root.display()))?;
+            // 本地开发也能走一遍对象存储的归档：工作区不放卷上。
+            Arc::new(if cfg.sandbox.workspace.object() {
+                local.without_volumes()
+            } else {
+                local
+            })
+        }
     };
-    let lifecycle = Arc::new(Lifecycle::new(
+    let kms = crate::kms(cfg)?;
+    let blob_store = crate::blob_store(cfg)?;
+    let mut lifecycle = Lifecycle::new(
         db.clone(),
         provider.clone(),
         Arc::new(BuiltinTemplates),
-        LifecycleConfig {
-            network_allow: cfg.sandbox.network_allow.clone(),
-            ..LifecycleConfig::default()
-        },
-    ));
+        cfg.sandbox.lifecycle_config(),
+    );
+    if cfg.sandbox.workspace.object() {
+        lifecycle = lifecycle.with_workspace_store(Arc::new(
+            ObjectWorkspaceStore::new(
+                db.clone(),
+                blob_store.clone(),
+                kms.clone(),
+                &cfg.sandbox.workspace.temp_dir,
+                cfg.sandbox.workspace.temp_budget_bytes,
+                Duration::from_secs(cfg.sandbox.workspace.archive_timeout_secs),
+            )
+            .with_context(|| {
+                format!(
+                    "workspace temp dir {}",
+                    cfg.sandbox.workspace.temp_dir.display()
+                )
+            })?,
+        ));
+    }
+    bg.wait_for_cleanups(lifecycle.pending_cleanups());
+    let lifecycle = Arc::new(lifecycle);
     let seed = cfg
         .sandbox_token_seed
         .as_deref()
@@ -95,8 +126,7 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
     };
     let workdir = exec_cfg.workdir.clone();
     let connector = Arc::new(ExecConnector::new(provider.clone(), exec_cfg));
-    let kms = crate::kms(cfg)?;
-    let artifacts = crate::artifact_store(cfg, db, kms.clone())?;
+    let artifacts = crate::artifact_store(db, blob_store, kms.clone());
     let blobs = artifacts.clone();
     let tools: Vec<Arc<dyn PlatformTools>> = vec![
         Arc::new(ScheduleTools::new(db.clone())),

@@ -15,6 +15,7 @@ use std::process::{ExitStatus, Stdio};
 use std::sync::Mutex;
 
 use async_trait::async_trait;
+use tokio::io::AsyncRead;
 
 use crate::{
     CreateSpec, Error, ExecSpec, Process, ProcessControl, Result, SandboxId, SandboxInfo,
@@ -33,6 +34,8 @@ struct Entry {
 
 pub struct LocalProvider {
     root: PathBuf,
+    /// 工作区放在 `volumes/` 下、销毁沙箱后还在；关掉时工作区在沙箱目录里，随沙箱删掉（像 ACS）。
+    volumes: bool,
     inherited_env: Vec<String>,
     sandboxes: Mutex<HashMap<SandboxId, Entry>>,
 }
@@ -102,6 +105,7 @@ impl LocalProvider {
         }
         Ok(Self {
             root: root.canonicalize()?,
+            volumes: true,
             inherited_env: DEFAULT_INHERITED_ENV
                 .iter()
                 .map(|s| s.to_string())
@@ -119,6 +123,12 @@ impl LocalProvider {
         self
     }
 
+    /// 不用工作区卷：工作区随沙箱删掉，和 ACS 后端一样（测试控制服务的工作区归档用）。
+    pub fn without_volumes(mut self) -> Self {
+        self.volumes = false;
+        self
+    }
+
     /// 沙箱目录在宿主机上的位置（测试和调试用）。
     pub fn sandbox_dir(&self, id: &SandboxId) -> Option<PathBuf> {
         self.lock().get(id).map(|e| e.dir.clone())
@@ -131,6 +141,14 @@ impl LocalProvider {
     fn volume_dir(&self, workspace: &str) -> Result<PathBuf> {
         check_name(workspace)?;
         Ok(self.root.join("volumes").join(workspace))
+    }
+
+    /// 沙箱的工作区实际在哪：卷，或者沙箱目录里。
+    fn workspace_dir(&self, dir: &Path, workspace: &Option<String>) -> Result<PathBuf> {
+        match workspace {
+            Some(ws) if self.volumes => self.volume_dir(ws),
+            _ => Ok(dir.join("workspace")),
+        }
     }
 
     fn running_dir(&self, id: &SandboxId) -> Result<PathBuf> {
@@ -173,12 +191,12 @@ impl LocalProvider {
         let dir = self.root.join("sandboxes").join(&id.0);
         std::fs::create_dir_all(dir.join("home"))?;
         match &spec.workspace {
-            Some(ws) => {
+            Some(ws) if self.volumes => {
                 let vol = self.volume_dir(ws)?;
                 std::fs::create_dir_all(&vol)?;
                 std::os::unix::fs::symlink(&vol, dir.join("workspace"))?;
             }
-            None => std::fs::create_dir_all(dir.join("workspace"))?,
+            _ => std::fs::create_dir_all(dir.join("workspace"))?,
         }
         Ok((id, dir))
     }
@@ -226,6 +244,10 @@ impl ProcessControl for LocalControl {
 impl SandboxProvider for LocalProvider {
     fn name(&self) -> &'static str {
         "local"
+    }
+
+    fn workspace_persists(&self) -> bool {
+        self.volumes
     }
 
     async fn create(&self, spec: CreateSpec) -> Result<SandboxInfo> {
@@ -323,10 +345,7 @@ impl SandboxProvider for LocalProvider {
         };
         let snap = SnapshotId(random_id("snap"));
         let dest = self.root.join("snapshots").join(&snap.0);
-        let ws_src = match &workspace {
-            Some(ws) => self.volume_dir(ws)?,
-            None => dir.join("workspace"),
-        };
+        let ws_src = self.workspace_dir(&dir, &workspace)?;
         tokio::task::spawn_blocking(move || -> std::io::Result<()> {
             copy_tree(&dir.join("home"), &dest.join("home"))?;
             copy_tree(&ws_src, &dest.join("workspace"))
@@ -343,10 +362,7 @@ impl SandboxProvider for LocalProvider {
             return Err(Error::SnapshotNotFound(snapshot.clone()));
         }
         let (id, dir) = self.materialize(&spec)?;
-        let ws_dest = match &spec.workspace {
-            Some(ws) => self.volume_dir(ws)?,
-            None => dir.join("workspace"),
-        };
+        let ws_dest = self.workspace_dir(&dir, &spec.workspace)?;
         let home_dest = dir.join("home");
         tokio::task::spawn_blocking(move || -> std::io::Result<()> {
             copy_tree(&src.join("home"), &home_dest)?;
@@ -372,6 +388,9 @@ impl SandboxProvider for LocalProvider {
 
     async fn delete_workspace(&self, workspace: &str) -> Result<()> {
         let vol = self.volume_dir(workspace)?;
+        if !self.volumes {
+            return Ok(());
+        }
         if vol.exists() {
             tokio::task::spawn_blocking(move || std::fs::remove_dir_all(vol))
                 .await
@@ -398,6 +417,39 @@ impl SandboxProvider for LocalProvider {
         })
         .await
         .map_err(|e| Error::Provider(e.to_string()))??;
+        Ok(())
+    }
+
+    async fn write_file_stream(
+        &self,
+        id: &SandboxId,
+        path: &str,
+        data: Box<dyn AsyncRead + Send + Unpin>,
+        len: u64,
+    ) -> Result<()> {
+        use std::os::unix::fs::OpenOptionsExt;
+        use tokio::io::AsyncReadExt;
+        let dir = self.running_dir(id)?;
+        let full = self.resolve(&dir, path, true)?;
+        // 和 write_file 一样不跟随最后一段的符号链接。
+        let file = tokio::task::spawn_blocking(move || {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .custom_flags(libc::O_NOFOLLOW)
+                .open(full)
+        })
+        .await
+        .map_err(|e| Error::Provider(e.to_string()))??;
+        let mut file = tokio::fs::File::from_std(file);
+        let copied = tokio::io::copy(&mut data.take(len), &mut file).await?;
+        tokio::io::AsyncWriteExt::flush(&mut file).await?;
+        if copied != len {
+            return Err(Error::Invalid(format!(
+                "stream for {path:?} ended after {copied} of {len} bytes"
+            )));
+        }
         Ok(())
     }
 
@@ -639,6 +691,11 @@ mod tests {
                 .await
                 .is_err()
         );
+        assert!(
+            p.write_file_stream(&s.id, "workspace/link.txt", Box::new(&b"x"[..]), 1)
+                .await
+                .is_err()
+        );
         assert_eq!(std::fs::read_to_string(&outside).unwrap(), "host secret");
         assert!(
             LocalProvider::new(dir.path().join("root"))
@@ -646,5 +703,44 @@ mod tests {
                 .volume_dir("../x")
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn streamed_writes_and_workspaces_without_volumes() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = LocalProvider::new(dir.path()).unwrap().without_volumes();
+        assert!(!p.workspace_persists());
+        let s = p.create(spec(Some("w"))).await.unwrap();
+        let data: Vec<u8> = (0..3 << 20).map(|i: u32| (i % 251) as u8).collect();
+        p.write_file_stream(
+            &s.id,
+            "workspace/a/restore.tgz",
+            Box::new(std::io::Cursor::new(data.clone())),
+            data.len() as u64,
+        )
+        .await
+        .unwrap();
+        assert!(
+            p.read_file(&s.id, "workspace/a/restore.tgz", u64::MAX)
+                .await
+                .unwrap()
+                == data
+        );
+        // 只写 len 字节；流不够长时报错。
+        p.write_file_stream(&s.id, "workspace/b", Box::new(&b"abcdef"[..]), 3)
+            .await
+            .unwrap();
+        assert_eq!(p.read_file(&s.id, "workspace/b", 10).await.unwrap(), b"abc");
+        assert!(matches!(
+            p.write_file_stream(&s.id, "workspace/c", Box::new(&b"ab"[..]), 3)
+                .await,
+            Err(Error::Invalid(_))
+        ));
+        // 没有卷：工作区随沙箱删掉，删除工作区什么都不做。
+        assert!(!dir.path().join("volumes/w").exists());
+        p.destroy(&s.id).await.unwrap();
+        p.delete_workspace("w").await.unwrap();
+        let again = p.create(spec(Some("w"))).await.unwrap();
+        assert!(p.read_file(&again.id, "workspace/b", 10).await.is_err());
     }
 }

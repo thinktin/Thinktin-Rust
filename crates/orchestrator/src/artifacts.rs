@@ -4,6 +4,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use keyvault::{KeyStore, KeyVault, Kms, MemoryKeyStore, WrappedKey};
@@ -33,6 +34,31 @@ pub trait BlobStore: Send + Sync {
     async fn get(&self, key: &str) -> std::io::Result<Vec<u8>>;
     /// 不存在也算成功。
     async fn delete(&self, key: &str) -> std::io::Result<()>;
+    /// 大对象（工作区归档）：从本地文件边读边传。`len`、`sha256_hex` 是文件的大小和 SHA-256
+    /// （S3 的签名要先知道正文的哈希）；`timeout` 是整个上传的上限。
+    async fn put_file(
+        &self,
+        key: &str,
+        path: &Path,
+        len: u64,
+        sha256_hex: &str,
+        timeout: Duration,
+    ) -> std::io::Result<()>;
+    /// 下载到本地文件，最多 `max` 字节（超了报错、删掉写了一半的文件），返回大小。
+    async fn get_to_file(
+        &self,
+        key: &str,
+        path: &Path,
+        max: u64,
+        timeout: Duration,
+    ) -> std::io::Result<u64>;
+}
+
+pub(crate) fn too_large(max: u64) -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        format!("object is larger than {max} bytes"),
+    )
 }
 
 /// 本地目录（开发、测试）。
@@ -88,6 +114,44 @@ impl BlobStore for LocalBlobStore {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
             r => r,
         }
+    }
+
+    async fn put_file(
+        &self,
+        key: &str,
+        path: &Path,
+        len: u64,
+        _sha256_hex: &str,
+        _timeout: Duration,
+    ) -> std::io::Result<()> {
+        let dest = self.path(key)?;
+        if let Some(dir) = dest.parent() {
+            tokio::fs::create_dir_all(dir).await?;
+        }
+        let tmp = dest.with_extension("tmp");
+        let copied = tokio::fs::copy(path, &tmp).await?;
+        if copied != len {
+            let _ = tokio::fs::remove_file(&tmp).await;
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("file has {copied} bytes, expected {len}"),
+            ));
+        }
+        tokio::fs::rename(&tmp, &dest).await
+    }
+
+    async fn get_to_file(
+        &self,
+        key: &str,
+        path: &Path,
+        max: u64,
+        _timeout: Duration,
+    ) -> std::io::Result<u64> {
+        let src = self.path(key)?;
+        if tokio::fs::metadata(&src).await?.len() > max {
+            return Err(too_large(max));
+        }
+        tokio::fs::copy(&src, path).await
     }
 }
 

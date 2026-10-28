@@ -122,7 +122,7 @@ kubectl -n thinktin-staging rollout status deploy/thinktin-api deploy/thinktin-w
 | Secret | 键 | 给谁 |
 |---|---|---|
 | `thinktin-api` | `DATABASE_URL`（控制面登录账号）、`THINKTIN_ACCESS_TOKEN_SEED`、`THINKTIN_CODE_PEPPER`、`THINKTIN_ALIYUN_KMS_ACCESS_KEY_ID`、`THINKTIN_ALIYUN_KMS_ACCESS_KEY_SECRET`（本地 KMS 时换成 `THINKTIN_KMS_KEY`）、`THINKTIN_S3_ACCESS_KEY_ID`、`THINKTIN_S3_SECRET_ACCESS_KEY`、`THINKTIN_ALIYUN_SMS_ACCESS_KEY_ID`、`THINKTIN_ALIYUN_SMS_ACCESS_KEY_SECRET`；提交审核期间加 `THINKTIN_REVIEW_CODE` | 接口副本 |
-| `thinktin-worker` | `DATABASE_URL`（控制面登录账号）、`THINKTIN_SANDBOX_TOKEN_SEED`、KMS 的两个（同上）、对象存储的两个、`THINKTIN_CUBE_API_KEY`、`THINKTIN_JPUSH_MASTER_SECRET` | 后台副本 |
+| `thinktin-worker` | `DATABASE_URL`（控制面登录账号）、`THINKTIN_SANDBOX_TOKEN_SEED`、KMS 的两个（同上）、对象存储的两个、`THINKTIN_CUBE_API_KEY`（Cube）或 `THINKTIN_ACS_API_KEY`（ACS）、`THINKTIN_JPUSH_MASTER_SECRET` | 后台副本 |
 | `thinktin-push`（文件） | `apns.p8`（APNs 私钥）、`fcm.json`（FCM 服务账号） | 后台副本，挂在 `/etc/thinktin/push` |
 | `thinktin-llm-gw` | `DATABASE_URL`（模型网关登录账号）、KMS 的两个 | 模型网关 |
 | `thinktin-relay` | `DATABASE_URL`（中继登录账号） | 设备中继 |
