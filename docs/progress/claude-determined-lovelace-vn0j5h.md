@@ -161,7 +161,9 @@ P1 后端核心（M1–M9）和 P2 里能在代码层面完成的包都做完了
   剩 `main`、三条线、本分支（和它的 autosave）、`claude/promo-video`（宣传片的制作源码，没进 main，留着）。
 
 进行中：
-- 无。
+- 本会话（session_016LgPcdynywrhrjCq8VVFLt）2026-10-28 开始写 ACS 沙箱后端（用户 10-28 定：“1、省钱；2、解绑；3、写”）：
+  OpenKruise 私有协议的 `AcsProvider`、模型网关令牌绑定沙箱 IP、空闲计时可配、空闲沙箱删掉前把工作区加密存到 OSS、唤醒时放回。
+  按小步提交推送，第 1 步把 envd 客户端从 `cube.rs` 拆到 `envd.rs`（不改行为）。
 
 下一步（要 macOS 才能验，或者要人定）：
 0. **部署到阿里云新加坡**（2026-10-27 定）：只读检查 `deploy/aliyun/run.sh check` 全部通过；第 1 阶段网络已建（不收费，ID 见 [新加坡部署计划](../deploy-aliyun-sg.md) 第 8.6 节）。沙箱实测脚本 `deploy/aliyun/run.sh sandbox [--apply]` 已写好，用假 Key 试过。**卡在实名认证**：国际站账号开通智能体沙箱极速版前要实名，用户在选国际站认证还是换国内站账号。认证、开通、建 API Key 放进环境变量 `ALIYUN_SANDBOX_API_KEY` 后，开新会话先 `run.sh sandbox` 再 `--apply`，结果记进第 8.6 节。暂停要申请白名单（第 8.7 节），实测时一并确认。之后的阶段先列资源和费用请用户确认再动手。
