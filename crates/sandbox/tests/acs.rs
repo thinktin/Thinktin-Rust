@@ -69,6 +69,18 @@ fn frame(flags: u8, v: &Value) -> Bytes {
     Bytes::from(out)
 }
 
+/// 计数大于 0 就减一，返回减了没有。
+fn take_one(n: &AtomicU32) -> bool {
+    let mut cur = n.load(Ordering::SeqCst);
+    while cur > 0 {
+        match n.compare_exchange(cur, cur - 1, Ordering::SeqCst, Ordering::SeqCst) {
+            Ok(_) => return true,
+            Err(now) => cur = now,
+        }
+    }
+    false
+}
+
 fn api_err(code: StatusCode, message: &str) -> Response {
     (
         code,
@@ -212,11 +224,7 @@ async fn connect(
     if body["timeout"].as_i64().unwrap_or(0) <= 0 {
         return api_err(StatusCode::BAD_REQUEST, "timeout must be positive");
     }
-    if m.sandboxes.lock().unwrap().contains_key(&id)
-        && m.connect_not_ready
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
-            .is_ok()
-    {
+    if m.sandboxes.lock().unwrap().contains_key(&id) && take_one(&m.connect_not_ready) {
         return api_err(StatusCode::NOT_FOUND, "Cannot get sandbox: not ready");
     }
     m.connects.lock().unwrap().push(body);
