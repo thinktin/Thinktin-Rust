@@ -673,6 +673,10 @@ async fn token_and_instance_checks() {
             env.token_with(|r| r.net = Some("10.0.0.7".into())),
         ),
         ("unbound", env.token_with(|r| r.net = None)),
+        (
+            "unparsable source",
+            env.token_with(|r| r.net = Some("not-an-ip".into())),
+        ),
     ];
     for (name, token) in cases {
         let mut req = env
@@ -688,6 +692,10 @@ async fn token_and_instance_checks() {
         assert_eq!(err["type"], "error", "{name}");
         assert_eq!(err["error"]["type"], "authentication_error", "{name}");
     }
+
+    // 绑定地址写成 IPv4 映射的 IPv6 也算同一个来源。
+    let mapped = env.token_with(|r| r.net = Some("::ffff:127.0.0.1".into()));
+    assert_eq!(env.anthropic(&mapped, body.clone()).await.status(), 200);
 
     // 吊销运行授权、实例停用，都立即生效。
     let token = env.token();
@@ -712,7 +720,7 @@ async fn token_and_instance_checks() {
     assert_eq!(err["error"]["code"], "invalid_api_key");
     assert_eq!(
         env.upstream.requests().len(),
-        1,
+        2,
         "rejected requests never reach the vendor"
     );
 }

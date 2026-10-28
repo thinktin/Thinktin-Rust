@@ -18,3 +18,4 @@ pub mod texts;
 pub mod tools;
 pub mod vault;
 pub mod waits;
+pub mod workspaces;
