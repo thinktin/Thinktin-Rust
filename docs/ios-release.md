@@ -21,7 +21,9 @@ App Store Connect，进 TestFlight。上架 App Store 的材料（审核备注�
    环境里，不进代码、不进日志（工作流结束时删掉解出来的 .p8）。
 4. **Bundle id 和能力不用手动建**：App `cn.thinktin.Thinktin`（推送、App Groups、Time Sensitive Notifications）、小组件
    `cn.thinktin.Thinktin.Widgets`（App Groups）、App Group `group.cn.thinktin.Thinktin` 在第一次归档时由自动签名用
-   API key 登记（`-allowProvisioningUpdates`）。App Group 已经在开发者网站建好了（2026-10-28）。换 bundle id 时先在
+   API key 登记（`-allowProvisioningUpdates`）。App Group 已经在开发者网站建好了（2026-10-28）。**但 App Group 和 App ID 的关联
+   自动签名做不了**：两个 App ID 都要在开发者网站上 App Groups → Configure 勾上 `group.cn.thinktin.Thinktin`，否则归档时报
+   “Provisioning profile … doesn't match the entitlements file's value for the com.apple.security.application-groups entitlement”。换 bundle id 时先在
    project.yml 显式写 `PRODUCT_BUNDLE_IDENTIFIER`，App Group 名（`WidgetSnapshotFile.appGroup`）一起改。
 5. **App Store Connect 里建 App 记录**（只能在网页上建，API 不支持）：App → “+” → 新建 App，iOS，名字 ThinkTin，
    简体中文，套装 ID 选 `cn.thinktin.Thinktin`（第一次归档登记之后才能选到），SKU `thinktin-ios`。App 的 Apple ID

@@ -15,7 +15,11 @@
   再编 Rust；Rust 缓存失败时也保存。
 - 截图工作流 `ios-screenshots.yml`（推到 `ios-screenshots` 分支触发）：和 Claude 的界面对比用。
 
-进行中：重跑（demo + upload）看密钥检查的结论。
+- 密钥：`ASC_KEY_ID` 填的是另一把旧密钥（Clodex，`…7D73`），.p8 是新建的 Github 那把（`WJDKBV6GWM`）；改对后检查通过（App 列表、Bundle ID、证书都是 200）。
+- GitHub 的苹果芯片 Mac（macos-26）容量不够，两次排队 15 分钟被丢；手动触发加了 `runner` 选项，换 `macos-15-intel`（Xcode 26.3）马上排上。
+- 第一次走到签名（run 40687840884）：证书和描述文件建出来了，但描述文件里没有 App Group，`group.cn.thinktin.Thinktin` 没有关联到 `cn.thinktin.Thinktin` 和 `cn.thinktin.Thinktin.Widgets` 两个 App ID（自动签名用 API key 时不会自己关联，公开 API 也做不了），要在开发者网站上各点一次 App Groups → Configure。
+
+进行中：等用户在开发者网站关联 App Group，然后 demo + upload + macos-15-intel 再跑。
 
 下一步：
 1. 试跑通过后，手动触发 demo + upload，传第一个演示版到 TestFlight；内部测试组加用户本人。
