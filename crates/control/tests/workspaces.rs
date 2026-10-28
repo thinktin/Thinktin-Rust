@@ -1181,6 +1181,10 @@ async fn interrupted_saves_clean_up_after_themselves() {
     };
     held.await;
     assert!(!e.read_paused(&sid).await, "resumed for the export");
+    // 守着的归档还在做：停机时等得到它（等到上限）。
+    let started = std::time::Instant::now();
+    lc.pending_cleanups().wait(Duration::from_millis(300)).await;
+    assert!(started.elapsed() >= Duration::from_millis(300));
     task.abort();
     let _ = task.await;
     e.store.hold.store(false, Ordering::SeqCst);
@@ -1248,6 +1252,59 @@ async fn database_errors_after_a_save_do_not_undo_a_version_change() {
     assert_eq!(rt.agent_version, current);
     assert_eq!(rt.sandbox_version.as_deref(), Some(current.as_str()));
     assert!(!rt.rebuild_pending);
+    assert_eq!(
+        e.read(rt.sandbox_id.as_deref().unwrap(), "workspace/notes.txt")
+            .await
+            .unwrap(),
+        b"v2"
+    );
+    let kept: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE action = 'instance.version.kept' AND target = $1",
+    )
+    .bind(inst.id.to_string())
+    .fetch_one(e.t.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(kept, 0);
+}
+
+/// 换版本时上次已经存好、只差删沙箱（暂停着，走直接删）：删完库连接断了，也不退回旧版本，下次唤醒照常换过去。
+#[tokio::test]
+async fn database_errors_in_the_delete_only_path_do_not_undo_a_version_change() {
+    let Some(e) = env().await else { return };
+    let flaky = Flaky::new(e.provider.clone());
+    let lc = Lifecycle::new(
+        e.t.db.clone(),
+        flaky.clone(),
+        Arc::new(TwoVersions),
+        LifecycleConfig::default(),
+    )
+    .with_workspace_store(e.store.clone());
+    let inst = lc.adopt(e.user, "user:d", "pi", None, "Pi").await.unwrap();
+    lc.ensure_running(inst.id).await.unwrap();
+    let sid = lc
+        .rebuild(inst.id, Some(OLD))
+        .await
+        .unwrap()
+        .sandbox_id
+        .unwrap();
+    e.write(&sid, "workspace/notes.txt", b"v2").await;
+    assert!(lc.pause(inst.id).await.unwrap());
+    // 存好了、删沙箱失败：暂停着，归档是最新的。
+    flaky.fail_destroy.store(true, Ordering::SeqCst);
+    assert!(lc.archive(inst.id).await.is_err());
+    let puts = e.store.puts.load(Ordering::SeqCst);
+
+    e.request_current_version(inst.id).await;
+    *flaky.drop_connections.lock().unwrap() = Some(e.t.db.pool().clone());
+    assert!(lc.ensure_running(inst.id).await.is_err());
+    assert!(e.runtime(inst.id).await.rebuild_pending);
+
+    let rt = lc.ensure_running(inst.id).await.unwrap();
+    let current = catalog::builtin("pi").unwrap().agent.version;
+    assert_eq!(rt.agent_version, current);
+    assert!(!rt.rebuild_pending);
+    assert_eq!(e.store.puts.load(Ordering::SeqCst), puts, "not saved again");
     assert_eq!(
         e.read(rt.sandbox_id.as_deref().unwrap(), "workspace/notes.txt")
             .await

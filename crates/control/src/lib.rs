@@ -371,11 +371,13 @@ struct Cleanup {
     op_timeout: Duration,
     id: InstanceId,
     leftover: Option<Leftover>,
-    pending: PendingCleanups,
+    /// 从守着的操作开始就算一个（停机时它所在的任务可能稍后才被取消），收拾完才放掉。
+    ticket: Option<CleanupTicket>,
 }
 
-/// 正在收拾被丢下的存、放的任务（[`Cleanup`]）。停机时先等它们做完再关数据库连接池，不然它们连不上库、
-/// 什么都没收拾（沙箱一直按运行收费，直到标记过期）。
+/// 有收拾守着的存、放（[`Cleanup`]），和它们被丢下后派出的收拾任务。停机时先等它们做完再关数据库连接池，
+/// 不然收拾任务连不上库、什么都没做（沙箱一直按运行收费，直到标记过期）。从开始守着就算：后台任务被中止时，
+/// 它里面的运行可能稍后才被取消、才派出收拾任务。
 #[derive(Clone, Default)]
 pub struct PendingCleanups(Arc<CleanupCount>);
 
@@ -430,6 +432,7 @@ impl Drop for CleanupTicket {
 impl Cleanup {
     fn disarm(mut self) {
         self.leftover = None;
+        self.ticket = None;
     }
 }
 
@@ -438,6 +441,7 @@ impl Drop for Cleanup {
         let Some(leftover) = self.leftover.take() else {
             return;
         };
+        let ticket = self.ticket.take();
         let Ok(rt) = tokio::runtime::Handle::try_current() else {
             return;
         };
@@ -447,7 +451,6 @@ impl Drop for Cleanup {
             self.op_timeout,
             self.id,
         );
-        let ticket = self.pending.start();
         rt.spawn(async move {
             let _ticket = ticket;
             match leftover {
@@ -1147,7 +1150,7 @@ impl Lifecycle {
             op_timeout: self.cfg.op_timeout,
             id,
             leftover: Some(leftover),
-            pending: self.cleanups.clone(),
+            ticket: Some(self.cleanups.start()),
         }
     }
 
@@ -1460,10 +1463,18 @@ impl Lifecycle {
             if let Err(e) = self.op("destroy", self.provider.destroy(&sandbox)).await {
                 return Ok(Archived::NotDestroyed(e));
             }
-            self.set_state(&mut w, &rt, InstanceState::Archived, None)
-                .await?;
-            w.commit().await?;
-            return Ok(Archived::Done);
+            // 删掉了才记不下（库出错）：工作区早存好了，不算存失败，下次再记（删不存在的沙箱也算成功）。
+            let recorded = async {
+                self.set_state(&mut w, &rt, InstanceState::Archived, None)
+                    .await?;
+                w.commit().await?;
+                Ok::<_, Error>(())
+            }
+            .await;
+            return Ok(match recorded {
+                Ok(()) => Archived::Done,
+                Err(e) => Archived::NotDestroyed(e),
+            });
         }
         let archive_id = Uuid::now_v7();
         let key = store.key(rt.user_id, &rt.workspace_id, archive_id);
