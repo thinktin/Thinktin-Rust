@@ -225,6 +225,13 @@ async fn fake_shim(
         match cmd {
             ShimCommand::Prompt { run_id, text } => {
                 rec.lock().unwrap().prompts.push(text.clone());
+                // 打断说明里引用了被打断的任务（8.12）：只按新消息表演。
+                let text = match text.split_once("\n\n") {
+                    Some((note, message)) if note.starts_with("（打断说明") => {
+                        message.to_owned()
+                    }
+                    _ => text,
+                };
                 let _ = ev
                     .send(ShimEvent::TurnStarted {
                         run_id: run_id.clone(),
@@ -237,6 +244,36 @@ async fn fake_shim(
                 } else if text.contains("问题有结果了") {
                     // 问队友的回答交回来了（8.11）。
                     let _ = ev.send(chunk(&run_id, "got the answers")).await;
+                    let _ = ev.send(ended(&run_id, StopReason::EndTurn)).await;
+                } else if text.contains("check news") {
+                    // 一遍遍调平台工具，直到结果后面捎带了新消息（8.12），把捎带的那段当作回复。
+                    let mut said = "no news".to_owned();
+                    for i in 0..200 {
+                        let _ = ev
+                            .send(ShimEvent::PlatformToolCall {
+                                run_id: run_id.clone(),
+                                call_id: format!("n{i}"),
+                                name: "schedule_list".into(),
+                                arguments: json!({ "page": i }),
+                            })
+                            .await;
+                        let mut extra = None;
+                        while let Some(c) = cmds.recv().await {
+                            if let ShimCommand::PlatformToolResult { content, .. } = c {
+                                extra = content
+                                    .get(1)
+                                    .and_then(|b| b["text"].as_str())
+                                    .map(str::to_owned);
+                                break;
+                            }
+                        }
+                        if let Some(news) = extra {
+                            said = news;
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_millis(50)).await;
+                    }
+                    let _ = ev.send(chunk(&run_id, &said)).await;
                     let _ = ev.send(ended(&run_id, StopReason::EndTurn)).await;
                 } else if let Some((_, rest)) = text.split_once("ask teammate ") {
                     // 问队友（8.11）："ask teammate 名字: 问题"。
@@ -2657,5 +2694,123 @@ async fn questions_respect_the_switch_and_the_cap() {
         out.is_error && text(&out).contains("no agent called"),
         "{}",
         text(&out)
+    );
+}
+
+// ---------- 运行中收消息（8.12） ----------
+
+async fn queue_urgent(e: &Env, prompt: &str) -> (RunId, store::Urgent) {
+    let mut tx = e.t.db.tenant(e.user).await.unwrap();
+    let (run, urgent) = tx
+        .queue_urgent_run(&NewRun::new(
+            e.instance.id,
+            RunSource::User,
+            prompt,
+            &e.instance.agent_version,
+        ))
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    (run.id, urgent)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_urgent_message_interrupts_the_running_task() {
+    let Some(e) = env().await else { return };
+    let busy = e.queue("loop forever on the report", None, 3).await;
+    let (_stop, h) = e.spawn().await;
+    e.wait_state(busy, RunState::Running).await;
+    // 先排着一条普通消息：紧急消息排在它前面。
+    let normal = e.queue("say hello later", None, 3).await;
+    let (urgent, how) = queue_urgent(&e, "say hello now").await;
+    assert_eq!(how, store::Urgent::Interrupting(busy));
+    // 执行器续租时看到，停下这一轮、结束运行：不推送（用户自己打断的）。
+    tokio::time::timeout(Duration::from_secs(20), h)
+        .await
+        .unwrap()
+        .unwrap();
+    let rec = e.state(busy).await;
+    assert_eq!(rec.run.state, RunState::Cancelled, "{:?}", rec.run);
+    assert_eq!(
+        rec.run.state_reason.as_deref(),
+        Some(store::INTERRUPTED_REASON)
+    );
+    assert!(e.inbox().await.iter().all(|i| i.run_id != Some(busy)));
+    // 紧急消息接着跑，开头说明打断了什么。
+    e.run_to_end().await;
+    assert_eq!(e.state(urgent).await.run.state, RunState::Succeeded);
+    assert_eq!(e.state(normal).await.run.state, RunState::Queued);
+    let prompts = e.fake.rec.lock().unwrap().prompts.clone();
+    let last = prompts.last().unwrap();
+    assert!(
+        last.contains("「loop forever on the report」") && last.ends_with("\n\nsay hello now"),
+        "{last}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_urgent_message_stops_a_waiting_run_at_once() {
+    let Some((e, _helper)) = delegation_env().await else {
+        return;
+    };
+    let lead = e.queue("lead the team: loop forever please", None, 3).await;
+    e.run_to_end().await;
+    assert_eq!(e.state(lead).await.run.state, RunState::WaitingChildren);
+    let child = children(&e, lead).await[0].id;
+    // 负责人停在等子任务里、没人在执行它：直接取消，连同子任务。
+    let (urgent, how) = queue_urgent(&e, "say hello instead").await;
+    assert_eq!(how, store::Urgent::Stopped(lead));
+    assert_eq!(e.state(lead).await.run.state, RunState::Cancelled);
+    assert_eq!(e.state(child).await.run.state, RunState::Cancelled);
+    // 再来一条紧急消息：排在上一条后面，不再去打断谁。
+    let (second, how) = queue_urgent(&e, "say hello again").await;
+    assert_eq!(how, store::Urgent::Behind(urgent));
+    e.run_to_end().await;
+    assert_eq!(e.state(urgent).await.run.state, RunState::Succeeded);
+    assert_eq!(e.state(second).await.run.state, RunState::Queued);
+    let prompts = e.fake.rec.lock().unwrap().prompts.clone();
+    assert!(prompts.last().unwrap().contains("打断说明"), "{prompts:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn queued_messages_ride_along_with_platform_tool_results() {
+    let Some(e) = env_with(
+        fast(),
+        Some(GrantScope {
+            platform_tools: vec!["schedule_list".into()],
+            ..GrantScope::default()
+        }),
+        Arc::new(Tools),
+    )
+    .await
+    else {
+        return;
+    };
+    let busy = e.queue("check news", None, 3).await;
+    let (_stop, h) = e.spawn().await;
+    e.wait_state(busy, RunState::Running).await;
+    let message = e.queue("say hello when you can", None, 3).await;
+    tokio::time::timeout(Duration::from_secs(20), h)
+        .await
+        .unwrap()
+        .unwrap();
+    // 正忙的 agent 在工具结果后面看到了排队的消息。
+    let rec = e.state(busy).await;
+    assert_eq!(rec.run.state, RunState::Succeeded);
+    let said = rec.run.summary.unwrap_or_default();
+    assert!(
+        said.contains("平台捎带") && said.contains("1. say hello when you can"),
+        "{said}"
+    );
+    assert!(e.state(message).await.announced_at.is_some());
+    // 轮到这条消息时提醒 agent 已经看过。
+    e.run_to_end().await;
+    let prompts = e.fake.rec.lock().unwrap().prompts.clone();
+    assert!(
+        prompts
+            .last()
+            .unwrap()
+            .starts_with("（这条消息你在上一个任务进行中已经看过"),
+        "{prompts:?}"
     );
 }

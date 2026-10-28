@@ -68,7 +68,8 @@ pub use outbox::{NewOutboxItem, OutboxItem};
 pub use plans::{DueTrigger, NewPlan, RetiredPlans};
 pub use reports::{NewReport, ReportRecord};
 pub use runs::{
-    ANSWER_TIMEOUT_REASON, ASKER_GONE_REASON, ModelCall, NewRun, RunChange, RunFilter, RunRecord,
+    ANSWER_TIMEOUT_REASON, ASKER_GONE_REASON, INTERRUPTED_REASON, ModelCall, NewRun, RunChange,
+    RunFilter, RunRecord, Urgent,
 };
 pub use schema::MigrationStatus;
 pub use sessions::{LoginCode, SessionRecord, SessionState};

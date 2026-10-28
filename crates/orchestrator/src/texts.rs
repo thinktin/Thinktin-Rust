@@ -571,6 +571,51 @@ pub fn children_results(
     out
 }
 
+/// 用户的紧急消息打断了 agent 正在做的事（8.12）：新消息前面的说明。`task` 是被打断的任务的第一行。
+pub fn interrupted(locale: Locale, task: &str, message: &str) -> String {
+    match locale {
+        Locale::ZhCn => format!(
+            "（打断说明：你刚才在做「{task}」，用户打断了你，发来下面这条消息。先处理它；刚才那一步可能做到一半，\
+             需要的话先检查、收拾好，再看要不要接着做原来的事。）\n\n{message}"
+        ),
+        Locale::En => format!(
+            "(Interruption: you were working on “{task}” when the user interrupted you with the message \
+             below. Deal with it first. The step you were on may be half done: check and tidy up if \
+             needed, then decide whether to carry on with the earlier work.)\n\n{message}"
+        ),
+    }
+}
+
+/// 排队的消息之前已经捎带给 agent 看过（8.12）：轮到它时提醒一句。
+pub fn announced(locale: Locale, message: &str) -> String {
+    match locale {
+        Locale::ZhCn => format!(
+            "（这条消息你在上一个任务进行中已经看过（平台在工具结果里捎带给了你）。已经处理了的话，简单确认一下就行。）\n\n{message}"
+        ),
+        Locale::En => format!(
+            "(You already saw this message while working on the previous task: the platform passed it \
+             along with a tool result. If you have dealt with it, just confirm briefly.)\n\n{message}"
+        ),
+    }
+}
+
+/// 捎带在平台工具结果后面的新消息（8.12）：agent 正忙时用户发来、还在排队的消息原文。
+pub fn new_messages(locale: Locale, messages: &[&str]) -> String {
+    let mut out = pick(
+        locale,
+        "（平台捎带：用户在你干活时发来了新消息，原文如下。这一轮结束后它们会一条条交给你；\
+         和你正在做的有关的话，可以现在就据此调整。）",
+        "(Platform note: the user sent new messages while you were working; they follow. Each comes \
+         to you as a task of its own after this turn. If one changes what you are doing now, you may \
+         adjust now.)",
+    )
+    .to_owned();
+    for (i, m) in messages.iter().enumerate() {
+        out.push_str(&format!("\n{}. {m}", i + 1));
+    }
+    out
+}
+
 /// 流水线一步的交接说明（8.5）的各行。
 pub struct HandoffWords {
     locale: Locale,
@@ -718,6 +763,16 @@ mod tests {
         );
         let en = resume_note(Locale::En, 2, None, false, true, "Plan");
         assert!(en.contains("don't ask them again"), "{en}");
+
+        // 运行中收消息（8.12）。
+        let zh = interrupted(Locale::ZhCn, "写周报", "先别写了");
+        assert!(
+            zh.contains("「写周报」") && zh.ends_with("）\n\n先别写了"),
+            "{zh}"
+        );
+        assert!(announced(Locale::En, "hi").ends_with(".)\n\nhi"));
+        let notes = new_messages(Locale::En, &["stop", "use the new data"]);
+        assert!(notes.ends_with("\n1. stop\n2. use the new data"), "{notes}");
 
         let words = HandoffWords::new(Locale::En);
         assert_eq!(

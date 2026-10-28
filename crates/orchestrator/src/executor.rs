@@ -103,6 +103,8 @@ pub enum Outcome {
     LeaseLost,
     /// 这个副本要停机：转入退避，别的副本马上接着跑。
     Interrupted,
+    /// 用户发来紧急消息打断了它（8.12）：这一轮已经取消，运行结束（取消），新消息接着跑。
+    Superseded,
     /// 要等一会儿或者等用户处理（7.11：等 key、等电脑）：放掉租约和执行名额，转入等待。
     Waiting {
         state: RunState,
@@ -127,6 +129,7 @@ fn outcome_label(o: &Outcome) -> &'static str {
         Outcome::Cancelled => "cancelled",
         Outcome::LeaseLost => "lease_lost",
         Outcome::Interrupted => "interrupted",
+        Outcome::Superseded => "superseded",
         Outcome::Waiting { .. } => "waiting",
     }
 }
@@ -186,6 +189,8 @@ struct Exec<'a> {
     has_children: bool,
     /// 这次运行问过队友（8.11）。
     has_asks: bool,
+    /// 消息前面的说明（8.12）：这条紧急消息打断了什么，或者这条排队的消息之前已经捎带给 agent 看过。
+    preface: Option<Preface>,
     /// 委派的子任务做完了：交还给 agent 的消息，以及其中的子运行（这一轮开始后记成已交还）。
     resume: Option<(String, Vec<RunId>)>,
     /// agent 接回了之前的会话（还记得之前的对话）。
@@ -246,6 +251,30 @@ fn computer_error(e: &CallError) -> String {
         }
     }
 }
+
+/// 用户消息前面加的说明（8.12）。
+enum Preface {
+    /// 打断了这个任务（第一行）。
+    Interrupted(String),
+    /// 之前已经捎带给 agent 看过。
+    Announced,
+}
+
+/// 运行的任务的第一行，最多 `max` 个字：委派来的子任务、别人问的问题只取说明后面的任务。
+fn task_title(run: &Run, max: usize) -> String {
+    let text = match run.source {
+        RunSource::Delegate | RunSource::Ask => run
+            .prompt
+            .split_once("\n\n")
+            .map_or(run.prompt.as_str(), |(_, t)| t),
+        _ => run.prompt.as_str(),
+    };
+    truncate(text.lines().next().unwrap_or_default(), max)
+}
+
+/// 捎带给正忙的 agent 的新消息：一次最多这么多条，每条最多这么多字。
+const MAX_PIGGYBACK: i64 = 3;
+const PIGGYBACK_CHARS: usize = 1000;
 
 /// 有副作用的平台工具（7.13）：同一次运行里参数完全相同的调用只执行一次。
 const SIDE_EFFECT_TOOLS: [&str; 8] = [
@@ -747,6 +776,16 @@ impl Executor {
         let delegated = w.delegated_runs(rec.run.id).await.map_err(retry)?;
         let asked = w.ask_runs(rec.run.id).await.map_err(retry)?;
         let finished = w.unreported_children(rec.run.id).await.map_err(retry)?;
+        // 用户的紧急消息（8.12）：它真的打断了一个运行，就在开头说明打断了什么。
+        let preface = match rec.interrupts_run_id {
+            Some(h) => {
+                let h = w.run(h).await.map_err(retry)?;
+                (h.state == RunState::Cancelled
+                    && h.state_reason.as_deref() == Some(store::INTERRUPTED_REASON))
+                .then(|| Preface::Interrupted(task_title(&h, 60)))
+            }
+            None => rec.announced_at.map(|_| Preface::Announced),
+        };
         // 电脑工具（14.2）只给登录着电脑的用户：没电脑的 agent 看不到它们。
         let has_computer =
             self.computer.is_some() && w.has_computer(rec.user_id).await.map_err(retry)?;
@@ -901,6 +940,7 @@ impl Executor {
             attempt_started,
             has_children: !delegated.is_empty(),
             has_asks: !asked.is_empty(),
+            preface,
             resume,
             session_restored,
             brief,
@@ -995,6 +1035,15 @@ impl Executor {
                     None,
                 )
             }
+            // 用户自己打断的，不用再通知他。
+            Outcome::Superseded => (
+                RunState::Cancelled,
+                RunChange {
+                    reason: Some(store::INTERRUPTED_REASON.into()),
+                    ..Default::default()
+                },
+                None,
+            ),
             Outcome::Interrupted => (
                 RunState::Backoff,
                 RunChange {
@@ -1041,9 +1090,12 @@ impl Executor {
                 .await?;
         }
         let done = w.transition_run(run, &self.node_id, to, &change).await?;
-        // 运行失败了：它委派出去、还没做完的子任务没人要了（8.7），一起停掉。
+        // 运行失败了、被打断了：它委派出去、还没做完的子任务没人要了（8.7），一起停掉。
         if to == RunState::Failed {
             w.cancel_descendants(run, "the parent run failed").await?;
+        } else if to == RunState::Cancelled {
+            w.cancel_descendants(run, "the parent run was interrupted")
+                .await?;
         }
         // 这次尝试结束了：没处理的审批作废（下次尝试 agent 会重新请求）。走到这里说明还拿着租约
         // （没拿住时 transition_run 报错），不会误伤接手的副本新建的审批。
@@ -1358,6 +1410,40 @@ impl Exec<'_> {
         }
     }
 
+    /// 实例上排队、还没给 agent 看过的用户消息（8.12）：在平台工具的结果后面捎带给它，记成已经看过。
+    /// 查不到就不捎带。
+    async fn new_messages(&self) -> Option<String> {
+        let found = async {
+            let mut w = self.ex.db.worker().await?;
+            let runs = w
+                .unannounced_messages(self.rec.run.instance_id, MAX_PIGGYBACK)
+                .await?;
+            if !runs.is_empty() {
+                w.mark_announced(&runs.iter().map(|r| r.id).collect::<Vec<_>>())
+                    .await?;
+            }
+            w.commit().await?;
+            Ok::<_, store::Error>(runs)
+        }
+        .await;
+        match found {
+            Ok(runs) if !runs.is_empty() => {
+                let texts: Vec<String> = runs
+                    .iter()
+                    .map(|r| truncate(&r.prompt, PIGGYBACK_CHARS))
+                    .collect();
+                let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
+                info!(run = %self.rec.run.id, messages = texts.len(), "passing new messages along");
+                Some(crate::texts::new_messages(self.locale, &texts))
+            }
+            Ok(_) => None,
+            Err(e) => {
+                warn!(run = %self.rec.run.id, error = %e, "reading new messages failed");
+                None
+            }
+        }
+    }
+
     /// 电脑工具（14.2）：交给设备中继转给用户自己的电脑。结果不在这里等（见 `computer_calls`）。
     async fn call_computer(
         &mut self,
@@ -1497,7 +1583,13 @@ impl Exec<'_> {
 
     async fn drive_inner(&mut self, stop: &mut watch::Receiver<bool>) -> Outcome {
         let run_id = self.rec.run.id.to_string();
-        let mut prompt = self.rec.run.prompt.clone();
+        let mut prompt = match &self.preface {
+            Some(Preface::Interrupted(task)) => {
+                crate::texts::interrupted(self.locale, task, &self.rec.run.prompt)
+            }
+            Some(Preface::Announced) => crate::texts::announced(self.locale, &self.rec.run.prompt),
+            None => self.rec.run.prompt.clone(),
+        };
         if let Some((message, _)) = &self.resume {
             prompt = message.clone();
         } else if self.rec.run.attempt > 1 {
@@ -1683,9 +1775,14 @@ impl Exec<'_> {
                     warn!(run = %self.rec.run.id, tool = %name, "platform tool outside the run grant");
                     ToolOutput::error(format!("unknown platform tool {name}"))
                 };
+                // 用户这时发来的消息捎带在结果后面（8.12），不进幂等缓存。
+                let mut content = out.content;
+                if let Some(note) = self.new_messages().await {
+                    content.push(json!({ "type": "text", "text": note }));
+                }
                 self.send(ShimCommand::PlatformToolResult {
                     call_id,
-                    content: out.content,
+                    content,
                     is_error: out.is_error,
                 })
                 .await;
@@ -2153,15 +2250,22 @@ impl Exec<'_> {
             let others = w
                 .tree_tokens_except(self.rec.run.root_run_id, self.rec.run.id)
                 .await?;
+            // 用户发来了紧急消息要打断它（8.12）。
+            let interrupted = w.interrupt_pending(self.rec.run.id).await?;
             w.commit().await?;
-            Ok(Ok((tokens, others)))
+            Ok(Ok((tokens, others, interrupted)))
         }
         .await;
         if matches!(result, Ok(Ok(_))) {
             self.lease_ok_until = Instant::now() + self.ex.cfg.lease;
         }
         match result {
-            Ok(Ok((tokens, others))) => {
+            Ok(Ok((_, _, true))) => {
+                info!(run = %self.rec.run.id, "interrupted by a new message, stopping the turn");
+                self.cancel_turn().await;
+                Some(Outcome::Superseded)
+            }
+            Ok(Ok((tokens, others, false))) => {
                 if let Some(max) = self.rec.budget.max_tokens
                     && tokens.saturating_add(others) > max
                 {

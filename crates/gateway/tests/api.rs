@@ -2188,6 +2188,50 @@ async fn instance_settings_over_http() {
     assert_eq!(audits, 1, "only the actual switch is audited");
 }
 
+/// 运行中收消息（8.12）：`delivery` 默认排队，`interrupt` 是紧急消息，排在别的排队消息前面；别的值拒绝。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn urgent_messages_over_http() {
+    let Some(a) = api().await else { return };
+    let u = a.login("13800138893").await;
+    let tok = Some(u.access.as_str());
+    let inst = a.adopt(&u).await;
+    let path = format!("/v1/instances/{inst}/runs");
+    let (st, normal) = a
+        .call(Method::POST, &path, tok, Some(json!({ "prompt": "first" })))
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{normal}");
+    let (st, urgent) = a
+        .call(
+            Method::POST,
+            &path,
+            tok,
+            Some(json!({ "prompt": "stop that", "delivery": "interrupt" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{urgent}");
+    assert_eq!(urgent["state"], "queued");
+    let mut w = a.t.db.worker().await.unwrap();
+    let claimed = w
+        .claim_next_run("x", Duration::from_secs(60))
+        .await
+        .unwrap();
+    w.rollback().await.unwrap();
+    assert_eq!(
+        claimed.map(|r| r.run.id.to_string()),
+        urgent["id"].as_str().map(String::from),
+        "the urgent message goes first"
+    );
+    let (st, body) = a
+        .call(
+            Method::POST,
+            &path,
+            tok,
+            Some(json!({ "prompt": "x", "delivery": "shout" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+}
+
 /// 用量看板（9.10）：按天（用户时区）、实例、模型汇总自己的用量；看不到别人的。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn usage_is_summarised_per_day_instance_and_model() {
