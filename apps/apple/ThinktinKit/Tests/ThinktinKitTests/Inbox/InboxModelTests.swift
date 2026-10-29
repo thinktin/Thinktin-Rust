@@ -63,6 +63,36 @@ struct InboxModelTests {
         #expect(Set(model.items.map(\.id)).count == 71)
     }
 
+    @Test("同步时新来的超过一页：只留最新一页，往下翻接着拉，中间的不漏")
+    func syncGap() async {
+        let client = mock(state(count: 40))
+        let model = InboxModel(client: client)
+        await model.load()
+        await model.loadOlder()
+        #expect(model.items.count == 40)
+        #expect(model.reachedEnd)
+
+        // 一下来了 35 条新的：最新一页对不上现在的任何一条。
+        client.update { s in
+            let now = Date()
+            let fresh = (0..<35).map { (i: Int) -> InboxItem in
+                InboxItem(
+                    id: InboxItemID(String(format: "0192f3a0-0000-7000-8000-%012d", 999_000 - i)), kind: .info,
+                    title: "新 \(i)", body: "", createdAt: now.addingTimeInterval(TimeInterval(3600 - i)))
+            }
+            s.inbox.insert(contentsOf: fresh, at: 0)
+        }
+        await model.load()
+        #expect(model.items.count == InboxModel.pageSize)
+        #expect(!model.reachedEnd)
+        await model.loadOlder()
+        await model.loadOlder()
+        await model.loadOlder()
+        #expect(model.items.count == 75)
+        #expect(Set(model.items.map(\.id)).count == 75)
+        #expect(model.reachedEnd)
+    }
+
     @Test("标已读、全部已读、标回未读、删除：未读数跟着变")
     func actions() async throws {
         let client = mock()

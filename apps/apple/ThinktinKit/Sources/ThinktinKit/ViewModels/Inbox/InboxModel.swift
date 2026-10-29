@@ -149,6 +149,9 @@ public final class InboxModel {
     }
 
     /// 最新一页换掉列表的开头；比它更早的、已经翻出来的留着。不满一页说明一共就这么多。
+    ///
+    /// 最新一页和现在的列表一条都对不上（离线久了、缓存旧了，新来的超过一页），中间可能还隔着没拉到的：只留最新一页，
+    /// 往下翻从它接着拉，不然隔着的那些永远翻不出来。
     private func merge(latest: [InboxItem]) {
         guard latest.count >= Self.pageSize, let oldest = latest.last else {
             items = latest
@@ -156,6 +159,11 @@ public final class InboxModel {
             return
         }
         let ids = Set(latest.map(\.id))
+        guard items.contains(where: { ids.contains($0.id) }) else {
+            items = latest
+            reachedEnd = false
+            return
+        }
         let older = items.filter { !ids.contains($0.id) && Self.isOlder($0, than: oldest) }
         items = latest + older
         if older.isEmpty { reachedEnd = false }
