@@ -413,10 +413,28 @@ async fn write_file(
         Err(s) => return s.into_response(),
     };
     assert_eq!(q.username, "user");
+    let ct = headers
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    // 大文件按 multipart 边读边传。
+    let content = match ct.strip_prefix("multipart/form-data; boundary=") {
+        Some(boundary) => {
+            let head = format!("--{boundary}\r\n");
+            let tail = format!("\r\n--{boundary}--\r\n");
+            let rest = body.strip_prefix(head.as_bytes()).unwrap();
+            let start = rest.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+            rest[start..]
+                .strip_suffix(tail.as_bytes())
+                .unwrap()
+                .to_vec()
+        }
+        None => body.to_vec(),
+    };
     m.files
         .lock()
         .unwrap()
-        .insert(format!("{sbx}:{}", q.path), body.to_vec());
+        .insert(format!("{sbx}:{}", q.path), content);
     StatusCode::OK.into_response()
 }
 
@@ -447,6 +465,7 @@ async fn mock() -> (S, String) {
         .route("/process.Process/SendSignal", post(send_signal))
         .route("/filesystem.Filesystem/MakeDir", post(make_dir))
         .route("/files", get(read_file).post(write_file))
+        .layer(axum::extract::DefaultBodyLimit::disable())
         .with_state(m.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -595,6 +614,21 @@ async fn sandboxes_processes_and_files() {
         p.write_file(&info.id, "../escape", b"x").await,
         Err(Error::Invalid(_))
     ));
+    let big: Vec<u8> = (0..3 << 20).map(|i: u32| (i % 251) as u8).collect();
+    p.write_file_stream(
+        &info.id,
+        "workspace/restore.tgz",
+        Box::new(std::io::Cursor::new(big.clone())),
+        big.len() as u64,
+    )
+    .await
+    .unwrap();
+    assert!(
+        p.read_file(&info.id, "workspace/restore.tgz", u64::MAX)
+            .await
+            .unwrap()
+            == big
+    );
 
     // 暂停后不能执行；重复暂停没问题；恢复后接着用。
     p.pause(&info.id).await.unwrap();

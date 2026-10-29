@@ -1,6 +1,7 @@
 # 阿里云新加坡部署计划
 
 > 2026-10-27 写，**还没部署**。由 Claude 在云端会话里执行，用户负责开账号、付钱和只有本人能点的授权。
+> **2026-10-28 改地域**：用户换成**国内站 aliyun.com 账号**（国际站要证件实名，太慢），地域选**日本东京 `ap-northeast-1`**。东京已查过（只读）：ACS 的 1.36.2、1.35.7、1.34.10 都有 `ack-agent-sandbox-controller` v0.6.6 和 `ack-sandbox-manager` v0.6.13；4 核 8G 的 `ecs.u1-c1m2.xlarge` 在可用区 a、b、c，RDS PostgreSQL 16 在 a、b，所以都放**可用区 a**。下文写“新加坡”的地方按东京理解，脚本跑时加 `--region ap-northeast-1`；国际站账号上建的新加坡网络不收费，以后删掉。
 > 通用的准备清单见[部署环境准备清单](deploy-checklist.md)；这份是它在“阿里云新加坡、起步规模”下的具体做法，两者不一致时以这份为准。
 
 ## 0. 已经定下来的
@@ -43,7 +44,7 @@
 | 公网流量 | 按流量 | ¥20–50 | 新加坡约 ¥0.53/GB（第三方整理，待核实），只算出方向 |
 | RDS PostgreSQL 16 | 基础系列 2 核 4G，50–100G，自动备份 | ¥300–450 | 海外价格没查到官方数，按国内价加五成估；只开内网 |
 | OSS | 一个私有桶，标准存储，按量 | < ¥10 | 产出物 |
-| ACS 集群 | 不收管理费；Agent Sandbox 的管理组件约 0.5–1 核、1–2G | ¥60–130 | 海外通用算力每核每小时 ¥0.089、每 GB 每小时 ¥0.044 |
+| ACS 集群 | 不收管理费；Agent Sandbox 的管理组件：测试配置（`run.sh acs --addons`）约 1 核 2G，组件默认配置 4 核 8G 起 | 测试 ¥130；默认 ¥500 以上 | 海外通用算力每核每小时 ¥0.089、每 GB 每小时 ¥0.044；正式要几个副本、多大，压测后定 |
 | Agent 沙箱 | 每个 agent 1 核 2G，用时计费 | 每个活跃用户约 ¥16–18 | 海外每核每小时 ¥0.123、每 GB 每小时 ¥0.062；休眠只收存储 |
 | 容器镜像服务 ACR | 个人版 | ¥0 | 放 agent 模板镜像（沙箱要求镜像在同一地域）。服务镜像继续用 GitHub 的 ghcr.io |
 | 域名 | 一个 | ¥60–100/年 | 海外部署不用 ICP 备案 |
@@ -60,10 +61,15 @@
    `AliyunECSFullAccess`、`AliyunVPCFullAccess`、`AliyunRDSFullAccess`、`AliyunOSSFullAccess`、`AliyunCSFullAccess`、
    `AliyunContainerRegistryFullAccess`、`AliyunBSSReadOnlyAccess`（只读账单），域名在阿里云时加 `AliyunDNSFullAccess`；
    用极速版时再加函数计算的权限。然后创建 AccessKey。
-5. **把 Key 放进云端环境，不要发到聊天里**：会话标题栏的云端环境菜单 → Edit → Network secrets（老版本叫 API credentials；没有就加环境变量），
-   名字用 `ALIBABA_CLOUD_ACCESS_KEY_ID`、`ALIBABA_CLOUD_ACCESS_KEY_SECRET`。**存好后开新会话**，新会话才读得到。
+5. **把 Key 放进云端环境，不要发到聊天里**：网页版 claude.ai/code，会话标题后的 ▾ → Edit cloud environment（或新建会话页输入框下面的
+   环境选择器 → 环境那一行的齿轮）→ **环境变量**（Environment variables）里填两行 `ALIBABA_CLOUD_ACCESS_KEY_ID=…`、
+   `ALIBABA_CLOUD_ACCESS_KEY_SECRET=…`，保存。**不要**填进“设置脚本”（那里设的变量脚本跑完就没了），也**不要**用 Network secrets
+   （它只会把 Key 原样塞进请求头，阿里云的 Key 是拿来给请求签名的，用不了）。**存好后开新会话**，仓库选 `thinktin/Thinktin-Rust`，
+   环境选存了 Key 的那个；会话只在虚拟机启动时读环境变量，老会话读不到。
 6. **域名**：买一个（或用已有的），要两个子域名，比如 `api.<域名>`、`relay.<域名>`。域名在阿里云就把 DNS 权限给子账号；不在阿里云的话，Claude 会给出要加的 DNS 记录，由你去加。
-7. **GitHub 仓库的密钥**（第 4 阶段要）：ACR 的登录用户名和密码加到仓库的 Actions secrets，用来把 agent 模板镜像推进 ACR。会话里的 GitHub 工具不能设仓库密钥。
+7. **集群里的权限**（用 kubectl 时要）：ACS 控制台 → 授权管理 → RAM 用户 `thinktin-deploy` → 选集群、所有命名空间、管理员。
+   RAM 策略只管 OpenAPI，集群里面的权限要单独给。
+8. **GitHub 仓库的密钥**（第 4 阶段要）：ACR 的登录用户名和密码加到仓库的 Actions secrets，用来把 agent 模板镜像推进 ACR。会话里的 GitHub 工具不能设仓库密钥。
 
 ## 4. Claude 的部署步骤
 
@@ -83,9 +89,10 @@
 |---|---|
 | 部署配置 `deploy/k8s/overlays/sg`（k3s 单机、单副本、本地主密钥），加进配置校验测试 | 0.5 天 |
 | 部署脚本 `deploy/aliyun/`：建网络、存储、数据库、服务机、ACS，云助手执行命令 | 2 天 |
-| 沙箱后端对接 ACS 的 E2B 接口：数据面地址和鉴权按 ACS 的方式；建沙箱时设超时到期“休眠”、保留时长；拿到每个沙箱自己的内网地址 | 2–3 天 |
-| 模型网关的来源地址校验：Cube 是整个节点一个出口地址；ACS 里每个沙箱有自己的内网地址，改成绑定到这个沙箱的地址（更严） | 0.5 天 |
-| 工作区保留：如果 ACS 的卷不好用，改成销毁沙箱前把工作区打包存进 OSS、重建时放回（架构方案里原本的“冷存档”） | 3–5 天，视实测而定 |
+| 沙箱后端对接 ACS 的 E2B 接口：数据面地址和鉴权按 ACS 的方式；建沙箱时设超时到期“休眠”、保留时长；拿到每个沙箱自己的内网地址 | **10-28 写完**（`AcsProvider`，[ACS 后端](sandbox-acs.md)），没连过真集群 |
+| 模型网关的来源地址校验：Cube 是整个节点一个出口地址；ACS 里每个沙箱有自己的内网地址，改成绑定到这个沙箱的地址（更严） | **10-28 写完**：令牌绑 Pod IP，拿不到 IP 不建沙箱；网关用主机网络 |
+| 工作区保留：如果 ACS 的卷不好用，改成销毁沙箱前把工作区打包存进 OSS、重建时放回（架构方案里原本的“冷存档”） | **10-28 写完**（`[sandbox.workspace] mode = "object"`，加密存 OSS，迁移 0023） |
+| 东京的部署配置（第 8.9 节的单机方案） | **10-28 写完**：`deploy/k8s/overlays/tokyo` |
 
 ## 6. 沙箱实测清单（第 4 阶段，任何一条过不去都要先解决）
 
@@ -105,6 +112,7 @@
 ## 7. 上线前还要确认的
 
 - **短信登录**：现在只有手机验证码登录。阿里云短信的签名和模板要审核，申请时可能要备案或 App 资料；发不了的话要加邮箱、Apple、Google 登录。**这是上线的前置条件**，建议账号一开就申请。
+- **备案**：服务器在新加坡，不用办 ICP 备案（只有中国内地的服务器要），国内站账号买新加坡也一样；账号本身要实名，域名要做域名实名认证，都不是备案。**但 App 上国内商店（苹果中国区、国内安卓商店）要 App 备案号**，苹果后台会校验。App 备案要国内主体，经境内的接入服务商办，后端只在新加坡一般办不了。不上国内商店（只上海外区、直接发 APK）就不涉及；要上的话，上线前定方案（比如加一个国内的入口再备案），和合规一起请法务看。
 - **合规**：中国用户的个人信息存在新加坡，涉及个人信息出境；面向国内用户提供未备案的境外模型。建议上线前请法务看一次（16.4、16.6）。
 - **隐私政策**：写明服务器在新加坡、会把内容发给用户自己选的模型厂商。
 - **Apple 开发者账号**：推送（APNs）和上架都要。
@@ -116,7 +124,95 @@
 - 平台的密钥（访问令牌、沙箱令牌、主密钥、数据库密码）在服务机上生成、直接写进 Kubernetes Secret，不出现在聊天和仓库里。要备份时由用户在控制台或云助手里导出，存进密码管理器。
 - 上次在聊天里贴过的 Codemagic 密钥，用户去 Codemagic 作废换新。
 
+## 8.5 第一次检查结果（2026-10-27，用户的阿里云账号）
+
+`deploy/aliyun/run.sh check` 在新会话里用真 Key 跑过（只读）：
+
+- **通过**：Key 是 RAM 子账号 `thinktin-deploy`；新加坡有 4 核 8G 的 `ecs.u1-c1m2.xlarge`（可用区 a、b、c）和 `ecs.c9i.xlarge`（a、d）；
+  还没有 VPC；RDS 的 PostgreSQL 16 在 a、b、c 可买；ACS 接口能调、还没有集群。
+- **不通过**：OSS 报 `UserDisable`，OSS 还没开通（或账号欠费）。
+- **余额 0.00 USD**：是**国际站**账号（按美元计价），下单前要绑定付款方式或充值。第 2 节的人民币估算照汇率换算即可。
+
+## 8.6 进度
+
+| 阶段 | 状态 | 资源 |
+|---|---|---|
+| 代码 | **2026-10-28 写完**：ACS 沙箱后端、令牌绑沙箱 IP、计时可配、工作区存 OSS、东京部署配置（第 5 节）。只对着模拟服务测过；实测清单见 [ACS 后端](sandbox-acs.md) 第 8 节，部署时要定的见 [交接文档](handoff.md) 第 4 节第 9 条 | — |
+| API Server 公网 | **2026-10-28 解绑**（用户同意，ModifyCluster api_server_eip=false）：只剩内网 172.29.47.77:6443。EIP eip-6we3j5f74oq6xzbeacf39（47.74.56.251，按流量）还在、闲置；释放它被自动审查拦了，请用户在控制台（专有网络 → 弹性公网 IP）释放 | — |
+| 检查（国内站，东京，第二次） | **2026-10-28**：全部通过（用户给 `claude-deploy` 加了 `AdministratorAccess`）；余额 0.00 元（国内站预付，付费资源下单前要充值）。集群 `Thinktin-Rust`（ce2dbb6f0799b4a65bbb31821d8a4623b，ACS 1.36.2，VPC vpc-6weeobj130h915q49t32h，API Server 公网 47.74.56.251:6443、内网 172.29.47.77:6443）。沙箱组件都没装：controller v0.6.6-release.5、manager v0.6.13-release.1；manager 默认约 36 核 48G、每月约 ¥3,900，测试配置约 1.2 核 2G、每月约 ¥146（`run.sh acs --addons` 打印） | — |
+| 检查（国内站，东京） | **2026-10-28**：Key 是 RAM 子账号 `claude-deploy`。通过：东京 4 核 8G 的 `ecs.u1-c1m2.xlarge`（a、b、c）、RDS PostgreSQL 16（a、b）、ACS 接口能调。不通过：VPC（缺 `AliyunVPCFullAccess`）、OSS（缺 `AliyunOSSFullAccess`）、余额（缺 `AliyunBSSReadOnlyAccess`）。**东京还没有集群**（香港、杭州、上海、北京、深圳、硅谷也没有） | — |
+| 容器版脚本 | **2026-10-28 写好，等 Key 和集群**：`run.sh acs`（找集群、看 / 装沙箱组件，OpenAPI，云端会话能跑）、`run.sh acs --pool`、`run.sh sandbox --acs`（要 kubectl，只能在集群 VPC 里的机器上跑：云端会话的代理只放行 443，API Server 在 6443、要客户端证书、port-forward 要 WebSocket）。只在本机用假服务验过私有协议的地址，没连过真集群。下一步见 [交接文档](handoff.md) 第 4 节 | — |
+| 检查 | 2026-10-27 全部通过（OSS 已开通；余额 0 USD，付费资源下单前要绑卡或充值） | — |
+| 1. 网络 | **2026-10-27 已建**（`deploy/aliyun/run.sh network --apply`，不收费） | VPC `thinktin-sg` vpc-t4nnamzms0ug1sro2xnsh（10.10.0.0/16）；交换机 `thinktin-svc-a` vsw-t4nkrp5vkmskd7u8l3iym（10.10.1.0/24）、`thinktin-sbx-a` vsw-t4noo1zilrxuce545tf2w（10.10.16.0/20），都在 ap-southeast-1a；安全组 `thinktin-svc` sg-t4ng934e0iz30f7mdie9（入方向 80、443） |
+| 沙箱测试 | **直接测容器版**（2026-10-27 用户定：正式就用容器版，不绕道极速版）。新加坡 ACS 的组件列表里有 `ack-agent-sandbox-controller` 和 `ack-sandbox-manager`（2026-10-27 用 ListAddons 查到，ACS 1.37.1）。测试不建 ALB、不要域名和证书：集群 API Server 开公网（绑一个按流量的 EIP），从云端会话 `kubectl port-forward` 到 sandbox-manager，用私有协议走 HTTP；E2B 的 Key 是装 `ack-sandbox-manager` 时自己设的 `adminApiKey`，不用去控制台建。预热池设 1 个。测完删沙箱，集群留不留再定。`deploy/aliyun/run.sh sandbox` 改成能连 port-forward 的地址后复用 | **卡在实名认证**：国际站账号开通产品前要实名，用户在选国际站认证还是换国内站 aliyun.com 账号（第 1 阶段网络可在新账号重建，不收费）。认证后用户在控制台开通 ACS（第一次要本人同意协议、授权服务角色），其余由 Claude 用 AccessKey 建 |
+
+### 8.7 极速版的 E2B 接口（2026-10-27 查文档、用假 Key 试过；现在不用极速版，留作备选）
+
+- 两个地址都在，没 Key 都返回 401：`api.ap-southeast-1.sandbox.aliyuncs.com`（智能体沙箱）和 `api.ap-southeast-1.e2b.fc.aliyuncs.com`（函数计算云沙箱）。
+  Key 是哪边控制台建的就用哪边，`run.sh sandbox` 会自动找；也可以用环境变量 `ALIYUN_SANDBOX_DOMAIN` 指定。
+- SDK：极速版文档测的是 `e2b==2.31.0`；`requirements.txt` 10-28 起钉容器版要的 `2.50.0`，极速版只是备选，没再测。
+  极速版的 Key 不是 `e2b_` 开头，要关掉 SDK 的 Key 格式校验。
+- [兼容接口列表](https://help.aliyun.com/en/functioncompute/e2b-sdk-compatible-api-list)里：建、删、列、设超时、跑命令、读写文件、端口访问都兼容；
+  **暂停要申请白名单**，恢复用 `connect`（没有单独的恢复接口）；超时被回收的沙箱连不上。快照、卷、自定义域名不支持。
+  文档没写暂停最长保留多久、暂停怎么收费、超时到期能不能自动暂停——这几条正好是第 6 节要实测的，也要问阿里云。
+- **对我们的影响**：架构里“空闲 10 分钟暂停、7 天内唤醒”靠暂停。白名单开不了、或暂停保留不到 7 天，就要改成第 5 节说的“删沙箱前把工作区存进 OSS、下次重建时放回”。
+
+## 8.8 无影 AgentBay（2026-10-28 调研，这次不用）
+
+结论：10 人测试的 agent 沙箱**不用** AgentBay，继续用东京 ACS 的 Agent Sandbox。以后做“云浏览器 / 云电脑”这类功能时，
+可以由东京的服务端调它的接口，当成 agent 的一个平台工具（不进沙箱那一层；那时优先用国际站新加坡）。不用它的原因：
+
+- **东京用不了**：国内站账号只能用中国大陆（SDK 默认杭州）；新加坡、美东只给国际站。东京、香港查不到。
+- **Linux 沙箱锁不住出网**：域名白名单“目前仅支持 Windows 沙箱”，`*.aliyuncs.com` 始终放行；自建 VPC 只在杭州。
+  多租户隔离的底线（出网只到模型网关）过不了。
+- **装我们自己的 agent 要 Pro 档**（自定义镜像，¥999/月），规格最小 2 核 4G。
+- **生命周期对不上**：单次运行最长 1000 分钟、休眠最长 72 小时；我们要等审批 24 小时、暂停保留 7 天。
+- 命令接口没有 stdin（只能用交互终端凑），不是 E2B 接口，要新写沙箱后端（估 1.5–3 周）。
+
+它的好处：Basic 档免费、10 个并发，CPU ¥0.12/核/时、内存 ¥0.05/GB/时按秒计；新用户送约 200 小时。
+来源：help.aliyun.com/zh/agentbay（计费说明 2026-06-24、安全白皮书 2026-10-13、镜像设置 2026-04-28）、
+github.com/agentbay-ai/wuying-agentbay-sdk（0.22.x）。
+
+## 8.9 10 个测试用户的省钱方案（2026-10-28 估算）
+
+假设每人每天 agent 跑约 1 小时（每月约 300 沙箱小时），不同时在线。两种办法，以后扩容都不用搬家：
+
+| 项目 | 规格 | 每月 |
+|---|---|---|
+| 服务机 | `ecs.e-c1m2.large`（2 核 4G，经济型）包月 ¥117.67，按量 ¥0.2534/时 | ¥118 |
+| 磁盘 | 40G 系统盘 + 20G 数据盘（放 Postgres） | 约 ¥22 |
+| 数据库 | Postgres 16 装在服务机上（以后 pg_dump 搬到 RDS，改 DATABASE_URL 就行） | ¥0 |
+| 公网流量 | 按流量 ¥0.6/GB，10–20 GB | ¥6–12 |
+| 沙箱管理组件 | 测试配置约 1.2 核 2G | ¥142–146 |
+| 沙箱运行 | 1 核 2G 每小时约 ¥0.25 × 300 小时（流量代理边车可能让规格进位，未实测） | ¥75–112 |
+| 其他 | 快照、OSS、域名 | ¥15–25 |
+
+- **办法一（最省，约 ¥390–450/月）**：沙箱用完最多休眠 1 小时就删，工作区存 OSS，下次重建放回。要多写 3–5 天代码。
+- **办法二（最省事，约 ¥730–800/月）**：沙箱一直休眠。**休眠不收 CPU 和内存，但 30 GiB 临时存储照收**，每个约 ¥36/月。
+- 都要做：预热池设 0（留 1 个每月 ¥135–270）；不开 SLS；不要 NAT、ALB；API Server 的 EIP 用不上，可以解绑（约 ¥22/月）。
+- 都要先写的代码：Rust 的 ACS 沙箱后端（私有协议，2–3 天）；模型网关按沙箱 IP 绑定令牌（0.5 天）。第 6 节实测全部通过才上线。
+- 第 2 节有两处估低了：4 核 8G 的 u1 官方标价 ¥627/月；“休眠只收存储”没算 30 GiB 的最低计费。
+- 现在就要定对的：地域东京、服务机放在 ACS 集群的 VPC 里、不用轻量应用服务器或抢占式实例放服务和数据库。
+
+来源：ECS 价格表 g.alicdn.com/aliyun/ecs-price-info/2.0.483（2026-10-22）、ACS 计费规则和临时存储说明（help.aliyun.com/zh/cs）。
+
+**要请法务看的（和选哪家沙箱无关）**：Anthropic 的支持地区政策（anthropic.com/supported-countries，2026-11-12 生效）
+不允许注册地、总部在不支持地区（含中国大陆、香港）或被这类公司控股的公司使用；Claude Code 的托管条款要求每个终端用户用自己的
+凭证、平台不能替用户付费或中转用量（code.claude.com/docs/en/legal-and-compliance）。我们是“用户自带 Key、经网关转发”，
+算不算中转要确认（`docs/licenses.md` 第 1 节也记着）。
+
 ## 9. 接手（新会话）
 
-开新会话读 Key 时：先看本文件和 `docs/progress/claude-determined-lovelace-vn0j5h.md`，确认 `ALIBABA_CLOUD_ACCESS_KEY_ID` 在环境里，
-然后从第 4 节第 1 阶段开始：先列资源和费用请用户确认，再动手。每完成一个阶段，在本文件和进度文件里记一笔、提交推送。
+先读 [交接文档](handoff.md)（2026-10-28，东京、容器版的下一步都在那里）。
+
+开新会话读 Key 时：先看本文件和 `docs/progress/claude-determined-lovelace-vn0j5h.md`，然后跑只读检查：
+
+```sh
+deploy/aliyun/run.sh check        # 第一次会在 target/aliyun-venv 装阿里云 SDK，约半分钟
+deploy/aliyun/run.sh sandbox      # 有 ALIYUN_SANDBOX_API_KEY 时：只读看接口和模板；加 --apply 建 1 个沙箱测完删掉
+```
+
+它查 Key 和身份（应是 RAM 子账号，不是主账号）、新加坡有没有服务机的 4 核 8G 规格、VPC、RDS 的 PostgreSQL 16、OSS、ACS、账户余额，
+只调查询接口、不建资源、不打印密钥；不通过的项会说该去哪儿处理（缺哪条权限、哪个产品没开通）。2026-10-27 只用假 Key 测过错误路径
+（7 项都能连到阿里云、提示正确），成功路径第一次用真 Key 时核对输出。全部通过后从第 4 节第 1 阶段开始：先列资源和费用请用户确认，
+再动手。每完成一个阶段，在本文件和进度文件里记一笔、提交推送。

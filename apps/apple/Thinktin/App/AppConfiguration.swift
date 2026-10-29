@@ -10,8 +10,11 @@ struct AppConfiguration: Equatable, Sendable {
         case core
     }
 
-    /// 环境变量：`1` 用 Mock，`0` 用真核心；不设时 Debug 用 Mock、Release 用真核心。
+    /// 环境变量：`1` 用 Mock，`0` 用真核心；不设时看 Info.plist 的 `ThinktinClient`，再不设时 Debug 用 Mock、Release 用真核心。
     static let mockEnvironmentKey = "THINKTIN_MOCK"
+    /// Info.plist 里选客户端的键（project.yml 用构建设置 `THINKTIN_CLIENT` 展开进去）：`mock` 是演示版（服务器上线前
+    /// 在 TestFlight 上给人看界面），`core` 连服务器，空的按构建配置定。
+    static let clientInfoKey = "ThinktinClient"
     /// Info.plist 里的接口地址（project.yml 用构建设置 `THINKTIN_API_BASE_URL` 展开进去）。
     static let baseURLInfoKey = "ThinktinAPIBaseURL"
     static let defaultBaseURL = URL(string: "https://api.thinktin.cn")!
@@ -34,7 +37,7 @@ struct AppConfiguration: Equatable, Sendable {
         isDebugBuild: Bool
     ) -> AppConfiguration {
         AppConfiguration(
-            client: clientKind(environment: environment, isDebugBuild: isDebugBuild),
+            client: clientKind(environment: environment, infoDictionary: infoDictionary, isDebugBuild: isDebugBuild),
             baseURL: baseURL(infoDictionary: infoDictionary)
         )
     }
@@ -64,12 +67,16 @@ struct AppConfiguration: Equatable, Sendable {
         #endif
     }
 
-    static func clientKind(environment: [String: String], isDebugBuild: Bool) -> ClientKind {
+    static func clientKind(
+        environment: [String: String], infoDictionary: [String: Any]? = nil, isDebugBuild: Bool
+    ) -> ClientKind {
         switch environment[mockEnvironmentKey]?.trimmingCharacters(in: .whitespaces).lowercased() {
         case "1", "true", "yes": return .mock
         case "0", "false", "no": return .core
-        default: return isDebugBuild ? .mock : .core
+        default: break
         }
+        let built = (infoDictionary?[clientInfoKey] as? String)?.trimmingCharacters(in: .whitespaces).lowercased()
+        return ClientKind(rawValue: built ?? "") ?? (isDebugBuild ? .mock : .core)
     }
 
     /// 启动后要打开的深链（`THINKTIN_OPEN_URL`）；没设、不是 `thinktin://` 的为 nil。

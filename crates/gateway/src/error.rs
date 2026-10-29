@@ -129,7 +129,7 @@ impl From<control::Error> for ApiError {
             Error::Busy => Self::conflict(e.to_string()),
             Error::InstanceLimit { .. } => Self::new(ErrorCode::InstanceLimit, e.to_string()),
             Error::Store(s) => s.into(),
-            Error::Timeout(_) | Error::Sandbox(_) => {
+            Error::Timeout(_) | Error::Sandbox(_) | Error::Workspace(_) => {
                 error!(error = %e, "sandbox operation failed");
                 Self::new(
                     ErrorCode::Unavailable,

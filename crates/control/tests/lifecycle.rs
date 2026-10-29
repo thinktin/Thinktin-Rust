@@ -1,8 +1,10 @@
 //! 实例生命周期：用本地沙箱后端 + 真实 Postgres（没有 DATABASE_URL 时跳过）。
 
-use std::sync::Arc;
+use std::net::IpAddr;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use async_trait::async_trait;
 use chrono::Utc;
 use control::{BuiltinTemplates, Error, Lifecycle, LifecycleConfig, Templates};
 use proto::domain::{
@@ -10,7 +12,10 @@ use proto::domain::{
     UserId,
 };
 use sandbox::local::LocalProvider;
-use sandbox::{SandboxId, SandboxProvider, SandboxState};
+use sandbox::{
+    CreateSpec, ExecSpec, Process, SandboxId, SandboxInfo, SandboxProvider, SandboxState,
+    SnapshotId,
+};
 use store::testing::TestDb;
 use store::{NewPlan, NewRun};
 
@@ -47,6 +52,99 @@ fn lifecycle(e: &Env, cfg: LifecycleConfig) -> Lifecycle {
 
 async fn sandbox_state(p: &LocalProvider, id: &str) -> Option<SandboxState> {
     p.get(&SandboxId(id.into())).await.unwrap().map(|i| i.state)
+}
+
+/// 像 ACS 那样的后端：没有工作区卷（销毁沙箱工作区就没了），每个沙箱有自己的地址，恢复后可能换。
+struct PodProvider {
+    inner: Arc<LocalProvider>,
+    address: Mutex<IpAddr>,
+}
+
+impl PodProvider {
+    fn new(inner: Arc<LocalProvider>, address: &str) -> Arc<Self> {
+        Arc::new(Self {
+            inner,
+            address: Mutex::new(address.parse().unwrap()),
+        })
+    }
+
+    fn move_to(&self, address: &str) {
+        *self.address.lock().unwrap() = address.parse().unwrap();
+    }
+
+    fn readdress(&self, mut info: SandboxInfo) -> SandboxInfo {
+        info.address = Some(*self.address.lock().unwrap());
+        info
+    }
+}
+
+#[async_trait]
+impl SandboxProvider for PodProvider {
+    fn name(&self) -> &'static str {
+        "pod"
+    }
+
+    fn workspace_persists(&self) -> bool {
+        false
+    }
+
+    async fn create(&self, spec: CreateSpec) -> sandbox::Result<SandboxInfo> {
+        Ok(self.readdress(self.inner.create(spec).await?))
+    }
+
+    async fn get(&self, id: &SandboxId) -> sandbox::Result<Option<SandboxInfo>> {
+        Ok(self.inner.get(id).await?.map(|i| self.readdress(i)))
+    }
+
+    async fn exec(&self, id: &SandboxId, spec: ExecSpec) -> sandbox::Result<Process> {
+        self.inner.exec(id, spec).await
+    }
+
+    async fn pause(&self, id: &SandboxId) -> sandbox::Result<()> {
+        self.inner.pause(id).await
+    }
+
+    async fn resume(&self, id: &SandboxId) -> sandbox::Result<SandboxInfo> {
+        Ok(self.readdress(self.inner.resume(id).await?))
+    }
+
+    async fn snapshot(&self, id: &SandboxId) -> sandbox::Result<SnapshotId> {
+        self.inner.snapshot(id).await
+    }
+
+    async fn restore(
+        &self,
+        snapshot: &SnapshotId,
+        spec: CreateSpec,
+    ) -> sandbox::Result<SandboxInfo> {
+        self.inner.restore(snapshot, spec).await
+    }
+
+    async fn destroy(&self, id: &SandboxId) -> sandbox::Result<()> {
+        self.inner.destroy(id).await
+    }
+
+    async fn delete_workspace(&self, workspace: &str) -> sandbox::Result<()> {
+        self.inner.delete_workspace(workspace).await
+    }
+
+    async fn write_file(&self, id: &SandboxId, path: &str, data: &[u8]) -> sandbox::Result<()> {
+        self.inner.write_file(id, path, data).await
+    }
+
+    async fn write_file_stream(
+        &self,
+        id: &SandboxId,
+        path: &str,
+        data: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
+        len: u64,
+    ) -> sandbox::Result<()> {
+        self.inner.write_file_stream(id, path, data, len).await
+    }
+
+    async fn read_file(&self, id: &SandboxId, path: &str, max: u64) -> sandbox::Result<Vec<u8>> {
+        self.inner.read_file(id, path, max).await
+    }
 }
 
 #[tokio::test]
@@ -584,4 +682,156 @@ async fn adopt_respects_the_instance_cap() {
     control::adopt_capped(&e.t.db, &BuiltinTemplates, e.user, "user:d", spec("三"), 2)
         .await
         .unwrap();
+}
+
+/// 没有工作区卷的后端（ACS）：可以暂停，但不归档、不重建——销毁沙箱会丢掉用户的文件。
+#[tokio::test]
+async fn providers_without_volumes_keep_their_sandboxes() {
+    let Some(e) = env().await else { return };
+    let pods = PodProvider::new(e.provider.clone(), "10.0.1.5");
+    let lc = Lifecycle::new(
+        e.t.db.clone(),
+        pods.clone(),
+        Arc::new(BuiltinTemplates),
+        LifecycleConfig {
+            idle_pause: Duration::ZERO,
+            archive_after: Duration::ZERO,
+            ..LifecycleConfig::default()
+        },
+    );
+    let inst = lc.adopt(e.user, "user:d", "pi", None, "Pi").await.unwrap();
+    let sid = lc
+        .ensure_running(inst.id)
+        .await
+        .unwrap()
+        .sandbox_id
+        .unwrap();
+
+    let report = lc.sweep().await.unwrap();
+    assert_eq!((report.paused, report.archived, report.failed), (1, 0, 0));
+    let report = lc.sweep().await.unwrap();
+    assert_eq!(
+        (report.archived, report.failed),
+        (0, 0),
+        "archive is skipped"
+    );
+    assert!(matches!(lc.archive(inst.id).await, Err(Error::Invalid(_))));
+    assert!(matches!(
+        lc.rebuild(inst.id, None).await,
+        Err(Error::Invalid(_))
+    ));
+    let current = catalog::builtin("pi").unwrap().agent.version;
+    let mut t = e.t.db.tenant(e.user).await.unwrap();
+    t.request_instance_version(inst.id, &current).await.unwrap();
+    t.commit().await.unwrap();
+    assert!(matches!(
+        lc.ensure_running(inst.id).await,
+        Err(Error::Invalid(_))
+    ));
+
+    assert_eq!(
+        sandbox_state(&e.provider, &sid).await,
+        Some(SandboxState::Paused),
+        "the sandbox and its workspace are still there"
+    );
+    let mut w = e.t.db.worker().await.unwrap();
+    let rt = w.instance_runtime(inst.id).await.unwrap();
+    assert_eq!(rt.state, InstanceState::Paused);
+    assert_eq!(rt.sandbox_id.as_deref(), Some(sid.as_str()));
+}
+
+/// 沙箱令牌绑定沙箱地址：后端报的地址变了（恢复后换了 Pod IP），实例记下新的。
+#[tokio::test]
+async fn a_changed_sandbox_address_is_recorded() {
+    let Some(e) = env().await else { return };
+    let pods = PodProvider::new(e.provider.clone(), "10.0.1.5");
+    let lc = Lifecycle::new(
+        e.t.db.clone(),
+        pods.clone(),
+        Arc::new(BuiltinTemplates),
+        LifecycleConfig::default(),
+    );
+    let inst = lc.adopt(e.user, "user:d", "pi", None, "Pi").await.unwrap();
+    let address = |a: &str| Some(a.parse::<IpAddr>().unwrap());
+    let stored = || async {
+        let mut w = e.t.db.worker().await.unwrap();
+        w.instance_runtime(inst.id).await.unwrap().sandbox_address
+    };
+    let events = || async {
+        let mut t = e.t.db.tenant(e.user).await.unwrap();
+        t.events_after(inst.id, 0, 100).await.unwrap().len()
+    };
+
+    let rt = lc.ensure_running(inst.id).await.unwrap();
+    assert_eq!(rt.sandbox_address, address("10.0.1.5"));
+
+    // 运行中换了地址：记下来，不算一次状态变化。
+    let before = events().await;
+    pods.move_to("10.0.1.9");
+    let rt = lc.ensure_running(inst.id).await.unwrap();
+    assert_eq!(rt.sandbox_address, address("10.0.1.9"));
+    assert_eq!(stored().await, address("10.0.1.9"));
+    assert_eq!(events().await, before);
+
+    // 暂停后恢复换了地址。
+    assert!(lc.pause(inst.id).await.unwrap());
+    pods.move_to("10.0.2.7");
+    let rt = lc.ensure_running(inst.id).await.unwrap();
+    assert_eq!(rt.sandbox_address, address("10.0.2.7"));
+    assert_eq!(stored().await, address("10.0.2.7"));
+}
+
+/// 等审批的运行：默认不挡空闲暂停（agent 进程随沙箱暂停）；关掉 `pause_waiting_approval` 时一直运行。
+/// 归档总是跳过它（销毁沙箱会结束等着的 agent 进程）。
+#[tokio::test]
+async fn approval_waits_can_keep_the_sandbox_running() {
+    let Some(e) = env().await else { return };
+    let cfg = |pause_waiting_approval| LifecycleConfig {
+        idle_pause: Duration::ZERO,
+        archive_after: Duration::ZERO,
+        pause_waiting_approval,
+        ..LifecycleConfig::default()
+    };
+    let inst = lifecycle(&e, cfg(true))
+        .adopt(e.user, "user:d", "pi", None, "Pi")
+        .await
+        .unwrap();
+    let mut t = e.t.db.tenant(e.user).await.unwrap();
+    t.create_run(&NewRun::new(
+        inst.id,
+        RunSource::User,
+        "work",
+        &inst.agent_version,
+    ))
+    .await
+    .unwrap();
+    t.commit().await.unwrap();
+    let mut w = e.t.db.worker().await.unwrap();
+    let run = w
+        .claim_next_run("node-a", Duration::from_secs(60))
+        .await
+        .unwrap()
+        .unwrap();
+    for to in [
+        proto::domain::RunState::Running,
+        proto::domain::RunState::WaitingApproval,
+    ] {
+        w.transition_run(run.run.id, "node-a", to, &Default::default())
+            .await
+            .unwrap();
+    }
+    w.commit().await.unwrap();
+    let state = || async {
+        let mut w = e.t.db.worker().await.unwrap();
+        w.instance_runtime(inst.id).await.unwrap().state
+    };
+
+    let keep = lifecycle(&e, cfg(false));
+    keep.ensure_running(inst.id).await.unwrap();
+    assert_eq!(keep.sweep().await.unwrap().paused, 0);
+    assert_eq!(state().await, InstanceState::Running);
+
+    let report = lifecycle(&e, cfg(true)).sweep().await.unwrap();
+    assert_eq!((report.paused, report.archived), (1, 0));
+    assert_eq!(state().await, InstanceState::Paused);
 }
