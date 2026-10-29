@@ -13,7 +13,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use chrono::Utc;
 use notify::PushKind;
-use proto::domain::{CatchUp, Plan, PlanAuthor, PlanId, PlanPolicy, ScheduleSpec};
+use proto::domain::{ArtifactId, CatchUp, Plan, PlanAuthor, PlanId, PlanPolicy, ScheduleSpec};
 use proto::shim::PlatformTool;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -473,13 +473,20 @@ impl ArtifactTools {
 
     /// 这次运行的产出物放在哪、看得到哪些，和沙箱。回答队友的问题（8.11）时只看得到、只写得进这个问题下面的
     /// 产出物：问的是信息，不是权限，回答方不能借机读提问方整棵运行树的产出物（可能来自别的、关了交流开关的
-    /// 实例），也不能覆盖它们；回答方发布的，提问方那棵树看得到（`whole`）。
+    /// 实例），也不能覆盖它们；回答方发布的，提问方看得到（见 [`store::ArtifactScope`]）。
     async fn origin(
         &self,
         ctx: &ToolContext,
-    ) -> Result<(crate::artifacts::Origin, bool, Option<String>), Fail> {
+    ) -> Result<
+        (
+            crate::artifacts::Origin,
+            store::ArtifactScope,
+            Option<String>,
+        ),
+        Fail,
+    > {
         let mut w = self.db.worker().await?;
-        let (root, whole) = w.artifact_scope(ctx.run).await?;
+        let scope = w.artifact_scope(ctx.run).await?;
         let rt = w.instance_runtime(ctx.instance).await?;
         w.rollback().await?;
         Ok((
@@ -487,9 +494,9 @@ impl ArtifactTools {
                 user: ctx.user,
                 instance: ctx.instance,
                 run: ctx.run,
-                root,
+                root: scope.own,
             },
-            whole,
+            scope,
             rt.sandbox_id,
         ))
     }
@@ -548,14 +555,15 @@ impl ArtifactTools {
     }
 
     async fn list(&self, ctx: &ToolContext) -> Result<Value, Fail> {
-        let (origin, whole, _) = self.origin(ctx).await?;
+        let (_, scope, _) = self.origin(ctx).await?;
         let mut w = self.db.worker().await?;
-        let items = w.tree_artifacts(origin.root, whole).await?;
+        let items = w.tree_artifacts(&scope).await?;
         w.rollback().await?;
         let list: Vec<Value> = items
             .into_iter()
             .map(|a| {
                 json!({
+                    "artifact_id": a.artifact.id,
                     "name": a.artifact.name,
                     "version": a.artifact.version,
                     "size": a.artifact.size,
@@ -572,18 +580,31 @@ impl ArtifactTools {
         ctx: &ToolContext,
         args: &Value,
     ) -> Result<(store::StoredArtifact, Value), Fail> {
-        let (origin, whole, _) = self.origin(ctx).await?;
+        let (_, scope, _) = self.origin(ctx).await?;
+        // 同名的有几个（比如回答方发布的和自己的重名）：按 artifact_list 给的 id 挑。
+        if let Some(id) = args.get("artifact_id").and_then(Value::as_str) {
+            let id: ArtifactId = id
+                .parse()
+                .map_err(|_| Fail("artifact_id is not a valid id".into()))?;
+            let mut w = self.db.worker().await?;
+            let a = w.scoped_artifact(&scope, id).await.map_err(|e| match e {
+                store::Error::NotFound => Fail("no such artifact in this task".into()),
+                other => other.into(),
+            })?;
+            w.rollback().await?;
+            return Ok((a, args.clone()));
+        }
         let name = args
             .get("name")
             .and_then(Value::as_str)
-            .ok_or_else(|| Fail("name is required".into()))?;
+            .ok_or_else(|| Fail("name or artifact_id is required".into()))?;
         let version = args
             .get("version")
             .and_then(Value::as_u64)
             .map(|v| u32::try_from(v).unwrap_or(u32::MAX));
         let mut w = self.db.worker().await?;
         let a = w
-            .named_artifact(origin.root, whole, name, version)
+            .named_artifact(&scope, name, version)
             .await
             .map_err(|e| match e {
                 store::Error::NotFound => Fail(format!("no artifact named {name:?} in this task")),
@@ -639,6 +660,10 @@ impl PlatformTools for ArtifactTools {
     fn tools(&self) -> Vec<PlatformTool> {
         let name = json!({ "type": "string", "description": "Artifact name, like report.md" });
         let version = json!({ "type": "integer", "description": "Version (default latest)" });
+        let id = json!({
+            "type": "string",
+            "description": "An artifact_id from artifact_list, to pick one of several artifacts with the same name (name and version are then ignored)"
+        });
         vec![
             PlatformTool {
                 name: "artifact_publish".into(),
@@ -661,16 +686,20 @@ impl PlatformTools for ArtifactTools {
             },
             PlatformTool {
                 name: "artifact_read".into(),
-                description: "Read a small text artifact (up to 64 KB).".into(),
-                input_schema: json!({ "type": "object", "properties": { "name": name, "version": version }, "required": ["name"] }),
+                description: "Read a small text artifact (up to 64 KB). Give its name, or its artifact_id from artifact_list.".into(),
+                input_schema: json!({ "type": "object", "properties": { "name": name, "version": version, "artifact_id": id } }),
             },
             PlatformTool {
                 name: "artifact_fetch".into(),
-                description: "Copy an artifact into your workspace (default handoff/<name>).".into(),
+                description: "Copy an artifact into your workspace (default handoff/<name>). Give its name, or its artifact_id from artifact_list.".into(),
                 input_schema: json!({
                     "type": "object",
-                    "properties": { "name": name, "version": version, "path": { "type": "string" } },
-                    "required": ["name"]
+                    "properties": {
+                        "name": name,
+                        "version": version,
+                        "artifact_id": id,
+                        "path": { "type": "string" }
+                    }
                 }),
             },
         ]

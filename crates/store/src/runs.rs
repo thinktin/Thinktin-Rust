@@ -89,7 +89,7 @@ pub const INTERRUPTED_REASON: &str = "interrupted by a new message";
 pub enum Urgent {
     /// 实例空闲：排在它别的排队消息前面。
     Free,
-    /// 有运行正在执行：它的执行器续租时看到，停下这一轮、结束运行，新消息接着跑。
+    /// 有运行正在执行：它的执行器续租时看到，停下这一轮、结束运行，排着的紧急消息按先后接着跑。
     Interrupting(RunId),
     /// 占着实例的运行停在等待里（等子任务、等 key、等电脑、退避）、没人在执行：直接取消了（连同子孙）。
     Stopped(RunId),
@@ -350,6 +350,17 @@ macro_rules! bump_epochs_where {
     };
 }
 
+/// 按 id 顺序锁住符合条件、还没结束的运行（到事务结束）：改实例（令牌代数）之前先锁运行，见 [`Tx::lock_run_tree`]。
+macro_rules! lock_runs_where {
+    ($filter:literal) => {
+        concat!(
+            "SELECT id FROM runs WHERE ",
+            $filter,
+            " AND state NOT IN ('succeeded', 'failed', 'cancelled') ORDER BY id FOR NO KEY UPDATE"
+        )
+    };
+}
+
 impl<R> Tx<R> {
     /// 按 id 顺序锁住这些运行和它们所有的子孙（到事务结束）：取消一整棵树之前先锁运行、再改实例（令牌代数），
     /// 和执行器（先锁自己的运行、再改实例）同一个顺序，不会互相等死。
@@ -544,6 +555,10 @@ impl Tx<Tenant> {
 impl Tx<Tenant> {
     /// 停掉整棵运行树（8.2）：根和所有没结束的子孙一起取消。返回取消的个数。
     pub async fn cancel_run_tree(&mut self, root: RunId, reason: &str) -> Result<u64> {
+        sqlx::query(lock_runs_where!("root_run_id = $1"))
+            .bind(root.0)
+            .execute(self.conn())
+            .await?;
         sqlx::query(bump_epochs_where!("root_run_id = $1"))
             .bind(root.0)
             .execute(self.conn())
@@ -622,6 +637,9 @@ impl Tx<Tenant> {
         let waiting = queued_urgent()
             .max_by_key(|r| (r.not_before, r.id))
             .map(|r| (r.id, r.not_before));
+        let head = queued_urgent()
+            .min_by_key(|r| (r.not_before, r.id))
+            .map(|r| r.id);
         // 已经有紧急消息在等着打断占着实例的那个了：新的排在紧急消息后面就行。没有的话（比如占着实例的是
         // 在紧急消息之后才领走的），新的去打断它。
         let targeted =
@@ -643,7 +661,7 @@ impl Tx<Tenant> {
             (None, Some((first, _))) => Urgent::Behind(first.into()),
             (None, None) => Urgent::Free,
             (Some((id, true)), _) => {
-                new.interrupts_run_id = Some(id.into());
+                self.mark_interrupt(&mut new, head, id).await?;
                 Urgent::Interrupting(id.into())
             }
             (Some((id, false)), _) => {
@@ -673,7 +691,7 @@ impl Tx<Tenant> {
                 .bind("the parent run was interrupted")
                 .execute(self.conn())
                 .await?;
-                new.interrupts_run_id = Some(id.into());
+                self.mark_interrupt(&mut new, head, id).await?;
                 Urgent::Stopped(id.into())
             }
         };
@@ -683,6 +701,29 @@ impl Tx<Tenant> {
             .await?
             .ok_or_else(|| Error::Conflict("run already exists".into()))?;
         Ok((run, urgent))
+    }
+
+    /// 记下谁打断了 `holder`：前面排着紧急消息的，记在排第一的那条上（它下一个跑，“你刚才在做……被打断了”
+    /// 落在紧接着的那一轮，先来后到也不乱）；没有的，记在新的这条上。
+    async fn mark_interrupt(
+        &mut self,
+        new: &mut NewRun,
+        head: Option<Uuid>,
+        holder: Uuid,
+    ) -> Result<()> {
+        match head {
+            Some(head) => {
+                sqlx::query(
+                    "UPDATE runs SET interrupts_run_id = $2, updated_at = now() WHERE id = $1",
+                )
+                .bind(head)
+                .bind(holder)
+                .execute(self.conn())
+                .await?;
+            }
+            None => new.interrupts_run_id = Some(holder.into()),
+        }
+        Ok(())
     }
 
     /// 占着实例的运行（8.9 查进度用）。
@@ -740,6 +781,13 @@ impl Tx<Tenant> {
         instance: InstanceId,
         reason: &str,
     ) -> Result<u64> {
+        sqlx::query(lock_runs_where!(
+            "(instance_id = $1 \
+              OR root_run_id IN (SELECT id FROM runs WHERE instance_id = $1 AND parent_run_id IS NULL))"
+        ))
+        .bind(instance.0)
+        .execute(self.conn())
+        .await?;
         sqlx::query(bump_epochs_where!(
             "(instance_id = $1 \
               OR root_run_id IN (SELECT id FROM runs WHERE instance_id = $1 AND parent_run_id IS NULL))"
@@ -781,6 +829,10 @@ impl Tx<Worker> {
     /// 取消用户所有没结束的运行（冻结、“全部停止”，4.6）：执行中的副本续租失败后停下 agent，
     /// 这些实例的令牌代数加一，已经发出的沙箱令牌马上作废（模型网关不再放行）。返回取消的个数。
     pub async fn cancel_user_runs(&mut self, user: UserId, reason: &str) -> Result<u64> {
+        sqlx::query(lock_runs_where!("user_id = $1"))
+            .bind(user.0)
+            .execute(self.conn())
+            .await?;
         sqlx::query(bump_epochs_where!("user_id = $1"))
             .bind(user.0)
             .execute(self.conn())
@@ -847,6 +899,19 @@ impl Tx<Worker> {
             let Some(id) = id else {
                 return Ok(None);
             };
+            // 选的那条语句的快照里还没有刚提交的紧急消息（8.12）：拿到锁之后再看一眼，有就让它先走，这条
+            // 留着排队（下一轮的新快照里看得到紧急消息，不会再选它）。
+            let behind_urgent: bool = sqlx::query_scalar(
+                "SELECT r.state = 'queued' AND NOT r.urgent AND EXISTS ( \
+                   SELECT 1 FROM runs u WHERE u.instance_id = r.instance_id AND u.urgent AND u.state = 'queued') \
+                 FROM runs r WHERE r.id = $1",
+            )
+            .bind(id)
+            .fetch_one(self.conn())
+            .await?;
+            if behind_urgent {
+                continue;
+            }
             sqlx::query("SAVEPOINT claim").execute(self.conn()).await?;
             let claimed: Result<Row> = sqlx::query_as(concat!(
                 "UPDATE runs SET state = 'starting', attempt = attempt + 1, \
@@ -946,6 +1011,15 @@ impl Tx<Worker> {
     /// 停掉 `run` 下面所有没结束的子孙运行（父运行失败了，委派出去的子任务没人要了，8.7）。
     /// 执行中的子孙续租时发现被取消，停下 agent；令牌代数加一，沙箱令牌马上作废。返回取消的个数。
     pub async fn cancel_descendants(&mut self, run: RunId, reason: &str) -> Result<u64> {
+        sqlx::query(concat!(
+            "WITH RECURSIVE tree AS ( \
+               SELECT id FROM runs WHERE parent_run_id = $1 \
+               UNION SELECT r.id FROM runs r JOIN tree t ON r.parent_run_id = t.id) ",
+            lock_runs_where!("id IN (SELECT id FROM tree)")
+        ))
+        .bind(run.0)
+        .execute(self.conn())
+        .await?;
         sqlx::query(concat!(
             "WITH RECURSIVE tree AS ( \
                SELECT id FROM runs WHERE parent_run_id = $1 \
@@ -1427,6 +1501,10 @@ impl Tx<Worker> {
 
     /// 取消一个运行的所有没结束的直接子运行（失败传播）。
     pub async fn cancel_children(&mut self, parent: RunId, reason: &str) -> Result<u64> {
+        sqlx::query(lock_runs_where!("parent_run_id = $1"))
+            .bind(parent.0)
+            .execute(self.conn())
+            .await?;
         sqlx::query(bump_epochs_where!("parent_run_id = $1"))
             .bind(parent.0)
             .execute(self.conn())

@@ -49,10 +49,10 @@ pub async fn for_run(
     let id: RunId = parse_id(&id, "run")?;
     let mut t = s.db.tenant(who.user).await?;
     t.run(id).await?;
-    // 和 agent 看到的一样：回答队友问题的运行只列这个问题里的，别的列整棵树（含各个问题里的，8.11）。
-    let (root, whole) = t.artifact_scope(id).await?;
+    // 和 agent 看到的一样：回答队友问题的运行只列这个问题里的，别的列整棵树；都含下面各个问题里的（8.11）。
+    let scope = t.artifact_scope(id).await?;
     let list: Vec<Artifact> = t
-        .tree_artifacts(root, whole)
+        .tree_artifacts(&scope)
         .await?
         .into_iter()
         .map(|a| a.artifact)

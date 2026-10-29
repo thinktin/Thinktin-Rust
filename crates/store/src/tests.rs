@@ -4600,7 +4600,8 @@ async fn unarchived_board_posts_count_as_new() {
 }
 
 /// 紧急消息（8.12）先来后到：实例空闲时连发两条，后一条排在前一条后面；占着实例的那个没有紧急消息去打断时，
-/// 再来的去打断它，但照样排在之前的紧急消息后面；紧急消息不当普通消息捎带。
+/// 再来的去打断它，但照样排在之前的紧急消息后面，打断记在排第一的那条上（它紧接着跑，开头说明打断了什么）；
+/// 紧急消息不当普通消息捎带。
 #[tokio::test]
 async fn urgent_messages_keep_their_order() {
     use crate::Urgent;
@@ -4637,10 +4638,16 @@ async fn urgent_messages_keep_their_order() {
     let first = w.claim_next_run("x", LEASE).await.unwrap().unwrap();
     assert_eq!(first.run.id, a.id);
     w.commit().await.unwrap();
-    // a 跑着的时候再来一条：b 只是排在 a 后面、没去打断谁，这条去打断 a（照样排在 b 后面）。
+    // a 跑着的时候再来一条：b 只是排在 a 后面、没去打断谁，这条去打断 a（照样排在 b 后面），打断记在 b 上。
     let (c, how) = urgent("c").await;
     assert_eq!(how, Urgent::Interrupting(a.id));
     let mut w = db.worker().await.unwrap();
+    assert!(w.interrupt_pending(a.id).await.unwrap());
+    assert_eq!(
+        w.run_record(b.id).await.unwrap().interrupts_run_id,
+        Some(a.id)
+    );
+    assert_eq!(w.run_record(c.id).await.unwrap().interrupts_run_id, None);
     w.transition_run(a.id, "x", RunState::Running, &RunChange::default())
         .await
         .unwrap();
@@ -4710,14 +4717,20 @@ async fn urgent_messages_go_first_and_untargeted_holders_get_interrupted() {
     let stray = w.create_run(u, &stray).await.unwrap().unwrap();
     w.commit().await.unwrap();
     let mut tx = db.tenant(u).await.unwrap();
-    let (_, how) = tx
+    let (stop, how) = tx
         .queue_urgent_run(&NewRun::new(inst.id, RunSource::User, "stop", "1"))
         .await
         .unwrap();
     assert_eq!(how, Urgent::Interrupting(late.id));
     tx.commit().await.unwrap();
+    // 打断记在排第一的那条上：它紧接着跑。
     let mut w = db.worker().await.unwrap();
     assert!(w.interrupt_pending(late.id).await.unwrap());
+    assert_eq!(
+        w.run_record(stray.id).await.unwrap().interrupts_run_id,
+        Some(late.id)
+    );
+    assert_eq!(w.run_record(stop.id).await.unwrap().interrupts_run_id, None);
     w.rollback().await.unwrap();
     // 之前那条照样排在前面。
     let mut tx = db.tenant(u).await.unwrap();

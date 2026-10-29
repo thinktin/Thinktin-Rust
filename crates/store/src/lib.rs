@@ -47,7 +47,7 @@ use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::{PgConnection, PgPool, Postgres, Transaction};
 
 pub use approvals::{ApprovalRecord, NewApproval, approval_key, split_approval_key};
-pub use artifacts::{NewArtifact, StoredArtifact};
+pub use artifacts::{ArtifactScope, MAX_LISTED_ARTIFACTS, NewArtifact, StoredArtifact};
 pub use board::{
     BOARD_ARCHIVE_RETENTION, BoardFilter, NewBoardPost, check_board_body, normalize_board_tags,
 };

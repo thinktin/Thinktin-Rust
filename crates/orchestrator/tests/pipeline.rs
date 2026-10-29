@@ -27,7 +27,7 @@ use proto::domain::{
 use proto::shim::{ShimCommand, ShimEvent, StopReason};
 use sandbox::local::LocalProvider;
 use sandbox::{SandboxId, SandboxProvider};
-use serde_json::json;
+use serde_json::{Value, json};
 use store::NewPlan;
 use store::testing::TestDb;
 use tokio::sync::{mpsc, watch};
@@ -380,7 +380,8 @@ async fn steps_run_in_dependency_order_and_hand_over_artifacts() {
     // 上游产出物已经复制到下游的工作区。
     let mut w = e.t.db.worker().await.unwrap();
     let rt_b = w.instance_runtime(e.b.id).await.unwrap();
-    let artifacts = w.tree_artifacts(root, true).await.unwrap();
+    let scope = w.artifact_scope(root).await.unwrap();
+    let artifacts = w.tree_artifacts(&scope).await.unwrap();
     // 每一步都有自己实例上的子授权，从计划授权收窄而来。
     let report_rec = w.run_record(child("report").id).await.unwrap();
     let (_, g) = w.run_grant(report_rec.run_grant_id.unwrap()).await.unwrap();
@@ -692,15 +693,89 @@ async fn answering_a_question_sees_only_its_own_artifacts() {
         )
         .await;
     assert!(text(&read).contains("private"), "{}", text(&read));
+    // 同名的按 artifact_list 给的 id 挑。
+    let listed: Value = serde_json::from_str(&text(&mine)).unwrap();
+    let theirs_id = listed["artifacts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["name"] == "inbox.md" && a["from_run"] == json!(q.id))
+        .unwrap()["artifact_id"]
+        .clone();
+    let read = tools
+        .call(
+            &ctx(e.a.id, r.id),
+            "artifact_read",
+            &json!({ "name": "inbox.md", "artifact_id": theirs_id }),
+        )
+        .await;
+    assert!(text(&read).contains("not yours"), "{}", text(&read));
     let theirs = tools
         .call(&ctx(e.b.id, q.id), "artifact_list", &json!({}))
         .await;
     assert!(text(&theirs).contains("answer.md"), "{}", text(&theirs));
+    // 回答方拿着提问方的 id 也读不到。
+    let mine_id = listed["artifacts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["name"] == "inbox.md" && a["from_run"] == json!(r.id))
+        .unwrap()["artifact_id"]
+        .clone();
+    let read = tools
+        .call(
+            &ctx(e.b.id, q.id),
+            "artifact_read",
+            &json!({ "artifact_id": mine_id }),
+        )
+        .await;
+    assert!(read.is_error, "{}", text(&read));
+    // 回答的时候 b 又问了 a 一个问题 q2：b 看得到 q2 的回答方发布的，最初的 r 也看得到；q2 看不到 q 的。
+    let mut w = e.t.db.worker().await.unwrap();
+    let mut q2 = store::NewRun::new(e.a.id, RunSource::Ask, "q2", &e.a.agent_version);
+    q2.parent_run_id = Some(q.id);
+    let q2 = w.create_run(e.user, &q2).await.unwrap().unwrap();
+    w.commit().await.unwrap();
+    store
+        .publish(
+            Origin {
+                user: e.user,
+                instance: e.a.id,
+                run: q2.id,
+                root: q2.id,
+            },
+            "nested.md",
+            "text/markdown",
+            b"deeper",
+        )
+        .await
+        .unwrap();
+    for (instance, run) in [(e.a.id, r.id), (e.b.id, q.id), (e.a.id, q2.id)] {
+        let read = tools
+            .call(
+                &ctx(instance, run),
+                "artifact_read",
+                &json!({ "name": "nested.md" }),
+            )
+            .await;
+        assert!(text(&read).contains("deeper"), "{}", text(&read));
+    }
+    let nested = tools
+        .call(&ctx(e.a.id, q2.id), "artifact_list", &json!({}))
+        .await;
+    assert!(!text(&nested).contains("answer.md"), "{}", text(&nested));
     // App 里看提问的运行和整棵树，和 agent 看到的一样。
     let mut tx = e.t.db.tenant(e.user).await.unwrap();
-    assert_eq!(tx.artifact_scope(q.id).await.unwrap(), (q.id, false));
-    assert_eq!(tx.artifact_scope(r.id).await.unwrap(), (r.id, true));
-    assert_eq!(tx.tree_artifacts(r.id, true).await.unwrap().len(), 3);
-    assert_eq!(tx.tree_artifacts(q.id, false).await.unwrap().len(), 2);
+    let scope = tx.artifact_scope(q.id).await.unwrap();
+    assert_eq!(
+        (scope.own, scope.visible.clone()),
+        (q.id, vec![q.id, q2.id])
+    );
+    assert_eq!(tx.tree_artifacts(&scope).await.unwrap().len(), 3);
+    let scope = tx.artifact_scope(r.id).await.unwrap();
+    assert_eq!(scope.visible, vec![r.id, q.id, q2.id]);
+    assert_eq!(tx.tree_artifacts(&scope).await.unwrap().len(), 4);
+    let scope = tx.artifact_scope(q2.id).await.unwrap();
+    assert_eq!(scope.visible, vec![q2.id]);
     tx.rollback().await.unwrap();
 }

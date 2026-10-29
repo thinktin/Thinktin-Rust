@@ -1679,17 +1679,8 @@ impl Exec<'_> {
         if self.interrupt_pending().await {
             return Outcome::Superseded;
         }
-        if !self
-            .send(ShimCommand::Prompt {
-                run_id: run_id.clone(),
-                text: prompt,
-            })
-            .await
-        {
-            return Outcome::Retry("agent-shim exited".into());
-        }
-        // 结果交出去了（还没处理完，处理完这一轮才记成已交还）：再问同一个问题就是真的再问（8.11），这一轮
-        // 断了下次重交时按续跑说明。
+        // 结果要交出去了（处理完这一轮才记成已交还），先记下：这一轮里再问同一个问题就是真的再问（8.11），
+        // 这一轮断了下次重交时按续跑说明。记不下就先不交，免得再问时拿回同一个旧回答。
         if let Some((_, ids)) = &self.resume {
             let handed = async {
                 let mut w = self.ex.db.worker().await?;
@@ -1699,7 +1690,17 @@ impl Exec<'_> {
             .await;
             if let Err(e) = handed {
                 warn!(run = %self.rec.run.id, error = %e, "marking subtask results as handed over failed");
+                return Outcome::Retry("could not record the handover of subtask results".into());
             }
+        }
+        if !self
+            .send(ShimCommand::Prompt {
+                run_id: run_id.clone(),
+                text: prompt,
+            })
+            .await
+        {
+            return Outcome::Retry("agent-shim exited".into());
         }
         let budget = self.rec.budget;
         let deadline = Instant::now() + Duration::from_secs(budget.max_duration_secs.max(1));
