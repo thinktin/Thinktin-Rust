@@ -24,6 +24,7 @@ class DemoTestApp : ThinktinApp() {
         clock = FIXED_CLOCK,
         settingsName = "settings-${UUID.randomUUID()}",
         privacyPreaccepted = true,
+        licenseSource = { _, _ -> null },
     )
 
     companion object {

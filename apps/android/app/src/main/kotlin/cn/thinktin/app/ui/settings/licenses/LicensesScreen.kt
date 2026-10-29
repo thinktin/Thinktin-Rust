@@ -29,6 +29,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import cn.thinktin.app.ui.common.LocalAppContainer
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -58,9 +59,9 @@ const val LICENSE_COMPONENT_TEST_TAG = "license-component-"
  */
 @Composable
 fun LicensesScreen(onBack: () -> Unit, onOpenText: (path: String, title: String) -> Unit) {
-    val context = LocalContext.current
+    val source = LocalAppContainer.current.licenseSource
     val viewModel: LicensesViewModel = viewModel(
-        factory = viewModelFactory { initializer { LicensesViewModel(AssetLicenseSource(context.applicationContext.assets)) } },
+        factory = viewModelFactory { initializer { LicensesViewModel(source) } },
     )
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     Scaffold(
@@ -214,11 +215,11 @@ private fun ComponentRow(
 /** 一份原文（`licenses/text?path=`）。 */
 @Composable
 fun LicenseTextScreen(path: String, title: String, onBack: () -> Unit) {
-    val context = LocalContext.current
+    val source = LocalAppContainer.current.licenseSource
     val viewModel: LicenseTextViewModel = viewModel(
         key = "license-text-$path",
         factory = viewModelFactory {
-            initializer { LicenseTextViewModel(AssetLicenseSource(context.applicationContext.assets), path) }
+            initializer { LicenseTextViewModel(source, path) }
         },
     )
     val state by viewModel.uiState.collectAsStateWithLifecycle()
