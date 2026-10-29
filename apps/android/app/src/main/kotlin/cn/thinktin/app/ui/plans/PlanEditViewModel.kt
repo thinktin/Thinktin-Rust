@@ -346,10 +346,11 @@ class PlanEditViewModel(
 
     // ---- 关闭 ----
 
-    /** 返回：有改动先问一句。 */
+    /** 返回：有改动先问一句；保存中不让关（关了协程被取消，计划会留成半截）。 */
     fun requestClose() {
         val s = state.value
         when {
+            s.saving -> Unit
             s.editing != null -> dismissTrigger()
             s.hasChanges && !s.saving -> state.update { it.copy(confirmDiscard = true) }
             else -> eventChannel.trySend(PlanEditEvent.Closed)
@@ -412,17 +413,11 @@ class PlanEditViewModel(
                 state.update { it.copy(original = updated) }
                 didSomething = true
             }
-            while (true) {
-                val id = state.value.removedTriggerIds.firstOrNull() ?: break
-                try {
-                    service.deleteTrigger(id)
-                } catch (e: ServiceError.Api) {
-                    // 别处已经删了。
-                    if (e.status != 404 && e.code != "not_found") throw e
-                }
-                state.update { it.copy(removedTriggerIds = it.removedTriggerIds.drop(1)) }
-                didSomething = true
-            }
+            // 先加新规则再删旧的：服务端拒绝新规则时旧规则还在。只有加完会超过上限时才先删。
+            val s = state.value
+            val onServer = s.triggers.count { !it.isNew } + s.removedTriggerIds.size
+            val deleteFirst = onServer + s.triggers.count { it.isNew } > PlanLimits.MAX_TRIGGERS
+            if (deleteFirst) didSomething = deleteRemovedTriggers() || didSomething
             for (item in state.value.triggers.filter { it.isNew }) {
                 val trigger = service.addTrigger(planId, item.schedule)
                 state.update { s ->
@@ -430,6 +425,7 @@ class PlanEditViewModel(
                 }
                 didSomething = true
             }
+            if (!deleteFirst) didSomething = deleteRemovedTriggers() || didSomething
         } catch (e: ServiceError) {
             state.update { it.copy(saveError = ErrorText.of(e), partiallySaved = it.partiallySaved || didSomething) }
             return
@@ -442,5 +438,22 @@ class PlanEditViewModel(
         } ?: return
         state.update { it.copy(original = saved, partiallySaved = false) }
         eventChannel.trySend(PlanEditEvent.Saved(saved, created = false))
+    }
+
+    /** 删掉标了删除的触发器（删一条记一条，失败后重试只做剩下的）；删了任何一条返回 true。 */
+    private suspend fun deleteRemovedTriggers(): Boolean {
+        var deleted = false
+        while (true) {
+            val id = state.value.removedTriggerIds.firstOrNull() ?: break
+            try {
+                service.deleteTrigger(id)
+            } catch (e: ServiceError.Api) {
+                // 别处已经删了。
+                if (e.status != 404 && e.code != "not_found") throw e
+            }
+            state.update { it.copy(removedTriggerIds = it.removedTriggerIds.drop(1)) }
+            deleted = true
+        }
+        return deleted
     }
 }
