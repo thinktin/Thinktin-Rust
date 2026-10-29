@@ -193,7 +193,11 @@ P1 后端核心（M1–M9）和 P2 里能在代码层面完成的包都做完了
     `RunSource.ask` 显示成“队友提问”、带 AI 标识（现在 iOS 会显示成“你”），不认识的来源别当成用户发的（12.24 / 13.17 一起做，
     这个容器里没有 Swift 和安卓工具链）。
   - 已知偶发：`crates/relay/tests/relay.rs` 的 `heartbeats_drop_revoked_frozen_and_silent_computers` 偶尔失败、重跑就过（和本批改动无关）。
-  - 下一步：修复评审的结果处理完以后做事件触发（7.1 的事件部分），然后项目与跨用户协作（8.13–8.19）。
+  - 事件触发（7.1 的事件部分）第一版做完（`8da843c`，设计和接口见 [事件触发](../event-triggers.md)）：计划的 webhook
+    （迁移 0030 `plan_hooks`、`runs.hook_id`），外面的服务往 `/v1/webhooks/<令牌>` 发 JSON 或文本，平台按计划起一次运行；建的时候要
+    用户同意、令牌只给一次、库里存哈希；按 webhook、按用户每小时限流，排着的最多 5 个；计划策略加 `notify_success`（成功不打扰）。
+    client-core 和安卓绑定都更新了。没做：平台自己接邮箱、IM 收消息，按服务商校验签名，平台内的事件（看板、产出物）。
+  - 下一步：webhook 这一版过一遍评审（对外不要登录的接口）；然后项目与跨用户协作（8.13–8.19）。
 - 已完成：ACS 沙箱后端这一批（2026-10-28，本会话 session_016LgPcdynywrhrjCq8VVFLt，用户定“1、省钱；2、解绑；3、写”）写完了：
   envd 客户端拆到 `envd.rs`（`7beff64`）；`AcsProvider` + 模拟测试，创建时要 Pod IP、拿不到就删沙箱（`0d472b5`）；没有卷的后端
   不乱删沙箱、运行中换地址会记下（`a7ddfe6`）；`[sandbox.acs]`、`THINKTIN_ACS_API_KEY`、`docs/sandbox-acs.md`（`531c38a`）；
