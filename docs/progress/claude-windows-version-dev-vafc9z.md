@@ -6,7 +6,7 @@
 
 已完成：
 - 分支与进度文件（本文件）。
-- **后端认 Windows 是电脑**：`DevicePlatform::Windows` + `is_computer()`（中继、设备消息方向、网关登录唤醒等电脑的运行、执行器的提示文案），迁移 `0023_windows_devices.sql` 放宽 `devices.platform` 的约束；client-core 的 `capability_allows_path` / `capability_message` 认 Windows 路径（盘符、UNC、两种分隔符、不分大小写、`\\?\` 前缀，`DirPath`）；iOS / 安卓授权页的目录校验也收 `C:\…`（没法在这里跑 Swift / Gradle，改动只有几行）。`cargo test` 过（store、relay、gateway、client-core、orchestrator、desktop）。
+- **后端认 Windows 是电脑**：`DevicePlatform::Windows` + `is_computer()`（中继、设备消息方向、网关登录唤醒等电脑的运行、执行器的提示文案），迁移 `0024_windows_devices.sql`（原 0023，和 main 上的 0023_workspace_archives 撞号，合并 main 时改号） 放宽 `devices.platform` 的约束；client-core 的 `capability_allows_path` / `capability_message` 认 Windows 路径（盘符、UNC、两种分隔符、不分大小写、`\\?\` 前缀，`DirPath`）；iOS / 安卓授权页的目录校验也收 `C:\…`（没法在这里跑 Swift / Gradle，改动只有几行）。`cargo test` 过（store、relay、gateway、client-core、orchestrator、desktop）。
 - **`desktop` 库跨平台**：命令在 Windows 上走 PowerShell（不开控制台、UTF-8 输出、带回原生退出码），删除进回收站（`SHFileOperationW`），`policy::resolve` 去掉 `\\?\`，`computer_open` 按 `Path::is_absolute` 分路径和应用；新模块 `keys`（按键写法解析，跨平台）、`screenshot`（缩放和 JPEG 编码，跨平台）、`windows`（GDI 截图、`SendInput` 键鼠、`ShellExecuteW` 打开、前台程序名、点到别的程序的窗口上拒绝、打开就会运行的文件不开）；`ToolSet` 把几个后端合成一个。端到端测试的依赖只在非 Windows 上编。`cargo clippy --target x86_64-pc-windows-gnu` 和 `cargo test --no-run`（MinGW 链接）都过；Linux 上单元测试过。
 
 - **`apps/windows` 托盘应用**（工作区成员 `thinktin-windows`，egui 0.31 + tray-icon 0.21，说明见 [docs/windows.md](../windows.md)）：登录页（验证码、60 秒重发）、手机控制（状态、开始 / 停止、正在执行的工具、被顶掉 / 被拒的提示）、手机（配对二维码带倒计时、解除配对）、授权列表、设置（开机自启写注册表 Run 键、退出登录）；托盘图标颜色随状态，菜单打开 / 开始停止 / 退出，关窗口收进托盘；`state.bin` 经 DPAPI 存会话、配对私钥、开关；`--background` 启动不显示窗口，按上次开关恢复；中英文按系统语言，加载系统中文字体。Linux 上 clippy 和单元测试过；`x86_64-pc-windows-gnu` 上 clippy 过、release 构建出了 `thinktin.exe`（MinGW 链接）。
