@@ -1,5 +1,7 @@
 # 交接：阿里云部署（2026-10-28）
 
+> iOS（TestFlight 发版、界面对比）的交接在 [handoff-ios.md](handoff-ios.md)（2026-10-29）。
+
 上一个会话（session_01JYVuTJTo78Zrenhct8Bkw5）用量快满了，下一个 agent 从这里接着干。分支是 `claude/determined-lovelace-vn0j5h`，
 PR #14 是开着的（部署脚本和文档）。**用户说“合并”才合。**
 
