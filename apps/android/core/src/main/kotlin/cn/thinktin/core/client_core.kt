@@ -1790,7 +1790,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_set_accept_language() and 0xFFFF) != 57462) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_client_core_checksum_method_thinktinclient_set_board_post_archived() and 0xFFFF) != 2134) {
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_set_board_post_archived() and 0xFFFF) != 22954) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_set_credential_daily_limit() and 0xFFFF) != 1631) {
@@ -4018,7 +4018,8 @@ public interface ThinktinClientInterface {
     fun `setAcceptLanguage`(`acceptLanguage`: kotlin.String?)
     
     /**
-     * 归档、取消归档。没归档的已经有 200 条时取消归档报 422（先归档别的）。
+     * 归档、取消归档。已经是那样的不动（重试不出错）；没归档的已经有 200 条时取消归档报 422（先归档别的）。
+     * 取消归档的算新的：看板满了自动归档时按取消归档的时间排。
      */
     suspend fun `setBoardPostArchived`(`postId`: kotlin.String, `archived`: kotlin.Boolean): BoardPost
     
@@ -6185,7 +6186,8 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
 
     
     /**
-     * 归档、取消归档。没归档的已经有 200 条时取消归档报 422（先归档别的）。
+     * 归档、取消归档。已经是那样的不动（重试不出错）；没归档的已经有 200 条时取消归档报 422（先归档别的）。
+     * 取消归档的算新的：看板满了自动归档时按取消归档的时间排。
      */
     @Throws(ClientException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
