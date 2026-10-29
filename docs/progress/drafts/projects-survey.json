@@ -1,0 +1,1117 @@
+{
+ "maps": [
+  {
+   "area": "teams",
+   "summary": "TEAMS TODAY: strictly single-user, with no project concept anywhere. A team is a named set of one user's instances. Each member has a role (lead or member) and a position, and a team has at most one lead. The store enforces \"same user\" three ways:\n(1) composite FKs: team_members (team_id,user_id)->teams and (instance_id,user_id)->instances (0002_collaboration.sql:16-25);\n(2) the RLS policy user_id = app_user_id() on teams, team_members and team_templates (0002:95-105);\n(3) every team function lives on Tx<Tenant>. insert_members calls self.instance() (RLS plus a non-deleted check) and rejects more than one lead (teams.rs:24-42). A partial unique index team_one_lead backs the lead rule (0002:27).\n\nMembership changes are a wholesale replace: update_team deletes every member, then re-inserts (teams.rs:88-112). team() hides soft-deleted instances with a JOIN, but their rows stay in team_members (teams.rs:50-57).\n\nTEMPLATES: team_templates stores a jsonb spec of TemplateMember entries (agent_id, harness, name, role) (domain.rs:853-866). Gateway create_template takes either a spec or a team_id; the team_id form snapshots the team's instances (routes/teams.rs:123-162). adopt_template runs in one tenant transaction:\n- lock the per-user instance count and enforce the instance limit (409);\n- for each member, call control::adopt_in, then create_run_grant(default_scope);\n- create_team (routes/teams.rs:183-226).\n\nAPI: /v1/teams and /v1/team-templates (routes/mod.rs:148-159). Teams have 1-12 members; names are 1-64 characters.\n\nDELEGATION SCOPE:\n- Tool exposure: the default platform tools include delegate_list/delegate for every grant (server/config.rs:136-147). So in practice the executor's gate is only `scope has DELEGATE_TOOLS && w.is_team_lead(instance)` (executor.rs:763-769, filter at 843), and calls outside the gate are refused (executor.rs:1848-1853).\n- is_team_lead is a Worker query: does any team_members row with role='lead' exist for this instance (instances.rs:546-555)? It is global, not tied to a team or run, and does not check deletion.\n- Who the lead can reach: delegation_targets runs under tenant(ctx.user). It returns the union of members of every team this instance leads, minus itself and deleted instances (instances.rs:529-543; delegate.rs:44-49).\n\nDELEGATE FLOW (delegate.rs:75-189):\n1. Match the target by name or id.\n2. Take lock_run_waits(ctx.user), a per-user advisory lock (runs.rs:417-423).\n3. Check depth (at most 3) and cycles with run_chain and instance_waits_for; cap at 10 children.\n4. create_child_grant(ctx.grant, target, same scope). The child grant is owned by the parent grant's user (grants.rs:246-275).\n5. create_run(ctx.user, …): the child run is owned by the lead's owner, inherits plan_id and budget, and has parent_run_id set.\n6. Emit a delegate.started event on the lead's instance.\nWhen the lead resumes, the executor names each child via tenant(rec.user_id).instance(child) (executor.rs:799-818).\n\nPIPELINES: steps are NOT team-scoped. A step can use any of the plan owner's non-deleted instances:\n- check_steps (gateway plans.rs:101-120) validates the shape; set_plan_steps (store plans.rs:252-279) checks ownership through RLS self.instance(); plan_steps has an FK (instance_id,user_id) (0002:57-68).\n- PipelineDriver::start_step (pipeline.rs:209-273) creates each step run with create_run(root.user_id), using a child grant from the plan's grant and the root's budget. HandoffCopier copies upstream artifacts through the per-user-DEK ArtifactStore (pipeline.rs:438-479).\n- Teams matter to pipelines only in the apps: \"new pipeline from team\" pre-fills one step per member, a summary step on the lead, and hosts the plan on the lead.\n\nRUNS: every run FK is composite with user_id, including parent_run_id and run_grant_id (0001_init.sql:249-253). The database therefore forbids cross-user run trees.\n\nCLIENTS:\n- client-core: api.rs:1600-1696 does REST. ffi.rs:722-823 defines the UniFFI records (Team, TeamMember, TemplateMember, TeamTemplate; role is a string) and ffi.rs:2418-2534 the 10 methods.\n- iOS: the ThinktinCore binding is generated at build time and not committed. The Team names run through 54 files (33 non-test): Core.swift typealiases, CoreClient adapter, ClientProtocol, ObservedClient, MockClient, models, Teams view models and screens, AppRoute .teams/.team/.teamTemplates/.pipelineEditor(teamID:), and instance detail and deletion-impact.\n- Android: the generated binding client_core.kt is committed, with 127 hits. Overall 31 files (21 non-test): ThinktinService, CoreThinktinService, Mappers, Models, Mock, Teams view models and screens, routes teams/team/{id}/teams/new/plans/new?teamId=, drawer, and strings in zh and en.\n- Neither app has a teams deep link. Both apps require a lead, but the server does not.\n- Renaming is a breaking FFI change for both apps at once. The design doc says there is no production data, so the cost is code churn, not a data migration.",
+   "files": [
+    {
+     "path": "/home/user/Thinktin-Rust/docs/projects.md",
+     "what": "Design for cross-user projects. Section 3 says teams become single-user projects and team templates become project templates; sections 5-7 cover the data boundary, sessions and the lead/delegation rules."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/migrations/0002_collaboration.sql",
+     "what": "teams (5-13), team_members with composite same-user FKs (16-25), team_one_lead partial unique index (27), team_templates (30-37), plan_steps with FK (instance_id,user_id) (57-68), RLS tenant policy loop (95-105), grants (107-110)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/migrations/0001_init.sql",
+     "what": "run_grants FKs (171-172) and runs FKs (249-253). All are composite with user_id, including parent_run_id, so run trees cannot cross users. app_user_id() is defined at line 21."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/src/teams.rs",
+     "what": "Tx<Tenant> only: create_team (13-22), insert_members with the at-most-one-lead and own-instance checks (24-42), team() hiding deleted instances (44-74), teams() one query per team (76-85), update_team wholesale member replace (88-112), delete_team (114-123), template create/list/get/delete (125-189). There is no template update."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/src/instances.rs",
+     "what": "delegation_targets (529-543, Tenant, union of members of teams the instance leads); is_team_lead (546-555, Worker, global and not deletion-aware); peers (501-527, same-user ask/status scope); instance() non-deleted lookup (284-294); lock_instance_count (252-263)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/src/plans.rs",
+     "what": "set_plan_steps (252-279): step instances checked through RLS self.instance(), so only the plan owner's instances. retire_instance_plans (314-345, Tenant) pauses pipelines with a step on a deleted instance. deleted_step (440-455). share_instances advisory locks (422-436)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/src/runs.rs",
+     "what": "insert_run root_run_id inheritance (267-280); Worker create_run(user, new) (801-803); lock_run_waits per-user advisory lock (417-423); delegated_runs/ask_runs/unreported_children (986-1046); run_chain (1082-1097); instance_waits_for (1153-1175); tree_tokens_except, the shared tree budget (974-983)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/src/grants.rs",
+     "what": "create_child_grant (246-275): the child grant is owned by the parent grant's user and inherits plan_id; its scope must be contained in the parent's."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/src/users.rs",
+     "what": "erase_account (183-231) deletes runs by user_id (200) and teams/team_templates (211-212)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/src/tests.rs",
+     "what": "RLS coverage test (~760-815) only checks tables that have a user_id column; it asserts 'teams' is RLS'd. The erase test (~819-1090) lists teams/team_members/team_templates. create_team and create_team_template are used around 952-972."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/proto/src/domain.rs",
+     "what": "TeamId/TeamTemplateId (64-65), TeamRole lead/member (289-295), Team (828-835), TeamMember (837-842), TeamTemplate (844-851), TeamTemplateSpec (853-856), TemplateMember with role defaulting to member (858-870), PlanStep (872-880), order_steps (883+)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/gateway/src/routes/teams.rs",
+     "what": "MAX_MEMBERS=12 (16); check_members (18-25); list returns {teams} (27-32); create/get/update/delete (34-106); templates list (108-113); create_template from spec XOR team_id (115-162); delete_template (164-174); adopt_template (176-226): instance-limit lock, adopt_in, create_run_grant(default_scope), create_team, all in one transaction."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/gateway/src/routes/mod.rs",
+     "what": "Routes /v1/teams, /v1/teams/{id}, /v1/team-templates, /v1/team-templates/{id}, /v1/team-templates/{id}/adopt (148-159). default_scope (186-191)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/gateway/src/routes/plans.rs",
+     "what": "MAX_STEPS=20 (23); check_steps shape-only validation (101-120); create takes the share_instances lock on plan and step instances, then set_plan_steps (143-192); update with steps (~270-305)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/gateway/tests/api.rs",
+     "what": "teams_pipelines_and_artifacts (1266+): a foreign instance as team member gives 404 (~1298-1308), another user's GET team gives 404 (~1309-1317), template from team plus adopt (~1330-1368), a foreign instance as plan step gives 404 (~1405-1415)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/orchestrator/src/delegate.rs",
+     "what": "DELEGATE_TOOLS (24), MAX_DEPTH=3 (27), MAX_CHILDREN_PER_RUN=10 (29); targets via tenant(ctx.user) (44-49); list (51-73); delegate (75-189): no-team error (82-86), name/id match (87-97), lock_run_waits(ctx.user) (101), depth/cycle checks (103-129), child grant (137-143), lead label = agent_id (144-148), NewRun and create_run(ctx.user) (157-173), delegate.started event (174-181). Tool descriptions saying 'team' (263-280)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/orchestrator/src/executor.rs",
+     "what": "Lead gating: lead = grant scope has delegate tools && is_team_lead (763-769); tool filter (843); allowed_tools (845); call-time refusal (1848-1853); resume message names children via tenant(rec.user_id).instance() (799-818); ToolContext built at 924-930 (no project field)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/orchestrator/src/pipeline.rs",
+     "what": "advance (85-206); start_step (209-273): instance_runtime on any user's instance, child grant from root grant, create_run(root.user_id), locale of root user, pipeline.step_started event on the root's instance; HandoffCopier::copy (438-479) reads dependency artifacts through the per-user-key ArtifactStore."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/orchestrator/src/shim.rs",
+     "what": "ToolContext {user, instance, run, plan, grant} (66-72). No project_id."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/orchestrator/src/texts.rs",
+     "what": "delegated_task prompt 'your team lead ({lead})' (426-438); teammate wording (363, 457, 494, 612-613)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/server/src/config.rs",
+     "what": "default_platform_tools includes DELEGATE_TOOLS for every new grant (136-147)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/server/src/workers.rs",
+     "what": "DelegateTools wired into the ToolSet (140)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/orchestrator/tests/executor.rs",
+     "what": "delegation_env builds a team with create_team (1917-1955); the_lead_delegates... (1964); delegating_back_up_the_chain_is_refused (2027); team() helper (2131); depth (2156) and children cap (2224) tests."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/client-core/src/api.rs",
+     "what": "REST client for teams/templates (1600-1696). update_team sends only the fields given; create_team_template sends {name, spec, team_id}."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/client-core/src/ffi.rs",
+     "what": "UniFFI records TeamMember/Team/TemplateMember/TeamTemplate (722-823; role is a string, the template flattens spec.members); 10 FFI methods (2418-2534): teams, create_team, team, update_team, delete_team, team_templates, create_team_template, create_team_template_from_team, delete_team_template, adopt_team_template."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/client-core/tests/client.rs",
+     "what": "ffi_teams_and_templates (1491+)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/apps/apple/ThinktinKit/Sources/ThinktinCoreAdapter/CoreClient.swift",
+     "what": "iOS adapter forwarding the 10 team FFI calls (491-545). Core.swift typealiases Team/TeamMember/TeamTemplate/TemplateMember (44-47). The binding is generated at build time (Package.swift 9, 21)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/apps/apple/ThinktinKit/Sources/ThinktinKit/Client/ClientProtocol.swift",
+     "what": "Protocol methods teams..adoptTeamTemplate (184-199). Implemented by ObservedClient (471-508), MockClient (951+) and the adapter."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/apps/apple/ThinktinKit/Sources/ThinktinKit/Models/Teams.swift",
+     "what": "Swift Team/TeamMember/TemplateMember/TeamTemplate; maxMembers=12; lead helper; members(leadFirst:)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/apps/apple/ThinktinKit/Sources/ThinktinKit/ViewModels/Teams/TeamsModels.swift",
+     "what": "Teams list, templates, adopt and detail (32-146); TeamEditorModel (170-265) requires a lead (noLead), lists only own non-deleted instances, and saves with create/updateTeam (wholesale)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/apps/apple/ThinktinKit/Sources/ThinktinKit/ViewModels/Teams/PipelineRules.swift",
+     "what": "fromTeam (178-191): one step per member plus a 'summary' step on the lead that depends on all of them."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/apps/apple/ThinktinKit/Sources/ThinktinKit/ViewModels/Teams/PipelineEditorModel.swift",
+     "what": "teamID entry point (13, 37-40); prefill and host the plan on the lead (87-92)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/apps/apple/ThinktinKit/Sources/ThinktinKit/Navigation/AppRoute.swift",
+     "what": "Routes .teams/.team(TeamID)/.teamTemplates/.pipelineEditor(planID:teamID:) (65-69), feature mapping (152), top-level list (178). AppFeature.teams (AppFeature.swift 19, 47). No deep link (DeepLinkTests.swift 58)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/apps/apple/ThinktinKit/Sources/ThinktinKit/ViewModels/Agents/InstanceDeletionImpact.swift",
+     "what": "TeamImpact for the delete-instance warning (91-140, 173-202). InstanceDetailModel.swift shows the teams an instance belongs to (100-141)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/apps/android/core/src/main/kotlin/cn/thinktin/core/client_core.kt",
+     "what": "Committed, generated UniFFI Kotlin binding (127 team hits). Must be regenerated on any FFI rename."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/apps/android/data/src/main/kotlin/cn/thinktin/data/service/ThinktinService.kt",
+     "what": "Service interface team methods (279-303). CoreThinktinService.kt (390-413), Mappers.kt (520-539), Models.kt (534-560), MockThinktinService.kt (842-915), MockData.kt (709)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/apps/android/app/src/main/kotlin/cn/thinktin/app/ui/teams/TeamsViewModels.kt",
+     "what": "Teams list, template adopt/delete, detail, editor (85-325). TeamFormProblem.NoLead (228, 249). TeamsScreens.kt is the UI."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/apps/android/app/src/main/kotlin/cn/thinktin/app/ui/plans/PipelineSteps.kt",
+     "what": "Pipeline.fromTeam (143-153). PlanEditViewModel.kt: Create(teamId) (30-31), prefillFromTeam hosts the plan on the lead (223-233)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/apps/android/app/src/main/kotlin/cn/thinktin/app/navigation/Routes.kt",
+     "what": "PLAN_NEW with teamId (32), TEAMS/TEAM/TEAM_NEW/TEAM_EDIT (36-41), ARG_TEAM_ID (104), builders (127-135), TOP_LEVEL (157). MainNavigation.kt wiring (167, 354-410); AppDrawer.kt (70, 153); ComingSoon.kt (35-36); InstanceSettingsViewModel.kt delete impact (38-50, 218-228); strings.xml and values-en/strings.xml."
+    }
+   ],
+   "extension_points": [
+    "crates/store/migrations (new 0031_projects.sql): create projects / project_members / project_agents (instance_id, owner user_id, is_lead, dedicated, grants) / project_invites. Migrate teams to projects with a creator member, team_members to project_agents (role='lead' becomes is_lead), and team_templates to project_templates. Replace team_one_lead with a per-project partial unique index on is_lead. RLS must use a membership predicate (e.g. EXISTS project_members WHERE user_id = app_user_id()), not user_id = app_user_id().",
+    "crates/store/migrations/0002_collaboration.sql:57-68 plan_steps: the FK (instance_id,user_id)->instances blocks steps on another member's agent. Add project_id to plans/plan_steps and an FK to project_agents, or drop user_id coupling for project plans.",
+    "crates/store/migrations/0001_init.sql:249-253 runs: add project_id. The FK (parent_run_id,user_id) must relax so a child run owned by agent B's owner can have a parent owned by A's owner. RLS needs an extra SELECT policy for project members on runs/events WHERE project_id IS NOT NULL.",
+    "crates/store/src/teams.rs:13-189: becomes projects.rs. Split the wholesale update_team (88-112) into add_agent/remove_agent/set_lead (each user manages only their own agents; the creator can remove anyone). insert_members (24-42) must verify the instance belongs to the caller, not just that it is visible.",
+    "crates/store/src/instances.rs:529-543 delegation_targets: needs a project argument (from the run) and must return project_agents of that project across owners. It must run under Worker or a membership-aware RLS, since the tenant RLS on instances hides other users' agents.",
+    "crates/store/src/instances.rs:546-555 is_team_lead: replace with is_project_lead(instance, project) keyed on the run's project_id, so leading a project does not expose delegate tools in private runs.",
+    "crates/orchestrator/src/shim.rs:66-72 ToolContext: add project: Option<ProjectId> (from runs.project_id), set in executor.rs:924-930.",
+    "crates/orchestrator/src/executor.rs:763-769 and 843: gate the delegate tools on (instance is lead of rec.run.project_id). Ensure scope = project scope ∩ owner grant (doc §7).",
+    "crates/orchestrator/src/delegate.rs:99-181: for cross-user targets, create the child grant under the target owner's user and grant (not ctx.grant's user, grants.rs:246-275), and call create_run(target_owner). Set new.project_id. Budget is per owner (not parent.budget plus tree_tokens_except across users). Use a project-wide or global lock instead of lock_run_waits(ctx.user) at line 101. Use user_locale of the target owner? (currently ctx.user at line 155).",
+    "crates/orchestrator/src/executor.rs:799-818: name children via the project's agent list or a Worker query rather than tenant(rec.user_id).instance(), which returns NotFound for other users' agents.",
+    "crates/orchestrator/src/pipeline.rs:209-273 start_step: for project plans, create the step run under the step agent's owner with that owner's grant, and set project_id. HandoffCopier (438-479) must read artifacts encrypted with the project key.",
+    "crates/store/src/plans.rs:252-279 set_plan_steps: allow step instances that are project_agents of the plan's project (currently self.instance() under tenant RLS). Also retire_instance_plans (314-345) must pause other users' project pipelines when an agent is deleted, withdrawn or leaves.",
+    "crates/gateway/src/routes/teams.rs and routes/mod.rs:148-159: becomes routes/projects.rs with /v1/projects, members, agents, invites, plus /v1/project-templates. Optionally keep /v1/teams* as thin aliases during the app transition.",
+    "crates/gateway/src/routes/teams.rs:123-162 create_template from team: restrict to the caller's own agents in the project (t.instance() fails for others). Template spec should describe members by agent kind (doc §3).",
+    "crates/gateway/src/routes/teams.rs:183-226 adopt_template: becomes adopt project template. Create a project with the creator as the only member, adopt the instances and add them as project_agents. Each (instance, project) also needs its own session/workspace (doc §6).",
+    "crates/proto/src/domain.rs:64-65, 289-295, 828-870: add ProjectId/ProjectTemplateId/Project/ProjectAgent/ProjectMember/ProjectInvite/ProjectRole; decide whether TeamRole stays (lead) or becomes a bool is_lead.",
+    "crates/client-core/src/api.rs:1600-1696 and ffi.rs:722-823, 2418-2534: replace the Team* records and methods with Project* (UniFFI renames are breaking). Regenerate apps/android/core/.../client_core.kt; the iOS ThinktinCore is regenerated at build.",
+    "crates/store/src/tests.rs ~760-815 RLS coverage test: extend it to tables without a user_id column (project_id keyed), or they escape the 'reachable by thinktin_app without RLS' check.",
+    "crates/store/src/users.rs:211-212 erase_account: replace the teams/team_templates deletes with the doc §10 rules (leave other projects, delete own projects and destroy their keys, keep authored content anonymised). Line 200 deletes runs by user_id, so cross-user parent/child cascades must be handled.",
+    "apps/apple: ClientProtocol.swift:184-199, CoreClient.swift:491-545, ObservedClient.swift:471-508, MockClient.swift:951+, Models/Teams.swift, ViewModels/Teams/*, PipelineRules.fromTeam:178-191, PipelineEditorModel:87-92, AppRoute.swift:65-69/152/178, InstanceDeletionImpact.swift, InstanceDetailModel.swift:100-141, Screens/Teams/*.",
+    "apps/android: ThinktinService.kt:279-303, CoreThinktinService.kt:390-413, Mappers.kt:520-539, Models.kt:534-560, Mock*, ui/teams/*, PipelineSteps.fromTeam:143-153, PlanEditViewModel:30-31/223-233, Routes.kt:32-41/104/127-135/157, MainNavigation.kt:167/354-410, AppDrawer.kt:70/153, InstanceSettingsViewModel.kt:38-50/218-228, strings.xml (zh and en)."
+   ],
+   "pitfalls": [
+    "Composite same-user FKs are the real isolation today: team_members (0002:23-24), plan_steps (0002:67), runs parent_run_id/run_grant_id/plan_id (0001:249-253), run_grants parent_id (0001:172). Dropping them for projects removes a DB-level guarantee, so replace each with an explicit membership FK or check, not nothing.",
+    "The RLS coverage test in store tests.rs only inspects tables that have a user_id column. New project tables keyed by project_id (and any membership-based policy) would pass silently, and a missing policy would leak across users.",
+    "delegation_targets runs under tenant(ctx.user). The current safety net is that RLS hides other users' instances. Moving it to Tx<Worker> to see cross-user agents without an explicit project-membership join would let a lead delegate to any instance id in the system (the target is matched by raw instance_id string, delegate.rs:87-90).",
+    "is_team_lead (instances.rs:546-555) is global per instance, not per run. If ported as 'is lead of any project', a project lead's private runs would get delegate tools and could push private context to other users' agents. Gate on the run's project_id.",
+    "create_child_grant copies the parent grant's user and scope (grants.rs:253-273), and delegate/pipeline call create_run(ctx.user / root.user_id). A naive cross-user child would run on the lead owner's account: the wrong model key, budget, approvals and usage. Doc §7 requires the agent owner's key, budget and approvals, with scope = project ∩ owner.",
+    "Shared tree budget: new.budget = parent.budget (delegate.rs:168, pipeline.rs:261) plus tree_tokens_except over root_run_id (runs.rs:974-983). This would charge one owner's budget with another owner's tokens. Doc §7 says split per owner.",
+    "lock_run_waits is keyed per user (runs.rs:417-423). Two users' agents delegating or asking each other concurrently would not serialise, which reopens the A-waits-B-waits-A race that 8.8/8.11 closed. A project or global lock is needed (sorted order if several).",
+    "The executor resume path names children with tenant(rec.user_id).instance(child) (executor.rs:802-810). Other users' agents come back as empty names. Their summaries are cross-user untrusted content injected into the lead's prompt (doc §9).",
+    "delegated_task labels the lead by agent_id (e.g. 'claude'), not instance name or owner (delegate.rs:144-148, texts.rs:426-438). In cross-user projects the member cannot tell which user's agent is instructing it.",
+    "update_team is a wholesale delete-and-reinsert (teams.rs:104-110), and both apps send the full member list. In projects that lets one member drop other users' agents. Use per-agent add/remove with owner and creator authorisation.",
+    "Soft-deleted instances stay in team_members. team() hides them via JOIN but team_one_lead still counts them, and is_team_lead does not check deletion. If migrated rows carry deleted instances, a project may appear to have no lead while the index blocks adding one.",
+    "Pipeline steps: set_plan_steps uses tenant self.instance() (plans.rs:258), so foreign steps get 404 (gateway test api.rs ~1415 asserts this). retire_instance_plans is Tenant-scoped (plans.rs:314-345), so deleting or withdrawing an agent will not pause another user's project pipeline that has a step on it. The step would later fail at start_step with 'instance was deleted' or start under the wrong owner.",
+    "HandoffCopier reads upstream artifacts with the per-user DEK store (pipeline.rs:467-468). Cross-owner step handoff fails or needs the project key. Never decrypt one user's private artifacts into another user's sandbox.",
+    "Events delegate.started and pipeline.step_started are written on the lead's or root's instance and carry the other agent's instance_id and name (delegate.rs:174-181, pipeline.rs:264-270). Once project members can read project-run events, check that no private-run data rides along.",
+    "erase_account deletes runs by user_id (users.rs:200). With cross-user run trees, a parent_run_id FK with ON DELETE CASCADE would delete other users' child runs. Also, teams are deleted by owner only (users.rs:211), but project membership must follow doc §10.",
+    "create_template from team snapshots each member via t.instance() (routes/teams.rs:133-142). Once projects include other users' agents, this returns NotFound or leaks their agent names into a template. Restrict it to own agents.",
+    "Both apps require exactly one lead (iOS TeamFormProblem.noLead, TeamsModels.swift; Android TeamsViewModels.kt:228,249), but the server allows zero (teams.rs:25). Settle the rule before the rename so migrated lead-less teams do not become uneditable in the apps.",
+    "FFI rename is breaking: UniFFI record and method names change, the Android binding client_core.kt is committed and must be regenerated, and iOS fails to compile until the adapter, protocol, mock and view models are updated. That is roughly 33 non-test iOS files and 21 non-test Android files. There is no teams deep link, so no URL compatibility is needed."
+   ],
+   "open_questions": [
+    "Keep /v1/teams* and /v1/team-templates* as aliases for already-installed app builds (TestFlight or internal tracks), or hard-cut, given the doc says there is no production data?",
+    "Where does a project pipeline's plan live: a project_id on plans owned by the creator, hosted on the lead's instance as the apps do today? Who owns the pipeline root run and its grant when steps span owners?",
+    "Today an instance can lead several teams and delegate to the union of their members (instances.rs:534-536). In projects, should delegate_list show only the agents of the current run's project, and what does a lead's private run see?",
+    "Can a non-lead project member sub-delegate? Today any instance that leads some team can re-delegate up to depth 3, so a member that leads another team can push work into a different team mid-tree.",
+    "Limits: gateway MAX_MEMBERS=12 per team/template versus doc §11 defaults of 10 users / 30 agents per project. Which applies to single-user projects and templates?",
+    "Is the lead a bool on project_agents (one per project) or a role enum? Must every project have a lead? (Server: optional; apps: required.)",
+    "When existing teams migrate to single-user projects, do their members' runs switch to the new per-(instance, project) session/workspace (doc §6)? Does that apply only to runs carrying project_id, with delegated runs from existing teams keeping the private session?",
+    "Which locale and whose push/approval routing should a cross-user delegated child use? Today it is ctx.user's locale (delegate.rs:155) and the root user's for pipelines (pipeline.rs:248).",
+    "Should project templates still carry harness and instance name per member (TemplateMember), or only agent kind as doc §3 suggests? Should the role 'lead' stay in the template spec?"
+   ]
+  },
+  {
+   "area": "rls",
+   "summary": "Tenant isolation today is one rule: every business query runs inside `Db::tenant(user)` (crates/store/src/lib.rs:119-133). That function opens a pooled transaction and runs `set_config('role','thinktin_app',true)`, `set_config('app.user_id',$1,true)` and a 15s statement_timeout. Both settings are transaction-local, so they reset at commit or rollback, and a Tx that is dropped rolls back. `app_user_id()` (0001_init.sql:21-23) is `LANGUAGE sql STABLE` and returns `nullif(current_setting('app.user_id',true),'')::uuid`. It is not SECURITY DEFINER. When the setting is missing it returns NULL, so nothing matches. `Db::worker/llmgw/relay` (lib.rs:136-170) switch to roles that have BYPASSRLS (0001:17-18, 0014:15) and set no user id. Isolation on those paths depends only on their table and column grants plus code.\n\nRLS policies: every tenant table has ENABLE + FORCE RLS and one policy, `tenant FOR ALL TO thinktin_app USING/WITH CHECK (user_id = app_user_id())`. The tables are:\n- devices, sessions, credentials, instances, model_routes, run_grants, plans, triggers, runs, events, approvals, inbox_items, usage_records (0001:427-438)\n- teams, team_members, team_templates, plan_steps, artifacts (0002:95-105)\n- model_route_fallbacks (0008:18-21), vault_items, vault_requests (0009:47-57), tool_calls (0012:13-15), device_messages (0014:74-76), im_channels (0017:35-37), live_activities (0018:43-45), content_reports (0019:32-34), board_posts (0025:33-35), plan_hooks (0030:20-22)\n\nThe exceptions:\n- users: `self` policy, `id = app_user_id()` (0001:440-442)\n- audit_log: INSERT only (0001:445-447)\n- outbox: INSERT, plus a SELECT policy and a column grant on only (user_id, dedupe_key), needed for ON CONFLICT (0001:455-459, 474)\n- device_links: SELECT only (0014:71-73)\n- login_codes, user_keys, session_refresh_history, device_calls: FORCE RLS with no policy, so the app role sees nothing\n- blob_purge: ENABLE but not FORCE, worker only (0007:36-38)\n- im_bot_slots: no RLS, worker only (0017:47-51)\n\nThere are no views and no ALTER DEFAULT PRIVILEGES, so every new table gets explicit grants.\n\nCross-table references use composite `(id, user_id)` foreign keys. The comment at 0001:13-14 explains why: FK checks bypass RLS, and the composite key makes a cross-user reference fail as 23503, which maps to Invalid. That includes `runs (parent_run_id, user_id) → runs (id, user_id)` (0001:252), so a run tree cannot span users today.\n\n`events` is `PARTITION BY RANGE (created_at)` (0001:271-282), with PK (instance_id, seq, created_at), seq taken from `instances.event_seq`. RLS and the app's SELECT/INSERT grant exist only on the parent (0001:432, 470). Monthly partitions are created by `ensure_event_partitions` and dropped by `drop_event_partitions_before`. Both are plpgsql SECURITY DEFINER with `SET search_path = public` (0001:286-319), and only the worker may execute them (0001:478-480). The partitions themselves have RLS off and no app grant.\n\nThe only other SECURITY DEFINER functions are the two blob-purge trigger functions (0007:40-48, 0023:32-61). They run as the table owner and insert into blob_purge, which works because that table is not FORCE.\n\nMost tenant reads have no explicit user filter and rely on RLS alone: run, run_tree, runs(instance), instance, instances, peers, delegation_targets, team, events_after, recent_run_events, and the artifact helpers. Only list_runs (runs.rs:482), the board queries and the instance count add `user_id = app_user_id()` themselves.\n\nTests:\n- `tenants_are_isolated` (store tests.rs:92-210) checks invisibility, forged inserts rejected with 42501 (mapped to Forbidden), and the composite-FK block.\n- `every_tenant_table_the_app_can_touch_has_rls` (tests.rs:761-816) checks only tables that have a `user_id` column: relrowsecurity must be on and at least one policy must exist. It does not check FORCE.\n- `other_users_objects_are_invisible` (gateway tests/api.rs:1680-1993) checks that about 40 id-based routes return 404, the lists are empty, the events WebSocket returns 404, and the owner's data is unchanged.\n- docs/security-audit.md:43-44 and docs/threat-model.md:61 describe these tests.\n\nThe production owner role matters for SECURITY DEFINER design. Dev and test connect as a SUPERUSER (tools/dev/setup-db.sh:16-18), so table owners and definer functions always bypass RLS there. In production, migrations run as `thinktin_owner`, which is a plain role (deploy-checklist.md:57-71). On FORCE tables it falls under RLS, and because every policy is `TO thinktin_app`, it is denied every row.\n\nSafest membership design:\n- Write a narrow SQL function, `STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp`, that schema-qualifies its tables.\n- It takes only a project id and reads `app_user_id()` itself, so it never accepts a user parameter.\n- REVOKE it FROM PUBLIC and GRANT EXECUTE to thinktin_app.\n- Its owner must actually bypass RLS on the membership table. Either leave that table ENABLE-but-not-FORCE (the blob_purge precedent) or have the function owned by a dedicated BYPASSRLS role that has SELECT only on the membership tables.\n- In policies, use it as `user_id = app_user_id() OR project_id = ANY((SELECT app_project_ids()))`. The scalar-subquery wrapper makes it an InitPlan that is evaluated once per statement and can use an index. Calling `app_is_project_member(project_id)` would run once per row, because SECURITY DEFINER SQL functions are never inlined.\n- Add member access as extra permissive `FOR SELECT` policies, so writes stay owner-only.",
+   "files": [
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/migrations/0001_init.sql",
+     "what": "Roles (16-18). app_user_id() (21-23). Composite-FK rationale (13-14). Runs FKs, including (parent_run_id,user_id) (248-253). Partitioned events table (271-283). SECURITY DEFINER partition functions with search_path=public (286-319). Tenant RLS loop over 13 tables (427-438). users self policy (440-442). audit_log append_own (445-447). login_codes/user_keys/outbox RLS (451-459). Every grant: app (466-474), worker ALL TABLES (477-480), llmgw (483-484). Note 466: app has table-level SELECT on users (phone included) and on instances."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/migrations/0002_collaboration.sql",
+     "what": "teams, team_members (composite FKs pin a team to a single user), team_templates, plan_steps, artifacts. Tenant RLS loop (95-105). App grants (107-109), worker grants (110)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/migrations/0007_review_fixes.sql",
+     "what": "session_refresh_history: FORCE, no policy (12-14). blob_purge: ENABLE without FORCE (36-38). queue_artifact_blob_purge SECURITY DEFINER trigger (40-48). These are the precedent for a definer function writing a non-FORCE table."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/migrations/0008_route_fallbacks.sql",
+     "what": "model_route_fallbacks: tenant policy, app/worker/llmgw grants (18-25)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/migrations/0009_vault.sql",
+     "what": "vault_items/vault_requests tenant RLS (47-57). Grants (59-61). llmgw column grant (id, user_id, name, sealed) (63)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/migrations/0012_tool_calls.sql",
+     "what": "tool_calls: tenant policy but grants for the worker only (13-16)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/migrations/0014_device_relay.sql",
+     "what": "thinktin_relay role (15). device_links SELECT-only policy. device_messages tenant policy. device_calls FORCE with no policy (71-78). App/worker grants (80-82). Relay column grants on users/devices/sessions/runs (84-92)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/migrations/0017_im_channels.sql",
+     "what": "im_channels tenant RLS with column-level UPDATE grant (35-42). im_bot_slots has no RLS and is worker only (47-51)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/migrations/0018_live_activities.sql",
+     "what": "live_activities tenant RLS and column UPDATE grants (43-52). See also 0022:5."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/migrations/0019_content_reports.sql",
+     "what": "content_reports tenant RLS. App gets SELECT and INSERT only (32-38)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/migrations/0023_workspace_archives.sql",
+     "what": "REVOKE INSERT/UPDATE on instances from app, then column-level INSERT/UPDATE grants (24-27). queue_workspace_archive_purge SECURITY DEFINER trigger that only accepts keys under the row owner's own prefix (32-61). This is the pattern for a definer function that distrusts its input."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/migrations/0024_peers.sql",
+     "what": "UPDATE(peer_access, purpose) on instances granted to app (9)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/migrations/0025_board.sql",
+     "what": "board_posts tenant RLS (33-35). App SELECT/INSERT/DELETE + UPDATE(archived_at) (38-39). 0028:9 adds UPDATE(revived_at)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/migrations/0030_plan_hooks.sql",
+     "what": "plan_hooks tenant RLS and column UPDATE grant (20-25). This is the newest migration; the next one is 0031."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/src/lib.rs",
+     "what": "Db::tenant sets role thinktin_app, app.user_id and statement_timeout via set_config(...,true) (119-133). worker (136-145), llmgw (148-157), relay (161-170). Tx<Tenant> carries only the user (179-183, 230-234)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/src/error.rs",
+     "what": "Maps 42501 (RLS WITH CHECK or missing grant) to Forbidden, 23503 FK to Invalid, 23505 to Conflict, RowNotFound to NotFound (37-55)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/gateway/src/error.rs",
+     "what": "store NotFound becomes 404. Forbidden falls through to internal, i.e. 500 (66-79)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/src/events.rs",
+     "what": "append_event bumps instances.event_seq under the caller's role, inserts the event and pg_notify's the instance id (40-73). events_after (76-92) and event_range (96-110) are filtered by RLS only. recent_run_events (116-134). Partition maintenance on the worker (139-158)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/gateway/src/routes/events.rs",
+     "what": "Paging and WebSocket stream are keyed by instance. Ownership is checked via t.instance(id) under the tenant (64-67, 95-97). Every page runs in a fresh tenant transaction (42-53), so RLS is re-checked on each fetch."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/src/runs.rs",
+     "what": "Generic insert_run reads the parent's root under the caller's RLS (267-315). run (317-324) and run_tree (326-337) rely on RLS only. list_runs has an explicit user_id = app_user_id() (482). cancel_run uses SELECT ... FOR NO KEY UPDATE (511-542). cancel_run_tree uses UPDATE ... WHERE root_run_id (546-565)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/src/instances.rs",
+     "what": "instance (284-294), instances (296-306), peers (501-528) and delegation_targets (530-544) have no user_id predicate and rely on RLS. is_team_lead runs on the worker (548-556)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/src/artifacts.rs",
+     "what": "insert_artifact runs on the worker and counts per tree (104-143). artifact, artifact_scope, tree_artifacts, named_artifact and run_artifacts are generic and filtered by RLS only (145-244). instance_artifacts and delete_artifact are tenant-only (246-276)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/src/teams.rs",
+     "what": "Team membership inserts use app_user_id() and composite FKs (24-41). team() JOINs instances under RLS (44-75), so it would silently drop another user's agents."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/src/tests.rs",
+     "what": "tenants_are_isolated (92-210). every_tenant_table_the_app_can_touch_has_rls (761-816): only checks tables with a user_id column, checks relrowsecurity and policy count but not FORCE, and asserts thinktin_app is not BYPASSRLS."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/src/testing.rs",
+     "what": "TestDb connects with DATABASE_URL, a superuser in dev, and migrates as that user (18-44). Superusers bypass RLS, so production owner behaviour is never exercised."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/gateway/tests/api.rs",
+     "what": "other_users_objects_are_invisible (1680-1993): owner versus thief, about 40 routes return 404, 10 list endpoints are empty, the events WebSocket returns 404, and the owner's data is untouched."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/gateway/src/routes/runs.rs",
+     "what": "get, cancel and tree do a tenant t.run(id) and then act (166-235). cancel?tree=true calls cancel_run_tree, then t.run(root), then append_event on the run's instance."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/orchestrator/src/delegate.rs",
+     "what": "Delegation targets are read under tenant(ctx.user) (44-49). Child runs are created on the worker after lock_run_waits(ctx.user), a per-user advisory lock (90-100)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/docs/deploy-checklist.md",
+     "what": "Production roles (55-71): thinktin_owner is a plain LOGIN owner (not superuser, not BYPASSRLS). The four service roles are pre-created by the RDS admin. Login accounts are members of the service roles. This is where a new BYPASSRLS function-owner role would need to be added."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/tools/ci/check_migrations.py",
+     "what": "The lint flags REVOKE as breaking (213-216) and CREATE INDEX on existing tables as a warning. It does not inspect policies: DROP/CREATE POLICY ... USING (true) passes clean (370)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/tools/dev/setup-db.sh",
+     "what": "Dev and test role thinktin_dev is SUPERUSER (16-18)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/docs/security-audit.md",
+     "what": "Section 3 rows 43-44 list the RLS coverage test and the cross-user test. They need extending for projects (15.7/17.8)."
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/docs/projects.md",
+     "what": "Design. Section 5 is the data boundary (membership-based RLS for project tables; project runs and their events readable by members). Section 9 covers authorization and prompt injection."
+    }
+   ],
+   "extension_points": [
+    "New migration crates/store/migrations/0031_projects.sql. Create projects, project_members, project_agents and project_invites; add a nullable project_id to runs, events (partitioned parent: ALTER TABLE propagates and CREATE INDEX cascades; CONCURRENTLY is not allowed on the parent, which is fine with no live data), artifacts and the project board table. Add explicit grants for app and worker (there are no default privileges). Add ENABLE RLS plus policies, every one written `TO thinktin_app`.",
+    "Membership functions. Define them in the same migration after the tables exist. app_project_ids() RETURNS uuid[] and app_is_project_member(p uuid) RETURNS bool, both `LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp`. Bodies schema-qualify `public.project_members` and filter on `user_id = public.app_user_id() AND left_at IS NULL` (also projects.status <> 'deleted'). `REVOKE ALL ... FROM PUBLIC; GRANT EXECUTE ... TO thinktin_app`. Ownership: project_members/project_agents either ENABLE without FORCE (owner bypasses, as with blob_purge in 0007:36), or `ALTER FUNCTION ... OWNER TO` a dedicated NOLOGIN BYPASSRLS role that has SELECT only on the membership tables. That role must be pre-created per deploy-checklist.md:55-71 and needs `GRANT <role> TO thinktin_owner` so the migration can transfer ownership.",
+    "Policies on project tables. projects SELECT: `creator_id = app_user_id() OR id = ANY((SELECT app_project_ids()))`. The creator arm is needed because INSERT ... RETURNING checks the SELECT policy before the creator's membership row exists. project_members/project_agents SELECT: membership. INSERT on project_agents: WITH CHECK `user_id = app_user_id() AND project_id = ANY((SELECT app_project_ids()))`, plus a composite FK (instance_id, user_id) → instances(id, user_id). DELETE: own row, or the project creator (app_is_project_creator). Write policies should require projects.status = 'active' so archived projects are read-only.",
+    "runs/events/artifacts: keep the existing `tenant` ALL policy and add a second permissive `project_read FOR SELECT TO thinktin_app USING (project_id IS NOT NULL AND project_id = ANY((SELECT app_project_ids())))`. Postgres ORs permissive policies, so writes and SELECT FOR UPDATE still need user_id = app_user_id(). Index runs (project_id, id DESC) WHERE project_id IS NOT NULL, and events (project_id, created_at) or (run_id, seq) on the parent.",
+    "runs WITH CHECK, or a column grant, for project_id. A tenant may only set project_id when it is a member and the instance is in project_agents for that project. runs currently has table-wide INSERT/UPDATE for app (0001:466). Follow the 0023 precedent: REVOKE and re-GRANT by column, marked `-- deploy-safe` for tools/ci/check_migrations.py:213. Consider a composite FK (parent_run_id, project_id) → runs(id, project_id) (with UNIQUE (id, project_id)) so a project child cannot hang under a private parent.",
+    "runs parent FK (0001:252, `(parent_run_id, user_id) → runs(id, user_id)`) must change before cross-user delegation and ask can create a child owned by B under A's run. Options: FK on parent_run_id alone plus a trigger enforcing the same owner when project_id IS NULL, or the (parent_run_id, project_id) FK above. The artifacts (run_id, user_id) FK can stay because an artifact's owner is its run's owner.",
+    "Db::tenant (crates/store/src/lib.rs:119-133). Optionally add Db::tenant_in_project(user, project), which also does set_config('app.project_id', ...). app_project_ids() would then return only that project when it is set, so an agent working in P1 cannot read P2 or private data at the DB layer. Extend Tenant (lib.rs:180-183) with Option<ProjectId>. Platform tools that open tenant(ctx.user) (orchestrator tools.rs:199-313, board.rs:59/90, ask.rs:65, peers.rs:47/92, delegate.rs:45, vault.rs:46/111) would pass the run's project.",
+    "events.rs append_event (40-73). Copy runs.project_id into events.project_id when inserting, either via a subselect or a BEFORE INSERT trigger, so the events policy needs no per-row join to runs. A project event stream needs its own cursor such as (created_at, instance_id, seq) and a hub fan-out by project id. gateway/src/routes/events.rs:56-107 is per instance and calls event_range on instances, which members cannot read.",
+    "Co-member display data. Copy display_name into project_members and instance name/agent_id/purpose into project_agents, or expose them through a SECURITY DEFINER function that returns only safe columns. Do NOT add member SELECT policies to users or instances.",
+    "Cross-user writes (creator interrupts B's agent, notifications to other members via outbox/inbox_items, appending events on B's instance) must go through Tx<Worker> with explicit membership checks in Rust. The tenant policies on outbox (0001:457), inbox_items and instances deny writes for another user_id.",
+    "Tests. Extend every_tenant_table_the_app_can_touch_has_rls (store tests.rs:764-816) to cover tables with a project_id column (or every table the app can touch), to assert relforcerowsecurity, and to assert that every SECURITY DEFINER function in pg_proc is owned by a role that bypasses RLS on what it reads or has REVOKE FROM PUBLIC. Add a store test that ALTERs the owner of the membership tables and functions to a NOSUPERUSER NOBYPASSRLS role, so production ownership is simulated (TestDb is a superuser, testing.rs:18-44). Add a gateway test next to other_users_objects_are_invisible (api.rs:1680) with three users: member B sees A's project runs, events and artifacts but not A's private runs, instances or users rows; C (non-member) gets 404; B gets 404 right after leaving; and C cannot forge project_id on its own runs or project_agents rows."
+   ],
+   "pitfalls": [
+    "FORCE RLS plus a non-superuser owner gives silent default-deny in production. Every table is FORCE (for example 0001:435) and every policy is `TO thinktin_app`. A SECURITY DEFINER function or plain view owned by thinktin_owner that reads a FORCE table therefore sees zero rows in production, so membership is always false. Tests connect as a superuser (setup-db.sh:16-18, testing.rs) and bypass RLS, so they pass. The failure is fail-closed but invisible in CI. Use a non-FORCE membership table or a BYPASSRLS function owner, and add a test that simulates production ownership.",
+    "Infinite recursion. A policy on project_members that subqueries project_members, or a cycle such as projects → project_members → projects, fails every query at rewrite time with 42P17 'infinite recursion detected in policy'. A SECURITY DEFINER function avoids this only if its owner bypasses RLS on that table. If the owner falls under FORCE and a policy applies to the owner (for example one created without `TO thinktin_app`, which defaults to PUBLIC), the recursion moves to run time and fails with 'stack depth limit exceeded'. Always write `TO thinktin_app`.",
+    "Per-row cost. SECURITY DEFINER SQL functions, and any function with a SET clause, are never inlined. `app_is_project_member(project_id)` in a USING clause runs as a separate query for every candidate row: on events, run trees, artifact lists, and under the 15s tenant statement_timeout. A STABLE function in a filter is not cached between rows either. Use `project_id = ANY((SELECT app_project_ids()))` so it becomes an InitPlan evaluated once and can use an index. Put the cheap `user_id = app_user_id()` / `project_id IS NOT NULL` tests first, give the function a high COST, and index project_id. The OR of two permissive policies can only use a BitmapOr if both arms are indexable.",
+    "Never mark these functions IMMUTABLE. sqlx caches prepared statements per pooled connection and app.user_id changes between transactions on the same connection, so an IMMUTABLE function could be constant-folded or cached across tenants. STABLE is correct. Do not take a user_id parameter: `app_is_project_member(project, any_user)` would let any tenant probe other users' memberships.",
+    "Snapshot visibility. STABLE functions see the calling statement's snapshot. Creating a project, adding the creator to project_members and returning the project in a single statement (CTE) fails the membership check. projects INSERT ... RETURNING applies the SELECT policy to the new row and raises an error rather than filtering it, so the projects policy needs `creator_id = app_user_id() OR ...`.",
+    "Most tenant reads rely on RLS alone (instance/instances/peers/delegation_targets in instances.rs:284-544, run/run_tree/runs in runs.rs:317-337, events_after, artifact helpers, team() with JOIN instances). Adding a member SELECT policy to instances or users would immediately put co-members' agents into /v1/instances, agents_list and peers, which are the private same-user layer, and would expose every column: users.phone, instances.sandbox_address, workspace and archive keys, limits, purpose. Column grants are per role, not per row (app has table-level SELECT on users and instances, 0001:466).",
+    "A member SELECT policy on runs changes the meaning of existing tenant-read-then-act flows. For example, gateway runs.rs:185-220 with cancel?tree=true: t.run(root) becomes visible to member B, cancel_run_tree's UPDATE then cancels only B's own runs in A's tree (the UPDATE policy is still tenant), and append_event on A's instance returns NotFound and rolls back. Audit every tenant handler that reads a run, event or artifact by id and then mutates, or that hands the result to Tx<Worker>, because the worker bypasses RLS.",
+    "FK checks bypass RLS (0001:13-14). Without WITH CHECK membership tests, a member could insert project_agents with someone else's instance_id and user_id: a composite FK on (instance_id, user_id) still passes when user_id is set to the victim, and the agent would then run on the victim's key. A non-member could likewise set project_id on their own runs or board rows and push content (prompt injection, spam) into a project. WITH CHECK must require `user_id = app_user_id()` plus membership plus that the instance is a project agent.",
+    "The ALL `tenant` policy gives authors permanent write access to project-owned rows that carry their user_id. A member who leaves can still DELETE their project artifacts (app has DELETE on artifacts, 0002:109) and board posts. Account erasure also cascades them through `REFERENCES users ON DELETE CASCADE`, which contradicts projects.md sections 4.5 and 10 (content stays in the project). Either split tenant into per-command policies that exclude project_id IS NOT NULL from writes, or keep project content in project-keyed tables.",
+    "Partitioned events. Policies live only on the parent, and partitions have RLS off. thinktin_app is safe only because it has no grant on partitions (0001:470). Never `GRANT ... ON ALL TABLES IN SCHEMA public TO thinktin_app`: that would grant on the RLS-less partitions and bypass the policy. Per-instance seq values leak the count of private events to a member who sees only that instance's project events. Use a separate project cursor.",
+    "Existing SECURITY DEFINER functions use `SET search_path = public`, which leaves pg_temp searched first for relation names. New definer functions should use `SET search_path = pg_catalog, public, pg_temp` and schema-qualify tables. Temp tables persist on pooled connections, and PUBLIC has TEMP on the database by default. This is only exploitable with SQL injection, but it is cheap hardening.",
+    "Coverage gaps in the guard rails. every_tenant_table_the_app_can_touch_has_rls skips tables without a user_id column, so projects (creator_id) and project_members (keyed by project) would pass unchecked. It accepts any policy, including USING (true), and does not check FORCE. The migration lint (check_migrations.py:370) does not inspect policies at all. A RLS WITH CHECK failure surfaces as Forbidden, i.e. 500 (gateway error.rs:66-79), not 404. Unique-constraint conflicts (23505 to 409) on invisible rows are an existence oracle.",
+    "Per-user advisory lock lock_run_waits(user) (runs.rs:417-424, used in delegate.rs:91) does not serialize cross-user wait cycles (A asks B while B asks A). Project delegation and ask need a per-project or global lock key."
+   ],
+   "open_questions": [
+    "Which role should own the membership functions in production: a non-FORCE membership table owned by thinktin_owner, a new pre-created BYPASSRLS role such as thinktin_membership (needs a deploy-checklist change and RDS admin), or thinktin_worker (needs GRANT thinktin_worker TO thinktin_owner)?",
+    "Should the DB scope agents to the current project (an app.project_id setting in a project-aware tenant transaction) or only the code? RLS can only see app.user_id, so without the extra setting an agent in P1 can read every project its owner belongs to.",
+    "Do project runs keep a cross-user run tree (requiring a change to the runs (parent_run_id, user_id) FK, 0001:252) or does each member get a separate root linked by a project-level id? This also decides artifacts' UNIQUE (root_run_id, name, version) and the per-tree artifact cap.",
+    "Do members see the full runs row (prompt, summary, error, budget, run_grant_id, state_reason, tokens_used), or only a restricted projection through a definer function or view? RLS is row-level only, and the app has table-level SELECT on runs.",
+    "Do events of a project run go to the instance stream (seq per instance) and also to a new project stream, and what cursor does the project stream use? Should non-run instance events, which have no run_id, stay owner-only?",
+    "How should projects.status (archived = read-only, deleted = key destroyed) appear in policies: in the USING of read policies, or only in WITH CHECK?",
+    "Should project board posts and artifacts be new project-keyed tables, or project_id added to board_posts and artifacts with the tenant policy split per command? This affects erasure cascades and leave semantics.",
+    "Should the existing single-user teams tables be migrated into projects tables in the same migration (no production data yet), or kept until the client switches? Both sets would then need policies."
+   ]
+  },
+  {
+   "area": "visibility",
+   "summary": "Today every read path for runs, events and results works on one assumption: the reader is the row's user_id. The gateway opens `s.db.tenant(who.user)` (store/src/lib.rs:119-133). That transaction sets role thinktin_app and app.user_id. Then a single FOR ALL policy `tenant ... USING (user_id = app_user_id()) WITH CHECK (...)` scopes runs, events, approvals and inbox_items (0001_init.sql:427-438), and artifacts (0002_collaboration.sql:96-105) and live_activities (0018:43-45). Most store reads have no user filter at all, so RLS is the whole guard: `Tx<R>::run` and `run_tree` (store runs.rs:317-336), `events_after`, `event_range` and `recent_run_events` (events.rs:76-134), `artifact`, `artifact_scope` and `tree_artifacts` (artifacts.rs:146-227), and `pending_approvals`/`approval` and `inbox`. The one exception is `list_runs` (runs.rs:471-508), which hard-codes `user_id = app_user_id()` so it can use the runs_user_* indexes (0020).\n\nThe schema also blocks cross-user rows outright. Every reference is a composite FK on (x_id, user_id): runs to parent run, plan, instance and grant (0001:249-253); events to (instance, user) and (run, user) (0001:280-281); approvals (341-342); inbox_items to instance/run (378-379) and plan (0003); artifacts (0002:89-90); live_activities to (run, user) (0018). So a run, its events, its inbox rows and its live activities must all belong to one user. A cross-user run tree (lead agent of A delegating to B's agent) cannot exist today. delegate.rs:165 creates the child as `ctx.user`, so the FK on the target instance would reject it.\n\nRoutes:\n- **Runs** (gateway routes/runs.rs): `list` is per-instance and gated by `t.instance(id)` (:112-114). `list_all` is `/v1/runs` (:134-164). `get` (:166). `tree` loads the root, then `run_tree` (:223-234). `cancel` (:185-221) uses tenant UPDATEs plus `append_event`, and `append_event` UPDATEs the instances row.\n- **Events:** the stream is per instance with a per-instance seq. `append_event` (events.rs:40-73) bumps `instances.event_seq`, inserts the row with the instance's user_id and sends `pg_notify('thinktin_events', instance_id)`. EventHub (hub.rs:25-37, 80-85) wakes per-InstanceId broadcast subscribers. The WS stream (routes/events.rs:82-107) checks `t.instance(id)` once at connect. It then re-fetches through a new tenant transaction each wake (`fetch`, :42-53). Heartbeat re-checks only the token (:194-205). REST `page` (:56-74) returns oldest/latest from `event_range`, and that reads the instances row. The client caches by (instance_id, seq) (client-core cache.rs:30-33, 197-243; events.rs:133-143).\n- **Inbox/notifications:** `notify(w, user, notice)` (outbox.rs:195-212) writes one inbox row, a push and IM fan-out for exactly one user. `notify_tenant` (:215-237) can only write for the caller. Run finished, failed or waiting goes to `rec.user_id` (executor.rs:1166-1189). Pipeline completion goes to `root.user_id` (pipeline.rs:353-360). Delegate, ask and step child runs are quiet (executor.rs:1155-1164).\n- **Approvals:** created by the worker for `self.rec.user_id`, i.e. the run owner (executor.rs:2072-2106). Listed, read and decided only by that owner (routes/approvals.rs; store approvals.rs:204-292). This already matches the design.\n- **Artifacts:** sealed with the publishing user's DEK (`user_vault`, orchestrator artifacts.rs:159-212; publish :280-338; blob key `<user>/<id>` :300). They are decrypted server-side by the worker, keyed on `a.user_id` (:341-347). Routes are in routes/artifacts.rs.\n- **Live activities:** register (store live_activities.rs:146-213; gateway runs.rs:260-286) uses the device's user_id and an FK to that user's run. Remote start covers only the owner's devices, for plan root runs (live.rs:35-42). The worker claim joins runs and instances (:322-387).\n\nWhat changes for a run owned by A that members B and C must read:\n- Keep `runs.user_id` = agent owner. Add `project_id` to runs, events (denormalised inside `append_event` from the run), artifacts, inbox_items, approvals and the proto structs.\n- Add SELECT-only membership policies on runs, events and project artifacts. Membership must be read through a SECURITY DEFINER helper.\n- Replace the `t.instance(id)` gates with project-agent checks, because instances must stay private.\n- Add a per-project event feed with its own cursor.\n- Fan notifications out to the recipients named in the design.\n- Seal project artifacts with a project key.\n- Relax the composite FKs only for project rows, and use worker transactions with app-level authority checks for any cross-user write (cancel, events, inbox).",
+   "files": [
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/src/lib.rs",
+     "what": "Db::tenant (119-133) sets role thinktin_app + app.user_id; Db::worker (136-145) bypasses RLS; Tx<Tenant> vs Tx<Worker> method split"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/migrations/0001_init.sql",
+     "what": "app_user_id() (21-23); runs table + composite FKs incl. (parent_run_id,user_id) (217-254); events partitioned table, FKs (instance_id,user_id),(run_id,user_id) (271-283); approvals (323-344); outbox (350-366); inbox_items FKs (368-381); tenant FOR ALL policy loop (427-438); grants: app has SELECT,INSERT,UPDATE on runs/approvals/inbox, SELECT,INSERT on events (466-471)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/migrations/0002_collaboration.sql",
+     "what": "teams/team_members (single-user via composite FK), artifacts table with (run_id,user_id) FK (75-92), tenant policy on artifacts, app has SELECT,DELETE on artifacts (96-109)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/migrations/0003_inbox.sql",
+     "what": "inbox plan_id FK (plan_id,user_id), dedupe index (user_id,dedupe_key), approval index"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/migrations/0018_live_activities.sql",
+     "what": "live_activities PK (device_id,run_id), FK (run_id,user_id)->runs and (device_id,user_id)->devices, tenant policy, column-level UPDATE grants"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/migrations/0020_run_lists_and_waits.sql",
+     "what": "runs_user_active / runs_plan / runs_user_recent indexes that list_runs SQL must match exactly"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/migrations/0019_content_reports.sql",
+     "what": "content_reports deliberately without FKs; create_report reads runs/events/artifacts via tenant RLS (store reports.rs:119-170) so widening SELECT makes member reporting work"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/src/runs.rs",
+     "what": "insert_run (267-315, user bound explicitly, parent root lookup); Tx<R>::run (317-323) and run_tree (326-336) rely on RLS only; Tenant::runs per-instance (449-467); list_runs with explicit user_id = app_user_id() (471-508); cancel_run FOR NO KEY UPDATE (511-541); cancel_run_tree (546-565) uses rows_affected==0 then run() to distinguish missing vs finished; instance_holder/last_finished_run (689-715)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/src/events.rs",
+     "what": "EVENTS_CHANNEL; append_event bumps instances.event_seq, takes user_id from instance, inserts, pg_notify(instance id) (40-73); events_after (76-92); event_range reads instances.event_seq + min(seq) (96-110); recent_run_events (116-134)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/gateway/src/routes/runs.rs",
+     "what": "create (31-64), list per-instance gated by t.instance (99-117), list_all /v1/runs (134-164), get (166-176), cancel incl. tree + append_event under tenant (185-221), tree (223-234), live-activity register/end (260-286)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/gateway/src/routes/events.rs",
+     "what": "fetch per wake in fresh tenant tx (42-53); REST page gated by t.instance + event_range (56-74); WS stream: token auth, instance gate once, per-user open_stream slot (82-107); run_stream reset logic using event_range (139-160), page loop, heartbeat re-auths token only (162-217)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/gateway/src/hub.rs",
+     "what": "EventHub keyed by InstanceId (16-37); PgListener on store::EVENTS_CHANNEL, payload parsed as InstanceId (63-85); notify_all on reconnect"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/gateway/src/routes/approvals.rs",
+     "what": "list pending (12-17), get (20-30), decide + append_event approval.decided + audit in tenant tx (37-69)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/src/approvals.rs",
+     "what": "Worker create_approval/settle/cancel_run_approvals (100-202) also mark inbox read; Tenant pending_approvals/approval/decide_approval (204-286) rely on RLS"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/orchestrator/src/executor.rs",
+     "what": "finish(): run.state event, step_quiet logic for delegate/ask/steps, run notice to rec.user_id with owner locale (1140-1192); on_permission creates approval + Approval notice to self.rec.user_id (2051-2128); approval-skipped notice (2220-2240); run log write_event via worker (1241-1257); vault.used event (2036-2042)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/orchestrator/src/outbox.rs",
+     "what": "Notice struct (99-123), inbox() mapping (145-159), push() PushTarget ids (168-192), notify(worker, user) single recipient + IM fan-out (195-212), notify_tenant only for t.user() (215-237); dispatcher uses item.user_id for push targets/badge (540-542)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/orchestrator/src/pipeline.rs",
+     "what": "pipeline run.state event on root instance (122-128); pipeline completion notice to root.user_id (330-362)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/orchestrator/src/delegate.rs",
+     "what": "child run created with ctx.user (165-169) and child grant from parent grant (135-142); delegate.started event on parent instance (174-180) - cross-user trees impossible today"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/src/inbox.rs",
+     "what": "insert_inbox for any user (RLS WITH CHECK in tenant) with ON CONFLICT (user_id,dedupe_key) (89-123); settle helpers; Worker unread count (152-160); Tenant inbox/item/unread/mark/delete rely on RLS (163-257)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/gateway/src/routes/inbox.rs",
+     "what": "list/get/mark_read/mark_unread/delete, all tenant"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/gateway/src/routes/artifacts.rs",
+     "what": "for_instance gated by t.instance (28-42); for_run: run + artifact_scope + tree_artifacts (44-62); get (64-74); content decrypts via ArtifactStore::read with labels (95-135); delete under tenant (137-152)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/src/artifacts.rs",
+     "what": "insert_artifact (Worker, per-tree version numbering, 1000 cap) (104-141); artifact/artifact_scope/tree_artifacts/named_artifact generic over role (146-227); run_artifacts (232-243); Tenant instance_artifacts/delete_artifact (248-275)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/orchestrator/src/artifacts.rs",
+     "what": "user_vault: user DEK via worker user_keys, KMS-wrapped per user id string (159-212); ArtifactStore::publish seals with origin.user, blob key <user>/<id>, artifact.published event (280-338); read opens with a.user_id DEK (341-347)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/keyvault/src/lib.rs",
+     "what": "create_user_key wraps DEK with KMS using user_id string as context (497-505); seal_bytes/open_bytes AAD = blob_aad(user_id, object_id) (530-550) - namespace string can be reused for a project key"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/src/live_activities.rs",
+     "what": "register_live_activity: late check on runs, iOS check, per-device cap, insert with device's user_id (146-213); end (216-226); queue_live_starts for owner devices (286-317); claim joins runs/instances/devices, steps include direct children (322-387)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/orchestrator/src/live.rs",
+     "what": "queue_starts only for attempt<=1 plan root runs, rec.user_id devices (35-42); LiveDispatcher tick (152+)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/proto/src/domain.rs",
+     "what": "Run (751-775), Approval (805-826), Artifact (923-935), InstanceEvent (939-946) - none carry project_id or owner"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/client-core/src/events.rs",
+     "what": "WS URL per instance /v1/instances/{id}/events/ws?after= (133-145)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/client-core/src/cache.rs",
+     "what": "local SQLite cache of events and cursors keyed by instance_id/seq (30-33, 197-243) - persists after a member leaves"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/gateway/tests/api.rs",
+     "what": "other_users_objects_are_invisible (1682+) lists every run/event/artifact/approval/inbox endpoint as 404 for another user - the regression baseline for private runs"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/docs/projects.md",
+     "what": "design: section 5 data boundary, section 7 approvals to owner, section 8 notification recipients and project-filtered event stream"
+    }
+   ],
+   "extension_points": [
+    "Migration (new): add nullable project_id to runs, events (parent partitioned table), artifacts, inbox_items, approvals, live_activities; indexes runs(project_id, id DESC) WHERE project_id IS NOT NULL (mirror the exact-WHERE style of 0020 for list_runs-like statements), events(project_id, project_seq) or (project_id, created_at), artifacts(project_id, created_at DESC).",
+    "Migration: a SECURITY DEFINER STABLE function e.g. app_project_ids() returning the caller's active project ids (reads project_members where user_id = app_user_id() AND not left), GRANT EXECUTE to thinktin_app; then CREATE POLICY project_read ON runs FOR SELECT TO thinktin_app USING (project_id IS NOT NULL AND project_id = ANY ((SELECT app_project_ids()))) and the same on events and artifacts. Keep the existing FOR ALL tenant policies untouched so writes stay owner-only.",
+    "Migration: replace composite FKs only where cross-user is now legal: runs (parent_run_id,user_id) at 0001_init.sql:252 (cross-user delegation inside a project) -> single-column FK plus trigger/CHECK that child.project_id = parent.project_id and cross-user only when project_id IS NOT NULL; inbox_items (instance_id,user_id)/(run_id,user_id)/(plan_id,user_id) at 0001:378-379 and 0003 so creator C can get an inbox row pointing at A's run; live_activities (run_id,user_id) at 0018 so B's device can follow A's project run.",
+    "store events.rs:40-73 append_event: after the instances UPDATE, look up runs.project_id for `run` (NULL when run is None) and store it on the event; if a per-project feed is chosen, also allocate project_seq from the project row (UPDATE projects SET event_seq = event_seq + 1) in a fixed lock order (instance row, then project row) and pg_notify a second channel (e.g. thinktin_project_events, payload project id) so old replicas keep parsing thinktin_events as InstanceId (hub.rs:82).",
+    "store events.rs: new Tx<Tenant>::project_events_after(project, after, limit) and project_event_range(project) that read only events WHERE project_id = $1 (RLS still applies) - do not reuse event_range (events.rs:96-110) because it reads the private instances row.",
+    "gateway routes/events.rs: new /v1/projects/{id}/events and /events/ws handlers; gate with a project-membership lookup instead of t.instance(id) (events.rs:65, 96); in run_stream re-check membership on each heartbeat (events.rs:194-205) and close with a dedicated code when the member left; EventHub (hub.rs:16-37) needs a key type covering projects.",
+    "store runs.rs: new Tenant::project_runs(project, filter, before, limit) with explicit `project_id = $1`; leave list_runs (471-508) owner-scoped (it already includes A's agents' project runs for A). gateway runs.rs: GET /v1/projects/{id}/runs; optionally a `project_id` query param on list_all. run_tree (326-336) and get (166-176) work for members once the SELECT policy exists; Run DTO (proto domain.rs:751) needs project_id and an owner/agent label.",
+    "gateway runs.rs cancel (185-221): add a project-authority path (creator may interrupt any project run; owner own agent; lead agent its delegates) that runs in Db::worker after an explicit membership/role check, since tenant UPDATE on runs/instances and append_event (instances UPDATE) are RLS-blocked for non-owners.",
+    "orchestrator executor.rs:1166-1189 and pipeline.rs:353-360: replace single notify(rec.user_id) with a project fan-out helper: for project runs, notify creator + distinct owners of agents in the run tree (worker tx; per-recipient locale via user_locale; same dedupe key is fine because the unique index is per user_id); revisit step_quiet (executor.rs:1155-1164) so a cross-user delegated child's waiting/failure still reaches its owner while success reports roll up to the root.",
+    "orchestrator outbox.rs:99-192: add project_id to Notice, NewInboxItem (store inbox.rs:13-28) and PushTarget so the App opens the project page; notify() (195-212) unchanged per recipient; never use notify_tenant (215-237) for cross-user recipients (RLS WITH CHECK forbids).",
+    "executor.rs:2072-2106 approvals: keep recipient = self.rec.user_id (owner) per design section 7; add project_id to approvals and the approval Notice so the owner's list (store approvals.rs:206-217) can label it; do not add a member policy on approvals.",
+    "orchestrator artifacts.rs publish (280-338) / read (341-347): Origin gets project_id; seal with a project vault (new project_keys table analogous to user_keys, KMS context string like project:<uuid>, blob key prefix p/<project>/<id>); read dispatches on artifact.project_id; project deletion destroys the project key. store artifacts.rs insert_artifact (104-141) stores project_id.",
+    "gateway routes/artifacts.rs: new /v1/projects/{id}/artifacts list; for_run (44-62), get (64-74), content (95-135) work for members once the artifacts SELECT policy exists; delete (137-152) needs a project rule (author's owner or creator) via worker, not a widened tenant policy.",
+    "store live_activities.rs register_live_activity (146-213): after FK change, insert with the device's user and verify project membership (the late-check SELECT at 157-162 will already pass for members under the new runs policy); orchestrator live.rs:35-42 decide whose devices get remote-start for project plan runs; end members' live activities when they leave.",
+    "client-core: events.rs ws_url (133-145) and cache.rs (30-33) are instance-keyed; a project feed needs its own cursor table keyed by project and a purge on a 'left project' notice subtype; FFI/DTOs need project_id on Run, InstanceEvent, Artifact, InboxItem, Approval.",
+    "gateway/tests/api.rs:1682 other_users_objects_are_invisible: extend with a three-user matrix (owner A, member B, outsider D; A's private run vs A's project run; before/after B leaves)."
+   ],
+   "pitfalls": [
+    "Writing the membership policy FOR ALL (or copying the tenant loop at 0001_init.sql:431-437) instead of FOR SELECT would let members UPDATE/DELETE: cancel others' runs, delete others' artifacts (app has DELETE on artifacts, routes/artifacts.rs:137-152), mark/delete inbox rows. Policies are permissive and OR-ed.",
+    "A policy on runs/events that sub-selects project_members, where project_members itself has a membership RLS policy, recurses or re-evaluates per row; use a SECURITY DEFINER helper and wrap it as (SELECT app_project_ids()) so it is an initplan evaluated once per statement, especially on the partitioned events table.",
+    "Do not widen instances RLS to let members pass the existing t.instance(id) gates (routes/events.rs:65,96; runs.rs:113; artifacts.rs:36): instance rows carry sandbox_id, sandbox_address, workspace_id, limits. Replace the gates with project_agents checks.",
+    "A filtered per-instance stream for members leaks A's private activity: seq is per instance (events.rs:47-52), so gaps between visible seqs reveal how many private events A's agent produced and when; event_range latest_seq (events.rs:96-110) exposes it directly. Also the RLS-filtered `seq > last LIMIT n` scan cannot advance past invisible rows, so each wake rescans all private events since the last project event. Prefer a per-project feed/sequence.",
+    "event_range reads the private instances row; for a non-owner it 404s (RowNotFound), and the WS reset logic (events.rs:139-160) would misfire if oldest is computed on a filtered set.",
+    "The WS gate runs once at connect (events.rs:95-97) and heartbeat only re-checks the token (194-205): after a member leaves, RLS makes pages empty but the socket stays open silently; close it explicitly.",
+    "Widening SELECT changes semantics of code that assumes SELECT visibility == UPDATE visibility: cancel_run_tree (runs.rs:546-565) uses rows_affected()==0 then run() to tell 'missing' from 'finished'; for a member it now returns Ok(0) silently, and a mixed-owner tree would cancel only the caller's own nodes before append_event on another user's instance fails and rolls everything back.",
+    "Tx<Tenant>::append_event (used by gateway cancel/decide/runs create) UPDATEs instances under RLS: any cross-user action (creator interrupting A's run) must write events through Db::worker after an explicit authority check, or it 404s.",
+    "Composite FKs make cross-user rows fail at insert time, not silently: inbox_items to A's run for creator C (0001:378-379), live_activities for B's device on A's run (0018), child runs of another user's parent (0001:252), plan_id of a creator-owned plan on an owner-owned run (0001:250). Relaxing them removes the DB-level guarantee described at 0001_init.sql:13-14; replace with triggers/CHECKs tied to project_id.",
+    "Notifications: notify_tenant (outbox.rs:215) can only write for the caller; executor.rs:1176 renders the body in the owner's locale - fan-out must render per recipient. Approval pushes must stay owner-only (executor.rs:2106); don't route them to the creator.",
+    "Artifacts are decrypted server-side by the worker with the publisher's DEK (orchestrator artifacts.rs:341-347), so RLS is the only real gate on the gateway path: adding a member SELECT policy on artifacts would serve A-DEK-sealed private artifacts if project_id were set wrongly, and project artifacts sealed with A's DEK would die when A deletes the account (contradicts docs/projects.md section 10) and survive project deletion (no crypto-shred). Seal project artifacts with a project key.",
+    "Project-run content that is not artifacts is plaintext: runs.prompt/summary/error/state_reason, events.payload (jsonb), inbox_items.body (summaries), content_reports.snapshot, outbox payloads. Destroying the project key does not make these unreadable; project deletion must delete or scrub them explicitly.",
+    "Inheritance of project_id: a project run that asks/delegates to one of A's private (non-project) agents would either put a private-agent run inside a project tree (gap in members' tree, or if it inherits project_id, A's private agent's answers become visible to members). Restrict ask/delegate from project runs to project agents and enforce child.project_id = parent.project_id in the DB.",
+    "RLS is per user, not per (user, context): once B is a member, B's agent tools running in tenant mode during B's PRIVATE runs (e.g. peers.rs:92-109 recent_run_events, board.rs) can read project runs/events. Session/workspace isolation (docs/projects.md section 6) needs explicit project scoping in tools, not just RLS.",
+    "Event payloads in project runs may carry owner-private details: vault.used names (executor.rs:2036-2042), vault.requested name/purpose (orchestrator vault.rs:168), agent.permission_requested tool_call, plan.needs_confirmation plan titles of A's plans (tools.rs:188). Decide whether to redact these for non-owners.",
+    "Copies outlive membership: inbox rows (summaries), client-core SQLite event cache (cache.rs:30-33), lock-screen live activities, IM channel messages. 'Invisible immediately after leaving' needs server-side live-activity end + optional inbox purge and a client purge notice.",
+    "Per-user stream cap (limits().open_stream at events.rs:99): subscribing a project page to every member instance stream would burn N slots; another reason for one per-project stream.",
+    "pg_notify payload format: hub.rs:82 parses payload as InstanceId; changing EVENTS_CHANNEL payload breaks wakeups on older replicas during rolling deploy (they fall back to heartbeat latency). Use a new channel.",
+    "list_runs SQL (runs.rs:477-499) must textually match index predicates in 0020; adding an OR project branch there would defeat runs_user_active/runs_user_recent - use a separate statement and index."
+   ],
+   "open_questions": [
+    "Project event feed shape: a per-project project_seq allocated in append_event (simple replay, but serialises every event of every member agent on the project row and adds a second lock in the hot path), or a composite cursor (instance_id, seq) / created_at across member instances?",
+    "Should A (owner) see project-run events in his own per-instance stream and A's /v1/runs, or should the private instance page exclude project work and the project page be the only place (design section 8 'only project things on the project page')? Today list_runs (user_id filter) would include them.",
+    "Are instance-level events with run_id NULL (instance.state from control/src/lib.rs:278,1253,1274) ever visible to project members (e.g. 'agent is paused')? Default with project_id NULL is private.",
+    "Who owns a project pipeline root run (kind=pipeline): it needs an instance_id and user_id today (pipeline.rs:122 writes events on root.run.instance_id); creator C has no instance in the project necessarily. Lead agent's instance and owner?",
+    "Which users get live-activity remote start for project plan runs (owner's devices per live.rs:35-42, the creator's, or both), and can any member register a live activity for any project run?",
+    "Should members see the waiting_approval reason (approval title in Run.state_reason, executor.rs transition) and agent.permission_requested tool_call payloads of another owner's agent, or should those be redacted for non-owners?",
+    "Delete rights on project artifacts: author's owner, creator, or both? (store artifacts.rs:268-275 currently owner-only via RLS.)",
+    "On member leave/removal: purge their inbox items about project runs, or keep (design section 4.5 keeps their contributions in the project but says nothing about their copies)?",
+    "Should project notifications go out through members' IM channels (outbox.rs:202-209)? That forwards project content (AI summaries from other users' agents) into third-party group chats outside the project's membership.",
+    "Project deletion: delete project runs/events/inbox rows outright, or encrypt run prompt/summary and event payloads with the project key so destroying the key is enough?"
+   ]
+  },
+  {
+   "area": "keys",
+   "summary": "Envelope encryption lives in crates/keyvault/src/lib.rs. Each user has one 256-bit DEK, wrapped by a KMS master key. The `Kms` trait (64-70) takes a free-form `context` string, which today is the user id. `LocalKms` binds that context into the AAD `thinktin/dek/{key_id}/{context}` (121, 136). `AliyunKms` puts it into EncryptionContext as `{\"purpose\":\"thinktin-dek\",\"user\":ctx}` (crates/aliyun/src/kms.rs:39-41). `KmsRing` (149-190) picks the master key by the `kms_key_id` stored with the DEK. `CachingKms` (195-268) keeps unwrapped DEKs for cfg.kms.cache_secs, keyed by a hash of (kms_key_id, context, wrapped ciphertext). `KeyVault<K,S>` (470-671) loads the DEK by owner string through a synchronous `KeyStore` (371-377) and seals with AES-256-GCM using a random nonce. Each kind of ciphertext has its own AAD domain plus the length-prefixed owner and object ids (`domain_aad` 777-784):\n- API keys: `thinktin/secret/v1/` (`seal`/`open`, 514-568)\n- blobs/artifacts: `thinktin/blob/v1/` (`seal_bytes`/`open_bytes`, 530-550)\n- vault items: `thinktin/vault/v1/` (571-592)\n- IM webhooks: `thinktin/im/v1/` (595-623)\n- workspace archives: `thinktin/workspace/v1/`, 1 MiB chunked frames with index and last flag in the AAD (626-640, 673-766)\n\nStorage. Wrapped DEKs sit in `user_keys(user_id PK, kms_key_id, wrapped_dek)` (migrations/0001_init.sql:87-92). That table has RLS enabled and forced with no thinktin_app policy (449-454); thinktin_worker can read it, and so can thinktin_llmgw via SELECT (483). The store functions are `Tx<Worker>::insert_user_key` (store/src/users.rs:163-176) and `Tx<R: Internal>::user_key` (276-285). The single entry point for everything else is `orchestrator::artifacts::user_vault(db, kms, user, create)` (orchestrator/src/artifacts.rs:159-211). It reads the wrapped key on a worker transaction (no RLS). With create=true it generates and inserts a key if none exists, and if two calls race, whichever row was inserted first is used. It returns a throwaway `KeyVault` holding only that user's key. Callers:\n- credentials seal (gateway/routes/credentials.rs:20-33)\n- vault items seal/open (gateway/routes/vault.rs:84-112)\n- vault use in the executor (executor.rs:1996)\n- scrubber (orchestrator/vault.rs:253-288)\n- IM channels (gateway/routes/im_channels.rs:84-101; outbox.rs:665-676)\n- workspace archives (orchestrator/workspaces.rs:239, 310)\n- artifacts\n\nllm-gw does not use user_vault. It loads wrapped DEKs itself into a shared MemoryKeyStore (llm-gw/src/pg.rs:128-180) and only decrypts credentials and vault items.\n\nArtifacts. `ArtifactStore::publish` (artifacts.rs:280-338) generates the artifact id, then `user_vault(origin.user, create=true)`, then `seal_bytes(user, artifact_id)`. It puts the ciphertext under blob key `<user32hex>/<artifact32hex>` (300). In one worker tx it inserts the `artifacts` index row and an `artifact.published` event; if that fails it deletes the blob. `read` (341-347) fetches the blob and decrypts with the DEK of the row's `user_id`. Reads happen in the platform tools (tools.rs:596-642), pipeline handoff (pipeline.rs:438-479) and the gateway download (routes/artifacts.rs:95-135). The index table is `artifacts` (0002:73-91). It is RLS-scoped by user_id; thinktin_app has only SELECT and DELETE, and blob_key is written by the worker. Its FKs `(run_id,user_id)` and `(instance_id,user_id)` are ON DELETE CASCADE. Names are unique per `root_run_id` (advisory lock `artifact:<root>:<name>`, cap of 1000 per tree; store/artifacts.rs:104-141). When an artifact row is deleted, a SECURITY DEFINER trigger queues `blob_key` into `blob_purge` (0007:32-48). The worker `purge_blobs` drains that queue (server/src/workers.rs:380-397). Workspace archives use keys `workspaces/<user>/<ws>/<id>` (control/src/workspace.rs:40-42), an owner prefix check (orchestrator/workspaces.rs:186-193) and a purge trigger that also checks the prefix (0023:31-60). The blob store is S3 or a local directory (server/src/lib.rs:213-238; s3.rs:131-134 adds the configured prefix).\n\nBoard posts are NOT encrypted. `board_posts.body` is plaintext text (0025:6-25), RLS is by user_id, reads and writes go through tenant transactions (store/board.rs:125-188), and there is a per-user advisory lock and a cap of 200 live posts. The only protection is that vault values are scrubbed with the writer's own vault before the insert (orchestrator/board.rs:85-89; gateway/routes/board.rs:72). Run prompts, summaries and events are also plaintext by design (progress.md:162, threat-model.md:83).\n\nErasure. `Tx<Worker>::erase_account` (users.rs:183-231) locks the user row FOR UPDATE, marks the user deleted and revokes sessions and grants. It then runs `DELETE FROM user_keys` (194), which is the crypto-shred, and blanks credential ciphertext. Plaintext content is removed by DELETE (runs cascade to artifacts, then blob_purge; events, board_posts and so on). Auth calls it from `delete_account` (auth/src/service.rs:553-575). No KMS call is made, and llm-gw `forget_user` is never called in production.\n\nCrypto is not the authorization boundary. The worker can unwrap any user's DEK, so who can read what is decided only by which row a query returns (RLS or explicit SQL).\n\nProposed project key: a `project_keys(project_id PK FK projects ON DELETE CASCADE, kms_key_id, wrapped_dek, created_at)` table that mirrors user_keys. It should be worker-only, with RLS forced and no app policy. Do not put the key on the member-readable `projects` table. Create it eagerly, in the same transaction that creates the project. Add `project_vault()` (or a generic `owner_vault(KeyOwner)`) beside user_vault, with context `project:<uuid>` and a separate AAD domain. Artifacts get a `project_id` and blob key `projects/<p>/<a>`. Publish and read pick the key by project_id. Project board posts store sealed bytea. Project deletion means: delete project_keys, delete the plaintext rows, and let artifacts go through blob_purge.",
+   "files": [
+    {
+     "path": "/home/user/Thinktin-Rust/crates/keyvault/src/lib.rs",
+     "what": "Kms trait (64-70), LocalKms context AAD (121,136), KmsRing (149-190), CachingKms (195-268), KeyStore trait (371-377), SecretOpener/forget_user (395-438), KeyVault: create_user_key 497-505, destroy_user_key 508-511, seal/open 514-568, seal_bytes/open_bytes 530-550, vault 571-592, webhook 595-623, workspace chunk sealer 626-640, dek() cache 642-670, AAD domains 768-795"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/aliyun/src/kms.rs",
+     "what": "AliyunKms; EncryptionContext {purpose:thinktin-dek,user:ctx} at 39-41; wrap 60-82, unwrap 84-119; label aliyun:<KeyId>"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/orchestrator/src/artifacts.rs",
+     "what": "BlobStore trait 31-55, LocalBlobStore key validation 76-92, user_vault 159-211 (the single DEK entry point, lazy create, race handling), ArtifactStore 259-352: Origin 266-272, publish 280-338 (blob key format line 300, index+event tx 303-329, orphan cleanup 330-337), read 341-347 (key chosen by a.user_id), delete_blob 349-351"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/src/users.rs",
+     "what": "insert_user_key 163-176 (no user-status check), erase_account 183-231 (FOR UPDATE 186-189, DELETE user_keys 194, credential blanking 195-197, runs delete 200 cascading artifacts, board_posts delete 222), user_key 276-285 (Internal roles)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/src/artifacts.rs",
+     "what": "Row/StoredArtifact 9-57, NewArtifact 66-78, blob_purge_batch/forget 85-101, insert_artifact 104-141 (advisory lock artifact:<root>:<name>, MAX_TREE_ARTIFACTS), artifact() 146-156, artifact_scope 160-175, tree_artifacts 179-201, named_artifact 204-226, run_artifacts 232-243, delete_artifact 268-275"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/migrations/0001_init.sql",
+     "what": "user_keys table 87-92; RLS with no app policy for user_keys 449-454; worker blanket grant (existing tables only) ~478; llmgw SELECT on user_keys 483"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/migrations/0002_collaboration.sql",
+     "what": "artifacts table 73-91 (FKs (run_id,user_id),(instance_id,user_id) ON DELETE CASCADE, UNIQUE(root_run_id,name,version)); RLS tenant policy 95-104; app SELECT,DELETE only 110"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/migrations/0007_review_fixes.sql",
+     "what": "blob_purge queue 32-38; SECURITY DEFINER trigger queue_artifact_blob_purge enqueuing OLD.blob_key unconditionally 40-48"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/migrations/0023_workspace_archives.sql",
+     "what": "workspace archive columns on instances; purge trigger with owner-prefix check workspaces/<user>/ 31-60"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/migrations/0025_board.sql",
+     "what": "board_posts: plaintext body text CHECK 1..2000, tags text[], FKs to instances/runs by (id,user_id), RLS by user_id, grants"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/src/board.rs",
+     "what": "post_to_board 125-154 (advisory lock board/<user>, auto-archive at 200), board_posts 165-188, archive/unarchive 191-231, delete 233-242, purge_archived 247-256; all plaintext"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/orchestrator/src/board.rs",
+     "what": "board_read/board_post platform tools; read 42-80 (tenant tx), post 82-125 with vault scrub via user_scrubber 85-89"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/gateway/src/routes/board.rs",
+     "what": "App board API list 27-53, create 64-84 (scrub_user_text 72), archive/unarchive/delete"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/orchestrator/src/tools.rs",
+     "what": "ArtifactTools 451-686: origin 477-499 (worker tx, artifact_scope), publish 502-548 (no vault scrubbing), list 550-568, find 570-594 (worker named_artifact), read 596-612, fetch 614-642"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/orchestrator/src/pipeline.rs",
+     "what": "handoff prompt lists upstream artifacts (247); HandoffCopier::copy 438-479 reads upstream artifacts via ArtifactStore::read and writes plaintext into the step's sandbox"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/gateway/src/routes/artifacts.rs",
+     "what": "for_instance/for_run/get under tenant RLS; content 95-135 decrypts via ArtifactStore::read; delete 137-152 deletes index then blob directly"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/orchestrator/src/workspaces.rs",
+     "what": "ObjectWorkspaceStore: check_owner 186-193, put 226-292 (user_vault create=true, workspace_sealer), restore 294-339 (user_vault create=false), delete 341-347"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/control/src/workspace.rs",
+     "what": "WorkspaceStore trait; archive key format workspaces/<user>/<workspace>/<archive> at 40-42; EXPORT_ARGV tars the whole workspace dir 80-87"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/orchestrator/src/vault.rs",
+     "what": "user_scrubber 253-288 (decrypts all of a user's vault items with user_vault), used for board posts, ask, run logs"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/orchestrator/src/outbox.rs",
+     "what": "IM webhook decrypt 665-700; treats keyvault::Error::NoUserKey/Decrypt as permanent (account erased)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/server/src/lib.rs",
+     "what": "kms() builds LocalKms / KmsRing(Aliyun + older local) wrapped in CachingKms 172-210; blob_store S3/local 213-233; artifact_store 236-238"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/server/src/workers.rs",
+     "what": "wiring of ObjectWorkspaceStore, ArtifactStore, ArtifactTools, BoardTools, AskTools, HandoffCopier with the shared kms 85-172; purge_blobs 380-397; maintain purges archived board posts 413"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/llm-gw/src/pg.rs",
+     "what": "PgDirectory loads credential + user_key and caches wrapped DEK in shared MemoryKeyStore (128-180, remember_user_key); llm-gw only needs user DEKs for credentials/vault items"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/auth/src/service.rs",
+     "what": "delete_account 553-575 calls erase_account in a worker tx + audit"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/src/tests.rs",
+     "what": "erasing_an_account_deletes_its_content: per-table check list 1063-1086 (project tables must be added)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/docs/projects.md",
+     "what": "Design: project key = KMS-wrapped DEK (§3 line 28), board/artifacts encrypted with it (§3 line 33, §5 line 55), deletion destroys the key (§4.6 line 47), erasure deletes the creator's projects but keeps contributions to others' projects (§10 line 102)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/docs/compliance.md",
+     "what": "§5 erasure procedure (58-63) describing DEK destruction + blob_purge"
+    }
+   ],
+   "extension_points": [
+    "Migration (new, e.g. 0031_projects.sql): add a `project_keys(project_id uuid PK REFERENCES projects ON DELETE CASCADE, kms_key_id text, wrapped_dek bytea, created_at)` table. Use ENABLE+FORCE RLS with no thinktin_app policy and no app or llmgw grants, the same pattern as 0001:449-454. Grant SELECT, INSERT, DELETE to thinktin_worker explicitly, because the blanket grant in 0001 only covered tables that existed then. Add `artifacts.project_id uuid NULL REFERENCES projects` plus an index, or create a separate project_artifacts table. Add a project board table whose body is `sealed bytea` instead of text.",
+    "crates/keyvault/src/lib.rs: generalize 'user' to 'owner'. Either pass an owner string like `project:<uuid>` through the existing &str APIs, or add a `KeyOwner { User(UserId), Project(ProjectId) }` type whose context() is used both for the KMS context and as the AAD owner. Add new AAD domains such as `thinktin/project-blob/v1/` and `thinktin/project-board/v1/` next to blob_aad/domain_aad (768-784). Add a distinct `Error::NoProjectKey` instead of reusing NoUserKey (33-34). Reuse create_user_key (497-505) as a generic create_key.",
+    "crates/aliyun/src/kms.rs:39-41 `context()`: emit `{\"purpose\":\"thinktin-project-dek\",\"project\":id}` for project owners. Keep the user format byte-for-byte so existing wrapped user DEKs still unwrap.",
+    "crates/store (new projects.rs): add `Tx<Worker>::create_project_with_key(...)`, which inserts the project and project_keys in one tx. Add `impl<R: Internal> Tx<R>::project_key(project)`, mirroring users.rs:276-285. Add `Tx<Worker>::delete_project(project)`, modelled on erase_account (users.rs:183-231): lock the project row FOR UPDATE, set status deleted, DELETE project_keys, delete project board posts, delete project artifact rows (the trigger queues blob_purge), and delete or blank project runs' prompts, summaries, events and approvals across owners.",
+    "crates/store/src/artifacts.rs: add project_id to Row/StoredArtifact (9-57), the columns! macro (59-63) and NewArtifact (66-78). In insert_artifact (104-141), decide the per-project namespace (lock key, cap). Add project-scoped variants of artifact_scope/tree_artifacts/named_artifact (160-226). The worker callers bypass RLS, so the scoping must be written into the SQL.",
+    "crates/orchestrator/src/artifacts.rs: add `project_vault(db, kms, project, create=false)` next to user_vault (159-211). Add `project: Option<ProjectId>` to Origin (266-272). publish (280-338) should pick the project vault and owner string, use blob key `projects/<p32hex>/<a32hex>` instead of line 300, and check the project status (FOR SHARE) inside the index tx at 303-329. read (341-347) should branch on a.project_id and never fall back to the user DEK.",
+    "crates/orchestrator/src/tools.rs ArtifactTools::origin (477-499): read the run's project_id (needs a runs.project_id from the runs subsystem) and fill Origin.project. list/find (550-594) should use project scope for project runs.",
+    "crates/orchestrator/src/pipeline.rs HandoffCopier::copy (438-479): needs no crypto change once ArtifactStore::read branches on project_id. The dep-run query (447-463) must allow upstream runs owned by other members.",
+    "crates/orchestrator/src/board.rs read/post (42-125), crates/store/src/board.rs (125-188) and crates/gateway/src/routes/board.rs (27-126): add project-board variants. They should seal the body with the project vault (AAD = post id), open it on read (one DEK fetch per call, up to 50 opens), use an advisory lock `board/project/<id>` with its own cap, and keep the author-owner vault scrub (board.rs:85-89).",
+    "crates/gateway/src/routes/artifacts.rs content (95-135), for_run (44-62) and delete (137-152): make visibility depend on membership for project artifacts. Decide who may delete.",
+    "crates/store/src/users.rs erase_account (183-231): delete projects the user created (each runs delete_project, which destroys the project key). Remove the user's members and agents from other projects. Stop the `DELETE FROM runs` (200) cascade from removing project artifacts in other people's projects, and stop the `DELETE FROM board_posts` (222) from removing project posts, if design §10 (keep contributions) holds. Extend the table list in store/src/tests.rs:1063-1086.",
+    "Workspace per (instance, project): control/src/workspace.rs:40-42 key(), orchestrator/workspaces.rs put/restore (226-339, user DEK) and check_owner (186-193), and the 0023 purge trigger prefix check (31-60). If project workspace directories must be shredded with the project, archive them separately under `projects/<p>/workspaces/<instance>/<id>`, sealed with the project key, and teach the owner check and trigger that prefix. Otherwise delete the directory from the sandbox on project deletion or member exit.",
+    "crates/server/src/workers.rs:129-172 and server/src/api.rs:55: no new wiring needed. ArtifactStore and BoardTools already receive the shared Arc<dyn Kms>. Project deletion can reuse purge_blobs (380-397)."
+   ],
+   "pitfalls": [
+    "Encryption does not enforce authorization. user_vault runs as thinktin_worker (artifacts.rs:177), which can unwrap ANY user's (or project's) DEK. ArtifactStore::read decrypts whatever StoredArtifact it is handed (341-347), and the tools, pipeline and peers fetch those rows with worker queries that bypass RLS (tools.rs:477-594, pipeline.rs:447-463). One overly broad project query will decrypt and return another user's private artifacts.",
+    "Lazy key creation after deletion. insert_user_key does not check user status (users.rs:163-176), so an in-flight user_vault(create=true) after erase_account mints a fresh DEK. Examples are a workspace archive put (workspaces.rs:239), or a credential, vault or IM seal. If project_vault copied this behaviour, a publish racing a project deletion would create a new key for a deleted project and its new content would stay readable. Create the key eagerly at project creation and never lazily. Lock the project row (FOR SHARE, status check) in the transaction that writes project content.",
+    "KMS context collisions. The context is a raw string: LocalKms AAD `thinktin/dek/{kid}/{ctx}` has no length prefix (lib.rs:121), and Aliyun puts it in the \"user\" field (kms.rs:39-41). Use a prefix that can never look like a UUID (e.g. `project:`). Never change the existing user context format, or every stored user DEK becomes undecryptable.",
+    "AAD owner binding. Blob AAD = domain + owner + object id (lib.rs:768-784). Project ciphertext must be sealed with the project owner string, ideally under a new domain, or it could be moved between the private and project spaces. If one path seals with the project DEK but the user owner string, reads fail later. Moving an artifact between spaces requires re-encryption.",
+    "Error semantics. outbox.rs:671-676 treats keyvault::Error::NoUserKey as 'account erased' and drops the IM backlog. Reusing NoUserKey for a missing project key would confuse similar handlers, so add a distinct variant.",
+    "Cascades destroy contributions. artifacts FKs (run_id,user_id) are ON DELETE CASCADE (0002:84-88), and erase_account deletes all runs (users.rs:200) and all board_posts by user_id (222). An erased member's project artifacts and posts in other people's projects would therefore vanish, contradicting projects.md §10. Conversely, keying project board rows by author user_id puts them under the author's RLS and erasure.",
+    "Board posts and run content are plaintext. 'Destroy the key and everything is unreadable' (projects.md §4.6) is only true for data actually sealed with the project key. Project runs' prompts, summaries, events and approvals are plaintext and owned by each agent's owner, so project deletion must explicitly DELETE or blank them across users. Keep the existing plaintext private board unchanged.",
+    "blob_purge trigger trust. queue_artifact_blob_purge is SECURITY DEFINER and enqueues OLD.blob_key without any check (0007:40-48). If a project artifacts table lets thinktin_app (members) write blob_key, a member could get any object deleted, including other users' artifacts or workspace archives. Keep blob_key worker-written, or add a prefix check like the one in 0023:31-36.",
+    "Blob key namespace. Today's keys are `<user32hex>/<artifact32hex>` (artifacts.rs:300) and `workspaces/<user>/...` (control/workspace.rs:41). Use a distinct top-level `projects/` prefix. LocalBlobStore only accepts [A-Za-z0-9_-] path segments (artifacts.rs:76-92).",
+    "New tables get no worker grants automatically. The 0001 GRANT ON ALL TABLES only covered tables that existed then, and later migrations grant explicitly (0025:43-45). Do not grant project_keys to thinktin_app or thinktin_llmgw. Do not store wrapped_dek on the member-readable projects table.",
+    "Plaintext outlives the project key in caches and sandboxes. CachingKms keeps unwrapped DEKs for cache_secs (server/src/lib.rs:203-206). It cannot be reached once the wrapped row is gone, but in-flight operations finish. Pipeline handoff and artifact_fetch write plaintext project artifacts into member sandboxes (pipeline.rs:467-474, tools.rs:614-642). Those files then end up in the member's workspace archive sealed with the member's user DEK, which the project deletion does not shred.",
+    "No vault scrubbing on artifact publish (tools.rs:502-548), unlike board posts (board.rs:85-89). In cross-user projects, an owner's vault values could reach other users through project artifacts.",
+    "Crypto-shredding effectiveness depends on backups. Deleted project_keys rows (like user_keys rows) survive in Postgres backups and PITR until those age out.",
+    "Concurrency: ArtifactStore::publish seals and uploads before the index tx (296-301), so a deletion can land in between and leave an orphan blob under a destroyed key. Do the project status check in the index tx and delete the blob on failure, as 330-337 already does."
+   ],
+   "open_questions": [
+    "Should project run content (prompts, summaries, events, approvals) be encrypted with the project key, or deleted/blanked on project deletion? Everything is plaintext today by decision 9 (progress.md:162). projects.md §4.6 says 'project run contents become unreadable', which only works by deletion unless those columns are encrypted.",
+    "For the project board, encrypt only the body, or the tags too? Tag filtering (store/board.rs:170-177) needs plaintext tags or a blind index. Do single-user projects (former teams) also get a project key, so a user's team board moves from plaintext/private to sealed?",
+    "Where do project artifacts live: a project_id column on `artifacts` (keeps the FK to the owner's run and the CASCADE) or a separate project_artifacts table detached from runs? And is the name namespace per project or still per run tree (UNIQUE(root_run_id,name,version), MAX_TREE_ARTIFACTS)?",
+    "What happens to the per-(instance, project) workspace directory: archived separately with the project key, or deleted from the member's sandbox on project deletion or member exit? Today the whole instance workspace is tarred and sealed with the owner's DEK (control/workspace.rs:80-87, workspaces.rs:226-292).",
+    "On account erasure, should the erased user's project artifacts and posts in other people's projects survive (projects.md §10)? That requires changing the runs→artifacts cascade and the board_posts delete in erase_account.",
+    "Should the Kms trait gain a typed owner (User/Project), so Aliyun's EncryptionContext can say `project` instead of overloading `user`, or is a `project:` prefix in the existing string acceptable?",
+    "Who may delete a project artifact or board post: the author's owner, the project creator, or both? This affects gateway/routes/artifacts.rs:137-152 and the RLS DELETE policy.",
+    "Should text artifacts published in project runs be scrubbed with the publishing owner's vault, as board posts are?"
+   ]
+  },
+  {
+   "area": "sessions",
+   "summary": "TODAY: each instance has one sandbox, one HOME, one cwd and one agent session. All runs on an instance continue that same agent conversation: user chats, plan runs, delegate children, ask answers, pipeline steps.\n\nLaunch path: Executor::start (crates/orchestrator/src/executor.rs:717-960) wakes the sandbox and copies pipeline handoff files (828-832). It then builds ShimLaunch (846-854). ShimLaunch (crates/orchestrator/src/shim.rs:16-28) carries only the instance runtime, run id, token, allow_tools, ask_timeout, platform_tools and models. It has no session or cwd field. ExecConnector (crates/orchestrator/src/exec.rs:103-140, 160-195) starts a new `agent-shim serve` for every run attempt, with these settings:\n- ExecSpec.cwd = workdir \"workspace\" (exec.rs:86, 189), so the process runs in /sandbox/workspace (envd.rs:353-376; local.rs:271-274).\n- argv: `--home .thinktin/home --cwd .` (exec.rs:113-116).\n- The token goes in the THINKTIN_SANDBOX_TOKEN env var.\n- The tool list is written to workspace/.thinktin/platform-tools.json (exec.rs:172-180).\n\nagent-shim (main.rs:148-163) canonicalizes and creates both directories:\n- HOME = /sandbox/workspace/.thinktin/home. This is on the volume and sits inside the cwd.\n- cwd = /sandbox/workspace.\n\nThe provider's own HOME (/sandbox/home, Dockerfile:36, 96) is not used by the agent, because config::render sets HOME again (config.rs:139). It also sets the state dir per agent, all under that HOME:\n- CLAUDE_CONFIG_DIR=~/.claude (173-177)\n- CODEX_HOME (184-185)\n- PI_CODING_AGENT_DIR (240-241)\n- OPENCLAW_STATE_DIR, with agents.defaults.workspace=cwd (277-283, 316)\n- HERMES_HOME (346-351)\n\nThe agent, its sidecars and the ACP session/new|load|resume all use the cwd (shim.rs:147, 177; acp.rs:86, 96, 139).\n\nSession persistence: state.rs keeps one file, HOME/.thinktin/shim-session.json, holding {agent_id, harness, cwd, session_id}. previous_session (shim.rs:270-274) uses it only if agent_id, harness and the canonical cwd all match. remember_session (276-286) overwrites it after each handshake.\n- ACP (acp.rs:95-132) tries session/resume if the agent offers it, else session/load. If that fails it falls back to session/new, and SessionLost is emitted (shim.rs:233-238).\n- Claude CLI (claude_cli.rs:43-60, 101-110) uses --resume <id> or --session-id <uuid>.\n- OpenClaw has restore=false and a hard-coded Gateway key `--session agent:main:thinktin` (openclaw.toml:26). Every session/new continues one Gateway conversation.\n- The executor only learns session_restored (executor.rs:886-892) and adds the resume brief on retries (894-917). No agent session id is stored in the database.\n\nConcurrency: there is one active agent run per instance (unique index runs_one_active_per_instance, 0002_collaboration.sql:48-51; claim_next_run runs.rs:855-858). The single HOME and session file are therefore never written by two shims at once.\n\nWorkspace persistence: the Cube volume is mounted at <root>/workspace (cube.rs:456-460). Local uses volumes/<workspace_id> linked as workspace (local.rs:189-202). ACS has no volume. For ACS, control tars the whole workspace (`tar -czf - .`, control/workspace.rs:80-87, lib.rs:1749-1805) and restores it (1808-1838). ObjectWorkspaceStore encrypts that tarball with the instance owner's user DEK, keyed workspaces/<user>/<workspace_id>/<id> (workspaces.rs:186-193, 239-245; control/workspace.rs:40-42). Archives, volumes and snapshots therefore cover every directory in the workspace, all under the owner's key.\n\nPlatform file I/O uses one static workdir:\n- ArtifactTools.workspace_path = \"workspace/<rel>\", and fetch defaults to handoff/<name> (tools.rs:504-507, 641).\n- HandoffCopier writes workspace/handoff/<name> (pipeline.rs:469).\n- Both are wired with exec_cfg.workdir (server/src/workers.rs:121-172).\n\nThe manifests' runtime.state_dirs (manifest.rs:61-62) is declared only and no code reads it.\n\nHOW TO SPLIT PER (instance, project): add a scope to ShimLaunch (Private | Project(id)), derived from a new runs.project_id. Delegate, ask and pipeline-step children must inherit it. ExecConnector would then pass `--session-key <key>` and `--cwd <scope dir>`, relative to the unchanged process cwd. Per-key session files are mandatory. If only the cwd is changed, previous_session's cwd check makes the single file flip between scopes, and every switch loses the other scope's session.\n\nTwo further changes are needed:\n- The scope dir must also reach ArtifactTools and HandoffCopier, through ToolContext and the RunRecord.\n- OpenClaw's fixed --session key must be templated.\n\nThere are two options:\n- (A) Shared HOME, per-scope cwd and session file. This matches docs/projects.md §6: memory is shared, and the app warns for non-dedicated instances.\n- (B) Per-scope HOME (`--home .thinktin/homes/<key>`). This isolates every agent store, and deleting the project becomes `rm -rf`.\n\nNeither is a security boundary. There is a single Unix user, ExecSpec offers only argv/env/cwd, and an agent can read any path in the sandbox.",
+   "files": [
+    {
+     "path": "/home/user/Thinktin-Rust/crates/agent-shim/src/state.rs",
+     "what": "SavedSession{agent_id,harness,cwd,session_id}; single file HOME/.thinktin/shim-session.json (path() lines 16-18, load 20-29, save 31-37 atomic tmp+rename)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/agent-shim/src/shim.rs",
+     "what": "ShimConfig (28-46: home, cwd); run() renders config into HOME (65-66); attempt() builds Launch with cwd (143-148), sidecars cwd (177); run_acp uses previous_session/remember_session (208-239); previous_session filters by agent_id+harness+cwd (270-274); remember_session (276-286)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/agent-shim/src/main.rs",
+     "what": "AgentArgs --home (env HOME, 125-126) / --cwd (128-129); dirs()/absolute() create+canonicalize both (148-163); shim_config (294-328); serve puts bridge socket + thinktin-vault bin under HOME/.thinktin (447-466)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/agent-shim/src/acp.rs",
+     "what": "ConnectOptions (27-36); restore via session/resume else session/load with cwd, drops history replay, falls back to session/new (95-155)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/agent-shim/src/claude_cli.rs",
+     "what": "Claude stream-json: previous_session -> --resume, else new uuid --session-id; SessionLost on failure (36-60, 101-110); remember_session in drive (220)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/agent-shim/src/config.rs",
+     "what": "render(manifest, routing, home, cwd) (111-150): HOME env (139), CLAUDE_CONFIG_DIR (173-177), CODEX_HOME + .codex/config.toml (184-211), PI_CODING_AGENT_DIR (240-264), OpenClaw state dir/config + agents.defaults.workspace=cwd (277-334, 316), fixed gateway port 18789 (268), HERMES_HOME + .hermes/config.yaml (346-388); files rewritten every start (97-108)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/agent-shim/src/process.rs",
+     "what": "Launch{command,env,cwd} (45-52); spawn env_clear + whitelist + rendered env, current_dir(cwd) (81-97)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/agent-shim/src/bridge.rs",
+     "what": "MCP bridge socket at <HOME>/.thinktin/platform-tools.sock, removes existing socket before bind (92, 111); falls back to TMPDIR if path >= 100 bytes (94-106, 416)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/orchestrator/src/shim.rs",
+     "what": "ShimLaunch (16-28) has no session/cwd/project field; ToolContext (65-72) has no project; ShimConnector trait (60-62)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/orchestrator/src/exec.rs",
+     "what": "ExecConfig.workdir default \"workspace\" (68-91); argv hard-codes --home .thinktin/home --cwd . (103-140); platform-tools.json written to workspace/.thinktin/ (167-181); ExecSpec cwd=workdir, token as Secret env (182-190)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/orchestrator/src/executor.rs",
+     "what": "start(): grant/models/policy (717-798), handoff copy (828-832), ShimLaunch built (846-854), wait Ready (861-885), session_restored (886-892), resume brief on retries (894-917), interrupt preface quotes interrupted run's title (780-794, 1643+)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/orchestrator/src/tools.rs",
+     "what": "ArtifactTools static workdir (451-472); workspace_path = \"<workdir>/<rel>\" (504-507); publish reads from it; fetch writes default handoff/<name> (635-641+)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/orchestrator/src/pipeline.rs",
+     "what": "HandoffCopier static workdir (415-435); writes upstream artifacts to <workdir>/handoff/<name> (469-473)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/orchestrator/src/workspaces.rs",
+     "what": "ObjectWorkspaceStore: archive key must start workspaces/<user>/ (186-193); put encrypts tar.gz with the instance owner's user DEK (239-245); restore (296-356)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/control/src/workspace.rs",
+     "what": "WorkspaceStore::key workspaces/<user>/<workspace_id>/<id> (40-42); RESTORE_FILE workspace/.thinktin/restore.tgz (77); EXPORT_ARGV tars whole workspace '.' (80-87); EXTRACT/CLEANUP (90-98)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/control/src/lib.rs",
+     "what": "workspace_id ws-<uuid> per instance at adopt (274); CreateSpec.workspace (1008); export (1749-1805) / restore_into (1808-1838); run_in_sandbox is private (1841-1870); purge deletes whole volume (1872-1890); argv() ExecSpec cwd None -> default workspace (1893-1898)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/sandbox/src/lib.rs",
+     "what": "ExecSpec{argv,env,cwd} only — no uid/mount isolation (115-121); write_file/read_file relative to sandbox root (197-230); check_relative_path (234-244)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/sandbox/src/envd.rs",
+     "what": "start_request: cwd default <root>/workspace, HOME default <root>/home (351-376) — used by Cube and ACS"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/sandbox/src/cube.rs",
+     "what": "root /sandbox (77); volume mounted at <root>/workspace (456-460); workspace_persists = use_volumes (501-503)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/sandbox/src/acs.rs",
+     "what": "no volumes, workspace on pod disk, persisted only via control archive (8-10, 402)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/sandbox/src/local.rs",
+     "what": "layout sandboxes/<id>/{home,workspace->volumes/<ws>} (3-7, 189-202); exec cwd/HOME (271-289)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/catalog/src/manifest.rs",
+     "what": "RuntimeSection.state_dirs (61-62, validated 452-458 but unused at runtime); SessionSupport{restore, per_session_mcp} (190-197)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/catalog/manifests/openclaw.toml",
+     "what": "ACP bridge command with fixed Gateway session key agent:main:thinktin (26), restore=false (27), gateway sidecar (29-33)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/catalog/manifests/claude.toml",
+     "what": "state_dirs .claude (21); acp and cli harnesses, restore=true (23-33)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/catalog/manifests/hermes.toml",
+     "what": "state_dirs .hermes (16); acp restore=true (18-22)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/catalog/manifests/codex.toml",
+     "what": "state_dirs .codex (18); acp restore=true, read-only mode env (20-27)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/catalog/manifests/pi.toml",
+     "what": "state_dirs .pi (16); acp restore=true, per_session_mcp=false (18-23)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/migrations/0002_collaboration.sql",
+     "what": "runs_one_active_per_instance unique index incl. waiting_* states (48-51)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/src/runs.rs",
+     "what": "claim_next_run: queued run only if no active run on the instance (846-908, esp. 855-858)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/server/src/workers.rs",
+     "what": "ExecConfig default workdir passed to ArtifactTools and HandoffCopier (121-172)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/orchestrator/tests/e2e_shim.rs",
+     "what": "cancellation_and_session_survive_sandbox_rebuild asserts session_restored after archive (289-317) — will need per-scope variants"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/deploy/templates/Dockerfile",
+     "what": "single Unix user `user`, HOME=/sandbox/home, WORKDIR /sandbox/workspace (34-38, 95-100)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/docs/agent-integration.md",
+     "what": "§7 session restore description (127-138); OpenClaw writes AGENTS.md/SOUL.md into the cwd (148)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/docs/sandbox-cube.md",
+     "what": "line 32 says agent state is in HOME, not on the volume. This is stale: the shim puts it at workspace/.thinktin/home (exec.rs:114; sandbox-acs.md:111 is correct)"
+    }
+   ],
+   "extension_points": [
+    "crates/orchestrator/src/shim.rs:16-28 ShimLaunch: add `scope: SessionScope` (Private | Project(ProjectId)), with helpers key() -> \"private\" | \"project-<uuid simple>\" and dir() -> \".\" or \"private\" | \"projects/<uuid simple>\". Update the Debug impl (30-38) and the two test connectors (orchestrator/tests/executor.rs:71, tests/pipeline.rs:61).",
+    "crates/orchestrator/src/executor.rs:846-854: fill scope from rec.run.project_id (new column). The store must make delegate children, ask runs (RunSource::Ask), pipeline steps and plan runs of project plans inherit project_id, otherwise an ask goes into the private session. Also add project to ToolContext (921-930).",
+    "crates/orchestrator/src/exec.rs:103-140 argv: replace `--cwd .` with `--cwd <scope.dir()>`, which resolves against the process cwd `workspace`. Add `--session-key <scope.key()>`. Option B also needs `--home .thinktin/homes/<key>`. Keep ExecSpec.cwd = workdir (189) so `.thinktin/platform-tools.json` (180) and the relative paths still resolve.",
+    "crates/agent-shim/src/main.rs:109-130 AgentArgs: add `--session-key` (default \"default\"; validate [a-z0-9-]{1,64}) and carry it into ShimConfig (shim.rs:28-46, main.rs:315-327). absolute() (159-163) already creates a new project dir.",
+    "crates/agent-shim/src/state.rs:16-37: path(home, key) -> HOME/.thinktin/sessions/<key>.json. For the private/default key, fall back to reading the legacy shim-session.json. Keep the cwd field and the cwd check in previous_session (shim.rs:270-274) as a safety net. Update remember_session (276-286) and both callers (shim.rs:208/239, claude_cli.rs:43/220).",
+    "crates/catalog/src/manifest.rs:146-160 Harness.command / Sidecar.command / env: support a `{session_key}` placeholder, expanded in shim.rs attempt() (143-148, 173-178). Then change openclaw.toml:26 to e.g. `--session agent:main:thinktin-{session_key}`. To keep existing dev history, map private to the old literal `agent:main:thinktin`.",
+    "crates/agent-shim/src/config.rs:111-150 render(): OpenClaw's agents.defaults.workspace=cwd (316) already follows the cwd. If env should expose the scope (e.g. THINKTIN_SESSION_KEY), add it here. Option B needs nothing more, because every *_HOME is derived from `home`.",
+    "crates/orchestrator/src/tools.rs:504-507 ArtifactTools::workspace_path and fetch default (641): prefix with the run's scope dir, from ToolContext or RunRecord, not the static workdir (451-472). The scope dir must be built server-side from the project UUID and never from agent input.",
+    "crates/orchestrator/src/pipeline.rs:469 HandoffCopier: write to <workdir>/<scope dir>/handoff/<name> using rec.run.project_id.",
+    "crates/control/src/lib.rs:1841-1870 run_in_sandbox is private: add a public Lifecycle op, e.g. clear_scope(instance, project). It would rm -rf projects/<id> and .thinktin/sessions/project-<id>.json, plus .thinktin/homes/project-<id> in option B, and any agent-specific transcripts. Run it when an agent is withdrawn, a member leaves or is removed, or the project is deleted. The sandbox can be paused or archived, so the op must wake it or queue the cleanup for the next ensure_running before the next shim start.",
+    "crates/orchestrator/src/executor.rs:780-794 interrupt preface: when the interrupting run and the interrupted run have different scopes, drop the task title (as is already done for Ask/Delegate) so the title does not cross between private and project sessions.",
+    "If private work moves to a sibling dir (recommended): ExecConfig/argv for the Private scope uses --cwd private. A one-time in-sandbox migration (mv of existing top-level files) or an accepted session_lost is needed. Update e2e_shim.rs:289-317 and docs/agent-integration.md §7."
+   ],
+   "pitfalls": [
+    "Changing only --cwd per project without keying the session file breaks restores. shim-session.json holds one record, and previous_session rejects it when the cwd differs (shim.rs:272). Alternating private and project runs would then overwrite each other: every switch starts a new agent session and emits session_lost, and both conversations are lost.",
+    "Today every run on an instance shares one agent conversation: user chat, plan, delegate, ask and pipeline steps. Converting teams to single-user projects moves delegated and ask work into separate project sessions. This changes context continuity for existing team flows even for one user.",
+    "Keeping the private cwd at /sandbox/workspace and nesting projects under it (workspace/projects/<id>) leaks in both directions. Private runs see projects/ in their cwd. Project runs inherit ancestor context files: Claude Code loads CLAUDE.md from every parent dir, Pi reads AGENTS.md/CLAUDE.md up the tree, and Codex reads AGENTS.md from the git root down if the private workspace was git-initialised. Use sibling dirs (private/ and projects/<id>/). Everything must stay under /sandbox/workspace, because only that path is the volume or archived (cube.rs:460, control/workspace.rs:80-87).",
+    "Directory separation is not isolation. There is one sandbox per instance and one Unix user (Dockerfile:36). ExecSpec has only argv/env/cwd (sandbox/lib.rs:115-121). The HOME (.thinktin/home) sits inside the workspace. A project run, including one prompt-injected by another user's board entry or artifact, can read ../private, ~/.claude/projects/* transcripts, ~/.hermes/state.db and so on. For non-dedicated instances in cross-user projects, everything in the owner's sandbox is reachable. Its tool-call events then become readable by project members through project run events.",
+    "Shared-HOME memory that still leaks under option A, Claude ($CLAUDE_CONFIG_DIR = HOME/.claude): CLAUDE.md user memory is loaded into every session. agents/, skills/, commands/, settings.json, plugins/, todos/, shell-snapshots/, history.jsonl, file-history/ and .claude.json are shared. Only projects/<sanitized cwd>/ (transcripts, and per-project auto-memory in newer versions) is split by cwd.",
+    "Codex ($CODEX_HOME = HOME/.codex): AGENTS.md global instructions, sessions/YYYY/MM/DD/rollout-*.jsonl for all sessions in one tree, history.jsonl, prompts/skills/memories (version-dependent; verify against the pinned codex-acp). Only the cwd/repo AGENTS.md is per-scope.",
+    "Hermes ($HERMES_HOME = HOME/.hermes) is the worst case. memories/MEMORY.md and USER.md are injected into every session's system prompt. skills/ holds agent-created skills. state.db stores every session, and Hermes' session_search tool can full-text search private conversations from inside a project run. Only cwd context files (AGENTS.md / .hermes.md) are split by cwd. Avoiding the leak needs a separate HERMES_HOME (option B) or a dedicated instance.",
+    "OpenClaw (HOME/.openclaw): the fixed Gateway key agent:main:thinktin (openclaw.toml:26) means all scopes share one Gateway conversation even with per-key shim files, because restore=false and the key ignores the shim session. Its persona and memory files (AGENTS.md, SOUL.md, USER.md, MEMORY.md, memory/*.md) live in the workspace = cwd (config.rs:316), so a per-project cwd splits them. The memory search index and agents/main/sessions/ stay in the shared state dir (verify against 2026.10.3).",
+    "Pi (HOME/.pi/agent): sessions/ is keyed by cwd, so it splits naturally. The global ~/.pi/agent/AGENTS.md and any prompts/skills are shared, and AGENTS.md is read up the parent chain.",
+    "Goose has no manifest or ConfigGenerator today; it is only named in architecture-v3.md:124/134. If added, ~/.config/goose (config.yaml, global memory extension store, .goosehints) and ~/.local/share/goose/sessions sit under HOME and are shared. Only <cwd>/.goose/memory and .goosehints follow the cwd.",
+    "Agent-independent shared state: ~/.gitconfig, ~/.git-credentials, ~/.ssh, ~/.npmrc, ~/.cache and ~/.local under the agent HOME; /tmp (TMPDIR, inherited by process.rs:28, and where the bridge socket goes when the path is too long); workspace/handoff/ while the ArtifactTools/HandoffCopier workdir stays static (tools.rs:504-507, 641; pipeline.rs:469); workspace/.thinktin/platform-tools.json (rewritten on every launch, so harmless).",
+    "Workspace archives (ACS/object mode), Cube volumes and snapshots contain every scope. Archives are encrypted with the instance owner's user DEK, not the project key (workspaces.rs:239-245), so destroying the project key ('删密钥即销毁') does not destroy project files in members' sandboxes or archives. Old archives remain until the replacement trigger's cleanup queue deletes them. Explicit in-sandbox deletion is required on project delete and member leave, and it needs the sandbox running.",
+    "A member who leaves or is removed keeps local copies of other users' project content: the workspace dir, agent transcripts and memories. Their private chats with that agent can still read it, which conflicts with '退出即不可见' unless clear_scope runs.",
+    "Concurrency assumptions: the single HOME, the shared session dir, the fixed bridge socket path (bridge.rs:92, which removes the existing socket at 111), the fixed OpenClaw gateway port 18789 (config.rs:268) and the config files rewritten on every start (config.rs:97-108) are safe only because runs_one_active_per_instance serialises runs (0002_collaboration.sql:48-51). Allowing a private run and a project run concurrently on one instance would clobber all of these.",
+    "The same serialisation means another user's project run on a non-dedicated instance blocks the owner's private work for the whole time it is running, waiting_approval, waiting_children or in backoff (runs.rs:855-858).",
+    "The interrupt preface quotes the interrupted run's title into the next run's prompt (executor.rs:780-794). When an urgent run in one scope interrupts a run in the other, that title crosses sessions.",
+    "The session key and scope dir must come from server-side IDs (project UUID, simple form). Never use project names or agent-supplied paths. check_relative_path rejects '.', '..' and absolute paths (sandbox/lib.rs:234-244).",
+    "Socket path length: a deeper per-scope HOME (option B: /sandbox/workspace/.thinktin/homes/project-<32hex>/.thinktin/platform-tools.sock, about 100 bytes) hits MAX_SOCKET_PATH (bridge.rs:416). The bridge then silently falls back to TMPDIR. This works, but a short key avoids it.",
+    "docs/sandbox-cube.md:32 says the agent's state is not on the workspace volume. That is wrong: it lives at workspace/.thinktin/home. Do not design cleanup or isolation based on that doc line."
+   ],
+   "open_questions": [
+    "Option A (shared HOME, per-scope cwd and session) or option B (per-scope HOME) for cross-user projects? docs/projects.md §6 implies A plus a warning for non-dedicated instances. With A, Hermes' MEMORY.md/USER.md and session_search, and Claude's ~/.claude/CLAUDE.md, still carry private memory into projects. B gives clean deletion but loses the agent's accumulated skills and memory inside projects.",
+    "Should the private cwd move from /sandbox/workspace to a sibling subdir (e.g. private/)? This avoids nesting projects inside it, at the cost of a one-time session_lost and a file move for existing dev instances, plus updating e2e_shim.rs:289-317.",
+    "Is there a separate scope per (instance, project) for every project type, including converted single-user teams? Or do same-user projects keep sharing the private session?",
+    "When a member leaves, an agent is withdrawn, or a project is deleted, should the platform wipe the project dir, session file and agent transcripts in each member sandbox (and re-archive), even if that means waking paused or archived sandboxes? Or is a lazy cleanup on the next wake acceptable?",
+    "Does the OpenClaw Gateway (2026.10.3) accept arbitrary session keys such as agent:main:thinktin-project-<id>? And can several keys share one state dir without cross-talk in memory search?",
+    "Do the pinned Claude Code, codex-acp and Hermes versions have cross-session memory or search features (Claude auto-memory, Codex memories, Hermes session_search) that can be disabled through config? If so, config.rs could turn them off for project scopes.",
+    "Should dedicated (专属) project instances skip the scope machinery entirely (one private-equivalent session), or still use the project scope so that converting them to non-dedicated later stays clean?",
+    "For the per-user sandbox disk and the 4 GiB archive limit (control/lib.rs:150): should project workspaces get their own quota, given that one project can fill a member's disk and block archiving of their private work?"
+   ]
+  },
+  {
+   "area": "money",
+   "summary": "Today every part of this subsystem is keyed by one user: `runs.user_id`. Child runs inherit the initiator's user: delegate.rs:170 `create_run(ctx.user)`, pipeline.rs:262 `create_run(root.user_id)`, ask.rs:157 `create_run(ctx.user)`. Composite FKs in 0001_init.sql make grants, runs, plans, approvals and plan_steps share one user_id with their instance, their parent grant and their parent run.\n\nGRANTS. A `run_grants` row holds instance, optional plan, optional parent, a `GrantScope {aliases, platform_tools, max_tokens}` (proto domain.rs:398), and a 90-day TTL. The gateway issues them with `default_scope()` (routes/mod.rs:186), built from `cfg.default_platform_tools`. By default that list holds schedule, artifact, vault, delegate, peer, board and ask tools plus every `computer_*` tool (server/config.rs:136-147). They are issued on adopt (instances.rs:49), on team template (teams.rs:211), on plan create or confirm (plans.rs:182, 403-426) and on re-issue after stop-all (runs.rs `ensure_instance_grant`). Delegation and pipeline steps call `Tx<Worker>::create_child_grant` (store grants.rs:246-275). It copies the parent's USER and checks `contains()`; the TTL cannot exceed the parent's and does not auto-renew. Agent-made plans use `create_plan_child_grant` (grants.rs:87-120). Ask runs carry no grant, so the executor falls back to `active_grant_for_instance`, the target's newest top-level grant. Revocation uses recursive CTEs. `ancestors_usable!` (grants.rs:47-55) makes a grant unusable when any ancestor is revoked or expired. `touch_run_grant` and llm-gw `usable_grant_aliases` both check it.\n\nEXECUTOR START (executor.rs:717-960):\n- resolves the grant (739-746) and filters model aliases by scope (747-757);\n- reads the plan policy from `run.plan_id`, which is the ROOT's plan for children (760);\n- treats the agent as lead when the scope has the delegate tools and `is_team_lead` is true (763-769);\n- calls `has_computer(rec.user_id)` (797) and `GrantService::sandbox_token` (auth grants.rs:105-163). That requires the grant's user to equal the instance owner (line 120) and the user to be Active (line 125). It signs `{iid, uid, grant, sbx, net, ep}`;\n- platform tools = registered tools ∪ computer tools (only if the user has a computer), ∩ `scope.platform_tools` (833-845). Every call is re-checked against `allowed_tools` (1844-1853);\n- vault reveal also needs `vault_list` in scope plus `vault_items_for_instance(rec.user_id, instance)` (1954-2048);\n- passes `policy.preauthorized_tools` to the shim as `allow_tools` (850).\n\nMODEL GATEWAY. `authenticate` (llm-gw proxy.rs:344-400) checks `instance.user_id == claims.uid`, the sandbox, the epoch and that the grant is not revoked (cached for `cache_secs`). It then checks the alias against the grant (735-747). Routes are the instance's `model_routes`. A credential is skipped unless `cred.user_id == instance.user_id` (951). The per-key `daily_token_limit` is enforced through `PgLedger` (958-965). Usage records are `{user: claims.uid, instance, grant, credential}` with no run_id and no project_id (pg.rs:343-371 → usage_records).\n\nBUDGETS. `runs.budget` (a RunBudget) comes from `plan.policy.budget` (scheduler.rs:180) or the default, which has no token cap. Children copy the root's budget (delegate.rs:168, pipeline.rs:261, ask.rs:153). `on_renew` (executor.rs:2325-2398) works in four steps:\n1. tokens = `instance_usage_since(instance, started_at)` (runs.rs:1393). This is only correct because of the `runs_one_active_per_instance` index.\n2. It writes them with `set_run_usage`.\n3. others = `tree_tokens_except(root)`: every run in the tree, whatever its user (runs.rs:1048).\n4. The run fails when tokens + others > `rec.budget.max_tokens`.\n\n`GrantScope.max_tokens` and `PlanPolicy.daily_token_limit` are never enforced at runtime. The only daily limit that works is the per-key one in llm-gw.\n\nAPPROVALS. `on_permission` (executor.rs:2052-2128) inserts an approval with `user: rec.user_id` and notifies that user. Decisions go through a Tenant transaction and RLS (store approvals.rs:233-285, gateway approvals.rs:37-69). Timeout behaviour comes from the plan policy; with `PausePlan` the run's `plan_id` gets paused (2180-2207, 574-614).\n\nSTOP ALL and FREEZE (orchestrator account.rs:36-112). Stop-all calls `cancel_user_runs` (by `runs.user_id`, bumping instance epochs), `revoke_user_grants` (by user_id, not recursive) and `pause_user_plans`. Freeze sets the status, after which `claim_next_run` and `due_pipelines` skip the user (they join on users.status), `sandbox_token` refuses, and login is refused.\n\nACROSS USERS TODAY. A child run on Bob's instance from Alice's tree is impossible. The DB rejects it through the FKs `run_grants(instance_id,user_id)` and `(parent_id,user_id)`, and `runs(parent_run_id,user_id)`, `(plan_id,user_id)` and `(run_grant_id,user_id)`. `sandbox_token` would also reject it. So key and budget isolation is structural, but there is no designed path. Projects need three things: (a) run rows owned by the agent's owner, so the key, usage, approvals, vault, computer, scrubber and locale all follow automatically; (b) a grant whose user is the owner and whose scope = parent/project scope ∩ the owner's ProjectAgent authorization; (c) per-owner budget accounting instead of whole-tree accounting.",
+   "files": [
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/src/grants.rs",
+     "what": "run_grants CRUD: create_run_grant 67-83 (Tenant), create_plan_child_grant 87-120, plan_grant, run_grants, revoke_run_grant/revoke_plan_grants/revoke_instance_grants 179-229 (recursive, any role; RLS-filtered for Tenant), Worker::create_child_grant 246-275 (copies parent's user, scope.contains check), touch_run_grant 279-300 (auto-renew top-level only), active_grant_for_instance 303-315, revoke_user_grants 318-328 (non-recursive); ancestors_usable! macro 47-55"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/auth/src/grants.rs",
+     "what": "GrantConfig (90d ttl, 30d renew_below, 24h sandbox token) 16-33; GrantService::issue/revoke (unused by gateway, which calls store directly); sandbox_token 105-163: touch grant, require g.instance_id==instance && grant user==instance owner (120), user Active else AccountFrozen (125), instance not deleted/archived, sign iid/uid/grant/sbx/net/ep"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/auth/src/sandbox_token.rs",
+     "what": "SandboxClaims {iid, uid, grant, sbx, net, ep, iat, exp, jti} 20-40; TokenRequest 54-61"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/proto/src/domain.rs",
+     "what": "RunBudget 344-359 (max_tokens None by default, 6h, steps); PlanPolicy 362-391 (preauthorized_tools, approval_timeout_secs, on_approval_timeout, budget, daily_token_limit [unenforced], wait_timeout_secs, notify_success); GrantScope 398-424 + contains(); RunGrant 477-495; wait_code 778-802"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/migrations/0001_init.sql",
+     "what": "run_grants table 158-174 with FK (instance_id,user_id) and (parent_id,user_id); runs 217-253 with FKs (plan_id,user_id) 250, (parent_run_id,user_id) 252, (run_grant_id,user_id); approvals 323-345 FK (run_id,user_id); usage_records 386-410 (no run/project id); tenant RLS loop 427-438; role grants 466-484 (llmgw SELECT run_grants, INSERT usage)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/migrations/0002_collaboration.sql",
+     "what": "runs_one_active_per_instance unique index 48-51 (makes instance_usage_since attribution valid); plan_steps FKs (plan_id,user_id),(instance_id,user_id) 66-67; team_members FKs 23-24"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/migrations/0024_peers.sql",
+     "what": "pattern for migrations that append new platform tools to every active top-level grant with non-empty platform_tools (also 0025_board.sql 43-48, 0026_ask.sql 16-21)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/orchestrator/src/executor.rs",
+     "what": "start 717-960: grant resolution incl. active_grant_for_instance fallback 739-746, alias filtering 747-757, policy from run.plan_id 760, lead gating 763-769, has_computer(rec.user_id) 797, sandbox_token 818-827 (AccountFrozen→Failed), platform tool ∩ scope 833-845, allow_tools=preauthorized_tools 850, ToolContext{user: rec.user_id,...} 924, scrubber(rec.user_id) 945; tool dispatch re-check 1844-1853; call_computer (rec.user_id) 1504-1530; reveal (vault gate 1962, vault_items_for_instance) 1954-2048; on_permission (approval user=rec.user_id 2076, notify 2107) 2052-2128; on_approval_timeout (PausePlan pauses run.plan_id) 2180-2207; expire_waits 574-614; on_renew budget check 2325-2398. NOTE: file is being modified in the working tree; lines may shift"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/src/runs.rs",
+     "what": "NewRun (run_grant_id, budget, plan_id, parent) 20-47; RunRecord (user_id, run_grant_id, budget) 126-144; insert_run 263-312 (user bound explicitly, root from parent); bump_epochs_where! 341; lock_run_waits (per-user advisory lock) ~428; cancel_run_tree (Tenant) ~557; cancel_user_runs ~831; Worker::create_run(user) ~853; claim_next_run (skips non-active users) ~872; tree_tokens_except ~1048 (sums all users); recent_model_calls ~1311; instance_usage_since ~1393; set_run_usage ~1410. Being modified in working tree"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/src/usage.rs",
+     "what": "NewUsage (user, instance, run_grant, credential, tokens) 10-31; insert_usage (Internal roles) 34-63; usage_summary (Tenant, group by day/instance/model/credential) 105-151"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/src/llmgw.rs",
+     "what": "thinktin_llmgw role queries: gateway_instance (user_id, running, sandbox, epoch, limits, routes+fallbacks) 35-79; vault_items_sealed 82-95; usable_grant_aliases (active + ancestors_usable) 98-114; credential_tokens_since 117-131"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/llm-gw/src/proxy.rs",
+     "what": "Gateway::authenticate 344-400 (instance.user_id==claims.uid 384, grant_revoked 396); scrubber per instance owner 403-432; budget_day 434-437; forward_inner 689-833 (per-instance limiter 697-700, alias not in grant → Permission 741-747, fallback chain); record_unavailable 863-906; attempt 936+: credential must belong to instance owner 946-957, credential daily_token_limit 958-965, open_secret with cred.user_id 1000-1003, Finisher usage record 1017-1052"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/llm-gw/src/pg.rs",
+     "what": "PgDirectory with TTL caches for instances/credentials/grants (revocation latency = cache_secs) 61-260; load_grant 159-167; PgUsageSink + new_usage mapping 290-400; PgLedger per-(credential, day) budget 410-485"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/llm-gw/src/limits.rs",
+     "what": "per-instance token-bucket/concurrency/circuit breaker; BudgetLedger trait used(credential, day)/add 133-135"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/llm-gw/src/store.rs",
+     "what": "Directory types: Route/Fallback, Limits, Instance{user_id, sandbox, epoch, routes}, Credential{user_id, daily_token_limit, disabled}"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/orchestrator/src/delegate.rs",
+     "what": "delegate(): targets via Tenant delegation_targets (team lead's team, same user); lock_run_waits(ctx.user) 101; depth/cycle guards; child grant from ctx.grant with same scope 134-144; child run plan_id=parent's 164, budget=parent's 168, create_run(ctx.user) 170"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/orchestrator/src/pipeline.rs",
+     "what": "start_step 208-275: child grant from root grant 226-245, create_run(root.user_id) with root plan/budget 251-262"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/orchestrator/src/ask.rs",
+     "what": "ask: lock_run_waits(ctx.user) 84; requires target active_grant_for_instance 131-140; run_grant_id=None/plan None 148-150 (executor falls back to target's top-level grant); budget=parent 153; create_run(ctx.user) 157"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/orchestrator/src/tools.rs",
+     "what": "ScheduleTools::create: agent-made plan with budget=run_budget(ctx.run) 232-235 and create_plan_child_grant from ctx.grant 251-253 (Tenant ctx.user)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/orchestrator/src/vault.rs",
+     "what": "VAULT_TOOLS 23; vault_list filters by instance_ids (empty = all instances) 44-71; vault_request (Tenant ctx.user, notify_tenant, max 5/run) 73-200"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/src/vault.rs",
+     "what": "vault_items_for_instance(user, instance, names): items with empty instance_ids or containing instance 391-411"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/src/device_relay.rs",
+     "what": "has_computer(user) 431-439 (any non-revoked macos device)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/orchestrator/src/computer.rs",
+     "what": "DeviceCalls::call(user, run, tool, args, timeout) ~217: routes to that user's online computer"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/src/approvals.rs",
+     "what": "NewApproval{user,...}; Worker create_approval 101-119, approval_for_request, settle_approval, cancel_run_approvals; Tenant pending_approvals 206-217, approval, decide_approval 233-285 (RLS by user_id)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/gateway/src/routes/approvals.rs",
+     "what": "list/get/decide via Tenant tx; decide appends approval.decided event + audit 37-69"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/orchestrator/src/account.rs",
+     "what": "freeze 36-62 (status + cancel_user_runs), unfreeze 65-87, stop_all 91-112 (cancel_user_runs, revoke_user_grants, pause_user_plans, notify)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/orchestrator/src/waits.rs",
+     "what": "KeyProblem 21-32 and of() 59-72 mapping usage outcomes/status to WaitingQuota reasons; key_problem 131-161"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/gateway/src/routes/mod.rs",
+     "what": "default_scope() 186-191 (platform_tools from config, aliases empty = all, no max_tokens)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/server/src/config.rs",
+     "what": "Api.default_platform_tools default 136-147: schedule+artifact+vault+delegate+peer+board+ask+all computer tools"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/gateway/src/routes/runs.rs",
+     "what": "user run creation + ensure_instance_grant re-issue after stop_all 66-90"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/gateway/src/routes/plans.rs",
+     "what": "plan create issues plan grant 181-189; ensure_plan_grant on confirm/resume 403-426; delete revokes plan grants 475"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/src/instances.rs",
+     "what": "Tenant delegation_targets 530-543 (team_members of lead's team); Worker is_team_lead 548-555 (any team); route_aliases 560-567; instance_runtime"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/gateway/src/routes/usage.rs",
+     "what": "usage summary API (Tenant, filters instance/credential, groups day/instance/model/credential)"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/crates/store/src/tests.rs",
+     "what": "grant tree tests: deleting_an_instance_stops_its_whole_run_tree_and_grant_tree ~1773-1860; stopping_everything_for_a_user ~1940-2030"
+    },
+    {
+     "path": "/home/user/Thinktin-Rust/docs/projects.md",
+     "what": "design: section 5 data boundary, section 7 cost/approval/scope/computer-vault/interrupt rules, WBS 8.18"
+    }
+   ],
+   "extension_points": [
+    "crates/store/migrations (new migration): give runs, run_grants and usage_records a project_id column (usage_records could get run_id instead). Relax the same-user FKs: run_grants (parent_id,user_id) at 0001_init.sql:172, and runs (parent_run_id,user_id) at :252, (plan_id,user_id) at :250 and (run_grant_id,user_id). Drop the user part, or keep the FKs for private runs and add checked cross-user ones. For project pipelines, also relax plan_steps (instance_id,user_id) at 0002:67. Index usage_records (user_id, project_id, created_at) for budget sums.",
+    "proto/src/domain.rs:398 GrantScope: add project-related fields, e.g. `computer: bool` and `vault_items: Vec<String>`, or a project id. Add a `fn intersect(&self, other)` alongside `contains()` (409-424), because a project grant = project scope ∩ owner scope. Today aliases treat empty as 'all', so the intersection must handle that case.",
+    "store/src/grants.rs: add a `Tx<Worker>::create_project_child_grant(parent, target_instance, owner_authorization)` next to create_child_grant (246-275). It binds user = target instance owner (not the parent's user, see line 266) and scope = parent.scope ∩ the owner's ProjectAgent scope. It keeps parent_id so revoking the creator's grant still cascades through ancestors_usable!. It also needs a second ancestor: the owner's per-(instance, project) grant, so the owner's stop-all or a withdrawal also kills it. One option is an `owner_grant_id` column also checked in ancestors_usable! (47-55), which `touch_run_grant` and llmgw `usable_grant_aliases` both use.",
+    "auth/src/grants.rs:105-163 sandbox_token: keep the `user != rt.user_id` check (120). For grants with a project_id, also check that the project is active and that the ProjectAgent and its member have not left or been removed. Otherwise rely on grant revocation and an epoch bump when they leave.",
+    "orchestrator/src/executor.rs:739-746: for project runs with no run_grant_id (ask), resolve the (instance, project) grant instead of `active_grant_for_instance`, which returns the private top-level grant with vault and computer tools.",
+    "orchestrator/src/executor.rs:758-761 policy: for project runs, build the policy as project policy ∩ the owner's ProjectAgent policy: intersect preauthorized_tools, take the min of the timeouts, and never let PausePlan pause another user's plan. Today it reads `w.plan(run.plan_id)`, which for a child is the root's (creator's) plan.",
+    "orchestrator/src/executor.rs:763-769 lead gating: scope it to the run's project (lead of THIS project) instead of `is_team_lead`, which matches any team.",
+    "orchestrator/src/executor.rs:796-797 and 833-845 computer tools: for project runs, require that the owner enabled computer for this ProjectAgent, in addition to has_computer(rec.user_id) and the scope.",
+    "orchestrator/src/executor.rs:1954-2048 reveal, plus vault.rs:44-71 list and 73-200 request: for project runs, only allow vault items the owner explicitly enabled for this project. The current rule (empty instance_ids = all instances, store/vault.rs:391-411) must not apply.",
+    "orchestrator/src/executor.rs:2325-2398 on_renew: replace the whole-tree sum with a per-owner sum, e.g. `tree_tokens_except_for_user(root, except, rec.user_id)` (new, next to runs.rs ~1048). Check it against the owner's ProjectMember budget (daily and total) and move to WaitingQuota with a new wait_code (proto domain.rs:778) instead of Outcome::Failed. waits.rs KeyProblem/of() (21-72) or a sibling type needs a 'project budget' variant.",
+    "llm-gw: PgDirectory::load_grant (pg.rs:159-167) / store llmgw.rs usable_grant_aliases (98-114) should also return the grant's project_id and its budget. proxy.rs attempt (958-965) enforces the per-key daily limit through BudgetLedger; enforce the project budget per (user, project, day) there before the request is sent. Add a distinct usage outcome (e.g. `project_budget`) so the executor's key_problem can tell it apart. Put project_id on UsageRecord (proxy.rs 1029-1052, 885-905) and on NewUsage (store/usage.rs:10-31, pg.rs new_usage 343-371).",
+    "store/src/usage.rs:105-151 usage_summary: add a project filter or grouping. If owners should see their agents' project spend in their own dashboard, RLS stays by user_id.",
+    "orchestrator/src/delegate.rs:94-176: take targets from the project's agents. Lock at project level, or take both users' run_waits locks in sorted order, instead of lock_run_waits(ctx.user) at 101. Create the child grant with the new project child grant fn (138) and the child run with `create_run(target_owner)` (170) and project_id. Do not copy plan_id (164). Budget comes from the owner (168).",
+    "orchestrator/src/pipeline.rs:208-262 start_step: same as delegation for steps on other users' instances: owner-bound child grant (226-245) and create_run(step owner) instead of root.user_id (262).",
+    "orchestrator/src/ask.rs:84-158: create the answer run under the target's owner (157) with the (instance, project) grant, not None (149). Replace the lock at 84.",
+    "orchestrator/src/account.rs:91-112 stop_all and 36-62 freeze: once project runs are owned by the agent's owner, cancel_user_runs and revoke_user_grants already cover the member's side. Also revoke or disable the owner's ProjectAgent authorizations so lead delegation cannot recreate them. Decide whether the creator's stop-all cancels project trees on others' instances. That needs a Worker-side cancel scoped to the project; Tenant cancel_run_tree (runs.rs ~557) only touches the caller's rows.",
+    "gateway/src/routes/mod.rs:186 default_scope and server/src/config.rs:136-147: add a `project_scope()` that excludes VAULT_TOOLS, proto::computer::names() and SCHEDULE_TOOLS (agent-made private plans) by default. Owner toggles add vault and computer per project.",
+    "gateway: project tasks the creator assigns to members' instances cannot use Tenant create_run_grant (store grants.rs:67-83 checks self.instance(), which is RLS-filtered). They need a Worker-side issuance that derives from each owner's ProjectAgent authorization, analogous to ensure_instance_grant (routes/runs.rs:66-90) / ensure_plan_grant (plans.rs:403-426).",
+    "orchestrator/src/executor.rs:2052-2128 on_permission / 2237 and store approvals.rs: no change is needed once rec.user_id is the owner. Approvals then go to and are decided by the owner through RLS. Add project_id to the notice so App filtering works (design section 8)."
+   ],
+   "pitfalls": [
+    "runs.user_id propagation: today child runs inherit the initiator's user (delegate.rs:170, pipeline.rs:262, ask.rs:157). If that stays for cross-user children, every rec.user_id use flips to the creator: approvals and notifications (executor.rs:2076, 2107), computer calls to the creator's Mac (1504-1530, has_computer 797), vault reveal of the creator's secrets (reveal uses rec.user_id), the scrubber, locale, Tenant transactions in platform tools via ToolContext.user (924), and wake_waiting_runs. Bob's agent would act on Alice's private assets and bill Alice's identity, although llm-gw would still use the instance's routes.",
+    "create_child_grant copies the parent's user (grants.rs:253/266) and the parent's full scope, including vault_* and computer_* names. A naive fix that only changes the user would give Bob's agent Alice's tool list. Bob's vault and computer would then be resolved through rec.user_id = Bob, i.e. vault and computer ON by default, against the design.",
+    "Fallback `active_grant_for_instance` (executor.rs:739-745) for runs without a grant: a project ask to Bob's agent would run under Bob's PRIVATE top-level grant (full default scope incl. vault/computer), not the project scope.",
+    "The plan policy is read from run.plan_id, which for children is the ROOT plan (executor.rs:760; delegate.rs:164; pipeline.rs:258). So the creator's preauthorized_tools (e.g. '*') would be passed to Bob's shim as allow_tools (850) and auto-approve actions that should go to Bob. The creator's PausePlan would pause the creator's plan when Bob's approval times out (2187-2205, 590-596). notify_success and the plan title are also read from the creator's plan (1162-1168).",
+    "tree_tokens_except (runs.rs ~1048) sums every run in the tree regardless of user, and every child compares against the root's RunBudget copy. One user's spend would stop another user's agents, and an owner's own project budget can't be expressed. User-initiated roots have no token cap at all (RunBudget default max_tokens None).",
+    "GrantScope.max_tokens and PlanPolicy.daily_token_limit are stored but never enforced at runtime: only contains() reads max_tokens, and no runtime code reads daily_token_limit. Don't assume they protect a project budget.",
+    "instance_usage_since (runs.rs ~1393) counts all usage on the instance since started_at. That is correct only because runs_one_active_per_instance (0002:48-51) serializes runs per instance. If per-(instance, project) sessions start allowing concurrent runs on one instance, attribution breaks. So does the per-instance token epoch: one run's attempt end bumps the epoch and kills the other run's sandbox token. usage_records has no run_id.",
+    "The executor enforces budgets lazily on renew (renew_every = lease/4) after usage rows are written in batches. A hard per-owner project budget that must 'never overspend' (design section 7) belongs in llm-gw before the request (like the credential ledger, proxy.rs:958-965), and even then concurrent requests can slightly overshoot (limits.rs header).",
+    "lock_run_waits (runs.rs ~428) is a per-user advisory lock. Cross-user wait cycles (Alice's lead asks Bob's agent while Bob's agent delegates back) would not be serialized, so the deadlock checks in delegate.rs/ask.rs could race.",
+    "Revocation across users: revoke_user_grants is not recursive (grants.rs:318-328). revoke_run_grant/revoke_instance_grants under a Tenant tx only walk and update the caller's rows (RLS), so cross-user descendants are not marked revoked. They are still unusable through ancestors_usable!, but llm-gw caches grant state for cache_secs and the executor only notices at the next sandbox token. Leaving or removal must also bump the affected instances' token_epoch to cut access at once (design 'gone the instant they leave').",
+    "If project child grants derive only from the creator's grant, the member's stop-all (revoke_user_grants + cancel_user_runs) stops current runs, but the lead can delegate again right away and mint new child grants for the member's agents. Owner consent must be a second ancestor or an explicit check.",
+    "The FK cascades change meaning: today (parent_run_id,user_id) ON DELETE CASCADE and (parent_id,user_id) cascade within one user. Once these are cross-user, deleting the creator's account (users ON DELETE CASCADE → runs) would cascade-delete members' child runs and their spend history, and approvals via (run_id,user_id). Decide on SET NULL or a detach instead.",
+    "Tenant cancel_run_tree (runs.rs ~557) and its bump_epochs only affect the caller's rows and instances. The creator interrupting members' project runs needs a Worker-side path with an explicit project-role check. Doing it with Tenant silently cancels nothing on others' instances.",
+    "Vault items with empty instance_ids apply to every instance the user owns (store/vault.rs:400-402, vault.rs:51). Without project gating, any such item becomes usable in project runs, where untrusted cross-user content can steer the agent (design section 9).",
+    "Schedule tools in project runs: ScheduleTools::create (tools.rs:232-253) would create a PRIVATE plan with a child grant of the project grant. The plan can outlive membership and run with project-derived scope. Exclude SCHEDULE_TOOLS from the project scope or make such plans project-owned. vault_request in project runs lets other users' content trigger pushes to the owner.",
+    "Future tool migrations (pattern in 0024/0025/0026) append tools to every top-level grant with non-empty platform_tools. They must not add vault or computer tools to project grants, so mark project grants (parent_id IS NULL alone won't distinguish them if project grants are top-level).",
+    "llm-gw scrubbing and credential selection key off instance.user_id (proxy.rs:717, 946-957). This is correct for projects only as long as the sandbox token's uid stays the instance owner. Never sign the creator's uid into a member's sandbox token.",
+    "Concurrent edits: executor.rs, runs.rs, tools.rs and others are modified in the working tree right now. Line numbers cited for those files may shift."
+   ],
+   "open_questions": [
+    "Who owns the root of a project run tree, such as a project task created in the App by the creator, or a project pipeline root (kind=pipeline, which uses no tokens)? Is it the creator, a project-owned pseudo-run, or the lead agent's owner? This decides whose RunBudget max_duration_secs and max_steps apply to member runs.",
+    "Where is the per-owner project budget enforced: in llm-gw before each request (exact, shared across replicas through a ledger keyed (user, project, day)), in executor on_renew (lagged), or both? Which timezone sets the day boundary: llm-gw budget_utc_offset_secs, or the owner's timezone?",
+    "Should usage_records get a run_id (generally useful, and it removes the one-run-per-instance assumption in instance_usage_since) or only a project_id?",
+    "Should a project grant be one top-level grant per (instance, project) issued by the owner on join, with child grants as its descendants, or a child of the creator's grant with an extra owner_grant_id ancestor? The answer drives how creator and owner revocation both cascade.",
+    "Should the creator's stop-all cancel members' agents' project runs, or only the creator's own? Should a member's stop-all also pause their ProjectAgent authorizations until they re-enable them?",
+    "Whose approval timeout and on_approval_timeout apply to a member agent's project run: the project's or the owner's? Should PausePlan in project context pause the project task?",
+    "Cross-user delegation confirmation (design 11): auto within budget with a notification to the owner, or per-delegation consent? This affects whether delegate creates the child run in queued state or in a waiting-for-owner state.",
+    "Can project runs on an instance interleave with private runs, keeping today's one-active-run-per-instance rule, or run concurrently in separate sessions? Concurrency breaks instance_usage_since and the per-instance token_epoch.",
+    "Do existing single-user teams migrated to single-user projects keep today's semantics (full default scope incl. vault and computer, whole-tree budget), or adopt the project defaults (vault and computer off)? Design section 7 says 'same user's own project doesn't prompt' but is silent on the defaults."
+   ]
+  }
+ ]
+}
