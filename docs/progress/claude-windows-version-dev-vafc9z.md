@@ -2,7 +2,7 @@
 
 目标：Windows 电脑端（架构方案 8.6 里“暂不做”的那一项）。和 macOS 端对齐：托盘常驻的电脑端工具服务（Rust 的 `desktop`，经设备中继让用户的 agent 用这台电脑）、登录、手机配对二维码、能力令牌和高危审批把关、开机自启、安装包分发。对话和计划的主窗口（macOS 上复用 ThinktinUI）不在这一期。
 
-认领：Windows 会话（session_012PgAxFAJsLo683tK5xbEqo）在做，2026-10-27 起。后端 `DevicePlatform` 加 `windows`、`desktop` 库跨平台这两处会碰 `crates/**`，别的分支如果也要改这些地方，请在这里记一句。
+认领：Windows 会话（session_01L91VnGgMnu15zdzSNk7nYQ）在做，2026-10-29 起（接手 session_012PgAxFAJsLo683tK5xbEqo）。后端 `DevicePlatform` 加 `windows`、`desktop` 库跨平台这两处会碰 `crates/**`，别的分支如果也要改这些地方，请在这里记一句。
 
 已完成：
 - 分支与进度文件（本文件）。
@@ -13,7 +13,7 @@
 - **CI、发版、文档**：`windows.yml`（windows-latest 上 fmt、clippy、测试、未签名 exe）、`windows-release.yml`（`windows-v*` 标签：构建、有证书就签名、Inno Setup 安装包 `apps/windows/installer/thinktin.iss`、GitHub Release）；`docs/windows.md`；README、架构方案 8.6 和待决问题、relay / pairing / desktop 文档里的“只有 macOS”；WBS 14.10–14.14；许可证检查加 Windows 程序（只算 Windows 平台的依赖，允许 Ubuntu 字体许可证）。
 
 进行中：
-- 无。等用户安排：`windows.yml` 还没在 GitHub 上跑过（见“坑和决定”）。
+- 合进 origin/main（迁移改号），然后让 windows.yml 跑起来。
 
 下一步：
 1. 让 `windows.yml` 跑一次（开 PR 或合进 main），修 MSVC 上的问题。
