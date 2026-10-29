@@ -191,6 +191,8 @@ struct Exec<'a> {
     has_asks: bool,
     /// 消息前面的说明（8.12）：这条紧急消息打断了什么，或者这条排队的消息之前已经捎带给 agent 看过。
     preface: Option<Preface>,
+    /// 交还的结果之前交出去过、那一轮中途断了（这次是续跑）。
+    redelivery: bool,
     /// 委派的子任务做完了：交还给 agent 的消息，以及其中的子运行（这一轮开始后记成已交还）。
     resume: Option<(String, Vec<RunId>)>,
     /// agent 接回了之前的会话（还记得之前的对话）。
@@ -769,6 +771,11 @@ impl Executor {
         let delegated = w.delegated_runs(rec.run.id).await.map_err(retry)?;
         let asked = w.ask_runs(rec.run.id).await.map_err(retry)?;
         let finished = w.unreported_children(rec.run.id).await.map_err(retry)?;
+        // 这些结果之前交出去过、那一轮中途断了：这次是续跑，照样附上续跑说明和简报。
+        let redelivery = !finished.is_empty()
+            && w.handed_before(&finished.iter().map(|c| c.id).collect::<Vec<_>>())
+                .await
+                .map_err(retry)?;
         // 用户的紧急消息（8.12）：它真的打断了一个运行，就在开头说明打断了什么。
         let preface = match rec.interrupts_run_id {
             Some(h) => {
@@ -883,8 +890,8 @@ impl Executor {
                 ..
             }
         );
-        // 续跑简报（7.12）：重试（不是交还子任务结果）时，从运行日志里整理上次执行到哪儿了。
-        let brief = if rec.run.attempt > 1 && resume.is_none() {
+        // 续跑简报（7.12）：重试（不是第一次交还子任务结果）时，从运行日志里整理上次执行到哪儿了。
+        let brief = if rec.run.attempt > 1 && (resume.is_none() || redelivery) {
             let events = async {
                 let mut w = self.db.worker().await?;
                 let events = w
@@ -941,6 +948,7 @@ impl Executor {
             // 还有没答完的问题（答完的交还在 resume 里）。
             has_asks: asked.iter().any(|q| !q.state.is_terminal()),
             preface,
+            redelivery,
             resume,
             session_restored,
             brief,
@@ -1635,7 +1643,19 @@ impl Exec<'_> {
             _ => self.rec.run.prompt.clone(),
         };
         if let Some((message, _)) = &self.resume {
-            prompt = message.clone();
+            prompt = if self.redelivery {
+                let brief = self.brief.as_deref().filter(|_| !self.session_restored);
+                crate::texts::resume_note(
+                    self.locale,
+                    self.rec.run.attempt,
+                    brief,
+                    self.has_children,
+                    self.has_asks,
+                    message,
+                )
+            } else {
+                message.clone()
+            };
         } else if self.rec.run.attempt > 1 {
             // 会话接回了，agent 记得之前的对话；没接回（换了机器、会话丢了）就附上平台记录的上次进展（7.12）。
             let brief = self.brief.as_deref().filter(|_| !self.session_restored);
@@ -1660,6 +1680,19 @@ impl Exec<'_> {
             .await
         {
             return Outcome::Retry("agent-shim exited".into());
+        }
+        // 结果交出去了（还没处理完，处理完这一轮才记成已交还）：再问同一个问题就是真的再问（8.11），这一轮
+        // 断了下次重交时按续跑说明。
+        if let Some((_, ids)) = &self.resume {
+            let handed = async {
+                let mut w = self.ex.db.worker().await?;
+                w.mark_handed(ids).await?;
+                w.commit().await
+            }
+            .await;
+            if let Err(e) = handed {
+                warn!(run = %self.rec.run.id, error = %e, "marking subtask results as handed over failed");
+            }
         }
         let budget = self.rec.budget;
         let deadline = Instant::now() + Duration::from_secs(budget.max_duration_secs.max(1));

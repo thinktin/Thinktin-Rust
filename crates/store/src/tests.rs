@@ -4599,8 +4599,8 @@ async fn unarchived_board_posts_count_as_new() {
     tx.commit().await.unwrap();
 }
 
-/// 紧急消息（8.12）先来后到：实例空闲时连发两条，后一条排在前一条后面；有一条在等着打断时，再来的都排在它后面；
-/// 紧急消息不当普通消息捎带。
+/// 紧急消息（8.12）先来后到：实例空闲时连发两条，后一条排在前一条后面；占着实例的那个没有紧急消息去打断时，
+/// 再来的去打断它，但照样排在之前的紧急消息后面；紧急消息不当普通消息捎带。
 #[tokio::test]
 async fn urgent_messages_keep_their_order() {
     use crate::Urgent;
@@ -4633,12 +4633,13 @@ async fn urgent_messages_keep_their_order() {
             .iter()
             .all(|r| r.id == normal.id)
     );
-    // a 先跑；它跑着的时候再来一条：b 还在等，排在 b 后面，不去打断 a。
+    // a 先跑。
     let first = w.claim_next_run("x", LEASE).await.unwrap().unwrap();
     assert_eq!(first.run.id, a.id);
     w.commit().await.unwrap();
+    // a 跑着的时候再来一条：b 只是排在 a 后面、没去打断谁，这条去打断 a（照样排在 b 后面）。
     let (c, how) = urgent("c").await;
-    assert_eq!(how, Urgent::Behind(b.id));
+    assert_eq!(how, Urgent::Interrupting(a.id));
     let mut w = db.worker().await.unwrap();
     w.transition_run(a.id, "x", RunState::Running, &RunChange::default())
         .await
@@ -4646,20 +4647,88 @@ async fn urgent_messages_keep_their_order() {
     w.transition_run(a.id, "x", RunState::Succeeded, &RunChange::default())
         .await
         .unwrap();
-    let order: Vec<_> = {
-        let mut got = Vec::new();
-        for _ in 0..3 {
-            let r = w.claim_next_run("x", LEASE).await.unwrap().unwrap();
-            got.push(r.run.id);
-            w.transition_run(r.run.id, "x", RunState::Running, &RunChange::default())
-                .await
-                .unwrap();
-            w.transition_run(r.run.id, "x", RunState::Succeeded, &RunChange::default())
-                .await
-                .unwrap();
-        }
-        got
-    };
-    assert_eq!(order, [b.id, c.id, normal.id]);
     w.commit().await.unwrap();
+    // 一个个跑完（各自的事务，结束时间不同）。
+    let mut order = Vec::new();
+    for _ in 0..3 {
+        let mut w = db.worker().await.unwrap();
+        let r = w.claim_next_run("x", LEASE).await.unwrap().unwrap();
+        order.push(r.run.id);
+        w.transition_run(r.run.id, "x", RunState::Running, &RunChange::default())
+            .await
+            .unwrap();
+        w.transition_run(r.run.id, "x", RunState::Succeeded, &RunChange::default())
+            .await
+            .unwrap();
+        w.commit().await.unwrap();
+    }
+    assert_eq!(order, [b.id, c.id, normal.id]);
+    // 最近做完的是最后结束的那个（排在紧急消息后面、先建的普通消息），不是最后建的。
+    let mut tx = db.tenant(u).await.unwrap();
+    assert_eq!(
+        tx.last_finished_run(inst.id).await.unwrap().map(|r| r.id),
+        Some(normal.id)
+    );
+    tx.rollback().await.unwrap();
+}
+
+/// 紧急消息（8.12）优先：之后才建、排得更靠前的普通运行（比如晚到的计划触发）也不能抢在它前面；占着实例的
+/// 那个没人打断时（它是紧急消息之后才领走的），再来的紧急消息去打断它。
+#[tokio::test]
+async fn urgent_messages_go_first_and_untargeted_holders_get_interrupted() {
+    use crate::Urgent;
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let u = user(db, "+8613800000898").await;
+    let inst = instance(db, u).await;
+    let mut tx = db.tenant(u).await.unwrap();
+    let (first, how) = tx
+        .queue_urgent_run(&NewRun::new(inst.id, RunSource::User, "now", "1"))
+        .await
+        .unwrap();
+    assert_eq!(how, Urgent::Free);
+    let mut late = NewRun::new(inst.id, RunSource::User, "late plan fire", "1");
+    late.not_before = Some(Utc::now() - Days::hours(1));
+    let late = tx.create_run(&late).await.unwrap();
+    tx.commit().await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    assert_eq!(
+        w.claim_next_run("x", LEASE).await.unwrap().unwrap().run.id,
+        first.id
+    );
+    w.transition_run(first.id, "x", RunState::Running, &RunChange::default())
+        .await
+        .unwrap();
+    w.transition_run(first.id, "x", RunState::Succeeded, &RunChange::default())
+        .await
+        .unwrap();
+    // 晚到的那个跑起来了；这时排着一条没去打断任何人的紧急消息（比如它入队时实例刚好空着）。
+    let holder = w.claim_next_run("x", LEASE).await.unwrap().unwrap();
+    assert_eq!(holder.run.id, late.id);
+    let mut stray = NewRun::new(inst.id, RunSource::User, "stray", "1");
+    stray.urgent = true;
+    let stray = w.create_run(u, &stray).await.unwrap().unwrap();
+    w.commit().await.unwrap();
+    let mut tx = db.tenant(u).await.unwrap();
+    let (_, how) = tx
+        .queue_urgent_run(&NewRun::new(inst.id, RunSource::User, "stop", "1"))
+        .await
+        .unwrap();
+    assert_eq!(how, Urgent::Interrupting(late.id));
+    tx.commit().await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    assert!(w.interrupt_pending(late.id).await.unwrap());
+    w.rollback().await.unwrap();
+    // 之前那条照样排在前面。
+    let mut tx = db.tenant(u).await.unwrap();
+    let queued: Vec<_> = tx
+        .runs(inst.id, None, 10)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.state == RunState::Queued)
+        .map(|r| r.id)
+        .collect();
+    assert!(queued.contains(&stray.id));
+    tx.rollback().await.unwrap();
 }

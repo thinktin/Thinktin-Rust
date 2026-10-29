@@ -82,6 +82,11 @@ impl BoardTools {
     async fn post(&self, ctx: &ToolContext, args: PostArgs) -> Result<Value, String> {
         let body = check_board_body(&args.body).map_err(user_error)?;
         let tags = normalize_board_tags(&args.tags).map_err(user_error)?;
+        // 保险箱里的值不上看板（模型网关转发前也会再抹一遍）：开事务之前抹，要解密保险箱。换成引用以后可能
+        // 变长，再查一次长度。
+        let scrubber = crate::vault::user_scrubber(&self.db, self.kms.clone(), ctx.user).await;
+        let body = scrubber.scrub(&body).unwrap_or(body);
+        let body = check_board_body(&body).map_err(user_error)?;
         let mut t = self.db.tenant(ctx.user).await.map_err(internal)?;
         if t.run_event_count(ctx.run, "board.posted")
             .await
@@ -92,10 +97,6 @@ impl BoardTools {
                 "at most {MAX_POSTS_PER_RUN} board posts per task; put more into one post"
             ));
         }
-        // 保险箱里的值不上看板（模型网关转发前也会再抹一遍）。换成引用以后可能变长：再查一次长度。
-        let scrubber = crate::vault::user_scrubber(&self.db, self.kms.clone(), ctx.user).await;
-        let body = scrubber.scrub(&body).unwrap_or(body);
-        let body = check_board_body(&body).map_err(user_error)?;
         let (post, archived) = t
             .post_to_board(&NewBoardPost {
                 author_instance_id: Some(ctx.instance),

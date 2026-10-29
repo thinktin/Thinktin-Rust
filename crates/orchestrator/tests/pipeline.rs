@@ -380,7 +380,7 @@ async fn steps_run_in_dependency_order_and_hand_over_artifacts() {
     // 上游产出物已经复制到下游的工作区。
     let mut w = e.t.db.worker().await.unwrap();
     let rt_b = w.instance_runtime(e.b.id).await.unwrap();
-    let artifacts = w.tree_artifacts(root).await.unwrap();
+    let artifacts = w.tree_artifacts(root, true).await.unwrap();
     // 每一步都有自己实例上的子授权，从计划授权收窄而来。
     let report_rec = w.run_record(child("report").id).await.unwrap();
     let (_, g) = w.run_grant(report_rec.run_grant_id.unwrap()).await.unwrap();
@@ -660,4 +660,47 @@ async fn answering_a_question_sees_only_its_own_artifacts() {
         )
         .await;
     assert!(read.is_error, "{}", text(&read));
+    // 回答方发布的：放在这个问题里，提问方那棵树看得到；同名的先用树自己的。
+    for (name, body) in [
+        ("answer.md", &b"the answer"[..]),
+        ("inbox.md", &b"not yours"[..]),
+    ] {
+        store
+            .publish(
+                Origin {
+                    user: e.user,
+                    instance: e.b.id,
+                    run: q.id,
+                    root: q.id,
+                },
+                name,
+                "text/markdown",
+                body,
+            )
+            .await
+            .unwrap();
+    }
+    let mine = tools
+        .call(&ctx(e.a.id, r.id), "artifact_list", &json!({}))
+        .await;
+    assert!(text(&mine).contains("answer.md"), "{}", text(&mine));
+    let read = tools
+        .call(
+            &ctx(e.a.id, r.id),
+            "artifact_read",
+            &json!({ "name": "inbox.md" }),
+        )
+        .await;
+    assert!(text(&read).contains("private"), "{}", text(&read));
+    let theirs = tools
+        .call(&ctx(e.b.id, q.id), "artifact_list", &json!({}))
+        .await;
+    assert!(text(&theirs).contains("answer.md"), "{}", text(&theirs));
+    // App 里看提问的运行和整棵树，和 agent 看到的一样。
+    let mut tx = e.t.db.tenant(e.user).await.unwrap();
+    assert_eq!(tx.artifact_scope(q.id).await.unwrap(), (q.id, false));
+    assert_eq!(tx.artifact_scope(r.id).await.unwrap(), (r.id, true));
+    assert_eq!(tx.tree_artifacts(r.id, true).await.unwrap().len(), 3);
+    assert_eq!(tx.tree_artifacts(q.id, false).await.unwrap().len(), 2);
+    tx.rollback().await.unwrap();
 }

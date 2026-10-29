@@ -1788,7 +1788,8 @@ impl ThinktinClient {
             .await
     }
 
-    /// 归档、取消归档。没归档的已经有 200 条时取消归档报 422（先归档别的）。
+    /// 归档、取消归档。已经是那样的不动（重试不出错）；没归档的已经有 200 条时取消归档报 422（先归档别的）。
+    /// 取消归档的算新的：看板满了自动归档时按取消归档的时间排。
     pub async fn set_board_post_archived(
         &self,
         post_id: String,

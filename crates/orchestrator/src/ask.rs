@@ -9,8 +9,8 @@
 //!   在等自己时不许问（“谁在等谁”和委派共用，按用户加锁检查）；一次运行最多问 [`MAX_ASKS_PER_RUN`] 次，
 //!   回答时再问别人最多 [`MAX_DEPTH`] 层；[`ANSWER_TIMEOUT`] 内没答完的由后台取消，交还“对方没回答”。
 //! - 问题送进对方会话之前抹掉用户保险箱里的值，免得密码经提问到了别的 agent 手里。
-//! - 不走通用的副作用幂等（7.13）：同一个问题还没交还时重复问就是那一个；交还了（比如超时没答上）再问是真的
-//!   再问一次。
+//! - 不走通用的副作用幂等（7.13）：同一个问题的结果还没交给 agent 时重复问就是那一个；交给 agent 以后（比如
+//!   超时没答上）再问是真的再问一次。
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -76,6 +76,9 @@ impl AskTools {
             ));
         };
         let target = peer.instance;
+        // 保险箱里的值不进对方的会话（模型网关转发前也会再抹一遍）。在拿锁、开事务之前抹：要解密保险箱。
+        let scrubber = crate::vault::user_scrubber(&self.db, self.kms.clone(), ctx.user).await;
+        let question = scrubber.scrub(&question).unwrap_or(question);
 
         let mut w = self.db.worker().await.map_err(internal)?;
         w.lock_run_waits(ctx.user).await.map_err(internal)?;
@@ -98,27 +101,9 @@ impl AskTools {
             );
         }
         let locale = w.user_locale(ctx.user).await.map_err(internal)?;
-        // 同一个问题还没交还（agent 重试、重复调用）：就是那一个，不再问一遍。交还以后再问（比如上次没答上）
-        // 是真的再问。到了上限时不抹值就比较，省掉解密保险箱。
-        let asked = w.ask_runs(ctx.run).await.map_err(internal)?;
-        let raw_prompt = crate::texts::ask_question(locale, &me.name, &question);
-        if asked.len() >= MAX_ASKS_PER_RUN {
-            if let Some(open) = w
-                .open_ask(ctx.run, target.id, &raw_prompt)
-                .await
-                .map_err(internal)?
-            {
-                w.rollback().await.map_err(internal)?;
-                return Ok(asked_reply(&open, &target.name, peer.holder.is_some()));
-            }
-            return Err(format!(
-                "at most {MAX_ASKS_PER_RUN} questions per task; put what you still need into one question"
-            ));
-        }
-        // 保险箱里的值不进对方的会话（模型网关转发前也会再抹一遍）。
-        let scrubber = crate::vault::user_scrubber(&self.db, self.kms.clone(), ctx.user).await;
-        let question = scrubber.scrub(&question).unwrap_or(question);
         let prompt = crate::texts::ask_question(locale, &me.name, &question);
+        // 同一个问题的结果还没交给 agent（agent 重试、重复调用）：就是那一个，不再问一遍。交给 agent 以后
+        // 再问（比如上次没答上）是真的再问。
         if let Some(open) = w
             .open_ask(ctx.run, target.id, &prompt)
             .await
@@ -126,6 +111,11 @@ impl AskTools {
         {
             w.rollback().await.map_err(internal)?;
             return Ok(asked_reply(&open, &target.name, peer.holder.is_some()));
+        }
+        if w.ask_runs(ctx.run).await.map_err(internal)?.len() >= MAX_ASKS_PER_RUN {
+            return Err(format!(
+                "at most {MAX_ASKS_PER_RUN} questions per task; put what you still need into one question"
+            ));
         }
         if w.instance_waits_for(target.id, ctx.run)
             .await

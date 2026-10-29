@@ -155,35 +155,71 @@ impl<R> Tx<R> {
         row.into_stored()
     }
 
-    /// 一棵运行树里的产出物，每个名字只取最新版本。
-    pub async fn tree_artifacts(&mut self, root: RunId) -> Result<Vec<StoredArtifact>> {
-        let rows: Vec<Row> = sqlx::query_as(concat!(
-            "SELECT DISTINCT ON (name) ",
-            columns!(),
-            " FROM artifacts WHERE root_run_id = $1 ORDER BY name, version DESC"
-        ))
-        .bind(root.0)
-        .fetch_all(self.conn())
+    /// 一个运行看得到哪些产出物（8.11）：回答队友问题的运行（和它下面的）只看这个问题里的，范围的根是那个
+    /// 提问运行；别的运行看整棵运行树（包括树里各个问题的回答方发布的）。返回范围的根、是不是整棵树。
+    pub async fn artifact_scope(&mut self, run: RunId) -> Result<(RunId, bool)> {
+        let (scope, whole): (Uuid, bool) = sqlx::query_as(
+            "WITH RECURSIVE chain AS ( \
+               SELECT id, source, parent_run_id, root_run_id, 0 AS depth FROM runs WHERE id = $1 \
+               UNION ALL \
+               SELECT r.id, r.source, r.parent_run_id, r.root_run_id, c.depth + 1 \
+               FROM runs r JOIN chain c ON r.id = c.parent_run_id WHERE c.depth < 64) \
+             SELECT coalesce((SELECT id FROM chain WHERE source = 'ask' ORDER BY depth LIMIT 1), \
+                             (SELECT root_run_id FROM chain WHERE depth = 0)), \
+                    NOT EXISTS (SELECT 1 FROM chain WHERE source = 'ask')",
+        )
+        .bind(run.0)
+        .fetch_one(self.conn())
         .await?;
-        rows.into_iter().map(Row::into_stored).collect()
+        Ok((scope.into(), whole))
     }
 
-    /// 树里某个名字的最新版本（或指定版本）。
+    /// 范围里的产出物，每个名字只取最新版本。`whole` 是整棵运行树（见 [`Tx::artifact_scope`]）：也列出树里
+    /// 各个问题的回答方发布的（同名的各列一条，`from_run` 看得出是谁的）。
+    pub async fn tree_artifacts(
+        &mut self,
+        root: RunId,
+        whole: bool,
+    ) -> Result<Vec<StoredArtifact>> {
+        let rows: Vec<Row> = sqlx::query_as(concat!(
+            "SELECT DISTINCT ON (root_run_id, name) ",
+            columns!(),
+            " FROM artifacts WHERE root_run_id = $1 OR ($2 AND root_run_id IN ( \
+                 SELECT id FROM runs WHERE root_run_id = $1 AND source = 'ask')) \
+             ORDER BY root_run_id, name, version DESC"
+        ))
+        .bind(root.0)
+        .bind(whole)
+        .fetch_all(self.conn())
+        .await?;
+        let mut out: Vec<StoredArtifact> = rows
+            .into_iter()
+            .map(Row::into_stored)
+            .collect::<Result<_>>()?;
+        out.sort_by(|a, b| a.artifact.name.cmp(&b.artifact.name));
+        Ok(out)
+    }
+
+    /// 范围里某个名字的最新版本（或指定版本）。整棵树时也找问题的回答方发布的，同名的先用树自己的。
     pub async fn named_artifact(
         &mut self,
         root: RunId,
+        whole: bool,
         name: &str,
         version: Option<u32>,
     ) -> Result<StoredArtifact> {
         let row: Row = sqlx::query_as(concat!(
             "SELECT ",
             columns!(),
-            " FROM artifacts WHERE root_run_id = $1 AND name = $2 AND ($3::int IS NULL OR version = $3) \
-             ORDER BY version DESC LIMIT 1"
+            " FROM artifacts WHERE (root_run_id = $1 OR ($4 AND root_run_id IN ( \
+                 SELECT id FROM runs WHERE root_run_id = $1 AND source = 'ask'))) \
+               AND name = $2 AND ($3::int IS NULL OR version = $3) \
+             ORDER BY root_run_id = $1 DESC, version DESC LIMIT 1"
         ))
         .bind(root.0)
         .bind(name)
         .bind(version.map(|v| i32::try_from(v).unwrap_or(i32::MAX)))
+        .bind(whole)
         .fetch_one(self.conn())
         .await?;
         row.into_stored()

@@ -41,6 +41,8 @@ struct Recorded {
     restore_sessions: bool,
     /// 收到子任务结果、队友回答的这么多次里，这一轮一开始就崩溃。
     crash_on_results: u32,
+    /// “slowly” 的提示词等它放行（测试在这一轮中间做完要做的事再放行），最多等 5 秒。
+    gate: Option<Arc<tokio::sync::Notify>>,
 }
 
 #[derive(Default, Clone)]
@@ -253,16 +255,35 @@ async fn fake_shim(
                 }
                 // 慢一点再开始（给测试留出在这一轮中间做点什么的时间）。
                 if text.contains("slowly") {
-                    tokio::time::sleep(Duration::from_millis(400)).await;
+                    let gate = rec.lock().unwrap().gate.clone();
+                    match gate {
+                        Some(g) => {
+                            let _ =
+                                tokio::time::timeout(Duration::from_secs(5), g.notified()).await;
+                        }
+                        None => tokio::time::sleep(Duration::from_millis(400)).await,
+                    }
                 }
                 if text.contains("子任务都结束了") {
                     // 委派的子任务的结果交回来了（8.7）。
                     let _ = ev.send(chunk(&run_id, "got the results")).await;
                     let _ = ev.send(ended(&run_id, StopReason::EndTurn)).await;
                 } else if text.contains("问题有结果了") {
-                    // 问队友的回答交回来了（8.11）。
-                    let _ = ev.send(chunk(&run_id, "got the answers")).await;
-                    let _ = ev.send(ended(&run_id, StopReason::EndTurn)).await;
+                    // 问队友的回答交回来了（8.11）。原来的任务说了“没答上就再问”：同一个问题再问一次。
+                    let again = text
+                        .split_once("ask teammate ")
+                        .filter(|_| text.contains("re-ask") && text.contains("对方没有在"))
+                        .map(|(_, rest)| rest.split_once(": ").unwrap_or((rest, "say hello")));
+                    match again {
+                        Some((to, question)) => {
+                            let question = question.lines().next().unwrap_or_default().to_owned();
+                            ask_call(&ev, &mut cmds, &run_id, to.trim(), &question).await;
+                        }
+                        None => {
+                            let _ = ev.send(chunk(&run_id, "got the answers")).await;
+                            let _ = ev.send(ended(&run_id, StopReason::EndTurn)).await;
+                        }
+                    }
                 } else if text.contains("check news") {
                     // 一遍遍调平台工具，直到结果后面捎带了新消息（8.12），把捎带的那段当作回复。
                     let mut said = "no news".to_owned();
@@ -2794,9 +2815,9 @@ async fn an_urgent_message_stops_a_waiting_run_at_once() {
     assert!(prompts.last().unwrap().contains("打断说明"), "{prompts:?}");
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn queued_messages_ride_along_with_platform_tool_results() {
-    let Some(e) = env_with(
+/// 正忙的 agent 调平台工具时捎带排队的消息；返回它这一轮的总结和轮到那条消息时发给 agent 的提示词。
+async fn ride_along(restore_sessions: bool) -> Option<(String, String)> {
+    let e = env_with(
         fast(),
         Some(GrantScope {
             platform_tools: vec!["schedule_list".into()],
@@ -2804,11 +2825,8 @@ async fn queued_messages_ride_along_with_platform_tool_results() {
         }),
         Arc::new(Tools),
     )
-    .await
-    else {
-        return;
-    };
-    e.fake.rec.lock().unwrap().restore_sessions = true;
+    .await?;
+    e.fake.rec.lock().unwrap().restore_sessions = restore_sessions;
     let busy = e.queue("check news", None, 3).await;
     let (_stop, h) = e.spawn().await;
     e.wait_state(busy, RunState::Running).await;
@@ -2817,25 +2835,39 @@ async fn queued_messages_ride_along_with_platform_tool_results() {
         .await
         .unwrap()
         .unwrap();
-    // 正忙的 agent 在工具结果后面看到了排队的消息。
     let rec = e.state(busy).await;
     assert_eq!(rec.run.state, RunState::Succeeded);
-    let said = rec.run.summary.unwrap_or_default();
+    assert!(e.state(message).await.announced_at.is_some());
+    e.run_to_end().await;
+    let prompts = e.fake.rec.lock().unwrap().prompts.clone();
+    Some((
+        rec.run.summary.unwrap_or_default(),
+        prompts.last().unwrap().clone(),
+    ))
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn queued_messages_ride_along_with_platform_tool_results() {
+    let Some((said, next)) = ride_along(true).await else {
+        return;
+    };
+    // 正忙的 agent 在工具结果后面看到了排队的消息。
     assert!(
         said.contains("平台捎带") && said.contains("1. say hello when you can"),
         "{said}"
     );
-    assert!(e.state(message).await.announced_at.is_some());
     // 轮到这条消息时提醒 agent 可能已经看过（会话接回了才这么说）。
-    e.run_to_end().await;
-    let prompts = e.fake.rec.lock().unwrap().prompts.clone();
-    assert!(
-        prompts
-            .last()
-            .unwrap()
-            .starts_with("（平台在你做上一个任务时"),
-        "{prompts:?}"
-    );
+    assert!(next.starts_with("（平台在你做上一个任务时"), "{next}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_message_seen_in_a_lost_session_comes_as_new() {
+    let Some((said, next)) = ride_along(false).await else {
+        return;
+    };
+    assert!(said.contains("平台捎带"), "{said}");
+    // 会话没接回：agent 不记得看过，按新消息发。
+    assert_eq!(next, "say hello when you can");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -2848,6 +2880,8 @@ async fn an_urgent_message_is_not_lost_when_the_turn_ends_in_a_wait() {
     let Some((e, _helper)) = delegation_env_with(cfg).await else {
         return;
     };
+    let gate = Arc::new(tokio::sync::Notify::new());
+    e.fake.rec.lock().unwrap().gate = Some(gate.clone());
     let lead = e
         .queue("slowly lead the team: loop forever please", None, 3)
         .await;
@@ -2855,6 +2889,8 @@ async fn an_urgent_message_is_not_lost_when_the_turn_ends_in_a_wait() {
     e.wait_state(lead, RunState::Running).await;
     let (urgent, how) = queue_urgent(&e, "say hello now").await;
     assert_eq!(how, store::Urgent::Interrupting(lead));
+    // 紧急消息建好了，agent 再委派、结束这一轮。
+    gate.notify_one();
     tokio::time::timeout(Duration::from_secs(20), h)
         .await
         .unwrap()
@@ -2897,6 +2933,8 @@ async fn answers_are_handed_over_again_if_the_turn_with_them_breaks() {
     let prompts = e.fake.rec.lock().unwrap().prompts.clone();
     let last = prompts.last().unwrap();
     assert!(last.contains("回答：Hello world"), "{last}");
+    // 重交的：说明是续跑。
+    assert!(last.starts_with("（续跑说明"), "{last}");
     let mut w = e.t.db.worker().await.unwrap();
     assert!(w.unreported_children(run).await.unwrap().is_empty());
     w.rollback().await.unwrap();
@@ -2925,11 +2963,62 @@ async fn a_question_can_be_asked_again_once_its_outcome_was_handed_over() {
         .await
         .unwrap();
     assert_eq!(e.exec.expire_asks().await.unwrap(), 1);
+    // 超时了、结果还没交给 agent：还是那一个（结果会交过去）。
+    let pending = ask_directly(&e, run, "helper", "where is the data?").await;
+    assert_eq!(id(&pending), id(&first));
     let mut w = e.t.db.worker().await.unwrap();
-    w.mark_reported(&[q]).await.unwrap();
+    w.mark_handed(&[q]).await.unwrap();
     w.commit().await.unwrap();
     let third = ask_directly(&e, run, "helper", "where is the data?").await;
     assert!(!third.is_error);
     assert_ne!(id(&third), id(&first));
     assert_eq!(asks(&e, run).await.len(), 2);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_agent_can_ask_again_in_the_turn_that_brings_no_answer() {
+    let Some((e, helper)) = ask_env().await else {
+        return;
+    };
+    // helper 正忙，问题等到超时。
+    let busy = {
+        let mut tx = e.t.db.tenant(e.user).await.unwrap();
+        let r = tx
+            .create_run(&NewRun::new(
+                helper.id,
+                RunSource::User,
+                "loop forever",
+                &helper.agent_version,
+            ))
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        r.id
+    };
+    let (_stop, h) = e.spawn().await;
+    e.wait_state(busy, RunState::Running).await;
+    let run = e
+        .queue("re-ask if needed; ask teammate helper: say hello", None, 3)
+        .await;
+    e.run_to_end().await;
+    let q = asks(&e, run).await[0].id;
+    sqlx::query("UPDATE runs SET answer_deadline = now() - interval '1 second' WHERE id = $1")
+        .bind(q.0)
+        .execute(e.t.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(e.exec.expire_asks().await.unwrap(), 1);
+    // 拿到“对方没回答”的这一轮里再问同一个问题：真的再问了一次，接着等它。
+    e.run_to_end().await;
+    let qs = asks(&e, run).await;
+    assert_eq!(qs.len(), 2, "{qs:?}");
+    assert_eq!(qs[1].state, RunState::Queued);
+    assert_eq!(e.state(run).await.run.state, RunState::WaitingChildren);
+    let mut tx = e.t.db.tenant(e.user).await.unwrap();
+    tx.cancel_run(busy, None).await.unwrap();
+    tx.commit().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(20), h)
+        .await
+        .unwrap()
+        .unwrap();
 }

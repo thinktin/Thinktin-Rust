@@ -471,20 +471,15 @@ impl ArtifactTools {
         }
     }
 
+    /// 这次运行的产出物放在哪、看得到哪些，和沙箱。回答队友的问题（8.11）时只看得到、只写得进这个问题下面的
+    /// 产出物：问的是信息，不是权限，回答方不能借机读提问方整棵运行树的产出物（可能来自别的、关了交流开关的
+    /// 实例），也不能覆盖它们；回答方发布的，提问方那棵树看得到（`whole`）。
     async fn origin(
         &self,
         ctx: &ToolContext,
-    ) -> Result<(crate::artifacts::Origin, Option<String>), Fail> {
+    ) -> Result<(crate::artifacts::Origin, bool, Option<String>), Fail> {
         let mut w = self.db.worker().await?;
-        let rec = w.run_record(ctx.run).await?;
-        // 回答队友的问题（8.11）时只看得到、只写得进这个问题下面的产出物：问的是信息，不是权限，回答方
-        // 不能借机读提问方整棵运行树的产出物（可能来自别的、关了交流开关的实例），也不能覆盖它们。
-        let root = w
-            .run_chain(ctx.run)
-            .await?
-            .into_iter()
-            .find(|(_, _, source)| *source == proto::domain::RunSource::Ask)
-            .map_or(rec.run.root_run_id, |(id, _, _)| id);
+        let (root, whole) = w.artifact_scope(ctx.run).await?;
         let rt = w.instance_runtime(ctx.instance).await?;
         w.rollback().await?;
         Ok((
@@ -494,6 +489,7 @@ impl ArtifactTools {
                 run: ctx.run,
                 root,
             },
+            whole,
             rt.sandbox_id,
         ))
     }
@@ -512,7 +508,7 @@ impl ArtifactTools {
             content_type: Option<String>,
         }
         let a: A = parse(args)?;
-        let (origin, sandbox) = self.origin(ctx).await?;
+        let (origin, _, sandbox) = self.origin(ctx).await?;
         let (bytes, default_type) = match (&a.path, &a.content) {
             (Some(path), None) => {
                 let sid = sandbox.ok_or_else(|| Fail("the sandbox is not running".into()))?;
@@ -552,9 +548,9 @@ impl ArtifactTools {
     }
 
     async fn list(&self, ctx: &ToolContext) -> Result<Value, Fail> {
-        let (origin, _) = self.origin(ctx).await?;
+        let (origin, whole, _) = self.origin(ctx).await?;
         let mut w = self.db.worker().await?;
-        let items = w.tree_artifacts(origin.root).await?;
+        let items = w.tree_artifacts(origin.root, whole).await?;
         w.rollback().await?;
         let list: Vec<Value> = items
             .into_iter()
@@ -576,7 +572,7 @@ impl ArtifactTools {
         ctx: &ToolContext,
         args: &Value,
     ) -> Result<(store::StoredArtifact, Value), Fail> {
-        let (origin, _) = self.origin(ctx).await?;
+        let (origin, whole, _) = self.origin(ctx).await?;
         let name = args
             .get("name")
             .and_then(Value::as_str)
@@ -587,7 +583,7 @@ impl ArtifactTools {
             .map(|v| u32::try_from(v).unwrap_or(u32::MAX));
         let mut w = self.db.worker().await?;
         let a = w
-            .named_artifact(origin.root, name, version)
+            .named_artifact(origin.root, whole, name, version)
             .await
             .map_err(|e| match e {
                 store::Error::NotFound => Fail(format!("no artifact named {name:?} in this task")),
@@ -623,7 +619,7 @@ impl ArtifactTools {
             .map(str::to_owned)
             .unwrap_or_else(|| format!("handoff/{}", a.artifact.name));
         let target = self.workspace_path(&rel)?;
-        let (_, sandbox) = self.origin(ctx).await?;
+        let (_, _, sandbox) = self.origin(ctx).await?;
         let sid = sandbox.ok_or_else(|| Fail("the sandbox is not running".into()))?;
         let bytes = self
             .store
