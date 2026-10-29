@@ -7,7 +7,10 @@ import cn.thinktin.app.ui.chat.ChatViewModel
 import cn.thinktin.app.ui.chat.DraftHandoff
 import cn.thinktin.app.ui.home.HomeEvent
 import cn.thinktin.app.ui.home.HomeViewModel
+import cn.thinktin.data.model.Approval
 import cn.thinktin.data.model.ApprovalCardStatus
+import cn.thinktin.data.model.ApprovalOption
+import cn.thinktin.data.model.ApprovalState
 import cn.thinktin.data.model.Conversation
 import cn.thinktin.data.model.ConversationSection
 import cn.thinktin.data.model.EventKinds
@@ -29,6 +32,7 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.After
@@ -73,6 +77,24 @@ class ChatViewModelTest {
     private val ChatViewModel.conversation: Conversation get() = uiState.value.conversation
 
     private fun Conversation.items(runId: String): List<TimelineItem> = block(runId)!!.items
+
+    /** 一条待处理的审批记录（和 agent.permission_requested 事件按 runId、attempt、requestId 对上）。 */
+    private fun pendingApproval(id: String, runId: String, requestId: String): Approval {
+        val now = DemoTestApp.FIXED_CLOCK.millis()
+        return Approval(
+            id = id, runId = runId, instanceId = "inst-coder", title = "删除 build 目录",
+            options = listOf(ApprovalOption("allow", "批准", OptionKind.AllowOnce), ApprovalOption("reject", "拒绝", OptionKind.RejectOnce)),
+            toolCallJson = "{}", toolCall = JsonObject(emptyMap()), state = ApprovalState.Pending,
+            expiresAtMs = now + 24 * 60 * 60_000L, createdAtMs = now, requestId = requestId, attempt = 1,
+        )
+    }
+
+    private fun permissionRequested(requestId: String, approvalId: String?) = buildJsonObject {
+        put("request_id", requestId); put("attempt", 1); put("title", "删除 build 目录")
+        if (approvalId != null) put("approval_id", approvalId)
+    }
+
+    private val waitingApproval = buildJsonObject { put("state", "waiting_approval"); put("attempt", 1) }
 
     @Test
     fun opensFromCacheThenRefreshesAndSubscribes() = test {
@@ -378,6 +400,7 @@ class ChatViewModelTest {
         assertEquals("看起来正常的消息", vm.uiState.value.draft)
     }
 
+    /** 根运行：连同它委派出去的子任务一起停。 */
     @Test
     fun stopCancelsActiveRunTree() = test {
         val vm = chat()
@@ -390,6 +413,79 @@ class ChatViewModelTest {
         assertEquals(listOf("run-live" to true), service.cancelled)
         assertEquals(RunState.Cancelled, vm.conversation.block("run-live")!!.state)
         assertFalse(vm.uiState.value.stopping)
+    }
+
+    /** 委派 / 流水线步骤的子运行：停止键只停它自己，不连根停掉负责人那边（别的实例）的整棵树。 */
+    @Test
+    fun stopOnChildRunOnlyCancelsItself() = test {
+        val child = service.mock.getRun("run-delegate").copy(state = RunState.Running, finishedAtMs = null)
+        service.syntheticRuns = listOf(child)
+        service.cachedEventsOverride = emptyList()
+        val vm = chat(instanceId = "inst-research")
+        advanceUntilIdle()
+        assertEquals("run-delegate", vm.uiState.value.activeRun)
+        vm.events.test {
+            vm.stop()
+            advanceUntilIdle()
+            assertTrue(awaitItem() is ChatEvent.Message)
+        }
+        assertEquals(listOf("run-delegate" to false), service.cancelled)
+        assertEquals(RunState.Cancelled, vm.conversation.block("run-delegate")!!.state)
+        assertNull(vm.uiState.value.activeRun)
+    }
+
+    /** 打开页面之后才来的审批请求：按 approval_id 取记录（只取一次、不重拉列表），内嵌卡片才能批准 / 拒绝、有倒计时。 */
+    @Test
+    fun permissionRequestedAfterOpeningFetchesItsApprovalRecord() = test {
+        val vm = chat()
+        advanceUntilIdle()
+        val listCalls = service.approvalsCalls
+        val approval = pendingApproval("ap-new", "run-live", "perm-9")
+        service.extraApprovals += approval
+        service.stream.trySend(
+            service.event("inst-coder", "run-live", EventKinds.AGENT_PERMISSION_REQUESTED, permissionRequested("perm-9", "ap-new"), 2000),
+        )
+        service.stream.trySend(service.event("inst-coder", "run-live", EventKinds.RUN_STATE, waitingApproval, 2001))
+        advanceUntilIdle()
+        val card = vm.conversation.block("run-live")!!.approvalCards.single()
+        assertEquals(ApprovalCardStatus.Pending, card.status)
+        assertTrue(card.canDecide)
+        assertEquals(approval.expiresAtMs, card.expiresAtMs)
+        assertEquals(listOf("ap-new"), service.approvalFetches)
+        assertEquals(listCalls, service.approvalsCalls)
+        // 横幅的“去审批”能滚到卡片，不用去审批中心。
+        assertEquals(RunState.WaitingApproval, vm.conversation.attentionBlock?.state)
+        vm.events.test {
+            assertTrue(vm.scrollToPendingApproval())
+            assertTrue(awaitItem() is ChatEvent.ScrollToItem)
+        }
+        // 卡片上决定走的就是这条记录。
+        vm.actions.onOption(card.approval!!, card.approval!!.options.first { it.kind == OptionKind.AllowOnce })
+        vm.actions.confirm()
+        advanceUntilIdle()
+        assertEquals(1, gate.requests.size)
+    }
+
+    /** 事件里没有 approval_id（老数据）：运行进入等审批时拉一次待处理列表，按关联键对上。 */
+    @Test
+    fun waitingApprovalWithoutApprovalIdFallsBackToApprovalList() = test {
+        val vm = chat()
+        advanceUntilIdle()
+        val listCalls = service.approvalsCalls
+        service.extraApprovals += pendingApproval("ap-old", "run-live", "perm-9")
+        service.stream.trySend(
+            service.event("inst-coder", "run-live", EventKinds.AGENT_PERMISSION_REQUESTED, permissionRequested("perm-9", null), 2000),
+        )
+        advanceUntilIdle()
+        assertFalse(vm.conversation.block("run-live")!!.approvalCards.single().canDecide)
+        assertEquals(listCalls, service.approvalsCalls)
+        service.stream.trySend(service.event("inst-coder", "run-live", EventKinds.RUN_STATE, waitingApproval, 2001))
+        advanceUntilIdle()
+        assertEquals(listCalls + 1, service.approvalsCalls)
+        assertTrue(service.approvalFetches.isEmpty())
+        val card = vm.conversation.block("run-live")!!.approvalCards.single()
+        assertEquals("ap-old", card.approvalId)
+        assertTrue(card.canDecide)
     }
 
     @Test

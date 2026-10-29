@@ -2,6 +2,8 @@ package cn.thinktin.app
 
 import cn.thinktin.app.ui.chat.ArtifactFiles
 import cn.thinktin.data.mock.MockThinktinService
+import cn.thinktin.data.model.Approval
+import cn.thinktin.data.model.ApprovalState
 import cn.thinktin.data.model.DetectedSecret
 import cn.thinktin.data.model.EventStreamItem
 import cn.thinktin.data.model.InstanceEvent
@@ -22,8 +24,9 @@ import java.nio.file.Files
 
 /**
  * 对话页的服务替身：数据来自 Mock，事件流由测试往 [stream] 里放（Mock 自己的事件流会按节奏一直吐演示事件，
- * 虚拟时间里跑不完）；记下发出的消息、停止的运行；[failNext] 让某个方法下一次抛错。
- * [syntheticRuns] 不为空时运行列表用它（翻页测试要 50 个以上的运行）。
+ * 虚拟时间里跑不完）；记下发出的消息、停止的运行、按 id 取过的审批；[failNext] 让某个方法下一次抛错。
+ * [syntheticRuns] 不为空时运行列表用它（翻页测试要 50 个以上的运行）；[extraApprovals] 是 Mock 之外的审批记录
+ * （打开页面之后才来的请求）。
  */
 class ChatService(
     val mock: MockThinktinService = MockThinktinService(clock = { DemoTestApp.FIXED_CLOCK.millis() }),
@@ -39,6 +42,10 @@ class ChatService(
         private set
     var syntheticRuns: List<Run> = emptyList()
     var cachedEventsOverride: List<InstanceEvent>? = null
+    val extraApprovals = mutableListOf<Approval>()
+    var approvalsCalls = 0
+        private set
+    val approvalFetches = mutableListOf<String>()
 
     /** 本地识别不出来（让 sendMessage 自己抛 ContainsSecrets）。 */
     var detectNothing = false
@@ -75,7 +82,21 @@ class ChatService(
         cancelled += runId to wholeTree
         maybeFail("cancelRun")
         if (syntheticRuns.isNotEmpty()) return syntheticRuns.first { it.id == runId }.copy(state = RunState.Cancelled)
-        return mock.cancelRun(runId, wholeTree)
+        // 和网关一致：停整棵树时返回的是根运行（可能属于别的实例）。
+        val run = mock.cancelRun(runId, wholeTree)
+        return if (wholeTree && run.rootRunId != run.id) mock.getRun(run.rootRunId) else run
+    }
+
+    override suspend fun approvals(): List<Approval> {
+        approvalsCalls++
+        maybeFail("approvals")
+        return mock.approvals() + extraApprovals.filter { it.state == ApprovalState.Pending }
+    }
+
+    override suspend fun getApproval(approvalId: String): Approval {
+        approvalFetches += approvalId
+        maybeFail("getApproval")
+        return extraApprovals.firstOrNull { it.id == approvalId } ?: mock.getApproval(approvalId)
     }
 
     override suspend fun runs(instanceId: String, limit: Int): List<Run> {

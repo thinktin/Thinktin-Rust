@@ -322,7 +322,8 @@ Keystore 失效……）都显示“无法加载核心库”页（原因 + 重�
     填写请求卡（agent 写的用途标 AI，“填写” / “拒绝”，已填写 / 已拒绝 / 已过期）；子运行入口；计划卡（“去确认”）。
   - 等待类横幅（警告色，输入框上方）：等审批 → 去审批（本页有能点的卡就滚过去，没有去审批中心）；等 key → 按 `wait_code`
     去配 key / 去配模型（限频、过载只提示）；等电脑 → 查看设备。运行中顶部细进度条，输入框为空时发送键变停止
-    （`cancelRun(wholeTree = true)`）。
+    （根运行 `cancelRun(wholeTree = true)` 连同委派出去的子任务一起停；委派 / 流水线步骤的子运行只停自己 `cancelRun(id, false)`，
+    整棵树在运行页经确认才停）。
   - 发送：`detectSecrets` 有命中 → 盖在页面上的底部表单（不是对话框）：名字（`uniqueVaultName` 避开已有条目，冲突 409 再换一个）、
     用途、账号、密码（预填命中值）→ `saveSecretFromMessage` → 换成 `[vault:名字]` 的文本放回输入框，还有命中接着弹；
     私钥（`storable = false`）只提示不发；“仍然发送”二次确认后 `sendMessage(allowSecrets = true)`；`sendMessage` 抛

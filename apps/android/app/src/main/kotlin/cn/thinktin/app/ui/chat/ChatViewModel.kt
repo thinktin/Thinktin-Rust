@@ -10,6 +10,7 @@ import cn.thinktin.app.ui.common.ErrorText
 import cn.thinktin.app.ui.common.UiText
 import cn.thinktin.app.ui.common.isRetryable
 import cn.thinktin.data.model.Approval
+import cn.thinktin.data.model.ApprovalCardStatus
 import cn.thinktin.data.model.ApprovalState
 import cn.thinktin.data.model.Conversation
 import cn.thinktin.data.model.ConversationBuilder
@@ -189,6 +190,10 @@ class ChatViewModel(
     private var window = HistoryWindow()
     private var olderRunsDone = false
     private val fetchingRuns = mutableSetOf<String>()
+    private val fetchingApprovals = mutableSetOf<String>()
+    private var fetchingApprovalList = false
+    /** 运行进入等审批了：这批归并完核对一遍还没对上记录的卡片（[checkApprovals]）。 */
+    private var checkApprovalsPending = false
     private var rebuildPending = false
     private var streamJob: Job? = null
     private var focusPending = focusRunId
@@ -245,18 +250,23 @@ class ChatViewModel(
             state.update { it.copy(offline = true, loading = false) }
         }
         // 审批和保险箱请求是附带的：拉不到只是卡片不能操作。
-        try {
-            val pending = service.approvals().filter { it.instanceId == instanceId }
-            approvals.values.removeAll { it.state == ApprovalState.Pending && pending.none { p -> p.id == it.id } }
-            pending.forEach { approvals[it.id] = it }
-        } catch (_: ServiceError) {
-        }
+        loadApprovals()
         try {
             service.vaultRequests(all = true).filter { it.instanceId == instanceId }.forEach { vaultRecords[it.id] = it }
         } catch (_: ServiceError) {
         }
         rebuild()
         ensureFocus()
+    }
+
+    /** 本实例待处理的审批记录（内嵌卡片的按钮和倒计时靠它）。拉不到只是卡片不能操作。 */
+    private suspend fun loadApprovals() {
+        try {
+            val pending = service.approvals().filter { it.instanceId == instanceId }
+            approvals.values.removeAll { it.state == ApprovalState.Pending && pending.none { p -> p.id == it.id } }
+            pending.forEach { approvals[it.id] = it }
+        } catch (_: ServiceError) {
+        }
     }
 
     private fun markGone() {
@@ -299,12 +309,18 @@ class ChatViewModel(
         if (event.instanceId != instanceId || eventsBySeq.containsKey(event.seq)) return
         eventsBySeq[event.seq] = event
         val runId = event.runId
+        val runState = if (event.kind == EventKinds.RUN_STATE) RunState.fromWire(event.payload.string("state").orEmpty()) else null
         if (runId != null) {
             when {
                 runId !in runs -> fetchRun(runId)
-                event.kind == EventKinds.RUN_STATE &&
-                    RunState.fromWire(event.payload.string("state").orEmpty()).isTerminal -> fetchRun(runId)
+                runState?.isTerminal == true -> fetchRun(runId)
             }
+        }
+        // 打开页面之后才来的审批请求：按 approval_id 取记录，内嵌卡片才能批准 / 拒绝、有倒计时（打开时只拉过一次列表）。
+        // 运行进入等审批时再核对一遍还没对上记录的卡片（照 iOS 的 checkApprovals）。
+        when {
+            event.kind == EventKinds.AGENT_PERMISSION_REQUESTED -> event.payload.string("approval_id")?.let { fetchApproval(it) }
+            runState == RunState.WaitingApproval -> checkApprovalsPending = true
         }
         scheduleRebuild()
     }
@@ -341,6 +357,44 @@ class ChatViewModel(
         }
     }
 
+    /** 事件里提到、还没对上记录的审批（打开页面之后才来的请求）：取记录。同一条只取一次。 */
+    private fun fetchApproval(approvalId: String) {
+        if (approvalId in approvals || !fetchingApprovals.add(approvalId)) return
+        viewModelScope.launch {
+            try {
+                val approval = service.getApproval(approvalId)
+                if (approval.instanceId == instanceId) {
+                    approvals[approval.id] = approval
+                    scheduleRebuild()
+                }
+            } catch (_: ServiceError) {
+            } finally {
+                fetchingApprovals.remove(approvalId)
+            }
+        }
+    }
+
+    /** 待处理却还没对上记录的卡片：有 approval_id 的按 id 取；没有的（老数据）拉一次待处理列表，按关联键对上。 */
+    private fun checkApprovals() {
+        var listNeeded = false
+        for (card in state.value.conversation.approvalCards) {
+            if (card.status != ApprovalCardStatus.Pending || card.approval != null) continue
+            val id = card.approvalId
+            if (id != null) fetchApproval(id) else listNeeded = true
+        }
+        if (listNeeded && !fetchingApprovalList) {
+            fetchingApprovalList = true
+            viewModelScope.launch {
+                try {
+                    loadApprovals()
+                    scheduleRebuild()
+                } finally {
+                    fetchingApprovalList = false
+                }
+            }
+        }
+    }
+
     /**
      * 补发的事件会一次涌进很多：按批归并。归并排在主线程队列的后面（`Dispatchers.Main` 总是排队，不像
      * `Main.immediate` 当场执行），收集方先把缓冲里已经到的事件都收完，再归并一次。
@@ -351,6 +405,10 @@ class ChatViewModel(
         viewModelScope.launch(Dispatchers.Main) {
             rebuildPending = false
             rebuild()
+            if (checkApprovalsPending) {
+                checkApprovalsPending = false
+                checkApprovals()
+            }
         }
     }
 
@@ -617,15 +675,24 @@ class ChatViewModel(
         if (state.value.draft.trim() == text) doSend(text, allowSecrets)
     }
 
-    /** 停止正在进行的运行（连同它委派出去的子任务）。 */
+    /**
+     * 停止正在进行的运行。根运行连同它委派出去的子任务一起停（整棵树）；委派 / 流水线步骤的子运行只停它自己——
+     * 整棵树是负责人那边（多半在别的实例）的运行，要停得在运行页经二次确认（和 iOS 一致）。
+     */
     fun stop() {
-        val runId = state.value.activeRun ?: return
+        val block = state.value.conversation.activeBlock ?: return
         if (state.value.stopping) return
+        val runId = block.runId
+        // 运行记录还没取到（不知道是不是子运行）时也只停它自己。
+        val run = block.run
+        val wholeTree = run != null && run.parentRunId == null
         state.update { it.copy(stopping = true) }
         viewModelScope.launch {
             try {
-                val run = service.cancelRun(runId, wholeTree = true)
-                runs[run.id] = run
+                val cancelled = service.cancelRun(runId, wholeTree)
+                // 停整棵树时网关返回的是根运行，可能属于别的实例：只收本实例的，本页这个运行另外取一次。
+                if (cancelled.instanceId == instanceId) runs[cancelled.id] = cancelled
+                if (cancelled.id != runId) fetchRun(runId)
                 rebuild()
                 message(UiText(R.string.chat_stopped))
             } catch (e: ServiceError) {
