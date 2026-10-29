@@ -1041,6 +1041,7 @@ impl Api {
     ) -> Result<Vec<Run>> {
         #[derive(Deserialize)]
         struct R {
+            #[serde(deserialize_with = "crate::lenient::vec")]
             runs: Vec<Run>,
         }
         let mut path = format!("/v1/instances/{instance}/runs?limit={limit}");
@@ -1059,6 +1060,7 @@ impl Api {
     ) -> Result<Vec<Run>> {
         #[derive(Deserialize)]
         struct R {
+            #[serde(deserialize_with = "crate::lenient::vec")]
             runs: Vec<Run>,
         }
         let mut path = format!("/v1/runs?limit={limit}");
@@ -1117,6 +1119,7 @@ impl Api {
     pub async fn run_tree(&self, id: RunId) -> Result<Vec<Run>> {
         #[derive(Deserialize)]
         struct R {
+            #[serde(deserialize_with = "crate::lenient::vec")]
             runs: Vec<Run>,
         }
         Ok(self
