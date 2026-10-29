@@ -9,8 +9,8 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use proto::domain::{
-    GrantId, InstanceId, PlanId, Run, RunBudget, RunId, RunKind, RunSource, RunState, TriggerId,
-    UserId,
+    GrantId, InstanceId, PlanHookId, PlanId, Run, RunBudget, RunId, RunKind, RunSource, RunState,
+    TriggerId, UserId,
 };
 use uuid::Uuid;
 
@@ -43,6 +43,8 @@ pub struct NewRun {
     pub interrupts_run_id: Option<RunId>,
     /// 用户的紧急消息（8.12），由 [`Tx::queue_urgent_run`] 填。
     pub urgent: bool,
+    /// 哪个计划 webhook 收到事件起的（7.1）。
+    pub hook_id: Option<PlanHookId>,
 }
 
 impl NewRun {
@@ -70,6 +72,7 @@ impl NewRun {
             answer_deadline: None,
             interrupts_run_id: None,
             urgent: false,
+            hook_id: None,
         }
     }
 }
@@ -278,9 +281,9 @@ impl<R> Tx<R> {
         let row: Option<Row> = sqlx::query_as(concat!(
             "INSERT INTO runs (id, user_id, instance_id, plan_id, trigger_id, fire_time, parent_run_id, root_run_id, \
                source, prompt, agent_version, run_grant_id, budget, not_before, max_attempts, kind, step_key, \
-               answer_deadline, interrupts_run_id, urgent) \
+               answer_deadline, interrupts_run_id, urgent, hook_id) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, coalesce($14, now()), $15, $16, $17, $18, \
-               $19, $20) \
+               $19, $20, $21) \
              ON CONFLICT (plan_id, fire_time) WHERE plan_id IS NOT NULL AND fire_time IS NOT NULL DO NOTHING \
              RETURNING ",
             columns!()
@@ -305,6 +308,7 @@ impl<R> Tx<R> {
         .bind(new.answer_deadline)
         .bind(new.interrupts_run_id.map(|r| r.0))
         .bind(new.urgent)
+        .bind(new.hook_id.map(|h| h.0))
         .fetch_optional(self.conn())
         .await?;
         row.map(Row::into_run).transpose()

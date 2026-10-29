@@ -71,6 +71,7 @@ id_type!(
     ImChannelId,
     ReportId,
     BoardPostId,
+    PlanHookId,
 );
 
 /// 字符串枚举的公共实现：和数据库里的取值一一对应。
@@ -372,6 +373,9 @@ pub struct PlanPolicy {
     pub daily_token_limit: Option<u64>,
     /// 等电脑上线、等补上 key 最多等多久（7.11）。
     pub wait_timeout_secs: u64,
+    /// 运行成功时通知用户（推送、收件箱）。事件触发的计划（7.1）常常关掉：没事的时候别打扰；失败、等审批、
+    /// 等 key 这些要用户处理的照样通知。老数据没有这一项，按打开算。
+    pub notify_success: bool,
 }
 
 impl Default for PlanPolicy {
@@ -383,6 +387,7 @@ impl Default for PlanPolicy {
             budget: RunBudget::default(),
             daily_token_limit: None,
             wait_timeout_secs: 24 * 3600,
+            notify_success: true,
         }
     }
 }
@@ -724,6 +729,19 @@ pub struct Trigger {
     /// 后台为什么停用了它（[`TRIGGER_INVALID_RULE`]）。用户自己停不了触发器，没被停用时没有。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disabled_reason: Option<String>,
+}
+
+/// 计划的 webhook（7.1 事件触发）：外面的服务往它的地址 POST，平台按这个计划起一次运行。令牌只在建、换的
+/// 时候返回一次，这里没有。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlanHook {
+    pub id: PlanHookId,
+    pub plan_id: PlanId,
+    pub enabled: bool,
+    /// 用户同意把收到的内容交给 agent 和模型厂商的时间。
+    pub consented_at: DateTime<Utc>,
+    pub last_event_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
 }
 
 /// 触发器的规则解析不了了（比如时区没了）：后台停用它，用户删掉重新加。

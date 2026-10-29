@@ -1079,6 +1079,59 @@ async fn ffi_urgent_message() {
     );
 }
 
+/// 7.1：计划的 webhook 经 UniFFI 建、列、停用、换令牌、删；返回的完整地址能直接收事件。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ffi_plan_hooks() {
+    let Some(e) = env().await else { return };
+    let (c, _store, _dir) = ffi_login(&e, "13800138549", "ios", "iPhone").await;
+    let inst = c.adopt("claude".into(), "Mail".into(), None).await.unwrap();
+    let plan = c
+        .create_plan(ffi::NewPlan {
+            instance_id: inst.id.clone(),
+            title: "邮件".into(),
+            goal: "看看要不要处理".into(),
+            triggers: vec![],
+            steps: vec![],
+            policy: Some(
+                proto::domain::PlanPolicy {
+                    notify_success: false,
+                    ..Default::default()
+                }
+                .into(),
+            ),
+            catch_up: None,
+        })
+        .await
+        .unwrap();
+    assert!(!plan.policy.notify_success);
+    let secret = c.create_plan_hook(plan.id.clone()).await.unwrap();
+    assert!(
+        secret
+            .url
+            .ends_with(&format!("/v1/webhooks/{}", secret.token))
+    );
+    let posted = reqwest::Client::new()
+        .post(&secret.url)
+        .header("content-type", "text/plain")
+        .body("a new mail")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(posted.status(), 202);
+    let hooks = c.plan_hooks(plan.id.clone()).await.unwrap();
+    assert_eq!(hooks.len(), 1);
+    assert!(hooks[0].last_event_at_ms.is_some());
+    let off = c
+        .set_plan_hook_enabled(secret.hook.id.clone(), false)
+        .await
+        .unwrap();
+    assert!(!off.enabled);
+    let rotated = c.rotate_plan_hook(secret.hook.id.clone()).await.unwrap();
+    assert_ne!(rotated.token, secret.token);
+    c.delete_plan_hook(secret.hook.id).await.unwrap();
+    assert!(c.plan_hooks(plan.id).await.unwrap().is_empty());
+}
+
 /// 8.9：实例的用途说明和“允许其他 agent 查我、问我”，经 UniFFI 改；给了才改。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn ffi_instance_settings() {
@@ -1198,6 +1251,7 @@ async fn ffi_plan_editing_and_triggers() {
         max_steps: None,
         daily_token_limit: Some(1_000_000),
         wait_timeout_secs: 7200,
+        notify_success: false,
     };
     let plan = c
         .create_plan(ffi::NewPlan {

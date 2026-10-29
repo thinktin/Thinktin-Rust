@@ -12,9 +12,10 @@ use proto::domain::{
     Approval, ApprovalId, Artifact, ArtifactId, BoardPost, BoardPostId, CatchUp, ContentReport,
     Credential, CredentialId, Device, DeviceId, DeviceMessage, DeviceMessageId, DeviceMessageKind,
     DevicePlatform, ImChannel, ImChannelId, InboxItem, InboxItemId, Instance, InstanceEvent,
-    InstanceId, ModelRoute, Plan, PlanId, PlanPolicy, PlanStep, PushChannelKind, ReportReason, Run,
-    RunId, ScheduleSpec, Team, TeamId, TeamMember, TeamTemplate, TeamTemplateId, TeamTemplateSpec,
-    Trigger, TriggerId, User, VaultItem, VaultItemId, VaultRequest, VaultRequestId,
+    InstanceId, ModelRoute, Plan, PlanHook, PlanHookId, PlanId, PlanPolicy, PlanStep,
+    PushChannelKind, ReportReason, Run, RunId, ScheduleSpec, Team, TeamId, TeamMember,
+    TeamTemplate, TeamTemplateId, TeamTemplateSpec, Trigger, TriggerId, User, VaultItem,
+    VaultItemId, VaultRequest, VaultRequestId,
 };
 use reqwest::Method;
 use reqwest::header::HeaderValue;
@@ -364,6 +365,21 @@ struct LoginResp {
     device_id: String,
     #[serde(flatten)]
     tokens: Tokens,
+}
+
+/// 建、换 webhook 的结果：完整地址和令牌只这一次拿得到（7.1）。
+#[derive(Debug, Clone)]
+pub struct HookSecret {
+    pub hook: PlanHook,
+    pub url: String,
+    pub token: String,
+}
+
+#[derive(Deserialize)]
+struct RawHookSecret {
+    hook: PlanHook,
+    path: String,
+    token: String,
 }
 
 pub struct Api {
@@ -1288,6 +1304,60 @@ impl Api {
     pub async fn delete_board_post(&self, id: BoardPostId) -> Result<()> {
         self.empty(Method::DELETE, &format!("/v1/board/{id}"), None)
             .await
+    }
+
+    /// 计划的 webhook（7.1 事件触发）。
+    pub async fn plan_hooks(&self, plan: PlanId) -> Result<Vec<PlanHook>> {
+        #[derive(Deserialize)]
+        struct R {
+            hooks: Vec<PlanHook>,
+        }
+        Ok(self
+            .json::<R>(Method::GET, &format!("/v1/plans/{plan}/hooks"), None)
+            .await?
+            .hooks)
+    }
+
+    /// 给计划加 webhook（用户在 App 里看过说明、同意之后）。令牌只在这里返回一次。
+    pub async fn create_plan_hook(&self, plan: PlanId) -> Result<HookSecret> {
+        let raw: RawHookSecret = self
+            .json(
+                Method::POST,
+                &format!("/v1/plans/{plan}/hooks"),
+                Some(&json!({ "consent": true })),
+            )
+            .await?;
+        Ok(self.hook_secret(raw))
+    }
+
+    /// 换令牌：旧地址马上失效。
+    pub async fn rotate_plan_hook(&self, id: PlanHookId) -> Result<HookSecret> {
+        let raw: RawHookSecret = self
+            .json(Method::POST, &format!("/v1/hooks/{id}/rotate"), None)
+            .await?;
+        Ok(self.hook_secret(raw))
+    }
+
+    pub async fn set_plan_hook_enabled(&self, id: PlanHookId, enabled: bool) -> Result<PlanHook> {
+        self.json(
+            Method::PATCH,
+            &format!("/v1/hooks/{id}"),
+            Some(&json!({ "enabled": enabled })),
+        )
+        .await
+    }
+
+    pub async fn delete_plan_hook(&self, id: PlanHookId) -> Result<()> {
+        self.empty(Method::DELETE, &format!("/v1/hooks/{id}"), None)
+            .await
+    }
+
+    fn hook_secret(&self, raw: RawHookSecret) -> HookSecret {
+        HookSecret {
+            url: format!("{}{}", self.base.trim_end_matches('/'), raw.path),
+            hook: raw.hook,
+            token: raw.token,
+        }
     }
 
     pub async fn delete_inbox_item(&self, id: InboxItemId) -> Result<()> {

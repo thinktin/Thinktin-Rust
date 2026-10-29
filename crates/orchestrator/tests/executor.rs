@@ -3022,3 +3022,28 @@ async fn an_agent_can_ask_again_in_the_turn_that_brings_no_answer() {
         .unwrap()
         .unwrap();
 }
+
+/// 计划设了成功时不通知（7.1，事件触发的计划常这么设）：成功的不推送、不进收件箱；失败的照样通知。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn quiet_plans_only_notify_when_something_needs_the_user() {
+    let Some(e) = env().await else { return };
+    let quiet = PlanPolicy {
+        notify_success: false,
+        ..PlanPolicy::default()
+    };
+    let (_, ok) = queue_plan_run(&e, "say hello", quiet.clone()).await;
+    e.run_to_end().await;
+    assert_eq!(e.state(ok).await.run.state, RunState::Succeeded);
+    assert!(e.inbox().await.iter().all(|i| i.run_id != Some(ok)));
+    assert!(e.outbox_kinds().await.is_empty());
+    // 失败了（只许试一次就崩溃）：照样通知。
+    let (_, bad) = queue_plan_run(&e, "crash please", quiet).await;
+    sqlx::query("UPDATE runs SET max_attempts = 1 WHERE id = $1")
+        .bind(bad.0)
+        .execute(e.t.db.pool())
+        .await
+        .unwrap();
+    e.run_to_end().await;
+    assert_eq!(e.state(bad).await.run.state, RunState::Failed);
+    assert!(e.inbox().await.iter().any(|i| i.run_id == Some(bad)));
+}

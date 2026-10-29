@@ -3765,3 +3765,148 @@ async fn content_reports_over_http() {
         .await;
     assert_eq!(theirs["reports"].as_array().unwrap().len(), 0);
 }
+
+/// 计划的 webhook（7.1）：建的时候要同意；收到事件按计划起一次运行，内容附在目标后面、注明来自外部；列表里没有
+/// 令牌；别人看不到；只收 JSON 和文本；令牌不对、停用了、换掉的旧地址都 404；排着太多 429；删了就失效。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn plan_webhooks_over_http() {
+    let Some(a) = api().await else { return };
+    let u = a.login("13800138896").await;
+    let other = a.login("13800138897").await;
+    let tok = Some(u.access.as_str());
+    let inst = a.adopt(&u).await;
+    let (st, plan) = a
+        .call(
+            Method::POST,
+            "/v1/plans",
+            tok,
+            Some(json!({ "instance_id": inst, "title": "邮件", "goal": "看看这封邮件要不要处理" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{plan}");
+    let hooks = format!("/v1/plans/{}/hooks", plan["id"].as_str().unwrap());
+    let (st, _) = a.call(Method::POST, &hooks, tok, Some(json!({}))).await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "consent is required");
+    let (st, created) = a
+        .call(Method::POST, &hooks, tok, Some(json!({ "consent": true })))
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{created}");
+    let token = created["token"].as_str().unwrap().to_owned();
+    let path = created["path"].as_str().unwrap().to_owned();
+    assert_eq!(path, format!("/v1/webhooks/{token}"));
+    let hook_id = created["hook"]["id"].as_str().unwrap().to_owned();
+    let (_, list) = a.call(Method::GET, &hooks, tok, None).await;
+    assert_eq!(list["hooks"].as_array().unwrap().len(), 1);
+    assert!(!list.to_string().contains(&token));
+    let (st, _) = a
+        .call(Method::GET, &hooks, Some(other.access.as_str()), None)
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+
+    let send = |path: String, ct: &'static str, body: &'static str| {
+        let req = a
+            .http
+            .post(format!("{}{path}", a.base))
+            .header("content-type", ct)
+            .body(body);
+        async move { req.send().await.unwrap().status() }
+    };
+    assert_eq!(
+        send(
+            path.clone(),
+            "application/json",
+            r#"{"subject":"invoice #42"}"#
+        )
+        .await,
+        StatusCode::ACCEPTED
+    );
+    let (_, runs) = a
+        .call(
+            Method::GET,
+            &format!("/v1/instances/{inst}/runs"),
+            tok,
+            None,
+        )
+        .await;
+    let run = &runs["runs"][0];
+    assert_eq!(run["source"], "plan");
+    let prompt = run["prompt"].as_str().unwrap();
+    assert!(
+        prompt.starts_with("看看这封邮件要不要处理")
+            && prompt.contains("来自外部")
+            && prompt.ends_with(r#"{"subject":"invoice #42"}"#),
+        "{prompt}"
+    );
+    // 只收 JSON 和文本；JSON 要合法；令牌不对的 404。
+    assert_eq!(
+        send(path.clone(), "image/png", "x").await,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert_eq!(
+        send(path.clone(), "application/json", "{not json").await,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert_eq!(
+        send("/v1/webhooks/twh1_nope".into(), "text/plain", "hi").await,
+        StatusCode::NOT_FOUND
+    );
+    // 排着的最多 5 个，再来的 429。
+    for _ in 0..4 {
+        assert_eq!(
+            send(path.clone(), "text/plain; charset=utf-8", "another mail").await,
+            StatusCode::ACCEPTED
+        );
+    }
+    assert_eq!(
+        send(path.clone(), "text/plain", "one too many").await,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    // 停用了 404；换了令牌旧地址 404，新地址照样认（只是排满了）。
+    let hook = format!("/v1/hooks/{hook_id}");
+    let (st, off) = a
+        .call(Method::PATCH, &hook, tok, Some(json!({ "enabled": false })))
+        .await;
+    assert_eq!(
+        (st, off["enabled"].as_bool()),
+        (StatusCode::OK, Some(false))
+    );
+    assert_eq!(
+        send(path.clone(), "text/plain", "hi").await,
+        StatusCode::NOT_FOUND
+    );
+    a.call(Method::PATCH, &hook, tok, Some(json!({ "enabled": true })))
+        .await;
+    let (st, rotated) = a
+        .call(Method::POST, &format!("{hook}/rotate"), tok, None)
+        .await;
+    assert_eq!(st, StatusCode::OK, "{rotated}");
+    let new_path = rotated["path"].as_str().unwrap().to_owned();
+    assert_ne!(new_path, path);
+    assert_eq!(
+        send(path.clone(), "text/plain", "hi").await,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        send(new_path.clone(), "text/plain", "hi").await,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    // 别人删不了；删了就失效。
+    let (st, _) = a
+        .call(Method::DELETE, &hook, Some(other.access.as_str()), None)
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (st, _) = a.call(Method::DELETE, &hook, tok, None).await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    assert_eq!(
+        send(new_path, "text/plain", "hi").await,
+        StatusCode::NOT_FOUND
+    );
+    let audits: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE action LIKE 'plan_hook.%' AND target = $1",
+    )
+    .bind(&hook_id)
+    .fetch_one(a.t.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(audits, 5, "create, off, on, rotate, delete");
+}

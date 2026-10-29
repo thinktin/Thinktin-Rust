@@ -293,6 +293,11 @@ impl Tx<Tenant> {
             .bind(id.0)
             .execute(self.conn())
             .await?;
+        // 计划删了，它的 webhook 也没用了（7.1）：地址马上失效。
+        sqlx::query("DELETE FROM plan_hooks WHERE plan_id = $1")
+            .bind(id.0)
+            .execute(self.conn())
+            .await?;
         Ok(())
     }
 

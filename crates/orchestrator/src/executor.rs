@@ -1155,6 +1155,13 @@ impl Executor {
         let step_quiet = (rec.run.step_key.is_some()
             || matches!(rec.run.source, RunSource::Delegate | RunSource::Ask))
             && !to.is_waiting();
+        // 计划设了成功时不通知（7.1，事件触发的计划常这么设）：没事别打扰，失败、等审批、等 key 照样通知。
+        let step_quiet = step_quiet
+            || (to == RunState::Succeeded
+                && match rec.run.plan_id {
+                    Some(plan) => w.plan(plan).await.is_ok_and(|p| !p.policy.notify_success),
+                    None => false,
+                });
         let wait = done.run.wait_code.as_deref().filter(|_| to.is_waiting());
         if let Some((kind, body)) = push.filter(|_| !step_quiet) {
             let title = match rec.run.plan_id {

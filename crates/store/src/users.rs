@@ -201,6 +201,7 @@ impl Tx<Worker> {
             // 按实例删，走主键索引（事件表没有以 user_id 开头的索引）。
             "DELETE FROM events WHERE instance_id IN (SELECT id FROM instances WHERE user_id = $1)",
             // 计划删了，触发器、流水线步骤级联删掉。
+            "DELETE FROM plan_hooks WHERE user_id = $1",
             "DELETE FROM plans WHERE user_id = $1",
             "DELETE FROM inbox_items WHERE user_id = $1",
             // 举报里复制了被举报的内容（运行的提问、事件）。

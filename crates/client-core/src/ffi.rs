@@ -567,6 +567,9 @@ pub struct PlanPolicy {
     /// 等电脑上线、等补上 key 最多等多久。
     #[uniffi(default = 86400)]
     pub wait_timeout_secs: u64,
+    /// 运行成功时通知（推送、收件箱）。事件触发的计划常常关掉；失败、等审批、等 key 照样通知。
+    #[uniffi(default = true)]
+    pub notify_success: bool,
 }
 
 impl From<d::PlanPolicy> for PlanPolicy {
@@ -580,6 +583,7 @@ impl From<d::PlanPolicy> for PlanPolicy {
             max_steps: p.budget.max_steps,
             daily_token_limit: p.daily_token_limit,
             wait_timeout_secs: p.wait_timeout_secs,
+            notify_success: p.notify_success,
         }
     }
 }
@@ -598,6 +602,7 @@ impl TryFrom<PlanPolicy> for d::PlanPolicy {
             },
             daily_token_limit: p.daily_token_limit,
             wait_timeout_secs: p.wait_timeout_secs,
+            notify_success: p.notify_success,
         })
     }
 }
@@ -848,6 +853,49 @@ impl From<d::BoardPost> for BoardPost {
             ai_generated: p.ai_generated,
             created_at_ms: ms(p.created_at),
             archived_at_ms: p.archived_at.map(ms),
+        }
+    }
+}
+
+/// 计划的 webhook（7.1 事件触发）：外面的服务往它的地址发事件，平台按这个计划起一次运行。
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct PlanHook {
+    pub id: String,
+    pub plan_id: String,
+    pub enabled: bool,
+    /// 用户同意把收到的内容交给 agent 和模型厂商的时间。
+    pub consented_at_ms: i64,
+    pub last_event_at_ms: Option<i64>,
+    pub created_at_ms: i64,
+}
+
+impl From<d::PlanHook> for PlanHook {
+    fn from(h: d::PlanHook) -> Self {
+        Self {
+            id: h.id.to_string(),
+            plan_id: h.plan_id.to_string(),
+            enabled: h.enabled,
+            consented_at_ms: ms(h.consented_at),
+            last_event_at_ms: h.last_event_at.map(ms),
+            created_at_ms: ms(h.created_at),
+        }
+    }
+}
+
+/// 建、换 webhook 的结果：`url`（完整地址，令牌在里面）和 `token` 只这一次拿得到，给用户复制、别存。
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct PlanHookSecret {
+    pub hook: PlanHook,
+    pub url: String,
+    pub token: String,
+}
+
+impl From<crate::api::HookSecret> for PlanHookSecret {
+    fn from(s: crate::api::HookSecret) -> Self {
+        Self {
+            hook: s.hook.into(),
+            url: s.url,
+            token: s.token,
         }
     }
 }
@@ -1803,6 +1851,47 @@ impl ThinktinClient {
     pub async fn delete_board_post(&self, post_id: String) -> Result<()> {
         let id: d::BoardPostId = parse(&post_id, "board post")?;
         self.run(|c| async move { c.api.delete_board_post(id).await })
+            .await
+    }
+
+    /// 计划的 webhook（7.1 事件触发）。
+    pub async fn plan_hooks(&self, plan_id: String) -> Result<Vec<PlanHook>> {
+        let id: d::PlanId = parse(&plan_id, "plan")?;
+        self.run(|c| async move {
+            Ok(c.api
+                .plan_hooks(id)
+                .await?
+                .into_iter()
+                .map(Into::into)
+                .collect())
+        })
+        .await
+    }
+
+    /// 给计划加 webhook。先在界面上告诉用户：收到的内容会交给 agent，也会发给他配置的模型厂商处理；
+    /// 用户同意了才调。返回的地址和令牌只这一次拿得到。带步骤的计划（流水线）暂不支持，报 422。
+    pub async fn create_plan_hook(&self, plan_id: String) -> Result<PlanHookSecret> {
+        let id: d::PlanId = parse(&plan_id, "plan")?;
+        self.run(|c| async move { Ok(c.api.create_plan_hook(id).await?.into()) })
+            .await
+    }
+
+    /// 换令牌：旧地址马上失效。
+    pub async fn rotate_plan_hook(&self, hook_id: String) -> Result<PlanHookSecret> {
+        let id: d::PlanHookId = parse(&hook_id, "webhook")?;
+        self.run(|c| async move { Ok(c.api.rotate_plan_hook(id).await?.into()) })
+            .await
+    }
+
+    pub async fn set_plan_hook_enabled(&self, hook_id: String, enabled: bool) -> Result<PlanHook> {
+        let id: d::PlanHookId = parse(&hook_id, "webhook")?;
+        self.run(|c| async move { Ok(c.api.set_plan_hook_enabled(id, enabled).await?.into()) })
+            .await
+    }
+
+    pub async fn delete_plan_hook(&self, hook_id: String) -> Result<()> {
+        let id: d::PlanHookId = parse(&hook_id, "webhook")?;
+        self.run(|c| async move { c.api.delete_plan_hook(id).await })
             .await
     }
 
