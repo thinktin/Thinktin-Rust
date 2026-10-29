@@ -315,6 +315,48 @@ async fn scheduled_runs_start_activities_remotely() {
     assert_eq!(sent[0].1.content_state["state"], "running");
 }
 
+/// 成功不打扰的计划（比如事件触发的，7.1）：不远程开实时活动，锁屏上不为每个事件亮一次。
+#[tokio::test]
+async fn quiet_plans_start_no_activities() {
+    let Some(s) = setup("+8613800000069", "邮件助手").await else {
+        return;
+    };
+    s.start_token(Some(START)).await;
+    let mut tx = s.t.db.tenant(s.user).await.unwrap();
+    let plan = tx
+        .create_plan(&store::NewPlan {
+            instance_id: s.instance.id,
+            title: "邮件".into(),
+            goal: "看邮件".into(),
+            policy: proto::domain::PlanPolicy {
+                notify_success: false,
+                ..Default::default()
+            },
+            catch_up: proto::domain::CatchUp::Once,
+            created_by: proto::domain::PlanAuthor::User,
+            run_grant_id: None,
+        })
+        .await
+        .unwrap();
+    let mut new = NewRun::new(s.instance.id, RunSource::Plan, "一封邮件", "1");
+    new.plan_id = Some(plan.id);
+    tx.create_run(&new).await.unwrap();
+    tx.commit().await.unwrap();
+    let mut w = s.t.db.worker().await.unwrap();
+    let rec = w
+        .claim_next_run("node-a", Duration::from_secs(60))
+        .await
+        .unwrap()
+        .unwrap();
+    queue_starts(&mut w, &rec).await.unwrap();
+    w.commit().await.unwrap();
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM live_activities")
+        .fetch_one(s.t.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
+}
+
 #[tokio::test]
 async fn dead_tokens_retries_and_giving_up() {
     let Some(s) = setup("+8613800000063", "调研助手").await else {

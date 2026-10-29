@@ -1532,10 +1532,13 @@ async fn deleting_an_instance_retires_its_plans() {
     a.add_trigger(py.id, &cron, Some(soon)).await.unwrap();
     let pz = a.create_plan(&plan(&y, "y 自己的")).await.unwrap();
     a.add_trigger(pz.id, &cron, Some(later)).await.unwrap();
+    // 删掉的计划的 webhook 一起删（7.1）。
+    a.create_plan_hook(px.id, &[7; 32]).await.unwrap();
     a.commit().await.unwrap();
 
     let mut a = db.tenant(alice).await.unwrap();
     let retired = a.retire_instance_plans(x.id).await.unwrap();
+    assert!(a.plan_hooks(px.id).await.unwrap().is_empty());
     a.delete_instance(x.id).await.unwrap();
     a.commit().await.unwrap();
     let mut deleted = retired.deleted.clone();

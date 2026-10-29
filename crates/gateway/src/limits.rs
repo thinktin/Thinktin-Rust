@@ -44,6 +44,8 @@ pub struct LimitConfig {
     pub im_tests_per_hour: u32,
     /// 内容举报（5.5）：每个用户每小时。
     pub reports_per_hour: u32,
+    /// 计划的 webhook（7.1）：每个 webhook 每分钟（库里还有每小时的准确计数，这里先挡住洪水）。
+    pub hook_events_per_minute: u32,
     /// 每个账号最多几个没删除的实例（归档的也算，11.9）；到了上限领养报 409 `instance_limit`。0 不限。
     pub instances_per_user: u32,
     /// 来源地址取 `X-Forwarded-For` 的最后一项（网关前面有自己的负载均衡时才开）。
@@ -64,6 +66,7 @@ impl Default for LimitConfig {
             streams_per_user: 32,
             im_tests_per_hour: 10,
             reports_per_hour: 30,
+            hook_events_per_minute: 30,
             instances_per_user: 0,
             trust_forwarded_for: false,
             max_keys: 200_000,
@@ -85,6 +88,8 @@ enum Key {
     Signups,
     ImTests(UserId),
     Reports(UserId),
+    /// webhook 令牌的哈希。
+    Hook([u8; 32]),
 }
 
 struct Bucket {
@@ -183,6 +188,38 @@ impl Limiter {
             ),
             None => Ok(()),
         }
+    }
+
+    /// 这个来源地址乱猜过太多次了吗（不扣次数，只看）：超了的连库都不用查。
+    pub fn anonymous_exhausted(&self, ip: Option<IpAddr>) -> Result<(), Limited> {
+        let (Some(ip), cap) = (ip, self.cfg.anonymous_per_minute) else {
+            return Ok(());
+        };
+        if cap == 0 {
+            return Ok(());
+        }
+        let now = Instant::now();
+        let mut map = self.buckets.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(b) = map.get_mut(&Key::Anonymous(limit_key(ip))) else {
+            return Ok(());
+        };
+        let refill = now.duration_since(b.last).as_secs_f64() * b.capacity / b.window.as_secs_f64();
+        b.tokens = (b.tokens + refill).min(b.capacity);
+        b.last = now;
+        if b.tokens >= 1.0 {
+            return Ok(());
+        }
+        let wait = (1.0 - b.tokens) * b.window.as_secs_f64() / b.capacity;
+        Err(Limited(wait.ceil().max(1.0) as u64))
+    }
+
+    /// 计划的 webhook 收事件：按 webhook（令牌的哈希）每分钟。
+    pub fn hook(&self, token_hash: [u8; 32]) -> Result<(), Limited> {
+        self.take(
+            Key::Hook(token_hash),
+            self.cfg.hook_events_per_minute,
+            MINUTE,
+        )
     }
 
     /// 发验证码：按来源地址每小时。
@@ -354,6 +391,27 @@ mod tests {
         l.codes(Some(c)).unwrap();
         l.codes(None).unwrap();
         l.codes(None).unwrap();
+    }
+
+    #[test]
+    fn peeking_at_an_address_does_not_use_it_up() {
+        let l = limiter(LimitConfig {
+            anonymous_per_minute: 2,
+            hook_events_per_minute: 1,
+            ..LimitConfig::default()
+        });
+        let ip: IpAddr = "1.2.3.4".parse().unwrap();
+        for _ in 0..5 {
+            l.anonymous_exhausted(Some(ip)).unwrap();
+        }
+        l.anonymous(Some(ip)).unwrap();
+        l.anonymous(Some(ip)).unwrap();
+        assert!(l.anonymous_exhausted(Some(ip)).is_err());
+        l.anonymous_exhausted(None).unwrap();
+        // 每个 webhook 各算各的。
+        l.hook([1; 32]).unwrap();
+        assert!(l.hook([1; 32]).is_err());
+        l.hook([2; 32]).unwrap();
     }
 
     #[test]

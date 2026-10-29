@@ -3,7 +3,7 @@
 
 use auth::secrets::HookToken;
 use axum::Json;
-use axum::body::Bytes;
+use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use proto::api::ErrorCode;
@@ -175,66 +175,129 @@ fn content_kind(headers: &HeaderMap) -> ApiResult<&'static str> {
     }
 }
 
+/// 太频繁了：发送方过一会儿再试。
+fn too_many(retry_after_secs: u64) -> ApiError {
+    ApiError {
+        retry_after_secs: Some(retry_after_secs),
+        ..ApiError::new(
+            ErrorCode::RateLimited,
+            "too many events for this webhook, try again later",
+        )
+    }
+}
+
+fn check_activity(act: &store::HookActivity) -> ApiResult<()> {
+    if act.hook_queued >= MAX_QUEUED_PER_HOOK
+        || act.hook_last_hour >= MAX_PER_HOOK_PER_HOUR
+        || act.user_last_hour >= MAX_PER_USER_PER_HOUR
+    {
+        return Err(too_many(60));
+    }
+    Ok(())
+}
+
+/// 飞书、Slack 保存事件订阅地址时先发一个 `url_verification`，要原样回 `challenge`：回了就算验证过，不起运行。
+fn url_challenge(kind: &str, body: &[u8]) -> Option<String> {
+    if kind != "JSON" {
+        return None;
+    }
+    let v: Value = serde_json::from_slice(body).ok()?;
+    if v.get("type")?.as_str()? != "url_verification" {
+        return None;
+    }
+    let c = v.get("challenge")?.as_str()?;
+    (c.len() <= 1024).then(|| c.to_owned())
+}
+
 /// 外面的服务发事件（不要登录，令牌在地址里）。令牌不对、webhook 停用了、计划不在用都回 404（不说是哪种）；
 /// 太频繁、排着的太多回 429，发送方通常会自己重试。
+///
+/// 顺序按代价从小到大：来源地址乱猜太多的、同一个 webhook 突发太多的，在内存里就挡掉；令牌对了才读正文（最多
+/// 64 KB）；查库先不加锁，次数超了不解密保险箱；最后加锁再数一次、建运行。
 pub async fn receive(
     State(s): State<AppState>,
     ClientIp(ip): ClientIp,
     Path(token): Path<String>,
     headers: HeaderMap,
-    body: Bytes,
+    body: Body,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     let not_found = || ApiError::not_found("webhook");
+    s.limits().anonymous_exhausted(ip)?;
     let Ok(token) = HookToken::parse(&token) else {
         // 乱猜令牌的按来源地址限流；正常的发送方（可能很多用户共用一个出口）不受影响。
         s.limits().anonymous(ip)?;
         return Err(not_found());
     };
+    let hash = token.hash();
+    s.limits().hook(hash)?;
     let kind = content_kind(&headers)?;
-    if body.len() > MAX_EVENT_BYTES {
-        return Err(ApiError::invalid(format!(
+    let too_big = || {
+        ApiError::invalid(format!(
             "events are limited to {} KB",
             MAX_EVENT_BYTES >> 10
-        )));
+        ))
+    };
+    let declared = headers
+        .get(header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<usize>().ok());
+    if declared.is_some_and(|n| n > MAX_EVENT_BYTES) {
+        return Err(too_big());
     }
+    let body = axum::body::to_bytes(body, MAX_EVENT_BYTES)
+        .await
+        .map_err(|_| too_big())?;
     let Ok(text) = std::str::from_utf8(&body) else {
         return Err(ApiError::invalid("the body must be UTF-8"));
     };
     if kind == "JSON" && serde_json::from_slice::<Value>(&body).is_err() {
         return Err(ApiError::invalid("the body is not valid JSON"));
     }
-    let hash = token.hash();
-    // 先找到是谁的（不拿锁），在锁外面抹掉保险箱里的值（要解密），再拿锁核对限流、建运行。
+
+    // 先找到是谁的（不加锁），数一下最近的次数：超了就不用往下做（解密保险箱要花功夫）。
     let mut w = s.db.worker().await?;
-    let Some(found) = w.hook_target(&hash).await? else {
+    let Some(found) = w.find_hook(&hash).await? else {
         w.rollback().await?;
         s.limits().anonymous(ip)?;
         return Err(not_found());
     };
+    let act = w.hook_activity(found.hook.id, found.user_id).await?;
     w.rollback().await?;
+    check_activity(&act)?;
+    if let Some(challenge) = url_challenge(kind, &body) {
+        return Ok((StatusCode::OK, Json(json!({ "challenge": challenge }))));
+    }
+    // 在锁外面抹掉保险箱里的值（要解密）。
     let text = super::vault::scrub_user_text(&s, found.user_id, text.trim()).await;
 
     let mut w = s.db.worker().await?;
-    let Some(target) = w.hook_target(&hash).await? else {
-        return Err(not_found());
+    let target = match w.lock_hook(&hash, found.user_id).await? {
+        store::HookLock::Found(t) => *t,
+        store::HookLock::Gone => return Err(not_found()),
+        store::HookLock::Busy => {
+            w.rollback().await?;
+            return Err(too_many(10));
+        }
     };
     let act = w.hook_activity(target.hook.id, target.user_id).await?;
-    if act.hook_queued >= MAX_QUEUED_PER_HOOK
-        || act.hook_last_hour >= MAX_PER_HOOK_PER_HOUR
-        || act.user_last_hour >= MAX_PER_USER_PER_HOUR
-    {
+    if let Err(e) = check_activity(&act) {
         w.rollback().await?;
-        return Err(ApiError {
-            retry_after_secs: Some(60),
-            ..ApiError::new(
-                ErrorCode::RateLimited,
-                "too many events for this webhook, try again later",
-            )
-        });
+        return Err(e);
+    }
+    let plan = &target.plan;
+    // 计划的每日 token 上限：按最近 24 小时核对（定时触发的还没核对，见 docs/event-triggers.md 第 3 节）。
+    if let Some(limit) = plan.policy.daily_token_limit {
+        let used = w
+            .plan_tokens_since(plan.id, chrono::Utc::now() - chrono::Duration::hours(24))
+            .await?;
+        if used >= limit {
+            w.rollback().await?;
+            return Err(too_many(3600));
+        }
     }
     let locale = w.user_locale(target.user_id).await?;
-    let plan = &target.plan;
-    let prompt = orchestrator::texts::event_input(locale, &plan.goal, kind, &text);
+    let boundary = uuid::Uuid::now_v7().simple().to_string()[20..].to_owned();
+    let prompt = orchestrator::texts::event_input(locale, &plan.goal, kind, &text, &boundary);
     let mut new = NewRun::new(
         plan.instance_id,
         RunSource::Plan,

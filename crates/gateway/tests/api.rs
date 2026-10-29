@@ -3830,13 +3830,76 @@ async fn plan_webhooks_over_http() {
         .await;
     let run = &runs["runs"][0];
     assert_eq!(run["source"], "plan");
+    let run_id = run["id"].as_str().unwrap().to_owned();
     let prompt = run["prompt"].as_str().unwrap();
+    // 内容前后有发送方猜不到的标记。
+    let boundary = prompt.rsplit('\n').next().unwrap().trim_end_matches(">>>");
     assert!(
         prompt.starts_with("看看这封邮件要不要处理")
             && prompt.contains("来自外部")
-            && prompt.ends_with(r#"{"subject":"invoice #42"}"#),
+            && boundary.len() == 12
+            && prompt.contains(&format!(
+                "<<<{boundary}\n{{\"subject\":\"invoice #42\"}}\n{boundary}>>>"
+            )),
         "{prompt}"
     );
+    // 飞书、Slack 保存地址时的验证：原样回 challenge，不起运行。
+    let (st, echoed) = {
+        let r = a
+            .http
+            .post(format!("{}{path}", a.base))
+            .json(&json!({ "type": "url_verification", "challenge": "c-123", "token": "x" }))
+            .send()
+            .await
+            .unwrap();
+        (r.status(), r.json::<serde_json::Value>().await.unwrap())
+    };
+    assert_eq!(
+        (st, echoed),
+        (StatusCode::OK, json!({ "challenge": "c-123" }))
+    );
+    // 太大的 422（不管有没有写长度）。
+    let big = "x".repeat(65 * 1024);
+    let st = a
+        .http
+        .post(format!("{}{path}", a.base))
+        .header("content-type", "text/plain")
+        .body(big.clone())
+        .send()
+        .await
+        .unwrap()
+        .status();
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+    let chunked =
+        reqwest::Body::wrap_stream(futures_util::stream::iter([Ok::<_, std::io::Error>(big)]));
+    let st = a
+        .http
+        .post(format!("{}{path}", a.base))
+        .header("content-type", "text/plain")
+        .body(chunked)
+        .send()
+        .await
+        .unwrap()
+        .status();
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+    // 计划的每日 token 上限到了：429。
+    sqlx::query("UPDATE runs SET tokens_used = 100 WHERE id = $1::uuid")
+        .bind(&run_id)
+        .execute(a.t.db.pool())
+        .await
+        .unwrap();
+    let set_limit = |limit: serde_json::Value| {
+        sqlx::query("UPDATE plans SET policy = jsonb_set(policy, '{daily_token_limit}', $2) WHERE id = $1::uuid")
+            .bind(plan["id"].as_str().unwrap().to_owned())
+            .bind(limit)
+            .execute(a.t.db.pool())
+    };
+    set_limit(json!(50)).await.unwrap();
+    assert_eq!(
+        send(path.clone(), "text/plain", "over the limit").await,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    set_limit(json!(null)).await.unwrap();
     // 只收 JSON 和文本；JSON 要合法；令牌不对的 404。
     assert_eq!(
         send(path.clone(), "image/png", "x").await,
@@ -3890,6 +3953,34 @@ async fn plan_webhooks_over_http() {
         send(new_path.clone(), "text/plain", "hi").await,
         StatusCode::TOO_MANY_REQUESTS
     );
+    // 有 webhook 的计划不能加步骤；步骤不管怎么加上的，事件都不按单个 agent 跑（404）。
+    let plan_path = format!("/v1/plans/{}", plan["id"].as_str().unwrap());
+    let (st, _) = a
+        .call(
+            Method::PATCH,
+            &plan_path,
+            tok,
+            Some(json!({ "steps": [{ "key": "a", "instance_id": inst, "prompt": "做" }] })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+    sqlx::query(
+        "INSERT INTO plan_steps (plan_id, key, user_id, instance_id, prompt) \
+         SELECT id, 'a', user_id, instance_id, '做' FROM plans WHERE id = $1::uuid",
+    )
+    .bind(plan["id"].as_str().unwrap())
+    .execute(a.t.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        send(new_path.clone(), "text/plain", "hi").await,
+        StatusCode::NOT_FOUND
+    );
+    sqlx::query("DELETE FROM plan_steps WHERE plan_id = $1::uuid")
+        .bind(plan["id"].as_str().unwrap())
+        .execute(a.t.db.pool())
+        .await
+        .unwrap();
     // 别人删不了；删了就失效。
     let (st, _) = a
         .call(Method::DELETE, &hook, Some(other.access.as_str()), None)

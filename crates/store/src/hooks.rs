@@ -2,7 +2,7 @@
 //!
 //! - 地址里的令牌库里只存 SHA-256，按哈希找；建、换的时候由调用方生成令牌、只给用户看一次。
 //! - 用户管理（建、列、停用、换令牌、删）走业务角色（行级安全）；收事件时还不知道是谁，按令牌哈希用后台角色找到
-//!   webhook、计划和用户，再核对计划在用、实例没删、账号没冻结。
+//!   webhook、计划和用户，再核对计划在用（没加步骤）、实例没删、账号没冻结。
 //! - 限流按库里的运行数：每个 webhook 最近一小时起了几次、排着几个，每个用户最近一小时一共起了几次（多副本也准）。
 
 use chrono::{DateTime, Utc};
@@ -159,23 +159,19 @@ impl Tx<Tenant> {
     }
 }
 
-impl Tx<Worker> {
-    /// 按令牌哈希找 webhook：启用着、计划在用（没暂停、没删、不在等确认）、实例没删、账号没冻结的才算。锁住
-    /// webhook 这一行到事务结束：同一个 webhook 同时来的事件排队数，限流不会被并发穿透。
-    pub async fn hook_target(&mut self, token_hash: &[u8]) -> Result<Option<HookTarget>> {
-        #[derive(sqlx::FromRow)]
-        struct Found {
-            id: Uuid,
-            plan_id: Uuid,
-            enabled: bool,
-            consented_at: DateTime<Utc>,
-            last_event_at: Option<DateTime<Utc>>,
-            created_at: DateTime<Utc>,
-            user_id: Uuid,
-            agent_version: String,
-            run_grant_id: Option<Uuid>,
-        }
-        let found: Option<Found> = sqlx::query_as(
+/// 收事件时锁 webhook 的结果。
+#[derive(Debug, Clone)]
+pub enum HookLock {
+    Found(Box<HookTarget>),
+    /// 没有，或者不在用了（见 [`Tx::find_hook`]）。
+    Gone,
+    /// 同一个 webhook 的别的事件拿着锁太久（洪水）：调用方回滚，让发送方稍后再试。
+    Busy,
+}
+
+macro_rules! hook_target_sql {
+    ($lock:literal) => {
+        concat!(
             "SELECT h.id, h.plan_id, h.enabled, h.consented_at, h.last_event_at, h.created_at, h.user_id, \
                i.agent_version, p.run_grant_id \
              FROM plan_hooks h \
@@ -184,16 +180,78 @@ impl Tx<Worker> {
              JOIN users u ON u.id = h.user_id \
              WHERE h.token_hash = $1 AND h.enabled AND p.status = 'active' AND NOT p.awaiting_confirmation \
                AND i.state <> 'deleted' AND u.status = 'active' \
-             FOR UPDATE OF h",
+               AND NOT EXISTS (SELECT 1 FROM plan_steps s WHERE s.plan_id = p.id)",
+            $lock
         )
-        .bind(token_hash)
-        .fetch_optional(self.conn())
-        .await?;
-        let Some(f) = found else {
-            return Ok(None);
+    };
+}
+
+#[derive(sqlx::FromRow)]
+struct Found {
+    id: Uuid,
+    plan_id: Uuid,
+    enabled: bool,
+    consented_at: DateTime<Utc>,
+    last_event_at: Option<DateTime<Utc>>,
+    created_at: DateTime<Utc>,
+    user_id: Uuid,
+    agent_version: String,
+    run_grant_id: Option<Uuid>,
+}
+
+impl Tx<Worker> {
+    /// 按令牌哈希找 webhook（不加锁）：启用着、计划在用（没暂停、没删、不在等确认、没加步骤）、实例没删、账号没冻结
+    /// 的才算。
+    pub async fn find_hook(&mut self, token_hash: &[u8]) -> Result<Option<HookTarget>> {
+        let found: Option<Found> = sqlx::query_as(hook_target_sql!(""))
+            .bind(token_hash)
+            .fetch_optional(self.conn())
+            .await?;
+        match found {
+            Some(f) => Ok(Some(self.hook_target(f).await?)),
+            None => Ok(None),
+        }
+    }
+
+    /// 和 [`Tx::find_hook`] 一样找，再锁住到事务结束：同一个 webhook 同时来的事件排队数、同一个用户一小时的数，
+    /// 限流不会被并发穿透。先锁用户（和注销账号同一个顺序），再锁 webhook（最多等 2 秒，等不到是 `Busy`），
+    /// 最后按用户排队（不同 webhook 的事件一起数用户的上限）。
+    pub async fn lock_hook(&mut self, token_hash: &[u8], user: UserId) -> Result<HookLock> {
+        sqlx::query("SELECT 1 FROM users WHERE id = $1 FOR KEY SHARE")
+            .bind(user.0)
+            .fetch_optional(self.conn())
+            .await?;
+        sqlx::query("SET LOCAL lock_timeout = '2s'")
+            .execute(self.conn())
+            .await?;
+        let found: std::result::Result<Option<Found>, sqlx::Error> =
+            sqlx::query_as(hook_target_sql!(" AND h.user_id = $2 FOR UPDATE OF h"))
+                .bind(token_hash)
+                .bind(user.0)
+                .fetch_optional(self.conn())
+                .await;
+        let found = match found {
+            Err(e) if e.as_database_error().and_then(|d| d.code()).as_deref() == Some("55P03") => {
+                return Ok(HookLock::Busy);
+            }
+            other => other?,
         };
+        sqlx::query("SET LOCAL lock_timeout = 0")
+            .execute(self.conn())
+            .await?;
+        let Some(f) = found else {
+            return Ok(HookLock::Gone);
+        };
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(format!("hook_user/{user}"))
+            .execute(self.conn())
+            .await?;
+        Ok(HookLock::Found(Box::new(self.hook_target(f).await?)))
+    }
+
+    async fn hook_target(&mut self, f: Found) -> Result<HookTarget> {
         let plan = self.plan(f.plan_id.into()).await?;
-        Ok(Some(HookTarget {
+        Ok(HookTarget {
             hook: Row {
                 id: f.id,
                 plan_id: f.plan_id,
@@ -207,7 +265,19 @@ impl Tx<Worker> {
             plan,
             agent_version: f.agent_version,
             run_grant_id: f.run_grant_id.map(Into::into),
-        }))
+        })
+    }
+
+    /// 这个计划最近 `since` 以来的运行一共用了多少 token（webhook 收事件时核对计划的每日上限）。
+    pub async fn plan_tokens_since(&mut self, plan: PlanId, since: DateTime<Utc>) -> Result<u64> {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT coalesce(sum(tokens_used), 0)::bigint FROM runs WHERE plan_id = $1 AND created_at > $2",
+        )
+        .bind(plan.0)
+        .bind(since)
+        .fetch_one(self.conn())
+        .await?;
+        unsigned(n, "plan tokens")
     }
 
     /// 这个 webhook、这个用户最近一小时起的运行，和这个 webhook 排着没开始的。

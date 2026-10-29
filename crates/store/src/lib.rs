@@ -58,7 +58,7 @@ pub use device_relay::{
 };
 pub use error::{Error, Result};
 pub use events::EVENTS_CHANNEL;
-pub use hooks::{HookActivity, HookTarget, MAX_HOOKS_PER_PLAN};
+pub use hooks::{HookActivity, HookLock, HookTarget, MAX_HOOKS_PER_PLAN};
 pub use im_channels::{ImChannelChange, ImSlot, ImWebhook, NewImChannel, SealedImChannel};
 pub use inbox::NewInboxItem;
 pub use instances::{
