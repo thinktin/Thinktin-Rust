@@ -221,6 +221,7 @@ MainActivity
 | `artifact.published` | `artifact_id`、`name`、`version`、`size` | 产出物卡片 |
 | `approval.decided` | `approval_id`、`state`、`option_id` | 审批卡片变为已决定 |
 | `plan.needs_confirmation` / `plan.cancelled` | `plan_id`、`title`、`change` | 计划卡片，带“去确认”按钮 |
+| `hook.received` | `hook_id`、`bytes`、`content_type`（不含内容） | 系统行“webhook 收到了一个事件”（7.1） |
 | `vault.requested` / `vault.fulfilled` / `vault.declined` / `vault.used` | `request_id`、`name`、`purpose`、`fields[]` / `names[]` | 填写请求卡片（带表单入口）、使用提示 |
 
 未知的 kind 一律显示成灰色系统行，不崩。
@@ -234,6 +235,9 @@ MainActivity
 - `on_reset(oldest_seq, latest_seq)`：client-core 已删掉本地事件并把续传位置设到 `oldest_seq`，服务端会把保留期内的事件全部补发。App 要：清空归并状态但保留运行记录并重新调 `runs()`；补发会一次涌入很多事件，视图模型按批提交；比 `oldest_seq` 更早的运行没有事件了（默认保留 30 天），只显示 `prompt`、`summary`、`error` 并标注“过程记录已超过保留期”。
 - 11.7 之后 client-core 已导出：`update_profile`、`devices` / `revoke_device`、`send_self_code` + `delete_account`、`instance`、`older_runs`、`instance_artifacts` / `delete_artifact`、`update_plan` / `add_trigger` / `delete_trigger`、`inbox_item` / `mark_inbox_unread` / `delete_inbox_item`、团队与模板（`teams`、`create_team`、`adopt_team_template` 等）、`update_credential` / `replace_credential_secret`、设备消息。App 侧服务接口直接接这些方法，不再需要“暂不支持”。
 - 发送：`detect_secrets(text)` 有命中先弹保险箱表单；`send_message(instance, text, allow_secrets=false)` 抛 `ContainsSecrets` 时同样处理。实例正忙时可以选“打断”：`send_urgent_message`（8.12，参数同 `send_message`）停下它正在做的、马上处理这条；默认的 `send_message` 排队。
+- 事件触发（7.1）：计划的 webhook `plan_hooks` / `create_plan_hook`（先说明收到的内容会交给 agent 和模型厂商，用户同意了才调；
+  返回的 `url`、`token` 只这一次，给用户复制）/ `rotate_plan_hook` / `set_plan_hook_enabled` / `delete_plan_hook`；计划策略
+  `notify_success` 关掉以后成功的运行不推送、不进收件箱（见 `docs/event-triggers.md`）。
 - agent 交流（8.9–8.12）：`update_instance(id, InstanceChange{name?, purpose?, peer_access?})` 改名字、用途说明、“允许其他 agent 查我、问我”；看板 `board(tag?, archived, before_id?, limit?)` / `post_to_board(body, tags, allow_secrets)`（像密码的内容同样抛 `ContainsSecrets`）/ `set_board_post_archived` / `delete_board_post`。
 - 列表页先用 `cached_*`（实例、运行、收件箱、未读数）渲染，再调网络版刷新。
 
