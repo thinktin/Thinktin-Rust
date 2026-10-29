@@ -15,6 +15,15 @@
   2. 浏览器；
   3. 项目与跨用户协作（8.13–8.19）。
 - 用户最新的要求（10-29）：“先看受管控的上网通道怎么设计，然后再确定浏览器怎么设计”。所以顺序是 **出口代理 → 浏览器 → 项目**。
+- **合并**：用户 10-29 让把现在的改动合进 main。已开 [PR #18](https://github.com/thinktin/Thinktin-Rust/pull/18)（本分支 → main，
+  已先合入 main 的 #16，本机全部检查都过），CI 在跑：rust、android、ThinktinKit on Linux、iOS 模拟器（要 20 分钟以上）。
+  - CI 全绿就 **squash 合并**，标题后面加 “(#18)”，和 #14、#16 一样。红了就修，修好再合。
+  - 如果本会话额度先用完，下一个 agent 按上面接着做。
+  - 合并以后：
+    1. 删掉 GitHub 上的 `autosave/claude-determined-lovelace-vn0j5h`（CLAUDE.md 的规则）。
+    2. 后续工作从最新的 main 重新开始，分支名不变：`git fetch origin main && git checkout -B claude/determined-lovelace-vn0j5h origin/main`。
+       分支上只有已经合并的历史时，可以用 force-with-lease 推送。
+    3. 把本文件这一条改成“已合并”。
 
 ### 1. 这一轮做完的（10-29，都已推送）
 
