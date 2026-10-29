@@ -1,5 +1,7 @@
 # 交接：阿里云部署（2026-10-28）
 
+> **2026-10-29 紧急交接**：最新进度和下一步先看 [本分支进度文件的“紧急交接”一节](progress/claude-determined-lovelace-vn0j5h.md)（出口代理 → 浏览器 → 项目，都还在设计阶段）。本文件讲的是阿里云部署。
+
 上一个会话（session_01JYVuTJTo78Zrenhct8Bkw5）用量快满了，下一个 agent 从这里接着干。分支是 `claude/determined-lovelace-vn0j5h`，
 PR #14 是开着的（部署脚本和文档）。**用户说“合并”才合。**
 
