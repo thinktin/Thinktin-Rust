@@ -22,16 +22,17 @@ public enum UserStatus: OpenStringEnum {
 
 /// 设备平台。
 public enum DevicePlatform: OpenStringEnum {
-    case ios, android, macos
+    case ios, android, macos, windows
     case unknown(String)
 
-    public static let knownCases: [DevicePlatform] = [.ios, .android, .macos]
+    public static let knownCases: [DevicePlatform] = [.ios, .android, .macos, .windows]
 
     public var rawValue: String {
         switch self {
         case .ios: "ios"
         case .android: "android"
         case .macos: "macos"
+        case .windows: "windows"
         case .unknown(let raw): raw
         }
     }

@@ -101,7 +101,7 @@ pub async fn login(
     };
     // 注册风控（5.4）：手机号没注册过时，按来源地址和全站的新注册上限放行。
     let limits = s.limits().clone();
-    let computer = device.platform == DevicePlatform::Macos;
+    let computer = device.platform.is_computer();
     let mut l = s
         .auth
         .login_gated(&req.phone, &req.code, &device, move || {

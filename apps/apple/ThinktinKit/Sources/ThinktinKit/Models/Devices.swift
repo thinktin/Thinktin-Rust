@@ -29,8 +29,8 @@ public struct DeviceInfo: Identifiable, Hashable, Codable, Sendable {
         self.lastSeenAt = lastSeenAt ?? createdAt
     }
 
-    /// 是电脑（macOS）：可以和手机配对，在线时 agent 能借它在本机执行。
-    public var isComputer: Bool { platform == .macos }
+    /// 是电脑（macOS、Windows）：可以和手机配对，在线时 agent 能借它在本机执行。
+    public var isComputer: Bool { platform == .macos || platform == .windows }
 
     /// 能登记实时活动（10.6）：只有 iPhone、iPad。
     public var supportsLiveActivities: Bool { platform == .ios }

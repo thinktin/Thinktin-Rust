@@ -296,6 +296,8 @@ fn capabilities_verify_and_scope_paths() {
         ("/Users/me/Documents/../.ssh/id_rsa", false),
         ("Users/me/Documents/x", false),
         ("/etc/passwd", false),
+        // macOS 的令牌管不到 Windows 的路径。
+        (r"C:\Users\me\Documents", false),
     ] {
         assert_eq!(
             capability_allows_path(grant.clone(), path.into()),
@@ -303,11 +305,42 @@ fn capabilities_verify_and_scope_paths() {
             "{path}"
         );
     }
-    let bad = CapabilityGrant {
-        dirs: vec!["relative/dir".into()],
-        ..grant
+    // Windows：盘符、两种分隔符、不分大小写、`\\?\` 前缀（canonicalize 给出的写法）、UNC 共享。
+    let windows = CapabilityGrant {
+        dirs: vec![
+            r"C:\Users\me\Documents".into(),
+            r"\\nas\share\photos".into(),
+        ],
+        ..grant.clone()
     };
-    assert!(capability_message(bad).is_err());
+    verify_capability_at(&windows, CAPABILITY_DER, PHONE_KEY_COMPRESSED, NOW).unwrap_err();
+    for (path, ok) in [
+        (r"C:\Users\me\Documents", true),
+        (r"c:\users\ME\documents\a\b.txt", true),
+        ("C:/Users/me/Documents/x", true),
+        (r"\\?\C:\Users\me\Documents\x", true),
+        (r"C:\Users\me\Documents2\x", false),
+        (r"C:\Users\me\Documents\..\.ssh\id_rsa", false),
+        (r"D:\Users\me\Documents", false),
+        (r"Users\me\Documents", false),
+        ("/Users/me/Documents", false),
+        (r"\\NAS\Share\photos\2026", true),
+        (r"\\nas\other\photos", false),
+        (r"\\nas", false),
+    ] {
+        assert_eq!(
+            capability_allows_path(windows.clone(), path.into()),
+            ok,
+            "{path}"
+        );
+    }
+    for d in [r"C:\Users\..\x", r"C:Users", r"\\nas", "relative/dir"] {
+        let bad = CapabilityGrant {
+            dirs: vec![d.into()],
+            ..grant.clone()
+        };
+        assert!(capability_message(bad).is_err(), "{d}");
+    }
 }
 
 #[test]
