@@ -20,7 +20,8 @@ object NotificationChannels {
     /** 运行进度的常驻通知（13.10，本地发的，服务端不用）：低优先级，不响不震。 */
     const val PROGRESS = "tt_progress"
 
-    fun ensure(context: Context) {
+    fun ensure(app: Context) {
+        val context = androidx.core.content.ContextCompat.getContextForLanguage(app)
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         manager.createNotificationChannels(
             listOf(

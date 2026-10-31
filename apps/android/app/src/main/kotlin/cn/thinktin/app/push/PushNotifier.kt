@@ -1,15 +1,14 @@
 package cn.thinktin.app.push
 
-import android.Manifest
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
-import androidx.core.content.ContextCompat
 import cn.thinktin.app.MainActivity
 import cn.thinktin.app.R
+import cn.thinktin.app.ThinktinApp
+import cn.thinktin.data.model.InboxKind
 
 /**
  * 自己发系统通知：FCM 在 App 前台时不显示通知、只回调 `onMessageReceived`，由这里照推送的标题、正文发一条
@@ -19,11 +18,7 @@ import cn.thinktin.app.R
 object PushNotifier {
     /** 没有通知权限（Android 13 起要用户允许）时什么都不做，返回 false。 */
     fun show(context: Context, title: String, body: String, message: PushMessage): Boolean {
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            return false
-        }
+        if (!hasNotificationPermission(context)) return false
         val intent = openIntent(context, message)
         val requestCode = message.inboxId?.hashCode() ?: message.hashCode()
         val pending = PendingIntent.getActivity(
@@ -45,9 +40,21 @@ object PushNotifier {
             )
             .setAutoCancel(true)
             .setContentIntent(pending)
+            .apply {
+                val approval = message.approvalId
+                val user = (context.applicationContext as? ThinktinApp)?.container?.push?.notificationAccountId
+                if (message.kind == InboxKind.Approval && approval != null && user != null) {
+                    val reject = ApprovalRejectReceiver.pendingIntent(context, user, approval, message.inboxId ?: TAG, requestCode, message.inboxId)
+                    addAction(0, context.getString(R.string.notification_reject_once), reject)
+                }
+            }
             .build()
-        NotificationManagerCompat.from(context).notify(message.inboxId ?: TAG, requestCode, notification)
-        return true
+        return try {
+            NotificationManagerCompat.from(context).notify(message.inboxId ?: TAG, requestCode, notification)
+            true
+        } catch (_: SecurityException) {
+            false
+        }
     }
 
     /** 点开通知打开的 Intent：深链（主界面按它跳）加 `tt_*`（标已读）。 */

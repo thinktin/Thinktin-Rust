@@ -21,12 +21,13 @@ class DeepLinkInbox {
     fun offer(intent: Intent?): Boolean {
         val uri = intent?.takeIf { it.action == Intent.ACTION_VIEW }?.data ?: return false
         if (uri.scheme != DeepLinks.SCHEME && uri.scheme != DeepLinks.PAIR_SCHEME) return false
+        if (uri.toString().length > MAX_LINK_LENGTH) return false
         pending.value = uri
         return true
     }
 
     fun restore(uri: Uri?) {
-        if (uri != null && pending.value == null) pending.value = uri
+        if (uri != null && uri.toString().length <= MAX_LINK_LENGTH && pending.value == null) pending.value = uri
     }
 
     /** 处理完 [uri] 之后清掉（期间又来了新的就保留新的）。 */
@@ -35,6 +36,8 @@ class DeepLinkInbox {
     }
 
     companion object {
+        private const val MAX_LINK_LENGTH = 8192
+
         /**
          * 交给 NavController.handleDeepLink 的 intent。带 NEW_TASK | CLEAR_TASK：返回栈重建成“首页 → 目标页”
          * （和冷启动一样，返回键回首页）；只带 NEW_TASK 时 Navigation 会重启整个 Activity。

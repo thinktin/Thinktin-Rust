@@ -113,10 +113,11 @@ object Pipeline {
     /** 改一步的键名：别的步骤依赖它的跟着改。 */
     fun rename(steps: List<StepDraft>, id: Long, key: String): List<StepDraft> {
         val old = steps.firstOrNull { it.id == id }?.key ?: return steps
+        val unique = steps.count { it.key == old } == 1
         return steps.map { s ->
             when {
                 s.id == id -> s.copy(key = key)
-                old in s.dependsOn -> s.copy(dependsOn = s.dependsOn.map { if (it == old) key else it })
+                unique && old in s.dependsOn -> s.copy(dependsOn = s.dependsOn.map { if (it == old) key else it })
                 else -> s
             }
         }
@@ -125,7 +126,9 @@ object Pipeline {
     /** 删一步：别的步骤对它的依赖一起去掉。 */
     fun remove(steps: List<StepDraft>, id: Long): List<StepDraft> {
         val key = steps.firstOrNull { it.id == id }?.key ?: return steps
-        return steps.filterNot { it.id == id }.map { s -> if (key in s.dependsOn) s.copy(dependsOn = s.dependsOn - key) else s }
+        val remaining = steps.filterNot { it.id == id }
+        if (remaining.any { it.key == key }) return remaining
+        return remaining.map { s -> if (key in s.dependsOn) s.copy(dependsOn = s.dependsOn - key) else s }
     }
 
     /** 上下挪一步（[delta] 是 -1 或 1）。 */

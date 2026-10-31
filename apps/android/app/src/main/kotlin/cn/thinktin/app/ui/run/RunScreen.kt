@@ -334,12 +334,15 @@ private fun ProgressToggle(run: Run, title: String) {
     val service = LocalThinktinService.current
     val tracked by container.progress.tracked.collectAsStateWithLifecycle()
     val on = run.id in tracked
+    val context = LocalContext.current
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
             .toggleable(value = on, role = Role.Switch) { enable ->
-                if (enable) container.progress.track(service, run, title) else container.progress.stop(run.id)
+                if (!enable) container.progress.stop(run.id)
+                else if (cn.thinktin.app.progress.SystemProgressNotifier.isEnabled(context)) container.progress.track(service, run, title)
+                else android.widget.Toast.makeText(context, R.string.run_progress_blocked, android.widget.Toast.LENGTH_LONG).show()
             }
             .padding(vertical = 4.dp),
     ) {

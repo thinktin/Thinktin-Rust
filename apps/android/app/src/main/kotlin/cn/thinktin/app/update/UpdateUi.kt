@@ -112,7 +112,8 @@ fun UpdatePanel(updater: Updater, modifier: Modifier = Modifier) {
             is UpdateState.Ready -> PrimaryButton(
                 text = stringResource(R.string.update_install),
                 onClick = {
-                    installNote = when (ApkInstaller.launch(context, current.file)) {
+                    val file = updater.readyFile() ?: return@PrimaryButton
+                    installNote = when (ApkInstaller.launch(context, file)) {
                         InstallLaunch.Started -> null
                         InstallLaunch.NeedsPermission -> R.string.update_needs_permission
                         InstallLaunch.Unavailable -> R.string.update_install_unavailable
@@ -198,30 +199,23 @@ fun UpdateScreen(updater: Updater, onBack: () -> Unit) {
 fun UpdatePrompt(updater: Updater) {
     LaunchedEffect(updater) { updater.checkIfDue() }
     val state by updater.updateState.collectAsStateWithLifecycle()
-    var open by remember { mutableStateOf(false) }
+    var openVersion by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<Long?>(null) }
+    val manifest = state.manifest
     LaunchedEffect(state) {
-        if (state is UpdateState.Available && updater.shouldPrompt) open = true
+        if (updater.shouldPrompt) openVersion = manifest?.versionCode
     }
-    if (!open) return
-    val version = when (val current = state) {
-        is UpdateState.Available -> current.manifest.versionName
-        is UpdateState.Downloading -> current.manifest.versionName
-        is UpdateState.Ready -> current.manifest.versionName
-        is UpdateState.Failed -> current.manifest?.versionName
-        else -> null
-    }
+    if (manifest == null || openVersion != manifest.versionCode) return
     AlertDialog(
         onDismissRequest = {},
-        title = { Text(stringResource(R.string.update_prompt_title, version.orEmpty())) },
+        title = { Text(stringResource(R.string.update_prompt_title, manifest.versionName)) },
         text = { UpdatePanel(updater) },
         confirmButton = {},
         dismissButton = {
             TextButton(
                 onClick = {
                     updater.dismiss()
-                    open = false
+                    openVersion = null
                 },
-                enabled = state !is UpdateState.Downloading,
             ) { Text(stringResource(R.string.update_later)) }
         },
     )

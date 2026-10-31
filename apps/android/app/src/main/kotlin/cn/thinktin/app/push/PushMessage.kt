@@ -26,7 +26,7 @@ data class PushMessage(
     /**
      * 点开去哪（深链，和 iOS 的 `PushPayload.route`、收件箱的 `targetRoute` 同一套规则，docs/ios.md 第 6.1 节）：
      * - 审批：审批详情；没有审批 id 时运行详情，再没有就是收件箱里的这一条；
-     * - 电脑审批（13.9 还没有页面）：运行详情，否则收件箱里的这一条；
+     * - 电脑审批去审批中心；
      * - 保险箱请求：填写请求；没有请求 id 时同运行完成；
      * - 计划待确认：计划详情（那里确认）；
      * - 运行完成 / 失败、其他提醒：子类型是审批超时跳过的去运行详情；再按运行 → 计划 → 收件箱里的这一条 → 收件箱。
@@ -36,7 +36,7 @@ data class PushMessage(
         val fallback = runId?.let { link("run", it) } ?: planId?.let { link("plan", it) } ?: inbox
         return when (kind) {
             InboxKind.Approval -> approvalId?.let { link("approval", it) } ?: runId?.let { link("run", it) } ?: inbox
-            InboxKind.ComputerApproval -> runId?.let { link("run", it) } ?: inbox
+            InboxKind.ComputerApproval -> Uri.parse(DeepLinks.APPROVALS)
             InboxKind.VaultRequest -> vaultRequestId?.let { link("vault/request", it) } ?: fallback
             InboxKind.PlanConfirm -> planId?.let { link("plan", it) } ?: inbox
             InboxKind.RunFinished, InboxKind.RunFailed, InboxKind.Info -> fallback

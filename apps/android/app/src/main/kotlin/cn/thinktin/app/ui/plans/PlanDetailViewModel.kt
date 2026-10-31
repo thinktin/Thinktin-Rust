@@ -99,7 +99,9 @@ class PlanDetailViewModel(
                     state.update { it.copy(loading = false, notFound = true) }
                     return@launch
                 }
-                state.update { it.copy(loading = false, loadError = ErrorText.of(e)) }
+                val error = ErrorText.of(e)
+                if (state.value.plan != null) eventChannel.trySend(PlanDetailEvent.Message(error))
+                state.update { it.copy(loading = false, loadError = error) }
                 return@launch
             }
             loadRuns(reset = true)

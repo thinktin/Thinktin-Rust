@@ -315,7 +315,7 @@ private fun PlanHead(plan: Plan, state: PlanDetailUiState, zone: ZoneId) {
         if (plan.byAgent) AiGeneratedLabel()
         Text(plan.title, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
         val status = stringResource(plan.status.labelRes())
-        val next = plan.nextFireAtMs?.let { stringResource(R.string.plan_next_fire, dateTimeText(it, zone)) }
+        val next = plan.nextFireAtMs?.let { stringResource(R.string.plan_next_fire, relativePlanTime(it, zone)) }
         Text(
             listOfNotNull(status, state.instances[plan.instanceId]?.name ?: plan.instanceId, next).joinToString(" · "),
             style = MaterialTheme.typography.bodyMedium,
@@ -334,10 +334,10 @@ private fun TriggerRow(trigger: Trigger, zone: ZoneId) {
         val detail = when {
             trigger.disabledReason == TriggerDisabledReason.InvalidRule -> stringResource(R.string.plan_trigger_invalid)
             !trigger.enabled -> stringResource(R.string.plan_trigger_disabled)
-            trigger.nextFireAtMs != null -> stringResource(R.string.plan_next_fire, dateTimeText(trigger.nextFireAtMs!!, zone))
+            trigger.nextFireAtMs != null -> stringResource(R.string.plan_next_fire, relativePlanTime(trigger.nextFireAtMs!!, zone))
             else -> null
         }
-        val last = trigger.lastFireAtMs?.let { stringResource(R.string.plan_last_fire, dateTimeText(it, zone)) }
+        val last = trigger.lastFireAtMs?.let { stringResource(R.string.plan_last_fire, relativePlanTime(it, zone)) }
         val line = listOfNotNull(detail, last).joinToString(" · ")
         if (line.isNotEmpty()) {
             Text(
@@ -399,7 +399,7 @@ private fun RunRow(run: Run, zone: ZoneId, onOpenRun: (String) -> Unit) {
     ) {
         StatusDot(run.state, contentDescription = state)
         Column(Modifier.weight(1f)) {
-            Text(listOf(dateTimeText(run.createdAtMs, zone), state).joinToString(" · "), style = MaterialTheme.typography.bodyMedium)
+            Text(listOfNotNull(relativePlanTime(run.createdAtMs, zone), state, run.durationMs(LocalAppContainer.current.clock.millis())?.let { cn.thinktin.app.ui.chat.durationText(it) }).joinToString(" · "), style = MaterialTheme.typography.bodyMedium)
             val summary = run.summary ?: run.error
             if (summary != null) {
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {

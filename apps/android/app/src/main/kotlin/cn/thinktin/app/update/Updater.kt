@@ -18,20 +18,22 @@ import java.security.MessageDigest
 
 /** 应用内更新的状态（13.12）。 */
 sealed interface UpdateState {
+    val manifest: UpdateManifest? get() = null
+
     data object Idle : UpdateState
 
     data object Checking : UpdateState
 
     data object UpToDate : UpdateState
 
-    data class Available(val manifest: UpdateManifest) : UpdateState
+    data class Available(override val manifest: UpdateManifest) : UpdateState
 
-    data class Downloading(val manifest: UpdateManifest, val read: Long) : UpdateState
+    data class Downloading(override val manifest: UpdateManifest, val read: Long) : UpdateState
 
     /** 下好了、校验过了，等交给系统安装。 */
-    data class Ready(val manifest: UpdateManifest, val file: File) : UpdateState
+    data class Ready(override val manifest: UpdateManifest, val file: File) : UpdateState
 
-    data class Failed(val error: UpdateError, val manifest: UpdateManifest?) : UpdateState
+    data class Failed(val error: UpdateError, override val manifest: UpdateManifest?) : UpdateState
 }
 
 /** 一个 https 地址的内容（测试里换成假的）。 */
@@ -43,16 +45,28 @@ fun interface HttpFetcher {
 /** 系统的 HttpURLConnection（证书按系统的校验，跟随重定向但不会从 https 跳到 http）。 */
 object SystemHttpFetcher : HttpFetcher {
     override fun open(url: String): InputStream {
-        val connection = URL(url).openConnection() as HttpURLConnection
-        connection.connectTimeout = 15_000
-        connection.readTimeout = 30_000
-        connection.setRequestProperty("Accept-Encoding", "identity")
-        val code = connection.responseCode
-        if (code !in 200..299) {
-            connection.disconnect()
-            throw IOException("HTTP $code")
+        var target = URL(url)
+        repeat(6) {
+            if (!UpdateManifest.isAllowedUrl(target.toString())) throw UpdateException(UpdateError.BadManifest)
+            val connection = target.openConnection() as HttpURLConnection
+            connection.instanceFollowRedirects = false
+            connection.connectTimeout = 15_000
+            connection.readTimeout = 30_000
+            connection.setRequestProperty("Accept-Encoding", "identity")
+            when (val code = connection.responseCode) {
+                in 200..299 -> return connection.inputStream
+                301, 302, 303, 307, 308 -> {
+                    val location = connection.getHeaderField("Location")
+                    connection.disconnect()
+                    target = URL(target, location ?: throw IOException("missing redirect location"))
+                }
+                else -> {
+                    connection.disconnect()
+                    throw IOException("HTTP $code")
+                }
+            }
         }
-        return connection.inputStream
+        throw IOException("too many redirects")
     }
 }
 
@@ -71,14 +85,14 @@ interface ApkInspector {
 /** 下载后、安装前的检查。 */
 object ApkCheck {
     /**
-     * 包名一样、版本号就是清单里的、比装着的新；两边都读得到签名时签名要一样（读不到时交给系统：签名不同的更新系统装不上）。
+     * 包名一样、版本号就是清单里的、比装着的新；两边都要读得到相同的签名。
      * 通过返回 null。
      */
     fun verify(archive: ApkInfo?, installed: ApkInfo, manifest: UpdateManifest): UpdateError? = when {
         archive == null -> UpdateError.BadApk
         archive.packageName != installed.packageName -> UpdateError.BadApk
         archive.versionCode != manifest.versionCode || archive.versionCode <= installed.versionCode -> UpdateError.BadApk
-        archive.signers.isNotEmpty() && installed.signers.isNotEmpty() && archive.signers != installed.signers ->
+        archive.signers.isEmpty() || installed.signers.isEmpty() || archive.signers != installed.signers ->
             UpdateError.Signature
         else -> null
     }
@@ -124,16 +138,18 @@ class Updater(
 
     /** 自动检查：离上次检查超过一天才查。 */
     fun checkIfDue() {
-        if (clock() - prefs.lastCheckMs < DAY_MS || job?.isActive == true) return
+        val last = prefs.lastCheckMs
+        val now = clock()
+        if (job?.isActive == true || (last > 0 && now - last in 0 until DAY_MS)) return
         automatic = true
         job = scope.launch { checkNow() }
     }
 
     internal suspend fun checkNow() {
+        prefs.lastCheckMs = clock()
         state.value = UpdateState.Checking
         state.value = try {
             val manifest = withContext(io) { UpdateManifest.parse(readText(manifestUrl)) }
-            prefs.lastCheckMs = clock()
             when {
                 manifest.versionCode <= currentVersionCode -> UpdateState.UpToDate
                 manifest.minSdk > sdkInt -> UpdateState.Failed(UpdateError.DeviceTooOld, manifest)
@@ -148,7 +164,14 @@ class Updater(
 
     /** “以后再说”：这个版本不再自动提示。 */
     fun dismiss() {
-        (state.value as? UpdateState.Available)?.let { prefs.dismissedVersion = it.manifest.versionCode }
+        state.value.manifest?.let { prefs.dismissedVersion = it.versionCode }
+    }
+
+    fun readyFile(): File? {
+        val ready = state.value as? UpdateState.Ready ?: return null
+        if (ready.file.isFile) return ready.file
+        state.value = UpdateState.Failed(UpdateError.Storage, ready.manifest)
+        return null
     }
 
     /** 下载、校验（有新版本或上次下载失败时）。 */

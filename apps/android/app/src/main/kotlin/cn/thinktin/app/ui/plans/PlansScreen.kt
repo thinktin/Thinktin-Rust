@@ -223,7 +223,7 @@ private fun PlanRow(
     onOpen: (String) -> Unit,
     onSetPaused: (Plan, Boolean) -> Unit,
 ) {
-    val next = plan.nextFireAtMs?.let { stringResource(R.string.plan_next_fire, dateTimeText(it, zone)) }
+    val next = plan.nextFireAtMs?.let { stringResource(R.string.plan_next_fire, relativePlanTime(it, zone)) }
         ?: stringResource(if (plan.paused) R.string.plan_status_paused else R.string.plan_no_next_fire)
     val toggleLabel = stringResource(if (plan.paused) R.string.plan_resume else R.string.plan_pause)
     Row(

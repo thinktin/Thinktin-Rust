@@ -29,6 +29,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import cn.thinktin.app.ui.common.LocalAppContainer
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -58,9 +59,10 @@ const val LICENSE_COMPONENT_TEST_TAG = "license-component-"
  */
 @Composable
 fun LicensesScreen(onBack: () -> Unit, onOpenText: (path: String, title: String) -> Unit) {
+    val source = LocalAppContainer.current.licenseSource
     val context = LocalContext.current
     val viewModel: LicensesViewModel = viewModel(
-        factory = viewModelFactory { initializer { LicensesViewModel(AssetLicenseSource(context.applicationContext.assets)) } },
+        factory = viewModelFactory { initializer { LicensesViewModel(source) } },
     )
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     Scaffold(
@@ -99,12 +101,19 @@ fun LicensesScreen(onBack: () -> Unit, onOpenText: (path: String, title: String)
                     )
                 }
             }
-            val deps = state.appDependencies
+            if (state.inventory is InventoryState.Loaded) {
+                item(key = "notices") {
+                    TextButton(onClick = { onOpenText("NOTICES.md", "NOTICES.md") }) {
+                        Text(stringResource(R.string.licenses_view_notices))
+                    }
+                }
+            }
+            val deps = state.appDependencies { context.getString(it) }
             if (deps.isNotEmpty()) {
                 item(key = "app-header") { SectionHeader(title = stringResource(R.string.licenses_app_section), modifier = Modifier.padding(top = 16.dp)) }
-                items(deps, key = { "app-" + it.name }) { dep ->
+                items(deps, key = { "app-" + it.nameRes }) { dep ->
                     Column(Modifier.padding(vertical = 8.dp)) {
-                        Text(dep.name, style = MaterialTheme.typography.bodyLarge)
+                        Text(stringResource(dep.nameRes), style = MaterialTheme.typography.bodyLarge)
                         Text(dep.license, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
@@ -214,11 +223,11 @@ private fun ComponentRow(
 /** 一份原文（`licenses/text?path=`）。 */
 @Composable
 fun LicenseTextScreen(path: String, title: String, onBack: () -> Unit) {
-    val context = LocalContext.current
+    val source = LocalAppContainer.current.licenseSource
     val viewModel: LicenseTextViewModel = viewModel(
         key = "license-text-$path",
         factory = viewModelFactory {
-            initializer { LicenseTextViewModel(AssetLicenseSource(context.applicationContext.assets), path) }
+            initializer { LicenseTextViewModel(source, path) }
         },
     )
     val state by viewModel.uiState.collectAsStateWithLifecycle()

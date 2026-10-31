@@ -42,6 +42,7 @@ sealed interface VaultFormProblem {
     data object UsernameTooLong : VaultFormProblem
 
     /** 用途、账号里有换行、制表符这些。 */
+    data object PurposeControl : VaultFormProblem
     data object ControlCharacters : VaultFormProblem
     data class Password(val problem: VaultRules.PasswordProblem) : VaultFormProblem
     data object NoInstances : VaultFormProblem
@@ -270,9 +271,8 @@ data class VaultEditorUiState(
             val purpose = purpose.trim()
             if (VaultRules.length(purpose) > VaultRules.MAX_PURPOSE) add(VaultFormProblem.PurposeTooLong)
             if (VaultRules.length(username) > VaultRules.MAX_USERNAME) add(VaultFormProblem.UsernameTooLong)
-            if (VaultRules.hasControlCharacters(purpose) || VaultRules.hasControlCharacters(username)) {
-                add(VaultFormProblem.ControlCharacters)
-            }
+            if (VaultRules.hasControlCharacters(purpose)) add(VaultFormProblem.PurposeControl)
+            if (VaultRules.hasControlCharacters(username)) add(VaultFormProblem.ControlCharacters)
             if (!editing || password.isNotEmpty()) VaultRules.passwordProblem(password)?.let { add(VaultFormProblem.Password(it)) }
             if (!allInstances) {
                 if (selected.isEmpty()) add(VaultFormProblem.NoInstances)
@@ -326,7 +326,7 @@ class VaultEditorViewModel(private val service: ThinktinService, private val ite
                             purpose = detail.item.purpose,
                             username = detail.username,
                             allInstances = detail.item.instanceIds.isEmpty(),
-                            selected = detail.item.instanceIds.toSet(),
+                            selected = detail.item.instanceIds.intersect(instances.map { instance -> instance.id }.toSet()),
                         )
                     }
                 }

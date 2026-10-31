@@ -128,6 +128,9 @@ class TeamsTest {
     @Test
     fun stepEditsKeepDependenciesConsistent() {
         val steps = listOf(step(1, "fetch"), step(2, "write", "fetch"))
+        val duplicate = steps + step(3, "fetch")
+        assertEquals(listOf("fetch"), Pipeline.rename(duplicate, 3, "other")[1].dependsOn)
+        assertEquals(listOf("fetch"), Pipeline.remove(duplicate, 3)[1].dependsOn)
         val renamed = Pipeline.rename(steps, 1, "gather")
         assertEquals(listOf("gather"), renamed[1].dependsOn)
         assertEquals(listOf("write"), Pipeline.remove(renamed, 1).map { it.key })

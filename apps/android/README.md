@@ -138,8 +138,8 @@ export THINKTIN_CORE_LIB_DIR=$PWD/../../target/debug
 ./gradlew :app:assembleCnDebug           # 只打 cn 渠道的 debug 包
 ```
 
-- 产物：`app/build/outputs/apk/{cn,global}/debug/app-*-debug.apk`。
-- 渠道（`dist` 维度）：`cn`（极光推送）、`global`（FCM），各自的源码目录里是 `FlavorPush`（13.8）；`BuildConfig.DIST` 区分。
+- 产物：`app/build/outputs/apk/{cn,global,direct}/debug/app-*-debug.apk`。
+- 渠道见 `BuildConfig.DIST`。`cn` 预留极光推送，`global` 预留 FCM，`direct` 是官网包，共用 cn 推送代码。只有官网包申请安装权限并可在 App 内更新。
 - 后端地址：`BuildConfig.BASE_URL`，默认 `https://api.thinktin.cn`，用 `-PthinktinBaseUrl=...` 覆盖。
 - 云端会话没有模拟器：界面测试是 Robolectric 跑的 Compose 测试（`app`、`design` 的 `src/test`），
   只跑 debug（`app` 只跑 cnDebug）。Robolectric 要的 android-all jar 由 `gradle/robolectric.gradle.kts`
@@ -167,7 +167,7 @@ Keystore 失效……）都显示“无法加载核心库”页（原因 + 重�
 
 - **登录流**（`ui/login`，未登录时替换整个主区）：手机号页（国家 / 地区码，默认 +86，常用 8 个；`PhoneRegion` 按位数和开头粗查格式，
   E.164 交给服务端）→ 验证码页（6 位、自动聚焦、满 6 位自动提交、60 秒倒计时重发、“更换手机号”返回）→
-  `login(phone, code, null, null)`（推送令牌在 13.8 接）。两页共用一个 `LoginViewModel`，挂在 Activity 上（旋转不丢号码和倒计时，
+  `login(phone, code, null, null)`（有推送令牌时登录携带令牌和通道）。两页共用一个 `LoginViewModel`，挂在 Activity 上（旋转不丢号码和倒计时，
   登录成功后界面切走也不会取消没跑完的回调），每次新进登录流 `reset()`。
   错误映射：`rate_limited` 显示剩余秒数（发码时倒计时，按号码算，换号码可以马上发）；`account_frozen` 进 `login/frozen`
   （还没有登录态，只能返回）；网络错误、服务暂时不可用用 Snackbar 带“重试”；`invalid` 按当前步骤做字段级提示
@@ -322,7 +322,8 @@ Keystore 失效……）都显示“无法加载核心库”页（原因 + 重�
     填写请求卡（agent 写的用途标 AI，“填写” / “拒绝”，已填写 / 已拒绝 / 已过期）；子运行入口；计划卡（“去确认”）。
   - 等待类横幅（警告色，输入框上方）：等审批 → 去审批（本页有能点的卡就滚过去，没有去审批中心）；等 key → 按 `wait_code`
     去配 key / 去配模型（限频、过载只提示）；等电脑 → 查看设备。运行中顶部细进度条，输入框为空时发送键变停止
-    （`cancelRun(wholeTree = true)`）。
+    （根运行 `cancelRun(wholeTree = true)` 连同委派出去的子任务一起停；委派 / 流水线步骤的子运行只停自己 `cancelRun(id, false)`，
+    整棵树在运行页经确认才停）。
   - 发送：`detectSecrets` 有命中 → 盖在页面上的底部表单（不是对话框）：名字（`uniqueVaultName` 避开已有条目，冲突 409 再换一个）、
     用途、账号、密码（预填命中值）→ `saveSecretFromMessage` → 换成 `[vault:名字]` 的文本放回输入框，还有命中接着弹；
     私钥（`storable = false`）只提示不发；“仍然发送”二次确认后 `sendMessage(allowSecrets = true)`；`sendMessage` 抛
@@ -474,7 +475,7 @@ abortOnError 开着，不用 baseline；release 包跑一遍 R8）→ 解开 rel
   都基于 JUnit 4，混用两套引擎只会多一层 vintage。规范第 1 节已按此修订。纯逻辑测试（`:data`、`:core`、ViewModel）
   也用 JUnit 4 + kotlinx-coroutines-test + Turbine；界面测试是 Robolectric 跑的 Compose 测试。
 
-- 文案全部进资源：`res/values`（中文，默认）和 `res/values-en`（英文），两边的键必须一致（lint 会查）。
+- 文案全部进资源：`res/values-zh`（中文）和 `res/values`（英文，其他语言也用英文），两边的键必须一致（lint 会查）。
   代码标识符用英文，注释用中文。
 - 服务端的状态字符串在 `:data` 里转成枚举（`InstanceState`、`RunState`、`InboxKind`……），未知取值一律 `Unknown`，界面不崩。
   时间统一是 Unix 毫秒（Long），相对时间用 `RelativeTime`。
@@ -500,19 +501,16 @@ abortOnError 开着，不用 baseline；release 包跑一遍 R8）→ 解开 rel
 
 - 登录页“用户协议”“隐私政策”还只是说明文字，没有链接（正式地址未定，13.13 关于页一起做）；冻结页只写“联系客服”，
   没有具体渠道（客服邮箱 / 工单地址未定）。
-- 验证码没有接 SMS Retriever / 一次性验证码自动填充（需要服务端短信模板带 App 哈希）；推送令牌在 13.8 接，现在登录传 null。
+- 验证码没有接 SMS Retriever / 一次性验证码自动填充（需要服务端短信模板带 App 哈希）；推送接口已接入登录，通道 SDK 尚待配置。
 
 - `tools/client-core/build-android.sh` 没有“跳过 AAR”的开关，`sync-core.sh` 用 PATH 垫片绕过（见上）。以后给它加一个开关
   （比如 `THINKTIN_SKIP_AAR=1`）并去掉 `jvmToolchain(17)` 的硬要求后，删掉垫片。
 - 审批的身份确认（`BiometricApprovalGate`）只在 JVM 上测了映射（认证方式、错误码），提示框本身要真机验证：
   有指纹 / 面容、只有锁屏密码、没有锁屏（应提示先设置）、API 28–29（WEAK + 凭证）、API 26–27（AppCompat 指纹对话框）、
-  提示框弹出时旋转屏幕。通知上的“拒绝”快捷操作随 13.8 推送一起做（先 `getApproval` 确认还是待处理再发）。
+  提示框弹出时旋转屏幕。前台生成的审批通知支持“拒绝这一次”，先核对账号和待处理审批。厂商生成的后台通知仍待接入推送 SDK。
 - Robolectric 的触摸注入点不到盖在页面上的层（抽屉、领养面板）：触摸落到了下面的内容 / 遮罩上（真机正常），
   这些控件在测试里用无障碍点击动作（`SemanticsActions.OnClick`）。
-- 删除实例后别的流水线只是暂停、步骤留着（11.9 的服务端语义），设计规范 8.6 写的“级联删除”和它不一致；App 和 Mock 按服务端的写。
-  计划页（13.6）还没做，恢复这种流水线时的 409 conflict 现在只有通用文案，到时按“先改步骤”给专门的提示和入口。
-- 团队模板领养（13.7）还没有界面：Mock 已按 11.9 全成或全不成，`AgentDetailViewModel.adoptError` 的 `instance_limit` 映射到时复用，
-  “放不下整个团队”的专门文案随 13.7 加。
+- 删除实例后受影响的流水线暂停，用户在计划详情中先改步骤再恢复。团队模板领养已支持整队领养及实例上限提示。
 - 用量按天的 `key` 按日期解析（`yyyy-MM-dd`）；服务端换格式时柱状图会退化成只有表格。
 - CI 的 APK 不含 .so（见“CI”）。启动时 `TlsInit` 加载不到库，`TlsState.failure` 记下 `UnsatisfiedLinkError`，演示模式照常可用。
 - `TlsInit.initialize`（JNI）只能在真机 / 模拟器上验证（云端会话没有模拟器，JVM 上的 .so 是 Linux 版，没有这个 JNI 函数）；

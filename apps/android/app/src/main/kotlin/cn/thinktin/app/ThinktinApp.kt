@@ -28,6 +28,11 @@ open class ThinktinApp : Application() {
         initializeLogging()
         tlsState = initializeTls()
         container = createContainer()
+        // 进程重建后没有运行中的订阅，只收回上一进程留下的进度通知。
+        val notifications = getSystemService(android.app.NotificationManager::class.java)
+        notifications.activeNotifications.filter { it.tag == cn.thinktin.app.progress.SystemProgressNotifier.TAG }.forEach {
+            notifications.cancel(it.tag, it.id)
+        }
         // 通知渠道（13.8）：推送里带着渠道 id，收到推送之前就要有。
         NotificationChannels.ensure(this)
         // 推送 SDK：登录（同意隐私政策）之前不收集信息、不注册（见 AppRoot 的 PushSync）。

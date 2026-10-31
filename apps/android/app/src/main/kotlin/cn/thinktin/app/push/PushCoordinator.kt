@@ -32,7 +32,16 @@ class PushCoordinator {
     /** 点开过、还没标已读的收件箱通知。 */
     val pendingReads: StateFlow<Set<String>> = readsState.asStateFlow()
 
+    private val restoreState = MutableStateFlow(false)
+    val pendingAccountRestore: StateFlow<Boolean> = restoreState.asStateFlow()
+
     private val mutex = Mutex()
+
+    @Volatile
+    private var foregroundAccount: Pair<ThinktinService, String>? = null
+
+    internal val notificationAccountId: String?
+        get() = foregroundAccount?.takeIf { it.first.authState.value == AuthState.SignedIn }?.second
 
     /** 已经报过的（服务按对象认：切换演示模式换了服务要重新报）。 */
     private var reported: Pair<ThinktinService, PushToken>? = null
@@ -43,15 +52,34 @@ class PushCoordinator {
     }
 
     fun onOpened(message: PushMessage) {
+        if (message.subtype == "account_restored") restoreState.value = true
         val id = message.inboxId ?: return
         readsState.update { it + id }
     }
 
     /** 登录着：报令牌、标已读；没登录：忘掉报过的（下次登录要再报）。 */
     suspend fun sync(service: ThinktinService) = mutex.withLock {
+        if (restoreState.compareAndSet(true, false) && service.authState.value == AuthState.Frozen) {
+            try {
+                service.me()
+            } catch (e: ServiceError) {
+                Log.w(TAG, "重新检查账号状态失败", e)
+            }
+        }
         if (service.authState.value != AuthState.SignedIn) {
+            foregroundAccount = null
             if (reported?.first === service) reported = null
             return@withLock
+        }
+        if (foregroundAccount?.first !== service) {
+            foregroundAccount = null
+            if (!service.isDemo) {
+                try {
+                    foregroundAccount = service to service.me().id
+                } catch (_: ServiceError) {
+                    // 还不能确认通知属于哪个账号时，只提供打开 App 的入口。
+                }
+            }
         }
         val token = tokenState.value
         val last = reported

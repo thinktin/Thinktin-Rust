@@ -47,17 +47,18 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-data class PrivacyInfoUiState(val confirmWithdraw: Boolean = false, val withdrawing: Boolean = false)
+data class PrivacyInfoUiState(val confirmWithdraw: Boolean = false, val withdrawing: Boolean = false, val cleanupFailed: Boolean = false)
 
 /** 撤回同意（13.11）：真实账号先退出登录（client-core 清掉登录态和缓存），再记下没同意，根界面换回隐私政策页。 */
 class PrivacyInfoViewModel(
     private val repository: AppSettingsRepository,
     private val service: ThinktinService,
+    private val clearDeviceData: suspend () -> Unit = {},
 ) : ViewModel() {
     private val state = MutableStateFlow(PrivacyInfoUiState())
     val uiState: StateFlow<PrivacyInfoUiState> = state.asStateFlow()
 
-    fun askWithdraw() = state.update { it.copy(confirmWithdraw = true) }
+    fun askWithdraw() = state.update { it.copy(confirmWithdraw = true, cleanupFailed = false) }
 
     fun dismissWithdraw() = state.update { if (it.withdrawing) it else it.copy(confirmWithdraw = false) }
 
@@ -65,6 +66,14 @@ class PrivacyInfoViewModel(
         if (state.value.withdrawing) return
         state.update { it.copy(withdrawing = true) }
         viewModelScope.launch {
+            try {
+                clearDeviceData()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                state.update { it.copy(withdrawing = false, cleanupFailed = true) }
+                return@launch
+            }
             if (!service.isDemo) service.logoutQuietly()
             repository.withdrawPrivacy()
             state.update { it.copy(withdrawing = false, confirmWithdraw = false) }
@@ -82,7 +91,14 @@ fun PrivacyInfoScreen(onBack: () -> Unit) {
     val service = LocalThinktinService.current
     val context = LocalContext.current
     val viewModel: PrivacyInfoViewModel = viewModel(
-        factory = viewModelFactory { initializer { PrivacyInfoViewModel(container.settingsRepository, service) } },
+        factory = viewModelFactory { initializer {
+            PrivacyInfoViewModel(container.settingsRepository, service) {
+                container.artifactFiles.clear()
+                container.deviceSigner.resetKey()
+                container.computerLinks.clear()
+                container.progress.stopAll()
+            }
+        } },
     )
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     // 从系统设置回来时重新看一遍权限。
@@ -155,7 +171,7 @@ fun PrivacyInfoScreen(onBack: () -> Unit) {
     if (state.confirmWithdraw) {
         ConfirmDialog(
             title = stringResource(R.string.privacy_withdraw_title),
-            text = stringResource(R.string.privacy_withdraw_message),
+            text = stringResource(if (state.cleanupFailed) R.string.privacy_cleanup_failed else R.string.privacy_withdraw_message),
             confirm = stringResource(R.string.privacy_withdraw_confirm),
             onConfirm = viewModel::withdraw,
             onDismiss = viewModel::dismissWithdraw,

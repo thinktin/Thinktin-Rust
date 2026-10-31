@@ -102,6 +102,8 @@ private fun ImChannelRules.Problem.text(): String = when (this) {
     ImChannelRules.Problem.SecretNotSupported -> stringResource(R.string.im_problem_secret_not_supported)
     ImChannelRules.Problem.BadSecret -> stringResource(R.string.im_problem_bad_secret)
     ImChannelRules.Problem.BadLabel -> stringResource(R.string.im_problem_bad_label, ImChannelRules.MAX_LABEL)
+    ImChannelRules.Problem.DifferentVendor -> stringResource(R.string.im_different_vendor)
+    ImChannelRules.Problem.LabelControl -> stringResource(R.string.im_label_control)
     ImChannelRules.Problem.NoEvents -> stringResource(R.string.im_problem_no_events)
 }
 

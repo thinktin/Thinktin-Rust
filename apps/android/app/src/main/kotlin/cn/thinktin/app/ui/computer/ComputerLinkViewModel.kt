@@ -258,6 +258,9 @@ class ComputerLinkViewModel(
         if (!state.value.canSign || link().computers.isEmpty()) return
         val encoded = try {
             codec.encodePublicKey(signer.publicKey())
+        } catch (e: DeviceSignerException.KeyInvalidated) {
+            fail(e)
+            return
         } catch (_: DeviceSignerException) {
             return
         } catch (_: PairingCodecException) {
@@ -273,19 +276,23 @@ class ComputerLinkViewModel(
     // ---- 配对 ----
 
     /** 扫到的二维码（或者粘贴的配对码）：签配对回复发给电脑，之后等确认（[awaitConfirmation]）。 */
-    fun pair(code: String, reason: String) {
+    fun pair(code: String, reason: String) = pair(code) { reason }
+
+    fun pair(code: String, reasonFor: (String) -> String) {
         val me = currentDeviceId ?: return
         val userId = userId ?: return
         work {
             val offer = codec.parseOffer(code.trim())
-            if (state.value.computers.none { it.id == offer.desktopId }) throw LinkFailure(ComputerLinkError.NotYourComputer)
+            val target = state.value.computers.firstOrNull { it.id == offer.desktopId }
+                ?: throw LinkFailure(ComputerLinkError.NotYourComputer)
             val phoneKey = currentPublicKey()
-            val signature = signer.sign(codec.responseMessage(offer, me, phoneKey), reason)
+            val signature = signer.sign(codec.responseMessage(offer, me, phoneKey), reasonFor(target.name))
             val body = buildJsonObject {
                 put("nonce", offer.nonce)
                 put("phone_key", phoneKey)
                 put("signature", PairingEncoding.base64url(signature))
             }
+            for (grant in state.value.activeGrants(offer.desktopId, clock())) revokeNow(grant)
             service.sendDeviceMessage(offer.desktopId, DeviceMessageKind.PairResponse, body.toString())
             store.update(userId) { it.copy(pending = PendingPairing(offer, phoneKey, clock())) }
         }
@@ -308,7 +315,7 @@ class ComputerLinkViewModel(
     /** 解除和这台电脑的配对：先吊销发给它的令牌（尽力），再忘掉它。电脑那边要在电脑上解除。 */
     fun unpair(desktopId: String) {
         val userId = userId ?: return
-        viewModelScope.launch {
+        work {
             for (grant in state.value.activeGrants(desktopId, clock())) revokeNow(grant)
             store.update(userId) { s ->
                 s.copy(
@@ -322,10 +329,11 @@ class ComputerLinkViewModel(
     /** 密钥失效后：删掉旧密钥和所有配对（要重新扫码）。 */
     fun resetKey() {
         val userId = userId ?: return
-        viewModelScope.launch {
+        work {
+            for (grant in link().grants.filter { it.isActive(clock() / 1000) }) revokeNow(grant)
             signer.resetKey()
             store.update(userId) { s ->
-                s.copy(computers = emptyList(), requests = emptyList(), grants = s.grants.map { it.copy(revoked = true) })
+                s.copy(computers = emptyList(), requests = emptyList(), pending = null)
             }
             state.update { it.copy(needsRepair = false, error = null) }
         }
@@ -391,19 +399,20 @@ class ComputerLinkViewModel(
 
     /** 吊销（不用签名：吊销只会收紧权限）。电脑不在线时平台排队 24 小时。 */
     fun revoke(issued: IssuedGrant) {
-        viewModelScope.launch { revokeNow(issued) }
+        work { revokeNow(issued) }
     }
 
     private suspend fun revokeNow(issued: IssuedGrant) {
         val userId = userId ?: return
+        val body = buildJsonObject { put("token_id", issued.grant.tokenId) }
         try {
-            val body = buildJsonObject { put("token_id", issued.grant.tokenId) }
             service.sendDeviceMessage(issued.grant.desktopId, DeviceMessageKind.Revocation, body.toString())
-            store.update(userId) { s ->
-                s.copy(grants = s.grants.map { if (it.grant.tokenId == issued.grant.tokenId) it.copy(revoked = true) else it })
-            }
-        } catch (e: ServiceError) {
-            fail(e)
+        } catch (e: ServiceError.Api) {
+            // 中继只向账号下仍有效的设备投递。已移除的电脑不会再收到消息。
+            if (e.status != 404 && e.code != "not_found") throw e
+        }
+        store.update(userId) { s ->
+            s.copy(grants = s.grants.map { if (it.grant.tokenId == issued.grant.tokenId) it.copy(revoked = true) else it })
         }
     }
 
@@ -464,7 +473,6 @@ private fun ComputerLinkState.paired(pending: PendingPairing, nowMs: Long): Comp
     return copy(
         computers = computers.filterNot { it.desktopId == desktopId } +
             PairedComputer(desktopId, pending.offer.desktopKey, pending.phoneKey, nowMs),
-        grants = grants.map { if (it.grant.desktopId == desktopId) it.copy(revoked = true) else it },
     )
 }
 

@@ -22,6 +22,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
@@ -92,6 +93,17 @@ class AppUiTest {
         // agent 写的摘要带“AI 生成”标识（第 8.4 节）
         compose.onAllNodes(hasText("【AI 生成】")).onFirst().assertIsDisplayed()
         compose.onNode(hasText("已翻译并提交 README.en.md")).assertIsDisplayed()
+        // 流水线步骤的 prompt 里附带上游摘要：prompt 前面也标（第 8.4 节）；用户自己说的不标。
+        compose.waitFor(hasText("根据调研结果写周报"))
+        assertEquals("【AI 生成】", textBefore("根据调研结果写周报"))
+        assertEquals("给登录页加单元测试", textBefore("给登录页加单元测试", orSelf = true))
+    }
+
+    /** “最近运行”一行里紧挨在 [text] 前面的文字（AI 标识在 prompt 前面）；[orSelf] 为真时没有前一项就返回它自己。 */
+    private fun textBefore(text: String, orSelf: Boolean = false): String? {
+        val texts = compose.onNode(hasText(text)).fetchSemanticsNode().config[SemanticsProperties.Text].map { it.text }
+        val i = texts.indexOf(text)
+        return if (i > 0) texts[i - 1] else if (orSelf) texts[i] else null
     }
 
     @Test

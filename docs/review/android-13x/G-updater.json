@@ -1,0 +1,122 @@
+[
+ {
+  "file": "apps/android/app/src/main/kotlin/cn/thinktin/app/update/UpdateUi.kt",
+  "line": 201,
+  "title": "自动更新提示框在 Activity 重建后消失，下载 / 已下好的状态无处可见",
+  "severity": "medium",
+  "category": "platform",
+  "description": "UpdatePrompt 的打开状态是 `remember { mutableStateOf(false) }`（不是 rememberSaveable，也不从 Updater 的状态推导），而重新打开的条件只有 `state is Available && shouldPrompt`（202–204 行）。用户在自动提示框里点了“下载并安装”后，只要 Activity 重建一次（旋转屏幕、切深色模式、设置里切换界面语言——13.13 用 AppCompatDelegate.setApplicationLocales 会重建 Activity、分屏改尺寸；主清单的 MainActivity 没有 configChanges），`open` 回到 false，此时 state 是 Downloading / Ready / Failed 而不是 Available，对话框再也不弹出来。Updater 是 AppContainer 级别的单例，下载在后台照常进行并变成 Ready，但界面上什么都没有：用户以为更新被取消了；只有碰巧进设置 → 检查更新（UpdateScreen 对 Ready 不重查）才能看到“安装”按钮。失败场景：自动提示 → 点“下载并安装” → 下载中旋转手机 → 对话框消失，没有任何提示；下载完成也不提示。",
+  "evidence": "UpdateUi.kt:201 `var open by remember { mutableStateOf(false) }`；202–204 `LaunchedEffect(state) { if (state is UpdateState.Available && updater.shouldPrompt) open = true }`；AndroidManifest.xml:23–27 MainActivity 无 configChanges；Updater.kt:104 scope 为 App 级，下载不随界面销毁；docs/android-release.md 第 3 节“下载中、下好了也在这个框里，直到装上或关掉”（UpdateUi.kt:194–195 的 KDoc 同）。",
+  "proposed_fix": "把“提示框是否打开”放进 Updater（例如 `promptOpen: StateFlow<Boolean>`，自动检查得到 Available 且未被 dismiss 时置 true，dismiss 时置 false），UpdatePrompt 只收集这个状态；或者至少改成 `rememberSaveable` 并把重开条件扩成 `state is Downloading/Ready/Failed(manifest != null)` 也算打开。",
+  "area": "updater-flavors",
+  "status": "unverified",
+  "verifier_note": "反方核实没跑成，修之前先自己核实；不成立就跳过并说明。"
+ },
+ {
+  "file": "apps/android/app/src/main/kotlin/cn/thinktin/app/update/UpdateManifest.kt",
+  "line": 43,
+  "title": "清单解析对深层嵌套 JSON 抛 StackOverflowError 未捕获：一份恶意 latest.json 让所有官网包用户每次启动都崩溃",
+  "severity": "high",
+  "category": "security",
+  "description": "`UpdateManifest.parse` 只拦 `JSONException`（UpdateManifest.kt:42-46），`Updater.checkNow` 只拦 `UpdateException` / `IOException`（Updater.kt:134-146），而 Android 的 `org.json.JSONTokener` 是无深度限制的递归下降解析（`nextValue → readArray/readObject → nextValue`，只有 `in`、`pos` 两个字段，没有任何 depth 计数；在 Robolectric 的 android-all 15 jar 里核对过）。清单大小上限 `MAX_BYTES = 64 KiB`（第 33 行）只限字节数，不限嵌套：一份 `{\"a\":[[[[…` 约 6 万层的 64 KiB 文件就会在 IO 线程（栈约 1 MB）里抛 `StackOverflowError`。它是 `Error` 不是 `Exception`，沿 `withContext(io)` 回到 `scope.launch`，而 `scope` 是裸的 `CoroutineScope(Dispatchers.Main.immediate)`（Updater.kt:104），没有 `CoroutineExceptionHandler`，工程里也没有全局 `UncaughtExceptionHandler`（grep 无结果）→ 进程崩溃。更糟的是 `prefs.lastCheckMs = clock()` 写在解析成功之后（Updater.kt:136），所以“一天一次”的节流根本不生效：`AppRoot.kt:105 → UpdatePrompt → LaunchedEffect { checkIfDue() }`（UpdateUi.kt:199）在每次冷启动都重新拉清单、重新崩溃，用户连“以后再说”都点不到，直到官网把文件换掉。失败场景：攻击者拿到 thinktin.cn 静态文件 / CDN 的写权限（或 TLS 中间人）后，不需要能签 APK，只要放一份合法大小的深嵌套 JSON，`direct` 渠道所有装了 App 的用户就进入启动即崩的循环；这正是哈希 / 签名校验要防的威胁模型，但更新通道的爆炸半径应当止于“不更新”而不是“App 打不开”。同样没被捕获的还有 `readText` 之后的任何 `RuntimeException`（例如 `JSONObject` 内部的 `NumberFormatException` 虽会被包成 JSONException，但 `OutOfMemoryError` 等不会）。",
+  "evidence": "UpdateManifest.kt:42-46 `val json = try { JSONObject(text) } catch (e: JSONException) { throw UpdateException(UpdateError.BadManifest, e) }`；Updater.kt:134-146 只 catch `UpdateException` / `IOException`，第 136 行 `prefs.lastCheckMs = clock()` 在解析之后；Updater.kt:104 `scope: CoroutineScope = CoroutineScope(Dispatchers.Main.immediate)`；AppRoot.kt:105 `if (!upgradeRequired) container.updater?.let { UpdatePrompt(it) }`，UpdateUi.kt:199 `LaunchedEffect(updater) { updater.checkIfDue() }`。契约：docs/android-release.md 第 3 节“更新清单是官网上的一个静态文件……App 每天最多自动检查一次”；任务清单第 (5) 条“清单解析对超大 / 畸形 JSON 的处理（崩溃即拒绝服务）”。",
+  "proposed_fix": "(1) `parse` 里把 `catch (e: JSONException)` 改成 `catch (e: Exception)` 外加 `catch (e: StackOverflowError)`（或统一 `catch (e: Throwable) { if (e is VirtualMachineError && e !is StackOverflowError) throw e; throw UpdateException(BadManifest, e) }`），或者解析前先用一次线性扫描限制 `{`/`[` 的嵌套深度（例如 ≤ 32）；(2) `checkNow` / `downloadNow` 兜底 `catch (e: Exception)` 转成 `Failed(BadManifest/Network)`，并给 `scope` 加 `SupervisorJob() + CoroutineExceptionHandler`；(3) 把 `prefs.lastCheckMs = clock()` 提到网络请求之前（或在 finally 里写），保证哪怕清单坏了自动检查也一天只碰一次；(4) `UpdateTest` 加一条 64 KiB 深嵌套清单的用例，断言得到 `Failed(BadManifest)` 而不是异常。",
+  "area": "updater-security",
+  "status": "unverified",
+  "verifier_note": "反方核实没跑成，修之前先自己核实；不成立就跳过并说明。"
+ },
+ {
+  "file": "apps/android/app/src/main/kotlin/cn/thinktin/app/update/UpdateUi.kt",
+  "line": 112,
+  "title": "Ready 状态下安装包文件丢失后没有任何恢复路径",
+  "severity": "low",
+  "category": "platform",
+  "description": "校验通过后状态停在 `Ready(manifest, file)`，界面只有“安装”按钮；`Updater.download()` 对 Ready 直接 `return`（Updater.kt:159），UpdateScreen 进入时也只对 Idle / Failed / UpToDate 重查（UpdateUi.kt:160），UpgradeRequiredScreen 只对 Idle / UpToDate 重查（UpgradeScreen.kt:48）。安装包放在 cacheDir/updates/，系统在存储紧张时会清理应用缓存，用户也可能在“应用信息 → 清除缓存”时把它删掉（去系统设置允许“安装未知应用”的流程本来就要进应用信息页）。文件没了以后，点“安装”时 FileProvider 照样生成 content:// 交给系统安装器，系统报“解析软件包时出现问题”，App 仍停在 Ready，再点还是一样；没有重新下载的入口，只能杀进程重来。",
+  "evidence": "UpdateUi.kt:112–122 Ready 分支只有安装按钮；Updater.kt:155–160 `download()` 在 Ready 时 `else -> return`；UpdateUi.kt:160 与 UpgradeScreen.kt:48 的重查条件都不含 Ready；ApkTools.kt:78 `FileProvider.getUriForFile` 不检查文件存在。",
+  "proposed_fix": "在 `ApkInstaller.launch` 之前（或 UpdatePanel 的 Ready 分支）检查 `file.exists()`，不存在时把状态改成 `Failed(UpdateError.Storage/Checksum, manifest)`，这样“重试”走 download 重新下载；或给 Updater 加 `ensureReadyFile()`。",
+  "area": "updater-flavors",
+  "status": "low-unverified",
+  "verifier_note": "low 级，没经反方核实；修之前先核实，确有其事且改动小才修。"
+ },
+ {
+  "file": "apps/android/app/src/main/kotlin/cn/thinktin/app/update/ApkTools.kt",
+  "line": 20,
+  "title": "Android 9（API 28）上 getPackageArchiveInfo 用 GET_SIGNING_CERTIFICATES 读不到签名，签名校验被静默跳过",
+  "severity": "low",
+  "category": "platform",
+  "description": "Android 9 的 ApplicationPackageManager.getPackageArchiveInfo 只在 flags 含 GET_SIGNATURES 时才 collectCertificates，传 GET_SIGNING_CERTIFICATES 时 PackageInfo.signingInfo 为 null（Android 10 才改成两个 flag 都收集）。本代码在 SDK ≥ 28 一律只传 GET_SIGNING_CERTIFICATES（28–32 行），于是在 API 28 设备上 `signing == null -> null`（39 行）→ archive.signers 为空集 → `ApkCheck.verify` 的签名比较因 `archive.signers.isNotEmpty()` 不成立而跳过（Updater.kt:81），文件不删、直接进 Ready。失败场景：Android 9 用户下载到一份签名不同的包（如发版机器签错 key），App 不报 Signature、不删文件，而是交给系统安装器后弹系统的“应用未安装”，与文档“对……签名证书（和装着的 App 一样）”不符。装着的 App 通过 getPackageInfo 读签名不受影响，只有安装包这边读不到。",
+  "evidence": "ApkTools.kt:20 `getPackageArchiveInfo(file.path, signatureFlags())`；ApkTools.kt:28–32 signatureFlags 在 P 及以上只返回 GET_SIGNING_CERTIFICATES；ApkTools.kt:39 `signing == null -> null`；Updater.kt:81 签名比较要求两边非空；docs/android-release.md 第 3 节“对大小、SHA-256、包名、版本号、签名证书（和装着的 App 一样）”。AOSP：android-9.0.0 ApplicationPackageManager.getPackageArchiveInfo `if ((flags & GET_SIGNATURES) != 0) collectCertificates(...)`，android-10 改为 `(GET_SIGNATURES | GET_SIGNING_CERTIFICATES)`。",
+  "proposed_fix": "`archive()` 在 `Build.VERSION.SDK_INT == 28` 时传 `GET_SIGNING_CERTIFICATES or GET_SIGNATURES`（collectCertificates 会执行，signingInfo 随之填上）；并考虑在 archive 读不到签名而 installed 读得到时按 Signature 失败而不是放行。",
+  "area": "updater-flavors",
+  "dupes": [
+   "updater-security: Android 9 上 getPackageArchiveInfo(GET_SIGNING_CERTIFICATES) 读不出签名，配合“读不到就放行”的规则，签名证书校验在 API 28 整个被跳过"
+  ],
+  "status": "low-unverified",
+  "verifier_note": "low 级，没经反方核实；修之前先核实，确有其事且改动小才修。"
+ },
+ {
+  "file": "apps/android/app/src/main/kotlin/cn/thinktin/app/ui/status/UpgradeScreen.kt",
+  "line": 83,
+  "title": "官网包的升级页在清单说“已是最新”时没有出口，用户卡在页面上",
+  "severity": "low",
+  "category": "spec",
+  "description": "服务端返回 426 时整个界面换成 UpgradeRequiredScreen，“不能再用，直到装上新版本”。direct 渠道这页只放 UpdatePanel；当清单的 version_code ≤ 当前版本（latest.json 还没换、CDN 缓存没过期、或服务端最低版本先于清单上调——发版文档第 3 节的顺序就允许这个窗口），面板状态是 UpToDate，只显示“已经是最新版本”和“再检查一次”（UpdateUi.kt:140–144），没有“去官网下载”——那个按钮只在 Failed 时出现。用户在一个写着“请升级”的页面上看到“已经是最新版本”，除了反复点“再检查一次”什么都做不了；商店包同一页却有“去官网下载”。",
+  "evidence": "UpgradeScreen.kt:82–95 direct 分支只有 `UpdatePanel`，网站链接只在 `else`（商店包）分支；UpdateUi.kt:140–144 Idle/UpToDate 只有检查按钮，134–138 网站按钮只在 Failed；docs/android-release.md 第 3 节第 3 步“先传安装包……再换 latest.json”与末段“强制升级靠服务端的最低版本……官网包的升级页直接在页面上下载安装”。",
+  "proposed_fix": "UpgradeRequiredScreen 对 direct 也始终显示“去官网下载”（放在 UpdatePanel 下面），或 UpdatePanel 加一个 `showWebsiteAlways` 参数在升级页打开。",
+  "area": "updater-flavors",
+  "status": "low-unverified",
+  "verifier_note": "low 级，没经反方核实；修之前先核实，确有其事且改动小才修。"
+ },
+ {
+  "file": "apps/android/app/src/main/kotlin/cn/thinktin/app/update/Updater.kt",
+  "line": 127,
+  "title": "自动检查的节流只在成功时记时间，失败时每次冷启动都请求；时钟回拨后长期不再检查",
+  "severity": "low",
+  "category": "spec",
+  "description": "`checkIfDue` 用 `clock() - prefs.lastCheckMs < DAY_MS` 判断，而 `prefs.lastCheckMs = clock()` 只在清单拉取并解析成功后才写（136 行，在 try 里、parse 之后）。两个边界：(1) 清单 404 / 格式错（现在官网的 latest.json 还没有）时每次冷启动都发一次请求，不是“一天最多一次”；清单一旦写坏，全部 direct 用户每次启动都打一次官网。(2) 用户把系统时间调到未来后 App 自动检查过一次，再把时间调回来（或自动校时纠正），`clock() - lastCheckMs` 为负数，永远小于 DAY_MS，直到真实时间越过那个未来时刻之前都不再自动检查（手动检查会覆盖 lastCheckMs，但自动提示在此期间失效）。",
+  "evidence": "Updater.kt:127 `if (clock() - prefs.lastCheckMs < DAY_MS || job?.isActive == true) return`；Updater.kt:134–146 `prefs.lastCheckMs = clock()` 在 try 内 parse 之后，catch 分支不写；docs/android-release.md 第 3 节“每天最多自动检查一次”。",
+  "proposed_fix": "在 `checkIfDue` 决定要查时就写 `lastCheckMs = now`（或失败也写），并把 `lastCheckMs > now` 视为到期：`val last = prefs.lastCheckMs; if (last in (now - DAY_MS)..now) return`。",
+  "area": "updater-flavors",
+  "status": "low-unverified",
+  "verifier_note": "low 级，没经反方核实；修之前先核实，确有其事且改动小才修。"
+ },
+ {
+  "file": "apps/android/app/src/main/kotlin/cn/thinktin/app/update/UpdateUi.kt",
+  "line": 214,
+  "title": "自动提示框下载期间不能关也不能取消，慢网络下整个 App 被挡住",
+  "severity": "low",
+  "category": "spec",
+  "description": "AlertDialog 的 `onDismissRequest = {}`（返回键、点外面都无效），唯一的按钮“以后再说”在 Downloading 时禁用（224 行），Updater 也没有取消接口（只有 `job` 字段，108 行，没有 cancel）。SystemHttpFetcher 只有 30 秒的 read 超时，没有总时长上限：只要服务器持续有数据（弱网每几秒来一点），几十 MB 的安装包可以下很久，这段时间用户在登录页 / 主界面上什么都干不了，也不能放弃更新；UpdateScreen 里同样没有取消。失败场景：用户在弱网下点了“下载并安装”，想先用 App 处理一个审批，发现关不掉对话框，只能杀进程。",
+  "evidence": "UpdateUi.kt:213–226 `onDismissRequest = {}`、`enabled = state !is UpdateState.Downloading`；Updater.kt:108 `private var job: Job? = null` 无取消方法；Updater.kt:47–48 仅 connectTimeout/readTimeout。",
+  "proposed_fix": "Updater 加 `cancelDownload()`（`job?.cancel()`、删 .part、状态回到 Available），对话框在下载中把“以后再说”换成“取消下载”或允许关闭对话框而下载继续、进入设置页可见。",
+  "area": "updater-flavors",
+  "status": "low-unverified",
+  "verifier_note": "low 级，没经反方核实；修之前先核实，确有其事且改动小才修。"
+ },
+ {
+  "file": "apps/android/scripts/update-manifest.py",
+  "line": 43,
+  "title": "update-manifest.py 不检查安装包是 direct 渠道，用商店包生成清单会让官网用户永久失去应用内更新",
+  "severity": "low",
+  "category": "spec",
+  "description": "脚本只校验包名 `cn.thinktin.app`，而三种渠道包名、签名都一样，App 侧 ApkCheck 也只比包名 / 版本号 / 签名。CI 现成产出的唯一 release 包是 `:app:assembleCnRelease` 的 app-cn-release（android.yml:69、77），发版人把它（或 global 包）喂给脚本会生成一份完全合法的 latest.json；所有 direct 用户自动更新后装上的是 cn 包：没有 REQUEST_INSTALL_PACKAGES、SELF_UPDATE=false，设置里“检查更新”入口消失、以后再也收不到应用内更新，只能去官网重装。App 侧无法防（包内没有渠道标识），只能在脚本里拦。",
+  "evidence": "update-manifest.py:42–44 只检查 `package.group(1) != \"cn.thinktin.app\"`；build.gradle.kts:42–58 三个 flavor 同 applicationId，仅 BuildConfig 不同；src/direct/AndroidManifest.xml:5 只有 direct 申请 REQUEST_INSTALL_PACKAGES；docs/android-release.md 第 1 节“只有 direct 申请 REQUEST_INSTALL_PACKAGES、能自己装更新”；.github/workflows/android.yml:69 CI 只打 assembleCnRelease。",
+  "proposed_fix": "脚本在 badging 输出里要求出现 `uses-permission: name='android.permission.REQUEST_INSTALL_PACKAGES'`（direct 独有），否则 sys.exit(\"不是 direct 渠道的包\")；可顺带检查文件名是否是 thinktin-<版本>.apk。",
+  "area": "updater-flavors",
+  "status": "low-unverified",
+  "verifier_note": "low 级，没经反方核实；修之前先核实，确有其事且改动小才修。"
+ },
+ {
+  "file": "apps/android/app/src/main/kotlin/cn/thinktin/app/update/Updater.kt",
+  "line": 46,
+  "title": "HttpURLConnection 默认跟随跨域名 302：清单和安装包的“只认 thinktin.cn”限制只对第一跳有效",
+  "severity": "low",
+  "category": "security",
+  "description": "`SystemHttpFetcher.open` 用 `URL(url).openConnection()` 不改 `instanceFollowRedirects`（默认 true）。Android 的实现（`com.android.okhttp.HttpHandler`）是 `setFollowRedirects(HttpURLConnection.getFollowRedirects())` + `setFollowSslRedirects(false)`（在 android-all 15 jar 里核对过），即不会 https→http 降级（代码注释说对了），但**同为 https 的跨域名重定向会跟**。`UpdateManifest.isAllowedUrl`（UpdateManifest.kt:70-79）只检查清单里写的 `apk_url` 字符串，`BuildConfig.UPDATE_MANIFEST_URL` 则根本没过这个检查；两者真正连到的最终主机都可以是任意 https 站点。失败场景：thinktin.cn 上 `/download/android/…` 被配置成 302 跳到第三方对象存储 / CDN（运维很常见），或某个 `*.thinktin.cn` 子域名的 CNAME 悬空被接管后设置跳转 → App 从非 thinktin.cn 的主机下载清单或安装包，规范第 3 节“只认 https 的 thinktin.cn 和它的子域名”不再成立。实际危害受限：安装包有清单里的 SHA-256 钉住，清单本身还在 thinktin.cn 根域名上，所以攻击者拿不到执行代码的能力，但（a）域名白名单这道防线变成只对字符串生效、给人虚假的安全感，`update-manifest.py` 第 59-60 行同样只检查字符串；（b）被跳转到的第三方可以看到全部用户的请求（IP、UA、版本号）并任意拒绝服务。",
+  "evidence": "Updater.kt:43-56 `object SystemHttpFetcher`，第 46 行 `val connection = URL(url).openConnection() as HttpURLConnection`，没有 `instanceFollowRedirects = false` 或对 3xx 的处理（grep `instanceFollowRedirects|setFollowRedirects` 全仓无结果）；UpdateManifest.kt:70-79 `isAllowedUrl` 只在解析时检查字符串；Updater.kt:135 `readText(manifestUrl)` 的 `manifestUrl` 没有过 `isAllowedUrl`。平台行为：android-all 15 `com.android.okhttp.HttpHandler.createHttpOkUrlFactory` 字节码 `setFollowRedirects(HttpURLConnection.getFollowRedirects()) ; setFollowSslRedirects(false)`。契约：docs/android-release.md 第 3 节“只认 `https` 的 `thinktin.cn` 和它的子域名”；任务清单第 (1) 条。",
+  "proposed_fix": "在 `SystemHttpFetcher.open` 里设 `connection.instanceFollowRedirects = false`，自己处理 3xx：取 `Location`、用 `URL(url).toURI().resolve(location)` 解析后再过一次 `UpdateManifest.isAllowedUrl`，不合格抛 `UpdateException(BadManifest)`，并限制跳转次数（≤ 5）；`manifestUrl` 也在构造 `Updater` 时（或 `readText` 前）过 `isAllowedUrl`。如果决定允许跳转到第三方 CDN，就把规范第 3 节和 `UpdateManifest.kt:16` 的注释改成“清单里的地址只认 thinktin.cn，实际下载可能被重定向到别处，完整性只靠 SHA-256 和签名”。",
+  "area": "updater-security",
+  "status": "low-unverified",
+  "verifier_note": "low 级，没经反方核实；修之前先核实，确有其事且改动小才修。"
+ }
+]

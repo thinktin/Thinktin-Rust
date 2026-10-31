@@ -64,6 +64,9 @@
         </service>
 
         <!-- 对话页的产出物：下载到缓存后用 content:// 交给其他应用打开 / 分享（13.5）。 -->
+        <receiver android:name=".push.ApprovalRejectReceiver" android:exported="false" />
+        <receiver android:name=".progress.ProgressDismissedReceiver" android:exported="false" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.files"
