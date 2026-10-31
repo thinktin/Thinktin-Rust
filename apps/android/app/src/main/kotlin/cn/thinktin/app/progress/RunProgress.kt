@@ -26,8 +26,7 @@ data class RunProgress(
     val isFinished: Boolean get() = state.isTerminal
 
     /**
-     * 按事件更新：`run.state` 换状态和等待原因（开始跑时记下开始时间），这个运行的工具调用（`agent.tool_call`、
-     * `agent.platform_tool_call`）步数加一。别的运行、别的事件不动。
+     * 按事件更新：`run.state` 换状态和等待原因（开始跑时记下开始时间），这个运行的工具调用（`agent.tool_call`）步数加一。别的运行、别的事件不动。
      */
     fun apply(event: InstanceEvent): RunProgress {
         if (event.runId != runId) return this
@@ -38,17 +37,17 @@ data class RunProgress(
                 copy(
                     state = state,
                     waitCode = wait,
-                    startedAtMs = startedAtMs ?: event.createdAtMs.takeIf { state == RunState.Running },
+                    startedAtMs = startedAtMs ?: event.createdAtMs.takeIf { state == RunState.Running || state == RunState.WaitingChildren },
                 )
             }
-            EventKinds.AGENT_TOOL_CALL, EventKinds.AGENT_PLATFORM_TOOL_CALL -> copy(steps = steps + 1)
+            EventKinds.AGENT_TOOL_CALL -> copy(steps = steps + 1)
             else -> this
         }
     }
 
     companion object {
         /** 从运行和缓存里这个运行的事件算起。 */
-        fun of(run: Run, title: String, cached: List<InstanceEvent> = emptyList()): RunProgress = cached.sortedBy { it.createdAtMs }.fold(
+        fun of(run: Run, title: String, cached: List<InstanceEvent> = emptyList()): RunProgress = cached.sortedBy { it.seq }.fold(
             RunProgress(
                 runId = run.id, instanceId = run.instanceId, title = title, state = run.state, steps = 0,
                 startedAtMs = run.startedAtMs, waitCode = run.waitCode,

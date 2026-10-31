@@ -1381,4 +1381,5 @@
         <item quantity="one">In %1$d day</item>
         <item quantity="other">In %1$d days</item>
     </plurals>
+    <string name="run_progress_blocked">Enable ThinkTin run progress notifications in system settings.</string>
 </resources>

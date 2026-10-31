@@ -39,10 +39,8 @@ object NoProgressNotifier : ProgressNotifier {
  */
 class SystemProgressNotifier(private val context: Context) : ProgressNotifier {
     override fun show(progress: RunProgress): Boolean {
-        if (!hasNotificationPermission(context)) return false
+        if (!isEnabled(context)) return false
         val manager = NotificationManagerCompat.from(context)
-        if (!manager.areNotificationsEnabled()) return false
-        if (manager.getNotificationChannel(NotificationChannels.PROGRESS)?.importance == NotificationManager.IMPORTANCE_NONE) return false
         return try {
             manager.notify(TAG, progress.runId.hashCode(), build(progress))
             true
@@ -61,7 +59,7 @@ class SystemProgressNotifier(private val context: Context) : ProgressNotifier {
         val state = context.getString(progress.state.labelRes())
         val wait = WaitText.of(progress.waitCode)?.let { context.getString(it.resId, *it.args.toTypedArray()) }
         val steps = context.resources.getQuantityString(R.plurals.progress_steps, progress.steps, progress.steps)
-        val text = listOfNotNull(wait ?: state, steps.takeIf { progress.steps > 0 }).joinToString(" · ")
+        val text = listOfNotNull(wait ?: state, steps.takeIf { progress.steps > 0 && progress.state != RunState.WaitingChildren }).joinToString(" · ")
         val open = PendingIntent.getActivity(
             context,
             progress.runId.hashCode(),
@@ -101,6 +99,12 @@ class SystemProgressNotifier(private val context: Context) : ProgressNotifier {
 
     companion object {
         const val TAG = "run_progress"
+
+        fun isEnabled(context: Context): Boolean {
+            val manager = NotificationManagerCompat.from(context)
+            return hasNotificationPermission(context) && manager.areNotificationsEnabled() &&
+                manager.getNotificationChannel(NotificationChannels.PROGRESS)?.importance != NotificationManager.IMPORTANCE_NONE
+        }
 
         /** 8 小时（服务端运行时长的上限）。 */
         const val TIMEOUT_MS = 8L * 60 * 60 * 1000

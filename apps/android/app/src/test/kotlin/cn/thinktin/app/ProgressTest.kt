@@ -93,10 +93,10 @@ class ProgressTest {
         assertEquals(RunState.Running, p.state)
         assertEquals(7_000L, p.startedAtMs)
         p = p.apply(event(EventKinds.AGENT_TOOL_CALL)).apply(event(EventKinds.AGENT_PLATFORM_TOOL_CALL))
-        assertEquals(2, p.steps)
+        assertEquals(1, p.steps)
         // 别的运行、别的事件不算。
         p = p.apply(event(EventKinds.AGENT_TOOL_CALL, runId = "other")).apply(event(EventKinds.AGENT_MESSAGE))
-        assertEquals(2, p.steps)
+        assertEquals(1, p.steps)
         p = p.apply(event(EventKinds.RUN_STATE, payload = state("waiting_quota", "rate_limited")))
         assertEquals(WaitCode.RateLimited, p.waitCode)
         assertEquals("开始时间不变", 7_000L, p.startedAtMs)

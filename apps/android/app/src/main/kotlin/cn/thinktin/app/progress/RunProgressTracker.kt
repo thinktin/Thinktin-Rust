@@ -3,10 +3,12 @@ package cn.thinktin.app.progress
 import android.util.Log
 import cn.thinktin.data.model.EventStreamItem
 import cn.thinktin.data.model.Run
+import cn.thinktin.data.model.InstanceEvent
 import cn.thinktin.data.model.StreamState
 import cn.thinktin.data.service.ServiceError
 import cn.thinktin.data.service.ThinktinService
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -52,19 +54,37 @@ class RunProgressTracker(
         synchronized(lock) {
             bind(service)
             if (run.id in jobs || jobs.size >= MAX_TRACKED) return
-            jobs[run.id] = scope.launch { follow(service, run, title) }
+            val job = scope.launch(start = CoroutineStart.LAZY) { follow(service, run, title) }
+            jobs[run.id] = job
             trackedRuns.update { it + run.id }
+            job.start()
         }
     }
 
     private suspend fun follow(service: ThinktinService, run: Run, title: String) {
         try {
             val cached = try {
-                service.cachedEventsBefore(run.instanceId, null, CACHED_EVENTS).filter { it.runId == run.id }
+                buildList<InstanceEvent> {
+                    var before: Long? = null
+                    do {
+                        val page = service.cachedEventsBefore(run.instanceId, before, CACHED_EVENTS)
+                        addAll(page.filter { it.runId == run.id })
+                        val oldest = page.firstOrNull() ?: break
+                        before = oldest.seq
+                    } while (page.size == CACHED_EVENTS && oldest.createdAtMs >= run.createdAtMs)
+                }
             } catch (_: ServiceError) {
                 emptyList()
             }
             var progress = RunProgress.of(run, title, cached)
+            if (progress.state != run.state && !progress.isFinished) {
+                try {
+                    val fresh = service.getRun(run.id)
+                    progress = progress.copy(state = fresh.state, startedAtMs = fresh.startedAtMs ?: progress.startedAtMs, waitCode = fresh.waitCode)
+                } catch (_: ServiceError.Network) {
+                    // 离线时保留按缓存事件复原的进度。
+                }
+            }
             if (progress.isFinished) {
                 notifier.cancel(run.id)
                 return
@@ -106,10 +126,11 @@ class RunProgressTracker(
 
     /** 不再跟（运行页上关掉）：撤掉通知。 */
     fun stop(runId: String) {
-        val job = synchronized(lock) { jobs.remove(runId) }
-        job?.cancel()
-        trackedRuns.update { it - runId }
-        notifier.cancel(runId)
+        synchronized(lock) {
+            jobs.remove(runId)?.cancel()
+            trackedRuns.update { it - runId }
+            notifier.cancel(runId)
+        }
     }
 
     /** 运行结束的推送到了（或者别处知道它结束了）：撤掉。 */

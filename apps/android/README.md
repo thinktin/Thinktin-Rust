@@ -167,7 +167,7 @@ Keystore 失效……）都显示“无法加载核心库”页（原因 + 重�
 
 - **登录流**（`ui/login`，未登录时替换整个主区）：手机号页（国家 / 地区码，默认 +86，常用 8 个；`PhoneRegion` 按位数和开头粗查格式，
   E.164 交给服务端）→ 验证码页（6 位、自动聚焦、满 6 位自动提交、60 秒倒计时重发、“更换手机号”返回）→
-  `login(phone, code, null, null)`（推送令牌在 13.8 接）。两页共用一个 `LoginViewModel`，挂在 Activity 上（旋转不丢号码和倒计时，
+  `login(phone, code, null, null)`（有推送令牌时登录携带令牌和通道）。两页共用一个 `LoginViewModel`，挂在 Activity 上（旋转不丢号码和倒计时，
   登录成功后界面切走也不会取消没跑完的回调），每次新进登录流 `reset()`。
   错误映射：`rate_limited` 显示剩余秒数（发码时倒计时，按号码算，换号码可以马上发）；`account_frozen` 进 `login/frozen`
   （还没有登录态，只能返回）；网络错误、服务暂时不可用用 Snackbar 带“重试”；`invalid` 按当前步骤做字段级提示
@@ -501,7 +501,7 @@ abortOnError 开着，不用 baseline；release 包跑一遍 R8）→ 解开 rel
 
 - 登录页“用户协议”“隐私政策”还只是说明文字，没有链接（正式地址未定，13.13 关于页一起做）；冻结页只写“联系客服”，
   没有具体渠道（客服邮箱 / 工单地址未定）。
-- 验证码没有接 SMS Retriever / 一次性验证码自动填充（需要服务端短信模板带 App 哈希）；推送令牌在 13.8 接，现在登录传 null。
+- 验证码没有接 SMS Retriever / 一次性验证码自动填充（需要服务端短信模板带 App 哈希）；推送接口已接入登录，通道 SDK 尚待配置。
 
 - `tools/client-core/build-android.sh` 没有“跳过 AAR”的开关，`sync-core.sh` 用 PATH 垫片绕过（见上）。以后给它加一个开关
   （比如 `THINKTIN_SKIP_AAR=1`）并去掉 `jvmToolchain(17)` 的硬要求后，删掉垫片。
