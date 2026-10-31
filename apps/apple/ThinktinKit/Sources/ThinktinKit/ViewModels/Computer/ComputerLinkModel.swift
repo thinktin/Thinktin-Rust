@@ -218,10 +218,16 @@ public final class ComputerLinkModel {
     static let clockSkew: TimeInterval = 5 * 60
 
     private func checkKey() async {
-        guard canSign, !state.computers.isEmpty, let key = try? await signer.publicKey(),
-            let encoded = try? codec.encodePublicKey(key)
-        else { return }
-        needsRepair = state.computers.contains { $0.phoneKey != encoded }
+        guard canSign, !state.computers.isEmpty else { return }
+        do {
+            let key = try await signer.publicKey()
+            let encoded = try codec.encodePublicKey(key)
+            needsRepair = state.computers.contains { $0.phoneKey != encoded }
+        } catch DeviceSignerError.keyInvalidated {
+            needsRepair = true
+        } catch {
+            fail(error)
+        }
     }
 
     // MARK: 配对
@@ -270,24 +276,38 @@ public final class ComputerLinkModel {
         save()
     }
 
-    /// 解除和这台电脑的配对：先吊销发给它的令牌（尽力），再忘掉它。电脑那边要在电脑上解除。
+    /// 解除前先把仍可能有效的令牌吊销；网络失败时保留配对，可继续重试。
     public func unpair(_ desktopID: DeviceID) async {
-        for grant in activeGrants(for: desktopID) {
-            await revoke(grant)
+        guard !isWorking else { return }
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            try await revokeOutstanding(for: desktopID)
+            state.computers.removeAll { $0.desktopID == desktopID }
+            state.requests.removeAll { $0.desktopID == desktopID }
+            if state.pending?.offer.desktopID == desktopID { state.pending = nil }
+            save()
+        } catch {
+            fail(error)
         }
-        state.computers.removeAll { $0.desktopID == desktopID }
-        state.requests.removeAll { $0.desktopID == desktopID }
-        save()
     }
 
     /// 密钥失效后：删掉旧密钥和所有配对（要重新扫码）。
     public func resetKey() async {
-        await signer.resetKey()
-        state.computers = []
-        state.requests = []
-        for i in state.grants.indices { state.grants[i].isRevoked = true }
-        needsRepair = false
-        save()
+        guard !isWorking else { return }
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            try await revokeOutstanding()
+            await signer.resetKey()
+            state.computers = []
+            state.requests = []
+            state.pending = nil
+            needsRepair = false
+            save()
+        } catch {
+            fail(error)
+        }
     }
 
     // MARK: 审批
@@ -367,16 +387,34 @@ public final class ComputerLinkModel {
     /// 吊销（不用签名：吊销只会收紧权限）。电脑不在线时平台排队 24 小时。
     public func revoke(_ issued: IssuedGrant) async {
         do {
-            _ = try await client.sendDeviceMessage(
-                to: issued.grant.desktopID, kind: .revocation, body: ["token_id": .string(issued.grant.tokenID)])
-            if let i = state.grants.firstIndex(where: { $0.id == issued.id }) { state.grants[i].isRevoked = true }
-            save()
+            try await sendRevocation(issued)
         } catch {
             fail(error)
         }
     }
 
     // MARK: 内部
+
+    private func revokeOutstanding(for desktop: DeviceID? = nil) async throws {
+        let cutoff = now().addingTimeInterval(-Self.clockSkew)
+        for issued in state.grants where !issued.isRevoked && issued.grant.expiresAt > cutoff {
+            if let desktop, issued.grant.desktopID != desktop { continue }
+            try await sendRevocation(issued)
+        }
+    }
+
+    private func sendRevocation(_ issued: IssuedGrant) async throws {
+        do {
+            _ = try await client.sendDeviceMessage(
+                to: issued.grant.desktopID, kind: .revocation, body: ["token_id": .string(issued.grant.tokenID)])
+        } catch let error as ClientError where error.isNotFound {
+            // The gateway returns 404 for either endpoint. Only retire locally if the target is gone.
+            let devices = try await client.devices()
+            if devices.contains(where: { $0.id == issued.grant.desktopID }) { throw error }
+        }
+        if let i = state.grants.firstIndex(where: { $0.id == issued.id }) { state.grants[i].isRevoked = true }
+        save()
+    }
 
     private func currentPublicKey() async throws -> String {
         let key: Data

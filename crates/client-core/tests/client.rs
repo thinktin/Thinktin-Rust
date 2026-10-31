@@ -450,6 +450,15 @@ async fn offline_inbox_reads_are_flushed_later() {
     w.commit().await.unwrap();
 
     let online = Client::new(api, Some(Cache::open(&cache_path).unwrap())).unwrap();
+    // 第一页只有一条，角标仍是服务端所有未读的总数。
+    let first = online.sync_inbox(1).await.unwrap();
+    assert_eq!(first.items.len(), 1);
+    assert_eq!(first.unread, 3);
+    assert_eq!(online.cached_unread().unwrap(), 3);
+    let next = online.older_inbox(ids[2], 1).await.unwrap();
+    assert_eq!(next[0].id, ids[1]);
+    assert_eq!(online.cached_unread().unwrap(), 3);
+
     let page = online.sync_inbox(50).await.unwrap();
     assert_eq!(page.unread, 3);
     assert_eq!(page.items[0].title, "早报 2");
@@ -485,6 +494,46 @@ async fn offline_inbox_reads_are_flushed_later() {
     let mut t = e.t.db.tenant(user).await.unwrap();
     assert_eq!(t.inbox_unread().await.unwrap(), 0);
     t.rollback().await.unwrap();
+
+    // 另一台设备删掉的通知不会被本机旧缓存补回；更早的仍能离线翻到。
+    online.api.delete_inbox_item(ids[2]).await.unwrap();
+    let page = online.sync_inbox(1).await.unwrap();
+    assert_eq!(page.items.len(), 1);
+    assert_eq!(page.items[0].id, ids[1]);
+    let cached = online.cached_inbox(None, 50).unwrap();
+    assert_eq!(
+        cached.iter().map(|item| item.id).collect::<Vec<_>>(),
+        [ids[1], ids[0]]
+    );
+    online.api.delete_inbox_item(ids[0]).await.unwrap();
+    assert!(online.older_inbox(ids[1], 1).await.unwrap().is_empty());
+    assert!(online.cached_inbox(Some(ids[1]), 50).unwrap().is_empty());
+
+    // 只有一页的设备离线点“全部已读”，重新上线后必须按游标补发，包含未缓存的更早通知。
+    for n in 0..3 {
+        let mut w = e.t.db.worker().await.unwrap();
+        w.insert_inbox(
+            user,
+            &NewInboxItem {
+                kind: "info".into(),
+                title: format!("后续 {n}"),
+                ..NewInboxItem::default()
+            },
+        )
+        .await
+        .unwrap();
+        w.commit().await.unwrap();
+    }
+    let page = online.sync_inbox(1).await.unwrap();
+    assert_eq!(page.unread, 3);
+    assert_eq!(
+        offline
+            .mark_inbox_read(&[], Some(page.items[0].id))
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(online.sync_inbox(1).await.unwrap().unread, 0);
 
     // 退出登录清缓存。
     online.logout().await.unwrap();

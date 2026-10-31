@@ -34,8 +34,13 @@ enum ApprovalDecision {
         } catch {
             guard let failure = ConversationErrors.from(error) else { return .cancelled }
             if failure.isConflict || failure.isNotFound {
-                let latest = try? await client.getApproval(approval.id)
-                if latest?.isPending != true { return .alreadyHandled(latest) }
+                do {
+                    let latest = try await client.getApproval(approval.id)
+                    if !latest.isPending { return .alreadyHandled(latest) }
+                } catch {
+                    guard let lookup = ConversationErrors.from(error) else { return .cancelled }
+                    return lookup.isNotFound ? .alreadyHandled(nil) : .failed(.client(lookup))
+                }
             }
             return .failed(.client(failure))
         }

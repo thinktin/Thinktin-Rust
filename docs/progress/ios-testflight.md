@@ -1,5 +1,7 @@
 # ios-testflight
 
+> 已合并（PR #16，`7877f1f`）。接着做先读 [交接](../handoff-ios.md)。
+
 目标：iOS 第一次上 TestFlight（WBS 12.19 的落地）。用户 2026-10-28 在开发者网站操作，Claude 负责流程和上传。
 
 已完成：

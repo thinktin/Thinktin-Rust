@@ -12,6 +12,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
+use crate::api::InboxPage;
 use crate::error::{ClientError, Result};
 
 /// 每个实例最多缓存多少条事件（更早的从服务端补）。
@@ -33,6 +34,8 @@ CREATE TABLE IF NOT EXISTS events (
     PRIMARY KEY (instance_id, seq));
 CREATE TABLE IF NOT EXISTS inbox (id TEXT PRIMARY KEY, json TEXT NOT NULL, read INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS pending_reads (id TEXT PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS pending_read_through (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), id TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS inbox_totals (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), unread INTEGER NOT NULL);
 ";
 
 const TABLES: &[&str] = &[
@@ -42,6 +45,8 @@ const TABLES: &[&str] = &[
     "events",
     "inbox",
     "pending_reads",
+    "inbox_totals",
+    "pending_read_through",
 ];
 
 pub struct Cache {
@@ -285,26 +290,83 @@ impl Cache {
 
     /// 合并服务端的条目。本地已标已读、还没同步上去的，保持已读。
     pub fn put_inbox(&self, items: &[InboxItem]) -> Result<()> {
-        let rows = items
-            .iter()
-            .map(|i| Ok((i.id.to_string(), to_json(i)?, i.read)))
-            .collect::<Result<Vec<_>>>()?;
         self.with(|c| {
             let tx = c.transaction()?;
-            for (id, json, read) in &rows {
-                tx.execute(
-                    "INSERT INTO inbox (id, json, read) VALUES (?1, ?2, \
-                       ?3 OR EXISTS (SELECT 1 FROM pending_reads WHERE id = ?1)) \
-                     ON CONFLICT (id) DO UPDATE SET json = excluded.json, read = excluded.read",
-                    params![id, json, read],
-                )?;
-            }
+            Self::write_inbox(&tx, items)?;
+            tx.commit()
+        })
+    }
+
+    /// 用服务端返回的一页替换它覆盖的 ID 范围；更早的缓存仍可离线翻阅。
+    pub(crate) fn reconcile_inbox_page(
+        &self,
+        page: &mut InboxPage,
+        before: Option<InboxItemId>,
+        limit: u32,
+    ) -> Result<()> {
+        let before = before.map(|id| id.to_string());
+        // 网关把页长限制在 1..=200；只有最后一页覆盖游标之后的全部条目。
+        let last = page
+            .items
+            .last()
+            .filter(|_| page.items.len() == limit.clamp(1, 200) as usize)
+            .map(|item| item.id.to_string());
+        self.with(|c| {
+            let tx = c.transaction()?;
             tx.execute(
-                "DELETE FROM inbox WHERE id NOT IN (SELECT id FROM inbox ORDER BY id DESC LIMIT ?1)",
-                [MAX_INBOX],
+                "DELETE FROM inbox WHERE (?1 IS NULL OR id < ?1) AND (?2 IS NULL OR id >= ?2)",
+                params![before, last],
+            )?;
+            Self::write_inbox(&tx, &page.items)?;
+            // 请求在途时也能标已读；只覆盖返回条目的已读位，不让旧缓存替换服务端给出的成员和顺序。
+            let mut pending = tx.prepare(
+                "SELECT EXISTS(SELECT 1 FROM pending_reads WHERE id = ?1) OR \
+                 EXISTS(SELECT 1 FROM pending_read_through WHERE id >= ?1)",
+            )?;
+            for item in &mut page.items {
+                if !item.read {
+                    item.read = pending.query_row([item.id.to_string()], |r| r.get(0))?;
+                }
+            }
+            drop(pending);
+            let local_reads: i64 = tx.query_row(
+                "SELECT COUNT(*) FROM pending_reads p JOIN inbox i ON i.id=p.id WHERE json_extract(i.json, '$.read')=0",
+                [], |r| r.get(0),
+            )?;
+            // “全部已读”仍待补发时，较早、未缓存的通知也已在本机标记。
+            let pending_range: bool = tx.query_row(
+                "SELECT EXISTS (SELECT 1 FROM pending_read_through)", [], |r| r.get(0),
+            )?;
+            page.unread = if pending_range {
+                tx.query_row("SELECT COUNT(*) FROM inbox WHERE read=0", [], |r| r.get(0))?
+            } else {
+                (page.unread - local_reads).max(0)
+            };
+            tx.execute(
+                "INSERT OR REPLACE INTO inbox_totals(singleton, unread) VALUES (1, ?1)",
+                [page.unread],
             )?;
             tx.commit()
         })
+    }
+
+    fn write_inbox(tx: &rusqlite::Transaction<'_>, items: &[InboxItem]) -> rusqlite::Result<()> {
+        for item in items {
+            let json = serde_json::to_string(item)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+            tx.execute(
+                "INSERT INTO inbox (id, json, read) VALUES (?1, ?2, \
+                   ?3 OR EXISTS (SELECT 1 FROM pending_reads WHERE id = ?1) OR \
+                   EXISTS (SELECT 1 FROM pending_read_through WHERE id >= ?1)) \
+                 ON CONFLICT (id) DO UPDATE SET json = excluded.json, read = excluded.read",
+                params![item.id.to_string(), json, item.read],
+            )?;
+        }
+        tx.execute(
+            "DELETE FROM inbox WHERE id NOT IN (SELECT id FROM inbox ORDER BY id DESC LIMIT ?1)",
+            [MAX_INBOX],
+        )?;
+        Ok(())
     }
 
     /// 服务端删掉的条目。
@@ -312,6 +374,11 @@ impl Cache {
         self.with(|c| {
             let tx = c.transaction()?;
             for id in ids {
+                tx.execute(
+                    "UPDATE inbox_totals SET unread = MAX(0, unread - 1) WHERE EXISTS \
+                     (SELECT 1 FROM inbox WHERE id = ?1 AND read = 0)",
+                    [id.to_string()],
+                )?;
                 tx.execute("DELETE FROM inbox WHERE id = ?1", [id.to_string()])?;
                 tx.execute("DELETE FROM pending_reads WHERE id = ?1", [id.to_string()])?;
             }
@@ -339,11 +406,14 @@ impl Cache {
     }
 
     pub fn unread(&self) -> Result<i64> {
-        self.with(|c| {
-            c.query_row("SELECT count(*) FROM inbox WHERE read = 0", [], |r| {
-                r.get(0)
-            })
-        })
+        self.with(|c| Self::inbox_unread(c))
+    }
+
+    fn inbox_unread(conn: &Connection) -> rusqlite::Result<i64> {
+        conn.query_row(
+            "SELECT COALESCE((SELECT unread FROM inbox_totals), (SELECT COUNT(*) FROM inbox WHERE read = 0))",
+            [], |r| r.get(0),
+        )
     }
 
     /// 本地先标已读，记进待同步队列。`ids` 为空时标全部（到 `up_to` 为止）。返回本地未读数。
@@ -352,7 +422,8 @@ impl Cache {
         let up_to = up_to.map(|u| u.to_string());
         self.with(|c| {
             let tx = c.transaction()?;
-            let targets: Vec<String> = if ids.is_empty() {
+            let bulk = ids.is_empty();
+            let targets: Vec<String> = if bulk {
                 let mut st =
                     tx.prepare("SELECT id FROM inbox WHERE read = 0 AND (?1 IS NULL OR id <= ?1)")?;
                 st.query_map([&up_to], |r| r.get(0))?
@@ -360,13 +431,33 @@ impl Cache {
             } else {
                 ids
             };
+            let mut changed = 0;
             for id in &targets {
-                tx.execute("UPDATE inbox SET read = 1 WHERE id = ?1", [id])?;
+                changed +=
+                    tx.execute("UPDATE inbox SET read = 1 WHERE id = ?1 AND read = 0", [id])?;
                 tx.execute("INSERT OR IGNORE INTO pending_reads (id) VALUES (?1)", [id])?;
             }
-            let unread = tx.query_row("SELECT count(*) FROM inbox WHERE read = 0", [], |r| {
-                r.get(0)
-            })?;
+            tx.execute(
+                "UPDATE inbox_totals SET unread = MAX(0, unread - ?1)",
+                [changed],
+            )?;
+            if bulk {
+                // 记下游标，联网后连同尚未缓存的较早通知一起标记。新来的通知不计在内。
+                let through: Option<String> = tx.query_row(
+                    "SELECT COALESCE(?1, (SELECT MAX(id) FROM inbox))", [up_to], |r| r.get(0),
+                )?;
+                if let Some(through) = through {
+                    tx.execute(
+                        "INSERT INTO pending_read_through(singleton,id) VALUES(1,?1) \
+                         ON CONFLICT(singleton) DO UPDATE SET id=MAX(id,excluded.id)", [&through],
+                    )?;
+                    tx.execute(
+                        "UPDATE inbox_totals SET unread = (SELECT COUNT(*) FROM inbox WHERE read=0) \
+                         WHERE NOT EXISTS (SELECT 1 FROM inbox WHERE id > ?1)", [&through],
+                    )?;
+                }
+            }
+            let unread = Self::inbox_unread(&tx)?;
             tx.commit()?;
             Ok(unread)
         })
@@ -377,14 +468,30 @@ impl Cache {
         let id = id.to_string();
         self.with(|c| {
             let tx = c.transaction()?;
-            tx.execute("UPDATE inbox SET read = 0 WHERE id = ?1", [&id])?;
+            let changed = tx.execute(
+                "UPDATE inbox SET read = 0 WHERE id = ?1 AND read = 1",
+                [&id],
+            )?;
+            tx.execute("UPDATE inbox_totals SET unread = unread + ?1", [changed])?;
             tx.execute("DELETE FROM pending_reads WHERE id = ?1", [&id])?;
-            let unread = tx.query_row("SELECT count(*) FROM inbox WHERE read = 0", [], |r| {
-                r.get(0)
-            })?;
+            let unread = Self::inbox_unread(&tx)?;
             tx.commit()?;
             Ok(unread)
         })
+    }
+
+    pub(crate) fn pending_read_through(&self) -> Result<Option<InboxItemId>> {
+        let value: Option<String> = self.with(|c| {
+            c.query_row("SELECT id FROM pending_read_through", [], |r| r.get(0))
+                .optional()
+        })?;
+        value
+            .map(|v| {
+                v.parse().map_err(|_| ClientError::Cache {
+                    detail: "invalid inbox id".into(),
+                })
+            })
+            .transpose()
     }
 
     /// 还没同步到服务端的已读。
@@ -397,10 +504,34 @@ impl Cache {
     }
 
     pub fn clear_pending_reads(&self, ids: &[InboxItemId]) -> Result<()> {
+        self.acknowledge_reads(ids, None, None)
+    }
+
+    pub(crate) fn acknowledge_reads(
+        &self,
+        ids: &[InboxItemId],
+        through: Option<InboxItemId>,
+        server_unread: Option<i64>,
+    ) -> Result<()> {
         self.with(|c| {
             let tx = c.transaction()?;
+            if let Some(id) = through {
+                tx.execute(
+                    "DELETE FROM pending_read_through WHERE id <= ?1",
+                    [id.to_string()],
+                )?;
+                tx.execute("DELETE FROM pending_reads WHERE id <= ?1", [id.to_string()])?;
+            }
             for id in ids {
                 tx.execute("DELETE FROM pending_reads WHERE id = ?1", [id.to_string()])?;
+            }
+            if let Some(unread) = server_unread {
+                tx.execute(
+                    "INSERT OR REPLACE INTO inbox_totals(singleton, unread) \
+                     SELECT 1, MAX(0, ?1 - (SELECT COUNT(*) FROM pending_reads)) \
+                     WHERE NOT EXISTS (SELECT 1 FROM pending_read_through)",
+                    [unread],
+                )?;
             }
             tx.commit()
         })
