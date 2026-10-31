@@ -539,7 +539,6 @@ fn verify_capability_at(
 }
 
 /// 令牌允不允许碰这个路径：在某个目录之内（按路径段比较，`/a/bc` 不在 `/a/b` 里）、不含 `..`。
-/// macOS 的路径（`/Users/me/Documents`）和 Windows 的路径（`C:\Users\me\Documents`）都认，见 [`DirPath`]。
 #[uniffi::export]
 pub fn capability_allows_path(grant: CapabilityGrant, path: String) -> bool {
     let Some(path) = DirPath::parse(&path) else {
