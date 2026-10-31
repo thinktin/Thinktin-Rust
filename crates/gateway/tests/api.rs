@@ -14,7 +14,7 @@ use gateway::{AppState, EventHub, GatewayConfig, Inner, LimitConfig};
 use keyvault::secrecy::ExposeSecret;
 use keyvault::{KeyStore, KeyVault, LocalKms, MemoryKeyStore, SealedSecret, WrappedKey};
 use orchestrator::artifacts::{ArtifactStore, LocalBlobStore, Origin};
-use proto::domain::{ApprovalState, InstanceId, PlanId, RunId, UserId};
+use proto::domain::{ApprovalState, InstanceId, PlanId, RunId, RunSource, RunState, UserId};
 use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};
 use store::testing::TestDb;
@@ -2032,6 +2032,280 @@ async fn instance_versions_can_be_switched() {
     w.rollback().await.unwrap();
 }
 
+/// 共享看板（8.10）：用户写、按标签读、归档和取消归档、删除；别人看不到、动不了。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn board_over_http() {
+    let Some(a) = api().await else { return };
+    let u = a.login("13800138891").await;
+    let bob = a.login("13800138892").await;
+    let tok = Some(u.access.as_str());
+    let (st, post) = a
+        .call(
+            Method::POST,
+            "/v1/board",
+            tok,
+            Some(json!({ "body": " Ship on Friday ", "tags": ["Launch"] })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{post}");
+    assert_eq!(post["body"], "Ship on Friday");
+    assert_eq!(post["tags"], json!(["launch"]));
+    assert_eq!(post["ai_generated"], false);
+    let id = post["id"].as_str().unwrap().to_owned();
+    // 保险箱里的密码换成引用再上看板：所有 agent 都读得到看板。
+    let (st, _) = a
+        .call(
+            Method::POST,
+            "/v1/vault",
+            tok,
+            Some(json!({ "name": "github", "password": "hunter2-secret" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED);
+    let (st, scrubbed) = a
+        .call(
+            Method::POST,
+            "/v1/board",
+            tok,
+            Some(json!({ "body": "the password is hunter2-secret" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{scrubbed}");
+    assert_eq!(scrubbed["body"], "the password is [vault:github]");
+    let scrubbed_id = scrubbed["id"].as_str().unwrap().to_owned();
+    let (st, _) = a
+        .call(
+            Method::DELETE,
+            &format!("/v1/board/{scrubbed_id}"),
+            tok,
+            None,
+        )
+        .await;
+    assert!(st.is_success());
+    let (st, _) = a
+        .call(
+            Method::POST,
+            "/v1/board",
+            tok,
+            Some(json!({ "body": "untagged" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED);
+    for bad in [
+        json!({ "body": "" }),
+        json!({ "body": "x", "tags": ["no space"] }),
+    ] {
+        let (st, body) = a
+            .call(Method::POST, "/v1/board", tok, Some(bad.clone()))
+            .await;
+        assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{bad}: {body}");
+    }
+
+    let (_, list) = a.call(Method::GET, "/v1/board", tok, None).await;
+    assert_eq!(list["posts"].as_array().unwrap().len(), 2);
+    let (_, tagged) = a.call(Method::GET, "/v1/board?tag=LAUNCH", tok, None).await;
+    assert_eq!(tagged["posts"].as_array().unwrap().len(), 1);
+    let (_, page) = a.call(Method::GET, "/v1/board?limit=1", tok, None).await;
+    let last = page["posts"][0]["id"].as_str().unwrap().to_owned();
+    let (_, next) = a
+        .call(Method::GET, &format!("/v1/board?before={last}"), tok, None)
+        .await;
+    assert_eq!(next["posts"][0]["id"], json!(id));
+
+    // 别人看不到、动不了。
+    let (_, theirs) = a
+        .call(Method::GET, "/v1/board", Some(&bob.access), None)
+        .await;
+    assert!(theirs["posts"].as_array().unwrap().is_empty());
+    for (m, path) in [
+        (Method::POST, format!("/v1/board/{id}/archive")),
+        (Method::DELETE, format!("/v1/board/{id}")),
+    ] {
+        let (st, _) = a.call(m, &path, Some(&bob.access), None).await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "{path}");
+    }
+
+    let (st, archived) = a
+        .call(Method::POST, &format!("/v1/board/{id}/archive"), tok, None)
+        .await;
+    assert_eq!(st, StatusCode::OK, "{archived}");
+    assert!(archived["archived_at"].is_string());
+    let (_, live) = a.call(Method::GET, "/v1/board", tok, None).await;
+    assert_eq!(live["posts"].as_array().unwrap().len(), 1);
+    let (_, old) = a
+        .call(Method::GET, "/v1/board?archived=true", tok, None)
+        .await;
+    assert_eq!(old["posts"][0]["id"], json!(id));
+    let (st, back) = a
+        .call(
+            Method::POST,
+            &format!("/v1/board/{id}/unarchive"),
+            tok,
+            None,
+        )
+        .await;
+    assert_eq!((st, back["archived_at"].is_null()), (StatusCode::OK, true));
+    let (st, _) = a
+        .call(Method::DELETE, &format!("/v1/board/{id}"), tok, None)
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let (st, _) = a
+        .call(Method::DELETE, &format!("/v1/board/{id}"), tok, None)
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+}
+
+/// 实例设置（8.9）：用途说明、“允许其他 agent 查我、问我”，给了才改；关开关记审计。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn instance_settings_over_http() {
+    let Some(a) = api().await else { return };
+    let u = a.login("13800138890").await;
+    let tok = Some(u.access.as_str());
+    let inst = a.adopt(&u).await;
+    let path = format!("/v1/instances/{inst}");
+    let (_, body) = a.call(Method::GET, &path, tok, None).await;
+    assert_eq!(
+        (body["purpose"].as_str(), body["peer_access"].as_bool()),
+        (Some(""), Some(true))
+    );
+    // 别的 agent 问它、还没答的问题（8.11）：关掉开关时取消。
+    let asker = a.adopt(&u).await;
+    let user: UserId = {
+        let (_, me) = a.call(Method::GET, "/v1/me", tok, None).await;
+        me["id"].as_str().unwrap().parse().unwrap()
+    };
+    let mut w = a.t.db.worker().await.unwrap();
+    let parent = w
+        .create_run(
+            user,
+            &store::NewRun::new(asker, RunSource::User, "task", "1"),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let mut q = store::NewRun::new(inst, RunSource::Ask, "（说明）\n\n问题", "1");
+    q.parent_run_id = Some(parent.id);
+    let q = w.create_run(user, &q).await.unwrap().unwrap();
+    w.commit().await.unwrap();
+
+    let (st, body) = a
+        .call(
+            Method::PATCH,
+            &path,
+            tok,
+            Some(json!({ "purpose": "  Finds sources  ", "peer_access": false })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(body["purpose"], "Finds sources");
+    assert_eq!(body["peer_access"], false);
+    assert_eq!(body["name"], "My Claude", "the name is kept");
+    let mut w = a.t.db.worker().await.unwrap();
+    let cancelled = w.run_record(q.id).await.unwrap().run;
+    w.rollback().await.unwrap();
+    assert_eq!(cancelled.state, RunState::Cancelled);
+    assert_eq!(
+        cancelled.state_reason.as_deref(),
+        Some("the agent stopped taking questions")
+    );
+    let logged: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM events WHERE run_id = $1 AND kind = 'run.state'")
+            .bind(q.id.0)
+            .fetch_one(a.t.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(logged, 1);
+    // 再关一次（没变）：不再记审计。
+    let (st, _) = a
+        .call(
+            Method::PATCH,
+            &path,
+            tok,
+            Some(json!({ "peer_access": false })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    // 只改名字：别的不动。
+    let (st, body) = a
+        .call(
+            Method::PATCH,
+            &path,
+            tok,
+            Some(json!({ "name": "Researcher" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(
+        (
+            body["name"].as_str(),
+            body["purpose"].as_str(),
+            body["peer_access"].as_bool()
+        ),
+        (Some("Researcher"), Some("Finds sources"), Some(false))
+    );
+    for bad in [
+        json!({}),
+        json!({ "purpose": "x".repeat(201) }),
+        json!({ "purpose": "bad\u{7}" }),
+        json!({ "name": "" }),
+    ] {
+        let (st, body) = a.call(Method::PATCH, &path, tok, Some(bad.clone())).await;
+        assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{bad}: {body}");
+    }
+    let audits: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE action = 'instance.peer_access' AND target = $1",
+    )
+    .bind(inst.to_string())
+    .fetch_one(a.t.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(audits, 1, "only the actual switch is audited");
+}
+
+/// 运行中收消息（8.12）：`delivery` 默认排队，`interrupt` 是紧急消息，排在别的排队消息前面；别的值拒绝。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn urgent_messages_over_http() {
+    let Some(a) = api().await else { return };
+    let u = a.login("13800138893").await;
+    let tok = Some(u.access.as_str());
+    let inst = a.adopt(&u).await;
+    let path = format!("/v1/instances/{inst}/runs");
+    let (st, normal) = a
+        .call(Method::POST, &path, tok, Some(json!({ "prompt": "first" })))
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{normal}");
+    let (st, urgent) = a
+        .call(
+            Method::POST,
+            &path,
+            tok,
+            Some(json!({ "prompt": "stop that", "delivery": "interrupt" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{urgent}");
+    assert_eq!(urgent["state"], "queued");
+    let mut w = a.t.db.worker().await.unwrap();
+    let claimed = w
+        .claim_next_run("x", Duration::from_secs(60))
+        .await
+        .unwrap();
+    w.rollback().await.unwrap();
+    assert_eq!(
+        claimed.map(|r| r.run.id.to_string()),
+        urgent["id"].as_str().map(String::from),
+        "the urgent message goes first"
+    );
+    let (st, body) = a
+        .call(
+            Method::POST,
+            &path,
+            tok,
+            Some(json!({ "prompt": "x", "delivery": "shout" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+}
+
 /// 用量看板（9.10）：按天（用户时区）、实例、模型汇总自己的用量；看不到别人的。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn usage_is_summarised_per_day_instance_and_model() {
@@ -3490,4 +3764,240 @@ async fn content_reports_over_http() {
         .call(Method::GET, "/v1/reports", Some(&other.access), None)
         .await;
     assert_eq!(theirs["reports"].as_array().unwrap().len(), 0);
+}
+
+/// 计划的 webhook（7.1）：建的时候要同意；收到事件按计划起一次运行，内容附在目标后面、注明来自外部；列表里没有
+/// 令牌；别人看不到；只收 JSON 和文本；令牌不对、停用了、换掉的旧地址都 404；排着太多 429；删了就失效。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn plan_webhooks_over_http() {
+    let Some(a) = api().await else { return };
+    let u = a.login("13800138896").await;
+    let other = a.login("13800138897").await;
+    let tok = Some(u.access.as_str());
+    let inst = a.adopt(&u).await;
+    let (st, plan) = a
+        .call(
+            Method::POST,
+            "/v1/plans",
+            tok,
+            Some(json!({ "instance_id": inst, "title": "邮件", "goal": "看看这封邮件要不要处理" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{plan}");
+    let hooks = format!("/v1/plans/{}/hooks", plan["id"].as_str().unwrap());
+    let (st, _) = a.call(Method::POST, &hooks, tok, Some(json!({}))).await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "consent is required");
+    let (st, created) = a
+        .call(Method::POST, &hooks, tok, Some(json!({ "consent": true })))
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{created}");
+    let token = created["token"].as_str().unwrap().to_owned();
+    let path = created["path"].as_str().unwrap().to_owned();
+    assert_eq!(path, format!("/v1/webhooks/{token}"));
+    let hook_id = created["hook"]["id"].as_str().unwrap().to_owned();
+    let (_, list) = a.call(Method::GET, &hooks, tok, None).await;
+    assert_eq!(list["hooks"].as_array().unwrap().len(), 1);
+    assert!(!list.to_string().contains(&token));
+    let (st, _) = a
+        .call(Method::GET, &hooks, Some(other.access.as_str()), None)
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+
+    let send = |path: String, ct: &'static str, body: &'static str| {
+        let req = a
+            .http
+            .post(format!("{}{path}", a.base))
+            .header("content-type", ct)
+            .body(body);
+        async move { req.send().await.unwrap().status() }
+    };
+    assert_eq!(
+        send(
+            path.clone(),
+            "application/json",
+            r#"{"subject":"invoice #42"}"#
+        )
+        .await,
+        StatusCode::ACCEPTED
+    );
+    let (_, runs) = a
+        .call(
+            Method::GET,
+            &format!("/v1/instances/{inst}/runs"),
+            tok,
+            None,
+        )
+        .await;
+    let run = &runs["runs"][0];
+    assert_eq!(run["source"], "plan");
+    let run_id = run["id"].as_str().unwrap().to_owned();
+    let prompt = run["prompt"].as_str().unwrap();
+    // 内容前后有发送方猜不到的标记。
+    let boundary = prompt.rsplit('\n').next().unwrap().trim_end_matches(">>>");
+    assert!(
+        prompt.starts_with("看看这封邮件要不要处理")
+            && prompt.contains("来自外部")
+            && boundary.len() == 12
+            && prompt.contains(&format!(
+                "<<<{boundary}\n{{\"subject\":\"invoice #42\"}}\n{boundary}>>>"
+            )),
+        "{prompt}"
+    );
+    // 飞书、Slack 保存地址时的验证：原样回 challenge，不起运行。
+    let (st, echoed) = {
+        let r = a
+            .http
+            .post(format!("{}{path}", a.base))
+            .json(&json!({ "type": "url_verification", "challenge": "c-123", "token": "x" }))
+            .send()
+            .await
+            .unwrap();
+        (r.status(), r.json::<serde_json::Value>().await.unwrap())
+    };
+    assert_eq!(
+        (st, echoed),
+        (StatusCode::OK, json!({ "challenge": "c-123" }))
+    );
+    // 太大的 422（不管有没有写长度）。
+    let big = "x".repeat(65 * 1024);
+    let st = a
+        .http
+        .post(format!("{}{path}", a.base))
+        .header("content-type", "text/plain")
+        .body(big.clone())
+        .send()
+        .await
+        .unwrap()
+        .status();
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+    let chunked =
+        reqwest::Body::wrap_stream(futures_util::stream::iter([Ok::<_, std::io::Error>(big)]));
+    let st = a
+        .http
+        .post(format!("{}{path}", a.base))
+        .header("content-type", "text/plain")
+        .body(chunked)
+        .send()
+        .await
+        .unwrap()
+        .status();
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+    // 计划的每日 token 上限到了：429。
+    sqlx::query("UPDATE runs SET tokens_used = 100 WHERE id = $1::uuid")
+        .bind(&run_id)
+        .execute(a.t.db.pool())
+        .await
+        .unwrap();
+    let set_limit = |limit: serde_json::Value| {
+        sqlx::query("UPDATE plans SET policy = jsonb_set(policy, '{daily_token_limit}', $2) WHERE id = $1::uuid")
+            .bind(plan["id"].as_str().unwrap().to_owned())
+            .bind(limit)
+            .execute(a.t.db.pool())
+    };
+    set_limit(json!(50)).await.unwrap();
+    assert_eq!(
+        send(path.clone(), "text/plain", "over the limit").await,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    set_limit(json!(null)).await.unwrap();
+    // 只收 JSON 和文本；JSON 要合法；令牌不对的 404。
+    assert_eq!(
+        send(path.clone(), "image/png", "x").await,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert_eq!(
+        send(path.clone(), "application/json", "{not json").await,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert_eq!(
+        send("/v1/webhooks/twh1_nope".into(), "text/plain", "hi").await,
+        StatusCode::NOT_FOUND
+    );
+    // 排着的最多 5 个，再来的 429。
+    for _ in 0..4 {
+        assert_eq!(
+            send(path.clone(), "text/plain; charset=utf-8", "another mail").await,
+            StatusCode::ACCEPTED
+        );
+    }
+    assert_eq!(
+        send(path.clone(), "text/plain", "one too many").await,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    // 停用了 404；换了令牌旧地址 404，新地址照样认（只是排满了）。
+    let hook = format!("/v1/hooks/{hook_id}");
+    let (st, off) = a
+        .call(Method::PATCH, &hook, tok, Some(json!({ "enabled": false })))
+        .await;
+    assert_eq!(
+        (st, off["enabled"].as_bool()),
+        (StatusCode::OK, Some(false))
+    );
+    assert_eq!(
+        send(path.clone(), "text/plain", "hi").await,
+        StatusCode::NOT_FOUND
+    );
+    a.call(Method::PATCH, &hook, tok, Some(json!({ "enabled": true })))
+        .await;
+    let (st, rotated) = a
+        .call(Method::POST, &format!("{hook}/rotate"), tok, None)
+        .await;
+    assert_eq!(st, StatusCode::OK, "{rotated}");
+    let new_path = rotated["path"].as_str().unwrap().to_owned();
+    assert_ne!(new_path, path);
+    assert_eq!(
+        send(path.clone(), "text/plain", "hi").await,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        send(new_path.clone(), "text/plain", "hi").await,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    // 有 webhook 的计划不能加步骤；步骤不管怎么加上的，事件都不按单个 agent 跑（404）。
+    let plan_path = format!("/v1/plans/{}", plan["id"].as_str().unwrap());
+    let (st, _) = a
+        .call(
+            Method::PATCH,
+            &plan_path,
+            tok,
+            Some(json!({ "steps": [{ "key": "a", "instance_id": inst, "prompt": "做" }] })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+    sqlx::query(
+        "INSERT INTO plan_steps (plan_id, key, user_id, instance_id, prompt) \
+         SELECT id, 'a', user_id, instance_id, '做' FROM plans WHERE id = $1::uuid",
+    )
+    .bind(plan["id"].as_str().unwrap())
+    .execute(a.t.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        send(new_path.clone(), "text/plain", "hi").await,
+        StatusCode::NOT_FOUND
+    );
+    sqlx::query("DELETE FROM plan_steps WHERE plan_id = $1::uuid")
+        .bind(plan["id"].as_str().unwrap())
+        .execute(a.t.db.pool())
+        .await
+        .unwrap();
+    // 别人删不了；删了就失效。
+    let (st, _) = a
+        .call(Method::DELETE, &hook, Some(other.access.as_str()), None)
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (st, _) = a.call(Method::DELETE, &hook, tok, None).await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    assert_eq!(
+        send(new_path, "text/plain", "hi").await,
+        StatusCode::NOT_FOUND
+    );
+    let audits: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE action LIKE 'plan_hook.%' AND target = $1",
+    )
+    .bind(&hook_id)
+    .fetch_one(a.t.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(audits, 5, "create, off, on, rotate, delete");
 }

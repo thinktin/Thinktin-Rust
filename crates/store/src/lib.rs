@@ -10,11 +10,13 @@
 
 mod approvals;
 mod artifacts;
+mod board;
 mod credentials;
 mod device_relay;
 mod error;
 mod events;
 mod grants;
+mod hooks;
 mod im_channels;
 mod inbox;
 mod instances;
@@ -45,7 +47,10 @@ use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::{PgConnection, PgPool, Postgres, Transaction};
 
 pub use approvals::{ApprovalRecord, NewApproval, approval_key, split_approval_key};
-pub use artifacts::{NewArtifact, StoredArtifact};
+pub use artifacts::{ArtifactScope, MAX_LISTED_ARTIFACTS, NewArtifact, StoredArtifact};
+pub use board::{
+    BOARD_ARCHIVE_RETENTION, BoardFilter, NewBoardPost, check_board_body, normalize_board_tags,
+};
 pub use credentials::{NewCredential, SealedCredential};
 pub use device_relay::{
     ClaimedCall, DEVICE_CALL_CHANNEL, DEVICE_CHANNEL, DeviceCallRecord, LINK_FRESH, NewDeviceCall,
@@ -53,15 +58,21 @@ pub use device_relay::{
 };
 pub use error::{Error, Result};
 pub use events::EVENTS_CHANNEL;
+pub use hooks::{HookActivity, HookLock, HookTarget, MAX_HOOKS_PER_PLAN};
 pub use im_channels::{ImChannelChange, ImSlot, ImWebhook, NewImChannel, SealedImChannel};
 pub use inbox::NewInboxItem;
-pub use instances::{InstanceRuntime, NewInstance, RestoringSandbox, WorkspaceArchive};
+pub use instances::{
+    InstanceChange, InstanceRuntime, NewInstance, Peer, RestoringSandbox, WorkspaceArchive,
+};
 pub use live_activities::{LiveActivity, LiveSettle};
 pub use llmgw::{GatewayInstance, GatewayRoute};
 pub use outbox::{NewOutboxItem, OutboxItem};
 pub use plans::{DueTrigger, NewPlan, RetiredPlans};
 pub use reports::{NewReport, ReportRecord};
-pub use runs::{ModelCall, NewRun, RunChange, RunFilter, RunRecord};
+pub use runs::{
+    ANSWER_TIMEOUT_REASON, ASKER_GONE_REASON, INTERRUPTED_REASON, ModelCall, NewRun, RunChange,
+    RunFilter, RunRecord, Urgent,
+};
 pub use schema::MigrationStatus;
 pub use sessions::{LoginCode, SessionRecord, SessionState};
 pub use usage::{NewUsage, UsageBucket, UsageFilter, UsageGroup};

@@ -293,6 +293,11 @@ impl Tx<Tenant> {
             .bind(id.0)
             .execute(self.conn())
             .await?;
+        // 计划删了，它的 webhook 也没用了（7.1）：地址马上失效。
+        sqlx::query("DELETE FROM plan_hooks WHERE plan_id = $1")
+            .bind(id.0)
+            .execute(self.conn())
+            .await?;
         Ok(())
     }
 
@@ -344,6 +349,11 @@ impl Tx<Tenant> {
         .bind(&deleted)
         .execute(self.conn())
         .await?;
+        // webhook 也删掉：正在收的事件拿着它的锁，这里等它提交，接下来取消实例上的运行时看得到它建的运行。
+        sqlx::query("DELETE FROM plan_hooks WHERE plan_id = ANY($1)")
+            .bind(&deleted)
+            .execute(self.conn())
+            .await?;
         Ok(RetiredPlans {
             deleted: deleted.into_iter().map(PlanId).collect(),
             paused: paused.into_iter().map(PlanId).collect(),
@@ -671,7 +681,7 @@ impl Tx<Worker> {
     pub async fn queued_plan_runs(&mut self, plan: PlanId) -> Result<u32> {
         let n: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM runs \
-             WHERE plan_id = $1 AND parent_run_id IS NULL AND state = 'queued'",
+             WHERE plan_id = $1 AND parent_run_id IS NULL AND state = 'queued' AND hook_id IS NULL",
         )
         .bind(plan.0)
         .fetch_one(self.conn())

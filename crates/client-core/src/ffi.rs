@@ -269,6 +269,13 @@ pub struct Instance {
     pub state: String,
     pub created_at_ms: i64,
     pub last_active_at_ms: i64,
+    /// 用途说明（8.9）：用户写的，别的 agent 列出队友时看得到。
+    #[uniffi(default = "")]
+    pub purpose: String,
+    /// “允许其他 agent 查我、问我”（8.9），默认打开。关了以后别的 agent 列不出它、查不了它的进度、问不了它
+    /// （8.11），关的时候别人问它、还没答的问题都取消。它自己照样能看别人、问别人、写看板。
+    #[uniffi(default = true)]
+    pub peer_access: bool,
 }
 
 impl From<d::Instance> for Instance {
@@ -282,8 +289,23 @@ impl From<d::Instance> for Instance {
             state: i.state.to_string(),
             created_at_ms: ms(i.created_at),
             last_active_at_ms: ms(i.last_active_at),
+            purpose: i.purpose,
+            peer_access: i.peer_access,
         }
     }
+}
+
+/// 改实例：给了才改。`purpose` 给空串清掉。
+#[derive(Debug, Clone, Default, uniffi::Record)]
+pub struct InstanceChange {
+    #[uniffi(default = None)]
+    pub name: Option<String>,
+    /// 用途说明，最长 200 字。
+    #[uniffi(default = None)]
+    pub purpose: Option<String>,
+    /// “允许其他 agent 查我、问我”。
+    #[uniffi(default = None)]
+    pub peer_access: Option<bool>,
 }
 
 /// 模型别名：agent 用别名调模型，平台按它找到用户的哪把 key、哪个上游模型。
@@ -313,6 +335,8 @@ pub struct Run {
     pub parent_run_id: Option<String>,
     pub root_run_id: String,
     pub step_key: Option<String>,
+    /// user / plan / pipeline / delegate / ask。ask 是别的 agent 问这个实例的问题（8.11）：prompt 是 agent 写的，
+    /// 不能显示成用户说的，要带“AI 生成”标识。以后可能加新值，不认识的不要当成用户发的。
     pub source: String,
     pub prompt: String,
     pub state: String,
@@ -324,10 +348,10 @@ pub struct Run {
     pub created_at_ms: i64,
     pub started_at_ms: Option<i64>,
     pub finished_at_ms: Option<i64>,
-    /// 等的是什么，只在 waiting_quota / waiting_device 时有：invalid（key 无效，去换 key）、no_balance（欠费：充值或
+    /// 等的是什么，只在 waiting_quota / waiting_device / waiting_children 时有：invalid（key 无效，去换 key）、no_balance（欠费：充值或
     /// 换 key，每小时也自己再试）、unavailable（没有能用的 key：停用了或当天额度用完，每小时也自己再试）、
-    /// rate_limited / overloaded（几分钟后自己继续，不用处理）、device_offline（等电脑上线）。以后可能加新值，
-    /// 不认识的按 state 显示。
+    /// rate_limited / overloaded（几分钟后自己继续，不用处理）、device_offline（等电脑上线）、answer（等子任务时
+    /// 只在等队友回答，8.11）。以后可能加新值，不认识的按 state 显示。
     #[uniffi(default = None)]
     pub wait_code: Option<String>,
 }
@@ -543,6 +567,9 @@ pub struct PlanPolicy {
     /// 等电脑上线、等补上 key 最多等多久。
     #[uniffi(default = 86400)]
     pub wait_timeout_secs: u64,
+    /// 运行成功时通知（推送、收件箱）。事件触发的计划常常关掉；失败、等审批、等 key 照样通知。
+    #[uniffi(default = true)]
+    pub notify_success: bool,
 }
 
 impl From<d::PlanPolicy> for PlanPolicy {
@@ -556,6 +583,7 @@ impl From<d::PlanPolicy> for PlanPolicy {
             max_steps: p.budget.max_steps,
             daily_token_limit: p.daily_token_limit,
             wait_timeout_secs: p.wait_timeout_secs,
+            notify_success: p.notify_success,
         }
     }
 }
@@ -574,6 +602,7 @@ impl TryFrom<PlanPolicy> for d::PlanPolicy {
             },
             daily_token_limit: p.daily_token_limit,
             wait_timeout_secs: p.wait_timeout_secs,
+            notify_success: p.notify_success,
         })
     }
 }
@@ -789,6 +818,84 @@ impl From<d::TeamTemplate> for TeamTemplate {
             name: t.name,
             members: t.spec.members.into_iter().map(Into::into).collect(),
             created_at_ms: ms(t.created_at),
+        }
+    }
+}
+
+/// 共享看板的一条（8.10）：用户的 agent（或用户自己）写的进展、决定、待别人处理的事。写了不改，只能归档、删除。
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct BoardPost {
+    pub id: String,
+    /// 哪个实例写的；没有是用户自己写的。实例删了 id 还在、`author_name` 没有：用 `ai_generated` 区分用户和
+    /// 删了的 agent。
+    pub author_instance_id: Option<String>,
+    /// 写它的实例的名字（实例删了就没有）。
+    pub author_name: Option<String>,
+    /// 哪次运行写的。
+    pub run_id: Option<String>,
+    pub body: String,
+    pub tags: Vec<String>,
+    /// agent 写的：显示时要带“AI 生成”标识（16.3）。用户自己写的是 false。
+    pub ai_generated: bool,
+    pub created_at_ms: i64,
+    pub archived_at_ms: Option<i64>,
+}
+
+impl From<d::BoardPost> for BoardPost {
+    fn from(p: d::BoardPost) -> Self {
+        Self {
+            id: p.id.to_string(),
+            author_instance_id: p.author_instance_id.map(|i| i.to_string()),
+            author_name: p.author_name,
+            run_id: p.run_id.map(|r| r.to_string()),
+            body: p.body,
+            tags: p.tags,
+            ai_generated: p.ai_generated,
+            created_at_ms: ms(p.created_at),
+            archived_at_ms: p.archived_at.map(ms),
+        }
+    }
+}
+
+/// 计划的 webhook（7.1 事件触发）：外面的服务往它的地址发事件，平台按这个计划起一次运行。
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct PlanHook {
+    pub id: String,
+    pub plan_id: String,
+    pub enabled: bool,
+    /// 用户同意把收到的内容交给 agent 和模型厂商的时间。
+    pub consented_at_ms: i64,
+    pub last_event_at_ms: Option<i64>,
+    pub created_at_ms: i64,
+}
+
+impl From<d::PlanHook> for PlanHook {
+    fn from(h: d::PlanHook) -> Self {
+        Self {
+            id: h.id.to_string(),
+            plan_id: h.plan_id.to_string(),
+            enabled: h.enabled,
+            consented_at_ms: ms(h.consented_at),
+            last_event_at_ms: h.last_event_at.map(ms),
+            created_at_ms: ms(h.created_at),
+        }
+    }
+}
+
+/// 建、换 webhook 的结果：`url`（完整地址，令牌在里面）和 `token` 只这一次拿得到，给用户复制、别存。
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct PlanHookSecret {
+    pub hook: PlanHook,
+    pub url: String,
+    pub token: String,
+}
+
+impl From<crate::api::HookSecret> for PlanHookSecret {
+    fn from(s: crate::api::HookSecret) -> Self {
+        Self {
+            hook: s.hook.into(),
+            url: s.url,
+            token: s.token,
         }
     }
 }
@@ -1693,6 +1800,117 @@ impl ThinktinClient {
             .await
     }
 
+    /// 共享看板（8.10），新的在前：`tag` 只看带这个标签的，`archived` 看归档了的（默认没归档的），
+    /// `before_id` 往下翻，`limit` 默认 50、最多 200。
+    pub async fn board(
+        &self,
+        tag: Option<String>,
+        archived: bool,
+        before_id: Option<String>,
+        limit: Option<u32>,
+    ) -> Result<Vec<BoardPost>> {
+        let before = before_id
+            .map(|b| parse::<d::BoardPostId>(&b, "board post"))
+            .transpose()?;
+        self.run(|c| async move {
+            Ok(c.api
+                .board(tag.as_deref(), archived, before, limit)
+                .await?
+                .into_iter()
+                .map(Into::into)
+                .collect())
+        })
+        .await
+    }
+
+    /// 用户自己在看板上写一条：最长 2000 字，最多 8 个标签（字母、数字、-、_）。满了最早的自动归档。
+    /// 看板上的内容用户所有的 agent 都读得到：有像密码、key 的内容时不发，返回 `ContainsSecrets`（和
+    /// `send_message` 一样），用户确认要发时带 `allow_secrets`；保险箱里有的，服务端还会换成引用。
+    pub async fn post_to_board(
+        &self,
+        body: String,
+        tags: Vec<String>,
+        allow_secrets: bool,
+    ) -> Result<BoardPost> {
+        self.run(|c| async move { Ok(c.post_to_board(&body, &tags, allow_secrets).await?.into()) })
+            .await
+    }
+
+    /// 归档、取消归档。已经是那样的不动（重试不出错）；没归档的已经有 200 条时取消归档报 422（先归档别的）。
+    /// 取消归档的算新的：看板满了自动归档时按取消归档的时间排。
+    pub async fn set_board_post_archived(
+        &self,
+        post_id: String,
+        archived: bool,
+    ) -> Result<BoardPost> {
+        let id: d::BoardPostId = parse(&post_id, "board post")?;
+        self.run(|c| async move { Ok(c.api.set_board_post_archived(id, archived).await?.into()) })
+            .await
+    }
+
+    pub async fn delete_board_post(&self, post_id: String) -> Result<()> {
+        let id: d::BoardPostId = parse(&post_id, "board post")?;
+        self.run(|c| async move { c.api.delete_board_post(id).await })
+            .await
+    }
+
+    /// 计划的 webhook（7.1 事件触发）。
+    pub async fn plan_hooks(&self, plan_id: String) -> Result<Vec<PlanHook>> {
+        let id: d::PlanId = parse(&plan_id, "plan")?;
+        self.run(|c| async move {
+            Ok(c.api
+                .plan_hooks(id)
+                .await?
+                .into_iter()
+                .map(Into::into)
+                .collect())
+        })
+        .await
+    }
+
+    /// 给计划加 webhook。先在界面上告诉用户：收到的内容会交给 agent，也会发给他配置的模型厂商处理；
+    /// 用户同意了才调。返回的地址和令牌只这一次拿得到。带步骤的计划（流水线）暂不支持，报 422。
+    pub async fn create_plan_hook(&self, plan_id: String) -> Result<PlanHookSecret> {
+        let id: d::PlanId = parse(&plan_id, "plan")?;
+        self.run(|c| async move { Ok(c.api.create_plan_hook(id).await?.into()) })
+            .await
+    }
+
+    /// 换令牌：旧地址马上失效。
+    pub async fn rotate_plan_hook(&self, hook_id: String) -> Result<PlanHookSecret> {
+        let id: d::PlanHookId = parse(&hook_id, "webhook")?;
+        self.run(|c| async move { Ok(c.api.rotate_plan_hook(id).await?.into()) })
+            .await
+    }
+
+    pub async fn set_plan_hook_enabled(&self, hook_id: String, enabled: bool) -> Result<PlanHook> {
+        let id: d::PlanHookId = parse(&hook_id, "webhook")?;
+        self.run(|c| async move { Ok(c.api.set_plan_hook_enabled(id, enabled).await?.into()) })
+            .await
+    }
+
+    pub async fn delete_plan_hook(&self, hook_id: String) -> Result<()> {
+        let id: d::PlanHookId = parse(&hook_id, "webhook")?;
+        self.run(|c| async move { c.api.delete_plan_hook(id).await })
+            .await
+    }
+
+    /// 改名字、用途说明、“允许其他 agent 查我、问我”（8.9），给了才改；什么都没给报 422。
+    pub async fn update_instance(
+        &self,
+        instance_id: String,
+        change: InstanceChange,
+    ) -> Result<Instance> {
+        let id: d::InstanceId = parse(&instance_id, "instance")?;
+        let change = api::InstanceChange {
+            name: change.name,
+            purpose: change.purpose,
+            peer_access: change.peer_access,
+        };
+        self.run(|c| async move { Ok(c.api.update_instance(id, &change).await?.into()) })
+            .await
+    }
+
     /// 升级（不给版本）或回滚到旧版本：下次唤醒时生效，工作区保留。
     pub async fn set_instance_version(
         &self,
@@ -2557,6 +2775,23 @@ impl ThinktinClient {
         let id: d::InstanceId = parse(&instance_id, "instance")?;
         self.run(|c| async move { Ok(c.send_message(id, &text, allow_secrets).await?.into()) })
             .await
+    }
+
+    /// 紧急消息（8.12，打断重来）：实例正忙时打断它正在做的、马上处理这条（会话保留，agent 会知道自己被
+    /// 打断了）；空闲时排在别的排队消息前面。密码拦截和 `send_message` 一样。
+    pub async fn send_urgent_message(
+        &self,
+        instance_id: String,
+        text: String,
+        allow_secrets: bool,
+    ) -> Result<Run> {
+        let id: d::InstanceId = parse(&instance_id, "instance")?;
+        self.run(|c| async move {
+            Ok(c.send_urgent_message(id, &text, allow_secrets)
+                .await?
+                .into())
+        })
+        .await
     }
 
     /// 把消息里拦下的值存进保险箱，返回条目和换成引用后的消息。`value` 是消息里原来的那段，

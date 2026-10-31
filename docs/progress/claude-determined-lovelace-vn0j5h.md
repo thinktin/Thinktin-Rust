@@ -1,5 +1,147 @@
 # claude/determined-lovelace-vn0j5h
 
+## ⚠️ 紧急交接（2026-10-29 16:00 UTC，本会话 session_016LgPcdynywrhrjCq8VVFLt 周额度快用完）
+
+**接手的先读这一节。** 下面原来的内容（10-25 起的现状、已完成、坑）照样有效。
+
+### 0. 现状一句话
+
+- 代码都推送了，工作区干净。本节下面的提交都在 `origin/claude/determined-lovelace-vn0j5h` 上（仓库 github.com/thinktin/Thinktin-Rust，
+  10-29 从个人账号移到组织，路径变了，代码没变）。
+- `cargo test --workspace` 全过（616 个，要 Postgres：`THINKTIN_REQUIRE_DB=1`），`cargo clippy --workspace --all-targets` 干净。
+  已知偶发：`crates/relay/tests/relay.rs` 的 `heartbeats_drop_revoked_frozen_and_silent_computers`，重跑就过。
+- 手上三件事都在**设计阶段**，一行实现代码都还没写：
+  1. 出口代理，也就是“受管控的上网通道”（WBS 2.7）；
+  2. 浏览器；
+  3. 项目与跨用户协作（8.13–8.19）。
+- 用户最新的要求（10-29）：“先看受管控的上网通道怎么设计，然后再确定浏览器怎么设计”。所以顺序是 **出口代理 → 浏览器 → 项目**。
+- **合并**：用户 10-29 让把现在的改动合进 main。已开 [PR #18](https://github.com/thinktin/Thinktin-Rust/pull/18)（本分支 → main，
+  已先合入 main 的 #16，本机全部检查都过），CI 在跑：rust、android、ThinktinKit on Linux、iOS 模拟器（要 20 分钟以上）。
+  - CI 全绿就 **squash 合并**，标题后面加 “(#18)”，和 #14、#16 一样。红了就修，修好再合。
+  - 如果本会话额度先用完，下一个 agent 按上面接着做。
+  - 合并以后：
+    1. 删掉 GitHub 上的 `autosave/claude-determined-lovelace-vn0j5h`（CLAUDE.md 的规则）。
+    2. 后续工作从最新的 main 重新开始，分支名不变：`git fetch origin main && git checkout -B claude/determined-lovelace-vn0j5h origin/main`。
+       分支上只有已经合并的历史时，可以用 force-with-lease 推送。
+    3. 把本文件这一条改成“已合并”。
+
+### 1. 这一轮做完的（10-29，都已推送）
+
+| 提交 | 内容 |
+|---|---|
+| `1d858a4` | agent 交流第三轮评审修复：紧急消息排队时打断记在排第一的那条上；领取时再查刚提交的紧急消息；产出物范围改成“自己的加上下面各个问题（含嵌套）的回答方的”、`= ANY` 查询、列表最多 500；`artifact_list` 带 `artifact_id`，读、取可按它挑同名的；交还结果先记 `handed_at` 再发；各取消路径先按 id 顺序锁运行 |
+| `ca1764c` | 上面的文档 |
+| `182dcb2` | client-core：运行列表、缓存里读不了的（新来源、新状态）跳过，不再整页失败（上线前必须做的那条） |
+| `3de0400` | webhook 评审修复（16 条，每条 2 个反驳者核对）：洪水在查库前挡掉、加锁顺序、计划每日 token 上限、随机边界标记、`url_verification`、排着的事件运行不吞定时触发、有 webhook 的计划不能加步骤、删实例连 webhook 删、静音计划不开实时活动 |
+| `50e1b0f` | 上面的文档（`docs/event-triggers.md`） |
+| `a035fec` | **浏览器调研** [`docs/browser.md`](../browser.md)：自己做为主，AgentBay 以后当“大陆浏览器”；价格、工作量、风险、来源 |
+| `2c0897a` | 设计草稿存档 `docs/progress/drafts/`（见第 3 节） |
+
+### 2. 下一步（按顺序）
+
+**① 出口代理设计（WBS 2.7）→ 写 `docs/egress.md`**
+
+- 已有的调研在 [`drafts/egress-survey.md`](drafts/egress-survey.md)。一份是我们的现状（file:line），一份是业界方案（带链接）。
+- 第三份调研“各 agent 和常用工具要连哪些地方、走不走代理”没做完。workflow 脚本在 `drafts/workflows/egress-design.js`，里面有现成的
+  prompt：3 份调研、3 个角度的设计、2 个评委、合成、查漏。
+  - 跨会话不能 resume，要重跑。可以把已有两份调研的结果直接贴进 prompt，只跑缺的那份调研和后面几步。
+- 已经看出来的方向（已经告诉用户）：
+  - 沙箱照旧全部拒绝出网，只放行模型网关和代理所在的服务机 IP（ACS allowOut）。
+  - 服务机上加一个显式的 HTTP CONNECT 代理，沙箱用 `HTTP(S)_PROXY` 连它。不走代理的一律不通（fail closed）。
+  - 按 Pod IP 认沙箱，和 llm-gw 一样，ACS 不 SNAT。可以再加每个沙箱的代理口令。
+  - 档位：只连模型 / 常用开发网站白名单（参考 Codex 71 个、Claude 约 215 个）/ 用户加的网站 / 全部开放。
+  - 必须做：
+    - 挡住所有非公网地址，含 100.64/10（阿里云元数据 100.100.100.200）、169.254/16、RFC1918、IPv6 映射；
+    - 解析一次、钉住 IP 再连；
+    - 只开 80/443，挡住 25/465/587；
+    - 沙箱里不给 DNS；
+    - 每条连接记元数据、不记内容，保存 ≥ 6 个月（网络安全法修订后第 23 条，2026-01-01 施行）。
+  - 选型：
+    - Stripe Smokescreen（Go，MIT，有解析钉住、ACL、限速、按域名 MITM 加请求头）；
+    - 或者自己用 Rust 写一个小的，复用 `crates/llm-gw/src/ssrf.rs`，要 MITM 用 hudsucker。
+    - 阿里云托管的方案太贵：ACS 增强出口管理默认规格约 ¥1,550/月加 NAT；云防火墙 NAT 边界约 ¥1,825/月加 NAT。
+  - TLS 只对用户为保险箱填密码打开的域名做中间人（`docs/vault.md` 的请求头注入），别的一律不解密。
+  - Node 要设 `NODE_USE_ENV_PROXY=1`。curl 只认小写的 `http_proxy`。Yarn Berry 要 `YARN_HTTPS_PROXY`。git 只能走 https。Chromium 用
+    `--proxy-server` 加 `--force-webrtc-ip-handling-policy=disable_non_proxied_udp`。
+  - 法律风险（要问律师）：东京的浏览器让国内用户实时看、操作被屏蔽的外网，像跨境访问通道。只让 agent 自己访问开发资源的风险小。
+- 写完以后，用简单中文给用户列要拍板的事，每条附建议的默认值：
+  - 默认档位（建议：只连模型加常用开发网站）；
+  - 全部开放要不要用户自己打开；
+  - 日志保存多久；
+  - 流量上限。
+
+**② 浏览器设计**：在出口代理上面接着做，起点是 [`docs/browser.md`](../browser.md) 第 5 节，原始调研在 `drafts/browser-research.json`。
+
+- 要点：
+  - Chromium 装进沙箱的浏览器版镜像，连依赖约 0.65–0.8 GB；
+  - agent-shim 起 Chromium，只听 127.0.0.1、经代理出网；
+  - 五个 agent 都接同一个 Playwright MCP。OpenClaw、Pi 要写进它们自己的配置文件；
+  - **Hermes 一看到 `/usr/bin/chromium` 就会自己挂出浏览器工具**，要处理；
+  - 实时看、接管走 CDP 截帧经网关推到 App；
+  - 规格先在东京 ACS 实测再定。
+
+**③ 项目与跨用户协作设计 → 写 `docs/projects-impl.md`**
+
+- 三份设计在 `drafts/projects-design-{A,B,C}.md`。两个评委（安全、可实现性）的打分和 must_fix 在 `drafts/projects-judgments.json`：
+  **A 16 分、B 13.5、C 10**（两个评委合计）。产品评委、合成、查漏都没跑。
+- 建议以 A 为底，因为数据库里强制项目边界：`thinktin_member` 角色、`thinktin_definer` 持有 definer 函数、
+  `scope_id = coalesce(project_id, user_id)` 复合外键、`events_fill` 按项目序号、每个项目一个 HOME、私人工作目录挪到 `private/`。
+- 从 B 嫁接：
+  - `ProjectActor` 能力令牌：没有核对就编译不过；
+  - `runs_project_guard`：只有后台角色能写项目运行；
+  - `ProjectTx` 只读、是独立类型；
+  - 事件 payload 按种类裁剪后再给成员看；
+  - 注销账号时别人的子运行 SET NULL，不级联删除。
+- 必须修 A 的这些问题（安全评委指出）：
+  - 注销账号级联删掉别的用户的子运行；
+  - inbox 的策略让邀请通知对被邀请人不可见；
+  - 业务角色能自己插项目运行和子运行；
+  - `project_feeds` 不该给 app 写权限；
+  - 成员能看到原始的工具调用输出；
+  - 删项目是一个大事务，可能超时。
+- 硬约束：已装的 App 还在调 `/v1/teams*` 和 Team FFI，要保留兼容（这个容器不能编 iOS / 安卓界面）。
+- 调研原文在 `drafts/projects-survey.json`。脚本在 `drafts/workflows/projects-design.js`。
+- 设计定了再分阶段实现，第一阶段要小、要安全，每阶段都要评审。
+
+### 3. 草稿目录 `docs/progress/drafts/`（都没评审，别当定稿）
+
+| 文件 | 是什么 |
+|---|---|
+| `egress-survey.md` | 出口代理调研两份：我们的现状、业界方案和价格、法律 |
+| `browser-research.json` | 浏览器调研全部结果：4 份调研、3 个方案的成本和工作量、63 条事实核对 |
+| `projects-survey.json` | 项目调研：teams / rls / visibility / keys / sessions / money 六份地图 |
+| `projects-design-A.md` / `-B.md` / `-C.md` | 项目的三份实现设计：A 数据库强制边界，B 跟着 agent 主人、显式检查，C 项目自己持有内容和密钥 |
+| `projects-judgments.json` | 安全、可实现性两个评委的打分、优点、缺点、嫁接、必须修 |
+| `workflows/*.js` | 这两轮设计用的 workflow 脚本，可以改了重跑 |
+
+设计定稿写进正式文档后，把对应的草稿删掉。
+
+### 4. 用户那边要拍板或要做的事
+
+- **浏览器**：默认开还是关（建议关）；国内网站显示“IP 属地 日本”怎么提示；每人每天的浏览分钟上限；开放浏览之前问律师（跨境访问）。
+- **出口代理**：见第 2 节①。
+- **以前就有的**：充值、域名、短信签名、法务复核（`docs/licenses.md` 第 6 节）；可以删掉 GitHub 上的 autosave 分支。
+- **App 那边要做**（12.x / 13.x，这个容器做不了）：
+  - 计划策略模型带上 `notify_success`；
+  - 加 webhook 时预授权里有执行命令、联网、其他或全部的要提示；
+  - `RunSource.ask` 显示成“队友提问”、带 AI 标识，不认识的来源别当成用户发的。
+
+### 5. 规矩（用户定的，一定要遵守）
+
+- 用户不是技术人员：**用简单中文说话**，少用术语，非用不可就用几个字解释。
+- 不让用户在聊天里贴密钥、口令；不打印、不提交密钥。密钥只放云端环境变量（不放启动脚本、不放 Network secrets）；生成的秘密
+  只放 `target/`。
+- 建要花钱的云资源前，先列出费用、等用户同意（免费的 VPC、交换机、安全组可以直接建）。
+- 自动模式拒绝的操作不要想办法绕过，比如释放 EIP、装外部 git 代码、新会话里建云资源：告诉用户，让他在控制台点。
+- 不要再催用户换阿里云 key、作废 Codemagic token。
+- 提交信息不写模型名，只在结尾带那两行 trailer。不建 PR，除非用户要；用户说“合并”才合并。
+- 不在 `main` 上改；小步提交、马上推送；每个提交只改一条线（后端 / iOS / 安卓）；进度记在本文件。
+- **额度**：今天连撞了 3 次 5 小时上限，之后又快撞周额度。
+  - 不要同时跑几个大 workflow。
+  - 每轮跑完马上把中间结果存进 `docs/progress/drafts/` 并推送：workflow 的结果只在本会话的临时目录里，换了会话就没了。
+  - `resumeFromRunId` 只能在同一个会话里用。
+
+
 > **接手先读 [交接文档](../handoff.md)**（2026-10-28）：现在在做阿里云部署（国内站账号、东京、ACS 容器版沙箱实测），下一步和规矩都在那里。
 > 10-28 补：容器版脚本写好了（`deploy/aliyun/acs.py`、`sandbox.py --acs`）；云端会话连不上集群的 API Server，kubectl 要在集群 VPC 里跑（交接文档第 3、4 节）。
 
@@ -161,7 +303,59 @@ P1 后端核心（M1–M9）和 P2 里能在代码层面完成的包都做完了
   剩 `main`、三条线、本分支（和它的 autosave）、`claude/promo-video`（宣传片的制作源码，没进 main，留着）。
 
 进行中：
-- 无。ACS 沙箱后端这一批（2026-10-28，本会话 session_016LgPcdynywrhrjCq8VVFLt，用户定“1、省钱；2、解绑；3、写”）写完了：
+- **agent 之间的交流 8.9–8.12（2026-10-28 晚开工，本会话 session_016LgPcdynywrhrjCq8VVFLt）**：用户说“不急的几项开干”。
+  顺序 8.9 认识队友与查进度 → 8.10 共享看板 → 8.11 问队友 → 8.12 运行中收消息（只做后端；界面 12.24 / 13.17 之后）；
+  之后事件触发（7.1 的事件部分）、项目与跨用户协作（8.13–8.19）。PR #14 已合并，本分支从 main（`a31080b`）重新开始。
+  - 8.9 做完：`agents_list`、`agent_status`（只读对方的运行记录），实例的用途说明和“允许其他 agent 查我、问我”开关
+    （迁移 0024，`PATCH /v1/instances/{id}`，client-core `update_instance`）。
+  - 8.10 做完：共享看板 `board_read`、`board_post`（迁移 0025，`/v1/board`，client-core `board` 等），每用户 200 条没归档的、
+    满了最早的自动归档，归档的 30 天后删。
+  - 8.11 做完（`4122327`、`78d39a4`）：`ask` 工具，问题是提问方运行下来源 `ask` 的子运行，在对方实例上跑、接着对方的会话，
+    用对方自己的授权（问的是信息不是权限）、算提问方运行树的预算。提问方这一轮结束时转入“等待子任务”（`wait_code` 是
+    `answer`），回答到了交还。“谁在等谁”从对方占着实例的运行顺着子运行、排队走，和委派共用（按用户加锁）；一次运行最多问
+    5 次、问里套问最多 2 层；30 分钟没答完、提问方已经结束、对方关了开关的，后台或接口取消（连同回答方开的子孙）。
+    迁移 0026 放宽来源约束：**老版本的 client-core 解析不了 `source: "ask"` 的运行**（严格枚举），上线前一起发版。
+  - 8.12 做完（`9bb0cbb`、`7b38b85`）：排队是默认；`POST /v1/instances/{id}/runs` 带 `delivery: "interrupt"`（client-core
+    `send_urgent_message`）是打断重来；排队的用户消息在 agent 下次调平台工具时捎带在结果后面。
+  - 评审（2026-10-28，4 个方面各一个评审，27 条去重后每组一个反驳者核对）：成立或部分成立的修了（`a0c71f0`、文档 `87d56cb`）：
+    紧急消息到的时候这一轮刚好要转入等待、退避就丢了（现在结束前锁住运行再查）、启动期间到的不再先跑旧任务；紧急消息每条打标记、
+    先来后到，正在被领取的运行也锁上；回答方的产出物只看得到这个问题下面的；关交流开关和建提问用同一把锁、先锁运行再改实例；
+    同一个问题按“还没交还”去重（超时以后可以再问）；交还结果这一轮断了下次重交；看板用户写的也抹保险箱的值、抹完再查长度、
+    取消归档幂等且算新的；`agent_status` 直接查占着实例的运行；后台领取只领本版本认识的来源（`docs/release.md` 第 3 节加了规则）；
+    给 App 的契约文档（`ask` 来源、`ask.sent`、`board.posted`、`wait_code: answer`、AI 标识规则）。
+  - 修复的评审（2026-10-29，3 个方面、每条 2 个反驳者；中途撞上用量上限，恢复后续完）：成立的修了（迁移 0029）：领取时同一实例
+    先领紧急消息，没人去打断的占着实例的运行由新来的紧急消息打断；结果“发给 agent”另记 `handed_at`（处理完这一轮才记已交还），
+    交出去以后再问同一个问题是真的再问、重交的带续跑说明和简报；回答方发布的产出物还放在问题里，但提问方那棵树和 App 看得到
+    （`artifact_scope`，同名先用树自己的）；解密保险箱挪到拿锁、开事务之前；取消整棵树之前按 id 顺序先锁运行；
+    `last_finished_run` 按结束时间；测试用信号代替固定的等待，补了“拿到没回答的那一轮里再问”“会话没接回时不说看过”。
+  - 第三轮（只看上一轮的修复，2026-10-29，2 个方面、每条 2 个反驳者）：成立的修了（`1d858a4`）：前面排着紧急消息时打断记在排第一
+    的那条上（“被打断了”落在紧接着的那一轮、先来后到不乱）；领取时拿到锁再查一次刚提交的紧急消息；产出物范围改成“自己的加上
+    下面各个问题（含问题里再问的）的回答方的”，查询走 `= ANY`、列表最多 500 条；`artifact_list` 带 `artifact_id`，读、取可以按它
+    挑同名的；交还结果先记 `handed_at` 再发、记不下就重试；各条取消路径先按 id 顺序锁运行再改实例。没修：结果交出去这一轮断了、
+    退避期间又有子任务做完时，重交不带续跑说明（两个反驳者意见不一，影响只是少一句说明）。
+  - 没做、记着（评审判断现在不值得或要人定）：一个 agent 能把看板挤满（按作者限额，和“看板按团队、项目分”一起定）；问同一个
+    队友没有总数上限（只有每次运行 5 次、30 分钟超时）；回答方触发的审批没写“谁问的”；新客户端连老服务端时 `delivery` 被忽略；
+    执行器死掉时被取消的运行留下的待处理审批要等它自己过期（取消路径原来就这样）；团队负责人打断成员、Claude 钩子的中途插话。
+  - **上线前必须做**：~~client-core 解析运行列表时来源、状态、种类改成宽松的~~（`182dcb2` 做了：读不了的那条跳过）；iOS、安卓把
+    `RunSource.ask` 显示成“队友提问”、带 AI 标识（现在 iOS 会显示成“你”），不认识的来源别当成用户发的（12.24 / 13.17 一起做，
+    这个容器里没有 Swift 和安卓工具链）。
+  - 已知偶发：`crates/relay/tests/relay.rs` 的 `heartbeats_drop_revoked_frozen_and_silent_computers` 偶尔失败、重跑就过（和本批改动无关）。
+  - 事件触发（7.1 的事件部分）第一版做完（`8da843c`，设计和接口见 [事件触发](../event-triggers.md)）：计划的 webhook
+    （迁移 0030 `plan_hooks`、`runs.hook_id`），外面的服务往 `/v1/webhooks/<令牌>` 发 JSON 或文本，平台按计划起一次运行；建的时候要
+    用户同意、令牌只给一次、库里存哈希；按 webhook、按用户每小时限流，排着的最多 5 个；计划策略加 `notify_success`（成功不打扰）。
+    client-core 和安卓绑定都更新了。没做：平台自己接邮箱、IM 收消息，按服务商校验签名，平台内的事件（看板、产出物）。
+  - webhook 评审（2026-10-29，安全、正确性 2 个方面，16 条每条 2 个反驳者）：成立的修了（`3de0400`，文档 event-triggers.md
+    第 2、3 节）：洪水在查库前挡掉（来源地址只看不扣、每个 webhook 内存里每分钟 30 次、令牌对了才读正文）；第一次查不加锁、
+    超了不解密；加锁时先锁用户再锁 webhook（2 秒等不到回 429）、按用户排队；计划每日 token 上限按最近 24 小时核对；内容加
+    随机标记；飞书、Slack 的 `url_verification`；排着的事件运行不吞定时触发；有 webhook 的计划不能加步骤；删实例连 webhook
+    一起删；成功不打扰的计划不远程开实时活动。没改：事件运行照样用计划的预授权（文档里写了 App 要提示）。
+  - **App 那边要做**（12.x / 13.x）：iOS、安卓的计划策略模型带上 `notify_success`（改计划时整个策略一起提交，漏了会被重新
+    打开）；加 webhook 时预授权里有执行命令、联网、其他或全部的要提示。
+  - 下一步：项目与跨用户协作（8.13–8.19），设计评审进行中（3 个设计、3 个评委、合并、查漏）。
+  - agent 自己的浏览器（2026-10-29 用户问）：调研写在 [浏览器](../browser.md)（建议自己做、AgentBay 以后当大陆浏览器）。
+    用户说先设计“受管控的上网通道”（出口代理，WBS 2.7），再定浏览器：出口代理的设计评审进行中，结果写成 `docs/egress.md`，
+    然后在它上面做浏览器的设计。
+- 已完成：ACS 沙箱后端这一批（2026-10-28，本会话 session_016LgPcdynywrhrjCq8VVFLt，用户定“1、省钱；2、解绑；3、写”）写完了：
   envd 客户端拆到 `envd.rs`（`7beff64`）；`AcsProvider` + 模拟测试，创建时要 Pod IP、拿不到就删沙箱（`0d472b5`）；没有卷的后端
   不乱删沙箱、运行中换地址会记下（`a7ddfe6`）；`[sandbox.acs]`、`THINKTIN_ACS_API_KEY`、`docs/sandbox-acs.md`（`531c38a`）；
   令牌跟着地址走的测试（`f108708`）；`[sandbox.lifecycle]` 计时、`pause_waiting_approval`（`2acd2d9`）；归档的分块加密

@@ -4,9 +4,11 @@ mod account;
 mod agents;
 mod approvals;
 mod artifacts;
+mod board;
 mod credentials;
 mod device_messages;
 mod events;
+mod hooks;
 mod im_channels;
 mod inbox;
 mod instances;
@@ -19,7 +21,7 @@ mod vault;
 mod vendors;
 
 use axum::Router;
-use axum::routing::{delete, get, post, put};
+use axum::routing::{delete, get, patch, post, put};
 use proto::domain::GrantScope;
 
 use crate::AppState;
@@ -95,6 +97,11 @@ pub fn router() -> Router<AppState> {
         .route("/v1/plans/{id}/confirm", post(plans::confirm))
         .route("/v1/plans/{id}/triggers", post(plans::add_trigger))
         .route("/v1/triggers/{id}", delete(plans::delete_trigger))
+        // 计划的 webhook（7.1 事件触发）：管理要登录，收事件不要（令牌在地址里）
+        .route("/v1/plans/{id}/hooks", get(hooks::list).post(hooks::create))
+        .route("/v1/hooks/{id}", patch(hooks::update).delete(hooks::delete))
+        .route("/v1/hooks/{id}/rotate", post(hooks::rotate))
+        .route("/v1/webhooks/{token}", post(hooks::receive))
         // 审批（4.7）
         .route("/v1/approvals", get(approvals::list))
         .route("/v1/approvals/{id}", get(approvals::get))
@@ -165,6 +172,11 @@ pub fn router() -> Router<AppState> {
         .route("/v1/inbox/read", post(inbox::mark_read))
         .route("/v1/inbox/{id}", get(inbox::get).delete(inbox::delete))
         .route("/v1/inbox/{id}/unread", post(inbox::mark_unread))
+        // 共享看板（8.10）
+        .route("/v1/board", get(board::list).post(board::create))
+        .route("/v1/board/{id}", delete(board::delete))
+        .route("/v1/board/{id}/archive", post(board::archive))
+        .route("/v1/board/{id}/unarchive", post(board::unarchive))
         // 事件流（5.2、5.3）
         .route("/v1/instances/{id}/events", get(events::page))
         .route("/v1/instances/{id}/events/ws", get(events::stream))

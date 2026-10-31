@@ -2,12 +2,15 @@
 
 pub mod account;
 pub mod artifacts;
+pub mod ask;
+pub mod board;
 pub mod computer;
 pub mod delegate;
 pub mod exec;
 pub mod executor;
 pub mod live;
 pub mod outbox;
+pub mod peers;
 pub mod pipeline;
 pub mod reports;
 pub mod s3;

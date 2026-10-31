@@ -363,3 +363,23 @@ async fn plans_of_deleted_instances_never_fire() {
     assert_eq!(runs, 0);
     tx.rollback().await.unwrap();
 }
+
+/// webhook 起的、还排着的运行（7.1）不算计划积压的触发：定时触发照常建自己的运行，不并进去。
+#[tokio::test]
+async fn queued_webhook_runs_do_not_swallow_scheduled_fires() {
+    let Some(f) = fixture().await else { return };
+    let t0 = at("2026-10-14T00:00:00Z");
+    let every_5 = ScheduleSpec::Cron {
+        expr: "*/5 * * * *".into(),
+        tz: "UTC".into(),
+    };
+    let (plan, _) = plan_with_trigger(&f, CatchUp::Once, every_5, t0).await;
+    let mut event = store::NewRun::new(f.instance, RunSource::Plan, "an event", "1.2.3");
+    event.plan_id = Some(plan);
+    event.hook_id = Some(proto::domain::PlanHookId::new());
+    let mut w = f.t.db.worker().await.unwrap();
+    w.create_run(f.user, &event).await.unwrap().unwrap();
+    w.commit().await.unwrap();
+    let report = scheduler(&f).tick(t0 + Duration::seconds(1)).await.unwrap();
+    assert_eq!((report.runs_created, report.coalesced), (1, 0));
+}

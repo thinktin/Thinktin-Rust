@@ -238,7 +238,7 @@
   依据：crates/orchestrator/src/waits.rs:75-90；crates/orchestrator/src/executor.rs:1799（transition(WaitingApproval, title)）、1517（"step budget exceeded"）、988-989；crates/orchestrator/src/pipeline.rs:105、111-114；docs/i18n.md 第 3 节（失败原因是英文诊断）
 
 - **AI 生成标识要有一张规则表，ai_generated 只覆盖三种事件**（审查，P1，+0.5 人日）
-  InstanceEvent.ai_generated 只对 agent.message、agent.thought、agent.plan 为真。但界面上还会显示很多 agent 写的文字，这些地方标识位都是 false 或者根本没有标识位：工具调用和平台工具调用的标题、Approval.title（收件箱里审批条目的 ai_generated 是 title.is_some()）、VaultRequest.purpose、created_by=agent 的计划标题、plan.needs_confirmation 和 delegate.started 里的 title、Run.summary、委派子运行的 Run.prompt（是负责人 agent 写的，不能显示成“用户说”）、流水线步骤 prompt 里交接说明附带的上游摘要、产出物名、电脑审批的说明。在 12.1 的 AI 标识组件旁边配一张“字段 → 要不要标”的规则表，12.5、12.6、12.15、12.18 统一用。复制和分享时追加的标识文字要和 proto::labels 的中英文一致。
+  InstanceEvent.ai_generated 只对 agent.message、agent.thought、agent.plan 为真。但界面上还会显示很多 agent 写的文字，这些地方标识位都是 false 或者根本没有标识位：工具调用和平台工具调用的标题、Approval.title（收件箱里审批条目的 ai_generated 是 title.is_some()）、VaultRequest.purpose、created_by=agent 的计划标题、plan.needs_confirmation 和 delegate.started 里的 title、Run.summary、委派子运行和队友提问（source = ask，8.11）的 Run.prompt（是 agent 写的，不能显示成“用户说”）、ask.sent 的 question、看板条目（按 BoardPost.ai_generated）、流水线步骤 prompt 里交接说明附带的上游摘要、产出物名、电脑审批的说明。在 12.1 的 AI 标识组件旁边配一张“字段 → 要不要标”的规则表，12.5、12.6、12.15、12.18 统一用。复制和分享时追加的标识文字要和 proto::labels 的中英文一致。
   依据：crates/proto/src/labels.rs:37-39；crates/orchestrator/src/executor.rs:1782、1903；crates/orchestrator/src/vault.rs:161；crates/orchestrator/src/tools.rs:184；crates/orchestrator/src/delegate.rs:164；crates/orchestrator/src/computer.rs:59；docs/compliance.md:13
 
 - **on_reset 之后要重新拉运行列表；超过 30 天保留期的运行只剩摘要**（审查，P1，+0.25 人日）

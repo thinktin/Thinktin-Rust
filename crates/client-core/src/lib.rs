@@ -15,6 +15,7 @@ pub mod client;
 pub mod error;
 pub mod events;
 pub mod ffi;
+mod lenient;
 pub mod logging;
 pub mod pairing;
 pub mod secrets;
