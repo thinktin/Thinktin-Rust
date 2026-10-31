@@ -96,16 +96,20 @@ public final class OnboardingModel {
         defer { isLoading = false }
         notificationPermission = await notifications.currentPermission()
         do {
-            instances = try await client.instances().filter { $0.state != .deleted }
+            let latestInstances = try await client.instances().filter { $0.state != .deleted }
                 .sorted { $0.lastActiveAt > $1.lastActiveAt }
-            hasCredentials = !(try await client.credentials()).isEmpty
-            if let instance {
-                hasMainRoute = try await client.modelRoutes(instanceID: instance.id).contains(where: \.isMain)
-                hasRun = !(try await client.runs(instanceID: instance.id, limit: 1)).isEmpty
-            } else {
-                hasMainRoute = false
-                hasRun = false
+            let latestHasCredentials = !(try await client.credentials()).isEmpty
+            var latestHasMainRoute = false
+            var latestHasRun = false
+            if let instance = latestInstances.first {
+                latestHasMainRoute = try await client.modelRoutes(instanceID: instance.id).contains(where: \.isMain)
+                latestHasRun = !(try await client.runs(instanceID: instance.id, limit: 1)).isEmpty
             }
+            // 四步必须来自同一次完整检查，避免刷新中断时把旧实例的完成状态套到新实例上。
+            instances = latestInstances
+            hasCredentials = latestHasCredentials
+            hasMainRoute = latestHasMainRoute
+            hasRun = latestHasRun
             error = nil
         } catch {
             if let failure = ConversationErrors.from(error) { self.error = failure }

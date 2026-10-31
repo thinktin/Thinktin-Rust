@@ -192,6 +192,11 @@ struct ImChannelModelTests {
         editor.label = "研发二群"
         editor.isReplacingWebhook = true
         editor.webhookURL = "https://oapi.dingtalk.com/robot/send?access_token=0123456789abcdef"
+        #expect(await editor.save() == nil)
+        #expect(editor.webhookProblem == .differentVendor)
+        #expect(mock.callCount("updateImChannel(_:label:events:enabled:)") == 0)
+        #expect(mock.callCount("replaceImWebhook(_:webhookURL:secret:)") == 0)
+        editor.webhookURL = "https://open.feishu.cn/open-apis/bot/v2/hook/0123456789abcdef"
         editor.secret = "SEC12345"
         mock.failNext("replaceImWebhook(_:webhookURL:secret:)", with: .network(message: "offline"))
         #expect(await editor.save() == nil)
@@ -200,7 +205,7 @@ struct ImChannelModelTests {
 
         let saved = try #require(await editor.save())
         #expect(mock.callCount("updateImChannel(_:label:events:enabled:)") == 1)
-        #expect(saved.vendor == .dingtalk)
+        #expect(saved.vendor == channel.vendor)
         #expect(saved.hasSecret)
         #expect(saved.label == "研发二群")
     }

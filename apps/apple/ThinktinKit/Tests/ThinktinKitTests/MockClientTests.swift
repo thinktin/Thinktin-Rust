@@ -996,11 +996,17 @@ struct MockSettingsTests {
         try await client.testImChannel(channel.id)
         #expect(try await client.imChannels().last?.lastSentAt != nil)
 
+        #expect(
+            await apiCode {
+                _ = try await client.replaceImWebhook(
+                    channel.id, webhookURL: "https://oapi.dingtalk.com/robot/send?access_token=zz99zz99",
+                    secret: "SEC12345")
+            } == .invalid)
         let moved = try await client.replaceImWebhook(
-            channel.id, webhookURL: "https://oapi.dingtalk.com/robot/send?access_token=zz99zz99", secret: "SEC12345")
-        #expect(moved.vendor == .dingtalk)
+            channel.id, webhookURL: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=zz99zz99", secret: nil)
+        #expect(moved.vendor == .wecom)
         #expect(moved.hint == "…zz99")
-        #expect(moved.hasSecret)
+        #expect(!moved.hasSecret)
         // 钉钉的密钥要以 SEC 开头；企业微信没有密钥。
         #expect(
             await apiCode {

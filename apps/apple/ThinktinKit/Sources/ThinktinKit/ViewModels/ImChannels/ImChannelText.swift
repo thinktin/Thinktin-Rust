@@ -37,6 +37,10 @@ public enum ImChannelText {
             return zh
                 ? "不是飞书、Lark、企业微信或钉钉群机器人的 webhook 地址。在群机器人的设置里复制完整的地址，不要改动。"
                 : "That isn't a Feishu, Lark, WeCom or DingTalk group bot webhook. Copy the full address from the bot's settings without changing it."
+        case .differentVendor:
+            return zh
+                ? "请输入原平台的机器人地址。使用其他平台时请新增渠道。"
+                : "Use a webhook from the original platform. Add a channel to use a different platform."
         case .badToken:
             return zh
                 ? "地址后面的 token 缺了或者不完整，重新复制一次。"

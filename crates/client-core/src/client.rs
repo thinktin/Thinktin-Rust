@@ -203,18 +203,16 @@ impl Client {
         self.flush_reads().await?;
         let mut page = self.signed_out_clears(self.api.inbox(None, limit, false).await)?;
         if let Some(c) = &self.cache {
-            c.put_inbox(&page.items)?;
-            page.items = c.inbox(None, limit)?;
-            page.unread = c.unread()?;
+            c.reconcile_inbox_page(&mut page, None, limit)?;
         }
         Ok(page)
     }
 
     /// 更早的一页（直接问服务端，也写进缓存）。
     pub async fn older_inbox(&self, before: InboxItemId, limit: u32) -> Result<Vec<InboxItem>> {
-        let page = self.signed_out_clears(self.api.inbox(Some(before), limit, false).await)?;
+        let mut page = self.signed_out_clears(self.api.inbox(Some(before), limit, false).await)?;
         if let Some(c) = &self.cache {
-            c.put_inbox(&page.items)?;
+            c.reconcile_inbox_page(&mut page, Some(before), limit)?;
         }
         Ok(page.items)
     }
@@ -246,7 +244,7 @@ impl Client {
         };
         let local = c.mark_read_local(ids, up_to)?;
         match self.flush_reads().await {
-            Ok(()) => Ok(local),
+            Ok(()) => c.unread(),
             Err(e) if e.retryable() => Ok(local),
             Err(e) => Err(e),
         }
@@ -270,19 +268,27 @@ impl Client {
     pub async fn mark_inbox_unread(&self, id: InboxItemId) -> Result<i64> {
         self.flush_reads().await?;
         self.signed_out_clears(self.api.mark_inbox_unread(id).await)?;
-        match &self.cache {
-            Some(c) => c.mark_unread_local(id),
-            None => Ok(self.api.inbox(None, 1, true).await?.unread),
+        let Some(c) = &self.cache else {
+            return Ok(self
+                .signed_out_clears(self.api.inbox(None, 1, true).await)?
+                .unread);
+        };
+        if c.contains_inbox_item(id)? {
+            return c.mark_unread_local(id);
         }
+        // 不在本机缓存中的通知无法判断之前是否已读；取服务端角标，也更新本地快照。
+        Ok(self.sync_inbox(1).await?.unread)
     }
 
     /// 删一条通知（缓存里一起删）。
     pub async fn delete_inbox_item(&self, id: InboxItemId) -> Result<()> {
-        self.signed_out_clears(self.api.delete_inbox_item(id).await)?;
-        if let Some(c) = &self.cache {
+        let result = self.signed_out_clears(self.api.delete_inbox_item(id).await);
+        if (result.is_ok() || result.as_ref().is_err_and(|e| e.is_not_found()))
+            && let Some(c) = &self.cache
+        {
             c.remove_inbox(&[id])?;
         }
-        Ok(())
+        result
     }
 
     /// 补发离线时标的已读。
@@ -290,12 +296,16 @@ impl Client {
         let Some(c) = &self.cache else {
             return Ok(());
         };
+        if let Some(through) = c.pending_read_through()? {
+            let unread =
+                self.signed_out_clears(self.api.mark_inbox_read(None, Some(through)).await)?;
+            c.acknowledge_reads(&[], Some(through), Some(unread))?;
+        }
         let pending = c.pending_reads()?;
         for chunk in pending.chunks(500) {
-            match self.api.mark_inbox_read(Some(chunk), None).await {
-                Ok(_) => c.clear_pending_reads(chunk)?,
-                Err(e) => return self.signed_out_clears(Err(e)),
-            }
+            let unread =
+                self.signed_out_clears(self.api.mark_inbox_read(Some(chunk), None).await)?;
+            c.acknowledge_reads(chunk, None, Some(unread))?;
         }
         Ok(())
     }

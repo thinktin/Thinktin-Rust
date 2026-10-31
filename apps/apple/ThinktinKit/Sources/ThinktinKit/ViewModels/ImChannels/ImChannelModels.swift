@@ -168,8 +168,12 @@ public final class ImChannelEditorModel {
 
     public var webhookProblem: ImChannelProblem? {
         guard editsWebhook else { return nil }
-        if case .failure(let problem) = ImChannelRules.parseWebhook(webhookURL) { return problem }
-        return nil
+        switch ImChannelRules.parseWebhook(webhookURL) {
+        case .failure(let problem): return problem
+        case .success(let parsed):
+            if let original, original.vendor != parsed.vendor { return .differentVendor }
+            return nil
+        }
     }
 
     public var secretProblem: ImChannelProblem? {

@@ -6,6 +6,8 @@ public enum ImChannelProblem: Error, Hashable, Sendable {
     case unknownAddress
     /// 地址后面的 token 缺了或者格式不对。
     case badToken
+    /// 换地址时须保留原群机器人的平台。
+    case differentVendor
     /// 企业微信的机器人没有签名密钥。
     case secretNotSupported
     /// 签名密钥是 8 到 128 个可见字符（钉钉的以 SEC 开头）。

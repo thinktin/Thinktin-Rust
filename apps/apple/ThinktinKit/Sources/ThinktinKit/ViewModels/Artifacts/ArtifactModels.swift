@@ -52,12 +52,12 @@ public final class ArtifactLibraryModel {
         do {
             if let instanceID {
                 artifacts = Self.sorted(try await client.instanceArtifacts(instanceID, limit: Self.perInstanceLimit))
+                error = nil
             } else {
                 let instances = try await client.instances().filter { $0.state != .deleted }
                 instanceNames = Self.names(instances)
-                artifacts = Self.sorted(await Self.fetchAll(instances.map(\.id), client: client))
+                await loadArtifacts(for: instances.map(\.id))
             }
-            error = nil
             if let filter, !artifacts.contains(where: { $0.instanceID == filter }) { self.filter = nil }
         } catch {
             if let failure = ConversationErrors.from(error) { self.error = failure }
@@ -90,15 +90,32 @@ public final class ArtifactLibraryModel {
         actionError = nil
     }
 
-    private nonisolated static func fetchAll(_ ids: [InstanceID], client: any ClientProtocol) async -> [Artifact] {
-        await withTaskGroup(of: [Artifact].self) { group in
+    private func loadArtifacts(for ids: [InstanceID]) async {
+        let client = self.client
+        var next: [Artifact] = []
+        var firstError: ClientError?
+        await withTaskGroup(of: (InstanceID, Result<[Artifact], any Error>).self) { group in
             for id in ids {
-                group.addTask { (try? await client.instanceArtifacts(id, limit: perInstanceLimit)) ?? [] }
+                group.addTask {
+                    let result = await AgentsErrors.attempt {
+                        try await client.instanceArtifacts(id, limit: Self.perInstanceLimit)
+                    }
+                    return (id, result)
+                }
             }
-            var all: [Artifact] = []
-            for await list in group { all += list }
-            return all
+            for await (id, result) in group {
+                switch result {
+                case .success(let list):
+                    next += list
+                case .failure(let failure):
+                    // 某个实例暂时拉不到时保留它上次的结果，其余实例仍正常更新。
+                    next += artifacts.filter { $0.instanceID == id }
+                    firstError = firstError ?? ConversationErrors.from(failure)
+                }
+            }
         }
+        artifacts = Self.sorted(next)
+        error = firstError
     }
 
     static func sorted(_ list: [Artifact]) -> [Artifact] {

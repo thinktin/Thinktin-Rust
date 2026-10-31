@@ -116,6 +116,22 @@ struct ApprovalCenterTests {
         #expect(model.approval?.decidedOptionInfo == allow)
     }
 
+    @Test("决定冲突后查最新状态断网，保留待审批项以便重试")
+    func conflictThenOffline() async throws {
+        let client = mock()
+        let model = ApprovalCenterModel(client: client)
+        await model.load()
+        let pending = try #require(model.visible().first)
+        let option = try #require(pending.options.first { $0.kind.isReject })
+        client.failNext(
+            "decideApproval(_:optionID:)", with: .api(status: 409, code: .conflict, message: "", retryAfterSecs: nil))
+        client.failNext("getApproval(_:)", with: .network(message: "offline"))
+        await model.decide(pending, option: option, reason: "")
+        #expect(model.visible().contains { $0.id == pending.id })
+        #expect(model.errors[pending.id] == .client(.network(message: "offline")))
+        #expect(model.notice == nil)
+    }
+
     @Test("详情：推送进来时已经处理过、过期了的显示结论；不存在的说找不到")
     func detailStates() async throws {
         let client = mock()
