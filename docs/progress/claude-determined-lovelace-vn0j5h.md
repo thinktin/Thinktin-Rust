@@ -1,5 +1,7 @@
 # claude/determined-lovelace-vn0j5h
 
+10 月 31 日续接交接中的三项设计，见[受控出网与五种 agent 调研](../egress.md)、[浏览器实现设计](../browser.md#实现设计与验收)、[跨用户项目实现方案](../projects-impl.md)。实际部署、东京 ACS 验收和多人项目功能放量分别使用对应文档的验收条件。
+
 ## ⚠️ 紧急交接（2026-10-29 16:00 UTC，本会话 session_016LgPcdynywrhrjCq8VVFLt 周额度快用完）
 
 **接手的先读这一节。** 下面原来的内容（10-25 起的现状、已完成、坑）照样有效。
