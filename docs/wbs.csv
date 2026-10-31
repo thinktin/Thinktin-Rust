@@ -151,15 +151,20 @@
 13 Android App,13.16,云端审批（审批卡与审批中心）,对话内的审批卡组件（选项、倒计时、已决状态）、跨实例的审批中心、批准前 BiometricPrompt（无生物识别退到锁屏密码）、通知上的直接拒绝；13.5 嵌入、13.8 复用拒绝逻辑,"13.1, 6.13",3,P1,Android
 13 Android App,13.17,agent 交流界面,同 12.24：运行树里的问答、共享看板页、实例的交流开关、排队 / 打断,"8.11, 8.12, 13.7",3,P2,Android
 13 Android App,13.18,项目界面,同 12.25：项目列表与详情、邀请与加入、授权与预算、退出；团队页改成项目页,"1.7, 8.17, 13.7",6,P2,Android
-14 macOS App 与电脑控制,14.1,relay：设备中继,wss 长连接、按会话绑定路由、离线检测,4.2,6,P3,Rust 后端
-14 macOS App 与电脑控制,14.2,desktop：MCP 工具服务,rmcp 工具服务框架、能力令牌校验、本地审计日志,14.1,5,P3,Rust 后端
-14 macOS App 与电脑控制,14.3,desktop：只读工具,看文件、截图（ScreenCaptureKit）,14.2,5,P3,Rust 后端
-14 macOS App 与电脑控制,14.4,desktop：操作工具,键鼠（enigo）、浏览器（chromiumoxide）、文件写入,14.3,8,P3,Rust 后端
-14 macOS App 与电脑控制,14.5,macOS App 界面,菜单栏应用、对话与计划（复用 ThinktinKit）,12.1,6,P3,iOS / macOS
-14 macOS App 与电脑控制,14.6,后台登录项,SMAppService、自启、“正在被控制”提示、一键停止,"14.5, 14.2",4,P3,iOS / macOS
-14 macOS App 与电脑控制,14.7,系统权限引导,屏幕录制、辅助功能权限检测与引导,14.6,3,P3,iOS / macOS
-14 macOS App 与电脑控制,14.8,配对与高危签名（Mac 侧）,显示配对二维码、验证手机签名、回发确认；高危操作验签后执行（手机侧见 12.9）,"14.6, 11.5, 12.9",3,P3,iOS / macOS
-14 macOS App 与电脑控制,14.9,分发,Developer ID 签名、公证、Sparkle 自动更新,14.6,3,P3,iOS / macOS
+14 macOS / Windows 电脑端与电脑控制,14.1,relay：设备中继,wss 长连接、按会话绑定路由、离线检测,4.2,6,P3,Rust 后端
+14 macOS / Windows 电脑端与电脑控制,14.2,desktop：MCP 工具服务,rmcp 工具服务框架、能力令牌校验、本地审计日志,14.1,5,P3,Rust 后端
+14 macOS / Windows 电脑端与电脑控制,14.3,desktop：只读工具,看文件、截图（ScreenCaptureKit）,14.2,5,P3,Rust 后端
+14 macOS / Windows 电脑端与电脑控制,14.4,desktop：操作工具,键鼠（enigo）、浏览器（chromiumoxide）、文件写入,14.3,8,P3,Rust 后端
+14 macOS / Windows 电脑端与电脑控制,14.5,macOS App 界面,菜单栏应用、对话与计划（复用 ThinktinKit）,12.1,6,P3,iOS / macOS
+14 macOS / Windows 电脑端与电脑控制,14.6,后台登录项,SMAppService、自启、“正在被控制”提示、一键停止,"14.5, 14.2",4,P3,iOS / macOS
+14 macOS / Windows 电脑端与电脑控制,14.7,系统权限引导,屏幕录制、辅助功能权限检测与引导,14.6,3,P3,iOS / macOS
+14 macOS / Windows 电脑端与电脑控制,14.8,配对与高危签名（Mac 侧）,显示配对二维码、验证手机签名、回发确认；高危操作验签后执行（手机侧见 12.9）,"14.6, 11.5, 12.9",3,P3,iOS / macOS
+14 macOS / Windows 电脑端与电脑控制,14.9,分发,Developer ID 签名、公证、Sparkle 自动更新,14.6,3,P3,iOS / macOS
+14 macOS / Windows 电脑端与电脑控制,14.10,Windows：平台认电脑,DevicePlatform 加 windows、is_computer；中继、设备消息、登录唤醒；能力令牌认 Windows 路径；手机授权页收 C:\ 路径,"14.1, 11.5",2,P3,Rust 后端
+14 macOS / Windows 电脑端与电脑控制,14.11,Windows：desktop 跨平台与系统工具,PowerShell、回收站、路径；GDI 截图、SendInput 键鼠、ShellExecute 打开、前台程序名、越权点击拦截,"14.10, 14.2",5,P3,Rust 后端
+14 macOS / Windows 电脑端与电脑控制,14.12,Windows 托盘应用,egui 窗口 + 托盘：登录、状态与开始 / 停止、“正在被控制”、配对二维码、授权列表、设置；DPAPI 存会话和配对私钥,"14.11, 11.1",6,P3,Rust 后端
+14 macOS / Windows 电脑端与电脑控制,14.13,Windows 开机自启与语言,注册表 Run 键、--background 启动、按上次开关恢复；中英文、系统中文字体,14.12,2,P3,Rust 后端
+14 macOS / Windows 电脑端与电脑控制,14.14,Windows 分发,windows.yml（lint、测试、未签名 exe）、Inno Setup 安装包、代码签名、发版工作流；自动更新以后做,14.12,3,P3,Rust 后端
 15 安全,15.1,威胁建模,按第 6 节逐项建模，含多 agent 协同与运行授权,1.1,4,P1,安全
 15 安全,15.2,租户隔离测试,RLS、TenantCtx、跨用户访问用例,3.3,4,P1,安全
 15 安全,15.3,agent 加固基线,关技能市场、禁自更新、只回环访问 agent 控制台,6.8,3,P1,安全

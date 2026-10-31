@@ -66,7 +66,10 @@ class AppApiMappersTest {
         assertNull(model.pushChannel)
         assertEquals(now - 5, model.createdAtMs)
         assertEquals(now, model.lastSeenAtMs)
-        assertEquals(DevicePlatform.Unknown, core.copy(platform = "windows").toModel().platform)
+        val windows = core.copy(platform = "windows").toModel()
+        assertEquals(DevicePlatform.Windows, windows.platform)
+        assertTrue(windows.platform.isComputer)
+        assertEquals(DevicePlatform.Unknown, core.copy(platform = "other").toModel().platform)
         assertEquals("fcm", core.copy(pushChannel = "fcm").toModel().pushChannel)
     }
 

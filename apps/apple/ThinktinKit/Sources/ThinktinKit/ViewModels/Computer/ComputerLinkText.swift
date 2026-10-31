@@ -15,7 +15,7 @@ public enum ComputerLinkText {
     public static func noComputers(_ language: DisplayLanguage) -> String {
         language == .chinese
             ? "还没有电脑登录这个账号。在电脑上装好 ThinkTin 并登录后，这里会出现。"
-            : "No computer is signed in to this account. Install ThinkTin on your Mac and sign in, and it shows up here."
+            : "No computer is signed in to this account. Install ThinkTin on your Mac or Windows PC and sign in, and it shows up here."
     }
 
     public static func cannotSign(_ language: DisplayLanguage) -> String {
@@ -77,7 +77,7 @@ public enum ComputerLinkText {
     public static func pairInstructions(_ language: DisplayLanguage) -> String {
         language == .chinese
             ? "在电脑上打开 ThinkTin，选“配对手机”，扫屏幕上的二维码；扫不了的话，把二维码下面的配对码粘贴到这里。"
-            : "On your Mac, open ThinkTin and choose Pair Phone, then scan the QR code. If you can't scan it, paste the pairing code shown under it."
+            : "On your computer, open ThinkTin and choose Pair Phone, then scan the QR code. If you can't scan it, paste the pairing code shown under it."
     }
 
     public static func signReason(_ action: SignAction, computer: String, language: DisplayLanguage) -> String {
@@ -128,7 +128,7 @@ public enum ComputerLinkText {
         case .pairing(.badSignature):
             return zh
                 ? "电脑的签名对不上，没有配对。确认扫的是自己电脑上的二维码。"
-                : "The computer's signature didn't match, so it wasn't paired. Make sure you scanned the code on your own Mac."
+                : "The computer's signature didn't match, so it wasn't paired. Make sure you scanned the code on your own computer."
         case .pairing(.malformed):
             return zh ? "不是 ThinkTin 的配对码。" : "That isn't a ThinkTin pairing code."
         case .signer(.cancelled): return zh ? "没有完成验证。" : "Authentication was cancelled."
