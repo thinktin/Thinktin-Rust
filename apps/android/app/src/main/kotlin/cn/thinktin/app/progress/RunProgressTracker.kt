@@ -30,6 +30,14 @@ class RunProgressTracker(
 ) {
     private val jobs = mutableMapOf<String, Job>()
     private val lock = Any()
+    private var activeService: ThinktinService? = null
+
+    fun bind(service: ThinktinService) = synchronized(lock) {
+        if (activeService !== service) {
+            stopAll()
+            activeService = service
+        }
+    }
     private val trackedRuns = MutableStateFlow<Set<String>>(emptySet())
 
     /** 正在跟的运行（运行页上的开关看它）。 */
@@ -42,6 +50,7 @@ class RunProgressTracker(
     fun track(service: ThinktinService, run: Run, title: String) {
         if (!run.state.isActive) return
         synchronized(lock) {
+            bind(service)
             if (run.id in jobs || jobs.size >= MAX_TRACKED) return
             jobs[run.id] = scope.launch { follow(service, run, title) }
             trackedRuns.update { it + run.id }
@@ -56,6 +65,10 @@ class RunProgressTracker(
                 emptyList()
             }
             var progress = RunProgress.of(run, title, cached)
+            if (progress.isFinished) {
+                notifier.cancel(run.id)
+                return
+            }
             if (!notifier.show(progress)) return
             // 收到运行结束、或者事件流以终止状态结束时停下。
             service.events(run.instanceId).firstOrNull { item ->
@@ -65,19 +78,29 @@ class RunProgressTracker(
                         val next = progress.apply(item.event)
                         if (next != progress) {
                             progress = next
-                            if (next.isFinished) notifier.cancel(run.id) else notifier.show(next)
+                            if (next.isFinished) notifier.cancel(run.id) else if (!notifier.show(next)) return@firstOrNull true
                         }
                         next.isFinished
                     }
-                    is EventStreamItem.Reset -> false
+                    is EventStreamItem.Reset -> {
+                        val fresh = service.getRun(run.id)
+                        progress = progress.copy(state = fresh.state, startedAtMs = fresh.startedAtMs, waitCode = fresh.waitCode)
+                        if (progress.isFinished) notifier.cancel(run.id)
+                        progress.isFinished || !notifier.show(progress)
+                    }
                 }
             }
         } catch (e: ServiceError) {
             // 订阅失败（断网、登录失效）：通知停在最后的状态，计时器照走。
             Log.w(TAG, "运行进度停止更新", e)
         } finally {
-            synchronized(lock) { jobs.remove(run.id) }
-            trackedRuns.update { it - run.id }
+            val current = kotlinx.coroutines.currentCoroutineContext()[Job]
+            synchronized(lock) {
+                if (jobs[run.id] === current) {
+                    jobs.remove(run.id)
+                    trackedRuns.update { it - run.id }
+                }
+            }
         }
     }
 

@@ -26,7 +26,8 @@ class PackageManagerApkInspector(private val context: Context) : ApkInspector {
 
     @Suppress("DEPRECATION")
     private fun signatureFlags(): Int = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-        PackageManager.GET_SIGNING_CERTIFICATES
+        if (Build.VERSION.SDK_INT == Build.VERSION_CODES.P) PackageManager.GET_SIGNING_CERTIFICATES or PackageManager.GET_SIGNATURES
+        else PackageManager.GET_SIGNING_CERTIFICATES
     } else {
         PackageManager.GET_SIGNATURES
     }
@@ -36,7 +37,7 @@ class PackageManagerApkInspector(private val context: Context) : ApkInspector {
         val certificates = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             val signing = signingInfo
             when {
-                signing == null -> null
+                signing == null -> signatures
                 signing.hasMultipleSigners() -> signing.apkContentsSigners
                 else -> signing.signingCertificateHistory?.takeLast(1)?.toTypedArray()
             }

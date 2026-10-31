@@ -170,7 +170,14 @@ class TeamDetailViewModel(private val service: ThinktinService, private val team
         load()
     }
 
-    /** 每次显示时（从编辑页回来）重新取。 */
+    private var shownOnce = false
+
+    fun onShown() {
+        if (shownOnce) load()
+        shownOnce = true
+    }
+
+    /** 从编辑页回来时重新取。 */
     fun load() {
         viewModelScope.launch {
             try {
@@ -272,6 +279,11 @@ class TeamEditViewModel(private val service: ThinktinService, private val teamId
     val events: Flow<TeamEditEvent> = eventChannel.receiveAsFlow()
 
     init {
+        load()
+    }
+
+    fun load() {
+        state.update { it.copy(loading = true, loadError = null) }
         viewModelScope.launch {
             try {
                 val instances = service.instances().filter { it.state != InstanceState.Deleted }
@@ -310,7 +322,7 @@ class TeamEditViewModel(private val service: ThinktinService, private val teamId
 
     fun save() {
         val current = state.value
-        if (current.saving) return
+        if (current.saving || current.loading || current.loadError != null) return
         if (current.problems.isNotEmpty()) {
             state.update { it.copy(showProblems = true) }
             return

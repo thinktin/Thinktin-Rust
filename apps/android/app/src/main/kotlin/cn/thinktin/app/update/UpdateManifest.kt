@@ -41,6 +41,8 @@ data class UpdateManifest(
         fun parse(text: String): UpdateManifest {
             val json = try {
                 JSONObject(text)
+            } catch (e: StackOverflowError) {
+                throw UpdateException(UpdateError.BadManifest, e)
             } catch (e: JSONException) {
                 throw UpdateException(UpdateError.BadManifest, e)
             }

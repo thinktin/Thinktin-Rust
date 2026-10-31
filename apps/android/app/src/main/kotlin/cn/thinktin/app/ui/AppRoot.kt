@@ -8,7 +8,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -87,7 +86,7 @@ private fun ServiceContent(container: AppContainer, service: ThinktinService, de
     val upgradeRequired by service.upgradeState.collectAsStateWithLifecycle()
     PushSync(container, service, auth)
     // 换服务（演示模式开关）时，跟着上一个服务的运行进度通知都撤掉（13.10）。
-    DisposableEffect(service) { onDispose { container.progress.stopAll() } }
+    LaunchedEffect(service) { container.progress.bind(service) }
     CompositionLocalProvider(
         LocalAppContainer provides container,
         LocalThinktinService provides service,
@@ -129,7 +128,7 @@ private fun PushSync(container: AppContainer, service: ThinktinService, auth: Au
                 PushNotifier.cancelAll(context)
             }
             if (auth == AuthState.SignedOut) wasSignedIn = false
-            container.push.sync(service)
+            container.push.pendingAccountRestore.collect { container.push.sync(service) }
         }
     }
 }

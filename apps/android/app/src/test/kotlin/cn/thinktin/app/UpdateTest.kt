@@ -186,8 +186,7 @@ class UpdateTest {
             ApkCheck.verify(ApkInfo("cn.thinktin.app", 2, setOf("aa")), installed.copy(versionCode = 2), manifest),
         )
         assertEquals(UpdateError.Signature, ApkCheck.verify(ApkInfo("cn.thinktin.app", 2, setOf("bb")), installed, manifest))
-        // 读不到签名时交给系统。
-        assertNull(ApkCheck.verify(ApkInfo("cn.thinktin.app", 2, emptySet()), installed, manifest))
+        assertEquals(UpdateError.Signature, ApkCheck.verify(ApkInfo("cn.thinktin.app", 2, emptySet()), installed, manifest))
     }
 
     @Test

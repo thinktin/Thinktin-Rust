@@ -48,13 +48,13 @@ data class RunProgress(
 
     companion object {
         /** 从运行和缓存里这个运行的事件算起。 */
-        fun of(run: Run, title: String, cached: List<InstanceEvent> = emptyList()): RunProgress = cached.fold(
+        fun of(run: Run, title: String, cached: List<InstanceEvent> = emptyList()): RunProgress = cached.sortedBy { it.createdAtMs }.fold(
             RunProgress(
                 runId = run.id, instanceId = run.instanceId, title = title, state = run.state, steps = 0,
                 startedAtMs = run.startedAtMs, waitCode = run.waitCode,
             ),
         ) { progress, event ->
-            if (event.kind == EventKinds.RUN_STATE) progress else progress.apply(event)
+            if (run.state.isTerminal && event.kind == EventKinds.RUN_STATE) progress else progress.apply(event)
         }
     }
 }

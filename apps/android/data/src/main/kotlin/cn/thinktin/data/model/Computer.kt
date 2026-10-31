@@ -177,14 +177,14 @@ object CapabilityRules {
     /** 有效期可选的几档（秒）。 */
     val DURATIONS: List<Long> = listOf(3600L, 8 * 3600L, 24 * 3600L, 7 * 24 * 3600L)
 
-    private val BUNDLE_PART = Regex("^[\\p{L}\\p{N}_-]+$")
+    private val BUNDLE_PART = Regex("^[a-zA-Z0-9_-]+$")
 
     fun isValidDirectory(path: String): Boolean =
-        path.startsWith("/") && '\n' !in path && path.split('/').none { it == ".." }
+        path.startsWith("/") && '\n' !in path && '\r' !in path && path.split('/').none { it == ".." }
 
     fun isValidBundleId(id: String): Boolean {
         val parts = id.split('.')
-        return parts.size >= 2 && parts.all { BUNDLE_PART.matches(it) }
+        return id.length <= 128 && parts.size >= 2 && parts.all { BUNDLE_PART.matches(it) }
     }
 
     /** 整理用户填的：去掉首尾空白、空行、重复的。 */

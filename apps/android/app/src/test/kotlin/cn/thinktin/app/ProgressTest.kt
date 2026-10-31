@@ -103,11 +103,11 @@ class ProgressTest {
         p = p.apply(event(EventKinds.RUN_STATE, payload = state("succeeded")))
         assertTrue(p.isFinished)
         assertNull(p.waitCode)
-        // 缓存里的事件只算步数（状态以运行为准）。
+        // 缓存里已经收到的终止事件覆盖较旧的运行快照。
         val cached = listOf(event(EventKinds.AGENT_TOOL_CALL), event(EventKinds.RUN_STATE, payload = state("failed")))
         val fromCache = RunProgress.of(run(state = RunState.Running), "小码", cached)
         assertEquals(1, fromCache.steps)
-        assertEquals(RunState.Running, fromCache.state)
+        assertEquals(RunState.Failed, fromCache.state)
     }
 
     @Test

@@ -61,7 +61,7 @@ class PushTest {
         assertEquals("thinktin://plan/p1", link("tt_kind" to "plan_confirm", "tt_plan" to "p1"))
         assertEquals("thinktin://run/r1", link("tt_kind" to "run_failed", "tt_run" to "r1", "tt_plan" to "p1"))
         assertEquals("thinktin://plan/p1", link("tt_kind" to "info", "tt_plan" to "p1", "tt_inbox" to "i1"))
-        assertEquals("thinktin://inbox/i1", link("tt_kind" to "computer_approval", "tt_inbox" to "i1"))
+        assertEquals("thinktin://approvals", link("tt_kind" to "computer_approval", "tt_inbox" to "i1"))
         assertEquals("thinktin://inbox", link("tt_kind" to "info"))
     }
 

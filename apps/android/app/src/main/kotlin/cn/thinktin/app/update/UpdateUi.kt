@@ -112,7 +112,8 @@ fun UpdatePanel(updater: Updater, modifier: Modifier = Modifier) {
             is UpdateState.Ready -> PrimaryButton(
                 text = stringResource(R.string.update_install),
                 onClick = {
-                    installNote = when (ApkInstaller.launch(context, current.file)) {
+                    val file = updater.readyFile() ?: return@PrimaryButton
+                    installNote = when (ApkInstaller.launch(context, file)) {
                         InstallLaunch.Started -> null
                         InstallLaunch.NeedsPermission -> R.string.update_needs_permission
                         InstallLaunch.Unavailable -> R.string.update_install_unavailable
@@ -198,7 +199,7 @@ fun UpdateScreen(updater: Updater, onBack: () -> Unit) {
 fun UpdatePrompt(updater: Updater) {
     LaunchedEffect(updater) { updater.checkIfDue() }
     val state by updater.updateState.collectAsStateWithLifecycle()
-    var open by remember { mutableStateOf(false) }
+    var open by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(state) {
         if (state is UpdateState.Available && updater.shouldPrompt) open = true
     }
@@ -221,7 +222,6 @@ fun UpdatePrompt(updater: Updater) {
                     updater.dismiss()
                     open = false
                 },
-                enabled = state !is UpdateState.Downloading,
             ) { Text(stringResource(R.string.update_later)) }
         },
     )

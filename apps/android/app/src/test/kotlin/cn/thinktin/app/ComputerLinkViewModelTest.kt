@@ -310,6 +310,7 @@ class ComputerLinkViewModelTest {
         assertTrue((reopened.uiState.value.error as ComputerLinkError.Signer).error is DeviceSignerException.KeyInvalidated)
         reopened.resetKey()
         advanceUntilIdle()
+        assertTrue(mock.sentDeviceMessages().any { it.kind == DeviceMessageKind.Revocation && issued.grant.tokenId in it.bodyJson })
         assertTrue(reopened.uiState.value.link.computers.isEmpty())
         assertFalse(reopened.uiState.value.needsRepair)
         assertTrue(vm.uiState.value.activeGrants(mac, nowMs).isEmpty())

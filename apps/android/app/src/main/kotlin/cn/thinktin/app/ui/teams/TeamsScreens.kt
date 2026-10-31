@@ -314,11 +314,7 @@ fun TeamDetailScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     val context = LocalContext.current
-    var shown by remember { mutableStateOf(false) }
-    LaunchedEffect(viewModel) {
-        if (shown) viewModel.load()
-        shown = true
-    }
+    LaunchedEffect(viewModel) { viewModel.onShown() }
     LaunchedEffect(viewModel) {
         viewModel.events.collect { event ->
             when (event) {
@@ -464,7 +460,7 @@ fun TeamEditScreen(teamId: String?, onClose: () -> Unit, onSaved: (String) -> Un
                     } else {
                         TextButton(
                             onClick = viewModel::save,
-                            enabled = !state.loading,
+                            enabled = !state.loading && state.loadError == null,
                             modifier = Modifier.testTag(TEAM_SAVE_TEST_TAG),
                         ) { Text(stringResource(R.string.action_save)) }
                     }
@@ -474,6 +470,17 @@ fun TeamEditScreen(teamId: String?, onClose: () -> Unit, onSaved: (String) -> Un
     ) { padding ->
         if (state.loading) {
             Box(Modifier.padding(padding)) { Loading() }
+            return@Scaffold
+        }
+        val loadError = state.loadError
+        if (loadError != null) {
+            EmptyState(
+                title = stringResource(R.string.teams_load_failed),
+                message = loadError.resolve(context),
+                actionLabel = stringResource(R.string.action_retry),
+                onAction = viewModel::load,
+                modifier = Modifier.padding(padding).padding(top = 48.dp),
+            )
             return@Scaffold
         }
         val problems = if (state.showProblems) state.problems else emptySet()
