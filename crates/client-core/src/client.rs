@@ -268,9 +268,12 @@ impl Client {
     pub async fn mark_inbox_unread(&self, id: InboxItemId) -> Result<i64> {
         self.flush_reads().await?;
         self.signed_out_clears(self.api.mark_inbox_unread(id).await)?;
-        if let Some(c) = &self.cache
-            && c.contains_inbox_item(id)?
-        {
+        let Some(c) = &self.cache else {
+            return Ok(self
+                .signed_out_clears(self.api.inbox(None, 1, true).await)?
+                .unread);
+        };
+        if c.contains_inbox_item(id)? {
             return c.mark_unread_local(id);
         }
         // 不在本机缓存中的通知无法判断之前是否已读；取服务端角标，也更新本地快照。
