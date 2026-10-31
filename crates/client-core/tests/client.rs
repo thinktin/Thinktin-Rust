@@ -455,6 +455,17 @@ async fn offline_inbox_reads_are_flushed_later() {
     assert_eq!(first.items.len(), 1);
     assert_eq!(first.unread, 3);
     assert_eq!(online.cached_unread().unwrap(), 3);
+    // 别的设备已读、且从未缓存在本机的通知，标回未读后角标仍须对齐服务端。
+    online
+        .api
+        .mark_inbox_read(Some(&[ids[0]]), None)
+        .await
+        .unwrap();
+    assert_eq!(online.sync_inbox(1).await.unwrap().unread, 2);
+    assert_eq!(online.cached_inbox(None, 50).unwrap().len(), 1);
+    assert_eq!(online.mark_inbox_unread(ids[0]).await.unwrap(), 3);
+    assert_eq!(online.cached_unread().unwrap(), 3);
+
     let next = online.older_inbox(ids[2], 1).await.unwrap();
     assert_eq!(next[0].id, ids[1]);
     assert_eq!(online.cached_unread().unwrap(), 3);

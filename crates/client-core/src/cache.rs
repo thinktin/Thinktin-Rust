@@ -439,7 +439,7 @@ impl Cache {
             }
             tx.execute(
                 "UPDATE inbox_totals SET unread = MAX(0, unread - ?1)",
-                [changed],
+                [changed as i64],
             )?;
             if bulk {
                 // 记下游标，联网后连同尚未缓存的较早通知一起标记。新来的通知不计在内。
@@ -463,6 +463,16 @@ impl Cache {
         })
     }
 
+    pub(crate) fn contains_inbox_item(&self, id: InboxItemId) -> Result<bool> {
+        self.with(|c| {
+            c.query_row(
+                "SELECT EXISTS(SELECT 1 FROM inbox WHERE id = ?1)",
+                [id.to_string()],
+                |r| r.get(0),
+            )
+        })
+    }
+
     /// 标回未读（服务端已经改好了）：待同步的已读也去掉。返回本地未读数。
     pub fn mark_unread_local(&self, id: InboxItemId) -> Result<i64> {
         let id = id.to_string();
@@ -472,7 +482,10 @@ impl Cache {
                 "UPDATE inbox SET read = 0 WHERE id = ?1 AND read = 1",
                 [&id],
             )?;
-            tx.execute("UPDATE inbox_totals SET unread = unread + ?1", [changed])?;
+            tx.execute(
+                "UPDATE inbox_totals SET unread = unread + ?1",
+                [changed as i64],
+            )?;
             tx.execute("DELETE FROM pending_reads WHERE id = ?1", [&id])?;
             let unread = Self::inbox_unread(&tx)?;
             tx.commit()?;
