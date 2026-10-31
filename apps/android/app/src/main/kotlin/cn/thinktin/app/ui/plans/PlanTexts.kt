@@ -168,6 +168,7 @@ fun PlanFormProblem.message(): String = when (this) {
 
 @Composable
 fun PolicyProblem.message(): String = when (this) {
+    PolicyProblem.ApprovalAction -> stringResource(R.string.plan_choose_timeout_action)
     PolicyProblem.ApprovalTimeout -> stringResource(R.string.plan_policy_problem_approval_timeout)
     PolicyProblem.WaitTimeout -> stringResource(R.string.plan_policy_problem_wait_timeout)
     PolicyProblem.MaxDuration -> stringResource(R.string.plan_policy_problem_max_duration)
