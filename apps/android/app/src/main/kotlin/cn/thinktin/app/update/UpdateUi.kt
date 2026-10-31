@@ -199,28 +199,22 @@ fun UpdateScreen(updater: Updater, onBack: () -> Unit) {
 fun UpdatePrompt(updater: Updater) {
     LaunchedEffect(updater) { updater.checkIfDue() }
     val state by updater.updateState.collectAsStateWithLifecycle()
-    var open by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    var openVersion by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<Long?>(null) }
+    val manifest = state.manifest
     LaunchedEffect(state) {
-        if (state is UpdateState.Available && updater.shouldPrompt) open = true
+        if (updater.shouldPrompt) openVersion = manifest?.versionCode
     }
-    if (!open) return
-    val version = when (val current = state) {
-        is UpdateState.Available -> current.manifest.versionName
-        is UpdateState.Downloading -> current.manifest.versionName
-        is UpdateState.Ready -> current.manifest.versionName
-        is UpdateState.Failed -> current.manifest?.versionName
-        else -> null
-    }
+    if (manifest == null || openVersion != manifest.versionCode) return
     AlertDialog(
         onDismissRequest = {},
-        title = { Text(stringResource(R.string.update_prompt_title, version.orEmpty())) },
+        title = { Text(stringResource(R.string.update_prompt_title, manifest.versionName)) },
         text = { UpdatePanel(updater) },
         confirmButton = {},
         dismissButton = {
             TextButton(
                 onClick = {
                     updater.dismiss()
-                    open = false
+                    openVersion = null
                 },
             ) { Text(stringResource(R.string.update_later)) }
         },

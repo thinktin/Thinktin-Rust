@@ -53,6 +53,7 @@ data class PlanEditUiState(
     val loading: Boolean = false,
     val loadError: UiText? = null,
     val notFound: Boolean = false,
+    val teamLoaded: Boolean = false,
     /** 能选的实例（新建时；已删除的不列）。 */
     val instances: List<Instance> = emptyList(),
     val instanceId: String? = null,
@@ -80,7 +81,8 @@ data class PlanEditUiState(
     val isEditing: Boolean get() = mode is PlanEditMode.Edit
 
     /** 编辑、但计划还没拉到。 */
-    val needsLoad: Boolean get() = isEditing && original == null
+    val needsLoad: Boolean
+        get() = (isEditing && original == null) || ((mode as? PlanEditMode.Create)?.teamId != null && !teamLoaded)
 
     val problems: List<PlanFormProblem>
         get() = buildList {
@@ -208,7 +210,7 @@ class PlanEditViewModel(
                 goal = plan.goal,
                 triggers = plan.triggers.map(TriggerItem::existing),
                 policy = PlanPolicyDraft(plan.policy),
-                catchUp = plan.catchUp.takeIf { c -> c != CatchUp.Unknown } ?: CatchUp.Once,
+                catchUp = plan.catchUp,
                 steps = plan.steps.mapIndexed { i, step -> StepDraft.from(step, nextStepId + i) }
                     .also { list -> nextStepId += list.size },
                 removedTriggerIds = emptyList(),
@@ -219,18 +221,20 @@ class PlanEditViewModel(
     /** 本地步骤 id（改键名时认得出是哪一步）。 */
     private var nextStepId = 1L
 
-    /** 用团队建流水线：每个成员一步，负责人最后汇总；计划挂在负责人上。拉不到团队就当普通新建。 */
+    /** 用团队建流水线：每个成员一步，负责人最后汇总；计划挂在负责人上。加载失败可重试。 */
     private suspend fun prefillFromTeam(teamId: String) {
-        if (state.value.steps.isNotEmpty()) return
+        if (state.value.teamLoaded) return
+        state.update { it.copy(loading = true, loadError = null) }
         val team = try {
             service.team(teamId)
-        } catch (_: ServiceError) {
+        } catch (e: ServiceError) {
+            state.update { it.copy(loading = false, loadError = ErrorText.of(e)) }
             return
         }
         val drafts = Pipeline.fromTeam(team, nextStepId)
         nextStepId += drafts.size
         val lead = team.members.firstOrNull { it.role == cn.thinktin.data.model.TeamRole.Lead }?.instanceId
-        state.update { it.copy(steps = drafts, instanceId = lead ?: it.instanceId ?: drafts.firstOrNull()?.instanceId) }
+        state.update { it.copy(loading = false, teamLoaded = true, steps = drafts, instanceId = lead ?: it.instanceId ?: drafts.firstOrNull()?.instanceId) }
     }
 
     // ---- 流水线步骤（13.7） ----

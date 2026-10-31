@@ -138,8 +138,8 @@ export THINKTIN_CORE_LIB_DIR=$PWD/../../target/debug
 ./gradlew :app:assembleCnDebug           # 只打 cn 渠道的 debug 包
 ```
 
-- 产物：`app/build/outputs/apk/{cn,global}/debug/app-*-debug.apk`。
-- 渠道（`dist` 维度）：`cn`（极光推送）、`global`（FCM），各自的源码目录里是 `FlavorPush`（13.8）；`BuildConfig.DIST` 区分。
+- 产物：`app/build/outputs/apk/{cn,global,direct}/debug/app-*-debug.apk`。
+- 渠道见 `BuildConfig.DIST`。`cn` 预留极光推送，`global` 预留 FCM，`direct` 是官网包，共用 cn 推送代码。只有官网包申请安装权限并可在 App 内更新。
 - 后端地址：`BuildConfig.BASE_URL`，默认 `https://api.thinktin.cn`，用 `-PthinktinBaseUrl=...` 覆盖。
 - 云端会话没有模拟器：界面测试是 Robolectric 跑的 Compose 测试（`app`、`design` 的 `src/test`），
   只跑 debug（`app` 只跑 cnDebug）。Robolectric 要的 android-all jar 由 `gradle/robolectric.gradle.kts`
@@ -475,7 +475,7 @@ abortOnError 开着，不用 baseline；release 包跑一遍 R8）→ 解开 rel
   都基于 JUnit 4，混用两套引擎只会多一层 vintage。规范第 1 节已按此修订。纯逻辑测试（`:data`、`:core`、ViewModel）
   也用 JUnit 4 + kotlinx-coroutines-test + Turbine；界面测试是 Robolectric 跑的 Compose 测试。
 
-- 文案全部进资源：`res/values`（中文，默认）和 `res/values-en`（英文），两边的键必须一致（lint 会查）。
+- 文案全部进资源：`res/values-zh`（中文）和 `res/values`（英文，其他语言也用英文），两边的键必须一致（lint 会查）。
   代码标识符用英文，注释用中文。
 - 服务端的状态字符串在 `:data` 里转成枚举（`InstanceState`、`RunState`、`InboxKind`……），未知取值一律 `Unknown`，界面不崩。
   时间统一是 Unix 毫秒（Long），相对时间用 `RelativeTime`。
@@ -510,10 +510,7 @@ abortOnError 开着，不用 baseline；release 包跑一遍 R8）→ 解开 rel
   提示框弹出时旋转屏幕。通知上的“拒绝”快捷操作随 13.8 推送一起做（先 `getApproval` 确认还是待处理再发）。
 - Robolectric 的触摸注入点不到盖在页面上的层（抽屉、领养面板）：触摸落到了下面的内容 / 遮罩上（真机正常），
   这些控件在测试里用无障碍点击动作（`SemanticsActions.OnClick`）。
-- 删除实例后别的流水线只是暂停、步骤留着（11.9 的服务端语义），设计规范 8.6 写的“级联删除”和它不一致；App 和 Mock 按服务端的写。
-  计划页（13.6）还没做，恢复这种流水线时的 409 conflict 现在只有通用文案，到时按“先改步骤”给专门的提示和入口。
-- 团队模板领养（13.7）还没有界面：Mock 已按 11.9 全成或全不成，`AgentDetailViewModel.adoptError` 的 `instance_limit` 映射到时复用，
-  “放不下整个团队”的专门文案随 13.7 加。
+- 删除实例后受影响的流水线暂停，用户在计划详情中先改步骤再恢复。团队模板领养已支持整队领养及实例上限提示。
 - 用量按天的 `key` 按日期解析（`yyyy-MM-dd`）；服务端换格式时柱状图会退化成只有表格。
 - CI 的 APK 不含 .so（见“CI”）。启动时 `TlsInit` 加载不到库，`TlsState.failure` 记下 `UnsatisfiedLinkError`，演示模式照常可用。
 - `TlsInit.initialize`（JNI）只能在真机 / 模拟器上验证（云端会话没有模拟器，JVM 上的 .so 是 Linux 版，没有这个 JNI 函数）；

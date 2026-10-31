@@ -291,6 +291,21 @@ class ComputerLinkViewModelTest {
     }
 
     @Test
+    fun missingRevocationTargetDoesNotPreventResettingInvalidKey() = runTest(dispatcher) {
+        val vm = make()
+        advanceUntilIdle()
+        pairMac(vm)
+        vm.issueGrant(mac, listOf("/Users/me"), emptyList(), 3600, "")
+        advanceUntilIdle()
+        assertTrue(vm.uiState.value.activeGrants(mac, nowMs).isNotEmpty())
+        mock.revokeDevice(mac)
+        vm.resetKey()
+        advanceUntilIdle()
+        assertTrue(vm.uiState.value.link.computers.isEmpty())
+        assertFalse(vm.uiState.value.needsRepair)
+    }
+
+    @Test
     fun keyChangesResetAndUnpairing() = runTest(dispatcher) {
         val vm = make()
         advanceUntilIdle()

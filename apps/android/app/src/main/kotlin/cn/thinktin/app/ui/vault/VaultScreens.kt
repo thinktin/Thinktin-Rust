@@ -94,7 +94,7 @@ private fun VaultFormProblem.text(): String = when (this) {
     VaultFormProblem.NameInvalid -> stringResource(R.string.vault_problem_name_invalid)
     VaultFormProblem.PurposeTooLong -> stringResource(R.string.vault_problem_too_long, VaultRules.MAX_PURPOSE)
     VaultFormProblem.UsernameTooLong -> stringResource(R.string.vault_problem_too_long, VaultRules.MAX_USERNAME)
-    VaultFormProblem.ControlCharacters -> stringResource(R.string.vault_problem_control)
+    VaultFormProblem.PurposeControl, VaultFormProblem.ControlCharacters -> stringResource(R.string.vault_problem_control)
     is VaultFormProblem.Password -> when (problem) {
         VaultRules.PasswordProblem.TooShort -> stringResource(R.string.vault_problem_password_short, VaultRules.MIN_PASSWORD)
         VaultRules.PasswordProblem.TooLong -> stringResource(R.string.vault_problem_password_long)
@@ -499,9 +499,23 @@ fun VaultEditorScreen(itemId: String?, onBack: () -> Unit, onSaved: (VaultItem) 
             }
         }
     }
+    var confirmDiscard by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    val close = {
+        if (!state.saving) {
+            if (state.hasChanges) confirmDiscard = true else onBack()
+        }
+    }
+    androidx.activity.compose.BackHandler(onBack = close)
+    if (confirmDiscard) {
+        ConfirmDialog(
+            title = stringResource(R.string.plan_discard_title), text = stringResource(R.string.plan_discard_text),
+            confirm = stringResource(R.string.plan_discard), onConfirm = { confirmDiscard = false; onBack() },
+            onDismiss = { confirmDiscard = false }, danger = true,
+        )
+    }
     ScreenScaffold(
         title = stringResource(if (state.editing) R.string.vault_edit else R.string.vault_new),
-        onBack = onBack,
+        onBack = close,
         snackbar = snackbar,
         actions = {
             TextButton(
@@ -569,10 +583,10 @@ private fun EditorForm(state: VaultEditorUiState, viewModel: VaultEditorViewMode
             value = state.purpose,
             onValueChange = viewModel::onPurpose,
             label = { Text(purposeLabel) },
-            isError = problem(VaultFormProblem.PurposeTooLong, VaultFormProblem.ControlCharacters) != null,
+            isError = problem(VaultFormProblem.PurposeTooLong, VaultFormProblem.PurposeControl) != null,
             supportingText = {
                 Text(
-                    problem(VaultFormProblem.PurposeTooLong, VaultFormProblem.ControlCharacters)?.text()
+                    problem(VaultFormProblem.PurposeTooLong, VaultFormProblem.PurposeControl)?.text()
                         ?: "${VaultRules.length(state.purpose.trim())}/${VaultRules.MAX_PURPOSE}",
                 )
             },
@@ -586,8 +600,8 @@ private fun EditorForm(state: VaultEditorUiState, viewModel: VaultEditorViewMode
             onValueChange = viewModel::onUsername,
             label = { Text(usernameLabel) },
             singleLine = true,
-            isError = problem(VaultFormProblem.UsernameTooLong) != null,
-            supportingText = problem(VaultFormProblem.UsernameTooLong)?.let { { Text(it.text()) } },
+            isError = problem(VaultFormProblem.UsernameTooLong, VaultFormProblem.ControlCharacters) != null,
+            supportingText = problem(VaultFormProblem.UsernameTooLong, VaultFormProblem.ControlCharacters)?.let { { Text(it.text()) } },
             modifier = Modifier
                 .fillMaxWidth()
                 .semantics { contentDescription = usernameLabel },

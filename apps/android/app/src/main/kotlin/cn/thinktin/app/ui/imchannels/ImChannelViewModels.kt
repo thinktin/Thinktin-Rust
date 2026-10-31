@@ -162,7 +162,13 @@ data class ImChannelEditorUiState(
 
     val supportsSecret: Boolean get() = vendor?.let(ImChannelRules::supportsSecret) ?: true
 
-    val webhookProblem: ImChannelRules.Problem? get() = if (editsWebhook) ImChannelRules.webhookProblem(webhookUrl) else null
+    val webhookProblem: ImChannelRules.Problem?
+        get() {
+            if (!editsWebhook) return null
+            val error = ImChannelRules.webhookProblem(webhookUrl)
+            if (error != null) return error
+            return if (original != null && original.vendor != vendor) ImChannelRules.Problem.DifferentVendor else null
+        }
 
     val secretProblem: ImChannelRules.Problem?
         get() = if (editsWebhook) vendor?.let { ImChannelRules.secretProblem(secret, it) } else null
@@ -265,7 +271,8 @@ class ImChannelEditorViewModel(private val service: ThinktinService, private val
                 eventChannel.trySend(ImChannelEvent.Saved(saved))
             } catch (e: ServiceError) {
                 state.update { it.copy(saving = false) }
-                eventChannel.trySend(ImChannelEvent.Notice(ErrorText.of(e)))
+                val message = if (e is ServiceError.Api && e.status == 409) UiText(R.string.im_already_bound) else ErrorText.of(e)
+                eventChannel.trySend(ImChannelEvent.Notice(message))
             }
         }
     }

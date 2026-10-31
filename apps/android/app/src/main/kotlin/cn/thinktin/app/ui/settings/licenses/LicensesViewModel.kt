@@ -1,6 +1,7 @@
 package cn.thinktin.app.ui.settings.licenses
 
 import android.content.res.AssetManager
+import cn.thinktin.app.R
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CoroutineDispatcher
@@ -43,15 +44,15 @@ class AssetLicenseSource(private val assets: AssetManager, private val directory
 }
 
 /** App 自己打进包里的库（README“第三方依赖与许可证”那张表；Gradle 依赖不在客户端核心的清单里）。 */
-data class AppDependency(val name: String, val license: String)
+data class AppDependency(val nameRes: Int, val license: String)
 
 val APP_DEPENDENCIES = listOf(
-    AppDependency("AndroidX（core、activity、lifecycle、navigation、datastore、security-crypto、appcompat、biometric）", "Apache-2.0"),
-    AppDependency("Jetpack Compose（UI、Material 3、Material Icons）", "Apache-2.0"),
-    AppDependency("kotlinx-coroutines、kotlinx-serialization", "Apache-2.0"),
-    AppDependency("commonmark（含 GFM 表格、删除线扩展）", "BSD-2-Clause"),
-    AppDependency("JNA", "Apache-2.0 OR LGPL-2.1"),
-    AppDependency("rustls-platform-verifier（Android 组件）", "Apache-2.0 OR MIT"),
+    AppDependency(R.string.licenses_dep_androidx, "Apache-2.0"),
+    AppDependency(R.string.licenses_dep_compose, "Apache-2.0"),
+    AppDependency(R.string.licenses_dep_kotlinx, "Apache-2.0"),
+    AppDependency(R.string.licenses_dep_commonmark, "BSD-2-Clause"),
+    AppDependency(R.string.licenses_dep_jna, "Apache-2.0 OR LGPL-2.1"),
+    AppDependency(R.string.licenses_dep_rustls, "Apache-2.0 OR MIT"),
 )
 
 sealed interface InventoryState {
@@ -72,13 +73,12 @@ data class LicensesUiState(
         get() = (inventory as? InventoryState.Loaded)?.inventory?.groups(query).orEmpty()
 
     /** 搜索后 App 自己的库还剩哪些。 */
-    val appDependencies: List<AppDependency>
-        get() {
-            val tokens = searchTokens(query)
-            return APP_DEPENDENCIES.filter { dep ->
-                tokens.all { dep.name.contains(it, ignoreCase = true) || dep.license.contains(it, ignoreCase = true) }
-            }
+    fun appDependencies(label: (Int) -> String): List<AppDependency> {
+        val tokens = searchTokens(query)
+        return APP_DEPENDENCIES.filter { dep ->
+            tokens.all { label(dep.nameRes).contains(it, ignoreCase = true) || dep.license.contains(it, ignoreCase = true) }
         }
+    }
 }
 
 /**

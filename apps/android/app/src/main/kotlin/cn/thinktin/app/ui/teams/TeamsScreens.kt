@@ -243,6 +243,8 @@ private fun TemplateRow(
 ) {
     var menu by remember { mutableStateOf(false) }
     val leadLabel = stringResource(R.string.team_role_lead)
+    val context = LocalContext.current
+    val separator = stringResource(R.string.plan_list_separator)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -254,8 +256,8 @@ private fun TemplateRow(
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(template.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
-                template.members.joinToString("、") { m ->
-                    if (m.role == TeamRole.Lead) "${m.name}（$leadLabel）" else m.name
+                template.members.joinToString(separator) { m ->
+                    if (m.role == TeamRole.Lead) context.getString(R.string.team_member_with_role, m.name, leadLabel) else m.name
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -376,6 +378,9 @@ fun TeamDetailScreen(
                     ) {
                         Column(Modifier.weight(1f)) {
                             Text(instance?.name ?: member.instanceId, style = MaterialTheme.typography.bodyLarge)
+                            if (member.instanceId in state.missingModel) {
+                                Text(stringResource(R.string.routes_main_missing), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                            }
                             Text(
                                 stringResource(if (member.role == TeamRole.Lead) R.string.team_role_lead else R.string.team_role_member),
                                 style = MaterialTheme.typography.bodySmall,
@@ -390,7 +395,7 @@ fun TeamDetailScreen(
                     }
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
-                Text(
+                if (state.missingModel.isNotEmpty()) Text(
                     stringResource(R.string.team_routes_hint),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

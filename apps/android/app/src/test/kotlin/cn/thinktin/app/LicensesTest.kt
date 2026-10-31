@@ -139,9 +139,9 @@ class LicensesTest {
         vm.onQueryChange("ring")
         assertEquals(listOf("ring"), vm.uiState.value.groups.flatMap { it.components }.map { it.name })
         // App 自己的库也按搜索词过滤。
-        assertTrue(vm.uiState.value.appDependencies.isEmpty())
+        assertTrue(vm.uiState.value.appDependencies { if (it == R.string.licenses_dep_jna) "JNA" else "lib" }.isEmpty())
         vm.onQueryChange("jna")
-        assertEquals(1, vm.uiState.value.appDependencies.size)
+        assertEquals(1, vm.uiState.value.appDependencies { if (it == R.string.licenses_dep_jna) "JNA" else "lib" }.size)
         vm.toggle("cargo:ring@0.17.8")
         assertTrue("cargo:ring@0.17.8" in vm.uiState.value.expanded)
         vm.toggle("cargo:ring@0.17.8")

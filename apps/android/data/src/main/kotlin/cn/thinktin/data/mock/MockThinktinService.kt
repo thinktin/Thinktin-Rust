@@ -127,6 +127,7 @@ class MockThinktinService(
     private val imChannelList = data.imChannels.toMutableList()
 
     /** 最近一小时发过的 IM 测试消息（毫秒时间）。 */
+    private val imWebhooks = mutableMapOf<String, ImChannelRules.ParsedWebhook>()
     private val imTests = mutableListOf<Long>()
     private var idCounter = 0
     private var scriptStep = 0
@@ -805,6 +806,7 @@ class MockThinktinService(
         lag()
         return updatePlanLocked(planId) { plan ->
             refuseDeletedSteps(plan)
+            if (!plan.awaitingConfirmation) throw ServiceError.Api(409, "conflict", "the plan is not waiting for confirmation", null)
             if (plan.revision != revision) {
                 throw ServiceError.Api(409, "conflict", "plan revision changed", null)
             }
@@ -1011,11 +1013,18 @@ class MockThinktinService(
         }
     }
 
+    private fun requireAvailableWebhook(webhook: ImChannelRules.ParsedWebhook, exceptId: String? = null) {
+        if (imWebhooks.any { (id, existing) -> id != exceptId && existing == webhook }) {
+            throw ServiceError.Api(409, "conflict", "this group bot is already bound to another channel", null)
+        }
+    }
+
     override suspend fun addImChannel(channel: NewImChannel): ImChannel {
         lag()
         return synchronized(lock) {
             val parsed = checkImWebhook(channel.webhookUrl, channel.secret)
             checkImLabelAndEvents(channel.label, channel.events)
+            requireAvailableWebhook(parsed)
             if (imChannelList.size >= ImChannelRules.MAX_CHANNELS) {
                 invalid("at most ${ImChannelRules.MAX_CHANNELS} IM channels per account")
             }
@@ -1024,7 +1033,10 @@ class MockThinktinService(
                 hint = ImChannelRules.hint(parsed.token), hasSecret = !channel.secret.isNullOrBlank(),
                 events = channel.events ?: ImEvents.ALL, enabled = true, lastSentAtMs = null, lastError = null,
                 createdAtMs = clock(),
-            ).also { imChannelList.add(it) }
+            ).also {
+                imChannelList.add(it)
+                imWebhooks[it.id] = parsed
+            }
         }
     }
 
@@ -1047,6 +1059,7 @@ class MockThinktinService(
         lag()
         synchronized(lock) {
             if (!imChannelList.removeAll { it.id == channelId }) notFound("im channel", channelId)
+            imWebhooks.remove(channelId)
         }
     }
 
@@ -1075,6 +1088,9 @@ class MockThinktinService(
             val i = imChannelList.indexOfFirst { it.id == channelId }
             if (i < 0) notFound("im channel", channelId)
             val old = imChannelList[i]
+            if (old.vendor != parsed.vendor) invalid("the new webhook belongs to a different vendor; add it as a new channel")
+            requireAvailableWebhook(parsed, exceptId = channelId)
+            imWebhooks[channelId] = parsed
             old.copy(
                 vendor = parsed.vendor,
                 hint = ImChannelRules.hint(parsed.token),

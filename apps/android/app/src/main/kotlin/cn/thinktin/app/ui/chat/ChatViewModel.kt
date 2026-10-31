@@ -139,6 +139,8 @@ sealed interface ChatEvent {
 /** 产出物下载到哪（App 的缓存目录；测试里换成临时目录）。 */
 fun interface ArtifactFiles {
     suspend fun save(artifactId: String, name: String, bytes: ByteArray): File
+
+    suspend fun clear() = Unit
 }
 
 /**

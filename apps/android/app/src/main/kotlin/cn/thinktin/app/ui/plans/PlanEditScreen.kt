@@ -323,6 +323,9 @@ private fun PolicyForm(policy: PlanPolicyDraft, viewModel: PlanEditViewModel) {
         error = PolicyProblem.ApprovalTimeout in problems,
         decimal = true,
     ) { v -> viewModel.updatePolicy { it.copy(approvalTimeoutHours = v) } }
+    if (PolicyProblem.ApprovalAction in problems) {
+        Text(stringResource(R.string.plan_choose_timeout_action), color = MaterialTheme.colorScheme.error)
+    }
     Text(stringResource(R.string.plan_policy_on_timeout), style = MaterialTheme.typography.labelLarge)
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         listOf(ApprovalTimeoutAction.PausePlan, ApprovalTimeoutAction.Skip, ApprovalTimeoutAction.Fail).forEach { action ->

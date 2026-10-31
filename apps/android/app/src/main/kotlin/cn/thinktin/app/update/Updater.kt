@@ -18,20 +18,22 @@ import java.security.MessageDigest
 
 /** 应用内更新的状态（13.12）。 */
 sealed interface UpdateState {
+    val manifest: UpdateManifest? get() = null
+
     data object Idle : UpdateState
 
     data object Checking : UpdateState
 
     data object UpToDate : UpdateState
 
-    data class Available(val manifest: UpdateManifest) : UpdateState
+    data class Available(override val manifest: UpdateManifest) : UpdateState
 
-    data class Downloading(val manifest: UpdateManifest, val read: Long) : UpdateState
+    data class Downloading(override val manifest: UpdateManifest, val read: Long) : UpdateState
 
     /** 下好了、校验过了，等交给系统安装。 */
-    data class Ready(val manifest: UpdateManifest, val file: File) : UpdateState
+    data class Ready(override val manifest: UpdateManifest, val file: File) : UpdateState
 
-    data class Failed(val error: UpdateError, val manifest: UpdateManifest?) : UpdateState
+    data class Failed(val error: UpdateError, override val manifest: UpdateManifest?) : UpdateState
 }
 
 /** 一个 https 地址的内容（测试里换成假的）。 */
@@ -162,7 +164,7 @@ class Updater(
 
     /** “以后再说”：这个版本不再自动提示。 */
     fun dismiss() {
-        (state.value as? UpdateState.Available)?.let { prefs.dismissedVersion = it.manifest.versionCode }
+        state.value.manifest?.let { prefs.dismissedVersion = it.versionCode }
     }
 
     fun readyFile(): File? {

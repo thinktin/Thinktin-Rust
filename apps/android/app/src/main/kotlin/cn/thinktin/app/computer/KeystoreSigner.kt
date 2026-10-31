@@ -79,6 +79,7 @@ class KeystoreSigner(
                 keyStore().deleteEntry(alias)
             } catch (e: GeneralSecurityException) {
                 Log.e(TAG, "cannot delete the signing key", e)
+                throw DeviceSignerException.Failed(e.javaClass.simpleName)
             }
         }
     }

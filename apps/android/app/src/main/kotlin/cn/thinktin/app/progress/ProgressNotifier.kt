@@ -57,6 +57,7 @@ class SystemProgressNotifier(private val context: Context) : ProgressNotifier {
     }
 
     internal fun build(progress: RunProgress): android.app.Notification {
+        val context = androidx.core.content.ContextCompat.getContextForLanguage(context)
         val state = context.getString(progress.state.labelRes())
         val wait = WaitText.of(progress.waitCode)?.let { context.getString(it.resId, *it.args.toTypedArray()) }
         val steps = context.resources.getQuantityString(R.plurals.progress_steps, progress.steps, progress.steps)

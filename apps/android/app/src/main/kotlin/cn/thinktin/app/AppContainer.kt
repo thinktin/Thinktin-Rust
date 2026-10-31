@@ -209,10 +209,10 @@ class AppContainer(
 
     /**
      * 系统里的“应用语言”（[cn.thinktin.app.settings.AppLocales.current]）和存的不一样（用户在系统设置里改过）：以系统的为准。
-     * 系统里没设（跟随系统）时不动存的值：Android 13 以前没有系统设置，AppCompat 记下的就是设置里选的。
+     * Android 13 起清空语言即跟随系统；更早的系统没有这项系统设置，AppCompat 记下的就是设置里选的。
      */
     fun followSystemAppLanguage(language: AppLanguage) {
-        if (language == AppLanguage.System) return
+        if (language == AppLanguage.System && android.os.Build.VERSION.SDK_INT < 33) return
         scope.launch {
             if (settings.first().language != language) settingsRepository.setLanguage(language)
         }
@@ -274,10 +274,11 @@ class AppContainer(
     private suspend fun followLanguage(service: ThinktinService) {
         settings.map { it.language }
             .distinctUntilChanged()
-            .combine(localeChanges) { language, _ -> language }
-            .collect { language ->
+            .combine(localeChanges) { language, _ -> languageTags(language) }
+            .distinctUntilChanged()
+            .collect { tags ->
                 try {
-                    service.setAcceptLanguage(languageTags(language))
+                    service.setAcceptLanguage(tags)
                 } catch (e: Exception) {
                     // 只是请求头：失败不影响使用（日志里记一下）。
                     Log.w(TAG, "设置 Accept-Language 失败", e)

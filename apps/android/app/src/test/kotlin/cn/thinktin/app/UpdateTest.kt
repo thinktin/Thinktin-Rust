@@ -235,12 +235,18 @@ class UpdateTest {
 
     @Test
     fun downloadIsVerifiedBeforeInstall() = runTest {
-        val good = updater()
+        val goodPrefs = MemoryUpdatePrefs()
+        val good = updater(prefs = goodPrefs)
         good.checkNow()
         good.downloadNow(UpdateManifest.parse(UpdateFixture.manifestJson()))
         val ready = good.updateState.value as UpdateState.Ready
         assertTrue(ready.file.exists())
         assertEquals(UpdateFixture.apk.size.toLong(), ready.file.length())
+        good.dismiss()
+        assertEquals(ready.manifest.versionCode, goodPrefs.dismissedVersion)
+        assertTrue(ready.file.delete())
+        assertNull(good.readyFile())
+        assertEquals(UpdateError.Storage, (good.updateState.value as UpdateState.Failed).error)
 
         // SHA-256 不对：删掉，报校验失败。
         val badHash = updater(http = UpdateFixture.http(UpdateFixture.manifestJson(sha256 = "0".repeat(64))))

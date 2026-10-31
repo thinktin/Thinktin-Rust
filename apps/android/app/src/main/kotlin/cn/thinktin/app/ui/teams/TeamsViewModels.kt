@@ -13,6 +13,9 @@ import cn.thinktin.data.model.TeamRole
 import cn.thinktin.data.model.TeamTemplate
 import cn.thinktin.data.service.ServiceError
 import cn.thinktin.data.service.ThinktinService
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -123,12 +126,15 @@ class TeamsViewModel(private val service: ThinktinService) : ViewModel() {
         viewModelScope.launch {
             try {
                 service.deleteTeamTemplate(template.id)
-                state.update { s -> s.copy(busyTemplate = null, templates = s.templates.filterNot { it.id == template.id }) }
-                eventChannel.trySend(TeamsEvent.Notice(UiText(R.string.team_template_deleted)))
             } catch (e: ServiceError) {
-                state.update { it.copy(busyTemplate = null) }
-                eventChannel.trySend(TeamsEvent.Notice(ErrorText.of(e)))
+                if (e !is ServiceError.Api || (e.status != 404 && e.code != "not_found")) {
+                    state.update { it.copy(busyTemplate = null) }
+                    eventChannel.trySend(TeamsEvent.Notice(ErrorText.of(e)))
+                    return@launch
+                }
             }
+            state.update { s -> s.copy(busyTemplate = null, templates = s.templates.filterNot { it.id == template.id }) }
+            eventChannel.trySend(TeamsEvent.Notice(UiText(R.string.team_template_deleted)))
         }
     }
 }
@@ -145,6 +151,7 @@ data class TeamDetailUiState(
     val team: Team? = null,
     val instances: Map<String, Instance> = emptyMap(),
     val missing: Boolean = false,
+    val missingModel: Set<String> = emptySet(),
     val loadError: UiText? = null,
     val busy: Boolean = false,
     /** 删除、存为模板的确认。 */
@@ -183,7 +190,20 @@ class TeamDetailViewModel(private val service: ThinktinService, private val team
             try {
                 val team = service.team(teamId)
                 val instances = service.instances().filter { it.state != InstanceState.Deleted }.associateBy { it.id }
-                state.update { it.copy(loading = false, team = team, instances = instances, missing = false, loadError = null) }
+                val missingModel = coroutineScope {
+                    team.members.filter { it.instanceId in instances }.map { member ->
+                        async {
+                            try {
+                                member.instanceId.takeIf { id -> service.modelRoutes(id).none { it.alias == "main" } }
+                            } catch (_: ServiceError) {
+                                null
+                            }
+                        }
+                    }.awaitAll().filterNotNull().toSet()
+                }
+                state.update {
+                    it.copy(loading = false, team = team, instances = instances, missingModel = missingModel, missing = false, loadError = null)
+                }
             } catch (e: ServiceError) {
                 val notFound = e is ServiceError.Api && (e.code == "not_found" || e.status == 404)
                 state.update {
@@ -204,12 +224,15 @@ class TeamDetailViewModel(private val service: ThinktinService, private val team
         viewModelScope.launch {
             try {
                 service.deleteTeam(teamId)
-                state.update { it.copy(busy = false, confirmDelete = false) }
-                eventChannel.trySend(TeamDetailEvent.Deleted)
             } catch (e: ServiceError) {
-                state.update { it.copy(busy = false, confirmDelete = false) }
-                eventChannel.trySend(TeamDetailEvent.Notice(ErrorText.of(e)))
+                if (e !is ServiceError.Api || (e.status != 404 && e.code != "not_found")) {
+                    state.update { it.copy(busy = false, confirmDelete = false) }
+                    eventChannel.trySend(TeamDetailEvent.Notice(ErrorText.of(e)))
+                    return@launch
+                }
             }
+            state.update { it.copy(busy = false, confirmDelete = false) }
+            eventChannel.trySend(TeamDetailEvent.Deleted)
         }
     }
 

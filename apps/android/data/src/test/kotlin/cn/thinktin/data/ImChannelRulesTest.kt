@@ -83,7 +83,7 @@ class ImChannelRulesTest {
         assertNull(ImChannelRules.labelProblem(""))
         assertNull(ImChannelRules.labelProblem("群".repeat(64)))
         assertEquals(Problem.BadLabel, ImChannelRules.labelProblem("群".repeat(65)))
-        assertEquals(Problem.BadLabel, ImChannelRules.labelProblem("研发\n群"))
+        assertEquals(Problem.LabelControl, ImChannelRules.labelProblem("研发\n群"))
         assertEquals(Problem.NoEvents, ImChannelRules.eventsProblem(emptyList()))
         assertNull(ImChannelRules.eventsProblem(listOf("approval")))
     }

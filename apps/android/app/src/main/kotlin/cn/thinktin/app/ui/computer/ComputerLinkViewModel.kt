@@ -276,14 +276,17 @@ class ComputerLinkViewModel(
     // ---- 配对 ----
 
     /** 扫到的二维码（或者粘贴的配对码）：签配对回复发给电脑，之后等确认（[awaitConfirmation]）。 */
-    fun pair(code: String, reason: String) {
+    fun pair(code: String, reason: String) = pair(code) { reason }
+
+    fun pair(code: String, reasonFor: (String) -> String) {
         val me = currentDeviceId ?: return
         val userId = userId ?: return
         work {
             val offer = codec.parseOffer(code.trim())
-            if (state.value.computers.none { it.id == offer.desktopId }) throw LinkFailure(ComputerLinkError.NotYourComputer)
+            val target = state.value.computers.firstOrNull { it.id == offer.desktopId }
+                ?: throw LinkFailure(ComputerLinkError.NotYourComputer)
             val phoneKey = currentPublicKey()
-            val signature = signer.sign(codec.responseMessage(offer, me, phoneKey), reason)
+            val signature = signer.sign(codec.responseMessage(offer, me, phoneKey), reasonFor(target.name))
             val body = buildJsonObject {
                 put("nonce", offer.nonce)
                 put("phone_key", phoneKey)
@@ -402,7 +405,12 @@ class ComputerLinkViewModel(
     private suspend fun revokeNow(issued: IssuedGrant) {
         val userId = userId ?: return
         val body = buildJsonObject { put("token_id", issued.grant.tokenId) }
-        service.sendDeviceMessage(issued.grant.desktopId, DeviceMessageKind.Revocation, body.toString())
+        try {
+            service.sendDeviceMessage(issued.grant.desktopId, DeviceMessageKind.Revocation, body.toString())
+        } catch (e: ServiceError.Api) {
+            // 中继只向账号下仍有效的设备投递。已移除的电脑不会再收到消息。
+            if (e.status != 404 && e.code != "not_found") throw e
+        }
         store.update(userId) { s ->
             s.copy(grants = s.grants.map { if (it.grant.tokenId == issued.grant.tokenId) it.copy(revoked = true) else it })
         }
