@@ -118,6 +118,7 @@ private fun PushSync(container: AppContainer, service: ThinktinService, auth: Au
         if (auth == AuthState.SignedIn) {
             wasSignedIn = true
             if (!service.isDemo) {
+                container.push.sync(service)
                 FlavorPush.start(context.applicationContext) { token -> container.push.onNewToken(FlavorPush.channel, token) }
             }
             combine(container.push.token, container.push.pendingReads) { _, _ -> }

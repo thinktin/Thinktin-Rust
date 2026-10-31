@@ -37,6 +37,12 @@ class PushCoordinator {
 
     private val mutex = Mutex()
 
+    @Volatile
+    private var foregroundAccount: Pair<ThinktinService, String>? = null
+
+    internal val notificationAccountId: String?
+        get() = foregroundAccount?.takeIf { it.first.authState.value == AuthState.SignedIn }?.second
+
     /** 已经报过的（服务按对象认：切换演示模式换了服务要重新报）。 */
     private var reported: Pair<ThinktinService, PushToken>? = null
 
@@ -61,8 +67,19 @@ class PushCoordinator {
             }
         }
         if (service.authState.value != AuthState.SignedIn) {
+            foregroundAccount = null
             if (reported?.first === service) reported = null
             return@withLock
+        }
+        if (foregroundAccount?.first !== service) {
+            foregroundAccount = null
+            if (!service.isDemo) {
+                try {
+                    foregroundAccount = service to service.me().id
+                } catch (_: ServiceError) {
+                    // 还不能确认通知属于哪个账号时，只提供打开 App 的入口。
+                }
+            }
         }
         val token = tokenState.value
         val last = reported

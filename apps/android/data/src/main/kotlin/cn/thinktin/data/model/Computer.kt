@@ -177,10 +177,21 @@ object CapabilityRules {
     /** 有效期可选的几档（秒）。 */
     val DURATIONS: List<Long> = listOf(3600L, 8 * 3600L, 24 * 3600L, 7 * 24 * 3600L)
 
-    private val BUNDLE_PART = Regex("^[a-zA-Z0-9_-]+$")
+    private val BUNDLE_PART = Regex("^[A-Za-z0-9_-]+$")
 
-    fun isValidDirectory(path: String): Boolean =
-        path.startsWith("/") && '\n' !in path && '\r' !in path && path.split('/').none { it == ".." }
+    private val WINDOWS_ROOT = Regex("^[A-Za-z]:[\\\\/]")
+    private val WINDOWS_DEVICE = Regex("(?i:CON|PRN|AUX|NUL|CONIN\\$|CONOUT\\$|(?:COM|LPT)[1-9¹²³])")
+
+    /** 目录授权只收普通绝对路径。Windows 用盘符根，不收设备路径或备用数据流。 */
+    fun isValidDirectory(path: String): Boolean {
+        if ('\r' in path || '\n' in path) return false
+        if (path.startsWith("/")) return !path.startsWith("//") && path.split('/').none { it == ".." }
+        if (!WINDOWS_ROOT.containsMatchIn(path)) return false
+        return path.drop(3).split('/', '\\').all { part ->
+            part.none { it < ' ' || it in "<>:\"|?*" } && !part.endsWith('.') && !part.endsWith(' ') &&
+                !WINDOWS_DEVICE.matches(part.substringBefore('.').trimEnd())
+        }
+    }
 
     fun isValidBundleId(id: String): Boolean {
         val parts = id.split('.')

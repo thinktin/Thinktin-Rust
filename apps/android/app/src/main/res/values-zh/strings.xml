@@ -1363,4 +1363,5 @@
         <item quantity="other">%1$d 天后</item>
     </plurals>
     <string name="run_progress_blocked">请在系统通知设置中打开 ThinkTin 的运行进度通知。</string>
+    <string name="notification_reject_once">拒绝这一次</string>
 </resources>
