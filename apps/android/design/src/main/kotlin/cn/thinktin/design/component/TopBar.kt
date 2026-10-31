@@ -31,6 +31,7 @@ fun ThinktinTopBar(
     navigationIcon: ImageVector? = null,
     navigationContentDescription: String? = null,
     onNavigationClick: () -> Unit = {},
+    navigationEnabled: Boolean = true,
     actions: @Composable RowScope.() -> Unit = {},
 ) {
     CenterAlignedTopAppBar(
@@ -45,7 +46,7 @@ fun ThinktinTopBar(
         },
         navigationIcon = {
             if (navigationIcon != null) {
-                IconButton(onClick = onNavigationClick) {
+                IconButton(onClick = onNavigationClick, enabled = navigationEnabled) {
                     Icon(navigationIcon, contentDescription = navigationContentDescription)
                 }
             }

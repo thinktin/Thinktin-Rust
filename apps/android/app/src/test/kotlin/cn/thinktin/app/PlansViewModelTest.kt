@@ -451,6 +451,27 @@ class PlansViewModelTest {
     }
 
     @Test
+    fun rejectedReplacementKeepsOriginalAndSavingCannotClose() = test {
+        val service = PlanService()
+        val vm = PlanEditViewModel(service, clock, PlanEditMode.Edit(Demo.PLAN_DAILY))
+        advanceUntilIdle()
+        vm.editTrigger("trg-daily")
+        vm.updateDraft { it.copy(hour = 7) }
+        vm.applyTrigger()
+        service.fail("addTrigger", ServiceError.Network("offline"))
+        vm.events.test {
+            vm.save()
+            vm.requestClose()
+            expectNoEvents()
+            advanceUntilIdle()
+            assertFalse(vm.uiState.value.confirmDiscard)
+            assertFalse(vm.uiState.value.partiallySaved)
+            assertTrue(service.deletedTriggers.isEmpty())
+            assertTrue(service.mock.getPlan(Demo.PLAN_DAILY).triggers.any { it.id == "trg-daily" })
+        }
+    }
+
+    @Test
     fun closingWithChangesAsksFirst() = test {
         val vm = PlanEditViewModel(PlanService(), clock, PlanEditMode.Create(Demo.INSTANCE_CODER))
         advanceUntilIdle()

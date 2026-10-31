@@ -811,7 +811,7 @@
     <string name="plan_timeout_fail">这次运行失败</string>
     <string name="plan_catch_up">错过的触发</string>
     <string name="plan_catch_up_once">只补一次</string>
-    <string name="plan_catch_up_once_detail">停机、暂停期间错过了几次，回来后只补跑一次。</string>
+    <string name="plan_catch_up_once_detail">服务中断期间错过的触发只补跑一次。手动暂停期间的触发会跳过。</string>
     <string name="plan_catch_up_all">全部补跑</string>
     <string name="plan_catch_up_all_detail">错过几次就补几次。</string>
     <string name="plan_catch_up_skip">跳过</string>

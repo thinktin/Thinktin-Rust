@@ -816,7 +816,7 @@
     <string name="plan_timeout_fail">fail the run</string>
     <string name="plan_catch_up">Missed runs</string>
     <string name="plan_catch_up_once">Run once</string>
-    <string name="plan_catch_up_once_detail">If several runs were missed, run once when back.</string>
+    <string name="plan_catch_up_once_detail">Catch up once after a service interruption. Runs missed while paused are skipped.</string>
     <string name="plan_catch_up_all">Run all</string>
     <string name="plan_catch_up_all_detail">Run every missed one.</string>
     <string name="plan_catch_up_skip">Skip</string>

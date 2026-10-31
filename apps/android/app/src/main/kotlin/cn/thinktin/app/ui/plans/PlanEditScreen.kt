@@ -99,6 +99,7 @@ fun PlanEditScreen(mode: PlanEditMode, onClose: () -> Unit, onSaved: (Plan, Bool
                     navigationIcon = TopBarIcons.Close,
                     navigationContentDescription = stringResource(R.string.action_close),
                     onNavigationClick = viewModel::requestClose,
+                    navigationEnabled = !state.saving,
                     actions = {
                         if (state.saving) {
                             val saving = stringResource(R.string.loading)
