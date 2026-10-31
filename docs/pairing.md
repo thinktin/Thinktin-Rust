@@ -51,7 +51,8 @@ sequenceDiagram
 
 手机签发 `CapabilityGrant`，电脑用 `verify_capability` 本地验，再用 `capability_allows_path` 检查路径。
 
-- 令牌限定：电脑 id、令牌 id、能碰的目录（绝对路径，按路径段比较，`..` 一律拒绝）、能操作的应用（bundle id）、过期时间。
+- 令牌限定：电脑 id、令牌 id、能碰的目录（绝对路径，按路径段比较，`..` 一律拒绝；Mac 的 `/Users/me/Documents` 和 Windows 的
+  `C:\Users\me\Documents` 都认，Windows 的不分大小写）、能操作的应用（macOS 的 bundle id，Windows 的程序名如 `chrome.exe`）、过期时间。
 - 吊销：电脑按令牌 id 自己记一份吊销列表（以后由手机经中继推送吊销）。
 
 ## 5. 规范编码

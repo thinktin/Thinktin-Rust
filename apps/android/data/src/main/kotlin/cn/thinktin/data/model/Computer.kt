@@ -179,8 +179,13 @@ object CapabilityRules {
 
     private val BUNDLE_PART = Regex("^[\\p{L}\\p{N}_-]+$")
 
+    private val WINDOWS_ROOT = Regex("^[A-Za-z]:[\\\\/]")
+
+    /** 绝对路径、不含 `..`：Mac 的 `/Users/me/Documents`，或者 Windows 的 `C:\Users\me\Documents`。 */
     fun isValidDirectory(path: String): Boolean =
-        path.startsWith("/") && '\n' !in path && path.split('/').none { it == ".." }
+        (path.startsWith("/") || WINDOWS_ROOT.containsMatchIn(path)) &&
+            '\n' !in path &&
+            path.split('/', '\\').none { it == ".." }
 
     fun isValidBundleId(id: String): Boolean {
         val parts = id.split('.')
