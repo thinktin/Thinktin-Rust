@@ -3860,28 +3860,28 @@ async fn plan_webhooks_over_http() {
     );
     // 太大的 422（不管有没有写长度）。
     let big = "x".repeat(65 * 1024);
-    let st = a
+    let response = a
         .http
         .post(format!("{}{path}", a.base))
         .header("content-type", "text/plain")
         .body(big.clone())
         .send()
         .await
-        .unwrap()
-        .status();
-    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(response.headers()["connection"], "close");
     let chunked =
         reqwest::Body::wrap_stream(futures_util::stream::iter([Ok::<_, std::io::Error>(big)]));
-    let st = a
+    let response = a
         .http
         .post(format!("{}{path}", a.base))
         .header("content-type", "text/plain")
         .body(chunked)
         .send()
         .await
-        .unwrap()
-        .status();
-    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(response.headers()["connection"], "close");
     // 计划的每日 token 上限到了：429。
     sqlx::query("UPDATE runs SET tokens_used = 100 WHERE id = $1::uuid")
         .bind(&run_id)
