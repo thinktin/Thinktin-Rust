@@ -5,7 +5,8 @@ use auth::secrets::HookToken;
 use axum::Json;
 use axum::body::Body;
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, Version, header};
+use axum::response::{IntoResponse, Response};
 use proto::api::ErrorCode;
 use proto::domain::{PlanHook, PlanHookId, PlanId, RunSource};
 use serde::Deserialize;
@@ -209,6 +210,21 @@ fn url_challenge(kind: &str, body: &[u8]) -> Option<String> {
     (c.len() <= 1024).then(|| c.to_owned())
 }
 
+fn oversized_event(version: Version) -> Response {
+    let mut response = ApiError::invalid(format!(
+        "events are limited to {} KB",
+        MAX_EVENT_BYTES >> 10
+    ))
+    .into_response();
+    // 正文没读完，HTTP/1 客户端不能把下一条请求发到这条连接上。
+    if matches!(version, Version::HTTP_10 | Version::HTTP_11) {
+        response
+            .headers_mut()
+            .insert(header::CONNECTION, HeaderValue::from_static("close"));
+    }
+    response
+}
+
 /// 外面的服务发事件（不要登录，令牌在地址里）。令牌不对、webhook 停用了、计划不在用都回 404（不说是哪种）；
 /// 太频繁、排着的太多回 429，发送方通常会自己重试。
 ///
@@ -218,9 +234,10 @@ pub async fn receive(
     State(s): State<AppState>,
     ClientIp(ip): ClientIp,
     Path(token): Path<String>,
+    version: Version,
     headers: HeaderMap,
     body: Body,
-) -> ApiResult<(StatusCode, Json<Value>)> {
+) -> ApiResult<Response> {
     let not_found = || ApiError::not_found("webhook");
     s.limits().anonymous_exhausted(ip)?;
     let Ok(token) = HookToken::parse(&token) else {
@@ -231,22 +248,16 @@ pub async fn receive(
     let hash = token.hash();
     s.limits().hook(hash)?;
     let kind = content_kind(&headers)?;
-    let too_big = || {
-        ApiError::invalid(format!(
-            "events are limited to {} KB",
-            MAX_EVENT_BYTES >> 10
-        ))
-    };
     let declared = headers
         .get(header::CONTENT_LENGTH)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.parse::<usize>().ok());
     if declared.is_some_and(|n| n > MAX_EVENT_BYTES) {
-        return Err(too_big());
+        return Ok(oversized_event(version));
     }
-    let body = axum::body::to_bytes(body, MAX_EVENT_BYTES)
-        .await
-        .map_err(|_| too_big())?;
+    let Ok(body) = axum::body::to_bytes(body, MAX_EVENT_BYTES).await else {
+        return Ok(oversized_event(version));
+    };
     let Ok(text) = std::str::from_utf8(&body) else {
         return Err(ApiError::invalid("the body must be UTF-8"));
     };
@@ -265,7 +276,7 @@ pub async fn receive(
     w.rollback().await?;
     check_activity(&act)?;
     if let Some(challenge) = url_challenge(kind, &body) {
-        return Ok((StatusCode::OK, Json(json!({ "challenge": challenge }))));
+        return Ok((StatusCode::OK, Json(json!({ "challenge": challenge }))).into_response());
     }
     // 在锁外面抹掉保险箱里的值（要解密）。
     let text = super::vault::scrub_user_text(&s, found.user_id, text.trim()).await;
@@ -321,5 +332,27 @@ pub async fn receive(
     )
     .await?;
     w.commit().await?;
-    Ok((StatusCode::ACCEPTED, Json(json!({ "status": "accepted" }))))
+    Ok((StatusCode::ACCEPTED, Json(json!({ "status": "accepted" }))).into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn oversized_events_only_close_http1_connections() {
+        for version in [Version::HTTP_10, Version::HTTP_11] {
+            assert_eq!(
+                oversized_event(version).headers()[header::CONNECTION],
+                "close"
+            );
+        }
+        for version in [Version::HTTP_2, Version::HTTP_3] {
+            assert!(
+                !oversized_event(version)
+                    .headers()
+                    .contains_key(header::CONNECTION)
+            );
+        }
+    }
 }
