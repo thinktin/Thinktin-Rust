@@ -42,6 +42,8 @@ def main():
     package = re.search(r"package: name='([^']+)' versionCode='(\d+)' versionName='([^']+)'", badging)
     if not package or package.group(1) != "cn.thinktin.app":
         sys.exit("不是 ThinkTin 的安装包")
+    if "uses-permission: name='android.permission.REQUEST_INSTALL_PACKAGES'" not in badging:
+        sys.exit("只有官网下载渠道的安装包可以生成更新清单")
     min_sdk = re.search(r"sdkVersion:'(\d+)'", badging)
 
     certs = subprocess.run(

@@ -119,7 +119,7 @@ class ComputerLinkUiTest {
         val response = mock.sentDeviceMessages().last()
         assertEquals(DeviceMessageKind.PairResponse, response.kind)
         assertEquals("n1", response.body.string("nonce"))
-        assertEquals(listOf("和“电脑”配对"), signer.reasons)
+        assertEquals(listOf("和“MacBook Air”配对"), signer.reasons)
 
         val offer = PairingOffer("dev-mac", "dk-dev-mac", "n1", nowSecs + 600)
         mock.deliverDeviceMessage(

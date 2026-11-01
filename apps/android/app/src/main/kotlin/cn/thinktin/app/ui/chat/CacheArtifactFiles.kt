@@ -21,6 +21,11 @@ class CacheArtifactFiles(
         file
     }
 
+    override suspend fun clear() = withContext(io) {
+        val dir = File(root, DIR)
+        if (dir.exists() && !dir.deleteRecursively()) throw java.io.IOException("could not clear artifact cache")
+    }
+
     companion object {
         const val DIR = "artifacts"
 

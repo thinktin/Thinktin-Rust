@@ -1,0 +1,88 @@
+[
+ {
+  "file": "apps/android/app/src/main/kotlin/cn/thinktin/app/ui/settings/licenses/LicensesViewModel.kt",
+  "line": 49,
+  "title": "开源许可页 App 自身依赖的名字写死中文，英文界面里显示中文",
+  "severity": "medium",
+  "category": "spec",
+  "description": "`APP_DEPENDENCIES`（第 48–54 行）把展示文案直接写在 Kotlin 里，且含中文：\"AndroidX（core、activity、…、biometric）\"、\"Jetpack Compose（UI、Material 3、Material Icons）\"、\"kotlinx-coroutines、kotlinx-serialization\"、\"commonmark（含 GFM 表格、删除线扩展）\"、\"rustls-platform-verifier（Android 组件）\"。`LicensesScreen.kt:106-110` 原样显示 `dep.name`。失败场景：用户把语言切到 English（或系统是英文）打开 设置 → 关于 → 开源许可，\"App 用到的库\" 一节仍是中文顿号和括号说明（如 \"commonmark（含 GFM 表格、删除线扩展）\"），违反规范第 5 节\"所有文案进 strings.xml（values 中文、values-en 英文），不写死在代码里\"和 README 的\"中英文文案都要有\"。搜索也只能按中文说明命中（搜 \"tables\" 搜不到 commonmark 的扩展）。",
+  "evidence": "apps/android/app/src/main/kotlin/cn/thinktin/app/ui/settings/licenses/LicensesViewModel.kt:48-54；显示处 LicensesScreen.kt:106-110；规范 docs/android-design.md 第 5 节\"文案与多语言\"；apps/android/README.md \"约定\"（中英文文案都要有）。对照 iOS：LicenseComponent 的说明文字都经 `DisplayLanguage` 分中英（LicenseInventory.swift:138-158）。",
+  "proposed_fix": "把每条依赖的说明改成 `@StringRes`（如 `licenses_app_dep_androidx`、`licenses_app_dep_commonmark`），在 values / values-en 各写一份；`AppDependency` 保留纯 ASCII 的 artifact 名（如 `org.commonmark:commonmark`）用于搜索，界面上用 `stringResource` 取说明。",
+  "area": "privacy-settings-licenses",
+  "dupes": [
+   "privacy-settings-licenses: App 自身的 Gradle 依赖只列名字和 SPDX 标识，没有许可证原文 / 版权声明，APK 还剔除了 META-INF 里的许可证文件",
+   "cross-cutting: 开源许可页里 App 自带库的名字写死了中文，英文界面照样显示中文"
+  ],
+  "status": "confirmed",
+  "verifier_note": "核实成立。(a) 可达性：/home/user/Thinktin-Rust/apps/android/app/src/main/kotlin/cn/thinktin/app/ui/settings/licenses/LicensesViewModel.kt:48-55 的 APP_DEPENDENCIES 把展示文案写死在 Kotlin 里，含中文说明和全角标点（\"commonmark（含 GFM 表格、删除线扩展）\"、\"rustls-platform-verifier（Android 组件）\"、\"Jetpack Compose（UI、Material 3、Material Icons）\"、\"AndroidX（core、activity、…）\"）；LicensesScreen.kt:106-110 原样 Text(dep.name)。英文界面真的可达：apps/android/app/src/main/kotlin/cn/thinktin/app/settings/AppLocales.kt:14 调 AppCompatDelegate.setApplicationLocales，docs/progress/android-app.md:24 记 13.13 加了\"跟随系统 / 中文 / English\"设置。切到 English 后，同一节的标题 \"Libraries in the app\"（values-en/strings.xml:954）是英文，而下面几行是中文说明和顿号，界面中英混杂。没有任何上游兜底（不经资源、不经 Mock）。(b) 契约：docs/android-design.md:160 第 5 节明确\"所有文案进 strings.xml（values 中文、values-en 英文），不写死在代码里\"；apps/android/README.md:477 \"文案全部进资源…两边的键必须一致\"。docs/progress/android-app.md 13.13 段没有声明这是有意偏差。iOS 对照要修正一点：ViewModels/Settings/LicenseInventory.swift:364-369 的 SwiftPackageLicenses.components 是空的，iOS 并没有同样一张表；但发现引用的 138-158 行（ecosystemName / licenseText 按 DisplayLanguage 分中英）确实是 iOS 对代码内说明文字的处理方式，作为模式参照是准确的。搜索问题也属实但次要：LicensesUiState.appDependencies（第 77-80 行）只对 dep.name / dep.license 做包含匹配，\"tables\"\"strikethrough\" 搜不到，\"commonmark\"\"gfm\" 仍能命中。库名本身（AndroidX、JNA、commonmark）是专有名词可以不翻，但括号里的说明和顿号是实打实的中文文案，这条不是风格问题而是违反规范的可见行为。",
+  "verifier_fix_note": "成立。按任务评级标准（medium = 和规范不一致、可见的错误行为）定 medium 合适，但它只影响设置→关于→开源许可这一个次级页面、无功能/数据后果，处于 medium 偏 low 的边界。proposed_fix 合适：AppDependency 保留纯 ASCII 的 artifact 名（给搜索和 LazyColumn key 用，因为过滤在无 Context 的 LicensesUiState 里做），说明文字改成 @StringRes 在 values / values-en 各写一份，Composable 里 stringResource 取出显示。更小的修法：把 AppDependency 改成 (artifact: String, @StringRes descriptionRes: Int, license: String)，只加 6 对字符串键（如 licenses_app_dep_androidx 等），界面显示 artifact + 说明两行，搜索继续匹配 artifact + license 即可；不必改搜索逻辑。再小一点的权宜（不完全合规）：去掉中文括号说明只留 ASCII 库名——不再中英混杂，但仍是写死在代码里的文案，不建议。注意 dupes 里 cross-cutting 那条是同一根因，只报一条。",
+  "verifier_severity": "medium"
+ },
+ {
+  "file": "apps/android/app/src/main/kotlin/cn/thinktin/app/AppContainer.kt",
+  "line": 215,
+  "title": "Android 13+ 在系统设置把\"应用语言\"改回\"系统默认\"后，App 不跟随：设置页仍勾着旧语言，Accept-Language 和服务端语言也不改",
+  "severity": "medium",
+  "category": "platform",
+  "description": "`followSystemAppLanguage` 第一行 `if (language == AppLanguage.System) return`，注释说这是为 Android 13 以前留的（AppCompat 记下的就是设置里选的）。但 Android 13+ 的系统\"应用语言\"是权威来源，用户在系统设置里选\"系统默认\"时 `AppLocales.current()` 返回 System，这里直接返回，DataStore 里的 `language` 仍是上次选的。失败场景（Android 14，系统语言中文）：设置里选 English → DataStore=English、系统应用语言=en；再到 系统设置 → 应用 → ThinkTin → 语言 选\"系统默认\"，Activity 重建后界面变回中文，但 设置 → 语言 的单选仍勾着 English，`followLanguage` 没有重算，请求头 Accept-Language 还是 `en, zh-CN…`（agent 目录、许可说明继续返回英文），服务端 `User.locale` 仍是 en（推送、收件箱英文）。进度文件声称\"系统设置里改过'应用语言'的以系统为准\"，这一分支没有做到。",
+  "evidence": "apps/android/app/src/main/kotlin/cn/thinktin/app/AppContainer.kt:210-219；调用处 MainActivity.kt:49；`AppLocales.current()` AppLocales.kt:129；声称：docs/progress/android-app.md 第 24 行\"系统设置里改过'应用语言'的以系统为准\"、apps/android/README.md 第 424 行。设置页用 DataStore 的值画单选：SettingsScreen.kt:236-251。",
+  "proposed_fix": "在 Android 13+（`Build.VERSION.SDK_INT >= 33`）系统值是权威的：`followSystemAppLanguage` 不要对 System 提前返回，直接 `if (settings.first().language != language) setLanguage(language)`；只在 API < 33 时保留\"系统为空不动存的值\"的逻辑（可把 sdkInt 作为构造参数注入便于测试）。",
+  "area": "privacy-settings-licenses",
+  "status": "confirmed",
+  "verifier_note": "核实成立，失败路径真实可达。\n\n(a) 路径可达性：\n- `apps/android/app/src/main/kotlin/cn/thinktin/app/MainActivity.kt:49` 在 `super.onCreate` 之后调 `container.followSystemAppLanguage(AppLocales.current())`；`AppLocales.current()`（`settings/AppLocales.kt:20`）= `fromTag(AppCompatDelegate.getApplicationLocales().toLanguageTags())`，空串 → `AppLanguage.System`（`AppLocales.kt:23-31`）。\n- 用 gradle 缓存里 appcompat 1.7.0 的 class 反编译核对：`AppCompatDelegate.getApplicationLocales()` 在 `SDK_INT >= 33` 时直接返回 `LocaleManager.getApplicationLocales()`（`getLocaleManagerForApplication()` 从已注册的 Activity delegate 拿 Context，而 `addActiveDelegate` 在 `AppCompatDelegateImpl.onCreate` 里调，所以 `MainActivity.onCreate` 里调时不会是 null）。Android 文档：用户在系统设置里把应用语言选成\"系统默认\"时 `LocaleManager.getApplicationLocales()` 返回空 LocaleList。因此该场景下 `current()` 必然是 `System`，`AppContainer.kt:215` 的 `if (language == AppLanguage.System) return` 直接返回，DataStore 里的 `language` 仍是上次在设置页选的 `English`。\n- 后续影响逐条核对：设置页单选用 DataStore 的值画（`ui/settings/SettingsScreen.kt:236-251`，`state.settings?.language`），所以界面已经是中文却仍勾着 English；而且 `onClick = { if (language != option) ... }` 使得再点 English 是空操作，用户得先点\"跟随系统\"再点 English。`followLanguage`（`AppContainer.kt:274-281`）的 Accept-Language 由 `languageTags(language)` = `AcceptLanguage.tags(\"en\", LocaleList.getDefault())` 算，`Application.onConfigurationChanged` 只是让它按同一个 English 重算（`ThinktinApp.kt:37-40` → `localeChanges`），结果仍是 `en` 打头。`syncServerLocaleNow`（`AppContainer.kt:259-268`）wanted = `English.serverLocale()` = \"en\"，与服务端 `User.locale`=en 相同就不改，所以推送、收件箱继续英文。没有 `ACTION_APPLICATION_LOCALE_CHANGED` 的接收器或别的地方比对 `AppLocales.current()`（全仓 grep 只有 MainActivity:49 一处）。\n- 这是真核心路径（Accept-Language 和 set_locale 都走 client-core），Mock 不影响结论。\n\n(b) 契约与规范：\n- 自述承诺：`docs/progress/android-app.md` 第 24 行\"系统设置里改过'应用语言'的以系统为准\"；`apps/android/README.md` 第 424 行\"Android 13 起系统设置里也能改'应用语言'（locales_config）：启动时以系统的为准（AppContainer.followSystemAppLanguage）\"。选\"系统默认\"正是系统设置里改应用语言的一种，这一分支没做到。\n- iOS 参照：`apps/apple/ThinktinKit/Sources/ThinktinKit/Formatting/DisplayLanguage.swift:10` 直接取 `Locale.preferredLanguages.first`（iOS 的按应用语言设置会反映到它），`ViewModels/Settings/LanguageSettingsModel.swift:11` 明确\"用户在系统设置里换了 App 的语言……下次启动都会补上\"，所以 iOS 在同一场景下 Accept-Language 和服务端语言都会回到系统语言；安卓与之不一致。\n- 规范：`docs/android-design.md` 8.1 表 `User.locale` = \"设置里的语言\"，而此时界面语言（中文）与 `User.locale`（en）脱节。\n\n严重程度 medium：不崩溃、不丢数据，用户能通过点\"跟随系统\"恢复，但设置页显示和实际界面语言矛盾、点 English 无反应、推送/收件箱/agent 目录语言和界面不一致，是可见的错误行为。",
+  "verifier_fix_note": "proposed_fix 合适，方向正确：Android 13+ 上系统值是权威，`System` 也应写回。更小的修法是一行：把 `AppContainer.kt:215` 改成 `if (language == AppLanguage.System && sdkInt < 33) return`（`sdkInt` 作为构造参数默认 `Build.VERSION.SDK_INT`，仓库里 Updater 已经用了同样的注入方式，见 `AppContainer.kt:343`），其余 `scope.launch { if (settings.first().language != language) setLanguage(language) }` 不动。注意事项：(1) API < 33 保留提前返回是对的——AppCompat 记下的就是设置页选的，空值只会在同步前出现；(2) Robolectric 测试跑 sdk 35 时 `LocaleManager` 的 shadow 返回空，`MainActivity` 启动会把 DataStore 写成 System，现有界面测试没有预先设过非 System 语言（grep 确认），所以不会被改坏，但新写测试时要留意；(3) 可以顺手给 `AppContainerLanguageTest` 加一条\"sdkInt=34、存的是 English、系统给 System → 写回 System\"的用例。",
+  "verifier_severity": "medium"
+ },
+ {
+  "file": "apps/android/app/src/main/kotlin/cn/thinktin/app/settings/AppSettings.kt",
+  "line": 28,
+  "title": "系统语言既非中文也非英文时：界面回落到中文（默认 values），服务端语言却被算成 en，和 iOS 也不一致",
+  "severity": "medium",
+  "category": "contract",
+  "description": "资源只有 `values`（中文，默认）和 `values-en`，没有 `values-zh`。跟随系统且系统是日语、德语等时，Android 资源解析回落到默认 `values` → 界面是中文；而 `AppLanguage.serverLocale` 对非 zh 一律返回 \"en\"，`syncServerLocaleNow` 把服务端 `User.locale` 改成 en。失败场景（Google Play 的 global 渠道，系统日语，跟随系统）：登录后 App 界面全是中文，推送、收件箱文案却是英文；Accept-Language 是 `ja-JP…`，服务端 `Locale::from_accept_language` 认不出回落到默认语言，目录文案又可能是中文——同一个用户三处语言不一致。iOS 的规则是\"非 zh 一律英文\"（`DisplayLanguage.current`），后端 `Locale::from_tag` 也只认 zh / en 且其余按默认处理，所以 Android 应当和 iOS 一样让英文做非中文系统的回落，而不是中文。",
+  "evidence": "apps/android/app/src/main/kotlin/cn/thinktin/app/settings/AppSettings.kt:27-28（`serverLocale`：非 zh → \"en\"）；资源目录只有 apps/android/app/src/main/res/values（中文）和 values-en；locales_config.xml 只列 zh-CN / en。iOS：apps/apple/ThinktinKit/Sources/ThinktinKit/Formatting/DisplayLanguage.swift:9-17（`hasPrefix(\"zh\") ? .chinese : .english`）。后端：crates/proto/src/domain.rs:163-193。",
+  "proposed_fix": "把英文作为默认资源：`values/strings.xml` 改成英文，中文挪到 `values-zh/strings.xml`（或 `values-b+zh`），`locales_config.xml` 不变；同步修改 docs/android-design.md 第 5 节的\"values 中文、values-en 英文\"。这样非中英文系统的界面、`serverLocale`、iOS 三者一致。若坚持中文做默认，则 `serverLocale` 对非 zh/en 系统要返回 zh-CN 并把 Accept-Language 里补上 zh-CN，但这与 iOS / 后端的约定相悖，不推荐。",
+  "area": "privacy-settings-licenses",
+  "status": "unverified",
+  "verifier_note": "反方核实没跑成，修之前先自己核实；不成立就跳过并说明。"
+ },
+ {
+  "file": "apps/android/app/src/main/kotlin/cn/thinktin/app/ui/settings/licenses/LicenseInventory.kt",
+  "line": 44,
+  "title": "开源许可页没有 NOTICES.md 入口，规范 4.9 和 iOS 都要求能看整份 NOTICES.md",
+  "severity": "low",
+  "category": "spec",
+  "description": "规范 4.9 写明开源许可页\"读 assets/thinktin-licenses/inventory.json 与 NOTICES.md\"，iOS 的 `LicensesModel.noticesPath` 在清单加载后给出整份 NOTICES.md 的入口。Android 只定义了常量 `NOTICES_FILE_NAME = \"NOTICES.md\"`，全工程没有任何地方读它或导航到 `licenses/text?path=NOTICES.md`。失败场景：用户在 Android 上想看人读的索引（按许可证汇总的 NOTICES.md）找不到入口；同一份清单 iOS 能看、Android 不能。",
+  "evidence": "apps/android/app/src/main/kotlin/cn/thinktin/app/ui/settings/licenses/LicenseInventory.kt:44（常量未被引用，`grep -rn NOTICES_FILE_NAME apps/android/app/src/main` 只有定义）；docs/android-design.md 4.9\"开源许可（读 assets/thinktin-licenses/inventory.json 与 NOTICES.md）\"；iOS apps/apple/ThinktinKit/Sources/ThinktinKit/ViewModels/Settings/LicensesModel.swift:126-130 `noticesPath`。",
+  "proposed_fix": "在 `LicensesScreen` 的\"客户端核心\"一节（清单加载成功时）加一行\"查看 NOTICES.md\"，`onOpenText(LicenseInventory.NOTICES_FILE_NAME, stringResource(R.string.licenses_notices))`，复用 `LicenseTextScreen`（NOTICES.md 约几十 KB，`LicenseFiles.MAX_TEXT_BYTES` 够用）；补中英文文案。",
+  "area": "privacy-settings-licenses",
+  "status": "low-unverified",
+  "verifier_note": "low 级，没经反方核实；修之前先核实，确有其事且改动小才修。"
+ },
+ {
+  "file": "apps/android/app/src/main/kotlin/cn/thinktin/app/ThinktinApp.kt",
+  "line": 40,
+  "title": "任何配置变化（旋转、深色模式、字号）都当成\"系统语言变了\"：每次都重设 Accept-Language 并请求一次 GET /v1/me",
+  "severity": "low",
+  "category": "platform",
+  "description": "`Application.onConfigurationChanged` 对进程内所有配置变化都会回调（旋转、uiMode、fontScale、键盘等），这里无条件 `container.onSystemLocalesChanged()`；`followLanguage` 用 `combine(localeChanges)`，`localeChanges` 每加一就重新 emit，于是每次都 `service.setAcceptLanguage(...)` 并在已登录时 `service.me()`（网络）再 `syncServerLocaleNow`。失败场景：已登录用户旋转一次屏幕 → 一次 GET /v1/me；开关深色模式 → 再一次；弱网下这些请求失败只记日志但照样发。注释写的是\"系统语言可能变了\"，实际没有比较 locales。",
+  "evidence": "apps/android/app/src/main/kotlin/cn/thinktin/app/ThinktinApp.kt:37-42；AppContainer.kt:177-178、232-234、274-294（`combine(localeChanges)` → `service.me()`）。",
+  "proposed_fix": "在 `ThinktinApp` 记住上一次的 `newConfig.locales`（`LocaleListCompat`），只有 `locales` 变了才调 `onSystemLocalesChanged()` 和重新 `ensure` 通知渠道；或在 `onSystemLocalesChanged` 里比较 `LocaleList.getDefault().toLanguageTags()` 与上次的值。",
+  "area": "privacy-settings-licenses",
+  "status": "low-unverified",
+  "verifier_note": "low 级，没经反方核实；修之前先核实，确有其事且改动小才修。"
+ },
+ {
+  "file": "apps/android/app/src/main/kotlin/cn/thinktin/app/ui/privacy/PrivacyInfoScreen.kt",
+  "line": 68,
+  "title": "撤回同意只退出登录：下载的产出物文件、配对电脑的密钥和令牌仍留在本机，和对话框承诺的\"清掉这台设备上的缓存\"不符",
+  "severity": "low",
+  "category": "security",
+  "description": "`withdraw()` 只做 `service.logoutQuietly()` + `repository.withdrawPrivacy()`。client-core 的 logout 只清 SQLite 缓存（`Cache.clear`），不碰 App 自己落盘的东西：对话页下载到 `cacheDir/artifacts/<id>/<文件名>` 的产出物（agent 产出的文件、用户内容，FileProvider 还对外开放这个目录）、`computer_link` SharedPreferences 里配对电脑的公钥、签发过的令牌和审批记录（13.9）、`push` 偏好。失败场景：用户在\"个人信息与权限\"撤回同意（对话框说\"撤回后会退出登录、清掉这台设备上的缓存\"），回到隐私政策页后，产出物文件仍在缓存目录可被文件管理器 / 分享记录打开，重新同意换账号登录前配对数据仍在；\"退出登录\"的文案也说\"本机的缓存会一并清掉\"，同样没有清这些。",
+  "evidence": "apps/android/app/src/main/kotlin/cn/thinktin/app/ui/privacy/PrivacyInfoScreen.kt:64-72；文案 res/values/strings.xml:1108（privacy_withdraw_message）、:212（devices_sign_out_message）；client-core 只清 SQLite：crates/client-core/src/client.rs:28-34；产出物落盘 ui/chat/CacheArtifactFiles.kt:16-22；配对数据 computer/ComputerLinkStore.kt:33-45。",
+  "proposed_fix": "撤回同意（以及退出登录）时在 `AppContainer` 里加一个 `clearLocalData()`：删除 `cacheDir/artifacts`，清掉 `computer_link` 偏好（或至少当前 userId 的键）、`push` 偏好；`PrivacyInfoViewModel.withdraw()` 在 `logoutQuietly()` 之后、`withdrawPrivacy()` 之前调用它。若有意保留配对数据，就把两处文案改成只说\"清掉对话缓存\"。",
+  "area": "privacy-settings-licenses",
+  "status": "low-unverified",
+  "verifier_note": "low 级，没经反方核实；修之前先核实，确有其事且改动小才修。"
+ }
+]

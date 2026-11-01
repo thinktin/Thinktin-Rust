@@ -26,6 +26,8 @@ import cn.thinktin.app.ui.approval.BiometricApprovalGate
 import cn.thinktin.app.ui.chat.ArtifactFiles
 import cn.thinktin.app.ui.chat.CacheArtifactFiles
 import cn.thinktin.app.ui.chat.DraftHandoff
+import cn.thinktin.app.ui.settings.licenses.AssetLicenseSource
+import cn.thinktin.app.ui.settings.licenses.LicenseSource
 import cn.thinktin.app.update.PackageManagerApkInspector
 import cn.thinktin.app.update.SharedUpdatePrefs
 import cn.thinktin.app.update.Updater
@@ -103,7 +105,12 @@ class AppContainer(
     codecFactory: (() -> PairingCodec)? = null,
     /** 配对好的电脑、收到的审批请求、签发的令牌存在哪；null 存在内存里（测试）。 */
     computerLinkStorage: ComputerLinkStorage? = null,
+    /** 开源许可页（13.13）读客户端核心的许可证清单的来源；null 当成这个包没有带清单（测试）。 */
+    licenseSource: LicenseSource? = null,
 ) {
+    /** 开源许可页的清单来源：App 里是 `:core` 的 assets，测试里给假的，所以界面测试不看本机有没有同步过清单。 */
+    val licenseSource: LicenseSource = licenseSource ?: LicenseSource { _, _ -> null }
+
     /** 对话页下载产出物的位置（13.5）。 */
     val artifactFiles: ArtifactFiles =
         artifactFiles ?: CacheArtifactFiles(File(System.getProperty("java.io.tmpdir") ?: ".", "thinktin"))
@@ -202,10 +209,10 @@ class AppContainer(
 
     /**
      * 系统里的“应用语言”（[cn.thinktin.app.settings.AppLocales.current]）和存的不一样（用户在系统设置里改过）：以系统的为准。
-     * 系统里没设（跟随系统）时不动存的值：Android 13 以前没有系统设置，AppCompat 记下的就是设置里选的。
+     * Android 13 起清空语言即跟随系统；更早的系统没有这项系统设置，AppCompat 记下的就是设置里选的。
      */
     fun followSystemAppLanguage(language: AppLanguage) {
-        if (language == AppLanguage.System) return
+        if (language == AppLanguage.System && android.os.Build.VERSION.SDK_INT < 33) return
         scope.launch {
             if (settings.first().language != language) settingsRepository.setLanguage(language)
         }
@@ -267,10 +274,11 @@ class AppContainer(
     private suspend fun followLanguage(service: ThinktinService) {
         settings.map { it.language }
             .distinctUntilChanged()
-            .combine(localeChanges) { language, _ -> language }
-            .collect { language ->
+            .combine(localeChanges) { language, _ -> languageTags(language) }
+            .distinctUntilChanged()
+            .collect { tags ->
                 try {
-                    service.setAcceptLanguage(languageTags(language))
+                    service.setAcceptLanguage(tags)
                 } catch (e: Exception) {
                     // 只是请求头：失败不影响使用（日志里记一下）。
                     Log.w(TAG, "设置 Accept-Language 失败", e)
@@ -304,6 +312,8 @@ class AppContainer(
             deviceSigner: ((activity: () -> FragmentActivity?) -> DeviceSigner)? = null,
             /** 测试用：换掉 client-core 的配对编码（测试不加载 .so）。 */
             pairingCodec: (() -> PairingCodec)? = null,
+            /** 测试用：换掉开源许可清单的来源（默认读 `:core` 的 assets）。 */
+            licenseSource: LicenseSource? = null,
         ): AppContainer {
             val app = context.applicationContext
             val store = PreferenceDataStoreFactory.create(
@@ -326,6 +336,7 @@ class AppContainer(
                 signerFactory = deviceSigner ?: { activity -> KeystoreSigner(app, activity) },
                 codecFactory = pairingCodec,
                 computerLinkStorage = SharedPrefsComputerLinkStorage.of(app),
+                licenseSource = licenseSource ?: AssetLicenseSource(app.assets),
                 updater = if (BuildConfig.SELF_UPDATE) {
                     Updater(
                         manifestUrl = BuildConfig.UPDATE_MANIFEST_URL,

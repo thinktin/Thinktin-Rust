@@ -269,6 +269,12 @@ class MockThinktinServiceTest {
         val added = s.addImChannel(
             NewImChannel(webhookUrl = "https://open.feishu.cn/open-apis/bot/v2/hook/abcd1234", label = "新群"),
         )
+        try {
+            s.addImChannel(NewImChannel(webhookUrl = "https://open.feishu.cn/open-apis/bot/v2/hook/abcd1234", label = "同一个群"))
+            fail("同一个机器人不能重复绑定")
+        } catch (e: ServiceError.Api) {
+            assertEquals(409, e.status)
+        }
         assertEquals("feishu", added.vendor)
         assertEquals("…1234", added.hint)
         assertFalse(added.hasSecret)

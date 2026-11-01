@@ -210,6 +210,9 @@ class ScheduleTest {
         assertEquals(TriggerProblem.RruleEmpty, rrule.copy(rruleText = "").problem(now))
         assertEquals(TriggerProblem.RruleNoFrequency, rrule.copy(rruleText = "BYDAY=MO").problem(now))
         assertEquals(TriggerProblem.RruleTooFrequent, rrule.copy(rruleText = "FREQ=SECONDLY").problem(now))
+        assertEquals(TriggerProblem.TooFrequent(5), rrule.copy(rruleText = "FREQ=MINUTELY").problem(now))
+        assertEquals(TriggerProblem.TooFrequent(5), rrule.copy(rruleText = "FREQ=MINUTELY;INTERVAL=2").problem(now))
+        assertNull(rrule.copy(rruleText = "FREQ=MINUTELY;INTERVAL=5").problem(now))
         assertEquals(TriggerProblem.RruleStartOutOfRange, rrule.copy(startDay = LocalDate.of(2026, 10, 20)).problem(now))
         assertEquals(
             TriggerProblem.RruleExtraDates,

@@ -10,14 +10,14 @@ import cn.thinktin.data.model.InboxKind
  * - 计划待确认：计划详情；
  * - 运行完成 / 失败、其他提醒：有运行去运行详情，有计划去计划，有实例去对话；IM 渠道被停用的提醒（子类型
  *   `im_channel_disabled`）去 IM 渠道设置（13.15，和 iOS 一样）；
- * - 电脑审批（13.9，P3）还没有页面：有运行去运行详情，否则不跳。
+ * - 电脑审批去审批中心处理。
  * 返回 null 表示没有可去的页面（只标已读）。
  */
 fun InboxItem.targetRoute(): String? = when (kind) {
     InboxKind.Approval -> approvalId?.let(Routes::approval) ?: Routes.APPROVALS
     InboxKind.VaultRequest -> Routes.vault(vaultRequestId)
     InboxKind.PlanConfirm -> planId?.let(Routes::plan) ?: Routes.PLANS
-    InboxKind.ComputerApproval -> runId?.let(Routes::run)
+    InboxKind.ComputerApproval -> Routes.APPROVALS
     InboxKind.RunFinished, InboxKind.RunFailed, InboxKind.Info ->
         if (subtype == SUBTYPE_IM_CHANNEL_DISABLED) {
             Routes.IM_CHANNELS
