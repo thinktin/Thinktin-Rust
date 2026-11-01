@@ -32,6 +32,7 @@ public final class PipelineEditorModel {
 
     @ObservationIgnored private let client: any ClientProtocol
     @ObservationIgnored private var nextID = 1
+    @ObservationIgnored private var originalTitle = ""
     @ObservationIgnored private var originalSteps: [PlanStep] = []
 
     public init(client: any ClientProtocol, planID: PlanID?, teamID: TeamID?) {
@@ -59,8 +60,7 @@ public final class PipelineEditorModel {
 
     /// 有改动（编辑时步骤变了；新建时填了东西）。
     public var hasChanges: Bool {
-        if isEditing { return steps.map(\.step) != originalSteps }
-        return !title.isEmpty || !goal.isEmpty || steps.contains { !$0.prompt.isEmpty }
+        steps.map(\.step) != originalSteps || (!isEditing && (title != originalTitle || !goal.isEmpty))
     }
 
     public func instanceName(_ id: InstanceID?) -> String? {
@@ -79,7 +79,6 @@ public final class PipelineEditorModel {
                 let plan = try await client.getPlan(planID)
                 self.plan = plan
                 hostInstanceID = plan.instanceID
-                originalSteps = plan.steps
                 steps = plan.steps.map { step in
                     defer { nextID += 1 }
                     return StepDraft(step, id: nextID)
@@ -93,6 +92,8 @@ public final class PipelineEditorModel {
             } else {
                 hostInstanceID = instances.first?.id
             }
+            originalTitle = title
+            originalSteps = steps.map(\.step)
             error = nil
             isMissing = false
             hasLoaded = true

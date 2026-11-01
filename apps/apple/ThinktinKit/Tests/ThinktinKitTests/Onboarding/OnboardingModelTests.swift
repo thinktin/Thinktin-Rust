@@ -75,6 +75,23 @@ struct OnboardingModelTests {
         #expect(model.notificationsDenied)
     }
 
+    @Test("实例切换后刷新中断，保留上次完整检查的实例和步骤")
+    func interruptedRefresh() async throws {
+        let client = MockClient(state: DemoData.state(), stepDelay: 0)
+        let permission = ScriptedPermission(.authorized, afterRequest: .authorized)
+        let model = OnboardingModel(client: client, notifications: permission, authorizer: permission)
+        await model.load()
+        let previous = try #require(model.instance?.id)
+        client.update { $0.instances.removeAll { $0.id == previous } }
+        client.failNext("credentials()", with: .network(message: "offline"))
+        await model.load()
+        #expect(model.error?.isOffline == true)
+        #expect(model.instance?.id == previous)
+        await model.load()
+        #expect(model.error == nil)
+        #expect(model.instance?.id != previous)
+    }
+
     @Test("换新机检查：不记的不弹；没有 key 的弹一次")
     func newDeviceCheck() async throws {
         #expect(

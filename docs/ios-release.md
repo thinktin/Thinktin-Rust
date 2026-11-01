@@ -43,6 +43,7 @@ git tag ios-v0.2.0
 git push origin ios-v0.2.0
 ```
 
+- 标签发版默认在 `macos-26` 归档。若要使用 Intel 运行器，在打标签前把仓库的 Actions 变量 `IOS_RELEASE_USE_INTEL` 设为 `true`，该次归档将使用 `macos-15-intel`。手动触发时仍以表单选择的运行器为准。
 - **版本号**取标签（`ios-v0.2.0` → `0.2.0`，1 到 3 段数字），覆盖 project.yml 里的 `MARKETING_VERSION`。
 - **构建号**是这个工作流的运行序号（`github.run_number`），只增不减，同一个版本号重新发（改了东西重打标签）也不会撞。
 - 签名：每次发版用 API key 现建一张 Apple Distribution 证书（私钥只在这台机器的临时钥匙串里）和两个 App Store 描述文件

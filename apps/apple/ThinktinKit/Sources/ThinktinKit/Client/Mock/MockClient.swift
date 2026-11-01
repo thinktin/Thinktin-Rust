@@ -1267,7 +1267,9 @@ public final class MockClient: ClientProtocol, @unchecked Sendable {
             let (vendor, token) = try MockErrors.imWebhook(webhookURL, secret: secret)
             let i = try s.channelIndex(channelID)
             let wasAutoDisabled = !s.state.imChannels[i].isEnabled && s.state.imChannels[i].lastError != nil
-            s.state.imChannels[i].vendor = vendor
+            guard s.state.imChannels[i].vendor == vendor else {
+                throw MockErrors.invalid("webhook belongs to a different vendor")
+            }
             s.state.imChannels[i].hint = ImChannelRules.hint(token)
             s.state.imChannels[i].hasSecret = !(secret ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             s.state.imChannels[i].lastError = nil

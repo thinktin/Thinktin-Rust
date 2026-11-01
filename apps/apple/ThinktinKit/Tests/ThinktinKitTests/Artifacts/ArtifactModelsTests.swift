@@ -44,6 +44,23 @@ struct ArtifactModelsTests {
         #expect(model.visible.map(\.name) == ["chart.png", "周报要点.md"])
     }
 
+    @Test("刷新时实例请求失败，保留之前的产出物并允许重试")
+    func libraryRefreshFailure() async {
+        let client = mock()
+        let model = ArtifactLibraryModel(client: client, instanceID: nil)
+        await model.load()
+        let before = model.artifacts
+        #expect(!before.isEmpty)
+        for _ in client.state.instances.filter({ $0.state != .deleted }) {
+            client.failNext("instanceArtifacts(_:limit:)", with: .network(message: "offline"))
+        }
+        await model.load()
+        #expect(model.artifacts == before)
+        #expect(model.error?.isOffline == true)
+        await model.load()
+        #expect(model.error == nil)
+    }
+
     @Test("一个实例的；删除（已经没有的照样拿掉）")
     func libraryOneInstance() async throws {
         let client = mock()
@@ -130,6 +147,20 @@ struct ArtifactModelsTests {
         #expect(name("  ") == "产出物（AI 生成）")
         #expect(name("archive.tar.gz") == "archive.tar（AI 生成）.gz")
         #expect(name("v1.0 final draft") == "v1.0 final draft（AI 生成）")
+    }
+
+    @Test("服务端允许的 200 字中文文件名也能导出，保留 AI 标识和扩展名")
+    func exportLongName() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let artifact = Artifact(
+            id: "a", instanceID: "i", runID: "r", name: String(repeating: "报", count: 197) + ".md",
+            contentType: "text/markdown", size: 2, createdAt: Date())
+        let contents = Data("OK".utf8)
+        let url = try ArtifactFiles.write(contents, for: artifact, language: .chinese, directory: directory)
+        #expect(url.lastPathComponent.utf8.count <= 255)
+        #expect(url.lastPathComponent.hasSuffix("（AI 生成）.md"))
+        #expect(try Data(contentsOf: url) == contents)
     }
 
     @Test("哪些能直接显示成文字")
