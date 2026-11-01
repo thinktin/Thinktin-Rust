@@ -122,8 +122,16 @@ str_enum!(
 );
 
 str_enum!(
-    DevicePlatform { Ios = "ios", Android = "android", Macos = "macos" }
+    /// 登录设备的平台。macOS 和 Windows 是电脑（连设备中继、给 agent 当“我的电脑”用，第 7 节），其余是手机。
+    DevicePlatform { Ios = "ios", Android = "android", Macos = "macos", Windows = "windows" }
 );
+
+impl DevicePlatform {
+    /// 是不是电脑：连设备中继，agent 的 `computer_*` 工具在它上面执行（14.1、14.2）。
+    pub fn is_computer(self) -> bool {
+        matches!(self, Self::Macos | Self::Windows)
+    }
+}
 
 str_enum!(
     /// 推送通道（8.3）。

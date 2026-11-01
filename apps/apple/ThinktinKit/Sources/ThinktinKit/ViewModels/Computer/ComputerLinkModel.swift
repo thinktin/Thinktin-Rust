@@ -22,9 +22,17 @@ public enum CapabilityRules {
     /// 有效期可选的几档。
     public static let durations: [TimeInterval] = [3600, 8 * 3600, 24 * 3600, 7 * 24 * 3600]
 
+    /// 绝对路径、不含 `..`：Mac 的 `/Users/me/Documents`，或者 Windows 的 `C:\Users\me\Documents`。
     public static func isValidDirectory(_ path: String) -> Bool {
-        guard path.hasPrefix("/"), !path.contains("\n") else { return false }
-        return !path.split(separator: "/").contains("..")
+        guard !path.contains("\n") else { return false }
+        let windows: Bool = {
+            let u = Array(path.utf8.prefix(3))
+            guard u.count == 3 else { return false }
+            let letter = (UInt8(ascii: "a")...UInt8(ascii: "z")).contains(u[0] | 0x20)
+            return letter && u[1] == UInt8(ascii: ":") && (u[2] == UInt8(ascii: "/") || u[2] == UInt8(ascii: "\\"))
+        }()
+        guard path.hasPrefix("/") || windows else { return false }
+        return !path.split(whereSeparator: { $0 == "/" || $0 == "\\" }).contains("..")
     }
 
     public static func isValidBundleID(_ id: String) -> Bool {

@@ -19,8 +19,18 @@ check() {  # 名字 包...
   python3 "$py" check "$out/$name/inventory.json" || status=1
 }
 
+check_on() {  # 名字 平台 包...：只发这一个平台的程序（别的平台的依赖根本不编进去）。
+  local name=$1 target=$2
+  shift 2
+  local args=()
+  for p in "$@"; do args+=(-p "$p"); done
+  python3 "$py" cargo --subject "$name" --out "$out/$name" --target "$target" "${args[@]}"
+  python3 "$py" check "$out/$name/inventory.json" || status=1
+}
+
 check server server llm-gw relay # 服务端镜像（deploy/docker/Dockerfile）
 check agent-shim agent-shim      # 每个 agent 的模板镜像（deploy/templates）
 check client-core client-core    # iOS、Android App 里的客户端核心
 check desktop desktop            # macOS App 里的电脑端工具服务
+check_on windows x86_64-pc-windows-msvc thinktin-windows  # Windows 电脑端（docs/windows.md），只发 Windows
 exit $status

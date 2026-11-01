@@ -1,8 +1,8 @@
 //! 普通操作的权限：手机签发的能力令牌（见 docs/pairing.md 第 4 节）。
 //!
 //! 只读和普通操作（看目录、读写文件、截图、键鼠、打开网页和应用）要有一张还有效、没被吊销的令牌覆盖：
-//! 文件按目录（按路径段比较，先解开符号链接），键鼠按前台应用的 bundle id。高危操作（删除、执行命令）
-//! 不看令牌，每次都要手机签名批准（见 [`crate::Desktop`]）。
+//! 文件按目录（按路径段比较，先解开符号链接），键鼠按前台应用（macOS 是 bundle id，Windows 是程序名，
+//! 如 `chrome.exe`）。高危操作（删除、执行命令）不看令牌，每次都要手机签名批准（见 [`crate::Desktop`]）。
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -66,7 +66,7 @@ impl State {
 pub enum Need {
     /// 要有令牌覆盖这个路径（已经解开符号链接）。
     Path(PathBuf),
-    /// 要有令牌覆盖这个应用（bundle id）。
+    /// 要有令牌覆盖这个应用（macOS 的 bundle id，Windows 的程序名）。
     App(String),
     /// 有任意一张有效的令牌就行（截图、打开网页）。
     Any,
@@ -95,7 +95,7 @@ pub fn need(tool: &str, arguments: &Value, frontmost_app: Option<String>) -> Res
                 .ok_or_else(|| "target is required".to_owned())?;
             if target.starts_with("https://") || target.starts_with("http://") {
                 Ok(Need::Any)
-            } else if target.starts_with('/') {
+            } else if Path::new(target).is_absolute() {
                 Ok(Need::Path(resolve(Path::new(target))?))
             } else {
                 Ok(Need::App(target.to_owned()))
@@ -106,19 +106,35 @@ pub fn need(tool: &str, arguments: &Value, frontmost_app: Option<String>) -> Res
 }
 
 /// 绝对路径，解开符号链接（链接指到授权目录外面就按外面算）。还不存在的文件按它所在的目录解。
+/// Windows 上去掉 `canonicalize` 加的 `\\?\` 前缀（给人看、给系统接口用的都是普通写法）。
 pub fn resolve(path: &Path) -> Result<PathBuf, String> {
     if !path.is_absolute() {
         return Err(format!("{} is not an absolute path", path.display()));
     }
     if let Ok(p) = std::fs::canonicalize(path) {
-        return Ok(p);
+        return Ok(plain(p));
     }
     let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
         return Err(format!("{} cannot be resolved", path.display()));
     };
     let parent = std::fs::canonicalize(parent)
         .map_err(|_| format!("{} does not exist", parent.display()))?;
-    Ok(parent.join(name))
+    Ok(plain(parent).join(name))
+}
+
+/// `\\?\C:\x` → `C:\x`，`\\?\UNC\server\share` → `\\server\share`；别的原样。
+fn plain(path: PathBuf) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let s = path.to_string_lossy();
+        if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+            return PathBuf::from(format!(r"\\{rest}"));
+        }
+        if let Some(rest) = s.strip_prefix(r"\\?\") {
+            return PathBuf::from(rest);
+        }
+    }
+    path
 }
 
 /// 有没有令牌允许。
@@ -186,7 +202,9 @@ mod tests {
     #[test]
     fn needs_follow_the_tool() {
         let dir = tempfile::tempdir().unwrap();
-        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let root = resolve(dir.path()).unwrap();
+        #[cfg(windows)]
+        assert!(!root.to_string_lossy().starts_with(r"\\?\"));
         let file = root.join("notes.md");
         std::fs::write(&file, "x").unwrap();
         let read = need(

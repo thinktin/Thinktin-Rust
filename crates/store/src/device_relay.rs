@@ -143,8 +143,8 @@ impl<R> Tx<R> {
         let (Some(from_platform), Some(to_platform)) = (platform(from)?, platform(to)?) else {
             return Err(Error::NotFound);
         };
-        let from_computer = from_platform == DevicePlatform::Macos;
-        let to_computer = to_platform == DevicePlatform::Macos;
+        let from_computer = from_platform.is_computer();
+        let to_computer = to_platform.is_computer();
         if kind.from_computer() != from_computer || from_computer == to_computer {
             return Err(Error::Invalid(format!(
                 "{kind} cannot go from a {from_platform} device to a {to_platform} device"
@@ -416,7 +416,8 @@ impl Tx<Worker> {
     ) -> Result<Option<(DeviceId, Vec<String>)>> {
         let row: Option<(Uuid, Vec<String>)> = sqlx::query_as(
             "SELECT l.device_id, l.tools FROM device_links l JOIN devices d ON d.id = l.device_id \
-             WHERE l.user_id = $1 AND d.user_id = $1 AND d.revoked_at IS NULL AND d.platform = 'macos' \
+             WHERE l.user_id = $1 AND d.user_id = $1 AND d.revoked_at IS NULL \
+               AND d.platform IN ('macos', 'windows') \
                AND l.last_seen_at > now() - make_interval(secs => $2) \
              ORDER BY l.connected_at DESC LIMIT 1",
         )
@@ -430,8 +431,8 @@ impl Tx<Worker> {
     /// 用户有没有登录着的电脑（不管在不在线）。
     pub async fn has_computer(&mut self, user: UserId) -> Result<bool> {
         Ok(sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM devices WHERE user_id = $1 AND platform = 'macos' \
-               AND revoked_at IS NULL)",
+            "SELECT EXISTS (SELECT 1 FROM devices WHERE user_id = $1 \
+               AND platform IN ('macos', 'windows') AND revoked_at IS NULL)",
         )
         .bind(user.0)
         .fetch_one(self.conn())

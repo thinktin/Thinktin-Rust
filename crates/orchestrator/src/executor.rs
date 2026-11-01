@@ -236,13 +236,13 @@ fn computer_error(e: &CallError) -> String {
     match e {
         CallError::NoComputer => {
             "No computer is signed in to this ThinkTin account. Ask the user to \
-            install ThinkTin on their Mac and sign in."
+            install ThinkTin on their Mac or Windows PC and sign in."
                 .into()
         }
         CallError::Offline => "The user's computer is offline.".into(),
         CallError::Unsupported(tool) => format!(
             "The user's computer cannot run {tool} right now; the ThinkTin app there may be missing \
-             a macOS permission (Screen Recording, Accessibility)."
+             a system permission (on macOS: Screen Recording, Accessibility)."
         ),
         CallError::Timeout => "The user's computer did not answer in time (actions that need the \
             user's approval wait for them to approve on their phone)."

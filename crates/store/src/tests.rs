@@ -2395,6 +2395,92 @@ async fn runs_wait_for_a_key_then_resume_or_time_out() {
 }
 
 /// 设备中继（14.1）：在线状态、调用的领取和回填、连接被顶掉、断线判失败、消息的方向和投递、
+/// Windows 电脑和 Mac 一样算电脑（架构方案 8.6）：能连中继、算“有电脑”、收手机的消息。
+#[tokio::test]
+async fn windows_pcs_are_computers_too() {
+    use proto::domain::{DeviceMessageKind, DevicePlatform};
+
+    use crate::NewLink;
+
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let carol = user(db, "+8613900000003").await;
+    let mut w = db.worker().await.unwrap();
+    let pc = w
+        .create_device(carol, DevicePlatform::Windows, "DESKTOP-7K2", None)
+        .await
+        .unwrap();
+    let phone = w
+        .create_device(carol, DevicePlatform::Android, "Pixel", None)
+        .await
+        .unwrap();
+    assert!(w.has_computer(carol).await.unwrap());
+    assert_eq!(w.online_computer(carol).await.unwrap(), None);
+    w.commit().await.unwrap();
+
+    let conn = uuid::Uuid::now_v7();
+    let mut r = db.relay().await.unwrap();
+    assert_eq!(
+        r.device_platform(pc).await.unwrap(),
+        Some((carol, DevicePlatform::Windows, false))
+    );
+    r.link_device(&NewLink {
+        device: pc,
+        user: carol,
+        node: "relay-1".into(),
+        connection: conn,
+    })
+    .await
+    .unwrap();
+    assert!(
+        r.set_link_info(pc, conn, &["computer_screenshot".to_owned()], "1.0.0")
+            .await
+            .unwrap()
+    );
+    r.commit().await.unwrap();
+
+    let mut w = db.worker().await.unwrap();
+    assert_eq!(
+        w.online_computer(carol).await.unwrap(),
+        Some((pc, vec!["computer_screenshot".to_owned()]))
+    );
+    w.commit().await.unwrap();
+
+    // 手机 → 电脑、电脑 → 手机的消息按方向检查；两台电脑之间不行。
+    let mut t = db.tenant(carol).await.unwrap();
+    t.send_device_message(
+        phone,
+        pc,
+        DeviceMessageKind::Capability,
+        &json!({ "grant": {} }),
+    )
+    .await
+    .unwrap();
+    t.send_device_message(
+        pc,
+        phone,
+        DeviceMessageKind::ApprovalRequest,
+        &json!({ "request": {} }),
+    )
+    .await
+    .unwrap();
+    let mac = {
+        let mut w = db.worker().await.unwrap();
+        let mac = w
+            .create_device(carol, DevicePlatform::Macos, "MacBook", None)
+            .await
+            .unwrap();
+        w.commit().await.unwrap();
+        mac
+    };
+    assert!(matches!(
+        t.send_device_message(pc, mac, DeviceMessageKind::ApprovalRequest, &json!({}))
+            .await,
+        Err(Error::Invalid(_))
+    ));
+    t.rollback().await.unwrap();
+}
+
 /// 电脑上线唤醒等电脑的运行、中继角色的权限、数据维护。
 #[tokio::test]
 async fn the_device_relay_routes_calls_and_messages() {

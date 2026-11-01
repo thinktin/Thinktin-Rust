@@ -220,7 +220,7 @@ struct DeviceRow: View {
         switch device.platform {
         case .ios: device.name.localizedCaseInsensitiveContains("ipad") ? "ipad" : "iphone"
         case .android: "smartphone"
-        case .macos: "laptopcomputer"
+        case .macos, .windows: "laptopcomputer"
         case .unknown: "desktopcomputer"
         }
     }

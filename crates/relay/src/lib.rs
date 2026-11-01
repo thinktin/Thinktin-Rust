@@ -26,7 +26,7 @@ use axum::http::{HeaderMap, StatusCode, header::AUTHORIZATION};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use proto::api::{ErrorBody, ErrorCode};
-use proto::domain::{DeviceId, DevicePlatform, SessionId, UserId, UserStatus};
+use proto::domain::{DeviceId, SessionId, UserId, UserStatus};
 use proto::relay::MAX_FRAME_BYTES;
 use store::Db;
 use tokio::net::TcpListener;
@@ -81,7 +81,7 @@ pub(crate) enum AuthFail {
     SessionRevoked,
     /// 账号被冻结（4.6）。
     Frozen,
-    /// 不是电脑：只有 macOS 设备能连中继。
+    /// 不是电脑：只有 macOS、Windows 设备能连中继。
     NotComputer,
     /// 数据库暂时不可用。
     Unavailable,
@@ -248,7 +248,7 @@ impl Relay {
             return Err(AuthFail::SessionRevoked);
         }
         match platform {
-            Some((owner, DevicePlatform::Macos, false)) if owner == who.user => Ok(()),
+            Some((owner, platform, false)) if owner == who.user && platform.is_computer() => Ok(()),
             Some((_, _, true)) => Err(AuthFail::SessionRevoked),
             _ => Err(AuthFail::NotComputer),
         }

@@ -53,6 +53,7 @@ extension DevicePlatform {
         case .ios: return "iOS"
         case .android: return "Android"
         case .macos: return "Mac"
+        case .windows: return "Windows"
         case .unknown(let raw): return raw.isEmpty ? (zh ? "未知设备" : "Unknown device") : raw
         }
     }
