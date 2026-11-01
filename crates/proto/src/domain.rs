@@ -70,6 +70,8 @@ id_type!(
     DeviceMessageId,
     ImChannelId,
     ReportId,
+    BoardPostId,
+    PlanHookId,
 );
 
 /// 字符串枚举的公共实现：和数据库里的取值一一对应。
@@ -194,8 +196,14 @@ impl Locale {
 }
 
 str_enum!(
-    /// 运行由什么发起。
-    RunSource { User = "user", Plan = "plan", Pipeline = "pipeline", Delegate = "delegate" }
+    /// 运行由什么发起。`Ask` 是别的 agent 问的问题（8.11），在被问的实例上跑。
+    RunSource {
+        User = "user",
+        Plan = "plan",
+        Pipeline = "pipeline",
+        Delegate = "delegate",
+        Ask = "ask",
+    }
 );
 
 str_enum!(
@@ -365,6 +373,9 @@ pub struct PlanPolicy {
     pub daily_token_limit: Option<u64>,
     /// 等电脑上线、等补上 key 最多等多久（7.11）。
     pub wait_timeout_secs: u64,
+    /// 运行成功时通知用户（推送、收件箱）。事件触发的计划（7.1）常常关掉：没事的时候别打扰；失败、等审批、
+    /// 等 key 这些要用户处理的照样通知。老数据没有这一项，按打开算。
+    pub notify_success: bool,
 }
 
 impl Default for PlanPolicy {
@@ -376,6 +387,7 @@ impl Default for PlanPolicy {
             budget: RunBudget::default(),
             daily_token_limit: None,
             wait_timeout_secs: 24 * 3600,
+            notify_success: true,
         }
     }
 }
@@ -492,6 +504,19 @@ pub struct Instance {
     pub state: InstanceState,
     pub created_at: DateTime<Utc>,
     pub last_active_at: DateTime<Utc>,
+    /// 用途说明（8.9）：用户写的，别的 agent 用 `agents_list` 看得到。老的服务端没有，按空的算。
+    #[serde(default)]
+    pub purpose: String,
+    /// “允许其他 agent 查我、问我”（8.9），默认打开。老的服务端没有，按打开算。
+    #[serde(default = "default_true")]
+    pub peer_access: bool,
+}
+
+/// 用途说明最长这么多字（8.9）。
+pub const MAX_INSTANCE_PURPOSE_CHARS: usize = 200;
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -706,6 +731,19 @@ pub struct Trigger {
     pub disabled_reason: Option<String>,
 }
 
+/// 计划的 webhook（7.1 事件触发）：外面的服务往它的地址 POST，平台按这个计划起一次运行。令牌只在建、换的
+/// 时候返回一次，这里没有。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlanHook {
+    pub id: PlanHookId,
+    pub plan_id: PlanId,
+    pub enabled: bool,
+    /// 用户同意把收到的内容交给 agent 和模型厂商的时间。
+    pub consented_at: DateTime<Utc>,
+    pub last_event_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
 /// 触发器的规则解析不了了（比如时区没了）：后台停用它，用户删掉重新加。
 pub const TRIGGER_INVALID_RULE: &str = "invalid_rule";
 
@@ -730,8 +768,8 @@ pub struct Run {
     pub created_at: DateTime<Utc>,
     pub started_at: Option<DateTime<Utc>>,
     pub finished_at: Option<DateTime<Utc>>,
-    /// 等的是什么（[`wait_code`]），只在 `waiting_quota`、`waiting_device` 时有。是字符串不是枚举：以后加了新值，
-    /// 老的客户端照样解析得了。
+    /// 等的是什么（[`wait_code`]），只在 `waiting_quota`、`waiting_device` 时有；`waiting_children` 时只等
+    /// 队友回答的是 [`wait_code::ANSWER`]。是字符串不是枚举：以后加了新值，老的客户端照样解析得了。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wait_code: Option<String>,
 }
@@ -750,13 +788,16 @@ pub mod wait_code {
     pub const OVERLOADED: &str = "overloaded";
     /// 等用户的电脑上线。
     pub const DEVICE_OFFLINE: &str = "device_offline";
-    pub const ALL: [&str; 6] = [
+    /// 等待子任务时（`waiting_children`）：等的只是队友的回答（8.11），没有委派的子任务。
+    pub const ANSWER: &str = "answer";
+    pub const ALL: [&str; 7] = [
         INVALID,
         NO_BALANCE,
         UNAVAILABLE,
         RATE_LIMITED,
         OVERLOADED,
         DEVICE_OFFLINE,
+        ANSWER,
     ];
 }
 
@@ -922,6 +963,40 @@ pub mod notice_subtype {
     pub const IM_CHANNEL_DISABLED: &str = "im_channel_disabled";
     /// 用户的内容举报处理完了。
     pub const REPORT_HANDLED: &str = "report_handled";
+}
+
+/// 共享看板的一条（8.10）：用户的 agent（或用户自己）写的进展、决定、待别人处理的事。写了不改，只能归档、删除。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BoardPost {
+    pub id: BoardPostId,
+    /// 哪个实例写的；没有是用户自己写的。实例删了 id 还在、`author_name` 没有：用 `ai_generated` 区分用户和
+    /// 删了的 agent。
+    pub author_instance_id: Option<InstanceId>,
+    /// 写它的实例的名字（实例删了就没有）。
+    pub author_name: Option<String>,
+    /// 哪次运行写的。
+    pub run_id: Option<RunId>,
+    pub body: String,
+    pub tags: Vec<String>,
+    /// agent 写的（App 里按 AI 生成内容标注）；用户自己写的是 false。
+    pub ai_generated: bool,
+    pub created_at: DateTime<Utc>,
+    pub archived_at: Option<DateTime<Utc>>,
+}
+
+/// 看板一条最长这么多字（8.10）。
+pub const MAX_BOARD_BODY_CHARS: usize = 2000;
+/// 看板一条最多这么多个标签。
+pub const MAX_BOARD_TAGS: usize = 8;
+/// 每个用户的看板上没归档的最多这么多条，满了最早的自动归档。
+pub const MAX_BOARD_LIVE_POSTS: u64 = 200;
+
+/// 看板标签的格式：字母（含中文）、数字、`-`、`_`，1–32 个字。比较前转成小写。
+pub fn valid_board_tag(tag: &str) -> bool {
+    (1..=32).contains(&tag.chars().count())
+        && tag
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
 }
 
 /// 提醒子类型的格式（和库里的 CHECK 一样）：小写字母开头，字母和下划线，最长 32。
@@ -1229,5 +1304,18 @@ mod tests {
         newer["wait_code"] = serde_json::json!("future_thing");
         let r: Run = serde_json::from_value(newer).unwrap();
         assert_eq!(r.wait_code.as_deref(), Some("future_thing"));
+    }
+
+    /// 老服务端、缓存里的实例没有用途说明和交流开关（8.9）：开关按打开算。
+    #[test]
+    fn instances_parse_without_purpose_or_peer_access() {
+        let old = serde_json::json!({
+            "id": InstanceId::new(), "agent_id": "claude", "agent_version": "1", "harness": "acp",
+            "name": "c", "state": "running", "created_at": "2026-10-28T00:00:00Z",
+            "last_active_at": "2026-10-28T00:00:00Z"
+        });
+        let i: Instance = serde_json::from_value(old).unwrap();
+        assert_eq!(i.purpose, "");
+        assert!(i.peer_access);
     }
 }

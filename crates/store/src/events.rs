@@ -110,8 +110,9 @@ impl<R> Tx<R> {
     }
 }
 
-impl Tx<Worker> {
-    /// 运行最近的 `limit` 条事件（只要 `kinds` 里的种类），按先后排。续跑简报用（7.12）。
+impl<R> Tx<R> {
+    /// 运行最近的 `limit` 条事件（只要 `kinds` 里的种类），按先后排。续跑简报（7.12）、查进度（8.9）用；
+    /// 业务角色按行级安全只看得到自己的。
     pub async fn recent_run_events(
         &mut self,
         run: RunId,
@@ -131,7 +132,9 @@ impl Tx<Worker> {
         rows.reverse();
         rows.into_iter().map(Row::into_event).collect()
     }
+}
 
+impl Tx<Worker> {
     /// 建好从 `from` 所在月起 `months` 个月的事件分区（维护任务每天调一次，提前建好下个月的）。
     pub async fn ensure_event_partitions(&mut self, from: NaiveDate, months: i32) -> Result<()> {
         if !(1..=24).contains(&months) {

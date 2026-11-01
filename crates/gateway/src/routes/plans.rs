@@ -301,6 +301,12 @@ pub async fn update(
         )
         .await?;
     if let Some(steps) = &req.steps {
+        // webhook 只支持单个 agent 的计划（7.1）：加步骤前先删掉它的 webhook。
+        if !steps.is_empty() && !t.plan_hooks(id).await?.is_empty() {
+            return Err(ApiError::invalid(
+                "remove the plan's webhooks before adding steps",
+            ));
+        }
         t.set_plan_steps(id, steps).await?;
     }
     t.audit(

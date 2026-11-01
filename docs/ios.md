@@ -86,20 +86,24 @@ Claude App 的特点：暖色纸张底色、极少的强调色、标题用衬线
 ## 5. 事件流怎么变成对话
 
 一个实例的事件流（`InstanceEvent`，按 `seq` 递增）是“运行日志”，对话页面按 **运行（Run）** 分组显示：每个运行一条用户消息
-（`Run.prompt`），后面跟 agent 的输出。归并规则（`ThinktinKit/Conversation`，纯函数，有单元测试）：
+（`Run.prompt`），后面跟 agent 的输出。`Run.source` 是 `delegate`（负责人委派的子任务）、`ask`（别的 agent 问的问题，8.11）
+时 `Run.prompt` 是 agent 写的，不能显示成“你”，要带“AI 生成”标识；不认识的来源也不要当成用户发的。归并规则
+（`ThinktinKit/Conversation`，纯函数，有单元测试）：
 
 | 事件 `kind` | 载荷（`payload_json`） | 界面 |
 |---|---|---|
 | `agent.message` | `{text}`，多条连续的拼成一段 | assistant 文本（Markdown），带“AI 生成”标识 |
 | `agent.thought` | `{text}` | 可折叠的“思考”块，默认折叠，带“AI 生成”标识 |
 | `agent.tool_call` / `agent.tool_call_update` | `{tool_call_id, title, kind, status, raw}` | 工具调用卡片：标题、状态（进行中 / 完成 / 失败），展开看 `raw` |
-| `agent.platform_tool_call` | `{call_id, name, arguments}` | 同上，显示为“平台工具：计划 / 产出物 / 委派 / 保险箱” |
+| `agent.platform_tool_call` | `{call_id, name, arguments}` | 同上，显示为“平台工具：计划 / 产出物 / 委派 / 保险箱 / 队友 / 看板 / 提问” |
 | `agent.plan` | `{entries}` | agent 的待办清单卡片，带“AI 生成”标识 |
 | `agent.permission_requested` / `agent.permission_resolved` | `{request_id, title, options, tool_call, attempt, approval_id}` / `{request_id, option_id, by, attempt, approval_id, approval_state}` | 审批卡片：未决时显示选项按钮（调 `decide_approval`），已决显示结论（`ApprovalOutcome`：你批准了 / 你拒绝了 / 按预授权 / 已过期 / 已作废）。一个运行里按 `(attempt, request_id)` 认（shim 每次尝试都从 `perm-1` 重新编号）；有 `approval_id` 直接关联审批记录；`approval_state` 是 `expired` 的显示已过期（平台判的超时 shim 回的是 `by: user`）；尝试比运行当前的小的、运行已经结束的待处理卡片作废（backend-core 的 docs/agent-integration.md 第 6 节） |
 | `vault.requested` / `vault.fulfilled` / `vault.declined` | `{request_id, name, purpose, fields}` | 保险箱表单卡片（填账号密码，只进保险箱）；已处理显示结果 |
-| `run.state` | `{state, reason, attempt}` | 运行状态行：等待类状态显示原因和下一步（去配 key、去审批、等电脑上线） |
+| `run.state` | `{state, reason, attempt, wait_code?}` | 运行状态行：等待类状态显示原因和下一步（去配 key、去审批、等电脑上线）；`waiting_children` 带 `wait_code: answer` 时是只在等队友回答 |
 | `artifact.published` | `{artifact_id, name, version, size}` | 产出物卡片，点开预览 / 分享 |
 | `pipeline.step_started` / `delegate.started` | `{step, run_id, instance_id}` / `{child_run_id, instance_id, to, title}` | 子运行链接卡片，进运行树 |
+| `ask.sent` | `{child_run_id, instance_id, to, question}`（问题第一行，agent 写的） | 提问卡片（问谁、问了什么），进运行树看回答；带“AI 生成”标识（8.11） |
+| `board.posted` | `{post_id, tags}` | “发到了看板”系统行，点进看板（8.10） |
 | `plan.needs_confirmation` | `{plan_id, title, change}` | “agent 新建 / 修改了计划，待确认”卡片，跳到计划页 |
 | `plan.cancelled` | `{plan_id, title}` | “agent 取消了计划 X”系统行 |
 | `instance.state` | `{state}`，没有 `run_id` | 不进时间线：更新对话页页头和抽屉里的实例状态（“正在唤醒”，已归档的从模板重建会慢一些） |

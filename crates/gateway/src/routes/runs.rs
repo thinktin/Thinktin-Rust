@@ -4,10 +4,10 @@ use auth::service::Principal;
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use proto::domain::{InstanceId, PlanId, Run, RunId, RunKind, RunSource};
+use proto::domain::{InstanceId, PlanId, Run, RunId, RunKind, RunSource, RunState};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use store::{NewRun, RunFilter, Tenant, Tx};
+use store::{NewRun, RunFilter, Tenant, Tx, Urgent};
 
 use super::{check_len, default_scope, parse_id};
 use crate::{ApiJson, ApiResult, AppState, Authed};
@@ -15,6 +15,17 @@ use crate::{ApiJson, ApiResult, AppState, Authed};
 #[derive(Deserialize)]
 pub struct CreateReq {
     prompt: String,
+    /// 实例正忙时怎么送（8.12）：默认排队；`interrupt` 是用户的紧急消息，打断它正在做的、马上处理这条。
+    #[serde(default)]
+    delivery: Delivery,
+}
+
+#[derive(Deserialize, Default, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum Delivery {
+    #[default]
+    Queue,
+    Interrupt,
 }
 
 pub async fn create(
@@ -30,14 +41,24 @@ pub async fn create(
     let mut t = s.db.tenant(who.user).await?;
     let instance = t.instance(id).await?;
     ensure_instance_grant(&s, &mut t, &who, id).await?;
-    let run = t
-        .create_run(&NewRun::new(
-            id,
-            RunSource::User,
-            prompt,
-            instance.agent_version,
-        ))
-        .await?;
+    let new = NewRun::new(id, RunSource::User, prompt, instance.agent_version);
+    let run = match req.delivery {
+        Delivery::Queue => t.create_run(&new).await?,
+        Delivery::Interrupt => {
+            let (run, urgent) = t.queue_urgent_run(&new).await?;
+            // 停在等待里的运行直接取消了：记一笔，App 的时间线上看得到它停了。正在执行的由执行器停下时记。
+            if let Urgent::Stopped(stopped) = urgent {
+                t.append_event(
+                    id,
+                    Some(stopped),
+                    "run.state",
+                    &json!({ "state": RunState::Cancelled, "reason": store::INTERRUPTED_REASON }),
+                )
+                .await?;
+            }
+            run
+        }
+    };
     t.commit().await?;
     Ok((StatusCode::CREATED, Json(run)))
 }

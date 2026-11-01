@@ -3,7 +3,8 @@
 use std::sync::Arc;
 
 use proto::domain::{
-    InboxItem, InboxItemId, Instance, InstanceEvent, InstanceId, Run, RunId, User, VaultItem,
+    BoardPost, InboxItem, InboxItemId, Instance, InstanceEvent, InstanceId, Run, RunId, User,
+    VaultItem,
 };
 
 use crate::api::{Api, InboxPage, LoginResult, NewVaultItem};
@@ -310,15 +311,30 @@ impl Client {
         text: &str,
         allow_secrets: bool,
     ) -> Result<Run> {
-        if !allow_secrets {
-            let found = secrets::detect(text);
-            if !found.is_empty() {
-                return Err(ClientError::ContainsSecrets {
-                    count: u32::try_from(found.len()).unwrap_or(u32::MAX),
-                });
-            }
-        }
+        refuse_secrets(text, allow_secrets)?;
         self.api.create_run(instance, text).await
+    }
+
+    /// 和 [`Client::send_message`] 一样，但是紧急消息（8.12）：实例正忙时打断它正在做的、马上处理这条。
+    pub async fn send_urgent_message(
+        &self,
+        instance: InstanceId,
+        text: &str,
+        allow_secrets: bool,
+    ) -> Result<Run> {
+        refuse_secrets(text, allow_secrets)?;
+        self.api.create_urgent_run(instance, text).await
+    }
+
+    /// 用户在共享看板上写一条（8.10）。看板上的内容所有 agent 都读得到：像密码、key 的内容和发消息一样拦下。
+    pub async fn post_to_board(
+        &self,
+        body: &str,
+        tags: &[String],
+        allow_secrets: bool,
+    ) -> Result<BoardPost> {
+        refuse_secrets(body, allow_secrets)?;
+        self.api.post_to_board(body, tags).await
     }
 
     /// 把消息里拦下的值存进保险箱，返回条目和换成引用（`[vault:名字]`）后的消息。
@@ -333,5 +349,20 @@ impl Client {
         let saved = self.api.create_vault_item(item).await?;
         let text = secrets::redact(message, &[(value.to_owned(), saved.name.clone())]);
         Ok((saved, text))
+    }
+}
+
+/// 消息里有像密码、key 的内容、用户又没确认要发时不发（11.6）。
+fn refuse_secrets(text: &str, allow_secrets: bool) -> Result<()> {
+    if allow_secrets {
+        return Ok(());
+    }
+    let found = secrets::detect(text);
+    if found.is_empty() {
+        Ok(())
+    } else {
+        Err(ClientError::ContainsSecrets {
+            count: u32::try_from(found.len()).unwrap_or(u32::MAX),
+        })
     }
 }

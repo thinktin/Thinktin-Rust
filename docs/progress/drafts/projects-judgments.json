@@ -1,0 +1,206 @@
+[
+ {
+  "lens": "judge:security",
+  "judgment": {
+   "scores": [
+    {
+     "design": "A",
+     "score": 8.5,
+     "strengths": [
+      "Fail-closed member role (thinktin_member). A project transaction cannot see any table that lacks a member policy (vault, private board, plans, inbox, approvals, keys), and column grants hide runs.state_reason, which holds the approval title (executor.rs:2121), plus budget, tokens_used, run_grant_id, events.seq, users.phone and instances.sandbox_address. Of the three, this is the only design where the project-to-private direction is enforced in the database and not by tool code.",
+      "thinktin_definer (NOLOGIN NOBYPASSRLS) owns the SECURITY DEFINER functions and reads membership through 'TO thinktin_definer USING (true)' policies. This works under the non-superuser, FORCE-bound thinktin_owner (deploy-checklist.md:57; 0001:435). Because the functions run as a plain role even in the superuser test DB, CI exercises the production path. This fixes the rls-map pitfall instead of assuming it away.",
+      "The tenant role is only narrowed. Rows with a project_id are visible only while the user is a current member and outside private_scope, so a member who leaves loses sight of their own agent's project runs, events and inbox at once (projects.md:94). Private-run tools get app.scope=private.",
+      "The scope_id = coalesce(project_id, user_id) composite foreign keys keep every run tree homogeneous (one user's private tree, or one project). Private artifacts, board posts and vault requests can only reference private runs. A private run cannot use a project grant, and vice versa. These are constraints, so they bind thinktin_worker, which bypasses RLS.",
+      "events_fill derives events.project_id and project_seq from the run and overrides whatever the program passes, so mislabelled events cannot be written. Members page by project_seq, so per-instance seq gaps do not leak private activity.",
+      "Revocation works from both sides. via_grant_id joins the ancestor walk, so a revoked lead or creator grant also kills cross-owner child grants. Membership liveness is checked in ancestors_usable!, which the sandbox token and the model gateway share (llmgw.rs:98-114), and token_epoch is bumped on leave.",
+      "A clippy disallowed-methods ban on Db::tenant in the orchestrator, covering every tenant call site the design lists (ask.rs:65, board.rs:59/90, delegate.rs:45, peers.rs:47/92, tools.rs:199-313, vault.rs:46/111, executor.rs:802, all verified), forces each tool onto a scoped transaction. The artifact tools that read through the worker are split by Scope.",
+      "Per-project HOME, and the private cwd moves to private/ so the private and project trees are siblings. vault_request and schedule tools are kept out of project scope. Vault access is by item id with a foreign key, not by name. A creator's urgent message never interrupts the owner's private run."
+     ],
+     "flaws": [
+      "Account erasure cascades through runs_parent_scope ON DELETE CASCADE (A §5.5), so DELETE FROM runs WHERE user_id deletes other owners' child runs, approvals and events. One user's action destroys another user's records. Today's cascade is same-user only (0001:252).",
+      "The inbox_items tenant policy hides any row whose project_id is not in app_project_ids(), yet inbox_fill takes the program-supplied project_id for invites and joins. Invite notifications to non-members and 'you were removed/left' notices therefore become invisible to the people they are for.",
+      "The tenant role can still INSERT project runs on its own agent, and child runs under another member's project run. FK checks bypass RLS (0001:13-14), and runs_fill only checks agent membership, not that the platform is the writer. The database alone does not enforce 'only the creator/lead dispatches' or protect against injected fake child results.",
+      "GRANT SELECT, UPDATE (event_seq) ON project_feeds TO thinktin_app is unnecessary because events_fill runs as definer. It lets a member rewind or skip a project's feed sequence.",
+      "Members read agent.tool_call and agent.tool_call_update payloads raw, since there is no DTO trimming (B does trim). For a non-dedicated instance that reads ../private, raw tool output is the easiest exfiltration path.",
+      "Project deletion is one synchronous transaction that cascades everything, which risks the worker statement timeout on big projects. A failed delete leaves the project fully readable."
+     ]
+    },
+    {
+     "design": "B",
+     "score": 6.5,
+     "strengths": [
+      "There are no SECURITY DEFINER membership functions. The policies are TO thinktin_project with uncorrelated EXISTS subqueries, evaluated under the role itself, so behaviour is identical under a superuser test DB and the production thinktin_owner. thinktin_app is not widened.",
+      "ProjectActor is a capability token with private fields, built only by locking the projects row and the member row FOR SHARE. Every cross-user worker write needs one, so a missing check fails to compile. The lock order is fixed.",
+      "runs_project_guard and run_grants_project_guard reject project runs and project grants unless current_user is in thinktin_worker. They also enforce that the grant and the run share a project, and that a project never changes on UPDATE. This is the only design that blocks tenant-forged project runs and children.",
+      "ProjectTx is a separate type, not Tx<R>, so the generic run(), run_tree() and events_after() cannot be called on it. It is read-only (transaction_read_only). Event payloads are trimmed per kind in the DTO, and wait_code is masked to waiting_owner for non-owners.",
+      "Correct catch: migrations 0024-0026 'UPDATE run_grants' (0024_peers.sql:13) touch zero rows in production because of FORCE. NO FORCE is done properly for the team copy, and a migration test with a non-superuser owner is planned.",
+      "The erasure path detaches cross-owner children (SET NULL) instead of cascade-deleting other users' runs."
+     ],
+     "flaws": [
+      "The tenant policy is never narrowed. A member who left still sees, through /v1/runs and the instance event stream, their own agent's project runs and events, including the creator's prompts and other agents' delegated text. This violates projects.md:94 ('退出、被移出的瞬间就看不到了').",
+      "The thinktin_project policy on project_members is only 'project_id = app_project_id()'. Setting app.project_id to project Q exposes Q's member list (user_id, role, display_name), so the §2.6 matrix row 'set_config Q → 空' is false. Membership there is enforced in code only.",
+      "Deleted projects: status is in no policy, so ProjectTx must reject 'deleted' in code, and the owner's tenant shows project-run plaintext until the purge job runs (acknowledged '最多一分钟').",
+      "Private-run tools still use the tenant role, which sees the owner's own project runs. Isolation relies on per-tool exclusions (#9: agent_status, last_finished_run), which fails open for any tool that is forgotten (for example the peers.rs:92 recent_run_events path or run_artifacts).",
+      "Shared HOME, and the private cwd stays at the workspace root containing .thinktin/projects/<hex>. Private runs therefore see project files, project sessions inherit root CLAUDE.md and AGENTS.md, and Hermes and Claude memory cross both ways. That is weaker than projects.md:65 asks for.",
+      "Project vault tools are 'vault_*', which includes vault_request (orchestrator/src/vault.rs:23), when the owner opens the vault. Cross-user content can then drive form popups to the owner. Vault access is granted by item name (text[]), so renaming or re-creating an item silently gains access.",
+      "The thinktin_project grant on events includes seq, which leaks gaps in private instance activity inside a run window."
+     ]
+    },
+    {
+     "design": "C",
+     "score": 5,
+     "strengths": [
+      "app_project_ids() is wrapped as an InitPlan and reads only app.user_id, with no user parameter. It runs as the table owner over a non-FORCE project_members table (the blob_purge precedent, 0007:36), so it works under the production owner. A test that reassigns ownership to a NOSUPERUSER role is proposed.",
+      "The tenant policy is narrowed for runs, events and artifacts, and DataScope::Private hides every project row from private-run tools. On delete, all members are marked left in the first transaction, so RLS hides everything at once, the owner included, before the async purge.",
+      "The cleanest content lifecycle: two-step delete (key destroyed and rows invisible first, plaintext purged in batches later). In phase 9, per-scope workspace archives are encrypted with the project key, so archives stop retaining project files after a crypto-shred.",
+      "Per-scope HOME and work directories, private/ moved to a sibling, vault_request and schedule excluded from project scope, IM never forwards project notices, and phone invites return the same answer whatever the phone's status, so they reveal nothing."
+     ],
+     "flaws": [
+      "The team-to-project copy (INSERT … SELECT FROM teams, team_members, instances, users, team_templates) runs without NO FORCE. In production, thinktin_owner is FORCE-bound with no policy (0002:102, 0001:435/441, deploy-checklist.md:57), so it copies zero rows silently, which is exactly the rls-map pitfall.",
+      "project_read widens thinktin_app SELECT to whole runs rows and all event kinds. Members see state_reason, which is the approval title (executor.rs:2121), tokens_used, budget, run_grant_id, vault.used names (executor.rs:2038-2041), agent.thought and agent.permission_requested. The design explicitly decides '不隐藏'.",
+      "DataScope::Project narrows only runs, events, artifacts and projects. Inside a project-run tool, the owner's private board_posts (0025:35), vault_items and vault_requests (0009:55), plans, inbox_items, approvals and instances (0001:436) are all still readable, so the §0.4 claim of a DB-enforced boundary in both directions is false.",
+      "events.project_id is a plain column with no derivation trigger. runs.project_id is not immutable: check_run_project allows an UPDATE that moves a run into or out of a project. Nothing in the database ties run_grant_id's project to the run's project. A code bug or tenant SQL can therefore label private events or runs as project content, or the reverse.",
+      "Because project_read makes other members' project runs visible, a member's tenant transaction can INSERT a child run under another owner's project run: the invoker trigger finds the parent and the single-column FK passes.",
+      "project_members SELECT exposes every member's daily_tokens, total_tokens and consented_at. project_agents.purpose is copied from the owner's private instances.purpose. The migration owner can read project_members because it is not FORCE.",
+      "The erased user's project runs (prompts and agent output) are kept indefinitely with user_id pointing at the erased account, a compliance risk the design pushes to the user."
+     ]
+    }
+   ],
+   "best": "A",
+   "graft": [
+    "B: In runs_fill and run_grants_fill, reject INSERTs with project_id NOT NULL unless pg_has_role(current_user,'thinktin_worker','USAGE'), or add 'project_id IS NULL' to the thinktin_app WITH CHECK. This stops tenant-forged project runs and children under other owners' runs.",
+    "B: Make ProjectActor a capability type (private fields, built only by locking the projects and member rows FOR SHARE) and require it in every cross-user Tx<Worker> write, on top of A's project_role_of SQL checks.",
+    "B: Per-kind payload trimming in the member DTO (tool_call keeps only id, title, kind and status) and wait_code masking to waiting_owner for non-owners. Also set transaction_read_only on project-scope read transactions.",
+    "B: On erasure, cancel and then detach cross-owner children (parent_run_id SET NULL) instead of letting runs_parent_scope ON DELETE CASCADE delete other owners' runs.",
+    "B: A migration test that runs the 0032 copy, and any backfill, under a non-superuser owner. Write the rule into release docs: future 'UPDATE run_grants' platform-tool backfills (the 0024-0026 pattern) need the NO FORCE dance and 'AND project_id IS NULL'.",
+    "C: Two-step delete. One short transaction destroys the key, revokes grants, cancels runs and makes the project invisible in RLS, either by marking members left or by checking status in app_project_id. Plaintext is purged in batches afterwards, so a large project cannot hit the worker statement timeout and stay readable.",
+    "C: Phase-9 per-scope workspace archives sealed with the project key (separate AAD domain), so the crypto-shred also covers ACS/OSS archives and their cleanup no longer needs to wake the sandbox.",
+    "C: A store test that reassigns all table and function ownership to a temporary NOSUPERUSER NOBYPASSRLS role and re-runs the membership checks, in addition to A's definer-ownership assertions.",
+    "C: An AAD domain-separation test showing that a user-DEK-sealed artifact cannot be opened as a project artifact, and that project reads never fall back to the user DEK."
+   ],
+   "must_fix": [
+    "Every design: block tenant-forged project runs at the DB level. FK checks bypass RLS (0001_init.sql:13-14), so in A and C a member's tenant transaction can INSERT a run with project_id=P, or a child under another owner's project run. A's runs_fill and C's check_run_project only verify agent membership. Require the worker role for project runs and project grants (B's runs_project_guard pattern).",
+    "A: runs_parent_scope ON DELETE CASCADE plus 'DELETE FROM runs WHERE user_id' (users.rs:200) cascade-deletes other owners' child runs, approvals and events when one member erases their account. Today the cascade at 0001_init.sql:252 is same-user only. Detach cross-owner children instead.",
+    "A: the inbox_items tenant policy hides rows whose project_id is not in app_project_ids(), but inbox_fill keeps the program-supplied project_id for invites and joins (A §2.5). Invitees and removed members can never see their notices. Write those rows with project_id NULL, or keep the project link in a column that RLS does not filter on.",
+    "A: drop 'GRANT UPDATE (event_seq) ON project_feeds TO thinktin_app'. events_fill is SECURITY DEFINER, so the tenant role never needs it, and the grant lets members corrupt project_seq ordering.",
+    "B: the tenant policy must be narrowed so that a member's own project-run rows disappear when they leave. Otherwise /v1/runs and instance events keep showing project content after leaving, violating docs/projects.md:94. B §2.1 keeps tenant '没放宽' and never adds a membership condition.",
+    "B: the thinktin_project policy on project_members ('project_id = app_project_id()') has no membership check. Setting app.project_id to project Q reveals Q's member list, so the §2.6 matrix claim is wrong. Add a membership-checked path or explicitly accept and test it.",
+    "B: deleted projects are hidden from members only by a ProjectTx check in code; no policy looks at status. The owner's tenant shows project-run plaintext until purge. Put the status or membership check into the policies, or hide rows synchronously on delete.",
+    "B: keep vault_request out of project scope. VAULT_TOOLS is ['vault_list','vault_request'] (crates/orchestrator/src/vault.rs:23), and B grants 'vault_*' whenever the owner enables the vault, so cross-user content could push forms to the owner. Key vault access on item ids, not names.",
+    "C: the team copy in 0031 runs INSERT … SELECT over FORCE tables (teams and team_members FORCE at 0002_collaboration.sql:102, instances at 0001_init.sql:435, users at 0001_init.sql:441) as the non-superuser thinktin_owner (deploy-checklist.md:57), so it silently copies zero rows in production. Wrap the copy in NO FORCE / FORCE, as A and B do.",
+    "C: the project_read policy gives thinktin_app full runs rows and all event kinds. That leaks state_reason (approval title, set at executor.rs:2121), vault.used item names (executor.rs:2038-2041), agent.thought, agent.permission_requested, tokens_used and budget to other members. Use column grants and an event-kind whitelist under a dedicated role.",
+    "C: DataScope::Project leaves the owner's private board_posts (0025_board.sql:35), vault_items and vault_requests (0009_vault.sql:55), and plans, inbox_items, approvals and instances (0001_init.sql:436) readable from project-run tools, so the boundary claim in §0.4 is false. A fail-closed role, as in A, is needed.",
+    "C: derive events.project_id (and approvals and inbox project_id) in a trigger from the run, make runs.project_id immutable on UPDATE, and enforce in the database that run_grant_id's project equals the run's project. As designed, these are program-supplied and mutable."
+   ]
+  }
+ },
+ {
+  "lens": "judge:build",
+  "judgment": {
+   "scores": [
+    {
+     "design": "A",
+     "score": 7.5,
+     "strengths": [
+      "Fail-closed member boundary: a separate thinktin_member role only has 'current project' policies, so any table without one stays invisible. Existing tenant code (runs.rs run/run_tree, instances.rs peers, gateway runs.rs:185-221 cancel?tree) needs no audit.",
+      "Avoids the production-owner pitfall in a way CI actually exercises. Definer functions are owned by thinktin_definer, a plain NOLOGIN NOBYPASSRLS role reading through TO-definer policies, so the superuser test DB (testing.rs, setup-db.sh:16-18) still runs them as a normal role.",
+      "The scope_id = coalesce(project_id, user_id) composite FK makes a run tree all-private or all-one-project in the DB. Re-pointing artifacts/board_posts/vault_requests at runs(id, scope_id) keeps private content off project runs. Verified: a GENERATED column cannot be used here (PG16: 'invalid ON DELETE action for foreign key constraint containing generated column').",
+      "The narrowed tenant policy enforces 'leaving makes it invisible' even for the owner's own project runs, and Db::private_scope hides project rows from private-run tools (projects.md section 9, 8.15).",
+      "Best phasing for shipping one phase at a time. P1 is boundary-only with no feature. A projects.cross_user server flag stays off until P7 and the 15.7 review. The test plan includes a three-user matrix, forged-write cases, a production-owner assertion and a stronger coverage test.",
+      "Cited facts check out: 0001:249-253 FKs, deploy-checklist.md:55-71, executor.rs:739-818, lock_run_waits runs.rs:428, list_runs and the 0020 partial indexes, bridge.rs:416 100-byte limit (94 bytes computed), hub.rs:82, error.rs:66-79."
+     ],
+     "flaws": [
+      "Heaviest P1 churn. It swaps FKs on ~9 tables (runs, plans, run_grants, events, approvals, inbox_items, artifacts, board_posts, vault_requests). It does NO FORCE backfills and rewrites policies on 6 tables, adds two new roles with deploy-checklist changes, and adds UNIQUE(id, scope_id) indexes on runs and plans.",
+      "Hot path: events_fill is a SECURITY DEFINER plpgsql trigger (with a SET clause) on every append_event (events.rs:40-72). For project runs it also takes a per-project project_feeds row lock held to commit. write_event runs per log chunk (executor.rs:1241-1256), so all agents in a project serialize their logs. A transaction that appends and then locks another instance of the same project can deadlock.",
+      "No index for the project feed reads. events has only its PK (instance_id, seq, created_at) and events_run (0001:271-283), so project_events_after/project_event_range on (project_id, project_seq) scan every partition.",
+      "Replacing the (run_id, user_id) FKs on approvals and events with (run_id, scope_id) drops the 'row owner = run owner' guarantee from 0001:281,342. A keeps both FKs only for run_grants.",
+      "Erasure: runs_parent_scope ON DELETE CASCADE plus DELETE FROM runs WHERE user_id (users.rs:200) also deletes other members' child runs. The design only parks this as user question 4.",
+      "Misses ensure_instance_grant (gateway routes/runs.rs:67-90). A top-level, plan-less project grant visible to the tenant would count as the private grant, so 'stop all' recovery breaks.",
+      "clippy.toml disallowing Db::tenant in orchestrator breaks CI (ci.yml:57 uses -D warnings with --all-targets): crates/orchestrator/tests/*.rs use tenant ~100 times.",
+      "thinktin_app gets no writes on project tables, but adopt_in needs Tx<Tenant> (control/src/lib.rs:216) and template adopt is one transaction today (routes/teams.rs:183-226). The design does not say how adoption stays atomic.",
+      "Minor: tenant UPDATE(event_seq) on project_feeds is unnecessary (the trigger runs as definer) and lets members inflate the counter. GRANT thinktin_definer TO CURRENT_USER does not catch unique_violation when parallel test DBs run migrations. Making thinktin_owner a member of thinktin_definer gives the migration account read access through USING(true), which contradicts section 1.3."
+     ]
+    },
+    {
+     "design": "B",
+     "score": 7,
+     "strengths": [
+      "Least churn and lowest regression risk. thinktin_app tenant policies on runs, events and instances are untouched. Only the parent FK is relaxed (single-column FK plus guard trigger); the instance/grant/plan composite FKs stay. Every existing tenant read-then-act flow behaves the same.",
+      "No SECURITY DEFINER at all. thinktin_project policies use uncorrelated EXISTS on project_members, and project_members' own policy is project_id = app_project_id(), so there is no recursion. It works identically under the superuser test DB and the non-superuser production owner.",
+      "ProjectTx is a separate type rather than Tx<R>, so the generic Tx<R> helpers (runs.rs:317-337, events.rs:76-110) cannot be called on it at compile time. The ProjectActor capability token (private fields, created only after locking the project and member rows) plus a fixed lock order covers worker-side cross-user writes.",
+      "Cheap hot path: events_project and runs_project_guard are SECURITY INVOKER triggers with a PK lookup and no counter lock. The curated project feed is written explicitly in the triggering transaction.",
+      "pg_has_role(current_user, 'thinktin_worker', 'USAGE') in the guards means a tenant can never insert project runs or project grants. The grant fallbacks in both places (active_grant_for_instance, ensure_instance_grant) exclude project grants.",
+      "Careful migration handling: NO FORCE copy in 0031, a re-copy of teams created during the rollout window in 0032, and a correct observation that the 0024-0026 UPDATE run_grants backfills are silent no-ops in production under FORCE.",
+      "The new 'project' run source fits the existing known_sources() rollout gate (runs.rs:201-205, 880), so older executors skip project root tasks. Adds the delegate_stop tool the product requires (projects.md section 7)."
+     ],
+     "flaws": [
+      "Owner-side visibility after leaving is not enforced. With tenant policies unchanged, a member who leaves still sees their own agents' project runs and events through /v1/runs and the instance streams, including other members' prompts and results. This violates projects.md section 9 and 8.15 ('退出即不可见').",
+      "Private-run tools (peers.rs:47/92, recent_run_events events.rs:116) see the owner's project runs under tenant. Keeping project content out of private sessions depends on explicit per-call filters (table item #9), which fails open.",
+      "The thinktin_project policy on project_members is only project_id = app_project_id(). The matrix claim that switching app.project_id to Q returns empty is false for project_members.",
+      "ProjectTx::run_events grants and exposes the per-instance seq. B's own section 7.4 says seq gaps leak the owner's private activity.",
+      "Weaker session isolation: shared HOME, and the project dir .thinktin/projects/<hex> sits under the private cwd '.'. Private runs can see project files, and project sessions read workspace-root CLAUDE.md/AGENTS.md.",
+      "Erasure deletes the erased member's project runs, leaving other members' children with parent_run_id NULL and a dangling root_run_id. Only roots get the 'project' source, so project child runs (delegate/ask/pipeline sources) can still be claimed by older executors during a rollout.",
+      "Phase 3 is very large: executor, shim, llm-gw, auth, catalog and cross-user creator dispatch land together. There is no cross-user feature flag."
+     ]
+    },
+    {
+     "design": "C",
+     "score": 5,
+     "strengths": [
+      "Project keys plus project-owned board and artifacts, with a full content-lifecycle table (leave, erase, delete). The two-step delete (keys destroyed and all members marked left in one transaction, then a background batched purge) avoids the 60s statement limit when erasure deletes several projects.",
+      "The lazy project-event sequencer (write with seq NULL, number committed rows under the head lock just before reading) keeps counter locks off the write path and avoids instance/feed deadlocks. Its reasoning about never missing rows is correct.",
+      "Keeps the erased member's project runs as contributions (users.rs:200 gets AND project_id IS NULL), which matches projects.md section 10.",
+      "Single application role with no new login grants. The ENABLE-but-not-FORCE project_members follows the real blob_purge precedent (0007:32-38).",
+      "Points out the INSERT ... RETURNING snapshot problem with STABLE membership functions. Handles ensure_instance_grant and active_grant_for_instance."
+     ],
+     "flaws": [
+      "Team data copy in 0031 has no NO FORCE handling. In production the migration owner sees zero rows (0001:432-436 FORCE with policies TO thinktin_app only, deploy-checklist.md:55-71), so installed test builds lose their teams. The join to users is affected the same way.",
+      "0032 puts several CREATE INDEX CONCURRENTLY statements in one '-- no-transaction' file. sqlx sends the file as one simple query, which Postgres runs as an implicit transaction block. Verified on PG16: 'CREATE INDEX CONCURRENTLY cannot run inside a transaction block'. The migration, and therefore every test, fails.",
+      "events.project_id is added but never populated. There is no trigger, and append_event (events.rs:40-72) does not set it. Policies depend on it, so events written by older replicas or forgotten code paths are treated as private.",
+      "project_read broadens thinktin_app on runs, events and artifacts, so every existing tenant read without a user_id filter now returns other members' rows with full columns. Events carry no kind whitelist, which exposes agent.thought, agent.permission_requested, vault.used and agent.vault_reveal (executor.rs:2037-2042, shim.rs:135) plus the per-instance seq.",
+      "The claim that DataScope blocks both directions at the DB level is overstated. instances, plans, board_posts, vault_items, approvals and inbox_items keep the plain tenant policy, so tenant_in(Project) still sees the owner's private rows.",
+      "The production-owner test uses REASSIGN OWNED, which also reassigns shared objects such as databases owned by the superuser test role, cluster-wide while tests run in parallel. It should use targeted ALTER ... OWNER.",
+      "project_agent_auth has no (project_id, instance_id, user_id) FK to project_agents, yet thinktin_app gets INSERT on it.",
+      "Ten phases. Phase 1 is huge (RLS rewrite, keys, read routes, FFI), and phase 9 (per-scope workspace archives) adds scope beyond WBS 8.13-8.19."
+     ]
+    }
+   ],
+   "best": "A",
+   "graft": [
+    "B: Make the member transaction a separate type (ProjectTx) instead of Tx<Member>. Generic impl<R> Tx<R> helpers then fail to compile instead of failing at runtime with 42501 column errors.",
+    "B: ProjectActor capability token (private fields, built only by Tx<Worker>::project_actor, which locks the projects row FOR SHARE and the member row FOR SHARE) as a required parameter of every cross-user worker write. Also B's fixed lock order: projects, member, project_agent, runs, instances, feed.",
+    "B: SECURITY INVOKER events trigger that only copies project_id from runs and takes no counter lock. Do not allocate a per-project seq inside append_event.",
+    "C: Lazy project-feed sequencer (write unsequenced; under the feed-head FOR UPDATE, number committed rows just before REST or WS reads). This replaces A's per-event project_feeds lock and removes the instance-then-feed deadlock risk.",
+    "B: pg_has_role(current_user, 'thinktin_worker', 'USAGE') guard in the runs and run_grants triggers, so thinktin_app can never insert project runs or project grants even though it has INSERT on runs and full CRUD on run_grants (0001:466-468).",
+    "B: In ensure_instance_grant (routes/runs.rs:67-90), filter project_id IS NULL in addition to active_grant_for_instance.",
+    "B: Tenant create_solo INSERT policies on projects, project_members and project_agents, so team-template adopt keeps adopt_in (Tx<Tenant>) and project creation in one transaction, as routes/teams.rs:183-226 does today.",
+    "B: Trim member-visible event payloads in code (agent.tool_call keeps only id, title, kind and status; wait_code becomes a generic 'waiting_owner' for non-owners) on top of A's kind whitelist.",
+    "B: delegate_stop tool for the lead, limited to parent_run_id = ctx.run subtrees. projects.md section 7 requires that the lead can interrupt members, and A defers it.",
+    "C: On erasure, keep the erased member's project runs, or at least detach other owners' children as B does (SET NULL parent), instead of cascading through runs_parent_scope.",
+    "B: Run-source or claim-filter rollout gate. Use known_sources() (runs.rs:201-205) or add project_id IS NULL to claim_next_run and lease takeover from the phase that adds the column, so older executors never execute project runs in the private session.",
+    "B: Note in release.md and code that 0024-0026-style UPDATE run_grants backfills are no-ops in production under FORCE. Future grant backfills must use NO FORCE and add AND project_id IS NULL.",
+    "B: Re-copy teams created by older replicas during the rollout window in the following migration before the old tables are retired."
+   ],
+   "must_fix": [
+    "C: The 0031 team-to-project copy must toggle NO FORCE on teams, team_members, team_templates, instances and users inside the migration transaction (as A and B do). Otherwise the production owner, a non-superuser bound by FORCE with policies TO thinktin_app (0001:432-436, deploy-checklist.md:55-71), copies zero rows and installed iOS/Android test builds lose their teams.",
+    "C: A '-- no-transaction' migration may hold only one CREATE INDEX CONCURRENTLY. sqlx executes the file (schema.rs:17 sqlx::migrate!) as one simple query, which Postgres wraps in an implicit transaction block. Reproduced on PG16: 'CREATE INDEX CONCURRENTLY cannot run inside a transaction block'. Split into one file per index, or use plain CREATE INDEX since there is no production data.",
+    "C: Populate events.project_id (and approvals and inbox_items) in a BEFORE INSERT trigger from runs. append_event (events.rs:40-72) never sets it, and C's tenant/project_read policies depend on it.",
+    "C: Do not use REASSIGN OWNED in the production-owner test, because it moves shared objects (databases) owned by the superuser test role across the cluster. ALTER only the definer function and project_members to a uniquely named temporary NOSUPERUSER role.",
+    "C: Either extend app_private_visible() to every private table a tool can reach (instances, plans, board_posts, vault_items, approvals, inbox_items) or drop the claim that DataScope blocks private-to-project at the DB level. Today those tables use only user_id policies (0001:430-437, 0025).",
+    "C: Add a kind whitelist and column limits for member reads of events and runs. project_read currently exposes agent.thought, agent.permission_requested, vault.used and agent.vault_reveal (executor.rs:2037-2042, shim.rs:135), plus seq, state_reason, budget and run_grant_id.",
+    "A: Add an index for member feed reads, e.g. CREATE INDEX events_project ON events (project_id, project_seq) WHERE project_id IS NOT NULL. Today events has only PK (instance_id, seq, created_at) and events_run (0001:271-283), so project_events_after scans every partition.",
+    "A: Move per-project sequencing off append_event. events_fill locks project_feeds on every project event, and write_event commits once per log chunk (executor.rs:1241-1256). That serializes all agents in a project and can deadlock: tx1 appends on instance X (locking X, then F) and then locks instance Y via bump_epochs_where or append, while tx2 holds Y and waits for F.",
+    "A: Keep the original (run_id, user_id) FKs on approvals and events alongside the new (run_id, scope_id) ones (0001:281,342), as A already does for run_grants. Otherwise approvals or events on a project run can carry a different member's user_id and become visible to that member under the tenant policy.",
+    "A: Erasure must not cascade-delete other owners' child runs. With runs_parent_scope ON DELETE CASCADE, DELETE FROM runs WHERE user_id = $1 (users.rs:200) deletes them, which contradicts projects.md section 10. Detach or retain them instead.",
+    "A: Filter project grants out of ensure_instance_grant (gateway routes/runs.rs:67-90, `.any(|g| g.plan_id.is_none() && g.parent_id.is_none())`). Otherwise, after 'stop all', a visible project grant blocks reissuing the private grant.",
+    "A: The orchestrator clippy.toml disallowing store::Db::tenant needs a crate-level #![allow(clippy::disallowed_methods)] in crates/orchestrator/tests/*.rs (about 100 uses). CI runs `cargo clippy --workspace --all-targets -- -D warnings` (.github/workflows/ci.yml:57).",
+    "A: Specify how template adopt stays atomic. thinktin_app has no project-table writes, but control::adopt_in requires Tx<Tenant> (control/src/lib.rs:216) and adoption plus team creation is one transaction today (routes/teams.rs:183-226). Use B's tenant create_solo policies or an explicit compensating delete.",
+    "A: Drop the tenant UPDATE(event_seq) grant on project_feeds, since the definer trigger does the update. Catch unique_violation in the DO-block GRANT thinktin_definer TO CURRENT_USER, because test DBs migrate concurrently and roles are cluster-wide (0001:8). Note that thinktin_owner's membership in thinktin_definer gives the migration account read access to runs and instances through the USING(true) policies.",
+    "B: Narrow the tenant policy on runs, events, approvals and inbox_items so project rows need current membership. This needs no definer, because the tenant can read its own project_members rows: `project_id IS NULL OR project_id = ANY (ARRAY(SELECT project_id FROM project_members WHERE user_id = app_user_id() AND left_at IS NULL))`. Without it a leaving owner still sees their agents' project runs (projects.md section 9, 8.15).",
+    "B: Scope private-run tools at the DB level (A's app.scope=private, or C's DataScope::Private). peers.rs:47/92 and recent_run_events (events.rs:116) otherwise read the owner's project runs into private sessions.",
+    "B: Fix or retract the matrix claim that set_config('app.project_id', Q) returns empty. thinktin_project's project_members policy is only project_id = app_project_id(), so Q's member list is readable. Also stop granting events.seq to thinktin_project (run_events), because B's own section 7.4 says seq gaps leak private activity.",
+    "All: Add a rollout gate so older executors never execute project runs. claim_next_run filters only by known_sources() (runs.rs:201-205, 880). A and C create project runs with existing sources ('user', 'delegate', 'ask'), and B does the same for project children. An older replica would therefore claim them and run them with the private cwd and HOME and the private-grant fallback (executor.rs:738-746). Add project_id IS NULL to claim and takeover from the phase that adds the column until the executing phase."
+   ]
+  }
+ }
+]

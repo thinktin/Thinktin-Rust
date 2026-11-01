@@ -1007,6 +1007,180 @@ async fn ffi_access_token_for_the_desktop_service() {
     ));
 }
 
+/// 8.10：共享看板经 UniFFI 读写、归档、删除。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ffi_board() {
+    let Some(e) = env().await else { return };
+    let (c, _store, _dir) = ffi_login(&e, "13800138529", "android", "Pixel").await;
+    let post = c
+        .post_to_board("周五发布".into(), vec!["发布".into()], false)
+        .await
+        .unwrap();
+    assert!(!post.ai_generated);
+    assert_eq!(post.tags, ["发布"]);
+    c.post_to_board("其他".into(), vec![], false).await.unwrap();
+    // 像密码的不发（11.6）。
+    let err = c
+        .post_to_board("mail 密码是 Abc12345".into(), vec![], false)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, ClientError::ContainsSecrets { .. }),
+        "{err:?}"
+    );
+    assert_eq!(c.board(None, false, None, None).await.unwrap().len(), 2);
+    let tagged = c
+        .board(Some("发布".into()), false, None, None)
+        .await
+        .unwrap();
+    assert_eq!(tagged.len(), 1);
+    let archived = c
+        .set_board_post_archived(post.id.clone(), true)
+        .await
+        .unwrap();
+    assert!(archived.archived_at_ms.is_some());
+    assert_eq!(c.board(None, true, None, None).await.unwrap().len(), 1);
+    c.delete_board_post(post.id).await.unwrap();
+    assert!(c.board(None, true, None, None).await.unwrap().is_empty());
+}
+
+/// 8.12：紧急消息经 UniFFI 发：排在普通消息前面；密码拦截和普通消息一样。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ffi_urgent_message() {
+    let Some(e) = env().await else { return };
+    let (c, _store, _dir) = ffi_login(&e, "13800138539", "ios", "iPhone").await;
+    let inst = c
+        .adopt("claude".into(), "Writer".into(), None)
+        .await
+        .unwrap();
+    c.send_message(inst.id.clone(), "写周报".into(), false)
+        .await
+        .unwrap();
+    let urgent = c
+        .send_urgent_message(inst.id.clone(), "先停一下".into(), false)
+        .await
+        .unwrap();
+    assert_eq!(urgent.prompt, "先停一下");
+    let mut w = e.t.db.worker().await.unwrap();
+    let first = w
+        .claim_next_run("x", std::time::Duration::from_secs(60))
+        .await
+        .unwrap()
+        .unwrap();
+    w.rollback().await.unwrap();
+    assert_eq!(first.run.id.to_string(), urgent.id);
+    let err = c
+        .send_urgent_message(inst.id, "mail 密码是 Abc12345".into(), false)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, ClientError::ContainsSecrets { .. }),
+        "{err:?}"
+    );
+}
+
+/// 7.1：计划的 webhook 经 UniFFI 建、列、停用、换令牌、删；返回的完整地址能直接收事件。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ffi_plan_hooks() {
+    let Some(e) = env().await else { return };
+    let (c, _store, _dir) = ffi_login(&e, "13800138549", "ios", "iPhone").await;
+    let inst = c.adopt("claude".into(), "Mail".into(), None).await.unwrap();
+    let plan = c
+        .create_plan(ffi::NewPlan {
+            instance_id: inst.id.clone(),
+            title: "邮件".into(),
+            goal: "看看要不要处理".into(),
+            triggers: vec![],
+            steps: vec![],
+            policy: Some(
+                proto::domain::PlanPolicy {
+                    notify_success: false,
+                    ..Default::default()
+                }
+                .into(),
+            ),
+            catch_up: None,
+        })
+        .await
+        .unwrap();
+    assert!(!plan.policy.notify_success);
+    let secret = c.create_plan_hook(plan.id.clone()).await.unwrap();
+    assert!(
+        secret
+            .url
+            .ends_with(&format!("/v1/webhooks/{}", secret.token))
+    );
+    let posted = reqwest::Client::new()
+        .post(&secret.url)
+        .header("content-type", "text/plain")
+        .body("a new mail")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(posted.status(), 202);
+    let hooks = c.plan_hooks(plan.id.clone()).await.unwrap();
+    assert_eq!(hooks.len(), 1);
+    assert!(hooks[0].last_event_at_ms.is_some());
+    let off = c
+        .set_plan_hook_enabled(secret.hook.id.clone(), false)
+        .await
+        .unwrap();
+    assert!(!off.enabled);
+    let rotated = c.rotate_plan_hook(secret.hook.id.clone()).await.unwrap();
+    assert_ne!(rotated.token, secret.token);
+    c.delete_plan_hook(secret.hook.id).await.unwrap();
+    assert!(c.plan_hooks(plan.id).await.unwrap().is_empty());
+}
+
+/// 8.9：实例的用途说明和“允许其他 agent 查我、问我”，经 UniFFI 改；给了才改。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ffi_instance_settings() {
+    let Some(e) = env().await else { return };
+    let (c, _store, _dir) = ffi_login(&e, "13800138519", "ios", "iPhone").await;
+    let inst = c
+        .adopt("claude".into(), "Writer".into(), None)
+        .await
+        .unwrap();
+    assert_eq!((inst.purpose.as_str(), inst.peer_access), ("", true));
+    let changed = c
+        .update_instance(
+            inst.id.clone(),
+            ffi::InstanceChange {
+                purpose: Some("Drafts the weekly report".into()),
+                peer_access: Some(false),
+                ..ffi::InstanceChange::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(changed.name, "Writer");
+    assert_eq!(changed.purpose, "Drafts the weekly report");
+    assert!(!changed.peer_access);
+    let renamed = c
+        .update_instance(
+            inst.id.clone(),
+            ffi::InstanceChange {
+                name: Some("Reporter".into()),
+                ..ffi::InstanceChange::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        (
+            renamed.name.as_str(),
+            renamed.purpose.as_str(),
+            renamed.peer_access
+        ),
+        ("Reporter", "Drafts the weekly report", false)
+    );
+    assert!(matches!(
+        c.update_instance(inst.id, ffi::InstanceChange::default())
+            .await,
+        Err(ClientError::Api { status: 422, .. })
+    ));
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn ffi_account_and_devices() {
     let Some(e) = env().await else { return };
@@ -1077,6 +1251,7 @@ async fn ffi_plan_editing_and_triggers() {
         max_steps: None,
         daily_token_limit: Some(1_000_000),
         wait_timeout_secs: 7200,
+        notify_success: false,
     };
     let plan = c
         .create_plan(ffi::NewPlan {

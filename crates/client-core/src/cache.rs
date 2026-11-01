@@ -175,7 +175,11 @@ impl Cache {
             st.query_map(params![instance.to_string(), limit], |r| r.get(0))?
                 .collect()
         })?;
-        rows.iter().map(|j| from_json(j)).collect()
+        // 存下来以后 App 升级、降级过：读不了的跳过（见 `lenient`）。
+        Ok(rows
+            .iter()
+            .filter_map(|j| serde_json::from_str(j).ok().and_then(crate::lenient::item))
+            .collect())
     }
 
     // ---------- 事件（续传位置） ----------

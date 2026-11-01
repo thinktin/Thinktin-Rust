@@ -83,6 +83,8 @@ struct Row {
     state: String,
     created_at: DateTime<Utc>,
     last_active_at: DateTime<Utc>,
+    purpose: String,
+    peer_access: bool,
 }
 
 impl Row {
@@ -96,14 +98,34 @@ impl Row {
             state: parse(&self.state)?,
             created_at: self.created_at,
             last_active_at: self.last_active_at,
+            purpose: self.purpose,
+            peer_access: self.peer_access,
         })
     }
 }
 
 macro_rules! columns {
     () => {
-        "id, agent_id, agent_version, harness, name, state, created_at, last_active_at"
+        "id, agent_id, agent_version, harness, name, state, created_at, last_active_at, purpose, peer_access"
     };
+}
+
+/// 改实例（App 的实例设置）：给了才改。
+#[derive(Debug, Clone, Default)]
+pub struct InstanceChange {
+    pub name: Option<String>,
+    /// 用途说明（8.9）。
+    pub purpose: Option<String>,
+    /// “允许其他 agent 查我、问我”（8.9）。
+    pub peer_access: Option<bool>,
+}
+
+/// 同一用户的另一个实例，`agents_list` 用（8.9）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct Peer {
+    pub instance: Instance,
+    /// 占着实例的运行（在跑、等审批、等子任务……）的状态；没有就是空闲。
+    pub holder: Option<RunState>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -282,6 +304,25 @@ impl Tx<Tenant> {
         rows.into_iter().map(Row::into_instance).collect()
     }
 
+    /// 改名字、用途说明、交流开关（给了才改）。实例删了是 NotFound。
+    pub async fn update_instance(&mut self, id: InstanceId, change: &InstanceChange) -> Result<()> {
+        let done = sqlx::query(
+            "UPDATE instances SET name = coalesce($2, name), purpose = coalesce($3, purpose), \
+               peer_access = coalesce($4, peer_access), updated_at = now() \
+             WHERE id = $1 AND state <> 'deleted'",
+        )
+        .bind(id.0)
+        .bind(change.name.as_deref())
+        .bind(change.purpose.as_deref())
+        .bind(change.peer_access)
+        .execute(self.conn())
+        .await?;
+        if done.rows_affected() == 0 {
+            return Err(Error::NotFound);
+        }
+        Ok(())
+    }
+
     pub async fn rename_instance(&mut self, id: InstanceId, name: &str) -> Result<()> {
         let done = sqlx::query(
             "UPDATE instances SET name = $2, updated_at = now() WHERE id = $1 AND state <> 'deleted'",
@@ -456,6 +497,35 @@ impl Tx<Tenant> {
 }
 
 impl Tx<Tenant> {
+    /// 认识队友（8.9）：同一用户的其他实例里允许别人查、问的（没删除的），按名字排，带上占着它的运行的状态。
+    pub async fn peers(&mut self, me: InstanceId) -> Result<Vec<Peer>> {
+        #[derive(sqlx::FromRow)]
+        struct PeerRow {
+            #[sqlx(flatten)]
+            row: Row,
+            holder: Option<String>,
+        }
+        let rows: Vec<PeerRow> = sqlx::query_as(concat!(
+            "SELECT ",
+            columns!(),
+            ", (SELECT r.state FROM runs r WHERE r.instance_id = instances.id AND r.kind = 'agent' \
+                 AND r.state IN ('starting', 'running', 'waiting_approval', 'waiting_device', 'waiting_quota', \
+                                 'waiting_children', 'backoff') LIMIT 1) AS holder \
+             FROM instances WHERE state <> 'deleted' AND id <> $1 AND peer_access ORDER BY name, id"
+        ))
+        .bind(me.0)
+        .fetch_all(self.conn())
+        .await?;
+        rows.into_iter()
+            .map(|r| {
+                Ok(Peer {
+                    instance: r.row.into_instance()?,
+                    holder: r.holder.as_deref().map(parse).transpose()?,
+                })
+            })
+            .collect()
+    }
+
     /// 委派（8.7）：`lead` 当负责人的团队里的其他成员（没删除的实例），按名字排。
     pub async fn delegation_targets(&mut self, lead: InstanceId) -> Result<Vec<Instance>> {
         let rows: Vec<Row> = sqlx::query_as(concat!(
