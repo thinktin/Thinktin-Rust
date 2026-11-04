@@ -174,7 +174,8 @@ private struct CredentialDetailContent: View {
     private func header(_ summary: CredentialSummary) -> some View {
         let zh = language == .chinese
         return HStack(alignment: .top, spacing: Metrics.Spacing.s) {
-            AgentMonogram(summary.monogram, style: .title, size: 56)
+            InstanceAvatar(summary.vendorName, size: 56)
+                .accessibilityHidden(true)
                 .opacity(summary.isDisabled ? 0.5 : 1)
             VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
                 Text(summary.name)

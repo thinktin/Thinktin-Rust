@@ -95,7 +95,8 @@ struct AgentCatalogCardView: View {
     var body: some View {
         Card {
             HStack(alignment: .top, spacing: Metrics.Spacing.s) {
-                AgentMonogram(card.monogram)
+                InstanceAvatar(card.name)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
                     Text(card.name)
                         .typography(.headline)

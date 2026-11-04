@@ -342,7 +342,8 @@ private struct InstanceHeader: View {
         let zh = language == .chinese
         VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
             HStack(alignment: .top, spacing: Metrics.Spacing.s) {
-                AgentMonogram(AgentsText.monogram(of: instance.name), style: .title, size: 56)
+                InstanceAvatar(instance.name, size: 56)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
                     Text(instance.name)
                         .typography(.title)

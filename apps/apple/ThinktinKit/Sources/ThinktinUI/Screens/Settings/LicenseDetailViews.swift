@@ -12,7 +12,8 @@ struct AgentLicenseCard: View {
         let zh = language == .chinese
         Card {
             HStack(alignment: .top, spacing: Metrics.Spacing.s) {
-                AgentMonogram(AgentsText.monogram(of: entry.name))
+                InstanceAvatar(entry.name)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
                     Text(entry.name)
                         .typography(.headline)

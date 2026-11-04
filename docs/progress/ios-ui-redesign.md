@@ -28,6 +28,10 @@
   `zoomTransitionSource` / `zoomNavigationTransition`（iOS 18，macOS 不做）。测试 `NativeControlsTests` 顺带把第 1 轮要换的系统控件
   （`List`、`Form`、`LabeledContent`、`ContentUnavailableView`、左滑、长按预览、搜索、工具栏位置）都用一遍，macOS CI 用真 SDK 编它，
   桩的签名对不上会在那里露出来。
+- 第 0 轮·`Components/InstanceAvatar.swift`（规范 2.4、6.9 C）：首字头像，底色按名字的 FNV-1a 散列从 8 色色板里取（跨进程稳定，
+  避开强调色和状态色，白字对比度 4:1 以上），右下角可选状态角标（`.instance` / `.run` / `.custom`），读屏念“名字，状态”；
+  尺寸用 `Metrics.Avatar`。`AgentMonogram` 删掉，6 个调用处（agent 目录、agent 详情、实例详情、模型 key 列表和详情、开源许可）
+  换成它，旁边有名字的照旧对读屏隐藏。测试 `InstanceAvatarTests`。
 进行中：第 0 轮底座（session_01GuCp3KRgqaK6Kzynw6udRn，2026-11-04 18:45 UTC 开始，分支 ios-ui-redesign）。本会话这一份：
 令牌、Design/Glass.swift、InstanceAvatar、FilterChipBar、uicheck 桩（规范 7.2 前四行和桩那一行）；导航、Shell、首页是第 0 轮的后几步。
 

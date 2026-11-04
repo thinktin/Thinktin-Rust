@@ -121,7 +121,8 @@ private struct AgentDetailBody: View {
         VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
             // 头部：头像、名字、出处、一句话介绍。
             HStack(alignment: .top, spacing: Metrics.Spacing.s) {
-                AgentMonogram(AgentsText.monogram(of: name), style: .title, size: 56)
+                InstanceAvatar(name, size: 56)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
                     Text(name)
                         .typography(.title)

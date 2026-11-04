@@ -123,7 +123,8 @@ struct ModelsCredentialRow: View {
 
     private var content: some View {
         HStack(alignment: .top, spacing: Metrics.Spacing.s) {
-            AgentMonogram(summary.monogram, style: .headline, size: 36)
+            InstanceAvatar(summary.vendorName, size: 36)
+                .accessibilityHidden(true)
                 .opacity(summary.isDisabled ? 0.5 : 1)
             VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
                 Text(summary.name)

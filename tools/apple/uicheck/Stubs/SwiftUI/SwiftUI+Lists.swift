@@ -785,9 +785,10 @@ extension Shape where Self == RoundedRectangle {
     }
 }
 
-// MARK: - 偏移（iOS 13）
+// MARK: - 偏移、文字缩小（iOS 13）
 
 extension View {
+    public func minimumScaleFactor(_ factor: CGFloat) -> some View { _m() }
     public func offset(_ offset: CGSize) -> some View { _m() }
     public func offset(x: CGFloat = 0, y: CGFloat = 0) -> some View { _m() }
 }
