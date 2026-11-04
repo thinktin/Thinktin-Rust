@@ -708,3 +708,108 @@ async fn egress_policy_usage_and_log_live_in_the_database() {
         .unwrap();
     assert_eq!(used, 8, "the unused reservation is refunded");
 }
+
+#[tokio::test]
+async fn browser_asks_are_kept_by_site_in_the_database() {
+    use llm_gw::egress::{Answer, Asked, EgressLedger, EgressRecord};
+    use llm_gw::pg::PgEgressLedger;
+    use proto::egress::Via;
+
+    let Some(e) = env().await else { return };
+    let ledger = PgEgressLedger::new(e.t.db.clone());
+    let (user, instance) = (e.user.to_string(), e.instance.to_string());
+    let mut tx = e.t.db.tenant(e.user).await.unwrap();
+    let run = tx
+        .create_run(&store::NewRun::new(
+            e.instance,
+            proto::domain::RunSource::User,
+            "read the news",
+            "1",
+        ))
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    sqlx::query("UPDATE runs SET state = 'running' WHERE id = $1")
+        .bind(run.id.0)
+        .execute(e.t.db.pool())
+        .await
+        .unwrap();
+    let run_id = run.id.to_string();
+    let ask = |host: &'static str, via: Via| {
+        let (ledger, user, instance, run_id) = (&ledger, &user, &instance, &run_id);
+        async move {
+            match ledger
+                .ask(
+                    user,
+                    instance,
+                    host,
+                    Some(run_id),
+                    5,
+                    20,
+                    via,
+                    Some(&proto::egress::site_of(host)),
+                )
+                .await
+                .unwrap()
+            {
+                Asked::Request(id) => id,
+                other => panic!("{other:?}"),
+            }
+        }
+    };
+    // 同一个网站的两个子域名：浏览器只问一次。
+    let first = ask("www.example.com", Via::Browser).await;
+    assert_eq!(ask("img.example.com", Via::Browser).await, first);
+    // 直接上网照旧按网址问。
+    let direct = ask("api.example.com", Via::Direct).await;
+    assert_ne!(direct, first);
+    let (got_run, answer) = ledger
+        .site_decision(&instance, "example.com")
+        .await
+        .unwrap();
+    assert_eq!(got_run.as_deref(), Some(run_id.as_str()));
+    assert_eq!(answer, None);
+    // 用户点了“访问一次”：这次任务里整个网站都算。
+    let mut tx = e.t.db.tenant(e.user).await.unwrap();
+    tx.decide_egress_request(first.parse().unwrap(), proto::domain::EgressDecision::Once)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let (_, answer) = ledger
+        .site_decision(&instance, "example.com")
+        .await
+        .unwrap();
+    assert_eq!(answer, Some(Answer::Allowed));
+    let (_, answer) = ledger.site_decision(&instance, "other.com").await.unwrap();
+    assert_eq!(answer, None);
+    // 日志带上通道、种类和页面网站。
+    ledger
+        .record(EgressRecord {
+            user: user.clone(),
+            instance: instance.clone(),
+            host: "www.example.com".into(),
+            port: 443,
+            allowed: true,
+            reason: "allowed",
+            count: 1,
+            via: Via::Browser,
+            kind: Some("ask"),
+            page_site: Some("news.com".into()),
+            ..Default::default()
+        })
+        .await;
+    let row: (String, Option<String>, Option<String>) =
+        sqlx::query_as("SELECT via, kind, page_site FROM egress_log WHERE instance_id = $1")
+            .bind(e.instance.0)
+            .fetch_one(e.t.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(
+        row,
+        (
+            "browser".to_owned(),
+            Some("ask".to_owned()),
+            Some("news.com".to_owned())
+        )
+    );
+}

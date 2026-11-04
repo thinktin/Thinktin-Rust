@@ -751,3 +751,310 @@ async fn the_browser_pass_does_not_work_on_the_direct_lane() {
         .await;
     assert_eq!(status(&resp), 200, "{resp}");
 }
+
+// ---- 浏览器通道（docs/browser.md 第 3.3、4.3 节）----
+
+impl Env {
+    fn browser_pass(&self) -> String {
+        self.issuer
+            .issue_for(
+                TokenRequest {
+                    ep: 0,
+                    iid: "inst-1".into(),
+                    uid: "user-1".into(),
+                    grant: "grant-1".into(),
+                    sbx: "sbx-1".into(),
+                    net: Some("127.0.0.1".into()),
+                },
+                Some(auth::sandbox_token::AUD_BROWSER),
+                600,
+                now(),
+            )
+            .unwrap()
+    }
+
+    /// 用户名是 `browser` 的 CONNECT（转发口发的）。
+    async fn browser_connect(&self, target: &str, pass: &str, page: &str) -> (String, TcpStream) {
+        let mut s = TcpStream::connect(self.proxy).await.unwrap();
+        let cred = base64::engine::general_purpose::STANDARD.encode(format!("browser:{pass}"));
+        let head = format!(
+            "CONNECT {target} HTTP/1.1\r\nHost: {target}\r\nProxy-Authorization: Basic {cred}\r\n\
+             X-Thinktin-Browser: kind=res; page={page}\r\n\r\n"
+        );
+        s.write_all(head.as_bytes()).await.unwrap();
+        let mut resp = Vec::new();
+        let mut byte = [0u8; 1];
+        while !resp.ends_with(b"\r\n\r\n") {
+            match tokio::time::timeout(Duration::from_secs(5), s.read(&mut byte)).await {
+                Ok(Ok(1)) => resp.push(byte[0]),
+                _ => break,
+            }
+        }
+        let text = String::from_utf8_lossy(&resp).into_owned();
+        if !text.starts_with("HTTP/1.1 200") {
+            let mut rest = String::new();
+            let _ = tokio::time::timeout(Duration::from_secs(2), s.read_to_string(&mut rest)).await;
+            return (format!("{text}{rest}"), s);
+        }
+        (text, s)
+    }
+
+    /// `POST /v1/browser/ask`，返回状态码和回答。
+    async fn ask(&self, pass: Option<&str>, body: serde_json::Value) -> (u16, serde_json::Value) {
+        let mut s = TcpStream::connect(self.proxy).await.unwrap();
+        let body = body.to_string();
+        let mut head = format!(
+            "POST /v1/browser/ask HTTP/1.1\r\nHost: egress\r\nContent-Type: application/json\r\n\
+             Content-Length: {}\r\n",
+            body.len()
+        );
+        if let Some(p) = pass {
+            head.push_str(&format!("Authorization: Bearer {p}\r\n"));
+        }
+        head.push_str("\r\n");
+        s.write_all(head.as_bytes()).await.unwrap();
+        s.write_all(body.as_bytes()).await.unwrap();
+        let mut out = String::new();
+        tokio::time::timeout(Duration::from_secs(10), s.read_to_string(&mut out))
+            .await
+            .unwrap()
+            .unwrap();
+        let (head, body) = out.split_once("\r\n\r\n").unwrap_or((&out, ""));
+        (
+            status(head),
+            serde_json::from_str(body).unwrap_or(serde_json::Value::Null),
+        )
+    }
+}
+
+fn ask_body(host: &str, wait: u64) -> serde_json::Value {
+    serde_json::json!({"host": host, "url": format!("https://{host}/a"), "from": "news.example.com",
+        "cause": "link", "wait_secs": wait})
+}
+
+fn browser_env_opts(o: &mut EgressOptions) {
+    o.browser_lanes = true;
+    o.ask_poll = Duration::from_millis(20);
+}
+
+#[tokio::test]
+async fn browser_page_resources_are_not_asked_but_keep_the_other_checks() {
+    let e = env(EgressMode::Dev, &[], browser_env_opts).await;
+    let pass = e.browser_pass();
+    // 直接上网会问用户的网站，浏览器通道不问、直接连。
+    let (resp, mut s) = e
+        .browser_connect(&e.echo_target(), &pass, "news.example.com")
+        .await;
+    assert_eq!(status(&resp), 200, "{resp}");
+    s.write_all(b"page bytes").await.unwrap();
+    let mut buf = [0u8; 10];
+    s.read_exact(&mut buf).await.unwrap();
+    drop(s);
+    assert!(e.ledger.asks().is_empty());
+    let records = e.wait_for_records(1).await;
+    let r = &records[0];
+    assert!(r.allowed, "{r:?}");
+    assert_eq!(r.via, proto::egress::Via::Browser);
+    assert_eq!(r.kind, Some("res"));
+    assert_eq!(r.page_site.as_deref(), Some("news.example.com"));
+    assert_eq!((r.bytes_up, r.bytes_down), (10, 10));
+    // 沙箱令牌冒充浏览器：不行。
+    let (resp, _) = e
+        .browser_connect(&e.echo_target(), &e.token_with(|_| {}), "x")
+        .await;
+    assert_eq!(status(&resp), 407, "{resp}");
+
+    // 没开浏览器通道：用户名 browser 一律 407。
+    let off = env(EgressMode::All, &[], |_| {}).await;
+    let (resp, _) = off
+        .browser_connect(&off.echo_target(), &off.browser_pass(), "x")
+        .await;
+    assert_eq!(status(&resp), 407, "{resp}");
+    // 只连模型：整条通道不能用。
+    let model = env(EgressMode::Model, &[], browser_env_opts).await;
+    let (resp, _) = model
+        .browser_connect(&model.echo_target(), &model.browser_pass(), "x")
+        .await;
+    assert_eq!(status(&resp), 403, "{resp}");
+    assert!(resp.contains("not_allowed"), "{resp}");
+    // 禁段照样拒绝。
+    let blocked = env(EgressMode::Dev, &[], |o| {
+        browser_env_opts(o);
+        o.deny = vec!["127.0.0.0/8".parse().unwrap()];
+    })
+    .await;
+    let (resp, _) = blocked
+        .browser_connect(&blocked.echo_target(), &blocked.browser_pass(), "x")
+        .await;
+    assert_eq!(status(&resp), 403, "{resp}");
+    assert!(resp.contains("private_address"), "{resp}");
+    // 每天的额度和直接上网共用：用完了浏览器也不行。
+    let spent = env(EgressMode::Dev, &[], |o| {
+        browser_env_opts(o);
+        o.daily_bytes = 0;
+    })
+    .await;
+    let (resp, _) = spent
+        .browser_connect(&spent.echo_target(), &spent.browser_pass(), "x")
+        .await;
+    assert_eq!(status(&resp), 429, "{resp}");
+    assert!(resp.contains("quota"), "{resp}");
+}
+
+#[tokio::test]
+async fn browser_tunnels_have_their_own_cap() {
+    let e = env(EgressMode::All, &[], |o| {
+        browser_env_opts(o);
+        o.max_tunnels = 1;
+        o.browser_max_tunnels = 2;
+        o.browser_slot_wait = Duration::from_millis(200);
+    })
+    .await;
+    let pass = e.browser_pass();
+    let (resp, _direct) = e
+        .connect(&e.echo_target(), Some(&e.token_with(|_| {})))
+        .await;
+    assert_eq!(status(&resp), 200, "{resp}");
+    // 直接上网的名额满了，浏览器的照样能开两条。
+    let (resp, _b1) = e.browser_connect(&e.echo_target(), &pass, "a.com").await;
+    assert_eq!(status(&resp), 200, "{resp}");
+    let (resp, _b2) = e.browser_connect(&e.echo_target(), &pass, "a.com").await;
+    assert_eq!(status(&resp), 200, "{resp}");
+    let (resp, _) = e.browser_connect(&e.echo_target(), &pass, "a.com").await;
+    assert_eq!(status(&resp), 429, "{resp}");
+    assert!(resp.contains("too_many_tunnels"), "{resp}");
+}
+
+#[tokio::test]
+async fn the_browser_asks_about_a_site_once_per_task() {
+    let e = env(EgressMode::Dev, &[], browser_env_opts).await;
+    e.ledger.set_run("inst-1", Some("run-1"));
+    let pass = e.browser_pass();
+    // 没开、没通行证、沙箱令牌：都不行。
+    let off = env(EgressMode::Dev, &[], |_| {}).await;
+    assert_eq!(
+        off.ask(Some(&off.browser_pass()), ask_body("localhost", 0))
+            .await
+            .0,
+        404
+    );
+    assert_eq!(e.ask(None, ask_body("localhost", 0)).await.0, 401);
+    assert_eq!(
+        e.ask(Some(&e.token_with(|_| {})), ask_body("localhost", 0))
+            .await
+            .0,
+        401
+    );
+    // 第一次：登记一条浏览器提问，没人答就是 pending。
+    let (code, reply) = e.ask(Some(&pass), ask_body("localhost", 0)).await;
+    assert_eq!(code, 200);
+    assert_eq!(reply["result"], "pending", "{reply}");
+    let asks = e.ledger.asks();
+    assert_eq!(asks.len(), 1);
+    assert_eq!(reply["request_id"], asks[0].id.as_str());
+    assert_eq!(asks[0].via, proto::egress::Via::Browser);
+    assert_eq!(asks[0].site.as_deref(), Some("localhost"));
+    // 再问一次还是那一条（用户只看到一张卡片）。
+    let (_, reply) = e.ask(Some(&pass), ask_body("localhost", 0)).await;
+    assert_eq!(reply["result"], "pending");
+    assert_eq!(e.ledger.asks().len(), 1);
+    // 等的时候用户点了“访问一次”。
+    let ledger = e.ledger.clone();
+    let id = asks[0].id.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        ledger.decide(&id, "once");
+    });
+    let (_, reply) = e.ask(Some(&pass), ask_body("localhost", 5)).await;
+    assert_eq!(reply["result"], "allowed", "{reply}");
+    assert_eq!(reply["scope"], "once");
+    // 这次任务里再打开同一个网站：不用再问。
+    let (_, reply) = e.ask(Some(&pass), ask_body("localhost", 0)).await;
+    assert_eq!(reply["result"], "allowed");
+    assert_eq!(e.ledger.asks().len(), 1);
+    // 换了任务要重新问；这次拒绝了，这次任务里不再问、浏览器通道也不放这个网站。
+    e.ledger.set_run("inst-1", Some("run-2"));
+    let (_, reply) = e.ask(Some(&pass), ask_body("localhost", 0)).await;
+    assert_eq!(reply["result"], "pending");
+    let id = reply["request_id"].as_str().unwrap().to_owned();
+    e.ledger.decide(&id, "denied");
+    let (_, reply) = e.ask(Some(&pass), ask_body("localhost", 0)).await;
+    assert_eq!(reply["result"], "denied", "{reply}");
+    let (resp, _) = e.browser_connect(&e.echo_target(), &pass, "x").await;
+    assert_eq!(status(&resp), 403, "{resp}");
+    assert!(resp.contains("user_denied"), "{resp}");
+    // 问询记日志：via=browser, kind=ask，来源网站按主域名。
+    let records = e.wait_for_records(5).await;
+    let ask = records
+        .iter()
+        .find(|r| r.kind == Some("ask") && r.allowed)
+        .expect("an allowed ask row");
+    assert_eq!(ask.via, proto::egress::Via::Browser);
+    assert_eq!(ask.page_site.as_deref(), Some("example.com"));
+}
+
+#[tokio::test]
+async fn the_browser_ask_checks_the_address_mode_and_allowance_first() {
+    // 内网地址：不问用户、不登记。
+    let e = env(EgressMode::Dev, &[], |o| {
+        browser_env_opts(o);
+        o.deny = vec!["127.0.0.0/8".parse().unwrap()];
+    })
+    .await;
+    let (_, reply) = e
+        .ask(Some(&e.browser_pass()), ask_body("localhost", 0))
+        .await;
+    assert_eq!(reply["result"], "private_address", "{reply}");
+    assert!(e.ledger.asks().is_empty());
+    // 解析不到。
+    let (_, reply) = e
+        .ask(Some(&e.browser_pass()), ask_body("nx.invalid", 0))
+        .await;
+    assert_eq!(reply["result"], "resolve", "{reply}");
+    // 只连模型。
+    let e = env(EgressMode::Model, &[], browser_env_opts).await;
+    let (_, reply) = e
+        .ask(Some(&e.browser_pass()), ask_body("localhost", 0))
+        .await;
+    assert_eq!(reply["result"], "not_allowed", "{reply}");
+    // 今天的流量用完了：不问。
+    let e = env(EgressMode::Dev, &[], |o| {
+        browser_env_opts(o);
+        o.daily_bytes = 0;
+    })
+    .await;
+    let (_, reply) = e
+        .ask(Some(&e.browser_pass()), ask_body("localhost", 0))
+        .await;
+    assert_eq!(reply["result"], "quota", "{reply}");
+    assert!(e.ledger.asks().is_empty());
+    // 全部公网的档位：直接允许。
+    let e = env(EgressMode::All, &[], browser_env_opts).await;
+    let (_, reply) = e
+        .ask(Some(&e.browser_pass()), ask_body("localhost", 0))
+        .await;
+    assert_eq!(reply["result"], "allowed");
+    assert_eq!(reply["scope"], "default");
+    // 一直允许的网站：同一个网站都算。
+    let e = env(EgressMode::Dev, &["localhost"], browser_env_opts).await;
+    let (_, reply) = e
+        .ask(Some(&e.browser_pass()), ask_body("localhost", 0))
+        .await;
+    assert_eq!(reply["result"], "allowed");
+    assert_eq!(reply["scope"], "always");
+    // 这次任务已经有太多网站在等。
+    let e = env(EgressMode::Dev, &[], |o| {
+        browser_env_opts(o);
+        o.max_pending_asks = 0;
+    })
+    .await;
+    let (_, reply) = e
+        .ask(Some(&e.browser_pass()), ask_body("localhost", 0))
+        .await;
+    assert_eq!(reply["result"], "too_many_asks", "{reply}");
+    // 坏的请求。
+    let (code, _) = e
+        .ask(Some(&e.browser_pass()), serde_json::json!({"nope": 1}))
+        .await;
+    assert_eq!(code, 400);
+}
