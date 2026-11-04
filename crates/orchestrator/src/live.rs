@@ -32,9 +32,15 @@ pub const MAX_OPEN: u32 = 10;
 
 /// 计划到点开始的根运行（第一次领取时；有步骤的计划是流水线开始时）：给开了远程开启的设备记下待开启的实时活动。
 /// 和领取运行在同一个事务里。用户自己发起的运行由 App 自己开；子运行、流水线的步骤不单独开（步数算在根运行上）。
+/// 成功不打扰的计划（`notify_success` 关了，比如事件触发的）也不开：锁屏上不为每个事件亮一次。
 pub async fn queue_starts(w: &mut Tx<Worker>, rec: &RunRecord) -> store::Result<()> {
     let run = &rec.run;
     if run.attempt <= 1 && run.parent_run_id.is_none() && run.source == RunSource::Plan {
+        if let Some(plan) = run.plan_id
+            && !w.plan(plan).await?.policy.notify_success
+        {
+            return Ok(());
+        }
         w.queue_live_starts(rec.user_id, run.id, MAX_PUSHED_OPEN)
             .await?;
     }

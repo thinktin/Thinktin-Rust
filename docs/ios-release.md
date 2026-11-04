@@ -43,6 +43,7 @@ git tag ios-v0.2.0
 git push origin ios-v0.2.0
 ```
 
+- 标签发版默认在 `macos-26` 归档。若要使用 Intel 运行器，在打标签前把仓库的 Actions 变量 `IOS_RELEASE_USE_INTEL` 设为 `true`，该次归档将使用 `macos-15-intel`。手动触发时仍以表单选择的运行器为准。
 - **版本号**取标签（`ios-v0.2.0` → `0.2.0`，1 到 3 段数字），覆盖 project.yml 里的 `MARKETING_VERSION`。
 - **构建号**是这个工作流的运行序号（`github.run_number`），只增不减，同一个版本号重新发（改了东西重打标签）也不会撞。
 - 签名：每次发版用 API key 现建一张 Apple Distribution 证书（私钥只在这台机器的临时钥匙串里）和两个 App Store 描述文件
@@ -69,6 +70,8 @@ git push origin ios-v0.2.0
   （`mobile.yml` 手动触发也能单独验证）。
 - 密钥检查（`tools/apple/asc_key_check.py`，在编 Rust 之前跑）：401 是密钥 ID、Issuer ID 和 .p8 对不上（或者是个人密钥、
   已撤销），403 是权限不够（自动签名要“管理（Admin）”）；两个 ID 首尾的空格、换行工作流会去掉，格式不对直接报错。
+- 403 `PLA_NOT_ACCEPTED`（“PLA Update available”）：苹果更新了开发者计划许可协议，账号持有人要登录 developer.apple.com/account
+  同意新协议（App Store Connect 的“商务”里有待同意的协议也一并同意），不是密钥的问题。
 - 签名失败：API key 的角色不够（要“管理（Admin）”），或者 App 记录、bundle id 没建。xcodebuild 报
   `Communication with Apple failed ... (401) ... listTeams.action` 也是密钥本身不被认（第一次试跑就是这样）。
 - 上传后 App Store Connect 报 ITMS-91053（缺必需理由 API 的声明）：补隐私清单（12.11，`PrivacyInfo.xcprivacy`）。

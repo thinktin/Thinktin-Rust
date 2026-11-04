@@ -81,6 +81,9 @@ fun UpgradeRequiredScreen(updater: Updater?, modifier: Modifier = Modifier) {
             )
             if (updater != null) {
                 UpdatePanel(updater, modifier = Modifier.padding(top = ThinktinSpacing.Paragraph))
+                TextButton(onClick = { StoreLinks.openDownloadPage(context) }) {
+                    Text(stringResource(R.string.update_open_website))
+                }
             } else {
                 PrimaryButton(
                     text = stringResource(R.string.upgrade_store),

@@ -336,8 +336,9 @@ private fun RunRow(run: Run, nowMs: Long, zone: ZoneId, onClick: () -> Unit) {
     ) {
         StatusDot(run.state, contentDescription = stateLabel)
         Column(Modifier.weight(1f)) {
-            // 第 8.4 节：委派出来的子运行，prompt 是上游 agent 写的，要标 AI 生成。
-            LabelledLine(aiGenerated = run.source == RunSource.Delegate) {
+            // 第 8.4 节：委派子运行的 prompt 是上游 agent 写的、流水线步骤的 prompt 里附带上游摘要，都标 AI 生成
+            // （和对话页的 TimelineItem.Prompt.aiGenerated、运行页一致）。
+            LabelledLine(aiGenerated = run.source == RunSource.Delegate || run.source == RunSource.Pipeline) {
                 Text(
                     text = run.prompt,
                     style = MaterialTheme.typography.bodyLarge,

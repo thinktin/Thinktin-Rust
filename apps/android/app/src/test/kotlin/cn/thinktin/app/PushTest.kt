@@ -1,13 +1,19 @@
 package cn.thinktin.app
 
 import android.app.NotificationManager
+import android.content.ComponentName
 import android.content.Intent
 import androidx.test.core.app.ApplicationProvider
+import cn.thinktin.app.push.ApprovalRejectReceiver
 import cn.thinktin.app.push.NotificationChannels
 import cn.thinktin.app.push.PushCoordinator
 import cn.thinktin.app.push.PushMessage
 import cn.thinktin.app.push.PushNotifier
+import cn.thinktin.data.model.Approval
+import cn.thinktin.data.model.ApprovalState
 import cn.thinktin.data.model.InboxKind
+import cn.thinktin.data.model.OptionKind
+import cn.thinktin.data.service.ThinktinService
 import cn.thinktin.data.service.AuthState
 import cn.thinktin.data.service.ServiceError
 import kotlinx.coroutines.test.runTest
@@ -61,7 +67,7 @@ class PushTest {
         assertEquals("thinktin://plan/p1", link("tt_kind" to "plan_confirm", "tt_plan" to "p1"))
         assertEquals("thinktin://run/r1", link("tt_kind" to "run_failed", "tt_run" to "r1", "tt_plan" to "p1"))
         assertEquals("thinktin://plan/p1", link("tt_kind" to "info", "tt_plan" to "p1", "tt_inbox" to "i1"))
-        assertEquals("thinktin://inbox/i1", link("tt_kind" to "computer_approval", "tt_inbox" to "i1"))
+        assertEquals("thinktin://approvals", link("tt_kind" to "computer_approval", "tt_inbox" to "i1"))
         assertEquals("thinktin://inbox", link("tt_kind" to "info"))
     }
 
@@ -106,6 +112,59 @@ class PushTest {
         assertEquals(message, PushMessage.fromIntent(open))
         PushNotifier.cancelAll(context)
         assertTrue(shadowOf(manager).allNotifications.isEmpty())
+    }
+
+    @Test
+    fun foregroundRejectIsImmutableAccountBoundAndReceiverIsPrivate() = runTest {
+        val app = ApplicationProvider.getApplicationContext<DemoTestApp>()
+        shadowOf(app).grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+        val service = FakeThinktinService()
+        val push = app.container.push
+        push.sync(service)
+        val message = PushMessage(kind = InboxKind.Approval, approvalId = "approval-pending")
+        assertTrue(PushNotifier.show(app, "审批", "", message))
+        val manager = shadowOf(app.getSystemService(NotificationManager::class.java))
+        val action = manager.allNotifications.single().actions.single().actionIntent
+        assertTrue(action.isImmutable)
+        val intent = shadowOf(action).savedIntent
+        assertEquals(ApprovalRejectReceiver::class.java.name, intent.component?.className)
+        assertEquals(listOf(service.me().id, "approval-pending"), intent.data!!.pathSegments.take(2))
+        @Suppress("DEPRECATION")
+        val info = app.packageManager.getReceiverInfo(ComponentName(app, ApprovalRejectReceiver::class.java), 0)
+        assertFalse(info.exported)
+        service.auth.value = AuthState.SignedOut
+        push.sync(service)
+        assertTrue(PushNotifier.show(app, "审批", "", message))
+        assertTrue(manager.allNotifications.single().actions.isNullOrEmpty())
+    }
+
+    @Test
+    fun rejectChecksOwnerExpiryAndOptionAndRepeatedTapsDecideOnlyOnce() = runTest {
+        val fake = FakeThinktinService()
+        val user = fake.me().id
+        val approval = fake.getApproval("approval-pending")
+        val inbox = fake.syncInbox().items.first { it.kind == InboxKind.Approval && it.approvalId == approval.id }
+        val now = approval.expiresAtMs - 1
+        var value = approval
+        val decisions = mutableListOf<String>()
+        val service = object : ThinktinService by fake {
+            override suspend fun getApproval(approvalId: String): Approval = value
+            override suspend fun decideApproval(approvalId: String, optionId: String): Approval {
+                decisions += optionId
+                return fake.decideApproval(approvalId, optionId).also { value = it }
+            }
+        }
+        assertFalse(ApprovalRejectReceiver.decide(service, "other-user", approval.id, inbox.id, now))
+        assertTrue(ApprovalRejectReceiver.decide(service, user, approval.id, null, approval.expiresAtMs))
+        value = approval.copy(options = approval.options.filter { it.kind != OptionKind.RejectOnce })
+        assertFalse(ApprovalRejectReceiver.decide(service, user, approval.id, inbox.id, now))
+        assertTrue(decisions.isEmpty())
+        value = approval
+        assertTrue(ApprovalRejectReceiver.decide(service, user, approval.id, inbox.id, now))
+        assertEquals(ApprovalState.Rejected, value.state)
+        assertTrue(ApprovalRejectReceiver.decide(service, user, approval.id, inbox.id, now))
+        assertEquals(listOf(approval.options.single { it.kind == OptionKind.RejectOnce }.optionId), decisions)
+        assertTrue(fake.inboxItem(inbox.id).read)
     }
 
     @Test

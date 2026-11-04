@@ -93,21 +93,21 @@ class ProgressTest {
         assertEquals(RunState.Running, p.state)
         assertEquals(7_000L, p.startedAtMs)
         p = p.apply(event(EventKinds.AGENT_TOOL_CALL)).apply(event(EventKinds.AGENT_PLATFORM_TOOL_CALL))
-        assertEquals(2, p.steps)
+        assertEquals(1, p.steps)
         // 别的运行、别的事件不算。
         p = p.apply(event(EventKinds.AGENT_TOOL_CALL, runId = "other")).apply(event(EventKinds.AGENT_MESSAGE))
-        assertEquals(2, p.steps)
+        assertEquals(1, p.steps)
         p = p.apply(event(EventKinds.RUN_STATE, payload = state("waiting_quota", "rate_limited")))
         assertEquals(WaitCode.RateLimited, p.waitCode)
         assertEquals("开始时间不变", 7_000L, p.startedAtMs)
         p = p.apply(event(EventKinds.RUN_STATE, payload = state("succeeded")))
         assertTrue(p.isFinished)
         assertNull(p.waitCode)
-        // 缓存里的事件只算步数（状态以运行为准）。
+        // 缓存里已经收到的终止事件覆盖较旧的运行快照。
         val cached = listOf(event(EventKinds.AGENT_TOOL_CALL), event(EventKinds.RUN_STATE, payload = state("failed")))
         val fromCache = RunProgress.of(run(state = RunState.Running), "小码", cached)
         assertEquals(1, fromCache.steps)
-        assertEquals(RunState.Running, fromCache.state)
+        assertEquals(RunState.Failed, fromCache.state)
     }
 
     @Test

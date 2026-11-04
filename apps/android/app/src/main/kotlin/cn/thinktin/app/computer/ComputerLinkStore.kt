@@ -15,6 +15,8 @@ interface ComputerLinkStorage {
     fun read(key: String): String?
 
     fun write(key: String, value: String)
+
+    fun clear()
 }
 
 class InMemoryComputerLinkStorage : ComputerLinkStorage {
@@ -22,6 +24,9 @@ class InMemoryComputerLinkStorage : ComputerLinkStorage {
 
     @Synchronized
     override fun read(key: String): String? = values[key]
+
+    @Synchronized
+    override fun clear() = values.clear()
 
     @Synchronized
     override fun write(key: String, value: String) {
@@ -32,6 +37,10 @@ class InMemoryComputerLinkStorage : ComputerLinkStorage {
 /** 本机的 SharedPreferences（不随备份、迁移走：见 `res/xml/data_extraction_rules.xml`，换了手机要重新配对）。 */
 class SharedPrefsComputerLinkStorage(private val prefs: SharedPreferences) : ComputerLinkStorage {
     override fun read(key: String): String? = prefs.getString(key, null)
+
+    override fun clear() {
+        prefs.edit().clear().apply()
+    }
 
     override fun write(key: String, value: String) {
         prefs.edit().putString(key, value).apply()
@@ -51,6 +60,11 @@ class SharedPrefsComputerLinkStorage(private val prefs: SharedPreferences) : Com
 class ComputerLinkStore(private val storage: ComputerLinkStorage) {
     private val flows = HashMap<String, MutableStateFlow<ComputerLinkState>>()
     private val lock = Any()
+
+    fun clear() = synchronized(lock) {
+        storage.clear()
+        flows.values.forEach { it.value = ComputerLinkState() }
+    }
 
     fun state(userId: String): StateFlow<ComputerLinkState> = flow(userId).asStateFlow()
 

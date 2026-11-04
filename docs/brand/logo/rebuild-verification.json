@@ -1,0 +1,18 @@
+{
+  "thinktin-master-gradient.svg": {
+    "byte_identical": true,
+    "sha256": "692a7b668e27849e8c22c8082c7420b94fe9500d437ba4a997028a39d1705cf6"
+  },
+  "thinktin-master-black.svg": {
+    "byte_identical": true,
+    "sha256": "7714017b28d297fd091e6df2dfaf70550bce1809bb1a07b5ac91cc57f2c6fac1"
+  },
+  "thinktin-construction.svg": {
+    "byte_identical": true,
+    "sha256": "fb165f5b48d01c5f64e0dae0b220583322db1eb77ea659932ebf3040dd2b4ca8"
+  },
+  "thinktin-arc-table.csv": {
+    "byte_identical": true,
+    "sha256": "9ed49da191cc1295f21ce9a975efc7466ac9906052eb6fec5aa85441148483ac"
+  }
+}

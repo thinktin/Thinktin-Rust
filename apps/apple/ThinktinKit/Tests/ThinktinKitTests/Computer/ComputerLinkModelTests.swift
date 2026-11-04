@@ -314,11 +314,21 @@ struct ComputerLinkModelTests {
         await signer.setFailNext(.keyInvalidated)
         _ = await reopened.issueGrant(to: mac, dirs: ["/x"], apps: [], duration: 3600, reason: "")
         #expect(reopened.error == .signer(.keyInvalidated))
+        mock.failNext("sendDeviceMessage(to:kind:bodyJSON:)", with: .network(message: "offline"))
+        await reopened.resetKey()
+        #expect(reopened.paired(mac) != nil)
+        #expect(reopened.activeGrants(for: mac).contains { $0.id == issued.id })
+        #expect(try await signer.publicKey() == Data("new-key".utf8))
         await reopened.resetKey()
         #expect(reopened.pairedComputers.isEmpty)
         #expect(!reopened.needsRepair)
+        #expect(
+            mock.state.deviceMessages.contains { $0.kind == .revocation && $0.bodyJSON.contains(issued.grant.tokenID) })
 
         // 解除配对：先吊销发给它的令牌。
+        mock.failNext("sendDeviceMessage(to:kind:bodyJSON:)", with: .network(message: "offline"))
+        await model.unpair(mac)
+        #expect(model.paired(mac) != nil)
         await model.unpair(mac)
         #expect(model.paired(mac) == nil)
         #expect(
@@ -330,6 +340,10 @@ struct ComputerLinkModelTests {
         #expect(CapabilityRules.isValidDirectory("/Users/me"))
         #expect(!CapabilityRules.isValidDirectory("Users/me"))
         #expect(!CapabilityRules.isValidDirectory("/Users/../etc"))
+        #expect(CapabilityRules.isValidDirectory("C:\\Users\\me"))
+        #expect(CapabilityRules.isValidDirectory("d:/Users/me"))
+        #expect(!CapabilityRules.isValidDirectory("C:\\Users\\..\\etc"))
+        #expect(!CapabilityRules.isValidDirectory("C:Users"))
         #expect(CapabilityRules.isValidBundleID("com.apple.Safari"))
         #expect(!CapabilityRules.isValidBundleID("Safari"))
         #expect(!CapabilityRules.isValidBundleID("com..apple"))

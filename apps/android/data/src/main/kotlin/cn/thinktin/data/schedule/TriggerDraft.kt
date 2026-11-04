@@ -270,6 +270,13 @@ data class TriggerDraft(
         val rule = ruleLines.firstOrNull()
         if (rule == null || "FREQ=" !in rule) return TriggerProblem.RruleNoFrequency
         if ("FREQ=SECONDLY" in rule) return TriggerProblem.RruleTooFrequent
+        // 每 N 分钟一次（没有 BY 限定）本地预测不了，但间隔一眼可知：服务端最小间隔 5 分钟，不够的先拦下。
+        if ("FREQ=MINUTELY" in rule && "BY" !in rule) {
+            val interval = Regex("INTERVAL=(\\d+)").find(rule)?.groupValues?.get(1)?.toLongOrNull() ?: 1L
+            if (interval < ScheduleForecast.MIN_INTERVAL_MS / 60_000) {
+                return TriggerProblem.TooFrequent((ScheduleForecast.MIN_INTERVAL_MS / 60_000).toInt())
+            }
+        }
         val startLine = full.lines().firstOrNull { it.trim().uppercase().startsWith("DTSTART") }
             ?: return TriggerProblem.RruleNoTimeZone
         val (start, _) = RecurrenceRule.parseStart(startLine.trim()) ?: return TriggerProblem.RruleNoTimeZone

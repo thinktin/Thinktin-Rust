@@ -291,6 +291,21 @@ class ComputerLinkViewModelTest {
     }
 
     @Test
+    fun missingRevocationTargetDoesNotPreventResettingInvalidKey() = runTest(dispatcher) {
+        val vm = make()
+        advanceUntilIdle()
+        pairMac(vm)
+        vm.issueGrant(mac, listOf("/Users/me"), emptyList(), 3600, "")
+        advanceUntilIdle()
+        assertTrue(vm.uiState.value.activeGrants(mac, nowMs).isNotEmpty())
+        mock.revokeDevice(mac)
+        vm.resetKey()
+        advanceUntilIdle()
+        assertTrue(vm.uiState.value.link.computers.isEmpty())
+        assertFalse(vm.uiState.value.needsRepair)
+    }
+
+    @Test
     fun keyChangesResetAndUnpairing() = runTest(dispatcher) {
         val vm = make()
         advanceUntilIdle()
@@ -310,6 +325,7 @@ class ComputerLinkViewModelTest {
         assertTrue((reopened.uiState.value.error as ComputerLinkError.Signer).error is DeviceSignerException.KeyInvalidated)
         reopened.resetKey()
         advanceUntilIdle()
+        assertTrue(mock.sentDeviceMessages().any { it.kind == DeviceMessageKind.Revocation && issued.grant.tokenId in it.bodyJson })
         assertTrue(reopened.uiState.value.link.computers.isEmpty())
         assertFalse(reopened.uiState.value.needsRepair)
         assertTrue(vm.uiState.value.activeGrants(mac, nowMs).isEmpty())

@@ -143,8 +143,11 @@ enum class DevicePlatform(override val wire: String) : WireEnum {
     Ios("ios"),
     Android("android"),
     Macos("macos"),
+    Windows("windows"),
     Unknown(""),
     ;
+
+    val isComputer: Boolean get() = this == Macos || this == Windows
 
     companion object {
         fun fromWire(value: String): DevicePlatform = parseWire(value, Unknown)

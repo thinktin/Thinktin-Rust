@@ -1,0 +1,9 @@
+{
+  "segment_count": 98,
+  "max_endpoint_circle_error_U": 1.1368683772161603e-13,
+  "max_join_gap_U": 0.0,
+  "max_tangent_angle_error_deg": 1.2074182697257333e-06,
+  "circle_endpoint_pass": true,
+  "join_pass": true,
+  "tangent_pass": true
+}

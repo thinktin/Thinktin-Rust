@@ -52,23 +52,15 @@ class KeystoreSigner(
         BiometricManager.from(context).canAuthenticate(BIOMETRIC_STRONG) == BiometricManager.BIOMETRIC_SUCCESS
 
     override suspend fun publicKey(): ByteArray = withContext(Dispatchers.IO) {
-        val key = loadOrCreate().certificate.publicKey as? ECPublicKey ?: throw DeviceSignerException.KeyInvalidated()
+        val entry = loadOrCreate()
+        prepareSignature(entry)
+        val key = entry.certificate.publicKey as? ECPublicKey ?: throw DeviceSignerException.KeyInvalidated()
         sec1(key)
     }
 
     override suspend fun sign(message: ByteArray, reason: String): ByteArray {
         if (!isAvailable()) throw DeviceSignerException.Unavailable()
-        val signature = withContext(Dispatchers.IO) {
-            val entry = loadOrCreate()
-            try {
-                Signature.getInstance(ALGORITHM).apply { initSign(entry.privateKey) }
-            } catch (e: KeyPermanentlyInvalidatedException) {
-                throw DeviceSignerException.KeyInvalidated()
-            } catch (e: GeneralSecurityException) {
-                Log.e(TAG, "initSign failed", e)
-                throw DeviceSignerException.Failed(e.javaClass.simpleName)
-            }
-        }
+        val signature = withContext(Dispatchers.IO) { prepareSignature(loadOrCreate()) }
         val unlocked = authenticate(signature, reason)
         return withContext(Dispatchers.IO) {
             try {
@@ -87,11 +79,22 @@ class KeystoreSigner(
                 keyStore().deleteEntry(alias)
             } catch (e: GeneralSecurityException) {
                 Log.e(TAG, "cannot delete the signing key", e)
+                throw DeviceSignerException.Failed(e.javaClass.simpleName)
             }
         }
     }
 
     // ---- 内部 ----
+
+    // 证书在生物识别重新录入后仍可读；只有初始化签名才能识别已永久失效的私钥。
+    private fun prepareSignature(entry: KeyStore.PrivateKeyEntry): Signature = try {
+        Signature.getInstance(ALGORITHM).apply { initSign(entry.privateKey) }
+    } catch (e: KeyPermanentlyInvalidatedException) {
+        throw DeviceSignerException.KeyInvalidated()
+    } catch (e: GeneralSecurityException) {
+        Log.e(TAG, "initSign failed", e)
+        throw DeviceSignerException.Failed(e.javaClass.simpleName)
+    }
 
     private fun keyStore(): KeyStore = KeyStore.getInstance(PROVIDER).apply { load(null) }
 

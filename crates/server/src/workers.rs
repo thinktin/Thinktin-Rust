@@ -138,6 +138,12 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
         )),
         Arc::new(VaultTools::new(db.clone())),
         Arc::new(DelegateTools::new(db.clone())),
+        Arc::new(orchestrator::peers::PeerTools::new(db.clone())),
+        Arc::new(orchestrator::board::BoardTools::new(
+            db.clone(),
+            kms.clone(),
+        )),
+        Arc::new(orchestrator::ask::AskTools::new(db.clone(), kms.clone())),
     ];
     // 用户电脑上的工具（14.2）：调用经设备中继转给用户自己的电脑，结果靠数据库通知取回。
     let computer = Arc::new(DeviceCalls::new(db.clone()));
@@ -403,7 +409,9 @@ async fn maintain(db: &Db) -> store::Result<()> {
         + w.purge_delivered_outbox(OUTBOX_RETENTION).await?
         + w.purge_device_traffic(DEVICE_TRAFFIC_RETENTION).await?
         + w.purge_im_bot_slots().await?
-        + w.purge_live_activities(LIVE_ACTIVITY_RETENTION).await?;
+        + w.purge_live_activities(LIVE_ACTIVITY_RETENTION).await?
+        + w.purge_archived_board_posts(store::BOARD_ARCHIVE_RETENTION)
+            .await?;
     // 内容举报（5.5）的待处理队列：几条、最早的一条等了多久（告警看它）。
     let (open, oldest) = w.report_backlog().await?;
     w.commit().await?;

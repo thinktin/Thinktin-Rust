@@ -18,7 +18,11 @@ struct PipelineEditorModelTests {
         #expect(model.steps.map(\.key) == ["step1", "summary"])
         #expect(model.steps.map(\.instanceID) == [DemoData.writerID, DemoData.reviewerID])
         #expect(model.steps[1].dependsOn == ["step1"])
+        #expect(!model.hasChanges)
+        model.setKey(model.steps[0].id, "collect")
         #expect(model.hasChanges)
+        model.setKey(model.steps[0].id, "step1")
+        #expect(!model.hasChanges)
 
         // 提示词、目标都空着：点保存只标出问题，不发请求。
         #expect(await model.save() == nil)

@@ -79,6 +79,21 @@ pub struct NewArtifact<'a> {
 
 /// 一棵运行树最多多少个产出物（含历史版本）。
 pub const MAX_TREE_ARTIFACTS: i64 = 1000;
+/// 列产出物时最多列这么多条。
+pub const MAX_LISTED_ARTIFACTS: i64 = 500;
+/// 一个范围下面最多看这么多个问题里的产出物。
+const MAX_VISIBLE_SCOPES: i64 = 200;
+
+/// 一个运行的产出物范围（8.11）。回答队友问题的运行（和它下面委派的）发布的记在这个问题里，只看得到这个问题
+/// 里的；别的运行记在运行树的根上。各自还看得到下面各个问题（含问题里再问的）的回答方发布的：提问方看得到
+/// 回答方的，回答方看不到提问方的。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArtifactScope {
+    /// 发布的记在这里：最近的回答问题的运行（可以是自己），没有就是运行树的根。
+    pub own: RunId,
+    /// 看得到哪些范围：自己的在前。
+    pub visible: Vec<RunId>,
+}
 
 impl Tx<Worker> {
     /// 待清理的产出物密文（产出物记录删掉时由触发器排进来）。
@@ -155,20 +170,102 @@ impl<R> Tx<R> {
         row.into_stored()
     }
 
-    /// 一棵运行树里的产出物，每个名字只取最新版本。
-    pub async fn tree_artifacts(&mut self, root: RunId) -> Result<Vec<StoredArtifact>> {
-        let rows: Vec<Row> = sqlx::query_as(concat!(
-            "SELECT DISTINCT ON (name) ",
-            columns!(),
-            " FROM artifacts WHERE root_run_id = $1 ORDER BY name, version DESC"
-        ))
-        .bind(root.0)
-        .fetch_all(self.conn())
+    /// 一个运行的产出物范围（8.11）：发布的记在哪、看得到哪些范围的。
+    pub async fn artifact_scope(&mut self, run: RunId) -> Result<ArtifactScope> {
+        let (own, asks): (Uuid, Vec<Uuid>) = sqlx::query_as(
+            "WITH RECURSIVE chain AS ( \
+               SELECT id, source, parent_run_id, root_run_id, 0 AS depth FROM runs WHERE id = $1 \
+               UNION ALL \
+               SELECT r.id, r.source, r.parent_run_id, r.root_run_id, c.depth + 1 \
+               FROM runs r JOIN chain c ON r.id = c.parent_run_id WHERE c.depth < 64), \
+             own AS ( \
+               SELECT coalesce((SELECT id FROM chain WHERE source = 'ask' ORDER BY depth LIMIT 1), \
+                               (SELECT root_run_id FROM chain WHERE depth = 0)) AS id), \
+             below AS ( \
+               SELECT r.id, r.source, 1 AS depth FROM runs r, own WHERE r.parent_run_id = own.id \
+               UNION ALL \
+               SELECT r.id, r.source, b.depth + 1 FROM runs r JOIN below b ON r.parent_run_id = b.id \
+               WHERE b.depth < 64) \
+             SELECT (SELECT id FROM own), \
+                    ARRAY(SELECT id FROM below WHERE source = 'ask' ORDER BY id LIMIT $2)",
+        )
+        .bind(run.0)
+        .bind(MAX_VISIBLE_SCOPES)
+        .fetch_one(self.conn())
         .await?;
-        rows.into_iter().map(Row::into_stored).collect()
+        let own: RunId = own.into();
+        let mut visible = vec![own];
+        visible.extend(asks.into_iter().map(RunId::from));
+        Ok(ArtifactScope { own, visible })
     }
 
-    /// 某几个运行发布的产出物（交接时取上游步骤的），每个名字只取最新版本。
+    /// 范围里看得到的产出物，每个范围里每个名字只取最新版本，按名字排（同名的自己的在前，`root_run_id`
+    /// 看得出是哪个问题里的），最多 [`MAX_LISTED_ARTIFACTS`] 条（自己的先列）。
+    pub async fn tree_artifacts(&mut self, scope: &ArtifactScope) -> Result<Vec<StoredArtifact>> {
+        let ids: Vec<Uuid> = scope.visible.iter().map(|r| r.0).collect();
+        let rows: Vec<Row> = sqlx::query_as(concat!(
+            "SELECT * FROM ( \
+               SELECT DISTINCT ON (root_run_id, name) ",
+            columns!(),
+            "  FROM artifacts WHERE root_run_id = ANY($1) \
+               ORDER BY root_run_id, name, version DESC) a \
+             ORDER BY root_run_id <> $2, name, root_run_id LIMIT $3"
+        ))
+        .bind(&ids)
+        .bind(scope.own.0)
+        .bind(MAX_LISTED_ARTIFACTS)
+        .fetch_all(self.conn())
+        .await?;
+        let mut out: Vec<StoredArtifact> = rows
+            .into_iter()
+            .map(Row::into_stored)
+            .collect::<Result<_>>()?;
+        // 稳定排序：同名的自己的还在前面。
+        out.sort_by(|a, b| a.artifact.name.cmp(&b.artifact.name));
+        Ok(out)
+    }
+
+    /// 范围里某个名字的最新版本（或指定版本）。同名的先用自己范围里的；要别的用 [`Tx::scoped_artifact`]。
+    pub async fn named_artifact(
+        &mut self,
+        scope: &ArtifactScope,
+        name: &str,
+        version: Option<u32>,
+    ) -> Result<StoredArtifact> {
+        let ids: Vec<Uuid> = scope.visible.iter().map(|r| r.0).collect();
+        let row: Row = sqlx::query_as(concat!(
+            "SELECT ",
+            columns!(),
+            " FROM artifacts WHERE root_run_id = ANY($1) \
+               AND name = $2 AND ($3::int IS NULL OR version = $3) \
+             ORDER BY root_run_id = $4 DESC, version DESC LIMIT 1"
+        ))
+        .bind(&ids)
+        .bind(name)
+        .bind(version.map(|v| i32::try_from(v).unwrap_or(i32::MAX)))
+        .bind(scope.own.0)
+        .fetch_one(self.conn())
+        .await?;
+        row.into_stored()
+    }
+
+    /// 范围里看得到的某一个产出物（按 id，同名的里挑一个用）。看不到的当没有。
+    pub async fn scoped_artifact(
+        &mut self,
+        scope: &ArtifactScope,
+        id: ArtifactId,
+    ) -> Result<StoredArtifact> {
+        let a = self.artifact(id).await?;
+        if !scope.visible.contains(&a.artifact.root_run_id) {
+            return Err(Error::NotFound);
+        }
+        Ok(a)
+    }
+}
+
+impl<R> Tx<R> {
+    /// 某几个运行发布的产出物（交接时取上游步骤的、查进度时列出来的），每个名字只取最新版本。
+    /// 业务角色按行级安全只看得到自己的。
     pub async fn run_artifacts(&mut self, runs: &[RunId]) -> Result<Vec<StoredArtifact>> {
         let ids: Vec<Uuid> = runs.iter().map(|r| r.0).collect();
         let rows: Vec<Row> = sqlx::query_as(concat!(
@@ -180,27 +277,6 @@ impl<R> Tx<R> {
         .fetch_all(self.conn())
         .await?;
         rows.into_iter().map(Row::into_stored).collect()
-    }
-
-    /// 树里某个名字的最新版本（或指定版本）。
-    pub async fn named_artifact(
-        &mut self,
-        root: RunId,
-        name: &str,
-        version: Option<u32>,
-    ) -> Result<StoredArtifact> {
-        let row: Row = sqlx::query_as(concat!(
-            "SELECT ",
-            columns!(),
-            " FROM artifacts WHERE root_run_id = $1 AND name = $2 AND ($3::int IS NULL OR version = $3) \
-             ORDER BY version DESC LIMIT 1"
-        ))
-        .bind(root.0)
-        .bind(name)
-        .bind(version.map(|v| i32::try_from(v).unwrap_or(i32::MAX)))
-        .fetch_one(self.conn())
-        .await?;
-        row.into_stored()
     }
 }
 

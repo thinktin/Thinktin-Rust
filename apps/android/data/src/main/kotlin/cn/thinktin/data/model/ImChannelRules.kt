@@ -31,7 +31,7 @@ object ImChannelRules {
     const val TESTS_PER_HOUR = 10
     const val MAX_WEBHOOK = 512
 
-    enum class Problem { UnknownAddress, BadToken, SecretNotSupported, BadSecret, BadLabel, NoEvents }
+    enum class Problem { UnknownAddress, BadToken, SecretNotSupported, BadSecret, BadLabel, LabelControl, DifferentVendor, NoEvents }
 
     data class ParsedWebhook(val vendor: String, val token: String)
 
@@ -81,7 +81,7 @@ object ImChannelRules {
 
     fun labelProblem(label: String): Problem? = when {
         VaultRules.length(label) > MAX_LABEL -> Problem.BadLabel
-        VaultRules.hasControlCharacters(label) -> Problem.BadLabel
+        VaultRules.hasControlCharacters(label) -> Problem.LabelControl
         else -> null
     }
 

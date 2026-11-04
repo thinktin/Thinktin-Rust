@@ -834,6 +834,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_artifact_content(
     ): Int
+    external fun uniffi_client_core_checksum_method_thinktinclient_board(
+    ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_cached_events(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_cached_events_before(
@@ -851,6 +853,8 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_client_core_checksum_method_thinktinclient_confirm_plan(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_create_plan(
+    ): Int
+    external fun uniffi_client_core_checksum_method_thinktinclient_create_plan_hook(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_create_run(
     ): Int
@@ -872,6 +876,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_delete_artifact(
     ): Int
+    external fun uniffi_client_core_checksum_method_thinktinclient_delete_board_post(
+    ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_delete_credential(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_delete_im_channel(
@@ -881,6 +887,8 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_client_core_checksum_method_thinktinclient_delete_instance(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_delete_plan(
+    ): Int
+    external fun uniffi_client_core_checksum_method_thinktinclient_delete_plan_hook(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_delete_team(
     ): Int
@@ -932,7 +940,11 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_older_runs(
     ): Int
+    external fun uniffi_client_core_checksum_method_thinktinclient_plan_hooks(
+    ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_plans(
+    ): Int
+    external fun uniffi_client_core_checksum_method_thinktinclient_post_to_board(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_register_live_activity(
     ): Int
@@ -947,6 +959,8 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_client_core_checksum_method_thinktinclient_reports(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_revoke_device(
+    ): Int
+    external fun uniffi_client_core_checksum_method_thinktinclient_rotate_plan_hook(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_run_artifacts(
     ): Int
@@ -964,7 +978,11 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_send_self_code(
     ): Int
+    external fun uniffi_client_core_checksum_method_thinktinclient_send_urgent_message(
+    ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_set_accept_language(
+    ): Int
+    external fun uniffi_client_core_checksum_method_thinktinclient_set_board_post_archived(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_set_credential_daily_limit(
     ): Int
@@ -975,6 +993,8 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_client_core_checksum_method_thinktinclient_set_locale(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_set_model_routes(
+    ): Int
+    external fun uniffi_client_core_checksum_method_thinktinclient_set_plan_hook_enabled(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_set_plan_paused(
     ): Int
@@ -1001,6 +1021,8 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_client_core_checksum_method_thinktinclient_update_credential(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_update_im_channel(
+    ): Int
+    external fun uniffi_client_core_checksum_method_thinktinclient_update_instance(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_update_plan(
     ): Int
@@ -1103,6 +1125,8 @@ internal object UniffiLib {
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_artifact_content(`ptr`: Long,`artifactId`: RustBuffer.ByValue,
     ): Long
+    external fun uniffi_client_core_fn_method_thinktinclient_board(`ptr`: Long,`tag`: RustBuffer.ByValue,`archived`: Byte,`beforeId`: RustBuffer.ByValue,`limit`: RustBuffer.ByValue,
+    ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_cached_events(`ptr`: Long,`instanceId`: RustBuffer.ByValue,`afterSeq`: Long,`limit`: Int,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_client_core_fn_method_thinktinclient_cached_events_before(`ptr`: Long,`instanceId`: RustBuffer.ByValue,`beforeSeq`: RustBuffer.ByValue,`limit`: Int,uniffi_out_err: UniffiRustCallStatus, 
@@ -1120,6 +1144,8 @@ internal object UniffiLib {
     external fun uniffi_client_core_fn_method_thinktinclient_confirm_plan(`ptr`: Long,`planId`: RustBuffer.ByValue,`revision`: Int,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_create_plan(`ptr`: Long,`plan`: RustBuffer.ByValue,
+    ): Long
+    external fun uniffi_client_core_fn_method_thinktinclient_create_plan_hook(`ptr`: Long,`planId`: RustBuffer.ByValue,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_create_run(`ptr`: Long,`instanceId`: RustBuffer.ByValue,`prompt`: RustBuffer.ByValue,
     ): Long
@@ -1141,6 +1167,8 @@ internal object UniffiLib {
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_delete_artifact(`ptr`: Long,`artifactId`: RustBuffer.ByValue,
     ): Long
+    external fun uniffi_client_core_fn_method_thinktinclient_delete_board_post(`ptr`: Long,`postId`: RustBuffer.ByValue,
+    ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_delete_credential(`ptr`: Long,`credentialId`: RustBuffer.ByValue,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_delete_im_channel(`ptr`: Long,`channelId`: RustBuffer.ByValue,
@@ -1150,6 +1178,8 @@ internal object UniffiLib {
     external fun uniffi_client_core_fn_method_thinktinclient_delete_instance(`ptr`: Long,`instanceId`: RustBuffer.ByValue,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_delete_plan(`ptr`: Long,`planId`: RustBuffer.ByValue,
+    ): Long
+    external fun uniffi_client_core_fn_method_thinktinclient_delete_plan_hook(`ptr`: Long,`hookId`: RustBuffer.ByValue,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_delete_team(`ptr`: Long,`teamId`: RustBuffer.ByValue,
     ): Long
@@ -1201,7 +1231,11 @@ internal object UniffiLib {
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_older_runs(`ptr`: Long,`instanceId`: RustBuffer.ByValue,`beforeRunId`: RustBuffer.ByValue,`limit`: Int,
     ): Long
+    external fun uniffi_client_core_fn_method_thinktinclient_plan_hooks(`ptr`: Long,`planId`: RustBuffer.ByValue,
+    ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_plans(`ptr`: Long,`instanceId`: RustBuffer.ByValue,
+    ): Long
+    external fun uniffi_client_core_fn_method_thinktinclient_post_to_board(`ptr`: Long,`body`: RustBuffer.ByValue,`tags`: RustBuffer.ByValue,`allowSecrets`: Byte,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_register_live_activity(`ptr`: Long,`runId`: RustBuffer.ByValue,`token`: RustBuffer.ByValue,
     ): Long
@@ -1216,6 +1250,8 @@ internal object UniffiLib {
     external fun uniffi_client_core_fn_method_thinktinclient_reports(`ptr`: Long,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_revoke_device(`ptr`: Long,`deviceId`: RustBuffer.ByValue,
+    ): Long
+    external fun uniffi_client_core_fn_method_thinktinclient_rotate_plan_hook(`ptr`: Long,`hookId`: RustBuffer.ByValue,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_run_artifacts(`ptr`: Long,`runId`: RustBuffer.ByValue,
     ): Long
@@ -1233,8 +1269,12 @@ internal object UniffiLib {
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_send_self_code(`ptr`: Long,`purpose`: RustBuffer.ByValue,
     ): Long
+    external fun uniffi_client_core_fn_method_thinktinclient_send_urgent_message(`ptr`: Long,`instanceId`: RustBuffer.ByValue,`text`: RustBuffer.ByValue,`allowSecrets`: Byte,
+    ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_set_accept_language(`ptr`: Long,`acceptLanguage`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
+    external fun uniffi_client_core_fn_method_thinktinclient_set_board_post_archived(`ptr`: Long,`postId`: RustBuffer.ByValue,`archived`: Byte,
+    ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_set_credential_daily_limit(`ptr`: Long,`credentialId`: RustBuffer.ByValue,`dailyTokenLimit`: RustBuffer.ByValue,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_set_instance_version(`ptr`: Long,`instanceId`: RustBuffer.ByValue,`version`: RustBuffer.ByValue,
@@ -1244,6 +1284,8 @@ internal object UniffiLib {
     external fun uniffi_client_core_fn_method_thinktinclient_set_locale(`ptr`: Long,`locale`: RustBuffer.ByValue,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_set_model_routes(`ptr`: Long,`instanceId`: RustBuffer.ByValue,`routes`: RustBuffer.ByValue,
+    ): Long
+    external fun uniffi_client_core_fn_method_thinktinclient_set_plan_hook_enabled(`ptr`: Long,`hookId`: RustBuffer.ByValue,`enabled`: Byte,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_set_plan_paused(`ptr`: Long,`planId`: RustBuffer.ByValue,`paused`: Byte,
     ): Long
@@ -1270,6 +1312,8 @@ internal object UniffiLib {
     external fun uniffi_client_core_fn_method_thinktinclient_update_credential(`ptr`: Long,`credentialId`: RustBuffer.ByValue,`label`: RustBuffer.ByValue,`disabled`: RustBuffer.ByValue,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_update_im_channel(`ptr`: Long,`channelId`: RustBuffer.ByValue,`label`: RustBuffer.ByValue,`events`: RustBuffer.ByValue,`enabled`: RustBuffer.ByValue,
+    ): Long
+    external fun uniffi_client_core_fn_method_thinktinclient_update_instance(`ptr`: Long,`instanceId`: RustBuffer.ByValue,`change`: RustBuffer.ByValue,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_update_plan(`ptr`: Long,`planId`: RustBuffer.ByValue,`change`: RustBuffer.ByValue,
     ): Long
@@ -1556,6 +1600,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_artifact_content() and 0xFFFF) != 35353) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_board() and 0xFFFF) != 50352) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_cached_events() and 0xFFFF) != 6727) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1581,6 +1628,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_create_plan() and 0xFFFF) != 21599) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_create_plan_hook() and 0xFFFF) != 41820) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_create_run() and 0xFFFF) != 57802) {
@@ -1613,6 +1663,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_delete_artifact() and 0xFFFF) != 2898) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_delete_board_post() and 0xFFFF) != 2201) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_delete_credential() and 0xFFFF) != 3317) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1626,6 +1679,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_delete_plan() and 0xFFFF) != 51470) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_delete_plan_hook() and 0xFFFF) != 40019) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_delete_team() and 0xFFFF) != 59109) {
@@ -1703,7 +1759,13 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_older_runs() and 0xFFFF) != 39421) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_plan_hooks() and 0xFFFF) != 2991) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_plans() and 0xFFFF) != 27034) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_post_to_board() and 0xFFFF) != 25957) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_register_live_activity() and 0xFFFF) != 32649) {
@@ -1725,6 +1787,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_revoke_device() and 0xFFFF) != 44420) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_rotate_plan_hook() and 0xFFFF) != 56078) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_run_artifacts() and 0xFFFF) != 31700) {
@@ -1751,7 +1816,13 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_send_self_code() and 0xFFFF) != 11066) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_send_urgent_message() and 0xFFFF) != 33248) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_set_accept_language() and 0xFFFF) != 57462) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_set_board_post_archived() and 0xFFFF) != 22954) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_set_credential_daily_limit() and 0xFFFF) != 1631) {
@@ -1767,6 +1838,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_set_model_routes() and 0xFFFF) != 26575) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_set_plan_hook_enabled() and 0xFFFF) != 23465) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_set_plan_paused() and 0xFFFF) != 34250) {
@@ -1806,6 +1880,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_update_im_channel() and 0xFFFF) != 2020) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_update_instance() and 0xFFFF) != 666) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_update_plan() and 0xFFFF) != 13910) {
@@ -3702,6 +3779,12 @@ public interface ThinktinClientInterface {
     suspend fun `artifactContent`(`artifactId`: kotlin.String): kotlin.ByteArray
     
     /**
+     * 共享看板（8.10），新的在前：`tag` 只看带这个标签的，`archived` 看归档了的（默认没归档的），
+     * `before_id` 往下翻，`limit` 默认 50、最多 200。
+     */
+    suspend fun `board`(`tag`: kotlin.String?, `archived`: kotlin.Boolean, `beforeId`: kotlin.String?, `limit`: kotlin.UInt?): List<BoardPost>
+    
+    /**
      * 缓存里 `after_seq` 之后的事件（打开页面时先显示）。
      */
     fun `cachedEvents`(`instanceId`: kotlin.String, `afterSeq`: kotlin.ULong, `limit`: kotlin.UInt): List<InstanceEvent>
@@ -3735,6 +3818,12 @@ public interface ThinktinClientInterface {
     suspend fun `confirmPlan`(`planId`: kotlin.String, `revision`: kotlin.UInt): Plan
     
     suspend fun `createPlan`(`plan`: NewPlan): Plan
+    
+    /**
+     * 给计划加 webhook。先在界面上告诉用户：收到的内容会交给 agent，也会发给他配置的模型厂商处理；
+     * 用户同意了才调。返回的地址和令牌只这一次拿得到。带步骤的计划（流水线）暂不支持，报 422。
+     */
+    suspend fun `createPlanHook`(`planId`: kotlin.String): PlanHookSecret
     
     suspend fun `createRun`(`instanceId`: kotlin.String, `prompt`: kotlin.String): Run
     
@@ -3772,6 +3861,8 @@ public interface ThinktinClientInterface {
     
     suspend fun `deleteArtifact`(`artifactId`: kotlin.String)
     
+    suspend fun `deleteBoardPost`(`postId`: kotlin.String)
+    
     suspend fun `deleteCredential`(`credentialId`: kotlin.String)
     
     suspend fun `deleteImChannel`(`channelId`: kotlin.String)
@@ -3786,6 +3877,8 @@ public interface ThinktinClientInterface {
     suspend fun `deleteInstance`(`instanceId`: kotlin.String)
     
     suspend fun `deletePlan`(`planId`: kotlin.String)
+    
+    suspend fun `deletePlanHook`(`hookId`: kotlin.String)
     
     /**
      * 删团队（实例不删）。
@@ -3882,7 +3975,19 @@ public interface ThinktinClientInterface {
      */
     suspend fun `olderRuns`(`instanceId`: kotlin.String, `beforeRunId`: kotlin.String, `limit`: kotlin.UInt): List<Run>
     
+    /**
+     * 计划的 webhook（7.1 事件触发）。
+     */
+    suspend fun `planHooks`(`planId`: kotlin.String): List<PlanHook>
+    
     suspend fun `plans`(`instanceId`: kotlin.String?): List<Plan>
+    
+    /**
+     * 用户自己在看板上写一条：最长 2000 字，最多 8 个标签（字母、数字、-、_）。满了最早的自动归档。
+     * 看板上的内容用户所有的 agent 都读得到：有像密码、key 的内容时不发，返回 `ContainsSecrets`（和
+     * `send_message` 一样），用户确认要发时带 `allow_secrets`；保险箱里有的，服务端还会换成引用。
+     */
+    suspend fun `postToBoard`(`body`: kotlin.String, `tags`: List<kotlin.String>, `allowSecrets`: kotlin.Boolean): BoardPost
     
     /**
      * 这个运行开了实时活动（10.6），或者远程开启的拿到了令牌：登记它的推送令牌（ActivityKit 的
@@ -3918,6 +4023,11 @@ public interface ThinktinClientInterface {
      */
     suspend fun `revokeDevice`(`deviceId`: kotlin.String)
     
+    /**
+     * 换令牌：旧地址马上失效。
+     */
+    suspend fun `rotatePlanHook`(`hookId`: kotlin.String): PlanHookSecret
+    
     suspend fun `runArtifacts`(`runId`: kotlin.String): List<Artifact>
     
     suspend fun `runTree`(`runId`: kotlin.String): List<Run>
@@ -3950,9 +4060,21 @@ public interface ThinktinClientInterface {
     suspend fun `sendSelfCode`(`purpose`: kotlin.String)
     
     /**
+     * 紧急消息（8.12，打断重来）：实例正忙时打断它正在做的、马上处理这条（会话保留，agent 会知道自己被
+     * 打断了）；空闲时排在别的排队消息前面。密码拦截和 `send_message` 一样。
+     */
+    suspend fun `sendUrgentMessage`(`instanceId`: kotlin.String, `text`: kotlin.String, `allowSecrets`: kotlin.Boolean): Run
+    
+    /**
      * App 里切换了语言：之后的请求带新的 `Accept-Language`（`None` 不带）。不联网。
      */
     fun `setAcceptLanguage`(`acceptLanguage`: kotlin.String?)
+    
+    /**
+     * 归档、取消归档。已经是那样的不动（重试不出错）；没归档的已经有 200 条时取消归档报 422（先归档别的）。
+     * 取消归档的算新的：看板满了自动归档时按取消归档的时间排。
+     */
+    suspend fun `setBoardPostArchived`(`postId`: kotlin.String, `archived`: kotlin.Boolean): BoardPost
     
     /**
      * 改每日 token 上限（11.9）：`None` 取消上限，必须大于 0（0 报 422）。放宽或取消时等 key 的运行会接着跑；
@@ -3981,6 +4103,8 @@ public interface ThinktinClientInterface {
      * 整体替换实例的模型别名（叫 main 的是默认模型）。
      */
     suspend fun `setModelRoutes`(`instanceId`: kotlin.String, `routes`: List<ModelRoute>)
+    
+    suspend fun `setPlanHookEnabled`(`hookId`: kotlin.String, `enabled`: kotlin.Boolean): PlanHook
     
     /**
      * 暂停或恢复用户自己的计划。等确认的计划要用 `confirm_plan`。
@@ -4032,6 +4156,11 @@ public interface ThinktinClientInterface {
     suspend fun `updateCredential`(`credentialId`: kotlin.String, `label`: kotlin.String?, `disabled`: kotlin.Boolean?): Credential
     
     suspend fun `updateImChannel`(`channelId`: kotlin.String, `label`: kotlin.String?, `events`: List<kotlin.String>?, `enabled`: kotlin.Boolean?): ImChannel
+    
+    /**
+     * 改名字、用途说明、“允许其他 agent 查我、问我”（8.9），给了才改；什么都没给报 422。
+     */
+    suspend fun `updateInstance`(`instanceId`: kotlin.String, `change`: InstanceChange): Instance
     
     /**
      * 改计划：标题、目标、策略、补跑方式、流水线步骤，给了才改。返回改完的计划（带触发器和步骤）。
@@ -4431,6 +4560,35 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
 
     
     /**
+     * 共享看板（8.10），新的在前：`tag` 只看带这个标签的，`archived` 看归档了的（默认没归档的），
+     * `before_id` 往下翻，`limit` 默认 50、最多 200。
+     */
+    @Throws(ClientException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `board`(`tag`: kotlin.String?, `archived`: kotlin.Boolean, `beforeId`: kotlin.String?, `limit`: kotlin.UInt?) : List<BoardPost> {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_client_core_fn_method_thinktinclient_board(
+                uniffiHandle,
+                
+        FfiConverterOptionalString.lower(`tag`),
+        FfiConverterBoolean.lower(`archived`),
+        FfiConverterOptionalString.lower(`beforeId`),
+        FfiConverterOptionalUInt.lower(`limit`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_client_core_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterSequenceTypeBoardPost.lift(it) },
+        // Error FFI converter
+        ClientException.ErrorHandler,
+    )
+    }
+
+    
+    /**
      * 缓存里 `after_seq` 之后的事件（打开页面时先显示）。
      */
     @Throws(ClientException::class)override fun `cachedEvents`(`instanceId`: kotlin.String, `afterSeq`: kotlin.ULong, `limit`: kotlin.UInt): List<InstanceEvent> {
@@ -4603,6 +4761,32 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
         { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypePlan.lift(it) },
+        // Error FFI converter
+        ClientException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * 给计划加 webhook。先在界面上告诉用户：收到的内容会交给 agent，也会发给他配置的模型厂商处理；
+     * 用户同意了才调。返回的地址和令牌只这一次拿得到。带步骤的计划（流水线）暂不支持，报 422。
+     */
+    @Throws(ClientException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `createPlanHook`(`planId`: kotlin.String) : PlanHookSecret {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_client_core_fn_method_thinktinclient_create_plan_hook(
+                uniffiHandle,
+                
+        FfiConverterString.lower(`planId`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_client_core_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypePlanHookSecret.lift(it) },
         // Error FFI converter
         ClientException.ErrorHandler,
     )
@@ -4853,6 +5037,29 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
     
     @Throws(ClientException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `deleteBoardPost`(`postId`: kotlin.String) {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_client_core_fn_method_thinktinclient_delete_board_post(
+                uniffiHandle,
+                
+        FfiConverterString.lower(`postId`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_void(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_client_core_rust_future_complete_void(future, continuation) },
+        { future -> UniffiLib.ffi_client_core_rust_future_free_void(future) },
+        // lift function
+        { },
+        
+        // Error FFI converter
+        ClientException.ErrorHandler,
+    )
+    }
+
+    
+    @Throws(ClientException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
     override suspend fun `deleteCredential`(`credentialId`: kotlin.String) {
         return uniffiRustCallAsync(
         callWithHandle { uniffiHandle ->
@@ -4957,6 +5164,29 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
                 uniffiHandle,
                 
         FfiConverterString.lower(`planId`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_void(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_client_core_rust_future_complete_void(future, continuation) },
+        { future -> UniffiLib.ffi_client_core_rust_future_free_void(future) },
+        // lift function
+        { },
+        
+        // Error FFI converter
+        ClientException.ErrorHandler,
+    )
+    }
+
+    
+    @Throws(ClientException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `deletePlanHook`(`hookId`: kotlin.String) {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_client_core_fn_method_thinktinclient_delete_plan_hook(
+                uniffiHandle,
+                
+        FfiConverterString.lower(`hookId`),
             )
         },
         { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_void(future, callback, continuation) },
@@ -5579,6 +5809,31 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
     }
 
     
+    /**
+     * 计划的 webhook（7.1 事件触发）。
+     */
+    @Throws(ClientException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `planHooks`(`planId`: kotlin.String) : List<PlanHook> {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_client_core_fn_method_thinktinclient_plan_hooks(
+                uniffiHandle,
+                
+        FfiConverterString.lower(`planId`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_client_core_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterSequenceTypePlanHook.lift(it) },
+        // Error FFI converter
+        ClientException.ErrorHandler,
+    )
+    }
+
+    
     @Throws(ClientException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
     override suspend fun `plans`(`instanceId`: kotlin.String?) : List<Plan> {
@@ -5595,6 +5850,35 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
         { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterSequenceTypePlan.lift(it) },
+        // Error FFI converter
+        ClientException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * 用户自己在看板上写一条：最长 2000 字，最多 8 个标签（字母、数字、-、_）。满了最早的自动归档。
+     * 看板上的内容用户所有的 agent 都读得到：有像密码、key 的内容时不发，返回 `ContainsSecrets`（和
+     * `send_message` 一样），用户确认要发时带 `allow_secrets`；保险箱里有的，服务端还会换成引用。
+     */
+    @Throws(ClientException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `postToBoard`(`body`: kotlin.String, `tags`: List<kotlin.String>, `allowSecrets`: kotlin.Boolean) : BoardPost {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_client_core_fn_method_thinktinclient_post_to_board(
+                uniffiHandle,
+                
+        FfiConverterString.lower(`body`),
+        FfiConverterSequenceString.lower(`tags`),
+        FfiConverterBoolean.lower(`allowSecrets`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_client_core_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeBoardPost.lift(it) },
         // Error FFI converter
         ClientException.ErrorHandler,
     )
@@ -5779,6 +6063,31 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
         // lift function
         { },
         
+        // Error FFI converter
+        ClientException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * 换令牌：旧地址马上失效。
+     */
+    @Throws(ClientException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `rotatePlanHook`(`hookId`: kotlin.String) : PlanHookSecret {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_client_core_fn_method_thinktinclient_rotate_plan_hook(
+                uniffiHandle,
+                
+        FfiConverterString.lower(`hookId`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_client_core_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypePlanHookSecret.lift(it) },
         // Error FFI converter
         ClientException.ErrorHandler,
     )
@@ -5986,6 +6295,34 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
 
     
     /**
+     * 紧急消息（8.12，打断重来）：实例正忙时打断它正在做的、马上处理这条（会话保留，agent 会知道自己被
+     * 打断了）；空闲时排在别的排队消息前面。密码拦截和 `send_message` 一样。
+     */
+    @Throws(ClientException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `sendUrgentMessage`(`instanceId`: kotlin.String, `text`: kotlin.String, `allowSecrets`: kotlin.Boolean) : Run {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_client_core_fn_method_thinktinclient_send_urgent_message(
+                uniffiHandle,
+                
+        FfiConverterString.lower(`instanceId`),
+        FfiConverterString.lower(`text`),
+        FfiConverterBoolean.lower(`allowSecrets`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_client_core_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeRun.lift(it) },
+        // Error FFI converter
+        ClientException.ErrorHandler,
+    )
+    }
+
+    
+    /**
      * App 里切换了语言：之后的请求带新的 `Accept-Language`（`None` 不带）。不联网。
      */
     @Throws(ClientException::class)override fun `setAcceptLanguage`(`acceptLanguage`: kotlin.String?)
@@ -6000,6 +6337,33 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
     }
     
     
+
+    
+    /**
+     * 归档、取消归档。已经是那样的不动（重试不出错）；没归档的已经有 200 条时取消归档报 422（先归档别的）。
+     * 取消归档的算新的：看板满了自动归档时按取消归档的时间排。
+     */
+    @Throws(ClientException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `setBoardPostArchived`(`postId`: kotlin.String, `archived`: kotlin.Boolean) : BoardPost {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_client_core_fn_method_thinktinclient_set_board_post_archived(
+                uniffiHandle,
+                
+        FfiConverterString.lower(`postId`),
+        FfiConverterBoolean.lower(`archived`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_client_core_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeBoardPost.lift(it) },
+        // Error FFI converter
+        ClientException.ErrorHandler,
+    )
+    }
 
     
     /**
@@ -6129,6 +6493,29 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
         // lift function
         { },
         
+        // Error FFI converter
+        ClientException.ErrorHandler,
+    )
+    }
+
+    
+    @Throws(ClientException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `setPlanHookEnabled`(`hookId`: kotlin.String, `enabled`: kotlin.Boolean) : PlanHook {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_client_core_fn_method_thinktinclient_set_plan_hook_enabled(
+                uniffiHandle,
+                
+        FfiConverterString.lower(`hookId`),
+        FfiConverterBoolean.lower(`enabled`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_client_core_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypePlanHook.lift(it) },
         // Error FFI converter
         ClientException.ErrorHandler,
     )
@@ -6431,6 +6818,32 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
         { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypeImChannel.lift(it) },
+        // Error FFI converter
+        ClientException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * 改名字、用途说明、“允许其他 agent 查我、问我”（8.9），给了才改；什么都没给报 422。
+     */
+    @Throws(ClientException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `updateInstance`(`instanceId`: kotlin.String, `change`: InstanceChange) : Instance {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_client_core_fn_method_thinktinclient_update_instance(
+                uniffiHandle,
+                
+        FfiConverterString.lower(`instanceId`),
+        FfiConverterTypeInstanceChange.lower(`change`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_client_core_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeInstance.lift(it) },
         // Error FFI converter
         ClientException.ErrorHandler,
     )
@@ -7125,6 +7538,95 @@ public object FfiConverterTypeArtifact: FfiConverterRustBuffer<Artifact> {
             FfiConverterULong.write(value.`size`, buf)
             FfiConverterString.write(value.`sha256`, buf)
             FfiConverterLong.write(value.`createdAtMs`, buf)
+    }
+}
+
+
+
+/**
+ * 共享看板的一条（8.10）：用户的 agent（或用户自己）写的进展、决定、待别人处理的事。写了不改，只能归档、删除。
+ */
+data class BoardPost (
+    var `id`: kotlin.String
+    , 
+    /**
+     * 哪个实例写的；没有是用户自己写的。实例删了 id 还在、`author_name` 没有：用 `ai_generated` 区分用户和
+     * 删了的 agent。
+     */
+    var `authorInstanceId`: kotlin.String?
+    , 
+    /**
+     * 写它的实例的名字（实例删了就没有）。
+     */
+    var `authorName`: kotlin.String?
+    , 
+    /**
+     * 哪次运行写的。
+     */
+    var `runId`: kotlin.String?
+    , 
+    var `body`: kotlin.String
+    , 
+    var `tags`: List<kotlin.String>
+    , 
+    /**
+     * agent 写的：显示时要带“AI 生成”标识（16.3）。用户自己写的是 false。
+     */
+    var `aiGenerated`: kotlin.Boolean
+    , 
+    var `createdAtMs`: kotlin.Long
+    , 
+    var `archivedAtMs`: kotlin.Long?
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeBoardPost: FfiConverterRustBuffer<BoardPost> {
+    override fun read(buf: ByteBuffer): BoardPost {
+        return BoardPost(
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterLong.read(buf),
+            FfiConverterOptionalLong.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: BoardPost) = (
+            FfiConverterString.allocationSize(value.`id`) +
+            FfiConverterOptionalString.allocationSize(value.`authorInstanceId`) +
+            FfiConverterOptionalString.allocationSize(value.`authorName`) +
+            FfiConverterOptionalString.allocationSize(value.`runId`) +
+            FfiConverterString.allocationSize(value.`body`) +
+            FfiConverterSequenceString.allocationSize(value.`tags`) +
+            FfiConverterBoolean.allocationSize(value.`aiGenerated`) +
+            FfiConverterLong.allocationSize(value.`createdAtMs`) +
+            FfiConverterOptionalLong.allocationSize(value.`archivedAtMs`)
+    )
+
+    override fun write(value: BoardPost, buf: ByteBuffer) {
+            FfiConverterString.write(value.`id`, buf)
+            FfiConverterOptionalString.write(value.`authorInstanceId`, buf)
+            FfiConverterOptionalString.write(value.`authorName`, buf)
+            FfiConverterOptionalString.write(value.`runId`, buf)
+            FfiConverterString.write(value.`body`, buf)
+            FfiConverterSequenceString.write(value.`tags`, buf)
+            FfiConverterBoolean.write(value.`aiGenerated`, buf)
+            FfiConverterLong.write(value.`createdAtMs`, buf)
+            FfiConverterOptionalLong.write(value.`archivedAtMs`, buf)
     }
 }
 
@@ -7915,6 +8417,17 @@ data class Instance (
     var `createdAtMs`: kotlin.Long
     , 
     var `lastActiveAtMs`: kotlin.Long
+    , 
+    /**
+     * 用途说明（8.9）：用户写的，别的 agent 列出队友时看得到。
+     */
+    var `purpose`: kotlin.String = "" 
+    , 
+    /**
+     * “允许其他 agent 查我、问我”（8.9），默认打开。关了以后别的 agent 列不出它、查不了它的进度、问不了它
+     * （8.11），关的时候别人问它、还没答的问题都取消。它自己照样能看别人、问别人、写看板。
+     */
+    var `peerAccess`: kotlin.Boolean = true 
     
 ){
     
@@ -7939,6 +8452,8 @@ public object FfiConverterTypeInstance: FfiConverterRustBuffer<Instance> {
             FfiConverterString.read(buf),
             FfiConverterLong.read(buf),
             FfiConverterLong.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterBoolean.read(buf),
         )
     }
 
@@ -7950,7 +8465,9 @@ public object FfiConverterTypeInstance: FfiConverterRustBuffer<Instance> {
             FfiConverterString.allocationSize(value.`name`) +
             FfiConverterString.allocationSize(value.`state`) +
             FfiConverterLong.allocationSize(value.`createdAtMs`) +
-            FfiConverterLong.allocationSize(value.`lastActiveAtMs`)
+            FfiConverterLong.allocationSize(value.`lastActiveAtMs`) +
+            FfiConverterString.allocationSize(value.`purpose`) +
+            FfiConverterBoolean.allocationSize(value.`peerAccess`)
     )
 
     override fun write(value: Instance, buf: ByteBuffer) {
@@ -7962,6 +8479,60 @@ public object FfiConverterTypeInstance: FfiConverterRustBuffer<Instance> {
             FfiConverterString.write(value.`state`, buf)
             FfiConverterLong.write(value.`createdAtMs`, buf)
             FfiConverterLong.write(value.`lastActiveAtMs`, buf)
+            FfiConverterString.write(value.`purpose`, buf)
+            FfiConverterBoolean.write(value.`peerAccess`, buf)
+    }
+}
+
+
+
+/**
+ * 改实例：给了才改。`purpose` 给空串清掉。
+ */
+data class InstanceChange (
+    var `name`: kotlin.String? = null 
+    , 
+    /**
+     * 用途说明，最长 200 字。
+     */
+    var `purpose`: kotlin.String? = null 
+    , 
+    /**
+     * “允许其他 agent 查我、问我”。
+     */
+    var `peerAccess`: kotlin.Boolean? = null 
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeInstanceChange: FfiConverterRustBuffer<InstanceChange> {
+    override fun read(buf: ByteBuffer): InstanceChange {
+        return InstanceChange(
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalBoolean.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: InstanceChange) = (
+            FfiConverterOptionalString.allocationSize(value.`name`) +
+            FfiConverterOptionalString.allocationSize(value.`purpose`) +
+            FfiConverterOptionalBoolean.allocationSize(value.`peerAccess`)
+    )
+
+    override fun write(value: InstanceChange, buf: ByteBuffer) {
+            FfiConverterOptionalString.write(value.`name`, buf)
+            FfiConverterOptionalString.write(value.`purpose`, buf)
+            FfiConverterOptionalBoolean.write(value.`peerAccess`, buf)
     }
 }
 
@@ -8678,6 +9249,116 @@ public object FfiConverterTypePlanChange: FfiConverterRustBuffer<PlanChange> {
 
 
 /**
+ * 计划的 webhook（7.1 事件触发）：外面的服务往它的地址发事件，平台按这个计划起一次运行。
+ */
+data class PlanHook (
+    var `id`: kotlin.String
+    , 
+    var `planId`: kotlin.String
+    , 
+    var `enabled`: kotlin.Boolean
+    , 
+    /**
+     * 用户同意把收到的内容交给 agent 和模型厂商的时间。
+     */
+    var `consentedAtMs`: kotlin.Long
+    , 
+    var `lastEventAtMs`: kotlin.Long?
+    , 
+    var `createdAtMs`: kotlin.Long
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypePlanHook: FfiConverterRustBuffer<PlanHook> {
+    override fun read(buf: ByteBuffer): PlanHook {
+        return PlanHook(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterLong.read(buf),
+            FfiConverterOptionalLong.read(buf),
+            FfiConverterLong.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: PlanHook) = (
+            FfiConverterString.allocationSize(value.`id`) +
+            FfiConverterString.allocationSize(value.`planId`) +
+            FfiConverterBoolean.allocationSize(value.`enabled`) +
+            FfiConverterLong.allocationSize(value.`consentedAtMs`) +
+            FfiConverterOptionalLong.allocationSize(value.`lastEventAtMs`) +
+            FfiConverterLong.allocationSize(value.`createdAtMs`)
+    )
+
+    override fun write(value: PlanHook, buf: ByteBuffer) {
+            FfiConverterString.write(value.`id`, buf)
+            FfiConverterString.write(value.`planId`, buf)
+            FfiConverterBoolean.write(value.`enabled`, buf)
+            FfiConverterLong.write(value.`consentedAtMs`, buf)
+            FfiConverterOptionalLong.write(value.`lastEventAtMs`, buf)
+            FfiConverterLong.write(value.`createdAtMs`, buf)
+    }
+}
+
+
+
+/**
+ * 建、换 webhook 的结果：`url`（完整地址，令牌在里面）和 `token` 只这一次拿得到，给用户复制、别存。
+ */
+data class PlanHookSecret (
+    var `hook`: PlanHook
+    , 
+    var `url`: kotlin.String
+    , 
+    var `token`: kotlin.String
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypePlanHookSecret: FfiConverterRustBuffer<PlanHookSecret> {
+    override fun read(buf: ByteBuffer): PlanHookSecret {
+        return PlanHookSecret(
+            FfiConverterTypePlanHook.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: PlanHookSecret) = (
+            FfiConverterTypePlanHook.allocationSize(value.`hook`) +
+            FfiConverterString.allocationSize(value.`url`) +
+            FfiConverterString.allocationSize(value.`token`)
+    )
+
+    override fun write(value: PlanHookSecret, buf: ByteBuffer) {
+            FfiConverterTypePlanHook.write(value.`hook`, buf)
+            FfiConverterString.write(value.`url`, buf)
+            FfiConverterString.write(value.`token`, buf)
+    }
+}
+
+
+
+/**
  * 计划的策略（4.4、4.7、7.11）。
  * 每个字段都有默认值（和服务端的默认策略一样），`PlanPolicy()` 就是默认策略。
  */
@@ -8712,6 +9393,11 @@ data class PlanPolicy (
      * 等电脑上线、等补上 key 最多等多久。
      */
     var `waitTimeoutSecs`: kotlin.ULong = 86400uL 
+    , 
+    /**
+     * 运行成功时通知（推送、收件箱）。事件触发的计划常常关掉；失败、等审批、等 key 照样通知。
+     */
+    var `notifySuccess`: kotlin.Boolean = true 
     
 ){
     
@@ -8736,6 +9422,7 @@ public object FfiConverterTypePlanPolicy: FfiConverterRustBuffer<PlanPolicy> {
             FfiConverterOptionalUInt.read(buf),
             FfiConverterOptionalULong.read(buf),
             FfiConverterULong.read(buf),
+            FfiConverterBoolean.read(buf),
         )
     }
 
@@ -8747,7 +9434,8 @@ public object FfiConverterTypePlanPolicy: FfiConverterRustBuffer<PlanPolicy> {
             FfiConverterULong.allocationSize(value.`maxDurationSecs`) +
             FfiConverterOptionalUInt.allocationSize(value.`maxSteps`) +
             FfiConverterOptionalULong.allocationSize(value.`dailyTokenLimit`) +
-            FfiConverterULong.allocationSize(value.`waitTimeoutSecs`)
+            FfiConverterULong.allocationSize(value.`waitTimeoutSecs`) +
+            FfiConverterBoolean.allocationSize(value.`notifySuccess`)
     )
 
     override fun write(value: PlanPolicy, buf: ByteBuffer) {
@@ -8759,6 +9447,7 @@ public object FfiConverterTypePlanPolicy: FfiConverterRustBuffer<PlanPolicy> {
             FfiConverterOptionalUInt.write(value.`maxSteps`, buf)
             FfiConverterOptionalULong.write(value.`dailyTokenLimit`, buf)
             FfiConverterULong.write(value.`waitTimeoutSecs`, buf)
+            FfiConverterBoolean.write(value.`notifySuccess`, buf)
     }
 }
 
@@ -8871,6 +9560,10 @@ data class Run (
     , 
     var `stepKey`: kotlin.String?
     , 
+    /**
+     * user / plan / pipeline / delegate / ask。ask 是别的 agent 问这个实例的问题（8.11）：prompt 是 agent 写的，
+     * 不能显示成用户说的，要带“AI 生成”标识。以后可能加新值，不认识的不要当成用户发的。
+     */
     var `source`: kotlin.String
     , 
     var `prompt`: kotlin.String
@@ -8894,10 +9587,10 @@ data class Run (
     var `finishedAtMs`: kotlin.Long?
     , 
     /**
-     * 等的是什么，只在 waiting_quota / waiting_device 时有：invalid（key 无效，去换 key）、no_balance（欠费：充值或
+     * 等的是什么，只在 waiting_quota / waiting_device / waiting_children 时有：invalid（key 无效，去换 key）、no_balance（欠费：充值或
      * 换 key，每小时也自己再试）、unavailable（没有能用的 key：停用了或当天额度用完，每小时也自己再试）、
-     * rate_limited / overloaded（几分钟后自己继续，不用处理）、device_offline（等电脑上线）。以后可能加新值，
-     * 不认识的按 state 显示。
+     * rate_limited / overloaded（几分钟后自己继续，不用处理）、device_offline（等电脑上线）、answer（等子任务时
+     * 只在等队友回答，8.11）。以后可能加新值，不认识的按 state 显示。
      */
     var `waitCode`: kotlin.String? = null 
     
@@ -11265,6 +11958,34 @@ public object FfiConverterSequenceTypeArtifact: FfiConverterRustBuffer<List<Arti
 /**
  * @suppress
  */
+public object FfiConverterSequenceTypeBoardPost: FfiConverterRustBuffer<List<BoardPost>> {
+    override fun read(buf: ByteBuffer): List<BoardPost> {
+        val len = buf.getInt()
+        return List<BoardPost>(len) {
+            FfiConverterTypeBoardPost.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<BoardPost>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeBoardPost.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<BoardPost>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeBoardPost.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceTypeContentReport: FfiConverterRustBuffer<List<ContentReport>> {
     override fun read(buf: ByteBuffer): List<ContentReport> {
         val len = buf.getInt()
@@ -11563,6 +12284,34 @@ public object FfiConverterSequenceTypePlan: FfiConverterRustBuffer<List<Plan>> {
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypePlan.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypePlanHook: FfiConverterRustBuffer<List<PlanHook>> {
+    override fun read(buf: ByteBuffer): List<PlanHook> {
+        val len = buf.getInt()
+        return List<PlanHook>(len) {
+            FfiConverterTypePlanHook.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<PlanHook>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypePlanHook.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<PlanHook>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypePlanHook.write(it, buf)
         }
     }
 }

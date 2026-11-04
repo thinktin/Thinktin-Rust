@@ -5,6 +5,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import cn.thinktin.app.R
+import cn.thinktin.app.ui.common.asString
 import cn.thinktin.data.model.ApprovalTimeoutAction
 import cn.thinktin.data.model.CatchUp
 import cn.thinktin.data.model.Plan
@@ -50,6 +51,23 @@ fun dateTimeText(ms: Long, zone: ZoneId): String =
     DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT)
         .withLocale(locale())
         .format(Instant.ofEpochMilli(ms).atZone(zone))
+
+/** 计划列表和历史显示相对时间；计划编辑器里的规则预览仍显示绝对时间。 */
+@Composable
+fun relativePlanTime(ms: Long, zone: ZoneId): String {
+    val now = cn.thinktin.app.ui.common.LocalAppContainer.current.clock.millis()
+    if (ms <= now) return cn.thinktin.app.ui.common.RelativeTime.of(ms, now, zone).asString()
+    val minutes = ((ms - now) / 60_000).coerceAtLeast(1)
+    val at = Instant.ofEpochMilli(ms).atZone(zone)
+    val days = at.toLocalDate().toEpochDay() - Instant.ofEpochMilli(now).atZone(zone).toLocalDate().toEpochDay()
+    return when {
+        minutes < 60 -> pluralStringResource(R.plurals.plan_in_minutes, minutes.toInt(), minutes.toInt())
+        days == 0L -> pluralStringResource(R.plurals.plan_in_hours, (minutes / 60).toInt(), (minutes / 60).toInt())
+        days == 1L -> stringResource(R.string.plan_tomorrow, at.format(DateTimeFormatter.ofPattern("HH:mm", locale())))
+        days < 7 -> pluralStringResource(R.plurals.plan_in_days, days.toInt(), days.toInt())
+        else -> dateTimeText(ms, zone)
+    }
+}
 
 /** 周几的短名（0 是周日），按界面语言。 */
 @Composable
@@ -150,6 +168,7 @@ fun PlanFormProblem.message(): String = when (this) {
 
 @Composable
 fun PolicyProblem.message(): String = when (this) {
+    PolicyProblem.ApprovalAction -> stringResource(R.string.plan_choose_timeout_action)
     PolicyProblem.ApprovalTimeout -> stringResource(R.string.plan_policy_problem_approval_timeout)
     PolicyProblem.WaitTimeout -> stringResource(R.string.plan_policy_problem_wait_timeout)
     PolicyProblem.MaxDuration -> stringResource(R.string.plan_policy_problem_max_duration)

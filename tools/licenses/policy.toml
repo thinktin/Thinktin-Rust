@@ -18,8 +18,8 @@ allow = [
   "PSF-2.0", "HPND", "MIT-CMU", "UPL-1.0", "NCSA", "PostgreSQL", "curl", "OpenSSL", "ICU", "Unicode-3.0", "Unicode-DFS-2015",
   "Unicode-DFS-2016", "CDLA-Permissive-2.0", "Artistic-2.0", "ZPL-2.1", "AFL-2.1", "AFL-3.0", "MS-PL", "W3C",
   "W3C-20150513", "bzip2-1.0.6", "libpng-2.0", "IJG", "Info-ZIP", "MulanPSL-2.0", "ECL-2.0",
-  # 文档、数据、字体（随包带的图标、文档）
-  "CC-BY-3.0", "CC-BY-4.0", "OFL-1.1",
+  # 文档、数据、字体（随包带的图标、文档；Ubuntu 字体许可证和 OFL 一样只管字体本身，egui 自带的字体用它）
+  "CC-BY-3.0", "CC-BY-4.0", "OFL-1.1", "Ubuntu-font-1.0",
   # 弱 copyleft：只要求改过的文件（MPL、EPL、CDDL）或库本身（LGPL）开源；我们不改上游代码。
   "MPL-2.0", "MPL-1.1", "EPL-1.0", "EPL-2.0", "CDDL-1.0", "CDDL-1.1",
   "LGPL-2.0-only", "LGPL-2.0-or-later", "LGPL-2.1-only", "LGPL-2.1-or-later", "LGPL-3.0-only", "LGPL-3.0-or-later",

@@ -292,6 +292,12 @@ object ConversationBuilder {
     /** agent 写的文字里 ai_generated 为真的 kind（proto::labels::is_ai_generated_event）。 */
     val AI_GENERATED_KINDS: Set<String> = setOf(EventKinds.AGENT_MESSAGE, EventKinds.AGENT_THOUGHT, EventKinds.AGENT_PLAN)
 
+    /** 有这些就说明 agent 这一轮在进行（照 iOS reducer 的 markActive）：审批通过后接着流、加载窗口从一轮中间开始时都没有 turn_started。 */
+    private val OUTPUT_KINDS: Set<String> = setOf(
+        EventKinds.AGENT_MESSAGE, EventKinds.AGENT_THOUGHT, EventKinds.AGENT_TOOL_CALL, EventKinds.AGENT_TOOL_CALL_UPDATE,
+        EventKinds.AGENT_PLATFORM_TOOL_CALL,
+    )
+
     /** 不进时间线的 kind。 */
     val HIDDEN_KINDS: Set<String> = setOf(
         EventKinds.AGENT_USAGE, EventKinds.AGENT_TURN_STARTED, EventKinds.AGENT_TURN_ENDED, EventKinds.AGENT_READY,
@@ -444,6 +450,8 @@ object ConversationBuilder {
         var lastState: StateEvent? = null
         var maxAttempt = 0
         var inTurn = false
+        /** 这一轮已经结束（turn_ended）：之后零星到的输出不再算在回复。 */
+        private var turnEnded = false
         var usage: JsonObject? = null
 
         fun timedItems(): List<Pair<TimelineItem, Long>> = items.map { it to (times[it.key] ?: 0L) }
@@ -459,6 +467,7 @@ object ConversationBuilder {
             hasEvents = true
             if (firstTimeMs == null) firstTimeMs = e.createdAtMs
             val p = e.payload
+            if (e.kind in OUTPUT_KINDS && !turnEnded) inTurn = true
             when (e.kind) {
                 EventKinds.AGENT_MESSAGE -> {
                     val text = p.string("text") ?: return
@@ -495,9 +504,13 @@ object ConversationBuilder {
                     }
                 }
                 EventKinds.AGENT_USAGE -> usage = p.obj("raw") ?: p
-                EventKinds.AGENT_TURN_STARTED -> inTurn = true
+                EventKinds.AGENT_TURN_STARTED -> {
+                    inTurn = true
+                    turnEnded = false
+                }
                 EventKinds.AGENT_TURN_ENDED -> {
                     inTurn = false
+                    turnEnded = true
                     val reason = p.string("stop_reason")
                     if (reason != null && reason in NOTABLE_STOP_REASONS) {
                         add(TimelineItem.System(key("stop-${e.seq}"), SystemLine.TurnStopped(reason)), e.createdAtMs)
@@ -658,7 +671,16 @@ object ConversationBuilder {
             lastState = StateEvent(state, attempt, p.string("reason"), waitCode)
             val newAttempt = previous != null && previous.attempt in 1 until attempt
             maxAttempt = maxOf(maxAttempt, attempt)
-            if (state.isTerminal || state.needsAttention) inTurn = false
+            when (state) {
+                // 回到运行中（开始、审批通过、重试）：这一轮接着输出，不会再来一次 turn_started。
+                RunState.Running -> {
+                    inTurn = true
+                    turnEnded = false
+                }
+                RunState.Starting -> turnEnded = false
+                // 排队、等待、退避、结束：没在输出。
+                else -> inTurn = false
+            }
             if (state !in STATE_LINE_STATES && !newAttempt) return
             // 同一状态连着报两次（重放、重连）只说一次。
             val last = items.lastOrNull()

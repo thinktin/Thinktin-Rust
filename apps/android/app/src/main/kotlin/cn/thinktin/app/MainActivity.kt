@@ -38,7 +38,7 @@ class MainActivity : AppCompatActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         if (savedInstanceState == null) {
-            receive(intent)
+            if (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY == 0) receive(intent)
         } else {
             // 重建（旋转、进程被杀后恢复）：intent 还是当初那条，已经处理过；只恢复还没处理的。
             deepLinks.restore(savedInstanceState.getString(KEY_PENDING_DEEP_LINK)?.let(Uri::parse))

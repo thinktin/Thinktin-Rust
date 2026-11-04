@@ -2,7 +2,20 @@
 
 目标：iOS App（WBS 12.x）。Swift + SwiftUI 原生开发，界面参考 Claude iOS App 的信息架构与视觉；iOS / macOS 共享 `ThinktinKit`；经 UniFFI 调 `crates/client-core`（`ThinktinCore` Swift 包，由 `tools/client-core/build-apple.sh` 打出）。分支从 `backend-core`（`82b60b5`）切出，后端接口以那里为准。
 
-认领：iOS 会话（session_01GuCp3KRgqaK6Kzynw6udRn）在做，2026-10-22 01:10 起（北京时间）。12.x 全部由本分支负责；`backend-core` 会话请不要重做 12.x。client-core（11.x）接口如有变动，请在 `docs/progress.md` 里记一句，本分支定期合 `backend-core`。
+认领：iOS 会话（session_01L91VnJva7EmtN6DiZFqLmC）在做，2026-10-30 00:40 起（北京时间）；之前是 session_01GuCp3KRgqaK6Kzynw6udRn（2026-10-22 起，额度用完交接，见 `docs/handoff-ios.md`）。12.x 全部由本分支负责。需要改 `crates/**`（client-core、后端接口）时不自己改，发给 core 协调会话（session_01L91VnGeZtSBumkPSkDuLxu）或记在 `docs/progress.md` 的“进行中”。
+
+## 2026-10-31 iOS 恢复记录
+
+从 `autosave/ios-app` 的 `206ceef` 恢复，并合入包含 Logo G1.0 的 `main`。之前的 TestFlight 及上线交接见 [iOS 交接](../handoff-ios.md)。
+
+- **12.8 收件箱和推送**　刷新后若离线期间新增超过一页，或离线缓存中间缺页，从服务端最新页接着翻。游标按 ID 降序，过期的分页响应不再接到新列表，另一台设备删掉的未读通知同时扣除角标。共享核心按服务端页范围更新 SQLite，保存整个账号的未读数，离线点「全部已读」时连同截止游标补发。
+- **12.15 云端审批**　决定冲突后若重新查询时断网，保留待处理项，可恢复网络后重试。服务端明确返回不存在时才移除。
+- **12.7 团队、12.17 引导、12.18 产出物**　流水线按初始步骤识别未保存的改动。引导检查完整返回后再更新实例与步骤。产出物刷新失败时保留该实例上次的结果，导出长中文文件名时保留扩展名和 AI 标识。
+- **W2**　复核了 IM 渠道、手机与电脑的配对和授权、退出登录时的实时活动清理、小组件与查询的数据来源、保险箱编辑的访问条件。更换群机器人地址时先校验平台，再提交备注。要解除电脑配对或重置密钥时先吊销有效授权，失败可用原配对重试。
+- **界面与发版**　用户确认本轮沿用现有界面。此前交接中四项 Claude 外观差异已记录，不属于此次恢复工作。标签归档可用仓库变量 `IOS_RELEASE_USE_INTEL=true` 选择 Intel 运行器，手动发布仍可选择运行器。连接真实后端、生产推送和 App Store 提审沿用原发版清单。
+
+- **本轮验证**　Xcode 26.5 的 Swift 工具链执行了 ThinktinKit 与 ThinktinUI 的 976 个测试，全部通过。针对 W1、IM 和电脑配对的 59 个专项测试通过，并单独重跑了 Mock 的 IM 渠道用例。Rust 的 HTTP/SQLite/PostgreSQL 联调验证了只取一页时的账号未读数、跨设备删除、离线全部已读，以及未缓存通知标回未读的场景。
+
 
 已完成：
 - 分支与进度文件（本文件）。
@@ -49,8 +62,17 @@
   Mac 菜单栏跟着真的工具调用显示“agent 正在使用这台电脑”（`ComputerHostEvent.activity`）。
 
 进行中：
-- 无。2026-10-23 用户要求：各会话先把代码同步对齐（上面两条），之后暂停所有工作，等用户通知再继续——不开新的工作包、不跑审查、不恢复预约的任务。定期续跑检查 `trig_01Wt6oEwQkA7pisCjcDZQZJB` 已停用（全部 12.x 完成前，用户让继续时再启用）。
+- 2026-10-30 用户让 iOS 继续。已把 `origin/main`（#14 阿里云部署、#16 TestFlight 发版）和 `ios-handoff`（紧急交接文档）合进本分支。`ios-testflight`、`ios-screenshots` 的内容都已经在 main 上，不用再合。
+- 当时正在做下面第 1 项（补审查）。本次恢复情况见上方 10-31 记录。
 
+下一步（2026-10-30 重排，按优先级）：
+1. **补审查没审过的包**（不靠后端、不靠用户，现在就能做）：12.7、12.8、12.15、12.17、12.18（W1 第三轮），12.13、12.10、12.20、12.21、12.14、12.9 手机这边（W2）。一个人逐个读视图模型、对照服务端规则（`docs/agent-integration.md`、各包在 `docs/ios-packages.md` 的要点），修真问题，每个包一次提交。顺序：12.8 推送与收件箱 → 12.15 云端审批 → 12.18 产出物 → 12.7 团队 → 12.17 引导 → W2。
+2. **界面对照 Claude**（用户最关心，要用户给截图 / 拍板）：交接里列了 4 处不同（输入框两行卡片、回复正文衬线字、新对话问候语、任务列表筛选标签）。用户同意前不改；截图用 `ios-screenshots.yml` 出。
+3. **发版的小项**：标签发版也能选 / 默认 Intel 机器（`ios-release.yml`）；提审前统一版本号（App Store Connect 的 1.0 和工程的 0.1.0，要用户定）。
+4. **卡在后端或产品决定上的包**（现在不做）：12.24 agent 交流界面（等后端 8.9–8.12，用户说先不开干）；12.25 项目界面（等 1.7、8.13–8.19）；12.22 运行附件（等 1.1 拍板和 5.6）；12.23 App 内购买（等 1.1 和计费包）。后端开工、client-core 有接口后照 12.x 的老办法接（`ClientProtocol` + `MockClient` + `CoreClient`）。
+5. 每次推送后看 macOS CI（Linux 上的桩查不到真实 SwiftUI / Charts / LocalAuthentication）。
+
+以前的下一步（都做完了，留着备查）：
 下一步（等用户通知后）：
 1. ~~对抗式审查 12.5、12.6、12.12~~（2026-10-25 审过并修了，见已完成）（W1 第二轮的审查步骤，脚本 ios-w1-round2.js 的 review 阶段；工作流 wf_f1f40517-bee 里实现结果有缓存）。
 2. ~~合并后留下的小项~~（2026-10-26 在集成分支上做完）：`ComposerBar` 有了发送 / 停止 / 转圈、超限标红、焦点，对话页的输入框套在它外面；`InstanceEventKind.instanceState`；~~`AppRoute.artifact(id)`~~；BiometricGate 原来就由 ThinktinUI 的 `SystemBiometricGate`（LocalAuthentication）按客户端自动选，不用 App 另外注入；12.3 的共用组件挪到 `Components/ListComponents.swift`、去掉 Agents 前缀（`ListRow`、`GroupedSection`、`SectionHeader`、`TagChip`、`ChoiceRow`、`InlineNotice`、`PageHeader`、`LoadingStateView`、`pageLayout()`、`inlineNavigationTitle`、`visibleError`；`AgentMonogram` 留在 agent 页面）；`MockClient.makeTrigger` 用 `ScheduleForecast` 算 cron / RRULE 的 `nextFireAt`（算不了的留空，再也不触发的不收）；Mock 和服务端一样在加 key、启用、放宽或取消上限、换 key、改路由后唤醒等额度的运行（安卓 Mock 同样）；中文里统一说 token；设置里的入口原来就跳 `.credentials`、`.usage`，等 key 跳 `.modelRoutes`。
@@ -58,6 +80,7 @@
 4. W2：~~12.13~~、~~12.10~~、~~12.20~~、~~12.21~~、~~12.19~~；~~12.11~~（代码部分）；~~12.9~~（手机这边）随 macOS（P3）。
 5. 每次合并后看 PR #8 的 iOS CI（macOS 上真实 SwiftUI / Charts / LocalAuthentication / UserNotifications 编译，Linux 的桩查不到这些）。
 6. ~~uicheck 的盲区~~（2026-10-26 补上：`prep.py` 换掉 `#if` 里的 `os(...)`，桩里 iOS 专属的接口放进 `#if canImport(UIKit)`，两种都过）：Linux 上 `#if os(iOS)` / `#if os(macOS)` 都是假，两种桩都只检查 `#else` 分支，平台专属的 API 漏到 macOS CI 才报（`51bd9e8` 的 `.contextMenuPreview` 在 macOS 上不可用）。改法：prep.py 把 `#if` / `#elseif` 行里的 `os(iOS)` 换成 `canImport(UIKit)`、`os(macOS)` 换成 `canImport(AppKit)`（试过，要先补 iOS 专属的桩：`navigationBarTitleDisplayMode`、`toolbar(_:for:)` 的 `.visible`、`ToolbarItemPlacement.bottomBar` / `.topBarLeading`、`presentationDetents` 的 `.medium` / `.large` 等约 50 处），并把 `.contextMenuPreview` 这类只有 iOS 有的桩放进 `#if canImport(UIKit)`。
+
 
 坑和决定：
 - （已解决，f9f87b3）`accept_language_header` 现在自己截到 256 字节内，`AcceptLanguage.header` 照同样的规则截，`CoreClient.systemAcceptLanguage` 默认值也安全了。
