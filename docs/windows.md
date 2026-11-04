@@ -86,7 +86,10 @@ Windows 没有 macOS 那样的屏幕录制、辅助功能权限开关，所以�
   `CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc`，就能 `cargo clippy --target x86_64-pc-windows-gnu` 检查 Windows 专有的代码、
   `cargo build --release --target x86_64-pc-windows-gnu` 出一个 MinGW 链接的 exe（能跑，但正式发的是 MSVC 的）。
 - **CI**：`.github/workflows/windows.yml` 在 windows-latest 上 fmt、clippy、`cargo test -p desktop -p thinktin-windows`（desktop 的端到端测试要
-  平台和沙箱，只在 Linux 上跑）、release 构建并上传未签名的 exe。`main` / `backend-core` 的推送和 PR 上相关路径变了就跑，也可以手动触发。
+  平台和沙箱，只在 Linux 上跑）、release 构建并上传未签名的 exe。`main` / `backend-core` 的推送和 PR 上相关路径变了就跑，也可以手动触发
+  （工作流文件得先在 main 上，不然 GitHub 不认）。GitHub 上跑不了时用 Codemagic：`codemagic.yaml` 的 `windows-check`
+  在 Codemagic 的 Windows 机器上做同样的事，网页上选分支手动开始，或者 API：
+  `POST https://api.codemagic.io/builds`，`{"appId": …, "workflowId": "windows-check", "branch": …}`（头 `x-auth-token`）。
 - **本机（Windows）**：装 Rust（MSVC 工具链），`cargo run -p thinktin-windows`。联调本地服务端：`THINKTIN_API_URL=http://127.0.0.1:8080
   THINKTIN_RELAY_URL=ws://127.0.0.1:8081/v1/connect cargo run -p thinktin-windows`。日志在 `%LOCALAPPDATA%\Thinktin\logs\thinktin.log`
   （`THINKTIN_LOG=debug` 更详细）。
