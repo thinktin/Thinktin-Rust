@@ -1444,3 +1444,30 @@ mod tests {
         assert!(i.peer_access);
     }
 }
+
+/// 手机号打码：留国家码和前几位、后四位，比如 `+86138****8000`（运维命令、项目邀请里给别人看的号码）。
+pub fn mask_phone(phone: &str) -> String {
+    let chars: Vec<char> = phone.chars().collect();
+    let n = chars.len();
+    if n <= 6 {
+        return "*".repeat(n);
+    }
+    let (head, tail) = if n > 10 { (6, 4) } else { (n - 6, 2) };
+    let shown_head: String = chars[..head].iter().collect();
+    let shown_tail: String = chars[n - tail..].iter().collect();
+    format!("{shown_head}{}{shown_tail}", "*".repeat(n - head - tail))
+}
+
+#[cfg(test)]
+mod mask_tests {
+    use super::mask_phone;
+
+    #[test]
+    fn phones_are_masked() {
+        assert_eq!(mask_phone("+8613800138000"), "+86138****8000");
+        assert_eq!(mask_phone("+14155550123"), "+14155**0123");
+        assert_eq!(mask_phone("+4930123"), "+4****23");
+        assert_eq!(mask_phone("deleted"), "d****ed");
+        assert_eq!(mask_phone("+123"), "****");
+    }
+}

@@ -128,35 +128,68 @@ impl RefreshToken {
     }
 }
 
-/// 计划 webhook 的令牌（7.1 事件触发）：`twh1_<32 字节随机数>`，放在 webhook 地址里。库里只存 SHA-256，
-/// 按哈希找记录（256 位熵，不用慢哈希，也不怕按时间猜）。
+/// `<前缀><32 字节随机数的 base64url>` 形式的令牌：库里只存 SHA-256，按哈希找记录（256 位熵，不用慢哈希，也不怕按时间猜）。
+fn random_token(prefix: &str) -> Result<Zeroizing<String>, TokenError> {
+    let mut b = Zeroizing::new([0u8; 32]);
+    getrandom::fill(b.as_mut()).map_err(|_| TokenError::Rng)?;
+    Ok(Zeroizing::new(format!(
+        "{prefix}{}",
+        URL_SAFE_NO_PAD.encode(b.as_ref())
+    )))
+}
+
+/// 格式对的才收（不查库）。
+fn parse_token(prefix: &str, token: &str) -> Result<Zeroizing<String>, TokenError> {
+    match token.strip_prefix(prefix) {
+        Some(rest)
+            if rest.len() == 43
+                && rest
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_') =>
+        {
+            Ok(Zeroizing::new(token.to_owned()))
+        }
+        _ => Err(TokenError::Malformed),
+    }
+}
+
+/// 计划 webhook 的令牌（7.1 事件触发）：`twh1_<32 字节随机数>`，放在 webhook 地址里。
 pub struct HookToken(Zeroizing<String>);
 
 const HOOK_PREFIX: &str = "twh1_";
 
 impl HookToken {
     pub fn generate() -> Result<Self, TokenError> {
-        let mut b = Zeroizing::new([0u8; 32]);
-        getrandom::fill(b.as_mut()).map_err(|_| TokenError::Rng)?;
-        Ok(Self(Zeroizing::new(format!(
-            "{HOOK_PREFIX}{}",
-            URL_SAFE_NO_PAD.encode(b.as_ref())
-        ))))
+        random_token(HOOK_PREFIX).map(Self)
     }
 
     /// 地址里拿到的令牌；格式不对的直接拒绝（不查库）。
     pub fn parse(token: &str) -> Result<Self, TokenError> {
-        match token.strip_prefix(HOOK_PREFIX) {
-            Some(rest)
-                if rest.len() == 43
-                    && rest
-                        .bytes()
-                        .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_') =>
-            {
-                Ok(Self(Zeroizing::new(token.to_owned())))
-            }
-            _ => Err(TokenError::Malformed),
-        }
+        parse_token(HOOK_PREFIX, token).map(Self)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn hash(&self) -> [u8; 32] {
+        Sha256::digest(self.0.as_bytes()).into()
+    }
+}
+
+/// 项目邀请链接的令牌（8.14）：`tpi1_<32 字节随机数>`，一次有效。只放在请求正文里（不进网址路径，免得进访问日志）；
+/// App 的链接是 `thinktin://join/<令牌>`。
+pub struct InviteToken(Zeroizing<String>);
+
+const INVITE_PREFIX: &str = "tpi1_";
+
+impl InviteToken {
+    pub fn generate() -> Result<Self, TokenError> {
+        random_token(INVITE_PREFIX).map(Self)
+    }
+
+    pub fn parse(token: &str) -> Result<Self, TokenError> {
+        parse_token(INVITE_PREFIX, token.trim()).map(Self)
     }
 
     pub fn as_str(&self) -> &str {
@@ -171,6 +204,21 @@ impl HookToken {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invite_tokens_round_trip_and_differ_from_hook_tokens() {
+        let t = InviteToken::generate().unwrap();
+        assert!(t.as_str().starts_with("tpi1_"));
+        assert_eq!(t.as_str().len(), 48);
+        let back = InviteToken::parse(&format!(" {} ", t.as_str())).unwrap();
+        assert_eq!(back.hash(), t.hash());
+        assert_ne!(InviteToken::generate().unwrap().hash(), t.hash(), "random");
+        // 前缀不对、长度不对、字符不对的都不收；webhook 的令牌不能当邀请用。
+        let hook = HookToken::generate().unwrap();
+        assert!(InviteToken::parse(hook.as_str()).is_err());
+        assert!(InviteToken::parse("tpi1_short").is_err());
+        assert!(InviteToken::parse(&format!("tpi1_{}", "!".repeat(43))).is_err());
+    }
 
     #[test]
     fn hook_tokens_round_trip() {

@@ -4,6 +4,7 @@
 //! 账号可以用手机号或用户 id 指定；输出里的手机号打码，不输出对话内容。唯一的例外是内容举报：`report` 输出
 //! 用户举报时复制下来的那一条内容（用户提交举报就是让运营看它），别的对话内容照样不输出。
 
+use proto::domain::mask_phone;
 use std::io::Write;
 
 use anyhow::{Context, bail};
@@ -216,31 +217,4 @@ pub async fn close_report(
     orchestrator::reports::close(db, id, operator.trim(), resolution.trim()).await?;
     writeln!(out, "closed {id}; the reporter was told the resolution")?;
     Ok(())
-}
-
-/// 手机号打码：留国家码和前几位、后四位，比如 `+86138****8000`。
-pub fn mask_phone(phone: &str) -> String {
-    let chars: Vec<char> = phone.chars().collect();
-    let n = chars.len();
-    if n <= 6 {
-        return "*".repeat(n);
-    }
-    let (head, tail) = if n > 10 { (6, 4) } else { (n - 6, 2) };
-    let shown_head: String = chars[..head].iter().collect();
-    let shown_tail: String = chars[n - tail..].iter().collect();
-    format!("{shown_head}{}{shown_tail}", "*".repeat(n - head - tail))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::mask_phone;
-
-    #[test]
-    fn phones_are_masked() {
-        assert_eq!(mask_phone("+8613800138000"), "+86138****8000");
-        assert_eq!(mask_phone("+14155550123"), "+14155**0123");
-        assert_eq!(mask_phone("+4930123"), "+4****23");
-        assert_eq!(mask_phone("deleted"), "d****ed");
-        assert_eq!(mask_phone("+123"), "****");
-    }
 }
