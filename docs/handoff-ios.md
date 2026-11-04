@@ -1,6 +1,17 @@
-# 紧急交接：iOS（TestFlight 发版、界面对比）2026-10-29
+# 交接：iOS（TestFlight 发版、Logo、界面改版）2026-11-04 更新
 
 2026-10-31 已从自动保存快照恢复开发，修复范围与验证见 [iOS 恢复记录](progress/ios-app.md#2026-10-31-ios-恢复记录)。下面保留当时的发版背景。
+
+**2026-11-04 更新（session_01GuCp3KRgqaK6Kzynw6udRn）**：
+- **Logo**：用户定稿的 Logo G1.0 在 `docs/brand/logo`。Apple 端已经换上（PR #25，`d14b159`）：iPhone 图标浅色 / 深色 / 着色、Mac 图标、
+  App 里原生矢量的 `BrandLogo`（欢迎页、侧边栏顶上）。素材由 `tools/apple/brand_assets.py` 生成，见 [ios.md](ios.md) 4.1 节。
+  **安卓、Windows 的图标还没换**（别的会话的线），等用户定要不要换。
+- **用户定的新规矩**（[ios.md](ios.md) 第 1 节第 5 条）：按钮这类控件能用系统原生的一律用原生的。
+- **界面改版**：用户会发一版 UI 设计稿，**按设计稿的页面布局改**，到时候再动手；需要用户拍板的地方单独发消息问。
+  之前拿 App Store 宣传图比过的 4 处差别（第 5 节第 1 条）以设计稿为准。
+- **苹果更新了开发者计划许可协议**：账号持有人没同意前，证书、描述文件的接口全是 403 `PLA_NOT_ACCEPTED`，TestFlight 发不出去
+  （密钥检查会直接这样报）。11-04 已经请用户去 developer.apple.com/account 同意；同意后从 `main` 手动触发 iOS release
+  （`upload` + `demo` + `macos-15-intel`），用户手机上 TestFlight 点“更新”就能看到新图标。
 
 上一个会话（session_01GuCp3KRgqaK6Kzynw6udRn）的周额度快用完了，下一个 agent 从这里接着做 iOS。阿里云部署的交接在
 [handoff.md](handoff.md)，那是另一条线，别混。
@@ -74,7 +85,7 @@ GitHub → Actions → **iOS release** → Run workflow（分支选 `main`）：
 
 ## 5. 没做完的（按优先级）
 
-1. **界面对照 Claude**（用户最关心）：用户说会发 Claude App 的真实截图 / 录屏。我们 App 的真实截图用 `ios-screenshots.yml` 生成
+1. **界面对照 Claude**（用户最关心；11-04 起以用户的 UI 设计稿为准，见顶上的更新）：用户说会发 Claude App 的真实截图 / 录屏。我们 App 的真实截图用 `ios-screenshots.yml` 生成
    （现在已在 main 上，Actions → iOS screenshots → Run workflow；结果在 artifact `ios-screenshots`，12 张）。
    上次只拿 App Store 的宣传图比过，发现 4 处明显不同，**用户还没拍板改不改**：
    - 输入框：Claude 是两行的圆角卡片（上面打字，下面“+”、模型名、麦克风、橙色发送键），我们是一行胶囊；
