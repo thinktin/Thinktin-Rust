@@ -64,7 +64,8 @@
   这一版不领项目运行。全量测试 701 个通过。细节见 projects-impl.md“8.13 做了什么”。
   坑：迁移账号受 FORCE 约束，回填前要在同一事务里 NO FORCE（不然悄悄复制 0 行）；`CREATE ROLE` 没有 CREATEROLE 时先报权限错、
   不查重，所以要先按名字查；`-- no-transaction` 的迁移只能一个迁移进程跑（CONCURRENTLY 会和等咨询锁的进程死锁）。
-- 下一步：8.13 对抗评审 → 8.14 邀请与加入 → 8.15–8.19。东京：Phase 0（docs/browser.md 第 8.1 节），过了一个模板开一个 `supported`。用户放好搜索 key（`THINKTIN_PARALLEL_SEARCH_KEY`）后做小测。
+- 8.13 对抗评审做完（`drafts/projects-8.13-review.md`）：13 条成立 7 条，都是小问题，都修了（`c5a0b41`），全量测试 702 个通过。
+- 下一步：8.14 邀请与加入（先跑一次方案 workflow，照 8.13 的做法：代码地图 → 方案 → 评审 → 定稿，存进 drafts）→ 8.15–8.19。东京：Phase 0（docs/browser.md 第 8.1 节），过了一个模板开一个 `supported`。用户放好搜索 key（`THINKTIN_PARALLEL_SEARCH_KEY`）后做小测。
 
 ## ⚠️ 紧急交接（2026-10-29 16:00 UTC，本会话 session_016LgPcdynywrhrjCq8VVFLt 周额度快用完）
 
