@@ -401,6 +401,49 @@ struct RouterTests {
         #expect(router.pendingRoute == nil)
     }
 
+    @Test("首页的行直接改主栈压对话（NavigationLink）：最上面的对话记成当前实例；退回首页、进别的页面不清")
+    func pathTracksCurrentInstance() {
+        let router = Router(currentInstanceID: "i1")
+        var seen: [InstanceID?] = []
+        router.instanceSelectionDidChange = { seen.append($0) }
+        router.path.append(.conversation("i2"))
+        #expect(router.currentInstanceID == "i2")
+        router.path.append(.instance("i2"))
+        #expect(router.currentInstanceID == "i2")
+        // 系统的返回手势改的也是这个绑定。
+        router.path = []
+        #expect(router.currentInstanceID == "i2")
+        router.path = [.inbox, .inboxItem("x")]
+        #expect(router.currentInstanceID == "i2")
+        // 深链的返回栈“首页 → 对话 → 运行”：栈里最上面的对话。
+        router.path = [.conversation("i3"), .run("r1")]
+        #expect(router.currentInstanceID == "i3")
+        router.path = [.conversation("i3"), .conversation("i4")]
+        #expect(router.currentInstanceID == "i4")
+        #expect(seen == ["i2", "i3", "i4"])
+    }
+
+    @Test("搜索请求：首页晚出现时照样补上，处理过的不再激活；退出登录时丢掉没处理的")
+    func searchRequests() {
+        let router = Router()
+        #expect(!router.hasPendingSearchRequest)
+        // 冷启动的深链：首页还没出现，请求先记着。
+        router.show(.search)
+        router.open(.search)
+        #expect(router.searchRequest == 2)
+        #expect(router.hasPendingSearchRequest)
+        // 首页出现、激活了搜索栏：两次一起算处理了，首页重建时不再激活。
+        router.searchRequestHandled()
+        #expect(!router.hasPendingSearchRequest)
+        #expect(router.handledSearchRequest == 2)
+        router.open(.search)
+        #expect(router.hasPendingSearchRequest)
+        // 换账号后不能自己弹出搜索栏。
+        router.reset()
+        #expect(!router.hasPendingSearchRequest)
+        #expect(router.searchRequest == 3)
+    }
+
     @Test("当前实例变了才通知")
     func selectionHook() {
         let router = Router()

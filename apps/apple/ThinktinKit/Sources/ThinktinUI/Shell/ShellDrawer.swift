@@ -62,11 +62,11 @@ private struct DrawerPanel: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
-                    ForEach(DrawerEntry.allCases, id: \.self) { entry in
+                    ForEach(WorkbenchEntry.allCases, id: \.self) { entry in
                         DrawerRow(
                             title: entry.title(language), systemImage: entry.systemImage,
                             badge: model.badges.count(for: entry),
-                            badgeLabel: entry.badgeAccessibilityLabel(
+                            badgeLabel: entry.subtitle(
                                 count: model.badges.count(for: entry), language: language),
                             isSelected: router.path.first == entry.route
                         ) {
@@ -360,20 +360,6 @@ private struct DrawerInstanceRow: View {
         [instance.name, instance.state.localizedName(language), lastActive, attention]
             .compactMap { $0 }
             .joined(separator: language == .chinese ? "，" : ", ")
-    }
-}
-
-extension DrawerEntry {
-    /// SF Symbol。
-    var systemImage: String {
-        switch self {
-        case .inbox: "tray"
-        case .approvals: "checkmark.shield"
-        case .activeRuns: "bolt"
-        case .plans: "calendar"
-        case .teams: "person.3"
-        case .artifacts: "doc.text"
-        }
     }
 }
 

@@ -64,7 +64,12 @@
 字体全用系统的）；6.3 A（保持 iOS 17，iOS 26 的接口在 Design/Glass.swift 里回退）；6.4 A（“+”直接弹领养表单）；6.5 A（设置用 sheet）；
 6.6 A（沿用“实例”）。其余 18 项按建议。
 
-进行中：第 0 轮的 Shell 和最小首页（`Shell/Home/`、去掉抽屉和实例切换、`solidTopScrollEdge()`、docs/ios.md 9.1 第 6 条）：云端会话在做，2026-11-04 19:57 UTC 开始。启动屏、截图脚本（`THINKTIN_OPEN_SCREEN`）还没人认领。
+进行中：第 0 轮的 Shell 和最小首页（`Shell/Home/`、去掉抽屉和实例切换、`solidTopScrollEdge()`、docs/ios.md 9.1 第 6 条）：云端会话在做，2026-11-04 19:57 UTC 开始。
+  已推送的一半（视图模型）：`DrawerEntry` 改名 `WorkbenchEntry`（加 `systemImage`、`countsTowardTotal`、`subtitle(count:)`），
+  `ShellBadges.workbenchTotal`（收件箱未读 + 待审批 + 待确认的计划，进行中不算）和读屏文字；新的 `ViewModels/Shell/HomeListModel.swift`
+  （`HomeRow`、`HomeRowPreview`、`HomeList.rows` / `timestamp`，`AppModel.homeRows`）；`Router.path` 变了时最上面的对话记成当前实例
+  （首页的行用 `NavigationLink` 压栈，不经过 `open`）；`handledSearchRequest`、`hasPendingSearchRequest`、`searchRequestHandled()`
+  （首页晚出现时补上搜索请求）。界面那一半（`Shell/Home/`、删抽屉）接着做。启动屏、截图脚本（`THINKTIN_OPEN_SCREEN`）还没人认领。
 
 下一步：
 1. 第 0 轮剩下的（规范 7.2 第 6 行起）：最小首页 `Shell/Home/`，去掉 `ShellDrawer`、`InstanceSwitcher`、`RootPage` 的抽屉按钮和左缘手势

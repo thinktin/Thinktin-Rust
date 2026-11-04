@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 
-/// 应用框架的全局状态（WBS 12.16）：登录状态、连接横幅、在线 / 离线、实例列表与当前实例、抽屉里的角标。
+/// 应用框架的全局状态（WBS 12.16）：登录状态、连接横幅、在线 / 离线、实例列表（首页）与当前实例、工作台菜单的角标。
 ///
 /// - 持有 `ObservedClient`（`client`）：所有页面都用它，任何调用遇到登录失效、账号冻结、要升级都会报到这里，
 ///   切换 `phase`（docs/ios.md 第 6 节）；`login` 成功、退出登录、注销、下线本机也会自动切换。
@@ -45,7 +45,7 @@ public final class AppModel {
     public static let activeRunsLimit = RunFilter.maxLimit
     /// 收件箱同步拉几条（只为角标的未读数；收件箱页自己再拉）。
     public static let inboxSyncLimit = 20
-    /// 打开抽屉、回到前台时，角标多久没刷新才刷新（秒）。
+    /// 回到首页、回到前台时，角标多久没刷新才刷新（秒）。
     public static let badgeMaxAge: TimeInterval = 15
 
     /// 所有页面用的客户端（包了一层的 `ObservedClient`）。
@@ -65,10 +65,10 @@ public final class AppModel {
     public private(set) var connection: ConnectionState = .idle
     /// 网络不通（最近一次调用是网络错误）：页面顶部显示离线横幅。
     public private(set) var isOffline = false
-    /// 实例列表拿到过（缓存或服务端）：抽屉据此区分“加载中”和“没有实例”。
+    /// 实例列表拿到过（缓存或服务端）：首页据此区分“加载中”和“没有实例”。
     public private(set) var hasLoadedInstances = false
     public private(set) var isRefreshing = false
-    /// 刷新实例列表失败（不是网络、不是全局错误）：抽屉里显示横幅，可以重试。
+    /// 刷新实例列表失败（不是网络、不是全局错误）：首页显示横幅，可以重试。
     public private(set) var refreshError: ClientError?
     /// 冻结页的“重新检查”正在进行。
     public private(set) var isCheckingAccount = false
@@ -191,6 +191,11 @@ public final class AppModel {
         activity[instanceID] ?? .none
     }
 
+    /// 首页的实例列表（`HomeList.rows`：最后活动新的在前，每行带预览）。
+    public var homeRows: [HomeRow] {
+        HomeList.rows(instances: instances, activity: activity)
+    }
+
     // MARK: 启动与刷新
 
     /// 启动（`AppShell` 的 `.task`，只做一次）：先换请求语言，再读缓存，再确认账号状态（和服务端的用户语言），
@@ -228,7 +233,7 @@ public final class AppModel {
         await refreshBadges()
     }
 
-    /// 只刷新角标（审批、确认计划、标已读之后，各功能可以调一次让抽屉马上变）。
+    /// 只刷新角标（审批、确认计划、标已读之后，各功能可以调一次让工作台的角标马上变）。
     public func refreshBadges() async {
         guard phase == .signedIn else { return }
         lastBadgeRefresh = now()
@@ -270,14 +275,14 @@ public final class AppModel {
         updateAppBadge()
     }
 
-    /// 收件箱的页面标了已读 / 未读、删了之后告诉这里新的未读数（抽屉的角标、App 图标的角标马上变）。
+    /// 收件箱的页面标了已读 / 未读、删了之后告诉这里新的未读数（工作台的角标、App 图标的角标马上变）。
     public func inboxUnreadChanged(_ count: Int) {
         guard phase == .signedIn else { return }
         badges.inboxUnread = max(0, count)
         updateAppBadge()
     }
 
-    /// 角标超过 `badgeMaxAge` 没刷新就刷新（打开抽屉时）。
+    /// 角标超过 `badgeMaxAge` 没刷新就刷新（回到首页时）。
     public func refreshBadgesIfStale() async {
         if let last = lastBadgeRefresh, now().timeIntervalSince(last) < Self.badgeMaxAge { return }
         await refreshBadges()

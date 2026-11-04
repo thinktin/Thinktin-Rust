@@ -173,10 +173,12 @@ struct AppRouteTests {
             #expect(!route.isTopLevel, "\(route)")
         }
         // 工作台菜单的入口都是顶级页面。
-        for entry in DrawerEntry.allCases {
+        for entry in WorkbenchEntry.allCases {
             #expect(entry.route.isTopLevel, "\(entry)")
         }
-        #expect(DrawerEntry.plans.route == .plans(instanceID: nil))
+        #expect(WorkbenchEntry.plans.route == .plans(instanceID: nil))
+        // 顶级页面正好是工作台菜单的 6 个入口。
+        #expect(RouteSamples.all.filter(\.isTopLevel).count == WorkbenchEntry.allCases.count)
     }
 
     @Test("页面所属的实例")

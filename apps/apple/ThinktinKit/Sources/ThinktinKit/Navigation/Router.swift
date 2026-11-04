@@ -18,8 +18,13 @@ import Observation
 /// - 没登录、冻结、要升级时（`isHoldingRoutes`，由 `AppModel` 设置）深链和推送先记下，恢复正常后再跳，同一条只跳一次。
 @Observable @MainActor
 public final class Router {
-    /// 主导航栈（首页之上的页面）。
-    public var path: [AppRoute]
+    /// 主导航栈（首页之上的页面）。首页的行用 `NavigationLink(value: AppRoute.conversation(id))` 压对话，不经过 `open`：
+    /// 栈变了时最上面的对话就是当前实例（退回首页时不清，新任务、小组件照样用上次的）。
+    public var path: [AppRoute] {
+        didSet {
+            if let id = Self.topConversation(in: path), id != currentInstanceID { currentInstanceID = id }
+        }
+    }
     /// 当前实例：最近打开的对话（新任务、小组件、快捷指令默认用它）。`AppModel` 在实例列表变了时校正它
     /// （被删了就换成上次选的或最近活跃的）。
     public var currentInstanceID: InstanceID? {
@@ -52,6 +57,9 @@ public final class Router {
     public private(set) var newTaskRequest = 0
     /// 要搜索的次数（`open(.search)`、深链）：首页 `onChange(of: router.searchRequest)` 时激活搜索栏。
     public private(set) var searchRequest = 0
+    /// 首页处理到了第几次搜索请求（`searchRequestHandled()`）。首页比请求晚出现时（冷启动的深链、登录后补跳的深链）
+    /// 看 `hasPendingSearchRequest` 补上；首页重建时也不会把处理过的再激活一次。
+    public private(set) var handledSearchRequest = 0
     /// 暂时不跳转（没登录、冻结、要升级）：深链和推送先记进 `pendingRoute`；改回 false 时自动跳过去。
     public var isHoldingRoutes = false {
         didSet {
@@ -83,6 +91,14 @@ public final class Router {
 
     // MARK: 现在在哪
 
+    /// 栈里最上面那个对话的实例；栈里没有对话时为 nil。
+    private static func topConversation(in stack: [AppRoute]) -> InstanceID? {
+        for route in stack.reversed() {
+            if case .conversation(let id) = route { return id }
+        }
+        return nil
+    }
+
     /// 主导航栈的根：永远是首页。
     public var rootRoute: AppRoute { .home }
 
@@ -104,6 +120,9 @@ public final class Router {
         if let sheet { return sheetPath.last ?? sheet }
         return topRoute
     }
+
+    /// 有首页还没处理的搜索请求：首页出现时、`searchRequest` 变了时看它，激活搜索栏后调 `searchRequestHandled()`。
+    public var hasPendingSearchRequest: Bool { searchRequest != handledSearchRequest }
 
     /// 最前面那层 sheet 底下的页面（从哪个页面弹出来的）；没开 sheet 时为 nil。
     public var routeBelowSheet: AppRoute? {
@@ -181,6 +200,11 @@ public final class Router {
 
     public func push(_ route: AppRoute) {
         open(route)
+    }
+
+    /// 首页激活了搜索栏：到现在为止的搜索请求都处理了。
+    public func searchRequestHandled() {
+        handledSearchRequest = searchRequest
     }
 
     /// 返回上一页：退最前面那一层的导航栈；那一层已经在根上、又是 sheet 时关掉这层 sheet。主栈在首页时什么也不做。
@@ -292,11 +316,12 @@ public final class Router {
 
     // MARK: 退出登录
 
-    /// 退出登录：导航全部清空（包括当前实例和记下的深链），换账号后不能看到上一个账号的页面。
+    /// 退出登录：导航全部清空（包括当前实例、记下的深链和没处理的搜索请求），换账号后不能看到上一个账号的页面。
     public func reset() {
         path = []
         dismissAllSheets()
         pendingRoute = nil
         currentInstanceID = nil
+        handledSearchRequest = searchRequest
     }
 }
