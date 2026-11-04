@@ -124,13 +124,18 @@ fun RunSource.labelRes(): Int = when (this) {
     RunSource.Unknown -> R.string.chat_source_unknown
 }
 
+/**
+ * 区块头最前面的来源。运行记录还没取到（别的设备刚发的，ViewModel 正在取）时先只说“运行”，
+ * 不能当成不认识的来源（“其他来源”）；取到以后按来源显示。
+ */
+fun RunBlock.headerSourceRes(): Int = run?.source?.labelRes() ?: R.string.chat_block_run
+
 /** 运行区块头：来源 · 状态 · 耗时 · token（第 4.3 节）。点进运行详情。 */
 @Composable
 fun RunHeaderRow(block: RunBlock, nowMs: Long, onOpenRun: (String) -> Unit) {
     val stateLabel = stringResource(block.state.labelRes())
     val parts = buildList {
-        // 运行记录还没取到（别的设备刚发的，ViewModel 正在取）：先只说“运行”，取到以后按来源显示。
-        add(stringResource(block.run?.source?.labelRes() ?: R.string.chat_block_run))
+        add(stringResource(block.headerSourceRes()))
         add(stateLabel)
         block.run?.durationMs(nowMs)?.let { add(durationText(it)) }
         block.run?.tokensUsed?.takeIf { it > 0 }?.let { add(stringResource(R.string.chat_block_tokens, formatTokens(it))) }
@@ -176,7 +181,8 @@ fun PromptRow(item: TimelineItem.Prompt) {
         PromptAuthor.Ask -> R.string.chat_prompt_ask
         PromptAuthor.User, PromptAuthor.Unknown -> R.string.chat_source_unknown
     }
-    Box(Modifier.fillMaxWidth(), contentAlignment = if (item.aiGenerated) Alignment.CenterStart else Alignment.CenterEnd) {
+    // 右侧只留给用户写的（计划的目标）；agent 写的、不认识来源的放左侧。
+    Box(Modifier.fillMaxWidth(), contentAlignment = if (item.onUserSide) Alignment.CenterEnd else Alignment.CenterStart) {
         Surface(
             shape = ThinktinShapes.Bubble,
             color = MaterialTheme.colorScheme.surface,
@@ -605,11 +611,10 @@ fun RunStateRow(item: TimelineItem.RunStateLine) {
     SmallLine(icon = { StatusDot(item.state) }) {
         Column {
             Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            val known = item.knownReason
-            // 平台写的固定说明（被新消息打断、提问超时）换成本地文案；
-            // waiting_quota 有码时用本地文案；否则 reason 原样（waiting_approval 的是 agent 写的标题）。
-            val reason = if (known != null) stringResource(known.labelRes()) else item.reason
-            if (reason != null && !(item.state == RunState.WaitingQuota && item.waitCode != null)) {
+            // 等子任务 / 等队友回答的英文诊断、waiting_quota 有码时不显示（RunStateLine.showsReason）；
+            // 平台写的固定说明（被新消息打断、提问超时）换成本地文案；其余原样（waiting_approval 的是 agent 写的标题）。
+            if (item.showsReason) {
+                val reason = item.knownReason?.let { stringResource(it.labelRes()) } ?: item.reason.orEmpty()
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     if (item.reasonAiGenerated) AiGeneratedLabel()
                     Text(

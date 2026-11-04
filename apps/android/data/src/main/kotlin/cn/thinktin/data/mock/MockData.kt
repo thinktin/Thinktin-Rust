@@ -262,7 +262,11 @@ internal class MockData(private val baseMs: Long) {
         }
         ev(c, RUN_PIPELINE, EventKinds.RUN_STATE, 60L * 48 - 25, payload = stateEvent(RunState.Succeeded))
 
-        // 小码：失败的计划运行（一天前）
+        // 小码：失败的计划运行（一天前）。这次是计划的 webhook 收到事件建的运行（7.1）：网关建运行时先记一条
+        // hook.received（只有大小和类型，不带内容）。只有已确认、没暂停、不带步骤的计划收得到事件，每日依赖检查正是这样。
+        ev(c, RUN_FAILED, EventKinds.HOOK_RECEIVED, 60L * 24, ai = false) {
+            put("hook_id", "hook-advisory"); put("bytes", 1_280); put("content_type", "JSON")
+        }
         ev(c, RUN_FAILED, EventKinds.RUN_STATE, 60L * 24, payload = stateEvent(RunState.Starting))
         ev(c, RUN_FAILED, EventKinds.AGENT_READY, 60L * 24) { put("harness", "claude-code") }
         ev(c, RUN_FAILED, EventKinds.AGENT_TURN_STARTED, 60L * 24)
@@ -427,10 +431,6 @@ internal class MockData(private val baseMs: Long) {
             putJsonArray("fields") { add("password") }
         }
         ev(r, null, EventKinds.VAULT_FULFILLED, 60L * 2 - 5, ai = false) { put("request_id", "vreq-done"); put("name", "zotero") }
-        // 每周新闻的计划由 webhook 触发了一次（7.1）：只说收到了，不带内容。
-        ev(r, RUN_QUOTA, EventKinds.HOOK_RECEIVED, 45, ai = false) {
-            put("hook_id", "hook-news"); put("bytes", 1_280); put("content_type", "json")
-        }
         ev(r, RUN_DELEGATE, EventKinds.AGENT_MESSAGE, 1) { put("text", "JUnit 最新的 4.x 是 4.13.2。") }
         ev(r, RUN_DELEGATE, EventKinds.RUN_STATE, 1, payload = stateEvent(RunState.Succeeded))
     }.sortedWith(compareBy({ it.instanceId }, { it.seq }))

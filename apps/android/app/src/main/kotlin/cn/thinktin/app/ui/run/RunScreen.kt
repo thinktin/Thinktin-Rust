@@ -64,7 +64,6 @@ import cn.thinktin.app.ui.common.formatTokens
 import cn.thinktin.app.ui.common.labelRes
 import cn.thinktin.app.ui.common.resolve
 import cn.thinktin.data.model.Run
-import cn.thinktin.data.model.RunSource
 import cn.thinktin.data.model.RunState
 import cn.thinktin.data.model.RunTreeNode
 import cn.thinktin.design.component.AiGeneratedLabel
@@ -398,8 +397,8 @@ private fun TreeRow(
     ) {
         StatusDot(run.state, contentDescription = stateLabel)
         Column(Modifier.weight(1f)) {
-            // 队友提问的子运行在对方实例上：标出来源，免得看成用户自己发的（8.11）。
-            val source = if (run.source == RunSource.Ask) stringResource(run.source.labelRes()) else null
+            // 队友提问的子运行在对方实例上、不认识的来源不知道是谁发起的：标出来源，免得看成用户自己发的（8.1、8.11）。
+            val source = if (run.source.labelledInLists) stringResource(run.source.labelRes()) else null
             Text(
                 listOfNotNull(name, run.stepKey, source).joinToString(" · "),
                 style = MaterialTheme.typography.bodyMedium,

@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasAnyDescendant
@@ -34,11 +35,14 @@ import cn.thinktin.app.ui.chat.SECRET_SHEET_TEST_TAG
 import cn.thinktin.app.ui.chat.VAULT_SHEET_TEST_TAG
 import cn.thinktin.app.ui.run.RUN_DETAIL_TEST_TAG
 import cn.thinktin.app.ui.run.RUN_NODE_TEST_TAG
+import cn.thinktin.data.model.EventKinds
 import cn.thinktin.data.model.VaultRequestStatus
 import cn.thinktin.design.component.APPROVAL_CARD_TEST_TAG
 import cn.thinktin.design.component.MARKDOWN_CODE_TEST_TAG
 import cn.thinktin.design.component.TOOL_CALL_CARD_TEST_TAG
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -131,7 +135,8 @@ class ChatUiTest {
         compose.onNode(hasText("README.en.md") and hasAnyAncestor(hasTestTag(CHAT_ARTIFACT_TEST_TAG + "art-readme")), useUnmergedTree = true)
             .assertExists()
         compose.onNode(hasText("已翻译并提交 README.en.md")).assertExists()
-        // 失败的计划运行：系统行（错误色）、日志截断、失败原因（不标 AI）。
+        // 失败的计划运行（webhook 触发的：只说收到了一个事件，不带内容）：系统行（错误色）、日志截断、失败原因（不标 AI）。
+        scrollTo(hasText("webhook 收到了一个事件"))
         scrollTo(hasText("agent 出错：fetch https://registry.example.com 超时"))
         scrollTo(hasText("日志超出上限，后续输出未记录"))
         scrollTo(hasText("失败原因：上游仓库连接超时（重试 3 次后放弃）"))
@@ -289,8 +294,40 @@ class ChatUiTest {
         scrollTo(hasText("队友 agent 的提问"))
         compose.onNode(hasText(ASK_QUESTION) and hasAnyAncestor(hasTestTag(CHAT_USER_PROMPT_TEST_TAG)), useUnmergedTree = true)
             .assertDoesNotExist()
-        // webhook 收到的事件：只说一句，不带内容。
-        scrollTo(hasText("webhook 收到了一个事件"))
+    }
+
+    /**
+     * 实时的状态行：等队友回答只说“在等队友回答”，不再把后端的英文诊断当“原因”显示；被新消息打断的取消
+     * 换成本地文案（第 8.2 节：reason 不是本地化文案）。
+     */
+    @Test
+    fun liveStateLinesUseLocalTextNotEnglishDiagnostics() {
+        openCoderChatAt("给登录页加单元测试")
+        fun push(payload: kotlinx.serialization.json.JsonObject, seq: Long) {
+            service.stream.trySend(runBlocking { service.event("inst-coder", "run-live", EventKinds.RUN_STATE, payload, seq) })
+        }
+        push(
+            buildJsonObject {
+                put("state", "waiting_children"); put("attempt", 1); put("reason", "waiting for 1 answer(s)")
+                put("wait_code", "answer")
+            },
+            3000,
+        )
+        val waiting = hasText("等待子任务 · 在等队友回答")
+        waitFor(waiting)
+        scrollTo(waiting)
+        compose.onAllNodes(hasText("waiting for 1 answer(s)", substring = true), useUnmergedTree = true)
+            .assertCountEquals(0)
+
+        push(
+            buildJsonObject { put("state", "cancelled"); put("attempt", 1); put("reason", "interrupted by a new message") },
+            3001,
+        )
+        val interrupted = hasText("原因：被新消息打断")
+        waitFor(interrupted)
+        scrollTo(interrupted)
+        compose.onAllNodes(hasText("interrupted by a new message", substring = true), useUnmergedTree = true)
+            .assertCountEquals(0)
     }
 
     private companion object {

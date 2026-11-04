@@ -153,6 +153,8 @@ class ChatViewModelTest {
         assertEquals("研究员", ask.to)
         assertEquals("README 里的产品介绍，英文版用哪种说法更准确？", ask.question)
         assertTrue(done.any { it is TimelineItem.System && it.line is SystemLine.BoardPosted })
+        // webhook 的事件挂在已确认的计划（每日依赖检查）的运行上。
+        assertTrue(vm.conversation.items("run-failed").any { it is TimelineItem.System && it.line is SystemLine.HookReceived })
 
         val research = chat(instanceId = "inst-research")
         advanceUntilIdle()
@@ -161,7 +163,9 @@ class ChatViewModelTest {
         assertEquals(PromptAuthor.Ask, answer.prompt?.author)
         assertTrue(answer.prompt!!.aiGenerated)
         assertFalse(answer.prompt!!.fromUser)
-        assertTrue(research.conversation.items("run-quota").any { it is TimelineItem.System && it.line is SystemLine.HookReceived })
+        assertFalse(answer.prompt!!.onUserSide)
+        // 每周新闻的计划还在等确认，收不到 webhook 事件。
+        assertTrue(research.conversation.items("run-quota").none { it is TimelineItem.System && it.line is SystemLine.HookReceived })
     }
 
     /** 实时来的等队友回答、被新消息打断：状态行带 answer 码、标出固定原因；等队友回答不算要用户处理。 */
@@ -172,13 +176,22 @@ class ChatViewModelTest {
         service.stream.trySend(
             service.event(
                 "inst-coder", "run-live", EventKinds.RUN_STATE,
-                buildJsonObject { put("state", "waiting_children"); put("attempt", 1); put("wait_code", "answer") }, 3000,
+                // 后端写的 reason 是英文诊断（executor.rs），和真实事件一样带上。
+                buildJsonObject {
+                    put("state", "waiting_children"); put("attempt", 1); put("reason", "waiting for 1 answer(s)")
+                    put("wait_code", "answer")
+                },
+                3000,
             ),
         )
         advanceUntilIdle()
         val waiting = vm.conversation.block("run-live")!!
         assertEquals(RunState.WaitingChildren, waiting.state)
         assertEquals(WaitCode.Answer, waiting.waitCode)
+        // 状态行用“在等队友回答”说明，不再把英文诊断当原因显示。
+        val waitLine = vm.conversation.items("run-live").filterIsInstance<TimelineItem.RunStateLine>().last()
+        assertEquals(WaitCode.Answer, waitLine.waitCode)
+        assertFalse(waitLine.showsReason)
         // 等队友回答不出警告横幅（横幅还是那个等审批的运行）。
         assertEquals("run-waiting", vm.conversation.attentionBlock?.runId)
         service.stream.trySend(
@@ -191,6 +204,7 @@ class ChatViewModelTest {
         val line = vm.conversation.items("run-live").filterIsInstance<TimelineItem.RunStateLine>().last()
         assertEquals(RunState.Cancelled, line.state)
         assertEquals(KnownStateReason.Interrupted, line.knownReason)
+        assertTrue(line.showsReason)
     }
 
     @Test

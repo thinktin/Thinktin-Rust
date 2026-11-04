@@ -93,7 +93,28 @@ class MockThinktinServiceTest {
         assertEquals(MockData.INSTANCE_RESEARCH, ask.payload.string("instance_id"))
         assertEquals(answer.prompt, ask.payload.string("question"))
         assertTrue(coder.any { it.kind == EventKinds.BOARD_POSTED })
-        assertTrue(s.cachedEvents(MockData.INSTANCE_RESEARCH).any { it.kind == EventKinds.HOOK_RECEIVED })
+    }
+
+    /**
+     * 演示里的 webhook 事件（7.1）要是服务端做得出来的：网关只给已确认、没暂停、不带步骤的计划建事件运行
+     * （crates/store/src/hooks.rs），hook.received 是那个计划运行的第一条事件，只有大小和类型、不带内容。
+     */
+    @Test
+    fun hookEventsOnlyOnRunsOfConfirmedActivePlans() = runTest {
+        val s = service()
+        val hooks = s.instances().flatMap { s.cachedEvents(it.id) }.filter { it.kind == EventKinds.HOOK_RECEIVED }
+        assertTrue(hooks.isNotEmpty())
+        for (hook in hooks) {
+            val run = s.getRun(hook.runId!!)
+            assertEquals(RunSource.Plan, run.source)
+            assertEquals(hook.instanceId, run.instanceId)
+            val plan = s.getPlan(run.planId!!)
+            assertFalse("${plan.id} 在等确认", plan.awaitingConfirmation)
+            assertFalse("${plan.id} 暂停了", plan.paused)
+            assertTrue("${plan.id} 带步骤", plan.steps.isEmpty())
+            assertEquals(hook, s.cachedEvents(run.instanceId).first { it.runId == run.id })
+            assertEquals(setOf("hook_id", "bytes", "content_type"), hook.payload.keys)
+        }
     }
 
     /** 计划策略的“成功时通知”：新建、修改都存下来并原样返回。 */

@@ -65,7 +65,6 @@ import cn.thinktin.app.ui.common.asString
 import cn.thinktin.app.ui.common.errorText
 import cn.thinktin.app.ui.common.labelRes
 import cn.thinktin.data.model.Run
-import cn.thinktin.data.model.RunSource
 import cn.thinktin.data.service.ServiceError
 import cn.thinktin.design.component.AiGeneratedLabel
 import cn.thinktin.design.component.BannerTone
@@ -367,8 +366,8 @@ private fun RunRow(run: Run, nowMs: Long, zone: ZoneId, onClick: () -> Unit) {
                 RelativeTime.of(run.createdAtMs, nowMs, zone).asString(),
             )
             Text(
-                // 队友提问不是用户自己发的：前面说明来源（8.11）。
-                text = if (run.source == RunSource.Ask) {
+                // 队友提问、不认识的来源不是用户自己发的：前面说明来源（8.1、8.11）。
+                text = if (run.source.labelledInLists) {
                     stringResource(R.string.home_run_subtitle, stringResource(run.source.labelRes()), subtitle)
                 } else {
                     subtitle

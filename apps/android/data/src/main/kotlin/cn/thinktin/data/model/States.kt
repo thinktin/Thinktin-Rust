@@ -77,6 +77,12 @@ enum class RunSource(override val wire: String) : WireEnum {
      */
     val promptAiGenerated: Boolean get() = this == Pipeline || this == Delegate || this == Ask
 
+    /**
+     * 首页最近运行、运行树里只列 prompt 和状态，要在旁边标出来源：队友提问是别的 agent 问的（8.11），
+     * 不认识的来源不知道是谁发起的，都不能看着像用户自己发的（第 8.1 节）。其余来源照旧。
+     */
+    val labelledInLists: Boolean get() = this == Ask || this == Unknown
+
     companion object {
         fun fromWire(value: String): RunSource = parseWire(value, Unknown)
     }

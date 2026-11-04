@@ -123,6 +123,12 @@ sealed interface TimelineItem {
 
         /** 用户自己说的（右侧气泡，“你”）。 */
         val fromUser: Boolean get() = author == PromptAuthor.User
+
+        /**
+         * 放在右侧（第 4.3 节：右侧是用户的话）：用户自己说的、计划的目标（用户写的）。agent 写的和不认识的来源
+         * （不知道是谁写的）都放左侧，不能看着像用户发的（第 8.1 节）。
+         */
+        val onUserSide: Boolean get() = author == PromptAuthor.User || author == PromptAuthor.Plan
     }
 
     /** agent 的回复（相邻的 agent.message 拼好的 Markdown）。 */
@@ -230,6 +236,14 @@ sealed interface TimelineItem {
 
         /** 平台写的固定说明（被新消息打断、提问超时）：界面用本地文案代替 [reason]。 */
         val knownReason: KnownStateReason? get() = KnownStateReason.of(state, reason)
+
+        /**
+         * 界面要不要显示“原因：[reason]”。等子任务、等队友回答的 reason 是平台写的英文诊断（“waiting for 1 answer(s)”、
+         * “handing the results to the agent”），等什么已经由状态、步数和 wait_code 的本地文案说明了；
+         * waiting_quota 有码时用码的本地文案。其余的照常显示（第 8.2 节）。
+         */
+        val showsReason: Boolean
+            get() = reason != null && state != RunState.WaitingChildren && !(state == RunState.WaitingQuota && waitCode != null)
     }
 
     /** 计划卡片（plan.needs_confirmation 带“去确认”；plan.cancelled 只是告知）。 */

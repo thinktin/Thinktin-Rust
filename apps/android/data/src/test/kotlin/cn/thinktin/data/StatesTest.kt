@@ -124,6 +124,9 @@ class StatesTest {
             setOf(RunSource.Pipeline, RunSource.Delegate, RunSource.Ask),
             RunSource.entries.filter { it.promptAiGenerated }.toSet(),
         )
+        // 首页最近运行、运行树里要标出来源的：队友提问、不认识的来源（都不能看着像用户自己发的）。
+        assertEquals(setOf(RunSource.Ask, RunSource.Unknown), RunSource.entries.filter { it.labelledInLists }.toSet())
+        assertTrue(RunSource.fromWire("email").labelledInLists)
         assertEquals(WaitCode.Answer, WaitCode.fromWire("answer"))
         assertFalse("等队友回答会自己继续", WaitCode.Answer.needsUserAction)
     }
