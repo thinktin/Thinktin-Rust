@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{Value, json};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 
 /// 一条消息最多多大（截图的回复可能有几 MB）。
 const MAX_MESSAGE: usize = 64 << 20;
@@ -45,6 +45,8 @@ struct FrontRoute {
     /// 属于前置口的会话（浏览器会话，和在它上面接上的页面、iframe、worker）。
     sessions: HashSet<String>,
     tx: Option<mpsc::UnboundedSender<String>>,
+    /// 前一个客户端留下、还没断干净的会话：上面的事件丢掉（不交给守门，也不交给下一个客户端）。
+    retired: HashSet<String>,
 }
 
 pub struct Cdp {
@@ -53,6 +55,8 @@ pub struct Cdp {
     next_id: AtomicU64,
     front: Mutex<FrontRoute>,
     closed: AtomicBool,
+    /// pipe 断了时变成 true（前置口据此断开 Playwright）。
+    closed_tx: watch::Sender<bool>,
 }
 
 impl Cdp {
@@ -70,6 +74,7 @@ impl Cdp {
             next_id: AtomicU64::new(1),
             front: Mutex::default(),
             closed: AtomicBool::new(false),
+            closed_tx: watch::channel(false).0,
         });
         tokio::spawn(write_loop(writer, out_rx));
         tokio::spawn(read_loop(reader, cdp.clone(), ev_tx));
@@ -78,6 +83,12 @@ impl Cdp {
 
     pub fn is_closed(&self) -> bool {
         self.closed.load(Ordering::Acquire)
+    }
+
+    /// pipe 断了时返回。
+    pub async fn wait_closed(&self) {
+        let mut rx = self.closed_tx.subscribe();
+        let _ = rx.wait_for(|c| *c).await;
     }
 
     fn send(&self, id: u64, method: &str, params: Value, session: Option<&str>) -> bool {
@@ -139,8 +150,15 @@ impl Cdp {
         f.tx = Some(tx);
     }
 
+    /// 前置口的客户端走了：它还没回的命令作废（回复不交给下一个客户端），它的会话上之后的事件丢掉。
     pub fn detach_front(&self) {
-        *self.lock_front() = FrontRoute::default();
+        self.lock_pending()
+            .retain(|_, w| !matches!(w, Waiter::Front { .. }));
+        let mut f = self.lock_front();
+        let old = std::mem::take(&mut f.sessions);
+        f.retired.extend(old);
+        f.browser = None;
+        f.tx = None;
     }
 
     /// 前置口转来的一条命令（已经核对过能不能发）。`session` 为空时发到前置口的浏览器会话上。返回 false 表示这个会话不归
@@ -152,6 +170,9 @@ impl Cdp {
         params: Value,
         session: Option<&str>,
     ) -> bool {
+        if self.is_closed() {
+            return false;
+        }
         let target = {
             let f = self.lock_front();
             match session {
@@ -235,6 +256,23 @@ impl Cdp {
         {
             let mut f = self.lock_front();
             if let Some(s) = session
+                && f.retired.contains(s)
+            {
+                if method == "Target.detachedFromTarget"
+                    && let Some(c) = params.get("sessionId").and_then(Value::as_str)
+                {
+                    f.retired.remove(c);
+                }
+                return;
+            }
+            // 前一个客户端的会话断开了。
+            if method == "Target.detachedFromTarget"
+                && let Some(c) = params.get("sessionId").and_then(Value::as_str)
+                && f.retired.remove(c)
+            {
+                return;
+            }
+            if let Some(s) = session
                 && f.sessions.contains(s)
             {
                 let child = params.get("sessionId").and_then(Value::as_str);
@@ -266,16 +304,29 @@ impl Cdp {
 
     fn close(&self) {
         self.closed.store(true, Ordering::Release);
+        let closed = json!({"code": -32000, "message": "the browser connection is closed"});
         let waiters: Vec<_> = self.lock_pending().drain().collect();
+        let f = self.lock_front();
         for (_, w) in waiters {
-            if let Waiter::Call(tx) = w {
-                let _ = tx.send(Err(
-                    json!({"code": -32000, "message": "the browser connection is closed"}),
-                ));
+            match w {
+                Waiter::Call(tx) => {
+                    let _ = tx.send(Err(closed.clone()));
+                }
+                // 前置口转来、还没回的命令：回一个错误，Playwright 不用干等。
+                Waiter::Front { id, session, .. } => {
+                    let mut reply = json!({"id": id, "error": closed});
+                    if let Some(s) = session {
+                        reply["sessionId"] = Value::from(s);
+                    }
+                    if let Some(tx) = &f.tx {
+                        let _ = tx.send(reply.to_string());
+                    }
+                }
             }
         }
+        drop(f);
         // 前置口那边：断开，Playwright 会报浏览器断了。
-        self.lock_front().tx = None;
+        self.closed_tx.send_replace(true);
     }
 }
 
@@ -294,19 +345,24 @@ async fn read_loop<R: AsyncRead + Unpin>(
 ) {
     let mut buf: Vec<u8> = Vec::with_capacity(64 << 10);
     let mut chunk = vec![0u8; 64 << 10];
+    // 已经找过、没有 NUL 的前缀长度（大消息分很多块到，每块只找新来的部分）。
+    let mut scanned = 0;
     'outer: loop {
         let n = match r.read(&mut chunk).await {
             Ok(0) | Err(_) => break,
             Ok(n) => n,
         };
         buf.extend_from_slice(&chunk[..n]);
-        while let Some(end) = buf.iter().position(|b| *b == 0) {
+        while let Some(pos) = buf[scanned..].iter().position(|b| *b == 0) {
+            let end = scanned + pos;
             let msg: Vec<u8> = buf.drain(..=end).collect();
+            scanned = 0;
             match serde_json::from_slice::<Value>(&msg[..msg.len() - 1]) {
                 Ok(v) => cdp.dispatch(v, &events),
                 Err(e) => tracing::warn!(error = %e, "malformed message from the browser"),
             }
         }
+        scanned = buf.len();
         if buf.len() > MAX_MESSAGE {
             tracing::error!("the browser sent an oversized message; closing");
             break 'outer;

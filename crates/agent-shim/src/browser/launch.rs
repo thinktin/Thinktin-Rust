@@ -2,9 +2,11 @@
 //!
 //! - Chromium 只开 `--remote-debugging-pipe`：在 `pre_exec` 里把两条 pipe 放到 fd 3（它读命令）和 fd 4（它写回复）；
 //!   没有 TCP 调试端口。代理指向转发口，访问本机也走转发口（由转发口拒绝）。
-//! - Node 启动脚本从 fd 3 读出前置口的地址，设进环境变量再加载 Playwright MCP：地址不进命令行和启动时的环境。
+//! - Node 启动脚本从 fd 3 读出前置口的地址和秘密，设进环境变量再加载 Playwright MCP：它们不进命令行和启动时的环境。
+//!   秘密放在请求头里（不放网址里：Playwright 连不上时会把网址写进给 agent 看的错误）。
 //! - 两个都用清空的环境变量加最少的几项启动（不带沙箱令牌和代理变量），单独一个进程组，`oom_score_adj=500`（内存不够时
-//!   系统先杀浏览器，不杀 agent）。
+//!   系统先杀浏览器，不杀 agent）。shim 不可转储，fork 出来到 exec 之前的子进程的 /proc/self 归 root、写不了，所以分数在
+//!   exec 之后由子进程自己写（Chromium 套一层 `sh`，Node 在启动脚本里）。
 
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -109,9 +111,9 @@ fn high(fd: &OwnedFd) -> std::io::Result<OwnedFd> {
     Ok(unsafe { OwnedFd::from_raw_fd(n) })
 }
 
-/// 在子进程里（exec 之前）：把 `map` 里的 fd 放到指定的号上，调高 `oom_score_adj`。只用异步信号安全的调用。
+/// 在子进程里（exec 之前）：把 `map` 里的 fd 放到指定的号上。只用异步信号安全的调用。
 fn prepare_child(cmd: &mut Command, map: Vec<(RawFd, RawFd)>) {
-    // SAFETY: 闭包在 fork 之后、exec 之前运行，只调 dup2、open、write、close，都是异步信号安全的，不分配内存。
+    // SAFETY: 闭包在 fork 之后、exec 之前运行，只调 dup2，是异步信号安全的，不分配内存。
     unsafe {
         cmd.pre_exec(move || {
             for (from, to) in &map {
@@ -119,17 +121,15 @@ fn prepare_child(cmd: &mut Command, map: Vec<(RawFd, RawFd)>) {
                     return Err(std::io::Error::last_os_error());
                 }
             }
-            let path = c"/proc/self/oom_score_adj";
-            let fd = libc::open(path.as_ptr(), libc::O_WRONLY | libc::O_CLOEXEC);
-            if fd >= 0 {
-                let v = b"500";
-                libc::write(fd, v.as_ptr().cast(), v.len());
-                libc::close(fd);
-            }
             Ok(())
         });
     }
 }
+
+/// 套在 Chromium 外面的一层 `sh`：exec 之后（这时 /proc/self 归本用户）写 `oom_score_adj`，再 exec 成 Chromium（pid 不变，
+/// fd 3、4 照样在）。写不了也接着起。
+const OOM_WRAPPER: &str =
+    "{ echo 500 > /proc/self/oom_score_adj; } 2>/dev/null; exec \"$0\" \"$@\"";
 
 fn spawn_stderr(child: &mut Child, label: &str) -> StderrTail {
     let tail = StderrTail::default();
@@ -186,8 +186,11 @@ pub fn chromium(paths: &Paths, profile: &Path, forward_port: u16) -> anyhow::Res
     ];
     args.extend(paths.extra_args.iter().cloned());
     args.push("about:blank".into());
-    let mut cmd = Command::new(&paths.chromium);
-    cmd.args(&args)
+    let mut cmd = Command::new("/bin/sh");
+    cmd.arg("-c")
+        .arg(OOM_WRAPPER)
+        .arg(&paths.chromium)
+        .args(&args)
         .current_dir(profile)
         .env_clear()
         .envs(minimal_env(profile))
@@ -223,14 +226,19 @@ pub struct Mcp {
     pub stderr: StderrTail,
 }
 
-/// 起 Playwright MCP：`node <dir>/launch.cjs <参数>`，前置口地址 `front` 经 fd 3 交给启动脚本。
-pub fn playwright_mcp(paths: &Paths, home: &Path, front: &str) -> anyhow::Result<Mcp> {
+/// 起 Playwright MCP：`node <dir>/launch.cjs <参数>`，前置口地址 `front` 和秘密 `secret` 经 fd 3 交给启动脚本（两行）。
+pub fn playwright_mcp(
+    paths: &Paths,
+    home: &Path,
+    front: &str,
+    secret: &str,
+) -> anyhow::Result<Mcp> {
     let (r, w) = pipe_pair()?;
     let r_hi = high(&r)?;
     drop(r);
     {
         let mut w = std::fs::File::from(w);
-        w.write_all(front.as_bytes())?;
+        w.write_all(format!("{front}\n{secret}\n").as_bytes())?;
         // 写完就关：启动脚本读到 EOF。
     }
     std::fs::create_dir_all(&paths.output_dir).ok();

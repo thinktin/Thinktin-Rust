@@ -84,19 +84,32 @@ pub struct Asker {
 
 impl Asker {
     pub async fn ask(&self, ask: &BrowserAsk) -> BrowserAskReply {
-        // 守门的硬上限：代理最多等 40 秒，这里再多给 2 秒（docs/browser.md 第 3.4 节）。
+        // 守门的硬上限：代理最多等 40 秒，这里再多给 2 秒（docs/browser.md 第 3.4 节）。请求发出去以后才超时的，问题已经
+        // 交给用户了：按“在等用户”报，不说平台上网服务不可用。
         let wait = Duration::from_secs(ask.wait_secs.unwrap_or(BROWSER_ASK_WAIT_SECS));
-        match tokio::time::timeout(wait + Duration::from_secs(2), self.post(ask)).await {
-            Ok(Ok(r)) => r,
+        let mut s = match tokio::time::timeout(Duration::from_secs(5), self.send(ask)).await {
+            Ok(Ok(s)) => s,
             Ok(Err(e)) => {
                 tracing::warn!(error = %e, "asking the egress proxy failed");
+                return unavailable();
+            }
+            Err(_) => return unavailable(),
+        };
+        match tokio::time::timeout(wait + Duration::from_secs(2), read_reply(&mut s)).await {
+            Ok(Ok(r)) => r,
+            Ok(Err(e)) => {
+                tracing::warn!(error = %e, "reading the egress proxy's answer failed");
                 unavailable()
             }
-            Err(_) => unavailable(),
+            Err(_) => BrowserAskReply {
+                result: "pending".into(),
+                scope: None,
+                request_id: None,
+            },
         }
     }
 
-    async fn post(&self, ask: &BrowserAsk) -> anyhow::Result<BrowserAskReply> {
+    async fn send(&self, ask: &BrowserAsk) -> anyhow::Result<tokio::net::TcpStream> {
         let Some(pass) = super::pass_value(&self.pass) else {
             anyhow::bail!("no browser pass");
         };
@@ -111,16 +124,21 @@ impl Asker {
         )
         .into_bytes();
         req.extend_from_slice(&body);
-        s.write_all(&req).await?;
+        let sent = s.write_all(&req).await;
         zeroize::Zeroize::zeroize(&mut req);
-        let mut out = Vec::new();
-        (&mut s).take(64 << 10).read_to_end(&mut out).await?;
-        let text = String::from_utf8_lossy(&out);
-        let (_, body) = text
-            .split_once("\r\n\r\n")
-            .ok_or_else(|| anyhow::anyhow!("no response body"))?;
-        Ok(serde_json::from_str(body.trim()).unwrap_or_else(|_| unavailable()))
+        sent?;
+        Ok(s)
     }
+}
+
+async fn read_reply(s: &mut tokio::net::TcpStream) -> anyhow::Result<BrowserAskReply> {
+    let mut out = Vec::new();
+    s.take(64 << 10).read_to_end(&mut out).await?;
+    let text = String::from_utf8_lossy(&out);
+    let (_, body) = text
+        .split_once("\r\n\r\n")
+        .ok_or_else(|| anyhow::anyhow!("no response body"))?;
+    Ok(serde_json::from_str(body.trim()).unwrap_or_else(|_| unavailable()))
 }
 
 fn unavailable() -> BrowserAskReply {
@@ -146,6 +164,9 @@ struct Target {
     explained: Option<String>,
     /// 主页面现在的网站（问用户时报“从哪个网站过来”，登记资源时记进日志）。
     site: Option<String>,
+    /// 停在守门这里、还没定下来的主页面请求。问完代理回来时它要还是这一个，才按结果改页面的状态（不然页面已经去了
+    /// 别处，不能把别处的状态盖掉）。
+    pending_main: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -290,6 +311,7 @@ impl Gate {
                 approved: false,
                 explained: None,
                 site: None,
+                pending_main: None,
             },
         );
         let s = Some(session.as_str());
@@ -391,6 +413,10 @@ impl Gate {
             return;
         }
         let target = target.expect("checked above");
+        // 新的主页面请求：之前还在问的那个（如果有）回来时不再改页面的状态。
+        if let Some(t) = self.targets().get_mut(&session) {
+            t.pending_main = None;
+        }
         let verdict = decide(&url, target.prerender, &self.approvals, self.insecure);
         match verdict {
             Verdict::Continue { approved } => {
@@ -426,6 +452,11 @@ impl Gate {
                 };
                 let wait = self.remaining(params["networkId"].as_str().unwrap_or(&request_id));
                 let from = self.targets().get(&session).and_then(|t| t.site.clone());
+                if let Some(t) = self.targets().get_mut(&session) {
+                    t.pending_main = Some(request_id.clone());
+                }
+                // 工具层等这次问询问完，把结果算进这次调用。
+                let asking = self.approvals.asking(&host);
                 let reply = self
                     .asker
                     .ask(&BrowserAsk {
@@ -442,23 +473,47 @@ impl Gate {
                     "denied" => "denied",
                     other => leak_reason(other),
                 };
-                self.approvals.record(&host, result, true);
+                // 真的问了用户（代理登记了请求）才算“等过”：搜索、开发网站、一直允许的是代理直接放行的。
+                self.approvals.record(
+                    &host,
+                    result,
+                    reply.request_id.is_some() || result != "allowed",
+                );
+                drop(asking);
+                // 这次任务的批准、拒绝照记；页面的状态只在它还停在这个请求上时改。
                 match result {
-                    "allowed" => {
-                        self.approvals.approve(&host, reply.scope.as_deref());
-                        self.set_approved(&session, true, None);
-                        self.set_site(&session, Some(host.clone()));
+                    "allowed" => self.approvals.approve(&host, reply.scope.as_deref()),
+                    "denied" => self.approvals.deny(&host),
+                    _ => {}
+                }
+                let current = self.targets().get_mut(&session).is_some_and(|t| {
+                    let current = t.pending_main.as_deref() == Some(request_id.as_str());
+                    if current {
+                        t.pending_main = None;
+                    }
+                    current
+                });
+                let reason = match result {
+                    "allowed" => None,
+                    "denied" => Some("user_denied"),
+                    "pending" => Some("pending_approval"),
+                    other => Some(other),
+                };
+                match reason {
+                    None => {
+                        if current {
+                            self.set_approved(&session, true, None);
+                            self.set_site(&session, Some(host.clone()));
+                        }
                         self.cdp
                             .fire("Fetch.continueRequest", json!({"requestId": request_id}), s);
                     }
-                    "denied" => {
-                        self.approvals.deny(&host);
-                        self.explain(&session, &request_id, &url, "user_denied", &host);
+                    Some(reason) => {
+                        if current {
+                            self.set_approved(&session, false, Some(url.clone()));
+                        }
+                        self.fulfill(&session, &request_id, reason, &host);
                     }
-                    "pending" => {
-                        self.explain(&session, &request_id, &url, "pending_approval", &host)
-                    }
-                    other => self.explain(&session, &request_id, &url, other, &host),
                 }
             }
         }
@@ -488,9 +543,14 @@ impl Gate {
         }
     }
 
-    /// 换成说明页：403，带 `X-Thinktin-Egress: <原因>`。
+    /// 换成说明页（同步判断的，页面还停在这个请求上）。
     fn explain(&self, session: &str, request_id: &str, url: &str, reason: &str, host: &str) {
         self.set_approved(session, false, Some(url.to_owned()));
+        self.fulfill(session, request_id, reason, host);
+    }
+
+    /// 回一张说明页：403，带 `X-Thinktin-Egress: <原因>`。请求已经不在了（页面去了别处）时 Chromium 回错误，不要紧。
+    fn fulfill(&self, session: &str, request_id: &str, reason: &str, host: &str) {
         let body = base64::engine::general_purpose::STANDARD.encode(pages::html(reason, host));
         self.cdp.fire(
             "Fetch.fulfillRequest",
@@ -530,6 +590,8 @@ impl Gate {
             self.set_site(session, None);
             return;
         };
+        // 主页面换了一个新文档：每页资源网站的计数从头算（标签页一直用同一个目标）。
+        self.approvals.page_closed(&target.target_id);
         if self.approvals.main_allowed(&host) && !self.approvals.denied(&host) {
             self.set_approved(session, true, None);
             self.set_site(session, Some(host));
@@ -558,6 +620,7 @@ fn leak_reason(r: &str) -> &'static str {
         "too_many_asks" => "too_many_asks",
         "ask_rate" => "ask_rate",
         "bad_address" => "bad_address",
+        "rate" => "rate",
         _ => "unavailable",
     }
 }

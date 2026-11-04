@@ -37,6 +37,10 @@ pub fn message(reason: &str, host: &str) -> (String, &'static str) {
             "Today's internet allowance is used up; it resets at midnight Beijing time.".into(),
             "今天的流量用完了。",
         ),
+        "rate" => (
+            "Too many pages were opened this minute. Wait a little, then open this address again.".into(),
+            "这一分钟打开的网页太多了。",
+        ),
         "not_allowed" => (
             "This agent may not open websites.".into(),
             "这个 agent 不能上网。",

@@ -53,6 +53,15 @@ pub fn load(text: &str) -> Vec<Value> {
     list.into_iter()
         .filter(|t| t["name"].as_str().is_some_and(|n| KEEP.contains(&n)))
         .map(|mut t| {
+            // 不给 agent 看 `filename`（[`check`] 也会去掉）。
+            if let Some(props) = t["inputSchema"]["properties"].as_object_mut() {
+                for k in STRIPPED_ARGS {
+                    props.remove(*k);
+                }
+            }
+            if let Some(req) = t["inputSchema"]["required"].as_array_mut() {
+                req.retain(|r| !r.as_str().is_some_and(|r| STRIPPED_ARGS.contains(&r)));
+            }
             // 故意标成只读：点击、输入不真是只读，但打开网站由守门问用户，不能让 agent 每点一下都弹审批
             // （Codex 见到只读的 MCP 工具才不问，docs/browser.md 第 2.7 节）。
             let title = t["annotations"]["title"].clone();
@@ -72,8 +81,17 @@ pub fn load(text: &str) -> Vec<Value> {
         .collect()
 }
 
-/// 核对、改写参数：`browser_navigate` 和新开标签页的网址。
+/// agent 不能给的参数：`filename`（Playwright 会把快照、网络请求的内容写到工作区里任意位置，比如
+/// `.claude/settings.local.json`，这些工具又不用用户批）、`_meta`（Playwright 按它的 `cwd` 解析路径）。
+const STRIPPED_ARGS: &[&str] = &["filename", "_meta"];
+
+/// 核对、改写参数：去掉 [`STRIPPED_ARGS`]；`browser_navigate` 和新开标签页的网址只收 https。
 pub fn check(name: &str, args: &mut Value) -> Result<(), String> {
+    if let Some(o) = args.as_object_mut() {
+        for k in STRIPPED_ARGS {
+            o.remove(*k);
+        }
+    }
     let field = match name {
         "browser_navigate" => Some("url"),
         "browser_tabs" if args["action"] == "new" && args.get("url").is_some() => Some("url"),
@@ -166,7 +184,8 @@ mod tests {
             {"name": "browser_navigate", "description": "Navigate to a URL", "inputSchema": {}},
             {"name": "browser_run_code_unsafe", "description": "x", "inputSchema": {}},
             {"name": "browser_evaluate", "description": "x", "inputSchema": {}},
-            {"name": "browser_snapshot", "description": "Capture", "inputSchema": {}},
+            {"name": "browser_snapshot", "description": "Capture", "inputSchema": {
+                "type": "object", "properties": {"filename": {"type": "string"}, "depth": {"type": "number"}}}},
         ]});
         let tools = load(&list.to_string());
         let names: Vec<_> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
@@ -178,6 +197,16 @@ mod tests {
                 .ends_with("(up to 40 s).")
         );
         assert_eq!(tools[0]["annotations"]["readOnlyHint"], true);
+        assert!(
+            tools[1]["inputSchema"]["properties"]
+                .get("filename")
+                .is_none()
+        );
+        assert!(tools[1]["inputSchema"]["properties"].get("depth").is_some());
+        let mut args =
+            json!({"filename": ".claude/settings.local.json", "_meta": {"cwd": "/"}, "depth": 2});
+        check("browser_snapshot", &mut args).unwrap();
+        assert_eq!(args, json!({"depth": 2}));
         assert!(load("not json").is_empty());
     }
 

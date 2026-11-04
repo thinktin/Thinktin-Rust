@@ -93,6 +93,43 @@ struct Session {
     failed: Arc<AtomicBool>,
     tasks: Vec<tokio::task::JoinHandle<()>>,
     dir: PathBuf,
+    /// 前置口的秘密：万一出现在工具结果里就抹掉。
+    secret: String,
+}
+
+/// 起到一半出错、或者起的时候被取消（超时）：已经起来的东西都收掉。起好了就 [`StartGuard::disarm`]。
+#[derive(Default)]
+struct StartGuard {
+    forward: Option<Arc<forward::Forward>>,
+    tasks: Vec<tokio::task::JoinHandle<()>>,
+    groups: Vec<i32>,
+    dir: Option<PathBuf>,
+}
+
+impl StartGuard {
+    fn disarm(&mut self) -> Vec<tokio::task::JoinHandle<()>> {
+        self.forward = None;
+        self.groups.clear();
+        self.dir = None;
+        std::mem::take(&mut self.tasks)
+    }
+}
+
+impl Drop for StartGuard {
+    fn drop(&mut self) {
+        if let Some(f) = &self.forward {
+            f.shut();
+        }
+        for t in &self.tasks {
+            t.abort();
+        }
+        for g in &self.groups {
+            kill_group(*g);
+        }
+        if let Some(d) = &self.dir {
+            let _ = std::fs::remove_dir_all(d);
+        }
+    }
 }
 
 impl Session {
@@ -116,6 +153,8 @@ pub struct BrowserService {
     navigating: Arc<AtomicBool>,
     run: Mutex<Option<String>>,
     session: tokio::sync::Mutex<Option<Session>>,
+    /// 一次只跑一个工具调用：Claude 见到只读的工具会并行调，几个调用同时点同一个标签页会互相打断，结果第一行也会串。
+    calls: tokio::sync::Mutex<()>,
     /// 起过几次（第一次不算重启）。
     starts: AtomicU32,
     /// 起不来（连试两次都失败）：之后的调用直接告诉 agent 用别的办法。
@@ -142,6 +181,7 @@ impl BrowserService {
             navigating: Arc::default(),
             run: Mutex::default(),
             session: tokio::sync::Mutex::default(),
+            calls: tokio::sync::Mutex::default(),
             starts: AtomicU32::new(0),
             unavailable: AtomicBool::new(false),
             attempt,
@@ -200,8 +240,12 @@ impl BrowserService {
         if let Err(e) = tools::check(name, &mut args) {
             return ToolResult::error(e);
         }
+        let _one_at_a_time = self.calls.lock().await;
+        // 排队的时间不算进这次调用的 55 秒。
         let started = Instant::now();
-        let (client, failed) = match tokio::time::timeout(CALL_TIMEOUT, self.ensure()).await {
+        let deadline = tokio::time::Instant::now() + CALL_TIMEOUT;
+        let (client, failed, secret) = match tokio::time::timeout(CALL_TIMEOUT, self.ensure()).await
+        {
             Ok(Ok(c)) => c,
             Ok(Err(e)) => return ToolResult::error(e),
             Err(_) => return ToolResult::error("the browser did not start in time; try again"),
@@ -216,16 +260,47 @@ impl BrowserService {
         if navigating {
             self.navigating.store(false, Ordering::Release);
         }
-        let outcomes = self.approvals.outcomes_since(started);
+        // 点了链接、提交了表单：Playwright 先回来了，问用户的还在等。等它问完（在 55 秒以内），结果算进这次调用。
+        self.approvals.wait_asks(started, deadline).await;
+        let mut outcomes = self.approvals.outcomes_since(started);
+        let now = Instant::now();
+        outcomes.extend(
+            self.approvals
+                .asking_since(started)
+                .into_iter()
+                .map(|host| approvals::Outcome {
+                    at: now,
+                    host,
+                    result: "pending".into(),
+                    asked: true,
+                }),
+        );
+        let mut r = Self::result(result, &outcomes, &failed);
+        // 万一前置口的秘密出现在结果里（Playwright 的错误会带上连接地址），抹掉。
+        for item in &mut r.content {
+            if let Some(t) = item["text"].as_str()
+                && t.contains(secret.as_str())
+            {
+                item["text"] = Value::from(t.replace(secret.as_str(), "<redacted>"));
+            }
+        }
+        r
+    }
+
+    fn result(
+        result: Result<Result<Value, crate::jsonrpc::RpcError>, tokio::time::error::Elapsed>,
+        outcomes: &[approvals::Outcome],
+        failed: &AtomicBool,
+    ) -> ToolResult {
         match result {
-            Ok(Ok(v)) => tools::finish(v, &outcomes),
+            Ok(Ok(v)) => tools::finish(v, outcomes),
             Ok(Err(e)) => {
                 // Playwright MCP 退出了：下次调用重新起整套。
                 if e.code == crate::jsonrpc::RpcError::CLOSED {
                     failed.store(true, Ordering::Release);
                 }
                 let mut r = ToolResult::error(format!("browser error: {}", e.message));
-                if let Some(line) = tools::status(&outcomes) {
+                if let Some(line) = tools::status(outcomes) {
                     r.content
                         .insert(0, serde_json::json!({"type": "text", "text": line}));
                 }
@@ -235,7 +310,7 @@ impl BrowserService {
                 let mut r = ToolResult::error(
                     "the browser did not finish in 55 seconds; check the page with browser_snapshot",
                 );
-                if let Some(line) = tools::status(&outcomes) {
+                if let Some(line) = tools::status(outcomes) {
                     r.content
                         .insert(0, serde_json::json!({"type": "text", "text": line}));
                 }
@@ -245,7 +320,7 @@ impl BrowserService {
     }
 
     /// 拿到能用的一套：没有、挂了就（重新）起。
-    async fn ensure(&self) -> Result<(Arc<mcp::McpClient>, Arc<AtomicBool>), String> {
+    async fn ensure(&self) -> Result<(Arc<mcp::McpClient>, Arc<AtomicBool>, String), String> {
         if self.unavailable.load(Ordering::Acquire) {
             return Err(UNAVAILABLE.into());
         }
@@ -253,7 +328,7 @@ impl BrowserService {
         if let Some(s) = guard.as_ref()
             && !s.failed.load(Ordering::Acquire)
         {
-            return Ok((s.mcp.clone(), s.failed.clone()));
+            return Ok((s.mcp.clone(), s.failed.clone(), s.secret.clone()));
         }
         if let Some(old) = guard.take() {
             tracing::warn!("the browser failed; restarting it");
@@ -270,7 +345,7 @@ impl BrowserService {
             let n = self.starts.fetch_add(1, Ordering::AcqRel);
             match tokio::time::timeout(START_TIMEOUT, self.start(n)).await {
                 Ok(Ok(s)) => {
-                    let client = (s.mcp.clone(), s.failed.clone());
+                    let client = (s.mcp.clone(), s.failed.clone(), s.secret.clone());
                     *guard = Some(s);
                     return Ok(client);
                 }
@@ -296,8 +371,10 @@ impl BrowserService {
             .mode(0o700)
             .create(&dir)
             .with_context(|| format!("creating {}", dir.display()))?;
+        // 出错、或者被取消（外面的超时）时，下面起来的都由它收掉。
+        let mut guard = StartGuard::default();
+        guard.dir = Some(dir.clone());
         let failed = Arc::new(AtomicBool::new(false));
-        let mut tasks = Vec::new();
 
         // 1. 转发口。
         let fwd_listener = TcpListener::bind("127.0.0.1:0").await?;
@@ -308,98 +385,88 @@ impl BrowserService {
             self.opts.proxy.clone(),
             self.opts.insecure,
         );
-        tasks.push(tokio::spawn(forward.clone().serve(fwd_listener)));
+        guard.forward = Some(forward.clone());
+        guard
+            .tasks
+            .push(tokio::spawn(forward.clone().serve(fwd_listener)));
 
         // 2. Chromium。
         let chromium = launch::chromium(&self.opts.paths, &dir, fwd_port)?;
+        guard.groups.push(chromium.pid);
         forward.chromium.store(chromium.pid, Ordering::Release);
         let (cdp, events) = cdp::Cdp::start(chromium.reader, chromium.writer);
         let chromium_proc = chromium.proc;
         let chromium_err = chromium.stderr;
-        let result = async {
-            // 3. 守门：自动接上、先停住所有新页面。装好之前任何网页都打不开。
-            let gate = gate::Gate::new(
-                cdp.clone(),
-                self.approvals.clone(),
-                gate::Asker {
-                    proxy: self.opts.proxy.clone(),
-                    pass: self.pass.clone(),
-                },
-                self.navigating.clone(),
-                self.opts.insecure,
-            );
-            gate.install().await.with_context(|| {
-                format!(
-                    "the browser did not accept the gate; recent output:\n{}",
-                    chromium_err.snapshot()
-                )
-            })?;
-            {
-                let failed = failed.clone();
-                let forward = forward.clone();
-                let pid = chromium_proc_pid(&chromium_proc);
-                tasks.push(tokio::spawn(async move {
-                    gate.run(events).await;
-                    // pipe 断了：出错就关。
-                    failed.store(true, Ordering::Release);
-                    forward.shut();
-                    kill_group(pid);
-                }));
-            }
-            // 4. 前置口。
-            let front_listener = TcpListener::bind("127.0.0.1:0").await?;
-            let front_port = front_listener.local_addr()?.port();
-            let secret = launch::random_hex()?;
-            let url = format!("ws://127.0.0.1:{front_port}/{secret}");
-            tasks.push(tokio::spawn(front::serve(
-                front_listener,
-                secret,
-                cdp.clone(),
-            )));
-            // 5. Playwright MCP。
-            let mut m = launch::playwright_mcp(&self.opts.paths, &dir, &url)?;
-            let client = match mcp::McpClient::connect(m.stdout, m.stdin, START_TIMEOUT).await {
-                Ok(c) => c,
-                Err(e) => {
-                    let tail = m.stderr.snapshot();
-                    m.proc.terminate(STOP_GRACE).await;
-                    return Err(e.context(format!("recent output:\n{tail}")));
-                }
-            };
-            anyhow::Ok((client, m.proc))
-        }
-        .await;
-        match result {
-            Ok((client, mcp_proc)) => Ok(Session {
-                chromium: chromium_proc,
-                mcp_proc,
-                mcp: Arc::new(client),
-                forward,
-                failed,
-                tasks,
-                dir,
-            }),
-            Err(e) => {
+
+        // 3. 守门：自动接上、先停住所有新页面。装好之前任何网页都打不开。
+        let gate = gate::Gate::new(
+            cdp.clone(),
+            self.approvals.clone(),
+            gate::Asker {
+                proxy: self.opts.proxy.clone(),
+                pass: self.pass.clone(),
+            },
+            self.navigating.clone(),
+            self.opts.insecure,
+        );
+        gate.install().await.with_context(|| {
+            format!(
+                "the browser did not accept the gate; recent output:\n{}",
+                chromium_err.snapshot()
+            )
+        })?;
+        {
+            let failed = failed.clone();
+            let forward = forward.clone();
+            let pid = chromium.pid;
+            guard.tasks.push(tokio::spawn(async move {
+                gate.run(events).await;
+                // pipe 断了：出错就关。
+                failed.store(true, Ordering::Release);
                 forward.shut();
-                for t in &tasks {
-                    t.abort();
-                }
-                let mut p = chromium_proc;
-                p.kill_group();
-                p.terminate(STOP_GRACE).await;
-                let _ = std::fs::remove_dir_all(&dir);
-                Err(e)
-            }
+                kill_group(pid);
+            }));
         }
+        // 4. 前置口：秘密放在请求头里。
+        let front_listener = TcpListener::bind("127.0.0.1:0").await?;
+        let front_port = front_listener.local_addr()?.port();
+        let secret = launch::random_hex()?;
+        let url = format!("ws://127.0.0.1:{front_port}/");
+        guard.tasks.push(tokio::spawn(front::serve(
+            front_listener,
+            secret.clone(),
+            cdp.clone(),
+        )));
+        // 5. Playwright MCP。
+        let m = launch::playwright_mcp(&self.opts.paths, &dir, &url, &secret)?;
+        if let Some(pid) = m.proc.child.id() {
+            guard.groups.push(pid as i32);
+        }
+        let mut mcp_proc = m.proc;
+        let client = match mcp::McpClient::connect(m.stdout, m.stdin, START_TIMEOUT).await {
+            Ok(c) => c,
+            Err(e) => {
+                let tail = m.stderr.snapshot();
+                mcp_proc.terminate(STOP_GRACE).await;
+                return Err(e.context(format!("recent output:\n{tail}")));
+            }
+        };
+        let tasks = guard.disarm();
+        Ok(Session {
+            chromium: chromium_proc,
+            mcp_proc,
+            mcp: Arc::new(client),
+            forward,
+            failed,
+            tasks,
+            dir,
+            secret,
+        })
     }
 }
 
 const UNAVAILABLE: &str =
     "browser unavailable in this sandbox; use web_search and plain fetches instead";
-
-fn chromium_proc_pid(p: &crate::process::ProcessHandle) -> i32 {
-    p.child.id().map_or(0, |id| id as i32)
-}
 
 fn kill_group(pid: i32) {
     if pid > 0 {
@@ -463,12 +530,42 @@ mod tests {
         assert!(t.contains("Page Title: Site"), "{t}");
         // 打开网页时快照存成工作区里的文件；browser_snapshot 直接返回。
         let r = svc.call("browser_snapshot", json!({})).await;
-        assert!(text(&r).contains("Hello from site"), "{}", text(&r));
+        let snap = text(&r);
+        assert!(snap.contains("Hello from site"), "{snap}");
+        // 点网页里去没批准网站的链接：Playwright 先回来，问询还在等；结果照样写在这次调用的第一行。
+        let link = snap
+            .split("link \"other\" [ref=")
+            .nth(1)
+            .and_then(|r| r.split(']').next())
+            .expect("a link to other.test");
+        let r = svc
+            .call("browser_click", json!({"element": "other", "target": link}))
+            .await;
+        assert!(
+            text(&r).starts_with("pending_approval: opening other.test"),
+            "{}",
+            text(&r)
+        );
+        let r = svc
+            .call(
+                "browser_navigate",
+                json!({"url": format!("https://site.test:{port}/")}),
+            )
+            .await;
+        assert!(!r.is_error, "{}", text(&r));
         // 同一个网站不用再问。
         let r = svc
             .call(
                 "browser_navigate",
                 json!({"url": format!("https://site.test:{port}/again")}),
+            )
+            .await;
+        assert!(!text(&r).starts_with("approved"), "{}", text(&r));
+        // 代理直接放行的（开发网站这类）：不说“用户允许了”。
+        let r = svc
+            .call(
+                "browser_navigate",
+                json!({"url": format!("https://dev.test:{port}/")}),
             )
             .await;
         assert!(!text(&r).starts_with("approved"), "{}", text(&r));

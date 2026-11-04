@@ -1,8 +1,11 @@
-//! 给 Playwright 的 CDP 前置口（docs/browser.md 第 2.5 节）：`ws://127.0.0.1:<随机>/<秘密>`。Playwright 以为连的是浏览器；
-//! 实际是同一条 pipe 上一个单独的浏览器会话（`Target.attachToBrowserTarget`），守门的会话它碰不到。少数危险命令直接回
-//! 错误：拦截请求只有守门能做，代理、证书、把 CDP 交给网页脚本的都不行。这在同一个用户下只是提高门槛，不是安全边界。
+//! 给 Playwright 的 CDP 前置口（docs/browser.md 第 2.5 节）：`ws://127.0.0.1:<随机>/`，请求头 `X-Thinktin-Front` 带秘密
+//! （不放网址里：Playwright 连不上时会把网址写进给 agent 看的错误）。Playwright 以为连的是浏览器；实际是同一条 pipe 上一个
+//! 单独的浏览器会话（`Target.attachToBrowserTarget`），守门的会话它碰不到。少数危险命令直接回错误：拦截请求只有守门能做，
+//! 代理、证书、把 CDP 交给网页脚本的都不行；只许 flat 模式的会话（非 flat 的会话能经 `Target.sendMessageToTarget` 绕过
+//! 这些检查）。这在同一个用户下只是提高门槛，不是安全边界。
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
@@ -14,15 +17,26 @@ use tokio_tungstenite::tungstenite::http::StatusCode;
 
 use super::cdp::Cdp;
 
+/// 带秘密的请求头。
+pub const SECRET_HEADER: &str = "x-thinktin-front";
+/// WebSocket 握手最多等多久（本机别的进程挂着不握手，不能卡住 Playwright 重连）。
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
+
 /// 前置口不转的命令，返回给 Playwright 的原因。
 pub fn refused(method: &str, params: &Value) -> Option<&'static str> {
     if method.starts_with("Fetch.") {
         return Some("request interception is reserved for the platform");
     }
+    let flat = params.get("flatten").and_then(Value::as_bool) == Some(true);
     match method {
         "Target.exposeDevToolsProtocol" => Some("exposing the protocol to pages is not allowed"),
-        "Target.attachToBrowserTarget" | "Target.setRemoteLocations" => {
+        "Target.attachToBrowserTarget"
+        | "Target.setRemoteLocations"
+        | "Target.sendMessageToTarget" => {
             Some("not allowed through the platform's browser connection")
+        }
+        "Target.attachToTarget" | "Target.setAutoAttach" | "Target.autoAttachRelated" if !flat => {
+            Some("only flat sessions are allowed")
         }
         "Network.setRequestInterception" => {
             Some("request interception is reserved for the platform")
@@ -49,30 +63,65 @@ pub fn refused(method: &str, params: &Value) -> Option<&'static str> {
     }
 }
 
-/// 一次只服务一个客户端（Playwright MCP）。`secret` 是网址里的秘密路径。
+/// 两个字符串一样长且每个字节都相同（比较时间不随第一个不同的字节变）。
+fn same(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+/// 一次只服务一个客户端（Playwright MCP）；`secret` 要出现在请求头里。pipe 断了就不再收。
 pub async fn serve(listener: TcpListener, secret: String, cdp: Arc<Cdp>) {
-    let path = format!("/{secret}");
-    while let Ok((stream, _)) = listener.accept().await {
-        // 签名是 tungstenite 定的，错误类型改不了。
-        #[allow(clippy::result_large_err)]
-        let check = |req: &Request, resp: Response| -> Result<Response, ErrorResponse> {
-            if req.uri().path() == path {
-                Ok(resp)
-            } else {
-                let mut e = ErrorResponse::new(None);
-                *e.status_mut() = StatusCode::NOT_FOUND;
-                Err(e)
+    let busy = Arc::new(tokio::sync::Mutex::new(()));
+    loop {
+        let accepted = tokio::select! {
+            a = listener.accept() => a,
+            () = cdp.wait_closed() => return,
+        };
+        let stream = match accepted {
+            Ok((s, _)) => s,
+            Err(e) => {
+                tracing::warn!(error = %e, "the browser front port could not accept a connection");
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
             }
         };
-        let Ok(ws) = tokio_tungstenite::accept_hdr_async(stream, check).await else {
-            continue;
-        };
-        if cdp.is_closed() {
-            return;
-        }
-        if let Err(e) = client(ws, &cdp).await {
-            tracing::info!(error = %e, "the browser automation client disconnected");
-        }
+        let (secret, cdp, busy) = (secret.clone(), cdp.clone(), busy.clone());
+        tokio::spawn(async move {
+            #[allow(clippy::result_large_err)]
+            let check = |req: &Request, resp: Response| -> Result<Response, ErrorResponse> {
+                let ok = req.uri().path() == "/"
+                    && req
+                        .headers()
+                        .get(SECRET_HEADER)
+                        .is_some_and(|v| same(v.as_bytes(), secret.as_bytes()));
+                if ok {
+                    Ok(resp)
+                } else {
+                    let mut e = ErrorResponse::new(None);
+                    *e.status_mut() = StatusCode::NOT_FOUND;
+                    Err(e)
+                }
+            };
+            let Ok(Ok(ws)) = tokio::time::timeout(
+                HANDSHAKE_TIMEOUT,
+                tokio_tungstenite::accept_hdr_async(stream, check),
+            )
+            .await
+            else {
+                return;
+            };
+            // 已经有一个客户端在用：不排队，直接断开（Playwright 会报连不上）。
+            let Ok(_held) = busy.try_lock() else {
+                let mut ws = ws;
+                let _ = ws.close(None).await;
+                return;
+            };
+            if cdp.is_closed() {
+                return;
+            }
+            if let Err(e) = client(ws, &cdp).await {
+                tracing::info!(error = %e, "the browser automation client disconnected");
+            }
+        });
     }
 }
 
@@ -94,9 +143,15 @@ async fn client(
             tokio::select! {
                 out = rx.recv() => match out {
                     Some(text) => sink.send(Message::text(text)).await?,
-                    // pipe 断了。
                     None => break,
                 },
+                // pipe 断了：把排着的回复（都是错误）发完，断开 Playwright。
+                () = cdp.wait_closed() => {
+                    while let Ok(t) = rx.try_recv() {
+                        sink.send(Message::text(t)).await?;
+                    }
+                    break;
+                }
                 msg = stream.next() => {
                     let text = match msg {
                         Some(Ok(Message::Text(t))) => t.to_string(),
@@ -131,7 +186,8 @@ async fn client(
                         continue;
                     }
                     if !cdp.forward_front(id.clone(), &method, params, sid.as_deref()) {
-                        let _ = tx.send(reply(json!({"error": {"code": -32001, "message": "session not found"}})));
+                        let why = if cdp.is_closed() { "the browser connection is closed" } else { "session not found" };
+                        let _ = tx.send(reply(json!({"error": {"code": -32001, "message": why}})));
                     }
                 }
             }
@@ -180,8 +236,14 @@ mod tests {
             )
             .is_some()
         );
+        assert!(
+            refused(
+                "Target.setAutoAttach",
+                &json!({"autoAttach": true, "waitForDebuggerOnStart": true, "flatten": true})
+            )
+            .is_none()
+        );
         for ok in [
-            "Target.setAutoAttach",
             "Browser.setDownloadBehavior",
             "Target.createTarget",
             "Runtime.evaluate",

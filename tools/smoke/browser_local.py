@@ -70,8 +70,12 @@ async def proxy(r, w):
         host = ask["host"]
         if not ok:
             reply = {"result": "auth"}
+        elif host.startswith("dev"):
+            # 开发网站这类：代理直接放行，没问用户（不带 request_id）。
+            reply = {"result": "allowed", "scope": "default"}
         elif host.startswith("allow") or host.startswith("site"):
-            reply = {"result": "allowed", "scope": "once"}
+            # 问了用户、用户点了“访问一次”。
+            reply = {"result": "allowed", "scope": "once", "request_id": "req-0"}
         elif host.startswith("deny"):
             reply = {"result": "denied"}
         else:

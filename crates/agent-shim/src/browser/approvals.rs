@@ -44,12 +44,30 @@ struct Inner {
     /// 每个页面登记过哪些资源网站。
     per_page: HashMap<String, HashSet<String>>,
     outcomes: Vec<Outcome>,
+    /// 正在问代理（等用户）的：编号 → (开始的时间, 网站)。
+    asking: HashMap<u64, (Instant, String)>,
+    next_ask: u64,
 }
 
 #[derive(Default)]
 pub struct Approvals {
     inner: Mutex<Inner>,
     announced: Notify,
+    /// 有一次问询结束了。
+    ask_done: Notify,
+}
+
+/// 一次在进行的问询；放下时（问完了、或者任务被中止）登记结束。
+pub struct Asking<'a> {
+    approvals: &'a Approvals,
+    id: u64,
+}
+
+impl Drop for Asking<'_> {
+    fn drop(&mut self) {
+        self.approvals.lock().asking.remove(&self.id);
+        self.approvals.ask_done.notify_waiters();
+    }
 }
 
 impl Approvals {
@@ -57,9 +75,53 @@ impl Approvals {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// 任务开始、结束：全部清掉。
+    /// 任务开始、结束：全部清掉（在进行的问询照样登记着，问完自己去掉）。
     pub fn clear(&self) {
-        *self.lock() = Inner::default();
+        let mut i = self.lock();
+        let asking = std::mem::take(&mut i.asking);
+        let next_ask = i.next_ask;
+        *i = Inner {
+            asking,
+            next_ask,
+            ..Inner::default()
+        };
+    }
+
+    /// 开始问代理 `host`（问完放下返回值）。
+    pub fn asking(&self, host: &str) -> Asking<'_> {
+        let mut i = self.lock();
+        i.next_ask += 1;
+        let id = i.next_ask;
+        i.asking.insert(id, (Instant::now(), host.to_owned()));
+        Asking {
+            approvals: self,
+            id,
+        }
+    }
+
+    /// `since` 以后开始、还没问完的网站。
+    pub fn asking_since(&self, since: Instant) -> Vec<String> {
+        self.lock()
+            .asking
+            .values()
+            .filter(|(at, _)| *at >= since)
+            .map(|(_, h)| h.clone())
+            .collect()
+    }
+
+    /// 等 `since` 以后开始的问询都问完，最多等到 `deadline`（点了链接、问询比工具调用晚结束时，结果还能算进这次调用）。
+    pub async fn wait_asks(&self, since: Instant, deadline: tokio::time::Instant) {
+        loop {
+            let done = self.ask_done.notified();
+            tokio::pin!(done);
+            done.as_mut().enable();
+            if self.asking_since(since).is_empty() {
+                return;
+            }
+            if tokio::time::timeout_at(deadline, done).await.is_err() {
+                return;
+            }
+        }
     }
 
     /// 打开 `host` 的网页不用再问吗。
@@ -224,6 +286,30 @@ mod tests {
         assert!(a.announce("p", None, "h0.example.com"));
         // 别的页面另算。
         assert!(a.announce("q", None, "one-more.example.com"));
+    }
+
+    #[tokio::test]
+    async fn calls_wait_for_asks_that_started_during_them() {
+        let a = std::sync::Arc::new(Approvals::default());
+        let before = Instant::now();
+        let guard = a.asking("www.zhihu.com");
+        assert_eq!(a.asking_since(before), ["www.zhihu.com"]);
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(30);
+        a.wait_asks(before, deadline).await;
+        assert_eq!(a.asking_since(before).len(), 1, "gave up at the deadline");
+        let b = a.clone();
+        let waiter = tokio::spawn(async move {
+            b.wait_asks(before, tokio::time::Instant::now() + Duration::from_secs(5))
+                .await
+        });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        a.record("www.zhihu.com", "pending", true);
+        drop(guard);
+        waiter.await.unwrap();
+        assert!(a.asking_since(before).is_empty());
+        // 调用开始之前就在问的不算这次调用的。
+        let _old = a.asking("old.example.com");
+        assert!(a.asking_since(Instant::now()).is_empty());
     }
 
     #[tokio::test]

@@ -12,3 +12,5 @@ tools
 # 许可证清单（16.5）：服务端镜像和模板镜像构建时都要用。
 !tools/licenses
 !deploy/templates/notices
+# 模板镜像里的浏览器（docs/browser.md）：启动脚本、补丁、托管策略。
+!deploy/templates/browser
