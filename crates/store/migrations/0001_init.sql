@@ -5,7 +5,9 @@
 --   thinktin_worker  后台任务（调度、租约、出箱投递、登录流程）用，绕过 RLS，代码里显式选用；
 --   thinktin_llmgw   模型网关用，只读路由数据、写用量。
 -- 应用每个事务开头切换到对应角色（set_config('role', ..., true)，等同 SET LOCAL ROLE），租户事务再设置 app.user_id。
--- 角色是整个集群共享的；并发建库（测试）时两个迁移可能同时建角色，所以也忽略唯一键冲突。
+-- 角色是整个集群共享的；先查再建：托管库的属主账号没有 CREATEROLE，CREATE ROLE 会在查重之前就报权限错，所以角色由高权限
+-- 账号预先建好时这里必须跳过（docs/deploy-checklist.md 第 3 节）。并发建库（测试）时两个迁移可能同时建角色，所以也忽略
+-- 唯一键冲突。真没建好的角色照样报“没有权限建角色”。
 -- 部署时给各服务的登录账号授予对应角色的成员身份（GRANT thinktin_app TO app_login），开发环境用超级用户直接 SET ROLE。
 --
 -- 主键都是应用生成的 UUIDv7；时间都是 timestamptz（UTC）。
@@ -13,9 +15,9 @@
 -- 跨表引用一律用 (id, user_id) 复合外键：外键检查不受 RLS 约束，单列外键会让一个用户
 -- 引用别人的 key、实例或计划（只要知道 id）；复合外键在库里保证两边属于同一个用户。
 
-DO $$ BEGIN CREATE ROLE thinktin_app NOLOGIN NOBYPASSRLS; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
-DO $$ BEGIN CREATE ROLE thinktin_worker NOLOGIN BYPASSRLS; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
-DO $$ BEGIN CREATE ROLE thinktin_llmgw NOLOGIN BYPASSRLS; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
+DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'thinktin_app') THEN CREATE ROLE thinktin_app NOLOGIN NOBYPASSRLS; END IF; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
+DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'thinktin_worker') THEN CREATE ROLE thinktin_worker NOLOGIN BYPASSRLS; END IF; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
+DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'thinktin_llmgw') THEN CREATE ROLE thinktin_llmgw NOLOGIN BYPASSRLS; END IF; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
 
 -- 当前租户；没设置时为 NULL，策略因此不匹配任何行。
 CREATE FUNCTION app_user_id() RETURNS uuid

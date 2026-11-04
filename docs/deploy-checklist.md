@@ -56,8 +56,8 @@ docker run --rm <镜像仓库>/thinktin-server:<版本> gen-secrets
 ```sql
 CREATE ROLE thinktin_owner LOGIN PASSWORD '<thinktin_owner 的密码>';   -- 表的属主，只给迁移 Job
 CREATE DATABASE thinktin OWNER thinktin_owner;
--- 服务用的四个角色。迁移里也会建，但建 BYPASSRLS 的角色要超级用户（或者自己有 BYPASSRLS），托管数据库的属主
--- 账号通常没有，所以在这里先建好，迁移遇到已有的就跳过。
+-- 服务用的四个角色。迁移里也会建，但建角色要 CREATEROLE、建 BYPASSRLS 的角色还要超级用户（或者自己有 BYPASSRLS），
+-- 托管数据库的属主账号通常没有，所以在这里先建好；迁移按名字先查，已有的就跳过（测试也这样跑：属主不是超级用户）。
 CREATE ROLE thinktin_app NOLOGIN NOBYPASSRLS;
 CREATE ROLE thinktin_worker NOLOGIN BYPASSRLS;
 CREATE ROLE thinktin_llmgw NOLOGIN BYPASSRLS;

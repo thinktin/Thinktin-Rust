@@ -12,7 +12,7 @@
 -- 中继用自己的角色 thinktin_relay：核对设备会话、维护在线状态、领取和回填调用、收发消息、
 -- 唤醒等电脑的运行（7.11），别的都碰不到。
 
-DO $$ BEGIN CREATE ROLE thinktin_relay NOLOGIN BYPASSRLS; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
+DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'thinktin_relay') THEN CREATE ROLE thinktin_relay NOLOGIN BYPASSRLS; END IF; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
 
 CREATE TABLE device_links (
     device_id    uuid PRIMARY KEY,

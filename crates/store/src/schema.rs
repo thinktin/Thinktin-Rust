@@ -13,7 +13,7 @@ use tracing::warn;
 use crate::{Db, Error, Result};
 
 /// 程序里带的迁移。
-fn migrator() -> Migrator {
+pub(crate) fn migrator() -> Migrator {
     sqlx::migrate!("./migrations")
 }
 

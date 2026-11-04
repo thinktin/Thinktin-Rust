@@ -71,7 +71,7 @@ CREATE ROLE thinktin_relay_login LOGIN PASSWORD '…';    -- 设备中继
 GRANT thinktin_relay TO thinktin_relay_login;
 ```
 
-登录账号要继承角色的权限（默认就是 `INHERIT`）：启动核对读 `_sqlx_migrations`，权限来自角色（迁移 0016）。托管数据库（RDS）的属主账号通常建不了 `BYPASSRLS` 的角色：用高权限账号先把四个角色建好，迁移遇到已有的会跳过
+登录账号要继承角色的权限（默认就是 `INHERIT`）：启动核对读 `_sqlx_migrations`，权限来自角色（迁移 0016）。托管数据库（RDS）的属主账号通常建不了 `BYPASSRLS` 的角色：用高权限账号先把四个角色建好，迁移按角色名先查、已有的就跳过
 （[部署环境准备清单](deploy-checklist.md) 第 3 节）。
 
 ## 4. 上线步骤

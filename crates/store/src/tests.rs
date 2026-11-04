@@ -815,6 +815,42 @@ async fn every_tenant_table_the_app_can_touch_has_rls() {
     }
 }
 
+/// 测试库和生产一样，由不是超级用户的属主账号跑迁移（docs/deploy-checklist.md 第 3 节）：属主不是超级用户、不绕过行级
+/// 安全、不能建角色；业务角色碰得到的表都强制行级安全（属主自己也受约束）。
+#[tokio::test]
+async fn migrations_run_as_a_plain_owner() {
+    let Some(t) = TestDb::new().await else { return };
+    for table in ["runs", "_sqlx_migrations"] {
+        let (sup, bypass, createrole): (bool, bool, bool) = sqlx::query_as(
+            "SELECT r.rolsuper, r.rolbypassrls, r.rolcreaterole FROM pg_class c \
+             JOIN pg_roles r ON r.oid = c.relowner WHERE c.relname = $1",
+        )
+        .bind(table)
+        .fetch_one(t.db.pool())
+        .await
+        .unwrap();
+        assert!(
+            !sup && !bypass && !createrole,
+            "{table} owner is privileged"
+        );
+    }
+    let unforced: Vec<String> = sqlx::query_scalar(
+        "SELECT c.relname::text FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
+         WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND NOT c.relispartition \
+           AND (has_table_privilege('thinktin_app', c.oid, 'SELECT, INSERT, UPDATE, DELETE') \
+                OR has_any_column_privilege('thinktin_app', c.oid, 'SELECT, INSERT, UPDATE')) \
+           AND NOT c.relforcerowsecurity AND c.relname <> '_sqlx_migrations' \
+         ORDER BY 1",
+    )
+    .fetch_all(t.db.pool())
+    .await
+    .unwrap();
+    assert!(
+        unforced.is_empty(),
+        "app tables without FORCE RLS: {unforced:?}"
+    );
+}
+
 /// 注销（16.4）：用户的内容全部删掉，手机号、设备去标识化；别人的数据不受影响。
 #[tokio::test]
 async fn erasing_an_account_deletes_its_content() {
