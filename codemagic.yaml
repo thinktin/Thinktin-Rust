@@ -185,3 +185,171 @@ workflows:
         script: tools/apple/screenshots.sh "$CM_BUILD_DIR/screenshots"
     artifacts:
       - screenshots/*.png
+
+  # TestFlight：GitHub 的 macOS 机器排不上时用。一般从 .github/workflows/ios-release.yml 发起（builder 选 codemagic，
+  # tools/apple/codemagic_build.py 发起并跟到结束），做的事和那里的 testflight 作业一样：验密钥 → 打全部 Apple 目标的
+  # ThinktinCore → xcodegen → 现建分发证书和两个描述文件 → 手动签名归档 → 导出、上传 → 撤销证书、删描述文件。
+  # 苹果的密钥放在 Codemagic 这个 App 的 testflight 变量组里：ASC_KEY_ID、ASC_ISSUER_ID、ASC_KEY_P8（都勾 Secure）。
+  # 发起时传的变量：UPLOAD（true 才上传，不传只导出验签名）、CLIENT（mock 是演示版）、THINKTIN_BUILD_NUMBER（构建号，
+  # 用 GitHub 工作流的运行序号，和 GitHub 上打的包共用一个只增不减的序号；Codemagic 自己的 BUILD_NUMBER 不用）。
+  ios-testflight:
+    name: iOS TestFlight (archive, sign, upload)
+    instance_type: mac_mini_m2
+    max_build_duration: 120
+    environment:
+      xcode: latest
+      groups:
+        - testflight
+      vars:
+        CARGO_INCREMENTAL: "0"
+        # Siting (Shenzhen) 的开发者团队（不是密钥，签名的 App 里都看得到）。
+        TEAM_ID: 5BUH46M229
+    cache:
+      cache_paths:
+        - $HOME/.cargo/registry
+        - $HOME/.cargo/git
+    scripts:
+      - name: Version and build number
+        script: |
+          set -euo pipefail
+          version=$(sed -n 's/^ *MARKETING_VERSION: "\(.*\)"/\1/p' apps/apple/project.yml | head -n 1)
+          # App Store 只认 1 到 3 段数字的版本号。
+          if ! [[ "$version" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
+            echo "版本号 '${version}' 不对：看 apps/apple/project.yml 的 MARKETING_VERSION"
+            exit 1
+          fi
+          build="${THINKTIN_BUILD_NUMBER:-}"
+          if ! [[ "$build" =~ ^[0-9]+$ ]]; then
+            echo "没有构建号（THINKTIN_BUILD_NUMBER）：从 GitHub 的 iOS release 工作流发起（builder 选 codemagic），构建号用它的运行序号"
+            exit 1
+          fi
+          mkdir -p "$HOME/thinktin-release" "$CM_BUILD_DIR/logs"
+          {
+            echo "MARKETING=$version"
+            echo "BUILD=$build"
+            echo "RUNNER_TEMP=$HOME/thinktin-release"
+          } >> "$CM_ENV"
+          if [[ "${CLIENT:-}" == "mock" ]]; then echo "演示版：用演示数据，不连服务器"; fi
+          echo "版本 ${version}，构建号 ${build}，上传 ${UPLOAD:-false}"
+      - name: Tools (Rust, cmake, XcodeGen, Python)
+        script: |
+          set -euo pipefail
+          xcodebuild -version
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          fi
+          export PATH="$HOME/.cargo/bin:$PATH"
+          rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios aarch64-apple-darwin x86_64-apple-darwin
+          brew install cmake xcodegen
+          # 许可证清单工具要 Python 3.11 以上；App Store Connect 的脚本要 PyJWT，装在自己的 venv 里（Homebrew 的 Python 不许直接 pip）。
+          python=python3
+          if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)'; then
+            brew install python@3.12
+            python="$(brew --prefix python@3.12)/libexec/bin/python3"
+          fi
+          "$python" -m venv "$HOME/asc-venv"
+          "$HOME/asc-venv/bin/python" -m pip install --quiet 'pyjwt[crypto]==2.10.1'
+          echo "PATH=$HOME/asc-venv/bin:$PATH" >> "$CM_ENV"
+          rustc --version; xcodegen --version; "$HOME/asc-venv/bin/python" --version
+      - name: Install the App Store Connect API key
+        script: tools/apple/asc_install_key.sh
+      - name: Check the API key with App Store Connect
+        script: python3 tools/apple/asc_key_check.py "$KEY_ID" "$ISSUER_ID" "$RUNNER_TEMP/AuthKey.p8" cn.thinktin.Thinktin
+      # 全部目标（真机 arm64 归档要用；不带 --ci）。
+      - name: Build ThinktinCore (all Apple targets)
+        script: tools/client-core/build-apple.sh target/apple
+      - name: Generate the Xcode project
+        working_directory: apps/apple
+        script: |
+          set -euo pipefail
+          xcodegen generate
+          # 发 TestFlight / App Store 的包用生产环境的 APNs（project.yml 里是给 Xcode 直装用的 development）。
+          plutil -replace aps-environment -string production Thinktin/Thinktin.entitlements
+          plutil -p Thinktin/Thinktin.entitlements
+      # 和 ios-release.yml 一样：每次用 API key 现建一张分发证书（私钥只在这台机器的临时钥匙串里）和两个 App Store 描述文件，
+      # 手动签名；跑完在 publishing 的脚本里撤销、删掉（构建失败也会跑）。
+      - name: Signing certificate and profiles
+        script: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/signing"
+          destination=export
+          if [[ "${UPLOAD:-false}" == "true" ]]; then destination=upload; fi
+          python3 tools/apple/asc_signing.py setup "$KEY_ID" "$ISSUER_ID" "$RUNNER_TEMP/AuthKey.p8" "$out" \
+            "run ${BUILD} codemagic" "$TEAM_ID" "$destination" cn.thinktin.Thinktin cn.thinktin.Thinktin.Widgets
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password=$(openssl rand -hex 16)
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          # 苹果的中间证书（WWDR G3），镜像里一般有，没有时签名找不到完整的证书链。
+          if curl -fsSL -o "$RUNNER_TEMP/AppleWWDRCAG3.cer" https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer; then
+            security import "$RUNNER_TEMP/AppleWWDRCAG3.cer" -k "$keychain" || true
+          fi
+          security import "$out/signing.p12" -k "$keychain" -P "$(cat "$out/p12-password")" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          security find-identity -v -p codesigning "$keychain"
+          for dir in "$HOME/Library/MobileDevice/Provisioning Profiles" "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"; do
+            mkdir -p "$dir"
+            cp "$out"/*.mobileprovision "$dir"/
+          done
+      - name: Archive
+        working_directory: apps/apple
+        script: |
+          set -o pipefail
+          log="$CM_BUILD_DIR/logs/archive.log"
+          if ! xcodebuild archive \
+            -project Thinktin.xcodeproj \
+            -scheme Thinktin \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath "$RUNNER_TEMP/Thinktin.xcarchive" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -skipPackagePluginValidation \
+            -xcconfig "$RUNNER_TEMP/signing/signing.xcconfig" \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            THINKTIN_CLIENT="${CLIENT:-}" \
+            MARKETING_VERSION="$MARKETING" \
+            CURRENT_PROJECT_VERSION="$BUILD" \
+            > "$log" 2>&1; then
+            # 完整日志在产物 logs/archive.log；这里把出错的行放在最后，远程跟踪时只看日志末尾也能看到。
+            tail -n 40 "$log"
+            echo "== 出错的行"
+            grep -E 'error:|\*\* ARCHIVE FAILED' "$log" | head -n 40
+            exit 1
+          fi
+          tail -n 5 "$log"
+          # 包里带上的 entitlements（推送、App Group、Time Sensitive）：出问题时对照描述文件看。
+          for bundle in "$RUNNER_TEMP"/Thinktin.xcarchive/Products/Applications/*.app \
+            "$RUNNER_TEMP"/Thinktin.xcarchive/Products/Applications/*.app/PlugIns/*.appex; do
+            echo "== ${bundle##*/}"
+            codesign -d --entitlements - --xml "$bundle" 2>/dev/null | plutil -p - || true
+          done
+      # 不上传时也导出一次（destination export），验证签名走得通。导出选项由 asc_signing.py 生成（手动签名、两个描述文件）。
+      - name: Export and upload
+        working_directory: apps/apple
+        script: |
+          set -o pipefail
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/Thinktin.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/signing/ExportOptions.plist" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/AuthKey.p8" \
+            -authenticationKeyID "$KEY_ID" \
+            -authenticationKeyIssuerID "$ISSUER_ID" \
+            2>&1 | tee "$CM_BUILD_DIR/logs/export.log"
+    artifacts:
+      - logs/*.log
+    publishing:
+      scripts:
+        # 撤销这次的分发证书、删掉描述文件、临时钥匙串和私钥（构建失败也会跑；被取消、超时的不跑，下次 setup 会先删旧的描述文件）。
+        - name: Revoke the signing certificate
+          script: |
+            if [[ -z "${RUNNER_TEMP:-}" ]]; then exit 0; fi
+            if [[ -f "$RUNNER_TEMP/signing/state.json" ]]; then
+              python3 tools/apple/asc_signing.py cleanup "$KEY_ID" "$ISSUER_ID" "$RUNNER_TEMP/AuthKey.p8" "$RUNNER_TEMP/signing" || true
+            fi
+            security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
+            rm -rf "$RUNNER_TEMP/signing"
+            rm -f "$RUNNER_TEMP"/AuthKey*.p8

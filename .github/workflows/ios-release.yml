@@ -34,6 +34,11 @@ on:
         description: 只做 TestFlight 内部测试：建内部测试组、把团队里的人加进去并发邀请（不打包，在 Linux 上跑）
         type: boolean
         default: false
+      builder:
+        description: 在哪里打包：github（GitHub 的 Mac）或 codemagic（GitHub 的 Mac 排不上时；要 THINKTIN_AI_CODEMAGIC_API_KEY）
+        type: choice
+        options: [github, codemagic]
+        default: github
 
 # 同时只发一个版本，不取消正在上传的。
 concurrency:
@@ -83,7 +88,7 @@ jobs:
 
   testflight:
     name: Archive and upload to TestFlight
-    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.invite_testers }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (!inputs.invite_testers && inputs.builder != 'codemagic') }}
     needs: key-check
     runs-on: ${{ inputs.runner || (vars.IOS_RELEASE_USE_INTEL == 'true' && 'macos-15-intel') || 'macos-26' }}
     timeout-minutes: 150
@@ -269,6 +274,35 @@ jobs:
             ${{ runner.temp }}/archive.log
             ${{ runner.temp }}/export.log
           if-no-files-found: ignore
+
+  # 同样的打包、上传放到 Codemagic 的 Mac 上（codemagic.yaml 的 ios-testflight）：这里只发起、跟到结束、把每一步的结果和
+  # 失败步骤的日志末尾打出来。苹果的密钥在 Codemagic 的 testflight 变量组里，这里只传不机密的参数；构建号用本工作流的运行序号。
+  codemagic:
+    name: Archive and upload on Codemagic
+    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.invite_testers && inputs.builder == 'codemagic' }}
+    needs: key-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    environment: "Test flight"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run ios-testflight on Codemagic
+        env:
+          THINKTIN_AI_CODEMAGIC_API_KEY: ${{ secrets.THINKTIN_AI_CODEMAGIC_API_KEY }}
+          UPLOAD: ${{ inputs.upload }}
+          CLIENT: ${{ inputs.demo && 'mock' || '' }}
+        run: |
+          python tools/apple/codemagic_build.py ios-testflight "$GITHUB_REF_NAME" \
+            "UPLOAD=$UPLOAD" "CLIENT=$CLIENT" "THINKTIN_BUILD_NUMBER=${{ github.run_number }}"
+      # GitHub 这边被取消时，Codemagic 上的构建也取消（不白花 Codemagic 的分钟数）。
+      - name: Cancel the Codemagic build
+        if: ${{ cancelled() && env.CODEMAGIC_BUILD_ID != '' }}
+        env:
+          THINKTIN_AI_CODEMAGIC_API_KEY: ${{ secrets.THINKTIN_AI_CODEMAGIC_API_KEY }}
+        run: python tools/apple/codemagic_build.py --cancel "$CODEMAGIC_BUILD_ID"
 
   # TestFlight 内部测试员：内部测试员只能是 App Store Connect 团队里的人，所以不收邮箱参数（仓库公开，日志也公开），
   # 由 tools/apple/asc_testflight.py 读团队用户，加进内部测试组、发邀请邮件。
