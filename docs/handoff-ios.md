@@ -77,7 +77,7 @@ GitHub → Actions → **iOS release** → Run workflow（分支选 `main`）：
 4. GitHub 的苹果芯片 Mac 容量不够：排队 15 分钟后被取消（日志注解 “The job was not acquired by Runner”）。手动发版选 Intel；PR 上的“iOS app on the simulator”检查被取消时重跑一次（这次 PR #16 重跑就过了）。
 5. **签名**：Xcode 自动签名在 CI 上会申请“这台机器”的开发证书，上一次的私钥不在 → “already has an Apple Development signing certificate for this machine”；
    iOS 26 SDK 不许临时签名（`CODE_SIGN_IDENTITY=-`）。所以改成每次现建 Apple Distribution 证书、手动签名（`signing.xcconfig` 按 target 名选描述文件，导出选项由脚本生成）。
-   **分发证书有数量上限**：申请时 409 就去开发者网站 Certificates 里撤销不用的（CI 每次都会撤销自己建的那张）。
+   **分发证书有数量上限**：申请时 409 就去开发者网站 Certificates 里撤销不用的（CI 每次都会撤销自己建的那张；没收尾的运行——崩了、被取消、超时——留下的描述文件和它挂的证书，下一次 `asc_signing.py setup` 先清掉）。
 6. App Group 没关联到 App ID → 描述文件和 entitlements 对不上。要在开发者网站上每个 App ID 的 App Groups → Configure 里勾上。
 7. 编完 Rust 后第一次连苹果遇到 DNS 失败，整次白跑：脚本现在都会退避重试。
 8. 本地验证：Linux 上 `tools/apple/uicheck/run.sh test` **只编不跑** App 的 `ThinktinTests`，单独跑 `cd tools/apple/uicheck && swift test --skip-build --filter 'ThinktinTests.*clientKind'`（要 App 包的那些测试在 Linux 上本来就过不了）。

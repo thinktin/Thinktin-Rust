@@ -191,7 +191,8 @@ workflows:
   # ThinktinCore → xcodegen → 现建分发证书和两个描述文件 → 手动签名归档 → 导出、上传 → 撤销证书、删描述文件。
   # 苹果的密钥放在 Codemagic 这个 App 的 testflight 变量组里：ASC_KEY_ID、ASC_ISSUER_ID、ASC_KEY_P8（都勾 Secure）。
   # 发起时传的变量：UPLOAD（true 才上传，不传只导出验签名）、CLIENT（mock 是演示版）、THINKTIN_BUILD_NUMBER（构建号，
-  # 用 GitHub 工作流的运行序号，和 GitHub 上打的包共用一个只增不减的序号；Codemagic 自己的 BUILD_NUMBER 不用）。
+  # 用 GitHub 工作流的运行序号，和 GitHub 上打的包共用一个只增不减的序号；Codemagic 自己的 BUILD_NUMBER 不用）、
+  # THINKTIN_COMMIT（GitHub 那次运行的提交，对不上时提醒）。按 ios-v* 标签构建时版本号取标签，否则取 project.yml。
   ios-testflight:
     name: iOS TestFlight (archive, sign, upload)
     instance_type: mac_mini_m2
@@ -212,11 +213,19 @@ workflows:
       - name: Version and build number
         script: |
           set -euo pipefail
-          version=$(sed -n 's/^ *MARKETING_VERSION: "\(.*\)"/\1/p' apps/apple/project.yml | head -n 1)
+          if [[ "${CM_TAG:-}" == ios-v* ]]; then
+            version="${CM_TAG#ios-v}"
+          else
+            version=$(sed -n 's/^ *MARKETING_VERSION: "\(.*\)"/\1/p' apps/apple/project.yml | head -n 1)
+          fi
           # App Store 只认 1 到 3 段数字的版本号。
           if ! [[ "$version" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
-            echo "版本号 '${version}' 不对：看 apps/apple/project.yml 的 MARKETING_VERSION"
+            echo "版本号 '${version}' 不对：标签要像 ios-v0.2.0，不按标签时看 apps/apple/project.yml 的 MARKETING_VERSION"
             exit 1
+          fi
+          head=$(git rev-parse HEAD)
+          if [[ -n "${THINKTIN_COMMIT:-}" && "$head" != "$THINKTIN_COMMIT" ]]; then
+            echo "注意：Codemagic 取到的提交 ${head} 和 GitHub 那次运行的 ${THINKTIN_COMMIT} 不一样（中间又推了新提交），打的是 ${head}"
           fi
           build="${THINKTIN_BUILD_NUMBER:-}"
           if ! [[ "$build" =~ ^[0-9]+$ ]]; then
@@ -343,7 +352,8 @@ workflows:
       - logs/*.log
     publishing:
       scripts:
-        # 撤销这次的分发证书、删掉描述文件、临时钥匙串和私钥（构建失败也会跑；被取消、超时的不跑，下次 setup 会先删旧的描述文件）。
+        # 撤销这次的分发证书、删掉描述文件、临时钥匙串和私钥（构建失败也会跑；被取消、超时的不跑，留下的描述文件和它挂的
+        # 证书由下一次 asc_signing.py setup 先清掉）。
         - name: Revoke the signing certificate
           script: |
             if [[ -z "${RUNNER_TEMP:-}" ]]; then exit 0; fi

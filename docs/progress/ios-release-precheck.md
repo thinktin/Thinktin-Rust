@@ -8,7 +8,11 @@
 - Codemagic 备用：`codemagic.yaml` 加 `ios-testflight`（和 GitHub 的 testflight 作业同样的步骤；证书在 publishing 脚本里撤销，
   构建失败也跑）；`ios-release.yml` 加输入 `builder`（github / codemagic）和作业 `codemagic`（Linux 上发起、跟踪，
   `tools/apple/codemagic_build.py`，只用标准库，假的 Codemagic 接口上测过成功、失败、401、没令牌）。说明在 docs/ios-release.md 2.2。
-进行中：run 25（macos-26）在排 GitHub 的 Mac；Codemagic 那条路等用户配两处（GitHub 的 THINKTIN_AI_CODEMAGIC_API_KEY、
+- 审查（5 个审查员 + 逐条反驳）后改的：被取消、超时没收尾的运行留下的分发证书由下一次 setup 先撤销（只撤 ThinkTin CI 描述文件挂的证书）；
+  发起构建（POST /builds）不再在 5xx、读超时后重发（免得一次打两个）；从标签触发时 Codemagic 按标签取代码、版本号取标签；
+  失败日志抄到 GitHub 公开日志前遮住密钥 ID、Issuer ID；文档写明环境加审批人时一次发版要点两下。
+- run 25（macos-26）也没排上 GitHub 的 Mac（17:48 GitHub 又报 Actions 故障）；run 26 用 builder=codemagic，用户配好了两处。
+进行中：run 26 在 Codemagic 上跑；Codemagic 那条路等用户配两处（GitHub 的 THINKTIN_AI_CODEMAGIC_API_KEY、
   Codemagic 的 testflight 变量组）。
 下一步：用户配好就 `builder=codemagic` 跑一次；用户说“合并”再合进 main。
 坑和决定：

@@ -295,8 +295,11 @@ jobs:
           UPLOAD: ${{ inputs.upload }}
           CLIENT: ${{ inputs.demo && 'mock' || '' }}
         run: |
-          python tools/apple/codemagic_build.py ios-testflight "$GITHUB_REF_NAME" \
-            "UPLOAD=$UPLOAD" "CLIENT=$CLIENT" "THINKTIN_BUILD_NUMBER=${{ github.run_number }}"
+          # 从标签手动触发时让 Codemagic 也按标签取代码（版本号取标签，和 testflight 作业一样）。
+          ref="$GITHUB_REF_NAME"
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then ref="tag:$GITHUB_REF_NAME"; fi
+          python tools/apple/codemagic_build.py ios-testflight "$ref" \
+            "UPLOAD=$UPLOAD" "CLIENT=$CLIENT" "THINKTIN_BUILD_NUMBER=${{ github.run_number }}" "THINKTIN_COMMIT=$GITHUB_SHA"
       # GitHub 这边被取消时，Codemagic 上的构建也取消（不白花 Codemagic 的分钟数）。
       - name: Cancel the Codemagic build
         if: ${{ cancelled() && env.CODEMAGIC_BUILD_ID != '' }}

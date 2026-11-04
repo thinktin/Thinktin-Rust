@@ -2,17 +2,18 @@
 """在 Codemagic 上发起一次构建并跟到结束（.github/workflows/ios-release.yml 选 builder=codemagic 时，GitHub 的 macOS 机器排不上，
 改用 Codemagic 的 Mac 打包、传 TestFlight）。
 
-    codemagic_build.py <workflow id> <分支> [变量=值 ...]
+    codemagic_build.py <workflow id> <分支，或者 tag:<标签>> [变量=值 ...]
 
 令牌从环境变量 THINKTIN_AI_CODEMAGIC_API_KEY 读（GitHub 的 Test flight 环境里的 secret），不打印。应用 id 默认是 ThinkTin
 在 Codemagic 上的那个，环境变量 CODEMAGIC_APP_ID 可以换。变量=值 作为这次构建的环境变量传过去（只传不机密的：UPLOAD、
 CLIENT、构建号这些；苹果的密钥在 Codemagic 的 testflight 变量组里，Secure）。
 
-每一步的状态变了就打印；有步骤失败时打印它日志的最后几十行。构建 id 写进 $GITHUB_ENV 的 CODEMAGIC_BUILD_ID（取消时用
+每一步的状态变了就打印；有步骤失败时打印它日志的最后几十行（GitHub 的日志是公开的：密钥 ID、Issuer ID 这类先遮住）。构建 id 写进 $GITHUB_ENV 的 CODEMAGIC_BUILD_ID（取消时用
 `codemagic_build.py --cancel <构建 id>`）。退出码：0 构建成功；1 失败、超时、被取消，或者发不起来。只用标准库。
 """
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -38,8 +39,13 @@ def token() -> str:
     return value
 
 
-def call(method: str, path: str, body: dict | None = None, *, raw: bool = False):
-    """返回 (HTTP 状态, JSON 或文本)；连不上时状态是 0。网络抖动、429、5xx 退避重试（POST 只在没发出去时重试）。"""
+def call(method: str, path: str, body: dict | None = None, *, raw: bool = False, idempotent: bool | None = None):
+    """返回 (HTTP 状态, JSON 或文本)；连不上时状态是 0，结果不明（请求可能已经到了）时是 -1。
+
+    幂等的请求（GET、取消）遇到网络抖动、429、5xx 退避重试；发起构建（POST /builds）不幂等，只在 429 或者请求没发完时
+    （urllib 把连接、发送阶段的错误包成 URLError）重试；读响应时断了、5xx 都不重发，免得一次发起变成两个构建。"""
+    if idempotent is None:
+        idempotent = method == "GET"
     data = json.dumps(body).encode() if body is not None else None
     url = path if path.startswith("https://") else API + path
     reason = ""
@@ -52,9 +58,12 @@ def call(method: str, path: str, body: dict | None = None, *, raw: bool = False)
                 payload = response.read()
                 if raw:
                     return response.status, payload.decode("utf-8", "replace")
-                return response.status, json.loads(payload or b"{}")
+                try:
+                    return response.status, json.loads(payload or b"{}")
+                except ValueError:
+                    return response.status, {"message": payload[:300].decode("utf-8", "replace")}
         except urllib.error.HTTPError as error:
-            if (error.code == 429 or error.code >= 500) and attempt < 5:
+            if (error.code == 429 or (idempotent and error.code >= 500)) and attempt < 5:
                 time.sleep(attempt * 10)
                 continue
             text = error.read().decode("utf-8", "replace")
@@ -64,10 +73,32 @@ def call(method: str, path: str, body: dict | None = None, *, raw: bool = False)
                 return error.code, json.loads(text or "{}")
             except ValueError:
                 return error.code, {"message": text[:300]}
-        except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
+        except urllib.error.URLError as error:
+            # 连接或者发送阶段就失败了（DNS、拒绝连接、连接超时）：Codemagic 没收到完整的请求，重发安全。
             reason = str(error)
             time.sleep(attempt * 10)
+        except (TimeoutError, ConnectionError) as error:
+            # 请求发出去之后才断的（读响应超时、连接被关）。
+            reason = str(error)
+            if not idempotent:
+                return -1, {"message": reason}
+            time.sleep(attempt * 10)
     return 0, {"message": reason}
+
+
+# 从 Codemagic 的日志抄到 GitHub 的公开日志之前遮住：xcodebuild 的 -authenticationKeyID / -authenticationKeyIssuerID 参数，
+# 和形如 Issuer ID 的 UUID（Codemagic 的 Secure 变量只遮原样的值，脚本去掉空格、改小写后的就遮不住了）。
+REDACTIONS = (
+    (re.compile(r"(-authenticationKey(?:ID|IssuerID))\s+\S+"), r"\1 ***"),
+    (re.compile(r"(KEY_ID|ISSUER_ID)=\S+"), r"\1=***"),
+    (re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"), "***"),
+)
+
+
+def redact(line: str) -> str:
+    for pattern, replacement in REDACTIONS:
+        line = pattern.sub(replacement, line)
+    return line
 
 
 def steps(build: dict) -> list[dict]:
@@ -96,15 +127,25 @@ def print_log_tail(step: dict) -> None:
     lines = text.splitlines()
     print(f"::group::「{step['name']}」日志的最后 {min(LOG_TAIL, len(lines))} 行")
     for line in lines[-LOG_TAIL:]:
-        print(line)
+        print(redact(line))
     print("::endgroup::")
 
 
-def start(workflow: str, branch: str, variables: dict[str, str]) -> str:
-    body = {"appId": APP_ID, "workflowId": workflow, "branch": branch}
+def start(workflow: str, ref: str, variables: dict[str, str]) -> str:
+    body = {"appId": APP_ID, "workflowId": workflow}
+    if ref.startswith("tag:"):
+        body["tag"] = ref[len("tag:") :]
+    else:
+        body["branch"] = ref
     if variables:
         body["environment"] = {"variables": variables}
     status, response = call("POST", "/builds", body)
+    if status == -1:
+        print(
+            f"::error::发起 Codemagic 构建时连接断了，不知道建没建成（{response.get('message', '')}）：先到 Codemagic 网页上看有没有"
+            "刚发起的 ios-testflight，没有再重跑这个工作流（不自动重发，免得同一个构建号打两次）"
+        )
+        sys.exit(1)
     if status not in (200, 201) or not response.get("buildId"):
         message = response.get("message") or response.get("error") or response
         hint = ""
@@ -112,6 +153,8 @@ def start(workflow: str, branch: str, variables: dict[str, str]) -> str:
             hint = f"：{TOKEN_VARIABLE} 不对或者已经作废，到 Codemagic 重新复制令牌"
         elif status == 404:
             hint = "：Codemagic 上找不到这个应用（CODEMAGIC_APP_ID）或者分支"
+        elif status >= 500:
+            hint = "：Codemagic 那边出错，构建可能已经建了；先到 Codemagic 网页上看有没有刚发起的，没有再重跑"
         print(f"::error::Codemagic 发起构建失败（{status} {message}）{hint}")
         sys.exit(1)
     build_id = response["buildId"]
@@ -164,9 +207,10 @@ def follow(build_id: str, deadline_minutes: int) -> int:
 
 
 def cancel(build_id: str) -> int:
-    status, response = call("POST", f"/builds/{build_id}/cancel")
+    status, response = call("POST", f"/builds/{build_id}/cancel", idempotent=True)
+    # 208：构建已经结束了。
     print(f"取消 Codemagic 构建 {build_id}：{status}")
-    return 0 if status in (200, 202, 204) else 1
+    return 0 if status in (200, 202, 204, 208) else 1
 
 
 def main(argv: list[str]) -> int:
@@ -175,7 +219,7 @@ def main(argv: list[str]) -> int:
     if len(argv) < 3:
         print(__doc__, file=sys.stderr)
         return 2
-    workflow, branch = argv[1], argv[2]
+    workflow, ref = argv[1], argv[2]
     variables: dict[str, str] = {}
     for pair in argv[3:]:
         name, separator, value = pair.partition("=")
@@ -184,7 +228,7 @@ def main(argv: list[str]) -> int:
             return 2
         variables[name] = value
     token()
-    build_id = start(workflow, branch, variables)
+    build_id = start(workflow, ref, variables)
     return follow(build_id, int(os.environ.get("CODEMAGIC_WAIT_MINUTES") or "140"))
 
 

@@ -132,14 +132,29 @@ def bundle_id_resource(client: Client, identifier: str) -> str:
 
 
 def remove_stale_profiles(client: Client) -> None:
-    """以前的运行崩了没删掉的描述文件（名字以 ThinkTin CI 开头）先删。"""
+    """以前的运行没收尾（崩了、被取消、超时；Codemagic 被取消时不跑收尾脚本）留下的描述文件（名字以 ThinkTin CI 开头）
+    先删，它们用的分发证书也撤销。这些描述文件只会挂 CI 自己建的证书，手动建的证书不会被动到。"""
     status, body = client.call("GET", f"/v1/profiles?filter[name]={urllib.parse.quote(PROFILE_PREFIX)}&limit=200")
     if status != 200:
         return
+    certificates: list[str] = []
     for item in body.get("data", []):
-        if item["attributes"].get("name", "").startswith(PROFILE_PREFIX):
-            client.call("DELETE", f"/v1/profiles/{item['id']}")
-            print(f"删掉以前留下的描述文件：{item['attributes'].get('name')}")
+        if not item["attributes"].get("name", "").startswith(PROFILE_PREFIX):
+            continue
+        # 先查证书再删描述文件：描述文件删了就查不到它挂的是哪张证书了。
+        status, linked = client.call("GET", f"/v1/profiles/{item['id']}/certificates?limit=10")
+        if status == 200:
+            for cert in linked.get("data", []):
+                if cert["id"] not in certificates:
+                    certificates.append(cert["id"])
+        client.call("DELETE", f"/v1/profiles/{item['id']}")
+        print(f"删掉以前留下的描述文件：{item['attributes'].get('name')}")
+    for cert_id in certificates:
+        status, body = client.call("DELETE", f"/v1/certificates/{cert_id}")
+        if status in (204, 404):
+            print(f"撤销以前留下的分发证书：{status}")
+        else:
+            print(f"::warning::撤销以前留下的分发证书没成功（{status} {apple_error(body)}）")
 
 
 def setup(client: Client, out: str, tag: str, team_id: str, destination: str, bundles: list[str]) -> None:
