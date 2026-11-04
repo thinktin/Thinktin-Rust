@@ -129,7 +129,8 @@ fun RunSource.labelRes(): Int = when (this) {
 fun RunHeaderRow(block: RunBlock, nowMs: Long, onOpenRun: (String) -> Unit) {
     val stateLabel = stringResource(block.state.labelRes())
     val parts = buildList {
-        add(stringResource((block.run?.source ?: RunSource.Unknown).labelRes()))
+        // 运行记录还没取到（别的设备刚发的，ViewModel 正在取）：先只说“运行”，取到以后按来源显示。
+        add(stringResource(block.run?.source?.labelRes() ?: R.string.chat_block_run))
         add(stateLabel)
         block.run?.durationMs(nowMs)?.let { add(durationText(it)) }
         block.run?.tokensUsed?.takeIf { it > 0 }?.let { add(stringResource(R.string.chat_block_tokens, formatTokens(it))) }
