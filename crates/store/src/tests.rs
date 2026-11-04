@@ -4849,7 +4849,7 @@ async fn urgent_messages_go_first_and_untargeted_holders_get_interrupted() {
     tx.rollback().await.unwrap();
 }
 
-/// 受控出网通道（2.7）：实例的档位能改（默认只连模型）；流量按天预留，几个副本同时预留合计也不超过上限，没用完的
+/// 受控出网通道（2.7）：实例的档位能改（默认 `dev`）；流量按天预留，几个副本同时预留合计也不超过上限，没用完的
 /// 退回；日志和用量只看得到自己的；到期删除。
 #[tokio::test]
 async fn egress_traffic_is_reserved_within_the_daily_limit() {
@@ -4863,7 +4863,7 @@ async fn egress_traffic_is_reserved_within_the_daily_limit() {
     let ia = instance(db, a).await;
     assert_eq!(
         (ia.egress_mode, ia.egress_hosts.len()),
-        (EgressMode::Model, 0)
+        (EgressMode::Dev, 0)
     );
     let mut tx = db.tenant(a).await.unwrap();
     tx.update_instance(
@@ -4990,4 +4990,256 @@ async fn egress_traffic_is_reserved_within_the_daily_limit() {
     assert_eq!(tx.egress_used(ia.id, day).await.unwrap(), 0);
     assert_eq!(tx.egress_used(ia.id, next).await.unwrap(), 100);
     tx.rollback().await.unwrap();
+}
+
+/// 出网要问用户的网站（2.7）：同一个网站只有一条在等，后来的任务接着等这条；一个实例最多几个在等；“访问一次”“拒绝”
+/// 只对那次任务有效，“一直允许”记进实例的网站；别的用户看不到、答不了；后台提醒一次、过期、到期删除。
+#[tokio::test]
+async fn egress_requests_are_asked_once_and_decided_per_task() {
+    use proto::domain::{EgressDecision, RunState};
+
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let a = user(db, "+8613800000911").await;
+    let b = user(db, "+8613800000912").await;
+    let ia = instance(db, a).await;
+    let r1 = queue_run(db, a, &ia, "one").await;
+    let set_state = |run: proto::domain::RunId, state: RunState| async move {
+        sqlx::query("UPDATE runs SET state = $2 WHERE id = $1")
+            .bind(run.0)
+            .bind(state.as_str())
+            .execute(db.pool())
+            .await
+            .unwrap();
+    };
+
+    let mut g = db.llmgw().await.unwrap();
+    // 排队的不算在做。
+    assert_eq!(g.egress_current_run(ia.id).await.unwrap(), None);
+    set_state(r1.id, RunState::Running).await;
+    assert_eq!(g.egress_current_run(ia.id).await.unwrap(), Some(r1.id));
+    assert_eq!(
+        g.egress_decision(ia.id, "example.com", Some(r1.id))
+            .await
+            .unwrap(),
+        None
+    );
+    let q1 = g
+        .egress_ask(a, ia.id, "example.com", Some(r1.id), 2)
+        .await
+        .unwrap()
+        .unwrap();
+    // 同一个网站再问还是那一条，不占个数。
+    assert_eq!(
+        g.egress_ask(a, ia.id, "example.com", Some(r1.id), 2)
+            .await
+            .unwrap(),
+        Some(q1)
+    );
+    let q2 = g
+        .egress_ask(a, ia.id, "example.org", Some(r1.id), 2)
+        .await
+        .unwrap()
+        .unwrap();
+    // 满了：新网站不再问。
+    assert_eq!(
+        g.egress_ask(a, ia.id, "example.net", Some(r1.id), 2)
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        g.egress_request_status(q1).await.unwrap(),
+        Some(("pending".to_owned(), Some(r1.id)))
+    );
+    g.commit().await.unwrap();
+
+    // 后台提醒一次。
+    let mut w = db.worker().await.unwrap();
+    let asks = w.claim_egress_asks(10).await.unwrap();
+    assert_eq!(asks.len(), 2);
+    assert_eq!(
+        (asks[0].user_id, asks[0].instance_name.as_str()),
+        (a, ia.name.as_str())
+    );
+    assert!(w.claim_egress_asks(10).await.unwrap().is_empty());
+    w.commit().await.unwrap();
+
+    // 别的用户看不到、答不了。
+    let mut other = db.tenant(b).await.unwrap();
+    assert!(
+        other
+            .egress_requests(None, true, 10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(matches!(
+        other
+            .decide_egress_request(q1, EgressDecision::Always)
+            .await,
+        Err(Error::NotFound)
+    ));
+    other.rollback().await.unwrap();
+
+    let mut tx = db.tenant(a).await.unwrap();
+    let pending = tx.egress_requests(Some(ia.id), true, 10).await.unwrap();
+    assert_eq!(pending.len(), 2);
+    let once = tx
+        .decide_egress_request(q1, EgressDecision::Once)
+        .await
+        .unwrap();
+    assert_eq!((once.status.as_str(), once.run_id), ("once", Some(r1.id)));
+    assert!(matches!(
+        tx.decide_egress_request(q1, EgressDecision::Deny).await,
+        Err(Error::Conflict(_))
+    ));
+    tx.decide_egress_request(q2, EgressDecision::Deny)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+
+    let mut g = db.llmgw().await.unwrap();
+    assert_eq!(
+        g.egress_decision(ia.id, "example.com", Some(r1.id))
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("once")
+    );
+    assert_eq!(
+        g.egress_decision(ia.id, "example.org", Some(r1.id))
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("denied")
+    );
+    g.commit().await.unwrap();
+
+    // 下一个任务：“访问一次”“拒绝”都不算了，重新问。
+    set_state(r1.id, RunState::Succeeded).await;
+    let r2 = queue_run(db, a, &ia, "two").await;
+    set_state(r2.id, RunState::Running).await;
+    let mut g = db.llmgw().await.unwrap();
+    assert_eq!(g.egress_current_run(ia.id).await.unwrap(), Some(r2.id));
+    assert_eq!(
+        g.egress_decision(ia.id, "example.com", Some(r2.id))
+            .await
+            .unwrap(),
+        None
+    );
+    let q3 = g
+        .egress_ask(a, ia.id, "example.com", Some(r2.id), 2)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_ne!(q3, q1);
+    g.commit().await.unwrap();
+
+    // 一直允许：记进实例的网站，已经有了不重复记。
+    let mut tx = db.tenant(a).await.unwrap();
+    tx.decide_egress_request(q3, EgressDecision::Always)
+        .await
+        .unwrap();
+    assert_eq!(
+        tx.instance(ia.id).await.unwrap().egress_hosts,
+        vec!["example.com".to_owned()]
+    );
+    tx.commit().await.unwrap();
+    let mut g = db.llmgw().await.unwrap();
+    let q4 = g
+        .egress_ask(a, ia.id, "example.com", Some(r2.id), 2)
+        .await
+        .unwrap()
+        .unwrap();
+    g.commit().await.unwrap();
+    let mut tx = db.tenant(a).await.unwrap();
+    tx.decide_egress_request(q4, EgressDecision::Always)
+        .await
+        .unwrap();
+    assert_eq!(tx.instance(ia.id).await.unwrap().egress_hosts.len(), 1);
+    tx.commit().await.unwrap();
+
+    // 网站满了，“一直允许”不行，请求还在等。
+    sqlx::query("UPDATE instances SET egress_hosts = $2 WHERE id = $1")
+        .bind(ia.id.0)
+        .bind(
+            (0..proto::egress::MAX_HOSTS)
+                .map(|i| format!("h{i}.example.com"))
+                .collect::<Vec<_>>(),
+        )
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let mut g = db.llmgw().await.unwrap();
+    let q5 = g
+        .egress_ask(a, ia.id, "full.example.com", None, 2)
+        .await
+        .unwrap()
+        .unwrap();
+    g.commit().await.unwrap();
+    let mut tx = db.tenant(a).await.unwrap();
+    assert!(matches!(
+        tx.decide_egress_request(q5, EgressDecision::Always).await,
+        Err(Error::Invalid(_))
+    ));
+    tx.rollback().await.unwrap();
+
+    // 没有任务时的“访问一次”管一小时。
+    let mut tx = db.tenant(a).await.unwrap();
+    tx.decide_egress_request(q5, EgressDecision::Once)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let mut g = db.llmgw().await.unwrap();
+    assert_eq!(
+        g.egress_decision(ia.id, "full.example.com", None)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("once")
+    );
+    assert_eq!(
+        g.egress_decision(ia.id, "full.example.com", Some(r2.id))
+            .await
+            .unwrap(),
+        None
+    );
+    g.commit().await.unwrap();
+
+    // 等太久的过期；过期、答过的到期删除。
+    let mut g = db.llmgw().await.unwrap();
+    let q6 = g
+        .egress_ask(a, ia.id, "late.example.com", None, 5)
+        .await
+        .unwrap()
+        .unwrap();
+    g.commit().await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    assert_eq!(
+        w.expire_egress_asks(Utc::now() - Days::days(1), 100)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        w.expire_egress_asks(Utc::now() + Days::days(1), 100)
+            .await
+            .unwrap(),
+        1
+    );
+    w.purge_egress(
+        Utc::now() - Days::days(1),
+        (Utc::now() + Days::days(1)).date_naive(),
+        100,
+    )
+    .await
+    .unwrap();
+    w.commit().await.unwrap();
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM egress_requests WHERE instance_id = $1")
+        .bind(ia.id.0)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(n, 0, "{q6}");
 }

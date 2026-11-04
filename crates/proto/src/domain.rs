@@ -72,6 +72,7 @@ id_type!(
     ReportId,
     BoardPostId,
     PlanHookId,
+    EgressRequestId,
 );
 
 /// 字符串枚举的公共实现：和数据库里的取值一一对应。
@@ -518,25 +519,27 @@ pub struct Instance {
     /// “允许其他 agent 查我、问我”（8.9），默认打开。老的服务端没有，按打开算。
     #[serde(default = "default_true")]
     pub peer_access: bool,
-    /// 能上哪些网站（2.7），默认只连模型。老的服务端没有，按只连模型算；以后加了这个版本不认识的档位，也按只连模型
-    /// 显示（不让整个实例列表解析失败）。
+    /// 能上哪些网站（2.7）。默认是 `dev`：搜索和开发网站直接能用，别的网站第一次访问时问用户。以后加了这个版本不认识的
+    /// 档位，按只连模型显示（不让整个实例列表解析失败）。
     #[serde(default, deserialize_with = "lenient_egress_mode")]
     pub egress_mode: EgressMode,
-    /// 用户加的网站（[`crate::egress::normalize_host`] 整理过的写法），“开发网站”“自定义网站”档用。
+    /// 用户选了“一直允许”的网站（[`crate::egress::normalize_host`] 整理过的写法）。
     #[serde(default)]
     pub egress_hosts: Vec<String>,
 }
 
 str_enum!(
-    /// 实例能上哪些网站（2.7，受控出网通道，见 docs/egress.md）。内网、元数据地址、服务机自己哪一档都连不了。
+    /// 实例能上哪些网站（2.7，受控出网通道，见 docs/egress.md）。内网、元数据地址、服务机自己哪一档都连不了。用户
+    /// 2026-11-04 定：App 里不放档位开关，大家都是 `dev`；别的档位留着给以后的管理策略。
     EgressMode {
-        /// 只连模型（默认）。
+        /// 只连模型，也不问用户。
         Model = "model",
-        /// 常用开发网站（[`crate::egress::DEV_HOSTS`]）加上用户加的网站。
+        /// 默认：搜索（[`crate::egress::SEARCH_HOSTS`]）、开发网站（[`crate::egress::DEV_HOSTS`]）和用户一直允许的网站直接
+        /// 能用，别的网站问用户（访问一次 / 一直允许 / 拒绝）。
         Dev = "dev",
-        /// 只有用户加的网站。
+        /// 只有用户一直允许的网站直接能用，别的问用户。
         Custom = "custom",
-        /// 全部公网：用户自己打开，打开前提示风险。
+        /// 全部公网，不问。
         All = "all",
     }
 );
@@ -544,29 +547,63 @@ str_enum!(
 /// 认不出的档位按只连模型。
 fn lenient_egress_mode<'de, D: serde::Deserializer<'de>>(d: D) -> Result<EgressMode, D::Error> {
     let raw = String::deserialize(d)?;
-    Ok(raw.parse().unwrap_or_default())
+    Ok(raw.parse().unwrap_or(EgressMode::Model))
 }
 
 // 枚举由 `str_enum!` 生成，派生不了 Default。
 #[allow(clippy::derivable_impls)]
 impl Default for EgressMode {
     fn default() -> Self {
-        EgressMode::Model
+        EgressMode::Dev
     }
 }
 
 impl EgressMode {
-    /// 这一档放不放行 `host`（已经按 [`crate::egress::normalize_host`] 整理过）。
+    /// 这一档直接放行 `host` 吗（已经按 [`crate::egress::normalize_host`] 整理过）。不直接放行的，[`EgressMode::asks`] 的
+    /// 档位问用户。
     pub fn allows(self, host: &str, extra: &[String]) -> bool {
         match self {
             EgressMode::Model => false,
             EgressMode::Dev => {
-                crate::egress::DEV_HOSTS.contains(&host) || extra.iter().any(|h| h == host)
+                crate::egress::SEARCH_HOSTS.contains(&host)
+                    || crate::egress::DEV_HOSTS.contains(&host)
+                    || extra.iter().any(|h| h == host)
             }
             EgressMode::Custom => extra.iter().any(|h| h == host),
             EgressMode::All => true,
         }
     }
+
+    /// 不直接放行的网站要不要问用户。
+    pub fn asks(self) -> bool {
+        matches!(self, EgressMode::Dev | EgressMode::Custom)
+    }
+}
+
+str_enum!(
+    /// 用户对“agent 想访问某个网站”的回答（2.7）。
+    EgressDecision {
+        /// 只在当前这次任务里能访问。
+        Once = "once",
+        /// 这个 agent 以后都能直接访问（记进实例的 `egress_hosts`）。
+        Always = "always",
+        /// 这次任务里不再问。
+        Deny = "deny",
+    }
+);
+
+/// agent 想访问、要问用户的一个网站（2.7）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EgressRequest {
+    pub id: EgressRequestId,
+    pub instance_id: InstanceId,
+    pub host: String,
+    /// 问的时候实例在做的任务（“访问一次”“拒绝”只对它有效）。
+    pub run_id: Option<RunId>,
+    /// pending（等用户）、once、always、denied、expired（太久没人处理）。是字符串：以后加了新状态老版本照样解析。
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+    pub decided_at: Option<DateTime<Utc>>,
 }
 
 /// 用途说明最长这么多字（8.9）。
@@ -1020,6 +1057,9 @@ pub mod notice_subtype {
     pub const IM_CHANNEL_DISABLED: &str = "im_channel_disabled";
     /// 用户的内容举报处理完了。
     pub const REPORT_HANDLED: &str = "report_handled";
+    /// agent 想访问一个网站、要用户回答（2.7，访问一次 / 一直允许 / 拒绝；带 `instance_id`，用
+    /// `GET /v1/egress-requests` 列出来）。
+    pub const EGRESS_REQUEST: &str = "egress_request";
 }
 
 /// 共享看板的一条（8.10）：用户的 agent（或用户自己）写的进展、决定、待别人处理的事。写了不改，只能归档、删除。
