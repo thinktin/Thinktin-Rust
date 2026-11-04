@@ -84,8 +84,9 @@ pub struct Asker {
 
 impl Asker {
     pub async fn ask(&self, ask: &BrowserAsk) -> BrowserAskReply {
+        // 守门的硬上限：代理最多等 40 秒，这里再多给 2 秒（docs/browser.md 第 3.4 节）。
         let wait = Duration::from_secs(ask.wait_secs.unwrap_or(BROWSER_ASK_WAIT_SECS));
-        match tokio::time::timeout(wait + Duration::from_secs(5), self.post(ask)).await {
+        match tokio::time::timeout(wait + Duration::from_secs(2), self.post(ask)).await {
             Ok(Ok(r)) => r,
             Ok(Err(e)) => {
                 tracing::warn!(error = %e, "asking the egress proxy failed");

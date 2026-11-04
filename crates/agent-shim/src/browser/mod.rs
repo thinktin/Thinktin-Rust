@@ -200,7 +200,7 @@ impl BrowserService {
             return ToolResult::error(e);
         }
         let started = Instant::now();
-        let client = match tokio::time::timeout(CALL_TIMEOUT, self.ensure()).await {
+        let (client, failed) = match tokio::time::timeout(CALL_TIMEOUT, self.ensure()).await {
             Ok(Ok(c)) => c,
             Ok(Err(e)) => return ToolResult::error(e),
             Err(_) => return ToolResult::error("the browser did not start in time; try again"),
@@ -219,6 +219,10 @@ impl BrowserService {
         match result {
             Ok(Ok(v)) => tools::finish(v, &outcomes),
             Ok(Err(e)) => {
+                // Playwright MCP 退出了：下次调用重新起整套。
+                if e.code == crate::jsonrpc::RpcError::CLOSED {
+                    failed.store(true, Ordering::Release);
+                }
                 let mut r = ToolResult::error(format!("browser error: {}", e.message));
                 if let Some(line) = tools::status(&outcomes) {
                     r.content
@@ -240,7 +244,7 @@ impl BrowserService {
     }
 
     /// 拿到能用的一套：没有、挂了就（重新）起。
-    async fn ensure(&self) -> Result<Arc<mcp::McpClient>, String> {
+    async fn ensure(&self) -> Result<(Arc<mcp::McpClient>, Arc<AtomicBool>), String> {
         if self.unavailable.load(Ordering::Acquire) {
             return Err(UNAVAILABLE.into());
         }
@@ -248,7 +252,7 @@ impl BrowserService {
         if let Some(s) = guard.as_ref()
             && !s.failed.load(Ordering::Acquire)
         {
-            return Ok(s.mcp.clone());
+            return Ok((s.mcp.clone(), s.failed.clone()));
         }
         if let Some(old) = guard.take() {
             tracing::warn!("the browser failed; restarting it");
@@ -265,7 +269,7 @@ impl BrowserService {
             let n = self.starts.fetch_add(1, Ordering::AcqRel);
             match tokio::time::timeout(START_TIMEOUT, self.start(n)).await {
                 Ok(Ok(s)) => {
-                    let client = s.mcp.clone();
+                    let client = (s.mcp.clone(), s.failed.clone());
                     *guard = Some(s);
                     return Ok(client);
                 }
