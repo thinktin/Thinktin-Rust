@@ -142,9 +142,7 @@ pub async fn update(
     let mut t = s.db.tenant(who.user).await?;
     let before = t.instance(id).await?;
     let switched = req.peer_access.filter(|on| *on != before.peer_access);
-    let egress_changed = egress
-        .as_ref()
-        .filter(|(m, h)| *m != before.egress_mode || *h != before.egress_hosts);
+
     // 关了以后别人问它、还没答的问题也不答了（8.11）：提问方拿到“没问成”。先拿提问用的那把锁，同时在建的
     // 提问要么已经提交、这里取消得到，要么等这里提交后再看开关、被拒绝；先锁运行再改实例（和执行器同序）。
     if switched == Some(false) {
@@ -172,9 +170,9 @@ pub async fn update(
         },
     )
     .await?;
-    // 出网档位是安全相关的改动（尤其是“全部公网”），记审计。出口代理按它放行，已经开着的隧道最多半分钟后按新档位
-    // 重新核对。
-    if let Some((mode, hosts)) = egress_changed {
+    // 出网档位是安全相关的改动（尤其是“全部公网”），请求里带了就记审计（不和改之前的比：两台设备同时改时，
+    // 比较用的旧值可能已经过时，会漏记最后生效的那次）。出口代理按它放行，已经开着的隧道最多半分钟后按新档位重新核对。
+    if let Some((mode, hosts)) = &egress {
         t.audit(
             &who.actor(),
             "instance.egress",

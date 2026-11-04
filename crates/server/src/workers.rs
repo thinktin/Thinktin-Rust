@@ -54,6 +54,9 @@ const LIVE_ACTIVITY_RETENTION: Duration = Duration::from_secs(24 * 3600);
 const EGRESS_LOG_RETENTION_DAYS: i64 = 183;
 /// 出网的每日用量行留 60 天（App 只看今天的，留一段方便查问题）。
 const EGRESS_USAGE_RETENTION_DAYS: i64 = 60;
+/// 出网日志每批删多少行、每轮最多删几批。
+const EGRESS_PURGE_BATCH: i64 = 10_000;
+const EGRESS_PURGE_BATCHES: usize = 100;
 /// 多久看一次有没有要推送的电脑审批请求（14.2），一次最多领多少条。
 const DEVICE_NOTICE_EVERY: Duration = Duration::from_secs(2);
 const DEVICE_NOTICE_BATCH: i64 = 100;
@@ -417,16 +420,28 @@ async fn maintain(db: &Db) -> store::Result<()> {
         + w.purge_im_bot_slots().await?
         + w.purge_live_activities(LIVE_ACTIVITY_RETENTION).await?
         + w.purge_archived_board_posts(store::BOARD_ARCHIVE_RETENTION)
-            .await?
-        + w.purge_egress(
-            Utc::now() - chrono::Duration::days(EGRESS_LOG_RETENTION_DAYS),
-            today - chrono::Duration::days(EGRESS_USAGE_RETENTION_DAYS),
-            10_000,
-        )
-        .await?;
+            .await?;
     // 内容举报（5.5）的待处理队列：几条、最早的一条等了多久（告警看它）。
     let (open, oldest) = w.report_backlog().await?;
     w.commit().await?;
+    // 出网日志（2.7）：一批批删，删到没有过期的为止（每批一个事务，最多删这么多批，剩下的下一轮接着删）。
+    let mut egress = 0;
+    for _ in 0..EGRESS_PURGE_BATCHES {
+        let mut w = db.worker().await?;
+        let n = w
+            .purge_egress(
+                Utc::now() - chrono::Duration::days(EGRESS_LOG_RETENTION_DAYS),
+                today - chrono::Duration::days(EGRESS_USAGE_RETENTION_DAYS),
+                EGRESS_PURGE_BATCH,
+            )
+            .await?;
+        w.commit().await?;
+        egress += n;
+        if n < EGRESS_PURGE_BATCH as u64 {
+            break;
+        }
+    }
+    let purged = purged + egress;
     metrics::gauge!("thinktin_content_reports_open").set(open as f64);
     metrics::gauge!("thinktin_content_report_oldest_seconds")
         .set(oldest.map_or(0.0, |t| (Utc::now() - t).num_seconds().max(0) as f64));

@@ -28,6 +28,8 @@ pub struct EgressLogEntry {
     pub bytes_up: u64,
     pub bytes_down: u64,
     pub duration_ms: u64,
+    /// 这一行合并了几条隧道（超过每分钟的日志上限时合并），平常是 1。
+    pub count: u32,
 }
 
 #[derive(sqlx::FromRow)]
@@ -43,6 +45,7 @@ struct LogRow {
     bytes_up: i64,
     bytes_down: i64,
     duration_ms: i64,
+    count: i32,
 }
 
 impl LogRow {
@@ -59,6 +62,7 @@ impl LogRow {
             bytes_up: unsigned(self.bytes_up, "egress bytes")?,
             bytes_down: unsigned(self.bytes_down, "egress bytes")?,
             duration_ms: unsigned(self.duration_ms, "egress duration")?,
+            count: u32::try_from(self.count).unwrap_or(1),
         })
     }
 }
@@ -126,8 +130,8 @@ impl Tx<Llmgw> {
         for e in entries {
             sqlx::query(
                 "INSERT INTO egress_log (id, user_id, instance_id, at, host, port, address, allowed, reason, \
-                   bytes_up, bytes_down, duration_ms) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+                   bytes_up, bytes_down, duration_ms, count) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
             )
             .bind(Uuid::now_v7())
             .bind(e.user_id.0)
@@ -141,6 +145,7 @@ impl Tx<Llmgw> {
             .bind(signed(e.bytes_up, "egress bytes")?)
             .bind(signed(e.bytes_down, "egress bytes")?)
             .bind(signed(e.duration_ms, "egress duration")?)
+            .bind(i32::try_from(e.count.max(1)).unwrap_or(i32::MAX))
             .execute(self.conn())
             .await?;
         }
@@ -170,7 +175,7 @@ impl Tx<Tenant> {
     ) -> Result<Vec<EgressLogEntry>> {
         let rows: Vec<LogRow> = sqlx::query_as(
             "SELECT user_id, instance_id, at, host, port, address, allowed, reason, bytes_up, bytes_down, \
-               duration_ms \
+               duration_ms, count \
              FROM egress_log WHERE instance_id = $1 AND (NOT $2 OR NOT allowed) \
              ORDER BY at DESC, id DESC LIMIT $3",
         )

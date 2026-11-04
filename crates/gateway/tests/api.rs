@@ -4097,6 +4097,7 @@ async fn instance_egress_over_http() {
         bytes_up: 0,
         bytes_down: 0,
         duration_ms: 0,
+        count: 1,
     }])
     .await
     .unwrap();

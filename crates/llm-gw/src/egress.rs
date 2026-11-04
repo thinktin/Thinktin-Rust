@@ -46,8 +46,10 @@ pub struct EgressOptions {
     pub max_tunnels: u32,
     /// 每个实例每分钟最多开几次隧道（含被拒绝的）。
     pub attempts_per_minute: u32,
-    /// 每个实例每分钟最多记几条拒绝的日志（再多的只计数，防刷日志）。
-    pub denials_logged_per_minute: u32,
+    /// 每个来源地址每分钟最多发几次 CONNECT（核对令牌之前就数，过期令牌反复来也不会每次都查库）。
+    pub attempts_per_ip_per_minute: u32,
+    /// 每个实例每分钟最多记几行日志（放行的和拒绝的一起数）。再多的按“网站、结果”合并，每分钟记一行带次数的。
+    pub logs_per_minute: u32,
     /// 每次从额度里预留多少。
     pub reserve_chunk: u64,
     pub connect_timeout: Duration,
@@ -72,7 +74,8 @@ impl Default for EgressOptions {
             daily_bytes: proto::egress::DAILY_BYTES,
             max_tunnels: proto::egress::MAX_TUNNELS,
             attempts_per_minute: 120,
-            denials_logged_per_minute: 30,
+            attempts_per_ip_per_minute: 240,
+            logs_per_minute: 30,
             reserve_chunk: 256 << 10,
             connect_timeout: Duration::from_secs(10),
             idle_timeout: Duration::from_secs(300),
@@ -152,6 +155,8 @@ pub struct EgressRecord {
     pub bytes_up: u64,
     pub bytes_down: u64,
     pub duration: Duration,
+    /// 合并了几条隧道（超过每分钟的日志上限时按网站和结果合并），平常是 1。
+    pub count: u32,
 }
 
 /// 额度和日志存在哪：生产是数据库（多副本共用），开发和测试用内存。
@@ -230,11 +235,51 @@ impl EgressLedger for MemoryEgressLedger {
     }
 }
 
-/// 每个实例的计数：开着的隧道、这一分钟开了几次、记了几条拒绝。
+/// 每个实例的计数：开着的隧道、这一分钟开了几次、记了几行日志；每个来源地址这一分钟发了几次。
 #[derive(Default)]
 struct Counters {
     open: HashMap<String, u32>,
     minute: HashMap<String, (Instant, u32, u32)>,
+    peers: HashMap<IpAddr, (Instant, u32)>,
+}
+
+/// 超过日志上限时合并的键：同一个实例、网站、端口、结果。
+type SummaryKey = (String, String, String, u16, bool, &'static str);
+
+/// 预留了还没交给隧道的额度：中途出错、客户端断开（请求被丢弃）时退回。
+struct Reserved {
+    ledger: Arc<dyn EgressLedger>,
+    instance: String,
+    day: NaiveDate,
+    bytes: u64,
+}
+
+impl Reserved {
+    /// 交给隧道：之后由隧道结束时退回剩下的。
+    fn take(mut self) -> u64 {
+        std::mem::take(&mut self.bytes)
+    }
+}
+
+impl Drop for Reserved {
+    fn drop(&mut self) {
+        if self.bytes == 0 {
+            return;
+        }
+        let (ledger, instance, day, bytes) = (
+            self.ledger.clone(),
+            std::mem::take(&mut self.instance),
+            self.day,
+            self.bytes,
+        );
+        if let Ok(rt) = tokio::runtime::Handle::try_current() {
+            rt.spawn(async move {
+                if let Err(e) = ledger.refund(&instance, day, bytes).await {
+                    tracing::warn!(error = %e, "refunding egress bytes failed");
+                }
+            });
+        }
+    }
 }
 
 /// 出口代理。
@@ -243,6 +288,8 @@ pub struct Egress {
     ledger: Arc<dyn EgressLedger>,
     options: EgressOptions,
     counters: Mutex<Counters>,
+    /// 超过日志上限、等着合并写的：键 → (次数, 上行, 下行, 时长)。
+    summaries: Mutex<HashMap<SummaryKey, (u32, u64, u64, Duration)>>,
 }
 
 /// 占着的一条隧道名额，放掉时减一。
@@ -346,6 +393,76 @@ impl Egress {
             ledger,
             options,
             counters: Mutex::default(),
+            summaries: Mutex::default(),
+        }
+    }
+
+    /// 这个来源地址这一分钟又发了一次 CONNECT：没超过上限返回 true。
+    fn peer_attempt(&self, ip: IpAddr) -> bool {
+        let mut c = self.counters.lock().unwrap_or_else(|e| e.into_inner());
+        let now = Instant::now();
+        let e = c.peers.entry(ip.to_canonical()).or_insert((now, 0));
+        if now.duration_since(e.0) >= Duration::from_secs(60) {
+            *e = (now, 0);
+        }
+        e.1 += 1;
+        let ok = e.1 <= self.options.attempts_per_ip_per_minute;
+        if c.peers.len() > 100_000 {
+            c.peers
+                .retain(|_, (at, _)| now.duration_since(*at) < Duration::from_secs(60));
+        }
+        ok
+    }
+
+    /// 记一行日志：这一分钟没超过上限就直接写，超了就并进合并表，由 [`Egress::flush_summaries`] 每分钟写一行。
+    async fn log(&self, record: EgressRecord) {
+        if self.may_log(&record.instance) {
+            self.ledger.record(record).await;
+            return;
+        }
+        let key = (
+            record.user,
+            record.instance,
+            record.host,
+            record.port,
+            record.allowed,
+            record.reason,
+        );
+        let mut s = self.summaries.lock().unwrap_or_else(|e| e.into_inner());
+        if s.len() >= 100_000 && !s.contains_key(&key) {
+            metrics::counter!("thinktin_egress_log_dropped_total").increment(1);
+            return;
+        }
+        let e = s.entry(key).or_insert((0, 0, 0, Duration::ZERO));
+        e.0 += record.count;
+        e.1 += record.bytes_up;
+        e.2 += record.bytes_down;
+        e.3 += record.duration;
+    }
+
+    /// 把合并表写成带次数的日志行（每分钟一次，停机前一次）。
+    pub async fn flush_summaries(&self) {
+        let drained: Vec<_> = {
+            let mut s = self.summaries.lock().unwrap_or_else(|e| e.into_inner());
+            s.drain().collect()
+        };
+        for ((user, instance, host, port, allowed, reason), (count, up, down, duration)) in drained
+        {
+            self.ledger
+                .record(EgressRecord {
+                    user,
+                    instance,
+                    host,
+                    port,
+                    address: None,
+                    allowed,
+                    reason,
+                    bytes_up: up,
+                    bytes_down: down,
+                    duration,
+                    count,
+                })
+                .await;
         }
     }
 
@@ -370,14 +487,14 @@ impl Egress {
         ok
     }
 
-    /// 这一分钟还能再记一条拒绝的日志吗。
-    fn may_log_denial(&self, instance: &str) -> bool {
+    /// 这一分钟还能再单独记一行日志吗。
+    fn may_log(&self, instance: &str) -> bool {
         let mut c = self.counters.lock().unwrap_or_else(|e| e.into_inner());
         let Some(e) = c.minute.get_mut(instance) else {
             return true;
         };
         e.2 += 1;
-        e.2 <= self.options.denials_logged_per_minute
+        e.2 <= self.options.logs_per_minute
     }
 
     fn take_slot(self: &Arc<Self>, instance: &str) -> Option<TunnelSlot> {
@@ -394,11 +511,8 @@ impl Egress {
         })
     }
 
-    fn record_denial(&self, caller: &Caller, host: &str, port: u16, d: &Denied) {
+    fn record_denial(self: &Arc<Self>, caller: &Caller, host: &str, port: u16, d: &Denied) {
         metrics::counter!("thinktin_egress_tunnels_total", "result" => d.reason).increment(1);
-        if !self.may_log_denial(&caller.instance.id) {
-            return;
-        }
         let record = EgressRecord {
             user: caller.instance.user_id.clone(),
             instance: caller.instance.id.clone(),
@@ -410,9 +524,10 @@ impl Egress {
             bytes_up: 0,
             bytes_down: 0,
             duration: Duration::ZERO,
+            count: 1,
         };
-        let ledger = self.ledger.clone();
-        tokio::spawn(async move { ledger.record(record).await });
+        let this = self.clone();
+        tokio::spawn(async move { this.log(record).await });
     }
 
     /// 解析目标，所有地址都要是公网地址且不在禁段里。
@@ -477,6 +592,14 @@ impl Egress {
                 StatusCode::METHOD_NOT_ALLOWED,
                 "method",
                 "only CONNECT host:443 is supported (set https_proxy, not a plain HTTP request)",
+            ));
+        }
+        if !self.peer_attempt(peer.ip()) {
+            metrics::counter!("thinktin_egress_tunnels_total", "result" => "rate").increment(1);
+            return respond(&denied(
+                StatusCode::TOO_MANY_REQUESTS,
+                "rate",
+                "too many connections from this sandbox this minute, slow down",
             ));
         }
         let Some(token) = proxy_token(&req) else {
@@ -556,7 +679,8 @@ impl Egress {
             port,
             day: self.today(),
         };
-        // 先预留一段：今天用完了就不开。
+        // 先预留一段：今天用完了就不开。预留由 `Reserved` 拿着：解析、连接时出错或者客户端断开（这个请求被丢弃）
+        // 都会退回。
         let first = match self
             .ledger
             .reserve(
@@ -577,7 +701,12 @@ impl Egress {
                 self.record_denial(&caller, &target.host, port, &d);
                 return respond(&d);
             }
-            Ok(n) => n,
+            Ok(n) => Reserved {
+                ledger: self.ledger.clone(),
+                instance: target.instance.clone(),
+                day: target.day,
+                bytes: n,
+            },
             Err(e) => {
                 tracing::error!(error = %e, "reserving egress bytes failed");
                 let d = denied(
@@ -589,25 +718,16 @@ impl Egress {
                 return respond(&d);
             }
         };
-        let refund = |bytes: u64| {
-            let ledger = self.ledger.clone();
-            let (instance, day) = (target.instance.clone(), target.day);
-            async move {
-                if let Err(e) = ledger.refund(&instance, day, bytes).await {
-                    tracing::warn!(error = %e, "refunding egress bytes failed");
-                }
-            }
-        };
         let addrs = match self.resolve(&target.host, port).await {
             Ok(a) => a,
             Err(d) => {
-                refund(first).await;
+                drop(first);
                 self.record_denial(&caller, &target.host, port, &d);
                 return respond(&d);
             }
         };
         let Some((upstream, address)) = self.connect(&addrs).await else {
-            refund(first).await;
+            drop(first);
             let d = denied(
                 StatusCode::BAD_GATEWAY,
                 "connect_failed",
@@ -617,6 +737,7 @@ impl Egress {
             return respond(&d);
         };
         let this = self.clone();
+        let first = first.take();
         tokio::spawn(async move {
             this.tunnel(req, upstream, address, target, first, slot)
                 .await
@@ -724,20 +845,20 @@ impl Egress {
         metrics::counter!("thinktin_egress_bytes_total", "direction" => "up").increment(bytes_up);
         metrics::counter!("thinktin_egress_bytes_total", "direction" => "down")
             .increment(bytes_down);
-        self.ledger
-            .record(EgressRecord {
-                user: target.user,
-                instance: target.instance,
-                host: target.host,
-                port: target.port,
-                address: Some(address),
-                allowed: true,
-                reason,
-                bytes_up,
-                bytes_down,
-                duration: started.elapsed(),
-            })
-            .await;
+        self.log(EgressRecord {
+            user: target.user,
+            instance: target.instance,
+            host: target.host,
+            port: target.port,
+            address: Some(address),
+            allowed: true,
+            reason,
+            bytes_up,
+            bytes_down,
+            duration: started.elapsed(),
+            count: 1,
+        })
+        .await;
     }
 
     /// 从额度里扣 `n` 字节：本地预留不够就再找账本要，今天用完了（或者账本出错）返回原因。
@@ -823,6 +944,15 @@ where
     }
 }
 
+/// 任务句柄丢了就停掉任务。
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 /// 在 `listener` 上跑出口代理，直到 `shutdown` 完成（之后不再接新连接，开着的隧道照常跑完）。
 pub async fn serve_egress(
     listener: TcpListener,
@@ -831,10 +961,24 @@ pub async fn serve_egress(
 ) -> std::io::Result<()> {
     let total = Arc::new(Semaphore::new(egress.options.max_connections));
     let per_ip = Arc::new(PerIp::default());
+    let flusher = {
+        let egress = egress.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(60));
+            loop {
+                tick.tick().await;
+                egress.flush_summaries().await;
+            }
+        })
+    };
+    let _flusher = AbortOnDrop(flusher);
     tokio::pin!(shutdown);
     loop {
         let (stream, peer) = tokio::select! {
-            _ = &mut shutdown => return Ok(()),
+            _ = &mut shutdown => {
+                egress.flush_summaries().await;
+                return Ok(());
+            }
             accepted = listener.accept() => match accepted {
                 Ok(pair) => pair,
                 Err(e) => {

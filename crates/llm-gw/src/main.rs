@@ -307,6 +307,11 @@ fn main() -> anyhow::Result<()> {
                 tracing::warn!(
                     "--insecure-egress: sandboxes may reach private addresses (dev only)"
                 );
+            } else if egress_listen.is_some() && egress_options.deny.is_empty() {
+                // 服务机自己的公网地址在解析检查里算公网：不写进禁段，沙箱就能经它绕回服务机。
+                bail!(
+                    "--egress-listen needs --egress-deny with the service machine's public address"
+                );
             }
             let runtime = tokio::runtime::Runtime::new()?;
             runtime.block_on(async move {

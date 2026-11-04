@@ -558,6 +558,7 @@ impl crate::egress::EgressLedger for PgEgressLedger {
                 bytes_up: r.bytes_up,
                 bytes_down: r.bytes_down,
                 duration_ms: u64::try_from(r.duration.as_millis()).unwrap_or(u64::MAX),
+                count: r.count,
             }])
             .await?;
             tx.commit().await?;

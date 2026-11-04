@@ -4924,6 +4924,7 @@ async fn egress_traffic_is_reserved_within_the_daily_limit() {
         bytes_up: 10,
         bytes_down: 20,
         duration_ms: 5,
+        count: 1,
     };
     g.insert_egress_log(&[entry(true, "ok"), entry(false, "not_allowed")])
         .await

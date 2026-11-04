@@ -43,6 +43,7 @@ struct Env {
     issuer: SandboxTokenIssuer,
     directory: Arc<MemoryDirectory>,
     ledger: Arc<MemoryEgressLedger>,
+    egress: Arc<Egress>,
 }
 
 /// 回显服务：读到什么写回什么。
@@ -99,13 +100,14 @@ async fn env(mode: EgressMode, hosts: &[&str], tune: impl FnOnce(&mut EgressOpti
     let egress = Arc::new(Egress::new(gw, ledger.clone(), opts));
     let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let proxy = l.local_addr().unwrap();
-    tokio::spawn(serve_egress(l, egress, std::future::pending()));
+    tokio::spawn(serve_egress(l, egress.clone(), std::future::pending()));
     Env {
         proxy,
         echo: echo_server().await,
         issuer,
         directory,
         ledger,
+        egress,
     }
 }
 
@@ -347,4 +349,68 @@ async fn idle_tunnels_are_closed() {
     assert!(matches!(r, Ok(Ok(0)) | Ok(Err(_))), "{r:?}");
     let records = e.wait_for_records(1).await;
     assert_eq!(records[0].reason, "idle");
+}
+
+/// 一个实例一分钟里的日志超过上限：多出来的按网站和结果合并成一行带次数的（评审 2026-11-04：放行的隧道也算）。
+#[tokio::test]
+async fn logs_over_the_minute_cap_are_merged() {
+    let e = env(EgressMode::Custom, &["localhost"], |o| {
+        o.logs_per_minute = 2
+    })
+    .await;
+    let token = e.token_with(|_| {});
+    for _ in 0..5 {
+        let (resp, s) = e.connect(&e.echo_target(), Some(&token)).await;
+        assert_eq!(status(&resp), 200, "{resp}");
+        drop(s);
+        // 等这条隧道结束、记完再开下一条。
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    for _ in 0..3 {
+        let (resp, _) = e.connect("example.com:443", Some(&token)).await;
+        assert_eq!(status(&resp), 403, "{resp}");
+    }
+    let single = e.wait_for_records(2).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(e.ledger.records().len(), 2, "{single:?}");
+    e.egress.flush_summaries().await;
+    let records = e.ledger.records();
+    let total: u32 = records.iter().map(|r| r.count).sum();
+    assert_eq!(total, 8, "{records:?}");
+    let merged = records.iter().find(|r| !r.allowed).unwrap();
+    assert_eq!((merged.count, merged.reason), (3, "not_allowed"));
+}
+
+/// 同一个来源地址一分钟里 CONNECT 太多：核对令牌之前就拒绝（过期令牌反复来也不会每次都查库）。
+#[tokio::test]
+async fn one_address_cannot_hammer_the_proxy() {
+    let e = env(EgressMode::All, &[], |o| o.attempts_per_ip_per_minute = 3).await;
+    for _ in 0..3 {
+        let (resp, _) = e.connect(&e.echo_target(), None).await;
+        assert_eq!(status(&resp), 407, "{resp}");
+    }
+    let (resp, _) = e
+        .connect(&e.echo_target(), Some(&e.token_with(|_| {})))
+        .await;
+    assert_eq!(status(&resp), 429, "{resp}");
+}
+
+/// 预留了额度、后面没连上（解析不了）：退回，不算今天的用量。
+#[tokio::test]
+async fn reservations_are_refunded_when_the_tunnel_never_opens() {
+    let e = env(EgressMode::All, &[], |_| {}).await;
+    let token = e.token_with(|_| {});
+    let (resp, _) = e.connect("no-such-host.invalid:443", Some(&token)).await;
+    assert_eq!(status(&resp), 502, "{resp}");
+    let day = (chrono::Utc::now() + chrono::Duration::hours(8)).date_naive();
+    for _ in 0..50 {
+        if e.ledger.used("inst-1", day) == 0 {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!(
+        "the reservation was not refunded: {}",
+        e.ledger.used("inst-1", day)
+    );
 }
