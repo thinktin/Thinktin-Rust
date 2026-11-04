@@ -56,7 +56,8 @@
   - 对抗评审做完（4 个方面，每个方面一个反驳者，原始结果 `drafts/browser-impl-review.md`）：26 条成立 22 条，都修了
     （`c7b2fea` shim 和镜像，`73262e7` 出口代理和库；要点见 browser.md“实现状态”第 4 条，最要紧的是模板镜像的
     `.dockerignore` 漏了浏览器目录、`filename` 参数能写工作区任意文件、前置口秘密会出现在错误里、只连模型的实例照样解析
-    网站名）。本机真 Chromium 冒烟重跑通过（加了“点链接去没批准的网站”的用例），全量测试 692 个通过。第二轮（只看修复）在跑。
+    网站名）。本机真 Chromium 冒烟重跑通过（加了“点链接去没批准的网站”的用例），第二轮（只看修复，`drafts/browser-impl-review-2.md`）13 条成立 11 条，都修了（`f4f4e04`，最要紧的是工具说明里补出
+    `null` 会让 agent 拿不到任何平台工具）。全量测试 694 个通过，冒烟重跑通过。浏览器第一版到此做完，等东京 Phase 0。
 - 下一步：修评审确认的问题 → 跨用户项目（8.13–8.19）。东京：Phase 0（docs/browser.md 第 8.1 节），过了一个模板开一个 `supported`。用户放好搜索 key（`THINKTIN_PARALLEL_SEARCH_KEY`）后做小测。
 
 ## ⚠️ 紧急交接（2026-10-29 16:00 UTC，本会话 session_016LgPcdynywrhrjCq8VVFLt 周额度快用完）
