@@ -22,8 +22,15 @@
   `drafts/egress-approval-review-2.md`），全量测试 655 个通过。2.7e 做完。
 - 用户 11-04 再补充：说的是两件事——① 默认启用联网搜索；② 浏览器打开一个网站时弹授权（访问一次 / 一直允许），页面顺带
   加载的东西不再问。不用浏览器、直接连网站的按同样的弹窗（已告诉用户，没反对前照这个做）。
-- 下一步：第二轮评审修完 → ① 五种 agent 的联网搜索默认能用（逐个核对，要买搜索服务先列费用问用户）→ ② 浏览器按上面的
-  规矩重写 browser.md 的实现设计再做 → 跨用户项目。
+- **联网搜索默认能用**（[docs/search.md](../search.md)）：调研（4 路 + 核对，原始结果 `drafts/search-survey.md`）后用户 11-04 定：
+  DeepSeek 为主、阿里云 IQS 备用（用户问的 clodex 用的也是 DeepSeek 搜索）；每人每天 50 次、每月 ¥100；保留 agent 自带的厂商
+  搜索；Claude 那层放行读网页。已做：Claude 的 `settings.json`（`b2594b0`）、平台工具只读标记（`4bc28fb`）、搜索记账
+  （`3784d03`，迁移 0036）、平台 `web_search`（DeepSeek / IQS，`17ae26b`）、服务器接线和 `[search]`（`34e6477`）、Pi 和
+  OpenClaw 写进它们自己的配置拿到平台工具（Pi 只给搜索，`f4a09af`）、网关记厂商搜索次数（迁移 0037，`97434ca`）、安卓绑定
+  （`70c8dbd`）。全量测试 663 个通过。
+  **等用户**：注册 DeepSeek 开放平台并充值、开通阿里云 IQS，把 key 放进环境变量 `THINKTIN_DEEPSEEK_SEARCH_KEY`、
+  `THINKTIN_IQS_API_KEY`，然后做 50 个问题的小测（约 ¥2）。
+- 下一步：对搜索这批改动做一轮对抗评审 → 浏览器按 11-04 的规矩重写 browser.md 的实现设计再做 → 跨用户项目。
 - 再下一步：浏览器（[浏览器](../browser.md)“实现设计与验收”）→ 跨用户项目。
 
 ## ⚠️ 紧急交接（2026-10-29 16:00 UTC，本会话 session_016LgPcdynywrhrjCq8VVFLt 周额度快用完）

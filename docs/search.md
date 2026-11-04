@@ -31,10 +31,16 @@
   Pi 写 `~/.pi/agent/mcp.json`，`exposure: direct`（模型才看得见），桥带 `--only web_search`：Pi 没有权限系统，先只给搜索。
   OpenClaw 写 `openclaw.json` 的 `mcp.servers`。
 
+- **厂商替 agent 搜了几次**（用户选了保留厂商自带的搜索）：模型网关从 Anthropic 协议的
+  `usage.server_tool_use.web_search_requests`（Anthropic、DeepSeek）和 Responses 输出里的 `web_search_call` 数出来，记进
+  `usage_records.web_searches`（迁移 0037），用量看板（`GET /v1/usage`、client-core 的 `UsageBucket.web_searches`）看得到；
+  指标 `thinktin_llm_vendor_web_searches_total{vendor}`。通义的 `x_tools`、豆包的 `tool_usage` 还没接（字段名要拿真 key 确认）。
+
 **还没做：**
 
-- 网关记厂商替 agent 搜了几次（用户选了保留厂商自带的搜索）。
 - 用户买接口、充值、把 key 放进环境变量后：50 个中英文问题的小测，东京连通测试，五个 agent 逐个验收。
+- Codex 对不支持搜索的厂商也发 `web_search` 工具，会不会每轮都报错（要拿真 key 试）。
+- App 里显示平台搜索今天用了几次、厂商搜索的次数（接口已经有）。
 
 ## 1. 现状
 
