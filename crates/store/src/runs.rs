@@ -200,6 +200,10 @@ macro_rules! columns {
 
 /// 这一版程序认识的运行来源。后台领取、接管运行时只要这些：新版本加了来源（比如 8.11 的 ask），回滚到
 /// 老版本时老副本跳过它解析不了的运行，不会卡在队头上谁都领不走（见 docs/release.md 第 3 节）。
+///
+/// 领取、接管还都只要私人运行（`project_id IS NULL`，四处：`claim_next_run`、`take_over_expired`、
+/// `claim_expired_waits`、`due_pipelines`）：这一版程序还做不到项目运行要的会话和工作区隔离（8.16）。等每个在跑的副本
+/// 都会隔离以后才放开（docs/projects-impl.md“迁移与放量”）。
 fn known_sources() -> Vec<&'static str> {
     RunSource::ALL.iter().map(|s| s.as_str()).collect()
 }
@@ -877,7 +881,8 @@ impl Tx<Worker> {
         for _ in 0..8 {
             let id: Option<Uuid> = sqlx::query_scalar(
                 "SELECT r.id FROM runs r JOIN users u ON u.id = r.user_id AND u.status = 'active' \
-                 WHERE r.kind = 'agent' AND r.source = ANY($1) AND r.not_before <= now() AND ( \
+                 WHERE r.kind = 'agent' AND r.source = ANY($1) AND r.project_id IS NULL \
+                   AND r.not_before <= now() AND ( \
                    (r.state = 'queued' AND NOT EXISTS ( \
                       SELECT 1 FROM runs a WHERE a.instance_id = r.instance_id AND a.kind = 'agent' AND a.state IN \
                         ('starting', 'running', 'waiting_approval', 'waiting_device', 'waiting_quota', \
@@ -995,6 +1000,7 @@ impl Tx<Worker> {
                updated_at = now() \
              WHERE id IN (SELECT id FROM runs WHERE lease_owner IS NOT NULL AND lease_expires_at < now() \
                             AND state NOT IN ('succeeded', 'failed', 'cancelled') AND source = ANY($4) \
+                            AND project_id IS NULL \
                           ORDER BY lease_expires_at LIMIT $3 FOR UPDATE SKIP LOCKED) \
              RETURNING ",
             columns!()
@@ -1293,6 +1299,7 @@ impl Tx<Worker> {
              WHERE id IN (SELECT id FROM runs WHERE state IN ('waiting_quota', 'waiting_device') \
                             AND wait_deadline <= now() \
                             AND (lease_owner IS NULL OR lease_expires_at < now()) AND source = ANY($4) \
+                            AND project_id IS NULL \
                           ORDER BY wait_deadline LIMIT $3 FOR UPDATE SKIP LOCKED) \
              RETURNING ",
             columns!()
@@ -1425,7 +1432,7 @@ impl Tx<Worker> {
             "SELECT ",
             columns!(),
             " FROM runs WHERE kind = 'pipeline' AND state IN ('queued', 'waiting_children') \
-               AND not_before <= now() \
+               AND not_before <= now() AND project_id IS NULL \
                AND EXISTS (SELECT 1 FROM users u WHERE u.id = runs.user_id AND u.status = 'active') \
              ORDER BY not_before, id LIMIT $1 FOR UPDATE OF runs SKIP LOCKED"
         ))

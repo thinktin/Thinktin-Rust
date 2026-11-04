@@ -1007,6 +1007,260 @@ async fn teams_move_into_single_user_projects() {
     ta.rollback().await.unwrap();
 }
 
+/// 项目运行、项目授权（8.13，0040–0046）：只有 worker 写得出带 project_id 的行；空间建了就不能改；这一版的后台一条都不领、
+/// 不接管；私人运行不能挂在项目运行下面、不能用项目授权；查私人授权时跳过项目授权；外键用得上新索引、都检查过了。
+#[tokio::test]
+async fn project_runs_are_server_only_and_never_claimed() {
+    use proto::domain::{GrantScope, TeamMember, TeamRole};
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = user(db, "+8613800000981").await;
+    let i = instance(db, alice).await;
+    let mut ta = db.tenant(alice).await.unwrap();
+    let team = ta
+        .create_team(
+            "p",
+            &[TeamMember {
+                instance_id: i.id,
+                role: TeamRole::Lead,
+                position: 0,
+            }],
+        )
+        .await
+        .unwrap();
+    let grant = ta
+        .create_run_grant(
+            i.id,
+            None,
+            &GrantScope::default(),
+            Duration::from_secs(3600),
+        )
+        .await
+        .unwrap();
+    ta.commit().await.unwrap();
+    let pid = team.id.0;
+    let private = queue_run(db, alice, &i, "private").await;
+    // 复制一行，换成项目的（列表现查，不用写死所有列）。
+    let copy = |table: &'static str| {
+        let db = db.clone();
+        async move {
+            let cols: Vec<String> = sqlx::query_scalar(
+                "SELECT column_name::text FROM information_schema.columns WHERE table_name = $1 \
+                   AND column_name NOT IN ('id', 'project_id', 'space_kind', 'space_id') \
+                 ORDER BY ordinal_position",
+            )
+            .bind(table)
+            .fetch_all(db.pool())
+            .await
+            .unwrap();
+            let list = cols.join(", ");
+            format!(
+                "INSERT INTO {table} (id, project_id, {list}) SELECT $1, $2, {list} FROM {table} WHERE id = $3"
+            )
+        }
+    };
+    let run_sql = copy("runs").await;
+    let grant_sql = copy("run_grants").await;
+    // 租户、超级用户都写不出项目运行（只放行 thinktin_worker）。
+    let mut ta = db.tenant(alice).await.unwrap();
+    let err = sqlx::query(sqlx::AssertSqlSafe(run_sql.clone()))
+        .bind(uuid::Uuid::now_v7())
+        .bind(pid)
+        .bind(private.id.0)
+        .execute(ta.conn())
+        .await
+        .map_err(Error::from)
+        .unwrap_err();
+    assert!(matches!(err, Error::Forbidden(_)), "{err:?}");
+    ta.rollback().await.unwrap();
+    let err = sqlx::query(sqlx::AssertSqlSafe(run_sql.clone()))
+        .bind(uuid::Uuid::now_v7())
+        .bind(pid)
+        .bind(private.id.0)
+        .execute(db.pool())
+        .await
+        .map_err(Error::from)
+        .unwrap_err();
+    assert!(matches!(err, Error::Forbidden(_)), "{err:?}");
+    // 空间建了就不能改。
+    let mut ta = db.tenant(alice).await.unwrap();
+    let err = sqlx::query("UPDATE runs SET space_id = $2 WHERE id = $1")
+        .bind(private.id.0)
+        .bind(pid)
+        .execute(ta.conn())
+        .await
+        .map_err(Error::from)
+        .unwrap_err();
+    assert!(matches!(err, Error::Invalid(_)), "{err:?}");
+    ta.rollback().await.unwrap();
+    // worker 写得出；这一版的后台不领它（私人运行先结束，免得领到它）。
+    let project_run = uuid::Uuid::now_v7();
+    let project_grant = uuid::Uuid::now_v7();
+    let mut w = db.worker().await.unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(grant_sql.clone()))
+        .bind(project_grant)
+        .bind(pid)
+        .bind(grant.id.0)
+        .execute(w.conn())
+        .await
+        .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(run_sql.clone()))
+        .bind(project_run)
+        .bind(pid)
+        .bind(private.id.0)
+        .execute(w.conn())
+        .await
+        .unwrap();
+    let kind: String = sqlx::query_scalar("SELECT space_kind FROM runs WHERE id = $1")
+        .bind(project_run)
+        .fetch_one(w.conn())
+        .await
+        .unwrap();
+    assert_eq!(kind, "project");
+    sqlx::query("UPDATE runs SET state = 'succeeded' WHERE id = $1")
+        .bind(private.id.0)
+        .execute(w.conn())
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    assert!(w.claim_next_run("w1", LEASE).await.unwrap().is_none());
+    // 租约过期的、等额度过期的、流水线：都不接管。
+    for sql in [
+        "UPDATE runs SET state = 'running', lease_owner = 'gone', lease_expires_at = now() - interval '1 minute' WHERE id = $1",
+        "UPDATE runs SET state = 'waiting_quota', lease_owner = NULL, wait_deadline = now() - interval '1 minute' WHERE id = $1",
+    ] {
+        sqlx::query(sql)
+            .bind(project_run)
+            .execute(w.conn())
+            .await
+            .unwrap();
+        assert!(
+            w.take_over_expired("w1", LEASE, 10)
+                .await
+                .unwrap()
+                .is_empty(),
+            "{sql}"
+        );
+        assert!(
+            w.claim_expired_waits("w1", LEASE, 10)
+                .await
+                .unwrap()
+                .is_empty(),
+            "{sql}"
+        );
+    }
+    sqlx::query(
+        "UPDATE runs SET state = 'queued', kind = 'pipeline', wait_deadline = NULL WHERE id = $1",
+    )
+    .bind(project_run)
+    .execute(w.conn())
+    .await
+    .unwrap();
+    assert!(w.due_pipelines(10).await.unwrap().is_empty());
+    sqlx::query("UPDATE runs SET state = 'succeeded', kind = 'agent' WHERE id = $1")
+        .bind(project_run)
+        .execute(w.conn())
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+    // 私人运行挂不到项目运行下面、用不了项目授权。
+    for (sql, constraint) in [
+        (
+            "UPDATE runs SET parent_run_id = $2 WHERE id = $1",
+            "runs_parent_space",
+        ),
+        (
+            "UPDATE runs SET run_grant_id = $3 WHERE id = $1",
+            "runs_grant_space",
+        ),
+    ] {
+        let mut w = db.worker().await.unwrap();
+        let err = sqlx::query(sql)
+            .bind(private.id.0)
+            .bind(project_run)
+            .bind(project_grant)
+            .execute(w.conn())
+            .await
+            .map_err(Error::from)
+            .unwrap_err();
+        assert!(
+            matches!(&err, Error::Invalid(m) if m.contains(constraint)),
+            "{sql}: {err:?}"
+        );
+        w.rollback().await.unwrap();
+    }
+    // 查私人授权跳过项目授权。
+    let mut w = db.worker().await.unwrap();
+    assert_eq!(
+        w.active_grant_for_instance(i.id).await.unwrap(),
+        Some(grant.id)
+    );
+    w.rollback().await.unwrap();
+    let mut ta = db.tenant(alice).await.unwrap();
+    let grants = ta.run_grants(i.id).await.unwrap();
+    assert_eq!(grants.iter().map(|g| g.id).collect::<Vec<_>>(), [grant.id]);
+    ta.rollback().await.unwrap();
+    // 外键检查都用上了新索引；约束都检查过了，索引都有效。
+    for (table, index) in [
+        ("runs", "runs_project"),
+        ("run_grants", "run_grants_project"),
+    ] {
+        let mut conn = db.pool().acquire().await.unwrap();
+        sqlx::query("SET plan_cache_mode = force_generic_plan")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "PREPARE fk AS SELECT 1 FROM ONLY {table} x WHERE project_id = $1 AND instance_id = $2 \
+               AND user_id = $3 FOR KEY SHARE OF x"
+        )))
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        let plan: Vec<String> = sqlx::query_scalar(
+            "EXPLAIN EXECUTE fk('00000000-0000-0000-0000-000000000000', \
+               '00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-000000000000')",
+        )
+        .fetch_all(&mut *conn)
+        .await
+        .unwrap();
+        sqlx::query("DEALLOCATE fk")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        assert!(plan.join("\n").contains(index), "{table}: {plan:?}");
+    }
+    let unvalidated: Vec<String> = sqlx::query_scalar(
+        "SELECT conname::text FROM pg_constraint WHERE conname = ANY($1) AND NOT convalidated",
+    )
+    .bind(vec![
+        "runs_project_agent",
+        "run_grants_project_agent",
+        "run_grants_parent_space",
+        "runs_parent_space",
+        "runs_grant_space",
+    ])
+    .fetch_all(db.pool())
+    .await
+    .unwrap();
+    assert!(unvalidated.is_empty(), "{unvalidated:?}");
+    let invalid: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM pg_index x JOIN pg_class c ON c.oid = x.indexrelid \
+         WHERE c.relname = ANY($1) AND NOT x.indisvalid",
+    )
+    .bind(vec![
+        "runs_id_space",
+        "run_grants_id_space",
+        "runs_project",
+        "run_grants_project",
+    ])
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(invalid, 0);
+}
+
 /// 单人项目只属于创建者（8.13）：别人看不到、改不了、塞不进自己；租户写不了共享、专属、目标这些列；共享以后（8.14 起由
 /// worker 加别的成员）租户不能再改它；邀请和项目密钥租户碰不到。
 #[tokio::test]

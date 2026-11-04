@@ -93,7 +93,8 @@ fn compare(embedded: &[(i64, Vec<u8>)], applied: &[(i64, Vec<u8>, bool)]) -> Mig
 }
 
 impl Db {
-    /// 执行迁移。要用表的属主账号（迁移账号）连接；多个副本同时执行时由 sqlx 的咨询锁串行化。
+    /// 执行迁移。要用表的属主账号（迁移账号）连接。只能由一个迁移进程执行（迁移 Job）：带 `-- no-transaction` 的迁移
+    /// （CREATE INDEX CONCURRENTLY）会和等 sqlx 咨询锁的另一个迁移进程死锁（docs/release.md 第 3 节）。
     /// 数据库里有程序不认识的迁移（回滚到上一版时）不报错：迁移只加不删，上一版的程序在新表结构上照常能跑。
     pub async fn migrate(&self) -> Result<()> {
         let mut migrator = migrator();

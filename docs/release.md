@@ -48,6 +48,9 @@ agent 的沙箱模板单独构建（6.8）；App 走各自的商店（12.11、13
   或者先用配置开关关着。8.11 的 `ask` 是第一次发布之前加的，不受这条限制。
 - 在已有的大表上建索引用 `CREATE INDEX CONCURRENTLY`，放在单独的迁移里，第一行写 `-- no-transaction`
   （sqlx 才不包事务）；普通的 `CREATE INDEX` 期间这张表写不进去。
+- 带 `-- no-transaction` 的迁移只能由一个迁移进程执行（迁移 Job；`migrate_on_start` 不能在多个副本上同时开）：别的进程等
+  sqlx 咨询锁时持有快照，CREATE INDEX CONCURRENTLY 等它会死锁，留下无效索引。失败后先
+  `DROP INDEX CONCURRENTLY IF EXISTS <索引名>;` 再重跑。
 - 回填受 FORCE 约束的表（`INSERT … SELECT`、`UPDATE`）要在同一个事务里先 `NO FORCE ROW LEVEL SECURITY`、做完再 `FORCE`：迁移账号是
   表的属主，FORCE 时它也看不到任何行，语句会悄悄处理 0 行（比如 `0039_projects.sql` 把团队搬进项目）。
 - 发布过的迁移文件一个字节都不能改：sqlx 按内容的校验和核对，改了生产库就迁移不了、程序也拒绝启动。

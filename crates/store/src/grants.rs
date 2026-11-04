@@ -138,7 +138,7 @@ impl Tx<Tenant> {
             "SELECT ",
             columns!(),
             " FROM run_grants WHERE instance_id = $1 AND revoked_at IS NULL AND expires_at > now() \
-             ORDER BY created_at"
+               AND project_id IS NULL ORDER BY created_at"
         ))
         .bind(instance.0)
         .fetch_all(self.conn())
@@ -306,7 +306,8 @@ impl Tx<Worker> {
     ) -> Result<Option<GrantId>> {
         let id: Option<Uuid> = sqlx::query_scalar(
             "SELECT id FROM run_grants WHERE instance_id = $1 AND parent_id IS NULL AND plan_id IS NULL \
-               AND revoked_at IS NULL AND expires_at > now() ORDER BY created_at DESC LIMIT 1",
+               AND revoked_at IS NULL AND expires_at > now() AND project_id IS NULL \
+             ORDER BY created_at DESC LIMIT 1",
         )
         .bind(instance.0)
         .fetch_optional(self.conn())

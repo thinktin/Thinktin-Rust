@@ -4,7 +4,8 @@
 #   kubectl apply -f thinktin-production-migrate-<版本>.yaml
 #   kubectl -n thinktin wait --for=condition=complete --timeout=15m job/thinktin-migrate-<版本>
 #
-# 多个迁移同时跑由 sqlx 的咨询锁串行化；失败不重试（backoffLimit 0），看日志、修好后删掉这个 Job 再跑。
+# 同时只能有一个迁移在跑：带 -- no-transaction 的迁移（CREATE INDEX CONCURRENTLY）会和等 sqlx 咨询锁的另一个迁移死锁，
+# 留下无效索引（docs/release.md 第 3 节）。失败不重试（backoffLimit 0），看日志、修好后删掉这个 Job 再跑。
 apiVersion: batch/v1
 kind: Job
 metadata:
