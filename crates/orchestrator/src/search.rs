@@ -1,8 +1,8 @@
 //! 平台搜索工具 `web_search`（[联网搜索](../../../docs/search.md)）：五种 agent 默认都能联网搜索，不弹窗、不用设置
 //! （用户 2026-11-04 定）。
 //!
-//! - 服务器替 agent 调搜索接口（DeepSeek 为主，阿里云 IQS 备用；前一家出错就换下一家），搜索服务的 key 只在服务器上，
-//!   不进沙箱。
+//! - 服务器替 agent 调搜索接口（Parallel 为主，DeepSeek、阿里云 IQS 备用；前一家出错就换下一家），搜索服务的 key 只在
+//!   服务器上，不进沙箱。
 //! - 只回标题、链接、网站、日期和一段短摘要，不回网页正文：agent 要读哪篇文章，自己去打开，不在名单上的网站照样先问
 //!   用户（出口代理，docs/egress.md）。
 //! - 每人每天最多 [`SearchLimits::per_user_daily`] 次，全站每月最多 [`SearchLimits::monthly_budget_millicents`]，先预留
@@ -397,12 +397,14 @@ fn web_url(v: &Value) -> Option<String> {
 async fn post_json(
     client: &reqwest::Client,
     endpoint: &str,
-    key: &str,
+    key: Auth<'_>,
     body: &Value,
 ) -> Result<(u16, Option<Value>, String), SearchFailure> {
-    let resp = client
-        .post(endpoint)
-        .bearer_auth(key)
+    let req = match key {
+        Auth::Bearer(k) => client.post(endpoint).bearer_auth(k),
+        Auth::ApiKey(k) => client.post(endpoint).header("x-api-key", k),
+    };
+    let resp = req
         .json(body)
         .send()
         .await
@@ -417,9 +419,123 @@ async fn post_json(
     Ok((status, json, clip(&text, 200)))
 }
 
+/// 搜索接口的 key 怎么带。
+#[derive(Clone, Copy)]
+enum Auth<'a> {
+    /// `Authorization: Bearer`（DeepSeek、IQS）。
+    Bearer(&'a str),
+    /// `x-api-key`（Parallel）。
+    ApiKey(&'a str),
+}
+
+/// 链接里的网站名（`https://a.example.com/x` → `a.example.com`）。
+fn host_of(url: &str) -> Option<String> {
+    let rest = url.split_once("://")?.1;
+    let host = rest.split(['/', '?', '#']).next()?;
+    let host = host.rsplit_once('@').map_or(host, |(_, h)| h);
+    let host = host.split(':').next()?;
+    (!host.is_empty()).then(|| host.to_ascii_lowercase())
+}
+
 /// 欠费、key 不对、没开通：要运营者处理，不会自己好。
 fn refused(status: u16) -> bool {
     (401..=403).contains(&status)
+}
+
+/// Parallel 搜索（`POST https://api.parallel.ai/v1/search`，docs.parallel.ai/api-reference/search/search）：专给 agent 用的
+/// 搜索接口，`fast` 档 $1/千次（每次 10 条），每月送 $5 额度（约 5000 次）；成功就收钱。只要网页摘录的开头一段
+/// （`excerpt_settings.max_chars_per_result`），不要整页。
+pub struct ParallelSearch {
+    client: reqwest::Client,
+    endpoint: String,
+    key: String,
+    mode: String,
+    cost_millicents: u64,
+}
+
+impl ParallelSearch {
+    pub const ENDPOINT: &'static str = "https://api.parallel.ai/v1/search";
+
+    pub fn new(
+        client: reqwest::Client,
+        endpoint: &str,
+        key: &str,
+        mode: &str,
+        cost_millicents: u64,
+    ) -> Self {
+        Self {
+            client,
+            endpoint: endpoint.to_owned(),
+            key: key.to_owned(),
+            mode: mode.to_owned(),
+            cost_millicents,
+        }
+    }
+}
+
+#[async_trait]
+impl SearchBackend for ParallelSearch {
+    fn name(&self) -> &'static str {
+        "parallel"
+    }
+
+    fn cost_millicents(&self) -> u64 {
+        self.cost_millicents
+    }
+
+    async fn search(&self, query: &str, count: u32) -> Result<SearchAnswer, SearchFailure> {
+        let (status, v, text) = post_json(
+            &self.client,
+            &self.endpoint,
+            Auth::ApiKey(&self.key),
+            &json!({
+                "search_queries": [query],
+                "mode": self.mode,
+                "max_chars_total": SNIPPET_CHARS * count as usize,
+                "advanced_settings": {
+                    "max_results": count,
+                    "excerpt_settings": { "max_chars_per_result": SNIPPET_CHARS },
+                },
+            }),
+        )
+        .await?;
+        if status != 200 {
+            return Err(SearchFailure {
+                reason: format!("HTTP {status}: {text}"),
+                billed: false,
+                fatal: refused(status),
+            });
+        }
+        // 成功的请求按次收钱：结果解析不出来也按收了算。
+        let Some(items) = v.as_ref().and_then(|v| v["results"].as_array()) else {
+            return Err(SearchFailure {
+                reason: "the response has no results array".into(),
+                billed: true,
+                fatal: false,
+            });
+        };
+        let hits = items
+            .iter()
+            .filter_map(|r| {
+                let url = web_url(&r["url"])?;
+                let snippet = r["excerpts"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|e| e.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                Some(SearchHit {
+                    title: non_empty(&r["title"]).unwrap_or_default(),
+                    site: host_of(&url),
+                    url,
+                    date: non_empty(&r["publish_date"]),
+                    snippet,
+                })
+            })
+            .collect();
+        Ok(SearchAnswer { hits, billed: true })
+    }
 }
 
 /// DeepSeek 搜索（`POST /v1/tools/search`，api-docs.deepseek.com/guides/search）：¥5/千次，只有结果不为空的才收钱。
@@ -458,7 +574,7 @@ impl SearchBackend for DeepSeekSearch {
         let (status, v, text) = post_json(
             &self.client,
             &self.endpoint,
-            &self.key,
+            Auth::Bearer(&self.key),
             &json!({ "query": query, "count": count, "need_content": false }),
         )
         .await?;
@@ -539,7 +655,7 @@ impl SearchBackend for IqsSearch {
         let (status, v, text) = post_json(
             &self.client,
             &self.endpoint,
-            &self.key,
+            Auth::Bearer(&self.key),
             &json!({
                 "query": query,
                 "engineType": self.engine,
@@ -588,6 +704,16 @@ pub fn search_client(timeout: Duration) -> reqwest::Result<reqwest::Client> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hosts_come_from_urls() {
+        assert_eq!(
+            host_of("https://Docs.Example.com:8443/a?b#c").as_deref(),
+            Some("docs.example.com")
+        );
+        assert_eq!(host_of("https://u@x.cn/").as_deref(), Some("x.cn"));
+        assert_eq!(host_of("nope"), None);
+    }
 
     #[test]
     fn snippets_are_clipped() {

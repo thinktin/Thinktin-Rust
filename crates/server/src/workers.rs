@@ -161,7 +161,7 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
     let search_backends = cfg.search_backends()?;
     if search_backends.is_empty() {
         warn!(
-            "no web search provider key is set (THINKTIN_DEEPSEEK_SEARCH_KEY / THINKTIN_IQS_API_KEY): agents get no web_search"
+            "no web search provider key is set (THINKTIN_PARALLEL_SEARCH_KEY / THINKTIN_DEEPSEEK_SEARCH_KEY / THINKTIN_IQS_API_KEY): agents get no web_search"
         );
     }
     let mut tools = tools;

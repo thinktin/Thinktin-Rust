@@ -1,8 +1,9 @@
 # 东京 10 人测试环境的控制面配置（docs/deploy-aliyun-sg.md 第 8.9 节、docs/sandbox-acs.md）。
 # 接口副本和后台副本共用，角色由环境变量 THINKTIN_API_ENABLED、THINKTIN_WORKER_ENABLED 决定。
 # 密钥都不在这里，由 Secret 以环境变量给（docs/release.md 第 5 节）：沙箱令牌种子、本地主密钥 THINKTIN_KMS_KEY、
-# OSS 的访问密钥、sandbox-manager 的 THINKTIN_ACS_API_KEY、平台搜索的 THINKTIN_DEEPSEEK_SEARCH_KEY 和
-# THINKTIN_IQS_API_KEY（docs/search.md；`[search]` 用默认值：DeepSeek 为主、IQS 备用、每人每天 50 次、每月 ¥100；
+# OSS 的访问密钥、sandbox-manager 的 THINKTIN_ACS_API_KEY、平台搜索的 THINKTIN_PARALLEL_SEARCH_KEY、
+# THINKTIN_DEEPSEEK_SEARCH_KEY、THINKTIN_IQS_API_KEY（docs/search.md；`[search]` 用默认值：Parallel 为主、DeepSeek 和 IQS
+# 依次备用、每人每天 50 次、每月 ¥100；
 # 要收额度、欠费提醒就在 `[search]` 里加 alert_phone = "+86…"，填运营者在 App 里登录的手机号）。
 # 标了“部署前填”的是占位值。
 # 改完跑一遍 `cargo test -p server deployment_configs_are_valid`。

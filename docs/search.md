@@ -8,6 +8,11 @@
    让 Claude Code 改用 DeepSeek 或 Codex 订阅的启动器，它的搜索就是 DeepSeek 替 Claude Code 跑的服务端搜索（README：
    “DeepSeek runs Claude Code's server-side search tool on its own engine”），也就是 DeepSeek 搜索，和第一条推荐一样。先花约
    ¥2 小测再定。
+   **更正（同一天）**：用户说 clodex 的 agent 联网搜索用的是 **Parallel**（parallel.ai 的搜索接口）。查了：专给 agent 用的
+   搜索接口，`fast` 档每千次 $1（约 ¥7，每次 10 条），每月送 $5 额度（约 5000 次，10 个测试用户基本够用），每分钟 600 次。
+   所以改成 **Parallel 为主，DeepSeek、阿里云 IQS 依次备用**（配了 key 的才用）。要注意：Parallel 是美国公司，用户的搜索词
+   会发到美国（个人信息出境要问律师）；中文质量没测过，小测时和 DeepSeek 比。来源：docs.parallel.ai/search/search-quickstart、
+   docs.parallel.ai/api-reference/search/search、parallel.ai/pricing（2026-11-04 读）。
 2. **花费上限：每月 ¥100，每人每天 50 次。** 到了就停下、提醒用户。
 3. **agent 自带的厂商搜索：保留**（不关）。所以网关要记厂商替 agent 搜了几次（第 4 节第 3 步提前做），Claude 自带的
    `WebSearch` 也要免弹窗。厂商替 agent 读网页、不经过出口代理这一点，用户知道后选的保留。
@@ -18,8 +23,8 @@
 本机测试都过，东京还没部署，也还没有搜索接口的 key。
 
 - **平台搜索工具 `web_search`**（`crates/orchestrator/src/search.rs`）：后台副本调搜索接口，按 `[search].providers` 的顺序
-  试（默认 DeepSeek，出错换 IQS），只回标题、链接、网站、日期和最多 300 字的摘要，不要正文（DeepSeek `need_content: false`、
-  不用 `summary`；IQS 不要 `mainText`、`summary`）。搜索词最长 128 字，里面有用户保险箱的值就不搜。
+  试（默认 Parallel → DeepSeek → IQS，配了 key 的才用），只回标题、链接、网站、日期和最多 300 字的摘要，不要正文（Parallel
+  的摘录每条最多 300 字；DeepSeek `need_content: false`、不用 `summary`；IQS 不要 `mainText`、`summary`）。搜索词最长 128 字，里面有用户保险箱的值就不搜。
 - **上限**（`store::search`，迁移 0036 的 `search_usage`）：每人每天 50 次（设成 0 是暂停）、全站每月 ¥100，先按最贵的一家
   预留、搜完按实际改（都出错、接口也没收钱的不算次数；接口收了钱但结果没解析出来的照样算）。用完了告诉 agent 明天再搜 /
   这个月的额度用完了。
@@ -32,7 +37,8 @@
 - **默认给所有实例**：加进默认平台工具，迁移 0036 也加进已有的授权。只读（MCP `readOnlyHint`），Codex 默认不问；Claude 在
   `settings.json` 里放行了 `mcp__thinktin__web_search`。没配 key 时不给这个工具（启动时打一条警告）。
 - **Claude 的设置**（`crates/agent-shim/src/config.rs`）：放行 `WebSearch`、`WebFetch`、平台搜索，`skipWebFetchPreflight`。
-- **key**：`THINKTIN_DEEPSEEK_SEARCH_KEY`、`THINKTIN_IQS_API_KEY`，只放后台副本的 Secret（docs/release.md 第 5 节）。
+- **key**：`THINKTIN_PARALLEL_SEARCH_KEY`、`THINKTIN_DEEPSEEK_SEARCH_KEY`、`THINKTIN_IQS_API_KEY`，只放后台副本的 Secret
+  （docs/release.md 第 5 节）。三家的请求格式和结果解析对着各家文档用假服务器测过（`vendor_requests_and_responses_follow_their_docs`）。
 - **Pi、OpenClaw 也拿到平台搜索**（`config::inject_mcp`）：它们不支持按会话给 MCP 服务器，shim 把桥写进它们自己的配置：
   Pi 写 `~/.pi/agent/mcp.json`（`exposure: direct`，模型才看得见；没有平台工具时写空的），OpenClaw 写 `openclaw.json` 的
   `mcp.servers`。两家调平台工具都不会先问用户（Pi 没有权限系统，OpenClaw 只对命令行工具问），所以只给只读的 `web_search`，

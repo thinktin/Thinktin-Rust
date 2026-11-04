@@ -45,6 +45,9 @@ pub struct Config {
     /// 平台搜索用的阿里云 IQS key，只从环境变量 THINKTIN_IQS_API_KEY 读。
     #[serde(skip)]
     pub iqs_api_key: Option<String>,
+    /// 平台搜索用的 Parallel key，只从环境变量 THINKTIN_PARALLEL_SEARCH_KEY 读。
+    #[serde(skip)]
+    pub parallel_search_key: Option<String>,
     /// S3 兼容存储的访问密钥，只从环境变量 THINKTIN_S3_ACCESS_KEY_ID、THINKTIN_S3_SECRET_ACCESS_KEY 读。
     #[serde(skip)]
     pub s3_access_key_id: Option<String>,
@@ -92,6 +95,7 @@ impl std::fmt::Debug for Config {
             .field("search", &self.search)
             .field("deepseek_search_key", &self.deepseek_search_key.is_some())
             .field("iqs_api_key", &self.iqs_api_key.is_some())
+            .field("parallel_search_key", &self.parallel_search_key.is_some())
             .field("s3_access_key_id", &self.s3_access_key_id.is_some())
             .field("s3_secret_access_key", &self.s3_secret_access_key.is_some())
             .field(
@@ -451,11 +455,12 @@ impl AcsSandbox {
 }
 
 /// 平台搜索工具 `web_search`（docs/search.md）：`[search]`。按 `providers` 的顺序试，配了 key 的才用；一家都没配就不给
-/// agent 这个工具。用户 2026-11-04 定：DeepSeek 为主、阿里云 IQS 备用，每人每天 50 次，测试期每月 ¥100。
+/// agent 这个工具。用户 2026-11-04 定：每人每天 50 次，测试期每月 ¥100；接口用 Parallel（用户点名的，clodex 用的就是它），
+/// DeepSeek、阿里云 IQS 依次备用。
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Search {
-    /// `deepseek`、`iqs`。
+    /// `parallel`、`deepseek`、`iqs`。
     pub providers: Vec<String>,
     /// 每人每天最多几次，0 是暂停平台搜索。
     pub per_user_daily: u32,
@@ -467,8 +472,28 @@ pub struct Search {
     pub deadline_secs: u64,
     /// 额度用到八成、用完了，接口欠费、key 不对时，提醒发给这个手机号（E.164）的账号；不配就只打日志。
     pub alert_phone: Option<String>,
+    pub parallel: ParallelVendor,
     pub deepseek: DeepSeekVendor,
     pub iqs: IqsVendor,
+}
+
+/// Parallel 搜索：地址、单价（分/千次，`fast` 档 $1/千次，按 ¥7 算）、档位（`turbo`、`fast`、`basic`、`advanced`）。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ParallelVendor {
+    pub endpoint: String,
+    pub price_per_1000_fen: u64,
+    pub mode: String,
+}
+
+impl Default for ParallelVendor {
+    fn default() -> Self {
+        Self {
+            endpoint: orchestrator::search::ParallelSearch::ENDPOINT.into(),
+            price_per_1000_fen: 700,
+            mode: "fast".into(),
+        }
+    }
 }
 
 /// DeepSeek 搜索：地址、单价（分/千次，只算收钱的次数）。
@@ -512,12 +537,21 @@ impl Config {
     pub fn search_backends(
         &self,
     ) -> anyhow::Result<Vec<std::sync::Arc<dyn orchestrator::search::SearchBackend>>> {
-        use orchestrator::search::{DeepSeekSearch, IqsSearch, search_client};
+        use orchestrator::search::{DeepSeekSearch, IqsSearch, ParallelSearch, search_client};
         let client = search_client(std::time::Duration::from_secs(self.search.timeout_secs))
             .context("search HTTP client")?;
         let mut out: Vec<std::sync::Arc<dyn orchestrator::search::SearchBackend>> = Vec::new();
         for p in &self.search.providers {
             match (p.as_str(), &self.deepseek_search_key, &self.iqs_api_key) {
+                ("parallel", _, _) if self.parallel_search_key.is_some() => {
+                    out.push(std::sync::Arc::new(ParallelSearch::new(
+                        client.clone(),
+                        &self.search.parallel.endpoint,
+                        self.parallel_search_key.as_deref().unwrap_or_default(),
+                        &self.search.parallel.mode,
+                        self.search.parallel.price_per_1000_fen,
+                    )))
+                }
                 ("deepseek", Some(key), _) => out.push(std::sync::Arc::new(DeepSeekSearch::new(
                     client.clone(),
                     &self.search.deepseek.endpoint,
@@ -549,12 +583,13 @@ impl Config {
 impl Default for Search {
     fn default() -> Self {
         Self {
-            providers: vec!["deepseek".into(), "iqs".into()],
+            providers: vec!["parallel".into(), "deepseek".into(), "iqs".into()],
             per_user_daily: 50,
             monthly_budget_yuan: 100,
             timeout_secs: 10,
             deadline_secs: 20,
             alert_phone: None,
+            parallel: ParallelVendor::default(),
             deepseek: DeepSeekVendor::default(),
             iqs: IqsVendor::default(),
         }
@@ -885,6 +920,7 @@ impl Default for Config {
             acs_api_key: None,
             deepseek_search_key: None,
             iqs_api_key: None,
+            parallel_search_key: None,
             s3_access_key_id: None,
             s3_secret_access_key: None,
             aliyun_sms_access_key_id: None,
@@ -982,6 +1018,7 @@ impl Config {
         cfg.acs_api_key = env.var("THINKTIN_ACS_API_KEY");
         cfg.deepseek_search_key = env.var("THINKTIN_DEEPSEEK_SEARCH_KEY");
         cfg.iqs_api_key = env.var("THINKTIN_IQS_API_KEY");
+        cfg.parallel_search_key = env.var("THINKTIN_PARALLEL_SEARCH_KEY");
         cfg.s3_access_key_id = env.var("THINKTIN_S3_ACCESS_KEY_ID");
         cfg.s3_secret_access_key = env.var("THINKTIN_S3_SECRET_ACCESS_KEY");
         cfg.aliyun_sms_access_key_id = env.var("THINKTIN_ALIYUN_SMS_ACCESS_KEY_ID");
@@ -1008,6 +1045,18 @@ impl Config {
         }
         for p in &self.search.providers {
             let (endpoint, price) = match p.as_str() {
+                "parallel" => {
+                    if !matches!(
+                        self.search.parallel.mode.as_str(),
+                        "turbo" | "fast" | "basic" | "advanced"
+                    ) {
+                        bail!("search.parallel.mode must be turbo, fast, basic or advanced");
+                    }
+                    (
+                        &self.search.parallel.endpoint,
+                        self.search.parallel.price_per_1000_fen,
+                    )
+                }
                 "deepseek" => (
                     &self.search.deepseek.endpoint,
                     self.search.deepseek.price_per_1000_fen,
@@ -1021,7 +1070,9 @@ impl Config {
                         self.search.iqs.price_per_1000_fen,
                     )
                 }
-                other => bail!("search.providers: unknown provider {other:?} (deepseek, iqs)"),
+                other => {
+                    bail!("search.providers: unknown provider {other:?} (parallel, deepseek, iqs)")
+                }
             };
             if !endpoint.starts_with("https://") {
                 bail!("search.{p}.endpoint must be an https:// URL");
@@ -1975,6 +2026,7 @@ api_ur = \"x\""
             ["iqs"]
         );
         vars.insert("THINKTIN_DEEPSEEK_SEARCH_KEY", "ds-key");
+        vars.insert("THINKTIN_PARALLEL_SEARCH_KEY", "pl-key");
         let cfg = Config::load(Some(&path), &MapEnv(vars.clone())).unwrap();
         assert_eq!(
             cfg.search_backends()
@@ -1982,7 +2034,11 @@ api_ur = \"x\""
                 .iter()
                 .map(|b| (b.name(), b.cost_millicents()))
                 .collect::<Vec<_>>(),
-            [("deepseek", 500), ("iqs", 800)]
+            [("parallel", 700), ("deepseek", 500), ("iqs", 800)]
+        );
+        assert!(
+            !format!("{cfg:?}").contains("pl-key"),
+            "keys stay out of logs"
         );
         assert!(
             !format!("{cfg:?}").contains("ds-key"),

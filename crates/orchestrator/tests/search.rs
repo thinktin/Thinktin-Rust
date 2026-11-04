@@ -399,3 +399,113 @@ async fn billed_failures_count_and_the_operator_is_told() {
         .collect();
     assert_eq!(subjects.len(), 3, "{subjects:?}");
 }
+
+/// 本机假的搜索接口：收一个请求、记下请求头和正文，回给定的状态码和正文。
+async fn fake_http(status: u16, body: Value) -> (String, tokio::task::JoinHandle<(String, Value)>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/search", l.local_addr().unwrap());
+    let task = tokio::spawn(async move {
+        let (mut s, _) = l.accept().await.unwrap();
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 4096];
+        let (head, body_start) = loop {
+            let n = s.read(&mut chunk).await.unwrap();
+            buf.extend_from_slice(&chunk[..n]);
+            if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                break (String::from_utf8_lossy(&buf[..i]).to_lowercase(), i + 4);
+            }
+        };
+        let len: usize = head
+            .lines()
+            .find_map(|l| l.strip_prefix("content-length:"))
+            .map(|v| v.trim().parse().unwrap())
+            .unwrap_or(0);
+        while buf.len() < body_start + len {
+            let n = s.read(&mut chunk).await.unwrap();
+            buf.extend_from_slice(&chunk[..n]);
+        }
+        let req: Value = serde_json::from_slice(&buf[body_start..body_start + len]).unwrap();
+        let text = body.to_string();
+        let resp = format!(
+            "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{text}",
+            text.len()
+        );
+        s.write_all(resp.as_bytes()).await.unwrap();
+        (head, req)
+    });
+    (url, task)
+}
+
+/// 三家接口的请求格式和结果解析（对着各家文档，没有真 key 时用假服务器）。
+#[tokio::test]
+async fn vendor_requests_and_responses_follow_their_docs() {
+    use orchestrator::search::{DeepSeekSearch, IqsSearch, ParallelSearch, search_client};
+    let client = search_client(Duration::from_secs(5)).unwrap();
+
+    let (url, task) = fake_http(
+        200,
+        json!({"search_id": "s1", "session_id": "x", "results": [
+            {"url": "https://Docs.Example.com/a", "title": "A", "publish_date": "2026-11-01",
+             "excerpts": ["first part", "second part"]},
+            {"url": "ftp://bad", "title": "B", "excerpts": []}
+        ]}),
+    )
+    .await;
+    let p = ParallelSearch::new(client.clone(), &url, "pk", "fast", 700);
+    let a = p.search("东京 天气", 3).await.unwrap();
+    let (head, req) = task.await.unwrap();
+    assert!(head.contains("x-api-key: pk"), "{head}");
+    assert_eq!(req["search_queries"], json!(["东京 天气"]));
+    assert_eq!(req["mode"], "fast");
+    assert_eq!(req["advanced_settings"]["max_results"], 3);
+    assert_eq!(
+        req["advanced_settings"]["excerpt_settings"]["max_chars_per_result"],
+        300
+    );
+    assert!(a.billed);
+    assert_eq!(a.hits.len(), 1, "non-web links are dropped");
+    assert_eq!(a.hits[0].site.as_deref(), Some("docs.example.com"));
+    assert_eq!(a.hits[0].snippet, "first part second part");
+    assert_eq!(a.hits[0].date.as_deref(), Some("2026-11-01"));
+
+    let (url, task) = fake_http(
+        200,
+        json!({"results": [{"title": "D", "url": "https://d.example.com", "snippet": "s",
+                             "summary": "long", "content": "", "site_name": "D站", "date": null}]}),
+    )
+    .await;
+    let d = DeepSeekSearch::new(client.clone(), &url, "dk", 500);
+    let a = d.search("q", 5).await.unwrap();
+    let (head, req) = task.await.unwrap();
+    assert!(head.contains("authorization: bearer dk"), "{head}");
+    assert_eq!(
+        (req["count"].clone(), req["need_content"].clone()),
+        (json!(5), json!(false))
+    );
+    assert_eq!((a.billed, a.hits[0].snippet.as_str()), (true, "s"));
+    // 没结果不收钱。
+    let (url, _task) = fake_http(200, json!({"results": []})).await;
+    let d = DeepSeekSearch::new(client.clone(), &url, "dk", 500);
+    assert!(!d.search("q", 5).await.unwrap().billed);
+    // 欠费：要运营者处理，不收钱。
+    let (url, _task) = fake_http(402, json!({"error": {"message": "Insufficient Balance"}})).await;
+    let d = DeepSeekSearch::new(client.clone(), &url, "dk", 500);
+    let f = d.search("q", 5).await.unwrap_err();
+    assert!(f.fatal && !f.billed, "{f:?}");
+
+    let (url, task) = fake_http(
+        200,
+        json!({"requestId": "r", "pageItems": [{"title": "I", "link": "https://i.example.cn/x",
+               "snippet": "片段", "hostname": "i.example.cn", "publishedTime": "2026-10-01T00:00:00Z"}]}),
+    )
+    .await;
+    let i = IqsSearch::new(client, &url, "ik", "CNLiteBasic", 800);
+    let a = i.search("q", 4).await.unwrap();
+    let (head, req) = task.await.unwrap();
+    assert!(head.contains("authorization: bearer ik"), "{head}");
+    assert_eq!(req["engineType"], "CNLiteBasic");
+    assert_eq!(req["contents"]["mainText"], false);
+    assert_eq!(req["advancedParams"]["numResults"], "4");
+    assert_eq!(a.hits[0].site.as_deref(), Some("i.example.cn"));
+}
