@@ -954,6 +954,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_register_live_activity(
     ): Int
+    external fun uniffi_client_core_checksum_method_thinktinclient_remove_instance_egress_host(
+    ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_rename_instance(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_replace_credential_secret(
@@ -1252,6 +1254,8 @@ internal object UniffiLib {
     external fun uniffi_client_core_fn_method_thinktinclient_post_to_board(`ptr`: Long,`body`: RustBuffer.ByValue,`tags`: RustBuffer.ByValue,`allowSecrets`: Byte,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_register_live_activity(`ptr`: Long,`runId`: RustBuffer.ByValue,`token`: RustBuffer.ByValue,
+    ): Long
+    external fun uniffi_client_core_fn_method_thinktinclient_remove_instance_egress_host(`ptr`: Long,`instanceId`: RustBuffer.ByValue,`host`: RustBuffer.ByValue,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_rename_instance(`ptr`: Long,`instanceId`: RustBuffer.ByValue,`name`: RustBuffer.ByValue,
     ): Long
@@ -1721,7 +1725,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_devices() and 0xFFFF) != 40703) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_client_core_checksum_method_thinktinclient_egress_requests() and 0xFFFF) != 56788) {
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_egress_requests() and 0xFFFF) != 7984) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_end_live_activity() and 0xFFFF) != 55372) {
@@ -1796,6 +1800,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_register_live_activity() and 0xFFFF) != 32649) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_remove_instance_egress_host() and 0xFFFF) != 62544) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_rename_instance() and 0xFFFF) != 58171) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1853,7 +1860,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_set_credential_daily_limit() and 0xFFFF) != 1631) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_client_core_checksum_method_thinktinclient_set_instance_egress() and 0xFFFF) != 32734) {
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_set_instance_egress() and 0xFFFF) != 62570) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_set_instance_version() and 0xFFFF) != 9209) {
@@ -3937,7 +3944,8 @@ public interface ThinktinClientInterface {
     
     /**
      * agent 想访问、要用户回答的网站（2.7），新的在前。`instance_id` 不给就是所有实例的；`include_answered` 时也列
-     * 答过、过期了的。收到 subtype 为 `egress_request` 的推送时调它，给用户看“访问一次 / 一直允许 / 拒绝”。
+     * 答过、过期了的；删了的实例的不列。收到 kind 为 `egress_request` 的推送时按目标里的请求 id 找到那一条，给用户看
+     * “访问一次 / 一直允许 / 拒绝”。
      */
     suspend fun `egressRequests`(`instanceId`: kotlin.String?, `includeAnswered`: kotlin.Boolean): List<EgressRequest>
     
@@ -4042,6 +4050,11 @@ public interface ThinktinClientInterface {
      */
     suspend fun `registerLiveActivity`(`runId`: kotlin.String, `token`: kotlin.String)
     
+    /**
+     * 从“一直允许”的网站里删掉一个（2.7，设置里用）。没有这个网站也算成功；返回改后的实例。
+     */
+    suspend fun `removeInstanceEgressHost`(`instanceId`: kotlin.String, `host`: kotlin.String): Instance
+    
     suspend fun `renameInstance`(`instanceId`: kotlin.String, `name`: kotlin.String): Instance
     
     /**
@@ -4128,9 +4141,9 @@ public interface ThinktinClientInterface {
     suspend fun `setCredentialDailyLimit`(`credentialId`: kotlin.String, `dailyTokenLimit`: kotlin.ULong?): Credential
     
     /**
-     * 改实例能上哪些网站（2.7）：`mode` 是 model / dev / custom / all，`hosts` 是一直允许的网站（custom 至少一个）。
-     * App 里不放档位开关（用户 2026-11-04 定），只用它管“一直允许”的网站：`mode` 传实例现在的档位，`hosts` 传删减后的
-     * 列表。打开 all 要 `accept_risk = true`，否则报 422。不合规的网站（IP 地址、通配符、带端口的）报 422。
+     * 改实例能上哪些网站（2.7）：`mode` 是 model / dev / custom / all，`hosts` 是一直允许的网站（custom 至少一个），整个
+     * 列表一起换。App 里不放档位开关（用户 2026-11-04 定），设置里删网站用 [`Self::remove_instance_egress_host`]（整个
+     * 列表一起换会冲掉同时点的“一直允许”）。打开 all 要 `accept_risk = true`，否则报 422。不合规的网站报 422。
      */
     suspend fun `setInstanceEgress`(`instanceId`: kotlin.String, `mode`: kotlin.String, `hosts`: List<kotlin.String>, `acceptRisk`: kotlin.Boolean): Instance
     
@@ -5425,7 +5438,8 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
     
     /**
      * agent 想访问、要用户回答的网站（2.7），新的在前。`instance_id` 不给就是所有实例的；`include_answered` 时也列
-     * 答过、过期了的。收到 subtype 为 `egress_request` 的推送时调它，给用户看“访问一次 / 一直允许 / 拒绝”。
+     * 答过、过期了的；删了的实例的不列。收到 kind 为 `egress_request` 的推送时按目标里的请求 id 找到那一条，给用户看
+     * “访问一次 / 一直允许 / 拒绝”。
      */
     @Throws(ClientException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -6046,6 +6060,32 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
     }
 
     
+    /**
+     * 从“一直允许”的网站里删掉一个（2.7，设置里用）。没有这个网站也算成功；返回改后的实例。
+     */
+    @Throws(ClientException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `removeInstanceEgressHost`(`instanceId`: kotlin.String, `host`: kotlin.String) : Instance {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_client_core_fn_method_thinktinclient_remove_instance_egress_host(
+                uniffiHandle,
+                
+        FfiConverterString.lower(`instanceId`),
+        FfiConverterString.lower(`host`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_client_core_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeInstance.lift(it) },
+        // Error FFI converter
+        ClientException.ErrorHandler,
+    )
+    }
+
+    
     @Throws(ClientException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
     override suspend fun `renameInstance`(`instanceId`: kotlin.String, `name`: kotlin.String) : Instance {
@@ -6525,9 +6565,9 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
 
     
     /**
-     * 改实例能上哪些网站（2.7）：`mode` 是 model / dev / custom / all，`hosts` 是一直允许的网站（custom 至少一个）。
-     * App 里不放档位开关（用户 2026-11-04 定），只用它管“一直允许”的网站：`mode` 传实例现在的档位，`hosts` 传删减后的
-     * 列表。打开 all 要 `accept_risk = true`，否则报 422。不合规的网站（IP 地址、通配符、带端口的）报 422。
+     * 改实例能上哪些网站（2.7）：`mode` 是 model / dev / custom / all，`hosts` 是一直允许的网站（custom 至少一个），整个
+     * 列表一起换。App 里不放档位开关（用户 2026-11-04 定），设置里删网站用 [`Self::remove_instance_egress_host`]（整个
+     * 列表一起换会冲掉同时点的“一直允许”）。打开 all 要 `accept_risk = true`，否则报 422。不合规的网站报 422。
      */
     @Throws(ClientException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -8383,7 +8423,8 @@ public object FfiConverterTypeEgressDenial: FfiConverterRustBuffer<EgressDenial>
 
 
 /**
- * agent 想访问、要用户回答的一个网站（2.7）。推送的 subtype 是 `egress_request`（带 `instance_id`）。
+ * agent 想访问、要用户回答的一个网站（2.7）。推送的 kind 是 `egress_request`（iOS category `EGRESS_REQUEST`，高优先级），
+ * 目标里带 `egress_request`（APNs 的 `tt.egress_request`，FCM、极光的 `tt_egress_request`）和 `instance`、`run`。
  */
 data class EgressRequest (
     var `id`: kotlin.String
@@ -8647,8 +8688,8 @@ data class InboxItem (
     var `approvalId`: kotlin.String?
     , 
     /**
-     * run_finished / run_failed / approval / computer_approval / vault_request / plan_confirm / info。以后可能有新的，
-     * 不认识的按 info 显示。
+     * run_finished / run_failed / approval / computer_approval / vault_request / egress_request / plan_confirm / info。
+     * 以后可能有新的，不认识的按 info 显示。
      */
     var `kind`: kotlin.String
     , 
@@ -8675,6 +8716,12 @@ data class InboxItem (
      * 保险箱请求（`kind` 是 vault_request 时，`thinktin://vault/request/{id}`）。
      */
     var `vaultRequestId`: kotlin.String? = null 
+    , 
+    /**
+     * agent 想访问的网站（`kind` 是 egress_request 时，2.7）：用 `egress_requests` 找到这一条，弹“访问一次 / 一直允许 /
+     * 拒绝”。用户答了、请求过期了，这一条服务端自动标成已读。
+     */
+    var `egressRequestId`: kotlin.String? = null 
     
 ){
     
@@ -8704,6 +8751,7 @@ public object FfiConverterTypeInboxItem: FfiConverterRustBuffer<InboxItem> {
             FfiConverterLong.read(buf),
             FfiConverterOptionalString.read(buf),
             FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
         )
     }
 
@@ -8720,7 +8768,8 @@ public object FfiConverterTypeInboxItem: FfiConverterRustBuffer<InboxItem> {
             FfiConverterBoolean.allocationSize(value.`read`) +
             FfiConverterLong.allocationSize(value.`createdAtMs`) +
             FfiConverterOptionalString.allocationSize(value.`subtype`) +
-            FfiConverterOptionalString.allocationSize(value.`vaultRequestId`)
+            FfiConverterOptionalString.allocationSize(value.`vaultRequestId`) +
+            FfiConverterOptionalString.allocationSize(value.`egressRequestId`)
     )
 
     override fun write(value: InboxItem, buf: ByteBuffer) {
@@ -8737,6 +8786,7 @@ public object FfiConverterTypeInboxItem: FfiConverterRustBuffer<InboxItem> {
             FfiConverterLong.write(value.`createdAtMs`, buf)
             FfiConverterOptionalString.write(value.`subtype`, buf)
             FfiConverterOptionalString.write(value.`vaultRequestId`, buf)
+            FfiConverterOptionalString.write(value.`egressRequestId`, buf)
     }
 }
 
