@@ -99,6 +99,10 @@
 
 ## 进行中
 
+- **2.7 受控出网通道（出口代理）**：集成分支会话（session_016LgPcdynywrhrjCq8VVFLt）在做，2026-11-04 08:30 起（北京时间），
+  按 [出口代理](egress.md) 的方案和用户 11-04 拍板的数值（默认只连模型、全部公网要用户自己开、每实例 4 条并发和每天 100 MiB、
+  日志 6 个月）。分支 `claude/determined-lovelace-vn0j5h`，进度记在 `docs/progress/claude-determined-lovelace-vn0j5h.md`。
+
 - **client-core 的破坏性改动（2026-10-22，和 iOS、Android 会话约好的一批，`339e191`）**：
   1. `ClientError`（`Network`、`Api`、`Decode`、`Cache`、`InvalidArgument`、`Internal`）和 `PairingError::Malformed` 里的
      `message` 字段改名 `detail`（Kotlin 的异常类自带 `message`，同名编译不过；Android 的 `patch-bindings.py` 可以去掉了）。
