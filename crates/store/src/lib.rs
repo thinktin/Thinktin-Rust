@@ -28,6 +28,7 @@ mod plans;
 mod reports;
 mod runs;
 mod schema;
+mod search;
 mod sessions;
 mod teams;
 mod tool_calls;
@@ -76,6 +77,7 @@ pub use runs::{
     RunFilter, RunRecord, Urgent,
 };
 pub use schema::MigrationStatus;
+pub use search::SearchReserve;
 pub use sessions::{LoginCode, SessionRecord, SessionState};
 pub use usage::{NewUsage, UsageBucket, UsageFilter, UsageGroup};
 pub use users::AccountSummary;

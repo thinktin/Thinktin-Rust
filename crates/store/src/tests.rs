@@ -5415,3 +5415,59 @@ async fn egress_asks_count_per_task_and_settle_their_inbox() {
         .unwrap();
     assert_eq!(status, "expired");
 }
+
+/// 平台搜索的记账（docs/search.md）：每人每天的次数、全站每月的钱各有上限；失败的退回；只看得到自己的。
+#[tokio::test]
+async fn search_usage_is_capped_per_user_and_per_month() {
+    use crate::SearchReserve;
+
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let a = user(db, "+8613800000931").await;
+    let b = user(db, "+8613800000932").await;
+    let day = NaiveDate::from_ymd_opt(2026, 11, 4).unwrap();
+    let month = NaiveDate::from_ymd_opt(2026, 11, 1).unwrap();
+    let reserve = |u: UserId, budget: u64| async move {
+        let mut w = db.worker().await.unwrap();
+        let r = w
+            .reserve_search(u, day, month, 2, budget, 500)
+            .await
+            .unwrap();
+        w.commit().await.unwrap();
+        r
+    };
+    assert_eq!(reserve(a, 10_000).await, SearchReserve::Reserved);
+    assert_eq!(reserve(a, 10_000).await, SearchReserve::Reserved);
+    // 今天的两次用完了。
+    assert_eq!(reserve(a, 10_000).await, SearchReserve::UserDaily);
+    // 失败的退回：又能搜一次。
+    let mut w = db.worker().await.unwrap();
+    w.settle_search(a, day, false, 500, 0).await.unwrap();
+    w.commit().await.unwrap();
+    assert_eq!(reserve(a, 10_000).await, SearchReserve::Reserved);
+    // 全站这个月已经花了 1000：再来 500 就超过 1400。
+    assert_eq!(reserve(b, 1_400).await, SearchReserve::MonthlyBudget);
+    assert_eq!(reserve(b, 2_000).await, SearchReserve::Reserved);
+    let mut w = db.worker().await.unwrap();
+    assert_eq!(w.search_spent_since(month).await.unwrap(), 1_500);
+    // 下个月重新算。
+    assert_eq!(
+        w.search_spent_since(NaiveDate::from_ymd_opt(2026, 12, 1).unwrap())
+            .await
+            .unwrap(),
+        0
+    );
+    w.commit().await.unwrap();
+    let mut tx = db.tenant(a).await.unwrap();
+    assert_eq!(tx.search_calls(day).await.unwrap(), 2);
+    tx.rollback().await.unwrap();
+    let mut tx = db.tenant(b).await.unwrap();
+    assert_eq!(tx.search_calls(day).await.unwrap(), 1);
+    tx.rollback().await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    assert_eq!(
+        w.purge_search_usage(day.succ_opt().unwrap()).await.unwrap(),
+        2
+    );
+    w.commit().await.unwrap();
+}
