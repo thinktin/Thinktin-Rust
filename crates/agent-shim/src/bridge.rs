@@ -35,6 +35,15 @@ use crate::events::EventSink;
 
 /// 注入给 agent 的 MCP 服务器名；Claude Code 里工具名会显示成 `mcp__thinktin__<工具>`。
 pub const SERVER_NAME: &str = "thinktin";
+
+/// 平台工具服务的说明（MCP `instructions`，agent 的系统提示里看得到）。出网（2.7）的规矩也写在这里：agent 的工具碰到
+/// 代理返回的 403 时，常常只说“CONNECT 失败”，不说原因。
+const INSTRUCTIONS: &str = "Tools provided by the ThinkTin platform (schedules, artifacts, delegation, the user's other \
+agents, their shared board and questions to them). Internet access goes through the platform's HTTPS proxy: web search \
+and developer sites (package registries, GitHub) work directly; any other website needs the user's approval. The first \
+request to such a site asks the user in the ThinkTin app and waits up to a minute. If it fails with a 403 \
+(pending_approval), the user has not answered yet: do other work first and retry that site later. If the user declined \
+(user_denied), do not retry it in this task; find another way.";
 /// 我们支持的 MCP 协议版本，按新旧排列。
 const MCP_VERSIONS: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
 
@@ -503,7 +512,7 @@ pub async fn run_client(socket: &Path) -> anyhow::Result<()> {
                         "protocolVersion": version,
                         "capabilities": {"tools": {"listChanged": true}},
                         "serverInfo": {"name": SERVER_NAME, "version": env!("CARGO_PKG_VERSION")},
-                        "instructions": "Tools provided by the ThinkTin platform (schedules, artifacts, delegation, the user's other agents, their shared board and questions to them).",
+                        "instructions": INSTRUCTIONS,
                     }),
                 ));
             }
