@@ -2,7 +2,7 @@ import SwiftUI
 
 /// ThinkTin 的标志（Logo G1.0，`docs/brand/logo`）：罐体三条线加一条彩色双圈线，用 SwiftUI 原生矢量画，多大都清楚。
 ///
-/// 几何在 `BrandLogo+Geometry.swift`，由 `tools/apple/brand_assets.py` 从 Logo 的几何参数生成（圆弧转三次贝塞尔，和原稿
+/// 几何在 `BrandLogo+Geometry.swift`（`BrandLogoGeometry`），由 `tools/apple/brand_assets.py` 从 Logo 的几何参数生成（圆弧转三次贝塞尔，和原稿
 /// 逐像素一致），改 Logo 后重跑脚本，不要手改。按线条的外缘等比缩放，不带原稿那一圈白边；用 `.frame(height:)` 定大小。
 /// 罐体线条用 `Theme.ink`，深色模式自动变浅；双圈线用原稿的渐变（`.color`）或同一种墨色（`.monochrome`）。
 public struct BrandLogo: View {
@@ -21,28 +21,26 @@ public struct BrandLogo: View {
 
     public var body: some View {
         GeometryReader { proxy in
-            let scale = Self.scale(for: proxy.size)
+            let scale = BrandLogoGeometry.scale(for: proxy.size)
             ZStack {
-                BrandLogoShape(part: .body).stroke(Theme.ink, style: Self.stroke(Self.bodyWidth * scale))
-                BrandLogoShape(part: .rim).stroke(Theme.ink, style: Self.stroke(Self.rimWidth * scale))
-                BrandLogoShape(part: .innerRim).stroke(Theme.ink, style: Self.stroke(Self.innerRimWidth * scale))
+                BrandLogoShape(part: .body).stroke(Theme.ink, style: Self.stroke(BrandLogoGeometry.bodyWidth * scale))
+                BrandLogoShape(part: .rim).stroke(Theme.ink, style: Self.stroke(BrandLogoGeometry.rimWidth * scale))
+                BrandLogoShape(part: .innerRim).stroke(
+                    Theme.ink, style: Self.stroke(BrandLogoGeometry.innerRimWidth * scale))
                 switch style {
                 case .color:
-                    BrandLogoShape(part: .loop).stroke(Self.gradient, style: Self.stroke(Self.loopWidth * scale))
+                    BrandLogoShape(part: .loop).stroke(
+                        Self.gradient, style: Self.stroke(BrandLogoGeometry.loopWidth * scale))
                 case .monochrome:
-                    BrandLogoShape(part: .loop).stroke(Theme.ink, style: Self.stroke(Self.loopWidth * scale))
+                    BrandLogoShape(part: .loop).stroke(
+                        Theme.ink, style: Self.stroke(BrandLogoGeometry.loopWidth * scale))
                 }
             }
         }
-        .aspectRatio(Self.contentBounds.width / Self.contentBounds.height, contentMode: .fit)
+        .aspectRatio(BrandLogoGeometry.contentBounds.width / BrandLogoGeometry.contentBounds.height, contentMode: .fit)
         .accessibilityElement()
         .accessibilityLabel(Text(verbatim: "ThinkTin"))
         .accessibilityAddTraits(.isImage)
-    }
-
-    /// 画板单位到视图点的比例：内容区等比放进给定的大小。
-    static func scale(for size: CGSize) -> CGFloat {
-        min(size.width / contentBounds.width, size.height / contentBounds.height)
     }
 
     /// 原稿的线条：圆头、圆角连接。
@@ -54,18 +52,32 @@ public struct BrandLogo: View {
     /// 视图按内容区的宽高比显示，所以和原稿一致；渐变轴外按端点色延展（SwiftUI 的默认行为）。
     static var gradient: LinearGradient {
         LinearGradient(
-            stops: gradientStops.map { stop in
+            stops: BrandLogoGeometry.gradientStops.map { stop in
                 let color = HexColor(stop.hex)
                 return Gradient.Stop(
                     color: Color(red: color.red, green: color.green, blue: color.blue), location: stop.location)
             },
-            startPoint: unitPoint(gradientStart),
-            endPoint: unitPoint(gradientEnd)
+            startPoint: unitPoint(BrandLogoGeometry.gradientStart),
+            endPoint: unitPoint(BrandLogoGeometry.gradientEnd)
         )
     }
 
     static func unitPoint(_ point: CGPoint) -> UnitPoint {
-        UnitPoint(
+        let relative = BrandLogoGeometry.relativePosition(point)
+        return UnitPoint(x: relative.x, y: relative.y)
+    }
+
+}
+
+extension BrandLogoGeometry {
+    /// 画板单位到视图点的比例：内容区等比放进给定的大小。
+    static func scale(for size: CGSize) -> CGFloat {
+        min(size.width / contentBounds.width, size.height / contentBounds.height)
+    }
+
+    /// 画板坐标在内容区里的相对位置（0...1 是内容区内）。
+    static func relativePosition(_ point: CGPoint) -> CGPoint {
+        CGPoint(
             x: (point.x - contentBounds.minX) / contentBounds.width,
             y: (point.y - contentBounds.minY) / contentBounds.height
         )
@@ -81,18 +93,18 @@ struct BrandLogoShape: Shape {
     let part: Part
 
     func path(in rect: CGRect) -> Path {
-        let bounds = BrandLogo.contentBounds
-        let scale = BrandLogo.scale(for: rect.size)
+        let bounds = BrandLogoGeometry.contentBounds
+        let scale = BrandLogoGeometry.scale(for: rect.size)
         let origin = CGPoint(
             x: rect.midX - (bounds.midX * scale),
             y: rect.midY - (bounds.midY * scale)
         )
         var builder = BrandLogoPathBuilder(scale: scale, origin: origin)
         switch part {
-        case .body: BrandLogo.bodyPath(&builder)
-        case .rim: BrandLogo.rimPath(&builder)
-        case .innerRim: BrandLogo.innerRimPath(&builder)
-        case .loop: BrandLogo.loopPath(&builder)
+        case .body: BrandLogoGeometry.body(&builder)
+        case .rim: BrandLogoGeometry.rim(&builder)
+        case .innerRim: BrandLogoGeometry.innerRim(&builder)
+        case .loop: BrandLogoGeometry.loop(&builder)
         }
         return builder.path
     }

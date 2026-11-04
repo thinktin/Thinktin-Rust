@@ -17,6 +17,10 @@ iOS App 用 Swift + SwiftUI 原生开发，界面参考 Claude 官方 iOS App �
    上编（每次推送都跑，见第 7 节）。
 4. **贴 iOS 的习惯，不复刻 Material。** 导航、列表、表单、分享用系统控件；颜色、字体、留白按第 4 节的设计令牌，看起来像
    Claude App，但不用它的商标和品牌字体。
+5. **按钮这类控件能用系统原生的，一律用原生的**（用户 2026-11-04 定的）：`Button` 加系统的按钮样式（`.borderedProminent`、
+   `.bordered`、`.plain`、iOS 26 的玻璃样式）、`Menu`、`Toggle`、`Picker`、`Stepper`、`TextField`、`.toolbar`、`.sheet`、
+   `.confirmationDialog`、`.swipeActions`、`ShareLink`、SF Symbols 图标，不自己画外形、不自己实现手势和动效。只有系统没有的东西
+   （对话里的卡片、Logo 这类）才自己画。改版界面时，遇到现在自己画的控件，顺手换成原生的。
 
 ## 2. 目录结构
 
@@ -82,6 +86,17 @@ Claude App 的特点：暖色纸张底色、极少的强调色、标题用衬线
   成功 `success`，失败 `danger`，取消 `inkTertiary`；重试等待（`backoff`）和认不出的状态同排队。实例状态：运行中、启动中、创建中是会呼吸的点，
   已暂停、已删除 `inkTertiary`，已归档是空心点。规则在 `ThinktinUI/Design/StatusTone.swift`，中英文状态名和安卓设计规范一致。
 - 深色模式、动态字体、VoiceOver 标签是每个页面的验收项，不是后补的。
+
+### 4.1 Logo 与 App 图标
+
+- 标志是 [Logo G1.0](brand/logo/README.md)（罐子加一条彩色双圈线）。素材由 `tools/apple/brand_assets.py` 从
+  `docs/brand/logo/` 生成并提交进仓库，改 Logo 后重跑（要 Pillow 和 resvg：`pip install pillow resvg-py`），不要手改生成物：
+  - App 里用的 Logo 是原生矢量 `BrandLogo`（`ThinktinUI/Design/BrandLogo.swift`，几何在生成的 `BrandLogo+Geometry.swift`）：
+    圆弧转三次贝塞尔，和原稿逐像素一致（`brand_assets.py --check` 比较）。罐体线条用 `ink`，深色模式自动变浅；双圈线是原稿的
+    渐变，`.monochrome` 时用墨色。按线条外缘等比缩放，用 `.frame(height:)` 定大小。现在用在欢迎页（112）和侧边栏顶上（28）。
+  - iPhone 图标 1024：浅色（白底不透明）、深色（透明底，罐体线条 `#F2F2F7`）、着色（透明底白色单色）三种。
+  - Mac 图标 16～1024：macOS 的圆角方形白底（824/1024，圆角 185，轻阴影），Logo 在里面。
+- Mac 菜单栏的图标是表示状态的 SF Symbol（空闲、可控制、正在操作），不换成 Logo。
 
 ## 5. 事件流怎么变成对话
 

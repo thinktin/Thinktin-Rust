@@ -2,7 +2,8 @@
 // 圆弧按 ≤90° 一段转成三次贝塞尔；坐标是 1000 × 1000 的画板单位（原点左上，y 向下）。
 import CoreGraphics
 
-extension BrandLogo {
+/// Logo 的几何数据。不是视图，不受主线程隔离，`Shape.path(in:)` 和测试里都能直接用。
+enum BrandLogoGeometry {
     /// 线条外缘的包围盒（画板单位）：App 里的 Logo 按它等比缩放、不带原稿的白边。
     static let contentBounds = CGRect(x: 271, y: 186, width: 458, height: 627)
 
@@ -23,7 +24,7 @@ extension BrandLogo {
 
     /// 罐体（B）：线宽 22。
     static let bodyWidth: CGFloat = 22
-    static func bodyPath(_ path: inout BrandLogoPathBuilder) {
+    static func body(_ path: inout BrandLogoPathBuilder) {
         path.move(287.5, 281.5)
         path.line(287.5, 729.5)
         path.curve(292.329, 744.821, 287.5, 734.981, 289.186, 740.33)
@@ -47,7 +48,7 @@ extension BrandLogo {
 
     /// 外罐口（R）：线宽 21。
     static let rimWidth: CGFloat = 21
-    static func rimPath(_ path: inout BrandLogoPathBuilder) {
+    static func rim(_ path: inout BrandLogoPathBuilder) {
         path.move(282, 263.5)
         path.curve(287.048, 249.133, 282, 258.276, 283.781, 253.209)
         path.curve(298.594, 238.052, 290.399, 244.954, 294.281, 241.228)
@@ -86,7 +87,7 @@ extension BrandLogo {
 
     /// 内罐口（I）：线宽 16.5。
     static let innerRimWidth: CGFloat = 16.5
-    static func innerRimPath(_ path: inout BrandLogoPathBuilder) {
+    static func innerRim(_ path: inout BrandLogoPathBuilder) {
         path.move(317.515, 268.617)
         path.curve(330.734, 259.561, 321.553, 265.093, 325.989, 262.054)
         path.curve(345.358, 252.797, 335.491, 257.061, 340.372, 254.804)
@@ -104,7 +105,7 @@ extension BrandLogo {
 
     /// 双圈线（S）：线宽 22。
     static let loopWidth: CGFloat = 22
-    static func loopPath(_ path: inout BrandLogoPathBuilder) {
+    static func loop(_ path: inout BrandLogoPathBuilder) {
         path.move(322.324, 573.218)
         path.curve(351.359, 579.691, 331.4, 577.509, 341.32, 579.721)
         path.curve(380.383, 573.106, 361.401, 579.662, 371.312, 577.413)

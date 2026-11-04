@@ -111,7 +111,8 @@ def swift_source(geometry: dict) -> str:
         "// 圆弧按 ≤90° 一段转成三次贝塞尔；坐标是 1000 × 1000 的画板单位（原点左上，y 向下）。",
         "import CoreGraphics",
         "",
-        "extension BrandLogo {",
+        "/// Logo 的几何数据。不是视图，不受主线程隔离，`Shape.path(in:)` 和测试里都能直接用。",
+        "enum BrandLogoGeometry {",
         "    /// 线条外缘的包围盒（画板单位）：App 里的 Logo 按它等比缩放、不带原稿的白边。",
         f"    static let contentBounds = CGRect(x: {min_x}, y: {min_y}, width: {max_x - min_x}, height: {max_y - min_y})",
         "",
@@ -127,7 +128,7 @@ def swift_source(geometry: dict) -> str:
         name, label = PATHS[path["id"]]
         lines.append(f"    /// {label}（{path['id']}）：线宽 {fmt(path['stroke'])}。")
         lines.append(f"    static let {name}Width: CGFloat = {fmt(path['stroke'])}")
-        lines.append(f"    static func {name}Path(_ path: inout BrandLogoPathBuilder) {{")
+        lines.append(f"    static func {name}(_ path: inout BrandLogoPathBuilder) {{")
         for command in path_commands(path):
             if command[0] == "move":
                 lines.append(f"        path.move({fmt(command[1][0])}, {fmt(command[1][1])})")
