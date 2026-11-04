@@ -2717,6 +2717,83 @@ async fn team_adoption_is_all_or_nothing() {
     }
 }
 
+/// 领养到一半失败（第二个成员的接入方式不存在；两个负责人）：实例、授权、事件、审计、团队（项目）一个都不留。
+#[tokio::test]
+async fn team_adoption_rolls_back_when_a_member_fails() {
+    let Some(a) = api().await else { return };
+    for (round, members) in [
+        json!([
+            { "agent_id": "claude", "name": "主编", "role": "lead" },
+            { "agent_id": "claude", "harness": "no-such-harness", "name": "写手" },
+        ]),
+        json!([
+            { "agent_id": "claude", "name": "主编", "role": "lead" },
+            { "agent_id": "claude", "name": "写手", "role": "lead" },
+        ]),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let phone = format!("1380013808{round}");
+        let u = a.login(&phone).await;
+        let tok = Some(u.access.as_str());
+        let (st, tpl) = a
+            .call(
+                Method::POST,
+                "/v1/team-templates",
+                tok,
+                Some(json!({ "name": "两个人", "spec": { "members": members } })),
+            )
+            .await;
+        assert_eq!(st, StatusCode::CREATED, "{tpl}");
+        let path = format!("/v1/team-templates/{}/adopt", tpl["id"].as_str().unwrap());
+        let (st, body) = a.call(Method::POST, &path, tok, Some(json!({}))).await;
+        assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        let user: uuid::Uuid = sqlx::query_scalar("SELECT id FROM users WHERE phone = $1")
+            .bind(format!("+86{phone}"))
+            .fetch_one(a.t.db.pool())
+            .await
+            .unwrap();
+        for (what, sql) in [
+            (
+                "instances",
+                "SELECT count(*) FROM instances WHERE user_id = $1",
+            ),
+            (
+                "grants",
+                "SELECT count(*) FROM run_grants WHERE user_id = $1",
+            ),
+            ("events", "SELECT count(*) FROM events WHERE user_id = $1"),
+            (
+                "audit",
+                "SELECT count(*) FROM audit_log WHERE user_id = $1 AND action = 'instance.adopt'",
+            ),
+            ("teams", "SELECT count(*) FROM teams WHERE user_id = $1"),
+            (
+                "projects",
+                "SELECT count(*) FROM projects WHERE creator_id = $1",
+            ),
+            (
+                "members",
+                "SELECT count(*) FROM project_members WHERE user_id = $1",
+            ),
+            (
+                "agents",
+                "SELECT count(*) FROM project_agents WHERE user_id = $1",
+            ),
+        ] {
+            let n: i64 = sqlx::query_scalar(sql)
+                .bind(user)
+                .fetch_one(a.t.db.pool())
+                .await
+                .unwrap();
+            assert_eq!(n, 0, "round {round}: {what} left behind");
+        }
+        let (_, teams) = a.call(Method::GET, "/v1/teams", tok, None).await;
+        assert_eq!(teams["teams"], json!([]), "{teams}");
+    }
+}
+
 #[tokio::test]
 async fn rate_limits_and_signup_cap() {
     let Some(a) = api_with(GatewayConfig {
