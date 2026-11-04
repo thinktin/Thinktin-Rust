@@ -32,6 +32,9 @@
   避开强调色和状态色，白字对比度 4:1 以上），右下角可选状态角标（`.instance` / `.run` / `.custom`），读屏念“名字，状态”；
   尺寸用 `Metrics.Avatar`。`AgentMonogram` 删掉，6 个调用处（agent 目录、agent 详情、实例详情、模型 key 列表和详情、开源许可）
   换成它，旁边有名字的照旧对读屏隐藏。测试 `InstanceAvatarTests`。
+- 第 0 轮·`Components/FilterChipBar.swift`（规范 2.8）：横向滚动的单选筛选胶囊，系统按钮 + `glassButtonStyle`（选中 `.prominent`），
+  外面包 `GlassGroup`，可带数，换选中时有选择触感；`value` 重复的只留第一个，点已选中的不改值。泛型 `Value: Hashable`，
+  “全部”用 `nil` 的那个胶囊。还没有调用处：`PlansFilterChip`（计划、产出物、触发器编辑）第 1 轮由 D 线换。测试 `FilterChipBarTests`。
 进行中：第 0 轮底座（session_01GuCp3KRgqaK6Kzynw6udRn，2026-11-04 18:45 UTC 开始，分支 ios-ui-redesign）。本会话这一份：
 令牌、Design/Glass.swift、InstanceAvatar、FilterChipBar、uicheck 桩（规范 7.2 前四行和桩那一行）；导航、Shell、首页是第 0 轮的后几步。
 
