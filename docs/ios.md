@@ -88,6 +88,10 @@ Linux 上 `tools/client-core/build-linux-swift.sh target/linux`（本机 `libcli
 - 字体：全部系统字体（SF），标题不再用衬线；全部用 Dynamic Type 的语义字号，导航标题由系统画。
 - 圆角：消息气泡、自己画的卡片 20（`Metrics.Radius.card`），带引用的输入卡片 28，小控件 10；分组卡片、导航栏按钮由系统给。
   实例头像的直径在 `Metrics.Avatar`（列表 48、置顶 80、资料页 120、编辑页 100、搜索 40、标题胶囊 24）。间距 4 的倍数。
+- iOS 26 才有的接口（玻璃、关闭 / 确认按钮的角色、工具栏间隔、底部搜索栏、底部条、工具栏角标）和 iOS 18 的缩放转场只经过
+  `ThinktinUI/Design/Glass.swift` 用（`glassButtonStyle`、`glassBackground`、`GlassGroup`、`floatingBar`、`CloseButton`、`ConfirmButton`、
+  `GlassToolbarSpacer`、`BottomBarSearchItem`、`toolbarBadge`、`zoomTransitionSource` 这些），那里带 iOS 17、macOS 14 的退路，页面里不写
+  `if #available`。`.toolbar { }` 里不能写 `if #available`（`ToolbarContentBuilder.buildLimitedAvailability` 要 iOS 17.5）。
 - 状态色只用于状态，不用于装饰。运行状态与颜色：排队 / 启动中 `inkSecondary`，运行中 `accent`，等待（审批 / 电脑 / key / 子任务）`warning`，
   成功 `success`，失败 `danger`，取消 `inkTertiary`；重试等待（`backoff`）和认不出的状态同排队。实例状态：运行中、启动中、创建中是会呼吸的点，
   已暂停、已删除 `inkTertiary`，已归档是空心点。规则在 `ThinktinUI/Design/StatusTone.swift`，中英文状态名和安卓设计规范一致。

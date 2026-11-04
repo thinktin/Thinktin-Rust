@@ -21,6 +21,13 @@
   `Metrics.Radius.card` 16 → 20、新增 `composerCard` 28 和 `Metrics.Avatar`；`themedGroupedBackground()`、`themedRow()`；
   `DesignTokenTests` 和 docs/ios.md 第 4 节跟着改。
 
+- 第 0 轮·`Design/Glass.swift`（规范 2.6、2.7、2.10）：`CloseButton`（iOS 26 带 `ButtonRole.close`）、`ConfirmButton`（`.confirm`，保存中转圈）、
+  `glassButtonStyle(.regular / .prominent)`（旧系统 `.bordered` / `.borderedProminent`）、`glassBackground(in:interactive:)`（旧系统
+  `.regularMaterial`）、`GlassGroup`（`GlassEffectContainer`）、`floatingBar(edge:)`（`safeAreaBar` / `safeAreaInset`）、
+  `GlassToolbarSpacer(.fixed / .flexible)`、`BottomBarSearchItem`（只有 iOS）、`hidesSharedGlassBackground()`、`toolbarBadge(_:)`、
+  `zoomTransitionSource` / `zoomNavigationTransition`（iOS 18，macOS 不做）。测试 `NativeControlsTests` 顺带把第 1 轮要换的系统控件
+  （`List`、`Form`、`LabeledContent`、`ContentUnavailableView`、左滑、长按预览、搜索、工具栏位置）都用一遍，macOS CI 用真 SDK 编它，
+  桩的签名对不上会在那里露出来。
 进行中：第 0 轮底座（session_01GuCp3KRgqaK6Kzynw6udRn，2026-11-04 18:45 UTC 开始，分支 ios-ui-redesign）。本会话这一份：
 令牌、Design/Glass.swift、InstanceAvatar、FilterChipBar、uicheck 桩（规范 7.2 前四行和桩那一行）；导航、Shell、首页是第 0 轮的后几步。
 

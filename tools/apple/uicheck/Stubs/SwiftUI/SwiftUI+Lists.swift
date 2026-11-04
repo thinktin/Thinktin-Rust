@@ -213,6 +213,8 @@ extension LabeledContent where Label == Text, Content == Text {
 // MARK: - 空状态（iOS 17）
 
 public struct ContentUnavailableView<Label: View, Description: View, Actions: View> {
+    /// 只给下面的 `.search` 用（测试在 Linux 上真的会跑这些桩）。
+    init(stub: Void) {}
     public init(
         @ViewBuilder label: () -> Label, @ViewBuilder description: () -> Description = { EmptyView() },
         @ViewBuilder actions: () -> Actions = { EmptyView() }
@@ -237,8 +239,8 @@ where
     Label == SearchUnavailableContent.Label, Description == SearchUnavailableContent.Description,
     Actions == SearchUnavailableContent.Actions
 {
-    public static var search: Self { fatalError() }
-    public static func search(text: String) -> Self { fatalError() }
+    public static var search: Self { Self(stub: ()) }
+    public static func search(text: String) -> Self { Self(stub: ()) }
 }
 
 // MARK: - 列表、分组的修饰符
@@ -781,6 +783,13 @@ extension Shape where Self == RoundedRectangle {
     public static func rect(cornerRadius: CGFloat, style: RoundedCornerStyle = .continuous) -> RoundedRectangle {
         RoundedRectangle(cornerRadius: cornerRadius, style: style)
     }
+}
+
+// MARK: - 偏移（iOS 13）
+
+extension View {
+    public func offset(_ offset: CGSize) -> some View { _m() }
+    public func offset(x: CGFloat = 0, y: CGFloat = 0) -> some View { _m() }
 }
 
 // MARK: - 视图一致性
