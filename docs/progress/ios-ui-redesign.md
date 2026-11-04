@@ -58,33 +58,49 @@
   - 这一步的 Linux 检查（2026-11-04）：ThinktinKit `swift test` 997 个全过（`CoreClient118Tests` 的 Accept-Language 那条起本地 HTTP，
     整组并行跑时偶尔连不上，单跑和重跑都过，和这次改动无关）；uicheck UIKit、AppKit 都编过；`run.sh test` 133 个全过；App 的
     `ThinktinTests` 16 个过 11 个（还是那 5 个要 App 包的）；`swift format lint --strict` 零条。
+- 第 0 轮·Shell 和最小首页（规范 4.2.1 第 0 轮的最小版、6.1 A + A1、6.5 A，7.2 的首页和接入点两行；提交 `70c1847`、`32bbb4c`）：
+  - 视图模型（ThinktinKit）：`DrawerEntry` 改名 `WorkbenchEntry`（`systemImage`、`countsTowardTotal`、菜单副标题 `subtitle(count:)`）；
+    `ShellBadges.workbenchTotal`（收件箱未读 + 待审批 + 待确认的计划；进行中是状态不是待办，不算）、`workbenchTitle`、
+    `workbenchAccessibilityLabel`；新的 `ViewModels/Shell/HomeListModel.swift`：`HomeRow`（最后活动 = 实例的 `lastActiveAt` 和最近一个
+    没结束的运行里晚的那个）、`HomeRowPreview`（在等你处理 > 进行中的运行 > 实例的状态）、`HomeList.rows`（去掉已删除的，最后活动新的在前，
+    一样新的按名字、再按 id）、`HomeList.timestamp`（今天“14:05”，更早的日期）；`AppModel.homeRows`；`InstanceActivity.latestWaitingState`。
+    `Router.path` 的 `didSet`：栈里最上面的对话记成当前实例（首页的行和系统返回手势直接改 `path`，不经过 `open`）；`handledSearchRequest`、
+    `hasPendingSearchRequest`、`searchRequestHandled()`：首页比搜索请求晚出现（冷启动深链）时补上，处理过的不再激活，退出登录时丢掉。
+  - 界面：新的 `Shell/Home/`：`HomeScreen`（plain `List` + `NavigationLink(value: .conversation(id))`；左上账号头像 `router.open(.settings)`，
+    右上“+” `router.open(.adopt(agentID: nil))`；底部工作台菜单 + `GlassToolbarSpacer(.fixed)` + `BottomBarSearchItem()`；
+    `.searchable(text:isPresented:)`，有字时列表换成按种类分组的搜索结果（`HomeSearchResults`，用 Search 目录的 `SearchResultRow`）；
+    下拉刷新；`ContentUnavailableView` 的空状态（`BrandLogo` + “还没有实例” + “去领养”）、离线没缓存；拉取失败 `ErrorBanner`；回到首页
+    时角标太久没刷新就刷新）、`HomeInstanceRow`（48pt `InstanceAvatar` + 状态角标、名字、时间、预览，读屏合成一句）、`WorkbenchMenu`
+    （系统 `Menu`，6 项带副标题，按钮上 `toolbarBadge(workbenchTotal)`，点了 `openTopLevel`）。macOS 没有底部条：账号在 `.navigation`，
+    工作台和“+”在 `.primaryAction`，搜索栏是工具栏里的。
+  - 删掉：`ShellDrawer.swift`、`InstanceSwitcher.swift`、`AppShell` 里的 `RootPage`（抽屉按钮、左缘手势、把 `.search` 压上来的过渡）和
+    `isDrawerOpen`、`solidTopScrollEdge()`、`Metrics.drawerMaxWidth`、`ConversationHomeScreen`（`RunTreeScreen.swift`）和它用的
+    `ConversationText.homeTitle/homeMessage/browseCatalog`。主栈的根直接是 `AppDestination(route: .home)`，横幅照旧由 `AppDestination` 放。
+    `ShellDestination` 的 `.home` 换成 `HomeScreen`；`SearchDestination` 只改了说明（`.search` 不再压栈）。
+  - 文档：docs/ios.md 第 5 节 `instance.state` 那行、第 9 节表里 12.16 和 12.5 两行、9.1 第 6 条（对话页没有抽屉按钮了，首页的接法）。
+  - 测试：ThinktinKit 新 `HomeListTests`（排序、已删除、预览、时间、演示数据）、`ShellStateTests` 加工作台总角标、菜单项、菜单项的路由
+    （开着设置也先关掉再压），`RouterTests` 加“直接改主栈记当前实例”“搜索请求补上一次”，`AppRouteTests` 加“顶级页面正好是工作台的 6 项”；
+    `AppShellTests` 的抽屉、实例切换两条换成：首页 → 对话 → 实例资料 → 回首页开设置（sheet）→ 开领养、首页的几种状态、行的预览文字和角标、
+    工作台菜单、首页搜索结果；`ConversationScreensTests` 去掉旧首页那一行（换到 `AppShellTests` 的“没有实例”）。
+  - 这一步的 Linux 检查（2026-11-04，`32bbb4c` 之后）：ThinktinKit `swift test` 1007 个全过；uicheck UIKit、AppKit 都编过；`run.sh test`
+    136 个全过；App 的 `ThinktinTests` 16 个过 11 个（还是那 5 个要 App 包的：Info.plist、URL scheme、隐私清单和多语言资源、小组件 appex、
+    `~/Library` 路径）；`swift format lint --strict` 零条。macOS CI 还没看。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、
 字体全用系统的）；6.3 A（保持 iOS 17，iOS 26 的接口在 Design/Glass.swift 里回退）；6.4 A（“+”直接弹领养表单）；6.5 A（设置用 sheet）；
 6.6 A（沿用“实例”）。其余 18 项按建议。
 
-进行中：第 0 轮的 Shell 和最小首页（`Shell/Home/`、去掉抽屉和实例切换、`solidTopScrollEdge()`、docs/ios.md 9.1 第 6 条）：云端会话在做，2026-11-04 19:57 UTC 开始。
-  已推送的一半（视图模型）：`DrawerEntry` 改名 `WorkbenchEntry`（加 `systemImage`、`countsTowardTotal`、`subtitle(count:)`），
-  `ShellBadges.workbenchTotal`（收件箱未读 + 待审批 + 待确认的计划，进行中不算）和读屏文字；新的 `ViewModels/Shell/HomeListModel.swift`
-  （`HomeRow`、`HomeRowPreview`、`HomeList.rows` / `timestamp`，`AppModel.homeRows`）；`Router.path` 变了时最上面的对话记成当前实例
-  （首页的行用 `NavigationLink` 压栈，不经过 `open`）；`handledSearchRequest`、`hasPendingSearchRequest`、`searchRequestHandled()`
-  （首页晚出现时补上搜索请求）。
-  界面那一半也推送了：`Shell/Home/`（`HomeScreen`、`HomeInstanceRow`、`WorkbenchMenu`），删了 `ShellDrawer`、`InstanceSwitcher`、
-  `RootPage`、`solidTopScrollEdge()`、`ConversationHomeScreen`。剩 docs/ios.md 和进度文件的收尾。启动屏、截图脚本（`THINKTIN_OPEN_SCREEN`）还没人认领。
+进行中：没有人在做。第 0 轮还剩启动屏资源、截图脚本（`THINKTIN_OPEN_SCREEN`），都还没人认领。
 
 下一步：
-1. 第 0 轮剩下的（规范 7.2 第 6 行起）：最小首页 `Shell/Home/`，去掉 `ShellDrawer`、`InstanceSwitcher`、`RootPage` 的抽屉按钮和左缘手势
-   （连同 `AppShell` 里 `isDrawerOpen` 这个过渡状态、`RootPage` 里把 `.search` 压上来的过渡），同时删掉 `solidTopScrollEdge()`；
-   `ConversationHomeScreen`（`RunTreeScreen.swift`）删掉，内容挪成首页空状态，`ShellDestination` 的 `.home` 换成新首页；
-   `DrawerEntry` 改名（比如 `WorkbenchEntry`）；首页 `onChange(of: router.searchRequest)` 激活 `.searchable`；左上头像 `router.open(.settings)`，
-   右上 `router.open(.adopt(agentID: nil))`，工作台菜单项 `router.openTopLevel(entry.route)`，点行 `NavigationLink(value: AppRoute.conversation(id))`；
-   启动屏资源；截图脚本的 `THINKTIN_OPEN_SCREEN`（截图清单换成规范 7.6 的）；docs/ios.md 9.1 第 6 条（对话页没有抽屉按钮了）和第 9 节表里 12.16 那一行。
-   首页直接用第 0 轮已有的东西：`InstanceAvatar(name, size: Metrics.Avatar.list, badge:)`、`toolbarBadge(_:)`、`BottomBarSearchItem()`、
-   `GlassToolbarSpacer(.fixed, placement: .bottomBar)`、`hidesSharedGlassBackground()`、`ContentUnavailableView` + `BrandLogo`；
-   sheet 的关闭用 `CloseButton`，主操作用 `ConfirmButton`。
-2. 推送后看 macOS CI（`.github/workflows/ios.yml`）：Glass.swift 的 `if #available` 分支和新测试只有真 SDK 才验得出来。
-3. 第 1 轮五条线并行；第 2 轮纯客户端新功能；第 3 轮等后端。
+1. 第 0 轮剩下的（规范 7.2）：启动屏资源（`tools/apple/brand_assets.py`、`Assets.xcassets`、`project.yml`）；截图脚本加只有 Debug 认的
+   `THINKTIN_OPEN_SCREEN`（conversation / plans / artifacts / settings / search / adopt，打开演示数据第一个实例的对应页面；search 用
+   `router.open(.search)`，首页会补上激活），截图清单换成规范 7.6 的（`tools/apple/screenshots.sh`、`AppConfiguration.swift`）。
+2. 推送后看 macOS CI（`.github/workflows/ios.yml`，只在推 main 和 PR 时跑）：Glass.swift 的 `if #available` 分支、首页工具栏
+   （`#if os(iOS)` 里的 `ToolbarContent`、菜单项的两行 `Text`、`toolbarBadge` 在 iOS 26 上的 `.badge`）和新测试只有真 SDK 才验得出来。
+3. 第 1 轮五条线并行；第 2 轮纯客户端新功能；第 3 轮等后端。A 线（首页）接着做：长按菜单（4.2.2）、“等你处理”提示行、预览换成最近
+   一次运行的摘要（6.7）、`SearchResultsView` 嵌进首页（D 线先交）、空查询时列实例、`NewTaskSheet` 换选择器版式（4.4.5）。
 
 坑和决定：
 - 参考截图是别家产品、里面有用户的账号信息，仓库公开，所以**不进仓库**；规范里只用自己的话写布局和交互，不写参考 App 的名字。以后的会话要看截图，请用户再发一次压缩包。
@@ -107,3 +123,11 @@
 - 桩还没补的（第 0、1 轮用不到）：PhotosUI 的 `PhotosPicker`、`MagnifyGesture`、`AccessibilityNotification`、StoreKit 的
   `SubscriptionStoreView`；用到的那一轮照 SDK 补。
 - 自画的 `Card`、`GroupedSection` 还画一像素描边（规范 2.1 说卡片不画描边）：第 1 轮各线换成 `List` / `Form` 时一起去掉，这一步没动。
+- 首页：`.searchable` 挂在 `ZStack` 上（不是 `Group`），有字时里面从实例列表换成搜索结果，搜索栏挂的视图不变、不丢焦点。搜索结果第 0 轮是
+  `HomeScreen.swift` 里的 `HomeSearchResults`（按种类分组，复用 `SearchResultRow`），D 线拆出 `SearchResultsView` 后换掉。
+- 首页：行的预览文字和头像角标（`HomeRowPreview.text`、`avatarBadge`）放在 ThinktinUI 的 `HomeInstanceRow.swift`，因为状态名
+  （`RunState` / `InstanceState.localizedName`）在 ThinktinUI 的 `StatusTone.swift`；测试在 `AppShellTests`（`run.sh test` 在 Linux 上跑）。
+  开着、闲着的实例写“随时可以接任务”、不画角标（实例的“运行中”和运行的“运行中”分不清）。
+- 首页：iOS 17 / 18 上底部条只有工作台菜单（`BottomBarSearchItem` 不放东西），搜索栏照旧在导航栏下面。账号头像用 `InstanceAvatar`
+  （按昵称取色），还没拉到用户时是 `person.crop.circle`。新任务没有首页入口了（规范 3.2：引导、快捷指令用 `.newTask`）。
+- `ConversationText` 里旧首页的三句文案删了；`Greeting`（问候语）还在 `Screens/Welcome/`，登录、欢迎页用户自己设计，没动。

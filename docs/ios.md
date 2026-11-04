@@ -131,7 +131,7 @@ Linux 上 `tools/client-core/build-linux-swift.sh target/linux`（本机 `libcli
 | `board.posted` | `{post_id, tags}` | “发到了看板”系统行，点进看板（8.10） |
 | `plan.needs_confirmation` | `{plan_id, title, change}` | “agent 新建 / 修改了计划，待确认”卡片，跳到计划页 |
 | `plan.cancelled` | `{plan_id, title}` | “agent 取消了计划 X”系统行 |
-| `instance.state` | `{state}`，没有 `run_id` | 不进时间线：更新对话页页头和抽屉里的实例状态（“正在唤醒”，已归档的从模板重建会慢一些） |
+| `instance.state` | `{state}`，没有 `run_id` | 不进时间线：更新对话页页头和首页实例行的状态（“正在唤醒”，已归档的从模板重建会慢一些） |
 | `approval.decided` | `{approval_id, state, option_id, request_id, attempt}` | 更新对应的审批卡：先按已关联的审批 id，再按 `(attempt, request_id)`，老的服务端没有这两个键时这个运行里只有一张未决卡片才算它 |
 | `vault.used` / `agent.vault_reveal` | `{names}` / `{call_id, refs}` | “用了保险箱里的 github”提示行（只有名字） |
 | `agent.usage`、`agent.turn_started`、`agent.turn_ended`、`agent.ready`、`agent.update` | — | 不进时间线（`turn_ended` 结束流式状态，`stop_reason` 为 refusal / max_tokens / max_turn_requests 时显示提示行；`usage` 显示在运行详情） |
@@ -315,11 +315,11 @@ client-core 只缓存实例、运行、事件、收件箱（cache.rs 的几张�
 | 工作包 | ThinktinKit（纯 Swift） | ThinktinUI（SwiftUI） |
 |---|---|---|
 | 12.1 | `Models/`、`Client/`、`Conversation/`、`Formatting/`、`Support/` | `Design/`、`Components/`、`RootView.swift` |
-| 12.16 | `Navigation/`（路由、深链、推送解析、`Router`）、`ViewModels/Shell/`（`AppModel`、`ObservedClient`） | `Shell/`（`AppShell`、抽屉、实例切换、全局横幅、冻结页、升级页、占位页） |
+| 12.16 | `Navigation/`（路由、深链、推送解析、`Router`）、`ViewModels/Shell/`（`AppModel`、`ObservedClient`、首页列表 `HomeListModel`、工作台的 `WorkbenchEntry` 和角标） | `Shell/`（`AppShell`、首页 `Shell/Home/`：实例列表、工作台菜单、首页搜索；全局横幅、冻结页、升级页、占位页） |
 | 12.2 | `ViewModels/Account/` | `Screens/Account/`（登录、设备、注销） |
 | 12.3 | `ViewModels/Agents/` | `Screens/Agents/`（目录、领养、实例详情） |
 | 12.4 | `ViewModels/Models/` | `Screens/Models/`（key、路由、用量） |
-| 12.5 | `ViewModels/Conversation/` | `Screens/Conversation/`（首页、时间线、输入框、事件卡片、运行详情、运行树、进行中） |
+| 12.5 | `ViewModels/Conversation/` | `Screens/Conversation/`（对话的时间线、输入框、事件卡片、运行详情、运行树、进行中） |
 | 12.6 | `ViewModels/Plans/` | `Screens/Plans/` |
 | 12.7 | `ViewModels/Teams/` | `Screens/Teams/`（团队、团队模板、流水线编辑器；运行树用 12.5 的，补流水线节点） |
 | 12.8 | `ViewModels/Inbox/` | `Screens/Inbox/`；推送注册在 App 的 `Platform/` |
@@ -369,8 +369,11 @@ struct PlansDestination: View {
 5. 错误：页面只管行内错误（`ErrorBanner`）。登录失效、冻结、要升级不用处理：环境里的客户端是 `ObservedClient`，任何调用遇到
    这些错误都会报给 `AppModel` 切换整页状态；`login` 成功、`logout` / `deleteAccount` / 下线本机之后也会自动切换（12.2 的登录页
    调完 `client.login(...)` 就行）。事件流照常 `client.subscribe(...)`，连接状态会自动汇总成顶部的横幅。
-6. 对话页（12.5）的根有导航栏的抽屉按钮和实例切换菜单（`AppShell` 加的），页面自己的按钮放 `.primaryAction`；
-   `router.newTaskRequest` 变了时把焦点放进输入框（抽屉里的“新任务”）。
+6. 对话页（12.5）是从首页压进来的（改版规范 4.2.1）：没有抽屉按钮和实例切换菜单了，左上是系统的返回，换实例就回首页点另一行；
+   页面自己的按钮放 `.primaryAction`。`router.newTaskRequest` 变了时把焦点放进输入框（引导、快捷指令的“新任务”）。
+   首页（`Shell/Home/`）归应用框架：左上头像 `router.open(.settings)`，右上“+” `router.open(.adopt(agentID: nil))`，左下工作台菜单
+   `router.openTopLevel(entry.route)`，行是 `NavigationLink(value: AppRoute.conversation(id))`（`Router` 看 `path` 记当前实例），
+   底部搜索栏在 `router.searchRequest` 变了（`hasPendingSearchRequest`）时激活。
 7. 预览用 `.previewShell()`（`.previewShell(.english, scheme: .dark)`）：放进导航栈，注入 Mock 客户端的 `AppModel`、`Router`。
    界面测试的工具在 `Tests/ThinktinUITests/UITestSupport.swift`（`renderInBothAppearances`、`hostAndLayout`）。
 
