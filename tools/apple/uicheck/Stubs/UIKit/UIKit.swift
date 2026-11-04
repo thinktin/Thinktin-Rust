@@ -28,6 +28,21 @@ open class UIColor: @unchecked Sendable {
         provider?(traitCollection) ?? self
     }
 
+    // 系统的语义文字色（iOS 13）：带透明度，跟着外观、底色自动调。值照 iOS 17 SDK（浅色 / 深色）。
+    public static let label = UIColor(dynamicProvider: { traits in
+        traits.userInterfaceStyle == .dark ? UIColor(red: 1, green: 1, blue: 1, alpha: 1) : UIColor(red: 0, green: 0, blue: 0, alpha: 1)
+    })
+    public static let secondaryLabel = UIColor(dynamicProvider: { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor(red: 235 / 255, green: 235 / 255, blue: 245 / 255, alpha: 0.6)
+            : UIColor(red: 60 / 255, green: 60 / 255, blue: 67 / 255, alpha: 0.6)
+    })
+    public static let tertiaryLabel = UIColor(dynamicProvider: { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor(red: 235 / 255, green: 235 / 255, blue: 245 / 255, alpha: 0.3)
+            : UIColor(red: 60 / 255, green: 60 / 255, blue: 67 / 255, alpha: 0.3)
+    })
+
     @discardableResult
     open func getRed(
         _ red: UnsafeMutablePointer<CGFloat>?, green: UnsafeMutablePointer<CGFloat>?,

@@ -29,7 +29,8 @@ public struct TupleView<T> {
     public init(_ value: T) {}
 }
 
-public struct _ConditionalContent<TrueContent: View, FalseContent: View> {
+/// SDK 里没有约束，按内容分别是视图、工具栏内容（条件一致性在下面和 SwiftUI+Lists.swift 里）。
+public struct _ConditionalContent<TrueContent, FalseContent> {
 }
 
 public struct AnyView {
@@ -476,14 +477,8 @@ public protocol ButtonStyle {
     typealias Configuration = ButtonStyleConfiguration
 }
 
-public struct PlainButtonStyle: ButtonStyle {
-    public init() {}
-    public func makeBody(configuration: Configuration) -> some View { configuration.label }
-}
-
-extension ButtonStyle where Self == PlainButtonStyle {
-    public static var plain: PlainButtonStyle { PlainButtonStyle() }
-}
+// PlainButtonStyle 和系统的其他按钮样式（bordered、borderedProminent、borderless、iOS 26 的 glass）一样是
+// `PrimitiveButtonStyle`，在 SwiftUI+Lists.swift。
 
 public struct TextField<Label: View> {
 }
@@ -540,7 +535,13 @@ extension InsettableShape {
 
 // MARK: - 工具栏
 
-public protocol ToolbarContent {}
+@MainActor @preconcurrency
+public protocol ToolbarContent {
+    associatedtype Body: ToolbarContent
+    @ToolbarContentBuilder var body: Body { get }
+}
+
+extension Never: ToolbarContent {}
 
 public struct ToolbarItemPlacement: Sendable {
     public static let automatic = ToolbarItemPlacement()
@@ -555,13 +556,17 @@ public struct ToolbarItemPlacement: Sendable {
     #endif
 }
 
-public struct ToolbarItem<ID, Content: View>: ToolbarContent {
+public struct ToolbarItem<ID, Content: View> {
     public init(placement: ToolbarItemPlacement = .automatic, @ViewBuilder content: () -> Content) where ID == () {}
 }
 
-public struct TupleToolbarContent<T>: ToolbarContent {
+public struct TupleToolbarContent<T> {
     public init(_ value: T) {}
 }
+
+// 一致性放在扩展里（和视图一样）：主声明里的成员不继承 ToolbarContent 的 @MainActor。
+extension ToolbarItem: ToolbarContent { public var body: Never { fatalError() } }
+extension TupleToolbarContent: ToolbarContent { public var body: Never { fatalError() } }
 
 @resultBuilder
 public struct ToolbarContentBuilder {
@@ -816,7 +821,9 @@ public protocol App {
 
 // 视图、形状的协议一致性放在扩展里：主声明里的成员不继承 View 的 @MainActor（和 SDK 的行为一致）。
 extension TupleView: View { public var body: Never { fatalError() } }
-extension _ConditionalContent: View { public var body: Never { fatalError() } }
+extension _ConditionalContent: View where TrueContent: View, FalseContent: View {
+    public var body: Never { fatalError() }
+}
 extension AnyView: View { public var body: Never { fatalError() } }
 extension ModifiedContent: View { public var body: Never { fatalError() } }
 extension Color: View { public var body: Never { fatalError() } }
