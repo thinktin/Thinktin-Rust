@@ -49,7 +49,9 @@ struct WelcomeView: View {
         ScrollView {
             VStack(spacing: Metrics.Spacing.xxl) {
                 VStack(spacing: Metrics.Spacing.l) {
-                    BrandMark()
+                    BrandLogo()
+                        .frame(height: 112)
+                        .accessibilityHidden(true)
                     VStack(spacing: Metrics.Spacing.s) {
                         Text(zh ? "欢迎使用 ThinkTin" : "Welcome to ThinkTin")
                             .typography(.largeTitle)
@@ -146,20 +148,6 @@ private struct WelcomeFeature: View {
                 .foregroundStyle(Theme.ink)
                 .fixedSize(horizontal: false, vertical: true)
         }
-    }
-}
-
-/// ThinkTin 的字标：强调色圆角方块里一个衬线的 T（自有的标识，不用任何第三方的标志）。
-struct BrandMark: View {
-    var body: some View {
-        Text(verbatim: "T")
-            .font(Typography.largeTitle.font.weight(.semibold))
-            .foregroundStyle(Theme.onAccent)
-            .frame(width: Metrics.Spacing.xxxl + Metrics.Spacing.m, height: Metrics.Spacing.xxxl + Metrics.Spacing.m)
-            .background(
-                Theme.accent, in: RoundedRectangle(cornerRadius: Metrics.Radius.card, style: .continuous)
-            )
-            .accessibilityHidden(true)
     }
 }
 
