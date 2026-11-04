@@ -41,6 +41,7 @@ object PlanText {
 /** 策略表单的问题。 */
 enum class PolicyProblem {
     ApprovalTimeout,
+    ApprovalAction,
     WaitTimeout,
     MaxDuration,
     MaxTokens,
@@ -83,6 +84,9 @@ data class PlanPolicyDraft(
 
     val problems: List<PolicyProblem>
         get() = buildList {
+            if (onApprovalTimeout == ApprovalTimeoutAction.Unknown && this@PlanPolicyDraft != PlanPolicyDraft(original)) {
+                add(PolicyProblem.ApprovalAction)
+            }
             val approval = secs(approvalTimeoutHours, original.approvalTimeoutSecs)
             if (approval == null || approval !in PlanLimits.MIN_TIMEOUT_SECS..PlanLimits.MAX_TIMEOUT_SECS) {
                 add(PolicyProblem.ApprovalTimeout)

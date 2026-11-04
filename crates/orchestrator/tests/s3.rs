@@ -20,6 +20,8 @@ const REGION: &str = "oss-cn-hangzhou";
 #[derive(Default)]
 struct Fake {
     objects: Mutex<HashMap<String, Vec<u8>>>,
+    /// 上传请求的 Content-Length 和 Transfer-Encoding 头。
+    uploads: Mutex<Vec<(String, String)>>,
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -36,7 +38,7 @@ fn error(status: StatusCode, code: &str) -> Response {
 
 async fn s3(State(fake): State<Arc<Fake>>, req: Request) -> Response {
     let (parts, body) = req.into_parts();
-    let body = axum::body::to_bytes(body, 1 << 24).await.unwrap();
+    let body = axum::body::to_bytes(body, 1 << 27).await.unwrap();
     let header = |k: &str| {
         parts
             .headers
@@ -74,6 +76,10 @@ async fn s3(State(fake): State<Arc<Fake>>, req: Request) -> Response {
     let mut objects = fake.objects.lock().unwrap();
     match parts.method {
         Method::PUT => {
+            fake.uploads
+                .lock()
+                .unwrap()
+                .push((header("content-length"), header("transfer-encoding")));
             objects.insert(path, body.to_vec());
             StatusCode::OK.into_response()
         }
@@ -89,13 +95,18 @@ async fn s3(State(fake): State<Arc<Fake>>, req: Request) -> Response {
     }
 }
 
-#[tokio::test]
-async fn objects_round_trip_through_a_signing_s3() {
+async fn fake_s3() -> (Arc<Fake>, std::net::SocketAddr) {
     let fake = Arc::new(Fake::default());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let app = axum::Router::new().fallback(s3).with_state(fake.clone());
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (fake, addr)
+}
+
+#[tokio::test]
+async fn objects_round_trip_through_a_signing_s3() {
+    let (fake, addr) = fake_s3().await;
     let cfg = S3Config {
         endpoint: format!("http://{addr}"),
         region: REGION.into(),
@@ -149,4 +160,74 @@ async fn objects_round_trip_through_a_signing_s3() {
             .unwrap()
             .contains_key("/artifacts/test/x")
     );
+}
+
+/// 大对象（工作区归档）：从文件边读边传，写明长度（OSS 不收分块传输编码），签名照样对得上；
+/// 下载有上限，超了不留半个文件。
+#[tokio::test]
+async fn large_objects_stream_from_and_to_files() {
+    let (fake, addr) = fake_s3().await;
+    let store = S3BlobStore::new(S3Config {
+        endpoint: format!("http://{addr}"),
+        region: REGION.into(),
+        bucket: "artifacts".into(),
+        prefix: "test/".into(),
+        path_style: true,
+        access_key_id: AKID.into(),
+        secret_access_key: SECRET.into(),
+        timeout: Duration::from_secs(5),
+    })
+    .unwrap();
+    let local =
+        orchestrator::artifacts::LocalBlobStore::new(tempfile::tempdir().unwrap().keep()).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("archive");
+    let data: Vec<u8> = (0..20 << 20).map(|i: u32| (i % 251) as u8).collect();
+    std::fs::write(&src, &data).unwrap();
+    let sha = hex(&Sha256::digest(&data));
+    let len = data.len() as u64;
+    let t = Duration::from_secs(30);
+
+    for (name, store) in [
+        ("s3", &store as &dyn BlobStore),
+        ("local", &local as &dyn BlobStore),
+    ] {
+        store
+            .put_file("workspaces/u/w/a", &src, len, &sha, t)
+            .await
+            .unwrap();
+        let out = dir.path().join(format!("{name}-out"));
+        assert_eq!(
+            store
+                .get_to_file("workspaces/u/w/a", &out, len, t)
+                .await
+                .unwrap(),
+            len,
+            "{name}"
+        );
+        assert!(std::fs::read(&out).unwrap() == data, "{name}");
+
+        let small = dir.path().join(format!("{name}-small"));
+        let err = store
+            .get_to_file("workspaces/u/w/a", &small, len - 1, t)
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData, "{name}");
+        assert!(!small.exists(), "{name}: no partial file");
+        let missing = store
+            .get_to_file("workspaces/u/w/nope", &small, len, t)
+            .await
+            .unwrap_err();
+        assert_eq!(missing.kind(), io::ErrorKind::NotFound, "{name}");
+        // 文件和说好的大小对不上：不传。
+        assert!(
+            store
+                .put_file("workspaces/u/w/b", &src, len + 1, &sha, t)
+                .await
+                .is_err(),
+            "{name}"
+        );
+    }
+    let uploads = fake.uploads.lock().unwrap().clone();
+    assert_eq!(uploads, [(len.to_string(), String::new())]);
 }

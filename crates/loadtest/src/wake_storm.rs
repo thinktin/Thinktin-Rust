@@ -62,6 +62,10 @@ impl<P: SandboxProvider> SandboxProvider for Delayed<P> {
         self.inner.name()
     }
 
+    fn workspace_persists(&self) -> bool {
+        self.inner.workspace_persists()
+    }
+
     async fn create(&self, spec: CreateSpec) -> sandbox::Result<SandboxInfo> {
         delay(self.create_latency).await;
         self.creates.fetch_add(1, Ordering::Relaxed);
@@ -110,6 +114,16 @@ impl<P: SandboxProvider> SandboxProvider for Delayed<P> {
 
     async fn write_file(&self, id: &SandboxId, path: &str, data: &[u8]) -> sandbox::Result<()> {
         self.inner.write_file(id, path, data).await
+    }
+
+    async fn write_file_stream(
+        &self,
+        id: &SandboxId,
+        path: &str,
+        data: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
+        len: u64,
+    ) -> sandbox::Result<()> {
+        self.inner.write_file_stream(id, path, data, len).await
     }
 
     async fn read_file(&self, id: &SandboxId, path: &str, max: u64) -> sandbox::Result<Vec<u8>> {

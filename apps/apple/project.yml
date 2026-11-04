@@ -71,6 +71,9 @@ targets:
         # 接口地址，展开进 Info.plist 的 ThinktinAPIBaseURL（AppEnvironment 读）。连测试环境时
         # xcodebuild THINKTIN_API_BASE_URL=https://... 覆盖，不用改代码。
         THINKTIN_API_BASE_URL: https://api.thinktin.cn
+        # 用哪个客户端，展开进 Info.plist 的 ThinktinClient（AppConfiguration 读）：空的时 Debug 用演示数据、Release 连服务器；
+        # 打演示版（TestFlight 上先给人看界面，服务器还没上线时）用 xcodebuild THINKTIN_CLIENT=mock。
+        THINKTIN_CLIENT: ""
     info:
       path: Thinktin/Resources/Info.plist
       properties:
@@ -101,6 +104,7 @@ targets:
             CFBundleTypeRole: Viewer
             CFBundleURLSchemes: [thinktin, thinktin-pair]
         ThinktinAPIBaseURL: $(THINKTIN_API_BASE_URL)
+        ThinktinClient: $(THINKTIN_CLIENT)
     entitlements:
       path: Thinktin/Thinktin.entitlements
       properties:

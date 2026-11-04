@@ -1,6 +1,7 @@
 //! 沙箱抽象（架构方案 4.10、6，WBS 6.1）：按 E2B 的接口定义创建、执行进程、暂停、恢复、快照、销毁。
 //!
-//! 控制服务只依赖 [`SandboxProvider`]。生产环境用 [`cube::CubeProvider`]，对接 CubeSandbox 的 E2B 兼容接口（6.2）；
+//! 控制服务只依赖 [`SandboxProvider`]。生产环境用 [`cube::CubeProvider`]，对接 CubeSandbox 的 E2B 兼容接口（6.2），
+//! 或 [`acs::AcsProvider`]，对接阿里云 ACS 上 OpenKruise Agents 的 E2B 兼容私有协议；
 //! 本地开发和端到端测试用 [`local::LocalProvider`]（6.3）：沙箱就是本机上的一个目录加一组进程，没有隔离。
 
 use std::collections::BTreeMap;
@@ -12,7 +13,9 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
 
+pub mod acs;
 pub mod cube;
+mod envd;
 pub mod local;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -179,14 +182,48 @@ pub trait SandboxProvider: Send + Sync {
     /// 从快照建一个新沙箱（宿主机故障后换机恢复用）。
     async fn restore(&self, snapshot: &SnapshotId, spec: CreateSpec) -> Result<SandboxInfo>;
 
-    /// 销毁沙箱，结束里面的所有进程。工作区卷保留。不存在时直接返回。
+    /// 销毁沙箱，结束里面的所有进程。工作区卷保留（[`Self::workspace_persists`] 为 false 的后端没有卷，
+    /// 工作区随沙箱删掉）。不存在时直接返回。
     async fn destroy(&self, id: &SandboxId) -> Result<()>;
+
+    /// 销毁沙箱后工作区还在不在（同一个工作区重建沙箱时能不能挂回去）。
+    fn workspace_persists(&self) -> bool {
+        true
+    }
 
     /// 删除工作区卷（实例销毁时）。
     async fn delete_workspace(&self, workspace: &str) -> Result<()>;
 
     /// 往沙箱里写文件（交接产出物、续跑简报）。路径相对沙箱根目录。
     async fn write_file(&self, id: &SandboxId, path: &str, data: &[u8]) -> Result<()>;
+
+    /// 往沙箱里写一个大文件（放回工作区归档），边读边写。`len` 是 `data` 的长度：读到的不够就报错，
+    /// 多的不写。没有超时，调用方自己限时。默认实现读进内存再 [`Self::write_file`]，只收
+    /// [`MAX_BUFFERED_WRITE`] 以内的。
+    async fn write_file_stream(
+        &self,
+        id: &SandboxId,
+        path: &str,
+        data: Box<dyn AsyncRead + Send + Unpin>,
+        len: u64,
+    ) -> Result<()> {
+        use tokio::io::AsyncReadExt;
+        if len > MAX_BUFFERED_WRITE {
+            return Err(Error::Invalid(format!(
+                "{} cannot stream files larger than {MAX_BUFFERED_WRITE} bytes",
+                self.name()
+            )));
+        }
+        let mut buf = Vec::with_capacity(len as usize);
+        data.take(len).read_to_end(&mut buf).await?;
+        if buf.len() as u64 != len {
+            return Err(Error::Invalid(format!(
+                "stream for {path:?} ended after {} of {len} bytes",
+                buf.len()
+            )));
+        }
+        self.write_file(id, path, &buf).await
+    }
 
     /// 读沙箱里的文件，最多 `max` 字节；更大的报 [`Error::Invalid`]，不读进内存
     /// （文件内容由 agent 控制，可能是一个很大的稀疏文件）。
@@ -205,6 +242,9 @@ pub fn check_relative_path(path: &str) -> Result<()> {
     }
     Ok(())
 }
+
+/// [`SandboxProvider::write_file_stream`] 的默认实现最多读进内存多少。
+pub const MAX_BUFFERED_WRITE: u64 = 64 << 20;
 
 /// 等待的默认上限，供调用方给沙箱操作设超时。
 pub const DEFAULT_OP_TIMEOUT: Duration = Duration::from_secs(120);

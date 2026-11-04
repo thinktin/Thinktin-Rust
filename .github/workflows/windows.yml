@@ -4,9 +4,15 @@ name: Windows
 
 on:
   push:
-    branches: [main, backend-core]
+    branches: [main, backend-core, "windows/**"]
     paths:
       - "apps/windows/**"
+      - "apps/android/**/ComputerLink*.kt"
+      - "apps/android/**/data/model/Computer.kt"
+      - "apps/android/**/data/model/States.kt"
+      - "apps/apple/**/ComputerLink*.swift"
+      - "apps/apple/**/Models/Devices.swift"
+      - "apps/apple/**/Models/Enums.swift"
       - "crates/desktop/**"
       - "crates/client-core/**"
       - "crates/proto/**"
@@ -16,6 +22,12 @@ on:
   pull_request:
     paths:
       - "apps/windows/**"
+      - "apps/android/**/ComputerLink*.kt"
+      - "apps/android/**/data/model/Computer.kt"
+      - "apps/android/**/data/model/States.kt"
+      - "apps/apple/**/ComputerLink*.swift"
+      - "apps/apple/**/Models/Devices.swift"
+      - "apps/apple/**/Models/Enums.swift"
       - "crates/desktop/**"
       - "crates/client-core/**"
       - "crates/proto/**"
@@ -51,9 +63,31 @@ jobs:
       - name: Test
         run: cargo test -p desktop -p thinktin-windows
       - name: Build
-        run: cargo build --release -p thinktin-windows
+        run: cargo build --release --locked -p thinktin-windows
+      - name: Build and smoke-test the installer
+        shell: pwsh
+        run: |
+          $workspace = cargo metadata --locked --no-deps --format-version 1 | ConvertFrom-Json
+          $version = ($workspace.packages | Where-Object name -eq 'thinktin-windows').version
+          iscc "/DAppVersion=$version" apps/windows/installer/thinktin.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $flags = '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'
+          $installDir = Join-Path $env:RUNNER_TEMP 'ThinkTin'
+          $setup = Start-Process "target/installer/ThinkTin-Setup-$version.exe" -ArgumentList ($flags + "/DIR=`"$installDir`"") -PassThru -Wait
+          if ($setup.ExitCode -ne 0) { exit $setup.ExitCode }
+          if ((Get-FileHash "$installDir/thinktin.exe").Hash -ne (Get-FileHash target/release/thinktin.exe).Hash) {
+            throw 'Installed executable differs from the release build'
+          }
+          $uninstall = Start-Process "$installDir/unins000.exe" -ArgumentList $flags -PassThru -Wait
+          if ($uninstall.ExitCode -ne 0) { exit $uninstall.ExitCode }
+          if (Test-Path "$installDir/thinktin.exe") { throw 'Uninstall left the executable behind' }
       - uses: actions/upload-artifact@v4
         with:
           name: thinktin-windows-unsigned
           path: target/release/thinktin.exe
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: thinktin-windows-installer-unsigned
+          path: target/installer/ThinkTin-Setup-*.exe
           if-no-files-found: error

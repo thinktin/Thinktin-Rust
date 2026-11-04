@@ -146,15 +146,16 @@ class ImChannelsTest {
         assertEquals(ImVendors.WECOM, vm.uiState.value.vendor)
         vm.setReplacingWebhook(true)
         vm.onWebhookUrl("https://oapi.dingtalk.com/robot/send?access_token=0123456789abcdef")
-        vm.onSecret("SEC12345")
-        assertNull(vm.uiState.value.secretProblem)
+        assertEquals(ImChannelRules.Problem.DifferentVendor, vm.uiState.value.webhookProblem)
+        vm.onWebhookUrl("https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=0123456789abcdef")
+        assertNull(vm.uiState.value.webhookProblem)
         vm.save()
         advanceUntilIdle()
         val saved = (vm.events.first() as ImChannelEvent.Saved).channel
-        assertEquals(ImVendors.DINGTALK, saved.vendor)
+        assertEquals(ImVendors.WECOM, saved.vendor)
         assertTrue(saved.enabled)
         assertNull(saved.lastError)
-        assertTrue(saved.hasSecret)
+        assertFalse(saved.hasSecret)
     }
 
     @Test

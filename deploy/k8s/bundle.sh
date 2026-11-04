@@ -6,7 +6,8 @@
 # 用法：
 #   deploy/k8s/bundle.sh <包> <镜像前缀> <版本> [<server 摘要> <llm-gw 摘要> <relay 摘要>]
 #
-#   包        staging、staging-migrate、production、production-migrate、production-canary
+#   包        staging、staging-migrate、production、production-migrate、production-canary、
+#             tokyo、tokyo-migrate（东京 10 人测试环境，docs/deploy-aliyun-sg.md 第 8.9 节）
 #   镜像前缀  比如 ghcr.io/thinktin
 #   版本      比如 0.2.0；不给摘要时按标签引用（<前缀>/thinktin-server:<版本>），迁移 Job 的名字也带上它
 #   摘要      sha256:...，三个镜像各一个（发布时用：标签被改指向也不影响）
@@ -22,9 +23,9 @@ bundle=$1 prefix=$2 version=$3
 here=$(cd "$(dirname "$0")" && pwd)
 
 case "$bundle" in
-  staging | production | production-canary) source="overlays/$bundle" namespace="" ;;
+  staging | production | production-canary | tokyo) source="overlays/$bundle" namespace="" ;;
   staging-migrate) source="migrate" namespace="thinktin-staging" ;;
-  production-migrate) source="migrate" namespace="thinktin" ;;
+  production-migrate | tokyo-migrate) source="migrate" namespace="thinktin" ;;
   *) echo "unknown bundle $bundle" >&2; exit 2 ;;
 esac
 

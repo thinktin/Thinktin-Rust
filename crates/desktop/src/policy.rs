@@ -202,7 +202,9 @@ mod tests {
     #[test]
     fn needs_follow_the_tool() {
         let dir = tempfile::tempdir().unwrap();
-        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let root = resolve(dir.path()).unwrap();
+        #[cfg(windows)]
+        assert!(!root.to_string_lossy().starts_with(r"\\?\"));
         let file = root.join("notes.md");
         std::fs::write(&file, "x").unwrap();
         let read = need(

@@ -139,6 +139,22 @@ class InboxViewModelTest {
     }
 
     @Test
+    fun newPageWithNoOverlapCanPageThroughTheGap() = runTest(dispatcher) {
+        val service = InboxService(40)
+        val vm = InboxViewModel(service)
+        advanceUntilIdle()
+        vm.loadMore()
+        advanceUntilIdle()
+        val newItems = (0 until 35).map { service.items.first().copy(id = "new-%03d".format(999 - it)) }
+        service.items.addAll(0, newItems)
+        vm.refresh()
+        advanceUntilIdle()
+        assertFalse(vm.uiState.value.endReached)
+        repeat(3) { vm.loadMore(); advanceUntilIdle() }
+        assertEquals(service.items.map { it.id }, vm.uiState.value.items.map { it.id })
+    }
+
+    @Test
     fun smallInboxIsComplete() = runTest(dispatcher) {
         val vm = InboxViewModel(InboxService(5))
         advanceUntilIdle()

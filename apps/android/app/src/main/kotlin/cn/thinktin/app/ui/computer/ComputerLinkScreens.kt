@@ -471,7 +471,7 @@ fun ComputerPairScreen(computerId: String?, pairingCode: String?, onBack: () -> 
                     )
                     PrimaryButton(
                         text = stringResource(R.string.computer_pair),
-                        onClick = { viewModel.pair(code, context.getString(R.string.computer_sign_pair, name)) },
+                        onClick = { viewModel.pair(code) { device -> context.getString(R.string.computer_sign_pair, device) } },
                         enabled = code.isNotBlank() && state.hasLoaded && state.canSign,
                         loading = state.working,
                         modifier = Modifier.fillMaxWidth(),

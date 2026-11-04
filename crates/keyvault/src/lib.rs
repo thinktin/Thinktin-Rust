@@ -622,6 +622,23 @@ impl<K: Kms, S: KeyStore> KeyVault<K, S> {
         Ok(WebhookSecret { token, secret })
     }
 
+    /// 工作区归档的分块加密（大文件边读边加密，不整个放进内存）。`archive_id` 进 AAD，单独的域。
+    pub async fn workspace_sealer(&self, user_id: &str, archive_id: &str) -> Result<ChunkSealer> {
+        let dek = self.dek(user_id).await?;
+        Ok(ChunkSealer(Chunks::new(
+            &dek,
+            domain_aad(b"thinktin/workspace/v1/", user_id, archive_id),
+        )))
+    }
+
+    pub async fn workspace_opener(&self, user_id: &str, archive_id: &str) -> Result<ChunkOpener> {
+        let dek = self.dek(user_id).await?;
+        Ok(ChunkOpener(Chunks::new(
+            &dek,
+            domain_aad(b"thinktin/workspace/v1/", user_id, archive_id),
+        )))
+    }
+
     async fn dek(&self, user_id: &str) -> Result<Zeroizing<[u8; DEK_LEN]>> {
         let now = Instant::now();
         {
@@ -650,6 +667,101 @@ impl<K: Kms, S: KeyStore> KeyVault<K, S> {
             },
         );
         Ok(dek)
+    }
+}
+
+/// 分块加密每块明文的上限。
+pub const CHUNK_LEN: usize = 1 << 20;
+/// 每帧的头：1 字节标志（最后一块是 1）+ 4 字节大端的密文长度。
+pub const FRAME_HEADER_LEN: usize = 5;
+const TAG_LEN: usize = 16;
+
+/// 分块加密的公共部分：每块单独 AES-256-GCM（随机 nonce），AAD 里有块的序号和是不是最后一块，
+/// 块被删、调换、截断、在末尾多接都解不开或报错。
+struct Chunks {
+    cipher: Aes256Gcm,
+    aad: Vec<u8>,
+    index: u64,
+    done: bool,
+}
+
+impl Chunks {
+    fn new(dek: &[u8; DEK_LEN], aad: Vec<u8>) -> Self {
+        Self {
+            cipher: Aes256Gcm::new_from_slice(dek).expect("32-byte key"),
+            aad,
+            index: 0,
+            done: false,
+        }
+    }
+
+    fn chunk_aad(&self, last: bool) -> Vec<u8> {
+        let mut aad = self.aad.clone();
+        aad.extend_from_slice(&self.index.to_be_bytes());
+        aad.push(u8::from(last));
+        aad
+    }
+}
+
+/// 分块加密：[`ChunkSealer::seal`] 一块出一帧，按顺序写出去即可。
+pub struct ChunkSealer(Chunks);
+
+impl ChunkSealer {
+    /// 加密下一块（最多 [`CHUNK_LEN`] 字节），返回整帧（帧头 + 密文）。最后一块 `last` 为 true，
+    /// 可以是空的；之后不能再加密。
+    pub fn seal(&mut self, plain: &[u8], last: bool) -> Result<Vec<u8>> {
+        let c = &mut self.0;
+        if c.done || plain.len() > CHUNK_LEN {
+            return Err(Error::Malformed);
+        }
+        let sealed = seal_raw(&c.cipher, plain, &c.chunk_aad(last))?;
+        c.index += 1;
+        c.done = last;
+        let mut frame = Vec::with_capacity(FRAME_HEADER_LEN + sealed.len());
+        frame.push(u8::from(last));
+        frame.extend_from_slice(&(sealed.len() as u32).to_be_bytes());
+        frame.extend_from_slice(&sealed);
+        Ok(frame)
+    }
+}
+
+/// 分块解密：先用 [`ChunkOpener::frame`] 读帧头，再 [`ChunkOpener::open`] 解这一帧的密文，
+/// 全部读完后 [`ChunkOpener::finish`] 确认最后一块到了。
+pub struct ChunkOpener(Chunks);
+
+impl ChunkOpener {
+    /// 帧头 → （密文长度，是不是最后一块）。
+    pub fn frame(&self, header: &[u8; FRAME_HEADER_LEN]) -> Result<(usize, bool)> {
+        let last = match header[0] {
+            0 => false,
+            1 => true,
+            _ => return Err(Error::Malformed),
+        };
+        let len = u32::from_be_bytes([header[1], header[2], header[3], header[4]]) as usize;
+        if self.0.done || !(NONCE_LEN + TAG_LEN..=NONCE_LEN + CHUNK_LEN + TAG_LEN).contains(&len) {
+            return Err(Error::Malformed);
+        }
+        Ok((len, last))
+    }
+
+    pub fn open(&mut self, sealed: &[u8], last: bool) -> Result<Vec<u8>> {
+        let c = &mut self.0;
+        if c.done {
+            return Err(Error::Malformed);
+        }
+        let plain = open_raw(&c.cipher, sealed, &c.chunk_aad(last))?;
+        c.index += 1;
+        c.done = last;
+        Ok(plain)
+    }
+
+    /// 最后一块没到（被截断）时报错。
+    pub fn finish(&self) -> Result<()> {
+        if self.0.done {
+            Ok(())
+        } else {
+            Err(Error::Malformed)
+        }
     }
 }
 
@@ -837,6 +949,98 @@ mod tests {
             LocalKms::new("local-1", &[7u8; 32]),
             MemoryKeyStore::default(),
         )
+    }
+
+    /// 按帧切开再逐帧解密，模拟边读边解。
+    fn open_all(opener: &mut ChunkOpener, mut data: &[u8]) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        while !data.is_empty() {
+            let header: [u8; FRAME_HEADER_LEN] = data
+                .get(..FRAME_HEADER_LEN)
+                .ok_or(Error::Malformed)?
+                .try_into()
+                .unwrap();
+            let (len, last) = opener.frame(&header)?;
+            let body = data
+                .get(FRAME_HEADER_LEN..FRAME_HEADER_LEN + len)
+                .ok_or(Error::Malformed)?;
+            out.extend(opener.open(body, last)?);
+            data = &data[FRAME_HEADER_LEN + len..];
+        }
+        opener.finish()?;
+        Ok(out)
+    }
+
+    async fn seal_all(v: &KeyVault<LocalKms, MemoryKeyStore>, plain: &[u8]) -> Vec<Vec<u8>> {
+        let mut s = v.workspace_sealer("u1", "a1").await.unwrap();
+        let mut frames = Vec::new();
+        let mut rest = plain;
+        loop {
+            let n = rest.len().min(CHUNK_LEN);
+            let last = n == rest.len();
+            frames.push(s.seal(&rest[..n], last).unwrap());
+            rest = &rest[n..];
+            if last {
+                return frames;
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn workspace_chunks_round_trip_and_detect_tampering() {
+        let v = vault();
+        v.create_user_key("u1").await.unwrap();
+        let big: Vec<u8> = (0..CHUNK_LEN * 7 / 2).map(|i| (i % 251) as u8).collect();
+        for len in [0, 1, CHUNK_LEN, CHUNK_LEN + 1, big.len()] {
+            let plain = &big[..len];
+            let sealed = seal_all(&v, plain).await.concat();
+            let mut o = v.workspace_opener("u1", "a1").await.unwrap();
+            assert_eq!(open_all(&mut o, &sealed).unwrap(), plain, "{len}");
+        }
+
+        let plain = &big[..CHUNK_LEN * 2 + 10];
+        let frames = seal_all(&v, plain).await;
+        assert_eq!(frames.len(), 3);
+        let open = |data: Vec<u8>, user: &'static str, archive: &'static str| {
+            let v = &v;
+            async move {
+                let mut o = v.workspace_opener(user, archive).await?;
+                open_all(&mut o, &data)
+            }
+        };
+        assert!(open(frames.concat(), "u1", "a1").await.is_ok());
+        // 别的归档、别的用户的 AAD。
+        assert!(open(frames.concat(), "u1", "a2").await.is_err());
+        v.create_user_key("u2").await.unwrap();
+        assert!(open(frames.concat(), "u2", "a1").await.is_err());
+        // 截断（少了最后一块）、调换顺序、多接一块。
+        assert!(open(frames[..2].concat(), "u1", "a1").await.is_err());
+        let swapped = [frames[1].clone(), frames[0].clone(), frames[2].clone()].concat();
+        assert!(open(swapped, "u1", "a1").await.is_err());
+        let extra = [frames.concat(), frames[2].clone()].concat();
+        assert!(open(extra, "u1", "a1").await.is_err());
+        // 把中间一块标成最后一块；改一个字节；改帧头的长度。
+        let mut flipped = frames.clone();
+        flipped[1][0] = 1;
+        assert!(open(flipped[..2].concat(), "u1", "a1").await.is_err());
+        let mut tampered = frames.concat();
+        tampered[FRAME_HEADER_LEN + 20] ^= 1;
+        assert!(open(tampered, "u1", "a1").await.is_err());
+        let mut bad_len = frames.concat();
+        bad_len[1..5].copy_from_slice(&u32::MAX.to_be_bytes());
+        assert!(open(bad_len, "u1", "a1").await.is_err());
+        // 加密销毁之后解不开。
+        v.destroy_user_key("u1");
+        assert!(matches!(
+            v.workspace_opener("u1", "a1").await,
+            Err(Error::NoUserKey(_))
+        ));
+        // 最后一块之后不能再加密；超过一块的明文不收。
+        v.create_user_key("u3").await.unwrap();
+        let mut s = v.workspace_sealer("u3", "a1").await.unwrap();
+        assert!(s.seal(&big[..CHUNK_LEN + 1], false).is_err());
+        s.seal(b"x", true).unwrap();
+        assert!(s.seal(b"y", true).is_err());
     }
 
     fn key(s: &str) -> SecretString {

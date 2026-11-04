@@ -132,11 +132,17 @@ class InboxViewModel(
         moreJob = viewModelScope.launch {
             try {
                 val older = service.olderInbox(last.id, PAGE_SIZE)
-                state.update { it.append(older).copy(loadingMore = false, endReached = older.size < PAGE_SIZE) }
+                state.update {
+                    if (it.items.lastOrNull()?.id == last.id) it.append(older).copy(loadingMore = false, endReached = older.size < PAGE_SIZE)
+                    else it.copy(loadingMore = false)
+                }
             } catch (e: ServiceError) {
                 val cached = if (e is ServiceError.Network) service.cachedInbox(last.id, PAGE_SIZE) else emptyList()
                 if (cached.isNotEmpty()) {
-                    state.update { it.append(cached).copy(loadingMore = false) }
+                    state.update {
+                        if (it.items.lastOrNull()?.id == last.id) it.append(cached).copy(loadingMore = false)
+                        else it.copy(loadingMore = false)
+                    }
                 } else {
                     state.update { it.copy(loadingMore = false) }
                     eventChannel.trySend(InboxEvent.Notice(ErrorText.of(e)))
@@ -163,12 +169,16 @@ class InboxViewModel(
             val item = known ?: try {
                 service.inboxItem(itemId)
             } catch (e: ServiceError) {
-                if (e is ServiceError.Api && (e.code == "not_found" || e.status == 404)) {
-                    state.update { it.copy(opened = null, openedMissing = true) }
-                } else {
-                    eventChannel.trySend(InboxEvent.Notice(ErrorText.of(e)))
+                val cached = if (e is ServiceError.Network) service.cachedInbox(null, 500).firstOrNull { it.id == itemId } else null
+                if (cached == null) {
+                    if (e is ServiceError.Api && (e.code == "not_found" || e.status == 404)) {
+                        state.update { it.copy(opened = null, openedMissing = true) }
+                    } else {
+                        eventChannel.trySend(InboxEvent.Notice(ErrorText.of(e)))
+                    }
+                    return@launch
                 }
-                return@launch
+                cached
             }
             state.update { it.copy(opened = item.copy(read = true), openedMissing = false) }
             markRead(item)
@@ -296,7 +306,8 @@ internal fun InboxUiState.merge(latest: List<InboxItem>): InboxUiState {
         return copy(items = latest, endReached = true, loadError = null)
     }
     val ids = latest.mapTo(HashSet()) { it.id }
-    val older = items.filter { it.id !in ids && isOlder(it, oldest) }
+    if (items.none { it.id in ids }) return copy(items = latest, endReached = false, loadError = null)
+    val older = items.filter { it.id !in ids && it.id < oldest.id }
     return copy(items = latest + older, endReached = if (older.isEmpty()) false else endReached, loadError = null)
 }
 
@@ -304,7 +315,3 @@ private fun InboxUiState.append(older: List<InboxItem>): InboxUiState {
     val ids = items.mapTo(HashSet()) { it.id }
     return copy(items = items + older.filter { it.id !in ids })
 }
-
-/** 列表的顺序：时间新的在前，同一时间按 id。 */
-private fun isOlder(item: InboxItem, than: InboxItem): Boolean =
-    item.createdAtMs < than.createdAtMs || (item.createdAtMs == than.createdAtMs && item.id < than.id)

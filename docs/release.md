@@ -42,6 +42,10 @@ agent 的沙箱模板单独构建（6.8）；App 走各自的商店（12.11、13
 - 改名：不直接改。加新列 → 程序双写、回填 → 改成读新列 → 下一次发布删旧列。
 - 加非空：先加可空列，程序开始写它、回填；下一次发布 `SET NOT NULL`（标 `deploy-safe`）。
 - 收紧检查约束、收回权限：同样要确认上一版不会写出违反的数据、不再用这个权限，标 `deploy-safe`。
+- 给程序按严格枚举解析的列加新取值（`runs.source`、`runs.state`、`runs.kind` 之类）：上一版程序读到这一行就解析失败。
+  后台领取、接管运行只要本版本认识的来源（`store` 里的 `known_sources`），老副本会跳过新来源的运行、不卡住队头；
+  但老版本的接口列运行照样报错，回滚时也一样。所以新取值分两次发布：先发认识它的程序，下一次再发开始写它的；
+  或者先用配置开关关着。8.11 的 `ask` 是第一次发布之前加的，不受这条限制。
 - 在已有的大表上建索引用 `CREATE INDEX CONCURRENTLY`，放在单独的迁移里，第一行写 `-- no-transaction`
   （sqlx 才不包事务）；普通的 `CREATE INDEX` 期间这张表写不进去。
 - 发布过的迁移文件一个字节都不能改：sqlx 按内容的校验和核对，改了生产库就迁移不了、程序也拒绝启动。
@@ -122,7 +126,7 @@ kubectl -n thinktin-staging rollout status deploy/thinktin-api deploy/thinktin-w
 | Secret | 键 | 给谁 |
 |---|---|---|
 | `thinktin-api` | `DATABASE_URL`（控制面登录账号）、`THINKTIN_ACCESS_TOKEN_SEED`、`THINKTIN_CODE_PEPPER`、`THINKTIN_ALIYUN_KMS_ACCESS_KEY_ID`、`THINKTIN_ALIYUN_KMS_ACCESS_KEY_SECRET`（本地 KMS 时换成 `THINKTIN_KMS_KEY`）、`THINKTIN_S3_ACCESS_KEY_ID`、`THINKTIN_S3_SECRET_ACCESS_KEY`、`THINKTIN_ALIYUN_SMS_ACCESS_KEY_ID`、`THINKTIN_ALIYUN_SMS_ACCESS_KEY_SECRET`；提交审核期间加 `THINKTIN_REVIEW_CODE` | 接口副本 |
-| `thinktin-worker` | `DATABASE_URL`（控制面登录账号）、`THINKTIN_SANDBOX_TOKEN_SEED`、KMS 的两个（同上）、对象存储的两个、`THINKTIN_CUBE_API_KEY`、`THINKTIN_JPUSH_MASTER_SECRET` | 后台副本 |
+| `thinktin-worker` | `DATABASE_URL`（控制面登录账号）、`THINKTIN_SANDBOX_TOKEN_SEED`、KMS 的两个（同上）、对象存储的两个、`THINKTIN_CUBE_API_KEY`（Cube）或 `THINKTIN_ACS_API_KEY`（ACS）、`THINKTIN_JPUSH_MASTER_SECRET` | 后台副本 |
 | `thinktin-push`（文件） | `apns.p8`（APNs 私钥）、`fcm.json`（FCM 服务账号） | 后台副本，挂在 `/etc/thinktin/push` |
 | `thinktin-llm-gw` | `DATABASE_URL`（模型网关登录账号）、KMS 的两个 | 模型网关 |
 | `thinktin-relay` | `DATABASE_URL`（中继登录账号） | 设备中继 |

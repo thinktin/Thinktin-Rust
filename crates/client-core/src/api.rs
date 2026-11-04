@@ -9,12 +9,13 @@ use std::time::Duration;
 
 use proto::api::{API_VERSION, ErrorCode, VERSION_HEADER};
 use proto::domain::{
-    Approval, ApprovalId, Artifact, ArtifactId, CatchUp, ContentReport, Credential, CredentialId,
-    Device, DeviceId, DeviceMessage, DeviceMessageId, DeviceMessageKind, DevicePlatform, ImChannel,
-    ImChannelId, InboxItem, InboxItemId, Instance, InstanceEvent, InstanceId, ModelRoute, Plan,
-    PlanId, PlanPolicy, PlanStep, PushChannelKind, ReportReason, Run, RunId, ScheduleSpec, Team,
-    TeamId, TeamMember, TeamTemplate, TeamTemplateId, TeamTemplateSpec, Trigger, TriggerId, User,
-    VaultItem, VaultItemId, VaultRequest, VaultRequestId,
+    Approval, ApprovalId, Artifact, ArtifactId, BoardPost, BoardPostId, CatchUp, ContentReport,
+    Credential, CredentialId, Device, DeviceId, DeviceMessage, DeviceMessageId, DeviceMessageKind,
+    DevicePlatform, ImChannel, ImChannelId, InboxItem, InboxItemId, Instance, InstanceEvent,
+    InstanceId, ModelRoute, Plan, PlanHook, PlanHookId, PlanId, PlanPolicy, PlanStep,
+    PushChannelKind, ReportReason, Run, RunId, ScheduleSpec, Team, TeamId, TeamMember,
+    TeamTemplate, TeamTemplateId, TeamTemplateSpec, Trigger, TriggerId, User, VaultItem,
+    VaultItemId, VaultRequest, VaultRequestId,
 };
 use reqwest::Method;
 use reqwest::header::HeaderValue;
@@ -171,6 +172,17 @@ pub struct PlanChange {
     pub catch_up: Option<CatchUp>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub steps: Option<Vec<PlanStep>>,
+}
+
+/// 改实例：给了才改（名字、用途说明、“允许其他 agent 查我、问我”）。
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct InstanceChange {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub purpose: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peer_access: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -353,6 +365,21 @@ struct LoginResp {
     device_id: String,
     #[serde(flatten)]
     tokens: Tokens,
+}
+
+/// 建、换 webhook 的结果：完整地址和令牌只这一次拿得到（7.1）。
+#[derive(Debug, Clone)]
+pub struct HookSecret {
+    pub hook: PlanHook,
+    pub url: String,
+    pub token: String,
+}
+
+#[derive(Deserialize)]
+struct RawHookSecret {
+    hook: PlanHook,
+    path: String,
+    token: String,
 }
 
 pub struct Api {
@@ -931,6 +958,17 @@ impl Api {
         .await
     }
 
+    /// 改实例的名字、用途说明、交流开关（8.9），给了才改。
+    pub async fn update_instance(
+        &self,
+        id: InstanceId,
+        change: &InstanceChange,
+    ) -> Result<Instance> {
+        let body = serde_json::to_value(change).map_err(ClientError::decode)?;
+        self.json(Method::PATCH, &format!("/v1/instances/{id}"), Some(&body))
+            .await
+    }
+
     /// 换模板版本（不给就是升级到当前版本）：下次唤醒时重建沙箱，工作区保留。
     pub async fn set_instance_version(
         &self,
@@ -985,6 +1023,16 @@ impl Api {
         .await
     }
 
+    /// 紧急消息（8.12）：实例正忙时打断它正在做的、马上处理这条（会话保留）；空闲时排在别的排队消息前面。
+    pub async fn create_urgent_run(&self, instance: InstanceId, prompt: &str) -> Result<Run> {
+        self.json(
+            Method::POST,
+            &format!("/v1/instances/{instance}/runs"),
+            Some(&json!({ "prompt": prompt, "delivery": "interrupt" })),
+        )
+        .await
+    }
+
     pub async fn runs(
         &self,
         instance: InstanceId,
@@ -993,6 +1041,7 @@ impl Api {
     ) -> Result<Vec<Run>> {
         #[derive(Deserialize)]
         struct R {
+            #[serde(deserialize_with = "crate::lenient::vec")]
             runs: Vec<Run>,
         }
         let mut path = format!("/v1/instances/{instance}/runs?limit={limit}");
@@ -1011,6 +1060,7 @@ impl Api {
     ) -> Result<Vec<Run>> {
         #[derive(Deserialize)]
         struct R {
+            #[serde(deserialize_with = "crate::lenient::vec")]
             runs: Vec<Run>,
         }
         let mut path = format!("/v1/runs?limit={limit}");
@@ -1069,6 +1119,7 @@ impl Api {
     pub async fn run_tree(&self, id: RunId) -> Result<Vec<Run>> {
         #[derive(Deserialize)]
         struct R {
+            #[serde(deserialize_with = "crate::lenient::vec")]
             runs: Vec<Run>,
         }
         Ok(self
@@ -1196,6 +1247,120 @@ impl Api {
     pub async fn mark_inbox_unread(&self, id: InboxItemId) -> Result<()> {
         self.empty(Method::POST, &format!("/v1/inbox/{id}/unread"), None)
             .await
+    }
+
+    /// 共享看板（8.10），新的在前：`tag` 只看带这个标签的，`archived` 看归档了的，`before` 往下翻。
+    pub async fn board(
+        &self,
+        tag: Option<&str>,
+        archived: bool,
+        before: Option<BoardPostId>,
+        limit: Option<u32>,
+    ) -> Result<Vec<BoardPost>> {
+        #[derive(Deserialize)]
+        struct R {
+            posts: Vec<BoardPost>,
+        }
+        let query = {
+            let mut q = url::form_urlencoded::Serializer::new(String::new());
+            if let Some(t) = tag {
+                q.append_pair("tag", t);
+            }
+            if archived {
+                q.append_pair("archived", "true");
+            }
+            if let Some(b) = before {
+                q.append_pair("before", &b.to_string());
+            }
+            if let Some(l) = limit {
+                q.append_pair("limit", &l.to_string());
+            }
+            q.finish()
+        };
+        Ok(self
+            .json::<R>(Method::GET, &format!("/v1/board?{query}"), None)
+            .await?
+            .posts)
+    }
+
+    /// 用户自己在看板上写一条（满了最早的自动归档）。
+    pub async fn post_to_board(&self, body: &str, tags: &[String]) -> Result<BoardPost> {
+        self.json(
+            Method::POST,
+            "/v1/board",
+            Some(&json!({ "body": body, "tags": tags })),
+        )
+        .await
+    }
+
+    /// 归档、取消归档（没归档的满了时取消归档报 422）。
+    pub async fn set_board_post_archived(
+        &self,
+        id: BoardPostId,
+        archived: bool,
+    ) -> Result<BoardPost> {
+        let action = if archived { "archive" } else { "unarchive" };
+        self.json(Method::POST, &format!("/v1/board/{id}/{action}"), None)
+            .await
+    }
+
+    pub async fn delete_board_post(&self, id: BoardPostId) -> Result<()> {
+        self.empty(Method::DELETE, &format!("/v1/board/{id}"), None)
+            .await
+    }
+
+    /// 计划的 webhook（7.1 事件触发）。
+    pub async fn plan_hooks(&self, plan: PlanId) -> Result<Vec<PlanHook>> {
+        #[derive(Deserialize)]
+        struct R {
+            hooks: Vec<PlanHook>,
+        }
+        Ok(self
+            .json::<R>(Method::GET, &format!("/v1/plans/{plan}/hooks"), None)
+            .await?
+            .hooks)
+    }
+
+    /// 给计划加 webhook（用户在 App 里看过说明、同意之后）。令牌只在这里返回一次。
+    pub async fn create_plan_hook(&self, plan: PlanId) -> Result<HookSecret> {
+        let raw: RawHookSecret = self
+            .json(
+                Method::POST,
+                &format!("/v1/plans/{plan}/hooks"),
+                Some(&json!({ "consent": true })),
+            )
+            .await?;
+        Ok(self.hook_secret(raw))
+    }
+
+    /// 换令牌：旧地址马上失效。
+    pub async fn rotate_plan_hook(&self, id: PlanHookId) -> Result<HookSecret> {
+        let raw: RawHookSecret = self
+            .json(Method::POST, &format!("/v1/hooks/{id}/rotate"), None)
+            .await?;
+        Ok(self.hook_secret(raw))
+    }
+
+    pub async fn set_plan_hook_enabled(&self, id: PlanHookId, enabled: bool) -> Result<PlanHook> {
+        self.json(
+            Method::PATCH,
+            &format!("/v1/hooks/{id}"),
+            Some(&json!({ "enabled": enabled })),
+        )
+        .await
+    }
+
+    pub async fn delete_plan_hook(&self, id: PlanHookId) -> Result<()> {
+        self.empty(Method::DELETE, &format!("/v1/hooks/{id}"), None)
+            .await
+    }
+
+    fn hook_secret(&self, raw: RawHookSecret) -> HookSecret {
+        HookSecret {
+            url: format!("{}{}", self.base.trim_end_matches('/'), raw.path),
+            hook: raw.hook,
+            token: raw.token,
+        }
     }
 
     pub async fn delete_inbox_item(&self, id: InboxItemId) -> Result<()> {

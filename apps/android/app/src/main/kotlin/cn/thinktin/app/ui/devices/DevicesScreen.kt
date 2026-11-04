@@ -237,7 +237,7 @@ internal fun AccountRow(
 private fun DeviceRow(device: DeviceInfo, nowMs: Long, zone: java.time.ZoneId, onRevoke: () -> Unit) {
     val platform = stringResource(platformLabel(device.platform))
     val lastSeen = stringResource(R.string.devices_last_seen, RelativeTime.of(device.lastSeenAtMs, nowMs, zone).asString())
-    val online = device.platform == DevicePlatform.Macos
+    val online = device.platform.isComputer
     ListItem(
         headlineContent = {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -285,7 +285,7 @@ private fun Badge(text: String, color: Color) {
 private fun platformIcon(platform: DevicePlatform): ImageVector = when (platform) {
     DevicePlatform.Android -> Icons.Outlined.PhoneAndroid
     DevicePlatform.Ios -> Icons.Outlined.PhoneIphone
-    DevicePlatform.Macos -> Icons.Outlined.Laptop
+    DevicePlatform.Macos, DevicePlatform.Windows -> Icons.Outlined.Laptop
     DevicePlatform.Unknown -> Icons.Outlined.Devices
 }
 
@@ -293,6 +293,7 @@ private fun platformLabel(platform: DevicePlatform): Int = when (platform) {
     DevicePlatform.Android -> R.string.platform_android
     DevicePlatform.Ios -> R.string.platform_ios
     DevicePlatform.Macos -> R.string.platform_macos
+    DevicePlatform.Windows -> R.string.platform_windows
     DevicePlatform.Unknown -> R.string.platform_unknown
 }
 

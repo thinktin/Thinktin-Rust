@@ -381,6 +381,30 @@ class ConversationBuilderTest {
         assertFalse(ConversationBuilder.build(listOf(run(state = RunState.Cancelled)), started).block("r1")!!.streaming)
     }
 
+    /** 审批通过后同一轮接着输出（不会再来 turn_started）、加载窗口从一轮中间开始：照 iOS reducer，有输出就算在回复。 */
+    @Test
+    fun streamingResumesAfterApprovalAndFollowsOutput() {
+        val text = { s: String -> ev(EventKinds.AGENT_MESSAGE, payload = obj { put("text", s) }) }
+        val state = { s: String -> ev(EventKinds.RUN_STATE, payload = obj { put("state", s); put("attempt", 1) }) }
+        fun streaming(events: List<InstanceEvent>) = ConversationBuilder.build(listOf(run()), events).block("r1")!!.streaming
+
+        val waiting = listOf(ev(EventKinds.AGENT_TURN_STARTED), text("先删文件，"), state("waiting_approval"))
+        assertFalse(streaming(waiting))
+        // 批准了：run.state 回到 running、文字接着流。
+        assertTrue(streaming(waiting + state("running")))
+        assertTrue(streaming(waiting + state("running") + text("删好了。")))
+        // 窗口刚好切在 turn_started 之后：只有输出也算。
+        val midTurn = listOf(text("……接着写"))
+        assertTrue(streaming(midTurn))
+        assertTrue(streaming(listOf(ev(EventKinds.AGENT_TOOL_CALL, payload = obj { put("tool_call_id", "t1"); put("title", "读文件") }))))
+        // turn_ended 之后零星到的输出不算；退避、排队中也没在输出。
+        assertFalse(streaming(midTurn + ev(EventKinds.AGENT_TURN_ENDED, payload = obj { put("stop_reason", "end_turn") }) + text("晚到的")))
+        assertFalse(streaming(midTurn + state("backoff")))
+        assertFalse(streaming(midTurn + state("queued")))
+        // 重试：running 之后又在回复。
+        assertTrue(streaming(midTurn + state("backoff") + state("running")))
+    }
+
     @Test
     fun blockStateUsesTerminalRunOrLatestEvent() {
         val waiting = listOf(

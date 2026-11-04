@@ -6,6 +6,7 @@
 
 use std::fmt;
 use std::io;
+use std::path::Path;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -13,7 +14,7 @@ use chrono::Utc;
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Digest, Sha256};
 
-use crate::artifacts::BlobStore;
+use crate::artifacts::{BlobStore, too_large};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -139,9 +140,19 @@ impl S3BlobStore {
         key: &str,
         body: Option<&[u8]>,
     ) -> io::Result<reqwest::Response> {
-        let path = self.object_path(key);
         let payload: [u8; 32] = Sha256::digest(body.unwrap_or_default()).into();
-        let payload = hex(&payload);
+        let req = self.signed(method, key, &hex(&payload));
+        let req = match body {
+            Some(b) => req.body(b.to_vec()),
+            None => req,
+        };
+        req.send().await.map_err(io::Error::other)
+    }
+
+    /// 签好名的请求（正文的 SHA-256 由调用方给），正文由调用方加。
+    fn signed(&self, method: reqwest::Method, key: &str, payload: &str) -> reqwest::RequestBuilder {
+        let path = self.object_path(key);
+        let payload = payload.to_owned();
         let amz_date = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
         let mut headers = vec![
             ("host".to_owned(), self.host.clone()),
@@ -161,17 +172,30 @@ impl S3BlobStore {
             &amz_date,
         );
         let url = format!("{}://{}{path}", self.scheme, self.host);
-        let mut req = self
-            .http
+        self.http
             .request(method, url)
             .header("x-amz-content-sha256", payload)
             .header("x-amz-date", amz_date)
-            .header("authorization", auth);
-        if let Some(b) = body {
-            req = req.body(b.to_vec());
-        }
-        req.send().await.map_err(io::Error::other)
+            .header("authorization", auth)
     }
+}
+
+/// 文件按块读成流（上传大对象用）。
+fn file_stream(
+    file: tokio::fs::File,
+) -> impl futures_util::Stream<Item = io::Result<bytes::Bytes>> + Send + 'static {
+    futures_util::stream::unfold(file, |mut file| async move {
+        use tokio::io::AsyncReadExt;
+        let mut buf = vec![0u8; 256 << 10];
+        match file.read(&mut buf).await {
+            Ok(0) => None,
+            Ok(n) => {
+                buf.truncate(n);
+                Some((Ok(bytes::Bytes::from(buf)), file))
+            }
+            Err(e) => Some((Err(e), file)),
+        }
+    })
 }
 
 /// 存储服务的错误：状态码加上响应里的错误码（S3 的 `<Code>`），不带别的内容。
@@ -215,6 +239,88 @@ impl BlobStore for S3BlobStore {
             200 | 204 | 404 => Ok(()),
             _ => Err(failure("delete", resp).await),
         }
+    }
+
+    async fn put_file(
+        &self,
+        key: &str,
+        path: &Path,
+        len: u64,
+        sha256_hex: &str,
+        timeout: Duration,
+    ) -> io::Result<()> {
+        let file = tokio::fs::File::open(path).await?;
+        if file.metadata().await?.len() != len {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "file size changed before upload",
+            ));
+        }
+        // 写明长度：OSS 不收分块传输编码的上传。
+        let resp = self
+            .signed(reqwest::Method::PUT, key, sha256_hex)
+            .header(reqwest::header::CONTENT_LENGTH, len)
+            .body(reqwest::Body::wrap_stream(file_stream(file)))
+            .timeout(timeout)
+            .send()
+            .await
+            .map_err(io::Error::other)?;
+        if resp.status().is_success() {
+            Ok(())
+        } else {
+            Err(failure("put", resp).await)
+        }
+    }
+
+    async fn get_to_file(
+        &self,
+        key: &str,
+        path: &Path,
+        max: u64,
+        timeout: Duration,
+    ) -> io::Result<u64> {
+        use futures_util::StreamExt;
+        use tokio::io::AsyncWriteExt;
+        let payload: [u8; 32] = Sha256::digest(b"").into();
+        let resp = self
+            .signed(reqwest::Method::GET, key, &hex(&payload))
+            .timeout(timeout)
+            .send()
+            .await
+            .map_err(io::Error::other)?;
+        match resp.status().as_u16() {
+            200 => {}
+            404 => {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("no such object {key}"),
+                ));
+            }
+            _ => return Err(failure("get", resp).await),
+        }
+        if resp.content_length().is_some_and(|n| n > max) {
+            return Err(too_large(max));
+        }
+        let written = async {
+            let mut file = tokio::fs::File::create(path).await?;
+            let mut stream = resp.bytes_stream();
+            let mut total = 0u64;
+            while let Some(chunk) = stream.next().await {
+                let chunk = chunk.map_err(io::Error::other)?;
+                total += chunk.len() as u64;
+                if total > max {
+                    return Err(too_large(max));
+                }
+                file.write_all(&chunk).await?;
+            }
+            file.flush().await?;
+            Ok(total)
+        }
+        .await;
+        if written.is_err() {
+            let _ = tokio::fs::remove_file(path).await;
+        }
+        written
     }
 }
 

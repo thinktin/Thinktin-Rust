@@ -4,6 +4,7 @@ ThinkTin 平台：托管多个开源 agent，用户领养后常驻云端、按�
 
 ## 文档
 
+- [品牌 Logo 定稿 G1.0](docs/brand/logo/README.md)（彩色与黑白矢量原稿、尺规图纸、复建参数）
 - [架构方案 v3](docs/architecture-v3.md)（当前版本）
 - [Agent 接入说明](docs/agent-integration.md)：Claude（ACP 与命令行两种接入）、Codex、Pi、OpenClaw、Hermes 的接入状态、配置注入、权限审批和已知问题
 - [模型网关与密钥库](docs/llm-gateway.md)：沙箱令牌、信封加密、按别名路由换 key、流式透传、计量、限额、SSRF 防护

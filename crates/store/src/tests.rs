@@ -1026,6 +1026,15 @@ async fn erasing_an_account_deletes_its_content() {
         .await
         .unwrap();
         r.commit().await.unwrap();
+        // 共享看板（8.10）。
+        let mut tx = db.tenant(who).await.unwrap();
+        tx.post_to_board(&crate::NewBoardPost {
+            body: "进展".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
     }
 
     // 送达过的推送记录也有正文，注销时一起删。
@@ -1073,6 +1082,7 @@ async fn erasing_an_account_deletes_its_content() {
         "device_calls",
         "device_messages",
         "device_links",
+        "board_posts",
     ] {
         assert_eq!(
             count(table, alice).await,
@@ -1522,10 +1532,13 @@ async fn deleting_an_instance_retires_its_plans() {
     a.add_trigger(py.id, &cron, Some(soon)).await.unwrap();
     let pz = a.create_plan(&plan(&y, "y 自己的")).await.unwrap();
     a.add_trigger(pz.id, &cron, Some(later)).await.unwrap();
+    // 删掉的计划的 webhook 一起删（7.1）。
+    a.create_plan_hook(px.id, &[7; 32]).await.unwrap();
     a.commit().await.unwrap();
 
     let mut a = db.tenant(alice).await.unwrap();
     let retired = a.retire_instance_plans(x.id).await.unwrap();
+    assert!(a.plan_hooks(px.id).await.unwrap().is_empty());
     a.delete_instance(x.id).await.unwrap();
     a.commit().await.unwrap();
     let mut deleted = retired.deleted.clone();
@@ -4077,4 +4090,747 @@ async fn runs_across_instances_by_plan_and_state() {
     assert_eq!([first, rest].concat(), all);
     // 别人的计划：什么都没有。
     assert!(list(bob, of_plan, None, 50).await.is_empty());
+}
+
+/// 认识队友（8.9）：业务角色能改用途说明和交流开关；列队友时只给同一用户、没删除、开着开关的，不含自己。
+#[tokio::test]
+async fn peers_are_the_users_other_instances_that_allow_it() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let u = user(db, "+8613800000891").await;
+    let other = user(db, "+8613800000892").await;
+    let me = instance(db, u).await;
+    let open = instance(db, u).await;
+    let closed = instance(db, u).await;
+    let gone = instance(db, u).await;
+    let _theirs = instance(db, other).await;
+    let mut tx = db.tenant(u).await.unwrap();
+    tx.update_instance(
+        closed.id,
+        &crate::InstanceChange {
+            peer_access: Some(false),
+            purpose: Some("vault and computer".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    tx.delete_instance(gone.id).await.unwrap();
+    tx.commit().await.unwrap();
+    let mut tx = db.tenant(u).await.unwrap();
+    let peers = tx.peers(me.id).await.unwrap();
+    assert_eq!(
+        peers.iter().map(|p| p.instance.id).collect::<Vec<_>>(),
+        [open.id]
+    );
+    assert_eq!(peers[0].holder, None);
+    let closed_now = tx.instance(closed.id).await.unwrap();
+    assert!(!closed_now.peer_access);
+    assert_eq!(closed_now.purpose, "vault and computer");
+    // 用途说明有长度上限（库里也查）；删了的实例改不了。
+    let long = sqlx::query("UPDATE instances SET purpose = repeat('x', 201) WHERE id = $1")
+        .bind(open.id.0)
+        .execute(tx.conn())
+        .await;
+    assert!(long.is_err());
+    tx.rollback().await.unwrap();
+    let mut tx = db.tenant(u).await.unwrap();
+    assert!(matches!(
+        tx.update_instance(
+            gone.id,
+            &crate::InstanceChange {
+                name: Some("x".into()),
+                ..Default::default()
+            }
+        )
+        .await,
+        Err(Error::NotFound)
+    ));
+    tx.rollback().await.unwrap();
+}
+
+/// 共享看板（8.10）：每个用户一块，按标签读、往下翻；没归档的满了最早的自动归档（并发写也不超）；取消归档
+/// 满了时拒绝；作者名字跟着实例，实例删了条目还在；看不到别人的；归档久了的由维护任务删掉。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_board_is_capped_per_user_and_archives_the_oldest() {
+    use proto::domain::MAX_BOARD_LIVE_POSTS;
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let u = user(db, "+8613800000893").await;
+    let other = user(db, "+8613800000894").await;
+    let inst = instance(db, u).await;
+    let run = queue_run(db, u, &inst, "p").await.id;
+    let post = |body: String,
+                tags: Vec<String>,
+                by: Option<(proto::domain::InstanceId, proto::domain::RunId)>| async move {
+        let mut tx = db.tenant(u).await.unwrap();
+        let r = tx
+            .post_to_board(&crate::NewBoardPost {
+                author_instance_id: by.map(|b| b.0),
+                run_id: by.map(|b| b.1),
+                body,
+                tags,
+            })
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        r
+    };
+    let (first, archived) = post("first".into(), vec!["alpha".into()], Some((inst.id, run))).await;
+    assert_eq!(archived, 0);
+    assert_eq!(first.author_name.as_deref(), Some(inst.name.as_str()));
+    assert!(first.ai_generated);
+    let (mine, _) = post("from the user".into(), vec![], None).await;
+    assert!(!mine.ai_generated);
+    assert_eq!(mine.author_name, None);
+
+    // 标签过滤；别人看不到。
+    let list = |tag: Option<&'static str>, archived: bool, who: UserId| async move {
+        let mut tx = db.tenant(who).await.unwrap();
+        let posts = tx
+            .board_posts(&crate::BoardFilter {
+                tag: tag.map(String::from),
+                archived,
+                before: None,
+                limit: 500,
+            })
+            .await
+            .unwrap();
+        tx.rollback().await.unwrap();
+        posts
+    };
+    assert_eq!(
+        list(Some("alpha"), false, u).await,
+        std::slice::from_ref(&first)
+    );
+    assert_eq!(list(None, false, u).await.len(), 2);
+    assert!(list(None, false, other).await.is_empty());
+
+    // 写满：并发写也不超过上限，多出来的把最早的归档。
+    let n = MAX_BOARD_LIVE_POSTS as usize - 2;
+    for i in 0..n - 4 {
+        post(format!("note {i}"), vec![], None).await;
+    }
+    let mut tasks = Vec::new();
+    for i in 0..8 {
+        let pool = t.db.clone();
+        tasks.push(tokio::spawn(async move {
+            let mut tx = pool.tenant(u).await.unwrap();
+            tx.post_to_board(&crate::NewBoardPost {
+                body: format!("burst {i}"),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+            tx.commit().await.unwrap();
+        }));
+    }
+    for task in tasks {
+        task.await.unwrap();
+    }
+    let live = list(None, false, u).await;
+    assert_eq!(live.len() as u64, MAX_BOARD_LIVE_POSTS);
+    let archived = list(None, true, u).await;
+    assert_eq!(archived.len(), 4);
+    assert_eq!(
+        archived.last().unwrap().id,
+        first.id,
+        "the oldest went first"
+    );
+
+    // 满了取消归档被拒；先归档一条就行。
+    let mut tx = db.tenant(u).await.unwrap();
+    assert!(matches!(
+        tx.set_board_post_archived(first.id, false).await,
+        Err(Error::Invalid(_))
+    ));
+    tx.rollback().await.unwrap();
+    let mut tx = db.tenant(u).await.unwrap();
+    tx.set_board_post_archived(live[0].id, true).await.unwrap();
+    let back = tx.set_board_post_archived(first.id, false).await.unwrap();
+    assert_eq!(back.archived_at, None);
+    tx.commit().await.unwrap();
+
+    // 别人删不了、归档不了；实例删了条目还在，没有作者名字。
+    let mut tx = db.tenant(other).await.unwrap();
+    assert!(matches!(
+        tx.delete_board_post(first.id).await,
+        Err(Error::NotFound)
+    ));
+    assert!(matches!(
+        tx.set_board_post_archived(first.id, true).await,
+        Err(Error::NotFound)
+    ));
+    tx.rollback().await.unwrap();
+    let mut tx = db.tenant(u).await.unwrap();
+    tx.delete_instance(inst.id).await.unwrap();
+    let kept = tx.board_post(first.id).await.unwrap();
+    assert_eq!(kept.author_name, None);
+    assert!(kept.ai_generated);
+    tx.delete_board_post(mine.id).await.unwrap();
+    tx.commit().await.unwrap();
+
+    // 归档久了的由维护任务删掉。
+    sqlx::query("UPDATE board_posts SET archived_at = now() - interval '31 days' WHERE archived_at IS NOT NULL")
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let mut w = db.worker().await.unwrap();
+    let purged = w
+        .purge_archived_board_posts(crate::BOARD_ARCHIVE_RETENTION)
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+    assert_eq!(purged, 3);
+    assert!(list(None, true, u).await.is_empty());
+}
+
+/// 工作区归档（没有卷的后端）：实例上只记最新的一份；换掉的、没用上的上传、回收或删掉实例时，
+/// 对象都排进 blob_purge。后台角色能做全部这些。
+#[tokio::test]
+async fn workspace_archives_queue_replaced_objects() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let u = user(db, "+8613800000771").await;
+    let inst = instance(db, u).await;
+    let queued = || async {
+        let mut w = db.worker().await.unwrap();
+        let mut keys = w.blob_purge_batch(100).await.unwrap();
+        w.forget_blob_purge(&keys).await.unwrap();
+        w.commit().await.unwrap();
+        keys.sort();
+        keys
+    };
+    let archive = || async {
+        let mut w = db.worker().await.unwrap();
+        w.instance_runtime(inst.id).await.unwrap().archive
+    };
+    let k = |name: &str| format!("workspaces/{}/ws-1/{name}", u.0.simple());
+    let id1 = uuid::Uuid::now_v7();
+    let sha = [7u8; 32];
+
+    // 别处的上传在这么久之内刷新过就不另起一份。
+    let fresh = Duration::from_secs(600);
+    let begin = |id: proto::domain::InstanceId, key: String| async move {
+        let mut w = db.worker().await.unwrap();
+        let began = w.begin_workspace_archive(id, &key, fresh).await.unwrap();
+        w.commit().await.unwrap();
+        began
+    };
+    let age_pending = |id: proto::domain::InstanceId| async move {
+        sqlx::query(
+            "UPDATE instances SET workspace_archive_pending_since = now() - interval '1 hour' WHERE id = $1",
+        )
+        .bind(id.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    };
+
+    assert!(begin(inst.id, k("a1")).await);
+    assert!(archive().await.is_none(), "pending is not an archive yet");
+    let mut w = db.worker().await.unwrap();
+    assert!(
+        w.finish_workspace_archive(inst.id, &k("a1"), id1, 1234, &sha)
+            .await
+            .unwrap()
+    );
+    w.commit().await.unwrap();
+    let a = archive().await.unwrap();
+    assert_eq!((a.key, a.id, a.bytes, a.sha256), (k("a1"), id1, 1234, sha));
+    assert!(queued().await.is_empty(), "the finished upload is kept");
+
+    // 一个实例同时只存一份：刷新着的上传挡住别处；太久没刷新的（进程中途被杀）被换掉，旧的排进队列，
+    // 它的完成、刷新、放弃都不再生效。
+    assert!(begin(inst.id, k("stale")).await);
+    assert!(
+        !begin(inst.id, k("other")).await,
+        "another upload is in progress"
+    );
+    let mut w = db.worker().await.unwrap();
+    assert!(
+        w.refresh_workspace_archive(inst.id, &k("stale"))
+            .await
+            .unwrap()
+    );
+    w.commit().await.unwrap();
+    assert!(!begin(inst.id, k("other")).await);
+    age_pending(inst.id).await;
+    assert!(
+        begin(inst.id, k("a2")).await,
+        "an abandoned upload is replaced"
+    );
+    let mut w = db.worker().await.unwrap();
+    assert!(
+        !w.finish_workspace_archive(inst.id, &k("stale"), id1, 1, &sha)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !w.refresh_workspace_archive(inst.id, &k("stale"))
+            .await
+            .unwrap()
+    );
+    assert!(
+        !w.abort_workspace_archive(inst.id, &k("stale"))
+            .await
+            .unwrap()
+    );
+    w.commit().await.unwrap();
+    assert_eq!(queued().await, [k("stale")]);
+    assert_eq!(archive().await.unwrap().key, k("a1"));
+
+    // 新的归档换掉旧的：旧对象排进队列。
+    let mut w = db.worker().await.unwrap();
+    let id2 = uuid::Uuid::now_v7();
+    assert!(
+        w.finish_workspace_archive(inst.id, &k("a2"), id2, 99, &sha)
+            .await
+            .unwrap()
+    );
+    w.commit().await.unwrap();
+    assert_eq!(archive().await.unwrap().id, id2);
+    assert_eq!(queued().await, [k("a1")]);
+
+    // 放弃上传：对象排进队列，现有的归档不动；之后马上能再开始一份。
+    assert!(begin(inst.id, k("a3")).await);
+    let mut w = db.worker().await.unwrap();
+    assert!(w.abort_workspace_archive(inst.id, &k("a3")).await.unwrap());
+    w.commit().await.unwrap();
+    assert_eq!(queued().await, [k("a3")]);
+    assert_eq!(archive().await.unwrap().key, k("a2"));
+
+    // 回收实例：归档和待定的上传都排进队列；之后上传完成的不算数（调用方自己删掉对象）。
+    assert!(begin(inst.id, k("a4")).await);
+    let mut w = db.worker().await.unwrap();
+    w.mark_instance_purged(inst.id).await.unwrap();
+    assert!(!w.abort_workspace_archive(inst.id, &k("a4")).await.unwrap());
+    w.commit().await.unwrap();
+    assert_eq!(queued().await, [k("a2"), k("a4")]);
+    assert!(archive().await.is_none());
+
+    // 整行删掉（运维清理）：同样排进队列。
+    let other = instance(db, u).await;
+    assert!(begin(other.id, k("b1")).await);
+    let mut w = db.worker().await.unwrap();
+    assert!(
+        w.finish_workspace_archive(other.id, &k("b1"), id1, 1, &sha)
+            .await
+            .unwrap()
+    );
+    w.commit().await.unwrap();
+    assert!(begin(other.id, k("b2")).await);
+    sqlx::query("DELETE FROM instances WHERE id = $1")
+        .bind(other.id.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(queued().await, [k("b1"), k("b2")]);
+
+    // 只排这个用户自己前缀下的键：拿别的键（别人的产出物、归档）来不会被删。
+    let third = instance(db, u).await;
+    assert!(begin(third.id, "artifacts/someone-else".into()).await);
+    let mut w = db.worker().await.unwrap();
+    w.abort_workspace_archive(third.id, "artifacts/someone-else")
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+    assert!(queued().await.is_empty());
+
+    // 失败的原因里带着控制字符（沙箱里打印的）也记得下。
+    let mut w = db.worker().await.unwrap();
+    w.record_workspace_archive_failure(third.id, "tar: bad\0name\u{1b}[31m")
+        .await
+        .unwrap();
+    let error: String =
+        sqlx::query_scalar("SELECT workspace_archive_error FROM instances WHERE id = $1")
+            .bind(third.id.0)
+            .fetch_one(w.conn())
+            .await
+            .unwrap();
+    assert_eq!(error, "tar: bad name [31m");
+    w.commit().await.unwrap();
+
+    // 记活动用当下的时间，不是事务开始时的：锁着实例等了一会儿的唤醒，记的时间也晚于期间提交的归档。
+    let mut w = db.worker().await.unwrap();
+    let began = w.db_now().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    w.touch_instance(third.id).await.unwrap();
+    let touched = w.instance_runtime(third.id).await.unwrap().last_active_at;
+    assert!(
+        touched >= began + chrono::Duration::milliseconds(150),
+        "{began} {touched}"
+    );
+    w.commit().await.unwrap();
+
+    // 放回：记下的时间是当下的；刷新着的不算没人管，太久没刷新的算。
+    let mut w = db.worker().await.unwrap();
+    w.begin_restore(third.id, "sbx-1").await.unwrap();
+    assert!(!w.restore_is_stale(third.id, fresh).await.unwrap());
+    assert!(w.refresh_restore(third.id, "sbx-1").await.unwrap());
+    assert!(!w.refresh_restore(third.id, "sbx-2").await.unwrap());
+    w.commit().await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    assert!(w.stale_restores(fresh, 10).await.unwrap().is_empty());
+    sqlx::query("UPDATE instances SET restoring_since = now() - interval '1 hour' WHERE id = $1")
+        .bind(third.id.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    assert!(w.restore_is_stale(third.id, fresh).await.unwrap());
+    assert_eq!(w.stale_restores(fresh, 10).await.unwrap(), [third.id]);
+    assert!(w.end_restore(third.id, "sbx-1").await.unwrap());
+    assert!(!w.restore_is_stale(third.id, fresh).await.unwrap());
+    w.commit().await.unwrap();
+
+    // 业务角色改不了归档、沙箱这些列（只有后台角色能写）。
+    let mut t = db.tenant(u).await.unwrap();
+    let denied = sqlx::query("UPDATE instances SET workspace_archive_pending = 'x' WHERE id = $1")
+        .bind(third.id.0)
+        .execute(t.conn())
+        .await;
+    assert!(
+        denied.is_err(),
+        "the tenant role cannot write archive columns"
+    );
+    t.rollback().await.unwrap();
+    // 新建实例时也写不了（不然能让巡检去删一个它指定的沙箱）。
+    for column in [
+        "sandbox_id",
+        "restoring_sandbox_id",
+        "workspace_archive_pending",
+    ] {
+        let mut t = db.tenant(u).await.unwrap();
+        let denied = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "INSERT INTO instances (id, user_id, agent_id, agent_version, harness, name, workspace_id, {column}) \
+             VALUES (gen_random_uuid(), $1, 'a', '1', 'acp', 'x', 'w', 'victim')"
+        )))
+        .bind(u.0)
+        .execute(t.conn())
+        .await;
+        assert!(denied.is_err(), "the tenant role cannot insert {column}");
+        t.rollback().await.unwrap();
+    }
+    let mut t = db.tenant(u).await.unwrap();
+    sqlx::query(
+        "INSERT INTO instances (id, user_id, agent_id, agent_version, harness, name, workspace_id) \
+         VALUES (gen_random_uuid(), $1, 'a', '1', 'acp', 'x', 'w')",
+    )
+    .bind(u.0)
+    .execute(t.conn())
+    .await
+    .expect("the columns create_instance writes are still allowed");
+    t.rollback().await.unwrap();
+}
+
+/// 问队友（8.11）：“谁在等谁”顺着子运行和排队走（A 问了 B、B 正忙，B 再问 A 就会互相等死）；过了回答期限的
+/// 提问连同它的子孙被取消，提问方结束了的提问也取消；结束的提问交还给提问方；只等回答时带等待原因。
+#[tokio::test]
+async fn asks_detect_waits_and_stale_questions_are_cancelled() {
+    use crate::{ANSWER_TIMEOUT_REASON, ASKER_GONE_REASON};
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let u = user(db, "+8613800000895").await;
+    let a = instance(db, u).await;
+    let b = instance(db, u).await;
+    let c = instance(db, u).await;
+    let ra = queue_run(db, u, &a, "a's task").await;
+    let rb = queue_run(db, u, &b, "b's task").await;
+    let mut w = db.worker().await.unwrap();
+    for _ in 0..2 {
+        w.claim_next_run("x", LEASE).await.unwrap().unwrap();
+    }
+    assert!(!w.instance_waits_for(b.id, ra.id).await.unwrap());
+    let ask = |to: &Instance, parent: proto::domain::RunId, deadline: chrono::DateTime<Utc>| {
+        let mut new = NewRun::new(to.id, RunSource::Ask, "（说明）\n\n问题", "1");
+        new.parent_run_id = Some(parent);
+        new.answer_deadline = Some(deadline);
+        new
+    };
+    let later = Utc::now() + Days::minutes(30);
+    let qa = w
+        .create_run(u, &ask(&b, ra.id, later))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!((qa.root_run_id, qa.source), (ra.id, RunSource::Ask));
+    // A 在等 B（提问排在 B 正在跑的运行后面）：B 再问 A 就会互相等死；问 C 没事。
+    assert!(w.instance_waits_for(a.id, rb.id).await.unwrap());
+    assert!(!w.instance_waits_for(c.id, rb.id).await.unwrap());
+    assert!(!w.instance_waits_for(b.id, ra.id).await.unwrap());
+    // 回答方在回答时又委派出去的子孙。
+    let mut sub = NewRun::new(c.id, RunSource::Delegate, "sub", "1");
+    sub.parent_run_id = Some(qa.id);
+    let sub = w.create_run(u, &sub).await.unwrap().unwrap();
+    let qb = w
+        .create_run(u, &ask(&c, rb.id, later))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(w.ask_runs(ra.id).await.unwrap().len(), 1);
+    // 只等回答：等待原因带上。
+    w.transition_run(ra.id, "x", RunState::Running, &RunChange::default())
+        .await
+        .unwrap();
+    let waiting = w
+        .transition_run(
+            ra.id,
+            "x",
+            RunState::WaitingChildren,
+            &RunChange {
+                release_lease: true,
+                wait_code: Some(proto::domain::wait_code::ANSWER),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        waiting.run.wait_code.as_deref(),
+        Some(proto::domain::wait_code::ANSWER)
+    );
+    assert!(w.cancel_stale_asks(10).await.unwrap().is_empty());
+    sqlx::query("UPDATE runs SET answer_deadline = now() - interval '1 second' WHERE id = $1")
+        .bind(qa.id.0)
+        .execute(w.conn())
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+
+    let mut w = db.worker().await.unwrap();
+    let gone = w.cancel_stale_asks(10).await.unwrap();
+    assert_eq!(gone.len(), 1);
+    assert_eq!(gone[0].id, qa.id);
+    assert_eq!(gone[0].state, RunState::Cancelled);
+    assert_eq!(gone[0].state_reason.as_deref(), Some(ANSWER_TIMEOUT_REASON));
+    assert_eq!(w.run(sub.id).await.unwrap().state, RunState::Cancelled);
+    assert_eq!(
+        w.unreported_children(ra.id)
+            .await
+            .unwrap()
+            .iter()
+            .map(|r| r.id)
+            .collect::<Vec<_>>(),
+        [qa.id]
+    );
+    w.commit().await.unwrap();
+    // 提问方被用户取消了：它的提问没人要了。
+    let mut tx = db.tenant(u).await.unwrap();
+    tx.cancel_run(rb.id, None).await.unwrap();
+    tx.commit().await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    let gone = w.cancel_stale_asks(10).await.unwrap();
+    assert_eq!(gone.len(), 1);
+    assert_eq!(gone[0].id, qb.id);
+    assert_eq!(gone[0].state_reason.as_deref(), Some(ASKER_GONE_REASON));
+    assert!(w.cancel_stale_asks(10).await.unwrap().is_empty());
+    // C 关了“允许其他 agent 问我”：问它的、还没答的都取消。
+    let q3 = w
+        .create_run(u, &ask(&c, ra.id, later))
+        .await
+        .unwrap()
+        .unwrap();
+    w.commit().await.unwrap();
+    let mut tx = db.tenant(u).await.unwrap();
+    let gone = tx.cancel_asks_to(c.id, "closed").await.unwrap();
+    assert_eq!(gone.iter().map(|r| r.id).collect::<Vec<_>>(), [q3.id]);
+    assert_eq!(gone[0].state_reason.as_deref(), Some("closed"));
+    assert!(tx.cancel_asks_to(c.id, "closed").await.unwrap().is_empty());
+    tx.commit().await.unwrap();
+}
+
+/// 看板取消归档（8.10）：已经是那样的不动（重试不报错）；取消归档的算新的，看板满着时下一条不先把它归档。
+#[tokio::test]
+async fn unarchived_board_posts_count_as_new() {
+    use proto::domain::MAX_BOARD_LIVE_POSTS;
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let u = user(db, "+8613800000896").await;
+    let mut tx = db.tenant(u).await.unwrap();
+    let mut ids = Vec::new();
+    for i in 0..MAX_BOARD_LIVE_POSTS {
+        let (p, _) = tx
+            .post_to_board(&crate::NewBoardPost {
+                body: format!("post {i}"),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        ids.push(p.id);
+    }
+    // 满了：取消归档一条本来就没归档的不报错。
+    let live = tx.set_board_post_archived(ids[0], false).await.unwrap();
+    assert_eq!(live.archived_at, None);
+    tx.set_board_post_archived(ids[0], true).await.unwrap();
+    assert!(
+        tx.set_board_post_archived(ids[0], true)
+            .await
+            .unwrap()
+            .archived_at
+            .is_some()
+    );
+    tx.commit().await.unwrap();
+    // 取消归档、再写一条都是单独的请求：归档的是最早的另一条，刚取消归档的那条还在。
+    let mut tx = db.tenant(u).await.unwrap();
+    tx.set_board_post_archived(ids[0], false).await.unwrap();
+    tx.commit().await.unwrap();
+    let mut tx = db.tenant(u).await.unwrap();
+    let (_, archived) = tx
+        .post_to_board(&crate::NewBoardPost {
+            body: "newest".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(archived, 1);
+    assert_eq!(tx.board_post(ids[0]).await.unwrap().archived_at, None);
+    assert!(tx.board_post(ids[1]).await.unwrap().archived_at.is_some());
+    tx.commit().await.unwrap();
+}
+
+/// 紧急消息（8.12）先来后到：实例空闲时连发两条，后一条排在前一条后面；占着实例的那个没有紧急消息去打断时，
+/// 再来的去打断它，但照样排在之前的紧急消息后面，打断记在排第一的那条上（它紧接着跑，开头说明打断了什么）；
+/// 紧急消息不当普通消息捎带。
+#[tokio::test]
+async fn urgent_messages_keep_their_order() {
+    use crate::Urgent;
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let u = user(db, "+8613800000897").await;
+    let inst = instance(db, u).await;
+    let urgent = |prompt: &'static str| {
+        let inst = inst.clone();
+        async move {
+            let mut tx = db.tenant(u).await.unwrap();
+            let r = tx
+                .queue_urgent_run(&NewRun::new(inst.id, RunSource::User, prompt, "1"))
+                .await
+                .unwrap();
+            tx.commit().await.unwrap();
+            r
+        }
+    };
+    let normal = queue_run(db, u, &inst, "normal").await;
+    let (a, how) = urgent("a").await;
+    assert_eq!(how, Urgent::Free);
+    let (b, how) = urgent("b").await;
+    assert_eq!(how, Urgent::Behind(a.id));
+    let mut w = db.worker().await.unwrap();
+    assert!(
+        w.unannounced_messages(inst.id, 10)
+            .await
+            .unwrap()
+            .iter()
+            .all(|r| r.id == normal.id)
+    );
+    // a 先跑。
+    let first = w.claim_next_run("x", LEASE).await.unwrap().unwrap();
+    assert_eq!(first.run.id, a.id);
+    w.commit().await.unwrap();
+    // a 跑着的时候再来一条：b 只是排在 a 后面、没去打断谁，这条去打断 a（照样排在 b 后面），打断记在 b 上。
+    let (c, how) = urgent("c").await;
+    assert_eq!(how, Urgent::Interrupting(a.id));
+    let mut w = db.worker().await.unwrap();
+    assert!(w.interrupt_pending(a.id).await.unwrap());
+    assert_eq!(
+        w.run_record(b.id).await.unwrap().interrupts_run_id,
+        Some(a.id)
+    );
+    assert_eq!(w.run_record(c.id).await.unwrap().interrupts_run_id, None);
+    w.transition_run(a.id, "x", RunState::Running, &RunChange::default())
+        .await
+        .unwrap();
+    w.transition_run(a.id, "x", RunState::Succeeded, &RunChange::default())
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+    // 一个个跑完（各自的事务，结束时间不同）。
+    let mut order = Vec::new();
+    for _ in 0..3 {
+        let mut w = db.worker().await.unwrap();
+        let r = w.claim_next_run("x", LEASE).await.unwrap().unwrap();
+        order.push(r.run.id);
+        w.transition_run(r.run.id, "x", RunState::Running, &RunChange::default())
+            .await
+            .unwrap();
+        w.transition_run(r.run.id, "x", RunState::Succeeded, &RunChange::default())
+            .await
+            .unwrap();
+        w.commit().await.unwrap();
+    }
+    assert_eq!(order, [b.id, c.id, normal.id]);
+    // 最近做完的是最后结束的那个（排在紧急消息后面、先建的普通消息），不是最后建的。
+    let mut tx = db.tenant(u).await.unwrap();
+    assert_eq!(
+        tx.last_finished_run(inst.id).await.unwrap().map(|r| r.id),
+        Some(normal.id)
+    );
+    tx.rollback().await.unwrap();
+}
+
+/// 紧急消息（8.12）优先：之后才建、排得更靠前的普通运行（比如晚到的计划触发）也不能抢在它前面；占着实例的
+/// 那个没人打断时（它是紧急消息之后才领走的），再来的紧急消息去打断它。
+#[tokio::test]
+async fn urgent_messages_go_first_and_untargeted_holders_get_interrupted() {
+    use crate::Urgent;
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let u = user(db, "+8613800000898").await;
+    let inst = instance(db, u).await;
+    let mut tx = db.tenant(u).await.unwrap();
+    let (first, how) = tx
+        .queue_urgent_run(&NewRun::new(inst.id, RunSource::User, "now", "1"))
+        .await
+        .unwrap();
+    assert_eq!(how, Urgent::Free);
+    let mut late = NewRun::new(inst.id, RunSource::User, "late plan fire", "1");
+    late.not_before = Some(Utc::now() - Days::hours(1));
+    let late = tx.create_run(&late).await.unwrap();
+    tx.commit().await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    assert_eq!(
+        w.claim_next_run("x", LEASE).await.unwrap().unwrap().run.id,
+        first.id
+    );
+    w.transition_run(first.id, "x", RunState::Running, &RunChange::default())
+        .await
+        .unwrap();
+    w.transition_run(first.id, "x", RunState::Succeeded, &RunChange::default())
+        .await
+        .unwrap();
+    // 晚到的那个跑起来了；这时排着一条没去打断任何人的紧急消息（比如它入队时实例刚好空着）。
+    let holder = w.claim_next_run("x", LEASE).await.unwrap().unwrap();
+    assert_eq!(holder.run.id, late.id);
+    let mut stray = NewRun::new(inst.id, RunSource::User, "stray", "1");
+    stray.urgent = true;
+    let stray = w.create_run(u, &stray).await.unwrap().unwrap();
+    w.commit().await.unwrap();
+    let mut tx = db.tenant(u).await.unwrap();
+    let (stop, how) = tx
+        .queue_urgent_run(&NewRun::new(inst.id, RunSource::User, "stop", "1"))
+        .await
+        .unwrap();
+    assert_eq!(how, Urgent::Interrupting(late.id));
+    tx.commit().await.unwrap();
+    // 打断记在排第一的那条上：它紧接着跑。
+    let mut w = db.worker().await.unwrap();
+    assert!(w.interrupt_pending(late.id).await.unwrap());
+    assert_eq!(
+        w.run_record(stray.id).await.unwrap().interrupts_run_id,
+        Some(late.id)
+    );
+    assert_eq!(w.run_record(stop.id).await.unwrap().interrupts_run_id, None);
+    w.rollback().await.unwrap();
+    // 之前那条照样排在前面。
+    let mut tx = db.tenant(u).await.unwrap();
+    let queued: Vec<_> = tx
+        .runs(inst.id, None, 10)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.state == RunState::Queued)
+        .map(|r| r.id)
+        .collect();
+    assert!(queued.contains(&stray.id));
+    tx.rollback().await.unwrap();
 }

@@ -53,6 +53,7 @@ data class PlanEditUiState(
     val loading: Boolean = false,
     val loadError: UiText? = null,
     val notFound: Boolean = false,
+    val teamLoaded: Boolean = false,
     /** 能选的实例（新建时；已删除的不列）。 */
     val instances: List<Instance> = emptyList(),
     val instanceId: String? = null,
@@ -80,7 +81,8 @@ data class PlanEditUiState(
     val isEditing: Boolean get() = mode is PlanEditMode.Edit
 
     /** 编辑、但计划还没拉到。 */
-    val needsLoad: Boolean get() = isEditing && original == null
+    val needsLoad: Boolean
+        get() = (isEditing && original == null) || ((mode as? PlanEditMode.Create)?.teamId != null && !teamLoaded)
 
     val problems: List<PlanFormProblem>
         get() = buildList {
@@ -150,7 +152,7 @@ sealed interface PlanEditEvent {
  * 按服务端的规则查键名、依赖和环，[Pipeline]）。从团队建（`plans/new?teamId=`）时按成员预填步骤，计划挂在负责人上。
  *
  * 保存：新建 `createPlan`；编辑 `updatePlan` 只带改了的字段，触发器服务端没有“改”：删掉的 `deleteTrigger`、新加的
- * （包括改过的，改一条 = 删旧的、加新的）`addTrigger`，先删后加（免得满 10 条加不进去）。中途失败时已经做完的不再重做，
+ * （包括改过的，改一条 = 删旧的、加新的）`addTrigger`，有空位时先加新规则，达到上限时只删一条以腾出位置。中途失败时已经做完的不再重做，
  * 再点保存只做剩下的。和 iOS 的 `PlanEditorModel` 一致。
  */
 class PlanEditViewModel(
@@ -208,7 +210,7 @@ class PlanEditViewModel(
                 goal = plan.goal,
                 triggers = plan.triggers.map(TriggerItem::existing),
                 policy = PlanPolicyDraft(plan.policy),
-                catchUp = plan.catchUp.takeIf { c -> c != CatchUp.Unknown } ?: CatchUp.Once,
+                catchUp = plan.catchUp,
                 steps = plan.steps.mapIndexed { i, step -> StepDraft.from(step, nextStepId + i) }
                     .also { list -> nextStepId += list.size },
                 removedTriggerIds = emptyList(),
@@ -219,18 +221,20 @@ class PlanEditViewModel(
     /** 本地步骤 id（改键名时认得出是哪一步）。 */
     private var nextStepId = 1L
 
-    /** 用团队建流水线：每个成员一步，负责人最后汇总；计划挂在负责人上。拉不到团队就当普通新建。 */
+    /** 用团队建流水线：每个成员一步，负责人最后汇总；计划挂在负责人上。加载失败可重试。 */
     private suspend fun prefillFromTeam(teamId: String) {
-        if (state.value.steps.isNotEmpty()) return
+        if (state.value.teamLoaded) return
+        state.update { it.copy(loading = true, loadError = null) }
         val team = try {
             service.team(teamId)
-        } catch (_: ServiceError) {
+        } catch (e: ServiceError) {
+            state.update { it.copy(loading = false, loadError = ErrorText.of(e)) }
             return
         }
         val drafts = Pipeline.fromTeam(team, nextStepId)
         nextStepId += drafts.size
         val lead = team.members.firstOrNull { it.role == cn.thinktin.data.model.TeamRole.Lead }?.instanceId
-        state.update { it.copy(steps = drafts, instanceId = lead ?: it.instanceId ?: drafts.firstOrNull()?.instanceId) }
+        state.update { it.copy(loading = false, teamLoaded = true, steps = drafts, instanceId = lead ?: it.instanceId ?: drafts.firstOrNull()?.instanceId) }
     }
 
     // ---- 流水线步骤（13.7） ----
@@ -346,12 +350,13 @@ class PlanEditViewModel(
 
     // ---- 关闭 ----
 
-    /** 返回：有改动先问一句。 */
+    /** 返回：有改动先问一句；保存中不让关（关了协程被取消，计划会留成半截）。 */
     fun requestClose() {
         val s = state.value
         when {
+            s.saving -> Unit
             s.editing != null -> dismissTrigger()
-            s.hasChanges && !s.saving -> state.update { it.copy(confirmDiscard = true) }
+            s.hasChanges -> state.update { it.copy(confirmDiscard = true) }
             else -> eventChannel.trySend(PlanEditEvent.Closed)
         }
     }
@@ -412,22 +417,24 @@ class PlanEditViewModel(
                 state.update { it.copy(original = updated) }
                 didSomething = true
             }
-            while (true) {
-                val id = state.value.removedTriggerIds.firstOrNull() ?: break
-                try {
-                    service.deleteTrigger(id)
-                } catch (e: ServiceError.Api) {
-                    // 别处已经删了。
-                    if (e.status != 404 && e.code != "not_found") throw e
+            // 删除旧规则之前尽量先让服务端接受新规则；满额时只腾出一个空位。
+            val draft = state.value
+            var onServer = draft.triggers.count { !it.isNew } + draft.removedTriggerIds.size
+            for (item in draft.triggers.filter { it.isNew }) {
+                if (onServer >= PlanLimits.MAX_TRIGGERS) {
+                    deleteRemovedTrigger(state.value.removedTriggerIds.first())
+                    didSomething = true
+                    onServer--
                 }
-                state.update { it.copy(removedTriggerIds = it.removedTriggerIds.drop(1)) }
-                didSomething = true
-            }
-            for (item in state.value.triggers.filter { it.isNew }) {
                 val trigger = service.addTrigger(planId, item.schedule)
                 state.update { s ->
                     s.copy(triggers = s.triggers.map { if (it.id == item.id) TriggerItem.existing(trigger) else it })
                 }
+                didSomething = true
+                onServer++
+            }
+            for (id in state.value.removedTriggerIds) {
+                deleteRemovedTrigger(id)
                 didSomething = true
             }
         } catch (e: ServiceError) {
@@ -442,5 +449,15 @@ class PlanEditViewModel(
         } ?: return
         state.update { it.copy(original = saved, partiallySaved = false) }
         eventChannel.trySend(PlanEditEvent.Saved(saved, created = false))
+    }
+
+    /** 每次只移除已经成功处理的 id，后续失败时重试不会重复删除。 */
+    private suspend fun deleteRemovedTrigger(id: String) {
+        try {
+            service.deleteTrigger(id)
+        } catch (e: ServiceError.Api) {
+            if (e.status != 404 && e.code != "not_found") throw e
+        }
+        state.update { it.copy(removedTriggerIds = it.removedTriggerIds - id) }
     }
 }

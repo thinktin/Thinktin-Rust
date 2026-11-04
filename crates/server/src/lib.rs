@@ -209,9 +209,9 @@ fn kms(cfg: &Config) -> anyhow::Result<Arc<dyn Kms>> {
     }
 }
 
-/// 产出物存储：接口（下载）和后台任务（发布、交接）共用。
-fn artifact_store(cfg: &Config, db: &Db, kms: Arc<dyn Kms>) -> anyhow::Result<Arc<ArtifactStore>> {
-    let blobs: Arc<dyn BlobStore> = match (cfg.storage.provider.as_str(), &cfg.storage.s3) {
+/// 对象存储：产出物和工作区归档共用。
+fn blob_store(cfg: &Config) -> anyhow::Result<Arc<dyn BlobStore>> {
+    Ok(match (cfg.storage.provider.as_str(), &cfg.storage.s3) {
         ("s3", Some(s3)) => Arc::new(
             S3BlobStore::new(S3Config {
                 endpoint: s3.endpoint.clone(),
@@ -229,8 +229,12 @@ fn artifact_store(cfg: &Config, db: &Db, kms: Arc<dyn Kms>) -> anyhow::Result<Ar
             LocalBlobStore::new(&cfg.storage.local_root)
                 .with_context(|| format!("storage root {}", cfg.storage.local_root.display()))?,
         ),
-    };
-    Ok(Arc::new(ArtifactStore::new(db.clone(), blobs, kms)))
+    })
+}
+
+/// 产出物存储：接口（下载）和后台任务（发布、交接）共用。
+fn artifact_store(db: &Db, blobs: Arc<dyn BlobStore>, kms: Arc<dyn Kms>) -> Arc<ArtifactStore> {
+    Arc::new(ArtifactStore::new(db.clone(), blobs, kms))
 }
 
 /// SIGTERM（容器编排）或 Ctrl-C。

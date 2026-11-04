@@ -1,12 +1,15 @@
 package cn.thinktin.app.progress
 
+import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import cn.thinktin.app.MainActivity
+import cn.thinktin.app.ThinktinApp
 import cn.thinktin.app.R
 import cn.thinktin.app.push.NotificationChannels
 import cn.thinktin.app.push.hasNotificationPermission
@@ -36,9 +39,8 @@ object NoProgressNotifier : ProgressNotifier {
  */
 class SystemProgressNotifier(private val context: Context) : ProgressNotifier {
     override fun show(progress: RunProgress): Boolean {
-        if (!hasNotificationPermission(context)) return false
+        if (!isEnabled(context)) return false
         val manager = NotificationManagerCompat.from(context)
-        if (!manager.areNotificationsEnabled()) return false
         return try {
             manager.notify(TAG, progress.runId.hashCode(), build(progress))
             true
@@ -53,14 +55,15 @@ class SystemProgressNotifier(private val context: Context) : ProgressNotifier {
     }
 
     internal fun build(progress: RunProgress): android.app.Notification {
+        val context = androidx.core.content.ContextCompat.getContextForLanguage(context)
         val state = context.getString(progress.state.labelRes())
         val wait = WaitText.of(progress.waitCode)?.let { context.getString(it.resId, *it.args.toTypedArray()) }
         val steps = context.resources.getQuantityString(R.plurals.progress_steps, progress.steps, progress.steps)
-        val text = listOfNotNull(wait ?: state, steps.takeIf { progress.steps > 0 }).joinToString(" · ")
+        val text = listOfNotNull(wait ?: state, steps.takeIf { progress.steps > 0 && progress.state != RunState.WaitingChildren }).joinToString(" · ")
         val open = PendingIntent.getActivity(
             context,
             progress.runId.hashCode(),
-            Intent(Intent.ACTION_VIEW, Uri.parse("thinktin://run/${Uri.encode(progress.runId)}"), context, MainActivity::class.java)
+            Intent(Intent.ACTION_VIEW, openRunUri(progress.runId), context, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
@@ -75,6 +78,10 @@ class SystemProgressNotifier(private val context: Context) : ProgressNotifier {
             .setContentTitle(progress.title)
             .setContentText(text)
             .setContentIntent(open)
+            .setDeleteIntent(PendingIntent.getBroadcast(
+                context, 0, Intent(context, ProgressDismissedReceiver::class.java).apply { data = openRunUri(progress.runId) },
+                PendingIntent.FLAG_IMMUTABLE,
+            ))
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(!progress.isFinished)
@@ -93,7 +100,22 @@ class SystemProgressNotifier(private val context: Context) : ProgressNotifier {
     companion object {
         const val TAG = "run_progress"
 
+        fun isEnabled(context: Context): Boolean {
+            val manager = NotificationManagerCompat.from(context)
+            return hasNotificationPermission(context) && manager.areNotificationsEnabled() &&
+                manager.getNotificationChannel(NotificationChannels.PROGRESS)?.importance != NotificationManager.IMPORTANCE_NONE
+        }
+
         /** 8 小时（服务端运行时长的上限）。 */
         const val TIMEOUT_MS = 8L * 60 * 60 * 1000
+    }
+}
+
+private fun openRunUri(id: String): Uri = Uri.parse("thinktin://run/${Uri.encode(id)}")
+
+class ProgressDismissedReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        val id = intent.data?.lastPathSegment ?: return
+        (context.applicationContext as ThinktinApp).container.progress.stop(id)
     }
 }

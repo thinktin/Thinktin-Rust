@@ -50,7 +50,7 @@ jobs:
       - name: Installer
         shell: pwsh
         run: |
-          iscc /DAppVersion=${{ steps.version.outputs.version }} /DSourceExe=..\..\target\release\thinktin.exe apps\windows\installer\thinktin.iss
+          iscc /DAppVersion=${{ steps.version.outputs.version }} apps\windows\installer\thinktin.iss
       - name: Sign installer
         if: env.WINDOWS_SIGNING_PFX_BASE64 != ''
         shell: pwsh

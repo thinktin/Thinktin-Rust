@@ -83,6 +83,28 @@ struct AppSmokeTests {
         #expect(AppConfiguration.clientKind(environment: ["THINKTIN_MOCK": "0"], isDebugBuild: true) == .core)
     }
 
+    @Test("演示版：Info.plist 的 ThinktinClient 是 mock 时 Release 也用演示数据；环境变量仍然优先，空的、没展开的按构建配置")
+    func clientKindFromInfoPlist() {
+        let demo: [String: Any] = ["ThinktinClient": "mock"]
+        #expect(AppConfiguration.clientKind(environment: [:], infoDictionary: demo, isDebugBuild: false) == .mock)
+        #expect(
+            AppConfiguration.clientKind(
+                environment: [:], infoDictionary: ["ThinktinClient": " Core "], isDebugBuild: true)
+                == .core)
+        #expect(
+            AppConfiguration.clientKind(environment: ["THINKTIN_MOCK": "0"], infoDictionary: demo, isDebugBuild: false)
+                == .core)
+        #expect(
+            AppConfiguration.clientKind(environment: [:], infoDictionary: ["ThinktinClient": ""], isDebugBuild: false)
+                == .core)
+        #expect(
+            AppConfiguration.clientKind(
+                environment: [:], infoDictionary: ["ThinktinClient": "$(THINKTIN_CLIENT)"], isDebugBuild: true) == .mock
+        )
+        let resolved = AppConfiguration.resolve(environment: [:], infoDictionary: demo, isDebugBuild: false)
+        #expect(resolved.client == .mock)
+    }
+
     @Test("截图用的启动参数：深链只认 thinktin://，抽屉认 1/true/yes")
     func launchOptions() {
         #expect(AppConfiguration.launchURL(environment: [:]) == nil)

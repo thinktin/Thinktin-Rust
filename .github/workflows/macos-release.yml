@@ -63,7 +63,7 @@ jobs:
           fi
           echo "marketing=$version" >> "$GITHUB_OUTPUT"
           echo "build=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
-          echo "版本 $version，构建号 ${{ github.run_number }}"
+          echo "版本 ${version}，构建号 ${{ github.run_number }}"
 
       - name: Select Xcode
         run: |
@@ -205,7 +205,7 @@ jobs:
             xcrun notarytool log "$id" \
               --key "${{ steps.signing.outputs.key }}" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID" \
               "$RUNNER_TEMP/notary-log.json" || true
-            echo "::error::公证没通过（$status），日志在 notary-log.json"
+            echo "::error::公证没通过（${status}），日志在 notary-log.json"
             exit 1
           fi
           xcrun stapler staple "$app"

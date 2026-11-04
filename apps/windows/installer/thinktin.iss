@@ -6,7 +6,7 @@
   #define AppVersion "0.0.0"
 #endif
 #ifndef SourceExe
-  #define SourceExe "..\..\target\release\thinktin.exe"
+  #define SourceExe "..\..\..\target\release\thinktin.exe"
 #endif
 
 [Setup]
@@ -20,7 +20,7 @@ DefaultDirName={localappdata}\Programs\ThinkTin
 DefaultGroupName=ThinkTin
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
-OutputDir=..\..\target\installer
+OutputDir=..\..\..\target\installer
 OutputBaseFilename=ThinkTin-Setup-{#AppVersion}
 Compression=lzma2
 SolidCompression=yes
@@ -30,7 +30,9 @@ CloseApplications=yes
 RestartApplications=no
 
 [Languages]
-Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+; Inno Setup 6.7.1 does not install its unofficial translations.
+; Source: jrsoftware/issrc is-6_7_1, Files/Languages/Unofficial/ChineseSimplified.isl.
+Name: "chinesesimplified"; MessagesFile: "ChineseSimplified.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]

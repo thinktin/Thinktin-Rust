@@ -9,6 +9,7 @@ publish.workspace = true
 metrics.workspace = true
 async-trait.workspace = true
 auth = { path = "../auth" }
+bytes.workspace = true
 chrono.workspace = true
 chrono-tz.workspace = true
 control = { path = "../control" }
@@ -26,14 +27,14 @@ serde_json.workspace = true
 sha2.workspace = true
 sqlx.workspace = true
 store = { path = "../store" }
+tempfile.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+uuid.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
 async-trait.workspace = true
 axum.workspace = true
-uuid.workspace = true
 store = { path = "../store", features = ["testing"] }
-tempfile.workspace = true

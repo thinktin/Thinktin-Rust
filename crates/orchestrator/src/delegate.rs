@@ -5,7 +5,8 @@
 //! - 工具立刻返回，负责人可以接着干别的。它这一轮结束时还有子任务没做完，父运行转入“等待子任务”、
 //!   放掉租约（沙箱照样会被空闲回收暂停）；子任务都结束后，平台把结果作为一条新消息交还给它，接着跑。
 //! - 护栏（8.8）：委派最多 [`MAX_DEPTH`] 层；不能交给自己、也不能交给链上已经在等它的 agent
-//!   （A 委派 B，B 又委派 A 会互相等死）；一次运行最多委派 [`MAX_CHILDREN_PER_RUN`] 个子任务。
+//!   （A 委派 B，B 又委派 A 会互相等死），也不能交给正（经别的 agent）在等它的（比如问了它一个问题、
+//!   在等回答的成员，和问队友 8.11 共用“谁在等谁”）；一次运行最多委派 [`MAX_CHILDREN_PER_RUN`] 个子任务。
 //! - agent 不可信：成员只能是负责人自己团队里的、同一用户的实例，库里再核对一次。
 
 use std::time::Duration;
@@ -18,7 +19,7 @@ use serde_json::{Value, json};
 use store::{Db, NewRun};
 
 use crate::shim::{PlatformTools, ToolContext, ToolOutput};
-use crate::texts::{ChildOutcome, delegation_results};
+use crate::texts::{AnswerOutcome, ChildOutcome, children_results};
 
 pub const DELEGATE_TOOLS: [&str; 2] = ["delegate_list", "delegate"];
 
@@ -96,6 +97,8 @@ impl DelegateTools {
         };
 
         let mut w = self.db.worker().await.map_err(internal)?;
+        // “谁在等谁”和问队友（8.11）共用：按用户加锁，检查和建子运行之间不会插进别的委派、提问。
+        w.lock_run_waits(ctx.user).await.map_err(internal)?;
         // 护栏（8.8）：深度、循环。链上是这次运行和它的父运行们。
         let chain = w.run_chain(ctx.run).await.map_err(internal)?;
         let depth = chain
@@ -110,6 +113,17 @@ impl DelegateTools {
         if chain.iter().any(|(_, instance, _)| *instance == target.id) {
             return Err(format!(
                 "{} is already working on this task further up the chain; delegating to it would deadlock",
+                target.name
+            ));
+        }
+        // 跨运行树的循环：成员正在跑的运行（直接或经别的 agent）在等这次运行，比如它问了负责人一个问题。
+        if w.instance_waits_for(target.id, ctx.run)
+            .await
+            .map_err(internal)?
+        {
+            return Err(format!(
+                "{} is waiting (directly or through other agents) for you to finish; delegating to it \
+                 would deadlock. Do this part yourself or delegate it to someone else",
                 target.name
             ));
         }
@@ -199,34 +213,47 @@ fn first_line(s: &str, max: usize) -> String {
     out
 }
 
-/// 子任务的结果，作为新消息交还给负责人（8.7），按用户的语言（1.6）。
-/// `children` 是这次要交还的、已经结束的子运行和成员名。
+/// 子任务的结果、问队友的回答，作为新消息交还给 agent（8.7、8.11），按用户的语言（1.6）。
+/// `children` 是这次要交还的、已经结束的子运行和成员名（委派的和提问的都在里面）。
 pub fn results_message(locale: Locale, children: &[(Run, String)], original: &str) -> String {
+    // 子运行的提示词是“说明 + 空行 + 任务（问题）”，取任务的第一行。
     let rows: Vec<(String, Option<String>)> = children
         .iter()
         .map(|(run, _)| {
-            // 子运行的提示词是“委派说明 + 空行 + 任务”，取任务的第一行。
+            let max = if run.source == RunSource::Ask { 60 } else { 40 };
             let task = run
                 .prompt
                 .split_once("\n\n")
-                .map_or_else(|| first_line(&run.prompt, 40), |(_, t)| first_line(t, 40));
+                .map_or_else(|| first_line(&run.prompt, max), |(_, t)| first_line(t, max));
             let error = run.error.as_deref().map(|e| first_line(e, 300));
             (task, error)
         })
         .collect();
-    let items: Vec<(&str, &str, ChildOutcome<'_>)> = children
-        .iter()
-        .zip(&rows)
-        .map(|((run, name), (task, error))| {
+    let mut delegated: Vec<(&str, &str, ChildOutcome<'_>)> = Vec::new();
+    let mut asked: Vec<(&str, &str, AnswerOutcome<'_>)> = Vec::new();
+    for ((run, name), (task, error)) in children.iter().zip(&rows) {
+        if run.source == RunSource::Ask {
+            let outcome = match run.state {
+                RunState::Succeeded => AnswerOutcome::Answered(run.summary.as_deref()),
+                RunState::Cancelled
+                    if run.state_reason.as_deref() == Some(store::ANSWER_TIMEOUT_REASON) =>
+                {
+                    AnswerOutcome::TimedOut(crate::ask::ANSWER_TIMEOUT.as_secs() / 60)
+                }
+                RunState::Cancelled => AnswerOutcome::Cancelled,
+                _ => AnswerOutcome::Failed(error.as_deref()),
+            };
+            asked.push((name.as_str(), task.as_str(), outcome));
+        } else {
             let outcome = match run.state {
                 RunState::Succeeded => ChildOutcome::Done(run.summary.as_deref()),
                 RunState::Cancelled => ChildOutcome::Cancelled,
                 _ => ChildOutcome::Failed(error.as_deref()),
             };
-            (name.as_str(), task.as_str(), outcome)
-        })
-        .collect();
-    delegation_results(locale, &items, original)
+            delegated.push((name.as_str(), task.as_str(), outcome));
+        }
+    }
+    children_results(locale, &delegated, &asked, original)
 }
 
 #[async_trait]
@@ -337,5 +364,50 @@ mod tests {
             "{msg}"
         );
         assert!(msg.ends_with("Write a report"));
+
+        // 问队友的（8.11）：回答、超时、取消分开说。
+        let ask = |state, summary: Option<&str>, reason: Option<&str>| Run {
+            source: RunSource::Ask,
+            prompt: "（提问说明）\n\n上周的数据放在哪？".into(),
+            state_reason: reason.map(str::to_owned),
+            ..run(state, summary, None)
+        };
+        let mixed = [
+            children[0].clone(),
+            (
+                ask(RunState::Succeeded, Some("在 data/ 下"), None),
+                "研究员".into(),
+            ),
+            (
+                ask(
+                    RunState::Cancelled,
+                    None,
+                    Some(store::ANSWER_TIMEOUT_REASON),
+                ),
+                "写手".into(),
+            ),
+            (ask(RunState::Cancelled, None, None), "测试员".into()),
+        ];
+        let msg = results_message(Locale::ZhCn, &mixed, "写一份竞品报告");
+        assert!(
+            msg.starts_with("（你委派的子任务都结束了，问队友的问题也有结果了"),
+            "{msg}"
+        );
+        assert!(
+            msg.contains("\n1. 交给「研究员」的「调研三家竞品」：完成。"),
+            "{msg}"
+        );
+        assert!(
+            msg.contains("\n问1. 问「研究员」的「上周的数据放在哪？」：回答：在 data/ 下"),
+            "{msg}"
+        );
+        assert!(
+            msg.contains("问2. 问「写手」的「上周的数据放在哪？」：对方没有在 30 分钟内回答。"),
+            "{msg}"
+        );
+        assert!(
+            msg.contains("问3. 问「测试员」的「上周的数据放在哪？」：没问成：被取消了。"),
+            "{msg}"
+        );
     }
 }

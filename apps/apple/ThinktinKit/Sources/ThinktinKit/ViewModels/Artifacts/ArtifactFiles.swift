@@ -19,13 +19,24 @@ public enum ArtifactFiles {
         let name = cleaned.isEmpty || cleaned.allSatisfy({ $0 == "." }) ? ArtifactsText.untitled(language) : cleaned
         let label = language == .chinese ? "（AI 生成）" : " (AI-generated)"
         // 扩展名留在最后，系统才认得类型；以点开头的（`.env`）当作没有扩展名。
+        var stem = name[...]
+        var suffix = label
         if let dot = name.lastIndex(of: "."), dot != name.startIndex {
             let ext = name[name.index(after: dot)...]
             if !ext.isEmpty, ext.count <= 10, !ext.contains(" ") {
-                return String(name[..<dot]) + label + "." + ext
+                stem = name[..<dot]
+                suffix += "." + ext
             }
         }
-        return name + label
+        // 服务端允许 200 个 Unicode 字符；导出时按文件名的字节上限截短，完整保留 AI 标识和扩展名。
+        var remaining = 255 - suffix.utf8.count
+        let prefix = stem.prefix { character in
+            let bytes = character.utf8.count
+            guard bytes <= remaining else { return false }
+            remaining -= bytes
+            return true
+        }
+        return prefix + suffix
     }
 
     /// 写进临时目录，返回文件地址（已经有同样内容的就直接用）。

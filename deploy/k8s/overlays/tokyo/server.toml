@@ -1,0 +1,80 @@
+# 东京 10 人测试环境的控制面配置（docs/deploy-aliyun-sg.md 第 8.9 节、docs/sandbox-acs.md）。
+# 接口副本和后台副本共用，角色由环境变量 THINKTIN_API_ENABLED、THINKTIN_WORKER_ENABLED 决定。
+# 密钥都不在这里，由 Secret 以环境变量给（docs/release.md 第 5 节）：沙箱令牌种子、本地主密钥 THINKTIN_KMS_KEY、
+# OSS 的访问密钥、sandbox-manager 的 THINKTIN_ACS_API_KEY。标了“部署前填”的是占位值。
+# 改完跑一遍 `cargo test -p server deployment_configs_are_valid`。
+
+[log]
+json = true
+filter = "info"
+
+[observability]
+metrics_listen = "0.0.0.0:9090"
+
+[database]
+# Postgres 装在服务机上（以后搬 RDS 只改 DATABASE_URL）；单副本用不了几个连接。
+max_connections = 10
+migrate_on_start = false
+
+[shutdown]
+drain_secs = 5
+grace_secs = 30
+
+[api]
+access_token_kid = "a1"
+
+[worker]
+max_concurrent_runs = 4
+lease_secs = 60
+takeover_every_secs = 15
+retry_backoff_secs = 30
+
+[sandbox]
+provider = "acs"
+token_kid = "k1"
+# 部署前填：服务机的内网 IP（模型网关用服务机的网络监听 8790）。ACS 的出网规则只认地址、不分端口，
+# 也不收通配符：这里只写 IP，端口由服务机的安全组限住（只许沙箱连 8790，docs/sandbox-acs.md 第 5 节）。
+gateway_url = "http://10.0.1.10:8790"
+network_allow = ["10.0.1.10"]
+
+[sandbox.acs]
+# 部署前填：服务机在 VPC 里访问 sandbox-manager 的地址（docs/sandbox-acs.md 第 3 节）。
+api_url = "http://sandbox-manager.thinktin.internal/kruise/api"
+
+# 省钱（第 8.9 节办法一）：空闲 10 分钟暂停，暂停 1 小时删掉沙箱、工作区存进 OSS，下次用时重建放回。
+[sandbox.lifecycle]
+idle_pause_secs = 600
+archive_after_secs = 3600
+# 有计划的实例也照常归档，到点前 5 分钟提前建好（暂停着每个约 ¥36/月的存储费）。
+keep_if_trigger_within_secs = 0
+prewarm_lead_secs = 300
+# 等审批时沙箱一直开着（每小时约 ¥0.25）：暂停后 agent 进程能不能接上还没实测（docs/sandbox-acs.md 第 8 节）。
+pause_waiting_approval = false
+
+[sandbox.workspace]
+mode = "object"
+
+[storage]
+provider = "s3"
+
+[storage.s3]
+# 部署前填：东京 OSS 的内网地址、桶。签名区域待实测（docs/sandbox-acs.md 第 8 节）。
+endpoint = "https://oss-ap-northeast-1-internal.aliyuncs.com"
+region = "oss-ap-northeast-1"
+bucket = "thinktin-tokyo"
+prefix = "tokyo/"
+# 工作区归档可能很大：单个请求的超时在归档里另算（sandbox.workspace.archive_timeout_secs）。
+timeout_secs = 60
+
+[kms]
+# 不买阿里云 KMS（docs/deploy-aliyun-sg.md 第 0 节）：本地主密钥 THINKTIN_KMS_KEY。
+provider = "local"
+
+[sms.aliyun]
+# 部署前填：控制台申请下来的签名和验证码模板。
+sign_name = "ThinkTin"
+template_code = "SMS_FILL_IN"
+
+[compliance]
+content_producer = "ThinkTin"
+label_downloads = true

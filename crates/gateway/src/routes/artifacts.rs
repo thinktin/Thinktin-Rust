@@ -48,9 +48,11 @@ pub async fn for_run(
 ) -> ApiResult<Json<Value>> {
     let id: RunId = parse_id(&id, "run")?;
     let mut t = s.db.tenant(who.user).await?;
-    let run = t.run(id).await?;
+    t.run(id).await?;
+    // 和 agent 看到的一样：回答队友问题的运行只列这个问题里的，别的列整棵树；都含下面各个问题里的（8.11）。
+    let scope = t.artifact_scope(id).await?;
     let list: Vec<Artifact> = t
-        .tree_artifacts(run.root_run_id)
+        .tree_artifacts(&scope)
         .await?
         .into_iter()
         .map(|a| a.artifact)

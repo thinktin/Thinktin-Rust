@@ -58,6 +58,7 @@ impl ShutdownListener {
 pub struct Background {
     tasks: JoinSet<(&'static str, anyhow::Result<()>)>,
     shutdown: ShutdownSignal,
+    cleanups: Vec<control::PendingCleanups>,
 }
 
 impl Background {
@@ -65,7 +66,13 @@ impl Background {
         Self {
             tasks: JoinSet::new(),
             shutdown,
+            cleanups: Vec::new(),
         }
+    }
+
+    /// 停机时任务都结束（或被中止）后，再等这些收拾任务做完（被中止的存、放留下的），之后才关数据库连接池。
+    pub fn wait_for_cleanups(&mut self, cleanups: control::PendingCleanups) {
+        self.cleanups.push(cleanups);
     }
 
     pub fn spawn<F, Fut>(&mut self, name: &'static str, task: F)
@@ -85,7 +92,7 @@ impl Background {
         }
     }
 
-    /// 停机：通知所有任务，最多等 `grace`，还没结束的强行中止。
+    /// 停机：通知所有任务，最多等 `grace`，还没结束的强行中止；再最多等 `grace` 让它们留下的收拾任务做完。
     pub async fn shutdown(mut self, grace: Duration) {
         self.shutdown.trigger();
         let wait_all = async {
@@ -104,6 +111,9 @@ impl Background {
                 "background tasks still running after grace period, aborting"
             );
             self.tasks.shutdown().await;
+        }
+        for cleanups in &self.cleanups {
+            cleanups.wait(grace).await;
         }
     }
 }

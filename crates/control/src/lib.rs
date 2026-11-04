@@ -16,13 +16,21 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use catalog::Manifest;
-use proto::domain::{Instance, InstanceId, InstanceLimits, InstanceState, UserId};
+use chrono::{DateTime, Utc};
+use proto::domain::{Instance, InstanceId, InstanceLimits, InstanceState, RunState, UserId};
 use sandbox::{
-    CreateSpec, NetworkPolicy, Resources, SandboxId, SandboxInfo, SandboxProvider, SandboxState,
+    CreateSpec, ExecSpec, NetworkPolicy, Process, Resources, SandboxId, SandboxInfo,
+    SandboxProvider, SandboxState,
 };
 use serde_json::json;
-use store::{Db, InstanceRuntime, NewInstance, Tenant, Tx, Worker};
+use store::{Db, InstanceRuntime, NewInstance, Tenant, Tx, Worker, WorkspaceArchive};
 use tracing::{info, warn};
+use uuid::Uuid;
+
+pub mod workspace;
+
+pub use workspace::{ArchiveMeta, PutTicket, WorkspaceStore};
+use workspace::{CLEANUP_ARGV, EXPORT_ARGV, EXTRACT_ARGV, RESTORE_FILE, STDERR_KEEP, drain};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -48,6 +56,9 @@ pub enum Error {
     Busy,
     #[error("sandbox {0} timed out")]
     Timeout(&'static str),
+    /// 工作区归档存不进去、放不回来（没有卷的后端）。
+    #[error("workspace archive: {0}")]
+    Workspace(String),
     #[error(transparent)]
     Store(#[from] store::Error),
     #[error(transparent)]
@@ -113,6 +124,14 @@ pub struct LifecycleConfig {
     pub op_timeout: Duration,
     /// 每轮巡检每类最多处理几个实例。
     pub sweep_batch: i64,
+    /// 等审批的运行不挡空闲暂停（agent 进程随沙箱一起暂停，用户批了再恢复）。关掉时等审批的实例一直运行。
+    pub pause_waiting_approval: bool,
+    /// 工作区归档（没有卷的后端）：打包上传、下载放回各自最多多久。
+    pub archive_timeout: Duration,
+    /// 工作区归档（tar.gz）的大小上限，超了不归档、沙箱留着。
+    pub max_archive_bytes: u64,
+    /// 归档失败（太大、打包出错、存储不通）后多久再试；期间被用过的照常再试。
+    pub archive_retry_after: Duration,
 }
 
 impl Default for LifecycleConfig {
@@ -126,6 +145,10 @@ impl Default for LifecycleConfig {
             disk_mb: Resources::default().disk_mb,
             op_timeout: sandbox::DEFAULT_OP_TIMEOUT,
             sweep_batch: 20,
+            pause_waiting_approval: true,
+            archive_timeout: Duration::from_secs(30 * 60),
+            max_archive_bytes: 4 << 30,
+            archive_retry_after: Duration::from_secs(6 * 3600),
         }
     }
 }
@@ -274,6 +297,255 @@ pub struct Lifecycle {
     provider: Arc<dyn SandboxProvider>,
     templates: Arc<dyn Templates>,
     cfg: LifecycleConfig,
+    workspaces: Option<Arc<dyn WorkspaceStore>>,
+    cleanups: PendingCleanups,
+}
+
+/// 别处正在存、放工作区时，多久看一次做完了没有。
+const RESTORE_POLL: Duration = Duration::from_secs(2);
+
+/// [`Lifecycle::ensure_running`] 一次尝试的结果。
+enum Next {
+    Done(Box<InstanceRuntime>),
+    /// 情况变了（存了工作区、换了沙箱）：马上再来。
+    Again,
+    /// 别处正在存这个实例的工作区，或者往新沙箱里放回：等一会儿再看。
+    Wait,
+}
+
+/// 什么情况下归档，每次重新锁住实例后据此判断还该不该归档（另外都要求期间没被用过、还是这个沙箱）。
+enum ArchiveWhen {
+    /// 巡检：还暂停着，上次活动时间没变（期间没被用过），没有在跑、等审批的运行，近期没有计划要触发。
+    Idle { seen: DateTime<Utc> },
+    /// 手动归档：运行中或暂停着，没有在跑的运行。
+    Asked,
+    /// 换版本重建：还是这个沙箱。
+    Rebuild { sandbox: String },
+}
+
+/// 一次归档（没有卷的后端）的结果。
+enum Archived {
+    /// 存好了、沙箱删了（或者本来就没有沙箱）。
+    Done,
+    /// 情况变了（期间被用过、换了沙箱、实例删了）：没归档，沙箱留着。
+    Skipped,
+    /// 别处正在存这个实例的工作区。
+    InProgress,
+    /// 存好了，删沙箱出了错：下次不用再存（暂停着的直接删）。
+    NotDestroyed(Error),
+}
+
+/// [`Lifecycle::commit_archive`] 第一步的结果。
+enum Recorded {
+    /// 记下了。
+    Saved,
+    /// 期间被用过、换了沙箱、实例删了：没记。
+    Skipped,
+    /// 沙箱在打包前就没了：记为已归档，留着上一份归档。
+    Gone,
+    /// 这份上传被当成没人管换掉了。
+    Superseded,
+}
+
+/// 存、放工作区期间定时刷新的标记：别处据此判断还有没有人在做（进程中途被杀的过一会儿就算没人管了）。
+#[derive(Clone, Copy)]
+enum Mark<'a> {
+    /// 正在上传的归档对象。
+    Archive(&'a str),
+    /// 正在放回的新沙箱。
+    Restore(&'a str),
+}
+
+/// 建沙箱、存工作区的任务中途被丢下（运行被取消、超时、关机）时要收拾的东西。
+enum Leftover {
+    /// 新建、还没绑到实例上的沙箱（可能正在往里放回工作区）。
+    Sandbox(SandboxId),
+    /// 正在上传的归档 `key`，和为此可能恢复过的沙箱。
+    Archive { sandbox: SandboxId, key: String },
+}
+
+/// 被丢下（drop）时派一个任务收拾 [`Leftover`]，不用等标记过期、巡检来删。正常走完的调用 [`Self::disarm`]。
+struct Cleanup {
+    db: Db,
+    provider: Arc<dyn SandboxProvider>,
+    op_timeout: Duration,
+    id: InstanceId,
+    leftover: Option<Leftover>,
+    /// 从守着的操作开始就算一个（停机时它所在的任务可能稍后才被取消），收拾完才放掉。
+    ticket: Option<CleanupTicket>,
+}
+
+/// 有收拾守着的存、放（[`Cleanup`]），和它们被丢下后派出的收拾任务。停机时先等它们做完再关数据库连接池，
+/// 不然收拾任务连不上库、什么都没做（沙箱一直按运行收费，直到标记过期）。从开始守着就算：后台任务被中止时，
+/// 它里面的运行可能稍后才被取消、才派出收拾任务。
+#[derive(Clone, Default)]
+pub struct PendingCleanups(Arc<CleanupCount>);
+
+#[derive(Default)]
+struct CleanupCount {
+    running: std::sync::atomic::AtomicUsize,
+    done: tokio::sync::Notify,
+}
+
+impl PendingCleanups {
+    fn start(&self) -> CleanupTicket {
+        self.0
+            .running
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        CleanupTicket(self.0.clone())
+    }
+
+    /// 等正在收拾的都做完，最多等 `limit`。
+    pub async fn wait(&self, limit: Duration) {
+        let all_done = async {
+            loop {
+                let done = self.0.done.notified();
+                tokio::pin!(done);
+                done.as_mut().enable();
+                if self.0.running.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+                    return;
+                }
+                done.await;
+            }
+        };
+        if tokio::time::timeout(limit, all_done).await.is_err() {
+            warn!("workspace cleanups still running at shutdown");
+        }
+    }
+}
+
+struct CleanupTicket(Arc<CleanupCount>);
+
+impl Drop for CleanupTicket {
+    fn drop(&mut self) {
+        if self
+            .0
+            .running
+            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst)
+            == 1
+        {
+            self.0.done.notify_waiters();
+        }
+    }
+}
+
+impl Cleanup {
+    fn disarm(mut self) {
+        self.leftover = None;
+        self.ticket = None;
+    }
+}
+
+impl Drop for Cleanup {
+    fn drop(&mut self) {
+        let Some(leftover) = self.leftover.take() else {
+            return;
+        };
+        let ticket = self.ticket.take();
+        let Ok(rt) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let (db, provider, op_timeout, id) = (
+            self.db.clone(),
+            self.provider.clone(),
+            self.op_timeout,
+            self.id,
+        );
+        rt.spawn(async move {
+            let _ticket = ticket;
+            match leftover {
+                Leftover::Sandbox(sandbox) => {
+                    abandon_sandbox(&db, provider.as_ref(), op_timeout, id, &sandbox).await
+                }
+                Leftover::Archive { sandbox, key } => {
+                    abandon_archive(&db, provider.as_ref(), op_timeout, id, &sandbox, &key).await
+                }
+            }
+        });
+    }
+}
+
+async fn timed<T>(
+    limit: Duration,
+    what: &'static str,
+    fut: impl std::future::Future<Output = sandbox::Result<T>>,
+) -> Result<T> {
+    match tokio::time::timeout(limit, fut).await {
+        Ok(r) => Ok(r?),
+        Err(_) => Err(Error::Timeout(what)),
+    }
+}
+
+/// 放弃一个新建的沙箱：删掉它，再清掉“正在放回”（删不掉就留着标记，过一会儿别处再删，不留下没人记得的沙箱）。
+/// 它已经绑到实例上了（提交之后才被丢下）就不动。
+async fn abandon_sandbox(
+    db: &Db,
+    provider: &dyn SandboxProvider,
+    op_timeout: Duration,
+    id: InstanceId,
+    sandbox: &SandboxId,
+) {
+    let done = async {
+        let mut w = db.worker().await?;
+        let cur = w.lock_instance(id).await?;
+        if cur.sandbox_id.as_deref() == Some(sandbox.0.as_str()) {
+            return Ok(());
+        }
+        timed(op_timeout, "destroy", provider.destroy(sandbox)).await?;
+        w.end_restore(id, &sandbox.0).await?;
+        w.commit().await?;
+        Ok::<_, Error>(())
+    }
+    .await;
+    if let Err(e) = done {
+        warn!(instance = %id, sandbox = %sandbox, error = %e, "could not remove an abandoned new sandbox");
+    }
+}
+
+/// 放弃一次没做完的归档：为打包恢复过的沙箱暂停回去（库里还是暂停着、还是这个沙箱、`key` 还是自己的时），
+/// 还没记成归档的上传清掉（触发器排进清理队列），下次归档不用等标记过期。
+async fn abandon_archive(
+    db: &Db,
+    provider: &dyn SandboxProvider,
+    op_timeout: Duration,
+    id: InstanceId,
+    sandbox: &SandboxId,
+    key: &str,
+) {
+    let done = async {
+        let mut w = db.worker().await?;
+        let cur = w.lock_instance(id).await?;
+        let pending = cur.archive_pending.as_deref() == Some(key);
+        let saved = cur.archive_pending.is_none() && cur.archive.as_ref().is_some_and(|a| a.key == key);
+        if (pending || saved)
+            && cur.state == InstanceState::Paused
+            && cur.sandbox_id.as_deref() == Some(sandbox.0.as_str())
+        {
+            // 暂停不成也接着清掉待定的上传（下次归档不用等标记过期，它会再暂停）。
+            let paused = async {
+                if timed(op_timeout, "get", provider.get(sandbox))
+                    .await?
+                    .is_some_and(|i| i.state == SandboxState::Running)
+                {
+                    timed(op_timeout, "pause", provider.pause(sandbox)).await?;
+                }
+                Ok::<_, Error>(())
+            }
+            .await;
+            if let Err(e) = paused {
+                warn!(instance = %id, sandbox = %sandbox, error = %e, "could not pause the sandbox of an abandoned workspace save");
+            }
+        }
+        if pending {
+            w.abort_workspace_archive(id, key).await?;
+        }
+        w.commit().await?;
+        Ok::<_, Error>(())
+    }
+    .await;
+    if let Err(e) = done {
+        warn!(instance = %id, sandbox = %sandbox, error = %e, "could not clean up an abandoned workspace save");
+    }
 }
 
 impl Lifecycle {
@@ -288,7 +560,15 @@ impl Lifecycle {
             provider,
             templates,
             cfg,
+            workspaces: None,
+            cleanups: PendingCleanups::default(),
         }
+    }
+
+    /// 沙箱后端没有工作区卷时（ACS），销毁沙箱前把工作区存进这里，重建沙箱时放回。
+    pub fn with_workspace_store(mut self, store: Arc<dyn WorkspaceStore>) -> Self {
+        self.workspaces = Some(store);
+        self
     }
 
     /// 领养：锁定 agent 当前版本，建实例记录和工作区卷名。沙箱在第一次唤醒时创建。
@@ -314,8 +594,53 @@ impl Lifecycle {
 
     /// 保证实例的沙箱在运行，返回最新的绑定（沙箱 id、地址）。编排服务在开始或继续一个运行前调用。
     pub async fn ensure_running(&self, id: InstanceId) -> Result<InstanceRuntime> {
+        let deadline = tokio::time::Instant::now() + self.wait_limit();
+        let mut changes = 0;
+        loop {
+            match self.ensure_running_once(id).await? {
+                Next::Done(rt) => return Ok(*rt),
+                // 换版本时工作区先存进对象存储、销毁旧沙箱（各步单独提交），之后从头再来一遍。
+                Next::Again => {
+                    changes += 1;
+                    if changes > 3 {
+                        return Err(Error::Workspace(
+                            "the instance kept changing while its workspace was being saved".into(),
+                        ));
+                    }
+                }
+                // 别处正在存、放工作区（不锁实例）：等它做完。进程没了的（标记不再刷新）过一会儿就被当成
+                // 没人管，删掉重来。
+                Next::Wait => {
+                    if tokio::time::Instant::now() > deadline {
+                        return Err(Error::Workspace(
+                            "another wake is still saving or restoring the workspace".into(),
+                        ));
+                    }
+                    tokio::time::sleep(RESTORE_POLL).await;
+                }
+            }
+        }
+    }
+
+    async fn ensure_running_once(&self, id: InstanceId) -> Result<Next> {
         let mut w = self.db.worker().await?;
         let mut rt = w.lock_instance(id).await?;
+        if rt.state != InstanceState::Deleted
+            && let Some(r) = rt.restoring.clone()
+        {
+            if !w.restore_is_stale(id, self.mark_stale_after()).await? {
+                return Ok(Next::Wait);
+            }
+            warn!(instance = %id, sandbox = %r.sandbox_id, since = %r.since, "a workspace restore was abandoned, removing its sandbox");
+            // 删不掉就报错、留着标记，下次再来（不留下没人记得的沙箱）。
+            self.op(
+                "destroy",
+                self.provider.destroy(&SandboxId(r.sandbox_id.clone())),
+            )
+            .await?;
+            w.end_restore(id, &r.sandbox_id).await?;
+            rt.restoring = None;
+        }
         // 锁定的版本因为安全问题下架了（15.5）：换到当前版本，按重建处理（工作区卷保留）。
         if rt.state != InstanceState::Deleted
             && let Some(advisory) = self.templates.withdrawn(&rt.agent_id, &rt.agent_version)
@@ -332,6 +657,7 @@ impl Lifecycle {
                 })?;
             warn!(instance = %id, from = %rt.agent_version, to = %to, %advisory, "template version was withdrawn, moving the instance to the current version");
             w.set_instance_version(id, &to).await?;
+            w.mark_rebuild_pending(id).await?;
             w.audit(
                 Some(rt.user_id),
                 "system",
@@ -352,16 +678,44 @@ impl Lifecycle {
                     version: rt.agent_version.clone(),
                 })?;
             if let Some(sid) = &rt.sandbox_id {
+                if let Some(store) = self.archives() {
+                    // 版本的变化先提交（rebuild_pending 留着），存好工作区、销毁旧沙箱后再来。
+                    // 刚存失败过、之后也没被用过的，这次不再白存一遍。
+                    let recently_failed = rt.archive_failed_at.is_some_and(|f| {
+                        f >= rt.last_active_at && f > Utc::now() - self.archive_retry()
+                    });
+                    w.commit().await?;
+                    let saved = if recently_failed {
+                        Err(Error::Workspace(
+                            "saving the workspace failed recently".into(),
+                        ))
+                    } else {
+                        info!(instance = %id, "saving the workspace before rebuilding");
+                        let when = ArchiveWhen::Rebuild {
+                            sandbox: sid.clone(),
+                        };
+                        self.archive_to_store(store, id, when).await
+                    };
+                    return match saved {
+                        Ok(Archived::Done | Archived::Skipped) => Ok(Next::Again),
+                        // 别的唤醒正在存（也是来换版本的）：等它存完、建好新沙箱。
+                        Ok(Archived::InProgress) => Ok(Next::Wait),
+                        // 存好了，只是旧沙箱没删掉：这次唤醒失败，下次再来（暂停着的直接删，运行中的再存一遍）。
+                        Ok(Archived::NotDestroyed(e)) => Err(e),
+                        Err(e) => {
+                            self.keep_old_version(id, e).await?;
+                            Ok(Next::Again)
+                        }
+                    };
+                }
+                if !self.provider.workspace_persists() {
+                    return Err(self.no_volumes());
+                }
                 self.op("destroy", self.provider.destroy(&SandboxId(sid.clone())))
                     .await?;
             }
             info!(instance = %id, version = %rt.agent_version, "rebuilding for a new template version");
-            let mut rt = self.create(&mut w, &rt).await?;
-            w.clear_rebuild_pending(id).await?;
-            rt.rebuild_pending = false;
-            w.touch_instance(id).await?;
-            w.commit().await?;
-            return Ok(rt);
+            return self.create(w, rt).await;
         }
         let rt = match rt.state {
             InstanceState::Deleted => return Err(Error::Deleted),
@@ -371,9 +725,23 @@ impl Lifecycle {
                     match self.op("get", self.provider.get(&sid)).await? {
                         Some(info) if info.state == SandboxState::Running => {
                             if rt.state == InstanceState::Running {
+                                // 沙箱令牌绑定这个地址：后端报的变了就记下新的（不算状态变化）。
+                                let mut rt = rt;
+                                if info.address != rt.sandbox_address {
+                                    w.set_instance_runtime(
+                                        id,
+                                        InstanceState::Running,
+                                        Some(&info.id.0),
+                                        info.address,
+                                        None,
+                                    )
+                                    .await?;
+                                    rt.sandbox_address = info.address;
+                                    rt.snapshot_id = None;
+                                }
                                 w.touch_instance(id).await?;
                                 w.commit().await?;
-                                return Ok(rt);
+                                return Ok(Next::Done(Box::new(rt)));
                             }
                             self.bind(&mut w, &rt, InstanceState::Running, &info)
                                 .await?
@@ -384,25 +752,78 @@ impl Lifecycle {
                                     .await?
                             }
                             Err(Error::Sandbox(sandbox::Error::NotFound(_))) => {
-                                self.create(&mut w, &rt).await?
+                                self.forget_sandbox(&sid).await;
+                                return self.create(w, rt).await;
                             }
                             Err(e) => return Err(e),
                         },
                         None => {
                             warn!(instance = %id, sandbox = %sid, "sandbox is gone, rebuilding from template");
-                            self.create(&mut w, &rt).await?
+                            return self.create(w, rt).await;
                         }
                     }
                 }
-                None => self.create(&mut w, &rt).await?,
+                None => return self.create(w, rt).await,
             },
             InstanceState::Provisioning | InstanceState::Archived => {
-                self.create(&mut w, &rt).await?
+                return self.create(w, rt).await;
             }
         };
         w.touch_instance(id).await?;
         w.commit().await?;
-        Ok(rt)
+        Ok(Next::Done(Box::new(rt)))
+    }
+
+    /// 换版本前存不下工作区（太大、打包出错、存储不通）：先不换，版本改回当前沙箱的版本，用旧沙箱接着跑，
+    /// 用户过后可以再试。沙箱本来就是要的版本（重建是为了修故障、换过去又换回来）时不重建了，接着用它。
+    /// 下架的版本不能这样留着，退不回去时照样报错。
+    async fn keep_old_version(&self, id: InstanceId, cause: Error) -> Result<()> {
+        let mut w = self.db.worker().await?;
+        let rt = w.lock_instance(id).await?;
+        if rt.state != InstanceState::Deleted
+            && rt.sandbox_id.is_some()
+            && rt.sandbox_version.as_deref() == Some(rt.agent_version.as_str())
+            && self
+                .templates
+                .withdrawn(&rt.agent_id, &rt.agent_version)
+                .is_none()
+        {
+            warn!(instance = %id, version = %rt.agent_version, error = %cause, "could not save the workspace before rebuilding, keeping the current sandbox");
+            w.clear_rebuild_pending(id).await?;
+            w.audit(
+                Some(rt.user_id),
+                "system",
+                "instance.rebuild.skipped",
+                Some(&id.to_string()),
+                &json!({ "version": rt.agent_version, "error": cause.to_string() }),
+            )
+            .await?;
+            w.commit().await?;
+            return Ok(());
+        }
+        let old = rt
+            .sandbox_version
+            .clone()
+            .filter(|_| rt.sandbox_id.is_some())
+            .filter(|v| *v != rt.agent_version)
+            .filter(|v| self.templates.manifest(&rt.agent_id, v).is_some())
+            .filter(|v| self.templates.withdrawn(&rt.agent_id, v).is_none());
+        let Some(old) = old else {
+            return Err(cause);
+        };
+        warn!(instance = %id, from = %rt.agent_version, to = %old, error = %cause, "could not save the workspace before rebuilding, keeping the current version");
+        w.set_instance_version(id, &old).await?;
+        w.clear_rebuild_pending(id).await?;
+        w.audit(
+            Some(rt.user_id),
+            "system",
+            "instance.version.kept",
+            Some(&id.to_string()),
+            &json!({ "wanted": rt.agent_version, "kept": old, "error": cause.to_string() }),
+        )
+        .await?;
+        w.commit().await?;
+        Ok(())
     }
 
     /// 暂停（内存快照）。有正在执行的运行时不暂停，返回 false。
@@ -420,30 +841,26 @@ impl Lifecycle {
         Ok(true)
     }
 
-    /// 归档：销毁沙箱，只留工作区卷。有正在执行的运行时不归档，返回 false。
+    /// 归档：销毁沙箱，只留工作区卷（没有卷的后端先把工作区存进对象存储）。有正在执行的运行时不归档，
+    /// 返回 false。
     pub async fn archive(&self, id: InstanceId) -> Result<bool> {
-        let mut w = self.db.worker().await?;
-        let rt = w.lock_instance(id).await?;
-        if !matches!(rt.state, InstanceState::Running | InstanceState::Paused) {
-            return Ok(false);
-        }
-        if w.instance_busy(id).await? {
-            return Ok(false);
-        }
-        self.archive_locked(&mut w, &rt).await?;
-        w.commit().await?;
-        Ok(true)
+        self.archive_one(id, ArchiveWhen::Asked).await
     }
 
-    /// 重建：销毁当前沙箱，按（可选的新）模板版本重新创建。升级、回滚、故障恢复用。
+    /// 重建：销毁当前沙箱，按（可选的新）模板版本重新创建。升级、回滚、故障恢复用。记下要重建再唤醒，
+    /// 和用户换版本走同一条路：没有卷的后端先存工作区（存不下时不换，见 [`Self::keep_old_version`]），
+    /// 中途出错的下次唤醒接着来，期间别处的唤醒等着、不会拿到要删的沙箱。
     pub async fn rebuild(&self, id: InstanceId, version: Option<&str>) -> Result<InstanceRuntime> {
         let mut w = self.db.worker().await?;
-        let mut rt = w.lock_instance(id).await?;
+        let rt = w.lock_instance(id).await?;
         if rt.state == InstanceState::Deleted {
             return Err(Error::Deleted);
         }
         if w.instance_busy(id).await? {
             return Err(Error::Busy);
+        }
+        if rt.sandbox_id.is_some() {
+            self.check_workspace_kept()?;
         }
         if let Some(v) = version {
             self.templates
@@ -453,17 +870,10 @@ impl Lifecycle {
                     version: v.into(),
                 })?;
             w.set_instance_version(id, v).await?;
-            rt.agent_version = v.into();
         }
-        if let Some(sid) = &rt.sandbox_id {
-            self.op("destroy", self.provider.destroy(&SandboxId(sid.clone())))
-                .await?;
-        }
-        let mut rt = self.create(&mut w, &rt).await?;
-        w.clear_rebuild_pending(id).await?;
-        rt.rebuild_pending = false;
+        w.mark_rebuild_pending(id).await?;
         w.commit().await?;
-        Ok(rt)
+        self.ensure_running(id).await
     }
 
     /// 巡检：预热快到点的、暂停空闲的、归档长期暂停的、回收已删除实例的沙箱和工作区卷。
@@ -471,7 +881,7 @@ impl Lifecycle {
     pub async fn sweep(&self) -> Result<SweepReport> {
         let mut report = SweepReport::default();
 
-        // 预热（6.5）：计划快到点了，它要用的实例（计划自己的、流水线第一批步骤的）还暂停着就提前唤醒。
+        // 预热（6.5）：计划快到点了，它要用的实例（计划自己的、流水线第一批步骤的）还暂停或归档着就提前唤醒。
         // 唤醒时记一次活动，下面的空闲暂停不会马上又把它停掉。
         if !self.cfg.prewarm_lead.is_zero() {
             let mut w = self.db.worker().await?;
@@ -490,48 +900,75 @@ impl Lifecycle {
             }
         }
 
+        let waiting: &[RunState] = if self.cfg.pause_waiting_approval {
+            &[]
+        } else {
+            &[RunState::WaitingApproval]
+        };
+        // 先列出来，再逐个锁住处理：归档要打包上传，不能一直锁着别的实例。
         let mut w = self.db.worker().await?;
-        for rt in w
-            .idle_instances(
+        let idle = w
+            .idle_instance_ids(
                 InstanceState::Running,
                 self.cfg.idle_pause,
                 self.cfg.sweep_batch,
+                waiting,
+                Duration::ZERO,
             )
-            .await?
-        {
-            match self.pause_locked(&mut w, &rt).await {
-                Ok(()) => report.paused += 1,
+            .await?;
+        w.commit().await?;
+        for (id, seen) in idle {
+            match self.pause_idle(id, seen, waiting).await {
+                Ok(true) => report.paused += 1,
+                Ok(false) => {}
                 Err(e) => {
-                    warn!(instance = %rt.id, error = %e, "idle pause failed");
+                    warn!(instance = %id, error = %e, "idle pause failed");
                     report.failed += 1;
                 }
             }
         }
-        w.commit().await?;
 
-        let mut w = self.db.worker().await?;
-        for rt in w
-            .idle_instances(
-                InstanceState::Paused,
-                self.cfg.archive_after,
-                self.cfg.sweep_batch,
-            )
-            .await?
-        {
-            if w.trigger_due_within(rt.id, self.cfg.keep_if_trigger_within)
-                .await?
-            {
-                continue;
-            }
-            match self.archive_locked(&mut w, &rt).await {
-                Ok(()) => report.archived += 1,
+        // 工作区留不住（没有卷、也没接对象存储）时不归档，暂停的沙箱一直留着。
+        let stale = if self.check_workspace_kept().is_ok() {
+            let mut w = self.db.worker().await?;
+            let ids = w
+                .idle_instance_ids(
+                    InstanceState::Paused,
+                    self.cfg.archive_after,
+                    self.cfg.sweep_batch,
+                    &[RunState::WaitingApproval],
+                    self.cfg.archive_retry_after,
+                )
+                .await?;
+            w.commit().await?;
+            ids
+        } else {
+            Vec::new()
+        };
+
+        for (id, seen) in stale {
+            match self.archive_one(id, ArchiveWhen::Idle { seen }).await {
+                Ok(true) => report.archived += 1,
+                Ok(false) => {}
                 Err(e) => {
-                    warn!(instance = %rt.id, error = %e, "archive failed");
+                    warn!(instance = %id, error = %e, "archive failed");
                     report.failed += 1;
                 }
             }
         }
+
+        // 放回工作区的标记太久没刷新（进程中途被杀）：新沙箱没人管了，删掉。
+        let mut w = self.db.worker().await?;
+        let stuck = w
+            .stale_restores(self.mark_stale_after(), self.cfg.sweep_batch)
+            .await?;
         w.commit().await?;
+        for id in stuck {
+            if let Err(e) = self.clean_stale_restore(id).await {
+                warn!(instance = %id, error = %e, "could not clean up a stale workspace restore");
+                report.failed += 1;
+            }
+        }
 
         let mut w = self.db.worker().await?;
         for rt in w.instances_to_purge(self.cfg.sweep_batch).await? {
@@ -588,22 +1025,220 @@ impl Lifecycle {
         })
     }
 
-    /// 从模板建新沙箱（挂上工作区卷），写回绑定。写库失败时销毁刚建的沙箱，不留孤儿。
-    async fn create(&self, w: &mut Tx<Worker>, rt: &InstanceRuntime) -> Result<InstanceRuntime> {
-        let spec = self.spec(rt)?;
+    /// 从模板建新沙箱（挂上工作区卷），写回绑定、记一次活动、提交。写库失败时销毁刚建的沙箱，不留孤儿。
+    /// 没有卷又有归档时要先把工作区放回去：那要很久，不锁着实例做——先单独提交“正在放回”和新沙箱 id，
+    /// 放的时候定时刷新，放完再锁住绑定（期间别处的唤醒等着，见 [`Next::Wait`]）。出错、被取消时删掉
+    /// 新沙箱、清掉标记；进程中途被杀的，标记不再刷新，过一会儿别处的唤醒或巡检删掉这个沙箱。
+    async fn create(&self, mut w: Tx<Worker>, rt: InstanceRuntime) -> Result<Next> {
+        let spec = self.spec(&rt)?;
+        let restore = match (self.archives(), &rt.archive) {
+            (Some(store), Some(archive)) => Some((store.clone(), archive.clone())),
+            _ => None,
+        };
         let info = self.op("create", self.provider.create(spec)).await?;
-        match self.bind(w, rt, InstanceState::Running, &info).await {
-            Ok(rt) => {
-                info!(instance = %rt.id, sandbox = %info.id, "sandbox created");
-                Ok(rt)
+        // 从这里起被丢下（运行被取消）的，删掉还没绑上的新沙箱。
+        let guard = self.cleanup(rt.id, Leftover::Sandbox(info.id.clone()));
+        let Some((store, archive)) = restore else {
+            let bound = async {
+                let rt = self.bind_new(&mut w, &rt, &rt.agent_version, &info).await?;
+                w.touch_instance(rt.id).await?;
+                w.commit().await?;
+                Ok::<_, Error>(rt)
+            }
+            .await;
+            guard.disarm();
+            return match bound {
+                Ok(rt) => Ok(Next::Done(Box::new(rt))),
+                Err(e) => {
+                    self.remove_orphan(&info.id).await;
+                    Err(e)
+                }
+            };
+        };
+        let marked = async {
+            w.begin_restore(rt.id, &info.id.0).await?;
+            w.commit().await?;
+            Ok::<_, Error>(())
+        }
+        .await;
+        if let Err(e) = marked {
+            guard.disarm();
+            self.remove_orphan(&info.id).await;
+            return Err(e);
+        }
+        let restored = self
+            .keep_marked(
+                rt.id,
+                Mark::Restore(&info.id.0),
+                self.restore_into(&store, &rt, &archive, &info.id),
+            )
+            .await;
+        let bound = async {
+            let mut w = self.db.worker().await?;
+            let cur = w.lock_instance(rt.id).await?;
+            // 被当成没人管的已经被别处删掉、接手了：这个沙箱不用了，从头再来。
+            if cur.restoring.as_ref().map(|r| r.sandbox_id.as_str()) != Some(info.id.0.as_str()) {
+                return Ok(None);
+            }
+            restored?;
+            if cur.state == InstanceState::Deleted {
+                return Err(Error::Deleted);
+            }
+            if archive.archived_at < cur.last_active_at {
+                // 沙箱是自己没的（不是归档掉的）：最近的改动没存下来。
+                warn!(instance = %rt.id, archived_at = %archive.archived_at, "restored a stale workspace archive");
+            } else {
+                info!(instance = %rt.id, bytes = archive.bytes, "workspace restored");
+            }
+            let bound = self.bind_new(&mut w, &cur, &rt.agent_version, &info).await?;
+            w.end_restore(rt.id, &info.id.0).await?;
+            w.touch_instance(rt.id).await?;
+            w.commit().await?;
+            Ok(Some(bound))
+        }
+        .await;
+        guard.disarm();
+        match bound {
+            Ok(Some(rt)) => Ok(Next::Done(Box::new(rt))),
+            Ok(None) => {
+                self.remove_orphan(&info.id).await;
+                Ok(Next::Again)
             }
             Err(e) => {
-                if let Err(d) = self.op("destroy", self.provider.destroy(&info.id)).await {
-                    warn!(sandbox = %info.id, error = %d, "could not destroy orphaned sandbox");
-                }
+                abandon_sandbox(
+                    &self.db,
+                    self.provider.as_ref(),
+                    self.cfg.op_timeout,
+                    rt.id,
+                    &info.id,
+                )
+                .await;
                 Err(e)
             }
         }
+    }
+
+    /// 把新建好的沙箱绑到实例上，记下它是按哪个版本建的；版本就是要换的版本时，换版本这件事做完了。
+    async fn bind_new(
+        &self,
+        w: &mut Tx<Worker>,
+        rt: &InstanceRuntime,
+        built: &str,
+        info: &SandboxInfo,
+    ) -> Result<InstanceRuntime> {
+        let mut rt = self.bind(w, rt, InstanceState::Running, info).await?;
+        w.set_sandbox_version(rt.id, built).await?;
+        rt.sandbox_version = Some(built.to_owned());
+        if rt.rebuild_pending && rt.agent_version == built {
+            w.clear_rebuild_pending(rt.id).await?;
+            rt.rebuild_pending = false;
+        }
+        info!(instance = %rt.id, sandbox = %info.id, version = %built, "sandbox created");
+        Ok(rt)
+    }
+
+    async fn remove_orphan(&self, sandbox: &SandboxId) {
+        if let Err(d) = self.op("destroy", self.provider.destroy(sandbox)).await {
+            warn!(sandbox = %sandbox, error = %d, "could not destroy orphaned sandbox");
+        }
+    }
+
+    fn cleanup(&self, id: InstanceId, leftover: Leftover) -> Cleanup {
+        Cleanup {
+            db: self.db.clone(),
+            provider: self.provider.clone(),
+            op_timeout: self.cfg.op_timeout,
+            id,
+            leftover: Some(leftover),
+            ticket: Some(self.cleanups.start()),
+        }
+    }
+
+    /// 停机时要等的收拾任务（见 [`PendingCleanups`]）。
+    pub fn pending_cleanups(&self) -> PendingCleanups {
+        self.cleanups.clone()
+    }
+
+    /// 存、放期间多久刷新一次标记（[`Mark`]）。
+    fn beat_every(&self) -> Duration {
+        (self.cfg.op_timeout / 4).max(Duration::from_millis(100))
+    }
+
+    /// 标记这么久没刷新就算没人管了（进程中途被杀）：别处删掉它建的沙箱、换掉它的上传。
+    fn mark_stale_after(&self) -> Duration {
+        self.cfg.op_timeout * 2
+    }
+
+    /// 唤醒最多等别处的存、放多久：存（排队、打包上传）加放（传、解开），各步的上限加起来。
+    fn wait_limit(&self) -> Duration {
+        self.cfg.archive_timeout * 4 + self.cfg.op_timeout * 8
+    }
+
+    /// 做 `work` 期间定时刷新标记的时间（单独提交）。标记已经不是自己的（被当成没人管换掉了）就不再刷新。
+    async fn keep_marked<T>(
+        &self,
+        id: InstanceId,
+        mark: Mark<'_>,
+        work: impl std::future::Future<Output = T>,
+    ) -> T {
+        let beat = async {
+            let mut tick = tokio::time::interval(self.beat_every());
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            // 第一下马上就到：标记刚记下，不用刷新。
+            tick.tick().await;
+            loop {
+                tick.tick().await;
+                let refreshed = async {
+                    let mut w = self.db.worker().await?;
+                    let ours = match mark {
+                        Mark::Archive(key) => w.refresh_workspace_archive(id, key).await?,
+                        Mark::Restore(sandbox) => w.refresh_restore(id, sandbox).await?,
+                    };
+                    w.commit().await?;
+                    Ok::<_, Error>(ours)
+                }
+                .await;
+                match refreshed {
+                    Ok(true) => {}
+                    Ok(false) => break,
+                    Err(e) => {
+                        warn!(instance = %id, error = %e, "could not refresh the workspace transfer mark")
+                    }
+                }
+            }
+            std::future::pending::<()>().await;
+        };
+        tokio::select! {
+            out = work => out,
+            () = beat => unreachable!("the heartbeat never finishes"),
+        }
+    }
+
+    fn archive_retry(&self) -> chrono::Duration {
+        chrono::Duration::from_std(self.cfg.archive_retry_after).unwrap_or(chrono::Duration::MAX)
+    }
+
+    async fn clean_stale_restore(&self, id: InstanceId) -> Result<()> {
+        let mut w = self.db.worker().await?;
+        let Some(rt) = w.try_lock_instance(id).await? else {
+            return Ok(());
+        };
+        let Some(r) = rt.restoring else {
+            return Ok(());
+        };
+        if !w.restore_is_stale(id, self.mark_stale_after()).await? {
+            return Ok(());
+        }
+        warn!(instance = %id, sandbox = %r.sandbox_id, since = %r.since, "a workspace restore was abandoned, removing its sandbox");
+        // 删不掉就留着标记，下一轮再来。
+        self.op(
+            "destroy",
+            self.provider.destroy(&SandboxId(r.sandbox_id.clone())),
+        )
+        .await?;
+        w.end_restore(id, &r.sandbox_id).await?;
+        w.commit().await?;
+        Ok(())
     }
 
     async fn bind(
@@ -661,17 +1296,587 @@ impl Lifecycle {
         }
     }
 
+    /// 销毁沙箱前确认工作区留得住：后端没有卷（ACS）时不销毁，免得丢了用户的文件。
+    /// 有没有接对象存储（[`Self::with_workspace_store`]）都算：接了的先存工作区再销毁。
+    fn check_workspace_kept(&self) -> Result<()> {
+        if self.provider.workspace_persists() || self.workspaces.is_some() {
+            return Ok(());
+        }
+        Err(self.no_volumes())
+    }
+
+    fn no_volumes(&self) -> Error {
+        Error::Invalid(format!(
+            "the {} sandbox provider keeps no workspace after a sandbox is destroyed",
+            self.provider.name()
+        ))
+    }
+
+    /// 直接销毁沙箱、只留工作区卷（后端有卷时）。
     async fn archive_locked(&self, w: &mut Tx<Worker>, rt: &InstanceRuntime) -> Result<()> {
         if let Some(sid) = rt.sandbox_id.as_deref() {
+            if !self.provider.workspace_persists() {
+                return Err(self.no_volumes());
+            }
             self.op("destroy", self.provider.destroy(&SandboxId(sid.into())))
                 .await?;
         }
         self.set_state(w, rt, InstanceState::Archived, None).await
     }
 
+    /// 要不要把工作区存进对象存储：后端没有卷、又接了存储时。
+    fn archives(&self) -> Option<&Arc<dyn WorkspaceStore>> {
+        if self.provider.workspace_persists() {
+            return None;
+        }
+        self.workspaces.as_ref()
+    }
+
+    async fn pause_idle(
+        &self,
+        id: InstanceId,
+        seen: DateTime<Utc>,
+        also_busy: &[RunState],
+    ) -> Result<bool> {
+        let mut w = self.db.worker().await?;
+        // 别处正锁着（唤醒、归档中）就跳过，下一轮再看。
+        let Some(rt) = w.try_lock_instance(id).await? else {
+            return Ok(false);
+        };
+        if rt.state != InstanceState::Running
+            || rt.last_active_at != seen
+            || w.instance_busy_with(id, also_busy).await?
+        {
+            return Ok(false);
+        }
+        self.pause_locked(&mut w, &rt).await?;
+        w.commit().await?;
+        Ok(true)
+    }
+
+    /// 锁住实例。巡检不等别处的锁（跳过，下一轮再看）；手动归档、重建等着。
+    async fn lock_for(
+        &self,
+        w: &mut Tx<Worker>,
+        id: InstanceId,
+        when: &ArchiveWhen,
+    ) -> Result<Option<InstanceRuntime>> {
+        Ok(match when {
+            ArchiveWhen::Idle { .. } => w.try_lock_instance(id).await?,
+            _ => Some(w.lock_instance(id).await?),
+        })
+    }
+
+    async fn may_archive(
+        &self,
+        w: &mut Tx<Worker>,
+        rt: &InstanceRuntime,
+        when: &ArchiveWhen,
+    ) -> Result<bool> {
+        Ok(match when {
+            ArchiveWhen::Idle { seen } => {
+                rt.state == InstanceState::Paused
+                    && rt.last_active_at == *seen
+                    && !w
+                        .instance_busy_with(rt.id, &[RunState::WaitingApproval])
+                        .await?
+                    && !w
+                        .trigger_due_within(rt.id, self.cfg.keep_if_trigger_within)
+                        .await?
+            }
+            ArchiveWhen::Asked => {
+                matches!(rt.state, InstanceState::Running | InstanceState::Paused)
+                    && !w.instance_busy(rt.id).await?
+            }
+            ArchiveWhen::Rebuild { sandbox } => {
+                rt.state != InstanceState::Deleted && rt.sandbox_id.as_deref() == Some(sandbox)
+            }
+        })
+    }
+
+    async fn archive_one(&self, id: InstanceId, when: ArchiveWhen) -> Result<bool> {
+        if let Some(store) = self.archives() {
+            return match self.archive_to_store(store, id, when).await? {
+                Archived::Done => Ok(true),
+                Archived::Skipped | Archived::InProgress => Ok(false),
+                Archived::NotDestroyed(e) => Err(e),
+            };
+        }
+        let mut w = self.db.worker().await?;
+        let Some(rt) = self.lock_for(&mut w, id, &when).await? else {
+            return Ok(false);
+        };
+        if !self.may_archive(&mut w, &rt, &when).await? {
+            return Ok(false);
+        }
+        self.archive_locked(&mut w, &rt).await?;
+        w.commit().await?;
+        Ok(true)
+    }
+
+    /// 重新锁住实例后：期间没被用过（上次活动时间没变）、还是这个沙箱、还该归档。
+    async fn unchanged(
+        &self,
+        w: &mut Tx<Worker>,
+        cur: &InstanceRuntime,
+        seen: &InstanceRuntime,
+        when: &ArchiveWhen,
+    ) -> Result<bool> {
+        Ok(cur.sandbox_id == seen.sandbox_id
+            && cur.last_active_at == seen.last_active_at
+            && self.may_archive(w, cur, when).await?)
+    }
+
+    /// 没有卷的后端归档：工作区存进对象存储，再销毁沙箱，记为已归档。先记下要上传的对象并提交（一个实例同时
+    /// 只存一份，别处正在存的返回 [`Archived::InProgress`]），打包上传时不锁实例、定时刷新标记（存的时候
+    /// 用户照样能唤醒、发消息，这次归档就作废），上传完锁住记下归档、销毁沙箱、提交：中途出错或进程被杀都
+    /// 不丢工作区，最多留下一个没用上的对象（排进清理队列，或者自己删掉）。存的时候出错的记下失败，一段时间内
+    /// 不再试。
+    async fn archive_to_store(
+        &self,
+        store: &Arc<dyn WorkspaceStore>,
+        id: InstanceId,
+        when: ArchiveWhen,
+    ) -> Result<Archived> {
+        let mut w = self.db.worker().await?;
+        let Some(rt) = self.lock_for(&mut w, id, &when).await? else {
+            return Ok(Archived::Skipped);
+        };
+        if !self.may_archive(&mut w, &rt, &when).await? {
+            return Ok(Archived::Skipped);
+        }
+        let Some(sid) = rt.sandbox_id.clone() else {
+            self.set_state(&mut w, &rt, InstanceState::Archived, None)
+                .await?;
+            w.commit().await?;
+            return Ok(Archived::Done);
+        };
+        let sandbox = SandboxId(sid);
+        // 暂停后没再用过、归档又是暂停之后存的（上次存好了、销毁时出了错）：不用再存一遍。
+        if rt.state == InstanceState::Paused
+            && rt.archive_pending.is_none()
+            && rt
+                .archive
+                .as_ref()
+                .is_some_and(|a| a.archived_at >= rt.last_active_at)
+        {
+            if let Err(e) = self.op("destroy", self.provider.destroy(&sandbox)).await {
+                return Ok(Archived::NotDestroyed(e));
+            }
+            // 删掉了才记不下（库出错）：工作区早存好了，不算存失败，下次再记（删不存在的沙箱也算成功）。
+            let recorded = async {
+                self.set_state(&mut w, &rt, InstanceState::Archived, None)
+                    .await?;
+                w.commit().await?;
+                Ok::<_, Error>(())
+            }
+            .await;
+            return Ok(match recorded {
+                Ok(()) => Archived::Done,
+                Err(e) => Archived::NotDestroyed(e),
+            });
+        }
+        let archive_id = Uuid::now_v7();
+        let key = store.key(rt.user_id, &rt.workspace_id, archive_id);
+        if !w
+            .begin_workspace_archive(id, &key, self.mark_stale_after())
+            .await?
+        {
+            return Ok(Archived::InProgress);
+        }
+        w.commit().await?;
+        let guard = self.cleanup(
+            id,
+            Leftover::Archive {
+                sandbox: sandbox.clone(),
+                key: key.clone(),
+            },
+        );
+        let exported = self
+            .keep_marked(
+                id,
+                Mark::Archive(&key),
+                self.export_workspace(store, &rt, &sandbox, &key, archive_id),
+            )
+            .await;
+        let result = match exported {
+            Ok(exported) => {
+                self.commit_archive(&rt, &when, &sandbox, &key, exported)
+                    .await
+            }
+            Err(e) => Err(e),
+        };
+        self.settle_archive(store, &rt, &key, result.as_ref().err())
+            .await;
+        guard.disarm();
+        result
+    }
+
+    /// 先占好临时空间（排队的时间不算在打包上传的时限里），恢复暂停的沙箱，打包上传。返回存好的归档和
+    /// 没归档成时要不要暂停回去（为此恢复的，或者库里暂停着、沙箱其实在跑的——上次归档被打断留下的）；
+    /// 沙箱已经没了返回 None。出错时暂停回去。
+    async fn export_workspace(
+        &self,
+        store: &Arc<dyn WorkspaceStore>,
+        rt: &InstanceRuntime,
+        sandbox: &SandboxId,
+        key: &str,
+        archive_id: Uuid,
+    ) -> Result<Option<(ArchiveMeta, bool)>> {
+        let ticket = match tokio::time::timeout(
+            self.cfg.archive_timeout,
+            store.reserve_put(self.cfg.max_archive_bytes),
+        )
+        .await
+        {
+            Ok(Ok(ticket)) => ticket,
+            Ok(Err(e)) => return Err(Error::Workspace(e)),
+            Err(_) => return Err(Error::Timeout("archive")),
+        };
+        let Some(resumed) = self.wake_for_export(sandbox).await? else {
+            return Ok(None);
+        };
+        let resumed = resumed || rt.state == InstanceState::Paused;
+        match self
+            .export(store, rt, sandbox, key, archive_id, ticket)
+            .await
+        {
+            Ok(meta) => Ok(Some((meta, resumed))),
+            Err(e) => {
+                self.repause(rt.id, sandbox, resumed, key).await;
+                Err(e)
+            }
+        }
+    }
+
+    /// 上传完：锁住，确认这期间没被用过、还是这个沙箱，记下归档、提交；再锁住确认一遍，销毁沙箱、记为已归档。
+    /// 归档先提交再删沙箱：删到一半被打断（取消、进程被杀、库出错）时归档已经在了，下次唤醒从它放回。
+    /// 沙箱在打包前就没了的，直接记为已归档（留着上一份归档）。
+    async fn commit_archive(
+        &self,
+        rt: &InstanceRuntime,
+        when: &ArchiveWhen,
+        sandbox: &SandboxId,
+        key: &str,
+        exported: Option<(ArchiveMeta, bool)>,
+    ) -> Result<Archived> {
+        let id = rt.id;
+        let resumed = exported.as_ref().is_some_and(|(_, resumed)| *resumed);
+        let outcome = match self.record_archive(rt, when, key, exported).await {
+            Ok(Recorded::Saved) => match self.destroy_archived(rt, when, sandbox, key).await {
+                Ok(Archived::Done) => return Ok(Archived::Done),
+                Ok(other) => other,
+                // 归档已经记下了：之后出的错（连不上库、删沙箱失败）不算没存成，不记失败、不退版本，下次再删。
+                Err(e) => Archived::NotDestroyed(e),
+            },
+            Ok(Recorded::Gone) => return Ok(Archived::Done),
+            // 这份上传太久没刷新、被当成没人管换掉了（别处正在存）：不记，也不去暂停别处正在打包的沙箱。
+            Ok(Recorded::Superseded) => return Ok(Archived::InProgress),
+            Ok(Recorded::Skipped) => Archived::Skipped,
+            Err(e) => {
+                self.repause(id, sandbox, resumed, key).await;
+                return Err(e);
+            }
+        };
+        self.repause(id, sandbox, resumed, key).await;
+        Ok(outcome)
+    }
+
+    /// [`Self::commit_archive`] 的第一步：锁住，确认这期间没被用过、还是这个沙箱，记下归档、提交。
+    async fn record_archive(
+        &self,
+        rt: &InstanceRuntime,
+        when: &ArchiveWhen,
+        key: &str,
+        exported: Option<(ArchiveMeta, bool)>,
+    ) -> Result<Recorded> {
+        let id = rt.id;
+        let mut w = self.db.worker().await?;
+        let cur = w.lock_instance(id).await?;
+        if !self.unchanged(&mut w, &cur, rt, when).await? {
+            return Ok(Recorded::Skipped);
+        }
+        let Some((meta, _)) = exported else {
+            warn!(instance = %id, sandbox = ?rt.sandbox_id, "sandbox is gone before its workspace was saved, keeping the last archive");
+            self.set_state(&mut w, &cur, InstanceState::Archived, None)
+                .await?;
+            w.commit().await?;
+            return Ok(Recorded::Gone);
+        };
+        if !w
+            .finish_workspace_archive(id, key, meta.id, meta.bytes, &meta.sha256)
+            .await?
+        {
+            return Ok(Recorded::Superseded);
+        }
+        w.commit().await?;
+        info!(instance = %id, bytes = meta.bytes, "workspace saved");
+        Ok(Recorded::Saved)
+    }
+
+    /// [`Self::commit_archive`] 的第二步：再锁住确认一遍，销毁沙箱、记为已归档。记下之后、锁住之前被用过，
+    /// 或者别处又开始存了：沙箱留着（归档比上次活动早，不会被当成最新的）。
+    async fn destroy_archived(
+        &self,
+        rt: &InstanceRuntime,
+        when: &ArchiveWhen,
+        sandbox: &SandboxId,
+        key: &str,
+    ) -> Result<Archived> {
+        let mut w = self.db.worker().await?;
+        let cur = w.lock_instance(rt.id).await?;
+        if cur.archive_pending.is_some() {
+            return Ok(Archived::InProgress);
+        }
+        if cur.archive.as_ref().is_none_or(|a| a.key != key)
+            || !self.unchanged(&mut w, &cur, rt, when).await?
+        {
+            return Ok(Archived::Skipped);
+        }
+        if let Err(e) = self.op("destroy", self.provider.destroy(sandbox)).await {
+            return Ok(Archived::NotDestroyed(e));
+        }
+        self.set_state(&mut w, &cur, InstanceState::Archived, None)
+            .await?;
+        w.commit().await?;
+        Ok(Archived::Done)
+    }
+
+    /// 上传结束后（`put` 已经返回）收尾。没记成归档的对象：待定的还是它就清掉（触发器排进清理队列）；已经被
+    /// 换掉、实例回收了就直接删（那时排进队列的可能早于上传完成，什么都没删到）。存的时候出错的记下失败
+    /// （单独提交，记不下不影响清理）。
+    async fn settle_archive(
+        &self,
+        store: &Arc<dyn WorkspaceStore>,
+        rt: &InstanceRuntime,
+        key: &str,
+        failed: Option<&Error>,
+    ) {
+        let id = rt.id;
+        let unreferenced = async {
+            let mut w = self.db.worker().await?;
+            let queued = w.abort_workspace_archive(id, key).await?;
+            let kept = !queued
+                && match w.instance_runtime(id).await {
+                    Ok(cur) => cur.archive.is_some_and(|a| a.key == key),
+                    Err(store::Error::NotFound) => false,
+                    Err(e) => return Err(e.into()),
+                };
+            w.commit().await?;
+            Ok::<_, Error>(!queued && !kept)
+        }
+        .await;
+        match unreferenced {
+            Ok(true) => {
+                if let Err(e) = store.delete(rt.user_id, key).await {
+                    warn!(instance = %id, key, error = %e, "could not delete an unused workspace upload");
+                }
+            }
+            Ok(false) => {}
+            Err(e) => {
+                warn!(instance = %id, key, error = %e, "could not release a workspace upload")
+            }
+        }
+        let Some(failed) = failed else {
+            return;
+        };
+        let recorded = async {
+            let mut w = self.db.worker().await?;
+            w.record_workspace_archive_failure(id, &failed.to_string())
+                .await?;
+            w.commit().await?;
+            Ok::<_, Error>(())
+        }
+        .await;
+        if let Err(e) = recorded {
+            warn!(instance = %id, error = %e, "could not record a failed workspace save");
+        }
+    }
+
+    /// 打包要沙箱在运行：暂停着的先恢复。返回是不是恢复了；沙箱没了返回 None。
+    async fn wake_for_export(&self, sandbox: &SandboxId) -> Result<Option<bool>> {
+        match self.op("get", self.provider.get(sandbox)).await? {
+            None => Ok(None),
+            Some(i) if i.state == SandboxState::Running => Ok(Some(false)),
+            Some(_) => match self.op("resume", self.provider.resume(sandbox)).await {
+                Ok(_) => Ok(Some(true)),
+                Err(Error::Sandbox(sandbox::Error::NotFound(_))) => {
+                    self.forget_sandbox(sandbox).await;
+                    Ok(None)
+                }
+                Err(e) => Err(e),
+            },
+        }
+    }
+
+    /// 后端说沙箱没了：保险起见再删一次（万一它其实还在，不留下一个没人管的）。
+    async fn forget_sandbox(&self, sandbox: &SandboxId) {
+        if let Err(e) = self.op("destroy", self.provider.destroy(sandbox)).await {
+            warn!(sandbox = %sandbox, error = %e, "could not remove a sandbox reported as gone");
+        }
+    }
+
+    /// 为了打包恢复过的沙箱，没归档成就再暂停回去：只在实例在库里还是暂停着、还是这个沙箱，而且 `key`
+    /// 还是自己的（待定的上传或者记下的归档）时——巡检不会去暂停它；期间被唤醒了就不动；被当成没人管、
+    /// 别处接着存的时候不去暂停别处正在打包的沙箱。
+    async fn repause(&self, id: InstanceId, sandbox: &SandboxId, resumed: bool, key: &str) {
+        if !resumed {
+            return;
+        }
+        let paused = async {
+            let mut w = self.db.worker().await?;
+            let rt = w.lock_instance(id).await?;
+            let ours = match rt.archive_pending.as_deref() {
+                Some(pending) => pending == key,
+                None => rt.archive.as_ref().is_some_and(|a| a.key == key),
+            };
+            if ours
+                && rt.state == InstanceState::Paused
+                && rt.sandbox_id.as_deref() == Some(&sandbox.0)
+            {
+                self.op("pause", self.provider.pause(sandbox)).await?;
+            }
+            w.commit().await?;
+            Ok::<_, Error>(())
+        }
+        .await;
+        if let Err(e) = paused {
+            warn!(sandbox = %sandbox, error = %e, "could not pause the sandbox again after saving its workspace failed");
+        }
+    }
+
+    /// 在沙箱里打包工作区，经 `store` 加密存到 `key`。
+    async fn export(
+        &self,
+        store: &Arc<dyn WorkspaceStore>,
+        rt: &InstanceRuntime,
+        sandbox: &SandboxId,
+        key: &str,
+        archive_id: Uuid,
+        ticket: PutTicket,
+    ) -> Result<ArchiveMeta> {
+        let Process {
+            stdin,
+            mut stdout,
+            stderr,
+            mut control,
+        } = self
+            .op("exec", self.provider.exec(sandbox, argv(EXPORT_ARGV)))
+            .await?;
+        drop(stdin);
+        // 标准错误另开任务读：上传出错不再读标准输出时，tar 卡住也不会连带这里卡住。
+        let stderr = tokio::spawn(drain(stderr, STDERR_KEEP));
+        let put = tokio::time::timeout(
+            self.cfg.archive_timeout,
+            store.put(
+                rt.user_id,
+                key,
+                archive_id,
+                &mut *stdout,
+                self.cfg.max_archive_bytes,
+                ticket,
+            ),
+        )
+        .await;
+        let meta = match put {
+            Ok(Ok(meta)) => meta,
+            Ok(Err(e)) => {
+                let _ = control.kill().await;
+                return Err(Error::Workspace(e));
+            }
+            Err(_) => {
+                let _ = control.kill().await;
+                return Err(Error::Timeout("archive"));
+            }
+        };
+        let status = match tokio::time::timeout(self.cfg.op_timeout, control.wait()).await {
+            Ok(status) => status?,
+            Err(_) => {
+                let _ = control.kill().await;
+                return Err(Error::Timeout("archive"));
+            }
+        };
+        let err = stderr.await.unwrap_or_default();
+        // GNU tar 的退出码 1 是“有文件在打包时变了”，归档照样能用。
+        if !matches!(status.code(), Some(0 | 1)) {
+            return Err(Error::Workspace(format!("tar exited with {status}: {err}")));
+        }
+        Ok(meta)
+    }
+
+    /// 把归档传进新沙箱、在沙箱里解开。
+    async fn restore_into(
+        &self,
+        store: &Arc<dyn WorkspaceStore>,
+        rt: &InstanceRuntime,
+        archive: &WorkspaceArchive,
+        sandbox: &SandboxId,
+    ) -> Result<()> {
+        let (mut writer, reader) = tokio::io::duplex(1 << 20);
+        let upload =
+            self.provider
+                .write_file_stream(sandbox, RESTORE_FILE, Box::new(reader), archive.bytes);
+        let download = async move {
+            let r = store.restore(rt.user_id, archive, &mut writer).await;
+            drop(writer);
+            r
+        };
+        let both = async {
+            let (down, up) = tokio::join!(download, upload);
+            down.map_err(Error::Workspace)?;
+            up?;
+            Ok::<_, Error>(())
+        };
+        match tokio::time::timeout(self.cfg.archive_timeout, both).await {
+            Ok(r) => r?,
+            Err(_) => return Err(Error::Timeout("restore")),
+        }
+        self.run_in_sandbox(sandbox, EXTRACT_ARGV, self.cfg.archive_timeout)
+            .await?;
+        self.run_in_sandbox(sandbox, CLEANUP_ARGV, self.cfg.op_timeout)
+            .await
+    }
+
+    /// 在沙箱的工作区里跑一条命令，要它成功。
+    async fn run_in_sandbox(
+        &self,
+        sandbox: &SandboxId,
+        cmd: &[&str],
+        limit: Duration,
+    ) -> Result<()> {
+        let run = async {
+            let Process {
+                stdin,
+                stdout,
+                stderr,
+                mut control,
+            } = self.provider.exec(sandbox, argv(cmd)).await?;
+            drop(stdin);
+            let (_, err) = tokio::join!(drain(stdout, 0), drain(stderr, STDERR_KEEP));
+            let status = control.wait().await?;
+            if status.success() {
+                Ok(())
+            } else {
+                Err(Error::Workspace(format!(
+                    "{} exited with {status}: {err}",
+                    cmd[0]
+                )))
+            }
+        };
+        match tokio::time::timeout(limit, run).await {
+            Ok(r) => r,
+            Err(_) => Err(Error::Timeout("restore")),
+        }
+    }
+
     async fn purge_locked(&self, w: &mut Tx<Worker>, rt: &InstanceRuntime) -> Result<()> {
-        if let Some(sid) = rt.sandbox_id.as_deref() {
-            self.op("destroy", self.provider.destroy(&SandboxId(sid.into())))
+        // 正在放回工作区的新沙箱也删掉（放回的那边锁住后发现实例删了，也会删）。
+        for sid in rt
+            .sandbox_id
+            .iter()
+            .chain(rt.restoring.as_ref().map(|r| &r.sandbox_id))
+        {
+            self.op("destroy", self.provider.destroy(&SandboxId(sid.clone())))
                 .await?;
         }
         self.op(
@@ -682,5 +1887,12 @@ impl Lifecycle {
         w.mark_instance_purged(rt.id).await?;
         info!(instance = %rt.id, "instance resources purged");
         Ok(())
+    }
+}
+
+fn argv(cmd: &[&str]) -> ExecSpec {
+    ExecSpec {
+        argv: cmd.iter().map(|s| s.to_string()).collect(),
+        ..ExecSpec::default()
     }
 }
