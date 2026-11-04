@@ -184,7 +184,20 @@ fn claude(r: &ModelRouting, home: &Path, out: &mut RenderedConfig) {
     set(out, "DISABLE_AUTOUPDATER", "1");
     // 关掉遥测、错误上报、反馈等非必要外联。
     set(out, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1");
+    // 用户 2026-11-04 定（docs/search.md）：搜索默认能用、不弹窗；读网页在 Claude 这层放行，只留出口代理问一次网站
+    // （能连哪些网站由出口代理管）。读网页前不再先把网站名发给 api.anthropic.com 查（那个网站不在名单里，会多问一次）。
+    let settings = json!({
+        "skipWebFetchPreflight": true,
+        "permissions": { "allow": CLAUDE_ALLOWED_TOOLS },
+    });
+    out.files.push((
+        PathBuf::from(".claude/settings.json"),
+        serde_json::to_string_pretty(&settings).unwrap_or_default(),
+    ));
 }
+
+/// Claude 不用再问用户的工具：搜索、读网页（[`docs/search.md`]）、平台的搜索工具。
+pub const CLAUDE_ALLOWED_TOOLS: [&str; 3] = ["WebSearch", "WebFetch", "mcp__thinktin__web_search"];
 
 fn codex(r: &ModelRouting, home: &Path, out: &mut RenderedConfig) -> anyhow::Result<()> {
     let codex_home = home.join(".codex");
@@ -628,13 +641,18 @@ mod tests {
     }
 
     #[test]
-    fn claude_uses_env_only() {
+    fn claude_uses_env_and_settings() {
         let c = render_for("claude");
         assert_eq!(c.env["ANTHROPIC_BASE_URL"], "https://gw.test/anthropic");
         assert_eq!(c.env["ANTHROPIC_AUTH_TOKEN"], "sbx-token");
         assert_eq!(c.env["ANTHROPIC_DEFAULT_HAIKU_MODEL"], "fast");
         assert_eq!(c.env["CLAUDE_CONFIG_DIR"], "/home/agent/.claude");
-        assert!(c.files.is_empty());
+        let v: Value = serde_json::from_str(file(&c, ".claude/settings.json")).unwrap();
+        assert_eq!(v["skipWebFetchPreflight"], true);
+        assert_eq!(
+            v["permissions"]["allow"],
+            json!(["WebSearch", "WebFetch", "mcp__thinktin__web_search"])
+        );
     }
 
     #[test]

@@ -42,11 +42,12 @@ agents, their shared board and questions to them).";
 
 /// 沙箱经出口代理上网（2.7）时加在说明后面的规矩：agent 的工具碰到代理返回的 403 时，常常只说“CONNECT 失败”，
 /// 不说原因。
-const EGRESS_INSTRUCTIONS: &str = " Internet access goes through the platform's HTTPS proxy (HTTPS only). Web search \
-and developer sites (package registries, GitHub) usually work directly; other websites need the user's approval. The \
-first request to such a site asks the user in the ThinkTin app and waits up to a minute. If it fails with a 403 \
-(pending_approval), the user has not answered yet: do other work first and retry that site later. If the user declined \
-(user_denied), do not retry it in this task; find another way.";
+const EGRESS_INSTRUCTIONS: &str = " Internet access goes through the platform's HTTPS proxy (HTTPS only). Search \
+engine sites and developer sites (package registries, GitHub) can be reached directly; other websites need the user's \
+approval. The first request to such a site asks the user in the ThinkTin app and waits up to a minute. If it fails \
+with a 403 (pending_approval), the user has not answered yet: do other work first and retry that site later. If the \
+user declined (user_denied), do not retry it in this task; find another way.";
+
 /// 我们支持的 MCP 协议版本，按新旧排列。
 const MCP_VERSIONS: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
 
