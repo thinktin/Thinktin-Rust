@@ -91,7 +91,7 @@
 字体全用系统的）；6.3 A（保持 iOS 17，iOS 26 的接口在 Design/Glass.swift 里回退）；6.4 A（“+”直接弹领养表单）；6.5 A（设置用 sheet）；
 6.6 A（沿用“实例”）。其余 18 项按建议。
 
-进行中：没有人在做。第 0 轮还剩启动屏资源、截图脚本（`THINKTIN_OPEN_SCREEN`），都还没人认领。
+进行中：第 0 轮最后一份（启动屏资源、截图脚本和 `THINKTIN_OPEN_SCREEN`、docs/ios.md 收尾），云端会话 2026-11-04 23:57 UTC 开始。
 
 下一步：
 1. 第 0 轮剩下的（规范 7.2）：启动屏资源（`tools/apple/brand_assets.py`、`Assets.xcassets`、`project.yml`）；截图脚本加只有 Debug 认的
