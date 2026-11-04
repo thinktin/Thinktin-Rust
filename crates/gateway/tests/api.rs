@@ -2794,6 +2794,146 @@ async fn team_adoption_rolls_back_when_a_member_fails() {
     }
 }
 
+/// 旧的团队接口（8.13 起是单人项目上的一层）：返回的 JSON 一样，读写的是项目表；去掉再加回来的成员只有一行；删掉负责人的
+/// 实例以后能换新负责人；共享过的项目只能看（8.14 起）；删除团队不删实例。
+#[tokio::test]
+async fn old_team_api_is_backed_by_projects() {
+    let Some(a) = api().await else { return };
+    let u = a.login("13800138090").await;
+    let tok = Some(u.access.as_str());
+    let lead = a.adopt(&u).await;
+    let writer = a.adopt(&u).await;
+    let other = a.adopt(&u).await;
+    let (st, team) = a
+        .call(
+            Method::POST,
+            "/v1/teams",
+            tok,
+            Some(json!({ "name": "编辑部", "members": [
+                { "instance_id": lead, "role": "lead", "position": 0 },
+                { "instance_id": writer, "role": "member", "position": 1 },
+            ] })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{team}");
+    let mut keys: Vec<&str> = team
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    keys.sort_unstable();
+    assert_eq!(keys, ["created_at", "id", "members", "name"]);
+    let mut member_keys: Vec<&str> = team["members"][0]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    member_keys.sort_unstable();
+    assert_eq!(member_keys, ["instance_id", "position", "role"]);
+    let id: uuid::Uuid = team["id"].as_str().unwrap().parse().unwrap();
+    let count = |sql: &'static str| {
+        let pool = a.t.db.pool().clone();
+        async move {
+            sqlx::query_scalar::<_, i64>(sql)
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        }
+    };
+    assert_eq!(
+        count("SELECT count(*) FROM projects WHERE id = $1").await,
+        1
+    );
+    assert_eq!(
+        count("SELECT count(*) FROM project_members WHERE project_id = $1 AND role = 'creator'")
+            .await,
+        1
+    );
+    assert_eq!(
+        count("SELECT count(*) FROM project_agents WHERE project_id = $1 AND left_at IS NULL")
+            .await,
+        2
+    );
+    assert_eq!(count("SELECT count(*) FROM teams WHERE id = $1").await, 0);
+    let path = format!("/v1/teams/{id}");
+    // 去掉再加回来：还是同一行。
+    for members in [
+        json!([{ "instance_id": lead, "role": "lead", "position": 0 }]),
+        json!([
+            { "instance_id": lead, "role": "lead", "position": 0 },
+            { "instance_id": writer, "role": "member", "position": 1 },
+        ]),
+    ] {
+        let (st, body) = a
+            .call(
+                Method::PATCH,
+                &path,
+                tok,
+                Some(json!({ "members": members })),
+            )
+            .await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+    }
+    assert_eq!(
+        count("SELECT count(*) FROM project_agents WHERE project_id = $1").await,
+        2
+    );
+    // 删掉负责人的实例：团队里只剩一个，可以换新负责人。
+    let (st, _) = a
+        .call(Method::DELETE, &format!("/v1/instances/{lead}"), tok, None)
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let (_, body) = a.call(Method::GET, &path, tok, None).await;
+    assert_eq!(body["members"].as_array().unwrap().len(), 1, "{body}");
+    let (st, body) = a
+        .call(
+            Method::PATCH,
+            &path,
+            tok,
+            Some(json!({ "members": [
+                { "instance_id": writer, "role": "member", "position": 0 },
+                { "instance_id": other, "role": "lead", "position": 1 },
+            ] })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    // 共享过的项目：只能看。
+    sqlx::query("UPDATE projects SET shared_at = now() WHERE id = $1")
+        .bind(id)
+        .execute(a.t.db.pool())
+        .await
+        .unwrap();
+    let (st, body) = a
+        .call(Method::PATCH, &path, tok, Some(json!({ "name": "x" })))
+        .await;
+    assert_eq!(st, StatusCode::CONFLICT, "{body}");
+    let (st, _) = a.call(Method::DELETE, &path, tok, None).await;
+    assert_eq!(st, StatusCode::CONFLICT);
+    let (st, _) = a.call(Method::GET, &path, tok, None).await;
+    assert_eq!(st, StatusCode::OK);
+    // 删掉：项目没了，实例还在。
+    sqlx::query("UPDATE projects SET shared_at = NULL WHERE id = $1")
+        .bind(id)
+        .execute(a.t.db.pool())
+        .await
+        .unwrap();
+    let (st, _) = a.call(Method::DELETE, &path, tok, None).await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    assert_eq!(
+        count("SELECT count(*) FROM projects WHERE id = $1").await,
+        0
+    );
+    assert_eq!(
+        count("SELECT count(*) FROM project_agents WHERE project_id = $1").await,
+        0
+    );
+    let (_, list) = a.call(Method::GET, "/v1/instances", tok, None).await;
+    assert_eq!(list["instances"].as_array().unwrap().len(), 2, "{list}");
+}
+
 #[tokio::test]
 async fn rate_limits_and_signup_cap() {
     let Some(a) = api_with(GatewayConfig {

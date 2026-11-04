@@ -1,4 +1,5 @@
-//! 团队与团队模板（8.1）。
+//! 团队与团队模板（8.1）。8.13 起是单人项目上的一层（`store/src/projects.rs`）：路径、状态码、JSON 都不变；共享过的项目
+//! （8.14 起）只能看，改和删回 409。
 
 use axum::Json;
 use axum::extract::{Path, State};
