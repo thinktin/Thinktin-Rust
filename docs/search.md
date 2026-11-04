@@ -2,6 +2,17 @@
 
 > 状态：2026-11-04 调研完，等用户定要不要买搜索接口（第 4 节“要你同意的”）。你 11-04 定的是“默认启用联网搜索：五种 agent 默认就能联网搜索，不弹窗、不用设置”（`docs/egress.md:36`）。这一页汇总了 4 路调研：仓库现状、五个 agent 锁定版本的安装包、模型厂商自带的搜索、付费搜索接口。之后又做了一轮核对：仓库行号逐个查过，几个影响决定的价格和开关也重新到官方页面和源码上看了（第 7 节标 †）。要花钱的东西一样都还没买，等你同意。标“没核实”的，是没实测过或只有二手来源的。仓库行号对应提交 `47e8ef6`。
 
+## 用户 2026-11-04 的决定
+
+1. **搜索服务：DeepSeek 为主、阿里云 IQS 备用。** 用户问“clodex 里用的是哪家便宜的”：clodex（github.com/Shiro836/clodex）是
+   让 Claude Code 改用 DeepSeek 或 Codex 订阅的启动器，它的搜索就是 DeepSeek 替 Claude Code 跑的服务端搜索（README：
+   “DeepSeek runs Claude Code's server-side search tool on its own engine”），也就是 DeepSeek 搜索，和第一条推荐一样。先花约
+   ¥2 小测再定。
+2. **花费上限：每月 ¥100，每人每天 50 次。** 到了就停下、提醒用户。
+3. **agent 自带的厂商搜索：保留**（不关）。所以网关要记厂商替 agent 搜了几次（第 4 节第 3 步提前做），Claude 自带的
+   `WebSearch` 也要免弹窗。厂商替 agent 读网页、不经过出口代理这一点，用户知道后选的保留。
+4. **Claude 读网页：在 Claude 那层放行**（`WebFetch` 免批准），只留出口代理那一次问用户。
+
 ## 1. 现状
 
 **一句话：东京还没部署（服务机还没买，`docs/progress/claude-determined-lovelace-vn0j5h.md:14`），所以下面说的是“按现在的代码上线会怎样”。结论是五个 agent 没有一个能做到“默认能搜、不弹窗”。** Codex 配上支持搜索的厂商能搜，也不弹窗，但用的是厂商替它搜、替它读网页，这一点绕过了“别的网站要问用户”。Claude 能搜，但大概每次都要弹窗。Pi、OpenClaw、Hermes 都搜不了。
