@@ -50,8 +50,9 @@ pub const MAX_PENDING_ASKS: u32 = 5;
 /// 每个实例一小时里最多登记这么多条新请求（定时任务每跑一次都问的话，不至于一直弹提示）。
 pub const MAX_ASKS_PER_HOUR: u32 = 20;
 
-/// 每个实例每天（北京时间自然日）最多这么多字节的双向流量（用户 2026-11-04 定：100 MiB）。
-pub const DAILY_BYTES: u64 = 100 << 20;
+/// 每个实例每天（北京时间自然日）最多这么多字节的双向流量。用户 2026-11-04 先定 100 MiB，同一天为了浏览器提到 300 MiB
+/// （docs/browser.md 第 11 节第 4 条；浏览器和直接上网共用）。
+pub const DAILY_BYTES: u64 = 300 << 20;
 
 /// 每个实例同时最多这么多条隧道（用户 2026-11-04 定：4 条）。
 pub const MAX_TUNNELS: u32 = 4;

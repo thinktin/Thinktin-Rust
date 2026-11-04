@@ -1260,7 +1260,7 @@ async fn ffi_instance_settings() {
     let status = c.instance_egress(inst.id.clone()).await.unwrap();
     assert_eq!(status.mode, "dev");
     assert_eq!(status.used_today, 0);
-    assert_eq!(status.daily_limit, 100 << 20);
+    assert_eq!(status.daily_limit, proto::egress::DAILY_BYTES);
     assert!(status.dev_hosts.contains(&"github.com".to_owned()));
     assert!(status.search_hosts.contains(&"www.baidu.com".to_owned()));
     assert!(status.recent_denied.is_empty() && status.pending.is_empty());

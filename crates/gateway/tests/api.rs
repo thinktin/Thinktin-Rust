@@ -4111,7 +4111,7 @@ async fn instance_egress_over_http() {
     assert_eq!(st, StatusCode::OK, "{body}");
     assert_eq!(body["mode"], "all");
     assert_eq!(body["used_today"], 1234);
-    assert_eq!(body["daily_limit"], 100 << 20);
+    assert_eq!(body["daily_limit"], proto::egress::DAILY_BYTES);
     assert_eq!(body["recent_denied"][0]["host"], "blocked.example.com");
     assert!(
         body["dev_hosts"]
