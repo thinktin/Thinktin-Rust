@@ -10,7 +10,7 @@ use chrono::{DateTime, Utc};
 use proto::domain::{InstanceId, ProjectId, ProjectStatus};
 use uuid::Uuid;
 
-use crate::{Error, Result, Tenant, Tx, parse};
+use crate::{Error, Result, Tenant, Tx, Worker, parse};
 
 /// 单人项目里的一个 agent（自己的实例）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,6 +44,30 @@ fn record(row: ProjectRow) -> Result<ProjectRecord> {
         created_at,
         updated_at,
     })
+}
+
+impl<R> Tx<R> {
+    /// 项目锁（事务结束放开）：改项目的成员、agent、状态的都先拿它（docs/progress/drafts/projects-8.14-plan.md 第 0 节 D3 的
+    /// 第 2 步）。人数、agent 数的上限在锁里数。
+    pub async fn lock_project(&mut self, id: ProjectId) -> Result<()> {
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(format!("project/{id}"))
+            .execute(self.conn())
+            .await?;
+        Ok(())
+    }
+}
+
+impl Tx<Worker> {
+    /// 按 id 顺序拿几个项目的锁（不在 `SELECT … ORDER BY` 里拿：目标列表里的函数不保证按排序的顺序执行）。
+    pub(crate) async fn lock_projects(&mut self, ids: &mut Vec<ProjectId>) -> Result<()> {
+        ids.sort_unstable();
+        ids.dedup();
+        for id in ids.iter() {
+            self.lock_project(*id).await?;
+        }
+        Ok(())
+    }
 }
 
 const PROJECT_COLUMNS: &str = "id, name, status, shared_at IS NOT NULL, created_at, updated_at";

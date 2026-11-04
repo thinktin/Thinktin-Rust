@@ -1906,7 +1906,13 @@ async fn erasing_an_account_deletes_its_content() {
            VALUES ('{bob_project}', '{alice_instance}', '{alice}'); \
          INSERT INTO project_invites (id, project_id, inviter_id, kind, invitee_phone, expires_at) VALUES \
            ('{}', '{bob_project}', '{bob}', 'phone', '{alice_phone}', now() + interval '1 day'), \
-           ('{}', '{bob_project}', '{bob}', 'phone', '+8613900000000', now() + interval '1 day');",
+           ('{}', '{bob_project}', '{bob}', 'phone', '+8613900000000', now() + interval '1 day'); \
+         INSERT INTO project_invites (id, project_id, inviter_id, kind, token_hash, status, expires_at, \
+             settled_at, accepted_by) \
+           VALUES ('{}', '{bob_project}', '{bob}', 'link', '\\x01'::bytea, 'accepted', now() + interval '1 day', \
+             now(), '{alice}'); \
+         INSERT INTO user_blocks (blocker_id, blocked_id) VALUES ('{alice}', '{bob}'), ('{bob}', '{alice}');",
+        uuid::Uuid::now_v7(),
         uuid::Uuid::now_v7(),
         uuid::Uuid::now_v7(),
         alice = alice.0,
@@ -1943,11 +1949,22 @@ async fn erasing_an_account_deletes_its_content() {
         (live_member, live_agent, reason.as_deref()),
         (0, 0, Some("erased"))
     );
-    let invites: Vec<String> = sqlx::query_scalar("SELECT invitee_phone FROM project_invites")
-        .fetch_all(db.pool())
-        .await
-        .unwrap();
+    let invites: Vec<String> =
+        sqlx::query_scalar("SELECT invitee_phone FROM project_invites WHERE kind = 'phone'")
+            .fetch_all(db.pool())
+            .await
+            .unwrap();
     assert_eq!(invites, ["+8613900000000"]);
+    // 她接受过的邀请、她拉黑的和拉黑她的（8.14）都删掉。
+    let (accepted, blocks): (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM project_invites WHERE accepted_by = $1), \
+                (SELECT count(*) FROM user_blocks WHERE blocker_id = $1 OR blocked_id = $1)",
+    )
+    .bind(alice.0)
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert_eq!((accepted, blocks), (0, 0));
     // 产出物的密文排进清理队列。
     let mut w = db.worker().await.unwrap();
     assert_eq!(w.blob_purge_batch(10).await.unwrap(), ["k"]);

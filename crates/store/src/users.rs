@@ -187,6 +187,20 @@ impl Tx<Worker> {
             .bind(id.0)
             .execute(self.conn())
             .await?;
+        // 再拿他建的、加入的、派了 agent 的项目的锁：自己改团队（租户事务先改 projects 再改 project_agents）和下面的注销
+        // （先改 project_agents 再删 projects）方向相反，不排队会互相等。
+        let mut projects: Vec<proto::domain::ProjectId> = sqlx::query_scalar::<_, uuid::Uuid>(
+            "SELECT id FROM projects WHERE creator_id = $1 \
+             UNION SELECT project_id FROM project_members WHERE user_id = $1 AND left_at IS NULL \
+             UNION SELECT project_id FROM project_agents WHERE user_id = $1 AND left_at IS NULL",
+        )
+        .bind(id.0)
+        .fetch_all(self.conn())
+        .await?
+        .into_iter()
+        .map(Into::into)
+        .collect();
+        self.lock_projects(&mut projects).await?;
         self.set_user_status(id, UserStatus::Deleted).await?;
         self.revoke_user_sessions(id, "account_deleted").await?;
         self.revoke_user_grants(id, "account_deleted").await?;
@@ -218,8 +232,10 @@ impl Tx<Worker> {
             "DELETE FROM projects WHERE creator_id = $1",
             "UPDATE project_members SET left_at = now(), left_reason = 'erased' \
                WHERE user_id = $1 AND left_at IS NULL",
-            "DELETE FROM project_invites WHERE inviter_id = $1 OR invitee_id = $1 \
+            "DELETE FROM project_invites WHERE inviter_id = $1 OR invitee_id = $1 OR accepted_by = $1 \
                OR invitee_phone = (SELECT phone FROM users WHERE id = $1)",
+            // 拉黑（8.14）：他拉黑的、拉黑他的。
+            "DELETE FROM user_blocks WHERE blocker_id = $1 OR blocked_id = $1",
             "DELETE FROM project_templates WHERE user_id = $1",
             "DELETE FROM vault_requests WHERE user_id = $1",
             "DELETE FROM vault_items WHERE user_id = $1",
