@@ -73,7 +73,21 @@ id_type!(
     BoardPostId,
     PlanHookId,
     EgressRequestId,
+    ProjectId,
 );
+
+// 团队就是只有创建者一个用户的项目（8.13，docs/projects.md 第 3 节）：id 一样。
+impl From<TeamId> for ProjectId {
+    fn from(t: TeamId) -> Self {
+        Self(t.0)
+    }
+}
+
+impl From<ProjectId> for TeamId {
+    fn from(p: ProjectId) -> Self {
+        Self(p.0)
+    }
+}
 
 /// 字符串枚举的公共实现：和数据库里的取值一一对应。
 macro_rules! str_enum {
@@ -527,6 +541,17 @@ pub struct Instance {
     #[serde(default)]
     pub egress_hosts: Vec<String>,
 }
+
+str_enum!(
+    /// 项目的状态（8.13，docs/projects.md 第 4 节）。
+    ProjectStatus {
+        Active = "active",
+        /// 归档：只读，不再派任务。
+        Archived = "archived",
+        /// 删除：马上读不到，后台清理（8.15）。
+        Deleted = "deleted",
+    }
+);
 
 str_enum!(
     /// 实例能上哪些网站（2.7，受控出网通道，见 docs/egress.md）。内网、元数据地址、服务机自己哪一档都连不了。用户

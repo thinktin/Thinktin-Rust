@@ -48,6 +48,8 @@ agent 的沙箱模板单独构建（6.8）；App 走各自的商店（12.11、13
   或者先用配置开关关着。8.11 的 `ask` 是第一次发布之前加的，不受这条限制。
 - 在已有的大表上建索引用 `CREATE INDEX CONCURRENTLY`，放在单独的迁移里，第一行写 `-- no-transaction`
   （sqlx 才不包事务）；普通的 `CREATE INDEX` 期间这张表写不进去。
+- 回填受 FORCE 约束的表（`INSERT … SELECT`、`UPDATE`）要在同一个事务里先 `NO FORCE ROW LEVEL SECURITY`、做完再 `FORCE`：迁移账号是
+  表的属主，FORCE 时它也看不到任何行，语句会悄悄处理 0 行（比如 `0039_projects.sql` 把团队搬进项目）。
 - 发布过的迁移文件一个字节都不能改：sqlx 按内容的校验和核对，改了生产库就迁移不了、程序也拒绝启动。
 
 **检查**：CI 的 `Migrations` 步骤（`tools/ci/check_migrations.py`）对照最近的 `v*` 标签：发布过的迁移改了、删了，

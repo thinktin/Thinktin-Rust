@@ -851,6 +851,159 @@ async fn migrations_run_as_a_plain_owner() {
     );
 }
 
+/// 0039：已有的团队搬成单人项目（id 不变），团队模板搬成项目模板；实例已删的成员标成离开、空出负责人。迁移账号受 FORCE
+/// 约束，迁移里要临时去掉才复制得到（不然悄悄复制 0 行，核对也是 0 对 0）。
+#[tokio::test]
+async fn teams_move_into_single_user_projects() {
+    let Some(t) = TestDb::up_to(38).await else {
+        return;
+    };
+    let db = &t.db;
+    let a = user(db, "+8613800000951").await;
+    let b = user(db, "+8613800000952").await;
+    let l = instance(db, a).await;
+    let w = instance(db, a).await;
+    let d = instance(db, a).await;
+    let bi = instance(db, b).await;
+    sqlx::query("UPDATE instances SET state = 'deleted', deleted_at = now() WHERE id = $1")
+        .bind(d.id.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let (t1, t2, t3, tpl) = (
+        uuid::Uuid::now_v7(),
+        uuid::Uuid::now_v7(),
+        uuid::Uuid::now_v7(),
+        uuid::Uuid::now_v7(),
+    );
+    for (id, owner, name) in [(t1, a, "one"), (t2, a, "two"), (t3, b, "three")] {
+        sqlx::query("INSERT INTO teams (id, user_id, name) VALUES ($1, $2, $3)")
+            .bind(id)
+            .bind(owner.0)
+            .bind(name)
+            .execute(db.pool())
+            .await
+            .unwrap();
+    }
+    for (team, inst, owner, role, pos) in [
+        (t1, l.id, a, "lead", 0),
+        (t1, w.id, a, "member", 1),
+        (t2, d.id, a, "lead", 0),
+        (t2, l.id, a, "member", 1),
+        (t3, bi.id, b, "lead", 0),
+    ] {
+        sqlx::query(
+            "INSERT INTO team_members (team_id, instance_id, user_id, role, position) \
+             VALUES ($1, $2, $3, $4, $5)",
+        )
+        .bind(team)
+        .bind(inst.0)
+        .bind(owner.0)
+        .bind(role)
+        .bind(pos)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    }
+    sqlx::query("INSERT INTO team_templates (id, user_id, name, spec) VALUES ($1, $2, 'tpl', $3)")
+        .bind(tpl)
+        .bind(a.0)
+        .bind(serde_json::json!({"members": [{"agent_id": "claude", "name": "x", "lead": true}]}))
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+    t.migrate_rest().await;
+
+    let projects: Vec<(uuid::Uuid, uuid::Uuid, String)> =
+        sqlx::query_as("SELECT id, creator_id, name FROM projects ORDER BY name")
+            .fetch_all(db.pool())
+            .await
+            .unwrap();
+    assert_eq!(
+        projects,
+        [
+            (t1, a.0, "one".to_owned()),
+            (t3, b.0, "three".to_owned()),
+            (t2, a.0, "two".to_owned())
+        ]
+    );
+    let creators: Vec<(uuid::Uuid, uuid::Uuid)> = sqlx::query_as(
+        "SELECT project_id, user_id FROM project_members WHERE role = 'creator' ORDER BY project_id",
+    )
+    .fetch_all(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(creators.len(), 3);
+    // 删掉的实例：离开、不再是负责人；这个项目没有负责人了。
+    let (left, lead): (bool, bool) = sqlx::query_as(
+        "SELECT left_at IS NOT NULL, is_lead FROM project_agents WHERE project_id = $1 AND instance_id = $2",
+    )
+    .bind(t2)
+    .bind(d.id.0)
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert!(left && !lead);
+    let leads: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM project_agents WHERE project_id = $1 AND is_lead AND left_at IS NULL",
+    )
+    .bind(t2)
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(leads, 0);
+    let (lead_t1, pos_w): (bool, i32) = sqlx::query_as(
+        "SELECT (SELECT is_lead FROM project_agents WHERE project_id = $1 AND instance_id = $2), \
+                (SELECT position FROM project_agents WHERE project_id = $1 AND instance_id = $3)",
+    )
+    .bind(t1)
+    .bind(l.id.0)
+    .bind(w.id.0)
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert!(lead_t1);
+    assert_eq!(pos_w, 1);
+    let spec: serde_json::Value =
+        sqlx::query_scalar("SELECT spec FROM project_templates WHERE id = $1 AND user_id = $2")
+            .bind(tpl)
+            .bind(a.0)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    assert_eq!(spec["members"][0]["agent_id"], "claude");
+    // 去掉的 FORCE 都加回来了。
+    let unforced: Vec<String> = sqlx::query_scalar(
+        "SELECT relname::text FROM pg_class WHERE relname = ANY($1) AND NOT relforcerowsecurity ORDER BY 1",
+    )
+    .bind(vec![
+        "teams",
+        "team_members",
+        "team_templates",
+        "instances",
+        "projects",
+        "project_members",
+        "project_agents",
+        "project_invites",
+        "project_keys",
+        "project_templates",
+    ])
+    .fetch_all(db.pool())
+    .await
+    .unwrap();
+    assert!(unforced.is_empty(), "{unforced:?}");
+    // 用户只看得到自己的。
+    let mut ta = db.tenant(a).await.unwrap();
+    let mine: Vec<uuid::Uuid> = sqlx::query_scalar("SELECT id FROM projects ORDER BY id")
+        .fetch_all(ta.conn())
+        .await
+        .unwrap();
+    assert_eq!(mine.len(), 2);
+    assert!(!mine.contains(&t3));
+    ta.rollback().await.unwrap();
+}
+
 /// 注销（16.4）：用户的内容全部删掉，手机号、设备去标识化；别人的数据不受影响。
 #[tokio::test]
 async fn erasing_an_account_deletes_its_content() {
