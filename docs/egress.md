@@ -191,6 +191,26 @@ Smokescreen 还得用 Go 写一层认实例、查档位、记额度的插件，�
 - 同一个任务被拒绝后，下一个任务还会再问；定时计划每次跑都问同一个网站会每次弹窗，以后看情况加冷却。
 - 等用户回答是每秒查一次库；量大了改成数据库通知。
 
+## 浏览器通道（2026-11-04，[浏览器](browser.md)第 3、4 节）
+
+agent 用平台的浏览器（Chromium，由 agent-shim 运行）时，打开**新网站**才问用户，网页自己加载的图片、脚本、CDN 不问。
+出口代理里为它多开了两样东西，都要模型网关加 `--egress-browser-lanes` 才有（不加时用户名 `browser` 一律 407，问询接口 404）：
+
+- **浏览器通道**：`CONNECT host:443`，`Proxy-Authorization` 的用户名是 `browser`，密码是浏览器通行证（和沙箱令牌一样的检查，
+  另外要求签名里 `aud=browser`；普通通道和模型接口见到它一律拒绝，沙箱令牌也进不了浏览器通道）。不按网站问；内网、
+  元数据、服务机、禁段、443、每天的额度（和直接上网共用 300 MiB）、日志、30 秒复查照旧；只连模型的档位整条通道不能用；
+  这次任务拒绝过的网站（按主域名，缓存 15 秒）不放；同时 16 条、每分钟 600 次单独算，空闲 90 秒断开。通行证只在 shim
+  内存里，agent 拿不到；转发口只收 shim 自己起的 Chromium 发来的连接。
+- **`POST /v1/browser/ask`**（`Authorization: Bearer <通行证>`）：浏览器要打开一个新网站时 shim 来问。先解析、查地址
+  （不是公网的不问用户），再看档位、今天的额度、搜索和开发网站（完整网址）、一直允许的（同一主域名）、这次任务答过的
+  （按主域名），都不是才登记一条 `egress_requests`（`via=browser`，同一主域名只有一条在等）问用户，最多等 40 秒。回答
+  `allowed`（带范围 default / once / always）、`pending`（带请求 id）、`denied`、`private_address`、`resolve`、`not_allowed`、
+  `quota`、`too_many_asks`、`ask_rate`、`unavailable`。每次问询记一行日志（`via=browser, kind=ask`）。
+- 日志 `egress_log` 多了 `via`（direct / browser）、`kind`（ask / nav / res）、`page_site`（资源是哪个网站的网页带出来的，
+  shim 报的，只进日志）。超过每分钟上限合并时按通道分开。
+- 两条通道的回答共用：直接上网点的“访问一次”也记了网站，浏览器打开同一网站不再问；反过来浏览器按网站答的，直接上网
+  还是按完整网址问。
+
 ## 上线前（在东京打开）
 
 1. 用 `deploy/aliyun/network.py` 给服务机安全组加 8791（只许 VPC 网段）。这一步免费，要在能连阿里云接口的地方跑。

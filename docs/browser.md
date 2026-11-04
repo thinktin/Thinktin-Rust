@@ -134,6 +134,42 @@
 
 > 2026-11-04 重写，取代本节旧稿。依据是用户 11-04 的规定（[出口代理](egress.md)“开关与验收”）。代码行号都按分支 `claude/determined-lovelace-vn0j5h` 的 `b849872`。网址都是 2026-11-04 读的。标“未验证”的，要在东京 ACS 上实测（第 8 节）。
 
+### 实现状态（2026-11-04，分支 `claude/determined-lovelace-vn0j5h`）
+
+第一版的代码做完了，本机在真的 Chromium 上跑通（下面第 3 条）；还没在东京实测（Phase 0，第 8.1 节），五个模板都还是
+`[browser] supported = false`，所以线上现在没有人有浏览器。
+
+1. **做了什么**（提交 `37d7d71` 起）：
+   - proto、auth：`site_of`（主域名，psl）、浏览器通行证（`aud=browser`，普通接口一律不收）、shim 协议 2 和 `EnableBrowser`。
+   - store：迁移 0038（提问按网站去重、日志记通道和种类、授权补 `browser`）。
+   - 出口代理：浏览器通道（用户名 `browser` + 通行证：不按网站问，内网/额度/日志照旧，16 条单独算，这次任务拒绝过的
+     网站不放）和 `POST /v1/browser/ask`；`--egress-browser-lanes` 不加就整个关着。
+   - agent-shim 的浏览器模块（`crates/agent-shim/src/browser/`）：Chromium 只开 pipe、守门、转发口（核对来人是我们的
+     Chromium）、给 Playwright 的前置口（秘密路径，拒绝 `Fetch.*`、改代理、忽略证书错误等）、Playwright MCP 客户端、工具
+     白名单和结果第一行的状态、说明页；shim 不可转储。
+   - 编排服务：服务器总开关 `[browser] enabled`、模板 `[browser] supported`、授权里有 `browser` 三样都满足才带
+     `THINKTIN_BROWSER=1` 启动、`Ready` 后只给协议 2 的 shim 发通行证。
+   - 五种 agent 的配置：Claude 逐个放行浏览器工具；Pi、OpenClaw 只拿搜索和浏览器工具；OpenClaw 自带的浏览器插件关掉；
+     Hermes 的环境变量里没有 `BROWSER_CDP_URL` 这类（有测试）。
+   - 镜像：`WITH_BROWSER=1`（或清单写了 `supported`）时装 Chromium、字体、托管策略、Playwright MCP 0.0.84（打了
+     `bind()` 补丁）、生成 `tools.json`；`/usr/bin/chromium` 移出 PATH。东京 overlay 开了总开关和浏览器通道。
+2. **和设计不一样的地方**：
+   - 0.0.84 实际的工具和第 2.6 节的表不完全一样：多了 `browser_find`、`browser_network_request`（只读，保留），
+     `browser_drop`（往网页里放文件，去掉）、`browser_emulate_media`（用不上，去掉），没有 `browser_install`。
+   - 打开网页时 Playwright 把页面快照存成工作区里的文件（`.thinktin/browser/page-*.yml`），结果里只给文件名；
+     `browser_snapshot` 直接返回快照。这是上游 0.0.84 的做法，没改。
+   - Codex 每点一下都要审批的问题：直接用了第 2.7 节的第 3 种办法，所有浏览器工具都标成只读（`readOnlyHint`）。点击、
+     输入不真是只读，是故意这样标的：打开网站由守门问用户。前两种办法要改 Codex 的配置，没实测，没用。
+   - 没开 `PR_SET_CHILD_SUBREAPER`：shim 用 tokio 管子进程，自己回收孤儿进程会抢走 tokio 要等的退出状态。改成
+     Chromium、Playwright 各自一个进程组，停的时候整组杀掉。
+   - 镜像 LABEL 写不进运行时才知道的 Chromium 版本，改成写进 `/opt/thinktin/browser/chromium-version`（许可证清单里也有）。
+3. **本机冒烟**：`tools/smoke/browser_local.py`（假出口代理 + 本机 https 测试网站）配 agent-shim 里忽略的测试
+   `browser_smoke`，用真的 Chromium 和 Playwright MCP 跑：新网站问用户、答应后打开，网页里另一个网站的图片走资源不问，
+   没人答的回说明页（第一行 `pending_approval`），拒绝的回 `user_denied`，没批准、拒绝的网站一个连接都没有。跑的时候
+   发现主页面自己的网页请求被当成了当前网页的资源登记（没批准的网站因此能经转发口预连接、取图标），已经修了。
+4. **还没做的**：东京 Phase 0 和验收（第 8 节）；CI 里对照 `tools.json` 和白名单；`crates/e2e` 的浏览器场景和本机 docker
+   集成测试；第二步的 App 卡片（【二】）；B 阶段（第 12 节）。
+
 ### 0. 五行摘要
 
 1. **怎么做**：每个 agent 的沙箱里装开源的 Chromium 浏览器，由 agent-shim 启动和管理。五种 agent 用同一套 `browser_*` 工具（微软开源的 Playwright MCP）。不买任何服务。
