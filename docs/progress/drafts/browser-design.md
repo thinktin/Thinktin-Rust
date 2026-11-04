@@ -2102,3 +2102,34 @@ Chromium → 转发口 CONNECT www.zhihu.com:443（主页面）→ 代理浏览�
  }
 ]
 ```
+
+
+## 合成时的说明
+
+---
+
+（以下不属于本节，是给合并的人看的。）
+
+**本节以外要一起改的地方**
+- `docs/browser.md` 开头的状态行，以及第 5 节第 2 步“每个实例一个开关，默认关”，都已经被本节取代。
+- `docs/egress.md`“开关与验收”第 2 条指向本节，要加一段“浏览器通道”。
+- `docs/threat-model.md` 加 R1–R6，进度文件也要更新。
+
+**相对三份草案改正的事实**
+1. 不再锁死 Debian Chromium 的小版本，因为安全源会下掉旧版本。
+2. `tokio-tungstenite` 不在 `[workspace.dependencies]` 里（gateway 和 relay 各自写的是 0.29.0）；agent-shim 也没有 `base64`，两个都要加。
+3. `/v1/browser/ask` 先解析地址、做 SSRF 检查，再问用户。
+4. 拒绝过的网站，在别的网页里当资源也拒绝。
+5. Codex 先试 `approval_mode`，最后才用 `readOnlyHint`。
+6. 走哪条通道看签名里的 `aud`，不看用户名（MVP 草案只看用户名，任何 agent 都能冒用）。
+7. 不开 TCP 调试端口；Playwright MCP 在 CDP 模式下也会调 `bind()` 开 socket（`coreBundle.js:76171-76187`），要打补丁关掉。
+8. `about:blank`、`data:`、`blob:` 页面不算已批准；`browser_navigate` 加网址协议白名单。
+9. 本机地址走转发口并被拒（MVP 草案让本机直连）。
+10. 守门挂了就杀掉 Chromium（UX 草案只是停止接受新网站）。
+11. 新接口放在 llm-gw 的 8791 端口：沙箱连不到 gateway（安全优先草案放在了 gateway）。
+12. Playwright 用 CDP 连接时要用 `Target.setAutoAttach`、`Browser.setDownloadBehavior`、`Target.createTarget`（`coreBundle.js:40156`、`40381`），前置口必须放行（安全优先草案把它们拦了）。
+13. ACS 按规格收整段运行时间的钱，不是只算浏览的时候。
+14. `.thinktin` 在工作区里面。
+15. 行号：`CLAUDE_ALLOWED_TOOLS` 在 `config.rs:200`；等待中请求的唯一索引在 `0034_egress_requests.sql:28`。
+16. 去掉了 MVP 草案里“后退缓存会绕过拦截”的错误理由。
+17. 工作量按旧估计重新核算：MVP 草案的 11.75–13.75 天偏乐观。
