@@ -10690,6 +10690,11 @@ data class UsageBucket (
     var `estimatedRequests`: kotlin.ULong
     , 
     var `failedRequests`: kotlin.ULong
+    , 
+    /**
+     * 厂商替 agent 搜了几次（用户的模型 key 另付钱，不在 token 里；docs/search.md）。
+     */
+    var `webSearches`: kotlin.ULong
     
 ){
     
@@ -10715,6 +10720,7 @@ public object FfiConverterTypeUsageBucket: FfiConverterRustBuffer<UsageBucket> {
             FfiConverterULong.read(buf),
             FfiConverterULong.read(buf),
             FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
         )
     }
 
@@ -10727,7 +10733,8 @@ public object FfiConverterTypeUsageBucket: FfiConverterRustBuffer<UsageBucket> {
             FfiConverterULong.allocationSize(value.`outputTokens`) +
             FfiConverterULong.allocationSize(value.`chargedTokens`) +
             FfiConverterULong.allocationSize(value.`estimatedRequests`) +
-            FfiConverterULong.allocationSize(value.`failedRequests`)
+            FfiConverterULong.allocationSize(value.`failedRequests`) +
+            FfiConverterULong.allocationSize(value.`webSearches`)
     )
 
     override fun write(value: UsageBucket, buf: ByteBuffer) {
@@ -10740,6 +10747,7 @@ public object FfiConverterTypeUsageBucket: FfiConverterRustBuffer<UsageBucket> {
             FfiConverterULong.write(value.`chargedTokens`, buf)
             FfiConverterULong.write(value.`estimatedRequests`, buf)
             FfiConverterULong.write(value.`failedRequests`, buf)
+            FfiConverterULong.write(value.`webSearches`, buf)
     }
 }
 
