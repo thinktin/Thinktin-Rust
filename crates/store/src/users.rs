@@ -176,7 +176,7 @@ impl Tx<Worker> {
     }
 
     /// 注销（16.4）：销毁用户的 DEK（key、保险箱和产出物的密文从此解不开），删掉用户的内容
-    /// （运行、提示词、摘要、事件、收件箱、计划、审批、团队、保险箱、产出物索引、推送记录、
+    /// （运行、提示词、摘要、事件、收件箱、计划、审批、团队和他建的项目、保险箱、产出物索引、推送记录、
     /// 电脑工具的调用和手机电脑之间的消息；产出物的密文排进清理队列，由后台从对象存储删掉），
     /// 手机号和设备信息去标识化，实例标记删除（沙箱和工作区卷由巡检回收）。
     /// 审计日志和用量记录只有 id 和计数，按网络日志的要求保留。
@@ -208,8 +208,19 @@ impl Tx<Worker> {
             "DELETE FROM content_reports WHERE user_id = $1",
             // 送达的也删：载荷里有推送的标题和正文（运行摘要、工具调用标题）。
             "DELETE FROM outbox WHERE user_id = $1",
+            // 8.13 以前的团队（复制进项目以后冻结的旧表）。
             "DELETE FROM teams WHERE user_id = $1",
             "DELETE FROM team_templates WHERE user_id = $1",
+            // 项目（8.13）：他的 agent 离开所有项目；他建的项目删掉（成员、agent、邀请、密钥级联）；他在别人项目里的
+            // 成员身份标成注销；发给他的、他发的邀请删掉（手机号邀请在改掉手机号之前按号码找）。
+            "UPDATE project_agents SET is_lead = false, dedicated = false, left_at = coalesce(left_at, now()) \
+               WHERE user_id = $1",
+            "DELETE FROM projects WHERE creator_id = $1",
+            "UPDATE project_members SET left_at = now(), left_reason = 'erased' \
+               WHERE user_id = $1 AND left_at IS NULL",
+            "DELETE FROM project_invites WHERE inviter_id = $1 OR invitee_id = $1 \
+               OR invitee_phone = (SELECT phone FROM users WHERE id = $1)",
+            "DELETE FROM project_templates WHERE user_id = $1",
             "DELETE FROM vault_requests WHERE user_id = $1",
             "DELETE FROM vault_items WHERE user_id = $1",
             // IM 群机器人的 token 和签名密钥（10.5）。

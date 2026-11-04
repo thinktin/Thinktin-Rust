@@ -1,125 +1,88 @@
-//! 团队与团队模板（8.1）。
+//! 团队与团队模板（8.1）：8.13 起是单人项目（`projects.rs`）上的一层，接口和返回的结构不变。团队模板存在
+//! `project_templates`（原来的 `teams`、`team_members`、`team_templates` 复制以后不再读写）。
 
 use chrono::{DateTime, Utc};
 use proto::domain::{
-    InstanceId, Team, TeamId, TeamMember, TeamRole, TeamTemplate, TeamTemplateId, TeamTemplateSpec,
+    ProjectId, Team, TeamId, TeamMember, TeamRole, TeamTemplate, TeamTemplateId, TeamTemplateSpec,
 };
 use uuid::Uuid;
 
-use crate::{Error, Result, Tenant, Tx, from_json, parse, to_json};
+use crate::projects::SoloAgent;
+use crate::{Error, Result, Tenant, Tx, from_json, to_json};
+
+fn solo(members: &[TeamMember]) -> Vec<SoloAgent> {
+    members
+        .iter()
+        .map(|m| SoloAgent {
+            instance_id: m.instance_id,
+            is_lead: m.role == TeamRole::Lead,
+            position: m.position,
+        })
+        .collect()
+}
 
 impl Tx<Tenant> {
-    /// 建团队。成员必须是自己的、没删除的实例；最多一个负责人。
+    /// 建团队（单人项目）。成员必须是自己的、没删除的实例；最多一个负责人。
     pub async fn create_team(&mut self, name: &str, members: &[TeamMember]) -> Result<Team> {
-        let id = TeamId::new();
-        sqlx::query("INSERT INTO teams (id, user_id, name) VALUES ($1, app_user_id(), $2)")
-            .bind(id.0)
-            .bind(name)
-            .execute(self.conn())
-            .await?;
-        self.insert_members(id, members).await?;
-        self.team(id).await
-    }
-
-    async fn insert_members(&mut self, team: TeamId, members: &[TeamMember]) -> Result<()> {
-        if members.iter().filter(|m| m.role == TeamRole::Lead).count() > 1 {
-            return Err(Error::Invalid("a team has at most one lead".into()));
-        }
-        for m in members {
-            self.instance(m.instance_id).await?;
-            sqlx::query(
-                "INSERT INTO team_members (team_id, instance_id, user_id, role, position) \
-                 VALUES ($1, $2, app_user_id(), $3, $4)",
-            )
-            .bind(team.0)
-            .bind(m.instance_id.0)
-            .bind(m.role.as_str())
-            .bind(i32::try_from(m.position).unwrap_or(i32::MAX))
-            .execute(self.conn())
-            .await?;
-        }
-        Ok(())
+        let id = self.create_solo_project(name, &solo(members)).await?;
+        self.team(id.into()).await
     }
 
     pub async fn team(&mut self, id: TeamId) -> Result<Team> {
-        let (name, created_at): (String, DateTime<Utc>) =
-            sqlx::query_as("SELECT name, created_at FROM teams WHERE id = $1")
-                .bind(id.0)
-                .fetch_one(self.conn())
-                .await?;
-        let rows: Vec<(Uuid, String, i32)> = sqlx::query_as(
-            "SELECT m.instance_id, m.role, m.position FROM team_members m \
-             JOIN instances i ON i.id = m.instance_id AND i.state <> 'deleted' \
-             WHERE m.team_id = $1 ORDER BY m.position, m.instance_id",
-        )
-        .bind(id.0)
-        .fetch_all(self.conn())
-        .await?;
-        let members = rows
+        let p = self.own_project(id.into()).await?;
+        let members = self
+            .my_project_agents(id.into())
+            .await?
             .into_iter()
-            .map(|(instance, role, position)| {
-                Ok(TeamMember {
-                    instance_id: InstanceId(instance),
-                    role: parse(&role)?,
-                    position: u32::try_from(position).unwrap_or_default(),
-                })
+            .map(|a| TeamMember {
+                instance_id: a.instance_id,
+                role: if a.is_lead {
+                    TeamRole::Lead
+                } else {
+                    TeamRole::Member
+                },
+                position: a.position,
             })
-            .collect::<Result<_>>()?;
+            .collect();
         Ok(Team {
             id,
-            name,
+            name: p.name,
             members,
-            created_at,
+            created_at: p.created_at,
         })
     }
 
     pub async fn teams(&mut self) -> Result<Vec<Team>> {
-        let ids: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM teams ORDER BY created_at")
-            .fetch_all(self.conn())
-            .await?;
+        let ids: Vec<ProjectId> = self
+            .own_projects()
+            .await?
+            .into_iter()
+            .map(|p| p.id)
+            .collect();
         let mut out = Vec::with_capacity(ids.len());
         for id in ids {
-            out.push(self.team(TeamId(id)).await?);
+            out.push(self.team(id.into()).await?);
         }
         Ok(out)
     }
 
-    /// 改名、整体替换成员。
+    /// 改名、整体替换成员（原地改：去掉的标成离开，留下的保留设置）。
     pub async fn update_team(
         &mut self,
         id: TeamId,
         name: Option<&str>,
         members: Option<&[TeamMember]>,
     ) -> Result<Team> {
-        let done = sqlx::query(
-            "UPDATE teams SET name = coalesce($2, name), updated_at = now() WHERE id = $1",
-        )
-        .bind(id.0)
-        .bind(name)
-        .execute(self.conn())
-        .await?;
-        if done.rows_affected() == 0 {
-            return Err(Error::NotFound);
-        }
+        self.update_solo_project(id.into(), name).await?;
         if let Some(members) = members {
-            sqlx::query("DELETE FROM team_members WHERE team_id = $1")
-                .bind(id.0)
-                .execute(self.conn())
+            self.replace_my_project_agents(id.into(), &solo(members))
                 .await?;
-            self.insert_members(id, members).await?;
         }
         self.team(id).await
     }
 
     pub async fn delete_team(&mut self, id: TeamId) -> Result<()> {
-        let done = sqlx::query("DELETE FROM teams WHERE id = $1")
-            .bind(id.0)
-            .execute(self.conn())
-            .await?;
-        if done.rows_affected() == 0 {
-            return Err(Error::NotFound);
-        }
-        Ok(())
+        self.delete_solo_project(id.into()).await
     }
 
     pub async fn create_team_template(
@@ -129,7 +92,7 @@ impl Tx<Tenant> {
     ) -> Result<TeamTemplate> {
         let id = TeamTemplateId::new();
         let created_at: DateTime<Utc> = sqlx::query_scalar(
-            "INSERT INTO team_templates (id, user_id, name, spec) VALUES ($1, app_user_id(), $2, $3) \
+            "INSERT INTO project_templates (id, user_id, name, spec) VALUES ($1, app_user_id(), $2, $3) \
              RETURNING created_at",
         )
         .bind(id.0)
@@ -147,7 +110,7 @@ impl Tx<Tenant> {
 
     pub async fn team_templates(&mut self) -> Result<Vec<TeamTemplate>> {
         let rows: Vec<(Uuid, String, serde_json::Value, DateTime<Utc>)> = sqlx::query_as(
-            "SELECT id, name, spec, created_at FROM team_templates ORDER BY created_at",
+            "SELECT id, name, spec, created_at FROM project_templates ORDER BY created_at",
         )
         .fetch_all(self.conn())
         .await?;
@@ -165,7 +128,7 @@ impl Tx<Tenant> {
 
     pub async fn team_template(&mut self, id: TeamTemplateId) -> Result<TeamTemplate> {
         let (name, spec, created_at): (String, serde_json::Value, DateTime<Utc>) =
-            sqlx::query_as("SELECT name, spec, created_at FROM team_templates WHERE id = $1")
+            sqlx::query_as("SELECT name, spec, created_at FROM project_templates WHERE id = $1")
                 .bind(id.0)
                 .fetch_one(self.conn())
                 .await?;
@@ -178,7 +141,7 @@ impl Tx<Tenant> {
     }
 
     pub async fn delete_team_template(&mut self, id: TeamTemplateId) -> Result<()> {
-        let done = sqlx::query("DELETE FROM team_templates WHERE id = $1")
+        let done = sqlx::query("DELETE FROM project_templates WHERE id = $1")
             .bind(id.0)
             .execute(self.conn())
             .await?;

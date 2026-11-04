@@ -770,7 +770,7 @@ async fn every_tenant_table_the_app_can_touch_has_rls() {
              OR has_any_column_privilege('thinktin_app', c.oid, 'SELECT, INSERT, UPDATE') \
          FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
          WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') \
-           AND EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.oid AND a.attname = 'user_id' AND NOT a.attisdropped) \
+           AND NOT c.relispartition AND c.relname <> '_sqlx_migrations' \
          ORDER BY 1",
     )
     .fetch_all(t.db.pool())
@@ -810,6 +810,9 @@ async fn every_tenant_table_the_app_can_touch_has_rls() {
         "inbox_items",
         "artifacts",
         "teams",
+        "projects",
+        "project_agents",
+        "project_templates",
     ] {
         assert!(touched.contains(&must), "{must} missing from {touched:?}");
     }
@@ -1001,6 +1004,281 @@ async fn teams_move_into_single_user_projects() {
         .unwrap();
     assert_eq!(mine.len(), 2);
     assert!(!mine.contains(&t3));
+    ta.rollback().await.unwrap();
+}
+
+/// 单人项目只属于创建者（8.13）：别人看不到、改不了、塞不进自己；租户写不了共享、专属、目标这些列；共享以后（8.14 起由
+/// worker 加别的成员）租户不能再改它；邀请和项目密钥租户碰不到。
+#[tokio::test]
+async fn solo_projects_stay_with_their_creator() {
+    use proto::domain::{TeamMember, TeamRole};
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = user(db, "+8613800000961").await;
+    let bob = user(db, "+8613800000962").await;
+    let al = instance(db, alice).await;
+    let bi = instance(db, bob).await;
+    let mut ta = db.tenant(alice).await.unwrap();
+    let team = ta
+        .create_team(
+            "solo",
+            &[TeamMember {
+                instance_id: al.id,
+                role: TeamRole::Lead,
+                position: 0,
+            }],
+        )
+        .await
+        .unwrap();
+    ta.commit().await.unwrap();
+    let pid = team.id.0;
+
+    // Bob 看不到、改不了、删不了。
+    let mut tb = db.tenant(bob).await.unwrap();
+    assert!(matches!(tb.team(team.id).await, Err(Error::NotFound)));
+    assert!(matches!(
+        tb.update_team(team.id, Some("x"), None).await,
+        Err(Error::NotFound)
+    ));
+    assert!(matches!(
+        tb.delete_team(team.id).await,
+        Err(Error::NotFound)
+    ));
+    assert!(tb.teams().await.unwrap().is_empty());
+    tb.rollback().await.unwrap();
+    // Bob 塞不进 Alice 的项目（成员、agent 都不行）。
+    for sql in [
+        "INSERT INTO project_members (project_id, user_id, role) \
+         SELECT $1, app_user_id(), 'creator' WHERE $2::uuid IS NOT NULL",
+        "INSERT INTO project_agents (project_id, instance_id, user_id) VALUES ($1, $2, app_user_id())",
+    ] {
+        let mut tb = db.tenant(bob).await.unwrap();
+        let err = sqlx::query(sql)
+            .bind(pid)
+            .bind(bi.id.0)
+            .execute(tb.conn())
+            .await
+            .map_err(Error::from)
+            .unwrap_err();
+        assert!(matches!(err, Error::Forbidden(_)), "{sql}: {err:?}");
+        tb.rollback().await.unwrap();
+    }
+    // Alice 放不进 Bob 的实例（复合外键）。
+    let mut ta = db.tenant(alice).await.unwrap();
+    let err = sqlx::query(
+        "INSERT INTO project_agents (project_id, instance_id, user_id) VALUES ($1, $2, app_user_id())",
+    )
+    .bind(pid)
+    .bind(bi.id.0)
+    .execute(ta.conn())
+    .await
+    .map_err(Error::from)
+    .unwrap_err();
+    assert!(matches!(err, Error::Invalid(_)), "{err:?}");
+    ta.rollback().await.unwrap();
+    // 租户写不了专属、共享、目标。
+    for sql in [
+        "UPDATE project_agents SET dedicated = true WHERE project_id = $1",
+        "UPDATE projects SET shared_at = now() WHERE id = $1",
+        "UPDATE projects SET goal = 'x' WHERE id = $1",
+    ] {
+        let mut ta = db.tenant(alice).await.unwrap();
+        let err = sqlx::query(sql)
+            .bind(pid)
+            .execute(ta.conn())
+            .await
+            .map_err(Error::from)
+            .unwrap_err();
+        assert!(matches!(err, Error::Forbidden(_)), "{sql}: {err:?}");
+        ta.rollback().await.unwrap();
+    }
+    // 邀请、项目密钥：租户没有权限。
+    for sql in [
+        "SELECT 1 FROM project_invites",
+        "SELECT 1 FROM project_keys",
+    ] {
+        let mut ta = db.tenant(alice).await.unwrap();
+        let err = sqlx::query(sql)
+            .execute(ta.conn())
+            .await
+            .map_err(Error::from)
+            .unwrap_err();
+        assert!(matches!(err, Error::Forbidden(_)), "{sql}: {err:?}");
+        ta.rollback().await.unwrap();
+    }
+    // Bob 加入（8.14 起只有 worker 写得出）：触发器标成共享，Alice 只能看、不能改。
+    let mut w = db.worker().await.unwrap();
+    sqlx::query(
+        "INSERT INTO project_members (project_id, user_id, role, consented_at) VALUES ($1, $2, 'member', now())",
+    )
+    .bind(pid)
+    .bind(bob.0)
+    .execute(w.conn())
+    .await
+    .unwrap();
+    w.commit().await.unwrap();
+    let mut ta = db.tenant(alice).await.unwrap();
+    assert!(ta.own_project(team.id.into()).await.unwrap().shared);
+    assert!(matches!(
+        ta.update_team(team.id, Some("x"), None).await,
+        Err(Error::Conflict(_))
+    ));
+    assert!(matches!(
+        ta.delete_team(team.id).await,
+        Err(Error::Conflict(_))
+    ));
+    assert_eq!(ta.team(team.id).await.unwrap().members.len(), 1);
+    ta.rollback().await.unwrap();
+}
+
+/// 改团队成员是原地改（8.13）：换负责人、去掉再加回来都只有一行；重复的实例 409；删掉的实例空出负责人；worker 标成专属的
+/// agent 照样能改、能删实例。委派对象和负责人跟着变。
+#[tokio::test]
+async fn team_members_are_replaced_in_place() {
+    use proto::domain::{TeamMember, TeamRole};
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = user(db, "+8613800000971").await;
+    let bob = user(db, "+8613800000972").await;
+    let l = instance(db, alice).await;
+    let w2 = instance(db, alice).await;
+    let n = instance(db, alice).await;
+    let m = |i: &Instance, lead: bool, position: u32| TeamMember {
+        instance_id: i.id,
+        role: if lead {
+            TeamRole::Lead
+        } else {
+            TeamRole::Member
+        },
+        position,
+    };
+    let rows = |id: uuid::Uuid| {
+        let db = db.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM project_agents WHERE project_id = $1",
+            )
+            .bind(id)
+            .fetch_one(db.pool())
+            .await
+            .unwrap()
+        }
+    };
+    let mut ta = db.tenant(alice).await.unwrap();
+    let team = ta
+        .create_team("t", &[m(&l, true, 0), m(&w2, false, 1)])
+        .await
+        .unwrap();
+    assert_eq!(
+        ta.delegation_targets(l.id)
+            .await
+            .unwrap()
+            .iter()
+            .map(|i| i.id)
+            .collect::<Vec<_>>(),
+        [w2.id]
+    );
+    // 换负责人：一次改完。
+    let swapped = ta
+        .update_team(team.id, None, Some(&[m(&w2, true, 0), m(&l, false, 1)]))
+        .await
+        .unwrap();
+    assert_eq!(swapped.members[0].role, TeamRole::Lead);
+    assert_eq!(swapped.members[0].instance_id, w2.id);
+    // 去掉再加回来：还是那一行。
+    ta.update_team(team.id, None, Some(&[m(&l, true, 0)]))
+        .await
+        .unwrap();
+    assert_eq!(ta.team(team.id).await.unwrap().members.len(), 1);
+    ta.update_team(team.id, None, Some(&[m(&l, true, 0), m(&w2, false, 1)]))
+        .await
+        .unwrap();
+    ta.commit().await.unwrap();
+    assert_eq!(rows(team.id.0).await, 2);
+    let mut ta = db.tenant(alice).await.unwrap();
+    assert!(matches!(
+        ta.update_team(team.id, None, Some(&[m(&l, true, 0), m(&l, false, 1)]))
+            .await,
+        Err(Error::Conflict(_))
+    ));
+    ta.rollback().await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    assert!(w.is_team_lead(l.id).await.unwrap());
+    // worker 把 w2 标成专属。
+    sqlx::query("UPDATE project_agents SET dedicated = true WHERE instance_id = $1")
+        .bind(w2.id.0)
+        .execute(w.conn())
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+    let mut ta = db.tenant(alice).await.unwrap();
+    ta.update_team(
+        team.id,
+        Some("again"),
+        Some(&[m(&l, true, 0), m(&w2, false, 1)]),
+    )
+    .await
+    .unwrap();
+    // 删掉负责人的实例：从团队里消失、负责人空出来，下一次改团队可以换新负责人。
+    ta.delete_instance(l.id).await.unwrap();
+    assert_eq!(
+        ta.team(team.id)
+            .await
+            .unwrap()
+            .members
+            .iter()
+            .map(|x| x.instance_id)
+            .collect::<Vec<_>>(),
+        [w2.id]
+    );
+    ta.update_team(team.id, None, Some(&[m(&w2, false, 0), m(&n, true, 1)]))
+        .await
+        .unwrap();
+    // 专属的实例也能删。
+    ta.delete_instance(w2.id).await.unwrap();
+    ta.commit().await.unwrap();
+    let (left, dedicated): (bool, bool) = sqlx::query_as(
+        "SELECT left_at IS NOT NULL, dedicated FROM project_agents WHERE instance_id = $1",
+    )
+    .bind(w2.id.0)
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert!(left && dedicated);
+    let mut w = db.worker().await.unwrap();
+    assert!(!w.is_team_lead(l.id).await.unwrap());
+    assert!(w.is_team_lead(n.id).await.unwrap());
+    // 在别人的项目里当负责人不算（私人运行不拿委派工具）。
+    let bob_project = uuid::Uuid::now_v7();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO projects (id, creator_id, name) VALUES ('{bob_project}', '{bob}', 'b'); \
+         INSERT INTO project_members (project_id, user_id, role) VALUES ('{bob_project}', '{bob}', 'creator'); \
+         INSERT INTO project_members (project_id, user_id, role, consented_at) \
+           VALUES ('{bob_project}', '{alice}', 'member', now());",
+        bob = bob.0,
+        alice = alice.0,
+    )))
+    .execute(w.conn())
+    .await
+    .unwrap();
+    sqlx::query("UPDATE project_agents SET is_lead = false WHERE instance_id = $1")
+        .bind(n.id.0)
+        .execute(w.conn())
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO project_agents (project_id, instance_id, user_id, is_lead) VALUES ($1, $2, $3, true)",
+    )
+    .bind(bob_project)
+    .bind(n.id.0)
+    .bind(alice.0)
+    .execute(w.conn())
+    .await
+    .unwrap();
+    assert!(!w.is_team_lead(n.id).await.unwrap());
+    w.commit().await.unwrap();
+    let mut ta = db.tenant(alice).await.unwrap();
+    assert!(ta.delegation_targets(n.id).await.unwrap().is_empty());
     ta.rollback().await.unwrap();
 }
 
@@ -1239,9 +1517,90 @@ async fn erasing_an_account_deletes_its_content() {
     .execute(db.pool())
     .await
     .unwrap();
+    // 8.13 以前的团队：复制进项目以后冻结的旧表里还有内容，注销照样删。
+    for u in [alice, bob] {
+        sqlx::query("INSERT INTO teams (id, user_id, name) VALUES ($1, $2, 'old')")
+            .bind(uuid::Uuid::now_v7())
+            .bind(u.0)
+            .execute(db.pool())
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO team_templates (id, user_id, name, spec) VALUES ($1, $2, 'old', '{}'::jsonb)",
+        )
+        .bind(uuid::Uuid::now_v7())
+        .bind(u.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    }
+    // Alice 还是 Bob 的项目的成员（8.14 起由 worker 写），带着一个自己的 agent；Bob 邀请了 Alice 的号码和另一个号码。
+    let bob_project: uuid::Uuid =
+        sqlx::query_scalar("SELECT id FROM projects WHERE creator_id = $1 LIMIT 1")
+            .bind(bob.0)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    let alice_phone: String = sqlx::query_scalar("SELECT phone FROM users WHERE id = $1")
+        .bind(alice.0)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    let alice_instance: uuid::Uuid =
+        sqlx::query_scalar("SELECT id FROM instances WHERE user_id = $1 LIMIT 1")
+            .bind(alice.0)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO project_members (project_id, user_id, role, consented_at) \
+           VALUES ('{bob_project}', '{alice}', 'member', now()); \
+         INSERT INTO project_agents (project_id, instance_id, user_id) \
+           VALUES ('{bob_project}', '{alice_instance}', '{alice}'); \
+         INSERT INTO project_invites (id, project_id, inviter_id, kind, invitee_phone, expires_at) VALUES \
+           ('{}', '{bob_project}', '{bob}', 'phone', '{alice_phone}', now() + interval '1 day'), \
+           ('{}', '{bob_project}', '{bob}', 'phone', '+8613900000000', now() + interval '1 day');",
+        uuid::Uuid::now_v7(),
+        uuid::Uuid::now_v7(),
+        alice = alice.0,
+        bob = bob.0,
+    )))
+    .execute(db.pool())
+    .await
+    .unwrap();
     let mut w = db.worker().await.unwrap();
     w.erase_account(alice).await.unwrap();
     w.commit().await.unwrap();
+    // 项目：她建的删掉了，Bob 的还在；她在 Bob 的项目里标成注销、agent 离开；发给她号码的邀请删掉，别的号码的还在。
+    let (alice_projects, bob_projects): (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM projects WHERE creator_id = $1), \
+                (SELECT count(*) FROM projects WHERE creator_id = $2)",
+    )
+    .bind(alice.0)
+    .bind(bob.0)
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert_eq!((alice_projects, bob_projects), (0, 1));
+    let (live_member, live_agent, reason): (i64, i64, Option<String>) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM project_members WHERE user_id = $1 AND left_at IS NULL), \
+                (SELECT count(*) FROM project_agents WHERE user_id = $1 AND left_at IS NULL), \
+                (SELECT left_reason FROM project_members WHERE user_id = $1 AND project_id = $2)",
+    )
+    .bind(alice.0)
+    .bind(bob_project)
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        (live_member, live_agent, reason.as_deref()),
+        (0, 0, Some("erased"))
+    );
+    let invites: Vec<String> = sqlx::query_scalar("SELECT invitee_phone FROM project_invites")
+        .fetch_all(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(invites, ["+8613900000000"]);
     // 产出物的密文排进清理队列。
     let mut w = db.worker().await.unwrap();
     assert_eq!(w.blob_purge_batch(10).await.unwrap(), ["k"]);
@@ -1271,8 +1630,8 @@ async fn erasing_an_account_deletes_its_content() {
         "inbox_items",
         "outbox",
         "teams",
-        "team_members",
         "team_templates",
+        "project_templates",
         "vault_items",
         "vault_requests",
         "im_channels",

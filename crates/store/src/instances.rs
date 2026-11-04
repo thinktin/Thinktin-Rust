@@ -392,6 +392,14 @@ impl Tx<Tenant> {
         if done.rows_affected() == 0 {
             return Err(Error::NotFound);
         }
+        // 从项目里离开（运行记录还要引用这一行，只标记）；负责人位置空出来。
+        sqlx::query(
+            "UPDATE project_agents SET is_lead = false, left_at = now() \
+             WHERE instance_id = $1 AND left_at IS NULL",
+        )
+        .bind(id.0)
+        .execute(self.conn())
+        .await?;
         // 降级链随主路由级联删除。
         sqlx::query("DELETE FROM model_routes WHERE instance_id = $1")
             .bind(id.0)
@@ -565,9 +573,12 @@ impl Tx<Tenant> {
         let rows: Vec<Row> = sqlx::query_as(concat!(
             "SELECT ",
             columns!(),
-            " FROM instances WHERE state <> 'deleted' AND id <> $1 AND id IN ( \
-               SELECT m.instance_id FROM team_members m WHERE m.team_id IN ( \
-                 SELECT team_id FROM team_members WHERE instance_id = $1 AND role = 'lead')) \
+            " FROM instances WHERE state <> 'deleted' AND id <> $1 AND user_id = app_user_id() AND id IN ( \
+               SELECT a.instance_id FROM project_agents a \
+                WHERE a.left_at IS NULL AND a.user_id = app_user_id() AND a.project_id IN ( \
+                  SELECT l.project_id FROM project_agents l JOIN projects p ON p.id = l.project_id \
+                   WHERE l.instance_id = $1 AND l.is_lead AND l.left_at IS NULL \
+                     AND p.creator_id = app_user_id() AND p.status = 'active')) \
              ORDER BY name, id"
         ))
         .bind(lead.0)
@@ -578,10 +589,13 @@ impl Tx<Tenant> {
 }
 
 impl Tx<Worker> {
-    /// 实例是不是哪个团队的负责人（只有负责人能委派，8.7）。
+    /// 实例是不是它主人自己的哪个团队（单人项目）的负责人（只有负责人能委派，8.7）。别人的项目里当负责人不算：私人运行
+    /// 不能因此拿到委派工具。
     pub async fn is_team_lead(&mut self, instance: InstanceId) -> Result<bool> {
         Ok(sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM team_members WHERE instance_id = $1 AND role = 'lead')",
+            "SELECT EXISTS (SELECT 1 FROM project_agents a JOIN projects p ON p.id = a.project_id \
+               WHERE a.instance_id = $1 AND a.is_lead AND a.left_at IS NULL \
+                 AND p.creator_id = a.user_id AND p.status = 'active')",
         )
         .bind(instance.0)
         .fetch_one(self.conn())
