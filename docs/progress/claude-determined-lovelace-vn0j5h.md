@@ -45,10 +45,16 @@
   - 48c `a4d1ae6`、`8d61567`：出口代理的浏览器通道（用户名 `browser` + 通行证：不按网站问，内网/额度/日志照旧，16 条单独算，
     这次任务拒绝过的网站不放）和 `POST /v1/browser/ask`（先查地址，再档位、额度、默认、一直允许、这次答过的，最后问用户，按
     网站去重、最多等 40 秒）。llm-gw 加 `--egress-browser-lanes`，不加就整个关着。测试全过（含 Postgres）。
-  - 48d（进行中）：agent-shim 的浏览器模块：起 Chromium 和 Playwright MCP、CDP 守门、转发口、工具白名单。
-  - 48e：接线（编排服务签通行证、发 `EnableBrowser`；`[browser] enabled`；catalog `[browser] supported`；镜像装 Chromium；
-    五种 agent 的配置）。然后文档、测试、对抗评审。
-- 下一步：48d → 48e → 浏览器评审 → 跨用户项目。用户放好搜索 key（`THINKTIN_PARALLEL_SEARCH_KEY`）后做小测。
+  - 48d `9bcced6`、`2554604`：agent-shim 的浏览器模块（`crates/agent-shim/src/browser/`）：Chromium 只开 CDP pipe、守门、
+    转发口（核对来人是我们的 Chromium）、给 Playwright 的前置口、Playwright MCP 客户端、工具白名单和结果第一行的状态、说明页；
+    shim 不可转储。本机用真的 Chromium + Playwright MCP 0.0.84 跑通（`tools/smoke/browser_local.py` + 忽略的测试
+    `browser_smoke`），跑的时候发现并修了“主页面自己的请求被当成资源登记”的漏洞。
+  - 48e `db357c9`、`95057a4`：编排服务三样都满足才发通行证（服务器 `[browser] enabled`、模板 `[browser] supported`、授权有
+    `browser`），只给协议 2 的 shim；五种 agent 的配置；镜像 `WITH_BROWSER=1` 时装 Chromium 和 Playwright；东京 overlay 打开
+    总开关和 `--egress-browser-lanes`（五个模板都还是 `supported = false`，线上没人有浏览器）。文档 `32eb027`（browser.md
+    “实现状态”、egress.md“浏览器通道”、threat-model R1–R6）。全量测试 690 个通过。
+  - 对抗评审在跑（4 个方面，每个方面一个反驳者），结果写进 `drafts/browser-impl-review.md`。
+- 下一步：修评审确认的问题 → 跨用户项目（8.13–8.19）。东京：Phase 0（docs/browser.md 第 8.1 节），过了一个模板开一个 `supported`。用户放好搜索 key（`THINKTIN_PARALLEL_SEARCH_KEY`）后做小测。
 
 ## ⚠️ 紧急交接（2026-10-29 16:00 UTC，本会话 session_016LgPcdynywrhrjCq8VVFLt 周额度快用完）
 
