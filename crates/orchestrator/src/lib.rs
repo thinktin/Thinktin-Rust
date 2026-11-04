@@ -6,6 +6,7 @@ pub mod ask;
 pub mod board;
 pub mod computer;
 pub mod delegate;
+pub mod egress;
 pub mod exec;
 pub mod executor;
 pub mod live;

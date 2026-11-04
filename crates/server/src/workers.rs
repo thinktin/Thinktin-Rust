@@ -59,6 +59,8 @@ const EGRESS_PURGE_BATCH: i64 = 10_000;
 const EGRESS_PURGE_BATCHES: usize = 100;
 /// 多久看一次有没有要推送的电脑审批请求（14.2），一次最多领多少条。
 const DEVICE_NOTICE_EVERY: Duration = Duration::from_secs(2);
+/// agent 想访问的网站（2.7）多久没人回答就过期。
+const EGRESS_ASK_EXPIRY_HOURS: i64 = 24;
 const DEVICE_NOTICE_BATCH: i64 = 100;
 
 async fn stopped(mut stop: ShutdownListener) {
@@ -350,6 +352,24 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
         .await;
         Ok(())
     });
+    // agent 想访问不在名单上的网站（2.7）：提醒用户回答。
+    let asks_db = db.clone();
+    bg.spawn("egress-requests", move |stop| async move {
+        every(DEVICE_NOTICE_EVERY, stop, || async {
+            loop {
+                match orchestrator::egress::notify_requests(&asks_db, DEVICE_NOTICE_BATCH).await {
+                    Ok(n) if n as i64 >= DEVICE_NOTICE_BATCH => {}
+                    Ok(_) => break,
+                    Err(e) => {
+                        error!(error = %e, "notifying egress requests failed");
+                        break;
+                    }
+                }
+            }
+        })
+        .await;
+        Ok(())
+    });
     let maintenance_every = Duration::from_secs(cfg.worker.maintenance_every_secs.max(60));
     let db = db.clone();
     bg.spawn("maintenance", move |stop| async move {
@@ -421,6 +441,14 @@ async fn maintain(db: &Db) -> store::Result<()> {
         + w.purge_live_activities(LIVE_ACTIVITY_RETENTION).await?
         + w.purge_archived_board_posts(store::BOARD_ARCHIVE_RETENTION)
             .await?;
+    // 太久没人回答的出网请求（2.7）过期。
+    let expired = w
+        .expire_egress_asks(
+            Utc::now() - chrono::Duration::hours(EGRESS_ASK_EXPIRY_HOURS),
+            EGRESS_PURGE_BATCH,
+        )
+        .await?;
+    let purged = purged + expired;
     // 内容举报（5.5）的待处理队列：几条、最早的一条等了多久（告警看它）。
     let (open, oldest) = w.report_backlog().await?;
     w.commit().await?;

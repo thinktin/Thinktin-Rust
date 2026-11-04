@@ -532,3 +532,92 @@ async fn items_whose_lock_expired_are_not_sent_twice() {
     );
     w.rollback().await.unwrap();
 }
+
+/// agent 想访问不在名单上的网站（2.7）：后台提醒用户一次（收件箱、推送），换了任务、隔了一小时以上再问的再提醒。
+#[tokio::test]
+async fn egress_requests_are_announced_once() {
+    use orchestrator::egress::notify_requests;
+
+    let Some(t) = TestDb::new().await else { return };
+    let mut w = t.db.worker().await.unwrap();
+    let (user, _) = w.upsert_user_by_phone("+8613800000003").await.unwrap();
+    w.commit().await.unwrap();
+    let user = user.id;
+    let mut tx = t.db.tenant(user).await.unwrap();
+    let inst = tx
+        .create_instance(&store::NewInstance {
+            agent_id: "claude".into(),
+            agent_version: "1".into(),
+            harness: "acp".into(),
+            name: "Writer".into(),
+            workspace_id: "ws-egress-notice".into(),
+            limits: Default::default(),
+        })
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let mut g = t.db.llmgw().await.unwrap();
+    let id = g
+        .egress_ask(user, inst.id, "example.com", None, 5)
+        .await
+        .unwrap()
+        .unwrap();
+    g.commit().await.unwrap();
+
+    assert_eq!(notify_requests(&t.db, 10).await.unwrap(), 1);
+    assert_eq!(notify_requests(&t.db, 10).await.unwrap(), 0);
+    // 同一个任务里再问：不再提醒。
+    let mut g = t.db.llmgw().await.unwrap();
+    g.egress_ask(user, inst.id, "example.com", None, 5)
+        .await
+        .unwrap();
+    g.commit().await.unwrap();
+    assert_eq!(notify_requests(&t.db, 10).await.unwrap(), 0);
+
+    let mut tx = t.db.tenant(user).await.unwrap();
+    let inbox = tx.inbox(None, 100, false).await.unwrap();
+    tx.rollback().await.unwrap();
+    assert_eq!(inbox.len(), 1, "{inbox:?}");
+    assert_eq!(
+        (
+            inbox[0].kind.as_str(),
+            inbox[0].subtype.as_deref(),
+            inbox[0].title.as_str(),
+            inbox[0].body.as_str(),
+            inbox[0].instance_id,
+        ),
+        (
+            "info",
+            Some("egress_request"),
+            "Writer 想访问一个网站",
+            "example.com：允许访问一次、一直允许，还是拒绝？",
+            Some(inst.id),
+        )
+    );
+
+    // 一个多小时后换了任务再问：再提醒一次。
+    sqlx::query(
+        "UPDATE egress_requests SET notified_at = now() - interval '2 hours' WHERE id = $1",
+    )
+    .bind(id.0)
+    .execute(t.db.pool())
+    .await
+    .unwrap();
+    let mut tx = t.db.tenant(user).await.unwrap();
+    let run = tx
+        .create_run(&store::NewRun::new(
+            inst.id,
+            proto::domain::RunSource::User,
+            "hi",
+            "1",
+        ))
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let mut g = t.db.llmgw().await.unwrap();
+    g.egress_ask(user, inst.id, "example.com", Some(run.id), 5)
+        .await
+        .unwrap();
+    g.commit().await.unwrap();
+    assert_eq!(notify_requests(&t.db, 10).await.unwrap(), 1);
+}

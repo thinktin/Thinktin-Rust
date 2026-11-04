@@ -142,6 +142,20 @@ pub fn account_restored(locale: Locale) -> (&'static str, &'static str) {
     }
 }
 
+/// agent 想访问一个不在名单上的网站（2.7）：问用户访问一次 / 一直允许 / 拒绝。
+pub fn egress_request(locale: Locale, instance: &str, host: &str) -> (String, String) {
+    match locale {
+        Locale::ZhCn => (
+            format!("{instance} 想访问一个网站"),
+            format!("{host}：允许访问一次、一直允许，还是拒绝？"),
+        ),
+        Locale::En => (
+            format!("{instance} wants to visit a website"),
+            format!("{host}: allow once, always, or deny?"),
+        ),
+    }
+}
+
 /// 举报处理完了（5.5）：告诉举报的人结果（运营写的处理结果原样带上）。
 pub fn report_handled(locale: Locale, resolution: &str) -> (&'static str, String) {
     match locale {
