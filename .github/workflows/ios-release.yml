@@ -34,6 +34,11 @@ on:
         description: 只做 TestFlight 内部测试：建内部测试组、把团队里的人加进去并发邀请（不打包，在 Linux 上跑）
         type: boolean
         default: false
+      builder:
+        description: 在哪里打包：github（GitHub 的 Mac）或 codemagic（GitHub 的 Mac 排不上时；要 THINKTIN_AI_CODEMAGIC_API_KEY）
+        type: choice
+        options: [github, codemagic]
+        default: github
 
 # 同时只发一个版本，不取消正在上传的。
 concurrency:
@@ -50,9 +55,41 @@ env:
   TEAM_ID_DEFAULT: 5BUH46M229
 
 jobs:
+  # 先在 Linux 上验 App Store Connect 的密钥、权限和苹果待同意的协议：Linux 机器随时排得上，一分钟内就知道，
+  # 不用先等 macOS 机器（排不上时要等十几分钟才被取消）、再等 Rust 编完。
+  key-check:
+    name: Check the App Store Connect key
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.invite_testers }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: "Test flight"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the App Store Connect API key
+        id: key
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID || vars.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID || vars.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
+          P8_IN_VARS: ${{ vars.ASC_KEY_P8 != '' }}
+        run: tools/apple/asc_install_key.sh
+      - name: Check the API key with App Store Connect
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet 'pyjwt[crypto]==2.10.1'
+          python tools/apple/asc_key_check.py "$KEY_ID" "$ISSUER_ID" "${{ steps.key.outputs.path }}" cn.thinktin.Thinktin
+      - name: Remove the API key
+        if: always()
+        run: rm -f "$RUNNER_TEMP"/AuthKey*.p8
+
   testflight:
     name: Archive and upload to TestFlight
-    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.invite_testers }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (!inputs.invite_testers && inputs.builder != 'codemagic') }}
+    needs: key-check
     runs-on: ${{ inputs.runner || (vars.IOS_RELEASE_USE_INTEL == 'true' && 'macos-15-intel') || 'macos-26' }}
     timeout-minutes: 150
     environment: "Test flight"
@@ -100,7 +137,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      # 密钥先装、先验：有问题一分钟内就报，不用等 Rust 编完。
+      # 密钥已经在前面的 key-check 作业（Linux）里验过；这里只装上，签名和上传要用。
       - name: Install the App Store Connect API key
         id: key
         env:
@@ -110,59 +147,7 @@ jobs:
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
           ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
           P8_IN_VARS: ${{ vars.ASC_KEY_P8 != '' }}
-        run: |
-          set -euo pipefail
-          # 不用数组：macOS 的 /bin/bash 3.2 在 set -u 下碰到空数组会报错。
-          missing=""
-          [[ -n "$ASC_KEY_ID" ]] || missing="$missing ASC_KEY_ID"
-          [[ -n "$ASC_ISSUER_ID" ]] || missing="$missing ASC_ISSUER_ID"
-          [[ -n "$ASC_KEY_P8" || -n "$ASC_KEY_P8_BASE64" ]] || missing="$missing ASC_KEY_P8"
-          if [[ -n "$missing" ]]; then
-            echo "::error::GitHub 的 Test flight 环境里读不到${missing}：Settings → Environments → Test flight → Environment secrets 里加上（名字要一字不差）"
-            if [[ "$P8_IN_VARS" == "true" ]]; then
-              echo "::error::ASC_KEY_P8 填在了 Environment variables 里：私钥要放 Environment secrets（变量谁都看得见），挪过去后把变量删掉"
-            fi
-            exit 1
-          fi
-          # 从网页上复制时常带上空格、换行：去掉。
-          key_id=$(printf '%s' "$ASC_KEY_ID" | tr -d '[:space:]')
-          issuer_id=$(printf '%s' "$ASC_ISSUER_ID" | tr -d '[:space:]' | tr 'A-F' 'a-f')
-          if ! [[ "$key_id" =~ ^[A-Z0-9]{10}$ ]]; then
-            echo "::error::ASC_KEY_ID 不像密钥 ID（应该是 10 位大写字母和数字，现在是 ${#key_id} 个字符）：填团队密钥列表里那一行的“密钥 ID”"
-            exit 1
-          fi
-          if ! [[ "$issuer_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
-            echo "::error::ASC_ISSUER_ID 不像 Issuer ID（应该是 8-4-4-4-12 位的一串，现在是 ${#issuer_id} 个字符）：填团队密钥页面顶上的 Issuer ID"
-            exit 1
-          fi
-          echo "::add-mask::$key_id"
-          echo "::add-mask::$issuer_id"
-          {
-            echo "KEY_ID=$key_id"
-            echo "ISSUER_ID=$issuer_id"
-          } >> "$GITHUB_ENV"
-          path="$RUNNER_TEMP/AuthKey.p8"
-          (
-            umask 077
-            if [[ -n "$ASC_KEY_P8" ]]; then
-              # 粘贴时换行可能丢了或变成空格：去掉首尾两行和所有空白，按 64 个字符一行重排成 PEM。
-              body=$(printf '%s' "$ASC_KEY_P8" | sed -e 's/-----BEGIN PRIVATE KEY-----//' -e 's/-----END PRIVATE KEY-----//' | tr -d ' \t\r\n')
-              { echo "-----BEGIN PRIVATE KEY-----"; printf '%s\n' "$body" | fold -w 64; echo "-----END PRIVATE KEY-----"; } > "$path"
-            else
-              printf '%s' "$ASC_KEY_P8_BASE64" | base64 --decode > "$path"
-            fi
-          )
-          if ! openssl pkey -in "$path" -noout 2>/dev/null; then
-            echo "::error::ASC_KEY_P8 读不出私钥：用文本编辑打开 .p8 文件，全选复制（从 -----BEGIN 到 END-----）再粘贴一次"
-            exit 1
-          fi
-          echo "path=$path" >> "$GITHUB_OUTPUT"
-
-      - name: Check the API key with App Store Connect
-        run: |
-          set -euo pipefail
-          python -m pip install --quiet 'pyjwt[crypto]==2.10.1'
-          python tools/apple/asc_key_check.py "$KEY_ID" "$ISSUER_ID" "${{ steps.key.outputs.path }}" cn.thinktin.Thinktin
+        run: tools/apple/asc_install_key.sh
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -198,6 +183,7 @@ jobs:
           TEAM_ID: ${{ secrets.APPLE_TEAM_ID || env.TEAM_ID_DEFAULT }}
         run: |
           set -euo pipefail
+          python -m pip install --quiet 'pyjwt[crypto]==2.10.1'
           out="$RUNNER_TEMP/signing"
           destination=export
           if [[ "$UPLOAD" == "true" ]]; then destination=upload; fi
@@ -289,6 +275,38 @@ jobs:
             ${{ runner.temp }}/export.log
           if-no-files-found: ignore
 
+  # 同样的打包、上传放到 Codemagic 的 Mac 上（codemagic.yaml 的 ios-testflight）：这里只发起、跟到结束、把每一步的结果和
+  # 失败步骤的日志末尾打出来。苹果的密钥在 Codemagic 的 testflight 变量组里，这里只传不机密的参数；构建号用本工作流的运行序号。
+  codemagic:
+    name: Archive and upload on Codemagic
+    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.invite_testers && inputs.builder == 'codemagic' }}
+    needs: key-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    environment: "Test flight"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run ios-testflight on Codemagic
+        env:
+          THINKTIN_AI_CODEMAGIC_API_KEY: ${{ secrets.THINKTIN_AI_CODEMAGIC_API_KEY }}
+          UPLOAD: ${{ inputs.upload }}
+          CLIENT: ${{ inputs.demo && 'mock' || '' }}
+        run: |
+          # 从标签手动触发时让 Codemagic 也按标签取代码（版本号取标签，和 testflight 作业一样）。
+          ref="$GITHUB_REF_NAME"
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then ref="tag:$GITHUB_REF_NAME"; fi
+          python tools/apple/codemagic_build.py ios-testflight "$ref" \
+            "UPLOAD=$UPLOAD" "CLIENT=$CLIENT" "THINKTIN_BUILD_NUMBER=${{ github.run_number }}" "THINKTIN_COMMIT=$GITHUB_SHA"
+      # GitHub 这边被取消时，Codemagic 上的构建也取消（不白花 Codemagic 的分钟数）。
+      - name: Cancel the Codemagic build
+        if: ${{ cancelled() && env.CODEMAGIC_BUILD_ID != '' }}
+        env:
+          THINKTIN_AI_CODEMAGIC_API_KEY: ${{ secrets.THINKTIN_AI_CODEMAGIC_API_KEY }}
+        run: python tools/apple/codemagic_build.py --cancel "$CODEMAGIC_BUILD_ID"
+
   # TestFlight 内部测试员：内部测试员只能是 App Store Connect 团队里的人，所以不收邮箱参数（仓库公开，日志也公开），
   # 由 tools/apple/asc_testflight.py 读团队用户，加进内部测试组、发邀请邮件。
   testers:
@@ -302,26 +320,20 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Invite testers
+      - name: Install the App Store Connect API key
+        id: key
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID || vars.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID || vars.ASC_ISSUER_ID }}
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
           ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
+          P8_IN_VARS: ${{ vars.ASC_KEY_P8 != '' }}
+        run: tools/apple/asc_install_key.sh
+      - name: Invite testers
         run: |
           set -euo pipefail
-          key_id=$(printf '%s' "$ASC_KEY_ID" | tr -d '[:space:]')
-          issuer_id=$(printf '%s' "$ASC_ISSUER_ID" | tr -d '[:space:]' | tr 'A-F' 'a-f')
-          path="$RUNNER_TEMP/AuthKey.p8"
-          (
-            umask 077
-            if [[ -n "$ASC_KEY_P8" ]]; then
-              body=$(printf '%s' "$ASC_KEY_P8" | sed -e 's/-----BEGIN PRIVATE KEY-----//' -e 's/-----END PRIVATE KEY-----//' | tr -d ' \t\r\n')
-              { echo "-----BEGIN PRIVATE KEY-----"; printf '%s\n' "$body" | fold -w 64; echo "-----END PRIVATE KEY-----"; } > "$path"
-            else
-              printf '%s' "$ASC_KEY_P8_BASE64" | base64 --decode > "$path"
-            fi
-          )
           python -m pip install --quiet 'pyjwt[crypto]==2.10.1'
-          python tools/apple/asc_testflight.py "$key_id" "$issuer_id" "$path" cn.thinktin.Thinktin
-          rm -f "$path"
+          python tools/apple/asc_testflight.py "$KEY_ID" "$ISSUER_ID" "${{ steps.key.outputs.path }}" cn.thinktin.Thinktin
+      - name: Remove the API key
+        if: always()
+        run: rm -f "$RUNNER_TEMP"/AuthKey*.p8
