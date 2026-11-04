@@ -1,0 +1,260 @@
+import SwiftUI
+import ThinktinKit
+
+/// 首页（`.home`，主导航栈永远的根，WBS 12.16；规范 docs/ios-ui-redesign.md 4.2.1 第 0 轮的最小版、6.1 A + A1）：
+///
+/// - 没有标题。plain 列表，每行一个实例（`HomeInstanceRow`），最后活动新的在前（`AppModel.homeRows`）；
+///   点一行压栈进它的对话（`NavigationLink(value: AppRoute.conversation(id))`，`Router` 顺带记成当前实例）。
+/// - 左上账号头像 → 设置（sheet，`router.open(.settings)`）；右上“+” → 领养新实例（sheet，`.adopt(agentID: nil)`）。
+/// - 底部：左边工作台菜单（`WorkbenchMenu`），右边搜索栏（iOS 26 在底部条里，旧系统在导航栈的导航栏下面）。
+///   搜索栏里有字时列表换成搜索结果（`HomeSearchResults`）；`router.searchRequest` 变了（`open(.search)`、深链）就激活它。
+///   macOS 没有底部条：工作台和“+”在工具栏右边，搜索栏是工具栏里的那个。
+/// - 下拉刷新；回到首页时角标太久没刷新就刷新。离线、连接横幅由 `AppDestination` 放在顶部。
+///
+/// 置顶、隐藏、长按菜单、“等你处理”提示行、搜索的类型筛选是第 1、2 轮的（规范 7.3、7.4 的 A 线）。
+struct HomeScreen: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.client) private var client
+
+    var body: some View {
+        HomeContent(model: model, search: SearchModel(client: client))
+    }
+}
+
+private struct HomeContent: View {
+    let model: AppModel
+    @State private var search: SearchModel
+    @State private var isSearchPresented = false
+
+    @Environment(\.displayLanguage) private var language
+
+    init(model: AppModel, search: SearchModel) {
+        self.model = model
+        _search = State(initialValue: search)
+    }
+
+    var body: some View {
+        @Bindable var search = search
+        let router = model.router
+        // 外面是 ZStack 不是 Group：搜索栏挂在一个不变的视图上，输入第一个字换成结果时不会丢焦点。
+        ZStack {
+            if search.isSearching {
+                HomeSearchResults(search: search)
+            } else {
+                HomeInstanceList(model: model)
+            }
+        }
+        .themedGroupedBackground()
+        .searchable(text: $search.query, isPresented: $isSearchPresented, prompt: Text(SearchText.prompt(language)))
+        .toolbar { HomeToolbar(model: model, language: language) }
+        #if os(iOS)
+            .toolbarTitleDisplayMode(.inline)
+        #else
+            .navigationTitle(AppRoute.home.title(language))
+        #endif
+        .onAppear(perform: activatePendingSearch)
+        .onChange(of: router.searchRequest, activatePendingSearch)
+        .onChange(of: isSearchPresented) {
+            guard isSearchPresented else { return }
+            // 每次打开搜索都重读缓存（刚跑完的运行也搜得到），联网时再拉计划和产出物。
+            search.loadCache()
+            if !model.isOffline { Task { [search] in await search.loadOnline() } }
+        }
+        .task { await model.refreshBadgesIfStale() }
+        .onChange(of: router.visibleRoute) {
+            if router.visibleRoute == .home { Task { await model.refreshBadgesIfStale() } }
+        }
+    }
+
+    /// 有没处理的搜索请求（首页出现之前来的也算）就激活搜索栏。
+    private func activatePendingSearch() {
+        let router = model.router
+        guard router.hasPendingSearchRequest else { return }
+        router.searchRequestHandled()
+        isSearchPresented = true
+    }
+}
+
+/// 首页的工具栏：iOS 左上账号、右上“+”、底部工作台和搜索栏；macOS 左边账号、右边工作台和“+”。
+private struct HomeToolbar: ToolbarContent {
+    let model: AppModel
+    let language: DisplayLanguage
+
+    var body: some ToolbarContent {
+        #if os(iOS)
+            ToolbarItem(placement: .topBarLeading) {
+                AccountButton(model: model)
+            }
+            .hidesSharedGlassBackground()
+            ToolbarItem(placement: .topBarTrailing) {
+                adoptButton
+            }
+            ToolbarItem(placement: .bottomBar) {
+                WorkbenchMenu(model: model)
+            }
+            GlassToolbarSpacer(.fixed, placement: .bottomBar)
+            BottomBarSearchItem()
+        #else
+            ToolbarItem(placement: .navigation) {
+                AccountButton(model: model)
+            }
+            ToolbarItem(placement: .primaryAction) {
+                WorkbenchMenu(model: model)
+            }
+            ToolbarItem(placement: .primaryAction) {
+                adoptButton
+            }
+        #endif
+    }
+
+    private var adoptButton: some View {
+        Button {
+            model.router.open(.adopt(agentID: nil))
+        } label: {
+            Label(AppRoute.adopt(agentID: nil).title(language), systemImage: "plus")
+                .labelStyle(.iconOnly)
+        }
+    }
+}
+
+/// 左上的账号头像（昵称的第一个字），点了弹出设置。账号还没拉到时是系统的人像图标。
+private struct AccountButton: View {
+    let model: AppModel
+
+    @Environment(\.displayLanguage) private var language
+
+    var body: some View {
+        let name = model.user?.nameForDisplay ?? ""
+        Button {
+            model.router.open(.settings)
+        } label: {
+            if name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Image(systemName: "person.crop.circle")
+                    .accessibilityHidden(true)
+            } else {
+                InstanceAvatar(name, size: Metrics.iconButton)
+                    .accessibilityHidden(true)
+            }
+        }
+        .accessibilityLabel(Text(AppRoute.settings.title(language)))
+        .accessibilityValue(Text(verbatim: name))
+    }
+}
+
+/// 首页的实例列表和它的几种状态（加载中、离线没缓存、没有实例、拉取失败）。
+struct HomeInstanceList: View {
+    let model: AppModel
+
+    @Environment(\.displayLanguage) private var language
+
+    var body: some View {
+        let rows = model.homeRows
+        List {
+            if let error = model.refreshError {
+                ErrorBanner(error, onRetry: { Task { await model.refresh() } })
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+            }
+            ForEach(rows) { row in
+                NavigationLink(value: AppRoute.conversation(row.id)) {
+                    HomeInstanceRow(row: row)
+                }
+                .listRowSeparator(.hidden)
+            }
+        }
+        .listStyle(.plain)
+        .refreshable { await model.refresh() }
+        .overlay {
+            if rows.isEmpty { emptyState }
+        }
+    }
+
+    @ViewBuilder
+    private var emptyState: some View {
+        let zh = language == .chinese
+        if !model.hasLoadedInstances {
+            if model.isOffline {
+                ContentUnavailableView(
+                    zh ? "离线" : "Offline", systemImage: "wifi.slash",
+                    description: OfflinePolicy.unavailable.bannerMessage(language).map { Text(verbatim: $0) })
+            } else if model.refreshError == nil {
+                ProgressView()
+            }
+        } else if model.refreshError == nil {
+            ContentUnavailableView {
+                Label {
+                    Text(zh ? "还没有实例" : "No instances yet")
+                } icon: {
+                    BrandLogo()
+                        .frame(height: Metrics.Spacing.xxxl)
+                        .accessibilityHidden(true)
+                }
+            } description: {
+                Text(
+                    zh
+                        ? "领养一个 agent，就可以给它布置任务了。"
+                        : "Adopt an agent and you can start giving it tasks.")
+            } actions: {
+                Button(zh ? "去领养" : "Adopt an agent") {
+                    model.router.open(.adopt(agentID: nil))
+                }
+                .glassButtonStyle(.prominent)
+            }
+        }
+    }
+}
+
+/// 首页的搜索结果（第 0 轮的最小版：按种类分组；规范 4.2.4 的“谁发给谁”和类型筛选是第 1、2 轮的，
+/// 那时换成 Search 目录拆出来的 `SearchResultsView`）。点一条跳过去（`router.open`）。
+struct HomeSearchResults: View {
+    let search: SearchModel
+
+    @Environment(Router.self) private var router
+    @Environment(\.displayLanguage) private var language
+
+    var body: some View {
+        List {
+            if !search.hasOnlineSources && !search.isLoadingOnline {
+                Text(SearchText.cacheOnly(language))
+                    .typography(.footnote)
+                    .foregroundStyle(Theme.inkSecondary)
+                    .listRowSeparator(.hidden)
+            }
+            ForEach(search.groups) { group in
+                Section {
+                    ForEach(group.results) { result in
+                        SearchResultRow(result: result) { router.open(result.route) }
+                            .listRowInsets(EdgeInsets())
+                    }
+                    if group.total > group.results.count {
+                        Text(SearchText.more(group.total - group.results.count, language: language))
+                            .typography(.footnote)
+                            .foregroundStyle(Theme.inkSecondary)
+                    }
+                } header: {
+                    Text(SearchText.groupTitle(group.kind, language: language))
+                }
+            }
+        }
+        .listStyle(.plain)
+        .scrollDismissesKeyboard(.immediately)
+        .overlay {
+            if search.isEmpty {
+                ContentUnavailableView(
+                    SearchText.noResults(search.query, language: language), systemImage: "magnifyingglass",
+                    description: search.hasOnlineSources ? nil : Text(SearchText.cacheOnly(language)))
+            }
+        }
+    }
+}
+
+#Preview("首页 · 浅色中文") {
+    AppShell(model: AppModel(client: ShellPreviewClients.signedIn(), defaults: nil))
+        .environment(\.displayLanguage, .chinese)
+}
+
+#Preview("首页 · 深色英文、没有实例") {
+    AppShell(model: AppModel(client: ShellPreviewClients.empty(), defaults: nil))
+        .environment(\.displayLanguage, .english)
+        .preferredColorScheme(.dark)
+}

@@ -1,15 +1,14 @@
 import SwiftUI
 import ThinktinKit
 
-/// 应用框架（WBS 12.16）：按登录状态显示登录页、冻结页、升级页，或者已登录的主界面——导航栈加侧边抽屉。
+/// 应用框架（WBS 12.16）：按登录状态显示登录页、冻结页、升级页，或者已登录的主界面——导航栈和两层 sheet。
 ///
 /// 已登录时（导航结构见 docs/ios-ui-redesign.md 第 3 节）：
-/// - 主导航栈的根永远是首页（`.home`），对话、实例资料这些压在上面；
+/// - 主导航栈的根永远是首页（`.home`，实例列表 `Shell/Home/HomeScreen`），对话、实例资料这些压在上面；
+///   设置（左上头像）、领养（右上“+”）是 sheet，抽屉的入口在首页左下的工作台菜单里；
 /// - sheet 有自己的导航栈（`Router.sheetPath`），sheet 里再弹 sheet 页叠第二层（`nestedSheet`、`nestedSheetPath`）；
-/// - 压进来的页面、sheet 都按 `AppRoute.feature` 交给功能目录里的接入点（`AppDestination`）；
-/// - 每个页面顶部有统一的连接横幅、离线横幅（`ShellBanners`）；
-/// - 过渡：首页还是旧的问候页，导航栏左边是抽屉按钮（抽屉开没开是这里的本地状态，`Router` 不管了），标题是实例切换菜单；
-///   第 0 轮下一步换成实例列表的首页（`Shell/Home/`），去掉抽屉和实例切换。
+/// - 根页面、压进来的页面、sheet 都按 `AppRoute.feature` 交给功能目录里的接入点（`AppDestination`）；
+/// - 每个页面顶部有统一的连接横幅、离线横幅（`ShellBanners`）。
 ///
 /// 全局状态都在 `AppModel` 里，导航在 `Router` 里（`model.router`），都放进了环境，各页面直接取。
 public struct AppShell: View {
@@ -62,22 +61,15 @@ public struct AppShell: View {
     }
 }
 
-/// 已登录的主界面：主导航栈 + 两层 sheet（各带导航栈）+ 过渡用的抽屉。
+/// 已登录的主界面：主导航栈（根是首页）+ 两层 sheet（各带导航栈）。
 private struct SignedInShell: View {
     let model: AppModel
 
-    /// 抽屉开着（过渡用，首页那一步删掉抽屉时一起删）。
-    @State private var isDrawerOpen = false
-
     var body: some View {
         let router = model.router
-        ZStack(alignment: .leading) {
-            NavigationStack(path: Binding(get: { router.path }, set: { router.path = $0 })) {
-                RootPage(model: model, isDrawerOpen: $isDrawerOpen)
-                    .appRouteDestinations()
-            }
-            .solidTopScrollEdge()
-            ShellDrawer(model: model, isOpen: $isDrawerOpen)
+        NavigationStack(path: Binding(get: { router.path }, set: { router.path = $0 })) {
+            AppDestination(route: router.rootRoute)
+                .appRouteDestinations()
         }
         .sheet(item: Binding(get: { router.sheet }, set: { router.sheet = $0 })) { route in
             SheetStack(
@@ -89,8 +81,6 @@ private struct SignedInShell: View {
                     path: Binding(get: { router.nestedSheetPath }, set: { router.nestedSheetPath = $0 }))
             }
         }
-        .onChange(of: router.path) { isDrawerOpen = false }
-        .onChange(of: router.sheet) { isDrawerOpen = false }
     }
 }
 
@@ -105,7 +95,6 @@ struct SheetStack: View {
             root
                 .appRouteDestinations()
         }
-        .solidTopScrollEdge()
         .shellEnvironment(model)
         .tint(Theme.accent)
     }
@@ -132,52 +121,6 @@ struct SheetStack: View {
         case .settings, .adopt: true
         default: false
         }
-    }
-}
-
-/// 主导航栈的根：首页，导航栏有抽屉按钮和实例切换菜单（过渡，见 `AppShell`）。
-private struct RootPage: View {
-    let model: AppModel
-    @Binding var isDrawerOpen: Bool
-
-    @Environment(\.displayLanguage) private var language
-
-    var body: some View {
-        let router = model.router
-        AppDestination(route: router.rootRoute)
-            // 过渡：首页还不能原地搜索（首页那一步做），先把搜索页压上来。
-            .onChange(of: router.searchRequest) {
-                if router.path.isEmpty { router.path = [.search] }
-            }
-            .toolbar {
-                ToolbarItem(placement: .navigation) {
-                    Button {
-                        isDrawerOpen = true
-                    } label: {
-                        Image(systemName: "line.3.horizontal")
-                            .foregroundStyle(Theme.ink)
-                    }
-                    .accessibilityLabel(Text(language == .chinese ? "打开侧边栏" : "Open sidebar"))
-                }
-                ToolbarItem(placement: .principal) {
-                    InstanceSwitcher(model: model)
-                }
-            }
-            #if os(iOS)
-                .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .overlay(alignment: .leading) {
-                // 左边缘向右划打开抽屉（Claude 的习惯）。窄窄一条，不挡内容的点按；读屏用导航栏的按钮。
-                Color.clear
-                    .frame(width: Metrics.Spacing.m)
-                    .contentShape(Rectangle())
-                    .gesture(
-                        DragGesture(minimumDistance: 10).onEnded { value in
-                            if value.translation.width > 60 { isDrawerOpen = true }
-                        }
-                    )
-                    .accessibilityHidden(true)
-            }
     }
 }
 

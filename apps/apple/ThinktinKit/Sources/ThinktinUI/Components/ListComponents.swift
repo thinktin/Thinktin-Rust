@@ -275,21 +275,6 @@ extension View {
     fileprivate func reportsPageTitle(_ title: String) -> some View {
         modifier(PageTitleReporter(title: title))
     }
-
-    /// 滚动内容在导航栏下面用实的边缘（iOS 26 起导航栏是透明的玻璃，默认的柔和边缘会让滚上去的文字从状态栏、
-    /// 导航栏后面透出来）。套在导航栏外面，里面所有页面的滚动视图都生效。
-    @ViewBuilder
-    func solidTopScrollEdge() -> some View {
-        #if os(iOS)
-            if #available(iOS 26.0, *) {
-                scrollEdgeEffectStyle(.hard, for: .top)
-            } else {
-                self
-            }
-        #else
-            self
-        #endif
-    }
 }
 
 /// 页面大标题（`PageHeader`）露没露在导航栏下面：`inlineNavigationTitle` 建一个放进环境，`PageHeader` 量了自己的

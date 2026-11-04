@@ -69,7 +69,9 @@
   `ShellBadges.workbenchTotal`（收件箱未读 + 待审批 + 待确认的计划，进行中不算）和读屏文字；新的 `ViewModels/Shell/HomeListModel.swift`
   （`HomeRow`、`HomeRowPreview`、`HomeList.rows` / `timestamp`，`AppModel.homeRows`）；`Router.path` 变了时最上面的对话记成当前实例
   （首页的行用 `NavigationLink` 压栈，不经过 `open`）；`handledSearchRequest`、`hasPendingSearchRequest`、`searchRequestHandled()`
-  （首页晚出现时补上搜索请求）。界面那一半（`Shell/Home/`、删抽屉）接着做。启动屏、截图脚本（`THINKTIN_OPEN_SCREEN`）还没人认领。
+  （首页晚出现时补上搜索请求）。
+  界面那一半也推送了：`Shell/Home/`（`HomeScreen`、`HomeInstanceRow`、`WorkbenchMenu`），删了 `ShellDrawer`、`InstanceSwitcher`、
+  `RootPage`、`solidTopScrollEdge()`、`ConversationHomeScreen`。剩 docs/ios.md 和进度文件的收尾。启动屏、截图脚本（`THINKTIN_OPEN_SCREEN`）还没人认领。
 
 下一步：
 1. 第 0 轮剩下的（规范 7.2 第 6 行起）：最小首页 `Shell/Home/`，去掉 `ShellDrawer`、`InstanceSwitcher`、`RootPage` 的抽屉按钮和左缘手势

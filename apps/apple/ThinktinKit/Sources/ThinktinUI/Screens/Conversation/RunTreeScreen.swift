@@ -342,37 +342,6 @@ private struct ActiveRunsContent: View {
     }
 }
 
-/// 首页（`.home`：还没有实例、或者还没选中实例时导航栈的根）：衬线的问候语，去 agent 目录领养（12.17 再做完整的引导）。
-struct ConversationHomeScreen: View {
-    @Environment(AppModel.self) private var app
-    @Environment(Router.self) private var router
-    @Environment(\.displayLanguage) private var language
-
-    var body: some View {
-        ScrollView {
-            VStack(spacing: Metrics.Spacing.l) {
-                Text(Greeting.text(name: app.user?.nameForDisplay, language: language))
-                    .typography(.largeTitle)
-                    .foregroundStyle(Theme.ink)
-                    .multilineTextAlignment(.center)
-                    .padding(.top, Metrics.Spacing.xxxl)
-                    .accessibilityAddTraits(.isHeader)
-                EmptyStateView(
-                    systemImage: "square.stack.3d.up", title: ConversationText.homeTitle(language),
-                    message: ConversationText.homeMessage(language),
-                    actionTitle: ConversationText.browseCatalog(language)
-                ) {
-                    router.open(.agentCatalog)
-                }
-            }
-            .padding(Metrics.Spacing.m)
-            .frame(maxWidth: Metrics.readableWidth)
-            .frame(maxWidth: .infinity)
-        }
-        .background(Theme.paper)
-    }
-}
-
 #Preview("运行树 · 浅色中文") {
     RunTreeScreen(runID: ConversationPreviewClients.childRunID)
         .previewShell(client: ConversationPreviewClients.delegated())
@@ -389,12 +358,4 @@ struct ConversationHomeScreen: View {
 
 #Preview("进行中 · 深色英文") {
     ActiveRunsScreen().previewShell(.english, scheme: .dark)
-}
-
-#Preview("首页 · 浅色中文") {
-    ConversationHomeScreen().previewShell(client: ShellPreviewClients.empty())
-}
-
-#Preview("首页 · 深色英文") {
-    ConversationHomeScreen().previewShell(.english, scheme: .dark, client: ShellPreviewClients.empty())
 }

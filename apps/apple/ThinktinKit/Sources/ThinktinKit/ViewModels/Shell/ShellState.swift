@@ -104,13 +104,17 @@ extension ShellBadges {
         count > 99 ? "99+" : String(count)
     }
 
+    /// 工作台按钮的名字。
+    public static func workbenchTitle(_ language: DisplayLanguage = .current) -> String {
+        language == .chinese ? "工作台" : "Workbench"
+    }
+
     /// 工作台按钮的读屏文字（“工作台，5 件要处理”）。
     public func workbenchAccessibilityLabel(_ language: DisplayLanguage = .current) -> String {
-        let zh = language == .chinese
-        let title = zh ? "工作台" : "Workbench"
+        let title = Self.workbenchTitle(language)
         let total = workbenchTotal
         guard total > 0 else { return title }
-        return zh ? "\(title)，\(total) 件要处理" : "\(title), \(total) to handle"
+        return language == .chinese ? "\(title)，\(total) 件要处理" : "\(title), \(total) to handle"
     }
 }
 

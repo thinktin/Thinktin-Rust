@@ -1,10 +1,8 @@
 import SwiftUI
 import ThinktinKit
 
-/// 应用框架自己的页面（`feature == .shell`）：首页、新任务的实例选择、冻结页、升级页。
-///
-/// 首页（`.home`，主导航栈永远的根）过渡期还是对话目录里的问候页（`ConversationHomeScreen`），第 0 轮下一步换成
-/// `Shell/Home/` 的实例列表。
+/// 应用框架自己的页面（`feature == .shell`）：首页（`.home`，主导航栈永远的根，实例列表 `Shell/Home/`）、
+/// 新任务的实例选择、冻结页、升级页。
 struct ShellDestination: View {
     let route: AppRoute
 
@@ -12,7 +10,7 @@ struct ShellDestination: View {
 
     var body: some View {
         switch route {
-        case .home: ConversationHomeScreen()
+        case .home: HomeScreen()
         case .newTask: NewTaskSheet(model: model)
         case .frozen: FrozenView(model: model)
         case .upgrade: UpgradeView()

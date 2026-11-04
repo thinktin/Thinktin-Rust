@@ -4,8 +4,8 @@ import ThinktinKit
 
 @testable import ThinktinUI
 
-/// 应用框架（WBS 12.16）的界面：四种登录状态、两层 sheet、过渡用的抽屉和实例切换、全局横幅，以及每个页面的接入点
-/// 都能布局。
+/// 应用框架（WBS 12.16）的界面：四种登录状态、首页（实例列表、工作台菜单、搜索结果）、两层 sheet、全局横幅，
+/// 以及每个页面的接入点都能布局。
 /// 逻辑（路由、深链、全局状态）在 ThinktinKitTests 的 Navigation、Shell 里测。
 @MainActor
 @Suite("应用框架的界面")
@@ -89,29 +89,135 @@ struct AppShellTests {
         }
     }
 
-    @Test("抽屉（过渡用）：有实例、没有实例、离线")
-    func drawer() async {
+    @Test("跑通首页 → 对话 → 实例资料，回到首页再开设置（sheet）")
+    func homeToProfileAndSettings() async throws {
         let model = await started(ShellPreviewClients.signedIn())
-        hostAndLayout(ShellDrawer(model: model, isOpen: .constant(true)).shellEnvironment(model))
+        let router = model.router
+        let first = try #require(model.homeRows.first)
+        #expect(router.isAtRoot)
+        hostAndLayout(AppShell(model: model))
+        // 首页的行是 `NavigationLink(value: .conversation(id))`：系统直接往主栈里压，`Router` 记成当前实例。
+        router.path.append(.conversation(first.id))
+        #expect(router.currentInstanceID == first.id)
+        hostAndLayout(AppShell(model: model))
+        // 对话的“…”菜单 → 实例资料（旧版式）。
+        router.open(.instance(first.id))
+        #expect(router.path == [.conversation(first.id), .instance(first.id)])
+        hostAndLayout(AppShell(model: model).environment(\.displayLanguage, .english).preferredColorScheme(.dark))
+        // 系统的返回两次回到首页，左上头像弹出设置。
+        router.pop()
+        router.pop()
+        #expect(router.isAtRoot)
+        router.open(.settings)
+        #expect(router.sheet == .settings)
+        #expect(router.path.isEmpty)
+        hostAndLayout(AppShell(model: model))
+        router.dismissSheet()
+        #expect(router.sheet == nil)
+        // 右上“+”弹出领养。
+        router.open(.adopt(agentID: nil))
+        #expect(router.sheet == .adopt(agentID: nil))
+        hostAndLayout(AppShell(model: model))
+    }
+
+    @Test("首页：有实例、没有实例、离线、拉取失败")
+    func home() async {
+        let model = await started(ShellPreviewClients.signedIn())
+        #expect(!model.homeRows.isEmpty)
+        hostAndLayout(NavigationStack { HomeScreen() }.shellEnvironment(model))
         hostAndLayout(
-            ShellDrawer(model: model, isOpen: .constant(true)).shellEnvironment(model)
+            NavigationStack { HomeScreen() }.shellEnvironment(model)
                 .environment(\.displayLanguage, .english)
                 .preferredColorScheme(.dark))
 
         let empty = await started(ShellPreviewClients.empty())
-        #expect(empty.instances.isEmpty)
-        hostAndLayout(ShellDrawer(model: empty, isOpen: .constant(true)).shellEnvironment(empty))
+        #expect(empty.hasLoadedInstances)
+        #expect(empty.homeRows.isEmpty)
+        hostAndLayout(NavigationStack { HomeScreen() }.shellEnvironment(empty))
+        hostAndLayout(NavigationStack { HomeInstanceList(model: empty) }.shellEnvironment(empty))
 
-        hostAndLayout(ShellDrawer(model: model, isOpen: .constant(false)).shellEnvironment(model), expectContent: false)
+        let offlineClient = ShellPreviewClients.signedIn()
+        for _ in 0..<6 { offlineClient.failNext(with: .network(message: "offline")) }
+        let offline = await started(offlineClient)
+        #expect(offline.isOffline)
+        hostAndLayout(AppShell(model: offline))
+
+        let failingClient = ShellPreviewClients.signedIn()
+        failingClient.failNext(
+            "instances()", with: .api(status: 500, code: .internal, message: "boom", retryAfterSecs: nil))
+        let failing = await started(failingClient)
+        hostAndLayout(NavigationStack { HomeInstanceList(model: failing) }.shellEnvironment(failing))
     }
 
-    @Test("实例切换菜单：有实例、没有实例")
-    func instanceSwitcher() async {
+    @Test("首页的行：预览文字和头像角标（在等你处理、进行中、闲着）")
+    func homeRows() async {
+        #expect(HomeRowPreview.waiting(count: 2, state: .waitingApproval).text(.chinese) == "2 个在等你处理")
+        #expect(HomeRowPreview.waiting(count: 1, state: .waitingDevice).text(.english) == "1 waiting for you")
+        #expect(HomeRowPreview.active(count: 1, state: .running).text(.chinese) == "运行中")
+        #expect(HomeRowPreview.active(count: 3, state: .queued).text(.chinese) == "排队中 · 共 3 个")
+        #expect(HomeRowPreview.active(count: 3, state: .running).text(.english) == "Running · 3 in progress")
+        #expect(HomeRowPreview.idle(.running).text(.chinese) == "随时可以接任务")
+        #expect(HomeRowPreview.idle(.running).text(.english) == "Ready for a task")
+        #expect(HomeRowPreview.idle(.paused).text(.chinese) == "已暂停")
+        #expect(HomeRowPreview.waiting(count: 2, state: .waitingApproval).avatarBadge == .run(.waitingApproval))
+        #expect(HomeRowPreview.active(count: 1, state: .running).avatarBadge == .run(.running))
+        #expect(HomeRowPreview.idle(.running).avatarBadge == nil)
+        #expect(HomeRowPreview.idle(.provisioning).avatarBadge == .instance(.provisioning))
+        #expect(HomeRowPreview.idle(.archived).avatarBadge == .instance(.archived))
+
         let model = await started(ShellPreviewClients.signedIn())
-        #expect(model.currentInstance != nil)
-        hostAndLayout(InstanceSwitcher(model: model))
-        let empty = await started(ShellPreviewClients.empty())
-        hostAndLayout(InstanceSwitcher(model: empty))
+        for row in model.homeRows {
+            hostAndLayout(List { HomeInstanceRow(row: row) }.shellEnvironment(model))
+        }
+    }
+
+    @Test("工作台菜单：总角标只算要你处理的；菜单项和抽屉原来的入口一一对应")
+    func workbenchMenu() async {
+        let model = await started(ShellPreviewClients.signedIn())
+        let badges = model.badges
+        #expect(
+            badges.workbenchTotal == badges.inboxUnread + badges.pendingApprovals + badges.plansAwaitingConfirmation)
+        #expect(WorkbenchEntry.allCases.allSatisfy { $0.route.isTopLevel })
+        hostAndLayout(
+            NavigationStack {
+                Text(verbatim: "首页")
+                    .toolbar {
+                        ToolbarItem(placement: .primaryAction) { WorkbenchMenu(model: model) }
+                    }
+            }
+            .shellEnvironment(model))
+        hostAndLayout(
+            NavigationStack {
+                Text(verbatim: "Home")
+                    .toolbar {
+                        ToolbarItem(placement: .primaryAction) { WorkbenchMenu(model: model) }
+                    }
+            }
+            .shellEnvironment(model)
+            .environment(\.displayLanguage, .english)
+            .preferredColorScheme(.dark))
+    }
+
+    @Test("首页的搜索结果：有结果、没结果；搜索请求回到首页")
+    func homeSearch() async {
+        let model = await started(ShellPreviewClients.signedIn())
+        let search = SearchModel(client: model.client)
+        search.loadCache()
+        search.query = "写作"
+        #expect(search.isSearching)
+        #expect(!search.isEmpty)
+        hostAndLayout(NavigationStack { HomeSearchResults(search: search) }.shellEnvironment(model))
+        search.query = "没有这个词 zzz"
+        #expect(search.isEmpty)
+        hostAndLayout(
+            NavigationStack { HomeSearchResults(search: search) }.shellEnvironment(model)
+                .environment(\.displayLanguage, .english))
+
+        model.router.open(.instance(DemoData.writerID))
+        model.router.open(.search)
+        #expect(model.router.isAtRoot)
+        #expect(model.router.hasPendingSearchRequest)
+        hostAndLayout(AppShell(model: model))
     }
 
     @Test("全局横幅：连接中、重连、离线（有缓存、没有缓存）")

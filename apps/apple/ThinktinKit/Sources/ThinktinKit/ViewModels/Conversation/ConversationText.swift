@@ -668,19 +668,6 @@ public enum ConversationText {
     public static func loadMore(_ language: DisplayLanguage) -> String {
         language == .chinese ? "加载更多" : "Load more"
     }
-
-    public static func homeTitle(_ language: DisplayLanguage) -> String {
-        language == .chinese ? "领养一个 agent" : "Adopt an agent"
-    }
-
-    public static func homeMessage(_ language: DisplayLanguage) -> String {
-        language == .chinese
-            ? "从 agent 目录领养一个，就可以给它布置任务了。" : "Adopt one from the catalog and you can start giving it tasks."
-    }
-
-    public static func browseCatalog(_ language: DisplayLanguage) -> String {
-        language == .chinese ? "去 agent 目录" : "Browse agents"
-    }
 }
 
 /// 运行详情页上的标签。

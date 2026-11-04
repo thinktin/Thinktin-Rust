@@ -30,7 +30,7 @@ struct ConversationScreensTests {
         }
     }
 
-    @Test("几种演示数据：流式输出中、等 key、委派的运行树、没有实例的首页")
+    @Test("几种演示数据：流式输出中、等 key、委派的运行树")
     func variants() {
         hostAndLayout(
             ConversationScreen(instanceID: DemoData.writerID).previewShell(
@@ -41,7 +41,6 @@ struct ConversationScreensTests {
         hostAndLayout(
             RunTreeScreen(runID: ConversationPreviewClients.childRunID)
                 .previewShell(client: ConversationPreviewClients.delegated()))
-        hostAndLayout(ConversationHomeScreen().previewShell(client: ShellPreviewClients.empty()))
         hostAndLayout(
             RunProcessScreen(
                 model: ConversationModel(

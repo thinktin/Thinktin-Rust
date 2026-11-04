@@ -58,8 +58,6 @@ public enum Metrics {
     public static let statusDot: CGFloat = 8
     /// 发送按钮这类圆形图标按钮的直径。
     public static let iconButton: CGFloat = 32
-    /// 抽屉的最大宽度。
-    public static let drawerMaxWidth: CGFloat = 320
     /// 正文的最大可读宽度（横屏、大屏时居中）。
     public static let readableWidth: CGFloat = 680
 
