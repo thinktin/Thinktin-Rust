@@ -12,7 +12,9 @@
   发起构建（POST /builds）不再在 5xx、读超时后重发（免得一次打两个）；从标签触发时 Codemagic 按标签取代码、版本号取标签；
   失败日志抄到 GitHub 公开日志前遮住密钥 ID、Issuer ID；文档写明环境加审批人时一次发版要点两下。
 - run 25（macos-26）也没排上 GitHub 的 Mac（17:48 GitHub 又报 Actions 故障）；run 26 用 builder=codemagic，用户配好了两处。
-进行中：run 26 在 Codemagic 上跑；Codemagic 那条路等用户配两处（GitHub 的 THINKTIN_AI_CODEMAGIC_API_KEY、
+- **run 26 用 Codemagic 打包成功**（2026-11-04 17:49–18:21，约 33 分钟）：0.1.0 (26) 演示版上传到 App Store Connect，证书在
+  publishing 脚本里撤销了。头一次查构建状态是 404（刚发起），之后正常；现在刚发起时的 404 不再报警告。
+进行中：等苹果处理 build 26；Codemagic 那条路等用户配两处（GitHub 的 THINKTIN_AI_CODEMAGIC_API_KEY、
   Codemagic 的 testflight 变量组）。
 下一步：用户配好就 `builder=codemagic` 跑一次；用户说“合并”再合进 main。
 坑和决定：

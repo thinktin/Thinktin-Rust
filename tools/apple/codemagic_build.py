@@ -175,7 +175,9 @@ def follow(build_id: str, deadline_minutes: int) -> int:
         status, response = call("GET", f"/builds/{build_id}")
         if status != 200:
             misses += 1
-            print(f"::warning::查构建状态失败：{status} {response.get('message', '') if isinstance(response, dict) else ''}")
+            # 刚发起的构建头一两次常查不到（404），不算问题。
+            if not (status == 404 and not last_status):
+                print(f"::warning::查构建状态失败：{status} {response.get('message', '') if isinstance(response, dict) else ''}")
             if misses >= 10:
                 print("::error::连续 10 次查不到 Codemagic 的构建状态，不等了（构建本身可能还在跑，到 Codemagic 网页上看）")
                 return 1
