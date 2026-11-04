@@ -4,6 +4,7 @@
 //! 换上 key 转发给厂商，响应原样流回，同时记录用量。用户 key 的明文只在这里短暂出现。
 
 pub mod body;
+pub mod egress;
 pub mod limits;
 pub mod pg;
 pub mod proxy;

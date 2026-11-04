@@ -1,0 +1,350 @@
+//! 出口代理（2.7）：沙箱 → CONNECT 隧道 → 目标网站。目标用本机的回显服务代替（测试模式放行回环地址和任意端口）。
+
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use auth::sandbox_token::{SandboxTokenIssuer, SandboxTokenVerifier, TokenRequest};
+use base64::Engine;
+use keyvault::{KeyVault, LocalKms, MemoryKeyStore};
+use llm_gw::egress::{Egress, EgressOptions, MemoryEgressLedger, serve_egress};
+use llm_gw::limits::{Limiter, MemoryLedger};
+use llm_gw::store::{Instance, Limits, MemoryDirectory};
+use llm_gw::usage::MemorySink;
+use llm_gw::{Gateway, Options, build_client};
+use proto::domain::EgressMode;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
+
+fn now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
+
+fn instance(mode: EgressMode, hosts: &[&str]) -> Instance {
+    Instance {
+        id: "inst-1".into(),
+        user_id: "user-1".into(),
+        sandbox: Some("sbx-1".into()),
+        epoch: 0,
+        active: true,
+        routes: Default::default(),
+        limits: Limits::default(),
+        egress_mode: mode,
+        egress_hosts: hosts.iter().map(|h| (*h).to_owned()).collect(),
+    }
+}
+
+struct Env {
+    proxy: SocketAddr,
+    echo: SocketAddr,
+    issuer: SandboxTokenIssuer,
+    directory: Arc<MemoryDirectory>,
+    ledger: Arc<MemoryEgressLedger>,
+}
+
+/// 回显服务：读到什么写回什么。
+async fn echo_server() -> SocketAddr {
+    let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = l.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut s, _)) = l.accept().await else {
+                return;
+            };
+            tokio::spawn(async move {
+                let (mut r, mut w) = s.split();
+                let _ = tokio::io::copy(&mut r, &mut w).await;
+            });
+        }
+    });
+    addr
+}
+
+async fn env(mode: EgressMode, hosts: &[&str], tune: impl FnOnce(&mut EgressOptions)) -> Env {
+    let issuer = SandboxTokenIssuer::generate("k1").unwrap();
+    let mut verifier = SandboxTokenVerifier::new();
+    verifier
+        .add_key_b64("k1", &issuer.verifying_key_b64())
+        .unwrap();
+    let directory = Arc::new(MemoryDirectory::new(
+        vec![instance(mode, hosts)],
+        vec![],
+        vec![],
+    ));
+    let options = Options::default();
+    let gw = Arc::new(Gateway {
+        verifier,
+        directory: directory.clone(),
+        secrets: Arc::new(KeyVault::new(
+            LocalKms::new("kms", &[7; 32]),
+            MemoryKeyStore::default(),
+        )),
+        vault: Default::default(),
+        usage: Arc::new(MemorySink::default()),
+        ledger: Arc::new(MemoryLedger::default()),
+        limiter: Limiter::default(),
+        cooldowns: Default::default(),
+        client: build_client(&options, None).unwrap(),
+        options,
+    });
+    let ledger = Arc::new(MemoryEgressLedger::default());
+    let mut opts = EgressOptions {
+        insecure: true,
+        ..EgressOptions::default()
+    };
+    tune(&mut opts);
+    let egress = Arc::new(Egress::new(gw, ledger.clone(), opts));
+    let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let proxy = l.local_addr().unwrap();
+    tokio::spawn(serve_egress(l, egress, std::future::pending()));
+    Env {
+        proxy,
+        echo: echo_server().await,
+        issuer,
+        directory,
+        ledger,
+    }
+}
+
+impl Env {
+    fn token_with(&self, f: impl FnOnce(&mut TokenRequest)) -> String {
+        let mut req = TokenRequest {
+            ep: 0,
+            iid: "inst-1".into(),
+            uid: "user-1".into(),
+            grant: "grant-1".into(),
+            sbx: "sbx-1".into(),
+            net: Some("127.0.0.1".into()),
+        };
+        f(&mut req);
+        self.issuer.issue(req, 600, now()).unwrap()
+    }
+
+    /// 发一个 CONNECT，返回状态行和连接（成功时接着就是隧道）。
+    async fn connect(&self, target: &str, token: Option<&str>) -> (String, TcpStream) {
+        let mut s = TcpStream::connect(self.proxy).await.unwrap();
+        let mut head = format!("CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n");
+        if let Some(t) = token {
+            let cred = base64::engine::general_purpose::STANDARD.encode(format!("x:{t}"));
+            head.push_str(&format!("Proxy-Authorization: Basic {cred}\r\n"));
+        }
+        head.push_str("\r\n");
+        s.write_all(head.as_bytes()).await.unwrap();
+        // 读到响应头结束为止（一个字节一个字节读，不吞掉隧道里的数据）。
+        let mut resp = Vec::new();
+        let mut byte = [0u8; 1];
+        while !resp.ends_with(b"\r\n\r\n") {
+            match tokio::time::timeout(Duration::from_secs(5), s.read(&mut byte)).await {
+                Ok(Ok(1)) => resp.push(byte[0]),
+                _ => break,
+            }
+        }
+        let text = String::from_utf8_lossy(&resp).into_owned();
+        // 拒绝的响应带正文：读掉（拒绝后连接关闭）。
+        if !text.starts_with("HTTP/1.1 200") {
+            let mut rest = String::new();
+            let _ = tokio::time::timeout(Duration::from_secs(2), s.read_to_string(&mut rest)).await;
+            return (format!("{text}{rest}"), s);
+        }
+        (text, s)
+    }
+
+    fn echo_target(&self) -> String {
+        format!("localhost:{}", self.echo.port())
+    }
+
+    async fn wait_for_records(&self, n: usize) -> Vec<llm_gw::egress::EgressRecord> {
+        for _ in 0..100 {
+            let r = self.ledger.records();
+            if r.len() >= n {
+                return r;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        self.ledger.records()
+    }
+}
+
+fn status(resp: &str) -> u16 {
+    resp.split(' ')
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0)
+}
+
+#[tokio::test]
+async fn an_allowed_host_gets_a_tunnel_and_the_bytes_are_counted() {
+    let e = env(EgressMode::Custom, &["localhost"], |_| {}).await;
+    let (resp, mut s) = e
+        .connect(&e.echo_target(), Some(&e.token_with(|_| {})))
+        .await;
+    assert_eq!(status(&resp), 200, "{resp}");
+    s.write_all(b"hello through the tunnel").await.unwrap();
+    let mut buf = [0u8; 24];
+    s.read_exact(&mut buf).await.unwrap();
+    assert_eq!(&buf, b"hello through the tunnel");
+    s.shutdown().await.unwrap();
+    drop(s);
+    let records = e.wait_for_records(1).await;
+    let r = &records[0];
+    assert!(r.allowed, "{r:?}");
+    assert_eq!((r.host.as_str(), r.port), ("localhost", e.echo.port()));
+    assert_eq!((r.bytes_up, r.bytes_down), (24, 24));
+    assert_eq!(r.address.map(|a| a.port()), Some(e.echo.port()));
+    // 没用完的预留退回了：今天只算真用掉的。
+    let day = (chrono::Utc::now() + chrono::Duration::hours(8)).date_naive();
+    assert_eq!(e.ledger.used("inst-1", day), 48);
+}
+
+#[tokio::test]
+async fn bad_credentials_methods_and_hosts_are_refused() {
+    let e = env(EgressMode::Custom, &["localhost"], |_| {}).await;
+    let target = e.echo_target();
+    let (resp, _) = e.connect(&target, None).await;
+    assert_eq!(status(&resp), 407, "{resp}");
+    assert!(
+        resp.to_ascii_lowercase()
+            .contains("proxy-authenticate: basic"),
+        "{resp}"
+    );
+    // 令牌绑定的来源地址不是这台：拒绝。
+    let elsewhere = e.token_with(|r| r.net = Some("10.0.0.9".into()));
+    let (resp, _) = e.connect(&target, Some(&elsewhere)).await;
+    assert_eq!(status(&resp), 407, "{resp}");
+    let token = e.token_with(|_| {});
+    // 上一次运行的令牌：拒绝。
+    e.directory.upsert_instance(Instance {
+        epoch: 1,
+        ..instance(EgressMode::Custom, &["localhost"])
+    });
+    let (resp, _) = e.connect(&target, Some(&token)).await;
+    assert_eq!(status(&resp), 407, "{resp}");
+    e.directory
+        .upsert_instance(instance(EgressMode::Custom, &["localhost"]));
+    // IP 字面量、不在列表里的网站。
+    let (resp, _) = e
+        .connect(&format!("127.0.0.1:{}", e.echo.port()), Some(&token))
+        .await;
+    assert_eq!(status(&resp), 400, "{resp}");
+    let (resp, _) = e.connect("example.com:443", Some(&token)).await;
+    assert_eq!(status(&resp), 403, "{resp}");
+    assert!(resp.contains("not_allowed"), "{resp}");
+    // 不是 CONNECT。
+    let mut s = TcpStream::connect(e.proxy).await.unwrap();
+    s.write_all(b"GET http://example.com/ HTTP/1.1\r\nHost: example.com\r\n\r\n")
+        .await
+        .unwrap();
+    let mut out = String::new();
+    let _ = tokio::time::timeout(Duration::from_secs(2), s.read_to_string(&mut out)).await;
+    assert_eq!(status(&out), 405, "{out}");
+    // 拒绝的也记日志（不合规的网站、不放行的网站），认不出是谁的不记。
+    let records = e.wait_for_records(2).await;
+    let reasons: Vec<_> = records.iter().map(|r| (r.allowed, r.reason)).collect();
+    assert_eq!(reasons, [(false, "bad_host"), (false, "not_allowed")]);
+}
+
+#[tokio::test]
+async fn model_only_agents_get_nothing_and_blocked_ranges_stay_blocked() {
+    let e = env(EgressMode::Model, &[], |_| {}).await;
+    let token = e.token_with(|_| {});
+    let (resp, _) = e.connect(&e.echo_target(), Some(&token)).await;
+    assert_eq!(status(&resp), 403, "{resp}");
+    // 全部公网也连不了禁段里的地址。
+    let e = env(EgressMode::All, &[], |o| {
+        o.deny = vec!["127.0.0.0/8".parse().unwrap()];
+    })
+    .await;
+    let token = e.token_with(|_| {});
+    let (resp, _) = e.connect(&e.echo_target(), Some(&token)).await;
+    assert_eq!(status(&resp), 403, "{resp}");
+    assert!(resp.contains("private_address"), "{resp}");
+}
+
+#[tokio::test]
+async fn tunnels_are_capped_and_the_daily_allowance_cuts_them_off() {
+    let e = env(EgressMode::All, &[], |o| {
+        o.max_tunnels = 1;
+        o.daily_bytes = 1000;
+        o.reserve_chunk = 100;
+    })
+    .await;
+    let token = e.token_with(|_| {});
+    let (resp, mut first) = e.connect(&e.echo_target(), Some(&token)).await;
+    assert_eq!(status(&resp), 200, "{resp}");
+    let (resp, _) = e.connect(&e.echo_target(), Some(&token)).await;
+    assert_eq!(status(&resp), 429, "{resp}");
+    assert!(resp.contains("too_many_tunnels"), "{resp}");
+    // 一直发：双向合计到 1000 字节就断。
+    let chunk = [b'x'; 100];
+    let mut echoed = 0usize;
+    let mut buf = [0u8; 100];
+    for _ in 0..20 {
+        if first.write_all(&chunk).await.is_err() {
+            break;
+        }
+        match tokio::time::timeout(Duration::from_secs(2), first.read(&mut buf)).await {
+            Ok(Ok(0)) | Ok(Err(_)) | Err(_) => break,
+            Ok(Ok(n)) => echoed += n,
+        }
+    }
+    assert!(echoed <= 500, "echoed {echoed}");
+    let records = e.wait_for_records(2).await;
+    let tunnel = records.iter().find(|r| r.allowed).unwrap();
+    assert_eq!(tunnel.reason, "quota", "{tunnel:?}");
+    assert!(tunnel.bytes_up + tunnel.bytes_down <= 1000, "{tunnel:?}");
+    let day = (chrono::Utc::now() + chrono::Duration::hours(8)).date_naive();
+    assert!(e.ledger.used("inst-1", day) <= 1000);
+    // 用完了：新隧道直接拒绝。
+    let (resp, _) = e.connect(&e.echo_target(), Some(&token)).await;
+    assert_eq!(status(&resp), 429, "{resp}");
+    assert!(resp.contains("quota"), "{resp}");
+}
+
+#[tokio::test]
+async fn revoking_or_narrowing_closes_open_tunnels() {
+    let e = env(EgressMode::Custom, &["localhost"], |o| {
+        o.recheck_every = Duration::from_millis(100);
+    })
+    .await;
+    let token = e.token_with(|_| {});
+    let (resp, mut s) = e.connect(&e.echo_target(), Some(&token)).await;
+    assert_eq!(status(&resp), 200, "{resp}");
+    // 用户把档位改回只连模型：开着的隧道很快断开。
+    e.directory
+        .upsert_instance(instance(EgressMode::Model, &[]));
+    let mut buf = [0u8; 8];
+    let r = tokio::time::timeout(Duration::from_secs(3), s.read(&mut buf)).await;
+    assert!(matches!(r, Ok(Ok(0)) | Ok(Err(_))), "{r:?}");
+    let records = e.wait_for_records(1).await;
+    assert_eq!(records[0].reason, "revoked");
+
+    // 运行授权吊销了也一样。
+    e.directory
+        .upsert_instance(instance(EgressMode::Custom, &["localhost"]));
+    let (resp, mut s) = e.connect(&e.echo_target(), Some(&token)).await;
+    assert_eq!(status(&resp), 200, "{resp}");
+    e.directory.revoke_grant("grant-1");
+    let r = tokio::time::timeout(Duration::from_secs(3), s.read(&mut buf)).await;
+    assert!(matches!(r, Ok(Ok(0)) | Ok(Err(_))), "{r:?}");
+    let records = e.wait_for_records(2).await;
+    assert_eq!(records[1].reason, "revoked");
+}
+
+#[tokio::test]
+async fn idle_tunnels_are_closed() {
+    let e = env(EgressMode::All, &[], |o| {
+        o.idle_timeout = Duration::from_millis(300);
+    })
+    .await;
+    let token = e.token_with(|_| {});
+    let (resp, mut s) = e.connect(&e.echo_target(), Some(&token)).await;
+    assert_eq!(status(&resp), 200, "{resp}");
+    let mut buf = [0u8; 8];
+    let r = tokio::time::timeout(Duration::from_secs(5), s.read(&mut buf)).await;
+    assert!(matches!(r, Ok(Ok(0)) | Ok(Err(_))), "{r:?}");
+    let records = e.wait_for_records(1).await;
+    assert_eq!(records[0].reason, "idle");
+}

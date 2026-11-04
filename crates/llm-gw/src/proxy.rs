@@ -208,7 +208,7 @@ enum Kind {
 }
 
 #[derive(Debug)]
-struct ApiError {
+pub(crate) struct ApiError {
     kind: Kind,
     message: String,
     retry_after: Option<u64>,
@@ -334,9 +334,9 @@ fn presented_token(headers: &HeaderMap) -> Option<&str> {
         .filter(|t| !t.is_empty())
 }
 
-struct Caller {
-    claims: SandboxClaims,
-    instance: Arc<Instance>,
+pub(crate) struct Caller {
+    pub(crate) claims: SandboxClaims,
+    pub(crate) instance: Arc<Instance>,
 }
 
 impl Gateway {
@@ -346,9 +346,18 @@ impl Gateway {
         headers: &HeaderMap,
         peer: SocketAddr,
     ) -> Result<Caller, ApiError> {
-        let rejected = || err(Kind::Auth, "sandbox token rejected");
         let token =
             presented_token(headers).ok_or_else(|| err(Kind::Auth, "missing sandbox token"))?;
+        self.verify_token(token, peer).await
+    }
+
+    /// 校验沙箱令牌（模型请求和出口代理共用，2.7）：签名、来源地址、实例在运行、沙箱和代数对得上、授权没吊销。
+    pub(crate) async fn verify_token(
+        &self,
+        token: &str,
+        peer: SocketAddr,
+    ) -> Result<Caller, ApiError> {
+        let rejected = || err(Kind::Auth, "sandbox token rejected");
         let claims = self.verifier.verify(token, now_secs()).map_err(|e| {
             tracing::info!(token = %redact(token), %peer, reason = %e, "sandbox token rejected");
             rejected()

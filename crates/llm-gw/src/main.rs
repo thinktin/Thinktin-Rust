@@ -13,8 +13,9 @@ use keyvault::secrecy::{ExposeSecret, SecretString};
 use keyvault::{
     CachingKms, KeyStore, KeyVault, Kms, KmsRing, LocalKms, MemoryKeyStore, SecretOpener,
 };
+use llm_gw::egress::{Cidr, Egress, EgressLedger, EgressOptions, MemoryEgressLedger, serve_egress};
 use llm_gw::limits::{BudgetLedger, Limiter, MemoryLedger};
-use llm_gw::pg::{PgDirectory, PgLedger, PgUsageSink};
+use llm_gw::pg::{PgDirectory, PgEgressLedger, PgLedger, PgUsageSink};
 use llm_gw::store::{Credential, DevStore, Directory};
 use llm_gw::usage::{LogSink, UsageSink};
 use llm_gw::{Gateway, Options, ServeOptions, build_client, router, serve, vendors};
@@ -80,6 +81,21 @@ enum Command {
         /// 出口代理，例如 http://egress:3128。不配则直连，并在 DNS 层拦截非公网地址
         #[arg(long)]
         egress_proxy: Option<String>,
+        /// 沙箱的受控出网通道（2.7）的监听地址，比如 0.0.0.0:8791；不配就不开（沙箱只能连模型）
+        #[arg(long)]
+        egress_listen: Option<SocketAddr>,
+        /// 出网通道额外拒绝的网段（比如服务机自己的公网地址），可重复。非公网地址本来就拒绝
+        #[arg(long = "egress-deny")]
+        egress_deny: Vec<String>,
+        /// 每个实例每天的出网流量（MiB，双向合计）
+        #[arg(long, default_value_t = 100)]
+        egress_daily_mib: u64,
+        /// 每个实例同时最多几条出网隧道
+        #[arg(long, default_value_t = 4)]
+        egress_max_tunnels: u32,
+        /// 只用于本地开发和测试：出网通道放行非公网地址、任意端口
+        #[arg(long)]
+        insecure_egress: bool,
         /// 只用于本地开发和测试：允许 http 和非公网上游
         #[arg(long)]
         insecure_upstreams: bool,
@@ -225,6 +241,11 @@ fn main() -> anyhow::Result<()> {
             cache_secs,
             token_keys,
             egress_proxy,
+            egress_listen,
+            egress_deny,
+            egress_daily_mib,
+            egress_max_tunnels,
+            insecure_egress,
             insecure_upstreams,
             allow_unbound_tokens,
             max_body_mb,
@@ -271,9 +292,26 @@ fn main() -> anyhow::Result<()> {
                 );
             }
             let client = build_client(&options, egress_proxy.as_deref())?;
+            let egress_options = EgressOptions {
+                daily_bytes: egress_daily_mib << 20,
+                max_tunnels: egress_max_tunnels,
+                deny: egress_deny
+                    .iter()
+                    .map(|c| c.parse::<Cidr>().map_err(anyhow::Error::msg))
+                    .collect::<anyhow::Result<_>>()?,
+                utc_offset_secs: budget_utc_offset_hours * 3600,
+                insecure: insecure_egress,
+                ..EgressOptions::default()
+            };
+            if insecure_egress {
+                tracing::warn!(
+                    "--insecure-egress: sandboxes may reach private addresses (dev only)"
+                );
+            }
             let runtime = tokio::runtime::Runtime::new()?;
             runtime.block_on(async move {
                 let mut writer = None;
+                let mut egress_ledger: Arc<dyn EgressLedger> = Arc::new(MemoryEgressLedger::default());
                 let (directory, secrets, usage, ledger): Backends = match (store, database_url) {
                     (Some(path), _) => {
                         let dev = DevStore::load(&path)?;
@@ -337,6 +375,7 @@ fn main() -> anyhow::Result<()> {
                         let keys = Arc::new(MemoryKeyStore::default());
                         let (sink, w) = PgUsageSink::spawn(db.clone());
                         writer = Some(w);
+                        egress_ledger = Arc::new(PgEgressLedger::new(db.clone()));
                         (
                             Arc::new(PgDirectory::new(db.clone(), keys.clone(), ttl)),
                             Arc::new(KeyVault::new(kms, keys)),
@@ -346,7 +385,7 @@ fn main() -> anyhow::Result<()> {
                     }
                     (None, None) => bail!("give --store or --database-url"),
                 };
-                let gw = Gateway {
+                let gw = Arc::new(Gateway {
                     verifier,
                     directory,
                     secrets,
@@ -357,7 +396,20 @@ fn main() -> anyhow::Result<()> {
                     cooldowns: Default::default(),
                     client,
                     options,
-                };
+                });
+                if let Some(addr) = egress_listen {
+                    let l = tokio::net::TcpListener::bind(addr)
+                        .await
+                        .with_context(|| format!("bind {addr}"))?;
+                    tracing::info!(addr = %l.local_addr()?, "egress proxy listening");
+                    let egress = Arc::new(Egress::new(gw.clone(), egress_ledger, egress_options));
+                    // 停机时随进程一起结束：开着的隧道断开，agent 的工具会重连。
+                    tokio::spawn(async move {
+                        if let Err(e) = serve_egress(l, egress, std::future::pending()).await {
+                            tracing::error!(error = %e, "egress proxy stopped");
+                        }
+                    });
+                }
                 if let Some(addr) = metrics_listen {
                     let handle = metrics_exporter_prometheus::PrometheusBuilder::new()
                         .install_recorder()
@@ -388,7 +440,7 @@ fn main() -> anyhow::Result<()> {
                     max_connections_per_ip,
                     ..ServeOptions::default()
                 };
-                serve(listener, router(Arc::new(gw)), serve_options, async {
+                serve(listener, router(gw), serve_options, async {
                     shutdown_signal().await;
                     tracing::info!(drain_secs, "shutting down: draining");
                     tokio::time::sleep(Duration::from_secs(drain_secs)).await;

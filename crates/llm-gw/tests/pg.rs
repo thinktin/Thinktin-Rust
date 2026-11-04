@@ -9,8 +9,9 @@ use axum::extract::{Request, State};
 use axum::response::IntoResponse;
 use keyvault::secrecy::SecretString;
 use keyvault::{KeyStore, KeyVault, LocalKms, MemoryKeyStore};
+use llm_gw::egress::{Egress, EgressOptions, serve_egress};
 use llm_gw::limits::{BudgetLedger, Limiter};
-use llm_gw::pg::{PgDirectory, PgLedger, PgUsageSink};
+use llm_gw::pg::{PgDirectory, PgEgressLedger, PgLedger, PgUsageSink};
 use llm_gw::{Gateway, Options, build_client, router};
 use proto::domain::{
     CredentialId, GrantScope, InstanceLimits, InstanceState, ModelRoute, RunGrant, UserId,
@@ -51,6 +52,7 @@ struct Env {
     grant: RunGrant,
     issuer: SandboxTokenIssuer,
     gw: String,
+    egress: std::net::SocketAddr,
     up: Arc<Upstream>,
     ledger: Arc<PgLedger>,
     http: reqwest::Client,
@@ -160,7 +162,7 @@ async fn env() -> Option<Env> {
         options.budget_utc_offset_secs,
         TTL,
     ));
-    let gw = Gateway {
+    let gw = Arc::new(Gateway {
         verifier,
         directory: Arc::new(PgDirectory::new(t.db.clone(), keys.clone(), TTL)),
         secrets: Arc::new(KeyVault::new(kms, keys)),
@@ -171,12 +173,24 @@ async fn env() -> Option<Env> {
         cooldowns: Default::default(),
         client: build_client(&options, None).unwrap(),
         options,
-    };
+    });
+    // 出网通道（2.7）：额度和日志在库里。测试模式放行回环地址和任意端口。
+    let egress = Arc::new(Egress::new(
+        gw.clone(),
+        Arc::new(PgEgressLedger::new(t.db.clone())),
+        EgressOptions {
+            insecure: true,
+            ..EgressOptions::default()
+        },
+    ));
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let egress_addr = l.local_addr().unwrap();
+    tokio::spawn(serve_egress(l, egress, std::future::pending()));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(llm_gw::serve(
         listener,
-        router(Arc::new(gw)),
+        router(gw),
         llm_gw::ServeOptions::default(),
         std::future::pending(),
     ));
@@ -188,6 +202,7 @@ async fn env() -> Option<Env> {
         grant,
         issuer,
         gw: format!("http://{addr}"),
+        egress: egress_addr,
         up,
         ledger,
         http: reqwest::Client::builder().no_proxy().build().unwrap(),
@@ -514,4 +529,104 @@ async fn disabled_keys_left_in_routes_are_skipped() {
     set_disabled(false).await;
     tokio::time::sleep(TTL + Duration::from_millis(50)).await;
     assert_eq!(e.chat(&token).await.0, 200);
+}
+
+/// 出网通道（2.7）接控制面数据库：档位从库里读（用户改了很快生效），用量和日志写进库里。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn egress_policy_usage_and_log_live_in_the_database() {
+    use base64::Engine;
+    use proto::domain::EgressMode;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let Some(e) = env().await else { return };
+    let echo = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let echo_port = echo.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        while let Ok((mut s, _)) = echo.accept().await {
+            tokio::spawn(async move {
+                let (mut r, mut w) = s.split();
+                let _ = tokio::io::copy(&mut r, &mut w).await;
+            });
+        }
+    });
+    let connect = |token: String| async move {
+        let mut s = tokio::net::TcpStream::connect(e.egress).await.unwrap();
+        let cred = base64::engine::general_purpose::STANDARD.encode(format!("x:{token}"));
+        s.write_all(
+            format!(
+                "CONNECT localhost:{echo_port} HTTP/1.1\r\nHost: localhost\r\nProxy-Authorization: Basic {cred}\r\n\r\n"
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+        let mut head = Vec::new();
+        let mut b = [0u8; 1];
+        while !head.ends_with(b"\r\n\r\n") {
+            if s.read(&mut b).await.unwrap() == 0 {
+                break;
+            }
+            head.push(b[0]);
+        }
+        (String::from_utf8_lossy(&head).into_owned(), s)
+    };
+    // 默认只连模型：拒绝，记一条拒绝的日志。
+    let token = e.token("sbx-1");
+    let (head, _) = connect(token.clone()).await;
+    assert!(head.starts_with("HTTP/1.1 403"), "{head}");
+    // 用户在 App 里放行这个网站：缓存过期后生效。
+    let mut tx = e.t.db.tenant(e.user).await.unwrap();
+    tx.update_instance(
+        e.instance,
+        &store::InstanceChange {
+            egress: Some((EgressMode::Custom, vec!["localhost".into()])),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    tokio::time::sleep(TTL * 2).await;
+    let (head, mut s) = connect(token).await;
+    assert!(head.starts_with("HTTP/1.1 200"), "{head}");
+    s.write_all(b"ping").await.unwrap();
+    let mut buf = [0u8; 4];
+    s.read_exact(&mut buf).await.unwrap();
+    assert_eq!(&buf, b"ping");
+    drop(s);
+    let db = e.t.db.clone();
+    let instance = e.instance;
+    eventually("two log rows", || {
+        let db = db.clone();
+        async move {
+            let n: i64 =
+                sqlx::query_scalar("SELECT count(*) FROM egress_log WHERE instance_id = $1")
+                    .bind(instance.0)
+                    .fetch_one(db.pool())
+                    .await
+                    .unwrap();
+            n == 2
+        }
+    })
+    .await;
+    let rows: Vec<(bool, String, i64, i64)> = sqlx::query_as(
+        "SELECT allowed, reason, bytes_up, bytes_down FROM egress_log WHERE instance_id = $1 ORDER BY at",
+    )
+    .bind(e.instance.0)
+    .fetch_all(e.t.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        [
+            (false, "not_allowed".to_owned(), 0, 0),
+            (true, "ok".to_owned(), 4, 4)
+        ]
+    );
+    let used: i64 = sqlx::query_scalar("SELECT bytes FROM egress_usage WHERE instance_id = $1")
+        .bind(e.instance.0)
+        .fetch_one(e.t.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(used, 8, "the unused reservation is refunded");
 }

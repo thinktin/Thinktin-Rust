@@ -63,6 +63,11 @@ pub struct Instance {
     pub routes: BTreeMap<String, Route>,
     #[serde(default)]
     pub limits: Limits,
+    /// 出口代理按这个放行网站（2.7）。没写就是只连模型。
+    #[serde(default)]
+    pub egress_mode: proto::domain::EgressMode,
+    #[serde(default)]
+    pub egress_hosts: Vec<String>,
 }
 
 fn yes() -> bool {

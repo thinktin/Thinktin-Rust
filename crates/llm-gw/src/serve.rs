@@ -37,15 +37,15 @@ impl Default for ServeOptions {
 
 /// 每个来源地址当前的连接数。
 #[derive(Default)]
-struct PerIp(Mutex<HashMap<IpAddr, usize>>);
+pub(crate) struct PerIp(Mutex<HashMap<IpAddr, usize>>);
 
-struct IpSlot {
+pub(crate) struct IpSlot {
     table: Arc<PerIp>,
     ip: IpAddr,
 }
 
 impl PerIp {
-    fn take(self: &Arc<Self>, ip: IpAddr, max: usize) -> Option<IpSlot> {
+    pub(crate) fn take(self: &Arc<Self>, ip: IpAddr, max: usize) -> Option<IpSlot> {
         let mut map = self.0.lock().unwrap_or_else(|e| e.into_inner());
         let n = map.entry(ip).or_default();
         if *n >= max {

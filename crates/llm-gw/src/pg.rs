@@ -120,6 +120,8 @@ impl PgDirectory {
                     requests_per_minute: i.limits.requests_per_minute,
                     max_concurrent: i.limits.max_concurrent,
                 },
+                egress_mode: i.egress_mode,
+                egress_hosts: i.egress_hosts,
             })
         }))
     }
@@ -480,6 +482,90 @@ impl BudgetLedger for PgLedger {
         let mut days = self.days.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(d) = days.get_mut(&(credential.to_owned(), day)) {
             d.local = d.local.saturating_add(tokens);
+        }
+    }
+}
+
+/// 出口代理（2.7）的额度和日志在控制面的库里：多副本同时转发也按同一份额度扣。
+pub struct PgEgressLedger {
+    db: Db,
+}
+
+impl PgEgressLedger {
+    pub fn new(db: Db) -> Self {
+        Self { db }
+    }
+}
+
+fn ids(instance: &str, user: Option<&str>) -> anyhow::Result<(InstanceId, Option<UserId>)> {
+    let instance: InstanceId = instance
+        .parse()
+        .map_err(|_| anyhow::anyhow!("bad instance id"))?;
+    let user = user
+        .map(|u| {
+            u.parse::<UserId>()
+                .map_err(|_| anyhow::anyhow!("bad user id"))
+        })
+        .transpose()?;
+    Ok((instance, user))
+}
+
+#[async_trait]
+impl crate::egress::EgressLedger for PgEgressLedger {
+    async fn reserve(
+        &self,
+        instance: &str,
+        user: &str,
+        day: chrono::NaiveDate,
+        want: u64,
+        limit: u64,
+    ) -> anyhow::Result<u64> {
+        let (instance, user) = ids(instance, Some(user))?;
+        let mut tx = self.db.llmgw().await?;
+        let got = tx
+            .egress_reserve(instance, user.unwrap_or_default(), day, want, limit)
+            .await?;
+        tx.commit().await?;
+        Ok(got)
+    }
+
+    async fn refund(
+        &self,
+        instance: &str,
+        day: chrono::NaiveDate,
+        bytes: u64,
+    ) -> anyhow::Result<()> {
+        let (instance, _) = ids(instance, None)?;
+        let mut tx = self.db.llmgw().await?;
+        tx.egress_refund(instance, day, bytes).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn record(&self, r: crate::egress::EgressRecord) {
+        let write = async {
+            let (instance, user) = ids(&r.instance, Some(&r.user))?;
+            let mut tx = self.db.llmgw().await?;
+            tx.insert_egress_log(&[store::EgressLogEntry {
+                user_id: user.unwrap_or_default(),
+                instance_id: instance,
+                at: Utc::now(),
+                host: r.host,
+                port: r.port,
+                address: r.address.map(|a| a.to_string()),
+                allowed: r.allowed,
+                reason: r.reason.to_owned(),
+                bytes_up: r.bytes_up,
+                bytes_down: r.bytes_down,
+                duration_ms: u64::try_from(r.duration.as_millis()).unwrap_or(u64::MAX),
+            }])
+            .await?;
+            tx.commit().await?;
+            anyhow::Ok(())
+        };
+        if let Err(e) = write.await {
+            tracing::error!(error = %e, "writing the egress log failed");
+            metrics::counter!("thinktin_egress_log_errors_total").increment(1);
         }
     }
 }

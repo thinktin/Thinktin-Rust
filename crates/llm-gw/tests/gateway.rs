@@ -349,6 +349,8 @@ async fn start(setup: Setup) -> Env {
             ),
         ]),
         limits: setup.limits,
+        egress_mode: Default::default(),
+        egress_hosts: Vec::new(),
     };
     let directory = Arc::new(MemoryDirectory::new(vec![instance], creds, vec![]));
     // 用户保险箱里的一个条目（9.11）：转发前从请求里抹掉。
