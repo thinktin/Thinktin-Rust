@@ -6,7 +6,9 @@
 //!    沙箱和代数、运行授权没吊销；
 //! 2. 每个实例每分钟开隧道的次数有上限；
 //! 3. 目标网站名按 `proto::egress::normalize_host` 整理（不收 IP、数字变形、单段名字），端口只能是 443；
-//! 4. 实例的档位放行这个网站（`EgressMode::allows`）；
+//! 4. 实例的档位直接放行这个网站（`EgressMode::allows`：默认是搜索、开发网站和用户一直允许的）；不直接放行的问用户
+//!    （[`Egress::ask`]：这次任务里答过就按答的，没答过就登记一条请求、最多等一分钟看用户答不答，没答就告诉 agent
+//!    先做别的）；
 //! 5. 每个实例同时最多几条隧道；
 //! 6. 从今天的额度里先预留一段（[`EgressLedger::reserve`]），转发途中不够了再预留，用完就断；
 //! 7. 由代理自己解析，任何一个地址不是公网地址、或者落在部署配置的禁段里就整体拒绝，直接连检查过的地址
@@ -68,6 +70,14 @@ pub struct EgressOptions {
     pub deny: Vec<Cidr>,
     /// 每天按哪个时区切（相对 UTC 的秒数）。
     pub utc_offset_secs: i64,
+    /// 问用户的时候最多等多久（用户 2026-11-04 定：一分钟）。
+    pub ask_wait: Duration,
+    /// 等用户回答时多久查一次。
+    pub ask_poll: Duration,
+    /// 每个实例最多几个网站同时在等用户回答（再多的不问，直接拒绝）。
+    pub max_pending_asks: u32,
+    /// 每个实例最多几个连接同时等用户回答（再多的照样登记、马上告诉 agent 用户还没答）。
+    pub max_waiting: u32,
     /// 只用于本地开发和测试：允许非公网地址、任意端口、单段名字（`localhost`）。
     pub insecure: bool,
 }
@@ -92,6 +102,10 @@ impl Default for EgressOptions {
             max_connections_per_ip: 32,
             deny: Vec::new(),
             utc_offset_secs: proto::egress::DAY_UTC_OFFSET_SECS,
+            ask_wait: Duration::from_secs(proto::egress::ASK_WAIT_SECS),
+            ask_poll: Duration::from_secs(1),
+            max_pending_asks: proto::egress::MAX_PENDING_ASKS,
+            max_waiting: 2 * proto::egress::MAX_TUNNELS,
             insecure: false,
         }
     }
@@ -165,7 +179,31 @@ pub struct EgressRecord {
     pub count: u32,
 }
 
-/// 额度和日志存在哪：生产是数据库（多副本共用），开发和测试用内存。
+/// 用户对 agent 想访问的一个网站怎么答的（出口代理看到的）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Answer {
+    /// 还在等。
+    Pending,
+    /// 访问一次（这次任务）或者一直允许。
+    Allowed,
+    /// 拒绝（这次任务里不再问）。
+    Denied,
+    /// 太久没人答、已经过期，或者这条没了。
+    Gone,
+}
+
+impl Answer {
+    pub(crate) fn from_status(status: Option<&str>) -> Self {
+        match status {
+            Some("pending") => Answer::Pending,
+            Some("once" | "always") => Answer::Allowed,
+            Some("denied") => Answer::Denied,
+            _ => Answer::Gone,
+        }
+    }
+}
+
+/// 额度、日志和要问用户的网站存在哪：生产是数据库（多副本共用），开发和测试用内存。
 #[async_trait]
 pub trait EgressLedger: Send + Sync {
     /// 从实例 `day` 这天的额度里预留最多 `want` 字节，返回实际预留到的；0 表示用完了。出错时调用方按用完处理。
@@ -181,6 +219,35 @@ pub trait EgressLedger: Send + Sync {
     async fn refund(&self, instance: &str, day: NaiveDate, bytes: u64) -> anyhow::Result<()>;
     /// 记一行日志。失败只记进程日志。
     async fn record(&self, record: EgressRecord);
+    /// 实例现在在做的任务，和这次任务里用户对 `host` 答过的（访问一次、拒绝；没答过为空）。
+    async fn decision(
+        &self,
+        instance: &str,
+        host: &str,
+    ) -> anyhow::Result<(Option<String>, Option<Answer>)>;
+    /// 登记“想访问 `host`”（同一个网站已经有一条在等就接着等那条），返回请求 id；这个实例已经有 `max_pending` 个
+    /// 网站在等时返回空。
+    async fn ask(
+        &self,
+        user: &str,
+        instance: &str,
+        host: &str,
+        run: Option<&str>,
+        max_pending: u32,
+    ) -> anyhow::Result<Option<String>>;
+    /// 一条请求现在怎么样了。
+    async fn answer(&self, request: &str) -> anyhow::Result<Answer>;
+}
+
+/// 内存里的一条请求（开发、测试）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryAsk {
+    pub id: String,
+    pub instance: String,
+    pub host: String,
+    pub run: Option<String>,
+    /// pending、once、always、denied、expired。
+    pub status: String,
 }
 
 /// 内存里的额度和日志（开发、测试）。
@@ -188,6 +255,8 @@ pub trait EgressLedger: Send + Sync {
 pub struct MemoryEgressLedger {
     usage: Mutex<HashMap<(String, NaiveDate), u64>>,
     records: Mutex<Vec<EgressRecord>>,
+    asks: Mutex<Vec<MemoryAsk>>,
+    runs: Mutex<HashMap<String, String>>,
 }
 
 impl MemoryEgressLedger {
@@ -196,6 +265,33 @@ impl MemoryEgressLedger {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone()
+    }
+
+    pub fn asks(&self) -> Vec<MemoryAsk> {
+        self.asks.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// 用户回答一条请求（`once`、`always`、`denied`、`expired`）。
+    pub fn decide(&self, id: &str, status: &str) {
+        for a in self
+            .asks
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter_mut()
+        {
+            if a.id == id {
+                a.status = status.to_owned();
+            }
+        }
+    }
+
+    /// 实例现在在做的任务（空表示没有）。
+    pub fn set_run(&self, instance: &str, run: Option<&str>) {
+        let mut runs = self.runs.lock().unwrap_or_else(|e| e.into_inner());
+        match run {
+            Some(r) => runs.insert(instance.to_owned(), r.to_owned()),
+            None => runs.remove(instance),
+        };
     }
 
     pub fn used(&self, instance: &str, day: NaiveDate) -> u64 {
@@ -239,12 +335,84 @@ impl EgressLedger for MemoryEgressLedger {
             .unwrap_or_else(|e| e.into_inner())
             .push(record);
     }
+
+    async fn decision(
+        &self,
+        instance: &str,
+        host: &str,
+    ) -> anyhow::Result<(Option<String>, Option<Answer>)> {
+        let run = self
+            .runs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(instance)
+            .cloned();
+        let answer = self
+            .asks
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .rev()
+            .find(|a| {
+                a.instance == instance
+                    && a.host == host
+                    && a.run == run
+                    && matches!(a.status.as_str(), "once" | "denied")
+            })
+            .map(|a| Answer::from_status(Some(&a.status)));
+        Ok((run, answer))
+    }
+
+    async fn ask(
+        &self,
+        _user: &str,
+        instance: &str,
+        host: &str,
+        run: Option<&str>,
+        max_pending: u32,
+    ) -> anyhow::Result<Option<String>> {
+        let mut asks = self.asks.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(a) = asks
+            .iter_mut()
+            .find(|a| a.instance == instance && a.host == host && a.status == "pending")
+        {
+            a.run = run.map(str::to_owned);
+            return Ok(Some(a.id.clone()));
+        }
+        let pending = asks
+            .iter()
+            .filter(|a| a.instance == instance && a.status == "pending")
+            .count();
+        if pending >= max_pending as usize {
+            return Ok(None);
+        }
+        let id = proto::domain::EgressRequestId::new().to_string();
+        asks.push(MemoryAsk {
+            id: id.clone(),
+            instance: instance.to_owned(),
+            host: host.to_owned(),
+            run: run.map(str::to_owned),
+            status: "pending".into(),
+        });
+        Ok(Some(id))
+    }
+
+    async fn answer(&self, request: &str) -> anyhow::Result<Answer> {
+        let asks = self.asks.lock().unwrap_or_else(|e| e.into_inner());
+        Ok(Answer::from_status(
+            asks.iter()
+                .find(|a| a.id == request)
+                .map(|a| a.status.as_str()),
+        ))
+    }
 }
 
 /// 每个实例的计数：开着的隧道、这一分钟开了几次、记了几行日志；每个来源地址这一分钟发了几次。
 #[derive(Default)]
 struct Counters {
     open: HashMap<String, u32>,
+    /// 在等用户回答的连接。
+    waiting: HashMap<String, u32>,
     minute: HashMap<String, (Instant, u32, u32)>,
     peers: HashMap<IpAddr, (Instant, u32)>,
 }
@@ -341,6 +509,28 @@ impl Drop for TunnelSlot {
     }
 }
 
+/// 一个在等用户回答的连接，放下时还回名额。
+struct WaitingSlot {
+    egress: Arc<Egress>,
+    instance: String,
+}
+
+impl Drop for WaitingSlot {
+    fn drop(&mut self) {
+        let mut c = self
+            .egress
+            .counters
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(n) = c.waiting.get_mut(&self.instance) {
+            *n = n.saturating_sub(1);
+            if *n == 0 {
+                c.waiting.remove(&self.instance);
+            }
+        }
+    }
+}
+
 /// 一条隧道的来龙去脉：谁、去哪、哪一天的额度。
 struct Target {
     token: String,
@@ -350,6 +540,8 @@ struct Target {
     host: String,
     port: u16,
     day: NaiveDate,
+    /// 用户答应了（访问一次、一直允许）才开的：档位本身不直接放行，重新核对时只要档位还问用户就接着开。
+    approved: bool,
 }
 
 /// 隧道的额度：本地还剩多少预留、是哪一天的，不够了再找账本要。过了零点就退回前一天剩下的，改从当天扣。
@@ -715,20 +907,34 @@ impl Egress {
             self.record_denial(&caller, &host, port, &d);
             return respond(&d);
         }
+        let mut approved = false;
         if !caller
             .instance
             .egress_mode
             .allows(&host, &caller.instance.egress_hosts)
         {
-            let d = denied(
-                StatusCode::FORBIDDEN,
-                "not_allowed",
-                format!(
-                    "this agent may not reach {host}; the user can allow it in the agent's internet settings"
-                ),
-            );
-            self.record_denial(&caller, &host, port, &d);
-            return respond(&d);
+            // 目录有缓存：用户刚点了“一直允许”时缓存里还没有，重新读一次再判断。
+            let fresh = self.gw.directory.instance(&caller.instance.id, true).await;
+            let (mode, allowed) = match &fresh {
+                Some(i) => (i.egress_mode, i.egress_mode.allows(&host, &i.egress_hosts)),
+                None => (caller.instance.egress_mode, false),
+            };
+            if !allowed {
+                if !mode.asks() {
+                    let d = denied(
+                        StatusCode::FORBIDDEN,
+                        "not_allowed",
+                        format!("this agent may not reach {host}"),
+                    );
+                    self.record_denial(&caller, &host, port, &d);
+                    return respond(&d);
+                }
+                if let Err(d) = self.ask(&caller, &host).await {
+                    self.record_denial(&caller, &host, port, &d);
+                    return respond(&d);
+                }
+                approved = true;
+            }
         }
         let Some(slot) = self.wait_slot(&caller.instance.id).await else {
             let d = denied(
@@ -747,6 +953,7 @@ impl Egress {
             host,
             port,
             day: self.today(),
+            approved,
         };
         // 先预留一段：今天用完了就不开。预留由 `Reserved` 拿着：解析、连接时出错或者客户端断开（这个请求被丢弃）
         // 都会退回。
@@ -814,15 +1021,115 @@ impl Egress {
         Response::new(Body::empty())
     }
 
-    /// 隧道开着的时候还放不放行：令牌还有效、档位还放行这个网站。
+    /// 隧道开着的时候还放不放行：令牌还有效（任务结束、实例停了、授权吊销都会失效）、档位还放行这个网站（用户答应过的，
+    /// 档位还问用户就行）。
     async fn still_allowed(&self, t: &Target) -> bool {
         match self.gw.verify_token(&t.token, t.peer).await {
-            Ok(c) => c
-                .instance
-                .egress_mode
-                .allows(&t.host, &c.instance.egress_hosts),
+            Ok(c) => {
+                let mode = c.instance.egress_mode;
+                (t.approved && mode.asks()) || mode.allows(&t.host, &c.instance.egress_hosts)
+            }
             Err(_) => false,
         }
+    }
+
+    /// 不直接放行的网站问用户（2.7）。这次任务里答过就按答的；没答过就登记一条请求（同一个网站只有一条在等，后台给
+    /// 用户发提醒），最多等 `ask_wait` 看用户答不答。用户答应了返回 Ok，否则是给 agent 看的拒绝。
+    async fn ask(self: &Arc<Self>, caller: &Caller, host: &str) -> Result<(), Denied> {
+        let instance = caller.instance.id.as_str();
+        let unavailable = |e: anyhow::Error| {
+            tracing::error!(error = %e, "egress approval lookup failed");
+            denied(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "store",
+                "the egress service is unavailable, try again later",
+            )
+        };
+        let user_denied = || {
+            denied(
+                StatusCode::FORBIDDEN,
+                "user_denied",
+                format!("the user declined {host} for this task; do it another way"),
+            )
+        };
+        let pending = || {
+            denied(
+                StatusCode::FORBIDDEN,
+                "pending_approval",
+                format!(
+                    "{host} needs the user's approval; they have been asked in the Thinktin app and have not \
+                     answered yet. Do other work first and try {host} again later, or find another way"
+                ),
+            )
+        };
+        let (run, answer) = self
+            .ledger
+            .decision(instance, host)
+            .await
+            .map_err(unavailable)?;
+        match answer {
+            Some(Answer::Allowed) => return Ok(()),
+            Some(Answer::Denied) => return Err(user_denied()),
+            _ => {}
+        }
+        let Some(id) = self
+            .ledger
+            .ask(
+                &caller.instance.user_id,
+                instance,
+                host,
+                run.as_deref(),
+                self.options.max_pending_asks,
+            )
+            .await
+            .map_err(unavailable)?
+        else {
+            return Err(denied(
+                StatusCode::FORBIDDEN,
+                "too_many_asks",
+                format!(
+                    "{} sites are already waiting for the user's approval; wait for those or do it another way",
+                    self.options.max_pending_asks
+                ),
+            ));
+        };
+        metrics::counter!("thinktin_egress_asks_total").increment(1);
+        let Some(_waiting) = self.take_waiting(instance) else {
+            return Err(pending());
+        };
+        let deadline = tokio::time::Instant::now() + self.options.ask_wait;
+        let mut stop = self.stopping.subscribe();
+        loop {
+            match self.ledger.answer(&id).await {
+                Ok(Answer::Allowed) => return Ok(()),
+                Ok(Answer::Denied) => return Err(user_denied()),
+                Ok(Answer::Gone) => return Err(pending()),
+                Ok(Answer::Pending) => {}
+                Err(e) => tracing::warn!(error = %e, "checking an egress approval failed"),
+            }
+            let now = tokio::time::Instant::now();
+            if now >= deadline || *stop.borrow_and_update() {
+                return Err(pending());
+            }
+            tokio::select! {
+                () = tokio::time::sleep(self.options.ask_poll.min(deadline - now)) => {}
+                _ = stop.changed() => {}
+            }
+        }
+    }
+
+    /// 占一个“等用户回答”的名额。
+    fn take_waiting(self: &Arc<Self>, instance: &str) -> Option<WaitingSlot> {
+        let mut c = self.counters.lock().unwrap_or_else(|e| e.into_inner());
+        let n = c.waiting.entry(instance.to_owned()).or_default();
+        if *n >= self.options.max_waiting {
+            return None;
+        }
+        *n += 1;
+        Some(WaitingSlot {
+            egress: self.clone(),
+            instance: instance.to_owned(),
+        })
     }
 
     async fn tunnel(

@@ -180,6 +180,7 @@ async fn env() -> Option<Env> {
         Arc::new(PgEgressLedger::new(t.db.clone())),
         EgressOptions {
             insecure: true,
+            ask_poll: Duration::from_millis(50),
             ..EgressOptions::default()
         },
     ));
@@ -531,7 +532,8 @@ async fn disabled_keys_left_in_routes_are_skipped() {
     assert_eq!(e.chat(&token).await.0, 200);
 }
 
-/// 出网通道（2.7）接控制面数据库：档位从库里读（用户改了很快生效），用量和日志写进库里。
+/// 出网通道（2.7）接控制面数据库：不在名单上的网站登记请求、等用户在 App 里回答；档位从库里读（用户改了很快生效），
+/// 用量和日志写进库里。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn egress_policy_usage_and_log_live_in_the_database() {
     use base64::Engine;
@@ -570,16 +572,104 @@ async fn egress_policy_usage_and_log_live_in_the_database() {
         }
         (String::from_utf8_lossy(&head).into_owned(), s)
     };
-    // 默认只连模型：拒绝，记一条拒绝的日志。
+    let db = e.t.db.clone();
+    let instance = e.instance;
+    // 等出口代理登记一条在等的请求，返回它的 id 和对应的任务。
+    let pending = || {
+        let db = db.clone();
+        async move {
+            for _ in 0..100 {
+                let row: Option<(uuid::Uuid, Option<uuid::Uuid>)> = sqlx::query_as(
+                    "SELECT id, run_id FROM egress_requests WHERE instance_id = $1 AND status = 'pending'",
+                )
+                .bind(instance.0)
+                .fetch_optional(db.pool())
+                .await
+                .unwrap();
+                if let Some(row) = row {
+                    return row;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            panic!("timed out waiting for a pending request");
+        }
+    };
+    let decide = |id: uuid::Uuid, decision: proto::domain::EgressDecision| {
+        let db = db.clone();
+        let user = e.user;
+        async move {
+            let mut tx = db.tenant(user).await.unwrap();
+            tx.decide_egress_request(id.into(), decision).await.unwrap();
+            tx.commit().await.unwrap();
+        }
+    };
+    // 实例在做一个任务。
+    let mut tx = e.t.db.tenant(e.user).await.unwrap();
+    let run = tx
+        .create_run(&store::NewRun::new(
+            e.instance,
+            proto::domain::RunSource::User,
+            "look something up",
+            "1",
+        ))
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    sqlx::query("UPDATE runs SET state = 'running' WHERE id = $1")
+        .bind(run.id.0)
+        .execute(e.t.db.pool())
+        .await
+        .unwrap();
+
+    // 默认档位：不在名单上的网站问用户，用户点“访问一次”就接着连。
     let token = e.token("sbx-1");
-    let (head, _) = connect(token.clone()).await;
-    assert!(head.starts_with("HTTP/1.1 403"), "{head}");
-    // 用户在 App 里放行这个网站：缓存过期后生效。
+    let waiting = tokio::spawn(connect(token.clone()));
+    let (id, asked_for) = pending().await;
+    assert_eq!(asked_for, Some(run.id.0));
+    decide(id, proto::domain::EgressDecision::Once).await;
+    let (head, mut s) = waiting.await.unwrap();
+    assert!(head.starts_with("HTTP/1.1 200"), "{head}");
+    s.write_all(b"ping").await.unwrap();
+    let mut buf = [0u8; 4];
+    s.read_exact(&mut buf).await.unwrap();
+    assert_eq!(&buf, b"ping");
+    drop(s);
+    // 这次任务里再连不用再问。
+    let (head, s) = connect(token.clone()).await;
+    assert!(head.starts_with("HTTP/1.1 200"), "{head}");
+    drop(s);
+
+    // 任务结束了：再访问重新问；这回“一直允许”，网站记进实例。
+    sqlx::query("UPDATE runs SET state = 'succeeded' WHERE id = $1")
+        .bind(run.id.0)
+        .execute(e.t.db.pool())
+        .await
+        .unwrap();
+    let waiting = tokio::spawn(connect(token.clone()));
+    let (id2, asked_for) = pending().await;
+    assert_ne!(id2, id);
+    assert_eq!(asked_for, None);
+    decide(id2, proto::domain::EgressDecision::Always).await;
+    let (head, s) = waiting.await.unwrap();
+    assert!(head.starts_with("HTTP/1.1 200"), "{head}");
+    drop(s);
+    let mut tx = e.t.db.tenant(e.user).await.unwrap();
+    let got = tx.instance(e.instance).await.unwrap();
+    assert_eq!(
+        (got.egress_mode, got.egress_hosts),
+        (EgressMode::Dev, vec!["localhost".to_owned()])
+    );
+    tx.rollback().await.unwrap();
+    let (head, s) = connect(token.clone()).await;
+    assert!(head.starts_with("HTTP/1.1 200"), "{head}");
+    drop(s);
+
+    // 只连模型（管理策略）：直接拒绝，不问。
     let mut tx = e.t.db.tenant(e.user).await.unwrap();
     tx.update_instance(
         e.instance,
         &store::InstanceChange {
-            egress: Some((EgressMode::Custom, vec!["localhost".into()])),
+            egress: Some((EgressMode::Model, vec![])),
             ..Default::default()
         },
     )
@@ -587,16 +677,9 @@ async fn egress_policy_usage_and_log_live_in_the_database() {
     .unwrap();
     tx.commit().await.unwrap();
     tokio::time::sleep(TTL * 2).await;
-    let (head, mut s) = connect(token).await;
-    assert!(head.starts_with("HTTP/1.1 200"), "{head}");
-    s.write_all(b"ping").await.unwrap();
-    let mut buf = [0u8; 4];
-    s.read_exact(&mut buf).await.unwrap();
-    assert_eq!(&buf, b"ping");
-    drop(s);
-    let db = e.t.db.clone();
-    let instance = e.instance;
-    eventually("two log rows", || {
+    let (head, _) = connect(token).await;
+    assert!(head.starts_with("HTTP/1.1 403"), "{head}");
+    eventually("five log rows", || {
         let db = db.clone();
         async move {
             let n: i64 =
@@ -605,7 +688,7 @@ async fn egress_policy_usage_and_log_live_in_the_database() {
                     .fetch_one(db.pool())
                     .await
                     .unwrap();
-            n == 2
+            n == 5
         }
     })
     .await;
@@ -616,13 +699,8 @@ async fn egress_policy_usage_and_log_live_in_the_database() {
     .fetch_all(e.t.db.pool())
     .await
     .unwrap();
-    assert_eq!(
-        rows,
-        [
-            (false, "not_allowed".to_owned(), 0, 0),
-            (true, "ok".to_owned(), 4, 4)
-        ]
-    );
+    assert_eq!(rows[0], (true, "ok".to_owned(), 4, 4));
+    assert_eq!(rows[4], (false, "not_allowed".to_owned(), 0, 0));
     let used: i64 = sqlx::query_scalar("SELECT bytes FROM egress_usage WHERE instance_id = $1")
         .bind(e.instance.0)
         .fetch_one(e.t.db.pool())

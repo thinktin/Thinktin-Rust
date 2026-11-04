@@ -203,7 +203,10 @@ async fn an_allowed_host_gets_a_tunnel_and_the_bytes_are_counted() {
 
 #[tokio::test]
 async fn bad_credentials_methods_and_hosts_are_refused() {
-    let e = env(EgressMode::Custom, &["localhost"], |_| {}).await;
+    let e = env(EgressMode::Custom, &["localhost"], |o| {
+        o.ask_wait = Duration::ZERO
+    })
+    .await;
     let target = e.echo_target();
     let (resp, _) = e.connect(&target, None).await;
     assert_eq!(status(&resp), 407, "{resp}");
@@ -226,14 +229,14 @@ async fn bad_credentials_methods_and_hosts_are_refused() {
     assert_eq!(status(&resp), 407, "{resp}");
     e.directory
         .upsert_instance(instance(EgressMode::Custom, &["localhost"]));
-    // IP 字面量、不在列表里的网站。
+    // IP 字面量；不在列表里的网站（问用户，用户还没答）。
     let (resp, _) = e
         .connect(&format!("127.0.0.1:{}", e.echo.port()), Some(&token))
         .await;
     assert_eq!(status(&resp), 400, "{resp}");
     let (resp, _) = e.connect("example.com:443", Some(&token)).await;
     assert_eq!(status(&resp), 403, "{resp}");
-    assert!(resp.contains("not_allowed"), "{resp}");
+    assert!(resp.contains("pending_approval"), "{resp}");
     // 不是 CONNECT。
     let mut s = TcpStream::connect(e.proxy).await.unwrap();
     s.write_all(b"GET http://example.com/ HTTP/1.1\r\nHost: example.com\r\n\r\n")
@@ -245,7 +248,7 @@ async fn bad_credentials_methods_and_hosts_are_refused() {
     // 拒绝的也记日志（不合规的网站、不放行的网站），认不出是谁的不记。
     let records = e.wait_for_records(2).await;
     let reasons: Vec<_> = records.iter().map(|r| (r.allowed, r.reason)).collect();
-    assert_eq!(reasons, [(false, "bad_host"), (false, "not_allowed")]);
+    assert_eq!(reasons, [(false, "bad_host"), (false, "pending_approval")]);
 }
 
 #[tokio::test]
@@ -356,7 +359,8 @@ async fn idle_tunnels_are_closed() {
 #[tokio::test]
 async fn logs_over_the_minute_cap_are_merged() {
     let e = env(EgressMode::Custom, &["localhost"], |o| {
-        o.logs_per_minute = 2
+        o.logs_per_minute = 2;
+        o.ask_wait = Duration::ZERO;
     })
     .await;
     let token = e.token_with(|_| {});
@@ -379,7 +383,7 @@ async fn logs_over_the_minute_cap_are_merged() {
     let total: u32 = records.iter().map(|r| r.count).sum();
     assert_eq!(total, 8, "{records:?}");
     let merged = records.iter().find(|r| !r.allowed).unwrap();
-    assert_eq!((merged.count, merged.reason), (3, "not_allowed"));
+    assert_eq!((merged.count, merged.reason), (3, "pending_approval"));
 }
 
 /// 同一个来源地址一分钟里 CONNECT 太多：核对令牌之前就拒绝（过期令牌反复来也不会每次都查库）。
@@ -459,4 +463,177 @@ async fn stopping_closes_tunnels_with_a_log_row_and_a_refund() {
     assert_eq!(records[0].reason, "shutdown", "{records:?}");
     let day = (chrono::Utc::now() + chrono::Duration::hours(8)).date_naive();
     assert_eq!(e.ledger.used("inst-1", day), 8);
+}
+
+impl Env {
+    /// 等到有 `n` 条请求登记上。
+    async fn wait_for_asks(&self, n: usize) -> Vec<llm_gw::egress::MemoryAsk> {
+        for _ in 0..200 {
+            let a = self.ledger.asks();
+            if a.len() >= n {
+                return a;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        self.ledger.asks()
+    }
+}
+
+fn asking(o: &mut EgressOptions) {
+    o.ask_wait = Duration::from_secs(5);
+    o.ask_poll = Duration::from_millis(20);
+}
+
+/// 不在名单上的网站问用户：等着的时候用户点了“访问一次”就接着连；这次任务里再访问不用再问，下一个任务重新问。
+#[tokio::test]
+async fn unlisted_sites_are_asked_and_once_lasts_for_the_task() {
+    let e = Arc::new(env(EgressMode::Custom, &[], asking).await);
+    e.ledger.set_run("inst-1", Some("run-1"));
+    let token = e.token_with(|_| {});
+    let waiting = {
+        let (e, token) = (e.clone(), token.clone());
+        tokio::spawn(async move { e.connect(&e.echo_target(), Some(&token)).await })
+    };
+    let asks = e.wait_for_asks(1).await;
+    assert_eq!(
+        (
+            asks[0].host.as_str(),
+            asks[0].run.as_deref(),
+            asks[0].status.as_str()
+        ),
+        ("localhost", Some("run-1"), "pending")
+    );
+    assert!(!waiting.is_finished(), "the agent waits for the answer");
+    e.ledger.decide(&asks[0].id, "once");
+    let (resp, mut s) = tokio::time::timeout(Duration::from_secs(5), waiting)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(status(&resp), 200, "{resp}");
+    s.write_all(b"ok").await.unwrap();
+    let mut buf = [0u8; 2];
+    s.read_exact(&mut buf).await.unwrap();
+    drop(s);
+    // 同一个任务：直接放行，不再登记。
+    let (resp, _s) = e.connect(&e.echo_target(), Some(&token)).await;
+    assert_eq!(status(&resp), 200, "{resp}");
+    assert_eq!(e.ledger.asks().len(), 1);
+
+    // 下一个任务：重新问；没人答，过一会儿告诉 agent 先做别的。
+    let e = Arc::new(
+        env(EgressMode::Custom, &[], |o| {
+            o.ask_wait = Duration::from_millis(200);
+            o.ask_poll = Duration::from_millis(20);
+        })
+        .await,
+    );
+    e.ledger.set_run("inst-1", Some("run-1"));
+    let token = e.token_with(|_| {});
+    let (resp, _) = e.connect(&e.echo_target(), Some(&token)).await;
+    assert_eq!(status(&resp), 403, "{resp}");
+    assert!(resp.contains("pending_approval"), "{resp}");
+    let id = e.ledger.asks()[0].id.clone();
+    e.ledger.decide(&id, "once");
+    e.ledger.set_run("inst-1", Some("run-2"));
+    let (resp, _) = e.connect(&e.echo_target(), Some(&token)).await;
+    assert!(resp.contains("pending_approval"), "{resp}");
+    let asks = e.ledger.asks();
+    assert_eq!(asks.len(), 2);
+    assert_eq!(asks[1].run.as_deref(), Some("run-2"));
+    let records = e.wait_for_records(2).await;
+    assert!(
+        records
+            .iter()
+            .all(|r| !r.allowed && r.reason == "pending_approval"),
+        "{records:?}"
+    );
+}
+
+/// “拒绝”：这次任务里不再问，直接告诉 agent 换个办法。
+#[tokio::test]
+async fn a_denied_site_is_not_asked_again_in_the_task() {
+    let e = Arc::new(env(EgressMode::Custom, &[], asking).await);
+    e.ledger.set_run("inst-1", Some("run-1"));
+    let token = e.token_with(|_| {});
+    let waiting = {
+        let (e, token) = (e.clone(), token.clone());
+        tokio::spawn(async move { e.connect(&e.echo_target(), Some(&token)).await.0 })
+    };
+    let asks = e.wait_for_asks(1).await;
+    e.ledger.decide(&asks[0].id, "denied");
+    let resp = waiting.await.unwrap();
+    assert_eq!(status(&resp), 403, "{resp}");
+    assert!(resp.contains("user_denied"), "{resp}");
+    let started = std::time::Instant::now();
+    let (resp, _) = e.connect(&e.echo_target(), Some(&token)).await;
+    assert!(resp.contains("user_denied"), "{resp}");
+    assert!(started.elapsed() < Duration::from_secs(2));
+    assert_eq!(e.ledger.asks().len(), 1);
+}
+
+/// “一直允许”：接着连，用户答应过的隧道重新核对时不会因为缓存里还没这个网站被断开。只连模型的不问。
+#[tokio::test]
+async fn always_allowed_tunnels_survive_rechecks_and_model_only_never_asks() {
+    let e = Arc::new(
+        env(EgressMode::Custom, &[], |o| {
+            asking(o);
+            o.recheck_every = Duration::from_millis(50);
+        })
+        .await,
+    );
+    let token = e.token_with(|_| {});
+    let waiting = {
+        let (e, token) = (e.clone(), token.clone());
+        tokio::spawn(async move { e.connect(&e.echo_target(), Some(&token)).await })
+    };
+    let asks = e.wait_for_asks(1).await;
+    assert_eq!(asks[0].run, None);
+    e.ledger.decide(&asks[0].id, "always");
+    let (resp, mut s) = waiting.await.unwrap();
+    assert_eq!(status(&resp), 200, "{resp}");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    s.write_all(b"still").await.unwrap();
+    let mut buf = [0u8; 5];
+    tokio::time::timeout(Duration::from_secs(2), s.read_exact(&mut buf))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(&buf, b"still");
+    // 档位改成只连模型：用户答应过的也断。
+    e.directory
+        .upsert_instance(instance(EgressMode::Model, &[]));
+    let r = tokio::time::timeout(Duration::from_secs(3), s.read(&mut buf)).await;
+    assert!(matches!(r, Ok(Ok(0)) | Ok(Err(_))), "{r:?}");
+    let (resp, _) = e.connect(&e.echo_target(), Some(&token)).await;
+    assert!(resp.contains("not_allowed"), "{resp}");
+    assert_eq!(e.ledger.asks().len(), 1);
+}
+
+/// 同时在等的网站有上限：再多的不问；同一个网站多个连接一起等，只登记一条。
+#[tokio::test]
+async fn pending_asks_are_capped_per_instance() {
+    let e = Arc::new(
+        env(EgressMode::Custom, &[], |o| {
+            o.ask_wait = Duration::from_millis(300);
+            o.ask_poll = Duration::from_millis(20);
+            o.max_pending_asks = 1;
+            o.max_waiting = 1;
+        })
+        .await,
+    );
+    let token = e.token_with(|_| {});
+    let first = {
+        let (e, token) = (e.clone(), token.clone());
+        tokio::spawn(async move { e.connect(&e.echo_target(), Some(&token)).await.0 })
+    };
+    e.wait_for_asks(1).await;
+    // 同一个网站的第二个连接：等的名额满了，马上告诉 agent 用户还没答。
+    let (resp, _) = e.connect(&e.echo_target(), Some(&token)).await;
+    assert!(resp.contains("pending_approval"), "{resp}");
+    // 别的网站：在等的网站满了，不问。
+    let (resp, _) = e.connect("otherhost:443", Some(&token)).await;
+    assert!(resp.contains("too_many_asks"), "{resp}");
+    assert_eq!(e.ledger.asks().len(), 1);
+    let resp = first.await.unwrap();
+    assert!(resp.contains("pending_approval"), "{resp}");
 }

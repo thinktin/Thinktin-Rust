@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
 use keyvault::{KeyStore, MemoryKeyStore, SealedSecret, WrappedKey};
-use proto::domain::{CredentialId, GrantId, InstanceId, UserId};
+use proto::domain::{CredentialId, EgressRequestId, GrantId, InstanceId, RunId, UserId};
 use store::{Db, NewUsage};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -568,5 +568,54 @@ impl crate::egress::EgressLedger for PgEgressLedger {
             tracing::error!(error = %e, "writing the egress log failed");
             metrics::counter!("thinktin_egress_log_errors_total").increment(1);
         }
+    }
+
+    async fn decision(
+        &self,
+        instance: &str,
+        host: &str,
+    ) -> anyhow::Result<(Option<String>, Option<crate::egress::Answer>)> {
+        let (instance, _) = ids(instance, None)?;
+        let mut tx = self.db.llmgw().await?;
+        let run = tx.egress_current_run(instance).await?;
+        let status = tx.egress_decision(instance, host, run).await?;
+        tx.commit().await?;
+        Ok((
+            run.map(|r| r.to_string()),
+            status.map(|s| crate::egress::Answer::from_status(Some(&s))),
+        ))
+    }
+
+    async fn ask(
+        &self,
+        user: &str,
+        instance: &str,
+        host: &str,
+        run: Option<&str>,
+        max_pending: u32,
+    ) -> anyhow::Result<Option<String>> {
+        let (instance, user) = ids(instance, Some(user))?;
+        let run = run
+            .map(|r| r.parse::<RunId>())
+            .transpose()
+            .map_err(|_| anyhow::anyhow!("bad run id"))?;
+        let mut tx = self.db.llmgw().await?;
+        let id = tx
+            .egress_ask(user.unwrap_or_default(), instance, host, run, max_pending)
+            .await?;
+        tx.commit().await?;
+        Ok(id.map(|i| i.to_string()))
+    }
+
+    async fn answer(&self, request: &str) -> anyhow::Result<crate::egress::Answer> {
+        let id: EgressRequestId = request
+            .parse()
+            .map_err(|_| anyhow::anyhow!("bad request id"))?;
+        let mut tx = self.db.llmgw().await?;
+        let status = tx.egress_request_status(id).await?;
+        tx.commit().await?;
+        Ok(crate::egress::Answer::from_status(
+            status.as_ref().map(|(s, _)| s.as_str()),
+        ))
     }
 }
