@@ -149,7 +149,7 @@ shim 把当前会话 id 记在 `~/.thinktin/shim-session.json`（工作区卷上
 | 辅助进程（OpenClaw Gateway）中途退出时 shim 不单独监控 | 桥会报错退出，之后按 agent 崩溃重启 | 6.9 增加辅助进程健康检查 |
 | Hermes 会把网关地址记进会话（令牌每次从 `key_env` 取，不受影响），网关在回环或内网地址时还会不带凭证探测本地推理服务的接口 | 网关地址变了，旧会话还打旧地址；网关会收到一些无凭证的探测请求 | 沙箱里的网关地址保持固定（比如固定的内部域名）；网关对无凭证请求一律 401 |
 | OpenClaw 启动约 90 秒后在后台拉 ClawHub 插件目录，配置关不掉 | 沙箱放行外网时会连 `clawhub.ai`（只读，不带数据） | 沙箱出网策略拦截（2.7） |
-| 不支持按会话注入 MCP 的 agent（Pi、OpenClaw），平台工具还没写进它们自己的配置 | 平台工具（第 5 节）暂时只能注入 Claude、Codex、Hermes | Pi 本身没有 MCP；OpenClaw 要把桥写进它的配置文件 |
+| 不支持按会话注入 MCP 的 agent（Pi、OpenClaw） | 2026-11-04 起 shim 把平台工具桥写进它们自己的配置：Pi 写 `~/.pi/agent/mcp.json`（Pi 1.2.0 有 MCP；`exposure: direct`；没有权限系统，先只给 `web_search`），OpenClaw 写 `openclaw.json` 的 `mcp.servers` | 还没在真沙箱里验收；OpenClaw 调 MCP 工具要不要批准没核实 |
 | 平台链路目前是 stdio JSON Lines | 还没接编排服务 | 3.2 协议定义、7.x 编排服务 |
 
 ## 9. 本地运行

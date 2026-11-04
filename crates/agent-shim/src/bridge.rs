@@ -453,7 +453,8 @@ fn rpc_error(id: &Value, code: i64, message: &str) -> Value {
 }
 
 /// 在 stdio 上当 MCP 服务器，把工具相关的请求转给 shim。
-pub async fn run_client(socket: &Path, egress: bool) -> anyhow::Result<()> {
+/// `only` 不为空时只给这几个工具（没有权限系统的 agent，比如 Pi，先只给搜索，docs/search.md）。
+pub async fn run_client(socket: &Path, egress: bool, only: Vec<String>) -> anyhow::Result<()> {
     let instructions = if egress {
         format!("{INSTRUCTIONS}{EGRESS_INSTRUCTIONS}")
     } else {
@@ -480,6 +481,7 @@ pub async fn run_client(socket: &Path, egress: bool) -> anyhow::Result<()> {
     let from_shim = {
         let waiting = waiting.clone();
         let out = out_tx.clone();
+        let only_list = only.clone();
         tokio::spawn(async move {
             let mut lines = BufReader::new(sock_read).lines();
             while let Ok(Some(line)) = lines.next_line().await {
@@ -499,7 +501,10 @@ pub async fn run_client(socket: &Path, egress: bool) -> anyhow::Result<()> {
                     continue;
                 };
                 let reply = match kind {
-                    "list" => rpc_result(&rpc_id, json!({"tools": msg["tools"]})),
+                    "list" => rpc_result(
+                        &rpc_id,
+                        json!({"tools": keep_only(&msg["tools"], &only_list)}),
+                    ),
                     _ => rpc_result(&rpc_id, msg["result"].clone()),
                 };
                 let _ = out.send(reply);
@@ -549,6 +554,13 @@ pub async fn run_client(socket: &Path, egress: bool) -> anyhow::Result<()> {
                     ("list", json!({"id": sock_id, "op": "list"}))
                 } else {
                     let name = req["params"]["name"].clone();
+                    if !only.is_empty() && !only.iter().any(|o| name.as_str() == Some(o.as_str())) {
+                        let _ = out_tx.send(rpc_result(
+                            &id,
+                            json!({"content": [{"type": "text", "text": format!("unknown tool `{}`", name.as_str().unwrap_or_default())}], "isError": true}),
+                        ));
+                        continue;
+                    }
                     let args = req["params"]
                         .get("arguments")
                         .cloned()
@@ -577,6 +589,22 @@ pub async fn run_client(socket: &Path, egress: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// 只留 `only` 里的工具（为空时都留）。
+fn keep_only(tools: &Value, only: &[String]) -> Value {
+    if only.is_empty() {
+        return tools.clone();
+    }
+    Value::Array(
+        tools
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|t| only.iter().any(|o| t["name"].as_str() == Some(o.as_str())))
+            .cloned()
+            .collect(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -597,6 +625,16 @@ mod tests {
         let mut buf = String::new();
         stream.read_line(&mut buf).await.unwrap();
         serde_json::from_str(&buf).unwrap()
+    }
+
+    #[test]
+    fn only_listed_tools_are_kept() {
+        let tools = json!([{"name": "web_search"}, {"name": "delegate"}]);
+        assert_eq!(keep_only(&tools, &[]), tools);
+        assert_eq!(
+            keep_only(&tools, &["web_search".to_owned()]),
+            json!([{"name": "web_search"}])
+        );
     }
 
     #[tokio::test]

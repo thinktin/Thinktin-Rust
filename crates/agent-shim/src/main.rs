@@ -66,6 +66,9 @@ enum Command {
         /// 沙箱经出口代理上网（说明里加上上网的规矩）。
         #[arg(long)]
         egress: bool,
+        /// 只给这几个工具（可以写多次）。
+        #[arg(long)]
+        only: Vec<String>,
     },
     /// 密码保险箱助手（沙箱里叫 thinktin-vault）：按名字把保险箱里的值注入命令
     Vault {
@@ -409,8 +412,12 @@ async fn run(cli: Cli) -> anyhow::Result<ExitCode> {
             let cfg = common.shim_config(Fallback::Ask, 5)?;
             serve(cfg, bridge).await
         }
-        Command::McpBridge { socket, egress } => {
-            bridge::run_client(&socket, egress).await?;
+        Command::McpBridge {
+            socket,
+            egress,
+            only,
+        } => {
+            bridge::run_client(&socket, egress, only).await?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Vault {

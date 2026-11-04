@@ -62,14 +62,12 @@ pub async fn run(
     sink: EventSink,
 ) -> anyhow::Result<()> {
     let harness = cfg.harness()?.clone();
-    let rendered = config::render(&cfg.manifest, &cfg.routing, &cfg.home, &cfg.cwd)?;
-    rendered.write_files(&cfg.home)?;
-    if !cfg.mcp_servers.is_empty() && !harness.session.per_session_mcp {
-        tracing::warn!(
-            "harness `{}` ignores per-session MCP servers; they are not injected yet",
-            harness.id
-        );
+    let mut rendered = config::render(&cfg.manifest, &cfg.routing, &cfg.home, &cfg.cwd)?;
+    // 不支持按会话给 MCP 服务器的（Pi、OpenClaw）：平台工具桥写进它们自己的配置文件。
+    if !harness.session.per_session_mcp {
+        config::inject_mcp(&cfg.manifest, &mut rendered, &cfg.mcp_servers)?;
     }
+    rendered.write_files(&cfg.home)?;
 
     let mut restarts = 0u32;
     loop {

@@ -27,10 +27,12 @@
   `settings.json` 里放行了 `mcp__thinktin__web_search`。没配 key 时不给这个工具（启动时打一条警告）。
 - **Claude 的设置**（`crates/agent-shim/src/config.rs`）：放行 `WebSearch`、`WebFetch`、平台搜索，`skipWebFetchPreflight`。
 - **key**：`THINKTIN_DEEPSEEK_SEARCH_KEY`、`THINKTIN_IQS_API_KEY`，只放后台副本的 Secret（docs/release.md 第 5 节）。
+- **Pi、OpenClaw 也拿到平台工具**（`config::inject_mcp`）：它们不支持按会话给 MCP 服务器，shim 把桥写进它们自己的配置。
+  Pi 写 `~/.pi/agent/mcp.json`，`exposure: direct`（模型才看得见），桥带 `--only web_search`：Pi 没有权限系统，先只给搜索。
+  OpenClaw 写 `openclaw.json` 的 `mcp.servers`。
 
 **还没做：**
 
-- Pi、OpenClaw 接上平台工具（现在只有 Claude、Codex、Hermes 拿得到平台搜索）。
 - 网关记厂商替 agent 搜了几次（用户选了保留厂商自带的搜索）。
 - 用户买接口、充值、把 key 放进环境变量后：50 个中英文问题的小测，东京连通测试，五个 agent 逐个验收。
 

@@ -407,6 +407,78 @@ fn hermes(r: &ModelRouting, home: &Path, take_over: bool, out: &mut RenderedConf
         .push((PathBuf::from(".hermes/config.yaml"), pretty(&config)));
 }
 
+/// Pi 只拿到这几个平台工具：它没有权限系统，给它的工具都直接执行（docs/search.md）。
+pub const PI_PLATFORM_TOOLS: [&str; 1] = ["web_search"];
+
+/// 不支持按会话给 MCP 服务器的 agent（Pi、OpenClaw）：把平台工具桥写进它们自己的配置文件。`servers` 是 ACP
+/// `session/new` 的条目（`name`、`command`、`args`、`env` 是 `[{name, value}]`）。别的 agent 什么都不做。
+pub fn inject_mcp(
+    manifest: &Manifest,
+    out: &mut RenderedConfig,
+    servers: &[Value],
+) -> anyhow::Result<()> {
+    if servers.is_empty() {
+        return Ok(());
+    }
+    let entry = |s: &Value| -> anyhow::Result<(String, Value)> {
+        let name = s["name"]
+            .as_str()
+            .context("MCP server entry has no name")?
+            .to_owned();
+        let env: serde_json::Map<String, Value> = s["env"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|e| Some((e["name"].as_str()?.to_owned(), e["value"].clone())))
+            .collect();
+        Ok((
+            name,
+            json!({ "command": s["command"], "args": s["args"], "env": env }),
+        ))
+    };
+    match manifest.llm.config {
+        ConfigGenerator::Pi => {
+            let mut map = serde_json::Map::new();
+            for s in servers {
+                let (name, mut e) = entry(s)?;
+                if let Some(args) = e["args"].as_array_mut() {
+                    for tool in PI_PLATFORM_TOOLS {
+                        args.push(json!("--only"));
+                        args.push(json!(tool));
+                    }
+                }
+                // 直接给模型看（默认的 codemode 只能在脚本里调，模型看不到）。
+                e["exposure"] = json!("direct");
+                e["description"] = json!("ThinkTin platform tools: web search");
+                map.insert(name, e);
+            }
+            out.files.push((
+                PathBuf::from(".pi/agent/mcp.json"),
+                pretty(&json!({ "mcpServers": map })),
+            ));
+        }
+        ConfigGenerator::Openclaw => {
+            let path = PathBuf::from(".openclaw/openclaw.json");
+            let file = out
+                .files
+                .iter_mut()
+                .find(|(p, _)| *p == path)
+                .context("openclaw.json was not rendered")?;
+            let mut config: Value =
+                serde_json::from_str(&file.1).context("parsing the rendered openclaw.json")?;
+            for s in servers {
+                let (name, mut e) = entry(s)?;
+                e["enabled"] = json!(true);
+                e["transport"] = json!("stdio");
+                config["mcp"]["servers"][name] = e;
+            }
+            file.1 = pretty(&config);
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 fn pretty(v: &Value) -> String {
     let mut s = serde_json::to_string_pretty(v).expect("JSON values always serialize");
     s.push('\n');
@@ -638,6 +710,55 @@ mod tests {
                 other => panic!("no hardening baseline recorded for {other}"),
             }
         }
+    }
+
+    /// Pi、OpenClaw 不支持按会话给 MCP 服务器：平台工具桥写进它们自己的配置；Pi 只给搜索。
+    #[test]
+    fn platform_tools_go_into_pi_and_openclaw_configs() {
+        let bridge = json!({
+            "name": "thinktin",
+            "command": "/opt/thinktin/agent-shim",
+            "args": ["mcp-bridge", "--socket", "/h/.thinktin/b.sock", "--egress"],
+            "env": [],
+        });
+        let m = catalog::builtin("pi").unwrap();
+        let mut c = render(&m, &routing(), Path::new("/h"), Path::new("/w")).unwrap();
+        inject_mcp(&m, &mut c, std::slice::from_ref(&bridge)).unwrap();
+        let v: Value = serde_json::from_str(file(&c, ".pi/agent/mcp.json")).unwrap();
+        let s = &v["mcpServers"]["thinktin"];
+        assert_eq!(s["command"], "/opt/thinktin/agent-shim");
+        assert_eq!(
+            s["args"],
+            json!([
+                "mcp-bridge",
+                "--socket",
+                "/h/.thinktin/b.sock",
+                "--egress",
+                "--only",
+                "web_search"
+            ])
+        );
+        assert_eq!(s["exposure"], "direct");
+
+        let m = catalog::builtin("openclaw").unwrap();
+        let mut c = render(&m, &routing(), Path::new("/h"), Path::new("/w")).unwrap();
+        inject_mcp(&m, &mut c, std::slice::from_ref(&bridge)).unwrap();
+        let v: Value = serde_json::from_str(file(&c, ".openclaw/openclaw.json")).unwrap();
+        let s = &v["mcp"]["servers"]["thinktin"];
+        assert_eq!(s["args"], bridge["args"]);
+        assert_eq!(
+            (s["enabled"].clone(), s["transport"].clone()),
+            (json!(true), json!("stdio"))
+        );
+        // 原来的设置还在。
+        assert_eq!(v["gateway"]["bind"], "loopback");
+
+        // 支持按会话给的 agent 不改配置。
+        let m = catalog::builtin("claude").unwrap();
+        let mut c = render(&m, &routing(), Path::new("/h"), Path::new("/w")).unwrap();
+        let before = c.files.clone();
+        inject_mcp(&m, &mut c, &[bridge]).unwrap();
+        assert_eq!(c.files, before);
     }
 
     #[test]
