@@ -209,6 +209,7 @@ impl PlatformTools for VaultTools {
     fn tools(&self) -> Vec<PlatformTool> {
         vec![
             PlatformTool {
+                read_only: false,
                 name: "vault_list".into(),
                 description: format!(
                     "List the user's password vault items this agent may use (names and purposes only, never the values), \
@@ -217,6 +218,7 @@ impl PlatformTools for VaultTools {
                 input_schema: json!({ "type": "object", "properties": {} }),
             },
             PlatformTool {
+                read_only: false,
                 name: "vault_request".into(),
                 description: "Ask the user to store an account's credentials in their password vault (they fill in a form in the \
                               ThinkTin app; you never see the values). Use this instead of asking for a password in the chat. \

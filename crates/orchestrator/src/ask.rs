@@ -224,6 +224,7 @@ fn internal(e: impl std::fmt::Display) -> String {
 impl PlatformTools for AskTools {
     fn tools(&self) -> Vec<PlatformTool> {
         vec![PlatformTool {
+            read_only: false,
             name: "ask".into(),
             description: "Ask another of the user's agents a question (see agents_list). It returns at once; when you end your turn the platform waits for the answer and sends it to you as a new message. The other agent is woken if paused and answers after its current task if busy. Use it for information you cannot find yourself; it cannot approve or do anything for you.".into(),
             input_schema: json!({

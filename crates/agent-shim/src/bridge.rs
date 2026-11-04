@@ -308,7 +308,13 @@ impl Bridge {
             .read()
             .unwrap_or_else(|e| e.into_inner())
             .iter()
-            .map(|t| json!({"name": t.name, "description": t.description, "inputSchema": t.input_schema}))
+            .map(|t| {
+                let mut v = json!({"name": t.name, "description": t.description, "inputSchema": t.input_schema});
+                if t.read_only {
+                    v["annotations"] = json!({ "readOnlyHint": true });
+                }
+                v
+            })
             .collect()
     }
 
@@ -577,6 +583,7 @@ mod tests {
 
     fn tool(name: &str) -> PlatformTool {
         PlatformTool {
+            read_only: false,
             name: name.into(),
             description: format!("{name} tool"),
             input_schema: json!({"type": "object"}),
@@ -599,7 +606,14 @@ mod tests {
         let bridge = Bridge::start(
             &dir.path().join("b"),
             sink,
-            vec![tool("schedule_list"), tool("bad name!")],
+            vec![
+                tool("schedule_list"),
+                tool("bad name!"),
+                PlatformTool {
+                    read_only: true,
+                    ..tool("web_search")
+                },
+            ],
             Duration::from_secs(5),
         )
         .unwrap();
@@ -607,10 +621,13 @@ mod tests {
         let list = ask(&mut conn, json!({"id": 1, "op": "list"})).await;
         assert_eq!(
             list["tools"].as_array().unwrap().len(),
-            1,
+            2,
             "invalid names are dropped"
         );
         assert_eq!(list["tools"][0]["inputSchema"], json!({"type": "object"}));
+        // 只读的工具带上 MCP 的 readOnlyHint（Codex 据此不先问用户），别的不带。
+        assert!(list["tools"][0].get("annotations").is_none());
+        assert_eq!(list["tools"][1]["annotations"]["readOnlyHint"], true);
 
         // 没有在执行的任务：直接报错，不打扰平台。
         let r = ask(

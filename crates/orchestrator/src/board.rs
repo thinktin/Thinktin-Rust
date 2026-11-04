@@ -181,6 +181,7 @@ impl PlatformTools for BoardTools {
     fn tools(&self) -> Vec<PlatformTool> {
         vec![
             PlatformTool {
+                read_only: false,
                 name: "board_read".into(),
                 description: "Read the user's shared board, newest first: progress, decisions and open items posted by the user's agents and the user. Optionally only posts with a tag (team or project).".into(),
                 input_schema: json!({
@@ -193,6 +194,7 @@ impl PlatformTools for BoardTools {
                 }),
             },
             PlatformTool {
+                read_only: false,
                 name: "board_post".into(),
                 description: "Post to the user's shared board so the user's other agents and the user can see it: progress, a decision, or something someone else should pick up. Keep it short; at most 2000 characters.".into(),
                 input_schema: json!({

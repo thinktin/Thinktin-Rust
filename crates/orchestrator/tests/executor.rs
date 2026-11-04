@@ -562,6 +562,7 @@ struct VaultStub;
 impl PlatformTools for VaultStub {
     fn tools(&self) -> Vec<PlatformTool> {
         vec![PlatformTool {
+            read_only: false,
             name: "vault_list".into(),
             description: "List vault items".into(),
             input_schema: json!({ "type": "object" }),
@@ -579,11 +580,13 @@ impl PlatformTools for Tools {
     fn tools(&self) -> Vec<PlatformTool> {
         vec![
             PlatformTool {
+                read_only: false,
                 name: "schedule_list".into(),
                 description: "List schedules".into(),
                 input_schema: json!({ "type": "object" }),
             },
             PlatformTool {
+                read_only: false,
                 name: "delegate".into(),
                 description: "Delegate".into(),
                 input_schema: json!({ "type": "object" }),
@@ -2258,6 +2261,7 @@ struct Publish(std::sync::atomic::AtomicUsize);
 impl PlatformTools for Publish {
     fn tools(&self) -> Vec<PlatformTool> {
         vec![PlatformTool {
+            read_only: false,
             name: "artifact_publish".into(),
             description: "Publish".into(),
             input_schema: json!({ "type": "object" }),

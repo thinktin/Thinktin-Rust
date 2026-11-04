@@ -66,6 +66,9 @@ pub struct PlatformTool {
     pub description: String,
     /// 参数的 JSON Schema。
     pub input_schema: Value,
+    /// 只读、不改任何东西（比如搜索）：给 agent 时带上 MCP 的 `readOnlyHint`，Codex 这类按它决定要不要先问用户。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub read_only: bool,
 }
 
 impl PlatformTool {

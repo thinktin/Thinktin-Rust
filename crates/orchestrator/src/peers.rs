@@ -260,11 +260,13 @@ impl PlatformTools for PeerTools {
     fn tools(&self) -> Vec<PlatformTool> {
         vec![
             PlatformTool {
+                read_only: false,
                 name: "agents_list".into(),
                 description: "List the user's other agents you can work with: name, kind of agent, what it is for, and whether it is idle, busy or paused.".into(),
                 input_schema: json!({ "type": "object", "properties": {} }),
             },
             PlatformTool {
+                read_only: false,
                 name: "agent_status".into(),
                 description: "See what another of the user's agents is working on: its current task, todo list, recent tools, what it last said and its artifacts, plus its last finished task. Read from its work log; it does not wake or disturb that agent.".into(),
                 input_schema: json!({

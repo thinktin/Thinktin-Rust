@@ -92,6 +92,7 @@ struct Tools;
 impl PlatformTools for Tools {
     fn tools(&self) -> Vec<PlatformTool> {
         vec![PlatformTool {
+            read_only: false,
             name: "schedule_list".into(),
             description: "List the user's schedules".into(),
             input_schema: json!({ "type": "object", "properties": { "limit": { "type": "integer" } } }),

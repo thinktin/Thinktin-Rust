@@ -261,11 +261,13 @@ impl PlatformTools for DelegateTools {
     fn tools(&self) -> Vec<PlatformTool> {
         vec![
             PlatformTool {
+                read_only: false,
                 name: "delegate_list".into(),
                 description: "List the team members you can delegate to, and the subtasks you delegated in this run with their state.".into(),
                 input_schema: json!({ "type": "object", "properties": {} }),
             },
             PlatformTool {
+                read_only: false,
                 name: "delegate".into(),
                 description: "Hand a subtask to another agent in your team. It runs in that agent's own sandbox; exchange files through artifacts. Returns at once: carry on, and when you end your turn the platform waits for all your subtasks and sends you their results as a new message.".into(),
                 input_schema: json!({

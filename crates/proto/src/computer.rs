@@ -52,6 +52,7 @@ impl ComputerTool {
     /// 交给 shim 的平台工具。
     pub fn platform_tool(&self) -> PlatformTool {
         PlatformTool {
+            read_only: false,
             name: self.name.into(),
             description: self.description.into(),
             input_schema: self.input_schema(),

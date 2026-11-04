@@ -339,11 +339,13 @@ impl PlatformTools for ScheduleTools {
         let plan_id = json!({ "type": "string", "description": "plan_id from schedule_list" });
         vec![
             PlatformTool {
+                read_only: false,
                 name: "schedule_list".into(),
                 description: "List the plans (recurring or one-time tasks) registered on the ThinkTin platform for this agent.".into(),
                 input_schema: json!({ "type": "object", "properties": {} }),
             },
             PlatformTool {
+                read_only: false,
                 name: "schedule_create".into(),
                 description: "Register a plan on the ThinkTin platform: the platform runs `goal` as a new task for this agent at the scheduled times, even when the user is offline. Use this instead of any built-in cron or heartbeat. New plans wait for the user's confirmation in the app.".into(),
                 input_schema: json!({
@@ -358,6 +360,7 @@ impl PlatformTools for ScheduleTools {
                 }),
             },
             PlatformTool {
+                read_only: false,
                 name: "schedule_update".into(),
                 description: "Change a plan's title, goal or schedule. Changes wait for the user's confirmation in the app.".into(),
                 input_schema: json!({
@@ -372,6 +375,7 @@ impl PlatformTools for ScheduleTools {
                 }),
             },
             PlatformTool {
+                read_only: false,
                 name: "schedule_cancel".into(),
                 description: "Cancel (delete) a plan.".into(),
                 input_schema: json!({
@@ -666,6 +670,7 @@ impl PlatformTools for ArtifactTools {
         });
         vec![
             PlatformTool {
+                read_only: false,
                 name: "artifact_publish".into(),
                 description: "Publish a result of this task as an artifact so later steps and other agents can use it. Give either `content` (text) or `path` (a file in your workspace). Publishing the same name again creates a new version.".into(),
                 input_schema: json!({
@@ -680,16 +685,19 @@ impl PlatformTools for ArtifactTools {
                 }),
             },
             PlatformTool {
+                read_only: false,
                 name: "artifact_list".into(),
                 description: "List the artifacts published in this task (including by upstream steps and other agents).".into(),
                 input_schema: json!({ "type": "object", "properties": {} }),
             },
             PlatformTool {
+                read_only: false,
                 name: "artifact_read".into(),
                 description: "Read a small text artifact (up to 64 KB). Give its name, or its artifact_id from artifact_list.".into(),
                 input_schema: json!({ "type": "object", "properties": { "name": name, "version": version, "artifact_id": id } }),
             },
             PlatformTool {
+                read_only: false,
                 name: "artifact_fetch".into(),
                 description: "Copy an artifact into your workspace (default handoff/<name>). Give its name, or its artifact_id from artifact_list.".into(),
                 input_schema: json!({
