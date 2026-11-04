@@ -1,6 +1,6 @@
 # iOS App 工程说明（WBS 12.x）
 
-> 更新日期：2026-10-23　｜　分支 `ios-app`　｜　进度见 [docs/progress/ios-app.md](progress/ios-app.md)
+> 更新日期：2026-11-04　｜　分支 `ios-app`　｜　进度见 [docs/progress/ios-app.md](progress/ios-app.md)
 
 iOS App 用 Swift + SwiftUI 原生开发，界面参考 Claude 官方 iOS App 的信息架构和视觉；iOS 与 macOS 共享 `ThinktinKit`；
 所有网络、续传、缓存、密码识别、配对验签都在 Rust 的 `client-core` 里（架构方案第 8 节），Swift 经 UniFFI 生成的
@@ -63,25 +63,31 @@ Linux 上 `tools/client-core/build-linux-swift.sh target/linux`（本机 `libcli
 | 界面 | `ThinktinUI` | 设计令牌、通用组件、各页面；只依赖视图模型 | 仅 Apple |
 | 平台层 | `Thinktin/Platform` | 系统能力的实现，注入给视图模型（协议化：`PushRegistrar`、`DeviceSigner`（Secure Enclave）、`LiveActivityControlling`） | 仅 iOS |
 
-## 4. 设计令牌（参考 Claude iOS App）
+## 4. 设计令牌（2026-11-04 改版，6.2 C）
 
-Claude App 的特点：暖色纸张底色、极少的强调色、标题用衬线、正文用无衬线、assistant 的回复不带气泡、用户消息是浅色圆角卡片、
-底部输入框是圆角大胶囊、左侧抽屉放对话列表。我们取其感觉，不用其品牌资产。
+改版（[ios-ui-redesign.md](ios-ui-redesign.md) 2.2–2.4，用户定了 6.2 C）以后：中性灰的底和卡片（浅色正好是系统的分组色，
+深色比系统默认亮一档），卡片不画描边（自画的 `Card`、`GroupedSection` 第 1 轮换成 `List` / `Form` 时去掉）；强调色保留 ThinkTin 的橙；agent 回复是左侧的气泡；文字三档用系统的语义色；字体全用系统的。
+令牌名没变，值在 `ThinktinUI/Design/Theme.swift`，`DesignTokenTests` 按下表核对。
 
 | 令牌 | 浅色 | 深色 | 用途 |
 |---|---|---|---|
-| `accent` | `#C96442` | `#D97757` | 发送按钮、选中态、链接、运行中的进度 |
-| `paper` | `#FAF9F5` | `#262624` | 页面底色 |
-| `paperElevated` | `#FFFFFF` | `#30302E` | 卡片、抽屉、输入框 |
-| `userBubble` | `#EFEDE4` | `#3A3936` | 用户消息卡片 |
-| `ink` | `#141413` | `#F0EEE6` | 主文字 |
-| `inkSecondary` | `#5E5D59` | `#B4B2A9` | 次要文字、时间 |
-| `inkTertiary` | `#8E8D87` | `#80807A` | 占位、禁用 |
-| `hairline` | `#E5E3DA` | `#3F3E3A` | 分隔线、边框 |
+| `accent` | `#C96442` | `#D97757` | 全局 `.tint`：主按钮、发送、开关、链接、选中态、运行中的进度 |
+| `paper` | `#F2F2F7` | `#1C1C1E` | 页面底色、`List` / `Form` 的底色（`themedGroupedBackground()`） |
+| `paperElevated` | `#FFFFFF` | `#2C2C2E` | 分组卡片、列表行（`themedRow()`）、输入卡片 |
+| `agentBubble` | `#FFFFFF` | `#2C2C2E` | agent 回复的气泡（和 `paperElevated` 同值，单列好单独调） |
+| `userBubble` | `#E5E5EA` | `#3A3A3C` | 用户消息的气泡 |
+| `ink` | 系统 `label`（≈ `#000000`） | 系统 `label`（≈ `#FFFFFF`） | 主文字 |
+| `inkSecondary` | 系统 `secondaryLabel`（≈ `#85858B`） | 系统 `secondaryLabel`（≈ `#98989F`） | 次要文字、副标题、时间 |
+| `inkTertiary` | 系统 `tertiaryLabel`（≈ `#BBBBC1`） | 系统 `tertiaryLabel`（≈ `#5A5A5F`） | 占位、禁用 |
+| `hairline` | `#C6C6C8` | `#38383A` | 自己画的分隔线（`List` 用系统分隔线） |
 | `success` / `warning` / `danger` | `#2E7D4F` / `#B7791F` / `#C0392B` | `#4A9E6E` / `#D4973A` / `#E05A4C` | 运行状态、审批、失败 |
 
-- 字体：标题 `.fontDesign(.serif)`（系统的 New York），正文默认系统字体（SF）；全部用 Dynamic Type 的语义字号。
-- 圆角：卡片 16，输入框 24，小控件 10。间距 4 的倍数。
+- 文字三档的“≈”是系统色（带透明度）叠在 `paper` 上的不透明近似值，只给文档和测试核对；界面里用的是系统色本身，放在玻璃上系统会自动调对比。
+- `List` / `Form` 加 `themedGroupedBackground()`（藏起系统底色、铺 `paper`），行加 `themedRow()`（`listRowBackground`，只对行生效，
+  加在 `Section` 的内容或 `ForEach` 上）。plain 列表（首页、搜索结果）不用 `themedRow()`。
+- 字体：全部系统字体（SF），标题不再用衬线；全部用 Dynamic Type 的语义字号，导航标题由系统画。
+- 圆角：消息气泡、自己画的卡片 20（`Metrics.Radius.card`），带引用的输入卡片 28，小控件 10；分组卡片、导航栏按钮由系统给。
+  实例头像的直径在 `Metrics.Avatar`（列表 48、置顶 80、资料页 120、编辑页 100、搜索 40、标题胶囊 24）。间距 4 的倍数。
 - 状态色只用于状态，不用于装饰。运行状态与颜色：排队 / 启动中 `inkSecondary`，运行中 `accent`，等待（审批 / 电脑 / key / 子任务）`warning`，
   成功 `success`，失败 `danger`，取消 `inkTertiary`；重试等待（`backoff`）和认不出的状态同排队。实例状态：运行中、启动中、创建中是会呼吸的点，
   已暂停、已删除 `inkTertiary`，已归档是空心点。规则在 `ThinktinUI/Design/StatusTone.swift`，中英文状态名和安卓设计规范一致。

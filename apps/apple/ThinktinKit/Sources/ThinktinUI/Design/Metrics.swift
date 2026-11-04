@@ -1,15 +1,35 @@
 import CoreGraphics
 
-/// 尺寸令牌（docs/ios.md 第 4 节）：圆角卡片 16、输入框 24、小控件 10；间距都是 4 的倍数。
+/// 尺寸令牌（docs/ios.md 第 4 节，改版见 docs/ios-ui-redesign.md 2.4）：自己画的卡片和消息气泡圆角 20、带引用的输入卡片 28、
+/// 小控件 10；分组卡片的圆角、导航栏按钮的尺寸由系统给，不自己设；间距都是 4 的倍数。
 public enum Metrics {
     /// 圆角（都用 `.continuous` 的圆角样式）。
     public enum Radius {
-        /// 卡片、用户消息、横幅。
-        public static let card: CGFloat = 16
-        /// 底部输入框（单行时看起来是胶囊）。
+        /// 消息气泡、自己画的卡片（工具调用、审批）、横幅。`List` 的 insetGrouped 分组卡片用系统自带的圆角。
+        public static let card: CGFloat = 20
+        /// 输入框带引用、长成卡片时的圆角（单行时是胶囊，用 `Capsule`）。
+        public static let composerCard: CGFloat = 28
+        /// 改版前的底部输入框。改版后输入框是胶囊（`Design/Glass.swift` 的 `glassBackground(in: .capsule)`），
+        /// 对话那条线换掉 `ComposerBar` 以后删掉。
         public static let input: CGFloat = 24
-        /// 小控件：标签、小按钮、代码块。
+        /// 小控件：标签、小按钮、代码块、应用 / agent 的图标方块。
         public static let control: CGFloat = 10
+    }
+
+    /// 实例头像（`InstanceAvatar`）的直径，跟着动态字体缩放。
+    public enum Avatar {
+        /// 导航栏标题胶囊里。
+        public static let title: CGFloat = 24
+        /// 搜索结果的行。
+        public static let search: CGFloat = 40
+        /// 首页列表的行。
+        public static let list: CGFloat = 48
+        /// 首页置顶的网格。
+        public static let pinned: CGFloat = 80
+        /// 编辑实例页。
+        public static let edit: CGFloat = 100
+        /// 实例资料页的头部。
+        public static let profile: CGFloat = 120
     }
 
     /// 间距：4 的倍数。
