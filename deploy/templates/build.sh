@@ -26,6 +26,7 @@ for key, value in [
     ("pip", " ".join(inst.get("pip", []))),
     ("bins", " ".join("%s=%s" % kv for kv in sorted(inst.get("bin", {}).items()))),
     ("prune", " ".join(inst.get("prune", []))),
+    ("browser", "1" if m.get("browser", {}).get("supported") else "0"),
 ]:
     print(f"{key}={shlex.quote(value)}")
 PY
@@ -47,6 +48,8 @@ args=(
   --build-arg "PIP_PACKAGES=$pip"
   --build-arg "NPM_BINS=$bins"
   --build-arg "PRUNE=$prune"
+  # 浏览器（docs/browser.md）：清单写了 [browser] supported 才装；Phase 0 的测试镜像用 WITH_BROWSER=1 强制装。
+  --build-arg "WITH_BROWSER=${WITH_BROWSER:-$browser}"
   -t "$image"
 )
 if [ -n "${SHIM_DIR:-}" ]; then

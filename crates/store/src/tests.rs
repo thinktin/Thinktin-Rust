@@ -5488,7 +5488,7 @@ async fn search_usage_is_capped_per_user_and_per_month() {
 #[tokio::test]
 async fn browser_asks_share_answers_by_site() {
     use crate::{AskMeta, EgressLogEntry};
-    use proto::domain::{EgressDecision, RunState};
+    use proto::domain::EgressDecision;
     use proto::egress::Via;
 
     let Some(t) = TestDb::new().await else { return };

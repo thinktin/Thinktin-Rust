@@ -1,0 +1,21 @@
+{
+  "QuicAllowed": false,
+  "WebRtcIPHandling": "disable_non_proxied_udp",
+  "NetworkPredictionOptions": 2,
+  "RemoteDebuggingAllowed": true,
+  "DnsOverHttpsMode": "off",
+  "BuiltInDnsClientEnabled": false,
+  "SafeBrowsingProtectionLevel": 0,
+  "MetricsReportingEnabled": false,
+  "TranslateEnabled": false,
+  "BrowserSignin": 0,
+  "SyncDisabled": true,
+  "PasswordManagerEnabled": false,
+  "DefaultNotificationsSetting": 2,
+  "DefaultGeolocationSetting": 2,
+  "AutoplayAllowed": false,
+  "HttpsOnlyMode": "force_enabled",
+  "URLBlocklist": ["chrome://*", "file://*", "view-source:*"],
+  "ExtensionInstallBlocklist": ["*"],
+  "MaxConnectionsPerProxy": 16
+}

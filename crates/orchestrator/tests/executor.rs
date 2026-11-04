@@ -43,6 +43,11 @@ struct Recorded {
     crash_on_results: u32,
     /// “slowly” 的提示词等它放行（测试在这一轮中间做完要做的事再放行），最多等 5 秒。
     gate: Option<Arc<tokio::sync::Notify>>,
+    /// 就绪时报的协议版本（0 按 1 算）。
+    protocol: u32,
+    /// 每次启动带没带浏览器通行证；收到了几次 EnableBrowser、交来的通行证。
+    browser_launches: Vec<bool>,
+    enabled_browser: Vec<String>,
 }
 
 #[derive(Default, Clone)]
@@ -79,6 +84,11 @@ impl ShimConnector for FakeConnector {
                 .map(|t| t.name.clone())
                 .collect(),
         ));
+        self.rec
+            .lock()
+            .unwrap()
+            .browser_launches
+            .push(launch.browser_pass.is_some());
         let (cmd_tx, cmd_rx) = mpsc::channel(16);
         let (ev_tx, ev_rx) = mpsc::channel(64);
         let rec = self.rec.clone();
@@ -203,9 +213,10 @@ async fn fake_shim(
     rec: Arc<Mutex<Recorded>>,
 ) {
     let restored = rec.lock().unwrap().restore_sessions;
+    let protocol = rec.lock().unwrap().protocol.max(1);
     let _ = ev
         .send(ShimEvent::Ready {
-            protocol_version: 1,
+            protocol_version: protocol,
             agent_id: "claude".into(),
             harness: "acp".into(),
             agent_info: None,
@@ -230,6 +241,9 @@ async fn fake_shim(
         };
         let Some(cmd) = cmd else { return };
         match cmd {
+            ShimCommand::EnableBrowser { pass } => {
+                rec.lock().unwrap().enabled_browser.push(pass.0);
+            }
             ShimCommand::Prompt { run_id, text } => {
                 rec.lock().unwrap().prompts.push(text.clone());
                 // 打断说明里引用了被打断的任务（8.12）：只按新消息表演。
@@ -1180,6 +1194,73 @@ async fn platform_tools_follow_the_grant_scope() {
         e.state(run).await.run.summary.as_deref(),
         Some("unknown platform tool delegate")
     );
+}
+
+/// 浏览器（docs/browser.md）：服务器开了、模板支持、授权里有 `browser` 才带通行证启动；只交给协议 2 起的 shim。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_browser_pass_goes_only_to_new_shims_when_everything_allows_it() {
+    fn supported(agent: &str, _version: &str) -> bool {
+        agent == "claude"
+    }
+    let scope = GrantScope {
+        platform_tools: vec![proto::shim::BROWSER_TOOL.into()],
+        ..GrantScope::default()
+    };
+    let Some(e) = env_with(
+        ExecutorConfig {
+            browser: Some(supported),
+            ..fast()
+        },
+        Some(scope.clone()),
+        Arc::new(NoPlatformTools),
+    )
+    .await
+    else {
+        return;
+    };
+    // 老 shim（协议 1）：带了通行证启动，但不发 EnableBrowser。
+    let run = e.queue("say hello", None, 3).await;
+    e.run_to_end().await;
+    assert_eq!(e.state(run).await.run.state, RunState::Succeeded);
+    {
+        let r = e.fake.rec.lock().unwrap();
+        assert_eq!(r.browser_launches, [true]);
+        assert!(r.enabled_browser.is_empty());
+    }
+    // 新 shim：Ready 之后收到通行证（浏览器专用，不是沙箱令牌）。
+    e.fake.rec.lock().unwrap().protocol = 2;
+    let run = e.queue("say hello", None, 3).await;
+    e.run_to_end().await;
+    assert_eq!(e.state(run).await.run.state, RunState::Succeeded);
+    {
+        let r = e.fake.rec.lock().unwrap();
+        assert_eq!(r.enabled_browser.len(), 1);
+        let token = &r.launches.last().unwrap().0;
+        assert_ne!(&r.enabled_browser[0], token);
+    }
+
+    // 授权里没有 browser、服务器没开：都不带。
+    for (cfg, scope) in [
+        (
+            ExecutorConfig {
+                browser: Some(supported),
+                ..fast()
+            },
+            GrantScope::default(),
+        ),
+        (fast(), scope),
+    ] {
+        let Some(e) = env_with(cfg, Some(scope), Arc::new(NoPlatformTools)).await else {
+            return;
+        };
+        e.fake.rec.lock().unwrap().protocol = 2;
+        let run = e.queue("say hello", None, 3).await;
+        e.run_to_end().await;
+        assert_eq!(e.state(run).await.run.state, RunState::Succeeded);
+        let r = e.fake.rec.lock().unwrap();
+        assert_eq!(r.browser_launches, [false]);
+        assert!(r.enabled_browser.is_empty());
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

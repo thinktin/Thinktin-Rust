@@ -85,3 +85,8 @@ template_code = "SMS_FILL_IN"
 [compliance]
 content_producer = "ThinkTin"
 label_downloads = true
+
+[browser]
+# agent 的浏览器（docs/browser.md）：服务器上的总开关。开着时，模板版本写了 [browser] supported（东京验收过一个开一个）、
+# 授权里有 browser 的运行才有浏览器。模型网关要同时加 --egress-browser-lanes（kustomization.yaml）。
+enabled = true

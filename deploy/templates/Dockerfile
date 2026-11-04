@@ -77,6 +77,35 @@ RUN set -f; for pair in $NPM_BINS; do \
         fi; \
         ln -s "$1" "/usr/local/bin/$name" || exit 1; \
     done
+# agent 的浏览器（docs/browser.md 第 2.4、2.6 节）：只在 WITH_BROWSER=1 时装（清单写了 [browser] supported，或者
+# Phase 0 的测试镜像，见 build.sh）。Chromium 用 Debian 的包，不锁死小版本（安全更新一出旧版本就从源里下掉了），每 1–2 周
+# 重建一次；装上的版本写进 /opt/thinktin/browser/chromium-version，许可证清单里也有。/usr/bin/chromium 移出 PATH：Hermes
+# 见到它会自己挂浏览器工具（不经守门），shim 直接执行 /usr/lib/chromium/chromium。托管策略属 root、0644，agent 改不了。
+# Playwright MCP 装在 /opt/thinktin/browser（不在 PATH 上），不下载它自己的浏览器；打补丁去掉 CDP 模式下的 bind()
+# （没正好命中一处就失败），生成 tools.json（shim 一开始列给 agent 的工具）。
+ARG WITH_BROWSER=0
+COPY deploy/templates/browser /tmp/browser
+RUN if [ "$WITH_BROWSER" = 1 ]; then \
+        apt-get update \
+        && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            chromium fonts-noto-cjk fonts-noto-color-emoji \
+        && rm -rf /var/lib/apt/lists/* \
+        && test -x /usr/lib/chromium/chromium \
+        && dpkg-divert --local --rename --divert /usr/lib/chromium/chromium-wrapper --add /usr/bin/chromium \
+        && ! command -v chromium \
+        && mkdir -p /etc/chromium/policies/managed \
+        && install -m 0644 /tmp/browser/chromium-policy.json /etc/chromium/policies/managed/thinktin.json \
+        && mkdir -p /opt/thinktin/browser \
+        && cp /tmp/browser/launch.cjs /tmp/browser/patch-playwright.cjs /tmp/browser/list-tools.cjs /opt/thinktin/browser/ \
+        && cd /opt/thinktin/browser \
+        && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install --no-fund --no-audit --no-update-notifier @playwright/mcp@0.0.84 \
+        && npm cache clean --force \
+        && node patch-playwright.cjs node_modules \
+        && node list-tools.cjs > tools.json \
+        && dpkg-query -W -f='${Version}\n' chromium > chromium-version \
+        && test ! -e /root/.cache/ms-playwright || exit 1; \
+    fi; \
+    rm -rf /tmp/browser
 # 第三方许可证（16.5，docs/licenses.md）：镜像里所有 npm、Python、Debian 包和 agent-shim 的 crate，
 # 原文复制到 /usr/share/thinktin/licenses，清单 inventory.json 由 CI 按许可证策略检查。
 # 上游有、包里没带的原文（比如 Codex 的 NOTICE）放在 deploy/templates/notices/<agent id>/。
@@ -89,6 +118,7 @@ RUN set -f; extra="--extra /tmp/licenses/notices/_base"; \
     python3 /tmp/licenses/tool/licenses.py scan --out /usr/share/thinktin/licenses \
         --subject "agents/$AGENT_ID:$AGENT_VERSION" --manifest /tmp/licenses/manifest.toml \
         --npm-root /usr/local/lib/node_modules --npm-package "/opt/yarn-*" \
+        $( [ -d /opt/thinktin/browser/node_modules ] && echo --npm-root /opt/thinktin/browser/node_modules ) \
         --site-packages "/opt/agents/$AGENT_ID/lib/python3*/site-packages" \
         --deb --node $extra --merge /tmp/licenses/shim \
     && rm -rf /tmp/licenses
