@@ -2,10 +2,12 @@
 //! 只能读路由相关的表、写用量，碰不到对话、事件这些数据。
 
 use chrono::{DateTime, Utc};
-use proto::domain::{CredentialId, GrantId, InstanceId, InstanceLimits, UserId, VaultItemId};
+use proto::domain::{
+    CredentialId, EgressMode, GrantId, InstanceId, InstanceLimits, UserId, VaultItemId,
+};
 use uuid::Uuid;
 
-use crate::{Llmgw, Result, Tx, from_json, unsigned};
+use crate::{Llmgw, Result, Tx, from_json, parse, unsigned};
 
 /// 网关校验沙箱令牌、选路要的实例信息。
 #[derive(Debug, Clone, PartialEq)]
@@ -20,6 +22,9 @@ pub struct GatewayInstance {
     pub token_epoch: u64,
     pub limits: InstanceLimits,
     pub routes: Vec<GatewayRoute>,
+    /// 出口代理按这个放行网站（2.7）。
+    pub egress_mode: EgressMode,
+    pub egress_hosts: Vec<String>,
 }
 
 /// 别名指向的 key 和上游模型，以及按顺序的降级链（9.9）。
@@ -33,13 +38,24 @@ pub struct GatewayRoute {
 
 impl Tx<Llmgw> {
     pub async fn gateway_instance(&mut self, id: InstanceId) -> Result<Option<GatewayInstance>> {
-        let row: Option<(Uuid, String, Option<String>, serde_json::Value, i64)> = sqlx::query_as(
-            "SELECT user_id, state, sandbox_id, limits, token_epoch FROM instances WHERE id = $1",
+        #[allow(clippy::type_complexity)]
+        let row: Option<(
+            Uuid,
+            String,
+            Option<String>,
+            serde_json::Value,
+            i64,
+            String,
+            Vec<String>,
+        )> = sqlx::query_as(
+            "SELECT user_id, state, sandbox_id, limits, token_epoch, egress_mode, egress_hosts \
+                 FROM instances WHERE id = $1",
         )
         .bind(id.0)
         .fetch_optional(self.conn())
         .await?;
-        let Some((user, state, sandbox_id, limits, token_epoch)) = row else {
+        let Some((user, state, sandbox_id, limits, token_epoch, egress_mode, egress_hosts)) = row
+        else {
             return Ok(None);
         };
         let routes: Vec<(String, Uuid, String)> = sqlx::query_as(
@@ -61,6 +77,8 @@ impl Tx<Llmgw> {
             sandbox_id,
             token_epoch: u64::try_from(token_epoch).unwrap_or_default(),
             limits,
+            egress_mode: parse(&egress_mode)?,
+            egress_hosts,
             routes: routes
                 .into_iter()
                 .map(|(alias, c, model)| GatewayRoute {

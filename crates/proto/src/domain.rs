@@ -518,6 +518,48 @@ pub struct Instance {
     /// “允许其他 agent 查我、问我”（8.9），默认打开。老的服务端没有，按打开算。
     #[serde(default = "default_true")]
     pub peer_access: bool,
+    /// 能上哪些网站（2.7），默认只连模型。老的服务端没有，按只连模型算。
+    #[serde(default)]
+    pub egress_mode: EgressMode,
+    /// 用户加的网站（[`crate::egress::normalize_host`] 整理过的写法），“开发网站”“自定义网站”档用。
+    #[serde(default)]
+    pub egress_hosts: Vec<String>,
+}
+
+str_enum!(
+    /// 实例能上哪些网站（2.7，受控出网通道，见 docs/egress.md）。内网、元数据地址、服务机自己哪一档都连不了。
+    EgressMode {
+        /// 只连模型（默认）。
+        Model = "model",
+        /// 常用开发网站（[`crate::egress::DEV_HOSTS`]）加上用户加的网站。
+        Dev = "dev",
+        /// 只有用户加的网站。
+        Custom = "custom",
+        /// 全部公网：用户自己打开，打开前提示风险。
+        All = "all",
+    }
+);
+
+// 枚举由 `str_enum!` 生成，派生不了 Default。
+#[allow(clippy::derivable_impls)]
+impl Default for EgressMode {
+    fn default() -> Self {
+        EgressMode::Model
+    }
+}
+
+impl EgressMode {
+    /// 这一档放不放行 `host`（已经按 [`crate::egress::normalize_host`] 整理过）。
+    pub fn allows(self, host: &str, extra: &[String]) -> bool {
+        match self {
+            EgressMode::Model => false,
+            EgressMode::Dev => {
+                crate::egress::DEV_HOSTS.contains(&host) || extra.iter().any(|h| h == host)
+            }
+            EgressMode::Custom => extra.iter().any(|h| h == host),
+            EgressMode::All => true,
+        }
+    }
 }
 
 /// 用途说明最长这么多字（8.9）。

@@ -4001,3 +4001,77 @@ async fn plan_webhooks_over_http() {
     .unwrap();
     assert_eq!(audits, 5, "create, off, on, rotate, delete");
 }
+
+/// 受控出网通道（2.7）：默认只连模型；改档位和网站（整理写法、去重）；不合规的网站、没确认风险就开“全部公网”、
+/// 空的自定义列表都拒绝；改了记审计；别人改不了。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn instance_egress_over_http() {
+    let Some(a) = api().await else { return };
+    let u = a.login("13800138898").await;
+    let other = a.login("13800138899").await;
+    let tok = Some(u.access.as_str());
+    let inst = a.adopt(&u).await;
+    let path = format!("/v1/instances/{inst}");
+    let (_, body) = a.call(Method::GET, &path, tok, None).await;
+    assert_eq!(
+        (body["egress_mode"].as_str(), body["egress_hosts"].clone()),
+        (Some("model"), json!([]))
+    );
+    let patch = |egress: serde_json::Value| json!({ "egress": egress });
+    let (st, body) = a
+        .call(
+            Method::PATCH,
+            &path,
+            tok,
+            Some(patch(
+                json!({ "mode": "dev", "hosts": ["Docs.Example.com.", "docs.example.com"] }),
+            )),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(
+        (body["egress_mode"].as_str(), body["egress_hosts"].clone()),
+        (Some("dev"), json!(["docs.example.com"]))
+    );
+    for bad in [
+        json!({ "mode": "custom", "hosts": ["10.0.0.1"] }),
+        json!({ "mode": "custom", "hosts": ["*.example.com"] }),
+        json!({ "mode": "custom", "hosts": [] }),
+        json!({ "mode": "all" }),
+        json!({ "mode": "everything" }),
+    ] {
+        let (st, body) = a
+            .call(Method::PATCH, &path, tok, Some(patch(bad.clone())))
+            .await;
+        assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{bad} -> {body}");
+    }
+    let (st, body) = a
+        .call(
+            Method::PATCH,
+            &path,
+            tok,
+            Some(patch(json!({ "mode": "all", "accept_risk": true }))),
+        )
+        .await;
+    assert_eq!(
+        (st, body["egress_mode"].as_str()),
+        (StatusCode::OK, Some("all"))
+    );
+    let (st, _) = a
+        .call(
+            Method::PATCH,
+            &path,
+            Some(other.access.as_str()),
+            Some(patch(json!({ "mode": "model" }))),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let audits: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE action = 'instance.egress' AND target = $1",
+    )
+    .bind(inst.to_string())
+    .fetch_one(a.t.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(audits, 2, "dev, then all");
+}

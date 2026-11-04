@@ -4834,3 +4834,145 @@ async fn urgent_messages_go_first_and_untargeted_holders_get_interrupted() {
     assert!(queued.contains(&stray.id));
     tx.rollback().await.unwrap();
 }
+
+/// 受控出网通道（2.7）：实例的档位能改（默认只连模型）；流量按天预留，几个副本同时预留合计也不超过上限，没用完的
+/// 退回；日志和用量只看得到自己的；到期删除。
+#[tokio::test]
+async fn egress_traffic_is_reserved_within_the_daily_limit() {
+    use crate::{EgressLogEntry, InstanceChange};
+    use proto::domain::EgressMode;
+
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let a = user(db, "+8613800000901").await;
+    let b = user(db, "+8613800000902").await;
+    let ia = instance(db, a).await;
+    assert_eq!(
+        (ia.egress_mode, ia.egress_hosts.len()),
+        (EgressMode::Model, 0)
+    );
+    let mut tx = db.tenant(a).await.unwrap();
+    tx.update_instance(
+        ia.id,
+        &InstanceChange {
+            egress: Some((EgressMode::Dev, vec!["example.com".into()])),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let got = tx.instance(ia.id).await.unwrap();
+    assert_eq!(
+        (got.egress_mode, got.egress_hosts),
+        (EgressMode::Dev, vec!["example.com".to_owned()])
+    );
+    // 只改别的设置时不动档位。
+    tx.update_instance(
+        ia.id,
+        &InstanceChange {
+            purpose: Some("调研".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        tx.instance(ia.id).await.unwrap().egress_mode,
+        EgressMode::Dev
+    );
+    tx.commit().await.unwrap();
+    // 别的用户改不了。
+    let mut other = db.tenant(b).await.unwrap();
+    assert!(matches!(
+        other
+            .update_instance(
+                ia.id,
+                &InstanceChange {
+                    egress: Some((EgressMode::All, vec![])),
+                    ..Default::default()
+                },
+            )
+            .await,
+        Err(Error::NotFound)
+    ));
+    other.rollback().await.unwrap();
+
+    let day = NaiveDate::from_ymd_opt(2026, 11, 4).unwrap();
+    let mut g = db.llmgw().await.unwrap();
+    let gi = g.gateway_instance(ia.id).await.unwrap().unwrap();
+    assert_eq!(
+        (gi.egress_mode, gi.egress_hosts),
+        (EgressMode::Dev, vec!["example.com".to_owned()])
+    );
+    assert_eq!(g.egress_reserve(ia.id, a, day, 60, 100).await.unwrap(), 60);
+    assert_eq!(g.egress_reserve(ia.id, a, day, 60, 100).await.unwrap(), 40);
+    assert_eq!(g.egress_reserve(ia.id, a, day, 60, 100).await.unwrap(), 0);
+    g.egress_refund(ia.id, day, 30).await.unwrap();
+    assert_eq!(g.egress_reserve(ia.id, a, day, 60, 100).await.unwrap(), 30);
+    // 第二天重新算。
+    let next = day.succ_opt().unwrap();
+    assert_eq!(g.egress_reserve(ia.id, a, next, 10, 100).await.unwrap(), 10);
+    let entry = |allowed: bool, reason: &str| EgressLogEntry {
+        user_id: a,
+        instance_id: ia.id,
+        at: Utc::now(),
+        host: "example.com".into(),
+        port: 443,
+        address: allowed.then(|| "93.184.215.14:443".to_owned()),
+        allowed,
+        reason: reason.into(),
+        bytes_up: 10,
+        bytes_down: 20,
+        duration_ms: 5,
+    };
+    g.insert_egress_log(&[entry(true, "ok"), entry(false, "not_allowed")])
+        .await
+        .unwrap();
+    g.commit().await.unwrap();
+
+    // 两个副本同时预留：按行锁排队，合计正好是剩下的。
+    let reserve = || async {
+        let mut g = db.llmgw().await.unwrap();
+        let n = g.egress_reserve(ia.id, a, next, 70, 100).await.unwrap();
+        g.commit().await.unwrap();
+        n
+    };
+    let (x, y) = tokio::join!(reserve(), reserve());
+    assert_eq!(x + y, 90, "{x} + {y}");
+
+    let mut tx = db.tenant(a).await.unwrap();
+    assert_eq!(tx.egress_used(ia.id, day).await.unwrap(), 100);
+    assert_eq!(tx.egress_used(ia.id, next).await.unwrap(), 100);
+    let log = tx.egress_log(ia.id, false, 10).await.unwrap();
+    assert_eq!(log.len(), 2);
+    let denied = tx.egress_log(ia.id, true, 10).await.unwrap();
+    assert_eq!(
+        (denied.len(), denied[0].reason.as_str()),
+        (1, "not_allowed")
+    );
+    tx.rollback().await.unwrap();
+    let mut other = db.tenant(b).await.unwrap();
+    assert_eq!(other.egress_used(ia.id, day).await.unwrap(), 0);
+    assert!(other.egress_log(ia.id, false, 10).await.unwrap().is_empty());
+    other.rollback().await.unwrap();
+
+    // 到期删除：日志按时间，用量按日期。
+    let mut w = db.worker().await.unwrap();
+    assert_eq!(
+        w.purge_egress(Utc::now() - Days::days(1), day, 100)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        w.purge_egress(Utc::now() + Days::days(1), next, 100)
+            .await
+            .unwrap(),
+        2
+    );
+    w.commit().await.unwrap();
+    let mut tx = db.tenant(a).await.unwrap();
+    assert_eq!(tx.egress_used(ia.id, day).await.unwrap(), 0);
+    assert_eq!(tx.egress_used(ia.id, next).await.unwrap(), 100);
+    tx.rollback().await.unwrap();
+}

@@ -3,7 +3,9 @@
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use proto::domain::{Instance, InstanceId, MAX_INSTANCE_PURPOSE_CHARS, ModelRoute, RunState};
+use proto::domain::{
+    EgressMode, Instance, InstanceId, MAX_INSTANCE_PURPOSE_CHARS, ModelRoute, RunState,
+};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use store::InstanceChange;
@@ -72,6 +74,45 @@ pub struct UpdateReq {
     purpose: Option<String>,
     /// “允许其他 agent 查我、问我”（8.9）。
     peer_access: Option<bool>,
+    /// 能上哪些网站（2.7）：档位和用户加的网站一起改。
+    egress: Option<EgressReq>,
+}
+
+#[derive(Deserialize)]
+pub struct EgressReq {
+    mode: EgressMode,
+    #[serde(default)]
+    hosts: Vec<String>,
+    /// 打开“全部公网”时 App 先提示风险，用户确认了才带上 true（用户 2026-11-04 定）。
+    #[serde(default)]
+    accept_risk: bool,
+}
+
+/// 整理、检查用户加的网站（去重，按 `proto::egress::normalize_host` 的写法存）。
+fn egress_change(req: &EgressReq) -> ApiResult<(EgressMode, Vec<String>)> {
+    if req.mode == EgressMode::All && !req.accept_risk {
+        return Err(crate::ApiError::invalid(
+            "turning on the whole internet needs accept_risk: true (show the user the risks first)",
+        ));
+    }
+    if req.hosts.len() > proto::egress::MAX_HOSTS {
+        return Err(crate::ApiError::invalid(format!(
+            "at most {} hosts",
+            proto::egress::MAX_HOSTS
+        )));
+    }
+    let mut hosts: Vec<String> = Vec::with_capacity(req.hosts.len());
+    for raw in &req.hosts {
+        let host = proto::egress::normalize_host(raw.trim(), false)
+            .map_err(|e| crate::ApiError::invalid(format!("{raw:?}: {e}")))?;
+        if !hosts.contains(&host) {
+            hosts.push(host);
+        }
+    }
+    if req.mode == EgressMode::Custom && hosts.is_empty() {
+        return Err(crate::ApiError::invalid("custom needs at least one host"));
+    }
+    Ok((req.mode, hosts))
 }
 
 pub async fn update(
@@ -94,12 +135,16 @@ pub async fn update(
             ));
         }
     }
-    if name.is_none() && purpose.is_none() && req.peer_access.is_none() {
+    let egress = req.egress.as_ref().map(egress_change).transpose()?;
+    if name.is_none() && purpose.is_none() && req.peer_access.is_none() && egress.is_none() {
         return Err(crate::ApiError::invalid("nothing to change"));
     }
     let mut t = s.db.tenant(who.user).await?;
     let before = t.instance(id).await?;
     let switched = req.peer_access.filter(|on| *on != before.peer_access);
+    let egress_changed = egress
+        .as_ref()
+        .filter(|(m, h)| *m != before.egress_mode || *h != before.egress_hosts);
     // 关了以后别人问它、还没答的问题也不答了（8.11）：提问方拿到“没问成”。先拿提问用的那把锁，同时在建的
     // 提问要么已经提交、这里取消得到，要么等这里提交后再看开关、被拒绝；先锁运行再改实例（和执行器同序）。
     if switched == Some(false) {
@@ -123,9 +168,21 @@ pub async fn update(
             name: name.map(String::from),
             purpose: purpose.map(String::from),
             peer_access: req.peer_access,
+            egress: egress.clone(),
         },
     )
     .await?;
+    // 出网档位是安全相关的改动（尤其是“全部公网”），记审计。出口代理按它放行，已经开着的隧道最多半分钟后按新档位
+    // 重新核对。
+    if let Some((mode, hosts)) = egress_changed {
+        t.audit(
+            &who.actor(),
+            "instance.egress",
+            Some(&id.to_string()),
+            &json!({ "mode": mode, "hosts": hosts }),
+        )
+        .await?;
+    }
     // 关掉交流开关是安全相关的改动（能控制电脑、能用保险箱的实例常常要关），记审计。
     if let Some(on) = switched {
         t.audit(

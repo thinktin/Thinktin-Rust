@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use proto::domain::{
-    CredentialId, Instance, InstanceId, InstanceLimits, InstanceState, MAX_ROUTE_FALLBACKS,
-    ModelRoute, RouteFallback, RunState, UserId,
+    CredentialId, EgressMode, Instance, InstanceId, InstanceLimits, InstanceState,
+    MAX_ROUTE_FALLBACKS, ModelRoute, RouteFallback, RunState, UserId,
 };
 use uuid::Uuid;
 
@@ -85,6 +85,8 @@ struct Row {
     last_active_at: DateTime<Utc>,
     purpose: String,
     peer_access: bool,
+    egress_mode: String,
+    egress_hosts: Vec<String>,
 }
 
 impl Row {
@@ -100,13 +102,16 @@ impl Row {
             last_active_at: self.last_active_at,
             purpose: self.purpose,
             peer_access: self.peer_access,
+            egress_mode: parse(&self.egress_mode)?,
+            egress_hosts: self.egress_hosts,
         })
     }
 }
 
 macro_rules! columns {
     () => {
-        "id, agent_id, agent_version, harness, name, state, created_at, last_active_at, purpose, peer_access"
+        "id, agent_id, agent_version, harness, name, state, created_at, last_active_at, purpose, peer_access, \
+         egress_mode, egress_hosts"
     };
 }
 
@@ -118,6 +123,8 @@ pub struct InstanceChange {
     pub purpose: Option<String>,
     /// “允许其他 agent 查我、问我”（8.9）。
     pub peer_access: Option<bool>,
+    /// 能上哪些网站和用户加的网站（2.7）：两个一起改，网站已经按 `proto::egress::normalize_host` 整理过。
+    pub egress: Option<(EgressMode, Vec<String>)>,
 }
 
 /// 同一用户的另一个实例，`agents_list` 用（8.9）。
@@ -308,13 +315,16 @@ impl Tx<Tenant> {
     pub async fn update_instance(&mut self, id: InstanceId, change: &InstanceChange) -> Result<()> {
         let done = sqlx::query(
             "UPDATE instances SET name = coalesce($2, name), purpose = coalesce($3, purpose), \
-               peer_access = coalesce($4, peer_access), updated_at = now() \
+               peer_access = coalesce($4, peer_access), egress_mode = coalesce($5, egress_mode), \
+               egress_hosts = coalesce($6, egress_hosts), updated_at = now() \
              WHERE id = $1 AND state <> 'deleted'",
         )
         .bind(id.0)
         .bind(change.name.as_deref())
         .bind(change.purpose.as_deref())
         .bind(change.peer_access)
+        .bind(change.egress.as_ref().map(|(m, _)| m.as_str()))
+        .bind(change.egress.as_ref().map(|(_, h)| h.clone()))
         .execute(self.conn())
         .await?;
         if done.rows_affected() == 0 {
