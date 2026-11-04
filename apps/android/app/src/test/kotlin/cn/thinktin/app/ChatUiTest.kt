@@ -24,6 +24,7 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import cn.thinktin.app.ui.chat.CHAT_AGENT_TEXT_TEST_TAG
 import cn.thinktin.app.ui.chat.CHAT_ARTIFACT_TEST_TAG
+import cn.thinktin.app.ui.chat.CHAT_ASK_TEST_TAG
 import cn.thinktin.app.ui.chat.CHAT_LIST_TEST_TAG
 import cn.thinktin.app.ui.chat.CHAT_RUN_HEADER_TEST_TAG
 import cn.thinktin.app.ui.chat.CHAT_SCREEN_TEST_TAG
@@ -247,5 +248,52 @@ class ChatUiTest {
         compose.onNode(hasContentDescription("停止 小码")).performClick()
         waitFor(hasText("已停止"))
         assertEquals(listOf("run-live" to false), service.cancelled)
+    }
+
+    /** 问队友（8.11）：提问卡片（问谁、问了什么、AI 标识）点进运行页看回答；看板是系统行。 */
+    @Test
+    fun askCardOpensTheAnswerOnTheRunPage() {
+        openCoderChatAt("把 README 翻译成英文")
+        val card = hasTestTag(CHAT_ASK_TEST_TAG + "run-ask")
+        scrollTo(card)
+        compose.onNode(hasText("问了 研究员") and hasAnyAncestor(card), useUnmergedTree = true).assertExists()
+        compose.onNode(hasText(ASK_QUESTION) and hasAnyAncestor(card), useUnmergedTree = true).assertExists()
+        compose.onNode(hasText("【AI 生成】") and hasAnyAncestor(card), useUnmergedTree = true).assertExists()
+        scrollTo(hasText("发到了共享看板"))
+        scrollTo(card)
+        compose.onNode(hasClickLabel("查看回答")).performClick()
+        waitFor(hasTestTag(RUN_DETAIL_TEST_TAG))
+        // 回答在研究员上：来源是队友提问；运行树从提问的运行开始。
+        waitFor(hasTestTag(RUN_NODE_TEST_TAG + "run-ask"))
+        compose.onNode(hasTestTag(RUN_NODE_TEST_TAG + "run-done")).assertExists()
+        compose.onNode(hasText("来源") and hasText("队友提问")).assertExists()
+        compose.onNode(hasTestTag(RUN_NODE_TEST_TAG + "run-ask") and hasText("研究员 · 队友提问")).assertExists()
+        compose.onNode(hasText(ASK_QUESTION) and hasAnyAncestor(hasTestTag(RUN_DETAIL_TEST_TAG))).assertExists()
+    }
+
+    /** 回答方：首页最近运行和对话页区块头都说是队友提问（不是“你”），prompt 标 AI 生成、不是右侧的用户气泡。 */
+    @Test
+    fun askRunIsLabelledAsTeammateQuestion() {
+        launch()
+        waitFor(hasContentDescription("让 小码 做点什么"))
+        compose.onNode(hasClickLabel("切换实例")).performClick()
+        compose.onNode(hasText("研究员") and hasAnyAncestor(isPopup())).performClick()
+        val recent = hasText(ASK_QUESTION) and hasText("队友提问 · ", substring = true)
+        waitFor(recent)
+        compose.onNode(recent).performClick()
+        waitFor(hasTestTag(CHAT_SCREEN_TEST_TAG + "inst-research"))
+        val header = hasTestTag(CHAT_RUN_HEADER_TEST_TAG + "run-ask")
+        waitFor(list)
+        scrollTo(header)
+        compose.onNode(header and hasText("队友提问 · ", substring = true)).assertExists()
+        scrollTo(hasText("队友 agent 的提问"))
+        compose.onNode(hasText(ASK_QUESTION) and hasAnyAncestor(hasTestTag(CHAT_USER_PROMPT_TEST_TAG)), useUnmergedTree = true)
+            .assertDoesNotExist()
+        // webhook 收到的事件：只说一句，不带内容。
+        scrollTo(hasText("webhook 收到了一个事件"))
+    }
+
+    private companion object {
+        const val ASK_QUESTION = "README 里的产品介绍，英文版用哪种说法更准确？"
     }
 }

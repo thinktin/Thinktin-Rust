@@ -1,5 +1,6 @@
 package cn.thinktin.app
 
+import cn.thinktin.app.ui.chat.labelRes
 import cn.thinktin.app.ui.common.ErrorText
 import cn.thinktin.app.ui.common.RelativeTime
 import cn.thinktin.app.ui.common.UiText
@@ -7,6 +8,8 @@ import cn.thinktin.app.ui.common.isLimitReached
 import cn.thinktin.app.ui.common.isRetryable
 import cn.thinktin.app.ui.common.WaitText
 import cn.thinktin.app.ui.home.Greeting
+import cn.thinktin.data.model.KnownStateReason
+import cn.thinktin.data.model.RunSource
 import cn.thinktin.data.model.WaitCode
 import cn.thinktin.data.service.ServiceError
 import org.junit.Assert.assertEquals
@@ -26,9 +29,28 @@ class UiLogicTest {
         assertEquals(UiText(R.string.wait_rate_limited), WaitText.of(WaitCode.RateLimited))
         assertEquals(UiText(R.string.wait_overloaded), WaitText.of(WaitCode.Overloaded))
         assertEquals(UiText(R.string.wait_device_offline), WaitText.of(WaitCode.DeviceOffline))
+        assertEquals(UiText(R.string.wait_answer), WaitText.of(WaitCode.Answer))
         // 不认识的码、没有码：按运行状态显示。
         assertEquals(null, WaitText.of(WaitCode.Unknown))
         assertEquals(null, WaitText.of(null as WaitCode?))
+    }
+
+    /** 运行来源的标签：队友提问有自己的说法；只有 user 显示成“你”，不认识的来源是中性的“其他来源”。 */
+    @Test
+    fun runSourceLabelsNeverMakeOthersLookLikeTheUser() {
+        assertEquals(R.string.chat_source_ask, RunSource.Ask.labelRes())
+        assertEquals(R.string.chat_source_delegate, RunSource.Delegate.labelRes())
+        assertEquals(R.string.chat_source_unknown, RunSource.Unknown.labelRes())
+        for (source in RunSource.entries) {
+            assertEquals(source == RunSource.User, source.labelRes() == R.string.chat_source_user)
+        }
+        assertEquals(RunSource.entries.size, RunSource.entries.map { it.labelRes() }.distinct().size)
+    }
+
+    @Test
+    fun knownCancelReasonsHaveLocalText() {
+        assertEquals(R.string.chat_state_reason_interrupted, KnownStateReason.Interrupted.labelRes())
+        assertEquals(R.string.chat_state_reason_no_answer, KnownStateReason.NoAnswerInTime.labelRes())
     }
 
     @Test

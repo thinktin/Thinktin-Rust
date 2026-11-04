@@ -6,6 +6,8 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
@@ -20,6 +22,7 @@ import androidx.test.core.app.ApplicationProvider
 import cn.thinktin.app.ui.drawer.DRAWER_TEST_TAG
 import cn.thinktin.app.ui.plans.PLAN_DETAIL_TEST_TAG
 import cn.thinktin.app.ui.plans.PLAN_EDIT_TEST_TAG
+import cn.thinktin.app.ui.plans.PLAN_NOTIFY_SUCCESS_TEST_TAG
 import cn.thinktin.app.ui.plans.PLAN_ROW_TEST_TAG
 import cn.thinktin.app.ui.plans.PLAN_RUN_ROW_TEST_TAG
 import cn.thinktin.app.ui.plans.PLAN_SAVE_TEST_TAG
@@ -39,7 +42,10 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
-/** 13.6 的界面：从抽屉进计划列表（分组、开关暂停）、深链进详情确认 agent 建的计划（返回回首页）、编辑触发规则并保存。 */
+/**
+ * 13.6 的界面：从抽屉进计划列表（分组、开关暂停）、深链进详情确认 agent 建的计划（返回回首页）、编辑触发规则并保存、
+ * 关掉“运行成功时通知我”。
+ */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], application = DemoTestApp::class, qualifiers = "zh-rCN-w411dp-h891dp")
 class PlansUiTest {
@@ -140,5 +146,38 @@ class PlansUiTest {
         waitFor(hasText("每周四 09:00"))
         val schedules = runBlocking { mock.getPlan("plan-daily") }.triggers.map { it.schedule }
         assertEquals(listOf(Schedule.Cron("0 21 * * *", "Mars/Olympus"), Schedule.Cron("0 9 * * 4", "Asia/Shanghai")), schedules)
+    }
+
+    /** “运行成功时通知我”：详情里显示，编辑页的开关关掉后保存，策略里别的不变。 */
+    @Test
+    fun turnOffNotifySuccess() {
+        launch("thinktin://plan/plan-daily")
+        waitFor(hasTestTag(PLAN_DETAIL_TEST_TAG))
+        val line = hasText("运行成功时通知我") and hasText("通知")
+        compose.onNode(hasTestTag(PLAN_DETAIL_TEST_TAG)).performScrollToNode(line)
+        compose.onNode(line).assertIsDisplayed()
+
+        compose.onNode(hasContentDescription("编辑")).performClick()
+        waitFor(hasTestTag(PLAN_EDIT_TEST_TAG))
+        waitFor(hasText("每日依赖检查"))
+        val toggle = hasTestTag(PLAN_NOTIFY_SUCCESS_TEST_TAG)
+        compose.onNode(toggle).performScrollTo().assertIsOn()
+        compose.onNode(toggle and hasText("运行成功时推送通知、放进收件箱。")).assertExists()
+        compose.onNode(toggle).performClick()
+        compose.onNode(toggle).assertIsOff()
+        compose.onNode(toggle and hasText("成功的运行不推送、不进收件箱，失败照常通知。")).assertExists()
+
+        compose.onNode(hasTestTag(PLAN_SAVE_TEST_TAG)).performClick()
+        waitFor(hasTestTag(PLAN_DETAIL_TEST_TAG))
+        val off = hasText("运行成功时通知我") and hasText("不通知（失败照常通知）")
+        // 详情页重新拉了计划之后才有这一行（在列表下面，要滚过去）。
+        compose.waitUntil(timeoutMillis = 10_000) {
+            runCatching { compose.onNode(hasTestTag(PLAN_DETAIL_TEST_TAG)).performScrollToNode(off) }.isSuccess
+        }
+        compose.onNode(off).assertIsDisplayed()
+        val policy = runBlocking { mock.getPlan("plan-daily") }.policy
+        assertFalse(policy.notifySuccess)
+        assertEquals(50_000L, policy.maxTokens)
+        assertEquals(listOf("read", "search"), policy.preauthorizedTools)
     }
 }

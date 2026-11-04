@@ -20,6 +20,11 @@ import cn.thinktin.data.model.OptionKind
 import cn.thinktin.data.model.RunState
 import cn.thinktin.data.model.StreamState
 import cn.thinktin.data.model.TimelineItem
+import cn.thinktin.data.model.SystemLine
+import cn.thinktin.data.model.RunSource
+import cn.thinktin.data.model.PromptAuthor
+import cn.thinktin.data.model.WaitCode
+import cn.thinktin.data.model.KnownStateReason
 import cn.thinktin.data.model.VaultRequestStatus
 import cn.thinktin.data.service.ServiceError
 import kotlinx.coroutines.Dispatchers
@@ -135,6 +140,57 @@ class ChatViewModelTest {
         val text = vm.conversation.items("run-live").filterIsInstance<TimelineItem.AgentText>().single().text
         assertTrue(text.startsWith("我先看看登录页现有的结构，0,1,2,"))
         assertTrue(text.endsWith("19,"))
+    }
+
+    /** 问队友（8.11）：提问方的时间线里有提问卡片（点进回答）、看板系统行；回答方的区块来源是队友提问、标 AI 生成。 */
+    @Test
+    fun askCardBoardLineAndAnswerBlock() = test {
+        val vm = chat()
+        advanceUntilIdle()
+        val done = vm.conversation.items("run-done")
+        val ask = done.filterIsInstance<TimelineItem.AskCard>().single()
+        assertEquals("run-ask", ask.childRunId)
+        assertEquals("研究员", ask.to)
+        assertEquals("README 里的产品介绍，英文版用哪种说法更准确？", ask.question)
+        assertTrue(done.any { it is TimelineItem.System && it.line is SystemLine.BoardPosted })
+
+        val research = chat(instanceId = "inst-research")
+        advanceUntilIdle()
+        val answer = research.conversation.block("run-ask")!!
+        assertEquals(RunSource.Ask, answer.run?.source)
+        assertEquals(PromptAuthor.Ask, answer.prompt?.author)
+        assertTrue(answer.prompt!!.aiGenerated)
+        assertFalse(answer.prompt!!.fromUser)
+        assertTrue(research.conversation.items("run-quota").any { it is TimelineItem.System && it.line is SystemLine.HookReceived })
+    }
+
+    /** 实时来的等队友回答、被新消息打断：状态行带 answer 码、标出固定原因；等队友回答不算要用户处理。 */
+    @Test
+    fun liveAnswerWaitAndInterruption() = test {
+        val vm = chat()
+        advanceUntilIdle()
+        service.stream.trySend(
+            service.event(
+                "inst-coder", "run-live", EventKinds.RUN_STATE,
+                buildJsonObject { put("state", "waiting_children"); put("attempt", 1); put("wait_code", "answer") }, 3000,
+            ),
+        )
+        advanceUntilIdle()
+        val waiting = vm.conversation.block("run-live")!!
+        assertEquals(RunState.WaitingChildren, waiting.state)
+        assertEquals(WaitCode.Answer, waiting.waitCode)
+        // 等队友回答不出警告横幅（横幅还是那个等审批的运行）。
+        assertEquals("run-waiting", vm.conversation.attentionBlock?.runId)
+        service.stream.trySend(
+            service.event(
+                "inst-coder", "run-live", EventKinds.RUN_STATE,
+                buildJsonObject { put("state", "cancelled"); put("attempt", 1); put("reason", "interrupted by a new message") }, 3001,
+            ),
+        )
+        advanceUntilIdle()
+        val line = vm.conversation.items("run-live").filterIsInstance<TimelineItem.RunStateLine>().last()
+        assertEquals(RunState.Cancelled, line.state)
+        assertEquals(KnownStateReason.Interrupted, line.knownReason)
     }
 
     @Test
