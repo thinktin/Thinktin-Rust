@@ -8,7 +8,7 @@ App Store Connect，进 TestFlight。上架 App Store 的材料（审核备注�
 1. **Apple 开发者账号**：团队是 Siting (Shenzhen)，团队 id `5BUH46M229`（工作流里的 `TEAM_ID_DEFAULT`，团队 id 不是密钥）。
 2. **App Store Connect API key**：用户和访问 → 集成 → App Store Connect API → 团队密钥 → “+”，权限选**管理（Admin）**
    （自动签名要它登记 bundle id、能力和描述文件），下载 .p8（只能下一次）。
-3. **GitHub 的 `Test flight` 环境**（Settings → Environments → New environment；名字要和工作流里的 `environment` 一字不差，包括空格和大小写）：可以加“需要审批的人”（发版要人点一下），
+3. **GitHub 的 `Test flight` 环境**（Settings → Environments → New environment；名字要和工作流里的 `environment` 一字不差，包括空格和大小写）：可以加“需要审批的人”（发版要人点一下；先验密钥的 `key-check` 和打包的作业都用这个环境，所以一次发版要点两下，等待计时也算两次），
    在 Environment secrets 里放三个：
 
    | 名字 | 内容 |
@@ -64,11 +64,29 @@ git push origin ios-v0.2.0
 `MockClient` 和演示数据（一打开就是登录好的，有实例、对话、计划、审批；退出后登录的验证码是 `123456`），不连服务器、
 不收推送。只能手动触发，标签发版永远连服务器。版本号和正式版共用，构建号照样递增；TestFlight 的“测试内容”里写明是演示版。
 
+## 2.2 GitHub 的 Mac 排不上时：在 Codemagic 上打包
+
+GitHub 的 macOS 机器有时十几分钟分不到（“The job was not acquired by Runner”），作业被取消。这时手动触发时 `builder` 选
+`codemagic`：先照样在 Linux 上验密钥（`key-check`），然后作业 `codemagic`（Linux）用 `tools/apple/codemagic_build.py` 在 Codemagic
+上发起 `codemagic.yaml` 的 `ios-testflight`，跟到结束，把每一步的结果和失败步骤日志的末尾打在 GitHub 的日志里。Codemagic 上做的事和
+`testflight` 作业一样（同样的脚本：`asc_install_key.sh`、`asc_key_check.py`、`asc_signing.py`），构建号用 GitHub 这次的运行序号，
+和 GitHub 上打的包共用一个只增不减的序号。GitHub 这边取消时，Codemagic 上的构建也取消。
+
+一次性准备（用户在网页上做，令牌和密钥不进聊天）：
+
+1. GitHub 仓库 → Settings → Environments → Test flight → Add environment secret：`THINKTIN_AI_CODEMAGIC_API_KEY`，值是
+   Codemagic 的 API 令牌。
+2. Codemagic → ThinkTin 这个 App → Environment variables：加 `ASC_KEY_ID`、`ASC_ISSUER_ID`、`ASC_KEY_P8` 三个（和 GitHub 里的
+   一样），Group 都填 `testflight`，都勾 Secure。
+
+Codemagic 免费额度每月 500 分钟（M2），一次 TestFlight 大约 30 分钟（Rust 没有缓存）。直接在 Codemagic 网页上发起
+`ios-testflight` 要自己加变量 `THINKTIN_BUILD_NUMBER`（比 TestFlight 上最大的构建号大），不然第一步就停。
+
 ## 3. 出问题时
 
 - 归档失败：看 artifact `ios-release-logs` 里的 `archive.log`。第一次跑通前要确认真机 arm64 的 ThinktinCore 能打出来
   （`mobile.yml` 手动触发也能单独验证）。
-- 密钥检查（`tools/apple/asc_key_check.py`，在编 Rust 之前跑）：401 是密钥 ID、Issuer ID 和 .p8 对不上（或者是个人密钥、
+- 密钥检查（`tools/apple/asc_key_check.py`，单独的 Linux 作业 `key-check`，一分钟内出结果；过了才去排 macOS 机器）：401 是密钥 ID、Issuer ID 和 .p8 对不上（或者是个人密钥、
   已撤销），403 是权限不够（自动签名要“管理（Admin）”）；两个 ID 首尾的空格、换行工作流会去掉，格式不对直接报错。
 - 403 `PLA_NOT_ACCEPTED`（“PLA Update available”）：苹果更新了开发者计划许可协议，账号持有人要登录 developer.apple.com/account
   同意新协议（App Store Connect 的“商务”里有待同意的协议也一并同意），不是密钥的问题。
