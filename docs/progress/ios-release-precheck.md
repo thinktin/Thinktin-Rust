@@ -9,3 +9,4 @@
 坑和决定：
 - 2026-11-04 16:05–16:49（UTC）GitHub Actions 故障，run 21（Intel）、22（arm64）都排不上 macOS 机器，15 分钟后被取消。
 - 用户说配了 Codemagic 的密钥，但这个会话里读不到（调 Codemagic 接口回 401）：云端环境里加的变量只有新会话才读得到；变量名不能带点。
+- Codemagic 的 API 令牌：用户放在云端环境变量 `THINKTIN_AI_CODEMAGIC_API_KEY` 里（新会话才读得到）。用法 `curl -H "x-auth-token: $THINKTIN_AI_CODEMAGIC_API_KEY" https://api.codemagic.io/apps`，不打印它的值。
