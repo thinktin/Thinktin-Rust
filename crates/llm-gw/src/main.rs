@@ -90,6 +90,10 @@ enum Command {
         /// 只用于本地开发和测试：出网通道放行非公网地址、任意端口
         #[arg(long)]
         insecure_egress: bool,
+        /// 开浏览器通道（docs/browser.md 第 4.3 节）：收浏览器通行证的 CONNECT 和 `POST /v1/browser/ask`。不开时用户名
+        /// `browser` 一律回 407，问询接口回 404
+        #[arg(long)]
+        egress_browser_lanes: bool,
         /// 只用于本地开发和测试：允许 http 和非公网上游
         #[arg(long)]
         insecure_upstreams: bool,
@@ -238,6 +242,7 @@ fn main() -> anyhow::Result<()> {
             egress_listen,
             egress_deny,
             insecure_egress,
+            egress_browser_lanes,
             insecure_upstreams,
             allow_unbound_tokens,
             max_body_mb,
@@ -291,6 +296,7 @@ fn main() -> anyhow::Result<()> {
                     .map(|c| c.parse::<Cidr>().map_err(anyhow::Error::msg))
                     .collect::<anyhow::Result<_>>()?,
                 insecure: insecure_egress,
+                browser_lanes: egress_browser_lanes,
                 ..EgressOptions::default()
             };
             if insecure_egress {

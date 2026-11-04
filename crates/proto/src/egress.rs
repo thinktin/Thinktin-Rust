@@ -81,7 +81,9 @@ pub fn site_of(host: &str) -> String {
 }
 
 /// 走的是哪条通道。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, Default,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Via {
     /// agent 自己直接上网（curl、npm、WebFetch）：每个网站都问。

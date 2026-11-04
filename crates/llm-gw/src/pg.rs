@@ -560,9 +560,9 @@ impl crate::egress::EgressLedger for PgEgressLedger {
                 bytes_down: r.bytes_down,
                 duration_ms: u64::try_from(r.duration.as_millis()).unwrap_or(u64::MAX),
                 count: r.count,
-                via: proto::egress::Via::Direct,
-                kind: None,
-                page_site: None,
+                via: r.via,
+                kind: r.kind.map(str::to_owned),
+                page_site: r.page_site,
             }])
             .await?;
             tx.commit().await?;
@@ -590,6 +590,22 @@ impl crate::egress::EgressLedger for PgEgressLedger {
         ))
     }
 
+    async fn site_decision(
+        &self,
+        instance: &str,
+        site: &str,
+    ) -> anyhow::Result<(Option<String>, Option<crate::egress::Answer>)> {
+        let (instance, _) = ids(instance, None)?;
+        let mut tx = self.db.llmgw().await?;
+        let run = tx.egress_current_run(instance).await?;
+        let status = tx.egress_site_decision(instance, site, run).await?;
+        tx.commit().await?;
+        Ok((
+            run.map(|r| r.to_string()),
+            status.map(|s| crate::egress::Answer::from_status(Some(&s))),
+        ))
+    }
+
     async fn ask(
         &self,
         user: &str,
@@ -598,6 +614,8 @@ impl crate::egress::EgressLedger for PgEgressLedger {
         run: Option<&str>,
         max_pending: u32,
         max_per_hour: u32,
+        via: proto::egress::Via,
+        site: Option<&str>,
     ) -> anyhow::Result<crate::egress::Asked> {
         let (instance, user) = ids(instance, Some(user))?;
         let run = run
@@ -606,13 +624,14 @@ impl crate::egress::EgressLedger for PgEgressLedger {
             .map_err(|_| anyhow::anyhow!("bad run id"))?;
         let mut tx = self.db.llmgw().await?;
         let id = tx
-            .egress_ask(
+            .egress_ask_as(
                 user.unwrap_or_default(),
                 instance,
                 host,
                 run,
                 max_pending,
                 max_per_hour,
+                store::AskMeta { via, site },
             )
             .await?;
         tx.commit().await?;
