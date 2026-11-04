@@ -305,7 +305,8 @@ async fn wait_or_shutdown(
                 Some(
                     ShimCommand::SetPlatformTools { .. }
                     | ShimCommand::PlatformToolResult { .. }
-                    | ShimCommand::VaultValues { .. },
+                    | ShimCommand::VaultValues { .. }
+                    | ShimCommand::EnableBrowser { .. },
                 ) => {}
                 Some(ShimCommand::PermissionDecision { request_id, .. }) => {
                     sink.emit(ShimEvent::Error {

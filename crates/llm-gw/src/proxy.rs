@@ -352,10 +352,30 @@ impl Gateway {
     }
 
     /// 校验沙箱令牌（模型请求和出口代理共用，2.7）：签名、来源地址、实例在运行、沙箱和代数对得上、授权没吊销。
+    /// 只给某种用途的令牌（浏览器通行证）不收。
     pub(crate) async fn verify_token(
         &self,
         token: &str,
         peer: SocketAddr,
+    ) -> Result<Caller, ApiError> {
+        self.verify_for(token, peer, None).await
+    }
+
+    /// 校验浏览器通行证（docs/browser.md 第 4.1 节）：和沙箱令牌一样的检查，另外要求 `aud` 是浏览器。
+    pub(crate) async fn verify_browser_pass(
+        &self,
+        token: &str,
+        peer: SocketAddr,
+    ) -> Result<Caller, ApiError> {
+        self.verify_for(token, peer, Some(auth::sandbox_token::AUD_BROWSER))
+            .await
+    }
+
+    async fn verify_for(
+        &self,
+        token: &str,
+        peer: SocketAddr,
+        aud: Option<&str>,
     ) -> Result<Caller, ApiError> {
         let rejected = || err(Kind::Auth, "sandbox token rejected");
         let claims = self.verifier.verify(token, now_secs()).map_err(|e| {
@@ -366,6 +386,9 @@ impl Gateway {
             tracing::info!(instance = %claims.iid, jti = %claims.jti, %peer, reason, "sandbox token rejected");
             rejected()
         };
+        if claims.aud.as_deref() != aud {
+            return Err(deny("token is for another use"));
+        }
         match &claims.net {
             Some(net) => {
                 let bound = net.parse::<IpAddr>().ok().map(|ip| ip.to_canonical());

@@ -307,7 +307,8 @@ impl Driver<'_> {
             // 平台工具的指令由 main 交给工具桥，不会到这里。
             ShimCommand::SetPlatformTools { .. }
             | ShimCommand::PlatformToolResult { .. }
-            | ShimCommand::VaultValues { .. } => {}
+            | ShimCommand::VaultValues { .. }
+            | ShimCommand::EnableBrowser { .. } => {}
             ShimCommand::Prompt { run_id, text } => {
                 if let Some(turn) = &self.turn {
                     self.sink.emit(ShimEvent::Error {

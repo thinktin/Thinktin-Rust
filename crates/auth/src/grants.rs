@@ -41,6 +41,9 @@ pub struct GrantService {
 /// 换出的沙箱令牌，连同它绑定的沙箱。
 pub struct SandboxCredential {
     pub token: String,
+    /// 浏览器通行证（docs/browser.md 第 4.1 节）：和 `token` 绑同一个实例、沙箱、代数，只给 shim 的浏览器用。编排服务只在
+    /// 这次任务开了浏览器时经 stdin 交给 shim，不进环境变量，不交给 agent。
+    pub browser_pass: String,
     pub sandbox_id: String,
     pub expires_in: Duration,
 }
@@ -143,20 +146,24 @@ impl GrantService {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or_default();
-        let token = self.issuer.issue(
-            TokenRequest {
-                ep: rt.token_epoch,
-                iid: instance.to_string(),
-                uid: user.to_string(),
-                grant: grant.to_string(),
-                sbx: sandbox_id.clone(),
-                net: rt.sandbox_address.map(|a| a.to_string()),
-            },
+        let req = TokenRequest {
+            ep: rt.token_epoch,
+            iid: instance.to_string(),
+            uid: user.to_string(),
+            grant: grant.to_string(),
+            sbx: sandbox_id.clone(),
+            net: rt.sandbox_address.map(|a| a.to_string()),
+        };
+        let token = self.issuer.issue(req.clone(), expires_in.as_secs(), now)?;
+        let browser_pass = self.issuer.issue_for(
+            req,
+            Some(crate::sandbox_token::AUD_BROWSER),
             expires_in.as_secs(),
             now,
         )?;
         Ok(SandboxCredential {
             token,
+            browser_pass,
             sandbox_id,
             expires_in,
         })

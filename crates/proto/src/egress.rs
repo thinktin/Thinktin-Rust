@@ -57,6 +57,92 @@ pub const DAILY_BYTES: u64 = 300 << 20;
 /// 每个实例同时最多这么多条隧道（用户 2026-11-04 定：4 条）。
 pub const MAX_TUNNELS: u32 = 4;
 
+/// 浏览器通道（docs/browser.md 第 4 节）：CONNECT 的用户名写这个、密码是浏览器通行证。走哪条通道由通行证里的 `aud`
+/// 决定，不看用户名（用户名谁都能写）。
+pub const BROWSER_USER: &str = "browser";
+/// 浏览器打开一个新网站时问用户最多等这么久（秒）：浏览器工具 60 秒就超时，要给网页加载留时间（用户 2026-11-04 同意）。
+pub const BROWSER_ASK_WAIT_SECS: u64 = 40;
+/// 每个实例的浏览器通道同时最多这么多条隧道（和直接上网的 4 条分开算）。
+pub const BROWSER_MAX_TUNNELS: u32 = 16;
+/// 每个实例的浏览器通道每分钟最多开这么多次隧道。
+pub const BROWSER_ATTEMPTS_PER_MINUTE: u32 = 600;
+/// 一个页面最多从这么多个网站加载资源；一次任务最多这么多个。
+pub const BROWSER_HOSTS_PER_PAGE: usize = 100;
+pub const BROWSER_HOSTS_PER_RUN: usize = 500;
+
+/// 浏览器里“同一个网站”（用户 2026-11-04 定：按主域名算，技术上是 eTLD+1）：`www.zhihu.com` 和 `zhuanlan.zhihu.com`
+/// 都是 `zhihu.com`，`sina.com.cn` 不会被当成 `com.cn`，`github.io` 这类后缀下每个子域名各算一个网站。`host` 已经按
+/// [`normalize_host`] 整理过；查不到主域名的（单段名字、本身就是后缀）原样返回。
+#[cfg(feature = "site")]
+pub fn site_of(host: &str) -> String {
+    psl::domain_str(host)
+        .map(str::to_owned)
+        .unwrap_or_else(|| host.to_owned())
+}
+
+/// 走的是哪条通道。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Via {
+    /// agent 自己直接上网（curl、npm、WebFetch）：每个网站都问。
+    #[default]
+    Direct,
+    /// 平台的浏览器：打开新网站时问，页面资源不问。
+    Browser,
+}
+
+/// 浏览器为什么要打开这个网站（问用户时给用户看，也记日志）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AskCause {
+    /// agent 用 `browser_navigate` 或新标签打开。
+    Navigate,
+    /// 网页里点了链接、脚本跳转。
+    Link,
+    /// 提交表单。
+    Form,
+    /// 服务器跳转。
+    Redirect,
+    /// 网页弹出的新窗口。
+    Popup,
+}
+
+/// shim 的浏览器守门问出口代理“能不能打开这个网站”（`POST /v1/browser/ask`）。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct BrowserAsk {
+    pub host: String,
+    /// 要打开的网址（只用来给用户看、记日志）。
+    #[serde(default)]
+    pub url: Option<String>,
+    /// 从哪个网站过来的。
+    #[serde(default)]
+    pub from: Option<String>,
+    pub cause: AskCause,
+    /// 最多等多久（秒，不超过 [`BROWSER_ASK_WAIT_SECS`]）。
+    #[serde(default)]
+    pub wait_secs: Option<u64>,
+}
+
+/// 出口代理的回答。`result` 是字符串：以后加了新结果老版本照样解析（认不出的按不能打开）。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct BrowserAskReply {
+    /// `allowed`、`pending`、`denied`、`private_address`、`resolve`、`not_allowed`、`quota`、`too_many_asks`、`ask_rate`、
+    /// `unavailable`。
+    pub result: String,
+    /// 允许时管到多大：`default`（搜索、开发网站，只认完整网址）、`once`（这次任务，整个网站）、`always`（整个网站）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    /// 在等用户回答的那条请求。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+}
+
+impl BrowserAskReply {
+    pub fn allowed(&self) -> bool {
+        self.result == "allowed"
+    }
+}
+
 /// 每天按北京时间切（相对 UTC 的秒数）：出口代理记账和 App 看用量用同一天。
 pub const DAY_UTC_OFFSET_SECS: i64 = 8 * 3600;
 
@@ -141,6 +227,33 @@ mod tests {
         v.as_object_mut().unwrap().remove("egress_mode");
         let i: Instance = serde_json::from_value(v).unwrap();
         assert_eq!(i.egress_mode, EgressMode::Dev);
+    }
+
+    /// 浏览器里按主域名算同一个网站。
+    #[cfg(feature = "site")]
+    #[test]
+    fn sites_follow_the_public_suffix_list() {
+        assert_eq!(site_of("www.zhihu.com"), "zhihu.com");
+        assert_eq!(site_of("zhuanlan.zhihu.com"), "zhihu.com");
+        assert_eq!(site_of("news.sina.com.cn"), "sina.com.cn");
+        assert_eq!(site_of("a.b.example.co.uk"), "example.co.uk");
+        // 每个子域名属于不同的人。
+        assert_eq!(site_of("alice.github.io"), "alice.github.io");
+        assert_ne!(site_of("alice.github.io"), site_of("bob.github.io"));
+        assert_eq!(
+            site_of("xn--fiqs8s.xn--fiqs8s"),
+            site_of("xn--fiqs8s.xn--fiqs8s")
+        );
+        assert_eq!(site_of("localhost"), "localhost");
+    }
+
+    #[test]
+    fn browser_ask_replies_decode_leniently() {
+        let r: BrowserAskReply = serde_json::from_str(r#"{"result":"something_new"}"#).unwrap();
+        assert!(!r.allowed());
+        let r: BrowserAskReply =
+            serde_json::from_str(r#"{"result":"allowed","scope":"once"}"#).unwrap();
+        assert!(r.allowed());
     }
 
     #[test]

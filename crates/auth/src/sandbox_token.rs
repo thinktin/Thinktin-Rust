@@ -16,6 +16,10 @@ const PREFIX: &str = "tts1";
 /// 令牌最长 7 天，防止误签出“永久”令牌。
 const MAX_TTL_SECS: u64 = 7 * 24 * 3600;
 
+/// 浏览器通行证（docs/browser.md 第 4.1 节）的 `aud`：只有出口代理的浏览器通道和 `/v1/browser/ask` 收；模型网关和普通
+/// 出网通道见到带 `aud` 的令牌一律拒绝。
+pub const AUD_BROWSER: &str = "browser";
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SandboxClaims {
     /// 实例 id（用户领养的一个 agent）。
@@ -35,6 +39,9 @@ pub struct SandboxClaims {
     pub exp: u64,
     /// 令牌 id，用于审计。
     pub jti: String,
+    /// 只给某一种用途的令牌（[`AUD_BROWSER`]）。普通沙箱令牌没有。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aud: Option<String>,
 }
 
 impl TimedClaims for SandboxClaims {
@@ -88,6 +95,17 @@ impl SandboxTokenIssuer {
     }
 
     pub fn issue(&self, req: TokenRequest, ttl_secs: u64, now: u64) -> Result<String, TokenError> {
+        self.issue_for(req, None, ttl_secs, now)
+    }
+
+    /// 签一张只给 `aud` 用的令牌（比如浏览器通行证），别的字段和沙箱令牌一样。
+    pub fn issue_for(
+        &self,
+        req: TokenRequest,
+        aud: Option<&str>,
+        ttl_secs: u64,
+        now: u64,
+    ) -> Result<String, TokenError> {
         if ttl_secs == 0 || ttl_secs > MAX_TTL_SECS {
             return Err(TokenError::InvalidTtl);
         }
@@ -101,6 +119,7 @@ impl SandboxTokenIssuer {
             iat: now,
             exp: now + ttl_secs,
             jti: signed::random_jti()?,
+            aud: aud.map(str::to_owned),
         };
         Ok(self.0.sign(PREFIX, &claims))
     }
@@ -166,6 +185,14 @@ mod tests {
             ("inst-1", "sbx-1", 4600)
         );
         assert_eq!(claims.net.as_deref(), Some("10.1.2.3"));
+        assert_eq!(claims.aud, None);
+        // 浏览器通行证：同样的签名和字段，多一个 aud。
+        let pass = issuer
+            .issue_for(req(), Some(AUD_BROWSER), 3600, 1000)
+            .unwrap();
+        let claims = verifier.verify(&pass, 1500).unwrap();
+        assert_eq!(claims.aud.as_deref(), Some(AUD_BROWSER));
+        assert_ne!(pass, token);
     }
 
     #[test]

@@ -722,3 +722,32 @@ async fn too_many_asks_in_an_hour_have_their_own_reason() {
     let (resp, _) = e.connect("otherhost:443", Some(&token)).await;
     assert!(resp.contains("pending_approval"), "{resp}");
 }
+
+/// 浏览器通行证（docs/browser.md 第 4.1 节）只给浏览器通道用：拿它走普通通道被拒。
+#[tokio::test]
+async fn the_browser_pass_does_not_work_on_the_direct_lane() {
+    let e = env(EgressMode::All, &[], |_| {}).await;
+    let pass = e
+        .issuer
+        .issue_for(
+            TokenRequest {
+                ep: 0,
+                iid: "inst-1".into(),
+                uid: "user-1".into(),
+                grant: "grant-1".into(),
+                sbx: "sbx-1".into(),
+                net: Some("127.0.0.1".into()),
+            },
+            Some(auth::sandbox_token::AUD_BROWSER),
+            600,
+            now(),
+        )
+        .unwrap();
+    let (resp, _) = e.connect(&e.echo_target(), Some(&pass)).await;
+    assert_eq!(status(&resp), 407, "{resp}");
+    // 普通令牌照常。
+    let (resp, _) = e
+        .connect(&e.echo_target(), Some(&e.token_with(|_| {})))
+        .await;
+    assert_eq!(status(&resp), 200, "{resp}");
+}

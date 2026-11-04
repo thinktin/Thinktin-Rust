@@ -393,6 +393,13 @@ async fn grants_outlive_logout_but_not_freeze_or_revocation() {
     let cred = grants.sandbox_token(grant.id, instance).await.unwrap();
     let claims = verifier.verify(&cred.token, now()).unwrap();
     assert_eq!(claims.sbx, "sbx-1");
+    // 浏览器通行证绑同一个沙箱，只多一个 aud（docs/browser.md 第 4.1 节）。
+    let pass = verifier.verify(&cred.browser_pass, now()).unwrap();
+    assert_eq!(
+        (pass.sbx.as_str(), pass.ep, pass.aud.as_deref()),
+        ("sbx-1", claims.ep, Some(auth::sandbox_token::AUD_BROWSER))
+    );
+    assert_eq!(claims.aud, None);
     assert_eq!(claims.net.as_deref(), Some("10.0.0.7"));
     assert_eq!(claims.grant, grant.id.to_string());
     assert_eq!(claims.uid, who.user.to_string());

@@ -7,8 +7,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// 消息格式版本。shim 在 [`ShimEvent::Ready`] 里报告，平台据此判断是否兼容。
-pub const SHIM_PROTOCOL_VERSION: u32 = 1;
+/// 消息格式版本。shim 在 [`ShimEvent::Ready`] 里报告，平台据此判断是否兼容。2：认得 [`ShimCommand::EnableBrowser`]。
+pub const SHIM_PROTOCOL_VERSION: u32 = 2;
 
 /// 平台发给 shim 的指令。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -45,6 +45,20 @@ pub enum ShimCommand {
         #[serde(default)]
         error: Option<String>,
     },
+    /// 这次任务可以用浏览器（docs/browser.md）：浏览器通行证只在 shim 的内存里，交给出口代理的浏览器通道用，不交给
+    /// agent、Chromium 和 Playwright。只发给报了协议版本 2 以上的 shim。
+    EnableBrowser { pass: SecretValue },
+}
+
+/// 一个明文值（浏览器通行证等）：调试输出不显示内容。
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SecretValue(pub String);
+
+impl std::fmt::Debug for SecretValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SecretValue(redacted)")
+    }
 }
 
 /// 明文值（保险箱里的密码等）：调试输出不显示内容。
