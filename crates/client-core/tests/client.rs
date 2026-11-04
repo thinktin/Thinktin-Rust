@@ -1234,10 +1234,10 @@ async fn ffi_instance_settings() {
         ),
         ("Reporter", "Drafts the weekly report", false)
     );
-    // 出网（2.7）：默认只连模型；改成开发网站加一个；全部公网要确认风险。
+    // 出网（2.7）：默认 dev；加一个一直允许的网站；全部公网要确认风险。
     assert_eq!(
         (renamed.egress_mode.as_str(), renamed.egress_hosts.len()),
-        ("model", 0)
+        ("dev", 0)
     );
     let dev = c
         .set_instance_egress(
@@ -1262,7 +1262,56 @@ async fn ffi_instance_settings() {
     assert_eq!(status.used_today, 0);
     assert_eq!(status.daily_limit, 100 << 20);
     assert!(status.dev_hosts.contains(&"github.com".to_owned()));
-    assert!(status.recent_denied.is_empty());
+    assert!(status.search_hosts.contains(&"www.baidu.com".to_owned()));
+    assert!(status.recent_denied.is_empty() && status.pending.is_empty());
+
+    // agent 想访问不在名单上的网站：出口代理登记，App 列出来、回答。
+    let me = c.me().await.unwrap();
+    let mut g = e.t.db.llmgw().await.unwrap();
+    g.egress_ask(
+        me.id.parse().unwrap(),
+        inst.id.parse().unwrap(),
+        "news.example.com",
+        None,
+        5,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    g.commit().await.unwrap();
+    let pending = c
+        .egress_requests(Some(inst.id.clone()), false)
+        .await
+        .unwrap();
+    assert_eq!(
+        (
+            pending.len(),
+            pending[0].host.as_str(),
+            pending[0].status.as_str()
+        ),
+        (1, "news.example.com", "pending")
+    );
+    assert_eq!(
+        c.instance_egress(inst.id.clone()).await.unwrap().pending,
+        pending
+    );
+    let decided = c
+        .decide_egress_request(pending[0].id.clone(), "always".into())
+        .await
+        .unwrap();
+    assert_eq!(decided.status, "always");
+    assert!(decided.decided_at_ms.is_some());
+    assert!(matches!(
+        c.decide_egress_request(pending[0].id.clone(), "deny".into())
+            .await,
+        Err(ClientError::Api { status: 409, .. })
+    ));
+    assert!(c.egress_requests(None, false).await.unwrap().is_empty());
+    assert_eq!(c.egress_requests(None, true).await.unwrap().len(), 1);
+    assert_eq!(
+        c.instance(inst.id.clone()).await.unwrap().egress_hosts,
+        ["docs.example.com", "news.example.com"]
+    );
     assert!(matches!(
         c.update_instance(inst.id, ffi::InstanceChange::default())
             .await,

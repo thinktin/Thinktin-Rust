@@ -11,11 +11,11 @@ use proto::api::{API_VERSION, ErrorCode, VERSION_HEADER};
 use proto::domain::{
     Approval, ApprovalId, Artifact, ArtifactId, BoardPost, BoardPostId, CatchUp, ContentReport,
     Credential, CredentialId, Device, DeviceId, DeviceMessage, DeviceMessageId, DeviceMessageKind,
-    DevicePlatform, ImChannel, ImChannelId, InboxItem, InboxItemId, Instance, InstanceEvent,
-    InstanceId, ModelRoute, Plan, PlanHook, PlanHookId, PlanId, PlanPolicy, PlanStep,
-    PushChannelKind, ReportReason, Run, RunId, ScheduleSpec, Team, TeamId, TeamMember,
-    TeamTemplate, TeamTemplateId, TeamTemplateSpec, Trigger, TriggerId, User, VaultItem,
-    VaultItemId, VaultRequest, VaultRequestId,
+    DevicePlatform, EgressRequest, EgressRequestId, ImChannel, ImChannelId, InboxItem, InboxItemId,
+    Instance, InstanceEvent, InstanceId, ModelRoute, Plan, PlanHook, PlanHookId, PlanId,
+    PlanPolicy, PlanStep, PushChannelKind, ReportReason, Run, RunId, ScheduleSpec, Team, TeamId,
+    TeamMember, TeamTemplate, TeamTemplateId, TeamTemplateSpec, Trigger, TriggerId, User,
+    VaultItem, VaultItemId, VaultRequest, VaultRequestId,
 };
 use reqwest::Method;
 use reqwest::header::HeaderValue;
@@ -194,6 +194,11 @@ pub struct EgressStatus {
     #[serde(default)]
     pub dev_hosts: Vec<String>,
     #[serde(default)]
+    pub search_hosts: Vec<String>,
+    /// 在等用户回答的网站。
+    #[serde(default)]
+    pub pending: Vec<EgressRequest>,
+    #[serde(default)]
     pub used_today: u64,
     #[serde(default)]
     pub daily_limit: u64,
@@ -209,8 +214,14 @@ pub struct EgressDenial {
     pub at: chrono::DateTime<chrono::Utc>,
     pub host: String,
     pub port: u16,
-    /// `not_allowed`（档位不放行）、`quota`（今天的流量用完了）、`private_address`、`port` 这类。
+    /// `pending_approval`（问了用户、还没答）、`user_denied`（用户拒绝了）、`too_many_asks`、`not_allowed`（只连模型）、
+    /// `quota`（今天的流量用完了）、`private_address`、`port` 这类。
     pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+struct EgressRequests {
+    requests: Vec<EgressRequest>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -1016,10 +1027,38 @@ impl Api {
         .await
     }
 
-    /// 实例的出网情况：档位、今天的用量、最近被拒绝的访问（2.7）。
+    /// 实例的出网情况：档位、今天的用量、在等用户回答的网站、最近被拒绝的访问（2.7）。
     pub async fn instance_egress(&self, id: InstanceId) -> Result<EgressStatus> {
         self.json(Method::GET, &format!("/v1/instances/{id}/egress"), None)
             .await
+    }
+
+    /// agent 想访问、要用户回答的网站（2.7），新的在前：默认只列还在等的，`all` 也列答过、过期了的。
+    pub async fn egress_requests(
+        &self,
+        instance: Option<InstanceId>,
+        all: bool,
+    ) -> Result<Vec<EgressRequest>> {
+        let mut path = format!("/v1/egress-requests?all={all}");
+        if let Some(i) = instance {
+            path.push_str(&format!("&instance_id={i}"));
+        }
+        let page: EgressRequests = self.json(Method::GET, &path, None).await?;
+        Ok(page.requests)
+    }
+
+    /// 回答一条请求（2.7）：`once`（这次任务）、`always`（以后都能）、`deny`（这次任务里不再问）。
+    pub async fn decide_egress_request(
+        &self,
+        id: EgressRequestId,
+        decision: &str,
+    ) -> Result<EgressRequest> {
+        self.json(
+            Method::POST,
+            &format!("/v1/egress-requests/{id}/decide"),
+            Some(&json!({ "decision": decision })),
+        )
+        .await
     }
 
     /// 换模板版本（不给就是升级到当前版本）：下次唤醒时重建沙箱，工作区保留。
