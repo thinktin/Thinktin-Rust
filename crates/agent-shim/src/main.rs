@@ -46,6 +46,9 @@ struct Cli {
 enum Command {
     /// 列出内置的 agent 清单（按接入优先级）
     Manifests,
+    /// 构建镜像时核对浏览器工具清单（tools.json）：白名单里的工具一个都不能少（Playwright 升级后改了名，这里失败）
+    #[command(hide = true)]
+    CheckBrowserTools { path: PathBuf },
     /// 只生成 agent 配置：写入文件，打印环境变量（令牌打码）
     RenderConfig {
         #[command(flatten)]
@@ -383,6 +386,24 @@ async fn run(cli: Cli) -> anyhow::Result<ExitCode> {
                     m.agent.sites
                 );
             }
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::CheckBrowserTools { path } => {
+            let text = std::fs::read_to_string(&path)
+                .with_context(|| format!("reading {}", path.display()))?;
+            let missing = browser::missing_tools(&text);
+            if !missing.is_empty() {
+                bail!(
+                    "{} lacks browser tools the shim exposes: {}",
+                    path.display(),
+                    missing.join(", ")
+                );
+            }
+            println!(
+                "{}: all {} browser tools present",
+                path.display(),
+                browser::TOOLS.len()
+            );
             Ok(ExitCode::SUCCESS)
         }
         Command::RenderConfig { agent, routing } => {

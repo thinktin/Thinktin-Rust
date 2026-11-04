@@ -92,6 +92,15 @@ pub fn load(text: &str) -> Vec<Value> {
 /// `.claude/settings.local.json`，这些工具又不用用户批）、`_meta`（Playwright 按它的 `cwd` 解析路径）。
 const STRIPPED_ARGS: &[&str] = &["filename", "_meta"];
 
+/// `tools.json` 里缺了白名单里的哪些工具（构建镜像时核对，Playwright 升级后工具改名就失败）。
+pub fn missing(text: &str) -> Vec<&'static str> {
+    let have = load(text);
+    KEEP.iter()
+        .copied()
+        .filter(|k| !have.iter().any(|t| t["name"] == *k))
+        .collect()
+}
+
 /// 核对、改写参数：去掉 [`STRIPPED_ARGS`]；`browser_navigate` 和新开标签页的网址只收 https。
 pub fn check(name: &str, args: &mut Value) -> Result<(), String> {
     if let Some(o) = args.as_object_mut() {
@@ -218,6 +227,9 @@ mod tests {
         check("browser_snapshot", &mut args).unwrap();
         assert_eq!(args, json!({"depth": 2}));
         assert!(load("not json").is_empty());
+        let missing = missing(&list.to_string());
+        assert!(missing.contains(&"browser_click"));
+        assert!(!missing.contains(&"browser_navigate"));
     }
 
     #[test]

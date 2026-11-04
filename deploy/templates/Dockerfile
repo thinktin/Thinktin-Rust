@@ -102,6 +102,7 @@ RUN if [ "$WITH_BROWSER" = 1 ]; then \
         && npm cache clean --force \
         && node patch-playwright.cjs node_modules \
         && node list-tools.cjs > tools.json \
+        && agent-shim check-browser-tools tools.json \
         && dpkg-query -W -f='${Version}\n' chromium > chromium-version \
         && test ! -e /root/.cache/ms-playwright || exit 1; \
     fi; \
