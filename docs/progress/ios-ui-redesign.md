@@ -64,7 +64,7 @@
 字体全用系统的）；6.3 A（保持 iOS 17，iOS 26 的接口在 Design/Glass.swift 里回退）；6.4 A（“+”直接弹领养表单）；6.5 A（设置用 sheet）；
 6.6 A（沿用“实例”）。其余 18 项按建议。
 
-进行中：第 0 轮的 Shell 和最小首页、启动屏、截图脚本（`THINKTIN_OPEN_SCREEN`）、docs/ios.md 9.1 第 6 条还没人认领（路由这一步做完了）。
+进行中：第 0 轮的 Shell 和最小首页（`Shell/Home/`、去掉抽屉和实例切换、`solidTopScrollEdge()`、docs/ios.md 9.1 第 6 条）：云端会话在做，2026-11-04 19:57 UTC 开始。启动屏、截图脚本（`THINKTIN_OPEN_SCREEN`）还没人认领。
 
 下一步：
 1. 第 0 轮剩下的（规范 7.2 第 6 行起）：最小首页 `Shell/Home/`，去掉 `ShellDrawer`、`InstanceSwitcher`、`RootPage` 的抽屉按钮和左缘手势
