@@ -49,6 +49,9 @@ PR：[#7](https://github.com/thinktin/Thinktin-Rust/pull/7)（草稿，叠在 #5
 
 验证通过的阶段检查见 [Android CI 41200739106](https://github.com/thinktin/Thinktin-Rust/actions/runs/41200739106)。最终候选的全量测试、lint 和打包结果以该提交的 GitHub Actions 为准。真机的生物识别、系统通知交互以及带推送 SDK 的端到端验证留待设备联调。
 
+进行中：
+- **适配后端 8.9–8.12 与计划 webhook 的契约**（Android 会话 session_01T2zubC6hDr9ZZR3ihhPP5b，2026-11-04 起；分支已合到 main `9f8222a`）：按 docs/android-design.md 8.1–8.4 和后端进度里“上线前必须做”：`RunSource.ask` 显示成“队友提问”并标 AI 生成、不认识的来源不当成用户；`wait_code: answer`；事件 `ask.sent`、`board.posted`、`hook.received`；计划策略带上 `notify_success`（现在安卓改计划会把它冲回默认的“开”）并在编辑页给开关；新平台工具的名字。不做：看板页、交流开关、打断发送、webhook 管理（13.17 / 13.6 扩展，等用户定）。期间请别的会话不要改 `apps/android/**`。
+
 下一步（等用户安排后）：
 1. ~~恢复 13.5 对话与运行过程~~（2026-10-25 已收尾，见上）：`Workflow({scriptPath: "<会话目录>/workflows/scripts/android-adapt-13-16-13-5-wf_2830c5a3-21b.js", resumeFromRunId: "wf_2830c5a3-21b"})`（适配与 13.16 已缓存；13.5 的部分改动在 `ba78a8d`，恢复前把脚本里任务 C 的“注意”段改成描述当前工作区状态），之后四维评审 → 反方核实 → 修复 → 最终验证。
 2. ~~13.6 计划~~、~~13.8 推送与收件箱~~（已完成，SDK 等人定）→ ~~13.13 设置~~ → ~~13.7 团队与流水线~~ → ~~13.11 / 13.12~~ → ~~13.14~~ → ~~13.10~~。剩下要人定的：推送 SDK（13.8、13.12 的厂商参数）、上架材料（13.11）。
