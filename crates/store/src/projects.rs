@@ -221,7 +221,13 @@ impl Tx<Tenant> {
             if !seen.insert(a.instance_id) {
                 return Err(Error::Conflict("project_agents_pkey".into()));
             }
-            self.instance(a.instance_id).await?;
+            // 加共享锁：同时有人在删这个实例时等它提交、再按删掉了算（不然删掉的实例会被改回成负责人）。
+            sqlx::query_scalar::<_, Uuid>(
+                "SELECT id FROM instances WHERE id = $1 AND state <> 'deleted' FOR SHARE",
+            )
+            .bind(a.instance_id.0)
+            .fetch_one(self.conn())
+            .await?;
         }
         Ok(())
     }

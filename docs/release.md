@@ -53,6 +53,8 @@ agent 的沙箱模板单独构建（6.8）；App 走各自的商店（12.11、13
   `DROP INDEX CONCURRENTLY IF EXISTS <索引名>;` 再重跑。
 - 回填受 FORCE 约束的表（`INSERT … SELECT`、`UPDATE`）要在同一个事务里先 `NO FORCE ROW LEVEL SECURITY`、做完再 `FORCE`：迁移账号是
   表的属主，FORCE 时它也看不到任何行，语句会悄悄处理 0 行（比如 `0039_projects.sql` 把团队搬进项目）。
+  外键的 `VALIDATE CONSTRAINT`（和不带 `NOT VALID` 的 `ADD FOREIGN KEY`）也一样：FORCE 时什么都不查就标成检查过了，引用方和被
+  引用方都要临时去掉 FORCE（`0046_validate_run_space_keys.sql`）。
 - 发布过的迁移文件一个字节都不能改：sqlx 按内容的校验和核对，改了生产库就迁移不了、程序也拒绝启动。
 
 **检查**：CI 的 `Migrations` 步骤（`tools/ci/check_migrations.py`）对照最近的 `v*` 标签：发布过的迁移改了、删了，

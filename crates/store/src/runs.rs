@@ -888,7 +888,8 @@ impl Tx<Worker> {
                         ('starting', 'running', 'waiting_approval', 'waiting_device', 'waiting_quota', \
                          'waiting_children', 'backoff')) \
                     AND (r.urgent OR NOT EXISTS ( \
-                      SELECT 1 FROM runs u WHERE u.instance_id = r.instance_id AND u.urgent AND u.state = 'queued'))) \
+                      SELECT 1 FROM runs u WHERE u.instance_id = r.instance_id AND u.urgent AND u.state = 'queued' \
+                        AND u.project_id IS NULL))) \
                    OR (r.state = 'backoff' AND (r.lease_owner IS NULL OR r.lease_expires_at < now())) \
                    OR (r.state IN ('waiting_quota', 'waiting_device') AND r.lease_owner IS NULL \
                        AND (r.wait_deadline IS NULL OR r.wait_deadline > now())) \
@@ -908,7 +909,8 @@ impl Tx<Worker> {
             // 留着排队（下一轮的新快照里看得到紧急消息，不会再选它）。
             let behind_urgent: bool = sqlx::query_scalar(
                 "SELECT r.state = 'queued' AND NOT r.urgent AND EXISTS ( \
-                   SELECT 1 FROM runs u WHERE u.instance_id = r.instance_id AND u.urgent AND u.state = 'queued') \
+                   SELECT 1 FROM runs u WHERE u.instance_id = r.instance_id AND u.urgent AND u.state = 'queued' \
+                     AND u.project_id IS NULL) \
                  FROM runs r WHERE r.id = $1",
             )
             .bind(id)

@@ -42,12 +42,17 @@ impl TestDb {
 
     /// 用属主账号跑完剩下的迁移。
     pub async fn migrate_rest(&self) {
-        let pool = self.owner_pool().await;
-        crate::schema::migrator()
-            .run(&pool)
+        self.try_migrate_rest()
             .await
             .expect("migrate test database");
+    }
+
+    /// 同 [`TestDb::migrate_rest`]，失败时返回错误（测迁移该失败的情况）。
+    pub async fn try_migrate_rest(&self) -> Result<(), sqlx::migrate::MigrateError> {
+        let pool = self.owner_pool().await;
+        let r = crate::schema::migrator().run(&pool).await;
         pool.close().await;
+        r
     }
 
     /// 只有一个连接的属主连接池：迁移时别的连接都不碰这个库（不进事务的迁移文件不会互相等）。

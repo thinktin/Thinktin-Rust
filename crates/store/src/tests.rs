@@ -765,7 +765,8 @@ async fn every_tenant_table_the_app_can_touch_has_rls() {
     let Some(t) = TestDb::new().await else { return };
     let rows: Vec<(String, bool, i64, bool)> = sqlx::query_as(
         "SELECT c.relname::text, c.relrowsecurity, \
-           (SELECT count(*) FROM pg_policies p WHERE p.schemaname = 'public' AND p.tablename = c.relname), \
+           (SELECT count(*) FROM pg_policies p WHERE p.schemaname = 'public' AND p.tablename = c.relname \
+              AND 'thinktin_app' = ANY(p.roles)), \
            has_table_privilege('thinktin_app', c.oid, 'SELECT, INSERT, UPDATE, DELETE') \
              OR has_any_column_privilege('thinktin_app', c.oid, 'SELECT, INSERT, UPDATE') \
          FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
@@ -787,6 +788,15 @@ async fn every_tenant_table_the_app_can_touch_has_rls() {
         bad.is_empty(),
         "tables reachable by thinktin_app without RLS: {bad:?}"
     );
+    // 给业务角色的策略不能是“全放行”。
+    let open: Vec<String> = sqlx::query_scalar(
+        "SELECT tablename || '.' || policyname FROM pg_policies WHERE schemaname = 'public' \
+           AND 'thinktin_app' = ANY(roles) AND (qual = 'true' OR with_check = 'true')",
+    )
+    .fetch_all(t.db.pool())
+    .await
+    .unwrap();
+    assert!(open.is_empty(), "permissive app policies: {open:?}");
     // 业务角色不能绕过 RLS。
     let bypass: bool =
         sqlx::query_scalar("SELECT rolbypassrls FROM pg_roles WHERE rolname = 'thinktin_app'")
@@ -852,6 +862,39 @@ async fn migrations_run_as_a_plain_owner() {
         unforced.is_empty(),
         "app tables without FORCE RLS: {unforced:?}"
     );
+}
+
+/// 0046 由属主账号跑也真的检查已有的行（FORCE 时外键检查看不到任何行，会什么都不查就标成检查过了）：有一条落不到项目
+/// agent 上的项目运行，迁移就失败。
+#[tokio::test]
+async fn validating_space_keys_checks_existing_rows() {
+    let Some(t) = TestDb::up_to(45).await else {
+        return;
+    };
+    let db = &t.db;
+    let a = user(db, "+8613800000991").await;
+    let i = instance(db, a).await;
+    let r = queue_run(db, a, &i, "x").await;
+    // 绕过触发器和外键（模拟以前的版本写坏的数据）。
+    let mut conn = db.pool().acquire().await.unwrap();
+    sqlx::query("SET session_replication_role = replica")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE runs SET project_id = $2, space_kind = 'project', space_id = $2 WHERE id = $1",
+    )
+    .bind(r.id.0)
+    .bind(uuid::Uuid::now_v7())
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+    sqlx::query("SET session_replication_role = origin")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    drop(conn);
+    assert!(t.try_migrate_rest().await.is_err());
 }
 
 /// 0039：已有的团队搬成单人项目（id 不变），团队模板搬成项目模板；实例已删的成员标成离开、空出负责人。迁移账号受 FORCE
@@ -1117,7 +1160,21 @@ async fn project_runs_are_server_only_and_never_claimed() {
         .await
         .unwrap();
     assert_eq!(kind, "project");
-    sqlx::query("UPDATE runs SET state = 'succeeded' WHERE id = $1")
+    // 项目运行是紧急消息：这一版不领它，也不能让同一个实例上的私人运行排在它后面。
+    sqlx::query("UPDATE runs SET urgent = true WHERE id = $1")
+        .bind(project_run)
+        .execute(w.conn())
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    let claimed = w
+        .claim_next_run("w1", LEASE)
+        .await
+        .unwrap()
+        .expect("the private run");
+    assert_eq!(claimed.run.id, private.id);
+    sqlx::query("UPDATE runs SET state = 'succeeded', lease_owner = NULL WHERE id = $1")
         .bind(private.id.0)
         .execute(w.conn())
         .await
@@ -1190,8 +1247,13 @@ async fn project_runs_are_server_only_and_never_claimed() {
         );
         w.rollback().await.unwrap();
     }
-    // 查私人授权跳过项目授权。
+    // 查私人授权跳过项目授权（项目授权更新：不过滤的话会选中它）。
     let mut w = db.worker().await.unwrap();
+    sqlx::query("UPDATE run_grants SET created_at = now() + interval '1 minute' WHERE id = $1")
+        .bind(project_grant)
+        .execute(w.conn())
+        .await
+        .unwrap();
     assert_eq!(
         w.active_grant_for_instance(i.id).await.unwrap(),
         Some(grant.id)
@@ -1383,6 +1445,37 @@ async fn solo_projects_stay_with_their_creator() {
     ));
     assert_eq!(ta.team(team.id).await.unwrap().members.len(), 1);
     ta.rollback().await.unwrap();
+    // 库里的策略本身也挡着（不只是代码里先查了一遍）：改、删都碰不到行，加 agent、加创建者都不行。
+    let al2 = instance(db, alice).await;
+    for sql in [
+        "UPDATE projects SET name = 'x' WHERE id = $1",
+        "DELETE FROM projects WHERE id = $1",
+        "UPDATE project_agents SET position = 1 WHERE project_id = $1",
+    ] {
+        let mut ta = db.tenant(alice).await.unwrap();
+        let done = sqlx::query(sql).bind(pid).execute(ta.conn()).await.unwrap();
+        assert_eq!(done.rows_affected(), 0, "{sql}");
+        ta.rollback().await.unwrap();
+    }
+    for sql in [
+        "INSERT INTO project_agents (project_id, instance_id, user_id) VALUES ($1, $2, app_user_id())",
+        "INSERT INTO project_members (project_id, user_id, role) \
+         SELECT $1, app_user_id(), 'creator' WHERE $2::uuid IS NOT NULL",
+    ] {
+        let mut ta = db.tenant(alice).await.unwrap();
+        let err = sqlx::query(sql)
+            .bind(pid)
+            .bind(al2.id.0)
+            .execute(ta.conn())
+            .await
+            .map_err(Error::from)
+            .unwrap_err();
+        assert!(
+            matches!(err, Error::Forbidden(_) | Error::Conflict(_)),
+            "{sql}: {err:?}"
+        );
+        ta.rollback().await.unwrap();
+    }
 }
 
 /// 改团队成员是原地改（8.13）：换负责人、去掉再加回来都只有一行；重复的实例 409；删掉的实例空出负责人；worker 标成专属的
