@@ -8,7 +8,8 @@
 在 Codemagic 上的那个，环境变量 CODEMAGIC_APP_ID 可以换。变量=值 作为这次构建的环境变量传过去（只传不机密的：UPLOAD、
 CLIENT、构建号这些；苹果的密钥在 Codemagic 的 testflight 变量组里，Secure）。
 
-每一步的状态变了就打印；有步骤失败时打印它日志的最后几十行（GitHub 的日志是公开的：密钥 ID、Issuer ID 这类先遮住）。构建 id 写进 $GITHUB_ENV 的 CODEMAGIC_BUILD_ID（取消时用
+设了环境变量 CODEMAGIC_ARTEFACTS_DIR 时，构建结束后把产物（截图、日志）下载到这个目录（.github/workflows/codemagic.yml 再传成
+GitHub 的 artifact）。每一步的状态变了就打印；有步骤失败时打印它日志的最后几十行（GitHub 的日志是公开的：密钥 ID、Issuer ID 这类先遮住）。构建 id 写进 $GITHUB_ENV 的 CODEMAGIC_BUILD_ID（取消时用
 `codemagic_build.py --cancel <构建 id>`）。退出码：0 构建成功；1 失败、超时、被取消，或者发不起来。只用标准库。
 """
 import json
@@ -116,9 +117,14 @@ def steps(build: dict) -> list[dict]:
     return found
 
 
+def codemagic_url(url: str) -> bool:
+    """令牌只发给 Codemagic 自己的接口地址。"""
+    return url.startswith(API + "/")
+
+
 def print_log_tail(step: dict) -> None:
     url = step.get("logUrl")
-    if not url:
+    if not url or not codemagic_url(url):
         return
     status, text = call("GET", url, raw=True)
     if status != 200 or not isinstance(text, str):
@@ -166,10 +172,12 @@ def start(workflow: str, ref: str, variables: dict[str, str]) -> str:
     return build_id
 
 
-def follow(build_id: str, deadline_minutes: int) -> int:
+def follow(build_id: str, deadline_minutes: int) -> tuple[int, dict]:
+    """跟到构建结束；返回 (退出码, 最后一次查到的构建)。"""
     seen: dict[str, str] = {}
     last_status = ""
     misses = 0
+    build: dict = {}
     deadline = time.monotonic() + deadline_minutes * 60
     while time.monotonic() < deadline:
         status, response = call("GET", f"/builds/{build_id}")
@@ -180,7 +188,7 @@ def follow(build_id: str, deadline_minutes: int) -> int:
                 print(f"::warning::查构建状态失败：{status} {response.get('message', '') if isinstance(response, dict) else ''}")
             if misses >= 10:
                 print("::error::连续 10 次查不到 Codemagic 的构建状态，不等了（构建本身可能还在跑，到 Codemagic 网页上看）")
-                return 1
+                return 1, build
             time.sleep(30)
             continue
         misses = 0
@@ -198,14 +206,41 @@ def follow(build_id: str, deadline_minutes: int) -> int:
                     print_log_tail(step)
         if overall in SUCCESS:
             print("Codemagic 构建成功")
-            return 0
+            return 0, build
         if overall in FAILURE:
             message = build.get("message") or ""
             print(f"::error::Codemagic 构建没成功：{overall} {message}".rstrip())
-            return 1
+            return 1, build
         time.sleep(30)
     print(f"::error::等了 {deadline_minutes} 分钟 Codemagic 还没跑完，不等了（到 Codemagic 网页上看）")
-    return 1
+    return 1, build
+
+
+def download_artefacts(build: dict, directory: str) -> None:
+    """构建的产物逐个下载到 directory（文件名取产物名里最后一段，重名时加序号）。"""
+    os.makedirs(directory, exist_ok=True)
+    count = 0
+    for artefact in build.get("artefacts") or []:
+        url = artefact.get("url") or ""
+        name = os.path.basename(artefact.get("name") or "") or f"artefact-{count + 1}"
+        if not codemagic_url(url):
+            print(f"::warning::产物 {name} 的地址不是 Codemagic 的接口，跳过")
+            continue
+        target = os.path.join(directory, name)
+        stem, extension = os.path.splitext(target)
+        suffix = 2
+        while os.path.exists(target):
+            target = f"{stem}-{suffix}{extension}"
+            suffix += 1
+        request = urllib.request.Request(url, headers={"x-auth-token": token()})
+        try:
+            with urllib.request.urlopen(request, timeout=120) as response, open(target, "wb") as handle:
+                handle.write(response.read())
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
+            print(f"::warning::下载产物 {name} 失败：{error}")
+            continue
+        count += 1
+    print(f"下载了 {count} 个产物到 {directory}")
 
 
 def cancel(build_id: str) -> int:
@@ -231,7 +266,15 @@ def main(argv: list[str]) -> int:
         variables[name] = value
     token()
     build_id = start(workflow, ref, variables)
-    return follow(build_id, int(os.environ.get("CODEMAGIC_WAIT_MINUTES") or "140"))
+    code, build = follow(build_id, int(os.environ.get("CODEMAGIC_WAIT_MINUTES") or "140"))
+    directory = os.environ.get("CODEMAGIC_ARTEFACTS_DIR")
+    if directory:
+        # 产物在构建结束后才齐：再查一次。
+        status, response = call("GET", f"/builds/{build_id}")
+        if status == 200 and isinstance(response, dict):
+            build = response.get("build") or build
+        download_artefacts(build, directory)
+    return code
 
 
 if __name__ == "__main__":
