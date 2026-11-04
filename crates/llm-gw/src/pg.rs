@@ -594,11 +594,12 @@ impl crate::egress::EgressLedger for PgEgressLedger {
         &self,
         instance: &str,
         site: &str,
+        host: &str,
     ) -> anyhow::Result<(Option<String>, Option<crate::egress::Answer>)> {
         let (instance, _) = ids(instance, None)?;
         let mut tx = self.db.llmgw().await?;
         let run = tx.egress_current_run(instance).await?;
-        let status = tx.egress_site_decision(instance, site, run).await?;
+        let status = tx.egress_site_decision(instance, site, host, run).await?;
         tx.commit().await?;
         Ok((
             run.map(|r| r.to_string()),

@@ -87,6 +87,8 @@ pub struct EgressOptions {
     /// 浏览器通道每个实例同时最多几条隧道（和直接上网分开算）、每分钟最多开几次、名额满了等多久、空闲多久断开。
     pub browser_max_tunnels: u32,
     pub browser_attempts_per_minute: u32,
+    /// `/v1/browser/ask` 每个实例每分钟最多几次（单独算，不占页面资源的次数）。
+    pub browser_asks_per_minute: u32,
     pub browser_slot_wait: Duration,
     pub browser_idle_timeout: Duration,
     /// 浏览器打开新网站时问用户最多等多久（40 秒，用户 2026-11-04 同意）。
@@ -124,6 +126,7 @@ impl Default for EgressOptions {
             browser_lanes: false,
             browser_max_tunnels: proto::egress::BROWSER_MAX_TUNNELS,
             browser_attempts_per_minute: proto::egress::BROWSER_ATTEMPTS_PER_MINUTE,
+            browser_asks_per_minute: 120,
             browser_slot_wait: Duration::from_secs(10),
             browser_idle_timeout: Duration::from_secs(90),
             browser_ask_wait: Duration::from_secs(proto::egress::BROWSER_ASK_WAIT_SECS),
@@ -302,11 +305,13 @@ pub trait EgressLedger: Send + Sync {
         instance: &str,
         host: &str,
     ) -> anyhow::Result<(Option<String>, Option<Answer>)>;
-    /// 浏览器用：实例现在在做的任务，和这次任务里用户对 `site`（主域名）这个网站答过的。
+    /// 浏览器用：实例现在在做的任务，和这次任务里用户对 `site`（主域名）这个网站答过的。浏览器里的回答按网站算；直接上网的
+    /// 回答只算它自己那个网址 `host`。
     async fn site_decision(
         &self,
         instance: &str,
         site: &str,
+        host: &str,
     ) -> anyhow::Result<(Option<String>, Option<Answer>)>;
     /// 登记“想访问 `host`”（同一个网站已经有一条在等就接着等那条，用户刚答过就是答过的那条）；这次任务已经有
     /// `max_pending` 个网站在等、或者这个实例一小时里已经有 `max_per_hour` 条用户没答应的时不登记。`via`、`site`：
@@ -460,6 +465,7 @@ impl EgressLedger for MemoryEgressLedger {
         &self,
         instance: &str,
         site: &str,
+        host: &str,
     ) -> anyhow::Result<(Option<String>, Option<Answer>)> {
         let run = self
             .runs
@@ -476,6 +482,7 @@ impl EgressLedger for MemoryEgressLedger {
             .find(|a| {
                 a.instance == instance
                     && a.site.as_deref() == Some(site)
+                    && (a.via == Via::Browser || a.host == host)
                     && a.run == run
                     && matches!(a.status.as_str(), "once" | "denied")
             })
@@ -634,6 +641,8 @@ pub struct Egress {
 const SITE_DENIAL_TTL: Duration = Duration::from_secs(15);
 /// `/v1/browser/ask` 的请求体最多多大。
 const BROWSER_ASK_MAX_BODY: usize = 8 << 10;
+/// 浏览器问询里解析网站名最多等多久（解析不到按 `resolve`）。
+const RESOLVE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// 一个开着的隧道任务：结束时计数减一。
 struct Running(Arc<Egress>);
@@ -1465,7 +1474,7 @@ impl Egress {
             self.record_denial_as(&caller, &host, port, &d, &tag);
             return respond(&d);
         }
-        match self.site_denied(&caller.instance.id, &site_of(&host)).await {
+        match self.site_denied(&caller.instance.id, &host).await {
             Ok(false) => {}
             Ok(true) => {
                 let d = denied(
@@ -1539,9 +1548,10 @@ impl Egress {
         self.open(req, &caller, target, slot).await
     }
 
-    /// 这次任务里用户拒绝过 `site` 这个网站吗（浏览器通道用，缓存 [`SITE_DENIAL_TTL`]）。
-    async fn site_denied(&self, instance: &str, site: &str) -> anyhow::Result<bool> {
-        let key = (instance.to_owned(), site.to_owned());
+    /// 这次任务里用户拒绝过 `host` 吗（浏览器通道用，缓存 [`SITE_DENIAL_TTL`]）：浏览器里按网站拒绝的整个网站都算，直接上网
+    /// 拒绝的只算那个网址。
+    async fn site_denied(&self, instance: &str, host: &str) -> anyhow::Result<bool> {
+        let key = (instance.to_owned(), host.to_owned());
         {
             let cache = self.denied_sites.lock().unwrap_or_else(|e| e.into_inner());
             if let Some((at, denied)) = cache.get(&key)
@@ -1550,7 +1560,10 @@ impl Egress {
                 return Ok(*denied);
             }
         }
-        let (_, answer) = self.ledger.site_decision(instance, site).await?;
+        let (_, answer) = self
+            .ledger
+            .site_decision(instance, &site_of(host), host)
+            .await?;
         let denied = answer == Some(Answer::Denied);
         let mut cache = self.denied_sites.lock().unwrap_or_else(|e| e.into_inner());
         if cache.len() >= 10_000 {
@@ -1560,6 +1573,14 @@ impl Egress {
         Ok(denied)
     }
 
+    /// 用户对 `site` 刚答过：缓存里这个网站的都作废。
+    fn forget_site(&self, instance: &str, site: &str) {
+        self.denied_sites
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|(i, h), _| !(i == instance && site_of(h) == site));
+    }
+
     /// `POST /v1/browser/ask`（docs/browser.md 第 3.3 节）：浏览器要打开一个新网站，先查地址（不是公网的不问），再看档位、
     /// 额度、一直允许的、这次任务答过的，都不是就问用户（按网站去重，最多等 40 秒）。不占隧道名额、不预留流量、不连对方。
     async fn browser_ask(
@@ -1567,6 +1588,7 @@ impl Egress {
         req: Request<Incoming>,
         peer: SocketAddr,
     ) -> Response<Body> {
+        let started = Instant::now();
         if !self.options.browser_lanes {
             return ask_reply(StatusCode::NOT_FOUND, "not_found", None, None);
         }
@@ -1579,8 +1601,9 @@ impl Egress {
         let Ok(caller) = self.gw.verify_browser_pass(&token, peer).await else {
             return ask_reply(StatusCode::UNAUTHORIZED, "auth", None, None);
         };
-        let key = lane_key(&caller.instance.id, Via::Browser);
-        if !self.attempt(&key, self.options.browser_attempts_per_minute) {
+        // 问询单独计数（不和页面资源的隧道抢 600 次）。
+        let key = format!("{}#ask", lane_key(&caller.instance.id, Via::Browser));
+        if !self.attempt(&key, self.options.browser_asks_per_minute) {
             return ask_reply(StatusCode::TOO_MANY_REQUESTS, "rate", None, None);
         }
         let body = tokio::time::timeout(
@@ -1608,7 +1631,9 @@ impl Egress {
                 return ask_reply(StatusCode::OK, "bad_address", None, None);
             }
         };
-        let (result, scope, request) = self.decide_browser_ask(&caller, &host, &ask, &tag).await;
+        let (result, scope, request) = self
+            .decide_browser_ask(&caller, &host, &ask, &tag, started)
+            .await;
         self.log_ask(&caller, &host, result == "allowed", result, &tag);
         ask_reply(StatusCode::OK, result, scope, request)
     }
@@ -1620,25 +1645,27 @@ impl Egress {
         host: &str,
         ask: &proto::egress::BrowserAsk,
         tag: &Tag,
+        started: Instant,
     ) -> (&'static str, Option<&'static str>, Option<String>) {
-        // 先查地址：内网、元数据、服务机、禁段，解析不到的都不问用户。
-        if let Err(d) = self.resolve(host, 443).await {
-            return (
-                if d.reason == "private_address" {
-                    "private_address"
-                } else {
-                    "resolve"
-                },
-                None,
-                None,
-            );
-        }
-        let mode = caller.instance.egress_mode;
-        if mode == proto::domain::EgressMode::Model {
+        // 先看档位（重新读一次实例）：不上网的档位连名字都不解析（解析本身就会把名字带出去）。
+        let fresh = self.gw.directory.instance(&caller.instance.id, true).await;
+        let Some(inst) = fresh else {
+            return ("not_allowed", None, None);
+        };
+        let mode = inst.egress_mode;
+        if !mode.asks() && !mode.allows(host, &inst.egress_hosts) {
             return ("not_allowed", None, None);
         }
         if self.quota_used_up(&caller.instance.id).await {
             return ("quota", None, None);
+        }
+        // 再查地址：内网、元数据、服务机、禁段，解析不到的都不问用户。
+        match tokio::time::timeout(RESOLVE_TIMEOUT, self.resolve(host, 443)).await {
+            Ok(Ok(_)) => {}
+            Ok(Err(d)) if d.reason == "private_address" => {
+                return ("private_address", None, None);
+            }
+            _ => return ("resolve", None, None),
         }
         // 搜索、开发网站只认完整网址（`All` 档全部放行）。
         if mode.allows(host, &[]) {
@@ -1646,21 +1673,16 @@ impl Egress {
         }
         let site = site_of(host);
         let always = |hosts: &[String]| hosts.iter().any(|h| site_of(h) == site);
-        if always(&caller.instance.egress_hosts) {
+        if always(&inst.egress_hosts) {
             return ("allowed", Some("always"), None);
         }
-        let fresh = self.gw.directory.instance(&caller.instance.id, true).await;
-        if fresh.as_ref().is_some_and(|i| always(&i.egress_hosts)) {
-            return ("allowed", Some("always"), None);
-        }
-        if !fresh.as_ref().map_or(mode, |i| i.egress_mode).asks() {
-            return ("not_allowed", None, None);
-        }
+        // 一次打开最多等 40 秒，从请求到这里算起（前面解析、查库的时间也算进去，守门那边的时限是从发请求算的）。
         let wait = ask
             .wait_secs
             .map(Duration::from_secs)
             .unwrap_or(self.options.browser_ask_wait)
-            .min(self.options.browser_ask_wait);
+            .min(self.options.browser_ask_wait)
+            .saturating_sub(started.elapsed());
         // 等用户回答的时候浏览器那边断开了：照样记一行日志。
         let gone = Abandoned {
             egress: self.clone(),
@@ -1670,16 +1692,20 @@ impl Egress {
             .ask_inner(caller, host, Via::Browser, &site, wait)
             .await;
         gone.disarm();
+        // 用户刚答了：浏览器通道里“这次任务拒绝过没有”的缓存作废，下一条隧道重新查。
+        if matches!(&result, Ok(())) || result.as_ref().is_err_and(|d| d.reason == "user_denied") {
+            self.forget_site(&caller.instance.id, &site);
+        }
         match result {
             Ok(()) => {
-                // 答应了：一直允许的会记进实例的名单。
+                // 答应了：一直允许的会记进实例的名单。`request` 有值表示这次真的问了用户（守门据此说“用户允许了”）。
                 let fresh = self.gw.directory.instance(&caller.instance.id, true).await;
                 let scope = if fresh.is_some_and(|i| always(&i.egress_hosts)) {
                     "always"
                 } else {
                     "once"
                 };
-                ("allowed", Some(scope), None)
+                ("allowed", Some(scope), request)
             }
             Err(d) => match d.reason {
                 "pending_approval" => ("pending", None, request),
@@ -1764,7 +1790,7 @@ impl Egress {
         };
         let looked_up = match via {
             Via::Direct => self.ledger.decision(instance, host).await,
-            Via::Browser => self.ledger.site_decision(instance, site).await,
+            Via::Browser => self.ledger.site_decision(instance, site, host).await,
         };
         let (run, answer) = match looked_up {
             Ok(v) => v,

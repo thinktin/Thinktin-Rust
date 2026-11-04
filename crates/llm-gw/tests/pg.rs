@@ -764,7 +764,7 @@ async fn browser_asks_are_kept_by_site_in_the_database() {
     let direct = ask("api.example.com", Via::Direct).await;
     assert_ne!(direct, first);
     let (got_run, answer) = ledger
-        .site_decision(&instance, "example.com")
+        .site_decision(&instance, "example.com", "www.example.com")
         .await
         .unwrap();
     assert_eq!(got_run.as_deref(), Some(run_id.as_str()));
@@ -776,11 +776,14 @@ async fn browser_asks_are_kept_by_site_in_the_database() {
         .unwrap();
     tx.commit().await.unwrap();
     let (_, answer) = ledger
-        .site_decision(&instance, "example.com")
+        .site_decision(&instance, "example.com", "www.example.com")
         .await
         .unwrap();
     assert_eq!(answer, Some(Answer::Allowed));
-    let (_, answer) = ledger.site_decision(&instance, "other.com").await.unwrap();
+    let (_, answer) = ledger
+        .site_decision(&instance, "other.com", "www.other.com")
+        .await
+        .unwrap();
     assert_eq!(answer, None);
     // 日志带上通道、种类和页面网站。
     ledger

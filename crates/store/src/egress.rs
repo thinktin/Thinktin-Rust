@@ -303,11 +303,14 @@ impl Tx<Llmgw> {
         &mut self,
         instance: InstanceId,
         site: &str,
+        host: &str,
         run: Option<RunId>,
     ) -> Result<Option<String>> {
+        // 浏览器里的回答按网站算；直接上网的回答只算它自己那个网址（直接上网按完整网址问，docs/browser.md 第 1.2 节）。
         let status: Option<String> = sqlx::query_scalar(
             "SELECT status FROM egress_requests \
              WHERE instance_id = $1 AND site = $2 AND status IN ('once', 'denied') \
+               AND (via = 'browser' OR host = $5) \
                AND (run_id = $3 OR ($3 IS NULL AND run_id IS NULL \
                     AND decided_at > now() - make_interval(hours => $4))) \
              ORDER BY decided_at DESC LIMIT 1",
@@ -316,6 +319,7 @@ impl Tx<Llmgw> {
         .bind(site)
         .bind(run.map(|r| r.0))
         .bind(NO_RUN_DECISION_HOURS)
+        .bind(host)
         .fetch_optional(self.conn())
         .await?;
         Ok(status)
@@ -363,6 +367,12 @@ impl Tx<Llmgw> {
     ) -> Result<EgressAsk> {
         let browser_site = meta.site.filter(|_| meta.via == Via::Browser);
         if let Some(site) = browser_site {
+            // 同一个网站的两个网址同时来问（两个标签页）：排队，只登记一条。
+            sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1::text), hashtext($2))")
+                .bind(instance.0)
+                .bind(site)
+                .execute(self.conn())
+                .await?;
             let touched: Option<Uuid> = sqlx::query_scalar(concat!(
                 "UPDATE egress_requests SET ",
                 touch_request!(),
@@ -384,7 +394,8 @@ impl Tx<Llmgw> {
         // 用户的回答在调用方查过之后、上面续之前提交了：用那条，不再问一遍。
         let decided: Option<Uuid> = sqlx::query_scalar(
             "SELECT id FROM egress_requests \
-             WHERE instance_id = $1 AND (host = $2 OR (site = $4 AND status <> 'always')) \
+             WHERE instance_id = $1 \
+               AND (host = $2 OR (site = $4 AND via = 'browser' AND status <> 'always')) \
                AND status IN ('once', 'always', 'denied') \
                AND decided_at > now() - interval '1 minute' \
                AND (run_id IS NOT DISTINCT FROM $3 OR status = 'always') \

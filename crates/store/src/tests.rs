@@ -5528,7 +5528,7 @@ async fn browser_asks_share_answers_by_site() {
     assert_eq!(ask("zhuanlan.zhihu.com", Via::Browser).await, q1);
     let mut g = db.llmgw().await.unwrap();
     assert_eq!(
-        g.egress_site_decision(ia.id, "zhihu.com", Some(r1.id))
+        g.egress_site_decision(ia.id, "zhihu.com", "www.zhihu.com", Some(r1.id))
             .await
             .unwrap(),
         None
@@ -5541,7 +5541,7 @@ async fn browser_asks_share_answers_by_site() {
     tx.commit().await.unwrap();
     let mut g = db.llmgw().await.unwrap();
     assert_eq!(
-        g.egress_site_decision(ia.id, "zhihu.com", Some(r1.id))
+        g.egress_site_decision(ia.id, "zhihu.com", "www.zhihu.com", Some(r1.id))
             .await
             .unwrap()
             .as_deref(),
@@ -5564,6 +5564,33 @@ async fn browser_asks_share_answers_by_site() {
     // 浏览器刚答过：同一个网站的再问拿到答过的那条。
     g.commit().await.unwrap();
     assert_eq!(ask("api.zhihu.com", Via::Browser).await, q1);
+
+    // 直接上网的拒绝只算它那个网址：不连带整个网站，也不盖掉浏览器的回答。
+    let q2 = ask("gist.zhihu.com", Via::Direct).await;
+    assert_ne!(q2, q1);
+    let mut tx = db.tenant(a).await.unwrap();
+    tx.decide_egress_request(q2, EgressDecision::Deny)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let mut g = db.llmgw().await.unwrap();
+    assert_eq!(
+        g.egress_site_decision(ia.id, "zhihu.com", "www.zhihu.com", Some(r1.id))
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("once")
+    );
+    assert_eq!(
+        g.egress_site_decision(ia.id, "zhihu.com", "gist.zhihu.com", Some(r1.id))
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("denied")
+    );
+    g.commit().await.unwrap();
+    // 浏览器来问同一个网站的别的网址：不复用直接上网刚拒绝的那条。
+    assert_eq!(ask("m.zhihu.com", Via::Browser).await, q1);
 
     // 日志：通道、种类、哪个网页带出来的。
     let mut g = db.llmgw().await.unwrap();

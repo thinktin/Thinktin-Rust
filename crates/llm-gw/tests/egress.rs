@@ -968,9 +968,12 @@ async fn the_browser_asks_about_a_site_once_per_task() {
     let (_, reply) = e.ask(Some(&pass), ask_body("localhost", 5)).await;
     assert_eq!(reply["result"], "allowed", "{reply}");
     assert_eq!(reply["scope"], "once");
-    // 这次任务里再打开同一个网站：不用再问。
+    // 真的问了用户：带着那条请求（守门据此说“用户允许了”）。
+    assert_eq!(reply["request_id"], asks[0].id.as_str());
+    // 这次任务里再打开同一个网站：不用再问，也不说用户刚允许。
     let (_, reply) = e.ask(Some(&pass), ask_body("localhost", 0)).await;
     assert_eq!(reply["result"], "allowed");
+    assert!(reply.get("request_id").is_none(), "{reply}");
     assert_eq!(e.ledger.asks().len(), 1);
     // 换了任务要重新问；这次拒绝了，这次任务里不再问、浏览器通道也不放这个网站。
     e.ledger.set_run("inst-1", Some("run-2"));
@@ -1011,10 +1014,14 @@ async fn the_browser_ask_checks_the_address_mode_and_allowance_first() {
         .ask(Some(&e.browser_pass()), ask_body("nx.invalid", 0))
         .await;
     assert_eq!(reply["result"], "resolve", "{reply}");
-    // 只连模型。
+    // 只连模型：不问，名字也不解析（解析本身会把名字带出去）。
     let e = env(EgressMode::Model, &[], browser_env_opts).await;
     let (_, reply) = e
         .ask(Some(&e.browser_pass()), ask_body("localhost", 0))
+        .await;
+    assert_eq!(reply["result"], "not_allowed", "{reply}");
+    let (_, reply) = e
+        .ask(Some(&e.browser_pass()), ask_body("nx.invalid", 0))
         .await;
     assert_eq!(reply["result"], "not_allowed", "{reply}");
     // 今天的流量用完了：不问。
@@ -1028,13 +1035,24 @@ async fn the_browser_ask_checks_the_address_mode_and_allowance_first() {
         .await;
     assert_eq!(reply["result"], "quota", "{reply}");
     assert!(e.ledger.asks().is_empty());
-    // 全部公网的档位：直接允许。
-    let e = env(EgressMode::All, &[], browser_env_opts).await;
-    let (_, reply) = e
-        .ask(Some(&e.browser_pass()), ask_body("localhost", 0))
+    // 全部公网的档位：直接允许（没问用户，不带请求）。问询和页面资源的次数分开算。
+    let e = env(EgressMode::All, &[], |o| {
+        browser_env_opts(o);
+        o.browser_attempts_per_minute = 1;
+    })
+    .await;
+    for _ in 0..3 {
+        let (_, reply) = e
+            .ask(Some(&e.browser_pass()), ask_body("localhost", 0))
+            .await;
+        assert_eq!(reply["result"], "allowed");
+        assert_eq!(reply["scope"], "default");
+        assert!(reply.get("request_id").is_none(), "{reply}");
+    }
+    let (resp, _) = e
+        .browser_connect(&e.echo_target(), &e.browser_pass(), "x")
         .await;
-    assert_eq!(reply["result"], "allowed");
-    assert_eq!(reply["scope"], "default");
+    assert_eq!(status(&resp), 200, "{resp}");
     // 一直允许的网站：同一个网站都算。
     let e = env(EgressMode::Dev, &["localhost"], browser_env_opts).await;
     let (_, reply) = e
@@ -1057,4 +1075,45 @@ async fn the_browser_ask_checks_the_address_mode_and_allowance_first() {
         .ask(Some(&e.browser_pass()), serde_json::json!({"nope": 1}))
         .await;
     assert_eq!(code, 400);
+}
+
+/// 直接上网的回答只算它那个网址；浏览器里的按网站（docs/browser.md 第 1.2 节）。
+#[tokio::test]
+async fn direct_answers_count_for_their_own_host_only_in_the_browser() {
+    use llm_gw::egress::{Answer, Asked, EgressLedger};
+    use proto::egress::Via;
+    let l = MemoryEgressLedger::default();
+    l.set_run("i", Some("r"));
+    let ask = |host: &'static str, via| {
+        let l = &l;
+        async move {
+            match l
+                .ask("u", "i", host, Some("r"), 5, 20, via, Some("zhihu.com"))
+                .await
+                .unwrap()
+            {
+                Asked::Request(id) => id,
+                other => panic!("{other:?}"),
+            }
+        }
+    };
+    let direct = ask("gist.zhihu.com", Via::Direct).await;
+    l.decide(&direct, "denied");
+    let (_, a) = l
+        .site_decision("i", "zhihu.com", "www.zhihu.com")
+        .await
+        .unwrap();
+    assert_eq!(a, None, "a curl denial does not block the whole site");
+    let (_, a) = l
+        .site_decision("i", "zhihu.com", "gist.zhihu.com")
+        .await
+        .unwrap();
+    assert_eq!(a, Some(Answer::Denied));
+    let browser = ask("www.zhihu.com", Via::Browser).await;
+    l.decide(&browser, "once");
+    let (_, a) = l
+        .site_decision("i", "zhihu.com", "zhuanlan.zhihu.com")
+        .await
+        .unwrap();
+    assert_eq!(a, Some(Answer::Allowed), "a browser answer covers the site");
 }
