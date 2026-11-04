@@ -28,6 +28,7 @@ public final class InboxModel {
     public private(set) var working: Set<InboxItemID> = []
 
     @ObservationIgnored private let client: any ClientProtocol
+    @ObservationIgnored private var includesCachedPage = false
 
     public init(client: any ClientProtocol) {
         self.client = client
@@ -59,13 +60,15 @@ public final class InboxModel {
         defer { isLoadingOlder = false }
         do {
             let older = try await client.olderInbox(before: last.id, limit: Self.pageSize)
+            guard items.last?.id == last.id else { return }
             append(older)
             if older.count < Self.pageSize { reachedEnd = true }
         } catch {
-            guard let failure = ConversationErrors.from(error) else { return }
+            guard items.last?.id == last.id, let failure = ConversationErrors.from(error) else { return }
             if failure.isOffline, let cached = try? client.cachedInbox(before: last.id, limit: Self.pageSize),
                 !cached.isEmpty
             {
+                includesCachedPage = true
                 append(cached)
             } else {
                 self.error = failure
@@ -120,16 +123,16 @@ public final class InboxModel {
         defer { working.remove(item.id) }
         do {
             try await client.deleteInboxItem(item.id)
-            items.removeAll { $0.id == item.id }
-            if !item.isRead { unread = max(0, unread - 1) }
         } catch {
             guard let failure = ConversationErrors.from(error) else { return }
-            // 已经没有了（别的设备删了）：一样拿掉。
-            if failure.isNotFound {
-                items.removeAll { $0.id == item.id }
-            } else {
+            guard failure.isNotFound else {
                 actionError = failure
+                return
             }
+        }
+        // 别的设备已经删掉时也更新角标；以当前列表为准，避免并行刷新后重复扣除。
+        if let index = items.firstIndex(where: { $0.id == item.id }), !items.remove(at: index).isRead {
+            unread = max(0, unread - 1)
         }
     }
 
@@ -144,19 +147,31 @@ public final class InboxModel {
         // 缓存不全（只有拉到过的），翻到底了没有还得问服务端：`reachedEnd` 不动。
         if let cached = try? client.cachedInbox(before: nil, limit: max(items.count, Self.pageSize)) {
             items = cached
+            includesCachedPage = true
         }
         if let count = try? client.cachedUnread() { unread = count }
     }
 
     /// 最新一页换掉列表的开头；比它更早的、已经翻出来的留着。不满一页说明一共就这么多。
+    ///
+    /// 最新一页和现在的列表一条都对不上（离线久了、缓存旧了，新来的超过一页），中间可能还隔着没拉到的：只留最新一页，
+    /// 往下翻从它接着拉，不然隔着的那些永远翻不出来。
     private func merge(latest: [InboxItem]) {
+        defer { includesCachedPage = false }
         guard latest.count >= Self.pageSize, let oldest = latest.last else {
             items = latest
             reachedEnd = true
             return
         }
         let ids = Set(latest.map(\.id))
-        let older = items.filter { !ids.contains($0.id) && Self.isOlder($0, than: oldest) }
+        // 离线缓存可能只有不连续的几页。重新联网时，先用服务端第一页重新建立翻页游标。
+        guard !includesCachedPage, items.contains(where: { ids.contains($0.id) }) else {
+            items = latest
+            reachedEnd = false
+            return
+        }
+        // 服务端按 UUID 倒序翻页（before 是 ID，时间戳可能相同或乱序）。
+        let older = items.filter { $0.id.rawValue < oldest.id.rawValue }
         items = latest + older
         if older.isEmpty { reachedEnd = false }
     }
@@ -171,10 +186,6 @@ public final class InboxModel {
         body(&items[index])
     }
 
-    /// 列表的顺序：时间新的在前，同一时间按 id。
-    static func isOlder(_ item: InboxItem, than other: InboxItem) -> Bool {
-        (item.createdAt, item.id.rawValue) < (other.createdAt, other.id.rawValue)
-    }
 }
 
 /// 收件箱里的一条（WBS 12.8，`.inboxItem(id)`：推送、深链 `thinktin://inbox/{id}`、收件箱里没有更具体页面的条目进来）：

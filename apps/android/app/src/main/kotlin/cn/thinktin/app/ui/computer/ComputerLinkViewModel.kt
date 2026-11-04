@@ -10,7 +10,6 @@ import cn.thinktin.data.model.ComputerLinkState
 import cn.thinktin.data.model.DeviceInfo
 import cn.thinktin.data.model.DeviceMessage
 import cn.thinktin.data.model.DeviceMessageKind
-import cn.thinktin.data.model.DevicePlatform
 import cn.thinktin.data.model.DeviceSigner
 import cn.thinktin.data.model.DeviceSignerException
 import cn.thinktin.data.model.IssuedGrant
@@ -164,7 +163,7 @@ class ComputerLinkViewModel(
             attach(user.id)
             currentDeviceId = devices.firstOrNull { it.current }?.id
             state.update { s ->
-                s.copy(computers = devices.filter { it.platform == DevicePlatform.Macos }, hasLoaded = true)
+                s.copy(computers = devices.filter { it.platform.isComputer }, hasLoaded = true)
             }
         } catch (e: ServiceError) {
             fail(e)

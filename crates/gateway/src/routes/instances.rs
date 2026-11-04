@@ -1,11 +1,12 @@
-//! 实例：领养、列表、改名、删除、模型别名。
+//! 实例：领养、列表、改名字和用途说明、交流开关、删除、模型别名。
 
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use proto::domain::{Instance, InstanceId, ModelRoute, RunState};
+use proto::domain::{Instance, InstanceId, MAX_INSTANCE_PURPOSE_CHARS, ModelRoute, RunState};
 use serde::Deserialize;
 use serde_json::{Value, json};
+use store::InstanceChange;
 
 use super::{check_len, default_scope, parse_id};
 use crate::{ApiJson, ApiResult, AppState, Authed};
@@ -63,9 +64,14 @@ pub async fn get(
     Ok(Json(instance))
 }
 
+/// 改实例：给了才改。
 #[derive(Deserialize)]
 pub struct UpdateReq {
-    name: String,
+    name: Option<String>,
+    /// 用途说明（8.9），空串清掉。
+    purpose: Option<String>,
+    /// “允许其他 agent 查我、问我”（8.9）。
+    peer_access: Option<bool>,
 }
 
 pub async fn update(
@@ -75,9 +81,61 @@ pub async fn update(
     ApiJson(req): ApiJson<UpdateReq>,
 ) -> ApiResult<Json<Instance>> {
     let id: InstanceId = parse_id(&id, "instance")?;
-    check_len("name", req.name.trim(), 1, 64)?;
+    let name = req.name.as_deref().map(str::trim);
+    if let Some(name) = name {
+        check_len("name", name, 1, 64)?;
+    }
+    let purpose = req.purpose.as_deref().map(str::trim);
+    if let Some(purpose) = purpose {
+        check_len("purpose", purpose, 0, MAX_INSTANCE_PURPOSE_CHARS)?;
+        if purpose.chars().any(|c| c.is_control() && c != '\n') {
+            return Err(crate::ApiError::invalid(
+                "purpose must not contain control characters",
+            ));
+        }
+    }
+    if name.is_none() && purpose.is_none() && req.peer_access.is_none() {
+        return Err(crate::ApiError::invalid("nothing to change"));
+    }
     let mut t = s.db.tenant(who.user).await?;
-    t.rename_instance(id, req.name.trim()).await?;
+    let before = t.instance(id).await?;
+    let switched = req.peer_access.filter(|on| *on != before.peer_access);
+    // 关了以后别人问它、还没答的问题也不答了（8.11）：提问方拿到“没问成”。先拿提问用的那把锁，同时在建的
+    // 提问要么已经提交、这里取消得到，要么等这里提交后再看开关、被拒绝；先锁运行再改实例（和执行器同序）。
+    if switched == Some(false) {
+        t.lock_run_waits(who.user).await?;
+        for run in t
+            .cancel_asks_to(id, "the agent stopped taking questions")
+            .await?
+        {
+            t.append_event(
+                run.instance_id,
+                Some(run.id),
+                "run.state",
+                &json!({ "state": run.state, "reason": run.state_reason }),
+            )
+            .await?;
+        }
+    }
+    t.update_instance(
+        id,
+        &InstanceChange {
+            name: name.map(String::from),
+            purpose: purpose.map(String::from),
+            peer_access: req.peer_access,
+        },
+    )
+    .await?;
+    // 关掉交流开关是安全相关的改动（能控制电脑、能用保险箱的实例常常要关），记审计。
+    if let Some(on) = switched {
+        t.audit(
+            &who.actor(),
+            "instance.peer_access",
+            Some(&id.to_string()),
+            &json!({ "on": on }),
+        )
+        .await?;
+    }
     let instance = t.instance(id).await?;
     t.commit().await?;
     Ok(Json(instance))

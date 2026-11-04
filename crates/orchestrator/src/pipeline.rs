@@ -326,10 +326,16 @@ impl PipelineDriver {
             &json!({ "state": to, "reason": done.run.state_reason }),
         )
         .await?;
-        let title = match root.run.plan_id {
-            Some(p) => w.plan(p).await.map(|p| p.title).unwrap_or_default(),
-            None => String::new(),
+        let plan = match root.run.plan_id {
+            Some(p) => w.plan(p).await.ok(),
+            None => None,
         };
+        // 计划设了成功时不通知（7.1，事件触发的计划常这么设）：失败照样通知。
+        if to == RunState::Succeeded && plan.as_ref().is_some_and(|p| !p.policy.notify_success) {
+            info!(run = %root.run.id, state = %to, "pipeline finished (quietly)");
+            return Ok(());
+        }
+        let title = plan.map(|p| p.title).unwrap_or_default();
         let (kind, body) = push;
         let title = if title.is_empty() {
             crate::texts::APP_NAME.to_owned()

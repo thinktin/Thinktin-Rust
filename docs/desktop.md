@@ -1,12 +1,12 @@
 # 电脑工具（WBS 14.2）
 
-agent 用“我的电脑”的工具，经 [设备中继](relay.md) 转到用户自己的 Mac 上执行。分三部分：
+agent 用“我的电脑”的工具，经 [设备中继](relay.md) 转到用户自己的 Mac 或 Windows 电脑上执行。分三部分：
 
 | 部分 | 位置 | 做什么 |
 |---|---|---|
 | 工具清单 | `crates/proto/src/computer.rs` | 平台交给 agent 的 `computer_*` 工具：名字、说明、参数、风险等级、平台等多久 |
 | 平台侧 | `crates/orchestrator/src/executor.rs`、`computer.rs` | 有电脑的用户的 agent 才拿到电脑工具；调用经中继转给用户自己的电脑；电脑不在线时转入等电脑上线 |
-| 电脑侧 | `crates/desktop` | 连中继、按手机给的权限把关、执行、记本地审计日志 |
+| 电脑侧 | `crates/desktop` | 连中继、按手机给的权限把关、执行、记本地审计日志；Windows 的系统工具在 `windows.rs`（[Windows 电脑端](windows.md)） |
 
 ## 1. 工具和风险等级
 
@@ -25,7 +25,7 @@ agent 用“我的电脑”的工具，经 [设备中继](relay.md) 转到用户
 
 ## 2. 平台侧
 
-- **只给有电脑的用户**：执行器在每次尝试开始时看用户有没有登录着的电脑（macOS 设备）；没有就不把电脑工具交给 agent。
+- **只给有电脑的用户**：执行器在每次尝试开始时看用户有没有登录着的电脑（macOS、Windows 设备，`DevicePlatform::is_computer`）；没有就不把电脑工具交给 agent。
   运行授权的默认范围包含电脑工具（`[api] default_platform_tools`）。
 - **不卡执行器**：电脑工具的调用放到单独的任务里等结果，执行器照常续租、处理别的事件、发现用户取消。
 - **电脑不在线**：告诉 agent，停下这一轮，运行转入“等待电脑上线”（7.11），通知用户；电脑连上中继时唤醒，
@@ -58,9 +58,10 @@ macOS App 的后台进程里跑一个 `Desktop`：
   等待、配好、失败（`PairingStatus`），关掉二维码调 `cancel_pairing()`。电脑的密钥由 App 放在钥匙串 / Secure Enclave
   里（实现 `PairingKey`），`SoftwareKey` 给测试和开发用。
 
-工具本身由 `ToolBackend` 实现：看目录、读写文件、删除（挪进 `~/.Trash`）、执行命令（`/bin/sh -c`，最多两分钟，
-输出各留 64 KiB）用 Rust 实现（`files::FileTools`）；截图（ScreenCaptureKit）、键鼠、打开应用要用 macOS 的系统接口，
-由 App 实现（14.3、14.4），和 `FileTools` 组合起来交给 `Desktop`。访问令牌由 App 用 client-core 管（`TokenSource`）。
+工具本身由 `ToolBackend` 实现：看目录、读写文件、删除（挪进 `~/.Trash`，Windows 上进回收站）、执行命令（`/bin/sh -c`，
+Windows 上是 PowerShell，最多两分钟，输出各留 64 KiB）用 Rust 实现（`files::FileTools`）；截图（ScreenCaptureKit）、键鼠、打开应用
+要用 macOS 的系统接口，由 App 实现（14.3、14.4），和 `FileTools` 组合起来交给 `Desktop`；Windows 上这几个用 Win32 在 `windows.rs` 里实现，
+用 `ToolSet` 和 `FileTools` 合起来。访问令牌由 App 用 client-core 管（`TokenSource`）。
 
 ## 4. macOS App 用的接口（UniFFI）
 

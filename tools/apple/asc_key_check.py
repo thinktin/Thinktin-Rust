@@ -107,6 +107,14 @@ def main(argv: list[str]) -> int:
         status, body = get(path, bearer)
         if status == 200:
             print(f"{what}：200")
+        elif status == 403 and "PLA_NOT_ACCEPTED" in json.dumps(body):
+            print(
+                "::error::苹果更新了开发者计划许可协议（PLA），账号持有人还没同意，证书、描述文件相关的接口都用不了"
+                f"（403 {apple_error(body)}）。账号持有人登录 developer.apple.com/account，按页面顶上的提示查看并同意新协议"
+                "（App Store Connect →“商务”里如果也有待同意的协议，一并同意），然后重跑。"
+            )
+            failed = True
+            break
         elif status == 403:
             print(
                 f"::error::这把 API 密钥没有{what}的权限（403 {apple_error(body)}）：自动签名要“管理（Admin）”权限的团队密钥，"
