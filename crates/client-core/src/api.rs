@@ -242,6 +242,9 @@ pub struct UsageBucket {
     pub charged_tokens: u64,
     pub estimated_requests: u64,
     pub failed_requests: u64,
+    /// 厂商替 agent 搜了几次（厂商另收钱，docs/search.md）。老服务端没有，按 0。
+    #[serde(default)]
+    pub web_searches: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]

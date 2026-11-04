@@ -907,6 +907,7 @@ impl Gateway {
             status: status.as_u16(),
             outcome: Outcome::Unavailable,
             usage: None,
+            web_searches: 0,
             charged_tokens: 0,
             estimated: false,
             duration_ms: 0,
@@ -1055,6 +1056,7 @@ impl Gateway {
                 status: 0,
                 outcome: Outcome::UpstreamError,
                 usage: None,
+                web_searches: 0,
                 charged_tokens: 0,
                 estimated: false,
                 duration_ms: 0,
@@ -1337,6 +1339,13 @@ impl Tapped {
 
     fn finish(&mut self, outcome: Outcome) {
         let usage = self.meter.as_ref().and_then(UsageMeter::usage);
+        if let Some(m) = &self.meter {
+            self.finisher.record.web_searches = m.web_searches();
+            if m.web_searches() > 0 {
+                metrics::counter!("thinktin_llm_vendor_web_searches_total", "vendor" => self.finisher.record.vendor.clone())
+                    .increment(m.web_searches());
+            }
+        }
         self.finisher.finish(outcome, usage);
     }
 }

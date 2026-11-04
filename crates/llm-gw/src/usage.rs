@@ -4,6 +4,9 @@
 //! - Chat Completions：最后一个分片带 `usage`（有的厂商要开 `stream_options.include_usage`）；
 //! - Responses：`response.completed`（或 `incomplete`、`failed`）事件里的 `response.usage`。
 //!
+//! 厂商替 agent 搜了几次（docs/search.md，用户 2026-11-04 选了保留厂商自带的搜索）：Anthropic 协议（Anthropic、
+//! DeepSeek）看 `usage.server_tool_use.web_search_requests`，Responses 数 `response.output` 里的 `web_search_call`。
+//!
 //! 响应内容由厂商控制，可能很大：只按需取出 `usage` 等几个字段（其余字段跳过，不解析成 `Value`），
 //! 超大的事件跳过、不影响后面的事件。取不到用量时由调用方按保守估算记账。
 
@@ -67,6 +70,33 @@ struct Probe<'a> {
     response: Option<&'a RawValue>,
     #[serde(default, borrow)]
     choices: Option<&'a RawValue>,
+    #[serde(default, borrow)]
+    output: Option<&'a RawValue>,
+}
+
+/// Responses 的输出条目：只看种类。
+#[derive(Deserialize)]
+struct OutputKind<'a> {
+    #[serde(rename = "type", default, borrow)]
+    ty: Option<Cow<'a, str>>,
+}
+
+/// `response` 对象里的 `output`。
+#[derive(Deserialize)]
+struct OutputHolder<'a> {
+    #[serde(default, borrow)]
+    output: Option<&'a RawValue>,
+}
+
+/// `output` 里有几个 `web_search_call`。
+fn count_web_search_calls(raw: Option<&RawValue>) -> Option<u64> {
+    let items: Vec<OutputKind> = serde_json::from_str(raw?.get()).ok()?;
+    Some(
+        items
+            .iter()
+            .filter(|i| i.ty.as_deref() == Some("web_search_call"))
+            .count() as u64,
+    )
 }
 
 /// 只取 `usage` 的嵌套对象（`message`、`response`、`choices[i]`）。
@@ -107,6 +137,7 @@ fn is_empty_array(raw: Option<&RawValue>) -> bool {
 pub struct UsageMeter {
     protocol: Protocol,
     usage: Option<Usage>,
+    web_searches: u64,
 }
 
 impl UsageMeter {
@@ -114,11 +145,17 @@ impl UsageMeter {
         Self {
             protocol,
             usage: None,
+            web_searches: 0,
         }
     }
 
     pub fn usage(&self) -> Option<Usage> {
         self.usage
+    }
+
+    /// 厂商替 agent 搜了几次（厂商另收钱，不在 token 里）。
+    pub fn web_searches(&self) -> u64 {
+        self.web_searches
     }
 
     /// 处理一个 SSE 事件的 data。返回 `true` 表示这是只带用量、`choices` 为空的 Chat 分片
@@ -154,9 +191,17 @@ impl UsageMeter {
                 if matches!(
                     p.ty.as_deref(),
                     Some("response.completed" | "response.incomplete" | "response.failed")
-                ) && let Some(u) = nested_usage(p.response)
-                {
-                    self.usage = Some(openai_usage(&u, "input_tokens", "output_tokens"));
+                ) {
+                    if let Some(u) = nested_usage(p.response) {
+                        self.usage = Some(openai_usage(&u, "input_tokens", "output_tokens"));
+                    }
+                    if let Some(n) = p
+                        .response
+                        .and_then(|r| serde_json::from_str::<OutputHolder>(r.get()).ok())
+                        .and_then(|h| count_web_search_calls(h.output))
+                    {
+                        self.web_searches = n;
+                    }
                 }
             }
         }
@@ -168,6 +213,11 @@ impl UsageMeter {
         let Ok(p) = serde_json::from_slice::<Probe>(body) else {
             return;
         };
+        if self.protocol == Protocol::Responses
+            && let Some(n) = count_web_search_calls(p.output)
+        {
+            self.web_searches = n;
+        }
         let Some(u) = usage_value(p.usage) else {
             return;
         };
@@ -184,6 +234,9 @@ impl UsageMeter {
 
     /// `message_delta` 里的数字是累计值，出现的字段覆盖 `message_start` 的值。
     fn merge_anthropic(&mut self, u: &Value) {
+        if let Some(n) = num(u, &["server_tool_use", "web_search_requests"]) {
+            self.web_searches = n;
+        }
         let usage = self.usage.get_or_insert_default();
         if let Some(n) = num(u, &["input_tokens"]) {
             usage.input_tokens = n;
@@ -362,6 +415,8 @@ pub struct UsageRecord {
     /// `charged_tokens` 含估算部分。
     pub estimated: bool,
     pub duration_ms: u64,
+    /// 厂商替 agent 搜了几次（厂商另收钱）。
+    pub web_searches: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -484,6 +539,40 @@ mod tests {
             }
         }
         assert_eq!(datas.len(), 2);
+    }
+
+    /// 厂商替 agent 搜了几次：Anthropic 协议看 `server_tool_use`，Responses 数 `web_search_call`。
+    #[test]
+    fn vendor_web_searches_are_counted() {
+        let mut m = UsageMeter::new(Protocol::Anthropic);
+        m.on_event(&bytes(json!({"type":"message_start","message":{"usage":{"input_tokens":5,"output_tokens":1}}})));
+        m.on_event(&bytes(json!({"type":"message_delta","usage":{"output_tokens":9,"server_tool_use":{"web_search_requests":3}}})));
+        assert_eq!(m.web_searches(), 3);
+        let mut b = UsageMeter::new(Protocol::Anthropic);
+        b.on_body(&bytes(json!({"usage":{"input_tokens":5,"output_tokens":1,"server_tool_use":{"web_search_requests":1}}})));
+        assert_eq!(b.web_searches(), 1);
+
+        let mut r = UsageMeter::new(Protocol::Responses);
+        r.on_event(&bytes(
+            json!({"type":"response.web_search_call.completed","item_id":"ws_1"}),
+        ));
+        r.on_event(&bytes(
+            json!({"type":"response.completed","response":{"output":[
+            {"type":"web_search_call","id":"ws_1","status":"completed"},
+            {"type":"web_search_call","id":"ws_2","status":"completed"},
+            {"type":"message","content":[{"type":"output_text","text":"hi"}]}],
+            "usage":{"input_tokens":10,"output_tokens":2}}}),
+        ));
+        assert_eq!(r.web_searches(), 2);
+        let mut rb = UsageMeter::new(Protocol::Responses);
+        rb.on_body(&bytes(json!({"output":[{"type":"web_search_call"}],"usage":{"input_tokens":1,"output_tokens":1}})));
+        assert_eq!(rb.web_searches(), 1);
+        // 没搜：0。
+        let mut c = UsageMeter::new(Protocol::Chat);
+        c.on_body(&bytes(
+            json!({"usage":{"prompt_tokens":1,"completion_tokens":1}}),
+        ));
+        assert_eq!(c.web_searches(), 0);
     }
 
     #[test]

@@ -1274,6 +1274,8 @@ pub struct UsageBucket {
     pub charged_tokens: u64,
     pub estimated_requests: u64,
     pub failed_requests: u64,
+    /// 厂商替 agent 搜了几次（用户的模型 key 另付钱，不在 token 里；docs/search.md）。
+    pub web_searches: u64,
 }
 
 impl From<api::UsageBucket> for UsageBucket {
@@ -1288,6 +1290,7 @@ impl From<api::UsageBucket> for UsageBucket {
             charged_tokens: b.charged_tokens,
             estimated_requests: b.estimated_requests,
             failed_requests: b.failed_requests,
+            web_searches: b.web_searches,
         }
     }
 }

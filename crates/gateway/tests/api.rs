@@ -2343,6 +2343,8 @@ async fn usage_is_summarised_per_day_instance_and_model() {
             outcome: "complete".into(),
             input_tokens: charged,
             charged_tokens: charged,
+            // 厂商替 agent 搜的次数（docs/search.md）。
+            web_searches: u64::from(model == "glm-4.6") * 2,
             ..Default::default()
         })
         .await
@@ -2381,6 +2383,7 @@ async fn usage_is_summarised_per_day_instance_and_model() {
     );
     assert_eq!(body["total"]["charged_tokens"], 180, "other users excluded");
     assert_eq!(body["total"]["requests"], 3);
+    assert_eq!(body["total"]["web_searches"], 2);
     let (_, utc) = a
         .call(Method::GET, &format!("/v1/usage?{range}&tz=UTC"), tok, None)
         .await;

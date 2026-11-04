@@ -80,6 +80,7 @@ pub async fn summary(
             acc.charged_tokens += b.charged_tokens;
             acc.estimated_requests += b.estimated_requests;
             acc.failed_requests += b.failed_requests;
+            acc.web_searches += b.web_searches;
             acc
         },
     );

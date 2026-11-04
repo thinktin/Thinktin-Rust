@@ -28,6 +28,8 @@ pub struct NewUsage {
     pub charged_tokens: u64,
     pub estimated: bool,
     pub duration_ms: u64,
+    /// 厂商替 agent 搜了几次（厂商另收钱，docs/search.md）。
+    pub web_searches: u64,
 }
 
 impl<R: crate::Internal> Tx<R> {
@@ -35,8 +37,8 @@ impl<R: crate::Internal> Tx<R> {
         sqlx::query(
             "INSERT INTO usage_records (id, user_id, instance_id, run_grant_id, credential_id, alias, vendor, \
                upstream_model, endpoint, stream, status, outcome, input_tokens, cache_read_tokens, \
-               cache_write_tokens, output_tokens, charged_tokens, estimated, duration_ms) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)",
+               cache_write_tokens, output_tokens, charged_tokens, estimated, duration_ms, web_searches) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)",
         )
         .bind(Uuid::now_v7())
         .bind(u.user.0)
@@ -57,6 +59,7 @@ impl<R: crate::Internal> Tx<R> {
         .bind(signed(u.charged_tokens, "charged_tokens")?)
         .bind(u.estimated)
         .bind(signed(u.duration_ms, "duration_ms")?)
+        .bind(i32::try_from(u.web_searches).unwrap_or(i32::MAX))
         .execute(self.conn())
         .await?;
         Ok(())
@@ -96,9 +99,11 @@ pub struct UsageBucket {
     pub estimated_requests: u64,
     /// 厂商返回错误或连不上的请求数。
     pub failed_requests: u64,
+    /// 厂商替 agent 搜了几次（厂商另收钱）。
+    pub web_searches: u64,
 }
 
-type BucketRow = (String, i64, i64, i64, i64, i64, i64, i64, i64);
+type BucketRow = (String, i64, i64, i64, i64, i64, i64, i64, i64, i64);
 
 impl Tx<Tenant> {
     /// 汇总自己的用量。`tz` 是 IANA 时区名（按天分组时用），调用方先校验。
@@ -118,7 +123,8 @@ impl Tx<Tenant> {
             "SELECT {key} AS k, count(*), coalesce(sum(input_tokens), 0)::bigint, \
                coalesce(sum(cache_read_tokens), 0)::bigint, coalesce(sum(cache_write_tokens), 0)::bigint, \
                coalesce(sum(output_tokens), 0)::bigint, coalesce(sum(charged_tokens), 0)::bigint, \
-               count(*) FILTER (WHERE estimated), count(*) FILTER (WHERE outcome <> 'complete') \
+               count(*) FILTER (WHERE estimated), count(*) FILTER (WHERE outcome <> 'complete'), \
+               coalesce(sum(web_searches), 0)::bigint \
              FROM usage_records \
              WHERE ($1::timestamptz IS NULL OR created_at >= $1) AND ($2::timestamptz IS NULL OR created_at < $2) \
                AND ($3::uuid IS NULL OR instance_id = $3) AND ($4::uuid IS NULL OR credential_id = $4) \
@@ -134,19 +140,22 @@ impl Tx<Tenant> {
             .fetch_all(self.conn())
             .await?;
         rows.into_iter()
-            .map(|(key, n, input, cr, cw, output, charged, est, failed)| {
-                Ok(UsageBucket {
-                    key,
-                    requests: unsigned(n, "requests")?,
-                    input_tokens: unsigned(input, "input tokens")?,
-                    cache_read_tokens: unsigned(cr, "cache read tokens")?,
-                    cache_write_tokens: unsigned(cw, "cache write tokens")?,
-                    output_tokens: unsigned(output, "output tokens")?,
-                    charged_tokens: unsigned(charged, "charged tokens")?,
-                    estimated_requests: unsigned(est, "estimated")?,
-                    failed_requests: unsigned(failed, "failed")?,
-                })
-            })
+            .map(
+                |(key, n, input, cr, cw, output, charged, est, failed, searches)| {
+                    Ok(UsageBucket {
+                        key,
+                        requests: unsigned(n, "requests")?,
+                        input_tokens: unsigned(input, "input tokens")?,
+                        cache_read_tokens: unsigned(cr, "cache read tokens")?,
+                        cache_write_tokens: unsigned(cw, "cache write tokens")?,
+                        output_tokens: unsigned(output, "output tokens")?,
+                        charged_tokens: unsigned(charged, "charged tokens")?,
+                        estimated_requests: unsigned(est, "estimated")?,
+                        failed_requests: unsigned(failed, "failed")?,
+                        web_searches: unsigned(searches, "web searches")?,
+                    })
+                },
+            )
             .collect()
     }
 }

@@ -466,22 +466,12 @@ pub struct Search {
 }
 
 /// 一家搜索接口：地址、单价（分/千次，按实际收费的次数算）、IQS 用哪个引擎。
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct SearchVendor {
     pub endpoint: String,
     pub price_per_1000_fen: u64,
     pub engine: String,
-}
-
-impl Default for SearchVendor {
-    fn default() -> Self {
-        Self {
-            endpoint: String::new(),
-            price_per_1000_fen: 0,
-            engine: String::new(),
-        }
-    }
 }
 
 impl Config {

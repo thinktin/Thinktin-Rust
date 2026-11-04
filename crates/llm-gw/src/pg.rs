@@ -354,6 +354,7 @@ fn new_usage(r: &UsageRecord) -> Option<NewUsage> {
         charged_tokens: r.charged_tokens,
         estimated: r.estimated,
         duration_ms: r.duration_ms,
+        web_searches: r.web_searches,
     })
 }
 
