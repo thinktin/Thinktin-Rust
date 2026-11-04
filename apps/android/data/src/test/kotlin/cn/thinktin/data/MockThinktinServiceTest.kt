@@ -1,6 +1,7 @@
 package cn.thinktin.data
 
 import app.cash.turbine.test
+import cn.thinktin.data.mock.MockData
 import cn.thinktin.data.mock.MockThinktinService
 import cn.thinktin.data.model.EventKinds
 import cn.thinktin.data.model.EventStreamItem
@@ -8,10 +9,16 @@ import cn.thinktin.data.model.ImChannelUpdate
 import cn.thinktin.data.model.InboxKind
 import cn.thinktin.data.model.InstanceState
 import cn.thinktin.data.model.NewImChannel
+import cn.thinktin.data.model.NewPlan
+import cn.thinktin.data.model.PlanChange
+import cn.thinktin.data.model.PlanPolicy
 import cn.thinktin.data.model.RunKind
 import cn.thinktin.data.model.RunSource
 import cn.thinktin.data.model.RunState
+import cn.thinktin.data.model.Schedule
 import cn.thinktin.data.model.StreamState
+import cn.thinktin.data.model.parseJsonObject
+import cn.thinktin.data.model.string
 import cn.thinktin.data.service.AuthState
 import cn.thinktin.data.service.ServiceError
 import cn.thinktin.data.service.signedIn
@@ -63,6 +70,49 @@ class MockThinktinServiceTest {
         // 新的在前
         val runs = s.runs("inst-coder")
         assertEquals(runs.sortedByDescending { it.createdAtMs }, runs)
+    }
+
+    /** 问队友（8.11）的演示：回答在另一个实例上、来源 ask、挂在提问的运行下面；提问方有 ask.sent、board.posted。 */
+    @Test
+    fun askRunIsAChildOnAnotherInstance() = runTest {
+        val s = service()
+        val answer = s.getRun(MockData.RUN_ASK)
+        assertEquals(RunSource.Ask, answer.source)
+        assertEquals(MockData.INSTANCE_RESEARCH, answer.instanceId)
+        val asker = s.getRun(answer.parentRunId!!)
+        assertEquals(MockData.INSTANCE_CODER, asker.instanceId)
+        assertEquals(asker.id, answer.rootRunId)
+        // 回答方的最近运行里有它；运行树从提问的运行开始。
+        assertTrue(s.runs(MockData.INSTANCE_RESEARCH).any { it.id == MockData.RUN_ASK })
+        assertEquals(listOf(asker.id, answer.id), s.runTree(answer.id).map { it.id })
+        assertEquals(listOf(asker.id, answer.id), s.runTree(asker.id).map { it.id })
+
+        val coder = s.cachedEvents(MockData.INSTANCE_CODER).filter { it.runId == asker.id }
+        val ask = coder.single { it.kind == EventKinds.ASK_SENT }
+        assertEquals(answer.id, ask.payload.string("child_run_id"))
+        assertEquals(MockData.INSTANCE_RESEARCH, ask.payload.string("instance_id"))
+        assertEquals(answer.prompt, ask.payload.string("question"))
+        assertTrue(coder.any { it.kind == EventKinds.BOARD_POSTED })
+        assertTrue(s.cachedEvents(MockData.INSTANCE_RESEARCH).any { it.kind == EventKinds.HOOK_RECEIVED })
+    }
+
+    /** 计划策略的“成功时通知”：新建、修改都存下来并原样返回。 */
+    @Test
+    fun planNotifySuccessIsSavedAndReturned() = runTest {
+        val s = service()
+        val created = s.createPlan(
+            NewPlan("inst-coder", "t", "g", listOf(Schedule.Once(now + 60_000)), policy = PlanPolicy(notifySuccess = false)),
+        )
+        assertFalse(created.policy.notifySuccess)
+        assertEquals("false", parseJsonObject(created.policyJson)["notify_success"].toString())
+        assertFalse(s.getPlan(created.id).policy.notifySuccess)
+        // 只改标题：策略不动。
+        assertFalse(s.updatePlan(created.id, PlanChange(title = "新标题")).policy.notifySuccess)
+        val on = s.updatePlan(created.id, PlanChange(policy = created.policy.copy(notifySuccess = true)))
+        assertTrue(on.policy.notifySuccess)
+        assertTrue(s.getPlan(created.id).policy.notifySuccess)
+        // 演示数据里的计划默认打开。
+        assertTrue(s.plans().filter { it.id != created.id }.all { it.policy.notifySuccess })
     }
 
     @Test

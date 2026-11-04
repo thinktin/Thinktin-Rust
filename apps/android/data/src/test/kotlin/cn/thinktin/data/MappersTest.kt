@@ -19,12 +19,14 @@ import cn.thinktin.data.model.RunState
 import cn.thinktin.data.model.Schedule
 import cn.thinktin.data.model.StreamState
 import cn.thinktin.data.model.TriggerDisabledReason
+import cn.thinktin.data.model.WaitCode
 import cn.thinktin.data.model.isTerminal
 import cn.thinktin.data.model.NewImChannel
 import cn.thinktin.data.model.long
 import cn.thinktin.data.model.parseJsonObject
 import cn.thinktin.data.model.string
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -78,6 +80,28 @@ class MappersTest {
         assertEquals(95L, run.durationMs(now + 100))
         // 超出 Long 的计数不会变成负数。
         assertEquals(Long.MAX_VALUE, core.copy(tokensUsed = ULong.MAX_VALUE).toModel().tokensUsed)
+    }
+
+    /** 队友提问（8.11）：来源 ask、在等回答的 wait_code answer；不认识的来源不当成用户发的。 */
+    @Test
+    fun runSourceAskAndAnswerWait() {
+        val core = CoreRun(
+            id = "r2", kind = "agent", instanceId = "i2", planId = null, parentRunId = "r1", rootRunId = "r1",
+            stepKey = null, source = "ask", prompt = "版本号是多少？", state = "succeeded", stateReason = null,
+            attempt = 1u, tokensUsed = 10uL, summary = null, error = null, createdAtMs = now,
+            startedAtMs = now, finishedAtMs = now + 1,
+        )
+        val asked = core.toModel()
+        assertEquals(RunSource.Ask, asked.source)
+        assertTrue(asked.source.promptAiGenerated)
+        val waiting = core.copy(id = "r1", parentRunId = null, source = "user", state = "waiting_children", waitCode = "answer")
+            .toModel()
+        assertEquals(RunState.WaitingChildren, waiting.state)
+        assertEquals(WaitCode.Answer, waiting.waitCode)
+        val unknown = core.copy(source = "webhook").toModel().source
+        assertEquals(RunSource.Unknown, unknown)
+        assertFalse(unknown == RunSource.User)
+        assertFalse(unknown.promptAiGenerated)
     }
 
     @Test

@@ -8,13 +8,16 @@ import cn.thinktin.data.model.ReportState
 import cn.thinktin.data.model.SelfCodePurpose
 import cn.thinktin.data.model.InboxKind
 import cn.thinktin.data.model.InstanceState
+import cn.thinktin.data.model.KnownStateReason
 import cn.thinktin.data.model.OptionKind
 import cn.thinktin.data.model.RunKind
 import cn.thinktin.data.model.RunSource
 import cn.thinktin.data.model.RunState
 import cn.thinktin.data.model.VaultRequestStatus
+import cn.thinktin.data.model.WaitCode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -74,6 +77,7 @@ class StatesTest {
     @Test
     fun otherEnumsParseKnownValues() {
         assertEquals(RunSource.Delegate, RunSource.fromWire("delegate"))
+        assertEquals(RunSource.Ask, RunSource.fromWire("ask"))
         assertEquals(RunKind.Pipeline, RunKind.fromWire("pipeline"))
         assertEquals(
             InboxKind.entries.toList(),
@@ -106,5 +110,33 @@ class StatesTest {
         }
         assertEquals(CatchUp.Unknown, CatchUp.fromWire("twice"))
         assertEquals(ApprovalTimeoutAction.Unknown, ApprovalTimeoutAction.fromWire("reject"))
+    }
+
+    /** 运行来源、wait_code 和 proto::domain 的取值一致（8.11 加了 ask、answer）。 */
+    @Test
+    fun runSourceAndWaitCodeMatchServerStrings() {
+        assertEquals(
+            listOf("user", "plan", "pipeline", "delegate", "ask"),
+            RunSource.entries.filter { it != RunSource.Unknown }.map { it.wire },
+        )
+        // 只有用户自己的 prompt 不标；agent 写的、带上游摘要的标 AI 生成，计划和不认识的来源不标但也不算“你”。
+        assertEquals(
+            setOf(RunSource.Pipeline, RunSource.Delegate, RunSource.Ask),
+            RunSource.entries.filter { it.promptAiGenerated }.toSet(),
+        )
+        assertEquals(WaitCode.Answer, WaitCode.fromWire("answer"))
+        assertFalse("等队友回答会自己继续", WaitCode.Answer.needsUserAction)
+    }
+
+    /** run.state 里平台写的固定取消说明（crates/store/src/runs.rs）：只认取消状态下的，别的原样显示。 */
+    @Test
+    fun knownStateReasonsOnlyForCancelled() {
+        assertEquals(KnownStateReason.Interrupted, KnownStateReason.of(RunState.Cancelled, "interrupted by a new message"))
+        assertEquals(KnownStateReason.NoAnswerInTime, KnownStateReason.of(RunState.Cancelled, "no answer in time"))
+        assertNull(KnownStateReason.of(RunState.Cancelled, "the asker stopped"))
+        assertNull(KnownStateReason.of(RunState.Cancelled, "用户取消"))
+        assertNull(KnownStateReason.of(RunState.Cancelled, null))
+        assertNull(KnownStateReason.of(RunState.Failed, "no answer in time"))
+        assertNull(KnownStateReason.of(RunState.Backoff, "interrupted by a new message"))
     }
 }

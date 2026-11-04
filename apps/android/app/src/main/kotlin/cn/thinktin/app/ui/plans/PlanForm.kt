@@ -66,6 +66,8 @@ data class PlanPolicyDraft(
     val maxSteps: String = original.maxSteps?.toString().orEmpty(),
     val dailyTokenLimit: String = original.dailyTokenLimit?.toString().orEmpty(),
     val preauthorizedTools: Set<String> = original.preauthorizedTools.toSet(),
+    /** 运行成功时通知（推送、收件箱）；关掉以后只有失败、等处理的才通知。 */
+    val notifySuccess: Boolean = original.notifySuccess,
 ) {
     private fun secs(text: String, originalSecs: Long): Long? {
         if (text.trim() == hours(originalSecs)) return originalSecs
@@ -114,6 +116,7 @@ data class PlanPolicyDraft(
                 maxTokens = limit(maxTokens).getOrNull(),
                 maxSteps = limit(maxSteps).getOrNull()?.toInt(),
                 dailyTokenLimit = limit(dailyTokenLimit).getOrNull(),
+                notifySuccess = notifySuccess,
             )
         }
 

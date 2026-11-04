@@ -57,13 +57,25 @@ enum class RunState(override val wire: String) : WireEnum {
     }
 }
 
+/**
+ * 运行是谁发起的（第 8.1 节）。只有 [User] 的 prompt 是用户自己说的；不认识的（服务端以后加的）也不能当成用户发的。
+ */
 enum class RunSource(override val wire: String) : WireEnum {
     User("user"),
     Plan("plan"),
     Pipeline("pipeline"),
     Delegate("delegate"),
+
+    /** 别的 agent 问这个实例的问题（8.11）：prompt 是提问的 agent 写的。 */
+    Ask("ask"),
     Unknown(""),
     ;
+
+    /**
+     * prompt 要标 AI 生成（第 8.4 节）：委派、提问是别的 agent 写的，流水线步骤的附带上游摘要。
+     * 计划的 prompt 是用户写的目标，不认识的来源不知道是谁写的，都不标。
+     */
+    val promptAiGenerated: Boolean get() = this == Pipeline || this == Delegate || this == Ask
 
     companion object {
         fun fromWire(value: String): RunSource = parseWire(value, Unknown)
@@ -262,8 +274,8 @@ enum class DeviceMessageKind(override val wire: String) : WireEnum {
 }
 
 /**
- * 运行在等什么（[Run.waitCode]，11.8）：只在 waiting_quota / waiting_device 时有。界面按码映射文案；
- * 不认识的（服务端以后加的）是 Unknown，按 [RunState] 显示。
+ * 运行在等什么（[Run.waitCode]，11.8）：waiting_quota / waiting_device 时有，waiting_children 只在等队友回答时有。
+ * 界面按码映射文案；不认识的（服务端以后加的）是 Unknown，按 [RunState] 显示。
  */
 enum class WaitCode(override val wire: String) : WireEnum {
     /** key 无效：去换 key。 */
@@ -283,11 +295,15 @@ enum class WaitCode(override val wire: String) : WireEnum {
 
     /** 等电脑上线。 */
     DeviceOffline("device_offline"),
+
+    /** 问了队友、在等回答（waiting_children，8.11）：回答到了自己继续，30 分钟没答完算超时。 */
+    Answer("answer"),
     Unknown(""),
     ;
 
-    /** 要用户处理（换 key、充值、开电脑）；限流和过载会自己继续。 */
-    val needsUserAction: Boolean get() = this != RateLimited && this != Overloaded && this != Unknown
+    /** 要用户处理（换 key、充值、开电脑）；限流、过载、等队友回答会自己继续。 */
+    val needsUserAction: Boolean
+        get() = this != RateLimited && this != Overloaded && this != Answer && this != Unknown
 
     companion object {
         fun fromWire(value: String): WaitCode = parseWire(value, Unknown)
@@ -303,5 +319,23 @@ enum class TriggerDisabledReason(override val wire: String) : WireEnum {
 
     companion object {
         fun fromWire(value: String): TriggerDisabledReason = parseWire(value, Unknown)
+    }
+}
+
+/**
+ * run.state 的 reason 里平台写的几个固定说明（英文诊断，crates/store/src/runs.rs）：界面换成本地文案。
+ * 只认取消的；别的 reason 原样显示（第 8.2 节）。
+ */
+enum class KnownStateReason(val wire: String) {
+    /** 用户发了紧急消息，打断了这个运行（8.12）。 */
+    Interrupted("interrupted by a new message"),
+
+    /** 队友的提问 30 分钟没答完，后台取消了（8.11）。 */
+    NoAnswerInTime("no answer in time"),
+    ;
+
+    companion object {
+        fun of(state: RunState, reason: String?): KnownStateReason? =
+            if (state != RunState.Cancelled || reason == null) null else entries.firstOrNull { it.wire == reason.trim() }
     }
 }

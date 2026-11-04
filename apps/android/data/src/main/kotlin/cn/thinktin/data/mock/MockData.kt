@@ -60,7 +60,7 @@ import kotlinx.serialization.json.putJsonObject
 /**
  * 演示数据（确定性：结构固定，时间相对于 [baseMs]）。
  * 3 个目录 agent；2 个实例（一个运行中、一个已暂停）；每个实例若干运行，事件覆盖第 8.2 节的每一种 kind
- * （含等待审批、失败、流水线子运行、委派）；5 种收件箱条目；2 个计划（一个待确认）；key、厂商、保险箱。
+ * （含等待审批、失败、流水线子运行、委派、问队友、发看板、webhook）；5 种收件箱条目；2 个计划（一个待确认）；key、厂商、保险箱。
  */
 internal class MockData(private val baseMs: Long) {
 
@@ -177,6 +177,12 @@ internal class MockData(private val baseMs: Long) {
             RUN_DELEGATE, INSTANCE_RESEARCH, "查一下登录页用到的测试框架的最新版本", RunState.Succeeded, 1, 1,
             source = RunSource.Delegate, parent = RUN_LIVE, root = RUN_LIVE, tokens = 940, summary = "JUnit 4.13.2",
         ),
+        // 小码翻译 README 时问了研究员一个问题（8.11）：提问是研究员实例上来源 ask 的子运行，prompt 是小码写的。
+        run(
+            RUN_ASK, INSTANCE_RESEARCH, "README 里的产品介绍，英文版用哪种说法更准确？", RunState.Succeeded, 179, 1,
+            source = RunSource.Ask, parent = RUN_DONE, root = RUN_DONE, tokens = 620,
+            summary = "建议用 “An agent platform”，和官网一致",
+        ),
         run(
             RUN_CANCELLED, INSTANCE_RESEARCH, "整理上周的阅读清单", RunState.Cancelled, 60L * 26, 2, tokens = 410,
             reason = "用户取消",
@@ -286,6 +292,14 @@ internal class MockData(private val baseMs: Long) {
             put("tool_call_id", "tc-read"); put("status", "completed")
             putJsonObject("raw") { put("lines", 128) }
         }
+        ev(c, RUN_DONE, EventKinds.AGENT_PLATFORM_TOOL_CALL, 179) {
+            put("call_id", "ptc-ask"); put("name", "ask")
+            putJsonObject("arguments") { put("to", "研究员"); put("question", ASK_QUESTION) }
+        }
+        ev(c, RUN_DONE, EventKinds.ASK_SENT, 179, ai = false) {
+            put("child_run_id", RUN_ASK); put("instance_id", INSTANCE_RESEARCH); put("to", "研究员")
+            put("question", ASK_QUESTION)
+        }
         ev(c, RUN_DONE, EventKinds.AGENT_TOOL_CALL, 178) {
             put("tool_call_id", "tc-write"); put("title", "写入 README.en.md"); put("kind", "edit"); put("status", "pending")
             rawToolCall("Write", "edit", buildJsonObject { put("path", "README.en.md") })
@@ -317,6 +331,10 @@ internal class MockData(private val baseMs: Long) {
         }
         ev(c, RUN_DONE, EventKinds.ARTIFACT_PUBLISHED, 176, ai = false) {
             put("artifact_id", "art-readme"); put("name", "README.en.md"); put("version", 1); put("size", 4_812)
+        }
+        // 把译名表发到共享看板（8.10），给别的 agent 看。
+        ev(c, RUN_DONE, EventKinds.BOARD_POSTED, 176, ai = false) {
+            put("post_id", "post-glossary"); putJsonArray("tags") { add("glossary") }
         }
         ev(c, RUN_DONE, EventKinds.AGENT_USAGE, 176) {
             putJsonObject("raw") { put("input_tokens", 10_200); put("output_tokens", 2_640) }
@@ -401,11 +419,18 @@ internal class MockData(private val baseMs: Long) {
             put("request_id", VAULT_REQUEST_PENDING); put("name", "aliyun_oss"); put("purpose", "上传调研报告")
             putJsonArray("fields") { add("username"); add("password") }
         }
+        ev(r, RUN_ASK, EventKinds.RUN_STATE, 179, payload = stateEvent(RunState.Running))
+        ev(r, RUN_ASK, EventKinds.AGENT_MESSAGE, 179) { put("text", "建议用 “An agent platform”，和官网的说法一致。") }
+        ev(r, RUN_ASK, EventKinds.RUN_STATE, 178, payload = stateEvent(RunState.Succeeded))
         ev(r, null, EventKinds.VAULT_REQUESTED, 60L * 2, ai = false) {
             put("request_id", "vreq-done"); put("name", "zotero"); put("purpose", "同步文献库")
             putJsonArray("fields") { add("password") }
         }
         ev(r, null, EventKinds.VAULT_FULFILLED, 60L * 2 - 5, ai = false) { put("request_id", "vreq-done"); put("name", "zotero") }
+        // 每周新闻的计划由 webhook 触发了一次（7.1）：只说收到了，不带内容。
+        ev(r, RUN_QUOTA, EventKinds.HOOK_RECEIVED, 45, ai = false) {
+            put("hook_id", "hook-news"); put("bytes", 1_280); put("content_type", "json")
+        }
         ev(r, RUN_DELEGATE, EventKinds.AGENT_MESSAGE, 1) { put("text", "JUnit 最新的 4.x 是 4.13.2。") }
         ev(r, RUN_DELEGATE, EventKinds.RUN_STATE, 1, payload = stateEvent(RunState.Succeeded))
     }.sortedWith(compareBy({ it.instanceId }, { it.seq }))
@@ -741,6 +766,8 @@ internal class MockData(private val baseMs: Long) {
         const val RUN_PIPELINE_RESEARCH = "run-pipeline-research"
         const val RUN_PIPELINE_WRITE = "run-pipeline-write"
         const val RUN_DELEGATE = "run-delegate"
+        const val RUN_ASK = "run-ask"
+        private const val ASK_QUESTION = "README 里的产品介绍，英文版用哪种说法更准确？"
         const val RUN_CANCELLED = "run-cancelled"
         const val RUN_QUOTA = "run-quota"
 
@@ -776,4 +803,5 @@ internal fun PlanPolicy.toServerJson(): String = buildJsonObject {
     }
     put("daily_token_limit", dailyTokenLimit)
     put("wait_timeout_secs", waitTimeoutSecs)
+    put("notify_success", notifySuccess)
 }.toString()

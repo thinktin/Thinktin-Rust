@@ -15,6 +15,7 @@ import kotlinx.serialization.json.contentOrNull
  * - 连续的 agent.message 拼成一段，连续的 agent.thought 拼成一个折叠块；tool_call + tool_call_update 按
  *   tool_call_id 合成一张卡；审批事件交给 [ApprovalCards.reconcile] 按 (run_id, attempt, request_id) 对上审批记录；
  *   vault.requested / fulfilled / declined 合成一张填写请求卡。
+ * - ask.sent 是提问卡片（点进回答的子运行），board.posted、hook.received 是系统行（不带内容）。
  * - agent.usage、turn_started、turn_ended、ready、update、instance.state 不进时间线（turn_ended 结束流式状态，
  *   usage 记在区块上给运行详情用）；不认识的 kind 显示成灰色系统行。payload 缺字段、类型不对都不崩。
  */
@@ -32,12 +33,16 @@ enum class ToolCallState(override val wire: String) : WireEnum {
     }
 }
 
-/** 运行区块里用户那句话是谁写的（[Run.source]）。委派子运行的 prompt 是负责人 agent 写的，不能显示成“你”。 */
+/**
+ * 运行区块里用户那句话是谁写的（[Run.source]）。委派子运行的 prompt 是负责人 agent 写的、队友提问的是提问的 agent
+ * 写的，不认识的来源不知道是谁写的：都不能显示成“你”。
+ */
 enum class PromptAuthor {
     User,
     Plan,
     Pipeline,
     Delegate,
+    Ask,
     Unknown,
     ;
 
@@ -47,6 +52,7 @@ enum class PromptAuthor {
             RunSource.Plan -> Plan
             RunSource.Pipeline -> Pipeline
             RunSource.Delegate -> Delegate
+            RunSource.Ask -> Ask
             RunSource.Unknown -> Unknown
         }
     }
@@ -90,6 +96,12 @@ sealed interface SystemLine {
     /** agent.turn_ended 的异常 stop_reason（max_tokens、max_turn_requests、refusal）。 */
     data class TurnStopped(val stopReason: String) : SystemLine
 
+    /** board.posted：agent 发到了共享看板（8.10）。标签是 agent 起的，不显示。 */
+    data class BoardPosted(val postId: String?) : SystemLine
+
+    /** hook.received：计划的 webhook 收到了一个事件（7.1）。不显示内容。 */
+    data class HookReceived(val hookId: String?) : SystemLine
+
     /** 不认识的 kind（服务端以后加的）。 */
     data class Unknown(val kind: String) : SystemLine
 }
@@ -105,8 +117,9 @@ sealed interface TimelineItem {
         val text: String,
         val author: PromptAuthor,
     ) : TimelineItem {
-        /** 第 8.4 节：委派子运行的 prompt 是负责人 agent 写的；流水线步骤的 prompt 里附带上游摘要。 */
-        val aiGenerated: Boolean get() = author == PromptAuthor.Delegate || author == PromptAuthor.Pipeline
+        /** 第 8.4 节：委派子运行、队友提问的 prompt 是 agent 写的；流水线步骤的 prompt 里附带上游摘要。 */
+        val aiGenerated: Boolean
+            get() = author == PromptAuthor.Delegate || author == PromptAuthor.Pipeline || author == PromptAuthor.Ask
 
         /** 用户自己说的（右侧气泡，“你”）。 */
         val fromUser: Boolean get() = author == PromptAuthor.User
@@ -187,6 +200,18 @@ sealed interface TimelineItem {
     ) : TimelineItem
 
     /**
+     * 提问卡片（ask.sent，8.11）：问了 [to]（实例名）什么。[question] 是提问的 agent 写的（标 AI 生成）；
+     * 有 [childRunId] 时点进回答的子运行（在对方实例上）。
+     */
+    data class AskCard(
+        override val key: String,
+        val childRunId: String?,
+        val instanceId: String?,
+        val to: String?,
+        val question: String?,
+    ) : TimelineItem
+
+    /**
      * 运行状态行（run.state 里值得说一句的：等待、重试、失败、取消、新的一次尝试）。[reason] 不是本地化文案：
      * waiting_quota 的是服务端按用户语言写的，waiting_approval 的是 agent 写的审批标题（[reasonAiGenerated]），
      * 失败原因是英文诊断。
@@ -202,6 +227,9 @@ sealed interface TimelineItem {
         val newAttempt: Boolean,
     ) : TimelineItem {
         val reasonAiGenerated: Boolean get() = state == RunState.WaitingApproval
+
+        /** 平台写的固定说明（被新消息打断、提问超时）：界面用本地文案代替 [reason]。 */
+        val knownReason: KnownStateReason? get() = KnownStateReason.of(state, reason)
     }
 
     /** 计划卡片（plan.needs_confirmation 带“去确认”；plan.cancelled 只是告知）。 */
@@ -573,6 +601,18 @@ object ConversationBuilder {
                         e.createdAtMs,
                     )
                 }
+                EventKinds.ASK_SENT -> add(
+                    TimelineItem.AskCard(
+                        key = key("ask-${e.seq}"),
+                        childRunId = p.string("child_run_id")?.takeIf { it.isNotBlank() },
+                        instanceId = p.string("instance_id"),
+                        to = p.string("to")?.takeIf { it.isNotBlank() },
+                        question = p.string("question")?.takeIf { it.isNotBlank() },
+                    ),
+                    e.createdAtMs,
+                )
+                EventKinds.BOARD_POSTED -> system(SystemLine.BoardPosted(p.string("post_id")), e)
+                EventKinds.HOOK_RECEIVED -> system(SystemLine.HookReceived(p.string("hook_id")), e)
                 EventKinds.ARTIFACT_PUBLISHED -> {
                     val id = p.string("artifact_id") ?: return
                     val version = p.long("version")?.toInt() ?: 1

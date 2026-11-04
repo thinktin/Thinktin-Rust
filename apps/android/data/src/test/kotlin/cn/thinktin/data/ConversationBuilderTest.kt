@@ -12,6 +12,7 @@ import cn.thinktin.data.model.EventKinds
 import cn.thinktin.data.model.HistoryGap
 import cn.thinktin.data.model.HistoryWindow
 import cn.thinktin.data.model.InstanceEvent
+import cn.thinktin.data.model.KnownStateReason
 import cn.thinktin.data.model.OptionKind
 import cn.thinktin.data.model.PromptAuthor
 import cn.thinktin.data.model.Run
@@ -441,6 +442,82 @@ class ConversationBuilderTest {
         assertFalse(plan.fromUser)
     }
 
+    /** 队友提问（8.11）：prompt 是提问的 agent 写的，标 AI 生成、不是“你”；不认识的来源也不当成用户发的。 */
+    @Test
+    fun askPromptIsAiGeneratedAndUnknownSourceIsNotFromUser() {
+        val asked = run(id = "r1", source = RunSource.Ask, prompt = "版本号是多少？", parent = "p", root = "p")
+        val prompt = ConversationBuilder.build(listOf(asked), emptyList()).block("r1")!!.prompt!!
+        assertEquals(PromptAuthor.Ask, prompt.author)
+        assertTrue(prompt.aiGenerated)
+        assertFalse(prompt.fromUser)
+        val unknown = ConversationBuilder.build(listOf(run(source = RunSource.Unknown)), emptyList()).block("r1")!!.prompt!!
+        assertEquals(PromptAuthor.Unknown, unknown.author)
+        assertFalse(unknown.fromUser)
+        assertFalse(unknown.aiGenerated)
+        // 每一种来源都有对应的作者，只有 user 是“你”。
+        for (source in RunSource.entries) {
+            val author = PromptAuthor.of(source)
+            assertEquals(source == RunSource.User, author == PromptAuthor.User)
+        }
+    }
+
+    /** ask.sent 出提问卡片（问谁、问了什么、回答的子运行）；board.posted、hook.received 是系统行，不带内容。 */
+    @Test
+    fun askBoardAndHookEvents() {
+        val events = listOf(
+            ev(EventKinds.ASK_SENT, payload = obj {
+                put("child_run_id", "answer-run"); put("instance_id", "i2"); put("to", "研究员"); put("question", "版本号是多少？")
+            }),
+            ev(EventKinds.BOARD_POSTED, payload = obj { put("post_id", "post-1"); putJsonArray("tags") { add("release") } }),
+            ev(EventKinds.HOOK_RECEIVED, payload = obj { put("hook_id", "h1"); put("bytes", 120); put("content_type", "json") }),
+            // 缺字段也不崩：没有子运行的卡片不能点。
+            ev(EventKinds.ASK_SENT, payload = obj { put("question", "  ") }),
+        )
+        val items = items(events)
+        val asks = items.filterIsInstance<TimelineItem.AskCard>()
+        assertEquals(2, asks.size)
+        assertEquals("answer-run", asks[0].childRunId)
+        assertEquals("i2", asks[0].instanceId)
+        assertEquals("研究员", asks[0].to)
+        assertEquals("版本号是多少？", asks[0].question)
+        assertNull(asks[1].childRunId)
+        assertNull(asks[1].to)
+        assertNull(asks[1].question)
+        assertEquals(
+            listOf(SystemLine.BoardPosted("post-1"), SystemLine.HookReceived("h1")),
+            items.filterIsInstance<TimelineItem.System>().map { it.line },
+        )
+        assertTrue(items.filterIsInstance<TimelineItem.System>().none { it.line.isError })
+        assertEquals(asks.size, asks.map { it.key }.distinct().size)
+    }
+
+    /** 取消的固定原因（被新消息打断、提问超时）标出来给界面换文案；等队友回答的 wait_code 记在状态行上。 */
+    @Test
+    fun cancelReasonsAndAnswerWait() {
+        val events = listOf(
+            ev(EventKinds.RUN_STATE, payload = obj { put("state", "waiting_children"); put("attempt", 1); put("wait_code", "answer") }),
+            ev(EventKinds.RUN_STATE, payload = obj { put("state", "cancelled"); put("attempt", 1); put("reason", "no answer in time") }),
+        )
+        val lines = items(events, listOf(run(state = RunState.Cancelled))).filterIsInstance<TimelineItem.RunStateLine>()
+        assertEquals(listOf(RunState.WaitingChildren, RunState.Cancelled), lines.map { it.state })
+        assertEquals(WaitCode.Answer, lines[0].waitCode)
+        assertNull(lines[0].knownReason)
+        assertEquals(KnownStateReason.NoAnswerInTime, lines[1].knownReason)
+        assertEquals("no answer in time", lines[1].reason)
+
+        seq = 0
+        val interrupted = items(
+            listOf(ev(EventKinds.RUN_STATE, payload = obj { put("state", "cancelled"); put("reason", "interrupted by a new message") })),
+        ).filterIsInstance<TimelineItem.RunStateLine>().single()
+        assertEquals(KnownStateReason.Interrupted, interrupted.knownReason)
+        seq = 0
+        val other = items(
+            listOf(ev(EventKinds.RUN_STATE, payload = obj { put("state", "cancelled"); put("reason", "the asker stopped") })),
+        ).filterIsInstance<TimelineItem.RunStateLine>().single()
+        assertNull(other.knownReason)
+        assertEquals("the asker stopped", other.reason)
+    }
+
     @Test
     fun runsOlderThanLoadedEventsWaitForPagingThenShowGap() {
         val old = run(id = "old", state = RunState.Succeeded, createdAt = now - 3_600_000, summary = "做完了")
@@ -575,5 +652,21 @@ class ConversationBuilderTest {
         assertEquals(listOf(ApprovalCardStatus.Superseded, ApprovalCardStatus.Pending), waiting.map { it.status })
         // 流水线根运行有两个子运行入口。
         assertEquals(2, coder.block("run-pipeline")!!.items.count { it is TimelineItem.ChildRun })
+        // 翻译 README 时问了研究员（点进回答的子运行），还发了看板。
+        val done = coder.block(MockData.RUN_DONE)!!.items
+        assertEquals(MockData.RUN_ASK, done.filterIsInstance<TimelineItem.AskCard>().single().childRunId)
+        assertTrue(done.any { it is TimelineItem.System && it.line is SystemLine.BoardPosted })
+
+        // 研究员那边：回答的运行来源是队友提问（prompt 标 AI 生成），webhook 的事件是系统行。
+        val research = ConversationBuilder.build(
+            data.runs.filter { it.instanceId == MockData.INSTANCE_RESEARCH },
+            data.events.filter { it.instanceId == MockData.INSTANCE_RESEARCH },
+            window = HistoryWindow(exhausted = true),
+        )
+        val answer = research.block(MockData.RUN_ASK)!!
+        assertEquals(PromptAuthor.Ask, answer.prompt!!.author)
+        assertTrue(answer.prompt!!.aiGenerated)
+        assertEquals(MockData.RUN_DONE, answer.run!!.parentRunId)
+        assertTrue(research.block(MockData.RUN_QUOTA)!!.items.any { it is TimelineItem.System && it.line is SystemLine.HookReceived })
     }
 }

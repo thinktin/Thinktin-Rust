@@ -56,6 +56,7 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import cn.thinktin.app.R
 import cn.thinktin.app.ui.catalog.AgentCard
+import cn.thinktin.app.ui.chat.labelRes
 import cn.thinktin.app.ui.common.ErrorText
 import cn.thinktin.app.ui.common.LocalAppContainer
 import cn.thinktin.app.ui.common.LocalThinktinService
@@ -336,9 +337,9 @@ private fun RunRow(run: Run, nowMs: Long, zone: ZoneId, onClick: () -> Unit) {
     ) {
         StatusDot(run.state, contentDescription = stateLabel)
         Column(Modifier.weight(1f)) {
-            // 第 8.4 节：委派子运行的 prompt 是上游 agent 写的、流水线步骤的 prompt 里附带上游摘要，都标 AI 生成
+            // 第 8.4 节：委派子运行、队友提问的 prompt 是别的 agent 写的、流水线步骤的 prompt 里附带上游摘要，都标 AI 生成
             // （和对话页的 TimelineItem.Prompt.aiGenerated、运行页一致）。
-            LabelledLine(aiGenerated = run.source == RunSource.Delegate || run.source == RunSource.Pipeline) {
+            LabelledLine(aiGenerated = run.source.promptAiGenerated) {
                 Text(
                     text = run.prompt,
                     style = MaterialTheme.typography.bodyLarge,
@@ -360,12 +361,18 @@ private fun RunRow(run: Run, nowMs: Long, zone: ZoneId, onClick: () -> Unit) {
                     )
                 }
             }
+            val subtitle = stringResource(
+                R.string.home_run_subtitle,
+                stateLabel,
+                RelativeTime.of(run.createdAtMs, nowMs, zone).asString(),
+            )
             Text(
-                text = stringResource(
-                    R.string.home_run_subtitle,
-                    stateLabel,
-                    RelativeTime.of(run.createdAtMs, nowMs, zone).asString(),
-                ),
+                // 队友提问不是用户自己发的：前面说明来源（8.11）。
+                text = if (run.source == RunSource.Ask) {
+                    stringResource(R.string.home_run_subtitle, stringResource(run.source.labelRes()), subtitle)
+                } else {
+                    subtitle
+                },
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

@@ -302,6 +302,7 @@ internal fun CorePlanPolicy.toModel(): PlanPolicy = PlanPolicy(
     maxSteps = maxSteps?.toIntClamped(),
     dailyTokenLimit = dailyTokenLimit?.toLongClamped(),
     waitTimeoutSecs = waitTimeoutSecs.toLongClamped(),
+    notifySuccess = notifySuccess,
 )
 
 internal fun PlanPolicy.toCore(): CorePlanPolicy = CorePlanPolicy(
@@ -313,6 +314,8 @@ internal fun PlanPolicy.toCore(): CorePlanPolicy = CorePlanPolicy(
     maxSteps = maxSteps?.toUIntNonNegative(),
     dailyTokenLimit = dailyTokenLimit?.toULongNonNegative(),
     waitTimeoutSecs = waitTimeoutSecs.toULongNonNegative(),
+    // 一定要带上模型里的值：绑定的默认是 true，漏了会把关掉的“成功时通知”改回打开。
+    notifySuccess = notifySuccess,
 )
 
 internal fun CorePlan.toModel(): Plan = Plan(

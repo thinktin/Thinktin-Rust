@@ -434,6 +434,7 @@ private fun ChatRowView(
                 onShare = { viewModel.openArtifact(item, share = true) },
             )
             is TimelineItem.ChildRun -> ChildRunRow(item, navigation.onOpenRun)
+            is TimelineItem.AskCard -> AskCardRow(item, navigation.onOpenRun)
             is TimelineItem.RunStateLine -> RunStateRow(item)
             is TimelineItem.PlanCard -> PlanCardRow(item, navigation.onOpenPlan)
             is TimelineItem.System -> SystemRow(item.line)

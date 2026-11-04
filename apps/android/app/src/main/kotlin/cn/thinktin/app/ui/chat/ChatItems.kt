@@ -24,6 +24,7 @@ import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.QuestionAnswer
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Timelapse
@@ -64,6 +65,7 @@ import cn.thinktin.app.ui.common.asString
 import cn.thinktin.app.ui.common.formatTokens
 import cn.thinktin.app.ui.common.labelRes
 import cn.thinktin.data.model.HistoryGap
+import cn.thinktin.data.model.KnownStateReason
 import cn.thinktin.data.model.PlanEntry
 import cn.thinktin.data.model.PromptAuthor
 import cn.thinktin.data.model.RunBlock
@@ -90,6 +92,13 @@ const val CHAT_USER_PROMPT_TEST_TAG = "chat-user-prompt"
 const val CHAT_VAULT_REQUEST_TEST_TAG = "chat-vault-request-"
 const val CHAT_ARTIFACT_TEST_TAG = "chat-artifact-"
 const val CHAT_SYSTEM_TEST_TAG = "chat-system"
+const val CHAT_ASK_TEST_TAG = "chat-ask-"
+
+/** 平台写的固定取消说明的本地文案。 */
+fun KnownStateReason.labelRes(): Int = when (this) {
+    KnownStateReason.Interrupted -> R.string.chat_state_reason_interrupted
+    KnownStateReason.NoAnswerInTime -> R.string.chat_state_reason_no_answer
+}
 
 /** 耗时的文字（秒 / 分秒 / 时分）。 */
 @Composable
@@ -110,6 +119,8 @@ fun RunSource.labelRes(): Int = when (this) {
     RunSource.Plan -> R.string.chat_source_plan
     RunSource.Pipeline -> R.string.chat_source_pipeline
     RunSource.Delegate -> R.string.chat_source_delegate
+    RunSource.Ask -> R.string.chat_source_ask
+    // 不认识的来源（服务端以后加的）：不知道是谁发起的，不能显示成“你”。
     RunSource.Unknown -> R.string.chat_source_unknown
 }
 
@@ -150,7 +161,7 @@ fun RunHeaderRow(block: RunBlock, nowMs: Long, onOpenRun: (String) -> Unit) {
     }
 }
 
-/** 用户那句话：自己说的是右侧气泡；计划 / 流水线 / 委派触发的标出来源，agent 写的标 AI 生成、不显示成“你”。 */
+/** 用户那句话：自己说的是右侧气泡；计划 / 流水线 / 委派 / 队友提问的标出来源，agent 写的标 AI 生成、不显示成“你”。 */
 @Composable
 fun PromptRow(item: TimelineItem.Prompt) {
     if (item.author == PromptAuthor.User) {
@@ -161,7 +172,8 @@ fun PromptRow(item: TimelineItem.Prompt) {
         PromptAuthor.Delegate -> R.string.chat_prompt_delegate
         PromptAuthor.Pipeline -> R.string.chat_prompt_pipeline
         PromptAuthor.Plan -> R.string.chat_prompt_plan
-        else -> R.string.chat_source_unknown
+        PromptAuthor.Ask -> R.string.chat_prompt_ask
+        PromptAuthor.User, PromptAuthor.Unknown -> R.string.chat_source_unknown
     }
     Box(Modifier.fillMaxWidth(), contentAlignment = if (item.aiGenerated) Alignment.CenterStart else Alignment.CenterEnd) {
         Surface(
@@ -524,6 +536,58 @@ fun ChildRunRow(item: TimelineItem.ChildRun, onOpenRun: (String) -> Unit) {
     }
 }
 
+/**
+ * 提问卡片（ask.sent）：问了谁、问了什么（提问的 agent 写的，标 AI 生成）。有子运行时点进运行页看回答
+ * （和委派一样走运行树）。
+ */
+@Composable
+fun AskCardRow(item: TimelineItem.AskCard, onOpenRun: (String) -> Unit) {
+    val child = item.childRunId
+    Surface(
+        shape = ThinktinShapes.Card,
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(CHAT_ASK_TEST_TAG + (child ?: item.key)),
+    ) {
+        Row(
+            modifier = Modifier
+                .then(
+                    if (child != null) {
+                        Modifier.clickable(role = Role.Button, onClickLabel = stringResource(R.string.chat_ask_open)) { onOpenRun(child) }
+                    } else {
+                        Modifier
+                    },
+                )
+                .heightIn(min = 48.dp)
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Icon(Icons.Outlined.QuestionAnswer, contentDescription = null, modifier = Modifier.size(18.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    item.to?.let { stringResource(R.string.chat_ask_to, it) } ?: stringResource(R.string.chat_ask_to_unknown),
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                item.question?.let { question ->
+                    // 问题是提问的 agent 写的（第 8.4 节）。
+                    AiGeneratedLabel()
+                    Text(question, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+            if (child != null) {
+                Icon(
+                    Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
 /** 运行状态行：等待（带 wait_code 文案）、重试、失败、取消、新的一次尝试。 */
 @Composable
 fun RunStateRow(item: TimelineItem.RunStateLine) {
@@ -540,8 +604,10 @@ fun RunStateRow(item: TimelineItem.RunStateLine) {
     SmallLine(icon = { StatusDot(item.state) }) {
         Column {
             Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            val reason = item.reason
+            val known = item.knownReason
+            // 平台写的固定说明（被新消息打断、提问超时）换成本地文案；
             // waiting_quota 有码时用本地文案；否则 reason 原样（waiting_approval 的是 agent 写的标题）。
+            val reason = if (known != null) stringResource(known.labelRes()) else item.reason
             if (reason != null && !(item.state == RunState.WaitingQuota && item.waitCode != null)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     if (item.reasonAiGenerated) AiGeneratedLabel()
@@ -609,6 +675,8 @@ fun SystemRow(line: SystemLine) {
             "refusal" -> stringResource(R.string.chat_sys_stop_refusal)
             else -> stringResource(R.string.chat_sys_stop_other, line.stopReason)
         }
+        is SystemLine.BoardPosted -> stringResource(R.string.chat_sys_board_posted)
+        is SystemLine.HookReceived -> stringResource(R.string.chat_sys_hook_received)
         is SystemLine.Unknown -> stringResource(R.string.chat_sys_unknown, line.kind)
     }
     val color = if (line.isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
