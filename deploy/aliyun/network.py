@@ -44,6 +44,8 @@ SG_RULES = [("80/80", "HTTP：证书验证、跳转 HTTPS"), ("443/443", "HTTPS�
 # 模型网关在服务机上监听 8790（主机网络）。ACS 的出网规则只认地址、不分端口，沙箱能不能连服务机的别的端口
 # （数据库、k3s 的 6443、kubelet）全靠这里：只许 VPC 里的地址连 8790。ACS 的 Pod 不要放进这个安全组（同组默认互通）。
 GATEWAY_PORTS = "8790/8790"
+# 受控出网通道（2.7，docs/egress.md）在模型网关里，监听 8791（主机网络）：同样只许 VPC 里的地址连。
+EGRESS_PORTS = "8791/8791"
 
 
 def vpc_blocks(vpc_entry):
@@ -59,6 +61,7 @@ def wanted_rules(blocks):
     rules = [(ports, "0.0.0.0/0", why) for ports, why in SG_RULES]
     for block in blocks:
         rules.append((GATEWAY_PORTS, block, "模型网关：只许 VPC 里的沙箱连"))
+        rules.append((EGRESS_PORTS, block, "出网通道：只许 VPC 里的沙箱连"))
     return rules
 
 
@@ -197,7 +200,7 @@ def main():
         sg_id = ecs.create_security_group(
             ecs_models.CreateSecurityGroupRequest(
                 region_id=region, vpc_id=vpc_id, security_group_name=SG_NAME, security_group_type="normal",
-                description="服务机：公网只开 80、443，VPC 里只开模型网关 8790",
+                description="服务机：公网只开 80、443，VPC 里只开模型网关 8790、出网通道 8791",
             )
         ).body.security_group_id
         for ports, src, why in rules:

@@ -42,3 +42,60 @@ python3 tools/smoke/egress-clients.py
 数值可以按被限次数和实际任务完成率再调。
 
 放量前须在东京 VPC 用真实 Pod 验证：允许域成功；撤权终止已打开的长连接；同租户不同实例和重用 Pod IP 的旧令牌被拒；混合公网/内网 DNS 与重绑定被拒；元数据、IPv6 映射、直连 TCP/UDP、SSH 和公网 DNS 被拒。代理停机时模型网关仍可用，抓包确认没有直连回退。两副本同时申请最后一份配额只放行预算内字节。分别用五个锁定模板跑断网冒烟和受控访问，保存版本、请求目标、拒绝原因及代理字节计数，再启用第一批实例。
+
+## 实现状态（2026-11-04）
+
+第一版代码写完，本机测试都过；**东京集群上还没开、没实测**（见下面“上线前”）。提交：`12b61df`（档位、额度、日志、接口）、
+`a2f9556`（代理）、`1364d47`（agent 一侧、查询接口、日志到期删除）、`3e71acf`（client-core）、`165c18c`（安卓绑定）。
+
+**选型。** 没用 Smokescreen，代理写在模型网关进程里（`crates/llm-gw/src/egress.rs`，`--egress-listen` 第二个端口）。
+原因：沙箱令牌的核对（签名、来源地址、实例在运行、沙箱和代数、授权没吊销）、目录缓存、主机网络的部署都是现成的，用
+Smokescreen 还得用 Go 写一层认实例、查档位、记额度的插件，再多部署一个程序。防 SSRF 的地址判断和模型网关共用
+`crates/llm-gw/src/ssrf.rs`。
+
+**一条隧道怎么走。**
+
+1. agent-shim 收到 `--egress-proxy 10.0.1.10:8791`（`[sandbox] egress_proxy`）后，给 agent 设
+   `http(s)_proxy`、`HTTP(S)_PROXY`、`YARN_HTTP(S)_PROXY`。值是 `http://thinktin:<沙箱令牌>@10.0.1.10:8791`。
+   同时设 `no_proxy` / `NO_PROXY`（本机加模型网关的 IP）和 `NODE_USE_ENV_PROXY=1`。没配就什么都不设，和以前一样只连模型。
+2. 代理只收 `CONNECT host:443`，别的方法回 405。下面的检查从便宜到贵：
+   - 令牌，在 `Proxy-Authorization: Basic` 的密码里，核对和模型请求一样。不对回 407。
+   - 每个实例每分钟 120 次。
+   - 网站名，用 `proto::egress::normalize_host` 整理：不收 IP、数字变形、单段名字。
+   - 端口。
+   - 档位（`EgressMode::allows`），不放行回 403。
+   - 同时 4 条，再开回 429。
+   - 先从今天的额度里预留 256 KiB，没有了回 429。
+   - 自己解析，任何一个地址不是公网地址、或者在 `--egress-deny` 里就拒绝，再直接连检查过的地址。
+3. 转发时每读到一块先扣额度，不够了再预留。预留在 `egress_usage` 的行锁下做，多副本合计也不会超；隧道结束时退回没用完的。
+4. 开着的隧道每 30 秒重新核对一次令牌和档位：实例停了、授权吊销、用户改小了档位就断开。空闲 5 分钟、开满 1 小时也断开。
+5. 每条隧道写一行 `egress_log`，放行的和拒绝的都写；每个实例每分钟最多记 30 条拒绝，多的只计数。日志只有元数据：实例、
+   网站、端口、连上的地址、结果、字节、时长。保留 183 天，用量行保留 60 天，由后台的例行清理删除。指标有
+   `thinktin_egress_tunnels_total{result}`、`thinktin_egress_bytes_total{direction}`、`thinktin_egress_open_tunnels`。
+
+**接口和客户端。**
+
+- `PATCH /v1/instances/{id}` 收 `egress: {mode, hosts, accept_risk}`。`all` 必须带 `accept_risk: true`，App 先提示风险。
+  网站整理写法、去重，最多 50 个；`custom` 至少一个。改了记审计 `instance.egress`。
+- `GET /v1/instances/{id}/egress` 返回：档位、网站、开发网站预设、今天的用量和上限、同时连接上限、最近被拒绝的访问
+  （给“要不要放行这个网站”用）。
+- client-core 的 `Instance.egress_mode` 是字符串，以后加档位老 App 不会解析失败；另有 `egress_hosts`、
+  `set_instance_egress`、`instance_egress`。
+
+**还没做（有意留到后面的）。**
+
+- 东京集群实测（第 3 节“放量前须在东京 VPC 用真实 Pod 验证”那一串）。在这之前 Tokyo 配置虽然写了
+  `egress_proxy` 和 `--egress-listen`，安全组没放 8791 就连不上，agent 照样只连模型。
+- 同时 4 条的上限按副本各自计数；现在模型网关只有一个副本，以后多副本要换成共享计数。每天的流量本来就是共享的。
+- 隧道不看 TLS 里的 SNI，所以同一个 CDN 上的别的网站拦不住（第 3 节第 5 条已说明）。
+- 保险箱按域名注入凭据、HTTP 明文 80 端口、Cube 后端：Cube 出网按节点 SNAT，来源地址对不上令牌，和模型网关一样要先解决身份。
+- App 界面（12.x / 13.x）：实例设置里的档位、网站列表、“全部公网”的风险提示、被拒绝的网站一键放行、今天的用量。
+
+## 上线前（在东京打开）
+
+1. 用 `deploy/aliyun/network.py` 给服务机安全组加 8791（只许 VPC 网段）。这一步免费，要在能连阿里云接口的地方跑。
+2. 发新版本：模型网关带 `--egress-listen=0.0.0.0:8791`（Tokyo overlay 已经加了），控制面的 `server.toml` 带
+   `egress_proxy = "10.0.1.10:8791"`（已经加了）。
+3. 用真实 Pod 跑第 3 节的验收：允许的网站能连；默认档拒绝；元数据 100.100.100.200、VPC 里的地址、内网 DNS 名都拒绝；
+   撤权以后开着的隧道断开；换了沙箱的旧令牌被拒；用完 100 MiB 当天拒绝。日志和用量对得上。
+4. 五个模板各跑一次：装一个 npm 包、一个 pip 包、`git clone` 一个 GitHub 仓库，看代理日志。

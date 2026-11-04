@@ -36,6 +36,9 @@ token_kid = "k1"
 # 也不收通配符：这里只写 IP，端口由服务机的安全组限住（只许沙箱连 8790，docs/sandbox-acs.md 第 5 节）。
 gateway_url = "http://10.0.1.10:8790"
 network_allow = ["10.0.1.10"]
+# 受控出网通道（2.7，docs/egress.md）：模型网关在服务机上另外监听 8791，和网关同一个 IP（已经在 network_allow 里），
+# 安全组也只许沙箱连 8791。实例默认只连模型，用户在 App 里打开了才放行。
+egress_proxy = "10.0.1.10:8791"
 
 [sandbox.acs]
 # 部署前填：服务机在 VPC 里访问 sandbox-manager 的地址（docs/sandbox-acs.md 第 3 节）。
