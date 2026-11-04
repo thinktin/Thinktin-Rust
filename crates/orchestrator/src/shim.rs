@@ -25,6 +25,8 @@ pub struct ShimLaunch {
     pub platform_tools: Vec<PlatformTool>,
     /// 交给 agent 的模型别名（实例配置的、授权允许的），第一个是默认模型。为空用 shim 的默认值。
     pub models: Vec<String>,
+    /// 这次运行开浏览器（docs/browser.md）：浏览器通行证。shim 带 `THINKTIN_BROWSER=1` 启动，`Ready` 之后经 stdin 交给它。
+    pub browser_pass: Option<String>,
 }
 
 impl std::fmt::Debug for ShimLaunch {
@@ -33,6 +35,7 @@ impl std::fmt::Debug for ShimLaunch {
             .field("instance", &self.instance.id)
             .field("run", &self.run)
             .field("allow_tools", &self.allow_tools)
+            .field("browser", &self.browser_pass.is_some())
             .finish_non_exhaustive()
     }
 }

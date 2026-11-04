@@ -37,6 +37,7 @@ use crate::bridge::ToolResult;
 use approvals::Approvals;
 
 pub use launch::Paths;
+pub use tools::KEEP as TOOLS;
 
 /// 浏览器通行证（只在内存里）。
 pub(crate) type Pass = Arc<RwLock<Option<Zeroizing<String>>>>;

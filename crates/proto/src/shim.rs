@@ -10,6 +10,9 @@ use serde_json::Value;
 /// 消息格式版本。shim 在 [`ShimEvent::Ready`] 里报告，平台据此判断是否兼容。2：认得 [`ShimCommand::EnableBrowser`]。
 pub const SHIM_PROTOCOL_VERSION: u32 = 2;
 
+/// 授权的 `platform_tools` 里有这一项才开浏览器（docs/browser.md）。浏览器工具由 shim 自己运行，不是平台工具。
+pub const BROWSER_TOOL: &str = "browser";
+
 /// 平台发给 shim 的指令。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]

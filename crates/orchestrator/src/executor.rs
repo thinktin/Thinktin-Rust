@@ -65,6 +65,9 @@ pub struct ExecutorConfig {
     /// 一次运行最多写这么多字节的运行日志（agent 的输出完全由 agent 控制，不能无限写进共享的数据库）。
     /// 超过以后只写一条 `run.log_truncated`，状态变化照常记。
     pub max_run_log_bytes: usize,
+    /// 浏览器（docs/browser.md）：服务器开了总开关 `[browser] enabled` 时，按 agent 和模板版本判断模板装没装浏览器
+    /// （`[browser] supported`）。为空就不开。
+    pub browser: Option<fn(&str, &str) -> bool>,
 }
 
 impl Default for ExecutorConfig {
@@ -82,6 +85,7 @@ impl Default for ExecutorConfig {
             takeover_every: Duration::from_secs(15),
             flush_every: Duration::from_millis(500),
             max_run_log_bytes: 64 << 20,
+            browser: None,
         }
     }
 }
@@ -846,6 +850,16 @@ impl Executor {
             .filter(|t| lead || !DELEGATE_TOOLS.contains(&t.name.as_str()))
             .collect();
         let allowed_tools = platform_tools.iter().map(|t| t.name.clone()).collect();
+        // 浏览器：服务器总开关、模板装了浏览器、授权里有 `browser` 三样都满足才开（docs/browser.md 第 5 节）。
+        let browser = self
+            .cfg
+            .browser
+            .is_some_and(|supported| supported(&rt.agent_id, &rt.agent_version))
+            && grant_row
+                .scope
+                .platform_tools
+                .iter()
+                .any(|t| t == proto::shim::BROWSER_TOOL);
         let launch = ShimLaunch {
             instance: rt.clone(),
             run: rec.run.id,
@@ -854,6 +868,7 @@ impl Executor {
             ask_timeout: Duration::from_secs(policy.approval_timeout_secs),
             platform_tools,
             models,
+            browser_pass: browser.then(|| cred.browser_pass.clone()),
         };
         let mut session = self
             .connector
@@ -893,6 +908,22 @@ impl Executor {
                 ..
             }
         );
+        // 浏览器通行证只交给认得这条指令的 shim（协议 2 起）；老 shim 照常跑，只是没有浏览器。
+        if let (
+            Some(pass),
+            ShimEvent::Ready {
+                protocol_version, ..
+            },
+        ) = (&launch.browser_pass, &ready)
+            && *protocol_version >= 2
+        {
+            let _ = session
+                .commands
+                .send(ShimCommand::EnableBrowser {
+                    pass: proto::shim::SecretValue(pass.clone()),
+                })
+                .await;
+        }
         // 续跑简报（7.12）：重试（不是第一次交还子任务结果）时，从运行日志里整理上次执行到哪儿了。
         let brief = if rec.run.attempt > 1 && (resume.is_none() || redelivery) {
             let events = async {

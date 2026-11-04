@@ -188,7 +188,7 @@ fn claude(r: &ModelRouting, home: &Path, out: &mut RenderedConfig) {
     // （能连哪些网站由出口代理管）。读网页前不再先把网站名发给 api.anthropic.com 查（那个网站不在名单里，会多问一次）。
     let settings = json!({
         "skipWebFetchPreflight": true,
-        "permissions": { "allow": CLAUDE_ALLOWED_TOOLS },
+        "permissions": { "allow": claude_allowed_tools() },
     });
     out.files.push((
         PathBuf::from(".claude/settings.json"),
@@ -196,8 +196,19 @@ fn claude(r: &ModelRouting, home: &Path, out: &mut RenderedConfig) {
     ));
 }
 
-/// Claude 不用再问用户的工具：搜索、读网页（[`docs/search.md`]）、平台的搜索工具。
-pub const CLAUDE_ALLOWED_TOOLS: [&str; 3] = ["WebSearch", "WebFetch", "mcp__thinktin__web_search"];
+/// Claude 不用再问用户的工具：搜索、读网页（[`docs/search.md`]）、平台的搜索工具，和浏览器工具（逐个列，不用
+/// `mcp__thinktin__*`，那样会连定时任务等工具一起放行；打开网站由浏览器的守门问用户，docs/browser.md 第 2.7 节）。
+pub fn claude_allowed_tools() -> Vec<String> {
+    ["WebSearch", "WebFetch", "mcp__thinktin__web_search"]
+        .into_iter()
+        .map(str::to_owned)
+        .chain(
+            crate::browser::TOOLS
+                .iter()
+                .map(|t| format!("mcp__thinktin__{t}")),
+        )
+        .collect()
+}
 
 fn codex(r: &ModelRouting, home: &Path, out: &mut RenderedConfig) -> anyhow::Result<()> {
     let codex_home = home.join(".codex");
@@ -340,6 +351,8 @@ fn openclaw(
         // 自带的 web_search 要一家搜索服务的 key，我们没给：留着它，模型会先去调它然后失败。搜索用平台的
         // web_search（docs/search.md）。
         "tools": {"exec": {"mode": "ask"}, "web": {"search": {"enabled": false}}},
+        // 自带的浏览器插件（默认开着）关掉：它在本机查 DNS、不经守门；浏览器用平台的（docs/browser.md 第 2.7 节）。
+        "browser": {"enabled": false},
         // 启用安装策略但不配审批命令：技能、插件的安装（含 ClawHub）一律失败关闭（3.6）。
         "security": {"installPolicy": {"enabled": true}},
         // 不检查更新（版本、插件版本漂移），不发遥测。
@@ -409,13 +422,19 @@ fn hermes(r: &ModelRouting, home: &Path, take_over: bool, out: &mut RenderedConf
         .push((PathBuf::from(".hermes/config.yaml"), pretty(&config)));
 }
 
-/// 调平台工具不会先问用户的 agent（Pi 没有权限系统；OpenClaw 只对命令行工具问用户）只拿到这几个平台工具
-/// （docs/search.md）。
-pub const UNGATED_PLATFORM_TOOLS: [&str; 1] = ["web_search"];
+/// 调平台工具不会先问用户的 agent（Pi 没有权限系统；OpenClaw 只对命令行工具问用户）只拿到这几个工具：搜索
+/// （docs/search.md）和浏览器（打开网站由守门问用户，docs/browser.md 第 2.7 节；没开浏览器时桥不列它们）。
+pub static UNGATED_PLATFORM_TOOLS: std::sync::LazyLock<Vec<&'static str>> =
+    std::sync::LazyLock::new(|| {
+        std::iter::once("web_search")
+            .chain(crate::browser::TOOLS.iter().copied())
+            .collect()
+    });
 
 /// 这个 agent 能拿到哪些平台工具：`None` 是授权里的都行。按内置 agent 的 id 判断（它们自己的审批机制）。
 pub fn platform_tool_limit(manifest: &Manifest) -> Option<&'static [&'static str]> {
-    matches!(manifest.agent.id.as_str(), "pi" | "openclaw").then_some(&UNGATED_PLATFORM_TOOLS[..])
+    matches!(manifest.agent.id.as_str(), "pi" | "openclaw")
+        .then(|| UNGATED_PLATFORM_TOOLS.as_slice())
 }
 
 /// 不支持按会话给 MCP 服务器的 agent（Pi、OpenClaw）：把平台工具桥写进它们自己的配置文件。`servers` 是 ACP
@@ -460,7 +479,7 @@ pub fn inject_mcp(
                 limit(&mut e);
                 // 直接给模型看（默认的 codemode 只能在脚本里调，模型看不到）。
                 e["exposure"] = json!("direct");
-                e["description"] = json!("ThinkTin platform tools: web search");
+                e["description"] = json!("ThinkTin platform tools: web search and a web browser");
                 map.insert(name, e);
             }
             out.files.push((
@@ -605,6 +624,20 @@ fn url_host(url: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// 注入 Pi、OpenClaw 配置的桥参数：只给搜索和浏览器工具。
+    fn expected_bridge_args() -> Vec<Value> {
+        let mut v: Vec<Value> = ["mcp-bridge", "--socket", "/h/.thinktin/b.sock", "--egress"]
+            .into_iter()
+            .map(Value::from)
+            .collect();
+        for t in UNGATED_PLATFORM_TOOLS.iter() {
+            v.push(json!("--only"));
+            v.push(json!(t));
+        }
+        assert_eq!(v[5], "web_search");
+        v
+    }
+
     fn routing() -> ModelRouting {
         ModelRouting {
             gateway_url: "https://gw.test/".into(),
@@ -656,6 +689,20 @@ mod tests {
         assert_eq!(userinfo_encode("a:b@c/d"), "a%3Ab%40c%2Fd");
         assert_eq!(url_host("https://[::1]:443/x").as_deref(), Some("::1"));
         assert_eq!(url_host("http://Gw.Test/").as_deref(), Some("gw.test"));
+    }
+
+    #[test]
+    fn no_agent_brings_its_own_browser() {
+        // Hermes 见到这两个变量就自己挂浏览器工具（不经守门）；OpenClaw 自带的浏览器插件关掉（docs/browser.md 第 2.7 节）。
+        for id in catalog::builtin_ids() {
+            let c = render_for(id);
+            for k in ["BROWSER_CDP_URL", "AGENT_BROWSER_EXECUTABLE_PATH"] {
+                assert!(!c.env.contains_key(k), "{id} sets {k}");
+            }
+        }
+        let c = render_for("openclaw");
+        let v: Value = serde_json::from_str(file(&c, ".openclaw/openclaw.json")).unwrap();
+        assert_eq!(v["browser"]["enabled"], false);
     }
 
     fn render_for(id: &str) -> RenderedConfig {
@@ -739,17 +786,7 @@ mod tests {
         let v: Value = serde_json::from_str(file(&c, ".pi/agent/mcp.json")).unwrap();
         let s = &v["mcpServers"]["thinktin"];
         assert_eq!(s["command"], "/opt/thinktin/agent-shim");
-        assert_eq!(
-            s["args"],
-            json!([
-                "mcp-bridge",
-                "--socket",
-                "/h/.thinktin/b.sock",
-                "--egress",
-                "--only",
-                "web_search"
-            ])
-        );
+        assert_eq!(s["args"], Value::from(expected_bridge_args()));
         assert_eq!(s["exposure"], "direct");
 
         let m = catalog::builtin("openclaw").unwrap();
@@ -757,17 +794,7 @@ mod tests {
         inject_mcp(&m, &mut c, std::slice::from_ref(&bridge)).unwrap();
         let v: Value = serde_json::from_str(file(&c, ".openclaw/openclaw.json")).unwrap();
         let s = &v["mcp"]["servers"]["thinktin"];
-        assert_eq!(
-            s["args"],
-            json!([
-                "mcp-bridge",
-                "--socket",
-                "/h/.thinktin/b.sock",
-                "--egress",
-                "--only",
-                "web_search"
-            ])
-        );
+        assert_eq!(s["args"], Value::from(expected_bridge_args()));
         // 自带的搜索没有服务可用，关掉。
         assert_eq!(v["tools"]["web"]["search"]["enabled"], false);
         assert_eq!(
@@ -801,9 +828,21 @@ mod tests {
         assert_eq!(c.env["CLAUDE_CONFIG_DIR"], "/home/agent/.claude");
         let v: Value = serde_json::from_str(file(&c, ".claude/settings.json")).unwrap();
         assert_eq!(v["skipWebFetchPreflight"], true);
+        let allow = v["permissions"]["allow"].as_array().unwrap();
         assert_eq!(
-            v["permissions"]["allow"],
-            json!(["WebSearch", "WebFetch", "mcp__thinktin__web_search"])
+            allow[..3],
+            [
+                json!("WebSearch"),
+                json!("WebFetch"),
+                json!("mcp__thinktin__web_search")
+            ]
+        );
+        assert!(allow.contains(&json!("mcp__thinktin__browser_navigate")));
+        // 没有通配符：定时任务等别的平台工具照样要批。
+        assert!(
+            !allow
+                .iter()
+                .any(|a| a.as_str().is_some_and(|s| s.contains('*')))
         );
     }
 

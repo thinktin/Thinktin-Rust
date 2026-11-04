@@ -196,6 +196,10 @@ impl ShimConnector for ExecConnector {
                         "THINKTIN_EGRESS_PROXY".to_owned(),
                         EnvValue::Plain(proxy.clone()),
                     );
+                    // 浏览器（docs/browser.md）也走环境变量；它要经出口代理上网，没有代理就不开。
+                    if launch.browser_pass.is_some() {
+                        env.insert("THINKTIN_BROWSER".to_owned(), EnvValue::Plain("1".into()));
+                    }
                 }
                 env
             },

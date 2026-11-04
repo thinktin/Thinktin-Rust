@@ -19,6 +19,20 @@ pub struct Manifest {
     /// 模板里装的包（6.8，`deploy/templates`）。
     #[serde(default)]
     pub install: InstallSection,
+    /// agent 的浏览器（docs/browser.md）：模板镜像装了 Chromium 和 Playwright MCP、东京验收过了才写 `supported = true`。
+    #[serde(default)]
+    pub browser: BrowserSection,
+}
+
+/// `[browser]`：这个模板版本能不能开浏览器。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserSection {
+    #[serde(default)]
+    pub supported: bool,
+    /// 开浏览器时沙箱要的内存（Phase 0 量过再填）。
+    #[serde(default)]
+    pub memory_mb: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

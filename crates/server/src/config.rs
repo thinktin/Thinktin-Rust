@@ -27,6 +27,7 @@ pub struct Config {
     pub sms: Sms,
     pub kms: KmsSettings,
     pub search: Search,
+    pub browser: Browser,
     /// 沙箱令牌签名私钥种子（base64url），只从环境变量 THINKTIN_SANDBOX_TOKEN_SEED 读。
     #[serde(skip)]
     pub sandbox_token_seed: Option<String>,
@@ -156,6 +157,8 @@ impl Default for Api {
                 .chain(orchestrator::board::BOARD_TOOLS.iter())
                 .chain(orchestrator::ask::ASK_TOOLS.iter())
                 .chain(orchestrator::search::SEARCH_TOOLS.iter())
+                // 浏览器（docs/browser.md）：授权里有它、服务器开了 `[browser] enabled`、模板支持才真的开。
+                .chain(std::iter::once(&proto::shim::BROWSER_TOOL))
                 .map(|s| s.to_string())
                 // 电脑工具（14.2）：只有登录着电脑的用户的 agent 才真的拿到。
                 .chain(proto::computer::names().map(String::from))
@@ -455,6 +458,14 @@ impl AcsSandbox {
 }
 
 /// 平台搜索工具 `web_search`（docs/search.md）：`[search]`。按 `providers` 的顺序试，配了 key 的才用；一家都没配就不给
+/// agent 自己的浏览器（docs/browser.md）：`[browser]`。这是服务器上的总开关，不是 App 里的开关：开着时，授权里有
+/// `browser`、模板版本写了 `[browser] supported = true` 的运行才有浏览器。出口代理那边要同时加 `--egress-browser-lanes`。
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Browser {
+    pub enabled: bool,
+}
+
 /// agent 这个工具。用户 2026-11-04 定：每人每天 50 次，测试期每月 ¥100；接口用 Parallel（用户点名的，clodex 用的就是它），
 /// DeepSeek、阿里云 IQS 依次备用。
 #[derive(Debug, Clone, Deserialize)]
@@ -914,6 +925,7 @@ impl Default for Config {
             kms: KmsSettings::default(),
             observability: Observability::default(),
             search: Search::default(),
+            browser: Browser::default(),
             sandbox_token_seed: None,
             jpush_master_secret: None,
             cube_api_key: None,

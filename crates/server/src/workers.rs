@@ -69,6 +69,11 @@ async fn stopped(mut stop: ShutdownListener) {
     stop.wait().await;
 }
 
+/// 这个 agent 的这个模板版本装了浏览器、验收过了吗（清单的 `[browser] supported`）。
+fn browser_supported(agent: &str, version: &str) -> bool {
+    catalog::builtin_version(agent, version).is_some_and(|m| m.browser.supported)
+}
+
 pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyhow::Result<()> {
     let provider: Arc<dyn SandboxProvider> = match cfg.sandbox.provider.as_str() {
         "cube" => Arc::new(
@@ -191,6 +196,10 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
                 renew_every: Duration::from_secs(cfg.worker.lease_secs) / 4,
                 takeover_every: Duration::from_secs(cfg.worker.takeover_every_secs),
                 backoff_base: Duration::from_secs(cfg.worker.retry_backoff_secs),
+                browser: cfg
+                    .browser
+                    .enabled
+                    .then_some(browser_supported as fn(&str, &str) -> bool),
                 ..ExecutorConfig::default()
             },
         )
