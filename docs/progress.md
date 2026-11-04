@@ -104,6 +104,9 @@
   日志 6 个月）。分支 `claude/determined-lovelace-vn0j5h`，进度记在 `docs/progress/claude-determined-lovelace-vn0j5h.md`。
   11-04：第一版代码做完（代理在模型网关里、档位和额度、日志、接口、client-core），评审和修复也做完；东京还没打开（要先填
   服务机公网地址、加 8791 安全组规则、发版、真机验收，见 egress.md“上线前”）。
+  11-04 用户改了规则：不要档位开关，搜索和开发网站默认能用，别的网站弹窗问（访问一次 / 一直允许 / 拒绝，先等 1 分钟）。
+  这部分（2.7e）也做完了：访问请求表、代理里等用户、推送、`/v1/egress-requests` 接口、client-core 和安卓绑定。**App 会话**：
+  收到 subtype `egress_request` 的推送时用 `egress_requests` / `decide_egress_request` 弹三个选项，见 egress.md“问用户”。
 
 - **client-core 的破坏性改动（2026-10-22，和 iOS、Android 会话约好的一批，`339e191`）**：
   1. `ClientError`（`Network`、`Api`、`Decode`、`Cache`、`InvalidArgument`、`Internal`）和 `PairingError::Malformed` 里的
