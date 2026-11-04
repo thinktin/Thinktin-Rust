@@ -30,7 +30,10 @@
   （`70c8dbd`）。全量测试 663 个通过。
   **等用户**：注册 DeepSeek 开放平台并充值、开通阿里云 IQS，把 key 放进环境变量 `THINKTIN_DEEPSEEK_SEARCH_KEY`、
   `THINKTIN_IQS_API_KEY`，然后做 50 个问题的小测（约 ¥2）。
-- 下一步：对搜索这批改动做一轮对抗评审 → 浏览器按 11-04 的规矩重写 browser.md 的实现设计再做 → 跨用户项目。
+- 搜索评审做完（4 个方面、每个方面一个反驳者，原始结果 `drafts/search-review.md`）：成立 12 个都修了（`a900d19`、`ad7b151`、
+  `58f72ac`、`5dddb21`），全量测试 665 个通过。要点：搜索不在执行器事件循环里等；`[search] alert_phone` 给运营者发额度、欠费
+  提醒；OpenClaw 也只给 `web_search`（shim 那边过滤）、关掉它自带的搜索。
+- 下一步：浏览器按 11-04 的规矩重写 browser.md 的实现设计再做 → 跨用户项目。用户放好搜索 key 后做小测。
 - 再下一步：浏览器（[浏览器](../browser.md)“实现设计与验收”）→ 跨用户项目。
 
 ## ⚠️ 紧急交接（2026-10-29 16:00 UTC，本会话 session_016LgPcdynywrhrjCq8VVFLt 周额度快用完）
