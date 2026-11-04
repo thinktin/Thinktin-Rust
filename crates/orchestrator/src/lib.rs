@@ -17,6 +17,7 @@ pub mod reports;
 pub mod s3;
 pub mod schedule;
 pub mod scheduler;
+pub mod search;
 pub mod shim;
 pub mod texts;
 pub mod tools;
