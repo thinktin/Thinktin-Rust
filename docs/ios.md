@@ -181,13 +181,15 @@ docs/i18n.md 第 3 节“不认识的按状态给通用文案”）：404 / 410 
 `PushPayload` 解析推送的 `userInfo`（`tt` 下的 `kind`、`subtype`、`instance`、`run`、`approval`、`plan`、`inbox`、`vault_request`，
 约定见 backend-core 的 docs/push.md 第 3、4 节），`Router` 跳转；推送送达、点开都先交给 `AppModel.receive(push:)` / `open(push:)`。规则：
 
-- 深链和推送打开后，返回栈是“根（当前实例的对话）→ 目标页”，和安卓的冷启动一致；`thinktin://instance/{id}` 打开实例详情
-  （安卓也是实例设置页），并把它设成当前实例。
+- 深链和推送打开后先关掉 sheet，返回栈是“首页 → 目标页”；和实例有关的页面（实例资料、模型路由、实例的计划和产出物、运行详情、
+  运行树）知道是哪个实例时是“首页 → 实例的对话 → 目标页”，返回先回到对话；推送只有实例 id 时是“首页 → 实例的对话”
+  （`DeepLink.backStack(to:instanceID:)`，改版规范 docs/ios-ui-redesign.md 3.4）。`thinktin://instance/{id}` 打开实例资料
+  （安卓是实例设置页），并把它记成当前实例。安卓现在还是抽屉结构，返回栈是“根 → 目标页”，两端不一样（规范 6.1）。
 - 推送去哪：审批 → 审批详情（没有审批 id 时运行详情，再没有就是审批中心）；运行完成 / 失败 → 运行详情（没有运行 id 时实例的对话，
   再没有就是收件箱里的那一条）；保险箱请求（`vault_request`）→ 填写请求页（`.vaultRequest`，没有请求 id 时同运行完成）；计划待确认
-  （`plan_confirm`）→ 计划确认页（`.confirmPlan`，没有计划 id 时计划列表）；其他提醒 → 先看子类型（`approval_skipped` 去运行详情，
+  （`plan_confirm`）→ 计划确认页（`.confirmPlan`，没有计划 id 时全部计划）；其他提醒 → 先看子类型（`approval_skipped` 去运行详情，
   `im_channel_disabled` 去 IM 渠道设置），再按计划 → 运行 → 实例的对话 → 收件箱里的那一条 → 收件箱，取第一个有 id 的。推送里有实例 id
-  时顺带切到这个实例。点开后 `AppModel.open(push:)` 把 `PushPayload.inboxItemID` 那一条标已读（12.8）。
+  时顺带记成当前实例，运行详情的返回栈经过它的对话。点开后 `AppModel.open(push:)` 把 `PushPayload.inboxItemID` 那一条标已读（12.8）。
 - 推送的系统回调（12.8）在 App 的 `AppDelegate`（`@UIApplicationDelegateAdaptor`，`AppEnvironment` 也由它建，冷启动点开通知时
   回调可能比界面先到）：启动时设通知中心的代理、登记通知类别（`PushCategory`，docs/push.md 第 2 节，只有 `APPROVAL` 有“拒绝”按钮）、
   登录之后（同意了隐私政策，12.17）每次启动都向 APNs 注册（不等用户允许通知，令牌先拿到；`ThinktinApp` 跟着 `AppModel.phase`）；设备令牌交给 `AppModel.didReceivePushToken`（登录着就 `setPushToken`，
@@ -267,7 +269,7 @@ client-core 只缓存实例、运行、事件、收件箱（cache.rs 的几张�
 | 策略 | 页面 | 横幅 |
 |---|---|---|
 | 有缓存（`cached`） | 首页、实例对话、运行详情、运行树、进行中、实例详情、收件箱 | “离线，显示的是缓存内容” |
-| 没有缓存（`unavailable`） | 计划、审批、模型 key、模型路由、用量、保险箱、团队、agent 目录、产出物、IM 渠道、登录设备、账号 | “离线，暂无数据。联网后会自动刷新。”，页面显示空状态 |
+| 没有缓存（`unavailable`） | 计划、审批、模型 key、模型路由、用量、保险箱、团队、agent 目录、领养新实例、产出物、IM 渠道、登录设备、账号 | “离线，暂无数据。联网后会自动刷新。”，页面显示空状态 |
 | 不用联网（`local`） | 设置中心、关于、开源许可、搜索（只搜本机缓存）、登录、冻结页、升级页 | 不显示 |
 
 退出登录和注销都会清掉缓存，换账号后不能显示上一个账号的数据（`AppModel` 同时清掉实例、角标和导航）。
@@ -353,9 +355,14 @@ struct PlansDestination: View {
 2. 环境里取全局状态和工具：`@Environment(AppModel.self)`（当前实例、实例列表、角标、离线、`refreshBadges()`）、
    `@Environment(Router.self)`（跳转）、`@Environment(\.client)`（调接口）。视图模型照常 `init(client: any ClientProtocol)`，
    传进去的就是环境里的这个。
-3. 跳到别的功能的页面：`router.open(.run(id))`（按 `presentation` 压栈 / 弹 sheet / 回到根，会关掉抽屉和 sheet），或
-   `NavigationLink(value: AppRoute.run(id))`。打开 `.conversation(id)` 等于切换当前实例、回到根。sheet 页（`.newPlan`、`.editPlan`、
-   `.addCredential`、`.onboarding`、`.newTask`）自带导航栈，关掉用 `router.dismissSheet()`。
+3. 跳到别的功能的页面：`router.open(.run(id))` 或 `NavigationLink(value: AppRoute.run(id))`。`open` 按 `presentation`
+   （改版规范 docs/ios-ui-redesign.md 3.3）：首页（`.home`）永远是主导航栈的根，压栈的页面压进最前面那一层的导航栈（设置这类 sheet
+   开着时压进 sheet 自己的栈 `router.sheetPath`，不关 sheet）；sheet 页（`.newPlan`、`.editPlan`、`.addCredential`、`.onboarding`、
+   `.newTask`、`.settings`、`.adopt`）弹出，sheet 开着时叠一层（`nestedSheet`，最多两层）；`.conversation(id)` 总是先关掉 sheet
+   再压进主栈，并记成当前实例；`.search` 回到首页激活搜索（`router.searchRequest`）。`router.dismissSheet()` 关最前面那层 sheet，
+   `router.pop()` 退最前面那层的栈（退到 sheet 的根再退就关掉它）。工作台菜单的顶级页面用 `router.openTopLevel(_:)`（先回首页再压）。
+   页面回到最前面时要刷新就看 `router.visibleRoute`（`.onChange(of: router.visibleRoute) { if router.visibleRoute == .vault { … } }`），
+   别看 `router.sheet == nil`：页面在设置的 sheet 里时，关掉的是叠在上面的第二层。
 4. 只在本功能里用、不要深链的子页面（向导的第二步、选择器）不用加 `AppRoute`：在自己的目录里用
    `NavigationLink { 子页面 } label: { … }` 或本地 sheet。要跨功能跳转、要深链的页面才加 case，那是 `Navigation/` 的改动，
    在合并时统一加（加了 case 要补 `feature`、`presentation`、`offlinePolicy`、`title`，`AppRouteTests` 会逐个检查）。

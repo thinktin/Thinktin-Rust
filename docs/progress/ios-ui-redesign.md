@@ -32,19 +32,48 @@
   `run.sh test` 的 ThinktinUITests 131 个全过（新加 `NativeControlsTests`、`InstanceAvatarTests`、`FilterChipBarTests`）；
   App 的 `ThinktinTests` 16 个过 11 个，挂的 5 个是要 App 包的（Info.plist、PrivacyInfo、小组件 appex、`~/Library` 路径），
   Linux 上本来就过不了（docs/handoff-ios.md 第 88 行）；`swift format lint --strict` 零条。macOS CI 还没看（推送后跑）。
+- 第 0 轮·路由（规范 3.3、3.4，7.2 路由那一行，提交 `6594b32`）：
+  - `AppRoute`：`.home` 永远是根、归 `.shell`；`.conversation` 压栈（照样记成当前实例）；`.settings`、新加的
+    `.adopt(agentID:)`（归 `.agents`，离线 `unavailable`，标题“领养新实例”）是 sheet；`.search` 是 `.root`（回首页、`searchRequest` 加一）；
+    `.plans(instanceID:)`（nil 是全部）；`isTopLevel` 只剩工作台的 6 个入口；新加 `returnsToConversation`（实例资料、模型路由、实例的计划和
+    产出物、运行详情、运行树、产出物详情）。
+  - `Router`：去掉抽屉状态；`openFromDrawer` 改名 `openTopLevel`；`sheetPath`（sheet 自己的栈）、`nestedSheet` + `nestedSheetPath`（第二层，
+    最多两层，再开就换掉第二层）；sheet 开着时 `open(.push)` 压进最前面那层的栈，`.conversation` 例外（关掉所有 sheet 再压主栈，主栈里已有
+    这个对话就退回到它）；`pop()` 退最前面那层，退到 sheet 的根再退就关掉它；`dismissSheet()` 关最前面那层，`dismissAllSheets()` 全关；
+    `selectInstance(id)` 是“首页 → 对话”；`requestNewTask` 同样进对话再加 `newTaskRequest`；新加 `visibleRoute`（眼前的页面）、
+    `frontSheet`、`routeBelowSheet`（sheet 底下的页面）、`removeRoutes(of:)`（实例删了：各层栈从它的第一个页面起截掉）。
+  - `DeepLink.backStack(to:instanceID:)`：深链和推送的返回栈“首页 → 目标页”，实例的页面“首页 → 对话 → 目标页”；`Router.show` 用它。
+  - `AppModel`：当前实例被删时只拿掉它的页面（以前是回到根）；`startNewTask` 没实例时 `openTopLevel(.agentCatalog)`。
+  - 界面只改到能编、能用：`AppShell` 的 sheet 换成 `SheetStack`（`NavigationStack(path:)` 绑 `sheetPath`，里面再挂第二层），设置、领养的根页面
+    补左上 `CloseButton`；抽屉的开关挪成 `AppShell` 的本地状态（过渡）；首页还不能原地搜索，`searchRequest` 变了先把 `.search` 压上来（过渡）；
+    `ShellDestination` 接 `.home`（先放原来的 `ConversationHomeScreen`）；`PlansDestination` 把实例传给 `PlanListScreen(instanceFilter:)`；
+    `AgentsDestination` 的 `.adopt`：nil 时 Agent 目录、有 agent 时它的详情（领养照旧在详情里，第 1 轮 C 线换成表单）；
+    靠“sheet 关了”刷新的页面（模型 key、模型路由、计划列表）和靠 `topRoute` 的保险箱改看 `visibleRoute`；添加 key 看 `routeBelowSheet`；
+    引导的关闭看 `frontSheet`；删实例用 `removeRoutes(of:)`；对话页压栈后没了标题，先放实例名（`inlineNavigationTitle`，B 线换成胶囊）。
+    `THINKTIN_OPEN_DRAWER`（`AppConfiguration`、App 冒烟测试）和截图脚本的两张抽屉图去掉了（规范 3.3 那一行）。
+  - 文档：docs/ios.md 6.1（返回栈、推送）、6.2（领养没有缓存）、7（截图张数）、9.1 第 3 条（`open` 的新规则、`visibleRoute`）。
+  - 测试：`AppRouteTests` 逐个查新 case 的 `feature`、`presentation`、`offlinePolicy`、`title`、`returnsToConversation`；`RouterTests`
+    重写（对话压栈和退回、sheet 栈、第二层、系统下滑关掉时清栈、工作台入口、删实例、深链和推送的返回栈、没登录先记下）；`DeepLinkTests`
+    加返回栈；`AppModelTests`、`AgentsScreensTests`、`AppShellTests`（加“设置是 sheet”）、`PlansScreensTests` 跟着改。
+  - 这一步的 Linux 检查（2026-11-04）：ThinktinKit `swift test` 997 个全过（`CoreClient118Tests` 的 Accept-Language 那条起本地 HTTP，
+    整组并行跑时偶尔连不上，单跑和重跑都过，和这次改动无关）；uicheck UIKit、AppKit 都编过；`run.sh test` 133 个全过；App 的
+    `ThinktinTests` 16 个过 11 个（还是那 5 个要 App 包的）；`swift format lint --strict` 零条。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、
 字体全用系统的）；6.3 A（保持 iOS 17，iOS 26 的接口在 Design/Glass.swift 里回退）；6.4 A（“+”直接弹领养表单）；6.5 A（设置用 sheet）；
 6.6 A（沿用“实例”）。其余 18 项按建议。
 
-进行中：第 0 轮·路由（规范 3.3、3.4、7.2 路由那一行）由工作流的路由这一步在做（2026-11-04 19:30 UTC 开始）；Shell 和最小首页、启动屏、截图脚本、docs/ios.md 6.1 / 9.1 还没人认领。
+进行中：第 0 轮的 Shell 和最小首页、启动屏、截图脚本（`THINKTIN_OPEN_SCREEN`）、docs/ios.md 9.1 第 6 条还没人认领（路由这一步做完了）。
 
 下一步：
-1. 第 0 轮剩下的（规范 7.2 第 5 行起）：路由（3.3：`.home` 永远是根、`.conversation` 压栈、`.settings` sheet、`.search` 回首页、
-   `.plans(instanceID:)`、`.adopt(agentID:)`、`sheetPath` 和第二层 sheet、深链返回栈 3.4）；最小首页 `Shell/Home/`，去掉抽屉和
-   `InstanceSwitcher`，同时删掉 `solidTopScrollEdge()`；各功能接入点跟上新路由；启动屏资源；截图脚本的 `THINKTIN_OPEN_SCREEN`；文档。
-   首页直接用这一份的东西：`InstanceAvatar(name, size: Metrics.Avatar.list, badge:)`、`toolbarBadge(_:)`、`BottomBarSearchItem()`、
+1. 第 0 轮剩下的（规范 7.2 第 6 行起）：最小首页 `Shell/Home/`，去掉 `ShellDrawer`、`InstanceSwitcher`、`RootPage` 的抽屉按钮和左缘手势
+   （连同 `AppShell` 里 `isDrawerOpen` 这个过渡状态、`RootPage` 里把 `.search` 压上来的过渡），同时删掉 `solidTopScrollEdge()`；
+   `ConversationHomeScreen`（`RunTreeScreen.swift`）删掉，内容挪成首页空状态，`ShellDestination` 的 `.home` 换成新首页；
+   `DrawerEntry` 改名（比如 `WorkbenchEntry`）；首页 `onChange(of: router.searchRequest)` 激活 `.searchable`；左上头像 `router.open(.settings)`，
+   右上 `router.open(.adopt(agentID: nil))`，工作台菜单项 `router.openTopLevel(entry.route)`，点行 `NavigationLink(value: AppRoute.conversation(id))`；
+   启动屏资源；截图脚本的 `THINKTIN_OPEN_SCREEN`（截图清单换成规范 7.6 的）；docs/ios.md 9.1 第 6 条（对话页没有抽屉按钮了）和第 9 节表里 12.16 那一行。
+   首页直接用第 0 轮已有的东西：`InstanceAvatar(name, size: Metrics.Avatar.list, badge:)`、`toolbarBadge(_:)`、`BottomBarSearchItem()`、
    `GlassToolbarSpacer(.fixed, placement: .bottomBar)`、`hidesSharedGlassBackground()`、`ContentUnavailableView` + `BrandLogo`；
    sheet 的关闭用 `CloseButton`，主操作用 `ConfirmButton`。
 2. 推送后看 macOS CI（`.github/workflows/ios.yml`）：Glass.swift 的 `if #available` 分支和新测试只有真 SDK 才验得出来。
@@ -52,7 +81,13 @@
 
 坑和决定：
 - 参考截图是别家产品、里面有用户的账号信息，仓库公开，所以**不进仓库**；规范里只用自己的话写布局和交互，不写参考 App 的名字。以后的会话要看截图，请用户再发一次压缩包。
-- Router 现在只有一层 sheet，设置改成 sheet 后里面再跳转会把设置关掉：第 0 轮要先改 Router（规范 3.3）。
+- 路由：sheet 里的页面要刷新别看 `router.sheet == nil` 或 `router.topRoute`（`topRoute` 只看主栈），看 `router.visibleRoute`；
+  要知道自己是从哪个页面弹出来的看 `router.routeBelowSheet`。`NavigationLink(value: AppRoute)` 在 sheet 里压进 sheet 的栈（`SheetStack` 绑了
+  `sheetPath`），设置根页面的行就是这样进子页的；sheet 页用 `NavigationLink(value:)` 打开会被压栈（引导在设置里就是这样），
+  要弹出就用 `router.open`。sheet 被系统下滑关掉时 `Router.sheet` 的 `didSet` 清掉它的栈和第二层。
+- 路由：对话改成压栈后 `.conversation(id)` 的新建页拿不到 `newTaskRequest` 的变化（页面在请求之后才建）：`requestNewTask` 新进对话时
+  输入框不会自动聚焦，B 线做对话页时在 `onAppear` 里看一下（比如对比上次处理过的 `newTaskRequest`）。
+- 路由：安卓还是抽屉结构，深链返回栈两端不一样了（规范 3.4、6.1，要不要跟着改另议）。
 - `ToolbarContentBuilder.buildLimitedAvailability` 在 SDK 里是 iOS 17.5 / macOS 14.5 才有，比最低版本高：`.toolbar { if #available(...) { … } }`
   在真实 SDK 上编不过。按系统版本放的工具栏项（iOS 26 的 `ToolbarSpacer`）一律用 Design/Glass.swift 的 `ToolbarContent` 帮手，
   桩里也故意不给这个方法。Linux 上不检查 iOS / macOS 的版本，漏写 `if #available` 只有 macOS CI 查得出来。
