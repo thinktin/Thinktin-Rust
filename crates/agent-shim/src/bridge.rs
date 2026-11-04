@@ -36,12 +36,15 @@ use crate::events::EventSink;
 /// 注入给 agent 的 MCP 服务器名；Claude Code 里工具名会显示成 `mcp__thinktin__<工具>`。
 pub const SERVER_NAME: &str = "thinktin";
 
-/// 平台工具服务的说明（MCP `instructions`，agent 的系统提示里看得到）。出网（2.7）的规矩也写在这里：agent 的工具碰到
-/// 代理返回的 403 时，常常只说“CONNECT 失败”，不说原因。
+/// 平台工具服务的说明（MCP `instructions`，agent 的系统提示里看得到）。
 const INSTRUCTIONS: &str = "Tools provided by the ThinkTin platform (schedules, artifacts, delegation, the user's other \
-agents, their shared board and questions to them). Internet access goes through the platform's HTTPS proxy: web search \
-and developer sites (package registries, GitHub) work directly; any other website needs the user's approval. The first \
-request to such a site asks the user in the ThinkTin app and waits up to a minute. If it fails with a 403 \
+agents, their shared board and questions to them).";
+
+/// 沙箱经出口代理上网（2.7）时加在说明后面的规矩：agent 的工具碰到代理返回的 403 时，常常只说“CONNECT 失败”，
+/// 不说原因。
+const EGRESS_INSTRUCTIONS: &str = " Internet access goes through the platform's HTTPS proxy (HTTPS only). Web search \
+and developer sites (package registries, GitHub) usually work directly; other websites need the user's approval. The \
+first request to such a site asks the user in the ThinkTin app and waits up to a minute. If it fails with a 403 \
 (pending_approval), the user has not answered yet: do other work first and retry that site later. If the user declined \
 (user_denied), do not retry it in this task; find another way.";
 /// 我们支持的 MCP 协议版本，按新旧排列。
@@ -170,12 +173,20 @@ impl Bridge {
         &self.socket
     }
 
-    /// ACP `session/new` 的 `mcpServers` 条目（stdio 方式）。
-    pub fn mcp_server_entry(&self, exe: &Path) -> Value {
+    /// ACP `session/new` 的 `mcpServers` 条目（stdio 方式）。`egress`：沙箱经出口代理上网，说明里加上上网的规矩。
+    pub fn mcp_server_entry(&self, exe: &Path, egress: bool) -> Value {
+        let mut args = vec![
+            "mcp-bridge".to_owned(),
+            "--socket".to_owned(),
+            self.socket.display().to_string(),
+        ];
+        if egress {
+            args.push("--egress".to_owned());
+        }
         json!({
             "name": SERVER_NAME,
             "command": exe.display().to_string(),
-            "args": ["mcp-bridge", "--socket", self.socket.display().to_string()],
+            "args": args,
             "env": [],
         })
     }
@@ -435,7 +446,12 @@ fn rpc_error(id: &Value, code: i64, message: &str) -> Value {
 }
 
 /// 在 stdio 上当 MCP 服务器，把工具相关的请求转给 shim。
-pub async fn run_client(socket: &Path) -> anyhow::Result<()> {
+pub async fn run_client(socket: &Path, egress: bool) -> anyhow::Result<()> {
+    let instructions = if egress {
+        format!("{INSTRUCTIONS}{EGRESS_INSTRUCTIONS}")
+    } else {
+        INSTRUCTIONS.to_owned()
+    };
     let stream = UnixStream::connect(socket)
         .await
         .with_context(|| format!("connecting to {}", socket.display()))?;
@@ -512,7 +528,7 @@ pub async fn run_client(socket: &Path) -> anyhow::Result<()> {
                         "protocolVersion": version,
                         "capabilities": {"tools": {"listChanged": true}},
                         "serverInfo": {"name": SERVER_NAME, "version": env!("CARGO_PKG_VERSION")},
-                        "instructions": INSTRUCTIONS,
+                        "instructions": instructions,
                     }),
                 ));
             }

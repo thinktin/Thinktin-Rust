@@ -241,8 +241,10 @@ impl Tx<Llmgw> {
         Ok(status)
     }
 
-    /// 问用户能不能访问 `host`：已经有一条在等就接着等那条（换成这次任务；换了任务、上次提醒过了一小时以上的再提醒
-    /// 一次），没有就新建一条。这个实例已经有 `max_pending` 个网站在等时返回空。
+    /// 问用户能不能访问 `host`，返回请求 id：已经有一条在等就接着等那条（换成这次任务；换了任务、上次提醒过了一小时
+    /// 以上的再提醒一次）；用户刚答过（这次任务的“访问一次”“拒绝”，或者“一直允许”）就返回答过的那条，调用方读到它的
+    /// 结果；都没有就新建一条。这次任务已经有 `max_pending` 个网站在等、或者这个实例一小时里已经登记了 `max_per_hour`
+    /// 条时返回空（不让 agent 一口气、定时任务一遍遍地弹提示）。
     pub async fn egress_ask(
         &mut self,
         user: UserId,
@@ -250,26 +252,36 @@ impl Tx<Llmgw> {
         host: &str,
         run: Option<RunId>,
         max_pending: u32,
+        max_per_hour: u32,
     ) -> Result<Option<EgressRequestId>> {
-        // 先续上已经在等的（不受个数限制）。
-        let touched: Option<Uuid> = sqlx::query_scalar(concat!(
-            "UPDATE egress_requests SET ",
-            touch_request!(),
-            " WHERE instance_id = $1 AND host = $2 AND status = 'pending' RETURNING id"
-        ))
+        if let Some(id) = self.touch_egress_ask(instance, host, run).await? {
+            return Ok(Some(id));
+        }
+        // 用户的回答在调用方查过之后、上面续之前提交了：用那条，不再问一遍。
+        let decided: Option<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM egress_requests \
+             WHERE instance_id = $1 AND host = $2 AND status IN ('once', 'always', 'denied') \
+               AND decided_at > now() - interval '1 minute' \
+               AND (status = 'always' OR run_id IS NOT DISTINCT FROM $3) \
+             ORDER BY decided_at DESC LIMIT 1",
+        )
         .bind(instance.0)
         .bind(host)
         .bind(run.map(|r| r.0))
         .fetch_optional(self.conn())
         .await?;
-        if let Some(id) = touched {
+        if let Some(id) = decided {
             return Ok(Some(id.into()));
         }
-        // 并发时个数可能多出一两个，不要紧：上限只是不让 agent 一口气弹一堆提示。
+        // 个数只算这次任务的：前面的任务没人答的请求还在等（用户还能点“一直允许”），但不挡后面的任务问新网站。
+        // 并发时个数可能多出一两个，不要紧。
         let id: Option<Uuid> = sqlx::query_scalar(concat!(
             "INSERT INTO egress_requests (id, user_id, instance_id, host, run_id) \
              SELECT $4, $5, $1, $2, $3 \
-             WHERE (SELECT count(*) FROM egress_requests WHERE instance_id = $1 AND status = 'pending') < $6 \
+             WHERE (SELECT count(*) FROM egress_requests \
+                    WHERE instance_id = $1 AND status = 'pending' AND run_id IS NOT DISTINCT FROM $3) < $6 \
+               AND (SELECT count(*) FROM egress_requests \
+                    WHERE instance_id = $1 AND created_at > now() - interval '1 hour') < $7 \
              ON CONFLICT (instance_id, host) WHERE status = 'pending' DO UPDATE SET ",
             touch_request!(),
             " RETURNING id"
@@ -280,9 +292,46 @@ impl Tx<Llmgw> {
         .bind(Uuid::now_v7())
         .bind(user.0)
         .bind(i64::from(max_pending))
+        .bind(i64::from(max_per_hour))
         .fetch_optional(self.conn())
         .await?;
-        Ok(id.map(Into::into))
+        if let Some(id) = id {
+            return Ok(Some(id.into()));
+        }
+        // 正好到上限时，同一个网站的另一个连接刚登记上（它提交后这里看到的个数满了，插入不成也撞不上冲突）：接着等它。
+        self.touch_egress_ask(instance, host, run).await
+    }
+
+    /// 续上一条在等的请求。
+    async fn touch_egress_ask(
+        &mut self,
+        instance: InstanceId,
+        host: &str,
+        run: Option<RunId>,
+    ) -> Result<Option<EgressRequestId>> {
+        let touched: Option<Uuid> = sqlx::query_scalar(concat!(
+            "UPDATE egress_requests SET ",
+            touch_request!(),
+            " WHERE instance_id = $1 AND host = $2 AND status = 'pending' RETURNING id"
+        ))
+        .bind(instance.0)
+        .bind(host)
+        .bind(run.map(|r| r.0))
+        .fetch_optional(self.conn())
+        .await?;
+        Ok(touched.map(Into::into))
+    }
+
+    /// 实例 `day` 这天用掉（含预留中）的字节：今天用完了就不必再问用户。
+    pub async fn egress_used_by(&mut self, instance: InstanceId, day: NaiveDate) -> Result<u64> {
+        let n: Option<i64> = sqlx::query_scalar(
+            "SELECT bytes FROM egress_usage WHERE instance_id = $1 AND day = $2",
+        )
+        .bind(instance.0)
+        .bind(day)
+        .fetch_optional(self.conn())
+        .await?;
+        unsigned(n.unwrap_or(0), "egress bytes")
     }
 
     /// 一条请求现在的状态和对应的任务；没有这条时为空。
@@ -310,8 +359,9 @@ impl Tx<Tenant> {
         let rows: Vec<RequestRow> = sqlx::query_as(concat!(
             "SELECT ",
             request_columns!(),
-            " FROM egress_requests \
+            " FROM egress_requests r \
              WHERE ($1::uuid IS NULL OR instance_id = $1) AND (NOT $2 OR status = 'pending') \
+               AND EXISTS (SELECT 1 FROM instances i WHERE i.id = r.instance_id AND i.state <> 'deleted') \
              ORDER BY created_at DESC, id DESC LIMIT $3"
         ))
         .bind(instance.map(|i| i.0))
@@ -344,6 +394,16 @@ impl Tx<Tenant> {
         .fetch_optional(self.conn())
         .await?;
         let row = row.ok_or(Error::NotFound)?;
+        // 实例删了：这条不用答了（列表里也不列）。
+        let live: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM instances WHERE id = $1 AND state <> 'deleted')",
+        )
+        .bind(row.instance_id)
+        .fetch_one(self.conn())
+        .await?;
+        if !live {
+            return Err(Error::NotFound);
+        }
         if row.status != "pending" {
             return Err(Error::Conflict(format!(
                 "request is already {}",
@@ -379,6 +439,7 @@ impl Tx<Tenant> {
         .bind(status)
         .fetch_one(self.conn())
         .await?;
+        self.settle_egress_request_inbox(id).await?;
         Ok(row.into())
     }
 
@@ -427,9 +488,9 @@ impl Tx<Worker> {
             instance_name: String,
         }
         let rows: Vec<AskRow> = sqlx::query_as(
-            "WITH due AS (SELECT id FROM egress_requests \
-                          WHERE status = 'pending' AND notified_at IS NULL \
-                          ORDER BY asked_at LIMIT $1 FOR UPDATE SKIP LOCKED), \
+            "WITH due AS (SELECT r.id FROM egress_requests r JOIN instances i ON i.id = r.instance_id \
+                          WHERE r.status = 'pending' AND r.notified_at IS NULL AND i.state <> 'deleted' \
+                          ORDER BY r.asked_at LIMIT $1 FOR UPDATE OF r SKIP LOCKED), \
                   done AS (UPDATE egress_requests e SET notified_at = now() FROM due WHERE e.id = due.id \
                            RETURNING e.id, e.instance_id, e.host, e.run_id, e.status, e.created_at, \
                                      e.decided_at, e.user_id) \
@@ -448,17 +509,29 @@ impl Tx<Worker> {
             .collect())
     }
 
-    /// 等了 `before` 之前还没人回答的标成过期；返回标了几条。
+    /// 等了 `before` 之前还没人回答的标成过期（提醒用户的收件箱条目算已读）；返回标了几条。
     pub async fn expire_egress_asks(&mut self, before: DateTime<Utc>, limit: i64) -> Result<u64> {
-        let done = sqlx::query(
-            "UPDATE egress_requests SET status = 'expired' WHERE id IN \
-               (SELECT id FROM egress_requests WHERE status = 'pending' AND asked_at < $1 LIMIT $2)",
+        // 外层再判断一次：子查询选中以后、更新以前用户答了（或者又有 agent 在等）的不动。
+        let ids: Vec<Uuid> = sqlx::query_scalar(
+            "UPDATE egress_requests SET status = 'expired' \
+             WHERE status = 'pending' AND asked_at < $1 AND id IN \
+               (SELECT id FROM egress_requests WHERE status = 'pending' AND asked_at < $1 LIMIT $2) \
+             RETURNING id",
         )
         .bind(before)
         .bind(limit)
-        .execute(self.conn())
+        .fetch_all(self.conn())
         .await?;
-        Ok(done.rows_affected())
+        if !ids.is_empty() {
+            sqlx::query(
+                "UPDATE inbox_items SET read_at = now() \
+                 WHERE egress_request_id = ANY($1) AND read_at IS NULL",
+            )
+            .bind(&ids)
+            .execute(self.conn())
+            .await?;
+        }
+        Ok(ids.len() as u64)
     }
 
     /// 删掉 `log_before` 之前的访问日志和 `usage_before` 之前的用量行，每次最多 `limit` 行。返回删了几行日志。
@@ -486,7 +559,8 @@ impl Tx<Worker> {
         // 答过、过期了的请求和用量行留得一样久（`usage_before`）。
         sqlx::query(
             "DELETE FROM egress_requests WHERE id IN \
-               (SELECT id FROM egress_requests WHERE status <> 'pending' AND created_at < $1 LIMIT $2)",
+               (SELECT id FROM egress_requests \
+                WHERE status <> 'pending' AND coalesce(decided_at, asked_at) < $1 LIMIT $2)",
         )
         .bind(usage_before.and_time(chrono::NaiveTime::MIN).and_utc())
         .bind(limit)

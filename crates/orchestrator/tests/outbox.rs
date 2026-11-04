@@ -558,7 +558,7 @@ async fn egress_requests_are_announced_once() {
     tx.commit().await.unwrap();
     let mut g = t.db.llmgw().await.unwrap();
     let id = g
-        .egress_ask(user, inst.id, "example.com", None, 5)
+        .egress_ask(user, inst.id, "example.com", None, 5, 20)
         .await
         .unwrap()
         .unwrap();
@@ -568,7 +568,7 @@ async fn egress_requests_are_announced_once() {
     assert_eq!(notify_requests(&t.db, 10).await.unwrap(), 0);
     // 同一个任务里再问：不再提醒。
     let mut g = t.db.llmgw().await.unwrap();
-    g.egress_ask(user, inst.id, "example.com", None, 5)
+    g.egress_ask(user, inst.id, "example.com", None, 5, 20)
         .await
         .unwrap();
     g.commit().await.unwrap();
@@ -581,14 +581,14 @@ async fn egress_requests_are_announced_once() {
     assert_eq!(
         (
             inbox[0].kind.as_str(),
-            inbox[0].subtype.as_deref(),
+            inbox[0].egress_request_id,
             inbox[0].title.as_str(),
             inbox[0].body.as_str(),
             inbox[0].instance_id,
         ),
         (
-            "info",
-            Some("egress_request"),
+            "egress_request",
+            Some(id),
             "Writer 想访问一个网站",
             "example.com：允许访问一次、一直允许，还是拒绝？",
             Some(inst.id),
@@ -615,7 +615,7 @@ async fn egress_requests_are_announced_once() {
         .unwrap();
     tx.commit().await.unwrap();
     let mut g = t.db.llmgw().await.unwrap();
-    g.egress_ask(user, inst.id, "example.com", Some(run.id), 5)
+    g.egress_ask(user, inst.id, "example.com", Some(run.id), 5, 20)
         .await
         .unwrap();
     g.commit().await.unwrap();

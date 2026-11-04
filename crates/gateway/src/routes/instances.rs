@@ -242,6 +242,29 @@ pub async fn egress(
     })))
 }
 
+/// 从“一直允许”的网站里删掉一个（2.7，App 的设置里用；不要用 PATCH 传整个列表，免得冲掉同时点的“一直允许”）。
+/// 已经开着的这个网站的连接开到任务结束。记审计。
+pub async fn remove_egress_host(
+    State(s): State<AppState>,
+    Authed(who): Authed,
+    Path((id, host)): Path<(String, String)>,
+) -> ApiResult<Json<Instance>> {
+    let id: InstanceId = parse_id(&id, "instance")?;
+    let host = proto::egress::normalize_host(host.trim(), false)
+        .map_err(|e| crate::ApiError::invalid(format!("host: {e}")))?;
+    let mut t = s.db.tenant(who.user).await?;
+    let instance = t.remove_egress_host(id, &host).await?;
+    t.audit(
+        &who.actor(),
+        "instance.egress",
+        Some(&id.to_string()),
+        &json!({ "removed": host }),
+    )
+    .await?;
+    t.commit().await?;
+    Ok(Json(instance))
+}
+
 #[derive(Deserialize)]
 pub struct EgressRequestsQuery {
     /// 只看这个实例的。

@@ -1274,6 +1274,7 @@ async fn ffi_instance_settings() {
         "news.example.com",
         None,
         5,
+        20,
     )
     .await
     .unwrap()
@@ -1312,6 +1313,16 @@ async fn ffi_instance_settings() {
         c.instance(inst.id.clone()).await.unwrap().egress_hosts,
         ["docs.example.com", "news.example.com"]
     );
+    let trimmed = c
+        .remove_instance_egress_host(inst.id.clone(), "docs.example.com".into())
+        .await
+        .unwrap();
+    assert_eq!(trimmed.egress_hosts, ["news.example.com"]);
+    assert!(matches!(
+        c.remove_instance_egress_host(inst.id.clone(), "a/b".into())
+            .await,
+        Err(ClientError::InvalidArgument { .. })
+    ));
     assert!(matches!(
         c.update_instance(inst.id, ffi::InstanceChange::default())
             .await,

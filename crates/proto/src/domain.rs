@@ -1057,9 +1057,6 @@ pub mod notice_subtype {
     pub const IM_CHANNEL_DISABLED: &str = "im_channel_disabled";
     /// 用户的内容举报处理完了。
     pub const REPORT_HANDLED: &str = "report_handled";
-    /// agent 想访问一个网站、要用户回答（2.7，访问一次 / 一直允许 / 拒绝；带 `instance_id`，用
-    /// `GET /v1/egress-requests` 列出来）。
-    pub const EGRESS_REQUEST: &str = "egress_request";
 }
 
 /// 共享看板的一条（8.10）：用户的 agent（或用户自己）写的进展、决定、待别人处理的事。写了不改，只能归档、删除。
@@ -1125,6 +1122,9 @@ pub struct InboxItem {
     /// 保险箱请求（`kind` 是 `vault_request` 时）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vault_request_id: Option<VaultRequestId>,
+    /// agent 想访问的网站（`kind` 是 `egress_request` 时，2.7）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub egress_request_id: Option<EgressRequestId>,
 }
 
 str_enum!(

@@ -306,7 +306,8 @@ pub struct EgressStatus {
     pub recent_denied: Vec<EgressDenial>,
 }
 
-/// agent 想访问、要用户回答的一个网站（2.7）。推送的 subtype 是 `egress_request`（带 `instance_id`）。
+/// agent 想访问、要用户回答的一个网站（2.7）。推送的 kind 是 `egress_request`（iOS category `EGRESS_REQUEST`，高优先级），
+/// 目标里带 `egress_request`（APNs 的 `tt.egress_request`，FCM、极光的 `tt_egress_request`）和 `instance`、`run`。
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct EgressRequest {
     pub id: String,
@@ -1000,8 +1001,8 @@ pub struct InboxItem {
     pub run_id: Option<String>,
     pub plan_id: Option<String>,
     pub approval_id: Option<String>,
-    /// run_finished / run_failed / approval / computer_approval / vault_request / plan_confirm / info。以后可能有新的，
-    /// 不认识的按 info 显示。
+    /// run_finished / run_failed / approval / computer_approval / vault_request / egress_request / plan_confirm / info。
+    /// 以后可能有新的，不认识的按 info 显示。
     pub kind: String,
     pub title: String,
     pub body: String,
@@ -1016,6 +1017,10 @@ pub struct InboxItem {
     /// 保险箱请求（`kind` 是 vault_request 时，`thinktin://vault/request/{id}`）。
     #[uniffi(default = None)]
     pub vault_request_id: Option<String>,
+    /// agent 想访问的网站（`kind` 是 egress_request 时，2.7）：用 `egress_requests` 找到这一条，弹“访问一次 / 一直允许 /
+    /// 拒绝”。用户答了、请求过期了，这一条服务端自动标成已读。
+    #[uniffi(default = None)]
+    pub egress_request_id: Option<String>,
 }
 
 impl From<d::InboxItem> for InboxItem {
@@ -1034,6 +1039,7 @@ impl From<d::InboxItem> for InboxItem {
             created_at_ms: ms(i.created_at),
             subtype: i.subtype,
             vault_request_id: i.vault_request_id.map(|x| x.to_string()),
+            egress_request_id: i.egress_request_id.map(|x| x.to_string()),
         }
     }
 }
@@ -2004,9 +2010,9 @@ impl ThinktinClient {
             .await
     }
 
-    /// 改实例能上哪些网站（2.7）：`mode` 是 model / dev / custom / all，`hosts` 是一直允许的网站（custom 至少一个）。
-    /// App 里不放档位开关（用户 2026-11-04 定），只用它管“一直允许”的网站：`mode` 传实例现在的档位，`hosts` 传删减后的
-    /// 列表。打开 all 要 `accept_risk = true`，否则报 422。不合规的网站（IP 地址、通配符、带端口的）报 422。
+    /// 改实例能上哪些网站（2.7）：`mode` 是 model / dev / custom / all，`hosts` 是一直允许的网站（custom 至少一个），整个
+    /// 列表一起换。App 里不放档位开关（用户 2026-11-04 定），设置里删网站用 [`Self::remove_instance_egress_host`]（整个
+    /// 列表一起换会冲掉同时点的“一直允许”）。打开 all 要 `accept_risk = true`，否则报 422。不合规的网站报 422。
     pub async fn set_instance_egress(
         &self,
         instance_id: String,
@@ -2024,6 +2030,17 @@ impl ThinktinClient {
         .await
     }
 
+    /// 从“一直允许”的网站里删掉一个（2.7，设置里用）。没有这个网站也算成功；返回改后的实例。
+    pub async fn remove_instance_egress_host(
+        &self,
+        instance_id: String,
+        host: String,
+    ) -> Result<Instance> {
+        let id: d::InstanceId = parse(&instance_id, "instance")?;
+        self.run(|c| async move { Ok(c.api.remove_instance_egress_host(id, &host).await?.into()) })
+            .await
+    }
+
     /// 实例的出网情况：档位、今天的用量、在等用户回答的网站、最近被拒绝的访问（2.7）。
     pub async fn instance_egress(&self, instance_id: String) -> Result<EgressStatus> {
         let id: d::InstanceId = parse(&instance_id, "instance")?;
@@ -2032,7 +2049,8 @@ impl ThinktinClient {
     }
 
     /// agent 想访问、要用户回答的网站（2.7），新的在前。`instance_id` 不给就是所有实例的；`include_answered` 时也列
-    /// 答过、过期了的。收到 subtype 为 `egress_request` 的推送时调它，给用户看“访问一次 / 一直允许 / 拒绝”。
+    /// 答过、过期了的；删了的实例的不列。收到 kind 为 `egress_request` 的推送时按目标里的请求 id 找到那一条，给用户看
+    /// “访问一次 / 一直允许 / 拒绝”。
     pub async fn egress_requests(
         &self,
         instance_id: Option<String>,

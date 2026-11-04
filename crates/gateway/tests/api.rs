@@ -4151,7 +4151,7 @@ async fn egress_requests_over_http() {
     let mut ids = Vec::new();
     for host in ["one.example.com", "two.example.com"] {
         ids.push(
-            g.egress_ask(user, inst, host, None, 5)
+            g.egress_ask(user, inst, host, None, 5, 20)
                 .await
                 .unwrap()
                 .unwrap(),
@@ -4232,4 +4232,34 @@ async fn egress_requests_over_http() {
             .await
             .unwrap();
     assert_eq!(audits, 2);
+
+    // 设置里删掉一个一直允许的网站（只删这一个）。
+    let (st, body) = a
+        .call(
+            Method::DELETE,
+            &format!("/v1/instances/{inst}/egress/hosts/One.Example.com"),
+            tok,
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(body["egress_hosts"], json!([]));
+    let (st, _) = a
+        .call(
+            Method::DELETE,
+            &format!("/v1/instances/{inst}/egress/hosts/10.0.0.1"),
+            tok,
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+    let (st, _) = a
+        .call(
+            Method::DELETE,
+            &format!("/v1/instances/{inst}/egress/hosts/one.example.com"),
+            Some(other.access.as_str()),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
 }

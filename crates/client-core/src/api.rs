@@ -1027,6 +1027,30 @@ impl Api {
         .await
     }
 
+    /// 从“一直允许”的网站里删掉一个（2.7）。
+    pub async fn remove_instance_egress_host(
+        &self,
+        id: InstanceId,
+        host: &str,
+    ) -> Result<Instance> {
+        // 拼进路径：只收网站名里的字符（服务端再按 normalize_host 整理）。
+        if host.is_empty()
+            || !host
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-'))
+        {
+            return Err(ClientError::InvalidArgument {
+                detail: "host must be a plain host name".into(),
+            });
+        }
+        self.json(
+            Method::DELETE,
+            &format!("/v1/instances/{id}/egress/hosts/{host}"),
+            None,
+        )
+        .await
+    }
+
     /// 实例的出网情况：档位、今天的用量、在等用户回答的网站、最近被拒绝的访问（2.7）。
     pub async fn instance_egress(&self, id: InstanceId) -> Result<EgressStatus> {
         self.json(Method::GET, &format!("/v1/instances/{id}/egress"), None)

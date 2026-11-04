@@ -198,6 +198,7 @@ fn message(kind: PushKind) -> PushMessage {
             plan_id: None,
             inbox_id: Some("inbox-3".into()),
             vault_request_id: None,
+            egress_request_id: None,
         },
         ttl: Some(Duration::from_secs(3600)),
         ai_generated: false,

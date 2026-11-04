@@ -18,7 +18,8 @@ pub const DEV_HOSTS: &[&str] = &[
 ];
 
 /// 默认就能用的搜索：常用搜索引擎和 agent 常用的搜索接口（用户 2026-11-04 定：搜索直接联网）。不放能替人抓任意网页的
-/// 服务（比如 r.jina.ai、翻译代理）：那等于绕过了逐个网站问用户。
+/// 服务（比如 r.jina.ai、翻译代理，还有 Tavily：它的 `/extract` 按给的网址抓任意网页）：那等于绕过了逐个网站问用户。
+/// 代理只看得到网站名、看不到路径，所以同一个网站上既能搜索又能抓网页的接口不能放进来。
 pub const SEARCH_HOSTS: &[&str] = &[
     "www.google.com",
     "google.com",
@@ -35,7 +36,6 @@ pub const SEARCH_HOSTS: &[&str] = &[
     "www.so.com",
     "search.brave.com",
     "api.search.brave.com",
-    "api.tavily.com",
 ];
 
 /// 每个实例最多一直允许这么多个网站。
@@ -44,8 +44,11 @@ pub const MAX_HOSTS: usize = 50;
 /// 问用户的时候，代理先等这么久（秒）：这期间用户同意了就接着连，没回应就告诉 agent 先做别的。
 pub const ASK_WAIT_SECS: u64 = 60;
 
-/// 一个实例同时最多有这么多个网站在等用户回答（再多的直接拒绝，免得 agent 一口气弹一堆提示）。
+/// 一次任务里最多有这么多个网站同时在等用户回答（再多的直接拒绝，免得 agent 一口气弹一堆提示）。
 pub const MAX_PENDING_ASKS: u32 = 5;
+
+/// 每个实例一小时里最多登记这么多条新请求（定时任务每跑一次都问的话，不至于一直弹提示）。
+pub const MAX_ASKS_PER_HOUR: u32 = 20;
 
 /// 每个实例每天（北京时间自然日）最多这么多字节的双向流量（用户 2026-11-04 定：100 MiB）。
 pub const DAILY_BYTES: u64 = 100 << 20;

@@ -142,6 +142,7 @@ impl ApnsClient {
             ("plan", &t.plan_id),
             ("inbox", &t.inbox_id),
             ("vault_request", &t.vault_request_id),
+            ("egress_request", &t.egress_request_id),
             ("subtype", &message.subtype),
         ] {
             if let Some(v) = v {
@@ -417,6 +418,7 @@ mod tests {
                 plan_id: None,
                 inbox_id: None,
                 vault_request_id: None,
+                egress_request_id: None,
             },
             ttl: Some(Duration::from_secs(3600)),
             ai_generated: false,

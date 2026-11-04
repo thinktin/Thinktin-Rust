@@ -63,6 +63,9 @@ enum Command {
     McpBridge {
         #[arg(long)]
         socket: PathBuf,
+        /// 沙箱经出口代理上网（说明里加上上网的规矩）。
+        #[arg(long)]
+        egress: bool,
     },
     /// 密码保险箱助手（沙箱里叫 thinktin-vault）：按名字把保险箱里的值注入命令
     Vault {
@@ -406,8 +409,8 @@ async fn run(cli: Cli) -> anyhow::Result<ExitCode> {
             let cfg = common.shim_config(Fallback::Ask, 5)?;
             serve(cfg, bridge).await
         }
-        Command::McpBridge { socket } => {
-            bridge::run_client(&socket).await?;
+        Command::McpBridge { socket, egress } => {
+            bridge::run_client(&socket, egress).await?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Vault {
@@ -457,7 +460,8 @@ async fn serve(mut cfg: ShimConfig, args: BridgeArgs) -> anyhow::Result<ExitCode
         )?;
         tracing::info!(socket = %b.socket_path().display(), "platform tool bridge listening");
         let exe = std::env::current_exe().context("locating agent-shim")?;
-        cfg.mcp_servers.push(b.mcp_server_entry(&exe));
+        let egress = cfg.routing.egress_proxy.is_some();
+        cfg.mcp_servers.push(b.mcp_server_entry(&exe, egress));
         // 密码保险箱助手（9.11）：agent 的命令里用 thinktin-vault 按名字引用保险箱里的值。
         let bin = vault_helper::install(
             &cfg.home.join(".thinktin").join("bin"),

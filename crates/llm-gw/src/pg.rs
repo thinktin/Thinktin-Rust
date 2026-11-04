@@ -593,6 +593,7 @@ impl crate::egress::EgressLedger for PgEgressLedger {
         host: &str,
         run: Option<&str>,
         max_pending: u32,
+        max_per_hour: u32,
     ) -> anyhow::Result<Option<String>> {
         let (instance, user) = ids(instance, Some(user))?;
         let run = run
@@ -601,10 +602,25 @@ impl crate::egress::EgressLedger for PgEgressLedger {
             .map_err(|_| anyhow::anyhow!("bad run id"))?;
         let mut tx = self.db.llmgw().await?;
         let id = tx
-            .egress_ask(user.unwrap_or_default(), instance, host, run, max_pending)
+            .egress_ask(
+                user.unwrap_or_default(),
+                instance,
+                host,
+                run,
+                max_pending,
+                max_per_hour,
+            )
             .await?;
         tx.commit().await?;
         Ok(id.map(|i| i.to_string()))
+    }
+
+    async fn used_on(&self, instance: &str, day: chrono::NaiveDate) -> anyhow::Result<u64> {
+        let (instance, _) = ids(instance, None)?;
+        let mut tx = self.db.llmgw().await?;
+        let used = tx.egress_used_by(instance, day).await?;
+        tx.commit().await?;
+        Ok(used)
     }
 
     async fn answer(&self, request: &str) -> anyhow::Result<crate::egress::Answer> {

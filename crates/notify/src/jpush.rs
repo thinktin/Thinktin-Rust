@@ -111,6 +111,7 @@ impl JpushClient {
             ("tt_plan", &t.plan_id),
             ("tt_inbox", &t.inbox_id),
             ("tt_vault_request", &t.vault_request_id),
+            ("tt_egress_request", &t.egress_request_id),
             ("tt_subtype", &message.subtype),
         ] {
             if let Some(v) = v {
@@ -347,6 +348,7 @@ mod tests {
                 plan_id: None,
                 inbox_id: Some("inbox-3".into()),
                 vault_request_id: None,
+                egress_request_id: None,
             },
             ttl: Some(Duration::from_secs(3600)),
             ai_generated: false,

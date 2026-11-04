@@ -333,6 +333,20 @@ impl Tx<Tenant> {
         Ok(())
     }
 
+    /// 从“一直允许”的网站里删掉一个（2.7；没有这个网站也算成功）。只删这一个，不会冲掉同时点的“一直允许”。
+    pub async fn remove_egress_host(&mut self, id: InstanceId, host: &str) -> Result<Instance> {
+        let row: Option<Row> = sqlx::query_as(concat!(
+            "UPDATE instances SET egress_hosts = array_remove(egress_hosts, $2), updated_at = now() \
+             WHERE id = $1 AND state <> 'deleted' RETURNING ",
+            columns!()
+        ))
+        .bind(id.0)
+        .bind(host)
+        .fetch_optional(self.conn())
+        .await?;
+        row.ok_or(Error::NotFound)?.into_instance()
+    }
+
     pub async fn rename_instance(&mut self, id: InstanceId, name: &str) -> Result<()> {
         let done = sqlx::query(
             "UPDATE instances SET name = $2, updated_at = now() WHERE id = $1 AND state <> 'deleted'",

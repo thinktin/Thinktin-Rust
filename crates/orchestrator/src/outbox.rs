@@ -20,8 +20,8 @@ use notify::filter::{self, AllowAll, ContentFilter, Verdict};
 use notify::im::{ImHook, ImMessage, ImSender};
 use notify::{PushChannel, PushKind, PushMessage, PushOutcome, PushTarget};
 use proto::domain::{
-    ApprovalId, ImChannelId, ImEvent, ImVendor, InboxItemId, InstanceId, Locale, PlanId,
-    PushChannelKind, RunId, UserId, VaultRequestId,
+    ApprovalId, EgressRequestId, ImChannelId, ImEvent, ImVendor, InboxItemId, InstanceId, Locale,
+    PlanId, PushChannelKind, RunId, UserId, VaultRequestId,
 };
 use serde::{Deserialize, Serialize};
 use store::{Db, ImSlot, NewInboxItem, NewOutboxItem, OutboxItem, Tenant, Tx, Worker};
@@ -69,6 +69,7 @@ fn im_event(kind: PushKind) -> Option<ImEvent> {
         PushKind::Approval => Some(ImEvent::Approval),
         PushKind::ComputerApproval
         | PushKind::VaultRequest
+        | PushKind::EgressRequest
         | PushKind::PlanConfirm
         | PushKind::Info => None,
     }
@@ -108,6 +109,8 @@ pub struct Notice {
     pub approval: Option<ApprovalId>,
     /// 保险箱请求（[`PushKind::VaultRequest`]）。
     pub vault_request: Option<VaultRequestId>,
+    /// agent 想访问的网站（[`PushKind::EgressRequest`]）。
+    pub egress_request: Option<EgressRequestId>,
     /// 是哪一种提醒（[`proto::domain::notice_subtype`]；运行在等什么时是 `wait_code`）。
     pub subtype: Option<String>,
     /// 推送分组（同一个运行的通知归成一组）。
@@ -133,6 +136,7 @@ impl Notice {
             plan: None,
             approval: None,
             vault_request: None,
+            egress_request: None,
             subtype: None,
             thread_id: None,
             collapse_id: None,
@@ -155,6 +159,7 @@ impl Notice {
             ai_generated: self.ai_generated,
             subtype: self.subtype.clone(),
             vault_request_id: self.vault_request,
+            egress_request_id: self.egress_request,
         }
     }
 
@@ -179,6 +184,7 @@ impl Notice {
                 plan_id: self.plan.map(|p| p.to_string()),
                 inbox_id: inbox.map(|i| i.to_string()),
                 vault_request_id: self.vault_request.map(|v| v.to_string()),
+                egress_request_id: self.egress_request.map(|v| v.to_string()),
             },
             ttl: self.ttl,
             ai_generated: self.ai_generated,

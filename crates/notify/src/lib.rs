@@ -30,6 +30,9 @@ pub enum PushKind {
     ComputerApproval,
     /// agent 请用户往保险箱里填账号密码（10.7，目标里有 `vault_request_id`）：运行等着，高优先级。
     VaultRequest,
+    /// agent 想访问一个网站、等用户回答（2.7，目标里有 `egress_request_id`）：访问一次 / 一直允许 / 拒绝，代理最多等一分钟，
+    /// 高优先级。
+    EgressRequest,
     /// agent 改了计划、等用户确认（10.7，目标里有 `plan_id`）。
     PlanConfirm,
     /// 其他提醒（`subtype` 说是哪一种）。
@@ -45,6 +48,7 @@ impl PushKind {
             Self::Approval => "approval",
             Self::ComputerApproval => "computer_approval",
             Self::VaultRequest => "vault_request",
+            Self::EgressRequest => "egress_request",
             Self::PlanConfirm => "plan_confirm",
             Self::Info => "info",
         }
@@ -58,6 +62,7 @@ impl PushKind {
             Self::Approval => "APPROVAL",
             Self::ComputerApproval => "COMPUTER_APPROVAL",
             Self::VaultRequest => "VAULT_REQUEST",
+            Self::EgressRequest => "EGRESS_REQUEST",
             Self::PlanConfirm => "PLAN_CONFIRM",
             Self::Info => "INFO",
         }
@@ -68,9 +73,10 @@ impl PushKind {
         matches!(self, Self::Approval | Self::ComputerApproval)
     }
 
-    /// 运行停下来等用户（审批、填保险箱）：iOS 上是 time-sensitive，Android 走审批的通知渠道、高优先级。
+    /// 运行停下来等用户（审批、填保险箱、能不能访问一个网站）：iOS 上是 time-sensitive，Android 走审批的通知渠道、
+    /// 高优先级。
     pub fn waits_for_user(self) -> bool {
-        self.is_approval() || self == Self::VaultRequest
+        self.is_approval() || matches!(self, Self::VaultRequest | Self::EgressRequest)
     }
 }
 
@@ -131,6 +137,9 @@ pub struct PushTarget {
     /// 保险箱请求（10.7，`thinktin://vault/request/{id}`）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vault_request_id: Option<String>,
+    /// agent 想访问的网站（2.7，`GET /v1/egress-requests` 里的 id）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub egress_request_id: Option<String>,
 }
 
 /// 发送结果。
@@ -231,6 +240,7 @@ mod tests {
             PushKind::Approval,
             PushKind::ComputerApproval,
             PushKind::VaultRequest,
+            PushKind::EgressRequest,
             PushKind::PlanConfirm,
             PushKind::Info,
         ] {
@@ -245,5 +255,7 @@ mod tests {
         assert!(!PushKind::PlanConfirm.waits_for_user());
         assert_eq!(PushKind::VaultRequest.category(), "VAULT_REQUEST");
         assert_eq!(PushKind::PlanConfirm.category(), "PLAN_CONFIRM");
+        assert!(PushKind::EgressRequest.waits_for_user() && !PushKind::EgressRequest.is_approval());
+        assert_eq!(PushKind::EgressRequest.category(), "EGRESS_REQUEST");
     }
 }

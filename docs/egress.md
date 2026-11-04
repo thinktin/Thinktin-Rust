@@ -104,29 +104,48 @@ Smokescreen 还得用 Go 写一层认实例、查档位、记额度的插件，�
 **问用户（2.7e，按用户 2026-11-04 改的规则）。** 提交 `f7db8e7`（库）、`ccd4b3c`（代理）、`cb76ab7`（提醒）、`8040ad9`（接口）、`0861148`（client-core）、`4f4950d`（安卓绑定）、`a1ed4ec`（给 agent 的说明）。
 
 1. 迁移 0034 把档位默认值改成 `dev`，已有实例一起改（出口代理还没在任何地方开过）。`dev` 直接放行
-   `proto::egress::SEARCH_HOSTS`（Google、Bing、DuckDuckGo、百度、搜狗、360 搜索、Brave、Tavily 的接口）、`DEV_HOSTS` 和
-   `egress_hosts`（用户点过“一直允许”的）。不放能替人抓任意网页的服务（比如 r.jina.ai），那等于绕过逐个网站问用户。
+   `proto::egress::SEARCH_HOSTS`（Google、Bing、DuckDuckGo、百度、搜狗、360 搜索、Brave 的搜索页和接口）、`DEV_HOSTS` 和
+   `egress_hosts`（用户点过“一直允许”的）。不放能替人抓任意网页的服务（比如 r.jina.ai、Tavily：它的 `/extract` 按给的
+   网址抓任意网页），那等于绕过逐个网站问用户；代理只看得到网站名、看不到路径，同一个网站上的搜索接口也一起不放。
 2. 不在名单上的网站，代理先强制重读一次实例（用户刚点了“一直允许”时缓存里还没有），还不放行就查
    `egress_requests`：这次任务（实例上正在跑的 agent 运行）里用户答过“访问一次”就放行、答过“拒绝”就回 403
    `user_denied`。没有任务时，答复管一小时。
-3. 没答过就登记一条请求：同一个实例、同一个网站同时只有一条在等，后来的任务再问就接着等这条（换成后来的任务）。一个
-   实例最多 5 个网站同时在等，再多的回 403 `too_many_asks`。然后这个 CONNECT 每秒查一次，最多等 60 秒：用户答应了就接着
-   连（`once` 或 `always`），拒绝了回 `user_denied`，到时间没答回 403 `pending_approval`，正文告诉 agent“已经问了用户，
-   先做别的，过会儿再试”。每个实例最多 8 个连接同时在等，再多的照样登记、马上回 `pending_approval`。
-4. 后台每 2 秒把新登记的请求发给用户（收件箱、推送；`PushKind::Info`，subtype `egress_request`，带实例和任务），每条
-   提醒一次；还在等的时候换了任务、上次提醒过了一小时以上的再提醒一次。一天没人答的标成过期；答过、过期了的留 60 天。
+3. 没答过就登记一条请求：同一个实例、同一个网站同时只有一条在等，后来的任务再问就接着等这条（换成后来的任务）；用户
+   刚答过（一分钟内）就用答过的那条，不再问一遍。一次任务最多 5 个网站同时在等（前面的任务没人答的不算，它们还在等，
+   用户还能点“一直允许”），每个实例一小时最多登记 20 条，再多的回 403 `too_many_asks`。今天的流量用完了就不问，直接回
+   429 `quota`。然后这个 CONNECT 每秒查一次，最多等 60 秒：用户答应了就接着连（`once` 或 `always`），拒绝了回
+   `user_denied`，到时间没答回 403 `pending_approval`，正文告诉 agent“已经问了用户，先做别的，过会儿再试”。每个实例
+   最多 8 个连接同时在等，再多的照样登记、马上回 `pending_approval`。等到用户答应以后（或者等名额等了一秒以上）重新读实例、
+   再核对一遍令牌：等的时候任务结束了就回 407。客户端等不及断开的，日志记一行 `client_gone`。
+4. 后台每 2 秒把新登记的请求发给用户：收件箱和推送，推送种类是 `egress_request`（和审批、保险箱一样高优先级：iOS
+   time-sensitive、category `EGRESS_REQUEST`，Android 走审批的通知渠道），目标里带请求 id（`tt.egress_request` /
+   `tt_egress_request`）、实例和任务；不发 IM 群。每条提醒一次；还在等的时候换了任务、上次提醒过了一小时以上的再提醒一次。
+   用户答了、一天没人答标成过期时，收件箱那条算已读。答过、过期了的请求留 60 天（按回答的时间算）。删了的实例的请求不列、
+   答不了、不提醒。
 5. 用户答应过的隧道，每 30 秒重新核对时只要档位还问用户就不断（缓存里还没有这个网站也不断）；任务结束（令牌代数变了）、
    改成只连模型时照样断。点了“一直允许”以后又在设置里删掉这个网站，开着的隧道开到任务结束（最多 1 小时）。
-6. agent 那边：平台工具的说明（MCP `instructions`）里写了这套规矩（很多工具碰到代理的 403 只说“CONNECT 失败”）。
-   pip 这类自己超时短的工具（pip 默认 15 秒）等不满一分钟就放弃，请求照样在等，用户答应后再试就行。
+6. agent 那边：配了出口代理时，平台工具的说明（MCP `instructions`）里写了这套规矩（很多工具碰到代理的 403 只说“CONNECT
+   失败”）。pip 这类自己超时短的工具（pip 默认 15 秒）等不满一分钟就放弃，请求照样在等，用户答应后再试就行。
 
 **接口和客户端。**
 
 - `GET /v1/egress-requests?instance_id=&all=`：在等用户回答的网站（`all=true` 也列答过、过期的），新的在前。
 - `POST /v1/egress-requests/{id}/decide {decision: once|always|deny}`：已经答过、过期的回 409；“一直允许”的网站满了（50 个）
   回 422，请求还在等。记审计 `egress.decide`。
-- client-core：`egress_requests(instance_id, include_answered)`、`decide_egress_request(request_id, decision)`，
-  `EgressStatus` 多了 `search_hosts` 和 `pending`。
+- `DELETE /v1/instances/{id}/egress/hosts/{host}`：设置里删掉一个一直允许的网站（只删这一个，不会冲掉同时点的“一直允许”；
+  用 PATCH 传整个列表会）。记审计 `instance.egress`。
+- client-core：`egress_requests(instance_id, include_answered)`、`decide_egress_request(request_id, decision)`、
+  `remove_instance_egress_host(instance_id, host)`，`EgressStatus` 多了 `search_hosts` 和 `pending`，收件箱条目多了
+  `egress_request_id`。
+
+**2.7e 评审（2026-11-04，安全、库的状态和并发、代理、接口和产品 4 个方面，每个方面一个反驳者核对）。** 成立 14 个问题
+（原始结果 [drafts/egress-approval-review.md](progress/drafts/egress-approval-review.md)），都修了：Tavily 能抓任意网页，从默认
+搜索里去掉；前面任务没人答的请求占满个数、挡住后面的任务（改成只算这次任务的，另加每小时 20 条）；等待时任务结束了还能
+开隧道（答应后重新核对令牌）；过期和回答同时发生时回答被冲掉；同一个网站并发登记、回答和登记撞上时多弹一次；按创建时间
+删答过的请求；推送优先级太低（新的推送种类）、推送不带请求 id、答过的收件箱条目一直未读；客户端断开不记日志；流量用完了
+还问；删了的实例的请求还列着；“一直允许”被设置页整表保存冲掉（加了删单个网站的接口）；没配代理时说明里也讲上网规矩。
+驳回 2 条：PATCH 整表替换的并发问题是原来就有的（新加了删单个的接口绕开）；老服务端没有 `egress_mode` 时 App 显示 dev
+（老服务端也没有出网接口，App 不会据此做什么）。
 - `PATCH /v1/instances/{id}` 收 `egress: {mode, hosts, accept_risk}`。`all` 必须带 `accept_risk: true`，App 先提示风险。
   网站整理写法、去重，最多 50 个；`custom` 至少一个。改了记审计 `instance.egress`。
 - `GET /v1/instances/{id}/egress` 返回：档位、网站、开发网站预设、今天的用量和上限、同时连接上限、最近被拒绝的访问

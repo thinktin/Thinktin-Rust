@@ -637,3 +637,67 @@ async fn pending_asks_are_capped_per_instance() {
     let resp = first.await.unwrap();
     assert!(resp.contains("pending_approval"), "{resp}");
 }
+
+/// 等用户回答的时候任务结束了（令牌代数变了）：用户随后答应了也不开隧道。
+#[tokio::test]
+async fn an_approval_after_the_task_ended_does_not_open_a_tunnel() {
+    let e = Arc::new(env(EgressMode::Custom, &[], asking).await);
+    let token = e.token_with(|_| {});
+    let waiting = {
+        let (e, token) = (e.clone(), token.clone());
+        tokio::spawn(async move { e.connect(&e.echo_target(), Some(&token)).await.0 })
+    };
+    let asks = e.wait_for_asks(1).await;
+    e.directory.upsert_instance(Instance {
+        epoch: 1,
+        ..instance(EgressMode::Custom, &[])
+    });
+    e.ledger.decide(&asks[0].id, "once");
+    let resp = waiting.await.unwrap();
+    assert_eq!(status(&resp), 407, "{resp}");
+}
+
+/// 今天的流量用完了：不问用户，直接说用完了。
+#[tokio::test]
+async fn a_used_up_allowance_is_reported_without_asking() {
+    let e = env(EgressMode::Custom, &[], |o| {
+        asking(o);
+        o.daily_bytes = 100;
+    })
+    .await;
+    let day = (chrono::Utc::now() + chrono::Duration::hours(8)).date_naive();
+    use llm_gw::egress::EgressLedger;
+    e.ledger
+        .reserve("inst-1", "user-1", day, 100, 100)
+        .await
+        .unwrap();
+    let (resp, _) = e
+        .connect(&e.echo_target(), Some(&e.token_with(|_| {})))
+        .await;
+    assert_eq!(status(&resp), 429, "{resp}");
+    assert!(resp.contains("quota"), "{resp}");
+    assert!(e.ledger.asks().is_empty());
+}
+
+/// 等用户回答时客户端等不及断开了：照样记一行日志。
+#[tokio::test]
+async fn connections_dropped_while_waiting_are_logged() {
+    let e = Arc::new(env(EgressMode::Custom, &[], asking).await);
+    let token = e.token_with(|_| {});
+    let mut s = TcpStream::connect(e.proxy).await.unwrap();
+    let cred = base64::engine::general_purpose::STANDARD.encode(format!("x:{token}"));
+    let target = e.echo_target();
+    s.write_all(
+        format!("CONNECT {target} HTTP/1.1\r\nHost: {target}\r\nProxy-Authorization: Basic {cred}\r\n\r\n")
+            .as_bytes(),
+    )
+    .await
+    .unwrap();
+    e.wait_for_asks(1).await;
+    drop(s);
+    let records = e.wait_for_records(1).await;
+    assert_eq!(
+        records.iter().map(|r| r.reason).collect::<Vec<_>>(),
+        ["client_gone"]
+    );
+}

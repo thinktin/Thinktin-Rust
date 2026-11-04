@@ -2,8 +2,8 @@
 
 use chrono::{DateTime, Utc};
 use proto::domain::{
-    ApprovalId, InboxItem, InboxItemId, InstanceId, PlanId, RunId, UserId, VaultRequestId,
-    valid_subtype,
+    ApprovalId, EgressRequestId, InboxItem, InboxItemId, InstanceId, PlanId, RunId, UserId,
+    VaultRequestId, valid_subtype,
 };
 use uuid::Uuid;
 
@@ -11,7 +11,7 @@ use crate::{Error, Result, Tenant, Tx, Worker};
 
 #[derive(Debug, Clone, Default)]
 pub struct NewInboxItem {
-    /// run_finished / run_failed / approval / computer_approval / vault_request / plan_confirm / info
+    /// run_finished / run_failed / approval / computer_approval / vault_request / egress_request / plan_confirm / info
     pub kind: String,
     pub title: String,
     pub body: String,
@@ -25,12 +25,14 @@ pub struct NewInboxItem {
     /// 是哪一种提醒（`proto::domain::notice_subtype`）。
     pub subtype: Option<String>,
     pub vault_request_id: Option<VaultRequestId>,
+    /// 出网要问用户的网站（2.7）。
+    pub egress_request_id: Option<EgressRequestId>,
 }
 
 macro_rules! columns {
     () => {
         "id, instance_id, run_id, plan_id, approval_id, kind, title, body, ai_generated, read_at, created_at, \
-         subtype, vault_request_id"
+         subtype, vault_request_id, egress_request_id"
     };
 }
 
@@ -47,6 +49,7 @@ type Row = (
     Option<DateTime<Utc>>,
     DateTime<Utc>,
     Option<String>,
+    Option<Uuid>,
     Option<Uuid>,
 );
 
@@ -65,6 +68,7 @@ fn item(r: Row) -> InboxItem {
         created_at,
         subtype,
         vault_request,
+        egress_request,
     ) = r;
     InboxItem {
         id: InboxItemId(id),
@@ -80,6 +84,7 @@ fn item(r: Row) -> InboxItem {
         created_at,
         subtype,
         vault_request_id: vault_request.map(VaultRequestId),
+        egress_request_id: egress_request.map(EgressRequestId),
     }
 }
 
@@ -100,8 +105,8 @@ impl<R> Tx<R> {
         let done = sqlx::query(
             "INSERT INTO inbox_items \
                (id, user_id, instance_id, run_id, plan_id, approval_id, kind, title, body, dedupe_key, ai_generated, \
-                subtype, vault_request_id) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) \
+                subtype, vault_request_id, egress_request_id) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) \
              ON CONFLICT (user_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING",
         )
         .bind(id.0)
@@ -117,6 +122,7 @@ impl<R> Tx<R> {
         .bind(new.ai_generated)
         .bind(new.subtype.as_deref())
         .bind(new.vault_request_id.map(|v| v.0))
+        .bind(new.egress_request_id.map(|v| v.0))
         .execute(self.conn())
         .await?;
         Ok((done.rows_affected() == 1).then_some(id))
@@ -127,6 +133,17 @@ impl<R> Tx<R> {
         let done = sqlx::query(
             "UPDATE inbox_items SET read_at = now() \
              WHERE vault_request_id = $1 AND kind = 'vault_request' AND read_at IS NULL",
+        )
+        .bind(request.0)
+        .execute(self.conn())
+        .await?;
+        Ok(done.rows_affected())
+    }
+
+    /// 出网请求答过（或者过期了）以后，提醒用户的收件箱条目算已读（2.7）。
+    pub async fn settle_egress_request_inbox(&mut self, request: EgressRequestId) -> Result<u64> {
+        let done = sqlx::query(
+            "UPDATE inbox_items SET read_at = now() WHERE egress_request_id = $1 AND read_at IS NULL",
         )
         .bind(request.0)
         .execute(self.conn())

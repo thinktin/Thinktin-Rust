@@ -70,6 +70,10 @@ pub fn router() -> Router<AppState> {
         )
         .route("/v1/instances/{id}/version", post(instances::set_version))
         .route("/v1/instances/{id}/egress", get(instances::egress))
+        .route(
+            "/v1/instances/{id}/egress/hosts/{host}",
+            delete(instances::remove_egress_host),
+        )
         .route("/v1/egress-requests", get(instances::egress_requests))
         .route(
             "/v1/egress-requests/{id}/decide",
