@@ -35,9 +35,20 @@
   提醒；OpenClaw 也只给 `web_search`（shim 那边过滤）、关掉它自带的搜索。
 - 用户更正：clodex 的搜索用的是 Parallel（parallel.ai）。已改成 Parallel 为主、DeepSeek 和 IQS 备用（`7227fa3`，key
   `THINKTIN_PARALLEL_SEARCH_KEY`），三家接口的格式用假服务器测过。
-- 浏览器设计 workflow 在跑（研究 3 路 → 3 个方案 → 2 个评审 → 合成），结果写进 browser.md“实现设计与验收”。
-- 下一步：浏览器设计出来、用户拍板后实现 → 跨用户项目。用户放好搜索 key 后做小测。
-- 再下一步：浏览器（[浏览器](../browser.md)“实现设计与验收”）→ 跨用户项目。
+- **浏览器设计做完、用户拍板**（[browser.md](../browser.md)“实现设计与验收”，原始结果 `drafts/browser-design.md`）：A 阶段先接受
+  残余风险 R1、存登录状态前把浏览器搬进单独的容器；“同一个网站”按主域名；浏览器等 40 秒；每天 300 MiB（直接上网也改成 300）；
+  先测 1 核 3G；第 6–9 条照建议（过验收的模板默认开、服务端总开关；不上传、不放音视频、遇到验证码和登录就停；跨站跳转重新问）。
+- 浏览器实现（任务 48，分 a–e 五步）：
+  - 48a `37d7d71`：`site_of`（psl）、浏览器通行证（`aud=browser`，普通接口一律不收）、shim 协议 2 和 `EnableBrowser`。
+  - 48b `40f8598`：迁移 0038（`egress_requests.via/site`、日志 `via/kind/page_site`、授权补 `browser`）、按网站查和
+    去重的库函数。
+  - 48c `a4d1ae6`、`8d61567`：出口代理的浏览器通道（用户名 `browser` + 通行证：不按网站问，内网/额度/日志照旧，16 条单独算，
+    这次任务拒绝过的网站不放）和 `POST /v1/browser/ask`（先查地址，再档位、额度、默认、一直允许、这次答过的，最后问用户，按
+    网站去重、最多等 40 秒）。llm-gw 加 `--egress-browser-lanes`，不加就整个关着。测试全过（含 Postgres）。
+  - 48d（进行中）：agent-shim 的浏览器模块：起 Chromium 和 Playwright MCP、CDP 守门、转发口、工具白名单。
+  - 48e：接线（编排服务签通行证、发 `EnableBrowser`；`[browser] enabled`；catalog `[browser] supported`；镜像装 Chromium；
+    五种 agent 的配置）。然后文档、测试、对抗评审。
+- 下一步：48d → 48e → 浏览器评审 → 跨用户项目。用户放好搜索 key（`THINKTIN_PARALLEL_SEARCH_KEY`）后做小测。
 
 ## ⚠️ 紧急交接（2026-10-29 16:00 UTC，本会话 session_016LgPcdynywrhrjCq8VVFLt 周额度快用完）
 

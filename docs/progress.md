@@ -109,6 +109,9 @@
   收到 kind 为 `egress_request` 的推送（iOS category `EGRESS_REQUEST`，高优先级，目标里有 `egress_request`）时用
   `egress_requests` / `decide_egress_request` 弹三个选项；设置里删一直允许的网站用 `remove_instance_egress_host`。见
   egress.md“问用户”和“接口和客户端”。
+  之后（同一会话）：联网搜索默认能用（[search.md](search.md)，Parallel 为主），做完、评审修完；**浏览器**按
+  [browser.md](browser.md)“实现设计与验收”在做（11-04 起，用户已拍板），出口代理那半（浏览器通道和 `/v1/browser/ask`）
+  做完了，现在做 agent-shim 的浏览器模块，然后接线和评审。两小时内别的会话不要重做这几块。
 
 - **client-core 的破坏性改动（2026-10-22，和 iOS、Android 会话约好的一批，`339e191`）**：
   1. `ClientError`（`Network`、`Api`、`Decode`、`Cache`、`InvalidArgument`、`Internal`）和 `PairingError::Malformed` 里的
