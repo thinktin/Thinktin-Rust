@@ -72,6 +72,26 @@ struct Probe<'a> {
     choices: Option<&'a RawValue>,
     #[serde(default, borrow)]
     output: Option<&'a RawValue>,
+    /// Anthropic `content_block_start` 的块。
+    #[serde(default, borrow)]
+    content_block: Option<&'a RawValue>,
+    /// Responses `response.output_item.done` 的条目。
+    #[serde(default, borrow)]
+    item: Option<&'a RawValue>,
+}
+
+/// 一个内容块 / 输出条目：只看种类和名字。
+#[derive(Deserialize)]
+struct BlockKind<'a> {
+    #[serde(rename = "type", default, borrow)]
+    ty: Option<Cow<'a, str>>,
+    #[serde(default, borrow)]
+    name: Option<Cow<'a, str>>,
+}
+
+fn block_kind(raw: Option<&RawValue>) -> Option<(String, Option<String>)> {
+    let b: BlockKind = serde_json::from_str(raw?.get()).ok()?;
+    Some((b.ty?.into_owned(), b.name.map(Cow::into_owned)))
 }
 
 /// Responses 的输出条目：只看种类。
@@ -137,7 +157,10 @@ fn is_empty_array(raw: Option<&RawValue>) -> bool {
 pub struct UsageMeter {
     protocol: Protocol,
     usage: Option<Usage>,
+    /// 厂商最后报的搜索次数。
     web_searches: u64,
+    /// 一边收一边数的（中途断开时厂商的总数还没来）。
+    seen_searches: u64,
 }
 
 impl UsageMeter {
@@ -146,6 +169,7 @@ impl UsageMeter {
             protocol,
             usage: None,
             web_searches: 0,
+            seen_searches: 0,
         }
     }
 
@@ -153,9 +177,9 @@ impl UsageMeter {
         self.usage
     }
 
-    /// 厂商替 agent 搜了几次（厂商另收钱，不在 token 里）。
+    /// 厂商替 agent 搜了几次（厂商另收钱，不在 token 里）。厂商报的总数和一边收一边数的取大的。
     pub fn web_searches(&self) -> u64 {
-        self.web_searches
+        self.web_searches.max(self.seen_searches)
     }
 
     /// 处理一个 SSE 事件的 data。返回 `true` 表示这是只带用量、`choices` 为空的 Chat 分片
@@ -176,6 +200,15 @@ impl UsageMeter {
                         self.merge_anthropic(&u);
                     }
                 }
+                // 服务端工具（搜索）开始了一次。
+                Some("content_block_start") => {
+                    if let Some((ty, name)) = block_kind(p.content_block)
+                        && ty == "server_tool_use"
+                        && name.as_deref() == Some("web_search")
+                    {
+                        self.seen_searches += 1;
+                    }
+                }
                 _ => {}
             },
             Protocol::Chat => {
@@ -188,6 +221,11 @@ impl UsageMeter {
                 return injected;
             }
             Protocol::Responses => {
+                if p.ty.as_deref() == Some("response.output_item.done")
+                    && block_kind(p.item).is_some_and(|(ty, _)| ty == "web_search_call")
+                {
+                    self.seen_searches += 1;
+                }
                 if matches!(
                     p.ty.as_deref(),
                     Some("response.completed" | "response.incomplete" | "response.failed")
@@ -567,6 +605,16 @@ mod tests {
         let mut rb = UsageMeter::new(Protocol::Responses);
         rb.on_body(&bytes(json!({"output":[{"type":"web_search_call"}],"usage":{"input_tokens":1,"output_tokens":1}})));
         assert_eq!(rb.web_searches(), 1);
+        // 中途断开：厂商的总数还没来，按收到的算。
+        let mut cut = UsageMeter::new(Protocol::Anthropic);
+        cut.on_event(&bytes(json!({"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"srvtoolu_1","name":"web_search","input":{}}})));
+        cut.on_event(&bytes(json!({"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}})));
+        assert_eq!(cut.web_searches(), 1);
+        let mut cut = UsageMeter::new(Protocol::Responses);
+        cut.on_event(&bytes(
+            json!({"type":"response.output_item.done","item":{"type":"web_search_call"}}),
+        ));
+        assert_eq!(cut.web_searches(), 1);
         // 没搜：0。
         let mut c = UsageMeter::new(Protocol::Chat);
         c.on_body(&bytes(

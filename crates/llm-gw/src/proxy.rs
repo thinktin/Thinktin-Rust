@@ -1229,6 +1229,10 @@ impl Finisher {
             (_, Some(u)) => (u.total(), false),
             (_, None) => (self.estimate_input.saturating_add(output_estimate), true),
         };
+        if self.record.web_searches > 0 {
+            metrics::counter!("thinktin_llm_vendor_web_searches_total", "vendor" => self.record.vendor.clone())
+                .increment(self.record.web_searches);
+        }
         self.record.outcome = outcome;
         self.record.usage = usage;
         self.record.charged_tokens = charged;
@@ -1339,12 +1343,10 @@ impl Tapped {
 
     fn finish(&mut self, outcome: Outcome) {
         let usage = self.meter.as_ref().and_then(UsageMeter::usage);
-        if let Some(m) = &self.meter {
+        if let Some(m) = &self.meter
+            && !self.finisher.done
+        {
             self.finisher.record.web_searches = m.web_searches();
-            if m.web_searches() > 0 {
-                metrics::counter!("thinktin_llm_vendor_web_searches_total", "vendor" => self.finisher.record.vendor.clone())
-                    .increment(m.web_searches());
-            }
         }
         self.finisher.finish(outcome, usage);
     }
