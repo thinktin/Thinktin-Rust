@@ -68,7 +68,7 @@ git push origin ios-v0.2.0
 
 - 归档失败：看 artifact `ios-release-logs` 里的 `archive.log`。第一次跑通前要确认真机 arm64 的 ThinktinCore 能打出来
   （`mobile.yml` 手动触发也能单独验证）。
-- 密钥检查（`tools/apple/asc_key_check.py`，在编 Rust 之前跑）：401 是密钥 ID、Issuer ID 和 .p8 对不上（或者是个人密钥、
+- 密钥检查（`tools/apple/asc_key_check.py`，单独的 Linux 作业 `key-check`，一分钟内出结果；过了才去排 macOS 机器）：401 是密钥 ID、Issuer ID 和 .p8 对不上（或者是个人密钥、
   已撤销），403 是权限不够（自动签名要“管理（Admin）”）；两个 ID 首尾的空格、换行工作流会去掉，格式不对直接报错。
 - 403 `PLA_NOT_ACCEPTED`（“PLA Update available”）：苹果更新了开发者计划许可协议，账号持有人要登录 developer.apple.com/account
   同意新协议（App Store Connect 的“商务”里有待同意的协议也一并同意），不是密钥的问题。

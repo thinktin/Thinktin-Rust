@@ -61,7 +61,7 @@ GitHub → Actions → **iOS release** → Run workflow（分支选 `main`）：
 
 - 一次大约 25 分钟（Rust 有缓存时）。构建号 = 这个工作流的运行序号，只增不减；版本号手动触发时取 `project.yml` 的
   `MARKETING_VERSION`（现在 0.1.0），打 `ios-v0.2.0` 这种标签时取标签（标签发版**永远连服务器**、用 `macos-26`）。
-- 流程：装密钥 → **先问苹果密钥能不能用**（`tools/apple/asc_key_check.py`，一分钟内出结果）→ 编 Rust → **现建一张分发证书 + 两个 App Store
+- 流程：**先在 Linux 上问苹果密钥能不能用**（作业 `key-check`，`tools/apple/asc_key_check.py`，一分钟内出结果，不用等 macOS 机器）→ macOS 上装密钥（`tools/apple/asc_install_key.sh`，三个作业共用）→ 编 Rust → **现建一张分发证书 + 两个 App Store
   描述文件**（`tools/apple/asc_signing.py`）→ 手动签名归档 → 导出上传 → **撤销证书、删描述文件**（失败也撤销）。
 - 传完苹果还要处理 10～30 分钟；内部测试组能看到所有构建，用户手机上 TestFlight 里点“更新”就行。
 - 查状态不用 Mac：勾 `invite_testers` 跑一次，日志里会打印每个构建的处理状态、内部测试状态、测试员状态。
