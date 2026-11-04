@@ -2,8 +2,9 @@ import Foundation
 
 /// App 里的每一个页面（WBS 12.16，信息架构见 docs/ios-packages.md “信息架构映射总表”、docs/android-design.md 第 3 节）。
 ///
-/// 导航栈（`Router.path`）、sheet（`Router.sheet`）、深链（`DeepLink`）、推送（`PushPayload`）都用它表示目的地；
-/// 界面层（ThinktinUI 的 `AppShell`）按 `feature` 把它分派给各功能目录里的 `XxxDestination`。
+/// 导航栈（`Router.path`）、sheet（`Router.sheet`、`sheetPath`、`nestedSheet`）、深链（`DeepLink`）、推送（`PushPayload`）都用它
+/// 表示目的地；界面层（ThinktinUI 的 `AppShell`）按 `feature` 把它分派给各功能目录里的 `XxxDestination`。导航结构见
+/// docs/ios-ui-redesign.md 第 3 节：首页（实例列表）永远是根，对话压栈，设置和领养是 sheet。
 ///
 /// 加 case 的规矩：要跨功能跳转、要深链的页面才加在这里；只在一个功能里用的子页面，在功能自己的目录里用
 /// `NavigationLink { … } label: { … }` 或 sheet 打开（docs/ios.md 第 9 节）。新加的 case 要同时补上 `feature`、
@@ -22,9 +23,10 @@ public enum AppRoute: Hashable, Sendable, Codable {
 
     // MARK: 对话与运行（12.5）
 
-    /// 首页：还没有实例（或还没选中）时导航栈的根。
+    /// 首页：实例列表，导航栈永远的根（应用框架的页面，`Shell/`）。所有返回的终点。
     case home
-    /// 一个实例的对话（时间线 + 输入框）。总是导航栈的根：打开它等于切换当前实例并回到根。
+    /// 一个实例的对话（时间线 + 输入框）。压进主导航栈（在 sheet 里打开也是先关 sheet），同时记成当前实例
+    /// （`Router.currentInstanceID`：新任务、小组件、快捷指令默认用它）。
     case conversation(InstanceID)
     /// 运行详情。
     case run(RunID)
@@ -35,8 +37,11 @@ public enum AppRoute: Hashable, Sendable, Codable {
 
     // MARK: agent 与实例（12.3）
 
+    /// Agent 目录。入口：引导、没有实例时的“新任务”、对话页“实例已删”的空状态（规范 3.3）。
     case agentCatalog
     case agent(AgentID)
+    /// 领养新实例（首页右上的“+”，sheet）：`agentID` 是预选的 agent，nil 时在表单里选（规范 4.7.1、6.4 A）。
+    case adopt(agentID: AgentID?)
     /// 实例详情：状态说明、改名、升级 / 回滚、删除。深链 `thinktin://instance/{id}` 打开它（和安卓一致）。
     case instance(InstanceID)
 
@@ -51,7 +56,8 @@ public enum AppRoute: Hashable, Sendable, Codable {
 
     // MARK: 计划（12.6）
 
-    case plans
+    /// 计划列表：`instanceID` 为 nil 时是全部实例的（工作台菜单），否则是这个实例的（实例资料的“计划”）。
+    case plans(instanceID: InstanceID?)
     case plan(PlanID)
     /// 新建计划；`instanceID` 是预选的实例（从实例详情、对话里进来时）。
     case newPlan(instanceID: InstanceID?)
@@ -96,6 +102,7 @@ public enum AppRoute: Hashable, Sendable, Codable {
 
     // MARK: 设置（12.12）
 
+    /// 设置（首页左上的头像，sheet）：里面的子页压进 sheet 自己的导航栈（`Router.sheetPath`）。
     case settings
     case licenses
     case about
@@ -111,11 +118,12 @@ public enum AppRoute: Hashable, Sendable, Codable {
 
     // MARK: 搜索（12.21）
 
+    /// 搜索：不压栈，回到首页并激活首页的搜索栏（`Router.searchRequest`）。
     case search
 
     // MARK: 应用框架（12.16）
 
-    /// 抽屉里的“新任务”：选在哪个实例上下任务。
+    /// “新任务”：选在哪个实例上下任务（引导、快捷指令、没有当前实例时）。
     case newTask
     /// 账号被冻结（整页，由 `AppModel.phase` 决定，不进导航栈）。
     case frozen
@@ -130,11 +138,11 @@ extension AppRoute: Identifiable {
 
 /// 页面怎么出现。
 public enum RoutePresentation: Hashable, Sendable {
-    /// 导航栈的根（首页、实例对话）：打开时回到根，不压栈。
+    /// 导航栈的根（首页；搜索是首页原地展开的）：打开时关掉 sheet、回到根，不压栈。
     case root
-    /// 压进导航栈。
+    /// 压栈：sheet 开着时压进 sheet 自己的导航栈，否则压进主导航栈（对话例外，总是先关 sheet 再压进主栈）。
     case push
-    /// 用 sheet 弹出（表单、选择器），里面自带一个导航栈。
+    /// 用 sheet 弹出（表单、选择器、设置），里面自带一个导航栈；sheet 里再开 sheet 页叠一层（最多两层）。
     case sheet
     /// 整页的全局状态（登录、冻结、升级）：由 `AppModel.phase` 决定显示，`Router` 不处理。
     case global
@@ -145,8 +153,8 @@ extension AppRoute {
     public var feature: AppFeature {
         switch self {
         case .signIn, .account, .devices, .pairComputer: .account
-        case .home, .conversation, .run, .runTree, .activeRuns: .conversation
-        case .agentCatalog, .agent, .instance: .agents
+        case .conversation, .run, .runTree, .activeRuns: .conversation
+        case .agentCatalog, .agent, .adopt, .instance: .agents
         case .credentials, .addCredential, .credential, .modelRoutes, .usage: .models
         case .plans, .plan, .newPlan, .editPlan, .confirmPlan: .plans
         case .teams, .team, .teamTemplates, .pipelineEditor: .teams
@@ -158,35 +166,48 @@ extension AppRoute {
         case .imChannels: .imChannels
         case .onboarding: .onboarding
         case .search: .search
-        case .newTask, .frozen, .upgrade: .shell
+        case .home, .newTask, .frozen, .upgrade: .shell
         }
     }
 
-    /// 页面怎么出现。表单和选择器用 sheet，整页状态由 `AppModel` 管，其余压栈。
+    /// 页面怎么出现。首页和搜索是根；表单、选择器、设置、领养用 sheet；整页状态由 `AppModel` 管；其余压栈。
     public var presentation: RoutePresentation {
         switch self {
-        case .home, .conversation: .root
+        case .home, .search: .root
         case .signIn, .frozen, .upgrade: .global
-        case .newTask, .addCredential, .newPlan, .editPlan, .onboarding, .pairComputer: .sheet
+        case .newTask, .addCredential, .newPlan, .editPlan, .onboarding, .pairComputer, .settings, .adopt: .sheet
         default: .push
         }
     }
 
-    /// 抽屉直达的顶级页面：从抽屉打开时导航栈先回到根再压它（返回就回到对话，和安卓的 `popUpTo(home)` 一致）。
+    /// 首页“工作台”菜单直达的顶级页面（`Router.openTopLevel`）：先关掉 sheet、回到首页再压它，返回就回到首页
+    /// （和安卓的 `popUpTo(home)` 一致）。
     public var isTopLevel: Bool {
         switch self {
-        case .inbox, .approvals, .activeRuns, .plans, .teams, .settings, .search, .agentCatalog: true
-        case .artifacts(let instanceID): instanceID == nil
+        case .inbox, .approvals, .activeRuns, .teams: true
+        case .plans(let instanceID), .artifacts(let instanceID): instanceID == nil
         default: false
         }
     }
 
-    /// 页面所属的实例（有的话）：从推送、深链打开时顺带切换当前实例，返回时回到这个实例的对话。
+    /// 页面所属的实例（有的话）：打开对话、从推送和深链打开时记成当前实例；实例被删时它的页面一起拿掉
+    /// （`Router.removeRoutes(of:)`）。
     public var instanceID: InstanceID? {
         switch self {
         case .conversation(let id), .instance(let id), .modelRoutes(let id): id
-        case .newPlan(let id), .artifacts(let id): id
+        case .newPlan(let id), .artifacts(let id), .plans(let id): id
         default: nil
+        }
+    }
+
+    /// 从外面（深链、推送）打开时，返回栈要不要经过所属实例的对话（规范 3.4）：实例资料、模型路由、实例的计划和产出物、
+    /// 运行详情和运行树、产出物详情是“首页 → 实例的对话 → 目标页”（运行的实例要推送里带着）；其余（收件箱、审批、
+    /// 计划详情、保险箱请求……）是“首页 → 目标页”。返回栈由 `DeepLink.backStack(to:instanceID:)` 算。
+    public var returnsToConversation: Bool {
+        switch self {
+        case .instance, .modelRoutes, .run, .runTree, .artifact: true
+        case .plans(let instanceID), .artifacts(let instanceID): instanceID != nil
+        default: false
         }
     }
 

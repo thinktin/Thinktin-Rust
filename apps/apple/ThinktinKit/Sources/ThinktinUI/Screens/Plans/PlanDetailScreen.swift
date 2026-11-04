@@ -67,7 +67,7 @@ private struct PlanDetailContent: View {
                         message: zh ? "它可能已经被删除了，或者被 agent 取消了。" : "It may have been deleted or cancelled by an agent.",
                         actionTitle: zh ? "看全部计划" : "All plans"
                     ) {
-                        router.open(.plans)
+                        router.open(.plans(instanceID: nil))
                     }
                 } else if model.isLoading || model.error == nil {
                     LoadingStateView()

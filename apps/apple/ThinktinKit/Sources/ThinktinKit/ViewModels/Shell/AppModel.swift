@@ -340,16 +340,16 @@ public final class AppModel {
         enter(.signedOut)
     }
 
-    /// 切换当前实例并回到它的对话。
+    /// 切换当前实例并从首页进它的对话（“首页 → 对话”）。
     public func selectInstance(_ instanceID: InstanceID) {
         router.selectInstance(instanceID)
     }
 
-    /// 抽屉里的“新任务”：只有一个实例时直接回到它的对话、把焦点放进输入框；有好几个时弹出选择（`.newTask`）；
+    /// “新任务”：只有一个实例时直接进它的对话、把焦点放进输入框；有好几个时弹出选择（`.newTask`）；
     /// 还没有实例时去 agent 目录领养。
     public func startNewTask() {
         switch instances.count {
-        case 0: router.openFromDrawer(.agentCatalog)
+        case 0: router.openTopLevel(.agentCatalog)
         case 1: router.requestNewTask(in: instances[0].id)
         default: router.present(.newTask)
         }
@@ -713,18 +713,15 @@ public final class AppModel {
         reconcileSelection()
     }
 
-    /// 当前实例不在列表里（被删了）或还没选：换成上次选的，再不行就是最近活跃的；没有实例时回到首页。
-    /// 原来选着的实例没了，导航栈回到根（它的页面都没意义了）。
+    /// 当前实例不在列表里（被删了）或还没选：换成上次选的，再不行就是最近活跃的；没有实例时为 nil。
+    /// 原来选着的实例没了，各层导航栈里它的页面拿掉（它的页面都没意义了），其余的不动。
     private func reconcileSelection() {
         let ids = Set(instances.map(\.id))
         if let current = router.currentInstanceID, ids.contains(current) { return }
         let stored = selection.load().flatMap { ids.contains($0) ? $0 : nil }
         let next = stored ?? instances.first?.id
-        if router.currentInstanceID == nil {
-            router.currentInstanceID = next
-        } else {
-            router.selectInstance(next)
-        }
+        if let removed = router.currentInstanceID { router.removeRoutes(of: removed) }
+        router.currentInstanceID = next
     }
 
     private func streamChanged(_ status: StreamStatus, instanceID: InstanceID, token: UUID) {

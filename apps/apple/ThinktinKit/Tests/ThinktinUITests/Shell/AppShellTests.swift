@@ -4,7 +4,8 @@ import ThinktinKit
 
 @testable import ThinktinUI
 
-/// 应用框架（WBS 12.16）的界面：四种登录状态、抽屉、实例切换、全局横幅，以及每个页面的接入点都能布局。
+/// 应用框架（WBS 12.16）的界面：四种登录状态、两层 sheet、过渡用的抽屉和实例切换、全局横幅，以及每个页面的接入点
+/// 都能布局。
 /// 逻辑（路由、深链、全局状态）在 ThinktinKitTests 的 Navigation、Shell 里测。
 @MainActor
 @Suite("应用框架的界面")
@@ -14,13 +15,14 @@ struct AppShellTests {
         .signIn, .account, .devices, .home, .conversation(DemoData.writerID), .run(DemoData.postRunID),
         .runTree(DemoData.postRunID), .activeRuns, .agentCatalog, .agent(DemoData.claudeAgentID),
         .instance(DemoData.writerID), .credentials, .addCredential, .credential(DemoData.claudeCredentialID),
-        .modelRoutes(DemoData.writerID), .usage, .plans, .plan(DemoData.digestPlanID), .newPlan(instanceID: nil),
+        .modelRoutes(DemoData.writerID), .usage, .plans(instanceID: nil), .plans(instanceID: DemoData.writerID),
+        .plan(DemoData.digestPlanID), .newPlan(instanceID: nil),
         .editPlan(DemoData.digestPlanID), .confirmPlan(DemoData.agentPlanID), .teams, .team(DemoData.releaseTeamID),
         .teamTemplates,
         .pipelineEditor(planID: nil, teamID: DemoData.releaseTeamID), .inbox, .inboxItem("inbox-1"), .approvals,
         .approval(DemoData.pendingApprovalID), .artifacts(instanceID: nil), .vault, .vaultItem(DemoData.githubVaultID),
         .vaultRequest(DemoData.npmVaultRequestID), .settings, .licenses, .about, .imChannels, .onboarding, .search,
-        .newTask, .frozen, .upgrade,
+        .newTask, .frozen, .upgrade, .adopt(agentID: nil), .adopt(agentID: DemoData.claudeAgentID),
     ]
 
     private func started(_ client: MockClient) async -> AppModel {
@@ -52,12 +54,31 @@ struct AppShellTests {
     @Test("压了页面、开着 sheet 的主界面")
     func stackAndSheet() async {
         let model = await started(ShellPreviewClients.signedIn())
+        model.router.open(.conversation(DemoData.writerID))
         model.router.open(.run(DemoData.postRunID))
         model.router.open(.runTree(DemoData.postRunID))
         hostAndLayout(AppShell(model: model))
         model.startNewTask()
         #expect(model.router.sheet == .newTask)
         hostAndLayout(AppShell(model: model))
+    }
+
+    @Test("设置是 sheet：里面压栈、再叠一层添加 key")
+    func settingsSheet() async {
+        let model = await started(ShellPreviewClients.signedIn())
+        model.router.open(.settings)
+        #expect(model.router.sheet == .settings)
+        hostAndLayout(AppShell(model: model))
+        model.router.open(.credentials)
+        model.router.open(.addCredential)
+        #expect(model.router.sheetPath == [.credentials])
+        #expect(model.router.nestedSheet == .addCredential)
+        hostAndLayout(AppShell(model: model).environment(\.displayLanguage, .english).preferredColorScheme(.dark))
+        // 设置、领养的根页面由应用框架补关闭按钮，其余 sheet 自己带“取消 / 完成”。
+        #expect(SheetStack.addsCloseButton(to: .settings))
+        #expect(SheetStack.addsCloseButton(to: .adopt(agentID: nil)))
+        #expect(!SheetStack.addsCloseButton(to: .newTask))
+        #expect(!SheetStack.addsCloseButton(to: .addCredential))
     }
 
     @Test("每个页面的接入点都能布局（中文浅色、英文深色）")
@@ -68,22 +89,20 @@ struct AppShellTests {
         }
     }
 
-    @Test("抽屉：有实例、没有实例、离线")
+    @Test("抽屉（过渡用）：有实例、没有实例、离线")
     func drawer() async {
         let model = await started(ShellPreviewClients.signedIn())
-        model.router.openDrawer()
-        hostAndLayout(ShellDrawer(model: model).shellEnvironment(model))
+        hostAndLayout(ShellDrawer(model: model, isOpen: .constant(true)).shellEnvironment(model))
         hostAndLayout(
-            ShellDrawer(model: model).shellEnvironment(model).environment(\.displayLanguage, .english)
+            ShellDrawer(model: model, isOpen: .constant(true)).shellEnvironment(model)
+                .environment(\.displayLanguage, .english)
                 .preferredColorScheme(.dark))
 
         let empty = await started(ShellPreviewClients.empty())
-        empty.router.openDrawer()
         #expect(empty.instances.isEmpty)
-        hostAndLayout(ShellDrawer(model: empty).shellEnvironment(empty))
+        hostAndLayout(ShellDrawer(model: empty, isOpen: .constant(true)).shellEnvironment(empty))
 
-        model.router.closeDrawer()
-        hostAndLayout(ShellDrawer(model: model).shellEnvironment(model), expectContent: false)
+        hostAndLayout(ShellDrawer(model: model, isOpen: .constant(false)).shellEnvironment(model), expectContent: false)
     }
 
     @Test("实例切换菜单：有实例、没有实例")

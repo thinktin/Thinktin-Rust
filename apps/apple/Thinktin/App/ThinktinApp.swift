@@ -45,9 +45,6 @@ struct ThinktinApp: App {
                         if let url = AppConfiguration.launchURL(environment: environment) {
                             _ = model.router.handle(url: url)
                         }
-                        if AppConfiguration.opensDrawerAtLaunch(environment: environment) {
-                            model.router.isDrawerOpen = true
-                        }
                     #endif
                 }
         }

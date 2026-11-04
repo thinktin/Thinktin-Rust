@@ -320,11 +320,11 @@ private struct InstanceDetailContent: View {
 }
 
 extension InstanceDetailScreen {
-    /// 实例删掉之后：导航栈里属于它的页面（实例详情、它的路由、产出物）都拿掉，再刷新应用框架的实例列表
-    /// （当前实例被删时应用框架会换到别的实例、回到根）。
+    /// 实例删掉之后：各层导航栈里从它的第一个页面（对话、实例资料、它的路由、产出物）起都拿掉，再刷新应用框架的实例列表
+    /// （当前实例被删时应用框架会换成别的实例）。
     @MainActor
     static func leaveDeletedInstance(_ id: InstanceID, app: AppModel, router: Router) async {
-        router.path.removeAll { $0.instanceID == id }
+        router.removeRoutes(of: id)
         await app.refresh()
     }
 }

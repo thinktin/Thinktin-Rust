@@ -20,7 +20,7 @@ struct DeepLinkTests {
         #expect(route("thinktin://inbox") == .inbox)
         #expect(route("thinktin://inbox/item-3") == .inboxItem("item-3"))
         #expect(route("thinktin://vault/request/req-7") == .vaultRequest("req-7"))
-        // 和安卓一致：实例深链打开实例详情。
+        // 和安卓一致：实例深链打开实例资料。
         #expect(route("thinktin://instance/inst-1") == .instance("inst-1"))
         // 小组件用的（12.20）。
         #expect(route("thinktin://approvals") == .approvals)
@@ -81,6 +81,39 @@ struct DeepLinkTests {
         #expect(!DeepLink.isValidID("a.b"))
         #expect(!DeepLink.isValidID("a b"))
         #expect(!DeepLink.isValidID("../x"))
+    }
+
+    @Test("返回栈（规范 3.4）：首页 → 目标页，实例的页面经过它的对话")
+    func backStacks() {
+        // 和实例有关的页面：首页 → 实例的对话 → 目标页（实例来自页面自己或推送）。
+        #expect(DeepLink.backStack(to: .instance("i1")) == [.conversation("i1"), .instance("i1")])
+        #expect(DeepLink.backStack(to: .modelRoutes("i1")) == [.conversation("i1"), .modelRoutes("i1")])
+        #expect(
+            DeepLink.backStack(to: .artifacts(instanceID: "i1")) == [.conversation("i1"), .artifacts(instanceID: "i1")])
+        #expect(DeepLink.backStack(to: .plans(instanceID: "i1")) == [.conversation("i1"), .plans(instanceID: "i1")])
+        #expect(DeepLink.backStack(to: .run("r1"), instanceID: "i2") == [.conversation("i2"), .run("r1")])
+        #expect(DeepLink.backStack(to: .runTree("r1"), instanceID: "i2") == [.conversation("i2"), .runTree("r1")])
+        // 页面自己所属的实例优先于传进来的。
+        #expect(DeepLink.backStack(to: .instance("i1"), instanceID: "i2") == [.conversation("i2"), .instance("i1")])
+        // 不知道是哪个实例的运行：首页 → 运行详情。
+        #expect(DeepLink.backStack(to: .run("r1")) == [.run("r1")])
+        // 只有实例：首页 → 对话。
+        #expect(DeepLink.backStack(to: .conversation("i3"), instanceID: "i4") == [.conversation("i3")])
+        // 其余：首页 → 目标页（推送里有实例也不经过对话）。
+        for route in [
+            AppRoute.inbox, .inboxItem("x"), .approvals, .approval("a"), .plan("p"), .confirmPlan("p"),
+            .plans(instanceID: nil), .artifacts(instanceID: nil), .vaultRequest("v"), .activeRuns, .imChannels,
+        ] {
+            #expect(DeepLink.backStack(to: route, instanceID: "i5") == [route], "\(route)")
+        }
+        // 根页面、sheet、整页状态不进主栈。
+        for route in [AppRoute.home, .search, .settings, .adopt(agentID: nil), .newPlan(instanceID: "i"), .frozen] {
+            #expect(DeepLink.backStack(to: route, instanceID: "i5").isEmpty, "\(route)")
+        }
+        // 深链能到的页面都有返回栈，最后一页是它自己。
+        for route in RouteSamples.all where DeepLink.url(for: route) != nil {
+            #expect(DeepLink.backStack(to: route).last == route, "\(route)")
+        }
     }
 
     @Test("页面 → 深链，再解析回来")

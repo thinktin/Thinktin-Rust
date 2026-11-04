@@ -10,7 +10,8 @@ import ThinktinKit
 /// 5. 服务端拒收（订阅类 key、套餐地址）时显示本地化的原因，认得出是哪个字段的显示在那个字段下面；加好后说明能用哪些协议、
 ///    等 key 的任务会接着跑。
 ///
-/// 从某个实例的模型路由页弹出来时（导航栈顶是 `.modelRoutes(id)`），提示这把 key 能不能给那个实例的 agent 用；
+/// 从某个实例的模型路由页弹出来时（sheet 底下的页面是 `.modelRoutes(id)`，`Router.routeBelowSheet`），提示这把 key
+/// 能不能给那个实例的 agent 用；
 /// 加好关掉 sheet，路由页会刷新 key 列表、把新 key 选进还没配的 main。
 struct AddCredentialSheet: View {
     @Environment(\.client) private var client
@@ -19,7 +20,7 @@ struct AddCredentialSheet: View {
 
     var body: some View {
         let target: Instance? = {
-            guard case .modelRoutes(let id) = router.topRoute else { return nil }
+            guard case .modelRoutes(let id) = router.routeBelowSheet else { return nil }
             return app.instances.first { $0.id == id }
         }()
         AddCredentialContent(client: client, targetInstance: target)

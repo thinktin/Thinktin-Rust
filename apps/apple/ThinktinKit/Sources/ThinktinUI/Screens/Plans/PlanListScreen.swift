@@ -1,7 +1,7 @@
 import SwiftUI
 import ThinktinKit
 
-/// 计划列表（`.plans`，抽屉里的“计划”）：
+/// 计划列表（`.plans(instanceID:)`：工作台菜单的“计划”是全部的，实例资料的“计划”预先筛选那个实例）：
 ///
 /// - 顶上一排筛选（全部、各个实例，流水线有一步在这个实例上的也算）；
 /// - agent 建的、改的等确认的置顶，带角标，卡片上直接“查看并确认”或删除（等确认的不能直接恢复）；
@@ -10,10 +10,13 @@ import ThinktinKit
 ///
 /// 离线策略是“没有缓存”：离线时显示已经拉到的，没有就是空状态；写操作都禁用。
 struct PlanListScreen: View {
+    /// 一开始筛选的实例（nil 是全部）。
+    var instanceFilter: InstanceID?
+
     @Environment(\.client) private var client
 
     var body: some View {
-        PlanListContent(client: client)
+        PlanListContent(client: client, instanceFilter: instanceFilter)
     }
 }
 
@@ -22,13 +25,16 @@ private struct PlanListContent: View {
     /// 等二次确认要删的计划。
     @State private var pendingDeletion: Plan?
     @State private var isConfirmingDeletion = false
+    /// 这一页的路由（回到最前面时刷新用）。
+    private let route: AppRoute
 
     @Environment(AppModel.self) private var app
     @Environment(Router.self) private var router
     @Environment(\.displayLanguage) private var language
 
-    init(client: any ClientProtocol) {
-        _model = State(initialValue: PlanListModel(client: client))
+    init(client: any ClientProtocol, instanceFilter: InstanceID?) {
+        _model = State(initialValue: PlanListModel(client: client, instanceFilter: instanceFilter))
+        route = .plans(instanceID: instanceFilter)
     }
 
     var body: some View {
@@ -38,7 +44,7 @@ private struct PlanListContent: View {
         ScrollView {
             VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
                 PageHeader(
-                    title: AppRoute.plans.title(language),
+                    title: route.title(language),
                     message: zh
                         ? "让 agent 按时干活。agent 自己安排的计划要你确认后才会运行。"
                         : "Have agents work on a schedule. Plans an agent sets up run only after you confirm them.")
@@ -61,7 +67,7 @@ private struct PlanListContent: View {
             .pageLayout()
         }
         .background(Theme.paper)
-        .inlineNavigationTitle(AppRoute.plans.title(language))
+        .inlineNavigationTitle(route.title(language))
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -76,8 +82,8 @@ private struct PlanListContent: View {
         .refreshable { await model.load() }
         // 每次回到这一页（从详情、确认页回来，新建的 sheet 关掉）都重新拉：别处可能改过。
         .task { await model.load() }
-        .onChange(of: router.sheet) {
-            if router.sheet == nil { Task { await model.load() } }
+        .onChange(of: router.visibleRoute) {
+            if router.visibleRoute == route { Task { await model.load() } }
         }
         .onChange(of: app.isOffline) {
             if !app.isOffline { Task { await model.load() } }

@@ -5,7 +5,7 @@
 #
 #   tools/apple/screenshots.sh [输出目录，默认 target/screenshots]
 #
-# 每张图都重新启动 App，用环境变量 THINKTIN_OPEN_URL / THINKTIN_OPEN_DRAWER 指定启动后的页面（只有 Debug 构建认，见
+# 每张图都重新启动 App，用环境变量 THINKTIN_OPEN_URL 指定启动后的页面（只有 Debug 构建认，见
 # AppConfiguration）：`simctl openurl` 会先弹系统的确认框挡住页面。中文界面，状态栏固定成 9:41、满电。
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -72,8 +72,6 @@ npm_request=0192f3a0-0000-7000-8000-000000000801
 
 launch
 shot 01-home
-launch SIMCTL_CHILD_THINKTIN_OPEN_DRAWER=1
-shot 02-drawer
 open_and_shot 03-instance "thinktin://instance/$writer"
 open_and_shot 04-run "thinktin://run/$weekly_run"
 open_and_shot 05-approvals "thinktin://approvals"
@@ -82,10 +80,8 @@ open_and_shot 07-plan "thinktin://plan/$digest_plan"
 open_and_shot 08-inbox "thinktin://inbox"
 open_and_shot 09-active "thinktin://active"
 open_and_shot 10-vault-request "thinktin://vault/request/$npm_request"
-# 深色模式的首页和抽屉。
+# 深色模式的首页。
 xcrun simctl ui "$udid" appearance dark
 launch
 shot 11-home-dark
-launch SIMCTL_CHILD_THINKTIN_OPEN_DRAWER=1
-shot 12-drawer-dark
 xcrun simctl ui "$udid" appearance light

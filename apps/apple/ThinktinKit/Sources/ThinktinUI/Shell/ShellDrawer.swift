@@ -5,37 +5,41 @@ import ThinktinKit
 /// 团队 / 产出物（带角标）、实例列表（状态点、最后活动时间、等你处理的提示），底部头像进设置。
 ///
 /// 盖在导航栈上面：点空白处、向左划、读屏的“返回”手势都能关掉。每次打开时角标太久没刷新就刷新一次。
+///
+/// 过渡用：改版后没有抽屉（入口挪到首页的工作台菜单，docs/ios-ui-redesign.md 6.1 A1），第 0 轮做首页时删掉这个文件。
+/// 开没开由 `AppShell` 的本地状态管（`Router` 不再有抽屉状态），点了入口先关抽屉再跳。
 struct ShellDrawer: View {
     let model: AppModel
+    @Binding var isOpen: Bool
 
     var body: some View {
-        let router = model.router
         ZStack(alignment: .leading) {
-            if router.isDrawerOpen {
+            if isOpen {
                 // 点空白处关闭；读屏不读这一层，用面板里的关闭按钮。
                 Color.black.opacity(0.3)
                     .ignoresSafeArea()
-                    .onTapGesture { router.closeDrawer() }
+                    .onTapGesture { isOpen = false }
                     .accessibilityHidden(true)
                     .transition(.opacity)
-                DrawerPanel(model: model)
+                DrawerPanel(model: model, isOpen: $isOpen)
                     .containerRelativeFrame(.horizontal) { width, _ in min(Metrics.drawerMaxWidth, width * 0.85) }
                     .transition(.move(edge: .leading))
                     // 向左划关闭。和面板里的滚动同时识别，不抢滚动。
                     .simultaneousGesture(
                         DragGesture(minimumDistance: 20).onEnded { value in
                             let width = value.translation.width
-                            if width < -60, abs(width) > abs(value.translation.height) { router.closeDrawer() }
+                            if width < -60, abs(width) > abs(value.translation.height) { isOpen = false }
                         })
             }
         }
-        .animation(.snappy, value: router.isDrawerOpen)
+        .animation(.snappy, value: isOpen)
     }
 }
 
 /// 抽屉的面板。
 private struct DrawerPanel: View {
     let model: AppModel
+    @Binding var isOpen: Bool
 
     @Environment(\.displayLanguage) private var language
     @Environment(\.displayScale) private var displayScale
@@ -49,6 +53,7 @@ private struct DrawerPanel: View {
                 DrawerRow(
                     title: AppRoute.newTask.title(language), systemImage: "square.and.pencil", isEmphasized: true
                 ) {
+                    isOpen = false
                     model.startNewTask()
                 }
             }
@@ -65,7 +70,8 @@ private struct DrawerPanel: View {
                                 count: model.badges.count(for: entry), language: language),
                             isSelected: router.path.first == entry.route
                         ) {
-                            router.openFromDrawer(entry.route)
+                            isOpen = false
+                            router.openTopLevel(entry.route)
                         }
                     }
                     Text(language == .chinese ? "实例" : "Instances")
@@ -75,7 +81,7 @@ private struct DrawerPanel: View {
                         .padding(.top, Metrics.Spacing.m)
                         .padding(.bottom, Metrics.Spacing.xxs)
                         .accessibilityAddTraits(.isHeader)
-                    DrawerInstanceList(model: model)
+                    DrawerInstanceList(model: model, isOpen: $isOpen)
                 }
                 .padding(.horizontal, Metrics.Spacing.s)
                 .padding(.bottom, Metrics.Spacing.m)
@@ -96,7 +102,7 @@ private struct DrawerPanel: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityAddTraits(.isModal)
-        .accessibilityAction(.escape) { router.closeDrawer() }
+        .accessibilityAction(.escape) { isOpen = false }
         .task { await model.refreshBadgesIfStale() }
     }
 
@@ -113,7 +119,7 @@ private struct DrawerPanel: View {
             }
             Spacer()
             Button {
-                model.router.closeDrawer()
+                isOpen = false
             } label: {
                 Image(systemName: "xmark")
                     .foregroundStyle(Theme.inkSecondary)
@@ -131,7 +137,8 @@ private struct DrawerPanel: View {
     /// 搜索入口（12.21 做搜索页，这里只是入口）：长得像一个搜索框。
     private var searchButton: some View {
         Button {
-            model.router.openFromDrawer(.search)
+            isOpen = false
+            model.router.open(.search)
         } label: {
             HStack(spacing: Metrics.Spacing.xs) {
                 Image(systemName: "magnifyingglass")
@@ -154,7 +161,8 @@ private struct DrawerPanel: View {
     private var footer: some View {
         let name = model.user?.nameForDisplay ?? ""
         return Button {
-            model.router.openFromDrawer(.settings)
+            isOpen = false
+            model.router.open(.settings)
         } label: {
             HStack(spacing: Metrics.Spacing.s) {
                 Text(verbatim: name.first.map(String.init) ?? "·")
@@ -235,6 +243,7 @@ private struct DrawerRow: View {
 /// 抽屉里的实例列表：先显示缓存，再拉最新的；出错显示横幅，可以重试。
 private struct DrawerInstanceList: View {
     let model: AppModel
+    @Binding var isOpen: Bool
 
     @Environment(\.displayLanguage) private var language
 
@@ -260,7 +269,8 @@ private struct DrawerInstanceList: View {
                     : "Adopt an agent from the catalog to start giving it tasks.",
                 actionTitle: language == .chinese ? "去领养" : "Browse agents"
             ) {
-                model.router.openFromDrawer(.agentCatalog)
+                isOpen = false
+                model.router.openTopLevel(.agentCatalog)
             }
         } else {
             if let error = model.refreshError {
@@ -274,6 +284,7 @@ private struct DrawerInstanceList: View {
                             instance: instance, activity: model.activity(for: instance.id),
                             isSelected: instance.id == model.router.currentInstanceID, now: context.date
                         ) {
+                            isOpen = false
                             model.selectInstance(instance.id)
                         }
                     }
@@ -368,21 +379,15 @@ extension DrawerEntry {
 
 #Preview("抽屉 · 浅色中文") {
     let model = AppModel(client: ShellPreviewClients.signedIn(), defaults: nil)
-    ShellDrawer(model: model)
-        .task {
-            model.router.openDrawer()
-            await model.start()
-        }
+    ShellDrawer(model: model, isOpen: .constant(true))
+        .task { await model.start() }
         .environment(\.displayLanguage, .chinese)
 }
 
 #Preview("抽屉 · 深色英文、没有实例") {
     let model = AppModel(client: ShellPreviewClients.empty(), defaults: nil)
-    ShellDrawer(model: model)
-        .task {
-            model.router.openDrawer()
-            await model.start()
-        }
+    ShellDrawer(model: model, isOpen: .constant(true))
+        .task { await model.start() }
         .environment(\.displayLanguage, .english)
         .preferredColorScheme(.dark)
 }

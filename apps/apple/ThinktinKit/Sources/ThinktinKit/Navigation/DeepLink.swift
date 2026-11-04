@@ -8,14 +8,15 @@ import Foundation
 /// | `thinktin://run/{id}` | 运行详情 |
 /// | `thinktin://approval/{id}` | 审批详情 |
 /// | `thinktin://plan/{id}` | 计划详情 |
-/// | `thinktin://instance/{id}` | 实例详情（安卓也是实例设置页） |
+/// | `thinktin://instance/{id}` | 实例资料（安卓是实例设置页） |
 /// | `thinktin://inbox`、`thinktin://inbox/{id}` | 收件箱、收件箱里的一条 |
 /// | `thinktin://vault/request/{id}` | 保险箱的填写请求 |
 /// | `thinktin://approvals` | 审批中心（小组件的“待审批”，12.20） |
 /// | `thinktin://active` | 进行中（小组件的“进行中”，12.20；安卓没有这一页，不认） |
 /// | `thinktin-pair:v1?…` | 和电脑配对（12.9）：电脑上的二维码，用系统相机扫到时打开；整条深链就是配对码 |
 ///
-/// 打开后返回栈是“根（当前实例的对话）→ 目标页”，和安卓的冷启动一致（`Router.show(_:in:)`）。
+/// 打开后返回栈是“首页 → 目标页”，和实例有关的页面是“首页 → 实例的对话 → 目标页”（`backStack(to:instanceID:)`，
+/// 规范 docs/ios-ui-redesign.md 3.4；`Router.show(_:in:)` 用它）。安卓现在还是抽屉结构，返回栈不一样（规范 6.1）。
 /// 深链是外部输入：认不出的格式、多余的路径段、不像 id 的 id 一律不认（返回 nil），查询参数和片段忽略。
 public enum DeepLink {
     /// URL scheme（project.yml 的 `CFBundleURLTypes` 注册了它）。
@@ -67,6 +68,22 @@ public enum DeepLink {
         }
         guard segments.dropFirst().allSatisfy({ isValidID($0) || $0 == "request" }) else { return nil }
         return URL(string: "\(scheme)://" + segments.joined(separator: "/"))
+    }
+
+    /// 从外面打开 `route` 时首页之上的返回栈（规范 3.4）：
+    ///
+    /// - 实例的对话：首页 → 对话（推送里只有实例 id 时也是这样）；
+    /// - 和实例有关的页面（`AppRoute.returnsToConversation`：实例资料、模型路由、实例的计划和产出物、运行详情、运行树），
+    ///   知道是哪个实例时（`instanceID`，或页面自己所属的实例）：首页 → 实例的对话 → 目标页，返回先回到对话；
+    /// - 其余压栈的页面（收件箱、审批、计划详情、保险箱请求……）：首页 → 目标页；
+    /// - 根页面、sheet、整页状态不进主导航栈：空。
+    public static func backStack(to route: AppRoute, instanceID: InstanceID? = nil) -> [AppRoute] {
+        guard route.presentation == .push else { return [] }
+        if case .conversation = route { return [route] }
+        if route.returnsToConversation, let owner = instanceID ?? route.instanceID {
+            return [.conversation(owner), route]
+        }
+        return [route]
     }
 
     /// 像服务端 id 的字符串：1 到 128 个 ASCII 字母、数字、`-`、`_`（服务端的 id 是 UUID，agent id 是小写字母）。

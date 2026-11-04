@@ -7,7 +7,7 @@ import Foundation
 public enum AppFeature: String, CaseIterable, Hashable, Sendable {
     /// 登录、设备、账号（12.2）。
     case account
-    /// agent 目录、领养、实例详情（12.3）。
+    /// agent 目录、领养（`.adopt`）、实例详情（12.3）。
     case agents
     /// 模型 key、模型路由、用量（12.4）。
     case models
@@ -33,7 +33,7 @@ public enum AppFeature: String, CaseIterable, Hashable, Sendable {
     case artifacts
     /// 搜索（12.21）。
     case search
-    /// 应用框架自己的页面：新任务、冻结页、升级页（12.16，在 `Shell/` 里，不在 `Screens/`）。
+    /// 应用框架自己的页面：首页（实例列表）、新任务、冻结页、升级页（12.16，在 `Shell/` 里，不在 `Screens/`）。
     case shell
 
     /// 负责的工作包（WBS 编号）。

@@ -42,7 +42,7 @@ struct DestinationPlaceholder: View {
 }
 
 #Preview("占位页 · 浅色中文") {
-    DestinationPlaceholder(route: .plans).previewShell()
+    DestinationPlaceholder(route: .plans(instanceID: nil)).previewShell()
 }
 
 #Preview("占位页 · 深色英文") {

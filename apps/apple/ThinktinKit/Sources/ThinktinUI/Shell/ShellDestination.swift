@@ -1,7 +1,10 @@
 import SwiftUI
 import ThinktinKit
 
-/// 应用框架自己的页面（`feature == .shell`）：新任务的实例选择、冻结页、升级页。
+/// 应用框架自己的页面（`feature == .shell`）：首页、新任务的实例选择、冻结页、升级页。
+///
+/// 首页（`.home`，主导航栈永远的根）过渡期还是对话目录里的问候页（`ConversationHomeScreen`），第 0 轮下一步换成
+/// `Shell/Home/` 的实例列表。
 struct ShellDestination: View {
     let route: AppRoute
 
@@ -9,6 +12,7 @@ struct ShellDestination: View {
 
     var body: some View {
         switch route {
+        case .home: ConversationHomeScreen()
         case .newTask: NewTaskSheet(model: model)
         case .frozen: FrozenView(model: model)
         case .upgrade: UpgradeView()
@@ -17,7 +21,7 @@ struct ShellDestination: View {
     }
 }
 
-/// “新任务”的实例选择（有好几个实例时，从抽屉的“新任务”弹出）：选一个就回到它的对话、把焦点放进输入框；
+/// “新任务”的实例选择（有好几个实例时，从“新任务”弹出）：选一个就进它的对话（先关掉 sheet）、把焦点放进输入框；
 /// 下面可以去领养新的 agent。
 private struct NewTaskSheet: View {
     let model: AppModel

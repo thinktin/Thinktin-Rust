@@ -66,16 +66,16 @@ private struct OnboardingContent: View {
         .task { await model.load() }
     }
 
-    /// 关掉引导：sheet 里收起，设置里压栈打开的退回去。
+    /// 关掉引导：sheet 里（第一层，或叠在设置上的第二层）收起，设置里压栈打开的退回去。
     private func close() {
-        if router.sheet == .onboarding { router.dismissSheet() } else { router.pop() }
+        if router.frontSheet == .onboarding { router.dismissSheet() } else { router.pop() }
     }
 
     private func perform(_ step: OnboardingStep) {
         switch step {
         case .adopt:
             close()
-            router.openFromDrawer(.agentCatalog)
+            router.openTopLevel(.agentCatalog)
         case .addKey:
             router.present(.addCredential)
         case .routeMain:

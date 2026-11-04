@@ -13,7 +13,8 @@ enum RouteSamples {
         .home, .conversation("inst-1"), .run("run-1"), .runTree("run-1"), .activeRuns,
         .agentCatalog, .agent("claude"), .instance("inst-1"),
         .credentials, .addCredential, .credential("cred-1"), .modelRoutes("inst-1"), .usage,
-        .plans, .plan("plan-1"), .newPlan(instanceID: nil), .editPlan("plan-1"), .confirmPlan("plan-1"),
+        .plans(instanceID: nil), .plan("plan-1"), .newPlan(instanceID: nil), .editPlan("plan-1"),
+        .confirmPlan("plan-1"),
         .teams, .team("team-1"), .teamTemplates, .pipelineEditor(planID: nil, teamID: "team-1"),
         .inbox, .inboxItem("inbox-1"),
         .approvals, .approval("appr-1"),
@@ -25,9 +26,10 @@ enum RouteSamples {
         .search,
         .newTask, .frozen, .upgrade,
         .pairComputer(code: "thinktin-pair:v1?d=mac"),
+        .adopt(agentID: nil),
     ]
 
-    static let caseCount = 44
+    static let caseCount = 45
 
     static func index(of route: AppRoute) -> Int {
         switch route {
@@ -75,6 +77,7 @@ enum RouteSamples {
         case .frozen: 41
         case .upgrade: 42
         case .pairComputer: 43
+        case .adopt: 44
         }
     }
 }
@@ -97,18 +100,24 @@ struct AppRouteTests {
         }
         #expect(AppRoute.pipelineEditor(planID: nil, teamID: nil).title(.chinese) == "新建流水线")
         #expect(AppRoute.pipelineEditor(planID: "p", teamID: nil).title(.chinese) == "编辑流水线")
+        #expect(AppRoute.adopt(agentID: nil).title(.chinese) == "领养新实例")
+        #expect(AppRoute.adopt(agentID: "claude").title(.english) == "New instance")
+        #expect(AppRoute.plans(instanceID: "i").title(.chinese) == AppRoute.plans(instanceID: nil).title(.chinese))
+        #expect(AppRoute.home.title(.chinese) == "首页")
     }
 
     @Test("页面归哪个功能（工作包）")
     func features() {
         let expected: [AppRoute: AppFeature] = [
             .signIn: .account, .devices: .account, .account: .account, .pairComputer(code: "c"): .account,
-            .home: .conversation, .conversation("i"): .conversation, .run("r"): .conversation,
+            .conversation("i"): .conversation, .run("r"): .conversation,
             .runTree("r"): .conversation, .activeRuns: .conversation,
             .agentCatalog: .agents, .agent("a"): .agents, .instance("i"): .agents,
+            .adopt(agentID: nil): .agents, .adopt(agentID: "a"): .agents,
             .credentials: .models, .addCredential: .models, .credential("c"): .models, .modelRoutes("i"): .models,
             .usage: .models,
-            .plans: .plans, .plan("p"): .plans, .newPlan(instanceID: "i"): .plans, .editPlan("p"): .plans,
+            .plans(instanceID: nil): .plans, .plans(instanceID: "i"): .plans, .plan("p"): .plans,
+            .newPlan(instanceID: "i"): .plans, .editPlan("p"): .plans,
             .teams: .teams, .team("t"): .teams, .teamTemplates: .teams,
             .pipelineEditor(planID: "p", teamID: nil): .teams,
             .inbox: .inbox, .inboxItem("x"): .inbox,
@@ -117,7 +126,7 @@ struct AppRouteTests {
             .vault: .vault, .vaultItem("v"): .vault, .vaultRequest("v"): .vault,
             .settings: .settings, .licenses: .settings, .about: .settings,
             .imChannels: .imChannels, .onboarding: .onboarding, .search: .search,
-            .newTask: .shell, .frozen: .shell, .upgrade: .shell,
+            .home: .shell, .newTask: .shell, .frozen: .shell, .upgrade: .shell,
         ]
         for (route, feature) in expected {
             #expect(route.feature == feature, "\(route)")
@@ -126,39 +135,48 @@ struct AppRouteTests {
         #expect(Set(RouteSamples.all.map(\.feature)) == Set(AppFeature.allCases))
     }
 
-    @Test("出现方式：根、压栈、sheet、整页")
+    @Test("出现方式：首页和搜索是根，对话压栈，设置和领养是 sheet")
     func presentation() {
-        #expect(AppRoute.home.presentation == .root)
-        #expect(AppRoute.conversation("i").presentation == .root)
+        for route in [AppRoute.home, .search] {
+            #expect(route.presentation == .root, "\(route)")
+        }
         for route in [AppRoute.signIn, .frozen, .upgrade] {
             #expect(route.presentation == .global)
         }
         for route in [
             AppRoute.newTask, .addCredential, .newPlan(instanceID: nil), .editPlan("p"), .onboarding,
-            .pairComputer(code: "c"),
+            .pairComputer(code: "c"), .settings, .adopt(agentID: nil), .adopt(agentID: "claude"),
         ] {
             #expect(route.presentation == .sheet, "\(route)")
         }
         for route in [
-            AppRoute.run("r"), .inbox, .settings, .vaultRequest("v"), .pipelineEditor(planID: nil, teamID: nil),
+            AppRoute.conversation("i"), .run("r"), .inbox, .vaultRequest("v"),
+            .pipelineEditor(planID: nil, teamID: nil),
+            .plans(instanceID: nil), .plans(instanceID: "i"), .agentCatalog, .instance("i"), .vault, .credentials,
         ] {
             #expect(route.presentation == .push, "\(route)")
         }
+        // 每个页面都有一种出现方式；根页面只有这两个。
+        #expect(RouteSamples.all.filter { $0.presentation == .root } == [.home, .search])
     }
 
-    @Test("抽屉直达的顶级页面")
+    @Test("工作台菜单直达的顶级页面")
     func topLevel() {
-        for route in [AppRoute.inbox, .approvals, .activeRuns, .plans, .teams, .settings, .search, .agentCatalog] {
+        for route in [AppRoute.inbox, .approvals, .activeRuns, .plans(instanceID: nil), .teams] {
             #expect(route.isTopLevel, "\(route)")
         }
         #expect(AppRoute.artifacts(instanceID: nil).isTopLevel)
         #expect(!AppRoute.artifacts(instanceID: "i").isTopLevel)
-        #expect(!AppRoute.run("r").isTopLevel)
-        #expect(!AppRoute.conversation("i").isTopLevel)
-        // 抽屉入口都是顶级页面。
+        #expect(!AppRoute.plans(instanceID: "i").isTopLevel)
+        // 设置、搜索、agent 目录不再是顶级页面（设置是 sheet、搜索在首页原地、目录是普通压栈）。
+        for route in [AppRoute.run("r"), .conversation("i"), .settings, .search, .agentCatalog, .adopt(agentID: nil)] {
+            #expect(!route.isTopLevel, "\(route)")
+        }
+        // 工作台菜单的入口都是顶级页面。
         for entry in DrawerEntry.allCases {
             #expect(entry.route.isTopLevel, "\(entry)")
         }
+        #expect(DrawerEntry.plans.route == .plans(instanceID: nil))
     }
 
     @Test("页面所属的实例")
@@ -168,8 +186,29 @@ struct AppRouteTests {
         #expect(AppRoute.modelRoutes("c").instanceID == "c")
         #expect(AppRoute.newPlan(instanceID: "d").instanceID == "d")
         #expect(AppRoute.artifacts(instanceID: "e").instanceID == "e")
+        #expect(AppRoute.plans(instanceID: "f").instanceID == "f")
+        #expect(AppRoute.plans(instanceID: nil).instanceID == nil)
         #expect(AppRoute.newPlan(instanceID: nil).instanceID == nil)
         #expect(AppRoute.run("r").instanceID == nil)
+        #expect(AppRoute.adopt(agentID: "claude").instanceID == nil)
+        #expect(AppRoute.home.instanceID == nil)
+    }
+
+    @Test("从外面打开时返回栈经过实例对话的页面（规范 3.4）")
+    func returnsToConversation() {
+        for route in [
+            AppRoute.instance("i"), .modelRoutes("i"), .run("r"), .runTree("r"), .artifact("a", runID: "r"),
+            .plans(instanceID: "i"), .artifacts(instanceID: "i"),
+        ] {
+            #expect(route.returnsToConversation, "\(route)")
+        }
+        for route in [
+            AppRoute.home, .conversation("i"), .inbox, .inboxItem("x"), .approvals, .approval("a"), .plan("p"),
+            .confirmPlan("p"), .plans(instanceID: nil), .artifacts(instanceID: nil), .vaultRequest("v"), .activeRuns,
+            .settings, .search, .adopt(agentID: nil),
+        ] {
+            #expect(!route.returnsToConversation, "\(route)")
+        }
     }
 
     @Test("离线策略：只有实例、运行、事件、收件箱有缓存")
@@ -181,8 +220,9 @@ struct AppRouteTests {
             #expect(route.offlinePolicy == .cached, "\(route)")
         }
         for route in [
-            AppRoute.plans, .plan("p"), .approvals, .credentials, .modelRoutes("i"), .usage, .vault, .teams,
-            .agentCatalog, .imChannels, .devices, .artifacts(instanceID: nil),
+            AppRoute.plans(instanceID: nil), .plans(instanceID: "i"), .plan("p"), .approvals, .credentials,
+            .modelRoutes("i"), .usage, .vault, .teams, .agentCatalog, .imChannels, .devices,
+            .artifacts(instanceID: nil), .adopt(agentID: nil), .adopt(agentID: "claude"),
         ] {
             #expect(route.offlinePolicy == .unavailable, "\(route)")
         }

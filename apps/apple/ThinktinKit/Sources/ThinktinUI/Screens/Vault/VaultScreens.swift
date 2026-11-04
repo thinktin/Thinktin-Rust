@@ -102,9 +102,9 @@ private struct VaultContent: View {
         }
         .refreshable { await model.load() }
         .task { await model.load() }
-        .onChange(of: router.topRoute) {
-            // 从条目、请求页回来：可能改了、删了、填了。
-            if router.topRoute == .vault && model.hasLoaded { Task { await model.load() } }
+        .onChange(of: router.visibleRoute) {
+            // 从条目、请求页回来（主栈里或设置的 sheet 里）：可能改了、删了、填了。
+            if router.visibleRoute == .vault && model.hasLoaded { Task { await model.load() } }
         }
         .sheet(isPresented: $isCreating) {
             NavigationStack {

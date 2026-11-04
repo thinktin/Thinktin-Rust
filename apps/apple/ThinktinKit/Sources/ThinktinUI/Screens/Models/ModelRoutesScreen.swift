@@ -84,9 +84,9 @@ private struct ModelRoutesContent: View {
         }
         .refreshable { await model.load() }
         .task { await model.load() }
-        .onChange(of: router.sheet) {
-            // 添加 key 的 sheet 关掉了：刷新 key，新 key 自动选进还没配的 main。
-            if router.sheet == nil { Task { await model.refreshCredentials() } }
+        .onChange(of: router.visibleRoute) {
+            // 添加 key 的 sheet 关掉了（这一页在 sheet 里时是叠在上面的第二层）：刷新 key，新 key 自动选进还没配的 main。
+            if router.visibleRoute == .modelRoutes(model.instanceID) { Task { await model.refreshCredentials() } }
         }
         .onChange(of: app.isOffline) {
             if !app.isOffline { Task { await model.load() } }

@@ -102,7 +102,7 @@ struct AgentsScreensTests {
         renderInBothAppearances(InstanceDeletionImpactView(impact: InstanceDeletionImpact(instanceID: "lonely")))
     }
 
-    @Test("领养后去配路由：先刷新实例列表，返回栈是“新实例的对话 → 路由页”")
+    @Test("领养后去配路由：先刷新实例列表，返回栈是“首页 → 新实例的对话 → 路由页”")
     func adoptionExitRoutes() async throws {
         let mock = MockClient(autoReply: false)
         let app = AppModel(client: mock, defaults: nil)
@@ -111,7 +111,7 @@ struct AgentsScreensTests {
         await AdoptionExit.configureRoutes(instance.id).perform(app: app, router: app.router)
         #expect(app.instances.contains { $0.id == instance.id })
         #expect(app.router.currentInstanceID == instance.id)
-        #expect(app.router.path == [.modelRoutes(instance.id)])
+        #expect(app.router.path == [.conversation(instance.id), .modelRoutes(instance.id)])
         #expect(app.router.sheet == nil)
     }
 
@@ -122,19 +122,26 @@ struct AgentsScreensTests {
         await app.start()
         let first = try await app.client.adopt(agentID: DemoData.codexAgentID, name: "校对", harness: nil)
         await AdoptionExit.addCredential(first.id).perform(app: app, router: app.router)
-        #expect(app.router.path == [.modelRoutes(first.id)])
+        #expect(app.router.path == [.conversation(first.id), .modelRoutes(first.id)])
         #expect(app.router.sheet == .addCredential)
+        #expect(app.router.routeBelowSheet == .modelRoutes(first.id))
 
+        // 从首页“+”弹的领养 sheet 里领养（sheet 里压了 agent 详情）：先关掉 sheet，再从首页进新实例的对话。
+        app.router.dismissSheet()
+        app.router.open(.adopt(agentID: nil))
+        app.router.open(.agent(DemoData.claudeAgentID))
+        #expect(app.router.sheetPath == [.agent(DemoData.claudeAgentID)])
         let second = try await app.client.adopt(agentID: DemoData.claudeAgentID, name: "主笔", harness: "cli")
         await AdoptionExit.openConversation(second.id).perform(app: app, router: app.router)
         #expect(app.router.currentInstanceID == second.id)
-        #expect(app.router.path.isEmpty)
+        #expect(app.router.path == [.conversation(second.id)])
         #expect(app.router.sheet == nil)
+        #expect(app.router.sheetPath.isEmpty)
 
         // 不跳：什么都不动。
         app.router.open(.agentCatalog)
         await AdoptionExit.stay.perform(app: app, router: app.router)
-        #expect(app.router.path == [.agentCatalog])
+        #expect(app.router.path == [.conversation(second.id), .agentCatalog])
     }
 
     @Test("删掉不是当前的实例：拿掉它的页面，当前实例不变")
@@ -153,15 +160,30 @@ struct AgentsScreensTests {
         #expect(!app.instances.contains { $0.id == DemoData.reviewerID })
     }
 
-    @Test("删掉当前实例：应用框架换到别的实例、回到根")
+    @Test("删掉当前实例：应用框架换到别的实例，它的对话和资料页都拿掉，回到首页")
     func leaveDeletedCurrent() async throws {
         let mock = MockClient(autoReply: false)
         let app = AppModel(client: mock, defaults: nil)
         await app.start()
+        app.router.open(.conversation(DemoData.writerID))
         app.router.open(.instance(DemoData.writerID))
         try await app.client.deleteInstance(DemoData.writerID)
         await InstanceDetailScreen.leaveDeletedInstance(DemoData.writerID, app: app, router: app.router)
         #expect(app.router.currentInstanceID == DemoData.reviewerID)
         #expect(app.router.path.isEmpty)
+    }
+
+    @Test("在领养 sheet 里删掉实例：sheet 栈里它的页面拿掉，sheet 不关")
+    func leaveDeletedInSheet() async throws {
+        let mock = MockClient(autoReply: false)
+        let app = AppModel(client: mock, defaults: nil)
+        await app.start()
+        app.router.open(.adopt(agentID: DemoData.claudeAgentID))
+        app.router.open(.instance(DemoData.reviewerID))
+        try await app.client.deleteInstance(DemoData.reviewerID)
+        await InstanceDetailScreen.leaveDeletedInstance(DemoData.reviewerID, app: app, router: app.router)
+        #expect(app.router.sheet == .adopt(agentID: DemoData.claudeAgentID))
+        #expect(app.router.sheetPath.isEmpty)
+        #expect(app.router.currentInstanceID == DemoData.writerID)
     }
 }

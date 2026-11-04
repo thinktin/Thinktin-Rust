@@ -52,7 +52,7 @@ private struct PlanConfirmContent: View {
                             ? "可能被删除了，或者 agent 又把它取消了。" : "It may have been deleted, or the agent cancelled it.",
                         actionTitle: zh ? "看全部计划" : "All plans"
                     ) {
-                        router.open(.plans)
+                        router.open(.plans(instanceID: nil))
                     }
                 } else if let plan = model.plan {
                     review(plan)
@@ -313,7 +313,7 @@ private struct PlanConfirmContent: View {
                 actionTitle: zh ? "看全部计划" : "All plans"
             ) {
                 router.path.removeAll { $0 == .confirmPlan(model.planID) || $0 == .plan(model.planID) }
-                router.open(.plans)
+                router.open(.plans(instanceID: nil))
             }
         }
     }

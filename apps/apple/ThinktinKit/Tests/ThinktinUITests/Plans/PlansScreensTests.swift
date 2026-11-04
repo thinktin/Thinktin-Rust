@@ -11,7 +11,8 @@ import ThinktinKit
 @Suite("计划管理的界面")
 struct PlansScreensTests {
     static let routes: [AppRoute] = [
-        .plans, .plan(DemoData.digestPlanID), .plan(PlansPreviewClients.pipelinePlanID),
+        .plans(instanceID: nil), .plans(instanceID: DemoData.writerID), .plan(DemoData.digestPlanID),
+        .plan(PlansPreviewClients.pipelinePlanID),
         .plan(PlansPreviewClients.invalidPlanID), .plan(DemoData.agentPlanID), .plan("gone"),
         .newPlan(instanceID: DemoData.writerID), .newPlan(instanceID: nil), .editPlan(DemoData.digestPlanID),
         .confirmPlan(DemoData.agentPlanID), .confirmPlan(DemoData.digestPlanID), .confirmPlan("gone"),

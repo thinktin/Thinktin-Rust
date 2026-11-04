@@ -63,9 +63,9 @@ private struct CredentialsContent: View {
         }
         .refreshable { await model.load() }
         .task { await model.load() }
-        .onChange(of: router.sheet) {
-            // 添加 key 的 sheet 关掉了：重新拉。
-            if router.sheet == nil { Task { await model.load() } }
+        .onChange(of: router.visibleRoute) {
+            // 添加 key 的 sheet 关掉了（在设置的 sheet 里时是叠在上面的第二层）、从详情回来：重新拉。
+            if router.visibleRoute == .credentials { Task { await model.load() } }
         }
         .onChange(of: app.isOffline) {
             if !app.isOffline { Task { await model.load() } }

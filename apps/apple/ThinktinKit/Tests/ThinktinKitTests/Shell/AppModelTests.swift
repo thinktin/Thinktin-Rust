@@ -146,14 +146,14 @@ struct AppModelTests {
     func globalErrorsFromAnyCall() async throws {
         let (mock, model) = make()
         await model.start()
-        model.router.open(.plans)
+        model.router.open(.plans(instanceID: nil))
 
         mock.failNext(with: .accountFrozen)
         _ = try? await model.client.plans(instanceID: nil)
         #expect(await eventually { model.phase == .frozen })
         // 冻结时登录状态和数据保留。
         #expect(model.instances.count == 2)
-        #expect(model.router.path == [.plans])
+        #expect(model.router.path == [.plans(instanceID: nil)])
 
         mock.failNext(with: .api(status: 401, code: .sessionRevoked, message: "revoked", retryAfterSecs: nil))
         _ = try? await model.client.me()
@@ -331,16 +331,19 @@ struct AppModelTests {
         handle2.stop()
     }
 
-    @Test("当前实例被删了：换成最近活跃的另一个，回到根")
+    @Test("当前实例被删了：换成最近活跃的另一个，拿掉它的页面，别的页面不动")
     func currentInstanceDeleted() async throws {
         let (_, model) = make()
         await model.start()
+        model.router.open(.inbox)
+        model.router.open(.conversation(DemoData.writerID))
         model.router.open(.instance(DemoData.writerID))
+        model.router.open(.modelRoutes(DemoData.writerID))
         try await model.client.deleteInstance(DemoData.writerID)
         await model.refresh()
         #expect(model.instances.map(\.id) == [DemoData.reviewerID])
         #expect(model.router.currentInstanceID == DemoData.reviewerID)
-        #expect(model.router.path.isEmpty)
+        #expect(model.router.path == [.inbox])
         #expect(model.activity[DemoData.writerID] == nil)
         #expect(model.badges.activeRuns == 1)
     }
@@ -357,7 +360,7 @@ struct AppModelTests {
         handle.stop()
     }
 
-    @Test("没有实例：根是首页")
+    @Test("没有实例：根是首页，没有当前实例")
     func noInstances() async {
         let mock = makeShellMock()
         mock.update {
@@ -369,6 +372,7 @@ struct AppModelTests {
         #expect(model.hasLoadedInstances)
         #expect(model.instances.isEmpty)
         #expect(model.router.rootRoute == .home)
+        #expect(model.router.currentInstanceID == nil)
         #expect(model.badges.activeRuns == 0)
     }
 
@@ -381,6 +385,7 @@ struct AppModelTests {
         let (_, first) = make(defaults: defaults)
         await first.start()
         first.selectInstance(DemoData.reviewerID)
+        #expect(first.router.path == [.conversation(DemoData.reviewerID)])
         #expect(defaults.string(forKey: InstanceSelectionStore.key) == DemoData.reviewerID.rawValue)
 
         let (_, second) = make(defaults: defaults)
@@ -390,7 +395,7 @@ struct AppModelTests {
         #expect(defaults.string(forKey: InstanceSelectionStore.key) == nil)
     }
 
-    @Test("角标：打开抽屉时太久没刷新才刷新")
+    @Test("角标：太久没刷新才刷新")
     func badgeThrottle() async {
         let mock = makeShellMock()
         let clock = Locked(Date())
@@ -414,28 +419,28 @@ struct AppModelTests {
         #expect(model.badges.pendingApprovals == 0)
     }
 
-    @Test("新任务：一个实例直接回对话，几个时弹出选择，没有时去领养")
+    @Test("新任务：一个实例直接进对话，几个时弹出选择，没有时去领养")
     func newTask() async {
         let (mock, model) = make()
         await model.start()
-        model.router.open(.plans)
-        model.router.openDrawer()
+        model.router.open(.plans(instanceID: nil))
         model.startNewTask()
         #expect(model.router.sheet == .newTask)
-        #expect(!model.router.isDrawerOpen)
+        #expect(model.router.path == [.plans(instanceID: nil)])
 
         model.router.dismissSheet()
         try? await model.client.deleteInstance(DemoData.reviewerID)
         await model.refresh()
         model.startNewTask()
         #expect(model.router.sheet == nil)
-        #expect(model.router.path.isEmpty)
+        #expect(model.router.path == [.conversation(DemoData.writerID)])
         #expect(model.router.currentInstanceID == DemoData.writerID)
         #expect(model.router.newTaskRequest == 1)
 
         try? await model.client.deleteInstance(DemoData.writerID)
         await model.refresh()
-        #expect(model.router.rootRoute == .home)
+        #expect(model.router.currentInstanceID == nil)
+        #expect(model.router.path.isEmpty)
         model.startNewTask()
         #expect(model.router.path == [.agentCatalog])
         #expect(mock.state.instances.isEmpty)
@@ -453,7 +458,7 @@ struct AppModelTests {
     }
 }
 
-@Suite("抽屉与横幅的数据")
+@Suite("工作台角标与横幅的数据")
 struct ShellStateTests {
     @Test("角标：按入口取数，超过 99 显示 99+")
     func badges() {

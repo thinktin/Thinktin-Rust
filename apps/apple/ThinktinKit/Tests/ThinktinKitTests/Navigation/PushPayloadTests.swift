@@ -121,7 +121,7 @@ struct PushPayloadTests {
         #expect(P(kind: .vaultRequest, inboxItemID: "x").route == .inboxItem("x"))
         // 计划待确认：确认页；没有计划 id 时去计划列表（那里有“待确认”分区）。
         #expect(P(kind: .planConfirm, instanceID: "i", planID: "p").route == .confirmPlan("p"))
-        #expect(P(kind: .planConfirm, instanceID: "i").route == .plans)
+        #expect(P(kind: .planConfirm, instanceID: "i").route == .plans(instanceID: nil))
         // 子类型：审批超时跳过的进运行详情（不是计划），IM 渠道停用的进 IM 渠道设置，触发规则失效的进计划详情。
         #expect(P(kind: .info, subtype: .approvalSkipped, runID: "r", approvalID: "a", planID: "p").route == .run("r"))
         #expect(P(kind: .info, subtype: .approvalSkipped, approvalID: "a").route == .approval("a"))

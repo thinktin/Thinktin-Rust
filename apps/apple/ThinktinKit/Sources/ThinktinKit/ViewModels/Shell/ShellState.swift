@@ -1,6 +1,6 @@
 import Foundation
 
-/// 抽屉里的角标（WBS 12.16）。
+/// 工作台菜单（首页左下，原来的抽屉入口）上的角标（WBS 12.16）。
 public struct ShellBadges: Hashable, Sendable {
     /// 收件箱未读（先读缓存的 `cachedUnread`，同步后用服务端的数）。
     public var inboxUnread: Int
@@ -22,7 +22,7 @@ public struct ShellBadges: Hashable, Sendable {
 
     public static let zero = ShellBadges()
 
-    /// 抽屉入口上的数字；0 表示不显示角标。
+    /// 入口上的数字；0 表示不显示角标。
     public func count(for entry: DrawerEntry) -> Int {
         switch entry {
         case .inbox: inboxUnread
@@ -34,7 +34,8 @@ public struct ShellBadges: Hashable, Sendable {
     }
 }
 
-/// 抽屉里的入口，从上到下（对应 Claude 侧边栏的 Chats、Projects、Artifacts、Code，见 ios-packages.md 的映射总表）。
+/// 工作台菜单里的入口，从上到下（原来在抽屉里；规范 docs/ios-ui-redesign.md 6.1 A1）。名字还是抽屉时代的，
+/// 首页那一步换成工作台菜单时一起改名。
 public enum DrawerEntry: String, CaseIterable, Hashable, Sendable {
     case inbox
     case approvals
@@ -43,13 +44,13 @@ public enum DrawerEntry: String, CaseIterable, Hashable, Sendable {
     case teams
     case artifacts
 
-    /// 点开去的页面（都是顶级页面，`Router.openFromDrawer`）。
+    /// 点开去的页面（都是顶级页面，`Router.openTopLevel`）。
     public var route: AppRoute {
         switch self {
         case .inbox: .inbox
         case .approvals: .approvals
         case .activeRuns: .activeRuns
-        case .plans: .plans
+        case .plans: .plans(instanceID: nil)
         case .teams: .teams
         case .artifacts: .artifacts(instanceID: nil)
         }

@@ -3,7 +3,7 @@ import ThinktinKit
 
 /// 计划管理（WBS 12.6）的接入点：`AppShell` 把 `route.feature == .plans` 的页面都交给它。
 ///
-/// 页面：计划列表（`.plans`，`PlanListScreen`）、计划详情（`.plan`，`PlanDetailScreen`）、新建（`.newPlan`，sheet）、
+/// 页面：计划列表（`.plans(instanceID:)`，`PlanListScreen`；带实例时预先筛选这个实例的）、计划详情（`.plan`，`PlanDetailScreen`）、新建（`.newPlan`，sheet）、
 /// 编辑（`.editPlan`，sheet，`PlanEditorScreen`；触发器编辑器 `TriggerEditorView` 在编辑页里压栈）、agent 建的或改的
 /// 计划的确认页（`.confirmPlan`，压栈，`PlanConfirmScreen`）。视图模型在 `ThinktinKit/ViewModels/Plans/`。
 ///
@@ -15,8 +15,8 @@ struct PlansDestination: View {
 
     var body: some View {
         switch route {
-        case .plans:
-            PlanListScreen()
+        case .plans(let instanceID):
+            PlanListScreen(instanceFilter: instanceID).id(instanceID)
         case .plan(let id):
             PlanDetailScreen(planID: id).id(id)
         case .newPlan(let instanceID):
@@ -39,7 +39,11 @@ struct PlansDestination: View {
 }
 
 #Preview("计划 · 浅色中文") {
-    PlansDestination(route: .plans).previewShell()
+    PlansDestination(route: .plans(instanceID: nil)).previewShell()
+}
+
+#Preview("实例的计划 · 深色英文") {
+    PlansDestination(route: .plans(instanceID: DemoData.writerID)).previewShell(.english, scheme: .dark)
 }
 
 #Preview("计划详情 · 深色英文") {

@@ -5,7 +5,9 @@ import ThinktinKit
 ///
 /// 页面：Agent 目录（`.agentCatalog`，`AgentCatalogScreen`）、Agent 详情（`.agent`，`AgentDetailScreen`，“领养”弹出
 /// `AdoptAgentSheet`）、实例详情（`.instance`，`InstanceDetailScreen`：状态说明、改名、升级 / 回滚、模型路由、
-/// 计划和产出物入口、删除前列出级联影响的 `InstanceDeleteSheet`）。视图模型在 `ThinktinKit/ViewModels/Agents/`。
+/// 计划和产出物入口、删除前列出级联影响的 `InstanceDeleteSheet`）、领养新实例（`.adopt(agentID:)`，首页右上“+”弹的 sheet；
+/// 第 1 轮换成规范 4.7.1 的表单，现在没选 agent 时是 Agent 目录，选了是它的详情，领养照旧在详情里）。
+/// 视图模型在 `ThinktinKit/ViewModels/Agents/`。
 ///
 /// 每个页面按 id 重建（`.id`），从一个实例的详情跳到另一个实例的详情时不沿用上一个的状态。
 struct AgentsDestination: View {
@@ -19,6 +21,10 @@ struct AgentsDestination: View {
             AgentDetailScreen(agentID: id).id(id)
         case .instance(let id):
             InstanceDetailScreen(instanceID: id).id(id)
+        case .adopt(agentID: nil):
+            AgentCatalogScreen()
+        case .adopt(let agentID?):
+            AgentDetailScreen(agentID: agentID).id(agentID)
         default:
             DestinationPlaceholder(route: route)
         }
@@ -27,6 +33,10 @@ struct AgentsDestination: View {
 
 #Preview("Agent 目录 · 浅色中文") {
     AgentsDestination(route: .agentCatalog).previewShell()
+}
+
+#Preview("领养 · 浅色中文") {
+    AgentsDestination(route: .adopt(agentID: nil)).previewShell()
 }
 
 #Preview("实例详情 · 深色英文") {

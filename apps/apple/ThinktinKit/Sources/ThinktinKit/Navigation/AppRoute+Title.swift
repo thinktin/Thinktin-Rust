@@ -1,7 +1,7 @@
 import Foundation
 
 extension AppRoute {
-    /// 页面的标题（导航栏、抽屉入口、占位页、读屏）。实例对话的导航栏标题是实例名，这里给的是通用的“对话”。
+    /// 页面的标题（导航栏、工作台菜单、占位页、读屏）。实例对话的导航栏标题是实例名，这里给的是通用的“对话”。
     public func title(_ language: DisplayLanguage = .current) -> String {
         let (zh, en) = titles
         return language == .chinese ? zh : en
@@ -20,6 +20,7 @@ extension AppRoute {
         case .activeRuns: ("进行中", "In progress")
         case .agentCatalog: ("Agent 目录", "Agent catalog")
         case .agent: ("Agent 详情", "Agent details")
+        case .adopt: ("领养新实例", "New instance")
         case .instance: ("实例详情", "Instance details")
         case .credentials: ("模型 key", "Model keys")
         case .addCredential: ("添加 key", "Add key")

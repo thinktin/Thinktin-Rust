@@ -1,14 +1,15 @@
 import SwiftUI
 import ThinktinKit
 
-/// 实例的对话页（`.conversation(id)`，导航栈的根）= 运行时间线 + 底部输入框（WBS 12.5，参考 Claude iOS App 的版式：
+/// 实例的对话页（`.conversation(id)`，压在首页上）= 运行时间线 + 底部输入框（WBS 12.5，参考 Claude iOS App 的版式：
 /// 回复不带气泡、用户消息是靠右的浅色卡片、底部胶囊输入框）。
 ///
 /// - 打开先显示缓存，再拉运行、订阅事件流（`ConversationModel.start()`）；进后台停订阅、回前台续订（scenePhase），
 ///   账号解冻后重新订阅（`AppModel.resubscribeRequest`）；连接横幅由应用框架统一显示。
-/// - 抽屉里的“新任务”（`Router.newTaskRequest`）把焦点放进输入框；发出消息、事件流重置后滚到底。
+/// - “新任务”（`Router.newTaskRequest`）把焦点放进输入框；发出消息、事件流重置后滚到底。
 /// - 长按 agent 的回复、产出物举报（`ContentReportSheet`）；发送前拦下的密码弹 `SecretInterceptionSheet`。
-/// - 导航栏左边的抽屉按钮、中间的实例切换由 `AppShell` 加，这里只加右边的菜单（实例详情、模型路由、计划、产出物）。
+/// - 导航栏左边是系统的返回（回首页），标题暂时是实例名（第 1 轮换成规范 4.3.1 的标题胶囊），右边是菜单（实例详情、
+///   模型路由、计划、产出物）。
 struct ConversationScreen: View {
     let instanceID: InstanceID
 
@@ -75,6 +76,7 @@ private struct ConversationContent: View {
             }
         }
         .background(Theme.paper)
+        .inlineNavigationTitle(instance?.name ?? AppRoute.conversation(model.instanceID).title(language))
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Menu {
