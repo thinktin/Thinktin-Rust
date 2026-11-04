@@ -26,6 +26,7 @@ pub struct Config {
     pub observability: Observability,
     pub sms: Sms,
     pub kms: KmsSettings,
+    pub search: Search,
     /// 沙箱令牌签名私钥种子（base64url），只从环境变量 THINKTIN_SANDBOX_TOKEN_SEED 读。
     #[serde(skip)]
     pub sandbox_token_seed: Option<String>,
@@ -38,6 +39,12 @@ pub struct Config {
     /// ACS 上 sandbox-manager 的 API Key，只从环境变量 THINKTIN_ACS_API_KEY 读。
     #[serde(skip)]
     pub acs_api_key: Option<String>,
+    /// 平台搜索（docs/search.md）用的 DeepSeek key，只从环境变量 THINKTIN_DEEPSEEK_SEARCH_KEY 读。
+    #[serde(skip)]
+    pub deepseek_search_key: Option<String>,
+    /// 平台搜索用的阿里云 IQS key，只从环境变量 THINKTIN_IQS_API_KEY 读。
+    #[serde(skip)]
+    pub iqs_api_key: Option<String>,
     /// S3 兼容存储的访问密钥，只从环境变量 THINKTIN_S3_ACCESS_KEY_ID、THINKTIN_S3_SECRET_ACCESS_KEY 读。
     #[serde(skip)]
     pub s3_access_key_id: Option<String>,
@@ -82,6 +89,9 @@ impl std::fmt::Debug for Config {
             .field("jpush_master_secret", &self.jpush_master_secret.is_some())
             .field("cube_api_key", &self.cube_api_key.is_some())
             .field("acs_api_key", &self.acs_api_key.is_some())
+            .field("search", &self.search)
+            .field("deepseek_search_key", &self.deepseek_search_key.is_some())
+            .field("iqs_api_key", &self.iqs_api_key.is_some())
             .field("s3_access_key_id", &self.s3_access_key_id.is_some())
             .field("s3_secret_access_key", &self.s3_secret_access_key.is_some())
             .field(
@@ -141,6 +151,7 @@ impl Default for Api {
                 .chain(orchestrator::peers::PEER_TOOLS.iter())
                 .chain(orchestrator::board::BOARD_TOOLS.iter())
                 .chain(orchestrator::ask::ASK_TOOLS.iter())
+                .chain(orchestrator::search::SEARCH_TOOLS.iter())
                 .map(|s| s.to_string())
                 // 电脑工具（14.2）：只有登录着电脑的用户的 agent 才真的拿到。
                 .chain(proto::computer::names().map(String::from))
@@ -435,6 +446,100 @@ impl AcsSandbox {
             templates: self.templates.clone(),
             ip_wait: Duration::from_secs(self.ip_wait_secs),
             request_timeout: Duration::from_secs(self.request_timeout_secs),
+        }
+    }
+}
+
+/// 平台搜索工具 `web_search`（docs/search.md）：`[search]`。按 `providers` 的顺序试，配了 key 的才用；一家都没配就不给
+/// agent 这个工具。用户 2026-11-04 定：DeepSeek 为主、阿里云 IQS 备用，每人每天 50 次，测试期每月 ¥100。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Search {
+    /// `deepseek`、`iqs`。
+    pub providers: Vec<String>,
+    pub per_user_daily: u32,
+    /// 全站每月最多花多少元，到了就停。
+    pub monthly_budget_yuan: u64,
+    pub timeout_secs: u64,
+    pub deepseek: SearchVendor,
+    pub iqs: SearchVendor,
+}
+
+/// 一家搜索接口：地址、单价（分/千次，按实际收费的次数算）、IQS 用哪个引擎。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SearchVendor {
+    pub endpoint: String,
+    pub price_per_1000_fen: u64,
+    pub engine: String,
+}
+
+impl Default for SearchVendor {
+    fn default() -> Self {
+        Self {
+            endpoint: String::new(),
+            price_per_1000_fen: 0,
+            engine: String::new(),
+        }
+    }
+}
+
+impl Config {
+    /// 平台搜索按顺序用的接口：`[search].providers` 里配了 key 的。
+    pub fn search_backends(
+        &self,
+    ) -> anyhow::Result<Vec<std::sync::Arc<dyn orchestrator::search::SearchBackend>>> {
+        use orchestrator::search::{DeepSeekSearch, IqsSearch, search_client};
+        let client = search_client(std::time::Duration::from_secs(self.search.timeout_secs))
+            .context("search HTTP client")?;
+        let mut out: Vec<std::sync::Arc<dyn orchestrator::search::SearchBackend>> = Vec::new();
+        for p in &self.search.providers {
+            match (p.as_str(), &self.deepseek_search_key, &self.iqs_api_key) {
+                ("deepseek", Some(key), _) => out.push(std::sync::Arc::new(DeepSeekSearch::new(
+                    client.clone(),
+                    &self.search.deepseek.endpoint,
+                    key,
+                    self.search.deepseek.price_per_1000_fen,
+                ))),
+                ("iqs", _, Some(key)) => out.push(std::sync::Arc::new(IqsSearch::new(
+                    client.clone(),
+                    &self.search.iqs.endpoint,
+                    key,
+                    &self.search.iqs.engine,
+                    self.search.iqs.price_per_1000_fen,
+                ))),
+                _ => {}
+            }
+        }
+        Ok(out)
+    }
+
+    /// 平台搜索的上限。
+    pub fn search_limits(&self) -> orchestrator::search::SearchLimits {
+        orchestrator::search::SearchLimits {
+            per_user_daily: self.search.per_user_daily,
+            monthly_budget_millicents: self.search.monthly_budget_yuan.saturating_mul(100 * 1000),
+        }
+    }
+}
+
+impl Default for Search {
+    fn default() -> Self {
+        Self {
+            providers: vec!["deepseek".into(), "iqs".into()],
+            per_user_daily: 50,
+            monthly_budget_yuan: 100,
+            timeout_secs: 15,
+            deepseek: SearchVendor {
+                endpoint: orchestrator::search::DeepSeekSearch::ENDPOINT.into(),
+                price_per_1000_fen: 500,
+                engine: String::new(),
+            },
+            iqs: SearchVendor {
+                endpoint: orchestrator::search::IqsSearch::ENDPOINT.into(),
+                price_per_1000_fen: 800,
+                engine: "CNLiteBasic".into(),
+            },
         }
     }
 }
@@ -756,10 +861,13 @@ impl Default for Config {
             sms: Sms::default(),
             kms: KmsSettings::default(),
             observability: Observability::default(),
+            search: Search::default(),
             sandbox_token_seed: None,
             jpush_master_secret: None,
             cube_api_key: None,
             acs_api_key: None,
+            deepseek_search_key: None,
+            iqs_api_key: None,
             s3_access_key_id: None,
             s3_secret_access_key: None,
             aliyun_sms_access_key_id: None,
@@ -855,6 +963,8 @@ impl Config {
         cfg.jpush_master_secret = env.var("THINKTIN_JPUSH_MASTER_SECRET");
         cfg.cube_api_key = env.var("THINKTIN_CUBE_API_KEY");
         cfg.acs_api_key = env.var("THINKTIN_ACS_API_KEY");
+        cfg.deepseek_search_key = env.var("THINKTIN_DEEPSEEK_SEARCH_KEY");
+        cfg.iqs_api_key = env.var("THINKTIN_IQS_API_KEY");
         cfg.s3_access_key_id = env.var("THINKTIN_S3_ACCESS_KEY_ID");
         cfg.s3_secret_access_key = env.var("THINKTIN_S3_SECRET_ACCESS_KEY");
         cfg.aliyun_sms_access_key_id = env.var("THINKTIN_ALIYUN_SMS_ACCESS_KEY_ID");
@@ -878,6 +988,19 @@ impl Config {
     fn validate(&self) -> anyhow::Result<()> {
         if self.database.url.is_none() {
             bail!("database url is not configured (set DATABASE_URL)");
+        }
+        for p in &self.search.providers {
+            let vendor = match p.as_str() {
+                "deepseek" => &self.search.deepseek,
+                "iqs" => &self.search.iqs,
+                other => bail!("search.providers: unknown provider {other:?} (deepseek, iqs)"),
+            };
+            if !vendor.endpoint.starts_with("https://") {
+                bail!("search.{p}.endpoint must be an https:// URL");
+            }
+        }
+        if self.search.timeout_secs == 0 {
+            bail!("search.timeout_secs must be positive");
         }
         if self.database.max_connections == 0 {
             bail!("database.max_connections must be positive");
@@ -1789,6 +1912,53 @@ api_ur = \"x\""
                 "https://api.sandbox.push.apple.com"
             )
         );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// 平台搜索（docs/search.md）：默认 DeepSeek 为主、IQS 备用，配了 key 的才用；认不出的接口启动时报错。
+    #[test]
+    fn search_uses_the_vendors_with_keys() {
+        let dir = std::env::temp_dir().join(format!("tt-search-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("server.toml");
+        std::fs::write(&path, "").unwrap();
+        let mut vars = HashMap::from([("DATABASE_URL", "postgres://x")]);
+        let cfg = Config::load(Some(&path), &MapEnv(vars.clone())).unwrap();
+        assert!(cfg.search_backends().unwrap().is_empty());
+        assert_eq!(cfg.search_limits().per_user_daily, 50);
+        assert_eq!(cfg.search_limits().monthly_budget_millicents, 10_000_000);
+        assert!(
+            cfg.api
+                .default_platform_tools
+                .contains(&"web_search".to_owned())
+        );
+        vars.insert("THINKTIN_IQS_API_KEY", "iqs-key");
+        let cfg = Config::load(Some(&path), &MapEnv(vars.clone())).unwrap();
+        assert_eq!(
+            cfg.search_backends()
+                .unwrap()
+                .iter()
+                .map(|b| b.name())
+                .collect::<Vec<_>>(),
+            ["iqs"]
+        );
+        vars.insert("THINKTIN_DEEPSEEK_SEARCH_KEY", "ds-key");
+        let cfg = Config::load(Some(&path), &MapEnv(vars.clone())).unwrap();
+        assert_eq!(
+            cfg.search_backends()
+                .unwrap()
+                .iter()
+                .map(|b| (b.name(), b.cost_millicents()))
+                .collect::<Vec<_>>(),
+            [("deepseek", 500), ("iqs", 800)]
+        );
+        assert!(
+            !format!("{cfg:?}").contains("ds-key"),
+            "keys stay out of logs"
+        );
+        std::fs::write(&path, "[search]\nproviders = [\"bing\"]\n").unwrap();
+        let err = Config::load(Some(&path), &MapEnv(vars)).unwrap_err();
+        assert!(err.to_string().contains("unknown provider"), "{err}");
         std::fs::remove_dir_all(dir).ok();
     }
 }

@@ -59,6 +59,8 @@ const EGRESS_PURGE_BATCH: i64 = 10_000;
 const EGRESS_PURGE_BATCHES: usize = 100;
 /// 多久看一次有没有要推送的电脑审批请求（14.2），一次最多领多少条。
 const DEVICE_NOTICE_EVERY: Duration = Duration::from_secs(2);
+/// 平台搜索的用量行保留多久。
+const SEARCH_USAGE_RETENTION_DAYS: i64 = 400;
 /// agent 想访问的网站（2.7）多久没人回答就过期。
 const EGRESS_ASK_EXPIRY_HOURS: i64 = 24;
 const DEVICE_NOTICE_BATCH: i64 = 100;
@@ -155,6 +157,20 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
         )),
         Arc::new(orchestrator::ask::AskTools::new(db.clone(), kms.clone())),
     ];
+    // 平台搜索（docs/search.md）：配了搜索接口的 key 才给 agent。
+    let search_backends = cfg.search_backends()?;
+    if search_backends.is_empty() {
+        warn!(
+            "no web search provider key is set (THINKTIN_DEEPSEEK_SEARCH_KEY / THINKTIN_IQS_API_KEY): agents get no web_search"
+        );
+    }
+    let mut tools = tools;
+    tools.push(Arc::new(orchestrator::search::SearchTools::new(
+        db.clone(),
+        kms.clone(),
+        search_backends,
+        cfg.search_limits(),
+    )));
     // 用户电脑上的工具（14.2）：调用经设备中继转给用户自己的电脑，结果靠数据库通知取回。
     let computer = Arc::new(DeviceCalls::new(db.clone()));
     let executor = Arc::new(
@@ -449,6 +465,10 @@ async fn maintain(db: &Db) -> store::Result<()> {
         )
         .await?;
     let purged = purged + expired;
+    // 平台搜索的用量行（docs/search.md）：留一年多，看得到历史用量（每月总额只看当月）。
+    let purged = purged
+        + w.purge_search_usage(today - chrono::Duration::days(SEARCH_USAGE_RETENTION_DAYS))
+            .await?;
     // 内容举报（5.5）的待处理队列：几条、最早的一条等了多久（告警看它）。
     let (open, oldest) = w.report_backlog().await?;
     w.commit().await?;

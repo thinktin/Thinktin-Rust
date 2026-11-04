@@ -13,6 +13,27 @@
    `WebSearch` 也要免弹窗。厂商替 agent 读网页、不经过出口代理这一点，用户知道后选的保留。
 4. **Claude 读网页：在 Claude 那层放行**（`WebFetch` 免批准），只留出口代理那一次问用户。
 
+## 实现状态（2026-11-04）
+
+本机测试都过，东京还没部署，也还没有搜索接口的 key。
+
+- **平台搜索工具 `web_search`**（`crates/orchestrator/src/search.rs`）：后台副本调搜索接口，按 `[search].providers` 的顺序
+  试（默认 DeepSeek，出错换 IQS），只回标题、链接、网站、日期和最多 300 字的摘要，不要正文（DeepSeek `need_content: false`、
+  不用 `summary`；IQS 不要 `mainText`、`summary`）。搜索词最长 128 字，里面有用户保险箱的值就不搜。
+- **上限**（`store::search`，迁移 0036 的 `search_usage`）：每人每天 50 次、全站每月 ¥100，先按最贵的一家预留、搜完按实际改
+  （都出错的不算次数；DeepSeek 没结果不收钱）。用完了告诉 agent 明天再搜 / 这个月的额度用完了；月度用完时打错误日志，
+  指标 `thinktin_search_month_spend_yuan`（这个月花了多少元）、`thinktin_search_calls_total{result,backend}`，运维据此告警。
+- **默认给所有实例**：加进默认平台工具，迁移 0036 也加进已有的授权。只读（MCP `readOnlyHint`），Codex 默认不问；Claude 在
+  `settings.json` 里放行了 `mcp__thinktin__web_search`。没配 key 时不给这个工具（启动时打一条警告）。
+- **Claude 的设置**（`crates/agent-shim/src/config.rs`）：放行 `WebSearch`、`WebFetch`、平台搜索，`skipWebFetchPreflight`。
+- **key**：`THINKTIN_DEEPSEEK_SEARCH_KEY`、`THINKTIN_IQS_API_KEY`，只放后台副本的 Secret（docs/release.md 第 5 节）。
+
+**还没做：**
+
+- Pi、OpenClaw 接上平台工具（现在只有 Claude、Codex、Hermes 拿得到平台搜索）。
+- 网关记厂商替 agent 搜了几次（用户选了保留厂商自带的搜索）。
+- 用户买接口、充值、把 key 放进环境变量后：50 个中英文问题的小测，东京连通测试，五个 agent 逐个验收。
+
 ## 1. 现状
 
 **一句话：东京还没部署（服务机还没买，`docs/progress/claude-determined-lovelace-vn0j5h.md:14`），所以下面说的是“按现在的代码上线会怎样”。结论是五个 agent 没有一个能做到“默认能搜、不弹窗”。** Codex 配上支持搜索的厂商能搜，也不弹窗，但用的是厂商替它搜、替它读网页，这一点绕过了“别的网站要问用户”。Claude 能搜，但大概每次都要弹窗。Pi、OpenClaw、Hermes 都搜不了。
