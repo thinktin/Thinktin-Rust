@@ -185,6 +185,34 @@ pub struct InstanceChange {
     pub peer_access: Option<bool>,
 }
 
+/// 实例的出网情况（2.7，`GET /v1/instances/{id}/egress`）。档位是字符串：以后加了新档位，老版本照样解析。
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct EgressStatus {
+    pub mode: String,
+    #[serde(default)]
+    pub hosts: Vec<String>,
+    #[serde(default)]
+    pub dev_hosts: Vec<String>,
+    #[serde(default)]
+    pub used_today: u64,
+    #[serde(default)]
+    pub daily_limit: u64,
+    #[serde(default)]
+    pub max_tunnels: u32,
+    #[serde(default)]
+    pub recent_denied: Vec<EgressDenial>,
+}
+
+/// agent 想上、没上成的一次访问。
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct EgressDenial {
+    pub at: chrono::DateTime<chrono::Utc>,
+    pub host: String,
+    pub port: u16,
+    /// `not_allowed`（档位不放行）、`quota`（今天的流量用完了）、`private_address`、`port` 这类。
+    pub reason: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct InboxPage {
     pub items: Vec<InboxItem>,
@@ -966,6 +994,31 @@ impl Api {
     ) -> Result<Instance> {
         let body = serde_json::to_value(change).map_err(ClientError::decode)?;
         self.json(Method::PATCH, &format!("/v1/instances/{id}"), Some(&body))
+            .await
+    }
+
+    /// 改实例能上哪些网站（2.7）：`mode` 是 model / dev / custom / all，`hosts` 是用户加的网站；打开 all 要先给用户
+    /// 看风险、用户确认了才传 `accept_risk`。
+    pub async fn set_instance_egress(
+        &self,
+        id: InstanceId,
+        mode: &str,
+        hosts: &[String],
+        accept_risk: bool,
+    ) -> Result<Instance> {
+        self.json(
+            Method::PATCH,
+            &format!("/v1/instances/{id}"),
+            Some(
+                &json!({ "egress": { "mode": mode, "hosts": hosts, "accept_risk": accept_risk } }),
+            ),
+        )
+        .await
+    }
+
+    /// 实例的出网情况：档位、今天的用量、最近被拒绝的访问（2.7）。
+    pub async fn instance_egress(&self, id: InstanceId) -> Result<EgressStatus> {
+        self.json(Method::GET, &format!("/v1/instances/{id}/egress"), None)
             .await
     }
 

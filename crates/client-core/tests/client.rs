@@ -1234,6 +1234,35 @@ async fn ffi_instance_settings() {
         ),
         ("Reporter", "Drafts the weekly report", false)
     );
+    // 出网（2.7）：默认只连模型；改成开发网站加一个；全部公网要确认风险。
+    assert_eq!(
+        (renamed.egress_mode.as_str(), renamed.egress_hosts.len()),
+        ("model", 0)
+    );
+    let dev = c
+        .set_instance_egress(
+            inst.id.clone(),
+            "dev".into(),
+            vec!["Docs.Example.com".into()],
+            false,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        (dev.egress_mode.as_str(), dev.egress_hosts),
+        ("dev", vec!["docs.example.com".to_owned()])
+    );
+    assert!(matches!(
+        c.set_instance_egress(inst.id.clone(), "all".into(), vec![], false)
+            .await,
+        Err(ClientError::Api { status: 422, .. })
+    ));
+    let status = c.instance_egress(inst.id.clone()).await.unwrap();
+    assert_eq!(status.mode, "dev");
+    assert_eq!(status.used_today, 0);
+    assert_eq!(status.daily_limit, 100 << 20);
+    assert!(status.dev_hosts.contains(&"github.com".to_owned()));
+    assert!(status.recent_denied.is_empty());
     assert!(matches!(
         c.update_instance(inst.id, ffi::InstanceChange::default())
             .await,

@@ -276,6 +276,61 @@ pub struct Instance {
     /// （8.11），关的时候别人问它、还没答的问题都取消。它自己照样能看别人、问别人、写看板。
     #[uniffi(default = true)]
     pub peer_access: bool,
+    /// 能上哪些网站（2.7）：model（只连模型，默认）、dev（常用开发网站加自己加的）、custom（只有自己加的）、
+    /// all（全部公网，用户自己打开）。以后可能加新值，不认识的按 model 显示。
+    #[uniffi(default = "model")]
+    pub egress_mode: String,
+    /// 用户加的网站。
+    #[uniffi(default = [])]
+    pub egress_hosts: Vec<String>,
+}
+
+/// 实例的出网情况（2.7）。
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct EgressStatus {
+    pub mode: String,
+    pub hosts: Vec<String>,
+    /// “开发网站”档自带的网站。
+    pub dev_hosts: Vec<String>,
+    /// 今天（北京时间）用掉的双向流量，字节。
+    pub used_today: u64,
+    pub daily_limit: u64,
+    /// 同时最多几条连接。
+    pub max_tunnels: u32,
+    /// 最近被拒绝的访问，新的在前：App 可以问用户“要不要放行这个网站”。
+    pub recent_denied: Vec<EgressDenial>,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct EgressDenial {
+    pub at_ms: i64,
+    pub host: String,
+    pub port: u16,
+    /// not_allowed（档位不放行）、quota（今天的流量用完了）、private_address、port 这类。
+    pub reason: String,
+}
+
+impl From<api::EgressStatus> for EgressStatus {
+    fn from(s: api::EgressStatus) -> Self {
+        Self {
+            mode: s.mode,
+            hosts: s.hosts,
+            dev_hosts: s.dev_hosts,
+            used_today: s.used_today,
+            daily_limit: s.daily_limit,
+            max_tunnels: s.max_tunnels,
+            recent_denied: s
+                .recent_denied
+                .into_iter()
+                .map(|d| EgressDenial {
+                    at_ms: ms(d.at),
+                    host: d.host,
+                    port: d.port,
+                    reason: d.reason,
+                })
+                .collect(),
+        }
+    }
 }
 
 impl From<d::Instance> for Instance {
@@ -291,6 +346,8 @@ impl From<d::Instance> for Instance {
             last_active_at_ms: ms(i.last_active_at),
             purpose: i.purpose,
             peer_access: i.peer_access,
+            egress_mode: i.egress_mode.to_string(),
+            egress_hosts: i.egress_hosts,
         }
     }
 }
@@ -1908,6 +1965,33 @@ impl ThinktinClient {
             peer_access: change.peer_access,
         };
         self.run(|c| async move { Ok(c.api.update_instance(id, &change).await?.into()) })
+            .await
+    }
+
+    /// 改实例能上哪些网站（2.7）：`mode` 是 model / dev / custom / all，`hosts` 是用户加的网站（custom 至少一个）。
+    /// 打开 all 之前先给用户看风险（agent 能访问任何公开网站，网页内容可能诱导它做事），用户确认了才传
+    /// `accept_risk = true`，否则报 422。不合规的网站（IP 地址、通配符、带端口的）报 422。
+    pub async fn set_instance_egress(
+        &self,
+        instance_id: String,
+        mode: String,
+        hosts: Vec<String>,
+        accept_risk: bool,
+    ) -> Result<Instance> {
+        let id: d::InstanceId = parse(&instance_id, "instance")?;
+        self.run(|c| async move {
+            Ok(c.api
+                .set_instance_egress(id, &mode, &hosts, accept_risk)
+                .await?
+                .into())
+        })
+        .await
+    }
+
+    /// 实例的出网情况：档位、今天的用量、最近被拒绝的访问（2.7）。
+    pub async fn instance_egress(&self, instance_id: String) -> Result<EgressStatus> {
+        let id: d::InstanceId = parse(&instance_id, "instance")?;
+        self.run(|c| async move { Ok(c.api.instance_egress(id).await?.into()) })
             .await
     }
 
