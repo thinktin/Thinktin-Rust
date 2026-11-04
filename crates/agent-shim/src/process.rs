@@ -63,7 +63,7 @@ pub struct Spawned {
 pub struct StderrTail(Arc<Mutex<VecDeque<String>>>);
 
 impl StderrTail {
-    fn push(&self, line: String) {
+    pub(crate) fn push(&self, line: String) {
         let mut lines = self.0.lock().unwrap();
         if lines.len() == STDERR_TAIL_LINES {
             lines.pop_front();
@@ -132,6 +132,21 @@ pub struct ProcessHandle {
 }
 
 impl ProcessHandle {
+    /// 接管一个用 `process_group(0)` 起的子进程（组 id 就是它的 pid）。
+    pub fn new(child: Child, label: &str) -> Self {
+        let pgid = child.id().unwrap_or_default() as libc::pid_t;
+        Self {
+            child,
+            pgid,
+            label: label.to_owned(),
+        }
+    }
+
+    /// 马上杀掉整个进程组（出错就关）。
+    pub fn kill_group(&self) {
+        self.signal_group(libc::SIGKILL);
+    }
+
     /// 停止进程及其进程组：先等它自己退出（调用方应已关闭它的 stdin），再 SIGTERM，最后 SIGKILL。
     pub async fn terminate(&mut self, grace: Duration) {
         if !matches!(self.child.try_wait(), Ok(Some(_)))
@@ -154,6 +169,9 @@ impl ProcessHandle {
     }
 
     fn signal_group(&self, signal: libc::c_int) {
+        if self.pgid <= 0 {
+            return;
+        }
         // SAFETY: killpg 只发信号，组 id 是我们启动子进程时创建的。组里没有进程时返回 ESRCH，忽略即可。
         unsafe {
             libc::killpg(self.pgid, signal);

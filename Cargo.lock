@@ -66,17 +66,21 @@ name = "agent-shim"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.23.1",
  "catalog",
  "clap",
+ "futures-util",
  "libc",
  "proto",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
+ "tokio-tungstenite",
  "toml 1.1.8+spec-1.1.0",
  "tracing",
  "tracing-subscriber",
+ "url",
  "zeroize",
 ]
 

@@ -3,6 +3,7 @@
 
 mod acp;
 mod bridge;
+mod browser;
 mod claude_cli;
 mod config;
 mod events;
@@ -66,6 +67,9 @@ enum Command {
         /// 沙箱经出口代理上网（说明里加上上网的规矩）。
         #[arg(long)]
         egress: bool,
+        /// shim 运行浏览器（说明里加上浏览器的规矩）。
+        #[arg(long)]
+        browser: bool,
         /// 只给这几个工具（可以写多次）。
         #[arg(long)]
         only: Vec<String>,
@@ -415,9 +419,10 @@ async fn run(cli: Cli) -> anyhow::Result<ExitCode> {
         Command::McpBridge {
             socket,
             egress,
+            browser,
             only,
         } => {
-            bridge::run_client(&socket, egress, only).await?;
+            bridge::run_client(&socket, egress, browser, only).await?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Vault {
@@ -448,7 +453,14 @@ async fn run(cli: Cli) -> anyhow::Result<ExitCode> {
 }
 
 async fn serve(mut cfg: ShimConfig, args: BridgeArgs) -> anyhow::Result<ExitCode> {
+    // 不可转储（docs/browser.md 第 2.2 节）：之后 /proc/<shim>/ 归 root 所有、不能被 ptrace，同一用户下的 agent 读不到
+    // shim 的内存、环境变量和 stdin（浏览器通行证、保险箱里的值都只在这里）。子进程 exec 以后照常。
+    // SAFETY: prctl 只改本进程的一个标志。
+    unsafe {
+        libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0);
+    }
     let (sink, mut events) = EventSink::new();
+    let mut browser_service = None;
     let bridge = if args.platform_tools {
         let tools = match &args.platform_tools_file {
             Some(path) => {
@@ -472,7 +484,18 @@ async fn serve(mut cfg: ShimConfig, args: BridgeArgs) -> anyhow::Result<ExitCode
             b.restrict_to(only);
         }
         let egress = cfg.routing.egress_proxy.is_some();
-        cfg.mcp_servers.push(b.mcp_server_entry(&exe, egress));
+        // 浏览器（docs/browser.md）：编排服务开了才有，工具在本地处理。
+        if let Some(opts) =
+            browser::BrowserOptions::from_env(&cfg.cwd, cfg.routing.egress_proxy.as_deref())
+        {
+            let service = browser::BrowserService::new(opts);
+            if !service.tools().is_empty() {
+                b.set_browser(service.clone());
+                browser_service = Some(service);
+            }
+        }
+        cfg.mcp_servers
+            .push(b.mcp_server_entry(&exe, egress, browser_service.is_some()));
         // 密码保险箱助手（9.11）：agent 的命令里用 thinktin-vault 按名字引用保险箱里的值。
         let bin = vault_helper::install(
             &cfg.home.join(".thinktin").join("bin"),
@@ -508,9 +531,16 @@ async fn serve(mut cfg: ShimConfig, args: BridgeArgs) -> anyhow::Result<ExitCode
         }
     });
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
-    tokio::spawn(read_commands(cmd_tx.clone(), bridge.clone()));
+    tokio::spawn(read_commands(
+        cmd_tx.clone(),
+        bridge.clone(),
+        browser_service.clone(),
+    ));
     tokio::spawn(forward_signals(cmd_tx));
     let result = shim::run(cfg, cmd_rx, sink).await;
+    if let Some(b) = &browser_service {
+        b.stop().await;
+    }
     if let Some(b) = &bridge {
         b.close();
     }
@@ -522,6 +552,7 @@ async fn serve(mut cfg: ShimConfig, args: BridgeArgs) -> anyhow::Result<ExitCode
 async fn read_commands(
     tx: mpsc::UnboundedSender<ShimCommand>,
     bridge: Option<std::sync::Arc<bridge::Bridge>>,
+    browser: Option<std::sync::Arc<browser::BrowserService>>,
 ) {
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
     while let Ok(Some(line)) = lines.next_line().await {
@@ -563,12 +594,17 @@ async fn read_commands(
                     tracing::warn!(%call_id, "no pending vault request with this id");
                 }
             }
+            Ok(ShimCommand::EnableBrowser { pass }) => match &browser {
+                Some(b) => b.enable(pass.0),
+                None => tracing::warn!("enable_browser ignored: this shim has no browser"),
+            },
             Ok(cmd) => {
                 if tx.send(cmd).is_err() {
                     return;
                 }
             }
-            Err(err) => tracing::error!("ignoring malformed command ({err}): {line}"),
+            // 别把整行（可能带通行证、保险箱里的值）写进日志。
+            Err(err) => tracing::error!("ignoring malformed command ({err})"),
         }
     }
     let _ = tx.send(ShimCommand::Shutdown);
