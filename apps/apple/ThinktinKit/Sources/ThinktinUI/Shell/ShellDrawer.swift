@@ -102,10 +102,15 @@ private struct DrawerPanel: View {
 
     private var header: some View {
         HStack {
-            Text(verbatim: "ThinkTin")
-                .typography(.title2)
-                .foregroundStyle(Theme.ink)
-                .accessibilityAddTraits(.isHeader)
+            HStack(spacing: Metrics.Spacing.s) {
+                BrandLogo()
+                    .frame(height: 28)
+                    .accessibilityHidden(true)
+                Text(verbatim: "ThinkTin")
+                    .typography(.title2)
+                    .foregroundStyle(Theme.ink)
+                    .accessibilityAddTraits(.isHeader)
+            }
             Spacer()
             Button {
                 model.router.closeDrawer()
