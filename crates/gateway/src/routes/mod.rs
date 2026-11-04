@@ -69,6 +69,7 @@ pub fn router() -> Router<AppState> {
                 .delete(instances::delete),
         )
         .route("/v1/instances/{id}/version", post(instances::set_version))
+        .route("/v1/instances/{id}/egress", get(instances::egress))
         .route(
             "/v1/instances/{id}/routes",
             get(instances::routes).put(instances::set_routes),

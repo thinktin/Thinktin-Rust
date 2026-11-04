@@ -71,6 +71,8 @@ pub struct ExecConfig {
     pub shim_path: String,
     /// 模型网关地址（从沙箱里看）。
     pub gateway_url: String,
+    /// 出口代理（2.7）的 `host:port`（从沙箱里看）；不配就不给 agent 设代理（沙箱只能连模型）。
+    pub egress_proxy: Option<String>,
     /// shim 运行的目录，相对沙箱根，在工作区卷上。
     pub workdir: String,
     /// 本地开发、测试用：用这个清单文件代替内置清单。
@@ -83,6 +85,7 @@ impl Default for ExecConfig {
         Self {
             shim_path: "agent-shim".into(),
             gateway_url: String::new(),
+            egress_proxy: None,
             workdir: "workspace".into(),
             manifest_override: None,
             handshake_timeout: Duration::from_secs(180),
@@ -125,6 +128,9 @@ impl ExecConnector {
         ]);
         if !launch.allow_tools.is_empty() {
             argv.extend(["--allow-tools".into(), launch.allow_tools.join(",")]);
+        }
+        if let Some(proxy) = &self.cfg.egress_proxy {
+            argv.extend(["--egress-proxy".into(), proxy.clone()]);
         }
         for m in &launch.models {
             argv.extend(["--model".into(), m.clone()]);

@@ -217,6 +217,9 @@ pub struct Sandbox {
     pub shim_path: String,
     /// 沙箱里看到的模型网关地址。
     pub gateway_url: String,
+    /// 沙箱里看到的出口代理（2.7，模型网关的 `--egress-listen`），`host:port`。不配就不给 agent 设代理，
+    /// 沙箱只能连模型。它的 IP 要在 `network_allow` 里（ACS 不分端口，端口由服务机安全组限住）。
+    pub egress_proxy: Option<String>,
     /// 本地开发：用这个清单代替内置清单（比如接假 agent）。
     pub manifest_override: Option<String>,
     /// 沙箱令牌签名密钥的 kid（模型网关按它找公钥）。
@@ -702,6 +705,7 @@ impl Default for Sandbox {
             network_allow: Vec::new(),
             shim_path: "agent-shim".into(),
             gateway_url: "http://127.0.0.1:8790".into(),
+            egress_proxy: None,
             manifest_override: None,
             token_kid: "k1".into(),
         }

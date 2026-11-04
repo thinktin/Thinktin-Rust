@@ -179,6 +179,9 @@ struct RoutingArgs {
     /// 指定模型协议：anthropic-messages、openai-completions、openai-responses
     #[arg(long, value_parser = parse_protocol)]
     protocol: Option<LlmProtocol>,
+    /// 平台的出口代理（2.7），`host:port`。给了就把代理（带沙箱令牌）设进 agent 的环境变量
+    #[arg(long)]
+    egress_proxy: Option<String>,
 }
 
 fn parse_model(s: &str) -> Result<ModelAlias, String> {
@@ -227,6 +230,7 @@ impl RoutingArgs {
             models: self.models.clone(),
             default_model,
             protocol: self.protocol,
+            egress_proxy: self.egress_proxy.clone(),
         })
     }
 }

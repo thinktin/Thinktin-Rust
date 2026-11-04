@@ -33,6 +33,8 @@ pub struct ModelRouting {
     pub default_model: String,
     /// 指定协议；为空时按清单的优先级选。
     pub protocol: Option<LlmProtocol>,
+    /// 平台的出口代理（2.7），`host:port`：给了就把它设进 agent 的环境变量。
+    pub egress_proxy: Option<String>,
 }
 
 /// 沙箱令牌不进调试输出。
@@ -43,6 +45,7 @@ impl std::fmt::Debug for ModelRouting {
             .field("models", &self.models)
             .field("default_model", &self.default_model)
             .field("protocol", &self.protocol)
+            .field("egress_proxy", &self.egress_proxy)
             .finish_non_exhaustive()
     }
 }
@@ -138,6 +141,9 @@ pub fn render(
     };
     out.env.insert("HOME".into(), home.display().to_string());
     out.env.insert(TOKEN_ENV.into(), routing.token.clone());
+    if let Some(addr) = &routing.egress_proxy {
+        proxy_env(&mut out.env, addr, &routing.token, &routing.gateway_url);
+    }
     let take_over = manifest.policy.heartbeat == Heartbeat::Platform;
     match manifest.llm.config {
         ConfigGenerator::Claude => claude(routing, home, &mut out),
@@ -409,6 +415,63 @@ fn random_hex(bytes: usize) -> anyhow::Result<String> {
         .collect())
 }
 
+/// 出网走平台的出口代理（2.7，docs/egress.md）：代理地址的密码是沙箱令牌（代理按它认是哪个实例、能上哪些网站），
+/// 本机和模型网关不走代理。大小写两套都设（curl 只认小写的 `http_proxy`）；Node 自带的 fetch 要
+/// `NODE_USE_ENV_PROXY` 才认代理变量，Yarn Berry 只认自己的变量。不认代理的程序连不上外网（沙箱本来就不许直连）。
+fn proxy_env(env: &mut BTreeMap<String, String>, addr: &str, token: &str, gateway_url: &str) {
+    let url = format!("http://thinktin:{}@{addr}", userinfo_encode(token));
+    for key in [
+        "http_proxy",
+        "https_proxy",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "YARN_HTTP_PROXY",
+        "YARN_HTTPS_PROXY",
+    ] {
+        env.insert(key.into(), url.clone());
+    }
+    let mut direct = vec![
+        "localhost".to_owned(),
+        "127.0.0.1".to_owned(),
+        "::1".to_owned(),
+    ];
+    if let Some(host) = url_host(gateway_url)
+        && !direct.contains(&host)
+    {
+        direct.push(host);
+    }
+    let direct = direct.join(",");
+    env.insert("no_proxy".into(), direct.clone());
+    env.insert("NO_PROXY".into(), direct);
+    env.insert("NODE_USE_ENV_PROXY".into(), "1".into());
+}
+
+/// URL 的用户信息部分里，非保留字符以外的都按百分号编码。
+fn userinfo_encode(s: &str) -> String {
+    s.bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect()
+}
+
+/// `http://10.0.1.10:8790/x` 里的主机（`10.0.1.10`）；IPv6 去掉方括号。
+fn url_host(url: &str) -> Option<String> {
+    let rest = url.split_once("://").map_or(url, |(_, r)| r);
+    let authority = rest.split(['/', '?', '#']).next()?;
+    let authority = authority.rsplit_once('@').map_or(authority, |(_, a)| a);
+    let host = if let Some(v6) = authority.strip_prefix('[') {
+        v6.split_once(']')?.0
+    } else {
+        authority.split(':').next()?
+    };
+    (!host.is_empty()).then(|| host.to_ascii_lowercase())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -420,7 +483,38 @@ mod tests {
             models: vec![ModelAlias::new("main"), ModelAlias::new("fast")],
             default_model: "main".into(),
             protocol: None,
+            egress_proxy: None,
         }
+    }
+
+    /// 配了出口代理（2.7）：代理变量带令牌，模型网关和本机直连；没配就什么都不设。
+    #[test]
+    fn egress_proxy_goes_into_the_environment() {
+        let m = catalog::builtin("claude").unwrap();
+        let plain = render(&m, &routing(), Path::new("/h"), Path::new("/w")).unwrap();
+        assert!(!plain.env.contains_key("https_proxy"));
+        let mut r = routing();
+        r.gateway_url = "http://10.0.1.10:8790".into();
+        r.token = "tts1.k1.a_b-c.d".into();
+        r.egress_proxy = Some("10.0.1.10:8791".into());
+        let c = render(&m, &r, Path::new("/h"), Path::new("/w")).unwrap();
+        let url = "http://thinktin:tts1.k1.a_b-c.d@10.0.1.10:8791";
+        for k in [
+            "http_proxy",
+            "https_proxy",
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "YARN_HTTPS_PROXY",
+        ] {
+            assert_eq!(c.env[k], url, "{k}");
+        }
+        assert_eq!(c.env["no_proxy"], "localhost,127.0.0.1,::1,10.0.1.10");
+        assert_eq!(c.env["NO_PROXY"], c.env["no_proxy"]);
+        assert_eq!(c.env["NODE_USE_ENV_PROXY"], "1");
+        assert_no_token_in_files(&c);
+        assert_eq!(userinfo_encode("a:b@c/d"), "a%3Ab%40c%2Fd");
+        assert_eq!(url_host("https://[::1]:443/x").as_deref(), Some("::1"));
+        assert_eq!(url_host("http://Gw.Test/").as_deref(), Some("gw.test"));
     }
 
     fn render_for(id: &str) -> RenderedConfig {

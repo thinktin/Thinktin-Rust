@@ -82,7 +82,7 @@ impl Default for EgressOptions {
             max_connections: 4096,
             max_connections_per_ip: 32,
             deny: Vec::new(),
-            utc_offset_secs: 8 * 3600,
+            utc_offset_secs: proto::egress::DAY_UTC_OFFSET_SECS,
             insecure: false,
         }
     }

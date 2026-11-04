@@ -4074,4 +4074,54 @@ async fn instance_egress_over_http() {
     .await
     .unwrap();
     assert_eq!(audits, 2, "dev, then all");
+
+    // 出网情况：档位、今天的用量、最近被拒绝的（出口代理写的日志）。
+    let user: UserId = {
+        let (_, me) = a.call(Method::GET, "/v1/me", tok, None).await;
+        me["id"].as_str().unwrap().parse().unwrap()
+    };
+    let mut g = a.t.db.llmgw().await.unwrap();
+    let today = (chrono::Utc::now() + chrono::Duration::hours(8)).date_naive();
+    g.egress_reserve(inst, user, today, 1234, 100 << 20)
+        .await
+        .unwrap();
+    g.insert_egress_log(&[store::EgressLogEntry {
+        user_id: user,
+        instance_id: inst,
+        at: chrono::Utc::now(),
+        host: "blocked.example.com".into(),
+        port: 443,
+        address: None,
+        allowed: false,
+        reason: "not_allowed".into(),
+        bytes_up: 0,
+        bytes_down: 0,
+        duration_ms: 0,
+    }])
+    .await
+    .unwrap();
+    g.commit().await.unwrap();
+    let (st, body) = a
+        .call(Method::GET, &format!("{path}/egress"), tok, None)
+        .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(body["mode"], "all");
+    assert_eq!(body["used_today"], 1234);
+    assert_eq!(body["daily_limit"], 100 << 20);
+    assert_eq!(body["recent_denied"][0]["host"], "blocked.example.com");
+    assert!(
+        body["dev_hosts"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("github.com"))
+    );
+    let (st, _) = a
+        .call(
+            Method::GET,
+            &format!("{path}/egress"),
+            Some(other.access.as_str()),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
 }

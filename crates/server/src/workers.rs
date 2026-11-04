@@ -50,6 +50,10 @@ const OUTBOX_RETENTION: Duration = Duration::from_secs(7 * 24 * 3600);
 const DEVICE_TRAFFIC_RETENTION: Duration = Duration::from_secs(24 * 3600);
 /// 实时活动最多显示 8 小时，结束后在锁屏上最多再留 4 小时：一天前开的早就不显示了。
 const LIVE_ACTIVITY_RETENTION: Duration = Duration::from_secs(24 * 3600);
+/// 出网访问日志留 6 个月（2.7，网络安全法要求网络日志至少 6 个月；用户 2026-11-04 定）。
+const EGRESS_LOG_RETENTION_DAYS: i64 = 183;
+/// 出网的每日用量行留 60 天（App 只看今天的，留一段方便查问题）。
+const EGRESS_USAGE_RETENTION_DAYS: i64 = 60;
 /// 多久看一次有没有要推送的电脑审批请求（14.2），一次最多领多少条。
 const DEVICE_NOTICE_EVERY: Duration = Duration::from_secs(2);
 const DEVICE_NOTICE_BATCH: i64 = 100;
@@ -121,6 +125,7 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
     let exec_cfg = ExecConfig {
         shim_path: cfg.sandbox.shim_path.clone(),
         gateway_url: cfg.sandbox.gateway_url.clone(),
+        egress_proxy: cfg.sandbox.egress_proxy.clone(),
         manifest_override: cfg.sandbox.manifest_override.clone(),
         ..ExecConfig::default()
     };
@@ -395,7 +400,8 @@ async fn purge_blobs(db: &Db, artifacts: &ArtifactStore) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// 事件分区提前建好、过期的删掉；清理过期的登录验证码、送达的推送记录、电脑工具的调用和设备间的消息。
+/// 事件分区提前建好、过期的删掉；清理过期的登录验证码、送达的推送记录、电脑工具的调用和设备间的消息、
+/// 出网日志（6 个月）。
 async fn maintain(db: &Db) -> store::Result<()> {
     let today = Utc::now().date_naive();
     let this_month = NaiveDate::from_ymd_opt(today.year(), today.month(), 1).unwrap_or(today);
@@ -411,7 +417,13 @@ async fn maintain(db: &Db) -> store::Result<()> {
         + w.purge_im_bot_slots().await?
         + w.purge_live_activities(LIVE_ACTIVITY_RETENTION).await?
         + w.purge_archived_board_posts(store::BOARD_ARCHIVE_RETENTION)
-            .await?;
+            .await?
+        + w.purge_egress(
+            Utc::now() - chrono::Duration::days(EGRESS_LOG_RETENTION_DAYS),
+            today - chrono::Duration::days(EGRESS_USAGE_RETENTION_DAYS),
+            10_000,
+        )
+        .await?;
     // 内容举报（5.5）的待处理队列：几条、最早的一条等了多久（告警看它）。
     let (open, oldest) = w.report_backlog().await?;
     w.commit().await?;

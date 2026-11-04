@@ -199,6 +199,46 @@ pub async fn update(
 }
 
 #[derive(Deserialize)]
+pub struct EgressQuery {
+    /// 最近被拒绝的最多列几条。
+    limit: Option<u32>,
+}
+
+/// 实例的出网情况（2.7）：档位、加的网站、“开发网站”自带哪些、今天用了多少，最近被拒绝的访问（App 里
+/// 让用户看 agent 想上哪些网站没上成，决定要不要放行）。
+pub async fn egress(
+    State(s): State<AppState>,
+    Authed(who): Authed,
+    Path(id): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<EgressQuery>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let id: InstanceId = parse_id(&id, "instance")?;
+    let mut t = s.db.tenant(who.user).await?;
+    let instance = t.instance(id).await?;
+    let today = (chrono::Utc::now()
+        + chrono::Duration::seconds(proto::egress::DAY_UTC_OFFSET_SECS))
+    .date_naive();
+    let used = t.egress_used(id, today).await?;
+    let denied = t
+        .egress_log(id, true, q.limit.unwrap_or(20).clamp(1, 100))
+        .await?;
+    t.rollback().await?;
+    let denied: Vec<_> = denied
+        .into_iter()
+        .map(|e| json!({ "at": e.at, "host": e.host, "port": e.port, "reason": e.reason }))
+        .collect();
+    Ok(Json(json!({
+        "mode": instance.egress_mode,
+        "hosts": instance.egress_hosts,
+        "dev_hosts": proto::egress::DEV_HOSTS,
+        "used_today": used,
+        "daily_limit": proto::egress::DAILY_BYTES,
+        "max_tunnels": proto::egress::MAX_TUNNELS,
+        "recent_denied": denied,
+    })))
+}
+
+#[derive(Deserialize)]
 pub struct VersionReq {
     /// 不给就是当前上架的版本（升级）；给旧版本就是回滚。
     version: Option<String>,

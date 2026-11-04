@@ -250,6 +250,8 @@ async fn start_in_process(cfg: &Config, parts: Arc<Vec<Bytes>>) -> anyhow::Resul
                 },
             )]),
             limits,
+            egress_mode: Default::default(),
+            egress_hosts: Vec::new(),
         })
         .collect();
     let directory = Arc::new(MemoryDirectory::new(instances, vec![credential], vec![]));

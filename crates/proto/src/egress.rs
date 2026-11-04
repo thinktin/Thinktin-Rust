@@ -26,6 +26,9 @@ pub const DAILY_BYTES: u64 = 100 << 20;
 /// 每个实例同时最多这么多条隧道（用户 2026-11-04 定：4 条）。
 pub const MAX_TUNNELS: u32 = 4;
 
+/// 每天按北京时间切（相对 UTC 的秒数）：出口代理记账和 App 看用量用同一天。
+pub const DAY_UTC_OFFSET_SECS: i64 = 8 * 3600;
+
 /// 网站名不合规的原因。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum HostError {
