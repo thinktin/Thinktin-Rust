@@ -55,6 +55,11 @@ patches:
       - op: add
         path: /spec/template/spec/containers/0/args/-
         value: --egress-listen=0.0.0.0:8791
+      # 部署前填：服务机自己的公网地址（EIP）。它在解析检查里算公网，不禁掉沙箱就能经它绕回服务机；不填（还是占位）
+      # 模型网关启动时报错。还有别的公网地址（负载均衡、别的 EIP）也加在这里，一个一行。
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --egress-deny=SERVICE_MACHINE_PUBLIC_IP/32
   # 工作区归档的密文临时文件放 /tmp（docs/sandbox-acs.md）：同时存、放各一份最大的归档（temp_budget_bytes 默认 9 GiB）。
   # 服务机只有 40G 系统盘。2026-10-28 定：测试阶段保持默认（max_bytes 4 GiB）。以后要省盘就在 server.toml 里把
   # max_bytes、temp_budget_bytes 一起调小（已经存下的大归档要两边加起来放得下才放得回来，见 docs/sandbox-acs.md 第 6 节）。
