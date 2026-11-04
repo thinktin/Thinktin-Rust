@@ -6,7 +6,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use keyvault::{Kms, LocalKms};
-use orchestrator::search::{SearchAnswer, SearchBackend, SearchHit, SearchLimits, SearchTools};
+use orchestrator::search::{
+    SearchAnswer, SearchBackend, SearchFailure, SearchHit, SearchLimits, SearchTools,
+};
 use orchestrator::shim::{PlatformTools, ToolContext, ToolOutput};
 use proto::domain::{GrantScope, InstanceLimits, RunSource};
 use serde_json::{Value, json};
@@ -22,6 +24,9 @@ struct Fake {
     name: &'static str,
     fail: bool,
     hits: usize,
+    /// 出错时：收没收钱、是不是欠费这类。
+    billed: bool,
+    fatal: bool,
     queries: Mutex<Vec<String>>,
 }
 
@@ -31,6 +36,18 @@ impl Fake {
             name,
             fail,
             hits,
+            billed: false,
+            fatal: false,
+            queries: Mutex::new(Vec::new()),
+        })
+    }
+    fn failing(name: &'static str, billed: bool, fatal: bool) -> Arc<Self> {
+        Arc::new(Self {
+            name,
+            fail: true,
+            hits: 0,
+            billed,
+            fatal,
             queries: Mutex::new(Vec::new()),
         })
     }
@@ -47,10 +64,14 @@ impl SearchBackend for Fake {
     fn cost_millicents(&self) -> u64 {
         500
     }
-    async fn search(&self, query: &str, count: u32) -> Result<SearchAnswer, String> {
+    async fn search(&self, query: &str, count: u32) -> Result<SearchAnswer, SearchFailure> {
         self.queries.lock().unwrap().push(query.to_owned());
         if self.fail {
-            return Err("HTTP 503".into());
+            return Err(SearchFailure {
+                reason: "HTTP 503".into(),
+                billed: self.billed,
+                fatal: self.fatal,
+            });
         }
         let hits = (0..self.hits.min(count as usize))
             .map(|i| SearchHit {
@@ -299,4 +320,82 @@ async fn secrets_are_never_sent_to_the_search_service() {
     );
     assert!(msg.contains("saved secrets"), "{msg}");
     assert!(up.queries().is_empty());
+}
+
+/// 搜索接口收了钱却没给出结果的照样算次数、算钱；欠费、key 不对的告诉运营者（每天一次），也告诉 agent 别再试。月度额度
+/// 用到八成、用完了也告诉运营者。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn billed_failures_count_and_the_operator_is_told() {
+    let Some(t) = TestDb::new().await else { return };
+    let ctx = setup(&t, "+8613800008965").await;
+    // 运营者的账号。
+    let mut w = t.db.worker().await.unwrap();
+    let (ops, _) = w.upsert_user_by_phone("+8613800008966").await.unwrap();
+    w.commit().await.unwrap();
+    let tools = SearchTools::new(
+        t.db.clone(),
+        kms(),
+        vec![
+            Fake::failing("broke", false, true),
+            Fake::failing("garbled", true, false),
+        ],
+        SearchLimits {
+            per_user_daily: 1,
+            monthly_budget_millicents: 100 * 100 * 1000,
+        },
+    )
+    .with_alert_phone(Some("+8613800008966".into()));
+    let msg = error(&tools.call(&ctx, "web_search", &json!({"query": "a"})).await);
+    assert!(msg.contains("not available right now"), "{msg}");
+    // 第二家收了钱：这一次算数，今天的 1 次用完了。
+    let msg = error(&tools.call(&ctx, "web_search", &json!({"query": "a"})).await);
+    assert!(msg.contains("limit"), "{msg}");
+    let inbox = |user| {
+        let db = t.db.clone();
+        async move {
+            let mut tx = db.tenant(user).await.unwrap();
+            let items = tx.inbox(None, 100, false).await.unwrap();
+            tx.rollback().await.unwrap();
+            items
+        }
+    };
+    let items = inbox(ops.id).await;
+    assert_eq!(items.len(), 1, "one alert per backend per day: {items:?}");
+    assert_eq!(items[0].subtype.as_deref(), Some("search_alert"));
+    assert!(items[0].body.contains("broke"), "{}", items[0].body);
+    // 用户自己收不到这些提醒。
+    assert!(inbox(ctx.user).await.is_empty());
+
+    // 额度：用到八成提醒一次，用完了再提醒一次。
+    let ctx2 = setup(&t, "+8613800008967").await;
+    let small = SearchTools::new(
+        t.db.clone(),
+        kms(),
+        vec![Fake::new("up", false, 1)],
+        SearchLimits {
+            per_user_daily: 50,
+            // 前面那家收了 500；这次再收 500 就是 1000，到 1250 的八成；再来一次超了。
+            monthly_budget_millicents: 1_250,
+        },
+    )
+    .with_alert_phone(Some("+8613800008966".into()));
+    body(
+        &small
+            .call(&ctx2, "web_search", &json!({"query": "a"}))
+            .await,
+    );
+    assert!(
+        error(
+            &small
+                .call(&ctx2, "web_search", &json!({"query": "a"}))
+                .await
+        )
+        .contains("budget")
+    );
+    let subjects: Vec<String> = inbox(ops.id)
+        .await
+        .iter()
+        .map(|i| i.title.clone())
+        .collect();
+    assert_eq!(subjects.len(), 3, "{subjects:?}");
 }

@@ -32,6 +32,10 @@ impl Tx<Worker> {
         cost_millicents: u64,
     ) -> Result<SearchReserve> {
         let cost = signed(cost_millicents, "search cost")?;
+        // 设成 0 是“暂停平台搜索”。
+        if per_user_daily == 0 {
+            return Ok(SearchReserve::UserDaily);
+        }
         sqlx::query("SELECT pg_advisory_xact_lock($1)")
             .bind(SEARCH_LOCK)
             .execute(self.conn())

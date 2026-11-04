@@ -205,6 +205,9 @@ struct Exec<'a> {
     /// （高危操作要等用户在手机上批准），等的时候照常续租、处理别的事件、发现取消。
     /// 运行结束时还没回的随它一起丢掉。
     computer_calls: JoinSet<ComputerDone>,
+    /// 在等结果的慢的只读平台工具（联网搜索要调外面的接口，最多十几秒，agent 还会一次并发好几个）：同样不在事件循环
+    /// 里等，免得耽误续租、停止。运行结束时还没回的随它一起丢掉。
+    slow_calls: JoinSet<(String, ToolOutput)>,
 }
 
 /// 一个电脑工具调用的结果：shim 的调用 id、结果。
@@ -954,6 +957,7 @@ impl Executor {
             brief,
             locale,
             computer_calls: JoinSet::new(),
+            slow_calls: JoinSet::new(),
         };
         exec.persist(&ready).await;
         Ok(exec)
@@ -1500,6 +1504,20 @@ impl Exec<'_> {
         }
     }
 
+    /// 平台工具的结果交给 agent。用户这时发来的消息捎带在结果后面（8.12），不进幂等缓存。
+    async fn send_tool_result(&mut self, call_id: String, out: ToolOutput) {
+        let mut content = out.content;
+        if let Some(note) = self.new_messages().await {
+            content.push(json!({ "type": "text", "text": note }));
+        }
+        self.send(ShimCommand::PlatformToolResult {
+            call_id,
+            content,
+            is_error: out.is_error,
+        })
+        .await;
+    }
+
     /// 电脑工具（14.2）：交给设备中继转给用户自己的电脑。结果不在这里等（见 `computer_calls`）。
     async fn call_computer(
         &mut self,
@@ -1727,6 +1745,12 @@ impl Exec<'_> {
                         return outcome;
                     }
                 }
+                Some(done) = self.slow_calls.join_next(), if !self.slow_calls.is_empty() => {
+                    match done {
+                        Ok((call_id, out)) => self.send_tool_result(call_id, out).await,
+                        Err(e) => error!(run = %self.rec.run.id, error = %e, "a platform tool call task died"),
+                    }
+                }
                 Some(done) = self.computer_calls.join_next(), if !self.computer_calls.is_empty() => {
                     match done {
                         Ok((call_id, result)) => {
@@ -1846,23 +1870,23 @@ impl Exec<'_> {
                     self.call_computer(call_id, tool, arguments).await;
                     return None;
                 }
+                if crate::search::SEARCH_TOOLS.contains(&name.as_str())
+                    && self.allowed_tools.contains(&name)
+                {
+                    let (tools, ctx) = (self.ex.tools.clone(), self.ctx);
+                    self.slow_calls.spawn(async move {
+                        let out = tools.call(&ctx, &name, &arguments).await;
+                        (call_id, out)
+                    });
+                    return None;
+                }
                 let out = if self.allowed_tools.contains(&name) {
                     self.call_tool(&name, &arguments).await
                 } else {
                     warn!(run = %self.rec.run.id, tool = %name, "platform tool outside the run grant");
                     ToolOutput::error(format!("unknown platform tool {name}"))
                 };
-                // 用户这时发来的消息捎带在结果后面（8.12），不进幂等缓存。
-                let mut content = out.content;
-                if let Some(note) = self.new_messages().await {
-                    content.push(json!({ "type": "text", "text": note }));
-                }
-                self.send(ShimCommand::PlatformToolResult {
-                    call_id,
-                    content,
-                    is_error: out.is_error,
-                })
-                .await;
+                self.send_tool_result(call_id, out).await;
             }
             ShimEvent::VaultReveal { call_id, refs, .. } => {
                 let (values, error) = match self.reveal(&refs).await {

@@ -457,21 +457,54 @@ impl AcsSandbox {
 pub struct Search {
     /// `deepseek`、`iqs`。
     pub providers: Vec<String>,
+    /// 每人每天最多几次，0 是暂停平台搜索。
     pub per_user_daily: u32,
     /// 全站每月最多花多少元，到了就停。
     pub monthly_budget_yuan: u64,
+    /// 每家接口最多等多久。
     pub timeout_secs: u64,
-    pub deepseek: SearchVendor,
-    pub iqs: SearchVendor,
+    /// 一次搜索（所有接口加起来）最多等多久。
+    pub deadline_secs: u64,
+    /// 额度用到八成、用完了，接口欠费、key 不对时，提醒发给这个手机号（E.164）的账号；不配就只打日志。
+    pub alert_phone: Option<String>,
+    pub deepseek: DeepSeekVendor,
+    pub iqs: IqsVendor,
 }
 
-/// 一家搜索接口：地址、单价（分/千次，按实际收费的次数算）、IQS 用哪个引擎。
-#[derive(Debug, Clone, Default, Deserialize)]
+/// DeepSeek 搜索：地址、单价（分/千次，只算收钱的次数）。
+#[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub struct SearchVendor {
+pub struct DeepSeekVendor {
+    pub endpoint: String,
+    pub price_per_1000_fen: u64,
+}
+
+impl Default for DeepSeekVendor {
+    fn default() -> Self {
+        Self {
+            endpoint: orchestrator::search::DeepSeekSearch::ENDPOINT.into(),
+            price_per_1000_fen: 500,
+        }
+    }
+}
+
+/// 阿里云 IQS：地址、单价（分/千次）、引擎。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct IqsVendor {
     pub endpoint: String,
     pub price_per_1000_fen: u64,
     pub engine: String,
+}
+
+impl Default for IqsVendor {
+    fn default() -> Self {
+        Self {
+            endpoint: orchestrator::search::IqsSearch::ENDPOINT.into(),
+            price_per_1000_fen: 800,
+            engine: "CNLiteBasic".into(),
+        }
+    }
 }
 
 impl Config {
@@ -519,17 +552,11 @@ impl Default for Search {
             providers: vec!["deepseek".into(), "iqs".into()],
             per_user_daily: 50,
             monthly_budget_yuan: 100,
-            timeout_secs: 15,
-            deepseek: SearchVendor {
-                endpoint: orchestrator::search::DeepSeekSearch::ENDPOINT.into(),
-                price_per_1000_fen: 500,
-                engine: String::new(),
-            },
-            iqs: SearchVendor {
-                endpoint: orchestrator::search::IqsSearch::ENDPOINT.into(),
-                price_per_1000_fen: 800,
-                engine: "CNLiteBasic".into(),
-            },
+            timeout_secs: 10,
+            deadline_secs: 20,
+            alert_phone: None,
+            deepseek: DeepSeekVendor::default(),
+            iqs: IqsVendor::default(),
         }
     }
 }
@@ -980,17 +1007,32 @@ impl Config {
             bail!("database url is not configured (set DATABASE_URL)");
         }
         for p in &self.search.providers {
-            let vendor = match p.as_str() {
-                "deepseek" => &self.search.deepseek,
-                "iqs" => &self.search.iqs,
+            let (endpoint, price) = match p.as_str() {
+                "deepseek" => (
+                    &self.search.deepseek.endpoint,
+                    self.search.deepseek.price_per_1000_fen,
+                ),
+                "iqs" => {
+                    if self.search.iqs.engine.trim().is_empty() {
+                        bail!("search.iqs.engine must not be empty");
+                    }
+                    (
+                        &self.search.iqs.endpoint,
+                        self.search.iqs.price_per_1000_fen,
+                    )
+                }
                 other => bail!("search.providers: unknown provider {other:?} (deepseek, iqs)"),
             };
-            if !vendor.endpoint.starts_with("https://") {
+            if !endpoint.starts_with("https://") {
                 bail!("search.{p}.endpoint must be an https:// URL");
             }
+            // 单价是 0 时这家花的钱不算进每月的上限。
+            if price == 0 {
+                bail!("search.{p}.price_per_1000_fen must be positive");
+            }
         }
-        if self.search.timeout_secs == 0 {
-            bail!("search.timeout_secs must be positive");
+        if self.search.timeout_secs == 0 || self.search.deadline_secs == 0 {
+            bail!("search.timeout_secs and search.deadline_secs must be positive");
         }
         if self.database.max_connections == 0 {
             bail!("database.max_connections must be positive");
@@ -1946,6 +1988,16 @@ api_ur = \"x\""
             !format!("{cfg:?}").contains("ds-key"),
             "keys stay out of logs"
         );
+        // 只改一项时别的照样是这家的默认值（单价不会变成 0）。
+        std::fs::write(
+            &path,
+            "[search.deepseek]\nendpoint = \"https://ds.example.com/v1/tools/search\"\n",
+        )
+        .unwrap();
+        let cfg = Config::load(Some(&path), &MapEnv(vars.clone())).unwrap();
+        assert_eq!(cfg.search.deepseek.price_per_1000_fen, 500);
+        std::fs::write(&path, "[search.iqs]\nprice_per_1000_fen = 0\n").unwrap();
+        assert!(Config::load(Some(&path), &MapEnv(vars.clone())).is_err());
         std::fs::write(&path, "[search]\nproviders = [\"bing\"]\n").unwrap();
         let err = Config::load(Some(&path), &MapEnv(vars)).unwrap_err();
         assert!(err.to_string().contains("unknown provider"), "{err}");

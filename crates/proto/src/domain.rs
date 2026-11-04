@@ -1057,6 +1057,9 @@ pub mod notice_subtype {
     pub const IM_CHANNEL_DISABLED: &str = "im_channel_disabled";
     /// 用户的内容举报处理完了。
     pub const REPORT_HANDLED: &str = "report_handled";
+    /// 平台搜索要运营者处理（docs/search.md）：额度快用完、用完了，搜索接口欠费或 key 不对。只发给 `[search] alert_phone`
+    /// 的账号。
+    pub const SEARCH_ALERT: &str = "search_alert";
 }
 
 /// 共享看板的一条（8.10）：用户的 agent（或用户自己）写的进展、决定、待别人处理的事。写了不改，只能归档、删除。

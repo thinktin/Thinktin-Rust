@@ -6,7 +6,8 @@
 //! - 只回标题、链接、网站、日期和一段短摘要，不回网页正文：agent 要读哪篇文章，自己去打开，不在名单上的网站照样先问
 //!   用户（出口代理，docs/egress.md）。
 //! - 每人每天最多 [`SearchLimits::per_user_daily`] 次，全站每月最多 [`SearchLimits::monthly_budget_millicents`]，先预留
-//!   再调接口，失败的退回（store::search）。月度总额用完时停下、打错误日志和指标（运维据此告警）。
+//!   再调接口，失败的退回（store::search；接口收了钱的不退）。月度总额用到八成、用完时，搜索接口欠费、key 失效时，给配了
+//!   手机号的运营者（`[search] alert_phone`）发提醒（收件箱和推送，同一件事每月 / 每天只发一次），也打错误日志和指标。
 //! - 搜索词里有用户保险箱里的值就不搜（不把密码发给第三方）。
 
 use std::sync::Arc;
@@ -21,6 +22,7 @@ use serde_json::{Value, json};
 use store::{Db, SearchReserve};
 use tracing::{error, warn};
 
+use crate::outbox::{Notice, notify};
 use crate::shim::{PlatformTools, ToolContext, ToolOutput};
 
 pub const SEARCH_TOOLS: [&str; 1] = ["web_search"];
@@ -55,6 +57,24 @@ pub struct SearchAnswer {
     pub billed: bool,
 }
 
+/// 一次没成的搜索：原因（进日志），接口收没收钱，是不是欠费、key 不对这类不会自己好的问题。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SearchFailure {
+    pub reason: String,
+    pub billed: bool,
+    pub fatal: bool,
+}
+
+impl SearchFailure {
+    pub fn transient(reason: impl Into<String>) -> Self {
+        Self {
+            reason: reason.into(),
+            billed: false,
+            fatal: false,
+        }
+    }
+}
+
 /// 一家搜索接口。
 #[async_trait]
 pub trait SearchBackend: Send + Sync {
@@ -62,8 +82,8 @@ pub trait SearchBackend: Send + Sync {
     fn name(&self) -> &'static str;
     /// 一次收费的搜索多少钱（千分之一分；单价“¥5/千次”就是 500）。
     fn cost_millicents(&self) -> u64;
-    /// 搜。出错时返回给日志看的原因（调用方换下一家）。
-    async fn search(&self, query: &str, count: u32) -> Result<SearchAnswer, String>;
+    /// 搜。出错时调用方换下一家。
+    async fn search(&self, query: &str, count: u32) -> Result<SearchAnswer, SearchFailure>;
 }
 
 /// 上限（用户 2026-11-04 定：每人每天 50 次、测试期每月 ¥100）。
@@ -87,6 +107,10 @@ pub struct SearchTools {
     kms: Arc<dyn Kms>,
     backends: Vec<Arc<dyn SearchBackend>>,
     limits: SearchLimits,
+    /// 所有接口加起来最多等多久。
+    deadline: Duration,
+    /// 运营者的手机号（E.164）：额度、欠费的提醒发给这个账号。
+    alert_phone: Option<String>,
 }
 
 impl SearchTools {
@@ -102,6 +126,48 @@ impl SearchTools {
             kms,
             backends,
             limits,
+            deadline: Duration::from_secs(20),
+            alert_phone: None,
+        }
+    }
+
+    /// 所有接口加起来最多等多久（默认 20 秒）。
+    pub fn with_deadline(mut self, deadline: Duration) -> Self {
+        self.deadline = deadline;
+        self
+    }
+
+    /// 额度、欠费的提醒发给这个手机号的账号。
+    pub fn with_alert_phone(mut self, phone: Option<String>) -> Self {
+        self.alert_phone = phone;
+        self
+    }
+
+    /// 给运营者发一次提醒（同一个 `key` 只发一次）。没配手机号、找不到账号就只打日志。
+    async fn alert(&self, key: &str, what: crate::texts::SearchAlert) {
+        error!(key, "web search needs the operator's attention");
+        let Some(phone) = &self.alert_phone else {
+            return;
+        };
+        let sent = async {
+            let mut w = self.db.worker().await?;
+            let Some(user) = w.user_by_phone(phone).await? else {
+                warn!("the search alert phone has no account");
+                return Ok(());
+            };
+            let locale = w.user_locale(user.id).await?;
+            let (title, body) = crate::texts::search_alert(locale, what);
+            let notice = Notice {
+                dedupe_key: Some(key.to_owned()),
+                ..Notice::new(notify::PushKind::Info, title, body)
+                    .subtype(proto::domain::notice_subtype::SEARCH_ALERT)
+            };
+            notify(&mut w, user.id, &notice).await?;
+            w.commit().await
+        }
+        .await;
+        if let Err(e) = sent {
+            warn!(error = %e, "sending the search alert failed");
         }
     }
 
@@ -157,41 +223,73 @@ impl SearchTools {
             SearchReserve::MonthlyBudget => {
                 metrics::counter!("thinktin_search_calls_total", "result" => "monthly_budget")
                     .increment(1);
-                error!("the platform's web search budget for this month is used up");
+                self.alert(
+                    &format!("search_budget:{}", month_start.format("%Y-%m")),
+                    crate::texts::SearchAlert::BudgetUsedUp,
+                )
+                .await;
                 return Err(
-                    "web search is not available right now (the platform's monthly search budget is used up)".into(),
+                    "web search is not available right now (the platform's monthly search budget is used up); work from what you already have".into(),
                 );
             }
         }
+        let deadline = tokio::time::Instant::now() + self.deadline;
         let mut answer = None;
+        let (mut billed, mut fatal) = (0u64, false);
         for b in &self.backends {
-            match b.search(&query, count).await {
+            let result = tokio::time::timeout_at(deadline, b.search(&query, count))
+                .await
+                .unwrap_or_else(|_| Err(SearchFailure::transient("timed out")));
+            match result {
                 Ok(a) => {
                     metrics::counter!("thinktin_search_calls_total", "result" => "ok", "backend" => b.name())
                         .increment(1);
-                    answer = Some((a, b.cost_millicents()));
+                    if a.billed {
+                        billed += b.cost_millicents();
+                    }
+                    answer = Some(a);
                     break;
                 }
-                Err(e) => {
+                Err(f) => {
                     metrics::counter!("thinktin_search_calls_total", "result" => "error", "backend" => b.name())
                         .increment(1);
-                    warn!(backend = b.name(), error = %e, "web search failed");
+                    warn!(backend = b.name(), error = %f.reason, "web search failed");
+                    if f.billed {
+                        billed += b.cost_millicents();
+                    }
+                    if f.fatal {
+                        fatal = true;
+                        self.alert(
+                            &format!("search_backend:{}:{day}", b.name()),
+                            crate::texts::SearchAlert::BackendRefused(b.name()),
+                        )
+                        .await;
+                    }
                 }
             }
         }
-        let (counted, actual) = match &answer {
-            Some((a, cost)) => (true, if a.billed { *cost } else { 0 }),
-            None => (false, 0),
-        };
+        // 接口收了钱的（包括结果没解析出来的）照样算次数、算钱。
+        let counted = answer.is_some() || billed > 0;
         let mut w = self.db.worker().await.map_err(internal)?;
-        w.settle_search(ctx.user, day, counted, reserved, actual)
+        w.settle_search(ctx.user, day, counted, reserved, billed)
             .await
             .map_err(internal)?;
         let spent = w.search_spent_since(month_start).await.map_err(internal)?;
         w.commit().await.map_err(internal)?;
         metrics::gauge!("thinktin_search_month_spend_yuan").set(spent as f64 / 100_000.0);
-        let Some((answer, _)) = answer else {
-            return Err("web search is temporarily unavailable; try again later".into());
+        if spent.saturating_mul(10) >= self.limits.monthly_budget_millicents.saturating_mul(8) {
+            self.alert(
+                &format!("search_budget_80:{}", month_start.format("%Y-%m")),
+                crate::texts::SearchAlert::BudgetMostlyUsed,
+            )
+            .await;
+        }
+        let Some(answer) = answer else {
+            return Err(if fatal {
+                "web search is not available right now; work from what you already have".into()
+            } else {
+                "web search is temporarily unavailable; try again later".into()
+            });
         };
         let results: Vec<Value> = answer
             .hits
@@ -294,30 +392,34 @@ fn web_url(v: &Value) -> Option<String> {
     (url.starts_with("https://") || url.starts_with("http://")).then_some(url)
 }
 
-/// HTTP 调用的共同部分：发 JSON、读 JSON，超时、状态码错误都当出错。
+/// HTTP 调用的共同部分：发 JSON，返回状态码、读到的 JSON（解析不了是 `None`）和正文开头。连不上、超时是出错（没收钱）；
+/// 状态码不对由各家按自己的计费规则判断。
 async fn post_json(
     client: &reqwest::Client,
     endpoint: &str,
     key: &str,
     body: &Value,
-) -> Result<Value, String> {
+) -> Result<(u16, Option<Value>, String), SearchFailure> {
     let resp = client
         .post(endpoint)
         .bearer_auth(key)
         .json(body)
         .send()
         .await
-        .map_err(|e| format!("request failed: {e}"))?;
-    let status = resp.status();
+        .map_err(|e| SearchFailure::transient(format!("request failed: {e}")))?;
+    let status = resp.status().as_u16();
     let text = resp
         .text()
         .await
-        .map_err(|e| format!("reading the response failed: {e}"))?;
-    if !status.is_success() {
-        // 错误正文可能很长，只留开头。
-        return Err(format!("HTTP {status}: {}", clip(&text, 200)));
-    }
-    serde_json::from_str(&text).map_err(|e| format!("bad JSON: {e}"))
+        .map_err(|e| SearchFailure::transient(format!("reading the response failed: {e}")))?;
+    let json = serde_json::from_str(&text).ok();
+    // 错误正文可能很长，只留开头。
+    Ok((status, json, clip(&text, 200)))
+}
+
+/// 欠费、key 不对、没开通：要运营者处理，不会自己好。
+fn refused(status: u16) -> bool {
+    (401..=403).contains(&status)
 }
 
 /// DeepSeek 搜索（`POST /v1/tools/search`，api-docs.deepseek.com/guides/search）：¥5/千次，只有结果不为空的才收钱。
@@ -351,18 +453,30 @@ impl SearchBackend for DeepSeekSearch {
         self.cost_millicents
     }
 
-    async fn search(&self, query: &str, count: u32) -> Result<SearchAnswer, String> {
+    async fn search(&self, query: &str, count: u32) -> Result<SearchAnswer, SearchFailure> {
         // 不要正文（need_content 默认就是 false，写明白）；长摘要 summary 也不用。
-        let v = post_json(
+        let (status, v, text) = post_json(
             &self.client,
             &self.endpoint,
             &self.key,
             &json!({ "query": query, "count": count, "need_content": false }),
         )
         .await?;
-        let items = v["results"]
-            .as_array()
-            .ok_or("the response has no results array")?;
+        if status != 200 {
+            return Err(SearchFailure {
+                reason: format!("HTTP {status}: {text}"),
+                billed: false,
+                fatal: refused(status),
+            });
+        }
+        // 只有结果不为空的收钱；正文解析不了时不知道收没收，按收了算（宁可多算）。
+        let Some(items) = v.as_ref().and_then(|v| v["results"].as_array()) else {
+            return Err(SearchFailure {
+                reason: "the response has no results array".into(),
+                billed: true,
+                fatal: false,
+            });
+        };
         let hits: Vec<SearchHit> = items
             .iter()
             .filter_map(|r| {
@@ -420,9 +534,9 @@ impl SearchBackend for IqsSearch {
         self.cost_millicents
     }
 
-    async fn search(&self, query: &str, count: u32) -> Result<SearchAnswer, String> {
+    async fn search(&self, query: &str, count: u32) -> Result<SearchAnswer, SearchFailure> {
         // 不要正文、不要增强摘要（另收钱）。
-        let v = post_json(
+        let (status, v, text) = post_json(
             &self.client,
             &self.endpoint,
             &self.key,
@@ -434,9 +548,19 @@ impl SearchBackend for IqsSearch {
             }),
         )
         .await?;
-        let items = v["pageItems"]
-            .as_array()
-            .ok_or("the response has no pageItems array")?;
+        // 状态码小于 400 的都收钱。
+        let billed = status < 400;
+        let Some(items) = v
+            .as_ref()
+            .filter(|_| (200..300).contains(&status))
+            .and_then(|v| v["pageItems"].as_array())
+        else {
+            return Err(SearchFailure {
+                reason: format!("HTTP {status}: {text}"),
+                billed,
+                fatal: refused(status),
+            });
+        };
         let hits = items
             .iter()
             .filter_map(|r| {

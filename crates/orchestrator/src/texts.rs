@@ -156,6 +156,46 @@ pub fn egress_request(locale: Locale, instance: &str, host: &str) -> (String, St
     }
 }
 
+/// 平台搜索要运营者处理的事（docs/search.md）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchAlert {
+    /// 这个月的搜索额度用到八成了。
+    BudgetMostlyUsed,
+    /// 这个月的搜索额度用完了，搜索停了。
+    BudgetUsedUp,
+    /// 这家搜索接口拒绝了（欠费、key 不对、没开通）。
+    BackendRefused(&'static str),
+}
+
+pub fn search_alert(locale: Locale, what: SearchAlert) -> (String, String) {
+    match (locale, what) {
+        (Locale::ZhCn, SearchAlert::BudgetMostlyUsed) => (
+            "联网搜索额度快用完了".into(),
+            "这个月平台搜索的花费已经到上限的八成。到了上限，agent 就搜不了了。".into(),
+        ),
+        (Locale::ZhCn, SearchAlert::BudgetUsedUp) => (
+            "联网搜索额度用完了".into(),
+            "这个月平台搜索的花费到了上限，agent 现在搜不了。要继续用，就调高 [search] monthly_budget_yuan。".into(),
+        ),
+        (Locale::ZhCn, SearchAlert::BackendRefused(name)) => (
+            "联网搜索接口出问题了".into(),
+            format!("搜索接口 {name} 拒绝了请求（可能欠费、key 不对或者没开通），请去它的控制台看看。"),
+        ),
+        (Locale::En, SearchAlert::BudgetMostlyUsed) => (
+            "Web search budget almost used".into(),
+            "Platform web search has used 80% of this month's budget. At the limit, agents can no longer search.".into(),
+        ),
+        (Locale::En, SearchAlert::BudgetUsedUp) => (
+            "Web search budget used up".into(),
+            "Platform web search reached this month's budget and is stopped. Raise [search] monthly_budget_yuan to continue.".into(),
+        ),
+        (Locale::En, SearchAlert::BackendRefused(name)) => (
+            "Web search provider problem".into(),
+            format!("The search provider {name} refused requests (out of balance, wrong key or not activated). Check its console."),
+        ),
+    }
+}
+
 /// 举报处理完了（5.5）：告诉举报的人结果（运营写的处理结果原样带上）。
 pub fn report_handled(locale: Locale, resolution: &str) -> (&'static str, String) {
     match locale {

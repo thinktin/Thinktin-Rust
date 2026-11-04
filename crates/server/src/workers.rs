@@ -165,12 +165,16 @@ pub fn spawn(cfg: &Config, db: &Db, node_id: &str, bg: &mut Background) -> anyho
         );
     }
     let mut tools = tools;
-    tools.push(Arc::new(orchestrator::search::SearchTools::new(
-        db.clone(),
-        kms.clone(),
-        search_backends,
-        cfg.search_limits(),
-    )));
+    tools.push(Arc::new(
+        orchestrator::search::SearchTools::new(
+            db.clone(),
+            kms.clone(),
+            search_backends,
+            cfg.search_limits(),
+        )
+        .with_deadline(Duration::from_secs(cfg.search.deadline_secs))
+        .with_alert_phone(cfg.search.alert_phone.clone()),
+    ));
     // 用户电脑上的工具（14.2）：调用经设备中继转给用户自己的电脑，结果靠数据库通知取回。
     let computer = Arc::new(DeviceCalls::new(db.clone()));
     let executor = Arc::new(

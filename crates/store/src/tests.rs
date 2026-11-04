@@ -5450,6 +5450,12 @@ async fn search_usage_is_capped_per_user_and_per_month() {
     assert_eq!(reserve(b, 2_000).await, SearchReserve::Reserved);
     let mut w = db.worker().await.unwrap();
     assert_eq!(w.search_spent_since(month).await.unwrap(), 1_500);
+    // 每天 0 次是暂停：一次也不给（今天还没搜过的也不行）。
+    let c = user(db, "+8613800000933").await;
+    assert_eq!(
+        w.reserve_search(c, day, month, 0, 10_000, 500).await.unwrap(),
+        SearchReserve::UserDaily
+    );
     // 下个月重新算。
     assert_eq!(
         w.search_spent_since(NaiveDate::from_ymd_opt(2026, 12, 1).unwrap())
