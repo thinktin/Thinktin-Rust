@@ -153,13 +153,17 @@ docs/i18n.md 第 3 节“不认识的按状态给通用文案”）：404 / 410 
 `notify` 定义，两端共用。Universal Links 等上线前再配。
 
 实现在 `ThinktinKit/Navigation`（12.16）：`DeepLink` 解析深链（认不出的格式、多余的路径段、不像 id 的 id 一律不认），
-`PushPayload` 解析推送的 `userInfo`（`tt` 下的 `kind`、`subtype`、`instance`、`run`、`approval`、`plan`、`inbox`、`vault_request`，
+`PushPayload` 解析推送的 `userInfo`（`tt` 下的 `kind`、`subtype`、`instance`、`run`、`approval`、`plan`、`inbox`、`vault_request`、
+`egress_request`（2026-11-04 加，还要在 App 里接上），
 约定见 backend-core 的 docs/push.md 第 3、4 节），`Router` 跳转；推送送达、点开都先交给 `AppModel.receive(push:)` / `open(push:)`。规则：
 
 - 深链和推送打开后，返回栈是“根（当前实例的对话）→ 目标页”，和安卓的冷启动一致；`thinktin://instance/{id}` 打开实例详情
   （安卓也是实例设置页），并把它设成当前实例。
 - 推送去哪：审批 → 审批详情（没有审批 id 时运行详情，再没有就是审批中心）；运行完成 / 失败 → 运行详情（没有运行 id 时实例的对话，
-  再没有就是收件箱里的那一条）；保险箱请求（`vault_request`）→ 填写请求页（`.vaultRequest`，没有请求 id 时同运行完成）；计划待确认
+  再没有就是收件箱里的那一条）；保险箱请求（`vault_request`）→ 填写请求页（`.vaultRequest`，没有请求 id 时同运行完成）；出网请求
+  （`egress_request`，2026-11-04 加，App 还没接）→ “访问一次 / 一直允许 / 拒绝”的弹窗（按 `egress_request` 的 id 用
+  `egress_requests` 找到那一条、`decide_egress_request` 回答；没有 id 时实例的在等列表，再没有就是收件箱里的那一条），
+  登记通知类别时加上 `EGRESS_REQUEST`；计划待确认
   （`plan_confirm`）→ 计划确认页（`.confirmPlan`，没有计划 id 时计划列表）；其他提醒 → 先看子类型（`approval_skipped` 去运行详情，
   `im_channel_disabled` 去 IM 渠道设置），再按计划 → 运行 → 实例的对话 → 收件箱里的那一条 → 收件箱，取第一个有 id 的。推送里有实例 id
   时顺带切到这个实例。点开后 `AppModel.open(push:)` 把 `PushPayload.inboxItemID` 那一条标已读（12.8）。

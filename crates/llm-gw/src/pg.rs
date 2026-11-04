@@ -594,7 +594,7 @@ impl crate::egress::EgressLedger for PgEgressLedger {
         run: Option<&str>,
         max_pending: u32,
         max_per_hour: u32,
-    ) -> anyhow::Result<Option<String>> {
+    ) -> anyhow::Result<crate::egress::Asked> {
         let (instance, user) = ids(instance, Some(user))?;
         let run = run
             .map(|r| r.parse::<RunId>())
@@ -612,7 +612,11 @@ impl crate::egress::EgressLedger for PgEgressLedger {
             )
             .await?;
         tx.commit().await?;
-        Ok(id.map(|i| i.to_string()))
+        Ok(match id {
+            store::EgressAsk::Asked(i) => crate::egress::Asked::Request(i.to_string()),
+            store::EgressAsk::TooManyPending => crate::egress::Asked::TooManyPending,
+            store::EgressAsk::HourlyLimit => crate::egress::Asked::HourlyLimit,
+        })
     }
 
     async fn used_on(&self, instance: &str, day: chrono::NaiveDate) -> anyhow::Result<u64> {

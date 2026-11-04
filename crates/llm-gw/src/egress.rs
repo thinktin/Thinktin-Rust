@@ -206,6 +206,17 @@ impl Answer {
     }
 }
 
+/// 登记“想访问一个网站”的结果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Asked {
+    /// 请求 id：新登记的、接着等的，或者用户刚答过的那条。
+    Request(String),
+    /// 这次任务已经有好几个网站在等用户回答。
+    TooManyPending,
+    /// 这个实例这一小时问用户问得太多了。
+    HourlyLimit,
+}
+
 /// 额度、日志和要问用户的网站存在哪：生产是数据库（多副本共用），开发和测试用内存。
 #[async_trait]
 pub trait EgressLedger: Send + Sync {
@@ -228,8 +239,8 @@ pub trait EgressLedger: Send + Sync {
         instance: &str,
         host: &str,
     ) -> anyhow::Result<(Option<String>, Option<Answer>)>;
-    /// 登记“想访问 `host`”（同一个网站已经有一条在等就接着等那条，用户刚答过就是答过的那条），返回请求 id；这次任务
-    /// 已经有 `max_pending` 个网站在等、或者这个实例一小时里登记满了 `max_per_hour` 条时返回空。
+    /// 登记“想访问 `host`”（同一个网站已经有一条在等就接着等那条，用户刚答过就是答过的那条）；这次任务已经有
+    /// `max_pending` 个网站在等、或者这个实例一小时里已经有 `max_per_hour` 条用户没答应的时不登记。
     async fn ask(
         &self,
         user: &str,
@@ -238,7 +249,7 @@ pub trait EgressLedger: Send + Sync {
         run: Option<&str>,
         max_pending: u32,
         max_per_hour: u32,
-    ) -> anyhow::Result<Option<String>>;
+    ) -> anyhow::Result<Asked>;
     /// 实例 `day` 这天用掉（含预留中）的字节。
     async fn used_on(&self, instance: &str, day: NaiveDate) -> anyhow::Result<u64>;
     /// 一条请求现在怎么样了。
@@ -378,14 +389,14 @@ impl EgressLedger for MemoryEgressLedger {
         run: Option<&str>,
         max_pending: u32,
         max_per_hour: u32,
-    ) -> anyhow::Result<Option<String>> {
+    ) -> anyhow::Result<Asked> {
         let mut asks = self.asks.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(a) = asks
             .iter_mut()
             .find(|a| a.instance == instance && a.host == host && a.status == "pending")
         {
             a.run = run.map(str::to_owned);
-            return Ok(Some(a.id.clone()));
+            return Ok(Asked::Request(a.id.clone()));
         }
         let pending = asks
             .iter()
@@ -393,10 +404,17 @@ impl EgressLedger for MemoryEgressLedger {
             .count();
         let hour = asks
             .iter()
-            .filter(|a| a.instance == instance && a.created.elapsed() < Duration::from_secs(3600))
+            .filter(|a| {
+                a.instance == instance
+                    && a.created.elapsed() < Duration::from_secs(3600)
+                    && !matches!(a.status.as_str(), "once" | "always")
+            })
             .count();
-        if pending >= max_pending as usize || hour >= max_per_hour as usize {
-            return Ok(None);
+        if pending >= max_pending as usize {
+            return Ok(Asked::TooManyPending);
+        }
+        if hour >= max_per_hour as usize {
+            return Ok(Asked::HourlyLimit);
         }
         let id = proto::domain::EgressRequestId::new().to_string();
         asks.push(MemoryAsk {
@@ -407,7 +425,7 @@ impl EgressLedger for MemoryEgressLedger {
             status: "pending".into(),
             created: Instant::now(),
         });
-        Ok(Some(id))
+        Ok(Asked::Request(id))
     }
 
     async fn used_on(&self, instance: &str, day: NaiveDate) -> anyhow::Result<u64> {
@@ -1158,7 +1176,7 @@ impl Egress {
             Some(Answer::Denied) => return Err(user_denied()),
             _ => {}
         }
-        let Some(id) = self
+        let id = match self
             .ledger
             .ask(
                 &caller.instance.user_id,
@@ -1170,12 +1188,24 @@ impl Egress {
             )
             .await
             .map_err(unavailable)?
-        else {
-            return Err(denied(
-                StatusCode::FORBIDDEN,
-                "too_many_asks",
-                "too many sites are already waiting for the user's approval; wait for those or do it another way",
-            ));
+        {
+            Asked::Request(id) => id,
+            Asked::TooManyPending => {
+                return Err(denied(
+                    StatusCode::FORBIDDEN,
+                    "too_many_asks",
+                    "too many sites are already waiting for the user's approval; wait for those or do it another way",
+                ));
+            }
+            Asked::HourlyLimit => {
+                return Err(denied(
+                    StatusCode::FORBIDDEN,
+                    "ask_rate",
+                    format!(
+                        "the user was asked about too many new sites this hour, so {host} was not asked; try again later or do it another way"
+                    ),
+                ));
+            }
         };
         metrics::counter!("thinktin_egress_asks_total").increment(1);
         let Some(_waiting) = self.take_waiting(instance) else {

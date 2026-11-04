@@ -561,6 +561,7 @@ async fn egress_requests_are_announced_once() {
         .egress_ask(user, inst.id, "example.com", None, 5, 20)
         .await
         .unwrap()
+        .id()
         .unwrap();
     g.commit().await.unwrap();
 
@@ -570,7 +571,8 @@ async fn egress_requests_are_announced_once() {
     let mut g = t.db.llmgw().await.unwrap();
     g.egress_ask(user, inst.id, "example.com", None, 5, 20)
         .await
-        .unwrap();
+        .unwrap()
+        .id();
     g.commit().await.unwrap();
     assert_eq!(notify_requests(&t.db, 10).await.unwrap(), 0);
 
@@ -617,7 +619,8 @@ async fn egress_requests_are_announced_once() {
     let mut g = t.db.llmgw().await.unwrap();
     g.egress_ask(user, inst.id, "example.com", Some(run.id), 5, 20)
         .await
-        .unwrap();
+        .unwrap()
+        .id();
     g.commit().await.unwrap();
     assert_eq!(notify_requests(&t.db, 10).await.unwrap(), 1);
 }

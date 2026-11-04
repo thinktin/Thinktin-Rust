@@ -14,9 +14,30 @@ use crate::{Error, Llmgw, Result, Tenant, Tx, Worker, signed, unsigned};
 /// 没有任务时（`run_id` 为空），“访问一次”“拒绝”管多久。
 const NO_RUN_DECISION_HOURS: i32 = 1;
 
+/// [`Tx::egress_ask`] 的结果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EgressAsk {
+    /// 登记上了（或者接着等已经在等的、用刚答过的那条）。
+    Asked(EgressRequestId),
+    /// 这次任务已经有好几个网站在等用户回答。
+    TooManyPending,
+    /// 这个实例这一小时问得太多了。
+    HourlyLimit,
+}
+
+impl EgressAsk {
+    /// 登记上的请求 id。
+    pub fn id(self) -> Option<EgressRequestId> {
+        match self {
+            EgressAsk::Asked(id) => Some(id),
+            _ => None,
+        }
+    }
+}
+
 /// 要问用户的一个网站，加上后台发提醒要用的：实例名、是谁的。
 #[derive(Debug, Clone, PartialEq)]
-pub struct EgressAsk {
+pub struct EgressNotice {
     pub request: EgressRequest,
     pub user_id: UserId,
     pub instance_name: String,
@@ -241,10 +262,11 @@ impl Tx<Llmgw> {
         Ok(status)
     }
 
-    /// 问用户能不能访问 `host`，返回请求 id：已经有一条在等就接着等那条（换成这次任务；换了任务、上次提醒过了一小时
-    /// 以上的再提醒一次）；用户刚答过（这次任务的“访问一次”“拒绝”，或者“一直允许”）就返回答过的那条，调用方读到它的
-    /// 结果；都没有就新建一条。这次任务已经有 `max_pending` 个网站在等、或者这个实例一小时里已经登记了 `max_per_hour`
-    /// 条时返回空（不让 agent 一口气、定时任务一遍遍地弹提示）。
+    /// 问用户能不能访问 `host`：已经有一条在等就接着等那条（换成这次任务；换了任务、上次提醒过了一小时以上的再提醒
+    /// 一次）；用户刚答过（这次任务的“访问一次”“拒绝”，或者还在名单上的“一直允许”）就用答过的那条，调用方读到它的
+    /// 结果；都没有就新建一条。这次任务已经有 `max_pending` 个网站在等时返回 [`EgressAsk::TooManyPending`]；这个实例一小时里
+    /// 已经登记了 `max_per_hour` 条用户没答应的（还在等的、拒绝的、过期的）时返回 [`EgressAsk::HourlyLimit`]（不让 agent
+    /// 一口气、定时任务一遍遍地弹提示）。
     pub async fn egress_ask(
         &mut self,
         user: UserId,
@@ -253,16 +275,18 @@ impl Tx<Llmgw> {
         run: Option<RunId>,
         max_pending: u32,
         max_per_hour: u32,
-    ) -> Result<Option<EgressRequestId>> {
+    ) -> Result<EgressAsk> {
         if let Some(id) = self.touch_egress_ask(instance, host, run).await? {
-            return Ok(Some(id));
+            return Ok(EgressAsk::Asked(id));
         }
         // 用户的回答在调用方查过之后、上面续之前提交了：用那条，不再问一遍。
         let decided: Option<Uuid> = sqlx::query_scalar(
             "SELECT id FROM egress_requests \
              WHERE instance_id = $1 AND host = $2 AND status IN ('once', 'always', 'denied') \
                AND decided_at > now() - interval '1 minute' \
-               AND (status = 'always' OR run_id IS NOT DISTINCT FROM $3) \
+               AND (run_id IS NOT DISTINCT FROM $3 OR status = 'always') \
+               AND (status <> 'always' \
+                    OR EXISTS (SELECT 1 FROM instances i WHERE i.id = $1 AND $2 = ANY(i.egress_hosts))) \
              ORDER BY decided_at DESC LIMIT 1",
         )
         .bind(instance.0)
@@ -271,7 +295,7 @@ impl Tx<Llmgw> {
         .fetch_optional(self.conn())
         .await?;
         if let Some(id) = decided {
-            return Ok(Some(id.into()));
+            return Ok(EgressAsk::Asked(id.into()));
         }
         // 个数只算这次任务的：前面的任务没人答的请求还在等（用户还能点“一直允许”），但不挡后面的任务问新网站。
         // 并发时个数可能多出一两个，不要紧。
@@ -281,7 +305,8 @@ impl Tx<Llmgw> {
              WHERE (SELECT count(*) FROM egress_requests \
                     WHERE instance_id = $1 AND status = 'pending' AND run_id IS NOT DISTINCT FROM $3) < $6 \
                AND (SELECT count(*) FROM egress_requests \
-                    WHERE instance_id = $1 AND created_at > now() - interval '1 hour') < $7 \
+                    WHERE instance_id = $1 AND created_at > now() - interval '1 hour' \
+                      AND status NOT IN ('once', 'always')) < $7 \
              ON CONFLICT (instance_id, host) WHERE status = 'pending' DO UPDATE SET ",
             touch_request!(),
             " RETURNING id"
@@ -296,10 +321,25 @@ impl Tx<Llmgw> {
         .fetch_optional(self.conn())
         .await?;
         if let Some(id) = id {
-            return Ok(Some(id.into()));
+            return Ok(EgressAsk::Asked(id.into()));
         }
         // 正好到上限时，同一个网站的另一个连接刚登记上（它提交后这里看到的个数满了，插入不成也撞不上冲突）：接着等它。
-        self.touch_egress_ask(instance, host, run).await
+        if let Some(id) = self.touch_egress_ask(instance, host, run).await? {
+            return Ok(EgressAsk::Asked(id));
+        }
+        let pending: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM egress_requests \
+             WHERE instance_id = $1 AND status = 'pending' AND run_id IS NOT DISTINCT FROM $2",
+        )
+        .bind(instance.0)
+        .bind(run.map(|r| r.0))
+        .fetch_one(self.conn())
+        .await?;
+        Ok(if pending >= i64::from(max_pending) {
+            EgressAsk::TooManyPending
+        } else {
+            EgressAsk::HourlyLimit
+        })
     }
 
     /// 续上一条在等的请求。
@@ -479,7 +519,7 @@ impl Tx<Tenant> {
 
 impl Tx<Worker> {
     /// 领走最多 `limit` 条还没提醒过的请求，记下提醒时间（和发提醒在同一个事务里：事务没提交就当没领）。
-    pub async fn claim_egress_asks(&mut self, limit: i64) -> Result<Vec<EgressAsk>> {
+    pub async fn claim_egress_asks(&mut self, limit: i64) -> Result<Vec<EgressNotice>> {
         #[derive(sqlx::FromRow)]
         struct AskRow {
             #[sqlx(flatten)]
@@ -501,7 +541,7 @@ impl Tx<Worker> {
         .await?;
         Ok(rows
             .into_iter()
-            .map(|r| EgressAsk {
+            .map(|r| EgressNotice {
                 request: r.request.into(),
                 user_id: r.user_id.into(),
                 instance_name: r.instance_name,

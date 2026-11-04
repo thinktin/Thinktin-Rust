@@ -1278,6 +1278,7 @@ async fn ffi_instance_settings() {
     )
     .await
     .unwrap()
+    .id()
     .unwrap();
     g.commit().await.unwrap();
     let pending = c

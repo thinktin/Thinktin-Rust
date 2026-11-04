@@ -57,7 +57,7 @@ pub use device_relay::{
     ClaimedCall, DEVICE_CALL_CHANNEL, DEVICE_CHANNEL, DeviceCallRecord, LINK_FRESH, NewDeviceCall,
     NewLink,
 };
-pub use egress::{EgressAsk, EgressLogEntry};
+pub use egress::{EgressAsk, EgressLogEntry, EgressNotice};
 pub use error::{Error, Result};
 pub use events::EVENTS_CHANNEL;
 pub use hooks::{HookActivity, HookLock, HookTarget, MAX_HOOKS_PER_PLAN};

@@ -701,3 +701,24 @@ async fn connections_dropped_while_waiting_are_logged() {
         ["client_gone"]
     );
 }
+
+/// 一小时里问用户问得太多了：不再问，告诉 agent 的是这个原因（不是“在等别的网站”）。
+#[tokio::test]
+async fn too_many_asks_in_an_hour_have_their_own_reason() {
+    let e = env(EgressMode::Custom, &[], |o| {
+        o.ask_wait = Duration::from_millis(100);
+        o.ask_poll = Duration::from_millis(20);
+        o.max_asks_per_hour = 1;
+    })
+    .await;
+    let token = e.token_with(|_| {});
+    let (resp, _) = e.connect(&e.echo_target(), Some(&token)).await;
+    assert!(resp.contains("pending_approval"), "{resp}");
+    let (resp, _) = e.connect("otherhost:443", Some(&token)).await;
+    assert!(resp.contains("ask_rate"), "{resp}");
+    // 用户答应了的不算：答应以后又能问新网站。
+    let id = e.ledger.asks()[0].id.clone();
+    e.ledger.decide(&id, "always");
+    let (resp, _) = e.connect("otherhost:443", Some(&token)).await;
+    assert!(resp.contains("pending_approval"), "{resp}");
+}

@@ -112,7 +112,8 @@ Smokescreen 还得用 Go 写一层认实例、查档位、记额度的插件，�
    `user_denied`。没有任务时，答复管一小时。
 3. 没答过就登记一条请求：同一个实例、同一个网站同时只有一条在等，后来的任务再问就接着等这条（换成后来的任务）；用户
    刚答过（一分钟内）就用答过的那条，不再问一遍。一次任务最多 5 个网站同时在等（前面的任务没人答的不算，它们还在等，
-   用户还能点“一直允许”），每个实例一小时最多登记 20 条，再多的回 403 `too_many_asks`。今天的流量用完了就不问，直接回
+   用户还能点“一直允许”），回 403 `too_many_asks`；每个实例一小时最多登记 20 条用户没答应的（在等的、拒绝的、过期的；
+   答应了的不算），再多的回 403 `ask_rate`。用户刚点了“一直允许”又在设置里删掉的，再访问重新问。今天的流量用完了就不问，直接回
    429 `quota`。然后这个 CONNECT 每秒查一次，最多等 60 秒：用户答应了就接着连（`once` 或 `always`），拒绝了回
    `user_denied`，到时间没答回 403 `pending_approval`，正文告诉 agent“已经问了用户，先做别的，过会儿再试”。每个实例
    最多 8 个连接同时在等，再多的照样登记、马上回 `pending_approval`。等到用户答应以后（或者等名额等了一秒以上）重新读实例、
@@ -138,6 +139,13 @@ Smokescreen 还得用 Go 写一层认实例、查档位、记额度的插件，�
   `remove_instance_egress_host(instance_id, host)`，`EgressStatus` 多了 `search_hosts` 和 `pending`，收件箱条目多了
   `egress_request_id`。
 
+- `PATCH /v1/instances/{id}` 收 `egress: {mode, hosts, accept_risk}`。`all` 必须带 `accept_risk: true`，App 先提示风险。
+  网站整理写法、去重，最多 50 个；`custom` 至少一个。改了记审计 `instance.egress`。
+- `GET /v1/instances/{id}/egress` 返回：档位、网站、开发网站预设、今天的用量和上限、同时连接上限、最近被拒绝的访问
+  （给“要不要放行这个网站”用）。
+- client-core 的 `Instance.egress_mode` 是字符串，以后加档位老 App 不会解析失败；另有 `egress_hosts`、
+  `set_instance_egress`、`instance_egress`。
+
 **2.7e 评审（2026-11-04，安全、库的状态和并发、代理、接口和产品 4 个方面，每个方面一个反驳者核对）。** 成立 14 个问题
 （原始结果 [drafts/egress-approval-review.md](progress/drafts/egress-approval-review.md)），都修了：Tavily 能抓任意网页，从默认
 搜索里去掉；前面任务没人答的请求占满个数、挡住后面的任务（改成只算这次任务的，另加每小时 20 条）；等待时任务结束了还能
@@ -146,12 +154,10 @@ Smokescreen 还得用 Go 写一层认实例、查档位、记额度的插件，�
 还问；删了的实例的请求还列着；“一直允许”被设置页整表保存冲掉（加了删单个网站的接口）；没配代理时说明里也讲上网规矩。
 驳回 2 条：PATCH 整表替换的并发问题是原来就有的（新加了删单个的接口绕开）；老服务端没有 `egress_mode` 时 App 显示 dev
 （老服务端也没有出网接口，App 不会据此做什么）。
-- `PATCH /v1/instances/{id}` 收 `egress: {mode, hosts, accept_risk}`。`all` 必须带 `accept_risk: true`，App 先提示风险。
-  网站整理写法、去重，最多 50 个；`custom` 至少一个。改了记审计 `instance.egress`。
-- `GET /v1/instances/{id}/egress` 返回：档位、网站、开发网站预设、今天的用量和上限、同时连接上限、最近被拒绝的访问
-  （给“要不要放行这个网站”用）。
-- client-core 的 `Instance.egress_mode` 是字符串，以后加档位老 App 不会解析失败；另有 `egress_hosts`、
-  `set_instance_egress`、`instance_egress`。
+
+第二轮（只看修复，原始结果 [drafts/egress-approval-review-2.md](progress/drafts/egress-approval-review-2.md)）又找出
+4 个小问题，也修了：每小时的条数把用户答应了的也算进去、和“这次任务在等的太多”说的是同一句话（分开成 `ask_rate`）；刚点
+“一直允许”又删掉的网站一分钟内还能连；删实例时没把在等的请求标过期、收件箱留着未读；[推送约定](push.md)没写新的推送种类。
 
 **评审（2026-11-04，网络逃逸、认证、额度、兼容 4 个方面，每个方面一个反驳者核对）。** 成立的都修了（`97c83e9`、
 `a8b0c1c`、`cc54c61`）：

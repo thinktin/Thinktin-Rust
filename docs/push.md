@@ -28,11 +28,16 @@
 | `approval` | `APPROVAL` | 10 | time-sensitive | 审批渠道，高 | 是 |
 | `computer_approval` | `COMPUTER_APPROVAL` | 10 | time-sensitive | 审批渠道，高 | 否 |
 | `vault_request` | `VAULT_REQUEST` | 10 | time-sensitive | 审批渠道，高 | 否 |
+| `egress_request` | `EGRESS_REQUEST` | 10 | time-sensitive | 审批渠道，高 | 否 |
 | `plan_confirm` | `PLAN_CONFIRM` | 10 | 默认 | 结果渠道，普通 | 否 |
 | `info` | `INFO` | 5 | 默认 | 结果渠道，普通 | 否 |
 
 - `APPROVAL` 通知上只能直接“拒绝”，批准要打开 App、过本机验证。`COMPUTER_APPROVAL` 批准和拒绝都要签名，通知上没有按钮。
 - `vault_request`：agent 请用户往保险箱里填账号密码，运行等着（`thinktin://vault/request/{id}`）。
+- `egress_request`：agent 想访问一个不在名单上的网站（2.7，[出口代理](egress.md)“问用户”），代理最多等 60 秒。目标里带
+  `egress_request`（请求 id），用 client-core 的 `egress_requests` 找到这一条、`decide_egress_request` 回答：访问一次（这次
+  任务）/ 一直允许（以后都能）/ 拒绝（这次任务不再问）。正文里有网站名，按用户的语言。没有请求 id 时打开实例的在等列表
+  （`instance_egress` 的 `pending`），再没有就是收件箱里的那一条。
 - `plan_confirm`：agent 建了或改了计划，等用户确认（`tt.plan`）。
 
 ## 3. 载荷
@@ -52,7 +57,7 @@ APNs：
   "tt": {
     "kind": "vault_request",
     "instance": "…", "run": "…", "approval": "…", "plan": "…", "inbox": "…",
-    "vault_request": "…",
+    "vault_request": "…", "egress_request": "…",
     "subtype": "…"
   }
 }
@@ -60,10 +65,10 @@ APNs：
 
 - `tt` 里只有 id，没有的键不带。`inbox` 是这条通知在收件箱里的条目，点开后用 `inbox_item(id)` 取、`mark_inbox_read` 标已读。
 - Android（FCM 的 `data`、极光的 `extras`）是同样的键加 `tt_` 前缀：`tt_kind`、`tt_instance`、`tt_run`、`tt_approval`、
-  `tt_plan`、`tt_inbox`、`tt_vault_request`、`tt_subtype`。
+  `tt_plan`、`tt_inbox`、`tt_vault_request`、`tt_egress_request`、`tt_subtype`。
 - 正文是 agent 写的（运行摘要、工具调用的标题、保险箱请求的用途）带“AI 生成”标识（16.3），按用户的语言。命中内容过滤的
   换成中性提示，原文留在收件箱。
-- 同一个运行的通知 `thread-id` 相同；审批、保险箱请求、计划待确认带 `apns-collapse-id`（FCM 的 `collapse_key` /
+- 同一个运行的通知 `thread-id` 相同；审批、保险箱请求、出网请求、计划待确认带 `apns-collapse-id`（FCM 的 `collapse_key` /
   `tag`），新通知替换旧的。极光还不替换（同一个计划改了几次，就有几条“计划待确认”）。
 - 推送里没有用户 id：退出登录、换账号时 App 清掉已送达的通知、角标设成 0。
 
@@ -100,7 +105,8 @@ APNs：
 - iOS：角标是发的时候收件箱的未读数（排队期间读了的不算），在 `aps.badge` 里。App 在前台时用 `cached_unread()` 自己设。
 - Android：推送不带角标数（FCM 的 `notification_count` 是“这一条通知代表几件事”，桌面会把通知栏里的加起来），桌面按
   通知栏里的通知自己算；App 要显示未读数就用 `cached_unread()`。
-- 审批处理完（批准、拒绝、超时、运行结束）、保险箱请求处理完（填了、拒绝了），收件箱里审批、保险箱请求那一条自动算已读；
+- 审批处理完（批准、拒绝、超时、运行结束）、保险箱请求处理完（填了、拒绝了）、出网请求答了或者过期了（一天没人答、实例删了），
+  收件箱里那一条自动算已读；
   同一个审批的其他提醒（“审批超时、已跳过”）不动。电脑审批平台看不到结果，那条要 App 标已读。
 
 ## 7. 还没做的

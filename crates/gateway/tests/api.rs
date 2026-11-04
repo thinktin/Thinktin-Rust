@@ -4154,6 +4154,7 @@ async fn egress_requests_over_http() {
             g.egress_ask(user, inst, host, None, 5, 20)
                 .await
                 .unwrap()
+                .id()
                 .unwrap(),
         );
     }

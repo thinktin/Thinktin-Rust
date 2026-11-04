@@ -5028,24 +5028,28 @@ async fn egress_requests_are_asked_once_and_decided_per_task() {
         .egress_ask(a, ia.id, "example.com", Some(r1.id), 2, 20)
         .await
         .unwrap()
+        .id()
         .unwrap();
     // 同一个网站再问还是那一条，不占个数。
     assert_eq!(
         g.egress_ask(a, ia.id, "example.com", Some(r1.id), 2, 20)
             .await
-            .unwrap(),
+            .unwrap()
+            .id(),
         Some(q1)
     );
     let q2 = g
         .egress_ask(a, ia.id, "example.org", Some(r1.id), 2, 20)
         .await
         .unwrap()
+        .id()
         .unwrap();
     // 满了：新网站不再问。
     assert_eq!(
         g.egress_ask(a, ia.id, "example.net", Some(r1.id), 2, 20)
             .await
-            .unwrap(),
+            .unwrap()
+            .id(),
         None
     );
     assert_eq!(
@@ -5132,6 +5136,7 @@ async fn egress_requests_are_asked_once_and_decided_per_task() {
         .egress_ask(a, ia.id, "example.com", Some(r2.id), 2, 20)
         .await
         .unwrap()
+        .id()
         .unwrap();
     assert_ne!(q3, q1);
     g.commit().await.unwrap();
@@ -5146,27 +5151,31 @@ async fn egress_requests_are_asked_once_and_decided_per_task() {
         vec!["example.com".to_owned()]
     );
     tx.commit().await.unwrap();
-    // 刚答过：再问拿到的是答过的那条。过了一分钟（比如用户后来又在设置里删了这个网站）再问才新建。
+    // 刚答过：再问拿到的是答过的那条。用户随后在设置里删了这个网站，再问就新建（不拿刚才的“一直允许”放行）。
     let mut g = db.llmgw().await.unwrap();
     assert_eq!(
         g.egress_ask(a, ia.id, "example.com", Some(r2.id), 2, 20)
             .await
-            .unwrap(),
+            .unwrap()
+            .id(),
         Some(q3)
     );
     g.commit().await.unwrap();
-    sqlx::query(
-        "UPDATE egress_requests SET decided_at = now() - interval '2 minutes' WHERE id = $1",
-    )
-    .bind(q3.0)
-    .execute(db.pool())
-    .await
-    .unwrap();
+    let mut tx = db.tenant(a).await.unwrap();
+    assert!(
+        tx.remove_egress_host(ia.id, "example.com")
+            .await
+            .unwrap()
+            .egress_hosts
+            .is_empty()
+    );
+    tx.commit().await.unwrap();
     let mut g = db.llmgw().await.unwrap();
     let q4 = g
         .egress_ask(a, ia.id, "example.com", Some(r2.id), 2, 20)
         .await
         .unwrap()
+        .id()
         .unwrap();
     assert_ne!(q4, q3);
     g.commit().await.unwrap();
@@ -5193,6 +5202,7 @@ async fn egress_requests_are_asked_once_and_decided_per_task() {
         .egress_ask(a, ia.id, "full.example.com", None, 2, 20)
         .await
         .unwrap()
+        .id()
         .unwrap();
     g.commit().await.unwrap();
     let mut tx = db.tenant(a).await.unwrap();
@@ -5230,6 +5240,7 @@ async fn egress_requests_are_asked_once_and_decided_per_task() {
         .egress_ask(a, ia.id, "late.example.com", None, 5, 20)
         .await
         .unwrap()
+        .id()
         .unwrap();
     g.commit().await.unwrap();
     let mut w = db.worker().await.unwrap();
@@ -5285,7 +5296,8 @@ async fn egress_asks_count_per_task_and_settle_their_inbox() {
         let id = g
             .egress_ask(a, ia.id, host, run, 2, per_hour)
             .await
-            .unwrap();
+            .unwrap()
+            .id();
         g.commit().await.unwrap();
         id
     };
@@ -5299,8 +5311,21 @@ async fn egress_asks_count_per_task_and_settle_their_inbox() {
     let r2 = queue_run(db, a, &ia, "two").await;
     set_state(r2.id, RunState::Running).await;
     let q3 = ask("c.example.com", Some(r2.id), 20).await.unwrap();
-    // 一小时里登记满了：不再登记新的（续在等的照样行）。
-    assert_eq!(ask("d.example.com", Some(r2.id), 3).await, None);
+    // 一小时里登记满了（用户没答应的有 3 条）：不再登记新的，和“这次任务在等的太多”分得开；续在等的照样行。
+    let mut g = db.llmgw().await.unwrap();
+    assert_eq!(
+        g.egress_ask(a, ia.id, "d.example.com", Some(r2.id), 2, 3)
+            .await
+            .unwrap(),
+        crate::EgressAsk::HourlyLimit
+    );
+    assert_eq!(
+        g.egress_ask(a, ia.id, "d.example.com", Some(r1.id), 2, 20)
+            .await
+            .unwrap(),
+        crate::EgressAsk::TooManyPending
+    );
+    g.commit().await.unwrap();
     assert_eq!(ask("a.example.com", Some(r2.id), 3).await, Some(q1));
 
     // 收件箱里的提醒：回答了就算已读。
@@ -5339,6 +5364,8 @@ async fn egress_asks_count_per_task_and_settle_their_inbox() {
     assert_eq!(unread().await, [q1]);
     // 刚答过“访问一次”：同一个任务再问拿到的是答过的那条，不新建。
     assert_eq!(ask("c.example.com", Some(r2.id), 20).await, Some(q3));
+    // 用户答应了的不算进每小时的条数。
+    assert!(ask("d.example.com", Some(r2.id), 3).await.is_some());
 
     // 过期：标成已读。
     let mut w = db.worker().await.unwrap();
@@ -5346,13 +5373,28 @@ async fn egress_asks_count_per_task_and_settle_their_inbox() {
         w.expire_egress_asks(Utc::now() + Days::days(1), 100)
             .await
             .unwrap(),
-        2
+        3
     );
     w.commit().await.unwrap();
     assert!(unread().await.is_empty());
 
-    // 删了的实例：在等的不列、答不了、不提醒。
+    // 删了的实例：在等的标成过期（提醒算已读）、不列、答不了、不提醒。
     let q4 = ask("e.example.com", Some(r2.id), 20).await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    w.insert_inbox(
+        a,
+        &NewInboxItem {
+            kind: "egress_request".into(),
+            title: "t".into(),
+            egress_request_id: Some(q4),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    w.commit().await.unwrap();
+    assert_eq!(unread().await, [q4]);
     let mut tx = db.tenant(a).await.unwrap();
     assert_eq!(tx.egress_requests(None, true, 10).await.unwrap().len(), 1);
     tx.delete_instance(ia.id).await.unwrap();
@@ -5365,4 +5407,11 @@ async fn egress_asks_count_per_task_and_settle_their_inbox() {
     let mut w = db.worker().await.unwrap();
     assert!(w.claim_egress_asks(10).await.unwrap().is_empty());
     w.commit().await.unwrap();
+    assert!(unread().await.is_empty());
+    let status: String = sqlx::query_scalar("SELECT status FROM egress_requests WHERE id = $1")
+        .bind(q4.0)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(status, "expired");
 }

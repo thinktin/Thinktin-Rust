@@ -397,6 +397,16 @@ impl Tx<Tenant> {
             .bind(id.0)
             .execute(self.conn())
             .await?;
+        // 还在等用户回答的出网请求（2.7）不用答了：标成过期，提醒的收件箱条目算已读（角标不留着）。
+        sqlx::query(
+            "WITH gone AS (UPDATE egress_requests SET status = 'expired' \
+                           WHERE instance_id = $1 AND status = 'pending' RETURNING id) \
+             UPDATE inbox_items SET read_at = now() \
+             WHERE egress_request_id IN (SELECT id FROM gone) AND read_at IS NULL",
+        )
+        .bind(id.0)
+        .execute(self.conn())
+        .await?;
         Ok(())
     }
 
