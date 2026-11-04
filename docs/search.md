@@ -20,21 +20,38 @@
 - **平台搜索工具 `web_search`**（`crates/orchestrator/src/search.rs`）：后台副本调搜索接口，按 `[search].providers` 的顺序
   试（默认 DeepSeek，出错换 IQS），只回标题、链接、网站、日期和最多 300 字的摘要，不要正文（DeepSeek `need_content: false`、
   不用 `summary`；IQS 不要 `mainText`、`summary`）。搜索词最长 128 字，里面有用户保险箱的值就不搜。
-- **上限**（`store::search`，迁移 0036 的 `search_usage`）：每人每天 50 次、全站每月 ¥100，先按最贵的一家预留、搜完按实际改
-  （都出错的不算次数；DeepSeek 没结果不收钱）。用完了告诉 agent 明天再搜 / 这个月的额度用完了；月度用完时打错误日志，
-  指标 `thinktin_search_month_spend_yuan`（这个月花了多少元）、`thinktin_search_calls_total{result,backend}`，运维据此告警。
+- **上限**（`store::search`，迁移 0036 的 `search_usage`）：每人每天 50 次（设成 0 是暂停）、全站每月 ¥100，先按最贵的一家
+  预留、搜完按实际改（都出错、接口也没收钱的不算次数；接口收了钱但结果没解析出来的照样算）。用完了告诉 agent 明天再搜 /
+  这个月的额度用完了。
+- **提醒运营者**（用户定的“到了就停下、提醒”）：`[search] alert_phone` 填运营者在 App 里登录的手机号，额度用到八成、用完了
+  （每月各一次），搜索接口拒绝（401/402/403：欠费、key 不对、没开通，每家每天一次）时，给这个账号发收件箱和推送
+  （subtype `search_alert`）；没填就只打错误日志。指标：`thinktin_search_month_spend_yuan`（这个月花了多少元）、
+  `thinktin_search_calls_total{result,backend}`。
+- **不耽误任务**：搜索在执行器的事件循环外面跑（和电脑工具一样），搜得慢时照样续租、能停；所有接口加起来最多等
+  `deadline_secs`（默认 20 秒），每家最多 `timeout_secs`（默认 10 秒）。
 - **默认给所有实例**：加进默认平台工具，迁移 0036 也加进已有的授权。只读（MCP `readOnlyHint`），Codex 默认不问；Claude 在
   `settings.json` 里放行了 `mcp__thinktin__web_search`。没配 key 时不给这个工具（启动时打一条警告）。
 - **Claude 的设置**（`crates/agent-shim/src/config.rs`）：放行 `WebSearch`、`WebFetch`、平台搜索，`skipWebFetchPreflight`。
 - **key**：`THINKTIN_DEEPSEEK_SEARCH_KEY`、`THINKTIN_IQS_API_KEY`，只放后台副本的 Secret（docs/release.md 第 5 节）。
-- **Pi、OpenClaw 也拿到平台工具**（`config::inject_mcp`）：它们不支持按会话给 MCP 服务器，shim 把桥写进它们自己的配置。
-  Pi 写 `~/.pi/agent/mcp.json`，`exposure: direct`（模型才看得见），桥带 `--only web_search`：Pi 没有权限系统，先只给搜索。
-  OpenClaw 写 `openclaw.json` 的 `mcp.servers`。
+- **Pi、OpenClaw 也拿到平台搜索**（`config::inject_mcp`）：它们不支持按会话给 MCP 服务器，shim 把桥写进它们自己的配置：
+  Pi 写 `~/.pi/agent/mcp.json`（`exposure: direct`，模型才看得见；没有平台工具时写空的），OpenClaw 写 `openclaw.json` 的
+  `mcp.servers`。两家调平台工具都不会先问用户（Pi 没有权限系统，OpenClaw 只对命令行工具问），所以只给只读的 `web_search`，
+  在 shim 那边过滤（`Bridge::restrict_to`；agent 改得了自己的配置，客户端的 `--only` 只是方便）。OpenClaw 自带的
+  `web_search` 要一家搜索服务的 key，我们没给，关掉（`tools.web.search.enabled: false`）。
 
 - **厂商替 agent 搜了几次**（用户选了保留厂商自带的搜索）：模型网关从 Anthropic 协议的
   `usage.server_tool_use.web_search_requests`（Anthropic、DeepSeek）和 Responses 输出里的 `web_search_call` 数出来，记进
   `usage_records.web_searches`（迁移 0037），用量看板（`GET /v1/usage`、client-core 的 `UsageBucket.web_searches`）看得到；
-  指标 `thinktin_llm_vendor_web_searches_total{vendor}`。通义的 `x_tools`、豆包的 `tool_usage` 还没接（字段名要拿真 key 确认）。
+  指标 `thinktin_llm_vendor_web_searches_total{vendor}`。流式中途断开时，按已经收到的搜索块（Anthropic 的
+  `server_tool_use`、Responses 的 `web_search_call`）记。通义的 `x_tools`、豆包的 `tool_usage` 还没接（字段名要拿真 key
+  确认）。厂商搜索花的是用户自己的 key，不受平台的每天、每月上限管。
+
+**评审（2026-11-04，平台搜索、agent 接入、厂商搜索计数、产品 4 个方面，每个方面一个反驳者）。** 成立 12 个问题都修了
+（原始结果 [drafts/search-review.md](progress/drafts/search-review.md)）：搜索在事件循环里等、慢了会丢租约；到了上限不提醒；
+接口收了钱的被退回；配置只改一项时单价变 0；每天 0 次还能搜一次；OpenClaw 自带的搜索没服务、一调就失败；OpenClaw 拿到全部
+平台工具又不先问；Pi 的“只给搜索”只在客户端；Pi 留着上次的 MCP 配置；厂商搜索的指标记了两遍；流式断开时厂商搜索记成 0；
+安卓单测编不过。驳回 4 条（老授权的迁移：还没部署过、新授权都带；厂商搜索没上限：用户选了保留、花的是用户的 key；给 agent
+的说明和文档：和代码对得上）。
 
 **还没做：**
 
