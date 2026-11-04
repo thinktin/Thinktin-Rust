@@ -411,6 +411,7 @@ internal fun CoreUsageBucket.toModel(): UsageBucket = UsageBucket(
     chargedTokens = chargedTokens.toLongClamped(),
     estimatedRequests = estimatedRequests.toLongClamped(),
     failedRequests = failedRequests.toLongClamped(),
+    webSearches = webSearches.toLongClamped(),
 )
 
 internal fun CoreUsageSummary.toModel(): UsageSummary =

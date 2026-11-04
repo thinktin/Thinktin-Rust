@@ -411,6 +411,8 @@ data class UsageBucket(
     val chargedTokens: Long,
     val estimatedRequests: Long,
     val failedRequests: Long,
+    /** 模型厂商替 agent 搜了几次（厂商另收钱，不在 token 里；docs/search.md）。 */
+    val webSearches: Long = 0,
 )
 
 /**

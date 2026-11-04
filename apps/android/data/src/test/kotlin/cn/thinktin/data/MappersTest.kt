@@ -188,9 +188,9 @@ class MappersTest {
 
     @Test
     fun usageBucket() {
-        val bucket = CoreUsageBucket("2026-10-01", 1u.toULong(), 2uL, 3uL, 4uL, 5uL, 6uL, 7uL, 8uL).toModel()
-        assertEquals(listOf(1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L), with(bucket) {
-            listOf(requests, inputTokens, cacheReadTokens, cacheWriteTokens, outputTokens, chargedTokens, estimatedRequests, failedRequests)
+        val bucket = CoreUsageBucket("2026-10-01", 1u.toULong(), 2uL, 3uL, 4uL, 5uL, 6uL, 7uL, 8uL, 9uL).toModel()
+        assertEquals(listOf(1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L), with(bucket) {
+            listOf(requests, inputTokens, cacheReadTokens, cacheWriteTokens, outputTokens, chargedTokens, estimatedRequests, failedRequests, webSearches)
         })
     }
 
