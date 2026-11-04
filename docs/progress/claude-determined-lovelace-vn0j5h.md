@@ -65,7 +65,11 @@
   坑：迁移账号受 FORCE 约束，回填前要在同一事务里 NO FORCE（不然悄悄复制 0 行）；`CREATE ROLE` 没有 CREATEROLE 时先报权限错、
   不查重，所以要先按名字查；`-- no-transaction` 的迁移只能一个迁移进程跑（CONCURRENTLY 会和等咨询锁的进程死锁）。
 - 8.13 对抗评审做完（`drafts/projects-8.13-review.md`）：13 条成立 7 条，都是小问题，都修了（`c5a0b41`），全量测试 702 个通过。
-- 下一步：8.14 邀请与加入（先跑一次方案 workflow，照 8.13 的做法：代码地图 → 方案 → 评审 → 定稿，存进 drafts）→ 8.15–8.19。东京：Phase 0（docs/browser.md 第 8.1 节），过了一个模板开一个 `supported`。用户放好搜索 key（`THINKTIN_PARALLEL_SEARCH_KEY`）后做小测。
+- **进行中：8.14 邀请与加入**（本会话，2026-11-04 21:40 UTC 起；两小时内别的会话不要重做）。按定稿 `drafts/projects-8.14-plan.md`
+  做（代码地图、草稿、评审在同一目录），分 13 步提交（第 8 节）。默认：手机号邀请只在 App 里通知（不发短信）；链接 72 小时、
+  一次有效，手机号邀请 7 天；每人每天 20 个、每项目 20 个待处理；可以拉黑；跨用户总开关 `[api] cross_user_projects` 默认关
+  （15.7 安全评审之前）。
+- 下一步：8.14 → 8.15–8.19。东京：Phase 0（docs/browser.md 第 8.1 节），过了一个模板开一个 `supported`。用户放好搜索 key（`THINKTIN_PARALLEL_SEARCH_KEY`）后做小测。
 
 ## ⚠️ 紧急交接（2026-10-29 16:00 UTC，本会话 session_016LgPcdynywrhrjCq8VVFLt 周额度快用完）
 
