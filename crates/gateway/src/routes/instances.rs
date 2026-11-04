@@ -4,7 +4,8 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use proto::domain::{
-    EgressMode, Instance, InstanceId, MAX_INSTANCE_PURPOSE_CHARS, ModelRoute, RunState,
+    EgressDecision, EgressMode, EgressRequest, EgressRequestId, Instance, InstanceId,
+    MAX_INSTANCE_PURPOSE_CHARS, ModelRoute, RunState,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -202,8 +203,8 @@ pub struct EgressQuery {
     limit: Option<u32>,
 }
 
-/// 实例的出网情况（2.7）：档位、加的网站、“开发网站”自带哪些、今天用了多少，最近被拒绝的访问（App 里
-/// 让用户看 agent 想上哪些网站没上成，决定要不要放行）。
+/// 实例的出网情况（2.7）：档位、用户一直允许的网站、默认就能上的搜索和开发网站、今天用了多少、在等用户回答的
+/// 网站，最近被拒绝的访问（App 里让用户看 agent 想上哪些网站没上成）。
 pub async fn egress(
     State(s): State<AppState>,
     Authed(who): Authed,
@@ -220,6 +221,9 @@ pub async fn egress(
     let denied = t
         .egress_log(id, true, q.limit.unwrap_or(20).clamp(1, 100))
         .await?;
+    let pending = t
+        .egress_requests(Some(id), true, proto::egress::MAX_PENDING_ASKS * 4)
+        .await?;
     t.rollback().await?;
     let denied: Vec<_> = denied
         .into_iter()
@@ -229,11 +233,73 @@ pub async fn egress(
         "mode": instance.egress_mode,
         "hosts": instance.egress_hosts,
         "dev_hosts": proto::egress::DEV_HOSTS,
+        "search_hosts": proto::egress::SEARCH_HOSTS,
+        "pending": pending,
         "used_today": used,
         "daily_limit": proto::egress::DAILY_BYTES,
         "max_tunnels": proto::egress::MAX_TUNNELS,
         "recent_denied": denied,
     })))
+}
+
+#[derive(Deserialize)]
+pub struct EgressRequestsQuery {
+    /// 只看这个实例的。
+    instance_id: Option<String>,
+    /// 也列答过、过期了的（默认只列还在等的）。
+    #[serde(default)]
+    all: bool,
+    limit: Option<u32>,
+}
+
+/// agent 想访问、要用户回答的网站（2.7），新的在前。默认只列还在等的。
+pub async fn egress_requests(
+    State(s): State<AppState>,
+    Authed(who): Authed,
+    axum::extract::Query(q): axum::extract::Query<EgressRequestsQuery>,
+) -> ApiResult<Json<Value>> {
+    let instance = q
+        .instance_id
+        .as_deref()
+        .map(|i| parse_id::<InstanceId>(i, "instance"))
+        .transpose()?;
+    let mut t = s.db.tenant(who.user).await?;
+    let requests = t
+        .egress_requests(instance, !q.all, q.limit.unwrap_or(50).clamp(1, 200))
+        .await?;
+    t.rollback().await?;
+    Ok(Json(json!({ "requests": requests })))
+}
+
+#[derive(Deserialize)]
+pub struct DecideEgressReq {
+    decision: EgressDecision,
+}
+
+/// 回答一条在等的请求（2.7）：`once` 这次任务里能访问，`always` 以后都能（记进实例的网站），`deny` 这次任务里
+/// 不再问。已经答过、过期了的返回冲突；一直允许的网站满了返回参数错误。记审计。
+pub async fn decide_egress_request(
+    State(s): State<AppState>,
+    Authed(who): Authed,
+    Path(id): Path<String>,
+    ApiJson(req): ApiJson<DecideEgressReq>,
+) -> ApiResult<Json<EgressRequest>> {
+    let id: EgressRequestId = parse_id(&id, "egress request")?;
+    let mut t = s.db.tenant(who.user).await?;
+    let decided = t.decide_egress_request(id, req.decision).await?;
+    t.audit(
+        &who.actor(),
+        "egress.decide",
+        Some(&id.to_string()),
+        &json!({
+            "instance_id": decided.instance_id,
+            "host": decided.host,
+            "decision": req.decision,
+        }),
+    )
+    .await?;
+    t.commit().await?;
+    Ok(Json(decided))
 }
 
 #[derive(Deserialize)]

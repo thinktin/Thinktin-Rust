@@ -4015,7 +4015,7 @@ async fn instance_egress_over_http() {
     let (_, body) = a.call(Method::GET, &path, tok, None).await;
     assert_eq!(
         (body["egress_mode"].as_str(), body["egress_hosts"].clone()),
-        (Some("model"), json!([]))
+        (Some("dev"), json!([]))
     );
     let patch = |egress: serde_json::Value| json!({ "egress": egress });
     let (st, body) = a
@@ -4116,6 +4116,13 @@ async fn instance_egress_over_http() {
             .unwrap()
             .contains(&json!("github.com"))
     );
+    assert!(
+        body["search_hosts"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("www.bing.com"))
+    );
+    assert_eq!(body["pending"], json!([]));
     let (st, _) = a
         .call(
             Method::GET,
@@ -4125,4 +4132,104 @@ async fn instance_egress_over_http() {
         )
         .await;
     assert_eq!(st, StatusCode::NOT_FOUND);
+}
+
+/// agent 想访问不在名单上的网站（2.7）：App 列出在等的，用户回答；“一直允许”记进实例；答过的不能再答；
+/// 别人的看不到、答不了。
+#[tokio::test]
+async fn egress_requests_over_http() {
+    let Some(a) = api().await else { return };
+    let u = a.login("13800138896").await;
+    let other = a.login("13800138897").await;
+    let tok = Some(u.access.as_str());
+    let inst = a.adopt(&u).await;
+    let user: UserId = {
+        let (_, me) = a.call(Method::GET, "/v1/me", tok, None).await;
+        me["id"].as_str().unwrap().parse().unwrap()
+    };
+    let mut g = a.t.db.llmgw().await.unwrap();
+    let mut ids = Vec::new();
+    for host in ["one.example.com", "two.example.com"] {
+        ids.push(
+            g.egress_ask(user, inst, host, None, 5)
+                .await
+                .unwrap()
+                .unwrap(),
+        );
+    }
+    g.commit().await.unwrap();
+
+    let (st, body) = a.call(Method::GET, "/v1/egress-requests", tok, None).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let hosts: Vec<_> = body["requests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| (r["host"].as_str().unwrap(), r["status"].as_str().unwrap()))
+        .collect();
+    assert_eq!(
+        hosts,
+        [
+            ("two.example.com", "pending"),
+            ("one.example.com", "pending")
+        ]
+    );
+    let (_, body) = a
+        .call(
+            Method::GET,
+            &format!("/v1/instances/{inst}/egress"),
+            tok,
+            None,
+        )
+        .await;
+    assert_eq!(body["pending"].as_array().unwrap().len(), 2);
+    let (_, body) = a
+        .call(
+            Method::GET,
+            "/v1/egress-requests",
+            Some(other.access.as_str()),
+            None,
+        )
+        .await;
+    assert_eq!(body["requests"], json!([]));
+
+    let decide = |id: &proto::domain::EgressRequestId, who: &str, decision: &str| {
+        let path = format!("/v1/egress-requests/{id}/decide");
+        let who = who.to_owned();
+        let body = json!({ "decision": decision });
+        let a = &a;
+        async move { a.call(Method::POST, &path, Some(&who), Some(body)).await }
+    };
+    let (st, _) = decide(&ids[0], &other.access, "always").await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (st, body) = decide(&ids[0], &u.access, "sometimes").await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    let (st, body) = decide(&ids[0], &u.access, "always").await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], "always");
+    let (st, _) = decide(&ids[0], &u.access, "deny").await;
+    assert_eq!(st, StatusCode::CONFLICT);
+    let (st, body) = decide(&ids[1], &u.access, "once").await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let (_, body) = a
+        .call(Method::GET, &format!("/v1/instances/{inst}"), tok, None)
+        .await;
+    assert_eq!(body["egress_hosts"], json!(["one.example.com"]));
+    let (_, body) = a.call(Method::GET, "/v1/egress-requests", tok, None).await;
+    assert_eq!(body["requests"], json!([]));
+    let (_, body) = a
+        .call(
+            Method::GET,
+            &format!("/v1/egress-requests?all=true&instance_id={inst}"),
+            tok,
+            None,
+        )
+        .await;
+    assert_eq!(body["requests"].as_array().unwrap().len(), 2);
+    let audits: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM audit_log WHERE action = 'egress.decide'")
+            .fetch_one(a.t.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(audits, 2);
 }
