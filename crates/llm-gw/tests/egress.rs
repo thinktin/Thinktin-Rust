@@ -756,10 +756,15 @@ async fn the_browser_pass_does_not_work_on_the_direct_lane() {
 
 impl Env {
     fn browser_pass(&self) -> String {
+        self.browser_pass_at(0)
+    }
+
+    /// 令牌代数是 `ep` 的浏览器通行证（下一次任务尝试）。
+    fn browser_pass_at(&self, ep: u64) -> String {
         self.issuer
             .issue_for(
                 TokenRequest {
-                    ep: 0,
+                    ep,
                     iid: "inst-1".into(),
                     uid: "user-1".into(),
                     grant: "grant-1".into(),
@@ -1108,12 +1113,102 @@ async fn direct_answers_count_for_their_own_host_only_in_the_browser() {
         .site_decision("i", "zhihu.com", "gist.zhihu.com")
         .await
         .unwrap();
-    assert_eq!(a, Some(Answer::Denied));
+    assert_eq!(a, Some((Answer::Denied, Via::Direct)));
     let browser = ask("www.zhihu.com", Via::Browser).await;
     l.decide(&browser, "once");
     let (_, a) = l
         .site_decision("i", "zhihu.com", "zhuanlan.zhihu.com")
         .await
         .unwrap();
-    assert_eq!(a, Some(Answer::Allowed), "a browser answer covers the site");
+    assert_eq!(
+        a,
+        Some((Answer::Allowed, Via::Browser)),
+        "a browser answer covers the site"
+    );
+}
+
+/// 直接上网时答的只算那个网址：浏览器问到同一个网址，回答带上这个范围（守门只记这个网址）。
+#[tokio::test]
+async fn direct_answers_reach_the_browser_as_host_only() {
+    use llm_gw::egress::{Asked, EgressLedger};
+    use proto::egress::Via;
+    let e = env(EgressMode::Dev, &[], browser_env_opts).await;
+    e.ledger.set_run("inst-1", Some("run-1"));
+    let direct = |status: &'static str| {
+        let ledger = e.ledger.clone();
+        async move {
+            let Asked::Request(id) = ledger
+                .ask(
+                    "user-1",
+                    "inst-1",
+                    "localhost",
+                    Some("run-1"),
+                    5,
+                    20,
+                    Via::Direct,
+                    Some("localhost"),
+                )
+                .await
+                .unwrap()
+            else {
+                panic!("not asked")
+            };
+            ledger.decide(&id, status);
+        }
+    };
+    direct("denied").await;
+    let (_, reply) = e
+        .ask(Some(&e.browser_pass()), ask_body("localhost", 0))
+        .await;
+    assert_eq!(reply["result"], "denied", "{reply}");
+    assert_eq!(reply["scope"], "host");
+    e.ledger.set_run("inst-1", Some("run-2"));
+    let ledger = e.ledger.clone();
+    let Asked::Request(id) = ledger
+        .ask(
+            "user-1",
+            "inst-1",
+            "localhost",
+            Some("run-2"),
+            5,
+            20,
+            Via::Direct,
+            Some("localhost"),
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("not asked")
+    };
+    ledger.decide(&id, "once");
+    let (_, reply) = e
+        .ask(Some(&e.browser_pass()), ask_body("localhost", 0))
+        .await;
+    assert_eq!(reply["result"], "allowed", "{reply}");
+    assert_eq!(reply["scope"], "default");
+}
+
+/// 浏览器通道“这次任务拒绝过”的缓存不带到下一次任务尝试（令牌代数变了）。
+#[tokio::test]
+async fn the_site_denial_cache_does_not_cross_task_attempts() {
+    let e = env(EgressMode::Dev, &[], browser_env_opts).await;
+    e.ledger.set_run("inst-1", Some("run-1"));
+    let (_, reply) = e
+        .ask(Some(&e.browser_pass()), ask_body("localhost", 0))
+        .await;
+    let id = reply["request_id"].as_str().unwrap().to_owned();
+    e.ledger.decide(&id, "denied");
+    let (resp, _) = e
+        .browser_connect(&e.echo_target(), &e.browser_pass(), "x")
+        .await;
+    assert_eq!(status(&resp), 403, "{resp}");
+    // 下一次任务尝试：代数加一、换了任务。15 秒的缓存里还是“拒绝过”，但不算这次的。
+    let mut next = instance(EgressMode::Dev, &[]);
+    next.epoch = 1;
+    e.directory.upsert_instance(next);
+    e.ledger.set_run("inst-1", Some("run-2"));
+    let (resp, _) = e
+        .browser_connect(&e.echo_target(), &e.browser_pass_at(1), "x")
+        .await;
+    assert_eq!(status(&resp), 200, "{resp}");
 }

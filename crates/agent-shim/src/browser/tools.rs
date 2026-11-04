@@ -53,13 +53,20 @@ pub fn load(text: &str) -> Vec<Value> {
     list.into_iter()
         .filter(|t| t["name"].as_str().is_some_and(|n| KEEP.contains(&n)))
         .map(|mut t| {
-            // 不给 agent 看 `filename`（[`check`] 也会去掉）。
-            if let Some(props) = t["inputSchema"]["properties"].as_object_mut() {
+            // 不给 agent 看 `filename`（[`check`] 也会去掉）。用 pointer_mut：按下标取可变引用会给没有的键补一个 null，
+            // MCP 客户端见到 `"required": null` 会把整个工具列表都拒掉。
+            if let Some(props) = t
+                .pointer_mut("/inputSchema/properties")
+                .and_then(Value::as_object_mut)
+            {
                 for k in STRIPPED_ARGS {
                     props.remove(*k);
                 }
             }
-            if let Some(req) = t["inputSchema"]["required"].as_array_mut() {
+            if let Some(req) = t
+                .pointer_mut("/inputSchema/required")
+                .and_then(Value::as_array_mut)
+            {
                 req.retain(|r| !r.as_str().is_some_and(|r| STRIPPED_ARGS.contains(&r)));
             }
             // 故意标成只读：点击、输入不真是只读，但打开网站由守门问用户，不能让 agent 每点一下都弹审批
@@ -203,6 +210,9 @@ mod tests {
                 .is_none()
         );
         assert!(tools[1]["inputSchema"]["properties"].get("depth").is_some());
+        // 没有的键不补（`"required": null` 会让 MCP 客户端拒掉整个工具列表）。
+        assert!(tools[1]["inputSchema"].get("required").is_none());
+        assert_eq!(tools[0]["inputSchema"], json!({}));
         let mut args =
             json!({"filename": ".claude/settings.local.json", "_meta": {"cwd": "/"}, "depth": 2});
         check("browser_snapshot", &mut args).unwrap();

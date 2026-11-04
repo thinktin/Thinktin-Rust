@@ -252,6 +252,15 @@ impl Gate {
                 }
                 "Fetch.requestPaused" => {
                     if let Some(session) = ev.session {
+                        // 主页面请求按事件的先后记下来（各请求在各自的任务里处理，任务的先后不一定）：问询回来时页面要还停在
+                        // 这个请求上，才按结果改页面的状态。
+                        if ev.params["resourceType"] == "Document"
+                            && let Some(t) = self.targets().get_mut(&session)
+                            && t.kind == Kind::Page
+                            && ev.params["frameId"].as_str() == Some(t.target_id.as_str())
+                        {
+                            t.pending_main = ev.params["requestId"].as_str().map(str::to_owned);
+                        }
                         let this = self.clone();
                         tokio::spawn(async move { this.on_paused(session, ev.params).await });
                     }
@@ -413,10 +422,6 @@ impl Gate {
             return;
         }
         let target = target.expect("checked above");
-        // 新的主页面请求：之前还在问的那个（如果有）回来时不再改页面的状态。
-        if let Some(t) = self.targets().get_mut(&session) {
-            t.pending_main = None;
-        }
         let verdict = decide(&url, target.prerender, &self.approvals, self.insecure);
         match verdict {
             Verdict::Continue { approved } => {
@@ -452,9 +457,6 @@ impl Gate {
                 };
                 let wait = self.remaining(params["networkId"].as_str().unwrap_or(&request_id));
                 let from = self.targets().get(&session).and_then(|t| t.site.clone());
-                if let Some(t) = self.targets().get_mut(&session) {
-                    t.pending_main = Some(request_id.clone());
-                }
                 // 工具层等这次问询问完，把结果算进这次调用。
                 let asking = self.approvals.asking(&host);
                 let reply = self
@@ -474,15 +476,14 @@ impl Gate {
                     other => leak_reason(other),
                 };
                 // 真的问了用户（代理登记了请求）才算“等过”：搜索、开发网站、一直允许的是代理直接放行的。
-                self.approvals.record(
-                    &host,
-                    result,
-                    reply.request_id.is_some() || result != "allowed",
-                );
-                drop(asking);
+                asking.finish(result, reply.request_id.is_some() || result != "allowed");
                 // 这次任务的批准、拒绝照记；页面的状态只在它还停在这个请求上时改。
                 match result {
                     "allowed" => self.approvals.approve(&host, reply.scope.as_deref()),
+                    // 直接上网时答的“拒绝”只管那个网址。
+                    "denied" if reply.scope.as_deref() == Some("host") => {
+                        self.approvals.deny_host(&host)
+                    }
                     "denied" => self.approvals.deny(&host),
                     _ => {}
                 }

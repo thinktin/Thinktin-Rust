@@ -68,6 +68,9 @@ async def proxy(r, w):
         ask = json.loads(body)
         ok = headers.get("authorization") == f"Bearer {PASS}"
         host = ask["host"]
+        if host.startswith("slow"):
+            # 用户一直没答、代理等了一会儿才回 pending：问询比 Playwright 的点击晚结束。
+            await asyncio.sleep(8)
         if not ok:
             reply = {"result": "auth"}
         elif host.startswith("dev"):
@@ -105,7 +108,8 @@ async def proxy(r, w):
 
 PAGES = {
     "site.test": "<html><head><title>Site</title></head><body><h1>Hello from site</h1>"
-                 "<img src='https://cdn.test:%d/img.png'><a href='https://other.test:%d/'>other</a></body></html>",
+                 "<img src='https://cdn.test:%d/img.png'><a href='https://other.test:%d/'>other</a>"
+                 "<a href='https://slow.test:%d/'>slow</a></body></html>",
     "other.test": "<html><body><h1>Other site</h1></body></html>",
     "allow.test": "<html><body><h1>Allowed site</h1></body></html>",
 }
@@ -125,7 +129,7 @@ async def site(r, w):
         body = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")
         ctype = b"image/png"
     else:
-        body = (PAGES.get(host, "<h1>%s</h1>" % host) % (SITE_PORT, SITE_PORT) if host == "site.test" else PAGES.get(host, "<h1>%s</h1>" % host)).encode()
+        body = (PAGES.get(host, "<h1>%s</h1>" % host) % (SITE_PORT, SITE_PORT, SITE_PORT) if host == "site.test" else PAGES.get(host, "<h1>%s</h1>" % host)).encode()
         ctype = b"text/html"
     w.write(b"HTTP/1.1 200 OK\r\nContent-Type: %s\r\nContent-Length: %d\r\nConnection: close\r\n\r\n" % (ctype, len(body)) + body)
     await w.drain()

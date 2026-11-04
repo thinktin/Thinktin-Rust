@@ -779,7 +779,7 @@ async fn browser_asks_are_kept_by_site_in_the_database() {
         .site_decision(&instance, "example.com", "www.example.com")
         .await
         .unwrap();
-    assert_eq!(answer, Some(Answer::Allowed));
+    assert_eq!(answer, Some((Answer::Allowed, Via::Browser)));
     let (_, answer) = ledger
         .site_decision(&instance, "other.com", "www.other.com")
         .await

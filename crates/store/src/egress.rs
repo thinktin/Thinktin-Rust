@@ -305,10 +305,10 @@ impl Tx<Llmgw> {
         site: &str,
         host: &str,
         run: Option<RunId>,
-    ) -> Result<Option<String>> {
+    ) -> Result<Option<(String, Via)>> {
         // 浏览器里的回答按网站算；直接上网的回答只算它自己那个网址（直接上网按完整网址问，docs/browser.md 第 1.2 节）。
-        let status: Option<String> = sqlx::query_scalar(
-            "SELECT status FROM egress_requests \
+        let row: Option<(String, String)> = sqlx::query_as(
+            "SELECT status, via FROM egress_requests \
              WHERE instance_id = $1 AND site = $2 AND status IN ('once', 'denied') \
                AND (via = 'browser' OR host = $5) \
                AND (run_id = $3 OR ($3 IS NULL AND run_id IS NULL \
@@ -322,7 +322,14 @@ impl Tx<Llmgw> {
         .bind(host)
         .fetch_optional(self.conn())
         .await?;
-        Ok(status)
+        Ok(row.map(|(status, via)| {
+            let via = if via == "browser" {
+                Via::Browser
+            } else {
+                Via::Direct
+            };
+            (status, via)
+        }))
     }
 
     /// 同 [`Self::egress_ask_as`]，直接上网、不记网站。

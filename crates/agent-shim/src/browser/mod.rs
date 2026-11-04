@@ -240,7 +240,17 @@ impl BrowserService {
         if let Err(e) = tools::check(name, &mut args) {
             return ToolResult::error(e);
         }
+        let run = self.run.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let _one_at_a_time = self.calls.lock().await;
+        // 排队的时候这一轮可能结束了、shim 可能在停：那就不跑了。
+        if *self.run.lock().unwrap_or_else(|e| e.into_inner()) != run {
+            return ToolResult::error("the browser is only available while a task is running");
+        }
+        if pass_value(&self.pass).is_none() {
+            return ToolResult::error(
+                "the browser is not enabled for this task; use web_search instead",
+            );
+        }
         // 排队的时间不算进这次调用的 55 秒。
         let started = Instant::now();
         let deadline = tokio::time::Instant::now() + CALL_TIMEOUT;
@@ -509,6 +519,16 @@ mod tests {
         });
         assert!(svc.has_tool("browser_navigate"));
         assert!(!svc.has_tool("browser_evaluate"));
+        // 真的 tools.json 读进来以后，工具说明里没有补出来的 null（MCP 客户端会拒掉整个列表）。
+        fn has_null(v: &Value) -> bool {
+            match v {
+                Value::Null => true,
+                Value::Array(a) => a.iter().any(has_null),
+                Value::Object(o) => o.values().any(has_null),
+                _ => false,
+            }
+        }
+        assert!(!svc.tools().iter().any(has_null));
         svc.begin_run("run-1");
         let r = svc
             .call(
@@ -553,6 +573,36 @@ mod tests {
             )
             .await;
         assert!(!r.is_error, "{}", text(&r));
+        // 问询比点击慢得多（用户一直没答）：这次调用等它问完，第一行照样是 pending_approval。
+        let snap = text(&svc.call("browser_snapshot", json!({})).await);
+        let slow = snap
+            .split("link \"slow\" [ref=")
+            .nth(1)
+            .and_then(|r| r.split(']').next())
+            .expect("a link to slow.test")
+            .to_owned();
+        let clicked = Instant::now();
+        let r = svc
+            .call("browser_click", json!({"element": "slow", "target": slow}))
+            .await;
+        assert!(
+            clicked.elapsed() >= Duration::from_secs(7),
+            "did not wait for the ask"
+        );
+        assert!(
+            text(&r).starts_with("pending_approval: opening slow.test"),
+            "{}",
+            text(&r)
+        );
+        // 下一次调用不会拿到上一次问询的结果。
+        let r = svc
+            .call(
+                "browser_navigate",
+                json!({"url": format!("https://site.test:{port}/")}),
+            )
+            .await;
+        assert!(!r.is_error, "{}", text(&r));
+        assert!(!text(&r).starts_with("pending"), "{}", text(&r));
         // 同一个网站不用再问。
         let r = svc
             .call(

@@ -5543,9 +5543,8 @@ async fn browser_asks_share_answers_by_site() {
     assert_eq!(
         g.egress_site_decision(ia.id, "zhihu.com", "www.zhihu.com", Some(r1.id))
             .await
-            .unwrap()
-            .as_deref(),
-        Some("once")
+            .unwrap(),
+        Some(("once".to_owned(), Via::Browser))
     );
     // 直接上网仍按完整网址：浏览器批准的是 www.zhihu.com，curl 同一个网址能通，别的子域名还要问。
     assert_eq!(
@@ -5577,16 +5576,14 @@ async fn browser_asks_share_answers_by_site() {
     assert_eq!(
         g.egress_site_decision(ia.id, "zhihu.com", "www.zhihu.com", Some(r1.id))
             .await
-            .unwrap()
-            .as_deref(),
-        Some("once")
+            .unwrap(),
+        Some(("once".to_owned(), Via::Browser))
     );
     assert_eq!(
         g.egress_site_decision(ia.id, "zhihu.com", "gist.zhihu.com", Some(r1.id))
             .await
-            .unwrap()
-            .as_deref(),
-        Some("denied")
+            .unwrap(),
+        Some(("denied".to_owned(), Via::Direct))
     );
     g.commit().await.unwrap();
     // 浏览器来问同一个网站的别的网址：不复用直接上网刚拒绝的那条。

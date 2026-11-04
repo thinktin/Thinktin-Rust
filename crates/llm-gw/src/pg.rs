@@ -595,7 +595,10 @@ impl crate::egress::EgressLedger for PgEgressLedger {
         instance: &str,
         site: &str,
         host: &str,
-    ) -> anyhow::Result<(Option<String>, Option<crate::egress::Answer>)> {
+    ) -> anyhow::Result<(
+        Option<String>,
+        Option<(crate::egress::Answer, proto::egress::Via)>,
+    )> {
         let (instance, _) = ids(instance, None)?;
         let mut tx = self.db.llmgw().await?;
         let run = tx.egress_current_run(instance).await?;
@@ -603,7 +606,7 @@ impl crate::egress::EgressLedger for PgEgressLedger {
         tx.commit().await?;
         Ok((
             run.map(|r| r.to_string()),
-            status.map(|s| crate::egress::Answer::from_status(Some(&s))),
+            status.map(|(s, via)| (crate::egress::Answer::from_status(Some(&s)), via)),
         ))
     }
 

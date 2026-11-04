@@ -179,6 +179,8 @@ pub fn chromium(paths: &Paths, profile: &Path, forward_port: u16) -> anyhow::Res
         "--disable-default-apps".into(),
         "--disable-extensions".into(),
         "--disable-features=Translate,MediaRouter,OptimizationHints".into(),
+        // 后退、前进也重新请求网页（经过守门），不从缓存里直接恢复。
+        "--disable-back-forward-cache".into(),
         "--disable-dev-shm-usage".into(),
         "--disable-gpu".into(),
         "--lang=zh-CN".into(),

@@ -39,6 +39,8 @@ struct Inner {
     sites: HashSet<String>,
     /// 这次任务拒绝过的网站。
     denied: HashSet<String>,
+    /// 这次任务拒绝过的网址（直接上网时答的“拒绝”只管那个网址）。
+    denied_hosts: HashSet<String>,
     /// 批准过的网页登记的资源网站：最近一次登记的时间、是哪个网站的网页。
     resources: HashMap<String, (Instant, Option<String>)>,
     /// 每个页面登记过哪些资源网站。
@@ -61,6 +63,26 @@ pub struct Approvals {
 pub struct Asking<'a> {
     approvals: &'a Approvals,
     id: u64,
+    started: Instant,
+}
+
+impl Asking<'_> {
+    /// 问完了：结果按问询开始的时间记（只算进问询开始时那次工具调用，不落到后来的调用上），然后登记结束。
+    pub fn finish(self, result: &str, asked: bool) {
+        let host = self
+            .approvals
+            .lock()
+            .asking
+            .get(&self.id)
+            .map(|(_, h)| h.clone())
+            .unwrap_or_default();
+        self.approvals.push(Outcome {
+            at: self.started,
+            host,
+            result: result.to_owned(),
+            asked,
+        });
+    }
 }
 
 impl Drop for Asking<'_> {
@@ -92,10 +114,12 @@ impl Approvals {
         let mut i = self.lock();
         i.next_ask += 1;
         let id = i.next_ask;
-        i.asking.insert(id, (Instant::now(), host.to_owned()));
+        let started = Instant::now();
+        i.asking.insert(id, (started, host.to_owned()));
         Asking {
             approvals: self,
             id,
+            started,
         }
     }
 
@@ -131,12 +155,14 @@ impl Approvals {
     }
 
     pub fn denied(&self, host: &str) -> bool {
-        self.lock().denied.contains(&site_of(host))
+        let i = self.lock();
+        i.denied.contains(&site_of(host)) || i.denied_hosts.contains(host)
     }
 
     /// 代理答应了：`scope` 是 `default` 时只记完整网址，否则记整个网站。
     pub fn approve(&self, host: &str, scope: Option<&str>) {
         let mut i = self.lock();
+        i.denied_hosts.remove(host);
         if scope == Some("default") {
             i.hosts.insert(host.to_owned());
         } else {
@@ -146,6 +172,13 @@ impl Approvals {
         }
         drop(i);
         self.announced.notify_waiters();
+    }
+
+    /// 只拒绝这个网址（代理说这是直接上网时答的“拒绝”）。
+    pub fn deny_host(&self, host: &str) {
+        let mut i = self.lock();
+        i.hosts.remove(host);
+        i.denied_hosts.insert(host.to_owned());
     }
 
     pub fn deny(&self, host: &str) {
@@ -219,16 +252,20 @@ impl Approvals {
     }
 
     pub fn record(&self, host: &str, result: &str, asked: bool) {
-        let mut i = self.lock();
-        if i.outcomes.len() >= 1000 {
-            i.outcomes.drain(..500);
-        }
-        i.outcomes.push(Outcome {
+        self.push(Outcome {
             at: Instant::now(),
             host: host.to_owned(),
             result: result.to_owned(),
             asked,
         });
+    }
+
+    fn push(&self, o: Outcome) {
+        let mut i = self.lock();
+        if i.outcomes.len() >= 1000 {
+            i.outcomes.drain(..500);
+        }
+        i.outcomes.push(o);
     }
 
     /// `since` 以后的结果（工具层看这次调用里发生了什么）。
@@ -259,6 +296,12 @@ mod tests {
         assert!(
             a.main_allowed("zhuanlan.zhihu.com"),
             "once covers the whole site"
+        );
+        a.deny_host("gist.github.com");
+        assert!(a.denied("gist.github.com"));
+        assert!(
+            !a.denied("github.com"),
+            "a host-level denial does not cover the site"
         );
         a.deny("news.example.co.uk");
         assert!(a.denied("www.example.co.uk"));
@@ -303,10 +346,15 @@ mod tests {
                 .await
         });
         tokio::time::sleep(Duration::from_millis(20)).await;
-        a.record("www.zhihu.com", "pending", true);
-        drop(guard);
+        guard.finish("pending", true);
         waiter.await.unwrap();
         assert!(a.asking_since(before).is_empty());
+        // 结果按问询开始的时间记：开始以后才开始的调用看不到它。
+        assert_eq!(a.outcomes_since(before).len(), 1);
+        let late = a.asking("slow.example.com");
+        let call = Instant::now();
+        late.finish("pending", true);
+        assert!(a.outcomes_since(call).is_empty());
         // 调用开始之前就在问的不算这次调用的。
         let _old = a.asking("old.example.com");
         assert!(a.asking_since(Instant::now()).is_empty());

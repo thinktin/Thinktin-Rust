@@ -305,14 +305,14 @@ pub trait EgressLedger: Send + Sync {
         instance: &str,
         host: &str,
     ) -> anyhow::Result<(Option<String>, Option<Answer>)>;
-    /// 浏览器用：实例现在在做的任务，和这次任务里用户对 `site`（主域名）这个网站答过的。浏览器里的回答按网站算；直接上网的
-    /// 回答只算它自己那个网址 `host`。
+    /// 浏览器用：实例现在在做的任务，和这次任务里用户对 `site`（主域名）这个网站答过的、是在哪条通道答的。浏览器里的回答
+    /// 按网站算；直接上网的回答只算它自己那个网址 `host`。
     async fn site_decision(
         &self,
         instance: &str,
         site: &str,
         host: &str,
-    ) -> anyhow::Result<(Option<String>, Option<Answer>)>;
+    ) -> anyhow::Result<(Option<String>, Option<(Answer, Via)>)>;
     /// 登记“想访问 `host`”（同一个网站已经有一条在等就接着等那条，用户刚答过就是答过的那条）；这次任务已经有
     /// `max_pending` 个网站在等、或者这个实例一小时里已经有 `max_per_hour` 条用户没答应的时不登记。`via`、`site`：
     /// 哪条通道、哪个网站（浏览器提问按网站去重）。
@@ -466,7 +466,7 @@ impl EgressLedger for MemoryEgressLedger {
         instance: &str,
         site: &str,
         host: &str,
-    ) -> anyhow::Result<(Option<String>, Option<Answer>)> {
+    ) -> anyhow::Result<(Option<String>, Option<(Answer, Via)>)> {
         let run = self
             .runs
             .lock()
@@ -486,7 +486,7 @@ impl EgressLedger for MemoryEgressLedger {
                     && a.run == run
                     && matches!(a.status.as_str(), "once" | "denied")
             })
-            .map(|a| Answer::from_status(Some(&a.status)));
+            .map(|a| (Answer::from_status(Some(&a.status)), a.via));
         Ok((run, answer))
     }
 
@@ -634,15 +634,19 @@ pub struct Egress {
     running: AtomicUsize,
     drained: Notify,
     /// 浏览器通道：(实例, 网站) 这次任务拒绝过没有，缓存 [`SITE_DENIAL_TTL`]。
-    denied_sites: Mutex<HashMap<(String, String), (Instant, bool)>>,
+    denied_sites: Mutex<HashMap<DenialKey, (Instant, bool)>>,
 }
+
+/// 浏览器通道“这次任务拒绝过没有”的缓存键：实例、令牌代数、网址。
+type DenialKey = (String, u64, String);
 
 /// 浏览器通道查“这个网站这次任务拒绝过没有”的缓存多久。
 const SITE_DENIAL_TTL: Duration = Duration::from_secs(15);
 /// `/v1/browser/ask` 的请求体最多多大。
 const BROWSER_ASK_MAX_BODY: usize = 8 << 10;
-/// 浏览器问询里解析网站名最多等多久（解析不到按 `resolve`）。
-const RESOLVE_TIMEOUT: Duration = Duration::from_secs(5);
+/// 浏览器问询里解析网站名最多等多久：比 glibc 一次重试（5 秒）长；超时按 `unavailable`（让 agent 过会儿再试，不说网站
+/// 不存在）。
+const RESOLVE_TIMEOUT: Duration = Duration::from_secs(12);
 
 /// 一个开着的隧道任务：结束时计数减一。
 struct Running(Arc<Egress>);
@@ -1072,6 +1076,11 @@ impl Egress {
         let Some(e) = c.minute.get_mut(key) else {
             return true;
         };
+        // 过了这一分钟：重新数（问询不再刷新浏览器通道的这一分钟，不能靠开隧道来重置）。
+        let now = Instant::now();
+        if now.duration_since(e.0) >= Duration::from_secs(60) {
+            *e = (now, 0, 0);
+        }
         e.2 += 1;
         e.2 <= self.options.logs_per_minute
     }
@@ -1474,7 +1483,10 @@ impl Egress {
             self.record_denial_as(&caller, &host, port, &d, &tag);
             return respond(&d);
         }
-        match self.site_denied(&caller.instance.id, &host).await {
+        match self
+            .site_denied(&caller.instance.id, caller.instance.epoch, &host)
+            .await
+        {
             Ok(false) => {}
             Ok(true) => {
                 let d = denied(
@@ -1550,8 +1562,9 @@ impl Egress {
 
     /// 这次任务里用户拒绝过 `host` 吗（浏览器通道用，缓存 [`SITE_DENIAL_TTL`]）：浏览器里按网站拒绝的整个网站都算，直接上网
     /// 拒绝的只算那个网址。
-    async fn site_denied(&self, instance: &str, host: &str) -> anyhow::Result<bool> {
-        let key = (instance.to_owned(), host.to_owned());
+    /// 缓存按令牌代数分开：换了任务（代数加一）不沿用上一个任务的结果。
+    async fn site_denied(&self, instance: &str, epoch: u64, host: &str) -> anyhow::Result<bool> {
+        let key = (instance.to_owned(), epoch, host.to_owned());
         {
             let cache = self.denied_sites.lock().unwrap_or_else(|e| e.into_inner());
             if let Some((at, denied)) = cache.get(&key)
@@ -1564,7 +1577,7 @@ impl Egress {
             .ledger
             .site_decision(instance, &site_of(host), host)
             .await?;
-        let denied = answer == Some(Answer::Denied);
+        let denied = matches!(answer, Some((Answer::Denied, _)));
         let mut cache = self.denied_sites.lock().unwrap_or_else(|e| e.into_inner());
         if cache.len() >= 10_000 {
             cache.retain(|_, (at, _)| at.elapsed() < SITE_DENIAL_TTL);
@@ -1578,7 +1591,7 @@ impl Egress {
         self.denied_sites
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .retain(|(i, h), _| !(i == instance && site_of(h) == site));
+            .retain(|(i, _, h), _| !(i == instance && site_of(h) == site));
     }
 
     /// `POST /v1/browser/ask`（docs/browser.md 第 3.3 节）：浏览器要打开一个新网站，先查地址（不是公网的不问），再看档位、
@@ -1648,10 +1661,13 @@ impl Egress {
         started: Instant,
     ) -> (&'static str, Option<&'static str>, Option<String>) {
         // 先看档位（重新读一次实例）：不上网的档位连名字都不解析（解析本身就会把名字带出去）。
-        let fresh = self.gw.directory.instance(&caller.instance.id, true).await;
-        let Some(inst) = fresh else {
-            return ("not_allowed", None, None);
-        };
+        // 读不到（库一时不可用）就按缓存里的，和直接上网一样。
+        let inst = self
+            .gw
+            .directory
+            .instance(&caller.instance.id, true)
+            .await
+            .unwrap_or_else(|| caller.instance.clone());
         let mode = inst.egress_mode;
         if !mode.asks() && !mode.allows(host, &inst.egress_hosts) {
             return ("not_allowed", None, None);
@@ -1665,7 +1681,8 @@ impl Egress {
             Ok(Err(d)) if d.reason == "private_address" => {
                 return ("private_address", None, None);
             }
-            _ => return ("resolve", None, None),
+            Ok(Err(_)) => return ("resolve", None, None),
+            Err(_) => return ("unavailable", None, None),
         }
         // 搜索、开发网站只认完整网址（`All` 档全部放行）。
         if mode.allows(host, &[]) {
@@ -1675,6 +1692,27 @@ impl Egress {
         let always = |hosts: &[String]| hosts.iter().any(|h| site_of(h) == site);
         if always(&inst.egress_hosts) {
             return ("allowed", Some("always"), None);
+        }
+        // 这次任务里答过的：浏览器里答的按网站；直接上网答的只算这个网址（守门照着回答的范围记：`default` 只记这个网址，
+        // 拒绝带 `host` 只拒这个网址）。
+        match self
+            .ledger
+            .site_decision(&caller.instance.id, &site, host)
+            .await
+        {
+            Ok((_, Some((Answer::Allowed, Via::Direct)))) => {
+                return ("allowed", Some("default"), None);
+            }
+            Ok((_, Some((Answer::Denied, Via::Direct)))) => return ("denied", Some("host"), None),
+            Ok((_, Some((Answer::Allowed, Via::Browser)))) => {
+                return ("allowed", Some("once"), None);
+            }
+            Ok((_, Some((Answer::Denied, Via::Browser)))) => return ("denied", None, None),
+            Ok(_) => {}
+            Err(e) => {
+                tracing::error!(error = %e, "egress approval lookup failed");
+                return ("unavailable", None, None);
+            }
         }
         // 一次打开最多等 40 秒，从请求到这里算起（前面解析、查库的时间也算进去，守门那边的时限是从发请求算的）。
         let wait = ask
@@ -1790,7 +1828,11 @@ impl Egress {
         };
         let looked_up = match via {
             Via::Direct => self.ledger.decision(instance, host).await,
-            Via::Browser => self.ledger.site_decision(instance, site, host).await,
+            Via::Browser => self
+                .ledger
+                .site_decision(instance, site, host)
+                .await
+                .map(|(run, a)| (run, a.map(|(a, _)| a))),
         };
         let (run, answer) = match looked_up {
             Ok(v) => v,
