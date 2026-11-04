@@ -4939,6 +4939,9 @@ async fn egress_traffic_is_reserved_within_the_daily_limit() {
         bytes_down: 20,
         duration_ms: 5,
         count: 1,
+        via: proto::egress::Via::Direct,
+        kind: None,
+        page_site: None,
     };
     g.insert_egress_log(&[entry(true, "ok"), entry(false, "not_allowed")])
         .await
@@ -5478,4 +5481,121 @@ async fn search_usage_is_capped_per_user_and_per_month() {
         2
     );
     w.commit().await.unwrap();
+}
+
+/// 浏览器（docs/browser.md）：浏览器提问按网站去重、按网站找这次任务的回答；直接上网的回答（记了网站）浏览器也认；
+/// 日志记通道和种类。
+#[tokio::test]
+async fn browser_asks_share_answers_by_site() {
+    use crate::{AskMeta, EgressLogEntry};
+    use proto::domain::{EgressDecision, RunState};
+    use proto::egress::Via;
+
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let a = user(db, "+8613800000941").await;
+    let ia = instance(db, a).await;
+    let r1 = queue_run(db, a, &ia, "one").await;
+    sqlx::query("UPDATE runs SET state = 'running' WHERE id = $1")
+        .bind(r1.id.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let ask = |host: &'static str, via: Via| async move {
+        let mut g = db.llmgw().await.unwrap();
+        let id = g
+            .egress_ask_as(
+                a,
+                ia.id,
+                host,
+                Some(r1.id),
+                5,
+                20,
+                AskMeta {
+                    via,
+                    site: Some("zhihu.com"),
+                },
+            )
+            .await
+            .unwrap()
+            .id()
+            .unwrap();
+        g.commit().await.unwrap();
+        id
+    };
+    let q1 = ask("www.zhihu.com", Via::Browser).await;
+    // 同一个网站的另一个子域名：接着等同一条，用户只看到一张卡片。
+    assert_eq!(ask("zhuanlan.zhihu.com", Via::Browser).await, q1);
+    let mut g = db.llmgw().await.unwrap();
+    assert_eq!(
+        g.egress_site_decision(ia.id, "zhihu.com", Some(r1.id))
+            .await
+            .unwrap(),
+        None
+    );
+    g.commit().await.unwrap();
+    let mut tx = db.tenant(a).await.unwrap();
+    tx.decide_egress_request(q1, EgressDecision::Once)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let mut g = db.llmgw().await.unwrap();
+    assert_eq!(
+        g.egress_site_decision(ia.id, "zhihu.com", Some(r1.id))
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("once")
+    );
+    // 直接上网仍按完整网址：浏览器批准的是 www.zhihu.com，curl 同一个网址能通，别的子域名还要问。
+    assert_eq!(
+        g.egress_decision(ia.id, "www.zhihu.com", Some(r1.id))
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("once")
+    );
+    assert_eq!(
+        g.egress_decision(ia.id, "zhuanlan.zhihu.com", Some(r1.id))
+            .await
+            .unwrap(),
+        None
+    );
+    // 浏览器刚答过：同一个网站的再问拿到答过的那条。
+    g.commit().await.unwrap();
+    assert_eq!(ask("api.zhihu.com", Via::Browser).await, q1);
+
+    // 日志：通道、种类、哪个网页带出来的。
+    let mut g = db.llmgw().await.unwrap();
+    g.insert_egress_log(&[EgressLogEntry {
+        user_id: a,
+        instance_id: ia.id,
+        at: Utc::now(),
+        host: "static.zhimg.com".into(),
+        port: 443,
+        address: None,
+        allowed: true,
+        reason: "ok".into(),
+        bytes_up: 1,
+        bytes_down: 2,
+        duration_ms: 3,
+        count: 1,
+        via: Via::Browser,
+        kind: Some("res".into()),
+        page_site: Some("zhihu.com".into()),
+    }])
+    .await
+    .unwrap();
+    g.commit().await.unwrap();
+    let mut tx = db.tenant(a).await.unwrap();
+    let log = tx.egress_log(ia.id, false, 10).await.unwrap();
+    assert_eq!(
+        (
+            log[0].via,
+            log[0].kind.as_deref(),
+            log[0].page_site.as_deref()
+        ),
+        (Via::Browser, Some("res"), Some("zhihu.com"))
+    );
+    tx.rollback().await.unwrap();
 }

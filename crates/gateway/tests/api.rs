@@ -4101,6 +4101,9 @@ async fn instance_egress_over_http() {
         bytes_down: 0,
         duration_ms: 0,
         count: 1,
+        via: proto::egress::Via::Direct,
+        kind: None,
+        page_site: None,
     }])
     .await
     .unwrap();

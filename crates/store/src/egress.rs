@@ -7,12 +7,28 @@
 
 use chrono::{DateTime, NaiveDate, Utc};
 use proto::domain::{EgressDecision, EgressRequest, EgressRequestId, InstanceId, RunId, UserId};
+use proto::egress::Via;
 use uuid::Uuid;
 
 use crate::{Error, Llmgw, Result, Tenant, Tx, Worker, signed, unsigned};
 
 /// 没有任务时（`run_id` 为空），“访问一次”“拒绝”管多久。
 const NO_RUN_DECISION_HOURS: i32 = 1;
+
+fn via_str(v: Via) -> &'static str {
+    match v {
+        Via::Direct => "direct",
+        Via::Browser => "browser",
+    }
+}
+
+/// 登记问用户时的附带信息：哪条通道、这个网址属于哪个网站（主域名，`proto::egress::site_of`）。浏览器提问按网站去重、
+/// 按网站共用回答；直接上网也填网站，浏览器那边才认得它的回答。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AskMeta<'a> {
+    pub via: Via,
+    pub site: Option<&'a str>,
+}
 
 /// [`Tx::egress_ask`] 的结果。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,6 +119,12 @@ pub struct EgressLogEntry {
     pub duration_ms: u64,
     /// 这一行合并了几条隧道（超过每分钟的日志上限时合并），平常是 1。
     pub count: u32,
+    /// 哪条通道。
+    pub via: Via,
+    /// 浏览器通道里是哪一种：`ask`（问询）、`nav`（打开网页）、`res`（页面资源）。
+    pub kind: Option<String>,
+    /// 页面资源是哪个网站的网页带出来的。
+    pub page_site: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -119,6 +141,9 @@ struct LogRow {
     bytes_down: i64,
     duration_ms: i64,
     count: i32,
+    via: String,
+    kind: Option<String>,
+    page_site: Option<String>,
 }
 
 impl LogRow {
@@ -136,6 +161,13 @@ impl LogRow {
             bytes_down: unsigned(self.bytes_down, "egress bytes")?,
             duration_ms: unsigned(self.duration_ms, "egress duration")?,
             count: u32::try_from(self.count).unwrap_or(1),
+            via: if self.via == "browser" {
+                Via::Browser
+            } else {
+                Via::Direct
+            },
+            kind: self.kind,
+            page_site: self.page_site,
         })
     }
 }
@@ -203,8 +235,8 @@ impl Tx<Llmgw> {
         for e in entries {
             sqlx::query(
                 "INSERT INTO egress_log (id, user_id, instance_id, at, host, port, address, allowed, reason, \
-                   bytes_up, bytes_down, duration_ms, count) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+                   bytes_up, bytes_down, duration_ms, count, via, kind, page_site) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
             )
             .bind(Uuid::now_v7())
             .bind(e.user_id.0)
@@ -219,6 +251,9 @@ impl Tx<Llmgw> {
             .bind(signed(e.bytes_down, "egress bytes")?)
             .bind(signed(e.duration_ms, "egress duration")?)
             .bind(i32::try_from(e.count.max(1)).unwrap_or(i32::MAX))
+            .bind(via_str(e.via))
+            .bind(e.kind.as_deref())
+            .bind(e.page_site.as_deref())
             .execute(self.conn())
             .await?;
         }
@@ -262,11 +297,31 @@ impl Tx<Llmgw> {
         Ok(status)
     }
 
-    /// 问用户能不能访问 `host`：已经有一条在等就接着等那条（换成这次任务；换了任务、上次提醒过了一小时以上的再提醒
-    /// 一次）；用户刚答过（这次任务的“访问一次”“拒绝”，或者还在名单上的“一直允许”）就用答过的那条，调用方读到它的
-    /// 结果；都没有就新建一条。这次任务已经有 `max_pending` 个网站在等时返回 [`EgressAsk::TooManyPending`]；这个实例一小时里
-    /// 已经登记了 `max_per_hour` 条用户没答应的（还在等的、拒绝的、过期的）时返回 [`EgressAsk::HourlyLimit`]（不让 agent
-    /// 一口气、定时任务一遍遍地弹提示）。
+    /// 浏览器用：用户对这次任务（`run`）打开 `site` 这个网站（主域名）答过的（`once`、`denied`），没答过为空。浏览器和
+    /// 直接上网的回答都算（直接上网的行也记了网站）。
+    pub async fn egress_site_decision(
+        &mut self,
+        instance: InstanceId,
+        site: &str,
+        run: Option<RunId>,
+    ) -> Result<Option<String>> {
+        let status: Option<String> = sqlx::query_scalar(
+            "SELECT status FROM egress_requests \
+             WHERE instance_id = $1 AND site = $2 AND status IN ('once', 'denied') \
+               AND (run_id = $3 OR ($3 IS NULL AND run_id IS NULL \
+                    AND decided_at > now() - make_interval(hours => $4))) \
+             ORDER BY decided_at DESC LIMIT 1",
+        )
+        .bind(instance.0)
+        .bind(site)
+        .bind(run.map(|r| r.0))
+        .bind(NO_RUN_DECISION_HOURS)
+        .fetch_optional(self.conn())
+        .await?;
+        Ok(status)
+    }
+
+    /// 同 [`Self::egress_ask_as`]，直接上网、不记网站。
     pub async fn egress_ask(
         &mut self,
         user: UserId,
@@ -276,13 +331,61 @@ impl Tx<Llmgw> {
         max_pending: u32,
         max_per_hour: u32,
     ) -> Result<EgressAsk> {
+        self.egress_ask_as(
+            user,
+            instance,
+            host,
+            run,
+            max_pending,
+            max_per_hour,
+            AskMeta::default(),
+        )
+        .await
+    }
+
+    /// 问用户能不能访问 `host`：已经有一条在等就接着等那条（换成这次任务；换了任务、上次提醒过了一小时以上的再提醒
+    /// 一次）；用户刚答过（这次任务的“访问一次”“拒绝”，或者还在名单上的“一直允许”）就用答过的那条，调用方读到它的
+    /// 结果；都没有就新建一条。这次任务已经有 `max_pending` 个网站在等时返回 [`EgressAsk::TooManyPending`]；这个实例一小时里
+    /// 已经登记了 `max_per_hour` 条用户没答应的（还在等的、拒绝的、过期的）时返回 [`EgressAsk::HourlyLimit`]（不让 agent
+    /// 一口气、定时任务一遍遍地弹提示）。
+    /// 浏览器提问（`meta.via` 是浏览器、带网站）按网站去重：同一个网站已经有一条浏览器提问在等，就接着等那条；刚答过的也
+    /// 按网站找。
+    #[allow(clippy::too_many_arguments)]
+    pub async fn egress_ask_as(
+        &mut self,
+        user: UserId,
+        instance: InstanceId,
+        host: &str,
+        run: Option<RunId>,
+        max_pending: u32,
+        max_per_hour: u32,
+        meta: AskMeta<'_>,
+    ) -> Result<EgressAsk> {
+        let browser_site = meta.site.filter(|_| meta.via == Via::Browser);
+        if let Some(site) = browser_site {
+            let touched: Option<Uuid> = sqlx::query_scalar(concat!(
+                "UPDATE egress_requests SET ",
+                touch_request!(),
+                " WHERE instance_id = $1 AND site = $2 AND via = 'browser' AND status = 'pending' \
+                  RETURNING id"
+            ))
+            .bind(instance.0)
+            .bind(site)
+            .bind(run.map(|r| r.0))
+            .fetch_optional(self.conn())
+            .await?;
+            if let Some(id) = touched {
+                return Ok(EgressAsk::Asked(id.into()));
+            }
+        }
         if let Some(id) = self.touch_egress_ask(instance, host, run).await? {
             return Ok(EgressAsk::Asked(id));
         }
         // 用户的回答在调用方查过之后、上面续之前提交了：用那条，不再问一遍。
         let decided: Option<Uuid> = sqlx::query_scalar(
             "SELECT id FROM egress_requests \
-             WHERE instance_id = $1 AND host = $2 AND status IN ('once', 'always', 'denied') \
+             WHERE instance_id = $1 AND (host = $2 OR (site = $4 AND status <> 'always')) \
+               AND status IN ('once', 'always', 'denied') \
                AND decided_at > now() - interval '1 minute' \
                AND (run_id IS NOT DISTINCT FROM $3 OR status = 'always') \
                AND (status <> 'always' \
@@ -292,6 +395,7 @@ impl Tx<Llmgw> {
         .bind(instance.0)
         .bind(host)
         .bind(run.map(|r| r.0))
+        .bind(browser_site)
         .fetch_optional(self.conn())
         .await?;
         if let Some(id) = decided {
@@ -300,8 +404,8 @@ impl Tx<Llmgw> {
         // 个数只算这次任务的：前面的任务没人答的请求还在等（用户还能点“一直允许”），但不挡后面的任务问新网站。
         // 并发时个数可能多出一两个，不要紧。
         let id: Option<Uuid> = sqlx::query_scalar(concat!(
-            "INSERT INTO egress_requests (id, user_id, instance_id, host, run_id) \
-             SELECT $4, $5, $1, $2, $3 \
+            "INSERT INTO egress_requests (id, user_id, instance_id, host, run_id, via, site) \
+             SELECT $4, $5, $1, $2, $3, $8, $9 \
              WHERE (SELECT count(*) FROM egress_requests \
                     WHERE instance_id = $1 AND status = 'pending' AND run_id IS NOT DISTINCT FROM $3) < $6 \
                AND (SELECT count(*) FROM egress_requests \
@@ -318,6 +422,8 @@ impl Tx<Llmgw> {
         .bind(user.0)
         .bind(i64::from(max_pending))
         .bind(i64::from(max_per_hour))
+        .bind(via_str(meta.via))
+        .bind(meta.site)
         .fetch_optional(self.conn())
         .await?;
         if let Some(id) = id {
@@ -504,7 +610,7 @@ impl Tx<Tenant> {
     ) -> Result<Vec<EgressLogEntry>> {
         let rows: Vec<LogRow> = sqlx::query_as(
             "SELECT user_id, instance_id, at, host, port, address, allowed, reason, bytes_up, bytes_down, \
-               duration_ms, count \
+               duration_ms, count, via, kind, page_site \
              FROM egress_log WHERE instance_id = $1 AND (NOT $2 OR NOT allowed) \
              ORDER BY at DESC, id DESC LIMIT $3",
         )
