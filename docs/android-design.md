@@ -239,6 +239,12 @@ MainActivity
   返回的 `url`、`token` 只这一次，给用户复制）/ `rotate_plan_hook` / `set_plan_hook_enabled` / `delete_plan_hook`；计划策略
   `notify_success` 关掉以后成功的运行不推送、不进收件箱（见 `docs/event-triggers.md`）。
 - agent 交流（8.9–8.12）：`update_instance(id, InstanceChange{name?, purpose?, peer_access?})` 改名字、用途说明、“允许其他 agent 查我、问我”；看板 `board(tag?, archived, before_id?, limit?)` / `post_to_board(body, tags, allow_secrets)`（像密码的内容同样抛 `ContainsSecrets`）/ `set_board_post_archived` / `delete_board_post`。
+- 出网（2.7，[出口代理](egress.md)）：`Instance.egress_mode`（字符串：model 只连模型、dev 常用开发网站加自己加的、
+  custom 只有自己加的、all 全部公网；不认识的按 model 显示）、`Instance.egress_hosts`。改用
+  `set_instance_egress(id, mode, hosts, accept_risk)`：打开 all 之前先弹风险提示（agent 能访问任何公开网站，网页内容
+  可能诱导它做事），用户确认了才传 `accept_risk = true`，否则 422；网站填 IP、通配符、带端口的也是 422（`detail` 说明原因）。
+  `instance_egress(id)` 返回档位、网站、开发网站预设（`dev_hosts`）、今天用量（`used_today` / `daily_limit`，字节）和
+  最近被拒绝的访问（`recent_denied`：`host`、`reason`，reason 是 not_allowed 时可以给“放行这个网站”的按钮）。
 - 列表页先用 `cached_*`（实例、运行、收件箱、未读数）渲染，再调网络版刷新。
 
 ### 8.4 AI 生成标识（16.3，App 端）
