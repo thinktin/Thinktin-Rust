@@ -5453,7 +5453,9 @@ async fn search_usage_is_capped_per_user_and_per_month() {
     // 每天 0 次是暂停：一次也不给（今天还没搜过的也不行）。
     let c = user(db, "+8613800000933").await;
     assert_eq!(
-        w.reserve_search(c, day, month, 0, 10_000, 500).await.unwrap(),
+        w.reserve_search(c, day, month, 0, 10_000, 500)
+            .await
+            .unwrap(),
         SearchReserve::UserDaily
     );
     // 下个月重新算。

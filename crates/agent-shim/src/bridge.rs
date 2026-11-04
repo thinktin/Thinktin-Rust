@@ -81,6 +81,8 @@ pub struct Bridge {
     /// socket 放在临时目录时，退出时连目录一起删。
     private_dir: Option<PathBuf>,
     tools: RwLock<Vec<PlatformTool>>,
+    /// 只放行这几个工具（`None` 是都放行）。
+    only: RwLock<Option<Vec<String>>>,
     pending: Mutex<HashMap<String, oneshot::Sender<ToolResult>>>,
     /// 等平台回保险箱里的值的请求（9.11）。
     vault_pending: Mutex<HashMap<String, oneshot::Sender<VaultReply>>>,
@@ -130,6 +132,7 @@ impl Bridge {
             socket,
             private_dir,
             tools: RwLock::new(Vec::new()),
+            only: RwLock::new(None),
             pending: Mutex::default(),
             vault_pending: Mutex::default(),
             run: Mutex::default(),
@@ -192,7 +195,17 @@ impl Bridge {
         })
     }
 
+    /// 只放行这几个工具（调平台工具不先问用户的 agent，见 `config::platform_tool_limit`）：之后 `set_tools` 给的、
+    /// socket 上调的都按它过滤（agent 改得了自己的 MCP 配置，客户端那边的 `--only` 只是方便）。
+    pub fn restrict_to(&self, names: &[&str]) {
+        *self.only.write().unwrap_or_else(|e| e.into_inner()) =
+            Some(names.iter().map(|n| (*n).to_owned()).collect());
+        let current = self.tools.read().unwrap_or_else(|e| e.into_inner()).clone();
+        self.set_tools(current);
+    }
+
     pub fn set_tools(&self, tools: Vec<PlatformTool>) {
+        let only = self.only.read().unwrap_or_else(|e| e.into_inner()).clone();
         let valid: Vec<_> = tools
             .into_iter()
             .filter(|t| {
@@ -202,6 +215,7 @@ impl Bridge {
                 }
                 ok
             })
+            .filter(|t| only.as_ref().is_none_or(|o| o.contains(&t.name)))
             .collect();
         *self.tools.write().unwrap_or_else(|e| e.into_inner()) = valid;
         let _ = self.changed.send(());
@@ -625,6 +639,40 @@ mod tests {
         let mut buf = String::new();
         stream.read_line(&mut buf).await.unwrap();
         serde_json::from_str(&buf).unwrap()
+    }
+
+    /// 不先问用户的 agent：shim 这边就只放行那几个工具，agent 改自己的 MCP 配置也绕不过去。
+    #[tokio::test]
+    async fn restricted_bridges_serve_only_the_allowed_tools() {
+        let dir = tempfile::tempdir().unwrap();
+        let (sink, _events) = EventSink::new();
+        let bridge = Bridge::start(
+            &dir.path().join("b"),
+            sink,
+            vec![tool("schedule_list"), tool("web_search")],
+            Duration::from_secs(5),
+        )
+        .unwrap();
+        bridge.restrict_to(&["web_search"]);
+        let mut conn = BufReader::new(UnixStream::connect(bridge.socket_path()).await.unwrap());
+        let list = ask(&mut conn, json!({"id": 1, "op": "list"})).await;
+        assert_eq!(list["tools"].as_array().unwrap().len(), 1);
+        assert_eq!(list["tools"][0]["name"], "web_search");
+        // 后来平台给的工具也照样过滤。
+        bridge.set_tools(vec![tool("delegate"), tool("web_search")]);
+        // 先收到“工具变了”的通知。
+        let note = ask(&mut conn, json!({"id": 2, "op": "list"})).await;
+        assert_eq!(note["op"], "tools_changed");
+        let mut buf = String::new();
+        conn.read_line(&mut buf).await.unwrap();
+        let list: Value = serde_json::from_str(&buf).unwrap();
+        assert_eq!(list["tools"].as_array().unwrap().len(), 1);
+        let r = ask(
+            &mut conn,
+            json!({"id": 3, "op": "call", "name": "delegate"}),
+        )
+        .await;
+        assert_eq!(r["result"]["isError"], true);
     }
 
     #[test]

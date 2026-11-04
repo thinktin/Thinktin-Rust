@@ -337,7 +337,9 @@ fn openclaw(
             }
         },
         // 执行命令要人审批，审批经 ACP 转给平台的预授权策略（默认是不审批的 full）。
-        "tools": {"exec": {"mode": "ask"}},
+        // 自带的 web_search 要一家搜索服务的 key，我们没给：留着它，模型会先去调它然后失败。搜索用平台的
+        // web_search（docs/search.md）。
+        "tools": {"exec": {"mode": "ask"}, "web": {"search": {"enabled": false}}},
         // 启用安装策略但不配审批命令：技能、插件的安装（含 ClawHub）一律失败关闭（3.6）。
         "security": {"installPolicy": {"enabled": true}},
         // 不检查更新（版本、插件版本漂移），不发遥测。
@@ -407,8 +409,14 @@ fn hermes(r: &ModelRouting, home: &Path, take_over: bool, out: &mut RenderedConf
         .push((PathBuf::from(".hermes/config.yaml"), pretty(&config)));
 }
 
-/// Pi 只拿到这几个平台工具：它没有权限系统，给它的工具都直接执行（docs/search.md）。
-pub const PI_PLATFORM_TOOLS: [&str; 1] = ["web_search"];
+/// 调平台工具不会先问用户的 agent（Pi 没有权限系统；OpenClaw 只对命令行工具问用户）只拿到这几个平台工具
+/// （docs/search.md）。
+pub const UNGATED_PLATFORM_TOOLS: [&str; 1] = ["web_search"];
+
+/// 这个 agent 能拿到哪些平台工具：`None` 是授权里的都行。按内置 agent 的 id 判断（它们自己的审批机制）。
+pub fn platform_tool_limit(manifest: &Manifest) -> Option<&'static [&'static str]> {
+    matches!(manifest.agent.id.as_str(), "pi" | "openclaw").then_some(&UNGATED_PLATFORM_TOOLS[..])
+}
 
 /// 不支持按会话给 MCP 服务器的 agent（Pi、OpenClaw）：把平台工具桥写进它们自己的配置文件。`servers` 是 ACP
 /// `session/new` 的条目（`name`、`command`、`args`、`env` 是 `[{name, value}]`）。别的 agent 什么都不做。
@@ -417,9 +425,6 @@ pub fn inject_mcp(
     out: &mut RenderedConfig,
     servers: &[Value],
 ) -> anyhow::Result<()> {
-    if servers.is_empty() {
-        return Ok(());
-    }
     let entry = |s: &Value| -> anyhow::Result<(String, Value)> {
         let name = s["name"]
             .as_str()
@@ -436,17 +441,23 @@ pub fn inject_mcp(
             json!({ "command": s["command"], "args": s["args"], "env": env }),
         ))
     };
+    // 只给这几个工具（桥那边也只放行这几个）。
+    let limit = |e: &mut Value| {
+        if let (Some(args), Some(only)) = (e["args"].as_array_mut(), platform_tool_limit(manifest))
+        {
+            for tool in only {
+                args.push(json!("--only"));
+                args.push(json!(tool));
+            }
+        }
+    };
     match manifest.llm.config {
+        // 没有平台工具时也写（空的），盖掉上一次留下的。
         ConfigGenerator::Pi => {
             let mut map = serde_json::Map::new();
             for s in servers {
                 let (name, mut e) = entry(s)?;
-                if let Some(args) = e["args"].as_array_mut() {
-                    for tool in PI_PLATFORM_TOOLS {
-                        args.push(json!("--only"));
-                        args.push(json!(tool));
-                    }
-                }
+                limit(&mut e);
                 // 直接给模型看（默认的 codemode 只能在脚本里调，模型看不到）。
                 e["exposure"] = json!("direct");
                 e["description"] = json!("ThinkTin platform tools: web search");
@@ -468,6 +479,7 @@ pub fn inject_mcp(
                 serde_json::from_str(&file.1).context("parsing the rendered openclaw.json")?;
             for s in servers {
                 let (name, mut e) = entry(s)?;
+                limit(&mut e);
                 e["enabled"] = json!(true);
                 e["transport"] = json!("stdio");
                 config["mcp"]["servers"][name] = e;
@@ -745,13 +757,32 @@ mod tests {
         inject_mcp(&m, &mut c, std::slice::from_ref(&bridge)).unwrap();
         let v: Value = serde_json::from_str(file(&c, ".openclaw/openclaw.json")).unwrap();
         let s = &v["mcp"]["servers"]["thinktin"];
-        assert_eq!(s["args"], bridge["args"]);
+        assert_eq!(
+            s["args"],
+            json!([
+                "mcp-bridge",
+                "--socket",
+                "/h/.thinktin/b.sock",
+                "--egress",
+                "--only",
+                "web_search"
+            ])
+        );
+        // 自带的搜索没有服务可用，关掉。
+        assert_eq!(v["tools"]["web"]["search"]["enabled"], false);
         assert_eq!(
             (s["enabled"].clone(), s["transport"].clone()),
             (json!(true), json!("stdio"))
         );
         // 原来的设置还在。
         assert_eq!(v["gateway"]["bind"], "loopback");
+
+        // Pi 这次没有平台工具：写一个空的，盖掉上次的。
+        let m = catalog::builtin("pi").unwrap();
+        let mut c = render(&m, &routing(), Path::new("/h"), Path::new("/w")).unwrap();
+        inject_mcp(&m, &mut c, &[]).unwrap();
+        let v: Value = serde_json::from_str(file(&c, ".pi/agent/mcp.json")).unwrap();
+        assert_eq!(v["mcpServers"], json!({}));
 
         // 支持按会话给的 agent 不改配置。
         let m = catalog::builtin("claude").unwrap();

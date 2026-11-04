@@ -467,6 +467,10 @@ async fn serve(mut cfg: ShimConfig, args: BridgeArgs) -> anyhow::Result<ExitCode
         )?;
         tracing::info!(socket = %b.socket_path().display(), "platform tool bridge listening");
         let exe = std::env::current_exe().context("locating agent-shim")?;
+        // 调平台工具不先问用户的 agent 只拿到几个只读的工具（docs/search.md）。
+        if let Some(only) = config::platform_tool_limit(&cfg.manifest) {
+            b.restrict_to(only);
+        }
         let egress = cfg.routing.egress_proxy.is_some();
         cfg.mcp_servers.push(b.mcp_server_entry(&exe, egress));
         // 密码保险箱助手（9.11）：agent 的命令里用 thinktin-vault 按名字引用保险箱里的值。
