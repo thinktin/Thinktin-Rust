@@ -1,0 +1,1436 @@
+# iOS 界面改版规范（参考 App 的布局 + 系统原生控件）
+
+> 更新日期：2026-11-04　｜　分支 `ios-ui-redesign`　｜　工程说明见 [docs/ios.md](ios.md)，交接见 [docs/handoff-ios.md](handoff-ios.md)
+
+用户给了一个参考 App 的 120 张 iPhone 截图（深色模式、iOS 26 原生风格），要求：**“我们 App 的 UI 就按这个 UI 页面的布局去做，
+按钮相关的东西能用原生的全部用原生的”**。本文把截图逐张对到 ThinkTin 的功能和现有代码，定下改版的视觉、导航、逐页规范、
+要用户拍板的事和实施顺序。
+
+先说几条规矩：
+
+- 只学布局和交互，不用参考 App 的名字、Logo、文案里的品牌词，文中一律叫“参考 App”。截图编号是用户那批截图的编号（1–120），
+  截图本身不进仓库，截图里的个人信息（邮箱、设备名、仓库、网址）不写进文档。
+- 登录页用户自己设计，参考里的登录方式页（108）不照做。
+- “现有 / 缺什么”以代码为准（本分支，2026-11-04）：页面看 `ThinktinKit/Navigation/AppRoute.swift`（44 个 case），
+  接口看 `ThinktinKit/Client/ClientProtocol.swift`。
+- 参考 App 管它的 agent 叫 Bot，ThinkTin 叫实例（领养出来的 agent）。下文讲参考 App 时说 Bot，讲 ThinkTin 时说实例；
+  界面上到底叫什么要拍板（6.6）。
+- 文中的路径省略了公共前缀：`Screens/`、`Shell/`、`Components/`、`Design/`、`Support/` 在 `apps/apple/ThinktinKit/Sources/ThinktinUI/` 下，
+  `ViewModels/`、`Navigation/`、`Models/` 在 `apps/apple/ThinktinKit/Sources/ThinktinKit/` 下。
+- 控件写法里的 `List(.insetGrouped)`、`List(.plain)`、`Picker(.menu)`、`Picker(.inline)`、`Picker(.segmented)`、`Button(.plain)`、
+  `Button(.borderless)` 是简写，真实写法是 `List { … }.listStyle(.insetGrouped)`、`.pickerStyle(.menu)`、`.buttonStyle(.plain)` 这些修饰符。
+  其余写出来的 API 都是 SwiftUI / UIKit 里真有的；只有 iOS 26 才有的（Liquid Glass 一类）在 2.10 列了清单和旧系统的退路。
+
+## 1. 总述
+
+### 1.1 改版目标
+
+1. **页面布局照参考 App。** 首页是实例列表，点一行压栈进对话，再进实例资料、编辑、计划、产出物；设置从首页左上角用 sheet 弹出。
+2. **控件一律用系统原生的**（docs/ios.md 第 1 节第 5 条）：导航栏按钮、菜单、sheet、搜索栏、列表、表单、开关、选择器、长按菜单、
+   左滑操作。用 Xcode 26 / iOS 26 SDK 编出来，这些在 iOS 26 上自动是 Liquid Glass。现在自己画的卡片、胶囊按钮、空状态、
+   筛选胶囊、抽屉、输入框外形，统统换成原生的。只有系统没有的才自己画：消息气泡、实例头像、Logo、工具调用卡片、审批卡片。
+3. **功能不减。** ThinkTin 有、参考 App 没有的（1.3）都要在新版式里找到位置。
+4. **业务逻辑尽量不动。** `ClientProtocol`、client-core 这次不改；视图模型只加首页列表、本机偏好、对话内查找这类纯客户端的东西。
+   要后端的功能先只出规范（第 6、7 节）。
+
+### 1.2 和现在的主要区别
+
+| 方面 | 现在 | 改版后 |
+|---|---|---|
+| 根页面 | 当前实例的对话（`.conversation` 是 `.root`）；没有实例时是 `ConversationHomeScreen` 的问候页 | 实例列表（`.home`，永远是根）；`.conversation` 改成压栈 |
+| 切换实例 | 左侧抽屉的实例列表 + 标题上的 `InstanceSwitcher` 菜单 | 返回首页点另一行；去掉抽屉和切换菜单 |
+| 收件箱、审批、进行中、计划、团队、产出物 | 抽屉里 6 个入口（`DrawerEntry`），收件箱、审批、进行中、计划（待确认）带角标，团队、产出物没有 | 首页左下的“工作台”菜单（带角标）+ 列表顶上“等你处理”一行（6.1） |
+| 搜索 | 抽屉里的假搜索框 → 压栈的搜索页 | 首页底部浮动的玻璃搜索栏，原地搜索，带类型筛选 |
+| 新任务 | 抽屉里的“新任务”（选实例的 sheet） | 首页点实例进对话直接打字；`.newTask` 只留给引导和快捷指令 |
+| 领养 | agent 目录 → agent 详情 → 领养 sheet | 首页右上“+” → 领养 sheet（表单里选 agent，6.4） |
+| 设置 | 抽屉底部头像 → 压栈 | 首页左上头像 → sheet，左上玻璃 × 关闭 |
+| 对话标题 | 实例切换菜单 | 玻璃胶囊（小头像 + 名字），点了进实例资料 |
+| 输入框 | 自画的一行胶囊（`ComposerBar`），上方模型标签 | 浮动的玻璃胶囊（+ / 输入 / 发送或停止），有引用时长成卡片 |
+| agent 回复 | 不带气泡 | 左侧灰色气泡（要拍板，6.2） |
+| 时间线 | 没有日期分隔 | 运行之间加“星期二 02:22”这样的分隔 |
+| 实例详情 | 一页长表（头部、模型、版本、计划和产出物、团队、信息），改名是 sheet | 资料页（大头像、名字、编辑、计划 / 产出物 / 工作区三行），压栈的编辑页；版本挪进工作区页，删除挪进“…”菜单 |
+| 列表和表单 | `ScrollView` + 自画的 `GroupedSection`、`ListRow`、`AccountRow`、`PillButton`、`PlansTextField`（连定义一共 47 个文件；页面里还没有一处用 `List` / `Form`） | `List` / `Form`（insetGrouped 或 plain）+ `LabeledContent`、`Toggle`、`Picker`、系统按钮样式 |
+| 空状态 | 自画的 `EmptyStateView`（代码里还没用过 `ContentUnavailableView`） | `ContentUnavailableView` |
+| 颜色、字体 | 暖色纸张底、橙色强调色、标题衬线 | 中性灰底、强调色保留橙色、全用系统字体（要拍板，6.2） |
+| 顶部滚动边缘 | `solidTopScrollEdge()` 设成 `.hard`（`Components/ListComponents.swift`） | 系统默认的软渐隐，内容从玻璃导航栏下面滚过去 |
+| sheet 的关闭和确认 | “取消 / 完成”文字按钮 | 左上玻璃圆 ×（`Button(role: .close)`），确认放 `.confirmationAction` |
+
+### 1.3 必须保留的 ThinkTin 功能（参考 App 没有）
+
+- **对话**：审批卡片、运行状态行（等审批 / 等 key / 等电脑 / 失败重试）、子运行和流水线卡片、保险箱填写卡片、工具调用卡片、
+  思考块、模型标签、排队提示、32000 字上限、发送前的密码拦截（`SecretInterceptionSheet`）、离线只读、“正在唤醒”提示。
+- **合规**：agent 写的内容都带“AI 生成”标识（`AIGeneratedLabel`，16.3）；回复和产出物能举报（`ContentReportSheet`，5.5）；
+  关于页的备案号和 AI 说明。
+- **实例**：模型路由、版本升级 / 回滚、所在团队、删除（带影响说明）。
+- **全局**：离线横幅、连接横幅、冻结页、升级页、角标、深链和推送跳转（docs/ios.md 第 6.1、6.2 节）。
+
+参考 App 里收件箱、审批中心、进行中、计划、团队、运行详情、运行树这些页都没有，它们照第 2 节的视觉语言改，不改结构。
+
+### 1.4 不在这次范围
+
+- 登录页（`Screens/Account/SignInFlow.swift`、`PhoneEntryView.swift`、`CodeEntryView.swift`），等用户的设计。
+- ThinkTin 没有、也不打算做的：语音通话（音色、语速、语言）、“主 Bot”。
+- 要后端的功能这次只出规范，排在第 3 轮（7.5）。
+- macOS App 的主窗口也用 `RootView`：改 Shell 时 Mac 先保持能用（uicheck 的 AppKit 版要过），Mac 自己的版式另议。
+
+## 2. 视觉语言
+
+### 2.1 总体
+
+- **深色为主，浅色照样做。** 参考只有深色截图；ThinkTin 深浅色都是验收项（docs/ios.md 第 4 节）。用 Theme 令牌和系统语义色，
+  浅色跟着出来。
+- 页面底是中性深灰（约 `#1C1C1E`），卡片、气泡亮一档（约 `#2C2C2E`），**卡片没有描边**；全屏图片和电脑画面用纯黑。
+- 没有大标题，全部 inline 小标题；首页、对话页、实例资料页、设置根页不显示标题。
+- 内容从玻璃导航栏、底部浮动条下面滚过去，边缘软渐隐（系统默认的 scroll edge effect，不要加 `.toolbarBackground(.visible)`）。
+
+### 2.2 颜色：和设计令牌怎么衔接
+
+建议方案如下（要拍板，6.2）。令牌名不变，只改值，页面代码不用逐个改；`Design/Theme.swift` 和 `DesignTokenTests` 跟着改。
+
+| 令牌 | 现在（浅 / 深） | 建议（浅 / 深） | 说明 |
+|---|---|---|---|
+| `accent` | `#C96442` / `#D97757` | 不变 | 全局 `.tint`：主按钮、发送、开关、链接、选中。参考用系统蓝和白色，ThinkTin 保留品牌橙 |
+| `paper` | `#FAF9F5` / `#262624` | `#F2F2F7` / `#1C1C1E` | 页面底。纯黑外观（第 2 轮）时深色用 `#000000` |
+| `paperElevated` | `#FFFFFF` / `#30302E` | `#FFFFFF` / `#2C2C2E` | 分组卡片、列表行、输入卡片 |
+| `agentBubble`（新增） | — | 同 `paperElevated` | agent 回复气泡，单列一个令牌，以后好单独调 |
+| `userBubble` | `#EFEDE4` / `#3A3936` | `#E5E5EA` / `#3A3A3C` | 用户消息（右侧） |
+| `ink` / `inkSecondary` / `inkTertiary` | 暖灰三档 | 系统的 `.primary` / `.secondary` / `.tertiary` | 放在玻璃上时系统会自动调对比 |
+| `hairline` | `#E5E3DA` / `#3F3E3A` | `#C6C6C8` / `#38383A` | 只给自画的分隔线；`List` 用系统分隔线 |
+| `success` / `warning` / `danger` | 现值 | 不变 | 只用于状态（`Design/StatusTone.swift`） |
+
+- `List` / `Form` 的底色和行底要和 `paper` / `paperElevated` 一致：在 `Design/` 里加 `themedGroupedBackground()`
+  （`.scrollContentBackground(.hidden)` + `.background(Theme.paper)`，加在 `List` / `Form` 上）和 `themedRow()`
+  （`.listRowBackground(Theme.paperElevated)`；这个修饰符只对行生效，要加在 `Section` 的内容或 `ForEach` 上，加在 `List` 本身上没用）。
+  建议值的浅色一套正好是系统分组色（`#F2F2F7` / `#FFFFFF`）；深色一套比系统默认的分组色（`#000000` / `#1C1C1E`）亮一档，
+  所以行底要覆盖。
+- `ink` 三档改成系统色时要注意：系统的 `.secondary`、`.tertiary` 带透明度，`DesignTokenTests` 和 docs/ios.md 第 4 节的表现在按
+  不透明的十六进制核对。要么令牌直接返回 `Color.primary` / `.secondary` / `.tertiary`（测试改成核对“是不是系统色”），要么取不透明近似值。
+- 状态色规则（排队、运行中、等待、成功、失败）不变。
+
+### 2.3 字体
+
+- 全部用系统字体（SF）和 Dynamic Type 语义字号；导航标题由系统画。
+- `Design/Typography.swift` 现在标题档（`largeTitle` 到 `title3`）用衬线（`.serif`），建议改成默认不用；想留一点品牌感的话，
+  只留在首页空状态的大标题上（6.2）。欢迎页（`SignInFlow.swift` 的 `WelcomeView`）属于登录流程，跟着用户的设计走。
+- 常用字号：列表名字 `.headline`；预览、副标题 `.subheadline` + `.secondary`；时间 `.caption` + `.tertiary`；正文 `.body`；
+  资料页名字 `.title2.bold()`；分组标题、脚注用 Section 自带的。
+
+### 2.4 圆角、尺寸
+
+| 元素 | 参考 | 做法 |
+|---|---|---|
+| 分组卡片 | 约 20–26 | 系统 insetGrouped 自带，不自己设 |
+| 消息气泡、自画卡片 | 约 20 | `RoundedRectangle(cornerRadius: 20, style: .continuous)`；`Metrics.Radius.card` 16 → 20 |
+| 输入框 | 胶囊；带引用时卡片圆角约 28 | `.glassEffect(in: .capsule)` / `RoundedRectangle(cornerRadius: 28)`；`Metrics.Radius.input` 不再用 |
+| 导航栏圆按钮 | 约 44 | 工具栏系统给，不自己设尺寸 |
+| 实例头像 | 列表 48、置顶 80、资料页 120、编辑页 100、搜索结果 40、标题胶囊 24 | 新组件 `InstanceAvatar(size:)` |
+| 应用 / agent 图标方块 | 40，圆角约 10 | `Metrics.Radius.control`（10）保留 |
+| 左右边距 | 16–20 | `List` 系统边距；自画内容用 `Metrics.Spacing.m` |
+
+### 2.5 列表样式
+
+- **plain、无分隔线**：首页、搜索结果、agent 目录、连接目录、已隐藏的实例。`List` + `.listStyle(.plain)` + `.listRowSeparator(.hidden)`。
+- **insetGrouped**：实例资料、编辑、计划列表、产出物、设置和它的子页、保险箱、设备、所有表单。`List(.insetGrouped)` 或 `Form`。
+- 行：左边图标或头像；主标题单行、尾部截断；下面一行灰色副标题；右边灰色值加 chevron（`NavigationLink` + `LabeledContent`
+  系统自动画）。分隔线从文字起点开始（系统默认）。
+- 分组标题、脚注用 Section 的 `header` / `footer`，加 `.textCase(nil)` 不转大写。
+
+### 2.6 导航栏和玻璃按钮
+
+- **返回**：系统返回按钮（iOS 26 是玻璃圆），不自定义返回项。
+- **关闭 sheet**：`ToolbarItem(placement: .cancellationAction) { Button(role: .close) { dismiss() } }`，iOS 26 画成玻璃圆 ×。
+- **主操作**（完成、保存、确认）：`.confirmationAction`，iOS 26 自动画成突出的玻璃胶囊；不合法时 `.disabled`，保存中换 `ProgressView`。
+- **更多**：`Menu { … } label: { Image(systemName: "ellipsis") }`，不再用 `ellipsis.circle`（玻璃圆由系统画）。
+- 并排的两个圆按钮（分享和更多、“?”和更多）中间放 `ToolbarSpacer(.fixed)`，否则 iOS 26 会把它们并成一个胶囊。
+- **标题胶囊**：`ToolbarItem(placement: .principal) { Button { … } label: { HStack { 头像; Text(名字) } } }`。
+- **按钮样式**：主按钮 `.glassProminent`，次按钮 `.glass`；小胶囊加 `.buttonBorderShape(.capsule)` + `.controlSize(.small)`；
+  iOS 26 以下回退成 `.borderedProminent` / `.bordered`（写在 `Design/Glass.swift` 里，见 2.10）。
+- **角标**：iOS 26 的工具栏项用 `.badge(_:)`。
+
+### 2.7 底部浮动条
+
+| 页面 | 内容 | 写法 |
+|---|---|---|
+| 首页 | 左边圆按钮（工作台）+ 右边胶囊搜索栏 | `.searchable` + `DefaultToolbarItem(kind: .search, placement: .bottomBar)` + `ToolbarItem(placement: .bottomBar)` + `ToolbarSpacer(.fixed, placement: .bottomBar)` |
+| 对话 | 胶囊输入框 | `.safeAreaBar(edge: .bottom)` 里 `GlassEffectContainer` + `.glassEffect(.regular.interactive(), in: .capsule)` |
+| 对话内查找 | 搜索框 + 上 / 下两个圆 + “完成” | 同上，或 `ToolbarItemGroup(placement: .bottomBar)` |
+| 只做一件事的页（领养 sheet、压栈的发送反馈、新建规则） | 全宽胶囊主按钮 | `.safeAreaBar(edge: .bottom)` + `.buttonStyle(.glassProminent)` + `.controlSize(.large)` + `.frame(maxWidth: .infinity)` |
+| sheet 里的选择器 | 搜索 | `.searchable`（iOS 26 的 iPhone 上落在底部） |
+
+主按钮放哪统一一条（参考 App 自己不统一）：**编辑表单**（编辑实例、登录信息，压栈或 sheet 都一样）右上放 `.confirmationAction`，
+sheet 的左上再放关闭（`.cancellationAction`）；**“只做一件事”的页**（领养、新建规则、发送反馈）用底部全宽按钮。iOS 26 以下 `.safeAreaBar` 回退成 `.safeAreaInset`。
+
+### 2.8 菜单、长按、弹窗、选择
+
+- **菜单**：系统 `Menu`，图标加文字，用 `Section` 分两三组，破坏性的放最后、`role: .destructive`（系统标红）。分享类直接放 `ShareLink`。
+- **长按**：`.contextMenu(menuItems:preview:)`，预览自己画（实例：头像 + 名字 + 最近一条）；子菜单用嵌套的 `Menu`，系统原地展开。
+- **左滑**：`.swipeActions(edge: .trailing, allowsFullSwipe: false)`，只在 `List` 里有效。
+- **确认**：删除类用 `.alert`（标题写对象，说明写后果）或 `.confirmationDialog`；改名用 `.alert` + `TextField`（iOS 26 自动是玻璃对话框）。
+- **单选**：表单行里 `Picker(.menu)`（长列表系统菜单自己能滚）；整页单选 `Picker(.inline)`；三项以内的页内切换 `Picker(.segmented)`。
+- **筛选胶囊**：新组件 `Components/FilterChipBar.swift`（横向 `ScrollView` 里的系统按钮，选中 `.glassProminent`、没选中 `.glass`，
+  外面包 `GlassEffectContainer`），替换 `Screens/Plans/PlansComponents.swift` 的 `PlansFilterChip`（计划、产出物在用）。
+- **触感**：用 `.sensoryFeedback`，不直接调 `UIFeedbackGenerator`。
+
+### 2.9 Logo（`BrandLogo`）放哪
+
+`BrandLogo`（原生矢量，`Design/BrandLogo.swift`）现在只用在两处：欢迎页（登录流程 `SignInFlow.swift` 的 `WelcomeView`，高 112）
+和抽屉顶上（高 28）。关于页现在没有 Logo（`AboutScreen` 只有版本、备案、条款、AI 生成说明几组）。抽屉去掉以后：
+
+- **设置页最底下的版本区**（75）：Logo 高 40 + “ThinkTin” + 版本（构建号），代替现在只有一行字的 `SettingsFootnote`。
+- **首页“还没有实例”的空状态**：`ContentUnavailableView` 的图标位置放 `BrandLogo`，下面是“去领养”。
+- **关于页**顶上可以新加一个（和设置页底部的版本区二选一，免得重复）。
+- **欢迎页**属于登录流程，留不留跟着用户的设计走。
+- **启动屏**（109）：`UILaunchScreen` 只能用图片资源，要 `tools/apple/brand_assets.py` 多导出一张单色矢量 PDF（`LaunchLogo`，
+  深浅色两版）和颜色集 `LaunchBackground`（和 `paper` 同值）。
+- 登录页用不用 Logo，跟着用户的设计走。
+- 导航栏里不放 Logo（参考的首页没有标题）。
+
+### 2.10 iOS 版本和兼容
+
+- 部署目标是 iOS 17（`apps/apple/project.yml` 的 `deploymentTarget`、`ThinktinKit/Package.swift` 的 `platforms`）。工具栏、菜单、
+  sheet、搜索栏、alert 用 26 SDK 编译后在 iOS 26 上自动是玻璃，旧系统是旧外观。
+- 要显式调用的 iOS 26 API（Liquid Glass 和新工具栏）**集中写在新文件 `Design/Glass.swift`**，每个都带旧系统的退路，
+  页面里不散写 `if #available`：
+
+  | API | 最低系统 | iOS 17 / 18 的退路 |
+  |---|---|---|
+  | `.glassEffect(_:in:)`（含 `.regular.interactive()`）、`GlassEffectContainer` | iOS 26 | `.background(.regularMaterial, in: 形状)`；容器直接去掉 |
+  | `.buttonStyle(.glass)` / `.buttonStyle(.glassProminent)` | iOS 26 | `.bordered` / `.borderedProminent` |
+  | `Button(role: .close)` / `Button(role: .confirm)` | iOS 26 | `Button { dismiss() } label: { Image(systemName: "xmark") }` 加读屏标签“关闭”/ 文字按钮“完成” |
+  | `ToolbarSpacer(.fixed)` / `ToolbarSpacer(.flexible)` | iOS 26 | 不放（旧系统的工具栏项本来就分开）/ `ToolbarItemGroup` 里放 `Spacer()` |
+  | `DefaultToolbarItem(kind: .search, placement: .bottomBar)` | iOS 26 | 不放，`.searchable` 落在导航栏下面 |
+  | `.safeAreaBar(edge:)` | iOS 26 | `.safeAreaInset(edge:)` |
+  | `.scrollEdgeEffectStyle(_:for:)` | iOS 26 | 不调 |
+  | 工具栏项的 `.badge(_:)` | iOS 26 | 在按钮的 label 上叠一个小数字（`overlay`） |
+  | `.sharedBackgroundVisibility(_:)` | iOS 26 | 不调 |
+  | `.navigationTransition(.zoom(sourceID:in:))` + `.matchedTransitionSource(id:in:)` | iOS 18 | 普通压栈 |
+  | `.toolbarVisibility(_:for:)` | iOS 18 | `.toolbar(.hidden, for: .navigationBar)`（iOS 16 就有） |
+
+  其余用到的（`ContentUnavailableView`、`.searchable(text:isPresented:)`、`.sensoryFeedback`、`Section(isExpanded:)`、
+  `.defaultScrollAnchor`、`SubscriptionStoreView`、`AccessibilityNotification`、`MagnifyGesture`、`.buttonBorderShape(.circle)`、
+  `.toolbarTitleDisplayMode`、`.topBarLeading` / `.topBarTrailing`）iOS 17 就有，不用包。
+- uicheck 的 SwiftUI 桩（`tools/apple/uicheck/Stubs/SwiftUI/`，签名照 iOS 17 SDK）现在只有 `scrollEdgeEffectStyle` 这一个 iOS 26 API，
+  而且**连 `List`、`Form`、`Section`、`LabeledContent`、`ContentUnavailableView`、`.listStyle`、`.listRowSeparator`、`.listRowBackground`、
+  `.scrollContentBackground`、`.swipeActions`、`.sensoryFeedback`、`Gauge`、`LazyVGrid`、`PhotosPicker`、`PasteButton`、`.fullScreenCover`、
+  `.toolbarTitleDisplayMode`、`.topBarTrailing`、`.bottomBar` 都没有**（现在的页面一处 `List` / `Form` 都没用过）。第 0 轮要把上表的 iOS 26 API
+  和这些一起补上（只有 iOS 有的放进 `#if canImport(UIKit)`），否则第 1 轮各线一换 `List` 就过不了 uicheck；补之前先 grep 整个 `Stubs/`，免得重复声明。
+- 验收：外观以 iOS 26 为准；iOS 17/18 只要求能用、不乱。最低版本要不要提，见 6.3。
+
+## 3. 信息架构和导航
+
+### 3.1 导航图
+
+```
+首页：实例列表（.home，根）
+├─ 左上 账号头像 ─────→ 设置（.settings，sheet，左上 ×）
+│                        ├─ 账号 .account → 注销
+│                        ├─ 模型 key .credentials、用量 .usage、保险箱 .vault
+│                        ├─ 连接 .connections（新增，第 2 轮）
+│                        ├─ 审批 .approvals、登录设备 .devices → 设备详情（本地）
+│                        ├─ 外观 / 语言（本地页）、通知、触感、实时活动
+│                        └─ 关于 .about、开源许可 .licenses、上手引导 .onboarding、发送反馈（本地，第 3 轮）
+├─ 右上 + ─────────────→ 领养新实例（.adopt，新增，sheet）→ 成功后压栈进新实例的对话
+├─ 左下 工作台（Menu）──→ 收件箱 .inbox / 审批 .approvals / 进行中 .activeRuns /
+│                          计划 .plans(nil) / 团队 .teams / 产出物 .artifacts(nil)（都压栈）
+├─ 底部 搜索栏 ────────→ 首页原地搜索（.search 改成“回首页并激活搜索”）
+├─ 长按一行 / 左滑 ────→ 系统菜单（置顶、隐藏、实例资料、改名、新建计划、更多 › 复制 ID、删除）
+├─ 列表底部“已隐藏 N 个”→ 已隐藏的实例（本地压栈）→ “?” 说明（sheet）
+└─ 点一行 ────────────→ 对话（.conversation，改成压栈）
+                         ├─ 标题胶囊 ──→ 实例资料（.instance，压栈）
+                         │               ├─ 编辑（本地压栈）→ 头像（本地，第 2 轮）
+                         │               ├─ 计划（.plans(instanceID:)，改）→ 计划详情 .plan / 新建 .newPlan（sheet）
+                         │               ├─ 产出物（.artifacts(instanceID:)）→ 产出物 .artifact / 图片全屏查看（本地）
+                         │               ├─ 工作区（本地压栈）→ 观看与接管（.instanceScreen，新增，第 3 轮）
+                         │               ├─ 默认模型 → 模型路由 .modelRoutes
+                         │               └─ “…”菜单：复制 ID、模型路由、删除实例（sheet）
+                         ├─ “…”菜单 ──→ 实例资料、在对话中查找（本页）、模型路由、新建计划、产出物
+                         ├─ 卡片和状态行 → 运行 .run / 运行树 .runTree / 审批 .approval / 模型路由 / 产出物 / 保险箱请求
+                         └─ 长按消息 ──→ 系统菜单（复制、选择文本、分享、复制运行 ID、举报 → sheet）
+```
+
+### 3.2 页面清单
+
+| 页面 | 参考截图 | 进入路径 | 出现方式 | 路由 |
+|---|---|---|---|---|
+| 首页（实例列表） | 1、110、111、113、119、120 | 启动后；所有返回的终点 | 根 | `.home`（改：永远是根，归 Shell） |
+| 首页搜索 | 78–80 | 首页底部搜索栏 | 首页原地展开 | `.search`（改：回首页并激活搜索） |
+| 实例长按菜单 | 32、33、112 | 长按首页一行或置顶头像 | 系统菜单 | — |
+| 改名 | 68 的版式 | 长按菜单 → 改名 | 弹窗（`.alert` + 输入框） | 不加 |
+| 删除实例 | — | 长按菜单 → 更多 → 删除；资料页“…” → 删除 | sheet（现有 `InstanceDeleteSheet`，带影响说明） | 不加 |
+| 已隐藏的实例 | 114、116 | 列表底部“已隐藏 N 个”；全部隐藏时的空状态 | 压栈 | 不加（Shell 本地） |
+| 隐藏说明 | 115 | 已隐藏页右上“?” | sheet | 不加 |
+| 工作台菜单 | 参考左下的“应用”按钮 | 首页左下 | 系统菜单 | 菜单项打开现有路由 |
+| 领养新实例 | 34、35、117 | 首页右上“+” | sheet | 新增 `.adopt(agentID: AgentID?)` |
+| 对话 | 2、118 | 首页点一行；搜索结果；推送 | 压栈 | `.conversation(id)`（改：`.root` → `.push`） |
+| 对话“…”菜单 | 3 | 对话右上 | 系统菜单 | — |
+| 对话内查找 | 4、5 | “…” → 在对话中查找 | 输入框换成查找栏 | 不加 |
+| 消息长按 | 6 | 长按消息 | 系统菜单 | — |
+| 引用回复 | 7 | 长按 → 回复 | 输入框长成卡片 | 不加（第 2 轮） |
+| 实例资料 | 9 | 对话标题胶囊；“…”菜单；深链 `thinktin://instance/{id}` | 压栈 | `.instance(id)` |
+| 资料页“…”菜单 | 10 | 资料页右上 | 系统菜单 | — |
+| 编辑实例 | 12 | 资料页“编辑” | 压栈 | 不加（Agents 本地） |
+| 头像 | 18–20 | 编辑页“头像”行 | 压栈 | 不加（第 2 轮） |
+| 实例的计划 | 21 | 资料页“计划” | 压栈 | 改成 `.plans(instanceID:)` |
+| 产出物 | 22、23、26、81–84 | 资料页“产出物”；对话“…”；工作台 | 压栈 | `.artifacts(instanceID:)` |
+| 图片全屏查看 | 24、25 | 产出物里点图片 | 全屏 | 不加（Artifacts 本地 `.fullScreenCover`） |
+| 工作区 | 资料页“电脑”行的位置（27、65） | 资料页第三行 | 压栈 | 不加（Agents 本地） |
+| 观看与接管 | 27、29、30、31、89 | 工作区；对话里“等你接管”的状态行 | 压栈 | 新增 `.instanceScreen(InstanceID)`（第 3 轮） |
+| 使用说明 | 28 | 观看页右上“?” | sheet | 不加（第 3 轮） |
+| 设置 | 53、70、75 | 首页左上头像 | sheet | `.settings`（改：`.push` → `.sheet`） |
+| 账号 | 54 | 设置第一行 | 设置里压栈 | `.account` |
+| 用量 | 55 | 设置 | 设置里压栈 | `.usage` |
+| 订阅 | 56 | 设置 | 设置里压栈 | 待定（12.23） |
+| 保险箱 | 57、58 | 设置；推送和深链进填写请求 | 设置里压栈 / 主栈压栈 | `.vault`、`.vaultItem`、`.vaultRequest` |
+| 新建 / 修改条目 | 59、99（60、61、94–98 待定） | 保险箱右上“+”；条目详情“编辑” | 压栈（参考是压栈；现在是本地 sheet，见 4.9.6） | 不加（Vault 本地） |
+| 权限与规则 | 62–64、100 | 设置 | 设置里压栈 | 待定，第 3 轮（`.permissions`） |
+| 登录设备、设备详情 | 66–69 | 设置 | 设置里压栈 | `.devices`；详情不加 |
+| 连接 | 36、37、41、43 | 设置“连接” | 设置里压栈 | 新增 `.connections`（第 2 轮） |
+| 外观、语言、触感 | 72–74 | 设置 | 设置里压栈 / 行内开关 | 不加（现有本地页） |
+| 导入记忆 | 71 | 设置 | 设置里压栈 | 待定 |
+| 发送反馈 | 76、77 | 设置 | 设置里压栈 | 不加（第 3 轮） |
+| 收件箱、审批中心、进行中、团队、计划（全部） | 无 | 工作台；推送；深链 | 压栈 | 现有路由 |
+| 新任务（选实例） | 11 的版式 | 引导、快捷指令 | sheet | `.newTask`（保留） |
+
+### 3.3 路由要改的地方（`Navigation/`，第 0 轮统一改）
+
+| 路由 | 现在 | 改成 | 跟着改 |
+|---|---|---|---|
+| `.home` | 没有实例时的根，属 `.conversation` | 永远是根：实例列表，属 `.shell`；离线策略 `cached` 不变 | `Router.rootRoute`、`AppShell`；`ConversationHomeScreen`（`RunTreeScreen.swift`）删掉，内容挪成首页空状态 |
+| `.conversation(id)` | `.root`，打开等于切换实例并回到根 | `.push`；仍然记下当前实例（新任务、小组件、快捷指令默认用它） | `Router.open`、`selectInstance`、`AppRouteTests` |
+| `.settings` | `.push`，`isTopLevel` | `.sheet` | `presentation`、`isTopLevel` |
+| `.search` | `.push`，`isTopLevel` | 回到首页并激活搜索（`Router` 加 `searchRequest`，像现在的 `newTaskRequest`） | `presentation` 用 `.root` |
+| `.plans` | 没有参数 | `.plans(instanceID: InstanceID?)`，nil 是全部实例 | `PlansDestination`、`instanceID`、深链（`thinktin://plan/{id}` 不受影响） |
+| `.agentCatalog` | `isTopLevel`（抽屉直达） | 普通压栈；入口剩引导（12.17）、没有实例时的“新任务”（`AppModel.startNewTask`）、对话页“实例已删”的空状态；领养表单里选 agent 用本地列表（4.7.1），设置根页不放入口 | `isTopLevel`、`startNewTask` |
+| sheet 里的跳转 | `Router` 只有一层 `sheet`；`open` 遇到压栈页会关掉 sheet 再压到主栈，遇到 sheet 页会把当前 sheet 换掉 | 加 `sheetPath: [AppRoute]`，sheet 显示时 `open(.push)` 压进 sheet 自己的栈、不关 sheet；sheet 里再开 sheet 页（`.addCredential`、`.onboarding`、`.newPlan`）叠一层（`Router` 加 `nestedSheet`）；`.conversation` 例外，永远先关 sheet 再压进主栈（领养成功进对话、`NewTaskSheet` 选实例都靠它）；`show`（深链、推送）照旧先关 sheet 再建返回栈 | `Router`、`AppShell` 的 sheet 改 `NavigationStack(path:)`、`Tests/ThinktinKitTests/Navigation/`。不改的话设置变成 sheet 以后，保险箱点条目（`router.open(.vaultItem)`）、模型 key 点“添加”（`router.open(.addCredential)`）、用量跳转都会把设置关掉 |
+| `isTopLevel` / `openFromDrawer` | 抽屉用 | 改名 `openTopLevel`，给工作台菜单用（先回根再压） | `ShellDrawer` 删掉 |
+| `isDrawerOpen`、`openDrawer` 等 | 抽屉状态 | 删掉 | 截图脚本的 `THINKTIN_OPEN_DRAWER` 一起去掉 |
+| 新增 `.adopt(agentID: AgentID?)` | — | sheet，属 `.agents`，离线 `unavailable` | `feature`、`presentation`、`offlinePolicy`、`title` |
+| 新增 `.connections` | — | 第 2 轮；新功能 `.connections` | 同上 |
+| 新增 `.instanceScreen(InstanceID)` | — | 第 3 轮；压栈 | 同上 |
+
+### 3.4 深链和推送的返回栈
+
+docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页”。改成：
+
+- 和实例有关的目标（实例资料、模型路由、实例的产出物、运行详情）：**首页 → 该实例的对话 → 目标页**，返回先回到对话
+  （和 `AppRoute.instanceID` 注释里“返回时回到这个实例的对话”的意思一致）。
+- 其余（收件箱、审批、计划、保险箱请求）：**首页 → 目标页**。
+- 推送只有实例 id 时：首页 → 该实例的对话。
+- 安卓现在还是抽屉结构，两端的返回栈会不一样；安卓要不要跟着改另议（6.1）。
+
+## 4. 逐页规范
+
+按参考 App 的分组排。每页写：截图编号、布局、原生控件、交互、状态、对应的 ThinkTin 功能和现有代码、要改什么（带轮次，见第 7 节）。
+同一页的几种状态（菜单展开、滚到底、空状态）合在一节里。
+
+### 4.1 启动
+
+#### 4.1.1 启动屏（109）
+
+- **布局**：整屏纯色底，正中偏下一个约 60pt 的单色 Logo；没有文字、进度条、按钮。
+- **原生**：Info.plist 的 `UILaunchScreen`：`UIColorName` = `LaunchBackground`（浅色、深色两套），`UIImageName` = `LaunchLogo`
+  （单色矢量 PDF，勾选保留矢量，深浅色两版）。不做 SwiftUI 画的假启动页，也不做启动动画。
+- **交互 / 状态**：没有。冷启动时系统显示，第一帧出来自动消失。
+- **ThinkTin 现在**：`apps/apple/project.yml` 里是 `UILaunchScreen: {}`（空，系统默认纯色底、没有 Logo）；Assets 只有
+  `AppIcon`、`AccentColor`；`BrandLogo` 是 SwiftUI 视图，启动屏用不了。
+- **要改**：`tools/apple/brand_assets.py` 多导出 `LaunchLogo` 和 `LaunchBackground`（生成物照规矩提交，不手改），project.yml
+  填上两个键。纯客户端，第 0 轮。
+
+#### 4.1.2 登录方式（108）
+
+不照做：登录页由用户自己设计。参考 App 在这里用的是“添加账户”（多账户），见 6.20。
+
+### 4.2 主页
+
+#### 4.2.1 首页：实例列表（1、119、120、111、110、113）
+
+- **布局**
+  - 没有导航标题。左上是玻璃圆按钮，里面是账号头像（昵称第一个字）；右上是玻璃圆“+”。
+  - plain 列表，没有分隔线，每行约 72pt：左边 48pt 实例头像，右下角叠状态角标；中间第一行名字（`.headline`）、
+    右边时间（`.caption`、`.tertiary`，今天显示 HH:mm，更早显示日期）；第二行预览（`.subheadline`、`.secondary`，单行截断，内容见 6.7）。
+  - 置顶的实例（第 2 轮）在列表最上面变成居中的大头像网格（80pt + 名字 `.footnote`，每排 3 个；参考只截到置顶一个的样子，多个时怎么排是推测的），下面接普通行，中间没有分区标题。
+  - 有待审批或未读时，列表最上面一行提示胶囊：“2 个审批在等你 · 3 条未读”，点了进审批中心或收件箱（6.1）。
+  - 底部浮动：左边玻璃圆按钮（工作台，`square.grid.2x2`，带角标），右边占满剩余宽度的玻璃胶囊搜索栏。列表从上下玻璃下面滚过去。
+- **原生控件**
+  - 根：`NavigationStack` 的根页，不设标题，`.toolbarTitleDisplayMode(.inline)`。
+  - 左上：`ToolbarItem(placement: .topBarLeading) { Button { router.open(.settings) } label: { 头像 } }`。
+  - 右上：`ToolbarItem(placement: .topBarTrailing) { Button("领养新实例", systemImage: "plus") { router.open(.adopt(agentID: nil)) } }`。
+  - 列表：`List { 提示行; 置顶网格行; ForEach { NavigationLink(value: AppRoute.conversation(id)) { HomeInstanceRow } } }`
+    + `.listStyle(.plain)` + `.listRowSeparator(.hidden)`；置顶网格是 `LazyVGrid`，放在第一行（`.listRowBackground(Color.clear)`）。
+  - 时间：外面包 `TimelineView(.everyMinute)`，用 `Formatting` 的时间格式。
+  - 底部：`.searchable(text:isPresented:)` + `DefaultToolbarItem(kind: .search, placement: .bottomBar)`；
+    工作台 `ToolbarItem(placement: .bottomBar) { Menu { … } label: { Image(systemName: "square.grid.2x2") } }.badge(n)` + `ToolbarSpacer(.fixed, placement: .bottomBar)`。
+  - 工作台菜单项：收件箱、审批、进行中、计划、团队、产出物，每项用 `Button { } label: { Text(标题); Text("3 条未读") }`
+    （第二个 `Text` 在菜单里显示成副标题）。
+  - 下拉刷新 `.refreshable { await model.refresh() }`；左滑 `.swipeActions`；长按 `.contextMenu(menuItems:preview:)`（4.2.2）。
+  - 空状态：`ContentUnavailableView`。
+- **交互**：点一行压栈进对话；左上进设置（sheet）；“+”领养（sheet）；左下工作台菜单；点搜索栏原地搜索（4.2.4）；
+  左滑置顶 / 隐藏（第 2 轮）；长按菜单；下拉刷新；从对话返回时回到原来的滚动位置。
+- **状态**
+  - 加载中：没有缓存时 `ProgressView`；有缓存先显示缓存再刷新（现有规则）。
+  - 离线：显示缓存 + 顶部离线横幅（现有）。
+  - 没有实例：`ContentUnavailableView`，图标位置放 `BrandLogo`，标题“还没有实例”，按钮“去领养”。
+  - 全部隐藏（113，第 2 轮）：“所有实例都已隐藏” + `Button("显示已隐藏的实例")`（`.bordered`、胶囊）。
+  - 拉取失败：`ErrorBanner`，可重试。
+  - 有运行在等你处理：行内第二行换成“N 个在等你处理”（现在抽屉里就有），角标用 `warning` 色。
+  - 运行中：状态角标会呼吸（`StatusTone` 规则不变）。
+- **ThinkTin 现在**：实例列表在抽屉 `Shell/ShellDrawer.swift`（`DrawerInstanceList`、`DrawerInstanceRow`：状态点、名字、
+  相对时间、“N 个在等你处理”，`VStack` + `Button(.plain)` 自己画）；根是 `Shell/AppShell.swift` 的 `RootPage`（抽屉按钮、
+  左缘右划手势、`InstanceSwitcher`）；没有实例时是 `ConversationHomeScreen`；数据在 `ViewModels/Shell/AppModel.swift`
+  （`instances`、`activity(for:)`、`badges`）；头像是 `Screens/Agents/AgentMonogram.swift`。
+- **要改**
+  - 新建 `Shell/Home/`：`HomeScreen.swift`、`HomeInstanceRow.swift`、`PinnedInstancesGrid.swift`（第 2 轮）、`WorkbenchMenu.swift`。
+  - 新建 `ViewModels/Shell/HomeListModel.swift`：排序（置顶在前，其余按最后活动）、隐藏过滤、预览文字、提示行的数；
+    `InstancePreferencesStore`（按账号存置顶、隐藏，仿 `AppModel.swift` 里的 `InstanceSelectionStore`）。Linux 上能测。
+  - 删掉 `ShellDrawer.swift`、`InstanceSwitcher.swift`、`RootPage` 的抽屉按钮和左缘手势。
+  - 预览：`cachedRuns(instanceID:limit: 1)` 的摘要或任务（6.7），agent 写的摘要带小号 AI 标识。
+  - 参考的“主 Bot”橙色星标不做，那个位置放状态角标。
+  - 第 0 轮先出最小可用的列表，第 1 轮做完整版，置顶、隐藏第 2 轮。
+
+#### 4.2.2 实例长按菜单（32、33、112）
+
+- **布局**：背景模糊变暗；上面是预览卡（小头像 + 名字，分隔线，最近一条消息的灰气泡，多行）；下面是玻璃菜单；
+  “更多 ›”在原地展开子菜单，父菜单变暗。
+- **原生**：`.contextMenu { … } preview: { InstancePreviewCard(…) }`；子菜单 `Menu("更多", systemImage: "ellipsis") { … }`；
+  隐藏、删除 `role: .destructive`；复制后 `.sensoryFeedback(.success, trigger:)`。
+- **ThinkTin 的菜单项（建议）**
+  - 第一组：置顶 / 取消置顶（`pin` / `pin.slash`）、隐藏（`eye.slash`，destructive）。第 2 轮才有。
+  - 第二组：实例资料（`info.circle`）、改名（`pencil`）、新建计划（`calendar.badge.plus`）。
+  - 更多：复制实例 ID（`doc.on.doc`）、模型路由（`cpu`）、删除实例（`trash`，destructive，接 `InstanceDeleteSheet`）。
+  - 参考里的“标为未读”“新建分组”“替换主 Bot…”“分享为模板”见 6.10、6.21。
+- **交互**：点预览卡进对话；点菜单项执行后菜单收起；点空白处收起。
+- **状态**：置顶与否文案跟着变；离线时要联网的项（改名、新建计划、删除）禁用；实例在运行或等你处理时预览卡顶上显示状态。
+- **ThinkTin 现在**：首页没有长按。改名是 `InstanceRenameSheet`、删除是 `InstanceDeleteSheet`（都在 `Screens/Agents/`）；
+  复制用 `Support/Pasteboard.swift`。
+- **要改**：预览里的最近一条用 `cachedEventsBefore(instanceID:beforeSeq: nil, limit:)` 取最后一条 agent 消息，没缓存时退回
+  `cachedRuns` 最新一次运行的摘要。改名用 `.alert` + `TextField`，按 `InstanceNameRule` 校验，Shell 自己调 `renameInstance`，
+  不依赖 Agents 的页面。第 1 轮（置顶、隐藏第 2 轮）。
+
+#### 4.2.3 已隐藏的实例和说明（114、115、116）
+
+- **布局**：压栈页，标题“已隐藏的实例”，右上玻璃“?”；plain 列表，每行头像 + 名字 + 右边小胶囊“取消隐藏”；
+  全部取消后中间一行灰字“没有隐藏的实例”。“?”弹 sheet“关于隐藏”：左上 ×，一组 insetGrouped 三行（图标 + 标题 + 多行说明）。
+- **原生**：`List(.plain)`；`Button("取消隐藏").buttonStyle(.bordered).buttonBorderShape(.capsule).controlSize(.small)`；
+  空时 `.overlay { ContentUnavailableView(…) }`；说明 `.sheet` + `.presentationDetents([.medium, .large])` + `Button(role: .close)`；
+  每行 `Label { VStack { 标题; 说明 } } icon: { Image(systemName:) }`。
+- **交互**：点“取消隐藏”这一行带动画移除，实例回到首页；点行进对话；“?”看说明。
+- **ThinkTin 现在**：没有。
+- **要改**：Shell 本地页（不加路由）。入口有两个：全部隐藏时的空状态按钮，和列表最底下一行“已隐藏 N 个”（0 个时不显示，
+  参考 App 只有前一个，部分隐藏时找不到入口）。说明文案写 ThinkTin 的实际行为：隐藏只是首页不显示，计划照常跑，
+  审批和推送照常发（6.10）。第 2 轮。
+
+#### 4.2.4 首页搜索（78、79、80）
+
+- **布局**：点底部搜索栏后原地进入搜索：导航栏收起；顶上一排横向筛选胶囊（全部、消息、实例、收件箱、计划、产出物）；
+  底部搜索框聚焦，右边系统给的玻璃 ×。空查询 + “全部”时直接列出实例（行尾一个灰色类型标签）；空查询 + 某一类时中间一个小放大镜 + “搜索消息”；
+  有结果时 plain 列表：40pt 头像 + 粗体“你发给 X” / “X 发给你” + 右边日期（本周内写星期几）+ 下面一行灰色摘录。
+- **原生**：`.searchable(text:isPresented:)` + `DefaultToolbarItem(kind: .search, placement: .bottomBar)`；搜索时
+  `.toolbarVisibility(.hidden, for: .navigationBar)`（iOS 18；iOS 17 用 `.toolbar(.hidden, for: .navigationBar)`）；筛选用 `FilterChipBar`，放 `.safeAreaInset(edge: .top)`；空状态
+  `ContentUnavailableView`；没结果 `ContentUnavailableView.search(text:)`；`.scrollDismissesKeyboard(.immediately)`。
+- **交互**：点胶囊换类型；点结果：实例 → 对话，运行 → 运行详情，收件箱 → 那一条，计划 → 计划详情，产出物 → 产出物页；
+  点 × 回到首页。
+- **状态**：空查询、有结果、没结果、离线时只搜了缓存（现有 `SearchText.cacheOnly` 提示）。
+- **ThinkTin 现在**：`.search` → `Screens/Search/SearchScreen.swift`（压栈页，结果分组卡片）+ `ViewModels/Search/SearchModel.swift`
+  （`SearchKind`：instance / run / inbox / plan / artifact；每个实例搜本机缓存里最近 200 条运行的任务和摘要，联网时再拉计划和每个实例
+  最近 100 个产出物）。agent 回复的正文（事件）现在不搜。
+- **要改**
+  - `SearchModel` 加类型筛选；一次运行拆成两种结果：任务命中显示“你发给 X”，摘要命中显示“X 发给你”（带 AI 标识）。
+  - “消息”想更接近参考（搜回复正文），可以再搜本机缓存的事件（`cachedEventsBefore`，每个实例最多 2000 条），纯客户端；缓存以外的
+    全文搜索才要后端。
+  - 结果视图拆成能嵌进别处的 `SearchResultsView`，首页嵌进去；`.search` 路由改成回首页激活搜索。
+  - 参考的“群聊”筛选 ThinkTin 没有，换成“收件箱”（6.24）。
+  - iOS 17/18 上 `.searchable` 在导航栏下面，照样能用。
+  - 第 1 轮做嵌入和空查询列实例，第 2 轮做筛选和“谁发给谁”。
+
+### 4.3 对话
+
+#### 4.3.1 对话页（2、118）
+
+- **布局**
+  - 导航栏透明：左系统返回；中间玻璃胶囊（24pt 头像 + 名字）；右玻璃“…”。
+  - 时间线：agent 回复是左对齐的灰色气泡（圆角 20，最宽约屏宽 85%，内边距 16，`.body`），“AI 生成”标识在气泡下方；
+    用户消息是右对齐的气泡（`userBubble`；参考截图里没有出现用户打字发的消息，只有通话记录行，这一条是按 iOS 习惯定的，没有参照）。工具调用、审批、产出物、子运行、保险箱填写这些卡片仍是全宽卡片，不放进气泡。
+  - 运行之间加居中的小灰字时间分隔（`.footnote`、`.secondary`，今天“今天 22:09”，本周“星期二 02:22”，更早写日期）；
+    计划、流水线、委派发起的运行，来源行改成居中的小灰 `Label`。
+  - 底部浮动的玻璃胶囊输入框（高约 52，左右留约 20）：输入、右边发送 / 停止圆按钮；附件“+”等 6.13（之前不放）。
+    模型标签、排队提示、字数、错误横幅放在输入框正上方一行小字（左对齐），超限时字数标红。
+- **原生控件**
+  - 标题：`ToolbarItem(placement: .principal) { Button { router.open(.instance(id)) } label: { HStack { InstanceAvatar(size: 24); Text(name) } } }`。
+  - 右上：`ToolbarItem(placement: .topBarTrailing) { Menu { … } label: { Image(systemName: "ellipsis") } }`（4.3.2）。
+  - 时间线保留 `ScrollView` + `LazyVStack` + `.defaultScrollAnchor(.bottom)` + `.scrollDismissesKeyboard(.interactively)`。
+  - 气泡：`.background(Theme.agentBubble, in: RoundedRectangle(cornerRadius: 20, style: .continuous))`。
+  - 输入框：`.safeAreaBar(edge: .bottom) { GlassEffectContainer { HStack { … } }.glassEffect(.regular.interactive(), in: .capsule) }`；
+    `TextField(axis: .vertical).lineLimit(1...6)`。
+  - 发送：`Button("发送", systemImage: "arrow.up").labelStyle(.iconOnly).buttonStyle(.glassProminent).buttonBorderShape(.circle)`；停止换 `stop.fill`；
+    发送中换 `ProgressView`。
+  - 去掉 `solidTopScrollEdge()`，用系统默认的软渐隐。
+- **交互**：点标题进实例资料；“…”菜单；长按消息（4.3.4）；左缘右划或点返回回首页；下拉加载更早的记录（现有）。
+- **状态（全部保留）**：加载中、空对话、实例已删、正在唤醒、流式输出、运行状态行（等审批 / key / 电脑、失败后重试）、
+  发送或停止失败的横幅、排队提示、字数超限、离线只读、密码拦截 sheet、没配 main 路由的提示。
+- **新实例第一次进来（118）**：参考是自动欢迎语 + “你最想让我先做什么”的 A/B/C/D 选择卡。ThinkTin 没有欢迎消息，
+  也没有“agent 提问 + 选项”的结构化事件；建议第 2 轮在客户端画一张静态卡：先查 main 路由和 key，没配好时卡片引导去配；
+  配好了给 3–4 个示例任务，点一个就 `sendMessage`（6.18）。第 1 轮先用 `ContentUnavailableView`“给 X 布置第一个任务”。
+- **ThinkTin 现在**：`.conversation(id)` → `Screens/Conversation/ConversationScreen.swift`（`ConversationContent`）、
+  `ConversationTimeline.swift`、`MessageViews.swift`（`UserMessageView` 右侧卡片，`AssistantTextView` 不带气泡）、
+  `ConversationCards.swift`（`SourceHeaderView`）、`ConversationComposer.swift` + `Components/ComposerBar.swift`；
+  `ViewModels/Conversation/ConversationModel.swift`。标题现在是 `Shell/InstanceSwitcher.swift`。
+- **要改**
+  - `ComposerBar` 重写成玻璃胶囊（它只有对话页用，第 1 轮归对话这条线）。
+  - 时间分隔按 `Run.createdAt` 在客户端算（隔 15 分钟以上或跨天才加），逻辑放 `ViewModels/Conversation/`，Linux 上测。
+  - 气泡和左右对齐按 6.2 的决定。参考的语音模式按钮、通话记录不做（6.23）。
+  - 第 1 轮。
+
+#### 4.3.2 对话“…”菜单（3）
+
+- **布局**：点“…”从按钮位置变形展开玻璃菜单，盖住标题，背景不变暗；每项左图标右文字。
+- **原生**：`Menu { Section { … } Section { … } } label: { Image(systemName: "ellipsis") }`；分享类用 `ShareLink`。
+- **ThinkTin 的菜单项**：第一组 实例资料（`person.crop.circle`）、在对话中查找（`magnifyingglass`，第 2 轮）；
+  第二组 模型路由（`cpu`）、新建计划（`calendar.badge.plus`）、产出物（`folder`）。参考的“分享为模板”不做（6.21）。
+- **ThinkTin 现在**：`ConversationScreen.swift` 的 `ToolbarItem(placement: .primaryAction)` 里的 `Menu`（实例详情、模型路由、
+  新建计划、产出物），图标 `ellipsis.circle`。
+- **要改**：分组、换图标、放 `.topBarTrailing`。第 1 轮。
+
+#### 4.3.3 对话内查找（4、5）
+
+- **布局**：底部输入框换成一条查找栏：玻璃胶囊搜索框（约占屏宽 45%，占位“在对话中查找”）、两个玻璃圆（上一个、下一个）、
+  “完成”玻璃胶囊。搜索框尾部显示“第 i 个，共 n 个”，0 个时红字。
+- **原生**：`TextField` + `.glassEffect(in: .capsule)`（系统 `.searchable` 放不下计数）；箭头
+  `.buttonStyle(.glass).buttonBorderShape(.circle)` + `.disabled(n == 0)`；完成 `Button("完成", role: .close)`；定位用
+  `ScrollViewReader` 的 `scrollTo(id, anchor: .center)`；命中文字用 `AttributedString` 加背景高亮；回车跳下一个（`.onSubmit`）；
+  计数变化发 `AccessibilityNotification.Announcement`。系统的 `.findNavigator` 只支持文本视图，消息列表用不上。
+- **交互**：从“…”进来，搜索框自动聚焦；输入后高亮所有匹配并跳到最新一处；上下箭头跳；点“完成”退出、恢复输入框。
+- **状态**：没输入（箭头灰）、有匹配（灰字计数）、没匹配（红字 0）、“已加载的记录里没有，加载更早的再找”。
+- **ThinkTin 现在**：没有。
+- **要改**：纯客户端。在 `ConversationModel` 已加载的记录（任务、回复文字）里搜，再往上用 `cachedEventsBefore`
+  （每个实例本机最多 2000 条）和 `olderRuns`；超出缓存的搜不到，要提示。查找状态放 `ViewModels/Conversation/ConversationFind.swift`，
+  查找栏 `Screens/Conversation/ConversationFindBar.swift`。查找时模型标签、错误横幅先藏起来。第 2 轮。
+
+#### 4.3.4 消息长按（6、90）
+
+- **参考**：长按 agent 气泡后背景变暗，底部升起带拖动条的玻璃面板：上面两排表情（最后一个“笑脸 +”进完整表情选择器，90），
+  下面两组：回复、标为未读；复制、选择文本、复制请求 ID。
+- **ThinkTin（建议）**：先用系统长按菜单（带预览），不做表情面板（6.11）。
+  - agent 回复：第一组 回复（引用，第 2 轮）、复制、选择文本、分享；第二组 复制运行 ID；最后一组 举报（destructive）。
+  - 用户消息：复制、再发一次、选择文本。
+- **原生**：`.contextMenu { Section { … } … }`；选择文本弹 sheet，里面放只读的 `UITextView`（`isEditable = false`、`isSelectable = true`，
+  `UIViewRepresentable` 包一层）——iOS 上 `Text(...).textSelection(.enabled)` 只能整段复制，不能划选一部分；复制用现有的
+  `Pasteboard.copy`（agent 输出带 AI 生成标识）；复制 ID 加 `.sensoryFeedback(.success, trigger:)`。
+- **ThinkTin 现在**：`MessageViews.swift` 的 `MessageMenu`（复制、分享、举报）、`UserMessageView`（复制、再发一次）、
+  `ContentReportSheet.swift`。
+- **要改**：加“选择文本”“复制运行 ID”，分组。表情、标为未读要后端（6.11）；真要做表情时长按改成
+  `.sheet` + `.presentationDetents([.medium, .large])` + `.presentationDragIndicator(.visible)`。第 1 轮。
+
+#### 4.3.5 引用回复（7）
+
+- **布局**：输入框从胶囊长成大圆角卡片（约 28）：上面引用条（灰胶囊，单行截断，右边 ×），中间输入，下面一行按钮。
+- **原生**：`VStack { … }.glassEffect(.regular, in: RoundedRectangle(cornerRadius: 28, style: .continuous))`；引用条
+  `.background(.fill.tertiary, in: Capsule())`；`@FocusState` 自动聚焦；胶囊和卡片的切换用系统的 `withAnimation`。
+- **ThinkTin 现在**：没有；`sendMessage(instanceID:text:allowSecrets:)` 只收纯文本。
+- **要改**：按 6.11 的方案 A，发送时把引用拼成 Markdown 引用块（`> …`）放在正文前，算进 32000 字、照样过密码检测。第 2 轮。
+
+#### 4.3.6 附件菜单（8）
+
+- **参考**：“+”向上展开玻璃菜单：照片或视频、拍照、选择文件；选好后输入框长成卡片，顶上一排缩略图。
+- **原生**：`Menu` + `.photosPicker`、`UIImagePickerController`（`sourceType = .camera`，`UIViewControllerRepresentable` 包一层；
+  SwiftUI 没有相机控件）、`.fileImporter`。
+- **ThinkTin 现在**：12.22 运行附件，等 1.1 拍板和后端 5.6，`ClientProtocol` 没有上传接口。
+- **要改**：第 3 轮（6.13）。在那之前输入框不放“+”。
+
+### 4.4 实例管理（参考的“Bot 管理”）
+
+#### 4.4.1 实例资料（9）
+
+- **布局**
+  - 没有标题；右上两个分开的玻璃圆：分享、“…”（分享先不放，6.21）。
+  - 头部居中：120pt 头像（右下状态角标）、名字（`.title2.bold()`）、小号玻璃胶囊“编辑”。
+  - 第一组：计划（`clock`，值“N 个生效”）、产出物（`folder`）、工作区（`desktopcomputer`，值是实例状态，如“休眠”）。
+  - 第二组：默认模型（值是 main 路由的上游模型，没配时橙色“未配置”），点进模型路由。
+  - 第三组：所在团队（每个团队一行）。
+  - 最后：信息（agent、接入方式、创建时间）。
+  - 参考的“通知”开关等后端（6.14），之前不放。
+- **原生**：`List(.insetGrouped)`；头部是第一个 Section，`.listRowBackground(Color.clear)`；编辑
+  `Button("编辑").buttonStyle(.glass).controlSize(.small)` + `.navigationDestination(isPresented:)`；带值的行
+  `NavigationLink { … } label: { LabeledContent { Text(值) } label: { Label(标题, systemImage:) } }`；右上
+  `ToolbarItem(placement: .topBarTrailing) { Menu }`。
+- **交互**：从对话标题进来（压栈）；计划 → 4.5.1；产出物 → 4.5.2；工作区 → 4.6.1；默认模型 → `.modelRoutes(id)`；
+  编辑 → 4.4.3；“…” → 4.4.2；团队行 → `.team(id)`。
+- **状态**：加载中、离线（只读，改动类禁用）、找不到实例、拉取失败可重试、没配 main 路由的提醒（模型那一组的行内警告）。
+- **ThinkTin 现在**：`.instance(id)` → `Screens/Agents/InstanceDetailScreen.swift`（`InstanceHeader`、`modelSection`、
+  `versionSection`、`workSection`、`teamSection`、`infoSection`，全用 `GroupedSection`）+ `ViewModels/Agents/InstanceDetailModel.swift`
+  （`plans`、`teams`、`routeStatus`、`versionOptions`）。
+- **要改**：重写成上面的版式。“N 个生效”是 `InstanceDetailModel.plans` 里没暂停、已确认的数；版本升级 / 回滚挪进工作区页；
+  改名挪进编辑页；删除挪进“…”菜单。第 1 轮。
+
+#### 4.4.2 资料页“…”菜单（10）
+
+- **参考**：替换主 Bot…、复制 ID。
+- **ThinkTin 的菜单项**：复制实例 ID（`doc.on.doc`）、模型路由（`cpu`）；最后一组 删除实例（`trash`，destructive，接现有的
+  `InstanceDeleteSheet`，带影响说明）。“替换主 Bot”不做（6.10）。
+- **原生**：`Menu` + `Section` + `role: .destructive`；复制后 `.sensoryFeedback(.success, trigger:)`。
+- **ThinkTin 现在**：`InstanceDetailScreen` 的 `Menu`（改名、删除实例，图标 `ellipsis.circle`）。
+- **要改**：第 1 轮。
+
+#### 4.4.3 编辑实例（12；13–17、85–88 是它的语音菜单）
+
+- **布局**：压栈页，标题“编辑实例”，右上“完成”。头像约 100pt 居中，右下玻璃小铅笔（第 2 轮才有，见 4.4.4）；
+  “名称”组一个单行输入；“外观”组“头像 >”（第 2 轮）；参考的“语音通话”组（语音、速度、语言）不做（6.23）。
+- **原生**：`Form { Section("名称") { TextField } footer: { 名字规则或错误 } }`；`ToolbarItem(placement: .confirmationAction) { Button("完成") }`，
+  名字不合法时 `.disabled`，保存中换 `ProgressView`。压栈页要拦返回只能藏掉系统返回键自己画（`.navigationBarBackButtonHidden(true)`），
+  和 2.6“不自定义返回项”冲突，参考也不拦，所以不拦。
+  参考在“语音”“语言”行用的 `Picker(.menu)`（长列表系统菜单自己能滚、选中项打勾）是好写法，单选项都照它做。
+- **交互**：点“完成”保存并返回；点返回直接放弃改动（只有一个名字字段，丢了好重填）。
+- **状态**：名字为空或太长（`InstanceNameRule`）、保存中、保存失败（`ErrorBanner`）、离线整页禁用。
+- **ThinkTin 现在**：`InstanceDetailScreen.swift` 里的 `InstanceRenameSheet`（sheet，取消 / 保存，`AgentsNameField`）+
+  `InstanceDetailModel.rename(to:)`。
+- **要改**：sheet 改成压栈的 `Form`（Agents 目录里本地 `NavigationLink`，不加路由）；第 1 轮只有名字。
+
+#### 4.4.4 头像（18、19、20）
+
+- **参考**：压栈页“头像”，右上“完成”；顶上分段“形状 / 生成 / 上传”；大预览；形状网格（14 个）+ 色板（11 个，选中带环）+
+  “重置为默认”；“生成”是多行描述 + 生成按钮；“上传”是从相册选、拍照两行 + 脚注（最大 25 MB，之后可以裁剪）。
+- **原生**：`Picker(.segmented)`；`LazyVGrid` 里 `Button(.plain)` + 选中环 + `.accessibilityAddTraits(.isSelected)` +
+  `.sensoryFeedback(.selection, trigger:)`；`PhotosPicker`（不用相册权限）；相机 `UIImagePickerController`（`sourceType = .camera`、
+  `allowsEditing = true`，要 `NSCameraUsageDescription`）。
+- **ThinkTin 现在**：只有 `AgentMonogram`（圆里放名字第一个字）；`Instance` 没有头像字段，也没有上传、生成接口。
+- **要改**：按 6.9。建议第 1 轮先把首字头像按名字取色（`InstanceAvatar`），后端加了头像字段再做“形状 + 颜色”
+  （素材自己设计，可以用 SF Symbols 的填充图形加两点眼睛，不照搬参考的形象）；生成、上传不做。
+
+#### 4.4.5 选择主 Bot（11）
+
+不做（ThinkTin 没有主实例，6.10）。它的 sheet 选择器版式（左上 ×、右上 `.confirmationAction`“确认”、`List(selection:)` 单选、
+底部 `.searchable`、空时 `ContentUnavailableView`、没结果 `ContentUnavailableView.search(text:)`）用来改两处现有的选择：
+`Shell/ShellDestination.swift` 的 `NewTaskSheet`（选在哪个实例上下任务）和团队编辑里的成员选择（`Screens/Teams/TeamsScreens.swift`）。
+
+### 4.5 任务与资料
+
+#### 4.5.1 实例的计划（21）
+
+- **布局**：压栈页，标题“计划”（参考叫“定时任务”）；没有计划时屏幕正中一段两行的灰字（参考只有这一段，没有图标、标题、按钮）；
+  有计划时 insetGrouped 列表。参考右上没有按钮（只能在对话里让 Bot 建）；ThinkTin 能手动新建，所以加右上玻璃“+”，空状态也多一个按钮。
+- **原生**：`ContentUnavailableView { } description: { Text("在对话里让它安排，或者手动新建。") } actions: { Button("新建计划") { router.open(.newPlan(instanceID: id)) }.buttonStyle(.glassProminent) }`；
+  右上 `Button("新建计划", systemImage: "plus")`；行 `NavigationLink(value: AppRoute.plan(id))` + `.swipeActions`（暂停 / 恢复；
+  删除 destructive，加 `.confirmationDialog`）+ `.contextMenu`。
+- **交互**：资料页“计划”行进来；点行进计划详情；“+”新建（sheet）。
+- **状态**：加载中、空、离线（没有缓存：空状态 + 横幅）、待确认的计划排最上面（现有的“待确认”分区保留）。
+- **ThinkTin 现在**：`.plans` → `Screens/Plans/PlanListScreen.swift`（全局，顶上按实例筛选的 `PlansFilterChip`；空状态
+  `EmptyStateView`）+ `ViewModels/Plans/PlanListModel.swift`（已经支持 `instanceFilter`）。实例详情的 `workSection` 现在直接列出本实例的计划。
+- **要改**：路由改 `.plans(instanceID:)`（第 0 轮）；`PlanListScreen` 接上 `instanceFilter`，有实例时不显示实例筛选；全部实例的
+  计划列表（从工作台进）同一版式，筛选换 `FilterChipBar`。第 1 轮。
+
+#### 4.5.2 产出物（22、23、26、81、82、83、84）
+
+- **布局**：压栈页，标题“产出物”（参考叫“资料库”）。顶上一排筛选胶囊“全部 / 媒体 / 文件”（参考是“全部 / 媒体 / 链接”），
+  跟着内容一起滚；下面按时间分组（今天、本周、更早）；insetGrouped 卡片，每行：图标或 28pt 圆角缩略图 + 单行文件名
+  （尾部截断）+ 灰色副标题（类型 · 日期 · 大小）+ AI 生成标识；列表最下面居中一个灰色文字按钮“展开”（还有更多时）。
+- **原生**：`List(.insetGrouped)` + `Section(header:)`；筛选胶囊作为第一行（`.listRowBackground(Color.clear)`）；行
+  `NavigationLink(value: AppRoute.artifact(id, runID:))`；`.contextMenu { ShareLink; 删除 }`；`.swipeActions` 删除；
+  `.refreshable`；空状态 `ContentUnavailableView`；iOS 18 起图片行可以用 `.matchedTransitionSource(id:in:)` +
+  `.navigationTransition(.zoom(sourceID:in:))` 放大进入（包在 `Design/Glass.swift` 的兼容层里，iOS 17 普通压栈）。
+- **交互**：切筛选；点图片进全屏查看（4.5.3），点其他进产出物详情；长按或左滑删除（二次确认，现有）。
+- **状态**：加载中、整体为空、某一类为空、离线（没有缓存：空状态 + 横幅）、刷新失败保留上次的结果（现有）。
+- **ThinkTin 现在**：`.artifacts(instanceID:)` → `Screens/Artifacts/ArtifactScreens.swift`（`ArtifactLibraryScreen`、
+  `ArtifactRow` 右边“…”菜单、`ArtifactIcon` 只有类型图标）+ `ViewModels/Artifacts/ArtifactModels.swift`（`ArtifactLibraryModel`：
+  一个实例或全部实例、按实例筛选、删除）；`ArtifactFiles.isImage` 已经能按 `contentType` 认图片。
+- **要改**
+  - 第 1 轮：版式换 `List`；全部实例时保留“按实例筛选”（换 `FilterChipBar`）；AI 标识留在行尾（合规）。
+  - 第 2 轮：按类型筛选和按日期分组在 `ArtifactLibraryModel` 里本地做；图片缩略图要下载整份文件，只给图片做、限数量、缓存。
+  - “链接”分类没有数据，“展开”只能本地折叠（`instanceArtifacts` 只有 `limit`、没有游标），见 6.19。
+
+#### 4.5.3 图片全屏查看（24、25）和产出物详情
+
+- **布局**：纯黑全屏；左上玻璃 ×，右上玻璃“…”（分享、保存；参考还有“转发”）；图片按屏宽适配、左右留 16、圆角约 12；
+  底部一行灰字（文件名）。
+- **原生**：Artifacts 目录本地的 `.fullScreenCover`（不加路由），里面套 `NavigationStack`；`Button(role: .close)`；
+  `Menu { ShareLink(item: fileURL); Button("保存", systemImage: "square.and.arrow.down") }`；图片存相册用 `PHPhotoLibrary`
+  （只申请“添加”权限），别的文件 `.fileExporter`；缩放、平移交给 `.quickLookPreview`（现在就有）；
+  `.toolbarBackground(.hidden, for: .navigationBar)`、`.preferredColorScheme(.dark)`；保存成功 `.sensoryFeedback(.success, trigger:)`。
+- **交互**：点 × 或下滑回产出物；“…”分享、保存。
+- **状态**：加载中、下载失败可重试、离线又没下载过时分享和保存禁用、没有相册权限时提示。
+- **ThinkTin 现在**：`.artifact(id, runID:)` → `ArtifactDetailScreen`（名字带 AI 标识、版本 / 大小 / 时间 / 实例、“预览”用
+  QuickLook、`ShareLink`、删除，按钮是 `PillButton`）+ `ArtifactDetailModel.prepareFile()`。
+- **要改**：第 1 轮把产出物详情改成 `List(.insetGrouped)`（头部图标 + 名字 + AI 标识，信息一组），“预览”“分享”放底部，
+  删除放“…”菜单最后（destructive）。第 2 轮加图片全屏查看和存相册（Info.plist 加 `NSPhotoLibraryAddUsageDescription`，
+  隐私清单同步）。“转发给另一个实例”要后端（`sendMessage` 只能发文字），不做。
+
+### 4.6 电脑
+
+#### 4.6.1 工作区（ThinkTin 新页，接实例资料的第三行；参考 27、65 的位置）
+
+- **参考**：资料页“电脑”行（值“空闲”）进 Bot 云桌面的实时画面（27）；设置里的“Bot 电脑”可以从快照重置、看磁盘空间（65），
+  脚注说所有 Bot 共用这台电脑。
+- **ThinkTin**：每个实例一个云端沙箱；用户自己的电脑是账号级配对的（设置 → 登录设备），两者不对等（6.8）。
+- **布局（建议）**：压栈页“工作区”，`Form`：
+  - 状态组：实例状态 + 一段说明（复用 `AgentsText` 现有的说明：运行中、休眠、冷存储，唤醒要多久）。
+  - 版本组：当前版本；有新版本时“升级到 x.y”按钮，旧版本在 `Picker(.menu)` 里选，选了用 `.confirmationDialog` 确认（挪自资料页）。
+  - 以后加：“观看与接管”（4.6.2）、“重置工作区”（destructive + 确认）、“磁盘空间”（`LabeledContent`）。
+- **原生**：`Form`、`LabeledContent`、`Picker(.menu)`、`Button(role: .destructive)`、`.confirmationDialog`。
+- **ThinkTin 现在**：`InstanceDetailScreen` 的 `versionSection`、`InstanceVersionRow`（自己画的行，点了弹确认）、`setInstanceVersion`。
+- **要改**：Agents 目录新页 `InstanceWorkspaceScreen.swift`（本地 `NavigationLink`），第 1 轮；重置、磁盘要后端（6.17），第 3 轮。
+
+#### 4.6.2 观看与接管（27、29、30、31、89）
+
+- **布局**
+  - 黑底；标题是小头像 + 名字；右上玻璃“?”，控制时再加“…”（两个分开的圆）。
+  - 中间是画面，按比例铺满宽度，上下留黑边。连接中是居中的 `ProgressView("正在连接…")`。
+  - 只看时右下一个玻璃胶囊“接管控制”。
+  - 控制时底部左边玻璃圆剪贴板按钮（菜单：从手机粘贴、复制到手机），右边玻璃圆键盘按钮；“…”里是“触控板模式”开关，
+    建议再加“交还给实例”“结束接管”（参考没有明显的交还入口）。
+- **原生**：`ToolbarItem(placement: .principal)`；`ToolbarItem(placement: .bottomBar)` + `ToolbarSpacer(.flexible, placement: .bottomBar)`；
+  `Menu`；`PasteButton`（不能放进 `Menu`，放工具栏）；隐藏的 `TextField` + `@FocusState` 调出系统键盘；手势用系统的
+  `SpatialTapGesture`、`DragGesture`、`MagnifyGesture`；画面要自己画（帧图片或 `AVSampleBufferDisplayLayer`）。
+- **交互**：工作区或对话里“等你接管”的状态行进来；连上后自动显示画面；“接管控制”进控制；“?”看使用说明（4.6.3）；返回断开观看。
+- **状态**：连接中、只看、控制中、断线重连、控制权被别的设备拿走、控制租约过期（先冻结输入，提示重新接管）、会话结束、
+  连接失败（`ContentUnavailableView` + 重试）、离线、用蜂窝网络时的流量提示。
+- **ThinkTin 现在**：没有。docs/browser.md 只有设计（只读票据和控制票据、单独的限帧画面通道、agent → waiting_owner → human → agent），
+  而且讲的是沙箱里的浏览器，不是整个桌面；剪贴板、键盘、触控板模式它都没写；
+  `ClientProtocol` 没有任何画面、会话接口；`Screens/Computer/` 只有配对、授权、电脑审批。
+- **要改**：第 3 轮，新路由 `.instanceScreen(InstanceID)`（压栈）。看的是实例沙箱的浏览器、用户自己的电脑还是两者都要，见 6.8。
+
+#### 4.6.3 使用说明（28）
+
+- **布局**：large sheet“使用电脑”，左上 ×；insetGrouped 两组（移动操作：接管控制、滚动、点击与拖动、右键、放大；
+  输入与剪贴板：输入、复制与粘贴），每行 SF Symbol + 标题 + 多行灰色说明。
+- **原生**：`.sheet` + `.presentationDetents([.large])` + `Button(role: .close)` + `List(.insetGrouped)` + `Label { VStack } icon:`。
+- **要改**：静态文案，跟 4.6.2 一起做（第 3 轮）。
+
+### 4.7 新建与分组
+
+#### 4.7.1 领养新实例（34、35、117）
+
+- **布局**
+  - large sheet，左上玻璃 ×，标题“领养新实例”。
+  - 上面是大头像预览（约 120）；第 2 轮有了头像以后，名字下面加形状网格和色板。
+  - 名字输入：占满宽度、圆角 16、填充底，文字居中、`.title2.bold()`，占位“给它取个名字”。
+  - ThinkTin 加一行“Agent”（选领养哪个 agent，默认目录里第一个或上次用的），agent 有多种接入方式时下面再加一行 `Picker(.menu)`；
+    许可说明放成脚注，链到 agent 详情。
+  - 底部全宽胶囊主按钮“领养”，没填名字时灰色、不能点。
+- **原生**：`.sheet` + `NavigationStack` + `Button(role: .close)`；`TextField` + `.submitLabel(.done)` + `.onSubmit`、`@FocusState`；
+  agent 行是 `NavigationLink`，进 Agents 目录里的本地选择列表（复用 `AgentCatalogModel` 的数据）；底部
+  `.safeAreaBar(edge: .bottom) { Button("领养") { … }.buttonStyle(.glassProminent).controlSize(.large).frame(maxWidth: .infinity).disabled(!canSubmit) }`；
+  提交中按钮里换 `ProgressView` + `.interactiveDismissDisabled(true)`；名字问题在输入框下面一行红色 `.footnote`。
+- **交互**：首页“+”打开；填了名字才能领养；领养成功关 sheet，压栈进新实例的对话（4.3.1 的首次状态）；× 或下滑取消，
+  已经填了内容时先确认。
+- **状态**：空表单、聚焦、可提交、提交中、名字不合法（`AdoptionModel.nameProblem`）、实例数到上限（`ErrorRecovery.limitReached`）、离线禁用。
+- **ThinkTin 现在**：`Screens/Agents/AdoptAgentSheet.swift`（`AgentsNameField`、接入方式 `ChoiceRow`、许可说明、`PillButton`、
+  领养完的 `AdoptionDoneView` 引导配模型或加 key）+ `ViewModels/Agents/AdoptionModel.swift`；入口 `.agentCatalog` → `.agent(id)` → 领养。
+- **要改**：新路由 `.adopt(agentID:)`（第 0 轮）；`AdoptAgentSheet` 改成上面的版式；`AdoptionDoneView` 去掉，“配模型、加 key”的引导挪到
+  新实例对话的首次卡片（第 2 轮之前先用对话页现有的“没配 main 路由”提示）。agent 目录（`.agentCatalog`）保留，改成 plain 列表行
+  （40pt 图标 + 名字 + 一句介绍 + 右边“领养 / 已领养”小胶囊，借参考 101–104 的行）；agent 详情可以借插件详情的 sheet 版式（4.8.3）。
+  第 1 轮（头像第 2 轮）。
+
+#### 4.7.2 分组（91、92、93）
+
+- **参考**：首页长按“新建分组” → 带输入框的 alert；列表出现可折叠的分组标题“名字 ⌄”；长按分组标题 → 菜单（重命名、上移、
+  下移、删除）；删除前 alert 确认（“其中的 Bot 会移到未分组，不会删除任何 Bot”）。
+- **原生**：`.alert` + `TextField`；`Section(isExpanded:)`（iOS 17 起；系统只在 `.listStyle(.sidebar)` 里自动画折叠箭头，
+  首页是 plain 列表，标题要自己做成 `Button` 切换 `isExpanded`，箭头用 `chevron.down` 跟着转）；分组标题 `.contextMenu` + `.contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 16))`；
+  删除 `.alert` + `role: .destructive`；排序也可以用 `EditButton` + `.onMove` 拖动，代替上移、下移。
+- **ThinkTin 现在**：没有。“团队”（`.teams`）是协作单位，不是列表分组。
+- **要改**：按 6.10，建议先不做；要做就是第 2 轮、本机存，和置顶、隐藏一起设计数据结构（`InstancePreferencesStore`）。
+
+### 4.8 应用与连接
+
+#### 4.8.1 连接目录（36、40–51）
+
+- **参考**：首页左下进“连接应用”：large sheet，左上 ×，标题“连接应用”，右上玻璃胶囊“已连接 N 个”；顶上一排横向滚动的
+  分类胶囊（全部、iPhone、密码管理器、效率、通信、设计、代码、数据、销售、营销、财务、研究、支持），选中的白底，滚到最左；
+  分组标题 `.title3.bold()`（“为你推荐 >”“精选插件 >”可以点开完整列表）；plain 列表行：40pt 圆角图标 + 标题 + 两行灰色说明 +
+  右边小胶囊按钮（连接 `.bordered`、授权 `.borderedProminent`、已连接 `.bordered` + `.disabled`）；底部浮动搜索“搜索应用和技能”。
+  “iPhone”分类能把日历、提醒、通讯录、位置、家庭、闹钟开放给 Bot；“密码管理器”接第三方密码管理器。
+- **原生**：`.sheet` + `NavigationStack`；`Button(role: .close)`；`ToolbarItem(placement: .primaryAction) { NavigationLink("已连接 \(n) 个") }`；
+  分类 `FilterChipBar`（分类多，不用 `Picker(.segmented)` 或 `.searchScopes`）；`List(.plain)` + `.listRowSeparator(.hidden)`；
+  `.searchable`；OAuth 用 `@Environment(\.webAuthenticationSession)`；图标 `AsyncImage`，没有时拼图 SF Symbol 占位。
+- **ThinkTin 现在**：没有第三方连接器、插件、技能；架构上 shim 只注入平台工具和电脑工具，在线技能市场关闭、技能走白名单（15.3）。
+  已有的“接入”分散在设置里：模型 key（`Screens/Models/CredentialsScreen.swift`、`AddCredentialSheet.swift`）、IM 渠道
+  （`Screens/ImChannels/ImChannelScreens.swift`）、保险箱（`Screens/Vault/VaultScreens.swift`）、电脑配对
+  （`Screens/Computer/ComputerLinkViews.swift` 的 `ComputerLinkSection`、`PairComputerSheet`）。
+- **要改**：按 6.12 的方案 A，第 2 轮做一个“连接”汇总页：分类是 全部 / 电脑 / IM 渠道 / 模型 key / 保险箱，每类一行或几行
+  （已配对的电脑、已绑的群、已加的 key、保险箱条目数），行上的按钮直接打开现有的 `PairComputerSheet`、`ImChannelEditorView`、
+  `AddCredentialSheet`、`.vault`。新功能目录 `Screens/Connections/` + `ViewModels/Connections/`（只用现有的 `devices()`、
+  `imChannels()`、`credentials()`、`vaultItems()`），新路由 `.connections`，入口是设置里的“连接”行（参考设置里也有“连接应用”一行，
+  53）。第三方应用、“此 iPhone”、第三方密码管理器要后端和产品决定，第 3 轮或不做。
+
+#### 4.8.2 已连接列表（37）
+
+- **参考**：目录右上“已连接 N 个”压栈到“你的插件”：分组“已安装”，行同目录，尾部按钮三种（授权、浏览插件、已连接），底部搜索。
+- **要改**：第 2 轮的汇总页里，“已连接 N 个”压栈列出全部已有的接入（电脑、群、key、保险箱条目数），点进各自的管理页。
+  第三方插件版本第 3 轮。
+
+#### 4.8.3 插件详情 sheet（38、39、52、105、106、107）
+
+- **参考**：在目录 sheet 上再弹 medium / large 两档的 sheet；左上 ×，已连接时右上“…”（菜单里只有红色“断开连接”）；居中 56pt 图标 +
+  名称（`.title2.bold()`）+ 说明；“账户”分组（账户名 + 蓝色“添加账户”）；底部居中的胶囊（没连接时蓝色“连接”，连上了变成灰色
+  不可点的“已连接”）。
+- **原生**：`.sheet(item:)` + `.presentationDetents([.medium, .large])`；`Button(role: .close)`；`Menu { Button("断开连接", systemImage: "trash", role: .destructive) }`
+  + `.confirmationDialog`；`Section("账户") { … Button("添加账户") }`；底部 `.safeAreaBar`。
+- **要改**：插件本身第 3 轮。这个版式第 2 轮可以借给 agent 详情（`.agent(id)`：图标、名字、介绍、上游、许可，底部“领养”），
+  要不要把 agent 详情从压栈改成 sheet 一起定。注意：说明很长时 medium 档放不下关键信息（106），状态和主按钮要放在说明前面，
+  或者说明限制行数加“展开”。
+
+#### 4.8.4 推荐 / 精选完整列表（101、102、103、104）
+
+- **参考**：点“为你推荐 >”“精选插件 >”压栈到完整列表：plain 列表，行同目录，一次加载完，没有分页。
+- **要改**：第三方目录第 3 轮。行版式第 1 轮借给 agent 目录（4.7.1）：“领养 / 已领养”对应“连接 / 已连接”。
+
+### 4.9 设置
+
+#### 4.9.1 设置根页（53、70、75）
+
+- **布局**：sheet，左上玻璃 ×，没有标题。insetGrouped 分组（ThinkTin 的版本）：
+  1. 账号行（44pt 首字头像 + 昵称 + 打码手机号 + chevron）、模型 key、用量（值：今天用了多少 token）、保险箱（副标题“实例能用的账号密码”）。
+  2. 连接（副标题“电脑、IM 渠道、模型 key”，第 2 轮）。
+  3. “实例”组：审批（进审批中心；自然语言规则见 6.15）、登录设备、IM 渠道（第 2 轮挪进连接）、实时活动（现有的那一组）。
+  4. 通知（开关）、外观（值）、语言（值）、触感反馈（开关，第 2 轮）。
+  5. 安全：全部停止（destructive + 确认）、下线其他设备。
+  6. 外部链接（右边 `arrow.up.right`）：帮助中心（等网址）、用户协议、隐私政策；关于 ThinkTin、开源许可、上手引导。
+  7. 发送反馈（第 3 轮）。
+  8. 退出登录（红字，单独一组，确认）。
+  9. 版本区：`BrandLogo` 高 40 + “ThinkTin” + 版本（构建号）。
+- **原生**：`List(.insetGrouped)`；`NavigationLink(value: AppRoute.x)`（sheet 里的导航栈用 `.appRouteDestinations()` 接住）；
+  `LabeledContent`；`Toggle { Text(标题); Text(说明) }`；`Link(destination:)` + `Image(systemName: "arrow.up.right")`；
+  `Button(role: .destructive)` + `.confirmationDialog`；版本区放最后一个 Section 的 footer。
+- **交互**：点各行压栈；× 或下滑关闭。通知开关反映的是系统权限：没问过时拨开就请求权限，拒绝过的跳系统设置；App 自己关不掉
+  系统通知，`ClientProtocol` 也没有“停止给这台设备推送”的接口，所以拨到关也是跳系统设置（真要 App 内关推送，要后端加开关，
+  和 6.14 一起做）。拿不准就保持现在的做法：一行带状态值、点了跳系统设置，不做成开关。
+- **注意**：设置变成 sheet 以后，里面各子页现有的 `router.open(...)`（保险箱条目、模型 key 的“添加”、用量跳 key、上手引导）会把设置关掉，
+  第 0 轮要先改 `Router`（3.3 “sheet 里的跳转”一行）。
+- **状态**：不用联网（`local`），离线时各子页自己显示离线状态。
+- **ThinkTin 现在**：`.settings` → `Screens/Settings/SettingsScreen.swift`（`SettingsContent`，`AccountScrollPage` / `AccountSection` /
+  `AccountRow`，每行带图标）+ `ViewModels/Settings/SettingsModel.swift` 的 `sections(_:)`（账号、模型 key 与用量、保险箱、通知、
+  外观与语言、安全、关于）+ `LiveActivitySettingsSection.swift`；底部 `SettingsFootnote` 只有一行字；入口是抽屉底部头像。
+  通知现在是跳系统设置的一行。
+- **要改**：`.settings` 改 sheet（第 0 轮）；`SettingsModel` 按上面重排（纯 Swift，Linux 上测）；整页换 `List`；用户协议、隐私政策从
+  关于页挪一份到根页（关于页保留，备案号和 AI 说明是合规要求）；注销账号挪进账号页。参考的订阅、权限规则、时区、Bot 电脑、
+  导入记忆、连接应用见第 6 节。第 1 轮。
+
+#### 4.9.2 账号（54）
+
+- **布局**：压栈页“账号”；第一组：头像 + 昵称 + 打码手机号（ThinkTin 用手机号登录，没有邮箱）；第二组：昵称（点了 alert 改）、
+  手机号；最后单独一组：红色垃圾桶“注销账号”，footer 写“永久删除，不能恢复”。参考的“切换账户 / 添加账户”不做（6.20）。
+- **原生**：`List(.insetGrouped)`；改昵称 `.alert` + `TextField`；注销 `NavigationLink` 进现有的注销页。
+- **ThinkTin 现在**：`.account` → `Screens/Account/AccountView.swift`（`AccountScreen`）、`DeleteAccountView.swift`（短信验证码注销）、
+  `ViewModels/Account/AccountModel.swift`；组件是 `AccountSection` / `AccountRow`。
+- **要改**：换 `List`；退出登录挪到设置根页。第 1 轮。
+
+#### 4.9.3 用量（55）
+
+- **参考**：一张卡：“试用用量”+“N 天后结束”+ 细进度条 + 百分比。
+- **ThinkTin 现在**：`.usage` → `Screens/Models/UsageScreen.swift`（7 / 30 / 90 天分段、总计、`UsageChart` 按天柱状图、按天 / 实例 /
+  模型 / key 分组）+ `ViewModels/Models/UsageModel.swift`。ThinkTin 用用户自己的 key，没有平台额度和试用期。
+- **要改**：换 insetGrouped；顶上加一组“今天”：每把设了每日上限的 key 一行 `Gauge(value:).gaugeStyle(.linearCapacity)`
+  （已用 / `Credential.dailyTokenLimit`，已用量取 `usage(group: .credential, from: 东八区今天零点, timeZone: Asia/Shanghai)`——模型网关的每日上限按东八区切天
+  （docs/llm-gateway.md），不能用手机本地的零点），没有上限的 key 不显示；其余保留。第 1 轮。
+
+#### 4.9.4 订阅（56）
+
+参考是一个网页容器（截图停在转圈）。ThinkTin 的 12.23 App 内购买等 1.1 拍板；做的话用 StoreKit 的 `SubscriptionStoreView` +
+`.manageSubscriptionsSheet`，不用网页、不放站外购买引导（6.20）。
+
+#### 4.9.5 保险箱（57、58）
+
+- **布局**：压栈页“保险箱”，右上玻璃“+”；标题下一排筛选胶囊带计数；没有条目时一行卡片“还没有保存任何内容。”+ 脚注
+  （实例能看到什么、看不到什么）；有条目时 insetGrouped 行（名字、用途）。
+- **原生**：`List(.insetGrouped)`；`FilterChipBar`；行 `NavigationLink(value: AppRoute.vaultItem(id))` + `.swipeActions` 删除；
+  空状态就是一行 `Text(...).foregroundStyle(.secondary)` + Section footer（参考不用大插画）；“+”只有一种类型时直接 `Button`，
+  有多种类型时 `Menu`（58：登录信息、卡、联系信息）。
+- **ThinkTin 现在**：`.vault` → `Screens/Vault/VaultScreens.swift`（`VaultScreen`：说明、“等你填写”的请求、条目、处理过的请求；
+  “+”直接弹 `VaultItemEditorView`）+ `ViewModels/Vault/`。
+- **要改**：换 `List`；筛选胶囊改成 ThinkTin 自己的：条目 / 等你填写 / 处理过的（只有一种条目类型，6.16）；脚注沿用
+  “密码不会发给模型”。第 1 轮。
+
+#### 4.9.6 登录信息表单（59、99）
+
+- **布局**：标题“新登录信息”，右上“保存”（没填好时灰）。几张卡：名称；网站（可以多个，“添加网站”，追加的行带“移除”）；
+  账号 + 密码（密码行尾一个眼睛按钮）；提示（多行，脚注“告诉实例什么时候用这一条”）。字段是“标签在上、输入在下”。
+- **原生**：`Form`；每行 `VStack(alignment: .leading) { Text(标签).font(.footnote).foregroundStyle(.secondary); TextField(…) }`；
+  账号 `.textContentType(.username)`；密码在 `SecureField` 和 `TextField` 之间切换，眼睛是 `Button(.borderless)`，
+  `.textContentType(.newPassword)`；提示 `TextField(axis: .vertical).lineLimit(4...8)`；保存 `.confirmationAction`。
+- **ThinkTin 现在**：`VaultItemEditorView`（sheet，取消 / 保存；名字 = 引用名 `[vault:名字]`、用途、账号、密码、能用的实例；
+  输入框是 `PlansTextField`）+ `VaultItemEditorModel`、`VaultRules`。
+- **要改**：参考是在保险箱的导航栈里压栈（左上返回、右上“保存”），不是 sheet。改版后保险箱本身就在设置 sheet 里，建议照参考改成压栈
+  （Vault 目录本地的 `.navigationDestination(isPresented:)`，不加路由），不再 sheet 叠 sheet；保存成功后返回上一页。字段对应：参考的“名称”= 引用名（规则提示保留，建好不能改）、
+  “提示”= 用途、账号、密码（加眼睛，只显示正在输入的，存进去以后照样谁都看不到）；ThinkTin 的“能用的实例”放最后一组
+  （`Toggle("所有实例")`，关掉后勾选列表）。网站字段要后端（6.16）。第 1 轮。
+
+#### 4.9.7 卡片和联系信息表单（60、94、95、96；61、97、98）
+
+要后端，而且卡片牵涉代付和 PCI 合规（6.16），先不做。版式记下来备用：`Form` 左标签右输入（`LabeledContent`）；系统自动填充
+（`.textContentType(.creditCardNumber / .creditCardExpiration / .creditCardSecurityCode / .telephoneNumber / .emailAddress / .fullStreetAddress / .postalCode …)`）；
+可以重复的字段（电话、邮箱）是“字段行 + 行内移除 + 末尾‘添加’”；账单地址是 `Picker(.menu)`（已存的地址 / 新地址）；
+底部全宽保存按钮。
+
+#### 4.9.8 权限与规则（62、63、64、100）
+
+- **参考**：自动审查总开关（带说明）；“始终询问”“无需询问即允许”两组，每组标题右边小玻璃胶囊“添加规则”；规则是一段自然语言；
+  新建 / 编辑规则页：“适用于”多行输入（示例当占位）+ 脚注 + 底部“添加规则 / 保存规则”和文字“取消”，编辑页多一行红色“删除规则”。
+- **原生**：`Form`；`Toggle { Text; Text(说明) }`；Section header 里 `HStack { VStack { 标题; 说明 }; Button("添加规则").buttonStyle(.glass).controlSize(.small) }`；
+  规则行 `NavigationLink` + `.swipeActions` 删除；删除 `Button(role: .destructive)` + `.confirmationDialog`。
+- **ThinkTin 现在**：没有。相关的有审批中心（`Screens/Approvals/ApprovalScreens.swift`，逐条批准）、计划的预授权工具
+  （`PlanPolicy.preauthorizedTools`，按计划、按工具种类）、电脑的能力令牌。
+- **要改**：第 3 轮或不做（6.15）。第 1 轮设置里这一行叫“审批”，进审批中心。
+
+#### 4.9.9 登录设备和设备详情（66、67、68、69）
+
+- **布局**：列表 insetGrouped 一组：状态点 + 设备图标 + 名字 + 副标题（“iOS · 这台设备”/“电脑 · 上次打开于 …”）+ chevron；
+  点进详情：名称行（点了 alert 改名）、状态行；电脑的详情多一组配对和授权、单独一组红字“移除电脑”。参考电脑详情里还有
+  “在此设备上执行：始终允许 / 每次询问 / 从不允许”（6.20）。
+- **原生**：`List(.insetGrouped)`；`NavigationLink`；`.refreshable`；`.swipeActions` 下线；改名 `.alert` + `TextField`；
+  `Picker(.inline)`；移除 `Button(role: .destructive)` + `.confirmationDialog`。
+- **ThinkTin 现在**：`.devices` → `Screens/Account/DevicesView.swift`（`DevicesScreen`：本机、其他设备两组，行内“下线”，底部
+  `PillButton`“下线其他设备”，再下面嵌着 `ComputerLinkSection`）+ `DevicesModel`、`ComputerLinkModel`；`DeviceInfo` 有
+  `platform`、`name`、`isCurrent`、`isOnline`、`lastSeenAt`。
+- **要改**：拆成列表 + 详情（Account 目录本地 `NavigationLink`，不加路由）；行内“下线”挪进详情和左滑；配对、授权、解除配对挪进
+  电脑详情；“下线其他设备”放列表底部单独一组。改名要后端（6.20）。第 1 轮。
+
+#### 4.9.10 导入记忆（71）
+
+参考：第 1 步复制一段导出提示词去别的 AI 助手里跑，第 2 步把结果粘贴回来，“添加到记忆”。ThinkTin 没有写入实例记忆的接口，
+各 agent 的记忆机制也不一样（6.20），先不做。版式备用：`Form` 两个 Section（header 写步骤）、`Text(...).textSelection(.enabled)`、
+`Button("复制提示词")`、`PasteButton`、多行 `TextField`、底部全宽按钮。
+
+#### 4.9.11 外观（72）
+
+- **参考**：两排大方块：跟随系统 / 浅色 / 深色；深色底色：黑色 / 跟随 Bot 颜色。选中的实心底、标签加粗。
+- **原生**：`LazyVGrid` 里 `Button`，选中 `.buttonStyle(.glassProminent)`、没选中 `.glass`，`.buttonBorderShape(.roundedRectangle(radius: 16))`，
+  `.accessibilityAddTraits(.isSelected)`，`.sensoryFeedback(.selection, trigger:)`；更省事的是 `Picker(.inline)`。
+- **ThinkTin 现在**：`Screens/Settings/DisplaySettingsViews.swift` 的 `AppearanceSettingsView`（`SettingsOptionRow` 打勾单选，
+  “只改这台设备”脚注）+ `SettingsPreferences.AppearancePreference`。
+- **要改**：第 1 轮换方块（第一排）；第二排的“纯黑”第 2 轮（`SettingsPreferences` 加深色底色、Theme 加纯黑这套值），
+  “跟随实例颜色”跟着头像走（6.9、6.22）。
+
+#### 4.9.12 语言（73）
+
+- **参考**：insetGrouped 一组纯文字行（各语言用自己的文字写），选中行右边打勾，选了立即生效。
+- **原生**：`Picker(selection:) { … } label: { EmptyView() }.pickerStyle(.inline)`；同步中、失败的状态放 Section footer。
+- **ThinkTin 现在**：`LanguageSettingsView` + `LanguageSettingsModel`（跟随系统 / 中文 / English，并同步服务端的 locale）。
+- **要改**：换 inline `Picker`，去掉行图标，保留“正在同步”“同步失败可重试”。加不加别的语言不在这次范围。第 1 轮。
+
+#### 4.9.13 触感反馈（74）
+
+参考是一个子页里一个开关加脚注。建议不单开页面，设置根页直接一行 `Toggle`。`SettingsPreferences` 加 `hapticsEnabled`（默认开），
+各处 `.sensoryFeedback(trigger:) { _, _ in enabled ? .selection : nil }`。先定哪些操作带触感：发送、批准 / 拒绝审批、复制、
+左滑、长按（6.22）。代码里现在没有任何触感。第 2 轮。
+
+#### 4.9.14 发送反馈（76、77）
+
+- **参考**：压栈页“发送反馈”：多行输入卡片 + 脚注；“和哪个 Bot 有关”一行 `Picker(.menu)`（无 / 各 Bot）；底部全宽“发送反馈”，空时禁用。
+- **ThinkTin 现在**：没有通用反馈接口，只有针对某次运行或产出物的举报（`reportContent`）。
+- **要改**：第 3 轮（6.20）；接口有了以后照上面的版式做，“和哪个实例有关”的选项来自 `AppModel.instances`。过渡可以先放一个
+  `mailto:` 链接。
+
+## 5. 对照表
+
+状态的意思：**只改界面**＝功能和数据都有，只换版式和控件；**部分有**＝主体有，缺的部分要么纯客户端补、要么等后端；
+**纯客户端能做**＝ThinkTin 没有，但不用后端就能做（多数是存在本机）；**要后端**＝要服务端和 client-core 新接口；
+**不适用**＝ThinkTin 不做。轮次见第 7 节（0 底座、1 一一对应、2 纯客户端新功能、3 要后端）。
+
+| 状态 | 张数 |
+|---|---|
+| 只改界面 | 6 |
+| 部分有 | 35 |
+| 纯客户端能做 | 18 |
+| 要后端 | 50 |
+| 不适用 | 11 |
+| 合计 | 120 |
+
+| 编号 | 参考页面 | ThinkTin 功能 | 现有代码 | 状态 | 轮次 | 规范 |
+|---|---|---|---|---|---|---|
+| 1 | 首页 Bot 列表 | 首页实例列表 | `Shell/ShellDrawer.swift`（抽屉里的列表）、`Shell/AppShell.swift`、`ConversationHomeScreen` | 部分有 | 0–1 | 4.2.1 |
+| 2 | 对话主页面 | 对话 | `Conversation/ConversationScreen.swift`、`MessageViews.swift`、`Components/ComposerBar.swift` | 只改界面 | 1 | 4.3.1 |
+| 3 | 对话更多菜单 | 对话“…”菜单 | `ConversationScreen.swift` 的 `Menu` | 部分有 | 1 | 4.3.2 |
+| 4 | 聊天内查找 | 对话内查找 | 无 | 纯客户端能做 | 2 | 4.3.3 |
+| 5 | 查找无匹配 | 对话内查找 | 无 | 纯客户端能做 | 2 | 4.3.3 |
+| 6 | 消息长按菜单 | 消息长按菜单 | `MessageViews.swift`（`MessageMenu`）、`ContentReportSheet.swift` | 部分有 | 1；表情、未读 3 | 4.3.4 |
+| 7 | 引用回复输入框 | 引用回复 | 无 | 纯客户端能做 | 2 | 4.3.5 |
+| 8 | 附件菜单 | 运行附件（12.22） | 无（没有上传接口） | 要后端 | 3 | 4.3.6 |
+| 9 | Bot 资料 | 实例资料 | `Agents/InstanceDetailScreen.swift`、`InstanceDetailModel` | 部分有 | 1；通知 3 | 4.4.1 |
+| 10 | 资料更多菜单 | 资料页“…”菜单 | `InstanceDetailScreen.swift` 的 `Menu` | 部分有 | 1 | 4.4.2 |
+| 11 | 选择主 Bot 空状态 | 主实例（无） | 无（版式借给 `NewTaskSheet`） | 不适用 | 不做 | 4.4.5 |
+| 12 | 编辑 Bot | 编辑实例 | `InstanceRenameSheet`、`renameInstance` | 部分有 | 1 | 4.4.3 |
+| 13 | 语音选择（上） | 语音通话（无） | 无 | 不适用 | 不做 | 4.4.3 |
+| 14 | 语音选择（中） | 语音通话（无） | 无 | 不适用 | 不做 | 4.4.3 |
+| 15 | 语音选择（下） | 语音通话（无） | 无 | 不适用 | 不做 | 4.4.3 |
+| 16 | 语速选择 | 语音通话（无） | 无 | 不适用 | 不做 | 4.4.3 |
+| 17 | 语言选择 | 语音通话（无） | 无 | 不适用 | 不做 | 4.4.3 |
+| 18 | 头像形状与颜色 | 实例头像 | `Agents/AgentMonogram.swift` | 纯客户端能做 | 2（本机）/ 3（同步） | 4.4.4 |
+| 19 | 生成头像 | 实例头像（AI 生成） | 无 | 要后端 | 不做 | 4.4.4 |
+| 20 | 上传头像入口 | 实例头像（上传） | 无 | 要后端 | 不做 | 4.4.4 |
+| 21 | 定时任务空状态 | 实例的计划 | `Plans/PlanListScreen.swift`、`PlanListModel` | 只改界面 | 1 | 4.5.1 |
+| 22 | 资料库全部 | 产出物 | `Artifacts/ArtifactScreens.swift`、`ArtifactLibraryModel` | 部分有 | 1；链接不做 | 4.5.2 |
+| 23 | 资料库媒体 | 产出物按类型筛选 | `ArtifactScreens.swift`、`ArtifactFiles.isImage` | 部分有 | 2 | 4.5.2 |
+| 24 | 图片预览 | 图片全屏查看 | `ArtifactDetailScreen`（QuickLook） | 部分有 | 2 | 4.5.3 |
+| 25 | 图片操作菜单 | 分享、存相册（转发） | `ArtifactDetailScreen`（`ShareLink`） | 部分有 | 2；转发不做 | 4.5.3 |
+| 26 | 资料库链接 | 链接分类 | 无数据来源 | 要后端 | 不做（6.19） | 4.5.2 |
+| 27 | 电脑启动页面 | 观看与接管 | 无（docs/browser.md 只有设计） | 要后端 | 3 | 4.6.2 |
+| 28 | 电脑操作说明 | 使用说明 | 无 | 纯客户端能做 | 3（跟 27） | 4.6.3 |
+| 29 | 电脑查看模式 | 观看 | 无 | 要后端 | 3 | 4.6.2 |
+| 30 | 电脑控制模式 | 接管 | 无 | 要后端 | 3 | 4.6.2 |
+| 31 | 电脑控制更多菜单 | 触控板模式 | 无 | 要后端 | 3 | 4.6.2 |
+| 32 | 首页 Bot 长按菜单 | 实例长按菜单 | 无（改名、删除 sheet 在 `Screens/Agents/`） | 部分有 | 1；置顶隐藏 2 | 4.2.2 |
+| 33 | 长按更多子菜单 | 复制实例 ID | `Support/Pasteboard.swift` | 纯客户端能做 | 1 | 4.2.2 |
+| 34 | 创建新 Bot 空表单 | 领养新实例 | `Agents/AdoptAgentSheet.swift`、`AdoptionModel` | 部分有 | 1；头像 2 | 4.7.1 |
+| 35 | 创建表单输入焦点 | 领养新实例 | `AdoptAgentSheet.swift` | 部分有 | 1 | 4.7.1 |
+| 36 | 连接应用目录 | 连接汇总页 / 第三方连接器 | 分散：`ImChannelScreens`、`CredentialsScreen`、`ComputerLinkViews`、`VaultScreens` | 要后端 | 2（汇总）/ 3 | 4.8.1 |
+| 37 | 已安装插件列表 | 已连接列表 | 无 | 要后端 | 2（汇总）/ 3 | 4.8.2 |
+| 38 | 已连接插件详情 | 连接器详情 | 无（版式可借给 key、IM 详情） | 要后端 | 3 | 4.8.3 |
+| 39 | 插件管理菜单 | 断开连接器 | 无 | 要后端 | 3 | 4.8.3 |
+| 40 | iPhone 连接能力 | 手机当工具宿主 | 无 | 要后端 | 待定（6.12） | 4.8.1 |
+| 41 | 密码管理器分类 | 保险箱入口 | `Vault/VaultScreens.swift` | 部分有 | 2 | 4.8.1 |
+| 42 | 效率应用分类 | 第三方连接器 | 无 | 要后端 | 3 / 待定 | 4.8.1 |
+| 43 | 通信应用分类 | IM 渠道 | `ImChannels/ImChannelScreens.swift` | 部分有 | 2 | 4.8.1 |
+| 44 | 设计应用分类 | 第三方连接器 | 无 | 要后端 | 3 / 待定 | 4.8.1 |
+| 45 | 代码应用分类 | 第三方连接器 | 无 | 要后端 | 3 / 待定 | 4.8.1 |
+| 46 | 数据应用分类 | 第三方连接器 | 无 | 要后端 | 3 / 待定 | 4.8.1 |
+| 47 | 销售应用分类 | 第三方连接器 | 无 | 要后端 | 3 / 待定 | 4.8.1 |
+| 48 | 营销应用分类 | 第三方连接器 | 无 | 要后端 | 3 / 待定 | 4.8.1 |
+| 49 | 财务应用分类 | 第三方连接器 | 无 | 要后端 | 3 / 待定 | 4.8.1 |
+| 50 | 研究应用分类 | 第三方连接器 | 无 | 要后端 | 3 / 待定 | 4.8.1 |
+| 51 | 支持应用分类 | 第三方连接器 | 无 | 要后端 | 3 / 待定 | 4.8.1 |
+| 52 | 未连接插件详情 | 连接器详情（版式借给 agent 详情） | `Agents/AgentDetailScreen.swift`（借版式） | 要后端 | 3；版式 2 | 4.8.3 |
+| 53 | 全局设置上半 | 设置根页 | `Settings/SettingsScreen.swift`、`SettingsModel` | 部分有 | 1 | 4.9.1 |
+| 54 | 账户管理 | 账号 | `Account/AccountView.swift`、`DeleteAccountView.swift` | 部分有 | 1；多账户不做 | 4.9.2 |
+| 55 | 用量 | 用量 | `Models/UsageScreen.swift`、`UsageModel` | 只改界面 | 1 | 4.9.3 |
+| 56 | 订阅加载状态 | App 内购买（12.23） | 无 | 要后端 | 待定 | 4.9.4 |
+| 57 | 保管库空状态 | 保险箱 | `Vault/VaultScreens.swift`（`VaultScreen`） | 只改界面 | 1 | 4.9.5 |
+| 58 | 保管库新增菜单 | 新建保险箱条目 | `VaultScreen` 的“+” | 部分有 | 1；多类型 3 | 4.9.5 |
+| 59 | 新增登录信息 | 登录信息表单 | `VaultItemEditorView`、`VaultItemEditorModel` | 部分有 | 1；网站 3 | 4.9.6 |
+| 60 | 新增卡片 | 卡片条目 | 无 | 要后端 | 不做（6.16） | 4.9.7 |
+| 61 | 新增联系信息 | 联系信息条目 | 无 | 要后端 | 待定（6.16） | 4.9.7 |
+| 62 | 权限与规则列表 | 自然语言权限规则 | 无（审批中心 `Approvals/ApprovalScreens.swift`） | 要后端 | 待定（6.15） | 4.9.8 |
+| 63 | 新增规则 | 自然语言权限规则 | 无 | 要后端 | 待定 | 4.9.8 |
+| 64 | 编辑规则 | 自然语言权限规则 | 无 | 要后端 | 待定 | 4.9.8 |
+| 65 | Bot 电脑设置 | 工作区（重置、磁盘） | `InstanceDetailScreen`（状态说明、版本） | 要后端 | 1（工作区页）/ 3 | 4.6.1 |
+| 66 | 设备列表 | 登录设备 | `Account/DevicesView.swift`、`DevicesModel` | 只改界面 | 1 | 4.9.9 |
+| 67 | 手机设备详情 | 设备详情 | `DevicesView` 的 `DeviceRow` | 部分有 | 1；改名 3 | 4.9.9 |
+| 68 | 设备重命名弹窗 | 设备改名 | 无（没有改名接口） | 要后端 | 3 | 4.9.9 |
+| 69 | 电脑详情与执行权限 | 电脑详情、配对、授权 | `Computer/ComputerLinkViews.swift`、`ComputerLinkModel` | 部分有 | 1；三档策略不做 | 4.9.9 |
+| 70 | 全局设置中下 | 设置根页 | `SettingsScreen`、`DisplaySettingsViews.swift` | 部分有 | 1；触感 2 | 4.9.1 |
+| 71 | 导入记忆 | 记忆导入 | 无 | 要后端 | 不做（6.20） | 4.9.10 |
+| 72 | 外观设置 | 外观 | `DisplaySettingsViews.swift`（`AppearanceSettingsView`） | 部分有 | 1；纯黑 2 | 4.9.11 |
+| 73 | 应用语言设置 | 界面语言 | `DisplaySettingsViews.swift`（`LanguageSettingsView`） | 只改界面 | 1 | 4.9.12 |
+| 74 | 触感反馈设置 | 触感开关 | 无 | 纯客户端能做 | 2 | 4.9.13 |
+| 75 | 全局设置底部与版本 | 设置根页底部、关于 | `SettingsScreen`、`AboutScreen.swift` | 部分有 | 1；反馈 3 | 4.9.1 |
+| 76 | 反馈空表单 | 发送反馈 | 无（只有举报） | 要后端 | 3 | 4.9.14 |
+| 77 | 反馈关联 Bot 菜单 | 发送反馈 | 无 | 要后端 | 3 | 4.9.14 |
+| 78 | 全局搜索 | 首页搜索 | `Search/SearchScreen.swift`、`SearchModel` | 部分有 | 1；筛选 2 | 4.2.4 |
+| 79 | 搜索消息筛选空状态 | 搜索筛选 | `SearchScreen` | 纯客户端能做 | 2 | 4.2.4 |
+| 80 | 搜索消息结果 | 搜运行（谁发给谁） | `SearchModel`（任务、摘要） | 部分有 | 2（含本机缓存的回复正文）；缓存外全文 3 | 4.2.4 |
+| 81 | 资料库底部展开入口 | 产出物分页 | `ArtifactLibraryModel`（只有 `limit`） | 部分有 | 1（本地折叠）/ 3 | 4.5.2 |
+| 82 | 资料库展开后 | 产出物分页 | 同上 | 部分有 | 3 | 4.5.2 |
+| 83 | 资料库媒体完整 | 产出物类型筛选 | `ArtifactScreens.swift`、`ArtifactFiles.isImage` | 部分有 | 2 | 4.5.2 |
+| 84 | 资料库链接完整 | 链接分类 | 无 | 要后端 | 不做（6.19） | 4.5.2 |
+| 85 | 语音选择完整底部 | 语音通话（无） | 无 | 不适用 | 不做 | 4.4.3 |
+| 86 | 语言选择中段一 | 语音通话（无） | 无 | 不适用 | 不做 | 4.4.3 |
+| 87 | 语言选择中段二 | 语音通话（无） | 无 | 不适用 | 不做 | 4.4.3 |
+| 88 | 语言选择完整底部 | 语音通话（无） | 无 | 不适用 | 不做 | 4.4.3 |
+| 89 | 电脑剪贴板菜单 | 接管时的剪贴板 | 无 | 要后端 | 3 | 4.6.2 |
+| 90 | 更多表情选择器 | 消息表情回应 | 无 | 要后端 | 不做（6.11） | 4.3.4 |
+| 91 | 新建分组名称弹窗 | 首页分组 | 无 | 纯客户端能做 | 待定（6.10） | 4.7.2 |
+| 92 | 分组管理菜单 | 首页分组 | 无 | 纯客户端能做 | 待定 | 4.7.2 |
+| 93 | 分组删除确认 | 首页分组 | 无 | 纯客户端能做 | 待定 | 4.7.2 |
+| 94 | 卡片账单地址菜单 | 卡片条目 | 无 | 要后端 | 不做 | 4.9.7 |
+| 95 | 卡片新地址 | 卡片条目 | 无 | 要后端 | 不做 | 4.9.7 |
+| 96 | 卡片完整字段 | 卡片条目 | 无 | 要后端 | 不做 | 4.9.7 |
+| 97 | 联系信息追加电话邮箱 | 联系信息条目 | 无 | 要后端 | 待定 | 4.9.7 |
+| 98 | 联系信息地址与底部 | 联系信息条目 | 无 | 要后端 | 待定 | 4.9.7 |
+| 99 | 登录信息追加网站 | 登录信息表单 | `VaultItemEditorView` | 部分有 | 1；网站 3 | 4.9.6 |
+| 100 | 新增自动允许规则 | 自然语言权限规则 | 无 | 要后端 | 待定 | 4.9.8 |
+| 101 | 推荐插件目录入口 | 第三方目录（行版式借给 agent 目录） | `Agents/AgentCatalogScreen.swift`（借版式） | 要后端 | 3；版式 1 | 4.8.4 |
+| 102 | 推荐目录中段 | 第三方目录 | 无 | 要后端 | 3 | 4.8.4 |
+| 103 | 推荐目录底部 | 第三方目录 | 无 | 要后端 | 3 | 4.8.4 |
+| 104 | 精选插件完整目录 | 第三方目录 | 无 | 要后端 | 3 | 4.8.4 |
+| 105 | 含技能插件详情 | 连接器详情 | 无 | 要后端 | 3 | 4.8.3 |
+| 106 | 插件详情中等高度 | 连接器详情 | 无 | 要后端 | 3 | 4.8.3 |
+| 107 | 多连接器插件详情 | 连接器详情 | 无 | 要后端 | 3 | 4.8.3 |
+| 108 | 登录方式选择 | 登录（用户自己设计） | `Account/SignInFlow.swift` | 不适用 | 不做 | 4.1.2 |
+| 109 | 开机启动页 | 启动屏 | `project.yml` 的 `UILaunchScreen: {}` | 纯客户端能做 | 0 | 4.1.1 |
+| 110 | 列表左滑快捷操作 | 置顶、隐藏 | 无 | 纯客户端能做 | 2 | 4.2.1 |
+| 111 | 置顶后的首页 | 置顶区 | 无 | 纯客户端能做 | 2 | 4.2.1 |
+| 112 | 置顶项的管理菜单 | 实例长按菜单 | 无 | 部分有 | 1；置顶隐藏 2 | 4.2.2 |
+| 113 | 全部隐藏后的空状态 | 首页空状态 | `Components/EmptyStateView.swift` | 纯客户端能做 | 2 | 4.2.1 |
+| 114 | 已隐藏对话管理页 | 已隐藏的实例 | 无 | 纯客户端能做 | 2 | 4.2.3 |
+| 115 | 隐藏对话说明 | 隐藏说明 | 无 | 纯客户端能做 | 2 | 4.2.3 |
+| 116 | 取消隐藏后的空状态 | 已隐藏的实例（空） | 无 | 纯客户端能做 | 2 | 4.2.3 |
+| 117 | 创建表单（填好） | 领养新实例 | `AdoptAgentSheet.swift` | 部分有 | 1；头像 2 | 4.7.1 |
+| 118 | 新 Bot 欢迎与引导卡 | 对话首次状态 | `ConversationScreen`（空状态）、`Onboarding/` | 部分有 | 2 | 4.3.1 |
+| 119 | 两个都没置顶的列表 | 首页列表 | `ShellDrawer.swift` 的 `DrawerInstanceRow` | 部分有 | 1 | 4.2.1 |
+| 120 | 置顶和普通同屏 | 首页置顶 + 列表 | 无 | 部分有 | 2 | 4.2.1 |
+
+## 6. 要用户拍板的事
+
+按重要程度排。**6.1–6.6 是第 1 轮开工前必须定的**（牵涉导航和令牌，定了以后再改代价大）；其余可以边做边定，没定的先按“建议”做或先不做。
+
+| 编号 | 事项 | 建议（一句话） | 影响 |
+|---|---|---|---|
+| 6.1 | 首页和导航结构 | 照参考改成“实例列表为根 + 压栈”，去掉抽屉；抽屉的 6 个入口放首页左下“工作台”菜单 | 第 0、1 轮 |
+| 6.2 | 颜色、气泡、字体 | 底色和卡片改中性灰，强调色保留橙色，agent 回复加灰气泡，字体全用系统的 | 第 0 轮 |
+| 6.3 | 最低系统版本 | 保持 iOS 17，iOS 26 的新接口集中包一层回退 | 第 0 轮 |
+| 6.4 | “+”领养流程 | “+”直接弹领养表单，表单里一行选 agent，许可说明放脚注 | 第 1 轮 |
+| 6.5 | 设置用 sheet 还是压栈 | 照参考用 sheet | 第 0 轮 |
+| 6.6 | 叫 Bot 还是实例 | 沿用“实例”，本轮不改名 | 全部 |
+| 6.7 | 首页列表的预览 | 先显示状态，没有状态时显示最近一次运行的摘要或任务 | 第 1 轮 |
+| 6.8 | 资料页的“电脑”行、远程画面 | 改叫“工作区”，进实例沙箱页；观看接管等后端 | 第 1、3 轮 |
+| 6.9 | 头像和实例颜色 | 先做首字头像按名字取色；形状颜色等后端字段；生成、上传不做 | 第 1–3 轮 |
+| 6.10 | 置顶、隐藏、分组、未读、主实例 | 置顶、隐藏本机存，第 2 轮做；分组、未读、主实例先不做 | 第 2 轮 |
+| 6.11 | 表情回应、标为未读、引用回复 | 表情和未读不做；引用拼成 Markdown 引用块，纯客户端 | 第 2 轮 |
+| 6.12 | 连接应用 / 插件目录 | 先做“连接”汇总页（只放已有的接入）；第三方和“此 iPhone”单独立项 | 第 2 轮 |
+| 6.13 | 附件 | 等 12.22 后端，之前输入框不放“+” | 第 3 轮 |
+| 6.14 | 按实例的通知开关 | 等后端；之前资料页不放 | 第 3 轮 |
+| 6.15 | 自然语言权限规则 | 先不做，设置里这行进审批中心；要做先过安全评审 | 待定 |
+| 6.16 | 保险箱的卡片、联系信息、网站 | 网站字段做；卡片不做；联系信息先不做 | 第 3 轮 |
+| 6.17 | 工作区重置、磁盘、时区 | 重置和磁盘等后端；时区不做 | 第 3 轮 |
+| 6.18 | 新实例的欢迎卡 | 客户端画静态卡，先引导配模型，再给示例任务 | 第 2 轮 |
+| 6.19 | 产出物的链接、缩略图、分页 | 不做链接；缩略图客户端做；分页先本地折叠 | 第 2 轮 |
+| 6.20 | 订阅、导入记忆、反馈、设备改名、多账户 | 订阅等 1.1；导入记忆、多账户不做；反馈先用邮件；设备改名做 | 第 3 轮 |
+| 6.21 | 分享（实例、模板） | 不放分享 | — |
+| 6.22 | 纯黑外观、跟随实例颜色、触感 | 纯黑和触感做；跟随实例颜色不做 | 第 2 轮 |
+| 6.23 | 语音（通话、音色、语速、语言） | 不做，用键盘自带的听写 | — |
+| 6.24 | 搜索的筛选类型 | 全部 / 消息 / 实例 / 收件箱 / 计划 / 产出物，不要“群聊” | 第 2 轮 |
+
+### 6.1 首页和导航结构
+
+- **参考 App**：首页就是 Bot 列表；点一行压栈进对话；左上账号头像进设置，右上“+”新建，左下“连接应用”，底部搜索。
+- **ThinkTin 现在**：根是当前实例的对话；左侧抽屉放新任务、搜索、收件箱、审批、进行中、计划、团队、产出物（后 6 个带角标）、
+  实例列表、设置；标题上是实例切换菜单。
+- **可选**
+  - A：照参考改，实例列表为根，去掉抽屉和切换菜单。
+  - B：保留抽屉，只换控件样式（和参考的布局差得最多）。
+  - C：列表为根，同时保留抽屉（两套入口，乱）。
+- **抽屉的 6 个入口放哪（选 A 时）**
+  - A1：首页左下“工作台”菜单（总角标；菜单项带“3 条未读”这样的副标题），列表顶上在有待审批 / 未读时多一行提示。
+  - A2：底部标签栏（收件箱、首页、审批……），和参考差太多。
+  - A3：放进设置，常用的东西藏得太深。
+- **建议**：A + A1。改动集中在 `Navigation/` 和 `Shell/`（第 0、1 轮）。深链返回栈改成“首页 → 目标页”（3.4），
+  和安卓（现在是抽屉）会不一样，安卓跟不跟着改另议。
+
+### 6.2 颜色、气泡、字体
+
+- **参考 App**：中性深灰底、亮一档的卡片、系统蓝和白色的主按钮、agent 回复是左侧灰气泡、全用 SF 字体。
+- **ThinkTin 现在**（docs/ios.md 第 4 节）：暖色纸张底（深色 `#262624`）、橙色强调色、agent 回复不带气泡、标题衬线。
+- **可选**
+  - A：全照参考（中性灰 + 系统蓝 + 气泡 + SF）。
+  - B：保留现在的令牌，只换布局和控件。
+  - C：折中：底色、卡片、文字改中性（同参考），强调色保留 ThinkTin 的橙，agent 回复加气泡，字体全用 SF
+    （首页空状态的大标题可以留衬线；欢迎页属于登录，跟着用户的设计）。
+- **建议**：C（2.2 的表）。品牌靠 Logo 和橙色；玻璃材质放在中性底上最干净。定了以后 docs/ios.md 第 4 节一起改写；
+  交接里列的四处“和 Claude 的差别”（输入框两行卡片、回复正文衬线、新对话问候语、任务筛选标签）以本规范为准。
+
+### 6.3 最低系统版本
+
+- **参考 App**：iOS 26。
+- **ThinkTin 现在**：iOS 17（`project.yml`、`Package.swift`）。
+- **可选**
+  - A：保持 iOS 17，iOS 26 的接口集中在 `Design/Glass.swift` 里回退；外观以 iOS 26 为准，旧系统能用就行。
+  - B：提到 iOS 18（缩放转场之类能直接用，回退少一些）。
+  - C：提到 iOS 26（不用写回退，但没升级的手机装不了）。
+- **建议**：A。App 还没上架，上架前看一次用户机型分布再决定要不要提。
+
+### 6.4 “+”领养流程
+
+- **参考 App**：“+”直接弹新建表单（名字、形状、颜色），建好进对话，Bot 自动打招呼。
+- **ThinkTin 现在**：领养必须先选 agent（`adopt(agentID:name:harness:)`），要让用户看到许可说明；领养后还要配 main 路由和 key 才能跑。
+  现在的路径是 目录 → agent 详情 → 领养 sheet → “领养好了”页。
+- **可选**
+  - A：“+”弹领养表单，表单里一行选 agent（默认第一个或上次用的），许可说明放脚注。
+  - B：“+”先弹 agent 目录（sheet），选了再填名字。
+  - C：维持现状，“+”只是进目录。
+- **建议**：A。“配模型、加 key”的引导挪到新实例对话的首次卡片（6.18）。
+
+### 6.5 设置用 sheet 还是压栈
+
+- **参考 App**：首页左上头像弹 sheet，左上玻璃 × 关闭。
+- **ThinkTin 现在**：从抽屉压栈。
+- **可选**：A sheet；B 压栈。
+- **建议**：A。设置里的子页（保险箱、设备、key）从推送或深链打开时仍然走主导航栈（`Router.show` 先关 sheet），两边进的是同一个页面。
+  代价：现在的 `Router` 只有一层 sheet，`open` 会关掉 sheet，选 A 就要在第 0 轮给 sheet 加自己的导航栈和第二层 sheet（3.3），
+  不然设置里点保险箱条目、加 key 都会把设置关掉。
+
+### 6.6 叫 Bot 还是实例
+
+- **参考 App**：Bot。
+- **ThinkTin 现在**：界面、文档、安卓、推送文案都叫“实例”，领养的是 agent。
+- **可选**：A 沿用“实例”；B 改叫“Bot”；C 换个更口语的词（比如“助手”）。B、C 要中英文、安卓、推送、文档一起换。
+- **建议**：A，本轮不改。首页、对话、资料页上主要显示的是名字，“实例”两个字出现得不多；要改名就单独做一次全端文案替换。
+
+### 6.7 首页列表的预览
+
+- **参考 App**：每行显示最后一条消息的预览和时间。
+- **ThinkTin 现在**：`Instance` 只有 `lastActiveAt`，实例列表接口不带最后一条消息。
+- **可选**
+  - A：用本机缓存凑：最新一次运行的摘要（agent 写的，带小号 AI 标识），没有摘要时“你：任务原文”。
+  - B：先显示状态（“2 个在等你处理”“运行中”），没有状态时同 A。
+  - C：只显示状态和时间。
+  - D：等后端在实例列表里带上最后一条。
+- **建议**：B。没缓存过的实例只显示状态。
+
+### 6.8 资料页的“电脑”行、实例的远程画面
+
+- **参考 App**：资料页“电脑”行进 Bot 云桌面的实时画面，可以接管、用剪贴板和键盘（27–31、89）；设置里“Bot 电脑”能重置、看磁盘（65）。
+- **ThinkTin 现在**：每个实例一个云端沙箱；docs/browser.md 有“观看与接管”的设计但没实现，`ClientProtocol` 没有画面、会话接口；
+  “手机控制电脑”（12.9）是账号级配对的用户自己的电脑。
+- **可选**
+  - A：这一行叫“工作区”，进实例的沙箱页（状态、版本；以后加观看接管、重置）。
+  - B：这一行指向用户自己的电脑（设置 → 登录设备里的电脑）。
+  - C：不要这一行。
+- **建议**：A（4.6.1）。观看接管等 browser.md 的后端（网关票据、画面通道、控制租约、剪贴板）和 client-core 接口，第 3 轮做；
+  在手机上看用户自己电脑的画面另外立项。
+
+### 6.9 头像和实例颜色
+
+- **参考 App**：每个 Bot 一个“形状 + 颜色”头像（14 种形状、11 种颜色），还能 AI 生成、上传照片；颜色还用在输入框按钮上，
+  外观里能让深色底跟随 Bot 颜色。
+- **ThinkTin 现在**：`AgentMonogram`（圆里放名字第一个字，统一橙色）；`Instance` 没有头像字段，也没有上传、生成接口。
+- **可选**
+  - A：做形状 + 颜色，只存本机（换手机、安卓上看不到）。
+  - B：后端在实例上加头像字段（形状 + 颜色），多端同步。
+  - C：不做选择，继续首字头像，但按名字算出不同的颜色，实例之间好区分。
+  - AI 生成：平台没有图片生成服务，模型调用用的是用户自己的 key，用哪把、费用怎么算都要定。上传：要存储接口和相机权限。
+- **建议**：第 1 轮先 C（纯客户端，马上能用）；同时请后端加头像字段，有了再做 B（形状素材自己设计）；生成、上传不做。
+
+### 6.10 置顶、隐藏、分组、未读、主实例
+
+- **参考 App**：左滑置顶 / 隐藏；置顶的变成顶上的大头像；有“已隐藏”管理页；能自建分组（可折叠、改名、排序、删除）；
+  长按能“标为未读”；有“主 Bot”星标和“替换主 Bot”。
+- **ThinkTin 现在**：都没有，后端也没有对应字段。
+- **可选**：A 只存本机（`UserDefaults`，按账号，仿 `InstanceSelectionStore`）；B 等后端加“实例偏好”（置顶、隐藏、分组、已读位置），
+  多端同步；C 不做。
+- **建议**
+  - 置顶、隐藏：A，第 2 轮。隐藏只是首页不显示，计划照常跑、审批和推送照常发；要不要顺带静音另议。
+  - 分组：先不做。实例不多时用处不大，还容易和“团队”混；要做也是 A。
+  - 未读：本机比较“最后看到的事件序号”能做个近似，但多台设备会乱，不做。
+  - 主实例：不做。如果想要“默认实例”（新任务、快捷指令、小组件默认用哪个），本机存就行。
+
+### 6.11 消息的表情回应、标为未读、引用回复
+
+- **参考 App**：长按消息弹底部面板：两排表情 + 回复、标为未读、复制、选择文本、复制请求 ID，还能打开完整的表情选择器；
+  回复时输入框带一条引用。
+- **ThinkTin 现在**：系统长按菜单（复制、分享、举报；用户消息是复制、再发一次）；没有反应、未读、引用的接口。
+- **可选**
+  - 表情：A 不做；B 只做 👍 / 👎，当作对回复的评价（要后端存）；C 完整表情（要后端，长按改成自己做的 sheet）。
+  - 引用：A 纯客户端，拼成 Markdown 引用块发出去；B 后端给运行加“回复的是哪条”的字段（时间线里显示引用、点了能跳回去）；C 不做。
+- **建议**：表情 A（以后要收集反馈再做 B）；标为未读不做；引用 A（第 2 轮）。长按菜单继续用系统的，加“选择文本”“复制运行 ID”。
+
+### 6.12 连接应用 / 插件目录（含“此 iPhone”、第三方密码管理器）
+
+- **参考 App**：首页左下进“连接应用”：分类、推荐、精选、搜索、网页授权、已连接列表、插件详情（账户、断开）；
+  “此 iPhone”能把日历、提醒、通讯录、位置、家庭、闹钟开放给 Bot；还能接第三方密码管理器。
+- **ThinkTin 现在**：没有第三方连接器、插件、技能；架构上 shim 只注入平台工具和电脑工具，在线技能市场关掉、技能走白名单（15.3）。
+  已有的“接入”分散在设置里：模型 key、IM 渠道、保险箱、电脑配对。
+- **可选**
+  - A：做一个“连接”汇总页，只放已有的四类（纯客户端，第 2 轮）。
+  - B：做第三方连接器目录：目录接口、网页授权、令牌托管（凭证不进沙箱）、按实例启用、shim 把连接器当 MCP 服务注入。量很大。
+  - C：不做。
+  - “此 iPhone”另算：要把手机做成工具宿主，iOS 不能常驻后台，控制类（家庭、闹钟）风险高，要配审批。
+- **建议**：A；B 和“此 iPhone”等产品定方向后单独立项。入口放设置里（参考的设置里也有“连接应用”），首页左下给工作台（6.1）。
+
+### 6.13 附件
+
+- **参考 App**：输入框“+”：照片或视频、拍照、选择文件。
+- **ThinkTin 现在**：12.22 运行附件等 1.1 拍板和后端 5.6，`ClientProtocol` 没有上传接口。
+- **可选**：A 等后端，之前输入框不放“+”；B 先放“+”，点了提示“还没开放”；C 不做。
+- **建议**：A。
+
+### 6.14 按实例的通知开关
+
+- **参考 App**：资料页一个“通知”开关（完成任务或等你处理时通知你）。
+- **ThinkTin 现在**：只有系统级的通知权限，没有按实例关推送的接口。
+- **可选**：A 后端加实例级的推送开关（服务端发推送时按它过滤）；B 只在本机过滤（App 在后台时系统直接显示推送，其实做不到静音，不推荐）；C 不做。
+- **建议**：A，第 3 轮；之前资料页不放这一行。同一个接口也能让设置根页的“通知”变成真正的开关（4.9.1），现在只能跳系统设置。
+
+### 6.15 自然语言权限规则和自动审查
+
+- **参考 App**：“自动审查”总开关，加“始终询问”“无需询问即允许”两组一句话写的规则，由模型判断一次操作有没有命中。
+- **ThinkTin 现在**：审批逐条批准；计划级按工具种类预授权；电脑上的高危操作每次都要手机签名（docs/pairing.md 第 3 节）。
+- **可选**
+  - A：后端做规则表、增删改查、模型判定，审批卡上显示“按规则允许”。
+  - B：只做“始终询问”（只会更严，风险小）。
+  - C：不做。
+- **建议**：先 C，设置里这一行叫“审批”，进审批中心。产品和安全评审以后再定 A 或 B；不管怎么做，电脑上的高危操作不能被
+  “自动允许”覆盖，规则本身还要防提示注入。
+
+### 6.16 保险箱的卡片、联系信息、网站
+
+- **参考 App**：保险箱有三种条目：登录信息（可以有多个网站）、卡片（卡号、有效期、安全码、账单地址，可以扫卡）、
+  联系信息（多个电话和邮箱、地址）；脚注说 Bot 永远看不到完整卡号和安全码。
+- **ThinkTin 现在**：只有账号密码一种（名字、用途、账号、密码、能用的实例）。
+- **可选**
+  - 网站字段：A 后端加，agent 能按网站找到对应条目；B 不做。
+  - 卡片：要“agent 看不到完整卡号”的代填机制和 PCI 合规。A 做；B 不做。
+  - 联系信息：A 后端加类型和结构化字段；B 不做。
+- **建议**：网站 A（改动小，第 3 轮）；卡片 B；联系信息先 B，等真有让 agent 代填表单的需求。登录信息的表单第 1 轮先照参考改版。
+
+### 6.17 工作区的重置、磁盘、时区
+
+- **参考 App**：设置里的“Bot 电脑”能从快照重置、看磁盘空间；还有“自动设置时区”和时区。
+- **ThinkTin 现在**：没有重置、磁盘、实例时区的接口（计划和用量查询自带时区）；每个实例一个沙箱，不是共用一台。
+- **可选**：A 后端加重置（从快照或模板重建，工作区留不留要定）、磁盘状态、实例时区；B 不做。
+- **建议**：重置和磁盘 A，放在工作区页（第 3 轮）；时区不做，等 agent 真的需要本地时间再说。
+
+### 6.18 新实例的欢迎语和引导卡
+
+- **参考 App**：建好自动进对话，有一段欢迎语，加一张“你最想让我先帮你做什么”的 A/B/C/D 选择卡。
+- **ThinkTin 现在**：没有欢迎消息；后端没有“agent 提问 + 选项”的结构化事件；新实例要先配 main 路由和 key。
+- **可选**
+  - A：客户端画一张静态卡：先查模型和 key，没配好就引导去配；配好了给 3–4 个示例任务，点了就发出去。
+  - B：后端加结构化提问事件，让 agent 自己出题。
+  - C：不做，继续用空状态。
+- **建议**：A（第 2 轮），示例任务按 agent 目录里的介绍写。
+
+### 6.19 产出物的链接、缩略图、分页
+
+- **参考 App**：资料库分“全部 / 媒体 / 链接”，按时间分组，图片有缩略图，底部“展开”加载更多。
+- **ThinkTin 现在**：产出物只有文件；`instanceArtifacts` 只有 `limit`（最多 500），没有游标；没有缩略图接口。
+- **可选**
+  - 链接：A 后端按实例汇总对话里出现过的网址；B 客户端扫本机缓存的事件（不全）；C 不做，筛选改成“全部 / 媒体 / 文件”。
+  - 缩略图：A 后端出缩略图；B 客户端下载原图缩小后缓存（只给图片、限数量）。
+  - 分页：A 后端加 `before` 游标；B 本地折叠。
+- **建议**：链接 C；缩略图 B（第 2 轮），以后再 A；分页先 B，产出物多了再 A。
+
+### 6.20 设置里的其他新项
+
+- **订阅**（56）：12.23 App 内购买等 1.1 拍板。建议等；要做就用 StoreKit 原生的订阅页，不用网页。
+- **导入记忆**（71）：没有写入记忆的接口，各 agent 的记忆机制也不一样。可选：A 纯客户端，给选中的实例发一条“把下面这些记进你的记忆”的任务；
+  B 后端统一接口；C 不做。建议 C，有需求再 A。
+- **发送反馈**（76、77）：没有通用反馈接口（只有举报）。可选：A 后端加反馈接口（带 App 版本、设备、可选的实例）；B 先用邮件链接；C 不做。
+  建议先 B，A 排进后端。
+- **设备改名**（67、68）：要后端加改设备名的接口。改动小，建议做（第 3 轮）。
+- **电脑“在此设备上执行”三档**（69）：和 docs/pairing.md“高危操作不能预授权”冲突，“始终允许”只能对普通操作签能力令牌（最长 7 天），
+  “从不允许”等于吊销全部令牌。建议不做三档，电脑详情里保留现有的授权列表。
+- **多账户**（54 的切换 / 添加账户）：client-core 只存一个会话。建议不做。
+
+### 6.21 分享
+
+- **参考 App**：资料页右上“分享”；对话菜单、长按菜单里“分享为模板”；图片查看页“转发”（25，转给另一个 Bot）。
+- **ThinkTin 现在**：没有单个实例的模板和对外分享；深链 `thinktin://instance/{id}` 只对自己有用；团队模板只能自己用。
+- **可选**：A 后端加“从实例生成 agent 模板 / 分享链接”；B 分享 agent 的公开介绍页（如果有网址）；C 不放分享。
+- **建议**：C。图片“转发”给另一个实例也不做：`sendMessage` 只收文字，要等运行附件（6.13）；系统分享（`ShareLink`）照常有。
+
+### 6.22 纯黑外观、跟随实例颜色、触感
+
+- **参考 App**：外观页两排方块：跟随系统 / 浅色 / 深色，深色底色可选黑色或跟随 Bot 颜色；还有触感反馈开关。
+- **ThinkTin 现在**：外观三选一（打勾列表），没有底色选项；代码里没有任何触感。
+- **可选**：纯黑 A 做（Theme 加一套纯黑值，纯客户端）/ B 不做；跟随实例颜色跟着 6.9；触感 A 做（先定哪些操作带：发送、批准 / 拒绝、复制、
+  左滑、长按）/ B 不做。
+- **建议**：纯黑 A（第 2 轮）；跟随实例颜色不做；触感 A，设置里直接一行开关，不单开页面。
+
+### 6.23 语音
+
+- **参考 App**：对话里有语音模式按钮和通话记录；编辑页能选音色、语速、语言。
+- **ThinkTin 现在**：没有语音通话，也没有语音合成。
+- **可选**：A 做（要服务端语音、语音合成、实例上的字段）；B 只用键盘自带的听写；C 不做。
+- **建议**：B。输入框不放麦克风按钮，系统键盘自带听写。
+
+### 6.24 搜索的筛选类型
+
+- **参考 App**：全部 / 消息 / Bot / 群聊 / 文件 / 定时任务。
+- **ThinkTin 现在**：能搜实例、运行（任务和摘要）、收件箱、计划、产出物；没有群聊（团队没有群聊，agent 交流界面 12.24 在等后端）。
+- **可选**：A 全部 / 消息 / 实例 / 收件箱 / 计划 / 产出物；B 再加“团队”（联网时拉 `teams()`）。
+- **建议**：A。
+
+## 7. 实施计划
+
+### 7.1 原则
+
+- **先底座、再并行。** `Navigation/`、`Shell/`、`Design/`、`Components/`、uicheck 桩是大家共用的，第 0 轮一条线改完、合进来，
+  之后各线只改自己的功能目录（docs/ios.md 第 9 节的分工、9.1 的接入点规矩）。
+- **开工先认领。** 建 `docs/progress/ios-ui-redesign.md`（CLAUDE.md 的格式），每条线写“谁在做、几点开始”；每一步能编译就提交、推送。
+- **先定再做。** 第 1 轮开工前要定 6.1–6.6；第 2 轮开工前要定 6.7–6.12、6.18、6.19、6.22。
+- **每一步都验证**（7.6）：视图模型有 Linux 测试，界面过 uicheck，每轮末出截图对照。
+
+### 7.2 第 0 轮：底座（一条线，先合）
+
+| 做什么 | 文件 |
+|---|---|
+| 令牌按 6.2 改值、加 `agentBubble`；标题不再用衬线；圆角调整；加 `themedGroupedBackground()` | `Design/Theme.swift`、`Design/Typography.swift`、`Design/Metrics.swift`；测试 `Tests/ThinktinUITests/DesignTokenTests.swift` |
+| iOS 26 兼容层（关闭按钮、玻璃按钮样式、玻璃胶囊背景、底部条、工具栏间隔、缩放转场，各带旧系统回退）；删掉 `solidTopScrollEdge()` | 新建 `Design/Glass.swift`；`Components/ListComponents.swift` |
+| 实例头像组件（首字 + 按名字取色 + 状态角标），`AgentMonogram` 挪进来 | 新建 `Components/InstanceAvatar.swift`；`Screens/Agents/AgentMonogram.swift` 删掉（调用处一起改） |
+| 筛选胶囊组件，替换 `PlansFilterChip` | 新建 `Components/FilterChipBar.swift`（调用处在第 1 轮各线改） |
+| 路由改动（3.3）：`.home` 永远是根、`.conversation` 压栈、`.settings` sheet、`.search` 回首页、`.plans(instanceID:)`、新增 `.adopt(agentID:)`；去掉抽屉状态，`openFromDrawer` 改 `openTopLevel`，加 `searchRequest`；sheet 自己的导航栈（`sheetPath`）和第二层 sheet；深链返回栈（3.4） | `Navigation/AppRoute.swift`、`AppRoute+Title.swift`、`AppFeature.swift`、`Router.swift`、`DeepLink.swift`；`Tests/ThinktinKitTests/Navigation/` |
+| 最小可用的首页（列表 + 左上设置 + 右上领养 + 左下工作台 + 底部搜索框），去掉抽屉和实例切换 | `Shell/AppShell.swift`、`Shell/AppDestination.swift`、`Shell/ShellDestination.swift`、新建 `Shell/Home/`；删 `Shell/ShellDrawer.swift`、`Shell/InstanceSwitcher.swift`；`ViewModels/Shell/`；`Tests/*/Shell/` |
+| 各功能接入点跟上新路由（只改 `Destination` 的分派，不改页面） | `Screens/Plans/PlansDestination.swift`、`Screens/Agents/AgentsDestination.swift`、`Screens/Search/SearchDestination.swift` |
+| uicheck 补桩：2.10 表里的 iOS 26 / 18 API，和现在没有的 `List`、`Form`、`Section`、`LabeledContent`、`ContentUnavailableView`、列表和工具栏的修饰符（2.10 列了清单；只有 iOS 有的放 `#if canImport(UIKit)`） | `tools/apple/uicheck/Stubs/SwiftUI/` |
+| 启动屏资源 | `tools/apple/brand_assets.py`、`apps/apple/Thinktin/Resources/Assets.xcassets`（生成物）、`apps/apple/project.yml` |
+| 截图脚本：去掉抽屉的两张；加一个只有 Debug 构建认的环境变量 `THINKTIN_OPEN_SCREEN`（conversation / plans / artifacts / settings / search / adopt，打开演示数据里第一个实例的对应页面）；截图清单换成 7.6 的 | `tools/apple/screenshots.sh`、`apps/apple/Thinktin/App/AppConfiguration.swift` |
+| 文档：docs/ios.md 第 4 节（令牌）、6.1 节（返回栈）、9.1 第 6 条（对话页没有抽屉按钮了）；建进度文件 | `docs/ios.md`、`docs/progress/ios-ui-redesign.md` |
+
+做完的标准：App 能跑通“首页 → 对话 → 实例资料（旧版式）→ 设置（sheet）”，Linux 测试、uicheck 三种、格式检查、macOS CI 都绿。
+
+### 7.3 第 1 轮：和现有功能一一对应、不用后端（五条线并行）
+
+| 线 | 页面（规范节） | 改 / 新建的文件和目录 |
+|---|---|---|
+| A 首页（12.16） | 首页完整版（4.2.1，不含置顶隐藏）、长按菜单（4.2.2：实例资料、改名、新建计划、复制 ID、删除）、工作台菜单和“等你处理”提示行、首页嵌入搜索（4.2.4 第 1 轮部分）、`NewTaskSheet` 换选择器版式（4.4.5） | `Shell/Home/*`、`Shell/ShellDestination.swift`、`ViewModels/Shell/HomeListModel.swift`（新）、`AppModel.swift`（小改）、`Tests/*/Shell/` |
+| B 对话（12.5） | 对话页（4.3.1，不含引导卡）、“…”菜单（4.3.2）、消息长按菜单（4.3.4）、时间分隔 | `Screens/Conversation/*`、`Components/ComposerBar.swift`（本轮归 B）、`ViewModels/Conversation/*`、`Tests/*/Conversation*/` |
+| C 实例（12.3） | 实例资料（4.4.1）、“…”菜单（4.4.2）、编辑页（4.4.3）、工作区页（4.6.1）、领养表单（4.7.1）、agent 目录改列表行 | `Screens/Agents/*`（新 `InstanceEditScreen.swift`、`InstanceWorkspaceScreen.swift`）、`ViewModels/Agents/*`、`Tests/*/Agents/` |
+| D 计划、产出物、搜索（12.6、12.18、12.21） | 实例的计划和全部计划（4.5.1）、产出物版式和产出物详情（4.5.2、4.5.3 第 1 轮部分）、`SearchResultsView` 拆出来给 A 用（4.2.4） | `Screens/Plans/*`、`Screens/Artifacts/*`、`Screens/Search/*`、对应的 `ViewModels/` 和测试 |
+| E 设置一带（12.12、12.2、12.4、12.13、12.14、12.9 手机这边） | 设置根页（4.9.1）、账号（4.9.2）、用量（4.9.3）、保险箱和登录信息表单（4.9.5、4.9.6）、设备列表和详情（4.9.9）、外观（4.9.11）、语言（4.9.12）、模型 key、IM 渠道换原生 | `Screens/Settings/*`、`ViewModels/Settings/SettingsModel.swift`、`Screens/Account/*`（登录相关不动）、`Screens/Models/*`、`Screens/Vault/*`、`Screens/ImChannels/*`、`Screens/Computer/ComputerLinkViews.swift` |
+
+- 线之间的依赖：A 的首页搜索要用 D 拆出来的 `SearchResultsView`，D 先交这一块，A 之前先嵌现有的 `SearchScreen`。
+  A 的长按“改名”自己用 `.alert` + `InstanceNameRule`，不等 C。
+- 收尾（谁先空下来谁做）：参考里没有的页（收件箱、审批中心、进行中、团队和流水线、运行详情、运行树、引导、关于、开源许可）
+  按第 2 节换原生控件，各在自己的目录里改；最后删掉没人用了的 `EmptyStateView`、`PillButton`、`Card`、`GroupedSection`、`ListRow`、
+  `PageHeader`、`AccountRow` 这些自画组件（`Components/`、`Screens/Account/AccountComponents.swift`、`Screens/Settings/SettingsComponents.swift`、
+  `Screens/Plans/PlansComponents.swift`）。
+
+### 7.4 第 2 轮：纯客户端的新功能
+
+| 线 | 页面（规范节） | 文件 |
+|---|---|---|
+| A 首页 | 置顶、隐藏、置顶网格、已隐藏页和说明（4.2.1、4.2.3）；分组（如果 6.10 要做，4.7.2） | `Shell/Home/*`、`ViewModels/Shell/InstancePreferencesStore.swift`（新） |
+| B 对话 | 对话内查找（4.3.3）、引用回复（4.3.5）、新实例引导卡（4.3.1、6.18） | `Screens/Conversation/ConversationFindBar.swift`（新）、`ViewModels/Conversation/ConversationFind.swift`（新） |
+| C 实例 | 头像形状和颜色（如果 6.9 选了本机方案，4.4.4）；agent 详情借插件详情的 sheet 版式（4.8.3） | `Screens/Agents/*` |
+| D 产出物、搜索 | 产出物类型筛选、按日期分组、缩略图、图片全屏查看、存相册（4.5.2、4.5.3）；搜索筛选和“谁发给谁”（4.2.4） | `Screens/Artifacts/*`、`ViewModels/Artifacts/*`、`Screens/Search/*`、`ViewModels/Search/*`；Info.plist 和隐私清单加相册“添加”权限 |
+| E 设置、连接 | “连接”汇总页和已连接列表（4.8.1、4.8.2）；纯黑外观、触感（4.9.11、4.9.13） | 新建 `Screens/Connections/`、`ViewModels/Connections/`（`.connections` 路由在本轮开头由 `Navigation/` 统一加）；`ViewModels/Settings/SettingsPreferences.swift`、`Design/Theme.swift`（纯黑值） |
+
+### 7.5 第 3 轮：要后端的（等接口）
+
+接法照 12.x 的老办法：后端和 client-core 先出接口；`ClientProtocol` 加方法，`MockClient` 按服务端规则实现，`CoreClient` 接上，
+`ObservedClient` 补转发（不补编译不过）；然后再做界面。
+
+| 功能 | 后端要做的 | 页面 |
+|---|---|---|
+| 观看与接管 | docs/browser.md 的票据、画面通道、控制租约、会话状态事件；剪贴板和键盘输入（browser.md 还没写，要补设计）；新路由 `.instanceScreen` | 4.6.2、4.6.3 |
+| 运行附件（12.22） | 1.1 拍板、5.6 上传 | 4.3.6 |
+| 按实例通知开关 | 实例级推送开关 | 4.4.1 |
+| 工作区重置、磁盘 | 重置、磁盘状态接口 | 4.6.1 |
+| 设备改名 | 改设备名接口 | 4.9.9 |
+| 保险箱网站字段 | 条目加网站 | 4.9.6 |
+| 发送反馈 | 反馈接口 | 4.9.14 |
+| 头像、置顶隐藏多端同步 | 实例偏好字段 | 4.4.4、4.2.1 |
+| 产出物分页、缩略图 | `before` 游标、缩略图 | 4.5.2 |
+| 订阅（12.23） | 1.1、计费包、验票 | 4.9.4 |
+| 权限规则、第三方连接器（如果定了要做） | 见 6.15、6.12 | 4.9.8、4.8.* |
+
+### 7.6 验证办法
+
+1. **Linux（每次提交前）**
+   - `cd apps/apple/ThinktinKit && swift test`：新的视图模型逻辑都要有测试，包括首页排序 / 置顶 / 隐藏 / 预览文字、时间分隔、对话内查找、
+     设置分组、`AppRoute` 和 `Router`（`AppRouteTests` 逐个检查新 case 的 `feature`、`presentation`、`offlinePolicy`、`title`）。
+   - `tools/apple/uicheck/run.sh`：UIKit、AppKit、`test` 三种都要过。第 0 轮补的 iOS 26 桩在这里起作用。
+   - `swift format lint --strict -r apps/apple`（提交前先 `swift format -i -r apps/apple`）。
+2. **macOS CI（`.github/workflows/ios.yml`，每次推送）**：真实的 iOS 26 SDK 编译，模拟器上跑 `ThinktinTests` 和 `ThinktinUITests`
+   （`renderInBothAppearances` 深浅色都渲染）。Linux 的桩查不出真实 SwiftUI 的问题，以它为准。
+3. **截图对照（每轮末）**
+   - 跑 `.github/workflows/ios-screenshots.yml`：Actions → iOS screenshots → Run workflow，或者 `git push -f origin HEAD:ios-screenshots`；
+     截图在 artifact `ios-screenshots`。用的是 Mock 演示数据，不会有个人信息。
+   - 截图清单（`tools/apple/screenshots.sh`）换成下表，深色、浅色各一套：
+
+     | 截图 | 怎么打开 | 对照参考 |
+     |---|---|---|
+     | 首页 | 直接启动 | 1、119 |
+     | 对话 | `THINKTIN_OPEN_SCREEN=conversation` | 2 |
+     | 实例资料 | `thinktin://instance/{id}` | 9 |
+     | 实例的计划 | `THINKTIN_OPEN_SCREEN=plans` | 21 |
+     | 产出物 | `THINKTIN_OPEN_SCREEN=artifacts` | 22 |
+     | 设置（sheet） | `THINKTIN_OPEN_SCREEN=settings` | 53、70、75 |
+     | 保险箱填写请求 | `thinktin://vault/request/{id}`（现有） | 57、59 的版式 |
+     | 领养（sheet） | `THINKTIN_OPEN_SCREEN=adopt` | 34、117 |
+     | 首页搜索 | `THINKTIN_OPEN_SCREEN=search` | 78 |
+     | 审批、收件箱、进行中、运行、计划 | 现有深链（`thinktin://approval/…`、`inbox`、`active`、`run/…`、`plan/…`） | 参考没有，看是否符合第 2 节 |
+
+   - 和参考截图并排看（参考截图留在仓库外，不提交）。逐页对照：导航栏按钮的位置和形状、有没有标题、列表样式、卡片圆角和有没有描边、
+     底部浮动条、空状态、深浅色。差别记进进度文件，改完再出一次截图。
+   - iOS 17/18 的回退：每轮至少在一个 iOS 17 或 18 的模拟器上出一次截图（`screenshots.sh` 现在选最新的运行时，要加一个参数选运行时；
+     macos-26 的镜像不一定带老运行时，要先下载）。只看能用、不乱。
+4. **人工过一遍**：深色、浅色、最大的动态字体、VoiceOver（头像、状态角标、自画卡片都要有读屏标签，长按菜单里的操作读屏也能用）、
+   离线（飞行模式下首页显示缓存、写操作禁用）、推送和深链跳进来的返回栈（3.4）。
