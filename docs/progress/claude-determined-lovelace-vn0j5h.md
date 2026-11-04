@@ -58,7 +58,11 @@
     `.dockerignore` 漏了浏览器目录、`filename` 参数能写工作区任意文件、前置口秘密会出现在错误里、只连模型的实例照样解析
     网站名）。本机真 Chromium 冒烟重跑通过（加了“点链接去没批准的网站”的用例），第二轮（只看修复，`drafts/browser-impl-review-2.md`）13 条成立 11 条，都修了（`f4f4e04`，最要紧的是工具说明里补出
     `null` 会让 agent 拿不到任何平台工具）。全量测试 694 个通过，冒烟重跑通过。浏览器第一版到此做完，等东京 Phase 0。
-- 下一步：修评审确认的问题 → 跨用户项目（8.13–8.19）。东京：Phase 0（docs/browser.md 第 8.1 节），过了一个模板开一个 `supported`。用户放好搜索 key（`THINKTIN_PARALLEL_SEARCH_KEY`）后做小测。
+- **进行中：8.13 项目模型与迁移**（本会话，2026-11-04 16:50 UTC 起；两小时内别的会话不要重做）。按定稿
+  `drafts/projects-8.13-plan.md` 做（代码地图 `drafts/projects-8.13-code-map.md`，评审 `drafts/projects-8.13-plan-critique.md`）。
+  定下来的：迁移从 0039 起；单人项目照旧在用户自己的事务里一次建好（领养不拆开）；`teams` 等旧表复制一次后冻结（前提：
+  第一次部署之前就带上 0039，现在还没有线上库）；测试改用不是超级用户的迁移账号。
+- 下一步：8.13 → 8.14–8.19。东京：Phase 0（docs/browser.md 第 8.1 节），过了一个模板开一个 `supported`。用户放好搜索 key（`THINKTIN_PARALLEL_SEARCH_KEY`）后做小测。
 
 ## ⚠️ 紧急交接（2026-10-29 16:00 UTC，本会话 session_016LgPcdynywrhrjCq8VVFLt 周额度快用完）
 
