@@ -870,6 +870,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_decide_approval(
     ): Int
+    external fun uniffi_client_core_checksum_method_thinktinclient_decide_egress_request(
+    ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_decline_vault_request(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_delete_account(
@@ -901,6 +903,8 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_client_core_checksum_method_thinktinclient_device_messages(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_devices(
+    ): Int
+    external fun uniffi_client_core_checksum_method_thinktinclient_egress_requests(
     ): Int
     external fun uniffi_client_core_checksum_method_thinktinclient_end_live_activity(
     ): Int
@@ -1165,6 +1169,8 @@ internal object UniffiLib {
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_decide_approval(`ptr`: Long,`approvalId`: RustBuffer.ByValue,`optionId`: RustBuffer.ByValue,
     ): Long
+    external fun uniffi_client_core_fn_method_thinktinclient_decide_egress_request(`ptr`: Long,`requestId`: RustBuffer.ByValue,`decision`: RustBuffer.ByValue,
+    ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_decline_vault_request(`ptr`: Long,`requestId`: RustBuffer.ByValue,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_delete_account(`ptr`: Long,`code`: RustBuffer.ByValue,
@@ -1196,6 +1202,8 @@ internal object UniffiLib {
     external fun uniffi_client_core_fn_method_thinktinclient_device_messages(`ptr`: Long,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_devices(`ptr`: Long,
+    ): Long
+    external fun uniffi_client_core_fn_method_thinktinclient_egress_requests(`ptr`: Long,`instanceId`: RustBuffer.ByValue,`includeAnswered`: Byte,
     ): Long
     external fun uniffi_client_core_fn_method_thinktinclient_end_live_activity(`ptr`: Long,`runId`: RustBuffer.ByValue,
     ): Long
@@ -1662,6 +1670,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_decide_approval() and 0xFFFF) != 13223) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_decide_egress_request() and 0xFFFF) != 28522) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_decline_vault_request() and 0xFFFF) != 41292) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1710,6 +1721,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_devices() and 0xFFFF) != 40703) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_egress_requests() and 0xFFFF) != 56788) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_end_live_activity() and 0xFFFF) != 55372) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1737,7 +1751,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_instance_artifacts() and 0xFFFF) != 32262) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_client_core_checksum_method_thinktinclient_instance_egress() and 0xFFFF) != 30896) {
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_instance_egress() and 0xFFFF) != 55732) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_instances() and 0xFFFF) != 31253) {
@@ -1839,7 +1853,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_set_credential_daily_limit() and 0xFFFF) != 1631) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_client_core_checksum_method_thinktinclient_set_instance_egress() and 0xFFFF) != 52663) {
+    if ((lib.uniffi_client_core_checksum_method_thinktinclient_set_instance_egress() and 0xFFFF) != 32734) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_client_core_checksum_method_thinktinclient_set_instance_version() and 0xFFFF) != 9209) {
@@ -3865,6 +3879,12 @@ public interface ThinktinClientInterface {
      */
     suspend fun `decideApproval`(`approvalId`: kotlin.String, `optionId`: kotlin.String): Approval
     
+    /**
+     * 回答一条请求（2.7）：`decision` 是 once（访问一次：这次任务里能访问）、always（一直允许：以后都能，记进实例的
+     * 网站）、deny（拒绝：这次任务里不再问）。已经答过、过期了的报冲突；一直允许的网站满了（50 个）报 422，请求还在等。
+     */
+    suspend fun `decideEgressRequest`(`requestId`: kotlin.String, `decision`: kotlin.String): EgressRequest
+    
     suspend fun `declineVaultRequest`(`requestId`: kotlin.String): VaultRequest
     
     /**
@@ -3916,6 +3936,12 @@ public interface ThinktinClientInterface {
     suspend fun `devices`(): List<DeviceInfo>
     
     /**
+     * agent 想访问、要用户回答的网站（2.7），新的在前。`instance_id` 不给就是所有实例的；`include_answered` 时也列
+     * 答过、过期了的。收到 subtype 为 `egress_request` 的推送时调它，给用户看“访问一次 / 一直允许 / 拒绝”。
+     */
+    suspend fun `egressRequests`(`instanceId`: kotlin.String?, `includeAnswered`: kotlin.Boolean): List<EgressRequest>
+    
+    /**
      * 这个运行的实时活动关掉了（用户划掉了、App 自己结束了）：后台不再推送。
      */
     suspend fun `endLiveActivity`(`runId`: kotlin.String)
@@ -3950,7 +3976,7 @@ public interface ThinktinClientInterface {
     suspend fun `instanceArtifacts`(`instanceId`: kotlin.String, `limit`: kotlin.UInt): List<Artifact>
     
     /**
-     * 实例的出网情况：档位、今天的用量、最近被拒绝的访问（2.7）。
+     * 实例的出网情况：档位、今天的用量、在等用户回答的网站、最近被拒绝的访问（2.7）。
      */
     suspend fun `instanceEgress`(`instanceId`: kotlin.String): EgressStatus
     
@@ -4102,9 +4128,9 @@ public interface ThinktinClientInterface {
     suspend fun `setCredentialDailyLimit`(`credentialId`: kotlin.String, `dailyTokenLimit`: kotlin.ULong?): Credential
     
     /**
-     * 改实例能上哪些网站（2.7）：`mode` 是 model / dev / custom / all，`hosts` 是用户加的网站（custom 至少一个）。
-     * 打开 all 之前先给用户看风险（agent 能访问任何公开网站，网页内容可能诱导它做事），用户确认了才传
-     * `accept_risk = true`，否则报 422。不合规的网站（IP 地址、通配符、带端口的）报 422。
+     * 改实例能上哪些网站（2.7）：`mode` 是 model / dev / custom / all，`hosts` 是一直允许的网站（custom 至少一个）。
+     * App 里不放档位开关（用户 2026-11-04 定），只用它管“一直允许”的网站：`mode` 传实例现在的档位，`hosts` 传删减后的
+     * 列表。打开 all 要 `accept_risk = true`，否则报 422。不合规的网站（IP 地址、通配符、带端口的）报 422。
      */
     suspend fun `setInstanceEgress`(`instanceId`: kotlin.String, `mode`: kotlin.String, `hosts`: List<kotlin.String>, `acceptRisk`: kotlin.Boolean): Instance
     
@@ -4989,6 +5015,33 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
     }
 
     
+    /**
+     * 回答一条请求（2.7）：`decision` 是 once（访问一次：这次任务里能访问）、always（一直允许：以后都能，记进实例的
+     * 网站）、deny（拒绝：这次任务里不再问）。已经答过、过期了的报冲突；一直允许的网站满了（50 个）报 422，请求还在等。
+     */
+    @Throws(ClientException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `decideEgressRequest`(`requestId`: kotlin.String, `decision`: kotlin.String) : EgressRequest {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_client_core_fn_method_thinktinclient_decide_egress_request(
+                uniffiHandle,
+                
+        FfiConverterString.lower(`requestId`),
+        FfiConverterString.lower(`decision`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_client_core_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeEgressRequest.lift(it) },
+        // Error FFI converter
+        ClientException.ErrorHandler,
+    )
+    }
+
+    
     @Throws(ClientException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
     override suspend fun `declineVaultRequest`(`requestId`: kotlin.String) : VaultRequest {
@@ -5371,6 +5424,33 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
 
     
     /**
+     * agent 想访问、要用户回答的网站（2.7），新的在前。`instance_id` 不给就是所有实例的；`include_answered` 时也列
+     * 答过、过期了的。收到 subtype 为 `egress_request` 的推送时调它，给用户看“访问一次 / 一直允许 / 拒绝”。
+     */
+    @Throws(ClientException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `egressRequests`(`instanceId`: kotlin.String?, `includeAnswered`: kotlin.Boolean) : List<EgressRequest> {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_client_core_fn_method_thinktinclient_egress_requests(
+                uniffiHandle,
+                
+        FfiConverterOptionalString.lower(`instanceId`),
+        FfiConverterBoolean.lower(`includeAnswered`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_client_core_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_client_core_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_client_core_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterSequenceTypeEgressRequest.lift(it) },
+        // Error FFI converter
+        ClientException.ErrorHandler,
+    )
+    }
+
+    
+    /**
      * 这个运行的实时活动关掉了（用户划掉了、App 自己结束了）：后台不再推送。
      */
     @Throws(ClientException::class)
@@ -5589,7 +5669,7 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
 
     
     /**
-     * 实例的出网情况：档位、今天的用量、最近被拒绝的访问（2.7）。
+     * 实例的出网情况：档位、今天的用量、在等用户回答的网站、最近被拒绝的访问（2.7）。
      */
     @Throws(ClientException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -6445,9 +6525,9 @@ open class ThinktinClient: Disposable, AutoCloseable, ThinktinClientInterface
 
     
     /**
-     * 改实例能上哪些网站（2.7）：`mode` 是 model / dev / custom / all，`hosts` 是用户加的网站（custom 至少一个）。
-     * 打开 all 之前先给用户看风险（agent 能访问任何公开网站，网页内容可能诱导它做事），用户确认了才传
-     * `accept_risk = true`，否则报 422。不合规的网站（IP 地址、通配符、带端口的）报 422。
+     * 改实例能上哪些网站（2.7）：`mode` 是 model / dev / custom / all，`hosts` 是一直允许的网站（custom 至少一个）。
+     * App 里不放档位开关（用户 2026-11-04 定），只用它管“一直允许”的网站：`mode` 传实例现在的档位，`hosts` 传删减后的
+     * 列表。打开 all 要 `accept_risk = true`，否则报 422。不合规的网站（IP 地址、通配符、带端口的）报 422。
      */
     @Throws(ClientException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -8258,7 +8338,8 @@ data class EgressDenial (
     var `port`: kotlin.UShort
     , 
     /**
-     * not_allowed（档位不放行）、quota（今天的流量用完了）、private_address、port 这类。
+     * pending_approval（问了用户、还没答）、user_denied（用户拒绝了）、too_many_asks（同时在等的网站太多）、
+     * not_allowed（只连模型）、quota（今天的流量用完了）、private_address、port 这类。
      */
     var `reason`: kotlin.String
     
@@ -8302,6 +8383,78 @@ public object FfiConverterTypeEgressDenial: FfiConverterRustBuffer<EgressDenial>
 
 
 /**
+ * agent 想访问、要用户回答的一个网站（2.7）。推送的 subtype 是 `egress_request`（带 `instance_id`）。
+ */
+data class EgressRequest (
+    var `id`: kotlin.String
+    , 
+    var `instanceId`: kotlin.String
+    , 
+    var `host`: kotlin.String
+    , 
+    /**
+     * 问的时候实例在做的任务：“访问一次”“拒绝”只对它有效。
+     */
+    var `runId`: kotlin.String?
+    , 
+    /**
+     * pending（在等）、once、always、denied、expired（一天没人答）。以后可能加新值。
+     */
+    var `status`: kotlin.String
+    , 
+    var `createdAtMs`: kotlin.Long
+    , 
+    var `decidedAtMs`: kotlin.Long?
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeEgressRequest: FfiConverterRustBuffer<EgressRequest> {
+    override fun read(buf: ByteBuffer): EgressRequest {
+        return EgressRequest(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterLong.read(buf),
+            FfiConverterOptionalLong.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: EgressRequest) = (
+            FfiConverterString.allocationSize(value.`id`) +
+            FfiConverterString.allocationSize(value.`instanceId`) +
+            FfiConverterString.allocationSize(value.`host`) +
+            FfiConverterOptionalString.allocationSize(value.`runId`) +
+            FfiConverterString.allocationSize(value.`status`) +
+            FfiConverterLong.allocationSize(value.`createdAtMs`) +
+            FfiConverterOptionalLong.allocationSize(value.`decidedAtMs`)
+    )
+
+    override fun write(value: EgressRequest, buf: ByteBuffer) {
+            FfiConverterString.write(value.`id`, buf)
+            FfiConverterString.write(value.`instanceId`, buf)
+            FfiConverterString.write(value.`host`, buf)
+            FfiConverterOptionalString.write(value.`runId`, buf)
+            FfiConverterString.write(value.`status`, buf)
+            FfiConverterLong.write(value.`createdAtMs`, buf)
+            FfiConverterOptionalLong.write(value.`decidedAtMs`, buf)
+    }
+}
+
+
+
+/**
  * 实例的出网情况（2.7）。
  */
 data class EgressStatus (
@@ -8310,9 +8463,19 @@ data class EgressStatus (
     var `hosts`: List<kotlin.String>
     , 
     /**
-     * “开发网站”档自带的网站。
+     * 默认就能上的开发网站（装软件包、拉代码）。
      */
     var `devHosts`: List<kotlin.String>
+    , 
+    /**
+     * 默认就能上的搜索。
+     */
+    var `searchHosts`: List<kotlin.String>
+    , 
+    /**
+     * 在等用户回答的网站。
+     */
+    var `pending`: List<EgressRequest>
     , 
     /**
      * 今天（北京时间）用掉的双向流量，字节。
@@ -8327,7 +8490,7 @@ data class EgressStatus (
     var `maxTunnels`: kotlin.UInt
     , 
     /**
-     * 最近被拒绝的访问，新的在前：App 可以问用户“要不要放行这个网站”。
+     * 最近被拒绝的访问，新的在前。
      */
     var `recentDenied`: List<EgressDenial>
     
@@ -8349,6 +8512,8 @@ public object FfiConverterTypeEgressStatus: FfiConverterRustBuffer<EgressStatus>
             FfiConverterString.read(buf),
             FfiConverterSequenceString.read(buf),
             FfiConverterSequenceString.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterSequenceTypeEgressRequest.read(buf),
             FfiConverterULong.read(buf),
             FfiConverterULong.read(buf),
             FfiConverterUInt.read(buf),
@@ -8360,6 +8525,8 @@ public object FfiConverterTypeEgressStatus: FfiConverterRustBuffer<EgressStatus>
             FfiConverterString.allocationSize(value.`mode`) +
             FfiConverterSequenceString.allocationSize(value.`hosts`) +
             FfiConverterSequenceString.allocationSize(value.`devHosts`) +
+            FfiConverterSequenceString.allocationSize(value.`searchHosts`) +
+            FfiConverterSequenceTypeEgressRequest.allocationSize(value.`pending`) +
             FfiConverterULong.allocationSize(value.`usedToday`) +
             FfiConverterULong.allocationSize(value.`dailyLimit`) +
             FfiConverterUInt.allocationSize(value.`maxTunnels`) +
@@ -8370,6 +8537,8 @@ public object FfiConverterTypeEgressStatus: FfiConverterRustBuffer<EgressStatus>
             FfiConverterString.write(value.`mode`, buf)
             FfiConverterSequenceString.write(value.`hosts`, buf)
             FfiConverterSequenceString.write(value.`devHosts`, buf)
+            FfiConverterSequenceString.write(value.`searchHosts`, buf)
+            FfiConverterSequenceTypeEgressRequest.write(value.`pending`, buf)
             FfiConverterULong.write(value.`usedToday`, buf)
             FfiConverterULong.write(value.`dailyLimit`, buf)
             FfiConverterUInt.write(value.`maxTunnels`, buf)
@@ -8640,13 +8809,14 @@ data class Instance (
     var `peerAccess`: kotlin.Boolean = true 
     , 
     /**
-     * 能上哪些网站（2.7）：model（只连模型，默认）、dev（常用开发网站加自己加的）、custom（只有自己加的）、
-     * all（全部公网，用户自己打开）。以后可能加新值，不认识的按 model 显示。
+     * 能上哪些网站（2.7）：dev（默认：搜索和开发网站直接能上，别的网站 agent 第一次访问时问用户）、custom（只有
+     * 一直允许的直接能上，别的问用户）、model（只连模型，不问）、all（全部公网）。用户 2026-11-04 定：App 里不放档位
+     * 开关。以后可能加新值，不认识的按 model 显示。
      */
-    var `egressMode`: kotlin.String = "model" 
+    var `egressMode`: kotlin.String = "dev" 
     , 
     /**
-     * 用户加的网站。
+     * 用户选了“一直允许”的网站。
      */
     var `egressHosts`: List<kotlin.String> = listOf() 
     
@@ -12371,6 +12541,34 @@ public object FfiConverterSequenceTypeEgressDenial: FfiConverterRustBuffer<List<
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypeEgressDenial.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeEgressRequest: FfiConverterRustBuffer<List<EgressRequest>> {
+    override fun read(buf: ByteBuffer): List<EgressRequest> {
+        val len = buf.getInt()
+        return List<EgressRequest>(len) {
+            FfiConverterTypeEgressRequest.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<EgressRequest>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeEgressRequest.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<EgressRequest>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeEgressRequest.write(it, buf)
         }
     }
 }
