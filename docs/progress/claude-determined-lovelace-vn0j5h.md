@@ -33,7 +33,10 @@
 - 搜索评审做完（4 个方面、每个方面一个反驳者，原始结果 `drafts/search-review.md`）：成立 12 个都修了（`a900d19`、`ad7b151`、
   `58f72ac`、`5dddb21`），全量测试 665 个通过。要点：搜索不在执行器事件循环里等；`[search] alert_phone` 给运营者发额度、欠费
   提醒；OpenClaw 也只给 `web_search`（shim 那边过滤）、关掉它自带的搜索。
-- 下一步：浏览器按 11-04 的规矩重写 browser.md 的实现设计再做 → 跨用户项目。用户放好搜索 key 后做小测。
+- 用户更正：clodex 的搜索用的是 Parallel（parallel.ai）。已改成 Parallel 为主、DeepSeek 和 IQS 备用（`7227fa3`，key
+  `THINKTIN_PARALLEL_SEARCH_KEY`），三家接口的格式用假服务器测过。
+- 浏览器设计 workflow 在跑（研究 3 路 → 3 个方案 → 2 个评审 → 合成），结果写进 browser.md“实现设计与验收”。
+- 下一步：浏览器设计出来、用户拍板后实现 → 跨用户项目。用户放好搜索 key 后做小测。
 - 再下一步：浏览器（[浏览器](../browser.md)“实现设计与验收”）→ 跨用户项目。
 
 ## ⚠️ 紧急交接（2026-10-29 16:00 UTC，本会话 session_016LgPcdynywrhrjCq8VVFLt 周额度快用完）
