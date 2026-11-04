@@ -430,20 +430,52 @@ fn proxy_env(env: &mut BTreeMap<String, String>, addr: &str, token: &str, gatewa
     ] {
         env.insert(key.into(), url.clone());
     }
-    let mut direct = vec![
-        "localhost".to_owned(),
-        "127.0.0.1".to_owned(),
-        "::1".to_owned(),
-    ];
-    if let Some(host) = url_host(gateway_url)
-        && !direct.contains(&host)
-    {
-        direct.push(host);
-    }
+    // 不走代理的：本机（agent 起的开发服务器常打印 0.0.0.0、本机名、本机地址的网址）和模型网关。
+    let gateway = url_host(gateway_url);
+    let mut direct: Vec<String> = ["localhost", "127.0.0.1", "::1", "0.0.0.0", "::"]
+        .iter()
+        .map(|s| (*s).to_owned())
+        .collect();
+    direct.extend(local_names(gateway.as_deref()));
+    direct.extend(gateway);
+    let mut seen = std::collections::HashSet::new();
+    direct.retain(|h| seen.insert(h.clone()));
     let direct = direct.join(",");
     env.insert("no_proxy".into(), direct.clone());
     env.insert("NO_PROXY".into(), direct);
     env.insert("NODE_USE_ENV_PROXY".into(), "1".into());
+    // 代理每个实例同时只给几条隧道（多的排队等）：包管理器默认同时开十几条连接，压到同样的数。
+    let n = proto::egress::MAX_TUNNELS.to_string();
+    for key in [
+        "npm_config_maxsockets",
+        "npm_config_network_concurrency",
+        "YARN_NETWORK_CONCURRENCY",
+        "UV_CONCURRENT_DOWNLOADS",
+    ] {
+        env.insert(key.into(), n.clone());
+    }
+}
+
+/// 沙箱自己的名字和地址：主机名，和连模型网关时用的本机地址（UDP 的 connect 只选路由、不发包）。
+fn local_names(gateway: Option<&str>) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Ok(name) = std::fs::read_to_string("/proc/sys/kernel/hostname") {
+        let name = name.trim().to_ascii_lowercase();
+        if !name.is_empty() {
+            out.push(name);
+        }
+    }
+    if let Some(gw) = gateway.and_then(|g| g.parse::<std::net::IpAddr>().ok()) {
+        let bind = if gw.is_ipv4() { "0.0.0.0:0" } else { "[::]:0" };
+        if let Ok(sock) = std::net::UdpSocket::bind(bind)
+            && sock.connect((gw, 9)).is_ok()
+            && let Ok(local) = sock.local_addr()
+            && !local.ip().is_unspecified()
+        {
+            out.push(local.ip().to_string());
+        }
+    }
+    out
 }
 
 /// URL 的用户信息部分里，非保留字符以外的都按百分号编码。
@@ -508,7 +540,19 @@ mod tests {
         ] {
             assert_eq!(c.env[k], url, "{k}");
         }
-        assert_eq!(c.env["no_proxy"], "localhost,127.0.0.1,::1,10.0.1.10");
+        let direct: Vec<&str> = c.env["no_proxy"].split(',').collect();
+        for h in [
+            "localhost",
+            "127.0.0.1",
+            "::1",
+            "0.0.0.0",
+            "::",
+            "10.0.1.10",
+        ] {
+            assert!(direct.contains(&h), "{h} in {direct:?}");
+        }
+        assert_eq!(c.env["npm_config_maxsockets"], "4");
+        assert_eq!(c.env["npm_config_network_concurrency"], "4");
         assert_eq!(c.env["NO_PROXY"], c.env["no_proxy"]);
         assert_eq!(c.env["NODE_USE_ENV_PROXY"], "1");
         assert_no_token_in_files(&c);

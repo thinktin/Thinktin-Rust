@@ -271,6 +271,7 @@ async fn tunnels_are_capped_and_the_daily_allowance_cuts_them_off() {
         o.max_tunnels = 1;
         o.daily_bytes = 1000;
         o.reserve_chunk = 100;
+        o.slot_wait = Duration::from_millis(200);
     })
     .await;
     let token = e.token_with(|_| {});
@@ -413,4 +414,49 @@ async fn reservations_are_refunded_when_the_tunnel_never_opens() {
         "the reservation was not refunded: {}",
         e.ledger.used("inst-1", day)
     );
+}
+
+/// 同时开着的隧道满了：新的排队等，有一条结束就轮到它（包管理器同时开很多连接也装得上）。
+#[tokio::test]
+async fn a_full_tunnel_cap_queues_instead_of_refusing() {
+    let e = Arc::new(
+        env(EgressMode::All, &[], |o| {
+            o.max_tunnels = 1;
+            o.slot_wait = Duration::from_secs(5);
+        })
+        .await,
+    );
+    let token = e.token_with(|_| {});
+    let (resp, first) = e.connect(&e.echo_target(), Some(&token)).await;
+    assert_eq!(status(&resp), 200, "{resp}");
+    let waiting = {
+        let e = e.clone();
+        let token = token.clone();
+        tokio::spawn(async move { e.connect(&e.echo_target(), Some(&token)).await.0 })
+    };
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!waiting.is_finished(), "the second tunnel waits for a slot");
+    drop(first);
+    let resp = tokio::time::timeout(Duration::from_secs(5), waiting)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(status(&resp), 200, "{resp}");
+}
+
+/// 停机：开着的隧道断开、退回没用完的额度、照样记日志。
+#[tokio::test]
+async fn stopping_closes_tunnels_with_a_log_row_and_a_refund() {
+    let e = env(EgressMode::All, &[], |_| {}).await;
+    let token = e.token_with(|_| {});
+    let (resp, mut s) = e.connect(&e.echo_target(), Some(&token)).await;
+    assert_eq!(status(&resp), 200, "{resp}");
+    s.write_all(b"ping").await.unwrap();
+    let mut buf = [0u8; 4];
+    s.read_exact(&mut buf).await.unwrap();
+    e.egress.stop().await;
+    let records = e.wait_for_records(1).await;
+    assert_eq!(records[0].reason, "shutdown", "{records:?}");
+    let day = (chrono::Utc::now() + chrono::Duration::hours(8)).date_naive();
+    assert_eq!(e.ledger.used("inst-1", day), 8);
 }

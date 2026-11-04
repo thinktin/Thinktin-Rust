@@ -129,9 +129,6 @@ impl ExecConnector {
         if !launch.allow_tools.is_empty() {
             argv.extend(["--allow-tools".into(), launch.allow_tools.join(",")]);
         }
-        if let Some(proxy) = &self.cfg.egress_proxy {
-            argv.extend(["--egress-proxy".into(), proxy.clone()]);
-        }
         for m in &launch.models {
             argv.extend(["--model".into(), m.clone()]);
         }
@@ -187,11 +184,21 @@ impl ShimConnector for ExecConnector {
         };
         let spec = ExecSpec {
             argv: self.argv(launch, tools_file),
-            env: [(
-                "THINKTIN_SANDBOX_TOKEN".to_owned(),
-                EnvValue::Secret(launch.token.clone()),
-            )]
-            .into(),
+            env: {
+                let mut env: std::collections::BTreeMap<String, EnvValue> = [(
+                    "THINKTIN_SANDBOX_TOKEN".to_owned(),
+                    EnvValue::Secret(launch.token.clone()),
+                )]
+                .into();
+                // 出口代理（2.7）走环境变量，不加命令行参数：沙箱里还是老版本的 shim 时它不认参数会起不来。
+                if let Some(proxy) = &self.cfg.egress_proxy {
+                    env.insert(
+                        "THINKTIN_EGRESS_PROXY".to_owned(),
+                        EnvValue::Plain(proxy.clone()),
+                    );
+                }
+                env
+            },
             cwd: Some(self.cfg.workdir.clone()),
         };
         let process = self

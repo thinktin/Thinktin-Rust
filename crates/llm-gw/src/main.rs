@@ -87,12 +87,6 @@ enum Command {
         /// 出网通道额外拒绝的网段（比如服务机自己的公网地址），可重复。非公网地址本来就拒绝
         #[arg(long = "egress-deny")]
         egress_deny: Vec<String>,
-        /// 每个实例每天的出网流量（MiB，双向合计）
-        #[arg(long, default_value_t = 100)]
-        egress_daily_mib: u64,
-        /// 每个实例同时最多几条出网隧道
-        #[arg(long, default_value_t = 4)]
-        egress_max_tunnels: u32,
         /// 只用于本地开发和测试：出网通道放行非公网地址、任意端口
         #[arg(long)]
         insecure_egress: bool,
@@ -243,8 +237,6 @@ fn main() -> anyhow::Result<()> {
             egress_proxy,
             egress_listen,
             egress_deny,
-            egress_daily_mib,
-            egress_max_tunnels,
             insecure_egress,
             insecure_upstreams,
             allow_unbound_tokens,
@@ -292,14 +284,12 @@ fn main() -> anyhow::Result<()> {
                 );
             }
             let client = build_client(&options, egress_proxy.as_deref())?;
+            // 每天的流量、同时几条、按哪个时区切天都用 `proto::egress` 里的（App 看到的和这里执行的是同一份）。
             let egress_options = EgressOptions {
-                daily_bytes: egress_daily_mib << 20,
-                max_tunnels: egress_max_tunnels,
                 deny: egress_deny
                     .iter()
                     .map(|c| c.parse::<Cidr>().map_err(anyhow::Error::msg))
                     .collect::<anyhow::Result<_>>()?,
-                utc_offset_secs: budget_utc_offset_hours * 3600,
                 insecure: insecure_egress,
                 ..EgressOptions::default()
             };
@@ -402,18 +392,23 @@ fn main() -> anyhow::Result<()> {
                     client,
                     options,
                 });
+                // 停机信号也给出网通道：它不再接新连接，开着的隧道收尾（退回额度、写日志）后退出。
+                let (stopping, mut stop_rx) = tokio::sync::watch::channel(false);
+                let mut egress_task = None;
                 if let Some(addr) = egress_listen {
                     let l = tokio::net::TcpListener::bind(addr)
                         .await
                         .with_context(|| format!("bind {addr}"))?;
                     tracing::info!(addr = %l.local_addr()?, "egress proxy listening");
                     let egress = Arc::new(Egress::new(gw.clone(), egress_ledger, egress_options));
-                    // 停机时随进程一起结束：开着的隧道断开，agent 的工具会重连。
-                    tokio::spawn(async move {
-                        if let Err(e) = serve_egress(l, egress, std::future::pending()).await {
+                    egress_task = Some(tokio::spawn(async move {
+                        let stop = async move {
+                            let _ = stop_rx.wait_for(|s| *s).await;
+                        };
+                        if let Err(e) = serve_egress(l, egress, stop).await {
                             tracing::error!(error = %e, "egress proxy stopped");
                         }
-                    });
+                    }));
                 }
                 if let Some(addr) = metrics_listen {
                     let handle = metrics_exporter_prometheus::PrometheusBuilder::new()
@@ -448,9 +443,18 @@ fn main() -> anyhow::Result<()> {
                 serve(listener, router(gw), serve_options, async {
                     shutdown_signal().await;
                     tracing::info!(drain_secs, "shutting down: draining");
+                    stopping.send_replace(true);
                     tokio::time::sleep(Duration::from_secs(drain_secs)).await;
                 })
                 .await?;
+                // 出网通道收完尾才放掉它手里的网关（网关拿着用量队列，它不放队列就关不了）。
+                if let Some(task) = egress_task
+                    && tokio::time::timeout(Duration::from_secs(grace_secs), task)
+                        .await
+                        .is_err()
+                {
+                    tracing::warn!("egress proxy did not stop in time");
+                }
                 // 等进行中的请求结束、还没写进库的用量落库（流式响应都结束后队列才会关闭）。
                 if let Some(w) = writer
                     && tokio::time::timeout(Duration::from_secs(grace_secs), w.finish())

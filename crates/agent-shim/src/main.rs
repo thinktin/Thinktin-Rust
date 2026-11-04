@@ -179,8 +179,9 @@ struct RoutingArgs {
     /// 指定模型协议：anthropic-messages、openai-completions、openai-responses
     #[arg(long, value_parser = parse_protocol)]
     protocol: Option<LlmProtocol>,
-    /// 平台的出口代理（2.7），`host:port`。给了就把代理（带沙箱令牌）设进 agent 的环境变量
-    #[arg(long)]
+    /// 平台的出口代理（2.7），`host:port`。给了就把代理（带沙箱令牌）设进 agent 的环境变量。
+    /// 平台经环境变量传（老版本的 shim 不认这个变量也照样能启动）
+    #[arg(long, env = "THINKTIN_EGRESS_PROXY")]
     egress_proxy: Option<String>,
 }
 

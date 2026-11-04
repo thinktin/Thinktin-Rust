@@ -1042,6 +1042,14 @@ async fn erasing_an_account_deletes_its_content() {
         .execute(db.pool())
         .await
         .unwrap();
+    // 用户加的出网网站（2.7）也是用户填的内容。
+    sqlx::query(
+        "UPDATE instances SET egress_mode = 'dev', egress_hosts = '{intranet.corp.example}' WHERE user_id = $1",
+    )
+    .bind(alice.0)
+    .execute(db.pool())
+    .await
+    .unwrap();
     let mut w = db.worker().await.unwrap();
     w.erase_account(alice).await.unwrap();
     w.commit().await.unwrap();
@@ -1108,13 +1116,19 @@ async fn erasing_an_account_deletes_its_content() {
             .await
             .unwrap();
     assert!(devices.iter().all(|(n, tok)| n.is_empty() && tok.is_none()));
-    let states: Vec<(String, String)> =
-        sqlx::query_as("SELECT state, name FROM instances WHERE user_id = $1")
-            .bind(alice.0)
-            .fetch_all(db.pool())
-            .await
-            .unwrap();
-    assert!(states.iter().all(|(s, n)| s == "deleted" && n.is_empty()));
+    let states: Vec<(String, String, String, Vec<String>)> = sqlx::query_as(
+        "SELECT state, name, egress_mode, egress_hosts FROM instances WHERE user_id = $1",
+    )
+    .bind(alice.0)
+    .fetch_all(db.pool())
+    .await
+    .unwrap();
+    assert!(!states.is_empty());
+    assert!(
+        states
+            .iter()
+            .all(|(s, n, m, h)| s == "deleted" && n.is_empty() && m == "model" && h.is_empty())
+    );
     // 同一个手机号可以重新注册成新账号。
     let mut w = db.worker().await.unwrap();
     let (again, created) = w.upsert_user_by_phone("+8613800000001").await.unwrap();

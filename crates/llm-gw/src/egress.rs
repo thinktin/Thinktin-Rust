@@ -18,7 +18,7 @@
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::{IpAddr, SocketAddr};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -31,7 +31,7 @@ use hyper::{Method, Request, Response, StatusCode, header};
 use hyper_util::rt::{TokioIo, TokioTimer};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::Semaphore;
+use tokio::sync::{Notify, Semaphore, watch};
 
 use crate::proxy::{Caller, Gateway};
 use crate::serve::PerIp;
@@ -57,6 +57,10 @@ pub struct EgressOptions {
     pub max_duration: Duration,
     /// 隧道开着时多久重新核对一次令牌和档位。
     pub recheck_every: Duration,
+    /// 同时开着的隧道满了时，新的等多久空出名额（npm 这类工具会同时开很多连接，马上拒绝它们就装不上包）。
+    pub slot_wait: Duration,
+    /// 停机时等开着的隧道收尾（退回额度、写日志）多久。
+    pub shutdown_grace: Duration,
     pub header_read_timeout: Duration,
     pub max_connections: usize,
     pub max_connections_per_ip: usize,
@@ -81,6 +85,8 @@ impl Default for EgressOptions {
             idle_timeout: Duration::from_secs(300),
             max_duration: Duration::from_secs(3600),
             recheck_every: Duration::from_secs(30),
+            slot_wait: Duration::from_secs(30),
+            shutdown_grace: Duration::from_secs(10),
             header_read_timeout: Duration::from_secs(10),
             max_connections: 4096,
             max_connections_per_ip: 32,
@@ -290,6 +296,24 @@ pub struct Egress {
     counters: Mutex<Counters>,
     /// 超过日志上限、等着合并写的：键 → (次数, 上行, 下行, 时长)。
     summaries: Mutex<HashMap<SummaryKey, (u32, u64, u64, Duration)>>,
+    /// 有隧道名额空出来了。
+    slot_freed: Notify,
+    /// 停机：开着的隧道收尾退出。
+    stopping: watch::Sender<bool>,
+    /// 开着的隧道任务数，和它降到 0 的通知。
+    running: AtomicUsize,
+    drained: Notify,
+}
+
+/// 一个开着的隧道任务：结束时计数减一。
+struct Running(Arc<Egress>);
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        if self.0.running.fetch_sub(1, Ordering::AcqRel) == 1 {
+            self.0.drained.notify_waiters();
+        }
+    }
 }
 
 /// 占着的一条隧道名额，放掉时减一。
@@ -311,7 +335,9 @@ impl Drop for TunnelSlot {
                 c.open.remove(&self.instance);
             }
         }
+        drop(c);
         metrics::gauge!("thinktin_egress_open_tunnels").decrement(1.0);
+        self.egress.slot_freed.notify_waiters();
     }
 }
 
@@ -326,9 +352,9 @@ struct Target {
     day: NaiveDate,
 }
 
-/// 隧道的额度：本地还剩多少预留，不够了再找账本要。
+/// 隧道的额度：本地还剩多少预留、是哪一天的，不够了再找账本要。过了零点就退回前一天剩下的，改从当天扣。
 struct Budget {
-    available: tokio::sync::Mutex<u64>,
+    inner: tokio::sync::Mutex<(u64, NaiveDate)>,
 }
 
 /// 拒绝：状态码、原因（进日志）、给 agent 看的说明。
@@ -394,6 +420,49 @@ impl Egress {
             options,
             counters: Mutex::default(),
             summaries: Mutex::default(),
+            slot_freed: Notify::new(),
+            stopping: watch::channel(false).0,
+            running: AtomicUsize::new(0),
+            drained: Notify::new(),
+        }
+    }
+
+    /// 停机：开着的隧道断开（退回额度、写日志），最多等 `shutdown_grace`，再把合并的日志写掉。
+    pub async fn stop(&self) {
+        self.stopping.send_replace(true);
+        let wait = async {
+            loop {
+                let drained = self.drained.notified();
+                tokio::pin!(drained);
+                drained.as_mut().enable();
+                if self.running.load(Ordering::Acquire) == 0 {
+                    return;
+                }
+                drained.await;
+            }
+        };
+        if tokio::time::timeout(self.options.shutdown_grace, wait)
+            .await
+            .is_err()
+        {
+            tracing::warn!("egress tunnels did not close in time");
+        }
+        self.flush_summaries().await;
+    }
+
+    /// 等一个隧道名额，最多等 `slot_wait`。
+    async fn wait_slot(self: &Arc<Self>, instance: &str) -> Option<TunnelSlot> {
+        let deadline = tokio::time::Instant::now() + self.options.slot_wait;
+        loop {
+            let freed = self.slot_freed.notified();
+            tokio::pin!(freed);
+            freed.as_mut().enable();
+            if let Some(slot) = self.take_slot(instance) {
+                return Some(slot);
+            }
+            if tokio::time::timeout_at(deadline, freed).await.is_err() {
+                return None;
+            }
         }
     }
 
@@ -661,7 +730,7 @@ impl Egress {
             self.record_denial(&caller, &host, port, &d);
             return respond(&d);
         }
-        let Some(slot) = self.take_slot(&caller.instance.id) else {
+        let Some(slot) = self.wait_slot(&caller.instance.id).await else {
             let d = denied(
                 StatusCode::TOO_MANY_REQUESTS,
                 "too_many_tunnels",
@@ -766,8 +835,13 @@ impl Egress {
         _slot: TunnelSlot,
     ) {
         let started = Instant::now();
+        let _running = {
+            self.running.fetch_add(1, Ordering::AcqRel);
+            Running(self.clone())
+        };
+        let mut stop = self.stopping.subscribe();
         let budget = Arc::new(Budget {
-            available: tokio::sync::Mutex::new(first),
+            inner: tokio::sync::Mutex::new((first, target.day)),
         });
         let up = Arc::new(AtomicU64::new(0));
         let down = Arc::new(AtomicU64::new(0));
@@ -803,7 +877,11 @@ impl Egress {
                 tokio::pin!(deadline);
                 let (mut a_done, mut b_done) = (false, false);
                 let reason = loop {
+                    if *stop.borrow_and_update() {
+                        break "shutdown";
+                    }
                     tokio::select! {
+                        _ = stop.changed() => {}
                         r = &mut a, if !a_done => {
                             a_done = true;
                             if let Ok(Err(r)) = r { break r; }
@@ -834,9 +912,9 @@ impl Egress {
                 "upgrade_failed"
             }
         };
-        let left = *budget.available.lock().await;
+        let (left, day) = *budget.inner.lock().await;
         if left > 0
-            && let Err(e) = self.ledger.refund(&target.instance, target.day, left).await
+            && let Err(e) = self.ledger.refund(&target.instance, day, left).await
         {
             tracing::warn!(error = %e, "refunding egress bytes failed");
         }
@@ -863,7 +941,18 @@ impl Egress {
 
     /// 从额度里扣 `n` 字节：本地预留不够就再找账本要，今天用完了（或者账本出错）返回原因。
     async fn charge(&self, budget: &Budget, ids: &Ids, n: u64) -> Result<(), &'static str> {
-        let mut available = budget.available.lock().await;
+        let mut guard = budget.inner.lock().await;
+        let (available, day) = &mut *guard;
+        let today = self.today();
+        if *day != today {
+            if *available > 0
+                && let Err(e) = self.ledger.refund(&ids.instance, *day, *available).await
+            {
+                tracing::warn!(error = %e, "refunding egress bytes failed");
+            }
+            *available = 0;
+            *day = today;
+        }
         while *available < n {
             let want = self.options.reserve_chunk.max(n - *available);
             match self
@@ -871,7 +960,7 @@ impl Egress {
                 .reserve(
                     &ids.instance,
                     &ids.user,
-                    ids.day,
+                    *day,
                     want,
                     self.options.daily_bytes,
                 )
@@ -895,7 +984,6 @@ impl Egress {
 struct Ids {
     user: String,
     instance: String,
-    day: NaiveDate,
 }
 
 impl Target {
@@ -903,7 +991,6 @@ impl Target {
         Ids {
             user: self.user.clone(),
             instance: self.instance.clone(),
-            day: self.day,
         }
     }
 }
@@ -953,7 +1040,7 @@ impl Drop for AbortOnDrop {
     }
 }
 
-/// 在 `listener` 上跑出口代理，直到 `shutdown` 完成（之后不再接新连接，开着的隧道照常跑完）。
+/// 在 `listener` 上跑出口代理，直到 `shutdown` 完成：之后不再接新连接，开着的隧道收尾断开（[`Egress::stop`]）。
 pub async fn serve_egress(
     listener: TcpListener,
     egress: Arc<Egress>,
@@ -976,7 +1063,7 @@ pub async fn serve_egress(
     loop {
         let (stream, peer) = tokio::select! {
             _ = &mut shutdown => {
-                egress.flush_summaries().await;
+                egress.stop().await;
                 return Ok(());
             }
             accepted = listener.accept() => match accepted {

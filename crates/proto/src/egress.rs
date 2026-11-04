@@ -91,6 +91,27 @@ pub fn normalize_host(raw: &str, allow_single_label: bool) -> Result<String, Hos
 mod tests {
     use super::*;
 
+    /// 以后加了新档位，老版本解析实例时按只连模型，不报错。
+    #[test]
+    fn unknown_modes_decode_as_model_only() {
+        use crate::domain::{EgressMode, Instance};
+        let mut v = serde_json::json!({
+            "id": "01890000-0000-7000-8000-000000000002",
+            "agent_id": "claude", "agent_version": "1", "harness": "acp", "name": "a",
+            "state": "running",
+            "created_at": "2026-11-04T00:00:00Z", "last_active_at": "2026-11-04T00:00:00Z",
+            "egress_mode": "mirror", "egress_hosts": ["x.example.com"]
+        });
+        let i: Instance = serde_json::from_value(v.clone()).unwrap();
+        assert_eq!(i.egress_mode, EgressMode::Model);
+        v["egress_mode"] = "dev".into();
+        let i: Instance = serde_json::from_value(v.clone()).unwrap();
+        assert_eq!(i.egress_mode, EgressMode::Dev);
+        v.as_object_mut().unwrap().remove("egress_mode");
+        let i: Instance = serde_json::from_value(v).unwrap();
+        assert_eq!(i.egress_mode, EgressMode::Model);
+    }
+
     #[test]
     fn host_names_are_normalised_and_tricks_refused() {
         assert_eq!(normalize_host("GitHub.com.", false).unwrap(), "github.com");

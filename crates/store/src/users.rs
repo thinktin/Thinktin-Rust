@@ -220,7 +220,7 @@ impl Tx<Worker> {
             "DELETE FROM device_links WHERE user_id = $1",
             // 共享看板（8.10）：agent 和用户写的进展、决定。
             "DELETE FROM board_posts WHERE user_id = $1",
-            "UPDATE instances SET state = 'deleted', name = '', purpose = '', deleted_at = coalesce(deleted_at, now()), \
+            "UPDATE instances SET state = 'deleted', name = '', purpose = '', egress_mode = 'model', egress_hosts = '{}', deleted_at = coalesce(deleted_at, now()), \
                updated_at = now() WHERE user_id = $1",
             "UPDATE devices SET name = '', push_channel = NULL, push_token = NULL, activity_start_token = NULL WHERE user_id = $1",
             "UPDATE users SET phone = 'deleted', display_name = NULL WHERE id = $1",

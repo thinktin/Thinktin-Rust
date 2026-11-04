@@ -518,8 +518,9 @@ pub struct Instance {
     /// “允许其他 agent 查我、问我”（8.9），默认打开。老的服务端没有，按打开算。
     #[serde(default = "default_true")]
     pub peer_access: bool,
-    /// 能上哪些网站（2.7），默认只连模型。老的服务端没有，按只连模型算。
-    #[serde(default)]
+    /// 能上哪些网站（2.7），默认只连模型。老的服务端没有，按只连模型算；以后加了这个版本不认识的档位，也按只连模型
+    /// 显示（不让整个实例列表解析失败）。
+    #[serde(default, deserialize_with = "lenient_egress_mode")]
     pub egress_mode: EgressMode,
     /// 用户加的网站（[`crate::egress::normalize_host`] 整理过的写法），“开发网站”“自定义网站”档用。
     #[serde(default)]
@@ -539,6 +540,12 @@ str_enum!(
         All = "all",
     }
 );
+
+/// 认不出的档位按只连模型。
+fn lenient_egress_mode<'de, D: serde::Deserializer<'de>>(d: D) -> Result<EgressMode, D::Error> {
+    let raw = String::deserialize(d)?;
+    Ok(raw.parse().unwrap_or_default())
+}
 
 // 枚举由 `str_enum!` 生成，派生不了 Default。
 #[allow(clippy::derivable_impls)]
