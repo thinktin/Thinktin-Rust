@@ -79,6 +79,8 @@ public struct AgentCatalogCard: Identifiable, Hashable, Sendable {
     public var harnessLabels: [String]
     /// 已经领养了几个。
     public var adoptedCount: Int
+    /// 能不能用来新建 Botin（`AgentInfo.canPowerNewBotin`）：不能的，列表行右边的按钮灰掉。
+    public var isAvailable: Bool
 
     public init(agent: AgentInfo, adoptedCount: Int = 0, language: DisplayLanguage = .current) {
         id = agent.id
@@ -91,6 +93,26 @@ public struct AgentCatalogCard: Identifiable, Hashable, Sendable {
         isProprietary = AgentsText.isProprietary(agent.license)
         harnessLabels = agent.catalogHarnesses.map { AgentsText.harnessName($0, language: language) }
         self.adoptedCount = adoptedCount
+        isAvailable = agent.canPowerNewBotin
+    }
+
+    /// 列表行名字下面的灰字（参考 101、104 的行：最多两行）：一句话介绍，老的服务端没有介绍时用出处。
+    public var rowSubtitle: String {
+        summary.isEmpty ? (byline ?? "") : summary
+    }
+
+    /// 列表行右边的小胶囊（参考的“连接”位置）：“选这个”，点了用它新建 Botin（在新建表单里时换成它）；不能用的“暂不可用”。
+    public func actionTitle(_ language: DisplayLanguage = .current) -> String {
+        let zh = language == .chinese
+        if !isAvailable { return zh ? "暂不可用" : "Unavailable" }
+        return zh ? "选这个" : "Use"
+    }
+
+    /// 小胶囊的读屏标签：“用 Claude Agent 新建 Botin”。
+    public func actionAccessibilityLabel(_ language: DisplayLanguage = .current) -> String {
+        let zh = language == .chinese
+        if !isAvailable { return zh ? "\(name) 暂不可用" : "\(name) is unavailable" }
+        return zh ? "用 \(name) 新建 Botin" : "Create a Botin with \(name)"
     }
 
     /// “2 个 Botin 在用”（用它当引擎的 Botin 数）；还没有 Botin 用它时为 nil。
