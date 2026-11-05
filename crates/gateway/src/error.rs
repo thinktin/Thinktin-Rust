@@ -95,6 +95,19 @@ impl From<store::Error> for ApiError {
     }
 }
 
+/// 项目接口（8.15）用的错误转换：库里拒绝了（权限不够、只读事务里写）说明代码和库里的边界对不上，是 bug：记日志、
+/// 计数（`thinktin_project_forbidden_total`），对外按找不到回，不说项目在不在。别的和 `From<store::Error>` 一样。
+pub(crate) fn project_error(e: store::Error) -> ApiError {
+    match e {
+        store::Error::Forbidden(m) => {
+            error!(error = %m, "project request hit the database boundary");
+            metrics::counter!("thinktin_project_forbidden_total").increment(1);
+            ApiError::not_found("project")
+        }
+        other => other.into(),
+    }
+}
+
 impl From<auth::service::AuthError> for ApiError {
     fn from(e: auth::service::AuthError) -> Self {
         use auth::service::AuthError;
@@ -153,5 +166,33 @@ impl From<control::Error> for ApiError {
                 )
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod project_error_tests {
+    use super::*;
+
+    #[test]
+    fn forbidden_is_counted_and_reads_as_not_found() {
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        let e = metrics::with_local_recorder(&recorder, || {
+            project_error(store::Error::Forbidden("permission denied".into()))
+        });
+        assert_eq!(e.code, ErrorCode::NotFound);
+        assert_eq!(e.message, "project not found");
+        assert!(
+            handle
+                .render()
+                .contains("thinktin_project_forbidden_total 1"),
+            "{}",
+            handle.render()
+        );
+        // 别的照旧。
+        assert_eq!(
+            project_error(store::Error::NotPermitted("creator only".into())).code,
+            ErrorCode::Forbidden
+        );
     }
 }

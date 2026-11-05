@@ -1,8 +1,10 @@
-//! 项目（8.13、8.14）：建单人项目、列表、详情、改名改目标、删（没共享过的）、加 agent、撤 agent、预算、退出、移出、
-//! 邀请。跨用户的写和按成员关系的读都经 `orchestrator::projects`（worker 事务，store 里核对成员关系）；动作人只来自登录态。
+//! 项目（8.13–8.15）：建单人项目、列表、详情、改名改目标、删、归档、加 agent、撤 agent、预算、退出、移出、邀请。
+//! 跨用户的写经 `orchestrator::projects`（worker 事务，store 里核对成员关系），读走只读的成员事务（8.15）；动作人只来自
+//! 登录态。
 //!
-//! 状态码：不是成员 404（不说项目在不在）；成员调只有创建者能用的接口 403；人数、agent 数、待处理邀请到了上限 409
-//! `project_member_limit` / `project_agent_limit` / `project_invite_limit`；邀请人一天的数到了 429。
+//! 状态码：不是成员 404（不说项目在不在，库里拒绝的也按 404，见 [`project_error`]）；成员调只有创建者能用的接口 403；
+//! 人数、agent 数、待处理邀请到了上限 409 `project_member_limit` / `project_agent_limit` / `project_invite_limit`；
+//! 邀请人一天的数到了 429。
 
 use axum::Json;
 use axum::extract::{Path, State};
@@ -17,6 +19,7 @@ use serde_json::{Value, json};
 use store::{Consent, InviteCaps, SoloAgent};
 
 use super::{check_len, parse_id};
+use crate::error::project_error;
 use crate::{ApiError, ApiJson, ApiResult, AppState, Authed};
 
 /// 跨用户项目的总开关（`[api] cross_user_projects`，15.7 安全评审之前默认关）：关着时邀请、预览、接受都 404。
@@ -66,7 +69,9 @@ pub struct AgentReq {
 }
 
 pub async fn list(State(s): State<AppState>, Authed(who): Authed) -> ApiResult<Json<Value>> {
-    let list = projects::my_projects(&s.db, who.user).await?;
+    let list = projects::my_projects(&s.db, who.user)
+        .await
+        .map_err(project_error)?;
     Ok(Json(json!({ "projects": list })))
 }
 
@@ -105,7 +110,9 @@ pub async fn create(
     let mut t = s.db.tenant(who.user).await?;
     let id = t.create_solo_project(name, &req.goal, &agents).await?;
     t.commit().await?;
-    let detail = projects::detail(&s.db, who.user, id).await?;
+    let detail = projects::detail(&s.db, who.user, id)
+        .await
+        .map_err(project_error)?;
     Ok((StatusCode::CREATED, Json(detail)))
 }
 
@@ -115,7 +122,11 @@ pub async fn get(
     Path(id): Path<String>,
 ) -> ApiResult<Json<ProjectDetail>> {
     let id: ProjectId = parse_id(&id, "project")?;
-    Ok(Json(projects::detail(&s.db, who.user, id).await?))
+    Ok(Json(
+        projects::detail(&s.db, who.user, id)
+            .await
+            .map_err(project_error)?,
+    ))
 }
 
 #[derive(Deserialize)]
@@ -139,20 +150,63 @@ pub async fn update(
     if let Some(g) = &req.goal {
         check_goal(g)?;
     }
-    projects::update(&s.db, who.user, &who.actor(), id, name, req.goal.as_deref()).await?;
-    Ok(Json(projects::detail(&s.db, who.user, id).await?))
+    projects::update(&s.db, who.user, &who.actor(), id, name, req.goal.as_deref())
+        .await
+        .map_err(project_error)?;
+    Ok(Json(
+        projects::detail(&s.db, who.user, id)
+            .await
+            .map_err(project_error)?,
+    ))
 }
 
-/// 删项目：只有没共享过的单人项目（共享过的 409，8.15 起改成软删除）。
+/// 删项目（只有创建者，共享过的也能删，8.15）：软删除，马上谁都读不到，密钥马上删掉，内容过一会儿由后台清理；还在的
+/// 成员收到 `project_deleted`。不能撤销。
 pub async fn delete(
     State(s): State<AppState>,
     Authed(who): Authed,
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
     let id: ProjectId = parse_id(&id, "project")?;
-    // worker 在一个事务里核对身份（成员 403、外人 404、共享过的 409）、撤回还没处理的邀请、删掉。
-    projects::delete(&s.db, who.user, &who.actor(), id, false).await?;
+    // worker 在一个事务里核对身份（成员 403、外人和删过的 404）、停掉项目里的运行、撤回还没处理的邀请、删掉。
+    projects::delete(&s.db, who.user, &who.actor(), id, true)
+        .await
+        .map_err(project_error)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// 归档（只有创建者）：项目变成只读，停掉里面的运行和授权；重复归档照样 200。
+pub async fn archive(
+    State(s): State<AppState>,
+    Authed(who): Authed,
+    Path(id): Path<String>,
+) -> ApiResult<Json<ProjectDetail>> {
+    let id: ProjectId = parse_id(&id, "project")?;
+    projects::archive(&s.db, who.user, &who.actor(), id)
+        .await
+        .map_err(project_error)?;
+    Ok(Json(
+        projects::detail(&s.db, who.user, id)
+            .await
+            .map_err(project_error)?,
+    ))
+}
+
+/// 取消归档（只有创建者）：停掉的运行不会重新开始。
+pub async fn unarchive(
+    State(s): State<AppState>,
+    Authed(who): Authed,
+    Path(id): Path<String>,
+) -> ApiResult<Json<ProjectDetail>> {
+    let id: ProjectId = parse_id(&id, "project")?;
+    projects::unarchive(&s.db, who.user, &who.actor(), id)
+        .await
+        .map_err(project_error)?;
+    Ok(Json(
+        projects::detail(&s.db, who.user, id)
+            .await
+            .map_err(project_error)?,
+    ))
 }
 
 #[derive(Deserialize)]
@@ -180,8 +234,13 @@ pub async fn add_agents(
         &agents,
         consent(req.consent),
     )
-    .await?;
-    Ok(Json(projects::detail(&s.db, who.user, id).await?))
+    .await
+    .map_err(project_error)?;
+    Ok(Json(
+        projects::detail(&s.db, who.user, id)
+            .await
+            .map_err(project_error)?,
+    ))
 }
 
 /// 撤回项目里的一个 agent（主人或创建者）。
@@ -192,7 +251,9 @@ pub async fn withdraw_agent(
 ) -> ApiResult<StatusCode> {
     let id: ProjectId = parse_id(&id, "project")?;
     let instance: InstanceId = parse_id(&instance, "agent")?;
-    projects::withdraw_agent(&s.db, who.user, &who.actor(), id, instance).await?;
+    projects::withdraw_agent(&s.db, who.user, &who.actor(), id, instance)
+        .await
+        .map_err(project_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -204,7 +265,9 @@ pub async fn set_budget(
     ApiJson(budget): ApiJson<ProjectBudget>,
 ) -> ApiResult<Json<ProjectBudget>> {
     let id: ProjectId = parse_id(&id, "project")?;
-    projects::set_budget(&s.db, who.user, &who.actor(), id, &budget).await?;
+    projects::set_budget(&s.db, who.user, &who.actor(), id, &budget)
+        .await
+        .map_err(project_error)?;
     Ok(Json(budget))
 }
 
@@ -215,7 +278,9 @@ pub async fn leave(
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
     let id: ProjectId = parse_id(&id, "project")?;
-    projects::leave(&s.db, who.user, &who.actor(), id).await?;
+    projects::leave(&s.db, who.user, &who.actor(), id)
+        .await
+        .map_err(project_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -227,7 +292,9 @@ pub async fn remove_member(
 ) -> ApiResult<StatusCode> {
     let id: ProjectId = parse_id(&id, "project")?;
     let member: UserId = parse_id(&member, "member")?;
-    projects::remove_member(&s.db, who.user, &who.actor(), id, member).await?;
+    projects::remove_member(&s.db, who.user, &who.actor(), id, member)
+        .await
+        .map_err(project_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -238,7 +305,9 @@ pub async fn invites(
     Path(id): Path<String>,
 ) -> ApiResult<Json<Value>> {
     let id: ProjectId = parse_id(&id, "project")?;
-    let list = projects::invites(&s.db, who.user, id).await?;
+    let list = projects::invites(&s.db, who.user, id)
+        .await
+        .map_err(project_error)?;
     Ok(Json(json!({ "invites": list })))
 }
 
@@ -264,7 +333,8 @@ pub async fn create_invite(
                 .map_err(|_| ApiError::invalid("invalid phone number"))?;
             let invite =
                 projects::invite_phone(&s.db, who.user, &who.actor(), id, &e164, invite_caps(&s))
-                    .await?;
+                    .await
+                    .map_err(project_error)?;
             Ok((StatusCode::CREATED, Json(json!({ "invite": invite }))))
         }
         (None, true) => {
@@ -277,7 +347,8 @@ pub async fn create_invite(
                 &token.hash(),
                 invite_caps(&s),
             )
-            .await?;
+            .await
+            .map_err(project_error)?;
             Ok((
                 StatusCode::CREATED,
                 Json(json!({
@@ -301,6 +372,8 @@ pub async fn revoke_invite(
 ) -> ApiResult<StatusCode> {
     let id: ProjectId = parse_id(&id, "project")?;
     let invite: ProjectInviteId = parse_id(&invite, "invite")?;
-    projects::revoke_invite(&s.db, who.user, &who.actor(), id, invite).await?;
+    projects::revoke_invite(&s.db, who.user, &who.actor(), id, invite)
+        .await
+        .map_err(project_error)?;
     Ok(StatusCode::NO_CONTENT)
 }

@@ -6,15 +6,16 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::Response;
 use proto::api::ErrorCode;
-use proto::domain::{Artifact, ArtifactId, InstanceId, RunId};
+use proto::domain::{Artifact, ArtifactId, InstanceId, Locale, RunId};
 use proto::labels;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use store::StoredArtifact;
 
 use super::parse_id;
 use crate::{ApiError, ApiResult, AppState, Authed};
 
-fn store(s: &AppState) -> ApiResult<&orchestrator::artifacts::ArtifactStore> {
+pub(crate) fn store(s: &AppState) -> ApiResult<&orchestrator::artifacts::ArtifactStore> {
     s.artifacts
         .as_deref()
         .ok_or_else(|| ApiError::new(ErrorCode::Unavailable, "artifact storage is not configured"))
@@ -91,7 +92,6 @@ fn is_labelable_text(content_type: &str, name: &str) -> bool {
 }
 
 /// 下载：解密后返回。按附件下载，避免浏览器把 agent 产出的 HTML 当页面执行。
-/// 产出物是 agent 生成的（16.3）：响应头带隐式标识的元数据，纯文本和 Markdown 末尾加显式标识。
 pub async fn content(
     State(s): State<AppState>,
     Authed(who): Authed,
@@ -102,7 +102,18 @@ pub async fn content(
     let a = t.artifact(id).await?;
     let locale = t.user_locale(who.user).await?;
     t.rollback().await?;
-    let mut bytes = store(&s)?.read(&a).await.map_err(ApiError::internal)?;
+    let bytes = store(&s)?.read(&a).await.map_err(ApiError::internal)?;
+    Ok(download_response(&s, locale, &a, bytes))
+}
+
+/// 下载的响应（私人的和项目的一样）：产出物是 agent 生成的（16.3），响应头带隐式标识的元数据，纯文本和 Markdown
+/// 末尾加显式标识（按下载人的语言）。
+pub(crate) fn download_response(
+    s: &AppState,
+    locale: Locale,
+    a: &StoredArtifact,
+    mut bytes: Vec<u8>,
+) -> Response {
     if s.cfg.label_downloads && is_labelable_text(&a.artifact.content_type, &a.artifact.name) {
         bytes.extend_from_slice(labels::text_footer_in(locale, &s.cfg.content_producer).as_bytes());
     }
@@ -131,7 +142,7 @@ pub async fn content(
             headers.insert("x-aigc", v);
         }
     }
-    Ok(resp)
+    resp
 }
 
 pub async fn delete(

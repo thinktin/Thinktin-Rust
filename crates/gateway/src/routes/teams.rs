@@ -1,17 +1,19 @@
 //! 团队与团队模板（8.1）。8.13 起是单人项目上的一层（`store/src/projects.rs`）：路径、状态码、JSON 都不变；共享过的项目
 //! （8.14 起）只能看，改和删回 409。
 
+use auth::service::Principal;
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use proto::domain::{
-    Team, TeamId, TeamMember, TeamRole, TeamTemplate, TeamTemplateId, TeamTemplateSpec,
-    TemplateMember,
+    ProjectDetail, Team, TeamId, TeamMember, TeamRole, TeamTemplate, TeamTemplateId,
+    TeamTemplateSpec, TemplateMember,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::{check_len, default_scope, parse_id};
+use crate::error::project_error;
 use crate::{ApiError, ApiJson, ApiResult, AppState, Authed};
 
 const MAX_MEMBERS: usize = 12;
@@ -119,8 +121,9 @@ pub async fn templates(State(s): State<AppState>, Authed(who): Authed) -> ApiRes
 #[derive(Deserialize)]
 pub struct TemplateReq {
     name: String,
-    /// 直接给出成员，或者从现有团队生成。
+    /// 直接给出成员，或者从现有团队生成（`/v1/project-templates` 也认 `project_id`）。
     spec: Option<TeamTemplateSpec>,
+    #[serde(alias = "project_id")]
     team_id: Option<TeamId>,
 }
 
@@ -191,6 +194,31 @@ pub async fn adopt_template(
     ApiJson(req): ApiJson<AdoptReq>,
 ) -> ApiResult<(StatusCode, Json<Team>)> {
     let id: TeamTemplateId = parse_id(&id, "template")?;
+    let team = adopt(&s, &who, id, req).await?;
+    Ok((StatusCode::CREATED, Json(team)))
+}
+
+/// `POST /v1/project-templates/{id}/adopt`（8.15）：同一个领养，回的是项目详情。
+pub async fn adopt_project_template(
+    State(s): State<AppState>,
+    Authed(who): Authed,
+    Path(id): Path<String>,
+    ApiJson(req): ApiJson<AdoptReq>,
+) -> ApiResult<(StatusCode, Json<ProjectDetail>)> {
+    let id: TeamTemplateId = parse_id(&id, "template")?;
+    let team = adopt(&s, &who, id, req).await?;
+    let detail = orchestrator::projects::detail(&s.db, who.user, team.id.into())
+        .await
+        .map_err(project_error)?;
+    Ok((StatusCode::CREATED, Json(detail)))
+}
+
+async fn adopt(
+    s: &AppState,
+    who: &Principal,
+    id: TeamTemplateId,
+    req: AdoptReq,
+) -> ApiResult<Team> {
     let max = u64::from(s.limits().config().instances_per_user);
     let mut t = s.db.tenant(who.user).await?;
     let tpl = t.team_template(id).await?;
@@ -212,7 +240,7 @@ pub async fn adopt_template(
             },
         )
         .await?;
-        t.create_run_grant(instance.id, None, &default_scope(&s), s.cfg.grant_ttl)
+        t.create_run_grant(instance.id, None, &default_scope(s), s.cfg.grant_ttl)
             .await?;
         members.push(TeamMember {
             instance_id: instance.id,
@@ -226,5 +254,5 @@ pub async fn adopt_template(
     }
     let team = t.create_team(name.trim(), &members).await?;
     t.commit().await?;
-    Ok((StatusCode::CREATED, Json(team)))
+    Ok(team)
 }

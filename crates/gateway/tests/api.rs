@@ -5011,20 +5011,11 @@ async fn project_link_invite_join_and_exit_over_http() {
             .await
             .contains(&"project_removed".into())
     );
-    // 创建者退不了：409；共享过的项目删不了：409。
+    // 创建者退不了：409（共享过的项目能删，见 `deleting_a_shared_project_over_http`）。
     let (st, _) = a
         .call(
             Method::POST,
             &format!("/v1/projects/{p}/leave"),
-            Some(&alice.access),
-            None,
-        )
-        .await;
-    assert_eq!(st, StatusCode::CONFLICT);
-    let (st, _) = a
-        .call(
-            Method::DELETE,
-            &format!("/v1/projects/{p}"),
             Some(&alice.access),
             None,
         )
@@ -5209,6 +5200,10 @@ async fn outsiders_see_nothing_of_a_project() {
             None,
         ),
         (Method::POST, format!("/v1/projects/{p}/leave"), None),
+        (Method::POST, format!("/v1/projects/{p}/archive"), None),
+        (Method::POST, format!("/v1/projects/{p}/unarchive"), None),
+        (Method::GET, format!("/v1/projects/{p}/runs"), None),
+        (Method::GET, format!("/v1/projects/{p}/artifacts"), None),
         (
             Method::POST,
             format!("/v1/projects/{p}/invites"),
@@ -5233,6 +5228,8 @@ async fn outsiders_see_nothing_of_a_project() {
     for (m, path, body) in [
         (Method::GET, format!("/v1/projects/{p}/invites"), None),
         (Method::DELETE, format!("/v1/projects/{p}"), None),
+        (Method::POST, format!("/v1/projects/{p}/archive"), None),
+        (Method::POST, format!("/v1/projects/{p}/unarchive"), None),
         (
             Method::PATCH,
             format!("/v1/projects/{p}"),
@@ -5401,4 +5398,551 @@ async fn deleting_an_instance_leaves_shared_projects_over_http() {
     .await
     .unwrap();
     assert_eq!(live, 0);
+}
+
+impl Api {
+    async fn user_id(&self, u: &User) -> UserId {
+        let (st, me) = self
+            .call(Method::GET, "/v1/me", Some(&u.access), None)
+            .await;
+        assert_eq!(st, StatusCode::OK, "{me}");
+        me["id"].as_str().unwrap().parse().unwrap()
+    }
+
+    /// `owner` 的 agent 在项目里的一个运行中的运行（8.15 里项目运行还不会被领去执行）：先建私人运行，再用 worker 角色
+    /// 复制进项目（库里只有 worker 写得出项目运行）。
+    async fn project_run(&self, owner: &User, instance: InstanceId, project: &str) -> RunId {
+        let (st, run) = self
+            .call(
+                Method::POST,
+                &format!("/v1/instances/{instance}/runs"),
+                Some(&owner.access),
+                Some(json!({ "prompt": "draft the brief" })),
+            )
+            .await;
+        assert_eq!(st, StatusCode::CREATED, "{run}");
+        let private: RunId = run["id"].as_str().unwrap().parse().unwrap();
+        let project: uuid::Uuid = project.parse::<proto::domain::ProjectId>().unwrap().0;
+        let pool = self.t.db.pool();
+        let cols: Vec<String> = sqlx::query_scalar(
+            "SELECT column_name::text FROM information_schema.columns WHERE table_name = 'runs' \
+               AND column_name NOT IN ('id', 'project_id', 'space_kind', 'space_id') ORDER BY ordinal_position",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        let list = cols.join(", ");
+        let select = cols
+            .iter()
+            .map(|c| if c == "root_run_id" { "$1" } else { c.as_str() })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let id = RunId::new();
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::query("SELECT set_config('role', 'thinktin_worker', true)")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "INSERT INTO runs (id, project_id, {list}) SELECT $1, $2, {select} FROM runs WHERE id = $3"
+        )))
+        .bind(id.0)
+        .bind(project)
+        .bind(private.0)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE runs SET state = 'running', lease_owner = 'w-test', \
+               lease_expires_at = now() + interval '1 hour', tokens_used = 4242 WHERE id = $1",
+        )
+        .bind(id.0)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        id
+    }
+
+    async fn get_raw(&self, path: &str, u: &User) -> reqwest::Response {
+        self.http
+            .get(format!("{}{path}", self.base))
+            .bearer_auth(&u.access)
+            .send()
+            .await
+            .unwrap()
+    }
+
+    /// 两个人的共享项目：alice 建、bob 加入；bob 的 agent 在项目里有一个运行（带事件）和一个产出物。
+    async fn shared_project_with_content(
+        &self,
+        alice: &User,
+        bob: &User,
+        marker: &str,
+    ) -> (String, InstanceId, InstanceId, RunId, String) {
+        let a1 = self.adopt(alice).await;
+        let b1 = self.adopt(bob).await;
+        let p = self.new_project(alice, "Design", a1).await;
+        let (_, token) = self.link_invite(alice, &p).await;
+        let (st, body) = self.join_link(bob, &token, &[b1]).await;
+        assert_eq!(st, StatusCode::CREATED, "{body}");
+        let r = self.project_run(bob, b1, &p).await;
+        let mut w = self.t.db.worker().await.unwrap();
+        for (kind, data) in [
+            ("agent.message", json!({ "text": "draft ready" })),
+            ("agent.thought", json!({ "text": marker })),
+            ("agent.usage", json!({ "tokens": marker })),
+            ("agent.permission_requested", json!({ "title": marker })),
+            (
+                "agent.tool_call",
+                json!({ "tool_call_id": "t1", "kind": "edit", "status": "pending",
+                        "title": marker, "raw": { "secret": marker } }),
+            ),
+        ] {
+            w.append_event(b1, Some(r), kind, &data).await.unwrap();
+        }
+        w.commit().await.unwrap();
+        let published = self
+            .artifacts
+            .publish(
+                Origin {
+                    user: self.user_id(bob).await,
+                    instance: b1,
+                    run: r,
+                    root: r,
+                },
+                "brief.md",
+                "text/markdown",
+                "# Brief\n".as_bytes(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(published.project_id.map(|p| p.to_string()), Some(p.clone()));
+        (p, a1, b1, r, published.artifact.id.to_string())
+    }
+}
+
+fn project_paths(p: &str, r: RunId, art: &str) -> Vec<String> {
+    vec![
+        format!("/v1/projects/{p}"),
+        format!("/v1/projects/{p}/runs"),
+        format!("/v1/projects/{p}/runs/{r}"),
+        format!("/v1/projects/{p}/runs/{r}/tree"),
+        format!("/v1/projects/{p}/runs/{r}/events"),
+        format!("/v1/projects/{p}/artifacts"),
+        format!("/v1/projects/{p}/artifacts/{art}"),
+        format!("/v1/projects/{p}/artifacts/{art}/content"),
+    ]
+}
+
+/// 项目里的内容（8.15）：成员看得到别人的 agent 在项目里的运行、事件、产出物，只有白名单里的字段，响应都不缓存；
+/// 外人全是 404；退出以后自己留下的也全看不到（项目路径、私人路径都一样），留下的人照样看得到，主人显示“已退出”。
+#[tokio::test]
+async fn project_runs_and_artifacts_over_http() {
+    let Some(a) = api().await else { return };
+    let alice = a.named("13800130151", "Alice").await;
+    let bob = a.named("13800130152", "Bob").await;
+    let carol = a.login("13800130153").await;
+    let marker = "SECRET-MARKER";
+    let (p, a1, b1, r, art) = a.shared_project_with_content(&alice, &bob, marker).await;
+    let paths = project_paths(&p, r, &art);
+    // 成员：都是 200，都不缓存，都没有私人的东西。
+    for path in &paths {
+        let resp = a.get_raw(path, &alice).await;
+        assert_eq!(resp.status(), StatusCode::OK, "{path}");
+        assert_eq!(resp.headers()["cache-control"], "no-store", "{path}");
+        let text = resp.text().await.unwrap();
+        assert!(!text.contains(marker), "{path}: {text}");
+    }
+    let (_, runs) = a
+        .call(
+            Method::GET,
+            &format!("/v1/projects/{p}/runs"),
+            Some(&alice.access),
+            None,
+        )
+        .await;
+    let list = runs["runs"].as_array().unwrap();
+    assert_eq!(list.len(), 1, "bob's private run is not listed: {runs}");
+    let run = &list[0];
+    assert_eq!(run["id"], r.to_string());
+    assert_eq!(run["owner"]["display_name"], "Bob");
+    assert_eq!(run["owner"]["status"], "member");
+    assert_eq!(run["mine"], false);
+    assert_eq!(run["state"], "running");
+    for key in [
+        "error",
+        "state_reason",
+        "tokens_used",
+        "wait_code",
+        "budget",
+    ] {
+        assert!(run.get(key).is_none(), "{key}: {run}");
+    }
+    let (_, mine) = a
+        .call(
+            Method::GET,
+            &format!("/v1/projects/{p}/runs/{r}"),
+            Some(&bob.access),
+            None,
+        )
+        .await;
+    assert_eq!(mine["mine"], true);
+    // 按 agent 过滤；查询参数里的 id 格式不对 422。
+    let (_, none) = a
+        .call(
+            Method::GET,
+            &format!("/v1/projects/{p}/runs?instance_id={a1}"),
+            Some(&alice.access),
+            None,
+        )
+        .await;
+    assert_eq!(none["runs"], json!([]));
+    let (st, _) = a
+        .call(
+            Method::GET,
+            &format!("/v1/projects/{p}/runs?instance_id=garbage"),
+            Some(&alice.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+    // 事件：想法、用量、权限请求不给，工具调用只有种类和状态，发布产出物的那条只有 id、名字、版本，没有序号。
+    let (_, events) = a
+        .call(
+            Method::GET,
+            &format!("/v1/projects/{p}/runs/{r}/events"),
+            Some(&alice.access),
+            None,
+        )
+        .await;
+    assert_eq!(events["truncated"], false);
+    assert_eq!(
+        events["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| (e["kind"].as_str().unwrap(), e["data"].clone()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("message", json!({ "text": "draft ready" })),
+            (
+                "tool_call",
+                json!({ "tool_call_id": "t1", "tool_kind": "edit", "status": "pending" })
+            ),
+            (
+                "artifact",
+                json!({ "artifact_id": art, "name": "brief.md", "version": 1 })
+            ),
+        ]
+    );
+    assert!(events["events"][0].get("seq").is_none());
+    // 下载：和私人的一样带标识。
+    let resp = a
+        .get_raw(&format!("/v1/projects/{p}/artifacts/{art}/content"), &alice)
+        .await;
+    assert_eq!(resp.headers()["content-disposition"], "attachment");
+    assert_eq!(resp.headers()["x-content-type-options"], "nosniff");
+    assert!(resp.headers().contains_key("x-aigc"));
+    assert_eq!(
+        resp.text().await.unwrap(),
+        format!("# Brief\n{}", proto::labels::text_footer("ThinkTin"))
+    );
+    let (_, list) = a
+        .call(
+            Method::GET,
+            &format!("/v1/projects/{p}/artifacts"),
+            Some(&alice.access),
+            None,
+        )
+        .await;
+    assert_eq!(list["artifacts"][0]["author"]["display_name"], "Bob");
+    assert_eq!(list["artifacts"][0]["mine"], false);
+    // 主人自己的私人读还在（带着项目 id）。
+    let (st, own) = a
+        .call(
+            Method::GET,
+            &format!("/v1/runs/{r}"),
+            Some(&bob.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{own}");
+    assert_eq!(own["project_id"], p);
+    // 外人：全是 404。
+    for path in &paths {
+        let resp = a.get_raw(path, &carol).await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND, "{path}");
+    }
+    // bob 退出：项目路径、自己的私人路径都读不到。
+    let (st, _) = a
+        .call(
+            Method::POST,
+            &format!("/v1/projects/{p}/leave"),
+            Some(&bob.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    for path in &paths {
+        let resp = a.get_raw(path, &bob).await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND, "{path}");
+    }
+    for (m, path) in [
+        (Method::GET, format!("/v1/runs/{r}")),
+        (Method::GET, format!("/v1/runs/{r}/tree")),
+        (Method::POST, format!("/v1/runs/{r}/cancel")),
+        (Method::GET, format!("/v1/runs/{r}/artifacts")),
+        (Method::GET, format!("/v1/artifacts/{art}")),
+        (Method::GET, format!("/v1/artifacts/{art}/content")),
+        (Method::DELETE, format!("/v1/artifacts/{art}")),
+    ] {
+        let (st, body) = a.call(m.clone(), &path, Some(&bob.access), None).await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "{m} {path}: {body}");
+    }
+    let (_, ev) = a
+        .call(
+            Method::GET,
+            &format!("/v1/instances/{b1}/events"),
+            Some(&bob.access),
+            None,
+        )
+        .await;
+    assert!(!ev.to_string().contains("draft ready"), "{ev}");
+    // 留下的 alice 照样看得到 bob 留下的，主人显示已退出；运行停了。
+    let (_, run) = a
+        .call(
+            Method::GET,
+            &format!("/v1/projects/{p}/runs/{r}"),
+            Some(&alice.access),
+            None,
+        )
+        .await;
+    assert_eq!(run["owner"]["status"], "left", "{run}");
+    assert_eq!(run["state"], "cancelled", "{run}");
+    let resp = a
+        .get_raw(&format!("/v1/projects/{p}/artifacts/{art}/content"), &alice)
+        .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+/// 删共享过的项目（8.15）：只有创建者，马上谁都读不到（产出物也下载不了），还在的成员收到 `project_deleted`；删过的
+/// 再删 404。
+#[tokio::test]
+async fn deleting_a_shared_project_over_http() {
+    let Some(a) = api().await else { return };
+    let alice = a.named("13800130161", "Alice").await;
+    let bob = a.named("13800130162", "Bob").await;
+    let carol = a.login("13800130163").await;
+    let (p, _, _, r, art) = a.shared_project_with_content(&alice, &bob, "x").await;
+    let path = format!("/v1/projects/{p}");
+    let (st, _) = a.call(Method::DELETE, &path, Some(&bob.access), None).await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    let (st, _) = a
+        .call(Method::DELETE, &path, Some(&carol.access), None)
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (st, body) = a
+        .call(Method::DELETE, &path, Some(&alice.access), None)
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT, "{body}");
+    assert!(
+        a.inbox_subtypes(&bob)
+            .await
+            .contains(&"project_deleted".into())
+    );
+    for u in [&alice, &bob] {
+        for path in project_paths(&p, r, &art) {
+            let resp = a.get_raw(&path, u).await;
+            assert_eq!(resp.status(), StatusCode::NOT_FOUND, "{path}");
+        }
+        let (_, list) = a
+            .call(Method::GET, "/v1/projects", Some(&u.access), None)
+            .await;
+        assert_eq!(list["projects"], json!([]), "{list}");
+    }
+    let (st, _) = a
+        .call(Method::DELETE, &path, Some(&alice.access), None)
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+}
+
+/// 归档（8.15）：只有创建者（成员 403、外人 404）；归档了还在列表里，只能看不能改；取消归档以后又能改。
+#[tokio::test]
+async fn archive_and_unarchive_over_http() {
+    let Some(a) = api().await else { return };
+    let alice = a.named("13800130171", "Alice").await;
+    let bob = a.named("13800130172", "Bob").await;
+    let carol = a.login("13800130173").await;
+    let (p, _, _, r, _) = a.shared_project_with_content(&alice, &bob, "x").await;
+    let archive = format!("/v1/projects/{p}/archive");
+    let unarchive = format!("/v1/projects/{p}/unarchive");
+    let (st, _) = a
+        .call(Method::POST, &archive, Some(&bob.access), None)
+        .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    let (st, _) = a
+        .call(Method::POST, &archive, Some(&carol.access), None)
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    for _ in 0..2 {
+        let (st, d) = a
+            .call(Method::POST, &archive, Some(&alice.access), None)
+            .await;
+        assert_eq!(
+            (st, d["status"].as_str()),
+            (StatusCode::OK, Some("archived")),
+            "{d}"
+        );
+    }
+    for u in [&alice, &bob] {
+        let (_, list) = a
+            .call(Method::GET, "/v1/projects", Some(&u.access), None)
+            .await;
+        assert_eq!(list["projects"][0]["status"], "archived", "{list}");
+    }
+    // 只能看：运行还在（停了），改名、发邀请都不行。
+    let (st, run) = a
+        .call(
+            Method::GET,
+            &format!("/v1/projects/{p}/runs/{r}"),
+            Some(&bob.access),
+            None,
+        )
+        .await;
+    assert_eq!(
+        (st, run["state"].as_str()),
+        (StatusCode::OK, Some("cancelled"))
+    );
+    let (st, _) = a
+        .call(
+            Method::PATCH,
+            &format!("/v1/projects/{p}"),
+            Some(&alice.access),
+            Some(json!({ "name": "renamed" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (st, _) = a
+        .call(
+            Method::POST,
+            &format!("/v1/projects/{p}/invites"),
+            Some(&alice.access),
+            Some(json!({ "link": true })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (st, _) = a
+        .call(Method::POST, &unarchive, Some(&bob.access), None)
+        .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    let (st, d) = a
+        .call(Method::POST, &unarchive, Some(&alice.access), None)
+        .await;
+    assert_eq!(
+        (st, d["status"].as_str()),
+        (StatusCode::OK, Some("active")),
+        "{d}"
+    );
+    let (st, d) = a
+        .call(
+            Method::PATCH,
+            &format!("/v1/projects/{p}"),
+            Some(&alice.access),
+            Some(json!({ "name": "renamed" })),
+        )
+        .await;
+    assert_eq!(
+        (st, d["name"].as_str()),
+        (StatusCode::OK, Some("renamed")),
+        "{d}"
+    );
+}
+
+/// 项目模板（8.15）：`/v1/project-templates` 和团队模板是同一张表；领养回 201 和项目详情。
+#[tokio::test]
+async fn project_templates_alias_over_http() {
+    let Some(a) = api().await else { return };
+    let alice = a.named("13800130181", "Alice").await;
+    let a1 = a.adopt(&alice).await;
+    let p = a.new_project(&alice, "Design", a1).await;
+    let (st, from_project) = a
+        .call(
+            Method::POST,
+            "/v1/project-templates",
+            Some(&alice.access),
+            Some(json!({ "name": "From project", "project_id": p })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{from_project}");
+    let (st, tpl) = a
+        .call(
+            Method::POST,
+            "/v1/project-templates",
+            Some(&alice.access),
+            Some(json!({
+                "name": "Writers",
+                "spec": { "members": [{ "agent_id": "claude", "name": "Lead", "role": "lead" }] }
+            })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{tpl}");
+    let id = tpl["id"].as_str().unwrap();
+    for path in ["/v1/project-templates", "/v1/team-templates"] {
+        let (_, list) = a.call(Method::GET, path, Some(&alice.access), None).await;
+        assert_eq!(
+            list["templates"].as_array().unwrap().len(),
+            2,
+            "{path}: {list}"
+        );
+    }
+    let (st, d) = a
+        .call(
+            Method::POST,
+            &format!("/v1/project-templates/{id}/adopt"),
+            Some(&alice.access),
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{d}");
+    assert_eq!(d["name"], "Writers");
+    assert_eq!(d["role"], "creator");
+    assert_eq!(d["agents"].as_array().unwrap().len(), 1, "{d}");
+    let resp = a.get_raw("/v1/project-templates", &alice).await;
+    assert_eq!(resp.headers()["cache-control"], "no-store");
+    let (st, _) = a
+        .call(
+            Method::DELETE,
+            &format!("/v1/project-templates/{id}"),
+            Some(&alice.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let (_, list) = a
+        .call(Method::GET, "/v1/team-templates", Some(&alice.access), None)
+        .await;
+    assert_eq!(list["templates"].as_array().unwrap().len(), 1, "{list}");
+}
+
+/// 库里拒绝了成员读（权限配错了）：对外 404，不是 500，也不说项目在不在。
+#[tokio::test]
+async fn forbidden_is_404_on_project_paths() {
+    let Some(a) = api().await else { return };
+    let alice = a.named("13800130191", "Alice").await;
+    let a1 = a.adopt(&alice).await;
+    let p = a.new_project(&alice, "Design", a1).await;
+    let owner = a.t.owner_db().await;
+    sqlx::query("REVOKE SELECT ON projects FROM thinktin_member")
+        .execute(owner.pool())
+        .await
+        .unwrap();
+    for path in [
+        format!("/v1/projects/{p}"),
+        format!("/v1/projects/{p}/runs"),
+    ] {
+        let (st, body) = a.call(Method::GET, &path, Some(&alice.access), None).await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "{path}: {body}");
+        assert_eq!(body["code"], "not_found");
+    }
 }

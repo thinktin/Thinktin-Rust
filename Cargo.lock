@@ -2008,6 +2008,8 @@ dependencies = [
  "control",
  "futures-util",
  "keyvault",
+ "metrics",
+ "metrics-exporter-prometheus",
  "notify",
  "orchestrator",
  "proto",

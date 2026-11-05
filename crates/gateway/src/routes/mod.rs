@@ -14,6 +14,7 @@ mod inbox;
 mod instances;
 mod plans;
 mod project_invites;
+mod project_runs;
 mod projects;
 mod reports;
 mod runs;
@@ -23,6 +24,8 @@ mod vault;
 mod vendors;
 
 use axum::Router;
+use axum::http::{HeaderValue, header};
+use axum::response::Response;
 use axum::routing::{delete, get, patch, post, put};
 use proto::domain::GrantScope;
 
@@ -169,7 +172,36 @@ pub fn router() -> Router<AppState> {
         )
         .route("/v1/team-templates/{id}", delete(teams::delete_template))
         .route("/v1/team-templates/{id}/adopt", post(teams::adopt_template))
-        // 项目、邀请与加入（8.14）
+        // 产出物（8.4）
+        .route("/v1/instances/{id}/artifacts", get(artifacts::for_instance))
+        .route("/v1/runs/{id}/artifacts", get(artifacts::for_run))
+        .route(
+            "/v1/artifacts/{id}",
+            get(artifacts::get).delete(artifacts::delete),
+        )
+        .route("/v1/artifacts/{id}/content", get(artifacts::content))
+        // 用量看板（9.10）
+        .route("/v1/usage", get(usage::summary))
+        // 收件箱（10.4）
+        .route("/v1/inbox", get(inbox::list))
+        .route("/v1/inbox/read", post(inbox::mark_read))
+        .route("/v1/inbox/{id}", get(inbox::get).delete(inbox::delete))
+        .route("/v1/inbox/{id}/unread", post(inbox::mark_unread))
+        // 共享看板（8.10）
+        .route("/v1/board", get(board::list).post(board::create))
+        .route("/v1/board/{id}", delete(board::delete))
+        .route("/v1/board/{id}/archive", post(board::archive))
+        .route("/v1/board/{id}/unarchive", post(board::unarchive))
+        // 事件流（5.2、5.3）
+        .route("/v1/instances/{id}/events", get(events::page))
+        .route("/v1/instances/{id}/events/ws", get(events::stream))
+        .merge(projects_router())
+}
+
+/// 项目、邀请与加入（8.14）、项目里的内容（8.15）：别人能看到的东西，响应一律不缓存（`Cache-Control: no-store`），
+/// 离开、被移出之后设备上的缓存里也不留。
+fn projects_router() -> Router<AppState> {
+    Router::new()
         .route("/v1/projects", get(projects::list).post(projects::create))
         .route(
             "/v1/projects/{id}",
@@ -177,6 +209,8 @@ pub fn router() -> Router<AppState> {
                 .patch(projects::update)
                 .delete(projects::delete),
         )
+        .route("/v1/projects/{id}/archive", post(projects::archive))
+        .route("/v1/projects/{id}/unarchive", post(projects::unarchive))
         .route("/v1/projects/{id}/agents", post(projects::add_agents))
         .route(
             "/v1/projects/{id}/agents/{instance_id}",
@@ -195,6 +229,35 @@ pub fn router() -> Router<AppState> {
         .route(
             "/v1/projects/{id}/invites/{invite_id}",
             delete(projects::revoke_invite),
+        )
+        .route("/v1/projects/{id}/runs", get(project_runs::runs))
+        .route("/v1/projects/{id}/runs/{run_id}", get(project_runs::run))
+        .route(
+            "/v1/projects/{id}/runs/{run_id}/tree",
+            get(project_runs::tree),
+        )
+        .route(
+            "/v1/projects/{id}/runs/{run_id}/events",
+            get(project_runs::events),
+        )
+        .route("/v1/projects/{id}/artifacts", get(project_runs::artifacts))
+        .route(
+            "/v1/projects/{id}/artifacts/{artifact_id}",
+            get(project_runs::artifact),
+        )
+        .route(
+            "/v1/projects/{id}/artifacts/{artifact_id}/content",
+            get(project_runs::content),
+        )
+        // 团队模板的新名字（8.15）：同一张表，领养回项目详情。
+        .route(
+            "/v1/project-templates",
+            get(teams::templates).post(teams::create_template),
+        )
+        .route("/v1/project-templates/{id}", delete(teams::delete_template))
+        .route(
+            "/v1/project-templates/{id}/adopt",
+            post(teams::adopt_project_template),
         )
         .route("/v1/project-invites", get(project_invites::mine))
         .route(
@@ -219,29 +282,13 @@ pub fn router() -> Router<AppState> {
             "/v1/blocks/{user_id}",
             put(project_invites::block).delete(project_invites::unblock),
         )
-        // 产出物（8.4）
-        .route("/v1/instances/{id}/artifacts", get(artifacts::for_instance))
-        .route("/v1/runs/{id}/artifacts", get(artifacts::for_run))
-        .route(
-            "/v1/artifacts/{id}",
-            get(artifacts::get).delete(artifacts::delete),
-        )
-        .route("/v1/artifacts/{id}/content", get(artifacts::content))
-        // 用量看板（9.10）
-        .route("/v1/usage", get(usage::summary))
-        // 收件箱（10.4）
-        .route("/v1/inbox", get(inbox::list))
-        .route("/v1/inbox/read", post(inbox::mark_read))
-        .route("/v1/inbox/{id}", get(inbox::get).delete(inbox::delete))
-        .route("/v1/inbox/{id}/unread", post(inbox::mark_unread))
-        // 共享看板（8.10）
-        .route("/v1/board", get(board::list).post(board::create))
-        .route("/v1/board/{id}", delete(board::delete))
-        .route("/v1/board/{id}/archive", post(board::archive))
-        .route("/v1/board/{id}/unarchive", post(board::unarchive))
-        // 事件流（5.2、5.3）
-        .route("/v1/instances/{id}/events", get(events::page))
-        .route("/v1/instances/{id}/events/ws", get(events::stream))
+        .layer(axum::middleware::map_response(no_store))
+}
+
+async fn no_store(mut resp: Response) -> Response {
+    resp.headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    resp
 }
 
 /// 新签发的运行授权的范围（领养实例、新建计划、“全部停止”之后重新签发）。
