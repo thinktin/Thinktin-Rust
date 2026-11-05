@@ -79,7 +79,7 @@ struct PrimaryBotinTests {
 
     @Test("文案：参考 11 的空状态、搜索、确认；资料页菜单里是“替换主 Botin…”")
     func text() {
-        #expect(ConversationText.noOtherBotins(.chinese) == "暂无其他可选的 Botin")
+        #expect(ConversationText.noOtherBotins(.chinese) == "没有别的 Botin 可选")
         #expect(ConversationText.searchBotins(.chinese) == "搜索 Botin")
         #expect(ConversationText.confirm(.english) == "Confirm")
         #expect(ConversationText.primaryBotin(.chinese) == "主 Botin")

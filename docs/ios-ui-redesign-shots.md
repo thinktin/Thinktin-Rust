@@ -4,7 +4,7 @@
 
 - 怎么出图：GitHub 上推到 `ios-screenshots` 分支（`git push -f origin HEAD:ios-screenshots`）或手动跑 iOS screenshots，
   产物 `ios-screenshots`；Codemagic 推到 `codemagic/ios-screenshots`。旧系统的回退见规范 7.6 第 3 条。
-- 文件名 `NN-名字-light.png` / `-dark.png`。“外观”一列：浅深是浅色、深色各一张，浅是只有浅色（一共 69 张）。编号定了不改，新页面往后加。
+- 文件名 `NN-名字-light.png` / `-dark.png`。“外观”一列：浅深是浅色、深色各一张，浅是只有浅色（一共 70 张）。编号定了不改，新页面往后加。
 - 参考截图（120 张，2026-11-01）不在仓库里，编号就是文件名开头的数字（`01-Bot列表.jpg` 是 1）。“无”是参考里没有的 ThinkTin 页面，
   看它和改版的页面是不是一套样子（规范第 2 节）。
 - 怎么打开见脚本里的清单（`THINKTIN_OPEN_SCREEN` 的值、深链）；Botin 的页面都是演示数据首页第一个 Botin “写作助手”的。
@@ -35,6 +35,7 @@
 | 29-botin-edit | 浅 | 12（语音、速度、语言三行的值；展开的菜单 13–17、85–88 要点开） | 4.4.3 |
 | 30-botin-avatar（形状和颜色） | 浅 | 18 | 4.4.4 |
 | 32-primary-botin | 浅 | 11 | 4.4.5 |
+| 52-primary-botin-empty（新账号，没有可选的 Botin） | 浅 | 11（空状态） | 4.4.5 |
 | 17-new-task（新任务选 Botin） | 浅 | 11 的版式 | 4.4.5 |
 | 31-workspace | 浅 | 65 的版式（资料页“电脑”行的位置） | 4.6.1 |
 | 20-instance-screen（观看与接管，演示画面） | 浅深 | 27、29 | 4.6.2 |

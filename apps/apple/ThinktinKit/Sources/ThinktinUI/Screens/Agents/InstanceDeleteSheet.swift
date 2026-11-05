@@ -167,7 +167,7 @@ struct InstanceDeletionImpactView: View {
                     detail: zh ? "正在跑的、排队的、等审批的都会取消。" : "Running, queued and waiting tasks are cancelled.",
                     detailTone: .waiting)
             } header: {
-                Text(zh ? "会停掉" : "Will be stopped").textCase(nil)
+                Text(zh ? "会停掉" : "Will be stopped").groupHeader()
             }
             .themedRow()
         }
@@ -188,7 +188,7 @@ struct InstanceDeletionImpactView: View {
                 title: zh ? "沙箱、工作区和对话记录" : "The sandbox, its workspace and chat history",
                 detail: zh ? "模型路由也会一起删掉；你的模型 key 不受影响。" : "Its model routes go too; your model keys stay.")
         } header: {
-            Text(zh ? "会一起删掉" : "Will be deleted").textCase(nil)
+            Text(zh ? "会一起删掉" : "Will be deleted").groupHeader()
         }
         .themedRow()
 
@@ -198,7 +198,7 @@ struct InstanceDeletionImpactView: View {
                     InstancePipelineImpactRow(pipeline: pipeline)
                 }
             } header: {
-                Text(zh ? "这些流水线有步骤在它上面" : "Pipelines with steps on it").textCase(nil)
+                Text(zh ? "这些流水线有步骤在它上面" : "Pipelines with steps on it").groupHeader()
             }
             .themedRow()
         }
@@ -211,7 +211,7 @@ struct InstanceDeletionImpactView: View {
                         detailTone: team.isLead || team.remainingMembers == 0 ? .waiting : nil)
                 }
             } header: {
-                Text(zh ? "会从这些团队里移除" : "Will be removed from these teams").textCase(nil)
+                Text(zh ? "会从这些团队里移除" : "Will be removed from these teams").groupHeader()
             }
             .themedRow()
         }

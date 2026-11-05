@@ -132,8 +132,8 @@ public enum InstanceScreenText {
     /// 工作区页那一行下面的灰字。
     public static func entryDetail(_ language: DisplayLanguage = .current) -> String {
         language == .chinese
-            ? "看 Botin 在云端桌面上做什么，需要时接管控制。"
-            : "See what the Botin is doing on its cloud desktop, and take control when needed."
+            ? "看它在云端桌面上做什么，随时接管。"
+            : "Watch its cloud desktop and take control."
     }
 
     public static func connecting(_ language: DisplayLanguage = .current) -> String {

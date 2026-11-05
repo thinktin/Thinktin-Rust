@@ -164,6 +164,8 @@ struct PlanTriggerRow: View {
                     }
                     if let onDelete {
                         Button(zh ? "删除" : "Delete", role: .destructive, action: onDelete)
+                            // 写在样式前面：次按钮默认是中性色（`glassButtonStyle`），删除要红色。
+                            .tint(StatusTone.failure.color)
                             .smallCapsuleButton()
                             .disabled(!canEdit)
                     }

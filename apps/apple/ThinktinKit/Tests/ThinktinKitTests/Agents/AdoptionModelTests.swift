@@ -64,6 +64,19 @@ struct AdoptionModelTests {
         #expect(model.nameNote(.english) == NameNote(text: "Names can be up to 64 characters.", isProblem: true))
     }
 
+    @Test("编辑 Botin 的名字也用这条规则，平时不写脚注；名字删空了要说（本来有名字）")
+    func editNameNote() {
+        #expect(AdoptionModel.nameNote(for: "写作助手", hidesUntouchedEmpty: false, language: .chinese) == nil)
+        #expect(
+            AdoptionModel.nameNote(for: "", hidesUntouchedEmpty: false, language: .chinese)
+                == NameNote(text: "起个名字吧。", isProblem: true))
+        #expect(AdoptionModel.nameNote(for: "", language: .chinese) == nil)
+        let nearLimit = String(repeating: "长", count: InstanceNameRule.maxLength - AdoptionModel.nameHintThreshold + 1)
+        #expect(
+            AdoptionModel.nameNote(for: nearLimit, hidesUntouchedEmpty: false, language: .chinese)
+                == NameNote(text: NewBotinText.nameHint(.chinese), isProblem: false))
+    }
+
     @Test("名字不对、没有引擎时不能提交，也不发请求")
     func invalidInput() async {
         let mock = AgentsFixture.mock()
@@ -423,7 +436,7 @@ struct AdoptionModelTests {
         #expect(codexNote.contains("sandbox"))
         #expect(!codexNote.contains("agree"))
         #expect(NewBotinText.nameHint(.chinese).contains("64"))
-        #expect(NewBotinText.namePrompt(.chinese) == "给 Botin 取个名字")
+        #expect(NewBotinText.namePrompt(.chinese) == "起个名字")
         #expect(NewBotinText.namePrompt(.english) == "Name your Botin")
         // 按钮、转圈的读屏、脚注都说“新建”，和标题“新建 Botin”一致。
         #expect(NewBotinText.create(.chinese) == "新建" && NewBotinText.create(.english) == "Create")

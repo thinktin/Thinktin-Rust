@@ -14,7 +14,8 @@ enum AgentDetailAction: Hashable {
 /// 引擎详情（代码里是 agent 详情；规范 4.8.3 的插件详情版式，参考 105、106、107、52）：引擎目录点行弹的 medium / large sheet；
 /// `.agent(id)` 路由（压栈）也是这个页面。
 ///
-/// - 左上 ×（sheet 时）；居中 56pt 圆角方块图标、名字（`.title2.bold()`）、出处；下面一段灰字介绍（参考的说明段落）；
+/// - 没有标题（参考 38、52，`hiddenInlineNavigationTitle`）；左上 ×（sheet 时）；头部紧贴着导航栏（参考的图标和 × 差不多
+///   一样高）：居中 56pt 圆角方块图标、名字（`.title2.bold()`）、出处；下面一段 `.subheadline` 灰字介绍（参考的说明段落）；
 /// - 分组（参考“账户”那一组的位置）：许可证（和上游仓库）、接入方式、版本、模型接口、能用的地区、在用它的 Botin；
 /// - 底部居中的胶囊主按钮“用它新建 Botin”（参考“连接”，浮在内容上，medium 档也看得到；离线灰掉）。
 ///   在新建表单里打开的（“了解引擎”→ 目录 → 详情）点了回到那张表单、换成这个引擎（`Router.engineRequest`），不叠第二张。
@@ -73,6 +74,7 @@ private struct AgentDetailContent: View {
             }
         }
         .insetGroupedList()
+        .compactGroupedList(top: 0)
         .themedGroupedBackground()
         .overlay { placeholder }
         .floatingBar(edge: .bottom) {
@@ -80,10 +82,10 @@ private struct AgentDetailContent: View {
                 createButton(agent)
             }
         }
-        .inlineNavigationTitle(model.agent == nil ? AppRoute.agent(model.agentID).title(language) : model.displayName) {
-            // 参考的详情 sheet 没有标题（头部已经有名字）。
-            EmptyView()
-        }
+        // 参考 38、52 的详情 sheet 没有标题（头部已经有名字）。
+        .hiddenInlineNavigationTitle(
+            model.agent == nil ? AppRoute.agent(model.agentID).title(language) : model.displayName
+        )
         .toolbar {
             if onAction != nil {
                 ToolbarItem(placement: .cancellationAction) {
@@ -185,7 +187,7 @@ private struct AgentDetailSections: View {
                 }
                 if !agent.description.isEmpty {
                     Text(agent.description)
-                        .typography(.body)
+                        .typography(.subheadline)
                         .foregroundStyle(Theme.inkSecondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .fixedSize(horizontal: false, vertical: true)
@@ -206,7 +208,7 @@ private struct AgentDetailSections: View {
                         ? (zh ? "默认" : "Default") : nil)
             }
         } header: {
-            Text(zh ? "接入方式" : "How it runs").textCase(nil)
+            Text(zh ? "接入方式" : "How it runs").groupHeader()
         }
         .themedRow()
 
@@ -216,7 +218,7 @@ private struct AgentDetailSections: View {
                 zh ? "可用版本" : "Available",
                 value: AgentsText.list(agent.catalogVersions.map(AgentsText.versionLabel), language: language))
         } header: {
-            Text(zh ? "版本" : "Versions").textCase(nil)
+            Text(zh ? "版本" : "Versions").groupHeader()
         } footer: {
             Text(
                 zh
@@ -233,7 +235,7 @@ private struct AgentDetailSections: View {
                     AgentsText.list(agent.sites.map { AgentsText.siteName($0, language: language) }, language: language)
                 )
             } header: {
-                Text(zh ? "能用的地区" : "Available in").textCase(nil)
+                Text(zh ? "能用的地区" : "Available in").groupHeader()
             }
             .themedRow()
         }
@@ -266,7 +268,7 @@ private struct AgentDetailSections: View {
                     .buttonStyle(.plain)
                 }
             } header: {
-                Text(zh ? "在用它的 Botin" : "Botins using it").textCase(nil)
+                Text(zh ? "在用它的 Botin" : "Botins using it").groupHeader()
             }
             .themedRow()
         }
@@ -293,7 +295,7 @@ private struct AgentDetailSections: View {
                 .accessibilityHint(Text(zh ? "在浏览器里打开" : "Opens in your browser"))
             }
         } header: {
-            Text(zh ? "许可证" : "License").textCase(nil)
+            Text(zh ? "许可证" : "License").groupHeader()
         }
         .themedRow()
     }
@@ -306,7 +308,7 @@ private struct AgentDetailSections: View {
             Section {
                 Text(AgentsText.list(needed.map(AgentsText.protocolName), language: language))
             } header: {
-                Text(zh ? "模型接口" : "Model API").textCase(nil)
+                Text(zh ? "模型接口" : "Model API").groupHeader()
             } footer: {
                 Text(
                     zh

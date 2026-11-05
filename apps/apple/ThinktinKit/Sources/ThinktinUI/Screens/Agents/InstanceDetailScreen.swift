@@ -6,7 +6,8 @@ import ThinktinKit
 ///
 /// - 头部：头像（右下状态角标，主 Botin 是星标）、名字、玻璃小胶囊“编辑”（压进 `InstanceEditScreen`：名字、头像）；
 /// - 第一组：计划（“N 个生效”，进这个 Botin 的计划）、产出物、工作区（值是状态，进 `InstanceWorkspaceScreen`：状态说明、
-///   升级 / 回滚）；
+///   升级 / 回滚）；行首是细的中性灰图标（`RowLabel`，参考 09）；
+/// - “通知”开关（参考 09 的第二组）：按 Botin 开关推送要后端（6.14 A），现在显示系统的通知权限、不能拨，脚注说即将推出；
 /// - 默认模型（main 指向的上游模型，没配时警告色“未配置”，进模型路由）；
 /// - 所在团队（每个团队一行）；信息（引擎和版本、接入方式、创建于、最近活动）；
 /// - 右上只有“…”一个玻璃圆（复制 Botin ID；模型路由、新建计划；删除，`InstanceProfileMenu`）：参考旁边那个是分享，
@@ -14,7 +15,6 @@ import ThinktinKit
 ///   二次确认后再删。
 ///
 /// 页面的离线策略是“有缓存”：离线时照样显示缓存里的 Botin，改名、换版本、删除、新建计划都禁用（头像只存在这台设备上，照样能改）。
-/// 参考的“通知”开关等后端（6.14）。
 struct InstanceDetailScreen: View {
     let instanceID: InstanceID
 
@@ -36,6 +36,11 @@ private struct InstanceDetailContent: View {
     @State private var isConfirmingDeletion = false
     /// 复制了几次 id（成功触感的触发器）。
     @State private var copies = 0
+    /// 系统的通知权限（“通知”那一行的开关跟着它）；还没读到为 nil。
+    @State private var notificationPermission: NotificationPermission?
+
+    @Environment(\.notificationPermissionReader) private var notificationReader
+    @Environment(\.scenePhase) private var scenePhase
 
     @Environment(AppModel.self) private var app
     @Environment(Router.self) private var router
@@ -72,18 +77,18 @@ private struct InstanceDetailContent: View {
                     }
                 }
                 workSection(instance)
+                notificationSection
                 modelSection(instance)
                 teamSection
                 infoSection(instance)
             }
         }
         .insetGroupedList()
+        .compactGroupedList()
         .themedGroupedBackground()
         .overlay { placeholder }
-        .inlineNavigationTitle(model.instance?.name ?? AppRoute.instance(model.instanceID).title(language)) {
-            // 参考 09 没有标题（头部已经有名字），导航栏中间空着；返回按钮的长按菜单照样写名字。
-            EmptyView()
-        }
+        // 参考 09 没有标题（头部已经有名字），导航栏中间空着；返回按钮的长按菜单照样写名字。
+        .hiddenInlineNavigationTitle(model.instance?.name ?? AppRoute.instance(model.instanceID).title(language))
         .toolbar {
             if model.instance != nil && !model.isMissing {
                 ToolbarItem(placement: ToolbarSlot.trailing) {
@@ -102,6 +107,14 @@ private struct InstanceDetailContent: View {
         .onSubpageRequest(.workspace, when: model.instance != nil) { isShowingWorkspace = true }
         .refreshable { await model.load() }
         .task { await model.load() }
+        .task { notificationPermission = await notificationReader.currentPermission() }
+        .onChange(of: scenePhase) {
+            // 从系统设置回来：通知权限可能改了。
+            if scenePhase == .active {
+                let reader = notificationReader
+                Task { notificationPermission = await reader.currentPermission() }
+            }
+        }
         .onChange(of: app.isOffline) {
             if !app.isOffline { Task { await model.load() } }
         }
@@ -165,6 +178,7 @@ private struct InstanceDetailContent: View {
             Label(language == .chinese ? "更多操作" : "More", systemImage: "ellipsis")
                 .labelStyle(.iconOnly)
         }
+        .neutralTint()
     }
 
     private func perform(_ item: InstanceProfileMenuItem) {
@@ -192,11 +206,11 @@ private struct InstanceDetailContent: View {
                                 active: active, awaiting: model.plansAwaitingConfirmation, language: language))
                     }
                 } label: {
-                    Label(InstanceProfileText.plans(language), systemImage: "clock")
+                    RowLabel(InstanceProfileText.plans(language), systemImage: "clock")
                 }
             }
             NavigationLink(value: AppRoute.artifacts(instanceID: instance.id)) {
-                Label(InstanceProfileText.artifacts(language), systemImage: "folder")
+                RowLabel(InstanceProfileText.artifacts(language), systemImage: "folder")
             }
             NavigationLink {
                 InstanceWorkspaceScreen(model: model)
@@ -204,9 +218,24 @@ private struct InstanceDetailContent: View {
                 LabeledContent {
                     Text(instance.state.localizedName(language))
                 } label: {
-                    Label(InstanceProfileText.workspace(language), systemImage: "desktopcomputer")
+                    // 空心的显示器（参考 09）；`desktopcomputer` 画出来是实心的一体机，比别的图标重。
+                    RowLabel(InstanceProfileText.workspace(language), systemImage: "display")
                 }
             }
+        }
+        .themedRow()
+    }
+
+    /// “通知”（参考 09 的第二组）：开关显示系统的通知权限能不能送到，不能拨（按 Botin 开关要后端，6.14 A）。
+    private var notificationSection: some View {
+        Section {
+            Toggle(
+                InstanceProfileText.notifications(language),
+                isOn: .constant(notificationPermission?.canDeliver ?? false)
+            )
+            .disabled(true)
+        } footer: {
+            Text(InstanceProfileText.notificationsFooter(language))
         }
         .themedRow()
     }
@@ -223,7 +252,7 @@ private struct InstanceDetailContent: View {
                             .lineLimit(1)
                     }
                 } label: {
-                    Label(InstanceProfileText.defaultModel(language), systemImage: "cpu")
+                    RowLabel(InstanceProfileText.defaultModel(language), systemImage: "cpu")
                 }
             }
         } footer: {
@@ -244,13 +273,13 @@ private struct InstanceDetailContent: View {
                         LabeledContent {
                             Text(model.role(in: team) == .lead ? (zh ? "负责人" : "Lead") : (zh ? "成员" : "Member"))
                         } label: {
-                            Label(team.name, systemImage: "person.3")
+                            RowLabel(team.name, systemImage: "person.3")
                         }
                     }
                 }
             } header: {
                 Text(InstanceProfileText.teamsSection(language))
-                    .textCase(nil)
+                    .groupHeader()
             }
             .themedRow()
         }
@@ -269,7 +298,7 @@ private struct InstanceDetailContent: View {
                 zh ? "最近活动" : "Last active", value: Formatting.relativeTime(instance.lastActiveAt, language: language))
         } header: {
             Text(InstanceProfileText.infoSection(language))
-                .textCase(nil)
+                .groupHeader()
         }
         .themedRow()
     }
@@ -296,7 +325,8 @@ extension InstanceDetailScreen {
     }
 }
 
-/// 头部（参考 09、10）：居中的头像（右下状态角标，主 Botin 是星标）、名字、玻璃小胶囊“编辑”。
+/// 头部（参考 09、10）：居中的头像（右下状态角标，主 Botin 是星标）、名字、玻璃小胶囊“编辑”（次按钮，中性色的字）。
+/// 下面留 16pt：这一行贴边（`clearListRow`），“编辑”的玻璃阴影要画在行里面，不然被行的下边切掉一截。
 private struct ProfileHeader: View {
     let instance: Instance
     /// 新建、改头像时挑的形状和颜色（`AppModel.appearances`）。
@@ -325,7 +355,8 @@ private struct ProfileHeader: View {
                 .accessibilityHint(Text(language == .chinese ? "改名字和头像" : "Change the name and avatar"))
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, Metrics.Spacing.s)
+        .padding(.top, Metrics.Spacing.xs)
+        .padding(.bottom, Metrics.Spacing.m)
     }
 }
 

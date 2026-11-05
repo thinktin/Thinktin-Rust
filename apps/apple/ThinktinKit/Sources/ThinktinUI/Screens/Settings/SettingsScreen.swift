@@ -89,10 +89,8 @@ private struct SettingsContent: View {
         }
         .insetGroupedList()
         .themedGroupedBackground()
-        .inlineNavigationTitle(AppRoute.settings.title(language)) {
-            // 参考 53 没有标题；返回按钮的长按菜单照样写“设置”。
-            EmptyView()
-        }
+        // 参考 53 没有标题；返回按钮的长按菜单照样写“设置”。
+        .hiddenInlineNavigationTitle(AppRoute.settings.title(language))
         .task { await model.refresh() }
         .navigationDestination(item: $displayPage) { page in
             displayPageView(page)

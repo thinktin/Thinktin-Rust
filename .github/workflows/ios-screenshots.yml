@@ -31,7 +31,7 @@ jobs:
   screenshots:
     name: Screenshots on the iPhone simulator
     runs-on: macos-26
-    # 69 张图（每张重新启动 App、等 7 秒）十分钟左右，加上打 ThinktinCore、编 App；要下载旧版本的模拟器运行时时多十几分钟。
+    # 70 张图（每张重新启动 App、等 7 秒）十分钟左右，加上打 ThinktinCore、编 App；要下载旧版本的模拟器运行时时多十几分钟。
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4

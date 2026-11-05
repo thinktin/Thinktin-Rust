@@ -109,6 +109,19 @@ public enum InstanceProfileText {
     public static func teamsSection(_ language: DisplayLanguage = .current) -> String {
         language == .chinese ? "所在团队" : "Teams"
     }
+
+    /// 第二组“通知”开关（参考 09 的位置）。按 Botin 开关推送要后端（规范 6.14 A），现在开关跟着系统的通知权限、不能拨。
+    public static func notifications(_ language: DisplayLanguage = .current) -> String {
+        language == .chinese ? "通知" : "Notifications"
+    }
+
+    /// “通知”那一组的脚注：发什么通知，现在跟着系统设置，按 Botin 开关即将推出。
+    public static func notificationsFooter(_ language: DisplayLanguage = .current) -> String {
+        language == .chinese
+            ? "做完任务、需要你处理时发通知。现在跟着系统的通知设置，按 Botin 单独开关即将推出。"
+            : "Get notified when it finishes a task or needs you. This follows your system notification settings "
+                + "for now; a switch for each Botin is coming soon."
+    }
 }
 
 // MARK: - 资料页右上“…”菜单（4.4.2）
@@ -251,6 +264,40 @@ public enum InstanceWorkspaceText {
     /// 右上“?”和说明 sheet 的标题。
     public static func helpTitle(_ language: DisplayLanguage = .current) -> String {
         language == .chinese ? "关于工作区" : "About the workspace"
+    }
+
+    /// “重置工作区”那一行（参考 65“重置电脑”的位置：红字 + 一行灰字，没有箭头）。要后端（规范 6.17），点了说即将推出。
+    public static func reset(_ language: DisplayLanguage = .current) -> String {
+        language == .chinese ? "重置工作区" : "Reset workspace"
+    }
+
+    /// 重置那一行下面的灰字。
+    public static func resetDetail(_ language: DisplayLanguage = .current) -> String {
+        language == .chinese
+            ? "回到最近一次快照，之后改过的文件会丢。"
+            : "Roll back to the last snapshot. Files changed since then are lost."
+    }
+
+    /// “磁盘空间”那一行（参考 65）。还没有接口（6.17），值写“即将推出”，不编一个“正常”。
+    public static func diskSpace(_ language: DisplayLanguage = .current) -> String {
+        language == .chinese ? "磁盘空间" : "Disk space"
+    }
+
+    /// 重置、磁盘空间还没有接口时的值和提示框的标题。
+    public static func comingSoon(_ language: DisplayLanguage = .current) -> String {
+        language == .chinese ? "即将推出" : "Coming soon"
+    }
+
+    /// 点“重置工作区”弹的提示框里的话。
+    public static func resetComingSoonMessage(_ language: DisplayLanguage = .current) -> String {
+        language == .chinese
+            ? "从快照重置工作区还在做，现在的文件不受影响。"
+            : "Resetting the workspace from a snapshot isn't ready yet. Your files are unchanged."
+    }
+
+    /// 提示框的按钮。
+    public static func ok(_ language: DisplayLanguage = .current) -> String {
+        language == .chinese ? "好" : "OK"
     }
 }
 

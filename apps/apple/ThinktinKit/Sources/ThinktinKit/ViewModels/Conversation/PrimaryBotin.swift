@@ -82,7 +82,7 @@ public enum PrimaryBotinPicker {
             .sorted { ($0.name, $0.id.rawValue) < ($1.name, $1.id.rawValue) }
     }
 
-    /// 一个都没有（不算搜索）：显示“暂无其他可选的 Botin”。
+    /// 一个都没有（不算搜索）：显示“没有别的 Botin 可选”。
     public static func hasNoOthers(_ instances: [Instance], primaryID: InstanceID?) -> Bool {
         candidates(instances, primaryID: primaryID, query: "").isEmpty
     }
@@ -111,7 +111,7 @@ extension ConversationText {
 
     /// 没有别的 Botin 可选（参考 11）。
     public static func noOtherBotins(_ language: DisplayLanguage) -> String {
-        language == .chinese ? "暂无其他可选的 Botin" : "No other Botins to choose"
+        language == .chinese ? "没有别的 Botin 可选" : "No other Botins to choose"
     }
 
     /// 底部的搜索框。

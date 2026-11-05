@@ -12,7 +12,8 @@ enum ProfileAvatarMetrics {
 /// 右上“完成”。
 ///
 /// - 居中的头像，右下角一个玻璃小铅笔，点了进头像页（和“外观”组的“头像”行一样）；
-/// - “名称”组一个输入框，脚注是名字的问题或保存失败；离线时不能改名字（头像只存在这台设备上，照样能改）；
+/// - “名称”组一个输入框，平时没有脚注（参考 12），名字有问题、快到上限、离线不能改时才写（`AdoptionModel.nameNote`）；
+///   离线时不能改名字（头像只存在这台设备上，照样能改）；
 /// - “外观”组“头像 >”；
 /// - “语音通话”组（参考 12、13–17、85–88）：语音、速度、语言三行系统的 `Picker(.menu)`（行尾是值和上下箭头，菜单里选中的
 ///   打勾，长列表系统菜单自己能滚）。ThinkTin 还没有语音通话（6.23），选项是演示数据（`BotinVoiceDemoData`），选了只记在
@@ -67,9 +68,9 @@ struct InstanceEditScreen: View {
                     .disabled(model.isRenaming || app.isOffline)
             } header: {
                 Text(InstanceProfileText.nameSection(language))
-                    .textCase(nil)
+                    .groupHeader()
             } footer: {
-                nameFooter(problem: problem)
+                nameFooter
             }
             .themedRow()
             if let error = model.renameError {
@@ -98,12 +99,13 @@ struct InstanceEditScreen: View {
                 .buttonStyle(.plain)
             } header: {
                 Text(InstanceProfileText.appearanceSection(language))
-                    .textCase(nil)
+                    .groupHeader()
             }
             .themedRow()
             BotinVoiceSection(editor: voice)
         }
         .formStyle(.grouped)
+        .compactGroupedList()
         .themedGroupedBackground()
         .inlineNavigationTitle(InstanceProfileText.editTitle(language))
         .toolbar {
@@ -121,17 +123,14 @@ struct InstanceEditScreen: View {
         .onDisappear { model.clearRenameError() }
     }
 
+    /// 名字下面的脚注：平时没有（参考 12）；离线说不能改，名字有问题（删空了、太长）或快到上限时说（和新建表单同一条规则）。
     @ViewBuilder
-    private func nameFooter(problem: InstanceNameProblem?) -> some View {
+    private var nameFooter: some View {
         if app.isOffline {
             Text(language == .chinese ? "离线时不能改名字。" : "You can't rename while offline.")
-        } else if let problem {
-            Text(problem.message(language))
-                .foregroundStyle(StatusTone.failure.color)
-        } else {
-            Text(
-                language == .chinese
-                    ? "最多 \(InstanceNameRule.maxLength) 个字。" : "Up to \(InstanceNameRule.maxLength) characters.")
+        } else if let note = AdoptionModel.nameNote(for: draft, hidesUntouchedEmpty: false, language: language) {
+            Text(verbatim: note.text)
+                .foregroundStyle(note.isProblem ? StatusTone.failure.color : Theme.inkSecondary)
         }
     }
 
@@ -153,7 +152,8 @@ struct InstanceEditScreen: View {
     }
 }
 
-/// 编辑页的“语音通话”组（参考 12 的三行，13–17、85–88 是它们的菜单）：系统的 `Picker(.menu)`，菜单里选中的打勾。
+/// 编辑页的“语音通话”组（参考 12 的三行，13–17、85–88 是它们的菜单）：系统的 `Picker(.menu)`，菜单里选中的打勾；行尾的值和
+/// 上下箭头是灰的（`menuPickerTint`，参考 12），不用强调色。
 private struct BotinVoiceSection: View {
     let editor: BotinVoiceEditor
 
@@ -173,6 +173,7 @@ private struct BotinVoiceSection: View {
                 }
             }
             .pickerStyle(.menu)
+            .menuPickerTint()
             Picker(
                 BotinVoiceText.speed(language), selection: Binding(get: { editor.speed }, set: { editor.speed = $0 })
             ) {
@@ -183,6 +184,7 @@ private struct BotinVoiceSection: View {
                 }
             }
             .pickerStyle(.menu)
+            .menuPickerTint()
             Picker(
                 BotinVoiceText.language(language),
                 selection: Binding(get: { editor.languageCode }, set: { editor.languageCode = $0 })
@@ -193,9 +195,10 @@ private struct BotinVoiceSection: View {
                 }
             }
             .pickerStyle(.menu)
+            .menuPickerTint()
         } header: {
             Text(BotinVoiceText.section(language))
-                .textCase(nil)
+                .groupHeader()
         } footer: {
             Text(BotinVoiceText.footer(language))
         }
@@ -203,7 +206,8 @@ private struct BotinVoiceSection: View {
     }
 }
 
-/// 编辑页顶上的头像：右下角一个玻璃小铅笔（参考 12）。
+/// 编辑页顶上的头像：右下角一个玻璃小铅笔（参考 12）。这一行贴边（`listRowInsets(EdgeInsets())`），下面留 16pt，
+/// 铅笔的玻璃阴影才不会被行的下边切掉。
 private struct AvatarWithPencil: View {
     let name: String
     let appearance: InstanceAppearance
@@ -219,7 +223,8 @@ private struct AvatarWithPencil: View {
                     .glassBackground(in: Circle())
                     .offset(x: Metrics.Spacing.xs, y: Metrics.Spacing.xxs)
             }
-            .padding(.vertical, Metrics.Spacing.s)
+            .padding(.top, Metrics.Spacing.xs)
+            .padding(.bottom, Metrics.Spacing.m)
             .accessibilityHidden(true)
     }
 }
@@ -256,7 +261,8 @@ struct InstanceAvatarScreen: View {
         let language = self.language
         List {
             Section {
-                VStack(spacing: Metrics.Spacing.l) {
+                // 分段和大预览之间约 40pt（参考 18）。
+                VStack(spacing: Metrics.Spacing.xxl + Metrics.Spacing.xs) {
                     Picker(selection: $tab) {
                         ForEach(AvatarSourceTab.allCases) { option in
                             Text(option.title(language)).tag(option)
@@ -273,7 +279,6 @@ struct InstanceAvatarScreen: View {
                         .animation(.snappy, value: editor.appearance)
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.top, Metrics.Spacing.s)
                 .clearListRow()
             }
             switch tab {
@@ -283,6 +288,7 @@ struct InstanceAvatarScreen: View {
             }
         }
         .insetGroupedList()
+        .compactGroupedList()
         .themedGroupedBackground()
         .inlineNavigationTitle(InstanceProfileText.avatar(language))
         .toolbar {
@@ -313,7 +319,9 @@ struct InstanceAvatarScreen: View {
                 color: Binding(get: { editor.color }, set: { editor.color = $0 }),
                 resolvedColor: editor.resolvedColor
             ) {
+                // 从字的起点一直画到卡片的右边（参考 18），抵掉卡片右边的内边距。
                 Divider()
+                    .padding(.trailing, -Metrics.Spacing.m)
                 Button(InstanceProfileText.resetAvatar(language)) { editor.reset() }
                     .buttonStyle(.borderless)
                     .frame(maxWidth: .infinity, alignment: .leading)

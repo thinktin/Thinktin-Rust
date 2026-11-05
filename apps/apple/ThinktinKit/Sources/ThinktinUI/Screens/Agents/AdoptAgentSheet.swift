@@ -8,17 +8,18 @@ import ThinktinKit
 /// - 顶上左边玻璃 ×（`CloseButton`，填了东西时先确认），中间标题“新建 Botin”，右边不放按钮。
 /// - 居中的大头像预览（固定 120pt，不跟动态字体缩放，大字号下不挤出屏幕）：选的形状、选的颜色（没选按名字取）、
 ///   名字的第一个字（还没输入时是占位符号）。
-/// - 大号名字输入框：整宽、胶囊形的填充底、字大、居中，占位“给 Botin 取个名字”，默认空的；点胶囊的哪儿都聚焦输入框；
-///   名字的问题或提示只在有用时出现在下面（`AdoptionModel.nameNote`）。
-/// - 头像的形状网格（3 × 5，自己设计的几何形状，`AvatarShape`）和色板（2 × 6，选中的带环，`AvatarColor`）。
+/// - 大号名字输入框：整宽、圆角 16 的填充底（参考 34 是圆角矩形，不是胶囊）、字大、居中，占位“起个名字”，默认空的；
+///   点填充底的哪儿都聚焦输入框；名字的问题或提示只在有用时出现在下面（`AdoptionModel.nameNote`）。
+/// - 头像的形状网格（3 × 5，自己设计的几何形状，`AvatarShape`）和色板（2 × 6，选中的带环，`AvatarColor`），直接画在 sheet
+///   的底上（参考 34，没有卡片）。
 /// - 紧凑的引擎行：“引擎”+ 系统 `Menu`（显示选的引擎；里面是行内 `Picker`，系统打勾、读屏念“已选中”，每项名字 + 一句话
 ///   介绍，不能用的灰掉；默认选哪个见 `AdoptionModel.defaultEngine`），接入方式多于一个时下面一行 `Picker(.menu)`；
 ///   下面一个小链接“了解引擎”压进引擎目录（目录 → 引擎详情，详情上的“用它新建 Botin”回到这张表单、换成那个引擎，
 ///   见 `Router.engineRequest`）。
 /// - 底部固定的一条（键盘弹出时在键盘上面）：错误横幅（包括 Botin 数到了上限）、离线说明、一行许可小字
 ///   （`NewBotinText.licenseCaption`，专有许可写“新建即表示同意…”）+“查看”（小 sheet 里是全文；一行放不下时小字居中折行、
-///   “查看”换到下一行）、整宽胶囊主按钮“新建”
-///   （名字对、选了能用的引擎、在线才能点，新建中转圈）。
+///   “查看”换到下一行）、胶囊主按钮“新建”（两边比页边多缩进 20pt，参考 34；名字对、选了能用的引擎、在线才能点，
+///   不能点时是看得出的灰胶囊，新建中转圈）。
 /// - 新建中、填了东西时不能下滑关掉（只能点 ×，先确认）。建好了：关掉表单、从首页压栈进新 Botin 的对话
 ///   （`AppModel.openCreatedInstance`）；头像外观由 `AdoptionModel` 记进这台设备（`AppModel.appearances`）。
 struct AdoptAgentSheet: View {
@@ -57,8 +58,9 @@ private struct AdoptAgentForm: View {
         let model = self.model
         ScrollView {
             VStack(spacing: Metrics.Spacing.m) {
-                // 固定大小（`InstanceAvatar` 跟着动态字体缩放，最大字号下比屏幕还宽）；只是装饰，读屏不念。
-                AvatarGlyph(name: model.name, appearance: model.appearance, size: Metrics.Avatar.edit)
+                // 固定大小（`InstanceAvatar` 跟着动态字体缩放，最大字号下比屏幕还宽）；只是装饰，读屏不念。参考 34 约 125pt；
+                // 形状和色板不画卡片以后省下 32pt，放得下 120。
+                AvatarGlyph(name: model.name, appearance: model.appearance, size: Metrics.Avatar.profile)
                     .accessibilityHidden(true)
                     .animation(.snappy, value: model.appearance)
                 nameField
@@ -66,7 +68,8 @@ private struct AdoptAgentForm: View {
                 engineSection
                 AvatarPicker(
                     name: model.name, shape: Binding(get: { model.shape }, set: { model.shape = $0 }),
-                    color: Binding(get: { model.color }, set: { model.color = $0 }), resolvedColor: model.resolvedColor
+                    color: Binding(get: { model.color }, set: { model.color = $0 }), resolvedColor: model.resolvedColor,
+                    showsCard: false
                 )
                 .disabled(model.isAdopting)
             }
@@ -108,8 +111,8 @@ private struct AdoptAgentForm: View {
 
     // MARK: 名字
 
-    /// 大号输入框（胶囊形的填充底，字大、居中），下面一行小字只在有用时出现。输入框只占中间那一行字，胶囊两头、
-    /// 上下的边点了也要聚焦：手势放在后面的胶囊底上（点到字那一行的还是输入框自己接，不和它的光标、选字抢）。
+    /// 大号输入框（圆角 16 的填充底，字大、居中，参考 34），下面一行小字只在有用时出现。输入框只占中间那一行字，填充底
+    /// 两头、上下的边点了也要聚焦：手势放在后面的填充底上（点到字那一行的还是输入框自己接，不和它的光标、选字抢）。
     private var nameField: some View {
         let model = self.model
         let note = model.nameNote(language)
@@ -129,7 +132,7 @@ private struct AdoptAgentForm: View {
             .padding(.horizontal, Metrics.Spacing.l)
             .frame(minHeight: Metrics.minTapTarget + Metrics.Spacing.s)
             .background {
-                Capsule()
+                RoundedRectangle(cornerRadius: Metrics.Radius.nameField, style: .continuous)
                     .fill(Theme.paperElevated)
                     .onTapGesture { if !model.isAdopting { isNameFocused = true } }
                     .accessibilityHidden(true)
@@ -236,6 +239,7 @@ private struct AdoptAgentForm: View {
                 .typography(.caption)
                 .multilineTextAlignment(.center)
             }
+            let canCreate = model.canCreate(isOffline: app.isOffline)
             Button(action: create) {
                 ZStack {
                     Text(NewBotinText.create(language))
@@ -247,10 +251,13 @@ private struct AdoptAgentForm: View {
                 .font(Font.headline)
                 .frame(maxWidth: .infinity)
             }
+            // 不能点时换成灰色的填充（参考 34 是实心的灰胶囊）：系统灰掉的突出按钮在浅色的底上几乎看不见。
+            .tint(canCreate || model.isAdopting ? Theme.accent : Theme.inkTertiary)
             .glassButtonStyle(.prominent)
             .buttonBorderShape(.capsule)
             .controlSize(.large)
-            .disabled(!model.canCreate(isOffline: app.isOffline))
+            .disabled(!canCreate)
+            .padding(.horizontal, Metrics.Spacing.l)
             .accessibilityLabel(
                 Text(model.isAdopting ? NewBotinText.creating(language) : NewBotinText.create(language)))
         }
@@ -357,6 +364,8 @@ private struct EngineMenu: View {
             }
         }
         .disabled(model.isAdopting)
+        // 菜单按钮上的引擎名和上下箭头是灰的（和表单里的 `Picker(.menu)` 一样，规范 2.2），不用强调色。
+        .menuPickerTint()
         .accessibilityLabel(Text(NewBotinText.engineTitle(language)))
         .accessibilityValue(Text(verbatim: selectedName))
     }

@@ -100,7 +100,7 @@ Linux 上 `tools/client-core/build-linux-swift.sh target/linux`（本机 `libcli
   （`listRowBackground(paperElevated)`，只对行生效，加在 `Section` 的内容或 `ForEach` 上）。plain 列表（首页、搜索结果）的行加
   `themedPlainRow()`（行底透明）：不加的话系统给 plain 列表的行铺 `systemBackground`（深色纯黑、浅色纯白），和 `paper` 不一样。
 - 字体：全部系统字体（SF），标题不再用衬线；全部用 Dynamic Type 的语义字号，导航标题由系统画。
-- 圆角：消息气泡、自己画的卡片 20（`Metrics.Radius.card`），带引用的输入卡片 28，小控件 10；分组卡片、导航栏按钮由系统给。
+- 圆角：消息气泡、自己画的卡片 20（`Metrics.Radius.card`），带引用的输入卡片 28，新建 Botin 的大号名字输入框 16（`nameField`），小控件 10；分组卡片、导航栏按钮由系统给。
   实例头像的直径在 `Metrics.Avatar`（首页和搜索结果的行 44、置顶 80、资料页量出来是 80、编辑页 100、选主 Botin 和收件箱的图标 40、
   首页左上 44pt 玻璃圆里的账号头像 36、导航栏里的标题胶囊 24）。间距 4 的倍数。
 - iOS 26 才有的接口（玻璃、关闭 / 确认按钮的角色、工具栏间隔、底部搜索栏、底部条、工具栏角标）和 iOS 18 的缩放转场只经过
@@ -331,7 +331,7 @@ client-core 只缓存实例、运行、事件、收件箱（cache.rs 的几张�
   `kit-linux` 最后还有严格模式的 `swift format lint`。推 main、开 PR 时跑；没开 PR 的分支要用真 SDK 验时，把提交推到 `ci/<名字>` 分支
   （`git push origin HEAD:ci/<名字>`）。路径过滤照旧：推上去的改动没碰到 `apps/apple/**` 这些路径时可能不跑，那就在 Actions 里
   手动 Run workflow 选那个分支。
-- **截图**（macOS）：`tools/apple/screenshots.sh [输出目录]` 在 iPhone 模拟器上跑演示模式，把改版的每一组页面都截下来（52 个页面、69 张：
+- **截图**（macOS）：`tools/apple/screenshots.sh [输出目录]` 在 iPhone 模拟器上跑演示模式，把改版的每一组页面都截下来（53 个页面、70 张：
   主要页面浅色、深色各一张，`01-home-light.png`、`01-home-dark.png`，其余只截浅色；每张对哪几张参考、规范哪一节见
   [ios-ui-redesign-shots.md](ios-ui-redesign-shots.md)）；`IOS_RUNTIME=18.6`（或 `17.5`）换成那个版本的模拟器看旧系统的回退（没有那个版本的
   iPhone 模拟器就建一台，运行时没装就用 `xcodebuild -downloadPlatform` 下载，这时要写完整的版本号）。GitHub 上是

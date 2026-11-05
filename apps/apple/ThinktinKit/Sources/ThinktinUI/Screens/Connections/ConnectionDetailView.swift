@@ -66,10 +66,8 @@ struct ConnectionDetailView: View {
                     .frame(maxWidth: .infinity)
             }
         }
-        .inlineNavigationTitle(detail?.title ?? AppRoute.connection(connectionID).title(language)) {
-            // 参考的详情 sheet 没有标题（头部已经有名字）。
-            EmptyView()
-        }
+        // 参考的详情 sheet 没有标题（头部已经有名字）。
+        .hiddenInlineNavigationTitle(detail?.title ?? AppRoute.connection(connectionID).title(language))
         .toolbar {
             if onDismiss != nil {
                 ToolbarItem(placement: .cancellationAction) {

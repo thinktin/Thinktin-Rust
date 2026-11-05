@@ -4,8 +4,9 @@ import ThinktinKit
 /// 引擎目录（代码里是 agent 目录，`.agentCatalog`；规范 4.7.1 末尾、4.8.4，借参考 101、104 的插件完整列表的版式）：新建 Botin
 /// 表单里的“了解引擎”、下架引擎的“看看别的引擎”进来（新建的主路径是首页“+”弹的表单，在表单里选引擎）。
 ///
-/// - plain 列表、不画分隔线，标题“引擎”；每行：40pt 圆角方块图标（名字的首字）、名字、最多两行灰字介绍，右边小胶囊“选这个”
-///   （参考“连接”的位置；点了用它新建 Botin：在新建表单里时退回表单、换成它，别处弹预选它的表单），不能用的灰掉写“暂不可用”。
+/// - plain 列表、不画分隔线，标题“引擎”；每行：40pt 圆角方块图标（名字的首字）、名字、最多两行 `.footnote` 灰字介绍，右边
+///   玻璃胶囊“选这个”（参考“连接”：普通大小、中性色的字；点了用它新建 Botin：在新建表单里时退回表单、换成它，别处弹预选
+///   它的表单），不能用的灰掉写“暂不可用”。
 /// - 点行弹引擎详情（参考 105–107 的插件详情 sheet，medium / large 两档，`AgentDetailScreen`）；详情里的按钮先关掉 sheet 再走路由。
 /// - 最下面一段灰字说明引擎是什么（参考没有页头，挪到列表末尾）。
 ///
@@ -132,7 +133,8 @@ private struct AgentCatalogContent: View {
     }
 }
 
-/// 目录的一行（参考 101、104）：图标、名字、两行灰字，右边小胶囊。点行（胶囊以外）看详情。
+/// 目录的一行（参考 101、104）：图标、名字、两行 `.footnote` 灰字，右边玻璃胶囊。点行（胶囊以外）看详情。行的上下不再
+/// 自己加边距（系统的行边距就够，参考两行之间约 70–89pt）。
 struct EngineRow: View {
     let card: AgentCatalogCard
     let canCreate: Bool
@@ -155,7 +157,7 @@ struct EngineRow: View {
                         let subtitle = card.rowSubtitle
                         if !subtitle.isEmpty {
                             Text(subtitle)
-                                .typography(.subheadline)
+                                .typography(.footnote)
                                 .foregroundStyle(Theme.inkSecondary)
                                 .lineLimit(2)
                         }
@@ -169,12 +171,16 @@ struct EngineRow: View {
             .accessibilityLabel(Text(card.accessibilityLabel(language)))
             .accessibilityHint(Text(zh ? "查看详情" : "Shows details"))
             .accessibilityAddTraits(.isButton)
-            Button(card.actionTitle(language), action: onUse)
-                .smallCapsuleButton()
-                .disabled(!card.isAvailable || !canCreate)
-                .accessibilityLabel(Text(card.actionAccessibilityLabel(language)))
+            // 参考“连接”：普通大小（约 35pt 高）、中性色的字（`glassButtonStyle` 的次按钮），不是强调色的小胶囊。
+            Button(action: onUse) {
+                Text(card.actionTitle(language))
+                    .font(Typography.subheadline.font.weight(.medium))
+            }
+            .glassButtonStyle()
+            .buttonBorderShape(.capsule)
+            .disabled(!card.isAvailable || !canCreate)
+            .accessibilityLabel(Text(card.actionAccessibilityLabel(language)))
         }
-        .padding(.vertical, Metrics.Spacing.xxs)
     }
 }
 

@@ -311,6 +311,8 @@ private struct RunDetailContent: View {
                     } label: {
                         Label(ConversationText.detailLabel(.stop, language: language), systemImage: "stop.fill")
                     }
+                    // 写在样式前面：次按钮默认是中性色（`glassButtonStyle`），停止要红色。
+                    .tint(StatusTone.failure.color)
                     .smallCapsuleButton()
                     if model.canStopTree {
                         Button {

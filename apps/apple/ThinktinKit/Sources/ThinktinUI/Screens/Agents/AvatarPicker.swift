@@ -1,9 +1,10 @@
 import SwiftUI
 import ThinktinKit
 
-/// 头像选择（新建 Botin 表单和建好之后改头像共用；规范 4.4.4、4.7.1，参考 18）：形状网格（3 × 5，`AvatarShape`）和色板
-/// （2 × 6，选中的带环，`AvatarColor`），放在一张卡片里，两块之间不画分隔线（参考 18）；每一格都用现在选的颜色和名字画。
-/// 改头像页在卡片最下面加分隔线和“重置为默认”（`footer`）。不能改时调用方加 `.disabled`。
+/// 头像选择（新建 Botin 表单和建好之后改头像共用；规范 4.4.4、4.7.1，参考 18、34）：形状网格（3 × 5，`AvatarShape`）和色板
+/// （2 × 6，选中的带环，`AvatarColor`），两块之间不画分隔线（参考 18）；每一格都用现在选的颜色和名字画。
+/// 改头像页放在一张卡片里（参考 18），卡片最下面加分隔线和“重置为默认”（`footer`）；新建表单直接画在 sheet 的底上
+/// （参考 34、35、117，`showsCard: false`）。不能改时调用方加 `.disabled`。
 struct AvatarPicker<Footer: View>: View {
     let name: String
     let shape: Binding<AvatarShape>
@@ -11,6 +12,8 @@ struct AvatarPicker<Footer: View>: View {
     let color: Binding<AvatarColor?>
     /// 色板上带环的颜色（挑过的，没挑过是按名字取的那个）。
     let resolvedColor: AvatarColor
+    /// 画不画卡片底（`paperElevated` 圆角卡片和上下的内边距）。
+    var showsCard = true
     private let footer: Footer
 
     @Environment(\.displayLanguage) private var language
@@ -25,12 +28,13 @@ struct AvatarPicker<Footer: View>: View {
 
     init(
         name: String, shape: Binding<AvatarShape>, color: Binding<AvatarColor?>, resolvedColor: AvatarColor,
-        @ViewBuilder footer: () -> Footer
+        showsCard: Bool = true, @ViewBuilder footer: () -> Footer
     ) {
         self.name = name
         self.shape = shape
         self.color = color
         self.resolvedColor = resolvedColor
+        self.showsCard = showsCard
         self.footer = footer()
     }
 
@@ -60,16 +64,25 @@ struct AvatarPicker<Footer: View>: View {
             .accessibilityLabel(Text(NewBotinText.colorTitle(language)))
             footer
         }
-        .padding(Metrics.Spacing.m)
-        .background(Theme.paperElevated, in: RoundedRectangle(cornerRadius: Metrics.Radius.card, style: .continuous))
+        .padding(.horizontal, Metrics.Spacing.m)
+        .padding(.vertical, showsCard ? Metrics.Spacing.m : 0)
+        .background(
+            showsCard ? Theme.paperElevated : Color.clear,
+            in: RoundedRectangle(cornerRadius: Metrics.Radius.card, style: .continuous)
+        )
         .appFeedback(
             .selection, trigger: InstanceAppearance(shape: shape.wrappedValue, color: color.wrappedValue))
     }
 }
 
 extension AvatarPicker where Footer == EmptyView {
-    init(name: String, shape: Binding<AvatarShape>, color: Binding<AvatarColor?>, resolvedColor: AvatarColor) {
-        self.init(name: name, shape: shape, color: color, resolvedColor: resolvedColor) { EmptyView() }
+    init(
+        name: String, shape: Binding<AvatarShape>, color: Binding<AvatarColor?>, resolvedColor: AvatarColor,
+        showsCard: Bool = true
+    ) {
+        self.init(name: name, shape: shape, color: color, resolvedColor: resolvedColor, showsCard: showsCard) {
+            EmptyView()
+        }
     }
 }
 

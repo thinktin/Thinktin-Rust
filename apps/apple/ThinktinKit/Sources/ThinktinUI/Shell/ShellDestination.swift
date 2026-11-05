@@ -51,12 +51,13 @@ private struct NewTaskSheet: View {
         let shown = self.shown
         List {
             if !shown.isEmpty {
+                // 参考 11 的列表上面没有分组标题：“交给哪个 Botin”写在脚注里。
                 Section {
                     ForEach(shown) { instance in
                         row(instance)
                     }
-                } header: {
-                    Text(zh ? "交给哪个 Botin？" : "Which Botin should take this task?").textCase(nil)
+                } footer: {
+                    Text(zh ? "选一个 Botin 接这个任务。" : "Pick the Botin that takes this task.")
                 }
                 .themedRow()
             }
@@ -103,7 +104,8 @@ private struct NewTaskSheet: View {
                 .disabled(selection.map { id in !model.instances.contains { $0.id == id } } ?? true)
             }
         }
-        .presentationDetents([.medium, .large])
+        // 参考 11 是 large、没有拖动条（只有一档时系统不画）。
+        .presentationDetents([.large])
     }
 
     private func row(_ instance: Instance) -> some View {
@@ -114,20 +116,10 @@ private struct NewTaskSheet: View {
             selection = instance.id
         } label: {
             HStack(spacing: Metrics.Spacing.s) {
-                InstanceAvatar(
-                    instance.name, appearance: model.appearances.resolved(for: instance.id),
-                    size: Metrics.Avatar.search, badge: isPrimary ? .primary : .instance(instance.state)
-                )
-                .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
-                    Text(verbatim: instance.name)
-                        .typography(.body)
-                        .foregroundStyle(Theme.ink)
-                        .lineLimit(1)
-                    Text(isPrimary ? ConversationText.primaryBotin(language) + " · " + state : state)
-                        .typography(.subheadline)
-                        .foregroundStyle(Theme.inkSecondary)
-                }
+                BotinPickerRow(
+                    name: instance.name, appearance: model.appearances.resolved(for: instance.id),
+                    badge: isPrimary ? .primary : .instance(instance.state),
+                    detail: isPrimary ? ConversationText.primaryBotin(language) + " · " + state : state)
                 Spacer(minLength: Metrics.Spacing.xs)
                 if isSelected {
                     Image(systemName: "checkmark")

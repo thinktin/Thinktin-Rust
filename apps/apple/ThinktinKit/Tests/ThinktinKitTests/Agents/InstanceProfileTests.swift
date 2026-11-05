@@ -115,6 +115,18 @@ struct InstanceProfileTests {
                 == "现在用的 v1.9.0 已经不在目录里了，建议升级到 v2.2.2。")
     }
 
+    @Test("资料页的“通知”和工作区的重置、磁盘空间：自己的说法，还没有接口的写即将推出")
+    func comingSoonRows() {
+        #expect(InstanceProfileText.notifications(.chinese) == "通知")
+        #expect(InstanceProfileText.notificationsFooter(.chinese).contains("即将推出"))
+        #expect(!InstanceProfileText.notificationsFooter(.chinese).contains("Bot "))
+        #expect(InstanceWorkspaceText.reset(.chinese) == "重置工作区")
+        #expect(InstanceWorkspaceText.resetDetail(.english).hasSuffix("lost."))
+        #expect(InstanceWorkspaceText.diskSpace(.chinese) == "磁盘空间")
+        #expect(InstanceWorkspaceText.comingSoon(.chinese) == "即将推出")
+        #expect(InstanceWorkspaceText.resetComingSoonMessage(.chinese).contains("不受影响"))
+    }
+
     @Test("工作区说明：状态一组（四种，用界面给的名字和状态说明）、版本一组")
     func workspaceHelp() {
         let sections = WorkspaceHelp.sections(.chinese) { "名字-\($0.rawValue)" }

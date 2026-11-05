@@ -177,12 +177,23 @@ public final class AdoptionModel {
     /// 输入框下面的小字：只在有用时有。还没输入（空的）不提示（按钮灰着就够了）；只输了空格说“起个名字吧。”；
     /// 太长了说最多几个字；快到上限（还剩 `nameHintThreshold` 个字以内）时提示上限；别的时候为 nil。
     public func nameNote(_ language: DisplayLanguage = .current) -> NameNote? {
-        if let problem = nameProblem {
-            if problem == .empty && name.isEmpty { return nil }
+        Self.nameNote(for: name, language: language)
+    }
+
+    /// 名字输入框下面的小字（新建表单和编辑 Botin 共用）：名字的问题，或者快到上限时的提示；别的时候为 nil（参考 12、34
+    /// 输入框下面平时什么都不写）。
+    ///
+    /// - Parameter hidesUntouchedEmpty: 一个字都没输时不提示“起个名字吧。”（新建表单：按钮灰着就够了）。编辑页传 false：
+    ///   名字本来有，删空了要说。
+    public static func nameNote(
+        for name: String, hidesUntouchedEmpty: Bool = true, language: DisplayLanguage = .current
+    ) -> NameNote? {
+        if let problem = InstanceNameRule.problem(name) {
+            if problem == .empty && name.isEmpty && hidesUntouchedEmpty { return nil }
             return NameNote(text: problem.message(language), isProblem: true)
         }
         let count = InstanceNameRule.normalized(name).unicodeScalars.count
-        guard count > InstanceNameRule.maxLength - Self.nameHintThreshold else { return nil }
+        guard count > InstanceNameRule.maxLength - nameHintThreshold else { return nil }
         return NameNote(text: NewBotinText.nameHint(language), isProblem: false)
     }
 
@@ -313,7 +324,7 @@ public enum NewBotinText {
 
     /// 大号输入框里的占位字。
     public static func namePrompt(_ language: DisplayLanguage) -> String {
-        language == .chinese ? "给 Botin 取个名字" : "Name your Botin"
+        language == .chinese ? "起个名字" : "Name your Botin"
     }
 
     /// 名字快到上限时输入框下面的提示（`AdoptionModel.nameNote`）。

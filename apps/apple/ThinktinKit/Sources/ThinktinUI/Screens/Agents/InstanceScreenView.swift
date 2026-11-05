@@ -11,7 +11,9 @@ import ThinktinKit
 /// - 底部（iOS 的底部工具栏，iOS 26 系统画成玻璃）：只看时右边胶囊“接管控制”（参考 27、29，连接中灰着）；控制时左边剪贴板菜单
 ///   （从本机粘贴、复制到本机，参考 89）、右边键盘（参考 30）。剪贴板、键盘要后端，点了弹“即将推出”；接管、交还、触控板模式
 ///   只在本机切换版式。macOS 没有底部工具栏，这几个按钮放在右上。
-/// - 黑底上按深色画：只改这一页的 `colorScheme` 环境和 iOS 导航栏、底部工具栏的配色，不改整个 App 的外观。离线时不能接管。
+/// - 黑底上按深色画：只改这一页的 `colorScheme` 环境和 iOS 导航栏、底部工具栏的配色，不改整个 App 的外观。导航栏的底画成
+///   黑色（和页面一样，看不出来）：底藏着时 `toolbarColorScheme` 不管用，浅色外观下状态栏是黑字，在黑底上看不见（2026-11-05
+///   截图）。“?”“…”和“接管控制”是白字（参考 27、29），不用强调色。离线时不能接管。
 struct InstanceScreenView: View {
     let instanceID: InstanceID
     /// “正在连接…”停多久（测试、预览传 `.zero` 直接看画面）。
@@ -68,6 +70,8 @@ struct InstanceScreenContent: View {
             Text(action.comingSoonMessage(language))
         }
         #if os(iOS)
+            .toolbarBackground(Color.black, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar, .bottomBar)
         #endif
         .environment(\.colorScheme, .dark)
@@ -142,6 +146,7 @@ struct InstanceScreenContent: View {
             Label(InstanceScreenText.helpTitle(language), systemImage: "questionmark")
                 .labelStyle(.iconOnly)
         }
+        .tint(Color.white)
     }
 
     /// 控制时右上的“…”（参考 31）：触控板模式开关；交还给 Botin。
@@ -162,14 +167,20 @@ struct InstanceScreenContent: View {
             Label(InstanceScreenText.more(language), systemImage: "ellipsis")
                 .labelStyle(.iconOnly)
         }
+        .tint(Color.white)
     }
 
-    /// 只看时右下的“接管控制”（参考 27、29）：连接中、离线时灰着。
+    /// 只看时右下的“接管控制”（参考 27、29）：白字、`.subheadline` 中等粗细（参考约 15pt 的字、39pt 高的胶囊），连接中、
+    /// 离线时灰着。
     private var takeControlButton: some View {
         let model = self.model
-        return Button(InstanceScreenText.takeControl(language)) {
+        return Button {
             model.takeControl()
+        } label: {
+            Text(InstanceScreenText.takeControl(language))
+                .font(Typography.subheadline.font.weight(.medium))
         }
+        .tint(Color.white)
         .disabled(model.phase != .viewing || app.isOffline)
     }
 
@@ -188,6 +199,7 @@ struct InstanceScreenContent: View {
             Label(InstanceScreenText.clipboard(language), systemImage: "clipboard")
                 .labelStyle(.iconOnly)
         }
+        .tint(Color.white)
     }
 
     /// 控制时右下的键盘（参考 30）。
@@ -199,6 +211,7 @@ struct InstanceScreenContent: View {
             Label(InstanceScreenAction.keyboard.title(language), systemImage: InstanceScreenAction.keyboard.systemImage)
                 .labelStyle(.iconOnly)
         }
+        .tint(Color.white)
     }
 }
 

@@ -4,15 +4,17 @@ import ThinktinKit
 /// 工作区（规范 4.6.1，参考 65 的版式、27 / 28 的“?”和说明）：资料页“工作区”行压进来（本地 `NavigationLink`，不加路由）。
 /// 每个 Botin 一个云端沙箱，这一页是它的状态和引擎版本（以前在资料页上的版本列表挪到这里）。
 ///
-/// - 有新版本（或者现在的版本下架了）时最上面一组是“升级到 vX”（参考“重置电脑”那一行的样子：强调色的字 + 灰字说明），
-///   脚注说这是这个 Botin 自己的沙箱；
-/// - “状态”一行（状态点 + 名字），脚注是状态说明（运行中、休眠、冷存储，唤醒要多久）；
+/// - 有新版本（或者现在的版本下架了）时下一组是“升级到 vX”（参考“重置电脑”那一行的样子：强调色的字 + 灰字说明）；
+/// - “重置工作区”（参考 65“重置电脑”：红字 + 一行灰字，没有箭头），脚注说这是这个 Botin 自己的沙箱；重置要后端（6.17），
+///   点了说即将推出；
+/// - “状态”（状态点 + 名字）和“磁盘空间”（参考 65，还没有接口，值写“即将推出”），脚注是状态说明（运行中、休眠、冷存储，
+///   唤醒要多久）；
 /// - “引擎”一组：引擎版本、“换到别的版本”（`Picker(.menu)`，选了先确认）、接入方式；脚注是“下次唤醒时生效、工作区保留”，
 ///   刚换过时写换到了哪个版本；
 /// - 右上“?”弹说明（参考 28 的版式：图标 + 标题 + 多行灰字，`WorkspaceHelp`）；
 /// - 最上面一行“观看与接管”（参考 09 资料页的“电脑”行进的那一页）：压进 `InstanceScreenView`（画面接口还没有，是演示）。
 ///
-/// 重置工作区、磁盘空间要后端（6.17），第 3 轮。离线时不能换版本。
+/// 重置工作区、磁盘空间的接口要后端（6.17），第 3 轮；版式先照参考 65 排出来。离线时不能换版本。
 struct InstanceWorkspaceScreen: View {
     let model: InstanceDetailModel
 
@@ -20,6 +22,8 @@ struct InstanceWorkspaceScreen: View {
     @State private var pendingVersion: InstanceVersionOption?
     @State private var isConfirmingVersion = false
     @State private var isShowingHelp = false
+    /// 点了“重置工作区”：弹“即将推出”。
+    @State private var isShowingResetComingSoon = false
 
     @Environment(AppModel.self) private var app
     @Environment(\.displayLanguage) private var language
@@ -35,7 +39,7 @@ struct InstanceWorkspaceScreen: View {
                     } label: {
                         LabeledRow(
                             systemImage: "display", title: InstanceScreenText.title(language),
-                            detail: InstanceScreenText.entryDetail(language))
+                            detail: InstanceScreenText.entryDetail(language), detailTypography: .footnote)
                     }
                 }
                 .themedRow()
@@ -56,11 +60,28 @@ struct InstanceWorkspaceScreen: View {
                         }
                         .buttonStyle(.plain)
                         .disabled(!canChangeVersion)
-                    } footer: {
-                        Text(InstanceWorkspaceText.workspaceFooter(language))
                     }
                     .themedRow()
                 }
+                Section {
+                    Button(role: .destructive) {
+                        isShowingResetComingSoon = true
+                    } label: {
+                        VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
+                            Text(InstanceWorkspaceText.reset(language))
+                                .foregroundStyle(StatusTone.failure.color)
+                            Text(InstanceWorkspaceText.resetDetail(language))
+                                .typography(.footnote)
+                                .foregroundStyle(Theme.inkSecondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                } footer: {
+                    Text(InstanceWorkspaceText.workspaceFooter(language))
+                }
+                .themedRow()
                 Section {
                     LabeledContent {
                         HStack(spacing: Metrics.Spacing.xs) {
@@ -71,8 +92,10 @@ struct InstanceWorkspaceScreen: View {
                     } label: {
                         Text(InstanceWorkspaceText.status(language))
                     }
+                    LabeledContent(
+                        InstanceWorkspaceText.diskSpace(language), value: InstanceWorkspaceText.comingSoon(language))
                 } footer: {
-                    Text(statusFooter(instance))
+                    Text(AgentsText.stateExplanation(instance.state, language: language))
                 }
                 .themedRow()
                 Section {
@@ -102,13 +125,14 @@ struct InstanceWorkspaceScreen: View {
                             }
                         }
                         .pickerStyle(.menu)
+                        .menuPickerTint()
                         .disabled(!canChangeVersion)
                     }
                     LabeledContent(
                         zh ? "接入方式" : "Runs via", value: AgentsText.harnessName(instance.harness, language: language))
                 } header: {
                     Text(zh ? "引擎" : "Engine")
-                        .textCase(nil)
+                        .groupHeader()
                 } footer: {
                     Text(versionFooter(instance))
                 }
@@ -123,6 +147,7 @@ struct InstanceWorkspaceScreen: View {
             }
         }
         .formStyle(.grouped)
+        .compactGroupedList()
         .themedGroupedBackground()
         .overlay {
             if model.instance == nil {
@@ -138,7 +163,13 @@ struct InstanceWorkspaceScreen: View {
                     Label(InstanceWorkspaceText.helpTitle(language), systemImage: "questionmark")
                         .labelStyle(.iconOnly)
                 }
+                .neutralTint()
             }
+        }
+        .alert(InstanceWorkspaceText.comingSoon(language), isPresented: $isShowingResetComingSoon) {
+            Button(InstanceWorkspaceText.ok(language)) {}
+        } message: {
+            Text(InstanceWorkspaceText.resetComingSoonMessage(language))
         }
         .confirmationDialog(
             pendingVersion?.actionTitle(language) ?? "", isPresented: $isConfirmingVersion, titleVisibility: .visible
@@ -172,13 +203,6 @@ struct InstanceWorkspaceScreen: View {
         let label = AgentsText.versionLabel(option.version)
         guard option.isLatest else { return label }
         return language == .chinese ? "\(label)（最新）" : "\(label) (latest)"
-    }
-
-    /// 状态一组的脚注：状态说明；没有“升级”那一组时把“这个 Botin 自己的沙箱”也写在这里。
-    private func statusFooter(_ instance: Instance) -> String {
-        let explanation = AgentsText.stateExplanation(instance.state, language: language)
-        guard model.upgradeOption == nil else { return explanation }
-        return InstanceWorkspaceText.workspaceFooter(language) + "\n" + explanation
     }
 
     /// 引擎一组的脚注：刚换过写换到了哪个；现在的版本下架了写建议；其余写换版本的规矩。
@@ -238,7 +262,7 @@ struct GroupedHelpSheet: View {
                         }
                     } header: {
                         Text(section.title)
-                            .textCase(nil)
+                            .groupHeader()
                     } footer: {
                         if let footer, section.id == lastID {
                             Text(footer)

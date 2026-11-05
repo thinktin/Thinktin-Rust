@@ -21,6 +21,24 @@ extension View {
     ) -> some View {
         modifier(InlineNavigationTitle(title: title, ownsGlass: ownsGlass, principal: principal()))
     }
+
+    /// 导航栏中间不显示标题（参考 09 Botin 资料、53 设置根页、38 / 52 详情 sheet：头部已经有名字）。`title` 照样是导航标题
+    /// （返回按钮的长按菜单、macOS 的窗口标题）。
+    ///
+    /// 别写成 `inlineNavigationTitle(title) { EmptyView() }`：`.principal` 里是 `EmptyView` 时系统当没放这一项，退回去画
+    /// `navigationTitle`，名字在导航栏和头部各出现一次（2026-11-05 截图）。这里放一个不占地方、读屏不念的透明点。
+    func hiddenInlineNavigationTitle(_ title: String) -> some View {
+        inlineNavigationTitle(title, ownsGlass: true) { HiddenNavigationTitle() }
+    }
+}
+
+/// `hiddenInlineNavigationTitle` 放在导航栏中间的东西：1pt 的透明点（不是 `EmptyView`，系统才不会补上标题），读屏不念。
+private struct HiddenNavigationTitle: View {
+    var body: some View {
+        Color.clear
+            .frame(width: 1, height: 1)
+            .accessibilityHidden(true)
+    }
 }
 
 extension View {

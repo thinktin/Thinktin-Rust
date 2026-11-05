@@ -19,7 +19,8 @@ import SwiftUI
 // MARK: - 关闭、确认按钮（2.6）
 
 /// sheet 左上的关闭按钮，放在 `ToolbarItem(placement: .cancellationAction)` 里：iOS 26 带系统的关闭角色
-/// （`ButtonRole.close`，画成玻璃圆 ×），旧系统是 × 图标按钮。读屏按界面语言念“关闭”。
+/// （`ButtonRole.close`，画成玻璃圆 ×），旧系统是 × 图标按钮。读屏按界面语言念“关闭”。× 是中性色（`neutralTint()`，
+/// 参考 11、34、52 和系统的返回箭头一样），不用强调色。
 ///
 /// ```swift
 /// .toolbar {
@@ -41,6 +42,7 @@ public struct CloseButton: View {
             Label(language == .chinese ? "关闭" : "Close", systemImage: "xmark")
                 .labelStyle(.iconOnly)
         }
+        .neutralTint()
     }
 }
 
@@ -93,7 +95,8 @@ enum GlassRoles {
 
 // MARK: - 按钮的玻璃样式（2.6）
 
-/// 系统按钮的分量：主按钮用 `.prominent`（强调色填充），次按钮用 `.regular`。
+/// 系统按钮的分量：主按钮用 `.prominent`（强调色填充），次按钮用 `.regular`（中性色的字，规范 2.2：强调色只给主按钮、
+/// 发送、开关、链接、选中；参考里“编辑”“接管控制”“连接”这些次按钮都是白字灰底）。
 public enum GlassButtonProminence: Hashable, Sendable {
     case regular
     case prominent
@@ -103,6 +106,9 @@ extension View {
     /// 系统按钮的玻璃样式：iOS 26 `.glass` / `.glassProminent`，旧系统 `.bordered` / `.borderedProminent`。
     /// 小胶囊再加 `.buttonBorderShape(.capsule)` + `.controlSize(.small)`；底部全宽的主按钮加 `.controlSize(.large)` 和
     /// `.frame(maxWidth: .infinity)`（放进 `floatingBar`）。工具栏里的按钮不用加，系统自己画。
+    ///
+    /// `.regular` 的字是中性色（`neutralTint()`）。次按钮要别的颜色（删除、停止这种破坏性的用失败色）时把 `.tint(_:)`
+    /// 写在这个修饰符**前面**（离按钮近的 `tint` 生效，写在后面会被这里的中性色盖住）。
     public func glassButtonStyle(_ prominence: GlassButtonProminence = .regular) -> some View {
         if #available(iOS 26.0, macOS 26.0, *) {
             return modifier(GlassButtonStyleModifier(prominence: prominence))
@@ -118,7 +124,7 @@ private struct GlassButtonStyleModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         switch prominence {
-        case .regular: content.buttonStyle(.glass)
+        case .regular: content.neutralTint().buttonStyle(.glass)
         case .prominent: content.buttonStyle(.glassProminent)
         }
     }
@@ -129,9 +135,24 @@ private struct BorderedButtonStyleModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         switch prominence {
-        case .regular: content.buttonStyle(.bordered)
+        case .regular: content.neutralTint().buttonStyle(.bordered)
         case .prominent: content.buttonStyle(.borderedProminent)
         }
+    }
+}
+
+// MARK: - 次要控件的中性色（2.2）
+
+extension View {
+    /// 次要控件用中性色（规范 2.2：强调色只给主按钮、发送、开关、链接、选中）：工具栏里只有图标的按钮和菜单（“…”“?”×）、
+    /// 次按钮的字。参考里这些都是白字（深色）/ 黑字（浅色），和系统的返回箭头一致。
+    public func neutralTint() -> some View {
+        tint(Theme.ink)
+    }
+
+    /// 表单里 `Picker(.menu)` 的值和上下箭头（参考 12 的语音、速度、语言，65 的值）：次要文字的灰，不用强调色。
+    public func menuPickerTint() -> some View {
+        tint(Theme.inkSecondary)
     }
 }
 

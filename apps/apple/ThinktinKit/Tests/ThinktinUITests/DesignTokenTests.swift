@@ -176,6 +176,7 @@ struct DesignTokenTests {
         #expect(Metrics.Radius.card == 20)
         #expect(Metrics.Radius.composerCard == 28)
         #expect(Metrics.Radius.control == 10)
+        #expect(Metrics.Radius.nameField == 16)
         let avatars = [
             Metrics.Avatar.title, Metrics.Avatar.account, Metrics.Avatar.search, Metrics.Avatar.list,
             Metrics.Avatar.pinned, Metrics.Avatar.edit, Metrics.Avatar.profile,

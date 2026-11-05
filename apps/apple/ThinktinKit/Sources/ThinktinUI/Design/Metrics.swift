@@ -11,6 +11,8 @@ public enum Metrics {
         public static let composerCard: CGFloat = 28
         /// 小控件：标签、小按钮、代码块、应用 / agent 的图标方块。
         public static let control: CGFloat = 10
+        /// 新建 Botin 的大号名字输入框（参考 34 量出来约 14–16，圆角矩形，不是胶囊）。
+        public static let nameField: CGFloat = 16
     }
 
     /// 实例头像（`InstanceAvatar`）的直径，跟着动态字体缩放。

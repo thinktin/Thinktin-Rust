@@ -1990,7 +1990,7 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 3. **截图对照（每轮末）**
    - 跑 `.github/workflows/ios-screenshots.yml`：Actions → iOS screenshots → Run workflow，或者 `git push -f origin HEAD:ios-screenshots`；
      截图在 artifact `ios-screenshots`。用的是 Mock 演示数据，不会有个人信息。
-   - 截图清单（`tools/apple/screenshots.sh`）覆盖改版的每一组页面，一共 69 张：主要页面浅色、深色各一张，其余只截浅色。
+   - 截图清单（`tools/apple/screenshots.sh`）覆盖改版的每一组页面，一共 70 张：主要页面浅色、深色各一张，其余只截浅色。
      每张对哪几张参考、规范哪一节见 [ios-ui-redesign-shots.md](ios-ui-redesign-shots.md)（还原度评审照它逐张看），截不到的
      （系统菜单、左滑、长按、要输入的状态）也列在那里。页面用启动变量打开：`THINKTIN_OPEN_URL` 是深链，`THINKTIN_OPEN_SCREEN`
      是没有深链的页面（42 个值，`AppConfiguration.OpenScreen`），`THINKTIN_MOCK_EMPTY=1` 是新账号。页面里本地打开、没有路由的子页
