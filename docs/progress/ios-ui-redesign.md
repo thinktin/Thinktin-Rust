@@ -105,22 +105,32 @@
   `--check` 先查 Swift 代码和启动屏是不是最新的（逐字节），再照旧和原稿比像素（0 差）。PDF 用 pdftoppm 栅格化后和原稿（单色）比过：
   线条都在原稿 ±1 像素以内，差的只是两个渲染器的抗锯齿。图标重跑后逐字节没变。测试：`DesignTokenTests` 加“启动屏底色和 `paper`
   同值、Logo 两版、保留矢量”（从 `#filePath` 往上找仓库根，uicheck 的复制件也找得到），App 的 Info.plist 测试加两个键（macOS CI 查）。
+- 第 0 轮最后这一份（截图脚本、启动屏、docs/ios.md 收尾）的 Linux 检查（2026-11-05，最后一次提交上）：ThinktinKit `swift test`
+  1007 个全过；uicheck UIKit、AppKit 都编过；`run.sh test` 137 个全过（新加启动屏那条）；App 的 `ThinktinTests` 19 个过 14 个（新加的
+  3 条 `OpenScreen` 都过；挂的还是那 5 个要 App 包的，Info.plist 那条多了启动屏两个键）；`brand_assets.py --check` 过（Swift 代码和
+  启动屏是最新的，贝塞尔版和原稿 0 差）；`swift format lint --strict` 零条。docs/ios.md：开头和第 1 节第 4 条不再写“参考某某 App”，
+  改指改版规范；第 2 节 App/ 的说明；第 4 节加共用组件（`InstanceAvatar`、`FilterChipBar`）、4.1 加启动屏；第 7 节截图换成新清单和两个
+  启动变量。规范 7.2 末尾记“第 0 轮做完”，7.6 的旧系统截图改成 `IOS_RUNTIME`。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、
 字体全用系统的）；6.3 A（保持 iOS 17，iOS 26 的接口在 Design/Glass.swift 里回退）；6.4 A（“+”直接弹领养表单）；6.5 A（设置用 sheet）；
 6.6 A（沿用“实例”）。其余 18 项按建议。
 
-进行中：第 0 轮最后一份（启动屏资源、截图脚本和 `THINKTIN_OPEN_SCREEN`、docs/ios.md 收尾），云端会话 2026-11-04 23:57 UTC 开始。
+进行中：没有人在做。**第 0 轮（规范 7.2）的每一行都做完了**（2026-11-05），只差下面第 1、2 条的验证；第 1 轮还没人认领。
 
 下一步：
-1. 第 0 轮剩下的（规范 7.2）：启动屏资源（`tools/apple/brand_assets.py`、`Assets.xcassets`、`project.yml`）；截图脚本加只有 Debug 认的
-   `THINKTIN_OPEN_SCREEN`（conversation / plans / artifacts / settings / search / adopt，打开演示数据第一个实例的对应页面；search 用
-   `router.open(.search)`，首页会补上激活），截图清单换成规范 7.6 的（`tools/apple/screenshots.sh`、`AppConfiguration.swift`）。
-2. 推送后看 macOS CI（`.github/workflows/ios.yml`，只在推 main 和 PR 时跑）：Glass.swift 的 `if #available` 分支、首页工具栏
-   （`#if os(iOS)` 里的 `ToolbarContent`、菜单项的两行 `Text`、`toolbarBadge` 在 iOS 26 上的 `.badge`）和新测试只有真 SDK 才验得出来。
-3. 第 1 轮五条线并行；第 2 轮纯客户端新功能；第 3 轮等后端。A 线（首页）接着做：长按菜单（4.2.2）、“等你处理”提示行、预览换成最近
-   一次运行的摘要（6.7）、`SearchResultsView` 嵌进首页（D 线先交）、空查询时列实例、`NewTaskSheet` 换选择器版式（4.4.5）。
+1. macOS CI（`.github/workflows/ios.yml`，只在推 main 和开 PR 时跑）还一次都没跑过这个分支：开 PR 或推一次让它用真 SDK 编。只有它验得出来的：
+   Glass.swift 的 `if #available` 分支；首页工具栏（`#if os(iOS)` 里的 `ToolbarContent`、菜单项的两行 `Text`、`toolbarBadge` 在 iOS 26 上的
+   `.badge`、`BottomBarSearchItem`）；`SheetStack` 里第二层 `.sheet(item:)`；`AgentsDestination` 的 `.adopt(agentID: nil)` 模式；启动屏
+   （`UILaunchScreen` 的两个键、`LaunchLogo` 的 PDF 和颜色集能不能被资源编译器收下，Info.plist 测试查键）；`DesignTokenTests` 在模拟器上
+   顺着 `#filePath` 读仓库里的颜色集（模拟器进程读宿主机的文件，按说可以，没验过）；App 测试里 `OpenScreen` 那三条。
+2. 出一次截图对照（规范 7.6 第 3 条）：`git push -f origin HEAD:ios-screenshots`（或 Actions 里手动跑 iOS screenshots），产物 28 张；
+   再用 `IOS_RUNTIME=18` 出一套看 iOS 18 的回退（镜像里没有就先下载运行时）。和参考截图并排看（参考截图在仓库外，要请用户再发），
+   差别记到这里。冷启动后的启动屏截不到，要在模拟器或真机上看一眼。
+3. 第 1 轮五条线并行（规范 7.3，开工前先在这里认领）；第 2 轮纯客户端新功能；第 3 轮等后端。A 线（首页）接着做：长按菜单（4.2.2）、
+   “等你处理”提示行、预览换成最近一次运行的摘要（6.7）、`SearchResultsView` 嵌进首页（D 线先交）、空查询时列实例、`NewTaskSheet`
+   换选择器版式（4.4.5）。B 线做对话页时注意下面“坑”里 `newTaskRequest` 那条。
 
 坑和决定：
 - 参考截图是别家产品、里面有用户的账号信息，仓库公开，所以**不进仓库**；规范里只用自己的话写布局和交互，不写参考 App 的名字。以后的会话要看截图，请用户再发一次压缩包。
@@ -151,3 +161,9 @@
 - 首页：iOS 17 / 18 上底部条只有工作台菜单（`BottomBarSearchItem` 不放东西），搜索栏照旧在导航栏下面。账号头像用 `InstanceAvatar`
   （按昵称取色），还没拉到用户时是 `person.crop.circle`。新任务没有首页入口了（规范 3.2：引导、快捷指令用 `.newTask`）。
 - `ConversationText` 里旧首页的三句文案删了；`Greeting`（问候语）还在 `Screens/Welcome/`，登录、欢迎页用户自己设计，没动。
+- 截图参数：`THINKTIN_OPEN_SCREEN` 打开的是“首页第一行”，不是写死的 id：演示数据里写作助手 2 分钟前活跃、代码审查 10 分钟前，所以是
+  写作助手（和截图脚本里 `thinktin://instance/$writer` 是同一个）。演示数据的时间改了，这一点要跟着看。实例的页面要等实例列表拿到才打开
+  （最多 10 秒），设置、领养、搜索不等。`AppConfiguration.swift` 保持只依赖 Foundation（macOS App 也编它），用到路由的在 `OpenScreen.swift`。
+- 截图脚本是 bash 3.2 写法：清单是一段文本、`while read … <&3` 从 3 号描述符读，不用数组；两个启动变量总是都传，不用的传空串（App 不认空的）。
+- 启动屏：`brand_assets.py` 自己写 PDF（只用标准库），`LaunchLogo` 高 60pt、宽约 43.8pt，矩阵保留 6 位小数（3 位会让 Logo 变成 60.2pt、
+  偏一点）。颜色从 `Theme.swift` 的 `public var light` / `dark` 两个 switch 里按正则读：改那两个 switch 的写法要跟着改脚本。

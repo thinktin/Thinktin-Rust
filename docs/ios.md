@@ -1,8 +1,9 @@
 # iOS App 工程说明（WBS 12.x）
 
-> 更新日期：2026-11-04　｜　分支 `ios-app`　｜　进度见 [docs/progress/ios-app.md](progress/ios-app.md)
+> 更新日期：2026-11-05　｜　分支 `ios-app`　｜　进度见 [docs/progress/ios-app.md](progress/ios-app.md)
 
-iOS App 用 Swift + SwiftUI 原生开发，界面参考 Claude 官方 iOS App 的信息架构和视觉；iOS 与 macOS 共享 `ThinktinKit`；
+iOS App 用 Swift + SwiftUI 原生开发，界面按[改版规范](ios-ui-redesign.md)（2026-11-04 起：首页是实例列表，系统原生控件，
+iOS 26 的玻璃，第 0 轮的底座已经做完）；iOS 与 macOS 共享 `ThinktinKit`；
 所有网络、续传、缓存、密码识别、配对验签都在 Rust 的 `client-core` 里（架构方案第 8 节），Swift 经 UniFFI 生成的
 `ThinktinCore` 包调用。本文记工程上的决定，给接手的人和 agent 看。
 
@@ -15,8 +16,8 @@ iOS App 用 Swift + SwiftUI 原生开发，界面参考 Claude 官方 iOS App �
 3. **能在 Linux 上测的都在 Linux 上测。** 云端会话没有 Xcode。纯 Swift 的部分（领域模型、视图模型、格式化、事件归并、
    计划触发器表达、适配层）用 Linux 上的 Swift 6.2 `swift test`；SwiftUI 视图、平台层只能在 GitHub Actions 的 macOS runner
    上编（每次推送都跑，见第 7 节）。
-4. **贴 iOS 的习惯，不复刻 Material。** 导航、列表、表单、分享用系统控件；颜色、字体、留白按第 4 节的设计令牌，看起来像
-   Claude App，但不用它的商标和品牌字体。
+4. **贴 iOS 的习惯，不复刻 Material。** 导航、列表、表单、分享用系统控件；颜色、字体、留白按第 4 节的设计令牌，页面布局按
+   改版规范（[ios-ui-redesign.md](ios-ui-redesign.md) 第 4 节逐页写了），不用别家的商标、品牌色和品牌字体。
 5. **按钮这类控件能用系统原生的，一律用原生的**（用户 2026-11-04 定的）：`Button` 加系统的按钮样式（`.borderedProminent`、
    `.bordered`、`.plain`、iOS 26 的玻璃样式）、`Menu`、`Toggle`、`Picker`、`Stepper`、`TextField`、`.toolbar`、`.sheet`、
    `.confirmationDialog`、`.swipeActions`、`ShareLink`、SF Symbols 图标，不自己画外形、不自己实现手势和动效。只有系统没有的东西
@@ -28,7 +29,7 @@ iOS App 用 Swift + SwiftUI 原生开发，界面参考 Claude 官方 iOS App �
 apps/apple/
   project.yml                 XcodeGen 工程定义（不提交 .xcodeproj；本机和 CI 都 `xcodegen generate`）
   Thinktin/                   iOS App target
-    App/                      入口、根导航、依赖装配（AppEnvironment）
+    App/                      入口、依赖装配（AppEnvironment）、启动配置（AppConfiguration；截图用的 OpenScreen）
     Platform/                 Keychain 会话存储、APNs、LocalAuthentication、Secure Enclave、小组件快照、实时活动、深链
     Intents/                  快捷指令和 Siri（App Intents，12.20）
     Resources/                Assets.xcassets、Localizable.xcstrings、PrivacyInfo.xcprivacy、Info.plist 补充项
@@ -95,6 +96,10 @@ Linux 上 `tools/client-core/build-linux-swift.sh target/linux`（本机 `libcli
 - 状态色只用于状态，不用于装饰。运行状态与颜色：排队 / 启动中 `inkSecondary`，运行中 `accent`，等待（审批 / 电脑 / key / 子任务）`warning`，
   成功 `success`，失败 `danger`，取消 `inkTertiary`；重试等待（`backoff`）和认不出的状态同排队。实例状态：运行中、启动中、创建中是会呼吸的点，
   已暂停、已删除 `inkTertiary`，已归档是空心点。规则在 `ThinktinUI/Design/StatusTone.swift`，中英文状态名和安卓设计规范一致。
+- 共用组件（`ThinktinUI/Components/`）：实例头像 `InstanceAvatar(name, size:, badge:)`（首字，底色按名字的散列从 8 色里取，跨进程稳定，
+  避开强调色和状态色；右下角可选状态角标；读屏念“名字，状态”，旁边有名字时 `.accessibilityHidden(true)`）；筛选胶囊
+  `FilterChipBar`（横向单选，系统按钮加 `glassButtonStyle`，可带数，“全部”用 `nil`）。改版后新页面不再用自画的 `Card`、
+  `GroupedSection`、`PillButton`、`EmptyStateView`，换成 `List` / `Form` / `ContentUnavailableView`（规范 7.3 的收尾里删掉它们）。
 - 深色模式、动态字体、VoiceOver 标签是每个页面的验收项，不是后补的。
 
 ### 4.1 Logo 与 App 图标
@@ -292,9 +297,13 @@ client-core 只缓存实例、运行、事件、收件箱（cache.rs 的几张�
      `swift build --build-tests` 整个 `ThinktinKit`（含 ThinktinUI）；`xcodegen generate`；挑一个不高于所选 Xcode 模拟器 SDK 的 iPhone，
      `xcodebuild test` 跑 App 的 `ThinktinTests` 和 `ThinktinUITests`；最后 macOS 本机 `swift test`（适配层经 macOS 切片跑一遍）。日志传成 artifact。
   `kit-linux` 最后还有严格模式的 `swift format lint`。
-- **截图**（macOS）：`tools/apple/screenshots.sh [输出目录]` 在 iPhone 模拟器上跑演示模式，按深链截首页、实例、运行、审批、
-  计划、收件箱、保险箱请求和深色模式的首页共 10 张（改版去掉了抽屉的两张）；Codemagic 上是 `codemagic.yaml` 的 `ios-screenshots`。
-  `simctl openurl` 会弹系统确认框，所以页面用启动环境变量指定：`THINKTIN_OPEN_URL=thinktin://…`（只有 Debug 构建认，`AppConfiguration`）。
+- **截图**（macOS）：`tools/apple/screenshots.sh [输出目录]` 在 iPhone 模拟器上跑演示模式，截改版规范 7.6 的 14 个页面（首页、对话、
+  实例资料、实例的计划、产出物、设置、保险箱填写请求、领养、首页搜索、审批、收件箱、进行中、运行、计划），浅色、深色各一张
+  （`01-home-light.png`、`01-home-dark.png`）；`IOS_RUNTIME=18`（或 `17.5`）换成那个版本的模拟器看旧系统的回退。GitHub 上是
+  `.github/workflows/ios-screenshots.yml`，Codemagic 上是 `codemagic.yaml` 的 `ios-screenshots`。`simctl openurl` 会弹系统确认框，
+  所以页面用启动环境变量指定（只有 Debug 构建认，`AppConfiguration`）：`THINKTIN_OPEN_URL=thinktin://…` 是深链；
+  `THINKTIN_OPEN_SCREEN=conversation / plans / artifacts / settings / search / adopt` 打开首页第一个实例（演示数据里是“写作助手”）
+  的对话、计划、产出物，或者设置、领养两个 sheet、首页搜索，和深链一样走 `Router.show`（App 的 `App/OpenScreen.swift`）。
 - 代码风格：`swift format`（Swift 6 工具链自带），配置在 `apps/apple/.swift-format`（App 和 ThinktinKit 共用，4 格缩进、120 列、
   其余是 swift-format 6.2 的默认规则全量导出）。CI 跑严格模式的 lint，**提交前先 `swift format -i -r apps/apple`**。
 - **Linux 上检查界面代码**：`tools/apple/uicheck/run.sh`（`appkit` 查 macOS 路径和 macOS App target（要先
