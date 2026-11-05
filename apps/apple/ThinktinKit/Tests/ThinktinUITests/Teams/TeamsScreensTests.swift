@@ -64,7 +64,9 @@ struct TeamsScreensTests {
                 TemplateMember(agentID: DemoData.hermesAgentID, name: "资料员"),
             ], createdAt: Date())
         for (isBusy, canWrite) in [(false, true), (true, false), (false, false)] {
-            let row = TemplateRow(template: template, isBusy: isBusy, canWrite: canWrite, onAdopt: {}, onDelete: {})
+            let row = List {
+                TemplateRow(template: template, isBusy: isBusy, canWrite: canWrite, onAdopt: {}, onDelete: {})
+            }
             hostAndLayout(row.previewShell())
             hostAndLayout(row.previewShell(.english, scheme: .dark).dynamicTypeSize(.accessibility3))
         }
@@ -77,8 +79,11 @@ struct TeamsScreensTests {
         _ = await model.save()
         #expect(model.showsProblems)
         for (index, step) in model.steps.enumerated() {
-            let card = PipelineStepCard(
-                model: model, step: step, index: index, isFirst: index == 0, isLast: index == model.steps.count - 1)
+            let card = Form {
+                PipelineStepCard(
+                    model: model, step: step, index: index, isFirst: index == 0,
+                    isLast: index == model.steps.count - 1)
+            }
             hostAndLayout(card.previewShell())
             hostAndLayout(card.previewShell(.english, scheme: .dark).dynamicTypeSize(.accessibility3))
         }

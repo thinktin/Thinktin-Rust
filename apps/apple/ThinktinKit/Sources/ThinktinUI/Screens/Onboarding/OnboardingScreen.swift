@@ -27,15 +27,30 @@ private struct OnboardingContent: View {
 
     var body: some View {
         let model = self.model
-        ScrollView {
-            VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                PageHeader(title: OnboardingText.title(language), message: OnboardingText.intro(language))
-                if let error = visibleError(model.error) {
-                    ErrorBanner(error) { Task { await model.load() } }
+        List {
+            Section {
+                VStack(spacing: Metrics.Spacing.xs) {
+                    Text(OnboardingText.title(language))
+                        .font(.title2.bold())
+                        .foregroundStyle(Theme.ink)
+                        .accessibilityAddTraits(.isHeader)
+                    Text(OnboardingText.intro(language))
+                        .typography(.subheadline)
+                        .foregroundStyle(Theme.inkSecondary)
                 }
-                if !model.hasLoaded {
-                    LoadingStateView()
-                } else {
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, Metrics.Spacing.s)
+                .clearListRow()
+            }
+            if let error = visibleError(model.error) {
+                Section {
+                    ErrorBanner(error) { Task { await model.load() } }
+                        .clearListRow()
+                }
+            }
+            if model.hasLoaded {
+                Section {
                     ForEach(OnboardingStep.allCases, id: \.self) { step in
                         OnboardingStepCard(
                             step: step, isDone: model.isDone(step), isCurrent: model.currentStep == step,
@@ -45,23 +60,34 @@ private struct OnboardingContent: View {
                             perform(step)
                         }
                     }
+                } footer: {
                     if model.isComplete {
-                        NoticeText(text: OnboardingText.allSet(language), tone: .success)
+                        Label(OnboardingText.allSet(language), systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(StatusTone.success.color)
                     }
                 }
-                Button {
-                    close()
-                } label: {
-                    Text(model.isComplete ? OnboardingText.done(language) : OnboardingText.later(language))
-                        .typography(.subheadline)
-                        .frame(maxWidth: .infinity, minHeight: Metrics.minTapTarget)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(Theme.accent)
+                .themedRow()
             }
-            .pageLayout()
         }
-        .background(Theme.paper)
+        .insetGroupedList()
+        .themedGroupedBackground()
+        .overlay {
+            if !model.hasLoaded, visibleError(model.error) == nil { ProgressView() }
+        }
+        // 只做一件事的页（规范 2.7）：底部全宽的玻璃胶囊，做完了是“完成”，没做完是“以后再说”。
+        .floatingBar(edge: .bottom) {
+            Button {
+                close()
+            } label: {
+                Text(model.isComplete ? OnboardingText.done(language) : OnboardingText.later(language))
+                    .frame(maxWidth: .infinity)
+            }
+            .glassButtonStyle(model.isComplete ? .prominent : .regular)
+            .buttonBorderShape(.capsule)
+            .controlSize(.large)
+            .padding(.horizontal, Metrics.Spacing.m)
+            .padding(.bottom, Metrics.Spacing.xs)
+        }
         .inlineNavigationTitle(AppRoute.onboarding.title(language))
         .task { await model.load() }
     }
@@ -96,7 +122,8 @@ private struct OnboardingContent: View {
     }
 }
 
-/// 一步：序号或对勾、标题、说明；当前这一步有按钮。
+/// 一步，是列表里的一行：左边序号圆（做完是成功色的对勾，当前这一步是强调色）、标题、说明；当前这一步在下面放一个
+/// 玻璃胶囊去做（可选的那一步不突出）。
 struct OnboardingStepCard: View {
     let step: OnboardingStep
     let isDone: Bool
@@ -108,26 +135,26 @@ struct OnboardingStepCard: View {
     @Environment(\.displayLanguage) private var language
 
     var body: some View {
-        Card {
+        VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
             HStack(alignment: .top, spacing: Metrics.Spacing.s) {
                 ZStack {
                     Circle()
-                        .fill(isDone ? Theme.success : (isCurrent ? Theme.accent : Theme.hairline))
+                        .fill(isDone ? Theme.success : (isCurrent ? Theme.accent : Theme.userBubble))
                         .frame(width: 28, height: 28)
                     if isDone {
                         Image(systemName: "checkmark")
-                            .font(Typography.footnote.font)
+                            .font(.footnote.weight(.bold))
                             .foregroundStyle(Theme.onAccent)
                     } else {
                         Text(verbatim: "\(step.rawValue + 1)")
-                            .typography(.footnote)
+                            .font(.footnote.weight(.semibold))
                             .foregroundStyle(isCurrent ? Theme.onAccent : Theme.inkSecondary)
                     }
                 }
                 .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
+                VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
                     Text(OnboardingText.stepTitle(step, language: language))
-                        .typography(.headline)
+                        .typography(.body)
                         .foregroundStyle(isDone ? Theme.inkSecondary : Theme.ink)
                     Text(OnboardingText.stepDetail(step, language: language))
                         .typography(.subheadline)
@@ -139,16 +166,17 @@ struct OnboardingStepCard: View {
             .accessibilityElement(children: .combine)
             .accessibilityValue(Text(isDone ? OnboardingText.done(language) : ""))
             if isCurrent && !isDone {
-                PillButton(
-                    OnboardingText.action(step, denied: denied, language: language), systemImage: "arrow.right",
-                    kind: step.isOptional ? .secondary : .primary
-                ) {
+                Button {
                     action()
+                } label: {
+                    Label(OnboardingText.action(step, denied: denied, language: language), systemImage: "arrow.right")
                 }
-                .frame(maxWidth: .infinity)
+                .smallCapsuleButton(step.isOptional ? .regular : .prominent)
+                .padding(.leading, 28 + Metrics.Spacing.s)
                 .disabled(isBusy)
             }
         }
+        .padding(.vertical, Metrics.Spacing.xxs)
     }
 }
 

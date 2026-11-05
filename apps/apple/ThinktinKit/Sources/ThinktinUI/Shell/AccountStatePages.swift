@@ -24,14 +24,16 @@ struct FrozenView: View {
             if let error = model.accountCheckError ?? signOutError {
                 ErrorBanner(error)
             }
-            PillButton(
-                model.isCheckingAccount ? (zh ? "正在检查…" : "Checking…") : (zh ? "重新检查" : "Check again"),
-                systemImage: "arrow.clockwise"
-            ) {
+            Button {
                 Task { await model.recheckAccount() }
+            } label: {
+                Label(
+                    model.isCheckingAccount ? (zh ? "正在检查…" : "Checking…") : (zh ? "重新检查" : "Check again"),
+                    systemImage: "arrow.clockwise")
             }
+            .glassButtonStyle(.prominent)
             .disabled(model.isCheckingAccount)
-            PillButton(zh ? "退出登录" : "Sign out", kind: .secondary) {
+            Button(zh ? "退出登录" : "Sign out") {
                 Task {
                     do {
                         try await model.signOut()
@@ -40,6 +42,7 @@ struct FrozenView: View {
                     }
                 }
             }
+            .glassButtonStyle()
         }
     }
 }
@@ -65,7 +68,7 @@ struct UpgradeView: View {
                 Link(destination: appStoreURL) {
                     Label(zh ? "前往 App Store" : "Open the App Store", systemImage: "arrow.up.forward.app")
                 }
-                .buttonStyle(.pill)
+                .glassButtonStyle(.prominent)
             } else {
                 Text(zh ? "在 App Store 搜索“ThinkTin”即可更新。" : "Search for “ThinkTin” in the App Store to update.")
                     .typography(.subheadline)
@@ -81,7 +84,8 @@ enum ShellLinks {
     static let appStore: URL? = nil
 }
 
-/// 冻结页、升级页共用的版式：居中的大图标、衬线标题、一段说明、下面一列按钮。内容多时可以滚动（大字号）。
+/// 冻结页、升级页共用的版式：系统的 `ContentUnavailableView`（按语气上色的图标、标题、说明，下面一列玻璃按钮，大尺寸胶囊）。
+/// 内容多时可以滚动（大字号）。
 private struct AccountStateLayout<Actions: View>: View {
     let systemImage: String
     let tone: StatusTone
@@ -101,29 +105,21 @@ private struct AccountStateLayout<Actions: View>: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: Metrics.Spacing.l) {
-                Image(systemName: systemImage)
-                    .font(Typography.largeTitle.font)
-                    .imageScale(.large)
-                    .foregroundStyle(tone.color)
-                    .accessibilityHidden(true)
-                VStack(spacing: Metrics.Spacing.s) {
+            ContentUnavailableView {
+                Label {
                     Text(title)
-                        .typography(.largeTitle)
-                        .foregroundStyle(Theme.ink)
-                        .accessibilityAddTraits(.isHeader)
-                    Text(message)
-                        .typography(.body)
-                        .foregroundStyle(Theme.inkSecondary)
+                } icon: {
+                    Image(systemName: systemImage)
+                        .foregroundStyle(tone.color)
                 }
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-                VStack(spacing: Metrics.Spacing.s) {
-                    actions
-                }
+            } description: {
+                Text(message)
+            } actions: {
+                actions
+                    .buttonBorderShape(.capsule)
+                    .controlSize(.large)
             }
             .frame(maxWidth: Metrics.readableWidth)
-            .padding(.horizontal, Metrics.Spacing.xl)
             .padding(.vertical, Metrics.Spacing.xxxl)
             .frame(maxWidth: .infinity)
         }

@@ -19,82 +19,121 @@ struct ShellDestination: View {
     }
 }
 
-/// “新任务”的实例选择（有好几个实例时，从“新任务”弹出）：选一个就进它的对话（先关掉 sheet）、把焦点放进输入框；
-/// 下面可以“新建 Botin”。
+/// “新任务”的 Botin 选择（引导、快捷指令的“新任务”有好几个 Botin 时弹出），照参考 11 的选择器版式（规范 4.4.5）：
+/// 左上 `CloseButton`、中间标题、右上 `ConfirmButton("确认")`；一行一个 Botin（头像、名字、状态），选中的右边系统勾，
+/// 默认选当前的 Botin；`.searchable` 按名字筛（iOS 26 的 iPhone 上落在底部）；最后一组“新建 Botin”。
+/// 确认就进它的对话（先关掉 sheet）、把焦点放进输入框。没有 Botin、没搜到时 `ContentUnavailableView`。
 private struct NewTaskSheet: View {
     let model: AppModel
 
     @Environment(\.displayLanguage) private var language
+    @State private var selection: InstanceID?
+    @State private var query = ""
+
+    init(model: AppModel) {
+        self.model = model
+        _selection = State(initialValue: model.router.currentInstanceID)
+    }
+
+    private var shown: [Instance] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return model.instances }
+        return model.instances.filter { $0.name.localizedCaseInsensitiveContains(needle) }
+    }
 
     var body: some View {
         let zh = language == .chinese
-        ScrollView {
-            VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
-                Text(zh ? "交给哪个 Botin？" : "Which Botin should take this task?")
-                    .typography(.subheadline)
-                    .foregroundStyle(Theme.inkSecondary)
-                    .padding(.horizontal, Metrics.Spacing.xs)
-                    .padding(.bottom, Metrics.Spacing.xs)
-                if model.instances.isEmpty {
-                    EmptyStateView(
-                        systemImage: "square.stack.3d.up", title: zh ? "还没有 Botin" : "No Botins yet",
-                        message: zh ? "先新建一个。" : "Create one first.")
-                }
-                ForEach(model.instances) { instance in
-                    Button {
-                        model.router.requestNewTask(in: instance.id)
-                    } label: {
-                        HStack(spacing: Metrics.Spacing.s) {
-                            StatusDot(instance.state)
-                                .accessibilityHidden(true)
-                            VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
-                                Text(instance.name)
-                                    .typography(.body)
-                                    .foregroundStyle(Theme.ink)
-                                Text(instance.state.localizedName(language))
-                                    .typography(.caption)
-                                    .foregroundStyle(Theme.inkSecondary)
-                            }
-                            Spacer(minLength: Metrics.Spacing.xs)
-                            if instance.id == model.router.currentInstanceID {
-                                Image(systemName: "checkmark")
-                                    .foregroundStyle(Theme.accent)
-                                    .accessibilityHidden(true)
-                            }
-                        }
-                        .padding(Metrics.Spacing.m)
-                        .frame(minHeight: Metrics.minTapTarget)
-                        .background(
-                            Theme.paperElevated,
-                            in: RoundedRectangle(cornerRadius: Metrics.Radius.card, style: .continuous)
-                        )
-                        .contentShape(Rectangle())
+        let shown = self.shown
+        List {
+            if !shown.isEmpty {
+                Section {
+                    ForEach(shown) { instance in
+                        row(instance)
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityElement(children: .combine)
-                    .accessibilityAddTraits(instance.id == model.router.currentInstanceID ? .isSelected : [])
+                } header: {
+                    Text(zh ? "交给哪个 Botin？" : "Which Botin should take this task?").textCase(nil)
                 }
-                // 叠在新任务上面的第二层；建好了关掉两层、进新 Botin 的对话。
-                PillButton(AppRoute.adopt(agentID: nil).title(language), systemImage: "plus", kind: .secondary) {
-                    model.router.open(.adopt(agentID: nil))
-                }
-                .padding(.top, Metrics.Spacing.s)
+                .themedRow()
             }
-            .padding(Metrics.Spacing.m)
+            if !model.instances.isEmpty, query.isEmpty {
+                Section {
+                    // 叠在新任务上面的第二层；建好了关掉两层、进新 Botin 的对话。
+                    Button {
+                        model.router.open(.adopt(agentID: nil))
+                    } label: {
+                        Label(AppRoute.adopt(agentID: nil).title(language), systemImage: "plus")
+                    }
+                }
+                .themedRow()
+            }
         }
-        .background(Theme.paper)
-        .navigationTitle(AppRoute.newTask.title(language))
-        #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-        #endif
+        .insetGroupedList()
+        .themedGroupedBackground()
+        .overlay {
+            if model.instances.isEmpty {
+                ContentUnavailableView {
+                    Label(zh ? "还没有 Botin" : "No Botins yet", systemImage: "person.crop.circle.badge.plus")
+                } description: {
+                    Text(zh ? "先新建一个。" : "Create one first.")
+                } actions: {
+                    Button(AppRoute.adopt(agentID: nil).title(language)) {
+                        model.router.open(.adopt(agentID: nil))
+                    }
+                    .glassButtonStyle(.prominent)
+                }
+            } else if shown.isEmpty {
+                ContentUnavailableView.search(text: query)
+            }
+        }
+        .searchable(text: $query, prompt: Text(zh ? "搜索 Botin" : "Search Botins"))
+        .inlineNavigationTitle(AppRoute.newTask.title(language))
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                Button(zh ? "取消" : "Cancel") {
-                    model.router.dismissSheet()
+                CloseButton { model.router.dismissSheet() }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                ConfirmButton(zh ? "确认" : "Confirm") {
+                    if let selection { model.router.requestNewTask(in: selection) }
                 }
+                .disabled(selection.map { id in !model.instances.contains { $0.id == id } } ?? true)
             }
         }
         .presentationDetents([.medium, .large])
+    }
+
+    private func row(_ instance: Instance) -> some View {
+        let isSelected = instance.id == selection
+        return Button {
+            selection = instance.id
+        } label: {
+            HStack(spacing: Metrics.Spacing.s) {
+                InstanceAvatar(
+                    instance.name, appearance: model.appearances.resolved(for: instance.id),
+                    size: Metrics.Avatar.search, badge: .instance(instance.state)
+                )
+                .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
+                    Text(verbatim: instance.name)
+                        .typography(.body)
+                        .foregroundStyle(Theme.ink)
+                        .lineLimit(1)
+                    Text(instance.state.localizedName(language))
+                        .typography(.subheadline)
+                        .foregroundStyle(Theme.inkSecondary)
+                }
+                Spacer(minLength: Metrics.Spacing.xs)
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(Theme.accent)
+                        .accessibilityHidden(true)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 }
 

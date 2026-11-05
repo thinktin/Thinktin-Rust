@@ -488,6 +488,19 @@
   `Form`（配对码用新的 `FormTextField`，“配对”是底部浮动的全宽胶囊，左上 `CloseButton`；授权的有效期换成 `Picker(.menu)`，右上
   `ConfirmButton("签名授权")`），Mac 菜单栏面板的胶囊按钮换成系统按钮。新的共用组件 `Components/FormFields.swift`：`FormTextField`
   （标签在上、系统输入框、提示 / 问题和字数，代替自画框的 `PlansTextField`）和 `numberInput()` / `codeInput()`。
+- 第 1 轮收尾线·团队、流水线、新任务、引导、冻结 / 升级页（参考里没有，照第 2 节和参考 11、62 的版式；2026-11-05）：团队列表换成分组列表
+  （顶上一句灰字，“我的团队”一行是负责人头像、名字、“负责人 · N 个成员”，`NavigationLink` 进详情；“团队模板”一行右边小玻璃胶囊“新建团队”，
+  左滑 / 长按删除；没有时组里一行灰字，照参考 62 的“暂无规则”；右上玻璃“+”）。团队详情照 Botin 资料页：居中的成员头像叠在一起 + 名字
+  `.title2.bold()` + 成员数，成员一组（头像、名字、角色，`NavigationLink` 进资料页，右边小胶囊“配模型”，配模型的说明挪到组脚注），
+  “用这个团队建流水线”“存为模板”一组，红字“删除团队”一组，右上“编辑”。团队编辑照参考 11 的选择器（规范 4.4.5）：左上 `CloseButton`、
+  右上 `ConfirmButton("保存")`，名字（`FormTextField`）、成员（头像 + 名字，选中的右边系统勾）、负责人（`Picker(.menu)`，只列选中的成员），
+  `.searchable` 筛成员，没有 Botin 时 `ContentUnavailableView`。流水线编辑器换成 `Form`：每步一组，组标题“第 N 步”右边 `ellipsis` 菜单
+  （上移、下移、删除），执行的 Botin 换成 `Picker(.menu)`，依赖一行一步、选中打勾，问题写在组脚注；“加一步”一组，脚注“共 N 步，最多 20 步”；
+  保存 / 创建换成 `ConfirmButton`。新任务的 Botin 选择（`NewTaskSheet`）照参考 11：左上 ×、右上“确认”，一行一个 Botin（40pt 头像带状态角标、
+  名字、状态），默认选当前的，`.searchable`，最后一组“新建 Botin”，没有 Botin / 没搜到用 `ContentUnavailableView`（以前点一行就走，现在先选再
+  “确认”）。引导换成分组列表：居中标题和说明，四步一组（序号圆、标题、说明，当前这一步下面一个小玻璃胶囊），底部浮动的全宽胶囊“以后再说 /
+  完成”。冻结页、升级页换成系统 `ContentUnavailableView` + 大尺寸玻璃按钮。共用的 `LabeledRow`（图标、标题、灰色说明的行内容，代替
+  `ListRow`）放在 `Components/ListStyles.swift`。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、
