@@ -1,8 +1,8 @@
 import SwiftUI
 import ThinktinKit
 
-/// 保险箱（`.vault`，WBS 12.13）。改版照参考 57、58（规范 4.9.5）：标题“密码保险箱”，右上玻璃“+”（ThinkTin 只有一种条目，
-/// 直接压进新建表单，不弹菜单）；第一行是筛选胶囊（全部 / 条目 / 等你填写 / 处理过的，带数）；一条都没有时一行灰字
+/// 保险箱（`.vault`，WBS 12.13）。改版照参考 57、58（规范 4.9.5）：标题“密码保险箱”，右上玻璃“+”弹系统菜单（参考 58：
+/// 登录信息、卡、联系信息；只有登录信息能存，卡和联系信息的表单照参考做好了、保存弹“即将推出”，规范 4.9.7）；第一行是筛选胶囊（全部 / 条目 / 等你填写 / 处理过的，带数）；一条都没有时一行灰字
 /// “还没有保存任何内容。”+ 脚注（Botin 看得到什么、看不到什么）；有的时候 insetGrouped 的几组：等你填写的请求、条目（名字、
 /// 用途和能用的 Botin，左滑删除）、处理过的请求。离线时显示已经拉到的，写操作禁用。
 struct VaultScreen: View {
@@ -15,7 +15,7 @@ struct VaultScreen: View {
 
 private struct VaultContent: View {
     @State private var model: VaultModel
-    @State private var isCreating = false
+    @State private var creating: VaultItemKind?
     @State private var pendingDeletion: VaultItem?
 
     @Environment(AppModel.self) private var app
@@ -54,7 +54,9 @@ private struct VaultContent: View {
                         Text(VaultText.empty(model.filter, language: language))
                             .foregroundStyle(Theme.inkSecondary)
                     } footer: {
-                        Text(VaultText.footer(language))
+                        Text(
+                            model.filter == .cards || model.filter == .contacts
+                                ? VaultExtraText.kindsFooter(language) : VaultText.footer(language))
                     }
                     .themedRow()
                 } else {
@@ -70,13 +72,20 @@ private struct VaultContent: View {
         .inlineNavigationTitle(AppRoute.vault.title(language))
         .toolbar {
             ToolbarItem(placement: ToolbarSlot.trailing) {
-                Button {
-                    isCreating = true
+                Menu {
+                    ForEach(VaultItemKind.allCases) { kind in
+                        Button {
+                            creating = kind
+                        } label: {
+                            Label(kind.title(language), systemImage: kind.systemImage)
+                        }
+                        // 只有登录信息真的存进保险箱：离线、没拉到、满了时不能新建；卡和联系信息是本地的表单。
+                        .disabled(kind.isSupported && (app.isOffline || !model.hasLoaded || model.isFull))
+                    }
                 } label: {
-                    Label(zh ? "新建条目" : "New item", systemImage: "plus")
+                    Label(VaultExtraText.addMenu(language), systemImage: "plus")
                         .labelStyle(.iconOnly)
                 }
-                .disabled(app.isOffline || !model.hasLoaded || model.isFull)
             }
         }
         .refreshable { await model.load() }
@@ -85,10 +94,15 @@ private struct VaultContent: View {
             // 从条目、请求页回来（主栈里或设置的 sheet 里）：可能改了、删了、填了。
             if router.visibleRoute == .vault && model.hasLoaded { Task { await model.load() } }
         }
-        .navigationDestination(isPresented: $isCreating) {
-            VaultItemEditorView(itemID: nil) { item in
-                isCreating = false
-                if let item { model.upsert(item) }
+        .navigationDestination(item: $creating) { kind in
+            switch kind {
+            case .login:
+                VaultItemEditorView(itemID: nil) { item in
+                    creating = nil
+                    if let item { model.upsert(item) }
+                }
+            case .card: VaultCardFormView()
+            case .contact: VaultContactFormView()
             }
         }
         .confirmationDialog(
@@ -329,7 +343,8 @@ private struct VaultItemContent: View {
 /// 新建 / 修改条目（参考 59 的“新登录信息”，规范 4.9.6）：在保险箱的导航栈里压栈（不再 sheet 叠 sheet），右上“保存”
 /// （`ConfirmButton`，没填好时灰）。`Form` 里几组，字段是“标签在上、输入在下”：名称（新建时，建好不能改）；账号 + 密码
 /// （密码行尾一个眼睛，只显示正在输入的）；提示（= 用途，多行，脚注“告诉 Botin 什么时候用这一条”）；能用它的 Botin
-/// （`Toggle` 所有 Botin，关掉后勾选）。参考的“网站”要后端（6.16），没做。保存成功调 `onFinish` 退回上一页。
+/// （`Toggle` 所有 Botin，关掉后勾选）。参考的“网站”（59、99）照做在名称下面（`VaultWebsitesSection`，能加、能移除），
+/// 但要后端（6.16），填了不保存、脚注写着。保存成功调 `onFinish` 退回上一页。
 struct VaultItemEditorView: View {
     let itemID: VaultItemID?
     /// 保存了带上条目（调用方退回上一页）。
@@ -345,6 +360,8 @@ struct VaultItemEditorView: View {
 private struct VaultItemEditorContent: View {
     @State private var model: VaultItemEditorModel
     @State private var showsPassword = false
+    /// 网站（参考 99）：接口还没有这个字段，只在这一页里。
+    @State private var websites = VaultFieldList()
     let onFinish: @MainActor (VaultItem?) -> Void
 
     @Environment(AppModel.self) private var app
@@ -380,7 +397,7 @@ private struct VaultItemEditorContent: View {
             if !model.hasLoaded && model.error == nil { ProgressView() }
         }
         .scrollDismissesKeyboard(.interactively)
-        .settingsNavigationTitle(model.isEditing ? (zh ? "修改条目" : "Edit item") : (zh ? "新建条目" : "New item"))
+        .settingsNavigationTitle(model.isEditing ? (zh ? "修改条目" : "Edit item") : VaultItemKind.login.newTitle(language))
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 ConfirmButton(zh ? "保存" : "Save", isWorking: model.isSaving) {
@@ -432,6 +449,7 @@ private struct VaultItemEditorContent: View {
             }
         }
         .themedRow()
+        VaultWebsitesSection(websites: $websites)
         Section {
             VaultLabeledField(title: zh ? "账号" : "Username") {
                 TextField(zh ? "可选" : "Optional", text: $bindable.username)

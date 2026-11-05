@@ -70,6 +70,9 @@ struct VaultModelsTests {
         #expect(model.count(of: .items) == 2)
         #expect(model.count(of: .pending) == 1)
         #expect(model.count(of: .past) == 1)
+        // 卡片、联系信息还不能存，数总是 0（参考 57 的胶囊照排）。
+        #expect(model.count(of: .cards) == 0 && model.count(of: .contacts) == 0)
+        #expect(VaultFilter.allCases == [.items, .cards, .contacts, .pending, .past])
         #expect(VaultFilter.allCases.allSatisfy { model.shows($0) })
         model.filter = .pending
         #expect(model.shows(.pending) && !model.shows(.items) && !model.shows(.past))
@@ -84,7 +87,11 @@ struct VaultModelsTests {
         #expect(empty.isEmptyForFilter)
         #expect(VaultText.empty(nil, language: .chinese) == "还没有保存任何内容。")
         #expect(VaultText.empty(.past, language: .english) == "No past requests.")
-        #expect(VaultFilter.items.title(.chinese) == "条目")
+        #expect(VaultFilter.items.title(.chinese) == "登录信息")
+        #expect(VaultFilter.cards.title(.chinese) == "支付")
+        #expect(VaultText.empty(.contacts, language: .chinese) == "还没有保存联系信息。")
+        model.filter = .cards
+        #expect(model.isEmptyForFilter)
         #expect(VaultFilter.allTitle(.english) == "All")
     }
 

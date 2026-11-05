@@ -22,19 +22,20 @@ struct SettingsModelTests {
         sections.flatMap(\.rows).first { $0.id == id }
     }
 
-    @Test("分组的顺序照参考 53、70、75：账号、连接、Botin、偏好、安全、链接、关于、退出登录")
+    @Test("分组的顺序照参考 53、70、75：账号、连接、Botin、偏好、安全、链接、反馈、关于、退出登录")
     func sectionOrder() {
         let (_, model) = make()
         #expect(model.sections(.chinese).map(\.id) == SettingsSection.ID.allCases)
         // 参考里只有“Bot”那一组有标题；ThinkTin 多出来的“安全”也带标题。
-        #expect(model.sections(.chinese).map(\.title) == [nil, nil, "Botin", nil, "安全", nil, nil, nil])
+        #expect(model.sections(.chinese).map(\.title) == [nil, nil, "Botin", nil, "安全", nil, nil, nil, nil])
         #expect(model.sections(.english).first { $0.id == .security }?.title == "Security")
         let ids = model.sections(.chinese).map { $0.rows.map(\.id) }
         #expect(
             ids == [
-                ["account", "usage", "credentials", "vault"], ["connections"], ["approvals", "devices"],
+                ["account", "usage", "subscription", "credentials", "vault"], ["connections"],
+                ["permissions", "approvals", "devices", "importMemory"],
                 ["notifications", "appearance", "language", "haptics"], ["stopAll", "signOutOthers"],
-                ["privacy", "terms"], ["about", "licenses", "onboarding"], ["signOut"],
+                ["privacy", "terms"], ["feedback"], ["about", "licenses", "onboarding"], ["signOut"],
             ])
     }
 
@@ -48,6 +49,9 @@ struct SettingsModelTests {
             "connections": (.connections(category: nil), .connections),
             "approvals": (.approvals, .approvals), "signOutOthers": (.devices, .account),
             "about": (.about, .settings), "licenses": (.licenses, .settings),
+            // 还没有后端的几页（参考 56、62、71、76），也是本功能的、压栈。
+            "subscription": (.subscription, .settings), "permissions": (.permissions, .settings),
+            "importMemory": (.importMemory, .settings), "feedback": (.feedback, .settings),
         ]
         for (id, (route, feature)) in expected {
             #expect(row(id, in: sections)?.route == route, "\(id)")
@@ -104,6 +108,13 @@ struct SettingsModelTests {
         #expect(row("approvals", in: model.sections(.english, pendingApprovals: 1))?.subtitle == "1 waiting for you")
         #expect(row("approvals", in: model.sections(.english, pendingApprovals: 3))?.subtitle == "3 waiting for you")
         #expect(row("approvals", in: model.sections(.chinese))?.subtitle == "Botin 做有风险的操作前先问你")
+    }
+
+    @Test("权限一行：副标题按演示规则写自动审查的状态和条数（参考 53）")
+    func permissionsRow() {
+        let (_, model) = make()
+        #expect(row("permissions", in: model.sections(.chinese))?.subtitle == "自动审查已开启 · 3 条规则")
+        #expect(row("permissions", in: model.sections(.english))?.subtitle == "Auto-review on · 3 rules")
     }
 
     @Test("用量一行：今天的用量拉到之前没有值，离线时留着原来的")

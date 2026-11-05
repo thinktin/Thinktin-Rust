@@ -31,9 +31,10 @@ enum RouteSamples {
         .connections(category: nil), .connectedApps, .connectionList(.recommended), .connection("docs"),
         .primaryBotin,
         .instanceScreen("inst-1"),
+        .permissions, .subscription, .importMemory, .feedback,
     ]
 
-    static let caseCount = 52
+    static let caseCount = 56
 
     static func index(of route: AppRoute) -> Int {
         switch route {
@@ -89,6 +90,10 @@ enum RouteSamples {
         case .connection: 49
         case .primaryBotin: 50
         case .instanceScreen: 51
+        case .permissions: 52
+        case .subscription: 53
+        case .importMemory: 54
+        case .feedback: 55
         }
     }
 }
@@ -125,6 +130,11 @@ struct AppRouteTests {
         #expect(AppRoute.primaryBotin.title(.chinese) == "选择主 Botin")
         #expect(AppRoute.instanceScreen("i").title(.chinese) == InstanceScreenText.title(.chinese))
         #expect(AppRoute.instanceScreen("i").title(.english) == "Watch and take over")
+        // 设置里还没有后端的几页（参考 56、62、71、76）。
+        #expect(AppRoute.permissions.title(.chinese) == "权限")
+        #expect(AppRoute.subscription.title(.english) == "Subscription")
+        #expect(AppRoute.importMemory.title(.chinese) == "导入记忆")
+        #expect(AppRoute.feedback.title(.chinese) == "发送反馈")
     }
 
     @Test("页面归哪个功能（工作包）")
@@ -147,6 +157,7 @@ struct AppRouteTests {
             .artifacts(instanceID: "i"): .artifacts, .artifact("a", runID: "r"): .artifacts,
             .vault: .vault, .vaultItem("v"): .vault, .vaultRequest("v"): .vault,
             .settings: .settings, .licenses: .settings, .about: .settings,
+            .permissions: .settings, .subscription: .settings, .importMemory: .settings, .feedback: .settings,
             .imChannels: .imChannels, .onboarding: .onboarding, .search: .search,
             .home: .shell, .newTask: .shell, .frozen: .shell, .upgrade: .shell, .hiddenBotins: .shell,
             .connections(category: nil): .connections, .connections(category: .thisDevice): .connections,
@@ -181,6 +192,8 @@ struct AppRouteTests {
             .connections(category: nil), .connections(category: .code), .connectedApps, .connectionList(.recommended),
             .connection("docs"),
             .instanceScreen("i"),
+            // 设置的补充页在设置 sheet 的栈里压栈（规范 3.2）。
+            .permissions, .subscription, .importMemory, .feedback,
         ] {
             #expect(route.presentation == .push, "\(route)")
         }
@@ -200,6 +213,7 @@ struct AppRouteTests {
         for route in [
             AppRoute.run("r"), .conversation("i"), .settings, .search, .agentCatalog, .adopt(agentID: nil),
             .connections(category: nil), .connectedApps,
+            .permissions, .feedback,
         ] {
             #expect(!route.isTopLevel, "\(route)")
         }
@@ -241,6 +255,7 @@ struct AppRouteTests {
             AppRoute.home, .conversation("i"), .inbox, .inboxItem("x"), .approvals, .approval("a"), .plan("p"),
             .confirmPlan("p"), .plans(instanceID: nil), .artifacts(instanceID: nil), .vaultRequest("v"), .activeRuns,
             .settings, .search, .adopt(agentID: nil), .connections(category: nil), .connection("docs"),
+            .permissions, .subscription, .importMemory, .feedback,
         ] {
             #expect(!route.returnsToConversation, "\(route)")
         }
@@ -263,7 +278,11 @@ struct AppRouteTests {
         ] {
             #expect(route.offlinePolicy == .unavailable, "\(route)")
         }
-        for route in [AppRoute.licenses, .about, .search, .settings, .primaryBotin] {
+        // 设置的补充页是本机的演示数据或走邮件，不用联网。
+        for route in [
+            AppRoute.licenses, .about, .search, .settings, .primaryBotin, .permissions, .subscription, .importMemory,
+            .feedback,
+        ] {
             #expect(route.offlinePolicy == .local, "\(route)")
         }
         #expect(OfflinePolicy.local.bannerMessage(.chinese) == nil)

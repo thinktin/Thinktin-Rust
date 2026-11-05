@@ -235,8 +235,8 @@ extension DeviceInfo {
 }
 
 /// 设备详情（登录设备页里本地压栈，参考 67 手机、69 电脑）：名称、状态、登录时间一组；电脑多“在这台电脑上执行”的配对和
-/// 授权（12.9，`ComputerDeviceSections`）；最后红字“下线”（本机是“下线本机”，就是退出登录）。改名要后端（规范 6.20），名称行
-/// 不能点。
+/// 授权（12.9，`ComputerDeviceSections`）；最后红字“下线”（本机是“下线本机”，就是退出登录）。名称行带箭头，点了弹系统的
+/// 改名弹窗（参考 68：标题“重命名 …”、输入框、取消 / 保存）；改名要后端（规范 6.20），保存弹“即将推出”。
 struct DeviceDetailScreen: View {
     let model: DevicesModel
     let deviceID: DeviceID
@@ -245,6 +245,9 @@ struct DeviceDetailScreen: View {
     @Environment(\.displayLanguage) private var language
     @Environment(\.dismiss) private var dismiss
     @State private var pendingRevoke: DeviceInfo?
+    @State private var isRenaming = false
+    @State private var newName = ""
+    @State private var comingSoon: SettingsComingSoon?
 
     var body: some View {
         let zh = language == .chinese
@@ -252,7 +255,7 @@ struct DeviceDetailScreen: View {
         List {
             if let device {
                 Section {
-                    LabeledContent(zh ? "名称" : "Name", value: device.displayName(language))
+                    nameRow(device)
                     TimelineView(.everyMinute) { context in
                         HStack(spacing: Metrics.Spacing.s) {
                             DeviceStatusDot(isActive: device.isActive)
@@ -296,7 +299,45 @@ struct DeviceDetailScreen: View {
         }
         .settingsNavigationTitle(device?.displayName(language) ?? AppRoute.devices.title(language))
         .modifier(
-            DeviceRevokeConfirmation(model: model, pending: $pendingRevoke, onRevoked: { dismiss() }))
+            DeviceRevokeConfirmation(model: model, pending: $pendingRevoke, onRevoked: { dismiss() })
+        )
+        .alert(renameTitle(device), isPresented: $isRenaming) {
+            TextField(zh ? "名称" : "Name", text: $newName)
+            Button(zh ? "取消" : "Cancel", role: .cancel) {}
+            Button(zh ? "保存" : "Save") { comingSoon = .renameDevice }
+                .disabled(newName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+        .settingsComingSoon($comingSoon)
+    }
+
+    /// 名称一行（参考 67）：右边灰色的名字和箭头，点了改名。
+    private func nameRow(_ device: DeviceInfo) -> some View {
+        let zh = language == .chinese
+        return Button {
+            newName = device.displayName(language)
+            isRenaming = true
+        } label: {
+            LabeledContent {
+                HStack(spacing: Metrics.Spacing.xs) {
+                    Text(device.displayName(language))
+                        .lineLimit(1)
+                    Image(systemName: "chevron.right")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(Theme.inkTertiary)
+                        .accessibilityHidden(true)
+                }
+            } label: {
+                Text(zh ? "名称" : "Name")
+                    .foregroundStyle(Theme.ink)
+            }
+        }
+        .accessibilityHint(Text(zh ? "给这台设备改名" : "Renames this device"))
+    }
+
+    /// 改名弹窗的标题（参考 68：“重命名 iPhone”）。
+    private func renameTitle(_ device: DeviceInfo?) -> String {
+        let name = device?.displayName(language) ?? ""
+        return language == .chinese ? "重命名 \(name)" : "Rename \(name)"
     }
 }
 

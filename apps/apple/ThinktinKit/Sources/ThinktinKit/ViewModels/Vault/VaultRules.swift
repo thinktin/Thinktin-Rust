@@ -59,6 +59,8 @@ public enum VaultText {
         let zh = language == .chinese
         switch filter {
         case nil, .items?: return zh ? "还没有保存任何内容。" : "Nothing saved yet."
+        case .cards?: return zh ? "还没有保存卡片。" : "No cards saved yet."
+        case .contacts?: return zh ? "还没有保存联系信息。" : "No contact info saved yet."
         case .pending?: return zh ? "没有等你填写的请求。" : "No requests waiting for you."
         case .past?: return zh ? "还没有处理过的请求。" : "No past requests."
         }

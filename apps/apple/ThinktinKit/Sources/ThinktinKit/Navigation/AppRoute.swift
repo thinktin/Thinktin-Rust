@@ -113,6 +113,15 @@ public enum AppRoute: Hashable, Sendable, Codable {
     case settings
     case licenses
     case about
+    /// 权限与规则（参考 62，规范 4.9.8、6.15）：自动审查开关、“始终询问”“无需询问即允许”两组自然语言规则，新建、修改规则是
+    /// 页面里本地压栈的表单（参考 63、64、100）。还没有后端：规则是本地的演示数据，改动弹“即将推出”。入口是设置“Botin”组。
+    case permissions
+    /// 订阅（参考 56，规范 4.9.4、6.20）：先转圈，再列演示的方案；购买、恢复弹“即将推出”（App 内购买等 12.23）。
+    case subscription
+    /// 导入记忆（参考 71，规范 4.9.10、6.20）：复制导出提示词、粘贴结果；“添加到记忆”弹“即将推出”（没有写记忆的接口）。
+    case importMemory
+    /// 发送反馈（参考 76、77，规范 4.9.14、6.20 B）：写反馈、选和哪个 Botin 有关，用邮件发出去（没有反馈接口）。
+    case feedback
 
     // MARK: IM 渠道（12.14）
 
@@ -184,7 +193,7 @@ extension AppRoute {
         case .approvals, .approval: .approvals
         case .artifacts, .artifact: .artifacts
         case .vault, .vaultItem, .vaultRequest: .vault
-        case .settings, .licenses, .about: .settings
+        case .settings, .licenses, .about, .permissions, .subscription, .importMemory, .feedback: .settings
         case .imChannels: .imChannels
         case .connections, .connectedApps, .connectionList, .connection: .connections
         case .onboarding: .onboarding
@@ -246,6 +255,8 @@ extension AppRoute {
         case .home, .conversation, .run, .runTree, .activeRuns, .instance, .inbox, .inboxItem, .hiddenBotins: .cached
         // 不用联网的页面。搜索只搜本机缓存（12.21）。
         case .licenses, .about, .settings, .search, .newTask, .frozen, .upgrade, .signIn, .primaryBotin: .local
+        // 设置里还没有后端的几页（规范 4.9.4、4.9.8、4.9.10、4.9.14）：数据是本机的演示数据，反馈走邮件，不用联网。
+        case .permissions, .subscription, .importMemory, .feedback: .local
         default: .unavailable
         }
     }
