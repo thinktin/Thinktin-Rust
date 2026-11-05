@@ -3,14 +3,16 @@ import ThinktinKit
 
 /// 截图脚本的 `THINKTIN_OPEN_SCREEN`（tools/apple/screenshots.sh；只有 Debug 构建认，`ThinktinApp` 启动时调）：打开首页
 /// 第一个实例（演示数据里是“写作助手”）的对应页面。和深链一样走 `Router.show`，实例的页面返回栈是“首页 → 对话 → 目标页”
-/// （docs/ios-ui-redesign.md 3.4），设置、新建 Botin、新任务、引导弹 sheet，团队是“首页 → 团队”，搜索回首页激活搜索栏。
+/// （docs/ios-ui-redesign.md 3.4），设置、新建 Botin、新任务、引导弹 sheet，团队是“首页 → 团队”，搜索回首页激活搜索栏；
+/// 设置里的页面（权限与规则、订阅、导入记忆、反馈）先弹设置，再压进设置 sheet 的栈。
 extension AppConfiguration.OpenScreen {
-    /// 在实例 `instanceID` 上要打开的页面；实例的页面（对话、计划、产出物）没有实例时为 nil。
+    /// 在实例 `instanceID` 上要打开的页面；实例的页面（对话、计划、产出物、观看与接管）没有实例时为 nil。
     func route(instanceID: InstanceID?) -> AppRoute? {
         switch self {
         case .conversation: instanceID.map { AppRoute.conversation($0) }
         case .plans: instanceID.map { AppRoute.plans(instanceID: $0) }
         case .artifacts: instanceID.map { AppRoute.artifacts(instanceID: $0) }
+        case .instancescreen: instanceID.map { AppRoute.instanceScreen($0) }
         case .settings: .settings
         case .search: .search
         case .adopt: .adopt(agentID: nil)
@@ -18,6 +20,10 @@ extension AppConfiguration.OpenScreen {
         case .newtask: .newTask
         case .onboarding: .onboarding
         case .connections: .connections(category: nil)
+        case .permissions: .permissions
+        case .subscription: .subscription
+        case .importmemory: .importMemory
+        case .feedback: .feedback
         }
     }
 
@@ -38,7 +44,12 @@ extension AppConfiguration.OpenScreen {
             instanceID = model.homeRows.first?.id
         }
         guard let route = route(instanceID: instanceID) else { return nil }
-        model.router.show(route)
+        if isInSettings {
+            model.router.show(.settings)
+            model.router.open(route)
+        } else {
+            model.router.show(route)
+        }
         return route
     }
 }

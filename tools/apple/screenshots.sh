@@ -13,7 +13,8 @@
 #
 # 每张图都重新启动 App，用启动环境变量指定打开的页面（只有 Debug 构建认，见 AppConfiguration；`simctl openurl` 会先弹
 # 系统的确认框挡住页面）：THINKTIN_OPEN_URL 是 thinktin:// 深链，THINKTIN_OPEN_SCREEN 是没有深链的页面（首页第一个 Botin 的
-# 对话、计划、产出物，设置、新建 Botin 两个 sheet，首页搜索），THINKTIN_MOCK_EMPTY=1 换成还没有 Botin 的新账号（首页空状态）。
+# 对话、计划、产出物、观看与接管，设置、新建 Botin 这些 sheet，设置里压进去的几页，首页搜索），THINKTIN_MOCK_EMPTY=1 换成
+# 还没有 Botin 的新账号（首页空状态）。
 # 中文界面，状态栏固定成 9:41、满电。
 # macOS 自带的是 bash 3.2：set -u 下别用空数组，紧跟中文标点的变量写成 ${name}。
 set -euo pipefail
@@ -150,6 +151,11 @@ shots="
 17-new-task newtask -
 18-onboarding onboarding -
 19-connections connections -
+20-instance-screen instancescreen -
+21-permissions permissions -
+22-subscription subscription -
+23-import-memory importmemory -
+24-feedback feedback -
 "
 
 for appearance in light dark; do

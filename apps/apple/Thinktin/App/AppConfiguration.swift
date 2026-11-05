@@ -54,12 +54,34 @@ struct AppConfiguration: Equatable, Sendable {
         case onboarding
         /// 连接目录（首页 → 连接，`.connections(category: nil)`；规范 4.8）。
         case connections
+        /// 实例的观看与接管（首页 → 对话 → 观看与接管，`.instanceScreen`；规范 4.6.2，演示画面）。
+        case instancescreen
+        /// 设置里的权限与规则（设置 sheet 里压一页；规范 4.9.8）。
+        case permissions
+        /// 设置里的订阅（设置 sheet 里压一页；规范 4.9.4）。
+        case subscription
+        /// 设置里的导入记忆（设置 sheet 里压一页；规范 4.9.10）。
+        case importmemory
+        /// 设置里的发送反馈（设置 sheet 里压一页；规范 4.9.14）。
+        case feedback
 
         /// 是不是某个实例的页面（要先等实例列表拿到）。
         var needsInstance: Bool {
             switch self {
-            case .conversation, .plans, .artifacts: true
-            case .settings, .search, .adopt, .teams, .newtask, .onboarding, .connections: false
+            case .conversation, .plans, .artifacts, .instancescreen: true
+            case .settings, .search, .adopt, .teams, .newtask, .onboarding, .connections, .permissions, .subscription,
+                .importmemory, .feedback:
+                false
+            }
+        }
+
+        /// 是不是设置里压进去的页面（先弹设置，再压进设置 sheet 的栈，和用户点进去一样）。
+        var isInSettings: Bool {
+            switch self {
+            case .permissions, .subscription, .importmemory, .feedback: true
+            case .conversation, .plans, .artifacts, .instancescreen, .settings, .search, .adopt, .teams, .newtask,
+                .onboarding, .connections:
+                false
             }
         }
     }

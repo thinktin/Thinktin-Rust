@@ -158,7 +158,7 @@ struct AppSmokeTests {
         #expect(model.router.sheet == .adopt(agentID: nil))
     }
 
-    @Test("截图用的启动参数：THINKTIN_OPEN_SCREEN 认十个页面，不分大小写，别的值不认")
+    @Test("截图用的启动参数：THINKTIN_OPEN_SCREEN 认十五个页面，不分大小写，别的值不认")
     func openScreenValues() {
         let key = AppConfiguration.openScreenEnvironmentKey
         #expect(key == "THINKTIN_OPEN_SCREEN")
@@ -166,12 +166,14 @@ struct AppSmokeTests {
             AppConfiguration.OpenScreen.allCases.map(\.rawValue)
                 == [
                     "conversation", "plans", "artifacts", "settings", "search", "adopt", "teams", "newtask",
-                    "onboarding", "connections",
+                    "onboarding", "connections", "instancescreen", "permissions", "subscription", "importmemory",
+                    "feedback",
                 ])
         for screen in AppConfiguration.OpenScreen.allCases {
             #expect(AppConfiguration.openScreen(environment: [key: screen.rawValue]) == screen)
         }
         #expect(AppConfiguration.openScreen(environment: [key: " Plans "]) == .plans)
+        #expect(AppConfiguration.openScreen(environment: [key: "InstanceScreen"]) == .instancescreen)
         #expect(AppConfiguration.openScreen(environment: [:]) == nil)
         #expect(AppConfiguration.openScreen(environment: [key: ""]) == nil)
         // 抽屉去掉了（规范 3.3），旧的截图参数不认。
@@ -179,7 +181,7 @@ struct AppSmokeTests {
         #expect(AppConfiguration.openScreen(environment: ["THINKTIN_OPEN_DRAWER": "1"]) == nil)
     }
 
-    @Test("截图用的启动参数：每个页面的路由；对话、计划、产出物要有实例")
+    @Test("截图用的启动参数：每个页面的路由；对话、计划、产出物、观看与接管要有实例，设置里的四页压进设置")
     func openScreenRoutes() {
         typealias Screen = AppConfiguration.OpenScreen
         let id = "0192f3a0-0000-7000-8000-000000000101"
@@ -193,6 +195,12 @@ struct AppSmokeTests {
         #expect(Screen.newtask.route(instanceID: nil) == .newTask)
         #expect(Screen.onboarding.route(instanceID: nil) == .onboarding)
         #expect(Screen.connections.route(instanceID: nil) == .connections(category: nil))
+        #expect(Screen.instancescreen.route(instanceID: .init(id)) == .instanceScreen(.init(id)))
+        #expect(Screen.permissions.route(instanceID: nil) == .permissions)
+        #expect(Screen.subscription.route(instanceID: nil) == .subscription)
+        #expect(Screen.importmemory.route(instanceID: nil) == .importMemory)
+        #expect(Screen.feedback.route(instanceID: nil) == .feedback)
+        #expect(Screen.allCases.filter(\.isInSettings) == [.permissions, .subscription, .importmemory, .feedback])
         for screen in Screen.allCases {
             #expect((screen.route(instanceID: nil) == nil) == screen.needsInstance)
             // 不是实例的页面不管传不传实例都一样。
@@ -240,6 +248,16 @@ struct AppSmokeTests {
         // 连接目录压在首页上（和深链一样“首页 → 目标页”）。
         await AppConfiguration.OpenScreen.connections.open(in: model)
         #expect(router.path == [.connections(category: nil)] && router.sheet == nil)
+        // 观看与接管经过对话（“首页 → 对话 → 观看与接管”）；设置里的页面压在设置 sheet 的栈里。
+        await AppConfiguration.OpenScreen.instancescreen.open(in: model)
+        #expect(router.path == [.conversation(.init(writer)), .instanceScreen(.init(writer))] && router.sheet == nil)
+        for screen in AppConfiguration.OpenScreen.allCases where screen.isInSettings {
+            let route = screen.route(instanceID: nil)
+            #expect(route != nil && route?.presentation == .push, "\(screen)")
+            #expect(await screen.open(in: model) == route)
+            #expect(router.path.isEmpty && router.sheet == .settings, "\(screen)")
+            #expect(router.sheetPath == route.map { [$0] }, "\(screen)")
+        }
     }
 
     @Test("接口地址：没有、没展开、不是 http(s) 时用默认地址")

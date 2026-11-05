@@ -1941,6 +1941,8 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
      | 审批、收件箱、进行中、运行、计划 | 现有深链（`thinktin://approval/…`、`inbox`、`active`、`run/…`、`plan/…`） | 参考没有，看是否符合第 2 节 |
      | 审批中心、团队、新任务的 Botin 选择、上手引导（2026-11-05 收尾线加的） | `thinktin://approvals`；`THINKTIN_OPEN_SCREEN=teams` / `newtask` / `onboarding` | 参考没有（新任务对 11 的选择器版式），看是否和改版的页面一套样子 |
      | 连接目录（r2/connections 加的，`19-connections`） | `THINKTIN_OPEN_SCREEN=connections` | 36、40–51 |
+     | 观看与接管（r2/botin 加的页，`20-instance-screen`，演示画面） | `THINKTIN_OPEN_SCREEN=instancescreen` | 27、29 |
+     | 权限与规则、订阅、导入记忆、发送反馈（r2/settings 加的页，在设置 sheet 的栈里，`21-permissions`、`22-subscription`、`23-import-memory`、`24-feedback`） | `THINKTIN_OPEN_SCREEN=permissions` / `subscription` / `importmemory` / `feedback` | 62；56；71；76 |
 
    - 和参考截图并排看（参考截图留在仓库外，不提交）。逐页对照：导航栏按钮的位置和形状、有没有标题、列表样式、卡片圆角和有没有描边、
      底部浮动条、空状态、深浅色。差别记进进度文件，改完再出一次截图。
