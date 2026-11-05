@@ -53,19 +53,19 @@ pub async fn delete(db: &Db, user: UserId, actor: &str, project: ProjectId) -> s
     w.commit().await
 }
 
-/// 我是成员的进行中的项目。
+/// 我是存活成员的项目（进行中、归档的），成员事务读（8.15）。
 pub async fn my_projects(db: &Db, user: UserId) -> store::Result<Vec<ProjectSummary>> {
-    let mut w = db.worker().await?;
-    let out = w.my_projects(user).await?;
-    w.rollback().await?;
+    let mut m = db.member(user).await?;
+    let out = m.my_projects().await?;
+    m.finish().await?;
     Ok(out)
 }
 
-/// 项目详情（只给成员）。
+/// 项目详情（只给存活成员），成员事务读（8.15）。
 pub async fn detail(db: &Db, user: UserId, project: ProjectId) -> store::Result<ProjectDetail> {
-    let mut w = db.worker().await?;
-    let out = w.project_detail(user, project).await?;
-    w.rollback().await?;
+    let mut m = db.member(user).await?;
+    let out = m.project_detail(project).await?;
+    m.finish().await?;
     Ok(out)
 }
 

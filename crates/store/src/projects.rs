@@ -11,14 +11,10 @@
 use std::collections::HashSet;
 
 use chrono::{DateTime, Utc};
-use proto::domain::{
-    InstanceId, ProjectAgentView, ProjectBudget, ProjectDetail, ProjectId, ProjectLimits,
-    ProjectMemberView, ProjectPerson, ProjectRole, ProjectStatus, ProjectSummary, UserId,
-    UserStatus,
-};
+use proto::domain::{InstanceId, ProjectId, ProjectRole, ProjectStatus, UserId, UserStatus};
 use uuid::Uuid;
 
-use crate::{Error, Result, Tenant, Tx, Worker, parse, unsigned};
+use crate::{Error, Result, Tenant, Tx, Worker, parse};
 
 /// 单人项目里的一个 agent（自己的实例）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,76 +106,6 @@ impl ProjectActor {
     }
 }
 
-type SummaryRow = (
-    Uuid,
-    String,
-    String,
-    String,
-    String,
-    bool,
-    Uuid,
-    Option<String>,
-    i64,
-    i64,
-    i64,
-    DateTime<Utc>,
-    DateTime<Utc>,
-);
-
-type MemberRow = (Uuid, Option<String>, String, DateTime<Utc>, i64);
-type AgentRow = (Uuid, Uuid, String, String, bool, i32, DateTime<Utc>);
-
-/// 我是成员（没退出）的项目，带人数、agent 数（实例删了的不算）。`$1` 是我。
-const SUMMARY_SQL: &str = "SELECT p.id, p.name, p.goal, p.status, m.role, p.shared_at IS NOT NULL, \
-       p.creator_id, cu.display_name, \
-       (SELECT count(*) FROM project_members x WHERE x.project_id = p.id AND x.left_at IS NULL), \
-       (SELECT count(*) FROM project_agents a JOIN instances i ON i.id = a.instance_id \
-          AND i.state <> 'deleted' WHERE a.project_id = p.id AND a.left_at IS NULL), \
-       (SELECT count(*) FROM project_agents a JOIN instances i ON i.id = a.instance_id \
-          AND i.state <> 'deleted' WHERE a.project_id = p.id AND a.left_at IS NULL AND a.user_id = $1), \
-       p.created_at, m.joined_at \
-  FROM project_members m JOIN projects p ON p.id = m.project_id JOIN users cu ON cu.id = p.creator_id \
- WHERE m.user_id = $1 AND m.left_at IS NULL";
-
-fn count(v: i64, what: &str) -> Result<u32> {
-    Ok(u32::try_from(unsigned(v, what)?).unwrap_or(u32::MAX))
-}
-
-fn summary(row: SummaryRow) -> Result<ProjectSummary> {
-    let (
-        id,
-        name,
-        goal,
-        status,
-        role,
-        shared,
-        creator,
-        creator_name,
-        members,
-        agents,
-        mine,
-        created_at,
-        joined_at,
-    ) = row;
-    Ok(ProjectSummary {
-        id: ProjectId(id),
-        name,
-        goal,
-        status: parse(&status)?,
-        role: parse(&role)?,
-        shared,
-        creator: ProjectPerson {
-            user_id: UserId(creator),
-            display_name: creator_name,
-        },
-        member_count: count(members, "member count")?,
-        agent_count: count(agents, "agent count")?,
-        my_agent_count: count(mine, "agent count")?,
-        created_at,
-        joined_at,
-    })
-}
-
 impl Tx<Worker> {
     /// 按 id 顺序给用户行加 `FOR KEY SHARE`（D3 第 1 步：写收件箱、成员行、邀请的外键都要拿这把锁，注销拿的是
     /// `FOR UPDATE`）。没有的、注销了的不报错，调用方按结果判断。
@@ -252,101 +178,6 @@ impl Tx<Worker> {
             role: parse(&role)?,
             creator,
             users,
-        })
-    }
-
-    /// 我是成员（没退出）的、进行中的项目，按创建时间（8.14 的读法：worker 读、同一句 SQL 里核对成员关系；8.15 换成
-    /// 成员事务，返回的结构不变）。
-    pub async fn my_projects(&mut self, user: UserId) -> Result<Vec<ProjectSummary>> {
-        let rows: Vec<SummaryRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-            "{SUMMARY_SQL} AND p.status = 'active' ORDER BY p.created_at, p.id"
-        )))
-        .bind(user.0)
-        .fetch_all(self.conn())
-        .await?;
-        rows.into_iter().map(summary).collect()
-    }
-
-    /// 项目详情：只有成员（没退出）看得到，不然 NotFound。成员创建者在前；agent 只列还在的（实例没删），按位置；
-    /// 预算只给我自己的（每个人管自己的 agent）。
-    pub async fn project_detail(
-        &mut self,
-        user: UserId,
-        project: ProjectId,
-    ) -> Result<ProjectDetail> {
-        let row: SummaryRow = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-            "{SUMMARY_SQL} AND p.status <> 'deleted' AND p.id = $2"
-        )))
-        .bind(user.0)
-        .bind(project.0)
-        .fetch_one(self.conn())
-        .await?;
-        let summary = summary(row)?;
-        let members: Vec<MemberRow> = sqlx::query_as(
-            "SELECT m.user_id, u.display_name, m.role, m.joined_at, \
-                    (SELECT count(*) FROM project_agents a JOIN instances i ON i.id = a.instance_id \
-                       AND i.state <> 'deleted' \
-                      WHERE a.project_id = m.project_id AND a.user_id = m.user_id AND a.left_at IS NULL) \
-               FROM project_members m JOIN users u ON u.id = m.user_id \
-              WHERE m.project_id = $1 AND m.left_at IS NULL \
-              ORDER BY m.role = 'creator' DESC, m.joined_at, m.user_id",
-        )
-        .bind(project.0)
-        .fetch_all(self.conn())
-        .await?;
-        let members = members
-            .into_iter()
-            .map(|(id, display_name, role, joined_at, agents)| {
-                Ok(ProjectMemberView {
-                    user_id: UserId(id),
-                    display_name,
-                    role: parse(&role)?,
-                    joined_at,
-                    agent_count: count(agents, "agent count")?,
-                    is_me: id == user.0,
-                })
-            })
-            .collect::<Result<_>>()?;
-        let agents: Vec<AgentRow> = sqlx::query_as(
-            "SELECT a.instance_id, a.user_id, i.agent_id, i.name, a.is_lead, a.position, a.added_at \
-               FROM project_agents a JOIN instances i ON i.id = a.instance_id AND i.state <> 'deleted' \
-              WHERE a.project_id = $1 AND a.left_at IS NULL ORDER BY a.position, a.instance_id",
-        )
-        .bind(project.0)
-        .fetch_all(self.conn())
-        .await?;
-        let agents = agents
-            .into_iter()
-            .map(
-                |(instance, owner, agent_id, name, is_lead, position, added_at)| ProjectAgentView {
-                    instance_id: InstanceId(instance),
-                    owner_id: UserId(owner),
-                    agent_id,
-                    name,
-                    is_lead,
-                    position: u32::try_from(position).unwrap_or_default(),
-                    added_at,
-                    mine: owner == user.0,
-                },
-            )
-            .collect();
-        let (daily, total): (Option<i64>, Option<i64>) = sqlx::query_as(
-            "SELECT daily_token_limit, total_token_limit FROM project_members \
-              WHERE project_id = $1 AND user_id = $2",
-        )
-        .bind(project.0)
-        .bind(user.0)
-        .fetch_one(self.conn())
-        .await?;
-        Ok(ProjectDetail {
-            summary,
-            members,
-            agents,
-            my_budget: ProjectBudget {
-                daily_token_limit: daily.map(|v| unsigned(v, "token limit")).transpose()?,
-                total_token_limit: total.map(|v| unsigned(v, "token limit")).transpose()?,
-            },
-            limits: ProjectLimits::default(),
         })
     }
 

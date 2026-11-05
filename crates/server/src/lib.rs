@@ -57,6 +57,9 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     db.check_migrations()
         .await
         .context("checking the database migrations")?;
+    db.check_roles()
+        .await
+        .context("checking the database roles")?;
     let listener = TcpListener::bind(cfg.listen)
         .await
         .with_context(|| format!("listen on {}", cfg.listen))?;

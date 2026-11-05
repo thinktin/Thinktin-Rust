@@ -55,6 +55,11 @@ impl TestDb {
         r
     }
 
+    /// 以属主账号（不是超级用户、不是任何服务角色的成员）连上测试库，测启动核对之类的用。
+    pub async fn owner_db(&self) -> Db {
+        Db::from_pool(self.owner_pool().await)
+    }
+
     /// 只有一个连接的属主连接池：迁移时别的连接都不碰这个库（不进事务的迁移文件不会互相等）。
     async fn owner_pool(&self) -> sqlx::PgPool {
         PgPoolOptions::new()

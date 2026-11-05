@@ -144,6 +144,52 @@ impl Db {
     }
 }
 
+impl Db {
+    /// 启动时核对数据库角色（8.15）：服务登录账号要能 SET ROLE 到业务、后台、项目成员三个角色，而且不能是定义者函数
+    /// 属主的成员（不然它就能改这些函数）。超级用户（开发库）跳过。缺了的写在 [`Error::Schema`] 里。
+    pub async fn check_roles(&self) -> Result<()> {
+        let superuser: bool =
+            sqlx::query_scalar("SELECT rolsuper FROM pg_roles WHERE rolname = session_user")
+                .fetch_one(self.pool())
+                .await?;
+        if superuser {
+            return Ok(());
+        }
+        let missing: Vec<String> = sqlx::query_scalar(
+            "SELECT w.name FROM unnest($1::text[]) AS w(name) LEFT JOIN pg_roles r ON r.rolname = w.name \
+              WHERE NOT coalesce(pg_has_role(session_user, r.oid, 'SET'), false) ORDER BY 1",
+        )
+        .bind(["thinktin_app", "thinktin_member", "thinktin_worker"])
+        .fetch_all(self.pool())
+        .await?;
+        let definer: bool = sqlx::query_scalar(
+            "SELECT coalesce(pg_has_role(session_user, r.oid, 'MEMBER'), false) FROM pg_roles r \
+              WHERE r.rolname = 'thinktin_project_definer' \
+             UNION ALL SELECT false LIMIT 1",
+        )
+        .fetch_one(self.pool())
+        .await?;
+        let mut problems = vec![];
+        if !missing.is_empty() {
+            problems.push(format!(
+                "the login cannot SET ROLE to {}",
+                missing.join(", ")
+            ));
+        }
+        if definer {
+            problems.push("the login must not be a member of thinktin_project_definer".to_string());
+        }
+        if problems.is_empty() {
+            Ok(())
+        } else {
+            Err(Error::Schema(format!(
+                "{} (docs/deploy-checklist.md section 3)",
+                problems.join("; ")
+            )))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

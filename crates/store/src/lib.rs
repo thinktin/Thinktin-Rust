@@ -27,6 +27,7 @@ mod outbox;
 mod plans;
 mod project_invites;
 mod project_members;
+mod project_reads;
 mod projects;
 mod reports;
 mod runs;
@@ -76,6 +77,7 @@ pub use outbox::{NewOutboxItem, OutboxItem};
 pub use plans::{DueTrigger, NewPlan, RetiredPlans};
 pub use project_invites::{Accepted, Consent, CreatedInvite, InviteCaps, InviteKey, JoinTerms};
 pub use project_members::{Exit, Withdrawn};
+pub use project_reads::ProjectTx;
 pub use projects::{ProjectRecord, SoloAgent};
 pub use reports::{NewReport, ReportRecord};
 pub use runs::{
@@ -164,6 +166,24 @@ impl Db {
         .execute(&mut *tx)
         .await?;
         Ok(Tx { tx, role: Llmgw })
+    }
+
+    /// 项目成员的只读事务（8.15）：thinktin_member、READ ONLY、REPEATABLE READ（详情的几句查询看同一个快照）。只设
+    /// app.user_id：读得到哪些项目由库里的 member_projects() 按它算，没有“当前项目”这种设置。
+    pub async fn member(&self, user: UserId) -> Result<ProjectTx> {
+        let mut tx = self
+            .pool
+            .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+            .await?;
+        sqlx::query(
+            "SELECT set_config('role', 'thinktin_member', true), set_config('app.user_id', $1, true), \
+             set_config('statement_timeout', $2, true)",
+        )
+        .bind(user.to_string())
+        .bind(TENANT_STATEMENT_TIMEOUT)
+        .execute(&mut *tx)
+        .await?;
+        Ok(ProjectTx::new(tx, user))
     }
 
     /// 设备中继的事务（14.1）：核对设备会话、维护电脑的在线状态、领取和回填工具调用、收发消息

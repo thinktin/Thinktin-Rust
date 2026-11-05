@@ -9,6 +9,25 @@ use super::{instance, queue_run, user};
 use crate::testing::TestDb;
 use crate::{Consent, CreatedInvite, Db, Error, InviteCaps, InviteKey, JoinTerms, NewInboxItem};
 
+/// 成员事务读我的项目（8.15 起项目列表、详情都走它）。
+async fn mine(db: &Db, user: UserId) -> crate::Result<Vec<proto::domain::ProjectSummary>> {
+    let mut m = db.member(user).await.unwrap();
+    let out = m.my_projects().await;
+    m.finish().await.unwrap();
+    out
+}
+
+async fn detail(
+    db: &Db,
+    user: UserId,
+    project: ProjectId,
+) -> crate::Result<proto::domain::ProjectDetail> {
+    let mut m = db.member(user).await.unwrap();
+    let out = m.project_detail(project).await;
+    m.finish().await.unwrap();
+    out
+}
+
 /// alice 的单人项目（经旧的团队接口建），负责人是 `lead`。
 async fn solo(db: &Db, owner: UserId, lead: &Instance) -> ProjectId {
     let mut t = db.tenant(owner).await.unwrap();
@@ -159,17 +178,15 @@ async fn project_reads_follow_membership() {
         .await
         .unwrap();
     // 只有创建者的时候：alice 看得到，bob、carol 看不到。
-    let mut w = db.worker().await.unwrap();
-    let mine = w.my_projects(alice).await.unwrap();
-    assert_eq!(mine.len(), 1);
-    assert_eq!(mine[0].role, ProjectRole::Creator);
-    assert!(!mine[0].shared);
-    assert!(w.my_projects(bob).await.unwrap().is_empty());
+    let listed = mine(db, alice).await.unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].role, ProjectRole::Creator);
+    assert!(!listed[0].shared);
+    assert!(mine(db, bob).await.unwrap().is_empty());
     assert!(matches!(
-        w.project_detail(carol, project).await,
+        detail(db, carol, project).await,
         Err(Error::NotFound)
     ));
-    w.rollback().await.unwrap();
 
     join_raw(db, project, bob, &[&b1, &b2]).await;
     sqlx::query(
@@ -187,8 +204,7 @@ async fn project_reads_follow_membership() {
         .execute(db.pool())
         .await
         .unwrap();
-    let mut w = db.worker().await.unwrap();
-    let bobs = w.my_projects(bob).await.unwrap();
+    let bobs = mine(db, bob).await.unwrap();
     assert_eq!(bobs.len(), 1);
     let s = &bobs[0];
     assert_eq!(
@@ -198,7 +214,7 @@ async fn project_reads_follow_membership() {
     assert_eq!(s.creator.user_id, alice);
     assert_eq!(s.creator.display_name.as_deref(), Some("Alice"));
     assert_eq!((s.member_count, s.agent_count, s.my_agent_count), (2, 2, 1));
-    let d = w.project_detail(bob, project).await.unwrap();
+    let d = detail(db, bob, project).await.unwrap();
     assert_eq!(d.members.len(), 2);
     assert_eq!(d.members[0].user_id, alice);
     assert_eq!(d.members[0].role, ProjectRole::Creator);
@@ -207,13 +223,12 @@ async fn project_reads_follow_membership() {
     assert_eq!(ids, vec![(a1.id, false), (b1.id, true)]);
     assert_eq!(d.my_budget.daily_token_limit, Some(1000));
     assert_eq!(d.my_budget.total_token_limit, Some(5000));
-    let da = w.project_detail(alice, project).await.unwrap();
+    let da = detail(db, alice, project).await.unwrap();
     assert_eq!(da.my_budget.daily_token_limit, None);
     assert!(matches!(
-        w.project_detail(carol, project).await,
+        detail(db, carol, project).await,
         Err(Error::NotFound)
     ));
-    w.rollback().await.unwrap();
 
     // 改名字、目标：只有创建者；不是成员的 NotFound。
     let mut w = db.worker().await.unwrap();
@@ -236,7 +251,7 @@ async fn project_reads_follow_membership() {
         .unwrap();
     w.commit().await.unwrap();
     let mut w = db.worker().await.unwrap();
-    let d = w.project_detail(bob, project).await.unwrap();
+    let d = detail(db, bob, project).await.unwrap();
     assert_eq!(
         (d.summary.name.as_str(), d.summary.goal.as_str()),
         ("p", "ship it")
@@ -258,15 +273,13 @@ async fn project_reads_follow_membership() {
     .execute(db.pool())
     .await
     .unwrap();
-    let mut w = db.worker().await.unwrap();
-    assert!(w.my_projects(bob).await.unwrap().is_empty());
+    assert!(mine(db, bob).await.unwrap().is_empty());
     assert!(matches!(
-        w.project_detail(bob, project).await,
+        detail(db, bob, project).await,
         Err(Error::NotFound)
     ));
-    let d = w.project_detail(alice, project).await.unwrap();
+    let d = detail(db, alice, project).await.unwrap();
     assert_eq!((d.summary.member_count, d.summary.shared), (1, true));
-    w.rollback().await.unwrap();
 }
 
 /// 收件箱里项目回执的字段（8.14，0047 的 inbox_project_guard）：只有 worker 写得出；写了以后谁都不能改它们和子类型；
@@ -1111,7 +1124,7 @@ async fn link_invites_are_single_use_and_idempotent() {
     let list = w.project_invites(alice, project).await.unwrap();
     assert_eq!(list[0].status, ProjectInviteStatus::Accepted);
     assert_eq!(list[0].accepted_by.as_ref().unwrap().user_id, bob);
-    assert!(w.project_detail(bob, project).await.unwrap().summary.shared);
+    assert!(detail(db, bob, project).await.unwrap().summary.shared);
     w.rollback().await.unwrap();
 
     // 手机号邀请：过期了接受不了；后台标过期、提醒标已读。
@@ -1618,13 +1631,11 @@ async fn withdraw_leave_remove_and_rejoin() {
     .await
     .unwrap();
     assert_eq!(reason.as_deref(), Some("left"));
-    let mut w = db.worker().await.unwrap();
     assert!(matches!(
-        w.project_detail(bob, project).await,
+        detail(db, bob, project).await,
         Err(Error::NotFound)
     ));
-    assert!(w.my_projects(bob).await.unwrap().is_empty());
-    w.rollback().await.unwrap();
+    assert!(mine(db, bob).await.unwrap().is_empty());
     let err = worker_do(db, async |w| w.leave_project(bob, project).await)
         .await
         .unwrap_err();
@@ -1725,12 +1736,10 @@ async fn withdraw_leave_remove_and_rejoin() {
     })
     .await
     .unwrap();
-    let mut w = db.worker().await.unwrap();
-    let d = w.project_detail(bob, project).await.unwrap();
+    let d = detail(db, bob, project).await.unwrap();
     assert_eq!(d.my_budget, budget(Some(5), Some(6)));
-    let d = w.project_detail(alice, project).await.unwrap();
+    let d = detail(db, alice, project).await.unwrap();
     assert_eq!(d.my_budget, budget(None, Some(5)));
-    w.rollback().await.unwrap();
 }
 
 /// 把 `from` 这一行复制成项目 `project` 的（列表现查）；`parent` 给授权设父授权。
@@ -2071,13 +2080,11 @@ async fn deleted_instances_leave_shared_projects() {
         1
     );
     assert!(left(&a3).await);
-    let mut w = db.worker().await.unwrap();
-    let d = w.project_detail(bob, project).await.unwrap();
+    let d = detail(db, bob, project).await.unwrap();
     assert_eq!(
         d.agents.iter().map(|a| a.instance_id).collect::<Vec<_>>(),
         vec![a1.id, b1.id]
     );
-    w.rollback().await.unwrap();
 }
 
 /// 评审修复（8.14）：删掉没人加入过的单人项目，邀请跟着删了，但每天的上限照样算（发送记录不跟着项目删）；删之前撤回
