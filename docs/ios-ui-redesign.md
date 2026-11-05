@@ -280,15 +280,15 @@ sheet 的左上再放关闭（`.cancellationAction`）；**“只做一件事”
 | 设置 | 53、70、75 | 首页左上头像 | sheet | `.settings`（改：`.push` → `.sheet`） |
 | 账号 | 54 | 设置第一行 | 设置里压栈 | `.account` |
 | 用量 | 55 | 设置 | 设置里压栈 | `.usage` |
-| 订阅 | 56 | 设置 | 设置里压栈 | 待定（12.23） |
+| 订阅 | 56 | 设置第一组 | 设置里压栈 | `.subscription`（2026-11-05 r2/settings，演示方案） |
 | 保险箱 | 57、58 | 设置；推送和深链进填写请求 | 设置里压栈 / 主栈压栈 | `.vault`、`.vaultItem`、`.vaultRequest` |
-| 新建 / 修改条目 | 59、99（60、61、94–98 待定） | 保险箱右上“+”；条目详情“编辑” | 压栈（参考是压栈；现在是本地 sheet，见 4.9.6） | 不加（Vault 本地） |
-| 权限与规则 | 62–64、100 | 设置 | 设置里压栈 | 待定，第 3 轮（`.permissions`） |
+| 新建 / 修改条目 | 59、99；卡片 60、94–96，联系信息 61、97、98（表单已做，保存即将推出） | 保险箱右上“+”菜单；条目详情“编辑” | 压栈（参考是压栈；现在是本地 sheet，见 4.9.6） | 不加（Vault 本地） |
+| 权限与规则 | 62–64、100 | 设置“Botin”组第一行 | 设置里压栈；新建 / 编辑规则本地压栈 | `.permissions`（2026-11-05 r2/settings，演示规则） |
 | 登录设备、设备详情 | 66–69 | 设置 | 设置里压栈 | `.devices`；详情不加 |
 | 连接 | 36、37、41、43 | 设置“连接” | 设置里压栈 | 新增 `.connections`（第 2 轮） |
 | 外观、语言、触感 | 72–74 | 设置 | 设置里压栈 / 行内开关 | 不加（现有本地页） |
-| 导入记忆 | 71 | 设置 | 设置里压栈 | 待定 |
-| 发送反馈 | 76、77 | 设置 | 设置里压栈 | 不加（第 3 轮） |
+| 导入记忆 | 71 | 设置“Botin”组 | 设置里压栈 | `.importMemory`（2026-11-05 r2/settings） |
+| 发送反馈 | 76、77 | 设置 | 设置里压栈 | `.feedback`（2026-11-05 r2/settings，用邮件发） |
 | 收件箱、审批中心、进行中、团队、计划（全部） | 无 | 工作台；推送；深链 | 压栈 | 现有路由 |
 | 新任务（选实例） | 11 的版式 | 引导、快捷指令 | sheet | `.newTask`（保留） |
 
@@ -1007,6 +1007,12 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   开源许可、上手引导（参考“发送反馈”的位置）；⑧ 红字“退出登录”（确认）。最底下版本区 `SettingsVersionFooter`（`BrandLogo` 高 40、
   “ThinkTin”、版本（构建号））。昵称、手机号、注销账号挪进账号页（4.9.2）。`AccountSection` / `AccountRow` / `SettingsOptionRow` /
   `SettingsFootnote` 在设置根页和外观、语言页不再用。
+
+- **已做（2026-11-05，第 2 轮 r2/settings，对过参考 53、70、75）**：根页加了四行，按参考的位置：第一组用量后面“订阅”（`.subscription`）；
+  “Botin”组第一行“权限”（`.permissions`，副标题按演示规则写“自动审查已开启 · 3 条规则”），审批挪到它下面照旧进审批中心，登录设备后面
+  “导入记忆”（`.importMemory`）；链接组后面单独一组“发送反馈”（`.feedback`，`SettingsSection.ID.feedback`）。参考的“自动设置时区 / 时区 /
+  Bot 电脑”没加（6.17 时区不做；工作区是每个 Botin 一个，在 Botin 资料里），“帮助中心”还没有网址。
+
 #### 4.9.2 账号（54）
 
 - **布局**：压栈页“账号”；第一组：头像 + 昵称 + 打码手机号（ThinkTin 用手机号登录，没有邮箱）；第二组：昵称（点了 alert 改）、
@@ -1039,6 +1045,11 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 参考是一个网页容器（截图停在转圈）。ThinkTin 的 12.23 App 内购买等 1.1 拍板；做的话用 StoreKit 的 `SubscriptionStoreView` +
 `.manageSubscriptionsSheet`，不用网页、不放站外购买引导（6.20）。
 
+- **已做（2026-11-05，第 2 轮 r2/settings，对过参考 56）**：`SubscriptionScreen`：先照参考在页面中间转圈（`SubscriptionModel.isLoading`，
+  演示数据等 0.6 秒），再换成 insetGrouped `List`：每个方案一组（名字、价格、“当前方案”、一条条权益带勾，不是当前的方案底下全宽的“订阅”），
+  最后“恢复购买”一组，脚注说是示例、以后走 App Store。方案是 `SubscriptionDemoData`（免费版是当前的，专业版“价格即将公布”），订阅、恢复购买弹
+  “即将推出”（`SettingsComingSoon`）。接 StoreKit 时把 `SubscriptionModel` 的 `loader` 换成查商品，订阅换成 `SubscriptionStoreView` 或购买。
+
 #### 4.9.5 保险箱（57、58）
 
 - **布局**：压栈页“保险箱”，右上玻璃“+”；标题下一排筛选胶囊带计数；没有条目时一行卡片“还没有保存任何内容。”+ 脚注
@@ -1057,6 +1068,11 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   条目（“N / 200 条”，名字 + 用途和能用的 Botin，左滑删除并确认）、“处理过的请求”几组，行是 `NavigationLink(value:)`。条目详情换成
   `List`（引用点了复制带触感、用途、账号、密码打点、能用的 Botin；时间；红字删除），找不到用 `ContentUnavailableView`。填写请求页换成
   `Form`（字段标签在上，底下突出的“存进保险箱”和“拒绝”）。
+
+- **已做（2026-11-05，第 2 轮 r2/settings，对过参考 57、58）**：“+”换成系统 `Menu`（参考 58：登录信息、卡、联系信息，`VaultItemKind`），
+  登录信息照旧压进表单（满了、离线时那一项灰），卡、联系信息压进 4.9.7 的表单；筛选胶囊照参考 57 改成“全部 / 登录信息 / 支付 / 联系信息”，
+  后面接 ThinkTin 的“等你填写 / 处理过的”（`VaultFilter.cards`、`.contacts` 的数总是 0，筛到它们时空状态的脚注说即将推出）。
+
 #### 4.9.6 登录信息表单（59、99）
 
 - **布局**：标题“新登录信息”，右上“保存”（没填好时灰）。几张卡：名称；网站（可以多个，“添加网站”，追加的行带“移除”）；
@@ -1075,12 +1091,25 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   `Form`，右上 `ConfirmButton("保存")`；“标签在上、输入在下”（`VaultLabeledField`）：名称（新建时；改的时候灰字，脚注说不能改）、
   账号 + 密码（行尾眼睛切换明文，`.borderless`）、提示（= 用途，多行 `lineLimit(4...8)`，脚注“告诉 Botin 什么时候用这一条。”和字数）、
   能用它的 Botin（`Toggle` 所有 Botin，关掉后勾选行）。压栈后用系统返回就是放弃，没有“有改动先确认”（以前 sheet 拦下滑）。网站要后端，没做。
+
+- **已做（2026-11-05，第 2 轮 r2/settings，对过参考 59、99）**：标题照参考改成“新登录信息”；名称下面加“网站”一组（`VaultWebsitesSection`：
+  标签在上、输入在下，不止一个时标签那行右边“移除”，最后一行强调色“添加网站”，最多 5 个，网址不对时脚注标红，`VaultFieldList`、
+  `VaultWebsiteRules`）。接口没有网站字段，填了不保存，脚注写着“网站即将推出，现在填了不会保存”。
+
 #### 4.9.7 卡片和联系信息表单（60、94、95、96；61、97、98）
 
 要后端，而且卡片牵涉代付和 PCI 合规（6.16），先不做。版式记下来备用：`Form` 左标签右输入（`LabeledContent`）；系统自动填充
 （`.textContentType(.creditCardNumber / .creditCardExpiration / .creditCardSecurityCode / .telephoneNumber / .emailAddress / .fullStreetAddress / .postalCode …)`）；
 可以重复的字段（电话、邮箱）是“字段行 + 行内移除 + 末尾‘添加’”；账单地址是 `Picker(.menu)`（已存的地址 / 新地址）；
 底部全宽保存按钮。
+
+- **已做（2026-11-05，第 2 轮 r2/settings，对过参考 60、94–98、61）**：用户要先照参考排版，表单做了、保存弹“即将推出”。新卡片
+  `VaultCardFormView`：`Form`，“标签在左、输入在右”的行（`VaultInlineField`，标签一样宽，输入框对齐）：卡号（每 4 位一格、Luhn 校验）、
+  有效期（MM / YY、过期提示）、安全码（行尾眼睛）、持卡人姓名、备注名、账单地址（系统 `Picker(.menu)`：不填 / 新地址，选了新地址多一组地址，
+  参考 95、96）；脚注“Botin 永远看不到你的完整卡号和安全码。”；“提示”一组；右上相机（扫描卡片，即将推出）；底部全宽“添加卡片”（没填好灰）。
+  新建联系信息 `VaultContactFormView`：标签、姓名、手机（“添加电话”加“电话 2”，下面“设为首选”“移除”）、邮箱同样；脚注“至少要有地址、
+  电话或邮箱中的一项”；“地址”一组；“提示”一组；底部“保存联系信息”。自动填充用系统的 `textContentType`（只在 iOS，`vaultFieldInput`）。
+  校验在 ThinktinKit 的 `VaultCardDraft`、`VaultContactDraft`、`VaultFieldList`（`VaultExtraFormsTests`）。
 
 #### 4.9.8 权限与规则（62、63、64、100）
 
@@ -1091,6 +1120,14 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 - **ThinkTin 现在**：没有。相关的有审批中心（`Screens/Approvals/ApprovalScreens.swift`，逐条批准）、计划的预授权工具
   （`PlanPolicy.preauthorizedTools`，按计划、按工具种类）、电脑的能力令牌。
 - **要改**：第 3 轮或不做（6.15）。第 1 轮设置里这一行叫“审批”，进审批中心。
+
+- **已做（2026-11-05，第 2 轮 r2/settings，对过参考 62、63、64、100）**：用户要先照参考排版，规则是本地的演示数据（`PermissionsDemoData`：
+  自动审查开着，“始终询问”没有规则，“无需询问即允许”3 条 ThinkTin 的例子），开关、保存、删除弹“即将推出”。`PermissionsScreen`：
+  insetGrouped `List`：`Toggle { 自动审查; 说明 }`；两组规则，组标题左边名字和说明、右边小玻璃胶囊“添加规则”（`PermissionRuleSectionHeader`），
+  规则一句一行（点了压进修改页，左滑删除并确认），没有规则是灰字“暂无规则”；ThinkTin 多一组进审批中心（逐条批准照旧），脚注说电脑上的高危操作
+  规则管不到、现在是示例。新建 / 编辑规则 `PermissionRuleEditorScreen`（页面里 `navigationDestination(item:)` 压栈）：“适用于”多行输入
+  （占位按组不同：参考 63 是始终询问的、100 是自动允许的）+ 脚注和字数；编辑多一组红字“删除规则”；底部浮着全宽“添加规则 / 保存规则”和一行
+  “取消”（`SettingsBottomActions`）。
 
 #### 4.9.9 登录设备和设备详情（66、67、68、69）
 
@@ -1111,11 +1148,20 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   多一组电脑的说明和“生成新密钥”（`ComputerLinkStatusSection`）。详情：名称（不能点，改名要后端）、状态点 + 状态、类别、登录时间；电脑多一组
   “在这台电脑上执行”（`ComputerDeviceSections`：配对状态、配对 / 授权目录和应用 / 现有授权左滑吊销 / 重新配对 / 红字解除配对，脚注是签名说明）；
   最后红字“下线这台设备”（本机“下线本机”）。参考的三档执行策略不做（6.20）。`ComputerLinkSection` 删了。
+
+- **已做（2026-11-05，第 2 轮 r2/settings，对过参考 67、68）**：设备详情的名称行带箭头（`DeviceDetailScreen.nameRow`），点了弹系统的改名
+  弹窗（`.alert` + `TextField`：标题“重命名 …”、取消 / 保存，空名字不能保存）；没有改名接口，保存弹“即将推出”。
+
 #### 4.9.10 导入记忆（71）
 
 参考：第 1 步复制一段导出提示词去别的 AI 助手里跑，第 2 步把结果粘贴回来，“添加到记忆”。ThinkTin 没有写入实例记忆的接口，
 各 agent 的记忆机制也不一样（6.20），先不做。版式备用：`Form` 两个 Section（header 写步骤）、`Text(...).textSelection(.enabled)`、
 `Button("复制提示词")`、`PasteButton`、多行 `TextField`、底部全宽按钮。
+
+- **已做（2026-11-05，第 2 轮 r2/settings，对过参考 71）**：`ImportMemoryScreen`：`Form` 两组，组标题写步骤：① 导出提示词
+  （ThinkTin 自己写的，中英文各一份，`ImportMemoryText.exportPrompt`，最多露 8 行、能选中）+ “复制提示词”（复制后换“已复制”，带触感）；
+  ② 粘贴框（多行）+ ThinkTin 多的一行“添加到”（系统 `Picker(.menu)` 选 Botin，各 Botin 的记忆分开；没有 Botin 时写“还没有 Botin”）；
+  底部全宽“添加到记忆”（没粘贴、没选 Botin 时灰）。没有写记忆的接口，点了弹“即将推出”，内容不离开设备。
 
 #### 4.9.11 外观（72）
 
@@ -1155,6 +1201,11 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 - **ThinkTin 现在**：没有通用反馈接口，只有针对某次运行或产出物的举报（`reportContent`）。
 - **要改**：第 3 轮（6.20）；接口有了以后照上面的版式做，“和哪个实例有关”的选项来自 `AppModel.instances`。过渡可以先放一个
   `mailto:` 链接。
+
+- **已做（2026-11-05，第 2 轮 r2/settings，对过参考 76、77）**：`FeedbackScreen`：`Form`：多行输入框 + 脚注（会用邮件发、带上版本）；
+  组标题“你的问题和某个 Botin 有关吗？”下面系统 `Picker(.menu)`“Botin 无 ⌃⌄”（无 + 各个 Botin，`SettingsBotinPicker`）；底部全宽
+  “发送反馈”（空的时候灰）。按 6.20 B 先用邮件：`FeedbackDraft.mailtoURL` 拼 `mailto:`（主题“ThinkTin 反馈”，正文末尾 App 版本、系统、
+  选的 Botin 的名字和 id），`openURL` 交给系统邮件 App，打不开时提示邮箱、可以复制。反馈邮箱 `feedback@thinktin.cn` 是占位，上线前确认。
 
 ## 5. 对照表
 
@@ -1228,28 +1279,28 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 | 53 | 全局设置上半 | 设置根页 | `Settings/SettingsScreen.swift`、`SettingsModel` | 部分有 | 1（已做，E 线） | 4.9.1 |
 | 54 | 账户管理 | 账号 | `Account/AccountView.swift`、`DeleteAccountView.swift` | 部分有 | 1；多账户不做（已做，E 线） | 4.9.2 |
 | 55 | 用量 | 用量 | `Models/UsageScreen.swift`、`UsageModel` | 只改界面 | 1（已做，E 线） | 4.9.3 |
-| 56 | 订阅加载状态 | App 内购买（12.23） | 无 | 要后端 | 待定 | 4.9.4 |
+| 56 | 订阅加载状态 | App 内购买（12.23） | `Settings/SubscriptionScreen.swift`、`SubscriptionDemoData`（演示方案） | 要后端 | 版式已做（r2/settings）；购买待定 | 4.9.4 |
 | 57 | 保管库空状态 | 保险箱 | `Vault/VaultScreens.swift`（`VaultScreen`） | 只改界面 | 1（已做，E 线） | 4.9.5 |
-| 58 | 保管库新增菜单 | 新建保险箱条目 | `VaultScreen` 的“+” | 部分有 | 1；多类型 3（已做，E 线） | 4.9.5 |
+| 58 | 保管库新增菜单 | 新建保险箱条目 | `VaultScreen` 的“+”菜单（`VaultItemKind`） | 部分有 | 1（已做，E 线）；三种的菜单和胶囊已做（r2/settings），卡和联系信息存要 3 | 4.9.5 |
 | 59 | 新增登录信息 | 登录信息表单 | `VaultItemEditorView`、`VaultItemEditorModel` | 部分有 | 1；网站 3（已做，E 线） | 4.9.6 |
-| 60 | 新增卡片 | 卡片条目 | 无 | 要后端 | 不做（6.16） | 4.9.7 |
-| 61 | 新增联系信息 | 联系信息条目 | 无 | 要后端 | 待定（6.16） | 4.9.7 |
-| 62 | 权限与规则列表 | 自然语言权限规则 | 无（审批中心 `Approvals/ApprovalScreens.swift`） | 要后端 | 待定（6.15）；设置里的“审批”入口已做（E 线） | 4.9.8 |
-| 63 | 新增规则 | 自然语言权限规则 | 无 | 要后端 | 待定 | 4.9.8 |
-| 64 | 编辑规则 | 自然语言权限规则 | 无 | 要后端 | 待定 | 4.9.8 |
+| 60 | 新增卡片 | 卡片条目 | `Vault/VaultExtraFormViews.swift`（`VaultCardFormView`）、`VaultCardDraft` | 要后端 | 表单已做（r2/settings）；保存待定（6.16） | 4.9.7 |
+| 61 | 新增联系信息 | 联系信息条目 | `VaultContactFormView`、`VaultContactDraft` | 要后端 | 表单已做（r2/settings）；保存待定（6.16） | 4.9.7 |
+| 62 | 权限与规则列表 | 自然语言权限规则 | `Settings/PermissionsScreens.swift`、`PermissionsDemoData`（演示规则）；审批中心照旧 | 要后端 | 版式已做（r2/settings）；规则后端待定（6.15） | 4.9.8 |
+| 63 | 新增规则 | 自然语言权限规则 | `PermissionRuleEditorScreen`、`PermissionRuleDraft` | 要后端 | 版式已做（r2/settings）；保存待定 | 4.9.8 |
+| 64 | 编辑规则 | 自然语言权限规则 | `PermissionRuleEditorScreen` | 要后端 | 版式已做（r2/settings）；保存、删除待定 | 4.9.8 |
 | 65 | Bot 电脑设置 | 工作区（重置、磁盘） | `InstanceWorkspaceScreen`（状态说明、版本，2026-11-05） | 要后端 | 1（工作区页，已做）/ 3 | 4.6.1 |
 | 66 | 设备列表 | 登录设备 | `Account/DevicesView.swift`、`DevicesModel` | 只改界面 | 1（已做，E 线） | 4.9.9 |
 | 67 | 手机设备详情 | 设备详情 | `DevicesView` 的 `DeviceRow` | 部分有 | 1；改名 3（已做，E 线） | 4.9.9 |
-| 68 | 设备重命名弹窗 | 设备改名 | 无（没有改名接口） | 要后端 | 3 | 4.9.9 |
+| 68 | 设备重命名弹窗 | 设备改名 | `DeviceDetailScreen` 的改名 `.alert`（没有改名接口） | 要后端 | 弹窗已做（r2/settings）；保存 3 | 4.9.9 |
 | 69 | 电脑详情与执行权限 | 电脑详情、配对、授权 | `Computer/ComputerLinkViews.swift`、`ComputerLinkModel` | 部分有 | 1；三档策略不做（已做，E 线） | 4.9.9 |
 | 70 | 全局设置中下 | 设置根页 | `SettingsScreen`、`DisplaySettingsViews.swift` | 部分有 | 1；触感 2（已做，E 线） | 4.9.1 |
-| 71 | 导入记忆 | 记忆导入 | 无 | 要后端 | 不做（6.20） | 4.9.10 |
+| 71 | 导入记忆 | 记忆导入 | `Settings/ImportMemoryScreen.swift`、`ImportMemoryDraft` | 要后端 | 版式已做（r2/settings）；写记忆待定（6.20） | 4.9.10 |
 | 72 | 外观设置 | 外观 | `DisplaySettingsViews.swift`（`AppearanceSettingsView`） | 部分有 | 1；纯黑 2（第一排已做，E 线） | 4.9.11 |
 | 73 | 应用语言设置 | 界面语言 | `DisplaySettingsViews.swift`（`LanguageSettingsView`） | 只改界面 | 1（已做，E 线） | 4.9.12 |
 | 74 | 触感反馈设置 | 触感开关 | 无 | 纯客户端能做 | 2（已做，E 线，照参考做成子页） | 4.9.13 |
 | 75 | 全局设置底部与版本 | 设置根页底部、关于 | `SettingsScreen`、`AboutScreen.swift` | 部分有 | 1；反馈 3（已做，E 线） | 4.9.1 |
-| 76 | 反馈空表单 | 发送反馈 | 无（只有举报） | 要后端 | 3 | 4.9.14 |
-| 77 | 反馈关联 Bot 菜单 | 发送反馈 | 无 | 要后端 | 3 | 4.9.14 |
+| 76 | 反馈空表单 | 发送反馈 | `Settings/FeedbackScreen.swift`、`FeedbackDraft`（邮件） | 部分有 | 已做（r2/settings，用邮件发，6.20 B）；接口 3 | 4.9.14 |
+| 77 | 反馈关联 Bot 菜单 | 发送反馈 | `SettingsBotinPicker` | 部分有 | 已做（r2/settings） | 4.9.14 |
 | 78 | 全局搜索 | 首页搜索 | `Search/SearchScreen.swift`（`SearchResultsView`）、`SearchModel` | 部分有 | 已做（2026-11-05，含筛选） | 4.2.4 |
 | 79 | 搜索消息筛选空状态 | 搜索筛选 | `SearchResultsView` | 纯客户端能做 | 已做（提前到第 1 轮） | 4.2.4 |
 | 80 | 搜索消息结果 | 搜运行（谁发给谁） | `SearchModel`（任务、摘要） | 部分有 | 谁发给谁已做（提前到第 1 轮）；本机缓存的回复正文 2；缓存外全文 3 | 4.2.4 |
@@ -1266,13 +1317,13 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 | 91 | 新建分组名称弹窗 | 首页分组 | 无 | 纯客户端能做 | 待定（6.10） | 4.7.2 |
 | 92 | 分组管理菜单 | 首页分组 | 无 | 纯客户端能做 | 待定 | 4.7.2 |
 | 93 | 分组删除确认 | 首页分组 | 无 | 纯客户端能做 | 待定 | 4.7.2 |
-| 94 | 卡片账单地址菜单 | 卡片条目 | 无 | 要后端 | 不做 | 4.9.7 |
-| 95 | 卡片新地址 | 卡片条目 | 无 | 要后端 | 不做 | 4.9.7 |
-| 96 | 卡片完整字段 | 卡片条目 | 无 | 要后端 | 不做 | 4.9.7 |
-| 97 | 联系信息追加电话邮箱 | 联系信息条目 | 无 | 要后端 | 待定 | 4.9.7 |
-| 98 | 联系信息地址与底部 | 联系信息条目 | 无 | 要后端 | 待定 | 4.9.7 |
-| 99 | 登录信息追加网站 | 登录信息表单 | `VaultItemEditorView` | 部分有 | 1；网站 3 | 4.9.6 |
-| 100 | 新增自动允许规则 | 自然语言权限规则 | 无 | 要后端 | 待定 | 4.9.8 |
+| 94 | 卡片账单地址菜单 | 卡片条目 | `VaultCardFormView` | 要后端 | 表单已做（r2/settings）；保存待定 | 4.9.7 |
+| 95 | 卡片新地址 | 卡片条目 | `VaultCardFormView` | 要后端 | 表单已做（r2/settings）；保存待定 | 4.9.7 |
+| 96 | 卡片完整字段 | 卡片条目 | `VaultCardFormView` | 要后端 | 表单已做（r2/settings）；保存待定 | 4.9.7 |
+| 97 | 联系信息追加电话邮箱 | 联系信息条目 | `VaultContactFormView` | 要后端 | 表单已做（r2/settings）；保存待定 | 4.9.7 |
+| 98 | 联系信息地址与底部 | 联系信息条目 | `VaultContactFormView` | 要后端 | 表单已做（r2/settings）；保存待定 | 4.9.7 |
+| 99 | 登录信息追加网站 | 登录信息表单 | `VaultItemEditorView` + `VaultWebsitesSection` | 部分有 | 1；网站的行已做（r2/settings，不保存），存要 3 | 4.9.6 |
+| 100 | 新增自动允许规则 | 自然语言权限规则 | `PermissionRuleEditorScreen`（按组换占位） | 要后端 | 版式已做（r2/settings）；保存待定 | 4.9.8 |
 | 101 | 推荐插件目录入口 | 第三方目录（行版式借给 agent 目录） | `Agents/AgentCatalogScreen.swift`（借版式） | 要后端 | 3；版式 1 | 4.8.4 |
 | 102 | 推荐目录中段 | 第三方目录 | 无 | 要后端 | 3 | 4.8.4 |
 | 103 | 推荐目录底部 | 第三方目录 | 无 | 要后端 | 3 | 4.8.4 |
@@ -1507,6 +1558,7 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   - C：不做。
 - **建议**：先 C，设置里这一行叫“审批”，进审批中心。产品和安全评审以后再定 A 或 B；不管怎么做，电脑上的高危操作不能被
   “自动允许”覆盖，规则本身还要防提示注入。
+- **2026-11-05 用户要先照参考把页面排出来**（r2/settings，4.9.8 的“已做”）：权限页和新建 / 编辑规则用本地的演示规则，开关、保存、删除弹“即将推出”；审批中心照旧。A / B / C 还是要产品和安全评审定。
 
 ### 6.16 保险箱的卡片、联系信息、网站
 
@@ -1518,6 +1570,7 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   - 卡片：要“agent 看不到完整卡号”的代填机制和 PCI 合规。A 做；B 不做。
   - 联系信息：A 后端加类型和结构化字段；B 不做。
 - **建议**：网站 A（改动小，第 3 轮）；卡片 B；联系信息先 B，等真有让 agent 代填表单的需求。登录信息的表单第 1 轮先照参考改版。
+- **2026-11-05 用户要先照参考把页面排出来**（r2/settings，4.9.5–4.9.7 的“已做”）：“+”菜单三种都有，卡片、联系信息的表单做了、保存弹“即将推出”，登录信息多了网站的行（不保存）。后端定了哪样，就把对应的“即将推出”换成真保存。
 
 ### 6.17 工作区的重置、磁盘、时区
 
@@ -1557,6 +1610,7 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 - **电脑“在此设备上执行”三档**（69）：和 docs/pairing.md“高危操作不能预授权”冲突，“始终允许”只能对普通操作签能力令牌（最长 7 天），
   “从不允许”等于吊销全部令牌。建议不做三档，电脑详情里保留现有的授权列表。
 - **多账户**（54 的切换 / 添加账户）：client-core 只存一个会话。建议不做。
+- **2026-11-05 用户要先照参考把页面排出来**（r2/settings，4.9.4、4.9.9、4.9.10、4.9.14 的“已做”）：订阅（演示方案）、导入记忆、设备改名的弹窗都做了，要服务端的操作弹“即将推出”；反馈按 B 用邮件发（邮箱是占位，要确认）。
 
 ### 6.21 分享
 
