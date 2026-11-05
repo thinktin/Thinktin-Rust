@@ -73,10 +73,13 @@ extension ConversationModel {
 
 // MARK: - 消息长按菜单（4.3.4）
 
-/// 长按消息的一项（参考 06：回复、标为未读；复制、选择文本、复制请求 ID。ThinkTin 用系统长按菜单，表情和标为未读不做，6.11）。
+/// 长按消息的一项（参考 06：回复、标为未读；复制、选择文本、复制请求 ID）。iPhone 上长按弹参考 06 的面板（上面两排表情回应，
+/// 见 `MessageReactions`，下面是这些项分组的列表），Mac 上是右键菜单。
 public enum MessageMenuAction: Hashable, Sendable, CaseIterable {
     /// 引用回复：记下原文，输入框上出现引用条（4.3.5，纯客户端）。
     case quote
+    /// 标为未读（参考 06）：ThinkTin 没有未读（6.10，要服务端），点了弹“即将推出”。
+    case markUnread
     /// 复制（agent 写的末尾加“AI 生成”标识）。
     case copy
     /// 选择文本：弹一张只读、可以划选一部分的文字（系统长按菜单只能整段复制）。
@@ -93,6 +96,7 @@ public enum MessageMenuAction: Hashable, Sendable, CaseIterable {
     public func title(_ language: DisplayLanguage) -> String {
         switch self {
         case .quote: ConversationText.quoteReply(language)
+        case .markUnread: ConversationText.markUnread(language)
         case .copy: ConversationText.copy(language)
         case .selectText: ConversationText.selectText(language)
         case .copyRunID: ConversationText.copyRunID(language)
@@ -105,6 +109,7 @@ public enum MessageMenuAction: Hashable, Sendable, CaseIterable {
     public var systemImage: String {
         switch self {
         case .quote: "arrowshape.turn.up.left"
+        case .markUnread: "message.badge"
         case .copy: "doc.on.doc"
         case .selectText: "character.cursor.ibeam"
         case .copyRunID: "number"
@@ -115,15 +120,18 @@ public enum MessageMenuAction: Hashable, Sendable, CaseIterable {
     }
 
     public var isDestructive: Bool { self == .report }
+
+    /// 现在点了只弹“即将推出”（要服务端的）。
+    public var isComingSoon: Bool { self == .markUnread }
 }
 
-/// 长按菜单的分组：第一组 引用回复（有输入框时）；第二组 复制、选择文本、复制运行 ID（有运行时）；
-/// 然后 agent 写的是 分享、再一组 举报，用户的是 再发一次。空组不出现。
+/// 长按菜单的分组：第一组 引用回复、标为未读（agent 写的，有输入框时；参考 06）；第二组 复制、选择文本、复制运行 ID
+/// （有运行时）；然后 agent 写的是 分享、再一组 举报，用户的是 再发一次。空组不出现。
 public enum MessageMenuLayout {
     /// agent 写的（回复、思考、待办、没有过程记录的运行结果）。
     public static func agentOutput(canQuote: Bool, hasRunID: Bool, canReport: Bool) -> [[MessageMenuAction]] {
         compact([
-            canQuote ? [.quote] : [],
+            canQuote ? [.quote, .markUnread] : [],
             [.copy, .selectText] + (hasRunID ? [.copyRunID] : []),
             [.share],
             canReport ? [.report] : [],

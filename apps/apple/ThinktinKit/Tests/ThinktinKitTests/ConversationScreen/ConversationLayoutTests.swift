@@ -129,11 +129,11 @@ struct ConversationLayoutTests {
         #expect(busy.flatMap { $0 }.allSatisfy { $0.systemImage != "chevron.right" })
     }
 
-    @Test("长按菜单：引用回复一组；复制、选择文本、复制运行 ID 一组；agent 的再分享、举报，用户的再发一次")
+    @Test("长按菜单：引用回复（agent 的还有标为未读）一组；复制、选择文本、复制运行 ID 一组；agent 的再分享、举报，用户的再发一次")
     func messageMenu() {
         #expect(
             MessageMenuLayout.agentOutput(canQuote: true, hasRunID: true, canReport: true)
-                == [[.quote], [.copy, .selectText, .copyRunID], [.share], [.report]])
+                == [[.quote, .markUnread], [.copy, .selectText, .copyRunID], [.share], [.report]])
         #expect(
             MessageMenuLayout.agentOutput(canQuote: false, hasRunID: false, canReport: false)
                 == [[.copy, .selectText], [.share]])
@@ -145,6 +145,8 @@ struct ConversationLayoutTests {
                 [.copy, .selectText]
             ])
         #expect(MessageMenuAction.allCases.filter(\.isDestructive) == [.report])
+        #expect(MessageMenuAction.allCases.filter(\.isComingSoon) == [.markUnread])
+        #expect(MessageMenuAction.markUnread.title(.chinese) == "标为未读")
         #expect(MessageMenuAction.quote.title(.chinese) == "引用回复")
         #expect(MessageMenuAction.copyRunID.title(.english) == "Copy Run ID")
         #expect(Set(MessageMenuAction.allCases.map(\.systemImage)).count == MessageMenuAction.allCases.count)

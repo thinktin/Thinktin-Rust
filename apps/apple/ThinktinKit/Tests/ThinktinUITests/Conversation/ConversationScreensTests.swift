@@ -178,7 +178,7 @@ struct ConversationScreensTests {
             content: .assistantText(AssistantText(text: "回复")))
         let menu = MessageMenuContent.agentOutput(
             "回复", runID: reply.runID, target: ContentReportTarget(item: reply), onReport: { _ in }, onQuote: { _ in })
-        #expect(menu.sections == [[.quote], [.copy, .selectText, .copyRunID], [.share], [.report]])
+        #expect(menu.sections == [[.quote, .markUnread], [.copy, .selectText, .copyRunID], [.share], [.report]])
         #expect(menu.isAIGenerated && menu.runID == DemoData.weeklyRunID)
         let noQuote = MessageMenuContent.agentOutput("x", runID: nil, target: nil, onReport: { _ in })
         #expect(noQuote.sections == [[.copy, .selectText], [.share]])

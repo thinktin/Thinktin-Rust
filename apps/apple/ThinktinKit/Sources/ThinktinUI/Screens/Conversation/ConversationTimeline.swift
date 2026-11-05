@@ -125,7 +125,9 @@ struct ConversationTurnView: View {
                 let summaryID = ConversationFindTarget.summaryID(turnID: turn.id)
                 HistoryRecordView(
                     note: note, summary: model.historySummary(for: turn), runID: turn.runID, onReport: onReport,
-                    onQuote: quote, highlight: model.find.highlight(for: summaryID)
+                    onQuote: quote, highlight: model.find.highlight(for: summaryID),
+                    reactions: model.canReact ? model.reactions(for: summaryID) : nil,
+                    onReact: { model.toggleReaction($0, on: summaryID) }
                 )
                 .id(summaryID)
             }
@@ -165,11 +167,11 @@ struct ConversationItemView: View {
         case .userMessage(let message):
             UserMessageView(
                 message: message, isAIGenerated: promptIsAIGenerated, runID: turn.runID, onSendAgain: sendAgain,
-                onQuote: quote, highlight: model.find.highlight(for: item.id))
+                onQuote: quote, highlight: model.find.highlight(for: item.id), reactions: reactions, onReact: react)
         case .assistantText(let text):
             AssistantTextView(
                 item: item, text: text, blocks: model.markdownBlocks(for: item), onReport: onReport, onQuote: quote,
-                highlight: model.find.highlight(for: item.id))
+                highlight: model.find.highlight(for: item.id), reactions: reactions, onReact: react)
         case .thought(let thought):
             ThoughtView(item: item, thought: thought, onReport: onReport, onQuote: quote)
         case .toolCall(let card):
@@ -200,6 +202,17 @@ struct ConversationItemView: View {
         guard model.focusRunID == nil, !model.isMissing else { return nil }
         let model = self.model
         return { model.setQuote($0) }
+    }
+
+    /// 这条消息的表情回应（只在这台设备上，`MessageReactionStore`）；Botin 不在了是 nil（不能回应）。
+    private var reactions: [String]? {
+        model.canReact ? model.reactions(for: item.id) : nil
+    }
+
+    private var react: @MainActor (String) -> Void {
+        let model = self.model
+        let id = item.id
+        return { model.toggleReaction($0, on: id) }
     }
 
     /// 再发一次这个任务（用户自己发的、已经结束的运行才有，`ConversationModel.canRetry`）。

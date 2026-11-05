@@ -573,6 +573,16 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   `ContentReportSheet.swift`。
 - **要改**：加“选择文本”“复制运行 ID”，分组。表情、标为未读要后端（6.11）；真要做表情时长按改成
   `.sheet` + `.presentationDetents([.medium, .large])` + `.presentationDragIndicator(.visible)`。第 1 轮。
+- **已做（第 2 轮 r2/conversation，2026-11-05，用户要求照参考把没有的功能也做出来）**：表情回应照参考 06、90 做了，**只存这台设备**
+  （ThinktinKit `MessageReactions.swift` 的 `MessageReactionStore`，`UserDefaults` 一个键，按“Botin id / 消息 id”记，最多 2000 条消息、
+  每条 12 个；不上传、不告诉 Botin；6.11 B 要后端存）。iPhone 上长按消息不再是系统菜单，改成上面说的 sheet（`MessageActionSheet`，
+  中号起、拖动条）：上面两排圆形的系统玻璃按钮（👍 👎 ❤️ 😂 🎉 😮 / 🔥 👀 🙏 😢 💯 + “更多表情” `face.smiling`，点过的是突出样式），
+  下面是 `List` 的分组（agent 写的第一组 引用回复、标为未读——参考 06 的“回复、标为未读”）。点“更多表情”面板拉到全高、原地换成参考 90
+  的选择器（`EmojiPickerView`：左上返回圆、“搜索表情”胶囊，8 列，按 Unicode 的八类分组、小灰字分类名；搜中文关键词、Unicode
+  英文名、分类名，没结果是 `ContentUnavailableView.search`）。点表情加上或去掉、关面板；点操作先关面板再做（引用回复、选择文本、
+  再发一次、举报都要弹别的东西），分享是 `ShareLink`。“标为未读”没有（6.10），点了弹“即将推出”。回应画在气泡下面（`ReactionChips`，
+  小玻璃胶囊，点了去掉；用户消息靠右）：用户消息、agent 回复、没有过程记录的运行结果有，思考和待办没有。Mac 还是右键菜单，多一组
+  “回应”子菜单（常用 11 个 + “更多表情…”弹选择器）。读屏多一个“回应”操作（打开面板）。长按有触感。
 
 #### 4.3.5 引用回复（7）
 

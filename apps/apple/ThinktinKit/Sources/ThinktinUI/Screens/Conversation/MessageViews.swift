@@ -21,6 +21,9 @@ struct UserMessageView: View {
     var onQuote: (@MainActor (String) -> Void)? = nil
     /// 对话内查找的高亮（段：开头有引用块时先引用、再正文，`ConversationFindTarget.userMessage`）。
     var highlight: ConversationFindHighlight? = nil
+    /// 表情回应（只在这台设备上）；nil 是这里不能回应。
+    var reactions: [String]? = nil
+    var onReact: (@MainActor (String) -> Void)? = nil
 
     @Environment(\.displayLanguage) private var language
     @State private var isExpanded = false
@@ -66,6 +69,7 @@ struct UserMessageView: View {
                 .background(Theme.userBubble, in: messageBubbleShape)
                 .messageMenu(menu, previewShape: messageBubbleShape)
             }
+            ReactionChips(reactions: reactions ?? [], alignment: .trailing, onToggle: onReact)
             if isAIGenerated { AIGeneratedLabel() }
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
@@ -79,7 +83,9 @@ struct UserMessageView: View {
             text: message.text, isAIGenerated: isAIGenerated, runID: runID,
             sections: MessageMenuLayout.userMessage(
                 canQuote: onQuote != nil, hasRunID: runID != nil, canSendAgain: onSendAgain != nil),
-            onQuote: onQuote, onSendAgain: onSendAgain)
+            onQuote: onQuote, onSendAgain: onSendAgain
+        )
+        .reacting(reactions ?? [], onReact: reactions == nil ? nil : onReact)
     }
 
     /// 读屏：“你：任务”“负责人委派的任务：……”。
@@ -126,6 +132,9 @@ struct AssistantTextView: View {
     var onQuote: (@MainActor (String) -> Void)? = nil
     /// 对话内查找的高亮（段见 `ConversationFindTarget.markdown`）。
     var highlight: ConversationFindHighlight? = nil
+    /// 表情回应（只在这台设备上）；nil 是这里不能回应。
+    var reactions: [String]? = nil
+    var onReact: (@MainActor (String) -> Void)? = nil
 
     @Environment(\.displayLanguage) private var language
 
@@ -139,10 +148,13 @@ struct AssistantTextView: View {
                     .messageMenu(
                         .agentOutput(
                             text.text, runID: item.runID, target: ContentReportTarget(item: item), onReport: onReport,
-                            onQuote: onQuote),
+                            onQuote: onQuote
+                        )
+                        .reacting(reactions ?? [], onReact: reactions == nil ? nil : onReact),
                         previewShape: messageBubbleShape)
                 Spacer(minLength: messageBubbleGutter)
             }
+            ReactionChips(reactions: reactions ?? [], alignment: .leading, onToggle: onReact)
             HStack(spacing: Metrics.Spacing.xs) {
                 if text.isAIGenerated { AIGeneratedLabel() }
                 if text.isStreaming {

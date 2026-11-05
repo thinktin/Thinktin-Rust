@@ -70,6 +70,40 @@ struct ConversationExtrasTests {
         #endif
     }
 
+    @Test("长按面板（参考 06）、完整表情选择器（参考 90）、气泡下的回应能布局；没有回应的消息面板里没有表情")
+    func reactions() {
+        hostAndLayout(MessageActionSheetDemo().previewShell())
+        hostAndLayout(MessageActionSheetDemo(reactions: nil).previewShell(.english, scheme: .dark))
+        hostAndLayout(EmojiPickerView(selected: ["😂"], onBack: {}, onPick: { _ in }).previewShell())
+        hostAndLayout(EmojiPickerSheet(selected: [], onPick: { _ in }).previewShell(.english, scheme: .dark))
+        renderInBothAppearances(ReactionChips(reactions: ["👍", "🎉"], alignment: .leading, onToggle: { _ in }))
+        renderInBothAppearances(ReactionChips(reactions: ["❤️"], alignment: .trailing, onToggle: nil))
+        renderInBothAppearances(ReactionGrid(selected: ["👍"], onPick: { _ in }, onMore: {}))
+        let base = MessageMenuContent(
+            text: "回复", isAIGenerated: true, runID: nil,
+            sections: MessageMenuLayout.agentOutput(canQuote: false, hasRunID: false, canReport: false))
+        #expect(!base.canReact)
+        #expect(base.reacting(["👍"], onReact: { _ in }).canReact)
+        #expect(base.reacting(["👍"], onReact: { _ in }).reactions == ["👍"])
+        #expect(!base.reacting(["👍"], onReact: nil).canReact)
+        #expect(base.labelledText(.chinese).hasPrefix("回复") && base.labelledText(.chinese) != "回复")
+        let sheets: [MessageSheet] = [
+            .actions, .emoji, .selectText(SelectableMessage(text: "a", isAIGenerated: false)),
+        ]
+        #expect(Set(sheets.map(\.id)).count == 3)
+        // 回复、用户消息、运行结果都能带回应出图。
+        renderInBothAppearances(
+            UserMessageView(
+                message: UserMessage(text: "帮我整理周报"), isAIGenerated: false, reactions: ["👍"], onReact: { _ in }))
+        let reply = ConversationItem(
+            id: "seq-1", runID: DemoData.weeklyRunID, createdAt: Date(),
+            content: .assistantText(AssistantText(text: "好的")))
+        renderInBothAppearances(
+            AssistantTextView(
+                item: reply, text: AssistantText(text: "好的"), blocks: MarkdownParser.parse("好的"), onReport: { _ in },
+                reactions: ["🎉", "❤️"], onReact: { _ in }))
+    }
+
     @Test("高亮的消息能出图：用户消息（引用和正文）、回复、结果")
     func highlightedMessages() {
         let quoted = MessageQuote.compose(quote: "上周的周报", body: "周报再分一下")

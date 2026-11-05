@@ -50,3 +50,13 @@ extension View {
     /// iOS 15 / macOS 12：菜单按钮旁边的小箭头（Mac 默认有）。
     public func menuIndicator(_ visibility: Visibility) -> some View { _m() }
 }
+
+// MARK: - 长按消息弹面板（规范 4.3.4）
+
+extension View {
+    /// iOS 16 / macOS 13 的写法（带 `onPressingChanged`）；iOS 13 起的 `perform:` 也是它。
+    public func onLongPressGesture(
+        minimumDuration: Double = 0.5, maximumDistance: CGFloat = 10, perform action: @escaping () -> Void,
+        onPressingChanged: ((Bool) -> Void)? = nil
+    ) -> some View { _m() }
+}

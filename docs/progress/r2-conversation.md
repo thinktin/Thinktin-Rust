@@ -13,11 +13,14 @@
 - 附件菜单（4.3.6，参考 08）：输入框左边玻璃圆“+”，系统菜单三项（照片或视频、拍照、选择文件；Mac 没有拍照），点了弹“即将推出”。
   ThinktinKit 的 `ConversationAttachments.swift`（`ComposerAttachmentSource`、`canAttach`），测试 `ConversationAttachmentTests`。
 
+- 表情回应（参考 06、90）：iPhone 长按消息改成参考 06 的面板（两排表情 + 分组操作，“标为未读”即将推出），“更多表情”是参考 90 的
+  选择器，回应画在气泡下面，只存这台设备。ThinktinKit 的 `MessageReactions.swift`（`MessageReactionStore`、`EmojiCategory`、
+  `EmojiCatalog`），界面 `MessageReactionViews.swift`、`MessageMenus.swift`；测试 `MessageReactionsTests`、`ConversationExtrasTests`。
+
 进行中：
-- 表情回应（参考 06 的表情行 + 90 的选择器，只存这台设备）。
+- 选择主 Botin（参考 11）。
 
 下一步：
-- 选择主 Botin（参考 11）。
 - 全部 Linux 检查、规范里的“已做”。
 
 坑和决定：
@@ -25,4 +28,10 @@
   跟着改另一个），行内 Markdown 用 `InlineText.plainText`（对话页在 `ConversationContent.init` 里塞给 `model.find.plainText`）。
   Linux 的 Foundation 没有 `AttributedString(markdown:)`，Kit 里默认用 `MarkdownInline.plainText` 近似。
 - 回车 = 上一个（更早）：一开始停在最新一处（最下面），往前翻才有“下一个”。上下到头都绕回。
+- 长按：iPhone 上 `messageMenu` 不再是 `.contextMenu`，是 `onLongPressGesture` 弹 `MessageActionSheet`（系统长按菜单放不下表情，
+  规范 4.3.4 早就写了“真要做表情时改成 sheet”）。面板里点的操作记在 `pending`，面板关掉（`sheet(item:onDismiss:)`）以后再做；
+  一个视图上只挂一个 `.sheet(item:)`（`MessageSheet`：面板、选择文本、Mac 的表情选择器），别再加第二个。`previewShape` 参数现在
+  没用了，留着是为了运行详情（别的线在改）的调用处不用改。
+- 回应的键是时间线里那一项的 id（事件序号），事件流重置后对不上，旧回应就看不到了。删了 Botin 时 `InstanceDetailModel.delete()`
+  顺带 `MessageReactionStore.shared.forget(instanceID:)`（加了一行）；注销账号时没删（`DeleteAccountView` 只删了头像外观）。
 - 只动 `Screens/Conversation/*`、`ViewModels/Conversation/*`、`Components/ComposerBar.swift`、路由加 case、桩；不动 `ClientProtocol` / `MockClient` / `CoreClient`。
