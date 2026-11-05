@@ -75,6 +75,7 @@ pub use llmgw::{GatewayInstance, GatewayRoute};
 pub use outbox::{NewOutboxItem, OutboxItem};
 pub use plans::{DueTrigger, NewPlan, RetiredPlans};
 pub use project_invites::{Accepted, Consent, CreatedInvite, InviteCaps, InviteKey, JoinTerms};
+pub use project_members::{Exit, Withdrawn};
 pub use projects::{ProjectRecord, SoloAgent};
 pub use reports::{NewReport, ReportRecord};
 pub use runs::{

@@ -85,9 +85,7 @@ pub(crate) struct LockedUser {
 
 /// 核对过的项目成员（只在 store 里、在同一个事务里建出来用）：用户行、项目锁、自己的成员行都锁着。
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // project、creator：加入、撤回（后面的提交）用到
 pub(crate) struct ProjectActor {
-    pub project: ProjectId,
     pub user: UserId,
     pub role: ProjectRole,
     pub creator: UserId,
@@ -250,7 +248,6 @@ impl Tx<Worker> {
         .fetch_one(self.conn())
         .await?;
         Ok(ProjectActor {
-            project,
             user,
             role: parse(&role)?,
             creator,

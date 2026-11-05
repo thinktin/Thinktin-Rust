@@ -1,15 +1,51 @@
-//! 项目成员和项目 agent 的变化（8.14，docs/progress/drafts/projects-8.14-plan.md 第 2.6 节）：加 agent；撤回、退出、移出
-//! 在后面的提交。都在 `Tx<Worker>` 里，按 D3 的顺序加锁。
+//! 项目成员和项目 agent 的变化（8.14，docs/progress/drafts/projects-8.14-plan.md 第 2.6 节）：加 agent、撤回 agent、退出、
+//! 移出、设预算，实例删了以后把它从项目里撤下。都在 `Tx<Worker>` 里，按 D3 的顺序加锁：用户行 → 项目锁 → 自己的成员行 →
+//! 别人的成员行 → 项目 agent 行 → 运行 → 实例（令牌代数）。
+//!
+//! 撤回、退出、移出时先停掉这个项目里的运行、吊销项目里的授权（8.14 还没有项目运行，都是 0 行；8.17 起才有），同一个实例的
+//! 私人运行和授权不动。
 
 use std::collections::HashSet;
 
 use proto::domain::{
-    InstanceId, MAX_PROJECT_AGENTS, MAX_TOKEN_LIMIT, ProjectId, ProjectRole, ProjectStatus, UserId,
+    InstanceId, MAX_PROJECT_AGENTS, MAX_TOKEN_LIMIT, ProjectBudget, ProjectId, ProjectRole,
+    ProjectStatus, UserId,
 };
 use uuid::Uuid;
 
 use crate::project_invites::Consent;
-use crate::{Error, ProjectCap, Result, Tx, Worker, unsigned};
+use crate::{Error, ProjectCap, Result, Tx, Worker, signed, unsigned};
+
+/// 撤回了一个项目 agent。
+#[derive(Debug, Clone)]
+pub struct Withdrawn {
+    pub project: ProjectId,
+    pub project_name: String,
+    pub creator: UserId,
+    /// agent 的主人。
+    pub owner: UserId,
+    pub owner_name: Option<String>,
+    /// 实例的名字。
+    pub name: String,
+    /// 之前已经撤下了：这次什么也没改。
+    pub already_left: bool,
+    pub runs_cancelled: u64,
+    pub grants_revoked: u64,
+}
+
+/// 一个成员离开了项目（自己退出或被移出）。
+#[derive(Debug, Clone)]
+pub struct Exit {
+    pub project: ProjectId,
+    pub project_name: String,
+    pub creator: UserId,
+    pub member: UserId,
+    pub member_name: Option<String>,
+    /// false：之前已经离开了，这次什么也没改。
+    pub changed: bool,
+    pub runs_cancelled: u64,
+    pub grants_revoked: u64,
+}
 
 /// 请求里的 agent：1 到 30 个、不重复。
 pub(crate) fn check_agent_ids(agents: &[InstanceId]) -> Result<Vec<Uuid>> {
@@ -177,5 +213,353 @@ impl Tx<Worker> {
         .bind(&ids)
         .fetch_all(self.conn())
         .await?)
+    }
+}
+
+impl Tx<Worker> {
+    /// 撤回项目里的一个 agent：主人或创建者能做（别的成员 NotPermitted，外人 NotFound）。项目归档了也能撤。
+    pub async fn withdraw_project_agent(
+        &mut self,
+        user: UserId,
+        project: ProjectId,
+        instance: InstanceId,
+    ) -> Result<Withdrawn> {
+        let (owner, name): (Uuid, String) = sqlx::query_as(
+            "SELECT a.user_id, i.name FROM project_agents a JOIN instances i ON i.id = a.instance_id \
+              WHERE a.project_id = $1 AND a.instance_id = $2",
+        )
+        .bind(project.0)
+        .bind(instance.0)
+        .fetch_one(self.conn())
+        .await?;
+        let owner = UserId(owner);
+        let actor = self
+            .project_actor(
+                user,
+                project,
+                &[owner],
+                &[ProjectStatus::Active, ProjectStatus::Archived],
+            )
+            .await?;
+        if user != owner && actor.role != ProjectRole::Creator {
+            return Err(Error::NotPermitted(
+                "only the agent's owner or the project creator can withdraw it".into(),
+            ));
+        }
+        if owner != user {
+            sqlx::query(
+                "SELECT 1 FROM project_members WHERE project_id = $1 AND user_id = $2 FOR NO KEY UPDATE",
+            )
+            .bind(project.0)
+            .bind(owner.0)
+            .execute(self.conn())
+            .await?;
+        }
+        let live: bool = sqlx::query_scalar(
+            "SELECT left_at IS NULL FROM project_agents WHERE project_id = $1 AND instance_id = $2 \
+             FOR NO KEY UPDATE",
+        )
+        .bind(project.0)
+        .bind(instance.0)
+        .fetch_one(self.conn())
+        .await?;
+        let mut out = Withdrawn {
+            project,
+            project_name: self.project_name(project).await?,
+            creator: actor.creator,
+            owner,
+            owner_name: actor.locked(owner).and_then(|u| u.display_name.clone()),
+            name,
+            already_left: !live,
+            runs_cancelled: 0,
+            grants_revoked: 0,
+        };
+        if !live {
+            return Ok(out);
+        }
+        let reason = "withdrawn from the project";
+        out.runs_cancelled = self
+            .cancel_project_agent_runs(project, instance, reason)
+            .await?;
+        out.grants_revoked = self
+            .revoke_project_agent_grants(project, instance, reason)
+            .await?;
+        sqlx::query(
+            "UPDATE project_agents SET is_lead = false, left_at = now() \
+              WHERE project_id = $1 AND instance_id = $2 AND left_at IS NULL",
+        )
+        .bind(project.0)
+        .bind(instance.0)
+        .execute(self.conn())
+        .await?;
+        Ok(out)
+    }
+
+    /// 退出项目（创建者不能退出，只能删项目）。退出以后就看不到这个项目了：再退一次 NotFound。
+    pub async fn leave_project(&mut self, user: UserId, project: ProjectId) -> Result<Exit> {
+        let actor = self
+            .project_actor(
+                user,
+                project,
+                &[],
+                &[ProjectStatus::Active, ProjectStatus::Archived],
+            )
+            .await?;
+        if actor.role == ProjectRole::Creator {
+            return Err(Error::Conflict(
+                "the creator cannot leave; delete the project instead".into(),
+            ));
+        }
+        let name = actor.locked(user).and_then(|u| u.display_name.clone());
+        self.exit_member(project, actor.creator, user, name, "left")
+            .await
+    }
+
+    /// 创建者把一个成员移出项目。移出创建者 Invalid；从没加入过的 NotFound；已经离开的照样成功（不改）。
+    pub async fn remove_project_member(
+        &mut self,
+        user: UserId,
+        project: ProjectId,
+        member: UserId,
+    ) -> Result<Exit> {
+        let actor = self
+            .project_actor(user, project, &[member], &[ProjectStatus::Active])
+            .await?;
+        actor.require_creator("remove members")?;
+        if member == actor.creator {
+            return Err(Error::Invalid("the creator cannot be removed".into()));
+        }
+        let live: bool = sqlx::query_scalar(
+            "SELECT left_at IS NULL FROM project_members WHERE project_id = $1 AND user_id = $2 \
+             FOR NO KEY UPDATE",
+        )
+        .bind(project.0)
+        .bind(member.0)
+        .fetch_one(self.conn())
+        .await?;
+        let name = actor.locked(member).and_then(|u| u.display_name.clone());
+        if !live {
+            return Ok(Exit {
+                project,
+                project_name: self.project_name(project).await?,
+                creator: actor.creator,
+                member,
+                member_name: name,
+                changed: false,
+                runs_cancelled: 0,
+                grants_revoked: 0,
+            });
+        }
+        self.exit_member(project, actor.creator, member, name, "removed")
+            .await
+    }
+
+    /// 成员离开（调用方已经锁好用户行、项目锁和他的成员行）：他在项目里的 agent 行 → 运行 → 授权 → agent 标离开 →
+    /// 成员行标离开 → 他发出、还没处理的邀请作废（8.14 只有创建者邀请，这里是 0 行；离开只标记，外键的级联不会触发）。
+    async fn exit_member(
+        &mut self,
+        project: ProjectId,
+        creator: UserId,
+        member: UserId,
+        member_name: Option<String>,
+        reason: &str,
+    ) -> Result<Exit> {
+        sqlx::query(
+            "SELECT 1 FROM project_agents WHERE project_id = $1 AND user_id = $2 AND left_at IS NULL \
+              ORDER BY instance_id FOR NO KEY UPDATE",
+        )
+        .bind(project.0)
+        .bind(member.0)
+        .execute(self.conn())
+        .await?;
+        let why = if reason == "left" {
+            "left the project"
+        } else {
+            "removed from the project"
+        };
+        let runs_cancelled = self
+            .cancel_project_member_runs(project, member, why)
+            .await?;
+        let grants_revoked = self
+            .revoke_project_member_grants(project, member, why)
+            .await?;
+        sqlx::query(
+            "UPDATE project_agents SET is_lead = false, left_at = now() \
+              WHERE project_id = $1 AND user_id = $2 AND left_at IS NULL",
+        )
+        .bind(project.0)
+        .bind(member.0)
+        .execute(self.conn())
+        .await?;
+        sqlx::query(
+            "UPDATE project_members SET left_at = now(), left_reason = $3 \
+              WHERE project_id = $1 AND user_id = $2 AND left_at IS NULL",
+        )
+        .bind(project.0)
+        .bind(member.0)
+        .bind(reason)
+        .execute(self.conn())
+        .await?;
+        sqlx::query(
+            "UPDATE project_invites SET status = 'revoked', settled_at = now() \
+              WHERE project_id = $1 AND inviter_id = $2 AND status = 'pending'",
+        )
+        .bind(project.0)
+        .bind(member.0)
+        .execute(self.conn())
+        .await?;
+        Ok(Exit {
+            project,
+            project_name: self.project_name(project).await?,
+            creator,
+            member,
+            member_name,
+            changed: true,
+            runs_cancelled,
+            grants_revoked,
+        })
+    }
+
+    /// 设我在项目里的预算（每个人管自己的 agent）。成员两个都要有、各自 1 到上限、每天的不超过总的；创建者可以不限。
+    pub async fn set_project_budget(
+        &mut self,
+        user: UserId,
+        project: ProjectId,
+        budget: &ProjectBudget,
+    ) -> Result<()> {
+        let actor = self
+            .project_actor(user, project, &[], &[ProjectStatus::Active])
+            .await?;
+        match (budget.daily_token_limit, budget.total_token_limit) {
+            (Some(d), Some(t)) => check_budget(d, t)?,
+            (d, t) if actor.role == ProjectRole::Creator => {
+                for v in [d, t].into_iter().flatten() {
+                    if !(1..=MAX_TOKEN_LIMIT).contains(&v) {
+                        return Err(Error::Invalid(format!(
+                            "token limits must be between 1 and {MAX_TOKEN_LIMIT}"
+                        )));
+                    }
+                }
+            }
+            _ => {
+                return Err(Error::Invalid(
+                    "members set both a daily and a total token limit".into(),
+                ));
+            }
+        }
+        sqlx::query(
+            "UPDATE project_members SET daily_token_limit = $3, total_token_limit = $4 \
+              WHERE project_id = $1 AND user_id = $2",
+        )
+        .bind(project.0)
+        .bind(user.0)
+        .bind(
+            budget
+                .daily_token_limit
+                .map(|v| signed(v, "token limit"))
+                .transpose()?,
+        )
+        .bind(
+            budget
+                .total_token_limit
+                .map(|v| signed(v, "token limit"))
+                .transpose()?,
+        )
+        .execute(self.conn())
+        .await?;
+        Ok(())
+    }
+
+    /// 实例删了以后（租户事务提交之后）把它从所有项目里撤下：共享项目的行租户改不了。运行、授权在删实例时已经停了
+    /// （它们带着主人的 user_id）。可以重复调；实例没删返回 0。
+    pub async fn retire_deleted_instance(
+        &mut self,
+        user: UserId,
+        instance: InstanceId,
+    ) -> Result<u64> {
+        let deleted: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM instances WHERE id = $1 AND user_id = $2 AND state = 'deleted')",
+        )
+        .bind(instance.0)
+        .bind(user.0)
+        .fetch_one(self.conn())
+        .await?;
+        if !deleted {
+            return Ok(0);
+        }
+        let mut projects: Vec<ProjectId> = sqlx::query_scalar::<_, Uuid>(
+            "SELECT project_id FROM project_agents WHERE instance_id = $1 AND left_at IS NULL",
+        )
+        .bind(instance.0)
+        .fetch_all(self.conn())
+        .await?
+        .into_iter()
+        .map(ProjectId)
+        .collect();
+        if projects.is_empty() {
+            return Ok(0);
+        }
+        self.lock_projects(&mut projects).await?;
+        let ids: Vec<Uuid> = projects.iter().map(|p| p.0).collect();
+        Ok(sqlx::query(
+            "UPDATE project_agents SET is_lead = false, left_at = now() \
+              WHERE project_id = ANY($1) AND instance_id = $2 AND left_at IS NULL",
+        )
+        .bind(&ids)
+        .bind(instance.0)
+        .execute(self.conn())
+        .await?
+        .rows_affected())
+    }
+
+    /// 后台兜底：实例已经删了、还挂在项目里的 agent 撤下。项目锁被别人拿着的跳过（不等），下一轮再说。返回撤下几个。
+    pub async fn retire_deleted_project_agents(&mut self, batch: u64) -> Result<u64> {
+        let rows: Vec<(Uuid, Uuid)> = sqlx::query_as(
+            "SELECT a.project_id, a.instance_id FROM project_agents a \
+               JOIN instances i ON i.id = a.instance_id AND i.state = 'deleted' \
+              WHERE a.left_at IS NULL ORDER BY a.project_id, a.instance_id LIMIT $1",
+        )
+        .bind(signed(batch, "batch")?)
+        .fetch_all(self.conn())
+        .await?;
+        let mut done = 0;
+        let mut last: Option<(Uuid, bool)> = None;
+        for (project, instance) in rows {
+            let locked = match last {
+                Some((p, ok)) if p == project => ok,
+                _ => {
+                    let ok: bool = sqlx::query_scalar(
+                        "SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0))",
+                    )
+                    .bind(format!("project/{}", ProjectId(project)))
+                    .fetch_one(self.conn())
+                    .await?;
+                    last = Some((project, ok));
+                    ok
+                }
+            };
+            if !locked {
+                continue;
+            }
+            done += sqlx::query(
+                "UPDATE project_agents SET is_lead = false, left_at = now() \
+                  WHERE project_id = $1 AND instance_id = $2 AND left_at IS NULL",
+            )
+            .bind(project)
+            .bind(instance)
+            .execute(self.conn())
+            .await?
+            .rows_affected();
+        }
+        Ok(done)
+    }
+
+    pub(crate) async fn project_name(&mut self, project: ProjectId) -> Result<String> {
+        Ok(
+            sqlx::query_scalar("SELECT name FROM projects WHERE id = $1")
+                .bind(project.0)
+                .fetch_one(self.conn())
+                .await?,
+        )
     }
 }

@@ -1,8 +1,8 @@
 //! 项目与跨用户协作（8.14 起）的库测试。需要真实 Postgres，没设置 DATABASE_URL 时跳过。
 
 use proto::domain::{
-    Instance, ProjectId, ProjectInviteId, ProjectInviteStatus, ProjectRole, TeamMember, TeamRole,
-    UserId,
+    Instance, ProjectBudget, ProjectId, ProjectInviteId, ProjectInviteStatus, ProjectRole,
+    TeamMember, TeamRole, UserId,
 };
 
 use super::{instance, queue_run, user};
@@ -1528,4 +1528,548 @@ async fn team_edits_and_joins_serialize() {
         }
         assert!(live_agent_count(db, project).await <= 30);
     }
+}
+
+/// 退出、移出、撤回、再加入（8.14 测试 6）。
+#[tokio::test]
+async fn withdraw_leave_remove_and_rejoin() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = named(db, "+8613800001111", "Alice").await;
+    let bob = named(db, "+8613800001112", "Bob").await;
+    let carol = user(db, "+8613800001113").await;
+    let a1 = instance(db, alice).await;
+    let b1 = instance(db, bob).await;
+    let b2 = instance(db, bob).await;
+    let project = solo(db, alice, &a1).await;
+    let hash = [21u8; 32];
+    worker_do(db, async |w| {
+        w.create_link_invite(alice, project, &hash, InviteCaps::default(), DAY)
+            .await
+    })
+    .await
+    .unwrap();
+    accept(db, bob, InviteKey::Link(&hash), &terms(&[&b1, &b2]))
+        .await
+        .unwrap();
+    let withdraw = |user: UserId, i: proto::domain::InstanceId| async move {
+        worker_do(db, async |w| {
+            w.withdraw_project_agent(user, project, i).await
+        })
+        .await
+    };
+    // 主人撤自己的；再撤一次 already_left。
+    let w1 = withdraw(bob, b1.id).await.unwrap();
+    assert!(!w1.already_left);
+    assert_eq!((w1.owner, w1.creator), (bob, alice));
+    assert_eq!(w1.owner_name.as_deref(), Some("Bob"));
+    assert_eq!(w1.name, "main");
+    assert!(withdraw(bob, b1.id).await.unwrap().already_left);
+    // 创建者撤成员的；外人 NotFound；成员撤创建者的 NotPermitted。
+    let err = withdraw(carol, b2.id).await.unwrap_err();
+    assert!(matches!(err, Error::NotFound), "{err:?}");
+    let err = withdraw(bob, a1.id).await.unwrap_err();
+    assert!(matches!(err, Error::NotPermitted(_)), "{err:?}");
+    assert!(!withdraw(alice, b2.id).await.unwrap().already_left);
+    assert_eq!(live_agent_count(db, project).await, 1);
+    // 成员移不了人；创建者退不了。
+    let err = worker_do(db, async |w| {
+        w.remove_project_member(bob, project, alice).await
+    })
+    .await
+    .unwrap_err();
+    assert!(matches!(err, Error::NotPermitted(_)), "{err:?}");
+    let err = worker_do(db, async |w| w.leave_project(alice, project).await)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::Conflict(_)), "{err:?}");
+    // 移出创建者 Invalid；移出从没加入过的人 NotFound。
+    let err = worker_do(db, async |w| {
+        w.remove_project_member(alice, project, alice).await
+    })
+    .await
+    .unwrap_err();
+    assert!(matches!(err, Error::Invalid(_)), "{err:?}");
+    let err = worker_do(db, async |w| {
+        w.remove_project_member(alice, project, carol).await
+    })
+    .await
+    .unwrap_err();
+    assert!(matches!(err, Error::NotFound), "{err:?}");
+    // bob 退出：看不到了；再退一次 NotFound。
+    let exit = worker_do(db, async |w| w.leave_project(bob, project).await)
+        .await
+        .unwrap();
+    assert!(exit.changed);
+    assert_eq!((exit.creator, exit.member), (alice, bob));
+    assert_eq!(exit.member_name.as_deref(), Some("Bob"));
+    let reason: Option<String> = sqlx::query_scalar(
+        "SELECT left_reason FROM project_members WHERE project_id = $1 AND user_id = $2",
+    )
+    .bind(project.0)
+    .bind(bob.0)
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(reason.as_deref(), Some("left"));
+    let mut w = db.worker().await.unwrap();
+    assert!(matches!(
+        w.project_detail(bob, project).await,
+        Err(Error::NotFound)
+    ));
+    assert!(w.my_projects(bob).await.unwrap().is_empty());
+    w.rollback().await.unwrap();
+    let err = worker_do(db, async |w| w.leave_project(bob, project).await)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::NotFound), "{err:?}");
+    // 新的邀请让他回来：同一行成员和 agent 原地恢复，加入时间往后挪。
+    let joined_before: chrono::DateTime<chrono::Utc> = sqlx::query_scalar(
+        "SELECT joined_at FROM project_members WHERE project_id = $1 AND user_id = $2",
+    )
+    .bind(project.0)
+    .bind(bob.0)
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    let hash2 = [22u8; 32];
+    worker_do(db, async |w| {
+        w.create_link_invite(alice, project, &hash2, InviteCaps::default(), DAY)
+            .await
+    })
+    .await
+    .unwrap();
+    accept(db, bob, InviteKey::Link(&hash2), &terms(&[&b1]))
+        .await
+        .unwrap();
+    let (rows, joined): (i64, chrono::DateTime<chrono::Utc>) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM project_agents WHERE project_id = $1 AND user_id = $2), \
+                (SELECT joined_at FROM project_members WHERE project_id = $1 AND user_id = $2)",
+    )
+    .bind(project.0)
+    .bind(bob.0)
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(rows, 2, "rows are reused, not duplicated");
+    assert!(joined > joined_before);
+    assert_eq!(live_agent_count(db, project).await, 2);
+    // 移出：标 removed；再移一次照样成功（不改）；项目还是共享的。
+    let exit = worker_do(db, async |w| {
+        w.remove_project_member(alice, project, bob).await
+    })
+    .await
+    .unwrap();
+    assert!(exit.changed);
+    let again = worker_do(db, async |w| {
+        w.remove_project_member(alice, project, bob).await
+    })
+    .await
+    .unwrap();
+    assert!(!again.changed);
+    let (reason, shared): (Option<String>, bool) = sqlx::query_as(
+        "SELECT m.left_reason, p.shared_at IS NOT NULL FROM project_members m \
+           JOIN projects p ON p.id = m.project_id WHERE m.project_id = $1 AND m.user_id = $2",
+    )
+    .bind(project.0)
+    .bind(bob.0)
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert_eq!((reason.as_deref(), shared), (Some("removed"), true));
+    assert_eq!(live_agent_count(db, project).await, 1);
+    // 预算：成员两个都要；创建者可以不限。
+    let budget = |d: Option<u64>, t: Option<u64>| ProjectBudget {
+        daily_token_limit: d,
+        total_token_limit: t,
+    };
+    worker_do(db, async |w| {
+        w.set_project_budget(alice, project, &budget(None, Some(5)))
+            .await
+    })
+    .await
+    .unwrap();
+    let hash3 = [23u8; 32];
+    worker_do(db, async |w| {
+        w.create_link_invite(alice, project, &hash3, InviteCaps::default(), DAY)
+            .await
+    })
+    .await
+    .unwrap();
+    accept(db, bob, InviteKey::Link(&hash3), &terms(&[&b1]))
+        .await
+        .unwrap();
+    let err = worker_do(db, async |w| {
+        w.set_project_budget(bob, project, &budget(Some(5), None))
+            .await
+    })
+    .await
+    .unwrap_err();
+    assert!(matches!(err, Error::Invalid(_)), "{err:?}");
+    let err = worker_do(db, async |w| {
+        w.set_project_budget(bob, project, &budget(Some(6), Some(5)))
+            .await
+    })
+    .await
+    .unwrap_err();
+    assert!(matches!(err, Error::Invalid(_)), "{err:?}");
+    worker_do(db, async |w| {
+        w.set_project_budget(bob, project, &budget(Some(5), Some(6)))
+            .await
+    })
+    .await
+    .unwrap();
+    let mut w = db.worker().await.unwrap();
+    let d = w.project_detail(bob, project).await.unwrap();
+    assert_eq!(d.my_budget, budget(Some(5), Some(6)));
+    let d = w.project_detail(alice, project).await.unwrap();
+    assert_eq!(d.my_budget, budget(None, Some(5)));
+    w.rollback().await.unwrap();
+}
+
+/// 把 `from` 这一行复制成项目 `project` 的（列表现查）；`parent` 给授权设父授权。
+async fn copy_into_project(
+    db: &Db,
+    table: &str,
+    from: uuid::Uuid,
+    project: ProjectId,
+    parent: Option<uuid::Uuid>,
+) -> uuid::Uuid {
+    let cols: Vec<String> = sqlx::query_scalar(
+        "SELECT column_name::text FROM information_schema.columns WHERE table_name = $1 \
+           AND column_name NOT IN ('id', 'project_id', 'space_kind', 'space_id') \
+         ORDER BY ordinal_position",
+    )
+    .bind(table)
+    .fetch_all(db.pool())
+    .await
+    .unwrap();
+    let list = cols.join(", ");
+    let id = uuid::Uuid::now_v7();
+    let mut w = db.worker().await.unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO {table} (id, project_id, {list}) SELECT $1, $2, {list} FROM {table} WHERE id = $3"
+    )))
+    .bind(id)
+    .bind(project.0)
+    .bind(from)
+    .execute(w.conn())
+    .await
+    .unwrap();
+    if let Some(p) = parent {
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE {table} SET parent_id = $2 WHERE id = $1"
+        )))
+        .bind(id)
+        .bind(p)
+        .execute(w.conn())
+        .await
+        .unwrap();
+    }
+    if table == "runs" {
+        sqlx::query(
+            "UPDATE runs SET state = 'running', lease_owner = 'w-test', \
+               lease_expires_at = now() + interval '1 hour' WHERE id = $1",
+        )
+        .bind(id)
+        .execute(w.conn())
+        .await
+        .unwrap();
+    }
+    w.commit().await.unwrap();
+    id
+}
+
+async fn epoch(db: &Db, i: &Instance) -> i64 {
+    sqlx::query_scalar("SELECT token_epoch FROM instances WHERE id = $1")
+        .bind(i.id.0)
+        .fetch_one(db.pool())
+        .await
+        .unwrap()
+}
+
+async fn run_state(db: &Db, id: uuid::Uuid) -> String {
+    sqlx::query_scalar("SELECT state FROM runs WHERE id = $1")
+        .bind(id)
+        .fetch_one(db.pool())
+        .await
+        .unwrap()
+}
+
+async fn grant_revoked(db: &Db, id: uuid::Uuid) -> bool {
+    sqlx::query_scalar("SELECT revoked_at IS NOT NULL FROM run_grants WHERE id = $1")
+        .bind(id)
+        .fetch_one(db.pool())
+        .await
+        .unwrap()
+}
+
+/// 撤回、退出停掉项目里的运行和授权（8.14 测试 7）：令牌代数加一；同一个实例上的私人运行、授权不动。
+#[tokio::test]
+async fn exits_stop_project_runs_and_grants() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = named(db, "+8613800001121", "Alice").await;
+    let bob = user(db, "+8613800001122").await;
+    let a1 = instance(db, alice).await;
+    let b1 = instance(db, bob).await;
+    let b2 = instance(db, bob).await;
+    let project = solo(db, alice, &a1).await;
+    let hash = [31u8; 32];
+    worker_do(db, async |w| {
+        w.create_link_invite(alice, project, &hash, InviteCaps::default(), DAY)
+            .await
+    })
+    .await
+    .unwrap();
+    accept(db, bob, InviteKey::Link(&hash), &terms(&[&b1, &b2]))
+        .await
+        .unwrap();
+    // 每个实例：一个私人运行（排队）、一个私人授权；复制出一个跑着的项目运行、一个项目授权和它的子授权。
+    let mut seeded = vec![];
+    for i in [&b1, &b2] {
+        let private_run = queue_run(db, bob, i, "private").await.id.0;
+        let mut tb = db.tenant(bob).await.unwrap();
+        let private_grant = tb
+            .create_run_grant(
+                i.id,
+                None,
+                &proto::domain::GrantScope::default(),
+                std::time::Duration::from_secs(3600),
+            )
+            .await
+            .unwrap()
+            .id
+            .0;
+        tb.commit().await.unwrap();
+        let run = copy_into_project(db, "runs", private_run, project, None).await;
+        let grant = copy_into_project(db, "run_grants", private_grant, project, None).await;
+        let child = copy_into_project(db, "run_grants", private_grant, project, Some(grant)).await;
+        seeded.push((private_run, private_grant, run, grant, child));
+    }
+    let check = async |i: &Instance,
+                       s: &(uuid::Uuid, uuid::Uuid, uuid::Uuid, uuid::Uuid, uuid::Uuid),
+                       before: i64| {
+        let (private_run, private_grant, run, grant, child) = *s;
+        assert_eq!(run_state(db, run).await, "cancelled");
+        assert_eq!(epoch(db, i).await, before + 1);
+        assert!(grant_revoked(db, grant).await && grant_revoked(db, child).await);
+        assert_eq!(run_state(db, private_run).await, "queued");
+        assert!(!grant_revoked(db, private_grant).await);
+    };
+    let before = epoch(db, &b1).await;
+    let w = worker_do(db, async |w| {
+        w.withdraw_project_agent(bob, project, b1.id).await
+    })
+    .await
+    .unwrap();
+    assert_eq!((w.runs_cancelled, w.grants_revoked), (1, 2));
+    check(&b1, &seeded[0], before).await;
+    // b2 的还在跑。
+    assert_eq!(run_state(db, seeded[1].2).await, "running");
+    let before = epoch(db, &b2).await;
+    let exit = worker_do(db, async |w| w.leave_project(bob, project).await)
+        .await
+        .unwrap();
+    assert_eq!((exit.runs_cancelled, exit.grants_revoked), (1, 2));
+    check(&b2, &seeded[1], before).await;
+}
+
+/// 注销和项目流程同时进行不死锁（8.14 测试 10b）。
+#[tokio::test]
+async fn erase_and_project_flows_do_not_deadlock() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let no_deadlock = |r: &crate::Result<()>| {
+        if let Err(Error::Db(e)) = r {
+            panic!("database error (deadlock?): {e}");
+        }
+    };
+    for round in 0..3u32 {
+        let alice = named(db, &format!("+861380000{round}201"), "Alice").await;
+        let bob = named(db, &format!("+861380000{round}202"), "Bob").await;
+        let a1 = instance(db, alice).await;
+        let b1 = instance(db, bob).await;
+        let project = solo(db, alice, &a1).await;
+        let hash = [40 + round as u8; 32];
+        worker_do(db, async |w| {
+            w.create_link_invite(alice, project, &hash, InviteCaps::default(), DAY)
+                .await
+        })
+        .await
+        .unwrap();
+        // 注销 bob 的同时 bob 接受邀请。
+        let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(2));
+        let (d1, br1) = (db.clone(), barrier.clone());
+        let erase = tokio::spawn(async move {
+            br1.wait().await;
+            worker_do(&d1, async |w| w.erase_account(bob).await).await
+        });
+        let (d2, br2, t2) = (db.clone(), barrier.clone(), terms(&[&b1]));
+        let join = tokio::spawn(async move {
+            br2.wait().await;
+            accept(&d2, bob, InviteKey::Link(&hash), &t2)
+                .await
+                .map(|_| ())
+        });
+        let (e, j) = (erase.await.unwrap(), join.await.unwrap());
+        no_deadlock(&e);
+        no_deadlock(&j);
+        e.unwrap();
+        assert!(!live_member(db, project, bob).await, "round {round}");
+
+        // 注销 alice 的同时 carol 退出 alice 的项目。
+        let carol = named(db, &format!("+861380000{round}203"), "Carol").await;
+        let c1 = instance(db, carol).await;
+        let hash = [50 + round as u8; 32];
+        worker_do(db, async |w| {
+            w.create_link_invite(alice, project, &hash, InviteCaps::default(), DAY)
+                .await
+        })
+        .await
+        .unwrap();
+        accept(db, carol, InviteKey::Link(&hash), &terms(&[&c1]))
+            .await
+            .unwrap();
+        // alice 的另一个单人项目：注销时她自己的租户事务正在改它。
+        let (solo_project, alices) = solo_with(db, alice, 2).await;
+        let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(3));
+        let (d1, br1) = (db.clone(), barrier.clone());
+        let erase = tokio::spawn(async move {
+            br1.wait().await;
+            worker_do(&d1, async |w| w.erase_account(alice).await).await
+        });
+        let (d2, br2) = (db.clone(), barrier.clone());
+        let leave = tokio::spawn(async move {
+            br2.wait().await;
+            worker_do(&d2, async |w| {
+                w.leave_project(carol, project).await.map(|_| ())
+            })
+            .await
+        });
+        let (d3, br3, keep) = (db.clone(), barrier.clone(), alices[1].id);
+        let edit = tokio::spawn(async move {
+            br3.wait().await;
+            let mut ta = d3.tenant(alice).await?;
+            let r = ta
+                .update_team(
+                    solo_project.into(),
+                    Some("renamed"),
+                    Some(&[TeamMember {
+                        instance_id: keep,
+                        role: TeamRole::Lead,
+                        position: 0,
+                    }]),
+                )
+                .await;
+            match r {
+                Ok(_) => ta.commit().await,
+                Err(e) => {
+                    ta.rollback().await.ok();
+                    Err(e)
+                }
+            }
+        });
+        let (e, l, u) = (
+            erase.await.unwrap(),
+            leave.await.unwrap(),
+            edit.await.unwrap(),
+        );
+        no_deadlock(&e);
+        no_deadlock(&l);
+        no_deadlock(&u);
+        e.unwrap();
+        let left: i64 = sqlx::query_scalar("SELECT count(*) FROM projects WHERE creator_id = $1")
+            .bind(alice.0)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+        assert_eq!(left, 0, "round {round}: alice's projects are gone");
+    }
+}
+
+/// 删了的实例离开共享项目（8.14 测试 11）：删完调 `retire_deleted_instance`；没调的由后台兜底；项目锁被占着时后台跳过。
+#[tokio::test]
+async fn deleted_instances_leave_shared_projects() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = named(db, "+8613800001131", "Alice").await;
+    let bob = user(db, "+8613800001132").await;
+    let a1 = instance(db, alice).await;
+    let a2 = instance(db, alice).await;
+    let a3 = instance(db, alice).await;
+    let b1 = instance(db, bob).await;
+    let project = solo(db, alice, &a1).await;
+    worker_do(db, async |w| {
+        w.add_project_agents(alice, project, &[a2.id, a3.id], None)
+            .await
+    })
+    .await
+    .unwrap();
+    let hash = [61u8; 32];
+    worker_do(db, async |w| {
+        w.create_link_invite(alice, project, &hash, InviteCaps::default(), DAY)
+            .await
+    })
+    .await
+    .unwrap();
+    accept(db, bob, InviteKey::Link(&hash), &terms(&[&b1]))
+        .await
+        .unwrap();
+    let left = async |i: &Instance| -> bool {
+        sqlx::query_scalar(
+            "SELECT left_at IS NOT NULL FROM project_agents WHERE project_id = $1 AND instance_id = $2",
+        )
+        .bind(project.0)
+        .bind(i.id.0)
+        .fetch_one(db.pool())
+        .await
+        .unwrap()
+    };
+    // 删 a2，接着撤下：标离开。没删的实例调了也不变。
+    super::delete_instance_like_the_api(db.clone(), alice, a2.id)
+        .await
+        .unwrap();
+    assert!(!left(&a2).await, "the tenant cannot touch a shared project");
+    assert_eq!(
+        worker_do(db, async |w| w.retire_deleted_instance(alice, a2.id).await)
+            .await
+            .unwrap(),
+        1
+    );
+    assert!(left(&a2).await);
+    assert_eq!(
+        worker_do(db, async |w| w.retire_deleted_instance(alice, a3.id).await)
+            .await
+            .unwrap(),
+        0
+    );
+    // 删 a3 不撤：后台兜底；项目锁被占着时跳过，放开后撤下。
+    super::delete_instance_like_the_api(db.clone(), alice, a3.id)
+        .await
+        .unwrap();
+    let mut holder = db.worker().await.unwrap();
+    holder.lock_project(project).await.unwrap();
+    assert_eq!(
+        worker_do(db, async |w| w.retire_deleted_project_agents(100).await)
+            .await
+            .unwrap(),
+        0
+    );
+    holder.rollback().await.unwrap();
+    assert!(!left(&a3).await);
+    assert_eq!(
+        worker_do(db, async |w| w.retire_deleted_project_agents(100).await)
+            .await
+            .unwrap(),
+        1
+    );
+    assert!(left(&a3).await);
+    let mut w = db.worker().await.unwrap();
+    let d = w.project_detail(bob, project).await.unwrap();
+    assert_eq!(
+        d.agents.iter().map(|a| a.instance_id).collect::<Vec<_>>(),
+        vec![a1.id, b1.id]
+    );
+    w.rollback().await.unwrap();
 }

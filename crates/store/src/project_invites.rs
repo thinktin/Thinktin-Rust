@@ -205,7 +205,7 @@ impl Tx<Worker> {
         .bind(phone)
         .execute(self.conn())
         .await?;
-        let project_name = project_name(self, project).await?;
+        let project_name = self.project_name(project).await?;
         let existing: Option<Uuid> = sqlx::query_scalar(
             "SELECT id FROM project_invites WHERE project_id = $1 AND kind = 'phone' \
                AND invitee_phone = $2 AND status = 'pending'",
@@ -906,13 +906,4 @@ fn inviter(actor: &ProjectActor) -> Result<&LockedUser> {
         return Err(Error::Invalid("set a display name before inviting".into()));
     }
     Ok(me)
-}
-
-async fn project_name(tx: &mut Tx<Worker>, project: ProjectId) -> Result<String> {
-    Ok(
-        sqlx::query_scalar("SELECT name FROM projects WHERE id = $1")
-            .bind(project.0)
-            .fetch_one(tx.conn())
-            .await?,
-    )
 }

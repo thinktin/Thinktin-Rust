@@ -9,8 +9,8 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use proto::domain::{
-    GrantId, InstanceId, PlanHookId, PlanId, Run, RunBudget, RunId, RunKind, RunSource, RunState,
-    TriggerId, UserId,
+    GrantId, InstanceId, PlanHookId, PlanId, ProjectId, Run, RunBudget, RunId, RunKind, RunSource,
+    RunState, TriggerId, UserId,
 };
 use uuid::Uuid;
 
@@ -846,6 +846,89 @@ impl Tx<Worker> {
                finished_at = now(), updated_at = now() \
              WHERE user_id = $1 AND state NOT IN ('succeeded', 'failed', 'cancelled')",
         )
+        .bind(user.0)
+        .bind(reason)
+        .execute(self.conn())
+        .await?;
+        Ok(done.rows_affected())
+    }
+
+    /// 取消一个 agent 在项目里没结束的运行（连同它们的子运行；8.14 撤回 agent）。只碰这个项目的运行：同一个实例的
+    /// 私人运行照常（令牌代数只在项目运行正是它当前的 agent 运行时才加一）。返回取消的个数。
+    pub async fn cancel_project_agent_runs(
+        &mut self,
+        project: ProjectId,
+        instance: InstanceId,
+        reason: &str,
+    ) -> Result<u64> {
+        sqlx::query(lock_runs_where!(
+            "(project_id = $1 AND instance_id = $2 \
+              OR root_run_id IN (SELECT id FROM runs WHERE project_id = $1 AND instance_id = $2 \
+                                   AND parent_run_id IS NULL))"
+        ))
+        .bind(project.0)
+        .bind(instance.0)
+        .execute(self.conn())
+        .await?;
+        sqlx::query(bump_epochs_where!(
+            "(project_id = $1 AND instance_id = $2 \
+              OR root_run_id IN (SELECT id FROM runs WHERE project_id = $1 AND instance_id = $2 \
+                                   AND parent_run_id IS NULL))"
+        ))
+        .bind(project.0)
+        .bind(instance.0)
+        .execute(self.conn())
+        .await?;
+        let done = sqlx::query(
+            "UPDATE runs SET state = 'cancelled', state_reason = $3, wait_code = NULL, lease_owner = NULL, \
+               lease_expires_at = NULL, finished_at = now(), updated_at = now() \
+             WHERE (project_id = $1 AND instance_id = $2 \
+                    OR root_run_id IN (SELECT id FROM runs WHERE project_id = $1 AND instance_id = $2 \
+                                         AND parent_run_id IS NULL)) \
+               AND state NOT IN ('succeeded', 'failed', 'cancelled')",
+        )
+        .bind(project.0)
+        .bind(instance.0)
+        .bind(reason)
+        .execute(self.conn())
+        .await?;
+        Ok(done.rows_affected())
+    }
+
+    /// 取消一个成员（他的所有 agent）在项目里没结束的运行（8.14 退出、移出）。返回取消的个数。
+    pub async fn cancel_project_member_runs(
+        &mut self,
+        project: ProjectId,
+        user: UserId,
+        reason: &str,
+    ) -> Result<u64> {
+        sqlx::query(lock_runs_where!(
+            "(project_id = $1 AND user_id = $2 \
+              OR root_run_id IN (SELECT id FROM runs WHERE project_id = $1 AND user_id = $2 \
+                                   AND parent_run_id IS NULL))"
+        ))
+        .bind(project.0)
+        .bind(user.0)
+        .execute(self.conn())
+        .await?;
+        sqlx::query(bump_epochs_where!(
+            "(project_id = $1 AND user_id = $2 \
+              OR root_run_id IN (SELECT id FROM runs WHERE project_id = $1 AND user_id = $2 \
+                                   AND parent_run_id IS NULL))"
+        ))
+        .bind(project.0)
+        .bind(user.0)
+        .execute(self.conn())
+        .await?;
+        let done = sqlx::query(
+            "UPDATE runs SET state = 'cancelled', state_reason = $3, wait_code = NULL, lease_owner = NULL, \
+               lease_expires_at = NULL, finished_at = now(), updated_at = now() \
+             WHERE (project_id = $1 AND user_id = $2 \
+                    OR root_run_id IN (SELECT id FROM runs WHERE project_id = $1 AND user_id = $2 \
+                                         AND parent_run_id IS NULL)) \
+               AND state NOT IN ('succeeded', 'failed', 'cancelled')",
+        )
+        .bind(project.0)
         .bind(user.0)
         .bind(reason)
         .execute(self.conn())

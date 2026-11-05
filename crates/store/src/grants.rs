@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use proto::domain::{GrantId, GrantScope, InstanceId, PlanId, RunGrant, UserId};
+use proto::domain::{GrantId, GrantScope, InstanceId, PlanId, ProjectId, RunGrant, UserId};
 use uuid::Uuid;
 
 use crate::{Error, Result, Tenant, Tx, Worker, from_json, secs, to_json};
@@ -230,6 +230,50 @@ impl<R> Tx<R> {
 }
 
 impl Tx<Worker> {
+    /// 吊销一个 agent 在项目里的授权，连同收窄出来的子授权（8.14 撤回 agent）。私人授权不动。
+    pub async fn revoke_project_agent_grants(
+        &mut self,
+        project: ProjectId,
+        instance: InstanceId,
+        reason: &str,
+    ) -> Result<u64> {
+        let done = sqlx::query(
+            "WITH RECURSIVE tree AS ( \
+               SELECT id FROM run_grants WHERE project_id = $1 AND instance_id = $2 \
+               UNION SELECT g.id FROM run_grants g JOIN tree t ON g.parent_id = t.id) \
+             UPDATE run_grants SET revoked_at = now(), revoke_reason = $3 \
+             WHERE id IN (SELECT id FROM tree) AND revoked_at IS NULL",
+        )
+        .bind(project.0)
+        .bind(instance.0)
+        .bind(reason)
+        .execute(self.conn())
+        .await?;
+        Ok(done.rows_affected())
+    }
+
+    /// 吊销一个成员在项目里的全部授权，连同子授权（8.14 退出、移出）。
+    pub async fn revoke_project_member_grants(
+        &mut self,
+        project: ProjectId,
+        user: UserId,
+        reason: &str,
+    ) -> Result<u64> {
+        let done = sqlx::query(
+            "WITH RECURSIVE tree AS ( \
+               SELECT id FROM run_grants WHERE project_id = $1 AND user_id = $2 \
+               UNION SELECT g.id FROM run_grants g JOIN tree t ON g.parent_id = t.id) \
+             UPDATE run_grants SET revoked_at = now(), revoke_reason = $3 \
+             WHERE id IN (SELECT id FROM tree) AND revoked_at IS NULL",
+        )
+        .bind(project.0)
+        .bind(user.0)
+        .bind(reason)
+        .execute(self.conn())
+        .await?;
+        Ok(done.rows_affected())
+    }
+
     pub async fn run_grant(&mut self, id: GrantId) -> Result<(UserId, RunGrant)> {
         let row: Row = sqlx::query_as(concat!(
             "SELECT ",
