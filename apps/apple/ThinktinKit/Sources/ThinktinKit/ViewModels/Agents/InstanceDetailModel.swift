@@ -51,12 +51,20 @@ public final class InstanceDetailModel {
     public private(set) var isDeleted = false
 
     @ObservationIgnored private let client: any ClientProtocol
+    /// 删掉之后把这个 Botin 的头像外观也删掉（App 里是 `AppModel.appearances`）；nil 不管。
+    @ObservationIgnored private let appearances: InstanceAppearanceStore?
 
-    /// - Parameter instance: 已经有的实例（应用框架的实例列表里的），先显示它。
-    public init(client: any ClientProtocol, instanceID: InstanceID, instance: Instance? = nil) {
+    /// - Parameters:
+    ///   - instance: 已经有的实例（应用框架的实例列表里的），先显示它。
+    ///   - appearances: 记头像外观的地方（`AppModel.appearances`），删掉 Botin 时一起删它的记录。
+    public init(
+        client: any ClientProtocol, instanceID: InstanceID, instance: Instance? = nil,
+        appearances: InstanceAppearanceStore? = nil
+    ) {
         self.client = client
         self.instanceID = instanceID
         self.instance = instance?.id == instanceID ? instance : nil
+        self.appearances = appearances
     }
 
     // MARK: 加载
@@ -234,7 +242,7 @@ public final class InstanceDetailModel {
         impactError = result.error
     }
 
-    /// 删除（二次确认之后）。已经不存在了（别处删了）也算删掉了。
+    /// 删除（二次确认之后）。已经不存在了（别处删了）也算删掉了。删掉了顺带删这台设备上记的头像外观。
     @discardableResult
     public func delete() async -> Bool {
         guard !isDeleting, !isDeleted else { return false }
@@ -252,6 +260,7 @@ public final class InstanceDetailModel {
                 deleteError = failure
             }
         }
+        if isDeleted { appearances?.forget([instanceID]) }
         return isDeleted
     }
 }

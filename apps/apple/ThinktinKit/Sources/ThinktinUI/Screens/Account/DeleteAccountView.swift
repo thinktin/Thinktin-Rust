@@ -78,7 +78,12 @@ struct DeleteAccountView: View {
             zh ? "确定注销账号？" : "Delete your account?", isPresented: $confirmsDeletion, titleVisibility: .visible
         ) {
             Button(zh ? "注销账号" : "Delete account", role: .destructive) {
-                Task { await model.deleteAccount() }
+                // 这个账号的 Botin 在这台设备上记的头像外观一起删掉（注销后实例列表就清空了，先记下 id）。
+                let ids = app.instances.map(\.id)
+                let appearances = app.appearances
+                Task {
+                    if await model.deleteAccount() { appearances.forget(ids) }
+                }
             }
             Button(zh ? "再想想" : "Cancel", role: .cancel) {}
         } message: {

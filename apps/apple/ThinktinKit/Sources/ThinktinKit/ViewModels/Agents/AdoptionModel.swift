@@ -351,7 +351,7 @@ public enum NewBotinText {
         let zh = language == .chinese
         let name = AgentsText.displayName(of: agent)
         if requiresConsent(agent) {
-            return zh ? "新建即表示同意 \(name) 的许可条款" : "By creating, you agree to the \(name) license terms"
+            return zh ? "新建即表示同意 \(name) 的许可条款" : "By creating, you agree to the \(name) terms"
         }
         let license = agent.license?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if license.isEmpty { return zh ? "\(name) 没有注明许可证" : "\(name) doesn't state a license" }

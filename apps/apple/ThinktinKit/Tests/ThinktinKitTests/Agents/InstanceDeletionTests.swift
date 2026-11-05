@@ -169,4 +169,28 @@ struct InstanceDeletionTests {
         #expect(gone.isDeleted)
         #expect(gone.deleteError == nil)
     }
+
+    @Test("删掉了顺带删这台设备上记的头像外观（别处已经删了也删）；删失败的留着")
+    func deleteForgetsAppearance() async {
+        let mock = AgentsFixture.mock()
+        let appearances = InstanceAppearanceStore(defaults: nil)
+        let flower = InstanceAppearance(shape: .flower, color: .orchid)
+        appearances.set(flower, for: DemoData.writerID)
+        appearances.set(flower, for: DemoData.reviewerID)
+        appearances.set(flower, for: "gone")
+
+        let failing = InstanceDetailModel(client: mock, instanceID: DemoData.writerID, appearances: appearances)
+        mock.failNext(with: .api(status: 503, code: .unavailable, message: "busy", retryAfterSecs: 5))
+        #expect(!(await failing.delete()))
+        #expect(appearances.appearance(for: DemoData.writerID) == flower)
+
+        let model = InstanceDetailModel(client: mock, instanceID: DemoData.reviewerID, appearances: appearances)
+        #expect(await model.delete())
+        #expect(appearances.appearance(for: DemoData.reviewerID) == nil)
+
+        let gone = InstanceDetailModel(client: mock, instanceID: "gone", appearances: appearances)
+        #expect(await gone.delete())
+        #expect(appearances.appearance(for: "gone") == nil)
+        #expect(appearances.appearance(for: DemoData.writerID) == flower)
+    }
 }

@@ -18,7 +18,8 @@ struct InstanceDetailScreen: View {
 
     var body: some View {
         InstanceDetailContent(
-            client: client, instanceID: instanceID, instance: app.instances.first { $0.id == instanceID })
+            client: client, instanceID: instanceID, instance: app.instances.first { $0.id == instanceID },
+            appearances: app.appearances)
     }
 }
 
@@ -34,8 +35,12 @@ private struct InstanceDetailContent: View {
     @Environment(Router.self) private var router
     @Environment(\.displayLanguage) private var language
 
-    init(client: any ClientProtocol, instanceID: InstanceID, instance: Instance?) {
-        _model = State(initialValue: InstanceDetailModel(client: client, instanceID: instanceID, instance: instance))
+    init(
+        client: any ClientProtocol, instanceID: InstanceID, instance: Instance?, appearances: InstanceAppearanceStore
+    ) {
+        _model = State(
+            initialValue: InstanceDetailModel(
+                client: client, instanceID: instanceID, instance: instance, appearances: appearances))
     }
 
     var body: some View {

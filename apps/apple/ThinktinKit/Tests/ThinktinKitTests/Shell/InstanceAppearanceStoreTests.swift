@@ -105,6 +105,67 @@ struct InstanceAppearanceStoreTests {
         #expect(String(decoding: data, as: UTF8.self) == #"{"shape":"leaf"}"#)
     }
 
+    /// 存着的表（原始的字符串，看认不出的值有没有留着）。
+    private func storedTable(_ defaults: UserDefaults) throws -> [String: [String: String]] {
+        let data = try #require(defaults.data(forKey: InstanceAppearanceStore.storageKey))
+        return try JSONDecoder().decode([String: [String: String]].self, from: data)
+    }
+
+    @Test("以后的版本加的形状、颜色：画的时候当默认，别的 Botin 存的时候原样留着；自己改了、删了才换掉")
+    func keepsUnrecognizedValues() throws {
+        try withDefaults { defaults in
+            let json = """
+                {"a": {"shape": "dodecahedron"},
+                 "b": {"shape": "cloud", "color": "ultraviolet"},
+                 "c": {"shape": "blob", "color": "navy"},
+                 "d": {"shape": "star", "color": "teal"}}
+                """
+            defaults.set(Data(json.utf8), forKey: InstanceAppearanceStore.storageKey)
+            let store = InstanceAppearanceStore(defaults: defaults)
+            #expect(store.resolved(for: "a") == .default)
+            #expect(store.appearance(for: "b") == InstanceAppearance(shape: .cloud, color: nil))
+
+            // 新建了一个 Botin：别的记录原样存回去。
+            store.set(InstanceAppearance(shape: .leaf), for: "e")
+            var table = try storedTable(defaults)
+            #expect(table["a"] == ["shape": "dodecahedron"])
+            #expect(table["b"] == ["shape": "cloud", "color": "ultraviolet"])
+            #expect(table["c"] == ["shape": "blob", "color": "navy"])
+            #expect(table["d"] == ["shape": "star", "color": "teal"])
+            #expect(table["e"] == ["shape": "leaf"])
+
+            // 重开也还在（再装回新版本时认得出）。
+            let reopened = InstanceAppearanceStore(defaults: defaults)
+            reopened.set(InstanceAppearance(shape: .hexagon), for: "e")
+            #expect(try storedTable(defaults)["a"] == ["shape": "dodecahedron"])
+
+            // 这个 Botin 自己改了外观（和读出来的一样也算）、删掉了，才换掉认不出的值。
+            reopened.set(InstanceAppearance(shape: .cloud, color: nil), for: "b")
+            reopened.set(nil, for: "a")
+            reopened.forget(["c"])
+            table = try storedTable(defaults)
+            #expect(table["a"] == nil)
+            #expect(table["b"] == ["shape": "cloud"])
+            #expect(table["c"] == nil)
+            #expect(table.count == 3)
+        }
+    }
+
+    @Test("删掉一批 Botin 的记录（删了 Botin、注销账号）；没记过的不动")
+    func forget() throws {
+        try withDefaults { defaults in
+            let store = InstanceAppearanceStore(defaults: defaults)
+            store.set(InstanceAppearance(shape: .star), for: DemoData.writerID)
+            store.set(InstanceAppearance(shape: .leaf), for: DemoData.reviewerID)
+            store.forget([DemoData.writerID, "never-stored"])
+            #expect(store.appearance(for: DemoData.writerID) == nil)
+            #expect(store.appearance(for: DemoData.reviewerID) == InstanceAppearance(shape: .leaf))
+            #expect(InstanceAppearanceStore(defaults: defaults).appearances.count == 1)
+            store.forget([DemoData.reviewerID])
+            #expect(defaults.data(forKey: InstanceAppearanceStore.storageKey) == nil)
+        }
+    }
+
     @Test("App 的 AppModel 带一份（传 nil 的 defaults 时只在内存里）")
     func appModelOwnsStore() {
         let app = AppModel(client: MockClient(state: DemoData.state(), stepDelay: 0), defaults: nil)

@@ -126,8 +126,11 @@ public struct InstanceAppearance: Codable, Hashable, Sendable {
 /// 这台设备上记的 Botin 头像外观（按实例 id），新建表单建好之后写（`AdoptionModel.adopt()`）；首页的行、搜索结果、
 /// 对话页的标题、Botin 资料按它画头像，没有记录的是 `InstanceAppearance.default`（圆形、按名字取色）。
 ///
-/// 存在 `UserDefaults` 里（一个键，JSON：`{实例 id: {shape, color}}`），只是本机的显示偏好，不上传；退出登录不清
-/// （同一个账号再登录时还在，别的账号的实例 id 对不上，用不到）。`defaults` 为 nil 时只记在内存里（测试、预览）。
+/// 存在 `UserDefaults` 里（一个键，JSON：`{实例 id: {shape, color}}`），只是本机的显示偏好，不上传。退出登录不清
+/// （同一个账号再登录时还在，别的账号的实例 id 对不上，用不到）；删了 Botin（`InstanceDetailModel.delete()`）、注销账号时
+/// 删掉对应的记录（`forget(_:)`）。以后的版本加的形状、颜色这个版本认不出：画的时候当圆形、当没选，存回去时原样留着
+/// （装回旧版本再新建一个 Botin 不会把它们抹掉），只有那个 Botin 自己改外观或删掉时才换掉。`defaults` 为 nil 时只记在内存里
+/// （测试、预览）。
 @Observable @MainActor
 public final class InstanceAppearanceStore {
     static let storageKey = "cn.thinktin.shell.instanceAppearance"
@@ -135,11 +138,15 @@ public final class InstanceAppearanceStore {
     /// 记下的外观（不含默认的）。
     public private(set) var appearances: [InstanceID: InstanceAppearance]
 
+    /// 存着的记录里形状或颜色这个版本认不出的那些（按实例 id 的原始值），存回去时原样写回。
+    @ObservationIgnored private var unrecognized: [String: StoredAppearance]
     @ObservationIgnored private let defaults: UserDefaults?
 
     public init(defaults: UserDefaults? = .standard) {
         self.defaults = defaults
-        self.appearances = Self.load(from: defaults)
+        let stored = Self.load(from: defaults)
+        self.appearances = stored.appearances
+        self.unrecognized = stored.unrecognized
     }
 
     /// 这个 Botin 记下的外观；没记过为 nil。
@@ -152,20 +159,34 @@ public final class InstanceAppearanceStore {
         appearances[id] ?? .default
     }
 
-    /// 记下外观。nil 或默认的外观删掉记录（和没记过一样画）。
+    /// 记下外观（这个 Botin 原来存着的、认不出的值一起换掉）。nil 或默认的外观删掉记录（和没记过一样画）。
     public func set(_ appearance: InstanceAppearance?, for id: InstanceID) {
-        if let appearance, !appearance.isDefault {
-            guard appearances[id] != appearance else { return }
-            appearances[id] = appearance
-        } else {
-            guard appearances.removeValue(forKey: id) != nil else { return }
+        guard let appearance, !appearance.isDefault else {
+            forget([id])
+            return
         }
+        let hadUnrecognized = unrecognized.removeValue(forKey: id.rawValue) != nil
+        guard appearances[id] != appearance || hadUnrecognized else { return }
+        appearances[id] = appearance
         save()
+    }
+
+    /// 删掉这些 Botin 的记录（删了 Botin、注销账号）。
+    public func forget(_ ids: [InstanceID]) {
+        var changed = false
+        for id in ids {
+            if appearances.removeValue(forKey: id) != nil { changed = true }
+            if unrecognized.removeValue(forKey: id.rawValue) != nil { changed = true }
+        }
+        if changed { save() }
     }
 
     private func save() {
         guard let defaults else { return }
-        let table = Dictionary(uniqueKeysWithValues: appearances.map { ($0.key.rawValue, $0.value) })
+        var table = unrecognized
+        for (id, appearance) in appearances where table[id.rawValue] == nil {
+            table[id.rawValue] = StoredAppearance(appearance)
+        }
         if table.isEmpty {
             defaults.removeObject(forKey: Self.storageKey)
         } else if let data = try? JSONEncoder().encode(table) {
@@ -173,15 +194,44 @@ public final class InstanceAppearanceStore {
         }
     }
 
-    /// 读出来的表：坏了（不是 JSON）就当没有；默认的外观不留（以前的版本可能写过）。
-    private static func load(from defaults: UserDefaults?) -> [InstanceID: InstanceAppearance] {
+    /// 读出来的表：坏了（不是 JSON）就当没有；默认的外观不留（以前的版本可能写过），认不出的值另外记下、原样存回去。
+    private static func load(
+        from defaults: UserDefaults?
+    ) -> (appearances: [InstanceID: InstanceAppearance], unrecognized: [String: StoredAppearance]) {
         guard let data = defaults?.data(forKey: storageKey),
-            let table = try? JSONDecoder().decode([String: InstanceAppearance].self, from: data)
-        else { return [:] }
-        var out: [InstanceID: InstanceAppearance] = [:]
-        for (key, appearance) in table where !key.isEmpty && !appearance.isDefault {
-            out[InstanceID(key)] = appearance
+            let table = try? JSONDecoder().decode([String: StoredAppearance].self, from: data)
+        else { return ([:], [:]) }
+        var appearances: [InstanceID: InstanceAppearance] = [:]
+        var unrecognized: [String: StoredAppearance] = [:]
+        for (key, record) in table where !key.isEmpty {
+            let appearance = record.appearance
+            if !appearance.isDefault { appearances[InstanceID(key)] = appearance }
+            if record.hasUnrecognizedValues { unrecognized[key] = record }
         }
-        return out
+        return (appearances, unrecognized)
+    }
+}
+
+/// `UserDefaults` 里的一条记录：形状、颜色的原始值原样留着（以后的版本加的这个版本也不丢）。
+private struct StoredAppearance: Codable, Hashable, Sendable {
+    var shape: String?
+    var color: String?
+
+    init(_ appearance: InstanceAppearance) {
+        shape = appearance.shape.rawValue
+        color = appearance.color?.rawValue
+    }
+
+    /// 画的时候用的：认不出的形状当圆形，认不出的颜色当没选（同 `InstanceAppearance` 的宽松解码）。
+    var appearance: InstanceAppearance {
+        InstanceAppearance(
+            shape: shape.flatMap(AvatarShape.init(rawValue:)) ?? .circle,
+            color: color.flatMap(AvatarColor.init(rawValue:)))
+    }
+
+    /// 有这个版本认不出的形状或颜色。
+    var hasUnrecognizedValues: Bool {
+        (shape.map { AvatarShape(rawValue: $0) == nil } ?? false)
+            || (color.map { AvatarColor(rawValue: $0) == nil } ?? false)
     }
 }

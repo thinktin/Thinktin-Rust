@@ -406,7 +406,7 @@ struct AdoptionModelTests {
         #expect(NewBotinText.licenseCaption(claude, language: .chinese) == "新建即表示同意 Claude Agent 的许可条款")
         #expect(
             NewBotinText.licenseCaption(claude, language: .english)
-                == "By creating, you agree to the Claude Agent license terms")
+                == "By creating, you agree to the Claude Agent terms")
         #expect(NewBotinText.licenseCaption(codex, language: .chinese) == "Codex 采用 Apache-2.0 许可")
         #expect(NewBotinText.licenseCaption(codex, language: .english) == "Codex is licensed under Apache-2.0")
         #expect(!NewBotinText.licenseCaption(codex, language: .english).contains("agree"))
