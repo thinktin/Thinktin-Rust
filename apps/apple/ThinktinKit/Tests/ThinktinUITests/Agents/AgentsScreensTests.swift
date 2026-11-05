@@ -55,12 +55,26 @@ struct AgentsScreensTests {
         hostAndLayout(NavigationStack { AdoptAgentSheet() }.previewShell(client: AgentsPreviewClients.emptyCatalog()))
     }
 
-    @Test("改名表单")
-    func renameSheet() {
+    @Test("编辑页、头像页、工作区和它的说明（参考 12、18、65、28）")
+    func editPages() {
         let mock = MockClient(autoReply: false)
         let writer = InstanceDetailModel(client: mock, instanceID: DemoData.writerID, instance: mock.state.instances[0])
-        hostAndLayout(InstanceRenameSheet(model: writer) {}.previewShell())
-        hostAndLayout(InstanceRenameSheet(model: writer) {}.previewShell(.english, scheme: .dark))
+        hostAndLayout(NavigationStack { InstanceEditScreen(model: writer) }.previewShell())
+        hostAndLayout(
+            NavigationStack { InstanceEditScreen(model: writer) }.previewShell(.english, scheme: .dark)
+                .dynamicTypeSize(.accessibility3))
+        let store = InstanceAppearanceStore(defaults: nil)
+        store.set(InstanceAppearance(shape: .leaf, color: .orchid), for: DemoData.writerID)
+        let editor = InstanceAppearanceEditor(instanceID: DemoData.writerID, name: "写作助手", store: store)
+        hostAndLayout(NavigationStack { InstanceAvatarScreen(editor: editor) }.previewShell())
+        hostAndLayout(NavigationStack { InstanceAvatarScreen(editor: editor) }.previewShell(.english, scheme: .dark))
+        for id in [DemoData.writerID, DemoData.reviewerID] {
+            hostAndLayout(NavigationStack { InstanceWorkspacePreview(instanceID: id) }.previewShell())
+            hostAndLayout(
+                NavigationStack { InstanceWorkspacePreview(instanceID: id) }.previewShell(.english, scheme: .dark))
+        }
+        hostAndLayout(WorkspaceHelpSheet().previewShell())
+        hostAndLayout(WorkspaceHelpSheet().previewShell(.english, scheme: .dark).dynamicTypeSize(.accessibility3))
     }
 
     @Test("删除确认页：有级联（代码审查在流水线和团队里）、没有级联")

@@ -341,6 +341,8 @@
 
 进行中：第 1 轮 C 线（Botin 资料、编辑、头像、工作区、引擎目录和详情；规范 4.4、4.6.1、4.7.1 末尾；参考 09、10、12、18、65、27、28、101–107），
 本会话（session_01GuCp3KRgqaK6Kzynw6udRn）2026-11-05 开始。B 线做完了，见“已完成”。
+  C 线已推送：ThinktinKit 的 `InstanceProfile.swift`、`InstanceAppearanceEditor`、目录行的帮手（`4ef102d`）；Botin 资料（List 版式、
+  “…”菜单）、编辑页、头像页、工作区页和说明、删除确认页（这一提交）。还差：引擎目录换列表行、引擎详情换插件详情的 sheet 版式。
 验证和发版（2026-11-05，session_01GuCp3KRgqaK6Kzynw6udRn）：GitHub 的 Mac 一直排不上，改用 Codemagic（`.github/workflows/codemagic.yml`：
 把提交推到 `codemagic/apple-check` / `codemagic/ios-screenshots`）。第 0 轮（bbdb07c）、Botin 版（06894fd）、新建页重做（c78064e）
 的 apple-check 都过了（真 Xcode：模拟器 build + test、ThinktinMac、Kit 的 macOS 测试）。截图对照参考 34、35 后又调了两次版式：

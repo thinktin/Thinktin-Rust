@@ -1,0 +1,242 @@
+import SwiftUI
+import ThinktinKit
+
+/// 资料页、编辑页、头像页的头像大小：参考 09、12、18 量出来都是 80pt 左右（规范 2.4 写的 120 / 100 偏大）。
+/// 最大跟到 xxxLarge 的动态字体，再大不跟（`InstanceAvatar` 跟着缩放，辅助字号下会比屏幕还宽）。
+enum ProfileAvatarMetrics {
+    static let size: CGFloat = 80
+    static let maxDynamicType: DynamicTypeSize = .xxxLarge
+}
+
+/// 编辑 Botin（规范 4.4.3，参考 12）：资料页“编辑”压进来的页面（本地的 `navigationDestination`，不加路由），标题“编辑 Botin”，
+/// 右上“完成”。
+///
+/// - 居中的头像，右下角一个玻璃小铅笔，点了进头像页（和“外观”组的“头像”行一样）；
+/// - “名称”组一个输入框，脚注是名字的问题或保存失败；离线时不能改名字（头像只存在这台设备上，照样能改）；
+/// - “外观”组“头像 >”；参考的“语音通话”组不做（6.23）。
+///
+/// 点“完成”保存名字并返回（名字没变直接返回）；点返回放弃改动（只有一个名字，丢了好重填，规范 4.4.3）。
+struct InstanceEditScreen: View {
+    let model: InstanceDetailModel
+
+    @State private var draft: String
+    @State private var isEditingAvatar = false
+    @FocusState private var isNameFocused: Bool
+
+    @Environment(AppModel.self) private var app
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.displayLanguage) private var language
+
+    init(model: InstanceDetailModel) {
+        self.model = model
+        _draft = State(initialValue: model.instance?.name ?? "")
+    }
+
+    var body: some View {
+        let model = self.model
+        let problem = InstanceNameRule.problem(draft)
+        let name = model.instance?.name ?? draft
+        Form {
+            Section {
+                Button {
+                    isEditingAvatar = true
+                } label: {
+                    AvatarWithPencil(
+                        name: name, appearance: app.appearances.resolved(for: model.instanceID))
+                }
+                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity)
+                .accessibilityLabel(Text(InstanceProfileText.avatar(language)))
+                .accessibilityHint(Text(language == .chinese ? "换形状和颜色" : "Change the shape and colour"))
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets())
+            }
+            Section {
+                TextField(InstanceProfileText.nameSection(language), text: $draft)
+                    .focused($isNameFocused)
+                    .submitLabel(.done)
+                    .onSubmit(save)
+                    .autocorrectionDisabled()
+                    .disabled(model.isRenaming || app.isOffline)
+            } header: {
+                Text(InstanceProfileText.nameSection(language))
+                    .textCase(nil)
+            } footer: {
+                nameFooter(problem: problem)
+            }
+            .themedRow()
+            if let error = model.renameError {
+                Section {
+                    ErrorBanner(error) { save() }
+                        .listRowBackground(Color.clear)
+                        .listRowInsets(EdgeInsets())
+                }
+            }
+            Section {
+                Button {
+                    isEditingAvatar = true
+                } label: {
+                    HStack {
+                        Text(InstanceProfileText.avatar(language))
+                            .foregroundStyle(Theme.ink)
+                        Spacer(minLength: Metrics.Spacing.s)
+                        AvatarGlyph(name: name, appearance: app.appearances.resolved(for: model.instanceID), size: 28)
+                            .accessibilityHidden(true)
+                        Image(systemName: "chevron.right")
+                            .font(Typography.footnote.font.weight(.semibold))
+                            .foregroundStyle(Theme.inkTertiary)
+                            .accessibilityHidden(true)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            } header: {
+                Text(InstanceProfileText.appearanceSection(language))
+                    .textCase(nil)
+            }
+            .themedRow()
+        }
+        .formStyle(.grouped)
+        .themedGroupedBackground()
+        .inlineNavigationTitle(InstanceProfileText.editTitle(language))
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                ConfirmButton(isWorking: model.isRenaming, action: save)
+                    .disabled(!canSave(problem: problem))
+            }
+        }
+        .navigationDestination(isPresented: $isEditingAvatar) {
+            InstanceAvatarScreen(
+                editor: InstanceAppearanceEditor(
+                    instanceID: model.instanceID, name: name, store: app.appearances))
+        }
+        .onDisappear { model.clearRenameError() }
+    }
+
+    @ViewBuilder
+    private func nameFooter(problem: InstanceNameProblem?) -> some View {
+        if app.isOffline {
+            Text(language == .chinese ? "离线时不能改名字。" : "You can't rename while offline.")
+        } else if let problem {
+            Text(problem.message(language))
+                .foregroundStyle(StatusTone.failure.color)
+        } else {
+            Text(
+                language == .chinese
+                    ? "最多 \(InstanceNameRule.maxLength) 个字。" : "Up to \(InstanceNameRule.maxLength) characters.")
+        }
+    }
+
+    /// 名字对、不在保存中；离线时名字没改也能点（只是返回）。
+    private func canSave(problem: InstanceNameProblem?) -> Bool {
+        guard problem == nil, !model.isRenaming else { return false }
+        return !app.isOffline || InstanceNameRule.normalized(draft) == model.instance?.name
+    }
+
+    private func save() {
+        guard canSave(problem: InstanceNameRule.problem(draft)) else { return }
+        isNameFocused = false
+        let model = self.model
+        let name = draft
+        Task {
+            if await model.rename(to: name) { dismiss() }
+        }
+    }
+}
+
+/// 编辑页顶上的头像：右下角一个玻璃小铅笔（参考 12）。
+private struct AvatarWithPencil: View {
+    let name: String
+    let appearance: InstanceAppearance
+
+    var body: some View {
+        InstanceAvatar(name, appearance: appearance, size: ProfileAvatarMetrics.size)
+            .dynamicTypeSize(...ProfileAvatarMetrics.maxDynamicType)
+            .overlay(alignment: .bottomTrailing) {
+                Image(systemName: "pencil")
+                    .font(Typography.footnote.font.weight(.semibold))
+                    .foregroundStyle(Theme.ink)
+                    .frame(width: 30, height: 30)
+                    .glassBackground(in: Circle())
+                    .offset(x: Metrics.Spacing.xs, y: Metrics.Spacing.xxs)
+            }
+            .padding(.vertical, Metrics.Spacing.s)
+            .accessibilityHidden(true)
+    }
+}
+
+/// 改头像（规范 4.4.4，参考 18）：编辑页压进来，标题“头像”，右上“完成”记进这台设备（`InstanceAppearanceStore`）。
+/// 大预览；和新建表单同一张卡片（形状网格 3 × 5、色板 2 × 6），卡片最下面分隔线和“重置为默认”。参考顶上的
+/// “形状 / 生成 / 上传”分段只有形状一项能做（生成、上传要后端，不做），所以不放分段。点返回放弃改动。
+struct InstanceAvatarScreen: View {
+    @State private var editor: InstanceAppearanceEditor
+
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.displayLanguage) private var language
+
+    init(editor: InstanceAppearanceEditor) {
+        _editor = State(initialValue: editor)
+    }
+
+    var body: some View {
+        let editor = self.editor
+        ScrollView {
+            VStack(spacing: Metrics.Spacing.l) {
+                // 固定大小（`AvatarGlyph` 不跟动态字体缩放），只是装饰，读屏不念（网格自己会念）。
+                AvatarGlyph(name: editor.name, appearance: editor.appearance, size: ProfileAvatarMetrics.size)
+                    .accessibilityHidden(true)
+                    .animation(.snappy, value: editor.appearance)
+                    .padding(.top, Metrics.Spacing.m)
+                AvatarPicker(
+                    name: editor.name, shape: Binding(get: { editor.shape }, set: { editor.shape = $0 }),
+                    color: Binding(get: { editor.color }, set: { editor.color = $0 }),
+                    resolvedColor: editor.resolvedColor
+                ) {
+                    Divider()
+                    Button(InstanceProfileText.resetAvatar(language)) { editor.reset() }
+                        .buttonStyle(.borderless)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .disabled(editor.isDefault)
+                }
+                Text(InstanceProfileText.avatarFooter(language))
+                    .typography(.footnote)
+                    .foregroundStyle(Theme.inkSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, Metrics.Spacing.m)
+            }
+            .padding(.horizontal, Metrics.Spacing.m)
+            .padding(.bottom, Metrics.Spacing.l)
+            .frame(maxWidth: Metrics.readableWidth)
+            .frame(maxWidth: .infinity)
+        }
+        .background(Theme.paper)
+        .inlineNavigationTitle(InstanceProfileText.avatar(language))
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                ConfirmButton {
+                    editor.save()
+                    dismiss()
+                }
+            }
+        }
+    }
+}
+
+#Preview("编辑 Botin · 浅色中文") {
+    NavigationStack {
+        InstanceEditScreen(
+            model: InstanceDetailModel(
+                client: MockClient(autoReply: false), instanceID: DemoData.writerID,
+                instance: DemoData.state().instances[0]))
+    }
+    .previewShell()
+}
+
+#Preview("头像 · 深色英文") {
+    NavigationStack {
+        InstanceAvatarScreen(
+            editor: InstanceAppearanceEditor(
+                instanceID: DemoData.reviewerID, name: "Code reviewer", store: InstanceAppearanceStore(defaults: nil)))
+    }
+    .previewShell(.english, scheme: .dark)
+}

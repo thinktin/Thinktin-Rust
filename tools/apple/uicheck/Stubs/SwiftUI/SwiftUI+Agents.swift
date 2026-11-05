@@ -38,6 +38,7 @@ extension EnvironmentValues {
 
 extension View {
     public func dynamicTypeSize(_ size: DynamicTypeSize) -> some View { _m() }
+    public func dynamicTypeSize<T: RangeExpression>(_ range: T) -> some View where T.Bound == DynamicTypeSize { _m() }
 }
 
 @propertyWrapper

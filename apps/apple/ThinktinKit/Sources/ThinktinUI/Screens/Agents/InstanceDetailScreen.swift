@@ -1,15 +1,19 @@
 import SwiftUI
 import ThinktinKit
 
-/// 实例详情（界面上是“Botin 资料”；`.instance(id)`，深链 `thinktin://instance/{id}`、对话页标题、引擎详情的
-/// “在用它的 Botin”进来）：
+/// Botin 资料（`.instance(id)`，规范 4.4.1、4.4.2，参考 09、10）：对话页标题、深链 `thinktin://instance/{id}`、引擎详情的
+/// “在用它的 Botin”进来。分组列表（insetGrouped），没有标题：
 ///
-/// - 头部：头像、名字（可以改）、agent 和版本、状态点和状态说明；
-/// - “打开对话”；模型路由（没配 main 时提醒）；版本（落后时提示升级，可以回滚，下次唤醒生效）；
-/// - 本实例的计划（agent 建的带 AI 生成标识）、新建计划、产出物、所在团队，都跳到各自功能的页面；
-/// - 删除：先列出会被级联删掉的流水线步骤和团队成员身份（`InstanceDeleteSheet`），二次确认后再删。
+/// - 头部：头像（右下状态角标）、名字、玻璃小胶囊“编辑”（压进 `InstanceEditScreen`：名字、头像）；
+/// - 第一组：计划（“N 个生效”，进这个 Botin 的计划）、产出物、工作区（值是状态，进 `InstanceWorkspaceScreen`：状态说明、
+///   升级 / 回滚）；
+/// - 默认模型（main 指向的上游模型，没配时警告色“未配置”，进模型路由）；
+/// - 所在团队（每个团队一行）；信息（引擎和版本、接入方式、创建于、最近活动）；
+/// - 右上两个分开的玻璃圆：打开对话（参考这个位置是分享，6.21 不做）、“…”（复制 Botin ID；模型路由、新建计划；删除，
+///   `InstanceProfileMenu`）。删除先列出会级联删掉的东西（`InstanceDeleteSheet`），二次确认后再删。
 ///
-/// 页面的离线策略是“有缓存”：离线时照样显示缓存里的实例，改名、换版本、删除、新建计划都禁用。
+/// 页面的离线策略是“有缓存”：离线时照样显示缓存里的 Botin，改名、换版本、删除、新建计划都禁用（头像只存在这台设备上，照样能改）。
+/// 参考的“通知”开关等后端（6.14）。
 struct InstanceDetailScreen: View {
     let instanceID: InstanceID
 
@@ -25,11 +29,10 @@ struct InstanceDetailScreen: View {
 
 private struct InstanceDetailContent: View {
     @State private var model: InstanceDetailModel
-    @State private var isRenaming = false
+    @State private var isEditing = false
     @State private var isConfirmingDeletion = false
-    /// 等确认要换的版本（`isConfirmingVersion` 时显示确认框）。
-    @State private var pendingVersion: InstanceVersionOption?
-    @State private var isConfirmingVersion = false
+    /// 复制了几次 id（成功触感的触发器）。
+    @State private var copies = 0
 
     @Environment(AppModel.self) private var app
     @Environment(Router.self) private var router
@@ -44,116 +47,67 @@ private struct InstanceDetailContent: View {
     }
 
     var body: some View {
-        let zh = language == .chinese
         let model = self.model
-        ScrollView {
-            VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                if let error = visibleError(model.error) {
+        List {
+            if let error = visibleError(model.error) {
+                Section {
                     ErrorBanner(error) { Task { await model.load() } }
+                        .clearListRow()
                 }
-                if let instance = model.instance, !model.isMissing {
-                    InstanceHeader(
-                        instance: instance, appearance: app.appearances.resolved(for: instance.id),
-                        agentName: model.agentDisplayName, canEdit: canWrite
+            }
+            if let instance = model.instance, !model.isMissing {
+                Section {
+                    ProfileHeader(
+                        instance: instance, appearance: app.appearances.resolved(for: instance.id)
                     ) {
-                        isRenaming = true
+                        isEditing = true
                     }
-                    PillButton(zh ? "打开对话" : "Open chat", systemImage: "bubble.left.and.text.bubble.right") {
-                        router.open(.conversation(instance.id))
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, Metrics.Spacing.xs)
-                    if let error = visibleError(model.detailsError) {
+                    .clearListRow()
+                }
+                if let error = visibleError(model.detailsError) {
+                    Section {
                         ErrorBanner(error) { Task { await model.load() } }
+                            .clearListRow()
                     }
-                    modelSection(instance)
-                    versionSection(instance)
-                    workSection(instance)
-                    teamSection
-                    infoSection(instance)
-                    deleteButton
-                } else if model.isMissing {
-                    EmptyStateView(
-                        systemImage: "questionmark.square.dashed",
-                        title: zh ? "找不到这个 Botin" : "Botin not found",
-                        message: zh ? "它可能已经被删除了。" : "It may have been deleted.",
-                        actionTitle: zh ? "返回" : "Go back"
-                    ) {
-                        router.pop()
-                    }
-                } else if model.isLoading || model.error == nil {
-                    LoadingStateView()
-                } else {
-                    EmptyStateView(
-                        systemImage: model.error?.isOffline == true ? "wifi.slash" : "exclamationmark.triangle",
-                        title: zh ? "暂时拉不到这个 Botin" : "Couldn't load this Botin")
                 }
+                workSection(instance)
+                modelSection(instance)
+                teamSection
+                infoSection(instance)
             }
-            .pageLayout()
         }
-        .background(Theme.paper)
-        .inlineNavigationTitle(model.instance?.name ?? AppRoute.instance(model.instanceID).title(language))
+        .insetGroupedList()
+        .themedGroupedBackground()
+        .overlay { placeholder }
+        .inlineNavigationTitle(model.instance?.name ?? AppRoute.instance(model.instanceID).title(language)) {
+            // 参考 09 没有标题（头部已经有名字），导航栏中间空着；返回按钮的长按菜单照样写名字。
+            EmptyView()
+        }
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                if model.instance != nil && !model.isMissing {
-                    Menu {
-                        Button {
-                            isRenaming = true
-                        } label: {
-                            Label(zh ? "改名" : "Rename", systemImage: "pencil")
-                        }
-                        .disabled(!canWrite)
-                        Button(role: .destructive) {
-                            isConfirmingDeletion = true
-                        } label: {
-                            Label(zh ? "删除这个 Botin" : "Delete this Botin", systemImage: "trash")
-                        }
-                        .disabled(!canWrite)
+            if model.instance != nil && !model.isMissing {
+                ToolbarItem(placement: AgentsToolbar.trailing) {
+                    Button {
+                        router.open(.conversation(model.instanceID))
                     } label: {
-                        Image(systemName: "ellipsis.circle")
-                            .accessibilityLabel(Text(zh ? "更多操作" : "More"))
+                        Label(InstanceProfileText.openConversation(language), systemImage: "bubble.left")
+                            .labelStyle(.iconOnly)
                     }
                 }
+                GlassToolbarSpacer(.fixed, placement: AgentsToolbar.trailing)
+                ToolbarItem(placement: AgentsToolbar.trailing) {
+                    moreMenu
+                }
             }
+        }
+        .sensoryFeedback(.success, trigger: copies)
+        .navigationDestination(isPresented: $isEditing) {
+            InstanceEditScreen(model: model)
         }
         .refreshable { await model.load() }
         .task { await model.load() }
         .onChange(of: app.isOffline) {
             if !app.isOffline { Task { await model.load() } }
         }
-        .confirmationDialog(
-            pendingVersion?.actionTitle(language) ?? "",
-            isPresented: $isConfirmingVersion, titleVisibility: .visible
-        ) {
-            if let option = pendingVersion {
-                Button {
-                    Task { await model.setVersion(option.version) }
-                } label: {
-                    Text(option.actionTitle(language))
-                }
-            }
-            Button(role: .cancel) {
-                isConfirmingVersion = false
-            } label: {
-                Text(zh ? "取消" : "Cancel")
-            }
-        } message: {
-            Text(
-                zh
-                    ? "下次唤醒沙箱时按新版本重建，工作区里的文件都保留，正在跑的任务不受影响。"
-                    : "The sandbox is rebuilt on the new version the next time it wakes up. Files in the workspace "
-                        + "are kept, and running tasks aren't affected.")
-        }
-        .sheet(
-            isPresented: $isRenaming, onDismiss: { model.clearRenameError() },
-            content: {
-                NavigationStack {
-                    InstanceRenameSheet(model: model) { isRenaming = false }
-                }
-                .shellEnvironment(app)
-                .tint(Theme.accent)
-            }
-        )
         .sheet(
             isPresented: $isConfirmingDeletion, onDismiss: { finishDeletion() },
             content: {
@@ -169,156 +123,161 @@ private struct InstanceDetailContent: View {
     /// 离线时不能改（只读看缓存）。
     private var canWrite: Bool { !app.isOffline }
 
-    // MARK: 各部分
-
-    private func modelSection(_ instance: Instance) -> some View {
+    /// 还没有 Botin 可显示时：加载中、找不到、拉不到。
+    @ViewBuilder
+    private var placeholder: some View {
         let zh = language == .chinese
-        let status = model.routeStatus
-        return VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            SectionHeader(title: zh ? "模型" : "Model")
-            GroupedSection {
-                ListRow(
-                    systemImage: status.needsAttention ? "exclamationmark.triangle" : "slider.horizontal.3",
-                    title: AppRoute.modelRoutes(instance.id).title(language),
-                    detail: status.summary(language), detailTone: status.needsAttention ? .waiting : nil,
-                    action: { router.open(.modelRoutes(instance.id)) })
+        if model.isMissing {
+            ContentUnavailableView {
+                Label(zh ? "找不到这个 Botin" : "Botin not found", systemImage: "questionmark.square.dashed")
+            } description: {
+                Text(zh ? "它可能已经被删除了。" : "It may have been deleted.")
+            } actions: {
+                Button(zh ? "返回" : "Go back") { router.pop() }
+                    .glassButtonStyle()
+            }
+        } else if model.instance == nil {
+            if model.isLoading || model.error == nil {
+                ProgressView()
+            } else {
+                ContentUnavailableView(
+                    zh ? "暂时拉不到这个 Botin" : "Couldn't load this Botin",
+                    systemImage: model.error?.isOffline == true ? "wifi.slash" : "exclamationmark.triangle")
             }
         }
     }
 
-    private func versionSection(_ instance: Instance) -> some View {
-        let zh = language == .chinese
-        let options = model.versionOptions
-        return VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            SectionHeader(title: zh ? "引擎版本" : "Engine version")
-            if let change = model.versionChange {
-                InlineNotice(systemImage: "clock.arrow.circlepath", tone: .active, text: change.message(language))
-            } else if !model.isCurrentVersionListed, let latest = model.latestVersion {
-                InlineNotice(
-                    systemImage: "exclamationmark.triangle", tone: .waiting,
-                    text: zh
-                        ? "现在用的 \(AgentsText.versionLabel(instance.agentVersion)) 已经不在目录里了，建议升级到 \(AgentsText.versionLabel(latest))。"
-                        : "\(AgentsText.versionLabel(instance.agentVersion)) is no longer listed. Upgrading to "
-                            + "\(AgentsText.versionLabel(latest)) is recommended.")
-            } else if model.upgradeAvailable, let latest = model.latestVersion {
-                InlineNotice(
-                    systemImage: "arrow.up.circle", tone: .active,
-                    text: zh
-                        ? "有新版本 \(AgentsText.versionLabel(latest))，升级后下次唤醒时生效。"
-                        : "\(AgentsText.versionLabel(latest)) is available. It takes effect the next time the sandbox wakes up."
-                )
-            }
-            if let error = model.versionError {
-                ErrorBanner(error)
-            }
-            GroupedSection {
-                if options.isEmpty {
-                    ListRow(
-                        systemImage: "shippingbox", title: AgentsText.versionLabel(instance.agentVersion),
-                        detail: zh ? "正在使用" : "In use")
-                }
-                ForEach(options) { option in
-                    if option.id != options.first?.id { Divider() }
-                    InstanceVersionRow(option: option, isBusy: model.isChangingVersion, canChange: canWrite) {
-                        pendingVersion = option
-                        isConfirmingVersion = true
+    // MARK: 右上“…”
+
+    private var moreMenu: some View {
+        Menu {
+            ForEach(Array(InstanceProfileMenu.sections(instanceID: model.instanceID).enumerated()), id: \.offset) {
+                _, items in
+                Section {
+                    ForEach(items, id: \.self) { item in
+                        Button(role: item.isDestructive ? .destructive : nil) {
+                            perform(item)
+                        } label: {
+                            Label(item.title(language), systemImage: item.systemImage)
+                        }
+                        .disabled(item.needsConnection && !canWrite)
                     }
                 }
             }
+        } label: {
+            Label(language == .chinese ? "更多操作" : "More", systemImage: "ellipsis")
+                .labelStyle(.iconOnly)
         }
     }
 
+    private func perform(_ item: InstanceProfileMenuItem) {
+        switch item {
+        case .copyID:
+            Pasteboard.copy(model.instanceID.rawValue)
+            copies += 1
+        case .open(let route):
+            router.open(route)
+        case .delete:
+            isConfirmingDeletion = true
+        }
+    }
+
+    // MARK: 各组
+
+    /// 计划、产出物、工作区（参考 09 的第一组：定时任务、资料库、电脑）。
     private func workSection(_ instance: Instance) -> some View {
-        let zh = language == .chinese
-        let plans = model.plans ?? []
-        return VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            SectionHeader(title: zh ? "计划和产出物" : "Plans and artifacts")
-            GroupedSection {
-                ForEach(plans) { plan in
-                    InstancePlanRow(plan: plan) { router.open(.plan(plan.id)) }
-                    Divider()
+        Section {
+            NavigationLink(value: AppRoute.plans(instanceID: instance.id)) {
+                LabeledContent {
+                    if let active = model.activePlanCount {
+                        Text(
+                            InstanceProfileText.plansValue(
+                                active: active, awaiting: model.plansAwaitingConfirmation, language: language))
+                    }
+                } label: {
+                    Label(InstanceProfileText.plans(language), systemImage: "clock")
                 }
-                if model.plans != nil && plans.isEmpty {
-                    ListRow(
-                        systemImage: "calendar", title: zh ? "还没有计划" : "No plans yet",
-                        detail: zh
-                            ? "可以新建一个，也可以直接对它说“每天 8 点…”。"
-                            : "Create one, or just tell it something like “every day at 8…”.")
-                    Divider()
+            }
+            NavigationLink(value: AppRoute.artifacts(instanceID: instance.id)) {
+                Label(InstanceProfileText.artifacts(language), systemImage: "folder")
+            }
+            NavigationLink {
+                InstanceWorkspaceScreen(model: model)
+            } label: {
+                LabeledContent {
+                    Text(instance.state.localizedName(language))
+                } label: {
+                    Label(InstanceProfileText.workspace(language), systemImage: "desktopcomputer")
                 }
-                ListRow(
-                    systemImage: "plus", title: zh ? "新建计划" : "New plan",
-                    action: { router.open(.newPlan(instanceID: instance.id)) }
-                )
-                .disabled(!canWrite)
-                Divider()
-                ListRow(
-                    systemImage: "doc.on.doc", title: AppRoute.artifacts(instanceID: instance.id).title(language),
-                    detail: zh ? "这个 Botin 发布的文件" : "Files this Botin published",
-                    action: { router.open(.artifacts(instanceID: instance.id)) })
             }
         }
+        .themedRow()
+    }
+
+    /// 默认模型（main 指向的上游模型），没配时警告色“未配置”，脚注说怎么办。
+    private func modelSection(_ instance: Instance) -> some View {
+        let status = model.routeStatus
+        return Section {
+            NavigationLink(value: AppRoute.modelRoutes(instance.id)) {
+                LabeledContent {
+                    if let value = status.defaultModelValue(language) {
+                        Text(value)
+                            .foregroundStyle(status.needsAttention ? StatusTone.waiting.color : Theme.inkSecondary)
+                            .lineLimit(1)
+                    }
+                } label: {
+                    Label(InstanceProfileText.defaultModel(language), systemImage: "cpu")
+                }
+            }
+        } footer: {
+            if status.needsAttention {
+                Text(status.summary(language))
+            }
+        }
+        .themedRow()
     }
 
     @ViewBuilder
     private var teamSection: some View {
         let zh = language == .chinese
         if let teams = model.teams, !teams.isEmpty {
-            SectionHeader(title: zh ? "所在团队" : "Teams")
-            GroupedSection {
+            Section {
                 ForEach(teams) { team in
-                    if team.id != teams.first?.id { Divider() }
-                    ListRow(
-                        systemImage: "person.3", title: team.name,
-                        detail: model.role(in: team) == .lead ? (zh ? "负责人" : "Lead") : (zh ? "成员" : "Member"),
-                        action: { router.open(.team(team.id)) })
+                    NavigationLink(value: AppRoute.team(team.id)) {
+                        LabeledContent {
+                            Text(model.role(in: team) == .lead ? (zh ? "负责人" : "Lead") : (zh ? "成员" : "Member"))
+                        } label: {
+                            Label(team.name, systemImage: "person.3")
+                        }
+                    }
                 }
+            } header: {
+                Text(InstanceProfileText.teamsSection(language))
+                    .textCase(nil)
             }
+            .themedRow()
         }
     }
 
     private func infoSection(_ instance: Instance) -> some View {
         let zh = language == .chinese
-        return VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            SectionHeader(title: zh ? "信息" : "Details")
-            GroupedSection {
-                ListRow(
-                    systemImage: "point.3.connected.trianglepath.dotted", title: zh ? "接入方式" : "Runs via",
-                    detail: AgentsText.harnessName(instance.harness, language: language))
-                Divider()
-                ListRow(
-                    systemImage: "calendar.badge.plus", title: zh ? "创建于" : "Created",
-                    detail: Formatting.dateTime(instance.createdAt, language: language))
-                Divider()
-                ListRow(
-                    systemImage: "clock", title: zh ? "最近活动" : "Last active",
-                    detail: Formatting.relativeTime(instance.lastActiveAt, language: language))
-            }
+        return Section {
+            LabeledContent(
+                zh ? "引擎" : "Engine",
+                value: model.agentDisplayName + " · " + AgentsText.versionLabel(instance.agentVersion))
+            LabeledContent(
+                zh ? "接入方式" : "Runs via", value: AgentsText.harnessName(instance.harness, language: language))
+            LabeledContent(zh ? "创建于" : "Created", value: Formatting.dateTime(instance.createdAt, language: language))
+            LabeledContent(
+                zh ? "最近活动" : "Last active", value: Formatting.relativeTime(instance.lastActiveAt, language: language))
+        } header: {
+            Text(InstanceProfileText.infoSection(language))
+                .textCase(nil)
         }
+        .themedRow()
     }
 
-    private var deleteButton: some View {
-        let zh = language == .chinese
-        return VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
-            PillButton(zh ? "删除这个 Botin" : "Delete this Botin", systemImage: "trash", kind: .destructive) {
-                isConfirmingDeletion = true
-            }
-            .disabled(!canWrite)
-            .frame(maxWidth: .infinity)
-            Text(
-                zh
-                    ? "删除前会列出受影响的任务、流水线和团队，确认后才删。"
-                    : "Before deleting, you'll see which tasks, pipelines and teams are affected."
-            )
-            .typography(.footnote)
-            .foregroundStyle(Theme.inkSecondary)
-            .frame(maxWidth: .infinity)
-            .multilineTextAlignment(.center)
-        }
-        .padding(.top, Metrics.Spacing.l)
-    }
-
-    /// 删除确认页关掉了：删掉了就离开这个实例的页面、刷新实例列表。
+    /// 删除确认页关掉了：删掉了就离开这个 Botin 的页面、刷新 Botin 列表。
     private func finishDeletion() {
         guard model.isDeleted else { return }
         let id = model.instanceID
@@ -338,221 +297,101 @@ extension InstanceDetailScreen {
     }
 }
 
-/// 头部：头像、名字、引擎（agent）和版本、状态。
-private struct InstanceHeader: View {
+/// 头部（参考 09）：居中的头像（右下状态角标）、名字、玻璃小胶囊“编辑”。
+private struct ProfileHeader: View {
     let instance: Instance
-    /// 新建时挑的形状和颜色（`AppModel.appearances`）。
+    /// 新建、改头像时挑的形状和颜色（`AppModel.appearances`）。
     let appearance: InstanceAppearance
-    let agentName: String
-    let canEdit: Bool
-    let onRename: @MainActor () -> Void
+    let onEdit: @MainActor () -> Void
 
     @Environment(\.displayLanguage) private var language
 
     var body: some View {
-        let zh = language == .chinese
-        VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            HStack(alignment: .top, spacing: Metrics.Spacing.s) {
-                InstanceAvatar(instance.name, appearance: appearance, size: 56)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
-                    Text(instance.name)
-                        .typography(.title)
-                        .foregroundStyle(Theme.ink)
-                        .accessibilityAddTraits(.isHeader)
-                    Text((zh ? "引擎：" : "Engine: ") + agentName + " · " + AgentsText.versionLabel(instance.agentVersion))
-                        .typography(.subheadline)
-                        .foregroundStyle(Theme.inkSecondary)
-                }
-                Spacer(minLength: Metrics.Spacing.xs)
-                Button(action: onRename) {
-                    Image(systemName: "pencil")
-                        .foregroundStyle(Theme.inkSecondary)
-                        .frame(width: Metrics.minTapTarget, height: Metrics.minTapTarget)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .disabled(!canEdit)
-                .accessibilityLabel(Text(zh ? "改名" : "Rename"))
-            }
-            .fixedSize(horizontal: false, vertical: true)
-            Card {
-                HStack(spacing: Metrics.Spacing.xs) {
-                    StatusDot(instance.state)
-                        .accessibilityHidden(true)
-                    Text(instance.state.localizedName(language))
-                        .typography(.headline)
-                        .foregroundStyle(Theme.ink)
-                }
-                Text(AgentsText.stateExplanation(instance.state, language: language))
-                    .typography(.subheadline)
-                    .foregroundStyle(Theme.inkSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .accessibilityElement(children: .combine)
-        }
-    }
-}
-
-/// 版本列表的一行：版本号、“最新”“正在使用”标签；不是现在的版本时可以点（升级 / 回滚）。
-private struct InstanceVersionRow: View {
-    let option: InstanceVersionOption
-    let isBusy: Bool
-    let canChange: Bool
-    let onChoose: @MainActor () -> Void
-
-    @Environment(\.displayLanguage) private var language
-
-    var body: some View {
-        let zh = language == .chinese
-        ListRow(
-            systemImage: option.isCurrent ? "checkmark.circle.fill" : "shippingbox",
-            title: AgentsText.versionLabel(option.version),
-            detail: option.isCurrent ? nil : option.actionTitle(language),
-            detailTone: option.change == .upgrade ? .active : nil,
-            action: option.isCurrent || !canChange || isBusy ? nil : onChoose,
-            accessory: {
-                TagChipRow {
-                    if option.isLatest { TagChip(text: zh ? "最新" : "Latest") }
-                    if option.isCurrent { TagChip(text: zh ? "正在使用" : "In use") }
-                }
-            })
-    }
-}
-
-/// 计划的一行：标题（agent 建的带 AI 生成标识）、待确认 / 已暂停。
-private struct InstancePlanRow: View {
-    let plan: Plan
-    let onOpen: @MainActor () -> Void
-
-    @Environment(\.displayLanguage) private var language
-
-    var body: some View {
-        let zh = language == .chinese
-        ListRow(
-            systemImage: "calendar", title: plan.title,
-            detail: plan.awaitingConfirmation
-                ? (zh ? "待确认" : "Needs confirmation") : (plan.isPaused ? (zh ? "已暂停" : "Paused") : nil),
-            detailTone: plan.awaitingConfirmation ? .waiting : nil,
-            action: onOpen,
-            accessory: {
-                if AgentsText.isAIGenerated(plan) { AIGeneratedLabel() }
-            })
-    }
-}
-
-/// 改名（实例详情弹出）。
-struct InstanceRenameSheet: View {
-    let model: InstanceDetailModel
-    let onClose: @MainActor () -> Void
-
-    @State private var draft: String
-    @Environment(\.displayLanguage) private var language
-
-    init(model: InstanceDetailModel, onClose: @escaping @MainActor () -> Void) {
-        self.model = model
-        self.onClose = onClose
-        _draft = State(initialValue: model.instance?.name ?? "")
-    }
-
-    var body: some View {
-        let zh = language == .chinese
-        let problem = InstanceNameRule.problem(draft)
-        ScrollView {
-            VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                AgentsNameField(
-                    title: zh ? "Botin 的名字" : "Botin name", text: $draft, problem: problem,
-                    hint: zh
-                        ? "最多 \(InstanceNameRule.maxLength) 个字。" : "Up to \(InstanceNameRule.maxLength) characters.")
-                if let error = model.renameError {
-                    ErrorBanner(error)
-                }
-            }
-            .pageLayout()
-        }
-        .background(Theme.paper)
-        .inlineNavigationTitle(zh ? "改名" : "Rename")
-        .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                Button(zh ? "取消" : "Cancel") { onClose() }
-                    .disabled(model.isRenaming)
-            }
-            ToolbarItem(placement: .confirmationAction) {
-                Button(model.isRenaming ? (zh ? "正在保存…" : "Saving…") : (zh ? "保存" : "Save")) {
-                    let name = draft
-                    Task {
-                        if await model.rename(to: name) { onClose() }
-                    }
-                }
-                .disabled(problem != nil || model.isRenaming)
-            }
-        }
-        .interactiveDismissDisabled(model.isRenaming)
-        .presentationDetents([.medium, .large])
-    }
-}
-
-/// 名字输入框：圆角描边的单行输入，下面是问题（危险色）或提示（改名用；新建 Botin 的表单用 `Form` 里的 `TextField`）。
-struct AgentsNameField: View {
-    let title: String
-    let text: Binding<String>
-    let problem: InstanceNameProblem?
-    let hint: String
-
-    @Environment(\.displayLanguage) private var language
-    @Environment(\.displayScale) private var displayScale
-
-    var body: some View {
-        let shape = RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous)
-        VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
-            TextField(title, text: text)
-                .textFieldStyle(.plain)
-                .typography(.body)
+        VStack(spacing: Metrics.Spacing.s) {
+            InstanceAvatar(
+                instance.name, appearance: appearance, size: ProfileAvatarMetrics.size,
+                badge: .instance(instance.state)
+            )
+            .dynamicTypeSize(...ProfileAvatarMetrics.maxDynamicType)
+            Text(instance.name)
+                .font(Font.title2.bold())
                 .foregroundStyle(Theme.ink)
-                .padding(.horizontal, Metrics.Spacing.s)
-                .frame(minHeight: Metrics.minTapTarget)
-                .background(Theme.paperElevated, in: shape)
-                .overlay {
-                    shape.strokeBorder(
-                        problem == nil ? Theme.hairline : StatusTone.failure.color,
-                        lineWidth: Metrics.hairline(scale: displayScale))
-                }
-                .accessibilityLabel(Text(title))
-                .accessibilityHint(Text(problem?.message(language) ?? hint))
-            Text(problem?.message(language) ?? hint)
-                .typography(.footnote)
-                .foregroundStyle(problem == nil ? Theme.inkSecondary : StatusTone.failure.color)
-                .accessibilityHidden(true)
+                .multilineTextAlignment(.center)
+                .accessibilityAddTraits(.isHeader)
+            Button(InstanceProfileText.edit(language), action: onEdit)
+                .glassButtonStyle()
+                .buttonBorderShape(.capsule)
+                .accessibilityHint(Text(language == .chinese ? "改名字和头像" : "Change the name and avatar"))
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, Metrics.Spacing.s)
+    }
+}
+
+// MARK: - 这个目录共用的小帮手
+
+/// 导航栏右边的位置：iOS `.topBarTrailing`；macOS 没有，放主操作的位置。
+enum AgentsToolbar {
+    static var trailing: ToolbarItemPlacement {
+        #if os(iOS)
+            .topBarTrailing
+        #else
+            .primaryAction
+        #endif
+    }
+}
+
+extension View {
+    /// 分组的圆角卡片列表（规范 2.5 的 insetGrouped）：iOS `.insetGrouped`；macOS 没有，用 `.inset`。
+    func insetGroupedList() -> some View {
+        #if os(iOS)
+            listStyle(.insetGrouped)
+        #else
+            listStyle(.inset)
+        #endif
+    }
+
+    /// 分组列表里不画卡片底的一行（头部、横幅）：透明底、贴边、不要分隔线。
+    func clearListRow() -> some View {
+        listRowBackground(Color.clear)
+            .listRowInsets(EdgeInsets())
+            .listRowSeparator(.hidden)
+    }
+}
+
+/// 直接显示一个 Botin 的工作区页（预览和界面测试用：用环境里的客户端建资料页的视图模型、拉一次）。
+struct InstanceWorkspacePreview: View {
+    let instanceID: InstanceID
+
+    @Environment(\.client) private var client
+
+    var body: some View {
+        Content(client: client, instanceID: instanceID)
+    }
+
+    private struct Content: View {
+        @State private var model: InstanceDetailModel
+
+        init(client: any ClientProtocol, instanceID: InstanceID) {
+            _model = State(initialValue: InstanceDetailModel(client: client, instanceID: instanceID))
+        }
+
+        var body: some View {
+            let model = self.model
+            InstanceWorkspaceScreen(model: model)
+                .task { await model.load() }
         }
     }
 }
 
-#Preview("实例详情 · 浅色中文") {
+#Preview("Botin 资料 · 浅色中文") {
     InstanceDetailScreen(instanceID: DemoData.writerID).previewShell()
 }
 
-#Preview("实例详情 · 深色英文") {
+#Preview("Botin 资料 · 深色英文") {
     InstanceDetailScreen(instanceID: DemoData.reviewerID).previewShell(.english, scheme: .dark)
 }
 
-#Preview("改名 · 浅色中文") {
-    InstanceRenameSheet(
-        model: InstanceDetailModel(
-            client: MockClient(autoReply: false), instanceID: DemoData.writerID,
-            instance: DemoData.state().instances[0])
-    ) {}
-    .previewShell()
-}
-
-#Preview("改名 · 深色英文") {
-    InstanceRenameSheet(
-        model: InstanceDetailModel(
-            client: MockClient(autoReply: false), instanceID: DemoData.reviewerID,
-            instance: DemoData.state().instances[1])
-    ) {}
-    .previewShell(.english, scheme: .dark)
-}
-
-#Preview("实例详情 · 找不到") {
+#Preview("Botin 资料 · 找不到") {
     InstanceDetailScreen(instanceID: "gone").previewShell()
 }

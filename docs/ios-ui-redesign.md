@@ -598,6 +598,14 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   （`plans`、`teams`、`routeStatus`、`versionOptions`）。
 - **要改**：重写成上面的版式。“N 个生效”是 `InstanceDetailModel.plans` 里没暂停、已确认的数；版本升级 / 回滚挪进工作区页；
   改名挪进编辑页；删除挪进“…”菜单。第 1 轮。
+- **已做（2026-11-05，第 1 轮 C 线，对过参考 09）**：`List` + insetGrouped（macOS 用 `.inset`，`insetGroupedList()`），导航栏中间空着；
+  头部头像量出来是 80pt 左右（不是上面写的 120，`ProfileAvatarMetrics`，最大跟到 xxxLarge 的动态字体），名字 `.title2.bold()`，“编辑”是
+  普通大小的玻璃胶囊（参考约 54 × 38pt）；第一组 计划（`clock`，“N 个生效 · M 个待确认”，`InstanceDetailModel.activePlanCount`）、
+  产出物（`folder`）、工作区（`desktopcomputer`，值是状态名）；默认模型（`cpu`，`InstanceRouteStatus.defaultModelValue`，没配警告色
+  “未配置”，脚注写原因）；所在团队；信息（引擎 · 版本、接入方式、创建于、最近活动）。右上两个分开的玻璃圆：参考是分享和“…”，
+  ThinkTin 第一个放“打开对话”（`bubble.left`，从对话进来时是退回去），中间 `GlassToolbarSpacer(.fixed)`。“打开对话”胶囊、
+  资料页上的计划列表、“新建计划”行、底部的删除按钮去掉了（计划进计划页，新建计划在“…”和计划页的“+”，删除在“…”）。
+  找不到、拉不到是 `ContentUnavailableView`。
 
 #### 4.4.2 资料页“…”菜单（10）
 
@@ -607,6 +615,11 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 - **原生**：`Menu` + `Section` + `role: .destructive`；复制后 `.sensoryFeedback(.success, trigger:)`。
 - **ThinkTin 现在**：`InstanceDetailScreen` 的 `Menu`（改名、删除实例，图标 `ellipsis.circle`）。
 - **要改**：第 1 轮。
+- **已做（2026-11-05）**：分组在 ThinktinKit 的 `InstanceProfileMenu`（测试 `InstanceProfileTests`）：复制 Botin ID（`doc.on.doc`，
+  成功触感）；模型路由（`cpu`）、新建计划（`calendar.badge.plus`）；删除这个 Botin（`trash`，destructive，接 `InstanceDeleteSheet`）。
+  离线时新建计划、删除灰掉（`needsConnection`）。删除确认页也换成了 insetGrouped 的 `List`（影响清单一组一组）、左上 `CloseButton`、
+  底部浮动的红色整宽胶囊“删除这个 Botin”，二次确认照旧。
+
 
 #### 4.4.3 编辑实例（12；13–17、85–88 是它的语音菜单）
 
@@ -621,6 +634,10 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 - **ThinkTin 现在**：`InstanceDetailScreen.swift` 里的 `InstanceRenameSheet`（sheet，取消 / 保存，`AgentsNameField`）+
   `InstanceDetailModel.rename(to:)`。
 - **要改**：sheet 改成压栈的 `Form`（Agents 目录里本地 `NavigationLink`，不加路由）；第 1 轮只有名字。
+- **已做（2026-11-05，对过参考 12）**：`InstanceEditScreen.swift`，资料页“编辑”用 `navigationDestination(isPresented:)` 压进来；
+  标题“编辑 Botin”，右上 `ConfirmButton`（“完成”，保存中转圈，名字不对灰掉）；头像 80pt 居中、右下玻璃小铅笔；“名称”组输入框，
+  脚注是名字规则 / 问题 / 离线不能改名；保存失败是一条 `ErrorBanner`；“外观”组“头像”行（右边小头像 + 箭头）。点头像、铅笔、“头像”行
+  都进头像页。离线时名字不能改、“完成”只是返回。旧的 `InstanceRenameSheet`、`AgentsNameField` 删了。
 
 #### 4.4.4 头像（18、19、20）
 
@@ -638,6 +655,10 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 - **要改**：建好之后改头像（编辑页“外观”组的“头像 >”，压栈页：大预览 + 同一套形状网格和色板 +“重置为默认”，右上“完成”）第 2 轮，
   复用新建表单的 `AvatarPicker`（挪成共用组件）；后端加了头像字段（6.9 B）后新建时一起提交、从实例上读，本机的存储当缓存或删掉；
   生成、上传不做。
+- **已做（2026-11-05，对过参考 18）**：编辑页 →“头像”（`InstanceAvatarScreen`）：标题“头像”、右上“完成”记进
+  `InstanceAppearanceStore`（`InstanceAppearanceEditor`，默认的删掉记录）；80pt 大预览；和新建表单同一张卡片（`AvatarPicker` 挪成
+  `Screens/Agents/AvatarPicker.swift`，两处共用），卡片最下面分隔线 +“重置为默认”（已经是默认时灰掉）；下面一句“只保存在这台设备上”。
+  参考顶上的“形状 / 生成 / 上传”分段只有形状能做，不放分段。点返回放弃改动。
 
 #### 4.4.5 选择主 Bot（11）
 
@@ -710,6 +731,11 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 - **原生**：`Form`、`LabeledContent`、`Picker(.menu)`、`Button(role: .destructive)`、`.confirmationDialog`。
 - **ThinkTin 现在**：`InstanceDetailScreen` 的 `versionSection`、`InstanceVersionRow`（自己画的行，点了弹确认）、`setInstanceVersion`。
 - **要改**：Agents 目录新页 `InstanceWorkspaceScreen.swift`（本地 `NavigationLink`），第 1 轮；重置、磁盘要后端（6.17），第 3 轮。
+- **已做（2026-11-05，对过参考 65、27、28）**：`InstanceWorkspaceScreen.swift`，资料页“工作区”行 `NavigationLink` 压进来，`Form`：
+  有新版本（或现在的版本下架了）时第一组是参考“重置电脑”那种行：强调色“升级到 vX”+ 灰字“下次唤醒时按新版本重建……”，脚注
+  “这个 Botin 自己的云端沙箱……”；“状态”一行（状态点 + 名字），脚注是状态说明；“引擎”组：引擎版本、“换到别的版本”
+  `Picker(.menu)`（选了先 `.confirmationDialog`）、接入方式，脚注是换版本的规矩 / 刚换到哪个 / 下架提醒。右上“?”（参考 27 的位置）
+  弹“关于工作区”说明 sheet（参考 28 的版式：large、左上 ×、insetGrouped 两组，图标 + 标题 + 多行灰字；`WorkspaceHelp`）。
 
 #### 4.6.2 观看与接管（27、29、30、31、89）
 
