@@ -620,6 +620,10 @@
     换掉状态角标（参考 10），首页的行和置顶大头像在没有状态角标时画（参考 01，有状态时先画状态，`HomeRowPreview.avatarBadge(isPrimary:)`），
     读屏都念“主 Botin”。小组件只有几个数、不选 Botin，没接。测试：`PrimaryBotinTests` 加默认选谁、排序，`InstanceAvatarTests` 加星标的
     直径、挪的距离、读屏、出图，`AppShellTests` 加“主 Botin”（首页、置顶、资料页、新任务都出图，行的角标优先级）。规范 4.4.5 记了。
+  - 工作台菜单加“连接”（下一步 4 (e)，参考 01 首页左下的“应用”按钮进连接目录）：`WorkbenchEntry.connections`（最后一项，
+    `puzzlepiece.extension`，和设置那一行同一个图标；不带数、不算总角标），`openTopLevel(.connections(category: nil))`；
+    `AppRoute.isTopLevel` 加 `.connections(category: nil)`（预选了分类的不算）。测试：`AppRouteTests` 顶级页面 6 → 7、
+    `ShellStateTests` 的顺序、标题、角标数、图标。规范 4.8.1 记了。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、
@@ -670,8 +674,7 @@ TestFlight：28（Botin 改名、空状态，旧表单）、30（新建页重做
 4. 第 2 轮四条线留下的跨线小事（合进来以后都在本分支，没做；各线的原话在 `docs/progress/r2-<名字>.md` 的“下一步”）：
    (a) ~~注销账号只清了头像外观~~ 做了（`BotinLocalData`，见“已完成”跨线小事那条）；
    (b) ~~新任务、快捷指令默认选主 Botin~~ 做了（小组件不选 Botin，不用接）；(c) ~~资料页头像的星标~~ 做了，首页的行也画了（没有状态角标时）；
-   (d) 对话里“等你接管”的状态行点了 `router.open(.instanceScreen(id))`；(e) 首页工作台菜单要不要加“连接”入口（参考是首页左下的应用按钮；
-   加的话改 `WorkbenchEntry`、`isTopLevel` 和 `AppRouteTests` 的顶级页个数）；(f) `MessageMenuContent` / `messageMenu` 没用的
+   (d) 对话里“等你接管”的状态行点了 `router.open(.instanceScreen(id))`；(e) ~~首页工作台菜单加“连接”入口~~ 做了；(f) `MessageMenuContent` / `messageMenu` 没用的
    `previewShape` 参数可以删了（运行详情那几处一起改）；(g) 连接、观看与接管、设置补充页的 `THINKTIN_OPEN_SCREEN` 和截图（连接已有
    `19-connections`，另两组没有）；(h) `AppFeature.connections.workPackage` 的 “12.26” 是占位，WBS 有了连接的包再改。
 

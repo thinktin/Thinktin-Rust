@@ -29,7 +29,7 @@ public struct ShellBadges: Hashable, Sendable {
         case .approvals: pendingApprovals
         case .activeRuns: activeRuns
         case .plans: plansAwaitingConfirmation
-        case .teams, .artifacts: 0
+        case .teams, .artifacts, .connections: 0
         }
     }
 
@@ -41,7 +41,8 @@ public struct ShellBadges: Hashable, Sendable {
 }
 
 /// 工作台菜单里的入口，从上到下（原来在抽屉里；规范 docs/ios-ui-redesign.md 3.1、4.2.1、6.1 A1）。点开都是顶级页面：
-/// `Router.openTopLevel(entry.route)`，先关掉 sheet、回到首页再压它。
+/// `Router.openTopLevel(entry.route)`，先关掉 sheet、回到首页再压它。最后的“连接”是参考 01 首页左下“应用”按钮进的连接目录
+/// （参考 36，规范 4.8.1；设置里也有一行进同一页）。
 public enum WorkbenchEntry: String, CaseIterable, Hashable, Sendable {
     case inbox
     case approvals
@@ -49,6 +50,7 @@ public enum WorkbenchEntry: String, CaseIterable, Hashable, Sendable {
     case plans
     case teams
     case artifacts
+    case connections
 
     /// 点开去的页面（都是顶级页面，`AppRoute.isTopLevel`）。
     public var route: AppRoute {
@@ -59,6 +61,7 @@ public enum WorkbenchEntry: String, CaseIterable, Hashable, Sendable {
         case .plans: .plans(instanceID: nil)
         case .teams: .teams
         case .artifacts: .artifacts(instanceID: nil)
+        case .connections: .connections(category: nil)
         }
     }
 
@@ -73,6 +76,7 @@ public enum WorkbenchEntry: String, CaseIterable, Hashable, Sendable {
         case .plans: "calendar"
         case .teams: "person.3"
         case .artifacts: "doc.text"
+        case .connections: "puzzlepiece.extension"
         }
     }
 
@@ -80,7 +84,7 @@ public enum WorkbenchEntry: String, CaseIterable, Hashable, Sendable {
     public var countsTowardTotal: Bool {
         switch self {
         case .inbox, .approvals, .plans: true
-        case .activeRuns, .teams, .artifacts: false
+        case .activeRuns, .teams, .artifacts, .connections: false
         }
     }
 
@@ -93,7 +97,7 @@ public enum WorkbenchEntry: String, CaseIterable, Hashable, Sendable {
         case .approvals: return zh ? "\(count) 个待审批" : "\(count) waiting for approval"
         case .activeRuns: return zh ? "\(count) 个进行中" : "\(count) in progress"
         case .plans: return zh ? "\(count) 个待确认" : "\(count) to confirm"
-        case .teams, .artifacts: return zh ? "\(count) 个" : "\(count)"
+        case .teams, .artifacts, .connections: return zh ? "\(count) 个" : "\(count)"
         }
     }
 }

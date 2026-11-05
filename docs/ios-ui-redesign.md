@@ -1061,7 +1061,11 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   （登录设备、IM 渠道、添加 key、模型 key、保险箱）；其余是本地演示数据 `ConnectionsDemoData`（通用叫法：在线文档、代码仓库、客户管理……，
   不写别家的产品名），按钮弹系统 alert“即将推出”。没改 `ClientProtocol` / Mock / CoreClient。设置根页第二组的“IM 渠道”换成“连接”
   （副标题“电脑、IM 渠道、模型 key 和更多应用”，规范 4.9.1 说的挪进连接）。截图 `THINKTIN_OPEN_SCREEN=connections`（`19-connections`）。
-  **还没做**：参考从首页左下进目录（ThinkTin 那里是工作台菜单，归 Shell，这一轮没动）；“此 iPhone”、第三方应用、网页授权（6.12 的 B）。
+  **还没做**：“此 iPhone”、第三方应用、网页授权（6.12 的 B）。
+- **已做（2026-11-05，四条 r2 线合进来以后补的跨线小事）**：参考从首页左下的“应用”按钮进目录；ThinkTin 那里是工作台菜单，菜单最后加
+  一项“连接”（`WorkbenchEntry.connections`，图标和设置那一行一样是 `puzzlepiece.extension`，不带数、不算进总角标），点了
+  `openTopLevel(.connections(category: nil))`（关掉 sheet、回首页再压）；`.connections(category: nil)` 算顶级页面，预选了分类的不算。
+  设置里的那一行照旧（压进设置 sheet 的栈）。
 
 #### 4.8.2 已连接列表（37）
 

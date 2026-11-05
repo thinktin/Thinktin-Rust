@@ -464,12 +464,13 @@ struct ShellStateTests {
     @Test("角标：按入口取数，超过 99 显示 99+")
     func badges() {
         let badges = ShellBadges(inboxUnread: 3, pendingApprovals: 1, activeRuns: 120, plansAwaitingConfirmation: 2)
-        #expect(WorkbenchEntry.allCases.map { badges.count(for: $0) } == [3, 1, 120, 2, 0, 0])
+        #expect(WorkbenchEntry.allCases.map { badges.count(for: $0) } == [3, 1, 120, 2, 0, 0, 0])
         #expect(ShellBadges.text(7) == "7")
         #expect(ShellBadges.text(99) == "99")
         #expect(ShellBadges.text(120) == "99+")
         #expect(WorkbenchEntry.activeRuns.title(.chinese) == "进行中")
         #expect(WorkbenchEntry.artifacts.route == .artifacts(instanceID: nil))
+        #expect(WorkbenchEntry.connections.route == .connections(category: nil))
     }
 
     @Test("工作台按钮的总角标：只算要你处理的，不算进行中")
@@ -486,9 +487,11 @@ struct ShellStateTests {
 
     @Test("工作台菜单项：顺序、图标、副标题（0 时没有）")
     func workbenchEntries() {
-        #expect(WorkbenchEntry.allCases == [.inbox, .approvals, .activeRuns, .plans, .teams, .artifacts])
+        #expect(WorkbenchEntry.allCases == [.inbox, .approvals, .activeRuns, .plans, .teams, .artifacts, .connections])
         #expect(
-            WorkbenchEntry.allCases.map { $0.title(.chinese) } == ["收件箱", "审批", "进行中", "计划", "团队", "产出物"])
+            WorkbenchEntry.allCases.map { $0.title(.chinese) } == [
+                "收件箱", "审批", "进行中", "计划", "团队", "产出物", "连接",
+            ])
         #expect(Set(WorkbenchEntry.allCases.map(\.systemImage)).count == WorkbenchEntry.allCases.count)
         #expect(WorkbenchEntry.inbox.subtitle(count: 3, language: .chinese) == "3 条未读")
         #expect(WorkbenchEntry.inbox.subtitle(count: 3, language: .english) == "3 unread")
@@ -497,6 +500,9 @@ struct ShellStateTests {
         #expect(WorkbenchEntry.plans.subtitle(count: 2, language: .english) == "2 to confirm")
         #expect(WorkbenchEntry.approvals.subtitle(count: 0) == nil)
         #expect(WorkbenchEntry.teams.subtitle(count: 0) == nil)
+        #expect(WorkbenchEntry.connections.subtitle(count: 0) == nil)
+        // 和设置里“连接”那一行同一个图标。
+        #expect(WorkbenchEntry.connections.systemImage == "puzzlepiece.extension")
     }
 
     @Test("工作台菜单项都是顶级页面：开着设置也先关掉，回到首页再压")

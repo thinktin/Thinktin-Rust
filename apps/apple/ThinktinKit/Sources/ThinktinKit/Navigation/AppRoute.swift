@@ -220,6 +220,7 @@ extension AppRoute {
         switch self {
         case .inbox, .approvals, .activeRuns, .teams: true
         case .plans(let instanceID), .artifacts(let instanceID): instanceID == nil
+        case .connections(let category): category == nil
         default: false
         }
     }

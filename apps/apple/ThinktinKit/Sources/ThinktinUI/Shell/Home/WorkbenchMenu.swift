@@ -1,9 +1,9 @@
 import SwiftUI
 import ThinktinKit
 
-/// 首页左下的“工作台”菜单（原来抽屉里的 6 个入口，规范 docs/ios-ui-redesign.md 4.2.1、6.1 A1）：系统的 `Menu`，
-/// 按钮上是要你处理的事的总数（`ShellBadges.workbenchTotal`），每一项带副标题（“3 条未读”）。点了都是顶级页面
-/// （`Router.openTopLevel`：关掉 sheet、回到首页再压它）。
+/// 首页左下的“工作台”菜单（原来抽屉里的 6 个入口，加上参考 01 左下“应用”按钮进的“连接”，规范 docs/ios-ui-redesign.md
+/// 4.2.1、4.8.1、6.1 A1）：系统的 `Menu`，按钮上是要你处理的事的总数（`ShellBadges.workbenchTotal`），每一项带副标题
+/// （“3 条未读”）。点了都是顶级页面（`Router.openTopLevel`：关掉 sheet、回到首页再压它）。
 struct WorkbenchMenu: View {
     let model: AppModel
 
