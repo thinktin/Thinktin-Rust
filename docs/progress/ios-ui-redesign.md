@@ -720,6 +720,35 @@
     的 ThinktinUITests 168 个全过；App 的 `ThinktinTests` 21 个过 16 个（挂的还是那 5 个要 App 包的）；`swift format lint --strict -r apps/apple`
     零条。macOS CI、截图没跑：要它们验的是标题胶囊在 iOS 26 上只有一层玻璃、`sharedBackgroundVisibility(.automatic)` 的签名、
     查找栏四个控件一样高、审批详情里“允许一次”的白勾（见“下一步”第 1、2 条）。
+- Botin 这一组的还原度评审修正（2026-11-05，session_01GuCp3KRgqaK6Kzynw6udRn；截图 03、29、30、32、17、31、20、08、33、34 对参考 09、12、18、
+  11、65、27、29、34、101、104、38、52，评审意见逐条对过两边的截图；规范 2.2、2.5、2.6、4.4.1、4.4.3、4.4.4、4.4.5、4.6.1、4.6.2、4.7.1、
+  6.14、6.17 各加了一条“截图审查”）：
+  - **跨页的**：`hiddenInlineNavigationTitle(_:)`（`.principal` 里的 `EmptyView` 系统当没放、照样画标题，Botin 资料、引擎详情、
+    连接详情、设置根页四处都换了）；`groupHeader()`（13pt 浅灰的分组标题，Botin 这一组的页面都换了，别的组还没换）；`RowLabel`（行首
+    细的中性灰图标）；`compactGroupedList(top:)`（iOS 分组间距 `.compact` + 顶上的内容边距）；`LabeledRow` 加 `detailTypography`。
+  - **品牌（强调色）**：`CloseButton` 和 `glassButtonStyle(.regular)` 自己就是中性色（`neutralTint()`），工具栏的图标按钮加
+    `neutralTint()`，表单的菜单选择器加 `menuPickerTint()`（`Design/Glass.swift`）。这会让全 App 的次按钮（“编辑”、错误横幅的“重试”、
+    空状态的按钮、对话里的小胶囊……）都从橙字变成中性色；运行详情的“停止”、计划的“删除”两个破坏性的次按钮在样式前面加了
+    `.tint(StatusTone.failure.color)` 保持红色。文案：新建表单的占位“起个名字”、选主 Botin 的空状态“没有别的 Botin 可选”（以前是参考的
+    原句换了个词）。
+  - 资料页：“通知”一组（开关显示系统通知权限、不能拨，按 Botin 开关等 6.14 A）；工作区的图标换成空心的 `display`；头部下面留 16pt
+    （“编辑”的阴影不再被切）。分享照旧不放（6.21 C，规范 4.4.1 写了原因）。
+  - 编辑页：名字平时没有脚注（`AdoptionModel.nameNote(for:hidesUntouchedEmpty:language:)`，新建表单同一条规则）；菜单的值是灰的；
+    铅笔的阴影留出空间。头像页：分段和预览之间 40pt；“重置为默认”上面的线画到卡片右边。
+  - 工作区：照参考 65 加“重置工作区”（点了即将推出）和“磁盘空间”（值“即将推出”，不编“正常”）；“观看与接管”的说明一行 `.footnote`。
+  - 观看与接管：浅色外观下状态栏看不见（黑字黑底）：这一页的导航栏画黑色的底（`toolbarBackground`，uicheck 桩补了它和 `contentMargins`）；
+    工具栏的字和图标是白的。
+  - 新建表单：形状和色板不画卡片（`AvatarPicker(showsCard:)`）、头像预览回到 120pt、名字框圆角 16（`Metrics.Radius.nameField`）、
+    底部“新建”多缩进 20pt、不能点时灰色填充、引擎菜单的值是灰的。引擎目录：`.footnote` 灰字、普通大小的中性玻璃胶囊“选这个”。
+    引擎详情：头部贴着导航栏、介绍 `.subheadline`。
+  - 两个照参考 11 的选择器共用 `Components/BotinPickerRow.swift`；新任务的选择只有 large 一档、没有分组标题（改成脚注）。
+  - 截图：加了 `52-primary-botin-empty`（新账号，看选主 Botin 的空状态），一共 70 张（脚本、对照表、两个工作流的注释跟着改）。
+  - 没照做的：资料页右上的分享（上面说了）；引擎详情 medium 档时内容照旧从底部按钮下面滚过去（2.1 的滚动边缘效果，头部上移后挡得少了）。
+    上下收紧是照评审给的 `listSectionSpacing(.compact)` + `contentMargins(.top, …)` 写的，iOS 26 上 insetGrouped 列表顶上那段空白到底归
+    哪个管，Linux 上验不了，要看下一次截图。
+  - 这一份的 Linux 检查（2026-11-05，这次提交上）：ThinktinKit `swift build --build-tests` + `swift test` 1172 个全过；uicheck UIKit、
+    AppKit 都编过；`run.sh test` 的 ThinktinUITests 168 个全过；App 的 `ThinktinTests` 21 个过 16 个（挂的还是那 5 个要 App 包的）；
+    `swift format lint --strict -r apps/apple` 零条；`bash -n tools/apple/screenshots.sh` 过。macOS CI、截图没跑（要它们验的见“下一步”第 5 条）。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、
@@ -730,7 +759,7 @@
 新建时选它用哪个 agent 当引擎，同一个 agent 可以给好几个 Botin 当引擎（服务端只限每个账号的实例数）。agent 在界面上只以 Botin 的“引擎”/“Engine”出现。
 首次登录首页是空的，空状态“还没有 Botin”+ 说明 + “新建 Botin”按钮。代码里的标识符（`Instance`、`AppRoute.adopt`、`adopt(...)`）不改。
 
-进行中：无人。每一组改版页面都能在真 Mac 上查了（`ci/**` 触发 macOS CI、69 张截图、对照表 docs/ios-ui-redesign-shots.md，
+进行中：无人。每一组改版页面都能在真 Mac 上查了（`ci/**` 触发 macOS CI、70 张截图、对照表 docs/ios-ui-redesign-shots.md，
 见“已完成”最后一条），下一步是推一次 `ci/` 和截图分支、照对照表做还原度评审。第 2 轮的四条线 2026-11-05 都合进本分支了（`c6a2aaf`、`7de7dd0`、`a897e14`、`19e299a`），合进来以后能在客户端做的
 跨线小事也做完了（`3e4648a` 到 `daf5a35`，见“已完成”最后两条）；合完的四个 `r2/*` 远端分支还没删，等用户看过再删。
 第 1 轮 A 线的首页补完、B、C、D、E 线和收尾线 2026-11-05 做完，见“已完成”。
@@ -758,7 +787,7 @@ TestFlight：28（Botin 改名、空状态，旧表单）、30（新建页重做
    `BottomBarSearchItem`）；`SheetStack` 里第二层 `.sheet(item:)`；`AgentsDestination` 的 `.adopt(agentID: nil)` 模式；启动屏
    （`UILaunchScreen` 的两个键、`LaunchLogo` 的 PDF 和颜色集能不能被资源编译器收下，Info.plist 测试查键）；`DesignTokenTests` 在模拟器上
    顺着 `#filePath` 读仓库里的颜色集（模拟器进程读宿主机的文件，按说可以，没验过）；App 测试里 `OpenScreen` 那三条。
-2. 出一次截图对照（规范 7.6 第 3 条）：`git push -f origin HEAD:ios-screenshots`（或 Actions 里手动跑 iOS screenshots），产物 69 张，
+2. 出一次截图对照（规范 7.6 第 3 条）：`git push -f origin HEAD:ios-screenshots`（或 Actions 里手动跑 iOS screenshots），产物 70 张，
    照 docs/ios-ui-redesign-shots.md 逐张和参考比（还原度评审）；先看子页那几张（28–51）是不是真的打开了（600 毫秒的等待够不够、
    7 秒够不够；不够就调 `Subpage.settleDelay` 和脚本的 `sleep`），键盘的滑动输入介绍是不是没再出来，`25-home-pinned` 之后的首页没带着置顶；
    再出一套 iOS 18 的回退：`git push -f origin HEAD:ios-screenshots-ios18.6`（或 Run workflow 填 `ios_runtime`），产物
@@ -790,7 +819,18 @@ TestFlight：28（Botin 改名、空状态，旧表单）、30（新建页重做
    第一行的间距；工作台菜单 7 项（多了“连接”）；新任务选择页主 Botin 在第一行；截图 `20`–`24`（设置里的四页是不是在设置 sheet 里）。
    macOS CI 要编的：`EntityQuery.defaultResult()`（uicheck 桩是照文档补的，真 SDK 上快捷指令的 Botin 参数默认值要在 iOS 上点一次看）。
 
+5. Botin 这一组的截图审查（2026-11-05，见“已完成”最后一条）留下的：(a) 别的组的分组标题还是 iOS 26 默认的 17pt 半粗字，各组对截图时把
+   `header:` 里的字换成 `groupHeader()`（连接目录参考 52 的分类标题本来就大，别换）；(b) 别的组工具栏上自己加的图标按钮（“+”“…”“?”）
+   逐个看要不要 `neutralTint()`、表单里的 `Picker(.menu)` 加 `menuPickerTint()`；(c) 下一次截图要看：`hiddenInlineNavigationTitle`
+   的透明点在 iOS 26 上真的不画标题、也不套玻璃；`compactGroupedList` 顶上的空白（03、29、30、31 导航栏到第一块约 25–36pt，34 的头部贴着 ×）；
+   20 浅色的状态栏是白字；08 不能点的“新建”是看得出的灰胶囊；`52-primary-botin-empty` 打开了空状态；全 App 的次按钮变成中性色后
+   有没有该是强调色的（比如空状态里唯一的按钮）。
+
 坑和决定：
+- 导航栏不显示标题用 `hiddenInlineNavigationTitle(_:)`，别写 `inlineNavigationTitle(title) { EmptyView() }`：`.principal` 里是
+  `EmptyView` 时系统当没放这一项，照样画 `navigationTitle`（2026-11-05 截图，资料页名字出现两次）。
+- 次按钮（`glassButtonStyle(.regular)`、`smallCapsuleButton()`）自己带中性色的 `tint`；要红色、强调色时 `.tint(_:)` 写在样式**前面**
+  （离按钮近的生效），写在后面会被盖住。分组标题用 `groupHeader()`，行首图标用 `RowLabel`（`List` 行里的 `Label` 图标默认是强调色）。
 - 自画组件删了（2026-11-05 收尾线）：页面一律 `List` / `Form` + `themedGroupedBackground()` + 行的 `themedRow()`，空状态
   `ContentUnavailableView`，加载中是 `.overlay` 里的 `ProgressView`；共用的行是 `LabeledRow` / `NoticeRow` / `AdaptiveRow`、输入框是
   `FormTextField`（`ModelsField` 是 key 那几页的同类，多了密码和网址键盘）；对话里系统没有的卡片用 `BubbleCard` / `cardSurface()`。
