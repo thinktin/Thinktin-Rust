@@ -100,6 +100,15 @@ pub async fn delete(
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
     let id: TeamId = parse_id(&id, "team")?;
+    // 项目接口发过邀请的（8.14）：先撤回、提醒标已读，不然邀请跟着级联删掉以后对方的提醒一直未读。旧接口的状态码不变：
+    // 不是自己的、共享过的，照旧由下面的租户删除回 404、409。
+    match orchestrator::projects::release_for_delete(&s.db, who.user, &who.actor(), id.into()).await
+    {
+        Ok(())
+        | Err(store::Error::NotFound | store::Error::NotPermitted(_) | store::Error::Conflict(_)) =>
+            {}
+        Err(e) => return Err(e.into()),
+    }
     let mut t = s.db.tenant(who.user).await?;
     t.delete_team(id).await?;
     t.commit().await?;

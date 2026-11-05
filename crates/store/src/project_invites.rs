@@ -196,15 +196,16 @@ impl Tx<Worker> {
         if let Some(r) = recipient {
             self.advisory_lock(&format!("user_blocks/{r}")).await?;
         }
-        sqlx::query(
+        let stale: Vec<(Uuid, Option<Uuid>)> = sqlx::query_as(
             "UPDATE project_invites SET status = 'expired', settled_at = now() \
               WHERE project_id = $1 AND kind = 'phone' AND invitee_phone = $2 \
-                AND status = 'pending' AND expires_at <= now()",
+                AND status = 'pending' AND expires_at <= now() RETURNING id, invitee_id",
         )
         .bind(project.0)
         .bind(phone)
-        .execute(self.conn())
+        .fetch_all(self.conn())
         .await?;
+        self.read_invite_items_nowait(&stale).await?;
         let project_name = self.project_name(project).await?;
         let existing: Option<Uuid> = sqlx::query_scalar(
             "SELECT id FROM project_invites WHERE project_id = $1 AND kind = 'phone' \
@@ -225,7 +226,7 @@ impl Tx<Worker> {
         self.invite_caps(user, project, caps).await?;
         // 不管号码是谁的都数一遍，每个号码花的工夫一样。
         let delivered: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM project_invites WHERE invitee_phone = $1 AND invitee_id IS NOT NULL \
+            "SELECT count(*) FROM project_invite_sends WHERE invitee_phone = $1 AND delivered \
                AND created_at > now() - interval '24 hours'",
         )
         .bind(phone)
@@ -260,6 +261,8 @@ impl Tx<Worker> {
         .bind(blocked)
         .execute(self.conn())
         .await?;
+        self.record_send(user, Some(phone), deliver_to.is_some())
+            .await?;
         Ok(CreatedInvite {
             invite: self.invite_row(id).await?,
             created: true,
@@ -296,7 +299,26 @@ impl Tx<Worker> {
         .bind(secs(ttl))
         .execute(self.conn())
         .await?;
+        self.record_send(user, None, false).await?;
         self.invite_row(id).await
+    }
+
+    /// 记一条发送记录（数上限用；不跟着项目删，见迁移 0048）。
+    async fn record_send(
+        &mut self,
+        user: UserId,
+        phone: Option<&str>,
+        delivered: bool,
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO project_invite_sends (inviter_id, invitee_phone, delivered) VALUES ($1, $2, $3)",
+        )
+        .bind(user.0)
+        .bind(phone)
+        .bind(delivered)
+        .execute(self.conn())
+        .await?;
+        Ok(())
     }
 
     /// 发邀请前的上限：邀请人 24 小时的数（429）、项目人数、待处理的邀请数（409）。
@@ -311,7 +333,7 @@ impl Tx<Worker> {
             let (n, wait): (i64, Option<i64>) = sqlx::query_as(
                 "SELECT count(*), \
                         ceil(extract(epoch FROM min(created_at) + interval '24 hours' - now()))::bigint \
-                   FROM project_invites \
+                   FROM project_invite_sends \
                   WHERE inviter_id = $1 AND created_at > now() - interval '24 hours'",
             )
             .bind(user.0)
@@ -397,8 +419,9 @@ impl Tx<Worker> {
             .project_actor(user, project, &also, &[ProjectStatus::Active])
             .await?;
         actor.require_creator("revoke invites")?;
-        let (status, invitee): (String, Option<Uuid>) = sqlx::query_as(
-            "SELECT status, invitee_id FROM project_invites WHERE id = $1 AND project_id = $2 FOR UPDATE",
+        let (status, expired, invitee): (String, bool, Option<Uuid>) = sqlx::query_as(
+            "SELECT status, expires_at <= now(), invitee_id FROM project_invites \
+              WHERE id = $1 AND project_id = $2 FOR UPDATE",
         )
         .bind(id.0)
         .bind(project.0)
@@ -406,7 +429,8 @@ impl Tx<Worker> {
         .await?;
         match status.as_str() {
             "accepted" => return Err(Error::Conflict("invite already accepted".into())),
-            "pending" => {}
+            // 已经过期（列表里显示过期了，后台还没标）：按结束了算，交给后台标过期。
+            "pending" if !expired => {}
             _ => return Ok(false),
         }
         sqlx::query(
@@ -698,12 +722,13 @@ impl Tx<Worker> {
 
     /// 拒绝发给我的手机号邀请。`block`：顺便拉黑邀请人（邀请不标“已拒绝”，标不送达：邀请人那边照样是待接受、
     /// 到期过期，看不出被拉黑）。不是发给我的、已经结束的 NotFound。
+    /// 返回邀请人（审计里记拉黑了谁）。
     pub async fn decline_invite(
         &mut self,
         user: UserId,
         id: ProjectInviteId,
         block: bool,
-    ) -> Result<()> {
+    ) -> Result<UserId> {
         let (project, inviter): (Uuid, Uuid) = sqlx::query_as(sqlx::AssertSqlSafe(for_me_sql(
             "i.project_id, i.inviter_id",
             "AND i.id = $2",
@@ -715,7 +740,8 @@ impl Tx<Worker> {
         let (project, inviter) = (ProjectId(project), UserId(inviter));
         if block {
             // 和拉黑一样的锁（不拿项目锁）：用户行 → user_blocks/{我} → 邀请行。
-            return self.block_locked(user, inviter).await;
+            self.block_locked(user, inviter).await?;
+            return Ok(inviter);
         }
         let locked = self.lock_users(&[user, inviter]).await?;
         let Some(me) = locked
@@ -745,7 +771,8 @@ impl Tx<Worker> {
         .bind(id.0)
         .execute(self.conn())
         .await?;
-        self.read_invite_items(user, &[id.0]).await
+        self.read_invite_items(user, &[id.0]).await?;
+        Ok(inviter)
     }
 
     /// 拉黑：对方再发来的手机号邀请不送达；已经发来、还没处理的也标上，收件箱里的标已读。拉黑自己 Invalid，
@@ -852,6 +879,81 @@ impl Tx<Worker> {
         Ok(())
     }
 
+    /// 这些邀请（id，送达给了谁）的提醒标已读，不等锁：收件人的用户行没锁时用（D3：别人的收件箱只在锁着他的用户行时
+    /// 改，不然 SKIP LOCKED；跳过的那条正被删掉或被主人自己标已读）。
+    pub(crate) async fn read_invite_items_nowait(
+        &mut self,
+        invites: &[(Uuid, Option<Uuid>)],
+    ) -> Result<()> {
+        let users: Vec<Uuid> = invites.iter().filter_map(|r| r.1).collect();
+        if users.is_empty() {
+            return Ok(());
+        }
+        let ids: Vec<Uuid> = invites.iter().map(|r| r.0).collect();
+        sqlx::query(
+            "UPDATE inbox_items SET read_at = now() \
+              WHERE id IN (SELECT id FROM inbox_items WHERE user_id = ANY($1) \
+                             AND project_invite_id = ANY($2) AND read_at IS NULL \
+                           FOR UPDATE SKIP LOCKED)",
+        )
+        .bind(&users)
+        .bind(&ids)
+        .execute(self.conn())
+        .await?;
+        Ok(())
+    }
+
+    /// 删没共享过的单人项目之前（租户事务删，邀请跟着级联删掉）：还没处理的邀请先撤回、送达的提醒标已读，不然它们
+    /// 一直未读、点开 404。只有创建者（成员 NotPermitted，外人 NotFound）；共享过的 Conflict（8.15 起改成软删除）。
+    /// 返回撤回了几个。
+    pub async fn release_solo_project_invites(
+        &mut self,
+        user: UserId,
+        project: ProjectId,
+    ) -> Result<u64> {
+        let invitees: Vec<UserId> = sqlx::query_scalar::<_, Uuid>(
+            "SELECT DISTINCT invitee_id FROM project_invites \
+              WHERE project_id = $1 AND status = 'pending' AND invitee_id IS NOT NULL",
+        )
+        .bind(project.0)
+        .fetch_all(self.conn())
+        .await?
+        .into_iter()
+        .map(UserId)
+        .collect();
+        let actor = self
+            .project_actor(user, project, &invitees, &[ProjectStatus::Active])
+            .await?;
+        actor.require_creator("delete the project")?;
+        let shared: bool =
+            sqlx::query_scalar("SELECT shared_at IS NOT NULL FROM projects WHERE id = $1")
+                .bind(project.0)
+                .fetch_one(self.conn())
+                .await?;
+        if shared {
+            return Err(Error::Conflict("project is shared".into()));
+        }
+        let revoked: Vec<(Uuid, Option<Uuid>)> = sqlx::query_as(
+            "UPDATE project_invites SET status = 'revoked', settled_at = now() \
+              WHERE project_id = $1 AND status = 'pending' RETURNING id, invitee_id",
+        )
+        .bind(project.0)
+        .fetch_all(self.conn())
+        .await?;
+        // 开头读到的送达人锁着，直接改；这期间新送达的（锁之后才有的）不等锁。
+        let (locked, other): (Vec<_>, Vec<_>) = revoked
+            .iter()
+            .copied()
+            .partition(|(_, u)| u.is_some_and(|u| invitees.contains(&UserId(u))));
+        for (id, u) in &locked {
+            if let Some(u) = u {
+                self.read_invite_items(UserId(*u), &[*id]).await?;
+            }
+        }
+        self.read_invite_items_nowait(&other).await?;
+        Ok(revoked.len() as u64)
+    }
+
     /// 后台：到期的待处理邀请标成过期，送达的提醒标已读。不等锁（别人锁着的下一轮再说），返回标了几条。
     pub async fn expire_project_invites(&mut self, batch: u64) -> Result<u64> {
         let rows: Vec<(Uuid, Option<Uuid>)> = sqlx::query_as(
@@ -863,34 +965,33 @@ impl Tx<Worker> {
         .bind(signed(batch, "batch")?)
         .fetch_all(self.conn())
         .await?;
-        let ids: Vec<Uuid> = rows.iter().map(|r| r.0).collect();
-        let users: Vec<Uuid> = rows.iter().filter_map(|r| r.1).collect();
-        if !users.is_empty() {
-            sqlx::query(
-                "UPDATE inbox_items SET read_at = now() \
-                  WHERE id IN (SELECT id FROM inbox_items WHERE user_id = ANY($1) \
-                                 AND project_invite_id = ANY($2) AND read_at IS NULL \
-                               FOR UPDATE SKIP LOCKED)",
-            )
-            .bind(&users)
-            .bind(&ids)
-            .execute(self.conn())
-            .await?;
-        }
+        self.read_invite_items_nowait(&rows).await?;
         Ok(rows.len() as u64)
     }
 
-    /// 后台：结束超过 `older_than`（30 天）的邀请删掉，明文手机号不久留。返回删了几条。
+    /// 后台：结束超过 `older_than`（30 天）的邀请删掉，明文手机号不久留；两天前的发送记录（只用来数 24 小时）也删掉。
+    /// 不等锁（别人锁着的下一轮再删）。返回删了几条。
     pub async fn purge_project_invites(&mut self, older_than: Duration, batch: u64) -> Result<u64> {
-        Ok(sqlx::query(
+        let invites = sqlx::query(
             "DELETE FROM project_invites WHERE id IN (SELECT id FROM project_invites \
-               WHERE status <> 'pending' AND settled_at < now() - make_interval(secs => $1) LIMIT $2)",
+               WHERE status <> 'pending' AND settled_at < now() - make_interval(secs => $1) \
+               ORDER BY settled_at LIMIT $2 FOR UPDATE SKIP LOCKED)",
         )
         .bind(secs(older_than))
         .bind(signed(batch, "batch")?)
         .execute(self.conn())
         .await?
-        .rows_affected())
+        .rows_affected();
+        let sends = sqlx::query(
+            "DELETE FROM project_invite_sends WHERE id IN (SELECT id FROM project_invite_sends \
+               WHERE created_at < now() - interval '2 days' ORDER BY created_at LIMIT $1 \
+               FOR UPDATE SKIP LOCKED)",
+        )
+        .bind(signed(batch, "batch")?)
+        .execute(self.conn())
+        .await?
+        .rows_affected();
+        Ok(invites + sends)
     }
 }
 

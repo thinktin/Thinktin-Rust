@@ -27,6 +27,38 @@ fn project_notice(project: ProjectId, title: &str, body: String, subtype: &str) 
     n
 }
 
+/// 撤 agent 的回执：同一个 agent 一小时最多一条（加了又撤、撤了又加的不会刷屏），推送互相替换。
+fn agent_notice(mut n: Notice, project: ProjectId, instance: InstanceId) -> Notice {
+    let hour = chrono::Utc::now().format("%Y%m%d%H");
+    let kind = n.subtype.clone().unwrap_or_default();
+    n.dedupe_key = Some(format!("{kind}:{project}:{instance}:{hour}"));
+    n.collapse_id = Some(format!("project_agent:{project}:{instance}"));
+    n
+}
+
+/// 删没共享过的单人项目之前（之后由租户事务删）：撤回还没处理的邀请、送达的提醒标已读。只有创建者（成员 403、外人 404），
+/// 共享过的 409。
+pub async fn release_for_delete(
+    db: &Db,
+    user: UserId,
+    actor: &str,
+    project: ProjectId,
+) -> store::Result<()> {
+    let mut w = db.worker().await?;
+    let n = w.release_solo_project_invites(user, project).await?;
+    if n > 0 {
+        w.audit(
+            Some(user),
+            actor,
+            "project.invite.revoke",
+            Some(&project.to_string()),
+            &json!({ "project": project, "revoked": n, "because": "project deleted" }),
+        )
+        .await?;
+    }
+    w.commit().await
+}
+
 /// 我是成员的进行中的项目。
 pub async fn my_projects(db: &Db, user: UserId) -> store::Result<Vec<ProjectSummary>> {
     let mut w = db.worker().await?;
@@ -249,20 +281,16 @@ pub async fn decline(
     block: bool,
 ) -> store::Result<()> {
     let mut w = db.worker().await?;
-    w.decline_invite(user, invite, block).await?;
-    let action = if block {
-        "user.block"
+    let inviter = w.decline_invite(user, invite, block).await?;
+    let (action, detail) = if block {
+        (
+            "user.block",
+            json!({ "blocked": inviter, "invite": invite }),
+        )
     } else {
-        "project.invite.decline"
+        ("project.invite.decline", json!({ "invite": invite }))
     };
-    w.audit(
-        Some(user),
-        actor,
-        action,
-        None,
-        &json!({ "invite": invite }),
-    )
-    .await?;
+    w.audit(Some(user), actor, action, None, &detail).await?;
     w.commit().await
 }
 
@@ -331,8 +359,11 @@ pub async fn withdraw_agent(
             .await?;
             let locale = w.user_locale(out.owner).await?;
             let (title, body) = texts::project_agent_removed(locale, &out.name, &out.project_name);
-            let notice =
-                project_notice(project, title, body, notice_subtype::PROJECT_AGENT_REMOVED);
+            let notice = agent_notice(
+                project_notice(project, title, body, notice_subtype::PROJECT_AGENT_REMOVED),
+                project,
+                instance,
+            );
             notify(&mut w, out.owner, &notice).await?;
         } else if out.owner != out.creator {
             let locale = w.user_locale(out.creator).await?;
@@ -342,7 +373,11 @@ pub async fn withdraw_agent(
                 &out.name,
                 &out.project_name,
             );
-            let notice = project_notice(project, title, body, notice_subtype::PROJECT_AGENT_LEFT);
+            let notice = agent_notice(
+                project_notice(project, title, body, notice_subtype::PROJECT_AGENT_LEFT),
+                project,
+                instance,
+            );
             notify(&mut w, out.creator, &notice).await?;
         }
     }

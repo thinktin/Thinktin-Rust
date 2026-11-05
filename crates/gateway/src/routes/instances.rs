@@ -377,6 +377,8 @@ pub async fn delete(
     let id: InstanceId = parse_id(&id, "instance")?;
     let mut t = s.db.tenant(who.user).await?;
     t.instance(id).await?;
+    // 先拿它所在项目的锁（改实例行之前），和往项目里加 agent 排队。
+    t.lock_instance_projects(id).await?;
     let retired = t.retire_instance_plans(id).await?;
     t.cancel_instance_runs(id, "instance deleted").await?;
     t.revoke_instance_grants(id, "instance deleted").await?;

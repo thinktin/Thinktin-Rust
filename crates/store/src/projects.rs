@@ -532,6 +532,22 @@ impl Tx<Tenant> {
         Ok(())
     }
 
+    /// 删实例之前拿它所在项目的锁（按 id 顺序；D4：租户改单人项目也先拿项目锁）。删实例先改实例行、再把它在单人项目里的
+    /// agent 行标离开，worker 加 agent 是先 agent 行、再实例行，不排队会互相等。看得到的只有自己的 agent 行。
+    pub async fn lock_instance_projects(&mut self, instance: InstanceId) -> Result<()> {
+        let mut ids: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT DISTINCT project_id FROM project_agents WHERE instance_id = $1 AND left_at IS NULL",
+        )
+        .bind(instance.0)
+        .fetch_all(self.conn())
+        .await?;
+        ids.sort_unstable();
+        for id in ids {
+            self.lock_project(ProjectId(id)).await?;
+        }
+        Ok(())
+    }
+
     /// 看得到、进行中、没共享过的单人项目才能改：看不到的 NotFound，共享过的 Conflict。先拿项目锁（D4）：不然 worker
     /// 在锁里数 agent、接受邀请的同时，租户还能往里加 agent，超过上限。锁之前先看一眼，别人的项目不去锁它；锁到以后
     /// 再读一遍（这期间可能有人加入、变成共享的了）。

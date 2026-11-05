@@ -224,12 +224,29 @@ async fn project_flows_send_receipts_and_audit() {
     let left = inbox(db, alice).await.pop().unwrap();
     assert_eq!(left.0, notice_subtype::PROJECT_AGENT_LEFT);
     assert!(left.2.contains("writer"));
-    // 再撤一次：不再通知。
+    // 再撤一次：不再通知；加回来再撤（一小时内）：也不再多一条，推送互相替换。
     let n = inbox(db, alice).await.len();
     projects::withdraw_agent(db, carol, ACTOR, p, c1.id)
         .await
         .unwrap();
     assert_eq!(inbox(db, alice).await.len(), n);
+    let consent = Some(Consent {
+        version: PROJECT_CONSENT_VERSION,
+    });
+    projects::add_agents(db, carol, ACTOR, p, &[c1.id], consent)
+        .await
+        .unwrap();
+    projects::withdraw_agent(db, carol, ACTOR, p, c1.id)
+        .await
+        .unwrap();
+    assert_eq!(inbox(db, alice).await.len(), n);
+    let collapse: Vec<String> = pushes(db, alice)
+        .await
+        .iter()
+        .filter_map(|p| p["collapse_id"].as_str().map(String::from))
+        .filter(|c| c.starts_with("project_agent:"))
+        .collect();
+    assert!(collapse.iter().all(|c| c == &collapse[0]) && !collapse.is_empty());
 
     // bob 退出：告诉创建者。移出 carol：告诉 carol；再移一次不再通知。
     projects::leave(db, bob, ACTOR, p).await.unwrap();
@@ -249,6 +266,26 @@ async fn project_flows_send_receipts_and_audit() {
     let (action, _) = audit(db, carol).await.pop().unwrap();
     assert_eq!(action, "project.removed");
 
+    // 拒绝并拉黑：审计里记着拉黑了谁（和直接拉黑一样）。
+    let p3 = project(db, alice, &instance(db, alice, "y").await, "Third").await;
+    let to_carol = projects::invite_phone(
+        db,
+        alice,
+        ACTOR,
+        p3,
+        "+8613800002103",
+        InviteCaps::default(),
+    )
+    .await
+    .unwrap();
+    projects::decline(db, carol, ACTOR, to_carol.id, true)
+        .await
+        .unwrap();
+    let (action, detail) = audit(db, carol).await.pop().unwrap();
+    assert_eq!(action, "user.block");
+    assert_eq!(detail["blocked"], alice.to_string());
+    projects::unblock(db, carol, ACTOR, alice).await.unwrap();
+    let n = inbox(db, carol).await.len();
     // 拉黑以后的邀请：不通知。
     projects::block(db, carol, ACTOR, alice).await.unwrap();
     assert_eq!(projects::blocks(db, carol).await.unwrap().len(), 1);

@@ -4620,14 +4620,34 @@ async fn project_phone_invites_are_uniform_over_http() {
         assert_eq!(st, StatusCode::CREATED, "{phone}: {body}");
         let inv = &body["invite"];
         assert_eq!(inv["status"], "pending");
-        let mut keys: Vec<String> = inv.as_object().unwrap().keys().cloned().collect();
-        keys.sort();
-        shapes.push(keys);
         if phone == "13800130002" {
             bob_invite = inv["id"].as_str().unwrap().into();
         }
+        // 去掉 id 和打码的号码，时间换成有效期的长度：剩下的每个号码都一样（整个响应也只有 invite 一项）。
+        assert_eq!(body.as_object().unwrap().len(), 1, "{body}");
+        let mut norm = inv.clone();
+        let o = norm.as_object_mut().unwrap();
+        o.remove("id");
+        assert!(
+            o.remove("phone_masked")
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .contains("****")
+        );
+        let at = |k: &str| {
+            chrono::DateTime::parse_from_rfc3339(o[k].as_str().unwrap())
+                .unwrap()
+                .timestamp()
+        };
+        let ttl = at("expires_at") - at("created_at");
+        o.remove("created_at");
+        o.remove("expires_at");
+        o.insert("ttl".into(), json!(ttl));
+        shapes.push(norm);
     }
     assert!(shapes.windows(2).all(|w| w[0] == w[1]), "{shapes:?}");
+    assert_eq!(shapes[0]["ttl"], 7 * 24 * 3600);
     // 再邀请 bob：还是 201、同一个 id。
     let (st, body) = a
         .call(
@@ -4755,6 +4775,18 @@ async fn project_link_invite_join_and_exit_over_http() {
     let b1 = a.adopt(&bob).await;
     let c1 = a.adopt(&carol).await;
     let p = a.new_project(&alice, "Design", a1).await;
+    // 建项目时同一个 agent 写两遍：422。
+    let (st, body) = a
+        .call(
+            Method::POST,
+            "/v1/projects",
+            Some(&alice.access),
+            Some(
+                json!({ "name": "dup", "agents": [{ "instance_id": a1 }, { "instance_id": a1 }] }),
+            ),
+        )
+        .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
     let (invite, token) = a.link_invite(&alice, &p).await;
     let invite_id = invite["id"].as_str().unwrap();
     // 令牌只在发出时返回一次。
@@ -4819,6 +4851,9 @@ async fn project_link_invite_join_and_exit_over_http() {
         )
         .await;
     assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+    // 选了别人的 agent：422（邀请还能用），不是“邀请找不到”。
+    let (st, body) = a.join_link(&bob, &token, &[c1]).await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
     let (st, joined) = a.join_link(&bob, &token, &[b1]).await;
     assert_eq!(st, StatusCode::CREATED, "{joined}");
     assert_eq!(joined["role"], "member");
@@ -5194,6 +5229,7 @@ async fn outsiders_see_nothing_of_a_project() {
     // 成员调只有创建者能用的：403。
     for (m, path, body) in [
         (Method::GET, format!("/v1/projects/{p}/invites"), None),
+        (Method::DELETE, format!("/v1/projects/{p}"), None),
         (
             Method::PATCH,
             format!("/v1/projects/{p}"),
@@ -5282,27 +5318,40 @@ async fn cross_user_projects_are_off_by_default() {
         )
         .await;
     assert_eq!(st, StatusCode::NOT_FOUND);
-    for (path, body) in [
-        ("/v1/project-invites/resolve", json!({ "token": "x" })),
+    // 令牌、正文都是对的格式，回的是开关的 404（不是“邀请找不到”）。
+    let token = format!("tpi1_{}", "A".repeat(43));
+    let join = json!({
+        "token": token, "agents": [{ "instance_id": a1 }],
+        "daily_token_limit": 1, "total_token_limit": 1, "consent": true
+    });
+    let some_invite = uuid::Uuid::now_v7();
+    for (m, path, body) in [
         (
-            "/v1/project-invites/accept",
-            json!({ "token": "x", "agents": [], "daily_token_limit": 1, "total_token_limit": 1 }),
+            Method::POST,
+            "/v1/project-invites/resolve".to_string(),
+            Some(json!({ "token": token })),
+        ),
+        (
+            Method::POST,
+            "/v1/project-invites/accept".into(),
+            Some(join.clone()),
+        ),
+        (Method::GET, "/v1/project-invites".into(), None),
+        (
+            Method::GET,
+            format!("/v1/project-invites/{some_invite}"),
+            None,
+        ),
+        (
+            Method::POST,
+            format!("/v1/project-invites/{some_invite}/accept"),
+            Some(join.clone()),
         ),
     ] {
-        let (st, _) = a
-            .call(Method::POST, path, Some(&alice.access), Some(body))
-            .await;
-        assert_eq!(st, StatusCode::NOT_FOUND, "{path}");
+        let (st, resp) = a.call(m.clone(), &path, Some(&alice.access), body).await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "{m} {path}");
+        assert_eq!(resp["message"], "route not found", "{m} {path}: {resp}");
     }
-    let (st, _) = a
-        .call(
-            Method::GET,
-            "/v1/project-invites",
-            Some(&alice.access),
-            None,
-        )
-        .await;
-    assert_eq!(st, StatusCode::NOT_FOUND);
     let (st, list) = a
         .call(Method::GET, "/v1/projects", Some(&alice.access), None)
         .await;

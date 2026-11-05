@@ -88,6 +88,10 @@ pub async fn create(
     check_len("name", name, 1, 64)?;
     check_goal(&req.goal)?;
     check_agent_count(req.agents.len())?;
+    let mut seen = std::collections::HashSet::new();
+    if !req.agents.iter().all(|a| seen.insert(a.instance_id)) {
+        return Err(ApiError::invalid("an agent is listed twice"));
+    }
     let agents: Vec<SoloAgent> = req
         .agents
         .iter()
@@ -146,6 +150,8 @@ pub async fn delete(
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
     let id: ProjectId = parse_id(&id, "project")?;
+    // 先由 worker 核对身份（成员 403、外人 404、共享过的 409）、撤回还没处理的邀请。
+    projects::release_for_delete(&s.db, who.user, &who.actor(), id).await?;
     let mut t = s.db.tenant(who.user).await?;
     t.delete_solo_project(id).await?;
     t.commit().await?;

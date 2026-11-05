@@ -14,6 +14,7 @@ use proto::domain::{
 use uuid::Uuid;
 
 use crate::project_invites::Consent;
+use crate::projects::LockedUser;
 use crate::{Error, ProjectCap, Result, Tx, Worker, signed, unsigned};
 
 /// 撤回了一个项目 agent。
@@ -95,7 +96,7 @@ impl Tx<Worker> {
         Ok((unsigned(n, "agents")?, live.into_iter().collect()))
     }
 
-    /// `ids` 都是 `user` 自己没删的实例（加共享锁，和删实例互斥）；不是的 NotFound，不说是谁的。
+    /// `ids` 都是 `user` 自己没删的实例（加共享锁，和删实例互斥）；不是的 Invalid，不说是谁的。
     pub(crate) async fn lock_own_instances(&mut self, user: UserId, ids: &[Uuid]) -> Result<()> {
         let mut sorted = ids.to_vec();
         sorted.sort_unstable();
@@ -108,7 +109,10 @@ impl Tx<Worker> {
         .fetch_all(self.conn())
         .await?;
         if found.len() != sorted.len() {
-            return Err(Error::NotFound);
+            // 和邀请找不到区分开（App 要让用户换一个 agent，而不是说邀请失效了）；不说是谁的。
+            return Err(Error::Invalid(
+                "choose your own agents (one of them is not yours or was deleted)".into(),
+            ));
         }
         Ok(())
     }
@@ -310,8 +314,8 @@ impl Tx<Worker> {
                 "the creator cannot leave; delete the project instead".into(),
             ));
         }
-        let name = actor.locked(user).and_then(|u| u.display_name.clone());
-        self.exit_member(project, actor.creator, user, name, "left")
+        let me = actor.locked(user).cloned();
+        self.exit_member(project, actor.creator, user, me.as_ref(), "left")
             .await
     }
 
@@ -337,33 +341,47 @@ impl Tx<Worker> {
         .bind(member.0)
         .fetch_one(self.conn())
         .await?;
-        let name = actor.locked(member).and_then(|u| u.display_name.clone());
+        let them = actor.locked(member).cloned();
         if !live {
             return Ok(Exit {
                 project,
                 project_name: self.project_name(project).await?,
                 creator: actor.creator,
                 member,
-                member_name: name,
+                member_name: them.as_ref().and_then(|u| u.display_name.clone()),
                 changed: false,
                 runs_cancelled: 0,
                 grants_revoked: 0,
             });
         }
-        self.exit_member(project, actor.creator, member, name, "removed")
+        self.exit_member(project, actor.creator, member, them.as_ref(), "removed")
             .await
     }
 
-    /// 成员离开（调用方已经锁好用户行、项目锁和他的成员行）：他在项目里的 agent 行 → 运行 → 授权 → agent 标离开 →
-    /// 成员行标离开 → 他发出、还没处理的邀请作废（8.14 只有创建者邀请，这里是 0 行；离开只标记，外键的级联不会触发）。
+    /// 成员离开（调用方已经锁好用户行、项目锁和他的成员行）：先作废邀请（D3 第 5 步：他发出的，8.14 只有创建者邀请，这里
+    /// 是 0 行；离开只标记，外键的级联不会触发。还有发给他号码的：不然被移出的人拿着他还是成员时收到的旧邀请就能自己
+    /// 回来），再是他在项目里的 agent 行 → 运行 → 授权 → agent 标离开 → 成员行标离开。
     async fn exit_member(
         &mut self,
         project: ProjectId,
         creator: UserId,
         member: UserId,
-        member_name: Option<String>,
+        locked: Option<&LockedUser>,
         reason: &str,
     ) -> Result<Exit> {
+        let member_name = locked.and_then(|u| u.display_name.clone());
+        let to_me: Vec<Uuid> = sqlx::query_scalar(
+            "UPDATE project_invites SET status = 'revoked', settled_at = now() \
+              WHERE project_id = $1 AND status = 'pending' \
+                AND (inviter_id = $2 OR (kind = 'phone' AND invitee_phone = $3)) \
+              RETURNING id",
+        )
+        .bind(project.0)
+        .bind(member.0)
+        .bind(locked.map(|u| u.phone.as_str()))
+        .fetch_all(self.conn())
+        .await?;
+        self.read_invite_items(member, &to_me).await?;
         sqlx::query(
             "SELECT 1 FROM project_agents WHERE project_id = $1 AND user_id = $2 AND left_at IS NULL \
               ORDER BY instance_id FOR NO KEY UPDATE",
@@ -398,14 +416,6 @@ impl Tx<Worker> {
         .bind(project.0)
         .bind(member.0)
         .bind(reason)
-        .execute(self.conn())
-        .await?;
-        sqlx::query(
-            "UPDATE project_invites SET status = 'revoked', settled_at = now() \
-              WHERE project_id = $1 AND inviter_id = $2 AND status = 'pending'",
-        )
-        .bind(project.0)
-        .bind(member.0)
         .execute(self.conn())
         .await?;
         Ok(Exit {

@@ -187,12 +187,16 @@ impl Tx<Worker> {
             .bind(id.0)
             .execute(self.conn())
             .await?;
-        // 再拿他建的、加入的、派了 agent 的项目的锁：自己改团队（租户事务先改 projects 再改 project_agents）和下面的注销
-        // （先改 project_agents 再删 projects）方向相反，不排队会互相等。
+        // 再拿下面要改到的项目的锁：他建的、加入过的、派过 agent 的（离开了的也算：下面也改离开的 agent 行）、和他有关的
+        // 邀请所在的。自己改团队（租户事务先改 projects 再改 project_agents）和下面的注销（先改 project_agents 再删
+        // projects）方向相反；两个人同时注销时，一个删项目级联到邀请、成员行，另一个改自己离开了的 agent 行、删发给自己的
+        // 邀请。不排队都会互相等。
         let mut projects: Vec<proto::domain::ProjectId> = sqlx::query_scalar::<_, uuid::Uuid>(
             "SELECT id FROM projects WHERE creator_id = $1 \
-             UNION SELECT project_id FROM project_members WHERE user_id = $1 AND left_at IS NULL \
-             UNION SELECT project_id FROM project_agents WHERE user_id = $1 AND left_at IS NULL",
+             UNION SELECT project_id FROM project_members WHERE user_id = $1 \
+             UNION SELECT project_id FROM project_agents WHERE user_id = $1 \
+             UNION SELECT project_id FROM project_invites WHERE inviter_id = $1 OR invitee_id = $1 \
+                     OR accepted_by = $1 OR invitee_phone = (SELECT phone FROM users WHERE id = $1)",
         )
         .bind(id.0)
         .fetch_all(self.conn())
@@ -225,6 +229,17 @@ impl Tx<Worker> {
             // 8.13 以前的团队（复制进项目以后冻结的旧表）。
             "DELETE FROM teams WHERE user_id = $1",
             "DELETE FROM team_templates WHERE user_id = $1",
+            // 他发出、还没处理的邀请：收件人那边的提醒标已读（邀请下面就删了，留着就一直未读、点开 404）。别人的收件箱
+            // 不等锁（D3）。
+            "UPDATE inbox_items SET read_at = now() WHERE id IN (SELECT id FROM inbox_items \
+               WHERE user_id IN (SELECT invitee_id FROM project_invites WHERE inviter_id = $1 \
+                                   AND status = 'pending' AND invitee_id IS NOT NULL) \
+                 AND project_invite_id IN (SELECT id FROM project_invites WHERE inviter_id = $1 \
+                                             AND status = 'pending') \
+                 AND read_at IS NULL FOR UPDATE SKIP LOCKED)",
+            // 邀请的发送记录（数上限用，8.14）：他发的、发给他号码的。
+            "DELETE FROM project_invite_sends WHERE inviter_id = $1 \
+               OR invitee_phone = (SELECT phone FROM users WHERE id = $1)",
             // 项目（8.13）：他的 agent 离开所有项目；他建的项目删掉（成员、agent、邀请、密钥级联）；他在别人项目里的
             // 成员身份标成注销；发给他的、他发的邀请删掉（手机号邀请在改掉手机号之前按号码找）。
             "UPDATE project_agents SET is_lead = false, dedicated = false, left_at = coalesce(left_at, now()) \
