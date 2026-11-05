@@ -215,6 +215,11 @@ public final class AppModel {
         homeContent.visible
     }
 
+    /// 首页列表最上面的“等你处理”提示行（有待审批或未读时）；没有为 nil。
+    public var homeAttentionHint: HomeAttentionHint? {
+        HomeAttentionHint(badges: badges)
+    }
+
     /// 首页列表空着时显示什么（`HomeList.placeholder`：加载中、离线没缓存、还没有 Botin、都隐藏了）；有看得见的 Botin
     /// 或刷新失败时为 nil。
     public var homePlaceholder: HomePlaceholder? {

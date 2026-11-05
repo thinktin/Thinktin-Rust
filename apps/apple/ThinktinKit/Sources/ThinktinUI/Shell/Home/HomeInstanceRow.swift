@@ -5,6 +5,8 @@ import ThinktinKit
 enum HomeLayout {
     /// 普通行：头像左边 22pt、时间右边 24pt；一行约 83pt 高（44pt 头像上下各留 18pt 左右）。
     static let rowInsets = EdgeInsets(top: 18, leading: 22, bottom: 18, trailing: 24)
+    /// “等你处理”提示行（参考没有）：左右和普通行对齐，上下留得少一点。
+    static let hintInsets = EdgeInsets(top: 8, leading: 22, bottom: 4, trailing: 24)
     /// 头像和文字之间。
     static let rowSpacing = Metrics.Spacing.m
     /// 置顶的大头像这一行：比普通行的头像往下约 18pt，名字下面留 20pt 再接普通行。

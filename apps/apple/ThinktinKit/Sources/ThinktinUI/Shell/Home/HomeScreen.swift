@@ -14,8 +14,8 @@ import ThinktinKit
 ///   macOS 没有底部条：工作台和“+”在工具栏右边，搜索栏是工具栏里的那个。
 /// - 下拉刷新；回到首页时角标太久没刷新就刷新。离线、连接横幅由 `AppDestination` 放在顶部。
 ///
-/// 列表本身（置顶的大头像、普通行、长按菜单、左滑、已隐藏的入口和空状态）在 `HomeInstanceList`（第 1 轮 A 线，参考 01、
-/// 32、33、110–116、119、120）。“等你处理”提示行还没做。
+/// 列表本身（“等你处理”提示行、置顶的大头像、普通行、长按菜单、左滑、已隐藏的入口和空状态）在 `HomeInstanceList`
+/// （第 1 轮 A 线，参考 01、32、33、110–116、119、120）。
 struct HomeScreen: View {
     @Environment(AppModel.self) private var model
     @Environment(\.client) private var client
@@ -168,7 +168,8 @@ private struct AccountButton: View {
 
 /// 首页的实例列表和它的几种状态（加载中、离线没缓存、没有实例、都隐藏了、拉取失败）。
 ///
-/// - 最上面是置顶的大头像（`PinnedInstancesGrid`，参考 111、120），下面是普通行（参考 01、119），中间没有分区标题。
+/// - 有待审批或未读时最上面一行“等你处理”的胶囊（`HomeAttentionRow`，规范 4.2.1、6.1 A1），点了进审批中心或收件箱。
+/// - 再下面是置顶的大头像（`PinnedInstancesGrid`，参考 111、120），下面是普通行（参考 01、119），中间没有分区标题。
 /// - 每一行（和每个置顶的头像）长按是系统菜单（`HomeInstanceMenuContent`，预览卡 `HomeInstancePreviewCard`）；
 ///   普通行左滑是“置顶”“隐藏”（参考 110）。
 /// - 改名是系统弹窗（`HomeRenameAlert`），删除先弹列出影响的确认页（`InstanceDeleteSheet`），复制 ID 有成功的触感。
@@ -191,6 +192,12 @@ struct HomeInstanceList: View {
         List {
             if let error = model.refreshError {
                 ErrorBanner(error, onRetry: { Task { await model.refresh() } })
+                    .listRowSeparator(.hidden)
+                    .themedPlainRow()
+            }
+            if let hint = model.homeAttentionHint {
+                HomeAttentionRow(hint: hint) { router.openTopLevel(hint.route) }
+                    .listRowInsets(HomeLayout.hintInsets)
                     .listRowSeparator(.hidden)
                     .themedPlainRow()
             }
