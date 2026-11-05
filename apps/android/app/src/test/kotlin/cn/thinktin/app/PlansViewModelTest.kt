@@ -424,6 +424,70 @@ class PlansViewModelTest {
         assertEquals(listOf(Schedule.Cron("0 7 * * *", "Asia/Shanghai")), plan.triggers.map { it.schedule })
     }
 
+    /**
+     * “运行成功时通知我”（notify_success）：读回来的值进表单；没改它就不进 PlanChange，改别的策略时原样带回去
+     * （不能落回默认的打开）；切换了才算改动。
+     */
+    @Test
+    fun notifySuccessIsKeptAndOnlySentWhenChanged() = test {
+        val service = PlanService()
+        val quiet = Demo.DAILY_POLICY.copy(notifySuccess = false)
+        service.mock.updatePlan(Demo.PLAN_DAILY, PlanChange(policy = quiet))
+        val vm = PlanEditViewModel(service, clock, PlanEditMode.Edit(Demo.PLAN_DAILY))
+        advanceUntilIdle()
+        assertFalse(vm.uiState.value.policy.notifySuccess)
+        assertFalse(vm.uiState.value.hasChanges)
+        // 只改标题：策略不带。
+        vm.setTitle("每日依赖检查（安静）")
+        assertNull(vm.uiState.value.change.policy)
+        // 改了别的策略：整个策略提交，成功时通知还是关的。
+        vm.updatePolicy { it.copy(maxTokens = "60000") }
+        assertEquals(quiet.copy(maxTokens = 60_000), vm.uiState.value.change.policy)
+        vm.updatePolicy { it.copy(maxTokens = "50000") }
+        assertNull(vm.uiState.value.change.policy)
+        // 打开：算改动，提交 true。
+        vm.updatePolicy { it.copy(notifySuccess = true) }
+        assertEquals(quiet.copy(notifySuccess = true), vm.uiState.value.change.policy)
+        vm.events.test {
+            vm.save()
+            advanceUntilIdle()
+            assertTrue(awaitItem() is PlanEditEvent.Saved)
+        }
+        assertEquals(true, service.changes.single().second.policy?.notifySuccess)
+        assertTrue(service.mock.getPlan(Demo.PLAN_DAILY).policy.notifySuccess)
+
+        // 只切换开关也能保存。
+        val again = PlanEditViewModel(service, clock, PlanEditMode.Edit(Demo.PLAN_DAILY))
+        advanceUntilIdle()
+        assertTrue(again.uiState.value.policy.notifySuccess)
+        again.updatePolicy { it.copy(notifySuccess = false) }
+        assertTrue(again.uiState.value.hasChanges)
+        assertTrue(again.uiState.value.canSave)
+        assertEquals(PlanChange(policy = Demo.DAILY_POLICY.copy(notifySuccess = false)), again.uiState.value.change)
+    }
+
+    @Test
+    fun createSendsTheNotifySuccessChoice() = test {
+        val service = PlanService()
+        val vm = PlanEditViewModel(service, clock, PlanEditMode.Create(Demo.INSTANCE_CODER))
+        advanceUntilIdle()
+        assertTrue("默认打开", vm.uiState.value.policy.notifySuccess)
+        assertFalse(vm.uiState.value.hasChanges)
+        vm.updatePolicy { it.copy(notifySuccess = false) }
+        assertTrue(vm.uiState.value.hasChanges)
+        vm.setTitle("webhook 收件")
+        vm.setGoal("把收到的内容整理一下。")
+        vm.addTrigger()
+        vm.applyTrigger()
+        vm.events.test {
+            vm.save()
+            advanceUntilIdle()
+            val saved = awaitItem() as PlanEditEvent.Saved
+            assertFalse(saved.plan.policy.notifySuccess)
+        }
+        assertEquals(false, service.created.single().policy?.notifySuccess)
+    }
+
     @Test
     fun aFailedSaveOnlyRedoesWhatIsLeft() = test {
         val service = PlanService()
@@ -502,5 +566,11 @@ class PlansViewModelTest {
         assertNull(draft.copy(maxSteps = "1.5").policy)
         assertEquals(ApprovalTimeoutAction.Fail, draft.copy(onApprovalTimeout = ApprovalTimeoutAction.Fail).policy?.onApprovalTimeout)
         assertNull(PlanPolicyDraft().copy(maxTokens = "").policy?.maxTokens)
+        // 成功时通知：从原来的策略来，改了就跟着改。
+        val quiet = PlanPolicyDraft(odd.copy(notifySuccess = false))
+        assertFalse(quiet.notifySuccess)
+        assertEquals(odd.copy(notifySuccess = false), quiet.policy)
+        assertEquals(true, quiet.copy(notifySuccess = true).policy?.notifySuccess)
+        assertTrue(PlanPolicyDraft().notifySuccess)
     }
 }

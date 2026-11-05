@@ -249,6 +249,7 @@
     <string name="wait_rate_limited">模型服务限流，几分钟后自动继续</string>
     <string name="wait_overloaded">模型服务繁忙，几分钟后自动继续</string>
     <string name="wait_device_offline">等电脑上线</string>
+    <string name="wait_answer">在等队友回答</string>
     <string name="error_other">出了点问题，请重试</string>
 
     <!-- 13.3 Agent 目录、领养、实例设置 -->
@@ -605,7 +606,9 @@
     <string name="chat_source_plan">计划</string>
     <string name="chat_source_pipeline">流水线</string>
     <string name="chat_source_delegate">委派</string>
-    <string name="chat_source_unknown">运行</string>
+    <string name="chat_source_ask">队友提问</string>
+    <string name="chat_source_unknown">其他来源</string>
+    <string name="chat_block_run">运行</string>
     <string name="chat_block_tokens">%1$s token</string>
     <string name="chat_duration_seconds">%1$d 秒</string>
     <string name="chat_duration_minutes">%1$d 分 %2$d 秒</string>
@@ -613,6 +616,7 @@
     <string name="chat_prompt_delegate">负责人 agent 委派的任务</string>
     <string name="chat_prompt_plan">计划触发</string>
     <string name="chat_prompt_pipeline">流水线步骤</string>
+    <string name="chat_prompt_ask">队友 agent 的提问</string>
     <string name="chat_history_expired">过程记录已超过保留期</string>
     <string name="chat_history_missing">本机没有这次运行的过程记录</string>
     <string name="chat_run_error">失败原因：%1$s</string>
@@ -636,11 +640,16 @@
     <string name="chat_child_pipeline">流水线步骤：%1$s</string>
     <string name="chat_child_delegate">委派给 %1$s</string>
     <string name="chat_child_open">查看运行</string>
+    <string name="chat_ask_to">问了 %1$s</string>
+    <string name="chat_ask_to_unknown">问了一个队友</string>
+    <string name="chat_ask_open">查看回答</string>
     <string name="chat_state_attempt">第 %1$d 次尝试</string>
     <plurals name="chat_state_steps">
         <item quantity="other">开始 %1$d 个步骤</item>
     </plurals>
     <string name="chat_state_reason">原因：%1$s</string>
+    <string name="chat_state_reason_interrupted">被新消息打断</string>
+    <string name="chat_state_reason_no_answer">提问超时没回答</string>
     <string name="chat_plan_needs_confirmation">agent 新建了计划，等你确认</string>
     <string name="chat_plan_updated">agent 修改了计划，等你确认</string>
     <string name="chat_plan_cancelled">计划已取消</string>
@@ -657,6 +666,8 @@
     <string name="chat_sys_stop_refusal">模型拒绝了这个请求</string>
     <string name="chat_sys_stop_other">这一轮提前结束（%1$s）</string>
     <string name="chat_sys_unknown">暂不支持的事件：%1$s</string>
+    <string name="chat_sys_board_posted">发到了共享看板</string>
+    <string name="chat_sys_hook_received">webhook 收到了一个事件</string>
     <string name="chat_banner_approval">等待你批准</string>
     <string name="chat_banner_go_approve">去审批</string>
     <string name="chat_banner_quota">等模型 key</string>
@@ -795,6 +806,11 @@
     <string name="plan_policy_preauthorized">预授权的操作</string>
     <string name="plan_policy_preauthorized_hint">这些操作 agent 不用等你审批。电脑上的高危操作永远要你批准。</string>
     <string name="plan_policy_none">无</string>
+    <string name="plan_policy_notify_success">运行成功时通知我</string>
+    <string name="plan_policy_notify_success_on">运行成功时推送通知、放进收件箱。</string>
+    <string name="plan_policy_notify_success_off">成功的运行不推送、不进收件箱，失败照常通知。</string>
+    <string name="plan_policy_notify_success_yes">通知</string>
+    <string name="plan_policy_notify_success_no">不通知（失败照常通知）</string>
     <string name="plan_policy_unlimited">不限</string>
     <string name="plan_policy_approval_timeout_hours">审批超时（小时）</string>
     <string name="plan_policy_on_timeout">超时以后</string>

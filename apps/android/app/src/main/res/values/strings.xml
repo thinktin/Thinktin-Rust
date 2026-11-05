@@ -252,6 +252,7 @@
     <string name="wait_rate_limited">The model service is rate limiting. Continues automatically in a few minutes.</string>
     <string name="wait_overloaded">The model service is busy. Continues automatically in a few minutes.</string>
     <string name="wait_device_offline">Waiting for your computer to come online.</string>
+    <string name="wait_answer">Waiting for a teammate to answer.</string>
     <string name="error_other">Something went wrong. Please try again.</string>
 
     <!-- 13.3 Agent 目录、领养、实例设置 -->
@@ -611,7 +612,9 @@
     <string name="chat_source_plan">Plan</string>
     <string name="chat_source_pipeline">Pipeline</string>
     <string name="chat_source_delegate">Delegated</string>
-    <string name="chat_source_unknown">Run</string>
+    <string name="chat_source_ask">Teammate question</string>
+    <string name="chat_source_unknown">Other source</string>
+    <string name="chat_block_run">Run</string>
     <string name="chat_block_tokens">%1$s tokens</string>
     <string name="chat_duration_seconds">%1$ds</string>
     <string name="chat_duration_minutes">%1$dm %2$ds</string>
@@ -619,6 +622,7 @@
     <string name="chat_prompt_delegate">Task delegated by the lead agent</string>
     <string name="chat_prompt_plan">Triggered by a plan</string>
     <string name="chat_prompt_pipeline">Pipeline step</string>
+    <string name="chat_prompt_ask">Question from a teammate agent</string>
     <string name="chat_history_expired">The run log is past its retention period</string>
     <string name="chat_history_missing">This run\'s log isn\'t on this device</string>
     <string name="chat_run_error">Failure: %1$s</string>
@@ -642,12 +646,17 @@
     <string name="chat_child_pipeline">Pipeline step: %1$s</string>
     <string name="chat_child_delegate">Delegated to %1$s</string>
     <string name="chat_child_open">View run</string>
+    <string name="chat_ask_to">Asked %1$s</string>
+    <string name="chat_ask_to_unknown">Asked a teammate</string>
+    <string name="chat_ask_open">View the answer</string>
     <string name="chat_state_attempt">Attempt %1$d</string>
     <plurals name="chat_state_steps">
         <item quantity="one">Started %1$d step</item>
         <item quantity="other">Started %1$d steps</item>
     </plurals>
     <string name="chat_state_reason">Reason: %1$s</string>
+    <string name="chat_state_reason_interrupted">Interrupted by a new message</string>
+    <string name="chat_state_reason_no_answer">The question wasn\'t answered in time</string>
     <string name="chat_plan_needs_confirmation">The agent created a plan that needs your confirmation</string>
     <string name="chat_plan_updated">The agent changed a plan that needs your confirmation</string>
     <string name="chat_plan_cancelled">Plan cancelled</string>
@@ -664,6 +673,8 @@
     <string name="chat_sys_stop_refusal">The model refused this request</string>
     <string name="chat_sys_stop_other">This turn ended early (%1$s)</string>
     <string name="chat_sys_unknown">Unsupported event: %1$s</string>
+    <string name="chat_sys_board_posted">Posted to the shared board</string>
+    <string name="chat_sys_hook_received">The webhook received an event</string>
     <string name="chat_banner_approval">Waiting for your approval</string>
     <string name="chat_banner_go_approve">Review</string>
     <string name="chat_banner_quota">Waiting for a model key</string>
@@ -804,6 +815,11 @@
     <string name="plan_policy_preauthorized">Pre-approved actions</string>
     <string name="plan_policy_preauthorized_hint">The agent won\'t ask before these. Risky actions on your computer always need your approval.</string>
     <string name="plan_policy_none">None</string>
+    <string name="plan_policy_notify_success">Notify me when a run succeeds</string>
+    <string name="plan_policy_notify_success_on">Successful runs send a notification and go to your inbox.</string>
+    <string name="plan_policy_notify_success_off">Successful runs won\'t send notifications or go to your inbox. Failures are still notified.</string>
+    <string name="plan_policy_notify_success_yes">On</string>
+    <string name="plan_policy_notify_success_no">Off (failures are still notified)</string>
     <string name="plan_policy_unlimited">No limit</string>
     <string name="plan_policy_approval_timeout_hours">Approval timeout (hours)</string>
     <string name="plan_policy_on_timeout">When it times out</string>

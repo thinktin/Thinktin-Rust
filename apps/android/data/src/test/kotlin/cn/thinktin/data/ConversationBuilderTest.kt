@@ -12,6 +12,7 @@ import cn.thinktin.data.model.EventKinds
 import cn.thinktin.data.model.HistoryGap
 import cn.thinktin.data.model.HistoryWindow
 import cn.thinktin.data.model.InstanceEvent
+import cn.thinktin.data.model.KnownStateReason
 import cn.thinktin.data.model.OptionKind
 import cn.thinktin.data.model.PromptAuthor
 import cn.thinktin.data.model.Run
@@ -441,6 +442,124 @@ class ConversationBuilderTest {
         assertFalse(plan.fromUser)
     }
 
+    /** 队友提问（8.11）：prompt 是提问的 agent 写的，标 AI 生成、不是“你”；不认识的来源也不当成用户发的。 */
+    @Test
+    fun askPromptIsAiGeneratedAndUnknownSourceIsNotFromUser() {
+        val asked = run(id = "r1", source = RunSource.Ask, prompt = "版本号是多少？", parent = "p", root = "p")
+        val prompt = ConversationBuilder.build(listOf(asked), emptyList()).block("r1")!!.prompt!!
+        assertEquals(PromptAuthor.Ask, prompt.author)
+        assertTrue(prompt.aiGenerated)
+        assertFalse(prompt.fromUser)
+        val unknown = ConversationBuilder.build(listOf(run(source = RunSource.Unknown)), emptyList()).block("r1")!!.prompt!!
+        assertEquals(PromptAuthor.Unknown, unknown.author)
+        assertFalse(unknown.fromUser)
+        assertFalse(unknown.aiGenerated)
+        // 不认识的来源不知道是谁写的：不放在右侧（用户那一侧）。
+        assertFalse(unknown.onUserSide)
+        assertFalse(prompt.onUserSide)
+        // 每一种来源都有对应的作者，只有 user 是“你”；右侧只有用户自己说的和计划的目标（用户写的）。
+        for (source in RunSource.entries) {
+            val author = PromptAuthor.of(source)
+            assertEquals(source == RunSource.User, author == PromptAuthor.User)
+            val p = ConversationBuilder.build(listOf(run(source = source)), emptyList()).block("r1")!!.prompt!!
+            assertEquals(source.name, source == RunSource.User || source == RunSource.Plan, p.onUserSide)
+            // agent 写的一定在左侧。
+            if (p.aiGenerated) assertFalse(source.name, p.onUserSide)
+        }
+    }
+
+    /** ask.sent 出提问卡片（问谁、问了什么、回答的子运行）；board.posted、hook.received 是系统行，不带内容。 */
+    @Test
+    fun askBoardAndHookEvents() {
+        val events = listOf(
+            ev(EventKinds.ASK_SENT, payload = obj {
+                put("child_run_id", "answer-run"); put("instance_id", "i2"); put("to", "研究员"); put("question", "版本号是多少？")
+            }),
+            ev(EventKinds.BOARD_POSTED, payload = obj { put("post_id", "post-1"); putJsonArray("tags") { add("release") } }),
+            ev(EventKinds.HOOK_RECEIVED, payload = obj { put("hook_id", "h1"); put("bytes", 120); put("content_type", "json") }),
+            // 缺字段也不崩：没有子运行的卡片不能点。
+            ev(EventKinds.ASK_SENT, payload = obj { put("question", "  ") }),
+        )
+        val items = items(events)
+        val asks = items.filterIsInstance<TimelineItem.AskCard>()
+        assertEquals(2, asks.size)
+        assertEquals("answer-run", asks[0].childRunId)
+        assertEquals("i2", asks[0].instanceId)
+        assertEquals("研究员", asks[0].to)
+        assertEquals("版本号是多少？", asks[0].question)
+        assertNull(asks[1].childRunId)
+        assertNull(asks[1].to)
+        assertNull(asks[1].question)
+        assertEquals(
+            listOf(SystemLine.BoardPosted("post-1"), SystemLine.HookReceived("h1")),
+            items.filterIsInstance<TimelineItem.System>().map { it.line },
+        )
+        assertTrue(items.filterIsInstance<TimelineItem.System>().none { it.line.isError })
+        assertEquals(asks.size, asks.map { it.key }.distinct().size)
+    }
+
+    /** 取消的固定原因（被新消息打断、提问超时）标出来给界面换文案；等队友回答的 wait_code 记在状态行上。 */
+    @Test
+    fun cancelReasonsAndAnswerWait() {
+        val events = listOf(
+            ev(EventKinds.RUN_STATE, payload = obj { put("state", "waiting_children"); put("attempt", 1); put("wait_code", "answer") }),
+            ev(EventKinds.RUN_STATE, payload = obj { put("state", "cancelled"); put("attempt", 1); put("reason", "no answer in time") }),
+        )
+        val lines = items(events, listOf(run(state = RunState.Cancelled))).filterIsInstance<TimelineItem.RunStateLine>()
+        assertEquals(listOf(RunState.WaitingChildren, RunState.Cancelled), lines.map { it.state })
+        assertEquals(WaitCode.Answer, lines[0].waitCode)
+        assertNull(lines[0].knownReason)
+        assertEquals(KnownStateReason.NoAnswerInTime, lines[1].knownReason)
+        assertEquals("no answer in time", lines[1].reason)
+
+        seq = 0
+        val interrupted = items(
+            listOf(ev(EventKinds.RUN_STATE, payload = obj { put("state", "cancelled"); put("reason", "interrupted by a new message") })),
+        ).filterIsInstance<TimelineItem.RunStateLine>().single()
+        assertEquals(KnownStateReason.Interrupted, interrupted.knownReason)
+        seq = 0
+        val other = items(
+            listOf(ev(EventKinds.RUN_STATE, payload = obj { put("state", "cancelled"); put("reason", "the asker stopped") })),
+        ).filterIsInstance<TimelineItem.RunStateLine>().single()
+        assertNull(other.knownReason)
+        assertEquals("the asker stopped", other.reason)
+        assertTrue(other.showsReason)
+        assertTrue(interrupted.showsReason)
+    }
+
+    /**
+     * 状态行的“原因：”只显示有意义的（第 8.2 节）：等子任务 / 等队友回答的 reason 是平台写的英文诊断，等什么已经由
+     * 状态和 wait_code 说了，不显示；waiting_quota 有码时用码的文案；等审批（agent 写的标题）、失败、取消照常显示。
+     */
+    @Test
+    fun waitingChildrenDiagnosticsAreNotShownAsReason() {
+        fun line(state: String, reason: String?, waitCode: String? = null): TimelineItem.RunStateLine {
+            seq = 0
+            val payload = obj {
+                put("state", state); put("attempt", 1)
+                if (reason != null) put("reason", reason)
+                if (waitCode != null) put("wait_code", waitCode)
+            }
+            return items(listOf(ev(EventKinds.RUN_STATE, payload = payload))).filterIsInstance<TimelineItem.RunStateLine>().single()
+        }
+        // 后端 executor 在提问方等回答、委派方等子任务、回答到了交还结果时写的几种 reason。
+        val answer = line("waiting_children", "waiting for 1 answer(s)", "answer")
+        assertEquals(WaitCode.Answer, answer.waitCode)
+        assertEquals("waiting for 1 answer(s)", answer.reason)
+        assertFalse(answer.showsReason)
+        assertFalse(line("waiting_children", "waiting for 2 delegated subtask(s)").showsReason)
+        assertFalse(line("waiting_children", "waiting for 1 delegated subtask(s) and 1 answer(s)").showsReason)
+        assertFalse(line("waiting_children", "handing the results to the agent").showsReason)
+        // waiting_quota：有码用码的文案，没码（老服务端）显示服务端按用户语言写的 reason。
+        assertFalse(line("waiting_quota", "key 余额不足", "no_balance").showsReason)
+        assertTrue(line("waiting_quota", "key 余额不足").showsReason)
+        // 等审批是 agent 写的标题（标 AI 生成），失败、取消是要让人看到的原因。
+        assertTrue(line("waiting_approval", "删除 build 目录").showsReason)
+        assertTrue(line("failed", "upstream_timeout").showsReason)
+        assertTrue(line("cancelled", "no answer in time").showsReason)
+        assertFalse(line("failed", null).showsReason)
+    }
+
     @Test
     fun runsOlderThanLoadedEventsWaitForPagingThenShowGap() {
         val old = run(id = "old", state = RunState.Succeeded, createdAt = now - 3_600_000, summary = "做完了")
@@ -575,5 +694,25 @@ class ConversationBuilderTest {
         assertEquals(listOf(ApprovalCardStatus.Superseded, ApprovalCardStatus.Pending), waiting.map { it.status })
         // 流水线根运行有两个子运行入口。
         assertEquals(2, coder.block("run-pipeline")!!.items.count { it is TimelineItem.ChildRun })
+        // 翻译 README 时问了研究员（点进回答的子运行），还发了看板。
+        val done = coder.block(MockData.RUN_DONE)!!.items
+        assertEquals(MockData.RUN_ASK, done.filterIsInstance<TimelineItem.AskCard>().single().childRunId)
+        assertTrue(done.any { it is TimelineItem.System && it.line is SystemLine.BoardPosted })
+        // 每日依赖检查（已确认的计划）这次是 webhook 触发的：区块里第一条是“webhook 收到了一个事件”系统行。
+        val hook = coder.block(MockData.RUN_FAILED)!!.items.drop(1).first()
+        assertEquals(SystemLine.HookReceived("hook-advisory"), (hook as TimelineItem.System).line)
+
+        // 研究员那边：回答的运行来源是队友提问（prompt 标 AI 生成）。
+        val research = ConversationBuilder.build(
+            data.runs.filter { it.instanceId == MockData.INSTANCE_RESEARCH },
+            data.events.filter { it.instanceId == MockData.INSTANCE_RESEARCH },
+            window = HistoryWindow(exhausted = true),
+        )
+        val answer = research.block(MockData.RUN_ASK)!!
+        assertEquals(PromptAuthor.Ask, answer.prompt!!.author)
+        assertTrue(answer.prompt!!.aiGenerated)
+        assertEquals(MockData.RUN_DONE, answer.run!!.parentRunId)
+        // 每周新闻的计划还在等确认，收不到 webhook 事件。
+        assertTrue(research.block(MockData.RUN_QUOTA)!!.items.none { it is TimelineItem.System && it.line is SystemLine.HookReceived })
     }
 }

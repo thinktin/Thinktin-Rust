@@ -21,6 +21,7 @@ import cn.thinktin.data.model.TemplateMember
 import cn.thinktin.data.model.string
 import cn.thinktin.data.service.ServiceError
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -116,6 +117,33 @@ class AppApiMappersTest {
         assertEquals(0u, negative.maxSteps)
 
         expectInvalid { PlanPolicy(onApprovalTimeout = ApprovalTimeoutAction.Unknown).toCore() }
+    }
+
+    /** 成功时通知（notify_success）两个方向都带上：提交时用模型里的值，不能落回绑定的默认 true。 */
+    @Test
+    fun planPolicyCarriesNotifySuccessBothWays() {
+        assertTrue(PlanPolicy().notifySuccess)
+        assertTrue(CorePlanPolicy().toModel().notifySuccess)
+        val quiet = CorePlanPolicy(notifySuccess = false).toModel()
+        assertFalse(quiet.notifySuccess)
+        assertEquals(CorePlanPolicy(notifySuccess = false), quiet.toCore())
+        assertFalse(PlanPolicy(notifySuccess = false).toCore().notifySuccess)
+        assertTrue(PlanPolicy(notifySuccess = true).toCore().notifySuccess)
+        // 新建、修改计划都把它交给 client-core。
+        assertEquals(
+            false,
+            NewPlan("i1", "t", "g", emptyList(), policy = PlanPolicy(notifySuccess = false)).toCore().policy?.notifySuccess,
+        )
+        assertEquals(false, PlanChange(policy = quiet).toCore().policy?.notifySuccess)
+        assertEquals(
+            false,
+            CorePlan(
+                id = "p1", instanceId = "i1", title = "t", goal = "g", paused = false, createdBy = "user",
+                awaitingConfirmation = false, revision = 1u, policyJson = "{}",
+                policy = CorePlanPolicy(notifySuccess = false), catchUp = "once",
+                createdAtMs = now, triggers = emptyList(), steps = emptyList(),
+            ).toModel().policy.notifySuccess,
+        )
     }
 
     @Test
@@ -262,10 +290,11 @@ class AppApiMappersTest {
             "rate_limited" to WaitCode.RateLimited,
             "overloaded" to WaitCode.Overloaded,
             "device_offline" to WaitCode.DeviceOffline,
+            "answer" to WaitCode.Answer,
             "solar_flare" to WaitCode.Unknown,
         )
         for ((wire, code) in expected) assertEquals(wire, code, base.copy(waitCode = wire).toModel().waitCode)
-        // 限流、过载会自己继续；其余要用户处理。
+        // 限流、过载、等队友回答会自己继续；其余要用户处理。
         assertEquals(
             listOf(WaitCode.Invalid, WaitCode.NoBalance, WaitCode.Unavailable, WaitCode.DeviceOffline),
             WaitCode.entries.filter { it.needsUserAction },

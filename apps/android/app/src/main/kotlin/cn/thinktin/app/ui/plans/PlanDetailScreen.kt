@@ -372,6 +372,10 @@ private fun PolicySection(policy: PlanPolicy, plan: Plan) {
             stringResource(R.string.plan_policy_preauthorized),
             tools.joinToString(stringResource(R.string.plan_list_separator)).ifEmpty { stringResource(R.string.plan_policy_none) },
         )
+        PolicyLine(
+            stringResource(R.string.plan_policy_notify_success),
+            stringResource(if (policy.notifySuccess) R.string.plan_policy_notify_success_yes else R.string.plan_policy_notify_success_no),
+        )
         PolicyLine(stringResource(R.string.plan_catch_up), stringResource(plan.catchUp.labelRes()))
     }
 }

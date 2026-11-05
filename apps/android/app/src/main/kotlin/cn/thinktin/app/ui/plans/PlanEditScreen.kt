@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -24,6 +25,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -34,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -62,6 +65,7 @@ import java.time.ZoneId
 const val PLAN_EDIT_TEST_TAG = "plan-edit"
 const val PLAN_SAVE_TEST_TAG = "plan-save"
 const val PLAN_TRIGGER_ROW_TEST_TAG = "plan-trigger-"
+const val PLAN_NOTIFY_SUCCESS_TEST_TAG = "plan-notify-success"
 
 /**
  * 新建、编辑计划（13.6，第 4.6 节；路由 plans/new?instanceId=…、plan/{id}/edit）：实例、标题、目标、触发规则（面板里编）、
@@ -381,6 +385,30 @@ private fun PolicyForm(policy: PlanPolicyDraft, viewModel: PlanEditViewModel) {
                 label = { Text(toolKindLabelRes(kind)?.let { res -> stringResource(res) } ?: kind) },
             )
         }
+    }
+    NotifySuccessToggle(policy.notifySuccess) { on -> viewModel.updatePolicy { it.copy(notifySuccess = on) } }
+}
+
+/** “运行成功时通知我”（docs/event-triggers.md）：关掉以后成功的运行不推送、不进收件箱，失败照常通知。 */
+@Composable
+private fun NotifySuccessToggle(on: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .toggleable(value = on, role = Role.Switch, onValueChange = onChange)
+            .padding(vertical = 4.dp)
+            .testTag(PLAN_NOTIFY_SUCCESS_TEST_TAG),
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(stringResource(R.string.plan_policy_notify_success), style = MaterialTheme.typography.bodyMedium)
+            Text(
+                stringResource(if (on) R.string.plan_policy_notify_success_on else R.string.plan_policy_notify_success_off),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(checked = on, onCheckedChange = null)
     }
 }
 

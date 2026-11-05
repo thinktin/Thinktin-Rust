@@ -15,6 +15,7 @@ object WaitText {
         WaitCode.RateLimited -> UiText(R.string.wait_rate_limited)
         WaitCode.Overloaded -> UiText(R.string.wait_overloaded)
         WaitCode.DeviceOffline -> UiText(R.string.wait_device_offline)
+        WaitCode.Answer -> UiText(R.string.wait_answer)
         WaitCode.Unknown, null -> null
     }
 

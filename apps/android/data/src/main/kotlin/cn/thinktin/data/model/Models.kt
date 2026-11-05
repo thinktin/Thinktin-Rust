@@ -74,7 +74,7 @@ data class Run(
     val rootRunId: String,
     val stepKey: String?,
     val source: RunSource,
-    /** 用户的提问（不在事件流里）。 */
+    /** 这次运行要做的事（不在事件流里）：用户自己说的，或别的 agent 写的（看 [RunSource.promptAiGenerated]）。 */
     val prompt: String,
     val state: RunState,
     val stateReason: String?,
@@ -85,7 +85,7 @@ data class Run(
     val createdAtMs: Long,
     val startedAtMs: Long?,
     val finishedAtMs: Long?,
-    /** 等的是什么（只在 waiting_quota / waiting_device 时有）：界面按码显示原因和操作。 */
+    /** 等的是什么（waiting_quota / waiting_device 时有，waiting_children 等队友回答时是 answer）：界面按码显示原因和操作。 */
     val waitCode: WaitCode? = null,
 ) {
     /** 耗时（毫秒）；还没开始时为 null，没结束时算到 [nowMs]。 */
@@ -144,6 +144,15 @@ object EventKinds {
     const val RUN_LOG_TRUNCATED = "run.log_truncated"
     const val PIPELINE_STEP_STARTED = "pipeline.step_started"
     const val DELEGATE_STARTED = "delegate.started"
+
+    /** 问了队友一个问题（8.11）：child_run_id、instance_id、to、question（问题第一行，agent 写的）。 */
+    const val ASK_SENT = "ask.sent"
+
+    /** 发到了共享看板（8.10）：post_id、tags。 */
+    const val BOARD_POSTED = "board.posted"
+
+    /** 计划的 webhook 收到了一个事件（7.1）：hook_id、bytes、content_type（不含内容）。 */
+    const val HOOK_RECEIVED = "hook.received"
     const val ARTIFACT_PUBLISHED = "artifact.published"
     const val APPROVAL_DECIDED = "approval.decided"
     const val PLAN_NEEDS_CONFIRMATION = "plan.needs_confirmation"
@@ -158,8 +167,8 @@ object EventKinds {
         AGENT_MESSAGE, AGENT_THOUGHT, AGENT_TOOL_CALL, AGENT_TOOL_CALL_UPDATE, AGENT_PLAN, AGENT_USAGE,
         AGENT_PERMISSION_REQUESTED, AGENT_PERMISSION_RESOLVED, AGENT_PLATFORM_TOOL_CALL, AGENT_VAULT_REVEAL,
         AGENT_TURN_STARTED, AGENT_TURN_ENDED, AGENT_READY, AGENT_SESSION_LOST, AGENT_EXITED, AGENT_UPDATE,
-        AGENT_ERROR, RUN_STATE, RUN_LOG_TRUNCATED, PIPELINE_STEP_STARTED, DELEGATE_STARTED,
-        ARTIFACT_PUBLISHED, APPROVAL_DECIDED, PLAN_NEEDS_CONFIRMATION, PLAN_CANCELLED,
+        AGENT_ERROR, RUN_STATE, RUN_LOG_TRUNCATED, PIPELINE_STEP_STARTED, DELEGATE_STARTED, ASK_SENT, BOARD_POSTED,
+        HOOK_RECEIVED, ARTIFACT_PUBLISHED, APPROVAL_DECIDED, PLAN_NEEDS_CONFIRMATION, PLAN_CANCELLED,
         VAULT_REQUESTED, VAULT_FULFILLED, VAULT_DECLINED, VAULT_USED,
     )
 }
@@ -302,6 +311,11 @@ data class PlanPolicy(
     val dailyTokenLimit: Long? = null,
     /** 等电脑上线、等补上 key 最多等多久。 */
     val waitTimeoutSecs: Long = DEFAULT_WAIT_TIMEOUT_SECS,
+    /**
+     * 运行成功时通知（推送、收件箱）。关掉以后成功的不打扰，失败、等审批、等 key 照常通知（docs/event-triggers.md）。
+     * 改计划时整个策略一起提交：读回来是什么就带回去，漏了会被改回打开。
+     */
+    val notifySuccess: Boolean = true,
 ) {
     companion object {
         const val DEFAULT_APPROVAL_TIMEOUT_SECS: Long = 86_400

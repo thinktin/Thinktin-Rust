@@ -64,7 +64,6 @@ import cn.thinktin.app.ui.common.formatTokens
 import cn.thinktin.app.ui.common.labelRes
 import cn.thinktin.app.ui.common.resolve
 import cn.thinktin.data.model.Run
-import cn.thinktin.data.model.RunSource
 import cn.thinktin.data.model.RunState
 import cn.thinktin.data.model.RunTreeNode
 import cn.thinktin.design.component.AiGeneratedLabel
@@ -255,8 +254,8 @@ private fun RunDetail(state: RunUiState, run: Run, nowMs: Long, onOpenChat: (Str
                 modifier = Modifier.semantics { heading() },
             )
         }
-        // 委派子运行的 prompt 是负责人 agent 写的（第 8.4 节）。
-        if (run.source == RunSource.Delegate || run.source == RunSource.Pipeline) AiGeneratedLabel()
+        // 委派子运行、队友提问的 prompt 是别的 agent 写的，流水线步骤的附带上游摘要（第 8.4 节）。
+        if (run.source.promptAiGenerated) AiGeneratedLabel()
         Text(run.prompt, style = MaterialTheme.typography.bodyLarge)
         val zone = LocalAppContainer.current.clock.zone
         InfoRow(stringResource(R.string.run_detail_instance), state.instanceNames[run.instanceId] ?: run.instanceId)
@@ -398,8 +397,10 @@ private fun TreeRow(
     ) {
         StatusDot(run.state, contentDescription = stateLabel)
         Column(Modifier.weight(1f)) {
+            // 队友提问的子运行在对方实例上、不认识的来源不知道是谁发起的：标出来源，免得看成用户自己发的（8.1、8.11）。
+            val source = if (run.source.labelledInLists) stringResource(run.source.labelRes()) else null
             Text(
-                listOfNotNull(name, run.stepKey).joinToString(" · "),
+                listOfNotNull(name, run.stepKey, source).joinToString(" · "),
                 style = MaterialTheme.typography.bodyMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
