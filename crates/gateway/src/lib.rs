@@ -43,6 +43,8 @@ pub struct GatewayConfig {
     pub label_downloads: bool,
     /// 限流与防刷（5.4）。
     pub limits: LimitConfig,
+    /// 跨用户项目（8.14）：发邀请、预览、接受。15.7 安全评审之前默认关（关着时这些接口 404，单人项目照常）。
+    pub cross_user_projects: bool,
 }
 
 impl Default for GatewayConfig {
@@ -56,6 +58,7 @@ impl Default for GatewayConfig {
             content_producer: "ThinkTin".into(),
             label_downloads: true,
             limits: LimitConfig::default(),
+            cross_user_projects: false,
         }
     }
 }

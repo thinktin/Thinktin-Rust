@@ -13,6 +13,8 @@ mod im_channels;
 mod inbox;
 mod instances;
 mod plans;
+mod project_invites;
+mod projects;
 mod reports;
 mod runs;
 mod teams;
@@ -167,6 +169,56 @@ pub fn router() -> Router<AppState> {
         )
         .route("/v1/team-templates/{id}", delete(teams::delete_template))
         .route("/v1/team-templates/{id}/adopt", post(teams::adopt_template))
+        // 项目、邀请与加入（8.14）
+        .route("/v1/projects", get(projects::list).post(projects::create))
+        .route(
+            "/v1/projects/{id}",
+            get(projects::get)
+                .patch(projects::update)
+                .delete(projects::delete),
+        )
+        .route("/v1/projects/{id}/agents", post(projects::add_agents))
+        .route(
+            "/v1/projects/{id}/agents/{instance_id}",
+            delete(projects::withdraw_agent),
+        )
+        .route("/v1/projects/{id}/budget", put(projects::set_budget))
+        .route("/v1/projects/{id}/leave", post(projects::leave))
+        .route(
+            "/v1/projects/{id}/members/{user_id}",
+            delete(projects::remove_member),
+        )
+        .route(
+            "/v1/projects/{id}/invites",
+            get(projects::invites).post(projects::create_invite),
+        )
+        .route(
+            "/v1/projects/{id}/invites/{invite_id}",
+            delete(projects::revoke_invite),
+        )
+        .route("/v1/project-invites", get(project_invites::mine))
+        .route(
+            "/v1/project-invites/resolve",
+            post(project_invites::resolve),
+        )
+        .route(
+            "/v1/project-invites/accept",
+            post(project_invites::accept_link),
+        )
+        .route("/v1/project-invites/{id}", get(project_invites::get))
+        .route(
+            "/v1/project-invites/{id}/accept",
+            post(project_invites::accept),
+        )
+        .route(
+            "/v1/project-invites/{id}/decline",
+            post(project_invites::decline),
+        )
+        .route("/v1/blocks", get(project_invites::blocks))
+        .route(
+            "/v1/blocks/{user_id}",
+            put(project_invites::block).delete(project_invites::unblock),
+        )
         // 产出物（8.4）
         .route("/v1/instances/{id}/artifacts", get(artifacts::for_instance))
         .route("/v1/runs/{id}/artifacts", get(artifacts::for_run))

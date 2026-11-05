@@ -48,6 +48,10 @@ pub struct LimitConfig {
     pub hook_events_per_minute: u32,
     /// 每个账号最多几个没删除的实例（归档的也算，11.9）；到了上限领养报 409 `instance_limit`。0 不限。
     pub instances_per_user: u32,
+    /// 项目邀请（8.14）：每个邀请人 24 小时最多发几个（手机号、链接都算；库里按时间窗数，超了 429）。
+    pub invites_per_day: u32,
+    /// 项目邀请：每个号码 24 小时最多收到几条邀请通知。超了的邀请照样有效、在 App 里看得到，只是不推送。
+    pub invites_per_phone_per_day: u32,
     /// 来源地址取 `X-Forwarded-For` 的最后一项（网关前面有自己的负载均衡时才开）。
     pub trust_forwarded_for: bool,
     /// 最多记多少个计数器；满了先清掉闲置的，还满就不再给新的来源计数（放行）。
@@ -68,6 +72,8 @@ impl Default for LimitConfig {
             reports_per_hour: 30,
             hook_events_per_minute: 30,
             instances_per_user: 0,
+            invites_per_day: 20,
+            invites_per_phone_per_day: 5,
             trust_forwarded_for: false,
             max_keys: 200_000,
         }

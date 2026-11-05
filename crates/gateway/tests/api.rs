@@ -35,6 +35,7 @@ struct Api {
 async fn api() -> Option<Api> {
     api_with(GatewayConfig {
         ws_heartbeat: Duration::from_millis(300),
+        cross_user_projects: true,
         ..GatewayConfig::default()
     })
     .await
@@ -4486,4 +4487,866 @@ async fn egress_requests_over_http() {
         )
         .await;
     assert_eq!(st, StatusCode::NOT_FOUND);
+}
+
+// ---------- 跨用户项目（8.14） ----------
+
+impl Api {
+    async fn named(&self, phone: &str, name: &str) -> User {
+        let u = self.login(phone).await;
+        let (st, body) = self
+            .call(
+                Method::PATCH,
+                "/v1/me",
+                Some(&u.access),
+                Some(json!({ "display_name": name })),
+            )
+            .await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        u
+    }
+
+    /// 建一个单人项目，负责人是 `lead`。
+    async fn new_project(&self, u: &User, name: &str, lead: InstanceId) -> String {
+        let (st, body) = self
+            .call(
+                Method::POST,
+                "/v1/projects",
+                Some(&u.access),
+                Some(json!({
+                    "name": name,
+                    "goal": "ship the redesign",
+                    "agents": [{ "instance_id": lead, "is_lead": true }]
+                })),
+            )
+            .await;
+        assert_eq!(st, StatusCode::CREATED, "{body}");
+        assert_eq!(body["role"], "creator");
+        body["id"].as_str().unwrap().into()
+    }
+
+    async fn link_invite(&self, u: &User, project: &str) -> (Value, String) {
+        let (st, body) = self
+            .call(
+                Method::POST,
+                &format!("/v1/projects/{project}/invites"),
+                Some(&u.access),
+                Some(json!({ "link": true })),
+            )
+            .await;
+        assert_eq!(st, StatusCode::CREATED, "{body}");
+        let token = body["token"].as_str().unwrap().to_string();
+        assert_eq!(body["link"], format!("thinktin://join/{token}"));
+        (body["invite"].clone(), token)
+    }
+
+    async fn join_link(&self, u: &User, token: &str, agents: &[InstanceId]) -> (StatusCode, Value) {
+        let agents: Vec<Value> = agents.iter().map(|a| json!({ "instance_id": a })).collect();
+        self.call(
+            Method::POST,
+            "/v1/project-invites/accept",
+            Some(&u.access),
+            Some(json!({
+                "token": token,
+                "agents": agents,
+                "daily_token_limit": 200000,
+                "total_token_limit": 5000000,
+                "consent": true
+            })),
+        )
+        .await
+    }
+
+    async fn inbox_subtypes(&self, u: &User) -> Vec<String> {
+        let (st, body) = self
+            .call(Method::GET, "/v1/inbox", Some(&u.access), None)
+            .await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|i| i["subtype"].as_str().map(String::from))
+            .collect()
+    }
+}
+
+/// 按手机号邀请（8.14）：注册的、没注册的、拉黑了的、已经在项目里的号码，回的都是 201 和同样的字段；只有该通知的人
+/// 收到通知，通知里没有项目名和邀请人的名字；预览里没有手机号，也没有别的成员的用户 id。
+#[tokio::test]
+async fn project_phone_invites_are_uniform_over_http() {
+    let Some(a) = api().await else { return };
+    let alice = a.named("13800130001", "Alice").await;
+    let bob = a.login("13800130002").await;
+    let carol = a.login("13800130003").await;
+    let dave = a.login("13800130004").await;
+    let a1 = a.adopt(&alice).await;
+    let d1 = a.adopt(&dave).await;
+    let p = a.new_project(&alice, "Moonshot", a1).await;
+    // dave 先用链接加入（已经是成员）。
+    let (_, token) = a.link_invite(&alice, &p).await;
+    let (st, body) = a.join_link(&dave, &token, &[d1]).await;
+    assert_eq!(st, StatusCode::CREATED, "{body}");
+    // carol 拉黑 alice（alice 的 id 从 bob 将要看到的那种预览里来：先用 dave 的项目详情拿）。
+    let (_, detail) = a
+        .call(
+            Method::GET,
+            &format!("/v1/projects/{p}"),
+            Some(&dave.access),
+            None,
+        )
+        .await;
+    let alice_id = detail["creator"]["user_id"].as_str().unwrap().to_string();
+    let (st, _) = a
+        .call(
+            Method::PUT,
+            &format!("/v1/blocks/{alice_id}"),
+            Some(&carol.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let mut shapes = vec![];
+    let mut bob_invite = String::new();
+    for phone in ["13800130002", "13800139999", "13800130003", "13800130004"] {
+        let (st, body) = a
+            .call(
+                Method::POST,
+                &format!("/v1/projects/{p}/invites"),
+                Some(&alice.access),
+                Some(json!({ "phone": phone })),
+            )
+            .await;
+        assert_eq!(st, StatusCode::CREATED, "{phone}: {body}");
+        let inv = &body["invite"];
+        assert_eq!(inv["status"], "pending");
+        let mut keys: Vec<String> = inv.as_object().unwrap().keys().cloned().collect();
+        keys.sort();
+        shapes.push(keys);
+        if phone == "13800130002" {
+            bob_invite = inv["id"].as_str().unwrap().into();
+        }
+    }
+    assert!(shapes.windows(2).all(|w| w[0] == w[1]), "{shapes:?}");
+    // 再邀请 bob：还是 201、同一个 id。
+    let (st, body) = a
+        .call(
+            Method::POST,
+            &format!("/v1/projects/{p}/invites"),
+            Some(&alice.access),
+            Some(json!({ "phone": "138 0013 0002" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED);
+    assert_eq!(body["invite"]["id"], bob_invite.as_str());
+    // 号码不对：422；邀请和链接都带、都不带：422。
+    for bad in [
+        json!({ "phone": "12" }),
+        json!({ "phone": "13800130002", "link": true }),
+        json!({}),
+    ] {
+        let (st, _) = a
+            .call(
+                Method::POST,
+                &format!("/v1/projects/{p}/invites"),
+                Some(&alice.access),
+                Some(bad),
+            )
+            .await;
+        assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+    }
+    // bob 的收件箱：一条邀请，不带项目名和 alice 的名字。
+    let (_, inbox) = a
+        .call(Method::GET, "/v1/inbox", Some(&bob.access), None)
+        .await;
+    let items = inbox["items"].as_array().unwrap();
+    let item = items
+        .iter()
+        .find(|i| i["subtype"] == "project_invite")
+        .expect("an invite notice");
+    assert_eq!(item["project_invite_id"], bob_invite.as_str());
+    let text = format!("{}{}", item["title"], item["body"]);
+    assert!(
+        !text.contains("Moonshot") && !text.contains("Alice"),
+        "{text}"
+    );
+    // carol 没收到；dave 已经在项目里，也没收到。
+    assert!(
+        !a.inbox_subtypes(&carol)
+            .await
+            .contains(&"project_invite".into())
+    );
+    assert!(
+        !a.inbox_subtypes(&dave)
+            .await
+            .contains(&"project_invite".into())
+    );
+    // bob 的预览：没有手机号，成员没有用户 id；创建者有 id（拉黑要用）。
+    let (st, preview) = a
+        .call(
+            Method::GET,
+            &format!("/v1/project-invites/{bob_invite}"),
+            Some(&bob.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{preview}");
+    assert!(!preview.to_string().contains("1380013"));
+    assert_eq!(preview["creator"]["user_id"], alice_id.as_str());
+    assert_eq!(preview["project"]["name"], "Moonshot");
+    for m in preview["members"].as_array().unwrap() {
+        assert!(m.get("user_id").is_none(), "{m}");
+    }
+    let (st, mine) = a
+        .call(Method::GET, "/v1/project-invites", Some(&bob.access), None)
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(mine["invites"].as_array().unwrap().len(), 1);
+    // carol 看 bob 的邀请：404。
+    let (st, _) = a
+        .call(
+            Method::GET,
+            &format!("/v1/project-invites/{bob_invite}"),
+            Some(&carol.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    // 邀请人的列表：打码的号码。
+    let (_, list) = a
+        .call(
+            Method::GET,
+            &format!("/v1/projects/{p}/invites"),
+            Some(&alice.access),
+            None,
+        )
+        .await;
+    let masked: Vec<_> = list["invites"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|i| i["phone_masked"].as_str())
+        .collect();
+    assert!(masked.iter().all(|m| m.contains("****")), "{masked:?}");
+    // bob 拒绝：204；之后看不到。
+    let (st, _) = a
+        .call(
+            Method::POST,
+            &format!("/v1/project-invites/{bob_invite}/decline"),
+            Some(&bob.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let (_, mine) = a
+        .call(Method::GET, "/v1/project-invites", Some(&bob.access), None)
+        .await;
+    assert!(mine["invites"].as_array().unwrap().is_empty());
+}
+
+/// 链接邀请从发出到加入、撤回、退出、再加入、移出（8.14）。
+#[tokio::test]
+async fn project_link_invite_join_and_exit_over_http() {
+    let Some(a) = api().await else { return };
+    let alice = a.named("13800130011", "Alice").await;
+    let bob = a.named("13800130012", "Bob").await;
+    let carol = a.login("13800130013").await;
+    let a1 = a.adopt(&alice).await;
+    let b1 = a.adopt(&bob).await;
+    let c1 = a.adopt(&carol).await;
+    let p = a.new_project(&alice, "Design", a1).await;
+    let (invite, token) = a.link_invite(&alice, &p).await;
+    let invite_id = invite["id"].as_str().unwrap();
+    // 令牌只在发出时返回一次。
+    let (_, list) = a
+        .call(
+            Method::GET,
+            &format!("/v1/projects/{p}/invites"),
+            Some(&alice.access),
+            None,
+        )
+        .await;
+    assert!(!list.to_string().contains(&token));
+    // 格式不对的令牌、链接邀请的 id 走按 id 的接口：404。
+    for bad in ["tpi1_nope", "garbage", ""] {
+        let (st, _) = a
+            .call(
+                Method::POST,
+                "/v1/project-invites/resolve",
+                Some(&bob.access),
+                Some(json!({ "token": bad })),
+            )
+            .await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "{bad}");
+    }
+    let (st, _) = a
+        .call(
+            Method::POST,
+            &format!("/v1/project-invites/{invite_id}/accept"),
+            Some(&bob.access),
+            Some(json!({
+                "agents": [{ "instance_id": b1 }],
+                "daily_token_limit": 1000, "total_token_limit": 5000, "consent": true
+            })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    // 预览。
+    let (st, preview) = a
+        .call(
+            Method::POST,
+            "/v1/project-invites/resolve",
+            Some(&bob.access),
+            Some(json!({ "token": token })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{preview}");
+    assert_eq!(preview["project"]["goal"], "ship the redesign");
+    assert_eq!(preview["creator"]["display_name"], "Alice");
+    assert_eq!(preview["members"].as_array().unwrap().len(), 1);
+    assert!(preview["shared_with_project"].as_array().unwrap().len() == 5);
+    assert!(preview["kept_private"].as_array().unwrap().len() == 8);
+    // 不确认：422；确认了：201；再来一次：200，内容一样；carol 拿同一个令牌：404。
+    let (st, _) = a
+        .call(
+            Method::POST,
+            "/v1/project-invites/accept",
+            Some(&bob.access),
+            Some(json!({
+                "token": token, "agents": [{ "instance_id": b1 }],
+                "daily_token_limit": 1000, "total_token_limit": 5000
+            })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+    let (st, joined) = a.join_link(&bob, &token, &[b1]).await;
+    assert_eq!(st, StatusCode::CREATED, "{joined}");
+    assert_eq!(joined["role"], "member");
+    let (st, again) = a.join_link(&bob, &token, &[b1]).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(again["id"], joined["id"]);
+    assert_eq!(again["members"], joined["members"]);
+    let (st, _) = a.join_link(&carol, &token, &[c1]).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    // bob 的列表、详情。
+    let (_, list) = a
+        .call(Method::GET, "/v1/projects", Some(&bob.access), None)
+        .await;
+    let projects = list["projects"].as_array().unwrap();
+    assert_eq!(projects.len(), 1);
+    assert_eq!(projects[0]["role"], "member");
+    let (_, d) = a
+        .call(
+            Method::GET,
+            &format!("/v1/projects/{p}"),
+            Some(&bob.access),
+            None,
+        )
+        .await;
+    let mine: Vec<(String, bool)> = d["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| {
+            (
+                x["instance_id"].as_str().unwrap().into(),
+                x["mine"].as_bool().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(mine, vec![(a1.to_string(), false), (b1.to_string(), true)]);
+    assert_eq!(d["my_budget"]["daily_token_limit"], 200000);
+    assert!(
+        a.inbox_subtypes(&alice)
+            .await
+            .contains(&"project_joined".into())
+    );
+    // 预算。
+    let (st, b) = a
+        .call(
+            Method::PUT,
+            &format!("/v1/projects/{p}/budget"),
+            Some(&bob.access),
+            Some(json!({ "daily_token_limit": 10, "total_token_limit": 20 })),
+        )
+        .await;
+    assert_eq!(
+        (st, b["total_token_limit"].as_u64()),
+        (StatusCode::OK, Some(20))
+    );
+    let (st, _) = a
+        .call(
+            Method::PUT,
+            &format!("/v1/projects/{p}/budget"),
+            Some(&bob.access),
+            Some(json!({ "daily_token_limit": 30, "total_token_limit": 20 })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+    // 撤回自己的 agent：204，alice 收到回执。
+    let (st, _) = a
+        .call(
+            Method::DELETE,
+            &format!("/v1/projects/{p}/agents/{b1}"),
+            Some(&bob.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    assert!(
+        a.inbox_subtypes(&alice)
+            .await
+            .contains(&"project_agent_left".into())
+    );
+    // 再加回来（要确认）。
+    let (st, _) = a
+        .call(
+            Method::POST,
+            &format!("/v1/projects/{p}/agents"),
+            Some(&bob.access),
+            Some(json!({ "agents": [{ "instance_id": b1 }] })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+    let (st, d) = a
+        .call(
+            Method::POST,
+            &format!("/v1/projects/{p}/agents"),
+            Some(&bob.access),
+            Some(json!({ "agents": [{ "instance_id": b1 }], "consent": true })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{d}");
+    assert_eq!(d["agent_count"], 2);
+    // 退出：204；之后 404、列表里没有；alice 收到回执。
+    let (st, _) = a
+        .call(
+            Method::POST,
+            &format!("/v1/projects/{p}/leave"),
+            Some(&bob.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let (st, _) = a
+        .call(
+            Method::GET,
+            &format!("/v1/projects/{p}"),
+            Some(&bob.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (_, list) = a
+        .call(Method::GET, "/v1/projects", Some(&bob.access), None)
+        .await;
+    assert!(list["projects"].as_array().unwrap().is_empty());
+    assert!(
+        a.inbox_subtypes(&alice)
+            .await
+            .contains(&"project_left".into())
+    );
+    // 新链接再加入，然后被移出：bob 收到回执。
+    let (_, token2) = a.link_invite(&alice, &p).await;
+    let (st, _) = a.join_link(&bob, &token2, &[b1]).await;
+    assert_eq!(st, StatusCode::CREATED);
+    let bob_id = d["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["is_me"] == true)
+        .unwrap()["user_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (st, _) = a
+        .call(
+            Method::DELETE,
+            &format!("/v1/projects/{p}/members/{bob_id}"),
+            Some(&alice.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    assert!(
+        a.inbox_subtypes(&bob)
+            .await
+            .contains(&"project_removed".into())
+    );
+    // 创建者退不了：409；共享过的项目删不了：409。
+    let (st, _) = a
+        .call(
+            Method::POST,
+            &format!("/v1/projects/{p}/leave"),
+            Some(&alice.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::CONFLICT);
+    let (st, _) = a
+        .call(
+            Method::DELETE,
+            &format!("/v1/projects/{p}"),
+            Some(&alice.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::CONFLICT);
+    // 改名、目标：创建者能改。
+    let (st, d) = a
+        .call(
+            Method::PATCH,
+            &format!("/v1/projects/{p}"),
+            Some(&alice.access),
+            Some(json!({ "goal": "ship it" })),
+        )
+        .await;
+    assert_eq!((st, d["goal"].as_str()), (StatusCode::OK, Some("ship it")));
+}
+
+/// 上限（8.14）：邀请人每天的数（429 带 Retry-After，0 不限）、10 个人、20 个待处理的邀请。
+#[tokio::test]
+async fn project_limits_and_invite_rate_limits_over_http() {
+    let Some(a) = api_with(GatewayConfig {
+        cross_user_projects: true,
+        limits: gateway::LimitConfig {
+            invites_per_day: 2,
+            ..gateway::LimitConfig::default()
+        },
+        ..GatewayConfig::default()
+    })
+    .await
+    else {
+        return;
+    };
+    let alice = a.named("13800130021", "Alice").await;
+    let a1 = a.adopt(&alice).await;
+    let p = a.new_project(&alice, "Limits", a1).await;
+    for n in 0..2 {
+        let (st, _) = a
+            .call(
+                Method::POST,
+                &format!("/v1/projects/{p}/invites"),
+                Some(&alice.access),
+                Some(json!({ "phone": format!("1380013110{n}") })),
+            )
+            .await;
+        assert_eq!(st, StatusCode::CREATED);
+    }
+    let resp = a
+        .http
+        .post(format!("{}/v1/projects/{p}/invites", a.base))
+        .bearer_auth(&alice.access)
+        .json(&json!({ "link": true }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+    let retry: u64 = resp.headers()["retry-after"]
+        .to_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!((1..=86_400).contains(&retry));
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["code"], "rate_limited");
+}
+
+#[tokio::test]
+async fn project_member_and_pending_caps_over_http() {
+    let Some(a) = api_with(GatewayConfig {
+        cross_user_projects: true,
+        limits: gateway::LimitConfig {
+            invites_per_day: 0,
+            ..gateway::LimitConfig::default()
+        },
+        ..GatewayConfig::default()
+    })
+    .await
+    else {
+        return;
+    };
+    let alice = a.named("13800130031", "Alice").await;
+    let a1 = a.adopt(&alice).await;
+    let p = a.new_project(&alice, "Crowd", a1).await;
+    // 九个人用链接加入，第十个人的链接先发好；十个人满了以后再接受：409 project_member_limit。
+    let (_, last_token) = a.link_invite(&alice, &p).await;
+    for n in 0..9 {
+        let u = a.login(&format!("1380013200{n}")).await;
+        let i = a.adopt(&u).await;
+        let (_, token) = a.link_invite(&alice, &p).await;
+        let (st, body) = a.join_link(&u, &token, &[i]).await;
+        assert_eq!(st, StatusCode::CREATED, "{n}: {body}");
+    }
+    let late = a.login("13800132099").await;
+    let li = a.adopt(&late).await;
+    let (st, body) = a.join_link(&late, &last_token, &[li]).await;
+    assert_eq!(st, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["code"], "project_member_limit");
+    // 满了也不能再邀请。
+    let (st, body) = a
+        .call(
+            Method::POST,
+            &format!("/v1/projects/{p}/invites"),
+            Some(&alice.access),
+            Some(json!({ "link": true })),
+        )
+        .await;
+    assert_eq!(
+        (st, body["code"].as_str()),
+        (StatusCode::CONFLICT, Some("project_member_limit"))
+    );
+    // 另一个项目：20 个待处理的邀请满了，第 21 个 409 project_invite_limit。
+    let a2 = a.adopt(&alice).await;
+    let p2 = a.new_project(&alice, "Pending", a2).await;
+    for n in 0..20 {
+        let (st, _) = a
+            .call(
+                Method::POST,
+                &format!("/v1/projects/{p2}/invites"),
+                Some(&alice.access),
+                Some(json!({ "phone": format!("138001330{n:02}") })),
+            )
+            .await;
+        assert_eq!(st, StatusCode::CREATED, "{n}");
+    }
+    let (st, body) = a
+        .call(
+            Method::POST,
+            &format!("/v1/projects/{p2}/invites"),
+            Some(&alice.access),
+            Some(json!({ "link": true })),
+        )
+        .await;
+    assert_eq!(
+        (st, body["code"].as_str()),
+        (StatusCode::CONFLICT, Some("project_invite_limit"))
+    );
+}
+
+/// 外人对项目什么都看不到（一律 404，不是 403）；成员调只有创建者能用的接口 403。
+#[tokio::test]
+async fn outsiders_see_nothing_of_a_project() {
+    let Some(a) = api().await else { return };
+    let alice = a.named("13800130041", "Alice").await;
+    let bob = a.login("13800130042").await;
+    let carol = a.login("13800130043").await;
+    let a1 = a.adopt(&alice).await;
+    let b1 = a.adopt(&bob).await;
+    let p = a.new_project(&alice, "Private", a1).await;
+    let (invite, token) = a.link_invite(&alice, &p).await;
+    let invite_id = invite["id"].as_str().unwrap().to_string();
+    let (st, _) = a.join_link(&bob, &token, &[b1]).await;
+    assert_eq!(st, StatusCode::CREATED);
+    let (_, d) = a
+        .call(
+            Method::GET,
+            &format!("/v1/projects/{p}"),
+            Some(&bob.access),
+            None,
+        )
+        .await;
+    let bob_id = d["members"][1]["user_id"].as_str().unwrap().to_string();
+    let routes: Vec<(Method, String, Option<Value>)> = vec![
+        (Method::GET, format!("/v1/projects/{p}"), None),
+        (Method::GET, format!("/v1/projects/{p}/invites"), None),
+        (
+            Method::PATCH,
+            format!("/v1/projects/{p}"),
+            Some(json!({ "name": "x" })),
+        ),
+        (
+            Method::DELETE,
+            format!("/v1/projects/{p}/members/{bob_id}"),
+            None,
+        ),
+        (
+            Method::DELETE,
+            format!("/v1/projects/{p}/agents/{b1}"),
+            None,
+        ),
+        (
+            Method::DELETE,
+            format!("/v1/projects/{p}/invites/{invite_id}"),
+            None,
+        ),
+        (Method::POST, format!("/v1/projects/{p}/leave"), None),
+        (
+            Method::POST,
+            format!("/v1/projects/{p}/invites"),
+            Some(json!({ "link": true })),
+        ),
+        (
+            Method::POST,
+            format!("/v1/project-invites/{invite_id}/accept"),
+            Some(json!({
+                "agents": [{ "instance_id": b1 }],
+                "daily_token_limit": 1, "total_token_limit": 1, "consent": true
+            })),
+        ),
+    ];
+    for (m, path, body) in &routes {
+        let (st, resp) = a
+            .call(m.clone(), path, Some(&carol.access), body.clone())
+            .await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "{m} {path}: {resp}");
+    }
+    // 成员调只有创建者能用的：403。
+    for (m, path, body) in [
+        (Method::GET, format!("/v1/projects/{p}/invites"), None),
+        (
+            Method::PATCH,
+            format!("/v1/projects/{p}"),
+            Some(json!({ "name": "x" })),
+        ),
+        (
+            Method::POST,
+            format!("/v1/projects/{p}/invites"),
+            Some(json!({ "link": true })),
+        ),
+        (
+            Method::DELETE,
+            format!("/v1/projects/{p}/agents/{a1}"),
+            None,
+        ),
+    ] {
+        let (st, resp) = a.call(m.clone(), &path, Some(&bob.access), body).await;
+        assert_eq!(st, StatusCode::FORBIDDEN, "{m} {path}: {resp}");
+        assert_eq!(resp["code"], "forbidden");
+    }
+}
+
+/// 旧的团队接口碰到共享了的项目：改、删 409；看只看得到自己的 agent；加入的人的团队列表里没有它。
+#[tokio::test]
+async fn old_team_api_on_a_shared_project() {
+    let Some(a) = api().await else { return };
+    let alice = a.named("13800130051", "Alice").await;
+    let bob = a.login("13800130052").await;
+    let a1 = a.adopt(&alice).await;
+    let b1 = a.adopt(&bob).await;
+    let p = a.new_project(&alice, "Team", a1).await;
+    let (_, token) = a.link_invite(&alice, &p).await;
+    let (st, _) = a.join_link(&bob, &token, &[b1]).await;
+    assert_eq!(st, StatusCode::CREATED);
+    let (st, _) = a
+        .call(
+            Method::PATCH,
+            &format!("/v1/teams/{p}"),
+            Some(&alice.access),
+            Some(json!({ "name": "renamed" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CONFLICT);
+    let (st, _) = a
+        .call(
+            Method::DELETE,
+            &format!("/v1/teams/{p}"),
+            Some(&alice.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::CONFLICT);
+    let (st, team) = a
+        .call(
+            Method::GET,
+            &format!("/v1/teams/{p}"),
+            Some(&alice.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    let members = team["members"].as_array().unwrap();
+    assert_eq!(members.len(), 1);
+    assert_eq!(members[0]["instance_id"], a1.to_string());
+    let (_, teams) = a
+        .call(Method::GET, "/v1/teams", Some(&bob.access), None)
+        .await;
+    assert!(teams["teams"].as_array().unwrap().is_empty());
+}
+
+/// 总开关关着（默认）：邀请、预览、接受都 404；单人项目照常。
+#[tokio::test]
+async fn cross_user_projects_are_off_by_default() {
+    let Some(a) = api_with(GatewayConfig::default()).await else {
+        return;
+    };
+    let alice = a.named("13800130061", "Alice").await;
+    let a1 = a.adopt(&alice).await;
+    let p = a.new_project(&alice, "Solo", a1).await;
+    let (st, _) = a
+        .call(
+            Method::POST,
+            &format!("/v1/projects/{p}/invites"),
+            Some(&alice.access),
+            Some(json!({ "link": true })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    for (path, body) in [
+        ("/v1/project-invites/resolve", json!({ "token": "x" })),
+        (
+            "/v1/project-invites/accept",
+            json!({ "token": "x", "agents": [], "daily_token_limit": 1, "total_token_limit": 1 }),
+        ),
+    ] {
+        let (st, _) = a
+            .call(Method::POST, path, Some(&alice.access), Some(body))
+            .await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "{path}");
+    }
+    let (st, _) = a
+        .call(
+            Method::GET,
+            "/v1/project-invites",
+            Some(&alice.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (st, list) = a
+        .call(Method::GET, "/v1/projects", Some(&alice.access), None)
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(list["projects"].as_array().unwrap().len(), 1);
+}
+
+/// 删了的实例离开共享项目（删实例的接口提交以后撤下）。
+#[tokio::test]
+async fn deleting_an_instance_leaves_shared_projects_over_http() {
+    let Some(a) = api().await else { return };
+    let alice = a.named("13800130071", "Alice").await;
+    let bob = a.login("13800130072").await;
+    let a1 = a.adopt(&alice).await;
+    let b1 = a.adopt(&bob).await;
+    let b2 = a.adopt(&bob).await;
+    let p = a.new_project(&alice, "Shared", a1).await;
+    let (_, token) = a.link_invite(&alice, &p).await;
+    let (st, _) = a.join_link(&bob, &token, &[b1, b2]).await;
+    assert_eq!(st, StatusCode::CREATED);
+    let (st, _) = a
+        .call(
+            Method::DELETE,
+            &format!("/v1/instances/{b2}"),
+            Some(&bob.access),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let (_, d) = a
+        .call(
+            Method::GET,
+            &format!("/v1/projects/{p}"),
+            Some(&alice.access),
+            None,
+        )
+        .await;
+    assert_eq!(d["agent_count"], 2);
+    let live: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM project_agents WHERE instance_id = $1 AND left_at IS NULL",
+    )
+    .bind(b2.0)
+    .fetch_one(a.t.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(live, 0);
 }

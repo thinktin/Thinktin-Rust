@@ -389,6 +389,10 @@ pub async fn delete(
     )
     .await?;
     t.commit().await?;
+    // 共享项目里的 agent 行租户改不了：提交以后由 worker 撤下（失败了后台维护兜底）。
+    if let Err(e) = orchestrator::projects::retire_deleted_instance(&s.db, who.user, id).await {
+        tracing::warn!(instance = %id, error = %e, "could not retire the deleted instance from its projects");
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 

@@ -107,6 +107,7 @@ pub fn build(
             content_producer: cfg.compliance.content_producer.clone(),
             label_downloads: cfg.compliance.label_downloads,
             limits: cfg.api.limits.clone(),
+            cross_user_projects: cfg.api.cross_user_projects,
             ..GatewayConfig::default()
         },
     });

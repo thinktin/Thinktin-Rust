@@ -138,6 +138,8 @@ pub struct Api {
     pub default_platform_tools: Vec<String>,
     /// 限流与防刷（5.4）：`[api.limits]`，各项上限，0 表示不限。
     pub limits: gateway::LimitConfig,
+    /// 跨用户项目（8.14：邀请、加入）。15.7 安全评审之前保持关闭。
+    pub cross_user_projects: bool,
 }
 
 impl Default for Api {
@@ -164,6 +166,7 @@ impl Default for Api {
                 .chain(proto::computer::names().map(String::from))
                 .collect(),
             limits: gateway::LimitConfig::default(),
+            cross_user_projects: false,
         }
     }
 }
