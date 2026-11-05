@@ -47,3 +47,10 @@ public struct ScaledMetric<Value: BinaryFloatingPoint>: DynamicProperty {
     public init(wrappedValue: Value, relativeTo textStyle: Font.TextStyle) { value = wrappedValue }
     public var wrappedValue: Value { value }
 }
+
+// MARK: - 放得下就用第一个（iOS 16、macOS 13；新建表单的许可小字一行放不下时换成两行）
+
+public struct ViewThatFits<Content: View>: View {
+    public init(in axes: Axis.Set = [.horizontal, .vertical], @ViewBuilder content: () -> Content) {}
+    public var body: Never { fatalError() }
+}

@@ -599,7 +599,8 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 - **原生**：`Picker(.segmented)`；`LazyVGrid` 里 `Button(.plain)` + 选中环 + `.accessibilityAddTraits(.isSelected)` +
   `.sensoryFeedback(.selection, trigger:)`；`PhotosPicker`（不用相册权限）；相机 `UIImagePickerController`（`sourceType = .camera`、
   `allowsEditing = true`，要 `NSCameraUsageDescription`）。
-- **ThinkTin 现在**（2026-11-05）：`Components/InstanceAvatar.swift`：形状里放名字的第一个字，右下角可选状态角标；形状和颜色
+- **ThinkTin 现在**（2026-11-05）：`Components/InstanceAvatar.swift`：形状里放名字的第一个字（不小于 9pt），右下角可选状态角标（圆心落在
+  形状右下方的轮廓上，右下角空着的形状往里挪）；形状和颜色
   （`InstanceAppearance`：`AvatarShape` 15 种、`AvatarColor` 12 种，ThinktinKit `ViewModels/Shell/InstanceAppearanceStore.swift`）
   **在新建表单里挑**（4.7.1：形状网格 3 × 5 + 色板 2 × 6，选中带环），先只存在这台设备上（6.9 A，`InstanceAppearanceStore`，按实例 id）；
   没挑过的是圆形、按名字取色（和第 0 轮的首字头像一样）。形状自己设计（`Components/AvatarShapes.swift`，几何、有机形状，只放首字，
@@ -718,28 +719,30 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 
 - **布局**（从上到下，深浅色一样）
   - large sheet；顶上左边玻璃 ×（`CloseButton`），中间标题“新建 Botin”，**右边不放按钮**。
-  - 居中的大头像预览（`Metrics.Avatar.profile`，120pt，跟着动态字体缩放）：选的形状、选的颜色（没选按名字取）、名字的第一个字；
-    还没输入名字时是中性的占位符号（`ellipsis`）。读屏不念（下面的输入框和网格自己会念）。
+  - 居中的大头像预览（`Metrics.Avatar.profile`，固定 120pt，**不跟动态字体缩放**：跟着缩放时最大字号下有 370pt 宽，比屏幕还宽）：
+    选的形状、选的颜色（没选按名字取）、名字的第一个字；还没输入名字时是中性的占位符号（`ellipsis`）。读屏不念（下面的输入框和网格自己会念）。
   - 大号名字输入框：整宽、胶囊形的填充底（`paperElevated`，像大号搜索框），`.title2` 半粗、居中，占位“给 Botin 取个名字”，
-    **默认空的**（以前默认填引擎名，删了）。下面的小字只在有用时出现（`AdoptionModel.nameNote`）：只输了空格说“起个名字吧。”、太长说问题
+    **默认空的**（以前默认填引擎名，删了）；点胶囊的哪儿（两头、上下的边）都聚焦输入框。下面的小字只在有用时出现（`AdoptionModel.nameNote`）：只输了空格说“起个名字吧。”、太长说问题
     （失败色），快到 64 个字的上限（还剩 10 个以内）时提示上限；空的不说（按钮灰着就够了）。
   - 头像选择卡片（`paperElevated` 圆角卡片）：形状网格 3 行 × 5 个（`AvatarShape`，15 种），下面一条分隔线，色板 2 行 × 6 个
     （`AvatarColor`，12 种）。每个形状格子都用现在的颜色和名字的首字画、按格子的宽度画（窄屏、大字号不挤出格子），选中的有强调色的
     圆角框；色板选中的外面一圈同色的环。没选过颜色时带环的是按名字取的那个色，输名字时环跟着走；点了就固定。
-  - 紧凑的引擎卡片：一行“引擎”+ 系统 `Menu`（按钮上是选的引擎名和上下箭头；菜单里每项名字 + 一句话介绍当副标题，选中的打勾，不能用的
-    灰掉、点不了；都不能用时按钮上写“暂时没有能用的”）；引擎有多种接入方式时下面一行“接入方式”`Picker(.menu)`。卡片下面一个小链接
+  - 紧凑的引擎卡片：一行“引擎”+ 系统 `Menu`（按钮上是选的引擎名和上下箭头；菜单里是行内的系统 `Picker`，每项名字 + 一句话介绍当副标题，
+    选中的由系统打勾、读屏念“已选中”，不能用的灰掉、点不了；都不能用时按钮上写“暂时没有能用的”）；引擎有多种接入方式时下面一行“接入方式”`Picker(.menu)`。卡片下面一个小链接
     “了解引擎 ›”压进引擎目录。目录在拉时按钮位置转圈；拉不到写“暂时拉不到引擎列表”+“重试”（离线不给重试，联网自己补拉）；目录是空的写
     “还没有能用的引擎，稍后再来看看。”。
   - 底部固定的一条（键盘弹出时在键盘上面，`floatingBar(edge: .bottom)`）：失败、Botin 数到上限的 `ErrorBanner`；离线时一句说明和
     “重新检查网络”；一行许可小字（`NewBotinText.licenseCaption`：专有许可——目录给了许可说明的——写“新建即表示同意 X 的许可条款”，
-    开源的写“X 采用 Y 许可”，没写许可证的写“X 没有注明许可证”）+“查看”（小 sheet，medium / large：许可证、专有许可的说明和
+    英文“By creating, you agree to the X terms”，开源的写“X 采用 Y 许可”，没写许可证的写“X 没有注明许可证”）+“查看”
+    （一行放不下时——英文的长名字、大字号——小字居中折行、“查看”换到下一行，`ViewThatFits`；小 sheet，medium / large：许可证、专有许可的说明和
     “新建即表示你同意按上面的条款使用这个引擎。”，或者在沙箱里运行的说明，有上游仓库时给链接，`NewBotinText.licenseDetails`）；
     最下面整宽胶囊主按钮“新建”（`glassButtonStyle(.prominent)` + `.buttonBorderShape(.capsule)` + `.controlSize(.large)`）。
   - 默认引擎：预选的（从引擎详情进来），其次最近活跃的那个 Botin 用的引擎（“上次用的”），再次目录里第一个能用的（`AdoptionModel.defaultEngine`）。
 - **原生**：`.sheet` + `NavigationStack`（`SheetStack`）+ `ScrollView`（`.scrollDismissesKeyboard(.interactively)`）；
   `TextField(_:text:prompt:)` + `.textFieldStyle(.plain)` + `.submitLabel(.done)`、`@FocusState`（不自动弹键盘，先看到整张表）；
   `LazyVGrid` 里 `Button(.plain)` + 选中框 / 环 + `.accessibilityAddTraits(.isSelected)`（读屏念形状、颜色的名字），`.sensoryFeedback(.selection)`；
-  引擎 `Menu`（每项 `Button`，两个 `Text` 是标题和副标题，`.disabled(!isAvailable)`，选不能用的在视图模型里也拦）；接入方式 `Picker(.menu)`；
+  引擎 `Menu` 里放 `Picker(.inline)`（每项一个视图、两个 `Text` 是标题和副标题，`.tag(AgentID?)`，`.disabled(!isAvailable)`，
+  选不能用的在视图模型里也拦；不自己画勾）；接入方式 `Picker(.menu)`；
   “了解引擎”`NavigationLink(value: AppRoute.agentCatalog)`（压进 sheet 自己的栈）；工具栏只有 `CloseButton`（Design/Glass.swift）；
   底部按钮新建中换成转圈（读屏“正在新建”）；`.interactiveDismissDisabled(isAdopting || hasUserInput)`；填了东西点 × 时
   `.confirmationDialog`（“不建这个 Botin 了？”）。
@@ -751,10 +754,13 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   先记下，拉到后再换（`AdoptionModel.requestEngine`），不会落回默认的引擎。
 - **头像**：形状默认圆形、颜色默认按名字取（`InstanceAppearance.default`，没挑过的 Botin 和以前一样）。服务端还没有头像字段（6.9），
   建好之后记进这台设备的 `InstanceAppearanceStore`（ThinktinKit `ViewModels/Shell/`，`UserDefaults` 一个键、按实例 id，`AppModel.appearances`；
-  默认的不记；删了 Botin（`InstanceDetailModel.delete()`）、注销账号时 `forget` 掉；认不出的形状、颜色原样存回去，见 6.9）；首页的行、搜索结果（首页的和搜索页的）、对话页导航栏中间的小头像 + 名字、Botin 资料的头部按它画。形状是自己设计的简单几何、
-  有机形状（`Components/AvatarShapes.swift`：圆形、圆角方形、拱形、六边形、八边形、菱形、圆角三角形、盾牌、叶子、鹅卵石、四角星、五角星、
-  花朵、花边圆、云朵），只放首字，不画脸和眼睛，不用参考 App 的形象。颜色 12 种（`InstanceAvatar.colors(of:)`，浅深各一套，白字对比度 4:1
-  以上，避开强调色和成功 / 警告 / 失败色；石板灰、石墨灰、灰褐是中性色；前 8 种是按名字取色的那套，色值和顺序没变）。
+  默认的不记；删了 Botin（`InstanceDetailModel.delete()`）、注销账号时 `forget` 掉；认不出的形状、颜色原样存回去，见 6.9）；首页的行、
+  搜索结果（首页的和搜索页的）、对话页导航栏中间的小头像 + 名字（`inlineNavigationTitle(_:principal:)`，导航栏中间只有这一项；实例列表里
+  还没有这个 Botin 时只写页面标题、不画头像）、Botin 资料的头部按它画。首字的字号按形状的比例、不小于 9pt（导航栏的 24pt 头像上窄的形状
+  也看得清）；状态角标的圆心落在形状右下方的轮廓上（`AvatarShapeGeometry.badgeAnchors`，四角星、叶子、菱形的右下角是空的）。形状是自己设计的
+  简单几何、有机形状（`Components/AvatarShapes.swift`：圆形、圆角方形、拱形、六边形、八边形、菱形、圆角三角形、盾牌、叶子、鹅卵石、四角星、
+  五角星、花朵、花边圆、云朵），只放首字，不画脸和眼睛，不用参考 App 的形象。颜色 12 种（`InstanceAvatar.colors(of:)`，浅深各一套，白字对比度
+  4:1 以上，避开强调色和成功 / 警告 / 失败色；石板灰、石墨灰、灰褐是中性色；前 8 种是按名字取色的那套，色值和顺序没变）。
 - **状态**：引擎列表在拉、拉不到、目录是空的、都不能用；名字不合法（`AdoptionModel.nameNote`）；提交中（底部按钮转圈）；失败和实例数到上限
   （`ErrorRecovery.limitReached`，不给重试）在底部条的 `ErrorBanner`；离线一句说明和“重新检查网络”，“新建”不能点。
 - **ThinkTin 现在**：`Screens/Agents/AdoptAgentSheet.swift` + `ViewModels/Agents/AdoptionModel.swift`（`EngineOption`、`NewBotinText`）。

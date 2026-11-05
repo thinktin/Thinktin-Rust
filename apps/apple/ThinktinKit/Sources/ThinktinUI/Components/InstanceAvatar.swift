@@ -52,9 +52,11 @@ public struct InstanceAvatar: View {
         AvatarGlyph(name: name, appearance: appearance, size: size)
             .overlay(alignment: .bottomTrailing) {
                 if let badge {
+                    let inset = Self.badgeInset(shape: appearance.shape, size: size)
                     badgeDot(badge)
-                        .padding(max(1.5, size * 0.04))
+                        .padding(Self.badgeRing(size: size))
                         .background(Theme.paper, in: Circle())
+                        .offset(x: -inset, y: -inset)
                         .accessibilityHidden(true)
                 }
             }
@@ -65,7 +67,7 @@ public struct InstanceAvatar: View {
 
     @ViewBuilder
     private func badgeDot(_ badge: Badge) -> some View {
-        let diameter = max(Metrics.statusDot, size * 0.24)
+        let diameter = Self.badgeDiameter(size: size)
         switch badge {
         case .instance(let state): StatusDot(state, size: diameter)
         case .run(let state): StatusDot(state, size: diameter)
@@ -98,17 +100,35 @@ struct AvatarGlyph: View {
     private func monogram(_ layout: AvatarMonogramLayout) -> some View {
         if name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             Image(systemName: "ellipsis")
-                .font(.system(size: size * layout.textScale * 0.8, weight: .bold))
+                .font(.system(size: layout.fontSize(for: size) * 0.8, weight: .bold))
         } else {
             Text(verbatim: AgentsText.monogram(of: name))
-                .font(.system(size: size * layout.textScale, weight: .semibold))
+                .font(.system(size: layout.fontSize(for: size), weight: .semibold))
         }
     }
 }
 
-// MARK: - 颜色、读屏文字（纯函数，测试直接调）
+// MARK: - 颜色、角标位置、读屏文字（纯函数，测试直接调）
 
 extension InstanceAvatar {
+    /// 角标圆点的直径。
+    nonisolated static func badgeDiameter(size: CGFloat) -> CGFloat {
+        max(Metrics.statusDot, size * 0.24)
+    }
+
+    /// 角标外面那圈纸色的环（把角标和头像的边分开）。
+    nonisolated static func badgeRing(size: CGFloat) -> CGFloat {
+        max(1.5, size * 0.04)
+    }
+
+    /// 角标从方框的右下角往左上挪多少：圆心落在形状右下方的轮廓上（`AvatarShapeGeometry.badgeAnchors`），四角星、叶子、
+    /// 菱形这类右下角是空的，不挪就浮在形状外面；轮廓伸到角上的（圆形、圆角方形……）不挪，角标不出方框（和以前一样）。
+    nonisolated static func badgeInset(shape: AvatarShape, size: CGFloat) -> CGFloat {
+        let radius = badgeDiameter(size: size) / 2 + badgeRing(size: size)
+        let anchor = (AvatarShapeGeometry.badgeAnchors[shape] ?? 1) * size
+        return max(0, size - radius - anchor)
+    }
+
     /// 色板的色值（`AvatarColor`，12 种）：一套浅色、一套深色，白字放在上面对比度都在 4:1 以上。避开强调色和状态色
     /// （成功绿、警告黄、失败红），免得头像看着像状态；石板灰、石墨灰、灰褐是中性色。前 8 种（按名字取色用的，
     /// `AvatarColor.nameHashed`）是第 0 轮的那套，色值没变。

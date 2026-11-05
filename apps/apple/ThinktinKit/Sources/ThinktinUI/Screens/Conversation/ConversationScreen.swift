@@ -10,7 +10,8 @@ import ThinktinKit
 ///   有没有没处理的（`hasPendingNewTaskRequest`），只认当前实例的；发出消息、事件流重置后滚到底。
 /// - 长按 agent 的回复、产出物举报（`ContentReportSheet`）；发送前拦下的密码弹 `SecretInterceptionSheet`。
 /// - 导航栏左边是系统的返回（回首页），中间是 Botin 的小头像（新建时挑的形状和颜色）和名字（第 1 轮换成规范 4.3.1
-///   能点的标题胶囊），右边是菜单（实例详情、模型路由、计划、产出物）。
+///   能点的标题胶囊；实例列表里还没有这个 Botin 时只有页面标题那一行字，不画头像），右边是菜单（实例详情、模型路由、
+///   计划、产出物）。中间这一项由 `inlineNavigationTitle(_:principal:)` 放，别再另加 `.principal`。
 struct ConversationScreen: View {
     let instanceID: InstanceID
 
@@ -99,11 +100,14 @@ private struct ConversationContent: View {
             }
         }
         .background(Theme.paper)
-        .inlineNavigationTitle(title)
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                ConversationTitle(name: title, appearance: app.appearances.resolved(for: model.instanceID))
+        .inlineNavigationTitle(title) {
+            if let instance {
+                ConversationTitle(name: instance.name, appearance: app.appearances.resolved(for: instance.id))
+            } else {
+                InlineTitleText(title: title)
             }
+        }
+        .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Menu {
                     Button {

@@ -266,6 +266,32 @@
     `MockClient.swift:1379` 有一条以前就有的未使用变量警告）；`run.sh test` 138 个全过；App 的 `ThinktinTests` 21 个过 16 个（还是那 5 个要
     App 包的：Info.plist 两条、隐私清单、小组件扩展、缓存路径）；`swift format -i -r apps/apple` 后 `swift format lint --strict -r apps/apple`
     零条。macOS CI 和截图还没跑。
+- 新建 Botin 重排版式的审查修正（2026-11-05，评审对 `a743df2` 之后提交的 12 条意见，逐条对过代码：10 条不重复，都是真的，都改了；
+  “对话页导航栏两个 `.principal`”“名字胶囊点边上不聚焦”各报了两次；提交 `4ad444f` 和这一条之后的）：
+  - 对话页导航栏中间只有一项：`inlineNavigationTitle(title)` 本来就放了一个 `.principal` 的 `Text(title)`（没有 `PageHeader` 时一直显示），
+    `a743df2` 又加了一个放头像 + 名字的，真机上两个都显示、读屏念两遍。`inlineNavigationTitle` 加重载 `(_:principal:)`（iOS 上用给的内容
+    代替那行字；macOS 照旧只有导航标题），对话页用它放 `ConversationTitle`；默认那行字拆成 `InlineTitleText`。
+  - 实例列表里还没有这个 Botin（冷启动的深链、推送，删掉了）：导航栏中间只写页面标题“对话”，不再画一个“对”字的头像。
+  - 头像外观的存储不丢以后版本的值：以前认不出的形状当圆形、颜色当没选，读进来就丢了，下一次存（随便哪个 Botin 新建）把它们抹掉
+    （TestFlight 装回旧版本就会碰到）。现在存原始的字符串（`StoredAppearance`），认不出的记录原样写回，只有那个 Botin 自己改外观、删掉时换掉。
+  - 删了 Botin 删它的外观记录：`InstanceDetailModel(appearances:)`，`delete()` 成功（或者别处已经删了）后 `forget`；注销账号成功后
+    `forget` 这个账号的 Botin（`DeleteAccountView`，注销前记下 id；只删这个账号的，同一台设备上别的账号的不动）。
+  - 状态角标落在形状上：以前固定在方框右下角，四角星、叶子、菱形的右下角是空的，48pt 的行上角标离形状 4pt 左右、浮在外面。现在圆心放在
+    从中心朝右下 45° 的射线和轮廓的交点上（`AvatarShapeGeometry.badgeAnchors`，`AvatarPathBuilder(recordsOutline:)` 把轮廓折成线段算的，
+    启动后算一次）；放到角上会出方框的（圆形、圆角方形、八边形……）不挪，和以前一样。
+  - 首字不小于 9pt（`AvatarMonogramLayout.fontSize(for:)`，也不超过圆形的比例）：24pt 的导航栏头像上四角星只有 6.2pt，汉字糊成一团。
+  - 新建表单的大头像预览固定 120pt（`AvatarGlyph`，不跟动态字体缩放）：`InstanceAvatar` 跟着缩放，AX5 下约 374pt，比屏幕还宽。
+  - 名字胶囊点哪儿都聚焦：`TextField` 只占中间那一行字，`.contentShape(Capsule())` 没有手势可用；手势放在胶囊底上
+    （`.background { Capsule().onTapGesture }`），点到字那一行的还是输入框自己接，不和光标、选字抢；新建中不聚焦。
+  - 引擎菜单里换成行内的系统 `Picker`（`.tag(AgentID?)`，系统打勾、读屏念“已选中”）：以前自己画勾、每项又换了读屏标签，读屏分不出选的是
+    哪个，也不合 docs/ios.md 第 1 节第 5 条。每项是一个视图 `EngineOptionLabel`（两个 `Text`，副标题；用 `Group` 包会把 `.tag` 分给两个
+    `Text`、变成两项）。
+  - 许可小字：一行放不下时（英文、大字号）不再让“查看”挂在折行的字旁边：`ViewThatFits` 先试一行（小字 `lineLimit(1)` +“查看”），
+    放不下换成小字居中折行、“查看”在下一行。英文的同意那句缩短成“By creating, you agree to the X terms”（375pt 的屏幕默认字号下一行放得下）。
+    uicheck 桩补了 `ViewThatFits`。
+  - 要在模拟器上看的（Linux 的桩看不出来）：导航栏中间的头像 + 名字只出现一次、读屏只念一遍；`Picker(.inline)` 放在 `Menu` 里时每项的
+    副标题（`EngineOptionLabel` 的第二个 `Text`）显示不显示、`.disabled` 的项灰不灰、每项自己的读屏标签念不念（不念的话退回系统念名字和
+    副标题，“已选中”照样有）；胶囊底上的点按会不会挡住输入框自己的点按（按说不会，输入框在上面）；四角星、叶子、菱形上角标的位置好不好看。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、
@@ -340,11 +366,16 @@
 - 截图脚本是 bash 3.2 写法：清单是一段文本、`while read … <&3` 从 3 号描述符读，不用数组；启动变量总是都传，不用的传空串（App 不认空的）。
   清单第四列（THINKTIN_MOCK_EMPTY）可以不写。每次启动带 `-cn.thinktin.onboarding.checked YES`：`OnboardingCheck` 的键名改了要跟着改。
 - 新建表单：`AdoptionModel` 的初始化是 `init(client:agents:instances:preselectedAgentID:appearances:)`，没有 `agent` / `existingNames` 了；
-  建好之后不再查能用的 key（`usableCredentials`、`nextStep` 删了），路由页自己会说缺什么 key。引擎选择现在是系统 `Menu`（照参考重排版式时
-  换掉了行内 `Picker(.inline)`），目录多了菜单自己能滚；每项的 `.disabled` 在真 SDK 上灰不灰没验过，视图模型的 `selectEngine` 会拦不能用的。
+  建好之后不再查能用的 key（`usableCredentials`、`nextStep` 删了），路由页自己会说缺什么 key。引擎选择现在是系统 `Menu`，里面放行内的
+  `Picker(.inline)`（系统打勾、读屏念“已选中”，别再自己画勾），目录多了菜单自己能滚；每项的 `.disabled` 在真 SDK 上灰不灰没验过，视图模型的
+  `selectEngine` 会拦不能用的。每项要是一个视图（`EngineOptionLabel`），别用 `Group` 包两个 `Text` 再 `.tag`（会变成两项）。
 - 头像外观：`AvatarShape` / `AvatarColor` 的原始值存进了 `UserDefaults`，**不能改名**；`AvatarColor.nameHashed` 的顺序也不能改（按名字取色
   按下标取，换了已有的 Botin 会变色）。加形状、颜色往 `allCases` 后面加，网格是 3 × 5、2 × 6，多了要改网格。服务端加头像字段时取值用这些
   原始值（6.9 B），本机的存储当缓存或删掉。形状是自己画的几何（`AvatarShapes.swift`），别换成参考 App 的形象，也别画脸。
+  存储读写的是原始字符串（`StoredAppearance`）：认不出的形状、颜色原样写回，别改成读进来就换成默认的（装回旧版本会抹掉新版本挑的）。
+  加了形状要看一眼 `badgeAnchors`（角标落在右下方的轮廓上，自动算的）和 `AvatarMonogramLayout`（字号比例，24pt 上不小于 9pt）。
+- 导航栏中间要放自己的内容（头像 + 名字、以后的标题胶囊）用 `inlineNavigationTitle(_:principal:)`，别在 `inlineNavigationTitle(title)`
+  外面再加 `.principal`：它自己已经放了一个，两个都会显示。
 - 新建表单：引擎详情是从表单压进去的时候，`Router.present(.adopt(agentID: id))` 不叠第二张，退回表单、记 `engineRequest`；
   只认最前面那层是 `.adopt` 的情况，别的照常弹。表单在栈底下也活着，`onChange(of: router.engineRequest)` 照样收到。
 - `AppModel.openCreatedInstance` 先把新 Botin 塞进列表再 `selectInstance`、再刷新。刷新正在进行时 `refresh()` 直接返回：要是那次刷新的

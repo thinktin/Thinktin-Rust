@@ -76,6 +76,50 @@ struct InstanceAvatarTests {
         #expect(squircle.contains { abs($0.x - 1) < 1e-9 } && squircle.contains { abs($0.y) < 1e-9 })
     }
 
+    @Test("角标落在形状右下方的轮廓上：圆形、伸到角上的不挪（和以前一样），四角星、叶子、菱形往里挪")
+    func badgeAnchors() {
+        let anchors = AvatarShapeGeometry.badgeAnchors
+        #expect(anchors.count == AvatarShape.allCases.count)
+        // 和手算的对得上：圆 0.5 + 0.5 / √2，四角星 0.5 + 0.24 / √2，菱形的边 x + y = 1.48，叶子右下那条曲线的中点。
+        #expect(abs((anchors[.circle] ?? 0) - 0.8536) < 0.005)
+        #expect(abs((anchors[.sparkle] ?? 0) - 0.6697) < 0.005)
+        #expect(abs((anchors[.diamond] ?? 0) - 0.74) < 0.005)
+        #expect(abs((anchors[.leaf] ?? 0) - 0.695) < 0.005)
+        for shape in AvatarShape.allCases {
+            let anchor = anchors[shape] ?? 0
+            #expect(anchor > 0.6 && anchor <= 1, "\(shape)")
+        }
+        // 圆形各种尺寸都不挪（角标在方框的右下角，和改之前一样）；伸到角上的圆角方形也不挪、不出方框。
+        for size in [Metrics.Avatar.title, Metrics.Avatar.list, Metrics.Avatar.profile] {
+            #expect(InstanceAvatar.badgeInset(shape: .circle, size: size) == 0)
+            #expect(InstanceAvatar.badgeInset(shape: .squircle, size: size) == 0)
+        }
+        // 48pt 的行上：四角星、叶子的角标挪到轮廓上（圆心正好在轮廓上）。
+        let size = Metrics.Avatar.list
+        let radius = InstanceAvatar.badgeDiameter(size: size) / 2 + InstanceAvatar.badgeRing(size: size)
+        for shape in [AvatarShape.sparkle, .leaf, .diamond] {
+            let inset = InstanceAvatar.badgeInset(shape: shape, size: size)
+            #expect(inset > 0, "\(shape)")
+            #expect(abs(size - radius - inset - (anchors[shape] ?? 0) * size) < 1e-9, "\(shape)")
+        }
+    }
+
+    @Test("首字的字号：窄的形状在 24pt 上也不小于 9pt，不超过圆形的比例；大头像照形状的比例")
+    func monogramFontSize() {
+        for shape in AvatarShape.allCases {
+            let layout = AvatarMonogramLayout(shape)
+            let small = layout.fontSize(for: Metrics.Avatar.title)
+            #expect(small >= AvatarMonogramLayout.minimumFontSize, "\(shape)")
+            #expect(small <= Metrics.Avatar.title * AvatarMonogramLayout.maximumTextScale + 1e-9, "\(shape)")
+            #expect(
+                abs(layout.fontSize(for: Metrics.Avatar.profile) - Metrics.Avatar.profile * layout.textScale) < 1e-9)
+        }
+        #expect(AvatarMonogramLayout(.sparkle).fontSize(for: Metrics.Avatar.title) == 9)
+        #expect(abs(AvatarMonogramLayout(.circle).fontSize(for: Metrics.Avatar.title) - 24 * 0.42) < 1e-9)
+        // 很小的头像（比 9pt 的字还窄的比例）不比圆形的字大。
+        #expect(abs(AvatarMonogramLayout(.sparkle).fontSize(for: 16) - 16 * 0.42) < 1e-9)
+    }
+
     @Test("读屏：名字加状态，名字空的念“未命名”")
     func accessibilityText() {
         #expect(InstanceAvatar.accessibilityText(name: "周报助手", badge: nil, language: .chinese) == "周报助手")

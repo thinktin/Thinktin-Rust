@@ -6,15 +6,18 @@ import ThinktinKit
 ///
 /// 版式照参考（2026-11-05 用户对过参考图后改的，以前是分组 `Form` + 右上按钮），从上到下：
 /// - 顶上左边玻璃 ×（`CloseButton`，填了东西时先确认），中间标题“新建 Botin”，右边不放按钮。
-/// - 居中的大头像预览（120pt）：选的形状、选的颜色（没选按名字取）、名字的第一个字（还没输入时是占位符号）。
-/// - 大号名字输入框：整宽、胶囊形的填充底、字大、居中，占位“给 Botin 取个名字”，默认空的；名字的问题或提示只在
-///   有用时出现在下面（`AdoptionModel.nameNote`）。
+/// - 居中的大头像预览（固定 120pt，不跟动态字体缩放，大字号下不挤出屏幕）：选的形状、选的颜色（没选按名字取）、
+///   名字的第一个字（还没输入时是占位符号）。
+/// - 大号名字输入框：整宽、胶囊形的填充底、字大、居中，占位“给 Botin 取个名字”，默认空的；点胶囊的哪儿都聚焦输入框；
+///   名字的问题或提示只在有用时出现在下面（`AdoptionModel.nameNote`）。
 /// - 头像的形状网格（3 × 5，自己设计的几何形状，`AvatarShape`）和色板（2 × 6，选中的带环，`AvatarColor`）。
-/// - 紧凑的引擎行：“引擎”+ 系统 `Menu`（显示选的引擎，每项名字 + 一句话介绍，不能用的灰掉；默认选哪个见
-///   `AdoptionModel.defaultEngine`），接入方式多于一个时下面一行 `Picker(.menu)`；下面一个小链接“了解引擎”压进引擎目录
-///   （目录 → 引擎详情，详情上的“用它新建 Botin”回到这张表单、换成那个引擎，见 `Router.engineRequest`）。
+/// - 紧凑的引擎行：“引擎”+ 系统 `Menu`（显示选的引擎；里面是行内 `Picker`，系统打勾、读屏念“已选中”，每项名字 + 一句话
+///   介绍，不能用的灰掉；默认选哪个见 `AdoptionModel.defaultEngine`），接入方式多于一个时下面一行 `Picker(.menu)`；
+///   下面一个小链接“了解引擎”压进引擎目录（目录 → 引擎详情，详情上的“用它新建 Botin”回到这张表单、换成那个引擎，
+///   见 `Router.engineRequest`）。
 /// - 底部固定的一条（键盘弹出时在键盘上面）：错误横幅（包括 Botin 数到了上限）、离线说明、一行许可小字
-///   （`NewBotinText.licenseCaption`，专有许可写“新建即表示同意…”）+“查看”（小 sheet 里是全文）、整宽胶囊主按钮“新建”
+///   （`NewBotinText.licenseCaption`，专有许可写“新建即表示同意…”）+“查看”（小 sheet 里是全文；一行放不下时小字居中折行、
+///   “查看”换到下一行）、整宽胶囊主按钮“新建”
 ///   （名字对、选了能用的引擎、在线才能点，新建中转圈）。
 /// - 新建中、填了东西时不能下滑关掉（只能点 ×，先确认）。建好了：关掉表单、从首页压栈进新 Botin 的对话
 ///   （`AppModel.openCreatedInstance`）；头像外观由 `AdoptionModel` 记进这台设备（`AppModel.appearances`）。
@@ -54,7 +57,8 @@ private struct AdoptAgentForm: View {
         let model = self.model
         ScrollView {
             VStack(spacing: Metrics.Spacing.l) {
-                InstanceAvatar(model.name, appearance: model.appearance, size: Metrics.Avatar.profile)
+                // 固定大小（`InstanceAvatar` 跟着动态字体缩放，最大字号下比屏幕还宽）；只是装饰，读屏不念。
+                AvatarGlyph(name: model.name, appearance: model.appearance, size: Metrics.Avatar.profile)
                     .accessibilityHidden(true)
                     .animation(.snappy, value: model.appearance)
                 nameField
@@ -99,7 +103,8 @@ private struct AdoptAgentForm: View {
 
     // MARK: 名字
 
-    /// 大号输入框（胶囊形的填充底，字大、居中），下面一行小字只在有用时出现。
+    /// 大号输入框（胶囊形的填充底，字大、居中），下面一行小字只在有用时出现。输入框只占中间那一行字，胶囊两头、
+    /// 上下的边点了也要聚焦：手势放在后面的胶囊底上（点到字那一行的还是输入框自己接，不和它的光标、选字抢）。
     private var nameField: some View {
         let model = self.model
         let note = model.nameNote(language)
@@ -118,8 +123,12 @@ private struct AdoptAgentForm: View {
             .disabled(model.isAdopting)
             .padding(.horizontal, Metrics.Spacing.l)
             .frame(minHeight: Metrics.minTapTarget + Metrics.Spacing.s)
-            .background(Theme.paperElevated, in: Capsule())
-            .contentShape(Capsule())
+            .background {
+                Capsule()
+                    .fill(Theme.paperElevated)
+                    .onTapGesture { if !model.isAdopting { isNameFocused = true } }
+                    .accessibilityHidden(true)
+            }
             if let note {
                 Text(verbatim: note.text)
                     .typography(.footnote)
@@ -225,12 +234,18 @@ private struct AdoptAgentForm: View {
                 .multilineTextAlignment(.center)
             }
             if let agent = model.selectedAgent {
-                HStack(alignment: .firstTextBaseline, spacing: Metrics.Spacing.xxs) {
-                    Text(verbatim: NewBotinText.licenseCaption(agent, language: language))
-                        .foregroundStyle(Theme.inkSecondary)
-                    Button(NewBotinText.viewLicense(language)) { licenseAgent = agent }
-                        .buttonStyle(.borderless)
-                        .accessibilityLabel(Text(NewBotinText.licenseTitle(language)))
+                // 一行放得下：小字 +“查看”；放不下（英文、大字号）：小字居中折行，“查看”在下一行，不挂在折行的字旁边。
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .firstTextBaseline, spacing: Metrics.Spacing.xxs) {
+                        licenseCaption(agent)
+                            .lineLimit(1)
+                        viewLicenseButton(agent)
+                    }
+                    VStack(spacing: Metrics.Spacing.xxs) {
+                        licenseCaption(agent)
+                            .fixedSize(horizontal: false, vertical: true)
+                        viewLicenseButton(agent)
+                    }
                 }
                 .typography(.caption)
                 .multilineTextAlignment(.center)
@@ -258,6 +273,17 @@ private struct AdoptAgentForm: View {
         .frame(maxWidth: Metrics.readableWidth)
         .frame(maxWidth: .infinity)
         .background(Theme.paper)
+    }
+
+    private func licenseCaption(_ agent: AgentInfo) -> some View {
+        Text(verbatim: NewBotinText.licenseCaption(agent, language: language))
+            .foregroundStyle(Theme.inkSecondary)
+    }
+
+    private func viewLicenseButton(_ agent: AgentInfo) -> some View {
+        Button(NewBotinText.viewLicense(language)) { licenseAgent = agent }
+            .buttonStyle(.borderless)
+            .accessibilityLabel(Text(NewBotinText.licenseTitle(language)))
     }
 
     // MARK: 操作
@@ -421,7 +447,8 @@ private struct EngineRow<Control: View>: View {
     }
 }
 
-/// 选引擎的系统菜单：按钮上是选的引擎（都不能用时“暂时没有能用的”）；每项名字 + 一句话介绍（菜单里的副标题），选中的打勾，不能用的灰掉、点不了。
+/// 选引擎的系统菜单：按钮上是选的引擎（都不能用时“暂时没有能用的”）；里面是行内的系统 `Picker`（选中的由系统打勾、
+/// 读屏念“已选中”，不自己画勾），每项名字 + 一句话介绍（菜单里的副标题），不能用的灰掉、点不了（视图模型也拦）。
 /// 读屏：按钮念“引擎，Claude Agent”，每项念 `EngineOption.accessibilityLabel`（多念几个 Botin 在用）。
 private struct EngineMenu: View {
     let model: AdoptionModel
@@ -433,27 +460,23 @@ private struct EngineMenu: View {
         let selectedName =
             model.selectedAgent.map { AgentsText.displayName(of: $0) } ?? NewBotinText.noUsableEngine(language)
         Menu {
-            ForEach(model.engineOptions(language)) { option in
-                let detail = option.detail(language)
-                Button {
-                    model.selectEngine(option.id)
-                } label: {
-                    // 第二个 `Text` 在系统菜单里显示成副标题。
-                    if option.id == model.selectedAgentID {
-                        Label {
-                            Text(verbatim: option.name)
-                            if !detail.isEmpty { Text(verbatim: detail) }
-                        } icon: {
-                            Image(systemName: "checkmark")
-                        }
-                    } else {
-                        Text(verbatim: option.name)
-                        if !detail.isEmpty { Text(verbatim: detail) }
-                    }
+            Picker(
+                NewBotinText.engineTitle(language),
+                selection: Binding(
+                    get: { model.selectedAgentID },
+                    set: { id in
+                        if let id { model.selectEngine(id) }
+                    })
+            ) {
+                ForEach(model.engineOptions(language)) { option in
+                    // 一项一个视图（`Group` 会把 `.tag` 分给里面的每个 `Text`，变成两项）。
+                    EngineOptionLabel(name: option.name, detail: option.detail(language))
+                        .tag(Optional(option.id))
+                        .disabled(!option.isAvailable)
+                        .accessibilityLabel(Text(option.accessibilityLabel(language)))
                 }
-                .disabled(!option.isAvailable)
-                .accessibilityLabel(Text(option.accessibilityLabel(language)))
             }
+            .pickerStyle(.inline)
         } label: {
             HStack(spacing: Metrics.Spacing.xxs) {
                 Text(verbatim: selectedName)
@@ -466,6 +489,17 @@ private struct EngineMenu: View {
         .disabled(model.isAdopting)
         .accessibilityLabel(Text(NewBotinText.engineTitle(language)))
         .accessibilityValue(Text(verbatim: selectedName))
+    }
+}
+
+/// 引擎菜单里的一项：名字，有介绍时第二个 `Text` 在系统菜单里显示成副标题（和菜单里 `Button` 的标签一样写法）。
+private struct EngineOptionLabel: View {
+    let name: String
+    let detail: String
+
+    var body: some View {
+        Text(verbatim: name)
+        if !detail.isEmpty { Text(verbatim: detail) }
     }
 }
 

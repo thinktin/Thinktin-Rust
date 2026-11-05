@@ -268,7 +268,15 @@ extension View {
     /// 页面顶部的行内标题（导航栏标题，iOS 上用小标题样式）。页面里有同一句话的 `PageHeader` 时，大标题露着就不在
     /// 导航栏里重复，滚到导航栏下面了才淡入（和系统的大标题一样）。
     func inlineNavigationTitle(_ title: String) -> some View {
-        modifier(InlineNavigationTitle(title: title))
+        inlineNavigationTitle(title) { InlineTitleText(title: title) }
+    }
+
+    /// 同上，iOS 导航栏中间放自己的内容（对话页的头像 + 名字）代替那一行字：导航栏中间只有这一个 `.principal`，
+    /// 别在外面再加一个（两个都会显示，读屏念两遍）。`title` 照样是导航标题（返回按钮的长按菜单、macOS 的窗口标题）。
+    func inlineNavigationTitle<Principal: View>(
+        _ title: String, @ViewBuilder principal: () -> Principal
+    ) -> some View {
+        modifier(InlineNavigationTitle(title: title, principal: principal()))
     }
 
     /// 报告页面大标题的位置（`PageHeader` 的标题行用）。
@@ -311,8 +319,21 @@ extension EnvironmentValues {
     }
 }
 
-private struct InlineNavigationTitle: ViewModifier {
+/// 导航栏中间的标题文字（`inlineNavigationTitle` 默认放的；自己放内容的页面没有内容可放时也用它）。
+struct InlineTitleText: View {
     let title: String
+
+    var body: some View {
+        Text(title)
+            .font(.headline)
+            .foregroundStyle(Theme.ink)
+            .lineLimit(1)
+    }
+}
+
+private struct InlineNavigationTitle<Principal: View>: ViewModifier {
+    let title: String
+    let principal: Principal
     @State private var visibility = PageTitleVisibility()
 
     func body(content: Content) -> some View {
@@ -324,10 +345,7 @@ private struct InlineNavigationTitle: ViewModifier {
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .principal) {
-                        Text(title)
-                            .font(.headline)
-                            .foregroundStyle(Theme.ink)
-                            .lineLimit(1)
+                        principal
                             .opacity(showsTitle ? 1 : 0)
                             .animation(.easeInOut(duration: 0.2), value: showsTitle)
                             .accessibilityHidden(!showsTitle)

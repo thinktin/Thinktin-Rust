@@ -26,10 +26,20 @@ struct AvatarMonogramLayout: Hashable, Sendable {
     /// 往下挪直径的几倍（负的往上）。
     var verticalOffset: CGFloat
 
+    /// 首字最小的字号：窄的形状在小头像上（导航栏的 24pt）按比例算只有 6、7pt，汉字糊成一团；宁可字比形状中间略宽一点。
+    static let minimumFontSize: CGFloat = 9
+    /// 圆形的比例：小头像上字号最大到这里（不比圆形的字还大）。
+    static let maximumTextScale: CGFloat = 0.42
+
+    /// 边长 `side` 的头像上首字的字号：按形状的比例，不小于 `minimumFontSize`，也不超过圆形的比例。
+    func fontSize(for side: CGFloat) -> CGFloat {
+        min(max(side * textScale, Self.minimumFontSize), side * Self.maximumTextScale)
+    }
+
     init(_ shape: AvatarShape) {
         switch shape {
         case .circle, .squircle, .hexagon, .octagon, .pebble, .scallop:
-            self.init(textScale: 0.42, verticalOffset: 0)
+            self.init(textScale: Self.maximumTextScale, verticalOffset: 0)
         case .arch: self.init(textScale: 0.40, verticalOffset: 0.05)
         case .diamond: self.init(textScale: 0.32, verticalOffset: 0)
         case .triangle: self.init(textScale: 0.30, verticalOffset: 0.12)
@@ -106,6 +116,32 @@ enum AvatarShapeGeometry {
     }
 
     static let center = CGPoint(x: 0.5, y: 0.5)
+
+    /// 右下角状态角标的圆心放在哪儿：从中心朝右下 45° 的射线和轮廓最外面的交点（单位坐标，在对角线上，x、y 一样）。
+    /// 圆形是 0.854；四角星、叶子、菱形这些右下角是空的，角标要往里挪到轮廓上，不然浮在形状外面（`InstanceAvatar`）。
+    static let badgeAnchors: [AvatarShape: CGFloat] = Dictionary(
+        uniqueKeysWithValues: AvatarShape.allCases.map { ($0, badgeAnchor(of: $0)) })
+
+    /// 算 `badgeAnchors`：把轮廓折成线段（`AvatarPathBuilder.outline`），找和对角线 x = y 在中心右下方的交点里最远的那个。
+    static func badgeAnchor(of shape: AvatarShape) -> CGFloat {
+        var builder = AvatarPathBuilder(recordsOutline: true)
+        draw(shape, into: &builder)
+        let points = builder.outline
+        var anchor: CGFloat?
+        for i in points.indices {
+            let a = points[i]
+            let b = points[(i + 1) % points.count]
+            // 线段 a + u (b - a) 上 x - y = 0 的点。
+            let denominator = (b.x - a.x) - (b.y - a.y)
+            guard abs(denominator) > 1e-12 else { continue }
+            let u = -(a.x - a.y) / denominator
+            guard u >= 0, u <= 1 else { continue }
+            let x = a.x + u * (b.x - a.x)
+            guard x > center.x else { continue }
+            anchor = max(anchor ?? x, x)
+        }
+        return anchor ?? 0.85
+    }
 
     /// 正多边形的顶点（外接圆半径 `radius`，第一个顶点在 `rotation` 方向）。
     static func regularPolygon(sides: Int, radius: CGFloat, rotation: CGFloat) -> [CGPoint] {
@@ -227,10 +263,17 @@ struct AvatarPathBuilder {
     let side: CGFloat
     /// 用到的所有点（端点和控制点）在单位坐标里的范围：曲线一定在它里面（测试查形状没出界、不太小）。
     private(set) var unitBounds: (minX: CGFloat, minY: CGFloat, maxX: CGFloat, maxY: CGFloat) = (1, 1, 0, 0)
+    /// 轮廓折成的点（单位坐标，曲线每段取 `outlineSteps` 个点）；只在 `recordsOutline` 时记（算角标位置用，画的时候不记）。
+    private(set) var outline: [CGPoint] = []
+    private let recordsOutline: Bool
+    /// 当前点（单位坐标），曲线取样从这里起。
+    private var current = CGPoint.zero
+    private static let outlineSteps = 16
 
-    init(origin: CGPoint = .zero, side: CGFloat = 1) {
+    init(origin: CGPoint = .zero, side: CGFloat = 1, recordsOutline: Bool = false) {
         self.origin = origin
         self.side = side
+        self.recordsOutline = recordsOutline
     }
 
     private mutating func point(_ p: CGPoint) -> CGPoint {
@@ -242,10 +285,14 @@ struct AvatarPathBuilder {
 
     mutating func move(_ p: CGPoint) {
         path.move(to: point(p))
+        if recordsOutline { outline.append(p) }
+        current = p
     }
 
     mutating func line(_ p: CGPoint) {
         path.addLine(to: point(p))
+        if recordsOutline { outline.append(p) }
+        current = p
     }
 
     mutating func curve(to p: CGPoint, control1: CGPoint, control2: CGPoint) {
@@ -253,6 +300,22 @@ struct AvatarPathBuilder {
         let c1 = point(control1)
         let c2 = point(control2)
         path.addCurve(to: end, control1: c1, control2: c2)
+        if recordsOutline {
+            let start = current
+            for step in 1...Self.outlineSteps {
+                let t = CGFloat(step) / CGFloat(Self.outlineSteps)
+                let s = 1 - t
+                let w0 = s * s * s
+                let w1 = 3 * s * s * t
+                let w2 = 3 * s * t * t
+                let w3 = t * t * t
+                outline.append(
+                    CGPoint(
+                        x: w0 * start.x + w1 * control1.x + w2 * control2.x + w3 * p.x,
+                        y: w0 * start.y + w1 * control1.y + w2 * control2.y + w3 * p.y))
+            }
+        }
+        current = p
     }
 
     mutating func close() {
