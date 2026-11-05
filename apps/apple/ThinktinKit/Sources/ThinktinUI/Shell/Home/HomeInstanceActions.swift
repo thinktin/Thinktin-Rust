@@ -60,12 +60,13 @@ struct HomeDeletion: Identifiable {
 }
 
 /// 首页长按“改名”的弹窗（参考 68 的版式：标题、输入框、取消 / 保存）：按 `InstanceNameRule` 校验，不合规时“保存”灰着；
-/// 改不成弹第二个提示。Shell 自己调 `AppModel.renameInstance`，不依赖 Agents 的页面。
+/// 改不成弹第二个提示。Shell 自己调 `AppModel.renameInstance`，不依赖 Agents 的页面。`name` 由打开的地方先填好原名再设
+/// `target`（弹窗出来时输入框里就是原名）。
 struct HomeRenameAlert: ViewModifier {
     let model: AppModel
     @Binding var target: Instance?
+    @Binding var name: String
 
-    @State private var name = ""
     @State private var failure: ClientError?
     @Environment(\.displayLanguage) private var language
 
@@ -96,9 +97,6 @@ struct HomeRenameAlert: ViewModifier {
                     Text(verbatim: error.localizedMessage(language))
                 }
             )
-            .onChange(of: target) {
-                if let target { name = target.name }
-            }
     }
 
     private var isRenaming: Binding<Bool> {

@@ -475,7 +475,8 @@
   上是不是玻璃圆、“置顶”的灰；`swipeActions` 的“隐藏”带 `.destructive`，行会被系统先拿掉再由数据拿掉，看有没有闪；置顶一排 3 个在
   最窄的 375pt 屏上放不放得下；已隐藏页（`navigationDestination(isPresented:)`）上点一行进对话（`Router.open` 把主栈设成
   `[.conversation]`）以后返回是回到已隐藏页还是首页，两种都行，别出现页面又被压一次；从上下文菜单直接弹改名的 alert、删除的 sheet
-  会不会被菜单收起的动画吞掉（B 线的“选择文本”也是这样直接弹的）。
+  会不会被菜单收起的动画吞掉（B 线的“选择文本”也是这样直接弹的）；左上账号头像参考里约 36pt、几乎填满玻璃圆（我们是第 0 轮审查后
+  定的 24pt），试 36pt 会不会把 iOS 26 的玻璃撑大，不会就改大。
 - 第 1 轮 A 线这一份的 Linux 检查（2026-11-05）：ThinktinKit `swift test` 1089 个全过；uicheck UIKit、AppKit 都编过（没有警告）；
   `run.sh test` 147 个全过；App 的 `ThinktinTests` 21 个过 16 个（还是那 5 个要 App 包的）；`swift format lint --strict` 零条。
 

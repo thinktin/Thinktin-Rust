@@ -177,6 +177,7 @@ struct HomeInstanceList: View {
     let model: AppModel
 
     @State private var renaming: Instance?
+    @State private var renameText = ""
     @State private var deleting: HomeDeletion?
     /// 最近一次打开删除确认页的（sheet 关掉时 `deleting` 已经是 nil，删没删成看它）。
     @State private var lastDeletion: HomeDeletion?
@@ -247,7 +248,7 @@ struct HomeInstanceList: View {
         .navigationDestination(isPresented: $isShowingHidden) {
             HiddenInstancesScreen(model: model)
         }
-        .modifier(HomeRenameAlert(model: model, target: $renaming))
+        .modifier(HomeRenameAlert(model: model, target: $renaming, name: $renameText))
         .sheet(
             item: $deleting, onDismiss: finishDeletion,
             content: { deletion in
@@ -277,6 +278,7 @@ struct HomeInstanceList: View {
         case .hide:
             withAnimation { preferences.setHidden(true, for: id) }
         case .rename:
+            renameText = row.instance.name
             renaming = row.instance
         case .copyID:
             Pasteboard.copy(id.rawValue)
