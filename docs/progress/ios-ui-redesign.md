@@ -177,7 +177,7 @@
   头像预览（`InstanceAvatar`，按名字取色）；名字 `TextField`（占位“给它取个名字”，问题或提示在分组脚注里，规则还是 `InstanceNameRule`，
   默认填引擎名、重名加序号，用户没改过时换引擎名字跟着换）；引擎是行内 `Picker`（每行名字 + 一句话介绍，不能用的灰掉、选不了），接入方式
   多于一个时再一行 `Picker(.menu)`，“了解引擎”`NavigationLink` 压进引擎目录；许可证和在哪运行的说明是引擎分组的脚注
-  （`NewBotinText.engineFooter`）。左上 `CloseButton`（自己填了名字时先确认“不建这个 Botin 了？”），右上 `ConfirmButton("创建")`
+  （`NewBotinText.engineFooter`）。左上 `CloseButton`（自己填了名字时先确认“不建这个 Botin 了？”），右上 `ConfirmButton("新建")`
   （新建中转圈，读屏“正在新建”；`ConfirmButton` 加了 `workingLabel`）。错误（包括 Botin 数上限）在表单里的 `ErrorBanner`；离线时一组说明和
   “重新检查网络”。建好了调 `AppModel.openCreatedInstance`：先把新 Botin 放进列表，`selectInstance` 关掉 sheet、从首页压栈进它的对话，再刷新。
   - 视图模型 `AdoptionModel` 改成带引擎选择的：`init(client:agents:instances:preselectedAgentID:)`、`load()` 拉目录、`selectEngine(_:)`、
@@ -207,6 +207,14 @@
   137 个全过；App 的 `ThinktinTests` 21 个过 16 个（还是那 5 个要 App 包的：Info.plist 两条、隐私清单、小组件扩展、缓存路径）；
   `swift format lint --strict -r apps/apple` 零条；`bash -n tools/apple/screenshots.sh` 过，清单循环在 Linux 上用桩函数跑过一遍（30 张）。
   macOS CI 和截图都还没跑。
+- 新建 Botin 和首页的审查修正（2026-11-05，评审对 `bbdb07c` 之后提交的 7 条意见，逐条对过代码）：
+  - 新建表单引擎选择器的一行读屏念 `EngineOption.accessibilityLabel`（名字、介绍、“N 个 Botin 在用”）：以前 `.combine` 只念看得见的
+    名字和介绍，有介绍的引擎念不到几个 Botin 在用，那个帮手和它的测试没有调用处。
+  - 中文按钮“创建”改成“新建”（和标题“新建 Botin”、转圈的读屏“正在新建”、许可脚注“新建即表示你同意……”一致），测试和规范 4.7.1 跟着改。
+  - 自己填了名字的表单不能下滑关掉（`.interactiveDismissDisabled(isAdopting || hasUserInput)`），只能点 ×、先确认；以前下滑直接丢掉。
+  - 从“了解引擎”进引擎详情点“用它新建 Botin”时表单自己的目录还没拉到（打开时那次拉失败了，或者压上目录时被取消了）：以前请求被丢掉、
+    回来按默认的引擎选；现在 `AdoptionModel.requestEngine(_:)` 先记下，`load()` 拉到后先选它（能用的话），之后自己选了别的以自己选的为准。
+    测试 `AdoptionModelTests` 的“引擎详情要的引擎”。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、

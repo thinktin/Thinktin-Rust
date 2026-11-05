@@ -710,25 +710,26 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 底部全宽胶囊按钮没照做。头像的形状网格和色板还是第 2 轮。
 
 - **布局**
-  - large sheet，左上玻璃 ×，标题“新建 Botin”，右上“创建”。
+  - large sheet，左上玻璃 ×，标题“新建 Botin”，右上“新建”（中文这个动作统一说“新建”：标题、按钮、转圈的读屏、许可脚注都是）。
   - 分组表单：最上面头像预览（`Metrics.Avatar.edit`，按名字取字和颜色）；“名字”一组（输入框，占位“给它取个名字”，默认填引擎名、
     重名加序号，脚注是“最多 64 个字，之后可以改。”或名字的问题，问题用失败色）；“引擎”一组：行内选择，每个引擎一行（名字 + 一句话介绍，
-    单行截断；没有介绍时写“N 个 Botin 在用”；不能用的灰掉、选不了），引擎有多种接入方式时下面一行“接入方式”菜单，最后一行“了解引擎”
+    单行截断；没有介绍时写“N 个 Botin 在用”；不能用的灰掉、选不了；读屏一行念“名字，介绍，N 个 Botin 在用”，`EngineOption.accessibilityLabel`），引擎有多种接入方式时下面一行“接入方式”菜单，最后一行“了解引擎”
     （进引擎目录）；这一组的脚注是许可证，专有许可再加许可说明和“新建即表示你同意按上面的条款使用这个引擎。”，别的写“Botin 在自己的沙箱里
     运行，模型请求只经平台的模型网关发给你配置的厂商。”（`NewBotinText.engineFooter`）。
   - 默认引擎：预选的（从引擎详情进来），其次最近活跃的那个 Botin 用的引擎（“上次用的”），再次目录里第一个能用的（`AdoptionModel.defaultEngine`）。
 - **原生**：`.sheet` + `NavigationStack`（`SheetStack`）+ `Form`（`.formStyle(.grouped)`）；`TextField(_:text:prompt:)` + `.submitLabel(.done)`、
   `@FocusState`；引擎 `Picker` + `.pickerStyle(.inline)` + `.labelsHidden()`（每行 `.disabled(!isAvailable)`，选不能用的在视图模型里也拦）；
   接入方式 `Picker(.menu)`；“了解引擎”`NavigationLink(value: AppRoute.agentCatalog)`（压进 sheet 自己的栈）；分组脚注 `Section { } footer: { }`；
-  工具栏 `CloseButton` / `ConfirmButton("创建", isWorking:)`（Design/Glass.swift，iOS 26 是关闭 / 确认角色的玻璃按钮）；
-  `.interactiveDismissDisabled(isAdopting)`；填了名字点 × 时 `.confirmationDialog`（“不建这个 Botin 了？”）。
-- **交互**：首页“+”、首页空状态的“新建 Botin”、引擎详情的“用它新建 Botin”（预选那个引擎）打开；名字合法、选了能用的引擎、在线才能点“创建”；
+  工具栏 `CloseButton` / `ConfirmButton("新建", isWorking:)`（Design/Glass.swift，iOS 26 是关闭 / 确认角色的玻璃按钮）；
+  `.interactiveDismissDisabled(isAdopting || hasUserInput)`；填了名字点 × 时 `.confirmationDialog`（“不建这个 Botin 了？”）。
+- **交互**：首页“+”、首页空状态的“新建 Botin”、引擎详情的“用它新建 Botin”（预选那个引擎）打开；名字合法、选了能用的引擎、在线才能点“新建”；
   建好关 sheet、从首页压栈进新 Botin 的对话（`AppModel.openCreatedInstance`，4.3.1 的首次状态：空状态下面“还差一步：给它配模型路由……”
-  和“配置模型路由”按钮）；× 取消（自己填了名字时先确认），下滑也能取消（新建中不能）。从表单的“了解引擎”进到引擎详情再点“用它新建 Botin”时
-  回到这张表单、换成那个引擎，不叠第二张（`Router.engineRequest`）。
+  和“配置模型路由”按钮）；× 取消（自己填了名字时先确认），没填名字时下滑也能取消（新建中、自己填了名字时不能，只能点 × 确认）。从表单的“了解引擎”进到
+  引擎详情再点“用它新建 Botin”时回到这张表单、换成那个引擎，不叠第二张（`Router.engineRequest`）；表单自己的目录还没拉到时先记下，拉到后再换
+  （`AdoptionModel.requestEngine`），不会落回默认的引擎。
 - **状态**：引擎列表在拉（引擎那一行转圈）、拉不到（“暂时拉不到引擎列表”+ 重试）、目录是空的；名字不合法（`AdoptionModel.nameProblem`）；
   提交中（右上转圈，读屏“正在新建”）；失败和实例数到上限（`ErrorRecovery.limitReached`，不给重试）在表单里的 `ErrorBanner`；离线一组说明和
-  “重新检查网络”，“创建”不能点。
+  “重新检查网络”，“新建”不能点。
 - **ThinkTin 现在**：`Screens/Agents/AdoptAgentSheet.swift` + `ViewModels/Agents/AdoptionModel.swift`（`EngineOption`、`NewBotinText`）。
   原来的“领养好了”页（`AdoptionDoneView`，引导配模型或加 key）删了，引导挪到新 Botin 对话的空状态（第 2 轮换成 6.18 的首次卡片）；
   没有能用的 key 时路由页自己引导加 key。

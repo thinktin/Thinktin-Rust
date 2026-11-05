@@ -39,6 +39,8 @@ public final class AdoptionModel {
     @ObservationIgnored private var suggestion = ""
     /// 用户自己选过引擎（目录刷新时不再换成默认的）。
     @ObservationIgnored private var userChoseEngine = false
+    /// 引擎详情要的引擎（`requestEngine(_:)`）还不在目录里（目录没拉到、拉到的是旧的）：`load()` 拉到后先选它。
+    @ObservationIgnored private var requestedAgentID: AgentID?
 
     /// - Parameters:
     ///   - agents: 已经有的目录（比如别的页面拉过的），先显示它；`load()` 再拉新的。
@@ -68,6 +70,11 @@ public final class AdoptionModel {
             agents = try await client.agents()
             hasLoadedAgents = true
             loadError = nil
+            // 引擎详情要的那个现在拉到了、能用就选它。
+            if let requested = requestedAgentID {
+                requestedAgentID = nil
+                if selectEngine(requested) { return }
+            }
             // 用户选过、还在目录里能用的留着；否则按新目录重新挑默认的（预选的可能现在才拉到）。
             if userChoseEngine, let selected = selectedAgent, selected.canPowerNewBotin {
                 select(selected)
@@ -100,8 +107,17 @@ public final class AdoptionModel {
             return false
         }
         userChoseEngine = true
+        requestedAgentID = nil
         select(agent)
         return true
+    }
+
+    /// 引擎详情上点了“用它新建 Botin”（表单在栈底下，`Router.engineRequest`）：目录里有、能用就马上换（同 `selectEngine`）；
+    /// 还不在目录里（拉不到、压上引擎目录时那次拉被取消了）就先记下，`load()` 拉到后先选它，不会被默认的引擎盖掉。
+    /// 在目录里但不能用的不记；之后用户自己选了别的，以自己选的为准。
+    public func requestEngine(_ id: AgentID) {
+        if selectEngine(id) || isAdopting || adopted != nil { return }
+        if !agents.contains(where: { $0.id == id }) { requestedAgentID = id }
     }
 
     /// 默认选哪个引擎：`preferred`（预选的）在目录里、能用就是它；其次最近活跃的 Botin 用的引擎；再次目录里第一个能用的。
@@ -245,7 +261,7 @@ extension AgentInfo {
 public enum NewBotinText {
     /// 右上的主按钮。
     public static func create(_ language: DisplayLanguage) -> String {
-        language == .chinese ? "创建" : "Create"
+        language == .chinese ? "新建" : "Create"
     }
 
     /// 新建中（转圈的读屏文字）。

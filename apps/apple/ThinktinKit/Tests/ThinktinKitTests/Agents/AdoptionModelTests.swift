@@ -195,6 +195,45 @@ struct AdoptionModelTests {
         #expect(late.loadError == nil)
     }
 
+    @Test("引擎详情要的引擎：目录还没拉到时先记下，拉到后选它，不被默认的盖掉；之后自己选的为准")
+    func engineRequestBeforeCatalog() async {
+        let mock = AgentsFixture.mock()
+        // 默认的是最近活跃的写作助手用的 Claude Agent。
+        let model = AdoptionModel(client: mock, instances: demoInstances)
+        // 打开表单时那次拉没拉到（出错，或者压上引擎目录时被取消了）：目录是空的。
+        mock.failNext(with: .network(message: "offline"))
+        await model.load()
+        #expect(model.agents.isEmpty && model.selectedAgentID == nil)
+        model.requestEngine(hermes.id)
+        #expect(model.selectedAgentID == nil)
+        await model.load()
+        #expect(model.selectedAgentID == hermes.id)
+        #expect(model.name == "Hermes Agent")
+        // 再拉一次也留着（算用户选的）。
+        await model.load()
+        #expect(model.selectedAgentID == hermes.id)
+        // 目录里有的马上换。
+        model.requestEngine(codex.id)
+        #expect(model.selectedAgentID == codex.id)
+        // 不能用的不换、也不记下。
+        let broken = AgentsFixture.agent("broken", name: "Broken", harnesses: [])
+        let withBroken = form(agents: DemoData.agents + [broken])
+        withBroken.requestEngine(broken.id)
+        #expect(withBroken.selectedAgentID == claude.id)
+        // 旧目录里没有：先记下；之后自己在选择器里选了别的，拉到新目录时不再换成要的那个。
+        let stale = AdoptionModel(client: mock, agents: [claude], instances: demoInstances)
+        stale.requestEngine(hermes.id)
+        #expect(stale.selectedAgentID == claude.id)
+        #expect(stale.selectEngine(claude.id))
+        await stale.load()
+        #expect(stale.selectedAgentID == claude.id)
+        // 没自己选：拉到新目录就换成要的那个。
+        let staleUntouched = AdoptionModel(client: mock, agents: [claude], instances: demoInstances)
+        staleUntouched.requestEngine(codex.id)
+        await staleUntouched.load()
+        #expect(staleUntouched.selectedAgentID == codex.id)
+    }
+
     // MARK: 新建
 
     @Test("新建：名字去掉首尾空白，带上选的引擎和接入方式；建过了再点不会再建")
@@ -284,6 +323,8 @@ struct AdoptionModelTests {
         #expect(codexNote.contains("sandbox"))
         #expect(!codexNote.contains("agree"))
         #expect(NewBotinText.nameHint(.chinese).contains("64"))
-        #expect(NewBotinText.create(.chinese) == "创建" && NewBotinText.create(.english) == "Create")
+        // 按钮、转圈的读屏、脚注都说“新建”，和标题“新建 Botin”一致。
+        #expect(NewBotinText.create(.chinese) == "新建" && NewBotinText.create(.english) == "Create")
+        #expect(NewBotinText.creating(.chinese) == "正在新建" && NewBotinText.creating(.english) == "Creating")
     }
 }

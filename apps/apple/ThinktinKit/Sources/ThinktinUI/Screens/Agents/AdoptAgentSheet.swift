@@ -8,8 +8,9 @@ import ThinktinKit
 ///   `Picker`，每行是名字和一句话介绍，不能用的灰掉、选不了；默认选哪个见 `AdoptionModel.defaultEngine`），引擎的
 ///   接入方式多于一个时再一行 `Picker(.menu)`；“了解引擎”压进引擎目录（目录 → 引擎详情，详情上的“用它新建 Botin”
 ///   回到这张表单、换成那个引擎，见 `Router.engineRequest`）；许可证和在哪里运行的说明是引擎分组的脚注。
-/// - 左上 ×（`CloseButton`，自己填了名字时先确认），右上“创建”（`ConfirmButton`，新建中转圈；名字不对、没有引擎、
-///   离线时不能点）。错误（包括 Botin 数到了上限）在表单里的横幅上；新建中不能下滑关掉。
+/// - 左上 ×（`CloseButton`，自己填了名字时先确认），右上“新建”（`ConfirmButton`，新建中转圈；名字不对、没有引擎、
+///   离线时不能点）。错误（包括 Botin 数到了上限）在表单里的横幅上；新建中、自己填了名字时不能下滑关掉（填了名字的
+///   只能点 ×，和 × 一样先确认）。
 /// - 建好了：关掉表单、从首页压栈进新 Botin 的对话（`AppModel.openCreatedInstance`）；以前“建好了”页上配模型路由的
 ///   引导挪到了对话页的空状态下面（`ConversationText.setupNote`）。
 struct AdoptAgentSheet: View {
@@ -78,7 +79,7 @@ private struct AdoptAgentForm: View {
                 .disabled(!model.canSubmit || app.isOffline)
             }
         }
-        .interactiveDismissDisabled(model.isAdopting)
+        .interactiveDismissDisabled(model.isAdopting || model.hasUserInput)
         .confirmationDialog(
             NewBotinText.discardTitle(language), isPresented: $isConfirmingDiscard, titleVisibility: .visible
         ) {
@@ -218,15 +219,16 @@ private struct AdoptAgentForm: View {
         }
     }
 
-    /// 引擎详情上点了“用它新建 Botin”（详情是从这张表单压进去的，`Router` 已经退回表单）：换成那个引擎。
+    /// 引擎详情上点了“用它新建 Botin”（详情是从这张表单压进去的，`Router` 已经退回表单）：换成那个引擎。表单的目录
+    /// 还没拉到时模型先记下，拉到后再换（`AdoptionModel.requestEngine`），所以路由上的请求这里就可以清掉。
     private func applyEngineRequest() {
         guard let id = router.engineRequest else { return }
         router.engineRequestHandled()
-        model.selectEngine(id)
+        model.requestEngine(id)
     }
 }
 
-/// 引擎选择器的一行：名字，下面一行介绍（不能用时说不能用）。
+/// 引擎选择器的一行：名字，下面一行介绍（不能用时说不能用）。读屏念 `EngineOption.accessibilityLabel`（多念几个 Botin 在用）。
 private struct EngineOptionLabel: View {
     let option: EngineOption
 
@@ -244,7 +246,8 @@ private struct EngineOptionLabel: View {
                     .lineLimit(1)
             }
         }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(option.accessibilityLabel(language)))
     }
 }
 
