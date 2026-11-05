@@ -151,7 +151,7 @@ pub async fn delete(
 ) -> ApiResult<StatusCode> {
     let id: ProjectId = parse_id(&id, "project")?;
     // worker 在一个事务里核对身份（成员 403、外人 404、共享过的 409）、撤回还没处理的邀请、删掉。
-    projects::delete(&s.db, who.user, &who.actor(), id).await?;
+    projects::delete(&s.db, who.user, &who.actor(), id, false).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

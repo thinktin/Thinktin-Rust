@@ -37,19 +37,75 @@ fn agent_notice(mut n: Notice, project: ProjectId, owner: UserId) -> Notice {
     n
 }
 
-/// 删没共享过的单人项目（一个事务）：撤回还没处理的邀请、送达的提醒标已读，再删。只有创建者（成员 403、外人 404），
-/// 共享过的 409。
-pub async fn delete(db: &Db, user: UserId, actor: &str, project: ProjectId) -> store::Result<()> {
+/// 删项目（一个事务，软删除：马上读不到、密钥删掉，内容由后台清理）。只有创建者（成员 403、外人 404）；`allow_shared`
+/// 为 false 时共享过的回 409（旧的团队接口）。告诉还在的成员。
+pub async fn delete(
+    db: &Db,
+    user: UserId,
+    actor: &str,
+    project: ProjectId,
+    allow_shared: bool,
+) -> store::Result<()> {
     let mut w = db.worker().await?;
-    let d = w.delete_project(user, project, false).await?;
+    let d = w.delete_project(user, project, allow_shared).await?;
     w.audit(
         Some(user),
         actor,
         "project.delete",
         Some(&project.to_string()),
-        &json!({ "project": project, "invites_revoked": d.invites_revoked }),
+        &json!({
+            "project": project,
+            "shared": d.shared,
+            "invites_revoked": d.invites_revoked,
+            "runs_cancelled": d.runs_cancelled,
+            "grants_revoked": d.grants_revoked,
+        }),
     )
     .await?;
+    for member in &d.notify {
+        let locale = w.user_locale(*member).await?;
+        let (title, body) = texts::project_deleted(locale, &d.name);
+        let mut notice = project_notice(project, title, body, notice_subtype::PROJECT_DELETED);
+        notice.dedupe_key = Some(format!("project_deleted:{project}"));
+        notify(&mut w, *member, &notice).await?;
+    }
+    w.commit().await
+}
+
+/// 归档（只有创建者）：只读，停掉项目里的运行和授权。
+pub async fn archive(db: &Db, user: UserId, actor: &str, project: ProjectId) -> store::Result<()> {
+    let mut w = db.worker().await?;
+    if w.archive_project(user, project).await? {
+        w.audit(
+            Some(user),
+            actor,
+            "project.archive",
+            Some(&project.to_string()),
+            &json!({ "project": project }),
+        )
+        .await?;
+    }
+    w.commit().await
+}
+
+/// 取消归档（只有创建者）。
+pub async fn unarchive(
+    db: &Db,
+    user: UserId,
+    actor: &str,
+    project: ProjectId,
+) -> store::Result<()> {
+    let mut w = db.worker().await?;
+    if w.unarchive_project(user, project).await? {
+        w.audit(
+            Some(user),
+            actor,
+            "project.unarchive",
+            Some(&project.to_string()),
+            &json!({ "project": project }),
+        )
+        .await?;
+    }
     w.commit().await
 }
 
@@ -531,6 +587,8 @@ pub const SWEEP_BATCH: u64 = 500;
 pub const SWEEP_BATCHES: usize = 20;
 /// 结束的邀请留这么久（明文手机号不久留）。
 pub const INVITE_RETENTION: Duration = Duration::from_secs(30 * 24 * 3600);
+/// 删了的项目过这么久才清理内容（删的时候已经读不到、密钥也删了）。
+pub const PROJECT_PURGE_GRACE: Duration = Duration::from_secs(10 * 60);
 
 /// 后台维护（每批一个事务，都不等锁）：到期的邀请标过期、实例删了还挂在项目里的 agent 撤下、结束 30 天的邀请删掉。
 /// 返回处理了几条。
@@ -557,6 +615,27 @@ pub async fn sweep(db: &Db) -> store::Result<u64> {
         total += n;
         if n < SWEEP_BATCH {
             break;
+        }
+    }
+    // 删了的项目：一批批清理内容，最后删项目这一行。出错（等锁超时之类）只记下来，不让整个维护任务失败，下一轮接着清。
+    for _ in 0..SWEEP_BATCHES {
+        let purged = async {
+            let mut w = db.worker().await?;
+            let n = w
+                .purge_deleted_projects(SWEEP_BATCH, PROJECT_PURGE_GRACE)
+                .await?;
+            w.commit().await?;
+            Ok::<_, store::Error>(n)
+        }
+        .await;
+        match purged {
+            Ok(0) => break,
+            Ok(n) => total += n,
+            Err(e) => {
+                tracing::warn!(error = %e, "purging deleted projects failed; trying again next round");
+                metrics::counter!("thinktin_project_purge_errors_total").increment(1);
+                break;
+            }
         }
     }
     Ok(total)

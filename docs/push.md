@@ -87,7 +87,7 @@ APNs：
 | `im_channel_disabled` | `info` | IM 群机器人失效、渠道被停用 | 进 IM 渠道设置 |
 | `report_handled` | `info` | 内容举报处理完 | 进举报记录 |
 | `project_invite` | `info` | 有人邀请你加入项目（带 `project_invite`；8.14，推送里没有邀请人能写的字） | `thinktin://project-invite/{id}` |
-| `project_joined`、`project_left`、`project_removed`、`project_agent_left`、`project_agent_removed` | `info` | 有人加入、退出项目，被移出，agent 撤回、被撤回（带 `project`） | `thinktin://project/{id}` |
+| `project_joined`、`project_left`、`project_removed`、`project_agent_left`、`project_agent_removed`、`project_deleted`（8.15） | `info` | 有人加入、退出项目，被移出，agent 撤回、被撤回（带 `project`） | `thinktin://project/{id}` |
 | `invalid`、`no_balance`、`unavailable`、`device_offline` | `run_failed` | 运行进入要用户处理的等待（和 `Run.wait_code` 一样） | 去换 key、充值、开电脑 |
 
 等待的提醒按原因分开：先缺 key、补上后又欠费，两次都提醒；同一个原因一个运行只提醒一次（唤醒等待中的运行的不只是用户

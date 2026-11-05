@@ -281,6 +281,22 @@ pub fn project_removed(locale: Locale, project: &str) -> (&'static str, String) 
     }
 }
 
+/// 我在的项目被创建者删了（8.15，发给其他成员）。
+pub fn project_deleted(locale: Locale, project: &str) -> (&'static str, String) {
+    match locale {
+        Locale::ZhCn => (
+            "项目已删除",
+            format!("「{project}」已被创建者删除，里面的内容都看不到了"),
+        ),
+        Locale::En => (
+            "Project deleted",
+            format!(
+                "\u{201c}{project}\u{201d} was deleted by its creator. Its content is no longer available."
+            ),
+        ),
+    }
+}
+
 /// 我的 agent 被创建者移出了项目（发给 agent 的主人）。
 pub fn project_agent_removed(locale: Locale, agent: &str, project: &str) -> (&'static str, String) {
     match locale {

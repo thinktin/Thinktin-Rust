@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use keyvault::{KeyStore, KeyVault, Kms, MemoryKeyStore, WrappedKey};
-use proto::domain::{ArtifactId, InstanceId, RunId, UserId};
+use proto::domain::{ArtifactId, InstanceId, Locale, ProjectId, RunId, UserId};
 use sha2::{Digest, Sha256};
 use store::{Db, NewArtifact, StoredArtifact};
 
@@ -25,6 +25,9 @@ pub enum ArtifactError {
     Crypto(#[from] keyvault::Error),
     #[error("object storage: {0}")]
     Blob(#[from] std::io::Error),
+    /// 项目的密钥没了（项目删了）：内容再也解不开，按找不到算。
+    #[error("gone")]
+    Gone,
 }
 
 /// 对象存储。键由平台生成（`<用户>/<产出物>`），内容已经加密。
@@ -210,6 +213,59 @@ pub async fn user_vault(
     }
 }
 
+/// 项目密钥在 KMS 和加密附加数据里的名字（8.15）。用户的是用户 id，UUID 不会以 `project:` 开头，两种不会撞。
+pub fn project_key_context(project: ProjectId) -> String {
+    format!("project:{project}")
+}
+
+/// 拿到项目的 DEK（`create` 时没有就生成一个：KMS 包裹在事务外做，存的时候在项目锁里、只给进行中的项目，同时生成的以先存
+/// 的为准），包成只含这个项目的密钥库。项目删了（密钥没了）返回 [`ArtifactError::Gone`]。
+pub async fn project_vault(
+    db: &Db,
+    kms: Arc<dyn Kms>,
+    project: ProjectId,
+    create: bool,
+) -> Result<KeyVault<Arc<dyn Kms>, MemoryKeyStore>, ArtifactError> {
+    let ctx = project_key_context(project);
+    let with_key = |kms_key_id: String, ciphertext: Vec<u8>| {
+        let store = MemoryKeyStore::default();
+        store.insert_new(
+            &ctx,
+            WrappedKey {
+                kms_key_id,
+                ciphertext,
+            },
+        );
+        KeyVault::new(kms.clone(), store)
+    };
+    let mut w = db.worker().await?;
+    let found = w.project_key(project).await?;
+    w.rollback().await?;
+    if let Some((kms_key_id, ciphertext)) = found {
+        return Ok(with_key(kms_key_id, ciphertext));
+    }
+    if !create {
+        return Err(ArtifactError::Gone);
+    }
+    let vault = KeyVault::new(kms.clone(), MemoryKeyStore::default());
+    vault.create_user_key(&ctx).await?;
+    let wrapped = vault
+        .store()
+        .get(&ctx)
+        .ok_or_else(|| ArtifactError::Invalid("generated key vanished".into()))?;
+    let mut w = db.worker().await?;
+    let (kms_key_id, ciphertext) = match w
+        .insert_project_key(project, &wrapped.kms_key_id, &wrapped.ciphertext)
+        .await
+    {
+        Ok(k) => k,
+        Err(store::Error::NotFound) => return Err(ArtifactError::Gone),
+        Err(e) => return Err(e.into()),
+    };
+    w.commit().await?;
+    Ok(with_key(kms_key_id, ciphertext))
+}
+
 /// 产出物名：文件名风格，不含路径分隔符。
 pub fn check_name(name: &str) -> Result<(), ArtifactError> {
     let ok = !name.is_empty()
@@ -293,11 +349,32 @@ impl ArtifactStore {
             )));
         }
         let id = ArtifactId::new();
-        let vault = user_vault(&self.db, self.kms.clone(), origin.user, true).await?;
-        let sealed = vault
-            .seal_bytes(&origin.user.to_string(), &id.to_string(), bytes)
-            .await?;
-        let key = format!("{}/{}", origin.user.0.simple(), id.0.simple());
+        // 项目运行的产出物（8.15）用项目的密钥加密、存在项目下面；项目删了就解不开。
+        let mut w = self.db.worker().await?;
+        let project = w.run_project(origin.run).await?;
+        w.rollback().await?;
+        let (sealed, key) = match project {
+            Some(p) => {
+                let vault = project_vault(&self.db, self.kms.clone(), p, true).await?;
+                let sealed = vault
+                    .seal_bytes(&project_key_context(p), &id.to_string(), bytes)
+                    .await?;
+                (
+                    sealed,
+                    format!("projects/{}/{}", p.0.simple(), id.0.simple()),
+                )
+            }
+            None => {
+                let vault = user_vault(&self.db, self.kms.clone(), origin.user, true).await?;
+                let sealed = vault
+                    .seal_bytes(&origin.user.to_string(), &id.to_string(), bytes)
+                    .await?;
+                (
+                    sealed,
+                    format!("{}/{}", origin.user.0.simple(), id.0.simple()),
+                )
+            }
+        };
         self.blobs.put(&key, &sealed).await?;
         let sha: [u8; 32] = Sha256::digest(bytes).into();
         let stored = async {
@@ -314,8 +391,7 @@ impl ArtifactStore {
                     size: bytes.len() as u64,
                     sha256: &sha,
                     blob_key: &key,
-                    // 项目运行的产出物用项目的密钥（下一步接上；8.15 里项目运行还不会被领去执行）。
-                    project: None,
+                    project,
                 })
                 .await?;
             w.append_event(
@@ -339,13 +415,49 @@ impl ArtifactStore {
         }
     }
 
-    /// 取出并解密。
+    /// 取出并解密（私人的用主人的密钥，项目的用项目的密钥）。
     pub async fn read(&self, a: &StoredArtifact) -> Result<Vec<u8>, ArtifactError> {
+        if let Some(p) = a.project_id {
+            let vault = project_vault(&self.db, self.kms.clone(), p, false).await?;
+            let sealed = self.blobs.get(&a.blob_key).await?;
+            return Ok(vault
+                .open_bytes(&project_key_context(p), &a.artifact.id.to_string(), &sealed)
+                .await?);
+        }
         let sealed = self.blobs.get(&a.blob_key).await?;
         let vault = user_vault(&self.db, self.kms.clone(), a.user_id, false).await?;
         Ok(vault
             .open_bytes(&a.user_id.to_string(), &a.artifact.id.to_string(), &sealed)
             .await?)
+    }
+
+    /// 成员下载项目产出物（8.15 D15）：在一句 SQL 里核对还是存活成员、项目没删、密钥还在，一起拿到包裹的密钥，再取出、
+    /// 解密。读不到的一律 NotFound（store 的）。返回产出物、内容和下载人的语言（下载时的标识用）。
+    pub async fn read_for_member(
+        &self,
+        user: UserId,
+        project: ProjectId,
+        id: ArtifactId,
+    ) -> Result<(StoredArtifact, Vec<u8>, Locale), ArtifactError> {
+        let mut w = self.db.worker().await?;
+        let (a, kms_key_id, ciphertext, locale) =
+            w.project_artifact_blob(user, project, id).await?;
+        w.rollback().await?;
+        let ctx = project_key_context(project);
+        let store = MemoryKeyStore::default();
+        store.insert_new(
+            &ctx,
+            WrappedKey {
+                kms_key_id,
+                ciphertext,
+            },
+        );
+        let vault = KeyVault::new(self.kms.clone(), store);
+        let sealed = self.blobs.get(&a.blob_key).await?;
+        let bytes = vault
+            .open_bytes(&ctx, &a.artifact.id.to_string(), &sealed)
+            .await?;
+        Ok((a, bytes, locale))
     }
 
     pub async fn delete_blob(&self, key: &str) -> Result<(), ArtifactError> {

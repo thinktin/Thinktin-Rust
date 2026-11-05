@@ -326,3 +326,113 @@ async fn project_flows_send_receipts_and_audit() {
             .unwrap();
     assert_eq!(pending, 0);
 }
+
+/// 项目产出物（8.15）：项目运行发布的用项目的密钥加密、存在项目下面；成员凭成员关系下载，退出以后下载不了；项目删了
+/// 密钥没了，谁都解不开；删项目时还在的成员收到“项目已删除”。
+#[tokio::test]
+async fn project_artifacts_use_the_project_key_and_die_with_it() {
+    use orchestrator::artifacts::{ArtifactError, ArtifactStore, LocalBlobStore, Origin};
+    use std::sync::Arc;
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = user(db, "+8613800002201", Some("Alice")).await;
+    let bob = user(db, "+8613800002202", Some("Bob")).await;
+    let a1 = instance(db, alice, "lead").await;
+    let b1 = instance(db, bob, "helper").await;
+    let p = project(db, alice, &a1, "Shared").await;
+    let hash = [9u8; 32];
+    projects::invite_link(db, alice, ACTOR, p, &hash, InviteCaps::default())
+        .await
+        .unwrap();
+    projects::accept(db, bob, ACTOR, InviteKey::Link(&hash), &terms(&[&b1]))
+        .await
+        .unwrap();
+    // bob 在项目里的一个运行（worker 复制出来：8.15 里项目运行还不会被领去执行）。
+    let mut tb = db.tenant(bob).await.unwrap();
+    let private = tb
+        .create_run(&store::NewRun::new(
+            b1.id,
+            proto::domain::RunSource::User,
+            "task",
+            "1",
+        ))
+        .await
+        .unwrap();
+    tb.commit().await.unwrap();
+    let cols: Vec<String> = sqlx::query_scalar(
+        "SELECT column_name::text FROM information_schema.columns WHERE table_name = 'runs' \
+           AND column_name NOT IN ('id', 'project_id', 'space_kind', 'space_id') ORDER BY ordinal_position",
+    )
+    .fetch_all(db.pool())
+    .await
+    .unwrap();
+    let list = cols.join(", ");
+    let run = proto::domain::RunId::new();
+    // 只有 worker 写得出项目运行（fill_space 触发器）：用原始连接切到 worker 角色。
+    let mut tx = db.pool().begin().await.unwrap();
+    sqlx::query("SELECT set_config('role', 'thinktin_worker', true)")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO runs (id, project_id, {list}) SELECT $1, $2, {list} FROM runs WHERE id = $3"
+    )))
+    .bind(run.0)
+    .bind(p.0)
+    .bind(private.id.0)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let kms: Arc<dyn keyvault::Kms> = Arc::new(keyvault::LocalKms::new("kms1", &[5; 32]));
+    let store = ArtifactStore::new(
+        db.clone(),
+        Arc::new(LocalBlobStore::new(dir.path().join("blobs")).unwrap()),
+        kms,
+    );
+    let a = store
+        .publish(
+            Origin {
+                user: bob,
+                instance: b1.id,
+                run,
+                root: run,
+            },
+            "report.md",
+            "text/markdown",
+            b"# done",
+        )
+        .await
+        .unwrap();
+    assert_eq!(a.project_id, Some(p));
+    assert!(a.blob_key.starts_with("projects/"), "{}", a.blob_key);
+    assert_eq!(store.read(&a).await.unwrap(), b"# done");
+    // alice（成员）下载得到；外人 carol 不行。
+    let (got, bytes, _) = store
+        .read_for_member(alice, p, a.artifact.id)
+        .await
+        .unwrap();
+    assert_eq!(
+        (got.artifact.id, bytes.as_slice()),
+        (a.artifact.id, &b"# done"[..])
+    );
+    let carol = user(db, "+8613800002203", None).await;
+    assert!(matches!(
+        store.read_for_member(carol, p, a.artifact.id).await,
+        Err(ArtifactError::Store(store::Error::NotFound))
+    ));
+    // 删项目：bob 收到“项目已删除”；密钥没了，谁都解不开。
+    projects::delete(db, alice, ACTOR, p, true).await.unwrap();
+    let deleted = inbox(db, bob).await.pop().unwrap();
+    assert_eq!(deleted.0, notice_subtype::PROJECT_DELETED);
+    assert!(deleted.2.contains("Shared"), "{}", deleted.2);
+    assert!(matches!(store.read(&a).await, Err(ArtifactError::Gone)));
+    assert!(matches!(
+        store.read_for_member(alice, p, a.artifact.id).await,
+        Err(ArtifactError::Store(store::Error::NotFound))
+    ));
+    let (action, detail) = audit(db, alice).await.pop().unwrap();
+    assert_eq!(action, "project.delete");
+    assert_eq!(detail["shared"], true);
+}

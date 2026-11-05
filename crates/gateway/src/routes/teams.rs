@@ -102,7 +102,7 @@ pub async fn delete(
     let id: TeamId = parse_id(&id, "team")?;
     // 和 `DELETE /v1/projects/{id}` 一样由 worker 在一个事务里删（项目接口发过的邀请先撤回、对方的提醒标已读）。旧接口的
     // 状态码不变：不是自己创建的 404（旧接口里成员看不到别人的团队），共享过的 409。
-    match orchestrator::projects::delete(&s.db, who.user, &who.actor(), id.into()).await {
+    match orchestrator::projects::delete(&s.db, who.user, &who.actor(), id.into(), false).await {
         Ok(()) => Ok(StatusCode::NO_CONTENT),
         Err(store::Error::NotPermitted(_)) => Err(ApiError::not_found("team")),
         Err(e) => Err(e.into()),
