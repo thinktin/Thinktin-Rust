@@ -710,6 +710,15 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   - 第 1 轮：版式换 `List`；全部实例时保留“按实例筛选”（换 `FilterChipBar`）；AI 标识留在行尾（合规）。
   - 第 2 轮：按类型筛选和按日期分组在 `ArtifactLibraryModel` 里本地做；图片缩略图要下载整份文件，只给图片做、限数量、缓存。
   - “链接”分类没有数据，“展开”只能本地折叠（`instanceArtifacts` 只有 `limit`、没有游标），见 6.19。
+- **已做（2026-11-05，第 1 轮 D 线，对过参考 22、23、26、81–84；第 2 轮的类型筛选、按日期分组、缩略图一起提前做了）**：
+  `ArtifactLibraryScreen` 换成 insetGrouped `List`。第一行“全部 / 媒体 / 文件”`FilterChipBar`（带数，透明行跟着内容滚；媒体是
+  图片、视频、音频，`ArtifactFiles.category`；“链接”按 6.19 C 换成“文件”）；按日期分组（今天、本周、更早，`ArtifactDateGroup`，
+  组标题 `.textCase(nil)`）；一行 `ArtifactRow`：28pt 缩略图（能显示的图片、4 MB 以内、一次打开最多 30 张，`ArtifactThumbnailLoader`
+  下整份文件，界面用 ImageIO 缩小解码，`ArtifactThumbnail`）或没有底的灰色类型图标，单行名字，灰色副标题（类型 · 日期 · 大小，
+  v2 起带版本，全部 Botin 的库带 Botin 名，`ArtifactsText.rowSubtitle`），行尾 AI 生成标识。图片点了全屏查看（4.5.3，iOS 18
+  缩放转场），别的 `NavigationLink` 进详情；左滑删除、长按“详情 / 查看生成它的运行 / 删除”。超过 20 个时最下面居中灰色“展开”
+  （`ArtifactLibraryModel.expand()`，本地折叠）。全部 Botin 的库按 Botin 筛选挪到右上的系统菜单（`Picker(.inline)`，有筛选时实心图标），
+  免得两排胶囊。空着时（`ArtifactLibraryModel.placeholder`）：还没有、没有这一类、拉不到（重试）。原来的 `PageHeader` 说明拿掉。
 
 #### 4.5.3 图片全屏查看（24、25）和产出物详情
 
@@ -726,6 +735,15 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 - **要改**：第 1 轮把产出物详情改成 `List(.insetGrouped)`（头部图标 + 名字 + AI 标识，信息一组），“预览”“分享”放底部，
   删除放“…”菜单最后（destructive）。第 2 轮加图片全屏查看和存相册（Info.plist 加 `NSPhotoLibraryAddUsageDescription`，
   隐私清单同步）。“转发给另一个实例”要后端（`sendMessage` 只能发文字），不做。
+- **已做（2026-11-05，第 1 轮 D 线，对过参考 24、25；全屏查看和存相册从第 2 轮提前）**：`ArtifactImageViewer.swift`，库里点图片
+  iOS 用 `.fullScreenCover`（macOS 是 sheet），纯黑底、深色外观；左上 `CloseButton`，右上“…”系统菜单：分享（`ShareLink`，文件名带
+  AI 标识）、保存到相册（只有 iOS，`PHPhotoLibrary.requestAuthorization(for: .addOnly)`，Info.plist 加了
+  `NSPhotoLibraryAddUsageDescription`，存好了成功触感，没权限 / 失败弹 `.alert`），第二组“详情”（关掉后压进产出物详情，那里有版本、
+  运行、删除）。图片 ImageIO 解码、按屏宽适配、左右 16、圆角 12，点图片用 QuickLook 放大平移；底部一行灰字是文件名加 AI 标识。
+  视图模型 `ArtifactViewerModel`（下载并落到本机、保存的状态，保存的办法由界面传进来）。参考的“转发”不做。
+  产出物详情换成 insetGrouped `List`：居中的头部（44pt 类型图标、名字、AI 标识），信息一组（Botin、类型、版本、大小、生成于），
+  文字类的“内容”一组，“查看生成它的运行”；底部浮着“预览”（`.prominent`）和“分享”两个胶囊；右上“…”里删除（二次确认）。
+  找不到用 `ContentUnavailableView`。隐私清单不用改（只“添加照片”，不是要写理由的 API）。
 
 ### 4.6 电脑
 
@@ -1084,10 +1102,10 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 | 19 | 生成头像 | 实例头像（AI 生成） | 无 | 要后端 | 不做 | 4.4.4 |
 | 20 | 上传头像入口 | 实例头像（上传） | 无 | 要后端 | 不做 | 4.4.4 |
 | 21 | 定时任务空状态 | 实例的计划 | `Plans/PlanListScreen.swift`、`PlanListModel` | 只改界面 | 1（已做） | 4.5.1 |
-| 22 | 资料库全部 | 产出物 | `Artifacts/ArtifactScreens.swift`、`ArtifactLibraryModel` | 部分有 | 1；链接不做 | 4.5.2 |
-| 23 | 资料库媒体 | 产出物按类型筛选 | `ArtifactScreens.swift`、`ArtifactFiles.isImage` | 部分有 | 2 | 4.5.2 |
-| 24 | 图片预览 | 图片全屏查看 | `ArtifactDetailScreen`（QuickLook） | 部分有 | 2 | 4.5.3 |
-| 25 | 图片操作菜单 | 分享、存相册（转发） | `ArtifactDetailScreen`（`ShareLink`） | 部分有 | 2；转发不做 | 4.5.3 |
+| 22 | 资料库全部 | 产出物 | `Artifacts/ArtifactScreens.swift`、`ArtifactLibraryModel` | 部分有 | 1（已做）；链接不做 | 4.5.2 |
+| 23 | 资料库媒体 | 产出物按类型筛选 | `ArtifactScreens.swift`、`ArtifactFiles.category` | 部分有 | 已做（2026-11-05，提前到第 1 轮） | 4.5.2 |
+| 24 | 图片预览 | 图片全屏查看 | `ArtifactImageViewer`（2026-11-05） | 部分有 | 已做（提前到第 1 轮） | 4.5.3 |
+| 25 | 图片操作菜单 | 分享、存相册（转发） | `ArtifactImageViewer`（`ShareLink`、相册的“添加”） | 部分有 | 已做（提前到第 1 轮）；转发不做 | 4.5.3 |
 | 26 | 资料库链接 | 链接分类 | 无数据来源 | 要后端 | 不做（6.19） | 4.5.2 |
 | 27 | 电脑启动页面 | 观看与接管 | 无（docs/browser.md 只有设计） | 要后端 | 3 | 4.6.2 |
 | 28 | 电脑操作说明 | 使用说明 | 无 | 纯客户端能做 | 3（跟 27） | 4.6.3 |
@@ -1143,9 +1161,9 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 | 78 | 全局搜索 | 首页搜索 | `Search/SearchScreen.swift`、`SearchModel` | 部分有 | 1；筛选 2 | 4.2.4 |
 | 79 | 搜索消息筛选空状态 | 搜索筛选 | `SearchScreen` | 纯客户端能做 | 2 | 4.2.4 |
 | 80 | 搜索消息结果 | 搜运行（谁发给谁） | `SearchModel`（任务、摘要） | 部分有 | 2（含本机缓存的回复正文）；缓存外全文 3 | 4.2.4 |
-| 81 | 资料库底部展开入口 | 产出物分页 | `ArtifactLibraryModel`（只有 `limit`） | 部分有 | 1（本地折叠）/ 3 | 4.5.2 |
+| 81 | 资料库底部展开入口 | 产出物分页 | `ArtifactLibraryModel`（只有 `limit`） | 部分有 | 1（本地折叠，已做）/ 3 | 4.5.2 |
 | 82 | 资料库展开后 | 产出物分页 | 同上 | 部分有 | 3 | 4.5.2 |
-| 83 | 资料库媒体完整 | 产出物类型筛选 | `ArtifactScreens.swift`、`ArtifactFiles.isImage` | 部分有 | 2 | 4.5.2 |
+| 83 | 资料库媒体完整 | 产出物类型筛选 | `ArtifactScreens.swift`、`ArtifactFiles.category` | 部分有 | 已做（提前到第 1 轮） | 4.5.2 |
 | 84 | 资料库链接完整 | 链接分类 | 无 | 要后端 | 不做（6.19） | 4.5.2 |
 | 85 | 语音选择完整底部 | 语音通话（无） | 无 | 不适用 | 不做 | 4.4.3 |
 | 86 | 语言选择中段一 | 语音通话（无） | 无 | 不适用 | 不做 | 4.4.3 |

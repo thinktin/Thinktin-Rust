@@ -21,8 +21,13 @@ public final class ArtifactLibraryModel {
     public private(set) var deleting: Set<ArtifactID> = []
     /// 全部实例时按实例筛选（nil 是全部）。
     public var filter: InstanceID?
+    /// 按大类筛选（顶上的“全部 / 媒体 / 文件”，nil 是全部）。
+    public var kind: ArtifactCategory?
+    /// 点过“展开”：不再折叠（`collapsedLimit`）。
+    public private(set) var isExpanded = false
 
     @ObservationIgnored private let client: any ClientProtocol
+    @ObservationIgnored private let thumbnails = ArtifactThumbnailLoader()
 
     public init(client: any ClientProtocol, instanceID: InstanceID? = nil) {
         self.client = client
@@ -88,6 +93,17 @@ public final class ArtifactLibraryModel {
 
     public func clearActionError() {
         actionError = nil
+    }
+
+    /// 列表最下面的“展开”：列出折起来的。
+    public func expand() {
+        isExpanded = true
+    }
+
+    /// 图片行的缩略图（整份文件的字节，界面自己缩小）：不是图片、太大、这次打开已经下了 `ArtifactThumbnailLoader.maxCount` 张、
+    /// 下载失败时为 nil，界面画类型图标。
+    public func thumbnail(for artifact: Artifact) async -> Data? {
+        await thumbnails.data(for: artifact, client: client)
     }
 
     private func loadArtifacts(for ids: [InstanceID]) async {

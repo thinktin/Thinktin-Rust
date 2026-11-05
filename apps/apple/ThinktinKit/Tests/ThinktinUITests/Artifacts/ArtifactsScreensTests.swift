@@ -44,11 +44,44 @@ struct ArtifactsScreensTests {
             #expect(!ArtifactIcon.systemImage(artifact).isEmpty)
             for name in ["写作助手", nil] as [String?] {
                 let row = ArtifactRow(
-                    artifact: artifact, instanceName: name, isDeleting: name == nil, canWrite: true, onOpen: {},
-                    onDelete: {})
+                    artifact: artifact, instanceName: name, isDeleting: name == nil, thumbnail: { _ in nil })
                 hostAndLayout(row.previewShell())
                 hostAndLayout(row.previewShell(.english, scheme: .dark))
             }
+            renderInBothAppearances(ArtifactThumbnail(artifact: artifact))
         }
+        #expect(ArtifactIcon.systemImage(Self.artifact(type: "video/mp4")) == "film")
+        #expect(ArtifactIcon.systemImage(Self.artifact(type: "audio/mpeg")) == "waveform")
+    }
+
+    private static func artifact(type: String, name: String = "截图.png") -> Artifact {
+        Artifact(
+            id: "art-image", instanceID: DemoData.writerID, runID: DemoData.weeklyRunID, name: name,
+            contentType: type, size: 4, createdAt: Date())
+    }
+
+    @Test("改版的库：只有某一类、折叠和展开、全部 Botin 的筛选菜单；图片全屏查看")
+    func redesignedLibrary() {
+        // 有图片、有文件，超过折叠的数量。
+        var state = DemoData.state()
+        state.artifacts += (0..<25).map { i in
+            Artifact(
+                id: ArtifactID(rawValue: "art-extra-\(i)"),
+                instanceID: i.isMultiple(of: 2) ? DemoData.writerID : DemoData.reviewerID,
+                runID: DemoData.weeklyRunID, name: "图 \(i).png", contentType: i < 3 ? "image/png" : "text/plain",
+                size: 4, createdAt: Date().addingTimeInterval(Double(-i) * 86400))
+        }
+        state.artifactContents["art-extra-0"] = Data([0x89, 0x50, 0x4e, 0x47])
+        let client = MockClient(state: state, stepDelay: 0)
+        hostAndLayout(ArtifactLibraryScreen(instanceID: nil).previewShell(client: client))
+        hostAndLayout(
+            ArtifactLibraryScreen(instanceID: DemoData.writerID).previewShell(.english, scheme: .dark, client: client))
+
+        let image = Self.artifact(type: "image/png")
+        hostAndLayout(ArtifactImageViewer(artifact: image) {}.previewShell(client: client))
+        hostAndLayout(ArtifactImageViewer(artifact: image) {}.previewShell(.english, scheme: .dark, client: client))
+        hostAndLayout(
+            ArtifactImageViewer(artifact: image) {}.previewShell(client: client).dynamicTypeSize(.accessibility3))
+        #expect(ArtifactImageDecoder.decode(Data([0, 1, 2]), maxPixelSize: 10) == nil)
     }
 }

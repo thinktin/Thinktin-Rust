@@ -20,6 +20,9 @@ struct AppSmokeTests {
         #expect(info["NSSupportsLiveActivities"] as? Bool == true)
         // 扫电脑上的配对二维码（12.9）。
         #expect(info["NSCameraUsageDescription"] as? String != nil)
+        // 产出物图片“保存到相册”（docs/ios-ui-redesign.md 4.5.3），只要“添加照片”。
+        #expect(info["NSPhotoLibraryAddUsageDescription"] as? String != nil)
+        #expect(info["NSPhotoLibraryUsageDescription"] == nil)
         // 启动屏（docs/ios-ui-redesign.md 4.1.1）：资源由 tools/apple/brand_assets.py 生成。
         let launch = info["UILaunchScreen"] as? [String: Any]
         #expect(launch?["UIColorName"] as? String == "LaunchBackground")

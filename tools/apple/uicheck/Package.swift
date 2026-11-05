@@ -20,9 +20,15 @@ var targets: [Target] = [
     .target(name: "UserNotifications", path: "Stubs/UserNotifications"),
     // 本机验证的桩（12.5 批准前、12.9 签名前）。
     .target(name: "LocalAuthentication", path: "Stubs/LocalAuthentication"),
+    // 图片按需缩小解码、存相册（第 1 轮 D 线：产出物库的缩略图、图片全屏查看）。
+    .target(name: "ImageIO", dependencies: ["CoreGraphics"], path: "Stubs/ImageIO"),
+    .target(name: "Photos", path: "Stubs/Photos"),
     .target(name: "ThinktinKit", path: "Gen/ThinktinKit"),
     .target(
-        name: "ThinktinUI", dependencies: ["ThinktinKit", "SwiftUI", "Charts", "UserNotifications", "LocalAuthentication"],
+        name: "ThinktinUI",
+        dependencies: [
+            "ThinktinKit", "SwiftUI", "Charts", "UserNotifications", "LocalAuthentication", "ImageIO", "Photos",
+        ],
         path: "Gen/ThinktinUI"),
     .testTarget(name: "ThinktinUITests", dependencies: ["ThinktinUI", "ThinktinKit", "SwiftUI"], path: "Gen/ThinktinUITests"),
 ]

@@ -362,7 +362,7 @@
     142 个全过；App 的 `ThinktinTests` 21 个过 16 个（还是那 5 个要 App 包的：Info.plist 两条、隐私清单、小组件扩展、缓存路径）；
     `swift format -i -r apps/apple` 后 `swift format lint --strict -r apps/apple` 零条。macOS CI 和截图还没跑。
 
-- 第 1 轮 D 线·计划列表（规范 4.5.1，对过参考 21；2026-11-05，进行中，产出物和搜索还没做）：`PlanListScreen` 换成 insetGrouped
+- 第 1 轮 D 线·计划列表（规范 4.5.1，对过参考 21；2026-11-05）：`PlanListScreen` 换成 insetGrouped
   `List`（右上玻璃“+”，Botin 资料进来的只看这个 Botin、不显示筛选，工作台进来的第一行是 `FilterChipBar`），一行 `PlanRow`
   （状态图标、单行标题、灰色副标题、状态行），左滑 / 长按暂停、恢复、删除；空着时正中一段说明 +“新建计划”（`ContentUnavailableView`）。
   视图模型：`PlanListModel.scopeInstanceID`、`showsInstanceFilter`、`placeholder`（`PlanListPlaceholder`），`PlansText.listEmptyMessage`、
@@ -370,6 +370,15 @@
   `PlansFilterChip`、`PlanListRow`、`PlanAwaitingCard` 删掉；触发器编辑器“规则的写法”换成 `FilterChipBar`。C 线放在
   `InstanceDetailScreen.swift` 末尾的 `insetGroupedList()`、`clearListRow()` 挪到 `Components/ListStyles.swift`，`AgentsToolbar.trailing`
   改名 `ToolbarSlot.trailing`（同一个文件）。
+- 第 1 轮 D 线·产出物（规范 4.5.2、4.5.3，对过参考 22–26、81–84；2026-11-05）：库换成 insetGrouped `List`（“全部 / 媒体 / 文件”胶囊、
+  按日期分组、28pt 缩略图、行尾 AI 标识、超过 20 个“展开”，全部 Botin 的按 Botin 筛选挪到右上菜单）；新的图片全屏查看
+  `ArtifactImageViewer`（纯黑底、× 和“…”：分享、保存到相册、详情）；详情换成 `List` + 底部“预览 / 分享” + “…”里删除。
+  视图模型：新文件 `ArtifactLibraryLayout.swift`（`ArtifactCategory`、`ArtifactDateGroup`、`ArtifactSection`、库的 `kind` / `filtered` /
+  `count(of:)` / `sections()` / `hasMore` / `expand()` / `placeholder`、`ArtifactThumbnailLoader`）、`ArtifactViewerModel.swift`、
+  `ArtifactsText` 加类型名、副标题和查看页的文案；测试 `ArtifactLibraryLayoutTests`（7 条），`ArtifactsScreensTests` 加改版的库和查看页。
+  Info.plist（project.yml）加 `NSPhotoLibraryAddUsageDescription`，App 的 Info.plist 测试和 docs/ios-appstore.md 3.3 跟着改。
+  uicheck 桩：新模块 `Stubs/ImageIO`（`CGImageSource`、缩略图的几个键，`CFData` 当 `Data`）和 `Stubs/Photos`（`PHPhotoLibrary`、
+  `PHAssetCreationRequest`），`Package.swift` 里 ThinktinUI 依赖它们。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、
