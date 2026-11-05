@@ -175,7 +175,6 @@ struct DesignTokenTests {
     func metrics() {
         #expect(Metrics.Radius.card == 20)
         #expect(Metrics.Radius.composerCard == 28)
-        #expect(Metrics.Radius.input == 24)
         #expect(Metrics.Radius.control == 10)
         let avatars = [
             Metrics.Avatar.title, Metrics.Avatar.search, Metrics.Avatar.list, Metrics.Avatar.pinned,

@@ -56,22 +56,25 @@ struct SecretInterceptionSheet: View {
                     }
                 }
             }
-            .safeAreaInset(edge: .bottom) {
+            .floatingBar(edge: .bottom) {
+                // 规范 2.7：底部全宽的玻璃胶囊按钮（不是主操作，用普通玻璃）。
                 VStack(spacing: Metrics.Spacing.xs) {
                     if let error = model.sendError {
                         ErrorBanner(error, onDismiss: { model.clearSendError() })
                     }
-                    PillButton(
-                        ConversationText.sendAnyway(language), systemImage: "exclamationmark.triangle",
-                        kind: .secondary
-                    ) {
+                    Button {
                         isConfirmingSend = true
+                    } label: {
+                        Label(ConversationText.sendAnyway(language), systemImage: "exclamationmark.triangle")
+                            .frame(maxWidth: .infinity)
                     }
-                    .frame(maxWidth: .infinity)
+                    .glassButtonStyle()
+                    .buttonBorderShape(.capsule)
+                    .controlSize(.large)
                     .disabled(model.isSending)
                 }
-                .padding(Metrics.Spacing.m)
-                .background(Theme.paper)
+                .padding(.horizontal, Metrics.Spacing.m)
+                .padding(.bottom, Metrics.Spacing.xs)
             }
             .confirmationDialog(
                 ConversationText.sendAnyway(language), isPresented: $isConfirmingSend, titleVisibility: .visible
@@ -97,7 +100,7 @@ struct SecretEntryCard: View {
     @Environment(\.displayLanguage) private var language
 
     var body: some View {
-        Card {
+        Card(bordered: false) {
             HStack(spacing: Metrics.Spacing.xs) {
                 Image(systemName: entry.isStorable ? "key" : "exclamationmark.lock")
                     .foregroundStyle(entry.isStorable ? Theme.warning : Theme.danger)
@@ -131,9 +134,12 @@ struct SecretEntryCard: View {
                     }
                 }
                 HStack(spacing: Metrics.Spacing.xs) {
-                    PillButton(ConversationText.saveSecret(language), systemImage: "lock", size: .compact) {
+                    Button {
                         Task { await model.saveSecret(entry.id) }
+                    } label: {
+                        Label(ConversationText.saveSecret(language), systemImage: "lock")
                     }
+                    .smallCapsuleButton(.prominent)
                     .disabled(!entry.canSave)
                     if entry.isSaving { ProgressView().controlSize(.small) }
                 }
@@ -142,9 +148,10 @@ struct SecretEntryCard: View {
             }
             if entry.looksLikeModelKey {
                 NoticeText(text: ConversationText.interceptionModelKey(language), tone: .waiting)
-                PillButton(
-                    ConversationText.addModelKey(language), systemImage: "plus", kind: .secondary, size: .compact,
-                    action: onAddModelKey)
+                Button(action: onAddModelKey) {
+                    Label(ConversationText.addModelKey(language), systemImage: "plus")
+                }
+                .smallCapsuleButton()
             }
         }
     }

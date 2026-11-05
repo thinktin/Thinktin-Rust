@@ -7,7 +7,8 @@ struct ReportRequest: Identifiable {
     let target: ContentReportTarget
 }
 
-/// 举报 agent 的输出（5.5）：选原因、写说明（可选，最多 1000 个字符），提交后显示“已收到”。
+/// 举报 agent 的输出（5.5）：系统表单（规范 2.6、2.8）——原因是整组单选（`Picker(.inline)`，系统打勾），说明（可选，最多
+/// 1000 个字符）一格；左上关闭、右上“提交”（提交中转圈）。提交后换成“已收到”和“完成”。
 struct ContentReportSheet: View {
     @State private var model: ContentReportModel
 
@@ -19,89 +20,81 @@ struct ContentReportSheet: View {
     }
 
     var body: some View {
-        @Bindable var model = model
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: Metrics.Spacing.m) {
-                    if model.report != nil {
-                        EmptyStateView(
-                            systemImage: "checkmark.circle", title: ConversationText.reportDone(language),
-                            actionTitle: language == .chinese ? "完成" : "Done"
-                        ) {
-                            dismiss()
-                        }
-                    } else {
-                        VStack(spacing: 0) {
-                            ForEach(ContentReportModel.reasons, id: \.self) { reason in
-                                reasonRow(reason, selected: model.reason == reason) { model.reason = reason }
+            content
+                .inlineNavigationTitle(ConversationText.reportTitle(model.target, language: language))
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) { CloseButton { dismiss() } }
+                    if model.report == nil {
+                        ToolbarItem(placement: .confirmationAction) {
+                            ConfirmButton(
+                                ConversationText.reportSubmit(language), isWorking: model.isSubmitting,
+                                workingLabel: language == .chinese ? "正在提交" : "Submitting"
+                            ) {
+                                Task { await model.submit() }
                             }
+                            .disabled(!model.canSubmit)
                         }
-                        .cardSurface()
-                        TextField(
-                            ConversationText.reportNotePlaceholder(language), text: $model.note, axis: .vertical
-                        )
-                        .lineLimit(3...6)
-                        .textFieldStyle(.plain)
-                        .vaultFieldStyle()
-                        if model.isNoteTooLong {
-                            Text(
-                                language == .chinese
-                                    ? "说明最多 \(ContentReport.maxNoteLength) 个字"
-                                    : "Keep it under \(ContentReport.maxNoteLength) characters"
-                            )
-                            .typography(.caption)
-                            .foregroundStyle(Theme.danger)
-                        }
-                        if let error = model.error {
-                            ErrorBanner(error) { Task { await model.submit() } }
-                        }
-                        PillButton(ConversationText.reportSubmit(language), systemImage: "flag") {
-                            Task { await model.submit() }
-                        }
-                        .frame(maxWidth: .infinity)
-                        .disabled(!model.canSubmit)
                     }
                 }
-                .padding(Metrics.Spacing.m)
-                .frame(maxWidth: Metrics.readableWidth)
-                .frame(maxWidth: .infinity)
-            }
-            .background(Theme.paper)
-            .navigationTitle(ConversationText.reportTitle(model.target, language: language))
-            #if os(iOS)
-                .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(language == .chinese ? "取消" : "Cancel") { dismiss() }
-                }
-            }
         }
         .tint(Theme.accent)
         .presentationDetents([.medium, .large])
     }
 
-    private func reasonRow(_ reason: ReportReason, selected: Bool, action: @escaping @MainActor () -> Void)
-        -> some View
-    {
-        Button(action: action) {
-            HStack {
-                Text(ConversationText.reportReasonName(reason, language: language))
-                    .typography(.body)
-                    .foregroundStyle(Theme.ink)
-                Spacer(minLength: 0)
-                if selected {
-                    Image(systemName: "checkmark")
-                        .foregroundStyle(Theme.accent)
-                        .accessibilityHidden(true)
+    /// 提交前是表单，提交后是“已收到”。
+    @ViewBuilder
+    private var content: some View {
+        @Bindable var model = model
+        if model.report != nil {
+            ContentUnavailableView {
+                Label(ConversationText.reportDone(language), systemImage: "checkmark.circle")
+            } actions: {
+                Button(language == .chinese ? "完成" : "Done") { dismiss() }
+                    .glassButtonStyle(.prominent)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Theme.paper)
+        } else {
+            Form {
+                Section {
+                    Picker(selection: $model.reason) {
+                        ForEach(ContentReportModel.reasons, id: \.self) { reason in
+                            Text(ConversationText.reportReasonName(reason, language: language))
+                                .tag(ReportReason?.some(reason))
+                        }
+                    } label: {
+                        EmptyView()
+                    }
+                    .pickerStyle(.inline)
+                }
+                .themedRow()
+                Section {
+                    TextField(
+                        ConversationText.reportNotePlaceholder(language), text: $model.note, axis: .vertical
+                    )
+                    .lineLimit(3...6)
+                } footer: {
+                    if model.isNoteTooLong {
+                        Text(
+                            language == .chinese
+                                ? "说明最多 \(ContentReport.maxNoteLength) 个字"
+                                : "Keep it under \(ContentReport.maxNoteLength) characters"
+                        )
+                        .foregroundStyle(Theme.danger)
+                    }
+                }
+                .themedRow()
+                if let error = model.error {
+                    Section {
+                        ErrorBanner(error) { Task { await model.submit() } }
+                    }
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets())
                 }
             }
-            .padding(.horizontal, Metrics.Spacing.m)
-            .frame(minHeight: Metrics.minTapTarget)
-            .contentShape(Rectangle())
+            .themedGroupedBackground()
         }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 

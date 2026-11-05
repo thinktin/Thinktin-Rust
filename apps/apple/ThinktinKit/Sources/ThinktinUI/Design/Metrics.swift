@@ -7,11 +7,8 @@ public enum Metrics {
     public enum Radius {
         /// 消息气泡、自己画的卡片（工具调用、审批）、横幅。`List` 的 insetGrouped 分组卡片用系统自带的圆角。
         public static let card: CGFloat = 20
-        /// 输入框带引用、长成卡片时的圆角（单行时是胶囊，用 `Capsule`）。
+        /// 输入框带引用、长成卡片时的圆角（单行时是胶囊：圆角取输入框高度的一半，`ComposerBar`）。
         public static let composerCard: CGFloat = 28
-        /// 改版前的底部输入框。改版后输入框是胶囊（`Design/Glass.swift` 的 `glassBackground(in: .capsule)`），
-        /// 对话那条线换掉 `ComposerBar` 以后删掉。
-        public static let input: CGFloat = 24
         /// 小控件：标签、小按钮、代码块、应用 / agent 的图标方块。
         public static let control: CGFloat = 10
     }

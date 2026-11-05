@@ -49,8 +49,8 @@ private struct RunTreeContent: View {
                     attentionBanner(run)
                 }
                 if model.isMissing {
-                    EmptyStateView(
-                        systemImage: "questionmark.square.dashed", title: ConversationText.runMissing(language))
+                    ContentUnavailableView(
+                        ConversationText.runMissing(language), systemImage: "questionmark.square.dashed")
                 } else if !model.hasLoaded {
                     ConversationLoadingView()
                 }
@@ -252,9 +252,9 @@ private struct ActiveRunsContent: View {
                     ErrorBanner(error) { Task { await model.load() } }
                 }
                 if model.hasLoaded && model.runs.isEmpty {
-                    EmptyStateView(
-                        systemImage: "checkmark.circle", title: ConversationText.activeRunsEmpty(language),
-                        message: ConversationText.activeRunsEmptyMessage(language))
+                    ContentUnavailableView(
+                        ConversationText.activeRunsEmpty(language), systemImage: "checkmark.circle",
+                        description: Text(ConversationText.activeRunsEmptyMessage(language)))
                 } else if !model.hasLoaded {
                     ConversationLoadingView()
                 }

@@ -53,11 +53,11 @@ private struct RunDetailContent: View {
                     if let run = model.run, !model.isMissing {
                         content(run, proxy: proxy)
                     } else if model.isMissing {
-                        EmptyStateView(
-                            systemImage: "questionmark.square.dashed", title: ConversationText.runMissing(language),
-                            actionTitle: language == .chinese ? "返回" : "Go back"
-                        ) {
-                            router.pop()
+                        ContentUnavailableView {
+                            Label(ConversationText.runMissing(language), systemImage: "questionmark.square.dashed")
+                        } actions: {
+                            Button(language == .chinese ? "返回" : "Go back") { router.pop() }
+                                .glassButtonStyle()
                         }
                     } else {
                         ConversationLoadingView()
@@ -301,21 +301,22 @@ private struct RunDetailContent: View {
             .buttonStyle(.plain)
             if model.canStop {
                 HStack(spacing: Metrics.Spacing.xs) {
-                    PillButton(
-                        ConversationText.detailLabel(.stop, language: language), systemImage: "stop.fill",
-                        kind: .destructive, size: .compact
-                    ) {
+                    Button(role: .destructive) {
                         stopsWholeTree = false
                         isConfirmingStop = true
+                    } label: {
+                        Label(ConversationText.detailLabel(.stop, language: language), systemImage: "stop.fill")
                     }
+                    .smallCapsuleButton()
                     if model.canStopTree {
-                        PillButton(
-                            ConversationText.detailLabel(.stopTree, language: language), systemImage: "stop.circle",
-                            kind: .secondary, size: .compact
-                        ) {
+                        Button {
                             stopsWholeTree = true
                             isConfirmingStop = true
+                        } label: {
+                            Label(
+                                ConversationText.detailLabel(.stopTree, language: language), systemImage: "stop.circle")
                         }
+                        .smallCapsuleButton()
                     }
                     if model.isStopping { ProgressView().controlSize(.small) }
                     Spacer(minLength: 0)
@@ -396,9 +397,9 @@ struct RunProcessScreen: View {
                     onReport: { reportRequest = ReportRequest(target: $0) }
                 ) {
                     if model.isEmpty && model.hasLoaded {
-                        EmptyStateView(
-                            systemImage: "list.bullet.rectangle",
-                            title: language == .chinese ? "这次没有过程记录" : "No steps recorded for this run")
+                        ContentUnavailableView(
+                            language == .chinese ? "这次没有过程记录" : "No steps recorded for this run",
+                            systemImage: "list.bullet.rectangle")
                     }
                 }
                 .padding(Metrics.Spacing.m)
