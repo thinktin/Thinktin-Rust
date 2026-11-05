@@ -45,6 +45,8 @@ iOS 和 Mac 已经改完（分支 `ios-ui-redesign`，范围见 [progress/ios-ui
 - **服务端推送和 IM 消息**（`crates/orchestrator/src/texts.rs` 里给用户看的标题和正文，比如“agent 需要账号密码”“agent 想安排一个计划”
   “agent 请求执行一个操作”）：照表换成 Botin。同一个文件里**写给 agent 自己看的说明**（续跑、委派、交接、问队友）是另一回事，
   换不换要和用户确认。agent 目录的介绍（`crates/catalog` 的清单里的 `description`）由服务端给，App 照原样显示，要不要改也要另定。
+- **上架材料**（[ios-appstore.md](ios-appstore.md) 的审核备注、以后的商店描述和截图说明，安卓的商店材料）也照表写：审核员照备注找
+  “新建 Botin”“引擎”这些按钮。iOS 的审核备注已经改了（2026-11-05）。
 - iOS 没改的：登录页（`SignInFlow`）的两句“你的常驻 agent”“agent 在云端常驻”（登录页是用户自己设计的，等用户定）。
 
 上一个会话（session_01GuCp3KRgqaK6Kzynw6udRn）的周额度快用完了，下一个 agent 从这里接着做 iOS。阿里云部署的交接在

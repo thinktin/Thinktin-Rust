@@ -224,6 +224,9 @@
     `destination(after:)` 新老用户都是 nil；`OnboardingCheck` 只在有 Botin、没有 key 时弹（还没有 Botin 的，空状态就是引导；新建之后对话页的
     “还差一步”接着引导配路由、加 key）；引导从设置里打开。测试 `SignInModelTests`（新用户登录后没有 sheet）、`OnboardingModelTests`
     （新账号不弹、有 Botin 有 key 不弹、有 Botin 没 key 弹）。docs/ios.md 截图那段、规范 4.2.1、截图脚本的说明跟着改。
+  - 给审核员看的说明换成新叫法：docs/ios-appstore.md 的审核备注（录屏“新建 Botin（起名字、选一个引擎）→ 配 key → …”、“给 Botin 配模型
+    路由”、“预置的 Botin”，英文版加一句 Botin 和引擎是什么、“preloaded with a Botin and a key”），docs/ios-release.md 的 TestFlight 测试说明
+    和审核账号同样改了。docs/handoff-ios.md 的“Botin 改名”加一条：上架材料（审核备注、商店描述、截图说明，安卓的商店材料）也照对照表写。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、
