@@ -115,12 +115,12 @@ struct ConversationLayoutTests {
         #expect(node.title == "帮我存一下")
     }
 
-    @Test("“…”菜单：Botin 资料一组，计划、新建计划、产出物、模型路由一组，有任务在跑时最后是停止")
+    @Test("“…”菜单：Botin 资料、在对话中查找一组，计划、新建计划、产出物、模型路由一组，有任务在跑时最后是停止")
     func conversationMenu() {
         let idle = ConversationMenu.sections(instanceID: writer, canStop: false)
         #expect(
             idle == [
-                [.open(.instance(writer))],
+                [.open(.instance(writer)), .find],
                 [
                     .open(.plans(instanceID: writer)), .open(.newPlan(instanceID: writer)),
                     .open(.artifacts(instanceID: writer)), .open(.modelRoutes(writer)),
@@ -133,15 +133,21 @@ struct ConversationLayoutTests {
         #expect(ConversationMenuItem.open(.instance(writer)).systemImage == "person.crop.circle")
         #expect(ConversationMenuItem.stop.title(.chinese) == "停止当前任务")
         #expect(ConversationMenuItem.open(.artifacts(instanceID: writer)).systemImage == "folder")
+        #expect(ConversationMenuItem.find.title(.chinese) == "在对话中查找")
+        #expect(ConversationMenuItem.find.systemImage == "magnifyingglass")
+        #expect(
+            ConversationMenu.sections(instanceID: writer, canFind: false, canStop: false).first == [
+                .open(.instance(writer))
+            ])
         // 每一项的图标都是认得的（不是兜底的 chevron）。
         #expect(busy.flatMap { $0 }.allSatisfy { $0.systemImage != "chevron.right" })
     }
 
-    @Test("长按菜单：引用回复一组；复制、选择文本、复制运行 ID 一组；agent 的再分享、举报，用户的再发一次")
+    @Test("长按菜单：引用回复（agent 的还有标为未读）一组；复制、选择文本、复制运行 ID 一组；agent 的再分享、举报，用户的再发一次")
     func messageMenu() {
         #expect(
             MessageMenuLayout.agentOutput(canQuote: true, hasRunID: true, canReport: true)
-                == [[.quote], [.copy, .selectText, .copyRunID], [.share], [.report]])
+                == [[.quote, .markUnread], [.copy, .selectText, .copyRunID], [.share], [.report]])
         #expect(
             MessageMenuLayout.agentOutput(canQuote: false, hasRunID: false, canReport: false)
                 == [[.copy, .selectText], [.share]])
@@ -153,6 +159,8 @@ struct ConversationLayoutTests {
                 [.copy, .selectText]
             ])
         #expect(MessageMenuAction.allCases.filter(\.isDestructive) == [.report])
+        #expect(MessageMenuAction.allCases.filter(\.isComingSoon) == [.markUnread])
+        #expect(MessageMenuAction.markUnread.title(.chinese) == "标为未读")
         #expect(MessageMenuAction.quote.title(.chinese) == "引用回复")
         #expect(MessageMenuAction.copyRunID.title(.english) == "Copy Run ID")
         #expect(Set(MessageMenuAction.allCases.map(\.systemImage)).count == MessageMenuAction.allCases.count)

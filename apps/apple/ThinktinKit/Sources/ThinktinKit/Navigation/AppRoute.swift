@@ -34,6 +34,9 @@ public enum AppRoute: Hashable, Sendable, Codable {
     case runTree(RunID)
     /// 进行中：跨实例的运行和等待态（对应 Claude 的后台会话列表）。
     case activeRuns
+    /// 选择主 Botin（参考 11，sheet）：新任务、快捷指令默认交给的那个，只记在这台设备上（`PrimaryBotinStore`）。
+    /// 入口是 Botin 资料“…”菜单的“替换主 Botin…”。
+    case primaryBotin
 
     // MARK: agent 与实例（12.3）
 
@@ -168,7 +171,7 @@ extension AppRoute {
     public var feature: AppFeature {
         switch self {
         case .signIn, .account, .devices, .pairComputer: .account
-        case .conversation, .run, .runTree, .activeRuns: .conversation
+        case .conversation, .run, .runTree, .activeRuns, .primaryBotin: .conversation
         case .agentCatalog, .agent, .adopt, .instance: .agents
         case .credentials, .addCredential, .credential, .modelRoutes, .usage: .models
         case .plans, .plan, .newPlan, .editPlan, .confirmPlan: .plans
@@ -191,7 +194,9 @@ extension AppRoute {
         switch self {
         case .home, .search: .root
         case .signIn, .frozen, .upgrade: .global
-        case .newTask, .addCredential, .newPlan, .editPlan, .onboarding, .pairComputer, .settings, .adopt: .sheet
+        case .newTask, .addCredential, .newPlan, .editPlan, .onboarding, .pairComputer, .settings, .adopt,
+            .primaryBotin:
+            .sheet
         default: .push
         }
     }
@@ -234,7 +239,7 @@ extension AppRoute {
         // 已隐藏的 Botin 读的是实例列表（有缓存），取消隐藏只改这台设备上的记录。
         case .home, .conversation, .run, .runTree, .activeRuns, .instance, .inbox, .inboxItem, .hiddenBotins: .cached
         // 不用联网的页面。搜索只搜本机缓存（12.21）。
-        case .licenses, .about, .settings, .search, .newTask, .frozen, .upgrade, .signIn: .local
+        case .licenses, .about, .settings, .search, .newTask, .frozen, .upgrade, .signIn, .primaryBotin: .local
         default: .unavailable
         }
     }

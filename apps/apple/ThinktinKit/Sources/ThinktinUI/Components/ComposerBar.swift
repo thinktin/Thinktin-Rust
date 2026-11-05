@@ -7,9 +7,11 @@ import ThinktinKit
 /// 主按钮是 [`Action`]：发送（强调色的玻璃圆，有非空白的文字才能点，也可以由调用方决定）、停止（同样的圆，方块图标）、
 /// 转圈（发送中、停止中）。超过字数上限时外沿描一圈危险色（提示文字由调用方放在上面）。
 ///
-/// 参考左边的“+”（附件，6.13）、麦克风和语音（6.23）ThinkTin 没有，不放。玻璃在 iOS 26 是 Liquid Glass，旧系统是
-/// `.regularMaterial`（`Design/Glass.swift`）。对话页（12.5）在它上面放错误、排队提示、模型标签和字数；
-/// `onSend` 为 nil 时发送按钮一直置灰（预览、占位）。
+/// 左边的“+”（附件，规范 4.3.6，参考 03、08）：传了 `attachments` 才有，是系统 `Menu`（照片或视频、拍照、选择文件），
+/// 选了哪项交给 `onAttach`（上传要服务端，现在对话页弹“即将推出”）；有引用的卡片里它在下面一行的左边（参考 07）。
+/// 参考的麦克风和语音（6.23）ThinkTin 没有，不放。玻璃在 iOS 26 是 Liquid Glass，旧系统是 `.regularMaterial`
+/// （`Design/Glass.swift`）。对话页（12.5）在它上面放错误、排队提示、模型标签和字数；`onSend` 为 nil 时发送按钮一直置灰
+/// （预览、占位）。
 public struct ComposerBar: View {
     /// 右边的按钮。
     public enum Action {
@@ -35,6 +37,8 @@ public struct ComposerBar: View {
     private let focus: FocusState<Bool>.Binding?
     private let quote: String?
     private let onRemoveQuote: (@MainActor () -> Void)?
+    private let attachments: [ComposerAttachmentSource]
+    private let onAttach: (@MainActor (ComposerAttachmentSource) -> Void)?
 
     @Environment(\.displayLanguage) private var language
 
@@ -54,10 +58,13 @@ public struct ComposerBar: View {
     ///   - focus: 输入框的焦点（调用方要收起键盘、聚焦时传）。
     ///   - quote: 引用回复的原文（输入框长成卡片，上面一条引用）；nil 是普通的胶囊。
     ///   - onRemoveQuote: 点引用条上的 ×。
+    ///   - attachments: 左边“+”菜单里的几项；空的不放“+”。
+    ///   - onAttach: 选了“+”菜单里的一项。
     public init(
         text: Binding<String>, placeholder: String, action: Action, actionLabel: String? = nil,
         isOverLimit: Bool = false, isDisabled: Bool = false, focus: FocusState<Bool>.Binding? = nil,
-        quote: String? = nil, onRemoveQuote: (@MainActor () -> Void)? = nil
+        quote: String? = nil, onRemoveQuote: (@MainActor () -> Void)? = nil,
+        attachments: [ComposerAttachmentSource] = [], onAttach: (@MainActor (ComposerAttachmentSource) -> Void)? = nil
     ) {
         _text = text
         self.placeholder = placeholder
@@ -68,7 +75,12 @@ public struct ComposerBar: View {
         self.focus = focus
         self.quote = quote
         self.onRemoveQuote = onRemoveQuote
+        self.attachments = attachments
+        self.onAttach = onAttach
     }
+
+    /// 左边有没有“+”。
+    var showsAttachments: Bool { onAttach != nil && !attachments.isEmpty && !isDisabled }
 
     /// 发送按钮能不能点。
     var canSend: Bool {
@@ -89,17 +101,23 @@ public struct ComposerBar: View {
                 QuoteStrip(quote: quote, onRemove: onRemoveQuote)
             }
             HStack(alignment: .bottom, spacing: Metrics.Spacing.xs) {
+                if quote == nil && showsAttachments { attachMenu }
                 field
                 if quote == nil { actionButton }
             }
             if quote != nil {
                 HStack(spacing: 0) {
+                    if showsAttachments { attachMenu }
                     Spacer(minLength: 0)
                     actionButton
                 }
             }
         }
-        .padding(.leading, quote == nil ? Metrics.Spacing.m : Metrics.Spacing.s)
+        .padding(
+            .leading,
+            quote == nil
+                ? (showsAttachments ? (Self.height - Self.buttonSize) / 2 : Metrics.Spacing.m) : Metrics.Spacing.s
+        )
         .padding(.trailing, quote == nil ? (Self.height - Self.buttonSize) / 2 : Metrics.Spacing.s)
         .padding(.vertical, quote == nil ? (Self.height - Self.buttonSize) / 2 : Metrics.Spacing.s)
         .frame(minHeight: Self.height)
@@ -127,6 +145,27 @@ public struct ComposerBar: View {
         .frame(minHeight: Self.buttonSize)
         .padding(.horizontal, quote == nil ? 0 : Metrics.Spacing.xxs)
         .disabled(isDisabled)
+    }
+
+    /// 左边的“+”：系统菜单，从按钮往上展开（参考 08）。
+    private var attachMenu: some View {
+        Menu {
+            ForEach(attachments, id: \.self) { source in
+                Button {
+                    onAttach?(source)
+                } label: {
+                    Label(source.title(language), systemImage: source.systemImage)
+                }
+            }
+        } label: {
+            Label(ConversationText.attach(language), systemImage: "plus")
+                .labelStyle(.iconOnly)
+                .font(Typography.body.font.weight(.medium))
+                .frame(width: Self.buttonSize - 12, height: Self.buttonSize - 12)
+        }
+        .menuIndicator(.hidden)
+        .glassButtonStyle(.regular)
+        .buttonBorderShape(.circle)
     }
 
     @ViewBuilder
@@ -222,6 +261,12 @@ private struct OptionalFocus: ViewModifier {
 #Preview("输入框") {
     VStack(spacing: Metrics.Spacing.m) {
         ComposerBar(text: .constant(""), placeholder: "给 Botin 布置一个任务")
+        ComposerBar(
+            text: .constant(""), placeholder: "给 Botin 布置一个任务", action: .send {},
+            attachments: ComposerAttachmentSource.allCases, onAttach: { _ in })
+        ComposerBar(
+            text: .constant(""), placeholder: "给写作助手布置任务", action: .send {}, quote: "引用的一段", onRemoveQuote: {},
+            attachments: ComposerAttachmentSource.allCases, onAttach: { _ in })
         ComposerBar(text: .constant("帮我把上周的提交整理成周报，发到飞书群。"), placeholder: "给 Botin 布置一个任务") {}
         ComposerBar(text: .constant(""), placeholder: "给 Botin 布置一个任务", action: .stop {})
         ComposerBar(

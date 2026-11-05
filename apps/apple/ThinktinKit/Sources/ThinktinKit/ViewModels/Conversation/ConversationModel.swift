@@ -87,6 +87,16 @@ public final class ConversationModel {
     public internal(set) var isStopping = false
     public internal(set) var stopError: ClientError?
 
+    // MARK: 对话内查找（ConversationFind.swift）
+
+    /// 查找栏的状态（规范 4.3.3）：开着时输入框换成查找栏，时间线变了重新找。
+    public let find = ConversationFind()
+
+    // MARK: 表情回应（MessageReactions.swift）
+
+    /// 这台设备上记的表情回应（规范 4.3.4、6.11；不上传）。
+    public let reactionStore: MessageReactionStore
+
     // MARK: 卡片上的操作（ConversationModel+Actions.swift）
 
     /// 正在决定的审批卡片（`ConversationItem.id`）。
@@ -120,10 +130,13 @@ public final class ConversationModel {
     ///   - biometricGate: 批准前的本机验证（App 里是 LocalAuthentication，预览、测试直接通过）。
     ///   - focusRunID: 只看这一个运行的过程。
     ///   - now: 现在的时间（测试传固定值）。
+    ///   - reactionStore: 表情回应记在哪（默认整个 App 共用的那份；测试传只在内存里的）。
     public init(
         client: any ClientProtocol, instanceID: InstanceID, focusRunID: RunID? = nil,
-        biometricGate: any BiometricGate = PassthroughBiometricGate(), now: @escaping () -> Date = Date.init
+        biometricGate: any BiometricGate = PassthroughBiometricGate(), now: @escaping () -> Date = Date.init,
+        reactionStore: MessageReactionStore? = nil
     ) {
+        self.reactionStore = reactionStore ?? .shared
         self.client = client
         self.instanceID = instanceID
         self.focusRunID = focusRunID
@@ -651,6 +664,7 @@ public final class ConversationModel {
             }
         }
         for key in markdown.keys where !seen.contains(key) { markdown[key] = nil }
+        refreshFind()
     }
 }
 

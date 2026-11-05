@@ -568,7 +568,7 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   新建计划、产出物），图标 `ellipsis.circle`。
 - **要改**：分组、换图标、放 `.topBarTrailing`。第 1 轮。
 - **审查意见（2026-11-05）**：缺“在对话中查找”、分组和参考 03 不一样。这一项在 `r2/conversation` 分支做了（`cd773e3`：第一组
-  Botin 资料、在对话中查找，ThinkTin 自己的项放第二组），合并进来就有；本分支没重复做，免得两边冲突。
+  Botin 资料、在对话中查找，ThinkTin 自己的项放第二组），已经合进本分支（见 4.3.3 的“已做”）。
 
 #### 4.3.3 对话内查找（4、5）
 
@@ -584,6 +584,16 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 - **要改**：纯客户端。在 `ConversationModel` 已加载的记录（任务、回复文字）里搜，再往上用 `cachedEventsBefore`
   （每个实例本机最多 2000 条）和 `olderRuns`；超出缓存的搜不到，要提示。查找状态放 `ViewModels/Conversation/ConversationFind.swift`，
   查找栏 `Screens/Conversation/ConversationFindBar.swift`。查找时模型标签、错误横幅先藏起来。第 2 轮。
+- **已做（第 2 轮 r2/conversation，2026-11-05）**：照参考 04、05。“…”菜单第一组 Botin 资料后面加“在对话中查找”（`magnifyingglass`，
+  `ConversationMenuItem.find`；只看本次过程、找不到 Botin 时没有）。点了输入框换成 `ConversationFindBar`：玻璃胶囊的查找框（放大镜、
+  占位“在对话中查找”、尾部“第 i 个，共 n 个”，没找到红字“第 0 个，共 0 个”）、上 / 下两个玻璃圆（没找到时灰）、“完成”玻璃胶囊；
+  查找框自动聚焦，回车和上箭头一样往前找，上下到头绕回，计数变了发读屏播报。找的是已读进来的用户消息、agent 回复、没有过程记录的
+  运行的结果（思考、工具调用、卡片不找），不分大小写、变音符号、全角半角；改字后跳到最新一处，新事件、往上翻时当前这一处不跳。
+  上面还能翻时查找栏上方多一个小胶囊“已加载的记录里没有，加载更早的再找”（参考没有）。高亮：所有匹配浅强调色底，当前这一处实心
+  强调色底白字；位置按画出来的字算（`InlineText.plainText`，即 `AttributedString(markdown:)` 的结果），每个 `Text` 是一段
+  （`MarkdownBlock.findSegments`），视图模型数的和界面画的一一对上；折起来的长消息、三行的引用块里有当前这一处时自动展开。
+  逻辑在 ThinktinKit 的 `ConversationFind.swift`（`ConversationModel.find`、`beginFind` / `setFindQuery` / `findPrevious` /
+  `findNext` / `endFind`，`render()` 时重新找）和 `MarkdownInline.swift`（Linux 上测试用的近似去标记）。
 
 #### 4.3.4 消息长按（6、90）
 
@@ -605,7 +615,17 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 - **要改**：加“选择文本”“复制运行 ID”，分组。表情、标为未读要后端（6.11）；真要做表情时长按改成
   `.sheet` + `.presentationDetents([.medium, .large])` + `.presentationDragIndicator(.visible)`。第 1 轮。
 - **审查意见（2026-11-05）**：长按要照参考 06 换成底部玻璃面板（拖动条 + 两组 + 表情一排）。`r2/conversation` 分支做了
-  （`b6393fd`：长按弹面板，表情一排、更多表情的选择器），合并进来就有；本分支没重复做。
+  （`b6393fd`：长按弹面板，表情一排、更多表情的选择器），已经合进本分支（见下一条）。
+- **已做（第 2 轮 r2/conversation，2026-11-05，用户要求照参考把没有的功能也做出来）**：表情回应照参考 06、90 做了，**只存这台设备**
+  （ThinktinKit `MessageReactions.swift` 的 `MessageReactionStore`，`UserDefaults` 一个键，按“Botin id / 消息 id”记，最多 2000 条消息、
+  每条 12 个；不上传、不告诉 Botin；6.11 B 要后端存）。iPhone 上长按消息不再是系统菜单，改成上面说的 sheet（`MessageActionSheet`，
+  中号起、拖动条）：上面两排圆形的系统玻璃按钮（👍 👎 ❤️ 😂 🎉 😮 / 🔥 👀 🙏 😢 💯 + “更多表情” `face.smiling`，点过的是突出样式），
+  下面是 `List` 的分组（agent 写的第一组 引用回复、标为未读——参考 06 的“回复、标为未读”）。点“更多表情”面板拉到全高、原地换成参考 90
+  的选择器（`EmojiPickerView`：左上返回圆、“搜索表情”胶囊，8 列，按 Unicode 的八类分组、小灰字分类名；搜中文关键词、Unicode
+  英文名、分类名，没结果是 `ContentUnavailableView.search`）。点表情加上或去掉、关面板；点操作先关面板再做（引用回复、选择文本、
+  再发一次、举报都要弹别的东西），分享是 `ShareLink`。“标为未读”没有（6.10），点了弹“即将推出”。回应画在气泡下面（`ReactionChips`，
+  小玻璃胶囊，点了去掉；用户消息靠右）：用户消息、agent 回复、没有过程记录的运行结果有，思考和待办没有。Mac 还是右键菜单，多一组
+  “回应”子菜单（常用 11 个 + “更多表情…”弹选择器）。读屏多一个“回应”操作（打开面板）。长按有触感。
 
 #### 4.3.5 引用回复（7）
 
@@ -630,6 +650,12 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   SwiftUI 没有相机控件）、`.fileImporter`。
 - **ThinkTin 现在**：12.22 运行附件，等 1.1 拍板和后端 5.6，`ClientProtocol` 没有上传接口。
 - **要改**：第 3 轮（6.13）。在那之前输入框不放“+”。
+- **已做（第 2 轮 r2/conversation，2026-11-05，用户要求“没有的功能也照参考把页面做出来”，推翻上一条的“不放‘+’”）**：
+  输入框左边一个玻璃圆“+”（`ComposerBar` 的 `attachments` / `onAttach`，有引用的卡片里在下面一行的左边，参考 07），系统 `Menu`
+  三项照参考 08：照片或视频（`photo.on.rectangle`）、拍照（`camera`，Mac 没有）、选择文件（`folder`）（ThinktinKit 的
+  `ComposerAttachmentSource`）。上传要服务端（12.22、后端 5.6），现在点哪一项都弹系统提示“即将推出”（说明等服务端能收附件以后就能用，
+  先把内容贴进输入框），不打开选择器。接口有了以后换成 `.photosPicker`、`UIImagePickerController`、`.fileImporter`，
+  选好的放在输入框上面一排缩略图。只看本次过程、找不到 Botin 时没有“+”。
 
 ### 4.4 实例管理（参考的“Bot 管理”）
 
@@ -679,7 +705,7 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   离线时新建计划、删除灰掉（`needsConnection`）。删除确认页也换成了 insetGrouped 的 `List`（影响清单一组一组）、左上 `CloseButton`、
   底部浮动的红色整宽胶囊“删除这个 Botin”，二次确认照旧。
 - **审查意见（2026-11-05）**：复制 ID 应该在最后（参考 10）。`r2/conversation` 分支已经把第一组改成“替换主 Botin、复制 Botin ID”
-  （`ff8b335`，和参考 10 那一组一样），合并进来就是；本分支没重复改。
+  （`ff8b335`，和参考 10 那一组一样），已经合进本分支。
 
 
 #### 4.4.3 编辑实例（12；13–17、85–88 是它的语音菜单）
@@ -734,6 +760,16 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 一行一个 Botin（40pt 头像带状态角标、名字、状态，选中的右边系统勾，默认选当前的），`.searchable`，最后一组“新建 Botin”，没有 Botin、没搜到用
 `ContentUnavailableView`。单选没用 `List(selection:)`：iOS 上它不进编辑模式时选中是整行灰底，和参考的勾不一样，改成按钮行 + 系统勾。团队编辑：
 同样的关闭 / 保存，名字一组，成员是多选（同样的勾），负责人另起一组 `Picker(.menu)`（只列选中的成员），`.searchable` 筛成员。
+
+- **已做（第 2 轮 r2/conversation，2026-11-05，用户要求“没有的功能也照参考把页面做出来”，推翻上面的“不做”）**：主 Botin 只记在
+  这台设备上（ThinktinKit `PrimaryBotin.swift` 的 `PrimaryBotinStore`，6.10 说的“本机存就行”的默认 Botin）。新路由
+  `AppRoute.primaryBotin`（sheet，归 `.conversation`，离线也能用，标题“选择主 Botin”），页面 `PrimaryBotinPickerScreen`
+  照参考 11：左上 ×、右上“确认”（`.confirmationAction`，没选或选的就是现在的主 Botin 时灰）、分组列表里系统单选
+  `Picker(.inline)`（头像 + 名字 + 状态）、`.searchable`“搜索 Botin”；不列现在的主 Botin 和删掉的，一个都没有时是参考 11 的
+  “暂无其他可选的 Botin”（`ContentUnavailableView`），搜不到是 `ContentUnavailableView.search`；脚注说明主 Botin 是干什么的、
+  只在这台设备上。入口照参考 10：Botin 资料“…”菜单第一组“替换主 Botin…”（`arrow.left.arrow.right`）、复制 ID。删了 Botin
+  时是主 Botin 的话清掉。**还没接**：新任务（`NewTaskSheet`）、快捷指令、小组件默认交给主 Botin，资料页头像上的星标（参考 10）——
+  这几页归别的线，接的时候读 `PrimaryBotinStore.shared.primaryID`。
 
 ### 4.5 任务与资料
 

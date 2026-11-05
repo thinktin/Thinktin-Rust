@@ -366,6 +366,11 @@ struct HistoryRecordView: View {
     let runID: RunID?
     let onReport: (ContentReportTarget) -> Void
     var onQuote: (@MainActor (String) -> Void)? = nil
+    /// 对话内查找的高亮（结果这一段）。
+    var highlight: ConversationFindHighlight? = nil
+    /// 表情回应（只在这台设备上）；nil 是这里不能回应。
+    var reactions: [String]? = nil
+    var onReact: (@MainActor (String) -> Void)? = nil
 
     @Environment(\.displayLanguage) private var language
 
@@ -379,17 +384,20 @@ struct HistoryRecordView: View {
                     .padding(.leading, Metrics.Spacing.xs)
                     .accessibilityAddTraits(.isHeader)
                 HStack(spacing: 0) {
-                    MarkdownView(blocks: MarkdownParser.parse(summary))
+                    MarkdownView(blocks: MarkdownParser.parse(summary), highlight: highlight)
                         .padding(.horizontal, Metrics.Spacing.m)
                         .padding(.vertical, Metrics.Spacing.s)
                         .background(Theme.agentBubble, in: messageBubbleShape)
                         .messageMenu(
                             .agentOutput(
                                 summary, runID: runID, target: runID.map(ContentReportTarget.run), onReport: onReport,
-                                onQuote: onQuote),
+                                onQuote: onQuote
+                            )
+                            .reacting(reactions ?? [], onReact: reactions == nil ? nil : onReact),
                             previewShape: messageBubbleShape)
                     Spacer(minLength: messageBubbleGutter)
                 }
+                ReactionChips(reactions: reactions ?? [], alignment: .leading, onToggle: onReact)
                 AIGeneratedLabel()
                     .padding(.leading, Metrics.Spacing.xs)
             }

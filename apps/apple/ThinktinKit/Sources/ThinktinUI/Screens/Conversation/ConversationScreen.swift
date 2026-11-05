@@ -15,6 +15,8 @@ import ThinktinKit
 ///   Botin 资料；计划、新建计划、产出物、模型路由；有任务在跑时“停止当前任务”）。中间这一项由
 ///   `inlineNavigationTitle(_:principal:)` 放，别再另加 `.principal`。
 /// - 还没有任务时时间线顶上是 `ConversationWelcome`（参考 118：说明气泡 + 示例任务 / 去配模型路由的卡片）。
+/// - “…”里的“在对话中查找”（规范 4.3.3，参考 04、05）：输入框换成 `ConversationFindBar`，找到的字在气泡里高亮，
+///   跳到哪一处就滚到哪条消息（先滚到那一组，懒加载的时间线才有那一条，再居中）。
 struct ConversationScreen: View {
     let instanceID: InstanceID
 
@@ -62,6 +64,7 @@ private struct ConversationContent: View {
     /// 密码拦截弹层关掉之后要去的页面（“添加为模型 key”）。
     @State private var routeAfterInterception: AppRoute?
     @FocusState private var isComposerFocused: Bool
+    @FocusState private var isFindFocused: Bool
 
     @Environment(AppModel.self) private var app
     @Environment(Router.self) private var router
@@ -70,7 +73,10 @@ private struct ConversationContent: View {
     @Environment(\.displayLanguage) private var language
 
     init(client: any ClientProtocol, instanceID: InstanceID, gate: any BiometricGate) {
-        _model = State(initialValue: ConversationModel(client: client, instanceID: instanceID, biometricGate: gate))
+        let model = ConversationModel(client: client, instanceID: instanceID, biometricGate: gate)
+        // 查找按画出来的字算位置（`AttributedString(markdown:)` 的真解析），和高亮对得上。
+        model.find.plainText = InlineText.plainText
+        _model = State(initialValue: model)
     }
 
     private var instance: Instance? { app.instances.first { $0.id == model.instanceID } }
@@ -100,10 +106,24 @@ private struct ConversationContent: View {
             .scrollDismissesKeyboard(.interactively)
             .refreshable { await model.refresh() }
             .floatingBar(edge: .bottom, spacing: 0) {
-                ConversationComposer(
-                    model: model,
-                    placeholder: ConversationText.placeholder(instanceName: instance?.name, language: language),
-                    isFocused: $isComposerFocused, onOpenModelRoutes: { router.open(.modelRoutes(model.instanceID)) })
+                if model.find.isActive {
+                    ConversationFindBar(model: model, isFocused: $isFindFocused)
+                } else {
+                    ConversationComposer(
+                        model: model,
+                        placeholder: ConversationText.placeholder(instanceName: instance?.name, language: language),
+                        isFocused: $isComposerFocused,
+                        onOpenModelRoutes: { router.open(.modelRoutes(model.instanceID)) })
+                }
+            }
+            .onChange(of: model.find.jumpCount) {
+                guard let match = model.find.currentMatch else { return }
+                // 懒加载的时间线：先滚到那一组（它的视图才建出来），下一拍再把那一条滚到中间。
+                proxy.scrollTo(match.turnID, anchor: .center)
+                Task { @MainActor in
+                    await Task.yield()
+                    withAnimation { proxy.scrollTo(match.targetID, anchor: .center) }
+                }
             }
             .onChange(of: model.lastSentRunID) {
                 withAnimation { proxy.scrollTo(ConversationScroll.bottomID, anchor: .bottom) }
@@ -124,7 +144,7 @@ private struct ConversationContent: View {
         }
         .toolbar {
             ToolbarItem(placement: ConversationMoreMenu.placement) {
-                ConversationMoreMenu(model: model)
+                ConversationMoreMenu(model: model, onFind: beginFind)
             }
         }
         .task { await model.start() }
@@ -153,6 +173,13 @@ private struct ConversationContent: View {
             SecretInterceptionSheet(model: model, onOpenRoute: { routeAfterInterception = $0 })
                 .environment(\.displayLanguage, language)
         }
+    }
+
+    /// “在对话中查找”：收起键盘、换成查找栏、查找框聚焦。
+    private func beginFind() {
+        isComposerFocused = false
+        model.beginFind()
+        isFindFocused = true
     }
 
     /// 有没处理的新任务请求、又是给这个实例的：把焦点放进输入框，记成处理过（对话页重建时不再聚焦）。
@@ -216,6 +243,8 @@ private struct ConversationMoreMenu: View {
     }
 
     let model: ConversationModel
+    /// 点了“在对话中查找”。
+    let onFind: @MainActor () -> Void
 
     @Environment(Router.self) private var router
     @Environment(\.displayLanguage) private var language
@@ -242,6 +271,7 @@ private struct ConversationMoreMenu: View {
     private func perform(_ item: ConversationMenuItem) {
         switch item {
         case .open(let route): router.open(route)
+        case .find: onFind()
         case .stop: Task { await model.stop() }
         }
     }
