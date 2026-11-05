@@ -86,7 +86,7 @@ struct AboutScreen: View {
             VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
                 // 上下排：大字号时一行放不下。
                 VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
-                    Text(zh ? "agent 写的内容旁边有这个标识：" : "Content written by agents carries this label:")
+                    Text(zh ? "Botin 写的内容旁边有这个标识：" : "Content written by Botins carries this label:")
                         .typography(.footnote)
                         .foregroundStyle(Theme.inkSecondary)
                         .fixedSize(horizontal: false, vertical: true)

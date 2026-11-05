@@ -124,8 +124,8 @@ private struct AccountContent: View {
         return AccountSection(
             zh ? "安全" : "Security",
             footer: zh
-                ? "退出登录只影响这台设备，agent 照常运行。要让所有 agent 立刻停下来，用“全部停止”。"
-                : "Signing out only affects this device; agents keep running. Use Stop everything to halt them all at once."
+                ? "退出登录只影响这台设备，Botin 照常运行。要让所有 Botin 立刻停下来，用“全部停止”。"
+                : "Signing out only affects this device; Botins keep running. Use Stop everything to halt them all at once."
         ) {
             NavigationLink(value: AppRoute.devices) {
                 AccountRow(

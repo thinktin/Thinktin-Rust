@@ -5,7 +5,7 @@ import Foundation
 public enum ApprovalsText {
     public static func intro(_ language: DisplayLanguage) -> String {
         language == .chinese
-            ? "agent 要做的事超出了预授权的范围，要你决定。没人处理的到期后按计划的策略办（默认暂停计划）。"
+            ? "Botin 要做的事超出了预授权的范围，要你决定。没人处理的到期后按计划的策略办（默认暂停计划）。"
             : "These actions are outside what you pre-approved. Unanswered ones follow the plan's rule when they "
                 + "expire (by default the plan pauses)."
     }
@@ -16,7 +16,7 @@ public enum ApprovalsText {
 
     public static func emptyMessage(_ language: DisplayLanguage) -> String {
         language == .chinese
-            ? "agent 需要你批准时，这里和通知里都会出现。" : "When an agent needs your OK, it shows up here and in notifications."
+            ? "Botin 需要你批准时，这里和通知里都会出现。" : "When a Botin needs your OK, it shows up here and in notifications."
     }
 
     /// 实例已经删除（列表里找不到名字）。
@@ -35,7 +35,7 @@ public enum ApprovalsText {
     }
 
     public static func toolCallTitle(_ language: DisplayLanguage) -> String {
-        language == .chinese ? "要执行的操作" : "What the agent wants to do"
+        language == .chinese ? "要执行的操作" : "What the Botin wants to do"
     }
 
     public static func rawDetails(_ language: DisplayLanguage) -> String {
@@ -62,7 +62,7 @@ public enum ApprovalsText {
             let name =
                 option.name.isEmpty ? ConversationText.approvalOptionName(option.kind, language: language) : option.name
             if option.kind.isReject { return zh ? "已拒绝（\(name)）" : "Declined (\(name))" }
-            return zh ? "已批准（\(name)），agent 会接着做" : "Approved (\(name)). The agent carries on."
+            return zh ? "已批准（\(name)），Botin 会接着做" : "Approved (\(name)). The Botin carries on."
         case .alreadyHandled(let approval):
             if approval.isExpired() || approval.state == .expired {
                 return zh ? "这条审批已经过期了" : "This approval has expired"

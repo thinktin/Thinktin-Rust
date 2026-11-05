@@ -128,12 +128,12 @@ public enum ModelsText {
         switch alias {
         case ModelRoute.mainAlias:
             return zh
-                ? "默认模型：agent 平时都用它，必须配。"
-                : "The default model. The agent uses it for everything unless told otherwise. Required."
+                ? "默认模型：Botin 平时都用它，必须配。"
+                : "The default model. The Botin uses it for everything unless told otherwise. Required."
         case RouteRules.fastAlias:
             return fastPurpose(language)
         default:
-            return zh ? "agent 按这个名字调用的模型。" : "A model the agent calls by this name."
+            return zh ? "Botin 按这个名字调用的模型。" : "A model the Botin calls by this name."
         }
     }
 

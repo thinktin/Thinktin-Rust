@@ -4,8 +4,8 @@ import Foundation
 public enum ArtifactsText {
     public static func intro(_ language: DisplayLanguage) -> String {
         language == .chinese
-            ? "agent 在运行里生成的文件。分享、存到“文件”时文件名带“AI 生成”。"
-            : "Files your agents made in runs. Shared and saved copies keep “AI-generated” in the file name."
+            ? "Botin 在运行里生成的文件。分享、存到“文件”时文件名带“AI 生成”。"
+            : "Files your Botins made in runs. Shared and saved copies keep “AI-generated” in the file name."
     }
 
     public static func emptyTitle(_ language: DisplayLanguage) -> String {
@@ -13,7 +13,7 @@ public enum ArtifactsText {
     }
 
     public static func emptyMessage(_ language: DisplayLanguage) -> String {
-        language == .chinese ? "agent 写文件、出报告时会出现在这里。" : "Reports and files your agents write show up here."
+        language == .chinese ? "Botin 写文件、出报告时会出现在这里。" : "Reports and files your Botins write show up here."
     }
 
     public static func untitled(_ language: DisplayLanguage) -> String {

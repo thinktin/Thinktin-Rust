@@ -254,8 +254,8 @@ private struct ModelRoutesContent: View {
                 ListRow(
                     systemImage: "plus", title: zh ? "加自定义别名" : "Add a custom alias",
                     detail: zh
-                        ? "agent 按名字调用的别名，最多 \(RouteRules.maxAliases) 个。"
-                        : "Aliases the agent calls by name, up to \(RouteRules.maxAliases).",
+                        ? "Botin 按名字调用的别名，最多 \(RouteRules.maxAliases) 个。"
+                        : "Aliases the Botin calls by name, up to \(RouteRules.maxAliases).",
                     action: model.canAddAlias && canWrite ? { @MainActor in isAddingAlias = true } : nil)
             }
             ModelsFootnote(text: ModelsText.fallbackExplanation(language))

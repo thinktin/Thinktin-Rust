@@ -61,8 +61,8 @@ private struct UsageContent: View {
                             systemImage: "chart.bar",
                             title: zh ? "这段时间还没有用量" : "No usage in this period",
                             message: zh
-                                ? "agent 调模型之后，这里会按天显示 token 数。"
-                                : "Once agents call models, daily token counts show up here.")
+                                ? "Botin 调模型之后，这里会按天显示 token 数。"
+                                : "Once Botins call models, daily token counts show up here.")
                     } else {
                         dashboard
                     }

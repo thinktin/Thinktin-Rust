@@ -76,7 +76,7 @@ public final class SettingsModel {
         return [
             SettingsSection(
                 id: .account, title: zh ? "账号" : "Account",
-                footer: zh ? "退出登录只影响这台设备，agent 照常运行。" : "Signing out only affects this device; agents keep running.",
+                footer: zh ? "退出登录只影响这台设备，Botin 照常运行。" : "Signing out only affects this device; Botins keep running.",
                 rows: [
                     SettingsRow(
                         id: "name", systemImage: "person", title: zh ? "昵称" : "Name",
@@ -99,8 +99,8 @@ public final class SettingsModel {
             SettingsSection(
                 id: .models, title: zh ? "模型 key 与用量" : "Model keys & usage",
                 footer: zh
-                    ? "agent 用你自己的模型 key 调模型，费用由厂商直接收。"
-                    : "Agents call models with your own keys; providers bill you directly.",
+                    ? "Botin 用你自己的模型 key 调模型，费用由厂商直接收。"
+                    : "Botins call models with your own keys; providers bill you directly.",
                 rows: [
                     SettingsRow(
                         id: "credentials", systemImage: "key", title: AppRoute.credentials.title(language),
@@ -112,8 +112,8 @@ public final class SettingsModel {
             SettingsSection(
                 id: .vault, title: zh ? "保险箱" : "Vault",
                 footer: zh
-                    ? "agent 要登录网站时用这里的账号密码，密码不会发给模型。"
-                    : "Agents use these accounts to sign in to websites; passwords are never sent to the model.",
+                    ? "Botin 要登录网站时用这里的账号密码，密码不会发给模型。"
+                    : "Botins use these accounts to sign in to websites; passwords are never sent to the model.",
                 rows: [
                     SettingsRow(
                         id: "vault", systemImage: "lock.rectangle.stack", title: AppRoute.vault.title(language),

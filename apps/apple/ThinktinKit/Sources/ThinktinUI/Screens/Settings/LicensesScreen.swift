@@ -73,7 +73,7 @@ private struct LicensesContent: View {
         let entries = model.agentEntries(language)
         if !(model.isSearching && entries.isEmpty) {
             VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
-                LicensesSectionTitle(title: "Agent", count: model.hasLoadedAgents ? entries.count : nil)
+                LicensesSectionTitle(title: zh ? "引擎" : "Engines", count: model.hasLoadedAgents ? entries.count : nil)
                 if !entries.isEmpty {
                     ForEach(entries) { entry in
                         AgentLicenseCard(entry: entry)
@@ -84,8 +84,8 @@ private struct LicensesContent: View {
                         Card {
                             Label(
                                 zh
-                                    ? "离线，联网后显示 agent 的许可证。"
-                                    : "Offline. Agent licenses will show when you're back online.",
+                                    ? "离线，联网后显示引擎的许可证。"
+                                    : "Offline. Engine licenses will show when you're back online.",
                                 systemImage: "wifi.slash"
                             )
                             .typography(.footnote)
@@ -97,7 +97,7 @@ private struct LicensesContent: View {
                 } else if model.isLoadingAgents || !model.hasLoadedAgents {
                     LoadingStateView()
                 } else {
-                    Text(zh ? "目录里还没有 agent。" : "No agents in the catalog yet.")
+                    Text(zh ? "还没有能用的引擎。" : "No engines yet.")
                         .typography(.footnote)
                         .foregroundStyle(Theme.inkSecondary)
                 }

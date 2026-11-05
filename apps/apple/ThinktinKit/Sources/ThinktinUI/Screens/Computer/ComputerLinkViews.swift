@@ -354,7 +354,7 @@ struct GrantEditorSheet: View {
             VStack(alignment: .leading, spacing: Metrics.Spacing.m) {
                 Text(
                     zh
-                        ? "agent 在这台电脑上看文件、写文件、打开应用这类普通操作，只能碰你在这里给的目录和应用，到期自动失效。删除、执行命令这类高危操作每次都要你批准。"
+                        ? "Botin 在这台电脑上看文件、写文件、打开应用这类普通操作，只能碰你在这里给的目录和应用，到期自动失效。删除、执行命令这类高危操作每次都要你批准。"
                         : "Routine actions on this computer (reading or writing files, opening apps) can only touch the folders and apps you grant here, until it expires. Risky actions like deleting or running commands always need your approval."
                 )
                 .typography(.subheadline)

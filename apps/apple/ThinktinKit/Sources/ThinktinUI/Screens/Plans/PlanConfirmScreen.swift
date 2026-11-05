@@ -49,7 +49,7 @@ private struct PlanConfirmContent: View {
                     EmptyStateView(
                         systemImage: "calendar.badge.exclamationmark", title: zh ? "这个计划已经不在了" : "This plan is gone",
                         message: zh
-                            ? "可能被删除了，或者 agent 又把它取消了。" : "It may have been deleted, or the agent cancelled it.",
+                            ? "可能被删除了，或者 Botin 又把它取消了。" : "It may have been deleted, or the Botin cancelled it.",
                         actionTitle: zh ? "看全部计划" : "All plans"
                     ) {
                         router.open(.plans(instanceID: nil))
@@ -92,8 +92,8 @@ private struct PlanConfirmContent: View {
         } message: {
             Text(
                 zh
-                    ? "不想要这个计划就删掉，agent 那边会知道它不在了。"
-                    : "If you don't want this plan, delete it. The agent will see it's gone.")
+                    ? "不想要这个计划就删掉，Botin 那边会知道它不在了。"
+                    : "If you don't want this plan, delete it. The Botin will see it's gone.")
         }
         .sheet(isPresented: $isEditing) {
             NavigationStack {

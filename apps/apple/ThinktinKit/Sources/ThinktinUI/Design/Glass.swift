@@ -345,7 +345,7 @@ extension View {
                     .controlSize(.small)
                 GlassGroup {
                     HStack(spacing: Metrics.Spacing.xs) {
-                        Text(verbatim: "给 agent 布置一个任务")
+                        Text(verbatim: "给 Botin 布置一个任务")
                             .foregroundStyle(Theme.inkTertiary)
                             .padding(.horizontal, Metrics.Spacing.m)
                             .frame(maxWidth: .infinity, minHeight: Metrics.minTapTarget, alignment: .leading)

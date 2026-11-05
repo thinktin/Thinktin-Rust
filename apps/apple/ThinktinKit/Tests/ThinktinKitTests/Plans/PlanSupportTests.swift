@@ -97,7 +97,7 @@ struct PlanSupportTests {
         let steps = PlansText.describe(
             .steps(from: [], to: [PlanStep(key: "a", instanceID: DemoData.writerID, prompt: "p")]), language: .chinese,
             instanceName: { $0 == DemoData.writerID ? "写作助手" : "?" })
-        #expect(steps.before == "没有（单个 agent）")
+        #expect(steps.before == "没有（单个 Botin）")
         #expect(steps.after == "a → 写作助手")
         let tools = PlansText.describe(.preauthorizedTools(from: ["execute", "read"], to: []), language: .chinese)
         #expect(tools.before == "读取文件、运行命令")

@@ -192,8 +192,8 @@ private struct PlanEditorContent: View {
         PlansTextField(
             title: zh ? "目标" : "Goal", text: $model.goal,
             prompt: zh
-                ? "每次触发时交给 agent 的任务，写清楚要做什么、结果放哪里。"
-                : "The task the agent gets each time. Say what to do and where results go.",
+                ? "每次触发时交给 Botin 的任务，写清楚要做什么、结果放哪里。"
+                : "The task the Botin gets each time. Say what to do and where results go.",
             multiline: true, limit: Plan.maxGoalLength, count: model.goalLength,
             problem: model.goal.isEmpty ? nil : model.goalProblem.map { PlanFormProblem.goal($0).message(language) })
     }
@@ -256,7 +256,7 @@ private struct PlanEditorContent: View {
                 systemImage: "hand.raised", title: zh ? "审批等多久" : "Approval wait",
                 options: PlansText.presets(PlansText.timeoutPresets, including: policy.approvalTimeoutSecs),
                 selection: $model.policy.approvalTimeoutSecs, name: { PlansText.duration($0, language: language) },
-                detail: zh ? "agent 要用没预授权的工具时，等你批准多久。" : "How long an approval request waits for you.")
+                detail: zh ? "Botin 要用没预授权的工具时，等你批准多久。" : "How long an approval request waits for you.")
             Divider()
             PlansMenuRow(
                 systemImage: "exclamationmark.arrow.circlepath", title: zh ? "超时后" : "After a timeout",
@@ -378,7 +378,7 @@ struct PlanToolsPicker: View {
             VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
                 Text(
                     zh
-                        ? "预授权的工具，agent 按时运行时用到不用等你审批。只给它需要的；会改文件、跑命令的要谨慎。"
+                        ? "预授权的工具，Botin 按时运行时用到不用等你审批。只给它需要的；会改文件、跑命令的要谨慎。"
                         : "Pre-approved tools don't need your approval during scheduled runs. Allow only what it needs; "
                             + "be careful with tools that change files or run commands."
                 )

@@ -49,8 +49,8 @@ public enum VaultFormProblem: Hashable, Sendable {
 public enum VaultText {
     public static func intro(_ language: DisplayLanguage) -> String {
         language == .chinese
-            ? "agent 要登录网站时用这里的账号密码：消息里写 [vault:名字]，agent 只拿到名字，看不到明文，用之前要你批准。"
-            : "Agents sign in to sites with the accounts saved here. Write [vault:name] in a message: the agent only "
+            ? "Botin 要登录网站时用这里的账号密码：消息里写 [vault:名字]，Botin 只拿到名字，看不到明文，用之前要你批准。"
+            : "Botins sign in to sites with the accounts saved here. Write [vault:name] in a message: the Botin only "
                 + "gets the name, never the password, and needs your approval to use it."
     }
 

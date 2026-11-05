@@ -46,8 +46,8 @@ private struct PlanListContent: View {
                 PageHeader(
                     title: route.title(language),
                     message: zh
-                        ? "让 agent 按时干活。agent 自己安排的计划要你确认后才会运行。"
-                        : "Have agents work on a schedule. Plans an agent sets up run only after you confirm them.")
+                        ? "让 Botin 按时干活。Botin 自己安排的计划要你确认后才会运行。"
+                        : "Have Botins work on a schedule. Plans a Botin sets up run only after you confirm them.")
                 if !model.plans.isEmpty { filterBar }
                 if let error = visibleError(model.error) {
                     ErrorBanner(error) { Task { await model.load() } }
@@ -247,10 +247,10 @@ struct PlanAwaitingCard: View {
                 .fixedSize(horizontal: false, vertical: true)
             Text(
                 plan.createdBy == .agent
-                    ? (zh ? "agent 安排的计划，确认后才会运行。" : "An agent set this up. It runs only after you confirm.")
+                    ? (zh ? "Botin 安排的计划，确认后才会运行。" : "A Botin set this up. It runs only after you confirm.")
                     : (zh
-                        ? "agent 改了这个计划，确认后才按新的内容运行。"
-                        : "An agent changed this plan. It runs again only after you confirm.")
+                        ? "Botin 改了这个计划，确认后才按新的内容运行。"
+                        : "A Botin changed this plan. It runs again only after you confirm.")
             )
             .typography(.footnote)
             .foregroundStyle(StatusTone.waiting.color)

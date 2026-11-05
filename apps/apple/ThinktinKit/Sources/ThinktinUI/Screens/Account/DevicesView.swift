@@ -42,8 +42,8 @@ private struct DevicesContent: View {
                 AccountSection(
                     zh ? "其他设备" : "Other devices",
                     footer: zh
-                        ? "电脑连着时显示“在线”，agent 可以借它在本机执行。iOS 16 起设备名可能都叫 iPhone，可以按登录时间分辨。"
-                        : "Computers show Online while connected, so agents can run tasks on them. Device names may all read "
+                        ? "电脑连着时显示“在线”，Botin 可以借它在本机执行。iOS 16 起设备名可能都叫 iPhone，可以按登录时间分辨。"
+                        : "Computers show Online while connected, so Botins can run tasks on them. Device names may all read "
                             + "“iPhone” on iOS 16 and later; use the sign-in date to tell them apart."
                 ) {
                     if model.otherDevices.isEmpty {
@@ -130,9 +130,9 @@ private struct DevicesContent: View {
         let zh = language == .chinese
         if device.isCurrent {
             return zh
-                ? "下线本机就是退出登录：回到登录页，这台设备不再收到通知。agent 照常运行。"
+                ? "下线本机就是退出登录：回到登录页，这台设备不再收到通知。Botin 照常运行。"
                 : "Signing out this device takes you back to the sign-in screen and stops notifications here. "
-                    + "Agents keep running."
+                    + "Botins keep running."
         }
         return zh
             ? "它会立即退出登录，要重新登录才能再用。"
@@ -248,12 +248,12 @@ struct SignOutOthersSheet: View {
                             + "and has to sign in again.")
                 AccountSection(
                     footer: zh
-                        ? "怀疑账号被盗时勾选：同时取消所有运行、吊销 agent 的运行授权、暂停所有计划。"
+                        ? "怀疑账号被盗时勾选：同时取消所有运行、吊销 Botin 的运行授权、暂停所有计划。"
                         : "Turn this on if you think someone else has access: it also cancels all runs, revokes the "
-                            + "agents' run grants and pauses every plan."
+                            + "Botins' run grants and pauses every plan."
                 ) {
                     Toggle(isOn: $stopAgents) {
-                        Text(zh ? "同时停止全部 agent" : "Also stop all agents")
+                        Text(zh ? "同时停止全部 Botin" : "Also stop all Botins")
                             .typography(.body)
                             .foregroundStyle(Theme.ink)
                     }

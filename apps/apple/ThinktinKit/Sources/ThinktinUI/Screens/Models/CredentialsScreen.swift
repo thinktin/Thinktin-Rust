@@ -32,8 +32,8 @@ private struct CredentialsContent: View {
                 PageHeader(
                     title: AppRoute.credentials.title(language),
                     message: zh
-                        ? "agent 用你自己在厂商那里开的 API key 调模型，费用由厂商直接结算。key 加密保存，只显示后 4 位。"
-                        : "Agents call models with API keys from your own vendor accounts, billed by the vendor directly. "
+                        ? "Botin 用你自己在厂商那里开的 API key 调模型，费用由厂商直接结算。key 加密保存，只显示后 4 位。"
+                        : "Botins call models with API keys from your own vendor accounts, billed by the vendor directly. "
                             + "Keys are stored encrypted and only the last 4 characters are shown.")
                 if model.hasLoaded, let error = visibleError(model.error) {
                     ErrorBanner(error) { Task { await model.load() } }
@@ -80,8 +80,8 @@ private struct CredentialsContent: View {
                 systemImage: "key",
                 title: zh ? "还没有模型 key" : "No model keys yet",
                 message: zh
-                    ? "加一把厂商的 API key，agent 才能干活。没有 key 时，任务会停在“等待 key”。"
-                    : "Add an API key from a model vendor so agents can work. Without one, tasks wait for a key.",
+                    ? "加一把厂商的 API key，Botin 才能干活。没有 key 时，任务会停在“等待 key”。"
+                    : "Add an API key from a model vendor so Botins can work. Without one, tasks wait for a key.",
                 actionTitle: app.isOffline ? nil : AppRoute.addCredential.title(language)
             ) {
                 router.open(.addCredential)
