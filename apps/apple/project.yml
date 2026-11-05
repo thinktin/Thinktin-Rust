@@ -85,7 +85,11 @@ targets:
         CFBundleLocalizations: [zh-Hans, en]
         LSRequiresIPhoneOS: true
         ITSAppUsesNonExemptEncryption: false
-        UILaunchScreen: {}
+        # 启动屏（docs/ios-ui-redesign.md 4.1.1）：底色同 Theme.paper，正中一个高 60pt 的单色 Logo，深浅色各一套。两个资源在
+        # Assets.xcassets 里，由 tools/apple/brand_assets.py 生成（改 Logo 或令牌后重跑，不手改）。
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+          UIImageName: LaunchLogo
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
         UISupportedInterfaceOrientations:

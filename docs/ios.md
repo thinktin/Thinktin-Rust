@@ -100,12 +100,18 @@ Linux 上 `tools/client-core/build-linux-swift.sh target/linux`（本机 `libcli
 ### 4.1 Logo 与 App 图标
 
 - 标志是 [Logo G1.0](brand/logo/README.md)（罐子加一条彩色双圈线）。素材由 `tools/apple/brand_assets.py` 从
-  `docs/brand/logo/` 生成并提交进仓库，改 Logo 后重跑（要 Pillow 和 resvg：`pip install pillow resvg-py`），不要手改生成物：
+  `docs/brand/logo/` 生成并提交进仓库，改 Logo 后重跑（渲染图标要 Pillow 和 resvg：`pip install pillow resvg-py`；`--no-icons`
+  只写 Swift 代码和启动屏，只用标准库），不要手改生成物。`--check` 查 Swift 代码和启动屏是不是最新的，再和原稿逐像素比：
   - App 里用的 Logo 是原生矢量 `BrandLogo`（`ThinktinUI/Design/BrandLogo.swift`，几何在生成的 `BrandLogo+Geometry.swift`）：
     圆弧转三次贝塞尔，和原稿逐像素一致（`brand_assets.py --check` 比较）。罐体线条用 `ink`，深色模式自动变浅；双圈线是原稿的
-    渐变，`.monochrome` 时用墨色。按线条外缘等比缩放，用 `.frame(height:)` 定大小。现在用在欢迎页（112）和侧边栏顶上（28）。
+    渐变，`.monochrome` 时用墨色。按线条外缘等比缩放，用 `.frame(height:)` 定大小。现在用在欢迎页（112）和首页“还没有实例”的
+    空状态（48）。
   - iPhone 图标 1024：浅色（白底不透明）、深色（透明底，罐体线条 `#F2F2F7`）、着色（透明底白色单色）三种。
   - Mac 图标 16～1024：macOS 的圆角方形白底（824/1024，圆角 185，轻阴影），Logo 在里面。
+  - iPhone 启动屏（[ios-ui-redesign.md](ios-ui-redesign.md) 4.1.1）：Info.plist 的 `UILaunchScreen`（project.yml）用 Assets 里的
+    `LaunchBackground`（颜色集，和 `paper` 同值）和 `LaunchLogo`（高 60pt 的单色矢量 PDF，同样的贝塞尔路径，颜色同 `ink`：浅色黑、
+    深色白，即 `BrandLogo(style: .monochrome)`；保留矢量数据）。两个颜色由脚本从 `Theme.swift` 读，改了 `paper` 或 `ink` 要重跑；
+    `DesignTokenTests` 核对底色。不做 SwiftUI 画的假启动页和启动动画。
 - Mac 菜单栏的图标是表示状态的 SF Symbol（空闲、可控制、正在操作），不换成 Logo。
 
 ## 5. 事件流怎么变成对话

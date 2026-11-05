@@ -98,6 +98,13 @@
     `IOS_RUNTIME=18`（或 `17.5`）只在那个 iOS 版本的模拟器里挑，看 iOS 17 / 18 的回退（7.6 第 3 条）。
   - 测试（App 的 `AppSmokeTests`，挨着原来的启动参数测试）：六个值和别的值、每页的路由（实例的页面没有实例时为 nil）、演示数据里打开
     各页面后的返回栈和 sheet（实例列表没拿到时实例的页面不打开）。
+- 第 0 轮·启动屏（规范 4.1.1、2.9，7.2 启动屏那一行）：`tools/apple/brand_assets.py` 多生成 `Assets.xcassets/LaunchLogo.imageset`
+  （高 60pt 的单色矢量 PDF，浅色、深色两版，脚本自己写 PDF，只用标准库；路径和 `BrandLogo` 同一套贝塞尔，颜色同 `ink`，即
+  `BrandLogo(style: .monochrome)`；保留矢量数据）和 `LaunchBackground.colorset`（和 `paper` 同值）；两个颜色从 `Theme.swift` 读。
+  project.yml 的 `UILaunchScreen` 填上 `UIColorName` / `UIImageName`。`--swift-only` 换成 `--no-icons`（只写 Swift 代码和启动屏）；
+  `--check` 先查 Swift 代码和启动屏是不是最新的（逐字节），再照旧和原稿比像素（0 差）。PDF 用 pdftoppm 栅格化后和原稿（单色）比过：
+  线条都在原稿 ±1 像素以内，差的只是两个渲染器的抗锯齿。图标重跑后逐字节没变。测试：`DesignTokenTests` 加“启动屏底色和 `paper`
+  同值、Logo 两版、保留矢量”（从 `#filePath` 往上找仓库根，uicheck 的复制件也找得到），App 的 Info.plist 测试加两个键（macOS CI 查）。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、

@@ -20,6 +20,10 @@ struct AppSmokeTests {
         #expect(info["NSSupportsLiveActivities"] as? Bool == true)
         // 扫电脑上的配对二维码（12.9）。
         #expect(info["NSCameraUsageDescription"] as? String != nil)
+        // 启动屏（docs/ios-ui-redesign.md 4.1.1）：资源由 tools/apple/brand_assets.py 生成。
+        let launch = info["UILaunchScreen"] as? [String: Any]
+        #expect(launch?["UIColorName"] as? String == "LaunchBackground")
+        #expect(launch?["UIImageName"] as? String == "LaunchLogo")
         // 构建设置 THINKTIN_API_BASE_URL 展开进来了，解析出来是 https 的地址。
         let raw = try #require(info[AppConfiguration.baseURLInfoKey] as? String)
         #expect(!raw.contains("$("))

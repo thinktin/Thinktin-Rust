@@ -88,6 +88,54 @@ struct DesignTokenTests {
         }
     }
 
+    @Test("启动屏：底色 LaunchBackground 和 paper 同值，Logo 深浅两版、保留矢量（tools/apple/brand_assets.py 生成，改令牌后重跑）")
+    func launchScreenAssets() throws {
+        // 从这个文件往上找仓库根（uicheck 把测试复制到 tools/apple/uicheck/Gen/ 下，层数不固定）。
+        let relative = "apps/apple/Thinktin/Resources/Assets.xcassets"
+        var directory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        while !FileManager.default.fileExists(atPath: directory.appendingPathComponent(relative).path),
+            directory.pathComponents.count > 1
+        {
+            directory.deleteLastPathComponent()
+        }
+        let assets = directory.appendingPathComponent(relative)
+        func json(_ path: String) throws -> [String: Any] {
+            let data = try Data(contentsOf: assets.appendingPathComponent(path))
+            return try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        }
+        func isDark(_ entry: [String: Any]) -> Bool {
+            let appearances = entry["appearances"] as? [[String: String]] ?? []
+            return appearances.contains { $0["appearance"] == "luminosity" && $0["value"] == "dark" }
+        }
+
+        let colors = try #require(try json("LaunchBackground.colorset/Contents.json")["colors"] as? [[String: Any]])
+        var found: [Bool: HexColor] = [:]
+        for entry in colors {
+            let color = try #require(entry["color"] as? [String: Any])
+            #expect(color["color-space"] as? String == "srgb")
+            let components = try #require(color["components"] as? [String: String])
+            #expect(components["alpha"] == "1.000")
+            let channels = try ["red", "green", "blue"].map { name in
+                let text = try #require(components[name])
+                return try #require(UInt32(text.dropFirst(2), radix: 16))
+            }
+            found[isDark(entry)] = HexColor(channels[0] << 16 | channels[1] << 8 | channels[2])
+        }
+        #expect(found[false] == ThemeToken.paper.light)
+        #expect(found[true] == ThemeToken.paper.dark)
+
+        let logo = try json("LaunchLogo.imageset/Contents.json")
+        let images = try #require(logo["images"] as? [[String: Any]])
+        #expect(images.map { $0["filename"] as? String } == ["LaunchLogo.pdf", "LaunchLogo-dark.pdf"])
+        #expect(images.map(isDark) == [false, true])
+        #expect((logo["properties"] as? [String: Any])?["preserves-vector-representation"] as? Bool == true)
+        for image in images {
+            let name = try #require(image["filename"] as? String)
+            let pdf = try Data(contentsOf: assets.appendingPathComponent("LaunchLogo.imageset/\(name)"))
+            #expect(pdf.starts(with: Data("%PDF-".utf8)), "\(name)")
+        }
+    }
+
     @Test("状态色的深色版比浅色版亮")
     func darkStatusColorsAreBrighter() {
         for token in [ThemeToken.success, .warning, .danger] {
