@@ -326,22 +326,24 @@ client-core 只缓存实例、运行、事件、收件箱（cache.rs 的几张�
   2. `app-macos`（macos-26，Xcode 26）：`build-apple.sh --ci` 只编模拟器和 macOS 的 arm64 两个切片打 xcframework（省时间）；
      `swift build --build-tests` 整个 `ThinktinKit`（含 ThinktinUI）；`xcodegen generate`；挑一个不高于所选 Xcode 模拟器 SDK 的 iPhone，
      `xcodebuild test` 跑 App 的 `ThinktinTests` 和 `ThinktinUITests`；最后 macOS 本机 `swift test`（适配层经 macOS 切片跑一遍）。日志传成 artifact。
-  `kit-linux` 最后还有严格模式的 `swift format lint`。
-- **截图**（macOS）：`tools/apple/screenshots.sh [输出目录]` 在 iPhone 模拟器上跑演示模式，截改版规范 7.6 的 25 个页面（新账号的首页空状态、
-  首页、对话、Botin 资料、Botin 的计划、产出物、设置、保险箱填写请求、新建 Botin、首页搜索、审批、收件箱、进行中、运行、计划、审批中心、
-  团队、新任务的 Botin 选择、上手引导、连接目录、观看与接管、设置里的权限与规则、订阅、导入记忆、发送反馈），浅色、
-  深色各一张（`01-home-light.png`、`01-home-dark.png`）；`IOS_RUNTIME=18.6`（或 `17.5`）换成那个版本的模拟器看旧系统的回退（没有那个版本的
+  `kit-linux` 最后还有严格模式的 `swift format lint`。推 main、开 PR 时跑；没开 PR 的分支要用真 SDK 验时，把提交推到 `ci/<名字>` 分支
+  （`git push origin HEAD:ci/<名字>`）。路径过滤照旧：推上去的改动没碰到 `apps/apple/**` 这些路径时可能不跑，那就在 Actions 里
+  手动 Run workflow 选那个分支。
+- **截图**（macOS）：`tools/apple/screenshots.sh [输出目录]` 在 iPhone 模拟器上跑演示模式，把改版的每一组页面都截下来（52 个页面、69 张：
+  主要页面浅色、深色各一张，`01-home-light.png`、`01-home-dark.png`，其余只截浅色；每张对哪几张参考、规范哪一节见
+  [ios-ui-redesign-shots.md](ios-ui-redesign-shots.md)）；`IOS_RUNTIME=18.6`（或 `17.5`）换成那个版本的模拟器看旧系统的回退（没有那个版本的
   iPhone 模拟器就建一台，运行时没装就用 `xcodebuild -downloadPlatform` 下载，这时要写完整的版本号）。GitHub 上是
   `.github/workflows/ios-screenshots.yml`（手动触发填 `ios_runtime`，或者推到 `ios-screenshots-ios18.6` 这样带版本的分支；产物是
   `ios-screenshots-ios18.6`），Codemagic 上是 `codemagic.yaml` 的 `ios-screenshots`（发起构建时改环境变量 `IOS_RUNTIME`）。`simctl openurl` 会弹系统确认框，
   所以页面用启动环境变量指定（只有 Debug 构建认，`AppConfiguration`）：`THINKTIN_OPEN_URL=thinktin://…` 是深链；
-  `THINKTIN_OPEN_SCREEN=conversation / plans / artifacts / settings / search / adopt / teams / newtask / onboarding / connections /
-  instancescreen / permissions / subscription / importmemory / feedback`
-  打开首页第一个 Botin（演示数据里是“写作助手”）的对话、计划、产出物、观看与接管，或者设置、新建 Botin、新任务、引导几个 sheet、团队、
-  首页搜索、连接目录，和深链一样走 `Router.show`（App 的 `App/OpenScreen.swift`）；设置里的四页先弹设置再压进设置 sheet 的栈；
+  `THINKTIN_OPEN_SCREEN`（42 个值，`AppConfiguration.OpenScreen`）打开首页第一个 Botin（演示数据里是“写作助手”）的页面、各个 sheet、
+  设置里的页面、首页置顶和隐藏的几种摆法，和深链一样走 `Router.show`（App 的 `App/OpenScreen.swift`）；设置里的页面先弹设置再压进设置
+  sheet 的栈；页面里本地打开、没有路由的子页（编辑 Botin、头像、工作区、引擎详情、保险箱的新建表单、设备详情、外观、语言、触感……）
+  先开父页面，再用 `Router.requestSubpages(_:)` 记下，父页面出现、数据拿到、转场走完后由 ThinktinUI 的 `onSubpageRequest` 一层层打开；
   `THINKTIN_MOCK_EMPTY=1` 换成还没有 Botin 的新账号（`DemoData.newAccountState`，截 `00-home-empty`）。截图时启动参数
   `-cn.thinktin.onboarding.checked YES` 让引导不弹（引导只在有 Botin、没有 key 的账号第一次启动时弹，现在的两套演示数据都不弹，
-  参数是保险）。新用户第一次登录不弹引导，看到的就是首页的空状态（用户 2026-11-05 定的），引导从设置里打开。
+  参数是保险），`-cn.thinktin.shell.instancePreferences none` 让每次启动的首页都没有置顶、隐藏；启动 App 之前关掉键盘的“滑动输入”
+  介绍。新用户第一次登录不弹引导，看到的就是首页的空状态（用户 2026-11-05 定的），引导从设置里打开。
 - 代码风格：`swift format`（Swift 6 工具链自带），配置在 `apps/apple/.swift-format`（App 和 ThinktinKit 共用，4 格缩进、120 列、
   其余是 swift-format 6.2 的默认规则全量导出）。CI 跑严格模式的 lint，**提交前先 `swift format -i -r apps/apple`**。
 - **Linux 上检查界面代码**：`tools/apple/uicheck/run.sh`（`appkit` 查 macOS 路径和 macOS App target（要先
@@ -419,6 +421,8 @@ struct PlansDestination: View {
 4. 只在本功能里用、不要深链的子页面（向导的第二步、选择器）不用加 `AppRoute`：在自己的目录里用
    `NavigationLink { 子页面 } label: { … }` 或本地 sheet。要跨功能跳转、要深链的页面才加 case，那是 `Navigation/` 的改动，
    在合并时统一加（加了 case 要补 `feature`、`presentation`、`offlinePolicy`、`title`，`AppRouteTests` 会逐个检查）。
+   截图要直接打开这种子页时不加路由，加一个 `Subpage`（`Navigation/Subpage.swift`）：父页面挂
+   `.onSubpageRequest(.xxx, when: 数据拿到了) { 打开它 }`，App 的 `OpenScreen` 先开父页面再 `router.requestSubpages([.xxx])`。
 5. 错误：页面只管行内错误（`ErrorBanner`）。登录失效、冻结、要升级不用处理：环境里的客户端是 `ObservedClient`，任何调用遇到
    这些错误都会报给 `AppModel` 切换整页状态；`login` 成功、`logout` / `deleteAccount` / 下线本机之后也会自动切换（12.2 的登录页
    调完 `client.login(...)` 就行）。事件流照常 `client.subscribe(...)`，连接状态会自动汇总成顶部的横幅。

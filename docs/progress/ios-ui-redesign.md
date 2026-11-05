@@ -641,6 +641,42 @@
     `swift test` 1169 个全过；uicheck UIKit、AppKit 都编过（没有错误和警告）；`run.sh test` 的 ThinktinUITests 168 个全过；App 的
     `ThinktinTests` 21 个过 16 个（挂的还是那 5 个要 App 包的：Info.plist、URL scheme、隐私清单和多语言资源、小组件 appex、`~/Library`
     路径）；`swift format -i -r apps/apple` 没改东西，`swift format lint --strict -r apps/apple` 零条。macOS CI、截图都没跑。
+- 每一组改版页面都能在真 Mac 上查（2026-11-05，session_01GuCp3KRgqaK6Kzynw6udRn；提交 `fbbd655`、`ff41d39`、`4701a85` 和这一条）：
+  - `.github/workflows/ios.yml` 的 push 加 `ci/**` 分支（main、PR 和路径过滤照旧）：没开 PR 的分支 `git push origin HEAD:ci/<名字>`
+    就用 GitHub 免费的 macOS 机器跑真 SDK 的编译和测试。路径过滤照旧，推上去的改动没碰 `apps/apple/**` 这些路径时可能不跑，那就在
+    Actions 里手动 Run workflow 选那个分支。
+  - 页面里本地打开、没有路由的子页能直接打开了（不加 `AppRoute`）：ThinktinKit 新的 `Navigation/Subpage.swift`（对话查找栏、编辑 Botin、
+    头像、工作区、引擎详情 sheet、产出物“媒体”、保险箱三种新建表单、新建规则、这台设备 / 第一台电脑的详情、外观、语言、触感、应用详情 sheet），
+    `Router.requestSubpages(_:)` 记下要依次打开的子页，`takeSubpage` 只取排在最前面的（`show`、`reset` 清掉）；ThinktinUI 新的
+    `Shell/SubpageRequest.swift`：`onSubpageRequest(_:when:perform:)`，父页面出现、数据拿到（`when`）后等 `Subpage.settleDelay`
+    （600 毫秒，转场里改导航状态系统可能不理）再取走、打开。挂在对话、资料（编辑、工作区；工作区多了一个 `navigationDestination(isPresented:)`，
+    行照旧是 `NavigationLink`）、编辑（头像）、引擎目录、产出物、保险箱、权限、登录设备（多了 `navigationDestination(item:)`）、设置根页
+    （外观、语言、触感三页改成 `displayPageView(_:)` 共用，多了 `navigationDestination(item:)`）、`ConnectionsHost` 上。没有请求时什么也不做。
+  - `THINKTIN_OPEN_SCREEN` 从 15 个值加到 42 个（`AppConfiguration.OpenScreen` 按页面组排）：首页的三种摆法（`homepinned` 第一个置顶、
+    `hiddenbotins` 最后一个隐藏并打开已隐藏页、`homeallhidden` 全部隐藏；`OpenScreen.homeArrangement`，先清掉再摆）、`conversationfind`、
+    `botinedit`、`botinavatar`（资料 → 编辑 → 头像两层）、`workspace`、`primarybotin`、`engines`、`enginedetail`、`artifactsmedia`、
+    `connected`、`connectiondetail`（已连接 → “电脑”详情）、设置里的 `account`、`usage`、`modelkeys`、`vault`、`vaultlogin` / `vaultcard` /
+    `vaultcontact`、`permissionrule`、`devices`、`devicedetail`、`computerdetail`，设置根页的 `appearance`、`language`、`haptics`。
+    `OpenScreen.swift` 的 `route(instanceID:)`、`subpages`、`open(in:)`（Botin 的页面等实例列表、取首页第一行）。没加深链（都能用
+    `Router.show` + 子页打开）。
+  - `tools/apple/screenshots.sh`：清单加一列外观（`ld` 深浅两张、`l` 只截浅色），00–24 的名字不变，新加 25–51（一共 52 个页面、69 张：
+    17 个主要页面深浅两张，其余浅色）；每次启动加 `-cn.thinktin.shell.instancePreferences none`（参数域把首页的置顶、隐藏盖成“没有”，
+    `homepinned` 这几张存进模拟器的不会带到下一张）、等 7 秒（子页一层层开）；启动 App 之前 `simctl spawn defaults write` 关掉键盘的滑动输入
+    （`com.apple.keyboard.preferences.plist KeyboardContinuousPathEnabled`）、记成看过介绍（`com.apple.Preferences` 的
+    `DidShowContinuousPathIntroduction`、`DidShowGestureKeyboardIntroduction`），失败不管。超时：GitHub 的截图作业 80 → 90 分钟，
+    Codemagic 的 `ios-screenshots` 80 → 90，`.github/workflows/codemagic.yml` 等 Codemagic 80 → 95 分钟、作业 90 → 105。
+    清单用假的 `simctl` 在 Linux 上跑过一遍（69 张、深色 17 张、每个 `THINKTIN_OPEN_SCREEN` 值都用到、都认得），`bash -n` 过；真机没跑过。
+  - 新的 `docs/ios-ui-redesign-shots.md`：每张截图对哪几张参考、规范哪一节，最后列了截不到的参考（系统菜单、左滑、长按、要输入的、
+    别的分页）。规范 7.6 的表换成指向它；docs/ios.md 第 7 节（CI 的 `ci/**`、截图）、第 9.1 节第 4 条（要截子页时加 `Subpage`）跟着改。
+  - 测试：`RouterTests` 加“子页”（顺序、带参数的、换掉、`show` 和 `reset` 清掉）；App 的 `AppSmokeTests` 三条 `OpenScreen` 重写（42 个值、
+    每个的路由和子页、首页的摆法、演示数据里打开后的返回栈和排好的子页，测完把置顶、隐藏清掉；测试 target 只依赖 App，ThinktinKit 的类型
+    不写名字、靠推断）。
+  - 截不到的：图片全屏（演示数据没有图片产出物，加一张要动十几处测试）、系统 `Menu`（语音、语言的选项）、长按、左滑。
+  - 这一份的 Linux 检查（2026-11-05，最后一次代码提交 `4701a85` 上）：ThinktinKit `swift build --build-tests` + `swift test` 1170 个全过；
+    uicheck UIKit、AppKit 都编过（没有错误和警告）；`run.sh test` 的 ThinktinUITests 168 个全过；App 的 `ThinktinTests` 21 个过 16 个
+    （挂的还是那 5 个要 App 包的：Info.plist、URL scheme、隐私清单和多语言资源、小组件 appex、`~/Library` 路径）；
+    `swift format -i -r apps/apple` 没改东西，`swift format lint --strict -r apps/apple` 零条；`bash -n tools/apple/screenshots.sh` 过。
+    macOS CI、截图都还没跑。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、
@@ -651,7 +687,8 @@
 新建时选它用哪个 agent 当引擎，同一个 agent 可以给好几个 Botin 当引擎（服务端只限每个账号的实例数）。agent 在界面上只以 Botin 的“引擎”/“Engine”出现。
 首次登录首页是空的，空状态“还没有 Botin”+ 说明 + “新建 Botin”按钮。代码里的标识符（`Instance`、`AppRoute.adopt`、`adopt(...)`）不改。
 
-进行中：无人。第 2 轮的四条线 2026-11-05 都合进本分支了（`c6a2aaf`、`7de7dd0`、`a897e14`、`19e299a`），合进来以后能在客户端做的
+进行中：无人。每一组改版页面都能在真 Mac 上查了（`ci/**` 触发 macOS CI、69 张截图、对照表 docs/ios-ui-redesign-shots.md，
+见“已完成”最后一条），下一步是推一次 `ci/` 和截图分支、照对照表做还原度评审。第 2 轮的四条线 2026-11-05 都合进本分支了（`c6a2aaf`、`7de7dd0`、`a897e14`、`19e299a`），合进来以后能在客户端做的
 跨线小事也做完了（`3e4648a` 到 `daf5a35`，见“已完成”最后两条）；合完的四个 `r2/*` 远端分支还没删，等用户看过再删。
 第 1 轮 A 线的首页补完、B、C、D、E 线和收尾线 2026-11-05 做完，见“已完成”。
 验证和发版（2026-11-05，session_01GuCp3KRgqaK6Kzynw6udRn）：GitHub 的 Mac 一直排不上，改用 Codemagic（`.github/workflows/codemagic.yml`：
@@ -669,12 +706,17 @@ TestFlight：28（Botin 改名、空状态，旧表单）、30（新建页重做
    （见“已完成”），要在模拟器上看一眼（下面第 1、2 条，`08-adopt`、`00-home-empty` 两张）；安卓的新建流程要不要跟着改另议；
    (d) 演示数据里 agent 的介绍（“通用 agent”）是仿服务端目录的，等服务端的清单改了再跟；(e) 第一次登录已经按用户的决定改成只看首页空状态、
    不弹引导（见“已完成”审查修正那条）；用户要是还想要第一次登录弹引导，改回 `SignInModel.destination(after:)` 和 `OnboardingCheck` 就行。
-1. macOS CI（`.github/workflows/ios.yml`，只在推 main 和开 PR 时跑）还一次都没跑过这个分支：开 PR 或推一次让它用真 SDK 编。只有它验得出来的：
+1. macOS CI（`.github/workflows/ios.yml`）还一次都没在 GitHub 上跑过这个分支（Codemagic 的 apple-check 跑过几次，见上面）：
+   `git push origin HEAD:ci/ios-ui-redesign` 就跑（2026-11-05 加的 `ci/**` 触发）。这次新加的要它验：`onSubpageRequest` 里
+   `Task { @MainActor in }` 的捕获、设置根页和登录设备的 `navigationDestination(item:)` 跟 `NavigationStack(path:)` 一起用、
+   `AppSmokeTests` 的 `OpenScreen` 三条在模拟器上（会写 `UserDefaults.standard`，测完清掉）。以前就列着的、只有它验得出来的：
    Glass.swift 的 `if #available` 分支；首页工具栏（`#if os(iOS)` 里的 `ToolbarContent`、菜单项的两行 `Text`、`toolbarBadge` 在 iOS 26 上的
    `.badge`、`BottomBarSearchItem`）；`SheetStack` 里第二层 `.sheet(item:)`；`AgentsDestination` 的 `.adopt(agentID: nil)` 模式；启动屏
    （`UILaunchScreen` 的两个键、`LaunchLogo` 的 PDF 和颜色集能不能被资源编译器收下，Info.plist 测试查键）；`DesignTokenTests` 在模拟器上
    顺着 `#filePath` 读仓库里的颜色集（模拟器进程读宿主机的文件，按说可以，没验过）；App 测试里 `OpenScreen` 那三条。
-2. 出一次截图对照（规范 7.6 第 3 条）：`git push -f origin HEAD:ios-screenshots`（或 Actions 里手动跑 iOS screenshots），产物 30 张；
+2. 出一次截图对照（规范 7.6 第 3 条）：`git push -f origin HEAD:ios-screenshots`（或 Actions 里手动跑 iOS screenshots），产物 69 张，
+   照 docs/ios-ui-redesign-shots.md 逐张和参考比（还原度评审）；先看子页那几张（28–51）是不是真的打开了（600 毫秒的等待够不够、
+   7 秒够不够；不够就调 `Subpage.settleDelay` 和脚本的 `sleep`），键盘的滑动输入介绍是不是没再出来，`25-home-pinned` 之后的首页没带着置顶；
    再出一套 iOS 18 的回退：`git push -f origin HEAD:ios-screenshots-ios18.6`（或 Run workflow 填 `ios_runtime`），产物
    `ios-screenshots-ios18.6`；镜像里没有那个运行时脚本会先下载（`xcodebuild -downloadPlatform iOS -buildVersion 18.6`，没在 CI 上跑过，
    失败的话看日志换版本号）。顺带看 09-search 里搜索栏有没有激活（iOS 26 底部条，见“已完成”审查修正那条）。和参考截图并排看

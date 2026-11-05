@@ -1923,31 +1923,19 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
      设置分组、`AppRoute` 和 `Router`（`AppRouteTests` 逐个检查新 case 的 `feature`、`presentation`、`offlinePolicy`、`title`）。
    - `tools/apple/uicheck/run.sh`：UIKit、AppKit、`test` 三种都要过。第 0 轮补的 iOS 26 桩在这里起作用。
    - `swift format lint --strict -r apps/apple`（提交前先 `swift format -i -r apps/apple`）。
-2. **macOS CI（`.github/workflows/ios.yml`，每次推送）**：真实的 iOS 26 SDK 编译，模拟器上跑 `ThinktinTests` 和 `ThinktinUITests`
-   （`renderInBothAppearances` 深浅色都渲染）。Linux 的桩查不出真实 SwiftUI 的问题，以它为准。
+2. **macOS CI（`.github/workflows/ios.yml`，推 main、开 PR、推 `ci/**` 分支时跑）**：真实的 iOS 26 SDK 编译，模拟器上跑 `ThinktinTests`
+   和 `ThinktinUITests`（`renderInBothAppearances` 深浅色都渲染）。Linux 的桩查不出真实 SwiftUI 的问题，以它为准。没开 PR 的分支要验时
+   推到 `ci/<名字>`（`git push origin HEAD:ci/<名字>`），用 GitHub 免费的 macOS 机器跑。
 3. **截图对照（每轮末）**
    - 跑 `.github/workflows/ios-screenshots.yml`：Actions → iOS screenshots → Run workflow，或者 `git push -f origin HEAD:ios-screenshots`；
      截图在 artifact `ios-screenshots`。用的是 Mock 演示数据，不会有个人信息。
-   - 截图清单（`tools/apple/screenshots.sh`）换成下表，深色、浅色各一套：
-
-     | 截图 | 怎么打开 | 对照参考 |
-     |---|---|---|
-     | 首页空状态（新账号） | `THINKTIN_MOCK_EMPTY=1` | 参考没有（113 是全部隐藏的空状态） |
-     | 首页 | 直接启动 | 1、119 |
-     | 对话 | `THINKTIN_OPEN_SCREEN=conversation` | 2 |
-     | 实例资料 | `thinktin://instance/{id}` | 9 |
-     | 实例的计划 | `THINKTIN_OPEN_SCREEN=plans` | 21 |
-     | 产出物 | `THINKTIN_OPEN_SCREEN=artifacts` | 22 |
-     | 设置（sheet） | `THINKTIN_OPEN_SCREEN=settings` | 53、70、75 |
-     | 保险箱填写请求 | `thinktin://vault/request/{id}`（现有） | 57、59 的版式 |
-     | 新建 Botin（sheet） | `THINKTIN_OPEN_SCREEN=adopt` | 34、117 |
-     | 首页搜索 | `THINKTIN_OPEN_SCREEN=search` | 78 |
-     | 审批、收件箱、进行中、运行、计划 | 现有深链（`thinktin://approval/…`、`inbox`、`active`、`run/…`、`plan/…`） | 参考没有，看是否符合第 2 节 |
-     | 审批中心、团队、新任务的 Botin 选择、上手引导（2026-11-05 收尾线加的） | `thinktin://approvals`；`THINKTIN_OPEN_SCREEN=teams` / `newtask` / `onboarding` | 参考没有（新任务对 11 的选择器版式），看是否和改版的页面一套样子 |
-     | 连接目录（r2/connections 加的，`19-connections`） | `THINKTIN_OPEN_SCREEN=connections` | 36、40–51 |
-     | 观看与接管（r2/botin 加的页，`20-instance-screen`，演示画面） | `THINKTIN_OPEN_SCREEN=instancescreen` | 27、29 |
-     | 权限与规则、订阅、导入记忆、发送反馈（r2/settings 加的页，在设置 sheet 的栈里，`21-permissions`、`22-subscription`、`23-import-memory`、`24-feedback`） | `THINKTIN_OPEN_SCREEN=permissions` / `subscription` / `importmemory` / `feedback` | 62；56；71；76 |
-
+   - 截图清单（`tools/apple/screenshots.sh`）覆盖改版的每一组页面，一共 69 张：主要页面浅色、深色各一张，其余只截浅色。
+     每张对哪几张参考、规范哪一节见 [ios-ui-redesign-shots.md](ios-ui-redesign-shots.md)（还原度评审照它逐张看），截不到的
+     （系统菜单、左滑、长按、要输入的状态）也列在那里。页面用启动变量打开：`THINKTIN_OPEN_URL` 是深链，`THINKTIN_OPEN_SCREEN`
+     是没有深链的页面（42 个值，`AppConfiguration.OpenScreen`），`THINKTIN_MOCK_EMPTY=1` 是新账号。页面里本地打开、没有路由的子页
+     （编辑 Botin、头像、工作区、引擎详情、保险箱的新建表单、设备详情、外观……）先开父页面，再由 `Router.requestSubpages(_:)` 记下、
+     父页面出现后一层层打开（ThinktinUI 的 `onSubpageRequest`）。首页的置顶、隐藏只记在这台设备上，截图脚本每次启动用启动参数
+     把它们清空，`homepinned` 这几张自己摆。
    - 和参考截图并排看（参考截图留在仓库外，不提交）。逐页对照：导航栏按钮的位置和形状、有没有标题、列表样式、卡片圆角和有没有描边、
      底部浮动条、空状态、深浅色。差别记进进度文件，改完再出一次截图。
    - iOS 17/18 的回退：每轮至少在一个 iOS 17 或 18 的模拟器上出一次截图。云端没有 Xcode，走 CI：Actions → iOS screenshots →
