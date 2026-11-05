@@ -51,3 +51,5 @@
   合并时 `AppRoute.swift`、`AppRoute+Title.swift`、`AppRouteTests.swift`（`RouteSamples` 的下标和 `caseCount`）会冲突，两边的 case 都留、
   下标顺着排。
 - 只动 `Screens/Conversation/*`、`ViewModels/Conversation/*`、`Components/ComposerBar.swift`、路由加 case、桩；不动 `ClientProtocol` / `MockClient` / `CoreClient`。
+
+已合进 ios-ui-redesign（7de7dd0）
