@@ -282,8 +282,8 @@ async fn project_reads_follow_membership() {
     assert_eq!((d.summary.member_count, d.summary.shared), (1, true));
 }
 
-/// 收件箱里项目回执的字段（8.14，0047 的 inbox_project_guard）：只有 worker 写得出；写了以后谁都不能改它们和子类型；
-/// 租户照样能标已读；运行删掉以后 run_id 置空、project_id 留着。
+/// 收件箱里项目回执的字段（8.14，0047 的 inbox_project_guard；8.15 起项目从运行算、要和运行对得上）：只有 worker 写得出；
+/// 写了以后谁都不能改它们和子类型（租户只有 read_at 的权限）；租户照样能标已读；运行删掉以后 run_id 置空、project_id 留着。
 #[tokio::test]
 async fn inbox_project_fields_are_server_only() {
     let Some(t) = TestDb::new().await else { return };
@@ -304,12 +304,14 @@ async fn inbox_project_fields_are_server_only() {
         .unwrap();
     ta.commit().await.unwrap();
     let project: ProjectId = team.id.into();
-    let run = queue_run(db, alice, &i, "x").await;
+    let private = queue_run(db, alice, &i, "x").await;
+    let run =
+        proto::domain::RunId(copy_into_project(db, "runs", private.id.0, project, None).await);
     let item = |project_id: Option<ProjectId>| NewInboxItem {
         kind: "info".into(),
         title: "t".into(),
         body: "b".into(),
-        run_id: Some(run.id),
+        run_id: Some(run),
         project_id,
         project_invite_id: project_id.map(|_| ProjectInviteId::new()),
         ..NewInboxItem::default()
@@ -346,7 +348,7 @@ async fn inbox_project_fields_are_server_only() {
         .await
         .map_err(Error::from)
         .unwrap_err();
-    assert!(matches!(err, Error::Invalid(_)), "{err:?}");
+    assert!(matches!(err, Error::Forbidden(_)), "{err:?}");
     ta.rollback().await.unwrap();
     // 租户标已读不受影响；读出来带着项目和邀请。
     let mut ta = db.tenant(alice).await.unwrap();
@@ -365,7 +367,7 @@ async fn inbox_project_fields_are_server_only() {
     ta.rollback().await.unwrap();
     // 运行删掉：run_id 置空（外键 ON DELETE SET NULL 不触发守卫），项目还在。
     sqlx::query("DELETE FROM runs WHERE id = $1")
-        .bind(run.id.0)
+        .bind(run.0)
         .execute(db.pool())
         .await
         .unwrap();

@@ -77,7 +77,7 @@ pub use outbox::{NewOutboxItem, OutboxItem};
 pub use plans::{DueTrigger, NewPlan, RetiredPlans};
 pub use project_invites::{Accepted, Consent, CreatedInvite, InviteCaps, InviteKey, JoinTerms};
 pub use project_members::{Exit, Withdrawn};
-pub use project_reads::ProjectTx;
+pub use project_reads::{ProjectRunFilter, ProjectTx};
 pub use projects::{ProjectRecord, SoloAgent};
 pub use reports::{NewReport, ReportRecord};
 pub use runs::{

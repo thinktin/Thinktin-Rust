@@ -5,7 +5,7 @@ use proto::domain::{InstanceEvent, InstanceId, RunId};
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::{Error, Result, Tx, Worker, signed, unsigned};
+use crate::{Error, Result, Tenant, Tx, Worker, signed, unsigned};
 
 /// 事件追加后在这个 Postgres 通知频道上发实例 id。
 pub const EVENTS_CHANNEL: &str = "thinktin_events";
@@ -71,8 +71,12 @@ impl<R> Tx<R> {
             .await?;
         row.into_event()
     }
+}
 
-    /// 序号大于 `after` 的事件，按序号排序。
+/// 用户自己的事件流（实例历史、事件流的 WebSocket）：只有私人事件（8.15）。项目运行的事件走项目的接口，老客户端不会把
+/// 它们存进按实例的本地缓存；退出项目以后行级安全本来也不给看。
+impl Tx<Tenant> {
+    /// 序号大于 `after` 的私人事件，按序号排序（中间夹着的项目事件跳过，序号会不连续）。
     pub async fn events_after(
         &mut self,
         instance: InstanceId,
@@ -81,7 +85,7 @@ impl<R> Tx<R> {
     ) -> Result<Vec<InstanceEvent>> {
         let rows: Vec<Row> = sqlx::query_as(
             "SELECT instance_id, seq, run_id, kind, payload, created_at FROM events \
-             WHERE instance_id = $1 AND seq > $2 ORDER BY seq LIMIT $3",
+             WHERE instance_id = $1 AND seq > $2 AND project_id IS NULL ORDER BY seq LIMIT $3",
         )
         .bind(instance.0)
         .bind(signed(after, "after")?)
@@ -95,7 +99,7 @@ impl<R> Tx<R> {
     /// （最新 + 1）：客户端要续传的位置早于最早序号，说明中间的事件已经过了保留期，要整体重新加载。
     pub async fn event_range(&mut self, instance: InstanceId) -> Result<(u64, u64)> {
         let (latest, oldest): (i64, Option<i64>) = sqlx::query_as(
-            "SELECT event_seq, (SELECT min(seq) FROM events WHERE instance_id = $1) \
+            "SELECT event_seq, (SELECT min(seq) FROM events WHERE instance_id = $1 AND project_id IS NULL) \
              FROM instances WHERE id = $1",
         )
         .bind(instance.0)

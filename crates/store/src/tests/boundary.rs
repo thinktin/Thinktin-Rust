@@ -136,7 +136,6 @@ async fn member_roles_and_definers_are_locked_down() {
         "plans",
         "outbox",
         "audit_log",
-        "artifacts",
     ] {
         let any: bool = sqlx::query_scalar(
             "SELECT has_table_privilege('thinktin_member', $1, 'SELECT') \
@@ -160,6 +159,10 @@ async fn member_roles_and_definers_are_locked_down() {
         ("instances", "name", true),
         ("instances", "state", false),
         ("instances", "limits", false),
+        // 项目产出物的索引（8.15，迁移 0054）：没有对象存储里的位置（下载由 worker 再核对）。
+        ("artifacts", "name", true),
+        ("artifacts", "project_id", true),
+        ("artifacts", "blob_key", false),
     ] {
         let has: bool =
             sqlx::query_scalar("SELECT has_column_privilege('thinktin_member', $1, $2, 'SELECT')")
@@ -659,4 +662,469 @@ async fn scope_backfill_covers_existing_rows() {
     .unwrap();
     // events 是分区表：每个分区一份外键约束，父表一份。
     assert!(n >= 3, "{n}");
+}
+
+/// bob 在 alice 的项目里的一个项目运行（复制出来、跑着），和一个私人运行。
+async fn project_run_fixture(
+    db: &Db,
+) -> (
+    UserId,
+    UserId,
+    ProjectId,
+    Instance,
+    proto::domain::RunId,
+    proto::domain::RunId,
+) {
+    let alice = user(db, "+8613800005101").await;
+    let bob = user(db, "+8613800005102").await;
+    let (a1, b1) = (instance(db, alice).await, instance(db, bob).await);
+    let p = solo(db, alice, &a1).await;
+    join_raw(db, p, bob, &b1).await;
+    let private = super::queue_run(db, bob, &b1, "private task").await;
+    let r = super::projects::copy_into_project(db, "runs", private.id.0, p, None).await;
+    (alice, bob, p, b1, proto::domain::RunId(r), private.id)
+}
+
+/// 退出即不可见（8.15 测试 3 的 C6 部分）：成员时，自己的私人列表不混进项目运行，按 id 读得到；退出以后自己的项目运行、
+/// 事件、产出物都读不到，成员读也读不到；alice 看得到 bob 留下的运行，主人显示“已退出”；bob 的私人运行 alice 永远看不到。
+#[tokio::test]
+async fn leaving_hides_project_rows_everywhere() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let (alice, bob, p, b1, r, private) = project_run_fixture(db).await;
+    let mut w = db.worker().await.unwrap();
+    w.append_event(
+        b1.id,
+        Some(r),
+        "agent.message",
+        &serde_json::json!({ "text": "done" }),
+    )
+    .await
+    .unwrap();
+    w.append_event(
+        b1.id,
+        Some(private),
+        "agent.message",
+        &serde_json::json!({ "text": "mine" }),
+    )
+    .await
+    .unwrap();
+    w.insert_project_key(p, "kms-1", b"wrapped").await.unwrap();
+    let art = w
+        .insert_artifact(&crate::NewArtifact {
+            id: proto::domain::ArtifactId::new(),
+            user: bob,
+            instance: b1.id,
+            run: r,
+            root: r,
+            name: "report.md",
+            content_type: "text/markdown",
+            size: 1,
+            sha256: &[1; 32],
+            blob_key: "k",
+            project: Some(p),
+        })
+        .await
+        .unwrap();
+    w.commit().await.unwrap();
+    // 成员时：按 id 读得到；私人的列表、事件流、产出物不混进项目的。
+    let mut tb = db.tenant(bob).await.unwrap();
+    assert_eq!(tb.run(r).await.unwrap().project_id, Some(p));
+    let runs: Vec<_> = tb
+        .runs(b1.id, None, 50)
+        .await
+        .unwrap()
+        .iter()
+        .map(|r| r.id)
+        .collect();
+    assert_eq!(runs, vec![private]);
+    let listed: Vec<_> = tb
+        .list_runs(crate::RunFilter::default(), None, 50)
+        .await
+        .unwrap()
+        .iter()
+        .map(|r| r.id)
+        .collect();
+    assert_eq!(listed, vec![private]);
+    let events = tb.events_after(b1.id, 0, 100).await.unwrap();
+    assert!(events.iter().all(|e| e.run_id != Some(r)), "{events:?}");
+    assert!(events.iter().any(|e| e.run_id == Some(private)));
+    assert!(tb.instance_artifacts(b1.id, 50).await.unwrap().is_empty());
+    tb.rollback().await.unwrap();
+    // 成员读：bob、alice 都看得到这个运行和产出物。
+    for who in [alice, bob] {
+        let mut m = db.member(who).await.unwrap();
+        let runs = m
+            .project_runs(
+                p,
+                &crate::ProjectRunFilter {
+                    limit: 50,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(runs.iter().map(|x| x.id).collect::<Vec<_>>(), vec![r]);
+        assert_eq!(runs[0].mine, who == bob);
+        assert_eq!(runs[0].owner.user_id, Some(bob));
+        let arts = m.project_artifacts(p, None, 50).await.unwrap();
+        assert_eq!(
+            arts.iter().map(|a| a.id).collect::<Vec<_>>(),
+            vec![art.artifact.id]
+        );
+        // 私人运行：成员读按 id 也读不到。
+        assert!(matches!(
+            m.project_run(p, private).await,
+            Err(Error::NotFound)
+        ));
+        m.finish().await.unwrap();
+    }
+    // bob 退出。
+    sqlx::query("UPDATE project_agents SET left_at = now() WHERE project_id = $1 AND user_id = $2")
+        .bind(p.0)
+        .bind(bob.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE project_members SET left_at = now(), left_reason = 'left' \
+          WHERE project_id = $1 AND user_id = $2",
+    )
+    .bind(p.0)
+    .bind(bob.0)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    let mut tb = db.tenant(bob).await.unwrap();
+    assert!(matches!(tb.run(r).await, Err(Error::NotFound)));
+    assert!(matches!(
+        tb.delete_artifact(art.artifact.id).await,
+        Err(Error::NotFound)
+    ));
+    assert_eq!(tb.run(private).await.unwrap().id, private);
+    tb.rollback().await.unwrap();
+    let mut m = db.member(bob).await.unwrap();
+    assert!(matches!(
+        m.project_runs(
+            p,
+            &crate::ProjectRunFilter {
+                limit: 50,
+                ..Default::default()
+            }
+        )
+        .await,
+        Err(Error::NotFound)
+    ));
+    m.finish().await.unwrap();
+    // alice 照样看得到，主人显示“已退出”（没有 id 和昵称）。
+    let mut m = db.member(alice).await.unwrap();
+    let run = m.project_run(p, r).await.unwrap();
+    assert_eq!(run.owner.status, proto::domain::ProjectAuthorStatus::Left);
+    assert_eq!(run.owner.user_id, None);
+    let a = m.project_artifact(p, art.artifact.id).await.unwrap();
+    assert_eq!(a.author.status, proto::domain::ProjectAuthorStatus::Left);
+    m.finish().await.unwrap();
+}
+
+/// 成员看到的事件按白名单（8.15 测试 4）：只有那 10 种，每种只有列出来的字段，私人的东西（原始参数、思考、用量、审批）
+/// 一个字都不出来；状态粗化；传别的项目、别的运行 id 读不到。
+#[tokio::test]
+async fn project_view_is_whitelisted() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let (alice, bob, p, b1, r, _) = project_run_fixture(db).await;
+    let marker = "SECRET-MARKER";
+    let raw = serde_json::json!({ "secret": marker });
+    let kinds: Vec<(&str, serde_json::Value)> = vec![
+        (
+            "agent.tool_call",
+            serde_json::json!({ "tool_call_id": "t1", "kind": "edit", "status": "pending",
+            "title": marker, "raw": raw }),
+        ),
+        (
+            "agent.tool_call_update",
+            serde_json::json!({ "tool_call_id": "t1", "status": "completed",
+            "raw": raw, "content": marker }),
+        ),
+        ("agent.message", serde_json::json!({ "text": "hello" })),
+        (
+            "agent.plan",
+            serde_json::json!({ "entries": [{ "content": "step one", "status": "pending",
+            "priority": marker }] }),
+        ),
+        (
+            "agent.turn_started",
+            serde_json::json!({ "secret": marker }),
+        ),
+        (
+            "agent.turn_ended",
+            serde_json::json!({ "stop_reason": "end_turn", "usage": marker }),
+        ),
+        (
+            "run.state",
+            serde_json::json!({ "state": "waiting_quota", "reason": marker, "attempt": 3 }),
+        ),
+        (
+            "run.log_truncated",
+            serde_json::json!({ "dropped": marker }),
+        ),
+        (
+            "artifact.published",
+            serde_json::json!({ "artifact_id": "a1", "name": "x.md", "version": 2,
+            "blob_key": marker }),
+        ),
+        (
+            "pipeline.step_started",
+            serde_json::json!({ "step": "draft", "prompt": marker }),
+        ),
+        ("agent.thought", serde_json::json!({ "text": marker })),
+        ("agent.usage", serde_json::json!({ "tokens": marker })),
+        (
+            "agent.permission_requested",
+            serde_json::json!({ "title": marker }),
+        ),
+        ("agent.vault_reveal", serde_json::json!({ "name": marker })),
+        ("approval.decided", serde_json::json!({ "option": marker })),
+        (
+            "agent.platform_tool_call",
+            serde_json::json!({ "args": marker }),
+        ),
+        ("run.state", serde_json::json!({ "state": "backoff" })),
+    ];
+    let mut w = db.worker().await.unwrap();
+    for (k, v) in &kinds {
+        w.append_event(b1.id, Some(r), k, v).await.unwrap();
+    }
+    w.commit().await.unwrap();
+    let mut m = db.member(alice).await.unwrap();
+    let got = m.project_run_events(p, r, 100).await.unwrap();
+    assert!(!got.truncated);
+    let text = serde_json::to_string(&got).unwrap();
+    assert!(!text.contains(marker), "{text}");
+    let seen: Vec<(String, serde_json::Value)> = got
+        .events
+        .iter()
+        .map(|e| (e.kind.clone(), e.data.clone()))
+        .collect();
+    assert_eq!(
+        seen,
+        vec![
+            (
+                "tool_call".into(),
+                serde_json::json!({ "tool_call_id": "t1", "tool_kind": "edit", "status": "pending" })
+            ),
+            (
+                "tool_call_update".into(),
+                serde_json::json!({ "tool_call_id": "t1", "status": "completed" })
+            ),
+            ("message".into(), serde_json::json!({ "text": "hello" })),
+            (
+                "plan".into(),
+                serde_json::json!({ "entries": [{ "content": "step one", "status": "pending" }] })
+            ),
+            ("turn_started".into(), serde_json::json!({})),
+            (
+                "turn_ended".into(),
+                serde_json::json!({ "stop_reason": "end_turn" })
+            ),
+            (
+                "state".into(),
+                serde_json::json!({ "state": "waiting_owner" })
+            ),
+            ("log_truncated".into(), serde_json::json!({})),
+            (
+                "artifact".into(),
+                serde_json::json!({ "artifact_id": "a1", "name": "x.md", "version": 2 })
+            ),
+            (
+                "step_started".into(),
+                serde_json::json!({ "step": "draft" })
+            ),
+            ("state".into(), serde_json::json!({ "state": "running" })),
+        ]
+    );
+    // 只要最近的 3 条：截断。
+    let last = m.project_run_events(p, r, 3).await.unwrap();
+    assert!(last.truncated);
+    assert_eq!(last.events.len(), 3);
+    assert_eq!(last.events[2].kind, "state");
+    // 运行本身：状态粗化，没有失败原因、花费这些字段。
+    let run = m.project_run(p, r).await.unwrap();
+    assert_eq!(run.state, proto::domain::ProjectRunState::Running);
+    assert_eq!(run.prompt, "private task");
+    let tree = m.project_run_tree(p, r).await.unwrap();
+    assert_eq!(tree.iter().map(|x| x.id).collect::<Vec<_>>(), vec![r]);
+    m.finish().await.unwrap();
+    // 别的项目、编出来的 id：读不到。
+    let other = solo(db, alice, &instance(db, alice).await).await;
+    let mut m = db.member(bob).await.unwrap();
+    for f in [
+        m.project_run(other, r).await.err(),
+        m.project_run_tree(other, r).await.err(),
+        m.project_run_events(other, r, 10).await.err(),
+    ] {
+        assert!(matches!(f, Some(Error::NotFound)), "{f:?}");
+    }
+    m.finish().await.unwrap();
+    let mut m = db.member(bob).await.unwrap();
+    assert!(matches!(
+        m.project_runs(
+            other,
+            &crate::ProjectRunFilter {
+                limit: 5,
+                ..Default::default()
+            }
+        )
+        .await,
+        Err(Error::NotFound)
+    ));
+    m.finish().await.unwrap();
+    // 库里的白名单和代码里的一样；回执子类型也一样。
+    let sql = include_str!("../../migrations/0054_project_scoped_reads.sql");
+    for k in proto::domain::PROJECT_RUN_EVENT_KINDS {
+        assert!(sql.contains(&format!("'{k}'")), "{k}");
+    }
+    for s in proto::domain::notice_subtype::PROJECT_RECEIPTS {
+        let yes: bool = sqlx::query_scalar("SELECT project_receipt($1)")
+            .bind(s)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+        assert!(yes, "{s}");
+    }
+    for s in [Some("approval"), Some("info"), None] {
+        let yes: Option<bool> = sqlx::query_scalar("SELECT project_receipt($1)")
+            .bind(s)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+        assert!(!yes.unwrap_or(false), "{s:?}");
+    }
+}
+
+/// 收件箱的项目从运行算（8.15 测试 6）：worker 写运行提醒不用给项目；给错了、回执带运行都不行；租户在项目运行上写不了
+/// 提醒（成员时 42501，退出以后运行看不到，23503）；退出以后运行提醒看不到，回执照样看得到。外加测试 5 的 C6 部分：退出
+/// 以后租户往自己的项目运行上追加事件被拒绝。
+#[tokio::test]
+async fn inbox_project_is_derived() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let (_alice, bob, p, b1, r, private) = project_run_fixture(db).await;
+    let note =
+        |run: Option<proto::domain::RunId>, project: Option<ProjectId>, subtype: Option<&str>| {
+            crate::NewInboxItem {
+                kind: "info".into(),
+                title: "t".into(),
+                body: "b".into(),
+                run_id: run,
+                project_id: project,
+                subtype: subtype.map(String::from),
+                ..crate::NewInboxItem::default()
+            }
+        };
+    let mut w = db.worker().await.unwrap();
+    let id = w
+        .insert_inbox(bob, &note(Some(r), None, None))
+        .await
+        .unwrap()
+        .unwrap();
+    let receipt = w
+        .insert_inbox(
+            bob,
+            &note(
+                None,
+                Some(p),
+                Some(proto::domain::notice_subtype::PROJECT_LEFT),
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    w.commit().await.unwrap();
+    let stored: Option<uuid::Uuid> =
+        sqlx::query_scalar("SELECT project_id FROM inbox_items WHERE id = $1")
+            .bind(id.0)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    assert_eq!(stored, Some(p.0));
+    // 给错项目、回执带运行：都不行。
+    let other = solo(db, bob, &instance(db, bob).await).await;
+    for (n, what) in [
+        (note(Some(r), Some(other), None), "mismatch"),
+        (
+            note(
+                Some(r),
+                Some(p),
+                Some(proto::domain::notice_subtype::PROJECT_JOINED),
+            ),
+            "receipt with a run",
+        ),
+    ] {
+        let mut w = db.worker().await.unwrap();
+        let err = w.insert_inbox(bob, &n).await.unwrap_err();
+        assert!(matches!(err, Error::Invalid(_)), "{what}: {err:?}");
+        w.rollback().await.unwrap();
+    }
+    // 租户在项目运行上写提醒：成员时 Forbidden。
+    let mut tb = db.tenant(bob).await.unwrap();
+    let err = tb
+        .insert_inbox(bob, &note(Some(r), None, None))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::Forbidden(_)), "{err:?}");
+    tb.rollback().await.unwrap();
+    // 私人运行的提醒照常。
+    let mut tb = db.tenant(bob).await.unwrap();
+    tb.insert_inbox(bob, &note(Some(private), None, None))
+        .await
+        .unwrap()
+        .unwrap();
+    tb.commit().await.unwrap();
+    // 退出以后：运行提醒看不到，回执看得到；在项目运行上写提醒、追加事件都被拒绝。
+    sqlx::query("UPDATE project_agents SET left_at = now() WHERE project_id = $1 AND user_id = $2")
+        .bind(p.0)
+        .bind(bob.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE project_members SET left_at = now(), left_reason = 'left' \
+          WHERE project_id = $1 AND user_id = $2",
+    )
+    .bind(p.0)
+    .bind(bob.0)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    let mut tb = db.tenant(bob).await.unwrap();
+    let ids: Vec<_> = tb
+        .inbox(None, 50, false)
+        .await
+        .unwrap()
+        .iter()
+        .map(|i| i.id)
+        .collect();
+    assert!(!ids.contains(&id), "the run notice is hidden");
+    assert!(ids.contains(&receipt), "the receipt stays");
+    tb.rollback().await.unwrap();
+    let mut tb = db.tenant(bob).await.unwrap();
+    let err = tb
+        .insert_inbox(bob, &note(Some(r), None, None))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::Invalid(_)), "{err:?}");
+    tb.rollback().await.unwrap();
+    let mut tb = db.tenant(bob).await.unwrap();
+    let err = tb
+        .append_event(
+            b1.id,
+            Some(r),
+            "run.cancel_requested",
+            &serde_json::json!({}),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::Invalid(_)), "{err:?}");
+    tb.rollback().await.unwrap();
 }

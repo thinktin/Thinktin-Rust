@@ -472,7 +472,7 @@ impl Tx<Tenant> {
         let rows: Vec<Row> = sqlx::query_as(concat!(
             "SELECT ",
             columns!(),
-            " FROM runs WHERE instance_id = $1 AND ($2::uuid IS NULL OR id < $2) \
+            " FROM runs WHERE instance_id = $1 AND project_id IS NULL AND ($2::uuid IS NULL OR id < $2) \
              ORDER BY id DESC LIMIT $3"
         ))
         .bind(instance.0)
@@ -498,7 +498,7 @@ impl Tx<Tenant> {
                     columns!(),
                     " FROM runs WHERE user_id = app_user_id() AND ",
                     $where,
-                    " AND ($2::bool OR parent_run_id IS NULL) \
+                    " AND project_id IS NULL AND ($2::bool OR parent_run_id IS NULL) \
                      AND id < coalesce($3::uuid, 'ffffffff-ffff-ffff-ffff-ffffffffffff'::uuid) \
                      ORDER BY id DESC LIMIT $4"
                 )

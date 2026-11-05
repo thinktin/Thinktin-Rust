@@ -87,6 +87,10 @@
   项目列表和详情改成成员读（结构不变，归档的也列出来），8.14 的 worker 读删了；启动核对登录账号的角色（`Db::check_roles`）。
   C4 迁移 0050（事件、审批、产出物带空间列，触发器按运行填、建了不能改，和运行的空间不一致的外键拒绝）；项目密钥的读、存
   （`project_key`、`insert_project_key`），产出物登记带项目、要项目有密钥。
+  C5 三个并发建的索引；C6 迁移 0054（四个定义者函数按白名单给成员看项目运行和事件，成员读项目产出物的索引，租户的运行、
+  授权、事件、审批只在还是存活成员时看得到项目行，产出物只看私人的，收件箱回执按子类型照常看，收件箱的项目从运行算，
+  租户只能改 read_at、审批只做决定），租户的运行列表、事件流不混进项目的；`ProjectTx` 读项目运行、事件、产出物。
+  坑：只加 .sql 文件 cargo 不会重新编译（`sqlx::migrate!` 编译时嵌入），加了 `crates/store/build.rs`。
   坑：`relay` 的 `heartbeats_drop_revoked_frozen_and_silent_computers` 机器忙时偶尔失败（200 毫秒心跳，8.14 没碰 relay），单独跑能过。
 - 下一步：8.15 → 8.16–8.19。东京：Phase 0（docs/browser.md 第 8.1 节），过了一个模板开一个 `supported`。用户放好搜索 key（`THINKTIN_PARALLEL_SEARCH_KEY`）后做小测。
 
