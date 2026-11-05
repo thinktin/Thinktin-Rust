@@ -2,7 +2,7 @@ import SwiftUI
 import ThinktinKit
 
 /// Agent 详情（`.agent(id)`）：介绍、许可证和许可说明、上游仓库、接入方式、可用版本、要哪种模型接口、能用的地区，
-/// 已经领养的实例；“领养”打开领养表单（`AdoptAgentSheet`）。
+/// 已经领养的实例；“用它新建 Botin”打开领养表单（`AdoptAgentSheet`）。界面上 agent 叫“引擎”，实例叫 Botin。
 ///
 /// 领养好之后按表单里选的下一步跳：配模型路由（12.4 的 `.modelRoutes`，返回栈是“新实例的对话 → 路由页”）、
 /// 先加 key（路由页上再弹添加 key）、或者直接去新实例的对话。跳之前先刷新应用框架的实例列表，抽屉里马上有它。
@@ -49,10 +49,10 @@ private struct AgentDetailContent: View {
                 } else if model.isMissing {
                     EmptyStateView(
                         systemImage: "shippingbox",
-                        title: language == .chinese ? "这个 agent 已经下架了" : "This agent is no longer offered",
+                        title: language == .chinese ? "这个引擎已经下架了" : "This engine is no longer offered",
                         message: language == .chinese
-                            ? "已经领养的实例不受影响，可以继续用。" : "Instances you already adopted keep working.",
-                        actionTitle: language == .chinese ? "看看别的 agent" : "Browse other agents"
+                            ? "已经在用它的 Botin 不受影响，可以继续用。" : "Botins that already use it keep working.",
+                        actionTitle: language == .chinese ? "看看别的引擎" : "Browse other engines"
                     ) {
                         router.open(.agentCatalog)
                     }
@@ -61,7 +61,7 @@ private struct AgentDetailContent: View {
                 } else {
                     EmptyStateView(
                         systemImage: model.error?.isOffline == true ? "wifi.slash" : "exclamationmark.triangle",
-                        title: language == .chinese ? "暂时拉不到这个 agent" : "Couldn't load this agent")
+                        title: language == .chinese ? "暂时拉不到这个引擎" : "Couldn't load this engine")
                 }
             }
             .pageLayout()
@@ -142,9 +142,9 @@ private struct AgentDetailBody: View {
                     .foregroundStyle(Theme.ink)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            PillButton(zh ? "领养" : "Adopt", systemImage: "plus", action: onAdopt)
+            PillButton(zh ? "用它新建 Botin" : "Create a Botin with it", systemImage: "plus", action: onAdopt)
                 .disabled(!canAdopt)
-                .accessibilityHint(Text(zh ? "起个名字，领养一个新实例" : "Name and adopt a new instance"))
+                .accessibilityHint(Text(zh ? "起个名字，新建一个用这个引擎的 Botin" : "Name a new Botin that runs on this engine"))
                 .padding(.vertical, Metrics.Spacing.xs)
 
             licenseSection
@@ -161,7 +161,7 @@ private struct AgentDetailBody: View {
                 }
             }
             if !instances.isEmpty {
-                SectionHeader(title: zh ? "你领养的" : "Your instances")
+                SectionHeader(title: zh ? "在用它的 Botin" : "Botins using it")
                 GroupedSection {
                     ForEach(instances) { instance in
                         if instance.id != instances.first?.id { Divider() }
@@ -230,9 +230,9 @@ private struct AgentDetailBody: View {
                     systemImage: "shippingbox",
                     title: (zh ? "最新 " : "Latest ") + AgentsText.versionLabel(agent.catalogLatestVersion),
                     detail: zh
-                        ? "领养时用最新版本。可用版本：\(AgentsText.list(versions, language: language))。之后可以在实例详情里升级或回滚。"
-                        : "New instances use the latest version. Available: \(AgentsText.list(versions, language: language)). "
-                            + "You can upgrade or roll back later from the instance details.")
+                        ? "新建 Botin 时用最新版本。可用版本：\(AgentsText.list(versions, language: language))。之后可以在 Botin 资料里升级或回滚。"
+                        : "New Botins use the latest version. Available: \(AgentsText.list(versions, language: language)). "
+                            + "You can upgrade or roll back later from the Botin's details.")
             }
         }
     }

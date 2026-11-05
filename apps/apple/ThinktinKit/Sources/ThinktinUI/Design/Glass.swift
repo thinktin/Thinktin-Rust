@@ -360,7 +360,7 @@ extension View {
         }
         .background(Theme.paper)
         .floatingBar {
-            Button("去领养") {}
+            Button("新建 Botin") {}
                 .glassButtonStyle(.prominent)
                 .controlSize(.large)
                 .frame(maxWidth: .infinity)

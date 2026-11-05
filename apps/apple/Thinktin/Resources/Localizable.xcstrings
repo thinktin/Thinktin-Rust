@@ -1,6 +1,18 @@
 {
   "sourceLanguage" : "zh-Hans",
   "strings" : {
+    "Botin" : {
+      "comment" : "快捷指令（12.20）：参数名和类型名，Botin（代码里的实例，中英文都叫 Botin）。",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Botin"
+          }
+        }
+      }
+    },
     "ThinkTin" : {
       "comment" : "App 名称，各语言都不翻译。",
       "extractionState" : "manual",
@@ -19,7 +31,7 @@
       }
     },
     "任务" : {
-      "comment" : "快捷指令（12.20）：参数名，要交给实例的任务。",
+      "comment" : "快捷指令（12.20）：参数名，要交给 Botin 的任务。",
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
@@ -78,18 +90,6 @@
         }
       }
     },
-    "实例" : {
-      "comment" : "快捷指令（12.20）：参数名和类型名，agent 实例。",
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Instance"
-          }
-        }
-      }
-    },
     "待审批" : {
       "comment" : "快捷指令（12.20）：查待审批数的短标题。",
       "extractionState" : "manual",
@@ -102,14 +102,14 @@
         }
       }
     },
-    "把一个任务交给选中的 agent 实例。任务里像有密码或 key 时不发，要在 App 里先存进保险箱。" : {
+    "把一个任务交给选中的 Botin。任务里像有密码或 key 时不发，要在 App 里先存进保险箱。" : {
       "comment" : "快捷指令（12.20）：下任务的说明。",
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Gives a task to the chosen agent instance. Tasks that look like they contain a password or key aren't sent: save those to the vault in the app first."
+            "value" : "Gives a task to the chosen Botin. Tasks that look like they contain a password or key aren't sent: save those to the vault in the app first."
           }
         }
       }
@@ -162,14 +162,14 @@
         }
       }
     },
-    "有几个 agent 的操作在等你批准（过期的不算）。" : {
+    "有几个 Botin 的操作在等你批准（过期的不算）。" : {
       "comment" : "快捷指令（12.20）：查待审批数的说明。",
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "How many agent actions are waiting for your approval (expired ones don't count)."
+            "value" : "How many Botin actions are waiting for your approval (expired ones don't count)."
           }
         }
       }
@@ -186,8 +186,8 @@
         }
       }
     },
-    "给实例下任务" : {
-      "comment" : "快捷指令（12.20）：给实例下任务的标题。",
+    "给 Botin 下任务" : {
+      "comment" : "快捷指令（12.20）：给 Botin 下任务的标题。",
       "extractionState" : "manual",
       "localizations" : {
         "en" : {

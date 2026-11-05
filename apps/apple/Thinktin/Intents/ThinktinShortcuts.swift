@@ -16,7 +16,7 @@ struct ThinktinShortcuts: AppShortcutsProvider {
             systemImageName: "checkmark.shield")
         AppShortcut(
             intent: SendTaskIntent(),
-            phrases: ["用\(.applicationName)下任务", "给\(.applicationName)的实例下任务"],
+            phrases: ["用\(.applicationName)下任务", "给\(.applicationName)的 Botin 下任务"],
             shortTitle: "下任务",
             systemImageName: "paperplane")
         AppShortcut(

@@ -1,9 +1,10 @@
 import SwiftUI
 import ThinktinKit
 
-/// 领养表单（Agent 详情的“领养”弹出，自带导航栈）：起名字，接入方式多于一个时选一个，专有许可的先看许可说明。
+/// 领养表单（界面上是“新建 Botin”；引擎详情的“用它新建 Botin”弹出，自带导航栈）：起名字，接入方式多于一个时选一个，
+/// 专有许可的先看许可说明。
 ///
-/// 领养好之后同一张表单换成“领养好了”：说明下一步（配模型路由；没有能用的 key 时先加 key），按钮通过 `onExit`
+/// 领养好之后同一张表单换成“建好了”：说明下一步（配模型路由；没有能用的 key 时先加 key），按钮通过 `onExit`
 /// 告诉详情页去哪，详情页等表单关掉再跳（不在表单还开着的时候弹别的 sheet）。
 struct AdoptAgentSheet: View {
     @State private var model: AdoptionModel
@@ -37,11 +38,7 @@ struct AdoptAgentSheet: View {
         }
         .background(Theme.paper)
         .inlineNavigationTitle(
-            model.adopted == nil
-                ? (zh
-                    ? "领养 \(AgentsText.displayName(of: model.agent))"
-                    : "Adopt \(AgentsText.displayName(of: model.agent))")
-                : (zh ? "领养好了" : "Adopted")
+            model.adopted == nil ? AppRoute.adopt(agentID: nil).title(language) : (zh ? "建好了" : "All set")
         )
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
@@ -76,12 +73,20 @@ struct AdoptAgentSheet: View {
         // 名字。
         SectionHeader(title: zh ? "名字" : "Name")
         AgentsNameField(
-            title: zh ? "实例的名字" : "Instance name",
+            title: zh ? "Botin 的名字" : "Botin name",
             text: Binding(get: { model.name }, set: { model.name = $0 }),
             problem: model.nameProblem,
             hint: zh
                 ? "最多 \(InstanceNameRule.maxLength) 个字，之后可以改。"
                 : "Up to \(InstanceNameRule.maxLength) characters. You can change it later.")
+
+        // 引擎（就是这个 agent；表单从它的详情页弹出，这里只写出来，不能换）。
+        SectionHeader(title: zh ? "引擎" : "Engine")
+        GroupedSection {
+            ListRow(
+                systemImage: "cpu", title: AgentsText.displayName(of: model.agent),
+                detail: AgentsText.versionLabel(model.agent.catalogLatestVersion))
+        }
 
         // 接入方式（多于一个时）。
         if model.showsHarnessChoice {
@@ -112,9 +117,13 @@ struct AdoptAgentSheet: View {
                     .typography(.subheadline)
                     .foregroundStyle(Theme.inkSecondary)
                     .fixedSize(horizontal: false, vertical: true)
-                Text(zh ? "领养即表示你同意按上面的条款使用。" : "By adopting, you agree to use it under these terms.")
-                    .typography(.footnote)
-                    .foregroundStyle(Theme.inkSecondary)
+                Text(
+                    zh
+                        ? "新建即表示你同意按上面的条款使用这个引擎。"
+                        : "By creating this Botin, you agree to use the engine under these terms."
+                )
+                .typography(.footnote)
+                .foregroundStyle(Theme.inkSecondary)
             }
         }
 
@@ -123,7 +132,7 @@ struct AdoptAgentSheet: View {
         }
 
         PillButton(
-            model.isAdopting ? (zh ? "正在领养…" : "Adopting…") : (zh ? "领养" : "Adopt"),
+            model.isAdopting ? (zh ? "正在新建…" : "Creating…") : (zh ? "新建" : "Create"),
             systemImage: model.isAdopting ? nil : "plus"
         ) {
             adopt()
@@ -133,10 +142,14 @@ struct AdoptAgentSheet: View {
         .padding(.top, Metrics.Spacing.s)
         if app.isOffline {
             VStack(spacing: Metrics.Spacing.xs) {
-                Text(zh ? "离线时不能领养，联网后再试。" : "You can't adopt while offline. Try again once you're back online.")
-                    .typography(.footnote)
-                    .foregroundStyle(Theme.inkSecondary)
-                    .multilineTextAlignment(.center)
+                Text(
+                    zh
+                        ? "离线时不能新建 Botin，联网后再试。"
+                        : "You can't create a Botin while offline. Try again once you're back online."
+                )
+                .typography(.footnote)
+                .foregroundStyle(Theme.inkSecondary)
+                .multilineTextAlignment(.center)
                 PillButton(zh ? "重新检查网络" : "Check again", kind: .secondary, size: .compact) {
                     let app = self.app
                     Task { await app.refresh() }
@@ -163,7 +176,7 @@ private struct AdoptionDoneView: View {
                     .font(Typography.largeTitle.font)
                     .foregroundStyle(StatusTone.success.color)
                     .accessibilityHidden(true)
-                Text(zh ? "领养好了" : "All set")
+                Text(zh ? "建好了" : "All set")
                     .typography(.title)
                     .foregroundStyle(Theme.ink)
                     .accessibilityAddTraits(.isHeader)

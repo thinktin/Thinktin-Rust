@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 空状态：图标、衬线标题、一句说明，可选一个操作按钮（“去领养”“新建计划”）。各页面的空列表都用它（12.17）。
+/// 空状态：图标、衬线标题、一句说明，可选一个操作按钮（“新建 Botin”“新建计划”）。各页面的空列表都用它（12.17）。
 public struct EmptyStateView: View {
     private let systemImage: String
     private let title: String
@@ -58,9 +58,9 @@ public struct EmptyStateView: View {
 #Preview("空状态") {
     EmptyStateView(
         systemImage: "square.stack.3d.up",
-        title: "还没有实例",
-        message: "从 agent 目录领养一个，就可以给它布置任务了。",
-        actionTitle: "去领养"
+        title: "还没有 Botin",
+        message: "Botin 是替你干活的助手。起个名字、选一个引擎，它就能帮你写东西、查资料、跑任务。",
+        actionTitle: "新建 Botin"
     ) {}
     .background(Theme.paper)
 }

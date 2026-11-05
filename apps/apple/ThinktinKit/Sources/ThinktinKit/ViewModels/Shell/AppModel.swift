@@ -65,7 +65,7 @@ public final class AppModel {
     public private(set) var connection: ConnectionState = .idle
     /// 网络不通（最近一次调用是网络错误）：页面顶部显示离线横幅。
     public private(set) var isOffline = false
-    /// 实例列表拿到过（缓存或服务端）：首页据此区分“加载中”和“没有实例”。
+    /// 实例列表拿到过（缓存或服务端）：首页据此区分“加载中”和“还没有 Botin”。
     public private(set) var hasLoadedInstances = false
     public private(set) var isRefreshing = false
     /// 刷新实例列表失败（不是网络、不是全局错误）：首页显示横幅，可以重试。

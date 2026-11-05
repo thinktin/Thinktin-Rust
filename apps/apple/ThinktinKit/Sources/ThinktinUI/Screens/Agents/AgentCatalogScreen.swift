@@ -1,8 +1,8 @@
 import SwiftUI
 import ThinktinKit
 
-/// Agent 目录（`.agentCatalog`，抽屉的“新任务”在没有实例时、空状态的“去领养”进来）：每个 agent 一张卡片
-/// （名字、出处、一句话介绍、版本、许可证、接入方式、已领养几个），点开去详情领养。
+/// Agent 目录（界面上是“引擎”；`.agentCatalog`，没有实例时的“新任务”、首页“+”和空状态的“新建 Botin”进来）：
+/// 每个 agent 一张卡片（名字、出处、一句话介绍、版本、许可证、接入方式、几个 Botin 在用），点开去详情新建 Botin。
 ///
 /// 目录不缓存：离线时显示“暂无数据”的空状态（横幅由应用框架统一放），联网后自动再拉一次。
 struct AgentCatalogScreen: View {
@@ -30,11 +30,13 @@ private struct AgentCatalogContent: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: Metrics.Spacing.s) {
                 PageHeader(
-                    title: zh ? "领养一个 agent" : "Adopt an agent",
+                    title: zh ? "选一个引擎" : "Pick an engine",
                     message: zh
-                        ? "每个 agent 都在自己的沙箱里运行，用你配置的模型 key。领养后可以随时改名、升级或删除。"
-                        : "Each agent runs in its own sandbox with the model keys you set up. You can rename, upgrade "
-                            + "or delete it any time after adopting.")
+                        ? "引擎决定 Botin 怎么干活，同一个引擎可以给好几个 Botin 用。每个 Botin 都在自己的沙箱里运行，用你配置的模型 key，"
+                            + "建好后可以随时改名、升级或删除。"
+                        : "The engine is what powers a Botin, and one engine can power several Botins. Each Botin runs in "
+                            + "its own sandbox with the model keys you set up. You can rename, upgrade or delete it any time."
+                )
                 if let error = visibleError(model.error) {
                     ErrorBanner(error) { Task { await model.load() } }
                 }
@@ -57,7 +59,7 @@ private struct AgentCatalogContent: View {
         let zh = language == .chinese
         if model.isEmpty {
             EmptyStateView(
-                systemImage: "square.stack.3d.up", title: zh ? "目录里还没有 agent" : "No agents yet",
+                systemImage: "square.stack.3d.up", title: zh ? "还没有能用的引擎" : "No engines yet",
                 message: zh ? "稍后再来看看。" : "Check back later.")
         } else if model.hasNothingToShow {
             if model.isLoading || model.error == nil {
@@ -65,7 +67,7 @@ private struct AgentCatalogContent: View {
             } else {
                 EmptyStateView(
                     systemImage: model.error?.isOffline == true ? "wifi.slash" : "exclamationmark.triangle",
-                    title: zh ? "暂时拉不到目录" : "Couldn't load the catalog",
+                    title: zh ? "暂时拉不到引擎列表" : "Couldn't load the engines",
                     message: model.error?.isOffline == true
                         ? (zh ? "联网后会自动刷新。" : "This will refresh when you're back online.") : nil)
             }
@@ -79,7 +81,7 @@ private struct AgentCatalogContent: View {
                 .buttonStyle(.plain)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(Text(card.accessibilityLabel(language)))
-                .accessibilityHint(Text(zh ? "查看详情和领养" : "Shows details and adoption"))
+                .accessibilityHint(Text(zh ? "查看详情，用它新建 Botin" : "Shows details. You can create a Botin with it."))
                 .accessibilityAddTraits(.isButton)
             }
         }

@@ -150,17 +150,17 @@ private struct PlanEditorContent: View {
     private var instanceSection: some View {
         let zh = language == .chinese
         let model = self.model
-        SectionHeader(title: zh ? "在哪个实例上运行" : "Runs on")
+        SectionHeader(title: zh ? "在哪个 Botin 上运行" : "Runs on")
         if model.isEditing {
             GroupedSection {
                 ListRow(
                     systemImage: "cpu", title: instanceName(model.instanceID),
-                    detail: zh ? "计划建好后不能换实例。" : "A plan's instance can't be changed.")
+                    detail: zh ? "计划建好后不能换 Botin。" : "A plan's Botin can't be changed.")
             }
         } else if app.instances.isEmpty {
             InlineNotice(
                 systemImage: "exclamationmark.triangle", tone: .waiting,
-                text: zh ? "还没有实例。先领养一个 agent。" : "You don't have any instances yet. Adopt an agent first.")
+                text: zh ? "还没有 Botin，先新建一个。" : "You don't have any Botins yet. Create one first.")
         } else {
             GroupedSection {
                 ForEach(app.instances) { instance in

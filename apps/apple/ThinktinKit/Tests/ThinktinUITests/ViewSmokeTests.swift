@@ -45,7 +45,9 @@ struct ViewSmokeTests {
         render(AIGeneratedLabel())
         render(EmptyStateView(systemImage: "tray", title: "收件箱是空的"))
         render(
-            EmptyStateView(systemImage: "square.stack.3d.up", title: "还没有实例", message: "去领养一个", actionTitle: "去领养") {}
+            EmptyStateView(
+                systemImage: "square.stack.3d.up", title: "还没有 Botin", message: "新建一个", actionTitle: "新建 Botin"
+            ) {}
         )
     }
 

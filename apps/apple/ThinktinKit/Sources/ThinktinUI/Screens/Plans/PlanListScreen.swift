@@ -140,11 +140,11 @@ private struct PlanListContent: View {
             .padding(.horizontal, Metrics.Spacing.xxs)
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(Text(zh ? "按实例筛选" : "Filter by instance"))
+        .accessibilityLabel(Text(zh ? "按 Botin 筛选" : "Filter by Botin"))
     }
 
     private func instanceName(_ id: InstanceID) -> String {
-        app.instances.first { $0.id == id }?.name ?? (language == .chinese ? "已删除的实例" : "Deleted instance")
+        app.instances.first { $0.id == id }?.name ?? (language == .chinese ? "已删除的 Botin" : "Deleted Botin")
     }
 
     // MARK: 分组
@@ -206,7 +206,7 @@ private struct PlanListContent: View {
         } else if model.instanceFilter != nil && !model.plans.isEmpty {
             EmptyStateView(
                 systemImage: "line.3.horizontal.decrease.circle",
-                title: zh ? "这个实例还没有计划" : "No plans for this instance",
+                title: zh ? "这个 Botin 还没有计划" : "No plans for this Botin",
                 message: PlansText.emptyMessage(language), actionTitle: zh ? "看全部" : "Show all"
             ) {
                 model.instanceFilter = nil

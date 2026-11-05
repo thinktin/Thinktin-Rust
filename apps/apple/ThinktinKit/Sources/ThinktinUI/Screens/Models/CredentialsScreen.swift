@@ -96,7 +96,7 @@ private struct CredentialsContent: View {
         GroupedSection {
             ListRow(
                 systemImage: "chart.bar", title: AppRoute.usage.title(language),
-                detail: zh ? "按天、实例、模型、key 看 token 用量" : "Token usage by day, instance, model and key",
+                detail: zh ? "按天、Botin、模型、key 看 token 用量" : "Token usage by day, Botin, model and key",
                 action: { router.open(.usage) })
         }
         ModelsFootnote(text: ModelsText.wakeExplanation(language))

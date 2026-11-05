@@ -20,7 +20,7 @@ struct ShellDestination: View {
 }
 
 /// “新任务”的实例选择（有好几个实例时，从“新任务”弹出）：选一个就进它的对话（先关掉 sheet）、把焦点放进输入框；
-/// 下面可以去领养新的 agent。
+/// 下面可以“新建 Botin”。
 private struct NewTaskSheet: View {
     let model: AppModel
 
@@ -30,15 +30,15 @@ private struct NewTaskSheet: View {
         let zh = language == .chinese
         ScrollView {
             VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
-                Text(zh ? "在哪个实例上下任务？" : "Which instance should take this task?")
+                Text(zh ? "交给哪个 Botin？" : "Which Botin should take this task?")
                     .typography(.subheadline)
                     .foregroundStyle(Theme.inkSecondary)
                     .padding(.horizontal, Metrics.Spacing.xs)
                     .padding(.bottom, Metrics.Spacing.xs)
                 if model.instances.isEmpty {
                     EmptyStateView(
-                        systemImage: "square.stack.3d.up", title: zh ? "还没有实例" : "No instances yet",
-                        message: zh ? "先领养一个 agent。" : "Adopt an agent first.")
+                        systemImage: "square.stack.3d.up", title: zh ? "还没有 Botin" : "No Botins yet",
+                        message: zh ? "先新建一个。" : "Create one first.")
                 }
                 ForEach(model.instances) { instance in
                     Button {
@@ -74,7 +74,7 @@ private struct NewTaskSheet: View {
                     .accessibilityElement(children: .combine)
                     .accessibilityAddTraits(instance.id == model.router.currentInstanceID ? .isSelected : [])
                 }
-                PillButton(zh ? "领养新的 agent" : "Adopt an agent", systemImage: "plus", kind: .secondary) {
+                PillButton(AppRoute.adopt(agentID: nil).title(language), systemImage: "plus", kind: .secondary) {
                     model.router.open(.agentCatalog)
                 }
                 .padding(.top, Metrics.Spacing.s)

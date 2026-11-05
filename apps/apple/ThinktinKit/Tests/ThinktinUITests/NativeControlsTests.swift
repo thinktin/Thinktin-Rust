@@ -43,7 +43,7 @@ struct NativeControlsTests {
             NavigationStack {
                 Text(verbatim: "内容")
                     .floatingBar {
-                        Button("去领养") {}
+                        Button("新建 Botin") {}
                             .glassButtonStyle(.prominent)
                             .controlSize(.large)
                             .frame(maxWidth: .infinity)
@@ -61,7 +61,7 @@ struct NativeControlsTests {
                                 Section {
                                     Button("复制 ID", systemImage: "doc.on.doc") {}
                                 }
-                                Button("删除实例", systemImage: "trash", role: .destructive) {}
+                                Button("删除这个 Botin", systemImage: "trash", role: .destructive) {}
                             } label: {
                                 Image(systemName: "ellipsis")
                             }
@@ -100,7 +100,7 @@ struct NativeControlsTests {
             hostAndLayout(
                 NavigationStack {
                     List {
-                        Text(verbatim: "实例")
+                        Text(verbatim: "Botin")
                     }
                     .listStyle(.plain)
                     .searchable(text: .constant(""), isPresented: .constant(false), prompt: "搜索")
@@ -111,7 +111,7 @@ struct NativeControlsTests {
                         }
                         .hidesSharedGlassBackground()
                         ToolbarItem(placement: .topBarTrailing) {
-                            Button("领养新实例", systemImage: "plus") {}
+                            Button("新建 Botin", systemImage: "plus") {}
                         }
                         ToolbarItem(placement: .bottomBar) {
                             Menu {
@@ -165,7 +165,7 @@ struct NativeControlsTests {
                         }
                         NavigationLink("产出物", value: "artifacts")
                     } header: {
-                        Text(verbatim: "实例")
+                        Text(verbatim: "Botin")
                     } footer: {
                         Text(verbatim: "脚注")
                     }
@@ -177,7 +177,7 @@ struct NativeControlsTests {
                     .themedRow()
                 }
                 .themedGroupedBackground()
-                .confirmationDialog("删除实例？", isPresented: .constant(false), titleVisibility: .visible) {
+                .confirmationDialog("删除这个 Botin？", isPresented: .constant(false), titleVisibility: .visible) {
                     Button("删除", role: .destructive) {}
                 }
                 .alert("改名", isPresented: .constant(false)) {
@@ -232,7 +232,7 @@ struct NativeControlsTests {
                 .formStyle(.grouped)
                 .themedGroupedBackground()
             })
-        hostAndLayout(ContentUnavailableView("还没有实例", systemImage: "square.stack.3d.up", description: Text("去领养一个")))
+        hostAndLayout(ContentUnavailableView("还没有 Botin", systemImage: "square.stack.3d.up", description: Text("新建一个")))
         hostAndLayout(
             ContentUnavailableView {
                 Label("还没有计划", systemImage: "clock")

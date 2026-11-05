@@ -110,7 +110,7 @@ private struct PlanConfirmContent: View {
     private var canWrite: Bool { !app.isOffline }
 
     private func instanceName(_ id: InstanceID) -> String {
-        app.instances.first { $0.id == id }?.name ?? (language == .chinese ? "已删除的实例" : "Deleted instance")
+        app.instances.first { $0.id == id }?.name ?? (language == .chinese ? "已删除的 Botin" : "Deleted Botin")
     }
 
     // MARK: 核对

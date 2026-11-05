@@ -5,7 +5,7 @@ import ThinktinKit
 
 /// 快捷指令里选的 agent 实例。
 struct InstanceEntity: AppEntity {
-    static let typeDisplayRepresentation: TypeDisplayRepresentation = "实例"
+    static let typeDisplayRepresentation: TypeDisplayRepresentation = "Botin"
     static let defaultQuery = InstanceEntityQuery()
 
     let id: String

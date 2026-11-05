@@ -49,7 +49,7 @@ private struct ModelRoutesContent: View {
                 if model.isMissing {
                     EmptyStateView(
                         systemImage: "questionmark.square.dashed",
-                        title: zh ? "找不到这个实例" : "Instance not found",
+                        title: zh ? "找不到这个 Botin" : "Botin not found",
                         message: zh ? "它可能已经被删除了。" : "It may have been deleted.",
                         actionTitle: zh ? "返回" : "Go back"
                     ) {
@@ -204,11 +204,11 @@ private struct ModelRoutesContent: View {
         return PageHeader(title: displayName, message: message.isEmpty ? nil : message)
     }
 
-    /// 实例的名字；实例本身没拉到（只拉到了路由）时写“这个实例”。
+    /// 实例的名字；实例本身没拉到（只拉到了路由）时写“这个 Botin”。
     private var displayName: String {
         let name = model.instanceName
         if !name.isEmpty { return name }
-        return language == .chinese ? "这个实例" : "This instance"
+        return language == .chinese ? "这个 Botin" : "This Botin"
     }
 
     private var noKeysCard: some View {

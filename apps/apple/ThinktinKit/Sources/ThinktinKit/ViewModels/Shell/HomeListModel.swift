@@ -68,3 +68,24 @@ public enum HomeList {
         return Formatting.shortDate(date, now: now, language: language, calendar: calendar)
     }
 }
+
+/// 首页空状态的文案（用户 2026-11-05 定的：第一次登录首页是空的，引导新建 Botin）。按钮文字用 `AppRoute.adopt` 的标题“新建 Botin”。
+public enum HomeText {
+    public static func emptyTitle(_ language: DisplayLanguage) -> String {
+        language == .chinese ? "还没有 Botin" : "No Botins yet"
+    }
+
+    public static func emptyMessage(_ language: DisplayLanguage) -> String {
+        language == .chinese
+            ? "Botin 是替你干活的助手。起个名字、选一个引擎，它就能帮你写东西、查资料、跑任务。"
+            : "A Botin is an assistant that works for you. Give it a name and pick an engine, and it can write, "
+                + "look things up and run tasks for you."
+    }
+
+    /// 离线、这台设备上又没有缓存时（顶部横幅已经说了“显示的是缓存内容”，这里只说缓存是空的）。
+    public static func offlineEmptyMessage(_ language: DisplayLanguage) -> String {
+        language == .chinese
+            ? "这台设备上还没有保存的 Botin，联网后会自动刷新。"
+            : "No Botins are saved on this device yet. They'll appear when you're back online."
+    }
+}

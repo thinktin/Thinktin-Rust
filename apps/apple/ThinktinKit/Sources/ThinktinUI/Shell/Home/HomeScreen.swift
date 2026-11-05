@@ -192,29 +192,23 @@ struct HomeInstanceList: View {
                 // 顶部的离线横幅按首页的策略写“显示的是缓存内容”，这里只说缓存是空的，不再写“离线，暂无数据”和它打架。
                 ContentUnavailableView(
                     zh ? "离线" : "Offline", systemImage: "wifi.slash",
-                    description: Text(
-                        zh
-                            ? "这台设备上还没有保存的实例，联网后会自动刷新。"
-                            : "No instances are saved on this device yet. They'll appear when you're back online."))
+                    description: Text(HomeText.offlineEmptyMessage(language)))
             } else if model.refreshError == nil {
                 ProgressView()
             }
         } else if model.refreshError == nil {
             ContentUnavailableView {
                 Label {
-                    Text(zh ? "还没有实例" : "No instances yet")
+                    Text(HomeText.emptyTitle(language))
                 } icon: {
                     BrandLogo()
                         .frame(height: Metrics.Spacing.xxxl)
                         .accessibilityHidden(true)
                 }
             } description: {
-                Text(
-                    zh
-                        ? "领养一个 agent，就可以给它布置任务了。"
-                        : "Adopt an agent and you can start giving it tasks.")
+                Text(HomeText.emptyMessage(language))
             } actions: {
-                Button(zh ? "去领养" : "Adopt an agent") {
+                Button(AppRoute.adopt(agentID: nil).title(language)) {
                     model.router.open(.adopt(agentID: nil))
                 }
                 .glassButtonStyle(.prominent)

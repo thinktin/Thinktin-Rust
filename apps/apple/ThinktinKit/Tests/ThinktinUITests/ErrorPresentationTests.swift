@@ -55,7 +55,7 @@ struct ErrorPresentationTests {
         #expect(instances.recovery == .limitReached)
         #expect(instances.action == .none)
         #expect(instances.tone == .waiting)
-        #expect(instances.message == "实例数已达上限，删掉不用的实例再领养。")
+        #expect(instances.message == "Botin 数已达上限，删掉不用的再新建。")
         #expect(instances.details == "api 409 instance_limit: at most 5")
 
         let future = ErrorPresentation(

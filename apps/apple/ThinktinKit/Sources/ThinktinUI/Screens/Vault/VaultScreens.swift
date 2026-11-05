@@ -56,8 +56,8 @@ private struct VaultContent: View {
                         InlineNotice(
                             systemImage: "key", tone: .neutral,
                             text: zh
-                                ? "还没有条目。右上角新建，或者在对话里填 agent 要的账号密码。"
-                                : "Nothing saved yet. Add one, or fill in what an agent asks for in a chat.")
+                                ? "还没有条目。右上角新建，或者在对话里填 Botin 要的账号密码。"
+                                : "Nothing saved yet. Add one, or fill in what a Botin asks for in a chat.")
                     } else {
                         GroupedSection {
                             ForEach(model.items) { item in
@@ -219,8 +219,8 @@ private struct VaultItemContent: View {
         } message: {
             Text(
                 zh
-                    ? "删掉后 agent 再用 [vault:\(model.detail?.item.name ?? "")] 会失败，要重新填。"
-                    : "Agents using [vault:\(model.detail?.item.name ?? "")] will fail until you add it again.")
+                    ? "删掉后 Botin 再用 [vault:\(model.detail?.item.name ?? "")] 会失败，要重新填。"
+                    : "Botins using [vault:\(model.detail?.item.name ?? "")] will fail until you add it again.")
         }
     }
 
@@ -232,7 +232,7 @@ private struct VaultItemContent: View {
             ListRow(
                 systemImage: "curlybraces", title: item.reference,
                 detail: copied
-                    ? (zh ? "已复制" : "Copied") : (zh ? "在消息里这样写，agent 就能用它" : "Write this in a message to use it"),
+                    ? (zh ? "已复制" : "Copied") : (zh ? "在消息里这样写，Botin 就能用它" : "Write this in a message to use it"),
                 detailTone: copied ? .success : nil, showsChevron: false
             ) {
                 Pasteboard.copy(item.reference)
@@ -252,7 +252,7 @@ private struct VaultItemContent: View {
                 detail: zh ? "已加密保存，谁都看不到明文（包括你）" : "Stored encrypted. Nobody can see it, including you.")
             Divider()
             ListRow(
-                systemImage: "cpu", title: zh ? "能用它的实例" : "Instances",
+                systemImage: "cpu", title: zh ? "能用它的 Botin" : "Botins",
                 detail: VaultText.instances(item, names: model.instanceNames, language: language))
         }
         SectionHeader(title: zh ? "时间" : "Dates")
@@ -414,13 +414,13 @@ private struct VaultItemEditorContent: View {
     private func instancesSection(_ problems: [VaultFormProblem]) -> some View {
         let zh = language == .chinese
         let model = self.model
-        SectionHeader(title: zh ? "能用它的实例" : "Instances that can use it")
+        SectionHeader(title: zh ? "能用它的 Botin" : "Botins that can use it")
         GroupedSection {
-            ChoiceRow(title: zh ? "所有实例" : "All instances", isSelected: model.allInstances) {
+            ChoiceRow(title: zh ? "所有 Botin" : "All Botins", isSelected: model.allInstances) {
                 model.allInstances = true
             }
             Divider()
-            ChoiceRow(title: zh ? "只给选中的实例" : "Only the ones I pick", isSelected: !model.allInstances) {
+            ChoiceRow(title: zh ? "只给选中的 Botin" : "Only the ones I pick", isSelected: !model.allInstances) {
                 model.allInstances = false
             }
         }
@@ -519,7 +519,7 @@ private struct VaultRequestContent: View {
         GroupedSection {
             ListRow(
                 systemImage: "key", title: ConversationText.vaultItemName(request.name, language: language),
-                detail: model.instanceNames[request.instanceID].map { zh ? "实例：\($0)" : "Instance: \($0)" })
+                detail: model.instanceNames[request.instanceID].map { zh ? "Botin：\($0)" : "Botin: \($0)" })
             if !request.purpose.isEmpty {
                 Divider()
                 VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {

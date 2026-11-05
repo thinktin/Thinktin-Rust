@@ -102,6 +102,21 @@ struct HomeListTests {
                 == "2025年12月31日")
     }
 
+    @Test("空状态的文案：叫 Botin，按钮是“新建 Botin”")
+    func emptyText() {
+        #expect(HomeText.emptyTitle(.chinese) == "还没有 Botin")
+        #expect(
+            HomeText.emptyMessage(.chinese) == "Botin 是替你干活的助手。起个名字、选一个引擎，它就能帮你写东西、查资料、跑任务。")
+        #expect(AppRoute.adopt(agentID: nil).title(.chinese) == "新建 Botin")
+        #expect(HomeText.emptyTitle(.english) == "No Botins yet")
+        #expect(HomeText.emptyMessage(.english).hasPrefix("A Botin is an assistant that works for you."))
+        #expect(AppRoute.adopt(agentID: nil).title(.english) == "New Botin")
+        for language in [DisplayLanguage.chinese, .english] {
+            #expect(!HomeText.offlineEmptyMessage(language).isEmpty)
+            #expect(!HomeText.offlineEmptyMessage(language).contains("实例"))
+        }
+    }
+
     @Test("演示数据：首页的行和实例列表一一对应，按最后活动排")
     @MainActor
     func demoRows() async {

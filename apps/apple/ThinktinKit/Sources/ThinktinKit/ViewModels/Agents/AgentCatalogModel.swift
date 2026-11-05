@@ -47,7 +47,7 @@ public final class AgentCatalogModel {
         agents.first { $0.id == id }
     }
 
-    /// 目录的卡片。`instances` 是当前账号的实例（卡片上写“已领养 N 个”）。
+    /// 目录的卡片。`instances` 是当前账号的实例（卡片上写“N 个 Botin 在用”）。
     public func cards(instances: [Instance], language: DisplayLanguage = .current) -> [AgentCatalogCard] {
         let counts = Self.adoptedCounts(instances)
         return agents.map { AgentCatalogCard(agent: $0, adoptedCount: counts[$0.id] ?? 0, language: language) }

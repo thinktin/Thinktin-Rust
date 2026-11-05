@@ -15,7 +15,7 @@ public final class AdoptionModel {
     public var harness: String
     public private(set) var isAdopting = false
     public private(set) var error: ClientError?
-    /// 领养出来的实例；有了就显示“领养好了”和下一步。
+    /// 领养出来的实例；有了就显示“建好了”和下一步。
     public private(set) var adopted: Instance?
     /// 领养后查到的、能给这个 agent 用的 key；nil 是没查（或查不到）。
     public private(set) var usableCredentials: [Credential]?
@@ -91,7 +91,7 @@ public final class AdoptionModel {
         usableCredentials?.isEmpty == true ? .addCredentialFirst : .configureRoutes
     }
 
-    /// 下一步的说明（“领养好了”下面那段）。
+    /// 下一步的说明（“建好了”下面那段）。
     public func nextStepMessage(_ language: DisplayLanguage = .current) -> String {
         let zh = language == .chinese
         let agentName = AgentsText.displayName(of: agent)
