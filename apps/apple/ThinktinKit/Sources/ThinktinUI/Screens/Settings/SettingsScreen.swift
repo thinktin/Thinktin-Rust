@@ -5,7 +5,8 @@ import ThinktinKit
 /// （规范 4.9.1）：没有标题，insetGrouped 的分组，行里不放图标，最底下是版本区（Logo、名字、版本号）。
 /// 分组和每一行去哪由 `SettingsModel.sections(_:pendingApprovals:)` 定（ThinktinKit 里测）：别的功能的页面压进 sheet 的栈
 /// （`AppRoute`），外观、语言、触感是本功能的子页面，通知开关跳系统设置，用户协议、隐私政策在浏览器里打开，
-/// 退出登录、全部停止用 12.2 的做法。实时活动（12.10）的两个开关接在“Botin”那组后面。
+/// 退出登录、全部停止用 12.2 的做法。实时活动（12.10）的两个开关是“Botin”那组里的行（审批后面，参考 53 那组里开关的位置），
+/// 说明放进那组的脚注。
 ///
 /// 设置中心不联网也能用（`OfflinePolicy.local`，没有离线横幅）：要联网的操作（全部停止）离线时禁用。
 struct SettingsScreen: View {
@@ -31,6 +32,7 @@ private struct SettingsContent: View {
     @Environment(\.displayLanguage) private var language
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.openURL) private var openURL
+    @Environment(\.notificationAuthorizer) private var authorizer
     @State private var confirmsSignOut = false
     @State private var isSigningOut = false
     @State private var signOutError: ClientError?
@@ -51,24 +53,27 @@ private struct SettingsContent: View {
                 .clearListRow()
             }
             ForEach(model.sections(language, pendingApprovals: app.badges.pendingApprovals)) { section in
+                let live = section.id == .botins ? app.liveActivities : nil
                 Section {
                     ForEach(section.rows) { row in
                         rowView(row)
+                        // 实时活动（12.10，只在支持的设备上有）：审批后面两行开关，参考“Bot”组里开关的位置。
+                        if row.id == "approvals", let live {
+                            LiveActivitySettingsRows(model: live)
+                        }
                     }
                 } header: {
                     if let title = section.title {
                         Text(title).textCase(nil)
                     }
                 } footer: {
-                    if let footer = section.footer {
+                    if live != nil {
+                        Text(LiveActivityText.footer(language))
+                    } else if let footer = section.footer {
                         Text(footer)
                     }
                 }
                 .themedRow()
-                // 实时活动（12.10，只在支持的设备上有）：参考“Bot”组里开关的位置。
-                if section.id == .botins, let live = app.liveActivities {
-                    LiveActivitySettingsSection(model: live)
-                }
             }
             Section {
                 SettingsVersionFooter(footer: model.versionFooter(language))
@@ -149,20 +154,38 @@ private struct SettingsContent: View {
         }
     }
 
-    /// 通知（参考 70 是开关）：开关的状态是系统的通知权限，App 自己改不了，拨它就去系统设置里改；回来时重新读。
+    /// 通知（参考 70 是开关）：开关的状态是系统的通知权限。还没问过时拨它就在 App 里请求（弹系统的权限框，引导用的同一个
+    /// `notificationAuthorizer`），之后重新读；问过了 App 自己改不了，去系统设置里改，回来时重新读（`NotificationToggleAction`）。
     @ViewBuilder
     private func notificationToggle(_ row: SettingsRow) -> some View {
         let zh = language == .chinese
         if let url = SystemSettingsLink.notifications {
+            let action = NotificationToggleAction(model.notificationPermission)
             Toggle(
                 isOn: Binding(
                     get: { model.notificationPermission?.canDeliver ?? false },
-                    set: { _ in openURL(url) })
+                    set: { _ in
+                        switch action {
+                        case .requestAuthorization:
+                            let model = self.model
+                            let authorizer = self.authorizer
+                            Task {
+                                _ = await authorizer.requestAuthorization()
+                                await model.refreshNotificationPermission()
+                            }
+                        case .openSystemSettings:
+                            openURL(url)
+                        }
+                    })
             ) {
                 Text(row.title)
             }
             .accessibilityValue(Text(row.value ?? ""))
-            .accessibilityHint(Text(zh ? "在系统设置里打开或关闭" : "Change this in Settings"))
+            .accessibilityHint(
+                Text(
+                    action == .requestAuthorization
+                        ? (zh ? "请求通知权限" : "Asks to send notifications")
+                        : (zh ? "在系统设置里打开或关闭" : "Change this in Settings")))
         } else {
             LabeledContent(row.title, value: row.value ?? "")
         }
@@ -183,15 +206,15 @@ private struct SettingsContent: View {
     }
 }
 
-/// 账号行（参考 53 的第一行）：44pt 头像、名字、打码的手机号。系统 `NavigationLink` 画右边的箭头。
+/// 账号行（参考 53 的第一行）：44pt 的中性灰首字头像（`AccountAvatar`，不是 Botin 那种彩色的）、名字、打码的手机号。
+/// 系统 `NavigationLink` 画右边的箭头。
 struct SettingsProfileRow: View {
     let title: String
     let subtitle: String?
 
     var body: some View {
         HStack(spacing: Metrics.Spacing.s) {
-            InstanceAvatar(title, size: SettingsMetrics.profileAvatar)
-                .accessibilityHidden(true)
+            AccountAvatar(title, size: SettingsMetrics.profileAvatar)
             VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
                 Text(title)
                     .font(.body)

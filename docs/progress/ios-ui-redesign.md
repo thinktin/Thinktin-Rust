@@ -557,6 +557,22 @@
     小头像（参考 12）；头像选择去掉形状和色板之间的分隔线、选中改成贴着形状的中性灰环（参考 18）。测试：`ArtifactModelsTests`
     （补扩展名）、`InstanceProfileTests`（下架占位）、`AppRouteTests` / `RouterTests`（新路由、推送换掉它）、`ConversationLayoutTests`
     （正文、读屏、运行树标题）、`HomeListTests`（预览取正文）、`AppShellTests`（读屏状态）。
+  - 第二批：设置根页照参考 53、70、75 调顺序（账号、用量、模型 key、保险箱；隐私政策在用户协议前面），通知那组只在没开着时有脚注；
+    通知开关在还没问过权限时直接请求（`NotificationToggleAction`，`\.notificationAuthorizer`），问过了才去系统设置；实时活动的两个开关
+    挪进“Botin”组审批后面（`LiveActivitySettingsRows`，说明进那组的脚注）；账号头像换成中性灰的首字圆（`AccountAvatar`：设置、账号页、
+    首页左上）；“全部停止”出错的横幅是单独一行（以前点横幅会弹确认）；登录设备没有电脑时有一组“电脑”说怎么让它出现
+    （`ComputerLinkStatusSection(hasComputer:)`）；产出物的行都是按钮（没有 chevron，参考 22），类型胶囊不带个数。测试：
+    `SettingsModelTests`（顺序、脚注、开关的动作）、`ComputerLinkScreensTests`（没有电脑时的一组）、`SettingsScreensTests`（改名后的开关行）。
+  - 没在本分支改的 3 条（`r2/conversation` 已经做了，合并进来就有，重复做会两边冲突）：对话“…”菜单加“在对话中查找”（`cd773e3`）、
+    消息长按换成底部面板（`b6393fd`）、资料页“…”菜单复制 ID 放最后（`ff8b335`）。规范 4.3.2、4.3.4、4.4.2 记了。
+  - 合并 `r2/*` 时要留意的冲突：`AppRoute`（本分支加了 `.hiddenBotins`，`RouteSamples` 的 `caseCount` 和下标）；`SettingsModel` 第一组
+    （本分支把用量挪到模型 key 前面，`r2/settings` 在用量后面加了订阅）和链接组；`InstanceProfile.swift`（本分支删了
+    `openConversation`、加了 `delistedVersion` / `needsDelistedVersionPlaceholder`）；`InstanceEditScreen` 的头像行；`DevicesView`、
+    `VaultScreens` 的左滑。
+  - 这一份的 Linux 检查（2026-11-05，第二批提交上）：ThinktinKit `swift build --build-tests` + `swift test` 1092 个全过；uicheck UIKit、AppKit
+    都编过（没有错误和警告）；`run.sh test` 的 ThinktinUITests 147 个全过；App 的 `ThinktinTests` 21 个过 16 个（挂的还是那 5 个要 App 包的）；
+    `swift format lint --strict -r apps/apple` 零条。要在模拟器上看的：已隐藏页标题的玻璃胶囊在 iOS 26 上是不是只有一层（工具栏的共用玻璃
+    底用 `sharedBackgroundVisibility(.hidden)` 去掉了）、iOS 17 / 18 上的材质胶囊；红色 `tint` 的左滑按钮；通知开关请求权限后回弹不回弹。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、
@@ -618,14 +634,14 @@ TestFlight：28（Botin 改名、空状态，旧表单）、30（新建页重做
 - 触感：界面里要震的地方一律用 `appFeedback(_:trigger:)`（`Design/Haptics.swift`），别直接写 `.sensoryFeedback`，不然设置里的“触感反馈”
   关不掉它。开关在 `SettingsPreferences.hapticsEnabled`，由 `.settingsPreferences()` 放进环境 `\.hapticsEnabled`。
 - 设置根页的分组、顺序、每行去哪都在 ThinktinKit 的 `SettingsModel.sections(_:pendingApprovals:)`（测试 `SettingsModelTests` 逐行查 id），
-  界面照着画；加行要给 `SettingsSection.ID` 里已有的组或新加组（新组记得改测试的 `allCases`）。实时活动的开关不在模型里，界面接在 `.botins`
-  组后面。用户协议、隐私政策的地址在 ThinktinKit 的 `LegalLinks`。
+  界面照着画；加行要给 `SettingsSection.ID` 里已有的组或新加组（新组记得改测试的 `allCases`）。实时活动的开关不在模型里，界面在 `.botins`
+  组里“审批”那一行后面接两行开关（`LiveActivitySettingsRows`），那组的脚注换成实时活动的说明。用户协议、隐私政策的地址在 ThinktinKit 的 `LegalLinks`。
 - “今天”的用量按东八区切天（`UsageToday`，模型网关的每日上限就是这样算的），别改成手机本地的零点。
 - 保险箱的新建 / 修改表单现在是压栈（`navigationDestination(isPresented:)`），不再是 sheet：系统返回就是放弃，没有“有改动先确认”。
 - 设置一带共用的行：`SettingsRowLabel`（标题 + 灰色副标题 + 右边值）、`SettingsProfileRow`（44pt 头像行）、`ExternalLinkRow`（`arrow.up.right`）、
   `VaultLabeledField`（标签在上的输入框，IM 渠道、模型路由也用）、`DeviceStatusDot`。uicheck 桩这一轮补了 `Group`、`fontDesign(_:)`、
   `fontWeight(_:)`（`Stubs/SwiftUI/SwiftUI+Settings.swift`），别再加。
-- `ModelsCredentialRow` 不再是按钮（外面包 `NavigationLink(value:)`），`StopAllRow` 是 `List` 里的一行，放进自画的 `GroupedSection` 会没边距。
+- `ModelsCredentialRow` 不再是按钮（外面包 `NavigationLink(value:)`），`StopAllRow` 是 `List` 里的一行（出错时多一行横幅，`body` 出两个视图），放进自画的 `GroupedSection` 会没边距。
 - 改版页面共用的列表帮手在 `Components/ListStyles.swift`：`insetGroupedList()`、`clearListRow()`、`ToolbarSlot.trailing`（C 线时叫
   `AgentsToolbar.trailing`，D 线挪出来改了名）。筛选胶囊放 `List` 第一行时 `FilterChipBar(..., horizontalInset: 0)` + `.clearListRow()`。
 - 产出物：大类、日期分组、折叠都在 ThinktinKit 的 `ArtifactLibraryLayout.swift`；缩略图要下整份文件，`ArtifactThumbnailLoader` 限 4 MB、
@@ -665,7 +681,8 @@ TestFlight：28（Botin 改名、空状态，旧表单）、30（新建页重做
   开着、闲着的实例写“随时可以接任务”、不画角标（实例的“运行中”和运行的“运行中”分不清）。
 - 首页：iOS 17 / 18 上底部条只有工作台菜单（`BottomBarSearchItem` 不放东西），搜索栏照旧在导航栏下面。iOS 26 上
   `BottomBarSearchItem` 的搜索栏从代码激活（`open(.search)`、深链、截图 09-search）还没在真 SDK 上验过，见“已完成”审查修正那条。
-  账号头像用 `InstanceAvatar`（按昵称取色，24pt，放在工具栏的玻璃圆里），还没拉到用户时是 `person.crop.circle`。
+  账号头像用 `AccountAvatar`（中性灰的首字圆，24pt，放在工具栏的玻璃圆里；审查修正前是按昵称取色的 `InstanceAvatar`），还没拉到用户时是
+  `person.crop.circle`。设置根页、账号页的账号行也用它（`SettingsProfileRow`）。
 - plain 列表的行要加 `themedPlainRow()`，分组列表的行加 `themedRow()`；只加 `themedGroupedBackground()` 行底还是系统的。新任务没有首页入口了（规范 3.2：引导、快捷指令用 `.newTask`）。
 - `ConversationText` 里旧首页的三句文案删了；`Greeting`（问候语）还在 `Screens/Welcome/`，登录、欢迎页用户自己设计，没动。
 - 截图参数：`THINKTIN_OPEN_SCREEN` 打开的是“首页第一行”，不是写死的 id：演示数据里写作助手 2 分钟前活跃、代码审查 10 分钟前，所以是

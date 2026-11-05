@@ -32,9 +32,9 @@ struct SettingsModelTests {
         let ids = model.sections(.chinese).map { $0.rows.map(\.id) }
         #expect(
             ids == [
-                ["account", "credentials", "usage", "vault"], ["imChannels"], ["approvals", "devices"],
+                ["account", "usage", "credentials", "vault"], ["imChannels"], ["approvals", "devices"],
                 ["notifications", "appearance", "language", "haptics"], ["stopAll", "signOutOthers"],
-                ["terms", "privacy"], ["about", "licenses", "onboarding"], ["signOut"],
+                ["privacy", "terms"], ["about", "licenses", "onboarding"], ["signOut"],
             ])
     }
 
@@ -136,6 +136,22 @@ struct SettingsModelTests {
         #expect(model.notificationPermission == .denied)
         #expect(row("notifications", in: model.sections(.chinese))?.value == "已关闭")
         #expect(model.sections(.chinese).first { $0.id == .preferences }?.footer?.contains("系统设置") == true)
+
+        // 开着时这一组没有脚注（参考 70）。
+        let (_, on) = make(permission: .authorized)
+        await on.refreshNotificationPermission()
+        #expect(on.sections(.chinese).first { $0.id == .preferences }?.footer == nil)
+    }
+
+    @Test("拨通知开关：还没问过就在 App 里请求权限，别的状态去系统设置")
+    func notificationToggle() {
+        #expect(NotificationToggleAction(.notDetermined) == .requestAuthorization)
+        for permission in [NotificationPermission.denied, .authorized, .provisional, .unknown] {
+            #expect(NotificationToggleAction(permission) == .openSystemSettings)
+        }
+        #expect(NotificationToggleAction(nil) == .openSystemSettings)
+        #expect(NotificationPermission.authorized.footer(.chinese) == nil)
+        #expect(NotificationPermission.notDetermined.footer(.chinese)?.contains("打开开关") == true)
     }
 
     @Test("刷新：静默拉最新的用户；离线时留着原来的")

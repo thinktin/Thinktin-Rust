@@ -3,12 +3,12 @@ import Observation
 
 /// 设置中心（WBS 12.12，`.settings`，首页左上的头像弹出的 sheet）。改版后照参考 53、70、75 的分组和顺序（规范 4.9.1），
 /// 放的是 ThinkTin 自己的入口：
-/// 1. 账号行（头像、昵称、打码的手机号）、模型 key、用量（今天用了多少）、保险箱；
+/// 1. 账号行（头像、昵称、打码的手机号）、用量（今天用了多少）、模型 key、保险箱；
 /// 2. IM 渠道（参考“连接应用”的位置；第 2 轮的“连接”汇总页做了以后挪进去）；
 /// 3. “Botin”组：审批（参考“权限”的位置，进审批中心）、登录设备；界面在这组后面接实时活动的开关（12.10）；
 /// 4. 通知、外观、语言、触感反馈；
 /// 5. 安全：全部停止、下线其他设备；
-/// 6. 外部链接：用户协议、隐私政策；
+/// 6. 外部链接：隐私政策、用户协议；
 /// 7. 关于 ThinkTin、开源许可、上手引导（参考“发送反馈”的位置）；
 /// 8. 退出登录（单独一组）。版本区（Logo、名字、版本号）在界面最底下。
 /// 注销账号在账号页里（参考 54）。
@@ -99,13 +99,14 @@ public final class SettingsModel {
                     SettingsRow(
                         id: "account", systemImage: "person.crop.circle", title: accountTitle(language),
                         subtitle: maskedPhone.isEmpty ? nil : maskedPhone, action: .open(.account), isProfile: true),
+                    // 用量紧跟账号（参考 53 的第二行）。
+                    SettingsRow(
+                        id: "usage", systemImage: "chart.bar", title: AppRoute.usage.title(language),
+                        value: UsageToday.rowValue(todayUsage, language: language), action: .open(.usage)),
                     SettingsRow(
                         id: "credentials", systemImage: "key", title: AppRoute.credentials.title(language),
                         subtitle: zh ? "Botin 调模型用你自己的 key，费用由厂商直接收" : "Botins use your own keys; providers bill you",
                         action: .open(.credentials)),
-                    SettingsRow(
-                        id: "usage", systemImage: "chart.bar", title: AppRoute.usage.title(language),
-                        value: UsageToday.rowValue(todayUsage, language: language), action: .open(.usage)),
                     SettingsRow(
                         id: "vault", systemImage: "lock.rectangle.stack", title: AppRoute.vault.title(language),
                         subtitle: zh
@@ -135,7 +136,8 @@ public final class SettingsModel {
                 ]),
             SettingsSection(
                 id: .preferences, title: nil,
-                footer: notificationPermission.map { $0.detail(language) },
+                // 参考 70 这一组没有脚注：通知开着时不写，没开、关掉了、读不到时才说一句。
+                footer: notificationPermission?.footer(language),
                 rows: [
                     SettingsRow(
                         id: "notifications", systemImage: "bell", title: zh ? "通知" : "Notifications",
@@ -170,12 +172,13 @@ public final class SettingsModel {
             SettingsSection(
                 id: .links, title: nil, footer: nil,
                 rows: [
-                    SettingsRow(
-                        id: "terms", systemImage: "doc.plaintext", title: zh ? "用户协议" : "Terms of Service",
-                        action: .link(LegalLinks.termsOfService)),
+                    // 隐私政策在前（参考 75）。
                     SettingsRow(
                         id: "privacy", systemImage: "hand.raised", title: zh ? "隐私政策" : "Privacy Policy",
                         action: .link(LegalLinks.privacyPolicy)),
+                    SettingsRow(
+                        id: "terms", systemImage: "doc.plaintext", title: zh ? "用户协议" : "Terms of Service",
+                        action: .link(LegalLinks.termsOfService)),
                 ]),
             SettingsSection(
                 id: .about, title: nil, footer: nil,

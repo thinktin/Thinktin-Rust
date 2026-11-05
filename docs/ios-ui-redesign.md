@@ -567,6 +567,8 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 - **ThinkTin 改版前**：`ConversationScreen.swift` 的 `ToolbarItem(placement: .primaryAction)` 里的 `Menu`（实例详情、模型路由、
   新建计划、产出物），图标 `ellipsis.circle`。
 - **要改**：分组、换图标、放 `.topBarTrailing`。第 1 轮。
+- **审查意见（2026-11-05）**：缺“在对话中查找”、分组和参考 03 不一样。这一项在 `r2/conversation` 分支做了（`cd773e3`：第一组
+  Botin 资料、在对话中查找，ThinkTin 自己的项放第二组），合并进来就有；本分支没重复做，免得两边冲突。
 
 #### 4.3.3 对话内查找（4、5）
 
@@ -602,6 +604,8 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   `ContentReportSheet.swift`。
 - **要改**：加“选择文本”“复制运行 ID”，分组。表情、标为未读要后端（6.11）；真要做表情时长按改成
   `.sheet` + `.presentationDetents([.medium, .large])` + `.presentationDragIndicator(.visible)`。第 1 轮。
+- **审查意见（2026-11-05）**：长按要照参考 06 换成底部玻璃面板（拖动条 + 两组 + 表情一排）。`r2/conversation` 分支做了
+  （`b6393fd`：长按弹面板，表情一排、更多表情的选择器），合并进来就有；本分支没重复做。
 
 #### 4.3.5 引用回复（7）
 
@@ -674,6 +678,8 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   成功触感）；模型路由（`cpu`）、新建计划（`calendar.badge.plus`）；删除这个 Botin（`trash`，destructive，接 `InstanceDeleteSheet`）。
   离线时新建计划、删除灰掉（`needsConnection`）。删除确认页也换成了 insetGrouped 的 `List`（影响清单一组一组）、左上 `CloseButton`、
   底部浮动的红色整宽胶囊“删除这个 Botin”，二次确认照旧。
+- **审查意见（2026-11-05）**：复制 ID 应该在最后（参考 10）。`r2/conversation` 分支已经把第一组改成“替换主 Botin、复制 Botin ID”
+  （`ff8b335`，和参考 10 那一组一样），合并进来就是；本分支没重复改。
 
 
 #### 4.4.3 编辑实例（12；13–17、85–88 是它的语音菜单）
@@ -789,6 +795,8 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   缩放转场），别的 `NavigationLink` 进详情；左滑删除、长按“详情 / 查看生成它的运行 / 删除”。超过 20 个时最下面居中灰色“展开”
   （`ArtifactLibraryModel.expand()`，本地折叠）。全部 Botin 的库按 Botin 筛选挪到右上的系统菜单（`Picker(.inline)`，有筛选时实心图标），
   免得两排胶囊。空着时（`ArtifactLibraryModel.placeholder`）：还没有、没有这一类、拉不到（重试）。原来的 `PageHeader` 说明拿掉。
+- **审查修正（2026-11-05）**：每一行都是按钮（文件行 `router.open(.artifact…)`、图片行全屏查看），不再用 `NavigationLink`：
+  分组列表里它会画 chevron，文件行和图片行对不齐，参考 22、81、82 的行都没有。类型胶囊只写名字、不带个数（参考 22、23，和搜索的胶囊一样）。
 
 #### 4.5.3 图片全屏查看（24、25）和产出物详情
 
@@ -1032,6 +1040,12 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   开源许可、上手引导（参考“发送反馈”的位置）；⑧ 红字“退出登录”（确认）。最底下版本区 `SettingsVersionFooter`（`BrandLogo` 高 40、
   “ThinkTin”、版本（构建号））。昵称、手机号、注销账号挪进账号页（4.9.2）。`AccountSection` / `AccountRow` / `SettingsOptionRow` /
   `SettingsFootnote` 在设置根页和外观、语言页不再用。
+- **审查修正（2026-11-05，对过参考 53、70、75）**：第一组改成 账号、用量、模型 key、保险箱（参考 53 用量紧跟账号）；链接组隐私政策在前、
+  用户协议在后（参考 75）；通知那组只在通知没开着时有脚注（参考 70 没有，`NotificationPermission.footer`）。通知开关：还没问过权限时
+  拨它在 App 里请求（`\.notificationAuthorizer`，和引导同一个），问过了才去系统设置（`NotificationToggleAction`）。实时活动的两个开关
+  是“Botin”组里审批后面的两行（参考 53 那组里的“自动设置时区”），说明挪进那组的脚注，不再单独一组带“实时活动”标题
+  （`LiveActivitySettingsRows`）。账号行的头像换成中性灰的首字圆（`AccountAvatar`，底色 `userBubble`、字是次要色，参考 53、54），
+  和 Botin 的彩色头像分开；首页左上的账号按钮同样。“全部停止”出错时横幅是同组里单独的一行，点横幅不再弹“全部停止？”。
 #### 4.9.2 账号（54）
 
 - **布局**：压栈页“账号”；第一组：头像 + 昵称 + 打码手机号（ThinkTin 用手机号登录，没有邮箱）；第二组：昵称（点了 alert 改）、
@@ -1046,6 +1060,7 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   红字“退出登录”单独一组（确认，脚注“只影响这台设备”）；红色垃圾桶“注销账号”单独一组，脚注写后果，进现有的注销页（注销页没改版式）。
   改昵称没用 `.alert`（要显示字数和校验）。登录设备、全部停止不在账号页了（设置根页有）；`StopAllRow` 换成 `List` 里的系统
   `Button(role: .destructive)` 一行。
+- **审查修正（2026-11-05）**：账号页第一行的头像也是中性灰的首字圆（`AccountAvatar`，和设置根页同一个 `SettingsProfileRow`）。
 #### 4.9.3 用量（55）
 
 - **参考**：一张卡：“试用用量”+“N 天后结束”+ 细进度条 + 百分比。
@@ -1136,6 +1151,9 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   多一组电脑的说明和“生成新密钥”（`ComputerLinkStatusSection`）。详情：名称（不能点，改名要后端）、状态点 + 状态、类别、登录时间；电脑多一组
   “在这台电脑上执行”（`ComputerDeviceSections`：配对状态、配对 / 授权目录和应用 / 现有授权左滑吊销 / 重新配对 / 红字解除配对，脚注是签名说明）；
   最后红字“下线这台设备”（本机“下线本机”）。参考的三档执行策略不做（6.20）。`ComputerLinkSection` 删了。
+- **审查修正（2026-11-05）**：还没有电脑登录这个账号时，设备列表下面有一组“电脑”：一行“在电脑上装好 ThinkTin 并登录后，这里会出现”
+  （`ComputerLinkText.noComputers`）+ 配对说明的脚注（`ComputerLinkStatusSection(hasComputer:)`）；以前这时整页看不到 12.9 从哪儿开始。
+  只弹确认的左滑“下线”不用 `.destructive`（红色 `tint`）。
 #### 4.9.10 导入记忆（71）
 
 参考：第 1 步复制一段导出提示词去别的 AI 助手里跑，第 2 步把结果粘贴回来，“添加到记忆”。ThinkTin 没有写入实例记忆的接口，

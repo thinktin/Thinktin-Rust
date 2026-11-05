@@ -29,10 +29,10 @@ struct SettingsScreensTests {
     func liveActivities() async throws {
         let mock = ShellPreviewClients.signedIn()
         let model = LiveActivityModel(client: mock, system: NoLiveActivities(), defaults: nil)
-        layoutBoth(List { LiveActivitySettingsSection(model: model) }, client: mock)
+        layoutBoth(List { LiveActivitySettingsRows(model: model) }, client: mock)
         await model.resume()
         #expect(model.isSystemDisabled)
-        layoutBoth(List { LiveActivitySettingsSection(model: model) }, client: mock)
+        layoutBoth(List { LiveActivitySettingsRows(model: model) }, client: mock)
         let run = try await mock.getRun(DemoData.postRunID)
         layoutBoth(LiveActivityRunButton(model: model, run: run, title: "写手"), client: mock)
     }

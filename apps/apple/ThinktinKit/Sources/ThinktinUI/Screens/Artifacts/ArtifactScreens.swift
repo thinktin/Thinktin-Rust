@@ -133,12 +133,12 @@ private struct ArtifactLibraryContent: View {
 
     // MARK: 筛选
 
-    /// 顶上的“全部 / 媒体 / 文件”（参考 22 的位置）。
+    /// 顶上的“全部 / 媒体 / 文件”（参考 22 的位置）：和参考、搜索的筛选胶囊一样只有名字，不带个数。
     private var kindBar: some View {
         @Bindable var model = model
         let options: [FilterChipBar<ArtifactCategory?>.Option] =
-            [.init(value: nil, title: ArtifactsText.allInstances(language), count: model.count(of: nil))]
-            + ArtifactCategory.allCases.map { .init(value: $0, title: $0.title(language), count: model.count(of: $0)) }
+            [.init(value: nil, title: ArtifactsText.allInstances(language), count: nil)]
+            + ArtifactCategory.allCases.map { .init(value: $0, title: $0.title(language), count: nil) }
         return FilterChipBar(options, selection: $model.kind, horizontalInset: 0)
             .accessibilityElement(children: .contain)
             .accessibilityLabel(Text(ArtifactsText.filterByKind(language)))
@@ -167,7 +167,8 @@ private struct ArtifactLibraryContent: View {
 
     // MARK: 行
 
-    /// 图片点了全屏查看，别的压进详情。
+    /// 图片点了全屏查看，别的压进详情。每一行都是按钮（不是 `NavigationLink`）：参考 22、81、82 的行没有 chevron，
+    /// 分组列表里的 `NavigationLink` 会画一个，文件行和图片行就对不齐了。
     @ViewBuilder
     private func rowLink(_ artifact: Artifact) -> some View {
         let model = self.model
@@ -187,9 +188,12 @@ private struct ArtifactLibraryContent: View {
             }
             .buttonStyle(.plain)
         } else {
-            NavigationLink(value: AppRoute.artifact(artifact.id, runID: artifact.runID)) {
+            Button {
+                router.open(.artifact(artifact.id, runID: artifact.runID))
+            } label: {
                 content
             }
+            .buttonStyle(.plain)
         }
     }
 

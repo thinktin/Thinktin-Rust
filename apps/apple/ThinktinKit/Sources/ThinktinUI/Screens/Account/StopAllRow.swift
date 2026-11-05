@@ -3,7 +3,7 @@ import ThinktinKit
 
 /// “全部停止”这一行（WBS 12.2，4.6）：危险操作，点了先二次确认；做完弹出取消了几个运行、吊销了几个授权、暂停了
 /// 几个计划，并刷新工作台的角标（进行中、待确认）。设置根页的“安全”一组用它；是 `List` 里的一行（系统的
-/// `Button(role: .destructive)`，红字、灰色副标题），出错时横幅接在下面。
+/// `Button(role: .destructive)`，红字、灰色副标题），出错时横幅是下面单独的一行（`body` 出两个视图，`List` 拆成两行）。
 struct StopAllRow: View {
     let model: StopAllModel
 
@@ -13,30 +13,26 @@ struct StopAllRow: View {
 
     var body: some View {
         let zh = language == .chinese
-        VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
-            Button(role: .destructive) {
-                confirms = true
-            } label: {
-                HStack {
-                    VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
-                        Text(zh ? "全部停止" : "Stop everything")
-                            .foregroundStyle(Theme.danger)
-                        Text(zh ? "取消所有运行、吊销运行授权、暂停所有计划" : "Cancel all runs, revoke run grants, pause all plans")
-                            .font(.subheadline)
-                            .foregroundStyle(Theme.inkSecondary)
-                    }
-                    if model.isStopping {
-                        Spacer(minLength: Metrics.Spacing.xs)
-                        ProgressView()
-                    }
+        // 出错的横幅是同一组里单独的一行：放进按钮那一行的话，`List` 里默认样式的按钮占满整行，点横幅也会弹“全部停止？”。
+        Button(role: .destructive) {
+            confirms = true
+        } label: {
+            HStack {
+                VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
+                    Text(zh ? "全部停止" : "Stop everything")
+                        .foregroundStyle(Theme.danger)
+                    Text(zh ? "取消所有运行、吊销运行授权、暂停所有计划" : "Cancel all runs, revoke run grants, pause all plans")
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.inkSecondary)
                 }
-                .contentShape(Rectangle())
+                if model.isStopping {
+                    Spacer(minLength: Metrics.Spacing.xs)
+                    ProgressView()
+                }
             }
-            .disabled(model.isStopping || app.isOffline)
-            if let error = model.error {
-                ErrorBanner(error, onRetry: { stop() }, onDismiss: { model.dismissError() })
-            }
+            .contentShape(Rectangle())
         }
+        .disabled(model.isStopping || app.isOffline)
         .confirmationDialog(zh ? "全部停止？" : "Stop everything?", isPresented: $confirms, titleVisibility: .visible) {
             Button(zh ? "全部停止" : "Stop everything", role: .destructive) { stop() }
             Button(zh ? "取消" : "Cancel", role: .cancel) {}
@@ -50,6 +46,9 @@ struct StopAllRow: View {
             Button(zh ? "好" : "OK", role: .cancel) {}
         } message: {
             Text(model.result?.summary(language) ?? "")
+        }
+        if let error = model.error {
+            ErrorBanner(error, onRetry: { stop() }, onDismiss: { model.dismissError() })
         }
     }
 

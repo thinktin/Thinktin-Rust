@@ -73,8 +73,9 @@ private struct DevicesContent: View {
                     }
                     .themedRow()
                 }
-                // 电脑（12.9）：签名密钥失效、签不了名、出错时的说明和“生成新密钥”（每台电脑的配对在它的详情里）。
-                ComputerLinkStatusSection()
+                // 电脑（12.9）：签名密钥失效、签不了名、出错时的说明和“生成新密钥”；还没有电脑登录时说怎么让它出现
+                // （每台电脑的配对在它的详情里）。
+                ComputerLinkStatusSection(hasComputer: model.devices.contains(where: \.isComputer))
             } else if let error = model.loadError, !error.isOffline {
                 Section {
                     ErrorBanner(error, onRetry: { Task { await model.load() } })

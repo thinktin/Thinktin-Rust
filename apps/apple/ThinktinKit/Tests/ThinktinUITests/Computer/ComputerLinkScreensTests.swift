@@ -47,17 +47,19 @@ struct ComputerLinkScreensTests {
         let mac = DemoData.state().devices.first(where: \.isComputer)!
         layoutBoth(
             List {
-                ComputerLinkStatusSection()
+                ComputerLinkStatusSection(hasComputer: true)
                 ComputerDeviceSections(computer: mac)
             })
+        // 还没有电脑登录：一组“电脑”说怎么让它出现。
+        layoutBoth(List { ComputerLinkStatusSection(hasComputer: false) })
         layoutBoth(
             List {
-                ComputerLinkStatusSection()
+                ComputerLinkStatusSection(hasComputer: true)
                 ComputerDeviceSections(computer: mac)
             }, signer: Signer(available: false))
         layoutBoth(
             List {
-                ComputerLinkStatusSection()
+                ComputerLinkStatusSection(hasComputer: true)
                 ComputerDeviceSections(computer: mac)
             }, signer: nil)
         layoutBoth(DevicesScreen())

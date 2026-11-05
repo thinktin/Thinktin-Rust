@@ -79,17 +79,23 @@ private struct ComputerLinkHolder<Content: View>: View {
 }
 
 /// 登录设备页里电脑的整体状态（改版规范 4.9.9）：出错、这台设备签不了名、签名密钥失效（新录了面容）时一组说明，失效时可以
-/// “生成新密钥”。每台电脑的配对和授权在它的设备详情里（`ComputerDeviceSections`）。都正常时不显示。
+/// “生成新密钥”。每台电脑的配对和授权在它的设备详情里（`ComputerDeviceSections`）。都正常、也有电脑登录时不显示；
+/// 还没有电脑登录这个账号时是一组“电脑”：怎么让电脑出现（`ComputerLinkText.noComputers`）+ 配对说明的脚注，不然没电脑的人
+/// 在这页上找不到 12.9 的功能从哪儿开始。
 struct ComputerLinkStatusSection: View {
+    /// 设备列表里有没有电脑（`DeviceInfo.isComputer`）。
+    let hasComputer: Bool
+
     var body: some View {
         ComputerLinkGate { model in
-            ComputerLinkStatusContent(model: model)
+            ComputerLinkStatusContent(model: model, hasComputer: hasComputer)
         }
     }
 }
 
 private struct ComputerLinkStatusContent: View {
     let model: ComputerLinkModel
+    let hasComputer: Bool
 
     @Environment(\.displayLanguage) private var language
     @State private var confirmsReset = false
@@ -123,6 +129,16 @@ private struct ComputerLinkStatusContent: View {
                 }
                 Button(zh ? "取消" : "Cancel", role: .cancel) {}
             }
+        } else if !hasComputer {
+            Section {
+                Text(ComputerLinkText.noComputers(language))
+                    .foregroundStyle(Theme.inkSecondary)
+            } header: {
+                Text(ComputerLinkText.sectionTitle(language)).textCase(nil)
+            } footer: {
+                Text(ComputerLinkText.sectionFooter(language))
+            }
+            .themedRow()
         }
     }
 }

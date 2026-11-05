@@ -157,8 +157,8 @@ private struct AccountButton: View {
                 Image(systemName: "person.crop.circle")
                     .accessibilityHidden(true)
             } else {
-                InstanceAvatar(name, size: Metrics.Avatar.title)
-                    .accessibilityHidden(true)
+                // 和设置里的账号行一样是中性灰的首字头像（不是 Botin 那种彩色的）。
+                AccountAvatar(name, size: Metrics.Avatar.title)
             }
         }
         .accessibilityLabel(Text(AppRoute.settings.title(language)))
