@@ -74,6 +74,22 @@ impl From<store::Error> for ApiError {
                 Self::conflict(format!("run is {from}, cannot become {to}"))
             }
             store::Error::LeaseLost { .. } => Self::conflict("changed concurrently, retry"),
+            store::Error::ProjectLimit(cap) => {
+                let (code, what) = match cap {
+                    store::ProjectCap::Members => (ErrorCode::ProjectMemberLimit, "members"),
+                    store::ProjectCap::Agents => (ErrorCode::ProjectAgentLimit, "agents"),
+                    store::ProjectCap::PendingInvites => {
+                        (ErrorCode::ProjectInviteLimit, "pending invites")
+                    }
+                };
+                Self::new(code, format!("the project has the most {what} it can have"))
+            }
+            store::Error::RetryAfter(secs) => Self {
+                code: ErrorCode::RateLimited,
+                message: format!("too many requests, retry in {secs}s"),
+                retry_after_secs: Some(secs),
+            },
+            store::Error::NotPermitted(m) => Self::new(ErrorCode::Forbidden, m),
             other => Self::internal(other),
         }
     }

@@ -57,6 +57,12 @@ pub enum ErrorCode {
     Internal,
     /// 实例数到了账号的上限（11.9）：删掉一个再领养。
     InstanceLimit,
+    /// 项目人数到了上限（8.14）：请人先退出再邀请、加入。
+    ProjectMemberLimit,
+    /// 项目里的 agent 数到了上限（8.14）：撤下一些再加。
+    ProjectAgentLimit,
+    /// 项目的待处理邀请到了上限（8.14）：撤回一些再发。
+    ProjectInviteLimit,
 }
 
 impl ErrorCode {
@@ -65,7 +71,11 @@ impl ErrorCode {
             Self::Unauthenticated | Self::SessionRevoked => 401,
             Self::AccountFrozen | Self::Forbidden => 403,
             Self::NotFound => 404,
-            Self::Conflict | Self::InstanceLimit => 409,
+            Self::Conflict
+            | Self::InstanceLimit
+            | Self::ProjectMemberLimit
+            | Self::ProjectAgentLimit
+            | Self::ProjectInviteLimit => 409,
             Self::Invalid => 422,
             Self::RateLimited => 429,
             Self::UpgradeRequired => 426,
@@ -81,7 +91,13 @@ impl ErrorCode {
 
     /// 数量到了上限（`*_limit`）。
     pub fn is_limit(self) -> bool {
-        matches!(self, Self::InstanceLimit)
+        matches!(
+            self,
+            Self::InstanceLimit
+                | Self::ProjectMemberLimit
+                | Self::ProjectAgentLimit
+                | Self::ProjectInviteLimit
+        )
     }
 }
 
@@ -164,14 +180,20 @@ mod tests {
 
     #[test]
     fn limit_codes() {
-        let code = ErrorCode::InstanceLimit;
-        assert_eq!(serde_json::to_value(code).unwrap(), "instance_limit");
-        assert_eq!(
-            serde_json::from_value::<ErrorCode>("instance_limit".into()).unwrap(),
-            code
-        );
-        assert_eq!(code.http_status(), 409);
-        assert!(code.is_limit() && !code.retryable());
+        for (code, wire) in [
+            (ErrorCode::InstanceLimit, "instance_limit"),
+            (ErrorCode::ProjectMemberLimit, "project_member_limit"),
+            (ErrorCode::ProjectAgentLimit, "project_agent_limit"),
+            (ErrorCode::ProjectInviteLimit, "project_invite_limit"),
+        ] {
+            assert_eq!(serde_json::to_value(code).unwrap(), wire);
+            assert_eq!(
+                serde_json::from_value::<ErrorCode>(wire.into()).unwrap(),
+                code
+            );
+            assert_eq!(code.http_status(), 409);
+            assert!(code.is_limit() && !code.retryable());
+        }
         assert!(!ErrorCode::Conflict.is_limit() && !ErrorCode::RateLimited.is_limit());
     }
 }

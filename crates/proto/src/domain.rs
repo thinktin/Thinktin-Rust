@@ -555,6 +555,58 @@ str_enum!(
 );
 
 str_enum!(
+    /// 用户在项目里的身份（8.14）。
+    ProjectRole {
+        /// 建项目的人：邀请、移出别人，改项目名字和目标。
+        Creator = "creator",
+        Member = "member",
+    }
+);
+
+str_enum!(
+    /// 邀请是怎么发的（8.14）。
+    ProjectInviteKind {
+        /// 按手机号邀请：只在 App 里收到，不发短信。
+        Phone = "phone",
+        /// 邀请链接：谁拿到都能用，用一次就失效。
+        Link = "link",
+    }
+);
+
+str_enum!(
+    /// 邀请的状态（8.14）。
+    ProjectInviteStatus {
+        Pending = "pending",
+        Accepted = "accepted",
+        Declined = "declined",
+        /// 创建者撤回了。
+        Revoked = "revoked",
+        Expired = "expired",
+    }
+);
+
+/// 一个项目最多这么多人（8.14，含创建者）。
+pub const MAX_PROJECT_USERS: u64 = 10;
+/// 一个项目里最多这么多个 agent（所有人的加在一起）。
+pub const MAX_PROJECT_AGENTS: u64 = 30;
+/// 一个项目同时最多这么多个待处理的邀请。
+pub const MAX_PENDING_PROJECT_INVITES: u64 = 20;
+/// 邀请链接 72 小时内有效，用一次就失效。
+pub const PROJECT_INVITE_LINK_TTL_SECS: u64 = 72 * 3600;
+/// 按手机号的邀请 7 天内有效。
+pub const PROJECT_INVITE_PHONE_TTL_SECS: u64 = 7 * 24 * 3600;
+/// 每个用户最多屏蔽这么多人。
+pub const MAX_BLOCKS: u64 = 1000;
+/// 项目目标最长这么多字。
+pub const MAX_PROJECT_GOAL_CHARS: usize = 4000;
+/// 项目预算（token 数）最大能设这么多。
+pub const MAX_TOKEN_LIMIT: u64 = 1_000_000_000_000;
+/// App 里邀请链接的前缀，后面是邀请令牌。
+pub const PROJECT_INVITE_LINK_PREFIX: &str = "thinktin://join/";
+/// 加入项目、加 agent 时用户同意的说明是第几版（[`ProjectInvitePreview`] 里列的那些）；说明改了加一。
+pub const PROJECT_CONSENT_VERSION: u32 = 1;
+
+str_enum!(
     /// 实例能上哪些网站（2.7，受控出网通道，见 docs/egress.md）。内网、元数据地址、服务机自己哪一档都连不了。用户
     /// 2026-11-04 定：App 里不放档位开关，大家都是 `dev`；别的档位留着给以后的管理策略。
     EgressMode {
@@ -961,6 +1013,186 @@ pub struct TeamMember {
     pub position: u32,
 }
 
+/// 项目里的一个人（8.14）：只有用户 id 和昵称，不带手机号。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectPerson {
+    pub user_id: UserId,
+    #[serde(default)]
+    pub display_name: Option<String>,
+}
+
+/// 项目列表里的一项（8.14）：我是成员的项目。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectSummary {
+    pub id: ProjectId,
+    pub name: String,
+    pub goal: String,
+    pub status: ProjectStatus,
+    /// 我在项目里的身份。
+    pub role: ProjectRole,
+    /// 有没有别人加入过（加入过就一直是共享项目）。
+    pub shared: bool,
+    pub creator: ProjectPerson,
+    pub member_count: u32,
+    pub agent_count: u32,
+    /// 其中我的 agent 有几个。
+    pub my_agent_count: u32,
+    pub created_at: DateTime<Utc>,
+    /// 我是什么时候加入的。
+    pub joined_at: DateTime<Utc>,
+}
+
+/// 项目的一个成员（只有成员看得到）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectMemberView {
+    pub user_id: UserId,
+    #[serde(default)]
+    pub display_name: Option<String>,
+    pub role: ProjectRole,
+    pub joined_at: DateTime<Utc>,
+    /// 他在项目里有几个 agent。
+    pub agent_count: u32,
+    pub is_me: bool,
+}
+
+/// 项目里的一个 agent：谁的、哪个实例。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectAgentView {
+    pub instance_id: InstanceId,
+    /// agent 的主人。
+    pub owner_id: UserId,
+    pub agent_id: String,
+    pub name: String,
+    pub is_lead: bool,
+    pub position: u32,
+    pub added_at: DateTime<Utc>,
+    /// 是我的 agent。
+    pub mine: bool,
+}
+
+/// 我在这个项目里的预算（每个人管自己的 agent 花多少；没有是不限）。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectBudget {
+    #[serde(default)]
+    pub daily_token_limit: Option<u64>,
+    #[serde(default)]
+    pub total_token_limit: Option<u64>,
+}
+
+/// 项目的上限：最多几个人、几个 agent。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectLimits {
+    pub max_users: u32,
+    pub max_agents: u32,
+}
+
+impl Default for ProjectLimits {
+    fn default() -> Self {
+        Self {
+            max_users: MAX_PROJECT_USERS as u32,
+            max_agents: MAX_PROJECT_AGENTS as u32,
+        }
+    }
+}
+
+/// 项目详情（只有成员看得到）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectDetail {
+    #[serde(flatten)]
+    pub summary: ProjectSummary,
+    /// 创建者在前。
+    pub members: Vec<ProjectMemberView>,
+    pub agents: Vec<ProjectAgentView>,
+    pub my_budget: ProjectBudget,
+    pub limits: ProjectLimits,
+}
+
+/// 一个邀请（创建者看的）。按手机号的只给打码的手机号。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectInvite {
+    pub id: ProjectInviteId,
+    pub project_id: ProjectId,
+    pub kind: ProjectInviteKind,
+    pub status: ProjectInviteStatus,
+    #[serde(default)]
+    pub phone_masked: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+    /// 接受、拒绝、撤回、过期的时间。
+    #[serde(default)]
+    pub settled_at: Option<DateTime<Utc>>,
+    /// 谁接受的。
+    #[serde(default)]
+    pub accepted_by: Option<ProjectPerson>,
+}
+
+/// 邀请预览里的项目（还不是成员时看到的）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectBrief {
+    pub id: ProjectId,
+    pub name: String,
+    pub goal: String,
+}
+
+/// 邀请预览里的成员：只有昵称，不带用户 id（还不是成员）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectMemberBrief {
+    #[serde(default)]
+    pub display_name: Option<String>,
+    pub role: ProjectRole,
+    pub agent_count: u32,
+}
+
+/// 加入前看到的邀请（8.14）：项目是什么、有谁，加入后哪些东西项目里的人看得到、哪些还是自己的。
+/// `shared_with_project` 和 `kept_private` 是固定的键（App 自己翻译），见 [`project_consent`]。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectInvitePreview {
+    pub invite_id: ProjectInviteId,
+    pub kind: ProjectInviteKind,
+    pub expires_at: DateTime<Utc>,
+    pub project: ProjectBrief,
+    /// 发邀请的创建者：屏蔽要用他的 id。
+    pub creator: ProjectPerson,
+    pub members: Vec<ProjectMemberBrief>,
+    pub users: u32,
+    pub agents: u32,
+    pub limits: ProjectLimits,
+    pub shared_with_project: Vec<String>,
+    pub kept_private: Vec<String>,
+}
+
+/// 加入项目时的说明（[`PROJECT_CONSENT_VERSION`] 这一版）：App 按键显示。
+pub mod project_consent {
+    /// 项目里的人都看得到的。
+    pub const SHARED_WITH_PROJECT: [&str; 5] = [
+        "project_goal_and_tasks",
+        "project_board",
+        "project_artifacts",
+        "your_agents_project_runs",
+        "sent_to_all_agents_vendors",
+    ];
+    /// 还是只有自己看得到的。
+    pub const KEPT_PRIVATE: [&str; 8] = [
+        "private_runs",
+        "private_board",
+        "private_artifacts",
+        "vault",
+        "computer",
+        "model_keys",
+        "costs",
+        "approvals",
+    ];
+}
+
+/// 我屏蔽的人（8.14）：他发的项目邀请不再给我看。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlockedUser {
+    pub user_id: UserId,
+    #[serde(default)]
+    pub display_name: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
 /// 团队模板：一键领养一整个团队。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TeamTemplate {
@@ -1086,6 +1318,18 @@ pub mod notice_subtype {
     /// 平台搜索要运营者处理（docs/search.md）：额度快用完、用完了，搜索接口欠费或 key 不对。只发给 `[search] alert_phone`
     /// 的账号。
     pub const SEARCH_ALERT: &str = "search_alert";
+    /// 有人邀请我加入项目（带 `project_id` 和 `project_invite_id`）。
+    pub const PROJECT_INVITE: &str = "project_invite";
+    /// 有人加入了我在的项目。
+    pub const PROJECT_JOINED: &str = "project_joined";
+    /// 有人退出了我在的项目。
+    pub const PROJECT_LEFT: &str = "project_left";
+    /// 我被移出了项目。
+    pub const PROJECT_REMOVED: &str = "project_removed";
+    /// 有人撤下了自己在项目里的 agent。
+    pub const PROJECT_AGENT_LEFT: &str = "project_agent_left";
+    /// 我的 agent 被创建者移出了项目。
+    pub const PROJECT_AGENT_REMOVED: &str = "project_agent_removed";
 }
 
 /// 共享看板的一条（8.10）：用户的 agent（或用户自己）写的进展、决定、待别人处理的事。写了不改，只能归档、删除。
@@ -1463,6 +1707,74 @@ pub fn mask_phone(phone: &str) -> String {
     let shown_head: String = chars[..head].iter().collect();
     let shown_tail: String = chars[n - tail..].iter().collect();
     format!("{shown_head}{}{shown_tail}", "*".repeat(n - head - tail))
+}
+
+#[cfg(test)]
+mod project_tests {
+    use super::*;
+
+    #[test]
+    fn project_subtypes_and_consent_keys_are_valid() {
+        for s in [
+            notice_subtype::PROJECT_INVITE,
+            notice_subtype::PROJECT_JOINED,
+            notice_subtype::PROJECT_LEFT,
+            notice_subtype::PROJECT_REMOVED,
+            notice_subtype::PROJECT_AGENT_LEFT,
+            notice_subtype::PROJECT_AGENT_REMOVED,
+        ] {
+            assert!(valid_subtype(s), "{s}");
+        }
+        let all: Vec<_> = project_consent::SHARED_WITH_PROJECT
+            .iter()
+            .chain(&project_consent::KEPT_PRIVATE)
+            .collect();
+        let mut dedup = all.clone();
+        dedup.sort();
+        dedup.dedup();
+        assert_eq!(dedup.len(), all.len(), "keys are distinct");
+        for r in ProjectRole::ALL {
+            assert_eq!(r.as_str().parse::<ProjectRole>().unwrap(), *r);
+        }
+        for k in ProjectInviteStatus::ALL {
+            assert_eq!(k.as_str().parse::<ProjectInviteStatus>().unwrap(), *k);
+        }
+        assert_eq!(MAX_TOKEN_LIMIT as i64 as u64, MAX_TOKEN_LIMIT);
+    }
+
+    #[test]
+    fn project_detail_flattens_the_summary() {
+        let me = UserId::new();
+        let now = chrono::Utc::now();
+        let d = ProjectDetail {
+            summary: ProjectSummary {
+                id: ProjectId::new(),
+                name: "p".into(),
+                goal: "g".into(),
+                status: ProjectStatus::Active,
+                role: ProjectRole::Creator,
+                shared: false,
+                creator: ProjectPerson {
+                    user_id: me,
+                    display_name: None,
+                },
+                member_count: 1,
+                agent_count: 0,
+                my_agent_count: 0,
+                created_at: now,
+                joined_at: now,
+            },
+            members: vec![],
+            agents: vec![],
+            my_budget: ProjectBudget::default(),
+            limits: ProjectLimits::default(),
+        };
+        let v = serde_json::to_value(&d).unwrap();
+        assert_eq!(v["role"], "creator");
+        assert_eq!(v["limits"]["max_users"], 10);
+        assert!(v.get("summary").is_none());
+        assert_eq!(serde_json::from_value::<ProjectDetail>(v).unwrap(), d);
+    }
 }
 
 #[cfg(test)]

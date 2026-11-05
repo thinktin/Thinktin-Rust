@@ -60,7 +60,7 @@ pub use device_relay::{
     NewLink,
 };
 pub use egress::{AskMeta, EgressAsk, EgressLogEntry, EgressNotice};
-pub use error::{Error, Result};
+pub use error::{Error, ProjectCap, Result};
 pub use events::EVENTS_CHANNEL;
 pub use hooks::{HookActivity, HookLock, HookTarget, MAX_HOOKS_PER_PLAN};
 pub use im_channels::{ImChannelChange, ImSlot, ImWebhook, NewImChannel, SealedImChannel};
