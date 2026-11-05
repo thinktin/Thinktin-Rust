@@ -43,6 +43,33 @@ struct ConversationExtrasTests {
         #expect(MarkdownBlockView(item: block) == MarkdownBlockView(item: block))
     }
 
+    @Test("输入框左边的“+”：传了几项才有，不能输入时没有；胶囊和带引用的卡片都能出图（参考 08）")
+    func attachments() {
+        let sources = ComposerAttachmentSource.allCases
+        let plain = ComposerBar(text: .constant(""), placeholder: "", action: .send {})
+        #expect(!plain.showsAttachments)
+        let withMenu = ComposerBar(
+            text: .constant(""), placeholder: "", action: .send {}, attachments: sources, onAttach: { _ in })
+        #expect(withMenu.showsAttachments)
+        let disabled = ComposerBar(
+            text: .constant(""), placeholder: "", action: .send {}, isDisabled: true, attachments: sources,
+            onAttach: { _ in })
+        #expect(!disabled.showsAttachments)
+        #expect(
+            !ComposerBar(text: .constant(""), placeholder: "", action: .send {}, attachments: [], onAttach: { _ in })
+                .showsAttachments)
+        renderInBothAppearances(withMenu)
+        renderInBothAppearances(
+            ComposerBar(
+                text: .constant("接着做"), placeholder: "", action: .send {}, quote: "引用的一段",
+                onRemoveQuote: {}, attachments: sources, onAttach: { _ in }))
+        #if os(iOS)
+            #expect(ConversationComposer.attachmentSources.contains(.camera))
+        #else
+            #expect(!ConversationComposer.attachmentSources.contains(.camera))
+        #endif
+    }
+
     @Test("高亮的消息能出图：用户消息（引用和正文）、回复、结果")
     func highlightedMessages() {
         let quoted = MessageQuote.compose(quote: "上周的周报", body: "周报再分一下")

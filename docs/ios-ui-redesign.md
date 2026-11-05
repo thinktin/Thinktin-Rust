@@ -594,6 +594,12 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   SwiftUI 没有相机控件）、`.fileImporter`。
 - **ThinkTin 现在**：12.22 运行附件，等 1.1 拍板和后端 5.6，`ClientProtocol` 没有上传接口。
 - **要改**：第 3 轮（6.13）。在那之前输入框不放“+”。
+- **已做（第 2 轮 r2/conversation，2026-11-05，用户要求“没有的功能也照参考把页面做出来”，推翻上一条的“不放‘+’”）**：
+  输入框左边一个玻璃圆“+”（`ComposerBar` 的 `attachments` / `onAttach`，有引用的卡片里在下面一行的左边，参考 07），系统 `Menu`
+  三项照参考 08：照片或视频（`photo.on.rectangle`）、拍照（`camera`，Mac 没有）、选择文件（`folder`）（ThinktinKit 的
+  `ComposerAttachmentSource`）。上传要服务端（12.22、后端 5.6），现在点哪一项都弹系统提示“即将推出”（说明等服务端能收附件以后就能用，
+  先把内容贴进输入框），不打开选择器。接口有了以后换成 `.photosPicker`、`UIImagePickerController`、`.fileImporter`，
+  选好的放在输入框上面一排缩略图。只看本次过程、找不到 Botin 时没有“+”。
 
 ### 4.4 实例管理（参考的“Bot 管理”）
 

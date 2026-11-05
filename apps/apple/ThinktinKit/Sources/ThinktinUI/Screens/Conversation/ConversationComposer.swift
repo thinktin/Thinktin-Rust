@@ -10,6 +10,8 @@ import ThinktinKit
 /// - 发送、停止失败的错误显示在输入框上面（`ErrorBanner`）；
 /// - 默认模型的标签（`main` 路由的上游模型；没配时提示），点开去这个实例的模型路由（不能逐条消息换模型）；
 /// - 引用回复（长按消息选“引用回复”，`ConversationModel.setQuote`）：输入框顶上一条引用，× 取消。
+/// - 左边的“+”（规范 4.3.6，参考 08）：照片或视频、拍照（只有 iOS）、选择文件；上传要服务端（12.22），现在点了弹系统提示
+///   “即将推出”（`ComposerAttachmentSource`）。
 ///
 /// 自己不画底：iOS 26 浮在 `safeAreaBar` 里，内容从下面滚过去、边缘系统软渐隐；旧系统的 `safeAreaInset` 下，玻璃胶囊
 /// （`.regularMaterial`）挡住后面滚过的内容。
@@ -21,6 +23,17 @@ struct ConversationComposer: View {
     let onOpenModelRoutes: @MainActor () -> Void
 
     @Environment(\.displayLanguage) private var language
+    /// 点了“+”菜单里还不能用的一项：弹“即将推出”。
+    @State private var comingSoon: ComposerAttachmentSource?
+
+    /// “+”菜单里的几项（Mac 没有拍照）。
+    static var attachmentSources: [ComposerAttachmentSource] {
+        #if os(iOS)
+            ComposerAttachmentSource.menu(hasCamera: true)
+        #else
+            ComposerAttachmentSource.menu(hasCamera: false)
+        #endif
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
@@ -42,7 +55,8 @@ struct ConversationComposer: View {
                 text: $model.draft, placeholder: placeholder, action: barAction,
                 actionLabel: ConversationText.composerActionLabel(model.composerAction, language: language),
                 isOverLimit: model.isOverLimit, isDisabled: model.isMissing, focus: isFocused,
-                quote: model.quotedText, onRemoveQuote: { model.clearQuote() })
+                quote: model.quotedText, onRemoveQuote: { model.clearQuote() },
+                attachments: model.canAttach ? Self.attachmentSources : [], onAttach: { comingSoon = $0 })
         }
         // 参考 02：胶囊离屏幕两边约 31pt（比气泡的 16pt 缩进得多），底边几乎贴着安全区。
         .padding(.horizontal, Metrics.Spacing.xxl)
@@ -50,6 +64,15 @@ struct ConversationComposer: View {
         .padding(.bottom, Metrics.Spacing.xxs)
         .frame(maxWidth: Metrics.readableWidth)
         .frame(maxWidth: .infinity)
+        .alert(
+            ConversationText.comingSoon(language),
+            isPresented: Binding(get: { comingSoon != nil }, set: { if !$0 { comingSoon = nil } }),
+            presenting: comingSoon
+        ) { _ in
+            Button(ConversationText.ok(language)) { comingSoon = nil }
+        } message: { source in
+            Text(ConversationText.attachmentComingSoon(source, language: language))
+        }
     }
 
     /// 输入框正上方一行：左边默认模型的小胶囊，右边快到上限时的字数（超了标红）。都没有时不占地方。

@@ -10,11 +10,14 @@
   桩：`SwiftUI+ConversationExtras.swift`（`AttributedString` 的 SwiftUI 属性 `backgroundColor` / `foregroundColor`、
   `AccessibilityNotification.Announcement`、`menuIndicator`）。
 
+- 附件菜单（4.3.6，参考 08）：输入框左边玻璃圆“+”，系统菜单三项（照片或视频、拍照、选择文件；Mac 没有拍照），点了弹“即将推出”。
+  ThinktinKit 的 `ConversationAttachments.swift`（`ComposerAttachmentSource`、`canAttach`），测试 `ConversationAttachmentTests`。
+
 进行中：
-- 附件菜单（4.3.6，参考 08，点了“即将推出”）。
+- 表情回应（参考 06 的表情行 + 90 的选择器，只存这台设备）。
 
 下一步：
-- 表情回应（参考 06 的表情行 + 90 的选择器，只存这台设备）；选择主 Botin（参考 11）。
+- 选择主 Botin（参考 11）。
 - 全部 Linux 检查、规范里的“已做”。
 
 坑和决定：
