@@ -233,6 +233,39 @@
     uicheck UIKit、AppKit 都编过；`run.sh test` 137 个全过；App 的 `ThinktinTests` 21 个过 16 个（还是那 5 个要 App 包的：Info.plist 两条、
     隐私清单、小组件扩展、缓存路径）；`swift format -i` 没改东西，`swift format lint --strict -r apps/apple` 零条；`bash -n tools/apple/screenshots.sh` 过。
     macOS CI 和截图还没跑。
+- 新建 Botin 照参考重排版式和头像外观（2026-11-05，用户对过参考图说分组 `Form` + 右上按钮不像；提交 `5d64c87`、`a743df2`、`a2d72d4`、
+  `e8ce6eb` 和这一条）：
+  - 视图模型（ThinktinKit）：名字**默认空的**（不再填引擎名），输入框下面的小字只在有用时出现（`AdoptionModel.nameNote`：只有空格、太长、快到
+    上限）；`canCreate(isOffline:)`；头像 `shape`（默认圆形）、`color`（nil 按名字取）、`appearance`、`resolvedColor`，挑过形状或颜色也算
+    `hasUserInput`；建好之后把外观记进 `appearances`（默认的不记、失败的不记）。新的 `ViewModels/Shell/InstanceAppearanceStore.swift`：
+    `AvatarShape`（15 种）、`AvatarColor`（12 种；`nameHashed` 是第 0 轮按名字取色的 8 种，顺序不能改；FNV-1a 挪到这里）、
+    `InstanceAppearance`（Codable，宽松地读：认不出的形状当圆形、颜色当没选）、`InstanceAppearanceStore`（`UserDefaults` 一个键
+    `cn.thinktin.shell.instanceAppearance`，JSON `{实例 id: {shape, color}}`；`defaults` 为 nil 只在内存里），`AppModel.appearances`。
+    许可：`NewBotinText.licenseCaption`（一行：专有许可“新建即表示同意 X 的许可条款”，同意的说法只给专有许可）、`licenseDetails`（全文）、
+    `viewLicense`、`licenseTitle`、`noUsableEngine`；`engineFooter` 删了。
+  - 界面：`AdoptAgentSheet` 换成 `ScrollView`：左上 ×、标题、右边不放按钮；120pt 头像预览（名字空时是中性的 `ellipsis`）；大号胶囊输入框
+    （`.textFieldStyle(.plain)`、`.title2` 半粗、居中，占位“给 Botin 取个名字”）；头像卡片里形状网格 3 × 5 + 色板 2 × 6（选中带框 / 环，
+    读屏念形状、颜色名和“已选中”，选择触感）；引擎卡片（“引擎”+ 系统 `Menu`，接入方式多于一个时再一行 `Picker(.menu)`）+“了解引擎 ›”；
+    底部 `floatingBar` 里错误横幅、离线说明、许可小字 +“查看”（小 sheet）、整宽胶囊“新建”（`glassButtonStyle(.prominent)`，新建中转圈）。
+    新的 `Components/AvatarShapes.swift`：15 种自己设计的形状（圆形、圆角方形、拱形、六边形、八边形、菱形、圆角三角形、盾牌、叶子、鹅卵石、
+    四角星、五角星、花朵、花边圆、云朵；单位正方形里的几何，圆角多边形、超椭圆、极坐标曲线、三个圆拼的云），只放首字、不画脸；首字的字号和
+    位置按形状调（`AvatarMonogramLayout`）。`InstanceAvatar` 加 `appearance:`（nil 是圆形、按名字取色），画法拆出 `AvatarGlyph`（按给的
+    边长画，不跟动态字体缩放；形状网格的格子按列宽画，窄屏、大字号不挤出格子）；12 种颜色的色值在 `InstanceAvatar.colors(of:)`（前 8 种
+    色值没变，新加藏青、兰紫、灰褐、石墨灰，白字对比度都在 4:1 以上）。首页的行、首页和搜索页的搜索结果（Botin 那种结果画头像）、对话页导航栏
+    中间（24pt 头像 + 名字，`.principal`）、Botin 资料头部按 `app.appearances.resolved(for:)` 画。
+  - 测试：ThinktinKit `InstanceAppearanceStoreTests`（网格大小、按名字取色没变、默认、记下读回和重开、宽松地读、`AppModel` 带一份）、
+    `AdoptionModelTests`（空的默认名字、小字、“新建”能不能点、头像默认和跟着名字变、新建后记下外观、许可的一行和全文、都不能用的引擎）；
+    `InstanceAvatarTests`（12 种颜色的对比度、15 种形状不出界、各形状和颜色深浅色都画得出来、名字空的占位）；`AgentsScreensTests` 的
+    “新建之后”（空名字时按钮灰着、挑了花朵 + 青绿、建好后首页的行按它画）；`AppShellTests`、`SearchScreensTests` 画挑过外观的行。
+  - 截图脚本没改：`08-adopt` 打开的就是空的新表单（不自动弹键盘，整张表都看得到）。
+  - 要在模拟器上看的（Linux 的桩看不出来）：引擎 `Menu` 里选中项 `Label { Text; Text } icon:` 的副标题和勾显示得对不对、灰掉的项点不点得动；
+    iOS 26 上底部条用 `safeAreaBar` 加了不透明的 `paper` 底（旧系统 `safeAreaInset` 要它挡住滚动内容），要不要只在旧系统加；键盘弹出时底部条
+    跟着上来、许可小字太长时换行的样子；形状网格在最小的 iPhone 和最大的动态字体下格子的大小；15 种形状和首字的位置（重心偏下的三角形、
+    星形、云朵的字往下挪了一点）深浅色下好不好看；大头像预览在 `.accessibility3` 下会很大（跟着动态字体缩放）。
+  - 这一份的 Linux 检查（2026-11-05，最后一次提交上）：ThinktinKit `swift test` 1034 个全过；uicheck UIKit、AppKit 都编过（AppKit 那边
+    `MockClient.swift:1379` 有一条以前就有的未使用变量警告）；`run.sh test` 138 个全过；App 的 `ThinktinTests` 21 个过 16 个（还是那 5 个要
+    App 包的：Info.plist 两条、隐私清单、小组件扩展、缓存路径）；`swift format -i -r apps/apple` 后 `swift format lint --strict -r apps/apple`
+    零条。macOS CI 和截图还没跑。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、
@@ -243,10 +276,8 @@
 新建时选它用哪个 agent 当引擎，同一个 agent 可以给好几个 Botin 当引擎（服务端只限每个账号的实例数）。agent 在界面上只以 Botin 的“引擎”/“Engine”出现。
 首次登录首页是空的，空状态“还没有 Botin”+ 说明 + “新建 Botin”按钮。代码里的标识符（`Instance`、`AppRoute.adopt`、`adopt(...)`）不改。
 
-进行中：**新建 Botin 表单照参考重排版式**（云端会话，2026-11-05 02:54 UTC 开始）：用户对过参考图，说表单不像（我们做成了分组 `Form` + 右上按钮）。
-改成参考的样子：大头像预览、大号居中名字输入框（默认空）、形状网格 + 色板（自己设计的几何形状）、紧凑的引擎行、一行许可说明、底部全宽胶囊“新建”；
-头像外观先只存本机（`InstanceAppearanceStore`），首页、搜索、对话标题、Botin 资料都按它画。逻辑和测试不变。
-新建 Botin 表单的第一版和首页空状态（2026-11-05）、Botin 改名（2026-11-05）做完了，见“已完成”。
+进行中：没有。
+新建 Botin 表单（照参考重排过版式、带头像外观）和首页空状态（2026-11-05）、Botin 改名（2026-11-05）做完了，见“已完成”。
 **第 0 轮（规范 7.2）的每一行和审查修正都做完了**（2026-11-05），只差下面第 1、2 条的验证；第 1 轮还没人认领。
 
 下一步：
@@ -308,10 +339,12 @@
   （最多 10 秒），设置、领养、搜索不等。`AppConfiguration.swift` 保持只依赖 Foundation（macOS App 也编它），用到路由的在 `OpenScreen.swift`。
 - 截图脚本是 bash 3.2 写法：清单是一段文本、`while read … <&3` 从 3 号描述符读，不用数组；启动变量总是都传，不用的传空串（App 不认空的）。
   清单第四列（THINKTIN_MOCK_EMPTY）可以不写。每次启动带 `-cn.thinktin.onboarding.checked YES`：`OnboardingCheck` 的键名改了要跟着改。
-- 新建表单：`AdoptionModel` 的初始化换成 `init(client:agents:instances:preselectedAgentID:)`，没有 `agent` / `existingNames` 了；建好之后
-  不再查能用的 key（`usableCredentials`、`nextStep` 删了），路由页自己会说缺什么 key。引擎选择用的是行内 `Picker(.inline)`：目录现在 3 个，
-  多到一屏放不下时换 `.navigationLink` 样式（收起时那一行会把选中项的两行字都显示出来，iOS 18 起可以给 `currentValueLabel`）。
-  每行的 `.disabled` 在真 SDK 的行内选择里灰不灰没验过，视图模型的 `selectEngine` 会拦不能用的。
+- 新建表单：`AdoptionModel` 的初始化是 `init(client:agents:instances:preselectedAgentID:appearances:)`，没有 `agent` / `existingNames` 了；
+  建好之后不再查能用的 key（`usableCredentials`、`nextStep` 删了），路由页自己会说缺什么 key。引擎选择现在是系统 `Menu`（照参考重排版式时
+  换掉了行内 `Picker(.inline)`），目录多了菜单自己能滚；每项的 `.disabled` 在真 SDK 上灰不灰没验过，视图模型的 `selectEngine` 会拦不能用的。
+- 头像外观：`AvatarShape` / `AvatarColor` 的原始值存进了 `UserDefaults`，**不能改名**；`AvatarColor.nameHashed` 的顺序也不能改（按名字取色
+  按下标取，换了已有的 Botin 会变色）。加形状、颜色往 `allCases` 后面加，网格是 3 × 5、2 × 6，多了要改网格。服务端加头像字段时取值用这些
+  原始值（6.9 B），本机的存储当缓存或删掉。形状是自己画的几何（`AvatarShapes.swift`），别换成参考 App 的形象，也别画脸。
 - 新建表单：引擎详情是从表单压进去的时候，`Router.present(.adopt(agentID: id))` 不叠第二张，退回表单、记 `engineRequest`；
   只认最前面那层是 `.adopt` 的情况，别的照常弹。表单在栈底下也活着，`onChange(of: router.engineRequest)` 照样收到。
 - `AppModel.openCreatedInstance` 先把新 Botin 塞进列表再 `selectInstance`、再刷新。刷新正在进行时 `refresh()` 直接返回：要是那次刷新的
