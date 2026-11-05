@@ -85,6 +85,19 @@
   - 这一步的 Linux 检查（2026-11-04，`32bbb4c` 之后）：ThinktinKit `swift test` 1007 个全过；uicheck UIKit、AppKit 都编过；`run.sh test`
     136 个全过；App 的 `ThinktinTests` 16 个过 11 个（还是那 5 个要 App 包的：Info.plist、URL scheme、隐私清单和多语言资源、小组件 appex、
     `~/Library` 路径）；`swift format lint --strict` 零条。macOS CI 还没看。
+- 第 0 轮·截图脚本（规范 7.2 截图那一行、7.6 的清单）：
+  - `AppConfiguration`：只有 Debug 认的启动环境变量 `THINKTIN_OPEN_SCREEN`（`openScreenEnvironmentKey`、`OpenScreen` 枚举、
+    `openScreen(environment:)`，不分大小写，认不出的不认）：conversation / plans / artifacts / settings / search / adopt。
+    `AppConfiguration.swift` 还是只依赖 Foundation（macOS App 也编它）；打开的办法在 iOS App 的新文件 `App/OpenScreen.swift`：
+    `route(instanceID:)` 和 `open(in:)`：实例的页面先等实例列表拿到（最多 10 秒），取首页第一行（演示数据里是“写作助手”），
+    然后和深链一样走 `Router.show`：对话是“首页 → 对话”，计划、产出物是“首页 → 对话 → 目标页”，设置、领养弹 sheet，搜索回首页
+    留一个搜索请求（首页出现时补上激活）。`ThinktinApp` 的 `.task` 在 `THINKTIN_OPEN_URL` 之后调它。
+  - `tools/apple/screenshots.sh`：清单换成规范 7.6 的 14 张（首页、对话、实例资料、实例的计划、产出物、设置、保险箱填写请求、领养、
+    首页搜索、审批、收件箱、进行中、运行、计划），浅色、深色各一套，文件名 `01-home-light.png` / `01-home-dark.png`（产物还是平铺的
+    `*.png`，两个工作流的 artifact 路径不用改）。清单是一段文本、从 3 号描述符读（bash 3.2 下不用数组，`simctl` 吃不掉）。新加
+    `IOS_RUNTIME=18`（或 `17.5`）只在那个 iOS 版本的模拟器里挑，看 iOS 17 / 18 的回退（7.6 第 3 条）。
+  - 测试（App 的 `AppSmokeTests`，挨着原来的启动参数测试）：六个值和别的值、每页的路由（实例的页面没有实例时为 nil）、演示数据里打开
+    各页面后的返回栈和 sheet（实例列表没拿到时实例的页面不打开）。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、

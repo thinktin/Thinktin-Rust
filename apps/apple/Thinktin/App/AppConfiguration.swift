@@ -24,6 +24,34 @@ struct AppConfiguration: Equatable, Sendable {
     /// 截图用（tools/apple/screenshots.sh，只在 Debug 构建里认）：启动后打开这个 `thinktin://` 深链。模拟器上
     /// `simctl openurl` 每次都先弹系统的“在 ThinkTin 中打开？”确认框，挡住页面。
     static let launchURLEnvironmentKey = "THINKTIN_OPEN_URL"
+    /// 截图用（同上，只在 Debug 构建里认）：启动后打开首页第一个实例（演示数据里是“写作助手”）的哪一页，值见 `OpenScreen`。
+    /// 对话、计划、产出物这些页面没有深链，设置、领养是 sheet，首页搜索要激活搜索栏，所以单列一个变量。
+    static let openScreenEnvironmentKey = "THINKTIN_OPEN_SCREEN"
+
+    /// `THINKTIN_OPEN_SCREEN` 认的页面（docs/ios-ui-redesign.md 7.6 的截图清单）。打开的办法在 `OpenScreen.swift`
+    /// （要 ThinktinKit 的路由，这个文件只依赖 Foundation）。
+    enum OpenScreen: String, CaseIterable, Equatable, Sendable {
+        /// 实例的对话（首页 → 对话）。
+        case conversation
+        /// 实例的计划（首页 → 对话 → 计划）。
+        case plans
+        /// 实例的产出物（首页 → 对话 → 产出物）。
+        case artifacts
+        /// 设置（sheet）。
+        case settings
+        /// 首页搜索（激活搜索栏）。
+        case search
+        /// 领养新实例（sheet）。
+        case adopt
+
+        /// 是不是某个实例的页面（要先等实例列表拿到）。
+        var needsInstance: Bool {
+            switch self {
+            case .conversation, .plans, .artifacts: true
+            case .settings, .search, .adopt: false
+            }
+        }
+    }
 
     var client: ClientKind
     var baseURL: URL
@@ -83,6 +111,12 @@ struct AppConfiguration: Equatable, Sendable {
             let url = URL(string: raw), url.scheme?.lowercased() == "thinktin"
         else { return nil }
         return url
+    }
+
+    /// 启动后要打开的页面（`THINKTIN_OPEN_SCREEN`，不分大小写）；没设、认不出的为 nil。
+    static func openScreen(environment: [String: String]) -> OpenScreen? {
+        guard let raw = environment[openScreenEnvironmentKey]?.trimmingCharacters(in: .whitespaces) else { return nil }
+        return OpenScreen(rawValue: raw.lowercased())
     }
 
     /// Info.plist 里的地址；没有、为空、没展开（`$(...)`）或不是 http(s) 的绝对地址时用默认地址。

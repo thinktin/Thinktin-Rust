@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
-# iPhone 模拟器上跑演示模式（Mock 数据，不联网）的 iOS App，按深链打开几个主要页面截图：给人看界面，也是上架截图的底稿。
+# iPhone 模拟器上跑演示模式（Mock 数据，不联网）的 iOS App，打开几个主要页面截图：给人看界面、和改版参考对照
+# （docs/ios-ui-redesign.md 7.6 的清单），也是上架截图的底稿。浅色、深色各一套（01-home-light.png、01-home-dark.png）。
 # 只能在 macOS 上跑（Xcode、模拟器、XcodeGen）。前提：target/apple/ThinktinCore 已生成（build-apple.sh --ci 就够）。
 # Codemagic 上是 codemagic.yaml 的 ios-screenshots。
 #
 #   tools/apple/screenshots.sh [输出目录，默认 target/screenshots]
+#   IOS_RUNTIME=18 tools/apple/screenshots.sh     # 用 iOS 18.x 的模拟器看 iOS 17 / 18 的回退（那个运行时要先装好）
 #
-# 每张图都重新启动 App，用环境变量 THINKTIN_OPEN_URL 指定启动后的页面（只有 Debug 构建认，见
-# AppConfiguration）：`simctl openurl` 会先弹系统的确认框挡住页面。中文界面，状态栏固定成 9:41、满电。
+# 每张图都重新启动 App，用启动环境变量指定打开的页面（只有 Debug 构建认，见 AppConfiguration；`simctl openurl` 会先弹
+# 系统的确认框挡住页面）：THINKTIN_OPEN_URL 是 thinktin:// 深链，THINKTIN_OPEN_SCREEN 是没有深链的页面（首页第一个实例的
+# 对话、计划、产出物，设置、领养两个 sheet，首页搜索）。中文界面，状态栏固定成 9:41、满电。
+# macOS 自带的是 bash 3.2：set -u 下别用空数组，紧跟中文标点的变量写成 ${name}。
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 [[ "$(uname)" == "Darwin" ]] || { echo "needs macOS with Xcode" >&2; exit 1; }
@@ -15,16 +19,21 @@ out="${1:-target/screenshots}"
 mkdir -p "$out"
 (cd apps/apple && xcodegen generate)
 
-# 选中的 Xcode 支持的最新 iOS 运行时里的 iPhone，带 Pro 的优先（屏幕尺寸和上架截图要的一样）。
+# 选中的 Xcode 支持的最新 iOS 运行时里的 iPhone（设了 IOS_RUNTIME 时只在那个版本里挑，比如 18 或 17.5），
+# 带 Pro 的优先（屏幕尺寸和上架截图要的一样）。
 SDK_VERSION=$(xcrun --sdk iphonesimulator --show-sdk-version)
 export SDK_VERSION
+export IOS_RUNTIME="${IOS_RUNTIME:-}"
 udid=$(xcrun simctl list --json devices available | python3 -c '
 import json, os, sys
 devices = json.load(sys.stdin)["devices"]
 sdk = tuple(int(p) for p in os.environ["SDK_VERSION"].split(".") if p.isdigit())
+want = tuple(int(p) for p in os.environ["IOS_RUNTIME"].split(".") if p.isdigit())
 def version(runtime):
     return tuple(int(p) for p in runtime.rsplit("iOS-", 1)[1].split("-") if p.isdigit())
-runtimes = sorted((r for r in devices if ".SimRuntime.iOS-" in r and version(r) <= sdk), key=version, reverse=True)
+runtimes = sorted(
+    (r for r in devices if ".SimRuntime.iOS-" in r and version(r) <= sdk and version(r)[:len(want)] == want),
+    key=version, reverse=True)
 for runtime in runtimes:
     phones = [d for d in devices[runtime] if d.get("isAvailable", True) and d["name"].startswith("iPhone")]
     phones.sort(key=lambda d: ("Pro" not in d["name"], "Max" in d["name"], d["name"]))
@@ -32,7 +41,7 @@ for runtime in runtimes:
         print(phones[0]["udid"], file=sys.stdout)
         print(phones[0]["name"], runtime, file=sys.stderr)
         sys.exit(0)
-sys.exit("no available iPhone simulator")
+sys.exit("no available iPhone simulator" + (" on iOS " + os.environ["IOS_RUNTIME"] if want else ""))
 ')
 xcrun simctl boot "$udid" 2>/dev/null || true
 xcrun simctl bootstatus "$udid" -b
@@ -47,10 +56,11 @@ xcrun simctl install "$udid" "$app"
 xcrun simctl status_bar "$udid" override --time 9:41 --dataNetwork wifi --wifiBars 3 --cellularBars 4 \
   --batteryState charged --batteryLevel 100
 
-# 重新启动 App（上一张打开的页面、弹出的面板不会叠到下一张上）。参数是额外给 App 的环境变量（SIMCTL_CHILD_NAME=value）。
+# 重新启动 App（上一张打开的页面、弹出的面板不会叠到下一张上）。$1 是 THINKTIN_OPEN_SCREEN，$2 是 THINKTIN_OPEN_URL；
+# 空的 App 不认，两个都空就停在首页。
 launch() {
   xcrun simctl terminate "$udid" "$bundle" >/dev/null 2>&1 || true
-  env SIMCTL_CHILD_THINKTIN_MOCK=1 "$@" \
+  env SIMCTL_CHILD_THINKTIN_MOCK=1 "SIMCTL_CHILD_THINKTIN_OPEN_SCREEN=$1" "SIMCTL_CHILD_THINKTIN_OPEN_URL=$2" \
     xcrun simctl launch "$udid" "$bundle" -AppleLanguages "(zh-Hans)" -AppleLocale zh_CN >/dev/null
   sleep 6
 }
@@ -58,30 +68,43 @@ shot() {
   xcrun simctl io "$udid" screenshot --type=png "$out/$1.png" >/dev/null
   echo "$out/$1.png"
 }
-open_and_shot() {
-  launch "SIMCTL_CHILD_THINKTIN_OPEN_URL=$2"
-  shot "$1"
-}
 
-# 演示数据里的 id（ThinktinKit 的 DemoData）。
+# 演示数据里的 id（ThinktinKit 的 DemoData）。THINKTIN_OPEN_SCREEN 打开首页第一个实例，演示数据里就是 writer。
 writer=0192f3a0-0000-7000-8000-000000000101
 weekly_run=0192f3a0-0000-7000-8000-000000000201
 pending_approval=0192f3a0-0000-7000-8000-000000000301
 digest_plan=0192f3a0-0000-7000-8000-000000000401
 npm_request=0192f3a0-0000-7000-8000-000000000801
 
-launch
-shot 01-home
-open_and_shot 03-instance "thinktin://instance/$writer"
-open_and_shot 04-run "thinktin://run/$weekly_run"
-open_and_shot 05-approvals "thinktin://approvals"
-open_and_shot 06-approval "thinktin://approval/$pending_approval"
-open_and_shot 07-plan "thinktin://plan/$digest_plan"
-open_and_shot 08-inbox "thinktin://inbox"
-open_and_shot 09-active "thinktin://active"
-open_and_shot 10-vault-request "thinktin://vault/request/$npm_request"
-# 深色模式的首页。
-xcrun simctl ui "$udid" appearance dark
-launch
-shot 11-home-dark
+# 截图清单（docs/ios-ui-redesign.md 7.6），一行一张：文件名、THINKTIN_OPEN_SCREEN、THINKTIN_OPEN_URL，“-”是不设。
+shots="
+01-home - -
+02-conversation conversation -
+03-instance - thinktin://instance/${writer}
+04-plans plans -
+05-artifacts artifacts -
+06-settings settings -
+07-vault-request - thinktin://vault/request/${npm_request}
+08-adopt adopt -
+09-search search -
+10-approval - thinktin://approval/${pending_approval}
+11-inbox - thinktin://inbox
+12-active - thinktin://active
+13-run - thinktin://run/${weekly_run}
+14-plan - thinktin://plan/${digest_plan}
+"
+
+for appearance in light dark; do
+  xcrun simctl ui "$udid" appearance "$appearance"
+  # 清单从 3 号文件描述符读，循环里的 simctl 读标准输入也吃不掉它。
+  while read -r name screen url <&3; do
+    if [[ -z "$name" ]]; then continue; fi
+    if [[ "$screen" == - ]]; then screen=""; fi
+    if [[ "$url" == - ]]; then url=""; fi
+    launch "$screen" "$url"
+    shot "${name}-${appearance}"
+  done 3<<EOF
+${shots}
+EOF
+done
 xcrun simctl ui "$udid" appearance light

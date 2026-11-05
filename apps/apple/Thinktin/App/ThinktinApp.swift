@@ -45,6 +45,9 @@ struct ThinktinApp: App {
                         if let url = AppConfiguration.launchURL(environment: environment) {
                             _ = model.router.handle(url: url)
                         }
+                        if let screen = AppConfiguration.openScreen(environment: environment) {
+                            await screen.open(in: model)
+                        }
                     #endif
                 }
         }

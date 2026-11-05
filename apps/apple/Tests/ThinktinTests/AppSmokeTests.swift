@@ -114,6 +114,73 @@ struct AppSmokeTests {
                 == "thinktin://approvals")
     }
 
+    @Test("截图用的启动参数：THINKTIN_OPEN_SCREEN 认六个页面，不分大小写，别的值不认")
+    func openScreenValues() {
+        let key = AppConfiguration.openScreenEnvironmentKey
+        #expect(key == "THINKTIN_OPEN_SCREEN")
+        #expect(
+            AppConfiguration.OpenScreen.allCases.map(\.rawValue)
+                == ["conversation", "plans", "artifacts", "settings", "search", "adopt"])
+        for screen in AppConfiguration.OpenScreen.allCases {
+            #expect(AppConfiguration.openScreen(environment: [key: screen.rawValue]) == screen)
+        }
+        #expect(AppConfiguration.openScreen(environment: [key: " Plans "]) == .plans)
+        #expect(AppConfiguration.openScreen(environment: [:]) == nil)
+        #expect(AppConfiguration.openScreen(environment: [key: ""]) == nil)
+        // 抽屉去掉了（规范 3.3），旧的截图参数不认。
+        #expect(AppConfiguration.openScreen(environment: [key: "drawer"]) == nil)
+        #expect(AppConfiguration.openScreen(environment: ["THINKTIN_OPEN_DRAWER": "1"]) == nil)
+    }
+
+    @Test("截图用的启动参数：每个页面的路由；对话、计划、产出物要有实例")
+    func openScreenRoutes() {
+        typealias Screen = AppConfiguration.OpenScreen
+        let id = "0192f3a0-0000-7000-8000-000000000101"
+        #expect(Screen.conversation.route(instanceID: .init(id)) == .conversation(.init(id)))
+        #expect(Screen.plans.route(instanceID: .init(id)) == .plans(instanceID: .init(id)))
+        #expect(Screen.artifacts.route(instanceID: .init(id)) == .artifacts(instanceID: .init(id)))
+        #expect(Screen.settings.route(instanceID: nil) == .settings)
+        #expect(Screen.search.route(instanceID: nil) == .search)
+        #expect(Screen.adopt.route(instanceID: nil) == .adopt(agentID: nil))
+        for screen in Screen.allCases {
+            #expect((screen.route(instanceID: nil) == nil) == screen.needsInstance)
+            // 不是实例的页面不管传不传实例都一样。
+            if !screen.needsInstance {
+                #expect(screen.route(instanceID: .init(id)) == screen.route(instanceID: nil))
+            }
+        }
+    }
+
+    @Test("截图用的启动参数：打开演示数据首页第一个实例（写作助手）的页面，返回栈和深链一样")
+    @MainActor
+    func openScreenInDemo() async {
+        let model = AppEnvironment.live().appModel
+        let router = model.router
+        // 实例列表还没拿到：实例的页面等不到就不打开，别的照样打开。
+        #expect(await AppConfiguration.OpenScreen.conversation.open(in: model, timeout: .zero) == nil)
+        #expect(router.path.isEmpty && router.sheet == nil)
+        #expect(await AppConfiguration.OpenScreen.settings.open(in: model, timeout: .zero) == .settings)
+        #expect(router.sheet == .settings)
+
+        await model.refresh()
+        let writer = "0192f3a0-0000-7000-8000-000000000101"
+        #expect(model.homeRows.first?.id.rawValue == writer)
+        #expect(await AppConfiguration.OpenScreen.conversation.open(in: model) == .conversation(.init(writer)))
+        #expect(router.sheet == nil)
+        #expect(router.path == [.conversation(.init(writer))])
+        #expect(router.currentInstanceID?.rawValue == writer)
+        await AppConfiguration.OpenScreen.plans.open(in: model)
+        #expect(router.path == [.conversation(.init(writer)), .plans(instanceID: .init(writer))])
+        await AppConfiguration.OpenScreen.artifacts.open(in: model)
+        #expect(router.path == [.conversation(.init(writer)), .artifacts(instanceID: .init(writer))])
+        // sheet 开在首页上；搜索回到首页、留一个首页还没处理的搜索请求。
+        await AppConfiguration.OpenScreen.adopt.open(in: model)
+        #expect(router.path.isEmpty && router.sheet == .adopt(agentID: nil))
+        await AppConfiguration.OpenScreen.search.open(in: model)
+        #expect(router.path.isEmpty && router.sheet == nil)
+        #expect(router.hasPendingSearchRequest)
+    }
+
     @Test("接口地址：没有、没展开、不是 http(s) 时用默认地址")
     func baseURLFallback() {
         let fallback = AppConfiguration.defaultBaseURL
