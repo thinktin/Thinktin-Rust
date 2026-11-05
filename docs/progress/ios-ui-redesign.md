@@ -511,6 +511,18 @@
   自画的卡片（审批、工具调用、发送前的拦截、运行详情的任务 / 信息 / 摘要 / 失败）从 `Card` 换成新的 `BubbleCard`（`Screens/Conversation/`，
   agent 气泡的灰、圆角 20、不画描边，规范 1.1 第 2 条“系统没有的才自己画”）。uicheck 桩加 `DisclosureGroup`（新文件
   `Stubs/SwiftUI/SwiftUI+Finishing.swift`）。
+- 第 1 轮收尾线·计划的新建 / 确认 / 触发器、添加 key 和 key 的小 sheet（D、E 线剩下的自画页；2026-11-05）：计划的新建 / 编辑换成 `Form`
+  （左上 `CloseButton`、右上 `ConfirmButton`；Botin、错过的怎么补是 `Picker(.inline)`，策略几项是 `Picker(.menu)`——`PlansMenuRow` 改成系统
+  `Picker`，预授权工具页是一组系统 `Toggle`；触发规则一行一条，右边红色减号也能左滑删）。确认页照计划详情排成分组列表（居中标题和说明，
+  改动 / 标题 / 目标 / 触发规则 / 策略 / 流水线各一组，改过的组标题后面标“改过”；“确认生效”是底部浮动的全宽胶囊，“修改后确认”、红字“删除”在
+  最后一组；已确认 / 不用确认 / 已删除 / 找不到换成 `ContentUnavailableView`）。触发器编辑器换成 `Form`（写法是第一行的筛选胶囊，时间日期是系统
+  `DatePicker` 行，周几、几号是一排玻璃圆按钮 `PlansDayToggle`，“工作日 / 周末 / 每天”是小玻璃胶囊，预览一组，接下来几次是
+  `LabeledContent`）；时区页换成分组列表（本机、常用、全部，选中打勾，没搜到 `ContentUnavailableView.search`）。`PlanPolicyRows`、
+  `PlanStepsView` 改成只出行，详情页和确认页共用（详情页原来自己写的两段删了）；`PlanTextBlock` 不再包卡片；新加 `PlansOptionLabel`
+  （行内单选的一项）、`PlansNoticeRow`（带色调图标的一句提示）；`PlansTextField` 删掉（都换成 `FormTextField`）。添加 key 换成 `Form`
+  （厂商一行一个、选中打勾，厂商说明一组，接口地址、key 各一组，数据去向的同意换成系统 `Toggle`，页尾的大按钮去掉、只留右上“保存”；加好了是
+  分组列表），key 详情的改备注、每日上限、换 key 三个小 sheet 换成 `Form`，`ModelsField` 去掉自画的框（标签在上），`ModelsFootnote`、
+  `ModelsOfflineNote` 删掉。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、

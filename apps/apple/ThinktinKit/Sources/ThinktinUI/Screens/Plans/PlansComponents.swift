@@ -3,8 +3,8 @@ import ThinktinKit
 
 // 计划管理（WBS 12.6）几个页面共用的小组件。名字都带 Plan / Plans 前缀，不和别的功能重名。
 //
-// 分组的卡片、行、小标题、提示、加载中、页面版式沿用 12.3 的 `GroupedSection`、`ListRow`、`SectionHeader`、
-// `InlineNotice`、`LoadingStateView`、`pageLayout()`（同一个模块里的通用写法，不另造一套）。
+// 改版后（规范 2.5）各页都是系统的 `List` / `Form`：这里的组件只是行的内容或几行（放进调用方的 `Section`），不画卡片底和描边。
+// 输入框用 `Components/FormFields.swift` 的 `FormTextField`，图标 + 标题 + 说明的行用 `LabeledRow`。
 
 extension PlanStatus {
     /// 状态的色调：待确认 `warning`，暂停 `inkTertiary`，规则失效 `danger`，按时运行 `accent`，不会再运行 `inkSecondary`。
@@ -197,7 +197,7 @@ struct PlanTriggerRow: View {
     }
 }
 
-/// 策略的几行（详情、确认页）。
+/// 策略的几行（详情、确认页）：`LabeledContent`，放进调用方的 `Section`（组标题、“错过的怎么补”的说明由调用方给）。
 struct PlanPolicyRows: View {
     let plan: Plan
 
@@ -206,37 +206,42 @@ struct PlanPolicyRows: View {
     var body: some View {
         let zh = language == .chinese
         let policy = plan.policy
-        GroupedSection {
-            ListRow(
-                systemImage: "checkmark.shield", title: zh ? "预授权的工具" : "Pre-approved tools",
-                detail: PlansText.toolsSummary(policy.preauthorizedTools, language: language),
-                detailTone: policy.preauthorizedTools.contains(where: PlansText.isRiskyTool) ? .waiting : nil)
-            Divider()
-            ListRow(
-                systemImage: "hand.raised", title: zh ? "审批" : "Approvals",
-                detail: PlansText.approvalSummary(policy, language: language))
-            Divider()
-            ListRow(
-                systemImage: "gauge.with.dots.needle.33percent", title: zh ? "每次运行的上限" : "Per-run limits",
-                detail: PlansText.budgetSummary(policy.budget, language: language))
-            Divider()
-            ListRow(
-                systemImage: "calendar.day.timeline.left", title: zh ? "每日 token 上限" : "Daily token limit",
-                detail: PlansText.dailyLimitSummary(policy.dailyTokenLimit, language: language))
-            Divider()
-            ListRow(
-                systemImage: "hourglass", title: zh ? "等待" : "Waiting",
-                detail: PlansText.waitSummary(policy, language: language))
-            Divider()
-            ListRow(
-                systemImage: "arrow.uturn.backward.circle", title: zh ? "错过的怎么补" : "Missed runs",
-                detail: PlansText.catchUpName(plan.catchUp, language: language)
-                    + (PlansText.catchUpDetail(plan.catchUp, language: language).map { (zh ? "：" : ": ") + $0 } ?? ""))
+        let risky = policy.preauthorizedTools.contains(where: PlansText.isRiskyTool)
+        LabeledContent {
+            Text(PlansText.toolsSummary(policy.preauthorizedTools, language: language))
+                .foregroundStyle(risky ? StatusTone.waiting.color : Theme.inkSecondary)
+        } label: {
+            Label(zh ? "预授权的工具" : "Pre-approved tools", systemImage: "checkmark.shield")
+        }
+        LabeledContent {
+            Text(PlansText.approvalSummary(policy, language: language))
+        } label: {
+            Label(zh ? "审批" : "Approvals", systemImage: "hand.raised")
+        }
+        LabeledContent {
+            Text(PlansText.budgetSummary(policy.budget, language: language))
+        } label: {
+            Label(zh ? "每次运行的上限" : "Per-run limits", systemImage: "gauge.with.dots.needle.33percent")
+        }
+        LabeledContent {
+            Text(PlansText.dailyLimitSummary(policy.dailyTokenLimit, language: language))
+        } label: {
+            Label(zh ? "每日 token 上限" : "Daily token limit", systemImage: "calendar.day.timeline.left")
+        }
+        LabeledContent {
+            Text(PlansText.waitSummary(policy, language: language))
+        } label: {
+            Label(zh ? "等待" : "Waiting", systemImage: "hourglass")
+        }
+        LabeledContent {
+            Text(PlansText.catchUpName(plan.catchUp, language: language))
+        } label: {
+            Label(zh ? "错过的怎么补" : "Missed runs", systemImage: "arrow.uturn.backward.circle")
         }
     }
 }
 
-/// 流水线的步骤（只读）：按依赖分层，每一步写在哪个实例上跑、提示词、依赖谁。
+/// 流水线的步骤（只读，详情、确认页）：按依赖分层，一步一行（第几批、键名和执行的 Botin、提示词、依赖谁），放进调用方的 `Section`。
 struct PlanStepsView: View {
     let plan: Plan
     let instanceName: (InstanceID) -> String
@@ -247,41 +252,33 @@ struct PlanStepsView: View {
         let zh = language == .chinese
         let stages = PipelineLayout.stages(plan.steps)
         let ai = PlansText.isAIGenerated(.stepPrompt, in: plan)
-        VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            ForEach(Array(stages.enumerated()), id: \.offset) { index, stage in
-                VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
+        ForEach(Array(stages.enumerated()), id: \.offset) { index, stage in
+            ForEach(stage) { step in
+                VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
                     Text(Self.stageTitle(index: index, parallel: stage.count > 1, language: language))
-                        .typography(.footnote)
-                        .foregroundStyle(Theme.inkSecondary)
-                        .accessibilityAddTraits(.isHeader)
-                    ForEach(stage) { step in
-                        Card(padding: Metrics.Spacing.s) {
-                            HStack(spacing: Metrics.Spacing.xs) {
-                                Text(verbatim: step.key)
-                                    .font(Typography.subheadline.monospacedFont)
-                                    .foregroundStyle(Theme.ink)
-                                Text(instanceName(step.instanceID))
-                                    .typography(.subheadline)
-                                    .foregroundStyle(Theme.inkSecondary)
-                                    .lineLimit(1)
-                            }
-                            Text(step.prompt)
-                                .typography(.body)
-                                .foregroundStyle(Theme.ink)
-                                .lineLimit(4)
-                            if ai { AIGeneratedLabel() }
-                            if !step.dependsOn.isEmpty {
-                                Text(
-                                    (zh ? "等这几步做完：" : "After: ")
-                                        + step.dependsOn.joined(separator: zh ? "、" : ", ")
-                                )
-                                .typography(.footnote)
-                                .foregroundStyle(Theme.inkTertiary)
-                            }
-                        }
-                        .accessibilityElement(children: .combine)
+                        .typography(.caption)
+                        .foregroundStyle(Theme.inkTertiary)
+                    HStack(spacing: Metrics.Spacing.xs) {
+                        Text(verbatim: step.key)
+                            .font(Typography.subheadline.monospacedFont)
+                            .foregroundStyle(Theme.ink)
+                        Text(instanceName(step.instanceID))
+                            .typography(.subheadline)
+                            .foregroundStyle(Theme.inkSecondary)
+                            .lineLimit(1)
+                    }
+                    Text(step.prompt)
+                        .typography(.body)
+                        .foregroundStyle(Theme.ink)
+                        .lineLimit(4)
+                    if ai { AIGeneratedLabel() }
+                    if !step.dependsOn.isEmpty {
+                        Text((zh ? "等这几步做完：" : "After: ") + step.dependsOn.joined(separator: zh ? "、" : ", "))
+                            .typography(.footnote)
+                            .foregroundStyle(Theme.inkTertiary)
                     }
                 }
+                .accessibilityElement(children: .combine)
             }
         }
     }
@@ -361,7 +358,7 @@ struct PlanRunRow: View {
     }
 }
 
-/// 一段文字（目标），可以带“改过”标记和 AI 生成标识。
+/// 一段文字（目标），是分组列表里一行的内容，可以带“改过”标记和 AI 生成标识。
 struct PlanTextBlock: View {
     let text: String
     var isAIGenerated = false
@@ -370,7 +367,7 @@ struct PlanTextBlock: View {
     @Environment(\.displayLanguage) private var language
 
     var body: some View {
-        Card {
+        VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
             if isChanged { PlanChangedTag() }
             Text(text)
                 .typography(.body)
@@ -378,6 +375,7 @@ struct PlanTextBlock: View {
                 .fixedSize(horizontal: false, vertical: true)
             if isAIGenerated { AIGeneratedLabel() }
         }
+        .padding(.vertical, Metrics.Spacing.xxs)
         .accessibilityElement(children: .combine)
     }
 }
@@ -393,83 +391,7 @@ struct PlanChangedTag: View {
     }
 }
 
-/// 输入框（单行或多行）加字数和问题提示：标题、目标、数字框都用它。
-struct PlansTextField: View {
-    let title: String
-    let text: Binding<String>
-    var prompt: String?
-    var multiline = false
-    /// 字数上限（显示“12/100”）；nil 不显示。
-    var limit: Int?
-    var count: Int = 0
-    var problem: String?
-    var hint: String?
-    var numeric = false
-    /// 等宽字体（cron、RRULE）。
-    var monospaced = false
-
-    @Environment(\.displayScale) private var displayScale
-
-    var body: some View {
-        let shape = RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous)
-        VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
-            Text(title)
-                .typography(.footnote)
-                .foregroundStyle(Theme.inkSecondary)
-                .accessibilityHidden(true)
-            field
-                .textFieldStyle(.plain)
-                .font(monospaced ? Typography.body.monospacedFont : Typography.body.font)
-                .foregroundStyle(Theme.ink)
-                .padding(.horizontal, Metrics.Spacing.s)
-                .padding(.vertical, multiline ? Metrics.Spacing.s : 0)
-                .frame(minHeight: Metrics.minTapTarget)
-                .background(Theme.paperElevated, in: shape)
-                .overlay {
-                    shape.strokeBorder(
-                        problem == nil ? Theme.hairline : StatusTone.failure.color,
-                        lineWidth: Metrics.hairline(scale: displayScale))
-                }
-                .accessibilityLabel(Text(title))
-                .accessibilityHint(Text(problem ?? hint ?? ""))
-            HStack(alignment: .firstTextBaseline) {
-                if let message = problem ?? hint {
-                    Text(message)
-                        .typography(.footnote)
-                        .foregroundStyle(problem == nil ? Theme.inkSecondary : StatusTone.failure.color)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: Metrics.Spacing.xs)
-                if let limit {
-                    Text(verbatim: "\(count)/\(limit)")
-                        .typography(.caption)
-                        .monospacedDigit()
-                        .foregroundStyle(count > limit ? StatusTone.failure.color : Theme.inkTertiary)
-                }
-            }
-            .accessibilityHidden(true)
-        }
-    }
-
-    @ViewBuilder
-    private var field: some View {
-        if multiline {
-            TextField(title, text: text, prompt: prompt.map { Text($0) }, axis: .vertical)
-                .lineLimit(3...12)
-                .plansCodeInput(monospaced)
-        } else if numeric {
-            TextField(title, text: text, prompt: prompt.map { Text($0) })
-                .plansNumberInput()
-        } else if monospaced {
-            TextField(title, text: text, prompt: prompt.map { Text($0) })
-                .plansCodeInput()
-        } else {
-            TextField(title, text: text, prompt: prompt.map { Text($0) })
-        }
-    }
-}
-
-/// 在几个选项里选一个（超时时长、超时后的动作、补跑方式）：一行标题和当前值，点开是菜单。
+/// 在几个选项里选一个（超时时长、超时后的动作、补跑方式）：系统的 `Picker(.menu)`，左边图标、标题和一行说明，右边当前值。
 struct PlansMenuRow<Value: Hashable>: View {
     let systemImage: String
     let title: String
@@ -479,79 +401,67 @@ struct PlansMenuRow<Value: Hashable>: View {
     var detail: String?
 
     var body: some View {
-        Menu {
+        Picker(selection: selection) {
             ForEach(options, id: \.self) { option in
-                Button {
-                    selection.wrappedValue = option
-                } label: {
-                    if option == selection.wrappedValue {
-                        Label(name(option), systemImage: "checkmark")
-                    } else {
-                        Text(name(option))
-                    }
-                }
+                Text(name(option)).tag(option)
             }
         } label: {
-            HStack(alignment: .firstTextBaseline, spacing: Metrics.Spacing.s) {
-                Image(systemName: systemImage)
-                    .foregroundStyle(Theme.inkSecondary)
-                    .frame(minWidth: Metrics.Spacing.xl)
-                    .accessibilityHidden(true)
+            Label {
                 VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
                     Text(title)
-                        .typography(.body)
                         .foregroundStyle(Theme.ink)
                     if let detail {
                         Text(detail)
-                            .typography(.footnote)
+                            .font(.footnote)
                             .foregroundStyle(Theme.inkSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                Spacer(minLength: Metrics.Spacing.xs)
-                Text(name(selection.wrappedValue))
-                    .typography(.body)
-                    .foregroundStyle(Theme.accent)
-                    .multilineTextAlignment(.trailing)
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(Typography.footnote.font)
-                    .foregroundStyle(Theme.inkTertiary)
-                    .accessibilityHidden(true)
+            } icon: {
+                Image(systemName: systemImage)
+                    .foregroundStyle(Theme.inkSecondary)
             }
-            .padding(.horizontal, Metrics.Spacing.m)
-            .padding(.vertical, Metrics.Spacing.s)
-            .frame(minHeight: Metrics.minTapTarget)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .accessibilityElement(children: .combine)
-        .accessibilityValue(Text(name(selection.wrappedValue)))
+        .pickerStyle(.menu)
     }
 }
 
-extension View {
-    /// 数字输入框：iOS 上是数字键盘。
-    func plansNumberInput() -> some View {
-        #if canImport(UIKit)
-            self.keyboardType(.numberPad)
-        #else
-            self
-        #endif
-    }
+/// 行内单选（`Picker(.inline)`）的一项：标题和一行灰色说明，是一个视图（`.tag` 要加在它上面，不能拆成两个 `Text`）。
+struct PlansOptionLabel: View {
+    let title: String
+    var detail: String?
 
-    /// 代码一类的输入（cron、RRULE）：iOS 上用英文键盘（不出中文输入法）。`enabled` 为 false 时不变。
-    @ViewBuilder
-    func plansCodeInput(_ enabled: Bool = true) -> some View {
-        #if canImport(UIKit)
-            if enabled {
-                self.keyboardType(.asciiCapable)
-            } else {
-                self
+    var body: some View {
+        VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
+            Text(title)
+                .foregroundStyle(Theme.ink)
+            if let detail {
+                Text(detail)
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-        #else
-            self
-        #endif
+        }
+    }
+}
+
+/// 分组列表里的一句提示（等你确认、有风险、流水线、部分保存）：按语气上色的图标加一段话，就是一行，不画底。
+struct PlansNoticeRow: View {
+    let systemImage: String
+    let tone: StatusTone
+    let text: String
+
+    var body: some View {
+        Label {
+            Text(text)
+                .typography(.subheadline)
+                .foregroundStyle(Theme.ink)
+                .fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: systemImage)
+                .foregroundStyle(tone.color)
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 

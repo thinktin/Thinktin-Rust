@@ -340,40 +340,8 @@ private struct PlanDetailContent: View {
 
     private func policySection(_ plan: Plan) -> some View {
         let zh = language == .chinese
-        let policy = plan.policy
-        let risky = policy.preauthorizedTools.contains(where: PlansText.isRiskyTool)
         return Section {
-            LabeledContent {
-                Text(PlansText.toolsSummary(policy.preauthorizedTools, language: language))
-                    .foregroundStyle(risky ? StatusTone.waiting.color : Theme.inkSecondary)
-            } label: {
-                Label(zh ? "预授权的工具" : "Pre-approved tools", systemImage: "checkmark.shield")
-            }
-            LabeledContent {
-                Text(PlansText.approvalSummary(policy, language: language))
-            } label: {
-                Label(zh ? "审批" : "Approvals", systemImage: "hand.raised")
-            }
-            LabeledContent {
-                Text(PlansText.budgetSummary(policy.budget, language: language))
-            } label: {
-                Label(zh ? "每次运行的上限" : "Per-run limits", systemImage: "gauge.with.dots.needle.33percent")
-            }
-            LabeledContent {
-                Text(PlansText.dailyLimitSummary(policy.dailyTokenLimit, language: language))
-            } label: {
-                Label(zh ? "每日 token 上限" : "Daily token limit", systemImage: "calendar.day.timeline.left")
-            }
-            LabeledContent {
-                Text(PlansText.waitSummary(policy, language: language))
-            } label: {
-                Label(zh ? "等待" : "Waiting", systemImage: "hourglass")
-            }
-            LabeledContent {
-                Text(PlansText.catchUpName(plan.catchUp, language: language))
-            } label: {
-                Label(zh ? "错过的怎么补" : "Missed runs", systemImage: "arrow.uturn.backward.circle")
-            }
+            PlanPolicyRows(plan: plan)
         } header: {
             Text(zh ? "策略" : "Policy").textCase(nil)
         } footer: {
@@ -384,38 +352,8 @@ private struct PlanDetailContent: View {
 
     private func stepsSection(_ plan: Plan) -> some View {
         let zh = language == .chinese
-        let stages = PipelineLayout.stages(plan.steps)
-        let ai = PlansText.isAIGenerated(.stepPrompt, in: plan)
         return Section {
-            ForEach(Array(stages.enumerated()), id: \.offset) { index, stage in
-                ForEach(stage) { step in
-                    VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
-                        Text(PlanStepsView.stageTitle(index: index, parallel: stage.count > 1, language: language))
-                            .typography(.caption)
-                            .foregroundStyle(Theme.inkTertiary)
-                        HStack(spacing: Metrics.Spacing.xs) {
-                            Text(verbatim: step.key)
-                                .font(Typography.subheadline.monospacedFont)
-                                .foregroundStyle(Theme.ink)
-                            Text(instanceName(step.instanceID))
-                                .typography(.subheadline)
-                                .foregroundStyle(Theme.inkSecondary)
-                                .lineLimit(1)
-                        }
-                        Text(step.prompt)
-                            .typography(.body)
-                            .foregroundStyle(Theme.ink)
-                            .lineLimit(4)
-                        if ai { AIGeneratedLabel() }
-                        if !step.dependsOn.isEmpty {
-                            Text((zh ? "等这几步做完：" : "After: ") + step.dependsOn.joined(separator: zh ? "、" : ", "))
-                                .typography(.footnote)
-                                .foregroundStyle(Theme.inkTertiary)
-                        }
-                    }
-                    .accessibilityElement(children: .combine)
-                }
-            }
+            PlanStepsView(plan: plan, instanceName: instanceName)
             Button {
                 router.open(.pipelineEditor(planID: plan.id, teamID: nil))
             } label: {
