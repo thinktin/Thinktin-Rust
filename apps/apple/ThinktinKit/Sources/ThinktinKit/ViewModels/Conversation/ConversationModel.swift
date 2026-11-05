@@ -73,6 +73,9 @@ public final class ConversationModel {
 
     /// 输入框里的文字。
     public var draft = ""
+    /// 引用回复（规范 4.3.5、6.11 A，纯客户端）：长按消息选“引用回复”记下的原文（`setQuote`）。发送时拼成 Markdown
+    /// 引用块放在正文前（`outgoingText`），算进字数、照样过密码检测；发出去以后清掉。
+    public internal(set) var quotedText: String?
     public internal(set) var isSending = false
     public internal(set) var sendError: ClientError?
     /// 发送前拦下了像密码的内容：弹保险箱表单。

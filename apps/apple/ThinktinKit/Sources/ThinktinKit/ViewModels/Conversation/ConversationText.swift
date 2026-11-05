@@ -80,6 +80,44 @@ public enum ConversationText {
     }
     /// 失败、取消的运行状态行上的按钮。
     public static func retry(_ language: DisplayLanguage) -> String { language == .chinese ? "重试" : "Retry" }
+    public static func quoteReply(_ language: DisplayLanguage) -> String {
+        language == .chinese ? "引用回复" : "Reply with Quote"
+    }
+    public static func selectText(_ language: DisplayLanguage) -> String {
+        language == .chinese ? "选择文本" : "Select Text"
+    }
+    public static func copyRunID(_ language: DisplayLanguage) -> String {
+        language == .chinese ? "复制运行 ID" : "Copy Run ID"
+    }
+
+    // MARK: 引用回复（4.3.5）
+
+    /// 输入框上引用条的 ×。
+    public static func removeQuote(_ language: DisplayLanguage) -> String {
+        language == .chinese ? "取消引用" : "Remove quote"
+    }
+
+    /// 引用条、消息里那一小块引用的读屏。
+    public static func quoteAccessibility(_ quote: String, language: DisplayLanguage) -> String {
+        (language == .chinese ? "引用：" : "Quoting: ") + MessageQuote.preview(quote)
+    }
+
+    // MARK: 导航栏（4.3.1、4.3.2）
+
+    /// 导航栏中间的头像 + 名字（点了进 Botin 资料）的读屏提示。
+    public static func titleHint(_ language: DisplayLanguage) -> String {
+        language == .chinese ? "打开 Botin 资料" : "Opens Botin details"
+    }
+
+    /// 右上“…”的读屏标签。
+    public static func moreActions(_ language: DisplayLanguage) -> String {
+        language == .chinese ? "更多操作" : "More"
+    }
+
+    /// “…”菜单里停止正在跑的任务。
+    public static func stopRun(_ language: DisplayLanguage) -> String {
+        language == .chinese ? "停止当前任务" : "Stop Current Task"
+    }
 
     /// 没有过程记录的运行，结果（`Run.summary`）上面的小标题。
     public static func resultLabel(_ language: DisplayLanguage) -> String {
@@ -411,6 +449,54 @@ public enum ConversationText {
     public static func emptyMessage(_ language: DisplayLanguage) -> String {
         language == .chinese
             ? "发一条消息就会开始运行，过程和结果都会显示在这里。" : "Send a message to start a run. Every step and the result show up here."
+    }
+
+    /// 还没有任务时顶上那个气泡（参考 118 的欢迎语；不是 Botin 说的，是 App 的说明，所以不带“AI 生成”标识）。
+    public static func welcome(instanceName: String?, language: DisplayLanguage) -> String {
+        let title = emptyTitle(instanceName: instanceName, language: language)
+        return language == .chinese ? title + "。" + emptyMessage(language) : title + ". " + emptyMessage(language)
+    }
+
+    /// 示例任务卡片的标题（参考 118 的选择卡）。
+    public static func starterTitle(instanceName: String?, language: DisplayLanguage) -> String {
+        let zh = language == .chinese
+        if let instanceName, !instanceName.isEmpty {
+            return zh ? "想让 \(instanceName) 先帮你做什么？" : "What should \(instanceName) help with first?"
+        }
+        return zh ? "想让它先帮你做什么？" : "What should it help with first?"
+    }
+
+    /// 示例任务（点一个放进输入框）。按引擎无关的通用任务写；以后按引擎目录里的介绍换（6.18）。
+    public static func starterSuggestions(_ language: DisplayLanguage) -> [String] {
+        switch language {
+        case .chinese:
+            ["整理这周的工作，写成一份周报", "查一个主题的资料，写成简报", "每天早上把当天要做的事发给我", "看看我的代码仓库，列出要修的问题"]
+        case .english:
+            [
+                "Turn this week's work into a status report", "Research a topic and write me a brief",
+                "Send me my to-do list every morning", "Look through my code repository and list what needs fixing",
+            ]
+        }
+    }
+
+    /// 示例卡片下面的小字。
+    public static func starterFooter(_ language: DisplayLanguage) -> String {
+        language == .chinese ? "也可以在下面直接写" : "Or type your own below"
+    }
+
+    /// 示例卡片右上的 ×。
+    public static func starterDismiss(_ language: DisplayLanguage) -> String {
+        language == .chinese ? "收起示例" : "Hide suggestions"
+    }
+
+    /// 示例任务的读屏提示。
+    public static func starterHint(_ language: DisplayLanguage) -> String {
+        language == .chinese ? "放进输入框" : "Puts it in the message field"
+    }
+
+    /// 还没配默认模型时卡片的标题。
+    public static func setupTitle(_ language: DisplayLanguage) -> String {
+        language == .chinese ? "开始之前" : "Before you start"
     }
 
     /// 还没有任务、也没配默认模型（刚新建的 Botin 就是这样）：空状态下面的一句提示（以前在新建后的“建好了”页上，
