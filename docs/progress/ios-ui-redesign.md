@@ -329,6 +329,38 @@
   - 这一份的 Linux 检查（2026-11-05，最后一次提交上）：ThinktinKit `swift test` 1048 个全过；uicheck UIKit、AppKit 都编过；
     `run.sh test` 141 个全过；App 的 `ThinktinTests` 21 个过 16 个（还是那 5 个要 App 包的）；`swift format -i -r apps/apple` 后
     `swift format lint --strict -r apps/apple` 零条。macOS CI 和截图还没跑。
+- 第 1 轮 C 线·Botin 资料和引擎（规范 4.4.1–4.4.4、4.6.1、4.7.1 末尾、4.8.3、4.8.4；对过参考 09、10、12、18、65、27、28、101、104、
+  105、106、107、52；提交 `4ef102d`、`71bf2a9`、`2828a6d` 和这一条）：
+  - 视图模型（ThinktinKit `ViewModels/Agents/`）：新文件 `InstanceProfile.swift`：`InstanceDetailModel.activePlanCount`（没暂停、
+    不在等确认的）、`plansAwaitingConfirmation`、`upgradeOption`（最新的比现在新，或现在的下架了）、`switchableVersions`（只有一个版本时为空）；
+    `InstanceRouteStatus.defaultModelValue`（main 的上游模型 /“未配置”/ 没拉到 nil）；`InstanceProfileText`、`InstanceWorkspaceText`；
+    “…”菜单 `InstanceProfileMenu` / `InstanceProfileMenuItem`（复制 ID；模型路由、新建计划；删除，`needsConnection`）；工作区说明
+    `WorkspaceHelp`（状态四种 + 版本三条，状态名由界面传进来，和状态点旁边的字一致）。新文件 `InstanceAppearanceEditor.swift`（改头像：
+    从记下的开始、`hasChanges`、`reset()`、`save()` 默认的删掉记录）。`AgentCatalogCard` 加 `isAvailable`、`rowSubtitle`、`actionTitle`、
+    `actionAccessibilityLabel`。测试 `InstanceProfileTests`（9 条）。
+  - 界面（`Screens/Agents/`）：`InstanceDetailScreen` 重写成 insetGrouped `List`（头部 80pt 头像 + 状态角标、名字、玻璃胶囊“编辑”；计划 /
+    产出物 / 工作区；默认模型；所在团队；信息；右上“打开对话”圆 + `GlassToolbarSpacer(.fixed)` +“…”）；新 `InstanceEditScreen.swift`
+    （编辑页：铅笔头像、“名称”、“外观 › 头像”，右上“完成”；`InstanceAvatarScreen` 改头像页）；新 `AvatarPicker.swift`（从新建表单挪出来
+    共用，带可选的 footer）；新 `InstanceWorkspaceScreen.swift`（升级行、状态、引擎组和“换到别的版本”、右上“?”的 `WorkspaceHelpSheet`）；
+    `InstanceDeleteSheet` 换成 `List` + 浮动的红色整宽胶囊 + `CloseButton`；`AgentCatalogScreen` 换成 plain 列表的 `EngineRow`
+    （`EngineIcon` 40pt 圆角方块）+“选这个”胶囊，点行弹 `AgentDetailScreen` 的 sheet；`AgentDetailScreen` 换成插件详情的版式
+    （`AgentDetailAction`，sheet 时交给目录在 `onDismiss` 里走路由）。这个目录共用的小帮手放在 `InstanceDetailScreen.swift` 末尾：
+    `AgentsToolbar.trailing`、`insetGroupedList()`（macOS 是 `.inset`）、`clearListRow()`、`InstanceWorkspacePreview`。
+    删掉：`InstanceRenameSheet`、`AgentsNameField`、`InstanceHeader`、`InstanceVersionRow`、`InstancePlanRow`、`AgentCatalogCardView`。
+  - uicheck 桩：`SwiftUI+Agents.swift` 加 `dynamicTypeSize(_:)` 的范围版本。`InsetGroupedListStyle` 早就有（`SwiftUI+Lists.swift`），别再加。
+  - 测试：`AgentsScreensTests` 的“改名表单”换成“编辑页、头像页、工作区和它的说明”，加“引擎详情当 sheet”，卡片换成 `EngineRow`。
+  - 和参考对不上、自己定的（等用户看）：资料页右上第一个圆参考是分享，这里放“打开对话”；参考的“通知”开关（6.14）、头像页的“生成 / 上传”
+    分段、编辑页的“语音通话”组没做；资料页、编辑页、头像页的头像按参考量出来是 80pt（规范 2.4 写的 120 / 100 没改令牌，页面里用
+    `ProfileAvatarMetrics.size`）；资料页多了“默认模型”“所在团队”“信息”三组（ThinkTin 有、参考没有）；工作区页参考是“重置电脑”“磁盘空间”
+    （要后端），这里是升级 / 状态 / 版本；引擎行上不再写“N 个 Botin 在用”（详情里列出来）。
+  - 要在模拟器上看的（Linux 的桩看不出来）：资料页导航栏中间空着时 iOS 26 会不会把右上两个圆挤到别处；`navigationDestination(isPresented:)`
+    挂在 `List` 上、在 sheet 的栈里（领养 → 目录 → 详情 → Botin 资料 → 编辑）压不压得进去；编辑页 `Form` 里按钮做的“头像”行和系统
+    `NavigationLink` 的箭头像不像；`InstanceAvatar` 加 `.dynamicTypeSize(...xxxLarge)` 之后角标还在不在轮廓上；引擎详情 sheet 在
+    medium 档时底部胶囊浮在内容上的样子；目录行里玻璃小胶囊和整行按钮是不是各点各的；删除确认页红色 `.prominent` 胶囊在 iOS 26 玻璃上
+    的颜色。
+  - 这一份的 Linux 检查（2026-11-05，最后一次提交上）：ThinktinKit `swift test` 1056 个全过；uicheck UIKit、AppKit 都编过；`run.sh test`
+    142 个全过；App 的 `ThinktinTests` 21 个过 16 个（还是那 5 个要 App 包的：Info.plist 两条、隐私清单、小组件扩展、缓存路径）；
+    `swift format -i -r apps/apple` 后 `swift format lint --strict -r apps/apple` 零条。macOS CI 和截图还没跑。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、
@@ -339,10 +371,7 @@
 新建时选它用哪个 agent 当引擎，同一个 agent 可以给好几个 Botin 当引擎（服务端只限每个账号的实例数）。agent 在界面上只以 Botin 的“引擎”/“Engine”出现。
 首次登录首页是空的，空状态“还没有 Botin”+ 说明 + “新建 Botin”按钮。代码里的标识符（`Instance`、`AppRoute.adopt`、`adopt(...)`）不改。
 
-进行中：第 1 轮 C 线（Botin 资料、编辑、头像、工作区、引擎目录和详情；规范 4.4、4.6.1、4.7.1 末尾；参考 09、10、12、18、65、27、28、101–107），
-本会话（session_01GuCp3KRgqaK6Kzynw6udRn）2026-11-05 开始。B 线做完了，见“已完成”。
-  C 线已推送：ThinktinKit 的 `InstanceProfile.swift`、`InstanceAppearanceEditor`、目录行的帮手（`4ef102d`）；Botin 资料（List 版式、
-  “…”菜单）、编辑页、头像页、工作区页和说明、删除确认页（这一提交）。还差：引擎目录换列表行、引擎详情换插件详情的 sheet 版式。
+进行中：没有（第 1 轮 B 线、C 线 2026-11-05 做完，见“已完成”）。
 验证和发版（2026-11-05，session_01GuCp3KRgqaK6Kzynw6udRn）：GitHub 的 Mac 一直排不上，改用 Codemagic（`.github/workflows/codemagic.yml`：
 把提交推到 `codemagic/apple-check` / `codemagic/ios-screenshots`）。第 0 轮（bbdb07c）、Botin 版（06894fd）、新建页重做（c78064e）
 的 apple-check 都过了（真 Xcode：模拟器 build + test、ThinktinMac、Kit 的 macOS 测试）。截图对照参考 34、35 后又调了两次版式：
@@ -368,7 +397,8 @@ TestFlight：28（Botin 改名、空状态，旧表单）、30（新建页重做
    `ios-screenshots-ios18.6`；镜像里没有那个运行时脚本会先下载（`xcodebuild -downloadPlatform iOS -buildVersion 18.6`，没在 CI 上跑过，
    失败的话看日志换版本号）。顺带看 09-search 里搜索栏有没有激活（iOS 26 底部条，见“已完成”审查修正那条）。和参考截图并排看
    （参考截图在仓库外，要请用户再发），差别记到这里。冷启动后的启动屏截不到，要在模拟器或真机上看一眼。
-3. 第 1 轮五条线并行（规范 7.3，开工前先在这里认领）；第 2 轮纯客户端新功能；第 3 轮等后端。A 线（首页）接着做：长按菜单（4.2.2）、
+3. 第 1 轮五条线并行（规范 7.3，开工前先在这里认领）；第 2 轮纯客户端新功能；第 3 轮等后端。B、C 线做完了；C 线没做的只剩要后端的
+   （资料页“通知”开关 6.14、工作区重置和磁盘 6.17、观看与接管 4.6.2、头像的生成和上传、多端同步 6.9 B）。A 线（首页）接着做：长按菜单（4.2.2）、
    “等你处理”提示行、预览换成最近一次运行的摘要（6.7）、`SearchResultsView` 嵌进首页（D 线先交）、空查询时列实例、`NewTaskSheet`
    换选择器版式（4.4.5）。B 线（对话页）做完了，接着可以做第 2 轮的对话内查找（4.3.3，“…”菜单第一组 Botin 资料后面加一项）。
 
@@ -423,6 +453,11 @@ TestFlight：28（Botin 改名、空状态，旧表单）、30（新建页重做
 - 对话页的菜单项改 ThinktinKit 的 `ConversationMenu`（“…”）和 `MessageMenuLayout`（长按），界面照着画；加了项要补 `systemImage`
   （`ConversationMenuItem` 认不出的路由是兜底的 `chevron.right`，测试会抓）。长按菜单统一用 `messageMenu(_:previewShape:)`，
   别再直接 `.contextMenu`（读屏操作、选择文本的 sheet、触感都在那个修饰符里）。
+- Botin 资料这一组：编辑页、头像页、工作区页都是本地压进去的（`navigationDestination(isPresented:)` / `NavigationLink(destination:)`），
+  没有路由，深链进不来；要从别处直达再加 `AppRoute`。资料页的“…”菜单项改 ThinktinKit 的 `InstanceProfileMenu`，加了项要补 `systemImage`
+  和 `needsConnection`。改头像只存这台设备（`InstanceAppearanceEditor.save()`），服务端加字段后改这里。
+- 引擎详情从目录弹的是本地 sheet，按钮的操作要等 sheet 关掉（`onDismiss`）再走路由：sheet 还开着时 `router.open(.adopt…)` 弹第二张会被系统
+  丢掉。`.agent(id)` 路由现在没有界面入口，留给以后的深链。
 - 引用回复是纯客户端的：发出去的就是带 `> ` 的 Markdown，服务端不知道回的是哪条（6.11 B 要后端）。要改拼法改 `MessageQuote`，
   `split` 要能拆回 `compose` 拼的样子（测试里有）。
 - 输入框（`ComposerBar`）的结构是固定的（引用条、输入行、卡片的按钮行都是可有可无的一项），切换引用时输入框不重建、不丢焦点；
