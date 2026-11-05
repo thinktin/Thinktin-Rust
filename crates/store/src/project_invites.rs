@@ -903,61 +903,6 @@ impl Tx<Worker> {
         Ok(())
     }
 
-    /// 删没共享过的单人项目（一个事务、在项目锁里）：还没处理的邀请先撤回、送达的提醒标已读（不然邀请跟着级联删掉以后
-    /// 它们一直未读、点开 404），再删项目（成员、agent、邀请、密钥级联删掉，实例留着）。只有创建者（成员 NotPermitted，
-    /// 外人 NotFound）；共享过的 Conflict（8.15 起改成软删除）。返回撤回了几个邀请。
-    pub async fn delete_unshared_project(
-        &mut self,
-        user: UserId,
-        project: ProjectId,
-    ) -> Result<u64> {
-        let invitees: Vec<UserId> = sqlx::query_scalar::<_, Uuid>(
-            "SELECT DISTINCT invitee_id FROM project_invites \
-              WHERE project_id = $1 AND status = 'pending' AND invitee_id IS NOT NULL",
-        )
-        .bind(project.0)
-        .fetch_all(self.conn())
-        .await?
-        .into_iter()
-        .map(UserId)
-        .collect();
-        let actor = self
-            .project_actor(user, project, &invitees, &[ProjectStatus::Active])
-            .await?;
-        actor.require_creator("delete the project")?;
-        let shared: bool =
-            sqlx::query_scalar("SELECT shared_at IS NOT NULL FROM projects WHERE id = $1")
-                .bind(project.0)
-                .fetch_one(self.conn())
-                .await?;
-        if shared {
-            return Err(Error::Conflict("project is shared".into()));
-        }
-        let revoked: Vec<(Uuid, Option<Uuid>)> = sqlx::query_as(
-            "UPDATE project_invites SET status = 'revoked', settled_at = now() \
-              WHERE project_id = $1 AND status = 'pending' RETURNING id, invitee_id",
-        )
-        .bind(project.0)
-        .fetch_all(self.conn())
-        .await?;
-        // 开头读到的送达人锁着，直接改；这期间新送达的（锁之后才有的）不等锁。
-        let (locked, other): (Vec<_>, Vec<_>) = revoked
-            .iter()
-            .copied()
-            .partition(|(_, u)| u.is_some_and(|u| invitees.contains(&UserId(u))));
-        for (id, u) in &locked {
-            if let Some(u) = u {
-                self.read_invite_items(UserId(*u), &[*id]).await?;
-            }
-        }
-        self.read_invite_items_nowait(&other).await?;
-        sqlx::query("DELETE FROM projects WHERE id = $1")
-            .bind(project.0)
-            .execute(self.conn())
-            .await?;
-        Ok(revoked.len() as u64)
-    }
-
     /// 后台：到期的待处理邀请标成过期，送达的提醒标已读。不等锁（别人锁着的下一轮再说），返回标了几条。
     pub async fn expire_project_invites(&mut self, batch: u64) -> Result<u64> {
         let rows: Vec<(Uuid, Option<Uuid>)> = sqlx::query_as(

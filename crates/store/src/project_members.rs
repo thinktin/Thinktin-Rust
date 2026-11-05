@@ -418,6 +418,8 @@ impl Tx<Worker> {
         .bind(reason)
         .execute(self.conn())
         .await?;
+        // 退出以后这个项目的提醒（回执除外）就看不到了：标已读，角标不留着（D23；他的用户行锁着）。
+        self.read_project_notices(project, &[member], false).await?;
         Ok(Exit {
             project,
             project_name: self.project_name(project).await?,

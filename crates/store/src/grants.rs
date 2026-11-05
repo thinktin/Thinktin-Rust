@@ -252,6 +252,22 @@ impl Tx<Worker> {
         Ok(done.rows_affected())
     }
 
+    /// 吊销一个项目里的全部授权，连同子授权（8.15 删除、归档、注销创建者）。
+    pub async fn revoke_project_grants(&mut self, project: ProjectId, reason: &str) -> Result<u64> {
+        let done = sqlx::query(
+            "WITH RECURSIVE tree AS ( \
+               SELECT id FROM run_grants WHERE project_id = $1 \
+               UNION SELECT g.id FROM run_grants g JOIN tree t ON g.parent_id = t.id) \
+             UPDATE run_grants SET revoked_at = now(), revoke_reason = $2 \
+             WHERE id IN (SELECT id FROM tree) AND revoked_at IS NULL",
+        )
+        .bind(project.0)
+        .bind(reason)
+        .execute(self.conn())
+        .await?;
+        Ok(done.rows_affected())
+    }
+
     /// 吊销一个成员在项目里的全部授权，连同子授权（8.14 退出、移出）。
     pub async fn revoke_project_member_grants(
         &mut self,

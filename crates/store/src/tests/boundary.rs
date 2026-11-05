@@ -1128,3 +1128,587 @@ async fn inbox_project_is_derived() {
     assert!(matches!(err, Error::Invalid(_)), "{err:?}");
     tb.rollback().await.unwrap();
 }
+
+async fn worker_do<T>(
+    db: &Db,
+    f: impl AsyncFnOnce(&mut crate::Tx<crate::Worker>) -> crate::Result<T>,
+) -> crate::Result<T> {
+    let mut w = db.worker().await.unwrap();
+    let r = f(&mut w).await;
+    match &r {
+        Ok(_) => w.commit().await.unwrap(),
+        Err(_) => w.rollback().await.unwrap(),
+    }
+    r
+}
+
+async fn scalar(db: &Db, sql: &str, id: uuid::Uuid) -> i64 {
+    sqlx::query_scalar(sqlx::AssertSqlSafe(sql.to_string()))
+        .bind(id)
+        .fetch_one(db.pool())
+        .await
+        .unwrap()
+}
+
+/// R 上放一条事件、一个产出物（项目有了密钥）、一条 bob 的运行提醒、一条回执。
+async fn fill_project(
+    db: &Db,
+    bob: UserId,
+    p: ProjectId,
+    b1: &Instance,
+    r: proto::domain::RunId,
+) -> (proto::domain::InboxItemId, proto::domain::InboxItemId) {
+    let mut w = db.worker().await.unwrap();
+    w.append_event(
+        b1.id,
+        Some(r),
+        "agent.message",
+        &serde_json::json!({ "text": "x" }),
+    )
+    .await
+    .unwrap();
+    w.insert_project_key(p, "kms-1", b"wrapped").await.unwrap();
+    w.insert_artifact(&crate::NewArtifact {
+        id: proto::domain::ArtifactId::new(),
+        user: bob,
+        instance: b1.id,
+        run: r,
+        root: r,
+        name: "out.md",
+        content_type: "text/markdown",
+        size: 1,
+        sha256: &[2; 32],
+        blob_key: "project-blob",
+        project: Some(p),
+    })
+    .await
+    .unwrap();
+    let base = crate::NewInboxItem {
+        kind: "info".into(),
+        title: "t".into(),
+        body: "b".into(),
+        ..crate::NewInboxItem::default()
+    };
+    let notice = w
+        .insert_inbox(
+            bob,
+            &crate::NewInboxItem {
+                run_id: Some(r),
+                ..base.clone()
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let receipt = w
+        .insert_inbox(
+            bob,
+            &crate::NewInboxItem {
+                project_id: Some(p),
+                subtype: Some(proto::domain::notice_subtype::PROJECT_JOINED.into()),
+                ..base
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    w.commit().await.unwrap();
+    (notice, receipt)
+}
+
+/// 删除即不可读、后台清理（8.15 测试 7）。
+#[tokio::test]
+async fn deleting_makes_unreadable_then_purges() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let (alice, bob, p, b1, r, _) = project_run_fixture(db).await;
+    let (notice, receipt) = fill_project(db, bob, p, &b1, r).await;
+    let epoch = || async {
+        scalar(
+            db,
+            "SELECT token_epoch FROM instances WHERE id = $1",
+            b1.id.0,
+        )
+        .await
+    };
+    let before = epoch().await;
+    // 成员删不了；旧接口的删法删不了共享过的。
+    let err = worker_do(db, async |w| w.delete_project(bob, p, true).await)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::NotPermitted(_)), "{err:?}");
+    let err = worker_do(db, async |w| w.delete_project(alice, p, false).await)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::Conflict(_)), "{err:?}");
+    let d = worker_do(db, async |w| w.delete_project(alice, p, true).await)
+        .await
+        .unwrap();
+    assert_eq!(
+        (d.creator, d.notify.clone(), d.shared),
+        (alice, vec![bob], true)
+    );
+    assert_eq!(d.runs_cancelled, 1);
+    // 马上读不到；密钥没了；运行取消、令牌代数加一；agent 离开；bob 的运行提醒已读，回执不动。
+    let mut m = db.member(bob).await.unwrap();
+    assert!(matches!(m.require_project(p).await, Err(Error::NotFound)));
+    m.finish().await.unwrap();
+    let mut tb = db.tenant(bob).await.unwrap();
+    assert!(matches!(tb.run(r).await, Err(Error::NotFound)));
+    tb.rollback().await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    assert_eq!(w.project_key(p).await.unwrap(), None);
+    w.rollback().await.unwrap();
+    let state: String = sqlx::query_scalar("SELECT state FROM runs WHERE id = $1")
+        .bind(r.0)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(state, "cancelled");
+    assert_eq!(epoch().await, before + 1);
+    assert_eq!(
+        scalar(
+            db,
+            "SELECT count(*) FROM project_agents WHERE project_id = $1 AND left_at IS NULL",
+            p.0
+        )
+        .await,
+        0
+    );
+    let read = |id: proto::domain::InboxItemId| async move {
+        sqlx::query_scalar::<_, bool>("SELECT read_at IS NOT NULL FROM inbox_items WHERE id = $1")
+            .bind(id.0)
+            .fetch_one(db.pool())
+            .await
+            .unwrap()
+    };
+    assert!(read(notice).await);
+    assert!(!read(receipt).await);
+    // 再删一次：已经删了，NotFound。
+    let err = worker_do(db, async |w| w.delete_project(alice, p, true).await)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::NotFound), "{err:?}");
+    // 后台清理：别人锁着一条项目提醒时，项目这一行留到下一轮。
+    let mut holder = db.worker().await.unwrap();
+    sqlx::query("SELECT 1 FROM inbox_items WHERE id = $1 FOR UPDATE")
+        .bind(notice.0)
+        .execute(holder.conn())
+        .await
+        .unwrap();
+    loop {
+        let n = worker_do(db, async |w| {
+            w.purge_deleted_projects(2, std::time::Duration::ZERO).await
+        })
+        .await
+        .unwrap();
+        if n == 0 {
+            break;
+        }
+    }
+    assert_eq!(
+        scalar(db, "SELECT count(*) FROM projects WHERE id = $1", p.0).await,
+        1
+    );
+    holder.rollback().await.unwrap();
+    loop {
+        let n = worker_do(db, async |w| {
+            w.purge_deleted_projects(2, std::time::Duration::ZERO).await
+        })
+        .await
+        .unwrap();
+        if n == 0 {
+            break;
+        }
+    }
+    for (sql, what) in [
+        ("SELECT count(*) FROM projects WHERE id = $1", "project"),
+        ("SELECT count(*) FROM runs WHERE project_id = $1", "runs"),
+        (
+            "SELECT count(*) FROM events WHERE project_id = $1",
+            "events",
+        ),
+        (
+            "SELECT count(*) FROM artifacts WHERE project_id = $1",
+            "artifacts",
+        ),
+        (
+            "SELECT count(*) FROM run_grants WHERE project_id = $1",
+            "grants",
+        ),
+        (
+            "SELECT count(*) FROM project_members WHERE project_id = $1",
+            "members",
+        ),
+        (
+            "SELECT count(*) FROM inbox_items WHERE project_id = $1 AND NOT coalesce(project_receipt(subtype), false)",
+            "notices",
+        ),
+    ] {
+        assert_eq!(scalar(db, sql, p.0).await, 0, "{what}");
+    }
+    assert_eq!(
+        scalar(
+            db,
+            "SELECT count(*) FROM inbox_items WHERE project_id = $1",
+            p.0
+        )
+        .await,
+        1,
+        "the receipt stays"
+    );
+    let mut w = db.worker().await.unwrap();
+    assert!(
+        w.blob_purge_batch(10)
+            .await
+            .unwrap()
+            .contains(&"project-blob".to_string())
+    );
+    w.rollback().await.unwrap();
+}
+
+/// 归档只读（8.15 测试 8）：运行取消、邀请撤回；成员照样读；存密钥、登记产出物、加 agent、改项目都不行；照样能退出；
+/// 取消归档恢复。
+#[tokio::test]
+async fn archive_is_read_only() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let (alice, bob, p, b1, r, _) = project_run_fixture(db).await;
+    fill_project(db, bob, p, &b1, r).await;
+    assert!(
+        !worker_do(db, async |w| w.unarchive_project(alice, p).await)
+            .await
+            .unwrap()
+    );
+    let err = worker_do(db, async |w| w.archive_project(bob, p).await)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::NotPermitted(_)), "{err:?}");
+    assert!(
+        worker_do(db, async |w| w.archive_project(alice, p).await)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !worker_do(db, async |w| w.archive_project(alice, p).await)
+            .await
+            .unwrap()
+    );
+    let state: String = sqlx::query_scalar("SELECT state FROM runs WHERE id = $1")
+        .bind(r.0)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(state, "cancelled");
+    let mut m = db.member(bob).await.unwrap();
+    assert_eq!(
+        m.project_detail(p).await.unwrap().summary.status,
+        ProjectStatus::Archived
+    );
+    assert_eq!(
+        m.project_runs(
+            p,
+            &crate::ProjectRunFilter {
+                limit: 10,
+                ..Default::default()
+            }
+        )
+        .await
+        .unwrap()
+        .len(),
+        1
+    );
+    assert_eq!(m.project_artifacts(p, None, 10).await.unwrap().len(), 1);
+    m.finish().await.unwrap();
+    let b2 = instance(db, bob).await;
+    let consent = Some(crate::Consent {
+        version: proto::domain::PROJECT_CONSENT_VERSION,
+    });
+    for err in [
+        worker_do(db, async |w| {
+            w.insert_project_key(p, "k2", b"x").await.map(|_| ())
+        })
+        .await
+        .unwrap_err(),
+        worker_do(db, async |w| {
+            w.add_project_agents(bob, p, &[b2.id], consent)
+                .await
+                .map(|_| ())
+        })
+        .await
+        .unwrap_err(),
+        worker_do(db, async |w| {
+            w.update_project(alice, p, Some("x"), None).await
+        })
+        .await
+        .unwrap_err(),
+    ] {
+        assert!(matches!(err, Error::NotFound), "{err:?}");
+    }
+    let err = worker_do(db, async |w| {
+        w.insert_artifact(&crate::NewArtifact {
+            id: proto::domain::ArtifactId::new(),
+            user: bob,
+            instance: b1.id,
+            run: r,
+            root: r,
+            name: "late.md",
+            content_type: "text/markdown",
+            size: 1,
+            sha256: &[3; 32],
+            blob_key: "late",
+            project: Some(p),
+        })
+        .await
+        .map(|_| ())
+    })
+    .await
+    .unwrap_err();
+    assert!(matches!(err, Error::NotFound), "{err:?}");
+    assert!(
+        worker_do(db, async |w| w.unarchive_project(alice, p).await)
+            .await
+            .unwrap()
+    );
+    worker_do(db, async |w| w.leave_project(bob, p).await.map(|_| ()))
+        .await
+        .unwrap();
+    let mut m = db.member(alice).await.unwrap();
+    assert_eq!(
+        m.project_detail(p).await.unwrap().summary.status,
+        ProjectStatus::Active
+    );
+    m.finish().await.unwrap();
+}
+
+/// 注销留下别人项目里的记录（8.15 测试 9）。
+#[tokio::test]
+async fn erase_keeps_others_records() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let (alice, bob, p, b1, r, private) = project_run_fixture(db).await;
+    let mut w = db.worker().await.unwrap();
+    w.append_event(
+        b1.id,
+        Some(r),
+        "agent.tool_call",
+        &serde_json::json!({ "tool_call_id": "t1", "kind": "edit", "status": "pending", "title": "secret", "raw": 1 }),
+    )
+    .await
+    .unwrap();
+    w.append_event(
+        b1.id,
+        Some(r),
+        "agent.thought",
+        &serde_json::json!({ "text": "secret" }),
+    )
+    .await
+    .unwrap();
+    w.append_event(
+        b1.id,
+        Some(r),
+        "run.state",
+        &serde_json::json!({ "state": "failed", "reason": "secret", "attempt": 2 }),
+    )
+    .await
+    .unwrap();
+    w.create_approval(&crate::NewApproval {
+        user: bob,
+        instance: b1.id,
+        run: r,
+        request_id: "perm-1",
+        title: None,
+        options: &serde_json::json!([]),
+        tool_call: &serde_json::json!({}),
+        expires_in: std::time::Duration::from_secs(60),
+    })
+    .await
+    .unwrap();
+    w.commit().await.unwrap();
+    sqlx::query("UPDATE runs SET error = 'secret error', state_reason = 'secret' WHERE id = $1")
+        .bind(r.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    worker_do(db, async |w| w.erase_account(bob).await)
+        .await
+        .unwrap();
+    // alice 还看得到 bob 的运行，主人“已注销”；留下的事件只有白名单里的字段。
+    let mut m = db.member(alice).await.unwrap();
+    let run = m.project_run(p, r).await.unwrap();
+    assert_eq!(run.owner.status, proto::domain::ProjectAuthorStatus::Erased);
+    m.finish().await.unwrap();
+    let payloads: Vec<(String, serde_json::Value)> =
+        sqlx::query_as("SELECT kind, payload FROM events WHERE run_id = $1 ORDER BY seq")
+            .bind(r.0)
+            .fetch_all(db.pool())
+            .await
+            .unwrap();
+    assert_eq!(
+        payloads,
+        vec![
+            (
+                "agent.tool_call".into(),
+                serde_json::json!({ "tool_call_id": "t1", "kind": "edit", "status": "pending" })
+            ),
+            ("run.state".into(), serde_json::json!({ "state": "failed" })),
+        ]
+    );
+    let (error, reason): (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT error, state_reason FROM runs WHERE id = $1")
+            .bind(r.0)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    assert_eq!((error, reason), (None, None));
+    assert_eq!(
+        scalar(db, "SELECT count(*) FROM approvals WHERE run_id = $1", r.0).await,
+        0
+    );
+    assert_eq!(
+        scalar(db, "SELECT count(*) FROM runs WHERE id = $1", private.0).await,
+        0
+    );
+    // 创建者注销：项目软删除、密钥没了；清理以后什么都不剩。
+    worker_do(db, async |w| w.erase_account(alice).await)
+        .await
+        .unwrap();
+    let status: String = sqlx::query_scalar("SELECT status FROM projects WHERE id = $1")
+        .bind(p.0)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(status, "deleted");
+    loop {
+        let n = worker_do(db, async |w| {
+            w.purge_deleted_projects(50, std::time::Duration::ZERO)
+                .await
+        })
+        .await
+        .unwrap();
+        if n == 0 {
+            break;
+        }
+    }
+    assert_eq!(
+        scalar(db, "SELECT count(*) FROM projects WHERE id = $1", p.0).await,
+        0
+    );
+    assert_eq!(
+        scalar(db, "SELECT count(*) FROM runs WHERE id = $1", r.0).await,
+        0
+    );
+}
+
+/// 删项目和别的事同时进行（8.15 测试 10）：存密钥、接受邀请、退出、成员注销；都不死锁，删完以后没有密钥。
+#[tokio::test]
+async fn delete_races() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let no_deadlock = |r: &crate::Result<()>| {
+        if let Err(Error::Db(e)) = r {
+            panic!("database error (deadlock?): {e}");
+        }
+    };
+    for round in 0..3u32 {
+        let alice = user(db, &format!("+861380000{round}501")).await;
+        let bob = user(db, &format!("+861380000{round}502")).await;
+        let carol = user(db, &format!("+861380000{round}503")).await;
+        sqlx::query("UPDATE users SET display_name = 'A' WHERE id = $1")
+            .bind(alice.0)
+            .execute(db.pool())
+            .await
+            .unwrap();
+        let (a1, b1, c1) = (
+            instance(db, alice).await,
+            instance(db, bob).await,
+            instance(db, carol).await,
+        );
+        let p = solo(db, alice, &a1).await;
+        join_raw(db, p, bob, &b1).await;
+        let hash = [100 + round as u8; 32];
+        worker_do(db, async |w| {
+            w.create_link_invite(
+                alice,
+                p,
+                &hash,
+                crate::InviteCaps::default(),
+                std::time::Duration::from_secs(3600),
+            )
+            .await
+            .map(|_| ())
+        })
+        .await
+        .unwrap();
+        let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(5));
+        let spawn =
+            |f: std::pin::Pin<Box<dyn std::future::Future<Output = crate::Result<()>> + Send>>| {
+                let b = barrier.clone();
+                tokio::spawn(async move {
+                    b.wait().await;
+                    f.await
+                })
+            };
+        let (d1, d2, d3, d4, d5) = (db.clone(), db.clone(), db.clone(), db.clone(), db.clone());
+        let tasks = vec![
+            spawn(Box::pin(async move {
+                worker_do(&d1, async |w| {
+                    w.delete_project(alice, p, true).await.map(|_| ())
+                })
+                .await
+            })),
+            spawn(Box::pin(async move {
+                worker_do(&d2, async |w| {
+                    w.insert_project_key(p, "kms", b"x").await.map(|_| ())
+                })
+                .await
+            })),
+            spawn(Box::pin(async move {
+                let terms = crate::JoinTerms {
+                    agents: vec![c1.id],
+                    daily_token_limit: 10,
+                    total_token_limit: 100,
+                    consent: crate::Consent {
+                        version: proto::domain::PROJECT_CONSENT_VERSION,
+                    },
+                };
+                worker_do(&d3, async |w| {
+                    w.accept_invite(carol, crate::InviteKey::Link(&hash), &terms)
+                        .await
+                        .map(|_| ())
+                })
+                .await
+            })),
+            spawn(Box::pin(async move {
+                worker_do(&d4, async |w| w.leave_project(bob, p).await.map(|_| ())).await
+            })),
+            spawn(Box::pin(async move {
+                worker_do(&d5, async |w| w.erase_account(bob).await).await
+            })),
+        ];
+        let mut results = vec![];
+        for t in tasks {
+            let r = t.await.unwrap();
+            no_deadlock(&r);
+            results.push(r);
+        }
+        assert!(results[0].is_ok(), "{:?}", results[0]);
+        results[4].as_ref().unwrap();
+        // 删完：没有密钥；接受邀请要么在删之前（然后被一起删掉）要么 NotFound。
+        assert_eq!(
+            scalar(
+                db,
+                "SELECT count(*) FROM project_keys WHERE project_id = $1",
+                p.0
+            )
+            .await,
+            0,
+            "round {round}"
+        );
+        assert!(
+            matches!(results[2], Ok(()) | Err(Error::NotFound)),
+            "{:?}",
+            results[2]
+        );
+    }
+}

@@ -881,20 +881,21 @@ impl Tx<Worker> {
         .bind(instance.0)
         .execute(self.conn())
         .await?;
-        let done = sqlx::query(
+        let ids: Vec<Uuid> = sqlx::query_scalar(
             "UPDATE runs SET state = 'cancelled', state_reason = $3, wait_code = NULL, lease_owner = NULL, \
                lease_expires_at = NULL, finished_at = now(), updated_at = now() \
              WHERE (project_id = $1 AND instance_id = $2 \
                     OR root_run_id IN (SELECT id FROM runs WHERE project_id = $1 AND instance_id = $2 \
                                          AND parent_run_id IS NULL)) \
-               AND state NOT IN ('succeeded', 'failed', 'cancelled')",
+               AND state NOT IN ('succeeded', 'failed', 'cancelled') RETURNING id",
         )
         .bind(project.0)
         .bind(instance.0)
         .bind(reason)
-        .execute(self.conn())
+        .fetch_all(self.conn())
         .await?;
-        Ok(done.rows_affected())
+        self.settle_cancelled_approvals(&ids).await?;
+        Ok(ids.len() as u64)
     }
 
     /// 取消一个成员（他的所有 agent）在项目里没结束的运行（8.14 退出、移出）。返回取消的个数。
@@ -922,20 +923,64 @@ impl Tx<Worker> {
         .bind(user.0)
         .execute(self.conn())
         .await?;
-        let done = sqlx::query(
+        let ids: Vec<Uuid> = sqlx::query_scalar(
             "UPDATE runs SET state = 'cancelled', state_reason = $3, wait_code = NULL, lease_owner = NULL, \
                lease_expires_at = NULL, finished_at = now(), updated_at = now() \
              WHERE (project_id = $1 AND user_id = $2 \
                     OR root_run_id IN (SELECT id FROM runs WHERE project_id = $1 AND user_id = $2 \
                                          AND parent_run_id IS NULL)) \
-               AND state NOT IN ('succeeded', 'failed', 'cancelled')",
+               AND state NOT IN ('succeeded', 'failed', 'cancelled') RETURNING id",
         )
         .bind(project.0)
         .bind(user.0)
         .bind(reason)
+        .fetch_all(self.conn())
+        .await?;
+        self.settle_cancelled_approvals(&ids).await?;
+        Ok(ids.len() as u64)
+    }
+
+    /// 取消一个项目里所有没结束的运行（8.15 删除、归档、注销创建者）：先锁运行、再加令牌代数、再取消，等着的审批一起
+    /// 作废。返回取消的个数。
+    pub async fn cancel_project_runs(&mut self, project: ProjectId, reason: &str) -> Result<u64> {
+        sqlx::query(lock_runs_where!("project_id = $1"))
+            .bind(project.0)
+            .execute(self.conn())
+            .await?;
+        sqlx::query(bump_epochs_where!("project_id = $1"))
+            .bind(project.0)
+            .execute(self.conn())
+            .await?;
+        let ids: Vec<Uuid> = sqlx::query_scalar(
+            "UPDATE runs SET state = 'cancelled', state_reason = $2, wait_code = NULL, lease_owner = NULL, \
+               lease_expires_at = NULL, finished_at = now(), updated_at = now() \
+             WHERE project_id = $1 AND state NOT IN ('succeeded', 'failed', 'cancelled') RETURNING id",
+        )
+        .bind(project.0)
+        .bind(reason)
+        .fetch_all(self.conn())
+        .await?;
+        self.settle_cancelled_approvals(&ids).await?;
+        Ok(ids.len() as u64)
+    }
+
+    /// 取消了的运行上等着的审批作废，审批提醒标已读（D23：取消以后这些行可能就看不到了，角标不留着；收件人的用户行
+    /// 不一定锁着，不等锁）。
+    pub(crate) async fn settle_cancelled_approvals(&mut self, runs: &[Uuid]) -> Result<()> {
+        if runs.is_empty() {
+            return Ok(());
+        }
+        sqlx::query(
+            "WITH gone AS (UPDATE approvals SET state = 'cancelled', decided_by = 'system', decided_at = now() \
+                            WHERE run_id = ANY($1) AND state = 'pending' RETURNING id) \
+             UPDATE inbox_items SET read_at = now() WHERE id IN ( \
+                 SELECT id FROM inbox_items WHERE approval_id IN (SELECT id FROM gone) AND kind = 'approval' \
+                    AND read_at IS NULL FOR UPDATE SKIP LOCKED)",
+        )
+        .bind(runs)
         .execute(self.conn())
         .await?;
-        Ok(done.rows_affected())
+        Ok(())
     }
 
     /// 后台建运行（计划到点、流水线、委派）。同一计划同一触发时间已有运行时返回 None。

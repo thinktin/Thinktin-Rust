@@ -205,19 +205,89 @@ impl Tx<Worker> {
         .map(Into::into)
         .collect();
         self.lock_projects(&mut projects).await?;
+        // 他建的项目（8.15）：软删除（马上谁都读不到、密钥删掉），停掉里面的运行和授权，别人的项目提醒标已读（不等锁）。
+        // 8.15 不给别的成员发回执（写别人的收件箱要先锁他们的用户行，会和他们自己注销互相等；8.19 由后台补）。
+        let created: Vec<proto::domain::ProjectId> = sqlx::query_scalar::<_, uuid::Uuid>(
+            "SELECT id FROM projects WHERE creator_id = $1 AND status <> 'deleted' ORDER BY id",
+        )
+        .bind(id.0)
+        .fetch_all(self.conn())
+        .await?
+        .into_iter()
+        .map(Into::into)
+        .collect();
+        for p in created {
+            sqlx::query(
+                "UPDATE projects SET status = 'deleted', deleted_at = now(), updated_at = now() WHERE id = $1",
+            )
+            .bind(p.0)
+            .execute(self.conn())
+            .await?;
+            sqlx::query("DELETE FROM project_keys WHERE project_id = $1")
+                .bind(p.0)
+                .execute(self.conn())
+                .await?;
+            self.stop_project(p, "account_deleted", true).await?;
+            let others: Vec<UserId> = sqlx::query_scalar::<_, uuid::Uuid>(
+                "SELECT user_id FROM project_members WHERE project_id = $1 AND left_at IS NULL AND user_id <> $2",
+            )
+            .bind(p.0)
+            .bind(id.0)
+            .fetch_all(self.conn())
+            .await?
+            .into_iter()
+            .map(UserId)
+            .collect();
+            self.read_project_notices(p, &others, true).await?;
+        }
+        // 他的 agent 离开所有项目（D3：项目 agent 行在运行之前）。
+        sqlx::query(
+            "UPDATE project_agents SET is_lead = false, dedicated = false, left_at = coalesce(left_at, now()) \
+              WHERE user_id = $1",
+        )
+        .bind(id.0)
+        .execute(self.conn())
+        .await?;
+        self.cancel_user_runs(id, "account_deleted").await?;
         self.set_user_status(id, UserStatus::Deleted).await?;
         self.revoke_user_sessions(id, "account_deleted").await?;
         self.revoke_user_grants(id, "account_deleted").await?;
+        // 他在别人项目里做的事（8.15）：运行、白名单里的事件、项目产出物留给项目里的人（主人显示“已注销”）；白名单以外的
+        // 事件删掉，留下的事件只留白名单里的字段，运行的失败原因清掉；审批、工具调用、灵动岛删掉。
+        sqlx::query(
+            "DELETE FROM events WHERE instance_id IN (SELECT id FROM instances WHERE user_id = $1) \
+               AND (project_id IS NULL OR NOT (kind = ANY($2)))",
+        )
+        .bind(id.0)
+        .bind(&proto::domain::PROJECT_RUN_EVENT_KINDS[..])
+        .execute(self.conn())
+        .await?;
         for sql in [
             "DELETE FROM user_keys WHERE user_id = $1",
             "UPDATE credentials SET deleted_at = coalesce(deleted_at, now()), disabled = true, \
                sealed = ''::bytea, label = '', anthropic_base = NULL, openai_base = NULL, \
                responses_base = NULL, updated_at = now() WHERE user_id = $1",
             "DELETE FROM model_routes WHERE user_id = $1",
-            // 运行删了，审批、产出物、带运行的事件一起级联删掉（产出物的密文排进 blob_purge）。
-            "DELETE FROM runs WHERE user_id = $1",
-            // 按实例删，走主键索引（事件表没有以 user_id 开头的索引）。
-            "DELETE FROM events WHERE instance_id IN (SELECT id FROM instances WHERE user_id = $1)",
+            "DELETE FROM approvals WHERE run_id IN (SELECT id FROM runs WHERE user_id = $1 AND project_id IS NOT NULL)",
+            "DELETE FROM tool_calls WHERE run_id IN (SELECT id FROM runs WHERE user_id = $1 AND project_id IS NOT NULL)",
+            "DELETE FROM live_activities WHERE user_id = $1",
+            "UPDATE runs SET error = NULL, state_reason = NULL WHERE user_id = $1 AND project_id IS NOT NULL",
+            "UPDATE events SET payload = CASE kind \
+                 WHEN 'agent.tool_call' THEN jsonb_strip_nulls(jsonb_build_object('tool_call_id', payload->'tool_call_id', \
+                      'kind', payload->'kind', 'status', payload->'status')) \
+                 WHEN 'agent.tool_call_update' THEN jsonb_strip_nulls(jsonb_build_object( \
+                      'tool_call_id', payload->'tool_call_id', 'status', payload->'status')) \
+                 WHEN 'agent.message' THEN jsonb_strip_nulls(jsonb_build_object('text', payload->'text')) \
+                 WHEN 'agent.plan' THEN jsonb_strip_nulls(jsonb_build_object('entries', payload->'entries')) \
+                 WHEN 'agent.turn_ended' THEN jsonb_strip_nulls(jsonb_build_object('stop_reason', payload->'stop_reason')) \
+                 WHEN 'run.state' THEN jsonb_strip_nulls(jsonb_build_object('state', payload->'state')) \
+                 WHEN 'artifact.published' THEN jsonb_strip_nulls(jsonb_build_object( \
+                      'artifact_id', payload->'artifact_id', 'name', payload->'name', 'version', payload->'version')) \
+                 WHEN 'pipeline.step_started' THEN jsonb_strip_nulls(jsonb_build_object('step', payload->'step')) \
+                 ELSE '{}'::jsonb END \
+              WHERE instance_id IN (SELECT id FROM instances WHERE user_id = $1) AND project_id IS NOT NULL",
+            // 私人运行删了，审批、产出物、带运行的事件一起级联删掉（产出物的密文排进 blob_purge）。
+            "DELETE FROM runs WHERE user_id = $1 AND project_id IS NULL",
             // 计划删了，触发器、流水线步骤级联删掉。
             "DELETE FROM plan_hooks WHERE user_id = $1",
             "DELETE FROM plans WHERE user_id = $1",
@@ -241,13 +311,10 @@ impl Tx<Worker> {
             // 两天后后台删掉）。
             "DELETE FROM project_invite_sends WHERE invitee_phone = (SELECT phone FROM users WHERE id = $1)",
             "UPDATE project_invite_sends SET inviter_id = NULL WHERE inviter_id = $1",
-            // 项目（8.13）：他的 agent 离开所有项目；他建的项目删掉（成员、agent、邀请、密钥级联）；他在别人项目里的
-            // 成员身份标成注销；发给他的、他发的邀请删掉（手机号邀请在改掉手机号之前按号码找）。
-            "UPDATE project_agents SET is_lead = false, dedicated = false, left_at = coalesce(left_at, now()) \
-               WHERE user_id = $1",
-            "DELETE FROM projects WHERE creator_id = $1",
+            // 项目：他在别人项目里的成员身份标成注销（他建的项目上面已经软删除，创建者那一行留到后台清理）；发给他的、
+            // 他发的邀请删掉（手机号邀请在改掉手机号之前按号码找）。
             "UPDATE project_members SET left_at = now(), left_reason = 'erased' \
-               WHERE user_id = $1 AND left_at IS NULL",
+               WHERE user_id = $1 AND left_at IS NULL AND role = 'member'",
             "DELETE FROM project_invites WHERE inviter_id = $1 OR invitee_id = $1 OR accepted_by = $1 \
                OR invitee_phone = (SELECT phone FROM users WHERE id = $1)",
             // 拉黑（8.14）：他拉黑的、拉黑他的。

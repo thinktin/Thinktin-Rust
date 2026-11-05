@@ -2915,7 +2915,7 @@ async fn old_team_api_is_backed_by_projects() {
     assert_eq!(st, StatusCode::CONFLICT);
     let (st, _) = a.call(Method::GET, &path, tok, None).await;
     assert_eq!(st, StatusCode::OK);
-    // 删掉：项目没了，实例还在。
+    // 删掉：项目软删除（8.15，后台清理时连行删掉），agent 都离开，实例还在。
     sqlx::query("UPDATE projects SET shared_at = NULL WHERE id = $1")
         .bind(id)
         .execute(a.t.db.pool())
@@ -2924,13 +2924,16 @@ async fn old_team_api_is_backed_by_projects() {
     let (st, _) = a.call(Method::DELETE, &path, tok, None).await;
     assert_eq!(st, StatusCode::NO_CONTENT);
     assert_eq!(
-        count("SELECT count(*) FROM projects WHERE id = $1").await,
+        count("SELECT count(*) FROM projects WHERE id = $1 AND status <> 'deleted'").await,
         0
     );
     assert_eq!(
-        count("SELECT count(*) FROM project_agents WHERE project_id = $1").await,
+        count("SELECT count(*) FROM project_agents WHERE project_id = $1 AND left_at IS NULL")
+            .await,
         0
     );
+    let (st, _) = a.call(Method::GET, &path, tok, None).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
     let (_, list) = a.call(Method::GET, "/v1/instances", tok, None).await;
     assert_eq!(list["instances"].as_array().unwrap().len(), 2, "{list}");
 }

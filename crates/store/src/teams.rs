@@ -81,10 +81,6 @@ impl Tx<Tenant> {
         self.team(id).await
     }
 
-    pub async fn delete_team(&mut self, id: TeamId) -> Result<()> {
-        self.delete_solo_project(id.into()).await
-    }
-
     pub async fn create_team_template(
         &mut self,
         name: &str,

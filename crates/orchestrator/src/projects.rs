@@ -41,13 +41,13 @@ fn agent_notice(mut n: Notice, project: ProjectId, owner: UserId) -> Notice {
 /// 共享过的 409。
 pub async fn delete(db: &Db, user: UserId, actor: &str, project: ProjectId) -> store::Result<()> {
     let mut w = db.worker().await?;
-    let revoked = w.delete_unshared_project(user, project).await?;
+    let d = w.delete_project(user, project, false).await?;
     w.audit(
         Some(user),
         actor,
         "project.delete",
         Some(&project.to_string()),
-        &json!({ "project": project, "invites_revoked": revoked }),
+        &json!({ "project": project, "invites_revoked": d.invites_revoked }),
     )
     .await?;
     w.commit().await

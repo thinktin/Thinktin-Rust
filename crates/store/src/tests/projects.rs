@@ -153,10 +153,11 @@ async fn cross_user_rows_are_worker_only() {
         .unwrap_err();
     assert!(matches!(err, Error::Conflict(_)), "{err:?}");
     ta.rollback().await.unwrap();
-    let mut ta = db.tenant(alice).await.unwrap();
-    let err = ta.delete_team(project.into()).await.unwrap_err();
+    // 删（worker，8.15 起）：旧接口的删法（不删共享过的）回 Conflict。
+    let err = worker_do(db, async |w| w.delete_project(alice, project, false).await)
+        .await
+        .unwrap_err();
     assert!(matches!(err, Error::Conflict(_)), "{err:?}");
-    ta.rollback().await.unwrap();
 }
 
 /// 项目列表和详情（8.14 的 worker 读法）：只给成员看；人数、agent 数不算删了的实例；预算只给自己的；只有创建者改得了
@@ -1996,12 +1997,14 @@ async fn erase_and_project_flows_do_not_deadlock() {
         no_deadlock(&l);
         no_deadlock(&u);
         e.unwrap();
-        let left: i64 = sqlx::query_scalar("SELECT count(*) FROM projects WHERE creator_id = $1")
-            .bind(alice.0)
-            .fetch_one(db.pool())
-            .await
-            .unwrap();
-        assert_eq!(left, 0, "round {round}: alice's projects are gone");
+        let left: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM projects WHERE creator_id = $1 AND status <> 'deleted'",
+        )
+        .bind(alice.0)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+        assert_eq!(left, 0, "round {round}: alice's projects are deleted");
     }
 }
 
@@ -2111,19 +2114,24 @@ async fn deleting_a_solo_project_keeps_invite_caps() {
     assert_eq!(first.deliver_to, Some(bob));
     invite_item(db, bob, p, first.invite.id).await;
     assert_eq!(
-        worker_do(db, async |w| w.delete_unshared_project(alice, p).await)
+        worker_do(db, async |w| w
+            .delete_project(alice, p, false)
             .await
-            .unwrap(),
+            .map(|d| d.invites_revoked))
+        .await
+        .unwrap(),
         1
     );
     assert!(invite_item_read(db, bob, first.invite.id).await);
-    let gone: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM project_invites WHERE project_id = $1")
-            .bind(p.0)
-            .fetch_one(db.pool())
-            .await
-            .unwrap();
-    assert_eq!(gone, 0);
+    // 8.15 起软删除：邀请撤回了（后台清理时连项目一起删掉）。
+    let pending: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM project_invites WHERE project_id = $1 AND status = 'pending'",
+    )
+    .bind(p.0)
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(pending, 0);
     // 新项目：发给 bob 的号码今天已经通知过一次了（上限 1），这次不通知；alice 今天第二个邀请，再发就 429。
     let p2 = solo(db, alice, &instance(db, alice).await).await;
     let second = invite_phone(db, alice, p2, "+8613800001142", caps)
@@ -2145,15 +2153,15 @@ async fn deleting_a_solo_project_keeps_invite_caps() {
     accept(db, carol, InviteKey::Link(&hash), &terms(&[&c1]))
         .await
         .unwrap();
-    let err = worker_do(db, async |w| w.delete_unshared_project(carol, p2).await)
+    let err = worker_do(db, async |w| w.delete_project(carol, p2, false).await)
         .await
         .unwrap_err();
     assert!(matches!(err, Error::NotPermitted(_)), "{err:?}");
-    let err = worker_do(db, async |w| w.delete_unshared_project(bob, p2).await)
+    let err = worker_do(db, async |w| w.delete_project(bob, p2, false).await)
         .await
         .unwrap_err();
     assert!(matches!(err, Error::NotFound), "{err:?}");
-    let err = worker_do(db, async |w| w.delete_unshared_project(alice, p2).await)
+    let err = worker_do(db, async |w| w.delete_project(alice, p2, false).await)
         .await
         .unwrap_err();
     assert!(matches!(err, Error::Conflict(_)), "{err:?}");

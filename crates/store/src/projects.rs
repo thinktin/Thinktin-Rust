@@ -408,19 +408,6 @@ impl Tx<Tenant> {
         Ok(())
     }
 
-    /// 删单人项目（成员、agent、邀请、密钥级联删掉，实例留着）。8.15 有了项目内容以后改成先标删除、后台清理。
-    pub async fn delete_solo_project(&mut self, id: ProjectId) -> Result<()> {
-        self.writable_solo(id).await?;
-        let done = sqlx::query("DELETE FROM projects WHERE id = $1")
-            .bind(id.0)
-            .execute(self.conn())
-            .await?;
-        if done.rows_affected() == 0 {
-            return Err(Error::NotFound);
-        }
-        Ok(())
-    }
-
     /// 删实例时最先调（改计划、运行、实例之前）：拿它现在所在项目的锁，按 id 顺序（D4：租户改单人项目也先拿项目锁）。
     /// 看得到的只有自己的 agent 行。之后才加进别的项目的不再补锁（那时已经拿着实例行，再等项目锁就可能和正在往那个项目里
     /// 加 agent 的 worker 互相等）；worker 加 agent 不先锁 agent 行，所以不会反过来挡住删实例。

@@ -1359,10 +1359,6 @@ async fn solo_projects_stay_with_their_creator() {
         tb.update_team(team.id, Some("x"), None).await,
         Err(Error::NotFound)
     ));
-    assert!(matches!(
-        tb.delete_team(team.id).await,
-        Err(Error::NotFound)
-    ));
     assert!(tb.teams().await.unwrap().is_empty());
     tb.rollback().await.unwrap();
     // Bob 塞不进 Alice 的项目（成员、agent 都不行）。
@@ -1440,10 +1436,6 @@ async fn solo_projects_stay_with_their_creator() {
     assert!(ta.own_project(team.id.into()).await.unwrap().shared);
     assert!(matches!(
         ta.update_team(team.id, Some("x"), None).await,
-        Err(Error::Conflict(_))
-    ));
-    assert!(matches!(
-        ta.delete_team(team.id).await,
         Err(Error::Conflict(_))
     ));
     assert_eq!(ta.team(team.id).await.unwrap().members.len(), 1);
@@ -1937,10 +1929,11 @@ async fn erasing_an_account_deletes_its_content() {
     let mut w = db.worker().await.unwrap();
     w.erase_account(alice).await.unwrap();
     w.commit().await.unwrap();
-    // 项目：她建的删掉了，Bob 的还在；她在 Bob 的项目里标成注销、agent 离开；发给她号码的邀请删掉，别的号码的还在。
+    // 项目：她建的软删除了（8.15，后台清理时连行删掉），Bob 的还在；她在 Bob 的项目里标成注销、agent 离开；发给她号码的
+    // 邀请删掉，别的号码的还在。
     let (alice_projects, bob_projects): (i64, i64) = sqlx::query_as(
-        "SELECT (SELECT count(*) FROM projects WHERE creator_id = $1), \
-                (SELECT count(*) FROM projects WHERE creator_id = $2)",
+        "SELECT (SELECT count(*) FROM projects WHERE creator_id = $1 AND status <> 'deleted'), \
+                (SELECT count(*) FROM projects WHERE creator_id = $2 AND status <> 'deleted')",
     )
     .bind(alice.0)
     .bind(bob.0)
@@ -1949,7 +1942,8 @@ async fn erasing_an_account_deletes_its_content() {
     .unwrap();
     assert_eq!((alice_projects, bob_projects), (0, 1));
     let (live_member, live_agent, reason): (i64, i64, Option<String>) = sqlx::query_as(
-        "SELECT (SELECT count(*) FROM project_members WHERE user_id = $1 AND left_at IS NULL), \
+        "SELECT (SELECT count(*) FROM project_members m JOIN projects p ON p.id = m.project_id \
+                  WHERE m.user_id = $1 AND m.left_at IS NULL AND p.status <> 'deleted'), \
                 (SELECT count(*) FROM project_agents WHERE user_id = $1 AND left_at IS NULL), \
                 (SELECT left_reason FROM project_members WHERE user_id = $1 AND project_id = $2)",
     )
