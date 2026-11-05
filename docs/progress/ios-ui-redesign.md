@@ -388,6 +388,19 @@
   `suggestions` / `filteredLimit`，`SearchResult.instanceID` / `direction`（`SearchMessageDirection`），运行拆成任务、摘要两条；
   `SearchText.filterTitle` / `searchKind` / `messageTitle` / `date` / `kindLabel`，运行那组改叫“消息”。测试 `SearchModelTests` 加两条、
   改一条，`SearchScreensTests` 加改版的几种状态，`AppShellTests` 的首页搜索换成 `SearchResultsView`。
+- 第 1 轮 D 线·和参考对不上、自己定的（等用户看）：计划空状态多一个“新建计划”按钮、右上多一个“+”（参考只能在对话里让 Bot 建）；
+  产出物的“链接”换成“文件”（没有链接的数据，6.19 C）；全部 Botin 的产出物按 Botin 筛选放在右上菜单（参考没有这个维度）；图片查看的
+  “转发”换成“详情”（转发要后端）；搜索的“群聊”换成“收件箱”、“文件”是产出物、“定时任务”是计划（6.24 A）；消息只搜任务和摘要，
+  没搜回复正文；搜索时 iOS 17 / 18 不藏导航栏（搜索栏挂在导航栏下面）。计划详情、产出物详情参考里没有，按 Botin 资料的路子排的。
+- 第 1 轮 D 线·要在模拟器上看的（Linux 的桩看不出来）：iOS 26 首页搜索时 `toolbarVisibility(.hidden, for: .navigationBar)` 会不会连底部条的
+  搜索栏一起藏、筛选胶囊在 `safeAreaBar(edge: .top)` 里是不是贴着状态栏下面；`FilterChipBar` 当 `List` 第一行（透明行、`horizontalInset: 0`）
+  左边和分组卡片对不对齐；产出物行尾 `AIGeneratedLabel` 挤不挤名字；缩略图 ImageIO 解码的清晰度和 `aspectRatio(.fill)` 裁切；图片全屏查看
+  `fullScreenCover` + iOS 18 缩放转场从行里的缩略图放大是否顺；`Color.black` 上 `.preferredColorScheme(.dark)` 的玻璃按钮；存相册第一次弹权限、
+  拒绝后的 alert；产出物详情底部两个胶囊在 `safeAreaBar` 里压不压内容；计划列表左滑两个按钮的颜色；计划详情头部 Botin 小胶囊。
+- 第 1 轮 D 线这一份的 Linux 检查（2026-11-05，最后一次提交上）：ThinktinKit `swift test` 1067 个全过；uicheck UIKit、AppKit 都编过；
+  `run.sh test` 144 个全过；App 的 `ThinktinTests` 21 个过 16 个（还是那 5 个要 App 包的：Info.plist 两条（这次多了
+  `NSPhotoLibraryAddUsageDescription`）、隐私清单、小组件扩展、缓存路径）；`swift format -i -r apps/apple` 后
+  `swift format lint --strict -r apps/apple` 零条。macOS CI 和截图还没跑。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、
@@ -398,8 +411,7 @@
 新建时选它用哪个 agent 当引擎，同一个 agent 可以给好几个 Botin 当引擎（服务端只限每个账号的实例数）。agent 在界面上只以 Botin 的“引擎”/“Engine”出现。
 首次登录首页是空的，空状态“还没有 Botin”+ 说明 + “新建 Botin”按钮。代码里的标识符（`Instance`、`AppRoute.adopt`、`adopt(...)`）不改。
 
-进行中：第 1 轮 D 线（计划、产出物、搜索：规范 4.5、4.2.4，参考 21–26、78–84），session_01GuCp3KRgqaK6Kzynw6udRn，2026-11-05 08:18 UTC 开始。
-（第 1 轮 B 线、C 线 2026-11-05 做完，见“已完成”。）
+进行中：没有（第 1 轮 B、C、D 线 2026-11-05 做完，见“已完成”）。
 验证和发版（2026-11-05，session_01GuCp3KRgqaK6Kzynw6udRn）：GitHub 的 Mac 一直排不上，改用 Codemagic（`.github/workflows/codemagic.yml`：
 把提交推到 `codemagic/apple-check` / `codemagic/ios-screenshots`）。第 0 轮（bbdb07c）、Botin 版（06894fd）、新建页重做（c78064e）
 的 apple-check 都过了（真 Xcode：模拟器 build + test、ThinktinMac、Kit 的 macOS 测试）。截图对照参考 34、35 后又调了两次版式：
@@ -427,10 +439,22 @@ TestFlight：28（Botin 改名、空状态，旧表单）、30（新建页重做
    （参考截图在仓库外，要请用户再发），差别记到这里。冷启动后的启动屏截不到，要在模拟器或真机上看一眼。
 3. 第 1 轮五条线并行（规范 7.3，开工前先在这里认领）；第 2 轮纯客户端新功能；第 3 轮等后端。B、C 线做完了；C 线没做的只剩要后端的
    （资料页“通知”开关 6.14、工作区重置和磁盘 6.17、观看与接管 4.6.2、头像的生成和上传、多端同步 6.9 B）。A 线（首页）接着做：长按菜单（4.2.2）、
-   “等你处理”提示行、预览换成最近一次运行的摘要（6.7）、`SearchResultsView` 嵌进首页（D 线先交）、空查询时列实例、`NewTaskSheet`
-   换选择器版式（4.4.5）。B 线（对话页）做完了，接着可以做第 2 轮的对话内查找（4.3.3，“…”菜单第一组 Botin 资料后面加一项）。
+   “等你处理”提示行、预览换成最近一次运行的摘要（6.7）、`NewTaskSheet` 换选择器版式（4.4.5）；`SearchResultsView` 嵌进首页和空查询列 Botin
+   D 线已经做了（`HomeScreen.swift` 只动了搜索那一块）。B 线（对话页）做完了，接着可以做第 2 轮的对话内查找（4.3.3，“…”菜单第一组
+   Botin 资料后面加一项）。D 线做完了，剩下的：计划的新建 / 编辑表单（`PlanEditorScreen`）、确认页（`PlanConfirmScreen`）、触发器编辑器
+   （`TriggerEditorView`）、时区和预授权工具的选择页还是自画版式（`PageHeader`、`GroupedSection`、`Card`、`PillButton`、`PlansTextField`），
+   按第 2 节换成 `Form`；搜索回复正文（本机缓存的事件，4.2.4，第 2 轮）。E 线（设置一带）还没人认领。
 
 坑和决定：
+- 改版页面共用的列表帮手在 `Components/ListStyles.swift`：`insetGroupedList()`、`clearListRow()`、`ToolbarSlot.trailing`（C 线时叫
+  `AgentsToolbar.trailing`，D 线挪出来改了名）。筛选胶囊放 `List` 第一行时 `FilterChipBar(..., horizontalInset: 0)` + `.clearListRow()`。
+- 产出物：大类、日期分组、折叠都在 ThinktinKit 的 `ArtifactLibraryLayout.swift`；缩略图要下整份文件，`ArtifactThumbnailLoader` 限 4 MB、
+  一次打开 30 张，下过的（包括失败的）记在库的视图模型里。图片解码只用 ImageIO（`ArtifactImageDecoder`），不用 `UIImage` / `NSImage`，
+  iOS 和 macOS 一套；uicheck 有 `Stubs/ImageIO`（`CFData` 当 `Data`）和 `Stubs/Photos`，ThinktinUI 依赖它们。
+- 存相册只在 iOS（`#if os(iOS)`，`PhotoLibrarySaver`，`nonisolated` 的静态函数，免得 Photos 的对象跨 actor）；ThinktinKit 的
+  `ArtifactViewerModel.save(using:)` 只管状态，保存的办法由界面传进来，测试里传闭包。
+- 搜索：一次运行是两条结果（任务 `key` 是运行 id，摘要是 `运行 id/reply`），`SearchResult.title` 对消息来说是 Botin 名，界面用
+  `SearchText.messageTitle` 拼。首页搜索栏一激活（`isSearchPresented`）就换成 `SearchResultsView`，关掉时 `search.filter = nil`。
 - 参考截图是别家产品、里面有用户的账号信息，仓库公开，所以**不进仓库**；规范里只用自己的话写布局和交互，不写参考 App 的名字。以后的会话要看截图，请用户再发一次压缩包。
 - 路由：sheet 里的页面要刷新别看 `router.sheet == nil` 或 `router.topRoute`（`topRoute` 只看主栈），看 `router.visibleRoute`；
   要知道自己是从哪个页面弹出来的看 `router.routeBelowSheet`。`NavigationLink(value: AppRoute)` 在 sheet 里压进 sheet 的栈（`SheetStack` 绑了
