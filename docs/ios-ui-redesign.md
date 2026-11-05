@@ -143,7 +143,8 @@
 - 分组标题、脚注用 Section 的 `header` / `footer`，加 `.textCase(nil)` 不转大写。
 - **已做（2026-11-05，Botin 这一组截图审查）**：iOS 26 的分组标题不写字号时是约 17pt 的半粗字（参考 12、18、65 是约 13pt 的浅灰），
   所以 `header:` 里的字统一加 `groupHeader()`（`Components/ListStyles.swift`：`.footnote` + `Theme.inkSecondary` + `.textCase(nil)`）。
-  Botin 这一组（资料、编辑、头像、工作区、两个说明 sheet、删除确认、引擎详情）都换了；别的页面还是 `.textCase(nil)`，各组对截图时
+  Botin 这一组（资料、编辑、头像、工作区、两个说明 sheet、删除确认、引擎详情）都换了；资料这一组（计划列表和详情、进行中、运行详情、
+  团队）2026-11-05 也换了（产出物的日期组标题照参考 22 是更浅的 `inkTertiary`）；别的页面还是 `.textCase(nil)`，各组对截图时
   逐页换（连接目录参考 52 的分类标题本来就大，不换）。同一个文件里还有：`compactGroupedList(top:)`（iOS 分组间距 `.compact`、
   滚动内容顶上的边距改小，导航栏下面到第一组约 25–36pt，参考 09、12、18、65）；`RowLabel`（行首的细的中性灰图标 + 标题，
   列表行里的 `Label` 图标默认是强调色、和正文一样大）。
@@ -184,8 +185,10 @@ sheet 的左上再放关闭（`.cancellationAction`）；**“只做一件事”
 - **左滑**：`.swipeActions(edge: .trailing, allowsFullSwipe: false)`，只在 `List` 里有效。
 - **确认**：删除类用 `.alert`（标题写对象，说明写后果）或 `.confirmationDialog`；改名用 `.alert` + `TextField`（iOS 26 自动是玻璃对话框）。
 - **单选**：表单行里 `Picker(.menu)`（长列表系统菜单自己能滚）；整页单选 `Picker(.inline)`；三项以内的页内切换 `Picker(.segmented)`。
-- **筛选胶囊**：新组件 `Components/FilterChipBar.swift`（横向 `ScrollView` 里的系统按钮，选中 `.glassProminent`、没选中 `.glass`，
-  外面包 `GlassEffectContainer`），替换 `Screens/Plans/PlansComponents.swift` 的 `PlansFilterChip`（计划、产出物在用）。
+- **筛选胶囊**：新组件 `Components/FilterChipBar.swift`（横向 `ScrollView` 里的系统按钮，选中 `.glassProminent`、没选中 `.glass`），
+  替换 `Screens/Plans/PlansComponents.swift` 的 `PlansFilterChip`（计划、产出物在用）。2026-11-05 资料这一组截图审查：外面原来包的
+  `GlassEffectContainer`（`GlassGroup`）去掉了——合起来的玻璃在整排胶囊后面画出一块长方形的灰影（05 浅色一直拖到最后一个胶囊右边），
+  参考 22、23 的胶囊各是各的。
 - **触感**：用 `.sensoryFeedback`，不直接调 `UIFeedbackGenerator`。
 
 ### 2.9 Logo（`BrandLogo`）放哪
@@ -924,6 +927,20 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   菜单（不再是 `ellipsis.circle`）。找不到、拉不到用 `ContentUnavailableView`。新建 / 编辑表单、确认页、触发器编辑器还是原来的自画版式。
 - **审查修正（2026-11-05）**：左滑“删除”只弹确认，按钮不用 `.destructive`（系统会先把行收走，取消后又跳回来），改成红色
   `tint`。产出物、保险箱、登录设备的“下线”、团队模板、运行树的“停止”同样处理；直接删掉的（收件箱、触发规则、电脑的吊销）照旧。
+- **截图审查（2026-11-05，资料这一组，对过参考 21；计划详情参考里没有，对 Botin 资料 09 的版式）**：
+  - 一行只有两行：标题（Botin 写的后面跟 AI 标识）和一行灰字（规则摘要 · Botin 名 · “下次：明天 09:00”，`PlansText.rowSubtitle`）。
+    以前第三行“● 按时运行 下次：…”把分组标题又写了一遍；现在状态交给分组标题，只有规则失效、不会再运行、有规则失效时多一行
+    （`PlanRowNotice`）。分组标题 `groupHeader()`，列表 `compactGroupedList()`。
+  - 演示数据的“下一次”按规则真的算（`ScheduleForecast`，工作日 09:00 Asia/Shanghai），以前写死 21 小时后，截图上钟点和规则对不上。
+    模拟器不在东八区时显示的是换算后的本地钟点，这是对的。
+  - 空状态的说明换成自己的句式（“到点让 Botin 自己动手：……”），以前那句和参考 21 的句式太像。
+  - 新截图 `53-plans-empty`（`THINKTIN_OPEN_SCREEN=allplans` + `THINKTIN_MOCK_EMPTY=1`：新账号的全部计划）专门对参考 21 的空状态；
+    `04-plans` 是有计划时的列表。新账号没有 Botin，“新建计划”按钮和“+”是灰的 / 不显示，正好只剩那段字。
+  - 计划详情：导航栏不写“计划详情”（`hiddenInlineNavigationTitle`，头部已经有计划名，和资料页一样），`compactGroupedList()`、头部
+    上 8 下 16；触发规则一行改成图标一列、文字一列（规则、下次、上次、失效的说明和按钮都从同一个 x 起，以前后两行跑到图标底下）；
+    策略几行一律是“图标 + 标题，下面一行灰字”的 `LabeledRow`（以前“审批”右对齐成一行、别的折成两行，不齐），图标中性灰；
+    右上“…”中性色（`neutralTint()`）。确认页的策略也是这几行。
+  - 留着没改的：右上玻璃“+”（能手动新建）、标题“计划”、insetGrouped 卡片和状态色图标、chevron（`NavigationLink` 进详情）。
 
 #### 4.5.2 产出物（22、23、26、81、82、83、84）
 
@@ -954,6 +971,12 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   免得两排胶囊。空着时（`ArtifactLibraryModel.placeholder`）：还没有、没有这一类、拉不到（重试）。原来的 `PageHeader` 说明拿掉。
 - **审查修正（2026-11-05）**：每一行都是按钮（文件行 `router.open(.artifact…)`、图片行全屏查看），不再用 `NavigationLink`：
   分组列表里它会画 chevron，文件行和图片行对不齐，参考 22、81、82 的行都没有。类型胶囊只写名字、不带个数（参考 22、23，和搜索的胶囊一样）。
+- **截图审查（2026-11-05，资料这一组，对过参考 22、23）**：胶囊离导航栏、卡片离胶囊都比参考远一截（整页往下约 60pt）：列表
+  `compactGroupedList(top: 4)`（分组间距 `.compact`，滚动内容顶上 4pt）；日期组标题照参考是 `.footnote` 的 `inkTertiary`；
+  胶囊外面不再包 `GlassGroup`（见 2.8，那块灰影）。截图上胶囊的字 17pt、没选中的是橙字，是截图之后 `37c19b1` 已经改成 medium
+  `.footnote` 和正文色的（参考 22 量出来约 13pt），没再动。空状态（还没有、这一类没有）换成参考 21 那样正中一段灰字，没有图标和
+  标题（读屏照样先念标题）。演示数据加了一张自己画的小图（`DemoData.digestImageArtifactID`，“通知汇总截图.png”，通知汇总那次运行的），
+  `35-artifacts-media` 有一行 28pt 缩略图可以对参考 23。右上按 Botin 筛选的菜单中性色。
 
 #### 4.5.3 图片全屏查看（24、25）和产出物详情
 
@@ -2013,6 +2036,24 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   换成自己排的 `ApprovalOptionLabel`（`HStack` 里勾 / 叉 + 名字，图标跟着按钮的前景色，读屏只念名字），和对话里的审批卡片共用。
   “还剩 23 小时”从警告色改成次要的灰，和对话里的卡片一样（剩余时间是说明，`warning` 只给状态用，2.2）。第二组“打开对话”还是按钮
   （`router.open` 回首页再进对话，不压在这一页上），样子改成和上面“查看这次运行”的 `NavigationLink` 一样：墨色的字、行尾灰箭头。
+  **截图审查（2026-11-05，资料这一组：11、12、13、15、16、18；这几页参考里都没有，对第 2 节和兄弟页）**：
+  - 收件箱（11）：一行和首页的行一样（`HomeLayout` 的边距和间距、44pt 图标垂直居中、两行）；未读圆点挪到图标右上角当角标（标题
+    都从同一个 x 起，以前未读的标题往右错 12pt）；去掉第三行的种类（标题已经说了，比如“等你审批”），AI 标识放在正文那一行的末尾；
+    右上“全部已读”从文字胶囊换成只有图标的玻璃圆（`envelope.open`，中性色，读屏念“全部已读”）。
+  - 审批中心（15）：导航栏下面那段说明挪到第一个审批的脚注，列表 `compactGroupedList()`；选项胶囊 `.controlSize(.regular)`（三个
+    `.large` 摞起来一条审批占半屏；对话里只有一张卡片，那里照旧 `.large`）；“详情”是这一组里系统的一行 `NavigationLink`（系统的
+    分隔线和 chevron），不再在卡片里自己画分隔线和箭头。突出的选项上图标显式写白色（`ApprovalOptionLabel(prominent:)`），不怕行的 tint。
+  - 进行中（12）：头像 40pt（`Metrics.Avatar.search`，以前 32 不在 2.4 的尺寸里），分组标题 `groupHeader()`，`compactGroupedList()`。
+  - 运行详情（13）：从自己画的卡片（`BubbleCard`、`cardSurface`）换成 insetGrouped `List`，和计划详情、审批、进行中一套：居中的头部
+    （`RunDetailHeader`：44pt 状态图标、`.title2` 粗体的状态、灰色的“用时 · token”或在等什么，等待类的跳转小胶囊，原文可以展开），
+    任务一组（用户气泡的灰），来源、Botin、计划、尝试次数、token、时间是系统的 `LabeledContent` 行，摘要、失败原因各一组，
+    “只看本次过程 / 运行树 / 打开对话”一组（`RowLabel` + 系统 chevron），产出物一组用产出物库的 `ArtifactRow`（以前是对话里的卡片，
+    同一个文件两页长得不一样），长按举报。右上 `ellipsis`（以前是 `ellipsis.circle`，圆里套圆）放在 `ToolbarSlot.trailing`、中性色。
+  - 团队（16）：说明挪到“我的团队”的脚注（只列模板的页面放在模板组），`compactGroupedList()`；模板一行前面加 32pt 的 `person.3`，
+    和团队那一行的头像同宽，两组的字对齐；行里的“新建团队”从玻璃小胶囊换成强调色的文字按钮（`.borderless`，白底上玻璃的阴影是一圈灰晕）。
+  - 引导（18）：sheet 左上补玻璃 ×（`SheetStack.addsCloseButton(to: .onboarding)`，2.6 每个 sheet 都有）；可选的“打开通知”不编号、
+    画铃铛（标题说“四步”，以前第五行是“5”）；“选默认模型”的说明去掉反引号（纯文本里原样露出“`main`”），写成“main 别名”；
+    都做完时底部按钮是“完成”（`OnboardingText.finish`），“已完成”只当每一步的读屏状态。
 
 ### 7.4 第 2 轮：纯客户端的新功能
 

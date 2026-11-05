@@ -749,6 +749,25 @@
   - 这一份的 Linux 检查（2026-11-05，这次提交上）：ThinktinKit `swift build --build-tests` + `swift test` 1172 个全过；uicheck UIKit、
     AppKit 都编过；`run.sh test` 的 ThinktinUITests 168 个全过；App 的 `ThinktinTests` 21 个过 16 个（挂的还是那 5 个要 App 包的）；
     `swift format lint --strict -r apps/apple` 零条；`bash -n tools/apple/screenshots.sh` 过。macOS CI、截图没跑（要它们验的见“下一步”第 5 条）。
+- 资料这一组的截图审查（2026-11-05，session_01GuCp3KRgqaK6Kzynw6udRn；评审拿 04、05、11–16、18、35 和参考 21、22、23 比，逐条看过
+  截图，都是真的，都改了；提交 `8d278d5`、`579288d`、`fdc81db`、`bdddd04` 和这一条。规范 2.5、2.8、4.5.1、4.5.2、7.3 收尾线记了“截图审查”）：
+  - 计划：一行两行（标题 + 一行灰字“规则 · Botin · 下次：…”，`PlansText.rowSubtitle` 多了 `now`、`calendar`），状态交给分组标题，
+    只有规则失效、不会再运行时多一行（`PlanRowNotice`，`PlanMetaLine` 删了）；计划详情不写导航标题、`compactGroupedList()`、
+    触发规则图标一列文字一列、策略全是 `LabeledRow`、“…”中性色；分组标题 `groupHeader()`。演示数据的“下一次”按 cron 算
+    （`ScheduleForecast`）。空计划的说明换了自己的句式（品牌：和参考 21 那句太像）。
+  - 截图：新 `THINKTIN_OPEN_SCREEN=allplans`（全部 Botin 的计划，不要 Botin）+ 新截图 `53-plans-empty`（配 `THINKTIN_MOCK_EMPTY=1`），
+    一共 71 张；脚本、对照表、docs/ios.md 第 7 节、App 的 `AppSmokeTests` 跟着改。
+  - 产出物：`FilterChipBar` 去掉 `GlassGroup`（整排后面那块灰影），列表 `compactGroupedList(top: 4)`，日期组标题 `.footnote` 的
+    `inkTertiary`，空状态只有一段灰字；演示数据加了一张自己画的 96 × 64 PNG（`DemoData.digestImageArtifactID`，通知汇总那次运行的，
+    base64 写在 `DemoData.digestImagePNG`），写作助手的产出物变成两个，数产出物的测试（`MockClientAppAPITests`、`ArtifactModelsTests`、
+    `InstanceDeletionTests`）跟着改。胶囊的字号和没选中的字色截图之后已经改过（`37c19b1`），没动。
+  - 收件箱、审批中心、进行中、运行详情、团队、引导：见规范 7.3 收尾线的“截图审查”那段。运行详情整页从 `ScrollView` + 自画卡片
+    换成 `List`（新的 `RunDetailHeader`），`ApprovalRequestCard` 去掉了 `onOpen`（“详情”成了审批中心里单独一行），
+    `ApprovalOptionLabel` 多了 `prominent`，`OnboardingText` 多了 `finish`，`SheetStack.addsCloseButton` 多了 `.onboarding`。
+  - 这一份的 Linux 检查（2026-11-05，这次提交上）：ThinktinKit `swift build --build-tests` + `swift test` 1173 个全过；uicheck UIKit、
+    AppKit 都编过；`run.sh test` 的 ThinktinUITests 168 个全过；App 的 `ThinktinTests` 21 个过 16 个（挂的还是那 5 个要 App 包的：
+    Info.plist、URL scheme、隐私清单和多语言资源、小组件 appex、`~/Library` 路径）；`swift format lint --strict -r apps/apple` 零条；
+    `bash -n tools/apple/screenshots.sh` 过。macOS CI、截图没跑（要验的见“下一步”第 6 条）。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、
@@ -759,10 +778,8 @@
 新建时选它用哪个 agent 当引擎，同一个 agent 可以给好几个 Botin 当引擎（服务端只限每个账号的实例数）。agent 在界面上只以 Botin 的“引擎”/“Engine”出现。
 首次登录首页是空的，空状态“还没有 Botin”+ 说明 + “新建 Botin”按钮。代码里的标识符（`Instance`、`AppRoute.adopt`、`adopt(...)`）不改。
 
-进行中：资料这一组的截图审查（计划、产出物、收件箱、审批中心、进行中、运行详情、团队、引导，2026-11-05 开始，
-session_01GuCp3KRgqaK6Kzynw6udRn）：计划两页、演示数据的“下一次”、空计划截图 `53-plans-empty`、产出物（筛选胶囊、上边距、空状态、演示截图）、
-收件箱、审批中心、进行中、运行详情、团队、引导做完，剩文档和全部 Linux 检查。
-其余无人。每一组改版页面都能在真 Mac 上查了（`ci/**` 触发 macOS CI、70 张截图、对照表 docs/ios-ui-redesign-shots.md，
+进行中：无人。资料这一组的截图审查（计划、产出物、收件箱、审批中心、进行中、运行详情、团队、引导）2026-11-05 做完，见“已完成”
+最后一条。每一组改版页面都能在真 Mac 上查了（`ci/**` 触发 macOS CI、71 张截图、对照表 docs/ios-ui-redesign-shots.md，
 见“已完成”最后一条），下一步是推一次 `ci/` 和截图分支、照对照表做还原度评审。第 2 轮的四条线 2026-11-05 都合进本分支了（`c6a2aaf`、`7de7dd0`、`a897e14`、`19e299a`），合进来以后能在客户端做的
 跨线小事也做完了（`3e4648a` 到 `daf5a35`，见“已完成”最后两条）；合完的四个 `r2/*` 远端分支还没删，等用户看过再删。
 第 1 轮 A 线的首页补完、B、C、D、E 线和收尾线 2026-11-05 做完，见“已完成”。
@@ -829,7 +846,18 @@ TestFlight：28（Botin 改名、空状态，旧表单）、30（新建页重做
    20 浅色的状态栏是白字；08 不能点的“新建”是看得出的灰胶囊；`52-primary-botin-empty` 打开了空状态；全 App 的次按钮变成中性色后
    有没有该是强调色的（比如空状态里唯一的按钮）。
 
+6. 资料这一组的截图审查（2026-11-05）留下的，下一次截图要看：`compactGroupedList` 在计划列表 / 详情、产出物（top 4）、审批中心、
+   进行中、运行详情、团队上把第一组提到了哪（参考 22：胶囊中心离导航栏中心约 40pt，第一张卡片再往下约 43pt）；`FilterChipBar`
+   去掉 `GlassGroup` 后那块灰影是不是没了（搜索 09 也用它）；`53-plans-empty` 是不是正中一段字；`35-artifacts-media` 的缩略图行；
+   运行详情的新头部和 `LabeledContent` 行、任务一组的气泡灰底；收件箱的未读角标位置（图标右上，偏出 2pt）；引导左上的 ×。
+   没改的：审批详情（10）和团队详情、编辑、流水线编辑器的分组标题还是 `.textCase(nil)`（不在这次的截图里）；`TeamRow` 的头像还是 32pt
+   （评审说照旧，模板图标跟它同宽）；对话里的审批卡片选项照旧 `.large`。
+
 坑和决定：
+- 资料这一组（2026-11-05）：`FilterChipBar` 别再包 `GlassGroup`（合起来的玻璃在整排后面画一块灰影）；运行详情是 `List`，自画卡片只剩
+  里面的审批卡片（`ApprovalCardView`，透明行）；页面导航栏下面别放说明段落，放第一组的脚注（审批、团队）；列表的空状态照参考 21
+  只放一段灰字（`ContentUnavailableView { EmptyView() } description:`，读屏的标题用 `accessibilityLabel` 补）；演示数据里写作助手
+  有两个产出物（周报要点、通知汇总的截图），数产出物的测试按这个数。
 - 导航栏不显示标题用 `hiddenInlineNavigationTitle(_:)`，别写 `inlineNavigationTitle(title) { EmptyView() }`：`.principal` 里是
   `EmptyView` 时系统当没放这一项，照样画 `navigationTitle`（2026-11-05 截图，资料页名字出现两次）。
 - 次按钮（`glassButtonStyle(.regular)`、`smallCapsuleButton()`）自己带中性色的 `tint`；要红色、强调色时 `.tint(_:)` 写在样式**前面**
