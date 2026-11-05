@@ -41,13 +41,6 @@ private struct TeamsContent: View {
         let model = self.model
         let route: AppRoute = templatesOnly ? .teamTemplates : .teams
         List {
-            Section {
-                Text(TeamsText.intro(language))
-                    .typography(.footnote)
-                    .foregroundStyle(Theme.inkSecondary)
-                    .padding(.horizontal, Metrics.Spacing.m)
-                    .clearListRow()
-            }
             if let error = visibleError(model.error) {
                 Section {
                     ErrorBanner(error) { Task { await model.load() } }
@@ -66,6 +59,8 @@ private struct TeamsContent: View {
             }
         }
         .insetGroupedList()
+        // 导航栏下面不放说明段落（和计划、产出物一样，规范 4.5.1）：说明挪到第一组的脚注，第一组贴着导航栏。
+        .compactGroupedList()
         .themedGroupedBackground()
         .overlay {
             if !model.hasLoaded, visibleError(model.error) == nil { ProgressView() }
@@ -132,7 +127,9 @@ private struct TeamsContent: View {
                 }
             }
         } header: {
-            Text(zh ? "我的团队" : "My teams").textCase(nil)
+            Text(zh ? "我的团队" : "My teams").groupHeader()
+        } footer: {
+            Text(TeamsText.intro(language))
         }
         .themedRow()
     }
@@ -166,10 +163,18 @@ private struct TeamsContent: View {
                 }
             }
         } header: {
-            Text(zh ? "团队模板" : "Team templates").textCase(nil)
+            Text(zh ? "团队模板" : "Team templates").groupHeader()
+        } footer: {
+            // 只列模板的页面没有“我的团队”一组，说明放在这里。
+            if templatesOnly { Text(TeamsText.intro(language)) }
         }
         .themedRow()
     }
+}
+
+/// 团队页的行首：团队的负责人头像、模板的团队图标一样宽，两组的字对齐。
+enum TeamsLayout {
+    static let leadingIcon: CGFloat = 32
 }
 
 /// 我的团队的一行：负责人的头像（没有负责人时是团队图标）、名字、“负责人：X · N 个成员”。
@@ -184,12 +189,12 @@ struct TeamRow: View {
         let zh = language == .chinese
         HStack(spacing: Metrics.Spacing.s) {
             if let leadName {
-                InstanceAvatar(leadName, appearance: leadAppearance, size: 32)
+                InstanceAvatar(leadName, appearance: leadAppearance, size: TeamsLayout.leadingIcon)
                     .accessibilityHidden(true)
             } else {
                 Image(systemName: "person.3")
                     .foregroundStyle(Theme.inkSecondary)
-                    .frame(width: 32, height: 32)
+                    .frame(width: TeamsLayout.leadingIcon, height: TeamsLayout.leadingIcon)
                     .accessibilityHidden(true)
             }
             VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
@@ -212,7 +217,8 @@ struct TeamRow: View {
     }
 }
 
-/// 模板的一行：名字、成员（负责人标出来）；右边小玻璃胶囊“新建团队”（领养模板）；左滑和长按菜单里删除。
+/// 模板的一行：左边团队图标（和团队那一行的头像同宽，两组的字从同一个 x 起）、名字、成员（负责人标出来）；右边强调色的
+/// 文字按钮“新建团队”（领养模板；行里不用玻璃胶囊，白底上它的阴影是一圈灰晕）；左滑和长按菜单里删除。
 struct TemplateRow: View {
     let template: TeamTemplate
     let isBusy: Bool
@@ -225,6 +231,10 @@ struct TemplateRow: View {
     var body: some View {
         let zh = language == .chinese
         HStack(spacing: Metrics.Spacing.s) {
+            Image(systemName: "person.3")
+                .foregroundStyle(Theme.inkSecondary)
+                .frame(width: TeamsLayout.leadingIcon, height: TeamsLayout.leadingIcon)
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
                 Text(verbatim: template.name)
                     .typography(.body)
@@ -244,7 +254,8 @@ struct TemplateRow: View {
                 ProgressView()
             } else {
                 Button(zh ? "新建团队" : "Create team") { onAdopt() }
-                    .smallCapsuleButton()
+                    .buttonStyle(.borderless)
+                    .typography(.subheadline)
                     .disabled(!canWrite)
                     .accessibilityLabel(
                         Text(zh ? "用模板“\(template.name)”新建团队" : "Create a team from “\(template.name)”"))

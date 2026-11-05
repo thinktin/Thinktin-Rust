@@ -99,7 +99,7 @@ struct SheetStack: View {
         .tint(Theme.accent)
     }
 
-    /// 设置的根页面自己没有关闭按钮（以前是压栈的页面），这里补上左上的 ×。`route` 在这层 sheet 里不会变，
+    /// 设置、引导的根页面自己没有关闭按钮（以前是压栈的页面），这里补上左上的 ×。`route` 在这层 sheet 里不会变，
     /// 分支不会来回换。新建 Botin 的表单自己带 ×（填了名字时先确认）。
     @ViewBuilder
     private var root: some View {
@@ -115,10 +115,11 @@ struct SheetStack: View {
         }
     }
 
-    /// 根页面是原来压栈的页面、自己不带“取消 / 完成”的 sheet。
+    /// 根页面是原来压栈的页面、自己不带“取消 / 完成”的 sheet：设置，上手引导（底部的“稍后再说 / 完成”是全宽主按钮，
+    /// 左上照样要有 ×，规范 2.6；2026-11-05 截图审查）。
     static func addsCloseButton(to route: AppRoute) -> Bool {
         switch route {
-        case .settings: true
+        case .settings, .onboarding: true
         default: false
         }
     }

@@ -100,6 +100,7 @@ struct AppShellTests {
         hostAndLayout(AppShell(model: model).environment(\.displayLanguage, .english).preferredColorScheme(.dark))
         // 设置的根页面由应用框架补关闭按钮，其余 sheet 自己带（新建 Botin 的表单自己有 ×，填了名字时先确认）。
         #expect(SheetStack.addsCloseButton(to: .settings))
+        #expect(SheetStack.addsCloseButton(to: .onboarding))
         #expect(!SheetStack.addsCloseButton(to: .adopt(agentID: nil)))
         #expect(!SheetStack.addsCloseButton(to: .newTask))
         #expect(!SheetStack.addsCloseButton(to: .addCredential))

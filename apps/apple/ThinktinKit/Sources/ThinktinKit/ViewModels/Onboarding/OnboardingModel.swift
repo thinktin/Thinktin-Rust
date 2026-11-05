@@ -195,7 +195,9 @@ public enum OnboardingText {
             return zh
                 ? "Botin 调模型用你的 key，费用直接走你的账户。" : "Botins call models with your key, billed to your own account."
         case .routeMain:
-            return zh ? "告诉 Botin 默认用哪个模型（`main`）。" : "Tell the Botin which model to use by default (`main`)."
+            // 纯文本显示（不按 Markdown 渲染），别写反引号：2026-11-05 截图上原样露出了“`main`”。
+            return zh
+                ? "告诉 Botin 默认用哪个模型（main 别名）。" : "Tell the Botin which model to use by default (the main alias)."
         case .firstTask:
             return zh
                 ? "用一句话说要做什么，过程和结果都在对话里。" : "Describe the job in a sentence. Progress and results show up in the chat."
@@ -218,8 +220,14 @@ public enum OnboardingText {
         }
     }
 
+    /// 一步做完了（读屏念的状态）。
     public static func done(_ language: DisplayLanguage) -> String {
         language == .chinese ? "已完成" : "Done"
+    }
+
+    /// 都做完时底部按钮上的字（动作，不是状态）。
+    public static func finish(_ language: DisplayLanguage) -> String {
+        language == .chinese ? "完成" : "Done"
     }
 
     public static func later(_ language: DisplayLanguage) -> String {

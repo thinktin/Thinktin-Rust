@@ -79,7 +79,8 @@ private struct OnboardingContent: View {
             Button {
                 close()
             } label: {
-                Text(model.isComplete ? OnboardingText.done(language) : OnboardingText.later(language))
+                // 按钮上是动作（“完成”），“已完成”是一步的状态（读屏念的值），两个分开。
+                Text(model.isComplete ? OnboardingText.finish(language) : OnboardingText.later(language))
                     .frame(maxWidth: .infinity)
             }
             .glassButtonStyle(model.isComplete ? .prominent : .regular)
@@ -90,6 +91,8 @@ private struct OnboardingContent: View {
         }
         .inlineNavigationTitle(AppRoute.onboarding.title(language))
         .task { await model.load() }
+        // 左上的玻璃 ×（规范 2.6：每个 sheet 都有）由 `SheetStack.addsCloseButton(to: .onboarding)` 加；设置里压栈打开时
+        // 是系统的返回。
     }
 
     /// 关掉引导：sheet 里（第一层，或叠在设置上的第二层）收起，设置里压栈打开的退回去。
@@ -122,8 +125,8 @@ private struct OnboardingContent: View {
     }
 }
 
-/// 一步，是列表里的一行：左边序号圆（做完是成功色的对勾，当前这一步是强调色）、标题、说明；当前这一步在下面放一个
-/// 玻璃胶囊去做（可选的那一步不突出）。
+/// 一步，是列表里的一行：左边序号圆（做完是成功色的对勾，当前这一步是强调色；可选的那一步不编号，是铃铛，标题说“四步”）、
+/// 标题、说明；当前这一步在下面放一个玻璃胶囊去做（可选的那一步不突出）。
 struct OnboardingStepCard: View {
     let step: OnboardingStep
     let isDone: Bool
@@ -145,6 +148,10 @@ struct OnboardingStepCard: View {
                         Image(systemName: "checkmark")
                             .font(.footnote.weight(.bold))
                             .foregroundStyle(Theme.onAccent)
+                    } else if step.isOptional {
+                        Image(systemName: "bell")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(isCurrent ? Theme.onAccent : Theme.inkSecondary)
                     } else {
                         Text(verbatim: "\(step.rawValue + 1)")
                             .font(.footnote.weight(.semibold))

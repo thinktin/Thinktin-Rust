@@ -124,4 +124,19 @@ struct OnboardingModelTests {
             !(await OnboardingCheck(defaults: fullDefaults).shouldPresent(
                 client: MockClient(state: DemoData.state(), stepDelay: 0))))
     }
+
+    @Test("文案：纯文本里没有 Markdown 的反引号；底部按钮是动作“完成”，不是状态“已完成”")
+    func texts() {
+        for language in [DisplayLanguage.chinese, .english] {
+            for step in OnboardingStep.allCases {
+                #expect(!OnboardingText.stepDetail(step, language: language).contains("`"), "\(step)")
+                #expect(!OnboardingText.stepTitle(step, language: language).contains("`"), "\(step)")
+            }
+        }
+        #expect(OnboardingText.finish(.chinese) == "完成")
+        #expect(OnboardingText.done(.chinese) == "已完成")
+        // 标题说“四步”：必做的正好四步，可选的那一步不算。
+        #expect(OnboardingStep.allCases.filter { !$0.isOptional }.count == 4)
+        #expect(OnboardingText.title(.chinese).hasPrefix("四步"))
+    }
 }
