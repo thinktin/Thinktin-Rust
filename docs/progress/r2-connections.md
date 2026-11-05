@@ -57,3 +57,5 @@ Linux 检查（2026-11-05，最后一次提交上）：ThinktinKit `swift build 
 （新加“连接的界面”4 条）；App 的 `AppSmokeTests` 里截图那几条（含新的 `connections`）都过，挂的还是那 5 个要 App 包的
 （Info.plist、URL scheme、隐私清单和多语言资源、小组件 appex、`~/Library` 路径）；`swift format lint --strict -r apps/apple` 零条。
 macOS CI 还没看。
+
+已合进 ios-ui-redesign（c6a2aaf）
