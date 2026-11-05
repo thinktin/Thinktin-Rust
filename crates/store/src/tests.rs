@@ -15,6 +15,7 @@ use crate::{
     RunChange,
 };
 
+mod boundary;
 mod projects;
 
 const LEASE: Duration = Duration::from_secs(60);
@@ -1451,7 +1452,6 @@ async fn solo_projects_stay_with_their_creator() {
     let al2 = instance(db, alice).await;
     for sql in [
         "UPDATE projects SET name = 'x' WHERE id = $1",
-        "DELETE FROM projects WHERE id = $1",
         "UPDATE project_agents SET position = 1 WHERE project_id = $1",
     ] {
         let mut ta = db.tenant(alice).await.unwrap();
@@ -1459,6 +1459,16 @@ async fn solo_projects_stay_with_their_creator() {
         assert_eq!(done.rows_affected(), 0, "{sql}");
         ta.rollback().await.unwrap();
     }
+    // 8.15 起删项目只走 worker（软删除）：租户连删的权限都没有。
+    let mut ta = db.tenant(alice).await.unwrap();
+    let err = sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(pid)
+        .execute(ta.conn())
+        .await
+        .map_err(Error::from)
+        .unwrap_err();
+    assert!(matches!(err, Error::Forbidden(_)), "{err:?}");
+    ta.rollback().await.unwrap();
     for sql in [
         "INSERT INTO project_agents (project_id, instance_id, user_id) VALUES ($1, $2, app_user_id())",
         "INSERT INTO project_members (project_id, user_id, role) \

@@ -67,6 +67,8 @@ impl From<sqlx::Error> for Error {
             Some("23503") => Error::Invalid(format!("reference {}", what())),
             Some("23514" | "23502" | "22P02" | "22007" | "22008") => Error::Invalid(what()),
             Some("42501") => Error::Forbidden(db.message().to_owned()),
+            // 只读事务里写（项目成员的 ProjectTx，8.15）：和没有权限一样，是程序用错了事务。
+            Some("25006") => Error::Forbidden(db.message().to_owned()),
             _ => Error::Db(e),
         }
     }

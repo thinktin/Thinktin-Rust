@@ -62,9 +62,16 @@ CREATE ROLE thinktin_app NOLOGIN NOBYPASSRLS;
 CREATE ROLE thinktin_worker NOLOGIN BYPASSRLS;
 CREATE ROLE thinktin_llmgw NOLOGIN BYPASSRLS;
 CREATE ROLE thinktin_relay NOLOGIN BYPASSRLS;
+-- 项目成员的只读角色和定义者函数的属主（8.15，迁移 0049 会核对这些属性）：都不能登录、不绕过行级安全；定义者不继承、
+-- 不是任何角色的成员。迁移账号能 SET ROLE 到定义者（把函数交给它），但不继承它的权限（PostgreSQL 16 的写法）。
+CREATE ROLE thinktin_member NOLOGIN NOBYPASSRLS;
+CREATE ROLE thinktin_project_definer NOLOGIN NOBYPASSRLS NOINHERIT;
+GRANT thinktin_project_definer TO thinktin_owner WITH INHERIT FALSE, SET TRUE;
 -- 三个服务的登录账号，只拿对应角色的成员身份。
 CREATE ROLE thinktin_server_login LOGIN PASSWORD '…';
 GRANT thinktin_app, thinktin_worker TO thinktin_server_login;
+-- 控制面只 SET ROLE 到成员角色，不继承它（继承了，登录账号自己就拿到成员读策略）。
+GRANT thinktin_member TO thinktin_server_login WITH INHERIT FALSE, SET TRUE;
 CREATE ROLE thinktin_llmgw_login LOGIN PASSWORD '…';
 GRANT thinktin_llmgw TO thinktin_llmgw_login;
 CREATE ROLE thinktin_relay_login LOGIN PASSWORD '…';

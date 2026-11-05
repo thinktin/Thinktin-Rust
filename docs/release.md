@@ -72,6 +72,7 @@ agent 的沙箱模板单独构建（6.8）；App 走各自的商店（12.11、13
 ```sql
 CREATE ROLE thinktin_server_login LOGIN PASSWORD '…';   -- 控制面
 GRANT thinktin_app, thinktin_worker TO thinktin_server_login;
+GRANT thinktin_member TO thinktin_server_login WITH INHERIT FALSE, SET TRUE;   -- 项目成员的只读事务（8.15），只 SET ROLE
 CREATE ROLE thinktin_llmgw_login LOGIN PASSWORD '…';    -- 模型网关
 GRANT thinktin_llmgw TO thinktin_llmgw_login;
 CREATE ROLE thinktin_relay_login LOGIN PASSWORD '…';    -- 设备中继

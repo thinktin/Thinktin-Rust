@@ -92,10 +92,16 @@ impl TestDb {
                  CREATE ROLE thinktin_llmgw NOLOGIN BYPASSRLS; END IF;
                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'thinktin_relay') THEN
                  CREATE ROLE thinktin_relay NOLOGIN BYPASSRLS; END IF;
+               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'thinktin_member') THEN
+                 CREATE ROLE thinktin_member NOLOGIN NOBYPASSRLS; END IF;
+               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'thinktin_project_definer') THEN
+                 CREATE ROLE thinktin_project_definer NOLOGIN NOBYPASSRLS NOINHERIT; END IF;
                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'thinktin_test_owner') THEN
                  CREATE ROLE thinktin_test_owner LOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB NOBYPASSRLS
                    PASSWORD 'thinktin_test_owner'; END IF;
-             END $$",
+             END $$;
+             -- 和生产一样（docs/deploy-checklist.md 第 3 节）：迁移账号能 SET ROLE 到定义者（把函数交给它），不继承它。
+             GRANT thinktin_project_definer TO thinktin_test_owner WITH INHERIT FALSE, SET TRUE",
         )
         .execute(&mut conn)
         .await
