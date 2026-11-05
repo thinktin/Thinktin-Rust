@@ -54,6 +54,36 @@ public enum VaultText {
                 + "gets the name, never the password, and needs your approval to use it."
     }
 
+    /// 一条都没有时的那一行（参考 57）；筛选下的空状态说哪一类没有。
+    public static func empty(_ filter: VaultFilter?, language: DisplayLanguage) -> String {
+        let zh = language == .chinese
+        switch filter {
+        case nil, .items?: return zh ? "还没有保存任何内容。" : "Nothing saved yet."
+        case .pending?: return zh ? "没有等你填写的请求。" : "No requests waiting for you."
+        case .past?: return zh ? "还没有处理过的请求。" : "No past requests."
+        }
+    }
+
+    /// 列表下面的脚注（参考 57 说 Bot 看得到什么、看不到什么）。
+    public static func footer(_ language: DisplayLanguage) -> String {
+        language == .chinese
+            ? "Botin 永远看不到密码明文，只拿到 [vault:名字] 这个引用，用之前要你批准。密码也不会发给模型。"
+            : "Botins never see passwords. They only get the [vault:name] reference and need your approval to use it. "
+                + "Passwords are never sent to the model."
+    }
+
+    /// 删除确认的说明。
+    public static func deleteMessage(_ name: String, language: DisplayLanguage) -> String {
+        language == .chinese
+            ? "删掉后 Botin 再用 [vault:\(name)] 会失败，要重新填。"
+            : "Botins using [vault:\(name)] will fail until you add it again."
+    }
+
+    /// 新建、修改表单里“提示”（用途）的脚注（参考 59）。
+    public static func purposeFooter(_ language: DisplayLanguage) -> String {
+        language == .chinese ? "告诉 Botin 什么时候用这一条。" : "Tell Botins when to use this item."
+    }
+
     public static func count(_ count: Int, language: DisplayLanguage) -> String {
         language == .chinese
             ? "\(count) / \(VaultRules.maxItems) 条" : "\(count) of \(VaultRules.maxItems) items"

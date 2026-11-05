@@ -58,6 +58,36 @@ struct VaultModelsTests {
                 == "All Botins")
     }
 
+    @Test("筛选胶囊（参考 57）：数、显示哪几组、筛空了说哪一类没有")
+    func filter() async {
+        let mock = VaultFixture.mock { state in
+            state.vaultRequests += [VaultFixture.request("vr-done", name: "pypi", status: .declined)]
+        }
+        let model = VaultModel(client: mock)
+        #expect(!model.isEmptyForFilter)
+        await model.load()
+        #expect(model.count(of: nil) == model.items.count + model.requests.count)
+        #expect(model.count(of: .items) == 2)
+        #expect(model.count(of: .pending) == 1)
+        #expect(model.count(of: .past) == 1)
+        #expect(VaultFilter.allCases.allSatisfy { model.shows($0) })
+        model.filter = .pending
+        #expect(model.shows(.pending) && !model.shows(.items) && !model.shows(.past))
+        #expect(!model.isEmptyForFilter)
+
+        let empty = VaultModel(
+            client: VaultFixture.mock {
+                $0.vaultItems = []
+                $0.vaultRequests = []
+            })
+        await empty.load()
+        #expect(empty.isEmptyForFilter)
+        #expect(VaultText.empty(nil, language: .chinese) == "还没有保存任何内容。")
+        #expect(VaultText.empty(.past, language: .english) == "No past requests.")
+        #expect(VaultFilter.items.title(.chinese) == "条目")
+        #expect(VaultFilter.allTitle(.english) == "All")
+    }
+
     @Test("满 200 条：列表提示、新建时拦下")
     func full() async {
         let mock = VaultFixture.mock { state in

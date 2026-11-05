@@ -415,6 +415,10 @@
   垃圾桶注销 + 脚注），改昵称页换 `Form` + `ConfirmButton`；`StopAllRow` 换成系统的 destructive 按钮行（账号页不再放安全那组，设置根页有）。
   用量页换 insetGrouped `List`，顶上“今天”一组按 key 的每日上限画系统 `Gauge`（`UsageModel.todayGauges` / `loadToday()`，测试
   `UsageModelTests` 的“今天”），明细行用 `NavigationLink(value:)`；`ModelsUnavailableView` 换成 `ContentUnavailableView`。
+- 第 1 轮 E 线·保险箱（规范 4.9.5、4.9.6，对过参考 57、58、59；2026-11-05）：列表换 insetGrouped `List` + 筛选胶囊（`VaultFilter`、
+  `VaultModel.filter` / `count(of:)` / `shows(_:)` / `isEmptyForFilter`，`VaultText.empty` / `footer` / `purposeFooter` / `deleteMessage`，
+  测试 `VaultModelsTests` 的“筛选胶囊”），条目左滑删除；新建 / 修改表单改成压栈的 `Form`（`VaultLabeledField` 标签在上、密码眼睛、
+  多行提示）；条目详情、填写请求换 `List` / `Form`。uicheck 桩补了 `Group`、`fontDesign(_:)`、`fontWeight(_:)`（`SwiftUI+Settings.swift`）。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、

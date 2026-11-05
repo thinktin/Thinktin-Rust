@@ -1,10 +1,34 @@
 import Foundation
 import Observation
 
+/// 保险箱页顶上的筛选胶囊（改版规范 4.9.5，参考 57 的“全部 / 登录信息 / 支付 / 联系信息”；ThinkTin 只有一种条目，
+/// 换成条目 / 等你填写 / 处理过的）。nil 是“全部”。
+public enum VaultFilter: String, CaseIterable, Hashable, Sendable {
+    case items
+    case pending
+    case past
+
+    public func title(_ language: DisplayLanguage = .current) -> String {
+        let zh = language == .chinese
+        switch self {
+        case .items: return zh ? "条目" : "Items"
+        case .pending: return zh ? "等你填写" : "Waiting"
+        case .past: return zh ? "处理过的" : "Past"
+        }
+    }
+
+    /// “全部”那个胶囊的名字。
+    public static func allTitle(_ language: DisplayLanguage = .current) -> String {
+        language == .chinese ? "全部" : "All"
+    }
+}
+
 /// 保险箱（WBS 12.13，`.vault`）：条目（按名字排，显示用途、能用的实例；没有密码）、等你填写的请求、填过 / 拒绝 / 过期的请求。
 /// 最多 200 条，满了不能新建。离线策略是“没有缓存”：离线时显示已经拉到的，写操作禁用。
 @Observable @MainActor
 public final class VaultModel {
+    /// 筛选（nil 是全部）。
+    public var filter: VaultFilter?
     public private(set) var items: [VaultItem] = []
     /// 全部请求（`vaultRequests(all: true)`），新的在前。
     public private(set) var requests: [VaultRequest] = []
@@ -36,6 +60,24 @@ public final class VaultModel {
         let now = now()
         return requests.filter { $0.status != .pending || $0.expiresAt <= now }
     }
+
+    /// 胶囊上的数：nil 是全部（条目加全部请求）。
+    public func count(of filter: VaultFilter?) -> Int {
+        switch filter {
+        case nil: items.count + requests.count
+        case .items?: items.count
+        case .pending?: pendingRequests.count
+        case .past?: pastRequests.count
+        }
+    }
+
+    /// 现在的筛选下显示不显示这一组。
+    public func shows(_ section: VaultFilter) -> Bool {
+        filter == nil || filter == section
+    }
+
+    /// 一条都没有（参考 57 的“还没有保存任何内容。”）：筛选下的那一类是空的。
+    public var isEmptyForFilter: Bool { hasLoaded && count(of: filter) == 0 }
 
     /// 请求现在的状态：过了期限还显示“等你填写”的按过期算（服务端定时清理前）。
     public func status(of request: VaultRequest) -> VaultRequestStatus {
