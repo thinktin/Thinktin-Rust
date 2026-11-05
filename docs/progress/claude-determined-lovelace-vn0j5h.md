@@ -97,7 +97,10 @@
   C9 接口：`/v1/projects/{id}/runs`（含单个、树、事件）、`/artifacts`（含单个、下载，下载和私人的共用 `download_response`）、
   `/archive`、`/unarchive`；`DELETE /v1/projects/{id}` 共享过的也能删（旧团队接口照旧 409）；`/v1/project-templates*`（领养回
   项目详情）；项目、邀请、拉黑的接口单独一个路由，响应都 `Cache-Control: no-store`；项目接口里库拒绝的按 404 回并计数
-  （`thinktin_project_forbidden_total`）。下一步 C10 client-core。
+  （`thinktin_project_forbidden_total`）。
+  C10 client-core（项目内容的接口和 FFI，`Run.project_id`；项目运行不进缓存，退出、删除、收到被移出/已删除、读整个项目 404 时
+  清掉缓存里这个项目的提醒，回执留着；冒烟脚本也加了）；C11 安卓绑定；C12 文档（projects-impl“8.15 做了什么”、projects.md 状态）。
+  下一步：8.15 对抗评审（workflow），修完再做 8.16。
   坑：只加 .sql 文件 cargo 不会重新编译（`sqlx::migrate!` 编译时嵌入），加了 `crates/store/build.rs`。
   坑：`relay` 的 `heartbeats_drop_revoked_frozen_and_silent_computers` 机器忙时偶尔失败（200 毫秒心跳，8.14 没碰 relay），单独跑能过。
 - 下一步：8.15 → 8.16–8.19。东京：Phase 0（docs/browser.md 第 8.1 节），过了一个模板开一个 `supported`。用户放好搜索 key（`THINKTIN_PARALLEL_SEARCH_KEY`）后做小测。
