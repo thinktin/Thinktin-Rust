@@ -13,6 +13,7 @@ pub mod live;
 pub mod outbox;
 pub mod peers;
 pub mod pipeline;
+pub mod projects;
 pub mod reports;
 pub mod s3;
 pub mod schedule;

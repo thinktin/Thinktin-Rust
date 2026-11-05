@@ -210,6 +210,115 @@ pub fn report_handled(locale: Locale, resolution: &str) -> (&'static str, String
     }
 }
 
+/// 没设昵称的成员在回执里怎么称呼。
+fn someone(locale: Locale, who: Option<&str>) -> String {
+    match who.map(str::trim).filter(|w| !w.is_empty()) {
+        Some(w) => w.to_owned(),
+        None => match locale {
+            Locale::ZhCn => "一位成员".to_owned(),
+            Locale::En => "A member".to_owned(),
+        },
+    }
+}
+
+/// 项目邀请（8.14）：发给可能不认识的人，不带任何邀请人能写的字（名字、项目名），免得被拿来在锁屏上发广告。
+pub fn project_invite(locale: Locale) -> (&'static str, &'static str) {
+    match locale {
+        Locale::ZhCn => ("项目邀请", "有人邀请你加入一个项目，打开 App 查看"),
+        Locale::En => (
+            "Project invite",
+            "Someone invited you to a project. Open the app to see it.",
+        ),
+    }
+}
+
+/// 有人接受邀请加入了项目（发给创建者）。
+pub fn project_joined(
+    locale: Locale,
+    who: Option<&str>,
+    project: &str,
+    agents: usize,
+) -> (&'static str, String) {
+    let who = someone(locale, who);
+    match locale {
+        Locale::ZhCn => (
+            "有人加入了项目",
+            format!("{who} 带着 {agents} 个 agent 加入了「{project}」"),
+        ),
+        Locale::En => (
+            "New project member",
+            format!(
+                "{who} joined \u{201c}{project}\u{201d} with {agents} agent{}",
+                if agents == 1 { "" } else { "s" }
+            ),
+        ),
+    }
+}
+
+/// 有人退出了项目（发给创建者）。
+pub fn project_left(locale: Locale, who: Option<&str>, project: &str) -> (&'static str, String) {
+    let who = someone(locale, who);
+    match locale {
+        Locale::ZhCn => ("有人退出了项目", format!("{who} 退出了「{project}」")),
+        Locale::En => (
+            "A member left",
+            format!("{who} left \u{201c}{project}\u{201d}"),
+        ),
+    }
+}
+
+/// 我被移出了项目（发给被移出的人）。
+pub fn project_removed(locale: Locale, project: &str) -> (&'static str, String) {
+    match locale {
+        Locale::ZhCn => (
+            "你已被移出项目",
+            format!("你已被移出「{project}」，你的 agent 也一起撤下了"),
+        ),
+        Locale::En => (
+            "Removed from a project",
+            format!("You were removed from \u{201c}{project}\u{201d}. Your agents left with you."),
+        ),
+    }
+}
+
+/// 我的 agent 被创建者移出了项目（发给 agent 的主人）。
+pub fn project_agent_removed(locale: Locale, agent: &str, project: &str) -> (&'static str, String) {
+    match locale {
+        Locale::ZhCn => (
+            "agent 被移出项目",
+            format!("你的 agent「{agent}」被移出了「{project}」"),
+        ),
+        Locale::En => (
+            "Agent removed from a project",
+            format!(
+                "Your agent \u{201c}{agent}\u{201d} was removed from \u{201c}{project}\u{201d}"
+            ),
+        ),
+    }
+}
+
+/// 成员撤下了自己的 agent（发给创建者）。
+pub fn project_agent_left(
+    locale: Locale,
+    who: Option<&str>,
+    agent: &str,
+    project: &str,
+) -> (&'static str, String) {
+    let who = someone(locale, who);
+    match locale {
+        Locale::ZhCn => (
+            "agent 撤出了项目",
+            format!("{who} 把 agent「{agent}」撤出了「{project}」"),
+        ),
+        Locale::En => (
+            "Agent left a project",
+            format!(
+                "{who} withdrew the agent \u{201c}{agent}\u{201d} from \u{201c}{project}\u{201d}"
+            ),
+        ),
+    }
+}
+
 /// 全部停止（4.6）。
 pub fn stopped_all(locale: Locale, runs: u64, plans: u64) -> (&'static str, String) {
     match locale {

@@ -453,7 +453,7 @@ async fn purge_blobs(db: &Db, artifacts: &ArtifactStore) -> anyhow::Result<()> {
 }
 
 /// 事件分区提前建好、过期的删掉；清理过期的登录验证码、送达的推送记录、电脑工具的调用和设备间的消息、
-/// 出网日志（6 个月）。
+/// 出网日志（6 个月）、项目邀请（到期标过期，结束 30 天删掉）。
 async fn maintain(db: &Db) -> store::Result<()> {
     let today = Utc::now().date_naive();
     let this_month = NaiveDate::from_ymd_opt(today.year(), today.month(), 1).unwrap_or(today);
@@ -503,6 +503,8 @@ async fn maintain(db: &Db) -> store::Result<()> {
         }
     }
     let purged = purged + egress;
+    // 项目邀请（8.14）：到期的标过期、删了的实例撤出项目、结束 30 天的邀请删掉（各自的事务，都不等锁）。
+    let purged = purged + orchestrator::projects::sweep(db).await?;
     metrics::gauge!("thinktin_content_reports_open").set(open as f64);
     metrics::gauge!("thinktin_content_report_oldest_seconds")
         .set(oldest.map_or(0.0, |t| (Utc::now() - t).num_seconds().max(0) as f64));
