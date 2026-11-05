@@ -3,10 +3,10 @@ import ThinktinKit
 
 /// 收件箱（`.inbox`，工作台菜单的“收件箱”，WBS 12.8）。参考里没有这一页，照首页的消息列表排（规范 2.5、1.3）：
 ///
-/// - 压栈页，inline 标题“收件箱”；plain 列表、不画分隔线，一行是 40pt 的种类图标、标题（未读的前面一个强调色圆点、加粗）
-///   和右边的时间、两行灰色正文、种类和 AI 生成标识。最新的在前，滚到底往下翻。
+/// - 压栈页，inline 标题“收件箱”；plain 列表、不画分隔线，一行和首页的行一样两行：44pt 的种类图标（未读的右上角一个
+///   强调色圆点）、标题（未读的加粗）和右边的时间，下面一行灰色正文和 AI 生成标识。最新的在前，滚到底往下翻。
 /// - 点一条标已读、去它对应的页面（和推送同一套规则），没有更具体的页面时打开这条通知自己。
-/// - 左滑：删除（红）、标已读 / 未读；长按是同样的系统菜单。右上玻璃“全部已读”。
+/// - 左滑：删除（红）、标已读 / 未读；长按是同样的系统菜单。右上玻璃圆“全部已读”（只有图标，`envelope.open`）。
 /// - 空的时候 `ContentUnavailableView`。
 ///
 /// 离线策略是“有缓存”：标已读离线也行，标未读、删除要联网。
@@ -18,10 +18,13 @@ struct InboxScreen: View {
     }
 }
 
-/// 收件箱一行的尺寸：照首页的行（`HomeLayout`），图标小一档（40pt，和搜索结果一样）。
+/// 收件箱一行的尺寸：照首页的行（`HomeLayout`：上下 18、左 22、右 24，44pt 头像，头像和文字之间 16；规范 7.3 说收件箱照首页排）。
 enum InboxLayout {
-    static let rowInsets = EdgeInsets(top: 14, leading: 22, bottom: 14, trailing: 24)
-    static let iconSize = Metrics.Avatar.search
+    static let rowInsets = HomeLayout.rowInsets
+    static let rowSpacing = HomeLayout.rowSpacing
+    static let iconSize = Metrics.Avatar.list
+    /// 未读圆点（图标右上角）的直径。
+    static let unreadDot: CGFloat = 12
 }
 
 private struct InboxContent: View {
@@ -85,9 +88,14 @@ private struct InboxContent: View {
         .inlineNavigationTitle(AppRoute.inbox.title(language))
         .toolbar {
             ToolbarItem(placement: ToolbarSlot.trailing) {
-                Button(InboxText.markAllRead(language)) {
+                // 参考的导航栏只有图标的玻璃圆（文字胶囊只给表单的“完成”），所以只放图标；读屏念“全部已读”。
+                Button {
                     Task { await model.markAllRead() }
+                } label: {
+                    Label(InboxText.markAllRead(language), systemImage: "envelope.open")
+                        .labelStyle(.iconOnly)
                 }
+                .neutralTint()
                 .disabled(model.unread == 0 && model.items.allSatisfy { $0.isRead })
             }
         }
@@ -136,8 +144,9 @@ private struct InboxContent: View {
     }
 }
 
-/// 收件箱的一行：40pt 种类图标；第一行未读圆点、标题、右边时间；下面两行灰色正文；最后一行种类和 AI 生成标识。
-/// 按钮本身是整行，左滑和长按菜单都在这里（标已读离线也行；标未读、删除要联网）。
+/// 收件箱的一行（和首页的行一样两行，2026-11-05 截图审查）：44pt 种类图标，垂直居中，未读的右上角一个强调色圆点
+/// （不放在标题前面，标题都从同一个 x 起）；第一行标题、右边时间；第二行灰色正文和 AI 生成标识。种类不再单写一行
+/// （标题已经说了，比如“等你审批”）。按钮本身是整行，左滑和长按菜单都在这里（标已读离线也行；标未读、删除要联网）。
 struct InboxRow: View {
     let item: InboxItem
     let isBusy: Bool
@@ -152,16 +161,22 @@ struct InboxRow: View {
         Button {
             onOpen()
         } label: {
-            HStack(alignment: .top, spacing: Metrics.Spacing.s) {
+            HStack(spacing: InboxLayout.rowSpacing) {
                 InboxKindIcon(kind: item.kind)
-                VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
-                    HStack(alignment: .firstTextBaseline, spacing: Metrics.Spacing.xs) {
+                    .overlay(alignment: .topTrailing) {
                         if !item.isRead {
                             Circle()
                                 .fill(Theme.accent)
-                                .frame(width: Metrics.statusDot, height: Metrics.statusDot)
+                                .frame(width: InboxLayout.unreadDot, height: InboxLayout.unreadDot)
+                                // 和头像的角标一样一圈底色，把圆点和图标分开（plain 列表的行是透明的，底下是 `paper`）。
+                                .padding(InstanceAvatar.badgeRing(size: InboxLayout.iconSize))
+                                .background(Theme.paper, in: Circle())
+                                .offset(x: 2, y: -2)
                                 .accessibilityLabel(Text(InboxText.unread(language)))
                         }
+                    }
+                VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
+                    HStack(alignment: .firstTextBaseline, spacing: Metrics.Spacing.xs) {
                         Text(verbatim: item.title)
                             .typography(item.isRead ? .body : .headline)
                             .foregroundStyle(Theme.ink)
@@ -177,17 +192,19 @@ struct InboxRow: View {
                                 .lineLimit(1)
                         }
                     }
-                    if !item.body.isEmpty {
-                        Text(verbatim: item.body)
-                            .typography(.subheadline)
-                            .foregroundStyle(Theme.inkSecondary)
-                            .lineLimit(2)
-                    }
-                    HStack(spacing: Metrics.Spacing.xs) {
-                        Text(InboxText.kind(item.kind, language: language))
-                            .typography(.caption)
-                            .foregroundStyle(Theme.inkTertiary)
-                        if item.isAIGenerated { AIGeneratedLabel() }
+                    if !item.body.isEmpty || item.isAIGenerated {
+                        HStack(spacing: Metrics.Spacing.xs) {
+                            if !item.body.isEmpty {
+                                Text(verbatim: item.body)
+                                    .typography(.subheadline)
+                                    .foregroundStyle(Theme.inkSecondary)
+                                    .lineLimit(1)
+                            }
+                            if item.isAIGenerated {
+                                AIGeneratedLabel()
+                                    .fixedSize()
+                            }
+                        }
                     }
                 }
             }
@@ -234,7 +251,7 @@ struct InboxRow: View {
     }
 }
 
-/// 条目种类的图标：圆底，默认 40pt（和搜索结果的图标一样大）。
+/// 条目种类的图标：圆底，默认 44pt（和首页的头像一样大）。
 struct InboxKindIcon: View {
     let kind: InboxKind
     var size: CGFloat = InboxLayout.iconSize

@@ -263,7 +263,7 @@ private struct ActiveRunsContent: View {
                 Section {
                     ForEach(model.waiting) { run in row(run) }
                 } header: {
-                    Text(ConversationText.needsYou(language)).textCase(nil)
+                    Text(ConversationText.needsYou(language)).groupHeader()
                 }
                 .themedRow()
             }
@@ -271,7 +271,7 @@ private struct ActiveRunsContent: View {
                 Section {
                     ForEach(model.others) { run in row(run) }
                 } header: {
-                    Text(AppRoute.activeRuns.title(language)).textCase(nil)
+                    Text(AppRoute.activeRuns.title(language)).groupHeader()
                 }
                 .themedRow()
             }
@@ -292,6 +292,7 @@ private struct ActiveRunsContent: View {
             }
         }
         .insetGroupedList()
+        .compactGroupedList()
         .themedGroupedBackground()
         .overlay {
             if model.hasLoaded && model.runs.isEmpty {
@@ -310,16 +311,17 @@ private struct ActiveRunsContent: View {
     private func row(_ run: Run) -> some View {
         let instance = app.instances.first { $0.id == run.instanceID }
         return NavigationLink(value: AppRoute.run(run.id)) {
+            // 头像用规范 2.4 的尺寸（搜索结果、选择器那一档 40pt），和首页、搜索里同一个 Botin 看着一样大（以前是 32）。
             HStack(alignment: .top, spacing: Metrics.Spacing.s) {
                 if let instance {
                     InstanceAvatar(
-                        instance.name, appearance: app.appearances.resolved(for: instance.id), size: 32,
-                        badge: .run(run.state)
+                        instance.name, appearance: app.appearances.resolved(for: instance.id),
+                        size: Metrics.Avatar.search, badge: .run(run.state)
                     )
                     .accessibilityHidden(true)
                 } else {
                     StatusDot(run.state)
-                        .frame(width: 32, height: 32)
+                        .frame(width: Metrics.Avatar.search, height: Metrics.Avatar.search)
                 }
                 VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
                     Text(verbatim: MessageQuote.body(run.prompt))

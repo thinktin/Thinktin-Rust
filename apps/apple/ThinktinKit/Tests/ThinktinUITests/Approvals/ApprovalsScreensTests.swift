@@ -54,8 +54,7 @@ struct ApprovalsScreensTests {
                 for name in ["写作助手", nil] as [String?] {
                     let card = ApprovalRequestCard(
                         approval: record, instanceName: name, now: Date(), isDeciding: false, error: error,
-                        canWrite: true, showsDetails: name == nil, onDecide: { _ in }, onClearError: {},
-                        onOpen: name == nil ? nil : {})
+                        canWrite: true, showsDetails: name == nil, onDecide: { _ in }, onClearError: {})
                     hostAndLayout(card.previewShell())
                     hostAndLayout(card.previewShell(.english, scheme: .dark))
                 }

@@ -106,7 +106,7 @@ struct ApprovalCardView: View {
                                 reason: ConversationText.verificationReason(title: card.title, language: language))
                         }
                     } label: {
-                        ApprovalOptionLabel(option: option)
+                        ApprovalOptionLabel(option: option, prominent: option.id == primaryOptionID)
                     }
                     .glassButtonStyle(option.id == primaryOptionID ? .prominent : .regular)
                     .buttonBorderShape(.capsule)
@@ -163,13 +163,23 @@ struct ApprovalCardView: View {
 /// 别的选项图标和字也隔得很开（2026-11-05 对截图）。图标跟着按钮的前景色（突出的按钮上是白的），读屏只念名字。
 struct ApprovalOptionLabel: View {
     let option: ApprovalOption
+    /// 放在突出的（强调色填充的）胶囊里：图标再显式写成白色。只靠按钮的前景色时，`List` 行里的图标一旦被染成强调色就和底色
+    /// 一样看不见（2026-11-05 审查又提了一次审批中心的“允许一次”），写死了不怕行的 tint。
+    var prominent = false
 
     @Environment(\.displayLanguage) private var language
 
     var body: some View {
         HStack(spacing: Metrics.Spacing.xs) {
-            Image(systemName: option.kind.isReject ? "xmark" : "checkmark")
-                .accessibilityHidden(true)
+            let icon = Image(systemName: option.kind.isReject ? "xmark" : "checkmark")
+            if prominent {
+                icon
+                    .foregroundStyle(Theme.onAccent)
+                    .accessibilityHidden(true)
+            } else {
+                icon
+                    .accessibilityHidden(true)
+            }
             Text(
                 verbatim: option.name.isEmpty
                     ? ConversationText.approvalOptionName(option.kind, language: language) : option.name)

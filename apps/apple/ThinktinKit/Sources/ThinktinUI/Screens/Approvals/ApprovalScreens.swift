@@ -3,10 +3,11 @@ import ThinktinKit
 
 /// 审批中心（`.approvals`，工作台菜单和设置里的“审批”，WBS 12.15）。参考里没有这一页，照第 2 节的视觉语言排（规范 1.3、2.5）：
 ///
-/// - 压栈页，inline 标题“审批”；insetGrouped 列表，顶上一句灰色说明。
-/// - 电脑发来的高危操作一组（12.9，`ComputerApprovalsSection`），然后每个等你处理的审批一张分组卡片（快过期的在前）：
-///   Botin 头像和名字、剩余时间，Botin 写的标题（AI 生成标识），要执行的操作，选项是玻璃胶囊（批准类先过本机验证，拒绝直接发），
-///   最后一行“查看详情”。
+/// - 压栈页，inline 标题“审批”；insetGrouped 列表，紧贴导航栏（`compactGroupedList`），说明放在第一个审批的脚注里
+///   （导航栏下面不放说明段落，和计划、产出物一样，规范 4.5.1、4.5.2）。
+/// - 电脑发来的高危操作一组（12.9，`ComputerApprovalsSection`），然后每个等你处理的审批一组（快过期的在前）：一行卡片
+///   （Botin 头像和名字、剩余时间，Botin 写的标题和 AI 生成标识，要执行的操作，选项是普通大小的玻璃胶囊；批准类先过本机验证，
+///   拒绝直接发），下面一行系统的“详情”（`NavigationLink`，系统画分隔线和 chevron）。
 /// - 决定后从列表里拿掉，刷新工作台的角标。没有审批时 `ContentUnavailableView`。
 ///
 /// 离线策略是“没有缓存”：离线时显示已经拉到的，选项都禁用。
@@ -38,13 +39,6 @@ private struct ApprovalCenterContent: View {
         TimelineView(.periodic(from: Date(), by: 30)) { context in
             let list = model.visible(now: context.date)
             List {
-                Section {
-                    Text(ApprovalsText.intro(language))
-                        .typography(.footnote)
-                        .foregroundStyle(Theme.inkSecondary)
-                        .padding(.horizontal, Metrics.Spacing.m)
-                        .clearListRow()
-                }
                 if let error = visibleError(model.error) {
                     Section {
                         ErrorBanner(error) { Task { await model.load() } }
@@ -80,13 +74,21 @@ private struct ApprovalCenterContent: View {
                                     await app.refreshBadges()
                                 }
                             },
-                            onClearError: { model.clearError(approval.id) },
-                            onOpen: { router.open(.approval(approval.id)) })
+                            onClearError: { model.clearError(approval.id) })
+                        NavigationLink(value: AppRoute.approval(approval.id)) {
+                            Text(ApprovalsText.viewDetails(language))
+                                .foregroundStyle(Theme.ink)
+                        }
+                    } footer: {
+                        if approval.id == list.first?.id {
+                            Text(ApprovalsText.intro(language))
+                        }
                     }
                     .themedRow()
                 }
             }
             .insetGroupedList()
+            .compactGroupedList()
             .themedGroupedBackground()
             .overlay {
                 if list.isEmpty {
@@ -164,7 +166,7 @@ private struct ApprovalDetailContent: View {
                                     await app.refreshBadges()
                                 }
                             },
-                            onClearError: { model.clearDecideError() }, onOpen: nil)
+                            onClearError: { model.clearDecideError() })
                     }
                     .themedRow()
                     Section {
@@ -223,7 +225,7 @@ private struct ApprovalDetailContent: View {
 }
 
 /// 一条审批，是分组列表里的一行（审批中心的卡片、详情页的主体）：Botin 头像和名字、剩余时间或结论，标题（AI 生成标识），
-/// 要执行的操作，选项（玻璃胶囊，第一个批准类的是突出的那种）；审批中心的最后一行“查看详情”。
+/// 要执行的操作，选项（普通大小的玻璃胶囊，第一个批准类的是突出的那种）。审批中心在它下面另放一行“详情”。
 struct ApprovalRequestCard: View {
     let approval: Approval
     let instanceName: String?
@@ -237,8 +239,6 @@ struct ApprovalRequestCard: View {
     var showsDetails = false
     let onDecide: (ApprovalOption) -> Void
     let onClearError: () -> Void
-    /// 审批中心的“详情”；详情页为 nil。
-    let onOpen: (() -> Void)?
 
     @Environment(\.displayLanguage) private var language
     @State private var showsRaw = false
@@ -292,27 +292,6 @@ struct ApprovalRequestCard: View {
                     tone: outcome == .approvedByUser ? .success : .muted)
             }
             if let error { errorView(error) }
-            if let onOpen {
-                Divider()
-                    .padding(.top, Metrics.Spacing.xxs)
-                Button {
-                    onOpen()
-                } label: {
-                    HStack {
-                        Text(ApprovalsText.viewDetails(language))
-                            .typography(.subheadline)
-                            .foregroundStyle(Theme.ink)
-                        Spacer(minLength: 0)
-                        Image(systemName: "chevron.right")
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(Theme.inkTertiary)
-                            .accessibilityHidden(true)
-                    }
-                    .frame(minHeight: Metrics.minTapTarget)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
         }
         .padding(.vertical, Metrics.Spacing.xxs)
     }
@@ -369,18 +348,20 @@ struct ApprovalRequestCard: View {
         }
     }
 
-    /// 选项：全宽的玻璃胶囊，一个一行（选项的名字是服务端给的，可能很长）。
+    /// 选项：全宽的玻璃胶囊，一个一行（选项的名字是服务端给的，可能很长）。普通大小（`.large` 三个摞起来一条审批占半屏，
+    /// 2026-11-05 截图审查；对话里只有一张卡片，那里照旧 `.large`）。
     private var options: some View {
         VStack(spacing: Metrics.Spacing.xs) {
             ForEach(approval.options) { option in
+                let prominent = option.id == primaryOptionID
                 Button {
                     onDecide(option)
                 } label: {
-                    ApprovalOptionLabel(option: option)
+                    ApprovalOptionLabel(option: option, prominent: prominent)
                 }
-                .glassButtonStyle(option.id == primaryOptionID ? .prominent : .regular)
+                .glassButtonStyle(prominent ? .prominent : .regular)
                 .buttonBorderShape(.capsule)
-                .controlSize(.large)
+                .controlSize(.regular)
                 .disabled(isDeciding || !canWrite)
             }
         }
