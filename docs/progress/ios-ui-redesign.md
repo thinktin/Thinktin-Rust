@@ -227,6 +227,12 @@
   - 给审核员看的说明换成新叫法：docs/ios-appstore.md 的审核备注（录屏“新建 Botin（起名字、选一个引擎）→ 配 key → …”、“给 Botin 配模型
     路由”、“预置的 Botin”，英文版加一句 Botin 和引擎是什么、“preloaded with a Botin and a key”），docs/ios-release.md 的 TestFlight 测试说明
     和审核账号同样改了。docs/handoff-ios.md 的“Botin 改名”加一条：上架材料（审核备注、商店描述、截图说明，安卓的商店材料）也照对照表写。
+  - 要在模拟器上看的（Linux 的桩看不出来）：行内 `Picker` 的行上自己给的读屏标签念不念、选中的那行还念不念“已选中”；
+    填了名字后下滑 sheet 是不是真的拦住（iOS 26 的 sheet 拦住时会回弹）。
+  - 这一份的 Linux 检查（2026-11-05，最后一次提交上）：ThinktinKit `swift test` 1024 个全过（新加“引擎详情要的引擎”“离线启动、没有缓存”）；
+    uicheck UIKit、AppKit 都编过；`run.sh test` 137 个全过；App 的 `ThinktinTests` 21 个过 16 个（还是那 5 个要 App 包的：Info.plist 两条、
+    隐私清单、小组件扩展、缓存路径）；`swift format -i` 没改东西，`swift format lint --strict -r apps/apple` 零条；`bash -n tools/apple/screenshots.sh` 过。
+    macOS CI 和截图还没跑。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、
