@@ -104,7 +104,8 @@ public struct HomeLastMessage: Hashable, Sendable {
                 return HomeLastMessage(
                     author: .agent, text: summary, runID: run.id, at: run.finishedAt ?? run.createdAt)
             }
-            let prompt = run.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+            // 引用回复只取正文（不然预览是“你：> 引用…”）。
+            let prompt = MessageQuote.body(run.prompt).trimmingCharacters(in: .whitespacesAndNewlines)
             if run.source == .user, !prompt.isEmpty {
                 return HomeLastMessage(author: .user, text: prompt, runID: run.id, at: run.createdAt)
             }

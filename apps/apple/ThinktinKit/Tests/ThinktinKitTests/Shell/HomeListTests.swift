@@ -318,6 +318,11 @@ struct HomeListTests {
         #expect(HomeLastMessage.latest(in: [failedTask, planTask, summary]) == task)
         #expect(HomeLastMessage.latest(in: [planTask]) == nil)
         #expect(HomeLastMessage.latest(in: []) == nil)
+
+        // 引用回复只取正文。
+        let quoted = Self.message(
+            "r4", prompt: MessageQuote.compose(quote: "原来那段", body: "就按这个改"), summary: nil, at: now)
+        #expect(HomeLastMessage.latest(in: [quoted])?.text == "就按这个改")
     }
 
     @Test("预览：没有进行中的运行时显示最后一条；创建中、不认识的状态照旧说状态；最后一条比实例新时按它排")

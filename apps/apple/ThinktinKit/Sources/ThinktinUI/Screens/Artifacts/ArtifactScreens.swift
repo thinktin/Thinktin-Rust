@@ -196,11 +196,13 @@ private struct ArtifactLibraryContent: View {
     private func row(_ artifact: Artifact) -> some View {
         rowLink(artifact)
             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                Button(role: .destructive) {
+                // 只弹确认：不用 `.destructive`，不然系统先把行收走。
+                Button {
                     confirmDeletion(artifact)
                 } label: {
                     Label(ArtifactsText.delete(language), systemImage: "trash")
                 }
+                .tint(StatusTone.failure.color)
                 .disabled(app.isOffline)
             }
             .contextMenu {

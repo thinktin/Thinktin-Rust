@@ -163,7 +163,12 @@ private struct RunDetailContent: View {
                 Text(ConversationText.detailLabel(.task, language: language))
                     .typography(.caption)
                     .foregroundStyle(Theme.inkSecondary)
-                Text(verbatim: run.prompt)
+                // 引用回复：引用画成一小块，正文照常（和对话里的气泡一样）。
+                let parts = MessageQuote.split(run.prompt)
+                if let quote = parts.quote {
+                    QuotedBlock(quote: quote)
+                }
+                Text(verbatim: parts.body)
                     .typography(.body)
                     .foregroundStyle(Theme.ink)
                     .fixedSize(horizontal: false, vertical: true)

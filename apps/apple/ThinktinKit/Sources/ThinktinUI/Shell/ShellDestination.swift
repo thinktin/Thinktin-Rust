@@ -2,7 +2,7 @@ import SwiftUI
 import ThinktinKit
 
 /// 应用框架自己的页面（`feature == .shell`）：首页（`.home`，主导航栈永远的根，实例列表 `Shell/Home/`）、
-/// 新任务的实例选择、冻结页、升级页。
+/// 已隐藏的 Botin（`.hiddenBotins`，压栈）、新任务的实例选择、冻结页、升级页。
 struct ShellDestination: View {
     let route: AppRoute
 
@@ -11,6 +11,7 @@ struct ShellDestination: View {
     var body: some View {
         switch route {
         case .home: HomeScreen()
+        case .hiddenBotins: HiddenInstancesScreen(model: model)
         case .newTask: NewTaskSheet(model: model)
         case .frozen: FrozenView(model: model)
         case .upgrade: UpgradeView()

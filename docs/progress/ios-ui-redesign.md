@@ -469,12 +469,11 @@
     uicheck 桩加 `Color.gray`（新文件 `Stubs/SwiftUI/SwiftUI+Home.swift`）。
 - 第 1 轮 A 线·和参考对不上、自己定的（等用户看）：长按菜单里参考的“标为未读”“新建分组”“替换主 Bot…”“分享为模板”换成 Botin 资料、
   新建计划、改名…（ThinkTin 没有前几个，6.10、6.21）；“更多”里多了删除；行的预览前面放的是“AI 生成”标识（参考是个小图标）；
-  已隐藏页的标题用系统的 inline 标题（参考在玻璃胶囊里）；首页底下多一行“已隐藏 N 个 Botin”（参考只有全部隐藏时才有入口）；
+  已隐藏页的标题原来用系统的 inline 标题（审查修正后照参考放进玻璃胶囊）；首页底下多一行“已隐藏 N 个 Botin”（参考只有全部隐藏时才有入口）；
   说明 sheet 的三行是 ThinkTin 自己的话（多了“只在这台设备上”）。
 - 第 1 轮 A 线·要在模拟器上看的（Linux 的桩看不出来）：长按预览卡的宽度和圆角（系统给预览卡包了一层圆角）；左滑两个按钮在 iOS 26
   上是不是玻璃圆、“置顶”的灰；`swipeActions` 的“隐藏”带 `.destructive`，行会被系统先拿掉再由数据拿掉，看有没有闪；置顶一排 3 个在
-  最窄的 375pt 屏上放不放得下；已隐藏页（`navigationDestination(isPresented:)`）上点一行进对话（`Router.open` 把主栈设成
-  `[.conversation]`）以后返回是回到已隐藏页还是首页，两种都行，别出现页面又被压一次；从上下文菜单直接弹改名的 alert、删除的 sheet
+  最窄的 375pt 屏上放不放得下；已隐藏页（审查修正后是路由 `.hiddenBotins`）上点一行进对话（压在它上面）以后返回是回到已隐藏页；从上下文菜单直接弹改名的 alert、删除的 sheet
   会不会被菜单收起的动画吞掉（B 线的“选择文本”也是这样直接弹的）；左上账号头像参考里约 36pt、几乎填满玻璃圆（我们是第 0 轮审查后
   定的 24pt），试 36pt 会不会把 iOS 26 的玻璃撑大，不会就改大。
 - 第 1 轮 A 线这一份的 Linux 检查（2026-11-05）：ThinktinKit `swift test` 1089 个全过；uicheck UIKit、AppKit 都编过（没有警告）；
@@ -548,6 +547,16 @@
   （这条线没动视图模型）；uicheck UIKit、AppKit 都编过（没有错误和警告）；`run.sh test` 的 ThinktinUITests 147 个全过；App 的
   `ThinktinTests` 21 个过 16 个（新改的三条 `OpenScreen` 都过；挂的还是那 5 个要 App 包的：Info.plist、URL scheme、隐私清单和多语言资源、
   小组件 appex、`~/Library` 路径）；`swift format lint --strict -r apps/apple` 零条。macOS CI 还没跑这一份。
+- 第 1 轮审查修正（2026-11-05，评审对 `ff12ebf` 之后提交的 21 条意见，逐条对过代码和参考截图）：
+  - 第一批（这次提交）：左滑只弹确认的按钮不用 `.destructive`（系统会先把行收走），改红色 `tint`：计划、产出物、保险箱、登录设备、
+    团队模板、运行树的停止；产出物导出的文件名没扩展名时按 MIME 补（`ArtifactFiles.preferredExtension`，存相册、预览、分享认类型）；
+    工作区版本菜单在现在的版本下架时补一项“（已下架）”占位（`needsDelistedVersionPlaceholder`）；已隐藏页改成路由 `.hiddenBotins`
+    （以前 `Router` 看不见它，推送、深链、`popToRoot()` 后它还在栈里），标题照参考 114 放进玻璃胶囊（`capsuleNavigationTitle`）；
+    引用回复在运行树、进行中、首页预览、搜索、运行详情、读屏里只显示 / 先念正文（`MessageQuote.body`、`spoken`）；首页行和置顶格子
+    读屏念暂停、归档（`HomeRowPreview.spokenState`）；资料页右上去掉“打开对话”只留“…”（规范 4.4.1）；编辑页“头像”行去掉行尾
+    小头像（参考 12）；头像选择去掉形状和色板之间的分隔线、选中改成贴着形状的中性灰环（参考 18）。测试：`ArtifactModelsTests`
+    （补扩展名）、`InstanceProfileTests`（下架占位）、`AppRouteTests` / `RouterTests`（新路由、推送换掉它）、`ConversationLayoutTests`
+    （正文、读屏、运行树标题）、`HomeListTests`（预览取正文）、`AppShellTests`（读屏状态）。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、

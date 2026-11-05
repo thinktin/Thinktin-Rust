@@ -27,9 +27,10 @@ enum RouteSamples {
         .newTask, .frozen, .upgrade,
         .pairComputer(code: "thinktin-pair:v1?d=mac"),
         .adopt(agentID: nil),
+        .hiddenBotins,
     ]
 
-    static let caseCount = 45
+    static let caseCount = 46
 
     static func index(of route: AppRoute) -> Int {
         switch route {
@@ -78,6 +79,7 @@ enum RouteSamples {
         case .upgrade: 42
         case .pairComputer: 43
         case .adopt: 44
+        case .hiddenBotins: 45
         }
     }
 }
@@ -129,7 +131,7 @@ struct AppRouteTests {
             .vault: .vault, .vaultItem("v"): .vault, .vaultRequest("v"): .vault,
             .settings: .settings, .licenses: .settings, .about: .settings,
             .imChannels: .imChannels, .onboarding: .onboarding, .search: .search,
-            .home: .shell, .newTask: .shell, .frozen: .shell, .upgrade: .shell,
+            .home: .shell, .newTask: .shell, .frozen: .shell, .upgrade: .shell, .hiddenBotins: .shell,
         ]
         for (route, feature) in expected {
             #expect(route.feature == feature, "\(route)")
@@ -220,7 +222,7 @@ struct AppRouteTests {
     func offlinePolicy() {
         for route in [
             AppRoute.home, .conversation("i"), .run("r"), .runTree("r"), .activeRuns, .instance("i"), .inbox,
-            .inboxItem("x"),
+            .inboxItem("x"), .hiddenBotins,
         ] {
             #expect(route.offlinePolicy == .cached, "\(route)")
         }

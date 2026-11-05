@@ -77,10 +77,10 @@ struct UserMessageView: View {
             onQuote: onQuote, onSendAgain: onSendAgain)
     }
 
-    /// 读屏：“你：任务”“负责人委派的任务：……”。
+    /// 读屏：“你：任务”“负责人委派的任务：……”；引用回复念正文再念“引用：……”，不念“>”。
     private var accessibilityText: String {
         let author = ConversationText.promptAuthor(message.source, language: language)
-        return author + (language == .chinese ? "：" : ": ") + message.text
+        return author + (language == .chinese ? "：" : ": ") + MessageQuote.spoken(message.text, language: language)
     }
 }
 

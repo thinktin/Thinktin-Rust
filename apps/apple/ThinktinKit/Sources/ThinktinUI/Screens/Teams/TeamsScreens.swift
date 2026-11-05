@@ -251,11 +251,13 @@ struct TemplateRow: View {
             }
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-            Button(role: .destructive) {
+            // `onDelete` 只弹确认：不用 `.destructive`，不然系统先把行收走。
+            Button {
                 onDelete()
             } label: {
                 Label(zh ? "删除" : "Delete", systemImage: "trash")
             }
+            .tint(StatusTone.failure.color)
             .disabled(!canWrite)
         }
         .contextMenu {

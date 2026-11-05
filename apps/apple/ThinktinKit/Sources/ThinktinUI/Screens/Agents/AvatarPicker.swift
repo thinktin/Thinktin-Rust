@@ -2,8 +2,8 @@ import SwiftUI
 import ThinktinKit
 
 /// 头像选择（新建 Botin 表单和建好之后改头像共用；规范 4.4.4、4.7.1，参考 18）：形状网格（3 × 5，`AvatarShape`）和色板
-/// （2 × 6，选中的带环，`AvatarColor`），放在一张卡片里；每一格都用现在选的颜色和名字画。改头像页在卡片最下面加
-/// 分隔线和“重置为默认”（`footer`）。不能改时调用方加 `.disabled`。
+/// （2 × 6，选中的带环，`AvatarColor`），放在一张卡片里，两块之间不画分隔线（参考 18）；每一格都用现在选的颜色和名字画。
+/// 改头像页在卡片最下面加分隔线和“重置为默认”（`footer`）。不能改时调用方加 `.disabled`。
 struct AvatarPicker<Footer: View>: View {
     let name: String
     let shape: Binding<AvatarShape>
@@ -49,7 +49,6 @@ struct AvatarPicker<Footer: View>: View {
             }
             .accessibilityElement(children: .contain)
             .accessibilityLabel(Text(NewBotinText.shapeTitle(language)))
-            Divider()
             LazyVGrid(columns: Self.colorColumns, spacing: Metrics.Spacing.xs) {
                 ForEach(AvatarColor.allCases, id: \.self) { option in
                     AvatarColorDot(color: option, isSelected: resolvedColor == option) {
@@ -74,7 +73,8 @@ extension AvatarPicker where Footer == EmptyView {
     }
 }
 
-/// 形状网格的一格：这个形状、现在的颜色和名字，按格子的宽度画（窄屏、大字号时也不会挤出格子）；选中的有强调色的圆角框。
+/// 形状网格的一格：这个形状、现在的颜色和名字，按格子的宽度画（窄屏、大字号时也不会挤出格子）；选中的外面一圈细的
+/// 中性灰环，贴着形状（参考 18），不用强调色的框。
 private struct AvatarShapeCell: View {
     static let maxSide: CGFloat = 56
 
@@ -87,7 +87,7 @@ private struct AvatarShapeCell: View {
     @Environment(\.displayLanguage) private var language
 
     var body: some View {
-        let frame = RoundedRectangle(cornerRadius: Metrics.Radius.control + Metrics.Spacing.xxs, style: .continuous)
+        let ring = Circle()
         let appearance = InstanceAppearance(shape: shape, color: color)
         Button(action: action) {
             GeometryReader { proxy in
@@ -96,13 +96,12 @@ private struct AvatarShapeCell: View {
             }
             .aspectRatio(1, contentMode: .fit)
             .padding(Metrics.Spacing.xs)
-            .background(isSelected ? Theme.accent.opacity(0.14) : Color.clear, in: frame)
             .overlay {
                 if isSelected {
-                    frame.strokeBorder(Theme.accent, lineWidth: 2)
+                    ring.strokeBorder(Theme.inkSecondary, lineWidth: 2)
                 }
             }
-            .contentShape(frame)
+            .contentShape(ring)
             // 格子最大 56pt（形状 40pt）：按整列宽画时三行太高，新建表单的色板被挤到底部的“新建”按钮后面（2026-11-05 截图）；
             // 参考稿的形状也是这么大。窄屏、大字号时照样按列宽缩小。
             .frame(maxWidth: Self.maxSide)

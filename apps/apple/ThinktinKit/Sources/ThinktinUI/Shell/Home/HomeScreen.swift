@@ -181,7 +181,6 @@ struct HomeInstanceList: View {
     @State private var deleting: HomeDeletion?
     /// 最近一次打开删除确认页的（sheet 关掉时 `deleting` 已经是 nil，删没删成看它）。
     @State private var lastDeletion: HomeDeletion?
-    @State private var isShowingHidden = false
     @State private var copies = 0
 
     @Environment(\.displayLanguage) private var language
@@ -228,7 +227,7 @@ struct HomeInstanceList: View {
             .themedPlainRow()
             if !content.hidden.isEmpty, !content.isAllHidden {
                 Button {
-                    isShowingHidden = true
+                    router.open(.hiddenBotins)
                 } label: {
                     Text(verbatim: HomeText.hiddenCount(content.hidden.count, language: language))
                         .typography(.footnote)
@@ -244,9 +243,6 @@ struct HomeInstanceList: View {
         .refreshable { await model.refresh() }
         .overlay {
             if let placeholder = model.homePlaceholder { emptyState(placeholder) }
-        }
-        .navigationDestination(isPresented: $isShowingHidden) {
-            HiddenInstancesScreen(model: model)
         }
         .modifier(HomeRenameAlert(model: model, target: $renaming, name: $renameText))
         .sheet(
@@ -333,7 +329,7 @@ struct HomeInstanceList: View {
                 .controlSize(.large)
             }
         case .allHidden:
-            HomeAllHiddenView { isShowingHidden = true }
+            HomeAllHiddenView { model.router.open(.hiddenBotins) }
         }
     }
 }

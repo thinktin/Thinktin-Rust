@@ -55,6 +55,20 @@ public enum MessageQuote {
         return (quote, body)
     }
 
+    /// 消息去掉开头引用后的正文（`split(_:).body`）。运行树的标题、进行中的行、首页的预览、搜索的摘要都显示它：
+    /// 引用回复发出去的是“> 引用 + 空行 + 正文”，这些地方只看第一行或前两行，不拆就只剩引用。
+    public static func body(_ message: String) -> String {
+        split(message).body
+    }
+
+    /// 读屏念的：正文在前，有引用时后面跟“引用：……”（不念 Markdown 的“>”）。
+    public static func spoken(_ message: String, language: DisplayLanguage) -> String {
+        let parts = split(message)
+        guard let quote = parts.quote else { return message }
+        let zh = language == .chinese
+        return parts.body + (zh ? "。引用：" : ". Quoting: ") + preview(quote)
+    }
+
     /// 引用条上的一行：换行换成空格、连续的空白并成一个（显示时再按宽度截断）。
     public static func preview(_ quote: String) -> String {
         quote.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")

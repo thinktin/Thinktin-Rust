@@ -21,12 +21,22 @@ public enum ArtifactFiles {
         // 扩展名留在最后，系统才认得类型；以点开头的（`.env`）当作没有扩展名。
         var stem = name[...]
         var suffix = label
+        var hasExtension = false
         if let dot = name.lastIndex(of: "."), dot != name.startIndex {
             let ext = name[name.index(after: dot)...]
-            if !ext.isEmpty, ext.count <= 10, !ext.contains(" ") {
+            // 图片的“扩展名”不是图片格式的（`chart.v2`）不算：存相册时系统按扩展名认类型。
+            let image = isImage(artifact)
+            if !ext.isEmpty, ext.count <= 10, !ext.contains(" "),
+                !image || imageExtensions.contains(ext.lowercased())
+            {
                 stem = name[..<dot]
                 suffix += "." + ext
+                hasExtension = true
             }
+        }
+        // 没有扩展名的按类型补上（`首页截图` + image/png → `首页截图（AI 生成）.png`）：相册、预览、分享都靠它认类型。
+        if !hasExtension, let ext = preferredExtension(forMIMEType: artifact.contentType) {
+            suffix += "." + ext
         }
         // 服务端允许 200 个 Unicode 字符；导出时按文件名的字节上限截短，完整保留 AI 标识和扩展名。
         var remaining = 255 - suffix.utf8.count
@@ -38,6 +48,27 @@ public enum ArtifactFiles {
         }
         return prefix + suffix
     }
+
+    /// MIME 类型对应的扩展名（常见的几种；认不出的返回 nil，文件名就不补）。参数（`; charset=utf-8`）不看。
+    public static func preferredExtension(forMIMEType contentType: String) -> String? {
+        let type = contentType.split(separator: ";").first.map {
+            $0.trimmingCharacters(in: .whitespaces).lowercased()
+        }
+        guard let type else { return nil }
+        return knownExtensions[type]
+    }
+
+    private static let knownExtensions: [String: String] = [
+        "image/png": "png", "image/jpeg": "jpg", "image/jpg": "jpg", "image/pjpeg": "jpg", "image/gif": "gif",
+        "image/webp": "webp", "image/heic": "heic", "image/heif": "heif", "image/tiff": "tiff", "image/bmp": "bmp",
+        "image/svg+xml": "svg", "application/pdf": "pdf", "text/plain": "txt", "text/markdown": "md",
+        "text/csv": "csv", "text/html": "html", "application/json": "json", "application/xml": "xml",
+        "text/xml": "xml", "application/zip": "zip", "application/yaml": "yaml", "application/x-yaml": "yaml",
+    ]
+
+    private static let imageExtensions: Set<String> = [
+        "png", "jpg", "jpeg", "gif", "webp", "heic", "heif", "tif", "tiff", "bmp", "svg", "avif",
+    ]
 
     /// 写进临时目录，返回文件地址（已经有同样内容的就直接用）。
     public static func write(

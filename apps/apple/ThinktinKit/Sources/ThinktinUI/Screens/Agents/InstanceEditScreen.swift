@@ -80,8 +80,7 @@ struct InstanceEditScreen: View {
                         Text(InstanceProfileText.avatar(language))
                             .foregroundStyle(Theme.ink)
                         Spacer(minLength: Metrics.Spacing.s)
-                        AvatarGlyph(name: name, appearance: app.appearances.resolved(for: model.instanceID), size: 28)
-                            .accessibilityHidden(true)
+                        // 只有“头像 >”（参考 12）：大头像已经在页面最上面了。
                         Image(systemName: "chevron.right")
                             .font(Typography.footnote.font.weight(.semibold))
                             .foregroundStyle(Theme.inkTertiary)

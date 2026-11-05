@@ -1,8 +1,8 @@
 import SwiftUI
 import ThinktinKit
 
-/// 已隐藏的 Botin（规范 docs/ios-ui-redesign.md 4.2.3，参考 114、116）：首页本地压进来的页（不加路由），标题“已隐藏的 Botin”，
-/// 右上玻璃“?”弹说明（参考 115）。plain 列表、没有分隔线，每行头像 + 名字 + 右边玻璃小胶囊“取消隐藏”（点了这一行带动画
+/// 已隐藏的 Botin（`.hiddenBotins`，规范 docs/ios-ui-redesign.md 4.2.3，参考 114、116）：首页压进主栈的页（有路由，推送、
+/// 深链换掉主栈时它跟着走），标题“已隐藏的 Botin”在玻璃胶囊里（参考 114，`capsuleNavigationTitle`），右上玻璃“?”弹说明（参考 115）。plain 列表、没有分隔线，每行头像 + 名字 + 右边玻璃小胶囊“取消隐藏”（点了这一行带动画
 /// 拿掉，回到首页的普通行）；点行进它的对话。都取消了以后正中一行灰字“没有隐藏的 Botin”。
 ///
 /// 入口：首页全部隐藏时空状态的“显示已隐藏的 Botin”，和列表最底下一行“已隐藏 N 个 Botin”（参考只有前一个）。
@@ -40,7 +40,7 @@ struct HiddenInstancesScreen: View {
                     .padding(Metrics.Spacing.m)
             }
         }
-        .inlineNavigationTitle(HomeText.hiddenTitle(language))
+        .capsuleNavigationTitle(HomeText.hiddenTitle(language))
         .toolbar {
             ToolbarItem(placement: ToolbarSlot.trailing) {
                 Button {

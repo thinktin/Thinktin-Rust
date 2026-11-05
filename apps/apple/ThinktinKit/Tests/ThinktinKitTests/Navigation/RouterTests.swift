@@ -40,6 +40,23 @@ struct RouterTests {
         #expect(router.sheet == nil)
     }
 
+    @Test("已隐藏的 Botin 是主栈里的页：推送、回到首页时跟着换掉，不留在别的页面底下")
+    func hiddenBotinsPage() {
+        let router = Router()
+        router.open(.hiddenBotins)
+        #expect(router.path == [.hiddenBotins])
+        #expect(router.visibleRoute == .hiddenBotins)
+        #expect(!router.isAtRoot)
+        // 在已隐藏页上点了推送：返回栈换成“首页 → 对话 → 目标页”，已隐藏页不在里面。
+        router.show(.modelRoutes("i1"))
+        #expect(!router.path.contains(.hiddenBotins))
+        #expect(router.path.last == .modelRoutes("i1"))
+        router.open(.hiddenBotins)
+        router.popToRoot()
+        #expect(router.path.isEmpty)
+        #expect(router.visibleRoute == .home)
+    }
+
     @Test("open：对话压栈并记成当前实例；栈里已有这个对话就退回到它")
     func openConversation() {
         let router = Router(path: [.inbox])

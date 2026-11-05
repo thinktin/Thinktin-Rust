@@ -130,9 +130,11 @@ private struct VaultContent: View {
                         SettingsRowLabel(title: item.name, subtitle: itemSubtitle(item))
                     }
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        Button(zh ? "删除" : "Delete", role: .destructive) {
+                        // 只弹确认：不用 `.destructive`，不然系统先把行收走。
+                        Button(zh ? "删除" : "Delete") {
                             pendingDeletion = item
                         }
+                        .tint(StatusTone.failure.color)
                         .disabled(app.isOffline || model.deleting.contains(item.id))
                     }
                 }

@@ -75,7 +75,12 @@ struct PinnedInstanceCell: View {
     private var accessibilityText: String {
         let zh = language == .chinese
         var parts = [row.instance.name, zh ? "已置顶" : "Pinned"]
-        if row.needsAttention { parts.append(row.preview.text(language)) }
+        if row.needsAttention {
+            parts.append(row.preview.text(language))
+        } else if let state = row.preview.spokenState(language) {
+            // 暂停、归档只画在头像角标上：念出来。
+            parts.append(state)
+        }
         return parts.joined(separator: zh ? "，" : ", ")
     }
 }

@@ -46,9 +46,11 @@ private struct DevicesContent: View {
                         }
                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                             if !device.isCurrent {
-                                Button(zh ? "下线" : "Sign out", role: .destructive) {
+                                // 只弹确认：不用 `.destructive`，不然系统先把行收走。
+                                Button(zh ? "下线" : "Sign out") {
                                     pendingRevoke = device
                                 }
+                                .tint(StatusTone.failure.color)
                                 .disabled(app.isOffline)
                             }
                         }

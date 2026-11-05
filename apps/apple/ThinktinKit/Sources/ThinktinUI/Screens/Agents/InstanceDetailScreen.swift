@@ -9,8 +9,9 @@ import ThinktinKit
 ///   升级 / 回滚）；
 /// - 默认模型（main 指向的上游模型，没配时警告色“未配置”，进模型路由）；
 /// - 所在团队（每个团队一行）；信息（引擎和版本、接入方式、创建于、最近活动）；
-/// - 右上两个分开的玻璃圆：打开对话（参考这个位置是分享，6.21 不做）、“…”（复制 Botin ID；模型路由、新建计划；删除，
-///   `InstanceProfileMenu`）。删除先列出会级联删掉的东西（`InstanceDeleteSheet`），二次确认后再删。
+/// - 右上只有“…”一个玻璃圆（复制 Botin ID；模型路由、新建计划；删除，`InstanceProfileMenu`）：参考旁边那个是分享，
+///   ThinkTin 不做（6.21），也不拿别的按钮占那个位置（规范 4.4.1）。删除先列出会级联删掉的东西（`InstanceDeleteSheet`），
+///   二次确认后再删。
 ///
 /// 页面的离线策略是“有缓存”：离线时照样显示缓存里的 Botin，改名、换版本、删除、新建计划都禁用（头像只存在这台设备上，照样能改）。
 /// 参考的“通知”开关等后端（6.14）。
@@ -85,15 +86,6 @@ private struct InstanceDetailContent: View {
         }
         .toolbar {
             if model.instance != nil && !model.isMissing {
-                ToolbarItem(placement: ToolbarSlot.trailing) {
-                    Button {
-                        router.open(.conversation(model.instanceID))
-                    } label: {
-                        Label(InstanceProfileText.openConversation(language), systemImage: "bubble.left")
-                            .labelStyle(.iconOnly)
-                    }
-                }
-                GlassToolbarSpacer(.fixed, placement: ToolbarSlot.trailing)
                 ToolbarItem(placement: ToolbarSlot.trailing) {
                     moreMenu
                 }

@@ -73,6 +73,8 @@ struct HomeInstanceRow: View {
 
     private func accessibilityText(preview: String, time: String) -> String {
         var parts = [row.instance.name]
+        // 预览是最后一条时，暂停、归档只画在头像角标上（头像对读屏隐藏）：念出来。
+        if let state = row.preview.spokenState(language) { parts.append(state) }
         if row.preview.isAIGenerated { parts.append(language.aiGeneratedLabel) }
         parts += [preview, time]
         return parts.joined(separator: language == .chinese ? "，" : ", ")
@@ -100,6 +102,13 @@ extension HomeRowPreview {
             if state == .running { return zh ? "随时可以接任务" : "Ready for a task" }
             return state.localizedName(language)
         }
+    }
+
+    /// 读屏要另外念的 Botin 状态：预览是最后一条、Botin 不是开着的（暂停、归档、休眠……）时，状态只画在头像角标上，
+    /// 看得见的人看得到，读屏的人听不到，所以名字后面念一下。别的预览自己就写着状态，不重复。
+    func spokenState(_ language: DisplayLanguage) -> String? {
+        guard case .message(_, let state) = self, state != .running else { return nil }
+        return state.localizedName(language)
     }
 
     /// 预览是 agent 写的摘要：前面放“AI 生成”标识。

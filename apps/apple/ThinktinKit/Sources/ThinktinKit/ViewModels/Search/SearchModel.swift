@@ -158,11 +158,13 @@ public final class SearchModel {
         // 一次运行是两条消息：任务（你发给 Botin）和摘要（Botin 发给你），各自要包含全部关键词。
         for run in runs {
             let name = names[run.instanceID] ?? ""
-            if Self.matches(terms, in: run.prompt) {
+            // 你发的话只看正文：引用回复开头引的是 Botin 的话，摘要那条结果已经搜得到它。
+            let sent = MessageQuote.body(run.prompt)
+            if Self.matches(terms, in: sent) {
                 add(
                     SearchResult(
                         kind: .run, key: run.id.rawValue, title: name,
-                        snippet: Self.snippet(run.prompt, terms: terms) ?? Self.firstLine(run.prompt),
+                        snippet: Self.snippet(sent, terms: terms) ?? Self.firstLine(sent),
                         isAIGenerated: AIGeneratedField.prompt(of: run).isAIGenerated, date: run.createdAt,
                         route: .run(run.id), instanceID: run.instanceID, direction: .sent), rank: 0)
             }

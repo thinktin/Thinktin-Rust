@@ -110,7 +110,7 @@ extension HomeText {
 
     /// 已隐藏的 Botin 页（参考 114、116）。
     public static func hiddenTitle(_ language: DisplayLanguage) -> String {
-        language == .chinese ? "已隐藏的 Botin" : "Hidden Botins"
+        AppRoute.hiddenBotins.title(language)
     }
 
     public static func unhide(_ language: DisplayLanguage) -> String {

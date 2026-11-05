@@ -180,6 +180,11 @@ struct AppShellTests {
         #expect(HomeRowPreview.idle(.running).avatarBadge == nil)
         #expect(HomeRowPreview.idle(.provisioning).avatarBadge == .instance(.provisioning))
         #expect(HomeRowPreview.idle(.archived).avatarBadge == .instance(.archived))
+        // 预览是最后一条时，暂停、归档只画在角标上：读屏另外念状态；开着的、别的预览不念。
+        let last = HomeLastMessage(author: .agent, text: "好了", runID: "r1", at: Date())
+        #expect(HomeRowPreview.message(last, state: .paused).spokenState(.chinese) == "已暂停")
+        #expect(HomeRowPreview.message(last, state: .running).spokenState(.chinese) == nil)
+        #expect(HomeRowPreview.idle(.paused).spokenState(.chinese) == nil)
 
         let model = await started(ShellPreviewClients.signedIn())
         for row in model.homeRows {

@@ -67,6 +67,7 @@ struct InstanceProfileTests {
         await latest.load()
         #expect(latest.upgradeOption == nil)
         #expect(latest.switchableVersions.map(\.change) == [.current, .rollback])
+        #expect(!latest.needsDelistedVersionPlaceholder)
 
         let behind = InstanceDetailModel(client: AgentsFixture.mock(), instanceID: DemoData.reviewerID)
         await behind.load()
@@ -100,6 +101,10 @@ struct InstanceProfileTests {
         let model = InstanceDetailModel(client: mock, instanceID: DemoData.writerID)
         await model.load()
         #expect(!model.isCurrentVersionListed)
+        // 版本菜单里补一项现在用的（已下架），选中值才有对应的项。
+        #expect(model.needsDelistedVersionPlaceholder)
+        #expect(!model.switchableVersions.contains { $0.version == "1.9.0" })
+        #expect(InstanceWorkspaceText.delistedVersion("1.9.0", language: .chinese) == "v1.9.0（已下架）")
         #expect(model.upgradeOption?.isLatest == true)
         #expect(model.upgradeOption?.change == .upgrade)
         #expect(

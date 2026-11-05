@@ -130,6 +130,9 @@ public enum AppRoute: Hashable, Sendable, Codable {
     case frozen
     /// 版本太老，请升级（整页，由 `AppModel.phase` 决定，不进导航栈）。
     case upgrade
+    /// 已隐藏的 Botin（首页最底下的“已隐藏 N 个 Botin”、全部隐藏时的空状态进来，参考 114、116）：压进主栈，
+    /// 推送、深链、`popToRoot()` 换掉主栈时它跟着走，不会留在别的页面底下。
+    case hiddenBotins
 }
 
 extension AppRoute: Identifiable {
@@ -167,7 +170,7 @@ extension AppRoute {
         case .imChannels: .imChannels
         case .onboarding: .onboarding
         case .search: .search
-        case .home, .newTask, .frozen, .upgrade: .shell
+        case .home, .newTask, .frozen, .upgrade, .hiddenBotins: .shell
         }
     }
 
@@ -216,7 +219,8 @@ extension AppRoute {
     public var offlinePolicy: OfflinePolicy {
         switch self {
         // client-core 缓存的只有实例、运行、事件、收件箱（cache.rs 的几张表）。
-        case .home, .conversation, .run, .runTree, .activeRuns, .instance, .inbox, .inboxItem: .cached
+        // 已隐藏的 Botin 读的是实例列表（有缓存），取消隐藏只改这台设备上的记录。
+        case .home, .conversation, .run, .runTree, .activeRuns, .instance, .inbox, .inboxItem, .hiddenBotins: .cached
         // 不用联网的页面。搜索只搜本机缓存（12.21）。
         case .licenses, .about, .settings, .search, .newTask, .frozen, .upgrade, .signIn: .local
         default: .unavailable

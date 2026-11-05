@@ -101,6 +101,20 @@ struct ConversationLayoutTests {
         #expect(MessageQuote.split("普通消息").body == "普通消息")
     }
 
+    @Test("引用回复在别处只显示正文：运行树的标题、读屏先念正文再念引用")
+    func quoteBodyElsewhere() {
+        let sent = MessageQuote.compose(quote: "我现在有一个只有你能看到的保险箱\n第二行", body: "帮我存一下\n细节")
+        #expect(MessageQuote.body(sent) == "帮我存一下\n细节")
+        #expect(MessageQuote.body("普通消息") == "普通消息")
+        #expect(
+            MessageQuote.spoken(sent, language: .chinese) == "帮我存一下\n细节。引用：我现在有一个只有你能看到的保险箱 第二行")
+        #expect(MessageQuote.spoken("普通消息", language: .english) == "普通消息")
+        let node = RunTreeNode(
+            run: Fixture.run("r1", prompt: sent, state: .running, createdAt: Date()), depth: 0, childCount: 0,
+            isFocus: false)
+        #expect(node.title == "帮我存一下")
+    }
+
     @Test("“…”菜单：Botin 资料一组，计划、新建计划、产出物、模型路由一组，有任务在跑时最后是停止")
     func conversationMenu() {
         let idle = ConversationMenu.sections(instanceID: writer, canStop: false)

@@ -81,6 +81,11 @@ struct InstanceWorkspaceScreen: View {
                                     }
                                 })
                         ) {
+                            // 现在的版本下架了：补一项它自己，选中值才有对应的项（不然系统报错、右边空白）。
+                            if model.needsDelistedVersionPlaceholder {
+                                Text(InstanceWorkspaceText.delistedVersion(instance.agentVersion, language: language))
+                                    .tag(instance.agentVersion)
+                            }
                             ForEach(model.switchableVersions) { option in
                                 Text(versionTitle(option)).tag(option.version)
                             }

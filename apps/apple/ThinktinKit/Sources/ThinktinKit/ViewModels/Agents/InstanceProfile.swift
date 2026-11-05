@@ -93,11 +93,6 @@ public enum InstanceProfileText {
             : "The avatar is saved on this device only. By default it's a circle coloured by the name."
     }
 
-    /// 右上第一个圆按钮（参考那个位置是分享；ThinkTin 放“打开对话”）。
-    public static func openConversation(_ language: DisplayLanguage = .current) -> String {
-        language == .chinese ? "打开对话" : "Open chat"
-    }
-
     public static func copyID(_ language: DisplayLanguage = .current) -> String {
         language == .chinese ? "复制 Botin ID" : "Copy Botin ID"
     }
@@ -187,6 +182,12 @@ extension InstanceDetailModel {
         let options = versionOptions
         return options.count > 1 ? options : []
     }
+
+    /// “换到别的版本”菜单里要不要补一项“现在用的（已下架）”：现在的版本不在目录里时，菜单的选中值（现在的版本）
+    /// 在列出的版本里找不到，系统的 `Picker` 会报“选中值没有对应的项”、右边显示空白。
+    public var needsDelistedVersionPlaceholder: Bool {
+        !switchableVersions.isEmpty && !switchableVersions.contains(where: \.isCurrent)
+    }
 }
 
 /// 工作区页的字。
@@ -202,6 +203,12 @@ public enum InstanceWorkspaceText {
     /// “换到别的版本”菜单（`Picker(.menu)`）的标题。
     public static func otherVersions(_ language: DisplayLanguage = .current) -> String {
         language == .chinese ? "换到别的版本" : "Switch version"
+    }
+
+    /// 版本菜单里现在用的、已经不在目录里的那个版本：“v1.9.0（已下架）”。
+    public static func delistedVersion(_ version: String, language: DisplayLanguage = .current) -> String {
+        let label = AgentsText.versionLabel(version)
+        return language == .chinese ? "\(label)（已下架）" : "\(label) (no longer listed)"
     }
 
     /// 升级那一行下面的灰字。

@@ -178,11 +178,13 @@ private struct PlanListContent: View {
                     isBusy: model.busyPlanIDs.contains(plan.id))
             }
             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                Button(role: .destructive) {
+                // 只弹确认、不直接删：`.destructive` 的左滑按钮系统会先把行收走，取消后又跳回来。
+                Button {
                     confirmDeletion(plan)
                 } label: {
                     Label(language == .chinese ? "删除" : "Delete", systemImage: "trash")
                 }
+                .tint(StatusTone.failure.color)
                 .disabled(!canWrite)
                 if let paused = pauseTarget(plan) {
                     Button {

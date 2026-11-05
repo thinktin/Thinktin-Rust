@@ -20,6 +20,38 @@ extension View {
     }
 }
 
+extension View {
+    /// 同 `inlineNavigationTitle(_:)`，但标题放在一个玻璃胶囊里（参考 114 已隐藏页的标题）：iOS 26 是玻璃，旧系统是材质；
+    /// 工具栏自己给项套的共用玻璃底去掉（`hidesSharedGlassBackground`），免得套两层。macOS 是窗口标题。
+    func capsuleNavigationTitle(_ title: String) -> some View {
+        modifier(CapsuleNavigationTitle(title: title))
+    }
+}
+
+private struct CapsuleNavigationTitle: ViewModifier {
+    let title: String
+
+    func body(content: Content) -> some View {
+        #if os(iOS)
+            content
+                .navigationTitle(title)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .principal) {
+                        InlineTitleText(title: title)
+                            .padding(.horizontal, Metrics.Spacing.m)
+                            .frame(minHeight: Metrics.minTapTarget)
+                            .glassBackground(in: Capsule())
+                            .accessibilityAddTraits(.isHeader)
+                    }
+                    .hidesSharedGlassBackground()
+                }
+        #else
+            content.navigationTitle(title)
+        #endif
+    }
+}
+
 /// 导航栏中间的标题文字（`inlineNavigationTitle` 默认放的；自己放内容的页面没有内容可放时也用它）。
 struct InlineTitleText: View {
     let title: String

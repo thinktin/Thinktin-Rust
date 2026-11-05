@@ -138,11 +138,13 @@ private struct RunTreeContent: View {
         .listRowBackground(node.isFocus ? Theme.userBubble : Theme.paperElevated)
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             if canStopNode {
-                Button(role: .destructive) {
+                // 只弹确认、停了行也还在：不用 `.destructive`，不然系统先把行收走。
+                Button {
                     stopTarget = .node(node.id)
                 } label: {
                     Label(ConversationText.detailLabel(.stop, language: language), systemImage: "stop.fill")
                 }
+                .tint(StatusTone.failure.color)
             }
         }
         .contextMenu {
@@ -320,7 +322,7 @@ private struct ActiveRunsContent: View {
                         .frame(width: 32, height: 32)
                 }
                 VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
-                    Text(verbatim: run.prompt)
+                    Text(verbatim: MessageQuote.body(run.prompt))
                         .typography(.body)
                         .foregroundStyle(Theme.ink)
                         .lineLimit(2)

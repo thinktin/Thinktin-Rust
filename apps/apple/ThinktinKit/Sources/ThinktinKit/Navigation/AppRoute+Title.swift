@@ -54,6 +54,7 @@ extension AppRoute {
         case .newTask: ("新任务", "New task")
         case .frozen: ("账号已冻结", "Account frozen")
         case .upgrade: ("需要更新", "Update required")
+        case .hiddenBotins: ("已隐藏的 Botin", "Hidden Botins")
         }
     }
 }
