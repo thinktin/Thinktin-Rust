@@ -8,21 +8,21 @@
   “完成”），高亮所有匹配、当前这一处实心，跳过去时先滚到那一组再居中；上面还能翻时提示加载更早的。逻辑在 ThinktinKit 的
   `ConversationFind.swift`、`MarkdownInline.swift`，测试 `ConversationFindTests`（ThinktinKit）、`ConversationExtrasTests`（界面）。
   桩：`SwiftUI+ConversationExtras.swift`（`AttributedString` 的 SwiftUI 属性 `backgroundColor` / `foregroundColor`、
-  `AccessibilityNotification.Announcement`、`menuIndicator`）。
-
+  `AccessibilityNotification.Announcement`、`menuIndicator`、`onLongPressGesture`）。
 - 附件菜单（4.3.6，参考 08）：输入框左边玻璃圆“+”，系统菜单三项（照片或视频、拍照、选择文件；Mac 没有拍照），点了弹“即将推出”。
   ThinktinKit 的 `ConversationAttachments.swift`（`ComposerAttachmentSource`、`canAttach`），测试 `ConversationAttachmentTests`。
-
 - 表情回应（参考 06、90）：iPhone 长按消息改成参考 06 的面板（两排表情 + 分组操作，“标为未读”即将推出），“更多表情”是参考 90 的
   选择器，回应画在气泡下面，只存这台设备。ThinktinKit 的 `MessageReactions.swift`（`MessageReactionStore`、`EmojiCategory`、
   `EmojiCatalog`），界面 `MessageReactionViews.swift`、`MessageMenus.swift`；测试 `MessageReactionsTests`、`ConversationExtrasTests`。
-
 - 选择主 Botin（参考 10、11）：新路由 `AppRoute.primaryBotin`（sheet），页面 `PrimaryBotinPickerScreen`（×、确认、单选列表、
   底部搜索、“暂无其他可选的 Botin”），入口是 Botin 资料“…”菜单的“替换主 Botin…”；只存这台设备（ThinktinKit `PrimaryBotin.swift`）。
   测试 `PrimaryBotinTests`、`AppRouteTests`、`InstanceProfileTests`、`ConversationExtrasTests`。
+- Linux 检查（2026-11-05，最后一次提交上）：ThinktinKit `swift test` 1095 个全过；uicheck UIKit、AppKit 都编过；`run.sh test`
+  152 个全过；`swift format lint --strict` 零条。macOS CI 还没看（真 SDK 上 `AccessibilityNotification` 要不要单独
+  `import Accessibility`、`AttributedString` 的 `backgroundColor` 在 `Text` 里画不画，都在 CI 上看）。
 
 进行中：
-- 全部 Linux 检查。
+- 无（这条线的四件事都做完了，等整合）。
 
 下一步：
 - 交给整合的人：新任务（`NewTaskSheet`）、快捷指令、小组件默认选 `PrimaryBotinStore.shared.primaryID`；资料页头像加主 Botin 的星标
@@ -41,7 +41,12 @@
   一个视图上只挂一个 `.sheet(item:)`（`MessageSheet`：面板、选择文本、Mac 的表情选择器），别再加第二个。`previewShape` 参数现在
   没用了，留着是为了运行详情（别的线在改）的调用处不用改。
 - 回应的键是时间线里那一项的 id（事件序号），事件流重置后对不上，旧回应就看不到了。删了 Botin 时 `InstanceDetailModel.delete()`
-  顺带 `MessageReactionStore.shared.forget(instanceID:)`（加了一行）；注销账号时没删（`DeleteAccountView` 只删了头像外观）。
+  顺带 `MessageReactionStore.shared.forget(instanceID:)`、`PrimaryBotinStore.shared.forget(instanceID:)`；注销账号时没删
+  （`DeleteAccountView` 只删了头像外观）。
+- Botin 资料“…”菜单（`InstanceProfileMenu`，ThinktinKit `ViewModels/Agents/InstanceProfile.swift`）第一组加了“替换主 Botin…”：
+  r2/botin 也在改 Botin 资料那一块，合并时这一组以“替换主 Botin…、复制 ID”为准（参考 10），别加出两个。
+- 长按面板里“标为未读”、附件“+”的三项都是“即将推出”：`MessageMenuAction.isComingSoon`、`ComposerAttachmentSource.isAvailable`，
+  后端有了以后改这两处。
 - `AppRoute.primaryBotin` 归 `.conversation`（`ConversationDestination` 接），这样不用动别的线的接入点；r2/connections 也在加路由，
   合并时 `AppRoute.swift`、`AppRoute+Title.swift`、`AppRouteTests.swift`（`RouteSamples` 的下标和 `caseCount`）会冲突，两边的 case 都留、
   下标顺着排。
