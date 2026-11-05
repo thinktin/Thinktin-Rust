@@ -1,20 +1,73 @@
-# 8.15 对抗评审（workflow `review-8-15`，第一轮的部分结果）
+# 8.15 对抗评审（workflow `review-8-15`）
 
-第一轮跑到一半碰到用量上限：`verify:db-boundary`、`verify:lifecycle-keys`、`find:api-contract-tests` 没跑完，已经续跑。下面是已经回来的发现（原文是英文）。
+4 个方面，每个方面一个找问题的、一个反驳的。第一轮碰到 5 小时上限，续跑以后 `find:api-contract-tests`（接口、FFI、测试是否对得上）又碰到**每周上限**（11 月 10 日恢复），这一方面由主会话自己过了一遍（见最后）。
 
-## db-boundary / role-check-direct-membership-only（low，核实：None）
+## 结论
 
-**The checks that keep service roles out of thinktin_member only look one membership hop deep, and nothing re-checks them after the migration**  
-`crates/store/migrations/0049_project_member_role.sql`:26
+6 条，5 条成立，都是低：没有跨用户的数据泄露。修复在 `7c1520d`（全部测试 760 个通过）。
+
+| 方面 | 问题 | 处理 |
+|---|---|---|
+| db-boundary | The checks that keep service roles out of thinktin_member only look one membership hop deep, and nothing re-checks them after the migration | 修了（`Db::check_roles` 每次启动核对间接的成员关系和两个角色的属性；0049 不改，改了已经迁移过的库校验和对不上） |
+| read-model-privacy | Invite accept reads the new project's detail without project_error, so a database refusal becomes a 500 and is not counted | 修了 |
+| lifecycle-keys | Project artifact publish takes the project lock before the users-row FK lock, so it can deadlock with erase | 修了（先锁主人的用户行；主人注销了的登记不进去） |
+| lifecycle-keys | Project cancel helpers change approvals after the instance epoch bump, the opposite order to decide_approval, so they can deadlock | 不成立（今天到不了：项目运行不会有待审批的）；8.16 放开领取前把顺序改成先审批后实例，记在进度文件 |
+| lifecycle-keys | The purge removes at most one deleted project per call, capped at 20 calls an hour, and a large project blocks all the others behind it | 修了（每次的行数分给几个项目，删完一个接着删下一个；加了测试） |
+| lifecycle-keys | A member who left a project and later deletes their account still shows as 'left', not 'erased', on the content they kept there | 修了（注销把所有成员行标成注销，退出时间不变；加了测试） |
+
+## 接口、FFI、测试（主会话自己过的）
+
+- 不缓存的中间层包在整个项目路由外面：登录失败、参数错误的响应也带 `no-store`（axum 的提取器在路由里面）。
+- 查询参数 `limit` 不是数字时 axum 回 400 纯文本，和别的列表接口一样（没改）。
+- 老版本 App：项目界面还没上线（12.25、13.18），删共享项目、列表里多了归档的，没有老界面受影响；`Run.project_id` 带默认值。
+- `forget_project` 用 `json_extract(json, '$.project_id')`：缓存里存的是 serde 的 JSON，id 是字符串，回执按 `PROJECT_RECEIPTS` 留着，单元测试和 FFI 测试都覆盖了。
+- 下载项目产出物时对象存储里的内容没了（清理之后）会是 500：那时项目已经删了，成员读先返回 404，到不了这一步。
+
+## 原文（英文）
+
+### db-boundary / role-check-direct-membership-only（low，核实：True）
+
+**The checks that keep service roles out of thinktin_member only look one membership hop deep, and nothing re-checks them after the migration**  `crates/store/migrations/0049_project_member_role.sql`:26
 
 - **scenario**: An operator grants the member role to the tenant role indirectly: `GRANT thinktin_member TO ops_ro; GRANT ops_ro TO thinktin_app` (default INHERIT). The same applies to a plain `GRANT thinktin_member TO thinktin_app` made after 0049 has run, or `ALTER ROLE thinktin_member BYPASSRLS` made later. In each case 0049 has already passed or passes, and `Db::check_roles` reports nothing at startup. From then on, has_privs_of_role(thinktin_app, thinktin_member) is true. Every tenant transaction therefore also gets the `member_read` policies on projects, project_members, project_agents, users, instances and artifacts, OR-ed with the tenant policies. The tenant role holds full table-level SELECT on most of these tables, so the whitelist is gone. Example: user B is a member of project P. `t.artifact(id)` now returns A's project artifact through the private `/v1/artifacts/{id}` routes, which branch on `project_id` and decrypt with the project key. B's tenant reads of project_members also return A's `daily_token_limit`, `total_token_limit` and `consented_at`.
 - **evidence**: 0049:23-29 joins `pg_auth_members` exactly once. It asks whether the two roles are members of anything, and whether a service role is a *direct* member (`am.roleid` = member/definer AND `am.member` IN (thinktin_app, ...)). Membership through an intermediate role is never seen, although RLS role matching follows inheritance (has_privs_of_role). The plan (Appendix A, I3) chose this direct join over `pg_has_role`. `Db::check_roles` (crates/store/src/schema.rs:150-190) checks only that session_user can SET to app, member and worker, and is not a MEMBER of the definer. It never checks whether thinktin_app, thinktin_worker, thinktin_llmgw or thinktin_relay have any membership (direct or indirect) in thinktin_member or thinktin_project_definer, and never checks those two roles' rolbypassrls, rolcanlogin or rolinherit. So the 0049 guard is a one-time, one-hop check.
 - **fix**: In 0049, replace the one-hop join with a transitive test that cannot raise 42704 when a role is missing, for example: `SELECT 1 FROM pg_roles s, pg_roles g WHERE s.rolname IN ('thinktin_app','thinktin_worker','thinktin_llmgw','thinktin_relay') AND g.rolname IN ('thinktin_member','thinktin_project_definer') AND pg_has_role(s.oid, g.oid, 'MEMBER')`. Run the same query in `Db::check_roles`, together with `rolbypassrls OR rolcanlogin` on the two roles and `rolinherit` on the definer, so that configuration drift after the migration fails startup.
+- **verifier**: The finding is accurate, and the risk only appears if an operator misconfigures the roles. No user can trigger it.
 
-## read-model-privacy / accept-missing-project-error（low，核实：True）
+What the code does:
+- In 0049, the guard reads pg_auth_members once (around lines 23-29). It flags a service role only when that role is a direct member of thinktin_member or thinktin_project_definer, i.e. am.roleid is one of those two and am.member is thinktin_app, thinktin_worker, thinktin_llmgw or thinktin_relay.
+- The separate check "these two roles are members of no role" looks the other way: it asks whether the two roles are themselves members of something. It does not see an intermediate role placed under them.
+- So with `GRANT thinktin_member TO ops_ro; GRANT ops_ro TO thinktin_app` (INHERIT by default), every condition passes.
+- `Db::check_roles` (crates/store/src/schema.rs:150-190) checks only two things about session_user: that it can SET ROLE to app, member and worker, and that it is not a MEMBER of the definer. It never looks at the service roles' membership in member or definer, or at the two roles' attributes.
+- The only other role checks are tests: crates/store/src/tests/boundary.rs:19-43 and tests.rs:805/841. Nothing checks at runtime after the migration.
 
-**Invite accept reads the new project's detail without project_error, so a database refusal becomes a 500 and is not counted**  
-`crates/gateway/src/routes/project_invites.rs`:111
+Why the gap matters:
+- RLS decides which policies apply with has_privs_of_role, and that follows INHERIT chains. If such a chain exists, a tenant transaction run as thinktin_app also gets the `member_read` policies from 0049 and 0054. Those are OR-ed with tenant_read.
+- thinktin_app has full table SELECT on artifacts (0002:109) and project_members (0039:217). So a member B would see project artifacts through tenant `t.artifact(id)`, and would see other members' daily_token_limit, total_token_limit and consented_at. The member-role column whitelist is meant to hide exactly those columns.
+
+Why this is not just the plan's choice:
+- The plan (D1) states the rule as "any service role is a member of either". It gives the reason as "Policies apply through inherited membership".
+- I3 picked the pg_auth_members join only to avoid a 42704 error when a role is missing. It did not decide to ignore indirect membership.
+- So the code checks less than the hazard the plan names.
+
+Why this is only low severity:
+- The reachable cases need a DBA to grant roles wrongly (indirectly, or after 0049 has run) or to ALTER the role attributes later. The documented deploy steps (deploy-checklist section 3) do neither.
+- No user action leads here. What is missing is a safety net for configuration drift.
+- **verified_fix**: Make the check transitive, and repeat it at every startup, not only in the migration.
+
+1. In `Db::check_roles`, add a query that cannot raise 42704 when a role is missing. Report every row it returns as Error::Schema:
+
+   SELECT s.rolname, g.rolname FROM pg_roles s, pg_roles g WHERE s.rolname IN ('thinktin_app','thinktin_worker','thinktin_llmgw','thinktin_relay') AND g.rolname IN ('thinktin_member','thinktin_project_definer') AND pg_has_role(s.oid, g.oid, 'MEMBER')
+
+   In the same function, also fail when either of the two roles has rolsuper, rolbypassrls or rolcanlogin, or when thinktin_project_definer has rolinherit.
+
+2. Optionally use the same pg_roles x pg_roles pg_has_role form in 0049. Only do this if 0049 has not been applied anywhere that must stay checksum-stable: editing it changes its checksum, and check_migrations fails for dev databases that already ran it. Otherwise put the stronger check in check_roles alone, or in a new migration.
+
+3. Add a boundary test: grant thinktin_member to a temporary role, grant that role to thinktin_app, and assert that check_roles fails.
+
+### read-model-privacy / accept-missing-project-error（low，核实：True）
+
+**Invite accept reads the new project's detail without project_error, so a database refusal becomes a 500 and is not counted**  `crates/gateway/src/routes/project_invites.rs`:111
 
 - **scenario**: In production a thinktin_member table or column GRANT is missing. Startup `check_roles` does not catch this: it only checks SET ROLE and definer membership. Bob accepts a project invite. `projects::accept` commits, so he has joined. Then `projects::detail` runs in the member transaction and fails with 42501, which maps to store::Error::Forbidden. Because the handler uses plain `?`, `From<store::Error>` sends Forbidden to `other => Self::internal(other)`: Bob gets a 500 'internal error' although the join succeeded, and `thinktin_project_forbidden_total` is not incremented. Every other project path returns 404 and increments the counter. A 25006 from the read-only member transaction takes the same path.
 - **evidence**: `async fn join(...)` at line 111: `let detail = projects::detail(&s.db, who.user, a.project).await?;`. `projects::detail` now opens `db.member(user)` and calls `ProjectTx::project_detail` (8.15). Every other caller of `projects::detail` / `ProjectTx` in routes/projects.rs, routes/project_runs.rs and teams::adopt_project_template uses `.map_err(project_error)`. Plan D16 says Forbidden (42501, and 25006 through D4) becomes 404, is logged at error! and is counted, so that a missing production GRANT is not silent.
@@ -22,38 +75,42 @@
 - **verifier**: I checked this against the code and could not refute it. In 8.15, `orchestrator::projects::detail` (crates/orchestrator/src/projects.rs:121-126) moved from a worker read to `db.member(user)` plus `ProjectTx::project_detail`. That moved it onto the 42501/25006 boundary. In crates/store/src/error.rs, both codes map to `store::Error::Forbidden`; 25006 was added in 8.15. The commit updated every gateway caller of `projects::detail` to `.map_err(project_error)`: routes/projects.rs lines 113, 126, 157, 189, 206 and 240, and teams.rs:210-212, where 8.15 also added the import. It missed `join` in crates/gateway/src/routes/project_invites.rs:111, which still uses plain `?`. Through `From<store::Error> for ApiError` (gateway/src/error.rs), Forbidden falls into `other => Self::internal(other)`. So the client gets a 500 'internal error' after `projects::accept` has already committed the join, and `thinktin_project_forbidden_total` is not incremented. Plan D16 asks for Forbidden on project paths to become 404, be logged at error! and be counted, so that a missing production GRANT is not silent. This route is `/v1/project-invites/*/accept`, but it sits in the same no-store project router block (routes/mod.rs:201-285) and serves a ProjectTx read. The impact is small for three reasons. It only triggers on a misconfigured role or GRANT. `internal()` still logs at error!, so only the metric and the status code differ. And the join itself is not lost. A concurrent removal between accept and detail gives NotFound, not Forbidden, so that path behaves correctly.
 - **verified_fix**: In crates/gateway/src/routes/project_invites.rs, add `use crate::error::project_error;` and change line 111 to `let detail = projects::detail(&s.db, who.user, a.project).await.map_err(project_error)?;`. This matches every other `projects::detail` caller. Forbidden then becomes a 404, logged at error! and counted in `thinktin_project_forbidden_total`.
 
-## lifecycle-keys / insert-artifact-users-after-project-lock（low，核实：None）
+### lifecycle-keys / insert-artifact-users-after-project-lock（low，核实：True）
 
-**Project artifact publish takes the project lock before the users-row FK lock, so it can deadlock with erase**  
-`crates/store/src/artifacts.rs`:130
+**Project artifact publish takes the project lock before the users-row FK lock, so it can deadlock with erase**  `crates/store/src/artifacts.rs`:130
 
 - **scenario**: This cannot happen today, because project runs are never claimed. It becomes possible once 8.16 lets project runs execute. Bob's agent runs in alice's shared project P and calls artifact_publish (T1). At the same moment bob deletes his account (T2). T2 runs `SELECT 1 FROM users WHERE id=bob FOR UPDATE` and then `lock_projects([P,..])`, which blocks on T1's advisory lock. T1 already holds `lock_project(P)` (artifacts.rs:130). Its `INSERT INTO artifacts` then checks the FK `artifacts.user_id REFERENCES users` (0002:75), which needs FOR KEY SHARE on bob's users row and conflicts with T2's FOR UPDATE. Each transaction waits on the other, so PostgreSQL aborts one with 40P01. Either the account deletion fails (500) or the publish fails.
 - **evidence**: `insert_artifact`: `if let Some(p) = a.project { self.lock_project(p).await?; ... }`, then the INSERT into artifacts (user_id FK to users). `erase_account` (users.rs:186-207): `SELECT 1 FROM users WHERE id = $1 FOR UPDATE`, then `self.lock_projects(&mut projects)`. The 8.14 D3 order puts the users lock before the project advisory lock. publish (orchestrator/src/artifacts.rs:380-404) opens a fresh worker transaction whose first action is this project lock, so the users row is locked after it.
 - **fix**: In `insert_artifact`, lock the artifact owner's users row first (`self.lock_users(&[a.user]).await?`, FOR KEY SHARE), before `lock_project(p)`, so the transaction follows D3.
+- **verifier**: The lock order the reviewer describes is correct. publish (orchestrator/src/artifacts.rs:380-404) opens a fresh worker transaction, and its first action is insert_artifact. That takes lock_project(p) (artifacts.rs:130) and only then INSERTs into artifacts. artifacts.user_id REFERENCES users(id) (0002:75), so the FK check takes FOR KEY SHARE on the owner's users row after the project advisory lock. erase_account takes `users ... FOR UPDATE` (users.rs:186) and then lock_projects over every project the user is a member of (users.rs:195-207), which includes alice's P. FOR UPDATE conflicts with KEY SHARE, so the two transactions deadlock (40P01). The deadlock detector covers advisory locks and row-lock waits alike. It is not reachable today: no route creates project runs (gateway project_runs.rs only reads), and claim and takeover filter `project_id IS NULL` (runs.rs:205), so run_project() never returns Some in production. It still breaks the plan. D3 rule R1 puts users KEY SHARE (step 1) before the project lock (step 2), and D3's rationale counts FK-implied KEY SHARE locks as step-1 locks. The 8.15 project branch of publish becomes live in 8.16 without further changes, so this is a latent 8.15 defect.
+- **verified_fix**: In insert_artifact, when a.project is Some, take `self.lock_users(&[a.user]).await?` (FOR KEY SHARE, projects.rs:112) before `self.lock_project(p)`. Optionally return NotFound when the locked user is missing or deleted, so an erase that won the race leaves no artifact row behind.
 
-## lifecycle-keys / settle-approvals-after-epoch-bump-deadlock（low，核实：None）
+### lifecycle-keys / settle-approvals-after-epoch-bump-deadlock（low，核实：False）
 
-**Project cancel helpers change approvals after the instance epoch bump, the opposite order to decide_approval, so they can deadlock**  
-`crates/store/src/runs.rs`:963
+**Project cancel helpers change approvals after the instance epoch bump, the opposite order to decide_approval, so they can deadlock**  `crates/store/src/runs.rs`:963
 
 - **scenario**: This cannot happen today (project runs never run). Once they do: bob's project run R is in waiting_approval with pending approval A. Bob approves A from his phone. The tenant transaction T2 takes A FOR UPDATE, updates it and settles the inbox item, then `append_event` tries `UPDATE instances SET event_seq ... WHERE id = I`. Meanwhile alice deletes or archives the project, or bob leaves from another device (T1). T1 locks R, runs `bump_epochs_where!` (UPDATE instances I, because R is active), updates R, and then `settle_cancelled_approvals` runs `UPDATE approvals ... WHERE run_id = ANY(..)` and waits on A. T2 waits on I, which T1 holds, so the two deadlock (40P01). The delete, archive, leave, remove or withdraw fails, or the user's approval fails, with a 500.
 - **evidence**: cancel_project_runs: lock runs, then `sqlx::query(bump_epochs_where!("project_id = $1"))` (line 950), then UPDATE runs, then `self.settle_cancelled_approvals(&ids)` (line 963). `cancel_project_agent_runs` (line 897) and `cancel_project_member_runs` (line 939) were changed the same way in 8.15. gateway/routes/approvals.rs:45-46: `t.decide_approval(..)`, which takes the approval FOR UPDATE and updates it, then `t.append_event(..)`, which runs `UPDATE instances SET event_seq`. So the cancel path goes runs, then instances, then approvals, while decide goes approvals, then instances.
 - **fix**: Cancel the pending approvals right after locking the runs and before `bump_epochs_where!`. Run the approvals-and-inbox CTE on the locked ids first, then bump the epochs and update the runs. Cancel then takes approvals before instances, the same order as decide_approval.
+- **verifier**: The mechanism is right. cancel_project_runs, cancel_project_agent_runs and cancel_project_member_runs (runs.rs:897, 939, 963) lock runs, UPDATE instances (bump_epochs_where!), UPDATE runs and only then UPDATE approvals. decide (gateway/routes/approvals.rs:45-46) holds the approval FOR UPDATE and then runs append_event's `UPDATE instances SET event_seq`. Once project runs can sit in waiting_approval, that is a cycle. It is not reachable today, though. settle_cancelled_approvals only receives ids of project runs (or runs under project roots). Approvals are created only by the executor for running runs. Project runs are never created by a route or claimed (runs.rs:205), so no pending approval on a project run can exist in production, and the id list is empty or holds no pending approvals. The plan also prescribes exactly this order: §2.4 says cancel_project_runs does 1. lock_runs_where, 2. bump_epochs_where, 3. UPDATE runs, 4. settle_cancelled_approvals. D3 does not place approvals anywhere, so the code does not contradict the plan. Under the review rules this falls inside the deferred project-run execution (8.16) and is not reportable for 8.15. It is still worth fixing before 8.16 opens claims.
+- **verified_fix**: (For 8.16) Settle approvals right after lock_runs_where and before bump_epochs_where!. Use the ids returned by the lock query (the not-yet-finished runs), so approvals are taken before instances, the same order as decide_approval. Amend plan §2.4 to match.
 
-## lifecycle-keys / purge-one-project-per-call-throughput（low，核实：None）
+### lifecycle-keys / purge-one-project-per-call-throughput（low，核实：True）
 
-**The purge removes at most one deleted project per call, capped at 20 calls an hour, and a large project blocks all the others behind it**  
-`crates/store/src/project_lifecycle.rs`:346
+**The purge removes at most one deleted project per call, capped at 20 calls an hour, and a large project blocks all the others behind it**  `crates/store/src/project_lifecycle.rs`:346
 
 - **scenario**: Since 8.15, every DELETE on /v1/projects/{id} and /v1/teams/{id} is a soft delete. Today a deleted project has no content, so each purge call removes exactly one projects row and returns (line 346). `sweep` makes at most SWEEP_BATCHES = 20 calls, and maintenance runs hourly by default (server config.rs:859). That allows at most 20 projects an hour, about 480 a day. If users delete more than that, the backlog of deleted projects (names, goals, member, agent and invite rows) grows without bound. Once projects have content, the call also returns after the first step that deletes rows (line 323), and candidates are always taken in deleted_at order. A project with, say, 1,000,000 events (500 rows per call, 20 calls an hour, so 10,000 rows an hour) then uses every call for about 100 hours, and no other deleted project is purged in that time.
 - **evidence**: `for (id, _) in candidates { ... if n > 0 { return Ok(n); } ... let n = sqlx::query("DELETE FROM projects ...")...; if n > 0 { return Ok(n); } }` together with `for _ in 0..SWEEP_BATCHES { ... purge_deleted_projects(SWEEP_BATCH, PROJECT_PURGE_GRACE) ... Ok(0) => break, Ok(n) => total += n ... }` (orchestrator/src/projects.rs:621-640).
 - **fix**: Keep processing within one call or one transaction. After a project row is deleted, continue with the next candidate instead of returning. Spend the batch budget across several candidates, for example by rotating or round-robining between them instead of always starting from the oldest. Alternatively, let the sweep loop run until a time budget is used up, rather than a fixed 20 calls.
+- **verifier**: Confirmed, and reachable today. purge_deleted_projects returns as soon as any step deletes rows (project_lifecycle.rs:323) and returns 1 right after deleting a project row (line 346). orchestrator::projects::sweep makes at most SWEEP_BATCHES=20 calls per maintenance run (projects.rs:621-640). maintain() runs every maintenance_every_secs, which defaults to 3600 (config.rs:859). Since 8.15 every DELETE /v1/projects/{id} and /v1/teams/{id} goes through delete_project, which only soft-deletes, whether or not cross_user_projects is on. Before 8.15, solo deletes were hard deletes. Today a deleted project has no runs or artifacts, but usually has some non-receipt project inbox rows, so it takes 1-2 calls. One worker replica therefore clears about 10-20 deleted projects an hour (about 240-480 a day). Each extra replica adds roughly 20 calls an hour, because the try-lock lets replicas take different candidates. Above that deletion rate the backlog of soft-deleted rows grows without bound. Those rows keep plaintext project name and goal, plus member, agent and invite rows, including those of erased creators. That contradicts projects-impl's '后台 10 分钟后按批清理' and '垃圾最终清掉'. The plan prescribes 'return 1', so this is a design-capacity weakness rather than a deviation from the plan. Nothing leaks: the deleted projects are unreadable. The 'one large project starves the rest' part of the scenario only applies once project content exists (8.16), but the 20-calls cap applies now.
+- **verified_fix**: Spend the per-call row budget across candidates. After a step deletes n rows, subtract n from the remaining batch and continue, or move on to the next candidate instead of returning. After deleting a project row, continue to the next candidate instead of returning 1. Alternatively, let sweep loop until a time or row budget is used up rather than a fixed 20 calls, and rotate the starting candidate so one large project cannot monopolise every call.
 
-## lifecycle-keys / left-then-erased-shown-as-left（low，核实：None）
+### lifecycle-keys / left-then-erased-shown-as-left（low，核实：True）
 
-**A member who left a project and later deletes their account still shows as 'left', not 'erased', on the content they kept there**  
-`crates/store/src/users.rs`:318
+**A member who left a project and later deletes their account still shows as 'left', not 'erased', on the content they kept there**  `crates/store/src/users.rs`:318
 
 - **scenario**: Bob runs work in alice's project P, then leaves P, which sets left_reason 'left'. Later bob deletes his account. Erase keeps bob's project runs and artifacts in P (D13), but its member update only touches rows with `left_at IS NULL`. Bob's row keeps left_reason = 'left', so `ProjectTx::authors` (project_reads.rs:179-203) reports `owner.status = left` on his runs and artifacts. D13 and projects-impl say content kept after erase is shown with the owner as erased. Bob's display name is already NULL, so nothing leaks; only the status is wrong.
 - **evidence**: `"UPDATE project_members SET left_at = now(), left_reason = 'erased' WHERE user_id = $1 AND left_at IS NULL AND role = 'member'"` and authors(): `coalesce(m.left_reason = 'erased', false)`. The member role cannot read users.status (0049 grants only id and display_name), so authors() has no other way to tell that the user is erased.
 - **fix**: Change the erase update to `UPDATE project_members SET left_at = coalesce(left_at, now()), left_reason = 'erased' WHERE user_id = $1 AND role = 'member'`, which keeps the original left_at and marks every non-creator row as erased.
+- **verifier**: Confirmed in code. erase_account runs `UPDATE project_members SET left_at = now(), left_reason = 'erased' WHERE user_id = $1 AND left_at IS NULL AND role = 'member'` (users.rs:316-317), so a member row that was already left keeps left_reason='left'. ProjectTx::authors (project_reads.rs:177-205) derives Erased only from `left_reason = 'erased'`, and the member role cannot see users.status, so content a user kept in P after leaving and then erasing shows owner.status=left. That contradicts D13 ('stay in other people's projects, with the owner shown as erased') and projects.md:107 ('作者显示为已注销的用户'). Plan §2.4 line 888 prescribes this exact SQL, so the plan is inconsistent with itself. The impact is cosmetic only: user_id and display_name are None in both cases, so nothing leaks. It is also latent, because authors only appear on project runs, artifacts and events, and no project content can exist in production until project runs execute (8.16); the member list shows only live members. Raising the status to erased does not trip CHECK (left_at IS NULL) = (left_reason IS NULL) or the role check, and project_members has no update trigger.
+- **verified_fix**: UPDATE project_members SET left_at = coalesce(left_at, now()), left_reason = 'erased' WHERE user_id = $1 AND role = 'member'. This keeps the original leave time and marks every non-creator row as erased. Update plan line 888 to match.
