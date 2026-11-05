@@ -32,8 +32,9 @@ public enum OnboardingStep: Int, CaseIterable, Hashable, Sendable {
 }
 
 /// 新用户引导（WBS 12.17，`.onboarding`，sheet）：按服务端的现状算每一步做没做完（实例、key、实例的 `main` 别名、运行），
-/// 当前这一步给一个按钮去做。新用户登录后弹出；换了新手机（这台设备第一次登录、账号还没有实例或 key）也弹一次
-/// （`OnboardingCheck`）；设置里随时能再打开。
+/// 当前这一步给一个按钮去做。设置里随时能打开；换了新手机（这台设备第一次登录、账号有 Botin 但还没有 key）弹一次
+/// （`OnboardingCheck`）。新用户登录后不弹：第一次登录看到的是首页的空状态（用户 2026-11-05 定的），新建 Botin 之后
+/// 对话页的“还差一步”接着引导配模型路由、加 key。
 ///
 /// 通知权限在这里问（“用到时再问”）：前面几步做完才到这一步；拒绝过的只能去系统设置。
 @Observable @MainActor
@@ -127,8 +128,8 @@ public final class OnboardingModel {
     }
 }
 
-/// 换新手机时检查一次（WBS 12.17）：这台设备上第一次登录进来，账号还没有实例或 key，就弹出引导。每台设备只看一次
-/// （`UserDefaults`），之后从设置里打开。
+/// 换新手机时检查一次（WBS 12.17）：这台设备上第一次登录进来，账号有 Botin 但还没有 key，就弹出引导。还没有 Botin 的
+/// 不弹（首页的空状态“还没有 Botin”就是引导，弹出来会盖住它）。每台设备只看一次（`UserDefaults`），之后从设置里打开。
 public struct OnboardingCheck {
     static let key = "cn.thinktin.onboarding.checked"
 
@@ -145,7 +146,7 @@ public struct OnboardingCheck {
         defaults?.set(true, forKey: Self.key)
     }
 
-    /// 要不要弹：没看过，且还没有实例或 key。看过了就记下（不管弹没弹）。不记的（测试、预览）不弹。
+    /// 要不要弹：没看过，且有 Botin、没有 key。看过了就记下（不管弹没弹）。不记的（测试、预览）不弹。
     @MainActor
     public func shouldPresent(client: any ClientProtocol) async -> Bool {
         guard defaults != nil, !hasChecked else { return false }
@@ -153,7 +154,7 @@ public struct OnboardingCheck {
             let instances = try await client.instances().filter { $0.state != .deleted }
             let credentials = try await client.credentials()
             markChecked()
-            return instances.isEmpty || credentials.isEmpty
+            return !instances.isEmpty && credentials.isEmpty
         } catch {
             // 拉不到（离线）：下次启动再看。
             return false

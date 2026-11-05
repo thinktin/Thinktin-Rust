@@ -375,7 +375,9 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
     “A Botin is an assistant that works for you. Give it a name and pick an engine, and it can write, look things up and run tasks for you.” /
     “New Botin”；在 `HomeText`）。按钮 `.glassButtonStyle(.prominent)` + `.controlSize(.large)`，打开和“+”同一张新建表单（4.7.1）。
     联网拉到了、账号里没有 Botin 才显示它（`HomeList.placeholder` / `AppModel.homePlaceholder` 的 `.noBotins`）；离线时不引导新建，
-    还是“这台设备上还没有保存的 Botin”（`.offlineWithoutCache`）。第一次登录会先弹引导（12.17），空状态在它下面。已做（2026-11-05）。
+    还是“这台设备上还没有保存的 Botin”（`.offlineWithoutCache`）。第一次登录不弹引导（12.17），看到的就是这个空状态（用户 2026-11-05
+    定的“首次登录首页是空的”；新用户登录不再进 `.onboarding`，换新机时只有有 Botin、没有 key 的账号才弹，引导从设置里打开）。
+    网络回来时实例列表没拉到过就补拉（`AppModel` 收到 `.reachable`），不会一直转圈。已做（2026-11-05）。
   - 全部隐藏（113，第 2 轮）：“所有 Botin 都已隐藏” + `Button("显示已隐藏的 Botin")`（`.bordered`、胶囊）。
   - 拉取失败：`ErrorBanner`，可重试。
   - 有运行在等你处理：行内第二行换成“N 个在等你处理”（现在抽屉里就有），角标用 `warning` 色。

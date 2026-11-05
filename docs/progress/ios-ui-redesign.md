@@ -197,7 +197,8 @@
 - 首页空状态的演示数据和截图（2026-11-05）：`AppConfiguration.mockEmptyEnvironmentKey`（`THINKTIN_MOCK_EMPTY`，`1` / `true` / `yes`），
   只有 Debug 构建、用 Mock 时认（`startsWithEmptyAccount`），`AppEnvironment.live` 这时用 `DemoData.newAccountState()`；scheme 的 Run 里
   加了一项（默认不勾）。`tools/apple/screenshots.sh` 清单加第四列 THINKTIN_MOCK_EMPTY，新加 `00-home-empty`（浅色、深色），产物 30 张；
-  每次启动带 `-cn.thinktin.onboarding.checked YES`（`OnboardingCheck` 的键写进 UserDefaults 参数域）：新账号第一次启动会弹引导盖住空状态。
+  每次启动带 `-cn.thinktin.onboarding.checked YES`（`OnboardingCheck` 的键写进 UserDefaults 参数域）：当时新账号第一次启动会弹引导盖住
+  空状态；审查修正之后新账号不弹了（见下面“审查修正”），参数留着当保险。
   `08-adopt` 现在截到的是新表单。测试在 App 的 `AppSmokeTests`（开关的取值、只认 Debug + Mock、新账号首页是 `.noBotins`、表单照样打开）。
   docs/ios.md 截图那段、apps/apple/README.md、规范 7.6 的截图表跟着改。
 - 别的“新建 Botin”入口也弹表单（2026-11-05）：引导里的“新建 Botin”一步、没有 Botin 时的“新任务”（`AppModel.startNewTask`）、
@@ -218,6 +219,11 @@
   - 首页不会一直转圈：离线启动、这台设备上没有缓存，网络回来时先成功的是别的调用（设置、收件箱、角标），以前没人补拉实例列表，
     `homePlaceholder` 一直是 `.loading`。现在 `AppModel` 收到 `.reachable` 时实例列表没拉到过就 `refresh()`；刷新到一半网络回来的
     （实例那一步离线失败、角标成功）在 `refresh()` 末尾补拉一次。测试 `HomeListTests` 的“离线启动、没有缓存”（去掉修改时两种都挂）。
+  - 第一次登录看到的是空的首页（用户 2026-11-05 定的“首次登录首页是空的”）：以前新用户登录进 `.onboarding`（`SignInModel.destination`），
+    换新机时没有 Botin 也弹（`OnboardingCheck`），引导的 sheet 盖住了“还没有 Botin”，截图 `00-home-empty` 靠启动参数才截得到。现在
+    `destination(after:)` 新老用户都是 nil；`OnboardingCheck` 只在有 Botin、没有 key 时弹（还没有 Botin 的，空状态就是引导；新建之后对话页的
+    “还差一步”接着引导配路由、加 key）；引导从设置里打开。测试 `SignInModelTests`（新用户登录后没有 sheet）、`OnboardingModelTests`
+    （新账号不弹、有 Botin 有 key 不弹、有 Botin 没 key 弹）。docs/ios.md 截图那段、规范 4.2.1、截图脚本的说明跟着改。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、
@@ -236,8 +242,8 @@ Botin 改名（2026-11-05）也做完了。
 0. Botin 改名的收尾：(a) 登录页 `SignInFlow` 的两句“你的常驻 agent”“agent 在云端常驻”要不要改成 Botin，问用户（登录页是他设计的）；
    (b) 安卓和服务端推送照 docs/handoff-ios.md 的“Botin 改名”对照表改（别的会话的线，这里没动）；(c) 新建表单已经是“+”直接弹、表单里选引擎
    （见“已完成”），要在模拟器上看一眼（下面第 1、2 条，`08-adopt`、`00-home-empty` 两张）；安卓的新建流程要不要跟着改另议；
-   (d) 演示数据里 agent 的介绍（“通用 agent”）是仿服务端目录的，等服务端的清单改了再跟；(e) 新账号第一次登录会先弹引导（12.17），
-   首页空状态在它下面：两个都是引导新建 Botin，要不要第一次登录不弹引导、只看空状态，问用户。
+   (d) 演示数据里 agent 的介绍（“通用 agent”）是仿服务端目录的，等服务端的清单改了再跟；(e) 第一次登录已经按用户的决定改成只看首页空状态、
+   不弹引导（见“已完成”审查修正那条）；用户要是还想要第一次登录弹引导，改回 `SignInModel.destination(after:)` 和 `OnboardingCheck` 就行。
 1. macOS CI（`.github/workflows/ios.yml`，只在推 main 和开 PR 时跑）还一次都没跑过这个分支：开 PR 或推一次让它用真 SDK 编。只有它验得出来的：
    Glass.swift 的 `if #available` 分支；首页工具栏（`#if os(iOS)` 里的 `ToolbarContent`、菜单项的两行 `Text`、`toolbarBadge` 在 iOS 26 上的
    `.badge`、`BottomBarSearchItem`）；`SheetStack` 里第二层 `.sheet(item:)`；`AgentsDestination` 的 `.adopt(agentID: nil)` 模式；启动屏

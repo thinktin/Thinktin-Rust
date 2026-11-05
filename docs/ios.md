@@ -320,7 +320,8 @@ client-core 只缓存实例、运行、事件、收件箱（cache.rs 的几张�
   `THINKTIN_OPEN_SCREEN=conversation / plans / artifacts / settings / search / adopt` 打开首页第一个 Botin（演示数据里是“写作助手”）
   的对话、计划、产出物，或者设置、新建 Botin 两个 sheet、首页搜索，和深链一样走 `Router.show`（App 的 `App/OpenScreen.swift`）；
   `THINKTIN_MOCK_EMPTY=1` 换成还没有 Botin 的新账号（`DemoData.newAccountState`，截 `00-home-empty`）。截图时启动参数
-  `-cn.thinktin.onboarding.checked YES` 让引导不弹（新账号第一次启动会弹，盖住空状态）。
+  `-cn.thinktin.onboarding.checked YES` 让引导不弹（引导只在有 Botin、没有 key 的账号第一次启动时弹，现在的两套演示数据都不弹，
+  参数是保险）。新用户第一次登录不弹引导，看到的就是首页的空状态（用户 2026-11-05 定的），引导从设置里打开。
 - 代码风格：`swift format`（Swift 6 工具链自带），配置在 `apps/apple/.swift-format`（App 和 ThinktinKit 共用，4 格缩进、120 列、
   其余是 swift-format 6.2 的默认规则全量导出）。CI 跑严格模式的 lint，**提交前先 `swift format -i -r apps/apple`**。
 - **Linux 上检查界面代码**：`tools/apple/uicheck/run.sh`（`appkit` 查 macOS 路径和 macOS App target（要先

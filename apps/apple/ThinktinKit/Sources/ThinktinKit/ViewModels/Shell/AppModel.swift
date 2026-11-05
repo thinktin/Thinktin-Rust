@@ -455,8 +455,8 @@ public final class AppModel {
         }
     }
 
-    /// 这台设备第一次登录进来、账号还没有实例或 key（换了新手机）：弹一次引导（12.17）。新用户登录时 `SignInModel`
-    /// 已经要弹了，不重复。
+    /// 这台设备第一次登录进来、账号有 Botin 但还没有 key（换了新手机）：弹一次引导（12.17，`OnboardingCheck`）。
+    /// 还没有 Botin 的（新用户第一次登录）不弹，首页的空状态就是引导。已经开着、排着引导的不重复。
     private func presentOnboardingIfNeeded() async {
         guard phase == .signedIn, router.sheet != .onboarding, router.pendingRoute?.route != .onboarding else { return }
         guard await onboardingCheck.shouldPresent(client: client), phase == .signedIn else { return }

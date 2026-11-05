@@ -30,7 +30,7 @@ private struct SignInFlowContent: View {
         WelcomeView(model: model)
             .onAppear {
                 model.onSignedIn = { [router] result in
-                    // 新用户进引导（12.17 的入口）。
+                    // 登录后要跳的页面（现在新老用户都回首页，见 `destination(after:)`）。
                     if let next = SignInModel.destination(after: result) { router.show(next) }
                 }
             }

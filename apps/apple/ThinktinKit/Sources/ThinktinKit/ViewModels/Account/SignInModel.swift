@@ -5,7 +5,7 @@ import Observation
 /// 倒计时重发）。和安卓的两步登录一致（docs/android-design.md 4.1）。
 ///
 /// - 登录成功后不用自己切页面：客户端是 `ObservedClient`，`login` 成功会报给 `AppModel` 切到主界面（docs/ios.md 9.1）。
-///   `onSignedIn` 在这之后调一次，新用户（`isNewUser`）进引导的入口在这里（12.17）。
+///   `onSignedIn` 在这之后调一次（登录后要跳到哪，`destination(after:)`）。
 /// - 发码限流（429）：按 `Retry-After` 倒数，按钮和提示上显示剩余秒数；之前已经给这个号码发过码的，照样进验证码页
 ///   （那个码还能用，5 分钟有效）。
 /// - 错误：号码不对、验证码不对（`invalid`）显示在输入框下面；其余按 `ClientError` 的分类给横幅（`error`）。
@@ -270,10 +270,11 @@ public final class SignInModel {
         failedStep = nil
     }
 
-    /// 登录成功后接着去哪（界面交给 `router.show(_:)`；还没切到主界面时 `Router` 先记下，切过去再跳）：新用户进引导
-    /// （12.17 的入口），老用户直接回到主界面（nil）。老用户换了新手机要不要补引导，由 12.17 在引导里判断。
+    /// 登录成功后接着去哪（界面交给 `router.show(_:)`；还没切到主界面时 `Router` 先记下，切过去再跳）。现在新老用户都是
+    /// nil，回到首页：用户 2026-11-05 定的，第一次登录看到的是空的首页（“还没有 Botin”和“新建 Botin”按钮，`HomeText`），
+    /// 不再先弹引导盖住它；引导（12.17）从设置里打开。老用户换了新手机要不要补引导看 `OnboardingCheck`。
     public nonisolated static func destination(after result: LoginResult) -> AppRoute? {
-        result.isNewUser ? .onboarding : nil
+        nil
     }
 
     // MARK: 内部

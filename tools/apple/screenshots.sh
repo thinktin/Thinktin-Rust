@@ -104,8 +104,9 @@ xcrun simctl status_bar "$udid" override --time 9:41 --dataNetwork wifi --wifiBa
   --batteryState charged --batteryLevel 100
 
 # 重新启动 App（上一张打开的页面、弹出的面板不会叠到下一张上）。$1 是 THINKTIN_OPEN_SCREEN，$2 是 THINKTIN_OPEN_URL，
-# $3 是 THINKTIN_MOCK_EMPTY；空的 App 不认，都空就是演示数据的首页。引导（12.17）在没有 Botin 或 key 的账号第一次启动时会弹，
-# 盖住首页空状态：启动参数把“看过引导”（OnboardingCheck 的键）写进 UserDefaults 的参数域，每张都不弹。
+# $3 是 THINKTIN_MOCK_EMPTY；空的 App 不认，都空就是演示数据的首页。引导（12.17）只在有 Botin、没有 key 的账号第一次启动时弹
+# （演示数据有 key，新账号没有 Botin，现在都不弹）：启动参数把“看过引导”（OnboardingCheck 的键）写进 UserDefaults 的参数域，
+# 以后改了演示数据也不会盖住截图。
 launch() {
   xcrun simctl terminate "$udid" "$bundle" >/dev/null 2>&1 || true
   env SIMCTL_CHILD_THINKTIN_MOCK=1 "SIMCTL_CHILD_THINKTIN_OPEN_SCREEN=$1" "SIMCTL_CHILD_THINKTIN_OPEN_URL=$2" \
