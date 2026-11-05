@@ -202,7 +202,7 @@ struct ModelRoutesModelTests {
         #expect(model.drafts.count == 16)
         #expect(!model.canAddAlias)
         #expect(model.aliasProblem("one-more") == .tooMany(max: 16))
-        #expect(AliasProblem.tooMany(max: 16).message(.chinese) == "一个实例最多 16 个别名。")
+        #expect(AliasProblem.tooMany(max: 16).message(.chinese) == "一个 Botin 最多 16 个别名。")
     }
 
     @Test("校验：模型名 1 到 128 个字符，停用的 key 要换掉才能保存")

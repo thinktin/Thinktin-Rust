@@ -414,19 +414,19 @@ public enum ConversationText {
     }
 
     public static func instanceMissing(_ language: DisplayLanguage) -> String {
-        language == .chinese ? "找不到这个实例" : "Instance not found"
+        language == .chinese ? "找不到这个 Botin" : "Botin not found"
     }
 
     /// 实例状态的页头提示（`instance.state`，正在唤醒、正在创建）；不用提示为 nil。
     public static func instanceBanner(_ state: InstanceState?, isStarting: Bool, language: DisplayLanguage) -> String? {
         let zh = language == .chinese
         switch state {
-        case .provisioning?: return zh ? "实例正在创建…" : "Setting up the instance…"
+        case .provisioning?: return zh ? "Botin 正在创建…" : "Setting up the Botin…"
         case .archived? where isStarting:
             return zh
-                ? "正在唤醒实例：已归档的要从模板重建，会慢一些"
-                : "Waking the instance. Archived ones are rebuilt from the template, so this takes a bit longer."
-        case .paused? where isStarting: return zh ? "正在唤醒实例…" : "Waking the instance…"
+                ? "正在唤醒 Botin：已归档的要从模板重建，会慢一些"
+                : "Waking the Botin. Archived ones are rebuilt from the template, so this takes a bit longer."
+        case .paused? where isStarting: return zh ? "正在唤醒 Botin…" : "Waking the Botin…"
         default: return nil
         }
     }
@@ -551,7 +551,7 @@ public enum ConversationText {
     }
 
     public static func onlyThisInstance(_ language: DisplayLanguage) -> String {
-        language == .chinese ? "只给这个实例用" : "Only this instance can use it"
+        language == .chinese ? "只给这个 Botin 用" : "Only this Botin can use it"
     }
 
     public static func saveSecret(_ language: DisplayLanguage) -> String {
@@ -636,7 +636,7 @@ public enum ConversationText {
         case .noArtifacts: return zh ? "这次没有产出物" : "No files from this run"
         case .openChat: return zh ? "打开对话" : "Open chat"
         case .usage: return zh ? "最近一轮用量" : "Last turn usage"
-        case .instance: return zh ? "实例" : "Instance"
+        case .instance: return "Botin"
         }
     }
 

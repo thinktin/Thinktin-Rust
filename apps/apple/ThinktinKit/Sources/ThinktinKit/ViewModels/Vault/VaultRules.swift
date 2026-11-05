@@ -67,8 +67,8 @@ public enum VaultText {
 
     public static func instances(_ item: VaultItem, names: [InstanceID: String], language: DisplayLanguage) -> String {
         let zh = language == .chinese
-        if item.isAvailableToAllInstances { return zh ? "所有实例都能用" : "All instances" }
-        let known = item.instanceIDs.map { names[$0] ?? (zh ? "已删除的实例" : "Deleted instance") }
+        if item.isAvailableToAllInstances { return zh ? "所有 Botin 都能用" : "All Botins" }
+        let known = item.instanceIDs.map { names[$0] ?? (zh ? "已删除的 Botin" : "Deleted Botin") }
         return (zh ? "只给：" : "Only: ") + known.joined(separator: zh ? "、" : ", ")
     }
 
@@ -85,9 +85,9 @@ public enum VaultText {
             return zh ? "密码至少 \(VaultRules.minPassword) 个字符" : "Use at least \(VaultRules.minPassword) characters"
         case .password(.tooLong): return zh ? "密码太长了" : "That password is too long"
         case .password(.controlCharacters): return zh ? "密码里不能有换行、制表符" : "No line breaks or tabs in the password"
-        case .noInstances: return zh ? "至少选一个实例，或者改成所有实例都能用" : "Pick at least one instance, or allow all"
+        case .noInstances: return zh ? "至少选一个 Botin，或者改成所有 Botin 都能用" : "Pick at least one Botin, or allow all"
         case .tooManyInstances:
-            return zh ? "最多选 \(VaultRules.maxInstances) 个实例" : "Pick up to \(VaultRules.maxInstances) instances"
+            return zh ? "最多选 \(VaultRules.maxInstances) 个 Botin" : "Pick up to \(VaultRules.maxInstances) Botins"
         case .full: return full(language)
         }
     }

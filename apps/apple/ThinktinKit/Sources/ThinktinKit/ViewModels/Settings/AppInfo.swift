@@ -74,7 +74,7 @@ public enum AboutText {
     /// 品牌下面的一句话介绍。
     public static func tagline(_ language: DisplayLanguage = .current) -> String {
         language == .chinese
-            ? "领养云端的 agent，让它们替你做事。" : "Adopt agents in the cloud and let them get things done for you."
+            ? "在云端新建 Botin，让它们替你做事。" : "Create Botins in the cloud and let them get things done for you."
     }
 
     /// “AI 生成内容说明”的几段话：哪些内容是 AI 生成的、怎么标识、要注意什么。和服务端的标识（`proto::labels`）、

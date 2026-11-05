@@ -55,7 +55,7 @@ struct VaultModelsTests {
         #expect(VaultText.instances(oss, names: model.instanceNames, language: .chinese) == "只给：代码审查")
         #expect(
             VaultText.instances(model.items.first { $0.name == "github" }!, names: [:], language: .english)
-                == "All instances")
+                == "All Botins")
     }
 
     @Test("满 200 条：列表提示、新建时拦下")

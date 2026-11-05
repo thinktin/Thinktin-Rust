@@ -21,7 +21,7 @@ public enum ApprovalsText {
 
     /// 实例已经删除（列表里找不到名字）。
     public static func deletedInstance(_ language: DisplayLanguage) -> String {
-        language == .chinese ? "已删除的实例" : "Deleted instance"
+        language == .chinese ? "已删除的 Botin" : "Deleted Botin"
     }
 
     public static func requestedAt(_ date: Date, language: DisplayLanguage) -> String {

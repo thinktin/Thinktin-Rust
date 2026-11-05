@@ -73,13 +73,13 @@ struct InstanceDeletionTests {
     @Test("影响的说明：中英文都有，说清楚要先改步骤")
     func effectMessages() {
         typealias Effect = InstanceDeletionImpact.PipelineImpact.Effect
-        #expect(Effect.paused.message(.chinese) == "删除后这条流水线会暂停，把这些步骤改到别的实例上才能恢复。")
+        #expect(Effect.paused.message(.chinese) == "删除后这条流水线会暂停，把这些步骤改到别的 Botin 上才能恢复。")
         #expect(
             Effect.paused.message(.english)
-                == "This pipeline will be paused. Move these steps to another instance to resume it.")
+                == "This pipeline will be paused. Move these steps to another Botin to resume it.")
         for effect in [Effect.paused, .stillPaused, .confirmationBlocked] {
-            #expect(effect.message(.chinese).contains("改到别的实例上"))
-            #expect(effect.message(.english).contains("Move these steps to another instance"))
+            #expect(effect.message(.chinese).contains("改到别的 Botin 上"))
+            #expect(effect.message(.english).contains("Move these steps to another Botin"))
         }
         #expect(Effect.confirmationBlocked.message(.chinese).contains("确认"))
     }

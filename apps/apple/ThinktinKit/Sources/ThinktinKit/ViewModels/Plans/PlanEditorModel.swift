@@ -348,7 +348,7 @@ public enum PlanFormProblem: Hashable, Sendable {
     public func message(_ language: DisplayLanguage = .current) -> String {
         let zh = language == .chinese
         switch self {
-        case .noInstance: return zh ? "选一个实例来执行这个计划。" : "Pick an instance to run this plan."
+        case .noInstance: return zh ? "选一个 Botin 来执行这个计划。" : "Pick a Botin to run this plan."
         case .title(.empty): return zh ? "起个标题吧。" : "Give it a title."
         case .title(.tooLong(let max)): return zh ? "标题最多 \(max) 个字。" : "Titles can be up to \(max) characters."
         case .goal(.empty): return zh ? "写一下要 agent 每次做什么。" : "Describe what the agent should do each time."

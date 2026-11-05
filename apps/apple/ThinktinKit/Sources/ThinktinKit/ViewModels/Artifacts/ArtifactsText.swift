@@ -76,6 +76,6 @@ public enum ArtifactsText {
     }
 
     public static func deletedInstance(_ language: DisplayLanguage) -> String {
-        language == .chinese ? "已删除的实例" : "Deleted instance"
+        language == .chinese ? "已删除的 Botin" : "Deleted Botin"
     }
 }

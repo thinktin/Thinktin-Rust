@@ -30,7 +30,8 @@ struct AgentCatalogModelTests {
         #expect(claude.harnessLabels == ["ACP 适配器", "命令行"])
         #expect(claude.summary.contains("Claude Agent SDK"))
         #expect(claude.byline != nil)
-        #expect(claude.adoptedLabel(.chinese) == "已领养 1 个")
+        #expect(claude.adoptedLabel(.chinese) == "1 个 Botin 在用")
+        #expect(claude.adoptedLabel(.english) == "Used by 1 Botin")
         let label = claude.accessibilityLabel(.chinese)
         #expect(label.contains("Claude Agent") && label.contains("v0.90.0") && label.contains("命令行"))
 

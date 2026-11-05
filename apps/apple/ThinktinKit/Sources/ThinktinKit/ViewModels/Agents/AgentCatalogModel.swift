@@ -93,13 +93,14 @@ public struct AgentCatalogCard: Identifiable, Hashable, Sendable {
         self.adoptedCount = adoptedCount
     }
 
-    /// “已领养 2 个”；没领养过为 nil。
+    /// “2 个 Botin 在用”（用它当引擎的 Botin 数）；还没有 Botin 用它时为 nil。
     public func adoptedLabel(_ language: DisplayLanguage = .current) -> String? {
         guard adoptedCount > 0 else { return nil }
-        return language == .chinese ? "已领养 \(adoptedCount) 个" : "\(adoptedCount) adopted"
+        if language == .chinese { return "\(adoptedCount) 个 Botin 在用" }
+        return adoptedCount == 1 ? "Used by 1 Botin" : "Used by \(adoptedCount) Botins"
     }
 
-    /// 读屏念的一句话：名字、出处、版本、许可证、接入方式、已领养几个。
+    /// 读屏念的一句话：名字、出处、版本、许可证、接入方式、几个 Botin 在用。
     public func accessibilityLabel(_ language: DisplayLanguage = .current) -> String {
         let zh = language == .chinese
         var parts = [name]

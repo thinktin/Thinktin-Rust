@@ -107,7 +107,7 @@ public enum AccountDeletionNotice {
     public static func deletedItems(_ language: DisplayLanguage = .current) -> [String] {
         if language == .chinese {
             return [
-                "全部实例和它们的工作区，正在跑的任务会被停掉",
+                "全部 Botin 和它们的工作区，正在跑的任务会被停掉",
                 "计划、触发器、团队、团队模板和流水线",
                 "运行记录、对话内容、产出物和收件箱",
                 "模型 key 和密码保险箱（加密密钥一并销毁，无法恢复）",
@@ -115,7 +115,7 @@ public enum AccountDeletionNotice {
             ]
         }
         return [
-            "All instances and their workspaces; anything running is stopped",
+            "All Botins and their workspaces; anything running is stopped",
             "Plans, triggers, teams, team templates and pipelines",
             "Run history, conversations, artifacts and your inbox",
             "Model keys and the password vault (the encryption key is destroyed, so they can't be recovered)",

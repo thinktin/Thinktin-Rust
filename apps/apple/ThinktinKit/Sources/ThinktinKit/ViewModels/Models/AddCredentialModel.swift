@@ -362,8 +362,8 @@ public enum CredentialCompatibility: Hashable, Sendable {
         case .incompatible(let name, let required):
             let proto = ModelsText.protocolName(required)
             return zh
-                ? "\(name) 要支持 \(proto) 的 key，这把不能给它用（可以留给别的实例）。"
-                : "\(name) needs a key that supports \(proto); this one won't work for it (other instances can still use it)."
+                ? "\(name) 要支持 \(proto) 的 key，这把不能给它用（可以留给别的 Botin）。"
+                : "\(name) needs a key that supports \(proto); this one won't work for it (other Botins can still use it)."
         }
     }
 }

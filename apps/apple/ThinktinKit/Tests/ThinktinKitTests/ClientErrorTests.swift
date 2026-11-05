@@ -121,10 +121,10 @@ struct ClientErrorTests {
         #expect(instances.isQuantityLimit)
         #expect(!instances.isRetryable && !instances.isConflict)
         #expect(instances.recovery == .limitReached)
-        #expect(instances.localizedMessage(.chinese) == "实例数已达上限，删掉不用的实例再领养。")
+        #expect(instances.localizedMessage(.chinese) == "Botin 数已达上限，删掉不用的再新建。")
         #expect(
             instances.localizedMessage(.english)
-                == "You've reached the instance limit. Delete an instance you no longer use, then adopt again.")
+                == "You've reached the Botin limit. Delete one you no longer use, then try again.")
 
         // 服务端以后加的上限（这个版本不认识）：通用的“数量已达上限”。
         let future = api(.unknown("vault_item_limit"), status: 409)

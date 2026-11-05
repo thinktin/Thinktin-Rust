@@ -94,9 +94,10 @@ struct UsageModelTests {
         #expect(rows.map(\.title) == ["写作助手", "代码审查"])
         #expect(model.destination(of: rows[0]) == .modelRoutes(DemoData.writerID))
         let (title, subtitle) = model.label(for: "0192f3a0-0000-7000-8000-0000000009ff", language: .chinese)
-        #expect(title == "已删除的实例")
+        #expect(title == "已删除的 Botin")
         #expect(subtitle == "…0009ff")
-        #expect(UsageGroup.instance.title(.chinese) == "按实例")
+        #expect(UsageGroup.instance.title(.chinese) == "按 Botin")
+        #expect(UsageGroup.instance.title(.english) == "By Botin")
     }
 
     @Test("按模型：模型名和厂商")

@@ -100,8 +100,11 @@ struct AppRouteTests {
         }
         #expect(AppRoute.pipelineEditor(planID: nil, teamID: nil).title(.chinese) == "新建流水线")
         #expect(AppRoute.pipelineEditor(planID: "p", teamID: nil).title(.chinese) == "编辑流水线")
-        #expect(AppRoute.adopt(agentID: nil).title(.chinese) == "领养新实例")
-        #expect(AppRoute.adopt(agentID: "claude").title(.english) == "New instance")
+        #expect(AppRoute.adopt(agentID: nil).title(.chinese) == "新建 Botin")
+        #expect(AppRoute.adopt(agentID: "claude").title(.english) == "New Botin")
+        #expect(AppRoute.instance("i").title(.chinese) == "Botin 资料")
+        #expect(AppRoute.agentCatalog.title(.chinese) == "引擎")
+        #expect(AppRoute.agent("claude").title(.english) == "Engine details")
         #expect(AppRoute.plans(instanceID: "i").title(.chinese) == AppRoute.plans(instanceID: nil).title(.chinese))
         #expect(AppRoute.home.title(.chinese) == "首页")
     }
