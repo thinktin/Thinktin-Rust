@@ -79,7 +79,7 @@ Linux 上 `tools/client-core/build-linux-swift.sh target/linux`（本机 `libcli
 ## 4. 设计令牌（2026-11-04 改版，6.2 C）
 
 改版（[ios-ui-redesign.md](ios-ui-redesign.md) 2.2–2.4，用户定了 6.2 C）以后：中性灰的底和卡片（浅色正好是系统的分组色，
-深色比系统默认亮一档），卡片不画描边（自画的 `Card`、`GroupedSection` 第 1 轮换成 `List` / `Form` 时去掉）；强调色保留 ThinkTin 的橙；agent 回复是左侧的气泡；文字三档用系统的语义色；字体全用系统的。
+深色比系统默认亮一档），卡片不画描边（自画的 `Card`、`GroupedSection` 这些 2026-11-05 第 1 轮收尾时删了，页面都是系统的 `List` / `Form`）；强调色保留 ThinkTin 的橙；agent 回复是左侧的气泡；文字三档用系统的语义色；字体全用系统的。
 令牌名没变，值在 `ThinktinUI/Design/Theme.swift`，`DesignTokenTests` 按下表核对。
 
 | 令牌 | 浅色 | 深色 | 用途 |
@@ -101,7 +101,7 @@ Linux 上 `tools/client-core/build-linux-swift.sh target/linux`（本机 `libcli
   `themedPlainRow()`（行底透明）：不加的话系统给 plain 列表的行铺 `systemBackground`（深色纯黑、浅色纯白），和 `paper` 不一样。
 - 字体：全部系统字体（SF），标题不再用衬线；全部用 Dynamic Type 的语义字号，导航标题由系统画。
 - 圆角：消息气泡、自己画的卡片 20（`Metrics.Radius.card`），带引用的输入卡片 28，小控件 10；分组卡片、导航栏按钮由系统给。
-  实例头像的直径在 `Metrics.Avatar`（列表 48、置顶 80、资料页 120、编辑页 100、搜索 40、导航栏里的标题胶囊和首页的账号按钮 24）。间距 4 的倍数。
+  实例头像的直径在 `Metrics.Avatar`（首页的行 44、置顶 80、资料页量出来是 80、编辑页 100、搜索结果 40、导航栏里的标题胶囊和首页的账号按钮 24）。间距 4 的倍数。
 - iOS 26 才有的接口（玻璃、关闭 / 确认按钮的角色、工具栏间隔、底部搜索栏、底部条、工具栏角标）和 iOS 18 的缩放转场只经过
   `ThinktinUI/Design/Glass.swift` 用（`glassButtonStyle`、`glassBackground`、`GlassGroup`、`floatingBar`、`CloseButton`、`ConfirmButton`、
   `GlassToolbarSpacer`、`BottomBarSearchItem`、`toolbarBadge`、`zoomTransitionSource` 这些），那里带 iOS 17、macOS 14 的退路，页面里不写
@@ -113,8 +113,20 @@ Linux 上 `tools/client-core/build-linux-swift.sh target/linux`（本机 `libcli
   挑的 `InstanceAppearance`，先只存在这台设备上，`AppModel.appearances.resolved(for:)`；没挑过的、引擎和厂商是圆形，底色按名字的散列从
   8 色里取，跨进程稳定，避开强调色和状态色；形状自己设计，在 `AvatarShapes.swift`，不画脸；右下角可选状态角标；读屏念“名字，状态”，
   旁边有名字时 `.accessibilityHidden(true)`）；筛选胶囊
-  `FilterChipBar`（横向单选，系统按钮加 `glassButtonStyle`，可带数，“全部”用 `nil`）。改版后新页面不再用自画的 `Card`、
-  `GroupedSection`、`PillButton`、`EmptyStateView`，换成 `List` / `Form` / `ContentUnavailableView`（规范 7.3 的收尾里删掉它们）。
+  `FilterChipBar`（横向单选，系统按钮加 `glassButtonStyle`，可带数，“全部”用 `nil`；当 `List` 第一行时 `horizontalInset: 0` 加
+  `.clearListRow()`）。
+- 页面的写法（规范 2.5–2.8，2026-11-05 起所有页面都是这样）：分组页 `List` + `.insetGroupedList()`（iOS `.insetGrouped`、macOS `.inset`）
+  或 `Form` + `.formStyle(.grouped)`，再加 `themedGroupedBackground()` 和行的 `themedRow()`；消息类的列表（首页、收件箱、搜索结果）是 plain
+  `List`、不画分隔线；组标题、脚注用 `Section` 的 `header` / `footer`（`.textCase(nil)`）；空状态、找不到、离线没数据用
+  `ContentUnavailableView`（没搜到用 `.search(text:)`）；加载中是页面正中一个 `ProgressView`（放在 `.overlay` 里）；右上的按钮放
+  `ToolbarSlot.trailing`，sheet 左上 `CloseButton`、右上 `ConfirmButton`；“只做一件事”的页（新建 Botin、引导、确认计划、注销）主按钮是
+  `floatingBar` 里的全宽胶囊；行内的小按钮是 `smallCapsuleButton()`（系统按钮 + 玻璃样式 + 小胶囊）；触感用 `appFeedback(_:trigger:)`
+  （设置里的“触感反馈”关得掉）。共用的行和字段在 `Components/ListStyles.swift`、`Components/FormFields.swift`：`LabeledRow`（图标、标题、
+  灰色说明）、`NoticeRow`（带色调图标的一句提示）、`AdaptiveRow`（大字号时改成一列）、`clearListRow()`（透明、贴边、没分隔线的一行：
+  头部、横幅、筛选胶囊）、`FormTextField`（标签在上的系统输入框，带字数和问题）。对话、运行详情里系统没有的卡片（工具调用、审批、保险箱、
+  拦截、运行信息）画在 `BubbleCard` 上（`Screens/Conversation/`）。以前自画的 `Card`、`GroupedSection`、`ListRow`、`SectionHeader`、
+  `PageHeader`、`InlineNotice`、`ChoiceRow`、`TagChip`、`LoadingStateView`、`EmptyStateView`、`PillButton`、`PlansTextField`、`AccountSection`
+  都删了，别再加回来；登录页是用户自己设计的、没改版，它用的胶囊按钮样式挪到了 `Screens/Account/SignInButtonStyle.swift`（只给登录页用）。
 - 深色模式、动态字体、VoiceOver 标签是每个页面的验收项，不是后补的。
 
 ### 4.1 Logo 与 App 图标
@@ -163,6 +175,9 @@ Linux 上 `tools/client-core/build-linux-swift.sh target/linux`（本机 `libcli
 | `agent.usage`、`agent.turn_started`、`agent.turn_ended`、`agent.ready`、`agent.update` | — | 不进时间线（`turn_ended` 结束流式状态，`stop_reason` 为 refusal / max_tokens / max_turn_requests 时显示提示行；`usage` 显示在运行详情） |
 | `agent.error`、`agent.session_lost`、`agent.exited`、`run.log_truncated` | `{message}` 等 | 系统提示行 |
 
+- 界面（规范 4.3）：agent 的输出在左侧 `agentBubble` 的气泡里，用户的任务在右侧 `userBubble` 的气泡里；上表的卡片（工具调用、审批、
+  保险箱、子运行、产出物、计划）画在 `BubbleCard` / `cardSurface()` 上（和气泡同一个灰、圆角 20、不画描边），里面的按钮是系统的玻璃小胶囊；
+  系统提示行、来源行是居中的灰色小字。运行详情沿用对话的写法，运行树、进行中是分组列表（`NavigationLink` 进运行详情，左滑停止）。
 - 事件流的回调在后台线程，视图模型切回主线程再更新。
 - `on_reset(oldest_seq, latest_seq)`：本地事件作废，清空后从 `cached_events` / 服务端重新加载。
 - `StreamStatus`：`connecting` / `reconnecting` 在顶部显示细条；`signed_out` 回登录页；`account_frozen` 显示冻结页；`not_found` 回实例列表；
@@ -312,15 +327,17 @@ client-core 只缓存实例、运行、事件、收件箱（cache.rs 的几张�
      `swift build --build-tests` 整个 `ThinktinKit`（含 ThinktinUI）；`xcodegen generate`；挑一个不高于所选 Xcode 模拟器 SDK 的 iPhone，
      `xcodebuild test` 跑 App 的 `ThinktinTests` 和 `ThinktinUITests`；最后 macOS 本机 `swift test`（适配层经 macOS 切片跑一遍）。日志传成 artifact。
   `kit-linux` 最后还有严格模式的 `swift format lint`。
-- **截图**（macOS）：`tools/apple/screenshots.sh [输出目录]` 在 iPhone 模拟器上跑演示模式，截改版规范 7.6 的 15 个页面（新账号的首页空状态、
-  首页、对话、Botin 资料、Botin 的计划、产出物、设置、保险箱填写请求、新建 Botin、首页搜索、审批、收件箱、进行中、运行、计划），浅色、
+- **截图**（macOS）：`tools/apple/screenshots.sh [输出目录]` 在 iPhone 模拟器上跑演示模式，截改版规范 7.6 的 19 个页面（新账号的首页空状态、
+  首页、对话、Botin 资料、Botin 的计划、产出物、设置、保险箱填写请求、新建 Botin、首页搜索、审批、收件箱、进行中、运行、计划、审批中心、
+  团队、新任务的 Botin 选择、上手引导），浅色、
   深色各一张（`01-home-light.png`、`01-home-dark.png`）；`IOS_RUNTIME=18.6`（或 `17.5`）换成那个版本的模拟器看旧系统的回退（没有那个版本的
   iPhone 模拟器就建一台，运行时没装就用 `xcodebuild -downloadPlatform` 下载，这时要写完整的版本号）。GitHub 上是
   `.github/workflows/ios-screenshots.yml`（手动触发填 `ios_runtime`，或者推到 `ios-screenshots-ios18.6` 这样带版本的分支；产物是
   `ios-screenshots-ios18.6`），Codemagic 上是 `codemagic.yaml` 的 `ios-screenshots`（发起构建时改环境变量 `IOS_RUNTIME`）。`simctl openurl` 会弹系统确认框，
   所以页面用启动环境变量指定（只有 Debug 构建认，`AppConfiguration`）：`THINKTIN_OPEN_URL=thinktin://…` 是深链；
-  `THINKTIN_OPEN_SCREEN=conversation / plans / artifacts / settings / search / adopt` 打开首页第一个 Botin（演示数据里是“写作助手”）
-  的对话、计划、产出物，或者设置、新建 Botin 两个 sheet、首页搜索，和深链一样走 `Router.show`（App 的 `App/OpenScreen.swift`）；
+  `THINKTIN_OPEN_SCREEN=conversation / plans / artifacts / settings / search / adopt / teams / newtask / onboarding` 打开首页第一个
+  Botin（演示数据里是“写作助手”）的对话、计划、产出物，或者设置、新建 Botin、新任务、引导几个 sheet、团队、首页搜索，和深链一样走
+  `Router.show`（App 的 `App/OpenScreen.swift`）；
   `THINKTIN_MOCK_EMPTY=1` 换成还没有 Botin 的新账号（`DemoData.newAccountState`，截 `00-home-empty`）。截图时启动参数
   `-cn.thinktin.onboarding.checked YES` 让引导不弹（引导只在有 Botin、没有 key 的账号第一次启动时弹，现在的两套演示数据都不弹，
   参数是保险）。新用户第一次登录不弹引导，看到的就是首页的空状态（用户 2026-11-05 定的），引导从设置里打开。

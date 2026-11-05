@@ -523,6 +523,31 @@
   （厂商一行一个、选中打勾，厂商说明一组，接口地址、key 各一组，数据去向的同意换成系统 `Toggle`，页尾的大按钮去掉、只留右上“保存”；加好了是
   分组列表），key 详情的改备注、每日上限、换 key 三个小 sheet 换成 `Form`，`ModelsField` 去掉自画的框（标签在上），`ModelsFootnote`、
   `ModelsOfflineNote` 删掉。
+- 第 1 轮收尾线·删掉自画组件、截图、文档（2026-11-05）：删了 `Components/Card.swift`（对话、运行详情的卡片换成新的 `BubbleCard`，
+  `Screens/Conversation/BubbleCard.swift`）、`EmptyStateView.swift`（登录页选国家没搜到那一处换成 `ContentUnavailableView`）、
+  `PillButton.swift`（错误横幅、离线横幅的按钮换成 `smallCapsuleButton()`，Mac 菜单栏的“去打开”换成 `glassButtonStyle()`；登录页还在用的
+  胶囊样式挪到 `Screens/Account/SignInButtonStyle.swift`，改成模块内部的、只给登录页用）；`ListComponents.swift` 只剩 `inlineNavigationTitle`、
+  `InlineTitleText`、`visibleError`（`SectionHeader`、`GroupedSection`、`ListRow`、`TagChip`、`ChoiceRow`、`InlineNotice`、`PageHeader`、
+  `LoadingStateView`、`pageLayout()` 和 `PageTitleVisibility` 删掉；`TagChipRow` / `PlansButtonRow` 合成 `AdaptiveRow`，`PlansNoticeRow`
+  改名 `NoticeRow`，都在 `ListStyles.swift`）；`AccountComponents.swift` 删 `AccountSection`、`AccountAvatar`（`AccountRow`、
+  `AccountRowDivider`、`AccountScrollPage`、`AccountPageHeader`、`CheckboxRow` 登录页还在用，注释写明了）。`ViewSmokeTests` 的组件那条换成
+  新组件。截图：`THINKTIN_OPEN_SCREEN` 加 `teams`、`newtask`、`onboarding`（App 的 `AppConfiguration.OpenScreen`、`OpenScreen.swift`，
+  `AppSmokeTests` 的三条跟着改），`screenshots.sh` 清单加 `15-approvals`（`thinktin://approvals`）、`16-teams`、`17-new-task`、
+  `18-onboarding`，产物 38 张。docs/ios.md 第 4 节（页面的写法、共用的行和字段、删掉的组件、头像尺寸）、第 5 节（卡片画在哪）、第 7 节
+  （截图清单）；规范 7.3 收尾那一条、4.4.5、7.6 的表记“已做”。
+- 第 1 轮收尾线·和参考对不上、自己定的（等用户看）：这些页参考里都没有，照最像的参考页排：收件箱照首页（01）的消息列表，团队、审批、计划确认、
+  组件详情照 Botin 资料（09）的分组和居中头部，组标题旁的小胶囊和“暂无……”的灰字照 62，新任务和团队编辑照 11 的选择器（单选用按钮行 + 系统勾，
+  没用 `List(selection:)`），引导、注销、计划确认的主按钮照 34 的底部全宽胶囊。收件箱每行的“…”按钮去掉了（左滑和长按里有一样的操作）；
+  “N 条未读”从页头挪到列表顶上一行灰字；新任务从“点一行就走”改成“选了再点确认”（照 11）；审批选项一个一行、全宽（服务端给的名字可能很长）。
+- 第 1 轮收尾线·要在模拟器上看的（Linux 的桩看不出来）：收件箱 plain 列表的行高、未读点和 40pt 图标的对齐；审批卡片里几个全宽玻璃胶囊在
+  分组行里各自能点（行里的按钮是有边框的样式，不会整行一起触发）；运行树行底的高亮（`listRowBackground(userBubble)`）和按层缩进；
+  团队详情头部叠在一起的头像；流水线编辑器组标题里的 `ellipsis` 菜单点不点得到；`DisclosureGroup` 在 insetGrouped 里的展开箭头；
+  触发器编辑器里周几、几号那一排 30pt 的玻璃圆（31 个号一排 7 个在 375pt 宽的屏上挤不挤）；`Picker(.inline)` 的选项是两行（名字 + 说明）
+  时系统勾的位置；新任务 sheet 半屏时底部搜索栏；注销页、计划确认页底部浮动的胶囊压不压最后一组。
+- 第 1 轮收尾线这一份的 Linux 检查（2026-11-05，最后一次提交上）：ThinktinKit `swift build --build-tests` + `swift test` 1089 个全过
+  （这条线没动视图模型）；uicheck UIKit、AppKit 都编过（没有错误和警告）；`run.sh test` 的 ThinktinUITests 147 个全过；App 的
+  `ThinktinTests` 21 个过 16 个（新改的三条 `OpenScreen` 都过；挂的还是那 5 个要 App 包的：Info.plist、URL scheme、隐私清单和多语言资源、
+  小组件 appex、`~/Library` 路径）；`swift format lint --strict -r apps/apple` 零条。macOS CI 还没跑这一份。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、
@@ -533,10 +558,7 @@
 新建时选它用哪个 agent 当引擎，同一个 agent 可以给好几个 Botin 当引擎（服务端只限每个账号的实例数）。agent 在界面上只以 Botin 的“引擎”/“Engine”出现。
 首次登录首页是空的，空状态“还没有 Botin”+ 说明 + “新建 Botin”按钮。代码里的标识符（`Instance`、`AppRoute.adopt`、`adopt(...)`）不改。
 
-进行中：没有（第 1 轮 A 线的首页补完和 B、C、D、E 线 2026-11-05 做完，见“已完成”）。
-- 2026-11-05 Claude（会话 session_01GuCp3KRgqaK6Kzynw6udRn，第 1 轮收尾线）开工：参考里没有的页（收件箱、审批中心、进行中、团队和流水线、
-  运行详情和运行树、引导、开源许可、新任务 sheet）和各线剩下的自画页（计划的新建 / 确认 / 触发器、添加 key、注销、电脑配对）换原生控件，
-  然后删掉没人用的自画组件（`EmptyStateView`、`PillButton`、`Card`、`GroupedSection`、`ListRow`、`PageHeader`、`AccountRow`……）。
+进行中：没有（第 1 轮 A 线的首页补完、B、C、D、E 线和收尾线 2026-11-05 做完，见“已完成”）。
 验证和发版（2026-11-05，session_01GuCp3KRgqaK6Kzynw6udRn）：GitHub 的 Mac 一直排不上，改用 Codemagic（`.github/workflows/codemagic.yml`：
 把提交推到 `codemagic/apple-check` / `codemagic/ios-screenshots`）。第 0 轮（bbdb07c）、Botin 版（06894fd）、新建页重做（c78064e）
 的 apple-check 都过了（真 Xcode：模拟器 build + test、ThinktinMac、Kit 的 macOS 测试）。截图对照参考 34、35 后又调了两次版式：
@@ -564,16 +586,22 @@ TestFlight：28（Botin 改名、空状态，旧表单）、30（新建页重做
    （参考截图在仓库外，要请用户再发），差别记到这里。冷启动后的启动屏截不到，要在模拟器或真机上看一眼。
 3. 第 1 轮五条线并行（规范 7.3，开工前先在这里认领）；第 2 轮纯客户端新功能；第 3 轮等后端。B、C 线做完了；C 线没做的只剩要后端的
    （资料页“通知”开关 6.14、工作区重置和磁盘 6.17、观看与接管 4.6.2、头像的生成和上传、多端同步 6.9 B）。A 线（首页）的长按菜单、置顶、隐藏、
-   已隐藏页、预览换成最后一条（6.7 B）2026-11-05 做完了；接着做：“等你处理”提示行（4.2.1）、`NewTaskSheet` 换选择器版式（4.4.5）、
+   已隐藏页、预览换成最后一条（6.7 B）2026-11-05 做完了；接着做：“等你处理”提示行（4.2.1）、
    预览卡里的最后一条改从缓存的事件里取（现在是运行的摘要，4.2.2 原来的建议是 `cachedEventsBefore`）。B 线（对话页）做完了，接着可以做第 2 轮的对话内查找（4.3.3，“…”菜单第一组
-   Botin 资料后面加一项）。D 线做完了，剩下的：计划的新建 / 编辑表单（`PlanEditorScreen`）、确认页（`PlanConfirmScreen`）、触发器编辑器
-   （`TriggerEditorView`）、时区和预授权工具的选择页还是自画版式（`PageHeader`、`GroupedSection`、`Card`、`PillButton`、`PlansTextField`），
-   按第 2 节换成 `Form`；搜索回复正文（本机缓存的事件，4.2.4，第 2 轮）。E 线做完了，剩下的：纯黑外观（4.9.11 第二排，Theme 的动态颜色要能按偏好换值，第 2 轮）；添加 key 的 sheet
-   （`AddCredentialSheet`）、key 的三个小 sheet 里的 `ModelsField`、注销页（`DeleteAccountView`）、开源许可页（`LicensesScreen` /
-   `LicenseDetailViews`）还是自画版式；`AccountSection` / `AccountRow` / `AccountScrollPage` 现在只剩它们和登录页在用，换完后可以删；
+   Botin 资料后面加一项）。D 线做完了，剩下的：搜索回复正文（本机缓存的事件，4.2.4，第 2 轮）。E 线做完了，剩下的：纯黑外观（4.9.11 第二排，Theme 的动态颜色要能按偏好换值，第 2 轮）；
    设置里“连接”汇总页（4.8.1、第 2 轮）做了以后 IM 渠道挪进去；设备改名、保险箱网站、发送反馈等后端（第 3 轮）。
+   收尾线做完了（参考里没有的页和各线剩下的自画页都换成原生控件，自画组件删了）：剩下的只有登录页（用户自己设计，等他的稿子；它还用
+   `AccountRow`、`AccountScrollPage`、`AccountPageHeader`、`CheckboxRow`、`SignInButtonStyle`，换完一起删）；出一次截图（下面第 2 条，
+   多了 15–18 四张）和参考并排看，按用户的修正再调。
 
 坑和决定：
+- 自画组件删了（2026-11-05 收尾线）：页面一律 `List` / `Form` + `themedGroupedBackground()` + 行的 `themedRow()`，空状态
+  `ContentUnavailableView`，加载中是 `.overlay` 里的 `ProgressView`；共用的行是 `LabeledRow` / `NoticeRow` / `AdaptiveRow`、输入框是
+  `FormTextField`（`ModelsField` 是 key 那几页的同类，多了密码和网址键盘）；对话里系统没有的卡片用 `BubbleCard` / `cardSurface()`。
+  别再加回带描边的卡片、自画的胶囊按钮（`SignInButtonStyle` 只给登录页）。行里放几个按钮时用有边框的样式（`smallCapsuleButton()`、
+  `glassButtonStyle()`、`.borderless`），默认样式的按钮在 `List` 行里会整行一起触发。单选列表用“按钮行 + 右边系统勾”（新任务、团队编辑、
+  添加 key 的厂商、时区），两行的选项放进 `Picker(.inline)` 时每项是一个视图（`PlansOptionLabel`）再 `.tag`。
+- uicheck 桩这一轮只加了 `DisclosureGroup`（`Stubs/SwiftUI/SwiftUI+Finishing.swift`），别再加。
 - 首页的置顶、隐藏在 `InstancePreferencesStore`（只存这台设备，按实例 id），界面别自己存；`AppModel.homeContent` 已经按它分好三部分，
   `homeRows` 是首页看得见的（置顶的在前），截图的“首页第一行”也是它。长按、左滑的项和顺序改 ThinktinKit 的 `HomeInstanceMenu`
   （有测试），加项要给 `systemImage`、`needsConnection`。删 Botin 的地方都走 `InstanceDetailScreen.leaveDeletedInstance`，它会删记录。

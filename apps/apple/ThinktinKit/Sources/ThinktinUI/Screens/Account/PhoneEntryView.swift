@@ -157,11 +157,14 @@ struct RegionPickerView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     if regions.isEmpty {
-                        EmptyStateView(
-                            systemImage: "magnifyingglass", title: zh ? "没有找到" : "No matches",
-                            message: zh
-                                ? "不在列表里的号码，可以在手机号框里直接输入“+区号号码”。"
-                                : "If your country isn't listed, type the full number starting with + instead.")
+                        ContentUnavailableView {
+                            Label(zh ? "没有找到" : "No matches", systemImage: "magnifyingglass")
+                        } description: {
+                            Text(
+                                zh
+                                    ? "不在列表里的号码，可以在手机号框里直接输入“+区号号码”。"
+                                    : "If your country isn't listed, type the full number starting with + instead.")
+                        }
                     }
                     ForEach(regions) { region in
                         Button {

@@ -172,7 +172,7 @@ private struct PlanConfirmContent: View {
         }
         if let conflict = model.conflictChanges {
             Section {
-                PlansNoticeRow(
+                NoticeRow(
                     systemImage: "arrow.triangle.2.circlepath", tone: .waiting,
                     text: PlansText.conflictMessage(language))
                 changeRows(conflict, plan: plan)
@@ -192,7 +192,7 @@ private struct PlanConfirmContent: View {
         let blocked = blockedSteps(plan)
         if !blocked.isEmpty {
             Section {
-                PlansNoticeRow(
+                NoticeRow(
                     systemImage: "exclamationmark.triangle", tone: .waiting,
                     text: PlanBlockedSteps.message(blocked, confirming: true, language: language))
             }
@@ -240,7 +240,7 @@ private struct PlanConfirmContent: View {
         Section {
             PlanPolicyRows(plan: plan)
             if plan.policy.preauthorizedTools.contains(where: PlansText.isRiskyTool) {
-                PlansNoticeRow(
+                NoticeRow(
                     systemImage: "exclamationmark.shield", tone: .waiting,
                     text: zh
                         ? "预授权里有会改文件、删文件或跑命令的工具，按时运行时用到不会再问你。确认前想清楚。"

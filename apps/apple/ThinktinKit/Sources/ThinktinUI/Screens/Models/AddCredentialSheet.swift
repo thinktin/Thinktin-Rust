@@ -102,7 +102,7 @@ private struct AddCredentialContent: View {
             VendorInfoCard(vendor: vendor, notes: model.vendorNotes, compatibility: model.compatibility)
         } else if let compatibility = model.compatibility {
             Section {
-                PlansNoticeRow(
+                NoticeRow(
                     systemImage: compatibility.isCompatible ? "checkmark.circle" : "exclamationmark.triangle",
                     tone: compatibility.isCompatible ? .success : .waiting, text: compatibility.message(language))
             }
@@ -148,7 +148,7 @@ private struct AddCredentialContent: View {
         if model.formRejection != nil || model.error != nil {
             Section {
                 if let rejection = model.formRejection {
-                    PlansNoticeRow(
+                    NoticeRow(
                         systemImage: "exclamationmark.octagon", tone: .failure,
                         text: rejection.message(vendorName: model.vendorName(language), language: language))
                 }
@@ -284,7 +284,7 @@ private struct AddCredentialContent: View {
         let model = self.model
         let vendor = model.vendorName(language)
         return Section {
-            PlansNoticeRow(
+            NoticeRow(
                 systemImage: "arrow.up.right.circle", tone: .neutral,
                 text: ModelsText.dataSharingNotice(vendorNames: [vendor], language: language))
             Toggle(
@@ -320,7 +320,7 @@ private struct VendorInfoCard: View {
                     zh ? "推荐模型" : "Recommended models", value: AgentsText.list(vendor.models, language: language))
             }
             if let compatibility {
-                PlansNoticeRow(
+                NoticeRow(
                     systemImage: compatibility.isCompatible ? "checkmark.circle" : "exclamationmark.triangle",
                     tone: compatibility.isCompatible ? .success : .waiting, text: compatibility.message(language))
             }
@@ -370,7 +370,7 @@ private struct AddCredentialDoneView: View {
                 ModelsCredentialRow(
                     summary: CredentialSummary(credential: credential, vendors: model.vendors, language: language))
                 if let compatibility = model.compatibility {
-                    PlansNoticeRow(
+                    NoticeRow(
                         systemImage: compatibility.isCompatible ? "checkmark.circle" : "exclamationmark.triangle",
                         tone: compatibility.isCompatible ? .success : .waiting, text: compatibility.message(language))
                 }

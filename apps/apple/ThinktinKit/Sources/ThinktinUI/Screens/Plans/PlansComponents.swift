@@ -67,25 +67,6 @@ struct PlansCountBadge: View {
     }
 }
 
-/// 几个按钮排一行；字号很大时改成一列。
-struct PlansButtonRow<Content: View>: View {
-    private let content: Content
-
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-
-    init(@ViewBuilder content: () -> Content) {
-        self.content = content()
-    }
-
-    var body: some View {
-        if dynamicTypeSize.isAccessibilitySize {
-            VStack(alignment: .leading, spacing: Metrics.Spacing.xs) { content }
-        } else {
-            HStack(spacing: Metrics.Spacing.xs) { content }
-        }
-    }
-}
-
 /// 计划的标题（agent 写的带 AI 生成标识）。
 struct PlanTitleText: View {
     let plan: Plan
@@ -112,7 +93,7 @@ struct PlanMetaLine: View {
 
     var body: some View {
         let status = plan.status
-        TagChipRow {
+        AdaptiveRow {
             PlanStatusLabel(status: status)
             if let instanceName {
                 Text(instanceName)
@@ -175,7 +156,7 @@ struct PlanTriggerRow: View {
                 .typography(.footnote)
                 .foregroundStyle(Theme.inkSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-                PlansButtonRow {
+                AdaptiveRow {
                     if let onFix {
                         Button(zh ? "修改规则" : "Change rule", systemImage: "pencil", action: onFix)
                             .smallCapsuleButton(.prominent)
@@ -306,7 +287,7 @@ struct PlanRunRow: View {
                 StatusDot(run.state)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
-                    TagChipRow {
+                    AdaptiveRow {
                         Text(run.state.localizedName(language))
                             .typography(.subheadline)
                             .foregroundStyle(Theme.ink)
@@ -442,26 +423,6 @@ struct PlansOptionLabel: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-    }
-}
-
-/// 分组列表里的一句提示（等你确认、有风险、流水线、部分保存）：按语气上色的图标加一段话，就是一行，不画底。
-struct PlansNoticeRow: View {
-    let systemImage: String
-    let tone: StatusTone
-    let text: String
-
-    var body: some View {
-        Label {
-            Text(text)
-                .typography(.subheadline)
-                .foregroundStyle(Theme.ink)
-                .fixedSize(horizontal: false, vertical: true)
-        } icon: {
-            Image(systemName: systemImage)
-                .foregroundStyle(tone.color)
-        }
-        .accessibilityElement(children: .combine)
     }
 }
 

@@ -47,7 +47,7 @@ struct InstanceDeleteSheet: View {
                 InstanceDeletionImpactView(impact: impact)
                 if impact.isIncomplete {
                     Section {
-                        InlineNotice(
+                        NoticeRow(
                             systemImage: "exclamationmark.triangle", tone: .waiting,
                             text: zh
                                 ? "有些信息没查到，可能还有别的计划或团队受影响。可以重试，也可以照样删除。"

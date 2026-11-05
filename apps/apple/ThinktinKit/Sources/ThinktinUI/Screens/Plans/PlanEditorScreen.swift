@@ -119,7 +119,7 @@ private struct PlanEditorContent: View {
         if let error = model.saveError {
             Section {
                 if model.isPartiallySaved {
-                    PlansNoticeRow(
+                    NoticeRow(
                         systemImage: "exclamationmark.triangle", tone: .waiting,
                         text: zh
                             ? "一部分改动已经保存了，剩下的没存上。再点一次保存只做剩下的。"
@@ -131,7 +131,7 @@ private struct PlanEditorContent: View {
         }
         if let original = model.original, original.awaitingConfirmation {
             Section {
-                PlansNoticeRow(
+                NoticeRow(
                     systemImage: "hourglass", tone: .waiting,
                     text: zh
                         ? "这个计划在等你确认。保存后回到确认页，按改好的内容确认。"
@@ -146,7 +146,7 @@ private struct PlanEditorContent: View {
         catchUpSection
         if !model.steps.isEmpty {
             Section {
-                PlansNoticeRow(
+                NoticeRow(
                     systemImage: "point.3.connected.trianglepath.dotted", tone: .neutral,
                     text: zh
                         ? "这个计划是 \(model.steps.count) 步的流水线。步骤在流水线编辑器里改，这里保存不会动它们。"
@@ -169,7 +169,7 @@ private struct PlanEditorContent: View {
                     systemImage: "cpu", title: instanceName(model.instanceID),
                     detail: zh ? "计划建好后不能换 Botin。" : "A plan's Botin can't be changed.")
             } else if app.instances.isEmpty {
-                PlansNoticeRow(
+                NoticeRow(
                     systemImage: "exclamationmark.triangle", tone: .waiting,
                     text: zh ? "还没有 Botin，先新建一个。" : "You don't have any Botins yet. Create one first.")
             } else {

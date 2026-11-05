@@ -145,6 +145,10 @@ shots="
 12-active - thinktin://active
 13-run - thinktin://run/${weekly_run}
 14-plan - thinktin://plan/${digest_plan}
+15-approvals - thinktin://approvals
+16-teams teams -
+17-new-task newtask -
+18-onboarding onboarding -
 "
 
 for appearance in light dark; do

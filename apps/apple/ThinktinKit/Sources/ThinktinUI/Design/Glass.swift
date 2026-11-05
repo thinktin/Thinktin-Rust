@@ -380,7 +380,7 @@ extension View {
                     }
                 }
             }
-            .pageLayout()
+            .padding(Metrics.Spacing.m)
         }
         .background(Theme.paper)
         .floatingBar {

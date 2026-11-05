@@ -195,7 +195,7 @@ struct TriggerEditorView: View {
                         }
                     }
                 }
-                PlansButtonRow {
+                AdaptiveRow {
                     Button(zh ? "工作日" : "Weekdays") { draft.weekdays = [1, 2, 3, 4, 5] }
                         .smallCapsuleButton()
                     Button(zh ? "周末" : "Weekends") { draft.weekdays = [0, 6] }

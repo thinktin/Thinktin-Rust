@@ -27,28 +27,33 @@ struct ViewSmokeTests {
         render(StatusDot(StatusAppearance(tone: .success), accessibilityLabel: "在线", size: 12))
     }
 
-    @Test("卡片、胶囊按钮、AI 生成标识、空状态")
+    @Test("对话卡片的底、共用的行、表单输入框、AI 生成标识")
     func basicComponents() {
         render(
-            Card {
+            BubbleCard {
                 Text(verbatim: "每周周报")
                 AIGeneratedLabel()
             })
-        render(Card(background: .bubble, padding: Metrics.Spacing.s, bordered: false) { Text(verbatim: "你好") })
-        for kind in [PillButtonKind.primary, .secondary, .destructive] {
-            for size in [PillButtonSize.regular, .compact] {
-                render(PillButton("重试", systemImage: "arrow.clockwise", kind: kind, size: size) {})
-                render(PillButton("重试", kind: kind, size: size) {}.disabled(true))
-            }
-        }
-        render(Button("系统按钮") {}.buttonStyle(.pill(.secondary, size: .compact)))
-        render(AIGeneratedLabel())
-        render(EmptyStateView(systemImage: "tray", title: "收件箱是空的"))
+        render(BubbleCard(fill: Theme.userBubble, padding: Metrics.Spacing.s) { Text(verbatim: "你好") })
         render(
-            EmptyStateView(
-                systemImage: "square.stack.3d.up", title: "还没有 Botin", message: "新建一个", actionTitle: "新建 Botin"
-            ) {}
-        )
+            List {
+                LabeledRow(systemImage: "clock", title: "每天 09:00", detail: "下一次：明天 09:00")
+                LabeledRow(title: "规则已失效", detail: "点开改一下", detailTone: .failure)
+                NoticeRow(systemImage: "exclamationmark.triangle", tone: .waiting, text: "有些信息没查到。")
+                AdaptiveRow {
+                    Text(verbatim: "运行中")
+                    Text(verbatim: "3 分钟前")
+                }
+            })
+        render(
+            Form {
+                FormTextField(title: "标题", text: .constant(""), prompt: "每日新闻摘要", limit: 100, count: 0)
+                FormTextField(
+                    title: "目标", text: .constant("x"), multiline: true, problem: "太长了", numeric: false,
+                    monospaced: true)
+            })
+        render(Button("系统按钮") {}.smallCapsuleButton())
+        render(AIGeneratedLabel())
     }
 
     @Test("错误横幅：每一类错误")

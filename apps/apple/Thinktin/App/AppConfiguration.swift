@@ -46,12 +46,18 @@ struct AppConfiguration: Equatable, Sendable {
         case search
         /// 新建 Botin（sheet，`.adopt(agentID: nil)`：在表单里选引擎）。
         case adopt
+        /// 团队（工作台菜单的“团队”，首页 → 团队；参考里没有这一页，看它和改版的页面是不是一套样子）。
+        case teams
+        /// 新任务的 Botin 选择（sheet，参考 11 的选择器版式）。
+        case newtask
+        /// 上手引导（sheet）。
+        case onboarding
 
         /// 是不是某个实例的页面（要先等实例列表拿到）。
         var needsInstance: Bool {
             switch self {
             case .conversation, .plans, .artifacts: true
-            case .settings, .search, .adopt: false
+            case .settings, .search, .adopt, .teams, .newtask, .onboarding: false
             }
         }
     }
