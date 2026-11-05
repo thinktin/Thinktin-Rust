@@ -56,9 +56,9 @@ private struct AdoptAgentForm: View {
     var body: some View {
         let model = self.model
         ScrollView {
-            VStack(spacing: Metrics.Spacing.l) {
+            VStack(spacing: Metrics.Spacing.m) {
                 // 固定大小（`InstanceAvatar` 跟着动态字体缩放，最大字号下比屏幕还宽）；只是装饰，读屏不念。
-                AvatarGlyph(name: model.name, appearance: model.appearance, size: Metrics.Avatar.profile)
+                AvatarGlyph(name: model.name, appearance: model.appearance, size: Metrics.Avatar.edit)
                     .accessibilityHidden(true)
                     .animation(.snappy, value: model.appearance)
                 nameField
@@ -141,32 +141,23 @@ private struct AdoptAgentForm: View {
 
     // MARK: 引擎
 
-    /// “引擎”+ 菜单（接入方式多于一个时再一行），下面“了解引擎”。
+    /// 一行“引擎 ⓘ”+ 菜单（接入方式多于一个时在同一个菜单里再选），ⓘ 是“了解引擎”。只占一行：放两三行时下面的色板被底部的
+    /// “新建”按钮挡住，要往下滑才看得到（2026-11-05 截图）。
     private var engineSection: some View {
-        let model = self.model
-        return VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
-            VStack(spacing: 0) {
-                EngineRow(title: NewBotinText.engineTitle(language)) {
-                    engineControl
+        VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
+            HStack(spacing: Metrics.Spacing.xs) {
+                Text(verbatim: NewBotinText.engineTitle(language))
+                    .foregroundStyle(Theme.ink)
+                NavigationLink(value: AppRoute.agentCatalog) {
+                    Image(systemName: "info.circle")
+                        .imageScale(.medium)
                 }
-                if model.showsHarnessChoice {
-                    Divider()
-                        .padding(.leading, Metrics.Spacing.m)
-                    EngineRow(title: NewBotinText.harnessTitle(language)) {
-                        Picker(
-                            NewBotinText.harnessTitle(language),
-                            selection: Binding(get: { model.harness }, set: { model.harness = $0 })
-                        ) {
-                            ForEach(model.harnessOptions, id: \.self) { harness in
-                                Text(AgentsText.harnessName(harness, language: language)).tag(harness)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .labelsHidden()
-                        .disabled(model.isAdopting)
-                    }
-                }
+                .accessibilityLabel(Text(NewBotinText.aboutEngines(language)))
+                Spacer(minLength: Metrics.Spacing.s)
+                engineControl
             }
+            .padding(.horizontal, Metrics.Spacing.m)
+            .frame(minHeight: Metrics.minTapTarget + Metrics.Spacing.xs)
             .background(
                 Theme.paperElevated, in: RoundedRectangle(cornerRadius: Metrics.Radius.card, style: .continuous))
             if let status = engineStatusNote {
@@ -175,16 +166,6 @@ private struct AdoptAgentForm: View {
                     .foregroundStyle(Theme.inkSecondary)
                     .padding(.horizontal, Metrics.Spacing.m)
             }
-            NavigationLink(value: AppRoute.agentCatalog) {
-                HStack(spacing: Metrics.Spacing.xxs) {
-                    Text(NewBotinText.aboutEngines(language))
-                    Image(systemName: "chevron.right")
-                        .imageScale(.small)
-                        .accessibilityHidden(true)
-                }
-                .typography(.footnote)
-            }
-            .padding(.horizontal, Metrics.Spacing.m)
         }
     }
 
@@ -431,23 +412,6 @@ private struct AvatarColorDot: View {
 
 // MARK: - 引擎
 
-/// 引擎卡片里的一行：左边标题，右边控件。
-private struct EngineRow<Control: View>: View {
-    let title: String
-    @ViewBuilder let control: () -> Control
-
-    var body: some View {
-        HStack(spacing: Metrics.Spacing.s) {
-            Text(verbatim: title)
-                .foregroundStyle(Theme.ink)
-            Spacer(minLength: Metrics.Spacing.s)
-            control()
-        }
-        .padding(.horizontal, Metrics.Spacing.m)
-        .frame(minHeight: Metrics.minTapTarget + Metrics.Spacing.xs)
-    }
-}
-
 /// 选引擎的系统菜单：按钮上是选的引擎（都不能用时“暂时没有能用的”）；里面是行内的系统 `Picker`（选中的由系统打勾、
 /// 读屏念“已选中”，不自己画勾），每项名字 + 一句话介绍（菜单里的副标题），不能用的灰掉、点不了（视图模型也拦）。
 /// 读屏：按钮念“引擎，Claude Agent”，每项念 `EngineOption.accessibilityLabel`（多念几个 Botin 在用）。
@@ -478,6 +442,18 @@ private struct EngineMenu: View {
                 }
             }
             .pickerStyle(.inline)
+            if model.showsHarnessChoice {
+                // 接入方式多于一个时，同一个菜单里第二组（系统画成带标题的分组）。
+                Picker(
+                    NewBotinText.harnessTitle(language),
+                    selection: Binding(get: { model.harness }, set: { model.harness = $0 })
+                ) {
+                    ForEach(model.harnessOptions, id: \.self) { harness in
+                        Text(AgentsText.harnessName(harness, language: language)).tag(harness)
+                    }
+                }
+                .pickerStyle(.inline)
+            }
         } label: {
             HStack(spacing: Metrics.Spacing.xxs) {
                 Text(verbatim: selectedName)
