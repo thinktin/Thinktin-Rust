@@ -30,9 +30,11 @@
   - uicheck 新桩 `Stubs/SwiftUI/SwiftUI+BotinExtras.swift`：`toolbarColorScheme(_:for:)`、`UnitPoint.topLeading / bottomTrailing`。
 - 界面测试 `Tests/ThinktinUITests/Agents/BotinExtrasScreensTests.swift`（语音组、三个分段、画面页各阶段和说明，浅色中文、深色英文、大字号）。
 - 文档：规范 4.4.3、4.4.4、4.6.2、4.6.3 的“已做”，6.23 的“现在”，对照表 13–17、19、20、27–31、85–89 行。
+- 合进最新的 `ios-ui-redesign`（收尾线删组件那一批，没冲突）后的 Linux 检查（2026-11-05）：ThinktinKit `swift test` 1103 个全过；
+  uicheck UIKit、AppKit 都编过；`run.sh test` 的 ThinktinUITests 150 个全过；`swift format lint --strict` 零条。macOS CI 还没看（推送后跑）。
 
 进行中：
-- 合进最新的 `ios-ui-redesign`，跑全部 Linux 检查。
+- 无（这一组做完了，等合并）。
 
 下一步：
 - 合并后：首页长按删 Botin（`Shell/Home/HomeScreen.swift` 建 `InstanceDetailModel` 的地方）补 `voices: .shared`（首页归别的线，这次没改）。
