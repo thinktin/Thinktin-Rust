@@ -173,6 +173,34 @@ struct HomeListTests {
         #expect(demo.homePlaceholder == nil)
     }
 
+    @Test("离线启动、没有缓存：网络回来时先成功的是别的调用也补拉实例列表，首页不会一直转圈")
+    @MainActor
+    func reconnectLoadsInstances() async throws {
+        let offline = ClientError.network(message: "offline")
+        let calls = [
+            "me()", "instances()", "syncInbox(limit:)", "approvals()", "plans(instanceID:)",
+            "listRuns(filter:limit:)", "deviceMessages()",
+        ]
+        let empty = MockClient(state: DemoData.newAccountState(), stepDelay: 0, autoReply: false)
+        for call in calls { empty.failNext(call, with: offline) }
+        let model = AppModel(client: empty, defaults: nil)
+        await model.start()
+        #expect(model.isOffline && !model.hasLoadedInstances)
+        #expect(model.homePlaceholder == .offlineWithoutCache)
+        // 网络回来了，先成功的是别的页面的调用（比如设置拉用户）。
+        _ = try await model.client.me()
+        #expect(await eventually { model.homePlaceholder == .noBotins })
+        #expect(model.hasLoadedInstances && !model.isOffline)
+
+        // 刷新到一半网络回来了：实例列表那一步失败，角标成功。
+        let flaky = MockClient(state: DemoData.newAccountState(), stepDelay: 0, autoReply: false)
+        flaky.failNext("me()", with: offline)
+        flaky.failNext("instances()", with: offline)
+        let flakyModel = AppModel(client: flaky, defaults: nil)
+        await flakyModel.start()
+        #expect(await eventually { flakyModel.homePlaceholder == .noBotins })
+    }
+
     @Test("新账号的演示数据：没有 Botin 和它们的东西，引擎目录、团队模板、这台设备照旧")
     func newAccountState() {
         let state = DemoData.newAccountState()

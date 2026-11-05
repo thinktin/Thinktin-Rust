@@ -238,6 +238,8 @@ public final class AppModel {
         defer { isRefreshing = false }
         await refreshInstances()
         await refreshBadges()
+        // 网络是刷新到一半回来的（实例列表那一步离线失败、角标成功了）：`.reachable` 赶上这次刷新时补拉不了，这里补一次。
+        if phase == .signedIn, !hasLoadedInstances, !isOffline, refreshError == nil { await refreshInstances() }
     }
 
     /// 新建了 Botin（新建表单，规范 4.7.1）：先把它放进实例列表（首页、对话页的标题马上有它），关掉 sheet、从首页压栈进
@@ -535,6 +537,9 @@ public final class AppModel {
             handle(error)
         case .reachable:
             isOffline = false
+            // 离线时没拉到实例列表、这台设备上也没有缓存（首页是“离线”），网络回来了是别的调用先成功的：补拉一次，
+            // 首页不会一直转圈（`homePlaceholder` 在没拉到过时是 `.loading`）。
+            if phase == .signedIn, !hasLoadedInstances { Task { await refresh() } }
         case .signedIn(let result):
             didSignIn(result)
         case .userUpdated(let updated):
