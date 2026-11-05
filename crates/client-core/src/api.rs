@@ -17,6 +17,10 @@ use proto::domain::{
     TeamMember, TeamTemplate, TeamTemplateId, TeamTemplateSpec, Trigger, TriggerId, User,
     VaultItem, VaultItemId, VaultRequest, VaultRequestId,
 };
+use proto::domain::{
+    BlockedUser, ProjectBudget, ProjectDetail, ProjectId, ProjectInvite, ProjectInviteId,
+    ProjectInvitePreview, ProjectSummary, UserId,
+};
 use reqwest::Method;
 use reqwest::header::HeaderValue;
 use serde::de::DeserializeOwned;
@@ -73,6 +77,58 @@ pub struct ApiConfig {
     /// 设备的语言偏好，`Accept-Language` 的写法（`zh-Hans-CN, en-US;q=0.9`）。每个请求都带上；服务端在新用户
     /// 注册时按它定推送和收件箱的语言。
     pub accept_language: Option<String>,
+}
+
+/// 新建的邀请链接（8.14）：令牌只在发出时返回这一次。
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct InviteLink {
+    pub invite: ProjectInvite,
+    pub token: String,
+    /// `thinktin://join/<令牌>`，给用户分享的。
+    pub link: String,
+}
+
+/// 加入项目时带上的（8.14）：放进项目的 agent、每天和总的 token 预算、用户确认过加入说明。
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProjectJoin {
+    pub agents: Vec<InstanceId>,
+    pub daily_token_limit: u64,
+    pub total_token_limit: u64,
+    pub consent: bool,
+}
+
+impl ProjectJoin {
+    fn body(&self, token: Option<&str>) -> Value {
+        let agents: Vec<Value> = self
+            .agents
+            .iter()
+            .map(|a| json!({ "instance_id": a }))
+            .collect();
+        let mut body = json!({
+            "agents": agents,
+            "daily_token_limit": self.daily_token_limit,
+            "total_token_limit": self.total_token_limit,
+            "consent": self.consent,
+        });
+        if let Some(t) = token {
+            body["token"] = json!(t);
+        }
+        body
+    }
+}
+
+/// 从 `thinktin://join/<令牌>` 或单独的令牌里取出令牌，本地核对格式（`tpi1_` 加 43 个 base64url 字符）。
+pub fn invite_token(text: &str) -> Option<String> {
+    let text = text.trim();
+    let token = text
+        .strip_prefix(proto::domain::PROJECT_INVITE_LINK_PREFIX)
+        .unwrap_or(text);
+    let rest = token.strip_prefix("tpi1_")?;
+    (rest.len() == 43
+        && rest
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_'))
+    .then(|| token.to_owned())
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -1817,6 +1873,268 @@ impl Api {
         .await
     }
 
+    // ---------- 项目、邀请（8.14） ----------
+
+    /// 我是成员的进行中的项目（自己建的、加入的）。
+    pub async fn projects(&self) -> Result<Vec<ProjectSummary>> {
+        #[derive(Deserialize)]
+        struct R {
+            #[serde(deserialize_with = "crate::lenient::vec")]
+            projects: Vec<ProjectSummary>,
+        }
+        Ok(self
+            .json::<R>(Method::GET, "/v1/projects", None)
+            .await?
+            .projects)
+    }
+
+    pub async fn project(&self, id: ProjectId) -> Result<ProjectDetail> {
+        self.json(Method::GET, &format!("/v1/projects/{id}"), None)
+            .await
+    }
+
+    /// 建单人项目：`agents` 是 (实例, 是不是负责人)，按顺序排位置。
+    pub async fn create_project(
+        &self,
+        name: &str,
+        goal: &str,
+        agents: &[(InstanceId, bool)],
+    ) -> Result<ProjectDetail> {
+        let agents: Vec<Value> = agents
+            .iter()
+            .map(|(id, lead)| json!({ "instance_id": id, "is_lead": lead }))
+            .collect();
+        self.json(
+            Method::POST,
+            "/v1/projects",
+            Some(&json!({ "name": name, "goal": goal, "agents": agents })),
+        )
+        .await
+    }
+
+    /// 改名字、目标（只有创建者）；给了才改。
+    pub async fn update_project(
+        &self,
+        id: ProjectId,
+        name: Option<&str>,
+        goal: Option<&str>,
+    ) -> Result<ProjectDetail> {
+        let mut body = serde_json::Map::new();
+        if let Some(n) = name {
+            body.insert("name".into(), json!(n));
+        }
+        if let Some(g) = goal {
+            body.insert("goal".into(), json!(g));
+        }
+        self.json(
+            Method::PATCH,
+            &format!("/v1/projects/{id}"),
+            Some(&Value::Object(body)),
+        )
+        .await
+    }
+
+    /// 删项目（只有没共享过的；共享过的 409）。
+    pub async fn delete_project(&self, id: ProjectId) -> Result<()> {
+        self.empty(Method::DELETE, &format!("/v1/projects/{id}"), None)
+            .await
+    }
+
+    /// 往项目里加自己的 agent。成员要 `consent`（用户确认过加入说明）。
+    pub async fn add_project_agents(
+        &self,
+        id: ProjectId,
+        agents: &[InstanceId],
+        consent: bool,
+    ) -> Result<ProjectDetail> {
+        let agents: Vec<Value> = agents.iter().map(|a| json!({ "instance_id": a })).collect();
+        self.json(
+            Method::POST,
+            &format!("/v1/projects/{id}/agents"),
+            Some(&json!({ "agents": agents, "consent": consent })),
+        )
+        .await
+    }
+
+    /// 撤回项目里的一个 agent（主人或创建者）。
+    pub async fn withdraw_project_agent(&self, id: ProjectId, instance: InstanceId) -> Result<()> {
+        self.empty(
+            Method::DELETE,
+            &format!("/v1/projects/{id}/agents/{instance}"),
+            None,
+        )
+        .await
+    }
+
+    /// 我在项目里的预算（成员两个都要有）。
+    pub async fn set_project_budget(
+        &self,
+        id: ProjectId,
+        budget: &ProjectBudget,
+    ) -> Result<ProjectBudget> {
+        self.json(
+            Method::PUT,
+            &format!("/v1/projects/{id}/budget"),
+            Some(&json!(budget)),
+        )
+        .await
+    }
+
+    pub async fn leave_project(&self, id: ProjectId) -> Result<()> {
+        self.empty(Method::POST, &format!("/v1/projects/{id}/leave"), None)
+            .await
+    }
+
+    /// 创建者移出一个成员。
+    pub async fn remove_project_member(&self, id: ProjectId, member: UserId) -> Result<()> {
+        self.empty(
+            Method::DELETE,
+            &format!("/v1/projects/{id}/members/{member}"),
+            None,
+        )
+        .await
+    }
+
+    /// 项目的邀请（只有创建者）。
+    pub async fn project_invites(&self, id: ProjectId) -> Result<Vec<ProjectInvite>> {
+        #[derive(Deserialize)]
+        struct R {
+            #[serde(deserialize_with = "crate::lenient::vec")]
+            invites: Vec<ProjectInvite>,
+        }
+        Ok(self
+            .json::<R>(Method::GET, &format!("/v1/projects/{id}/invites"), None)
+            .await?
+            .invites)
+    }
+
+    /// 按手机号邀请：不管号码是谁的，回的都一样（对方在 App 里收到，不发短信）。
+    pub async fn invite_by_phone(&self, id: ProjectId, phone: &str) -> Result<ProjectInvite> {
+        #[derive(Deserialize)]
+        struct R {
+            invite: ProjectInvite,
+        }
+        Ok(self
+            .json::<R>(
+                Method::POST,
+                &format!("/v1/projects/{id}/invites"),
+                Some(&json!({ "phone": phone })),
+            )
+            .await?
+            .invite)
+    }
+
+    /// 邀请链接：令牌只在这一次返回，交给用户分享（72 小时、用一次）。
+    pub async fn create_invite_link(&self, id: ProjectId) -> Result<InviteLink> {
+        self.json(
+            Method::POST,
+            &format!("/v1/projects/{id}/invites"),
+            Some(&json!({ "link": true })),
+        )
+        .await
+    }
+
+    pub async fn revoke_project_invite(
+        &self,
+        id: ProjectId,
+        invite: ProjectInviteId,
+    ) -> Result<()> {
+        self.empty(
+            Method::DELETE,
+            &format!("/v1/projects/{id}/invites/{invite}"),
+            None,
+        )
+        .await
+    }
+
+    /// 发给我的手机号邀请。
+    pub async fn my_project_invites(&self) -> Result<Vec<ProjectInvitePreview>> {
+        #[derive(Deserialize)]
+        struct R {
+            #[serde(deserialize_with = "crate::lenient::vec")]
+            invites: Vec<ProjectInvitePreview>,
+        }
+        Ok(self
+            .json::<R>(Method::GET, "/v1/project-invites", None)
+            .await?
+            .invites)
+    }
+
+    pub async fn project_invite(&self, id: ProjectInviteId) -> Result<ProjectInvitePreview> {
+        self.json(Method::GET, &format!("/v1/project-invites/{id}"), None)
+            .await
+    }
+
+    /// 凭链接令牌看邀请（令牌只放在正文里）。
+    pub async fn resolve_invite_link(&self, token: &str) -> Result<ProjectInvitePreview> {
+        self.json(
+            Method::POST,
+            "/v1/project-invites/resolve",
+            Some(&json!({ "token": token })),
+        )
+        .await
+    }
+
+    /// 接受发给我的手机号邀请。
+    pub async fn accept_project_invite(
+        &self,
+        id: ProjectInviteId,
+        join: &ProjectJoin,
+    ) -> Result<ProjectDetail> {
+        self.json(
+            Method::POST,
+            &format!("/v1/project-invites/{id}/accept"),
+            Some(&join.body(None)),
+        )
+        .await
+    }
+
+    /// 凭链接令牌接受。
+    pub async fn accept_invite_link(
+        &self,
+        token: &str,
+        join: &ProjectJoin,
+    ) -> Result<ProjectDetail> {
+        self.json(
+            Method::POST,
+            "/v1/project-invites/accept",
+            Some(&join.body(Some(token))),
+        )
+        .await
+    }
+
+    /// 拒绝发给我的邀请；`block` 顺便拉黑邀请人。
+    pub async fn decline_project_invite(&self, id: ProjectInviteId, block: bool) -> Result<()> {
+        self.empty(
+            Method::POST,
+            &format!("/v1/project-invites/{id}/decline"),
+            Some(&json!({ "block": block })),
+        )
+        .await
+    }
+
+    pub async fn blocks(&self) -> Result<Vec<BlockedUser>> {
+        #[derive(Deserialize)]
+        struct R {
+            #[serde(deserialize_with = "crate::lenient::vec")]
+            blocks: Vec<BlockedUser>,
+        }
+        Ok(self
+            .json::<R>(Method::GET, "/v1/blocks", None)
+            .await?
+            .blocks)
+    }
+
+    pub async fn block_user(&self, user: UserId) -> Result<()> {
+        self.empty(Method::PUT, &format!("/v1/blocks/{user}"), None)
+            .await
+    }
+
+    pub async fn unblock_user(&self, user: UserId) -> Result<()> {
+        self.empty(Method::DELETE, &format!("/v1/blocks/{user}"), None)
+            .await
+    }
+
     // ---------- 用量 ----------
 
     /// 用量汇总。`group`：day / instance / model / credential；时间是 RFC 3339，不给就是最近 30 天。
@@ -1970,5 +2288,28 @@ impl Api {
             )
             .await?;
         Ok(resp.bytes().await.map_err(ClientError::network)?.to_vec())
+    }
+}
+
+#[cfg(test)]
+mod invite_token_tests {
+    #[test]
+    fn invite_tokens_from_links() {
+        let tok = format!("tpi1_{}", "a".repeat(43));
+        assert_eq!(super::invite_token(&tok), Some(tok.clone()));
+        assert_eq!(
+            super::invite_token(&format!(" thinktin://join/{tok} ")),
+            Some(tok.clone())
+        );
+        for bad in [
+            String::new(),
+            "tpi1_short".into(),
+            "thinktin://join/".into(),
+            "https://example.com/tpi1_x".into(),
+            format!("tpi1_{}", "!".repeat(43)),
+            format!("twh1_{}", "a".repeat(43)),
+        ] {
+            assert_eq!(super::invite_token(&bad), None, "{bad}");
+        }
     }
 }

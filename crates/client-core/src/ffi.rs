@@ -863,6 +863,326 @@ impl From<d::Team> for Team {
     }
 }
 
+// ---------- 项目（8.14） ----------
+
+/// 项目里的一个人：用户 id 和昵称（没有手机号）。
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct ProjectPerson {
+    pub user_id: String,
+    pub display_name: Option<String>,
+}
+
+impl From<d::ProjectPerson> for ProjectPerson {
+    fn from(p: d::ProjectPerson) -> Self {
+        Self {
+            user_id: p.user_id.to_string(),
+            display_name: p.display_name,
+        }
+    }
+}
+
+/// 项目列表里的一项（我是成员的项目）。
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct Project {
+    pub id: String,
+    pub name: String,
+    pub goal: String,
+    /// active / archived / deleted
+    pub status: String,
+    /// 我在项目里的身份：creator / member。
+    pub role: String,
+    /// 有没有别人加入过。
+    pub shared: bool,
+    pub creator: ProjectPerson,
+    pub member_count: u32,
+    pub agent_count: u32,
+    pub my_agent_count: u32,
+    pub created_at_ms: i64,
+    pub joined_at_ms: i64,
+}
+
+impl From<d::ProjectSummary> for Project {
+    fn from(p: d::ProjectSummary) -> Self {
+        Self {
+            id: p.id.to_string(),
+            name: p.name,
+            goal: p.goal,
+            status: p.status.as_str().into(),
+            role: p.role.as_str().into(),
+            shared: p.shared,
+            creator: p.creator.into(),
+            member_count: p.member_count,
+            agent_count: p.agent_count,
+            my_agent_count: p.my_agent_count,
+            created_at_ms: ms(p.created_at),
+            joined_at_ms: ms(p.joined_at),
+        }
+    }
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct ProjectMember {
+    pub user_id: String,
+    pub display_name: Option<String>,
+    pub role: String,
+    pub joined_at_ms: i64,
+    pub agent_count: u32,
+    pub is_me: bool,
+}
+
+impl From<d::ProjectMemberView> for ProjectMember {
+    fn from(m: d::ProjectMemberView) -> Self {
+        Self {
+            user_id: m.user_id.to_string(),
+            display_name: m.display_name,
+            role: m.role.as_str().into(),
+            joined_at_ms: ms(m.joined_at),
+            agent_count: m.agent_count,
+            is_me: m.is_me,
+        }
+    }
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct ProjectAgent {
+    pub instance_id: String,
+    pub owner_id: String,
+    pub agent_id: String,
+    pub name: String,
+    pub is_lead: bool,
+    pub position: u32,
+    pub added_at_ms: i64,
+    /// 是我的 agent。
+    pub mine: bool,
+}
+
+impl From<d::ProjectAgentView> for ProjectAgent {
+    fn from(a: d::ProjectAgentView) -> Self {
+        Self {
+            instance_id: a.instance_id.to_string(),
+            owner_id: a.owner_id.to_string(),
+            agent_id: a.agent_id,
+            name: a.name,
+            is_lead: a.is_lead,
+            position: a.position,
+            added_at_ms: ms(a.added_at),
+            mine: a.mine,
+        }
+    }
+}
+
+/// 我在项目里的预算（token 数；没有是不限，只有创建者可以不限）。
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct ProjectBudget {
+    pub daily_token_limit: Option<u64>,
+    pub total_token_limit: Option<u64>,
+}
+
+impl From<d::ProjectBudget> for ProjectBudget {
+    fn from(b: d::ProjectBudget) -> Self {
+        Self {
+            daily_token_limit: b.daily_token_limit,
+            total_token_limit: b.total_token_limit,
+        }
+    }
+}
+
+impl From<ProjectBudget> for d::ProjectBudget {
+    fn from(b: ProjectBudget) -> Self {
+        Self {
+            daily_token_limit: b.daily_token_limit,
+            total_token_limit: b.total_token_limit,
+        }
+    }
+}
+
+/// 项目详情（只有成员看得到）。
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct ProjectDetail {
+    pub project: Project,
+    /// 创建者在前。
+    pub members: Vec<ProjectMember>,
+    pub agents: Vec<ProjectAgent>,
+    pub my_budget: ProjectBudget,
+    pub max_users: u32,
+    pub max_agents: u32,
+}
+
+impl From<d::ProjectDetail> for ProjectDetail {
+    fn from(p: d::ProjectDetail) -> Self {
+        Self {
+            project: p.summary.into(),
+            members: p.members.into_iter().map(Into::into).collect(),
+            agents: p.agents.into_iter().map(Into::into).collect(),
+            my_budget: p.my_budget.into(),
+            max_users: p.limits.max_users,
+            max_agents: p.limits.max_agents,
+        }
+    }
+}
+
+/// 一个邀请（创建者看的）。按手机号的只有打码的号码。
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct ProjectInvite {
+    pub id: String,
+    pub project_id: String,
+    /// phone / link
+    pub kind: String,
+    /// pending / accepted / declined / revoked / expired
+    pub status: String,
+    pub phone_masked: Option<String>,
+    pub created_at_ms: i64,
+    pub expires_at_ms: i64,
+    pub settled_at_ms: Option<i64>,
+    pub accepted_by: Option<ProjectPerson>,
+}
+
+impl From<d::ProjectInvite> for ProjectInvite {
+    fn from(i: d::ProjectInvite) -> Self {
+        Self {
+            id: i.id.to_string(),
+            project_id: i.project_id.to_string(),
+            kind: i.kind.as_str().into(),
+            status: i.status.as_str().into(),
+            phone_masked: i.phone_masked,
+            created_at_ms: ms(i.created_at),
+            expires_at_ms: ms(i.expires_at),
+            settled_at_ms: ms_opt(i.settled_at),
+            accepted_by: i.accepted_by.map(Into::into),
+        }
+    }
+}
+
+/// 新建的邀请链接：令牌只在这一次返回。
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct ProjectInviteLink {
+    pub invite: ProjectInvite,
+    pub token: String,
+    /// `thinktin://join/<令牌>`，给用户分享的。
+    pub link: String,
+}
+
+/// 邀请预览里的成员：只有昵称、身份和 agent 数（还不是成员，看不到用户 id）。
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct ProjectMemberBrief {
+    pub display_name: Option<String>,
+    pub role: String,
+    pub agent_count: u32,
+}
+
+/// 加入前看到的邀请：项目、有谁，加入后哪些东西项目里的人看得到（`shared_with_project`）、哪些还是自己的
+/// （`kept_private`），两个都是固定的键，App 自己翻译。
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct ProjectInvitePreview {
+    pub invite_id: String,
+    pub kind: String,
+    pub expires_at_ms: i64,
+    pub project_id: String,
+    pub project_name: String,
+    pub project_goal: String,
+    /// 发邀请的创建者（拉黑要用他的 id）。
+    pub creator: ProjectPerson,
+    pub members: Vec<ProjectMemberBrief>,
+    pub users: u32,
+    pub agents: u32,
+    pub max_users: u32,
+    pub max_agents: u32,
+    pub shared_with_project: Vec<String>,
+    pub kept_private: Vec<String>,
+}
+
+impl From<d::ProjectInvitePreview> for ProjectInvitePreview {
+    fn from(p: d::ProjectInvitePreview) -> Self {
+        Self {
+            invite_id: p.invite_id.to_string(),
+            kind: p.kind.as_str().into(),
+            expires_at_ms: ms(p.expires_at),
+            project_id: p.project.id.to_string(),
+            project_name: p.project.name,
+            project_goal: p.project.goal,
+            creator: p.creator.into(),
+            members: p
+                .members
+                .into_iter()
+                .map(|m| ProjectMemberBrief {
+                    display_name: m.display_name,
+                    role: m.role.as_str().into(),
+                    agent_count: m.agent_count,
+                })
+                .collect(),
+            users: p.users,
+            agents: p.agents,
+            max_users: p.limits.max_users,
+            max_agents: p.limits.max_agents,
+            shared_with_project: p.shared_with_project,
+            kept_private: p.kept_private,
+        }
+    }
+}
+
+/// 我拉黑的人。
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct BlockedUser {
+    pub user_id: String,
+    pub display_name: Option<String>,
+    pub created_at_ms: i64,
+}
+
+impl From<d::BlockedUser> for BlockedUser {
+    fn from(b: d::BlockedUser) -> Self {
+        Self {
+            user_id: b.user_id.to_string(),
+            display_name: b.display_name,
+            created_at_ms: ms(b.created_at),
+        }
+    }
+}
+
+/// 建项目时的一个 agent。
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct ProjectAgentInput {
+    pub instance_id: String,
+    pub is_lead: bool,
+}
+
+/// 加入项目时带上的：放进项目的 agent、每天和总的 token 预算、用户确认过加入说明（`consent` 要是 true）。
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct ProjectJoin {
+    pub instance_ids: Vec<String>,
+    pub daily_token_limit: u64,
+    pub total_token_limit: u64,
+    pub consent: bool,
+}
+
+impl TryFrom<ProjectJoin> for api::ProjectJoin {
+    type Error = ClientError;
+
+    fn try_from(j: ProjectJoin) -> Result<Self> {
+        Ok(Self {
+            agents: j
+                .instance_ids
+                .iter()
+                .map(|i| parse(i, "instance"))
+                .collect::<Result<_>>()?,
+            daily_token_limit: j.daily_token_limit,
+            total_token_limit: j.total_token_limit,
+            consent: j.consent,
+        })
+    }
+}
+
+/// 从 `thinktin://join/<令牌>` 或单独的令牌里取出令牌（只核对格式，不联网）；格式不对返回 None。
+#[uniffi::export]
+pub fn project_invite_token(text: String) -> Option<String> {
+    api::invite_token(&text)
+}
+
+fn invite_token_or_err(text: &str) -> Result<String> {
+    api::invite_token(text).ok_or_else(|| ClientError::InvalidArgument {
+        detail: "not a project invite link".into(),
+    })
+}
+
 /// 团队模板里的一个成员：领养时用这个 agent 新领养一个实例。
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct TemplateMember {
@@ -2713,6 +3033,253 @@ impl ThinktinClient {
             |c| async move { Ok(c.api.adopt_team_template(id, name.as_deref()).await?.into()) },
         )
         .await
+    }
+
+    // ---------- 项目、邀请（8.14） ----------
+
+    /// 我是成员的进行中的项目（自己建的、加入的）。
+    pub async fn projects(&self) -> Result<Vec<Project>> {
+        self.run(|c| async move {
+            Ok(c.api
+                .projects()
+                .await?
+                .into_iter()
+                .map(Into::into)
+                .collect())
+        })
+        .await
+    }
+
+    pub async fn project(&self, project_id: String) -> Result<ProjectDetail> {
+        let id: d::ProjectId = parse(&project_id, "project")?;
+        self.run(|c| async move { Ok(c.api.project(id).await?.into()) })
+            .await
+    }
+
+    /// 建单人项目：agent 都是自己的实例，最多一个负责人。
+    pub async fn create_project(
+        &self,
+        name: String,
+        goal: String,
+        agents: Vec<ProjectAgentInput>,
+    ) -> Result<ProjectDetail> {
+        let agents: Vec<(d::InstanceId, bool)> = agents
+            .iter()
+            .map(|a| Ok((parse(&a.instance_id, "instance")?, a.is_lead)))
+            .collect::<Result<_>>()?;
+        self.run(|c| async move { Ok(c.api.create_project(&name, &goal, &agents).await?.into()) })
+            .await
+    }
+
+    /// 改名字、目标（只有创建者）；给了才改。
+    pub async fn update_project(
+        &self,
+        project_id: String,
+        name: Option<String>,
+        goal: Option<String>,
+    ) -> Result<ProjectDetail> {
+        let id: d::ProjectId = parse(&project_id, "project")?;
+        self.run(|c| async move {
+            Ok(c.api
+                .update_project(id, name.as_deref(), goal.as_deref())
+                .await?
+                .into())
+        })
+        .await
+    }
+
+    /// 删项目（只有没共享过的；共享过的回 409）。
+    pub async fn delete_project(&self, project_id: String) -> Result<()> {
+        let id: d::ProjectId = parse(&project_id, "project")?;
+        self.run(|c| async move { c.api.delete_project(id).await })
+            .await
+    }
+
+    /// 往项目里加自己的 agent。成员要先让用户确认加入说明（`consent` = true）；超过 30 个回 409
+    /// `project_agent_limit`。
+    pub async fn add_project_agents(
+        &self,
+        project_id: String,
+        instance_ids: Vec<String>,
+        consent: bool,
+    ) -> Result<ProjectDetail> {
+        let id: d::ProjectId = parse(&project_id, "project")?;
+        let agents: Vec<d::InstanceId> = instance_ids
+            .iter()
+            .map(|i| parse(i, "instance"))
+            .collect::<Result<_>>()?;
+        self.run(
+            |c| async move { Ok(c.api.add_project_agents(id, &agents, consent).await?.into()) },
+        )
+        .await
+    }
+
+    /// 撤回项目里的一个 agent（主人或创建者）。
+    pub async fn withdraw_project_agent(
+        &self,
+        project_id: String,
+        instance_id: String,
+    ) -> Result<()> {
+        let id: d::ProjectId = parse(&project_id, "project")?;
+        let instance: d::InstanceId = parse(&instance_id, "instance")?;
+        self.run(|c| async move { c.api.withdraw_project_agent(id, instance).await })
+            .await
+    }
+
+    /// 设我在项目里的预算（成员两个都要有）。
+    pub async fn set_project_budget(
+        &self,
+        project_id: String,
+        budget: ProjectBudget,
+    ) -> Result<ProjectBudget> {
+        let id: d::ProjectId = parse(&project_id, "project")?;
+        let budget: d::ProjectBudget = budget.into();
+        self.run(|c| async move { Ok(c.api.set_project_budget(id, &budget).await?.into()) })
+            .await
+    }
+
+    /// 退出项目（创建者不能退出：409）。
+    pub async fn leave_project(&self, project_id: String) -> Result<()> {
+        let id: d::ProjectId = parse(&project_id, "project")?;
+        self.run(|c| async move { c.api.leave_project(id).await })
+            .await
+    }
+
+    /// 创建者移出一个成员。
+    pub async fn remove_project_member(&self, project_id: String, user_id: String) -> Result<()> {
+        let id: d::ProjectId = parse(&project_id, "project")?;
+        let member: d::UserId = parse(&user_id, "user")?;
+        self.run(|c| async move { c.api.remove_project_member(id, member).await })
+            .await
+    }
+
+    /// 项目的邀请（只有创建者）。
+    pub async fn project_invites(&self, project_id: String) -> Result<Vec<ProjectInvite>> {
+        let id: d::ProjectId = parse(&project_id, "project")?;
+        self.run(|c| async move {
+            Ok(c.api
+                .project_invites(id)
+                .await?
+                .into_iter()
+                .map(Into::into)
+                .collect())
+        })
+        .await
+    }
+
+    /// 按手机号邀请：不管号码是谁的，结果都一样（对方在 App 里收到，不发短信）。邀请人一天的数到了回 429
+    /// （`retry_after_secs`）；待处理的邀请满了回 409 `project_invite_limit`；人满了 409 `project_member_limit`。
+    pub async fn invite_to_project_by_phone(
+        &self,
+        project_id: String,
+        phone: String,
+    ) -> Result<ProjectInvite> {
+        let id: d::ProjectId = parse(&project_id, "project")?;
+        self.run(|c| async move { Ok(c.api.invite_by_phone(id, &phone).await?.into()) })
+            .await
+    }
+
+    /// 邀请链接（72 小时、用一次）：令牌只在这一次返回。
+    pub async fn create_project_invite_link(
+        &self,
+        project_id: String,
+    ) -> Result<ProjectInviteLink> {
+        let id: d::ProjectId = parse(&project_id, "project")?;
+        self.run(|c| async move {
+            let l = c.api.create_invite_link(id).await?;
+            Ok(ProjectInviteLink {
+                invite: l.invite.into(),
+                token: l.token,
+                link: l.link,
+            })
+        })
+        .await
+    }
+
+    pub async fn revoke_project_invite(&self, project_id: String, invite_id: String) -> Result<()> {
+        let id: d::ProjectId = parse(&project_id, "project")?;
+        let invite: d::ProjectInviteId = parse(&invite_id, "invite")?;
+        self.run(|c| async move { c.api.revoke_project_invite(id, invite).await })
+            .await
+    }
+
+    /// 发给我的手机号邀请。
+    pub async fn my_project_invites(&self) -> Result<Vec<ProjectInvitePreview>> {
+        self.run(|c| async move {
+            Ok(c.api
+                .my_project_invites()
+                .await?
+                .into_iter()
+                .map(Into::into)
+                .collect())
+        })
+        .await
+    }
+
+    pub async fn project_invite(&self, invite_id: String) -> Result<ProjectInvitePreview> {
+        let id: d::ProjectInviteId = parse(&invite_id, "invite")?;
+        self.run(|c| async move { Ok(c.api.project_invite(id).await?.into()) })
+            .await
+    }
+
+    /// 凭链接看邀请：`link_or_token` 是 `thinktin://join/<令牌>` 或令牌本身；格式不对的不联网，直接 InvalidArgument。
+    pub async fn resolve_project_invite_link(
+        &self,
+        link_or_token: String,
+    ) -> Result<ProjectInvitePreview> {
+        let token = invite_token_or_err(&link_or_token)?;
+        self.run(|c| async move { Ok(c.api.resolve_invite_link(&token).await?.into()) })
+            .await
+    }
+
+    /// 接受发给我的手机号邀请。
+    pub async fn accept_project_invite(
+        &self,
+        invite_id: String,
+        join: ProjectJoin,
+    ) -> Result<ProjectDetail> {
+        let id: d::ProjectInviteId = parse(&invite_id, "invite")?;
+        let join: api::ProjectJoin = join.try_into()?;
+        self.run(|c| async move { Ok(c.api.accept_project_invite(id, &join).await?.into()) })
+            .await
+    }
+
+    /// 凭链接接受。
+    pub async fn accept_project_invite_link(
+        &self,
+        link_or_token: String,
+        join: ProjectJoin,
+    ) -> Result<ProjectDetail> {
+        let token = invite_token_or_err(&link_or_token)?;
+        let join: api::ProjectJoin = join.try_into()?;
+        self.run(|c| async move { Ok(c.api.accept_invite_link(&token, &join).await?.into()) })
+            .await
+    }
+
+    /// 拒绝发给我的邀请；`block` 顺便拉黑邀请人（对方看不出来）。
+    pub async fn decline_project_invite(&self, invite_id: String, block: bool) -> Result<()> {
+        let id: d::ProjectInviteId = parse(&invite_id, "invite")?;
+        self.run(|c| async move { c.api.decline_project_invite(id, block).await })
+            .await
+    }
+
+    /// 我拉黑的人。
+    pub async fn blocked_users(&self) -> Result<Vec<BlockedUser>> {
+        self.run(|c| async move { Ok(c.api.blocks().await?.into_iter().map(Into::into).collect()) })
+            .await
+    }
+
+    /// 拉黑：他发来的手机号邀请不再送达。
+    pub async fn block_user(&self, user_id: String) -> Result<()> {
+        let id: d::UserId = parse(&user_id, "user")?;
+        self.run(|c| async move { c.api.block_user(id).await })
+            .await
+    }
+
+    pub async fn unblock_user(&self, user_id: String) -> Result<()> {
+        let id: d::UserId = parse(&user_id, "user")?;
+        self.run(|c| async move { c.api.unblock_user(id).await })
+            .await
     }
 
     // ---------- 用量 ----------

@@ -63,6 +63,7 @@ async fn env() -> Option<Env> {
         artifacts: None,
         cfg: GatewayConfig {
             ws_heartbeat: Duration::from_millis(300),
+            cross_user_projects: true,
             ..GatewayConfig::default()
         },
     });
@@ -1635,6 +1636,110 @@ async fn ffi_keys_runs_artifacts_and_inbox_items() {
         c.inbox_item(ids[1].clone()).await,
         Err(ClientError::Api { status: 404, .. })
     ));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ffi_projects_invites_and_join() {
+    let Some(e) = env().await else { return };
+    let (alice, _s1, _d1) = ffi_login(&e, "13800138520", "ios", "iPhone").await;
+    let (bob, _s2, _d2) = ffi_login(&e, "13800138521", "android", "Pixel").await;
+    alice.update_profile(Some("Alice".into())).await.unwrap();
+    let a1 = alice
+        .adopt("claude".into(), "主编".into(), None)
+        .await
+        .unwrap();
+    let b1 = bob
+        .adopt("codex".into(), "写手".into(), None)
+        .await
+        .unwrap();
+    let p = alice
+        .create_project(
+            "改版".into(),
+            "两周内出首页".into(),
+            vec![ffi::ProjectAgentInput {
+                instance_id: a1.id.clone(),
+                is_lead: true,
+            }],
+        )
+        .await
+        .unwrap();
+    assert_eq!(p.project.role, "creator");
+    assert_eq!(p.max_users, 10);
+    let link = alice
+        .create_project_invite_link(p.project.id.clone())
+        .await
+        .unwrap();
+    assert!(link.link.starts_with("thinktin://join/tpi1_"));
+    assert_eq!(
+        ffi::project_invite_token(link.link.clone()),
+        Some(link.token.clone())
+    );
+    assert!(matches!(
+        bob.resolve_project_invite_link("thinktin://join/nope".into())
+            .await,
+        Err(ClientError::InvalidArgument { .. })
+    ));
+    let preview = bob
+        .resolve_project_invite_link(link.link.clone())
+        .await
+        .unwrap();
+    assert_eq!(preview.project_name, "改版");
+    assert_eq!(preview.creator.display_name.as_deref(), Some("Alice"));
+    assert_eq!(preview.kept_private.len(), 8);
+    let join = ffi::ProjectJoin {
+        instance_ids: vec![b1.id.clone()],
+        daily_token_limit: 100_000,
+        total_token_limit: 1_000_000,
+        consent: true,
+    };
+    let detail = bob
+        .accept_project_invite_link(link.token.clone(), join.clone())
+        .await
+        .unwrap();
+    assert_eq!(detail.project.role, "member");
+    assert_eq!(detail.members.len(), 2);
+    assert_eq!(bob.projects().await.unwrap().len(), 1);
+    let mine: Vec<bool> = bob
+        .project(p.project.id.clone())
+        .await
+        .unwrap()
+        .agents
+        .iter()
+        .map(|a| a.mine)
+        .collect();
+    assert_eq!(mine, vec![false, true]);
+    // 创建者收到“加入了”的提醒，带着项目 id。
+    let inbox = alice.sync_inbox(50).await.unwrap();
+    assert!(
+        inbox
+            .items
+            .iter()
+            .any(|i| i.project_id.as_deref() == Some(p.project.id.as_str()))
+    );
+    // 撤 agent、退出；之后项目 404。
+    bob.withdraw_project_agent(p.project.id.clone(), b1.id.clone())
+        .await
+        .unwrap();
+    bob.leave_project(p.project.id.clone()).await.unwrap();
+    assert!(matches!(
+        bob.project(p.project.id.clone()).await,
+        Err(ClientError::Api { status: 404, .. })
+    ));
+    // 用过的链接：404。
+    assert!(matches!(
+        bob.accept_project_invite_link(link.token.clone(), join)
+            .await,
+        Err(ClientError::Api { status: 404, .. })
+    ));
+    // 拉黑、取消拉黑。
+    bob.block_user(preview.creator.user_id.clone())
+        .await
+        .unwrap();
+    assert_eq!(bob.blocked_users().await.unwrap().len(), 1);
+    bob.unblock_user(preview.creator.user_id.clone())
+        .await
+        .unwrap();
+    assert!(bob.blocked_users().await.unwrap().is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
