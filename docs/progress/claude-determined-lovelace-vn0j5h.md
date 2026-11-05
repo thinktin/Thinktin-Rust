@@ -104,6 +104,7 @@
   **每周用量上限（11 月 10 日 18:00 UTC 恢复）**，主会话自己过了一遍；恢复以后可以补跑一次。
   8.16 放开领取项目运行之前要做：取消项目运行时先结掉审批、再给实例加代数（现在的顺序和用户审批相反，到时候会互相等）。
   下一步：8.16。
+- **进行中：8.16 项目会话和工作区隔离**（本会话，2026-11-05 23:40 UTC 起；两小时内别的会话不要重做）：先出方案（`drafts/projects-8.16-*`）。
   坑：只加 .sql 文件 cargo 不会重新编译（`sqlx::migrate!` 编译时嵌入），加了 `crates/store/build.rs`。
   坑：`relay` 的 `heartbeats_drop_revoked_frozen_and_silent_computers` 机器忙时偶尔失败（200 毫秒心跳，8.14 没碰 relay），单独跑能过。
 - 下一步：8.15 → 8.16–8.19。东京：Phase 0（docs/browser.md 第 8.1 节），过了一个模板开一个 `supported`。用户放好搜索 key（`THINKTIN_PARALLEL_SEARCH_KEY`）后做小测。
