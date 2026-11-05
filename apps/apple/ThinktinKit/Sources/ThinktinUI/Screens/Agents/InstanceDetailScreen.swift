@@ -43,7 +43,8 @@ private struct InstanceDetailContent: View {
     ) {
         _model = State(
             initialValue: InstanceDetailModel(
-                client: client, instanceID: instanceID, instance: instance, appearances: appearances))
+                client: client, instanceID: instanceID, instance: instance, appearances: appearances,
+                voices: .shared))
     }
 
     var body: some View {

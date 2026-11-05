@@ -13,13 +13,18 @@ enum ProfileAvatarMetrics {
 ///
 /// - 居中的头像，右下角一个玻璃小铅笔，点了进头像页（和“外观”组的“头像”行一样）；
 /// - “名称”组一个输入框，脚注是名字的问题或保存失败；离线时不能改名字（头像只存在这台设备上，照样能改）；
-/// - “外观”组“头像 >”；参考的“语音通话”组不做（6.23）。
+/// - “外观”组“头像 >”；
+/// - “语音通话”组（参考 12、13–17、85–88）：语音、速度、语言三行系统的 `Picker(.menu)`（行尾是值和上下箭头，菜单里选中的
+///   打勾，长列表系统菜单自己能滚）。ThinkTin 还没有语音通话（6.23），选项是演示数据（`BotinVoiceDemoData`），选了只记在
+///   这台设备上（`BotinVoiceStore`），脚注说“即将推出”。
 ///
-/// 点“完成”保存名字并返回（名字没变直接返回）；点返回放弃改动（只有一个名字，丢了好重填，规范 4.4.3）。
+/// 点“完成”记下语音通话的选择、保存名字并返回（名字没变直接返回；改名失败时语音的选择已经记下了，它只在本机）；点返回放弃
+/// 改动（规范 4.4.3）。
 struct InstanceEditScreen: View {
     let model: InstanceDetailModel
 
     @State private var draft: String
+    @State private var voice: BotinVoiceEditor
     @State private var isEditingAvatar = false
     @FocusState private var isNameFocused: Bool
 
@@ -30,6 +35,8 @@ struct InstanceEditScreen: View {
     init(model: InstanceDetailModel) {
         self.model = model
         _draft = State(initialValue: model.instance?.name ?? "")
+        _voice = State(
+            initialValue: BotinVoiceEditor(instanceID: model.instanceID, store: model.voices ?? BotinVoiceStore.shared))
     }
 
     var body: some View {
@@ -95,6 +102,7 @@ struct InstanceEditScreen: View {
                     .textCase(nil)
             }
             .themedRow()
+            BotinVoiceSection(editor: voice)
         }
         .formStyle(.grouped)
         .themedGroupedBackground()
@@ -136,11 +144,62 @@ struct InstanceEditScreen: View {
     private func save() {
         guard canSave(problem: InstanceNameRule.problem(draft)) else { return }
         isNameFocused = false
+        voice.save()
         let model = self.model
         let name = draft
         Task {
             if await model.rename(to: name) { dismiss() }
         }
+    }
+}
+
+/// 编辑页的“语音通话”组（参考 12 的三行，13–17、85–88 是它们的菜单）：系统的 `Picker(.menu)`，菜单里选中的打勾。
+private struct BotinVoiceSection: View {
+    let editor: BotinVoiceEditor
+
+    @Environment(\.displayLanguage) private var language
+
+    var body: some View {
+        let editor = self.editor
+        let language = self.language
+        Section {
+            Picker(
+                BotinVoiceText.voice(language),
+                selection: Binding(get: { editor.voiceID }, set: { editor.voiceID = $0 })
+            ) {
+                Text(BotinVoiceText.notSet(language)).tag(String?.none)
+                ForEach(BotinVoiceDemoData.voices) { voice in
+                    Text(verbatim: voice.name).tag(String?.some(voice.id))
+                }
+            }
+            .pickerStyle(.menu)
+            Picker(
+                BotinVoiceText.speed(language), selection: Binding(get: { editor.speed }, set: { editor.speed = $0 })
+            ) {
+                ForEach(BotinVoiceSpeed.allCases, id: \.self) { speed in
+                    Text(verbatim: speed.label)
+                        .accessibilityLabel(Text(speed.accessibilityLabel(language)))
+                        .tag(speed)
+                }
+            }
+            .pickerStyle(.menu)
+            Picker(
+                BotinVoiceText.language(language),
+                selection: Binding(get: { editor.languageCode }, set: { editor.languageCode = $0 })
+            ) {
+                Text(BotinVoiceText.automatic(language)).tag(String?.none)
+                ForEach(BotinVoiceDemoData.languages) { option in
+                    Text(option.name(language)).tag(String?.some(option.code))
+                }
+            }
+            .pickerStyle(.menu)
+        } header: {
+            Text(BotinVoiceText.section(language))
+                .textCase(nil)
+        } footer: {
+            Text(BotinVoiceText.footer(language))
+        }
+        .themedRow()
     }
 }
 
