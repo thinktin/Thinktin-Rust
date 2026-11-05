@@ -426,6 +426,9 @@
 - 第 1 轮 E 线·模型 key、IM 渠道（规范 7.3 E，参考里没有；2026-11-05）：key 列表、key 详情、IM 渠道列表和编辑页换 insetGrouped `List` /
   `Form`；`ModelsCredentialRow` 不再自己画按钮、边距和箭头（外面包 `NavigationLink`），标签换成 `CredentialSummary.tagsLine`（测试在
   `CredentialsModelTests`）；`modelsKeyboard(_:)` 改成模块内可用。key 的三个小 sheet 只换了工具栏按钮（字段还是 `ModelsField`）。
+- 第 1 轮 E 线·模型路由、关于（2026-11-05）：`ModelRoutesScreen` 换 insetGrouped `List`（`RouteSection` / `FallbackRows`，key 用系统
+  `Picker(.menu)`，推荐模型是 `Menu` 里的行内 `Picker`，保存只在右上），`AboutScreen` 换 `List`（`BrandLogo` 头部、版本、备案、条款、
+  AI 说明）。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、

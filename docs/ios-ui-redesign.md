@@ -1602,7 +1602,10 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 - E 线 2026-11-05：模型 key 列表（在用 / 停用两组，`ModelsCredentialRow` 变成纯行内容，标签换成一行灰字 `CredentialSummary.tagsLine`，
   空状态 `ContentUnavailableView`，右上玻璃“+”）、key 详情（居中头部 + 玻璃胶囊“改备注”、启用开关、换 key、信息、用量、用在哪里、红字删除，
   右上 `ellipsis` 菜单；三个小 sheet 的按钮换 `CloseButton` / `ConfirmButton`）、IM 渠道（每个群一组：开关行、发测试消息、修改、红字删除；
-  编辑页换 `Form`）换成原生的。参考里没有这几页，照设置子页、Botin 资料页的写法排。
+  编辑页换 `Form`）、模型路由（每个别名一组 `RouteSection`：用途、主 key 的系统 `Picker(.menu)`、标签在上的上游模型输入框 + 推荐菜单、
+  降级链的几行、加备用 key、红字删掉别名；“更多别名”一组；保存在右上 `ConfirmButton`，页尾的大按钮去掉）、关于页（`BrandLogo` 头部 +
+  分组）换成原生的。参考里没有这几页，照设置子页、Botin 资料页的写法排。添加 key 的 sheet、key 的三个小 sheet 里的字段、注销页、
+  开源许可页还是旧版式。
 - 线之间的依赖：A 的首页搜索要用 D 拆出来的 `SearchResultsView`，D 先交这一块，A 之前先嵌现有的 `SearchScreen`（2026-11-05 D 线已经嵌好）。
   A 的长按“改名”自己用 `.alert` + `InstanceNameRule`，不等 C。
 - 收尾（谁先空下来谁做）：参考里没有的页（收件箱、审批中心、进行中、团队和流水线、运行详情、运行树、引导、关于、开源许可）
