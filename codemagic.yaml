@@ -151,13 +151,15 @@ workflows:
     artifacts:
       - logs/*.log
 
-  # iPhone 模拟器上演示模式的截图（tools/apple/screenshots.sh）：首页、实例、运行、审批、计划、收件箱……，看界面、做上架截图的底稿。
+  # iPhone 模拟器上演示模式的截图（tools/apple/screenshots.sh）：改版的每一组页面（69 张，对照见 docs/ios-ui-redesign-shots.md），
+  # 看界面、做上架截图的底稿。
   # 旧系统的回退：发起构建时把环境变量 IOS_RUNTIME 改成 18.6、17.5 这样的版本号（Start new build → Environment variables，
   # 或 API 的 environment.variables）；镜像里没有那个运行时的话脚本先下载。和 .github/workflows/ios-screenshots.yml 的 ios_runtime 一样。
   ios-screenshots:
     name: iOS screenshots (simulator, demo data)
     instance_type: mac_mini_m2
-    max_build_duration: 80
+    # 截图十分钟左右，加上打 ThinktinCore、编 App；下载旧版本的模拟器运行时时多十几分钟。
+    max_build_duration: 90
     environment:
       xcode: latest
       vars:

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# iPhone 模拟器上跑演示模式（Mock 数据，不联网）的 iOS App，打开几个主要页面截图：给人看界面、和改版参考对照
-# （docs/ios-ui-redesign.md 7.6 的清单），也是上架截图的底稿。浅色、深色各一套（01-home-light.png、01-home-dark.png）。
+# iPhone 模拟器上跑演示模式（Mock 数据，不联网）的 iOS App，把改版的每一组页面都打开截图：给人看界面、和改版参考对照
+# （每张图对哪几张参考、规范哪一节见 docs/ios-ui-redesign-shots.md），也是上架截图的底稿。主要页面浅色、深色各一张
+# （01-home-light.png、01-home-dark.png），其余的只截浅色（一共 69 张）。
 # 只能在 macOS 上跑（Xcode、模拟器、XcodeGen）。前提：target/apple/ThinktinCore 已生成（build-apple.sh --ci 就够）。
 # Codemagic 上是 codemagic.yaml 的 ios-screenshots。
 #
@@ -13,9 +14,11 @@
 #
 # 每张图都重新启动 App，用启动环境变量指定打开的页面（只有 Debug 构建认，见 AppConfiguration；`simctl openurl` 会先弹
 # 系统的确认框挡住页面）：THINKTIN_OPEN_URL 是 thinktin:// 深链，THINKTIN_OPEN_SCREEN 是没有深链的页面（首页第一个 Botin 的
-# 对话、计划、产出物、观看与接管，设置、新建 Botin 这些 sheet，设置里压进去的几页，首页搜索），THINKTIN_MOCK_EMPTY=1 换成
+# 对话、计划、产出物、观看与接管，设置、新建 Botin 这些 sheet，设置里压进去的几页，首页搜索，首页置顶、隐藏的摆法，页面里
+# 本地打开的子页：编辑 Botin、头像、工作区、引擎详情、保险箱的新建表单、设备详情、外观……），THINKTIN_MOCK_EMPTY=1 换成
 # 还没有 Botin 的新账号（首页空状态）。
-# 中文界面，状态栏固定成 9:41、满电。
+# 中文界面，状态栏固定成 9:41、满电；键盘的“滑动输入”介绍事先关掉。系统的长按菜单、左滑、`Menu` 菜单（语音、语言的选项）
+# 要真的点，这里截不到。
 # macOS 自带的是 bash 3.2：set -u 下别用空数组，紧跟中文标点的变量写成 ${name}。
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -93,6 +96,14 @@ if ! udid=$(pick_iphone); then
 fi
 xcrun simctl boot "$udid" 2>/dev/null || true
 xcrun simctl bootstatus "$udid" -b
+# 第一次弹键盘时系统的“滑动输入”（QuickPath）介绍会盖住半个页面：关掉滑动输入、记成看过介绍。哪一项在这个 iOS 版本上
+# 不认都不要紧，失败不管。
+xcrun simctl spawn "$udid" defaults write com.apple.keyboard.preferences.plist KeyboardContinuousPathEnabled -bool false \
+  >/dev/null 2>&1 || true
+xcrun simctl spawn "$udid" defaults write com.apple.Preferences DidShowContinuousPathIntroduction -bool true \
+  >/dev/null 2>&1 || true
+xcrun simctl spawn "$udid" defaults write com.apple.Preferences DidShowGestureKeyboardIntroduction -bool true \
+  >/dev/null 2>&1 || true
 
 dd="target/screenshots-derived-data"
 xcodebuild -project apps/apple/Thinktin.xcodeproj -scheme Thinktin -configuration Debug \
@@ -107,14 +118,15 @@ xcrun simctl status_bar "$udid" override --time 9:41 --dataNetwork wifi --wifiBa
 # 重新启动 App（上一张打开的页面、弹出的面板不会叠到下一张上）。$1 是 THINKTIN_OPEN_SCREEN，$2 是 THINKTIN_OPEN_URL，
 # $3 是 THINKTIN_MOCK_EMPTY；空的 App 不认，都空就是演示数据的首页。引导（12.17）只在有 Botin、没有 key 的账号第一次启动时弹
 # （演示数据有 key，新账号没有 Botin，现在都不弹）：启动参数把“看过引导”（OnboardingCheck 的键）写进 UserDefaults 的参数域，
-# 以后改了演示数据也不会盖住截图。
+# 以后改了演示数据也不会盖住截图。首页的置顶、隐藏（InstancePreferencesStore 的键）也用参数域盖成“没有”：homepinned 这几张
+# 摆的置顶、隐藏会存进模拟器，不盖的话后面每张的首页都带着。等 7 秒：子页一层层打开（每层等转场走完），要几秒。
 launch() {
   xcrun simctl terminate "$udid" "$bundle" >/dev/null 2>&1 || true
   env SIMCTL_CHILD_THINKTIN_MOCK=1 "SIMCTL_CHILD_THINKTIN_OPEN_SCREEN=$1" "SIMCTL_CHILD_THINKTIN_OPEN_URL=$2" \
     "SIMCTL_CHILD_THINKTIN_MOCK_EMPTY=$3" \
     xcrun simctl launch "$udid" "$bundle" -AppleLanguages "(zh-Hans)" -AppleLocale zh_CN \
-    -cn.thinktin.onboarding.checked YES >/dev/null
-  sleep 6
+    -cn.thinktin.onboarding.checked YES -cn.thinktin.shell.instancePreferences none >/dev/null
+  sleep 7
 }
 shot() {
   xcrun simctl io "$udid" screenshot --type=png "$out/$1.png" >/dev/null
@@ -128,41 +140,70 @@ pending_approval=0192f3a0-0000-7000-8000-000000000301
 digest_plan=0192f3a0-0000-7000-8000-000000000401
 npm_request=0192f3a0-0000-7000-8000-000000000801
 
-# 截图清单（docs/ios-ui-redesign.md 7.6），一行一张：文件名、THINKTIN_OPEN_SCREEN、THINKTIN_OPEN_URL、THINKTIN_MOCK_EMPTY，
-# “-”是不设，第四列不写也是不设。
+# 截图清单（每张对哪几张参考、规范哪一节见 docs/ios-ui-redesign-shots.md），一行一张：文件名、截哪几种外观（ld 是浅色和深色，
+# l 只截浅色）、THINKTIN_OPEN_SCREEN、THINKTIN_OPEN_URL、THINKTIN_MOCK_EMPTY，“-”是不设，最后一列不写也是不设。按编号排，
+# 编号定了不改（对照文件和以前的截图都按名字找），新页面往后加。
 shots="
-00-home-empty - - 1
-01-home - -
-02-conversation conversation -
-03-instance - thinktin://instance/${writer}
-04-plans plans -
-05-artifacts artifacts -
-06-settings settings -
-07-vault-request - thinktin://vault/request/${npm_request}
-08-adopt adopt -
-09-search search -
-10-approval - thinktin://approval/${pending_approval}
-11-inbox - thinktin://inbox
-12-active - thinktin://active
-13-run - thinktin://run/${weekly_run}
-14-plan - thinktin://plan/${digest_plan}
-15-approvals - thinktin://approvals
-16-teams teams -
-17-new-task newtask -
-18-onboarding onboarding -
-19-connections connections -
-20-instance-screen instancescreen -
-21-permissions permissions -
-22-subscription subscription -
-23-import-memory importmemory -
-24-feedback feedback -
+00-home-empty ld - - 1
+01-home ld - -
+02-conversation ld conversation -
+03-instance ld - thinktin://instance/${writer}
+04-plans ld plans -
+05-artifacts ld artifacts -
+06-settings ld settings -
+07-vault-request l - thinktin://vault/request/${npm_request}
+08-adopt ld adopt -
+09-search ld search -
+10-approval l - thinktin://approval/${pending_approval}
+11-inbox ld - thinktin://inbox
+12-active ld - thinktin://active
+13-run ld - thinktin://run/${weekly_run}
+14-plan ld - thinktin://plan/${digest_plan}
+15-approvals ld - thinktin://approvals
+16-teams l teams -
+17-new-task l newtask -
+18-onboarding l onboarding -
+19-connections ld connections -
+20-instance-screen ld instancescreen -
+21-permissions l permissions -
+22-subscription l subscription -
+23-import-memory l importmemory -
+24-feedback l feedback -
+25-home-pinned ld homepinned -
+26-hidden-botins l hiddenbotins -
+27-home-all-hidden l homeallhidden -
+28-conversation-find l conversationfind -
+29-botin-edit l botinedit -
+30-botin-avatar l botinavatar -
+31-workspace l workspace -
+32-primary-botin l primarybotin -
+33-engines l engines -
+34-engine-detail l enginedetail -
+35-artifacts-media l artifactsmedia -
+36-connected l connected -
+37-connection-detail l connectiondetail -
+38-account l account -
+39-usage l usage -
+40-model-keys l modelkeys -
+41-vault l vault -
+42-vault-login l vaultlogin -
+43-vault-card l vaultcard -
+44-vault-contact l vaultcontact -
+45-permission-rule l permissionrule -
+46-devices l devices -
+47-device-detail l devicedetail -
+48-computer-detail l computerdetail -
+49-appearance l appearance -
+50-language l language -
+51-haptics l haptics -
 "
 
 for appearance in light dark; do
   xcrun simctl ui "$udid" appearance "$appearance"
   # 清单从 3 号文件描述符读，循环里的 simctl 读标准输入也吃不掉它。
-  while read -r name screen url empty <&3; do
+  while read -r name modes screen url empty <&3; do
     if [[ -z "$name" ]]; then continue; fi
+    if [[ "$appearance" == dark && "$modes" != ld ]]; then continue; fi
     if [[ "$screen" == - ]]; then screen=""; fi
     if [[ "$url" == - ]]; then url=""; fi
     if [[ "$empty" == - ]]; then empty=""; fi

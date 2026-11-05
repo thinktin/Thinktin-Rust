@@ -6,7 +6,7 @@
 #     （Codemagic 构建的就是这个分支，所以推之前不用合并；这个文件要在推上去的提交里）；
 #   - 手动触发（这个文件要先在默认分支上）：选分支和工作流。
 # Codemagic 的 API 令牌在 Test flight 环境的 THINKTIN_AI_CODEMAGIC_API_KEY（docs/ios-release.md 2.2）。产物（截图、日志）
-# 传成 GitHub 的 artifact `codemagic-<工作流>`。免费额度每月 500 分钟：apple-check 约 6 分钟，截图约 20 分钟。
+# 传成 GitHub 的 artifact `codemagic-<工作流>`。免费额度每月 500 分钟：apple-check 约 6 分钟，截图约 30 分钟（69 张）。
 name: Codemagic
 
 on:
@@ -32,7 +32,8 @@ jobs:
   codemagic:
     name: Run on Codemagic
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # 比等 Codemagic 的时间（CODEMAGIC_WAIT_MINUTES）多留十分钟，取消步骤和传产物还来得及跑。
+    timeout-minutes: 105
     environment: "Test flight"
     steps:
       - uses: actions/checkout@v4
@@ -59,7 +60,8 @@ jobs:
         env:
           THINKTIN_AI_CODEMAGIC_API_KEY: ${{ secrets.THINKTIN_AI_CODEMAGIC_API_KEY }}
           CODEMAGIC_ARTEFACTS_DIR: ${{ runner.temp }}/codemagic
-          CODEMAGIC_WAIT_MINUTES: "80"
+          # 截图跑满 codemagic.yaml 的 max_build_duration（ios-screenshots 是 90 分钟）也等得到，再留点排队的时间。
+          CODEMAGIC_WAIT_MINUTES: "95"
         run: python tools/apple/codemagic_build.py "$WORKFLOW" "$GITHUB_REF_NAME"
       - name: Cancel the Codemagic build
         if: ${{ cancelled() && env.CODEMAGIC_BUILD_ID != '' }}
