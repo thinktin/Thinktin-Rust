@@ -75,7 +75,7 @@ private struct OnboardingContent: View {
         switch step {
         case .adopt:
             close()
-            router.openTopLevel(.agentCatalog)
+            router.open(.adopt(agentID: nil))
         case .addKey:
             router.present(.addCredential)
         case .routeMain:

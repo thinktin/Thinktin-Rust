@@ -163,9 +163,9 @@ private struct ConversationContent: View {
         if model.isMissing {
             EmptyStateView(
                 systemImage: "questionmark.square.dashed", title: ConversationText.instanceMissing(language),
-                actionTitle: AppRoute.agentCatalog.title(language)
+                actionTitle: AppRoute.adopt(agentID: nil).title(language)
             ) {
-                router.open(.agentCatalog)
+                router.open(.adopt(agentID: nil))
             }
         } else if model.isEmpty && model.hasLoaded {
             EmptyStateView(

@@ -74,8 +74,9 @@ private struct NewTaskSheet: View {
                     .accessibilityElement(children: .combine)
                     .accessibilityAddTraits(instance.id == model.router.currentInstanceID ? .isSelected : [])
                 }
+                // 叠在新任务上面的第二层；建好了关掉两层、进新 Botin 的对话。
                 PillButton(AppRoute.adopt(agentID: nil).title(language), systemImage: "plus", kind: .secondary) {
-                    model.router.open(.agentCatalog)
+                    model.router.open(.adopt(agentID: nil))
                 }
                 .padding(.top, Metrics.Spacing.s)
             }

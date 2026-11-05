@@ -368,10 +368,10 @@ public final class AppModel {
     }
 
     /// “新任务”：只有一个实例时直接进它的对话、把焦点放进输入框；有好几个时弹出选择（`.newTask`）；
-    /// 还没有实例时去 agent 目录领养。
+    /// 还没有实例时弹新建 Botin 的表单（规范 4.7.1，在表单里选引擎）。
     public func startNewTask() {
         switch instances.count {
-        case 0: router.openTopLevel(.agentCatalog)
+        case 0: router.open(.adopt(agentID: nil))
         case 1: router.requestNewTask(in: instances[0].id)
         default: router.present(.newTask)
         }

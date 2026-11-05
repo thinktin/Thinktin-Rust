@@ -301,7 +301,7 @@ sheet 的左上再放关闭（`.cancellationAction`）；**“只做一件事”
 | `.settings` | `.push`，`isTopLevel` | `.sheet` | `presentation`、`isTopLevel` |
 | `.search` | `.push`，`isTopLevel` | 回到首页并激活搜索（`Router` 加 `searchRequest`，像现在的 `newTaskRequest`） | `presentation` 用 `.root` |
 | `.plans` | 没有参数 | `.plans(instanceID: InstanceID?)`，nil 是全部实例 | `PlansDestination`、`instanceID`、深链（`thinktin://plan/{id}` 不受影响） |
-| `.agentCatalog` | `isTopLevel`（抽屉直达） | 普通压栈；入口剩引导（12.17）、没有实例时的“新任务”（`AppModel.startNewTask`）、对话页“实例已删”的空状态；领养表单里选 agent 用本地列表（4.7.1），设置根页不放入口 | `isTopLevel`、`startNewTask` |
+| `.agentCatalog` | `isTopLevel`（抽屉直达） | 普通压栈；入口只剩新建表单的“了解引擎”（引导 12.17 的“新建 Botin”、没有实例时的“新任务” `AppModel.startNewTask`、对话页“实例已删”的空状态 2026-11-05 起都弹新建表单）；新建表单里选引擎用表单里的行内选择（4.7.1），设置根页不放入口 | `isTopLevel`、`startNewTask` |
 | sheet 里的跳转 | `Router` 只有一层 `sheet`；`open` 遇到压栈页会关掉 sheet 再压到主栈，遇到 sheet 页会把当前 sheet 换掉 | 加 `sheetPath: [AppRoute]`，sheet 显示时 `open(.push)` 压进 sheet 自己的栈、不关 sheet；sheet 里再开 sheet 页（`.addCredential`、`.onboarding`、`.newPlan`）叠一层（`Router` 加 `nestedSheet`）；`.conversation` 例外，永远先关 sheet 再压进主栈（领养成功进对话、`NewTaskSheet` 选实例都靠它）；`show`（深链、推送）照旧先关 sheet 再建返回栈 | `Router`、`AppShell` 的 sheet 改 `NavigationStack(path:)`、`Tests/ThinktinKitTests/Navigation/`。不改的话设置变成 sheet 以后，保险箱点条目（`router.open(.vaultItem)`）、模型 key 点“添加”（`router.open(.addCredential)`）、用量跳转都会把设置关掉 |
 | `isTopLevel` / `openFromDrawer` | 抽屉用 | 改名 `openTopLevel`，给工作台菜单用（先回根再压） | `ShellDrawer` 删掉 |
 | `isDrawerOpen`、`openDrawer` 等 | 抽屉状态 | 删掉 | 截图脚本的 `THINKTIN_OPEN_DRAWER` 一起去掉 |
@@ -373,7 +373,9 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   - 没有实例（第一次登录就是这样）：`ContentUnavailableView`，图标位置放 `BrandLogo`，标题“还没有 Botin”，说明“Botin 是替你干活的助手。
     起个名字、选一个引擎，它就能帮你写东西、查资料、跑任务。”，按钮“新建 Botin”（用户 2026-11-05 定的文案；英文 “No Botins yet” /
     “A Botin is an assistant that works for you. Give it a name and pick an engine, and it can write, look things up and run tasks for you.” /
-    “New Botin”；在 `HomeText`）。
+    “New Botin”；在 `HomeText`）。按钮 `.glassButtonStyle(.prominent)` + `.controlSize(.large)`，打开和“+”同一张新建表单（4.7.1）。
+    联网拉到了、账号里没有 Botin 才显示它（`HomeList.placeholder` / `AppModel.homePlaceholder` 的 `.noBotins`）；离线时不引导新建，
+    还是“这台设备上还没有保存的 Botin”（`.offlineWithoutCache`）。第一次登录会先弹引导（12.17），空状态在它下面。已做（2026-11-05）。
   - 全部隐藏（113，第 2 轮）：“所有 Botin 都已隐藏” + `Button("显示已隐藏的 Botin")`（`.bordered`、胶囊）。
   - 拉取失败：`ErrorBanner`，可重试。
   - 有运行在等你处理：行内第二行换成“N 个在等你处理”（现在抽屉里就有），角标用 `warning` 色。
@@ -704,28 +706,35 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 代码里还是领养（`AppRoute.adopt(agentID:)`、`AdoptionModel`、`adopt(agentID:name:harness:)`），界面上一律是“新建 Botin、选一个引擎”（6.6）。
 同一个 agent 可以给好几个 Botin 当引擎：服务端只限每个账号的实例数，不限每个 agent 领养几次，`adopt` 每调一次就建一个新实例。
 
+**已做（2026-11-05，按用户当天的要求改过版式：原生 `Form`，主按钮放工具栏）**，下面写的是现在的样子；参考里的大号居中输入框、
+底部全宽胶囊按钮没照做。头像的形状网格和色板还是第 2 轮。
+
 - **布局**
-  - large sheet，左上玻璃 ×，标题“新建 Botin”。
-  - 上面是大头像预览（约 120）；第 2 轮有了头像以后，名字下面加形状网格和色板。
-  - 名字输入：占满宽度、圆角 16、填充底，文字居中、`.title2.bold()`，占位“给它取个名字”。
-  - ThinkTin 加一行“引擎”（选这个 Botin 用哪个 agent 当引擎，默认目录里第一个或上次用的），引擎有多种接入方式时下面再加一行 `Picker(.menu)`；
-    许可说明放成脚注（“新建即表示你同意按上面的条款使用这个引擎”），链到引擎详情。
-  - 底部全宽胶囊主按钮“新建”，没填名字时灰色、不能点。
-- **原生**：`.sheet` + `NavigationStack` + `Button(role: .close)`；`TextField` + `.submitLabel(.done)` + `.onSubmit`、`@FocusState`；
-  引擎行是 `NavigationLink`，进 Agents 目录里的本地选择列表（复用 `AgentCatalogModel` 的数据；行上写“N 个 Botin 在用”，不写“已领养”，
-  用过的引擎照样能再选）；底部
-  `.safeAreaBar(edge: .bottom) { Button("新建") { … }.buttonStyle(.glassProminent).controlSize(.large).frame(maxWidth: .infinity).disabled(!canSubmit) }`；
-  提交中按钮里换 `ProgressView` + `.interactiveDismissDisabled(true)`；名字问题在输入框下面一行红色 `.footnote`。
-- **交互**：首页“+”和首页空状态的“新建 Botin”打开；填了名字才能新建；建好关 sheet，压栈进新 Botin 的对话（4.3.1 的首次状态）；× 或下滑取消，
-  已经填了内容时先确认。
-- **状态**：空表单、聚焦、可提交、提交中、名字不合法（`AdoptionModel.nameProblem`）、实例数到上限（`ErrorRecovery.limitReached`）、离线禁用。
-- **ThinkTin 现在**：`Screens/Agents/AdoptAgentSheet.swift`（`AgentsNameField`、接入方式 `ChoiceRow`、许可说明、`PillButton`、
-  领养完的 `AdoptionDoneView` 引导配模型或加 key）+ `ViewModels/Agents/AdoptionModel.swift`；入口 `.agentCatalog` → `.agent(id)` → 领养。
-- **要改**：新路由 `.adopt(agentID:)`（第 0 轮）；`AdoptAgentSheet` 改成上面的版式；`AdoptionDoneView` 去掉，“配模型、加 key”的引导挪到
-  新实例对话的首次卡片（第 2 轮之前先用对话页现有的“没配 main 路由”提示）。agent 目录（`.agentCatalog`）保留，改成 plain 列表行
-  （40pt 图标 + 名字 + 一句介绍 + 右边“选这个”/“N 个 Botin 在用”小胶囊，借参考 101–104 的行；页面标题“引擎”）；引擎详情可以借插件详情的
-  sheet 版式（4.8.3），主按钮“用它新建 Botin”。
-  第 1 轮（头像第 2 轮）。
+  - large sheet，左上玻璃 ×，标题“新建 Botin”，右上“创建”。
+  - 分组表单：最上面头像预览（`Metrics.Avatar.edit`，按名字取字和颜色）；“名字”一组（输入框，占位“给它取个名字”，默认填引擎名、
+    重名加序号，脚注是“最多 64 个字，之后可以改。”或名字的问题，问题用失败色）；“引擎”一组：行内选择，每个引擎一行（名字 + 一句话介绍，
+    单行截断；没有介绍时写“N 个 Botin 在用”；不能用的灰掉、选不了），引擎有多种接入方式时下面一行“接入方式”菜单，最后一行“了解引擎”
+    （进引擎目录）；这一组的脚注是许可证，专有许可再加许可说明和“新建即表示你同意按上面的条款使用这个引擎。”，别的写“Botin 在自己的沙箱里
+    运行，模型请求只经平台的模型网关发给你配置的厂商。”（`NewBotinText.engineFooter`）。
+  - 默认引擎：预选的（从引擎详情进来），其次最近活跃的那个 Botin 用的引擎（“上次用的”），再次目录里第一个能用的（`AdoptionModel.defaultEngine`）。
+- **原生**：`.sheet` + `NavigationStack`（`SheetStack`）+ `Form`（`.formStyle(.grouped)`）；`TextField(_:text:prompt:)` + `.submitLabel(.done)`、
+  `@FocusState`；引擎 `Picker` + `.pickerStyle(.inline)` + `.labelsHidden()`（每行 `.disabled(!isAvailable)`，选不能用的在视图模型里也拦）；
+  接入方式 `Picker(.menu)`；“了解引擎”`NavigationLink(value: AppRoute.agentCatalog)`（压进 sheet 自己的栈）；分组脚注 `Section { } footer: { }`；
+  工具栏 `CloseButton` / `ConfirmButton("创建", isWorking:)`（Design/Glass.swift，iOS 26 是关闭 / 确认角色的玻璃按钮）；
+  `.interactiveDismissDisabled(isAdopting)`；填了名字点 × 时 `.confirmationDialog`（“不建这个 Botin 了？”）。
+- **交互**：首页“+”、首页空状态的“新建 Botin”、引擎详情的“用它新建 Botin”（预选那个引擎）打开；名字合法、选了能用的引擎、在线才能点“创建”；
+  建好关 sheet、从首页压栈进新 Botin 的对话（`AppModel.openCreatedInstance`，4.3.1 的首次状态：空状态下面“还差一步：给它配模型路由……”
+  和“配置模型路由”按钮）；× 取消（自己填了名字时先确认），下滑也能取消（新建中不能）。从表单的“了解引擎”进到引擎详情再点“用它新建 Botin”时
+  回到这张表单、换成那个引擎，不叠第二张（`Router.engineRequest`）。
+- **状态**：引擎列表在拉（引擎那一行转圈）、拉不到（“暂时拉不到引擎列表”+ 重试）、目录是空的；名字不合法（`AdoptionModel.nameProblem`）；
+  提交中（右上转圈，读屏“正在新建”）；失败和实例数到上限（`ErrorRecovery.limitReached`，不给重试）在表单里的 `ErrorBanner`；离线一组说明和
+  “重新检查网络”，“创建”不能点。
+- **ThinkTin 现在**：`Screens/Agents/AdoptAgentSheet.swift` + `ViewModels/Agents/AdoptionModel.swift`（`EngineOption`、`NewBotinText`）。
+  原来的“领养好了”页（`AdoptionDoneView`，引导配模型或加 key）删了，引导挪到新 Botin 对话的空状态（第 2 轮换成 6.18 的首次卡片）；
+  没有能用的 key 时路由页自己引导加 key。
+- **还没做**：agent 目录（`.agentCatalog`）改成 plain 列表行（40pt 图标 + 名字 + 一句介绍 + 右边“选这个”/“N 个 Botin 在用”小胶囊，借参考 101–104 的行；
+  页面标题“引擎”），引擎详情借插件详情的 sheet 版式（4.8.3），主按钮“用它新建 Botin”：第 1 轮 C 线。头像第 2 轮。
+  “能不能用”现在只看有没有接入方式（`AgentInfo.canPowerNewBotin`）：服务端目录还没有下架、地区这类字段。
 
 #### 4.7.2 分组（91、92、93）
 
@@ -1387,7 +1396,7 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 |---|---|---|
 | A 首页（12.16） | 首页完整版（4.2.1，不含置顶隐藏）、长按菜单（4.2.2：实例资料、改名、新建计划、复制 ID、删除）、工作台菜单和“等你处理”提示行、首页嵌入搜索（4.2.4 第 1 轮部分）、`NewTaskSheet` 换选择器版式（4.4.5） | `Shell/Home/*`、`Shell/ShellDestination.swift`、`ViewModels/Shell/HomeListModel.swift`（新）、`AppModel.swift`（小改）、`Tests/*/Shell/` |
 | B 对话（12.5） | 对话页（4.3.1，不含引导卡）、“…”菜单（4.3.2）、消息长按菜单（4.3.4）、时间分隔 | `Screens/Conversation/*`、`Components/ComposerBar.swift`（本轮归 B）、`ViewModels/Conversation/*`、`Tests/*/Conversation*/` |
-| C 实例（12.3） | 实例资料（4.4.1）、“…”菜单（4.4.2）、编辑页（4.4.3）、工作区页（4.6.1）、新建 Botin 表单（4.7.1，选引擎）、引擎目录改列表行 | `Screens/Agents/*`（新 `InstanceEditScreen.swift`、`InstanceWorkspaceScreen.swift`）、`ViewModels/Agents/*`、`Tests/*/Agents/` |
+| C 实例（12.3） | 实例资料（4.4.1）、“…”菜单（4.4.2）、编辑页（4.4.3）、工作区页（4.6.1）、引擎目录改列表行（新建 Botin 表单 4.7.1 已经先做了，2026-11-05） | `Screens/Agents/*`（新 `InstanceEditScreen.swift`、`InstanceWorkspaceScreen.swift`）、`ViewModels/Agents/*`、`Tests/*/Agents/` |
 | D 计划、产出物、搜索（12.6、12.18、12.21） | 实例的计划和全部计划（4.5.1）、产出物版式和产出物详情（4.5.2、4.5.3 第 1 轮部分）、`SearchResultsView` 拆出来给 A 用（4.2.4） | `Screens/Plans/*`、`Screens/Artifacts/*`、`Screens/Search/*`、对应的 `ViewModels/` 和测试 |
 | E 设置一带（12.12、12.2、12.4、12.13、12.14、12.9 手机这边） | 设置根页（4.9.1）、账号（4.9.2）、用量（4.9.3）、保险箱和登录信息表单（4.9.5、4.9.6）、设备列表和详情（4.9.9）、外观（4.9.11）、语言（4.9.12）、模型 key、IM 渠道换原生 | `Screens/Settings/*`、`ViewModels/Settings/SettingsModel.swift`、`Screens/Account/*`（登录相关不动）、`Screens/Models/*`、`Screens/Vault/*`、`Screens/ImChannels/*`、`Screens/Computer/ComputerLinkViews.swift` |
 

@@ -212,5 +212,13 @@ struct HomeListTests {
         await demo.openCreatedInstance(fresh)
         #expect(demo.homeRows.first?.id == fresh.id)
         #expect(demo.router.path == [.conversation(fresh.id)])
+        // 从新任务的选择里点“新建 Botin”：表单叠成第二层；建好了两层都关掉。
+        demo.router.present(.newTask)
+        demo.router.open(.adopt(agentID: nil))
+        #expect(demo.router.sheet == .newTask && demo.router.nestedSheet == .adopt(agentID: nil))
+        let another = try await demo.client.adopt(agentID: DemoData.claudeAgentID, name: "主笔", harness: nil)
+        await demo.openCreatedInstance(another)
+        #expect(demo.router.sheet == nil && demo.router.nestedSheet == nil)
+        #expect(demo.router.path == [.conversation(another.id)])
     }
 }

@@ -419,7 +419,7 @@ struct AppModelTests {
         #expect(model.badges.pendingApprovals == 0)
     }
 
-    @Test("新任务：一个实例直接进对话，几个时弹出选择，没有时去领养")
+    @Test("新任务：一个实例直接进对话，几个时弹出选择，没有时弹新建 Botin 的表单")
     func newTask() async {
         let (mock, model) = make()
         await model.start()
@@ -442,7 +442,8 @@ struct AppModelTests {
         #expect(model.router.currentInstanceID == nil)
         #expect(model.router.path.isEmpty)
         model.startNewTask()
-        #expect(model.router.path == [.agentCatalog])
+        #expect(model.router.sheet == .adopt(agentID: nil))
+        #expect(model.router.path.isEmpty)
         #expect(mock.state.instances.isEmpty)
     }
 

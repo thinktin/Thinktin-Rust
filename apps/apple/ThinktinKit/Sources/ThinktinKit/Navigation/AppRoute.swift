@@ -37,7 +37,8 @@ public enum AppRoute: Hashable, Sendable, Codable {
 
     // MARK: agent 与实例（12.3）
 
-    /// Agent 目录。入口：引导、没有实例时的“新任务”、对话页“实例已删”的空状态（规范 3.3）。
+    /// Agent 目录（界面上是“引擎”）。入口：新建 Botin 表单的“了解引擎”（规范 3.3、4.7.1）；引导、没有实例时的“新任务”、
+    /// 对话页“实例已删”的空状态都改成弹新建表单了。
     case agentCatalog
     case agent(AgentID)
     /// 领养新实例（首页右上的“+”，sheet）：`agentID` 是预选的 agent，nil 时在表单里选（规范 4.7.1、6.4 A）。
