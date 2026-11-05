@@ -702,6 +702,11 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   “查看并确认”和删除）。空着时（`PlanListModel.placeholder`）：参考 21 那样正中一段说明（`PlansText.listEmptyMessage`，没有图标和
   标题）+ “新建计划”玻璃按钮；拉不到时 `ContentUnavailableView` + 重试；全部的页面筛到没有时“看全部”。原来的 `PageHeader`
   说明拿掉（确认的说明挪到待确认一组的脚注）。
+- **计划详情也换了（2026-11-05，D 线，参考里没有这一页，按第 2 节换原生）**：`PlanDetailScreen` 换成 insetGrouped `List`，
+  版式跟 Botin 资料一样：居中的头部（44pt 状态图标、`.title2.bold()` 标题、AI 标识、状态 · 下一次、所属 Botin 的玻璃小胶囊），
+  等确认 / 步骤卡住 / 规则失效各一行提示（等确认的带“查看并确认”`NavigationLink`），目标、触发规则（失效规则的“修改规则”“删除”
+  换成系统小胶囊）、策略（`LabeledContent`）、流水线步骤、运行历史，最后一组暂停 / 恢复和红色“删除计划”整行按钮；右上 `ellipsis`
+  菜单（不再是 `ellipsis.circle`）。找不到、拉不到用 `ContentUnavailableView`。新建 / 编辑表单、确认页、触发器编辑器还是原来的自画版式。
 
 #### 4.5.2 产出物（22、23、26、81、82、83、84）
 

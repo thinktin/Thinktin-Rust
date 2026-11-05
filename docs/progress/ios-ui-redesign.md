@@ -370,6 +370,8 @@
   `PlansFilterChip`、`PlanListRow`、`PlanAwaitingCard` 删掉；触发器编辑器“规则的写法”换成 `FilterChipBar`。C 线放在
   `InstanceDetailScreen.swift` 末尾的 `insetGroupedList()`、`clearListRow()` 挪到 `Components/ListStyles.swift`，`AgentsToolbar.trailing`
   改名 `ToolbarSlot.trailing`（同一个文件）。
+  计划详情（参考里没有）也换成 insetGrouped `List`（居中头部、提示行、目标、规则、策略 `LabeledContent`、步骤、运行历史、最后一组
+  暂停 / 删除，右上 `ellipsis`）；`PlanStepsView.stageTitle` 改成静态的（带语言参数）；`PlanTriggerRow` 的两个按钮换成系统小胶囊。
 - 第 1 轮 D 线·产出物（规范 4.5.2、4.5.3，对过参考 22–26、81–84；2026-11-05）：库换成 insetGrouped `List`（“全部 / 媒体 / 文件”胶囊、
   按日期分组、28pt 缩略图、行尾 AI 标识、超过 20 个“展开”，全部 Botin 的按 Botin 筛选挪到右上菜单）；新的图片全屏查看
   `ArtifactImageViewer`（纯黑底、× 和“…”：分享、保存到相册、详情）；详情换成 `List` + 底部“预览 / 分享” + “…”里删除。

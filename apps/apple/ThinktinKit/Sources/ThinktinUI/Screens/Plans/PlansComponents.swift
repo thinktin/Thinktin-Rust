@@ -177,11 +177,13 @@ struct PlanTriggerRow: View {
                 .fixedSize(horizontal: false, vertical: true)
                 PlansButtonRow {
                     if let onFix {
-                        PillButton(zh ? "修改规则" : "Change rule", systemImage: "pencil", size: .compact, action: onFix)
+                        Button(zh ? "修改规则" : "Change rule", systemImage: "pencil", action: onFix)
+                            .smallCapsuleButton(.prominent)
                             .disabled(!canEdit)
                     }
                     if let onDelete {
-                        PillButton(zh ? "删除" : "Delete", kind: .secondary, size: .compact, action: onDelete)
+                        Button(zh ? "删除" : "Delete", role: .destructive, action: onDelete)
+                            .smallCapsuleButton()
                             .disabled(!canEdit)
                     }
                 }
@@ -248,7 +250,7 @@ struct PlanStepsView: View {
         VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
             ForEach(Array(stages.enumerated()), id: \.offset) { index, stage in
                 VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
-                    Text(stageTitle(index: index, parallel: stage.count > 1))
+                    Text(Self.stageTitle(index: index, parallel: stage.count > 1, language: language))
                         .typography(.footnote)
                         .foregroundStyle(Theme.inkSecondary)
                         .accessibilityAddTraits(.isHeader)
@@ -287,7 +289,7 @@ struct PlanStepsView: View {
 
 extension PlanStepsView {
     /// “第 1 批（同时跑）” / “Stage 1 (in parallel)”。
-    func stageTitle(index: Int, parallel: Bool) -> String {
+    static func stageTitle(index: Int, parallel: Bool, language: DisplayLanguage) -> String {
         if language == .chinese { return "第 \(index + 1) 批" + (parallel ? "（同时跑）" : "") }
         return "Stage \(index + 1)" + (parallel ? " (in parallel)" : "")
     }
