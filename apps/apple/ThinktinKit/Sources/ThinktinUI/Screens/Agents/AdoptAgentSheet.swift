@@ -62,8 +62,9 @@ private struct AdoptAgentForm: View {
                     .accessibilityHidden(true)
                     .animation(.snappy, value: model.appearance)
                 nameField
-                AvatarPicker(model: model)
+                // 引擎紧跟名字：放在形状和颜色下面时被底部的“新建”按钮挡住，不往下滑看不到（参考稿里没有这一行）。
                 engineSection
+                AvatarPicker(model: model)
             }
             .padding(.horizontal, Metrics.Spacing.m)
             .padding(.top, Metrics.Spacing.s)
