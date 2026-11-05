@@ -5,7 +5,11 @@
 # Codemagic 上是 codemagic.yaml 的 ios-screenshots。
 #
 #   tools/apple/screenshots.sh [输出目录，默认 target/screenshots]
-#   IOS_RUNTIME=18 tools/apple/screenshots.sh     # 用 iOS 18.x 的模拟器看 iOS 17 / 18 的回退（那个运行时要先装好）
+#   IOS_RUNTIME=18.6 tools/apple/screenshots.sh   # 用 iOS 18.6 的模拟器看 iOS 17 / 18 的回退
+#
+# IOS_RUNTIME 是版本号（18、18.6、17.5）：只在那个版本的模拟器里挑。没有那个版本的 iPhone 模拟器时建一台；连运行时都没装时
+# 先用 `xcodebuild -downloadPlatform iOS -buildVersion` 下载（几个 GB，这时要写完整的版本号，比如 18.6）。CI 上的触发办法见
+# .github/workflows/ios-screenshots.yml 开头（Run workflow 的 ios_runtime，或者推到 ios-screenshots-ios18.6 这样的分支）。
 #
 # 每张图都重新启动 App，用启动环境变量指定打开的页面（只有 Debug 构建认，见 AppConfiguration；`simctl openurl` 会先弹
 # 系统的确认框挡住页面）：THINKTIN_OPEN_URL 是 thinktin:// 深链，THINKTIN_OPEN_SCREEN 是没有深链的页面（首页第一个实例的
@@ -24,7 +28,12 @@ mkdir -p "$out"
 SDK_VERSION=$(xcrun --sdk iphonesimulator --show-sdk-version)
 export SDK_VERSION
 export IOS_RUNTIME="${IOS_RUNTIME:-}"
-udid=$(xcrun simctl list --json devices available | python3 -c '
+if [[ -n "$IOS_RUNTIME" && ! "$IOS_RUNTIME" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+  echo "IOS_RUNTIME 要写成 18、18.6 这样的版本号，现在是：${IOS_RUNTIME}" >&2
+  exit 1
+fi
+pick_iphone() {
+  xcrun simctl list --json devices available | python3 -c '
 import json, os, sys
 devices = json.load(sys.stdin)["devices"]
 sdk = tuple(int(p) for p in os.environ["SDK_VERSION"].split(".") if p.isdigit())
@@ -42,7 +51,44 @@ for runtime in runtimes:
         print(phones[0]["name"], runtime, file=sys.stderr)
         sys.exit(0)
 sys.exit("no available iPhone simulator" + (" on iOS " + os.environ["IOS_RUNTIME"] if want else ""))
-')
+'
+}
+# 装好的 IOS_RUNTIME 版本的 iOS 运行时（最新的那个）和它支持的一种 iPhone（带 Pro、不带 Max 的优先，取最新的）：
+# 一行“运行时 id<Tab>机型 id<Tab>机型名”；没装时失败。
+find_runtime() {
+  xcrun simctl list --json runtimes available | python3 -c '
+import json, os, sys
+want = tuple(int(p) for p in os.environ["IOS_RUNTIME"].split(".") if p.isdigit())
+def version(runtime):
+    return tuple(int(p) for p in runtime.get("version", "").split(".") if p.isdigit())
+runtimes = sorted(
+    (r for r in json.load(sys.stdin)["runtimes"]
+     if ".SimRuntime.iOS-" in r["identifier"] and r.get("isAvailable", True) and version(r)[:len(want)] == want),
+    key=version, reverse=True)
+for runtime in runtimes:
+    phones = [
+        t for t in runtime.get("supportedDeviceTypes", [])
+        if t.get("productFamily", "iPhone" if t["name"].startswith("iPhone") else "") == "iPhone"]
+    pros = [t for t in phones if "Pro" in t["name"] and "Max" not in t["name"]]
+    if pros or phones:
+        phone = (pros or phones)[-1]
+        print(runtime["identifier"], phone["identifier"], phone["name"], sep="\t")
+        sys.exit(0)
+sys.exit("iOS " + os.environ["IOS_RUNTIME"] + " runtime is not installed")
+'
+}
+if ! udid=$(pick_iphone); then
+  [[ -n "$IOS_RUNTIME" ]] || exit 1
+  # 镜像里没有这个版本的 iPhone 模拟器（CI 上常见）：运行时没装就下载，再建一台。
+  if ! found=$(find_runtime); then
+    echo "下载 iOS ${IOS_RUNTIME} 的模拟器运行时" >&2
+    xcodebuild -downloadPlatform iOS -buildVersion "$IOS_RUNTIME"
+    found=$(find_runtime)
+  fi
+  IFS=$'\t' read -r runtime_id device_type device_name <<<"$found"
+  echo "新建模拟器：${device_name}（${runtime_id}）" >&2
+  udid=$(xcrun simctl create "$device_name" "$device_type" "$runtime_id")
+fi
 xcrun simctl boot "$udid" 2>/dev/null || true
 xcrun simctl bootstatus "$udid" -b
 

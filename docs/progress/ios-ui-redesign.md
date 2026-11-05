@@ -134,6 +134,10 @@
     搜索栏从代码激活可能要等底部条装好（Apple 论坛 798018 / FB20068224 说的是 `searchFocused`；`isPresented` 有没有这个问题、
     推迟一拍够不够，都要在 iOS 26 模拟器上看截图 09-search 和从压栈的页面 `open(.search)`）。
   - 设置 → 账号 → 昵称的说明不再说“显示在侧边栏”，改成“显示在首页左上角的头像和这台设备上”。
+  - 截图的旧系统回退在 CI 上也能出了：`ios-screenshots.yml` 加 `workflow_dispatch` 的 `ios_runtime` 输入和 `ios-screenshots-ios*` 分支
+    （分支名里带版本），产物名带版本；`codemagic.yaml` 加环境变量 `IOS_RUNTIME`（发起构建时改）；`screenshots.sh` 在没有那个版本的
+    iPhone 模拟器时自己建一台，运行时没装时先 `xcodebuild -downloadPlatform` 下载，`IOS_RUNTIME` 不是版本号就停。规范 7.6、
+    docs/ios.md 第 7 节写了怎么触发。脚本的挑选、建机逻辑用假的 `xcrun` 在 Linux 上跑过（18、18.6、没装的 17.5、非法值），真机没跑过。
   - 测试：`RouterTests` 加“App 里点的链接”“页面没了从哪层拿掉”“新任务请求补上一次”“添加 key 之后去配路由”；
     `AppShellTests` 加“工作台按钮的读屏只念一次数”；`AppModelTests` 的工作台标签那几行换成名字。
 
@@ -152,8 +156,10 @@
    （`UILaunchScreen` 的两个键、`LaunchLogo` 的 PDF 和颜色集能不能被资源编译器收下，Info.plist 测试查键）；`DesignTokenTests` 在模拟器上
    顺着 `#filePath` 读仓库里的颜色集（模拟器进程读宿主机的文件，按说可以，没验过）；App 测试里 `OpenScreen` 那三条。
 2. 出一次截图对照（规范 7.6 第 3 条）：`git push -f origin HEAD:ios-screenshots`（或 Actions 里手动跑 iOS screenshots），产物 28 张；
-   再用 `IOS_RUNTIME=18` 出一套看 iOS 18 的回退（镜像里没有就先下载运行时）。和参考截图并排看（参考截图在仓库外，要请用户再发），
-   差别记到这里。冷启动后的启动屏截不到，要在模拟器或真机上看一眼。
+   再出一套 iOS 18 的回退：`git push -f origin HEAD:ios-screenshots-ios18.6`（或 Run workflow 填 `ios_runtime`），产物
+   `ios-screenshots-ios18.6`；镜像里没有那个运行时脚本会先下载（`xcodebuild -downloadPlatform iOS -buildVersion 18.6`，没在 CI 上跑过，
+   失败的话看日志换版本号）。顺带看 09-search 里搜索栏有没有激活（iOS 26 底部条，见“已完成”审查修正那条）。和参考截图并排看
+   （参考截图在仓库外，要请用户再发），差别记到这里。冷启动后的启动屏截不到，要在模拟器或真机上看一眼。
 3. 第 1 轮五条线并行（规范 7.3，开工前先在这里认领）；第 2 轮纯客户端新功能；第 3 轮等后端。A 线（首页）接着做：长按菜单（4.2.2）、
    “等你处理”提示行、预览换成最近一次运行的摘要（6.7）、`SearchResultsView` 嵌进首页（D 线先交）、空查询时列实例、`NewTaskSheet`
    换选择器版式（4.4.5）。B 线做对话页时注意下面“坑”里 `newTaskRequest` 那条。

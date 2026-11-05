@@ -1433,7 +1433,9 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 
    - 和参考截图并排看（参考截图留在仓库外，不提交）。逐页对照：导航栏按钮的位置和形状、有没有标题、列表样式、卡片圆角和有没有描边、
      底部浮动条、空状态、深浅色。差别记进进度文件，改完再出一次截图。
-   - iOS 17/18 的回退：每轮至少在一个 iOS 17 或 18 的模拟器上出一次截图（`IOS_RUNTIME=18 tools/apple/screenshots.sh`，默认选最新的
-     运行时；macos-26 的镜像不一定带老运行时，要先下载）。只看能用、不乱。
+   - iOS 17/18 的回退：每轮至少在一个 iOS 17 或 18 的模拟器上出一次截图。云端没有 Xcode，走 CI：Actions → iOS screenshots →
+     Run workflow 填 `ios_runtime`（比如 `18.6`），或者 `git push -f origin HEAD:ios-screenshots-ios18.6`，截图在 artifact
+     `ios-screenshots-ios18.6`；Codemagic 发起构建时改环境变量 `IOS_RUNTIME`。本机是 `IOS_RUNTIME=18.6 tools/apple/screenshots.sh`
+     （默认选最新的运行时）。镜像里没有那个运行时的话脚本先用 `xcodebuild -downloadPlatform` 下载（要写完整的版本号）。只看能用、不乱。
 4. **人工过一遍**：深色、浅色、最大的动态字体、VoiceOver（头像、状态角标、自画卡片都要有读屏标签，长按菜单里的操作读屏也能用）、
    离线（飞行模式下首页显示缓存、写操作禁用）、推送和深链跳进来的返回栈（3.4）。

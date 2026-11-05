@@ -300,8 +300,10 @@ client-core 只缓存实例、运行、事件、收件箱（cache.rs 的几张�
   `kit-linux` 最后还有严格模式的 `swift format lint`。
 - **截图**（macOS）：`tools/apple/screenshots.sh [输出目录]` 在 iPhone 模拟器上跑演示模式，截改版规范 7.6 的 14 个页面（首页、对话、
   实例资料、实例的计划、产出物、设置、保险箱填写请求、领养、首页搜索、审批、收件箱、进行中、运行、计划），浅色、深色各一张
-  （`01-home-light.png`、`01-home-dark.png`）；`IOS_RUNTIME=18`（或 `17.5`）换成那个版本的模拟器看旧系统的回退。GitHub 上是
-  `.github/workflows/ios-screenshots.yml`，Codemagic 上是 `codemagic.yaml` 的 `ios-screenshots`。`simctl openurl` 会弹系统确认框，
+  （`01-home-light.png`、`01-home-dark.png`）；`IOS_RUNTIME=18.6`（或 `17.5`）换成那个版本的模拟器看旧系统的回退（没有那个版本的
+  iPhone 模拟器就建一台，运行时没装就用 `xcodebuild -downloadPlatform` 下载，这时要写完整的版本号）。GitHub 上是
+  `.github/workflows/ios-screenshots.yml`（手动触发填 `ios_runtime`，或者推到 `ios-screenshots-ios18.6` 这样带版本的分支；产物是
+  `ios-screenshots-ios18.6`），Codemagic 上是 `codemagic.yaml` 的 `ios-screenshots`（发起构建时改环境变量 `IOS_RUNTIME`）。`simctl openurl` 会弹系统确认框，
   所以页面用启动环境变量指定（只有 Debug 构建认，`AppConfiguration`）：`THINKTIN_OPEN_URL=thinktin://…` 是深链；
   `THINKTIN_OPEN_SCREEN=conversation / plans / artifacts / settings / search / adopt` 打开首页第一个实例（演示数据里是“写作助手”）
   的对话、计划、产出物，或者设置、领养两个 sheet、首页搜索，和深链一样走 `Router.show`（App 的 `App/OpenScreen.swift`）。
