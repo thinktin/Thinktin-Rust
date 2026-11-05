@@ -124,7 +124,7 @@
 | 消息气泡、自画卡片 | 约 20 | `RoundedRectangle(cornerRadius: 20, style: .continuous)`；`Metrics.Radius.card` 16 → 20 |
 | 输入框 | 胶囊；带引用时卡片圆角约 28 | `.glassEffect(in: .capsule)` / `RoundedRectangle(cornerRadius: 28)`；`Metrics.Radius.input` 不再用 |
 | 导航栏圆按钮 | 约 44 | 工具栏系统给，不自己设尺寸 |
-| 实例头像 | 列表 48、置顶 80、资料页 120、编辑页 100、搜索结果 40、标题胶囊 24 | 新组件 `InstanceAvatar(size:)` |
+| 实例头像 | 列表 48、置顶 80、资料页 120、编辑页 100、搜索结果 40、标题胶囊 24 | 新组件 `InstanceAvatar(_:appearance:size:badge:)`（形状 + 颜色见 4.4.4） |
 | 应用 / agent 图标方块 | 40，圆角约 10 | `Metrics.Radius.control`（10）保留 |
 | 左右边距 | 16–20 | `List` 系统边距；自画内容用 `Metrics.Spacing.m` |
 
@@ -301,7 +301,7 @@ sheet 的左上再放关闭（`.cancellationAction`）；**“只做一件事”
 | `.settings` | `.push`，`isTopLevel` | `.sheet` | `presentation`、`isTopLevel` |
 | `.search` | `.push`，`isTopLevel` | 回到首页并激活搜索（`Router` 加 `searchRequest`，像现在的 `newTaskRequest`） | `presentation` 用 `.root` |
 | `.plans` | 没有参数 | `.plans(instanceID: InstanceID?)`，nil 是全部实例 | `PlansDestination`、`instanceID`、深链（`thinktin://plan/{id}` 不受影响） |
-| `.agentCatalog` | `isTopLevel`（抽屉直达） | 普通压栈；入口只剩新建表单的“了解引擎”（引导 12.17 的“新建 Botin”、没有实例时的“新任务” `AppModel.startNewTask`、对话页“实例已删”的空状态 2026-11-05 起都弹新建表单）；新建表单里选引擎用表单里的行内选择（4.7.1），设置根页不放入口 | `isTopLevel`、`startNewTask` |
+| `.agentCatalog` | `isTopLevel`（抽屉直达） | 普通压栈；入口只剩新建表单的“了解引擎”（引导 12.17 的“新建 Botin”、没有实例时的“新任务” `AppModel.startNewTask`、对话页“实例已删”的空状态 2026-11-05 起都弹新建表单）；新建表单里选引擎用表单里的引擎菜单（4.7.1），设置根页不放入口 | `isTopLevel`、`startNewTask` |
 | sheet 里的跳转 | `Router` 只有一层 `sheet`；`open` 遇到压栈页会关掉 sheet 再压到主栈，遇到 sheet 页会把当前 sheet 换掉 | 加 `sheetPath: [AppRoute]`，sheet 显示时 `open(.push)` 压进 sheet 自己的栈、不关 sheet；sheet 里再开 sheet 页（`.addCredential`、`.onboarding`、`.newPlan`）叠一层（`Router` 加 `nestedSheet`）；`.conversation` 例外，永远先关 sheet 再压进主栈（领养成功进对话、`NewTaskSheet` 选实例都靠它）；`show`（深链、推送）照旧先关 sheet 再建返回栈 | `Router`、`AppShell` 的 sheet 改 `NavigationStack(path:)`、`Tests/ThinktinKitTests/Navigation/`。不改的话设置变成 sheet 以后，保险箱点条目（`router.open(.vaultItem)`）、模型 key 点“添加”（`router.open(.addCredential)`）、用量跳转都会把设置关掉 |
 | `isTopLevel` / `openFromDrawer` | 抽屉用 | 改名 `openTopLevel`，给工作台菜单用（先回根再压） | `ShellDrawer` 删掉 |
 | `isDrawerOpen`、`openDrawer` 等 | 抽屉状态 | 删掉 | 截图脚本的 `THINKTIN_OPEN_DRAWER` 一起去掉 |
@@ -599,9 +599,14 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 - **原生**：`Picker(.segmented)`；`LazyVGrid` 里 `Button(.plain)` + 选中环 + `.accessibilityAddTraits(.isSelected)` +
   `.sensoryFeedback(.selection, trigger:)`；`PhotosPicker`（不用相册权限）；相机 `UIImagePickerController`（`sourceType = .camera`、
   `allowsEditing = true`，要 `NSCameraUsageDescription`）。
-- **ThinkTin 现在**：只有 `AgentMonogram`（圆里放名字第一个字）；`Instance` 没有头像字段，也没有上传、生成接口。
-- **要改**：按 6.9。建议第 1 轮先把首字头像按名字取色（`InstanceAvatar`），后端加了头像字段再做“形状 + 颜色”
-  （素材自己设计，可以用 SF Symbols 的填充图形加两点眼睛，不照搬参考的形象）；生成、上传不做。
+- **ThinkTin 现在**（2026-11-05）：`Components/InstanceAvatar.swift`：形状里放名字的第一个字，右下角可选状态角标；形状和颜色
+  （`InstanceAppearance`：`AvatarShape` 15 种、`AvatarColor` 12 种，ThinktinKit `ViewModels/Shell/InstanceAppearanceStore.swift`）
+  **在新建表单里挑**（4.7.1：形状网格 3 × 5 + 色板 2 × 6，选中带环），先只存在这台设备上（6.9 A，`InstanceAppearanceStore`，按实例 id）；
+  没挑过的是圆形、按名字取色（和第 0 轮的首字头像一样）。形状自己设计（`Components/AvatarShapes.swift`，几何、有机形状，只放首字，
+  **不画脸和眼睛**，不照搬参考的形象）。`Instance` 还没有头像字段，也没有上传、生成接口。
+- **要改**：建好之后改头像（编辑页“外观”组的“头像 >”，压栈页：大预览 + 同一套形状网格和色板 +“重置为默认”，右上“完成”）第 2 轮，
+  复用新建表单的 `AvatarPicker`（挪成共用组件）；后端加了头像字段（6.9 B）后新建时一起提交、从实例上读，本机的存储当缓存或删掉；
+  生成、上传不做。
 
 #### 4.4.5 选择主 Bot（11）
 
@@ -708,35 +713,56 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 代码里还是领养（`AppRoute.adopt(agentID:)`、`AdoptionModel`、`adopt(agentID:name:harness:)`），界面上一律是“新建 Botin、选一个引擎”（6.6）。
 同一个 agent 可以给好几个 Botin 当引擎：服务端只限每个账号的实例数，不限每个 agent 领养几次，`adopt` 每调一次就建一个新实例。
 
-**已做（2026-11-05，按用户当天的要求改过版式：原生 `Form`，主按钮放工具栏）**，下面写的是现在的样子；参考里的大号居中输入框、
-底部全宽胶囊按钮没照做。头像的形状网格和色板还是第 2 轮。
+**已做（2026-11-05）**：第一版做成了原生分组 `Form` + 右上“新建”，用户对过参考图说不像，当天照参考重排了版式（下面写的是现在的样子）；
+逻辑（名字规则、默认引擎和引擎详情要的引擎、接入方式、离线、上限和错误、取消前确认、建好进对话）和测试没变。
 
-- **布局**
-  - large sheet，左上玻璃 ×，标题“新建 Botin”，右上“新建”（中文这个动作统一说“新建”：标题、按钮、转圈的读屏、许可脚注都是）。
-  - 分组表单：最上面头像预览（`Metrics.Avatar.edit`，按名字取字和颜色）；“名字”一组（输入框，占位“给它取个名字”，默认填引擎名、
-    重名加序号，脚注是“最多 64 个字，之后可以改。”或名字的问题，问题用失败色）；“引擎”一组：行内选择，每个引擎一行（名字 + 一句话介绍，
-    单行截断；没有介绍时写“N 个 Botin 在用”；不能用的灰掉、选不了；读屏一行念“名字，介绍，N 个 Botin 在用”，`EngineOption.accessibilityLabel`），引擎有多种接入方式时下面一行“接入方式”菜单，最后一行“了解引擎”
-    （进引擎目录）；这一组的脚注是许可证，专有许可再加许可说明和“新建即表示你同意按上面的条款使用这个引擎。”，别的写“Botin 在自己的沙箱里
-    运行，模型请求只经平台的模型网关发给你配置的厂商。”（`NewBotinText.engineFooter`）。
+- **布局**（从上到下，深浅色一样）
+  - large sheet；顶上左边玻璃 ×（`CloseButton`），中间标题“新建 Botin”，**右边不放按钮**。
+  - 居中的大头像预览（`Metrics.Avatar.profile`，120pt，跟着动态字体缩放）：选的形状、选的颜色（没选按名字取）、名字的第一个字；
+    还没输入名字时是中性的占位符号（`ellipsis`）。读屏不念（下面的输入框和网格自己会念）。
+  - 大号名字输入框：整宽、胶囊形的填充底（`paperElevated`，像大号搜索框），`.title2` 半粗、居中，占位“给 Botin 取个名字”，
+    **默认空的**（以前默认填引擎名，删了）。下面的小字只在有用时出现（`AdoptionModel.nameNote`）：只输了空格说“起个名字吧。”、太长说问题
+    （失败色），快到 64 个字的上限（还剩 10 个以内）时提示上限；空的不说（按钮灰着就够了）。
+  - 头像选择卡片（`paperElevated` 圆角卡片）：形状网格 3 行 × 5 个（`AvatarShape`，15 种），下面一条分隔线，色板 2 行 × 6 个
+    （`AvatarColor`，12 种）。每个形状格子都用现在的颜色和名字的首字画、按格子的宽度画（窄屏、大字号不挤出格子），选中的有强调色的
+    圆角框；色板选中的外面一圈同色的环。没选过颜色时带环的是按名字取的那个色，输名字时环跟着走；点了就固定。
+  - 紧凑的引擎卡片：一行“引擎”+ 系统 `Menu`（按钮上是选的引擎名和上下箭头；菜单里每项名字 + 一句话介绍当副标题，选中的打勾，不能用的
+    灰掉、点不了；都不能用时按钮上写“暂时没有能用的”）；引擎有多种接入方式时下面一行“接入方式”`Picker(.menu)`。卡片下面一个小链接
+    “了解引擎 ›”压进引擎目录。目录在拉时按钮位置转圈；拉不到写“暂时拉不到引擎列表”+“重试”（离线不给重试，联网自己补拉）；目录是空的写
+    “还没有能用的引擎，稍后再来看看。”。
+  - 底部固定的一条（键盘弹出时在键盘上面，`floatingBar(edge: .bottom)`）：失败、Botin 数到上限的 `ErrorBanner`；离线时一句说明和
+    “重新检查网络”；一行许可小字（`NewBotinText.licenseCaption`：专有许可——目录给了许可说明的——写“新建即表示同意 X 的许可条款”，
+    开源的写“X 采用 Y 许可”，没写许可证的写“X 没有注明许可证”）+“查看”（小 sheet，medium / large：许可证、专有许可的说明和
+    “新建即表示你同意按上面的条款使用这个引擎。”，或者在沙箱里运行的说明，有上游仓库时给链接，`NewBotinText.licenseDetails`）；
+    最下面整宽胶囊主按钮“新建”（`glassButtonStyle(.prominent)` + `.buttonBorderShape(.capsule)` + `.controlSize(.large)`）。
   - 默认引擎：预选的（从引擎详情进来），其次最近活跃的那个 Botin 用的引擎（“上次用的”），再次目录里第一个能用的（`AdoptionModel.defaultEngine`）。
-- **原生**：`.sheet` + `NavigationStack`（`SheetStack`）+ `Form`（`.formStyle(.grouped)`）；`TextField(_:text:prompt:)` + `.submitLabel(.done)`、
-  `@FocusState`；引擎 `Picker` + `.pickerStyle(.inline)` + `.labelsHidden()`（每行 `.disabled(!isAvailable)`，选不能用的在视图模型里也拦）；
-  接入方式 `Picker(.menu)`；“了解引擎”`NavigationLink(value: AppRoute.agentCatalog)`（压进 sheet 自己的栈）；分组脚注 `Section { } footer: { }`；
-  工具栏 `CloseButton` / `ConfirmButton("新建", isWorking:)`（Design/Glass.swift，iOS 26 是关闭 / 确认角色的玻璃按钮）；
-  `.interactiveDismissDisabled(isAdopting || hasUserInput)`；填了名字点 × 时 `.confirmationDialog`（“不建这个 Botin 了？”）。
-- **交互**：首页“+”、首页空状态的“新建 Botin”、引擎详情的“用它新建 Botin”（预选那个引擎）打开；名字合法、选了能用的引擎、在线才能点“新建”；
-  建好关 sheet、从首页压栈进新 Botin 的对话（`AppModel.openCreatedInstance`，4.3.1 的首次状态：空状态下面“还差一步：给它配模型路由……”
-  和“配置模型路由”按钮）；× 取消（自己填了名字时先确认），没填名字时下滑也能取消（新建中、自己填了名字时不能，只能点 × 确认）。从表单的“了解引擎”进到
-  引擎详情再点“用它新建 Botin”时回到这张表单、换成那个引擎，不叠第二张（`Router.engineRequest`）；表单自己的目录还没拉到时先记下，拉到后再换
-  （`AdoptionModel.requestEngine`），不会落回默认的引擎。
-- **状态**：引擎列表在拉（引擎那一行转圈）、拉不到（“暂时拉不到引擎列表”+ 重试）、目录是空的；名字不合法（`AdoptionModel.nameProblem`）；
-  提交中（右上转圈，读屏“正在新建”）；失败和实例数到上限（`ErrorRecovery.limitReached`，不给重试）在表单里的 `ErrorBanner`；离线一组说明和
-  “重新检查网络”，“新建”不能点。
+- **原生**：`.sheet` + `NavigationStack`（`SheetStack`）+ `ScrollView`（`.scrollDismissesKeyboard(.interactively)`）；
+  `TextField(_:text:prompt:)` + `.textFieldStyle(.plain)` + `.submitLabel(.done)`、`@FocusState`（不自动弹键盘，先看到整张表）；
+  `LazyVGrid` 里 `Button(.plain)` + 选中框 / 环 + `.accessibilityAddTraits(.isSelected)`（读屏念形状、颜色的名字），`.sensoryFeedback(.selection)`；
+  引擎 `Menu`（每项 `Button`，两个 `Text` 是标题和副标题，`.disabled(!isAvailable)`，选不能用的在视图模型里也拦）；接入方式 `Picker(.menu)`；
+  “了解引擎”`NavigationLink(value: AppRoute.agentCatalog)`（压进 sheet 自己的栈）；工具栏只有 `CloseButton`（Design/Glass.swift）；
+  底部按钮新建中换成转圈（读屏“正在新建”）；`.interactiveDismissDisabled(isAdopting || hasUserInput)`；填了东西点 × 时
+  `.confirmationDialog`（“不建这个 Botin 了？”）。
+- **交互**：首页“+”、首页空状态的“新建 Botin”、引擎详情的“用它新建 Botin”（预选那个引擎）打开；名字合法、选了能用的引擎、在线才能点“新建”
+  （`AdoptionModel.canCreate(isOffline:)`），不能点时按钮灰着；建好关 sheet、从首页压栈进新 Botin 的对话（`AppModel.openCreatedInstance`，
+  4.3.1 的首次状态：空状态下面“还差一步：给它配模型路由……”和“配置模型路由”按钮），挑的头像外观记进这台设备（见下面“头像”）；
+  × 取消（填了名字、挑过形状或颜色时先确认，`hasUserInput`），没填东西时下滑也能取消（新建中、填了东西时不能，只能点 × 确认）。从表单的
+  “了解引擎”进到引擎详情再点“用它新建 Botin”时回到这张表单、换成那个引擎，不叠第二张（`Router.engineRequest`）；表单自己的目录还没拉到时
+  先记下，拉到后再换（`AdoptionModel.requestEngine`），不会落回默认的引擎。
+- **头像**：形状默认圆形、颜色默认按名字取（`InstanceAppearance.default`，没挑过的 Botin 和以前一样）。服务端还没有头像字段（6.9），
+  建好之后记进这台设备的 `InstanceAppearanceStore`（ThinktinKit `ViewModels/Shell/`，`UserDefaults` 一个键、按实例 id，`AppModel.appearances`；
+  默认的不记）；首页的行、搜索结果（首页的和搜索页的）、对话页导航栏中间的小头像 + 名字、Botin 资料的头部按它画。形状是自己设计的简单几何、
+  有机形状（`Components/AvatarShapes.swift`：圆形、圆角方形、拱形、六边形、八边形、菱形、圆角三角形、盾牌、叶子、鹅卵石、四角星、五角星、
+  花朵、花边圆、云朵），只放首字，不画脸和眼睛，不用参考 App 的形象。颜色 12 种（`InstanceAvatar.colors(of:)`，浅深各一套，白字对比度 4:1
+  以上，避开强调色和成功 / 警告 / 失败色；石板灰、石墨灰、灰褐是中性色；前 8 种是按名字取色的那套，色值和顺序没变）。
+- **状态**：引擎列表在拉、拉不到、目录是空的、都不能用；名字不合法（`AdoptionModel.nameNote`）；提交中（底部按钮转圈）；失败和实例数到上限
+  （`ErrorRecovery.limitReached`，不给重试）在底部条的 `ErrorBanner`；离线一句说明和“重新检查网络”，“新建”不能点。
 - **ThinkTin 现在**：`Screens/Agents/AdoptAgentSheet.swift` + `ViewModels/Agents/AdoptionModel.swift`（`EngineOption`、`NewBotinText`）。
   原来的“领养好了”页（`AdoptionDoneView`，引导配模型或加 key）删了，引导挪到新 Botin 对话的空状态（第 2 轮换成 6.18 的首次卡片）；
   没有能用的 key 时路由页自己引导加 key。
 - **还没做**：agent 目录（`.agentCatalog`）改成 plain 列表行（40pt 图标 + 名字 + 一句介绍 + 右边“选这个”/“N 个 Botin 在用”小胶囊，借参考 101–104 的行；
-  页面标题“引擎”），引擎详情借插件详情的 sheet 版式（4.8.3），主按钮“用它新建 Botin”：第 1 轮 C 线。头像第 2 轮。
+  页面标题“引擎”），引擎详情借插件详情的 sheet 版式（4.8.3），主按钮“用它新建 Botin”：第 1 轮 C 线。建好之后改头像（编辑页的“头像”，4.4.4）
+  第 2 轮；多端同步等后端字段（6.9 B）。
   “能不能用”现在只看有没有接入方式（`AgentInfo.canPowerNewBotin`）：服务端目录还没有下架、地区这类字段。
 
 #### 4.7.2 分组（91、92、93）
@@ -973,7 +999,7 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 | 15 | 语音选择（下） | 语音通话（无） | 无 | 不适用 | 不做 | 4.4.3 |
 | 16 | 语速选择 | 语音通话（无） | 无 | 不适用 | 不做 | 4.4.3 |
 | 17 | 语言选择 | 语音通话（无） | 无 | 不适用 | 不做 | 4.4.3 |
-| 18 | 头像形状与颜色 | 实例头像 | `Agents/AgentMonogram.swift` | 纯客户端能做 | 2（本机）/ 3（同步） | 4.4.4 |
+| 18 | 头像形状与颜色 | 实例头像 | `Components/InstanceAvatar.swift`、`AvatarShapes.swift` | 纯客户端能做 | 新建时挑已做（本机，2026-11-05）；改头像 2 / 同步 3 | 4.4.4 |
 | 19 | 生成头像 | 实例头像（AI 生成） | 无 | 要后端 | 不做 | 4.4.4 |
 | 20 | 上传头像入口 | 实例头像（上传） | 无 | 要后端 | 不做 | 4.4.4 |
 | 21 | 定时任务空状态 | 实例的计划 | `Plans/PlanListScreen.swift`、`PlanListModel` | 只改界面 | 1 | 4.5.1 |
@@ -989,7 +1015,7 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 | 31 | 电脑控制更多菜单 | 触控板模式 | 无 | 要后端 | 3 | 4.6.2 |
 | 32 | 首页 Bot 长按菜单 | 实例长按菜单 | 无（改名、删除 sheet 在 `Screens/Agents/`） | 部分有 | 1；置顶隐藏 2 | 4.2.2 |
 | 33 | 长按更多子菜单 | 复制实例 ID | `Support/Pasteboard.swift` | 纯客户端能做 | 1 | 4.2.2 |
-| 34 | 创建新 Bot 空表单 | 领养新实例 | `Agents/AdoptAgentSheet.swift`、`AdoptionModel` | 部分有 | 1；头像 2 | 4.7.1 |
+| 34 | 创建新 Bot 空表单 | 新建 Botin | `Agents/AdoptAgentSheet.swift`、`AdoptionModel` | 部分有 | 已做（2026-11-05，含头像，本机） | 4.7.1 |
 | 35 | 创建表单输入焦点 | 领养新实例 | `AdoptAgentSheet.swift` | 部分有 | 1 | 4.7.1 |
 | 36 | 连接应用目录 | 连接汇总页 / 第三方连接器 | 分散：`ImChannelScreens`、`CredentialsScreen`、`ComputerLinkViews`、`VaultScreens` | 要后端 | 2（汇总）/ 3 | 4.8.1 |
 | 37 | 已安装插件列表 | 已连接列表 | 无 | 要后端 | 2（汇总）/ 3 | 4.8.2 |
@@ -1072,7 +1098,7 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 | 114 | 已隐藏对话管理页 | 已隐藏的实例 | 无 | 纯客户端能做 | 2 | 4.2.3 |
 | 115 | 隐藏对话说明 | 隐藏说明 | 无 | 纯客户端能做 | 2 | 4.2.3 |
 | 116 | 取消隐藏后的空状态 | 已隐藏的实例（空） | 无 | 纯客户端能做 | 2 | 4.2.3 |
-| 117 | 创建表单（填好） | 领养新实例 | `AdoptAgentSheet.swift` | 部分有 | 1；头像 2 | 4.7.1 |
+| 117 | 创建表单（填好） | 新建 Botin | `AdoptAgentSheet.swift` | 部分有 | 已做（2026-11-05，含头像，本机） | 4.7.1 |
 | 118 | 新 Bot 欢迎与引导卡 | 对话首次状态 | `ConversationScreen`（空状态）、`Onboarding/` | 部分有 | 2 | 4.3.1 |
 | 119 | 两个都没置顶的列表 | 首页列表 | `ShellDrawer.swift` 的 `DrawerInstanceRow` | 部分有 | 1 | 4.2.1 |
 | 120 | 置顶和普通同屏 | 首页置顶 + 列表 | 无 | 部分有 | 2 | 4.2.1 |
@@ -1091,7 +1117,7 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 | 6.6 | 叫 Bot 还是实例 | **已定（2026-11-05）**：界面上叫 Botin，agent 只以“引擎”出现；代码标识符不改 | 全部 |
 | 6.7 | 首页列表的预览 | 先显示状态，没有状态时显示最近一次运行的摘要或任务 | 第 1 轮 |
 | 6.8 | 资料页的“电脑”行、远程画面 | 改叫“工作区”，进实例沙箱页；观看接管等后端 | 第 1、3 轮 |
-| 6.9 | 头像和实例颜色 | 先做首字头像按名字取色；形状颜色等后端字段；生成、上传不做 | 第 1–3 轮 |
+| 6.9 | 头像和实例颜色 | 先做首字头像按名字取色；形状颜色等后端字段；生成、上传不做（2026-11-05：新建时挑形状颜色、先存本机，A） | 第 1–3 轮 |
 | 6.10 | 置顶、隐藏、分组、未读、主实例 | 置顶、隐藏本机存，第 2 轮做；分组、未读、主实例先不做 | 第 2 轮 |
 | 6.11 | 表情回应、标为未读、引用回复 | 表情和未读不做；引用拼成 Markdown 引用块，纯客户端 | 第 2 轮 |
 | 6.12 | 连接应用 / 插件目录 | 先做“连接”汇总页（只放已有的接入）；第三方和“此 iPhone”单独立项 | 第 2 轮 |
@@ -1221,6 +1247,11 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   - C：不做选择，继续首字头像，但按名字算出不同的颜色，实例之间好区分。
   - AI 生成：平台没有图片生成服务，模型调用用的是用户自己的 key，用哪把、费用怎么算都要定。上传：要存储接口和相机权限。
 - **建议**：第 1 轮先 C（纯客户端，马上能用）；同时请后端加头像字段，有了再做 B（形状素材自己设计）；生成、上传不做。
+- **现在（2026-11-05）**：C 做完了（第 0 轮）；用户要新建表单照参考做形状网格和色板，所以先做了 **A**：新建时挑形状（15 种，自己设计的
+  几何、有机形状）和颜色（12 种），记在这台设备上（`InstanceAppearanceStore`，`UserDefaults` 一个键，按实例 id；不上传，退出登录不清），
+  首页、搜索、对话标题、Botin 资料按它画；没挑过的还是 C 的样子。换手机、安卓上看到的是按名字取色的圆。**还要后端**在实例上加头像字段
+  （形状、颜色两个字符串，取值就是 `AvatarShape` / `AvatarColor` 的原始值，认不出的当默认）做 B；颜色用在输入框按钮、外观跟随实例颜色
+  （6.22）另议。
 
 ### 6.10 置顶、隐藏、分组、未读、主实例
 
@@ -1416,7 +1447,7 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 |---|---|---|
 | A 首页 | 置顶、隐藏、置顶网格、已隐藏页和说明（4.2.1、4.2.3）；分组（如果 6.10 要做，4.7.2） | `Shell/Home/*`、`ViewModels/Shell/InstancePreferencesStore.swift`（新） |
 | B 对话 | 对话内查找（4.3.3）、引用回复（4.3.5）、新实例引导卡（4.3.1、6.18） | `Screens/Conversation/ConversationFindBar.swift`（新）、`ViewModels/Conversation/ConversationFind.swift`（新） |
-| C 实例 | 头像形状和颜色（如果 6.9 选了本机方案，4.4.4）；agent 详情借插件详情的 sheet 版式（4.8.3） | `Screens/Agents/*` |
+| C 实例 | 改头像的页（4.4.4；新建时挑形状和颜色、存本机 2026-11-05 已做，6.9 A）；agent 详情借插件详情的 sheet 版式（4.8.3） | `Screens/Agents/*` |
 | D 产出物、搜索 | 产出物类型筛选、按日期分组、缩略图、图片全屏查看、存相册（4.5.2、4.5.3）；搜索筛选和“谁发给谁”（4.2.4） | `Screens/Artifacts/*`、`ViewModels/Artifacts/*`、`Screens/Search/*`、`ViewModels/Search/*`；Info.plist 和隐私清单加相册“添加”权限 |
 | E 设置、连接 | “连接”汇总页和已连接列表（4.8.1、4.8.2）；纯黑外观、触感（4.9.11、4.9.13） | 新建 `Screens/Connections/`、`ViewModels/Connections/`（`.connections` 路由在本轮开头由 `Navigation/` 统一加）；`ViewModels/Settings/SettingsPreferences.swift`、`Design/Theme.swift`（纯黑值） |
 

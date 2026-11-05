@@ -106,7 +106,7 @@ struct AgentsScreensTests {
         renderInBothAppearances(InstanceDeletionImpactView(impact: InstanceDeletionImpact(instanceID: "lonely")))
     }
 
-    @Test("新建之后：从首页“+”弹的表单里新建，关掉表单、从首页压栈进新 Botin 的对话；空状态下面提示去配模型路由")
+    @Test("新建之后：从首页“+”弹的表单里新建，关掉表单、从首页压栈进新 Botin 的对话，挑的头像记下；空状态下面提示去配模型路由")
     func afterCreation() async throws {
         let mock = MockClient(state: DemoData.newAccountState(), autoReply: false)
         let app = AppModel(client: mock, defaults: nil)
@@ -115,15 +115,26 @@ struct AgentsScreensTests {
         // 空状态的“新建 Botin”和右上的“+”一样。
         app.router.open(.adopt(agentID: nil))
         app.router.open(.agentCatalog)
-        let form = AdoptionModel(client: app.client, instances: app.instances)
+        let form = AdoptionModel(client: app.client, instances: app.instances, appearances: app.appearances)
         await form.load()
         #expect(form.selectedAgentID == DemoData.claudeAgentID)
+        // 名字默认空的，“新建”灰着；起了名字、挑了形状和颜色才能点。
+        #expect(form.name.isEmpty && !form.canCreate(isOffline: app.isOffline))
         form.name = "主笔"
+        form.shape = .flower
+        form.color = .teal
+        #expect(form.canCreate(isOffline: false) && !form.canCreate(isOffline: true))
         let instance = try #require(await form.adopt())
         await app.openCreatedInstance(instance)
         #expect(app.router.sheet == nil && app.router.sheetPath.isEmpty)
         #expect(app.router.path == [.conversation(instance.id)])
         #expect(app.instances.map(\.name) == ["主笔"])
+        // 挑的头像记进这台设备，首页的行、对话标题按它画。
+        #expect(app.appearances.resolved(for: instance.id) == InstanceAppearance(shape: .flower, color: .teal))
+        let row = try #require(app.homeRows.first)
+        hostAndLayout(
+            List { HomeInstanceRow(row: row, appearance: app.appearances.resolved(for: row.id)) }
+                .shellEnvironment(app))
         hostAndLayout(AppShell(model: app))
         let conversation = ConversationModel(client: app.client, instanceID: instance.id)
         await conversation.start()
