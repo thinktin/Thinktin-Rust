@@ -2189,3 +2189,259 @@ fn older_servers_vendor_info_decodes() {
     let v = ffi::VendorInfo::from(v);
     assert!(v.subscription_key_prefixes.is_empty() && v.plan_only_bases.is_empty());
 }
+
+/// 8.15：项目里的内容只走网络。成员读得到别人的 agent 在项目里的运行、事件、产出物；退出以后自己读不到，缓存里这个
+/// 项目的提醒删掉（回执留着）；归档、取消归档；项目模板。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ffi_project_content_and_forget() {
+    let Some(e) = env().await else { return };
+    let (alice, _s1, _d1) = ffi_login(&e, "13800138530", "ios", "iPhone").await;
+    let (bob, s2, _d2) = ffi_login(&e, "13800138531", "android", "Pixel").await;
+    alice.update_profile(Some("Alice".into())).await.unwrap();
+    bob.update_profile(Some("Bob".into())).await.unwrap();
+    let a1 = alice
+        .adopt("claude".into(), "主编".into(), None)
+        .await
+        .unwrap();
+    let b1 = bob
+        .adopt("codex".into(), "写手".into(), None)
+        .await
+        .unwrap();
+    let p = alice
+        .create_project(
+            "改版".into(),
+            String::new(),
+            vec![ffi::ProjectAgentInput {
+                instance_id: a1.id.clone(),
+                is_lead: true,
+            }],
+        )
+        .await
+        .unwrap()
+        .project
+        .id;
+    let link = alice.create_project_invite_link(p.clone()).await.unwrap();
+    bob.accept_project_invite_link(
+        link.token,
+        ffi::ProjectJoin {
+            instance_ids: vec![b1.id.clone()],
+            daily_token_limit: 100_000,
+            total_token_limit: 1_000_000,
+            consent: true,
+        },
+    )
+    .await
+    .unwrap();
+    // bob 的 agent 在项目里的一个运行（worker 复制出来：8.15 里项目运行还不会被领去执行）、事件、产出物、提醒。
+    let bob_id: UserId = s2.load().unwrap().user_id.parse().unwrap();
+    let pid: proto::domain::ProjectId = p.parse().unwrap();
+    let b1_id: InstanceId = b1.id.parse().unwrap();
+    let mut t = e.t.db.tenant(bob_id).await.unwrap();
+    let private = t
+        .create_run(&store::NewRun::new(
+            b1_id,
+            proto::domain::RunSource::User,
+            "写稿",
+            "1",
+        ))
+        .await
+        .unwrap();
+    t.commit().await.unwrap();
+    let pool = e.t.db.pool();
+    let cols: Vec<String> = sqlx::query_scalar(
+        "SELECT column_name::text FROM information_schema.columns WHERE table_name = 'runs' \
+           AND column_name NOT IN ('id', 'project_id', 'space_kind', 'space_id') ORDER BY ordinal_position",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    let list = cols.join(", ");
+    let select = cols
+        .iter()
+        .map(|c| if c == "root_run_id" { "$1" } else { c.as_str() })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let r = proto::domain::RunId::new();
+    let mut tx = pool.begin().await.unwrap();
+    sqlx::query("SELECT set_config('role', 'thinktin_worker', true)")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO runs (id, project_id, {list}) SELECT $1, $2, {select} FROM runs WHERE id = $3"
+    )))
+    .bind(r.0)
+    .bind(pid.0)
+    .bind(private.id.0)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let mut w = e.t.db.worker().await.unwrap();
+    w.append_event(
+        b1_id,
+        Some(r),
+        "agent.message",
+        &json!({ "text": "初稿好了" }),
+    )
+    .await
+    .unwrap();
+    w.append_event(
+        b1_id,
+        Some(r),
+        "agent.thought",
+        &json!({ "text": "私下想的" }),
+    )
+    .await
+    .unwrap();
+    w.insert_project_key(pid, "kms1", b"wrapped").await.unwrap();
+    w.insert_artifact(&store::NewArtifact {
+        id: proto::domain::ArtifactId::new(),
+        user: bob_id,
+        instance: b1_id,
+        run: r,
+        root: r,
+        name: "brief.md",
+        content_type: "text/markdown",
+        size: 1,
+        sha256: &[1; 32],
+        blob_key: "k",
+        project: Some(pid),
+    })
+    .await
+    .unwrap();
+    let notice = NewInboxItem {
+        kind: "run_finished".into(),
+        title: "写完了".into(),
+        instance_id: Some(b1_id),
+        run_id: Some(r),
+        ..NewInboxItem::default()
+    };
+    w.insert_inbox(bob_id, &notice).await.unwrap().unwrap();
+    let receipt = NewInboxItem {
+        kind: "info".into(),
+        title: "你的 agent 被移出了项目".into(),
+        subtype: Some(proto::domain::notice_subtype::PROJECT_AGENT_REMOVED.into()),
+        project_id: Some(pid),
+        ..NewInboxItem::default()
+    };
+    w.insert_inbox(bob_id, &receipt).await.unwrap().unwrap();
+    w.commit().await.unwrap();
+
+    // alice 看 bob 留在项目里的。
+    let runs = alice.project_runs(p.clone(), None, None, 50).await.unwrap();
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].id, r.to_string());
+    assert_eq!(runs[0].owner.display_name.as_deref(), Some("Bob"));
+    assert_eq!(runs[0].owner.status, "member");
+    assert!(!runs[0].mine);
+    assert_eq!(
+        alice
+            .project_runs(p.clone(), Some(a1.id.clone()), None, 50)
+            .await
+            .unwrap()
+            .len(),
+        0
+    );
+    let events = alice
+        .project_run_events(p.clone(), r.to_string(), 50)
+        .await
+        .unwrap();
+    assert!(!events.truncated);
+    assert_eq!(
+        events
+            .events
+            .iter()
+            .map(|e| (e.kind.as_str(), e.data_json.as_str()))
+            .collect::<Vec<_>>(),
+        vec![("message", r#"{"text":"初稿好了"}"#)]
+    );
+    assert_eq!(
+        alice
+            .project_run_tree(p.clone(), r.to_string())
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    let arts = alice.project_artifacts(p.clone(), None, 50).await.unwrap();
+    assert_eq!(arts.len(), 1);
+    assert_eq!(arts[0].author.display_name.as_deref(), Some("Bob"));
+    let art = alice
+        .project_artifact(p.clone(), arts[0].id.clone())
+        .await
+        .unwrap();
+    assert_eq!(art.name, "brief.md");
+    // bob 自己读私人的：带着项目 id。
+    let own = bob.get_run(r.to_string()).await.unwrap();
+    assert_eq!(own.project_id.as_deref(), Some(p.as_str()));
+
+    // bob 的缓存里有这两条提醒；退出以后提醒删掉，回执留着，项目读不到。
+    let page = bob.sync_inbox(50).await.unwrap();
+    assert_eq!(page.items.len(), 2);
+    assert!(
+        page.items
+            .iter()
+            .all(|i| i.project_id.as_deref() == Some(p.as_str()))
+    );
+    bob.leave_project(p.clone()).await.unwrap();
+    let cached: Vec<Option<String>> = bob
+        .cached_inbox(None, 50)
+        .unwrap()
+        .into_iter()
+        .map(|i| i.subtype)
+        .collect();
+    assert_eq!(
+        cached,
+        vec![Some(
+            proto::domain::notice_subtype::PROJECT_AGENT_REMOVED.to_string()
+        )]
+    );
+    assert!(matches!(
+        bob.project_runs(p.clone(), None, None, 50).await,
+        Err(ClientError::Api { status: 404, .. })
+    ));
+    let runs = alice.project_runs(p.clone(), None, None, 50).await.unwrap();
+    assert_eq!(runs[0].owner.status, "left");
+
+    // 归档、取消归档。
+    assert_eq!(
+        alice
+            .archive_project(p.clone())
+            .await
+            .unwrap()
+            .project
+            .status,
+        "archived"
+    );
+    assert_eq!(alice.projects().await.unwrap()[0].status, "archived");
+    assert_eq!(
+        alice
+            .unarchive_project(p.clone())
+            .await
+            .unwrap()
+            .project
+            .status,
+        "active"
+    );
+    // 项目模板：从项目生成，按模板建项目。
+    let tpl = alice
+        .create_project_template_from_project("模板".into(), p.clone())
+        .await
+        .unwrap();
+    assert_eq!(alice.project_templates().await.unwrap().len(), 1);
+    let adopted = alice
+        .adopt_project_template(tpl.id.clone(), Some("第二期".into()))
+        .await
+        .unwrap();
+    assert_eq!(adopted.project.name, "第二期");
+    assert_eq!(adopted.project.role, "creator");
+    alice.delete_project_template(tpl.id).await.unwrap();
+    assert!(alice.project_templates().await.unwrap().is_empty());
+    // 删项目：之后读不到。
+    alice.delete_project(p.clone()).await.unwrap();
+    assert!(matches!(
+        alice.project(p).await,
+        Err(ClientError::Api { status: 404, .. })
+    ));
+}

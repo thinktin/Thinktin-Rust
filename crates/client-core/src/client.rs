@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use proto::domain::{
-    BoardPost, InboxItem, InboxItemId, Instance, InstanceEvent, InstanceId, Run, RunId, User,
-    VaultItem,
+    BoardPost, InboxItem, InboxItemId, Instance, InstanceEvent, InstanceId, ProjectId, Run, RunId,
+    User, VaultItem, notice_subtype,
 };
 
 use crate::api::{Api, InboxPage, LoginResult, NewVaultItem};
@@ -197,6 +197,52 @@ impl Client {
         }
     }
 
+    // ---------- 项目（8.15） ----------
+
+    /// 看不到这个项目了：清掉缓存里它的东西（见 [`Cache::forget_project`]）。缓存出错只记日志。
+    pub fn forget_project(&self, project: ProjectId, before: Option<InboxItemId>) {
+        if let Some(c) = &self.cache
+            && let Err(e) = c.forget_project(project, before)
+        {
+            tracing::warn!(error = %e, "forgetting a project in the cache failed");
+        }
+    }
+
+    /// 收件箱里有“被移出”“项目已删除”：清掉这条之前缓存的这个项目的东西（自己退出的、删的在调用时就清了）。
+    fn forget_projects_left(&self, items: &[InboxItem]) {
+        for item in items {
+            let gone = matches!(
+                item.subtype.as_deref(),
+                Some(notice_subtype::PROJECT_REMOVED | notice_subtype::PROJECT_DELETED)
+            );
+            if gone && let Some(p) = item.project_id {
+                self.forget_project(p, Some(item.id));
+            }
+        }
+    }
+
+    /// 读整个项目的接口（详情、运行列表、产出物列表）回了 404：不是成员了或者项目没了，清掉缓存里的。错误原样返回。
+    pub fn project_read<T>(&self, project: ProjectId, r: Result<T>) -> Result<T> {
+        if let Err(ClientError::Api { code, .. }) = &r
+            && code == "not_found"
+        {
+            self.forget_project(project, None);
+        }
+        self.signed_out_clears(r)
+    }
+
+    pub async fn leave_project(&self, project: ProjectId) -> Result<()> {
+        self.signed_out_clears(self.api.leave_project(project).await)?;
+        self.forget_project(project, None);
+        Ok(())
+    }
+
+    pub async fn delete_project(&self, project: ProjectId) -> Result<()> {
+        self.signed_out_clears(self.api.delete_project(project).await)?;
+        self.forget_project(project, None);
+        Ok(())
+    }
+
     // ---------- 收件箱 ----------
 
     /// 先把离线时标的已读补发，再拉最新一页并合并进缓存。返回服务端的这一页（已读状态以本地为准）。
@@ -206,6 +252,7 @@ impl Client {
         if let Some(c) = &self.cache {
             c.reconcile_inbox_page(&mut page, None, limit)?;
         }
+        self.forget_projects_left(&page.items);
         Ok(page)
     }
 
@@ -215,6 +262,7 @@ impl Client {
         if let Some(c) = &self.cache {
             c.reconcile_inbox_page(&mut page, Some(before), limit)?;
         }
+        self.forget_projects_left(&page.items);
         Ok(page.items)
     }
 

@@ -7,7 +7,9 @@
 use std::path::Path;
 use std::sync::Mutex;
 
-use proto::domain::{InboxItem, InboxItemId, Instance, InstanceEvent, InstanceId, Run};
+use proto::domain::{
+    InboxItem, InboxItemId, Instance, InstanceEvent, InstanceId, ProjectId, Run, notice_subtype,
+};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -153,9 +155,11 @@ impl Cache {
 
     // ---------- 运行 ----------
 
+    /// 项目运行（8.15，带 `project_id`）不缓存：项目内容只走网络，退出以后设备上不留。
     pub fn put_runs(&self, runs: &[Run]) -> Result<()> {
         let rows = runs
             .iter()
+            .filter(|r| r.project_id.is_none())
             .map(|r| Ok((r.id.to_string(), r.instance_id.to_string(), to_json(r)?)))
             .collect::<Result<Vec<_>>>()?;
         self.with(|c| {
@@ -390,6 +394,36 @@ impl Cache {
         })
     }
 
+    // ---------- 项目（8.15） ----------
+
+    /// 看不到这个项目了（退出、被移出、项目删了）：删掉缓存里它的提醒和运行。项目回执（“已退出”“被移出”“已删除”这些，
+    /// [`notice_subtype::PROJECT_RECEIPTS`]）留着，本来就是给离开的人看的。`before` 给了就只删这条之前的（重新加入以后的
+    /// 提醒不删）。
+    pub fn forget_project(&self, project: ProjectId, before: Option<InboxItemId>) -> Result<()> {
+        let receipts = to_json(&notice_subtype::PROJECT_RECEIPTS)?;
+        let ids: Vec<String> = self.with(|c| {
+            let mut st = c.prepare(
+                "SELECT id FROM inbox WHERE json_extract(json, '$.project_id') = ?1 \
+                   AND (?2 IS NULL OR id < ?2) \
+                   AND COALESCE(json_extract(json, '$.subtype'), '') NOT IN (SELECT value FROM json_each(?3))",
+            )?;
+            st.query_map(
+                params![project.to_string(), before.map(|b| b.to_string()), receipts],
+                |r| r.get(0),
+            )?
+            .collect()
+        })?;
+        let ids: Vec<InboxItemId> = ids.iter().filter_map(|i| i.parse().ok()).collect();
+        self.remove_inbox(&ids)?;
+        self.with(|c| {
+            c.execute(
+                "DELETE FROM runs WHERE json_extract(json, '$.project_id') = ?1",
+                [project.to_string()],
+            )
+            .map(|_| ())
+        })
+    }
+
     /// 新的在前；`read` 字段按本地状态。
     pub fn inbox(&self, before: Option<InboxItemId>, limit: u32) -> Result<Vec<InboxItem>> {
         let before = before.map(|b| b.to_string());
@@ -558,7 +592,7 @@ impl Cache {
 #[cfg(test)]
 mod tests {
     use chrono::Utc;
-    use proto::domain::{InboxItem, InboxItemId, InstanceEvent, InstanceId};
+    use proto::domain::{InboxItem, InboxItemId, InstanceEvent, InstanceId, ProjectId};
     use serde_json::json;
 
     use super::*;
@@ -593,6 +627,84 @@ mod tests {
             payload: json!({ "text": seq }),
             created_at: Utc::now(),
         }
+    }
+
+    fn run_json(instance: InstanceId, project: Option<ProjectId>) -> Run {
+        let id = proto::domain::RunId::new();
+        serde_json::from_value(json!({
+            "id": id, "kind": "agent", "instance_id": instance, "plan_id": null,
+            "parent_run_id": null, "root_run_id": id, "step_key": null, "source": "user",
+            "prompt": "hi", "state": "succeeded", "state_reason": null, "attempt": 1,
+            "tokens_used": 0, "summary": null, "error": null,
+            "created_at": "2026-10-29T00:00:00Z", "started_at": null, "finished_at": null,
+            "project_id": project,
+        }))
+        .unwrap()
+    }
+
+    /// 8.15：项目运行不进缓存；看不到项目以后，它的提醒（回执除外）和运行都删掉，`before` 之后的留着。
+    #[test]
+    fn projects_are_forgotten_but_receipts_stay() {
+        let c = Cache::in_memory().unwrap();
+        let p = ProjectId::new();
+        let other = ProjectId::new();
+        let i = InstanceId::new();
+        c.put_runs(&[run_json(i, None), run_json(i, Some(p))])
+            .unwrap();
+        assert_eq!(
+            c.runs(i, 10).unwrap().len(),
+            1,
+            "project runs are not cached"
+        );
+        // 万一有（老版本存进来的）：forget 时也删。
+        let stale = run_json(i, Some(p));
+        c.with(|conn| {
+            conn.execute(
+                "INSERT INTO runs (id, instance_id, json) VALUES (?1, ?2, ?3)",
+                params![
+                    stale.id.to_string(),
+                    i.to_string(),
+                    to_json(&stale).unwrap()
+                ],
+            )
+        })
+        .unwrap();
+        assert_eq!(c.runs(i, 10).unwrap().len(), 2);
+        let in_project = |subtype: Option<&str>, project: ProjectId| {
+            let mut it = item(false);
+            it.project_id = Some(project);
+            it.subtype = subtype.map(Into::into);
+            it
+        };
+        let notice = in_project(None, p);
+        let receipt = in_project(Some(notice_subtype::PROJECT_REMOVED), p);
+        let elsewhere = in_project(None, other);
+        let later = in_project(Some(notice_subtype::PROJECT_INVITE), p);
+        let later_notice = in_project(None, p);
+        c.put_inbox(&[
+            notice.clone(),
+            receipt.clone(),
+            elsewhere.clone(),
+            later.clone(),
+            later_notice.clone(),
+        ])
+        .unwrap();
+        assert_eq!(c.unread().unwrap(), 5);
+        // 被移出（回执那一条之前的才删）。
+        c.forget_project(p, Some(receipt.id)).unwrap();
+        let ids = |c: &Cache| -> Vec<InboxItemId> {
+            c.inbox(None, 50).unwrap().iter().map(|i| i.id).collect()
+        };
+        assert_eq!(
+            ids(&c),
+            vec![later_notice.id, later.id, elsewhere.id, receipt.id]
+        );
+        assert_eq!(c.unread().unwrap(), 4);
+        assert_eq!(c.runs(i, 10).unwrap().len(), 1);
+        // 自己退出（全部删，回执照样留着）。
+        c.forget_project(p, None).unwrap();
+        assert_eq!(ids(&c), vec![later.id, elsewhere.id, receipt.id]);
+        assert_eq!(c.unread().unwrap(), 3);
     }
 
     #[test]

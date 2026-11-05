@@ -55,6 +55,8 @@ axum.workspace = true
 control = { path = "../control" }
 gateway = { path = "../gateway" }
 keyvault = { path = "../keyvault" }
+# tests/client.rs：用 worker 角色写出项目运行（8.15）。
+sqlx.workspace = true
 # tests/logging.rs：用 `log` 打日志的依赖库。
 log = "0.4"
 store = { path = "../store", features = ["testing"] }

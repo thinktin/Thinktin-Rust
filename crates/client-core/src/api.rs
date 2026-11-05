@@ -18,8 +18,8 @@ use proto::domain::{
     VaultItem, VaultItemId, VaultRequest, VaultRequestId,
 };
 use proto::domain::{
-    BlockedUser, ProjectBudget, ProjectDetail, ProjectId, ProjectInvite, ProjectInviteId,
-    ProjectInvitePreview, ProjectSummary, UserId,
+    BlockedUser, ProjectArtifact, ProjectBudget, ProjectDetail, ProjectId, ProjectInvite,
+    ProjectInviteId, ProjectInvitePreview, ProjectRun, ProjectRunEvents, ProjectSummary, UserId,
 };
 use reqwest::Method;
 use reqwest::header::HeaderValue;
@@ -1875,7 +1875,7 @@ impl Api {
 
     // ---------- 项目、邀请（8.14） ----------
 
-    /// 我是成员的进行中的项目（自己建的、加入的）。
+    /// 我是成员的项目（自己建的、加入的；进行中的和归档的，8.15 起归档的也列出来）。
     pub async fn projects(&self) -> Result<Vec<ProjectSummary>> {
         #[derive(Deserialize)]
         struct R {
@@ -1934,7 +1934,7 @@ impl Api {
         .await
     }
 
-    /// 删项目（只有没共享过的；共享过的 409）。
+    /// 删项目（只有创建者；8.15 起共享过的也能删）：马上谁都读不到，不能撤销，还在的成员收到“项目已删除”。
     pub async fn delete_project(&self, id: ProjectId) -> Result<()> {
         self.empty(Method::DELETE, &format!("/v1/projects/{id}"), None)
             .await
@@ -2133,6 +2133,202 @@ impl Api {
     pub async fn unblock_user(&self, user: UserId) -> Result<()> {
         self.empty(Method::DELETE, &format!("/v1/blocks/{user}"), None)
             .await
+    }
+
+    // ---------- 项目里的内容、归档、项目模板（8.15） ----------
+
+    /// 归档（只有创建者）：项目变成只读，里面的运行停掉。重复归档也成功。
+    pub async fn archive_project(&self, id: ProjectId) -> Result<ProjectDetail> {
+        self.json(Method::POST, &format!("/v1/projects/{id}/archive"), None)
+            .await
+    }
+
+    /// 取消归档（只有创建者）：停掉的运行不会重新开始。
+    pub async fn unarchive_project(&self, id: ProjectId) -> Result<ProjectDetail> {
+        self.json(Method::POST, &format!("/v1/projects/{id}/unarchive"), None)
+            .await
+    }
+
+    /// 项目里的运行，新的在前（成员能看的字段）：`instance` 只看一个 agent 的，`before` 往下翻，`limit` 1 到 200。
+    pub async fn project_runs(
+        &self,
+        id: ProjectId,
+        instance: Option<InstanceId>,
+        before: Option<RunId>,
+        limit: Option<u32>,
+    ) -> Result<Vec<ProjectRun>> {
+        #[derive(Deserialize)]
+        struct R {
+            #[serde(deserialize_with = "crate::lenient::vec")]
+            runs: Vec<ProjectRun>,
+        }
+        let query = {
+            let mut q = url::form_urlencoded::Serializer::new(String::new());
+            if let Some(i) = instance {
+                q.append_pair("instance_id", &i.to_string());
+            }
+            if let Some(b) = before {
+                q.append_pair("before", &b.to_string());
+            }
+            if let Some(l) = limit {
+                q.append_pair("limit", &l.to_string());
+            }
+            q.finish()
+        };
+        Ok(self
+            .json::<R>(
+                Method::GET,
+                &format!("/v1/projects/{id}/runs?{query}"),
+                None,
+            )
+            .await?
+            .runs)
+    }
+
+    pub async fn project_run(&self, id: ProjectId, run: RunId) -> Result<ProjectRun> {
+        self.json(Method::GET, &format!("/v1/projects/{id}/runs/{run}"), None)
+            .await
+    }
+
+    /// 运行所在的整棵树（流水线的步骤、委派的子任务），先建的在前。
+    pub async fn project_run_tree(&self, id: ProjectId, run: RunId) -> Result<Vec<ProjectRun>> {
+        #[derive(Deserialize)]
+        struct R {
+            #[serde(deserialize_with = "crate::lenient::vec")]
+            runs: Vec<ProjectRun>,
+        }
+        Ok(self
+            .json::<R>(
+                Method::GET,
+                &format!("/v1/projects/{id}/runs/{run}/tree"),
+                None,
+            )
+            .await?
+            .runs)
+    }
+
+    /// 运行最近的事件（成员能看的种类和字段），旧的在前；`limit` 1 到 500，更早的没给时 `truncated`。
+    pub async fn project_run_events(
+        &self,
+        id: ProjectId,
+        run: RunId,
+        limit: Option<u32>,
+    ) -> Result<ProjectRunEvents> {
+        let query = limit.map(|l| format!("?limit={l}")).unwrap_or_default();
+        self.json(
+            Method::GET,
+            &format!("/v1/projects/{id}/runs/{run}/events{query}"),
+            None,
+        )
+        .await
+    }
+
+    /// 项目的产出物，新的在前；`before` 往下翻，`limit` 1 到 200。
+    pub async fn project_artifacts(
+        &self,
+        id: ProjectId,
+        before: Option<ArtifactId>,
+        limit: Option<u32>,
+    ) -> Result<Vec<ProjectArtifact>> {
+        #[derive(Deserialize)]
+        struct R {
+            #[serde(deserialize_with = "crate::lenient::vec")]
+            artifacts: Vec<ProjectArtifact>,
+        }
+        let query = {
+            let mut q = url::form_urlencoded::Serializer::new(String::new());
+            if let Some(b) = before {
+                q.append_pair("before", &b.to_string());
+            }
+            if let Some(l) = limit {
+                q.append_pair("limit", &l.to_string());
+            }
+            q.finish()
+        };
+        Ok(self
+            .json::<R>(
+                Method::GET,
+                &format!("/v1/projects/{id}/artifacts?{query}"),
+                None,
+            )
+            .await?
+            .artifacts)
+    }
+
+    pub async fn project_artifact(
+        &self,
+        id: ProjectId,
+        artifact: ArtifactId,
+    ) -> Result<ProjectArtifact> {
+        self.json(
+            Method::GET,
+            &format!("/v1/projects/{id}/artifacts/{artifact}"),
+            None,
+        )
+        .await
+    }
+
+    /// 下载项目产出物（解密后的内容，文本类末尾带 AI 生成标识）。
+    pub async fn project_artifact_content(
+        &self,
+        id: ProjectId,
+        artifact: ArtifactId,
+    ) -> Result<Vec<u8>> {
+        let resp = self
+            .send(
+                Method::GET,
+                &format!("/v1/projects/{id}/artifacts/{artifact}/content"),
+                None,
+                true,
+            )
+            .await?;
+        Ok(resp.bytes().await.map_err(ClientError::network)?.to_vec())
+    }
+
+    /// 项目模板（和团队模板是同一张表）。
+    pub async fn project_templates(&self) -> Result<Vec<TeamTemplate>> {
+        #[derive(Deserialize)]
+        struct R {
+            templates: Vec<TeamTemplate>,
+        }
+        Ok(self
+            .json::<R>(Method::GET, "/v1/project-templates", None)
+            .await?
+            .templates)
+    }
+
+    /// 新建项目模板：直接给成员，或者从现有项目生成（给 `project`）。
+    pub async fn create_project_template(
+        &self,
+        name: &str,
+        spec: Option<&TeamTemplateSpec>,
+        project: Option<ProjectId>,
+    ) -> Result<TeamTemplate> {
+        self.json(
+            Method::POST,
+            "/v1/project-templates",
+            Some(&json!({ "name": name, "spec": spec, "project_id": project })),
+        )
+        .await
+    }
+
+    pub async fn delete_project_template(&self, id: TeamTemplateId) -> Result<()> {
+        self.empty(Method::DELETE, &format!("/v1/project-templates/{id}"), None)
+            .await
+    }
+
+    /// 按模板建项目：每个成员领养一个新实例，再建成单人项目。`name` 不给就用模板的名字。
+    pub async fn adopt_project_template(
+        &self,
+        id: TeamTemplateId,
+        name: Option<&str>,
+    ) -> Result<ProjectDetail> {
+        self.json(
+            Method::POST,
+            &format!("/v1/project-templates/{id}/adopt"),
+            Some(&json!({ "name": name })),
+        )
+        .await
     }
 
     // ---------- 用量 ----------

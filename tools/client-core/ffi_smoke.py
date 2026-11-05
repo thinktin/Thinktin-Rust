@@ -37,6 +37,12 @@ async def main():
                         title="t", body="b", ai_generated=False, read=False, created_at_ms=0)
     assert (item.subtype, item.vault_request_id, item.egress_request_id, item.project_id,
             item.project_invite_id) == (None, None, None, None, None), item
+    # 运行后加的项目 id（8.15）默认是空的。
+    run = cc.Run(id="r", kind="agent", instance_id="i", plan_id=None, parent_run_id=None, root_run_id="r",
+                 step_key=None, source="user", prompt="p", state="queued", state_reason=None, attempt=0,
+                 tokens_used=0, summary=None, error=None, created_at_ms=0, started_at_ms=None,
+                 finished_at_ms=None)
+    assert (run.wait_code, run.project_id) == (None, None), run
     store = Store()
     d = tempfile.mkdtemp()
     cfg = cc.ClientConfig(base_url="http://127.0.0.1:9", cache_path=os.path.join(d, "c.db"),
@@ -73,6 +79,18 @@ async def main():
         await c2.mark_inbox_read(["bad"], None)
     except cc.ClientError.InvalidArgument:
         print("bad id -> InvalidArgument")
+    # 项目里的内容（8.15）：只走网络，没网就是 Network。
+    try:
+        await c2.project_runs("bad", None, None, 10)
+        raise SystemExit("expected InvalidArgument")
+    except cc.ClientError.InvalidArgument:
+        print("project_runs bad id -> InvalidArgument")
+    try:
+        await c2.project_run_events("0192f0c4-0000-7000-8000-000000000003",
+                                    "0192f0c4-0000-7000-8000-000000000004", 10)
+        raise SystemExit("expected Network")
+    except cc.ClientError.Network:
+        print("project_run_events -> Network")
     # 输入里的密码拦截（11.6）：本地识别，位置是 UTF-16 下标；发送时拦下；换成引用。
     msg = "我的 github 密码是 Abc12345，帮我登录"
     found = cc.detect_secrets(msg)

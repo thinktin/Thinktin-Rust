@@ -448,6 +448,10 @@ pub struct Run {
     /// 只在等队友回答，8.11）。以后可能加新值，不认识的按 state 显示。
     #[uniffi(default = None)]
     pub wait_code: Option<String>,
+    /// 项目里的运行（8.15）：在哪个项目里。项目运行只有主人自己按 id 读得到私人字段（`run`），列表、缓存里没有；
+    /// 成员看的是 `project_run`。
+    #[uniffi(default = None)]
+    pub project_id: Option<String>,
 }
 
 impl From<d::Run> for Run {
@@ -472,6 +476,7 @@ impl From<d::Run> for Run {
             started_at_ms: ms_opt(r.started_at),
             finished_at_ms: ms_opt(r.finished_at),
             wait_code: r.wait_code,
+            project_id: r.project_id.map(|p| p.to_string()),
         }
     }
 }
@@ -1134,6 +1139,153 @@ impl From<d::BlockedUser> for BlockedUser {
             user_id: b.user_id.to_string(),
             display_name: b.display_name,
             created_at_ms: ms(b.created_at),
+        }
+    }
+}
+
+// ---------- 项目里的内容（8.15） ----------
+
+/// 项目里一条内容（运行、产出物）的主人。
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct ProjectAuthor {
+    /// 注销了的人没有。
+    pub user_id: Option<String>,
+    pub display_name: Option<String>,
+    /// member / left（退出了或者被移出了，都显示成“已退出的成员”）/ erased（注销了）。以后可能加新值，不认识的按 left 显示。
+    pub status: String,
+}
+
+impl From<d::ProjectAuthor> for ProjectAuthor {
+    fn from(a: d::ProjectAuthor) -> Self {
+        Self {
+            user_id: a.user_id.map(|u| u.to_string()),
+            display_name: a.display_name,
+            status: a.status.as_str().into(),
+        }
+    }
+}
+
+/// 成员看到的项目运行：任务、粗略的状态、结果摘要；没有失败原因、花费、尝试次数这些主人私人的东西。
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct ProjectRun {
+    pub id: String,
+    pub project_id: String,
+    pub instance_id: String,
+    pub owner: ProjectAuthor,
+    /// 是我的 agent 的运行（私人字段用 `run` 按 id 读）。
+    pub mine: bool,
+    /// agent / pipeline
+    pub kind: String,
+    /// user / plan / pipeline / delegate / ask（和 `Run.source` 一样，ask 的 prompt 是 agent 写的）。
+    pub source: String,
+    pub parent_run_id: Option<String>,
+    pub root_run_id: String,
+    pub step_key: Option<String>,
+    pub prompt: String,
+    /// queued / running / waiting_owner（等主人处理：key、审批、电脑这些）/ waiting_children / succeeded / failed /
+    /// cancelled。以后可能加新值。
+    pub state: String,
+    pub summary: Option<String>,
+    pub created_at_ms: i64,
+    pub started_at_ms: Option<i64>,
+    pub finished_at_ms: Option<i64>,
+}
+
+impl From<d::ProjectRun> for ProjectRun {
+    fn from(r: d::ProjectRun) -> Self {
+        Self {
+            id: r.id.to_string(),
+            project_id: r.project_id.to_string(),
+            instance_id: r.instance_id.to_string(),
+            owner: r.owner.into(),
+            mine: r.mine,
+            kind: r.kind.to_string(),
+            source: r.source.to_string(),
+            parent_run_id: r.parent_run_id.map(|p| p.to_string()),
+            root_run_id: r.root_run_id.to_string(),
+            step_key: r.step_key,
+            prompt: r.prompt,
+            state: r.state.as_str().into(),
+            summary: r.summary,
+            created_at_ms: ms(r.created_at),
+            started_at_ms: ms_opt(r.started_at),
+            finished_at_ms: ms_opt(r.finished_at),
+        }
+    }
+}
+
+/// 成员看到的一条运行事件。`kind` 和字段（`data_json`）：tool_call（tool_call_id、tool_kind、status）、
+/// tool_call_update（tool_call_id、status）、message（text）、plan（entries：content、status）、turn_started、
+/// turn_ended（stop_reason）、state（state，和 `ProjectRun.state` 一样粗）、log_truncated、artifact（artifact_id、name、
+/// version）、step_started（step）。以后可能加新种类，不认识的跳过。
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct ProjectRunEvent {
+    pub run_id: String,
+    pub kind: String,
+    pub data_json: String,
+    pub created_at_ms: i64,
+}
+
+impl From<d::ProjectRunEvent> for ProjectRunEvent {
+    fn from(e: d::ProjectRunEvent) -> Self {
+        Self {
+            run_id: e.run_id.to_string(),
+            kind: e.kind,
+            data_json: e.data.to_string(),
+            created_at_ms: ms(e.created_at),
+        }
+    }
+}
+
+/// 一个运行最近的事件（旧的在前）；`truncated`：更早的没给。
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct ProjectRunEvents {
+    pub events: Vec<ProjectRunEvent>,
+    pub truncated: bool,
+}
+
+impl From<d::ProjectRunEvents> for ProjectRunEvents {
+    fn from(e: d::ProjectRunEvents) -> Self {
+        Self {
+            events: e.events.into_iter().map(Into::into).collect(),
+            truncated: e.truncated,
+        }
+    }
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct ProjectArtifact {
+    pub id: String,
+    pub project_id: String,
+    pub instance_id: String,
+    pub run_id: String,
+    pub root_run_id: String,
+    pub author: ProjectAuthor,
+    pub mine: bool,
+    pub name: String,
+    pub version: u32,
+    pub content_type: String,
+    pub size: u64,
+    pub sha256: String,
+    pub created_at_ms: i64,
+}
+
+impl From<d::ProjectArtifact> for ProjectArtifact {
+    fn from(a: d::ProjectArtifact) -> Self {
+        Self {
+            id: a.id.to_string(),
+            project_id: a.project_id.to_string(),
+            instance_id: a.instance_id.to_string(),
+            run_id: a.run_id.to_string(),
+            root_run_id: a.root_run_id.to_string(),
+            author: a.author.into(),
+            mine: a.mine,
+            name: a.name,
+            version: a.version,
+            content_type: a.content_type,
+            size: a.size,
+            sha256: a.sha256,
+            created_at_ms: ms(a.created_at),
         }
     }
 }
@@ -3037,7 +3189,7 @@ impl ThinktinClient {
 
     // ---------- 项目、邀请（8.14） ----------
 
-    /// 我是成员的进行中的项目（自己建的、加入的）。
+    /// 我是成员的项目（自己建的、加入的；进行中的和归档的）。
     pub async fn projects(&self) -> Result<Vec<Project>> {
         self.run(|c| async move {
             Ok(c.api
@@ -3050,10 +3202,14 @@ impl ThinktinClient {
         .await
     }
 
+    /// 项目详情。404（不是成员了、项目删了）时顺便清掉缓存里这个项目的提醒。
     pub async fn project(&self, project_id: String) -> Result<ProjectDetail> {
         let id: d::ProjectId = parse(&project_id, "project")?;
-        self.run(|c| async move { Ok(c.api.project(id).await?.into()) })
-            .await
+        self.run(|c| async move {
+            let r = c.api.project(id).await;
+            Ok(c.project_read(id, r)?.into())
+        })
+        .await
     }
 
     /// 建单人项目：agent 都是自己的实例，最多一个负责人。
@@ -3088,10 +3244,11 @@ impl ThinktinClient {
         .await
     }
 
-    /// 删项目（只有没共享过的；共享过的回 409）。
+    /// 删项目（只有创建者，8.15 起共享过的也能删）：马上谁都读不到，不能撤销，还在的成员收到“项目已删除”
+    /// （`project_deleted`）。删之前要让用户确认。成功后清掉缓存里这个项目的提醒。
     pub async fn delete_project(&self, project_id: String) -> Result<()> {
         let id: d::ProjectId = parse(&project_id, "project")?;
-        self.run(|c| async move { c.api.delete_project(id).await })
+        self.run(|c| async move { c.delete_project(id).await })
             .await
     }
 
@@ -3138,11 +3295,10 @@ impl ThinktinClient {
             .await
     }
 
-    /// 退出项目（创建者不能退出：409）。
+    /// 退出项目（创建者不能退出：409）。成功后清掉缓存里这个项目的提醒。
     pub async fn leave_project(&self, project_id: String) -> Result<()> {
         let id: d::ProjectId = parse(&project_id, "project")?;
-        self.run(|c| async move { c.api.leave_project(id).await })
-            .await
+        self.run(|c| async move { c.leave_project(id).await }).await
     }
 
     /// 创建者移出一个成员。
@@ -3280,6 +3436,203 @@ impl ThinktinClient {
         let id: d::UserId = parse(&user_id, "user")?;
         self.run(|c| async move { c.api.unblock_user(id).await })
             .await
+    }
+
+    // ---------- 项目里的内容、归档、项目模板（8.15） ----------
+    //
+    // 项目里的内容只走网络、不缓存。读整个项目的（详情、运行列表、产出物列表）回 404 时顺便清掉缓存里这个项目的提醒。
+
+    /// 归档（只有创建者）：项目变成只读，里面的运行停掉。重复归档也成功。
+    pub async fn archive_project(&self, project_id: String) -> Result<ProjectDetail> {
+        let id: d::ProjectId = parse(&project_id, "project")?;
+        self.run(|c| async move { Ok(c.api.archive_project(id).await?.into()) })
+            .await
+    }
+
+    /// 取消归档（只有创建者）：停掉的运行不会重新开始。
+    pub async fn unarchive_project(&self, project_id: String) -> Result<ProjectDetail> {
+        let id: d::ProjectId = parse(&project_id, "project")?;
+        self.run(|c| async move { Ok(c.api.unarchive_project(id).await?.into()) })
+            .await
+    }
+
+    /// 项目里的运行，新的在前：`instance_id` 只看一个 agent 的，`before_run_id` 往下翻，`limit` 1 到 200。
+    pub async fn project_runs(
+        &self,
+        project_id: String,
+        instance_id: Option<String>,
+        before_run_id: Option<String>,
+        limit: u32,
+    ) -> Result<Vec<ProjectRun>> {
+        let id: d::ProjectId = parse(&project_id, "project")?;
+        let instance: Option<d::InstanceId> = instance_id
+            .as_deref()
+            .map(|i| parse(i, "instance"))
+            .transpose()?;
+        let before: Option<d::RunId> = before_run_id
+            .as_deref()
+            .map(|b| parse(b, "run"))
+            .transpose()?;
+        self.run(|c| async move {
+            let r = c.api.project_runs(id, instance, before, Some(limit)).await;
+            Ok(c.project_read(id, r)?.into_iter().map(Into::into).collect())
+        })
+        .await
+    }
+
+    pub async fn project_run(&self, project_id: String, run_id: String) -> Result<ProjectRun> {
+        let id: d::ProjectId = parse(&project_id, "project")?;
+        let run: d::RunId = parse(&run_id, "run")?;
+        self.run(|c| async move { Ok(c.api.project_run(id, run).await?.into()) })
+            .await
+    }
+
+    /// 运行所在的整棵树（流水线的步骤、委派的子任务），先建的在前。
+    pub async fn project_run_tree(
+        &self,
+        project_id: String,
+        run_id: String,
+    ) -> Result<Vec<ProjectRun>> {
+        let id: d::ProjectId = parse(&project_id, "project")?;
+        let run: d::RunId = parse(&run_id, "run")?;
+        self.run(|c| async move {
+            Ok(c.api
+                .project_run_tree(id, run)
+                .await?
+                .into_iter()
+                .map(Into::into)
+                .collect())
+        })
+        .await
+    }
+
+    /// 运行最近的事件（成员能看的），旧的在前；`limit` 1 到 500。
+    pub async fn project_run_events(
+        &self,
+        project_id: String,
+        run_id: String,
+        limit: u32,
+    ) -> Result<ProjectRunEvents> {
+        let id: d::ProjectId = parse(&project_id, "project")?;
+        let run: d::RunId = parse(&run_id, "run")?;
+        self.run(
+            |c| async move { Ok(c.api.project_run_events(id, run, Some(limit)).await?.into()) },
+        )
+        .await
+    }
+
+    /// 项目的产出物，新的在前；`before_artifact_id` 往下翻，`limit` 1 到 200。
+    pub async fn project_artifacts(
+        &self,
+        project_id: String,
+        before_artifact_id: Option<String>,
+        limit: u32,
+    ) -> Result<Vec<ProjectArtifact>> {
+        let id: d::ProjectId = parse(&project_id, "project")?;
+        let before: Option<d::ArtifactId> = before_artifact_id
+            .as_deref()
+            .map(|b| parse(b, "artifact"))
+            .transpose()?;
+        self.run(|c| async move {
+            let r = c.api.project_artifacts(id, before, Some(limit)).await;
+            Ok(c.project_read(id, r)?.into_iter().map(Into::into).collect())
+        })
+        .await
+    }
+
+    pub async fn project_artifact(
+        &self,
+        project_id: String,
+        artifact_id: String,
+    ) -> Result<ProjectArtifact> {
+        let id: d::ProjectId = parse(&project_id, "project")?;
+        let artifact: d::ArtifactId = parse(&artifact_id, "artifact")?;
+        self.run(|c| async move { Ok(c.api.project_artifact(id, artifact).await?.into()) })
+            .await
+    }
+
+    /// 下载项目产出物（解密后的内容，文本类末尾带 AI 生成标识）。项目删了的 404。
+    pub async fn project_artifact_content(
+        &self,
+        project_id: String,
+        artifact_id: String,
+    ) -> Result<Vec<u8>> {
+        let id: d::ProjectId = parse(&project_id, "project")?;
+        let artifact: d::ArtifactId = parse(&artifact_id, "artifact")?;
+        self.run(|c| async move { c.api.project_artifact_content(id, artifact).await })
+            .await
+    }
+
+    /// 项目模板（和团队模板是同一张表）。
+    pub async fn project_templates(&self) -> Result<Vec<TeamTemplate>> {
+        self.run(|c| async move {
+            Ok(c.api
+                .project_templates()
+                .await?
+                .into_iter()
+                .map(Into::into)
+                .collect())
+        })
+        .await
+    }
+
+    /// 新建项目模板，直接给成员。
+    pub async fn create_project_template(
+        &self,
+        name: String,
+        members: Vec<TemplateMember>,
+    ) -> Result<TeamTemplate> {
+        let spec = d::TeamTemplateSpec {
+            members: members
+                .into_iter()
+                .map(TryInto::try_into)
+                .collect::<Result<_>>()?,
+        };
+        self.run(|c| async move {
+            Ok(c.api
+                .create_project_template(&name, Some(&spec), None)
+                .await?
+                .into())
+        })
+        .await
+    }
+
+    /// 从现有项目生成模板（每个 agent 记下它的 agent、接入方式、名字、是不是负责人）。
+    pub async fn create_project_template_from_project(
+        &self,
+        name: String,
+        project_id: String,
+    ) -> Result<TeamTemplate> {
+        let id: d::ProjectId = parse(&project_id, "project")?;
+        self.run(|c| async move {
+            Ok(c.api
+                .create_project_template(&name, None, Some(id))
+                .await?
+                .into())
+        })
+        .await
+    }
+
+    pub async fn delete_project_template(&self, template_id: String) -> Result<()> {
+        let id: d::TeamTemplateId = parse(&template_id, "template")?;
+        self.run(|c| async move { c.api.delete_project_template(id).await })
+            .await
+    }
+
+    /// 按模板建项目：每个成员领养一个新实例，再建成单人项目。`name` 不给就用模板的名字。
+    pub async fn adopt_project_template(
+        &self,
+        template_id: String,
+        name: Option<String>,
+    ) -> Result<ProjectDetail> {
+        let id: d::TeamTemplateId = parse(&template_id, "template")?;
+        self.run(|c| async move {
+            Ok(c.api
+                .adopt_project_template(id, name.as_deref())
+                .await?
+                .into())
+        })
+        .await
     }
 
     // ---------- 用量 ----------
