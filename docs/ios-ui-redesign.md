@@ -408,7 +408,7 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   - 参考里的“标为未读”“新建分组”“替换主 Bot…”“分享为模板”见 6.10、6.21。
 - **交互**：点预览卡进对话；点菜单项执行后菜单收起；点空白处收起。
 - **状态**：置顶与否文案跟着变；离线时要联网的项（改名、新建计划、删除）禁用；实例在运行或等你处理时预览卡顶上显示状态。
-- **ThinkTin 现在**：首页没有长按。改名是 `InstanceRenameSheet`、删除是 `InstanceDeleteSheet`（都在 `Screens/Agents/`）；
+- **ThinkTin 现在**：首页没有长按。改名以前是 `InstanceRenameSheet`（2026-11-05 C 线换成压栈的编辑页 `InstanceEditScreen`，A 线的长按改名照旧用 `.alert` + `InstanceNameRule`）、删除是 `InstanceDeleteSheet`（都在 `Screens/Agents/`）；
   复制用 `Support/Pasteboard.swift`。
 - **要改**：预览里的最近一条用 `cachedEventsBefore(instanceID:beforeSeq: nil, limit:)` 取最后一条 agent 消息，没缓存时退回
   `cachedRuns` 最新一次运行的摘要。改名用 `.alert` + `TextField`，按 `InstanceNameRule` 校验，Shell 自己调 `renameInstance`，
@@ -823,10 +823,13 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 - **ThinkTin 现在**：`Screens/Agents/AdoptAgentSheet.swift` + `ViewModels/Agents/AdoptionModel.swift`（`EngineOption`、`NewBotinText`）。
   原来的“领养好了”页（`AdoptionDoneView`，引导配模型或加 key）删了，引导挪到新 Botin 对话的空状态（第 2 轮换成 6.18 的首次卡片）；
   没有能用的 key 时路由页自己引导加 key。
-- **还没做**：agent 目录（`.agentCatalog`）改成 plain 列表行（40pt 图标 + 名字 + 一句介绍 + 右边“选这个”/“N 个 Botin 在用”小胶囊，借参考 101–104 的行；
-  页面标题“引擎”），引擎详情借插件详情的 sheet 版式（4.8.3），主按钮“用它新建 Botin”：第 1 轮 C 线。建好之后改头像（编辑页的“头像”，4.4.4）
-  第 2 轮；多端同步等后端字段（6.9 B）。
-  “能不能用”现在只看有没有接入方式（`AgentInfo.canPowerNewBotin`）：服务端目录还没有下架、地区这类字段。
+- **已做（2026-11-05，第 1 轮 C 线）**：引擎目录（`.agentCatalog`）换成 plain 列表行（参考 101、104）：40pt 圆角方块图标（`EngineIcon`，
+  `.squircle` 形状 + 名字首字 + 按名字取色，和 Botin 默认的圆形分开）+ 名字 + 最多两行灰字（`AgentCatalogCard.rowSubtitle`）+ 右边玻璃小胶囊
+  “选这个”（`actionTitle`，不能用的“暂不可用”灰掉；点了 `router.open(.adopt(agentID:))`：在新建表单里时退回表单换引擎，别处弹预选它的表单）；
+  不画分隔线；以前的页头说明挪到列表最后一段灰字；空、拉不到是 `ContentUnavailableView`。点行弹引擎详情 sheet（4.8.3 的版式，medium / large，
+  本地 `.sheet(item:)`，不改路由；详情里的“用它新建 Botin”“在用它的 Botin”先关 sheet、在 `onDismiss` 里再走路由）。“N 个 Botin 在用”
+  不在行上了（读屏标签里有，详情里列出来）。`.agent(id)` 路由（压栈）还在，画的是同一个详情页，没有 ×、操作直接走路由。
+  建好之后改头像第 1 轮顺带做了（4.4.4）；多端同步等后端字段（6.9 B）。
 
 #### 4.7.2 分组（91、92、93）
 
@@ -873,6 +876,10 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   不可点的“已连接”）。
 - **原生**：`.sheet(item:)` + `.presentationDetents([.medium, .large])`；`Button(role: .close)`；`Menu { Button("断开连接", systemImage: "trash", role: .destructive) }`
   + `.confirmationDialog`；`Section("账户") { … Button("添加账户") }`；底部 `.safeAreaBar`。
+- **已做（2026-11-05，借给引擎详情）**：`AgentDetailScreen`：目录点行弹的 medium / large sheet，左上 `CloseButton`，没有标题；居中 56pt
+  圆角方块图标 + 名字（`.title2.bold()`）+ 出处，下面一段灰字介绍（左对齐）；许可证（和上游仓库）、接入方式、版本、模型接口、能用的地区、
+  在用它的 Botin 几组（insetGrouped）；底部 `floatingBar` 里居中的胶囊“用它新建 Botin”（`.prominent`、不占满整宽，medium 档也看得到）。
+  参考右上“…”（断开连接）没有对应的操作，不放。下架的是 `ContentUnavailableView` +“看看别的引擎”。
 - **要改**：插件本身第 3 轮。这个版式第 2 轮可以借给 agent 详情（`.agent(id)`：图标、名字、介绍、上游、许可，底部“领养”），
   要不要把 agent 详情从压栈改成 sheet 一起定。注意：说明很长时 medium 档放不下关键信息（106），状态和主按钮要放在说明前面，
   或者说明限制行数加“展开”。
@@ -880,7 +887,8 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 #### 4.8.4 推荐 / 精选完整列表（101、102、103、104）
 
 - **参考**：点“为你推荐 >”“精选插件 >”压栈到完整列表：plain 列表，行同目录，一次加载完，没有分页。
-- **要改**：第三方目录第 3 轮。行版式第 1 轮借给 agent 目录（4.7.1）：“领养 / 已领养”对应“连接 / 已连接”。
+- **要改**：第三方目录第 3 轮。行版式第 1 轮借给 agent 目录（4.7.1）：“领养 / 已领养”对应“连接 / 已连接”。2026-11-05 做了，
+  右边的胶囊是“选这个”（同一个引擎能建好几个 Botin，没有“已连接”那种灰掉的状态）。
 
 ### 4.9 设置
 
@@ -1056,7 +1064,7 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 | 9 | Bot 资料 | 实例资料 | `Agents/InstanceDetailScreen.swift`、`InstanceDetailModel` | 部分有 | 1；通知 3 | 4.4.1 |
 | 10 | 资料更多菜单 | 资料页“…”菜单 | `InstanceDetailScreen.swift` 的 `Menu` | 部分有 | 1 | 4.4.2 |
 | 11 | 选择主 Bot 空状态 | 主实例（无） | 无（版式借给 `NewTaskSheet`） | 不适用 | 不做 | 4.4.5 |
-| 12 | 编辑 Bot | 编辑实例 | `InstanceRenameSheet`、`renameInstance` | 部分有 | 1 | 4.4.3 |
+| 12 | 编辑 Bot | 编辑实例 | `InstanceEditScreen`（2026-11-05，以前是 `InstanceRenameSheet`）、`renameInstance` | 部分有 | 1（已做） | 4.4.3 |
 | 13 | 语音选择（上） | 语音通话（无） | 无 | 不适用 | 不做 | 4.4.3 |
 | 14 | 语音选择（中） | 语音通话（无） | 无 | 不适用 | 不做 | 4.4.3 |
 | 15 | 语音选择（下） | 语音通话（无） | 无 | 不适用 | 不做 | 4.4.3 |
@@ -1109,7 +1117,7 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 | 62 | 权限与规则列表 | 自然语言权限规则 | 无（审批中心 `Approvals/ApprovalScreens.swift`） | 要后端 | 待定（6.15） | 4.9.8 |
 | 63 | 新增规则 | 自然语言权限规则 | 无 | 要后端 | 待定 | 4.9.8 |
 | 64 | 编辑规则 | 自然语言权限规则 | 无 | 要后端 | 待定 | 4.9.8 |
-| 65 | Bot 电脑设置 | 工作区（重置、磁盘） | `InstanceDetailScreen`（状态说明、版本） | 要后端 | 1（工作区页）/ 3 | 4.6.1 |
+| 65 | Bot 电脑设置 | 工作区（重置、磁盘） | `InstanceWorkspaceScreen`（状态说明、版本，2026-11-05） | 要后端 | 1（工作区页，已做）/ 3 | 4.6.1 |
 | 66 | 设备列表 | 登录设备 | `Account/DevicesView.swift`、`DevicesModel` | 只改界面 | 1 | 4.9.9 |
 | 67 | 手机设备详情 | 设备详情 | `DevicesView` 的 `DeviceRow` | 部分有 | 1；改名 3 | 4.9.9 |
 | 68 | 设备重命名弹窗 | 设备改名 | 无（没有改名接口） | 要后端 | 3 | 4.9.9 |
@@ -1497,6 +1505,8 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 | D 计划、产出物、搜索（12.6、12.18、12.21） | 实例的计划和全部计划（4.5.1）、产出物版式和产出物详情（4.5.2、4.5.3 第 1 轮部分）、`SearchResultsView` 拆出来给 A 用（4.2.4） | `Screens/Plans/*`、`Screens/Artifacts/*`、`Screens/Search/*`、对应的 `ViewModels/` 和测试 |
 | E 设置一带（12.12、12.2、12.4、12.13、12.14、12.9 手机这边） | 设置根页（4.9.1）、账号（4.9.2）、用量（4.9.3）、保险箱和登录信息表单（4.9.5、4.9.6）、设备列表和详情（4.9.9）、外观（4.9.11）、语言（4.9.12）、模型 key、IM 渠道换原生 | `Screens/Settings/*`、`ViewModels/Settings/SettingsModel.swift`、`Screens/Account/*`（登录相关不动）、`Screens/Models/*`、`Screens/Vault/*`、`Screens/ImChannels/*`、`Screens/Computer/ComputerLinkViews.swift` |
 
+- C 线 2026-11-05 做完（Botin 资料 4.4.1、“…”菜单 4.4.2、编辑页 4.4.3、工作区页 4.6.1 和它的说明、引擎目录的列表行和引擎详情的 sheet 版式
+  4.7.1 / 4.8.3，顺带做了第 2 轮的改头像 4.4.4 和删除确认页换原生列表），逐节的做法见各节的“已做”和 docs/progress/ios-ui-redesign.md。
 - B 线 2026-11-05 做完（对话页 4.3.1、“…”菜单 4.3.2、长按菜单 4.3.4，顺带做了第 2 轮的引用回复 4.3.5 和首次引导卡 6.18 A；
   对话内查找 4.3.3 还没做），逐节的做法见各节的“已做”和 docs/progress/ios-ui-redesign.md。
 - 线之间的依赖：A 的首页搜索要用 D 拆出来的 `SearchResultsView`，D 先交这一块，A 之前先嵌现有的 `SearchScreen`。

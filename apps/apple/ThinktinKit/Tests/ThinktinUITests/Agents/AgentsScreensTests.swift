@@ -29,8 +29,24 @@ struct AgentsScreensTests {
             hostAndLayout(AgentsDestination(route: route).previewShell().dynamicTypeSize(.accessibility3))
         }
         hostAndLayout(
-            AgentCatalogCardView(card: AgentCatalogCard(agent: DemoData.agents[0], adoptedCount: 1))
-                .dynamicTypeSize(.accessibility3))
+            List {
+                EngineRow(
+                    card: AgentCatalogCard(agent: DemoData.agents[0], adoptedCount: 1), canCreate: true, onOpen: {},
+                    onUse: {})
+            }
+            .dynamicTypeSize(.accessibility3))
+    }
+
+    @Test("引擎详情当 sheet（参考 105–107）：左上 ×，按钮交给弹它的页面；下架的、压栈的")
+    func engineDetailSheet() {
+        for id in [DemoData.claudeAgentID, DemoData.codexAgentID, "retired"] {
+            hostAndLayout(NavigationStack { AgentDetailScreen(agentID: id) { _ in } }.previewShell())
+            hostAndLayout(
+                NavigationStack {
+                    AgentDetailScreen(agentID: id, agent: DemoData.agents.first { $0.id == id }) { _ in }
+                }
+                .previewShell(.english, scheme: .dark).dynamicTypeSize(.accessibility3))
+        }
     }
 
     @Test("目录是空的、没有 key 的账号")
@@ -90,8 +106,11 @@ struct AgentsScreensTests {
     @Test("卡片和影响清单能出图")
     func render() {
         renderInBothAppearances(
-            AgentCatalogCardView(card: AgentCatalogCard(agent: DemoData.agents[0], adoptedCount: 1)))
-        renderInBothAppearances(AgentCatalogCardView(card: AgentCatalogCard(agent: DemoData.agents[2])))
+            EngineRow(
+                card: AgentCatalogCard(agent: DemoData.agents[0], adoptedCount: 1), canCreate: true, onOpen: {},
+                onUse: {}))
+        renderInBothAppearances(
+            EngineRow(card: AgentCatalogCard(agent: DemoData.agents[2]), canCreate: false, onOpen: {}, onUse: {}))
         var state = DemoData.state()
         state.plans.append(
             Plan(
