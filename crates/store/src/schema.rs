@@ -144,40 +144,49 @@ impl Db {
     }
 }
 
+/// 服务角色（迁移 0049 里同一张表）：不管直接还是间接，都不能是成员角色、定义者的成员。
+pub(crate) const SERVICE_ROLES: [&str; 4] = [
+    "thinktin_app",
+    "thinktin_worker",
+    "thinktin_llmgw",
+    "thinktin_relay",
+];
+
 impl Db {
     /// 启动时核对数据库角色（8.15）：服务登录账号要能 SET ROLE 到业务、后台、项目成员三个角色，而且不能是定义者函数
-    /// 属主的成员（不然它就能改这些函数）。超级用户（开发库）跳过。缺了的写在 [`Error::Schema`] 里。
+    /// 属主的成员（不然它就能改这些函数）；两个 8.15 角色的配置没被改坏（见 [`Self::role_graph_problems`]）。登录账号的
+    /// 核对超级用户（开发库）跳过。有问题的写在 [`Error::Schema`] 里。
     pub async fn check_roles(&self) -> Result<()> {
+        let mut problems = self.role_graph_problems(&SERVICE_ROLES).await?;
         let superuser: bool =
             sqlx::query_scalar("SELECT rolsuper FROM pg_roles WHERE rolname = session_user")
                 .fetch_one(self.pool())
                 .await?;
-        if superuser {
-            return Ok(());
-        }
-        let missing: Vec<String> = sqlx::query_scalar(
-            "SELECT w.name FROM unnest($1::text[]) AS w(name) LEFT JOIN pg_roles r ON r.rolname = w.name \
-              WHERE NOT coalesce(pg_has_role(session_user, r.oid, 'SET'), false) ORDER BY 1",
-        )
-        .bind(["thinktin_app", "thinktin_member", "thinktin_worker"])
-        .fetch_all(self.pool())
-        .await?;
-        let definer: bool = sqlx::query_scalar(
-            "SELECT coalesce(pg_has_role(session_user, r.oid, 'MEMBER'), false) FROM pg_roles r \
-              WHERE r.rolname = 'thinktin_project_definer' \
-             UNION ALL SELECT false LIMIT 1",
-        )
-        .fetch_one(self.pool())
-        .await?;
-        let mut problems = vec![];
-        if !missing.is_empty() {
-            problems.push(format!(
-                "the login cannot SET ROLE to {}",
-                missing.join(", ")
-            ));
-        }
-        if definer {
-            problems.push("the login must not be a member of thinktin_project_definer".to_string());
+        if !superuser {
+            let missing: Vec<String> = sqlx::query_scalar(
+                "SELECT w.name FROM unnest($1::text[]) AS w(name) LEFT JOIN pg_roles r ON r.rolname = w.name \
+                  WHERE NOT coalesce(pg_has_role(session_user, r.oid, 'SET'), false) ORDER BY 1",
+            )
+            .bind(["thinktin_app", "thinktin_member", "thinktin_worker"])
+            .fetch_all(self.pool())
+            .await?;
+            let definer: bool = sqlx::query_scalar(
+                "SELECT coalesce(pg_has_role(session_user, r.oid, 'MEMBER'), false) FROM pg_roles r \
+                  WHERE r.rolname = 'thinktin_project_definer' \
+                 UNION ALL SELECT false LIMIT 1",
+            )
+            .fetch_one(self.pool())
+            .await?;
+            if !missing.is_empty() {
+                problems.push(format!(
+                    "the login cannot SET ROLE to {}",
+                    missing.join(", ")
+                ));
+            }
+            if definer {
+                problems
+                    .push("the login must not be a member of thinktin_project_definer".to_string());
+            }
         }
         if problems.is_empty() {
             Ok(())
@@ -187,6 +196,55 @@ impl Db {
                 problems.join("; ")
             )))
         }
+    }
+
+    /// 两个 8.15 角色后来有没有被改坏（迁移 0049 只在迁移时核对一次，而且只看直接的成员关系）：不能登录、不绕过行级安全、
+    /// 不是超级用户、不能建角色和库，定义者不继承权限；它们不是任何角色的成员；`services` 里的角色不管直接还是经过别的角色间接，都不是
+    /// 它们的成员（行级安全的策略按继承的成员关系生效，服务角色继承了成员角色，白名单就没了）。
+    pub(crate) async fn role_graph_problems(&self, services: &[&str]) -> Result<Vec<String>> {
+        let attributes: Vec<String> = sqlx::query_scalar(
+            "SELECT rolname::text FROM pg_roles \
+              WHERE rolname IN ('thinktin_member', 'thinktin_project_definer') \
+                AND (rolsuper OR rolbypassrls OR rolcanlogin OR rolcreaterole OR rolcreatedb \
+                     OR (rolname = 'thinktin_project_definer' AND rolinherit)) ORDER BY 1",
+        )
+        .fetch_all(self.pool())
+        .await?;
+        let parents: Vec<String> = sqlx::query_scalar(
+            "SELECT DISTINCT r.rolname::text FROM pg_auth_members am JOIN pg_roles r ON r.oid = am.member \
+              WHERE r.rolname IN ('thinktin_member', 'thinktin_project_definer') ORDER BY 1",
+        )
+        .fetch_all(self.pool())
+        .await?;
+        let inherited: Vec<String> = sqlx::query_scalar(
+            "SELECT s.rolname::text || ' -> ' || g.rolname::text FROM pg_roles s, pg_roles g \
+              WHERE s.rolname::text = ANY($1) \
+                AND g.rolname IN ('thinktin_member', 'thinktin_project_definer') \
+                AND pg_has_role(s.oid, g.oid, 'MEMBER') ORDER BY 1",
+        )
+        .bind(services)
+        .fetch_all(self.pool())
+        .await?;
+        let mut problems = vec![];
+        if !attributes.is_empty() {
+            problems.push(format!(
+                "{} must be NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOCREATEDB (thinktin_project_definer also NOINHERIT)",
+                attributes.join(", ")
+            ));
+        }
+        if !parents.is_empty() {
+            problems.push(format!(
+                "{} must not be a member of any role",
+                parents.join(", ")
+            ));
+        }
+        if !inherited.is_empty() {
+            problems.push(format!(
+                "service roles must not be members of the project roles, directly or through another role: {}",
+                inherited.join(", ")
+            ));
+        }
+        Ok(problems)
     }
 }
 

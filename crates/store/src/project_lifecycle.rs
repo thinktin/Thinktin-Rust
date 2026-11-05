@@ -271,7 +271,8 @@ impl Tx<Worker> {
     }
 
     /// 后台清理删了的项目（过了 `grace` 才动）：一次调用一个事务、不等锁；按产出物 → 项目提醒 → 事件 → 运行 → 授权的顺序
-    /// 每次删一批（`batch` 行），都删完了再删项目这一行（成员、agent、邀请级联）。返回这次删了几行。
+    /// 删，都删完了再删项目这一行（成员、agent、邀请级联）。一次最多删 `batch` 行，分给这次拿到的几个项目（每个最多分到
+    /// 一份），一个大项目占不满所有轮次，小项目一次删完接着删下一个。返回这次删了几行（0：没有能删的了）。
     pub async fn purge_deleted_projects(&mut self, batch: u64, grace: Duration) -> Result<u64> {
         let batch = signed(batch, "batch")?;
         // 外键的级联（运行删了，提醒的 run_id 置空）会等别人锁着的行：等不到就这一轮放弃，下一轮再来。
@@ -286,7 +287,16 @@ impl Tx<Worker> {
         .bind(secs(grace))
         .fetch_all(self.conn())
         .await?;
+        if candidates.is_empty() {
+            return Ok(0);
+        }
+        let share = (batch / candidates.len() as i64).max(1);
+        let mut remaining = batch;
+        let mut total = 0u64;
         for (id, _) in candidates {
+            if remaining <= 0 {
+                break;
+            }
             let got: bool =
                 sqlx::query_scalar("SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0))")
                     .bind(format!("project/{}", ProjectId(id)))
@@ -295,6 +305,8 @@ impl Tx<Worker> {
             if !got {
                 continue;
             }
+            // 这个项目这次最多删几行。
+            let mut quota = share.min(remaining);
             for sql in [
                 // 产出物（触发器把对象存储里的内容排进 blob_purge）。
                 "DELETE FROM artifacts WHERE id IN (SELECT id FROM artifacts WHERE project_id = $1 \
@@ -313,15 +325,22 @@ impl Tx<Worker> {
                 "DELETE FROM run_grants WHERE id IN (SELECT id FROM run_grants WHERE project_id = $1 \
                    ORDER BY id DESC LIMIT $2)",
             ] {
+                if quota <= 0 {
+                    break;
+                }
                 let n = sqlx::query(sql)
                     .bind(id)
-                    .bind(batch)
+                    .bind(quota)
                     .execute(self.conn())
                     .await?
                     .rows_affected();
-                if n > 0 {
-                    return Ok(n);
-                }
+                total += n;
+                quota -= n as i64;
+                remaining -= n as i64;
+            }
+            if quota <= 0 {
+                // 这次的份用完了，还没删完：下一次再来。
+                continue;
             }
             // 都删完了（跳过的提醒还在的，下一轮再来）。
             let left: bool = sqlx::query_scalar(
@@ -342,10 +361,9 @@ impl Tx<Worker> {
                 .execute(self.conn())
                 .await?
                 .rows_affected();
-            if n > 0 {
-                return Ok(n);
-            }
+            total += n;
+            remaining -= n as i64;
         }
-        Ok(0)
+        Ok(total)
     }
 }

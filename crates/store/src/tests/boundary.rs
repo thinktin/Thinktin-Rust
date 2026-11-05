@@ -1712,3 +1712,140 @@ async fn delete_races() {
         );
     }
 }
+
+/// 后台清理分配每次的行数（8.15 评审）：一个内容多的项目不会占满每一次，排在后面的小项目一次就删掉。
+#[tokio::test]
+async fn purge_shares_each_batch_between_projects() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = user(db, "+8613800005301").await;
+    // 每个实例同时只能有一个进行中的运行：大项目里放六个 agent，各复制一个运行进去。
+    let mut agents = Vec::new();
+    for _ in 0..6 {
+        agents.push(instance(db, alice).await);
+    }
+    let mut t = db.tenant(alice).await.unwrap();
+    let members: Vec<TeamMember> = agents
+        .iter()
+        .enumerate()
+        .map(|(i, a)| TeamMember {
+            instance_id: a.id,
+            role: if i == 0 {
+                TeamRole::Lead
+            } else {
+                TeamRole::Member
+            },
+            position: i as u32,
+        })
+        .collect();
+    let big: ProjectId = t.create_team("big", &members).await.unwrap().id.into();
+    t.commit().await.unwrap();
+    let small = solo(db, alice, &instance(db, alice).await).await;
+    for a in &agents {
+        let private = super::queue_run(db, alice, a, "task").await;
+        super::projects::copy_into_project(db, "runs", private.id.0, big, None).await;
+    }
+    for p in [big, small] {
+        worker_do(db, async |w| w.delete_project(alice, p, false).await)
+            .await
+            .unwrap();
+    }
+    // 先删的大项目排在前面；一次 4 行，各分 2 行：小项目这一次就删完了。
+    let n = worker_do(db, async |w| {
+        w.purge_deleted_projects(4, std::time::Duration::ZERO).await
+    })
+    .await
+    .unwrap();
+    assert!(n >= 3, "{n}");
+    assert_eq!(
+        scalar(db, "SELECT count(*) FROM projects WHERE id = $1", small.0).await,
+        0
+    );
+    assert_eq!(
+        scalar(db, "SELECT count(*) FROM projects WHERE id = $1", big.0).await,
+        1
+    );
+    loop {
+        let n = worker_do(db, async |w| {
+            w.purge_deleted_projects(4, std::time::Duration::ZERO).await
+        })
+        .await
+        .unwrap();
+        if n == 0 {
+            break;
+        }
+    }
+    assert_eq!(
+        scalar(db, "SELECT count(*) FROM projects WHERE id = $1", big.0).await,
+        0
+    );
+    assert_eq!(
+        scalar(db, "SELECT count(*) FROM runs WHERE project_id = $1", big.0).await,
+        0
+    );
+}
+
+/// 启动核对看得到间接的成员关系（8.15 评审）：一个服务角色经过别的角色继承了成员角色，`check_roles` 报错；正常配置下
+/// 什么都不报。用临时角色代替服务角色，不碰别的测试在用的角色。
+#[tokio::test]
+async fn startup_catches_roles_that_inherit_the_member_role() {
+    let Some(t) = TestDb::new().await else { return };
+    let pool = t.db.pool();
+    assert!(
+        t.db.role_graph_problems(&crate::schema::SERVICE_ROLES)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let suffix = uuid::Uuid::now_v7().simple().to_string();
+    let svc = format!("thinktin_test_svc_{}", &suffix[24..]);
+    let mid = format!("thinktin_test_mid_{}", &suffix[24..]);
+    for sql in [
+        format!("CREATE ROLE {svc} NOLOGIN"),
+        format!("CREATE ROLE {mid} NOLOGIN"),
+        format!("GRANT thinktin_member TO {mid}"),
+        format!("GRANT {mid} TO {svc}"),
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(sql))
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+    let problems = t.db.role_graph_problems(&[svc.as_str()]).await.unwrap();
+    for sql in [format!("DROP ROLE {svc}"), format!("DROP ROLE {mid}")] {
+        sqlx::query(sqlx::AssertSqlSafe(sql))
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert!(
+        problems[0].contains(&format!("{svc} -> thinktin_member")),
+        "{problems:?}"
+    );
+}
+
+/// 先退出、后注销的人（8.15 评审）：留在项目里的内容显示“已注销”，不是“已退出”。
+#[tokio::test]
+async fn left_then_erased_shows_as_erased() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let (alice, bob, p, _, r, _) = project_run_fixture(db).await;
+    worker_do(db, async |w| w.leave_project(bob, p).await)
+        .await
+        .unwrap();
+    let mut m = db.member(alice).await.unwrap();
+    assert_eq!(
+        m.project_run(p, r).await.unwrap().owner.status,
+        proto::domain::ProjectAuthorStatus::Left
+    );
+    m.finish().await.unwrap();
+    worker_do(db, async |w| w.erase_account(bob).await)
+        .await
+        .unwrap();
+    let mut m = db.member(alice).await.unwrap();
+    let owner = m.project_run(p, r).await.unwrap().owner;
+    assert_eq!(owner.status, proto::domain::ProjectAuthorStatus::Erased);
+    assert_eq!((owner.user_id, owner.display_name), (None, None));
+    m.finish().await.unwrap();
+}

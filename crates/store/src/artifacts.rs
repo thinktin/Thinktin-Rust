@@ -1,7 +1,7 @@
 //! 产出物索引（8.4）。内容在对象存储里（按用户 DEK 加密），这里只记元数据和存储键。
 
 use chrono::{DateTime, Utc};
-use proto::domain::{Artifact, ArtifactId, InstanceId, ProjectId, RunId, UserId};
+use proto::domain::{Artifact, ArtifactId, InstanceId, ProjectId, RunId, UserId, UserStatus};
 use uuid::Uuid;
 
 use crate::{Error, Result, Tenant, Tx, Worker, signed, unsigned};
@@ -126,7 +126,12 @@ impl Tx<Worker> {
     /// 登记产出物，版本号在这棵运行树里同名的基础上加一。
     pub async fn insert_artifact(&mut self, a: &NewArtifact<'_>) -> Result<StoredArtifact> {
         if let Some(p) = a.project {
-            // 项目产出物：在项目锁里核对项目进行中、有密钥（删项目在同一把锁里先删密钥，删了以后登记不进去）。
+            // 项目产出物：在项目锁里核对项目进行中、有密钥（删项目在同一把锁里先删密钥，删了以后登记不进去）。加锁顺序和
+            // 8.14 的一样：先主人的用户行（外键要的 KEY SHARE，不然和注销互相等），再项目锁。主人注销了的登记不进去。
+            let owner = self.lock_users(&[a.user]).await?;
+            if !owner.iter().any(|u| u.status != UserStatus::Deleted) {
+                return Err(Error::NotFound);
+            }
             self.lock_project(p).await?;
             let ok: bool = sqlx::query_scalar(
                 "SELECT EXISTS (SELECT 1 FROM projects p JOIN project_keys k ON k.project_id = p.id \

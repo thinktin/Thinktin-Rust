@@ -14,6 +14,7 @@ use store::{InviteKey, JoinTerms};
 
 use super::parse_id;
 use super::projects::{consent, cross_user};
+use crate::error::project_error;
 use crate::{ApiError, ApiJson, ApiResult, AppState, Authed};
 
 /// 找不到邀请：所有情况一样的回答。
@@ -108,7 +109,9 @@ async fn join(
     let a = projects::accept(&s.db, who.user, &who.actor(), key, terms)
         .await
         .map_err(no_invite)?;
-    let detail = projects::detail(&s.db, who.user, a.project).await?;
+    let detail = projects::detail(&s.db, who.user, a.project)
+        .await
+        .map_err(project_error)?;
     let status = if a.created {
         StatusCode::CREATED
     } else {

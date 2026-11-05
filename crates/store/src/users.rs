@@ -311,10 +311,11 @@ impl Tx<Worker> {
             // 两天后后台删掉）。
             "DELETE FROM project_invite_sends WHERE invitee_phone = (SELECT phone FROM users WHERE id = $1)",
             "UPDATE project_invite_sends SET inviter_id = NULL WHERE inviter_id = $1",
-            // 项目：他在别人项目里的成员身份标成注销（他建的项目上面已经软删除，创建者那一行留到后台清理）；发给他的、
-            // 他发的邀请删掉（手机号邀请在改掉手机号之前按号码找）。
-            "UPDATE project_members SET left_at = now(), left_reason = 'erased' \
-               WHERE user_id = $1 AND left_at IS NULL AND role = 'member'",
+            // 项目：他在别人项目里的成员身份标成注销，早就退出、被移出的也一样（留下的内容显示“已注销”，退出时间不变；
+            // 他建的项目上面已经软删除，创建者那一行留到后台清理）；发给他的、他发的邀请删掉（手机号邀请在改掉手机号之前
+            // 按号码找）。
+            "UPDATE project_members SET left_at = coalesce(left_at, now()), left_reason = 'erased' \
+               WHERE user_id = $1 AND role = 'member'",
             "DELETE FROM project_invites WHERE inviter_id = $1 OR invitee_id = $1 OR accepted_by = $1 \
                OR invitee_phone = (SELECT phone FROM users WHERE id = $1)",
             // 拉黑（8.14）：他拉黑的、拉黑他的。
