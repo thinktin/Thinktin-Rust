@@ -172,7 +172,7 @@ struct HomeInstanceList: View {
             }
             ForEach(rows) { row in
                 NavigationLink(value: AppRoute.conversation(row.id)) {
-                    HomeInstanceRow(row: row)
+                    HomeInstanceRow(row: row, appearance: model.appearances.resolved(for: row.id))
                 }
             }
             .listRowSeparator(.hidden)
@@ -225,6 +225,7 @@ struct HomeInstanceList: View {
 struct HomeSearchResults: View {
     let search: SearchModel
 
+    @Environment(AppModel.self) private var app
     @Environment(Router.self) private var router
     @Environment(\.displayLanguage) private var language
 
@@ -241,7 +242,7 @@ struct HomeSearchResults: View {
                 // plain、没有分隔线（规范 2.5），行底透明（`themedPlainRow()`）。
                 Section {
                     ForEach(group.results) { result in
-                        SearchResultRow(result: result) { router.open(result.route) }
+                        SearchResultRow(result: result, appearances: app.appearances) { router.open(result.route) }
                             .listRowInsets(EdgeInsets())
                     }
                     .listRowSeparator(.hidden)

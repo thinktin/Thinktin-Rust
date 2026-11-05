@@ -165,7 +165,7 @@ struct AppShellTests {
     }
 
     @Test("首页的行：预览文字和头像角标（在等你处理、进行中、闲着）")
-    func homeRows() async {
+    func homeRows() async throws {
         #expect(HomeRowPreview.waiting(count: 2, state: .waitingApproval).text(.chinese) == "2 个在等你处理")
         #expect(HomeRowPreview.waiting(count: 1, state: .waitingDevice).text(.english) == "1 waiting for you")
         #expect(HomeRowPreview.active(count: 1, state: .running).text(.chinese) == "运行中")
@@ -184,6 +184,14 @@ struct AppShellTests {
         for row in model.homeRows {
             hostAndLayout(List { HomeInstanceRow(row: row) }.shellEnvironment(model))
         }
+        // 新建时挑过形状和颜色的 Botin：行上画它挑的头像（首页按 `AppModel.appearances` 传进来）。
+        let first = try #require(model.homeRows.first)
+        model.appearances.set(InstanceAppearance(shape: .hexagon, color: .orchid), for: first.id)
+        #expect(model.appearances.resolved(for: first.id).shape == .hexagon)
+        hostAndLayout(
+            List { HomeInstanceRow(row: first, appearance: model.appearances.resolved(for: first.id)) }
+                .shellEnvironment(model))
+        hostAndLayout(NavigationStack { HomeScreen() }.shellEnvironment(model))
     }
 
     @Test("工作台按钮的读屏：标签只是名字，要处理的数在角标的值里，合起来只念一次")

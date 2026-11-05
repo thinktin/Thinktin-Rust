@@ -1,12 +1,15 @@
 import SwiftUI
 import ThinktinKit
 
-/// 首页的一行（规范 docs/ios-ui-redesign.md 4.2.1 第 0 轮的最小版）：左边 48pt 实例头像（右下角状态角标），中间第一行名字、
+/// 首页的一行（规范 docs/ios-ui-redesign.md 4.2.1 第 0 轮的最小版）：左边 48pt Botin 头像（新建时挑的形状和颜色，
+/// 右下角状态角标），中间第一行名字、
 /// 右边最后活动的时间，第二行预览（在等你处理时用警告色）。外面由 `HomeScreen` 包 `NavigationLink(value: .conversation)`。
 ///
 /// 读屏合成一句：“写作助手，2 个在等你处理，14:05”。
 struct HomeInstanceRow: View {
     let row: HomeRow
+    /// 头像的形状和颜色（`AppModel.appearances`）；默认的是圆形、按名字取色。
+    var appearance: InstanceAppearance = .default
 
     @Environment(\.displayLanguage) private var language
 
@@ -16,8 +19,11 @@ struct HomeInstanceRow: View {
             let time = HomeList.timestamp(row.lastActivityAt, now: context.date, language: language)
             let preview = row.preview.text(language)
             HStack(spacing: Metrics.Spacing.s) {
-                InstanceAvatar(row.instance.name, size: Metrics.Avatar.list, badge: row.preview.avatarBadge)
-                    .accessibilityHidden(true)
+                InstanceAvatar(
+                    row.instance.name, appearance: appearance, size: Metrics.Avatar.list,
+                    badge: row.preview.avatarBadge
+                )
+                .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
                     HStack(alignment: .firstTextBaseline, spacing: Metrics.Spacing.xs) {
                         Text(verbatim: row.instance.name)
@@ -90,7 +96,8 @@ extension HomeRowPreview {
         HomeInstanceRow(
             row: HomeRow(
                 instance: instance,
-                activity: InstanceActivity(activeRuns: 3, latestRunState: .running, latestRunAt: now)))
+                activity: InstanceActivity(activeRuns: 3, latestRunState: .running, latestRunAt: now)),
+            appearance: InstanceAppearance(shape: .flower, color: .orchid))
     }
     .listStyle(.plain)
 }

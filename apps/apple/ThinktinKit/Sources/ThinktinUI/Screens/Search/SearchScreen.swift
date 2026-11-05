@@ -45,7 +45,9 @@ private struct SearchContent: View {
                         GroupedSection {
                             ForEach(group.results) { result in
                                 if result.id != group.results.first?.id { Divider() }
-                                SearchResultRow(result: result) { router.open(result.route) }
+                                SearchResultRow(result: result, appearances: app.appearances) {
+                                    router.open(result.route)
+                                }
                             }
                         }
                         if group.total > group.results.count {
@@ -76,17 +78,42 @@ private struct SearchContent: View {
 /// 一条结果：图标、标题（带 AI 标识的要标）、匹配到的那一段、时间。
 struct SearchResultRow: View {
     let result: SearchResult
+    /// Botin 的头像外观（`AppModel.appearances`）：Botin 的结果画它的头像，别的种类画图标；nil 时 Botin 也是默认的头像。
+    var appearances: InstanceAppearanceStore?
     let action: @MainActor () -> Void
 
     @Environment(\.displayLanguage) private var language
 
+    init(
+        result: SearchResult, appearances: InstanceAppearanceStore? = nil, action: @escaping @MainActor () -> Void
+    ) {
+        self.result = result
+        self.appearances = appearances
+        self.action = action
+    }
+
+    /// Botin 的结果（点了进它的对话）：它的 id。
+    private var instanceID: InstanceID? {
+        guard result.kind == .instance, case .conversation(let id) = result.route else { return nil }
+        return id
+    }
+
     var body: some View {
         Button(action: action) {
-            HStack(alignment: .firstTextBaseline, spacing: Metrics.Spacing.s) {
-                Image(systemName: icon)
-                    .foregroundStyle(Theme.inkSecondary)
+            HStack(alignment: instanceID == nil ? .firstTextBaseline : .center, spacing: Metrics.Spacing.s) {
+                if let instanceID {
+                    InstanceAvatar(
+                        result.title, appearance: appearances?.resolved(for: instanceID),
+                        size: Metrics.Avatar.search
+                    )
                     .frame(minWidth: Metrics.Spacing.xl)
                     .accessibilityHidden(true)
+                } else {
+                    Image(systemName: icon)
+                        .foregroundStyle(Theme.inkSecondary)
+                        .frame(minWidth: Metrics.Spacing.xl)
+                        .accessibilityHidden(true)
+                }
                 VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
                     Text(verbatim: result.title.isEmpty ? AppRoute.search.title(language) : result.title)
                         .typography(.body)

@@ -15,7 +15,7 @@ struct SearchScreensTests {
         hostAndLayout(SearchDestination(route: .search).previewShell().dynamicTypeSize(.accessibility3))
     }
 
-    @Test("结果的一行：带片段、AI 标识、时间")
+    @Test("结果的一行：带片段、AI 标识、时间；Botin 的结果画它挑的头像")
     func row() {
         let results = [
             SearchResult(
@@ -29,5 +29,8 @@ struct SearchScreensTests {
                 SearchResultRow(result: result) {}.previewShell(.english, scheme: .dark).dynamicTypeSize(
                     .accessibility3))
         }
+        let appearances = InstanceAppearanceStore(defaults: nil)
+        appearances.set(InstanceAppearance(shape: .cloud, color: .navy), for: "i")
+        hostAndLayout(SearchResultRow(result: results[1], appearances: appearances) {}.previewShell())
     }
 }

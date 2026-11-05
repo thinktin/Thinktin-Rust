@@ -9,8 +9,8 @@ import ThinktinKit
 /// - “新任务”（`Router.newTaskRequest`）把焦点放进输入框：对话页一般在请求之后才建（首页 → 对话），出现时也看一眼
 ///   有没有没处理的（`hasPendingNewTaskRequest`），只认当前实例的；发出消息、事件流重置后滚到底。
 /// - 长按 agent 的回复、产出物举报（`ContentReportSheet`）；发送前拦下的密码弹 `SecretInterceptionSheet`。
-/// - 导航栏左边是系统的返回（回首页），标题暂时是实例名（第 1 轮换成规范 4.3.1 的标题胶囊），右边是菜单（实例详情、
-///   模型路由、计划、产出物）。
+/// - 导航栏左边是系统的返回（回首页），中间是 Botin 的小头像（新建时挑的形状和颜色）和名字（第 1 轮换成规范 4.3.1
+///   能点的标题胶囊），右边是菜单（实例详情、模型路由、计划、产出物）。
 struct ConversationScreen: View {
     let instanceID: InstanceID
 
@@ -20,6 +20,25 @@ struct ConversationScreen: View {
     var body: some View {
         ConversationContent(
             client: client, instanceID: instanceID, gate: ConversationGate.resolve(gate, client: client))
+    }
+}
+
+/// 对话页导航栏中间：24pt 头像 + 名字，读屏念名字、当标题。
+private struct ConversationTitle: View {
+    let name: String
+    let appearance: InstanceAppearance
+
+    var body: some View {
+        HStack(spacing: Metrics.Spacing.xs) {
+            InstanceAvatar(name, appearance: appearance, size: Metrics.Avatar.title)
+                .accessibilityHidden(true)
+            Text(verbatim: name)
+                .typography(.headline)
+                .foregroundStyle(Theme.ink)
+                .lineLimit(1)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
     }
 }
 
@@ -41,6 +60,9 @@ private struct ConversationContent: View {
     }
 
     private var instance: Instance? { app.instances.first { $0.id == model.instanceID } }
+
+    /// 导航栏的标题：Botin 的名字（列表里还没有时是页面的标题）。
+    private var title: String { instance?.name ?? AppRoute.conversation(model.instanceID).title(language) }
 
     /// 实例状态：事件流说的优先，其次是实例列表里的。
     private var instanceState: InstanceState? { model.instanceState ?? instance?.state }
@@ -77,8 +99,11 @@ private struct ConversationContent: View {
             }
         }
         .background(Theme.paper)
-        .inlineNavigationTitle(instance?.name ?? AppRoute.conversation(model.instanceID).title(language))
+        .inlineNavigationTitle(title)
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                ConversationTitle(name: title, appearance: app.appearances.resolved(for: model.instanceID))
+            }
             ToolbarItem(placement: .primaryAction) {
                 Menu {
                     Button {

@@ -47,7 +47,10 @@ private struct InstanceDetailContent: View {
                     ErrorBanner(error) { Task { await model.load() } }
                 }
                 if let instance = model.instance, !model.isMissing {
-                    InstanceHeader(instance: instance, agentName: model.agentDisplayName, canEdit: canWrite) {
+                    InstanceHeader(
+                        instance: instance, appearance: app.appearances.resolved(for: instance.id),
+                        agentName: model.agentDisplayName, canEdit: canWrite
+                    ) {
                         isRenaming = true
                     }
                     PillButton(zh ? "打开对话" : "Open chat", systemImage: "bubble.left.and.text.bubble.right") {
@@ -333,6 +336,8 @@ extension InstanceDetailScreen {
 /// 头部：头像、名字、引擎（agent）和版本、状态。
 private struct InstanceHeader: View {
     let instance: Instance
+    /// 新建时挑的形状和颜色（`AppModel.appearances`）。
+    let appearance: InstanceAppearance
     let agentName: String
     let canEdit: Bool
     let onRename: @MainActor () -> Void
@@ -343,7 +348,7 @@ private struct InstanceHeader: View {
         let zh = language == .chinese
         VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
             HStack(alignment: .top, spacing: Metrics.Spacing.s) {
-                InstanceAvatar(instance.name, size: 56)
+                InstanceAvatar(instance.name, appearance: appearance, size: 56)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
                     Text(instance.name)

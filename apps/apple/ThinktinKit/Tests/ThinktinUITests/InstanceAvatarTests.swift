@@ -4,7 +4,8 @@ import ThinktinKit
 
 @testable import ThinktinUI
 
-/// 实例头像（docs/ios-ui-redesign.md 2.4、6.9 C）：按名字取色稳定、颜色看得清、读屏文字、各种尺寸和角标都画得出来。
+/// Botin 头像（docs/ios-ui-redesign.md 2.4、4.4.4、6.9）：按名字取色稳定、12 种颜色都看得清、15 种形状不出界、读屏文字、
+/// 各种尺寸、形状和角标都画得出来。
 @MainActor
 @Suite("实例头像")
 struct InstanceAvatarTests {
@@ -33,10 +34,13 @@ struct InstanceAvatarTests {
         #expect(indices.allSatisfy { InstanceAvatar.palette.indices.contains($0) })
     }
 
-    @Test("色板：白字看得清（对比度 4:1 以上），浅深各一套，不和强调色、状态色撞")
+    @Test("色板：12 种颜色白字看得清（对比度 4:1 以上），浅深各一套，不和强调色、状态色撞；按名字取的 8 种色值没变")
     func paletteIsReadable() {
-        let palette = InstanceAvatar.palette
-        #expect(palette.count == 8)
+        // 第 0 轮的 8 种（已有的 Botin 的颜色不能变）。
+        #expect(InstanceAvatar.palette.count == 8)
+        #expect(InstanceAvatar.palette[0].light == 0x3B6FB6 && InstanceAvatar.palette[7].dark == 0x9A7055)
+        let palette = AvatarColor.allCases.map(InstanceAvatar.colors(of:))
+        #expect(palette.count == 12)
         #expect(Set(palette.map { $0.light }).count == palette.count)
         #expect(Set(palette.map { $0.dark }).count == palette.count)
         let reserved: Set<HexColor> = Set(
@@ -47,6 +51,29 @@ struct InstanceAvatarTests {
             #expect(contrastWithWhite(colors.light) >= 4, "\(colors.light)")
             #expect(contrastWithWhite(colors.dark) >= 4, "\(colors.dark)")
         }
+    }
+
+    @Test("形状：15 种都画在单位正方形里、不太小；云朵的三个圆相交")
+    func shapesFit() {
+        for shape in AvatarShape.allCases {
+            var builder = AvatarPathBuilder()
+            AvatarShapeGeometry.draw(shape, into: &builder)
+            let bounds = builder.unitBounds
+            // 控制点可能比曲线略往外一点。
+            #expect(bounds.minX >= -0.02 && bounds.minY >= -0.02, "\(shape)")
+            #expect(bounds.maxX <= 1.02 && bounds.maxY <= 1.02, "\(shape)")
+            #expect(bounds.maxX - bounds.minX >= 0.6 && bounds.maxY - bounds.minY >= 0.6, "\(shape)")
+            let layout = AvatarMonogramLayout(shape)
+            #expect(layout.textScale > 0.2 && layout.textScale <= 0.42 && abs(layout.verticalOffset) < 0.15)
+        }
+        let circles = AvatarShapeGeometry.cloudCircles
+        #expect(AvatarShapeGeometry.upperIntersection(circles.right, circles.top) != nil)
+        #expect(AvatarShapeGeometry.upperIntersection(circles.top, circles.left) != nil)
+        // 圆的边上的点都在半径 0.5 上；超椭圆填满正方形。
+        let ring = AvatarShapeGeometry.polar(samples: 8) { _ in 0.5 }
+        #expect(ring.allSatisfy { abs(hypot($0.x - 0.5, $0.y - 0.5) - 0.5) < 1e-9 })
+        let squircle = AvatarShapeGeometry.superellipse(exponent: 4.5, samples: 8)
+        #expect(squircle.contains { abs($0.x - 1) < 1e-9 } && squircle.contains { abs($0.y) < 1e-9 })
     }
 
     @Test("读屏：名字加状态，名字空的念“未命名”")
@@ -81,6 +108,17 @@ struct InstanceAvatarTests {
         renderInBothAppearances(InstanceAvatar("OpenClaw", badge: .run(.waitingApproval)))
         renderInBothAppearances(
             InstanceAvatar("", badge: .custom(StatusAppearance(tone: .success), accessibilityLabel: "在线")))
+        for shape in AvatarShape.allCases {
+            renderInBothAppearances(
+                InstanceAvatar(
+                    "周报助手", appearance: InstanceAppearance(shape: shape, color: .graphite), size: Metrics.Avatar.list,
+                    badge: .instance(.running)))
+        }
+        for color in AvatarColor.allCases {
+            renderInBothAppearances(InstanceAvatar("Pi", appearance: InstanceAppearance(color: color)))
+        }
+        // 名字是空的：占位符号（新建表单还没输入）。
+        renderInBothAppearances(InstanceAvatar("  ", appearance: InstanceAppearance(shape: .cloud), size: 120))
     }
 
     /// WCAG 的对比度：白色和 `color` 的相对亮度之比。
