@@ -71,3 +71,5 @@ ThinkTin 还没有后端的功能用本地演示数据，要服务端的操作�
 Linux 检查（2026-11-05，最后一次提交上）：ThinktinKit `swift build --build-tests` + `swift test` 1114 个全过；uicheck UIKit、AppKit 都编过（这几页没有
 警告）；`run.sh test` 的 ThinktinUITests 151 个全过（新加“设置补充页的界面”4 条）；`swift format -i -r apps/apple` 后
 `swift format lint --strict -r apps/apple` 零条。macOS CI 和截图还没跑。
+
+已合进 ios-ui-redesign（19e299a）

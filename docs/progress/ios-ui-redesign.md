@@ -594,6 +594,17 @@
     中性灰选中环）在合并后的代码里都还在。
     Linux 检查：ThinktinKit `swift test` 1138 个全过；uicheck UIKit、AppKit 都编过；`run.sh test` 161 个全过；App 的 `ThinktinTests`
     21 个过 16 个（还是那 5 个）；`swift format lint --strict` 零条。
+  - `r2/settings`（合并提交 `19e299a`）：权限与规则、订阅、导入记忆、发送反馈、设备改名弹窗、保险箱“+”菜单和卡片 / 联系信息表单、
+    登录信息的网站行（规范 4.9.1、4.9.4–4.9.10、4.9.14）。冲突：`RouteSamples` 里权限、订阅、导入记忆、反馈是 52–55，`caseCount` 56；
+    离线策略 `.local` 那行留着 `.primaryBotin`，这四个另起一行 `.local`；设置根页第一组是 账号、用量、订阅、模型 key、保险箱（用量照审查修正
+    紧跟账号，订阅照参考 53 紧跟用量），第二组“连接”（r2/connections 换掉的 IM 渠道），“Botin”组 权限、审批、登录设备、导入记忆（实时活动的
+    两行开关照旧接在审批后面），链接组隐私政策在前，反馈单独一组；规范 4.9.1、4.9.9 两边的审查修正和“已做”都留，表里 94–100 用这条线的、
+    101–107 用 r2/connections 的。`DevicesView`、`VaultScreens` 两边都改过，自动合上了（审查修正的左滑和这条线的改名弹窗、“+”菜单都在）；
+    桩没有重复声明（`UITextContentType` 这条线只是 extension 加信用卡几种）。
+    Linux 检查（合并提交上）：ThinktinKit `swift build --build-tests` + `swift test` 1163 个全过；uicheck UIKit、AppKit 都编过（没有错误和警告）；
+    `run.sh test` 的 ThinktinUITests 165 个全过；App 的 `ThinktinTests` 21 个过 16 个（还是那 5 个要 App 包的）；`swift format -i -r apps/apple`
+    没改东西，`swift format lint --strict -r apps/apple` 零条。
+  - 四条线都合完了。各线留的跨线小事（以前不在各自的范围里，现在都在本分支上了）记在“下一步”第 4 条。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、
@@ -604,7 +615,8 @@
 新建时选它用哪个 agent 当引擎，同一个 agent 可以给好几个 Botin 当引擎（服务端只限每个账号的实例数）。agent 在界面上只以 Botin 的“引擎”/“Engine”出现。
 首次登录首页是空的，空状态“还没有 Botin”+ 说明 + “新建 Botin”按钮。代码里的标识符（`Instance`、`AppRoute.adopt`、`adopt(...)`）不改。
 
-进行中：把第 2 轮的四条线合进本分支（2026-11-05，session_01GuCp3KRgqaK6Kzynw6udRn）：`r2/connections`、`r2/conversation`、`r2/botin` 已合，接着 `r2/settings`。
+进行中：无人。第 2 轮的四条线 2026-11-05 都合进本分支了（`c6a2aaf`、`7de7dd0`、`a897e14`、`19e299a`，见“已完成”最后一条）；
+合完的四个 `r2/*` 远端分支还没删，等用户看过再删。
 第 1 轮 A 线的首页补完、B、C、D、E 线和收尾线 2026-11-05 做完，见“已完成”。
 验证和发版（2026-11-05，session_01GuCp3KRgqaK6Kzynw6udRn）：GitHub 的 Mac 一直排不上，改用 Codemagic（`.github/workflows/codemagic.yml`：
 把提交推到 `codemagic/apple-check` / `codemagic/ios-screenshots`）。第 0 轮（bbdb07c）、Botin 版（06894fd）、新建页重做（c78064e）
@@ -640,6 +652,13 @@ TestFlight：28（Botin 改名、空状态，旧表单）、30（新建页重做
    收尾线做完了（参考里没有的页和各线剩下的自画页都换成原生控件，自画组件删了）：剩下的只有登录页（用户自己设计，等他的稿子；它还用
    `AccountRow`、`AccountScrollPage`、`AccountPageHeader`、`CheckboxRow`、`SignInButtonStyle`，换完一起删）；出一次截图（下面第 2 条，
    多了 15–18 四张）和参考并排看，按用户的修正再调。
+4. 第 2 轮四条线留下的跨线小事（合进来以后都在本分支，没做；各线的原话在 `docs/progress/r2-<名字>.md` 的“下一步”）：
+   (a) 注销账号只清了头像外观，还要清表情回应、主 Botin、语音选择（`MessageReactionStore`、`PrimaryBotinStore`、`BotinVoiceStore`）；
+   (b) 新任务表单、快捷指令、小组件默认选主 Botin（`PrimaryBotinStore.shared.primaryID`）；(c) Botin 资料页的头像给主 Botin 加星标（参考 10）；
+   (d) 对话里“等你接管”的状态行点了 `router.open(.instanceScreen(id))`；(e) 首页工作台菜单要不要加“连接”入口（参考是首页左下的应用按钮；
+   加的话改 `WorkbenchEntry`、`isTopLevel` 和 `AppRouteTests` 的顶级页个数）；(f) `MessageMenuContent` / `messageMenu` 没用的
+   `previewShape` 参数可以删了（运行详情那几处一起改）；(g) 连接、观看与接管、设置补充页的 `THINKTIN_OPEN_SCREEN` 和截图（连接已有
+   `19-connections`，另两组没有）；(h) `AppFeature.connections.workPackage` 的 “12.26” 是占位，WBS 有了连接的包再改。
 
 坑和决定：
 - 自画组件删了（2026-11-05 收尾线）：页面一律 `List` / `Form` + `themedGroupedBackground()` + 行的 `themedRow()`，空状态
