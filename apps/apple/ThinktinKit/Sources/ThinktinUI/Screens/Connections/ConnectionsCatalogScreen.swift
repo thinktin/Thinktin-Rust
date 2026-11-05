@@ -79,7 +79,12 @@ private struct ConnectionsCatalogContent: View {
             .inlineNavigationTitle(AppRoute.connections(category: nil).title(language))
             .toolbar {
                 ToolbarItem(placement: ToolbarSlot.trailing) {
-                    Button(ConnectionsText.connectedCount(model.connectedCount, language: language)) {
+                    // 拉到之前不知道几个，先只写“已连接”。
+                    Button(
+                        model.hasLoaded
+                            ? ConnectionsText.connectedCount(model.connectedCount, language: language)
+                            : ConnectionsText.connected(language)
+                    ) {
                         router.open(.connectedApps)
                     }
                 }
