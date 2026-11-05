@@ -122,7 +122,7 @@
 |---|---|---|
 | 分组卡片 | 约 20–26 | 系统 insetGrouped 自带，不自己设 |
 | 消息气泡、自画卡片 | 约 20 | `RoundedRectangle(cornerRadius: 20, style: .continuous)`；`Metrics.Radius.card` 16 → 20 |
-| 输入框 | 胶囊；带引用时卡片圆角约 28 | `.glassEffect(in: .capsule)` / `RoundedRectangle(cornerRadius: 28)`；`Metrics.Radius.input` 不再用 |
+| 输入框 | 胶囊；带引用时卡片圆角约 28 | `.glassEffect(in: .capsule)` / `RoundedRectangle(cornerRadius: 28)`；`Metrics.Radius.input` 已删（2026-11-05） |
 | 导航栏圆按钮 | 约 44 | 工具栏系统给，不自己设尺寸 |
 | 实例头像 | 列表 48、置顶 80、资料页 120、编辑页 100、搜索结果 40、标题胶囊 24 | 新组件 `InstanceAvatar(_:appearance:size:badge:)`（形状 + 颜色见 4.4.4） |
 | 应用 / agent 图标方块 | 40，圆角约 10 | `Metrics.Radius.control`（10）保留 |
@@ -478,7 +478,23 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 - **新实例第一次进来（118）**：参考是自动欢迎语 + “你最想让我先做什么”的 A/B/C/D 选择卡。ThinkTin 没有欢迎消息，
   也没有“agent 提问 + 选项”的结构化事件；建议第 2 轮在客户端画一张静态卡：先查 main 路由和 key，没配好时卡片引导去配；
   配好了给 3–4 个示例任务，点一个就 `sendMessage`（6.18）。第 1 轮先用 `ContentUnavailableView`“给 X 布置第一个任务”。
-- **ThinkTin 现在**：`.conversation(id)` → `Screens/Conversation/ConversationScreen.swift`（`ConversationContent`）、
+- **已做（第 1 轮 B 线，2026-11-05）**：照参考 02、118 的版式。导航栏中间是能点的 `ConversationTitle`（24pt 头像 + 名字，
+  `Button`，iOS 26 由工具栏画成玻璃胶囊，点了 `router.open(.instance(id))`），右边“…”（4.3.2）。agent 的回复、思考、待办、
+  没有过程记录的运行结果是左边的 `agentBubble` 气泡（圆角 20，内边距 16 × 12，右边留 48pt），“AI 生成”标识在气泡下面；
+  用户消息是右边的 `userBubble` 气泡，开头是引用块的（4.3.5）在气泡里先画一小块引用（`QuotedBlock`）。运行之间的时间分隔
+  `ConversationTimeSeparator`（ViewModels/Conversation，隔 15 分钟以上或跨天才加，今天 / 昨天 / 星期几 / 日期，`.footnote` +
+  三级灰，参考里就是这个灰度）；来源行改成居中的小灰字和图标。输入框是 `floatingBar` 里的玻璃胶囊（高 48，左右各留 32pt，
+  参考量出来约 31pt；主按钮是 36pt 的 `glassProminent` 圆，发送 `arrow.up`、停止 `stop.fill`、发送中转圈），有引用时长成
+  圆角 28 的卡片；模型标签、排队提示、超限提示、字数是输入框正上方的小玻璃胶囊（旧系统的 `safeAreaInset` 下也挡得住后面滚过的
+  内容）。参考输入框里的“+”（附件，6.13）、麦克风和语音（6.23）没有对应的功能，没放。还没有任务时是 `ConversationWelcome`
+  （参考 118 的版式：最上面 Botin 创建时间、左边一个说明气泡——App 的话不是 Botin 说的，不带 AI 标识——下面同宽的卡片：没配
+  main 时“开始之前”+ 去配模型路由，配好了“想让 X 先帮你做什么？”+ A–D 四个示例任务，点了放进输入框、聚焦，右上 × 收起；卡片
+  下面“也可以在下面直接写”）；这就是 6.18 A，示例任务先按引擎无关的通用任务写（`ConversationText.starterSuggestions`）。
+  找不到这个 Botin 用 `ContentUnavailableView`。工具调用、审批、保险箱、产出物、子运行、计划卡片照旧全宽，去掉描边、底色和
+  气泡同一个灰（`cardSurface()`、`Card(bordered: false)`），按钮换成系统的玻璃按钮（`smallCapsuleButton()`；审批的选项是全宽的
+  大胶囊，第一个批准类的突出）。举报 sheet 换成 `Form`（原因 `Picker(.inline)`，左上关闭、右上“提交”），密码拦截 sheet 的按钮
+  换成系统的、底部“仍然发送”是浮动的全宽玻璃胶囊。`Metrics.Radius.input` 删了。
+- **ThinkTin 改版前**：`.conversation(id)` → `Screens/Conversation/ConversationScreen.swift`（`ConversationContent`）、
   `ConversationTimeline.swift`、`MessageViews.swift`（`UserMessageView` 右侧卡片，`AssistantTextView` 不带气泡）、
   `ConversationCards.swift`（`SourceHeaderView`）、`ConversationComposer.swift` + `Components/ComposerBar.swift`；
   `ViewModels/Conversation/ConversationModel.swift`。标题现在是 `Shell/InstanceSwitcher.swift`。
@@ -494,7 +510,11 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 - **原生**：`Menu { Section { … } Section { … } } label: { Image(systemName: "ellipsis") }`；分享类用 `ShareLink`。
 - **ThinkTin 的菜单项**：第一组 实例资料（`person.crop.circle`）、在对话中查找（`magnifyingglass`，第 2 轮）；
   第二组 模型路由（`cpu`）、新建计划（`calendar.badge.plus`）、产出物（`folder`）。参考的“分享为模板”不做（6.21）。
-- **ThinkTin 现在**：`ConversationScreen.swift` 的 `ToolbarItem(placement: .primaryAction)` 里的 `Menu`（实例详情、模型路由、
+- **已做（第 1 轮 B 线，2026-11-05）**：`ConversationMoreMenu`，iOS 放 `.topBarTrailing`（macOS `.primaryAction`），图标
+  `ellipsis`；分组在 ThinktinKit 的 `ConversationMenu`（Linux 上测顺序）：第一组 Botin 资料（`person.crop.circle`）；第二组 计划
+  （`calendar`，这个 Botin 的计划）、新建计划（`calendar.badge.plus`）、产出物（`folder`）、模型路由（`cpu`）；有任务在跑时最后一组
+  “停止当前任务”（`stop.circle`，destructive，`model.stop()`）。参考的三项里“在聊天中查找”是第 2 轮（做了放第一组），“分享为模板”不做。
+- **ThinkTin 改版前**：`ConversationScreen.swift` 的 `ToolbarItem(placement: .primaryAction)` 里的 `Menu`（实例详情、模型路由、
   新建计划、产出物），图标 `ellipsis.circle`。
 - **要改**：分组、换图标、放 `.topBarTrailing`。第 1 轮。
 
@@ -523,7 +543,12 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 - **原生**：`.contextMenu { Section { … } … }`；选择文本弹 sheet，里面放只读的 `UITextView`（`isEditable = false`、`isSelectable = true`，
   `UIViewRepresentable` 包一层）——iOS 上 `Text(...).textSelection(.enabled)` 只能整段复制，不能划选一部分；复制用现有的
   `Pasteboard.copy`（agent 输出带 AI 生成标识）；复制 ID 加 `.sensoryFeedback(.success, trigger:)`。
-- **ThinkTin 现在**：`MessageViews.swift` 的 `MessageMenu`（复制、分享、举报）、`UserMessageView`（复制、再发一次）、
+- **已做（第 1 轮 B 线，2026-11-05）**：系统长按菜单（`MessageMenus.swift` 的 `messageMenu(_:previewShape:)`，iOS 上预览是
+  气泡的外形），分组在 ThinktinKit 的 `MessageMenuLayout`：agent 写的 引用回复；复制、选择文本、复制运行 ID；分享；举报
+  （destructive）。用户消息 引用回复；复制、选择文本、复制运行 ID；再发一次。“只看本次过程”里没有引用回复。选择文本弹
+  中号起的 sheet，iOS 里是只读的 `UITextView`（`UIViewRepresentable`，能划选一部分），macOS 是 `Text.textSelection`；agent 写的
+  下面带 AI 标识。复制运行 ID 有成功的触感（`.sensoryFeedback(.success)`）。删除不做（没有删运行的接口），表情、标为未读不做（6.11）。
+- **ThinkTin 改版前**：`MessageViews.swift` 的 `MessageMenu`（复制、分享、举报）、`UserMessageView`（复制、再发一次）、
   `ContentReportSheet.swift`。
 - **要改**：加“选择文本”“复制运行 ID”，分组。表情、标为未读要后端（6.11）；真要做表情时长按改成
   `.sheet` + `.presentationDetents([.medium, .large])` + `.presentationDragIndicator(.visible)`。第 1 轮。
@@ -535,6 +560,11 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   `.background(.fill.tertiary, in: Capsule())`；`@FocusState` 自动聚焦；胶囊和卡片的切换用系统的 `withAnimation`。
 - **ThinkTin 现在**：没有；`sendMessage(instanceID:text:allowSecrets:)` 只收纯文本。
 - **要改**：按 6.11 的方案 A，发送时把引用拼成 Markdown 引用块（`> …`）放在正文前，算进 32000 字、照样过密码检测。第 2 轮。
+- **已做（提前到第 1 轮 B 线，2026-11-05）**：`ConversationModel.quotedText` / `setQuote` / `clearQuote` / `outgoingText`，
+  拼法在 `MessageQuote`（每行加 `> `、空行只留 `>`，空一行接正文；引用超过 1000 个字符截断加“…”；正文空时不带引用、不能发）；
+  字数和超限按 `outgoingText` 算；发出去以后引用和输入框一起清，发送失败都留着；密码拦截拦下的是整段，存进保险箱后整段放回
+  输入框、不再单独带引用。输入框长成圆角 28 的卡片：顶上一条浅灰胶囊（一行截断、右边 ×“取消引用”），中间输入，下面一行右边
+  是主按钮；选了引用自动聚焦。时间线里用户消息开头的引用块拆出来画（`MessageQuote.split`）。
 
 #### 4.3.6 附件菜单（8）
 
@@ -1441,6 +1471,8 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 | D 计划、产出物、搜索（12.6、12.18、12.21） | 实例的计划和全部计划（4.5.1）、产出物版式和产出物详情（4.5.2、4.5.3 第 1 轮部分）、`SearchResultsView` 拆出来给 A 用（4.2.4） | `Screens/Plans/*`、`Screens/Artifacts/*`、`Screens/Search/*`、对应的 `ViewModels/` 和测试 |
 | E 设置一带（12.12、12.2、12.4、12.13、12.14、12.9 手机这边） | 设置根页（4.9.1）、账号（4.9.2）、用量（4.9.3）、保险箱和登录信息表单（4.9.5、4.9.6）、设备列表和详情（4.9.9）、外观（4.9.11）、语言（4.9.12）、模型 key、IM 渠道换原生 | `Screens/Settings/*`、`ViewModels/Settings/SettingsModel.swift`、`Screens/Account/*`（登录相关不动）、`Screens/Models/*`、`Screens/Vault/*`、`Screens/ImChannels/*`、`Screens/Computer/ComputerLinkViews.swift` |
 
+- B 线 2026-11-05 做完（对话页 4.3.1、“…”菜单 4.3.2、长按菜单 4.3.4，顺带做了第 2 轮的引用回复 4.3.5 和首次引导卡 6.18 A；
+  对话内查找 4.3.3 还没做），逐节的做法见各节的“已做”和 docs/progress/ios-ui-redesign.md。
 - 线之间的依赖：A 的首页搜索要用 D 拆出来的 `SearchResultsView`，D 先交这一块，A 之前先嵌现有的 `SearchScreen`。
   A 的长按“改名”自己用 `.alert` + `InstanceNameRule`，不等 C。
 - 收尾（谁先空下来谁做）：参考里没有的页（收件箱、审批中心、进行中、团队和流水线、运行详情、运行树、引导、关于、开源许可）

@@ -296,6 +296,39 @@
     Botin 的记录”“删掉了顺带删头像外观”）；uicheck UIKit、AppKit 都编过；`run.sh test` 140 个全过（新加角标位置、首字字号两条）；App 的
     `ThinktinTests` 21 个过 16 个（还是那 5 个要 App 包的：Info.plist 两条、隐私清单、小组件扩展、缓存路径）；`swift format -i -r apps/apple`
     后 `swift format lint --strict -r apps/apple` 零条。macOS CI 和截图还没跑。
+- 第 1 轮 B 线·对话页（规范 4.3，参考 02、03、06、07、118；用户 2026-11-05 要求“其他页面也照稿子 1:1 改”；提交 `b307428`、
+  `372771c`、`11e22a9` 和这一条）：
+  - 视图模型（ThinktinKit `ViewModels/Conversation/`）：`ConversationTimeSeparator`（运行之间的时间：第一组总有，隔 15 分钟以上或
+    跨天才加；今天“今天 22:09”、昨天、一周内“星期二 02:22”、更早“10月29日 09:00”，往年带年份；`ConversationModel.timeSeparators`）；
+    `MessageQuote`（引用回复的 Markdown 拼法、拆回、单行预览，引用最多 1000 个字符）；`ConversationModel.quotedText` / `setQuote` /
+    `clearQuote` / `outgoingText`（字数、超限、发送都按带引用的整段算；发完清掉，失败留着；密码拦截存好后整段放回输入框）；
+    `ConversationMenu` / `ConversationMenuItem`（“…”菜单的分组）、`MessageMenuLayout` / `MessageMenuAction`（长按菜单的分组）；
+    `ConversationStarter` + `ConversationModel.starter` / `useSuggestion`（第一次进来的卡片：没配 main 是去配置，配好了是示例任务，
+    默认模型还没拉到时先不出）；`ConversationText` 加了相应文案（示例任务四条，中英文）。
+  - 界面：导航栏中间能点的标题（头像 + 名字 → Botin 资料），右上 `ellipsis` 菜单（`.topBarTrailing`）；agent 输出是左边的
+    `agentBubble` 气泡、用户消息右边的 `userBubble` 气泡（开头的引用块画成一小块 `QuotedBlock`）；时间分隔、居中的来源行；
+    `ComposerBar` 重写成浮动的玻璃胶囊（高 48、左右各留 32，主按钮 36pt 的 `glassProminent` 圆），有引用时长成圆角 28 的卡片、
+    顶上一条引用和 ×；模型、排队、超限、字数是输入框上方的小玻璃胶囊；新文件 `MessageMenus.swift`（`messageMenu` 修饰符：系统长按
+    菜单 + 读屏操作 + 选择文本的 sheet + 复制运行 ID 的触感）、`ConversationWelcome.swift`（参考 118 的首次状态）；卡片去掉描边、
+    底色和气泡一样，按钮换成系统玻璃按钮（`smallCapsuleButton()`）；举报 sheet 换成 `Form`，密码拦截 sheet、运行详情、运行树、
+    进行中的 `PillButton` / `EmptyStateView` 换成系统的；`Metrics.Radius.input` 删了（`DesignTokenTests` 跟着改）。
+    `AgentsScreensTests` 里画 `ConversationSetupNote` 的两行换成 `ConversationWelcome`（那个视图删了）。
+  - uicheck 桩：`SwiftUI+iOS.swift` 加 `UIViewRepresentable`，新文件 `UIKit/UIKit+Conversation.swift`（`UITextView`、`UIScrollView`、
+    `UIFont.preferredFont(forTextStyle:)`、`UIEdgeInsets`、`UIColor.clear`）。桩里没有 `Group`、两个参数的 `onChange` 闭包、`AnyShape`、
+    `truncationMode`，这次绕开了没补。
+  - 测试：ThinktinKit 新 `ConversationLayoutTests`（时间分隔的写法和位置、引用的拼法和拆回、两个菜单的分组、带引用发送 / 超限 /
+    失败 / 密码拦截、第一次进来的卡片、菜单跟着状态变）；`ConversationScreensTests` 加“改版的对话页”（首次状态两种卡片、时间分隔、
+    带引用的消息和输入框、选择文本 sheet、长按菜单的内容）。
+  - 参考里有、这次没做的：输入框的“+”（附件，6.13 要后端）、麦克风和语音按钮（6.23 不做）、长按的表情面板和“标为未读”（6.11）、
+    “…”里的“在聊天中查找”（4.3.3，第 2 轮）、“分享为模板”（6.21）。示例任务点了是放进输入框（规范 6.18 写的是“点了就发出去”，
+    放进输入框让用户改一改再发，不想要的话 `ConversationWelcome` 的 `onSuggestion` 里直接 `send()`）。
+  - 要在模拟器上看的（Linux 的桩看不出来）：iOS 26 工具栏给 `.principal` 里的标题按钮套不套玻璃胶囊（不套的话自己加
+    `glassBackground`）；输入框左右 32pt 在 375pt 宽的机器上挤不挤；`safeAreaBar` 下键盘弹起时输入框的位置；36pt 主按钮在
+    `glassProminent` + `.circle` 下的实际大小；选择文本 sheet 里 `UITextView` 的边距和深色；长按气泡的预览外形；旧系统上小玻璃胶囊
+    （`.regularMaterial`）压在滚动内容上的可读性。
+  - 这一份的 Linux 检查（2026-11-05，最后一次提交上）：ThinktinKit `swift test` 1048 个全过；uicheck UIKit、AppKit 都编过；
+    `run.sh test` 141 个全过；App 的 `ThinktinTests` 21 个过 16 个（还是那 5 个要 App 包的）；`swift format -i -r apps/apple` 后
+    `swift format lint --strict -r apps/apple` 零条。macOS CI 和截图还没跑。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、
@@ -306,9 +339,7 @@
 新建时选它用哪个 agent 当引擎，同一个 agent 可以给好几个 Botin 当引擎（服务端只限每个账号的实例数）。agent 在界面上只以 Botin 的“引擎”/“Engine”出现。
 首次登录首页是空的，空状态“还没有 Botin”+ 说明 + “新建 Botin”按钮。代码里的标识符（`Instance`、`AppRoute.adopt`、`adopt(...)`）不改。
 
-进行中：
-- 第 1 轮 B 线（对话页，规范 4.3，参考 02、03、06、07、118）：session_01GuCp3KRgqaK6Kzynw6udRn 的工作流子任务，2026-11-05 07:23 UTC 开始。
-  改 `Screens/Conversation/*`、`Components/ComposerBar.swift`、`ViewModels/Conversation/*` 和对应测试。
+进行中：没有（第 1 轮 B 线 2026-11-05 做完，见“已完成”）。
 验证和发版（2026-11-05，session_01GuCp3KRgqaK6Kzynw6udRn）：GitHub 的 Mac 一直排不上，改用 Codemagic（`.github/workflows/codemagic.yml`：
 把提交推到 `codemagic/apple-check` / `codemagic/ios-screenshots`）。第 0 轮（bbdb07c）、Botin 版（06894fd）、新建页重做（c78064e）
 的 apple-check 都过了（真 Xcode：模拟器 build + test、ThinktinMac、Kit 的 macOS 测试）。截图对照参考 34、35 后又调了两次版式：
@@ -336,7 +367,7 @@ TestFlight：28（Botin 改名、空状态，旧表单）、30（新建页重做
    （参考截图在仓库外，要请用户再发），差别记到这里。冷启动后的启动屏截不到，要在模拟器或真机上看一眼。
 3. 第 1 轮五条线并行（规范 7.3，开工前先在这里认领）；第 2 轮纯客户端新功能；第 3 轮等后端。A 线（首页）接着做：长按菜单（4.2.2）、
    “等你处理”提示行、预览换成最近一次运行的摘要（6.7）、`SearchResultsView` 嵌进首页（D 线先交）、空查询时列实例、`NewTaskSheet`
-   换选择器版式（4.4.5）。B 线做对话页时注意下面“坑”里 `newTaskRequest` 那条。
+   换选择器版式（4.4.5）。B 线（对话页）做完了，接着可以做第 2 轮的对话内查找（4.3.3，“…”菜单第一组 Botin 资料后面加一项）。
 
 坑和决定：
 - 参考截图是别家产品、里面有用户的账号信息，仓库公开，所以**不进仓库**；规范里只用自己的话写布局和交互，不写参考 App 的名字。以后的会话要看截图，请用户再发一次压缩包。
@@ -386,6 +417,13 @@ TestFlight：28（Botin 改名、空状态，旧表单）、30（新建页重做
   原始值（6.9 B），本机的存储当缓存或删掉。形状是自己画的几何（`AvatarShapes.swift`），别换成参考 App 的形象，也别画脸。
   存储读写的是原始字符串（`StoredAppearance`）：认不出的形状、颜色原样写回，别改成读进来就换成默认的（装回旧版本会抹掉新版本挑的）。
   加了形状要看一眼 `badgeAnchors`（角标落在右下方的轮廓上，自动算的）和 `AvatarMonogramLayout`（字号比例，24pt 上不小于 9pt）。
+- 对话页的菜单项改 ThinktinKit 的 `ConversationMenu`（“…”）和 `MessageMenuLayout`（长按），界面照着画；加了项要补 `systemImage`
+  （`ConversationMenuItem` 认不出的路由是兜底的 `chevron.right`，测试会抓）。长按菜单统一用 `messageMenu(_:previewShape:)`，
+  别再直接 `.contextMenu`（读屏操作、选择文本的 sheet、触感都在那个修饰符里）。
+- 引用回复是纯客户端的：发出去的就是带 `> ` 的 Markdown，服务端不知道回的是哪条（6.11 B 要后端）。要改拼法改 `MessageQuote`，
+  `split` 要能拆回 `compose` 拼的样子（测试里有）。
+- 输入框（`ComposerBar`）的结构是固定的（引用条、输入行、卡片的按钮行都是可有可无的一项），切换引用时输入框不重建、不丢焦点；
+  改布局时别把 `TextField` 挪进 `if` / `else` 的两个分支。
 - 导航栏中间要放自己的内容（头像 + 名字、以后的标题胶囊）用 `inlineNavigationTitle(_:principal:)`，别在 `inlineNavigationTitle(title)`
   外面再加 `.principal`：它自己已经放了一个，两个都会显示。
 - 新建表单：引擎详情是从表单压进去的时候，`Router.present(.adopt(agentID: id))` 不叠第二张，退回表单、记 `engineRequest`；

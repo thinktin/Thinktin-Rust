@@ -405,7 +405,8 @@ struct PlansDestination: View {
    这些错误都会报给 `AppModel` 切换整页状态；`login` 成功、`logout` / `deleteAccount` / 下线本机之后也会自动切换（12.2 的登录页
    调完 `client.login(...)` 就行）。事件流照常 `client.subscribe(...)`，连接状态会自动汇总成顶部的横幅。
 6. 对话页（12.5）是从首页压进来的（改版规范 4.2.1）：没有抽屉按钮和实例切换菜单了，左上是系统的返回，换实例就回首页点另一行；
-   页面自己的按钮放 `.primaryAction`。`router.newTaskRequest` 变了时把焦点放进输入框（引导、快捷指令的“新任务”）。
+   中间是能点的标题（头像 + 名字，进 Botin 资料），右边是“…”菜单（iOS 放 `.topBarTrailing`，macOS `.primaryAction`；菜单项在
+   `ConversationMenu`，要加入口往那里加）。`router.newTaskRequest` 变了时把焦点放进输入框（引导、快捷指令的“新任务”）。
    首页（`Shell/Home/`）归应用框架：左上头像 `router.open(.settings)`，右上“+” `router.open(.adopt(agentID: nil))`，左下工作台菜单
    `router.openTopLevel(entry.route)`，行是 `NavigationLink(value: AppRoute.conversation(id))`（`Router` 看 `path` 记当前实例），
    底部搜索栏在 `router.searchRequest` 变了（`hasPendingSearchRequest`）时激活。
