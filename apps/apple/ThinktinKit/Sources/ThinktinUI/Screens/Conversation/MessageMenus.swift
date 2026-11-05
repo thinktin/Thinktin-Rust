@@ -54,7 +54,7 @@ private struct MessageMenuModifier<PreviewShape: Shape>: ViewModifier {
             .accessibilityAction(named: Text(ConversationText.copy(language))) { copy() }
             .accessibilityAction(named: Text(ConversationText.quoteReply(language)), ifAvailable: quote)
             .accessibilityAction(named: Text(ConversationText.report(language)), ifAvailable: content.onReport)
-            .sensoryFeedback(.success, trigger: copies)
+            .appFeedback(.success, trigger: copies)
             .sheet(item: $selection) { message in
                 SelectTextSheet(message: message)
                     .environment(\.displayLanguage, language)

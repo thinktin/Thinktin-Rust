@@ -4,10 +4,10 @@ import ThinktinKit
 // 账号与设备页面（WBS 12.2）共用的小组件：分组、行、勾选框、验证码框、协议链接、登录时带的推送令牌。
 // 版式参考 Claude iOS App 的设置页：纸色底上一组组圆角卡片，行里左边图标、中间标题、右边值或箭头。
 
-/// 用户协议、隐私政策的地址（16.4 定稿后由法务发布；12.12 的关于页也用这两个）。
+/// 用户协议、隐私政策的地址（地址本身在 ThinktinKit 的 `LegalLinks`，设置根页的链接组也用）。
 enum AccountLinks {
-    static let userAgreement = URL(string: "https://thinktin.cn/legal/terms")!
-    static let privacyPolicy = URL(string: "https://thinktin.cn/legal/privacy")!
+    static let userAgreement = LegalLinks.termsOfService
+    static let privacyPolicy = LegalLinks.privacyPolicy
 }
 
 /// 登录时带上的推送令牌（12.8 拿到 APNs 设备令牌后注入：`.environment(\.signInPushRegistration, …)`）。

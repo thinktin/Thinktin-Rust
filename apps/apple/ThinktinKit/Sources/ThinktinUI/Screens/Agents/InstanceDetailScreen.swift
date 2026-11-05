@@ -99,7 +99,7 @@ private struct InstanceDetailContent: View {
                 }
             }
         }
-        .sensoryFeedback(.success, trigger: copies)
+        .appFeedback(.success, trigger: copies)
         .navigationDestination(isPresented: $isEditing) {
             InstanceEditScreen(model: model)
         }

@@ -67,7 +67,7 @@ public struct FilterChipBar<Value: Hashable>: View {
         }
         // 玻璃的阴影和按压时的放大不被滚动视图的边框切掉。
         .scrollClipDisabled()
-        .sensoryFeedback(.selection, trigger: selection)
+        .appFeedback(.selection, trigger: selection)
     }
 
     private func chip(_ option: Option) -> some View {

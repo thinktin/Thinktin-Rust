@@ -65,7 +65,7 @@ private struct ArtifactImageViewerContent: View {
                 await model.load()
                 decode()
             }
-            .sensoryFeedback(.success, trigger: model.saveCount)
+            .appFeedback(.success, trigger: model.saveCount)
             .alert(
                 model.saveError.map { ArtifactsText.saveErrorTitle($0, language: language) } ?? "",
                 isPresented: Binding(get: { model.saveError != nil }, set: { if !$0 { model.clearSaveError() } })

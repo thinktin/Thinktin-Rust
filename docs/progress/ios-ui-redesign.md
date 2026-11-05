@@ -401,6 +401,16 @@
   `run.sh test` 144 个全过；App 的 `ThinktinTests` 21 个过 16 个（还是那 5 个要 App 包的：Info.plist 两条（这次多了
   `NSPhotoLibraryAddUsageDescription`）、隐私清单、小组件扩展、缓存路径）；`swift format -i -r apps/apple` 后
   `swift format lint --strict -r apps/apple` 零条。macOS CI 和截图还没跑。
+- 第 1 轮 E 线·设置根页、外观、语言、触感（规范 4.9.1、4.9.11–4.9.13，对过参考 53、70、75、72、73、74；2026-11-05）：
+  视图模型：`SettingsModel.sections(_:pendingApprovals:)` 按参考重排成 8 组（账号 / 连接 / Botin / 偏好 / 安全 / 链接 / 关于 / 退出登录，
+  `SettingsSection.title` 可空）、`todayUsage` + `refreshUsage()`、`accountTitle`、`approvalsSubtitle`、`versionFooter`；`SettingsRow` 加
+  `isProfile`，`Action` 加 `.haptics`、`.link(URL)`，去掉 `.deleteAccount`（注销挪进账号页）；新文件 `ViewModels/Models/UsageToday.swift`
+  （东八区今天的零点、按 key 的每日上限进度 `UsageGauge`、根页那一行的值）；`SettingsPreferences.hapticsEnabled`、`HapticsText`；
+  `LegalLinks`（`AccountLinks` 指过去）。界面：`SettingsScreen` 换 insetGrouped `List`（账号行 `SettingsProfileRow`、`SettingsRowLabel`、
+  `ExternalLinkRow`、版本区 `SettingsVersionFooter`、通知是跳系统设置的 `Toggle`）；`AppearanceTile` 三个方块；语言 `Picker(.inline)`；
+  新 `HapticsSettingsView`；实时活动那组变成 `List` 里的 `Section`；新 `Design/Haptics.swift`（`\.hapticsEnabled`、`appFeedback`，5 处
+  `.sensoryFeedback` 换掉）。测试：`SettingsModelTests` 重写分组 / 入口 / 账号行，加审批、用量、版本区；`SettingsPreferencesTests` 加触感；
+  新 `UsageTodayTests`（4 条）；`SettingsScreensTests` 加根页、方块、触感页。纯黑外观没做（第 2 轮）。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、

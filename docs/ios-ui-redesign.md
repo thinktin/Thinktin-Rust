@@ -965,6 +965,15 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   关于页挪一份到根页（关于页保留，备案号和 AI 说明是合规要求）；注销账号挪进账号页。参考的订阅、权限规则、时区、Bot 电脑、
   导入记忆、连接应用见第 6 节。第 1 轮。
 
+- **已做（2026-11-05，第 1 轮 E 线，对过参考 53、70、75）**：`SettingsScreen` 换成 insetGrouped `List`，没有标题（`inlineNavigationTitle` 放空），
+  行里不放图标；分组照参考的顺序（`SettingsModel.sections(_:pendingApprovals:)`，ThinktinKit 里测）：① 账号行（44pt `InstanceAvatar` + 昵称 +
+  打码手机号）、模型 key（副标题）、用量（值“今天 1.2 万”，`UsageToday` 按东八区今天拉，离线不显示）、保险箱（副标题）；② IM 渠道（参考
+  “连接应用”的位置）；③ 标题“Botin”：审批（参考“权限”的位置，副标题“N 条等你批准”或说明）、登录设备，后面接实时活动的一组开关；
+  ④ 通知（系统 `Toggle`，状态是系统权限，拨它跳系统设置，回前台重读）、外观、语言、触感反馈（值“开启 / 关闭”，进子页）；⑤ 安全（全部停止、
+  下线其他设备，参考没有，带标题）；⑥ 用户协议、隐私政策（`Link` + `arrow.up.right`，地址挪进 ThinktinKit 的 `LegalLinks`）；⑦ 关于 ThinkTin、
+  开源许可、上手引导（参考“发送反馈”的位置）；⑧ 红字“退出登录”（确认）。最底下版本区 `SettingsVersionFooter`（`BrandLogo` 高 40、
+  “ThinkTin”、版本（构建号））。昵称、手机号、注销账号挪进账号页（4.9.2）。`AccountSection` / `AccountRow` / `SettingsOptionRow` /
+  `SettingsFootnote` 在设置根页和外观、语言页不再用。
 #### 4.9.2 账号（54）
 
 - **布局**：压栈页“账号”；第一组：头像 + 昵称 + 打码手机号（ThinkTin 用手机号登录，没有邮箱）；第二组：昵称（点了 alert 改）、
@@ -1060,6 +1069,9 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 - **要改**：第 1 轮换方块（第一排）；第二排的“纯黑”第 2 轮（`SettingsPreferences` 加深色底色、Theme 加纯黑这套值），
   “跟随实例颜色”跟着头像走（6.9、6.22）。
 
+- **已做（2026-11-05，E 线）**：一排三个方块（`AppearanceTile`：圆角 16、高 64 的系统按钮，选中 `glassButtonStyle(.prominent)`、没选中
+  `.regular`，下面名字选中加粗），脚注“只改这台设备”，选中有选择触感。第二排（深色底色：纯黑）没做：纯黑要 Theme 的动态颜色按偏好换值，
+  改了要所有页面重新取色，排第 2 轮。
 #### 4.9.12 语言（73）
 
 - **参考**：insetGrouped 一组纯文字行（各语言用自己的文字写），选中行右边打勾，选了立即生效。
@@ -1067,12 +1079,18 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 - **ThinkTin 现在**：`LanguageSettingsView` + `LanguageSettingsModel`（跟随系统 / 中文 / English，并同步服务端的 locale）。
 - **要改**：换 inline `Picker`，去掉行图标，保留“正在同步”“同步失败可重试”。加不加别的语言不在这次范围。第 1 轮。
 
+- **已做（2026-11-05，E 线）**：一组系统 `Picker(.inline)`（跟随系统（中文）/ 中文 / English，没有行图标），同步中、没同步上的说明在脚注里，
+  失败的 `ErrorBanner` 单独一组可以重试。
 #### 4.9.13 触感反馈（74）
 
 参考是一个子页里一个开关加脚注。建议不单开页面，设置根页直接一行 `Toggle`。`SettingsPreferences` 加 `hapticsEnabled`（默认开），
 各处 `.sensoryFeedback(trigger:) { _, _ in enabled ? .selection : nil }`。先定哪些操作带触感：发送、批准 / 拒绝审批、复制、
 左滑、长按（6.22）。代码里现在没有任何触感。第 2 轮。
 
+- **已做（2026-11-05，E 线，照参考 74 做成子页而不是根页的开关）**：`SettingsPreferences.hapticsEnabled`（默认开，键
+  `cn.thinktin.settings.haptics`，关掉才存 false），`.settingsPreferences()` 放进环境 `\.hapticsEnabled`；界面里要震的地方统一用
+  `appFeedback(_:trigger:)`（`Design/Haptics.swift`，关了就不震），原来的 5 处 `.sensoryFeedback`（筛选胶囊、复制运行 ID、存相册、头像挑选、
+  复制 Botin ID）都换了，外观、语言选中也加了选择触感。根页一行“触感反馈 开启 ›”进 `HapticsSettingsView`（`Toggle` + 脚注）。
 #### 4.9.14 发送反馈（76、77）
 
 - **参考**：压栈页“发送反馈”：多行输入卡片 + 脚注；“和哪个 Bot 有关”一行 `Picker(.menu)`（无 / 各 Bot）；底部全宽“发送反馈”，空时禁用。

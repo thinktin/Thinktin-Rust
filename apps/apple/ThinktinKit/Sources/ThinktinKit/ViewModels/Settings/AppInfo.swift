@@ -69,6 +69,12 @@ public struct AppInfo: Hashable, Sendable {
     }
 }
 
+/// 用户协议、隐私政策的地址（16.4 定稿后由法务发布）：登录页的同意、设置根页的链接组、关于页都用这两个。
+public enum LegalLinks {
+    public static let termsOfService = URL(string: "https://thinktin.cn/legal/terms")!
+    public static let privacyPolicy = URL(string: "https://thinktin.cn/legal/privacy")!
+}
+
 /// 关于页的文案（WBS 12.12；docs/compliance.md 第 1 节、16.3）。
 public enum AboutText {
     /// 品牌下面的一句话介绍。

@@ -22,22 +22,31 @@ struct SettingsModelTests {
         sections.flatMap(\.rows).first { $0.id == id }
     }
 
-    @Test("分组的顺序：账号、模型 key 与用量、保险箱、通知、外观与语言、安全、关于")
+    @Test("分组的顺序照参考 53、70、75：账号、连接、Botin、偏好、安全、链接、关于、退出登录")
     func sectionOrder() {
         let (_, model) = make()
         #expect(model.sections(.chinese).map(\.id) == SettingsSection.ID.allCases)
-        #expect(model.sections(.chinese).map(\.title) == ["账号", "模型 key 与用量", "保险箱", "通知", "外观与语言", "安全", "关于"])
-        #expect(model.sections(.english).first?.title == "Account")
+        // 参考里只有“Bot”那一组有标题；ThinkTin 多出来的“安全”也带标题。
+        #expect(model.sections(.chinese).map(\.title) == [nil, nil, "Botin", nil, "安全", nil, nil, nil])
+        #expect(model.sections(.english).first { $0.id == .security }?.title == "Security")
+        let ids = model.sections(.chinese).map { $0.rows.map(\.id) }
+        #expect(
+            ids == [
+                ["account", "credentials", "usage", "vault"], ["imChannels"], ["approvals", "devices"],
+                ["notifications", "appearance", "language", "haptics"], ["stopAll", "signOutOthers"],
+                ["terms", "privacy"], ["about", "licenses", "onboarding"], ["signOut"],
+            ])
     }
 
-    @Test("入口跳到各功能自己的页面（12.2、12.4、12.13、12.14、本功能）")
+    @Test("入口跳到各功能自己的页面（12.2、12.4、12.13、12.14、12.15、本功能）")
     func routes() {
         let (_, model) = make()
         let sections = model.sections(.chinese)
         let expected: [String: (AppRoute, AppFeature)] = [
-            "name": (.account, .account), "devices": (.devices, .account), "credentials": (.credentials, .models),
+            "account": (.account, .account), "devices": (.devices, .account), "credentials": (.credentials, .models),
             "usage": (.usage, .models), "vault": (.vault, .vault), "imChannels": (.imChannels, .imChannels),
-            "signOutOthers": (.devices, .account), "about": (.about, .settings), "licenses": (.licenses, .settings),
+            "approvals": (.approvals, .approvals), "signOutOthers": (.devices, .account),
+            "about": (.about, .settings), "licenses": (.licenses, .settings),
         ]
         for (id, (route, feature)) in expected {
             #expect(row(id, in: sections)?.route == route, "\(id)")
@@ -47,12 +56,14 @@ struct SettingsModelTests {
         }
         #expect(row("appearance", in: sections)?.action == .appearance)
         #expect(row("language", in: sections)?.action == .language)
-        #expect(row("systemNotifications", in: sections)?.action == .systemNotificationSettings)
+        #expect(row("haptics", in: sections)?.action == .haptics)
+        #expect(row("notifications", in: sections)?.action == .systemNotificationSettings)
+        #expect(row("terms", in: sections)?.action == .link(LegalLinks.termsOfService))
+        #expect(row("privacy", in: sections)?.action == .link(LegalLinks.privacyPolicy))
         #expect(row("signOut", in: sections)?.action == .signOut)
-        #expect(row("deleteAccount", in: sections)?.action == .deleteAccount)
         #expect(row("stopAll", in: sections)?.action == .stopAll)
-        // 手机号只读（换手机号还没有接口，ios-packages.md 12.2）。
-        #expect(row("phone", in: sections)?.action == nil)
+        // 注销账号挪进账号页（参考 54），根页不放。
+        #expect(row("deleteAccount", in: sections) == nil)
         // 行的 id 不重复。
         let ids = sections.flatMap(\.rows).map(\.id)
         #expect(Set(ids).count == ids.count)
@@ -63,40 +74,68 @@ struct SettingsModelTests {
     func flags() {
         let (_, model) = make()
         let sections = model.sections(.chinese)
-        #expect(row("deleteAccount", in: sections)?.isDestructive == true)
-        #expect(row("deleteAccount", in: sections)?.needsNetwork == true)
         #expect(row("stopAll", in: sections)?.isDestructive == true)
         #expect(row("stopAll", in: sections)?.needsNetwork == true)
-        // 退出登录离线也能做（本地照样清掉，`AppModel.signOut()`）。
+        // 退出登录是红字（参考 75），离线也能做（本地照样清掉，`AppModel.signOut()`）。
         #expect(row("signOut", in: sections)?.needsNetwork == false)
-        #expect(row("signOut", in: sections)?.isDestructive == false)
+        #expect(row("signOut", in: sections)?.isDestructive == true)
+        #expect(sections.flatMap(\.rows).filter(\.isProfile).map(\.id) == ["account"])
     }
 
-    @Test("账号一栏：昵称、打码的手机号；没昵称时写未设置")
+    @Test("账号行：昵称、打码的手机号；没昵称时写打码的手机号")
     func account() {
         let (mock, model) = make()
         let sections = model.sections(.chinese)
-        #expect(row("name", in: sections)?.value == "张三")
-        #expect(row("phone", in: sections)?.value == "138****8000")
+        #expect(row("account", in: sections)?.title == "张三")
+        #expect(row("account", in: sections)?.subtitle == "138****8000")
         #expect(model.maskedPhone == "138****8000")
 
         var unnamed = mock.state.user
         unnamed.displayName = nil
         let (_, other) = make(user: unnamed)
-        #expect(row("name", in: other.sections(.chinese))?.value == "未设置")
-        #expect(row("name", in: other.sections(.english))?.value == "Not set")
+        #expect(row("account", in: other.sections(.chinese))?.title == unnamed.nameForDisplay)
+    }
+
+    @Test("审批一行：有等你批准的写条数，没有时说明")
+    func approvals() {
+        let (_, model) = make()
+        #expect(row("approvals", in: model.sections(.chinese, pendingApprovals: 2))?.subtitle == "2 条等你批准")
+        #expect(row("approvals", in: model.sections(.english, pendingApprovals: 1))?.subtitle == "1 waiting for you")
+        #expect(row("approvals", in: model.sections(.english, pendingApprovals: 3))?.subtitle == "3 waiting for you")
+        #expect(row("approvals", in: model.sections(.chinese))?.subtitle == "Botin 做有风险的操作前先问你")
+    }
+
+    @Test("用量一行：今天的用量拉到之前没有值，离线时留着原来的")
+    func usageValue() async {
+        let (mock, model) = make()
+        #expect(row("usage", in: model.sections(.chinese))?.value == nil)
+        await model.refreshUsage()
+        let total = model.todayUsage?.total.totalTokens ?? -1
+        #expect(total >= 0)
+        #expect(
+            row("usage", in: model.sections(.chinese))?.value == "今天 " + Formatting.tokens(total, language: .chinese))
+        mock.failNext(with: .network(message: "offline"))
+        await model.refreshUsage()
+        #expect(model.todayUsage?.total.totalTokens == total)
+    }
+
+    @Test("版本区：名字和版本（构建号）")
+    func versionFooter() {
+        let (_, model) = make()
+        #expect(model.versionFooter(.chinese) == ("ThinkTin", "0.1.0（7）"))
+        #expect(model.versionFooter(.english).version == "0.1.0 (7)")
     }
 
     @Test("通知：读到权限之前没有值，读到之后显示状态和说明")
     func notifications() async {
         let (_, model) = make(permission: .denied)
         #expect(model.notificationPermission == nil)
-        #expect(row("systemNotifications", in: model.sections(.chinese))?.value == nil)
-        #expect(model.sections(.chinese).first { $0.id == .notifications }?.footer == nil)
+        #expect(row("notifications", in: model.sections(.chinese))?.value == nil)
+        #expect(model.sections(.chinese).first { $0.id == .preferences }?.footer == nil)
         await model.refreshNotificationPermission()
         #expect(model.notificationPermission == .denied)
-        #expect(row("systemNotifications", in: model.sections(.chinese))?.value == "已关闭")
-        #expect(model.sections(.chinese).first { $0.id == .notifications }?.footer?.contains("系统设置") == true)
+        #expect(row("notifications", in: model.sections(.chinese))?.value == "已关闭")
+        #expect(model.sections(.chinese).first { $0.id == .preferences }?.footer?.contains("系统设置") == true)
     }
 
     @Test("刷新：静默拉最新的用户；离线时留着原来的")
@@ -120,16 +159,18 @@ struct SettingsModelTests {
         #expect(model.user?.displayName == "赵六")
     }
 
-    @Test("外观、语言那两行显示当前选的")
+    @Test("外观、语言、触感那几行显示当前选的")
     func displayRows() {
         let (_, model) = make()
         #expect(row("appearance", in: model.sections(.chinese))?.value == "跟随系统")
         #expect(row("language", in: model.sections(.chinese))?.value == "跟随系统（中文）")
+        #expect(row("haptics", in: model.sections(.chinese))?.value == "开启")
         model.preferences.setAppearance(.dark)
         model.preferences.setLanguage(.english)
+        model.preferences.setHapticsEnabled(false)
         #expect(row("appearance", in: model.sections(.english))?.value == "Dark")
         #expect(row("language", in: model.sections(.english))?.value == "English")
-        #expect(row("about", in: model.sections(.english))?.value == "0.1.0")
+        #expect(row("haptics", in: model.sections(.english))?.value == "Off")
     }
 
     // MARK: 通知权限

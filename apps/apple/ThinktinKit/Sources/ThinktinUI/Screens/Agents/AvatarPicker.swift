@@ -63,7 +63,7 @@ struct AvatarPicker<Footer: View>: View {
         }
         .padding(Metrics.Spacing.m)
         .background(Theme.paperElevated, in: RoundedRectangle(cornerRadius: Metrics.Radius.card, style: .continuous))
-        .sensoryFeedback(
+        .appFeedback(
             .selection, trigger: InstanceAppearance(shape: shape.wrappedValue, color: color.wrappedValue))
     }
 }
