@@ -587,6 +587,13 @@
     规范两边都留，4.3.2、4.3.4、4.4.2 的审查意见改成“已经合进本分支”。资料页“…”第一组是“替换主 Botin…、复制 ID”（两边一致）。
     Linux 检查：ThinktinKit `swift test` 1124 个全过；uicheck UIKit、AppKit 都编过；`run.sh test` 158 个全过；App 的 `ThinktinTests`
     21 个过 16 个（还是那 5 个）；`swift format lint --strict` 零条。
+  - `r2/botin`（合并提交 `a897e14`）：编辑页的语音通话三行、头像页的形状 / 生成 / 上传分段、观看与接管（`.instanceScreen`，
+    规范 4.4.3、4.4.4、4.6.2、4.6.3）。冲突：`RouteSamples` 里 `.instanceScreen` 是 51，`caseCount` 52；`InstanceDetailModel.delete()`
+    删掉后清头像外观、语音选择、表情回应、主 Botin 四样；规范 4.4.3、4.4.4 留审查修正和这条线的“已做”。合并时顺手补了这条线留的一行：
+    首页长按删 Botin 也传 `voices: .shared`（`HomeScreen.swift`）。审查修正（编辑页“头像”行不带小头像、形状和色板之间没有分隔线、
+    中性灰选中环）在合并后的代码里都还在。
+    Linux 检查：ThinktinKit `swift test` 1138 个全过；uicheck UIKit、AppKit 都编过；`run.sh test` 161 个全过；App 的 `ThinktinTests`
+    21 个过 16 个（还是那 5 个）；`swift format lint --strict` 零条。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、
@@ -597,7 +604,7 @@
 新建时选它用哪个 agent 当引擎，同一个 agent 可以给好几个 Botin 当引擎（服务端只限每个账号的实例数）。agent 在界面上只以 Botin 的“引擎”/“Engine”出现。
 首次登录首页是空的，空状态“还没有 Botin”+ 说明 + “新建 Botin”按钮。代码里的标识符（`Instance`、`AppRoute.adopt`、`adopt(...)`）不改。
 
-进行中：把第 2 轮的四条线合进本分支（2026-11-05，session_01GuCp3KRgqaK6Kzynw6udRn）：`r2/connections`、`r2/conversation` 已合，接着 `r2/botin`、`r2/settings`。
+进行中：把第 2 轮的四条线合进本分支（2026-11-05，session_01GuCp3KRgqaK6Kzynw6udRn）：`r2/connections`、`r2/conversation`、`r2/botin` 已合，接着 `r2/settings`。
 第 1 轮 A 线的首页补完、B、C、D、E 线和收尾线 2026-11-05 做完，见“已完成”。
 验证和发版（2026-11-05，session_01GuCp3KRgqaK6Kzynw6udRn）：GitHub 的 Mac 一直排不上，改用 Codemagic（`.github/workflows/codemagic.yml`：
 把提交推到 `codemagic/apple-check` / `codemagic/ios-screenshots`）。第 0 轮（bbdb07c）、Botin 版（06894fd）、新建页重做（c78064e）

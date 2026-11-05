@@ -50,3 +50,5 @@
   （压栈的页面用它会把整个窗口变成深色）。
 - 工作区页是本地 `NavigationLink` 压进来的，画面页也用本地 `NavigationLink` 压（混用路由值会把本地压的页退掉），路由留给对话等别处用。
 - worktree 里的检查用 scratchpad 里的脚本跑（沙箱不让在一条命令里同时 cd 和跑 git 之外的复杂管道）。
+
+已合进 ios-ui-redesign（a897e14）
