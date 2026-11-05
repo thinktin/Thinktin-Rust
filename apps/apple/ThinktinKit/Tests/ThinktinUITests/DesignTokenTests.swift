@@ -180,7 +180,7 @@ struct DesignTokenTests {
             Metrics.Avatar.title, Metrics.Avatar.search, Metrics.Avatar.list, Metrics.Avatar.pinned,
             Metrics.Avatar.edit, Metrics.Avatar.profile,
         ]
-        #expect(avatars == [24, 40, 48, 80, 100, 120])
+        #expect(avatars == [24, 40, 44, 80, 100, 120])
         for size in avatars {
             #expect(size.truncatingRemainder(dividingBy: 4) == 0, "\(size)")
         }

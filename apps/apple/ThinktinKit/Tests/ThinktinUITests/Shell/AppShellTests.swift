@@ -96,8 +96,9 @@ struct AppShellTests {
         let first = try #require(model.homeRows.first)
         #expect(router.isAtRoot)
         hostAndLayout(AppShell(model: model))
-        // 首页的行是 `NavigationLink(value: .conversation(id))`：系统直接往主栈里压，`Router` 记成当前实例。
-        router.path.append(.conversation(first.id))
+        // 首页的行是按钮（plain 列表里的 `NavigationLink` 会画 chevron）：`Router.open` 压进主栈、记成当前实例。
+        router.open(.conversation(first.id))
+        #expect(router.path == [.conversation(first.id)])
         #expect(router.currentInstanceID == first.id)
         hostAndLayout(AppShell(model: model))
         // 对话的“…”菜单 → 实例资料（旧版式）。
@@ -192,6 +193,97 @@ struct AppShellTests {
             List { HomeInstanceRow(row: first, appearance: model.appearances.resolved(for: first.id)) }
                 .shellEnvironment(model))
         hostAndLayout(NavigationStack { HomeScreen() }.shellEnvironment(model))
+    }
+
+    @Test("首页的行：最后一条的预览（AI 标识、你：），长按的预览卡")
+    func homeRowMessages() async throws {
+        let reply = HomeLastMessage(author: .agent, text: "周报整理好了，\n分了三组。", runID: "r1", at: Date())
+        let task = HomeLastMessage(author: .user, text: "发到群里", runID: "r2", at: Date())
+        #expect(HomeRowPreview.message(reply, state: .running).text(.chinese) == "周报整理好了， 分了三组。")
+        #expect(HomeRowPreview.message(task, state: .running).text(.chinese) == "你：发到群里")
+        #expect(HomeRowPreview.message(task, state: .running).text(.english) == "You: 发到群里")
+        #expect(HomeRowPreview.message(reply, state: .running).isAIGenerated)
+        #expect(!HomeRowPreview.message(task, state: .running).isAIGenerated)
+        #expect(!HomeRowPreview.idle(.running).isAIGenerated)
+        #expect(HomeRowPreview.message(reply, state: .running).avatarBadge == nil)
+        #expect(HomeRowPreview.message(reply, state: .paused).avatarBadge == .instance(.paused))
+        #expect(HomeRowPreview.waiting(count: 1, state: .waitingApproval).statusLine(.chinese) == "1 个在等你处理")
+        #expect(HomeRowPreview.message(reply, state: .running).statusLine(.chinese) == nil)
+
+        let model = await started(ShellPreviewClients.signedIn())
+        #expect(!model.lastMessages.isEmpty)
+        for row in model.homeRows {
+            let appearance = model.appearances.resolved(for: row.id)
+            hostAndLayout(List { HomeInstanceRow(row: row, appearance: appearance) }.shellEnvironment(model))
+            hostAndLayout(HomeInstancePreviewCard(row: row, appearance: appearance).shellEnvironment(model))
+        }
+        let first = try #require(model.homeRows.first)
+        var withReply = first
+        withReply.lastMessage = reply
+        withReply.preview = .message(reply, state: .running)
+        hostAndLayout(HomeInstancePreviewCard(row: withReply).previewShell(.english, scheme: .dark))
+        var withTask = first
+        withTask.lastMessage = task
+        hostAndLayout(HomeInstancePreviewCard(row: withTask).previewShell())
+    }
+
+    @Test("首页：置顶的大头像、隐藏、都隐藏了的空状态、已隐藏页和说明、长按菜单")
+    func homePinAndHide() async throws {
+        let model = await started(ShellPreviewClients.signedIn())
+        let preferences = model.instancePreferences
+        preferences.setPinned(true, for: DemoData.writerID)
+        #expect(model.homeContent.pinned.map(\.id) == [DemoData.writerID])
+        hostAndLayout(NavigationStack { HomeScreen() }.shellEnvironment(model))
+        hostAndLayout(
+            NavigationStack { HomeInstanceList(model: model) }.shellEnvironment(model)
+                .environment(\.displayLanguage, .english)
+                .preferredColorScheme(.dark))
+        hostAndLayout(
+            PinnedInstancesGrid(
+                rows: model.homeContent.pinned, appearances: model.appearances, open: { _ in },
+                menu: { _ in HomeInstanceMenuContent(isPinned: true, isOffline: false) { _ in } }
+            )
+            .shellEnvironment(model))
+        // 一排 3 个，最后一排可以不满。
+        let rows = model.homeRows
+        let seven = Array(repeating: rows, count: 4).joined().prefix(7).map { $0 }
+        #expect(PinnedInstancesGrid<EmptyView>.chunks(seven).map(\.count) == [3, 3, 1])
+        #expect(PinnedInstancesGrid<EmptyView>.chunks([]).isEmpty)
+
+        // 隐藏一个：首页最底下有“已隐藏 1 个 Botin”，已隐藏页有一行。
+        preferences.setHidden(true, for: DemoData.reviewerID)
+        #expect(model.homeContent.hidden.map(\.id) == [DemoData.reviewerID])
+        hostAndLayout(NavigationStack { HomeInstanceList(model: model) }.shellEnvironment(model))
+        hostAndLayout(NavigationStack { HiddenInstancesScreen(model: model) }.shellEnvironment(model))
+        hostAndLayout(
+            List {
+                HiddenInstanceRow(row: model.homeContent.hidden[0], open: {}, unhide: {})
+            }
+            .previewShell(.english, scheme: .dark))
+
+        // 都隐藏了：参考 113 的空状态。
+        preferences.setHidden(true, for: DemoData.writerID)
+        #expect(model.homePlaceholder == .allHidden)
+        hostAndLayout(NavigationStack { HomeInstanceList(model: model) }.shellEnvironment(model))
+        hostAndLayout(HomeAllHiddenView {}.previewShell(.english, scheme: .dark))
+
+        // 都取消隐藏：已隐藏页正中一行灰字。
+        preferences.setHidden(false, for: DemoData.writerID)
+        preferences.setHidden(false, for: DemoData.reviewerID)
+        #expect(model.homeContent.hidden.isEmpty)
+        hostAndLayout(NavigationStack { HiddenInstancesScreen(model: model) }.shellEnvironment(model))
+        hostAndLayout(HidingHelpSheet().previewShell())
+        hostAndLayout(HidingHelpSheet().previewShell(.english, scheme: .dark))
+
+        // 长按菜单、左滑按钮（离线时要联网的灰掉）。
+        for offline in [false, true] {
+            hostAndLayout(
+                Menu("…") { HomeInstanceMenuContent(isPinned: offline, isOffline: offline) { _ in } }
+                    .previewShell())
+        }
+        hostAndLayout(
+            List { Text(verbatim: "行").swipeActions { HomeInstanceSwipeButtons(isPinned: false) { _ in } } }
+                .previewShell())
     }
 
     @Test("工作台按钮的读屏：标签只是名字，要处理的数在角标的值里，合起来只念一次")

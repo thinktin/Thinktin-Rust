@@ -19,8 +19,8 @@ public enum Metrics {
         public static let title: CGFloat = 24
         /// 搜索结果的行。
         public static let search: CGFloat = 40
-        /// 首页列表的行。
-        public static let list: CGFloat = 48
+        /// 首页列表的行（参考 01、119 量出来约 44pt；规范 2.4 原来写 48）。
+        public static let list: CGFloat = 44
         /// 首页置顶的网格。
         public static let pinned: CGFloat = 80
         /// 编辑实例页。

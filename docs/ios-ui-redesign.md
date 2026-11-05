@@ -124,7 +124,7 @@
 | 消息气泡、自画卡片 | 约 20 | `RoundedRectangle(cornerRadius: 20, style: .continuous)`；`Metrics.Radius.card` 16 → 20 |
 | 输入框 | 胶囊；带引用时卡片圆角约 28 | `.glassEffect(in: .capsule)` / `RoundedRectangle(cornerRadius: 28)`；`Metrics.Radius.input` 已删（2026-11-05） |
 | 导航栏圆按钮 | 约 44 | 工具栏系统给，不自己设尺寸 |
-| 实例头像 | 列表 48、置顶 80、资料页 120、编辑页 100、搜索结果 40、标题胶囊 24 | 新组件 `InstanceAvatar(_:appearance:size:badge:)`（形状 + 颜色见 4.4.4） |
+| 实例头像 | 列表 48、置顶 80、资料页 120、编辑页 100、搜索结果 40、标题胶囊 24 | 新组件 `InstanceAvatar(_:appearance:size:badge:)`（形状 + 颜色见 4.4.4）。首页的行照参考 01、119 量出来是 44（`Metrics.Avatar.list` 2026-11-05 改成 44），资料页量出来是 80（C 线） |
 | 应用 / agent 图标方块 | 40，圆角约 10 | `Metrics.Radius.control`（10）保留 |
 | 左右边距 | 16–20 | `List` 系统边距；自画内容用 `Metrics.Spacing.m` |
 
@@ -395,6 +395,22 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   - 参考的“主 Bot”橙色星标不做，那个位置放状态角标。
   - 第 0 轮先出最小可用的列表，第 1 轮做完整版，置顶、隐藏第 2 轮。
 
+- **已做（2026-11-05，第 1 轮 A 线，对过参考 01、110、111、113、119、120；第 2 轮的置顶、隐藏一起做了）**
+  - 版式照参考量（393pt 宽，1pt ≈ 1.525px，`HomeLayout`）：行高约 83pt，44pt 头像（`Metrics.Avatar.list` 48 → 44）离左边 22pt，
+    文字从 82pt 起，时间离右边 24pt，名字和预览中间 4pt；左上账号、右上“+”、左下工作台、底部搜索栏的位置不变（第 0 轮已经对上）。
+  - 行换成按钮（`Router.open(.conversation(id))`），不再是 `NavigationLink`：plain 列表里的 `NavigationLink` 会画 chevron，参考没有。
+  - 预览照 6.7 B：在等你处理、进行中照旧说状态；闲着时是本机缓存里的最后一条（`HomeLastMessage.latest(in:)`：最近一次的摘要，
+    前面放“AI 生成”标识，参考那个位置是个小图标；没有摘要、是你发的写“你：任务原文”；计划派的跳过）。创建中、不认识的状态照旧说状态。
+    `AppModel.lastMessages` 启动时从缓存读，刷新完、回到首页时（`reloadLastMessages()`）重读，只读缓存、不联网。
+  - 置顶（参考 111、120）：列表第一行是居中的大头像（80pt + `.footnote` 名字，一排 3 个、每排居中，`PinnedInstancesGrid`），
+    上面比普通行多留约 18pt、下面 20pt，中间没有分区标题；按置顶的先后排。置顶的头像长按是同一套菜单，没有左滑。
+  - 左滑（参考 110）：系统 `.swipeActions`，最右边红色“隐藏”，再是灰色“置顶”（`HomeInstanceMenu.swipeItems`）。
+  - 置顶、隐藏只存这台设备（`InstancePreferencesStore`，`UserDefaults` 一个键，按实例 id、不分账号，和头像外观一样；6.10 A），
+    互斥：隐藏时取消置顶。删了 Botin（资料页、首页长按删除、事件流说没了）时删记录。
+  - 都隐藏了（参考 113）：正中小的 `eye.slash` + 灰字“所有 Botin 都已隐藏” + 玻璃胶囊“显示已隐藏的 Botin”（比
+    `ContentUnavailableView` 小一号，照参考自己排）。部分隐藏时列表最底下一行灰字“已隐藏 N 个 Botin”（参考没有，不然找不到入口）。
+  - 还没做：“等你处理”提示行、从对话返回时回到原来的滚动位置（要在模拟器上看系统是不是本来就保留）。
+
 #### 4.2.2 实例长按菜单（32、33、112）
 
 - **布局**：背景模糊变暗；上面是预览卡（小头像 + 名字，分隔线，最近一条消息的灰气泡，多行）；下面是玻璃菜单；
@@ -414,6 +430,16 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   `cachedRuns` 最新一次运行的摘要。改名用 `.alert` + `TextField`，按 `InstanceNameRule` 校验，Shell 自己调 `renameInstance`，
   不依赖 Agents 的页面。第 1 轮（置顶、隐藏第 2 轮）。
 
+- **已做（2026-11-05，第 1 轮 A 线，对过参考 32、33、112）**：系统 `.contextMenu(menuItems:preview:)`，和参考一样一列、不分组，
+  最后“更多”在原地展开（嵌套的 `Menu`）。顺序在 ThinktinKit 的 `HomeInstanceMenu`：Botin 资料、置顶 / 取消置顶、新建计划、改名…、
+  隐藏（红），更多里复制 Botin ID、删除（红）。参考的“标为未读”“新建分组”“替换主 Bot…”“分享为模板”ThinkTin 没有（6.10、6.21），
+  那几个位置换成资料、新建计划、改名；模型路由没放进来（资料页和对话页的菜单里有）。离线时新建计划、改名、删除灰掉。
+  预览卡（`HomeInstancePreviewCard`，宽 320pt，量自参考 32）：28pt 头像 + 名字（在等你处理、进行中时下面一行状态），分隔线，
+  最后一条的气泡（agent 的在左、`agentBubble`、下面带“AI 生成”标识，你发的在右、`userBubble`，最多 8 行），没缓存时一行灰字状态；
+  卡片底是 `paper`、气泡亮一档，和参考一样。改名是系统弹窗 + 输入框（`HomeRenameAlert`，`InstanceNameRule` 不合规时“保存”灰着，
+  改不成再弹一个说原因），调 `AppModel.renameInstance`，首页、对话页标题马上变。删除弹资料页同一张确认页（`InstanceDeleteSheet`，
+  列影响 + 二次确认），删成了走 `InstanceDetailScreen.leaveDeletedInstance`。复制 ID 有成功的触感（`appFeedback`）。
+
 #### 4.2.3 已隐藏的实例和说明（114、115、116）
 
 - **布局**：压栈页，标题“已隐藏的实例”，右上玻璃“?”；plain 列表，每行头像 + 名字 + 右边小胶囊“取消隐藏”；
@@ -426,6 +452,13 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 - **要改**：Shell 本地页（不加路由）。入口有两个：全部隐藏时的空状态按钮，和列表最底下一行“已隐藏 N 个”（0 个时不显示，
   参考 App 只有前一个，部分隐藏时找不到入口）。说明文案写 ThinkTin 的实际行为：隐藏只是首页不显示，计划照常跑，
   审批和推送照常发（6.10）。第 2 轮。
+
+- **已做（2026-11-05，第 1 轮 A 线，对过参考 114、115、116）**：`HiddenInstancesScreen`，首页本地压栈（`navigationDestination(isPresented:)`，
+  不加路由），标题“已隐藏的 Botin”（系统的 inline 标题；参考的标题在玻璃胶囊里，别的线都用系统标题，没照做），右上玻璃“?”。
+  plain 列表、行和首页一样高（44pt 头像 + `.body` 名字），右边玻璃小胶囊“取消隐藏”（`smallCapsuleButton()`），点了带动画回到首页；
+  点头像和名字进对话（`Router.open`，“首页 → 对话”）。都取消了以后正中一行灰字“没有隐藏的 Botin”（参考 116，没有图标）。
+  “?”弹 `HidingHelpSheet`（large，左上 ×，一组分组卡片三行：照常干活 / 只是首页不显示、只在这台设备上 / 随时放回来，
+  文案 `HomeText.hidingFacts` 是 ThinkTin 自己的，写的是真实行为）。
 
 #### 4.2.4 首页搜索（78、79、80）
 
@@ -1140,7 +1173,7 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 
 | 编号 | 参考页面 | ThinkTin 功能 | 现有代码 | 状态 | 轮次 | 规范 |
 |---|---|---|---|---|---|---|
-| 1 | 首页 Bot 列表 | 首页实例列表 | `Shell/ShellDrawer.swift`（抽屉里的列表）、`Shell/AppShell.swift`、`ConversationHomeScreen` | 部分有 | 0–1 | 4.2.1 |
+| 1 | 首页 Bot 列表 | 首页实例列表 | `Shell/Home/HomeScreen.swift`、`HomeInstanceRow.swift`（2026-11-05 照参考量过行高、边距） | 部分有 | 0–1 | 4.2.1 |
 | 2 | 对话主页面 | 对话 | `Conversation/ConversationScreen.swift`、`MessageViews.swift`、`Components/ComposerBar.swift` | 只改界面 | 1 | 4.3.1 |
 | 3 | 对话更多菜单 | 对话“…”菜单 | `ConversationScreen.swift` 的 `Menu` | 部分有 | 1 | 4.3.2 |
 | 4 | 聊天内查找 | 对话内查找 | 无 | 纯客户端能做 | 2 | 4.3.3 |
@@ -1171,8 +1204,8 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 | 29 | 电脑查看模式 | 观看 | 无 | 要后端 | 3 | 4.6.2 |
 | 30 | 电脑控制模式 | 接管 | 无 | 要后端 | 3 | 4.6.2 |
 | 31 | 电脑控制更多菜单 | 触控板模式 | 无 | 要后端 | 3 | 4.6.2 |
-| 32 | 首页 Bot 长按菜单 | 实例长按菜单 | 无（改名、删除 sheet 在 `Screens/Agents/`） | 部分有 | 1；置顶隐藏 2 | 4.2.2 |
-| 33 | 长按更多子菜单 | 复制实例 ID | `Support/Pasteboard.swift` | 纯客户端能做 | 1 | 4.2.2 |
+| 32 | 首页 Bot 长按菜单 | 实例长按菜单 | `Shell/Home/HomeInstanceActions.swift`、ThinktinKit `HomeInstanceMenu`（2026-11-05 做了） | 部分有 | 1；置顶隐藏 2 | 4.2.2 |
+| 33 | 长按更多子菜单 | 复制 Botin ID、删除 | `HomeInstanceMenu.more`（2026-11-05 做了） | 纯客户端能做 | 1 | 4.2.2 |
 | 34 | 创建新 Bot 空表单 | 新建 Botin | `Agents/AdoptAgentSheet.swift`、`AdoptionModel` | 部分有 | 已做（2026-11-05，含头像，本机） | 4.7.1 |
 | 35 | 创建表单输入焦点 | 领养新实例 | `AdoptAgentSheet.swift` | 部分有 | 1 | 4.7.1 |
 | 36 | 连接应用目录 | 连接汇总页 / 第三方连接器 | 分散：`ImChannelScreens`、`CredentialsScreen`、`ComputerLinkViews`、`VaultScreens` | 要后端 | 2（汇总）/ 3 | 4.8.1 |
@@ -1249,17 +1282,17 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 | 107 | 多连接器插件详情 | 连接器详情 | 无 | 要后端 | 3 | 4.8.3 |
 | 108 | 登录方式选择 | 登录（用户自己设计） | `Account/SignInFlow.swift` | 不适用 | 不做 | 4.1.2 |
 | 109 | 开机启动页 | 启动屏 | `project.yml` 的 `UILaunchScreen: {}` | 纯客户端能做 | 0 | 4.1.1 |
-| 110 | 列表左滑快捷操作 | 置顶、隐藏 | 无 | 纯客户端能做 | 2 | 4.2.1 |
-| 111 | 置顶后的首页 | 置顶区 | 无 | 纯客户端能做 | 2 | 4.2.1 |
-| 112 | 置顶项的管理菜单 | 实例长按菜单 | 无 | 部分有 | 1；置顶隐藏 2 | 4.2.2 |
-| 113 | 全部隐藏后的空状态 | 首页空状态 | `Components/EmptyStateView.swift` | 纯客户端能做 | 2 | 4.2.1 |
-| 114 | 已隐藏对话管理页 | 已隐藏的实例 | 无 | 纯客户端能做 | 2 | 4.2.3 |
-| 115 | 隐藏对话说明 | 隐藏说明 | 无 | 纯客户端能做 | 2 | 4.2.3 |
-| 116 | 取消隐藏后的空状态 | 已隐藏的实例（空） | 无 | 纯客户端能做 | 2 | 4.2.3 |
+| 110 | 列表左滑快捷操作 | 置顶、隐藏 | `HomeInstanceSwipeButtons`、`InstancePreferencesStore`（2026-11-05 做了） | 纯客户端能做 | 2 | 4.2.1 |
+| 111 | 置顶后的首页 | 置顶区 | `Shell/Home/PinnedInstancesGrid.swift`（2026-11-05 做了） | 纯客户端能做 | 2 | 4.2.1 |
+| 112 | 置顶项的管理菜单 | 实例长按菜单 | 同 32，“置顶”换成“取消置顶”（2026-11-05 做了） | 部分有 | 1；置顶隐藏 2 | 4.2.2 |
+| 113 | 全部隐藏后的空状态 | 首页空状态 | `HomeAllHiddenView`、`HomePlaceholder.allHidden`（2026-11-05 做了） | 纯客户端能做 | 2 | 4.2.1 |
+| 114 | 已隐藏对话管理页 | 已隐藏的 Botin | `Shell/Home/HiddenInstancesScreen.swift`（2026-11-05 做了） | 纯客户端能做 | 2 | 4.2.3 |
+| 115 | 隐藏对话说明 | 隐藏说明 | `HidingHelpSheet`、`HomeText.hidingFacts`（2026-11-05 做了） | 纯客户端能做 | 2 | 4.2.3 |
+| 116 | 取消隐藏后的空状态 | 已隐藏的 Botin（空） | `HiddenInstancesScreen` 的空状态（2026-11-05 做了） | 纯客户端能做 | 2 | 4.2.3 |
 | 117 | 创建表单（填好） | 新建 Botin | `AdoptAgentSheet.swift` | 部分有 | 已做（2026-11-05，含头像，本机） | 4.7.1 |
 | 118 | 新 Bot 欢迎与引导卡 | 对话首次状态 | `ConversationScreen`（空状态）、`Onboarding/` | 部分有 | 2 | 4.3.1 |
-| 119 | 两个都没置顶的列表 | 首页列表 | `ShellDrawer.swift` 的 `DrawerInstanceRow` | 部分有 | 1 | 4.2.1 |
-| 120 | 置顶和普通同屏 | 首页置顶 + 列表 | 无 | 部分有 | 2 | 4.2.1 |
+| 119 | 两个都没置顶的列表 | 首页列表 | `HomeInstanceRow`（2026-11-05 照参考量过；预览是缓存里的最后一条） | 部分有 | 1 | 4.2.1 |
+| 120 | 置顶和普通同屏 | 首页置顶 + 列表 | `PinnedInstancesGrid` + `HomeInstanceRow`（2026-11-05 做了） | 部分有 | 2 | 4.2.1 |
 
 ## 6. 要用户拍板的事
 
@@ -1381,6 +1414,8 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   - C：只显示状态和时间。
   - D：等后端在实例列表里带上最后一条。
 - **建议**：B。没缓存过的实例只显示状态。
+- **已做（2026-11-05，A 线）**：B。`HomeLastMessage.latest(in:)` 取缓存里最近一次运行的摘要（带“AI 生成”标识）或你发的任务（“你：”），
+  计划派的、没摘要的跳过；创建中、不认识的状态照旧说状态（见 4.2.1 的“已做”）。
 
 ### 6.8 资料页的“电脑”行、实例的远程画面
 
@@ -1423,6 +1458,7 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   - 分组：先不做。实例不多时用处不大，还容易和“团队”混；要做也是 A。
   - 未读：本机比较“最后看到的事件序号”能做个近似，但多台设备会乱，不做。
   - 主实例：不做。如果想要“默认实例”（新任务、快捷指令、小组件默认用哪个），本机存就行。
+- **已做（2026-11-05，A 线）**：置顶、隐藏按 A 做了（`InstancePreferencesStore`，见 4.2.1、4.2.3 的“已做”）；隐藏不静音。
 
 ### 6.11 消息的表情回应、标为未读、引用回复
 
@@ -1592,6 +1628,9 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 | D 计划、产出物、搜索（12.6、12.18、12.21） | 实例的计划和全部计划（4.5.1）、产出物版式和产出物详情（4.5.2、4.5.3 第 1 轮部分）、`SearchResultsView` 拆出来给 A 用（4.2.4） | `Screens/Plans/*`、`Screens/Artifacts/*`、`Screens/Search/*`、对应的 `ViewModels/` 和测试 |
 | E 设置一带（12.12、12.2、12.4、12.13、12.14、12.9 手机这边） | 设置根页（4.9.1）、账号（4.9.2）、用量（4.9.3）、保险箱和登录信息表单（4.9.5、4.9.6）、设备列表和详情（4.9.9）、外观（4.9.11）、语言（4.9.12）、模型 key、IM 渠道换原生 | `Screens/Settings/*`、`ViewModels/Settings/SettingsModel.swift`、`Screens/Account/*`（登录相关不动）、`Screens/Models/*`、`Screens/Vault/*`、`Screens/ImChannels/*`、`Screens/Computer/ComputerLinkViews.swift` |
 
+- A 线 2026-11-05 做完首页这一半（首页的行和预览 4.2.1、长按菜单 4.2.2，顺带做了第 2 轮的置顶、隐藏、左滑、已隐藏页和说明 4.2.1、
+  4.2.3，6.7 B、6.10 A）；“等你处理”提示行、`NewTaskSheet` 换选择器版式（4.4.5）还没做。逐节的做法见各节的“已做”和
+  docs/progress/ios-ui-redesign.md。
 - C 线 2026-11-05 做完（Botin 资料 4.4.1、“…”菜单 4.4.2、编辑页 4.4.3、工作区页 4.6.1 和它的说明、引擎目录的列表行和引擎详情的 sheet 版式
   4.7.1 / 4.8.3，顺带做了第 2 轮的改头像 4.4.4 和删除确认页换原生列表），逐节的做法见各节的“已做”和 docs/progress/ios-ui-redesign.md。
 - B 线 2026-11-05 做完（对话页 4.3.1、“…”菜单 4.3.2、长按菜单 4.3.4，顺带做了第 2 轮的引用回复 4.3.5 和首次引导卡 6.18 A；

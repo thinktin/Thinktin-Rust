@@ -1,10 +1,10 @@
 import SwiftUI
 import ThinktinKit
 
-/// 首页（`.home`，主导航栈永远的根，WBS 12.16；规范 docs/ios-ui-redesign.md 4.2.1 第 0 轮的最小版、6.1 A + A1）：
+/// 首页（`.home`，主导航栈永远的根，WBS 12.16；规范 docs/ios-ui-redesign.md 4.2.1、6.1 A + A1，参考 01、119、120）：
 ///
-/// - 没有标题。plain 列表，每行一个实例（`HomeInstanceRow`），最后活动新的在前（`AppModel.homeRows`）；
-///   点一行压栈进它的对话（`NavigationLink(value: AppRoute.conversation(id))`，`Router` 顺带记成当前实例）。
+/// - 没有标题。plain 列表，置顶的大头像在最上面，下面每行一个 Botin（`HomeInstanceRow`），最后活动新的在前
+///   （`AppModel.homeContent`）；点一行压栈进它的对话（`Router.open(.conversation(id))`，顺带记成当前实例）。
 /// - 左上账号头像 → 设置（sheet，`router.open(.settings)`）；右上“+” → 新建 Botin（sheet，`.adopt(agentID: nil)`）。
 ///   账号里还没有 Botin（第一次登录）时列表是“还没有 Botin”的空状态，按钮也打开新建表单。
 ///   两个都是系统工具栏的玻璃圆按钮（规范 4.2.1），头像放在玻璃圆里面。
@@ -14,7 +14,8 @@ import ThinktinKit
 ///   macOS 没有底部条：工作台和“+”在工具栏右边，搜索栏是工具栏里的那个。
 /// - 下拉刷新；回到首页时角标太久没刷新就刷新。离线、连接横幅由 `AppDestination` 放在顶部。
 ///
-/// 置顶、隐藏、长按菜单、“等你处理”提示行、搜索的类型筛选是第 1、2 轮的（规范 7.3、7.4 的 A 线）。
+/// 列表本身（置顶的大头像、普通行、长按菜单、左滑、已隐藏的入口和空状态）在 `HomeInstanceList`（第 1 轮 A 线，参考 01、
+/// 32、33、110–116、119、120）。“等你处理”提示行还没做。
 struct HomeScreen: View {
     @Environment(AppModel.self) private var model
     @Environment(\.client) private var client
@@ -70,7 +71,10 @@ private struct HomeContent: View {
         }
         .task { await model.refreshBadgesIfStale() }
         .onChange(of: router.visibleRoute) {
-            if router.visibleRoute == .home { Task { await model.refreshBadgesIfStale() } }
+            guard router.visibleRoute == .home else { return }
+            // 从对话页回来：刚收完的回复已经进了缓存，行的预览换成它。
+            model.reloadLastMessages()
+            Task { await model.refreshBadgesIfStale() }
         }
     }
 
@@ -162,36 +166,140 @@ private struct AccountButton: View {
     }
 }
 
-/// 首页的实例列表和它的几种状态（加载中、离线没缓存、没有实例、拉取失败）。
+/// 首页的实例列表和它的几种状态（加载中、离线没缓存、没有实例、都隐藏了、拉取失败）。
+///
+/// - 最上面是置顶的大头像（`PinnedInstancesGrid`，参考 111、120），下面是普通行（参考 01、119），中间没有分区标题。
+/// - 每一行（和每个置顶的头像）长按是系统菜单（`HomeInstanceMenuContent`，预览卡 `HomeInstancePreviewCard`）；
+///   普通行左滑是“置顶”“隐藏”（参考 110）。
+/// - 改名是系统弹窗（`HomeRenameAlert`），删除先弹列出影响的确认页（`InstanceDeleteSheet`），复制 ID 有成功的触感。
+/// - 有隐藏的 Botin 时列表最底下一行灰字“已隐藏 N 个 Botin”，都隐藏了是参考 113 的空状态；两个都进“已隐藏的 Botin”页。
 struct HomeInstanceList: View {
     let model: AppModel
+
+    @State private var renaming: Instance?
+    @State private var deleting: HomeDeletion?
+    /// 最近一次打开删除确认页的（sheet 关掉时 `deleting` 已经是 nil，删没删成看它）。
+    @State private var lastDeletion: HomeDeletion?
+    @State private var isShowingHidden = false
+    @State private var copies = 0
 
     @Environment(\.displayLanguage) private var language
 
     var body: some View {
-        let rows = model.homeRows
+        let content = model.homeContent
+        let router = model.router
         List {
             if let error = model.refreshError {
                 ErrorBanner(error, onRetry: { Task { await model.refresh() } })
                     .listRowSeparator(.hidden)
                     .themedPlainRow()
             }
-            ForEach(rows) { row in
-                NavigationLink(value: AppRoute.conversation(row.id)) {
-                    HomeInstanceRow(row: row, appearance: model.appearances.resolved(for: row.id))
+            if !content.pinned.isEmpty {
+                PinnedInstancesGrid(
+                    rows: content.pinned, appearances: model.appearances,
+                    open: { router.open(.conversation($0)) },
+                    menu: { row in menu(for: row, isPinned: true) }
+                )
+                .listRowInsets(HomeLayout.pinnedInsets)
+                .listRowSeparator(.hidden)
+                .themedPlainRow()
+            }
+            ForEach(content.rows) { row in
+                let appearance = model.appearances.resolved(for: row.id)
+                // 按钮不是 `NavigationLink`：plain 列表里的 `NavigationLink` 会画右边的 chevron，参考的行没有。
+                // 进对话照样是“首页 → 对话”（`Router.open` 记成当前实例）。
+                Button {
+                    router.open(.conversation(row.id))
+                } label: {
+                    HomeInstanceRow(row: row, appearance: appearance)
+                }
+                .contextMenu {
+                    menu(for: row, isPinned: false)
+                } preview: {
+                    HomeInstancePreviewCard(row: row, appearance: appearance)
+                }
+                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                    HomeInstanceSwipeButtons(isPinned: false) { perform($0, on: row) }
                 }
             }
+            .listRowInsets(HomeLayout.rowInsets)
             .listRowSeparator(.hidden)
             .themedPlainRow()
+            if !content.hidden.isEmpty, !content.isAllHidden {
+                Button {
+                    isShowingHidden = true
+                } label: {
+                    Text(verbatim: HomeText.hiddenCount(content.hidden.count, language: language))
+                        .typography(.footnote)
+                        .foregroundStyle(Theme.inkTertiary)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.plain)
+                .listRowSeparator(.hidden)
+                .themedPlainRow()
+            }
         }
         .listStyle(.plain)
         .refreshable { await model.refresh() }
         .overlay {
             if let placeholder = model.homePlaceholder { emptyState(placeholder) }
         }
+        .navigationDestination(isPresented: $isShowingHidden) {
+            HiddenInstancesScreen(model: model)
+        }
+        .modifier(HomeRenameAlert(model: model, target: $renaming))
+        .sheet(
+            item: $deleting, onDismiss: finishDeletion,
+            content: { deletion in
+                NavigationStack {
+                    InstanceDeleteSheet(model: deletion.model) { deleting = nil }
+                }
+                .shellEnvironment(model)
+                .tint(Theme.accent)
+            }
+        )
+        .appFeedback(.success, trigger: copies)
     }
 
-    /// 列表空着时（`AppModel.homePlaceholder`）：第一次在拉、离线没缓存、账号里还没有 Botin（第一次登录）。
+    private func menu(for row: HomeRow, isPinned: Bool) -> HomeInstanceMenuContent {
+        HomeInstanceMenuContent(isPinned: isPinned, isOffline: model.isOffline) { perform($0, on: row) }
+    }
+
+    /// 长按菜单、左滑的一项。
+    private func perform(_ item: HomeInstanceMenuItem, on row: HomeRow) {
+        let id = row.id
+        let preferences = model.instancePreferences
+        switch item {
+        case .profile, .newPlan:
+            if let route = item.route(for: id) { model.router.open(route) }
+        case .pin, .unpin:
+            withAnimation { preferences.setPinned(item == .pin, for: id) }
+        case .hide:
+            withAnimation { preferences.setHidden(true, for: id) }
+        case .rename:
+            renaming = row.instance
+        case .copyID:
+            Pasteboard.copy(id.rawValue)
+            copies += 1
+        case .delete:
+            let deletion = HomeDeletion(
+                id: id,
+                model: InstanceDetailModel(
+                    client: model.client, instanceID: id, instance: row.instance, appearances: model.appearances))
+            lastDeletion = deletion
+            deleting = deletion
+        }
+    }
+
+    /// 删除的确认页关掉了：删成了就和资料页删除一样，拿掉它的页面、刷新列表（置顶、隐藏的记录也删）。
+    private func finishDeletion() {
+        guard let deleted = lastDeletion, deleted.model.isDeleted else { return }
+        lastDeletion = nil
+        let app = model
+        Task { await InstanceDetailScreen.leaveDeletedInstance(deleted.id, app: app, router: app.router) }
+    }
+
+    /// 列表空着时（`AppModel.homePlaceholder`）：第一次在拉、离线没缓存、账号里还没有 Botin（第一次登录）、都隐藏了。
     @ViewBuilder
     private func emptyState(_ placeholder: HomePlaceholder) -> some View {
         let zh = language == .chinese
@@ -222,7 +330,35 @@ struct HomeInstanceList: View {
                 .glassButtonStyle(.prominent)
                 .controlSize(.large)
             }
+        case .allHidden:
+            HomeAllHiddenView { isShowingHidden = true }
         }
+    }
+}
+
+/// 都隐藏了（参考 113）：正中一个小的 `eye.slash`、一行灰字“所有 Botin 都已隐藏”，下面玻璃胶囊“显示已隐藏的 Botin”。
+/// 参考的图标和字都比 `ContentUnavailableView` 的小一号，这里照参考自己排。
+struct HomeAllHiddenView: View {
+    let showHidden: @MainActor () -> Void
+
+    @Environment(\.displayLanguage) private var language
+
+    var body: some View {
+        VStack(spacing: Metrics.Spacing.s) {
+            Image(systemName: "eye.slash")
+                .font(Typography.title3.font)
+                .foregroundStyle(Theme.inkSecondary)
+                .accessibilityHidden(true)
+            Text(verbatim: HomeText.allHiddenTitle(language))
+                .typography(.body)
+                .foregroundStyle(Theme.inkSecondary)
+                .multilineTextAlignment(.center)
+            Button(HomeText.showHidden(language)) { showHidden() }
+                .glassButtonStyle()
+                .buttonBorderShape(.capsule)
+                .padding(.top, Metrics.Spacing.s)
+        }
+        .padding(Metrics.Spacing.m)
     }
 }
 

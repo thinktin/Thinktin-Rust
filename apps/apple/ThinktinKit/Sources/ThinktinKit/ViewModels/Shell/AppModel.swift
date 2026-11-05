@@ -45,6 +45,8 @@ public final class AppModel {
     public static let activeRunsLimit = RunFilter.maxLimit
     /// 收件箱同步拉几条（只为角标的未读数；收件箱页自己再拉）。
     public static let inboxSyncLimit = 20
+    /// 首页行的最后一条看缓存里最近几次运行（最近几次都是计划派的、没有摘要时往前找）。
+    public static let lastMessageRuns = 5
     /// 回到首页、回到前台时，角标多久没刷新才刷新（秒）。
     public static let badgeMaxAge: TimeInterval = 15
 
@@ -54,6 +56,8 @@ public final class AppModel {
     public let router: Router
     /// 这台设备上记的 Botin 头像外观（形状 + 颜色，新建表单写；服务端还没有这个字段，规范 6.9）。
     public let appearances: InstanceAppearanceStore
+    /// 这台设备上记的首页置顶、隐藏（服务端没有这两个字段，规范 4.2.1–4.2.3、6.10 A）。
+    public let instancePreferences: InstancePreferencesStore
 
     public private(set) var phase: Phase
     /// 当前用户（`me()`、登录结果）；拉到之前为 nil。
@@ -62,6 +66,8 @@ public final class AppModel {
     public private(set) var instances: [Instance] = []
     /// 每个实例最近的运行概况。
     public private(set) var activity: [InstanceID: InstanceActivity] = [:]
+    /// 每个实例本机缓存里的最后一条（首页行的预览、长按的预览卡，规范 6.7 B）；没缓存过的不在里面。
+    public private(set) var lastMessages: [InstanceID: HomeLastMessage] = [:]
     public private(set) var badges = ShellBadges.zero
     /// 顶部的连接横幅。
     public private(set) var connection: ConnectionState = .idle
@@ -152,6 +158,7 @@ public final class AppModel {
         self.router = router
         self.selection = InstanceSelectionStore(defaults: defaults)
         self.appearances = InstanceAppearanceStore(defaults: defaults)
+        self.instancePreferences = InstancePreferencesStore(defaults: defaults)
         self.computerLinks = ComputerLinkStore(defaults: defaults)
         self.onboardingCheck = OnboardingCheck(defaults: defaults)
         self.notifications = notifications
@@ -194,16 +201,62 @@ public final class AppModel {
         activity[instanceID] ?? .none
     }
 
-    /// 首页的实例列表（`HomeList.rows`：最后活动新的在前，每行带预览）。
-    public var homeRows: [HomeRow] {
-        HomeList.rows(instances: instances, activity: activity)
+    /// 首页的三部分（`HomeList.content`）：置顶的、普通的行、隐藏的。
+    public var homeContent: HomeListContent {
+        HomeList.content(
+            instances: instances, activity: activity, lastMessages: lastMessages,
+            pinned: instancePreferences.pinned, hidden: instancePreferences.hidden)
     }
 
-    /// 首页列表空着时显示什么（`HomeList.placeholder`：加载中、离线没缓存、还没有 Botin）；有 Botin 或刷新失败时为 nil。
+    /// 首页上看得见的 Botin（置顶的在前，再是最后活动新的在前的普通行；不含隐藏的）。
+    public var homeRows: [HomeRow] {
+        homeContent.visible
+    }
+
+    /// 首页列表空着时显示什么（`HomeList.placeholder`：加载中、离线没缓存、还没有 Botin、都隐藏了）；有看得见的 Botin
+    /// 或刷新失败时为 nil。
     public var homePlaceholder: HomePlaceholder? {
         HomeList.placeholder(
             isEmpty: instances.isEmpty, hasLoaded: hasLoadedInstances, isOffline: isOffline,
-            hasError: refreshError != nil)
+            hasError: refreshError != nil, isAllHidden: homeContent.isAllHidden)
+    }
+
+    // MARK: 首页的 Botin（规范 4.2.1–4.2.3）
+
+    /// 读本机缓存，换上每个 Botin 的最后一条（首页行的预览，规范 6.7 B）：刷新之后、回到首页时（刚在对话页收完的回复
+    /// 已经进了缓存）。只读缓存、不联网；读缓存出错的那个留着原来的。
+    public func reloadLastMessages() {
+        guard phase == .signedIn else { return }
+        var messages = lastMessages
+        for instance in instances {
+            guard let runs = cached({ try client.cachedRuns(instanceID: instance.id, limit: Self.lastMessageRuns) })
+            else { continue }
+            messages[instance.id] = HomeLastMessage.latest(in: runs)
+        }
+        let ids = Set(instances.map(\.id))
+        messages = messages.filter { ids.contains($0.key) }
+        if messages != lastMessages { lastMessages = messages }
+    }
+
+    /// 首页长按“改名”（规范 4.2.2）：去掉首尾空白后按 `InstanceNameRule` 校验，改好了换上服务端回来的实例（首页、对话页的
+    /// 标题马上变）。名字没变直接算成功。返回失败的原因；成功、页面关了（任务取消）为 nil。名字不合规返回校验错误
+    /// （界面上按钮本来就灰着，不该走到这里）。
+    public func renameInstance(_ instanceID: InstanceID, to newName: String) async -> ClientError? {
+        let name = InstanceNameRule.normalized(newName)
+        if let problem = InstanceNameRule.problem(name) {
+            return .invalidArgument(message: problem.message(DisplayLanguage.current))
+        }
+        guard phase == .signedIn, let instance = instances.first(where: { $0.id == instanceID }) else { return nil }
+        if instance.name == name { return nil }
+        do {
+            let renamed = try await client.renameInstance(instanceID, name: name)
+            guard phase == .signedIn else { return nil }
+            apply(instances: instances.map { $0.id == renamed.id ? renamed : $0 })
+            return nil
+        } catch {
+            if error is CancellationError { return nil }
+            return Self.clientError(error)
+        }
     }
 
     // MARK: 启动与刷新
@@ -241,6 +294,7 @@ public final class AppModel {
         defer { isRefreshing = false }
         await refreshInstances()
         await refreshBadges()
+        reloadLastMessages()
         // 网络是刷新到一半回来的（实例列表那一步离线失败、角标成功了）：`.reachable` 赶上这次刷新时补拉不了，这里补一次。
         if phase == .signedIn, !hasLoadedInstances, !isOffline, refreshError == nil { await refreshInstances() }
     }
@@ -572,6 +626,7 @@ public final class AppModel {
         user = result.user
         instances = []
         activity = [:]
+        lastMessages = [:]
         badges = .zero
         hasLoadedInstances = false
         refreshError = nil
@@ -618,6 +673,7 @@ public final class AppModel {
             user = nil
             instances = []
             activity = [:]
+            lastMessages = [:]
             badges = .zero
             publishWidgetSnapshot()
             if let liveActivities { Task { await liveActivities.signedOut() } }
@@ -707,11 +763,14 @@ public final class AppModel {
         var badges = self.badges
         if let unread = cached({ try client.cachedUnread() }) { badges.inboxUnread = unread }
         var activity: [InstanceID: InstanceActivity] = [:]
+        var messages: [InstanceID: HomeLastMessage] = [:]
         for instance in instances {
             if let runs = cached({ try client.cachedRuns(instanceID: instance.id, limit: Self.runsPerInstance) }) {
                 activity[instance.id] = InstanceActivity(runs: runs)
+                messages[instance.id] = HomeLastMessage.latest(in: runs)
             }
         }
+        lastMessages = messages
         setActivity(activity, badges: &badges)
         self.badges = badges
         updateAppBadge()
@@ -739,6 +798,7 @@ public final class AppModel {
         instances = list.filter { $0.state != .deleted }.sorted { $0.lastActiveAt > $1.lastActiveAt }
         let ids = Set(instances.map(\.id))
         activity = activity.filter { ids.contains($0.key) }
+        lastMessages = lastMessages.filter { ids.contains($0.key) }
         badges.activeRuns = activity.values.reduce(0) { $0 + $1.activeRuns }
         reconcileSelection()
     }
@@ -789,6 +849,7 @@ public final class AppModel {
     private func instanceDisappeared(_ instanceID: InstanceID) {
         guard phase == .signedIn, instances.contains(where: { $0.id == instanceID }) else { return }
         apply(instances: instances.filter { $0.id != instanceID })
+        instancePreferences.forget([instanceID])
         Task { await refresh() }
     }
 

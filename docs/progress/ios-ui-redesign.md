@@ -448,6 +448,37 @@
   App 的 `ThinktinTests` 21 个过 16 个（还是那 5 个要 App 包的：Info.plist 两条（这次没有新键）、隐私清单、小组件扩展、缓存路径）；
   `swift format -i -r apps/apple` 后 `swift format lint --strict -r apps/apple` 零条。macOS CI 和截图还没跑。
 
+- 第 1 轮 A 线·首页补完（规范 4.2.1–4.2.3、6.7 B、6.10 A，对过参考 01、32、33、110–116、119、120；2026-11-05）：
+  - 版式照参考量（393pt 宽，1pt ≈ 1.525px，常量在 `HomeLayout`）：行高约 83pt、44pt 头像（`Metrics.Avatar.list` 48 → 44，
+    `DesignTokenTests` 跟着改）离左边 22pt、文字从 82pt 起、时间离右边 24pt。行换成按钮（`Router.open(.conversation)`），
+    不再是 `NavigationLink`（plain 列表里会画 chevron，参考没有）。
+  - 预览照 6.7 B：闲着时是缓存里的最后一条（ThinktinKit `HomeLastMessage.latest(in:)`：最近一次的摘要带“AI 生成”标识，
+    没摘要、是你发的写“你：…”，计划派的跳过），`HomeRowPreview.message`；`AppModel.lastMessages` 启动读缓存，刷新完、回到首页
+    （`reloadLastMessages()`）重读。
+  - 置顶、隐藏只存这台设备（新 `InstancePreferencesStore`，仿 `InstanceAppearanceStore`：一个 `UserDefaults` 键、按实例 id、不分账号；
+    互斥，隐藏时取消置顶；删 Botin、事件流说没了时删记录）；`HomeList.content` 分成置顶 / 普通 / 隐藏三部分（`HomeListContent`），
+    `AppModel.homeContent`；`homeRows` 现在是看得见的（置顶的在前）。`HomePlaceholder.allHidden`。
+  - 界面（`Shell/Home/`）：`PinnedInstancesGrid`（80pt 头像 + `.footnote` 名字，一排 3 个、每排居中，104pt 一格）；长按
+    `HomeInstanceMenuContent`（一列不分组 + “更多”原地展开，顺序在 ThinktinKit `HomeInstanceMenu`）+ 预览卡 `HomeInstancePreviewCard`；
+    左滑 `HomeInstanceSwipeButtons`（隐藏、置顶）；改名 `HomeRenameAlert`（系统弹窗 + 输入框，调新的 `AppModel.renameInstance`）；
+    删除弹资料页那张 `InstanceDeleteSheet`，删成了走 `InstanceDetailScreen.leaveDeletedInstance`（这个函数现在顺带删置顶、隐藏的记录）；
+    复制 ID 有触感。都隐藏了是 `HomeAllHiddenView`（参考 113），部分隐藏时列表底下一行“已隐藏 N 个 Botin”；`HiddenInstancesScreen`
+    （本地压栈，参考 114、116）和 `HidingHelpSheet`（参考 115，文案 `HomeText.hidingFacts`）。
+  - 测试：ThinktinKit 新 `InstancePreferencesStoreTests`（6 条）、`HomeListTests` 加 6 条（三部分、最后一条、预览、菜单、改名、缓存重读）；
+    `AppShellTests` 加 2 条（最后一条和预览卡；置顶、隐藏、空状态、已隐藏页、说明、菜单），首页进对话那条改成 `Router.open`。
+    uicheck 桩加 `Color.gray`（新文件 `Stubs/SwiftUI/SwiftUI+Home.swift`）。
+- 第 1 轮 A 线·和参考对不上、自己定的（等用户看）：长按菜单里参考的“标为未读”“新建分组”“替换主 Bot…”“分享为模板”换成 Botin 资料、
+  新建计划、改名…（ThinkTin 没有前几个，6.10、6.21）；“更多”里多了删除；行的预览前面放的是“AI 生成”标识（参考是个小图标）；
+  已隐藏页的标题用系统的 inline 标题（参考在玻璃胶囊里）；首页底下多一行“已隐藏 N 个 Botin”（参考只有全部隐藏时才有入口）；
+  说明 sheet 的三行是 ThinkTin 自己的话（多了“只在这台设备上”）。
+- 第 1 轮 A 线·要在模拟器上看的（Linux 的桩看不出来）：长按预览卡的宽度和圆角（系统给预览卡包了一层圆角）；左滑两个按钮在 iOS 26
+  上是不是玻璃圆、“置顶”的灰；`swipeActions` 的“隐藏”带 `.destructive`，行会被系统先拿掉再由数据拿掉，看有没有闪；置顶一排 3 个在
+  最窄的 375pt 屏上放不放得下；已隐藏页（`navigationDestination(isPresented:)`）上点一行进对话（`Router.open` 把主栈设成
+  `[.conversation]`）以后返回是回到已隐藏页还是首页，两种都行，别出现页面又被压一次；从上下文菜单直接弹改名的 alert、删除的 sheet
+  会不会被菜单收起的动画吞掉（B 线的“选择文本”也是这样直接弹的）。
+- 第 1 轮 A 线这一份的 Linux 检查（2026-11-05）：ThinktinKit `swift test` 1089 个全过；uicheck UIKit、AppKit 都编过（没有警告）；
+  `run.sh test` 147 个全过；App 的 `ThinktinTests` 21 个过 16 个（还是那 5 个要 App 包的）；`swift format lint --strict` 零条。
+
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、
 字体全用系统的）；6.3 A（保持 iOS 17，iOS 26 的接口在 Design/Glass.swift 里回退）；6.4 A（“+”直接弹领养表单）；6.5 A（设置用 sheet）；
@@ -457,7 +488,7 @@
 新建时选它用哪个 agent 当引擎，同一个 agent 可以给好几个 Botin 当引擎（服务端只限每个账号的实例数）。agent 在界面上只以 Botin 的“引擎”/“Engine”出现。
 首次登录首页是空的，空状态“还没有 Botin”+ 说明 + “新建 Botin”按钮。代码里的标识符（`Instance`、`AppRoute.adopt`、`adopt(...)`）不改。
 
-进行中：第 1 轮 A 线·首页补完（规范 4.2.1–4.2.3：置顶、隐藏、长按菜单、左滑、已隐藏页和说明、全部隐藏的空状态），session_01GuCp3KRgqaK6Kzynw6udRn，2026-11-05 开始。B、C、D、E 线 2026-11-05 做完，见“已完成”。
+进行中：没有（第 1 轮 A 线的首页补完和 B、C、D、E 线 2026-11-05 做完，见“已完成”）。
 验证和发版（2026-11-05，session_01GuCp3KRgqaK6Kzynw6udRn）：GitHub 的 Mac 一直排不上，改用 Codemagic（`.github/workflows/codemagic.yml`：
 把提交推到 `codemagic/apple-check` / `codemagic/ios-screenshots`）。第 0 轮（bbdb07c）、Botin 版（06894fd）、新建页重做（c78064e）
 的 apple-check 都过了（真 Xcode：模拟器 build + test、ThinktinMac、Kit 的 macOS 测试）。截图对照参考 34、35 后又调了两次版式：
@@ -484,9 +515,9 @@ TestFlight：28（Botin 改名、空状态，旧表单）、30（新建页重做
    失败的话看日志换版本号）。顺带看 09-search 里搜索栏有没有激活（iOS 26 底部条，见“已完成”审查修正那条）。和参考截图并排看
    （参考截图在仓库外，要请用户再发），差别记到这里。冷启动后的启动屏截不到，要在模拟器或真机上看一眼。
 3. 第 1 轮五条线并行（规范 7.3，开工前先在这里认领）；第 2 轮纯客户端新功能；第 3 轮等后端。B、C 线做完了；C 线没做的只剩要后端的
-   （资料页“通知”开关 6.14、工作区重置和磁盘 6.17、观看与接管 4.6.2、头像的生成和上传、多端同步 6.9 B）。A 线（首页）接着做：长按菜单（4.2.2）、
-   “等你处理”提示行、预览换成最近一次运行的摘要（6.7）、`NewTaskSheet` 换选择器版式（4.4.5）；`SearchResultsView` 嵌进首页和空查询列 Botin
-   D 线已经做了（`HomeScreen.swift` 只动了搜索那一块）。B 线（对话页）做完了，接着可以做第 2 轮的对话内查找（4.3.3，“…”菜单第一组
+   （资料页“通知”开关 6.14、工作区重置和磁盘 6.17、观看与接管 4.6.2、头像的生成和上传、多端同步 6.9 B）。A 线（首页）的长按菜单、置顶、隐藏、
+   已隐藏页、预览换成最后一条（6.7 B）2026-11-05 做完了；接着做：“等你处理”提示行（4.2.1）、`NewTaskSheet` 换选择器版式（4.4.5）、
+   预览卡里的最后一条改从缓存的事件里取（现在是运行的摘要，4.2.2 原来的建议是 `cachedEventsBefore`）。B 线（对话页）做完了，接着可以做第 2 轮的对话内查找（4.3.3，“…”菜单第一组
    Botin 资料后面加一项）。D 线做完了，剩下的：计划的新建 / 编辑表单（`PlanEditorScreen`）、确认页（`PlanConfirmScreen`）、触发器编辑器
    （`TriggerEditorView`）、时区和预授权工具的选择页还是自画版式（`PageHeader`、`GroupedSection`、`Card`、`PillButton`、`PlansTextField`），
    按第 2 节换成 `Form`；搜索回复正文（本机缓存的事件，4.2.4，第 2 轮）。E 线做完了，剩下的：纯黑外观（4.9.11 第二排，Theme 的动态颜色要能按偏好换值，第 2 轮）；添加 key 的 sheet
@@ -495,6 +526,10 @@ TestFlight：28（Botin 改名、空状态，旧表单）、30（新建页重做
    设置里“连接”汇总页（4.8.1、第 2 轮）做了以后 IM 渠道挪进去；设备改名、保险箱网站、发送反馈等后端（第 3 轮）。
 
 坑和决定：
+- 首页的置顶、隐藏在 `InstancePreferencesStore`（只存这台设备，按实例 id），界面别自己存；`AppModel.homeContent` 已经按它分好三部分，
+  `homeRows` 是首页看得见的（置顶的在前），截图的“首页第一行”也是它。长按、左滑的项和顺序改 ThinktinKit 的 `HomeInstanceMenu`
+  （有测试），加项要给 `systemImage`、`needsConnection`。删 Botin 的地方都走 `InstanceDetailScreen.leaveDeletedInstance`，它会删记录。
+- 首页的行是按钮不是 `NavigationLink`（plain 列表里 `NavigationLink` 会画 chevron）；进对话用 `Router.open(.conversation(id))`。
 - 触感：界面里要震的地方一律用 `appFeedback(_:trigger:)`（`Design/Haptics.swift`），别直接写 `.sensoryFeedback`，不然设置里的“触感反馈”
   关不掉它。开关在 `SettingsPreferences.hapticsEnabled`，由 `.settingsPreferences()` 放进环境 `\.hapticsEnabled`。
 - 设置根页的分组、顺序、每行去哪都在 ThinktinKit 的 `SettingsModel.sections(_:pendingApprovals:)`（测试 `SettingsModelTests` 逐行查 id），

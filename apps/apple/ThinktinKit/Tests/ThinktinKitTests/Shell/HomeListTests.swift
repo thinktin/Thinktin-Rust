@@ -148,9 +148,20 @@ struct HomeListTests {
         #expect(check(true, true, false, true) == nil)
         for loaded in [false, true] {
             for offline in [false, true] {
-                for error in [false, true] { #expect(check(false, loaded, offline, error) == nil) }
+                for error in [false, true] {
+                    #expect(check(false, loaded, offline, error) == nil)
+                    // 有 Botin 但都隐藏了：离线、出错也这么说（隐藏是这台设备上的事）。
+                    #expect(
+                        HomeList.placeholder(
+                            isEmpty: false, hasLoaded: loaded, isOffline: offline, hasError: error, isAllHidden: true)
+                            == .allHidden)
+                }
             }
         }
+        // 一个 Botin 都没有时说不上“都隐藏了”。
+        #expect(
+            HomeList.placeholder(isEmpty: true, hasLoaded: true, isOffline: false, hasError: false, isAllHidden: true)
+                == .noBotins)
     }
 
     @Test("第一次登录（新账号）：拉到了、联网，首页是“还没有 Botin”；有了缓存的账号离线时不是")
@@ -248,5 +259,158 @@ struct HomeListTests {
         await demo.openCreatedInstance(another)
         #expect(demo.router.sheet == nil && demo.router.nestedSheet == nil)
         #expect(demo.router.path == [.conversation(another.id)])
+    }
+
+    // MARK: 第 1 轮 A 线：置顶、隐藏、最后一条、长按菜单
+
+    private static func message(_ runID: RunID, prompt: String, summary: String?, source: RunSource = .user, at: Date)
+        -> Run
+    {
+        var run = Fixture.run(
+            runID, prompt: prompt, state: summary == nil ? .failed : .succeeded, createdAt: at, source: source)
+        run.summary = summary
+        run.finishedAt = summary == nil ? nil : at.addingTimeInterval(30)
+        return run
+    }
+
+    @Test("三部分：置顶的按置顶先后、不管活动；隐藏的不在首页；又置顶又隐藏按隐藏；没了的 Botin 不管")
+    func content() {
+        let now = Fixture.now
+        let instances = [
+            Self.instance("a", name: "写作助手", lastActive: now),
+            Self.instance("b", name: "代码审查", lastActive: now.addingTimeInterval(-60)),
+            Self.instance("c", name: "日报", lastActive: now.addingTimeInterval(-120)),
+            Self.instance("d", name: "翻译", lastActive: now.addingTimeInterval(-180)),
+        ]
+        let content = HomeList.content(
+            instances: instances, activity: [:], pinned: ["c", "gone", "b", "c", "d"], hidden: ["a", "d"])
+        #expect(content.pinned.map(\.id) == ["c", "b"])
+        #expect(content.rows.isEmpty)
+        #expect(content.hidden.map(\.id) == ["a", "d"])
+        #expect(content.visible.map(\.id) == ["c", "b"])
+        #expect(!content.isAllHidden)
+
+        let plain = HomeList.content(instances: instances, activity: [:])
+        #expect(plain.pinned.isEmpty && plain.hidden.isEmpty)
+        #expect(plain.rows == HomeList.rows(instances: instances, activity: [:]))
+
+        let allHidden = HomeList.content(instances: instances, activity: [:], hidden: ["a", "b", "c", "d"])
+        #expect(allHidden.isAllHidden && allHidden.visible.isEmpty)
+        #expect(!HomeListContent().isAllHidden)
+    }
+
+    @Test("最后一条：最新一次有摘要就是摘要；没摘要、是你发的就是任务；计划派的没摘要往前找")
+    func lastMessage() {
+        let now = Fixture.now
+        let summary = Self.message("r1", prompt: "整理周报", summary: "周报整理好了，\n分了三组。", at: now.addingTimeInterval(-600))
+        let failedTask = Self.message("r2", prompt: "  发到群里  ", summary: nil, at: now.addingTimeInterval(-60))
+        let planTask = Self.message("r3", prompt: "汇总通知", summary: nil, source: .plan, at: now)
+
+        let reply = HomeLastMessage.latest(in: [summary])
+        #expect(reply?.author == .agent)
+        #expect(reply?.text == "周报整理好了，\n分了三组。")
+        #expect(reply?.singleLine == "周报整理好了， 分了三组。")
+        #expect(reply?.at == now.addingTimeInterval(-570))
+
+        // 计划派的、没摘要的跳过；你发的任务没回答也算。顺序不影响。
+        let task = HomeLastMessage.latest(in: [summary, planTask, failedTask])
+        #expect(task == HomeLastMessage(author: .user, text: "发到群里", runID: "r2", at: now.addingTimeInterval(-60)))
+        #expect(HomeLastMessage.latest(in: [failedTask, planTask, summary]) == task)
+        #expect(HomeLastMessage.latest(in: [planTask]) == nil)
+        #expect(HomeLastMessage.latest(in: []) == nil)
+    }
+
+    @Test("预览：没有进行中的运行时显示最后一条；创建中、不认识的状态照旧说状态；最后一条比实例新时按它排")
+    func messagePreview() {
+        let now = Fixture.now
+        let last = HomeLastMessage(author: .agent, text: "好了", runID: "r1", at: now)
+        #expect(HomeRowPreview(state: .running, activity: .none, lastMessage: last) == .message(last, state: .running))
+        #expect(HomeRowPreview(state: .paused, activity: .none, lastMessage: last) == .message(last, state: .paused))
+        #expect(
+            HomeRowPreview(state: .archived, activity: .none, lastMessage: last) == .message(last, state: .archived))
+        #expect(HomeRowPreview(state: .provisioning, activity: .none, lastMessage: last) == .idle(.provisioning))
+        #expect(HomeRowPreview(state: .unknown("x"), activity: .none, lastMessage: last) == .idle(.unknown("x")))
+        // 在等你处理、进行中的照旧优先。
+        let active = InstanceActivity(activeRuns: 1, latestRunState: .running, latestRunAt: now)
+        #expect(
+            HomeRowPreview(state: .running, activity: active, lastMessage: last) == .active(count: 1, state: .running))
+
+        let row = HomeRow(
+            instance: Self.instance("a", name: "写作助手", lastActive: now.addingTimeInterval(-3_600)), activity: .none,
+            lastMessage: last)
+        #expect(row.lastActivityAt == now)
+        #expect(row.lastMessage == last)
+    }
+
+    @Test("长按菜单（参考 32、112 的一列）：资料、置顶 / 取消置顶、新建计划、改名、隐藏，更多里复制 ID 和删除")
+    func menu() {
+        typealias Item = HomeInstanceMenuItem
+        #expect(HomeInstanceMenu.items(isPinned: false) == [.profile, .pin, .newPlan, .rename, .hide])
+        #expect(HomeInstanceMenu.items(isPinned: true) == [.profile, .unpin, .newPlan, .rename, .hide])
+        #expect(HomeInstanceMenu.more == [.copyID, .delete])
+        // 左滑：最右边是隐藏，再是置顶。
+        #expect(HomeInstanceMenu.swipeItems(isPinned: false) == [.hide, .pin])
+        #expect(HomeInstanceMenu.swipeItems(isPinned: true) == [.hide, .unpin])
+
+        let all: [Item] = [.profile, .pin, .unpin, .newPlan, .rename, .hide, .copyID, .delete]
+        #expect(Set(all.map(\.systemImage)).count == all.count)
+        #expect(all.filter(\.isDestructive) == [.hide, .delete])
+        #expect(all.filter(\.needsConnection) == [.newPlan, .rename, .delete])
+        let id: InstanceID = "a"
+        #expect(Item.profile.route(for: id) == .instance(id))
+        #expect(Item.newPlan.route(for: id) == .newPlan(instanceID: id))
+        #expect(all.filter { $0.route(for: id) != nil } == [.profile, .newPlan])
+        #expect(Item.profile.title(.chinese) == "Botin 资料")
+        #expect(Item.copyID.title(.chinese) == "复制 Botin ID")
+        #expect(Item.rename.title(.english) == "Rename…")
+        for language in [DisplayLanguage.chinese, .english] {
+            #expect(Set(all.map { $0.title(language) }).count == all.count)
+            #expect(HomeText.hidingFacts(language).count == 3)
+            #expect(!HomeText.hiddenCount(2, language: language).isEmpty)
+        }
+        #expect(HomeText.hiddenCount(1, language: .english) == "1 hidden Botin")
+        #expect(HomeText.hiddenCount(3, language: .chinese) == "已隐藏 3 个 Botin")
+    }
+
+    @Test("改名：去掉首尾空白，改好了首页马上变；名字没变不调；不合规、失败返回错误")
+    @MainActor
+    func rename() async {
+        let mock = makeShellMock()
+        let model = AppModel(client: mock, defaults: nil)
+        await model.start()
+        let id = DemoData.writerID
+        #expect(await model.renameInstance(id, to: "  主笔  ") == nil)
+        #expect(model.instances.first { $0.id == id }?.name == "主笔")
+        #expect(model.homeRows.first { $0.id == id }?.instance.name == "主笔")
+
+        let calls = mock.callCount("renameInstance(_:name:)")
+        #expect(await model.renameInstance(id, to: "主笔") == nil)
+        #expect(mock.callCount("renameInstance(_:name:)") == calls)
+
+        #expect(await model.renameInstance(id, to: "   ") != nil)
+        #expect(await model.renameInstance(id, to: String(repeating: "长", count: 65)) != nil)
+        #expect(mock.callCount("renameInstance(_:name:)") == calls)
+
+        mock.failNext(
+            "renameInstance(_:name:)", with: .api(status: 500, code: .internal, message: "boom", retryAfterSecs: nil))
+        #expect(await model.renameInstance(id, to: "校对") != nil)
+        #expect(model.instances.first { $0.id == id }?.name == "主笔")
+    }
+
+    @Test("最后一条从缓存读：启动时有；新跑完的回首页时重读就有")
+    @MainActor
+    func reloadLastMessages() async throws {
+        let mock = makeShellMock()
+        let model = AppModel(client: mock, defaults: nil)
+        await model.start()
+        // 写作助手最新的一次（发到群里）在等审批，没摘要、是你发的。
+        let writer = try #require(model.lastMessages[DemoData.writerID])
+        #expect(writer.author == .user)
+        #expect(writer.runID == DemoData.postRunID)
+
+        let run = try await mock.createRun(instanceID: DemoData.reviewerID, prompt: "看看新的 PR")
+        model.reloadLastMessages()
+        #expect(model.lastMessages[DemoData.reviewerID]?.runID == run.id)
+        #expect(model.lastMessages[DemoData.reviewerID]?.text == "看看新的 PR")
     }
 }
