@@ -44,7 +44,7 @@ struct InboxScreensTests {
                 hostAndLayout(row.previewShell())
                 hostAndLayout(row.previewShell(.english, scheme: .dark))
             }
-            hostAndLayout(InboxItemCard(item: item).previewShell())
+            hostAndLayout(List { InboxItemCard(item: item) }.previewShell())
         }
         for kind in InboxKind.knownCases + [.unknown("new")] {
             #expect(!InboxKindIcon.systemImage(kind).isEmpty)

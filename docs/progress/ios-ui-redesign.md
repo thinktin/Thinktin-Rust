@@ -479,6 +479,15 @@
   定的 24pt），试 36pt 会不会把 iOS 26 的玻璃撑大，不会就改大。
 - 第 1 轮 A 线这一份的 Linux 检查（2026-11-05）：ThinktinKit `swift test` 1089 个全过；uicheck UIKit、AppKit 都编过（没有警告）；
   `run.sh test` 147 个全过；App 的 `ThinktinTests` 21 个过 16 个（还是那 5 个要 App 包的）；`swift format lint --strict` 零条。
+- 第 1 轮收尾线·收件箱和审批（参考里没有，照第 2 节；2026-11-05）：收件箱换成 plain 列表、不画分隔线（照首页的消息列表：40pt 种类图标、
+  未读圆点 + 加粗标题、右边时间、两行灰色正文、种类和 AI 标识），左滑删除 / 标已读未读、长按同样的菜单（每行的“…”按钮去掉），右上玻璃
+  “全部已读”，“N 条未读”是列表顶上一行灰字，空状态 `ContentUnavailableView`；一条通知的页换成分组列表（居中 56pt 图标头部、标题和全文一组、
+  “查看…”一行，右上 `ellipsis` 菜单）。审批中心换成分组列表：顶上一句灰色说明，电脑发来的一组（`ComputerApprovalsSection` 变成原生
+  `Section`），每个审批一张分组卡片（24pt Botin 头像和名字、剩余时间用警告色、标题和 AI 标识、操作摘要，选项是全宽的玻璃胶囊，第一个批准类
+  的突出，最后一行“查看详情”）；审批详情同一张卡片 + “查看这次运行”（`NavigationLink`）“去对话”一组。电脑配对、授权两张 sheet 换成
+  `Form`（配对码用新的 `FormTextField`，“配对”是底部浮动的全宽胶囊，左上 `CloseButton`；授权的有效期换成 `Picker(.menu)`，右上
+  `ConfirmButton("签名授权")`），Mac 菜单栏面板的胶囊按钮换成系统按钮。新的共用组件 `Components/FormFields.swift`：`FormTextField`
+  （标签在上、系统输入框、提示 / 问题和字数，代替自画框的 `PlansTextField`）和 `numberInput()` / `codeInput()`。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、
