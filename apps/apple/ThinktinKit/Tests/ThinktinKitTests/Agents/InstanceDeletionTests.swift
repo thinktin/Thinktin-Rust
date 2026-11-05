@@ -124,7 +124,8 @@ struct InstanceDeletionTests {
         #expect(impact.pipelines.isEmpty)
         #expect(impact.teams.first?.isLead == false)
         #expect(impact.activeRuns == 1)
-        #expect(impact.artifactCount == 1)
+        // 周报要点、通知汇总的截图。
+        #expect(impact.artifactCount == 2)
     }
 
     @Test("计划拉不到：标成没查全，带上错误")

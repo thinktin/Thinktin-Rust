@@ -2,8 +2,8 @@ import SwiftUI
 import ThinktinKit
 
 /// 一排单选的筛选胶囊（docs/ios-ui-redesign.md 2.8）：横向滚动的系统按钮，选中的是 `.glassProminent`、没选中的是
-/// `.glass`（iOS 17 / 18 是 `.borderedProminent` / `.bordered`，见 Design/Glass.swift），外面包一层 `GlassGroup`。
-/// 换选中项时有系统的选择触感。
+/// `.glass`（iOS 17 / 18 是 `.borderedProminent` / `.bordered`，见 Design/Glass.swift）。外面不包 `GlassGroup`（合起来的
+/// 玻璃在整排后面画出一块灰影，2026-11-05 截图）。换选中项时有系统的选择触感。
 ///
 /// 字是 medium 的 `.footnote`（参考 22、36、78 量出来约 13pt，两个字的胶囊约 52pt 宽，首页搜索的六个胶囊一屏放得下）；
 /// 没选中的字是正文色，只有选中的那个用强调色（参考里也只有选中的突出，没选中的字都是强调色时选中的不显眼）。
@@ -57,16 +57,16 @@ public struct FilterChipBar<Value: Hashable>: View {
     }
 
     public var body: some View {
+        // 不包 `GlassGroup`：合在一起的玻璃在 iOS 26 上给整排胶囊画了一块长方形的灰影（2026-11-05 截图，05 浅色一直拖到
+        // 最后一个胶囊右边），参考 22、23 的胶囊各是各的、没有这块底。
         ScrollView(.horizontal, showsIndicators: false) {
-            GlassGroup(spacing: Metrics.Spacing.xs) {
-                HStack(spacing: Metrics.Spacing.xs) {
-                    ForEach(options) { option in
-                        chip(option)
-                    }
+            HStack(spacing: Metrics.Spacing.xs) {
+                ForEach(options) { option in
+                    chip(option)
                 }
-                .padding(.horizontal, horizontalInset)
-                .padding(.vertical, Metrics.Spacing.xxs)
             }
+            .padding(.horizontal, horizontalInset)
+            .padding(.vertical, Metrics.Spacing.xxs)
         }
         // 玻璃的阴影和按压时的放大不被滚动视图的边框切掉。
         .scrollClipDisabled()

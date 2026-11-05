@@ -37,11 +37,11 @@ struct ArtifactModelsTests {
         let model = ArtifactLibraryModel(client: mock())
         await model.load()
         #expect(model.hasLoaded)
-        #expect(model.artifacts.map(\.name) == ["review.json", "chart.png", "周报要点.md"])
+        #expect(model.artifacts.map(\.name) == ["review.json", "chart.png", "通知汇总截图.png", "周报要点.md"])
         #expect(model.instanceName(DemoData.reviewerID) == "代码审查")
         #expect(model.filterInstances.count == 2)
         model.filter = DemoData.writerID
-        #expect(model.visible.map(\.name) == ["chart.png", "周报要点.md"])
+        #expect(model.visible.map(\.name) == ["chart.png", "通知汇总截图.png", "周报要点.md"])
     }
 
     @Test("刷新时实例请求失败，保留之前的产出物并允许重试")
@@ -66,11 +66,14 @@ struct ArtifactModelsTests {
         let client = mock()
         let model = ArtifactLibraryModel(client: client, instanceID: DemoData.writerID)
         await model.load()
-        #expect(model.artifacts.count == 2)
+        // chart.png、演示数据里的通知汇总截图、周报要点。
+        #expect(model.artifacts.count == 3)
         let first = try #require(model.artifacts.first)
         await model.delete(first)
-        #expect(model.artifacts.count == 1)
-        #expect(try await client.instanceArtifacts(DemoData.writerID, limit: 10).count == 1)
+        #expect(model.artifacts.count == 2)
+        #expect(try await client.instanceArtifacts(DemoData.writerID, limit: 10).count == 2)
+        let second = try #require(model.artifacts.first)
+        await model.delete(second)
         let last = try #require(model.artifacts.first)
         try await client.deleteArtifact(last.id)
         await model.delete(last)

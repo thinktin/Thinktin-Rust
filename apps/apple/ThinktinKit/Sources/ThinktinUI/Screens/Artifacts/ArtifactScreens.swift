@@ -72,7 +72,10 @@ private struct ArtifactLibraryContent: View {
                         row(artifact)
                     }
                 } header: {
+                    // 参考 22、23 的“更早”：小号、很浅的灰，贴着下面的卡片。
                     Text(section.group.title(language))
+                        .typography(.footnote)
+                        .foregroundStyle(Theme.inkTertiary)
                         .textCase(nil)
                 }
                 .themedRow()
@@ -89,6 +92,8 @@ private struct ArtifactLibraryContent: View {
             }
         }
         .insetGroupedList()
+        // 参考 22：胶囊贴着导航栏（中心往下约 40pt），下面约 43pt 就是第一张卡片；系统默认的上边距和分组间距都多出一截。
+        .compactGroupedList(top: Metrics.Spacing.xxs)
         .themedGroupedBackground()
         .overlay { placeholder }
         .inlineNavigationTitle(AppRoute.artifacts(instanceID: model.instanceID).title(language))
@@ -164,6 +169,7 @@ private struct ArtifactLibraryContent: View {
             )
             .labelStyle(.iconOnly)
         }
+        .neutralTint()
     }
 
     // MARK: 行
@@ -263,15 +269,28 @@ private struct ArtifactLibraryContent: View {
                     .glassButtonStyle()
             }
         case .noneOfKind(let kind):
-            // 胶囊那一行还在上面，空状态往下让一点。
-            ContentUnavailableView(
-                ArtifactsText.noneOfKind(kind, language: language),
-                systemImage: kind == .media ? "photo.on.rectangle" : "doc",
-                description: Text(ArtifactsText.noneOfKindMessage(kind, language: language)))
+            // 和计划的空状态（参考 21）一样：正中一段灰字，没有图标和标题。读屏先念“没有媒体”再念说明。
+            ContentUnavailableView {
+                EmptyView()
+            } description: {
+                Text(ArtifactsText.noneOfKindMessage(kind, language: language))
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(
+                Text(
+                    ArtifactsText.noneOfKind(kind, language: language) + (language == .chinese ? "。" : ". ")
+                        + ArtifactsText.noneOfKindMessage(kind, language: language)))
         case .empty:
-            ContentUnavailableView(
-                ArtifactsText.emptyTitle(language), systemImage: "folder",
-                description: Text(ArtifactsText.emptyMessage(language)))
+            ContentUnavailableView {
+                EmptyView()
+            } description: {
+                Text(ArtifactsText.emptyMessage(language))
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(
+                Text(
+                    ArtifactsText.emptyTitle(language) + (language == .chinese ? "。" : ". ")
+                        + ArtifactsText.emptyMessage(language)))
         case nil:
             EmptyView()
         }
