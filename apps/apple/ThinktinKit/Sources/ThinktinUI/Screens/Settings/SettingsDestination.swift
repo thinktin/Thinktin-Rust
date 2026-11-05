@@ -27,6 +27,8 @@ struct SettingsDestination: View {
         case .licenses: LicensesScreen()
         case .permissions: PermissionsScreen()
         case .subscription: SubscriptionScreen()
+        case .importMemory: ImportMemoryScreen()
+        case .feedback: FeedbackScreen()
         default: DestinationPlaceholder(route: route)
         }
     }
