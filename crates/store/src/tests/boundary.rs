@@ -416,3 +416,247 @@ async fn startup_checks_the_login_roles() {
     );
     assert!(msg.contains("deploy-checklist"), "{msg}");
 }
+
+async fn space(db: &Db, table: &str, run: uuid::Uuid) -> Vec<(String, Option<uuid::Uuid>)> {
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT space_kind, project_id FROM {table} WHERE run_id = $1 ORDER BY 1"
+    )))
+    .bind(run)
+    .fetch_all(db.pool())
+    .await
+    .unwrap()
+}
+
+/// 事件、审批、产出物的空间跟着运行走（8.15 测试 5 的 C4 部分）：worker、租户写的都由触发器按运行填上项目；建了不能改；
+/// 和运行对不上的被外键拒绝；项目产出物要项目有密钥，登记时给的项目和运行的对不上报错。
+#[tokio::test]
+async fn scope_follows_the_run() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = user(db, "+8613800005021").await;
+    let bob = user(db, "+8613800005022").await;
+    let (a1, b1) = (instance(db, alice).await, instance(db, bob).await);
+    let p = solo(db, alice, &a1).await;
+    join_raw(db, p, bob, &b1).await;
+    let private = super::queue_run(db, bob, &b1, "private").await;
+    let r = super::projects::copy_into_project(db, "runs", private.id.0, p, None).await;
+    let r_id = proto::domain::RunId(r);
+    let mut w = db.worker().await.unwrap();
+    assert_eq!(w.run_project(r_id).await.unwrap(), Some(p));
+    assert_eq!(w.run_project(private.id).await.unwrap(), None);
+    w.append_event(
+        b1.id,
+        Some(r_id),
+        "agent.message",
+        &serde_json::json!({ "text": "hi" }),
+    )
+    .await
+    .unwrap();
+    w.create_approval(&crate::NewApproval {
+        user: bob,
+        instance: b1.id,
+        run: r_id,
+        request_id: "perm-1",
+        title: None,
+        options: &serde_json::json!([]),
+        tool_call: &serde_json::json!({}),
+        expires_in: std::time::Duration::from_secs(60),
+    })
+    .await
+    .unwrap();
+    w.commit().await.unwrap();
+    // 租户（bob 自己）在项目运行上写事件：照样带上项目。
+    let mut tb = db.tenant(bob).await.unwrap();
+    tb.append_event(
+        b1.id,
+        Some(r_id),
+        "agent.plan",
+        &serde_json::json!({ "entries": [] }),
+    )
+    .await
+    .unwrap();
+    tb.commit().await.unwrap();
+    assert_eq!(
+        space(db, "events", r).await,
+        vec![("project".into(), Some(p.0)), ("project".into(), Some(p.0))]
+    );
+    assert_eq!(
+        space(db, "approvals", r).await,
+        vec![("project".into(), Some(p.0))]
+    );
+    // 私人运行上的照样是私人的。
+    let mut w = db.worker().await.unwrap();
+    w.append_event(
+        b1.id,
+        Some(private.id),
+        "agent.message",
+        &serde_json::json!({ "text": "mine" }),
+    )
+    .await
+    .unwrap();
+    w.commit().await.unwrap();
+    assert_eq!(
+        space(db, "events", private.id.0).await,
+        vec![("private".into(), None)]
+    );
+    // 产出物：没有密钥登记不进项目；不说是项目的也不行（库里按运行算出来的对不上）。
+    let artifact = |project: Option<ProjectId>, name: &'static str| crate::NewArtifact {
+        id: proto::domain::ArtifactId::new(),
+        user: bob,
+        instance: b1.id,
+        run: r_id,
+        root: r_id,
+        name,
+        content_type: "text/plain",
+        size: 1,
+        sha256: &[0; 32],
+        blob_key: "k",
+        project,
+    };
+    let mut w = db.worker().await.unwrap();
+    assert!(matches!(
+        w.insert_artifact(&artifact(Some(p), "a.txt")).await,
+        Err(Error::NotFound)
+    ));
+    w.rollback().await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    let (kid, wrapped) = w
+        .insert_project_key(p, "kms-1", b"wrapped-1")
+        .await
+        .unwrap();
+    assert_eq!(
+        (kid.as_str(), wrapped.as_slice()),
+        ("kms-1", &b"wrapped-1"[..])
+    );
+    // 同时有人存了：用先存的那个。
+    let (kid, _) = w
+        .insert_project_key(p, "kms-2", b"wrapped-2")
+        .await
+        .unwrap();
+    assert_eq!(kid, "kms-1");
+    w.commit().await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    let err = w
+        .insert_artifact(&artifact(None, "b.txt"))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::Invalid(_)), "{err:?}");
+    w.rollback().await.unwrap();
+    let mut w = db.worker().await.unwrap();
+    let a = w
+        .insert_artifact(&artifact(Some(p), "a.txt"))
+        .await
+        .unwrap();
+    assert_eq!(a.project_id, Some(p));
+    assert_eq!(w.project_key(p).await.unwrap().unwrap().0, "kms-1");
+    w.commit().await.unwrap();
+    assert_eq!(
+        space(db, "artifacts", r).await,
+        vec![("project".into(), Some(p.0))]
+    );
+    // 建了不能改空间。
+    let err = sqlx::query("UPDATE events SET project_id = NULL WHERE run_id = $1")
+        .bind(r)
+        .execute(db.pool())
+        .await
+        .map_err(Error::from)
+        .unwrap_err();
+    assert!(matches!(err, Error::Invalid(_)), "{err:?}");
+    // 和运行的空间对不上：去掉触发器硬写一条私人的，外键拒绝。
+    sqlx::query("ALTER TABLE approvals DISABLE TRIGGER approvals_space")
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let mut w = db.worker().await.unwrap();
+    let err = sqlx::query(
+        "INSERT INTO approvals (id, user_id, instance_id, run_id, request_id, options, tool_call, expires_at, \
+           space_kind, space_id) \
+         VALUES (gen_random_uuid(), $1, $2, $3, 'perm-2', '[]', '{}', now() + interval '1 minute', 'private', $1)",
+    )
+    .bind(bob.0)
+    .bind(b1.id.0)
+    .bind(r)
+    .execute(w.conn())
+    .await
+    .map_err(Error::from)
+    .unwrap_err();
+    assert!(matches!(err, Error::Invalid(_)), "{err:?}");
+    w.rollback().await.unwrap();
+    sqlx::query("ALTER TABLE approvals ENABLE TRIGGER approvals_space")
+        .execute(db.pool())
+        .await
+        .unwrap();
+    // 项目删了（软删除）：密钥读不到，也存不进去。
+    sqlx::query("UPDATE projects SET status = 'deleted', deleted_at = now() WHERE id = $1")
+        .bind(p.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let mut w = db.worker().await.unwrap();
+    assert_eq!(w.project_key(p).await.unwrap(), None);
+    assert!(matches!(
+        w.insert_project_key(p, "kms-3", b"x").await,
+        Err(Error::NotFound)
+    ));
+    w.rollback().await.unwrap();
+}
+
+/// 迁移 0050 的回填（8.15 测试 12）：迁移之前就有的项目运行的事件、审批、产出物，迁移后都带上项目，三个外键都核对过。
+#[tokio::test]
+async fn scope_backfill_covers_existing_rows() {
+    let Some(t) = TestDb::up_to(49).await else {
+        return;
+    };
+    let db = &t.db;
+    let alice = user(db, "+8613800005031").await;
+    let bob = user(db, "+8613800005032").await;
+    let (a1, b1) = (instance(db, alice).await, instance(db, bob).await);
+    let p = solo(db, alice, &a1).await;
+    join_raw(db, p, bob, &b1).await;
+    let private = super::queue_run(db, bob, &b1, "private").await;
+    let r = super::projects::copy_into_project(db, "runs", private.id.0, p, None).await;
+    // 0050 之前：事件、审批、产出物没有空间列（直接写，超级用户）。
+    for sql in [
+        "INSERT INTO events (instance_id, seq, run_id, user_id, kind, payload) \
+         VALUES ($2, 1001, $1, $3, 'agent.message', '{}')",
+        "INSERT INTO approvals (id, user_id, instance_id, run_id, request_id, options, tool_call, expires_at) \
+         VALUES (gen_random_uuid(), $3, $2, $1, 'perm-1', '[]', '{}', now() + interval '1 minute')",
+        "INSERT INTO artifacts (id, user_id, instance_id, run_id, root_run_id, name, version, content_type, \
+           size, sha256, blob_key) \
+         VALUES (gen_random_uuid(), $3, $2, $1, $1, 'a.txt', 1, 'text/plain', 1, '\\x00', 'k')",
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(sql.to_string()))
+            .bind(r)
+            .bind(b1.id.0)
+            .bind(bob.0)
+            .execute(db.pool())
+            .await
+            .unwrap();
+    }
+    t.migrate_rest().await;
+    for table in ["events", "approvals", "artifacts"] {
+        assert_eq!(
+            space(db, table, r).await,
+            vec![("project".into(), Some(p.0))],
+            "{table}"
+        );
+    }
+    let unvalidated: Vec<String> = sqlx::query_scalar(
+        "SELECT conname::text FROM pg_constraint \
+          WHERE conname IN ('events_run_space', 'approvals_run_space', 'artifacts_run_space') \
+            AND NOT convalidated",
+    )
+    .fetch_all(db.pool())
+    .await
+    .unwrap();
+    assert!(unvalidated.is_empty(), "{unvalidated:?}");
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM pg_constraint \
+          WHERE conname IN ('events_run_space', 'approvals_run_space', 'artifacts_run_space')",
+    )
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    // events 是分区表：每个分区一份外键约束，父表一份。
+    assert!(n >= 3, "{n}");
+}

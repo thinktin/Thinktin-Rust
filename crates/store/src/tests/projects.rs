@@ -1743,7 +1743,7 @@ async fn withdraw_leave_remove_and_rejoin() {
 }
 
 /// 把 `from` 这一行复制成项目 `project` 的（列表现查）；`parent` 给授权设父授权。
-async fn copy_into_project(
+pub(super) async fn copy_into_project(
     db: &Db,
     table: &str,
     from: uuid::Uuid,

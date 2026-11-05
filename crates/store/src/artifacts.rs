@@ -1,7 +1,7 @@
 //! 产出物索引（8.4）。内容在对象存储里（按用户 DEK 加密），这里只记元数据和存储键。
 
 use chrono::{DateTime, Utc};
-use proto::domain::{Artifact, ArtifactId, InstanceId, RunId, UserId};
+use proto::domain::{Artifact, ArtifactId, InstanceId, ProjectId, RunId, UserId};
 use uuid::Uuid;
 
 use crate::{Error, Result, Tenant, Tx, Worker, signed, unsigned};
@@ -20,6 +20,7 @@ struct Row {
     sha256: Vec<u8>,
     blob_key: String,
     created_at: DateTime<Utc>,
+    project_id: Option<Uuid>,
 }
 
 /// 产出物和它在对象存储里的位置（只给平台内部用）。
@@ -28,6 +29,8 @@ pub struct StoredArtifact {
     pub artifact: Artifact,
     pub user_id: UserId,
     pub blob_key: String,
+    /// 项目产出物（8.15）：用项目的密钥加密；私人的没有。
+    pub project_id: Option<ProjectId>,
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -52,13 +55,15 @@ impl Row {
             },
             user_id: self.user_id.into(),
             blob_key: self.blob_key,
+            project_id: self.project_id.map(ProjectId),
         })
     }
 }
 
 macro_rules! columns {
     () => {
-        "id, user_id, instance_id, run_id, root_run_id, name, version, content_type, size, sha256, blob_key, created_at"
+        "id, user_id, instance_id, run_id, root_run_id, name, version, content_type, size, sha256, blob_key, created_at, \
+         project_id"
     };
 }
 
@@ -75,6 +80,9 @@ pub struct NewArtifact<'a> {
     pub size: u64,
     pub sha256: &'a [u8; 32],
     pub blob_key: &'a str,
+    /// 运行在哪个项目里（8.15，由调用方按运行查好）：项目进行中、有密钥才登记得进去；库里按运行算出来的项目和它对不上
+    /// 就报错。
+    pub project: Option<ProjectId>,
 }
 
 /// 一棵运行树最多多少个产出物（含历史版本）。
@@ -117,6 +125,20 @@ impl Tx<Worker> {
 
     /// 登记产出物，版本号在这棵运行树里同名的基础上加一。
     pub async fn insert_artifact(&mut self, a: &NewArtifact<'_>) -> Result<StoredArtifact> {
+        if let Some(p) = a.project {
+            // 项目产出物：在项目锁里核对项目进行中、有密钥（删项目在同一把锁里先删密钥，删了以后登记不进去）。
+            self.lock_project(p).await?;
+            let ok: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM projects p JOIN project_keys k ON k.project_id = p.id \
+                                 WHERE p.id = $1 AND p.status = 'active')",
+            )
+            .bind(p.0)
+            .fetch_one(self.conn())
+            .await?;
+            if !ok {
+                return Err(Error::NotFound);
+            }
+        }
         // 同一棵树、同一个名字的发布串行化，版本号不会撞。
         sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
             .bind(format!("artifact:{}:{}", a.root, a.name))
@@ -152,7 +174,11 @@ impl Tx<Worker> {
         .bind(a.blob_key)
         .fetch_one(self.conn())
         .await?;
-        row.into_stored()
+        let stored = row.into_stored()?;
+        if stored.project_id != a.project {
+            return Err(Error::Invalid("artifact space".into()));
+        }
+        Ok(stored)
     }
 }
 

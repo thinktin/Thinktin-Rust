@@ -314,6 +314,8 @@ impl ArtifactStore {
                     size: bytes.len() as u64,
                     sha256: &sha,
                     blob_key: &key,
+                    // 项目运行的产出物用项目的密钥（下一步接上；8.15 里项目运行还不会被领去执行）。
+                    project: None,
                 })
                 .await?;
             w.append_event(

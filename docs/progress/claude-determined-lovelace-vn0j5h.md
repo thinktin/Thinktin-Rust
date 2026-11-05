@@ -85,6 +85,8 @@
   `member_projects()`、成员读项目目录的策略和列权限，租户的项目策略看状态、不能再硬删，四个旧定义者函数固定 search_path），
   部署清单加了建角色和授权（**上线前高权限账号要先执行**）；C3 `ProjectTx`（`Db::member`，只读、REPEATABLE READ，独立类型），
   项目列表和详情改成成员读（结构不变，归档的也列出来），8.14 的 worker 读删了；启动核对登录账号的角色（`Db::check_roles`）。
+  C4 迁移 0050（事件、审批、产出物带空间列，触发器按运行填、建了不能改，和运行的空间不一致的外键拒绝）；项目密钥的读、存
+  （`project_key`、`insert_project_key`），产出物登记带项目、要项目有密钥。
   坑：`relay` 的 `heartbeats_drop_revoked_frozen_and_silent_computers` 机器忙时偶尔失败（200 毫秒心跳，8.14 没碰 relay），单独跑能过。
 - 下一步：8.15 → 8.16–8.19。东京：Phase 0（docs/browser.md 第 8.1 节），过了一个模板开一个 `supported`。用户放好搜索 key（`THINKTIN_PARALLEL_SEARCH_KEY`）后做小测。
 

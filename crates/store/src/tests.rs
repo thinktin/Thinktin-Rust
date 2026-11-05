@@ -1704,6 +1704,7 @@ async fn erasing_an_account_deletes_its_content() {
             size: 3,
             sha256: &[0; 32],
             blob_key: "k",
+            project: None,
         })
         .await
         .unwrap();

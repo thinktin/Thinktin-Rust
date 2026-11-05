@@ -206,6 +206,64 @@ impl Tx<Worker> {
     }
 }
 
+impl Tx<Worker> {
+    /// 项目的密钥（KMS 包裹的 DEK）：只有项目进行中或归档、密钥还在时有（删项目时先删密钥，解不开）。
+    pub async fn project_key(&mut self, project: ProjectId) -> Result<Option<(String, Vec<u8>)>> {
+        Ok(sqlx::query_as(
+            "SELECT k.kms_key_id, k.wrapped_dek FROM project_keys k JOIN projects p ON p.id = k.project_id \
+              WHERE k.project_id = $1 AND p.status IN ('active', 'archived')",
+        )
+        .bind(project.0)
+        .fetch_optional(self.conn())
+        .await?)
+    }
+
+    /// 存项目的密钥（第一次发布项目产出物时；KMS 包裹在事务外做好）。在项目锁里、只给进行中的项目；已经有了（同时有人
+    /// 存了）就用先存的那个，返回最后存着的。项目不在了、不是进行中 NotFound。
+    pub async fn insert_project_key(
+        &mut self,
+        project: ProjectId,
+        kms_key_id: &str,
+        wrapped: &[u8],
+    ) -> Result<(String, Vec<u8>)> {
+        self.lock_project(project).await?;
+        let active: bool =
+            sqlx::query_scalar("SELECT status = 'active' FROM projects WHERE id = $1")
+                .bind(project.0)
+                .fetch_one(self.conn())
+                .await?;
+        if !active {
+            return Err(Error::NotFound);
+        }
+        sqlx::query(
+            "INSERT INTO project_keys (project_id, kms_key_id, wrapped_dek) VALUES ($1, $2, $3) \
+             ON CONFLICT (project_id) DO NOTHING",
+        )
+        .bind(project.0)
+        .bind(kms_key_id)
+        .bind(wrapped)
+        .execute(self.conn())
+        .await?;
+        Ok(
+            sqlx::query_as(
+                "SELECT kms_key_id, wrapped_dek FROM project_keys WHERE project_id = $1",
+            )
+            .bind(project.0)
+            .fetch_one(self.conn())
+            .await?,
+        )
+    }
+
+    /// 运行在哪个项目里（私人运行没有）。
+    pub async fn run_project(&mut self, run: proto::domain::RunId) -> Result<Option<ProjectId>> {
+        let p: Option<Uuid> = sqlx::query_scalar("SELECT project_id FROM runs WHERE id = $1")
+            .bind(run.0)
+            .fetch_one(self.conn())
+            .await?;
+        Ok(p.map(ProjectId))
+    }
+}
+
 const PROJECT_COLUMNS: &str = "id, name, status, shared_at IS NOT NULL, created_at, updated_at";
 
 impl Tx<Tenant> {
