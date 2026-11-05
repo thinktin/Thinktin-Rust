@@ -53,11 +53,37 @@ struct PrimaryBotinTests {
         #expect(!PrimaryBotinPicker.canConfirm(selection: "w", primaryID: "w"))
     }
 
+    @Test("用到主 Botin 的地方：新任务默认选它（没有就选当前的）、排最前；删掉的、不在列表里的不算")
+    func defaults() {
+        let list = [instance("w", "写作助手"), instance("c", "代码审查"), instance("d", "旧的", state: .deleted)]
+        let store = PrimaryBotinStore(defaults: nil)
+        #expect(store.primaryFirst(list).map(\.id) == ["w", "c", "d"], "没有主 Botin：原样")
+        #expect(store.defaultSelection(in: list, current: "c") == "c")
+        #expect(store.defaultSelection(in: list, current: "d") == nil, "当前的删掉了")
+        #expect(store.defaultSelection(in: list, current: "gone") == nil)
+        #expect(store.defaultSelection(in: list, current: nil) == nil)
+        #expect(!store.isPrimary("c"))
+
+        store.set("c")
+        #expect(store.isPrimary("c") && !store.isPrimary("w"))
+        #expect(store.primaryFirst(list).map(\.id) == ["c", "w", "d"])
+        #expect(store.defaultSelection(in: list, current: "w") == "c", "主 Botin 比当前的优先")
+        #expect(store.defaultSelection(in: list, current: nil) == "c")
+
+        store.set("d")
+        #expect(store.primaryFirst(list).map(\.id) == ["w", "c", "d"], "主 Botin 删掉了：原样")
+        #expect(store.defaultSelection(in: list, current: "w") == "w")
+        store.set("gone")
+        #expect(store.defaultSelection(in: list, current: nil) == nil)
+    }
+
     @Test("文案：参考 11 的空状态、搜索、确认；资料页菜单里是“替换主 Botin…”")
     func text() {
         #expect(ConversationText.noOtherBotins(.chinese) == "暂无其他可选的 Botin")
         #expect(ConversationText.searchBotins(.chinese) == "搜索 Botin")
         #expect(ConversationText.confirm(.english) == "Confirm")
+        #expect(ConversationText.primaryBotin(.chinese) == "主 Botin")
+        #expect(ConversationText.primaryBotin(.english) == "Main Botin")
         #expect(ConversationText.replacePrimaryBotin(hasPrimary: false, language: .chinese) == "设置主 Botin…")
         #expect(InstanceProfileMenuItem.open(.primaryBotin).title(.chinese) == "替换主 Botin…")
         #expect(InstanceProfileMenuItem.open(.primaryBotin).systemImage == "arrow.left.arrow.right")

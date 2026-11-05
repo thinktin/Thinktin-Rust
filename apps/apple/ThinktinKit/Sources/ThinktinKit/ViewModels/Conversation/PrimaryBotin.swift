@@ -1,10 +1,12 @@
 import Foundation
 import Observation
 
-// 主 Botin（规范 4.4.5、6.10，参考 10 的“替换主 Bot…”、11 的“选择主 Bot”）：用户指定一个 Botin 当“主”的——新任务、快捷指令、
-// 小组件不知道交给谁时默认交给它。服务端没有这个字段（6.10 建议“本机存就行”），所以**只记在这台设备上**
-// （`PrimaryBotinStore`，`UserDefaults` 一个键）。入口是 Botin 资料右上“…”菜单的“替换主 Botin…”（`AppRoute.primaryBotin`，
-// sheet）。新任务那页（`NewTaskSheet`）、快捷指令默认选它还没接（那几页归别的线，见 docs/progress/r2-conversation.md）。
+// 主 Botin（规范 4.4.5、6.10，参考 10 的“替换主 Bot…”、11 的“选择主 Bot”）：用户指定一个 Botin 当“主”的——新任务、快捷指令
+// 不知道交给谁时默认交给它。服务端没有这个字段（6.10 建议“本机存就行”），所以**只记在这台设备上**
+// （`PrimaryBotinStore`，`UserDefaults` 一个键，App 里是 `AppModel.local.primary`）。入口是 Botin 资料右上“…”菜单的
+// “替换主 Botin…”（`AppRoute.primaryBotin`，sheet）。用到它的地方：新任务的选择页默认选它、排最前（`defaultSelection`、
+// `primaryFirst`），快捷指令“给 Botin 下任务”的 Botin 参数默认是它、建议列表里排最前，Botin 资料和首页的头像右下角是星标
+// （参考 01、10）。小组件只有几个数、不选 Botin，用不到它。
 
 /// 这台设备上记的主 Botin。
 @Observable @MainActor
@@ -47,6 +49,25 @@ public final class PrimaryBotinStore {
         guard let primaryID else { return nil }
         return instances.first { $0.id == primaryID && $0.state != .deleted }
     }
+
+    /// 是不是主 Botin（头像上的星标）。
+    public func isPrimary(_ id: InstanceID) -> Bool {
+        primaryID == id
+    }
+
+    /// 主 Botin 排到最前面（新任务的选择、快捷指令里选 Botin），别的顺序不变；没有主 Botin、它不在列表里或删掉了时原样返回。
+    public func primaryFirst(_ instances: [Instance]) -> [Instance] {
+        guard let primary = primary(in: instances) else { return instances }
+        return [primary] + instances.filter { $0.id != primary.id }
+    }
+
+    /// “交给哪个 Botin”默认选谁（新任务的选择页）：主 Botin（还在列表里、没删掉）；没有就是 `current`（当前的 Botin，
+    /// 还在列表里、没删掉的话）；都没有是 nil（用户自己选）。
+    public func defaultSelection(in instances: [Instance], current: InstanceID?) -> InstanceID? {
+        if let primary = primary(in: instances) { return primary.id }
+        guard let current, instances.contains(where: { $0.id == current && $0.state != .deleted }) else { return nil }
+        return current
+    }
 }
 
 /// “选择主 Botin”页（参考 11）：列出别的 Botin（现在的主 Botin 不列、删掉的不列），按名字搜，单选，右上“确认”。
@@ -81,6 +102,11 @@ extension ConversationText {
         case (.english, true): "Replace Main Botin…"
         case (.english, false): "Set Main Botin…"
         }
+    }
+
+    /// 主 Botin 的叫法（头像星标的读屏、新任务选择页那一行的说明）。
+    public static func primaryBotin(_ language: DisplayLanguage) -> String {
+        language == .chinese ? "主 Botin" : "Main Botin"
     }
 
     /// 没有别的 Botin 可选（参考 11）。

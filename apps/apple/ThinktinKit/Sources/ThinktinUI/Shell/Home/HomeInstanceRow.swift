@@ -20,14 +20,16 @@ enum HomeLayout {
 }
 
 /// 首页的一行（规范 docs/ios-ui-redesign.md 4.2.1，参考 01、119）：左边 44pt Botin 头像（新建时挑的形状和颜色，
-/// 右下角状态角标），中间第一行名字、右边最后活动的时间，第二行预览（在等你处理时用警告色；agent 写的摘要前面是
-/// “AI 生成”标识，你发的任务前面是“你：”）。外面由 `HomeInstanceList` 包按钮、长按菜单和左滑。
+/// 右下角状态角标；没有状态角标的主 Botin 是星标），中间第一行名字、右边最后活动的时间，第二行预览（在等你处理时用
+/// 警告色；agent 写的摘要前面是“AI 生成”标识，你发的任务前面是“你：”）。外面由 `HomeInstanceList` 包按钮、长按菜单和左滑。
 ///
-/// 读屏合成一句：“写作助手，2 个在等你处理，14:05”。
+/// 读屏合成一句：“写作助手，主 Botin，2 个在等你处理，14:05”。
 struct HomeInstanceRow: View {
     let row: HomeRow
     /// 头像的形状和颜色（`AppModel.appearances`）；默认的是圆形、按名字取色。
     var appearance: InstanceAppearance = .default
+    /// 是不是主 Botin（`AppModel.local.primary`，参考 01 的星标）。
+    var isPrimary = false
 
     @Environment(\.displayLanguage) private var language
 
@@ -39,7 +41,7 @@ struct HomeInstanceRow: View {
             HStack(spacing: HomeLayout.rowSpacing) {
                 InstanceAvatar(
                     row.instance.name, appearance: appearance, size: Metrics.Avatar.list,
-                    badge: row.preview.avatarBadge
+                    badge: row.preview.avatarBadge(isPrimary: isPrimary)
                 )
                 .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
@@ -73,6 +75,7 @@ struct HomeInstanceRow: View {
 
     private func accessibilityText(preview: String, time: String) -> String {
         var parts = [row.instance.name]
+        if isPrimary { parts.append(ConversationText.primaryBotin(language)) }
         // 预览是最后一条时，暂停、归档只画在头像角标上（头像对读屏隐藏）：念出来。
         if let state = row.preview.spokenState(language) { parts.append(state) }
         if row.preview.isAIGenerated { parts.append(language.aiGeneratedLabel) }
@@ -124,6 +127,11 @@ extension HomeRowPreview {
         case .waiting(_, let state), .active(_, let state): .run(state)
         case .idle(let state), .message(_, let state): state == .running ? nil : .instance(state)
         }
+    }
+
+    /// 头像角标，主 Botin 没有状态角标时是星标（参考 01）：在等你处理、进行中、暂停这些状态比“主”要紧，有就先画状态。
+    func avatarBadge(isPrimary: Bool) -> InstanceAvatar.Badge? {
+        avatarBadge ?? (isPrimary ? .primary : nil)
     }
 
     /// 长按预览卡名字下面的状态（在等你处理、进行中才有）。

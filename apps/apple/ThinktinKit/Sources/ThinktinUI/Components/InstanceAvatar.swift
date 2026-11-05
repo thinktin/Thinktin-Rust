@@ -23,6 +23,8 @@ public struct InstanceAvatar: View {
         case run(RunState)
         /// 别的状态：直接给样子和读屏文字。
         case custom(StatusAppearance, accessibilityLabel: String)
+        /// 主 Botin（参考 01、10）：强调色的圆里一颗白星，比状态点大一点；读屏念“主 Botin”。
+        case primary
     }
 
     private let name: String
@@ -52,7 +54,8 @@ public struct InstanceAvatar: View {
         AvatarGlyph(name: name, appearance: appearance, size: size)
             .overlay(alignment: .bottomTrailing) {
                 if let badge {
-                    let inset = Self.badgeInset(shape: appearance.shape, size: size)
+                    let inset = Self.badgeInset(
+                        shape: appearance.shape, size: size, diameter: Self.badgeDiameter(size: size, badge: badge))
                     badgeDot(badge)
                         .padding(Self.badgeRing(size: size))
                         .background(Theme.paper, in: Circle())
@@ -67,11 +70,17 @@ public struct InstanceAvatar: View {
 
     @ViewBuilder
     private func badgeDot(_ badge: Badge) -> some View {
-        let diameter = Self.badgeDiameter(size: size)
+        let diameter = Self.badgeDiameter(size: size, badge: badge)
         switch badge {
         case .instance(let state): StatusDot(state, size: diameter)
         case .run(let state): StatusDot(state, size: diameter)
         case .custom(let appearance, let label): StatusDot(appearance, accessibilityLabel: label, size: diameter)
+        case .primary:
+            Image(systemName: "star.fill")
+                .font(.system(size: diameter * 0.55, weight: .bold))
+                .foregroundStyle(Theme.onAccent)
+                .frame(width: diameter, height: diameter)
+                .background(Theme.accent, in: Circle())
         }
     }
 }
@@ -116,6 +125,14 @@ extension InstanceAvatar {
         max(Metrics.statusDot, size * 0.24)
     }
 
+    /// 这种角标的直径：主 Botin 的星标里有个符号，比状态点大一点（最小 14pt，参考 01、10 量的约 0.28 倍）。
+    nonisolated static func badgeDiameter(size: CGFloat, badge: Badge) -> CGFloat {
+        switch badge {
+        case .primary: max(14, size * 0.28)
+        case .instance, .run, .custom: badgeDiameter(size: size)
+        }
+    }
+
     /// 角标外面那圈纸色的环（把角标和头像的边分开）。
     nonisolated static func badgeRing(size: CGFloat) -> CGFloat {
         max(1.5, size * 0.04)
@@ -123,8 +140,8 @@ extension InstanceAvatar {
 
     /// 角标从方框的右下角往左上挪多少：圆心落在形状右下方的轮廓上（`AvatarShapeGeometry.badgeAnchors`），四角星、叶子、
     /// 菱形这类右下角是空的，不挪就浮在形状外面；轮廓伸到角上的（圆形、圆角方形……）不挪，角标不出方框（和以前一样）。
-    nonisolated static func badgeInset(shape: AvatarShape, size: CGFloat) -> CGFloat {
-        let radius = badgeDiameter(size: size) / 2 + badgeRing(size: size)
+    nonisolated static func badgeInset(shape: AvatarShape, size: CGFloat, diameter: CGFloat? = nil) -> CGFloat {
+        let radius = (diameter ?? badgeDiameter(size: size)) / 2 + badgeRing(size: size)
         let anchor = (AvatarShapeGeometry.badgeAnchors[shape] ?? 1) * size
         return max(0, size - radius - anchor)
     }
@@ -173,6 +190,7 @@ extension InstanceAvatar {
             case .instance(let state): state.localizedName(language)
             case .run(let state): state.localizedName(language)
             case .custom(_, let label): label
+            case .primary: ConversationText.primaryBotin(language)
             }
         return title + (zh ? "，" : ", ") + status
     }
@@ -192,6 +210,7 @@ extension InstanceAvatar {
             InstanceAvatar("OpenClaw", size: Metrics.Avatar.pinned, badge: .instance(.archived))
         }
         InstanceAvatar("翻译", size: Metrics.Avatar.profile, badge: .instance(.paused))
+        InstanceAvatar("小克", size: Metrics.Avatar.profile, badge: .primary)
         HStack(spacing: Metrics.Spacing.s) {
             ForEach(AvatarShape.allCases, id: \.self) { shape in
                 InstanceAvatar("翻译", appearance: InstanceAppearance(shape: shape, color: .navy), size: 32)

@@ -4,7 +4,7 @@ import ThinktinKit
 /// Botin 资料（`.instance(id)`，规范 4.4.1、4.4.2，参考 09、10）：对话页标题、深链 `thinktin://instance/{id}`、引擎详情的
 /// “在用它的 Botin”进来。分组列表（insetGrouped），没有标题：
 ///
-/// - 头部：头像（右下状态角标）、名字、玻璃小胶囊“编辑”（压进 `InstanceEditScreen`：名字、头像）；
+/// - 头部：头像（右下状态角标，主 Botin 是星标）、名字、玻璃小胶囊“编辑”（压进 `InstanceEditScreen`：名字、头像）；
 /// - 第一组：计划（“N 个生效”，进这个 Botin 的计划）、产出物、工作区（值是状态，进 `InstanceWorkspaceScreen`：状态说明、
 ///   升级 / 回滚）；
 /// - 默认模型（main 指向的上游模型，没配时警告色“未配置”，进模型路由）；
@@ -56,7 +56,8 @@ private struct InstanceDetailContent: View {
             if let instance = model.instance, !model.isMissing {
                 Section {
                     ProfileHeader(
-                        instance: instance, appearance: app.appearances.resolved(for: instance.id)
+                        instance: instance, appearance: app.appearances.resolved(for: instance.id),
+                        isPrimary: app.local.primary.isPrimary(instance.id)
                     ) {
                         isEditing = true
                     }
@@ -288,11 +289,13 @@ extension InstanceDetailScreen {
     }
 }
 
-/// 头部（参考 09）：居中的头像（右下状态角标）、名字、玻璃小胶囊“编辑”。
+/// 头部（参考 09、10）：居中的头像（右下状态角标，主 Botin 是星标）、名字、玻璃小胶囊“编辑”。
 private struct ProfileHeader: View {
     let instance: Instance
     /// 新建、改头像时挑的形状和颜色（`AppModel.appearances`）。
     let appearance: InstanceAppearance
+    /// 是不是主 Botin（`AppModel.local.primary`）：头像右下角换成星标（参考 10），状态在“工作区”那一行照样看得到。
+    let isPrimary: Bool
     let onEdit: @MainActor () -> Void
 
     @Environment(\.displayLanguage) private var language
@@ -301,7 +304,7 @@ private struct ProfileHeader: View {
         VStack(spacing: Metrics.Spacing.s) {
             InstanceAvatar(
                 instance.name, appearance: appearance, size: ProfileAvatarMetrics.size,
-                badge: .instance(instance.state)
+                badge: isPrimary ? .primary : .instance(instance.state)
             )
             .dynamicTypeSize(...ProfileAvatarMetrics.maxDynamicType)
             Text(instance.name)

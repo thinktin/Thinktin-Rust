@@ -104,10 +104,12 @@ public protocol EntityQuery: Sendable {
     init()
     func entities(for identifiers: [Entity.ID]) async throws -> [Entity]
     func suggestedEntities() async throws -> [Entity]
+    func defaultResult() async -> Entity?
 }
 
 extension EntityQuery {
     public func suggestedEntities() async throws -> [Entity] { [] }
+    public func defaultResult() async -> Entity? { nil }
 }
 
 // MARK: - App 自带的快捷指令

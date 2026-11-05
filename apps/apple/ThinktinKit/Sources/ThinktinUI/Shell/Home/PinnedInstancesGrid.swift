@@ -9,6 +9,8 @@ import ThinktinKit
 struct PinnedInstancesGrid<MenuItems: View>: View {
     let rows: [HomeRow]
     let appearances: InstanceAppearanceStore
+    /// 主 Botin（头像上的星标）；nil 是没有。
+    var primaryID: InstanceID? = nil
     let open: (InstanceID) -> Void
     /// 每个头像的长按菜单（由 `HomeInstanceList` 给，和普通行共用一套）。
     @ViewBuilder let menu: (HomeRow) -> MenuItems
@@ -30,7 +32,8 @@ struct PinnedInstancesGrid<MenuItems: View>: View {
         Button {
             open(row.id)
         } label: {
-            PinnedInstanceCell(row: row, appearance: appearances.resolved(for: row.id))
+            PinnedInstanceCell(
+                row: row, appearance: appearances.resolved(for: row.id), isPrimary: row.id == primaryID)
         }
         .buttonStyle(.plain)
         .frame(width: HomeLayout.pinnedCellWidth)
@@ -53,6 +56,8 @@ struct PinnedInstancesGrid<MenuItems: View>: View {
 struct PinnedInstanceCell: View {
     let row: HomeRow
     var appearance: InstanceAppearance = .default
+    /// 是不是主 Botin（没有状态角标时画星标）。
+    var isPrimary = false
 
     @Environment(\.displayLanguage) private var language
 
@@ -60,7 +65,7 @@ struct PinnedInstanceCell: View {
         VStack(spacing: Metrics.Spacing.xs) {
             InstanceAvatar(
                 row.instance.name, appearance: appearance, size: Metrics.Avatar.pinned,
-                badge: row.preview.avatarBadge)
+                badge: row.preview.avatarBadge(isPrimary: isPrimary))
             Text(verbatim: row.instance.name)
                 .typography(.footnote)
                 .foregroundStyle(row.needsAttention ? StatusTone.waiting.color : Theme.ink)
@@ -75,6 +80,7 @@ struct PinnedInstanceCell: View {
     private var accessibilityText: String {
         let zh = language == .chinese
         var parts = [row.instance.name, zh ? "已置顶" : "Pinned"]
+        if isPrimary { parts.append(ConversationText.primaryBotin(language)) }
         if row.needsAttention {
             parts.append(row.preview.text(language))
         } else if let state = row.preview.spokenState(language) {

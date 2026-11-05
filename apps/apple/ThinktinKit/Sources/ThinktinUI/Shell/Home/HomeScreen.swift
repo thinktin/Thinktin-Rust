@@ -196,7 +196,7 @@ struct HomeInstanceList: View {
             }
             if !content.pinned.isEmpty {
                 PinnedInstancesGrid(
-                    rows: content.pinned, appearances: model.appearances,
+                    rows: content.pinned, appearances: model.appearances, primaryID: model.local.primary.primaryID,
                     open: { router.open(.conversation($0)) },
                     menu: { row in menu(for: row, isPinned: true) }
                 )
@@ -211,7 +211,8 @@ struct HomeInstanceList: View {
                 Button {
                     router.open(.conversation(row.id))
                 } label: {
-                    HomeInstanceRow(row: row, appearance: appearance)
+                    HomeInstanceRow(
+                        row: row, appearance: appearance, isPrimary: model.local.primary.isPrimary(row.id))
                 }
                 .contextMenu {
                     menu(for: row, isPinned: false)

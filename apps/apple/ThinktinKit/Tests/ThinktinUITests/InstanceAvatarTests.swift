@@ -104,6 +104,26 @@ struct InstanceAvatarTests {
         }
     }
 
+    @Test("主 Botin 的星标比状态点大一点、最小 14pt；挪的距离按它自己的直径算")
+    func primaryBadge() {
+        #expect(InstanceAvatar.badgeDiameter(size: Metrics.Avatar.title, badge: .primary) == 14)
+        #expect(abs(InstanceAvatar.badgeDiameter(size: 80, badge: .primary) - 22.4) < 1e-9)
+        for size in [Metrics.Avatar.list, Metrics.Avatar.profile] {
+            #expect(
+                InstanceAvatar.badgeDiameter(size: size, badge: .primary)
+                    > InstanceAvatar.badgeDiameter(size: size, badge: .instance(.running)))
+            #expect(
+                InstanceAvatar.badgeDiameter(size: size, badge: .run(.running))
+                    == InstanceAvatar.badgeDiameter(size: size))
+            // 圆形不挪；四角星按星标的直径挪（比状态点挪得少）。
+            let star = InstanceAvatar.badgeDiameter(size: size, badge: .primary)
+            #expect(InstanceAvatar.badgeInset(shape: .circle, size: size, diameter: star) == 0)
+            #expect(
+                InstanceAvatar.badgeInset(shape: .sparkle, size: size, diameter: star)
+                    < InstanceAvatar.badgeInset(shape: .sparkle, size: size))
+        }
+    }
+
     @Test("首字的字号：窄的形状在 24pt 上也不小于 9pt，不超过圆形的比例；大头像照形状的比例")
     func monogramFontSize() {
         for shape in AvatarShape.allCases {
@@ -133,6 +153,8 @@ struct InstanceAvatarTests {
             InstanceAvatar.accessibilityText(
                 name: "Pi", badge: .custom(StatusAppearance(tone: .success), accessibilityLabel: "Online"),
                 language: .english) == "Pi, Online")
+        #expect(InstanceAvatar.accessibilityText(name: "小克", badge: .primary, language: .chinese) == "小克，主 Botin")
+        #expect(InstanceAvatar.accessibilityText(name: "Ko", badge: .primary, language: .english) == "Ko, Main Botin")
         #expect(InstanceAvatar.accessibilityText(name: "  ", badge: nil, language: .chinese) == "未命名")
         #expect(InstanceAvatar.accessibilityText(name: "", badge: nil, language: .english) == "Untitled")
     }
@@ -150,6 +172,9 @@ struct InstanceAvatarTests {
             renderInBothAppearances(InstanceAvatar("Codex", size: Metrics.Avatar.list, badge: .instance(state)))
         }
         renderInBothAppearances(InstanceAvatar("OpenClaw", badge: .run(.waitingApproval)))
+        for size in [Metrics.Avatar.list, Metrics.Avatar.profile] {
+            renderInBothAppearances(InstanceAvatar("小克", size: size, badge: .primary))
+        }
         renderInBothAppearances(
             InstanceAvatar("", badge: .custom(StatusAppearance(tone: .success), accessibilityLabel: "在线")))
         for shape in AvatarShape.allCases {

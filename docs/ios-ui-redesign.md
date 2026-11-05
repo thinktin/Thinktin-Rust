@@ -784,8 +784,14 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   `Picker(.inline)`（头像 + 名字 + 状态）、`.searchable`“搜索 Botin”；不列现在的主 Botin 和删掉的，一个都没有时是参考 11 的
   “暂无其他可选的 Botin”（`ContentUnavailableView`），搜不到是 `ContentUnavailableView.search`；脚注说明主 Botin 是干什么的、
   只在这台设备上。入口照参考 10：Botin 资料“…”菜单第一组“替换主 Botin…”（`arrow.left.arrow.right`）、复制 ID。删了 Botin
-  时是主 Botin 的话清掉。**还没接**：新任务（`NewTaskSheet`）、快捷指令、小组件默认交给主 Botin，资料页头像上的星标（参考 10）——
-  这几页归别的线，接的时候读 `PrimaryBotinStore.shared.primaryID`。
+  时是主 Botin 的话清掉。
+- **已接（2026-11-05，四条 r2 线合进来以后补的跨线小事）**：主 Botin 从 `AppModel.local.primary` 读（App 里就是
+  `PrimaryBotinStore.shared`）。新任务的选择（`NewTaskSheet`）默认选主 Botin（没有、删掉了才选当前的 Botin，
+  `PrimaryBotinStore.defaultSelection`），主 Botin 排第一行、头像是星标、状态前面写“主 Botin ·”；快捷指令“给 Botin 下任务”的
+  Botin 参数默认是主 Botin（`InstanceEntityQuery.defaultResult()`），建议列表里排最前（`primaryFirst`）。头像的星标是
+  `InstanceAvatar.Badge.primary`（强调色圆里一颗白星，比状态点大，最小 14pt，读屏念“主 Botin”）：Botin 资料的头像上换掉状态角标
+  （参考 10；状态在“工作区”那行照样看得到）；首页的行和置顶的大头像只在没有状态角标时画（参考 01；在等你处理、进行中、暂停这些
+  比“主”要紧，**有状态时先画状态，要不要两个都画请用户看一眼**）。小组件只有几个数、不选 Botin，用不到主 Botin。
 
 ### 4.5 任务与资料
 

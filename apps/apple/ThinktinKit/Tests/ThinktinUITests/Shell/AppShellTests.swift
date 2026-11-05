@@ -63,6 +63,30 @@ struct AppShellTests {
         hostAndLayout(AppShell(model: model))
     }
 
+    @Test("主 Botin（参考 01、10）：首页的行、置顶、资料页头像上是星标；新任务默认选它")
+    func primaryBotin() async {
+        let model = await started(ShellPreviewClients.signedIn())
+        model.local.primary.set(DemoData.reviewerID)
+        hostAndLayout(AppShell(model: model))
+        model.local.preferences.setPinned(true, for: DemoData.reviewerID)
+        hostAndLayout(AppShell(model: model).environment(\.displayLanguage, .english))
+        model.router.open(.instance(DemoData.reviewerID))
+        hostAndLayout(AppShell(model: model))
+        model.router.popToRoot()
+        model.router.open(.conversation(DemoData.writerID))
+        model.startNewTask()
+        #expect(model.router.sheet == .newTask)
+        #expect(
+            model.local.primary.defaultSelection(in: model.instances, current: model.router.currentInstanceID)
+                == DemoData.reviewerID)
+        hostAndLayout(AppShell(model: model))
+        // 首页的行：没有状态角标时画星标，有在等你处理这类状态时先画状态。
+        let idle = HomeRowPreview.idle(.running)
+        #expect(idle.avatarBadge(isPrimary: true) == .primary)
+        #expect(idle.avatarBadge(isPrimary: false) == nil)
+        #expect(HomeRowPreview.idle(.paused).avatarBadge(isPrimary: true) == .instance(.paused))
+    }
+
     @Test("设置是 sheet：里面压栈、再叠一层添加 key")
     func settingsSheet() async {
         let model = await started(ShellPreviewClients.signedIn())

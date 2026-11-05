@@ -30,12 +30,24 @@ struct InstanceEntityQuery: EntityQuery {
         return try await suggestedEntities().filter { wanted.contains($0.id) }
     }
 
-    /// 最近活跃的在前，不含已删除的。
+    /// 主 Botin 在最前（只记在这台设备上，规范 4.4.5），其余最近活跃的在前，不含已删除的。
     @MainActor
     func suggestedEntities() async throws -> [InstanceEntity] {
-        try await IntentContext.run { actions async throws(QuickActionError) in
+        let instances = try await IntentContext.run { actions async throws(QuickActionError) in
             try await actions.instances()
-        }.map(InstanceEntity.init)
+        }
+        return AppEnvironment.shared.appModel.local.primary.primaryFirst(instances).map(InstanceEntity.init)
+    }
+
+    /// 参数没填时默认是主 Botin（“给 Botin 下任务”不用每次选）；没设主 Botin、它删掉了或拉不到列表时为 nil，让用户选。
+    @MainActor
+    func defaultResult() async -> InstanceEntity? {
+        let primary = AppEnvironment.shared.appModel.local.primary
+        guard primary.primaryID != nil else { return nil }
+        let instances = try? await IntentContext.run { actions async throws(QuickActionError) in
+            try await actions.instances()
+        }
+        return primary.primary(in: instances ?? []).map(InstanceEntity.init)
     }
 }
 
