@@ -222,6 +222,13 @@ struct AdoptionModelTests {
         #expect(!model.selectEngine(broken.id))
         #expect(!model.selectEngine("retired"))
         #expect(model.selectedAgentID == claude.id)
+        // 都不能用：没有选上的，菜单按钮上说没有能用的，“新建”不能点。
+        let none = form(agents: [broken])
+        #expect(none.selectedAgent == nil && none.engineOptions(.chinese).map(\.isAvailable) == [false])
+        none.name = "周报助手"
+        #expect(!none.canCreate(isOffline: false))
+        #expect(NewBotinText.noUsableEngine(.chinese) == "暂时没有能用的")
+        #expect(NewBotinText.noUsableEngine(.english) == "None available")
     }
 
     @Test("换引擎：接入方式换成它默认的；名字不动")

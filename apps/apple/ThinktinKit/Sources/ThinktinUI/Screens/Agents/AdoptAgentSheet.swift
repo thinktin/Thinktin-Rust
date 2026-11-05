@@ -108,6 +108,7 @@ private struct AdoptAgentForm: View {
                 NewBotinText.nameTitle(language), text: Binding(get: { model.name }, set: { model.name = $0 }),
                 prompt: Text(NewBotinText.namePrompt(language))
             )
+            .textFieldStyle(.plain)
             .font(Font.title2.weight(.semibold))
             .multilineTextAlignment(.center)
             .focused($isNameFocused)
@@ -333,7 +334,7 @@ private struct AvatarPicker: View {
     }
 }
 
-/// 形状网格的一格：这个形状、现在的颜色和名字；选中的有强调色的圆角框。
+/// 形状网格的一格：这个形状、现在的颜色和名字，按格子的宽度画（窄屏、大字号时也不会挤出格子）；选中的有强调色的圆角框。
 private struct AvatarShapeCell: View {
     let shape: AvatarShape
     let name: String
@@ -343,21 +344,23 @@ private struct AvatarShapeCell: View {
 
     @Environment(\.displayLanguage) private var language
 
-    private static let side: CGFloat = 44
-
     var body: some View {
         let frame = RoundedRectangle(cornerRadius: Metrics.Radius.control + Metrics.Spacing.xxs, style: .continuous)
+        let appearance = InstanceAppearance(shape: shape, color: color)
         Button(action: action) {
-            InstanceAvatar(name, appearance: InstanceAppearance(shape: shape, color: color), size: Self.side)
-                .padding(Metrics.Spacing.xs)
-                .frame(maxWidth: .infinity)
-                .background(isSelected ? Theme.accent.opacity(0.14) : Color.clear, in: frame)
-                .overlay {
-                    if isSelected {
-                        frame.strokeBorder(Theme.accent, lineWidth: 2)
-                    }
+            GeometryReader { proxy in
+                AvatarGlyph(name: name, appearance: appearance, size: min(proxy.size.width, proxy.size.height))
+                    .frame(width: proxy.size.width, height: proxy.size.height)
+            }
+            .aspectRatio(1, contentMode: .fit)
+            .padding(Metrics.Spacing.xs)
+            .background(isSelected ? Theme.accent.opacity(0.14) : Color.clear, in: frame)
+            .overlay {
+                if isSelected {
+                    frame.strokeBorder(Theme.accent, lineWidth: 2)
                 }
-                .contentShape(frame)
+            }
+            .contentShape(frame)
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
@@ -418,7 +421,7 @@ private struct EngineRow<Control: View>: View {
     }
 }
 
-/// 选引擎的系统菜单：按钮上是选的引擎；每项名字 + 一句话介绍（菜单里的副标题），选中的打勾，不能用的灰掉、点不了。
+/// 选引擎的系统菜单：按钮上是选的引擎（都不能用时“暂时没有能用的”）；每项名字 + 一句话介绍（菜单里的副标题），选中的打勾，不能用的灰掉、点不了。
 /// 读屏：按钮念“引擎，Claude Agent”，每项念 `EngineOption.accessibilityLabel`（多念几个 Botin 在用）。
 private struct EngineMenu: View {
     let model: AdoptionModel
@@ -427,7 +430,8 @@ private struct EngineMenu: View {
 
     var body: some View {
         let model = self.model
-        let selectedName = model.selectedAgent.map { AgentsText.displayName(of: $0) } ?? ""
+        let selectedName =
+            model.selectedAgent.map { AgentsText.displayName(of: $0) } ?? NewBotinText.noUsableEngine(language)
         Menu {
             ForEach(model.engineOptions(language)) { option in
                 let detail = option.detail(language)

@@ -403,6 +403,11 @@ public enum NewBotinText {
         language == .chinese ? "暂时拉不到引擎列表" : "Couldn't load the engines"
     }
 
+    /// 目录里有引擎、但都不能用（没有选上的）：引擎菜单按钮上的字。
+    public static func noUsableEngine(_ language: DisplayLanguage) -> String {
+        language == .chinese ? "暂时没有能用的" : "None available"
+    }
+
     /// 目录拉到了但是空的。
     public static func noEngines(_ language: DisplayLanguage) -> String {
         language == .chinese ? "还没有能用的引擎，稍后再来看看。" : "No engines are available yet. Check back later."

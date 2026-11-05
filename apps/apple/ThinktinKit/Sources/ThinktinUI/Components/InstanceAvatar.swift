@@ -49,15 +49,7 @@ public struct InstanceAvatar: View {
     }
 
     public var body: some View {
-        let colors = Self.colors(of: appearance.resolvedColor(name: name))
-        let layout = AvatarMonogramLayout(appearance.shape)
-        monogram(layout)
-            .foregroundStyle(Theme.onAccent)
-            .lineLimit(1)
-            .minimumScaleFactor(0.5)
-            .offset(y: size * layout.verticalOffset)
-            .frame(width: size, height: size)
-            .background(Color(light: colors.light, dark: colors.dark), in: AvatarShapePath(shape: appearance.shape))
+        AvatarGlyph(name: name, appearance: appearance, size: size)
             .overlay(alignment: .bottomTrailing) {
                 if let badge {
                     badgeDot(badge)
@@ -71,6 +63,36 @@ public struct InstanceAvatar: View {
             .accessibilityAddTraits(.isImage)
     }
 
+    @ViewBuilder
+    private func badgeDot(_ badge: Badge) -> some View {
+        let diameter = max(Metrics.statusDot, size * 0.24)
+        switch badge {
+        case .instance(let state): StatusDot(state, size: diameter)
+        case .run(let state): StatusDot(state, size: diameter)
+        case .custom(let appearance, let label): StatusDot(appearance, accessibilityLabel: label, size: diameter)
+        }
+    }
+}
+
+/// 头像本身：形状填上颜色，里面放名字的第一个字（名字是空的放一个中性的占位符号）。按给的边长画，不跟动态字体缩放
+/// （`InstanceAvatar` 传缩放过的直径；新建表单的形状网格按格子的宽度画，格子多宽就画多大）。读屏由调用方处理。
+struct AvatarGlyph: View {
+    let name: String
+    let appearance: InstanceAppearance
+    let size: CGFloat
+
+    var body: some View {
+        let colors = InstanceAvatar.colors(of: appearance.resolvedColor(name: name))
+        let layout = AvatarMonogramLayout(appearance.shape)
+        monogram(layout)
+            .foregroundStyle(Theme.onAccent)
+            .lineLimit(1)
+            .minimumScaleFactor(0.5)
+            .offset(y: size * layout.verticalOffset)
+            .frame(width: size, height: size)
+            .background(Color(light: colors.light, dark: colors.dark), in: AvatarShapePath(shape: appearance.shape))
+    }
+
     /// 名字的第一个字；名字是空的（新建表单还没输入）放一个中性的占位符号。
     @ViewBuilder
     private func monogram(_ layout: AvatarMonogramLayout) -> some View {
@@ -80,16 +102,6 @@ public struct InstanceAvatar: View {
         } else {
             Text(verbatim: AgentsText.monogram(of: name))
                 .font(.system(size: size * layout.textScale, weight: .semibold))
-        }
-    }
-
-    @ViewBuilder
-    private func badgeDot(_ badge: Badge) -> some View {
-        let diameter = max(Metrics.statusDot, size * 0.24)
-        switch badge {
-        case .instance(let state): StatusDot(state, size: diameter)
-        case .run(let state): StatusDot(state, size: diameter)
-        case .custom(let appearance, let label): StatusDot(appearance, accessibilityLabel: label, size: diameter)
         }
     }
 }
