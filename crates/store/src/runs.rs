@@ -187,6 +187,7 @@ struct Row {
     wait_code: Option<String>,
     interrupts_run_id: Option<Uuid>,
     announced_at: Option<DateTime<Utc>>,
+    project_id: Option<Uuid>,
 }
 
 macro_rules! columns {
@@ -194,7 +195,7 @@ macro_rules! columns {
         "id, kind, step_key, user_id, instance_id, plan_id, trigger_id, fire_time, parent_run_id, root_run_id, source, prompt, \
          state, state_reason, attempt, max_attempts, not_before, lease_owner, lease_expires_at, agent_version, \
          run_grant_id, budget, tokens_used, steps, summary, error, created_at, started_at, finished_at, wait_code, \
-         interrupts_run_id, announced_at"
+         interrupts_run_id, announced_at, project_id"
     };
 }
 
@@ -242,6 +243,7 @@ impl Row {
             started_at: self.started_at,
             finished_at: self.finished_at,
             wait_code,
+            project_id: self.project_id.map(ProjectId),
         };
         Ok(RunRecord {
             run,

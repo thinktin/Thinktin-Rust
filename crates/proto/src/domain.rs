@@ -944,6 +944,9 @@ pub struct Run {
     /// 队友回答的是 [`wait_code::ANSWER`]。是字符串不是枚举：以后加了新值，老的客户端照样解析得了。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wait_code: Option<String>,
+    /// 项目运行（8.15）：在哪个项目里；私人运行没有。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<ProjectId>,
 }
 
 /// 运行在等什么（11.8）：App 据此决定显示“去换 key”还是“稍后自动重试”。
@@ -1184,6 +1187,114 @@ pub mod project_consent {
     ];
 }
 
+str_enum!(
+    /// 项目里的内容是谁的（8.15）：成员、已退出的成员、已注销的用户（后两种不给用户 id 和昵称）。
+    ProjectAuthorStatus {
+        Member = "member",
+        Left = "left",
+        Erased = "erased",
+    }
+);
+
+/// 项目里一条内容（运行、产出物）的主人（8.15）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectAuthor {
+    #[serde(default)]
+    pub user_id: Option<UserId>,
+    #[serde(default)]
+    pub display_name: Option<String>,
+    pub status: ProjectAuthorStatus,
+}
+
+str_enum!(
+    /// 成员看到的运行状态（8.15）：比 [`RunState`] 粗，看不出主人那边在等什么（等 key、等审批、等电脑都是“等主人处理”）。
+    ProjectRunState {
+        Queued = "queued",
+        Running = "running",
+        WaitingOwner = "waiting_owner",
+        WaitingChildren = "waiting_children",
+        Succeeded = "succeeded",
+        Failed = "failed",
+        Cancelled = "cancelled",
+    }
+);
+
+/// 成员看到的项目运行（8.15）：任务、粗略的状态、结果摘要；不带失败原因、花费、尝试次数、计划、授权这些主人私人的东西。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectRun {
+    pub id: RunId,
+    pub project_id: ProjectId,
+    pub instance_id: InstanceId,
+    pub owner: ProjectAuthor,
+    /// 是我的 agent 的运行。
+    pub mine: bool,
+    pub kind: RunKind,
+    pub source: RunSource,
+    #[serde(default)]
+    pub parent_run_id: Option<RunId>,
+    pub root_run_id: RunId,
+    #[serde(default)]
+    pub step_key: Option<String>,
+    pub prompt: String,
+    pub state: ProjectRunState,
+    #[serde(default)]
+    pub summary: Option<String>,
+    pub created_at: DateTime<Utc>,
+    #[serde(default)]
+    pub started_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub finished_at: Option<DateTime<Utc>>,
+}
+
+/// 成员看到的一条运行事件（8.15）：只有 [`PROJECT_RUN_EVENT_KINDS`] 这几种，每种只留白名单里的字段（库里的函数挑好）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectRunEvent {
+    pub run_id: RunId,
+    pub kind: String,
+    pub data: Value,
+    pub created_at: DateTime<Utc>,
+}
+
+/// 一个运行最近的那些事件（最多 500 条，旧的在前）；`truncated`：更早的没给。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectRunEvents {
+    pub events: Vec<ProjectRunEvent>,
+    pub truncated: bool,
+}
+
+/// 成员看到的项目产出物（8.15）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectArtifact {
+    pub id: ArtifactId,
+    pub project_id: ProjectId,
+    pub instance_id: InstanceId,
+    pub run_id: RunId,
+    pub root_run_id: RunId,
+    pub author: ProjectAuthor,
+    pub mine: bool,
+    pub name: String,
+    pub version: u32,
+    pub content_type: String,
+    pub size: u64,
+    pub sha256: String,
+    pub created_at: DateTime<Utc>,
+}
+
+/// 成员看得到的事件种类（8.15）；别的种类（思考、用量、审批、工具调用的原始参数和结果……）一律不给。和迁移 0054 里的
+/// 白名单一样（测试核对）。
+pub const PROJECT_RUN_EVENT_KINDS: [&str; 10] = [
+    "agent.tool_call",
+    "agent.tool_call_update",
+    "agent.message",
+    "agent.plan",
+    "agent.turn_started",
+    "agent.turn_ended",
+    "run.state",
+    "run.log_truncated",
+    "artifact.published",
+    "pipeline.step_started",
+];
+
 /// 我屏蔽的人（8.14）：他发的项目邀请不再给我看。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlockedUser {
@@ -1330,6 +1441,18 @@ pub mod notice_subtype {
     pub const PROJECT_AGENT_LEFT: &str = "project_agent_left";
     /// 我的 agent 被创建者移出了项目。
     pub const PROJECT_AGENT_REMOVED: &str = "project_agent_removed";
+    /// 我在的项目被创建者删了（8.15）。
+    pub const PROJECT_DELETED: &str = "project_deleted";
+    /// 项目回执：只关于成员关系本身、退出以后照样留在收件人收件箱里的（8.15 的租户策略、守卫、后台清理按子类型认）。
+    pub const PROJECT_RECEIPTS: [&str; 7] = [
+        PROJECT_INVITE,
+        PROJECT_JOINED,
+        PROJECT_LEFT,
+        PROJECT_REMOVED,
+        PROJECT_AGENT_LEFT,
+        PROJECT_AGENT_REMOVED,
+        PROJECT_DELETED,
+    ];
 }
 
 /// 共享看板的一条（8.10）：用户的 agent（或用户自己）写的进展、决定、待别人处理的事。写了不改，只能归档、删除。
@@ -1740,6 +1863,44 @@ mod project_tests {
             assert_eq!(k.as_str().parse::<ProjectInviteStatus>().unwrap(), *k);
         }
         assert_eq!(MAX_TOKEN_LIMIT as i64 as u64, MAX_TOKEN_LIMIT);
+        for s in notice_subtype::PROJECT_RECEIPTS {
+            assert!(valid_subtype(s), "{s}");
+        }
+        assert!(notice_subtype::PROJECT_RECEIPTS.contains(&notice_subtype::PROJECT_DELETED));
+        for k in PROJECT_RUN_EVENT_KINDS {
+            assert!(k.contains('.'), "{k}");
+        }
+        for s in ProjectRunState::ALL {
+            assert_eq!(s.as_str().parse::<ProjectRunState>().unwrap(), *s);
+        }
+    }
+
+    #[test]
+    fn runs_carry_their_project_only_when_there_is_one() {
+        let v = serde_json::json!({
+            "id": RunId::new(), "kind": "agent", "instance_id": InstanceId::new(),
+            "plan_id": null, "parent_run_id": null, "root_run_id": RunId::new(), "step_key": null,
+            "source": "user", "prompt": "p", "state": "queued", "state_reason": null, "attempt": 0,
+            "tokens_used": 0, "summary": null, "error": null, "created_at": chrono::Utc::now(),
+            "started_at": null, "finished_at": null
+        });
+        let run: Run = serde_json::from_value(v).unwrap();
+        assert_eq!(run.project_id, None);
+        assert!(
+            serde_json::to_value(&run)
+                .unwrap()
+                .get("project_id")
+                .is_none()
+        );
+        let p = ProjectId::new();
+        let run = Run {
+            project_id: Some(p),
+            ..run
+        };
+        assert_eq!(
+            serde_json::to_value(&run).unwrap()["project_id"],
+            p.to_string()
+        );
     }
 
     #[test]

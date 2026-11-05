@@ -80,7 +80,8 @@
   （projects-impl.md“8.14 做了什么”、compliance.md）。13 步都提交了。对抗评审（`drafts/projects-8.14-review.md`）15 条成立
   的都修了（迁移 0048 发送记录等，见 projects-impl.md），修复后又核对一遍、补修了 5 处。
 - **进行中：8.15 跨用户数据边界**（本会话，2026-11-05 11:08 UTC 起；两小时内别的会话不要重做）：先出方案（代码地图、草稿、两个角度
-  的评审、定稿，放 `drafts/projects-8.15-*`），再按定稿分步提交。
+  的评审、定稿，放 `drafts/projects-8.15-*`，都推了），再按定稿第 7 节分 12 步提交。已提交：C1 数据类型（成员看到的运行、事件、
+  产出物，`Run.project_id`，`project_deleted` 和回执子类型表）。
   坑：`relay` 的 `heartbeats_drop_revoked_frozen_and_silent_computers` 机器忙时偶尔失败（200 毫秒心跳，8.14 没碰 relay），单独跑能过。
 - 下一步：8.15 → 8.16–8.19。东京：Phase 0（docs/browser.md 第 8.1 节），过了一个模板开一个 `supported`。用户放好搜索 key（`THINKTIN_PARALLEL_SEARCH_KEY`）后做小测。
 

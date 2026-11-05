@@ -333,6 +333,7 @@ mod tests {
             started_at: None,
             finished_at: None,
             wait_code: None,
+            project_id: None,
         };
         let children = [
             (
