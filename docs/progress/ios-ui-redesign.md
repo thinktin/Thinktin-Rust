@@ -490,6 +490,9 @@
 首次登录首页是空的，空状态“还没有 Botin”+ 说明 + “新建 Botin”按钮。代码里的标识符（`Instance`、`AppRoute.adopt`、`adopt(...)`）不改。
 
 进行中：没有（第 1 轮 A 线的首页补完和 B、C、D、E 线 2026-11-05 做完，见“已完成”）。
+- 2026-11-05 Claude（会话 session_01GuCp3KRgqaK6Kzynw6udRn，第 1 轮收尾线）开工：参考里没有的页（收件箱、审批中心、进行中、团队和流水线、
+  运行详情和运行树、引导、开源许可、新任务 sheet）和各线剩下的自画页（计划的新建 / 确认 / 触发器、添加 key、注销、电脑配对）换原生控件，
+  然后删掉没人用的自画组件（`EmptyStateView`、`PillButton`、`Card`、`GroupedSection`、`ListRow`、`PageHeader`、`AccountRow`……）。
 验证和发版（2026-11-05，session_01GuCp3KRgqaK6Kzynw6udRn）：GitHub 的 Mac 一直排不上，改用 Codemagic（`.github/workflows/codemagic.yml`：
 把提交推到 `codemagic/apple-check` / `codemagic/ios-screenshots`）。第 0 轮（bbdb07c）、Botin 版（06894fd）、新建页重做（c78064e）
 的 apple-check 都过了（真 Xcode：模拟器 build + test、ThinktinMac、Kit 的 macOS 测试）。截图对照参考 34、35 后又调了两次版式：
