@@ -307,6 +307,12 @@
 首次登录首页是空的，空状态“还没有 Botin”+ 说明 + “新建 Botin”按钮。代码里的标识符（`Instance`、`AppRoute.adopt`、`adopt(...)`）不改。
 
 进行中：没有。
+验证和发版（2026-11-05，session_01GuCp3KRgqaK6Kzynw6udRn）：GitHub 的 Mac 一直排不上，改用 Codemagic（`.github/workflows/codemagic.yml`：
+把提交推到 `codemagic/apple-check` / `codemagic/ios-screenshots`）。第 0 轮（bbdb07c）、Botin 版（06894fd）、新建页重做（c78064e）
+的 apple-check 都过了（真 Xcode：模拟器 build + test、ThinktinMac、Kit 的 macOS 测试）。截图对照参考 34、35 后又调了两次版式：
+引擎卡片挪到名字下面并压成一行（`6afee36`、`e23b47f`），形状格子最大 56pt（`4d5ded8`），现在一屏放得下。
+TestFlight：28（Botin 改名、空状态，旧表单）、30（新建页重做，第二排色点要滑一下才看得到）都是演示版，从本分支用 `builder=codemagic`
+打的；29 取消了（旧版式）。`4d5ded8` 还没打包，下次一起。
 新建 Botin 表单（照参考重排过版式、带头像外观，审查修正也做了）和首页空状态（2026-11-05）、Botin 改名（2026-11-05）做完了，见“已完成”。
 **第 0 轮（规范 7.2）的每一行和审查修正都做完了**（2026-11-05），只差下面第 1、2 条的验证；第 1 轮还没人认领。
 
