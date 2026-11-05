@@ -67,7 +67,7 @@ struct UserMessageView: View {
                 .padding(.horizontal, Metrics.Spacing.m)
                 .padding(.vertical, Metrics.Spacing.s)
                 .background(Theme.userBubble, in: messageBubbleShape)
-                .messageMenu(menu, previewShape: messageBubbleShape)
+                .messageMenu(menu)
             }
             ReactionChips(reactions: reactions ?? [], alignment: .trailing, onToggle: onReact)
             if isAIGenerated { AIGeneratedLabel() }
@@ -150,8 +150,7 @@ struct AssistantTextView: View {
                             text.text, runID: item.runID, target: ContentReportTarget(item: item), onReport: onReport,
                             onQuote: onQuote
                         )
-                        .reacting(reactions ?? [], onReact: reactions == nil ? nil : onReact),
-                        previewShape: messageBubbleShape)
+                        .reacting(reactions ?? [], onReact: reactions == nil ? nil : onReact))
                 Spacer(minLength: messageBubbleGutter)
             }
             ReactionChips(reactions: reactions ?? [], alignment: .leading, onToggle: onReact)

@@ -187,8 +187,7 @@ private struct RunDetailContent: View {
             .messageMenu(
                 .agentOutput(summary, runID: run.id, target: .run(run.id)) {
                     reportRequest = ReportRequest(target: $0)
-                },
-                previewShape: messageBubbleShape)
+                })
         }
         if let error = run.error, !error.isEmpty, model.state == .failed {
             BubbleCard {

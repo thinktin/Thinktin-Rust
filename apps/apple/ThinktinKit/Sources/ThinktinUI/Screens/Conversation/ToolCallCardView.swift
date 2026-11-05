@@ -204,8 +204,7 @@ struct AgentPlanCardView: View {
         }
         .messageMenu(
             .agentOutput(
-                card.plainText, runID: item?.runID, target: reportTarget, onReport: onReport, onQuote: onQuote),
-            previewShape: messageBubbleShape)
+                card.plainText, runID: item?.runID, target: reportTarget, onReport: onReport, onQuote: onQuote))
     }
 
     private var reportTarget: ContentReportTarget? {

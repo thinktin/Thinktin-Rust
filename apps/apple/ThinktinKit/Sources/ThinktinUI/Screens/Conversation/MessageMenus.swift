@@ -53,8 +53,8 @@ struct MessageMenuContent {
 
 extension View {
     /// 给消息加长按（iOS 是参考 06 的面板，Mac 是右键菜单）和读屏的自定义操作（复制、引用回复、回应、举报）。
-    /// `previewShape` 是以前系统长按菜单的预览外形，现在不用了（iOS 弹面板，Mac 的右键菜单没有预览），留着让调用处不用改。
-    func messageMenu(_ content: MessageMenuContent, previewShape: some Shape = Rectangle()) -> some View {
+    /// 没有预览外形：iOS 弹面板，Mac 的右键菜单没有预览。
+    func messageMenu(_ content: MessageMenuContent) -> some View {
         modifier(MessageMenuModifier(content: content))
     }
 }

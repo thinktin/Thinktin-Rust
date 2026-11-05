@@ -182,7 +182,7 @@ struct ConversationScreensTests {
         #expect(menu.isAIGenerated && menu.runID == DemoData.weeklyRunID)
         let noQuote = MessageMenuContent.agentOutput("x", runID: nil, target: nil, onReport: { _ in })
         #expect(noQuote.sections == [[.copy, .selectText], [.share]])
-        renderInBothAppearances(Text(verbatim: "长按").messageMenu(menu, previewShape: messageBubbleShape))
+        renderInBothAppearances(Text(verbatim: "长按").messageMenu(menu))
     }
 
     @Test("本机验证：注入的优先；Mock 客户端直接通过")

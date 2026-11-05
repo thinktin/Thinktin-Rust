@@ -393,8 +393,7 @@ struct HistoryRecordView: View {
                                 summary, runID: runID, target: runID.map(ContentReportTarget.run), onReport: onReport,
                                 onQuote: onQuote
                             )
-                            .reacting(reactions ?? [], onReact: reactions == nil ? nil : onReact),
-                            previewShape: messageBubbleShape)
+                            .reacting(reactions ?? [], onReact: reactions == nil ? nil : onReact))
                     Spacer(minLength: messageBubbleGutter)
                 }
                 ReactionChips(reactions: reactions ?? [], alignment: .leading, onToggle: onReact)
