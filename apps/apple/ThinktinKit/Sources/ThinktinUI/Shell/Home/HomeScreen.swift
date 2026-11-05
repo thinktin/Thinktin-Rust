@@ -283,7 +283,8 @@ struct HomeInstanceList: View {
             let deletion = HomeDeletion(
                 id: id,
                 model: InstanceDetailModel(
-                    client: model.client, instanceID: id, instance: row.instance, appearances: model.appearances))
+                    client: model.client, instanceID: id, instance: row.instance, appearances: model.appearances,
+                    voices: .shared))
             lastDeletion = deletion
             deleting = deletion
         }

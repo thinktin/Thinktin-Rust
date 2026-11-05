@@ -53,18 +53,23 @@ public final class InstanceDetailModel {
     @ObservationIgnored private let client: any ClientProtocol
     /// 删掉之后把这个 Botin 的头像外观也删掉（App 里是 `AppModel.appearances`）；nil 不管。
     @ObservationIgnored private let appearances: InstanceAppearanceStore?
+    /// 这台设备上记的语音通话设置（编辑页的“语音通话”组，App 里是 `BotinVoiceStore.shared`），删掉 Botin 时一起删；
+    /// nil 不管（编辑页这时用 `.shared`）。
+    @ObservationIgnored public let voices: BotinVoiceStore?
 
     /// - Parameters:
     ///   - instance: 已经有的实例（应用框架的实例列表里的），先显示它。
     ///   - appearances: 记头像外观的地方（`AppModel.appearances`），删掉 Botin 时一起删它的记录。
+    ///   - voices: 记语音通话设置的地方，删掉 Botin 时一起删它的记录。
     public init(
         client: any ClientProtocol, instanceID: InstanceID, instance: Instance? = nil,
-        appearances: InstanceAppearanceStore? = nil
+        appearances: InstanceAppearanceStore? = nil, voices: BotinVoiceStore? = nil
     ) {
         self.client = client
         self.instanceID = instanceID
         self.instance = instance?.id == instanceID ? instance : nil
         self.appearances = appearances
+        self.voices = voices
     }
 
     // MARK: 加载
@@ -242,7 +247,8 @@ public final class InstanceDetailModel {
         impactError = result.error
     }
 
-    /// 删除（二次确认之后）。已经不存在了（别处删了）也算删掉了。删掉了顺带删这台设备上记的头像外观、表情回应，是主 Botin 的话清掉。
+    /// 删除（二次确认之后）。已经不存在了（别处删了）也算删掉了。删掉了顺带删这台设备上记的头像外观、语音通话设置、表情回应，
+    /// 是主 Botin 的话清掉。
     @discardableResult
     public func delete() async -> Bool {
         guard !isDeleting, !isDeleted else { return false }
@@ -262,6 +268,7 @@ public final class InstanceDetailModel {
         }
         if isDeleted {
             appearances?.forget([instanceID])
+            voices?.forget([instanceID])
             // 这台设备上记的表情回应（对话页，规范 4.3.4）、主 Botin（4.4.5）也一起清掉。
             MessageReactionStore.shared.forget(instanceID: instanceID)
             PrimaryBotinStore.shared.forget(instanceID: instanceID)

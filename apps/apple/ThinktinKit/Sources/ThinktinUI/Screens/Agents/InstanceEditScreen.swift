@@ -13,13 +13,18 @@ enum ProfileAvatarMetrics {
 ///
 /// - 居中的头像，右下角一个玻璃小铅笔，点了进头像页（和“外观”组的“头像”行一样）；
 /// - “名称”组一个输入框，脚注是名字的问题或保存失败；离线时不能改名字（头像只存在这台设备上，照样能改）；
-/// - “外观”组“头像 >”；参考的“语音通话”组不做（6.23）。
+/// - “外观”组“头像 >”；
+/// - “语音通话”组（参考 12、13–17、85–88）：语音、速度、语言三行系统的 `Picker(.menu)`（行尾是值和上下箭头，菜单里选中的
+///   打勾，长列表系统菜单自己能滚）。ThinkTin 还没有语音通话（6.23），选项是演示数据（`BotinVoiceDemoData`），选了只记在
+///   这台设备上（`BotinVoiceStore`），脚注说“即将推出”。
 ///
-/// 点“完成”保存名字并返回（名字没变直接返回）；点返回放弃改动（只有一个名字，丢了好重填，规范 4.4.3）。
+/// 点“完成”记下语音通话的选择、保存名字并返回（名字没变直接返回；改名失败时语音的选择已经记下了，它只在本机）；点返回放弃
+/// 改动（规范 4.4.3）。
 struct InstanceEditScreen: View {
     let model: InstanceDetailModel
 
     @State private var draft: String
+    @State private var voice: BotinVoiceEditor
     @State private var isEditingAvatar = false
     @FocusState private var isNameFocused: Bool
 
@@ -30,6 +35,8 @@ struct InstanceEditScreen: View {
     init(model: InstanceDetailModel) {
         self.model = model
         _draft = State(initialValue: model.instance?.name ?? "")
+        _voice = State(
+            initialValue: BotinVoiceEditor(instanceID: model.instanceID, store: model.voices ?? BotinVoiceStore.shared))
     }
 
     var body: some View {
@@ -94,6 +101,7 @@ struct InstanceEditScreen: View {
                     .textCase(nil)
             }
             .themedRow()
+            BotinVoiceSection(editor: voice)
         }
         .formStyle(.grouped)
         .themedGroupedBackground()
@@ -135,11 +143,62 @@ struct InstanceEditScreen: View {
     private func save() {
         guard canSave(problem: InstanceNameRule.problem(draft)) else { return }
         isNameFocused = false
+        voice.save()
         let model = self.model
         let name = draft
         Task {
             if await model.rename(to: name) { dismiss() }
         }
+    }
+}
+
+/// 编辑页的“语音通话”组（参考 12 的三行，13–17、85–88 是它们的菜单）：系统的 `Picker(.menu)`，菜单里选中的打勾。
+private struct BotinVoiceSection: View {
+    let editor: BotinVoiceEditor
+
+    @Environment(\.displayLanguage) private var language
+
+    var body: some View {
+        let editor = self.editor
+        let language = self.language
+        Section {
+            Picker(
+                BotinVoiceText.voice(language),
+                selection: Binding(get: { editor.voiceID }, set: { editor.voiceID = $0 })
+            ) {
+                Text(BotinVoiceText.notSet(language)).tag(String?.none)
+                ForEach(BotinVoiceDemoData.voices) { voice in
+                    Text(verbatim: voice.name).tag(String?.some(voice.id))
+                }
+            }
+            .pickerStyle(.menu)
+            Picker(
+                BotinVoiceText.speed(language), selection: Binding(get: { editor.speed }, set: { editor.speed = $0 })
+            ) {
+                ForEach(BotinVoiceSpeed.allCases, id: \.self) { speed in
+                    Text(verbatim: speed.label)
+                        .accessibilityLabel(Text(speed.accessibilityLabel(language)))
+                        .tag(speed)
+                }
+            }
+            .pickerStyle(.menu)
+            Picker(
+                BotinVoiceText.language(language),
+                selection: Binding(get: { editor.languageCode }, set: { editor.languageCode = $0 })
+            ) {
+                Text(BotinVoiceText.automatic(language)).tag(String?.none)
+                ForEach(BotinVoiceDemoData.languages) { option in
+                    Text(option.name(language)).tag(String?.some(option.code))
+                }
+            }
+            .pickerStyle(.menu)
+        } header: {
+            Text(BotinVoiceText.section(language))
+                .textCase(nil)
+        } footer: {
+            Text(BotinVoiceText.footer(language))
+        }
+        .themedRow()
     }
 }
 
@@ -164,51 +223,66 @@ private struct AvatarWithPencil: View {
     }
 }
 
-/// 改头像（规范 4.4.4，参考 18）：编辑页压进来，标题“头像”，右上“完成”记进这台设备（`InstanceAppearanceStore`）。
-/// 大预览；和新建表单同一张卡片（形状网格 3 × 5、色板 2 × 6），卡片最下面分隔线和“重置为默认”。参考顶上的
-/// “形状 / 生成 / 上传”分段只有形状一项能做（生成、上传要后端，不做），所以不放分段。点返回放弃改动。
+/// 改头像（规范 4.4.4，参考 18、19、20）：编辑页压进来，标题“头像”，右上“完成”记进这台设备（`InstanceAppearanceStore`）。
+/// 顶上是系统的分段“形状 / 生成 / 上传”（`AvatarSourceTab`），下面 80pt 大预览，再下面跟着分段换：
+///
+/// - 形状（参考 18）：和新建表单同一张卡片（形状网格 3 × 5、色板 2 × 6），卡片最下面分隔线和“重置为默认”，下面一句
+///   “只保存在这台设备上”；
+/// - 生成（参考 19）：多行描述 + 整宽的“生成”胶囊（写了描述才能点），下面一句说明；点了弹“即将推出”（要图片生成服务，6.9）；
+/// - 上传（参考 20）：“从相册选择”“拍照”两行 + 脚注（25 MB、可以裁剪）；点了弹“即将推出”（要存储接口和 Botin 上的头像
+///   字段，6.9 B；只存在本机的照片得改首页、搜索、对话标题里所有画头像的地方，这次不做）。
+///
+/// 点返回放弃改动。
 struct InstanceAvatarScreen: View {
     @State private var editor: InstanceAppearanceEditor
+    @State private var tab: AvatarSourceTab
+    /// “生成”页的描述。
+    @State private var prompt = ""
+    /// 正在弹“即将推出”的分段（生成、上传）。
+    @State private var comingSoon: AvatarSourceTab?
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.displayLanguage) private var language
 
-    init(editor: InstanceAppearanceEditor) {
+    /// - Parameter tab: 一打开在哪个分段（预览、测试用；App 里总是“形状”）。
+    init(editor: InstanceAppearanceEditor, tab: AvatarSourceTab = .shape) {
         _editor = State(initialValue: editor)
+        _tab = State(initialValue: tab)
     }
 
     var body: some View {
         let editor = self.editor
-        ScrollView {
-            VStack(spacing: Metrics.Spacing.l) {
-                // 固定大小（`AvatarGlyph` 不跟动态字体缩放），只是装饰，读屏不念（网格自己会念）。
-                AvatarGlyph(name: editor.name, appearance: editor.appearance, size: ProfileAvatarMetrics.size)
-                    .accessibilityHidden(true)
-                    .animation(.snappy, value: editor.appearance)
-                    .padding(.top, Metrics.Spacing.m)
-                AvatarPicker(
-                    name: editor.name, shape: Binding(get: { editor.shape }, set: { editor.shape = $0 }),
-                    color: Binding(get: { editor.color }, set: { editor.color = $0 }),
-                    resolvedColor: editor.resolvedColor
-                ) {
-                    Divider()
-                    Button(InstanceProfileText.resetAvatar(language)) { editor.reset() }
-                        .buttonStyle(.borderless)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .disabled(editor.isDefault)
+        let language = self.language
+        List {
+            Section {
+                VStack(spacing: Metrics.Spacing.l) {
+                    Picker(selection: $tab) {
+                        ForEach(AvatarSourceTab.allCases) { option in
+                            Text(option.title(language)).tag(option)
+                        }
+                    } label: {
+                        Text(InstanceProfileText.avatar(language))
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
+                    // 固定大小（`AvatarGlyph` 不跟动态字体缩放），只是装饰，读屏不念（网格自己会念）。
+                    AvatarGlyph(name: editor.name, appearance: editor.appearance, size: ProfileAvatarMetrics.size)
+                        .accessibilityHidden(true)
+                        .animation(.snappy, value: editor.appearance)
                 }
-                Text(InstanceProfileText.avatarFooter(language))
-                    .typography(.footnote)
-                    .foregroundStyle(Theme.inkSecondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, Metrics.Spacing.m)
+                .frame(maxWidth: .infinity)
+                .padding(.top, Metrics.Spacing.s)
+                .clearListRow()
             }
-            .padding(.horizontal, Metrics.Spacing.m)
-            .padding(.bottom, Metrics.Spacing.l)
-            .frame(maxWidth: Metrics.readableWidth)
-            .frame(maxWidth: .infinity)
+            switch tab {
+            case .shape: shapeSection
+            case .generate: generateSections
+            case .upload: uploadSection
+            }
         }
-        .background(Theme.paper)
+        .insetGroupedList()
+        .themedGroupedBackground()
         .inlineNavigationTitle(InstanceProfileText.avatar(language))
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
@@ -218,6 +292,99 @@ struct InstanceAvatarScreen: View {
                 }
             }
         }
+        .alert(
+            AvatarSourceText.comingSoon(language),
+            isPresented: Binding(get: { comingSoon != nil }, set: { if !$0 { comingSoon = nil } }),
+            presenting: comingSoon
+        ) { _ in
+            Button(AvatarSourceText.ok(language)) { comingSoon = nil }
+        } message: { tab in
+            Text(AvatarSourceText.comingSoonMessage(tab, language: language))
+        }
+    }
+
+    /// 形状（参考 18）：形状网格和色板的卡片，最下面“重置为默认”。
+    private var shapeSection: some View {
+        let editor = self.editor
+        return Section {
+            AvatarPicker(
+                name: editor.name, shape: Binding(get: { editor.shape }, set: { editor.shape = $0 }),
+                color: Binding(get: { editor.color }, set: { editor.color = $0 }),
+                resolvedColor: editor.resolvedColor
+            ) {
+                Divider()
+                Button(InstanceProfileText.resetAvatar(language)) { editor.reset() }
+                    .buttonStyle(.borderless)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .disabled(editor.isDefault)
+            }
+            .clearListRow()
+        } footer: {
+            Text(InstanceProfileText.avatarFooter(language))
+        }
+    }
+
+    /// 生成（参考 19）：多行描述、整宽的“生成”胶囊。
+    @ViewBuilder
+    private var generateSections: some View {
+        let language = self.language
+        Section {
+            TextField(AvatarSourceText.generatePlaceholder(language), text: $prompt, axis: .vertical)
+                .lineLimit(4...8)
+        } footer: {
+            if let problem = AvatarGenerationPrompt.problem(prompt, language: language) {
+                Text(problem)
+                    .foregroundStyle(StatusTone.failure.color)
+            }
+        }
+        .themedRow()
+        Section {
+            Button {
+                comingSoon = .generate
+            } label: {
+                Text(AvatarSourceText.generate(language))
+                    .frame(maxWidth: .infinity)
+            }
+            .glassButtonStyle()
+            .buttonBorderShape(.capsule)
+            .controlSize(.large)
+            .disabled(!AvatarGenerationPrompt.canSubmit(prompt))
+            .clearListRow()
+        } footer: {
+            Text(AvatarSourceText.generateFooter(language))
+        }
+    }
+
+    /// 上传（参考 20）：从相册选择、拍照两行和脚注。
+    private var uploadSection: some View {
+        let language = self.language
+        return Section {
+            ForEach(AvatarUploadSource.allCases) { source in
+                Button {
+                    comingSoon = .upload
+                } label: {
+                    HStack {
+                        Label {
+                            Text(source.title(language))
+                                .foregroundStyle(Theme.ink)
+                        } icon: {
+                            Image(systemName: source.systemImage)
+                                .foregroundStyle(Theme.inkSecondary)
+                        }
+                        Spacer(minLength: Metrics.Spacing.s)
+                        Image(systemName: "chevron.right")
+                            .font(Typography.footnote.font.weight(.semibold))
+                            .foregroundStyle(Theme.inkTertiary)
+                            .accessibilityHidden(true)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        } footer: {
+            Text(AvatarSourceText.uploadFooter(language))
+        }
+        .themedRow()
     }
 }
 
@@ -238,4 +405,24 @@ struct InstanceAvatarScreen: View {
                 instanceID: DemoData.reviewerID, name: "Code reviewer", store: InstanceAppearanceStore(defaults: nil)))
     }
     .previewShell(.english, scheme: .dark)
+}
+
+#Preview("头像 · 生成") {
+    NavigationStack {
+        InstanceAvatarScreen(
+            editor: InstanceAppearanceEditor(
+                instanceID: DemoData.writerID, name: "写作助手", store: InstanceAppearanceStore(defaults: nil)),
+            tab: .generate)
+    }
+    .previewShell(scheme: .dark)
+}
+
+#Preview("头像 · 上传") {
+    NavigationStack {
+        InstanceAvatarScreen(
+            editor: InstanceAppearanceEditor(
+                instanceID: DemoData.writerID, name: "写作助手", store: InstanceAppearanceStore(defaults: nil)),
+            tab: .upload)
+    }
+    .previewShell()
 }

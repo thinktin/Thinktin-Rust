@@ -23,6 +23,7 @@ extension AppRoute {
         case .agent: ("引擎详情", "Engine details")
         case .adopt: ("新建 Botin", "New Botin")
         case .instance: ("Botin 资料", "Botin details")
+        case .instanceScreen: ("观看与接管", "Watch and take over")
         case .credentials: ("模型 key", "Model keys")
         case .addCredential: ("添加 key", "Add key")
         case .credential: ("Key 详情", "Key details")

@@ -30,9 +30,10 @@ enum RouteSamples {
         .hiddenBotins,
         .connections(category: nil), .connectedApps, .connectionList(.recommended), .connection("docs"),
         .primaryBotin,
+        .instanceScreen("inst-1"),
     ]
 
-    static let caseCount = 51
+    static let caseCount = 52
 
     static func index(of route: AppRoute) -> Int {
         switch route {
@@ -87,6 +88,7 @@ enum RouteSamples {
         case .connectionList: 48
         case .connection: 49
         case .primaryBotin: 50
+        case .instanceScreen: 51
         }
     }
 }
@@ -121,6 +123,8 @@ struct AppRouteTests {
         #expect(AppRoute.connectionList(.featured).title(.english) == "Featured")
         #expect(AppRoute.connectedApps.title(.chinese) == "已连接")
         #expect(AppRoute.primaryBotin.title(.chinese) == "选择主 Botin")
+        #expect(AppRoute.instanceScreen("i").title(.chinese) == InstanceScreenText.title(.chinese))
+        #expect(AppRoute.instanceScreen("i").title(.english) == "Watch and take over")
     }
 
     @Test("页面归哪个功能（工作包）")
@@ -131,6 +135,7 @@ struct AppRouteTests {
             .runTree("r"): .conversation, .activeRuns: .conversation, .primaryBotin: .conversation,
             .agentCatalog: .agents, .agent("a"): .agents, .instance("i"): .agents,
             .adopt(agentID: nil): .agents, .adopt(agentID: "a"): .agents,
+            .instanceScreen("i"): .agents,
             .credentials: .models, .addCredential: .models, .credential("c"): .models, .modelRoutes("i"): .models,
             .usage: .models,
             .plans(instanceID: nil): .plans, .plans(instanceID: "i"): .plans, .plan("p"): .plans,
@@ -175,6 +180,7 @@ struct AppRouteTests {
             // 连接的几页都压栈（规范 3.2：设置里压栈）；详情在目录里是本地 sheet，路由本身压栈（和引擎详情一样）。
             .connections(category: nil), .connections(category: .code), .connectedApps, .connectionList(.recommended),
             .connection("docs"),
+            .instanceScreen("i"),
         ] {
             #expect(route.presentation == .push, "\(route)")
         }
@@ -218,6 +224,8 @@ struct AppRouteTests {
         #expect(AppRoute.newPlan(instanceID: nil).instanceID == nil)
         #expect(AppRoute.run("r").instanceID == nil)
         #expect(AppRoute.adopt(agentID: "claude").instanceID == nil)
+        #expect(AppRoute.instanceScreen("g").instanceID == "g")
+        #expect(!AppRoute.instanceScreen("g").isTopLevel)
         #expect(AppRoute.home.instanceID == nil)
     }
 
@@ -225,7 +233,7 @@ struct AppRouteTests {
     func returnsToConversation() {
         for route in [
             AppRoute.instance("i"), .modelRoutes("i"), .run("r"), .runTree("r"), .artifact("a", runID: "r"),
-            .plans(instanceID: "i"), .artifacts(instanceID: "i"),
+            .plans(instanceID: "i"), .artifacts(instanceID: "i"), .instanceScreen("i"),
         ] {
             #expect(route.returnsToConversation, "\(route)")
         }
@@ -249,7 +257,7 @@ struct AppRouteTests {
         for route in [
             AppRoute.plans(instanceID: nil), .plans(instanceID: "i"), .plan("p"), .approvals, .credentials,
             .modelRoutes("i"), .usage, .vault, .teams, .agentCatalog, .imChannels, .devices,
-            .artifacts(instanceID: nil), .adopt(agentID: nil), .adopt(agentID: "claude"),
+            .artifacts(instanceID: nil), .adopt(agentID: nil), .adopt(agentID: "claude"), .instanceScreen("i"),
             // 连接的几页要拉电脑、IM 渠道、key、保险箱，都不缓存。
             .connections(category: nil), .connectedApps, .connectionList(.featured), .connection("docs"),
         ] {
