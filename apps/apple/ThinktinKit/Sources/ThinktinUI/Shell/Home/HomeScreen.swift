@@ -6,6 +6,7 @@ import ThinktinKit
 /// - 没有标题。plain 列表，每行一个实例（`HomeInstanceRow`），最后活动新的在前（`AppModel.homeRows`）；
 ///   点一行压栈进它的对话（`NavigationLink(value: AppRoute.conversation(id))`，`Router` 顺带记成当前实例）。
 /// - 左上账号头像 → 设置（sheet，`router.open(.settings)`）；右上“+” → 领养新实例（sheet，`.adopt(agentID: nil)`）。
+///   两个都是系统工具栏的玻璃圆按钮（规范 4.2.1），头像放在玻璃圆里面。
 /// - 底部：左边工作台菜单（`WorkbenchMenu`），右边搜索栏（iOS 26 在底部条里，旧系统在导航栈的导航栏下面）。
 ///   搜索栏里有字时列表换成搜索结果（`HomeSearchResults`）；`router.searchRequest` 变了（`open(.search)`、深链）就激活它。
 ///   macOS 没有底部条：工作台和“+”在工具栏右边，搜索栏是工具栏里的那个。
@@ -67,11 +68,24 @@ private struct HomeContent: View {
     }
 
     /// 有没处理的搜索请求（首页出现之前来的也算）就激活搜索栏。
+    ///
+    /// 推迟一拍再设：iOS 26 的搜索栏在底部条里（`BottomBarSearchItem`），冷启动时首页的 `onAppear` 比底部条装好早，
+    /// 从代码激活底部条里的搜索栏在同一拍里可能不生效（Apple 论坛 798018 / FB20068224 说的是 `searchFocused`，
+    /// `isPresented` 有没有这个问题还没在模拟器上验，见进度文件）。绑定还是 true 时（系统没写回 false）先放下再拉起，
+    /// 每次请求都是一次真的变化。
     private func activatePendingSearch() {
         let router = model.router
         guard router.hasPendingSearchRequest else { return }
         router.searchRequestHandled()
-        isSearchPresented = true
+        let wasPresented = isSearchPresented
+        Task { @MainActor in
+            if wasPresented {
+                isSearchPresented = false
+                await Task.yield()
+            }
+            await Task.yield()
+            isSearchPresented = true
+        }
     }
 }
 
@@ -85,7 +99,6 @@ private struct HomeToolbar: ToolbarContent {
             ToolbarItem(placement: .topBarLeading) {
                 AccountButton(model: model)
             }
-            .hidesSharedGlassBackground()
             ToolbarItem(placement: .topBarTrailing) {
                 adoptButton
             }
@@ -117,7 +130,8 @@ private struct HomeToolbar: ToolbarContent {
     }
 }
 
-/// 左上的账号头像（昵称的第一个字），点了弹出设置。账号还没拉到时是系统的人像图标。
+/// 左上的账号头像（昵称的第一个字），点了弹出设置。账号还没拉到时是系统的人像图标。iOS 26 外面是工具栏的玻璃圆
+/// （和右上的“+”一样），头像用导航栏里的尺寸（`Metrics.Avatar.title`）放在里面。
 private struct AccountButton: View {
     let model: AppModel
 
@@ -132,7 +146,7 @@ private struct AccountButton: View {
                 Image(systemName: "person.crop.circle")
                     .accessibilityHidden(true)
             } else {
-                InstanceAvatar(name, size: Metrics.iconButton)
+                InstanceAvatar(name, size: Metrics.Avatar.title)
                     .accessibilityHidden(true)
             }
         }
@@ -153,14 +167,15 @@ struct HomeInstanceList: View {
             if let error = model.refreshError {
                 ErrorBanner(error, onRetry: { Task { await model.refresh() } })
                     .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
+                    .themedPlainRow()
             }
             ForEach(rows) { row in
                 NavigationLink(value: AppRoute.conversation(row.id)) {
                     HomeInstanceRow(row: row)
                 }
-                .listRowSeparator(.hidden)
             }
+            .listRowSeparator(.hidden)
+            .themedPlainRow()
         }
         .listStyle(.plain)
         .refreshable { await model.refresh() }
@@ -174,9 +189,13 @@ struct HomeInstanceList: View {
         let zh = language == .chinese
         if !model.hasLoadedInstances {
             if model.isOffline {
+                // 顶部的离线横幅按首页的策略写“显示的是缓存内容”，这里只说缓存是空的，不再写“离线，暂无数据”和它打架。
                 ContentUnavailableView(
                     zh ? "离线" : "Offline", systemImage: "wifi.slash",
-                    description: OfflinePolicy.unavailable.bannerMessage(language).map { Text(verbatim: $0) })
+                    description: Text(
+                        zh
+                            ? "这台设备上还没有保存的实例，联网后会自动刷新。"
+                            : "No instances are saved on this device yet. They'll appear when you're back online."))
             } else if model.refreshError == nil {
                 ProgressView()
             }
@@ -219,17 +238,23 @@ struct HomeSearchResults: View {
                     .typography(.footnote)
                     .foregroundStyle(Theme.inkSecondary)
                     .listRowSeparator(.hidden)
+                    .themedPlainRow()
             }
             ForEach(search.groups) { group in
+                // plain、没有分隔线（规范 2.5），行底透明（`themedPlainRow()`）。
                 Section {
                     ForEach(group.results) { result in
                         SearchResultRow(result: result) { router.open(result.route) }
                             .listRowInsets(EdgeInsets())
                     }
+                    .listRowSeparator(.hidden)
+                    .themedPlainRow()
                     if group.total > group.results.count {
                         Text(SearchText.more(group.total - group.results.count, language: language))
                             .typography(.footnote)
                             .foregroundStyle(Theme.inkSecondary)
+                            .listRowSeparator(.hidden)
+                            .themedPlainRow()
                     }
                 } header: {
                     Text(SearchText.groupTitle(group.kind, language: language))

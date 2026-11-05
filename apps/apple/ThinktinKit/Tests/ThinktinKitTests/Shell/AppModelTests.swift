@@ -478,9 +478,9 @@ struct ShellStateTests {
         #expect(ShellBadges(activeRuns: 4).workbenchTotal == 0)
         #expect(ShellBadges.zero.workbenchTotal == 0)
         #expect(WorkbenchEntry.allCases.filter(\.countsTowardTotal) == [.inbox, .approvals, .plans])
-        #expect(badges.workbenchAccessibilityLabel(.chinese) == "工作台，6 件要处理")
-        #expect(badges.workbenchAccessibilityLabel(.english) == "Workbench, 6 to handle")
-        #expect(ShellBadges(activeRuns: 4).workbenchAccessibilityLabel(.chinese) == "工作台")
+        // 读屏标签只是名字，数由角标当值念（ThinktinUITests 的 AppShellTests 查合起来只念一次）。
+        #expect(ShellBadges.workbenchTitle(.chinese) == "工作台")
+        #expect(ShellBadges.workbenchTitle(.english) == "Workbench")
     }
 
     @Test("工作台菜单项：顺序、图标、副标题（0 时没有）")

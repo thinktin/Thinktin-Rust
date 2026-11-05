@@ -239,7 +239,8 @@ public struct GlassToolbarSpacer: ToolbarContent {
 #endif
 
 extension ToolbarContent {
-    /// 不要 iOS 26 工具栏项共用的玻璃底（左上的账号头像这种自己就是圆形的）；旧系统本来就没有，原样。
+    /// 不要 iOS 26 工具栏项共用的玻璃底（自己画了完整的底、不要外面再套一圈玻璃的东西）；旧系统本来就没有，原样。
+    /// 首页左上的账号头像不用它：规范 4.2.1 要的是玻璃圆里放头像。
     public func hidesSharedGlassBackground() -> some ToolbarContent {
         if #available(iOS 26.0, macOS 26.0, *) {
             return sharedBackgroundVisibility(.hidden)
@@ -251,7 +252,8 @@ extension ToolbarContent {
 
 extension View {
     /// 工具栏按钮上的角标（首页左下的工作台菜单）：iOS 26 用系统的 `.badge(_:)`；旧系统的工具栏不画按钮的角标，
-    /// 在按钮右上角叠一个强调色的小数字。0 不显示。读屏把数字当按钮的值念。
+    /// 在按钮右上角叠一个强调色的小数字。0 不显示。读屏把数字当按钮的值念（`ToolbarBadgeText.accessibilityValue`），
+    /// 所以按钮的标签里别再写这个数。
     public func toolbarBadge(_ count: Int) -> some View {
         if #available(iOS 26.0, macOS 26.0, *) {
             return badge(count)
@@ -267,8 +269,8 @@ private struct ToolbarBadgeOverlay: ViewModifier {
     func body(content: Content) -> some View {
         content
             .overlay(alignment: .topTrailing) {
-                if count > 0 {
-                    Text(verbatim: count > 99 ? "99+" : "\(count)")
+                if let text = ToolbarBadgeText.display(count) {
+                    Text(verbatim: text)
                         .font(Typography.caption2.font.weight(.semibold))
                         .monospacedDigit()
                         .foregroundStyle(Theme.onAccent)
@@ -279,7 +281,21 @@ private struct ToolbarBadgeOverlay: ViewModifier {
                         .accessibilityHidden(true)
                 }
             }
-            .accessibilityValue(Text(verbatim: count > 0 ? "\(count)" : ""))
+            .accessibilityValue(Text(verbatim: ToolbarBadgeText.accessibilityValue(count)))
+    }
+}
+
+/// 旧系统自己画的工具栏角标上的字和读屏的值。
+enum ToolbarBadgeText {
+    /// 角标上显示的字：0 不显示，超过 99 显示“99+”。
+    static func display(_ count: Int) -> String? {
+        guard count > 0 else { return nil }
+        return count > 99 ? "99+" : String(count)
+    }
+
+    /// 读屏念的值：完整的数（不截成 99+）；0 时为空，只念按钮的名字。
+    static func accessibilityValue(_ count: Int) -> String {
+        count > 0 ? String(count) : ""
     }
 }
 

@@ -221,8 +221,8 @@ struct DisplayNameEditor: View {
                     } else {
                         Text(
                             zh
-                                ? "显示在侧边栏和这台设备上。不填就显示打码的手机号。"
-                                : "Shown in the sidebar and on this device. Leave it empty to show your masked number."
+                                ? "显示在首页左上角的头像和这台设备上。不填就显示打码的手机号。"
+                                : "Shown on the home screen's account button and on this device. Leave it empty to show your masked number."
                         )
                         .typography(.footnote)
                         .foregroundStyle(Theme.inkSecondary)

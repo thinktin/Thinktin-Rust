@@ -18,7 +18,7 @@ public enum Metrics {
 
     /// 实例头像（`InstanceAvatar`）的直径，跟着动态字体缩放。
     public enum Avatar {
-        /// 导航栏标题胶囊里。
+        /// 导航栏里：标题胶囊、首页左上的账号按钮（放在工具栏的玻璃圆里）。
         public static let title: CGFloat = 24
         /// 搜索结果的行。
         public static let search: CGFloat = 40

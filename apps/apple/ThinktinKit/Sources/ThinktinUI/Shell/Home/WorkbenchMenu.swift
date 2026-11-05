@@ -28,11 +28,11 @@ struct WorkbenchMenu: View {
                 }
             }
         } label: {
+            // 读屏标签是 `Label` 的名字“工作台”，要处理的数由角标当按钮的值念（“工作台，5，弹出按钮”），只念一次。
             Label(ShellBadges.workbenchTitle(language), systemImage: "square.grid.2x2")
                 .labelStyle(.iconOnly)
         }
         .toolbarBadge(badges.workbenchTotal)
-        .accessibilityLabel(Text(badges.workbenchAccessibilityLabel(language)))
     }
 }
 

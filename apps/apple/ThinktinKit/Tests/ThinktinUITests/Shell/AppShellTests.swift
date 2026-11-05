@@ -171,6 +171,22 @@ struct AppShellTests {
         }
     }
 
+    @Test("工作台按钮的读屏：标签只是名字，要处理的数在角标的值里，合起来只念一次")
+    func workbenchAccessibility() {
+        for language in [DisplayLanguage.chinese, .english] {
+            let label = ShellBadges.workbenchTitle(language)
+            #expect(!label.contains { $0.isNumber })
+            for count in [0, 5, 120] {
+                let spoken = label + " " + ToolbarBadgeText.accessibilityValue(count)
+                #expect(spoken.components(separatedBy: String(count)).count - 1 == (count > 0 ? 1 : 0))
+            }
+        }
+        #expect(ToolbarBadgeText.display(0) == nil)
+        #expect(ToolbarBadgeText.display(7) == "7")
+        #expect(ToolbarBadgeText.display(120) == "99+")
+        #expect(ToolbarBadgeText.accessibilityValue(120) == "120")
+    }
+
     @Test("工作台菜单：总角标只算要你处理的；菜单项和抽屉原来的入口一一对应")
     func workbenchMenu() async {
         let model = await started(ShellPreviewClients.signedIn())

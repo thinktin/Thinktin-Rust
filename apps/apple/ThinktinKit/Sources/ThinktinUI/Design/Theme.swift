@@ -199,16 +199,23 @@ extension StatusTone {
 
 extension View {
     /// `List` / `Form` 的底色换成 `paper`（加在 `List` / `Form` 上）。浅色和系统的分组底色一样；深色系统默认是纯黑，
-    /// 比 `paper` 暗一档，所以要藏起系统的底色自己铺。行底配 `themedRow()`。
+    /// 比 `paper` 暗一档，所以要藏起系统的底色自己铺。它只藏列表自己的底，不管行：分组列表的行配 `themedRow()`，
+    /// plain 列表的行配 `themedPlainRow()`。
     public func themedGroupedBackground() -> some View {
         scrollContentBackground(.hidden)
             .background(Theme.paper)
     }
 
-    /// 列表行的底色换成 `paperElevated`。这个修饰符只对行生效：加在 `Section` 的内容或 `ForEach` 上，加在 `List`
-    /// 本身上没用。plain 列表（首页、搜索结果）不用它，行底就是页面底色。
+    /// 分组列表（`insetGrouped`、`Form`）行的底色换成 `paperElevated`。这个修饰符只对行生效：加在 `Section` 的内容或
+    /// `ForEach` 上，加在 `List` 本身上没用。
     public func themedRow() -> some View {
         listRowBackground(Theme.paperElevated)
+    }
+
+    /// plain 列表（首页、搜索结果）的行底透明，露出页面的 `paper`。不加的话系统给 plain 列表的每一行铺
+    /// `systemBackground`（浅色纯白、深色纯黑），和行之间、列表下面的 `paper` 不一样。和 `themedRow()` 一样只对行生效。
+    public func themedPlainRow() -> some View {
+        listRowBackground(Color.clear)
     }
 }
 

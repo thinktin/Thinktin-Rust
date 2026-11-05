@@ -104,17 +104,10 @@ extension ShellBadges {
         count > 99 ? "99+" : String(count)
     }
 
-    /// 工作台按钮的名字。
+    /// 工作台按钮的名字，也是它的读屏标签。要处理的数不放进标签：按钮上的角标（`toolbarBadge`）把它当按钮的值念，
+    /// 放进标签就念两遍。
     public static func workbenchTitle(_ language: DisplayLanguage = .current) -> String {
         language == .chinese ? "工作台" : "Workbench"
-    }
-
-    /// 工作台按钮的读屏文字（“工作台，5 件要处理”）。
-    public func workbenchAccessibilityLabel(_ language: DisplayLanguage = .current) -> String {
-        let title = Self.workbenchTitle(language)
-        let total = workbenchTotal
-        guard total > 0 else { return title }
-        return language == .chinese ? "\(title)，\(total) 件要处理" : "\(title), \(total) to handle"
     }
 }
 

@@ -84,11 +84,12 @@ Linux 上 `tools/client-core/build-linux-swift.sh target/linux`（本机 `libcli
 | `success` / `warning` / `danger` | `#2E7D4F` / `#B7791F` / `#C0392B` | `#4A9E6E` / `#D4973A` / `#E05A4C` | 运行状态、审批、失败 |
 
 - 文字三档的“≈”是系统色（带透明度）叠在 `paper` 上的不透明近似值，只给文档和测试核对；界面里用的是系统色本身，放在玻璃上系统会自动调对比。
-- `List` / `Form` 加 `themedGroupedBackground()`（藏起系统底色、铺 `paper`），行加 `themedRow()`（`listRowBackground`，只对行生效，
-  加在 `Section` 的内容或 `ForEach` 上）。plain 列表（首页、搜索结果）不用 `themedRow()`。
+- `List` / `Form` 加 `themedGroupedBackground()`（藏起系统底色、铺 `paper`；只藏列表的底，不管行），分组列表的行加 `themedRow()`
+  （`listRowBackground(paperElevated)`，只对行生效，加在 `Section` 的内容或 `ForEach` 上）。plain 列表（首页、搜索结果）的行加
+  `themedPlainRow()`（行底透明）：不加的话系统给 plain 列表的行铺 `systemBackground`（深色纯黑、浅色纯白），和 `paper` 不一样。
 - 字体：全部系统字体（SF），标题不再用衬线；全部用 Dynamic Type 的语义字号，导航标题由系统画。
 - 圆角：消息气泡、自己画的卡片 20（`Metrics.Radius.card`），带引用的输入卡片 28，小控件 10；分组卡片、导航栏按钮由系统给。
-  实例头像的直径在 `Metrics.Avatar`（列表 48、置顶 80、资料页 120、编辑页 100、搜索 40、标题胶囊 24）。间距 4 的倍数。
+  实例头像的直径在 `Metrics.Avatar`（列表 48、置顶 80、资料页 120、编辑页 100、搜索 40、导航栏里的标题胶囊和首页的账号按钮 24）。间距 4 的倍数。
 - iOS 26 才有的接口（玻璃、关闭 / 确认按钮的角色、工具栏间隔、底部搜索栏、底部条、工具栏角标）和 iOS 18 的缩放转场只经过
   `ThinktinUI/Design/Glass.swift` 用（`glassButtonStyle`、`glassBackground`、`GlassGroup`、`floatingBar`、`CloseButton`、`ConfirmButton`、
   `GlassToolbarSpacer`、`BottomBarSearchItem`、`toolbarBadge`、`zoomTransitionSource` 这些），那里带 iOS 17、macOS 14 的退路，页面里不写

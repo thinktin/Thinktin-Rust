@@ -364,11 +364,13 @@ private struct AddCredentialDoneView: View {
                         zh ? "回到“\(targetInstance.name)”的模型路由" : "Back to “\(targetInstance.name)” routes",
                         systemImage: "slider.horizontal.3", action: onClose)
                 } else if let current = app.currentInstance {
-                    // 不是从路由页来的（设置、引导）：顺手去配当前实例的路由。
+                    // 不是从路由页来的（设置、引导）：顺手去配当前实例的路由。先关掉这层 sheet，路由页压在底下那层
+                    // （主栈或设置的栈）上；压进这层 sheet 的话，路由页的“添加 key”再弹添加 key 是原地不动。
                     PillButton(
                         zh ? "给“\(current.name)”配模型路由" : "Set up routes for “\(current.name)”",
                         systemImage: "slider.horizontal.3"
                     ) {
+                        router.dismissSheet()
                         router.open(.modelRoutes(current.id))
                     }
                     PillButton(zh ? "完成" : "Done", kind: .secondary, action: onClose)

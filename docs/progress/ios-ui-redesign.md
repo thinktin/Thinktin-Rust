@@ -120,7 +120,22 @@
   - 新任务请求照搜索请求的办法补上：`handledNewTaskRequest`、`hasPendingNewTaskRequest`、`newTaskRequestHandled()`；
     对话页 `onAppear` 和 `onChange(of: newTaskRequest)` 都看，只认当前实例的（从首页进对话时页面在请求之后才建）。
     退出登录时丢掉没处理的。
-  - 测试：`RouterTests` 加“App 里点的链接”“页面没了从哪层拿掉”“新任务请求补上一次”。
+  - 添加 key 做完点“给 X 配模型路由”：先 `dismissSheet()` 再 `open(.modelRoutes)`，路由页压在底下那层（主栈或设置的栈）上；
+    以前压进添加 key 这层 sheet 的栈，路由页的“添加 key”再弹添加 key 是原地不动。
+  - 首页：plain 列表的行（实例行、错误横幅、搜索结果、“还有 N 条”、只搜了缓存的提示）加新的 `themedPlainRow()`（行底透明）：
+    `themedGroupedBackground()` 只藏列表的底，系统照样给 plain 列表的行铺 `systemBackground`（深色纯黑）；Theme.swift 的说明和
+    docs/ios.md 第 4 节改了。搜索结果的行、“还有 N 条”也藏分隔线（规范 2.5）。
+  - 首页左上的账号按钮不再藏工具栏的玻璃（去掉 `hidesSharedGlassBackground()`），24pt 头像（`Metrics.Avatar.title`）放在玻璃圆里，
+    和右上的“+”一样（规范 4.2.1）。帮手留着（`NativeControlsTests` 用）。
+  - 工作台按钮的读屏：标签只是“工作台”，数由角标当值念（旧系统 `ToolbarBadgeOverlay` 的值，iOS 26 系统的 `.badge`），
+    `ShellBadges.workbenchAccessibilityLabel` 删掉（以前标签里带数，旧系统上念两遍）；角标的字和值挪到 `ToolbarBadgeText`。
+  - 首页离线又没有缓存：空状态的说明换成“这台设备上还没有保存的实例，联网后会自动刷新。”，不再和顶部横幅的“显示的是缓存内容”打架。
+  - 首页的搜索请求推迟一拍再激活（`Task` 里 `Task.yield()` 后设 `isSearchPresented`），绑定还是 true 时先放下再拉起：iOS 26 底部条里的
+    搜索栏从代码激活可能要等底部条装好（Apple 论坛 798018 / FB20068224 说的是 `searchFocused`；`isPresented` 有没有这个问题、
+    推迟一拍够不够，都要在 iOS 26 模拟器上看截图 09-search 和从压栈的页面 `open(.search)`）。
+  - 设置 → 账号 → 昵称的说明不再说“显示在侧边栏”，改成“显示在首页左上角的头像和这台设备上”。
+  - 测试：`RouterTests` 加“App 里点的链接”“页面没了从哪层拿掉”“新任务请求补上一次”“添加 key 之后去配路由”；
+    `AppShellTests` 加“工作台按钮的读屏只念一次数”；`AppModelTests` 的工作台标签那几行换成名字。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、
@@ -172,8 +187,10 @@
 - 首页：行的预览文字和头像角标（`HomeRowPreview.text`、`avatarBadge`）放在 ThinktinUI 的 `HomeInstanceRow.swift`，因为状态名
   （`RunState` / `InstanceState.localizedName`）在 ThinktinUI 的 `StatusTone.swift`；测试在 `AppShellTests`（`run.sh test` 在 Linux 上跑）。
   开着、闲着的实例写“随时可以接任务”、不画角标（实例的“运行中”和运行的“运行中”分不清）。
-- 首页：iOS 17 / 18 上底部条只有工作台菜单（`BottomBarSearchItem` 不放东西），搜索栏照旧在导航栏下面。账号头像用 `InstanceAvatar`
-  （按昵称取色），还没拉到用户时是 `person.crop.circle`。新任务没有首页入口了（规范 3.2：引导、快捷指令用 `.newTask`）。
+- 首页：iOS 17 / 18 上底部条只有工作台菜单（`BottomBarSearchItem` 不放东西），搜索栏照旧在导航栏下面。iOS 26 上
+  `BottomBarSearchItem` 的搜索栏从代码激活（`open(.search)`、深链、截图 09-search）还没在真 SDK 上验过，见“已完成”审查修正那条。
+  账号头像用 `InstanceAvatar`（按昵称取色，24pt，放在工具栏的玻璃圆里），还没拉到用户时是 `person.crop.circle`。
+- plain 列表的行要加 `themedPlainRow()`，分组列表的行加 `themedRow()`；只加 `themedGroupedBackground()` 行底还是系统的。新任务没有首页入口了（规范 3.2：引导、快捷指令用 `.newTask`）。
 - `ConversationText` 里旧首页的三句文案删了；`Greeting`（问候语）还在 `Screens/Welcome/`，登录、欢迎页用户自己设计，没动。
 - 截图参数：`THINKTIN_OPEN_SCREEN` 打开的是“首页第一行”，不是写死的 id：演示数据里写作助手 2 分钟前活跃、代码审查 10 分钟前，所以是
   写作助手（和截图脚本里 `thinktin://instance/$writer` 是同一个）。演示数据的时间改了，这一点要跟着看。实例的页面要等实例列表拿到才打开

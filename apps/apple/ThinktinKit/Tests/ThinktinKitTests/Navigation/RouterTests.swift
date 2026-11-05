@@ -336,6 +336,36 @@ struct RouterTests {
         #expect(router.path == [.conversation("i1")])
     }
 
+    @Test("添加 key 之后去配路由：先关掉添加 key，路由页压在底下那层上，它的“添加 key”还弹得出来")
+    func addCredentialThenRoutes() {
+        // 设置 → 模型 key → “+”（第二层）→ 保存 → “给 X 配模型路由”。
+        let router = Router(path: [.conversation("i1")], currentInstanceID: "i1")
+        router.open(.settings)
+        router.open(.credentials)
+        router.open(.addCredential)
+        #expect(router.nestedSheet == .addCredential)
+        #expect(router.routeBelowSheet == .credentials)
+        router.dismissSheet()
+        router.open(.modelRoutes("i1"))
+        #expect(router.sheet == .settings)
+        #expect(router.sheetPath == [.credentials, .modelRoutes("i1")])
+        #expect(router.visibleRoute == .modelRoutes("i1"))
+        router.open(.addCredential)
+        #expect(router.nestedSheet == .addCredential)
+        #expect(router.routeBelowSheet == .modelRoutes("i1"))
+
+        // 添加 key 是第一层（对话里拦下的密码）：路由页压进主栈。
+        router.dismissAllSheets()
+        router.open(.addCredential)
+        router.dismissSheet()
+        router.open(.modelRoutes("i1"))
+        #expect(router.sheet == nil)
+        #expect(router.path == [.conversation("i1"), .modelRoutes("i1")])
+        router.open(.addCredential)
+        #expect(router.sheet == .addCredential)
+        #expect(router.routeBelowSheet == .modelRoutes("i1"))
+    }
+
     @Test("App 里点的链接：压在眼前这一层上，对话和 sheet 都留着；认不出的不理")
     func inAppLinks() throws {
         let router = Router(path: [.conversation("i1")], currentInstanceID: "i1")
