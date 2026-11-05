@@ -118,6 +118,43 @@ struct AppSmokeTests {
                 == "thinktin://approvals")
     }
 
+    @Test("截图用的启动参数：THINKTIN_MOCK_EMPTY=1 时 Mock 从还没有 Botin 的新账号开始；只有 Debug 构建、用 Mock 时认")
+    func mockEmptyAccountFlag() {
+        let key = AppConfiguration.mockEmptyEnvironmentKey
+        #expect(key == "THINKTIN_MOCK_EMPTY")
+        #expect(AppConfiguration.startsWithEmptyAccount(environment: [key: "1"], isDebugBuild: true))
+        #expect(AppConfiguration.startsWithEmptyAccount(environment: [key: " True "], isDebugBuild: true))
+        #expect(AppConfiguration.startsWithEmptyAccount(environment: [key: "yes"], isDebugBuild: true))
+        #expect(!AppConfiguration.startsWithEmptyAccount(environment: [key: "1"], isDebugBuild: false))
+        #expect(!AppConfiguration.startsWithEmptyAccount(environment: [key: ""], isDebugBuild: true))
+        #expect(!AppConfiguration.startsWithEmptyAccount(environment: [key: "0"], isDebugBuild: true))
+        #expect(!AppConfiguration.startsWithEmptyAccount(environment: [:], isDebugBuild: true))
+        // 合起来：Debug、Mock 才认；真核心、Release 的演示版（Info.plist 的 ThinktinClient 是 mock）都不认。
+        let resolve = { (environment: [String: String], info: [String: Any]?, debug: Bool) in
+            AppConfiguration.resolve(environment: environment, infoDictionary: info, isDebugBuild: debug)
+        }
+        #expect(resolve([key: "1"], nil, true).startsWithEmptyAccount)
+        #expect(resolve([key: "1", "THINKTIN_MOCK": "1"], nil, true).client == .mock)
+        #expect(!resolve([key: "1", "THINKTIN_MOCK": "0"], nil, true).startsWithEmptyAccount)
+        #expect(!resolve([key: "1"], ["ThinktinClient": "mock"], false).startsWithEmptyAccount)
+        #expect(!resolve([:], nil, true).startsWithEmptyAccount)
+    }
+
+    @Test("截图用的启动参数：新账号的演示数据里首页是“还没有 Botin”，新建表单照样能打开")
+    @MainActor
+    func mockEmptyAccountInDemo() async {
+        let configuration = AppConfiguration.resolve(
+            environment: [AppConfiguration.mockEmptyEnvironmentKey: "1"], infoDictionary: nil, isDebugBuild: true)
+        let model = AppEnvironment.live(configuration).appModel
+        await model.refresh()
+        #expect(model.hasLoadedInstances && model.instances.isEmpty)
+        #expect(model.homePlaceholder == .noBotins)
+        // 实例的页面没有实例可开；新建表单、设置照样打开。
+        #expect(await AppConfiguration.OpenScreen.conversation.open(in: model, timeout: .zero) == nil)
+        #expect(await AppConfiguration.OpenScreen.adopt.open(in: model) == .adopt(agentID: nil))
+        #expect(model.router.sheet == .adopt(agentID: nil))
+    }
+
     @Test("截图用的启动参数：THINKTIN_OPEN_SCREEN 认六个页面，不分大小写，别的值不认")
     func openScreenValues() {
         let key = AppConfiguration.openScreenEnvironmentKey

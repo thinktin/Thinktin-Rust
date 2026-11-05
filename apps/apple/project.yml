@@ -262,6 +262,10 @@ schemes:
         - variable: THINKTIN_MOCK
           value: "0"
           isEnabled: false
+        # 勾上这一项：Mock 从还没有 Botin 的新账号开始（看首页空状态、第一次新建 Botin；只有 Debug 构建认）。
+        - variable: THINKTIN_MOCK_EMPTY
+          value: "1"
+          isEnabled: false
     test:
       config: Debug
       # App 的单元测试，加上 ThinktinKit 里只能在 Apple 平台跑的界面测试（docs/ios.md 第 7 节）；

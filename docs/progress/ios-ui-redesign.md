@@ -194,6 +194,12 @@
   按钮 `.glassButtonStyle(.prominent)` + `.controlSize(.large)`，打开同一张表单）；离线不管拿没拿到过都是第 0 轮那句“这台设备上还没有保存的
   Botin”。演示数据加了 `DemoData.newAccountState()`（刚注册的账号：没有 Botin 和它们的运行、计划、团队、产出物、收件箱，也没有 key），
   `ShellPreviewClients.empty()` 用它。
+- 首页空状态的演示数据和截图（2026-11-05）：`AppConfiguration.mockEmptyEnvironmentKey`（`THINKTIN_MOCK_EMPTY`，`1` / `true` / `yes`），
+  只有 Debug 构建、用 Mock 时认（`startsWithEmptyAccount`），`AppEnvironment.live` 这时用 `DemoData.newAccountState()`；scheme 的 Run 里
+  加了一项（默认不勾）。`tools/apple/screenshots.sh` 清单加第四列 THINKTIN_MOCK_EMPTY，新加 `00-home-empty`（浅色、深色），产物 30 张；
+  每次启动带 `-cn.thinktin.onboarding.checked YES`（`OnboardingCheck` 的键写进 UserDefaults 参数域）：新账号第一次启动会弹引导盖住空状态。
+  `08-adopt` 现在截到的是新表单。测试在 App 的 `AppSmokeTests`（开关的取值、只认 Debug + Mock、新账号首页是 `.noBotins`、表单照样打开）。
+  docs/ios.md 截图那段、apps/apple/README.md、规范 7.6 的截图表跟着改。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、
@@ -219,7 +225,7 @@ Botin 改名（2026-11-05）做完了，见“已完成”里“Botin 改名”�
    `.badge`、`BottomBarSearchItem`）；`SheetStack` 里第二层 `.sheet(item:)`；`AgentsDestination` 的 `.adopt(agentID: nil)` 模式；启动屏
    （`UILaunchScreen` 的两个键、`LaunchLogo` 的 PDF 和颜色集能不能被资源编译器收下，Info.plist 测试查键）；`DesignTokenTests` 在模拟器上
    顺着 `#filePath` 读仓库里的颜色集（模拟器进程读宿主机的文件，按说可以，没验过）；App 测试里 `OpenScreen` 那三条。
-2. 出一次截图对照（规范 7.6 第 3 条）：`git push -f origin HEAD:ios-screenshots`（或 Actions 里手动跑 iOS screenshots），产物 28 张；
+2. 出一次截图对照（规范 7.6 第 3 条）：`git push -f origin HEAD:ios-screenshots`（或 Actions 里手动跑 iOS screenshots），产物 30 张；
    再出一套 iOS 18 的回退：`git push -f origin HEAD:ios-screenshots-ios18.6`（或 Run workflow 填 `ios_runtime`），产物
    `ios-screenshots-ios18.6`；镜像里没有那个运行时脚本会先下载（`xcodebuild -downloadPlatform iOS -buildVersion 18.6`，没在 CI 上跑过，
    失败的话看日志换版本号）。顺带看 09-search 里搜索栏有没有激活（iOS 26 底部条，见“已完成”审查修正那条）。和参考截图并排看

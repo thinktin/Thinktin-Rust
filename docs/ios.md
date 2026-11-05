@@ -310,15 +310,17 @@ client-core 只缓存实例、运行、事件、收件箱（cache.rs 的几张�
      `swift build --build-tests` 整个 `ThinktinKit`（含 ThinktinUI）；`xcodegen generate`；挑一个不高于所选 Xcode 模拟器 SDK 的 iPhone，
      `xcodebuild test` 跑 App 的 `ThinktinTests` 和 `ThinktinUITests`；最后 macOS 本机 `swift test`（适配层经 macOS 切片跑一遍）。日志传成 artifact。
   `kit-linux` 最后还有严格模式的 `swift format lint`。
-- **截图**（macOS）：`tools/apple/screenshots.sh [输出目录]` 在 iPhone 模拟器上跑演示模式，截改版规范 7.6 的 14 个页面（首页、对话、
-  Botin 资料、Botin 的计划、产出物、设置、保险箱填写请求、新建 Botin、首页搜索、审批、收件箱、进行中、运行、计划），浅色、深色各一张
-  （`01-home-light.png`、`01-home-dark.png`）；`IOS_RUNTIME=18.6`（或 `17.5`）换成那个版本的模拟器看旧系统的回退（没有那个版本的
+- **截图**（macOS）：`tools/apple/screenshots.sh [输出目录]` 在 iPhone 模拟器上跑演示模式，截改版规范 7.6 的 15 个页面（新账号的首页空状态、
+  首页、对话、Botin 资料、Botin 的计划、产出物、设置、保险箱填写请求、新建 Botin、首页搜索、审批、收件箱、进行中、运行、计划），浅色、
+  深色各一张（`01-home-light.png`、`01-home-dark.png`）；`IOS_RUNTIME=18.6`（或 `17.5`）换成那个版本的模拟器看旧系统的回退（没有那个版本的
   iPhone 模拟器就建一台，运行时没装就用 `xcodebuild -downloadPlatform` 下载，这时要写完整的版本号）。GitHub 上是
   `.github/workflows/ios-screenshots.yml`（手动触发填 `ios_runtime`，或者推到 `ios-screenshots-ios18.6` 这样带版本的分支；产物是
   `ios-screenshots-ios18.6`），Codemagic 上是 `codemagic.yaml` 的 `ios-screenshots`（发起构建时改环境变量 `IOS_RUNTIME`）。`simctl openurl` 会弹系统确认框，
   所以页面用启动环境变量指定（只有 Debug 构建认，`AppConfiguration`）：`THINKTIN_OPEN_URL=thinktin://…` 是深链；
-  `THINKTIN_OPEN_SCREEN=conversation / plans / artifacts / settings / search / adopt` 打开首页第一个实例（演示数据里是“写作助手”）
-  的对话、计划、产出物，或者设置、领养两个 sheet、首页搜索，和深链一样走 `Router.show`（App 的 `App/OpenScreen.swift`）。
+  `THINKTIN_OPEN_SCREEN=conversation / plans / artifacts / settings / search / adopt` 打开首页第一个 Botin（演示数据里是“写作助手”）
+  的对话、计划、产出物，或者设置、新建 Botin 两个 sheet、首页搜索，和深链一样走 `Router.show`（App 的 `App/OpenScreen.swift`）；
+  `THINKTIN_MOCK_EMPTY=1` 换成还没有 Botin 的新账号（`DemoData.newAccountState`，截 `00-home-empty`）。截图时启动参数
+  `-cn.thinktin.onboarding.checked YES` 让引导不弹（新账号第一次启动会弹，盖住空状态）。
 - 代码风格：`swift format`（Swift 6 工具链自带），配置在 `apps/apple/.swift-format`（App 和 ThinktinKit 共用，4 格缩进、120 列、
   其余是 swift-format 6.2 的默认规则全量导出）。CI 跑严格模式的 lint，**提交前先 `swift format -i -r apps/apple`**。
 - **Linux 上检查界面代码**：`tools/apple/uicheck/run.sh`（`appkit` 查 macOS 路径和 macOS App target（要先

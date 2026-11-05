@@ -12,8 +12,9 @@
 # .github/workflows/ios-screenshots.yml 开头（Run workflow 的 ios_runtime，或者推到 ios-screenshots-ios18.6 这样的分支）。
 #
 # 每张图都重新启动 App，用启动环境变量指定打开的页面（只有 Debug 构建认，见 AppConfiguration；`simctl openurl` 会先弹
-# 系统的确认框挡住页面）：THINKTIN_OPEN_URL 是 thinktin:// 深链，THINKTIN_OPEN_SCREEN 是没有深链的页面（首页第一个实例的
-# 对话、计划、产出物，设置、领养两个 sheet，首页搜索）。中文界面，状态栏固定成 9:41、满电。
+# 系统的确认框挡住页面）：THINKTIN_OPEN_URL 是 thinktin:// 深链，THINKTIN_OPEN_SCREEN 是没有深链的页面（首页第一个 Botin 的
+# 对话、计划、产出物，设置、新建 Botin 两个 sheet，首页搜索），THINKTIN_MOCK_EMPTY=1 换成还没有 Botin 的新账号（首页空状态）。
+# 中文界面，状态栏固定成 9:41、满电。
 # macOS 自带的是 bash 3.2：set -u 下别用空数组，紧跟中文标点的变量写成 ${name}。
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -102,12 +103,15 @@ xcrun simctl install "$udid" "$app"
 xcrun simctl status_bar "$udid" override --time 9:41 --dataNetwork wifi --wifiBars 3 --cellularBars 4 \
   --batteryState charged --batteryLevel 100
 
-# 重新启动 App（上一张打开的页面、弹出的面板不会叠到下一张上）。$1 是 THINKTIN_OPEN_SCREEN，$2 是 THINKTIN_OPEN_URL；
-# 空的 App 不认，两个都空就停在首页。
+# 重新启动 App（上一张打开的页面、弹出的面板不会叠到下一张上）。$1 是 THINKTIN_OPEN_SCREEN，$2 是 THINKTIN_OPEN_URL，
+# $3 是 THINKTIN_MOCK_EMPTY；空的 App 不认，都空就是演示数据的首页。引导（12.17）在没有 Botin 或 key 的账号第一次启动时会弹，
+# 盖住首页空状态：启动参数把“看过引导”（OnboardingCheck 的键）写进 UserDefaults 的参数域，每张都不弹。
 launch() {
   xcrun simctl terminate "$udid" "$bundle" >/dev/null 2>&1 || true
   env SIMCTL_CHILD_THINKTIN_MOCK=1 "SIMCTL_CHILD_THINKTIN_OPEN_SCREEN=$1" "SIMCTL_CHILD_THINKTIN_OPEN_URL=$2" \
-    xcrun simctl launch "$udid" "$bundle" -AppleLanguages "(zh-Hans)" -AppleLocale zh_CN >/dev/null
+    "SIMCTL_CHILD_THINKTIN_MOCK_EMPTY=$3" \
+    xcrun simctl launch "$udid" "$bundle" -AppleLanguages "(zh-Hans)" -AppleLocale zh_CN \
+    -cn.thinktin.onboarding.checked YES >/dev/null
   sleep 6
 }
 shot() {
@@ -122,8 +126,10 @@ pending_approval=0192f3a0-0000-7000-8000-000000000301
 digest_plan=0192f3a0-0000-7000-8000-000000000401
 npm_request=0192f3a0-0000-7000-8000-000000000801
 
-# 截图清单（docs/ios-ui-redesign.md 7.6），一行一张：文件名、THINKTIN_OPEN_SCREEN、THINKTIN_OPEN_URL，“-”是不设。
+# 截图清单（docs/ios-ui-redesign.md 7.6），一行一张：文件名、THINKTIN_OPEN_SCREEN、THINKTIN_OPEN_URL、THINKTIN_MOCK_EMPTY，
+# “-”是不设，第四列不写也是不设。
 shots="
+00-home-empty - - 1
 01-home - -
 02-conversation conversation -
 03-instance - thinktin://instance/${writer}
@@ -143,11 +149,12 @@ shots="
 for appearance in light dark; do
   xcrun simctl ui "$udid" appearance "$appearance"
   # 清单从 3 号文件描述符读，循环里的 simctl 读标准输入也吃不掉它。
-  while read -r name screen url <&3; do
+  while read -r name screen url empty <&3; do
     if [[ -z "$name" ]]; then continue; fi
     if [[ "$screen" == - ]]; then screen=""; fi
     if [[ "$url" == - ]]; then url=""; fi
-    launch "$screen" "$url"
+    if [[ "$empty" == - ]]; then empty=""; fi
+    launch "$screen" "$url" "$empty"
     shot "${name}-${appearance}"
   done 3<<EOF
 ${shots}

@@ -56,8 +56,9 @@ final class AppEnvironment {
         switch configuration.client {
         case .mock:
             // 一点延迟，界面的加载状态看得见。和真核心带一样的请求语言（agent 目录的介绍跟着变）；
-            // Mock 不经过 client-core，不用接日志。
-            let mock = MockClient(latency: 0.2)
+            // Mock 不经过 client-core，不用接日志。`THINKTIN_MOCK_EMPTY=1` 时从还没有 Botin 的新账号开始。
+            let state = configuration.startsWithEmptyAccount ? DemoData.newAccountState() : DemoData.state()
+            let mock = MockClient(state: state, latency: 0.2)
             try? mock.setAcceptLanguage(acceptLanguage)
             client = mock
         case .core:

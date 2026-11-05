@@ -12,6 +12,9 @@ struct AppConfiguration: Equatable, Sendable {
 
     /// 环境变量：`1` 用 Mock，`0` 用真核心；不设时看 Info.plist 的 `ThinktinClient`，再不设时 Debug 用 Mock、Release 用真核心。
     static let mockEnvironmentKey = "THINKTIN_MOCK"
+    /// 截图、看空状态用（tools/apple/screenshots.sh，只在 Debug 构建里认）：`1` 时 Mock 从刚注册的账号开始
+    /// （`DemoData.newAccountState`：还没有 Botin，首页是“还没有 Botin”的空状态）。用的是真核心时不管它。
+    static let mockEmptyEnvironmentKey = "THINKTIN_MOCK_EMPTY"
     /// Info.plist 里选客户端的键（project.yml 用构建设置 `THINKTIN_CLIENT` 展开进去）：`mock` 是演示版（服务器上线前
     /// 在 TestFlight 上给人看界面），`core` 连服务器，空的按构建配置定。
     static let clientInfoKey = "ThinktinClient"
@@ -25,7 +28,7 @@ struct AppConfiguration: Equatable, Sendable {
     /// `simctl openurl` 每次都先弹系统的“在 ThinkTin 中打开？”确认框，挡住页面。
     static let launchURLEnvironmentKey = "THINKTIN_OPEN_URL"
     /// 截图用（同上，只在 Debug 构建里认）：启动后打开首页第一个实例（演示数据里是“写作助手”）的哪一页，值见 `OpenScreen`。
-    /// 对话、计划、产出物这些页面没有深链，设置、领养是 sheet，首页搜索要激活搜索栏，所以单列一个变量。
+    /// 对话、计划、产出物这些页面没有深链，设置、新建 Botin 是 sheet，首页搜索要激活搜索栏，所以单列一个变量。
     static let openScreenEnvironmentKey = "THINKTIN_OPEN_SCREEN"
 
     /// `THINKTIN_OPEN_SCREEN` 认的页面（docs/ios-ui-redesign.md 7.6 的截图清单）。打开的办法在 `OpenScreen.swift`
@@ -41,7 +44,7 @@ struct AppConfiguration: Equatable, Sendable {
         case settings
         /// 首页搜索（激活搜索栏）。
         case search
-        /// 领养新实例（sheet）。
+        /// 新建 Botin（sheet，`.adopt(agentID: nil)`：在表单里选引擎）。
         case adopt
 
         /// 是不是某个实例的页面（要先等实例列表拿到）。
@@ -55,6 +58,8 @@ struct AppConfiguration: Equatable, Sendable {
 
     var client: ClientKind
     var baseURL: URL
+    /// Mock 从刚注册、还没有 Botin 的账号开始（`THINKTIN_MOCK_EMPTY=1`，只有 Debug 构建、用 Mock 时为 true）。
+    var startsWithEmptyAccount = false
 
     /// 按进程环境变量、Info.plist 和构建配置得出配置。
     static func resolve(
@@ -62,9 +67,12 @@ struct AppConfiguration: Equatable, Sendable {
         infoDictionary: [String: Any]?,
         isDebugBuild: Bool
     ) -> AppConfiguration {
-        AppConfiguration(
-            client: clientKind(environment: environment, infoDictionary: infoDictionary, isDebugBuild: isDebugBuild),
-            baseURL: baseURL(infoDictionary: infoDictionary)
+        let client = clientKind(environment: environment, infoDictionary: infoDictionary, isDebugBuild: isDebugBuild)
+        return AppConfiguration(
+            client: client,
+            baseURL: baseURL(infoDictionary: infoDictionary),
+            startsWithEmptyAccount: client == .mock
+                && startsWithEmptyAccount(environment: environment, isDebugBuild: isDebugBuild)
         )
     }
 
@@ -103,6 +111,15 @@ struct AppConfiguration: Equatable, Sendable {
         }
         let built = (infoDictionary?[clientInfoKey] as? String)?.trimmingCharacters(in: .whitespaces).lowercased()
         return ClientKind(rawValue: built ?? "") ?? (isDebugBuild ? .mock : .core)
+    }
+
+    /// `THINKTIN_MOCK_EMPTY` 是 `1` / `true` / `yes`（不分大小写）且是 Debug 构建。
+    static func startsWithEmptyAccount(environment: [String: String], isDebugBuild: Bool) -> Bool {
+        guard isDebugBuild else { return false }
+        switch environment[mockEmptyEnvironmentKey]?.trimmingCharacters(in: .whitespaces).lowercased() {
+        case "1", "true", "yes": return true
+        default: return false
+        }
     }
 
     /// 启动后要打开的深链（`THINKTIN_OPEN_URL`）；没设、不是 `thinktin://` 的为 nil。

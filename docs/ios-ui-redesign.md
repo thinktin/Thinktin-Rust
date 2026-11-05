@@ -1443,6 +1443,7 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 
      | 截图 | 怎么打开 | 对照参考 |
      |---|---|---|
+     | 首页空状态（新账号） | `THINKTIN_MOCK_EMPTY=1` | 参考没有（113 是全部隐藏的空状态） |
      | 首页 | 直接启动 | 1、119 |
      | 对话 | `THINKTIN_OPEN_SCREEN=conversation` | 2 |
      | 实例资料 | `thinktin://instance/{id}` | 9 |
@@ -1450,7 +1451,7 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
      | 产出物 | `THINKTIN_OPEN_SCREEN=artifacts` | 22 |
      | 设置（sheet） | `THINKTIN_OPEN_SCREEN=settings` | 53、70、75 |
      | 保险箱填写请求 | `thinktin://vault/request/{id}`（现有） | 57、59 的版式 |
-     | 领养（sheet） | `THINKTIN_OPEN_SCREEN=adopt` | 34、117 |
+     | 新建 Botin（sheet） | `THINKTIN_OPEN_SCREEN=adopt` | 34、117 |
      | 首页搜索 | `THINKTIN_OPEN_SCREEN=search` | 78 |
      | 审批、收件箱、进行中、运行、计划 | 现有深链（`thinktin://approval/…`、`inbox`、`active`、`run/…`、`plan/…`） | 参考没有，看是否符合第 2 节 |
 
