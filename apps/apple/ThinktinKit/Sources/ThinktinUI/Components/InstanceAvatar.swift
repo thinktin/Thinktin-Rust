@@ -210,7 +210,7 @@ extension InstanceAvatar {
             InstanceAvatar("OpenClaw", size: Metrics.Avatar.pinned, badge: .instance(.archived))
         }
         InstanceAvatar("翻译", size: Metrics.Avatar.profile, badge: .instance(.paused))
-        InstanceAvatar("小克", size: Metrics.Avatar.profile, badge: .primary)
+        InstanceAvatar("写作助手", size: Metrics.Avatar.profile, badge: .primary)
         HStack(spacing: Metrics.Spacing.s) {
             ForEach(AvatarShape.allCases, id: \.self) { shape in
                 InstanceAvatar("翻译", appearance: InstanceAppearance(shape: shape, color: .navy), size: 32)

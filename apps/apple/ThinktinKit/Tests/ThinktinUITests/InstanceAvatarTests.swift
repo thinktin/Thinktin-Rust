@@ -153,7 +153,7 @@ struct InstanceAvatarTests {
             InstanceAvatar.accessibilityText(
                 name: "Pi", badge: .custom(StatusAppearance(tone: .success), accessibilityLabel: "Online"),
                 language: .english) == "Pi, Online")
-        #expect(InstanceAvatar.accessibilityText(name: "小克", badge: .primary, language: .chinese) == "小克，主 Botin")
+        #expect(InstanceAvatar.accessibilityText(name: "写作助手", badge: .primary, language: .chinese) == "写作助手，主 Botin")
         #expect(InstanceAvatar.accessibilityText(name: "Ko", badge: .primary, language: .english) == "Ko, Main Botin")
         #expect(InstanceAvatar.accessibilityText(name: "  ", badge: nil, language: .chinese) == "未命名")
         #expect(InstanceAvatar.accessibilityText(name: "", badge: nil, language: .english) == "Untitled")
@@ -173,7 +173,7 @@ struct InstanceAvatarTests {
         }
         renderInBothAppearances(InstanceAvatar("OpenClaw", badge: .run(.waitingApproval)))
         for size in [Metrics.Avatar.list, Metrics.Avatar.profile] {
-            renderInBothAppearances(InstanceAvatar("小克", size: size, badge: .primary))
+            renderInBothAppearances(InstanceAvatar("写作助手", size: size, badge: .primary))
         }
         renderInBothAppearances(
             InstanceAvatar("", badge: .custom(StatusAppearance(tone: .success), accessibilityLabel: "在线")))

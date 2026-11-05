@@ -127,7 +127,7 @@ struct ImportMemoryTests {
 
     @Test("粘贴了内容、选了 Botin 才能添加")
     func canSubmit() {
-        var draft = ImportMemoryDraft(instances: [instance("a", "小克")])
+        var draft = ImportMemoryDraft(instances: [instance("a", "周报助手")])
         #expect(!draft.canSubmit)
         draft.text = "  \n"
         #expect(!draft.canSubmit)
@@ -173,11 +173,11 @@ struct FeedbackDraftTests {
         let draft = FeedbackDraft(text: "  搜索没反应  ", instanceID: "a")
         let info = AppInfo(version: "0.1.0", build: "7")
         let withBotin = draft.body(
-            instance: instance("a", "小克"), appInfo: info, system: "iOS 18.1.0", language: .chinese)
+            instance: instance("a", "周报助手"), appInfo: info, system: "iOS 18.1.0", language: .chinese)
         #expect(withBotin.hasPrefix("搜索没反应\n\n"))
         #expect(withBotin.contains("App：ThinkTin 0.1.0（7）"))
         #expect(withBotin.contains("系统：iOS 18.1.0"))
-        #expect(withBotin.contains("Botin：小克（a）"))
+        #expect(withBotin.contains("Botin：周报助手（a）"))
         let without = draft.body(instance: nil, appInfo: info, system: "iOS 18.1.0", language: .english)
         #expect(without.contains("App: ThinkTin 0.1.0 (7)"))
         #expect(!without.contains("Botin"))
