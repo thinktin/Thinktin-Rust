@@ -167,7 +167,8 @@ struct AppSmokeTests {
                 == [
                     "homepinned", "hiddenbotins", "homeallhidden", "conversation", "conversationfind", "search",
                     "botinedit", "botinavatar", "workspace", "instancescreen", "primarybotin", "adopt", "engines",
-                    "enginedetail", "plans", "artifacts", "artifactsmedia", "teams", "newtask", "onboarding",
+                    "enginedetail", "plans", "allplans", "artifacts", "artifactsmedia", "teams", "newtask",
+                    "onboarding",
                     "connections", "connected", "connectiondetail", "settings", "account", "usage", "subscription",
                     "modelkeys", "vault", "vaultlogin", "vaultcard", "vaultcontact", "permissions", "permissionrule",
                     "devices", "devicedetail", "computerdetail", "appearance", "language", "haptics", "importmemory",
@@ -206,6 +207,8 @@ struct AppSmokeTests {
         #expect(Screen.engines.route(instanceID: nil) == .agentCatalog)
         #expect(Screen.enginedetail.route(instanceID: nil) == .agentCatalog)
         #expect(Screen.plans.route(instanceID: .init(id)) == .plans(instanceID: .init(id)))
+        #expect(Screen.allplans.route(instanceID: nil) == .plans(instanceID: nil))
+        #expect(!Screen.allplans.needsInstance)
         #expect(Screen.artifacts.route(instanceID: .init(id)) == .artifacts(instanceID: .init(id)))
         #expect(Screen.artifactsmedia.route(instanceID: .init(id)) == .artifacts(instanceID: .init(id)))
         #expect(Screen.teams.route(instanceID: nil) == .teams)

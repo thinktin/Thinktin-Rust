@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # iPhone 模拟器上跑演示模式（Mock 数据，不联网）的 iOS App，把改版的每一组页面都打开截图：给人看界面、和改版参考对照
 # （每张图对哪几张参考、规范哪一节见 docs/ios-ui-redesign-shots.md），也是上架截图的底稿。主要页面浅色、深色各一张
-# （01-home-light.png、01-home-dark.png），其余的只截浅色（一共 70 张）。
+# （01-home-light.png、01-home-dark.png），其余的只截浅色（一共 71 张）。
 # 只能在 macOS 上跑（Xcode、模拟器、XcodeGen）。前提：target/apple/ThinktinCore 已生成（build-apple.sh --ci 就够）。
 # Codemagic 上是 codemagic.yaml 的 ios-screenshots。
 #
@@ -202,6 +202,7 @@ shots="
 50-language l language -
 51-haptics l haptics -
 52-primary-botin-empty l primarybotin - 1
+53-plans-empty l allplans - 1
 "
 
 for appearance in light dark; do

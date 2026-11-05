@@ -83,34 +83,21 @@ struct PlanTitleText: View {
     }
 }
 
-/// 一行小字：状态 · 实例（可以没有）· 下一次（按时运行的）。
-struct PlanMetaLine: View {
+/// 计划列表一行里要单独提醒的状态（分组标题说不清的）：规则失效、不会再运行（状态点 + 状态名），有规则失效了（红字）。
+/// 待确认、按时运行、已暂停由分组标题说，行里不再写一遍（2026-11-05 截图审查：每行第三行重复了分组标题）。别的情况不占地方。
+struct PlanRowNotice: View {
     let plan: Plan
-    /// nil 不显示（计划列表的一行把 Botin 名放在副标题里）。
-    let instanceName: String?
 
     @Environment(\.displayLanguage) private var language
 
     var body: some View {
         let status = plan.status
-        AdaptiveRow {
+        if status == .invalidRule || status == .idle {
             PlanStatusLabel(status: status)
-            if let instanceName {
-                Text(instanceName)
-                    .typography(.footnote)
-                    .foregroundStyle(Theme.inkSecondary)
-                    .lineLimit(1)
-            }
-            if case .scheduled(let next) = status {
-                Text(PlansText.nextFire(next, language: language))
-                    .typography(.footnote)
-                    .foregroundStyle(Theme.inkSecondary)
-            }
-            if plan.hasInvalidTriggers && status != .invalidRule {
-                Text(language == .chinese ? "有规则已失效" : "A rule is no longer valid")
-                    .typography(.footnote)
-                    .foregroundStyle(StatusTone.failure.color)
-            }
+        } else if plan.hasInvalidTriggers {
+            Text(language == .chinese ? "有规则已失效" : "A rule is no longer valid")
+                .typography(.footnote)
+                .foregroundStyle(StatusTone.failure.color)
         }
     }
 }
@@ -127,60 +114,60 @@ struct PlanTriggerRow: View {
 
     var body: some View {
         let zh = language == .chinese
-        VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
-            Label {
+        // 图标一列、文字一列（`LabeledRow` 那样）：规则、下一次、上一次、失效的说明和按钮都从同一个 x 起，不再跑到图标底下。
+        HStack(alignment: .firstTextBaseline, spacing: Metrics.Spacing.s) {
+            Image(systemName: trigger.isInvalid ? "exclamationmark.triangle" : "clock")
+                .foregroundStyle(trigger.isInvalid ? StatusTone.failure.color : Theme.inkSecondary)
+                .frame(minWidth: Metrics.Spacing.xl)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
                 Text(ScheduleDescription.describe(trigger.schedule, language: language))
                     .typography(.body)
                     .foregroundStyle(trigger.isEnabled ? Theme.ink : Theme.inkSecondary)
                     .fixedSize(horizontal: false, vertical: true)
-            } icon: {
-                Image(systemName: trigger.isInvalid ? "exclamationmark.triangle" : "clock")
+                Text(PlansText.triggerState(trigger, plan: plan, language: language))
+                    .typography(.subheadline)
                     .foregroundStyle(trigger.isInvalid ? StatusTone.failure.color : Theme.inkSecondary)
-                    .accessibilityHidden(true)
-            }
-            Text(PlansText.triggerState(trigger, plan: plan, language: language))
-                .typography(.subheadline)
-                .foregroundStyle(trigger.isInvalid ? StatusTone.failure.color : Theme.inkSecondary)
-            if let last = trigger.lastFireAt {
-                Text(PlansText.lastFire(last, language: language))
-                    .typography(.footnote)
-                    .foregroundStyle(Theme.inkTertiary)
-            }
-            if trigger.isInvalid {
-                Text(
-                    zh
-                        ? "这条规则解析不了了（比如时区不存在了），已经停用、不会再触发。改一下规则就能恢复。"
-                        : "This rule can no longer be read (for example its time zone is gone), so it was turned off. "
-                            + "Change the rule to bring it back."
-                )
-                .typography(.footnote)
-                .foregroundStyle(Theme.inkSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-                AdaptiveRow {
-                    if let onFix {
-                        Button(zh ? "修改规则" : "Change rule", systemImage: "pencil", action: onFix)
-                            .smallCapsuleButton(.prominent)
-                            .disabled(!canEdit)
-                    }
-                    if let onDelete {
-                        Button(zh ? "删除" : "Delete", role: .destructive, action: onDelete)
-                            // 写在样式前面：次按钮默认是中性色（`glassButtonStyle`），删除要红色。
-                            .tint(StatusTone.failure.color)
-                            .smallCapsuleButton()
-                            .disabled(!canEdit)
-                    }
+                if let last = trigger.lastFireAt {
+                    Text(PlansText.lastFire(last, language: language))
+                        .typography(.footnote)
+                        .foregroundStyle(Theme.inkTertiary)
                 }
-                .padding(.top, Metrics.Spacing.xxs)
+                if trigger.isInvalid {
+                    Text(
+                        zh
+                            ? "这条规则解析不了了（比如时区不存在了），已经停用、不会再触发。改一下规则就能恢复。"
+                            : "This rule can no longer be read (for example its time zone is gone), so it was turned off. "
+                                + "Change the rule to bring it back."
+                    )
+                    .typography(.footnote)
+                    .foregroundStyle(Theme.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    AdaptiveRow {
+                        if let onFix {
+                            Button(zh ? "修改规则" : "Change rule", systemImage: "pencil", action: onFix)
+                                .smallCapsuleButton(.prominent)
+                                .disabled(!canEdit)
+                        }
+                        if let onDelete {
+                            Button(zh ? "删除" : "Delete", role: .destructive, action: onDelete)
+                                // 写在样式前面：次按钮默认是中性色（`glassButtonStyle`），删除要红色。
+                                .tint(StatusTone.failure.color)
+                                .smallCapsuleButton()
+                                .disabled(!canEdit)
+                        }
+                    }
+                    .padding(.top, Metrics.Spacing.xxs)
+                }
             }
+            Spacer(minLength: 0)
         }
-        .padding(.horizontal, Metrics.Spacing.m)
-        .padding(.vertical, Metrics.Spacing.s)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, Metrics.Spacing.xxs)
         .accessibilityElement(children: .contain)
     }
 }
 
-/// 策略的几行（详情、确认页）：`LabeledContent`，放进调用方的 `Section`（组标题、“错过的怎么补”的说明由调用方给）。
+/// 策略的几行（详情、确认页）：`LabeledRow`，放进调用方的 `Section`（组标题、“错过的怎么补”的说明由调用方给）。
 struct PlanPolicyRows: View {
     let plan: Plan
 
@@ -190,37 +177,27 @@ struct PlanPolicyRows: View {
         let zh = language == .chinese
         let policy = plan.policy
         let risky = policy.preauthorizedTools.contains(where: PlansText.isRiskyTool)
-        LabeledContent {
-            Text(PlansText.toolsSummary(policy.preauthorizedTools, language: language))
-                .foregroundStyle(risky ? StatusTone.waiting.color : Theme.inkSecondary)
-        } label: {
-            Label(zh ? "预授权的工具" : "Pre-approved tools", systemImage: "checkmark.shield")
-        }
-        LabeledContent {
-            Text(PlansText.approvalSummary(policy, language: language))
-        } label: {
-            Label(zh ? "审批" : "Approvals", systemImage: "hand.raised")
-        }
-        LabeledContent {
-            Text(PlansText.budgetSummary(policy.budget, language: language))
-        } label: {
-            Label(zh ? "每次运行的上限" : "Per-run limits", systemImage: "gauge.with.dots.needle.33percent")
-        }
-        LabeledContent {
-            Text(PlansText.dailyLimitSummary(policy.dailyTokenLimit, language: language))
-        } label: {
-            Label(zh ? "每日 token 上限" : "Daily token limit", systemImage: "calendar.day.timeline.left")
-        }
-        LabeledContent {
-            Text(PlansText.waitSummary(policy, language: language))
-        } label: {
-            Label(zh ? "等待" : "Waiting", systemImage: "hourglass")
-        }
-        LabeledContent {
-            Text(PlansText.catchUpName(plan.catchUp, language: language))
-        } label: {
-            Label(zh ? "错过的怎么补" : "Missed runs", systemImage: "arrow.uturn.backward.circle")
-        }
+        // 每一行都是“图标 + 标题，下面一行灰字”（`LabeledRow`）：值有长有短，右对齐的一行和折成两行的混在一起不齐
+        // （2026-11-05 截图审查）。图标是中性灰（列表行里 `Label` 的图标默认是强调色）。
+        LabeledRow(
+            systemImage: "checkmark.shield", title: zh ? "预授权的工具" : "Pre-approved tools",
+            detail: PlansText.toolsSummary(policy.preauthorizedTools, language: language),
+            detailTone: risky ? .waiting : nil)
+        LabeledRow(
+            systemImage: "hand.raised", title: zh ? "审批" : "Approvals",
+            detail: PlansText.approvalSummary(policy, language: language))
+        LabeledRow(
+            systemImage: "gauge.with.dots.needle.33percent", title: zh ? "每次运行的上限" : "Per-run limits",
+            detail: PlansText.budgetSummary(policy.budget, language: language))
+        LabeledRow(
+            systemImage: "calendar.day.timeline.left", title: zh ? "每日 token 上限" : "Daily token limit",
+            detail: PlansText.dailyLimitSummary(policy.dailyTokenLimit, language: language))
+        LabeledRow(
+            systemImage: "hourglass", title: zh ? "等待" : "Waiting",
+            detail: PlansText.waitSummary(policy, language: language))
+        LabeledRow(
+            systemImage: "arrow.uturn.backward.circle", title: zh ? "错过的怎么补" : "Missed runs",
+            detail: PlansText.catchUpName(plan.catchUp, language: language))
     }
 }
 

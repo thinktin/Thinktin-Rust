@@ -67,9 +67,9 @@ private struct PlanListContent: View {
                 } header: {
                     HStack(spacing: Metrics.Spacing.xs) {
                         Text(zh ? "待确认" : "Needs review")
+                            .groupHeader()
                         PlansCountBadge(count: sections.awaiting.count)
                     }
-                    .textCase(nil)
                 } footer: {
                     Text(PlansText.awaitingFooter(language))
                 }
@@ -79,7 +79,7 @@ private struct PlanListContent: View {
                 Section {
                     rows(sections.active, awaiting: false)
                 } header: {
-                    Text(zh ? "按时运行" : "Active").textCase(nil)
+                    Text(zh ? "按时运行" : "Active").groupHeader()
                 }
                 .themedRow()
             }
@@ -87,12 +87,13 @@ private struct PlanListContent: View {
                 Section {
                     rows(sections.paused, awaiting: false)
                 } header: {
-                    Text(zh ? "已暂停" : "Paused").textCase(nil)
+                    Text(zh ? "已暂停" : "Paused").groupHeader()
                 }
                 .themedRow()
             }
         }
         .insetGroupedList()
+        .compactGroupedList()
         .themedGroupedBackground()
         .overlay { placeholder }
         .inlineNavigationTitle(route.title(language))
@@ -298,8 +299,9 @@ private struct PlanListContent: View {
     }
 }
 
-/// 计划列表的一行（规范 4.5.1）：左边状态图标，标题（单行，Botin 写的带 AI 生成标识），灰色副标题（规则摘要，全部的页面带
-/// Botin 名），一行状态（待确认 / 下一次 / 暂停 / 规则失效）。正在暂停、删除时右边转圈。
+/// 计划列表的一行（规范 4.5.1）：左边状态图标，标题（单行，Botin 写的后面跟 AI 生成标识），一行灰色副标题（规则摘要，
+/// 全部的页面带 Botin 名，按时运行的带下一次）。状态由分组标题说，只有规则失效、不会再运行时多一行（`PlanRowNotice`）。
+/// 正在暂停、删除时右边转圈。
 struct PlanRow: View {
     let plan: Plan
     /// 全部计划的页面显示 Botin 名；只看一个 Botin 的为 nil。
@@ -317,16 +319,21 @@ struct PlanRow: View {
                 .frame(width: Metrics.Spacing.xl)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
-                Text(plan.title)
-                    .typography(.body)
-                    .foregroundStyle(Theme.ink)
-                    .lineLimit(1)
+                HStack(alignment: .firstTextBaseline, spacing: Metrics.Spacing.xs) {
+                    Text(plan.title)
+                        .typography(.body)
+                        .foregroundStyle(Theme.ink)
+                        .lineLimit(1)
+                    if PlansText.isAIGenerated(.title, in: plan) {
+                        AIGeneratedLabel()
+                            .fixedSize()
+                    }
+                }
                 Text(PlansText.rowSubtitle(plan, instanceName: instanceName, language: language))
                     .typography(.subheadline)
                     .foregroundStyle(Theme.inkSecondary)
                     .lineLimit(2)
-                PlanMetaLine(plan: plan, instanceName: nil)
-                if PlansText.isAIGenerated(.title, in: plan) { AIGeneratedLabel() }
+                PlanRowNotice(plan: plan)
             }
             Spacer(minLength: 0)
             if isBusy { ProgressView() }

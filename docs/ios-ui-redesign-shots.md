@@ -4,7 +4,7 @@
 
 - 怎么出图：GitHub 上推到 `ios-screenshots` 分支（`git push -f origin HEAD:ios-screenshots`）或手动跑 iOS screenshots，
   产物 `ios-screenshots`；Codemagic 推到 `codemagic/ios-screenshots`。旧系统的回退见规范 7.6 第 3 条。
-- 文件名 `NN-名字-light.png` / `-dark.png`。“外观”一列：浅深是浅色、深色各一张，浅是只有浅色（一共 70 张）。编号定了不改，新页面往后加。
+- 文件名 `NN-名字-light.png` / `-dark.png`。“外观”一列：浅深是浅色、深色各一张，浅是只有浅色（一共 71 张）。编号定了不改，新页面往后加。
 - 参考截图（120 张，2026-11-01）不在仓库里，编号就是文件名开头的数字（`01-Bot列表.jpg` 是 1）。“无”是参考里没有的 ThinkTin 页面，
   看它和改版的页面是不是一套样子（规范第 2 节）。
 - 怎么打开见脚本里的清单（`THINKTIN_OPEN_SCREEN` 的值、深链）；Botin 的页面都是演示数据首页第一个 Botin “写作助手”的。
@@ -47,10 +47,11 @@
 
 | 截图 | 外观 | 参考 | 规范 |
 |---|---|---|---|
-| 04-plans（这个 Botin 的计划） | 浅深 | 21 | 4.5.1 |
+| 04-plans（这个 Botin 的计划） | 浅深 | 21 的列表版式（有计划） | 4.5.1 |
+| 53-plans-empty（新账号，全部 Botin 的计划，一个也没有） | 浅 | 21（空状态：正中一段灰字） | 4.5.1 |
 | 14-plan（计划详情） | 浅深 | 无 | 4.5.1 |
 | 05-artifacts（全部） | 浅深 | 22、81、82 | 4.5.2 |
-| 35-artifacts-media | 浅 | 23、83（演示数据没有图片，是空的“媒体”） | 4.5.2 |
+| 35-artifacts-media | 浅 | 23、83（演示数据里一张图片：28pt 缩略图的行） | 4.5.2 |
 | 11-inbox | 浅深 | 无 | 1.3 |
 | 15-approvals（审批中心） | 浅深 | 无 | 1.3 |
 | 10-approval（一条审批） | 浅 | 无 | 1.3 |

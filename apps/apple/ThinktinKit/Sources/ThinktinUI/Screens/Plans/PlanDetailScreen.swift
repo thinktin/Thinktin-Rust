@@ -71,7 +71,7 @@ private struct PlanDetailContent: View {
                     }
                     .accessibilityElement(children: .combine)
                 } header: {
-                    Text(zh ? "目标" : "Goal").textCase(nil)
+                    Text(zh ? "目标" : "Goal").groupHeader()
                 }
                 .themedRow()
                 triggersSection(plan)
@@ -82,9 +82,11 @@ private struct PlanDetailContent: View {
             }
         }
         .insetGroupedList()
+        .compactGroupedList()
         .themedGroupedBackground()
         .overlay { placeholder }
-        .inlineNavigationTitle(AppRoute.plan(model.planID).title(language))
+        // 和 Botin 资料（参考 09）一样导航栏中间空着：头部已经有计划名（2026-11-05 截图审查：“计划详情”和头部的名字重复）。
+        .hiddenInlineNavigationTitle(model.plan?.title ?? AppRoute.plan(model.planID).title(language))
         .toolbar {
             if model.plan != nil && !model.isMissing {
                 ToolbarItem(placement: ToolbarSlot.trailing) { moreMenu }
@@ -242,7 +244,8 @@ private struct PlanDetailContent: View {
             .controlSize(.small)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, Metrics.Spacing.s)
+        .padding(.top, Metrics.Spacing.xs)
+        .padding(.bottom, Metrics.Spacing.m)
     }
 
     @ViewBuilder
@@ -307,11 +310,9 @@ private struct PlanDetailContent: View {
         let zh = language == .chinese
         return Section {
             if plan.triggers.isEmpty {
-                LabeledContent {
-                    Text(zh ? "不会自动运行。编辑计划加一条吧。" : "It won't run on its own. Edit the plan to add one.")
-                } label: {
-                    Label(zh ? "没有触发规则" : "No schedule", systemImage: "clock.badge.questionmark")
-                }
+                LabeledRow(
+                    systemImage: "clock.badge.questionmark", title: zh ? "没有触发规则" : "No schedule",
+                    detail: zh ? "不会自动运行。编辑计划加一条吧。" : "It won't run on its own. Edit the plan to add one.")
             }
             ForEach(plan.triggers) { trigger in
                 PlanTriggerRow(
@@ -325,10 +326,9 @@ private struct PlanDetailContent: View {
                         isConfirmingTriggerDeletion = true
                     }
                 )
-                .listRowInsets(EdgeInsets())
             }
         } header: {
-            Text(zh ? "触发规则" : "Schedule").textCase(nil)
+            Text(zh ? "触发规则" : "Schedule").groupHeader()
         } footer: {
             Text(
                 zh
@@ -343,7 +343,7 @@ private struct PlanDetailContent: View {
         return Section {
             PlanPolicyRows(plan: plan)
         } header: {
-            Text(zh ? "策略" : "Policy").textCase(nil)
+            Text(zh ? "策略" : "Policy").groupHeader()
         } footer: {
             if let detail = PlansText.catchUpDetail(plan.catchUp, language: language) { Text(detail) }
         }
@@ -362,7 +362,7 @@ private struct PlanDetailContent: View {
             }
             .disabled(!canWrite)
         } header: {
-            Text(zh ? "流水线（\(plan.steps.count) 步）" : "Pipeline (\(plan.steps.count) steps)").textCase(nil)
+            Text(zh ? "流水线（\(plan.steps.count) 步）" : "Pipeline (\(plan.steps.count) steps)").groupHeader()
         }
         .themedRow()
     }
@@ -376,11 +376,9 @@ private struct PlanDetailContent: View {
                     .clearListRow()
             }
             if model.runsLoaded && model.runs.isEmpty {
-                LabeledContent {
-                    Text(zh ? "到点触发后会出现在这里。" : "Runs show up here once the plan fires.")
-                } label: {
-                    Label(zh ? "还没有运行过" : "No runs yet", systemImage: "clock.arrow.circlepath")
-                }
+                LabeledRow(
+                    systemImage: "clock.arrow.circlepath", title: zh ? "还没有运行过" : "No runs yet",
+                    detail: zh ? "到点触发后会出现在这里。" : "Runs show up here once the plan fires.")
             } else if !model.runsLoaded {
                 ProgressView()
                     .frame(maxWidth: .infinity)
@@ -402,7 +400,7 @@ private struct PlanDetailContent: View {
                 .disabled(model.isLoadingRuns)
             }
         } header: {
-            Text(zh ? "运行历史" : "Run history").textCase(nil)
+            Text(zh ? "运行历史" : "Run history").groupHeader()
         } footer: {
             if model.plan?.isPipeline == true {
                 Text(
@@ -487,6 +485,8 @@ private struct PlanDetailContent: View {
             Label(zh ? "更多操作" : "More", systemImage: "ellipsis")
                 .labelStyle(.iconOnly)
         }
+        // 次要的图标按钮是中性色（规范 2.2，和 Botin 资料的“…”一样）。
+        .neutralTint()
     }
 
     /// 删掉了：离开这一页（主栈或 sheet 的栈，哪层有拿哪层），刷新角标。

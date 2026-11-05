@@ -17,7 +17,7 @@ struct PlanListModelTests {
         let s = model.sections
         #expect(s.awaiting.map(\.id) == [DemoData.agentPlanID])
         #expect(s.paused.map(\.id) == [PlansFixture.pausedPlanID])
-        // 流水线明天 10:00、通知汇总 21 小时后（演示数据按真实时间算），规则失效的没有下一次排最后。
+        // 流水线明天 10:00、通知汇总下一个工作日 09:00（演示数据按真实时间算），规则失效的没有下一次排最后。
         #expect(s.active.last?.id == PlansFixture.invalidPlanID)
         #expect(Set(s.active.prefix(2).map(\.id)) == [PlansFixture.pipelinePlanID, DemoData.digestPlanID])
         #expect(model.awaitingCount == 1)
@@ -152,11 +152,20 @@ struct PlanListModelTests {
     }
 
     @Test("列表一行的副标题和空状态的说明")
-    func texts() {
+    func texts() throws {
         let plan = PlansFixture.mockWithPlans().state.plans.first { $0.id == DemoData.digestPlanID }!
         let summary = PlansText.scheduleSummary(plan, language: .chinese)
-        #expect(PlansText.rowSubtitle(plan, instanceName: nil, language: .chinese) == summary)
-        #expect(PlansText.rowSubtitle(plan, instanceName: "写作助手", language: .chinese) == summary + " · 写作助手")
+        // 按时运行的带下一次，状态不写（分组标题已经说了）。
+        let now = Date()
+        let next = PlansText.nextFire(try #require(plan.nextFireAt), now: now, language: .chinese)
+        #expect(PlansText.rowSubtitle(plan, instanceName: nil, now: now, language: .chinese) == summary + " · " + next)
+        #expect(
+            PlansText.rowSubtitle(plan, instanceName: "写作助手", now: now, language: .chinese)
+                == summary + " · 写作助手 · " + next)
+        var paused = plan
+        paused.isPaused = true
+        #expect(PlansText.rowSubtitle(paused, instanceName: nil, now: now, language: .chinese) == summary)
+        #expect(!PlansText.listEmptyMessage(.chinese).contains("按时重复"))
         #expect(PlansText.listEmptyMessage(.chinese).contains("新建"))
         #expect(!PlansText.listEmptyMessage(.english).isEmpty)
         #expect(!PlansText.awaitingFooter(.english).isEmpty)

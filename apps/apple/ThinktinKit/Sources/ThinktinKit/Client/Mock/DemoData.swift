@@ -235,6 +235,12 @@ public enum DemoData {
                 createdAt: post.startedAt!.addingTimeInterval(9), requestID: pendingPermissionRequestID, attempt: 1)
         ]
 
+        // 通知汇总的规则是“工作日 09:00（Asia/Shanghai）”：下一次按规则真的算出来（以前写死 21 小时后，截图上“下次”的
+        // 钟点和规则对不上）。算不出来时（不会发生）退回明天这个时候。
+        let digestSchedule = Schedule.cron(expression: "0 9 * * 1-5", timeZone: "Asia/Shanghai")
+        let digestNext =
+            ScheduleForecast.nextFires(digestSchedule, after: now, count: 1)?.first ?? now.addingTimeInterval(day)
+
         let plans = [
             Plan(
                 id: digestPlanID, instanceID: writerID, title: "每日 GitHub 通知汇总",
@@ -247,8 +253,7 @@ public enum DemoData {
                 triggers: [
                     Trigger(
                         id: "0192f3a0-0000-7000-8000-000000000411",
-                        schedule: .cron(expression: "0 9 * * 1-5", timeZone: "Asia/Shanghai"),
-                        nextFireAt: now.addingTimeInterval(21 * hour), lastFireAt: ago(3 * hour))
+                        schedule: digestSchedule, nextFireAt: digestNext, lastFireAt: ago(3 * hour))
                 ]),
             Plan(
                 id: agentPlanID, instanceID: reviewerID, title: "每周依赖升级检查",

@@ -36,6 +36,7 @@ extension AppConfiguration.OpenScreen {
         }
         switch self {
         case .search: return .search
+        case .allplans: return .plans(instanceID: nil)
         case .primarybotin: return .primaryBotin
         case .adopt: return .adopt(agentID: nil)
         case .engines, .enginedetail: return .agentCatalog

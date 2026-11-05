@@ -75,6 +75,9 @@ struct AppConfiguration: Equatable, Sendable {
 
         /// 实例的计划（首页 → 对话 → 计划）。
         case plans
+        /// 全部 Botin 的计划（工作台菜单的“计划”，首页 → 计划，`.plans(instanceID: nil)`）。截图配 `THINKTIN_MOCK_EMPTY=1`：
+        /// 新账号一个计划也没有，看空状态（参考 21：正中一段灰字）。
+        case allplans
         /// 实例的产出物（首页 → 对话 → 产出物）。
         case artifacts
         /// 实例的产出物，选中“媒体”（参考 23）。
