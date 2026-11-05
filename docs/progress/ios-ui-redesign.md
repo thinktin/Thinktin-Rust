@@ -411,7 +411,8 @@
 新建时选它用哪个 agent 当引擎，同一个 agent 可以给好几个 Botin 当引擎（服务端只限每个账号的实例数）。agent 在界面上只以 Botin 的“引擎”/“Engine”出现。
 首次登录首页是空的，空状态“还没有 Botin”+ 说明 + “新建 Botin”按钮。代码里的标识符（`Instance`、`AppRoute.adopt`、`adopt(...)`）不改。
 
-进行中：没有（第 1 轮 B、C、D 线 2026-11-05 做完，见“已完成”）。
+进行中：第 1 轮 E 线（设置一带：设置根页、账号、用量、保险箱、登录设备、外观、语言、触感、模型 key、IM 渠道；规范 4.9、7.3 E），
+  session_01GuCp3KRgqaK6Kzynw6udRn，2026-11-05 开始。B、C、D 线 2026-11-05 做完，见“已完成”。
 验证和发版（2026-11-05，session_01GuCp3KRgqaK6Kzynw6udRn）：GitHub 的 Mac 一直排不上，改用 Codemagic（`.github/workflows/codemagic.yml`：
 把提交推到 `codemagic/apple-check` / `codemagic/ios-screenshots`）。第 0 轮（bbdb07c）、Botin 版（06894fd）、新建页重做（c78064e）
 的 apple-check 都过了（真 Xcode：模拟器 build + test、ThinktinMac、Kit 的 macOS 测试）。截图对照参考 34、35 后又调了两次版式：
