@@ -42,11 +42,24 @@ struct ComputerLinkScreensTests {
         }
     }
 
-    @Test("登录设备里的“电脑”一组：能签名、不能签名、没注入")
+    @Test("登录设备里电脑的说明、电脑详情的配对一组：能签名、不能签名、没注入")
     func section() {
-        layoutBoth(AccountScrollPage { ComputerLinkSection() })
-        layoutBoth(AccountScrollPage { ComputerLinkSection() }, signer: Signer(available: false))
-        layoutBoth(AccountScrollPage { ComputerLinkSection() }, signer: nil)
+        let mac = DemoData.state().devices.first(where: \.isComputer)!
+        layoutBoth(
+            List {
+                ComputerLinkStatusSection()
+                ComputerDeviceSections(computer: mac)
+            })
+        layoutBoth(
+            List {
+                ComputerLinkStatusSection()
+                ComputerDeviceSections(computer: mac)
+            }, signer: Signer(available: false))
+        layoutBoth(
+            List {
+                ComputerLinkStatusSection()
+                ComputerDeviceSections(computer: mac)
+            }, signer: nil)
         layoutBoth(DevicesScreen())
     }
 

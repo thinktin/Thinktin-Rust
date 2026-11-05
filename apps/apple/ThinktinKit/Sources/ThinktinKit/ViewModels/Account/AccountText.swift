@@ -89,6 +89,33 @@ extension DeviceInfo {
         return language == .chinese ? "\(date)登录" : "Signed in \(date)"
     }
 
+    /// 类别：电脑写“电脑”，手机写平台名（“iOS”“Android”）。设备列表副标题的第一段（参考 66）。
+    public func kindName(_ language: DisplayLanguage = .current) -> String {
+        if isComputer { return language == .chinese ? "电脑" : "Computer" }
+        return platform.localizedName(language)
+    }
+
+    /// 设备列表的副标题（参考 66 的“iOS · 此设备”“电脑 · 上次打开于 …”）：类别 · 状态。本机写“本机”，电脑在线写“在线”，
+    /// 别的写最近活跃。
+    public func listSubtitle(
+        now: Date = Date(), language: DisplayLanguage = .current, calendar: Calendar = .current
+    ) -> String {
+        let zh = language == .chinese
+        let status: String
+        if isCurrent {
+            status = zh ? "本机" : "This device"
+        } else if isComputer && isOnline {
+            status = zh ? "在线" : "Online"
+        } else {
+            let lastSeen = Formatting.relativeTime(lastSeenAt, now: now, language: language, calendar: calendar)
+            status = zh ? "最近活跃 \(lastSeen)" : "Last active \(lastSeen)"
+        }
+        return kindName(language) + " · " + status
+    }
+
+    /// 状态点亮不亮：本机、在线的电脑亮（成功色），别的灰。
+    public var isActive: Bool { isCurrent || (isComputer && isOnline) }
+
     /// 读屏的一句话：“张三的 MacBook Pro，Mac，在线，10月2日登录”。
     public func accessibilityText(
         now: Date = Date(), language: DisplayLanguage = .current, calendar: Calendar = .current

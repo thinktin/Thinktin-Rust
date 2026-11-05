@@ -62,15 +62,19 @@ struct AccountScreensTests {
         layoutBoth(List { StopAllRow(model: stopAll) })
     }
 
-    @Test("登录设备：下线其他设备的 sheet、设备行")
+    @Test("登录设备：下线其他设备的 sheet、设备行、设备详情")
     func devicePages() async {
         let model = DevicesModel(client: AccountPreviewClients.signedIn())
         await model.load()
         layoutBoth(SignOutOthersSheet(model: model))
         for device in model.devices {
-            layoutBoth(DeviceRow(device: device) {})
+            layoutBoth(DeviceRow(device: device))
+            // 设备详情（参考 67、69）：手机、电脑。
+            layoutBoth(NavigationStack { DeviceDetailScreen(model: model, deviceID: device.id) })
         }
-        layoutBoth(DeviceRow(device: model.devices[0], isRevoking: true) {})
+        layoutBoth(DeviceRow(device: model.devices[0], isRevoking: true))
+        layoutBoth(NavigationStack { DeviceDetailScreen(model: model, deviceID: "gone") })
+        layoutBoth(DeviceStatusDot(isActive: true))
     }
 
     @Test("没登录时应用框架显示登录页")
