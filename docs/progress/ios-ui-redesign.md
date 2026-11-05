@@ -169,20 +169,27 @@
   “新建 Botin”，起名字、选引擎）、4.7.1（标题、引擎行、按钮“新建”，同一个引擎能建好几个）、4.2.1（空状态的文案）、表格和 7.3 C 线；
   docs/ios.md 第 1 节第 6 条（界面用词规则）和几处引到的文案；docs/handoff-ios.md 加“Botin 改名”一节：给安卓、服务端推送的对照表，
   点名 `crates/orchestrator/src/texts.rs` 里给用户看的推送和 IM 文案、`crates/catalog` 的介绍（安卓、服务端的代码没动）。
+- Botin 改名这一份的 Linux 检查（2026-11-05，最后一次提交上）：ThinktinKit `swift test` 1012 个全过（新加首页空状态文案那条）；uicheck
+  UIKit、AppKit 都编过；`run.sh test` 138 个全过；App 的 `ThinktinTests` 19 个过 14 个（还是那 5 个要 App 包的）；
+  `swift format lint --strict -r apps/apple` 零条。macOS CI 还没看。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、
 字体全用系统的）；6.3 A（保持 iOS 17，iOS 26 的接口在 Design/Glass.swift 里回退）；6.4 A（“+”直接弹领养表单）；6.5 A（设置用 sheet）；
-6.6 A（沿用“实例”）。其余 18 项按建议。
+6.6 A（沿用“实例”，2026-11-05 被下面的决定推翻）。其余 18 项按建议。
 
 决定（2026-11-05，用户）：代码里的“实例”（`Instance`）在界面上叫 **Botin**（中英文同一个词，英文复数 Botins）。用户“新建 Botin”，不再“领养 agent”；
 新建时选它用哪个 agent 当引擎，同一个 agent 可以给好几个 Botin 当引擎（服务端只限每个账号的实例数）。agent 在界面上只以 Botin 的“引擎”/“Engine”出现。
 首次登录首页是空的，空状态“还没有 Botin”+ 说明 + “新建 Botin”按钮。代码里的标识符（`Instance`、`AppRoute.adopt`、`adopt(...)`）不改。
 
-进行中：Botin 改名（界面文案、测试、文档；用户 2026-11-05 的决定，见上面“决定（2026-11-05，用户）”），云端会话，2026-11-05 01:00 UTC 开始。
+进行中：没有人在做。Botin 改名（2026-11-05）做完了，见“已完成”里“Botin 改名”那几条。
 **第 0 轮（规范 7.2）的每一行和审查修正都做完了**（2026-11-05），只差下面第 1、2 条的验证；第 1 轮还没人认领。
 
 下一步：
+0. Botin 改名的收尾：(a) 登录页 `SignInFlow` 的两句“你的常驻 agent”“agent 在云端常驻”要不要改成 Botin，问用户（登录页是他设计的）；
+   (b) 安卓和服务端推送照 docs/handoff-ios.md 的“Botin 改名”对照表改（别的会话的线，这里没动）；(c) 新建表单（`AdoptAgentSheet`）现在多了
+   一行只读的“引擎”，还是从引擎详情进来、不能在表单里换引擎，第 1 轮 C 线按规范 4.7.1 换成“+”直接弹、表单里选引擎的版式；
+   (d) 演示数据里 agent 的介绍（“通用 agent”）是仿服务端目录的，等服务端的清单改了再跟。
 1. macOS CI（`.github/workflows/ios.yml`，只在推 main 和开 PR 时跑）还一次都没跑过这个分支：开 PR 或推一次让它用真 SDK 编。只有它验得出来的：
    Glass.swift 的 `if #available` 分支；首页工具栏（`#if os(iOS)` 里的 `ToolbarContent`、菜单项的两行 `Text`、`toolbarBadge` 在 iOS 26 上的
    `.badge`、`BottomBarSearchItem`）；`SheetStack` 里第二层 `.sheet(item:)`；`AgentsDestination` 的 `.adopt(agentID: nil)` 模式；启动屏
