@@ -27,9 +27,10 @@ enum RouteSamples {
         .newTask, .frozen, .upgrade,
         .pairComputer(code: "thinktin-pair:v1?d=mac"),
         .adopt(agentID: nil),
+        .permissions, .subscription, .importMemory, .feedback,
     ]
 
-    static let caseCount = 45
+    static let caseCount = 49
 
     static func index(of route: AppRoute) -> Int {
         switch route {
@@ -78,6 +79,10 @@ enum RouteSamples {
         case .upgrade: 42
         case .pairComputer: 43
         case .adopt: 44
+        case .permissions: 45
+        case .subscription: 46
+        case .importMemory: 47
+        case .feedback: 48
         }
     }
 }
@@ -107,6 +112,11 @@ struct AppRouteTests {
         #expect(AppRoute.agent("claude").title(.english) == "Engine details")
         #expect(AppRoute.plans(instanceID: "i").title(.chinese) == AppRoute.plans(instanceID: nil).title(.chinese))
         #expect(AppRoute.home.title(.chinese) == "首页")
+        // 设置里还没有后端的几页（参考 56、62、71、76）。
+        #expect(AppRoute.permissions.title(.chinese) == "权限")
+        #expect(AppRoute.subscription.title(.english) == "Subscription")
+        #expect(AppRoute.importMemory.title(.chinese) == "导入记忆")
+        #expect(AppRoute.feedback.title(.chinese) == "发送反馈")
     }
 
     @Test("页面归哪个功能（工作包）")
@@ -128,6 +138,7 @@ struct AppRouteTests {
             .artifacts(instanceID: "i"): .artifacts, .artifact("a", runID: "r"): .artifacts,
             .vault: .vault, .vaultItem("v"): .vault, .vaultRequest("v"): .vault,
             .settings: .settings, .licenses: .settings, .about: .settings,
+            .permissions: .settings, .subscription: .settings, .importMemory: .settings, .feedback: .settings,
             .imChannels: .imChannels, .onboarding: .onboarding, .search: .search,
             .home: .shell, .newTask: .shell, .frozen: .shell, .upgrade: .shell,
         ]
@@ -156,6 +167,8 @@ struct AppRouteTests {
             AppRoute.conversation("i"), .run("r"), .inbox, .vaultRequest("v"),
             .pipelineEditor(planID: nil, teamID: nil),
             .plans(instanceID: nil), .plans(instanceID: "i"), .agentCatalog, .instance("i"), .vault, .credentials,
+            // 设置的补充页在设置 sheet 的栈里压栈（规范 3.2）。
+            .permissions, .subscription, .importMemory, .feedback,
         ] {
             #expect(route.presentation == .push, "\(route)")
         }
@@ -172,7 +185,10 @@ struct AppRouteTests {
         #expect(!AppRoute.artifacts(instanceID: "i").isTopLevel)
         #expect(!AppRoute.plans(instanceID: "i").isTopLevel)
         // 设置、搜索、agent 目录不再是顶级页面（设置是 sheet、搜索在首页原地、目录是普通压栈）。
-        for route in [AppRoute.run("r"), .conversation("i"), .settings, .search, .agentCatalog, .adopt(agentID: nil)] {
+        for route in [
+            AppRoute.run("r"), .conversation("i"), .settings, .search, .agentCatalog, .adopt(agentID: nil),
+            .permissions, .feedback,
+        ] {
             #expect(!route.isTopLevel, "\(route)")
         }
         // 工作台菜单的入口都是顶级页面。
@@ -210,7 +226,7 @@ struct AppRouteTests {
         for route in [
             AppRoute.home, .conversation("i"), .inbox, .inboxItem("x"), .approvals, .approval("a"), .plan("p"),
             .confirmPlan("p"), .plans(instanceID: nil), .artifacts(instanceID: nil), .vaultRequest("v"), .activeRuns,
-            .settings, .search, .adopt(agentID: nil),
+            .settings, .search, .adopt(agentID: nil), .permissions, .subscription, .importMemory, .feedback,
         ] {
             #expect(!route.returnsToConversation, "\(route)")
         }
@@ -231,7 +247,10 @@ struct AppRouteTests {
         ] {
             #expect(route.offlinePolicy == .unavailable, "\(route)")
         }
-        for route in [AppRoute.licenses, .about, .search, .settings] {
+        // 设置的补充页是本机的演示数据或走邮件，不用联网。
+        for route in [
+            AppRoute.licenses, .about, .search, .settings, .permissions, .subscription, .importMemory, .feedback,
+        ] {
             #expect(route.offlinePolicy == .local, "\(route)")
         }
         #expect(OfflinePolicy.local.bannerMessage(.chinese) == nil)

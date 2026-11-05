@@ -3,14 +3,16 @@ import Observation
 
 /// 设置中心（WBS 12.12，`.settings`，首页左上的头像弹出的 sheet）。改版后照参考 53、70、75 的分组和顺序（规范 4.9.1），
 /// 放的是 ThinkTin 自己的入口：
-/// 1. 账号行（头像、昵称、打码的手机号）、模型 key、用量（今天用了多少）、保险箱；
+/// 1. 账号行（头像、昵称、打码的手机号）、模型 key、用量（今天用了多少）、订阅（演示，参考 56）、保险箱；
 /// 2. IM 渠道（参考“连接应用”的位置；第 2 轮的“连接”汇总页做了以后挪进去）；
-/// 3. “Botin”组：审批（参考“权限”的位置，进审批中心）、登录设备；界面在这组后面接实时活动的开关（12.10）；
+/// 3. “Botin”组：权限（自然语言规则，演示，参考 62）、审批（进审批中心）、登录设备、导入记忆（参考 71）；
+///    界面在这组后面接实时活动的开关（12.10）；
 /// 4. 通知、外观、语言、触感反馈；
 /// 5. 安全：全部停止、下线其他设备；
 /// 6. 外部链接：用户协议、隐私政策；
-/// 7. 关于 ThinkTin、开源许可、上手引导（参考“发送反馈”的位置）；
-/// 8. 退出登录（单独一组）。版本区（Logo、名字、版本号）在界面最底下。
+/// 7. 发送反馈（单独一组，参考 75；用邮件发）；
+/// 8. 关于 ThinkTin、开源许可、上手引导；
+/// 9. 退出登录（单独一组）。版本区（Logo、名字、版本号）在界面最底下。
 /// 注销账号在账号页里（参考 54）。
 ///
 /// 设置中心不联网也能用（`OfflinePolicy.local`）：用户先用应用框架已经拿到的（`AppModel.user`），再静默 `me()` 一次。
@@ -106,6 +108,10 @@ public final class SettingsModel {
                     SettingsRow(
                         id: "usage", systemImage: "chart.bar", title: AppRoute.usage.title(language),
                         value: UsageToday.rowValue(todayUsage, language: language), action: .open(.usage)),
+                    // 订阅（参考 56 的位置）：App 内购买等 12.23，页面是演示的方案。
+                    SettingsRow(
+                        id: "subscription", systemImage: "creditcard", title: AppRoute.subscription.title(language),
+                        action: .open(.subscription)),
                     SettingsRow(
                         id: "vault", systemImage: "lock.rectangle.stack", title: AppRoute.vault.title(language),
                         subtitle: zh
@@ -125,6 +131,11 @@ public final class SettingsModel {
             SettingsSection(
                 id: .botins, title: "Botin", footer: nil,
                 rows: [
+                    // 权限（参考 53 的第一行）：自然语言规则还没有后端，副标题按演示数据写。
+                    SettingsRow(
+                        id: "permissions", systemImage: "hand.raised.square", title: AppRoute.permissions.title(language),
+                        subtitle: PermissionsDemoData.overview(language).settingsSubtitle(language),
+                        action: .open(.permissions)),
                     SettingsRow(
                         id: "approvals", systemImage: "checkmark.shield", title: AppRoute.approvals.title(language),
                         subtitle: Self.approvalsSubtitle(pendingApprovals, language: language),
@@ -132,6 +143,9 @@ public final class SettingsModel {
                     SettingsRow(
                         id: "devices", systemImage: "laptopcomputer.and.iphone",
                         title: AppRoute.devices.title(language), action: .open(.devices)),
+                    SettingsRow(
+                        id: "importMemory", systemImage: "square.and.arrow.down",
+                        title: AppRoute.importMemory.title(language), action: .open(.importMemory)),
                 ]),
             SettingsSection(
                 id: .preferences, title: nil,
@@ -178,6 +192,13 @@ public final class SettingsModel {
                         action: .link(LegalLinks.privacyPolicy)),
                 ]),
             SettingsSection(
+                id: .feedback, title: nil, footer: nil,
+                rows: [
+                    SettingsRow(
+                        id: "feedback", systemImage: "envelope", title: AppRoute.feedback.title(language),
+                        action: .open(.feedback))
+                ]),
+            SettingsSection(
                 id: .about, title: nil, footer: nil,
                 rows: [
                     SettingsRow(
@@ -219,7 +240,7 @@ public final class SettingsModel {
 /// 设置中心的一组。
 public struct SettingsSection: Identifiable, Hashable, Sendable {
     public enum ID: String, CaseIterable, Hashable, Sendable {
-        case account, connections, botins, preferences, security, links, about, signOut
+        case account, connections, botins, preferences, security, links, feedback, about, signOut
     }
 
     public var id: ID
