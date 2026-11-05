@@ -94,6 +94,10 @@
   （不等锁），注销把他建的项目软删除、他在别人项目里的运行和白名单事件留下（去掉私人字段）；租户的硬删除代码删了。
   C8 编排层：项目运行的产出物用项目密钥加密（`projects/<项目>/<产出物>`），成员下载核对成员关系，项目删了解不开；删项目给
   还在的成员发“项目已删除”，归档、取消归档的审计；后台清理删了的项目（出错只记下来，不让维护任务失败）。
+  C9 接口：`/v1/projects/{id}/runs`（含单个、树、事件）、`/artifacts`（含单个、下载，下载和私人的共用 `download_response`）、
+  `/archive`、`/unarchive`；`DELETE /v1/projects/{id}` 共享过的也能删（旧团队接口照旧 409）；`/v1/project-templates*`（领养回
+  项目详情）；项目、邀请、拉黑的接口单独一个路由，响应都 `Cache-Control: no-store`；项目接口里库拒绝的按 404 回并计数
+  （`thinktin_project_forbidden_total`）。下一步 C10 client-core。
   坑：只加 .sql 文件 cargo 不会重新编译（`sqlx::migrate!` 编译时嵌入），加了 `crates/store/build.rs`。
   坑：`relay` 的 `heartbeats_drop_revoked_frozen_and_silent_computers` 机器忙时偶尔失败（200 毫秒心跳，8.14 没碰 relay），单独跑能过。
 - 下一步：8.15 → 8.16–8.19。东京：Phase 0（docs/browser.md 第 8.1 节），过了一个模板开一个 `supported`。用户放好搜索 key（`THINKTIN_PARALLEL_SEARCH_KEY`）后做小测。
