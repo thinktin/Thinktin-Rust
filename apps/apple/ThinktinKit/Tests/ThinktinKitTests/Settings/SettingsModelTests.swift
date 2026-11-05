@@ -32,7 +32,7 @@ struct SettingsModelTests {
         let ids = model.sections(.chinese).map { $0.rows.map(\.id) }
         #expect(
             ids == [
-                ["account", "credentials", "usage", "vault"], ["imChannels"], ["approvals", "devices"],
+                ["account", "credentials", "usage", "vault"], ["connections"], ["approvals", "devices"],
                 ["notifications", "appearance", "language", "haptics"], ["stopAll", "signOutOthers"],
                 ["terms", "privacy"], ["about", "licenses", "onboarding"], ["signOut"],
             ])
@@ -44,7 +44,8 @@ struct SettingsModelTests {
         let sections = model.sections(.chinese)
         let expected: [String: (AppRoute, AppFeature)] = [
             "account": (.account, .account), "devices": (.devices, .account), "credentials": (.credentials, .models),
-            "usage": (.usage, .models), "vault": (.vault, .vault), "imChannels": (.imChannels, .imChannels),
+            "usage": (.usage, .models), "vault": (.vault, .vault),
+            "connections": (.connections(category: nil), .connections),
             "approvals": (.approvals, .approvals), "signOutOthers": (.devices, .account),
             "about": (.about, .settings), "licenses": (.licenses, .settings),
         ]

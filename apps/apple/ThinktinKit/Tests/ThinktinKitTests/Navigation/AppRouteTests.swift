@@ -27,9 +27,10 @@ enum RouteSamples {
         .newTask, .frozen, .upgrade,
         .pairComputer(code: "thinktin-pair:v1?d=mac"),
         .adopt(agentID: nil),
+        .connections(category: nil), .connectedApps, .connectionList(.recommended), .connection("docs"),
     ]
 
-    static let caseCount = 45
+    static let caseCount = 49
 
     static func index(of route: AppRoute) -> Int {
         switch route {
@@ -78,6 +79,10 @@ enum RouteSamples {
         case .upgrade: 42
         case .pairComputer: 43
         case .adopt: 44
+        case .connections: 45
+        case .connectedApps: 46
+        case .connectionList: 47
+        case .connection: 48
         }
     }
 }
@@ -107,6 +112,10 @@ struct AppRouteTests {
         #expect(AppRoute.agent("claude").title(.english) == "Engine details")
         #expect(AppRoute.plans(instanceID: "i").title(.chinese) == AppRoute.plans(instanceID: nil).title(.chinese))
         #expect(AppRoute.home.title(.chinese) == "首页")
+        #expect(AppRoute.connections(category: .code).title(.chinese) == "连接")
+        #expect(AppRoute.connectionList(.recommended).title(.chinese) == "为你推荐")
+        #expect(AppRoute.connectionList(.featured).title(.english) == "Featured")
+        #expect(AppRoute.connectedApps.title(.chinese) == "已连接")
     }
 
     @Test("页面归哪个功能（工作包）")
@@ -130,6 +139,8 @@ struct AppRouteTests {
             .settings: .settings, .licenses: .settings, .about: .settings,
             .imChannels: .imChannels, .onboarding: .onboarding, .search: .search,
             .home: .shell, .newTask: .shell, .frozen: .shell, .upgrade: .shell,
+            .connections(category: nil): .connections, .connections(category: .thisDevice): .connections,
+            .connectedApps: .connections, .connectionList(.featured): .connections, .connection("x"): .connections,
         ]
         for (route, feature) in expected {
             #expect(route.feature == feature, "\(route)")
@@ -156,6 +167,9 @@ struct AppRouteTests {
             AppRoute.conversation("i"), .run("r"), .inbox, .vaultRequest("v"),
             .pipelineEditor(planID: nil, teamID: nil),
             .plans(instanceID: nil), .plans(instanceID: "i"), .agentCatalog, .instance("i"), .vault, .credentials,
+            // 连接的几页都压栈（规范 3.2：设置里压栈）；详情在目录里是本地 sheet，路由本身压栈（和引擎详情一样）。
+            .connections(category: nil), .connections(category: .code), .connectedApps, .connectionList(.recommended),
+            .connection("docs"),
         ] {
             #expect(route.presentation == .push, "\(route)")
         }
@@ -172,7 +186,10 @@ struct AppRouteTests {
         #expect(!AppRoute.artifacts(instanceID: "i").isTopLevel)
         #expect(!AppRoute.plans(instanceID: "i").isTopLevel)
         // 设置、搜索、agent 目录不再是顶级页面（设置是 sheet、搜索在首页原地、目录是普通压栈）。
-        for route in [AppRoute.run("r"), .conversation("i"), .settings, .search, .agentCatalog, .adopt(agentID: nil)] {
+        for route in [
+            AppRoute.run("r"), .conversation("i"), .settings, .search, .agentCatalog, .adopt(agentID: nil),
+            .connections(category: nil), .connectedApps,
+        ] {
             #expect(!route.isTopLevel, "\(route)")
         }
         // 工作台菜单的入口都是顶级页面。
@@ -210,7 +227,7 @@ struct AppRouteTests {
         for route in [
             AppRoute.home, .conversation("i"), .inbox, .inboxItem("x"), .approvals, .approval("a"), .plan("p"),
             .confirmPlan("p"), .plans(instanceID: nil), .artifacts(instanceID: nil), .vaultRequest("v"), .activeRuns,
-            .settings, .search, .adopt(agentID: nil),
+            .settings, .search, .adopt(agentID: nil), .connections(category: nil), .connection("docs"),
         ] {
             #expect(!route.returnsToConversation, "\(route)")
         }
@@ -228,6 +245,8 @@ struct AppRouteTests {
             AppRoute.plans(instanceID: nil), .plans(instanceID: "i"), .plan("p"), .approvals, .credentials,
             .modelRoutes("i"), .usage, .vault, .teams, .agentCatalog, .imChannels, .devices,
             .artifacts(instanceID: nil), .adopt(agentID: nil), .adopt(agentID: "claude"),
+            // 连接的几页要拉电脑、IM 渠道、key、保险箱，都不缓存。
+            .connections(category: nil), .connectedApps, .connectionList(.featured), .connection("docs"),
         ] {
             #expect(route.offlinePolicy == .unavailable, "\(route)")
         }
@@ -251,6 +270,8 @@ struct AppRouteTests {
     func featureMetadata() {
         #expect(AppFeature.account.directory == "Account")
         #expect(AppFeature.imChannels.directory == "ImChannels")
+        #expect(AppFeature.connections.directory == "Connections")
+        #expect(AppFeature.connections.destinationTypeName == "ConnectionsDestination")
         #expect(AppFeature.conversation.destinationTypeName == "ConversationDestination")
         #expect(AppFeature.shell.workPackage == "12.16")
         #expect(Set(AppFeature.allCases.map(\.workPackage)).count == AppFeature.allCases.count)

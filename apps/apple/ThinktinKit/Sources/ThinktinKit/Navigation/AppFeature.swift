@@ -25,6 +25,8 @@ public enum AppFeature: String, CaseIterable, Hashable, Sendable {
     case vault
     /// IM 渠道（12.14）。
     case imChannels
+    /// 连接目录、已连接列表、应用详情（改版规范 4.8、6.12，第 2 轮的新功能）。
+    case connections
     /// 审批中心与审批卡（12.15）。
     case approvals
     /// 首次启动与引导（12.17）。
@@ -49,6 +51,8 @@ public enum AppFeature: String, CaseIterable, Hashable, Sendable {
         case .settings: "12.12"
         case .vault: "12.13"
         case .imChannels: "12.14"
+        // WBS 还没有这个包（规范 7.4 的第 2 轮 E 线“连接”汇总页）；先占一个不和别的重的编号。
+        case .connections: "12.26"
         case .approvals: "12.15"
         case .onboarding: "12.17"
         case .artifacts: "12.18"

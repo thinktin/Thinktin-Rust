@@ -4,7 +4,7 @@ import Observation
 /// 设置中心（WBS 12.12，`.settings`，首页左上的头像弹出的 sheet）。改版后照参考 53、70、75 的分组和顺序（规范 4.9.1），
 /// 放的是 ThinkTin 自己的入口：
 /// 1. 账号行（头像、昵称、打码的手机号）、模型 key、用量（今天用了多少）、保险箱；
-/// 2. IM 渠道（参考“连接应用”的位置；第 2 轮的“连接”汇总页做了以后挪进去）；
+/// 2. 连接（参考“连接应用”的位置，规范 4.8：电脑、IM 渠道、模型 key、保险箱和即将推出的应用；IM 渠道挪进了这里）；
 /// 3. “Botin”组：审批（参考“权限”的位置，进审批中心）、登录设备；界面在这组后面接实时活动的开关（12.10）；
 /// 4. 通知、外观、语言、触感反馈；
 /// 5. 安全：全部停止、下线其他设备；
@@ -116,11 +116,10 @@ public final class SettingsModel {
                 id: .connections, title: nil, footer: nil,
                 rows: [
                     SettingsRow(
-                        id: "imChannels", systemImage: "bubble.left.and.bubble.right",
-                        title: AppRoute.imChannels.title(language),
-                        subtitle: zh
-                            ? "把任务结果发到飞书、企业微信、钉钉的群" : "Post task results to Feishu/Lark, WeCom or DingTalk groups",
-                        action: .open(.imChannels))
+                        id: "connections", systemImage: "puzzlepiece.extension",
+                        title: AppRoute.connections(category: nil).title(language),
+                        subtitle: ConnectionsText.settingsSubtitle(language),
+                        action: .open(.connections(category: nil)))
                 ]),
             SettingsSection(
                 id: .botins, title: "Botin", footer: nil,
