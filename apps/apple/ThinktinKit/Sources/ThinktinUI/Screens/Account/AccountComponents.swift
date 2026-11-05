@@ -35,48 +35,7 @@ extension EnvironmentValues {
     }
 }
 
-/// 一组：小标题、圆角卡片里的几行、可选的脚注。
-struct AccountSection<Content: View>: View {
-    var title: String?
-    var footer: String?
-    let content: Content
-
-    @Environment(\.displayScale) private var displayScale
-
-    init(_ title: String? = nil, footer: String? = nil, @ViewBuilder content: () -> Content) {
-        self.title = title
-        self.footer = footer
-        self.content = content()
-    }
-
-    var body: some View {
-        let shape = RoundedRectangle(cornerRadius: Metrics.Radius.card, style: .continuous)
-        VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
-            if let title {
-                Text(title)
-                    .typography(.footnote)
-                    .foregroundStyle(Theme.inkSecondary)
-                    .padding(.horizontal, Metrics.Spacing.m)
-                    .accessibilityAddTraits(.isHeader)
-            }
-            VStack(alignment: .leading, spacing: 0) {
-                content
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Theme.paperElevated, in: shape)
-            .overlay { shape.strokeBorder(Theme.hairline, lineWidth: Metrics.hairline(scale: displayScale)) }
-            if let footer {
-                Text(footer)
-                    .typography(.footnote)
-                    .foregroundStyle(Theme.inkSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, Metrics.Spacing.m)
-            }
-        }
-    }
-}
-
-/// 一组里两行之间的分隔线（从文字开始，不贯穿图标）。
+/// 一组里两行之间的分隔线（从文字开始，不贯穿图标）。现在只有登录页（选国家和地区）在用：登录页是用户自己设计的，没改版。
 struct AccountRowDivider: View {
     @Environment(\.displayScale) private var displayScale
 
@@ -299,22 +258,7 @@ struct CountdownNotice: View {
     }
 }
 
-/// 头像：名字的第一个字，强调色圆底（和抽屉底部的一样）。
-struct AccountAvatar: View {
-    let name: String
-    var size: CGFloat = Metrics.Spacing.xxxl
-
-    var body: some View {
-        Text(verbatim: name.first.map(String.init) ?? "·")
-            .font(Typography.title2.font.weight(.semibold))
-            .foregroundStyle(Theme.onAccent)
-            .frame(width: size, height: size)
-            .background(Theme.accent, in: Circle())
-            .accessibilityHidden(true)
-    }
-}
-
-/// 页面的大标题区：衬线标题和一句说明（登录、注销这类单任务的页面用）。
+/// 页面的大标题区：标题和一句说明（登录页用；登录页是用户自己设计的，没改版）。
 struct AccountPageHeader: View {
     let title: String
     var message: String?
@@ -341,13 +285,15 @@ struct AccountOfflineState: View {
     @Environment(\.displayLanguage) private var language
 
     var body: some View {
-        EmptyStateView(
-            systemImage: "wifi.slash", title: language == .chinese ? "离线" : "Offline",
-            message: OfflinePolicy.unavailable.bannerMessage(language))
+        ContentUnavailableView {
+            Label(language == .chinese ? "离线" : "Offline", systemImage: "wifi.slash")
+        } description: {
+            Text(OfflinePolicy.unavailable.bannerMessage(language) ?? "")
+        }
     }
 }
 
-/// 账号页面共用的滚动容器：纸色底、可读宽度居中、页边距。
+/// 登录页的滚动容器：纸色底、可读宽度居中、页边距（登录页是用户自己设计的，没改版）。
 struct AccountScrollPage<Content: View>: View {
     let content: Content
 

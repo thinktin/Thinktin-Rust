@@ -158,13 +158,16 @@ struct AppSmokeTests {
         #expect(model.router.sheet == .adopt(agentID: nil))
     }
 
-    @Test("截图用的启动参数：THINKTIN_OPEN_SCREEN 认六个页面，不分大小写，别的值不认")
+    @Test("截图用的启动参数：THINKTIN_OPEN_SCREEN 认九个页面，不分大小写，别的值不认")
     func openScreenValues() {
         let key = AppConfiguration.openScreenEnvironmentKey
         #expect(key == "THINKTIN_OPEN_SCREEN")
         #expect(
             AppConfiguration.OpenScreen.allCases.map(\.rawValue)
-                == ["conversation", "plans", "artifacts", "settings", "search", "adopt"])
+                == [
+                    "conversation", "plans", "artifacts", "settings", "search", "adopt", "teams", "newtask",
+                    "onboarding",
+                ])
         for screen in AppConfiguration.OpenScreen.allCases {
             #expect(AppConfiguration.openScreen(environment: [key: screen.rawValue]) == screen)
         }
@@ -186,6 +189,9 @@ struct AppSmokeTests {
         #expect(Screen.settings.route(instanceID: nil) == .settings)
         #expect(Screen.search.route(instanceID: nil) == .search)
         #expect(Screen.adopt.route(instanceID: nil) == .adopt(agentID: nil))
+        #expect(Screen.teams.route(instanceID: nil) == .teams)
+        #expect(Screen.newtask.route(instanceID: nil) == .newTask)
+        #expect(Screen.onboarding.route(instanceID: nil) == .onboarding)
         for screen in Screen.allCases {
             #expect((screen.route(instanceID: nil) == nil) == screen.needsInstance)
             // 不是实例的页面不管传不传实例都一样。
@@ -223,6 +229,13 @@ struct AppSmokeTests {
         await AppConfiguration.OpenScreen.search.open(in: model)
         #expect(router.path.isEmpty && router.sheet == nil)
         #expect(router.hasPendingSearchRequest)
+        // 团队压在首页上；新任务、引导是 sheet。
+        await AppConfiguration.OpenScreen.teams.open(in: model)
+        #expect(router.path == [.teams] && router.sheet == nil)
+        await AppConfiguration.OpenScreen.newtask.open(in: model)
+        #expect(router.sheet == .newTask)
+        await AppConfiguration.OpenScreen.onboarding.open(in: model)
+        #expect(router.sheet == .onboarding)
     }
 
     @Test("接口地址：没有、没展开、不是 http(s) 时用默认地址")

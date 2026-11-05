@@ -105,11 +105,11 @@ struct PlansScreensTests {
             renderInBothAppearances(PlanRunRow(run: run) {})
         }
         renderInBothAppearances(
-            PlansTextField(
+            FormTextField(
                 title: "标题", text: .constant("每周周报"), limit: Plan.maxTitleLength, count: 4, problem: nil,
                 hint: "最多 100 个字"))
         renderInBothAppearances(
-            PlansTextField(title: "cron", text: .constant("0 9 * * *"), problem: "格式不对", monospaced: true))
+            FormTextField(title: "cron", text: .constant("0 9 * * *"), problem: "格式不对", monospaced: true))
     }
 
     @Test("计划的状态色：待确认是等待色，规则失效是失败色，暂停是静音色")

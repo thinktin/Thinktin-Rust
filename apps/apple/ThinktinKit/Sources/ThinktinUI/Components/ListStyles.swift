@@ -73,3 +73,42 @@ struct LabeledRow: View {
         .accessibilityElement(children: .combine)
     }
 }
+
+/// 分组列表里的一句提示（等你确认、有风险、部分保存、信息没查全）：按语气上色的图标加一段话，就是一行，不画底。
+struct NoticeRow: View {
+    let systemImage: String
+    let tone: StatusTone
+    let text: String
+
+    var body: some View {
+        Label {
+            Text(text)
+                .typography(.subheadline)
+                .foregroundStyle(Theme.ink)
+                .fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: systemImage)
+                .foregroundStyle(tone.color)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// 几样东西排一行（状态和时间、几个小按钮）；字号很大时改成一列，免得挤出屏幕。
+struct AdaptiveRow<Content: View>: View {
+    private let content: Content
+
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) { content }
+        } else {
+            HStack(spacing: Metrics.Spacing.xs) { content }
+        }
+    }
+}

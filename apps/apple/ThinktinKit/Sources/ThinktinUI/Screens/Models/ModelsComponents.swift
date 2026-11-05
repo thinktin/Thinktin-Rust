@@ -2,10 +2,10 @@ import SwiftUI
 import ThinktinKit
 
 // 模型 key、路由、用量（WBS 12.4）共用的小组件。名字都带 Models 前缀，不和别的功能重名。
-// 分组、行、小标签、页头、加载中、提示条沿用 12.3 的 `GroupedSection`、`ListRow`、`TagChip`、`PageHeader`、
-// `LoadingStateView`、`InlineNotice`，勾选框沿用 12.2 的 `CheckboxRow`、红字沿用 `FieldMessage`。
+// 改版后各页是系统的 `List` / `Form`（规范 2.5），这里只有行的内容；红字沿用 `FieldMessage`。
 
-/// 表单里的一个输入框：上面一行小标题，输入框（普通、密码、标识、网址、数字），下面是问题（危险色）或提示。
+/// 表单里的一个输入框（放在 `Form` 的一行里，和 `FormTextField` 一样标签在上、没有自己画的框）：上面一行小标题，
+/// 输入框（普通、密码、标识、网址、数字），下面是问题（危险色）或提示。
 struct ModelsField: View {
     enum Kind {
         /// 普通文字（备注）。
@@ -28,29 +28,17 @@ struct ModelsField: View {
     var problem: String?
     var hint: String?
 
-    @Environment(\.displayScale) private var displayScale
-
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous)
-        VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
+        VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
             Text(title)
-                .typography(.footnote)
+                .font(.footnote)
                 .foregroundStyle(Theme.inkSecondary)
                 .accessibilityHidden(true)
             field
-                .textFieldStyle(.plain)
                 .font(kind == .secret ? Typography.body.monospacedFont : Typography.body.font)
                 .foregroundStyle(Theme.ink)
                 .autocorrectionDisabled(kind != .plain)
                 .modelsKeyboard(kind)
-                .padding(.horizontal, Metrics.Spacing.s)
-                .frame(minHeight: Metrics.minTapTarget)
-                .background(Theme.paperElevated, in: shape)
-                .overlay {
-                    shape.strokeBorder(
-                        problem == nil ? Theme.hairline : StatusTone.failure.color,
-                        lineWidth: Metrics.hairline(scale: displayScale))
-                }
                 .accessibilityLabel(Text(title))
                 .accessibilityHint(Text(problem ?? hint ?? ""))
             if let problem {
@@ -58,12 +46,13 @@ struct ModelsField: View {
                     .accessibilityHidden(true)
             } else if let hint {
                 Text(hint)
-                    .typography(.footnote)
+                    .font(.footnote)
                     .foregroundStyle(Theme.inkSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityHidden(true)
             }
         }
+        .padding(.vertical, Metrics.Spacing.xxs)
     }
 
     @ViewBuilder
@@ -155,46 +144,16 @@ struct ModelsUnavailableView: View {
     }
 }
 
-/// 页面底部的小字说明。
-struct ModelsFootnote: View {
-    let text: String
-
-    var body: some View {
-        Text(text)
-            .typography(.footnote)
-            .foregroundStyle(Theme.inkSecondary)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, Metrics.Spacing.xs)
-    }
-}
-
-/// 离线时写操作的说明（按钮下面）。
-struct ModelsOfflineNote: View {
-    @Environment(\.displayLanguage) private var language
-
-    var body: some View {
-        Text(language == .chinese ? "离线时不能修改，联网后再试。" : "You can't make changes while offline.")
-            .typography(.footnote)
-            .foregroundStyle(Theme.inkSecondary)
-            .multilineTextAlignment(.center)
-            .frame(maxWidth: .infinity)
-    }
-}
-
 #Preview("key 的一行 · 浅色中文") {
     let mock = MockClient(autoReply: false)
-    VStack(spacing: Metrics.Spacing.s) {
-        List {
-            ForEach(mock.state.credentials) { credential in
-                ModelsCredentialRow(summary: CredentialSummary(credential: credential, vendors: DemoData.vendors))
-            }
+    List {
+        ForEach(mock.state.credentials) { credential in
+            ModelsCredentialRow(summary: CredentialSummary(credential: credential, vendors: DemoData.vendors))
         }
         ModelsField(title: "API key", text: .constant(""), prompt: "sk-…", kind: .secret, hint: "加密保存，只显示后 4 位。")
         ModelsField(
             title: "Anthropic Messages 地址", text: .constant("http://x"), kind: .url, problem: "只支持 https:// 开头的地址。")
     }
-    .padding()
-    .background(Theme.paper)
     .environment(\.displayLanguage, .chinese)
 }
 

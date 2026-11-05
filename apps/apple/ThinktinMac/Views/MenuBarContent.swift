@@ -162,7 +162,10 @@ struct MacPermissionsSection: View {
                     .typography(.caption)
                     .foregroundStyle(Theme.inkSecondary)
             } else {
-                PillButton(zh ? "去打开" : "Turn on", kind: .secondary, size: .compact, action: request)
+                Button(zh ? "去打开" : "Turn on", action: request)
+                    .glassButtonStyle()
+                    .buttonBorderShape(.capsule)
+                    .controlSize(.small)
             }
         }
         .accessibilityElement(children: .combine)

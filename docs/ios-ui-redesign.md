@@ -725,6 +725,11 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 底部 `.searchable`、空时 `ContentUnavailableView`、没结果 `ContentUnavailableView.search(text:)`）用来改两处现有的选择：
 `Shell/ShellDestination.swift` 的 `NewTaskSheet`（选在哪个实例上下任务）和团队编辑里的成员选择（`Screens/Teams/TeamsScreens.swift`）。
 
+已做（2026-11-05，收尾线）：两处都换成了这个版式。`NewTaskSheet`：左上 `CloseButton`、右上 `ConfirmButton("确认")`（选中的 Botin 还在才能点）、
+一行一个 Botin（40pt 头像带状态角标、名字、状态，选中的右边系统勾，默认选当前的），`.searchable`，最后一组“新建 Botin”，没有 Botin、没搜到用
+`ContentUnavailableView`。单选没用 `List(selection:)`：iOS 上它不进编辑模式时选中是整行灰底，和参考的勾不一样，改成按钮行 + 系统勾。团队编辑：
+同样的关闭 / 保存，名字一组，成员是多选（同样的勾），负责人另起一组 `Picker(.menu)`（只列选中的成员），`.searchable` 筛成员。
+
 ### 4.5 任务与资料
 
 #### 4.5.1 实例的计划（21）
@@ -1689,6 +1694,17 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   按第 2 节换原生控件，各在自己的目录里改；最后删掉没人用了的 `EmptyStateView`、`PillButton`、`Card`、`GroupedSection`、`ListRow`、
   `PageHeader`、`AccountRow` 这些自画组件（`Components/`、`Screens/Account/AccountComponents.swift`、`Screens/Settings/SettingsComponents.swift`、
   `Screens/Plans/PlansComponents.swift`）。
+  **2026-11-05 做完**（收尾线）：收件箱（照首页的消息列表，plain、左滑、长按）、一条通知、审批中心和详情（每个审批一张分组卡片，选项是全宽玻璃
+  胶囊）、进行中、运行树（分组列表，左滑停止）、团队和团队详情、团队编辑（参考 11 的选择器版式）、流水线编辑器（`Form`，每步一组）、新任务的
+  Botin 选择（4.4.5）、引导（分组列表 + 底部浮动胶囊）、开源许可和组件详情（`DisclosureGroup`）、冻结页和升级页（`ContentUnavailableView`），
+  顺带把 D、E 线剩下的自画页也换了：计划的新建 / 编辑、确认页、触发器编辑器和时区页、添加 key 和 key 的三个小 sheet、注销账号、电脑配对和授权。
+  对话、运行详情里系统没有的卡片画在新的 `BubbleCard` 上。删掉的：`Components/Card.swift`、`EmptyStateView.swift`、`PillButton.swift`，
+  `ListComponents.swift` 里的 `SectionHeader`、`GroupedSection`、`ListRow`、`TagChip`、`ChoiceRow`、`InlineNotice`、`PageHeader`、
+  `LoadingStateView`、`pageLayout()` 和大标题露没露的那套（`PageTitleVisibility`），`AccountSection`、`AccountAvatar`、`PlansTextField`、
+  `PlansButtonRow`、`ModelsFootnote`、`ModelsOfflineNote`。新的共用写法：`LabeledRow`、`NoticeRow`、`AdaptiveRow`（`Components/ListStyles.swift`）、
+  `FormTextField`（`Components/FormFields.swift`）。登录页（1.4）没动：它还用 `AccountRow`、`AccountScrollPage`、`AccountPageHeader`、
+  `CheckboxRow` 和胶囊按钮样式（挪到 `Screens/Account/SignInButtonStyle.swift`，只给登录页用），等用户的设计。逐页的做法见
+  docs/progress/ios-ui-redesign.md。
 
 ### 7.4 第 2 轮：纯客户端的新功能
 
@@ -1746,6 +1762,7 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
      | 新建 Botin（sheet） | `THINKTIN_OPEN_SCREEN=adopt` | 34、117 |
      | 首页搜索 | `THINKTIN_OPEN_SCREEN=search` | 78 |
      | 审批、收件箱、进行中、运行、计划 | 现有深链（`thinktin://approval/…`、`inbox`、`active`、`run/…`、`plan/…`） | 参考没有，看是否符合第 2 节 |
+     | 审批中心、团队、新任务的 Botin 选择、上手引导（2026-11-05 收尾线加的） | `thinktin://approvals`；`THINKTIN_OPEN_SCREEN=teams` / `newtask` / `onboarding` | 参考没有（新任务对 11 的选择器版式），看是否和改版的页面一套样子 |
 
    - 和参考截图并排看（参考截图留在仓库外，不提交）。逐页对照：导航栏按钮的位置和形状、有没有标题、列表样式、卡片圆角和有没有描边、
      底部浮动条、空状态、深浅色。差别记进进度文件，改完再出一次截图。

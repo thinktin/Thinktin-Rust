@@ -3,7 +3,7 @@ import ThinktinKit
 
 /// 截图脚本的 `THINKTIN_OPEN_SCREEN`（tools/apple/screenshots.sh；只有 Debug 构建认，`ThinktinApp` 启动时调）：打开首页
 /// 第一个实例（演示数据里是“写作助手”）的对应页面。和深链一样走 `Router.show`，实例的页面返回栈是“首页 → 对话 → 目标页”
-/// （docs/ios-ui-redesign.md 3.4），设置、新建 Botin 弹 sheet，搜索回首页激活搜索栏。
+/// （docs/ios-ui-redesign.md 3.4），设置、新建 Botin、新任务、引导弹 sheet，团队是“首页 → 团队”，搜索回首页激活搜索栏。
 extension AppConfiguration.OpenScreen {
     /// 在实例 `instanceID` 上要打开的页面；实例的页面（对话、计划、产出物）没有实例时为 nil。
     func route(instanceID: InstanceID?) -> AppRoute? {
@@ -14,6 +14,9 @@ extension AppConfiguration.OpenScreen {
         case .settings: .settings
         case .search: .search
         case .adopt: .adopt(agentID: nil)
+        case .teams: .teams
+        case .newtask: .newTask
+        case .onboarding: .onboarding
         }
     }
 

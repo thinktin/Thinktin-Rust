@@ -1,11 +1,12 @@
 import SwiftUI
 import ThinktinKit
 
-/// 运行树（`.runTree(id)`：流水线、委派的子运行）：深度优先排开、按层缩进，每个节点是状态点、标题（步骤名或任务的第一行，
-/// 委派的任务带 AI 标识）、所在的实例；打开时指定的那个高亮。点节点进运行详情。
+/// 运行树（`.runTree(id)`：流水线、委派的子运行）。参考里没有这一页，照第 2 节排成分组列表：深度优先排开、按层缩进，
+/// 每个节点一行（状态点、标题——步骤名或任务的第一行，委派的任务带 AI 标识——、状态和所在的 Botin），打开时指定的那个行底高亮。
+/// 点节点进运行详情（`NavigationLink`，系统画 chevron）。
 ///
-/// 12.7 补上：没结束的节点右边有停止键，右上角“停止整棵树”（都先问一句）；子步骤在等你审批、等 key、等电脑时顶上冒一条，
-/// 点了去它的运行详情；还有没结束的运行时每 5 秒刷新一次。
+/// 12.7 补上：没结束的节点右边有停止键，也能左滑、长按停止；右上“停止整棵树”（都先问一句）；子步骤在等你审批、等 key、
+/// 等电脑时顶上一组提示，点了去它的运行详情；还有没结束的运行时每 5 秒刷新一次。
 struct RunTreeScreen: View {
     let runID: RunID
 
@@ -37,52 +38,63 @@ private struct RunTreeContent: View {
     var body: some View {
         let model = self.model
         let canStop = model.hasActiveRuns
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
-                if let error = model.error, !error.isOffline {
+        List {
+            if let error = model.error, !error.isOffline {
+                Section {
                     ErrorBanner(error) { Task { await model.load() } }
-                }
-                if let error = model.stopError {
-                    ErrorBanner(error, onDismiss: { model.clearStopError() })
-                }
-                if let run = model.attention {
-                    attentionBanner(run)
-                }
-                if model.isMissing {
-                    ContentUnavailableView(
-                        ConversationText.runMissing(language), systemImage: "questionmark.square.dashed")
-                } else if !model.hasLoaded {
-                    ConversationLoadingView()
-                }
-                ForEach(model.nodes) { node in
-                    HStack(spacing: Metrics.Spacing.xxs) {
-                        Button {
-                            router.open(.run(node.id))
-                        } label: {
-                            RunTreeRow(
-                                node: node, instanceName: app.instances.first { $0.id == node.run.instanceID }?.name)
-                        }
-                        .buttonStyle(.plain)
-                        if canStop { stopButton(node) }
-                    }
+                        .clearListRow()
                 }
             }
-            .padding(Metrics.Spacing.m)
-            .frame(maxWidth: Metrics.readableWidth)
-            .frame(maxWidth: .infinity)
+            if let error = model.stopError {
+                Section {
+                    ErrorBanner(error, onDismiss: { model.clearStopError() })
+                        .clearListRow()
+                }
+            }
+            if let run = model.attention {
+                Section {
+                    NavigationLink(value: AppRoute.run(run.id)) {
+                        Label {
+                            Text(TeamsText.attention(run, language: language))
+                                .typography(.subheadline)
+                                .foregroundStyle(Theme.ink)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } icon: {
+                            Image(systemName: "exclamationmark.bubble")
+                                .foregroundStyle(StatusTone.waiting.color)
+                        }
+                    }
+                }
+                .themedRow()
+            }
+            if !model.nodes.isEmpty {
+                Section {
+                    ForEach(model.nodes) { node in
+                        nodeRow(node, canStop: canStop)
+                    }
+                }
+                .themedRow()
+            }
         }
-        .background(Theme.paper)
-        .navigationTitle(AppRoute.runTree(model.runID).title(language))
-        #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-        #endif
+        .insetGroupedList()
+        .themedGroupedBackground()
+        .overlay {
+            if model.isMissing {
+                ContentUnavailableView(
+                    ConversationText.runMissing(language), systemImage: "questionmark.square.dashed")
+            } else if !model.hasLoaded {
+                ConversationLoadingView()
+            }
+        }
+        .inlineNavigationTitle(AppRoute.runTree(model.runID).title(language))
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                if canStop {
+            if canStop {
+                ToolbarItem(placement: ToolbarSlot.trailing) {
                     Button(role: .destructive) {
                         stopTarget = .tree
                     } label: {
-                        Label(ConversationText.detailLabel(.stopTree, language: language), systemImage: "stop.circle")
+                        Label(ConversationText.detailLabel(.stopTree, language: language), systemImage: "stop.fill")
+                            .labelStyle(.iconOnly)
                     }
                     .disabled(app.isOffline || !model.stopping.isEmpty)
                 }
@@ -113,6 +125,42 @@ private struct RunTreeContent: View {
         }
     }
 
+    /// 一个节点：`NavigationLink` 进运行详情，没结束的右边停止键（也能左滑、长按停止）；打开时指定的那个行底高亮。
+    private func nodeRow(_ node: RunTreeNode, canStop: Bool) -> some View {
+        let zh = language == .chinese
+        let canStopNode = canStop && node.run.state.isActive && !app.isOffline
+        return NavigationLink(value: AppRoute.run(node.id)) {
+            HStack(spacing: Metrics.Spacing.xs) {
+                RunTreeRow(node: node, instanceName: app.instances.first { $0.id == node.run.instanceID }?.name)
+                if canStop { stopButton(node) }
+            }
+        }
+        .listRowBackground(node.isFocus ? Theme.userBubble : Theme.paperElevated)
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            if canStopNode {
+                Button(role: .destructive) {
+                    stopTarget = .node(node.id)
+                } label: {
+                    Label(ConversationText.detailLabel(.stop, language: language), systemImage: "stop.fill")
+                }
+            }
+        }
+        .contextMenu {
+            Button {
+                router.open(.run(node.id))
+            } label: {
+                Label(AppRoute.run(node.id).title(language), systemImage: "list.bullet.rectangle")
+            }
+            if canStopNode {
+                Button(role: .destructive) {
+                    stopTarget = .node(node.id)
+                } label: {
+                    Label(zh ? "停止“\(node.title)”" : "Stop “\(node.title)”", systemImage: "stop.fill")
+                }
+            }
+        }
+    }
+
     private var stopTitle: String {
         stopTarget == .tree
             ? ConversationText.detailLabel(.stopTree, language: language)
@@ -125,60 +173,23 @@ private struct RunTreeContent: View {
         let zh = language == .chinese
         if model.stopping.contains(node.id) {
             ProgressView()
-                .frame(width: Metrics.minTapTarget, height: Metrics.minTapTarget)
+                .controlSize(.small)
         } else if node.run.state.isActive {
             Button {
                 stopTarget = .node(node.id)
             } label: {
-                Image(systemName: "stop.fill")
+                Image(systemName: "stop.circle.fill")
+                    .font(.title3)
                     .foregroundStyle(StatusTone.failure.color)
-                    .frame(width: Metrics.minTapTarget, height: Metrics.minTapTarget)
-                    .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.borderless)
             .disabled(app.isOffline)
             .accessibilityLabel(Text(zh ? "停止“\(node.title)”" : "Stop “\(node.title)”"))
-        } else {
-            Color.clear
-                .frame(width: Metrics.minTapTarget, height: Metrics.minTapTarget)
-                .accessibilityHidden(true)
         }
-    }
-
-    /// 子步骤在等你：点了去它的运行详情处理。
-    private func attentionBanner(_ run: Run) -> some View {
-        Button {
-            router.open(.run(run.id))
-        } label: {
-            HStack(spacing: Metrics.Spacing.s) {
-                Image(systemName: "exclamationmark.bubble")
-                    .foregroundStyle(StatusTone.waiting.color)
-                    .accessibilityHidden(true)
-                Text(TeamsText.attention(run, language: language))
-                    .typography(.subheadline)
-                    .foregroundStyle(Theme.ink)
-                    .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.right")
-                    .imageScale(.small)
-                    .foregroundStyle(Theme.inkTertiary)
-                    .accessibilityHidden(true)
-            }
-            .padding(Metrics.Spacing.s)
-            .frame(maxWidth: .infinity, minHeight: Metrics.minTapTarget, alignment: .leading)
-            .background(
-                Theme.paperElevated, in: RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous)
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isButton)
     }
 }
 
-/// 运行树的一个节点。
+/// 运行树的一个节点（行的内容）：状态点、标题、状态 · Botin · 子运行数、AI 标识；按层缩进。
 struct RunTreeRow: View {
     let node: RunTreeNode
     let instanceName: String?
@@ -206,25 +217,18 @@ struct RunTreeRow: View {
                 if node.titleIsAIGenerated { AIGeneratedLabel() }
             }
             Spacer(minLength: 0)
-            Image(systemName: "chevron.right")
-                .imageScale(.small)
-                .foregroundStyle(Theme.inkTertiary)
-                .accessibilityHidden(true)
         }
-        .padding(Metrics.Spacing.s)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            node.isFocus ? Theme.userBubble : Theme.paperElevated,
-            in: RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous)
-        )
+        .padding(.vertical, Metrics.Spacing.xxs)
         .padding(.leading, CGFloat(min(node.depth, 6)) * Metrics.Spacing.l)
-        .contentShape(Rectangle())
+        .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(node.isFocus ? .isSelected : [])
     }
 }
 
-/// 进行中（`.activeRuns`）：跨实例、还没结束的运行，等你处理的在前。点开进运行详情。
+/// 进行中（`.activeRuns`，工作台菜单的“进行中”）。参考里没有这一页，照第 2 节排成分组列表：跨 Botin、还没结束的运行，
+/// “等你处理”一组在前，其余一组；一行是 Botin 头像（带运行状态角标）、任务（两行）、状态 · Botin · 时间、AI 标识，
+/// `NavigationLink` 进运行详情。还有更多时最后一行“加载更多”。没有时 `ContentUnavailableView`。
 struct ActiveRunsScreen: View {
     @Environment(\.client) private var client
 
@@ -246,27 +250,31 @@ private struct ActiveRunsContent: View {
 
     var body: some View {
         let model = self.model
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                if let error = model.error, !error.isOffline {
+        List {
+            if let error = model.error, !error.isOffline {
+                Section {
                     ErrorBanner(error) { Task { await model.load() } }
+                        .clearListRow()
                 }
-                if model.hasLoaded && model.runs.isEmpty {
-                    ContentUnavailableView(
-                        ConversationText.activeRunsEmpty(language), systemImage: "checkmark.circle",
-                        description: Text(ConversationText.activeRunsEmptyMessage(language)))
-                } else if !model.hasLoaded {
-                    ConversationLoadingView()
-                }
-                if !model.waiting.isEmpty {
-                    sectionHeader(ConversationText.needsYou(language))
+            }
+            if !model.waiting.isEmpty {
+                Section {
                     ForEach(model.waiting) { run in row(run) }
+                } header: {
+                    Text(ConversationText.needsYou(language)).textCase(nil)
                 }
-                if !model.others.isEmpty {
-                    sectionHeader(AppRoute.activeRuns.title(language))
+                .themedRow()
+            }
+            if !model.others.isEmpty {
+                Section {
                     ForEach(model.others) { run in row(run) }
+                } header: {
+                    Text(AppRoute.activeRuns.title(language)).textCase(nil)
                 }
-                if model.hasMore {
+                .themedRow()
+            }
+            if model.hasMore {
+                Section {
                     Button {
                         Task { await model.loadMore() }
                     } label: {
@@ -274,71 +282,64 @@ private struct ActiveRunsContent: View {
                             if model.isLoadingMore { ProgressView().controlSize(.small) }
                             Text(ConversationText.loadMore(language))
                         }
-                        .typography(.footnote)
-                        .foregroundStyle(Theme.accent)
-                        .frame(maxWidth: .infinity, minHeight: Metrics.minTapTarget)
+                        .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.plain)
                     .disabled(model.isLoadingMore)
                 }
+                .themedRow()
             }
-            .padding(Metrics.Spacing.m)
-            .frame(maxWidth: Metrics.readableWidth)
-            .frame(maxWidth: .infinity)
         }
-        .background(Theme.paper)
-        .navigationTitle(AppRoute.activeRuns.title(language))
-        #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-        #endif
+        .insetGroupedList()
+        .themedGroupedBackground()
+        .overlay {
+            if model.hasLoaded && model.runs.isEmpty {
+                ContentUnavailableView(
+                    ConversationText.activeRunsEmpty(language), systemImage: "checkmark.circle",
+                    description: Text(ConversationText.activeRunsEmptyMessage(language)))
+            } else if !model.hasLoaded {
+                ConversationLoadingView()
+            }
+        }
+        .inlineNavigationTitle(AppRoute.activeRuns.title(language))
         .refreshable { await model.load() }
         .task { await model.load() }
     }
 
-    private func sectionHeader(_ title: String) -> some View {
-        Text(title)
-            .typography(.title3)
-            .foregroundStyle(Theme.ink)
-            .padding(.top, Metrics.Spacing.xs)
-            .accessibilityAddTraits(.isHeader)
-    }
-
     private func row(_ run: Run) -> some View {
-        Button {
-            router.open(.run(run.id))
-        } label: {
-            HStack(alignment: .firstTextBaseline, spacing: Metrics.Spacing.s) {
-                StatusDot(run.state)
-                VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
+        let instance = app.instances.first { $0.id == run.instanceID }
+        return NavigationLink(value: AppRoute.run(run.id)) {
+            HStack(alignment: .top, spacing: Metrics.Spacing.s) {
+                if let instance {
+                    InstanceAvatar(
+                        instance.name, appearance: app.appearances.resolved(for: instance.id), size: 32,
+                        badge: .run(run.state)
+                    )
+                    .accessibilityHidden(true)
+                } else {
+                    StatusDot(run.state)
+                        .frame(width: 32, height: 32)
+                }
+                VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
                     Text(verbatim: run.prompt)
-                        .typography(.subheadline)
+                        .typography(.body)
                         .foregroundStyle(Theme.ink)
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)
-                    HStack(spacing: Metrics.Spacing.xs) {
-                        Text(run.state.localizedName(language))
-                        if let name = app.instances.first(where: { $0.id == run.instanceID })?.name {
-                            Text(verbatim: name)
-                        }
-                        Text(Formatting.relativeTime(run.createdAt, language: language))
-                    }
-                    .typography(.caption)
+                    Text(
+                        verbatim: [
+                            run.state.localizedName(language), instance?.name,
+                            Formatting.relativeTime(run.createdAt, language: language),
+                        ].compactMap { $0 }.joined(separator: " · ")
+                    )
+                    .typography(.subheadline)
                     .foregroundStyle(Theme.inkSecondary)
+                    .lineLimit(1)
                     if AIGeneratedField.prompt(of: run).isAIGenerated { AIGeneratedLabel() }
                 }
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.right")
-                    .imageScale(.small)
-                    .foregroundStyle(Theme.inkTertiary)
-                    .accessibilityHidden(true)
             }
-            .padding(Metrics.Spacing.s)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .cardSurface()
-            .contentShape(Rectangle())
+            .padding(.vertical, Metrics.Spacing.unit / 2)
+            .accessibilityElement(children: .combine)
         }
-        .buttonStyle(.plain)
-        .accessibilityElement(children: .combine)
     }
 }
 

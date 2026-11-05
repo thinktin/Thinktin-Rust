@@ -17,7 +17,7 @@ struct ApprovalCardView: View {
 
     var body: some View {
         let record = model.approvalRecord(for: card)
-        Card(bordered: false) {
+        BubbleCard {
             HStack(spacing: Metrics.Spacing.xs) {
                 Image(systemName: card.isPending ? "hand.raised" : "checkmark.shield")
                     .foregroundStyle(card.isPending ? Theme.warning : Theme.inkSecondary)
@@ -191,7 +191,7 @@ struct VaultRequestCardView: View {
         let record = model.vaultRecord(for: card)
         let fields = card.fields.isEmpty ? (record?.fields ?? [.username, .password]) : card.fields
         let busy = model.busyVaultRequests.contains(card.requestID)
-        Card(bordered: false) {
+        BubbleCard {
             HStack(spacing: Metrics.Spacing.xs) {
                 Image(systemName: "key")
                     .foregroundStyle(status == .pending ? Theme.warning : Theme.inkSecondary)

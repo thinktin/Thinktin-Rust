@@ -404,21 +404,25 @@ struct CredentialRenameSheet: View {
         let vendor = model.credential.map {
             ModelsText.vendorName($0.vendor, vendors: model.vendors, language: language)
         }
-        ScrollView {
-            VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
+        Form {
+            Section {
                 ModelsField(
                     title: zh ? "备注" : "Note", text: $draft, prompt: vendor,
                     problem: problem?.message(language),
                     hint: zh
                         ? "最多 \(Credential.maxLabelLength) 个字；留空就显示厂商名。"
                         : "Up to \(Credential.maxLabelLength) characters; leave empty to show the vendor name.")
-                if let error = model.renameError {
+            }
+            .themedRow()
+            if let error = model.renameError {
+                Section {
                     ErrorBanner(error)
+                        .clearListRow()
                 }
             }
-            .pageLayout()
         }
-        .background(Theme.paper)
+        .formStyle(.grouped)
+        .themedGroupedBackground()
         .inlineNavigationTitle(zh ? "改备注" : "Edit note")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
@@ -459,8 +463,8 @@ struct CredentialDailyLimitSheet: View {
     var body: some View {
         let zh = language == .chinese
         let problem = Self.problem(draft)
-        ScrollView {
-            VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
+        Form {
+            Section {
                 ModelsField(
                     title: zh ? "每日上限（token 数）" : "Daily limit (tokens)", text: $draft,
                     prompt: zh ? "不限" : "No limit", kind: .number, problem: problem?.message(language),
@@ -468,13 +472,17 @@ struct CredentialDailyLimitSheet: View {
                         ? "留空就是不限。放宽或取消后，等 key 的任务马上重试。"
                         : "Leave it empty for no limit. Raising or removing it lets tasks waiting for a key retry right away."
                 )
-                if let error = model.dailyLimitError {
+            }
+            .themedRow()
+            if let error = model.dailyLimitError {
+                Section {
                     ErrorBanner(error)
+                        .clearListRow()
                 }
             }
-            .pageLayout()
         }
-        .background(Theme.paper)
+        .formStyle(.grouped)
+        .themedGroupedBackground()
         .inlineNavigationTitle(zh ? "每日上限" : "Daily limit")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
@@ -531,33 +539,40 @@ struct ReplaceCredentialSheet: View {
             }
             return nil
         }()
-        ScrollView {
-            VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                Text(
-                    zh
-                        ? "换成同一个厂商（\(vendor ?? "")）的新 key。模型路由不用改，等 key 的任务会接着跑。"
-                        : "Replace it with a new key from the same vendor (\(vendor ?? "")). Routes stay as they are, and "
-                            + "tasks waiting for a key resume."
-                )
-                .typography(.subheadline)
-                .foregroundStyle(Theme.inkSecondary)
-                .fixedSize(horizontal: false, vertical: true)
+        Form {
+            Section {
                 ModelsField(
                     title: zh ? "新的 API key" : "New API key", text: $newKey,
                     prompt: zh ? "粘贴新的 key" : "Paste the new key", kind: .secret, problem: shownProblem,
                     hint: zh ? "旧的 key 会被覆盖。" : "The old key is overwritten.")
                 if let rejection = model.replaceRejection, !rejection.concernsKey {
-                    InlineNotice(
-                        systemImage: "exclamationmark.octagon", tone: .failure,
-                        text: rejection.message(vendorName: vendor ?? "", language: language))
+                    Label {
+                        Text(rejection.message(vendorName: vendor ?? "", language: language))
+                            .typography(.subheadline)
+                            .foregroundStyle(Theme.ink)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } icon: {
+                        Image(systemName: "exclamationmark.octagon")
+                            .foregroundStyle(StatusTone.failure.color)
+                    }
                 }
-                if let error = model.replaceError {
+            } footer: {
+                Text(
+                    zh
+                        ? "换成同一个厂商（\(vendor ?? "")）的新 key。模型路由不用改，等 key 的任务会接着跑。"
+                        : "Replace it with a new key from the same vendor (\(vendor ?? "")). Routes stay as they are, and "
+                            + "tasks waiting for a key resume.")
+            }
+            .themedRow()
+            if let error = model.replaceError {
+                Section {
                     ErrorBanner(error)
+                        .clearListRow()
                 }
             }
-            .pageLayout()
         }
-        .background(Theme.paper)
+        .formStyle(.grouped)
+        .themedGroupedBackground()
         .inlineNavigationTitle(zh ? "换 key" : "Replace key")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {

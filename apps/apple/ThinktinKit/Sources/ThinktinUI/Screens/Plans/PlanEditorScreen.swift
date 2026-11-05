@@ -11,6 +11,10 @@ import ThinktinKit
 /// - 流水线的步骤只读，在流水线编辑器（`.pipelineEditor`，12.7）里改。
 ///
 /// 保存按钮在本地校验通过、有改动时才能点；有没保存的改动时下拉不能关，“取消”先问一句。
+///
+/// 改版（规范 2.5、2.6、4.9.6 的字段写法）：`Form`，左上 `CloseButton`、右上 `ConfirmButton("创建" / "保存")`；Botin、
+/// 错过的怎么补是行内 `Picker(.inline)`（系统打勾），策略的几项是 `Picker(.menu)`，输入框标签在上（`FormTextField`），
+/// 提示放在组里一行带色调图标的字，问题写在组脚注。
 struct PlanEditorScreen: View {
     let mode: PlanEditorModel.Mode
     var plan: Plan?
@@ -43,38 +47,44 @@ private struct PlanEditorContent: View {
     var body: some View {
         let zh = language == .chinese
         let model = self.model
-        ScrollView {
-            VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                if model.isMissing {
-                    EmptyStateView(
-                        systemImage: "calendar.badge.exclamationmark", title: zh ? "找不到这个计划" : "Plan not found",
-                        message: zh ? "它可能已经被删除了。" : "It may have been deleted.")
-                } else if model.needsLoad {
-                    if let error = model.loadError {
-                        ErrorBanner(error) { Task { await model.load() } }
-                    } else {
-                        LoadingStateView()
-                    }
-                } else {
-                    form
+        Form {
+            if !model.isMissing, !model.needsLoad {
+                formSections
+            } else if !model.isMissing, let error = model.loadError {
+                Section {
+                    ErrorBanner(error) { Task { await model.load() } }
+                        .clearListRow()
                 }
             }
-            .pageLayout()
         }
+        .formStyle(.grouped)
+        .themedGroupedBackground()
         .scrollDismissesKeyboard(.interactively)
-        .background(Theme.paper)
+        .overlay {
+            if model.isMissing {
+                ContentUnavailableView {
+                    Label(zh ? "找不到这个计划" : "Plan not found", systemImage: "calendar.badge.exclamationmark")
+                } description: {
+                    Text(zh ? "它可能已经被删除了。" : "It may have been deleted.")
+                }
+            } else if model.needsLoad, model.loadError == nil {
+                ProgressView()
+            }
+        }
         .inlineNavigationTitle(
             model.isEditing ? AppRoute.editPlan("").title(language) : AppRoute.newPlan(instanceID: nil).title(language)
         )
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                Button(zh ? "取消" : "Cancel") {
+                CloseButton {
                     if model.hasChanges { isConfirmingDiscard = true } else { onFinish(nil) }
                 }
                 .disabled(model.isSaving)
             }
             ToolbarItem(placement: .confirmationAction) {
-                Button(saveTitle) {
+                ConfirmButton(
+                    model.isEditing ? (zh ? "保存" : "Save") : (zh ? "创建" : "Create"), isWorking: model.isSaving
+                ) {
                     Task {
                         if let saved = await model.save() { onFinish(saved) }
                     }
@@ -100,35 +110,34 @@ private struct PlanEditorContent: View {
         }
     }
 
-    private var saveTitle: String {
-        let zh = language == .chinese
-        if model.isSaving { return zh ? "正在保存…" : "Saving…" }
-        if model.isEditing { return zh ? "保存" : "Save" }
-        return zh ? "创建" : "Create"
-    }
-
     // MARK: 表单
 
     @ViewBuilder
-    private var form: some View {
+    private var formSections: some View {
         let zh = language == .chinese
         let model = self.model
         if let error = model.saveError {
-            if model.isPartiallySaved {
-                InlineNotice(
-                    systemImage: "exclamationmark.triangle", tone: .waiting,
-                    text: zh
-                        ? "一部分改动已经保存了，剩下的没存上。再点一次保存只做剩下的。"
-                        : "Some changes were saved and some weren't. Saving again does only the rest.")
+            Section {
+                if model.isPartiallySaved {
+                    NoticeRow(
+                        systemImage: "exclamationmark.triangle", tone: .waiting,
+                        text: zh
+                            ? "一部分改动已经保存了，剩下的没存上。再点一次保存只做剩下的。"
+                            : "Some changes were saved and some weren't. Saving again does only the rest.")
+                }
+                ErrorBanner(error, onDismiss: { model.clearSaveError() })
+                    .clearListRow()
             }
-            ErrorBanner(error, onDismiss: { model.clearSaveError() })
         }
         if let original = model.original, original.awaitingConfirmation {
-            InlineNotice(
-                systemImage: "hourglass", tone: .waiting,
-                text: zh
-                    ? "这个计划在等你确认。保存后回到确认页，按改好的内容确认。"
-                    : "This plan is waiting for your review. After saving, confirm the updated version.")
+            Section {
+                NoticeRow(
+                    systemImage: "hourglass", tone: .waiting,
+                    text: zh
+                        ? "这个计划在等你确认。保存后回到确认页，按改好的内容确认。"
+                        : "This plan is waiting for your review. After saving, confirm the updated version.")
+            }
+            .themedRow()
         }
         instanceSection
         basicsSection
@@ -136,13 +145,17 @@ private struct PlanEditorContent: View {
         policySection
         catchUpSection
         if !model.steps.isEmpty {
-            SectionHeader(title: zh ? "流水线" : "Pipeline")
-            InlineNotice(
-                systemImage: "point.3.connected.trianglepath.dotted", tone: .neutral,
-                text: zh
-                    ? "这个计划是 \(model.steps.count) 步的流水线。步骤在流水线编辑器里改，这里保存不会动它们。"
-                    : "This plan is a \(model.steps.count)-step pipeline. Steps are edited in the pipeline editor; "
-                        + "saving here leaves them as they are.")
+            Section {
+                NoticeRow(
+                    systemImage: "point.3.connected.trianglepath.dotted", tone: .neutral,
+                    text: zh
+                        ? "这个计划是 \(model.steps.count) 步的流水线。步骤在流水线编辑器里改，这里保存不会动它们。"
+                        : "This plan is a \(model.steps.count)-step pipeline. Steps are edited in the pipeline editor; "
+                            + "saving here leaves them as they are.")
+            } header: {
+                Text(zh ? "流水线" : "Pipeline").textCase(nil)
+            }
+            .themedRow()
         }
     }
 
@@ -150,30 +163,31 @@ private struct PlanEditorContent: View {
     private var instanceSection: some View {
         let zh = language == .chinese
         let model = self.model
-        SectionHeader(title: zh ? "在哪个 Botin 上运行" : "Runs on")
-        if model.isEditing {
-            GroupedSection {
-                ListRow(
+        Section {
+            if model.isEditing {
+                LabeledRow(
                     systemImage: "cpu", title: instanceName(model.instanceID),
                     detail: zh ? "计划建好后不能换 Botin。" : "A plan's Botin can't be changed.")
-            }
-        } else if app.instances.isEmpty {
-            InlineNotice(
-                systemImage: "exclamationmark.triangle", tone: .waiting,
-                text: zh ? "还没有 Botin，先新建一个。" : "You don't have any Botins yet. Create one first.")
-        } else {
-            GroupedSection {
-                ForEach(app.instances) { instance in
-                    if instance.id != app.instances.first?.id { Divider() }
-                    ChoiceRow(
-                        title: instance.name, detail: AgentsText.displayName(agentID: instance.agentID),
-                        isSelected: model.instanceID == instance.id
-                    ) {
-                        model.instanceID = instance.id
+            } else if app.instances.isEmpty {
+                NoticeRow(
+                    systemImage: "exclamationmark.triangle", tone: .waiting,
+                    text: zh ? "还没有 Botin，先新建一个。" : "You don't have any Botins yet. Create one first.")
+            } else {
+                Picker(zh ? "在哪个 Botin 上运行" : "Runs on", selection: $model.instanceID) {
+                    ForEach(app.instances) { instance in
+                        PlansOptionLabel(
+                            title: instance.name, detail: AgentsText.displayName(agentID: instance.agentID)
+                        )
+                        .tag(InstanceID?.some(instance.id))
                     }
                 }
+                .pickerStyle(.inline)
+                .labelsHidden()
             }
+        } header: {
+            Text(zh ? "在哪个 Botin 上运行" : "Runs on").textCase(nil)
         }
+        .themedRow()
     }
 
     private func instanceName(_ id: InstanceID?) -> String {
@@ -181,36 +195,39 @@ private struct PlanEditorContent: View {
         return app.instances.first { $0.id == id }?.name ?? id.rawValue
     }
 
-    @ViewBuilder
     private var basicsSection: some View {
         let zh = language == .chinese
-        SectionHeader(title: zh ? "做什么" : "What it does")
-        PlansTextField(
-            title: zh ? "标题" : "Title", text: $model.title, prompt: zh ? "比如：每日新闻摘要" : "For example: Daily news digest",
-            limit: Plan.maxTitleLength, count: model.titleLength,
-            problem: model.title.isEmpty ? nil : model.titleProblem.map { PlanFormProblem.title($0).message(language) })
-        PlansTextField(
-            title: zh ? "目标" : "Goal", text: $model.goal,
-            prompt: zh
-                ? "每次触发时交给 Botin 的任务，写清楚要做什么、结果放哪里。"
-                : "The task the Botin gets each time. Say what to do and where results go.",
-            multiline: true, limit: Plan.maxGoalLength, count: model.goalLength,
-            problem: model.goal.isEmpty ? nil : model.goalProblem.map { PlanFormProblem.goal($0).message(language) })
+        return Section {
+            FormTextField(
+                title: zh ? "标题" : "Title", text: $model.title,
+                prompt: zh ? "比如：每日新闻摘要" : "For example: Daily news digest",
+                limit: Plan.maxTitleLength, count: model.titleLength,
+                problem: model.title.isEmpty
+                    ? nil : model.titleProblem.map { PlanFormProblem.title($0).message(language) })
+            FormTextField(
+                title: zh ? "目标" : "Goal", text: $model.goal,
+                prompt: zh
+                    ? "每次触发时交给 Botin 的任务，写清楚要做什么、结果放哪里。"
+                    : "The task the Botin gets each time. Say what to do and where results go.",
+                multiline: true, limit: Plan.maxGoalLength, count: model.goalLength,
+                problem: model.goal.isEmpty
+                    ? nil : model.goalProblem.map { PlanFormProblem.goal($0).message(language) })
+        } header: {
+            Text(zh ? "做什么" : "What it does").textCase(nil)
+        }
+        .themedRow()
     }
 
-    @ViewBuilder
     private var triggersSection: some View {
         let zh = language == .chinese
         let model = self.model
-        SectionHeader(title: zh ? "什么时候运行" : "When it runs")
-        GroupedSection {
+        return Section {
             ForEach(model.triggers) { item in
                 PlanEditorTriggerRow(item: item, draft: model.draft(for: item.id)) { schedule in
                     model.updateTrigger(item.id, to: schedule)
                 } onDelete: {
                     model.removeTrigger(item.id)
                 }
-                Divider()
             }
             NavigationLink {
                 TriggerEditorView(
@@ -219,20 +236,20 @@ private struct PlanEditorContent: View {
                     model.addTrigger(schedule)
                 }
             } label: {
-                ListRow(
-                    systemImage: "plus", title: zh ? "添加触发规则" : "Add schedule",
-                    detail: model.canAddTrigger
-                        ? nil : (zh ? "最多 \(Plan.maxTriggers) 条" : "Up to \(Plan.maxTriggers)"))
+                Label(zh ? "添加触发规则" : "Add schedule", systemImage: "plus")
             }
-            .buttonStyle(.plain)
             .disabled(!model.canAddTrigger)
+        } header: {
+            Text(zh ? "什么时候运行" : "When it runs").textCase(nil)
+        } footer: {
+            if model.triggersProblem == .noTriggers && model.hasChanges {
+                Text(PlanFormProblem.noTriggers.message(language))
+                    .foregroundStyle(StatusTone.failure.color)
+            } else if !model.canAddTrigger {
+                Text(zh ? "最多 \(Plan.maxTriggers) 条" : "Up to \(Plan.maxTriggers)")
+            }
         }
-        if model.triggersProblem == .noTriggers && model.hasChanges {
-            Text(PlanFormProblem.noTriggers.message(language))
-                .typography(.footnote)
-                .foregroundStyle(StatusTone.failure.color)
-                .padding(.horizontal, Metrics.Spacing.xs)
-        }
+        .themedRow()
     }
 
     @ViewBuilder
@@ -240,54 +257,56 @@ private struct PlanEditorContent: View {
         let zh = language == .chinese
         let model = self.model
         let policy = model.policy
-        SectionHeader(title: zh ? "策略" : "Policy")
-        GroupedSection {
+        Section {
             NavigationLink {
                 PlanToolsPicker(policy: $model.policy)
             } label: {
-                ListRow(
+                LabeledRow(
                     systemImage: "checkmark.shield", title: zh ? "预授权的工具" : "Pre-approved tools",
                     detail: PlansText.toolsSummary(policy.preauthorizedTools, language: language),
                     detailTone: policy.preauthorizedTools.contains(where: PlansText.isRiskyTool) ? .waiting : nil)
             }
-            .buttonStyle(.plain)
-            Divider()
             PlansMenuRow(
                 systemImage: "hand.raised", title: zh ? "审批等多久" : "Approval wait",
                 options: PlansText.presets(PlansText.timeoutPresets, including: policy.approvalTimeoutSecs),
                 selection: $model.policy.approvalTimeoutSecs, name: { PlansText.duration($0, language: language) },
                 detail: zh ? "Botin 要用没预授权的工具时，等你批准多久。" : "How long an approval request waits for you.")
-            Divider()
             PlansMenuRow(
                 systemImage: "exclamationmark.arrow.circlepath", title: zh ? "超时后" : "After a timeout",
                 options: timeoutActions(including: policy.onApprovalTimeout),
                 selection: $model.policy.onApprovalTimeout,
                 name: { PlansText.timeoutActionName($0, language: language) },
                 detail: PlansText.timeoutActionDetail(policy.onApprovalTimeout, language: language))
-            Divider()
             PlansMenuRow(
                 systemImage: "hourglass", title: zh ? "等电脑、等 key 多久" : "Wait for a computer or key",
                 options: PlansText.presets(PlansText.timeoutPresets, including: policy.waitTimeoutSecs),
                 selection: $model.policy.waitTimeoutSecs, name: { PlansText.duration($0, language: language) })
+        } header: {
+            Text(zh ? "策略" : "Policy").textCase(nil)
         }
-        SectionHeader(title: zh ? "每次运行的上限" : "Per-run limits")
-        GroupedSection {
+        .themedRow()
+        Section {
             PlansMenuRow(
                 systemImage: "timer", title: zh ? "最长跑多久" : "Longest run",
                 options: PlansText.presets(PlansText.durationPresets, including: policy.maxDurationSecs),
                 selection: $model.policy.maxDurationSecs, name: { PlansText.duration($0, language: language) })
+            FormTextField(
+                title: zh ? "最多用多少 token" : "Token limit per run", text: $model.policy.maxTokens,
+                prompt: zh ? "不限" : "No limit", problem: policy.problem(for: .maxTokens)?.message(language),
+                numeric: true)
+            FormTextField(
+                title: zh ? "最多几步（工具调用）" : "Step limit per run (tool calls)", text: $model.policy.maxSteps,
+                prompt: zh ? "不限" : "No limit", problem: policy.problem(for: .maxSteps)?.message(language),
+                numeric: true)
+            FormTextField(
+                title: zh ? "每天最多用多少 token（整个计划）" : "Daily token limit (whole plan)",
+                text: $model.policy.dailyTokenLimit, prompt: zh ? "不限" : "No limit",
+                problem: policy.problem(for: .dailyTokenLimit)?.message(language),
+                hint: zh ? "超过后当天不再运行。" : "Once reached, the plan doesn't run again that day.", numeric: true)
+        } header: {
+            Text(zh ? "每次运行的上限" : "Per-run limits").textCase(nil)
         }
-        PlansTextField(
-            title: zh ? "最多用多少 token" : "Token limit per run", text: $model.policy.maxTokens,
-            prompt: zh ? "不限" : "No limit", problem: policy.problem(for: .maxTokens)?.message(language), numeric: true)
-        PlansTextField(
-            title: zh ? "最多几步（工具调用）" : "Step limit per run (tool calls)", text: $model.policy.maxSteps,
-            prompt: zh ? "不限" : "No limit", problem: policy.problem(for: .maxSteps)?.message(language), numeric: true)
-        PlansTextField(
-            title: zh ? "每天最多用多少 token（整个计划）" : "Daily token limit (whole plan)",
-            text: $model.policy.dailyTokenLimit, prompt: zh ? "不限" : "No limit",
-            problem: policy.problem(for: .dailyTokenLimit)?.message(language),
-            hint: zh ? "超过后当天不再运行。" : "Once reached, the plan doesn't run again that day.", numeric: true)
+        .themedRow()
     }
 
     private func timeoutActions(including current: ApprovalTimeoutAction) -> [ApprovalTimeoutAction] {
@@ -295,28 +314,31 @@ private struct PlanEditorContent: View {
         return known.contains(current) ? known : known + [current]
     }
 
-    @ViewBuilder
     private var catchUpSection: some View {
         let zh = language == .chinese
         let model = self.model
         let options =
             CatchUp.knownCases.contains(model.catchUp) ? CatchUp.knownCases : CatchUp.knownCases + [model.catchUp]
-        SectionHeader(title: zh ? "错过的怎么补（平台停机时）" : "Missed runs (during downtime)")
-        GroupedSection {
-            ForEach(options, id: \.self) { option in
-                if option != options.first { Divider() }
-                ChoiceRow(
-                    title: PlansText.catchUpName(option, language: language),
-                    detail: PlansText.catchUpDetail(option, language: language), isSelected: model.catchUp == option
-                ) {
-                    model.catchUp = option
+        return Section {
+            Picker(zh ? "错过的怎么补" : "Missed runs", selection: $model.catchUp) {
+                ForEach(options, id: \.self) { option in
+                    PlansOptionLabel(
+                        title: PlansText.catchUpName(option, language: language),
+                        detail: PlansText.catchUpDetail(option, language: language)
+                    )
+                    .tag(option)
                 }
             }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        } header: {
+            Text(zh ? "错过的怎么补（平台停机时）" : "Missed runs (during downtime)").textCase(nil)
         }
+        .themedRow()
     }
 }
 
-/// 编辑器里的一条触发规则：描述、下一次（已有的看服务端的，新加的看本地预测），点开改，右边删。
+/// 编辑器里的一条触发规则：描述、下一次（已有的看服务端的，新加的看本地预测），点开改；右边红色减号或左滑删。
 private struct PlanEditorTriggerRow: View {
     let item: PlanTriggerItem
     let draft: TriggerDraft?
@@ -327,27 +349,28 @@ private struct PlanEditorTriggerRow: View {
 
     var body: some View {
         let zh = language == .chinese
-        HStack(spacing: Metrics.Spacing.xs) {
-            NavigationLink {
-                TriggerEditorView(
-                    draft: draft ?? TriggerDraft(), title: zh ? "修改触发规则" : "Edit schedule", dismissOnSave: true,
-                    onSave: onChange)
-            } label: {
-                ListRow(
+        NavigationLink {
+            TriggerEditorView(
+                draft: draft ?? TriggerDraft(), title: zh ? "修改触发规则" : "Edit schedule", dismissOnSave: true,
+                onSave: onChange)
+        } label: {
+            HStack(spacing: Metrics.Spacing.xs) {
+                LabeledRow(
                     systemImage: item.trigger?.isInvalid == true ? "exclamationmark.triangle" : "clock",
                     title: ScheduleDescription.describe(item.schedule, language: language), detail: detail,
                     detailTone: item.trigger?.isInvalid == true ? .failure : nil)
+                Button(action: onDelete) {
+                    Image(systemName: "minus.circle.fill")
+                        .foregroundStyle(StatusTone.failure.color)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel(Text(zh ? "删除这条规则" : "Remove this schedule"))
             }
-            .buttonStyle(.plain)
-            Button(action: onDelete) {
-                Image(systemName: "minus.circle")
-                    .foregroundStyle(StatusTone.failure.color)
-                    .frame(width: Metrics.minTapTarget, height: Metrics.minTapTarget)
-                    .contentShape(Rectangle())
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button(role: .destructive, action: onDelete) {
+                Label(zh ? "删除" : "Delete", systemImage: "trash")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(Text(zh ? "删除这条规则" : "Remove this schedule"))
-            .padding(.trailing, Metrics.Spacing.xs)
         }
     }
 
@@ -374,49 +397,43 @@ struct PlanToolsPicker: View {
     var body: some View {
         let zh = language == .chinese
         let kinds = PlansText.toolKinds + policy.preauthorizedTools.filter { !PlansText.toolKinds.contains($0) }
-        ScrollView {
-            VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
+        Form {
+            Section {
+                ForEach(kinds, id: \.self) { kind in
+                    Toggle(isOn: binding(for: kind)) {
+                        VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
+                            Text(PlansText.toolName(kind, language: language))
+                                .typography(.body)
+                                .foregroundStyle(Theme.ink)
+                            if PlansText.isRiskyTool(kind) {
+                                Text(zh ? "有风险" : "Risky")
+                                    .typography(.subheadline)
+                                    .foregroundStyle(StatusTone.waiting.color)
+                            }
+                        }
+                    }
+                }
+            } header: {
                 Text(
                     zh
                         ? "预授权的工具，Botin 按时运行时用到不用等你审批。只给它需要的；会改文件、跑命令的要谨慎。"
                         : "Pre-approved tools don't need your approval during scheduled runs. Allow only what it needs; "
                             + "be careful with tools that change files or run commands."
                 )
-                .typography(.subheadline)
-                .foregroundStyle(Theme.inkSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-                GroupedSection {
-                    ForEach(kinds, id: \.self) { kind in
-                        if kind != kinds.first { Divider() }
-                        Toggle(isOn: binding(for: kind)) {
-                            VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
-                                Text(PlansText.toolName(kind, language: language))
-                                    .typography(.body)
-                                    .foregroundStyle(Theme.ink)
-                                if PlansText.isRiskyTool(kind) {
-                                    Text(zh ? "有风险" : "Risky")
-                                        .typography(.caption)
-                                        .foregroundStyle(StatusTone.waiting.color)
-                                }
-                            }
-                        }
-                        .padding(.horizontal, Metrics.Spacing.m)
-                        .padding(.vertical, Metrics.Spacing.xs)
-                        .frame(minHeight: Metrics.minTapTarget)
-                    }
-                }
+                .textCase(nil)
+            } footer: {
                 if let problem = policy.problems.first(where: {
                     if case .tooManyTools = $0 { return true }
                     return false
                 }) {
                     Text(problem.message(language))
-                        .typography(.footnote)
                         .foregroundStyle(StatusTone.failure.color)
                 }
             }
-            .pageLayout()
+            .themedRow()
         }
-        .background(Theme.paper)
+        .formStyle(.grouped)
+        .themedGroupedBackground()
         .inlineNavigationTitle(zh ? "预授权的工具" : "Pre-approved tools")
         .tint(Theme.accent)
     }
