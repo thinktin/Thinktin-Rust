@@ -983,6 +983,11 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   `ViewModels/Account/AccountModel.swift`；组件是 `AccountSection` / `AccountRow`。
 - **要改**：换 `List`；退出登录挪到设置根页。第 1 轮。
 
+- **已做（2026-11-05，E 线，对过参考 54）**：insetGrouped `List`：第一组 `SettingsProfileRow`（44pt 头像、昵称、打码手机号，不能点）；
+  “个人资料”组昵称（进改昵称页，改昵称页换成 `Form` + 脚注里的说明和字数、右上 `ConfirmButton("保存")`）、手机号（只读，脚注不能换）；
+  红字“退出登录”单独一组（确认，脚注“只影响这台设备”）；红色垃圾桶“注销账号”单独一组，脚注写后果，进现有的注销页（注销页没改版式）。
+  改昵称没用 `.alert`（要显示字数和校验）。登录设备、全部停止不在账号页了（设置根页有）；`StopAllRow` 换成 `List` 里的系统
+  `Button(role: .destructive)` 一行。
 #### 4.9.3 用量（55）
 
 - **参考**：一张卡：“试用用量”+“N 天后结束”+ 细进度条 + 百分比。
@@ -992,6 +997,10 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   （已用 / `Credential.dailyTokenLimit`，已用量取 `usage(group: .credential, from: 东八区今天零点, timeZone: Asia/Shanghai)`——模型网关的每日上限按东八区切天
   （docs/llm-gateway.md），不能用手机本地的零点），没有上限的 key 不显示；其余保留。第 1 轮。
 
+- **已做（2026-11-05，E 线，对过参考 55）**：insetGrouped `List`：最上面“今天”一组（`UsageModel.loadToday()`：key 列表 + 东八区今天按 key 的用量，
+  每把设了上限的 key 一行 `UsageGaugeRow`：名字、右边“已用 / 上限”、系统 `Gauge(.linearCapacity)`、下面百分比，用满是警告色；没有上限的 key
+  不列，一把都没有时整组不显示），然后透明行的时间范围分段、总计一行、“每天”的图、“明细”的分组分段和行（能点开的是系统 `NavigationLink`），
+  空状态和拉不到是 `ContentUnavailableView`（`ModelsUnavailableView` 跟着换了）。
 #### 4.9.4 订阅（56）
 
 参考是一个网页容器（截图停在转圈）。ThinkTin 的 12.23 App 内购买等 1.1 拍板；做的话用 StoreKit 的 `SubscriptionStoreView` +

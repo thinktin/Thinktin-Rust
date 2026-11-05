@@ -56,10 +56,10 @@ struct AccountScreensTests {
         layoutBoth(DisplayNameEditor(client: mock, user: mock.state.user) { _ in })
         layoutBoth(DeleteAccountView(client: mock, maskedPhone: "138****8000"))
         let stopAll = StopAllModel(client: mock)
-        layoutBoth(AccountSection("安全") { StopAllRow(model: stopAll) })
+        layoutBoth(List { StopAllRow(model: stopAll) })
         await stopAll.stopAll()
         #expect(stopAll.result != nil)
-        layoutBoth(AccountSection("安全") { StopAllRow(model: stopAll) })
+        layoutBoth(List { StopAllRow(model: stopAll) })
     }
 
     @Test("登录设备：下线其他设备的 sheet、设备行")

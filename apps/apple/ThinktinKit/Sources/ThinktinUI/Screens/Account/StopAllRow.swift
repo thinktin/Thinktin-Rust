@@ -2,7 +2,8 @@ import SwiftUI
 import ThinktinKit
 
 /// “全部停止”这一行（WBS 12.2，4.6）：危险操作，点了先二次确认；做完弹出取消了几个运行、吊销了几个授权、暂停了
-/// 几个计划，并刷新抽屉的角标（进行中、待确认）。账号页的“安全”一组用它，12.12 的设置中心也可以直接放。
+/// 几个计划，并刷新工作台的角标（进行中、待确认）。设置根页的“安全”一组用它；是 `List` 里的一行（系统的
+/// `Button(role: .destructive)`，红字、灰色副标题），出错时横幅接在下面。
 struct StopAllRow: View {
     let model: StopAllModel
 
@@ -12,29 +13,28 @@ struct StopAllRow: View {
 
     var body: some View {
         let zh = language == .chinese
-        VStack(alignment: .leading, spacing: 0) {
-            Button {
+        VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
+            Button(role: .destructive) {
                 confirms = true
             } label: {
                 HStack {
-                    AccountRow(
-                        systemImage: "stop.circle", title: zh ? "全部停止" : "Stop everything",
-                        subtitle: zh ? "取消所有运行、吊销运行授权、暂停所有计划" : "Cancel all runs, revoke run grants, pause all plans",
-                        tone: .destructive)
+                    VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
+                        Text(zh ? "全部停止" : "Stop everything")
+                            .foregroundStyle(Theme.danger)
+                        Text(zh ? "取消所有运行、吊销运行授权、暂停所有计划" : "Cancel all runs, revoke run grants, pause all plans")
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.inkSecondary)
+                    }
                     if model.isStopping {
+                        Spacer(minLength: Metrics.Spacing.xs)
                         ProgressView()
-                            .controlSize(.small)
-                            .padding(.trailing, Metrics.Spacing.m)
                     }
                 }
+                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
             .disabled(model.isStopping || app.isOffline)
             if let error = model.error {
-                ErrorBanner(
-                    error, onRetry: { stop() }, onDismiss: { model.dismissError() }
-                )
-                .padding([.horizontal, .bottom], Metrics.Spacing.s)
+                ErrorBanner(error, onRetry: { stop() }, onDismiss: { model.dismissError() })
             }
         }
         .confirmationDialog(zh ? "全部停止？" : "Stop everything?", isPresented: $confirms, titleVisibility: .visible) {
@@ -64,20 +64,22 @@ struct StopAllRow: View {
 }
 
 #Preview("全部停止 · 浅色中文") {
-    AccountSection("安全") {
-        StopAllRow(model: StopAllModel(client: AccountPreviewClients.signedIn()))
+    List {
+        Section("安全") {
+            StopAllRow(model: StopAllModel(client: AccountPreviewClients.signedIn()))
+        }
     }
-    .padding()
     .previewShell()
 }
 
 #Preview("全部停止 · 深色英文、出错") {
     let mock = AccountPreviewClients.signedIn()
     let model = StopAllModel(client: mock)
-    AccountSection("Security") {
-        StopAllRow(model: model)
+    List {
+        Section("Security") {
+            StopAllRow(model: model)
+        }
     }
-    .padding()
     .task {
         mock.failNext(with: .network(message: "offline"))
         await model.stopAll()

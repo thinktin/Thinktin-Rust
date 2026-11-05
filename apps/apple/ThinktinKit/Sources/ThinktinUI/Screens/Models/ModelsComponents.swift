@@ -158,7 +158,7 @@ struct ModelsCredentialRow: View {
     }
 }
 
-/// 离线、拉不到时的空状态（顶部的离线横幅由应用框架放，这里只占住页面）。
+/// 离线、拉不到时的空状态（系统的 `ContentUnavailableView`；顶部的离线横幅由应用框架放，这里只占住页面）。
 struct ModelsUnavailableView: View {
     let error: ClientError?
     let onRetry: @MainActor () -> Void
@@ -168,13 +168,16 @@ struct ModelsUnavailableView: View {
     var body: some View {
         let zh = language == .chinese
         if error?.isOffline == true {
-            EmptyStateView(
-                systemImage: "wifi.slash", title: zh ? "离线，暂无数据" : "Offline",
-                message: zh ? "联网后会自动刷新。" : "This refreshes once you're back online.")
+            ContentUnavailableView(
+                zh ? "离线，暂无数据" : "Offline", systemImage: "wifi.slash",
+                description: Text(zh ? "联网后会自动刷新。" : "This refreshes once you're back online."))
         } else {
-            EmptyStateView(
-                systemImage: "exclamationmark.triangle", title: zh ? "暂时拉不到" : "Couldn't load",
-                actionTitle: zh ? "重试" : "Retry", action: onRetry)
+            ContentUnavailableView {
+                Label(zh ? "暂时拉不到" : "Couldn't load", systemImage: "exclamationmark.triangle")
+            } actions: {
+                Button(zh ? "重试" : "Retry", action: onRetry)
+                    .glassButtonStyle()
+            }
         }
     }
 }

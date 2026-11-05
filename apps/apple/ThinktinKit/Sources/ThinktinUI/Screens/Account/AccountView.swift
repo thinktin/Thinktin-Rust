@@ -1,8 +1,9 @@
 import SwiftUI
 import ThinktinKit
 
-/// 账号页（WBS 12.2，`.account`）：头像、昵称、打码的手机号；登录设备、全部停止；退出登录；注销账号。
-/// 版式参考 Claude iOS App 的设置页（一组组圆角卡片）。设置中心（12.12）的“账号”一栏进这里。
+/// 账号页（WBS 12.2，`.account`；设置根页第一行进来）。改版照参考 54（规范 4.9.2）：insetGrouped `List`，第一组头像、昵称、
+/// 打码的手机号；“个人资料”一组昵称（进改昵称页）、手机号（只读）；红字“退出登录”单独一组；红色垃圾桶“注销账号”单独一组，
+/// 脚注写后果。参考的“切换账户 / 添加账户”不做（client-core 只存一个会话，规范 6.20）。登录设备、全部停止在设置根页。
 struct AccountScreen: View {
     @Environment(\.client) private var client
     @Environment(AppModel.self) private var app
@@ -14,7 +15,6 @@ struct AccountScreen: View {
 
 private struct AccountContent: View {
     @State private var model: AccountModel
-    @State private var stopAll: StopAllModel
     let client: any ClientProtocol
 
     @Environment(AppModel.self) private var app
@@ -25,48 +25,46 @@ private struct AccountContent: View {
 
     init(model: AccountModel, client: any ClientProtocol) {
         _model = State(initialValue: model)
-        _stopAll = State(initialValue: StopAllModel(client: client))
         self.client = client
     }
 
     var body: some View {
         let zh = language == .chinese
-        AccountScrollPage {
+        List {
             if let user = model.user {
-                header(user)
+                Section {
+                    SettingsProfileRow(
+                        title: user.nameForDisplay, subtitle: model.maskedPhone.isEmpty ? nil : model.maskedPhone)
+                }
+                .themedRow()
                 profileSection(user)
-                securitySection
                 signOutSection
-                AccountSection(
-                    footer: zh
-                        ? "注销会永久删除账号和全部内容。" : "Deleting your account permanently removes it and everything in it."
-                ) {
+                Section {
                     NavigationLink {
                         DeleteAccountView(client: client, maskedPhone: model.maskedPhone)
                     } label: {
-                        AccountRow(
-                            systemImage: "person.crop.circle.badge.xmark", title: zh ? "注销账号" : "Delete account",
-                            tone: .destructive, showsChevron: true)
+                        Label(zh ? "注销账号" : "Delete account", systemImage: "trash")
+                            .foregroundStyle(Theme.danger)
                     }
-                    .buttonStyle(.plain)
                     .disabled(app.isOffline)
+                } footer: {
+                    Text(
+                        zh
+                            ? "永久删除你的 ThinkTin 账号和里面的全部内容，不能恢复。"
+                            : "Permanently deletes your ThinkTin account and everything in it. This can't be undone.")
                 }
-            } else if let error = model.loadError {
-                if error.isOffline {
-                    AccountOfflineState()
-                } else {
+                .themedRow()
+            } else if let error = model.loadError, !error.isOffline {
+                Section {
                     ErrorBanner(error, onRetry: { Task { await model.load() } })
                 }
-            } else {
-                ProgressView()
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, Metrics.Spacing.xxl)
+                .clearListRow()
             }
         }
-        .navigationTitle(AppRoute.account.title(language))
-        #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-        #endif
+        .insetGroupedList()
+        .themedGroupedBackground()
+        .overlay { placeholder }
+        .settingsNavigationTitle(AppRoute.account.title(language))
         .refreshable { await model.load() }
         .task { await model.load() }
         .confirmationDialog(
@@ -79,89 +77,70 @@ private struct AccountContent: View {
         }
     }
 
-    private func header(_ user: User) -> some View {
-        HStack(spacing: Metrics.Spacing.m) {
-            AccountAvatar(name: user.nameForDisplay)
-            VStack(alignment: .leading, spacing: Metrics.Spacing.unit / 2) {
-                Text(user.nameForDisplay)
-                    .typography(.title2)
-                    .foregroundStyle(Theme.ink)
-                    .lineLimit(2)
-                if !model.maskedPhone.isEmpty {
-                    Text(verbatim: model.maskedPhone)
-                        .font(Typography.subheadline.font.monospacedDigit())
-                        .foregroundStyle(Theme.inkSecondary)
+    /// 还没拉到用户：转圈；离线又没有：离线说明（账号不缓存，docs/ios.md 6.2）。
+    @ViewBuilder
+    private var placeholder: some View {
+        if model.user == nil {
+            if let error = model.loadError {
+                if error.isOffline {
+                    AccountOfflineState()
                 }
+            } else {
+                ProgressView()
             }
-            Spacer(minLength: 0)
         }
-        .accessibilityElement(children: .combine)
     }
 
     private func profileSection(_ user: User) -> some View {
         let zh = language == .chinese
         let name = user.displayName.flatMap { $0.isEmpty ? nil : $0 }
-        return AccountSection(
-            zh ? "个人资料" : "Profile",
-            footer: zh ? "手机号是登录方式，暂时不能更换。" : "Your phone number is how you sign in and can't be changed yet."
-        ) {
+        return Section {
             NavigationLink {
                 DisplayNameEditor(client: client, user: user) { model.apply($0) }
             } label: {
-                AccountRow(
-                    systemImage: "person", title: zh ? "昵称" : "Name", value: name ?? (zh ? "未设置" : "Not set"),
-                    showsChevron: true)
+                LabeledContent(zh ? "昵称" : "Name", value: name ?? (zh ? "未设置" : "Not set"))
             }
-            .buttonStyle(.plain)
             .disabled(app.isOffline)
-            AccountRowDivider()
-            AccountRow(systemImage: "phone", title: zh ? "手机号" : "Phone number", value: model.maskedPhone)
-        }
-    }
-
-    private var securitySection: some View {
-        let zh = language == .chinese
-        return AccountSection(
-            zh ? "安全" : "Security",
-            footer: zh
-                ? "退出登录只影响这台设备，Botin 照常运行。要让所有 Botin 立刻停下来，用“全部停止”。"
-                : "Signing out only affects this device; Botins keep running. Use Stop everything to halt them all at once."
-        ) {
-            NavigationLink(value: AppRoute.devices) {
-                AccountRow(
-                    systemImage: "laptopcomputer.and.iphone", title: AppRoute.devices.title(language),
-                    showsChevron: true)
+            LabeledContent {
+                Text(verbatim: model.maskedPhone)
+                    .monospacedDigit()
+            } label: {
+                Text(zh ? "手机号" : "Phone number")
             }
-            .buttonStyle(.plain)
-            AccountRowDivider()
-            StopAllRow(model: stopAll)
+        } header: {
+            Text(zh ? "个人资料" : "Profile").textCase(nil)
+        } footer: {
+            Text(zh ? "手机号是登录方式，暂时不能更换。" : "Your phone number is how you sign in and can't be changed yet.")
         }
+        .themedRow()
     }
 
     private var signOutSection: some View {
         let zh = language == .chinese
-        return VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
+        return Section {
             if let signOutError {
                 ErrorBanner(signOutError, onDismiss: { self.signOutError = nil })
             }
-            AccountSection {
-                Button {
-                    confirmsSignOut = true
-                } label: {
-                    HStack {
-                        AccountRow(
-                            systemImage: "rectangle.portrait.and.arrow.right", title: zh ? "退出登录" : "Sign out")
-                        if isSigningOut {
-                            ProgressView()
-                                .controlSize(.small)
-                                .padding(.trailing, Metrics.Spacing.m)
-                        }
+            Button(role: .destructive) {
+                confirmsSignOut = true
+            } label: {
+                HStack {
+                    Text(zh ? "退出登录" : "Sign out")
+                        .foregroundStyle(Theme.danger)
+                    if isSigningOut {
+                        Spacer()
+                        ProgressView()
                     }
                 }
-                .buttonStyle(.plain)
-                .disabled(isSigningOut)
             }
+            .disabled(isSigningOut)
+        } footer: {
+            Text(
+                zh
+                    ? "退出登录只影响这台设备，Botin 照常运行。"
+                    : "Signing out only affects this device; Botins keep running.")
         }
+        .themedRow()
     }
 
     /// 退出登录用 `AppModel.signOut()`：网络不通时本地照样清掉，之后应用框架回到登录页。
@@ -187,7 +166,6 @@ struct DisplayNameEditor: View {
     @Environment(AppModel.self) private var app
     @Environment(\.displayLanguage) private var language
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.displayScale) private var displayScale
     @FocusState private var isFocused: Bool
 
     init(client: any ClientProtocol, user: User?, onSaved: @escaping @MainActor (User) -> Void) {
@@ -197,40 +175,28 @@ struct DisplayNameEditor: View {
 
     var body: some View {
         let zh = language == .chinese
-        let shape = RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous)
-        AccountScrollPage {
-            VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
+        Form {
+            Section {
                 TextField(zh ? "昵称" : "Name", text: $model.draft)
-                    .typography(.body)
-                    .foregroundStyle(Theme.ink)
                     .focused($isFocused)
                     .submitLabel(.done)
                     .onSubmit { save() }
-                    .padding(.horizontal, Metrics.Spacing.m)
-                    .frame(minHeight: Metrics.minTapTarget + Metrics.Spacing.s)
-                    .background(Theme.paperElevated, in: shape)
-                    .overlay {
-                        shape.strokeBorder(
-                            model.isTooLong ? Theme.danger : (isFocused ? Theme.accent : Theme.hairline),
-                            lineWidth: isFocused ? 1 : Metrics.hairline(scale: displayScale))
-                    }
                     .accessibilityLabel(Text(zh ? "昵称" : "Name"))
+            } footer: {
                 HStack(alignment: .firstTextBaseline) {
                     if let message = model.validationMessage(language) {
-                        FieldMessage(text: message)
+                        Text(message)
+                            .foregroundStyle(Theme.danger)
                     } else {
                         Text(
                             zh
                                 ? "显示在首页左上角的头像和这台设备上。不填就显示打码的手机号。"
                                 : "Shown on the home screen's account button and on this device. Leave it empty to show your masked number."
                         )
-                        .typography(.footnote)
-                        .foregroundStyle(Theme.inkSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer(minLength: Metrics.Spacing.xs)
                     Text(verbatim: model.counterText)
-                        .font(Typography.footnote.font.monospacedDigit())
+                        .monospacedDigit()
                         .foregroundStyle(model.isTooLong ? Theme.danger : Theme.inkTertiary)
                         .accessibilityLabel(
                             Text(
@@ -239,22 +205,21 @@ struct DisplayNameEditor: View {
                                     : "\(model.characterCount) of \(User.maxDisplayNameLength) characters"))
                 }
             }
+            .themedRow()
             if let error = model.error {
-                ErrorBanner(error, onRetry: { save() })
+                Section {
+                    ErrorBanner(error, onRetry: { save() })
+                }
+                .clearListRow()
             }
         }
-        .navigationTitle(zh ? "昵称" : "Name")
-        #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-        #endif
+        .formStyle(.grouped)
+        .themedGroupedBackground()
+        .settingsNavigationTitle(zh ? "昵称" : "Name")
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
-                if model.isSaving {
-                    ProgressView()
-                } else {
-                    Button(zh ? "保存" : "Save") { save() }
-                        .disabled(!model.canSave || app.isOffline)
-                }
+                ConfirmButton(zh ? "保存" : "Save", isWorking: model.isSaving) { save() }
+                    .disabled(!model.canSave || app.isOffline)
             }
         }
         .onAppear { isFocused = true }

@@ -411,6 +411,10 @@
   新 `HapticsSettingsView`；实时活动那组变成 `List` 里的 `Section`；新 `Design/Haptics.swift`（`\.hapticsEnabled`、`appFeedback`，5 处
   `.sensoryFeedback` 换掉）。测试：`SettingsModelTests` 重写分组 / 入口 / 账号行，加审批、用量、版本区；`SettingsPreferencesTests` 加触感；
   新 `UsageTodayTests`（4 条）；`SettingsScreensTests` 加根页、方块、触感页。纯黑外观没做（第 2 轮）。
+- 第 1 轮 E 线·账号、用量（规范 4.9.2、4.9.3，对过参考 54、55；2026-11-05）：账号页换 insetGrouped `List`（头像行、个人资料、红字退出登录、
+  垃圾桶注销 + 脚注），改昵称页换 `Form` + `ConfirmButton`；`StopAllRow` 换成系统的 destructive 按钮行（账号页不再放安全那组，设置根页有）。
+  用量页换 insetGrouped `List`，顶上“今天”一组按 key 的每日上限画系统 `Gauge`（`UsageModel.todayGauges` / `loadToday()`，测试
+  `UsageModelTests` 的“今天”），明细行用 `NavigationLink(value:)`；`ModelsUnavailableView` 换成 `ContentUnavailableView`。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、

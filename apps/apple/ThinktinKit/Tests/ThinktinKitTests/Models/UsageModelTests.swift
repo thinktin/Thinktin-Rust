@@ -168,6 +168,24 @@ struct UsageModelTests {
         #expect(model.rows(language: .chinese).map(\.title) == ["claude-sonnet-5-5", "deepseek-v4-pro"])
     }
 
+    @Test("今天：只列设了每日上限的 key，拉不到时留着原来的")
+    func today() async {
+        let (mock, model) = make()
+        #expect(model.todayGauges.isEmpty)
+        await model.loadToday()
+        // 演示数据里只有“Claude 主力”设了每日上限。
+        #expect(model.todayGauges.map(\.title) == ["Claude 主力"])
+        #expect(model.todayGauges.first?.limit == 2_000_000)
+        mock.failNext(with: .network(message: "offline"))
+        await model.loadToday()
+        #expect(model.todayGauges.count == 1)
+        mock.update { state in
+            for i in state.credentials.indices { state.credentials[i].dailyTokenLimit = nil }
+        }
+        await model.loadToday()
+        #expect(model.todayGauges.isEmpty)
+    }
+
     @Test("没有用量：空状态")
     func empty() async {
         let (_, model) = make { $0.dailyUsage = [] }
