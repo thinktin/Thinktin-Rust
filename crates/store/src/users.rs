@@ -237,9 +237,10 @@ impl Tx<Worker> {
                  AND project_invite_id IN (SELECT id FROM project_invites WHERE inviter_id = $1 \
                                              AND status = 'pending') \
                  AND read_at IS NULL FOR UPDATE SKIP LOCKED)",
-            // 邀请的发送记录（数上限用，8.14）：他发的、发给他号码的。
-            "DELETE FROM project_invite_sends WHERE inviter_id = $1 \
-               OR invitee_phone = (SELECT phone FROM users WHERE id = $1)",
+            // 邀请的发送记录（数上限用，8.14）：发给他号码的删掉；他发的只去掉是谁发的（照样算进对方号码的通知数，
+            // 两天后后台删掉）。
+            "DELETE FROM project_invite_sends WHERE invitee_phone = (SELECT phone FROM users WHERE id = $1)",
+            "UPDATE project_invite_sends SET inviter_id = NULL WHERE inviter_id = $1",
             // 项目（8.13）：他的 agent 离开所有项目；他建的项目删掉（成员、agent、邀请、密钥级联）；他在别人项目里的
             // 成员身份标成注销；发给他的、他发的邀请删掉（手机号邀请在改掉手机号之前按号码找）。
             "UPDATE project_agents SET is_lead = false, dedicated = false, left_at = coalesce(left_at, now()) \

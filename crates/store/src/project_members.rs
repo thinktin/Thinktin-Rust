@@ -177,15 +177,8 @@ impl Tx<Worker> {
                 .ok_or_else(|| Error::Invalid("confirm what the project shares first".into()))?
                 .check()?;
         }
-        // D3 第 7 步：项目 agent 行，再第 9 步：实例。
-        sqlx::query(
-            "SELECT 1 FROM project_agents WHERE project_id = $1 AND instance_id = ANY($2) \
-              ORDER BY instance_id FOR NO KEY UPDATE",
-        )
-        .bind(project.0)
-        .bind(&ids)
-        .execute(self.conn())
-        .await?;
+        // 不先锁已有的 agent 行：worker 写项目 agent 都在项目锁里，而租户删实例是先改实例行、再改 agent 行；这里先锁
+        // agent 行再等实例的共享锁，就会和它互相等。
         let (live, already) = self.live_agents(project, &ids).await?;
         self.lock_own_instances(user, &ids).await?;
         let new: Vec<Uuid> = ids.into_iter().filter(|i| !already.contains(i)).collect();
@@ -358,9 +351,9 @@ impl Tx<Worker> {
             .await
     }
 
-    /// 成员离开（调用方已经锁好用户行、项目锁和他的成员行）：先作废邀请（D3 第 5 步：他发出的，8.14 只有创建者邀请，这里
-    /// 是 0 行；离开只标记，外键的级联不会触发。还有发给他号码的：不然被移出的人拿着他还是成员时收到的旧邀请就能自己
-    /// 回来），再是他在项目里的 agent 行 → 运行 → 授权 → agent 标离开 → 成员行标离开。
+    /// 成员离开（调用方已经锁好用户行、项目锁和他的成员行）：先处理邀请（D3 第 5 步：他发出的作废，8.14 只有创建者邀请，
+    /// 这里是 0 行，离开只标记、外键的级联不会触发；发给他号码的标不送达，不然被移出的人拿着他还是成员时收到的旧邀请就能
+    /// 自己回来），再是他在项目里的 agent 行 → 运行 → 授权 → agent 标离开 → 成员行标离开。
     async fn exit_member(
         &mut self,
         project: ProjectId,
@@ -370,14 +363,21 @@ impl Tx<Worker> {
         reason: &str,
     ) -> Result<Exit> {
         let member_name = locked.and_then(|u| u.display_name.clone());
-        let to_me: Vec<Uuid> = sqlx::query_scalar(
+        sqlx::query(
             "UPDATE project_invites SET status = 'revoked', settled_at = now() \
-              WHERE project_id = $1 AND status = 'pending' \
-                AND (inviter_id = $2 OR (kind = 'phone' AND invitee_phone = $3)) \
-              RETURNING id",
+              WHERE project_id = $1 AND inviter_id = $2 AND status = 'pending'",
         )
         .bind(project.0)
         .bind(member.0)
+        .execute(self.conn())
+        .await?;
+        // 发给他号码的：标不送达（和拉黑一样，邀请人那边照样是待接受、到期过期，看不出这个号码是谁的）。
+        let to_me: Vec<Uuid> = sqlx::query_scalar(
+            "UPDATE project_invites SET suppressed_at = now() \
+              WHERE project_id = $1 AND kind = 'phone' AND invitee_phone = $2 \
+                AND status = 'pending' AND suppressed_at IS NULL RETURNING id",
+        )
+        .bind(project.0)
         .bind(locked.map(|u| u.phone.as_str()))
         .fetch_all(self.conn())
         .await?;

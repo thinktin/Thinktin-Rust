@@ -150,11 +150,8 @@ pub async fn delete(
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
     let id: ProjectId = parse_id(&id, "project")?;
-    // 先由 worker 核对身份（成员 403、外人 404、共享过的 409）、撤回还没处理的邀请。
-    projects::release_for_delete(&s.db, who.user, &who.actor(), id).await?;
-    let mut t = s.db.tenant(who.user).await?;
-    t.delete_solo_project(id).await?;
-    t.commit().await?;
+    // worker 在一个事务里核对身份（成员 403、外人 404、共享过的 409）、撤回还没处理的邀请、删掉。
+    projects::delete(&s.db, who.user, &who.actor(), id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

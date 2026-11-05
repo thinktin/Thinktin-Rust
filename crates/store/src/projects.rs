@@ -532,8 +532,9 @@ impl Tx<Tenant> {
         Ok(())
     }
 
-    /// 删实例之前拿它所在项目的锁（按 id 顺序；D4：租户改单人项目也先拿项目锁）。删实例先改实例行、再把它在单人项目里的
-    /// agent 行标离开，worker 加 agent 是先 agent 行、再实例行，不排队会互相等。看得到的只有自己的 agent 行。
+    /// 删实例时最先调（改计划、运行、实例之前）：拿它现在所在项目的锁，按 id 顺序（D4：租户改单人项目也先拿项目锁）。
+    /// 看得到的只有自己的 agent 行。之后才加进别的项目的不再补锁（那时已经拿着实例行，再等项目锁就可能和正在往那个项目里
+    /// 加 agent 的 worker 互相等）；worker 加 agent 不先锁 agent 行，所以不会反过来挡住删实例。
     pub async fn lock_instance_projects(&mut self, instance: InstanceId) -> Result<()> {
         let mut ids: Vec<Uuid> = sqlx::query_scalar(
             "SELECT DISTINCT project_id FROM project_agents WHERE instance_id = $1 AND left_at IS NULL",

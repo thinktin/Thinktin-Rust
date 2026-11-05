@@ -382,8 +382,6 @@ impl Tx<Tenant> {
     /// 标记删除。沙箱和工作区由后台的生命周期管理回收；模型别名和降级链一起删掉（已删除的实例的别名看不到也改不了，
     /// 留着会让它们指着的 key 删不掉）。实例的计划、运行、授权由调用方处理（接入网关的删除接口）。
     pub async fn delete_instance(&mut self, id: InstanceId) -> Result<()> {
-        // 调用方最好在取消运行之前就拿（接入网关的删除接口是这样）；这里再拿一次（同一个事务里重复拿不会等）。
-        self.lock_instance_projects(id).await?;
         let done = sqlx::query(
             "UPDATE instances SET state = 'deleted', deleted_at = now(), updated_at = now() \
              WHERE id = $1 AND state <> 'deleted'",

@@ -27,35 +27,29 @@ fn project_notice(project: ProjectId, title: &str, body: String, subtype: &str) 
     n
 }
 
-/// 撤 agent 的回执：同一个 agent 一小时最多一条（加了又撤、撤了又加的不会刷屏），推送互相替换。
-fn agent_notice(mut n: Notice, project: ProjectId, instance: InstanceId) -> Notice {
+/// 撤 agent 的回执：同一个项目里同一个人的 agent 一小时最多一条（加了又撤、换着新领养的实例撤都不会刷屏；agent 的名字是
+/// 主人写的），推送互相替换。
+fn agent_notice(mut n: Notice, project: ProjectId, owner: UserId) -> Notice {
     let hour = chrono::Utc::now().format("%Y%m%d%H");
     let kind = n.subtype.clone().unwrap_or_default();
-    n.dedupe_key = Some(format!("{kind}:{project}:{instance}:{hour}"));
-    n.collapse_id = Some(format!("project_agent:{project}:{instance}"));
+    n.dedupe_key = Some(format!("{kind}:{project}:{owner}:{hour}"));
+    n.collapse_id = Some(format!("project_agent:{project}:{owner}"));
     n
 }
 
-/// 删没共享过的单人项目之前（之后由租户事务删）：撤回还没处理的邀请、送达的提醒标已读。只有创建者（成员 403、外人 404），
+/// 删没共享过的单人项目（一个事务）：撤回还没处理的邀请、送达的提醒标已读，再删。只有创建者（成员 403、外人 404），
 /// 共享过的 409。
-pub async fn release_for_delete(
-    db: &Db,
-    user: UserId,
-    actor: &str,
-    project: ProjectId,
-) -> store::Result<()> {
+pub async fn delete(db: &Db, user: UserId, actor: &str, project: ProjectId) -> store::Result<()> {
     let mut w = db.worker().await?;
-    let n = w.release_solo_project_invites(user, project).await?;
-    if n > 0 {
-        w.audit(
-            Some(user),
-            actor,
-            "project.invite.revoke",
-            Some(&project.to_string()),
-            &json!({ "project": project, "revoked": n, "because": "project deleted" }),
-        )
-        .await?;
-    }
+    let revoked = w.delete_unshared_project(user, project).await?;
+    w.audit(
+        Some(user),
+        actor,
+        "project.delete",
+        Some(&project.to_string()),
+        &json!({ "project": project, "invites_revoked": revoked }),
+    )
+    .await?;
     w.commit().await
 }
 
@@ -362,7 +356,7 @@ pub async fn withdraw_agent(
             let notice = agent_notice(
                 project_notice(project, title, body, notice_subtype::PROJECT_AGENT_REMOVED),
                 project,
-                instance,
+                out.owner,
             );
             notify(&mut w, out.owner, &notice).await?;
         } else if out.owner != out.creator {
@@ -376,7 +370,7 @@ pub async fn withdraw_agent(
             let notice = agent_notice(
                 project_notice(project, title, body, notice_subtype::PROJECT_AGENT_LEFT),
                 project,
-                instance,
+                out.owner,
             );
             notify(&mut w, out.creator, &notice).await?;
         }

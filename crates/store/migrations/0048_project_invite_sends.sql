@@ -1,10 +1,10 @@
 -- 项目邀请的发送记录（8.14 评审）：邀请人每天的上限、每个号码每天的通知数从这里数，不再数 project_invites。
 -- project_invites 跟着项目级联删除：没人加入过的单人项目创建者自己就能删，删了再建、再邀请，两个 24 小时的计数就都清零了，
--- 一个账号一天能发无数条邀请推送。这张表不挂在项目上，只有 worker 读写；后台删掉两天前的（只用来数 24 小时），注销时删掉
--- 他发的和发给他号码的。
+-- 一个账号一天能发无数条邀请推送。这张表不挂在项目上，只有 worker 读写；后台删掉两天前的（只用来数 24 小时）。注销时删掉
+-- 发给他号码的；他发的只去掉 inviter_id（行留着照样算进对方号码的通知数，不然注销、重新注册就能把对方的上限清零）。
 CREATE TABLE project_invite_sends (
     id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    inviter_id    uuid NOT NULL REFERENCES users (id),
+    inviter_id    uuid REFERENCES users (id),            -- 注销了的是 NULL
     -- 手机号邀请的号码（E.164）；链接邀请没有。
     invitee_phone text,
     -- 这一条给号码的主人发了通知。

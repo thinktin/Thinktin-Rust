@@ -100,19 +100,13 @@ pub async fn delete(
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
     let id: TeamId = parse_id(&id, "team")?;
-    // 项目接口发过邀请的（8.14）：先撤回、提醒标已读，不然邀请跟着级联删掉以后对方的提醒一直未读。旧接口的状态码不变：
-    // 不是自己的、共享过的，照旧由下面的租户删除回 404、409。
-    match orchestrator::projects::release_for_delete(&s.db, who.user, &who.actor(), id.into()).await
-    {
-        Ok(())
-        | Err(store::Error::NotFound | store::Error::NotPermitted(_) | store::Error::Conflict(_)) =>
-            {}
-        Err(e) => return Err(e.into()),
+    // 和 `DELETE /v1/projects/{id}` 一样由 worker 在一个事务里删（项目接口发过的邀请先撤回、对方的提醒标已读）。旧接口的
+    // 状态码不变：不是自己创建的 404（旧接口里成员看不到别人的团队），共享过的 409。
+    match orchestrator::projects::delete(&s.db, who.user, &who.actor(), id.into()).await {
+        Ok(()) => Ok(StatusCode::NO_CONTENT),
+        Err(store::Error::NotPermitted(_)) => Err(ApiError::not_found("team")),
+        Err(e) => Err(e.into()),
     }
-    let mut t = s.db.tenant(who.user).await?;
-    t.delete_team(id).await?;
-    t.commit().await?;
-    Ok(StatusCode::NO_CONTENT)
 }
 
 pub async fn templates(State(s): State<AppState>, Authed(who): Authed) -> ApiResult<Json<Value>> {

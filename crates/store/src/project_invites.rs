@@ -903,10 +903,10 @@ impl Tx<Worker> {
         Ok(())
     }
 
-    /// 删没共享过的单人项目之前（租户事务删，邀请跟着级联删掉）：还没处理的邀请先撤回、送达的提醒标已读，不然它们
-    /// 一直未读、点开 404。只有创建者（成员 NotPermitted，外人 NotFound）；共享过的 Conflict（8.15 起改成软删除）。
-    /// 返回撤回了几个。
-    pub async fn release_solo_project_invites(
+    /// 删没共享过的单人项目（一个事务、在项目锁里）：还没处理的邀请先撤回、送达的提醒标已读（不然邀请跟着级联删掉以后
+    /// 它们一直未读、点开 404），再删项目（成员、agent、邀请、密钥级联删掉，实例留着）。只有创建者（成员 NotPermitted，
+    /// 外人 NotFound）；共享过的 Conflict（8.15 起改成软删除）。返回撤回了几个邀请。
+    pub async fn delete_unshared_project(
         &mut self,
         user: UserId,
         project: ProjectId,
@@ -951,6 +951,10 @@ impl Tx<Worker> {
             }
         }
         self.read_invite_items_nowait(&other).await?;
+        sqlx::query("DELETE FROM projects WHERE id = $1")
+            .bind(project.0)
+            .execute(self.conn())
+            .await?;
         Ok(revoked.len() as u64)
     }
 

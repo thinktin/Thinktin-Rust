@@ -240,6 +240,15 @@ async fn project_flows_send_receipts_and_audit() {
         .await
         .unwrap();
     assert_eq!(inbox(db, alice).await.len(), n);
+    // 换一个新领养的实例也一样（按主人算，不按实例）。
+    let c2 = instance(db, carol, "spam spam").await;
+    projects::add_agents(db, carol, ACTOR, p, &[c2.id], consent)
+        .await
+        .unwrap();
+    projects::withdraw_agent(db, carol, ACTOR, p, c2.id)
+        .await
+        .unwrap();
+    assert_eq!(inbox(db, alice).await.len(), n);
     let collapse: Vec<String> = pushes(db, alice)
         .await
         .iter()
