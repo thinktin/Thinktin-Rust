@@ -257,6 +257,26 @@ struct RouterTests {
         #expect(empty.newTaskRequest == 0)
     }
 
+    @Test("新任务请求：对话页在请求之后才建时照样补上，处理过的不再聚焦；退出登录时丢掉没处理的")
+    func newTaskRequests() {
+        // 在首页点“发第一个任务”：对话页这时还没建。
+        let router = Router()
+        #expect(!router.hasPendingNewTaskRequest)
+        router.requestNewTask(in: "i1")
+        #expect(router.path == [.conversation("i1")])
+        #expect(router.currentInstanceID == "i1")
+        #expect(router.hasPendingNewTaskRequest)
+        // 对话页出现、聚焦了输入框：处理过了，对话页重建时不再聚焦。
+        router.newTaskRequestHandled()
+        #expect(!router.hasPendingNewTaskRequest)
+        #expect(router.handledNewTaskRequest == 1)
+        router.requestNewTask()
+        #expect(router.hasPendingNewTaskRequest)
+        router.reset()
+        #expect(!router.hasPendingNewTaskRequest)
+        #expect(router.newTaskRequest == 2)
+    }
+
     @Test("实例删了：各层栈里从它的第一个页面起拿掉，根是它的 sheet 关掉")
     func removeRoutes() {
         let router = Router(path: [.inbox, .conversation("i1"), .run("r1"), .instance("i1")])
@@ -283,6 +303,63 @@ struct RouterTests {
         router.removeRoutes(of: "i4")
         #expect(router.sheet == nil)
         #expect(router.sheetPath.isEmpty)
+    }
+
+    @Test("页面没了：哪层栈里有就从哪层拿掉（sheet 的栈也算），根页面符合的 sheet 关掉")
+    func removeRoutesWhere() {
+        // 首页“+” → 领养 → agent 详情 → 实例资料 → 计划：计划压在 sheet 的栈里。
+        let router = Router(path: [.conversation("i1"), .plan("p1")])
+        router.open(.adopt(agentID: nil))
+        router.open(.agent("claude"))
+        router.open(.instance("i2"))
+        router.open(.plan("p1"))
+        router.open(.confirmPlan("p1"))
+        router.removeRoutes { $0 == .plan("p1") || $0 == .confirmPlan("p1") }
+        #expect(router.sheet == .adopt(agentID: nil))
+        #expect(router.sheetPath == [.agent("claude"), .instance("i2")])
+        #expect(router.path == [.conversation("i1")])
+        #expect(router.visibleRoute == .instance("i2"))
+
+        // 第二层的栈、第二层的根。
+        router.present(.settings)
+        router.open(.vault)
+        router.open(.plan("p2"))
+        router.removeRoutes { $0 == .plan("p2") }
+        #expect(router.nestedSheet == .settings)
+        #expect(router.nestedSheetPath == [.vault])
+        router.removeRoutes { $0 == .settings }
+        #expect(router.nestedSheet == nil)
+        #expect(router.sheet == .adopt(agentID: nil))
+        router.removeRoutes { $0 == .adopt(agentID: nil) }
+        #expect(router.sheet == nil)
+        #expect(router.sheetPath.isEmpty)
+        #expect(router.path == [.conversation("i1")])
+    }
+
+    @Test("App 里点的链接：压在眼前这一层上，对话和 sheet 都留着；认不出的不理")
+    func inAppLinks() throws {
+        let router = Router(path: [.conversation("i1")], currentInstanceID: "i1")
+        #expect(router.openLink(try #require(URL(string: "thinktin://plan/p1"))))
+        #expect(router.path == [.conversation("i1"), .plan("p1")])
+        // 运行没有所属实例：也不会把对话换掉。
+        #expect(router.openLink(try #require(URL(string: "thinktin://run/r1"))))
+        #expect(router.path == [.conversation("i1"), .plan("p1"), .run("r1")])
+        router.pop()
+        router.pop()
+        #expect(router.path == [.conversation("i1")])
+        #expect(router.currentInstanceID == "i1")
+
+        #expect(!router.openLink(try #require(URL(string: "thinktin://nope/1"))))
+        #expect(!router.openLink(try #require(URL(string: "https://example.com"))))
+        #expect(router.path == [.conversation("i1")])
+
+        // sheet 里（保险箱请求 → 运行详情）点的：压进 sheet 自己的栈，不关 sheet。
+        router.open(.settings)
+        router.open(.vault)
+        #expect(router.openLink(try #require(URL(string: "thinktin://plan/p2"))))
+        #expect(router.sheet == .settings)
+        #expect(router.sheetPath == [.vault, .plan("p2")])
+        #expect(router.path == [.conversation("i1")])
     }
 
     @Test("深链：关掉 sheet，返回栈“首页 → 目标页”，实例的页面经过它的对话")

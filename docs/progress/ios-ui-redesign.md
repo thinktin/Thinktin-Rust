@@ -111,13 +111,24 @@
   启动屏是最新的，贝塞尔版和原稿 0 差）；`swift format lint --strict` 零条。docs/ios.md：开头和第 1 节第 4 条不再写“参考某某 App”，
   改指改版规范；第 2 节 App/ 的说明；第 4 节加共用组件（`InstanceAvatar`、`FilterChipBar`）、4.1 加启动屏；第 7 节截图换成新清单和两个
   启动变量。规范 7.2 末尾记“第 0 轮做完”，7.6 的旧系统截图改成 `IOS_RUNTIME`。
+- 第 0 轮·审查修正（2026-11-05，评审对 `123c510` 之后第 0 轮提交的 12 条意见，逐条核对后改；进行中，见下面“进行中”）：
+  - 对话、运行详情里 agent 写的 `thinktin://` 链接改走新的 `Router.openLink(_:)`（按 `open` 的规则压在眼前这一层上），
+    不再走 `handle(url:)`（那个是外面进来的，会关 sheet、把返回栈重建成“首页 → 目标页”，对话页和输入框里的草稿就没了）。
+  - 新的 `Router.removeRoutes(where:)`：各层栈（主栈、sheet 的栈、第二层的栈）里拿掉符合的页面，根页面符合的 sheet 关掉；
+    计划详情删掉后离开、确认页换成详情都用它（计划页现在可能在 sheet 的栈里：领养 → agent → 实例资料 → 计划）。
+    计划详情从流水线编辑器回来的刷新改看 `visibleRoute`。
+  - 新任务请求照搜索请求的办法补上：`handledNewTaskRequest`、`hasPendingNewTaskRequest`、`newTaskRequestHandled()`；
+    对话页 `onAppear` 和 `onChange(of: newTaskRequest)` 都看，只认当前实例的（从首页进对话时页面在请求之后才建）。
+    退出登录时丢掉没处理的。
+  - 测试：`RouterTests` 加“App 里点的链接”“页面没了从哪层拿掉”“新任务请求补上一次”。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、
 字体全用系统的）；6.3 A（保持 iOS 17，iOS 26 的接口在 Design/Glass.swift 里回退）；6.4 A（“+”直接弹领养表单）；6.5 A（设置用 sheet）；
 6.6 A（沿用“实例”）。其余 18 项按建议。
 
-进行中：没有人在做。**第 0 轮（规范 7.2）的每一行都做完了**（2026-11-05），只差下面第 1、2 条的验证；第 1 轮还没人认领。
+进行中：第 0 轮的审查修正（2026-11-05 开始，这个会话在做，见“已完成”最后一条）。**第 0 轮（规范 7.2）的每一行都做完了**
+（2026-11-05），只差下面第 1、2 条的验证；第 1 轮还没人认领。
 
 下一步：
 1. macOS CI（`.github/workflows/ios.yml`，只在推 main 和开 PR 时跑）还一次都没跑过这个分支：开 PR 或推一次让它用真 SDK 编。只有它验得出来的：
@@ -138,8 +149,11 @@
   要知道自己是从哪个页面弹出来的看 `router.routeBelowSheet`。`NavigationLink(value: AppRoute)` 在 sheet 里压进 sheet 的栈（`SheetStack` 绑了
   `sheetPath`），设置根页面的行就是这样进子页的；sheet 页用 `NavigationLink(value:)` 打开会被压栈（引导在设置里就是这样），
   要弹出就用 `router.open`。sheet 被系统下滑关掉时 `Router.sheet` 的 `didSet` 清掉它的栈和第二层。
-- 路由：对话改成压栈后 `.conversation(id)` 的新建页拿不到 `newTaskRequest` 的变化（页面在请求之后才建）：`requestNewTask` 新进对话时
-  输入框不会自动聚焦，B 线做对话页时在 `onAppear` 里看一下（比如对比上次处理过的 `newTaskRequest`）。
+- 路由：对话改成压栈后 `.conversation(id)` 的新建页拿不到 `newTaskRequest` 的变化（页面在请求之后才建）：已经照搜索请求补上
+  （`hasPendingNewTaskRequest`，对话页 `onAppear` 时看）。压栈动画中途在 `onAppear` 里设 `@FocusState` 在真机上灵不灵还没验过，
+  不灵就推迟一拍再设（B 线做对话页时看）。
+- 路由：App 里点的链接用 `openLink`，外面来的（`onOpenURL`、推送、小组件）才用 `handle(url:)` / `show`。删页面、换页面别直接改
+  `router.path`（页面可能在 sheet 的栈里），用 `removeRoutes(where:)`。
 - 路由：安卓还是抽屉结构，深链返回栈两端不一样了（规范 3.4、6.1，要不要跟着改另议）。
 - `ToolbarContentBuilder.buildLimitedAvailability` 在 SDK 里是 iOS 17.5 / macOS 14.5 才有，比最低版本高：`.toolbar { if #available(...) { … } }`
   在真实 SDK 上编不过。按系统版本放的工具栏项（iOS 26 的 `ToolbarSpacer`）一律用 Design/Glass.swift 的 `ToolbarContent` 帮手，

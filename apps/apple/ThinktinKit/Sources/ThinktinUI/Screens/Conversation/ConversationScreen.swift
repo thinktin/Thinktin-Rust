@@ -6,7 +6,8 @@ import ThinktinKit
 ///
 /// - 打开先显示缓存，再拉运行、订阅事件流（`ConversationModel.start()`）；进后台停订阅、回前台续订（scenePhase），
 ///   账号解冻后重新订阅（`AppModel.resubscribeRequest`）；连接横幅由应用框架统一显示。
-/// - “新任务”（`Router.newTaskRequest`）把焦点放进输入框；发出消息、事件流重置后滚到底。
+/// - “新任务”（`Router.newTaskRequest`）把焦点放进输入框：对话页一般在请求之后才建（首页 → 对话），出现时也看一眼
+///   有没有没处理的（`hasPendingNewTaskRequest`），只认当前实例的；发出消息、事件流重置后滚到底。
 /// - 长按 agent 的回复、产出物举报（`ContentReportSheet`）；发送前拦下的密码弹 `SecretInterceptionSheet`。
 /// - 导航栏左边是系统的返回（回首页），标题暂时是实例名（第 1 轮换成规范 4.3.1 的标题胶囊），右边是菜单（实例详情、
 ///   模型路由、计划、产出物）。
@@ -120,7 +121,8 @@ private struct ConversationContent: View {
             }
         }
         .onChange(of: app.resubscribeRequest) { model.resubscribe() }
-        .onChange(of: router.newTaskRequest) { isComposerFocused = true }
+        .onAppear(perform: focusComposerIfRequested)
+        .onChange(of: router.newTaskRequest, focusComposerIfRequested)
         .sheet(item: $reportRequest) { request in
             ContentReportSheet(client: client, target: request.target)
         }
@@ -132,6 +134,13 @@ private struct ConversationContent: View {
             SecretInterceptionSheet(model: model, onOpenRoute: { routeAfterInterception = $0 })
                 .environment(\.displayLanguage, language)
         }
+    }
+
+    /// 有没处理的新任务请求、又是给这个实例的：把焦点放进输入框，记成处理过（对话页重建时不再聚焦）。
+    private func focusComposerIfRequested() {
+        guard router.hasPendingNewTaskRequest, router.currentInstanceID == model.instanceID else { return }
+        router.newTaskRequestHandled()
+        isComposerFocused = true
     }
 
     /// 密码拦截弹层关掉之后，去用户在弹层里选的页面（弹层还在时弹不出另一个 sheet）。

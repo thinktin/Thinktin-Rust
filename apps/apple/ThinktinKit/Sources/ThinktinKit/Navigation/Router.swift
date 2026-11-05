@@ -14,7 +14,8 @@ import Observation
 ///   （sheet 开着时压进 sheet 自己的栈、不关 sheet）。`.conversation` 例外：总是先关掉所有 sheet，再压进主栈。
 /// - 工作台菜单的入口（`openTopLevel`）是顶级页面：先关掉 sheet、回到首页再压它。
 /// - 深链和推送（`show(_:in:)`、`handle(url:)`、`handle(push:)`）先关掉 sheet，把返回栈重建成“首页 → 目标页”，
-///   和实例有关的是“首页 → 实例的对话 → 目标页”（`DeepLink.backStack(to:instanceID:)`）。
+///   和实例有关的是“首页 → 实例的对话 → 目标页”（`DeepLink.backStack(to:instanceID:)`）。App 里点的 `thinktin://` 链接
+///   （agent 回复里的）不算从外面进来：`openLink(_:)` 按 `open` 的规则压在眼前这一层上，不重建返回栈。
 /// - 没登录、冻结、要升级时（`isHoldingRoutes`，由 `AppModel` 设置）深链和推送先记下，恢复正常后再跳，同一条只跳一次。
 @Observable @MainActor
 public final class Router {
@@ -55,6 +56,9 @@ public final class Router {
     public private(set) var pendingRoute: PendingRoute?
     /// 点“新任务”的次数：对话页（12.5）`onChange(of: router.newTaskRequest)` 时把焦点放进输入框。
     public private(set) var newTaskRequest = 0
+    /// 对话页处理到了第几次新任务请求（`newTaskRequestHandled()`）。对话页一般在请求之后才建（从首页进对话），
+    /// 出现时看 `hasPendingNewTaskRequest` 补上。
+    public private(set) var handledNewTaskRequest = 0
     /// 要搜索的次数（`open(.search)`、深链）：首页 `onChange(of: router.searchRequest)` 时激活搜索栏。
     public private(set) var searchRequest = 0
     /// 首页处理到了第几次搜索请求（`searchRequestHandled()`）。首页比请求晚出现时（冷启动的深链、登录后补跳的深链）
@@ -123,6 +127,10 @@ public final class Router {
 
     /// 有首页还没处理的搜索请求：首页出现时、`searchRequest` 变了时看它，激活搜索栏后调 `searchRequestHandled()`。
     public var hasPendingSearchRequest: Bool { searchRequest != handledSearchRequest }
+
+    /// 有对话页还没处理的新任务请求：当前实例的对话页出现时、`newTaskRequest` 变了时看它，聚焦输入框后调
+    /// `newTaskRequestHandled()`。
+    public var hasPendingNewTaskRequest: Bool { newTaskRequest != handledNewTaskRequest }
 
     /// 最前面那层 sheet 底下的页面（从哪个页面弹出来的）；没开 sheet 时为 nil。
     public var routeBelowSheet: AppRoute? {
@@ -207,6 +215,20 @@ public final class Router {
         handledSearchRequest = searchRequest
     }
 
+    /// 对话页聚焦了输入框：到现在为止的新任务请求都处理了。
+    public func newTaskRequestHandled() {
+        handledNewTaskRequest = newTaskRequest
+    }
+
+    /// App 里点的 `thinktin://` 链接（agent 回复、运行详情里的）：按 `open` 的规则打开，压在眼前这一层的栈上，返回还是
+    /// 现在的页面（对话不会被换掉）。和 `handle(url:)` 不同，不关 sheet、不重建返回栈。是认得的深链返回 true。
+    @discardableResult
+    public func openLink(_ url: URL) -> Bool {
+        guard let route = DeepLink.route(from: url) else { return false }
+        open(route)
+        return true
+    }
+
     /// 返回上一页：退最前面那一层的导航栈；那一层已经在根上、又是 sheet 时关掉这层 sheet。主栈在首页时什么也不做。
     public func pop() {
         if nestedSheet != nil {
@@ -248,6 +270,18 @@ public final class Router {
     public func dismissAllSheets() {
         nestedSheet = nil
         sheet = nil
+    }
+
+    /// 页面没了（计划删了、确认页换成详情）：各层导航栈里拿掉符合条件的页面（别的留着），根页面符合的 sheet 关掉。
+    /// 页面可能在主栈里，也可能在 sheet 自己的栈里（从 sheet 里压进去的），所以别只改 `path`。
+    public func removeRoutes(where shouldRemove: (AppRoute) -> Bool) {
+        if let nestedSheet, shouldRemove(nestedSheet) {
+            self.nestedSheet = nil
+        } else {
+            nestedSheetPath.removeAll(where: shouldRemove)
+        }
+        if let sheet, shouldRemove(sheet) { self.sheet = nil } else { sheetPath.removeAll(where: shouldRemove) }
+        path.removeAll(where: shouldRemove)
     }
 
     /// 实例没了（被删了）：各层导航栈从它的第一个页面起都拿掉（后面的是从它那里进去的），根页面是它的 sheet 关掉。
@@ -316,12 +350,13 @@ public final class Router {
 
     // MARK: 退出登录
 
-    /// 退出登录：导航全部清空（包括当前实例、记下的深链和没处理的搜索请求），换账号后不能看到上一个账号的页面。
+    /// 退出登录：导航全部清空（包括当前实例、记下的深链和没处理的搜索、新任务请求），换账号后不能看到上一个账号的页面。
     public func reset() {
         path = []
         dismissAllSheets()
         pendingRoute = nil
         currentInstanceID = nil
         handledSearchRequest = searchRequest
+        handledNewTaskRequest = newTaskRequest
     }
 }

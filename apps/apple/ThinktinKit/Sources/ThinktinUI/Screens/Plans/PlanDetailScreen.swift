@@ -94,9 +94,9 @@ private struct PlanDetailContent: View {
         .onChange(of: app.resubscribeRequest) {
             Task { await model.load() }
         }
-        .onChange(of: router.topRoute) {
-            // 从流水线编辑器（压栈的页面）回来：步骤可能改了。
-            if router.topRoute == .plan(model.planID) && model.hasLoaded { Task { await model.reloadPlan() } }
+        .onChange(of: router.visibleRoute) {
+            // 从流水线编辑器（压栈的页面）回来：步骤可能改了。看 `visibleRoute`：这一页也可能在 sheet 的栈里。
+            if router.visibleRoute == .plan(model.planID) && model.hasLoaded { Task { await model.reloadPlan() } }
         }
         .onChange(of: model.isDeleted) {
             if model.isDeleted { leave() }
@@ -417,10 +417,10 @@ private struct PlanDetailContent: View {
         }
     }
 
-    /// 删掉了：离开这一页，刷新角标。
+    /// 删掉了：离开这一页（主栈或 sheet 的栈，哪层有拿哪层），刷新角标。
     private func leave() {
         let id = model.planID
-        router.path.removeAll { $0 == .plan(id) || $0 == .confirmPlan(id) || $0 == .editPlan(id) }
+        router.removeRoutes { $0 == .plan(id) || $0 == .confirmPlan(id) || $0 == .editPlan(id) }
         Task { await app.refreshBadges() }
     }
 }

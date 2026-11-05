@@ -73,15 +73,16 @@ struct MarkdownBlockView: View, Equatable {
 }
 
 extension View {
-    /// agent 内容里的链接（`ConversationLinks`）：`thinktin://` 的深链在 App 里打开（`Router.handle(url:)`），网址、邮件
-    /// 交给系统，别的（打电话、别的 App 的 scheme、`javascript:`）不打开。
+    /// agent 内容里的链接（`ConversationLinks`）：`thinktin://` 的深链在 App 里打开（`Router.openLink(_:)`：压在眼前这一层上，
+    /// 返回还是对话或运行详情；不用 `handle(url:)`，那个是从外面进来的、会重建返回栈），网址、邮件交给系统，
+    /// 别的（打电话、别的 App 的 scheme、`javascript:`）不打开。
     @MainActor
     func conversationLinkHandling(_ router: Router) -> some View {
         environment(
             \.openURL,
             OpenURLAction { url in
                 switch ConversationLinks.handling(of: url) {
-                case .inApp: router.handle(url: url) ? .handled : .discarded
+                case .inApp: router.openLink(url) ? .handled : .discarded
                 case .external: .systemAction
                 case .blocked: .discarded
                 }

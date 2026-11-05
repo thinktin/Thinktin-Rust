@@ -312,15 +312,15 @@ private struct PlanConfirmContent: View {
                 systemImage: "trash", title: zh ? "已删除" : "Deleted", message: nil,
                 actionTitle: zh ? "看全部计划" : "All plans"
             ) {
-                router.path.removeAll { $0 == .confirmPlan(model.planID) || $0 == .plan(model.planID) }
+                router.removeRoutes { $0 == .confirmPlan(model.planID) || $0 == .plan(model.planID) }
                 router.open(.plans(instanceID: nil))
             }
         }
     }
 
-    /// 换成计划详情（确认页从返回栈里拿掉）。
+    /// 换成计划详情（确认页从它所在的那层栈里拿掉）。
     private func showPlan(_ id: PlanID) {
-        router.path.removeAll { $0 == .confirmPlan(id) }
+        router.removeRoutes { $0 == .confirmPlan(id) }
         router.open(.plan(id))
     }
 }
