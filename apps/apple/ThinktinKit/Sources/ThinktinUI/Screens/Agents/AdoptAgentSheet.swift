@@ -344,6 +344,8 @@ private struct AvatarPicker: View {
 
 /// 形状网格的一格：这个形状、现在的颜色和名字，按格子的宽度画（窄屏、大字号时也不会挤出格子）；选中的有强调色的圆角框。
 private struct AvatarShapeCell: View {
+    static let maxSide: CGFloat = 56
+
     let shape: AvatarShape
     let name: String
     let color: AvatarColor?
@@ -369,6 +371,9 @@ private struct AvatarShapeCell: View {
                 }
             }
             .contentShape(frame)
+            // 格子最大 56pt（形状 40pt）：按整列宽画时三行太高，把色板挤到底部的“新建”按钮后面（2026-11-05 截图）；
+            // 参考稿的形状也是这么大。窄屏、大字号时照样按列宽缩小。
+            .frame(maxWidth: Self.maxSide)
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
