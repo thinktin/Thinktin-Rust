@@ -26,6 +26,7 @@ mod llmgw;
 mod outbox;
 mod plans;
 mod project_invites;
+mod project_members;
 mod projects;
 mod reports;
 mod runs;
@@ -73,7 +74,7 @@ pub use live_activities::{LiveActivity, LiveSettle};
 pub use llmgw::{GatewayInstance, GatewayRoute};
 pub use outbox::{NewOutboxItem, OutboxItem};
 pub use plans::{DueTrigger, NewPlan, RetiredPlans};
-pub use project_invites::{Consent, CreatedInvite, InviteCaps, InviteKey};
+pub use project_invites::{Accepted, Consent, CreatedInvite, InviteCaps, InviteKey, JoinTerms};
 pub use projects::{ProjectRecord, SoloAgent};
 pub use reports::{NewReport, ReportRecord};
 pub use runs::{

@@ -71,7 +71,8 @@
   （15.7 安全评审之前）。
   已提交：C1 邀请令牌、`mask_phone` 挪到 proto；C2 迁移 0047、项目锁、注销清拉黑；C3 收件箱和推送带项目、邀请 id；C4 项目
   类型、三个 `project_*_limit` 错误码；C5 成员核对（`ProjectActor`）、我的项目和项目详情、改名改目标、租户改单人项目先拿项目锁；
-  C6 邀请和拉黑（发、列、撤回、预览、拒绝、拉黑、过期、清理，`store/src/project_invites.rs`）。接着 C7 接受邀请、加 agent。
+  C6 邀请和拉黑（发、列、撤回、预览、拒绝、拉黑、过期、清理，`store/src/project_invites.rs`）；C7 接受邀请、加 agent（30 个
+  上限、成员要带确认）。接着 C8 撤回 agent、退出、移出。
 - 下一步：8.14 → 8.15–8.19。东京：Phase 0（docs/browser.md 第 8.1 节），过了一个模板开一个 `supported`。用户放好搜索 key（`THINKTIN_PARALLEL_SEARCH_KEY`）后做小测。
 
 ## ⚠️ 紧急交接（2026-10-29 16:00 UTC，本会话 session_016LgPcdynywrhrjCq8VVFLt 周额度快用完）

@@ -7,7 +7,7 @@ use proto::domain::{
 
 use super::{instance, queue_run, user};
 use crate::testing::TestDb;
-use crate::{CreatedInvite, Db, Error, InviteCaps, InviteKey, NewInboxItem};
+use crate::{Consent, CreatedInvite, Db, Error, InviteCaps, InviteKey, JoinTerms, NewInboxItem};
 
 /// alice 的单人项目（经旧的团队接口建），负责人是 `lead`。
 async fn solo(db: &Db, owner: UserId, lead: &Instance) -> ProjectId {
@@ -928,5 +928,604 @@ async fn blocks_hide_invites_silently() {
         worker_do(db, async |w| w.unblock_user(carol, alice).await)
             .await
             .unwrap();
+    }
+}
+
+fn terms(agents: &[&Instance]) -> JoinTerms {
+    JoinTerms {
+        agents: agents.iter().map(|a| a.id).collect(),
+        daily_token_limit: 1_000_000,
+        total_token_limit: 10_000_000,
+        consent: Consent {
+            version: proto::domain::PROJECT_CONSENT_VERSION,
+        },
+    }
+}
+
+async fn accept(
+    db: &Db,
+    user: UserId,
+    key: InviteKey<'_>,
+    terms: &JoinTerms,
+) -> crate::Result<crate::Accepted> {
+    worker_do(db, async |w| w.accept_invite(user, key, terms).await).await
+}
+
+async fn live_member(db: &Db, project: ProjectId, user: UserId) -> bool {
+    sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM project_members WHERE project_id = $1 AND user_id = $2 \
+           AND left_at IS NULL)",
+    )
+    .bind(project.0)
+    .bind(user.0)
+    .fetch_one(db.pool())
+    .await
+    .unwrap()
+}
+
+async fn live_agent_count(db: &Db, project: ProjectId) -> i64 {
+    sqlx::query_scalar(
+        "SELECT count(*) FROM project_agents a JOIN instances i ON i.id = a.instance_id \
+           AND i.state <> 'deleted' WHERE a.project_id = $1 AND a.left_at IS NULL",
+    )
+    .bind(project.0)
+    .fetch_one(db.pool())
+    .await
+    .unwrap()
+}
+
+/// 用原始 SQL 让成员退出（退出流程在后面的提交）。
+async fn leave_raw(db: &Db, project: ProjectId, user: UserId) {
+    sqlx::query(
+        "UPDATE project_agents SET left_at = now(), is_lead = false \
+          WHERE project_id = $1 AND user_id = $2 AND left_at IS NULL",
+    )
+    .bind(project.0)
+    .bind(user.0)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE project_members SET left_at = now(), left_reason = 'left' \
+          WHERE project_id = $1 AND user_id = $2 AND left_at IS NULL",
+    )
+    .bind(project.0)
+    .bind(user.0)
+    .execute(db.pool())
+    .await
+    .unwrap();
+}
+
+/// 有 `n` 个 agent 的单人项目（第一个是负责人）。
+async fn solo_with(db: &Db, owner: UserId, n: usize) -> (ProjectId, Vec<Instance>) {
+    let mut agents = vec![];
+    for _ in 0..n {
+        agents.push(instance(db, owner).await);
+    }
+    let members: Vec<TeamMember> = agents
+        .iter()
+        .enumerate()
+        .map(|(i, a)| TeamMember {
+            instance_id: a.id,
+            role: if i == 0 {
+                TeamRole::Lead
+            } else {
+                TeamRole::Member
+            },
+            position: i as u32,
+        })
+        .collect();
+    let mut t = db.tenant(owner).await.unwrap();
+    let team = t.create_team("big", &members).await.unwrap();
+    t.commit().await.unwrap();
+    (team.id.into(), agents)
+}
+
+/// 链接邀请（8.14 测试 2）：一次有效；同一个人再接受一次不改什么；别人拿同一个令牌 NotFound；不能按 id 当手机号邀请
+/// 接受；过期了接受不了，后台标过期、提醒标已读。手机号邀请也能接受，加入后共享、带着确认时间和预算。
+#[tokio::test]
+async fn link_invites_are_single_use_and_idempotent() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = named(db, "+8613800001061", "Alice").await;
+    let bob = named(db, "+8613800001062", "Bob").await;
+    let carol = user(db, "+8613800001063").await;
+    let a1 = instance(db, alice).await;
+    let b1 = instance(db, bob).await;
+    let c1 = instance(db, carol).await;
+    let project = solo(db, alice, &a1).await;
+    let hash = [3u8; 32];
+    let link = worker_do(db, async |w| {
+        w.create_link_invite(alice, project, &hash, InviteCaps::default(), DAY)
+            .await
+    })
+    .await
+    .unwrap();
+    // 按 id 当手机号邀请：预览、接受都 NotFound。
+    let err = accept(db, bob, InviteKey::Phone(link.id), &terms(&[&b1]))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::NotFound), "{err:?}");
+    // 别人的实例、删掉的实例：NotFound，邀请不作废。
+    let err = accept(db, bob, InviteKey::Link(&hash), &terms(&[&c1]))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::NotFound), "{err:?}");
+    // 确认版本不对、预算不对、agent 为空或重复：Invalid。
+    let mut bad = terms(&[&b1]);
+    bad.consent.version = 0;
+    let mut over = terms(&[&b1]);
+    over.daily_token_limit = over.total_token_limit + 1;
+    let mut zero = terms(&[&b1]);
+    zero.total_token_limit = 0;
+    for t in [bad, over, zero, terms(&[]), terms(&[&b1, &b1])] {
+        let err = accept(db, bob, InviteKey::Link(&hash), &t)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::Invalid(_)), "{err:?}");
+    }
+    let got = accept(db, bob, InviteKey::Link(&hash), &terms(&[&b1]))
+        .await
+        .unwrap();
+    assert!(got.created);
+    assert_eq!(
+        (got.project, got.creator, got.invite),
+        (project, alice, link.id)
+    );
+    assert_eq!(got.member_name.as_deref(), Some("Bob"));
+    assert_eq!(got.agents, vec![b1.id]);
+    assert!(got.vendors.is_empty());
+    assert!(live_member(db, project, bob).await);
+    let (consented, daily): (bool, Option<i64>) = sqlx::query_as(
+        "SELECT consented_at IS NOT NULL, daily_token_limit FROM project_members \
+          WHERE project_id = $1 AND user_id = $2",
+    )
+    .bind(project.0)
+    .bind(bob.0)
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert!(consented && daily == Some(1_000_000));
+    let agent_consented: bool = sqlx::query_scalar(
+        "SELECT consented_at IS NOT NULL FROM project_agents WHERE project_id = $1 AND instance_id = $2",
+    )
+    .bind(project.0)
+    .bind(b1.id.0)
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert!(agent_consented);
+    // 再接受一次：不改，created = false。
+    let again = accept(db, bob, InviteKey::Link(&hash), &terms(&[&b1]))
+        .await
+        .unwrap();
+    assert!(!again.created);
+    assert_eq!(again.agents, vec![b1.id]);
+    // 别人拿同一个令牌：NotFound。
+    let err = accept(db, carol, InviteKey::Link(&hash), &terms(&[&c1]))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::NotFound), "{err:?}");
+    let mut w = db.worker().await.unwrap();
+    let list = w.project_invites(alice, project).await.unwrap();
+    assert_eq!(list[0].status, ProjectInviteStatus::Accepted);
+    assert_eq!(list[0].accepted_by.as_ref().unwrap().user_id, bob);
+    assert!(w.project_detail(bob, project).await.unwrap().summary.shared);
+    w.rollback().await.unwrap();
+
+    // 手机号邀请：过期了接受不了；后台标过期、提醒标已读。
+    let to_carol = invite_phone(db, alice, project, "+8613800001063", InviteCaps::default())
+        .await
+        .unwrap();
+    assert_eq!(to_carol.deliver_to, Some(carol));
+    invite_item(db, carol, project, to_carol.invite.id).await;
+    sqlx::query(
+        "UPDATE project_invites SET expires_at = now() - interval '1 second' WHERE id = $1",
+    )
+    .bind(to_carol.invite.id.0)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    let err = accept(
+        db,
+        carol,
+        InviteKey::Phone(to_carol.invite.id),
+        &terms(&[&c1]),
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(err, Error::NotFound), "{err:?}");
+    worker_do(db, async |w| w.expire_project_invites(10).await)
+        .await
+        .unwrap();
+    assert_eq!(invite_state(db, to_carol.invite.id).await.0, "expired");
+    assert!(invite_item_read(db, carol, to_carol.invite.id).await);
+    // 新的手机号邀请：只有被邀请的号码接受得了；接受后提醒标已读。
+    let fresh = invite_phone(db, alice, project, "+8613800001063", InviteCaps::default())
+        .await
+        .unwrap();
+    invite_item(db, carol, project, fresh.invite.id).await;
+    let err = accept(db, bob, InviteKey::Phone(fresh.invite.id), &terms(&[&b1]))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::NotFound), "{err:?}");
+    let got = accept(db, carol, InviteKey::Phone(fresh.invite.id), &terms(&[&c1]))
+        .await
+        .unwrap();
+    assert!(got.created);
+    assert!(invite_item_read(db, carol, fresh.invite.id).await);
+    // 已经是成员：再用别的邀请 Conflict，邀请不作废。
+    let hash2 = [4u8; 32];
+    let link2 = worker_do(db, async |w| {
+        w.create_link_invite(alice, project, &hash2, InviteCaps::default(), DAY)
+            .await
+    })
+    .await
+    .unwrap();
+    let err = accept(db, carol, InviteKey::Link(&hash2), &terms(&[&c1]))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::Conflict(_)), "{err:?}");
+    assert_eq!(invite_state(db, link2.id).await.0, "pending");
+    // 拉黑了邀请人的：手机号邀请接受不了（链接照样能用）。
+    let dave = user(db, "+8613800001064").await;
+    let d1 = instance(db, dave).await;
+    let to_dave = invite_phone(db, alice, project, "+8613800001064", InviteCaps::default())
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO user_blocks (blocker_id, blocked_id) VALUES ($1, $2)")
+        .bind(dave.0)
+        .bind(alice.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let err = accept(
+        db,
+        dave,
+        InviteKey::Phone(to_dave.invite.id),
+        &terms(&[&d1]),
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(err, Error::NotFound), "{err:?}");
+    let got = accept(db, dave, InviteKey::Link(&hash2), &terms(&[&d1]))
+        .await
+        .unwrap();
+    assert!(got.created);
+}
+
+/// 接受和撤回、和过期同时发生（8.14 测试 3）：每一轮只有一方成；接受了 ⇔ 是成员。
+#[tokio::test]
+async fn accept_races_revoke_and_expiry() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = named(db, "+8613800001071", "Alice").await;
+    let bob = user(db, "+8613800001072").await;
+    let a1 = instance(db, alice).await;
+    let b1 = instance(db, bob).await;
+    let project = solo(db, alice, &a1).await;
+    let mut wins = (0, 0);
+    for round in 0..20 {
+        let inv = invite_phone(db, alice, project, "+8613800001072", InviteCaps::default())
+            .await
+            .unwrap();
+        let id = inv.invite.id;
+        let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(2));
+        let (d1, b_1, t1) = (db.clone(), barrier.clone(), terms(&[&b1]));
+        let acc = tokio::spawn(async move {
+            b_1.wait().await;
+            accept(&d1, bob, InviteKey::Phone(id), &t1).await
+        });
+        let (d2, b_2) = (db.clone(), barrier.clone());
+        let rev = tokio::spawn(async move {
+            b_2.wait().await;
+            worker_do(&d2, async |w| w.revoke_invite(alice, project, id).await).await
+        });
+        let (a, r) = (acc.await.unwrap(), rev.await.unwrap());
+        match (&a, &r) {
+            (Ok(x), Err(Error::Conflict(_))) if x.created => wins.0 += 1,
+            (Err(Error::NotFound), Ok(true)) => wins.1 += 1,
+            other => panic!("round {round}: {other:?}"),
+        }
+        let state = invite_state(db, id).await.0;
+        assert_eq!(state == "accepted", live_member(db, project, bob).await);
+        if a.is_ok() {
+            leave_raw(db, project, bob).await;
+        }
+    }
+    eprintln!("accept vs revoke: {wins:?}");
+    // 和过期：邀请在两边开始后不久到期；最后再扫一次，邀请要么接受了、要么过期了。
+    for round in 0..20u64 {
+        let inv = invite_phone(db, alice, project, "+8613800001072", InviteCaps::default())
+            .await
+            .unwrap();
+        let id = inv.invite.id;
+        sqlx::query(
+            "UPDATE project_invites SET expires_at = now() + interval '40 milliseconds' WHERE id = $1",
+        )
+        .bind(id.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+        let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(2));
+        let (d1, b_1, t1) = (db.clone(), barrier.clone(), terms(&[&b1]));
+        let acc = tokio::spawn(async move {
+            b_1.wait().await;
+            tokio::time::sleep(std::time::Duration::from_millis(round * 4)).await;
+            accept(&d1, bob, InviteKey::Phone(id), &t1).await
+        });
+        let (d2, b_2) = (db.clone(), barrier.clone());
+        let exp = tokio::spawn(async move {
+            b_2.wait().await;
+            tokio::time::sleep(std::time::Duration::from_millis(45)).await;
+            worker_do(&d2, async |w| w.expire_project_invites(100).await).await
+        });
+        let a = acc.await.unwrap();
+        exp.await.unwrap().unwrap();
+        worker_do(db, async |w| w.expire_project_invites(100).await)
+            .await
+            .unwrap();
+        let state = invite_state(db, id).await.0;
+        match &a {
+            Ok(x) => assert!(x.created && state == "accepted", "round {round}"),
+            Err(Error::NotFound) => assert_eq!(state, "expired", "round {round}"),
+            Err(e) => panic!("round {round}: {e:?}"),
+        }
+        assert_eq!(state == "accepted", live_member(db, project, bob).await);
+        if a.is_ok() {
+            leave_raw(db, project, bob).await;
+        }
+    }
+}
+
+/// 两个人同时接受、只剩一个名额（8.14 测试 4）：一个成，另一个 `ProjectLimit(Members)`、邀请还是待接受。
+#[tokio::test]
+async fn concurrent_accepts_respect_ten_users() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = named(db, "+8613800001081", "Alice").await;
+    let a1 = instance(db, alice).await;
+    let project = solo(db, alice, &a1).await;
+    for n in 0..8 {
+        let u = user(db, &format!("+86138000040{n:02}")).await;
+        join_raw(db, project, u, &[]).await;
+    }
+    let x = user(db, "+8613800004090").await;
+    let y = user(db, "+8613800004091").await;
+    let (xi, yi) = (instance(db, x).await, instance(db, y).await);
+    let ix = invite_phone(db, alice, project, "+8613800004090", InviteCaps::default())
+        .await
+        .unwrap()
+        .invite
+        .id;
+    let iy = invite_phone(db, alice, project, "+8613800004091", InviteCaps::default())
+        .await
+        .unwrap()
+        .invite
+        .id;
+    let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(2));
+    let (d1, b1, t1) = (db.clone(), barrier.clone(), terms(&[&xi]));
+    let first = tokio::spawn(async move {
+        b1.wait().await;
+        accept(&d1, x, InviteKey::Phone(ix), &t1).await
+    });
+    let (d2, b2, t2) = (db.clone(), barrier.clone(), terms(&[&yi]));
+    let second = tokio::spawn(async move {
+        b2.wait().await;
+        accept(&d2, y, InviteKey::Phone(iy), &t2).await
+    });
+    let (rx, ry) = (first.await.unwrap(), second.await.unwrap());
+    let (ok, lost) = match (&rx, &ry) {
+        (Ok(_), Err(e)) => (ix, (iy, e)),
+        (Err(e), Ok(_)) => (iy, (ix, e)),
+        other => panic!("{other:?}"),
+    };
+    assert!(
+        matches!(lost.1, Error::ProjectLimit(crate::ProjectCap::Members)),
+        "{:?}",
+        lost.1
+    );
+    assert_eq!(invite_state(db, ok).await.0, "accepted");
+    assert_eq!(invite_state(db, lost.0).await.0, "pending");
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM project_members WHERE project_id = $1 AND left_at IS NULL",
+    )
+    .bind(project.0)
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(n, 10);
+}
+
+/// agent 数上限 30（8.14 测试 5）：加入、加 agent 都在锁里数；已经在项目里的不算新的；实例删了的不算；成员加 agent
+/// 要带确认。
+#[tokio::test]
+async fn thirty_agents_per_project() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = named(db, "+8613800001091", "Alice").await;
+    let bob = user(db, "+8613800001092").await;
+    let (project, alices) = solo_with(db, alice, 28).await;
+    let mut bobs = vec![];
+    for _ in 0..4 {
+        bobs.push(instance(db, bob).await);
+    }
+    let hash = [5u8; 32];
+    worker_do(db, async |w| {
+        w.create_link_invite(alice, project, &hash, InviteCaps::default(), DAY)
+            .await
+    })
+    .await
+    .unwrap();
+    let err = accept(
+        db,
+        bob,
+        InviteKey::Link(&hash),
+        &terms(&[&bobs[0], &bobs[1], &bobs[2]]),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(err, Error::ProjectLimit(crate::ProjectCap::Agents)),
+        "{err:?}"
+    );
+    accept(
+        db,
+        bob,
+        InviteKey::Link(&hash),
+        &terms(&[&bobs[0], &bobs[1]]),
+    )
+    .await
+    .unwrap();
+    assert_eq!(live_agent_count(db, project).await, 30);
+    let consent = Some(Consent {
+        version: proto::domain::PROJECT_CONSENT_VERSION,
+    });
+    let add = |user: UserId, ids: Vec<proto::domain::InstanceId>, consent: Option<Consent>| async move {
+        worker_do(db, async |w| {
+            w.add_project_agents(user, project, &ids, consent).await
+        })
+        .await
+    };
+    // 满了：加新的不行；重发已经在里面的照样成功（什么也没加）。
+    let err = add(bob, vec![bobs[2].id], consent).await.unwrap_err();
+    assert!(
+        matches!(err, Error::ProjectLimit(crate::ProjectCap::Agents)),
+        "{err:?}"
+    );
+    assert_eq!(add(bob, vec![bobs[0].id], consent).await.unwrap(), vec![]);
+    // 成员不带确认、确认版本不对：Invalid；加别人的实例：NotFound。
+    let err = add(bob, vec![bobs[2].id], None).await.unwrap_err();
+    assert!(matches!(err, Error::Invalid(_)), "{err:?}");
+    let err = add(bob, vec![bobs[2].id], Some(Consent { version: 99 }))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::Invalid(_)), "{err:?}");
+    let err = add(bob, vec![alices[1].id], consent).await.unwrap_err();
+    assert!(matches!(err, Error::NotFound), "{err:?}");
+    // 实例删了的不算：删掉一个就又能加一个。
+    sqlx::query("UPDATE instances SET state = 'deleted', deleted_at = now() WHERE id = $1")
+        .bind(alices[27].id.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        add(bob, vec![bobs[2].id], consent).await.unwrap(),
+        vec![bobs[2].id]
+    );
+    // 29 个时同时加两个：只有一个成。
+    sqlx::query(
+        "UPDATE project_agents SET left_at = now() WHERE project_id = $1 AND instance_id = $2",
+    )
+    .bind(project.0)
+    .bind(bobs[2].id.0)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(live_agent_count(db, project).await, 29);
+    let a_new = instance(db, alice).await;
+    let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(2));
+    let (d1, b1, i1) = (db.clone(), barrier.clone(), bobs[3].id);
+    let one = tokio::spawn(async move {
+        b1.wait().await;
+        worker_do(&d1, async |w| {
+            w.add_project_agents(bob, project, &[i1], consent).await
+        })
+        .await
+    });
+    let (d2, b2, i2) = (db.clone(), barrier.clone(), a_new.id);
+    let two = tokio::spawn(async move {
+        b2.wait().await;
+        // 创建者不用确认。
+        worker_do(&d2, async |w| {
+            w.add_project_agents(alice, project, &[i2], None).await
+        })
+        .await
+    });
+    let (r1, r2) = (one.await.unwrap(), two.await.unwrap());
+    assert_eq!(
+        [&r1, &r2].iter().filter(|r| r.is_ok()).count(),
+        1,
+        "{r1:?} {r2:?}"
+    );
+    assert_eq!(live_agent_count(db, project).await, 30);
+    // 创建者加的 agent 没有确认时间，成员加的有。
+    if r2.is_ok() {
+        let c: bool = sqlx::query_scalar(
+            "SELECT consented_at IS NULL FROM project_agents WHERE project_id = $1 AND instance_id = $2",
+        )
+        .bind(project.0)
+        .bind(a_new.id.0)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+        assert!(c);
+    }
+}
+
+/// 租户改团队和加入同时进行（8.14 测试 12）：都在项目锁里，agent 数不超过 30；团队先改完，或者回 409（项目已经共享）。
+#[tokio::test]
+async fn team_edits_and_joins_serialize() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = named(db, "+8613800001101", "Alice").await;
+    let bob = user(db, "+8613800001102").await;
+    let b1 = instance(db, bob).await;
+    for round in 0..4 {
+        let (project, alices) = solo_with(db, alice, 29).await;
+        let extra = instance(db, alice).await;
+        let hash = [10 + round as u8; 32];
+        worker_do(db, async |w| {
+            w.create_link_invite(alice, project, &hash, InviteCaps::default(), DAY)
+                .await
+        })
+        .await
+        .unwrap();
+        let mut members: Vec<TeamMember> = alices
+            .iter()
+            .enumerate()
+            .map(|(i, a)| TeamMember {
+                instance_id: a.id,
+                role: if i == 0 {
+                    TeamRole::Lead
+                } else {
+                    TeamRole::Member
+                },
+                position: i as u32,
+            })
+            .collect();
+        members.push(TeamMember {
+            instance_id: extra.id,
+            role: TeamRole::Member,
+            position: 29,
+        });
+        let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(2));
+        let (d1, bar1) = (db.clone(), barrier.clone());
+        let edit = tokio::spawn(async move {
+            bar1.wait().await;
+            let mut ta = d1.tenant(alice).await.unwrap();
+            let r = ta.update_team(project.into(), None, Some(&members)).await;
+            match r {
+                Ok(_) => ta.commit().await.map(|_| ()),
+                Err(e) => {
+                    ta.rollback().await.unwrap();
+                    Err(e)
+                }
+            }
+        });
+        let (d2, bar2, t2) = (db.clone(), barrier.clone(), terms(&[&b1]));
+        let join = tokio::spawn(async move {
+            bar2.wait().await;
+            accept(&d2, bob, InviteKey::Link(&hash), &t2).await
+        });
+        let (e, j) = (edit.await.unwrap(), join.await.unwrap());
+        match (&e, &j) {
+            // 团队先改完：30 个了，加入回上限。
+            (Ok(()), Err(Error::ProjectLimit(crate::ProjectCap::Agents))) => {}
+            // 先加入了：项目共享了，团队改不了。
+            (Err(Error::Conflict(_)), Ok(_)) => {}
+            other => panic!("round {round}: {other:?}"),
+        }
+        assert!(live_agent_count(db, project).await <= 30);
     }
 }

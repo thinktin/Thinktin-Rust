@@ -10,13 +10,14 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use proto::domain::{
-    BlockedUser, MAX_BLOCKS, MAX_PENDING_PROJECT_INVITES, MAX_PROJECT_USERS, ProjectBrief,
-    ProjectId, ProjectInvite, ProjectInviteId, ProjectInvitePreview, ProjectLimits,
-    ProjectMemberBrief, ProjectPerson, ProjectRole, ProjectStatus, UserId, UserStatus, mask_phone,
-    project_consent,
+    BlockedUser, InstanceId, MAX_BLOCKS, MAX_PENDING_PROJECT_INVITES, MAX_PROJECT_AGENTS,
+    MAX_PROJECT_USERS, ProjectBrief, ProjectId, ProjectInvite, ProjectInviteId,
+    ProjectInvitePreview, ProjectLimits, ProjectMemberBrief, ProjectPerson, ProjectRole,
+    ProjectStatus, UserId, UserStatus, mask_phone, project_consent,
 };
 use uuid::Uuid;
 
+use crate::project_members::{check_agent_ids, check_budget};
 use crate::projects::{LockedUser, ProjectActor};
 use crate::{Error, ProjectCap, Result, Tx, Worker, parse, secs, signed, unsigned};
 
@@ -43,7 +44,6 @@ pub struct Consent {
 }
 
 impl Consent {
-    #[allow(dead_code)] // 加入、增派 agent（下一个提交）用到
     pub(crate) fn check(self) -> Result<()> {
         if self.version == proto::domain::PROJECT_CONSENT_VERSION {
             Ok(())
@@ -61,6 +61,30 @@ pub struct CreatedInvite {
     pub created: bool,
     pub deliver_to: Option<UserId>,
     pub project_name: String,
+}
+
+/// 加入时带上的：放进项目的 agent、每天和总的 token 预算、确认过的说明。
+#[derive(Debug, Clone)]
+pub struct JoinTerms {
+    pub agents: Vec<InstanceId>,
+    pub daily_token_limit: u64,
+    pub total_token_limit: u64,
+    pub consent: Consent,
+}
+
+/// 接受了邀请。`created = false`：之前已经用这个邀请加入了，这次什么也没改（不再通知）。
+#[derive(Debug, Clone)]
+pub struct Accepted {
+    pub created: bool,
+    pub project: ProjectId,
+    pub creator: UserId,
+    pub invite: ProjectInviteId,
+    pub project_name: String,
+    pub member_name: Option<String>,
+    /// 我在项目里的 agent。
+    pub agents: Vec<InstanceId>,
+    /// 这些 agent 用到的模型厂商（审计用）。
+    pub vendors: Vec<String>,
 }
 
 type InviteRow = (
@@ -447,6 +471,173 @@ impl Tx<Worker> {
             }
         };
         self.preview(row).await
+    }
+
+    /// 接受邀请、加入项目（一个事务）。手机号邀请要是发给我的号码、没被标不送达、我没拉黑邀请人；链接邀请凭令牌。
+    /// 找不到、过期、撤回、拒绝、被别人用掉的一律 NotFound；已经是成员 Conflict（邀请不作废）；人数、agent 数到了上限
+    /// 回 `ProjectLimit`（邀请不作废）。同一个人用同一个邀请再接受一次：什么也不改，`created = false`。
+    pub async fn accept_invite(
+        &mut self,
+        user: UserId,
+        key: InviteKey<'_>,
+        terms: &JoinTerms,
+    ) -> Result<Accepted> {
+        let ids = check_agent_ids(&terms.agents)?;
+        check_budget(terms.daily_token_limit, terms.total_token_limit)?;
+        terms.consent.check()?;
+        let (invite_id, project, creator): (Uuid, Uuid, Uuid) = match key {
+            InviteKey::Phone(id) => sqlx::query_as(
+                "SELECT i.id, i.project_id, p.creator_id FROM project_invites i \
+                   JOIN projects p ON p.id = i.project_id WHERE i.id = $1 AND i.kind = 'phone'",
+            )
+            .bind(id.0),
+            InviteKey::Link(hash) => sqlx::query_as(
+                "SELECT i.id, i.project_id, p.creator_id FROM project_invites i \
+                   JOIN projects p ON p.id = i.project_id WHERE i.token_hash = $1 AND i.kind = 'link'",
+            )
+            .bind(&hash[..]),
+        }
+        .fetch_one(self.conn())
+        .await?;
+        let (invite_id, project, creator) = (
+            ProjectInviteId(invite_id),
+            ProjectId(project),
+            UserId(creator),
+        );
+        // D3：用户行 → 项目锁 → 自己的成员行（可能没有）→ 邀请行。
+        let locked = self.lock_users(&[user, creator]).await?;
+        let Some(me) = locked
+            .into_iter()
+            .find(|u| u.id == user && u.status != UserStatus::Deleted)
+        else {
+            return Err(Error::NotFound);
+        };
+        self.lock_project(project).await?;
+        let (status, name): (String, String) =
+            sqlx::query_as("SELECT status, name FROM projects WHERE id = $1")
+                .bind(project.0)
+                .fetch_one(self.conn())
+                .await?;
+        if parse::<ProjectStatus>(&status)? != ProjectStatus::Active {
+            return Err(Error::NotFound);
+        }
+        let member: Option<bool> = sqlx::query_scalar(
+            "SELECT left_at IS NULL FROM project_members WHERE project_id = $1 AND user_id = $2 \
+             FOR NO KEY UPDATE",
+        )
+        .bind(project.0)
+        .bind(user.0)
+        .fetch_optional(self.conn())
+        .await?;
+        let live_member = member == Some(true);
+        type Row = (String, bool, Option<Uuid>, Option<String>, bool, Uuid);
+        let (status, unexpired, accepted_by, phone, suppressed, inviter): Row = sqlx::query_as(
+            "SELECT status, expires_at > statement_timestamp(), accepted_by, invitee_phone, \
+                    suppressed_at IS NOT NULL, inviter_id \
+               FROM project_invites WHERE id = $1 FOR UPDATE",
+        )
+        .bind(invite_id.0)
+        .fetch_one(self.conn())
+        .await?;
+        let mut accepted = Accepted {
+            created: false,
+            project,
+            creator,
+            invite: invite_id,
+            project_name: name,
+            member_name: me.display_name.clone(),
+            agents: vec![],
+            vendors: vec![],
+        };
+        if status == "accepted" && accepted_by == Some(user.0) && live_member {
+            let mine: Vec<Uuid> = sqlx::query_scalar(
+                "SELECT a.instance_id FROM project_agents a \
+                   JOIN instances i ON i.id = a.instance_id AND i.state <> 'deleted' \
+                  WHERE a.project_id = $1 AND a.user_id = $2 AND a.left_at IS NULL \
+                  ORDER BY a.position, a.instance_id",
+            )
+            .bind(project.0)
+            .bind(user.0)
+            .fetch_all(self.conn())
+            .await?;
+            accepted.agents = mine.into_iter().map(InstanceId).collect();
+            accepted.vendors = self.instance_vendors(user, &accepted.agents).await?;
+            return Ok(accepted);
+        }
+        if status != "pending" || !unexpired {
+            return Err(Error::NotFound);
+        }
+        if let Some(phone) = phone {
+            let blocked: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM user_blocks WHERE blocker_id = $1 AND blocked_id = $2)",
+            )
+            .bind(user.0)
+            .bind(inviter)
+            .fetch_one(self.conn())
+            .await?;
+            if phone != me.phone || suppressed || blocked {
+                return Err(Error::NotFound);
+            }
+        }
+        if live_member {
+            return Err(Error::Conflict("already a member".into()));
+        }
+        let members: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM project_members WHERE project_id = $1 AND left_at IS NULL",
+        )
+        .bind(project.0)
+        .fetch_one(self.conn())
+        .await?;
+        if unsigned(members, "members")? + 1 > MAX_PROJECT_USERS {
+            return Err(Error::ProjectLimit(ProjectCap::Members));
+        }
+        let (live, already) = self.live_agents(project, &ids).await?;
+        let new: Vec<Uuid> = ids
+            .iter()
+            .copied()
+            .filter(|i| !already.contains(i))
+            .collect();
+        if live + new.len() as u64 > MAX_PROJECT_AGENTS {
+            return Err(Error::ProjectLimit(ProjectCap::Agents));
+        }
+        self.lock_own_instances(user, &ids).await?;
+        // 第一次加入走 INSERT（触发器标共享）；退出、被移出后再加入走 DO UPDATE。
+        let done = sqlx::query(
+            "INSERT INTO project_members \
+               (project_id, user_id, role, daily_token_limit, total_token_limit, consented_at) \
+             VALUES ($1, $2, 'member', $3, $4, now()) \
+             ON CONFLICT (project_id, user_id) DO UPDATE SET \
+               daily_token_limit = EXCLUDED.daily_token_limit, \
+               total_token_limit = EXCLUDED.total_token_limit, consented_at = now(), joined_at = now(), \
+               left_at = NULL, left_reason = NULL \
+             WHERE project_members.role = 'member' AND project_members.left_at IS NOT NULL",
+        )
+        .bind(project.0)
+        .bind(user.0)
+        .bind(signed(terms.daily_token_limit, "daily token limit")?)
+        .bind(signed(terms.total_token_limit, "total token limit")?)
+        .execute(self.conn())
+        .await?;
+        if done.rows_affected() != 1 {
+            return Err(Error::Conflict("already a member".into()));
+        }
+        self.put_agents(project, user, &new, true).await?;
+        let settled = sqlx::query(
+            "UPDATE project_invites SET status = 'accepted', settled_at = now(), accepted_by = $2 \
+              WHERE id = $1 AND status = 'pending' AND expires_at > statement_timestamp()",
+        )
+        .bind(invite_id.0)
+        .bind(user.0)
+        .execute(self.conn())
+        .await?;
+        if settled.rows_affected() != 1 {
+            return Err(Error::NotFound);
+        }
+        self.read_invite_items(user, &[invite_id.0]).await?;
+        accepted.created = true;
+        accepted.agents = terms.agents.clone();
+        accepted.vendors = self.instance_vendors(user, &terms.agents).await?;
+        Ok(accepted)
     }
 
     /// 预览：项目、创建者（屏蔽要用他的 id），别的成员只有昵称、身份和 agent 数，没有用户 id。
