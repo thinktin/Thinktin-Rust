@@ -1,11 +1,9 @@
 import SwiftUI
 import ThinktinKit
 
-/// Agent 详情（`.agent(id)`）：介绍、许可证和许可说明、上游仓库、接入方式、可用版本、要哪种模型接口、能用的地区，
-/// 已经领养的实例；“用它新建 Botin”打开领养表单（`AdoptAgentSheet`）。界面上 agent 叫“引擎”，实例叫 Botin。
-///
-/// 领养好之后按表单里选的下一步跳：配模型路由（12.4 的 `.modelRoutes`，返回栈是“新实例的对话 → 路由页”）、
-/// 先加 key（路由页上再弹添加 key）、或者直接去新实例的对话。跳之前先刷新应用框架的实例列表，抽屉里马上有它。
+/// 引擎详情（`.agent(id)`，代码里是 agent 详情）：介绍、许可证和许可说明、上游仓库、接入方式、可用版本、要哪种模型接口、
+/// 能用的地区，在用它的 Botin；“用它新建 Botin”打开预选它的新建表单（`.adopt(agentID:)`，`AdoptAgentSheet`）。
+/// 详情是从新建表单的“了解引擎”压进去的时候，`Router` 退回那张表单、换成这个引擎，不再叠一张。
 struct AgentDetailScreen: View {
     let agentID: AgentID
 
@@ -18,11 +16,6 @@ struct AgentDetailScreen: View {
 
 private struct AgentDetailContent: View {
     @State private var model: AgentDetailModel
-    @State private var isAdopting = false
-    /// 表单里领养成功了（关掉表单后要刷新实例列表）。
-    @State private var didAdopt = false
-    /// 领养表单关掉之后要去哪（表单里选的）。
-    @State private var exit: AdoptionExit?
 
     @Environment(AppModel.self) private var app
     @Environment(Router.self) private var router
@@ -44,7 +37,7 @@ private struct AgentDetailContent: View {
                         agent: agent, instances: model.adoptedInstances(in: app.instances),
                         canAdopt: !app.isOffline
                     ) {
-                        isAdopting = true
+                        router.open(.adopt(agentID: agent.id))
                     }
                 } else if model.isMissing {
                     EmptyStateView(
@@ -73,35 +66,6 @@ private struct AgentDetailContent: View {
         .onChange(of: app.isOffline) {
             if !app.isOffline { Task { await model.load() } }
         }
-        .sheet(
-            isPresented: $isAdopting, onDismiss: { finishAdoption() },
-            content: {
-                if let agent = model.agent {
-                    NavigationStack {
-                        AdoptAgentSheet(
-                            agent: agent, existingNames: app.instances.map(\.name), client: app.client,
-                            onAdopted: { didAdopt = true },
-                            onExit: { exit in
-                                self.exit = exit
-                                isAdopting = false
-                            })
-                    }
-                    .shellEnvironment(app)
-                    .tint(Theme.accent)
-                }
-            })
-    }
-
-    /// 领养表单关掉了：领养过就按表单里选的下一步跳（直接划走的只刷新实例列表）；没领养什么也不做。
-    private func finishAdoption() {
-        let exit = self.exit ?? .stay
-        let adopted = didAdopt
-        self.exit = nil
-        didAdopt = false
-        guard adopted else { return }
-        let app = self.app
-        let router = self.router
-        Task { await exit.perform(app: app, router: router) }
     }
 }
 
@@ -255,45 +219,14 @@ private struct AgentDetailBody: View {
     }
 }
 
-/// 领养表单关掉之后去哪。
-enum AdoptionExit: Hashable, Sendable {
-    /// 去配新实例的模型路由。
-    case configureRoutes(InstanceID)
-    /// 先加 key（停在新实例的路由页上，上面弹添加 key）。
-    case addCredential(InstanceID)
-    /// 先去新实例的对话。
-    case openConversation(InstanceID)
-    /// 不跳（取消了，或者领养好了直接关掉表单，留在详情页）。
-    case stay
-
-    /// 领养好之后跳过去：先刷新应用框架的实例列表（抽屉里马上有新实例，当前实例换成它时也不会被校正回去）。
-    @MainActor
-    func perform(app: AppModel, router: Router) async {
-        await app.refresh()
-        switch self {
-        case .configureRoutes(let id):
-            // 返回栈：新实例的对话 → 路由页（配好返回就是对话）。
-            router.show(.modelRoutes(id))
-        case .addCredential(let id):
-            // 先停在路由页，上面弹添加 key；加好关掉就接着配路由。
-            router.show(.modelRoutes(id))
-            router.present(.addCredential)
-        case .openConversation(let id):
-            router.selectInstance(id)
-        case .stay:
-            break
-        }
-    }
-}
-
-#Preview("Agent 详情 · 浅色中文") {
+#Preview("引擎详情 · 浅色中文") {
     AgentDetailScreen(agentID: DemoData.claudeAgentID).previewShell()
 }
 
-#Preview("Agent 详情 · 深色英文") {
+#Preview("引擎详情 · 深色英文") {
     AgentDetailScreen(agentID: DemoData.codexAgentID).previewShell(.english, scheme: .dark)
 }
 
-#Preview("Agent 详情 · 已下架") {
+#Preview("引擎详情 · 已下架") {
     AgentDetailScreen(agentID: "retired").previewShell()
 }

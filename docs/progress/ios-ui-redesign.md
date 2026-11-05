@@ -172,6 +172,28 @@
 - Botin 改名这一份的 Linux 检查（2026-11-05，最后一次提交上）：ThinktinKit `swift test` 1012 个全过（新加首页空状态文案那条）；uicheck
   UIKit、AppKit 都编过；`run.sh test` 138 个全过；App 的 `ThinktinTests` 19 个过 14 个（还是那 5 个要 App 包的）；
   `swift format lint --strict -r apps/apple` 零条。macOS CI 还没看。
+- 新建 Botin 表单（规范 4.7.1 改过的版式，2026-11-05）：首页“+”、空状态的“新建 Botin”、引擎详情的“用它新建 Botin”都打开
+  `.adopt(agentID:)` 这张 sheet（`AdoptAgentSheet`，`AgentsDestination` 不再把它换成目录 / 详情）。原生 `Form` + `.formStyle(.grouped)`：
+  头像预览（`InstanceAvatar`，按名字取色）；名字 `TextField`（占位“给它取个名字”，问题或提示在分组脚注里，规则还是 `InstanceNameRule`，
+  默认填引擎名、重名加序号，用户没改过时换引擎名字跟着换）；引擎是行内 `Picker`（每行名字 + 一句话介绍，不能用的灰掉、选不了），接入方式
+  多于一个时再一行 `Picker(.menu)`，“了解引擎”`NavigationLink` 压进引擎目录；许可证和在哪运行的说明是引擎分组的脚注
+  （`NewBotinText.engineFooter`）。左上 `CloseButton`（自己填了名字时先确认“不建这个 Botin 了？”），右上 `ConfirmButton("创建")`
+  （新建中转圈，读屏“正在新建”；`ConfirmButton` 加了 `workingLabel`）。错误（包括 Botin 数上限）在表单里的 `ErrorBanner`；离线时一组说明和
+  “重新检查网络”。建好了调 `AppModel.openCreatedInstance`：先把新 Botin 放进列表，`selectInstance` 关掉 sheet、从首页压栈进它的对话，再刷新。
+  - 视图模型 `AdoptionModel` 改成带引擎选择的：`init(client:agents:instances:preselectedAgentID:)`、`load()` 拉目录、`selectEngine(_:)`、
+    `engineOptions(_:)`（`EngineOption`）、`defaultEngine`（预选的 → 最近活跃的 Botin 用的引擎 → 目录里第一个能用的）、`hasUserInput`。
+    “能不能用”是 `AgentInfo.canPowerNewBotin`：服务端目录还没有下架 / 地区这类字段，现在只有没给接入方式的算不能用，以后在这里接。
+  - 以前“建好了”页（`AdoptionDoneView`、`AdoptionExit`、领养后查能用的 key）删了；配模型路由的提示挪到对话页：还没有任务、没配 main 时
+    空状态下面一句“还差一步……”和“配置模型路由”按钮（`ConversationModel.needsSetupNote`、`ConversationText.setupNote`、
+    `ConversationSetupNote`）；没有能用的 key 时路由页自己引导加 key。
+  - 引擎详情是从表单的“了解引擎”压进去的时候，“用它新建 Botin”不再叠第二张表单：`Router.present` 看到最前面那层是 `.adopt`，就拿掉那层栈上的
+    页面、记下 `engineRequest`，表单 `onChange` 时换引擎（`engineRequestHandled()`）。别处（主栈、设置里）的引擎详情照常弹表单。
+  - `SheetStack.addsCloseButton` 不再给 `.adopt` 补 ×（表单自己有）。`AgentsNameField` 挪到 `InstanceDetailScreen.swift`（只剩改名用）。
+- 首页空状态（2026-11-05）：显示什么挪到 ThinktinKit 的 `HomeList.placeholder` / `AppModel.homePlaceholder`（`.loading`、
+  `.offlineWithoutCache`、`.noBotins`；有行、刷新失败时为 nil）。联网拉到了、没有 Botin 才是“还没有 Botin”（`ContentUnavailableView`，
+  按钮 `.glassButtonStyle(.prominent)` + `.controlSize(.large)`，打开同一张表单）；离线不管拿没拿到过都是第 0 轮那句“这台设备上还没有保存的
+  Botin”。演示数据加了 `DemoData.newAccountState()`（刚注册的账号：没有 Botin 和它们的运行、计划、团队、产出物、收件箱，也没有 key），
+  `ShellPreviewClients.empty()` 用它。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、

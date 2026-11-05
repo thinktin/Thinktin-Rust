@@ -95,11 +95,8 @@ enum ShellPreviewClients {
         return MockClient(state: state, autoReply: false)
     }
 
-    /// 还没有实例（新用户）。
+    /// 还没有 Botin（刚注册、第一次登录的新账号，`DemoData.newAccountState`）。
     static func empty() -> MockClient {
-        var state = DemoData.state()
-        state.instances = []
-        state.runs = []
-        return MockClient(state: state, autoReply: false)
+        MockClient(state: DemoData.newAccountState(), autoReply: false)
     }
 }

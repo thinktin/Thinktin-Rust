@@ -482,6 +482,41 @@ struct InstanceRenameSheet: View {
     }
 }
 
+/// 名字输入框：圆角描边的单行输入，下面是问题（危险色）或提示（改名用；新建 Botin 的表单用 `Form` 里的 `TextField`）。
+struct AgentsNameField: View {
+    let title: String
+    let text: Binding<String>
+    let problem: InstanceNameProblem?
+    let hint: String
+
+    @Environment(\.displayLanguage) private var language
+    @Environment(\.displayScale) private var displayScale
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous)
+        VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
+            TextField(title, text: text)
+                .textFieldStyle(.plain)
+                .typography(.body)
+                .foregroundStyle(Theme.ink)
+                .padding(.horizontal, Metrics.Spacing.s)
+                .frame(minHeight: Metrics.minTapTarget)
+                .background(Theme.paperElevated, in: shape)
+                .overlay {
+                    shape.strokeBorder(
+                        problem == nil ? Theme.hairline : StatusTone.failure.color,
+                        lineWidth: Metrics.hairline(scale: displayScale))
+                }
+                .accessibilityLabel(Text(title))
+                .accessibilityHint(Text(problem?.message(language) ?? hint))
+            Text(problem?.message(language) ?? hint)
+                .typography(.footnote)
+                .foregroundStyle(problem == nil ? Theme.inkSecondary : StatusTone.failure.color)
+                .accessibilityHidden(true)
+        }
+    }
+}
+
 #Preview("实例详情 · 浅色中文") {
     InstanceDetailScreen(instanceID: DemoData.writerID).previewShell()
 }

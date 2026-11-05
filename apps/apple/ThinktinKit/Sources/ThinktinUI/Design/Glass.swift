@@ -49,6 +49,7 @@ public struct CloseButton: View {
 public struct ConfirmButton: View {
     private let title: String?
     private let isWorking: Bool
+    private let workingLabel: String?
     private let action: @MainActor () -> Void
 
     @Environment(\.displayLanguage) private var language
@@ -56,16 +57,21 @@ public struct ConfirmButton: View {
     /// - Parameters:
     ///   - title: 按钮上的字；nil 用“完成”。
     ///   - isWorking: 正在保存：显示转圈，不能再点。
-    public init(_ title: String? = nil, isWorking: Bool = false, action: @escaping @MainActor () -> Void) {
+    ///   - workingLabel: 转圈的读屏文字；nil 用“正在保存”（新建这类不是保存的操作自己给，比如“正在新建”）。
+    public init(
+        _ title: String? = nil, isWorking: Bool = false, workingLabel: String? = nil,
+        action: @escaping @MainActor () -> Void
+    ) {
         self.title = title
         self.isWorking = isWorking
+        self.workingLabel = workingLabel
         self.action = action
     }
 
     public var body: some View {
         if isWorking {
             ProgressView()
-                .accessibilityLabel(Text(language == .chinese ? "正在保存" : "Saving"))
+                .accessibilityLabel(Text(workingLabel ?? (language == .chinese ? "正在保存" : "Saving")))
         } else {
             Button(title ?? (language == .chinese ? "完成" : "Done"), role: GlassRoles.confirm, action: action)
         }

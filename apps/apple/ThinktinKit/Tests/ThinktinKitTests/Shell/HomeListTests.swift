@@ -130,4 +130,87 @@ struct HomeListTests {
             #expect(row.activity == model.activity(for: row.id))
         }
     }
+
+    @Test("空着时显示什么：转圈、离线没缓存、还没有 Botin；有行或刷新失败时不显示")
+    func placeholder() {
+        typealias P = HomePlaceholder
+        func check(_ empty: Bool, _ loaded: Bool, _ offline: Bool, _ error: Bool) -> P? {
+            HomeList.placeholder(isEmpty: empty, hasLoaded: loaded, isOffline: offline, hasError: error)
+        }
+        #expect(check(true, false, false, false) == .loading)
+        #expect(check(true, true, false, false) == .noBotins)
+        // 离线：不管拿没拿到过都不引导新建（表单离线不能提交）。
+        #expect(check(true, false, true, false) == .offlineWithoutCache)
+        #expect(check(true, true, true, false) == .offlineWithoutCache)
+        #expect(check(true, false, true, true) == .offlineWithoutCache)
+        // 刷新失败：横幅说了怎么回事，列表空着。
+        #expect(check(true, false, false, true) == nil)
+        #expect(check(true, true, false, true) == nil)
+        for loaded in [false, true] {
+            for offline in [false, true] {
+                for error in [false, true] { #expect(check(false, loaded, offline, error) == nil) }
+            }
+        }
+    }
+
+    @Test("第一次登录（新账号）：拉到了、联网，首页是“还没有 Botin”；有了缓存的账号离线时不是")
+    @MainActor
+    func newAccountPlaceholder() async {
+        let empty = MockClient(state: DemoData.newAccountState(), stepDelay: 0, autoReply: false)
+        let model = AppModel(client: empty, defaults: nil)
+        #expect(model.homePlaceholder == .loading)
+        await model.start()
+        #expect(model.instances.isEmpty && model.hasLoadedInstances)
+        #expect(model.homePlaceholder == .noBotins)
+        // 网络断了（刷新的每个请求都失败）：只说这台设备上没有。
+        for _ in 0..<6 { empty.failNext(with: .network(message: "offline")) }
+        await model.refresh()
+        #expect(await eventually { model.isOffline })
+        #expect(model.homePlaceholder == .offlineWithoutCache)
+
+        let demo = AppModel(client: makeShellMock(), defaults: nil)
+        await demo.start()
+        #expect(demo.homePlaceholder == nil)
+    }
+
+    @Test("新账号的演示数据：没有 Botin 和它们的东西，引擎目录、团队模板、这台设备照旧")
+    func newAccountState() {
+        let state = DemoData.newAccountState()
+        #expect(state.session != nil)
+        #expect(state.instances.isEmpty && state.runs.isEmpty && state.events.isEmpty && state.routes.isEmpty)
+        #expect(state.plans.isEmpty && state.teams.isEmpty && state.approvals.isEmpty && state.inbox.isEmpty)
+        #expect(state.artifacts.isEmpty && state.vaultRequests.isEmpty && state.credentials.isEmpty)
+        #expect(state.agents == DemoData.agents)
+        #expect(!state.teamTemplates.isEmpty && !state.devices.isEmpty && !state.vendors.isEmpty)
+    }
+
+    @Test("新建了 Botin：马上进实例列表、关掉表单、从首页压栈进它的对话，再刷新")
+    @MainActor
+    func openCreatedInstance() async throws {
+        let mock = MockClient(state: DemoData.newAccountState(), stepDelay: 0, autoReply: false)
+        let model = AppModel(client: mock, defaults: nil)
+        await model.start()
+        model.router.open(.adopt(agentID: nil))
+        model.router.open(.agentCatalog)
+        let instance = try await mock.adopt(agentID: DemoData.hermesAgentID, name: "资料员", harness: nil)
+        await model.openCreatedInstance(instance)
+        #expect(model.instances.map(\.id) == [instance.id])
+        #expect(model.homePlaceholder == nil)
+        #expect(model.router.sheet == nil && model.router.sheetPath.isEmpty)
+        #expect(model.router.path == [.conversation(instance.id)])
+        #expect(model.router.currentInstanceID == instance.id)
+        // 已经在列表里（刷新先到了）也不会多出一行。
+        await model.openCreatedInstance(instance)
+        #expect(model.instances.count == 1)
+        #expect(model.router.path == [.conversation(instance.id)])
+
+        // 有别的 Botin 时，新的排在最前面（刚活跃）。
+        let demo = AppModel(client: makeShellMock(), defaults: nil)
+        await demo.start()
+        demo.router.open(.conversation(DemoData.reviewerID))
+        let fresh = try await demo.client.adopt(agentID: DemoData.codexAgentID, name: "校对", harness: nil)
+        await demo.openCreatedInstance(fresh)
+        #expect(demo.homeRows.first?.id == fresh.id)
+        #expect(demo.router.path == [.conversation(fresh.id)])
+    }
 }

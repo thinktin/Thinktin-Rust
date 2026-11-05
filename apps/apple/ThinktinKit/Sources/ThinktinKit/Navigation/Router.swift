@@ -64,6 +64,9 @@ public final class Router {
     /// 首页处理到了第几次搜索请求（`searchRequestHandled()`）。首页比请求晚出现时（冷启动的深链、登录后补跳的深链）
     /// 看 `hasPendingSearchRequest` 补上；首页重建时也不会把处理过的再激活一次。
     public private(set) var handledSearchRequest = 0
+    /// 新建 Botin 的表单开着时又要用某个引擎新建（表单的“了解引擎”压进去的引擎详情上点了“用它新建 Botin”）：`present`
+    /// 退回表单、不再叠一张，表单换成这个引擎（`onChange(of: router.engineRequest)`，换好调 `engineRequestHandled()`）。
+    public private(set) var engineRequest: AgentID?
     /// 暂时不跳转（没登录、冻结、要升级）：深链和推送先记进 `pendingRoute`；改回 false 时自动跳过去。
     public var isHoldingRoutes = false {
         didSet {
@@ -220,6 +223,11 @@ public final class Router {
         handledNewTaskRequest = newTaskRequest
     }
 
+    /// 新建表单换好了引擎。
+    public func engineRequestHandled() {
+        engineRequest = nil
+    }
+
     /// App 里点的 `thinktin://` 链接（agent 回复、运行详情里的）：按 `open` 的规则打开，压在眼前这一层的栈上，返回还是
     /// 现在的页面（对话不会被换掉）。和 `handle(url:)` 不同，不关 sheet、不重建返回栈。是认得的深链返回 true。
     @discardableResult
@@ -247,14 +255,30 @@ public final class Router {
     }
 
     /// 弹出 sheet（不管页面平时怎么出现）：没开 sheet 时是第一层；开着时叠成第二层（第二层开着就换掉它）。
-    /// 已经开着的那一层就是它时不重复弹（是第一层时关掉上面叠的那层，回到它）。
+    /// 已经开着的那一层就是它时不重复弹（是第一层时关掉上面叠的那层，回到它）。最前面那层是新建 Botin 的表单、又要用某个
+    /// 引擎新建（`.adopt(agentID: id)`）时不叠第二张表单：退回那张表单，记下 `engineRequest`。
     public func present(_ route: AppRoute) {
+        if case .adopt(let agentID?) = route, returnToNewBotinForm(choosing: agentID) { return }
         if sheet == nil || sheet == route {
             sheet = route
             nestedSheet = nil
         } else {
             nestedSheet = route
         }
+    }
+
+    /// 最前面那层 sheet 是新建表单：拿掉它栈上的页面（目录、引擎详情），记下要换的引擎。不是时返回 false。
+    private func returnToNewBotinForm(choosing agentID: AgentID) -> Bool {
+        if let nestedSheet {
+            guard case .adopt = nestedSheet else { return false }
+            nestedSheetPath = []
+        } else if let sheet, case .adopt = sheet {
+            sheetPath = []
+        } else {
+            return false
+        }
+        engineRequest = agentID
+        return true
     }
 
     /// 关掉最前面那层 sheet（sheet 里的“取消”“完成”）。
@@ -358,5 +382,6 @@ public final class Router {
         currentInstanceID = nil
         handledSearchRequest = searchRequest
         handledNewTaskRequest = newTaskRequest
+        engineRequest = nil
     }
 }

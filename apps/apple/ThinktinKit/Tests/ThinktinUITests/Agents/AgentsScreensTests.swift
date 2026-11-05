@@ -4,14 +4,15 @@ import ThinktinKit
 
 @testable import ThinktinUI
 
-/// Agent 目录与领养（WBS 12.3）的界面：每个页面在浅色中文、深色英文、大字号下都能布局，领养表单、删除确认页、
-/// 领养后和删除后的跳转。视图模型的逻辑在 ThinktinKitTests 的 Agents 里测。
+/// 引擎目录与新建 Botin（WBS 12.3，代码里是 agent 目录与领养）的界面：每个页面在浅色中文、深色英文、大字号下都能布局，
+/// 新建表单、删除确认页、新建后和删除后的跳转。视图模型的逻辑在 ThinktinKitTests 的 Agents 里测。
 @MainActor
-@Suite("Agent 目录与领养的界面")
+@Suite("引擎目录与新建 Botin 的界面")
 struct AgentsScreensTests {
     static let routes: [AppRoute] = [
         .agentCatalog, .agent(DemoData.claudeAgentID), .agent(DemoData.codexAgentID), .agent("retired"),
-        .instance(DemoData.writerID), .instance(DemoData.reviewerID), .instance("gone"),
+        .instance(DemoData.writerID), .instance(DemoData.reviewerID), .instance("gone"), .adopt(agentID: nil),
+        .adopt(agentID: DemoData.codexAgentID), .adopt(agentID: "retired"),
     ]
 
     @Test("每个页面都能布局（中文浅色、英文深色）")
@@ -39,16 +40,19 @@ struct AgentsScreensTests {
             AgentsDestination(route: .instance(DemoData.writerID)).previewShell(client: AgentsPreviewClients.noKeys()))
     }
 
-    @Test("领养表单：Claude（两种接入方式、许可说明）和 Codex")
+    @Test("新建表单：在演示账号、新账号上，Claude（两种接入方式、许可说明）和预选的 Codex；目录拉不到")
     func adoptionForm() {
+        hostAndLayout(NavigationStack { AdoptAgentSheet() }.previewShell())
         hostAndLayout(
-            AdoptAgentSheet(agent: DemoData.agents[0], existingNames: ["写作助手"], client: MockClient(autoReply: false)) {
-                _ in
-            }
-            .previewShell())
-        hostAndLayout(
-            AdoptAgentSheet(agent: DemoData.agents[1], existingNames: [], client: MockClient(autoReply: false)) { _ in }
+            NavigationStack { AdoptAgentSheet(preselectedAgentID: DemoData.codexAgentID) }
                 .previewShell(.english, scheme: .dark))
+        hostAndLayout(
+            NavigationStack { AdoptAgentSheet() }.previewShell(client: ShellPreviewClients.empty())
+                .dynamicTypeSize(.accessibility3))
+        let offline = MockClient(autoReply: false)
+        offline.failNext("agents()", with: .network(message: "offline"))
+        hostAndLayout(NavigationStack { AdoptAgentSheet() }.previewShell(client: offline))
+        hostAndLayout(NavigationStack { AdoptAgentSheet() }.previewShell(client: AgentsPreviewClients.emptyCatalog()))
     }
 
     @Test("改名表单")
@@ -102,46 +106,30 @@ struct AgentsScreensTests {
         renderInBothAppearances(InstanceDeletionImpactView(impact: InstanceDeletionImpact(instanceID: "lonely")))
     }
 
-    @Test("领养后去配路由：先刷新实例列表，返回栈是“首页 → 新实例的对话 → 路由页”")
-    func adoptionExitRoutes() async throws {
-        let mock = MockClient(autoReply: false)
+    @Test("新建之后：从首页“+”弹的表单里新建，关掉表单、从首页压栈进新 Botin 的对话；空状态下面提示去配模型路由")
+    func afterCreation() async throws {
+        let mock = MockClient(state: DemoData.newAccountState(), autoReply: false)
         let app = AppModel(client: mock, defaults: nil)
         await app.start()
-        let instance = try await app.client.adopt(agentID: DemoData.hermesAgentID, name: "资料员", harness: nil)
-        await AdoptionExit.configureRoutes(instance.id).perform(app: app, router: app.router)
-        #expect(app.instances.contains { $0.id == instance.id })
-        #expect(app.router.currentInstanceID == instance.id)
-        #expect(app.router.path == [.conversation(instance.id), .modelRoutes(instance.id)])
-        #expect(app.router.sheet == nil)
-    }
-
-    @Test("领养后先加 key：停在路由页，上面弹添加 key；稍后再配就去新实例的对话")
-    func adoptionExitOthers() async throws {
-        let mock = MockClient(autoReply: false)
-        let app = AppModel(client: mock, defaults: nil)
-        await app.start()
-        let first = try await app.client.adopt(agentID: DemoData.codexAgentID, name: "校对", harness: nil)
-        await AdoptionExit.addCredential(first.id).perform(app: app, router: app.router)
-        #expect(app.router.path == [.conversation(first.id), .modelRoutes(first.id)])
-        #expect(app.router.sheet == .addCredential)
-        #expect(app.router.routeBelowSheet == .modelRoutes(first.id))
-
-        // 从首页“+”弹的领养 sheet 里领养（sheet 里压了 agent 详情）：先关掉 sheet，再从首页进新实例的对话。
-        app.router.dismissSheet()
+        #expect(app.homePlaceholder == .noBotins)
+        // 空状态的“新建 Botin”和右上的“+”一样。
         app.router.open(.adopt(agentID: nil))
-        app.router.open(.agent(DemoData.claudeAgentID))
-        #expect(app.router.sheetPath == [.agent(DemoData.claudeAgentID)])
-        let second = try await app.client.adopt(agentID: DemoData.claudeAgentID, name: "主笔", harness: "cli")
-        await AdoptionExit.openConversation(second.id).perform(app: app, router: app.router)
-        #expect(app.router.currentInstanceID == second.id)
-        #expect(app.router.path == [.conversation(second.id)])
-        #expect(app.router.sheet == nil)
-        #expect(app.router.sheetPath.isEmpty)
-
-        // 不跳：什么都不动。
         app.router.open(.agentCatalog)
-        await AdoptionExit.stay.perform(app: app, router: app.router)
-        #expect(app.router.path == [.conversation(second.id), .agentCatalog])
+        let form = AdoptionModel(client: app.client, instances: app.instances)
+        await form.load()
+        #expect(form.selectedAgentID == DemoData.claudeAgentID)
+        form.name = "主笔"
+        let instance = try #require(await form.adopt())
+        await app.openCreatedInstance(instance)
+        #expect(app.router.sheet == nil && app.router.sheetPath.isEmpty)
+        #expect(app.router.path == [.conversation(instance.id)])
+        #expect(app.instances.map(\.name) == ["主笔"])
+        hostAndLayout(AppShell(model: app))
+        let conversation = ConversationModel(client: app.client, instanceID: instance.id)
+        await conversation.start()
+        #expect(conversation.needsSetupNote)
+        hostAndLayout(ConversationSetupNote {}.previewShell())
+        hostAndLayout(ConversationSetupNote {}.previewShell(.english, scheme: .dark).dynamicTypeSize(.accessibility3))
     }
 
     @Test("删掉不是当前的实例：拿掉它的页面，当前实例不变")

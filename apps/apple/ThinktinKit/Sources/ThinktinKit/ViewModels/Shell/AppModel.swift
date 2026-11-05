@@ -196,6 +196,13 @@ public final class AppModel {
         HomeList.rows(instances: instances, activity: activity)
     }
 
+    /// 首页列表空着时显示什么（`HomeList.placeholder`：加载中、离线没缓存、还没有 Botin）；有 Botin 或刷新失败时为 nil。
+    public var homePlaceholder: HomePlaceholder? {
+        HomeList.placeholder(
+            isEmpty: instances.isEmpty, hasLoaded: hasLoadedInstances, isOffline: isOffline,
+            hasError: refreshError != nil)
+    }
+
     // MARK: 启动与刷新
 
     /// 启动（`AppShell` 的 `.task`，只做一次）：先换请求语言，再读缓存，再确认账号状态（和服务端的用户语言），
@@ -231,6 +238,16 @@ public final class AppModel {
         defer { isRefreshing = false }
         await refreshInstances()
         await refreshBadges()
+    }
+
+    /// 新建了 Botin（新建表单，规范 4.7.1）：先把它放进实例列表（首页、对话页的标题马上有它），关掉 sheet、从首页压栈进
+    /// 它的对话（“首页 → 对话”，记成当前实例），再刷新实例和角标。
+    public func openCreatedInstance(_ instance: Instance) async {
+        guard phase == .signedIn else { return }
+        if !instances.contains(where: { $0.id == instance.id }) { apply(instances: instances + [instance]) }
+        hasLoadedInstances = true
+        router.selectInstance(instance.id)
+        await refresh()
     }
 
     /// 只刷新角标（审批、确认计划、标已读之后，各功能可以调一次让工作台的角标马上变）。

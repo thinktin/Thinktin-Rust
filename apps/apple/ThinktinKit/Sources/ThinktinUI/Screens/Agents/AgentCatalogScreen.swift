@@ -1,8 +1,9 @@
 import SwiftUI
 import ThinktinKit
 
-/// Agent 目录（界面上是“引擎”；`.agentCatalog`，没有实例时的“新任务”、首页“+”和空状态的“新建 Botin”进来）：
-/// 每个 agent 一张卡片（名字、出处、一句话介绍、版本、许可证、接入方式、几个 Botin 在用），点开去详情新建 Botin。
+/// Agent 目录（界面上是“引擎”；`.agentCatalog`）：新建 Botin 表单里的“了解引擎”、引导、没有 Botin 时的“新任务”、
+/// 对话页“Botin 已删”的空状态进来（新建的主路径是首页“+”弹的表单，在表单里选引擎）。每个 agent 一张卡片（名字、出处、
+/// 一句话介绍、版本、许可证、接入方式、几个 Botin 在用），点开去详情，详情上“用它新建 Botin”。
 ///
 /// 目录不缓存：离线时显示“暂无数据”的空状态（横幅由应用框架统一放），联网后自动再拉一次。
 struct AgentCatalogScreen: View {

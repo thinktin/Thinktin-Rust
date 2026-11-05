@@ -74,9 +74,9 @@ struct AppShellTests {
         #expect(model.router.sheetPath == [.credentials])
         #expect(model.router.nestedSheet == .addCredential)
         hostAndLayout(AppShell(model: model).environment(\.displayLanguage, .english).preferredColorScheme(.dark))
-        // 设置、领养的根页面由应用框架补关闭按钮，其余 sheet 自己带“取消 / 完成”。
+        // 设置的根页面由应用框架补关闭按钮，其余 sheet 自己带（新建 Botin 的表单自己有 ×，填了名字时先确认）。
         #expect(SheetStack.addsCloseButton(to: .settings))
-        #expect(SheetStack.addsCloseButton(to: .adopt(agentID: nil)))
+        #expect(!SheetStack.addsCloseButton(to: .adopt(agentID: nil)))
         #expect(!SheetStack.addsCloseButton(to: .newTask))
         #expect(!SheetStack.addsCloseButton(to: .addCredential))
     }
@@ -114,9 +114,17 @@ struct AppShellTests {
         hostAndLayout(AppShell(model: model))
         router.dismissSheet()
         #expect(router.sheet == nil)
-        // 右上“+”弹出领养。
+        // 右上“+”弹出新建 Botin 的表单；表单里“了解引擎”压进引擎目录和详情。
         router.open(.adopt(agentID: nil))
         #expect(router.sheet == .adopt(agentID: nil))
+        hostAndLayout(AppShell(model: model))
+        router.open(.agentCatalog)
+        router.open(.agent(DemoData.codexAgentID))
+        hostAndLayout(AppShell(model: model))
+        // 详情上“用它新建 Botin”：回到表单、换成这个引擎。
+        router.open(.adopt(agentID: DemoData.codexAgentID))
+        #expect(router.sheet == .adopt(agentID: nil) && router.sheetPath.isEmpty)
+        #expect(router.engineRequest == DemoData.codexAgentID)
         hostAndLayout(AppShell(model: model))
     }
 
@@ -133,6 +141,7 @@ struct AppShellTests {
         let empty = await started(ShellPreviewClients.empty())
         #expect(empty.hasLoadedInstances)
         #expect(empty.homeRows.isEmpty)
+        #expect(empty.homePlaceholder == .noBotins)
         hostAndLayout(NavigationStack { HomeScreen() }.shellEnvironment(empty))
         hostAndLayout(NavigationStack { HomeInstanceList(model: empty) }.shellEnvironment(empty))
 
@@ -141,6 +150,12 @@ struct AppShellTests {
         let offline = await started(offlineClient)
         #expect(offline.isOffline)
         hostAndLayout(AppShell(model: offline))
+        // 新账号、离线：只说这台设备上没有，不引导新建。
+        let offlineEmptyClient = ShellPreviewClients.empty()
+        for _ in 0..<6 { offlineEmptyClient.failNext(with: .network(message: "offline")) }
+        let offlineEmpty = await started(offlineEmptyClient)
+        #expect(offlineEmpty.homePlaceholder == .offlineWithoutCache)
+        hostAndLayout(NavigationStack { HomeInstanceList(model: offlineEmpty) }.shellEnvironment(offlineEmpty))
 
         let failingClient = ShellPreviewClients.signedIn()
         failingClient.failNext(

@@ -1,272 +1,263 @@
 import SwiftUI
 import ThinktinKit
 
-/// 领养表单（界面上是“新建 Botin”；引擎详情的“用它新建 Botin”弹出，自带导航栈）：起名字，接入方式多于一个时选一个，
-/// 专有许可的先看许可说明。
+/// 新建 Botin（`.adopt(agentID:)`，sheet；规范 docs/ios-ui-redesign.md 4.7.1、6.4 A）：首页右上的“+”、首页空状态的
+/// “新建 Botin”、引擎详情的“用它新建 Botin”（预选那个引擎）打开。代码里还叫领养（`AdoptionModel`、`adopt(...)`）。
 ///
-/// 领养好之后同一张表单换成“建好了”：说明下一步（配模型路由；没有能用的 key 时先加 key），按钮通过 `onExit`
-/// 告诉详情页去哪，详情页等表单关掉再跳（不在表单还开着的时候弹别的 sheet）。
+/// - 原生 `Form`：上面是头像预览（按名字取字和颜色）；名字（`TextField`，名字的问题或提示写在分组脚注里）；引擎（行内
+///   `Picker`，每行是名字和一句话介绍，不能用的灰掉、选不了；默认选哪个见 `AdoptionModel.defaultEngine`），引擎的
+///   接入方式多于一个时再一行 `Picker(.menu)`；“了解引擎”压进引擎目录（目录 → 引擎详情，详情上的“用它新建 Botin”
+///   回到这张表单、换成那个引擎，见 `Router.engineRequest`）；许可证和在哪里运行的说明是引擎分组的脚注。
+/// - 左上 ×（`CloseButton`，自己填了名字时先确认），右上“创建”（`ConfirmButton`，新建中转圈；名字不对、没有引擎、
+///   离线时不能点）。错误（包括 Botin 数到了上限）在表单里的横幅上；新建中不能下滑关掉。
+/// - 建好了：关掉表单、从首页压栈进新 Botin 的对话（`AppModel.openCreatedInstance`）；以前“建好了”页上配模型路由的
+///   引导挪到了对话页的空状态下面（`ConversationText.setupNote`）。
 struct AdoptAgentSheet: View {
-    @State private var model: AdoptionModel
-    /// 领养成功了（详情页据此在表单关掉后刷新实例列表，用户直接划走表单也算）。
-    private let onAdopted: @MainActor () -> Void
-    private let onExit: @MainActor (AdoptionExit) -> Void
+    let preselectedAgentID: AgentID?
 
     @Environment(AppModel.self) private var app
-    @Environment(\.displayLanguage) private var language
+    @Environment(\.client) private var client
 
-    init(
-        agent: AgentInfo, existingNames: [String], client: any ClientProtocol,
-        onAdopted: @escaping @MainActor () -> Void = {}, onExit: @escaping @MainActor (AdoptionExit) -> Void
-    ) {
-        _model = State(initialValue: AdoptionModel(client: client, agent: agent, existingNames: existingNames))
-        self.onAdopted = onAdopted
-        self.onExit = onExit
+    init(preselectedAgentID: AgentID? = nil) {
+        self.preselectedAgentID = preselectedAgentID
     }
 
     var body: some View {
-        let zh = language == .chinese
-        ScrollView {
-            VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                if let instance = model.adopted {
-                    AdoptionDoneView(model: model, instance: instance, onExit: onExit)
-                } else {
-                    form
+        AdoptAgentForm(
+            model: AdoptionModel(client: client, instances: app.instances, preselectedAgentID: preselectedAgentID))
+    }
+}
+
+private struct AdoptAgentForm: View {
+    @State private var model: AdoptionModel
+    @State private var isConfirmingDiscard = false
+    @FocusState private var isNameFocused: Bool
+
+    @Environment(AppModel.self) private var app
+    @Environment(Router.self) private var router
+    @Environment(\.displayLanguage) private var language
+
+    init(model: AdoptionModel) {
+        _model = State(initialValue: model)
+    }
+
+    var body: some View {
+        let model = self.model
+        Form {
+            Section {
+                InstanceAvatar(model.name, size: Metrics.Avatar.edit)
+                    .frame(maxWidth: .infinity)
+                    .accessibilityHidden(true)
+                    .listRowBackground(Color.clear)
+            }
+            nameSection
+            engineSection
+            if let error = model.error {
+                Section {
+                    ErrorBanner(error) { create() }
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
                 }
             }
-            .pageLayout()
+            if app.isOffline {
+                offlineSection
+            }
         }
-        .background(Theme.paper)
-        .inlineNavigationTitle(
-            model.adopted == nil ? AppRoute.adopt(agentID: nil).title(language) : (zh ? "建好了" : "All set")
-        )
+        .formStyle(.grouped)
+        .inlineNavigationTitle(AppRoute.adopt(agentID: nil).title(language))
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                if model.adopted == nil {
-                    Button(zh ? "取消" : "Cancel") { onExit(.stay) }
-                        .disabled(model.isAdopting)
-                }
+                CloseButton(action: close)
+                    .disabled(model.isAdopting)
             }
             ToolbarItem(placement: .confirmationAction) {
-                if model.adopted != nil {
-                    // 留在 Agent 详情页（实例列表照样刷新）。
-                    Button(zh ? "完成" : "Done") { onExit(.stay) }
-                }
+                ConfirmButton(
+                    NewBotinText.create(language), isWorking: model.isAdopting,
+                    workingLabel: NewBotinText.creating(language), action: create
+                )
+                .disabled(!model.canSubmit || app.isOffline)
             }
         }
         .interactiveDismissDisabled(model.isAdopting)
-        .presentationDetents([.large])
-    }
-
-    private func adopt() {
-        let model = self.model
-        let onAdopted = self.onAdopted
-        Task {
-            if await model.adopt() != nil { onAdopted() }
-        }
-    }
-
-    @ViewBuilder
-    private var form: some View {
-        let zh = language == .chinese
-        let model = self.model
-        // 名字。
-        SectionHeader(title: zh ? "名字" : "Name")
-        AgentsNameField(
-            title: zh ? "Botin 的名字" : "Botin name",
-            text: Binding(get: { model.name }, set: { model.name = $0 }),
-            problem: model.nameProblem,
-            hint: zh
-                ? "最多 \(InstanceNameRule.maxLength) 个字，之后可以改。"
-                : "Up to \(InstanceNameRule.maxLength) characters. You can change it later.")
-
-        // 引擎（就是这个 agent；表单从它的详情页弹出，这里只写出来，不能换）。
-        SectionHeader(title: zh ? "引擎" : "Engine")
-        GroupedSection {
-            ListRow(
-                systemImage: "cpu", title: AgentsText.displayName(of: model.agent),
-                detail: AgentsText.versionLabel(model.agent.catalogLatestVersion))
-        }
-
-        // 接入方式（多于一个时）。
-        if model.showsHarnessChoice {
-            SectionHeader(title: zh ? "接入方式" : "How it runs")
-            GroupedSection {
-                ForEach(model.harnessOptions, id: \.self) { harness in
-                    if harness != model.harnessOptions.first { Divider() }
-                    ChoiceRow(
-                        title: AgentsText.harnessName(harness, language: language),
-                        detail: AgentsText.harnessDetail(harness, language: language),
-                        tag: harness == model.agent.defaultHarness ? (zh ? "默认" : "Default") : nil,
-                        isSelected: model.harness == harness
-                    ) {
-                        model.harness = harness
-                    }
-                }
-            }
-        }
-
-        // 许可说明（专有许可证必有）：领养前要给用户看。
-        if let note = model.agent.licenseNote {
-            SectionHeader(title: zh ? "许可说明" : "License terms")
-            Card {
-                Text(AgentsText.licenseName(model.agent.license, language: language))
-                    .typography(.headline)
-                    .foregroundStyle(Theme.ink)
-                Text(note)
-                    .typography(.subheadline)
-                    .foregroundStyle(Theme.inkSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(
-                    zh
-                        ? "新建即表示你同意按上面的条款使用这个引擎。"
-                        : "By creating this Botin, you agree to use the engine under these terms."
-                )
-                .typography(.footnote)
-                .foregroundStyle(Theme.inkSecondary)
-            }
-        }
-
-        if let error = model.error {
-            ErrorBanner(error) { adopt() }
-        }
-
-        PillButton(
-            model.isAdopting ? (zh ? "正在新建…" : "Creating…") : (zh ? "新建" : "Create"),
-            systemImage: model.isAdopting ? nil : "plus"
+        .confirmationDialog(
+            NewBotinText.discardTitle(language), isPresented: $isConfirmingDiscard, titleVisibility: .visible
         ) {
-            adopt()
+            Button(NewBotinText.discard(language), role: .destructive) { router.dismissSheet() }
+            Button(NewBotinText.keepEditing(language), role: .cancel) {}
         }
-        .disabled(!model.canSubmit || app.isOffline)
-        .frame(maxWidth: .infinity)
-        .padding(.top, Metrics.Spacing.s)
-        if app.isOffline {
-            VStack(spacing: Metrics.Spacing.xs) {
-                Text(
-                    zh
-                        ? "离线时不能新建 Botin，联网后再试。"
-                        : "You can't create a Botin while offline. Try again once you're back online."
-                )
-                .typography(.footnote)
-                .foregroundStyle(Theme.inkSecondary)
-                .multilineTextAlignment(.center)
-                PillButton(zh ? "重新检查网络" : "Check again", kind: .secondary, size: .compact) {
-                    let app = self.app
-                    Task { await app.refresh() }
-                }
-            }
-            .frame(maxWidth: .infinity)
+        .task { await model.load() }
+        .onChange(of: app.isOffline) {
+            // 联网后补拉目录（离线时拉不到）。
+            if !app.isOffline && !model.hasLoadedAgents { Task { await model.load() } }
         }
+        .onAppear(perform: applyEngineRequest)
+        .onChange(of: router.engineRequest) { applyEngineRequest() }
     }
-}
 
-/// 领养好之后：说明下一步，给“配模型路由”“先加 key”“稍后再配”。
-private struct AdoptionDoneView: View {
-    let model: AdoptionModel
-    let instance: Instance
-    let onExit: @MainActor (AdoptionExit) -> Void
+    // MARK: 分组
 
-    @Environment(\.displayLanguage) private var language
-
-    var body: some View {
+    private var nameSection: some View {
         let zh = language == .chinese
-        VStack(alignment: .leading, spacing: Metrics.Spacing.m) {
-            VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
-                Image(systemName: "checkmark.circle")
-                    .font(Typography.largeTitle.font)
-                    .foregroundStyle(StatusTone.success.color)
-                    .accessibilityHidden(true)
-                Text(zh ? "建好了" : "All set")
-                    .typography(.title)
-                    .foregroundStyle(Theme.ink)
-                    .accessibilityAddTraits(.isHeader)
-                Text(
-                    zh
-                        ? "“\(instance.name)”已经建好，沙箱正在准备。"
-                        : "“\(instance.name)” has been created and its sandbox is getting ready."
-                )
-                .typography(.body)
-                .foregroundStyle(Theme.inkSecondary)
-            }
-            .fixedSize(horizontal: false, vertical: true)
-
-            Card {
-                Label {
-                    Text(model.nextStepMessage(language))
-                        .typography(.subheadline)
-                        .foregroundStyle(Theme.ink)
-                        .fixedSize(horizontal: false, vertical: true)
-                } icon: {
-                    Image(systemName: "slider.horizontal.3")
-                        .foregroundStyle(StatusTone.waiting.color)
-                        .accessibilityHidden(true)
-                }
-            }
-
-            VStack(spacing: Metrics.Spacing.s) {
-                switch model.nextStep {
-                case .configureRoutes:
-                    PillButton(zh ? "配置模型路由" : "Set up model routes", systemImage: "slider.horizontal.3") {
-                        onExit(.configureRoutes(instance.id))
-                    }
-                case .addCredentialFirst:
-                    PillButton(zh ? "添加模型 key" : "Add a model key", systemImage: "key") {
-                        onExit(.addCredential(instance.id))
-                    }
-                    PillButton(zh ? "直接配置模型路由" : "Set up model routes", kind: .secondary) {
-                        onExit(.configureRoutes(instance.id))
-                    }
-                }
-                PillButton(zh ? "稍后再配，先去对话" : "Later, go to the chat", kind: .secondary) {
-                    onExit(.openConversation(instance.id))
-                }
-            }
-            .frame(maxWidth: .infinity)
+        let model = self.model
+        let problem = model.nameProblem
+        return Section {
+            TextField(
+                NewBotinText.nameTitle(language), text: Binding(get: { model.name }, set: { model.name = $0 }),
+                prompt: Text(NewBotinText.namePrompt(language))
+            )
+            .focused($isNameFocused)
+            .submitLabel(.done)
+            .autocorrectionDisabled()
+            .disabled(model.isAdopting)
+        } header: {
+            Text(zh ? "名字" : "Name")
+        } footer: {
+            Text(problem?.message(language) ?? NewBotinText.nameHint(language))
+                .foregroundStyle(problem == nil ? Theme.inkSecondary : StatusTone.failure.color)
         }
+    }
+
+    private var engineSection: some View {
+        let model = self.model
+        return Section {
+            if model.agents.isEmpty {
+                engineStatusRow
+            } else {
+                Picker(
+                    NewBotinText.engineTitle(language),
+                    selection: Binding(
+                        get: { model.selectedAgentID },
+                        set: { id in
+                            if let id { model.selectEngine(id) }
+                        })
+                ) {
+                    ForEach(model.engineOptions(language)) { option in
+                        EngineOptionLabel(option: option)
+                            .tag(AgentID?.some(option.id))
+                            .disabled(!option.isAvailable)
+                    }
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+                .disabled(model.isAdopting)
+            }
+            if model.showsHarnessChoice {
+                Picker(
+                    NewBotinText.harnessTitle(language),
+                    selection: Binding(get: { model.harness }, set: { model.harness = $0 })
+                ) {
+                    ForEach(model.harnessOptions, id: \.self) { harness in
+                        Text(AgentsText.harnessName(harness, language: language)).tag(harness)
+                    }
+                }
+                .pickerStyle(.menu)
+                .disabled(model.isAdopting)
+            }
+            NavigationLink(value: AppRoute.agentCatalog) {
+                Label(NewBotinText.aboutEngines(language), systemImage: "info.circle")
+            }
+        } header: {
+            Text(NewBotinText.engineTitle(language))
+        } footer: {
+            if let agent = model.selectedAgent {
+                Text(NewBotinText.engineFooter(agent, language: language))
+            }
+        }
+    }
+
+    /// 目录还没拉到：在拉、拉不到（可以重试）、目录是空的。
+    @ViewBuilder
+    private var engineStatusRow: some View {
+        let zh = language == .chinese
+        let model = self.model
+        if model.hasLoadedAgents {
+            Text(NewBotinText.noEngines(language))
+                .foregroundStyle(Theme.inkSecondary)
+        } else if let error = model.loadError, !model.isLoadingAgents {
+            LabeledContent(NewBotinText.enginesUnavailable(language)) {
+                if !error.isOffline {
+                    Button(zh ? "重试" : "Retry") { Task { await model.load() } }
+                }
+            }
+        } else {
+            LabeledContent(NewBotinText.engineTitle(language)) {
+                ProgressView()
+            }
+        }
+    }
+
+    private var offlineSection: some View {
+        let zh = language == .chinese
+        let app = self.app
+        return Section {
+            Text(NewBotinText.offlineNote(language))
+                .foregroundStyle(Theme.inkSecondary)
+            Button(zh ? "重新检查网络" : "Check again") { Task { await app.refresh() } }
+        }
+    }
+
+    // MARK: 操作
+
+    private func create() {
+        guard model.canSubmit, !app.isOffline else { return }
+        isNameFocused = false
+        let model = self.model
+        let app = self.app
+        Task {
+            guard let instance = await model.adopt() else { return }
+            await app.openCreatedInstance(instance)
+        }
+    }
+
+    /// ×：自己填了名字时先确认，否则直接关掉。
+    private func close() {
+        if model.hasUserInput {
+            isConfirmingDiscard = true
+        } else {
+            router.dismissSheet()
+        }
+    }
+
+    /// 引擎详情上点了“用它新建 Botin”（详情是从这张表单压进去的，`Router` 已经退回表单）：换成那个引擎。
+    private func applyEngineRequest() {
+        guard let id = router.engineRequest else { return }
+        router.engineRequestHandled()
+        model.selectEngine(id)
     }
 }
 
-/// 名字输入框：圆角描边的单行输入，下面是问题（危险色）或提示。
-struct AgentsNameField: View {
-    let title: String
-    let text: Binding<String>
-    let problem: InstanceNameProblem?
-    let hint: String
+/// 引擎选择器的一行：名字，下面一行介绍（不能用时说不能用）。
+private struct EngineOptionLabel: View {
+    let option: EngineOption
 
     @Environment(\.displayLanguage) private var language
-    @Environment(\.displayScale) private var displayScale
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: Metrics.Radius.control, style: .continuous)
-        VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
-            TextField(title, text: text)
-                .textFieldStyle(.plain)
-                .typography(.body)
-                .foregroundStyle(Theme.ink)
-                .padding(.horizontal, Metrics.Spacing.s)
-                .frame(minHeight: Metrics.minTapTarget)
-                .background(Theme.paperElevated, in: shape)
-                .overlay {
-                    shape.strokeBorder(
-                        problem == nil ? Theme.hairline : StatusTone.failure.color,
-                        lineWidth: Metrics.hairline(scale: displayScale))
-                }
-                .accessibilityLabel(Text(title))
-                .accessibilityHint(Text(problem?.message(language) ?? hint))
-            Text(problem?.message(language) ?? hint)
-                .typography(.footnote)
-                .foregroundStyle(problem == nil ? Theme.inkSecondary : StatusTone.failure.color)
-                .accessibilityHidden(true)
+        let detail = option.detail(language)
+        VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
+            Text(option.name)
+                .foregroundStyle(option.isAvailable ? Theme.ink : Theme.inkSecondary)
+            if !detail.isEmpty {
+                Text(detail)
+                    .typography(.footnote)
+                    .foregroundStyle(Theme.inkSecondary)
+                    .lineLimit(1)
+            }
         }
+        .accessibilityElement(children: .combine)
     }
 }
 
-#Preview("领养表单 · 浅色中文") {
-    AdoptAgentSheet(agent: DemoData.agents[0], existingNames: ["写作助手"], client: MockClient(autoReply: false)) { _ in }
-        .previewShell()
+#Preview("新建 Botin · 浅色中文") {
+    NavigationStack {
+        AdoptAgentSheet()
+    }
+    .previewShell()
 }
 
-#Preview("领养表单 · 深色英文") {
-    AdoptAgentSheet(agent: DemoData.agents[1], existingNames: [], client: MockClient(autoReply: false)) { _ in }
-        .previewShell(.english, scheme: .dark)
+#Preview("新建 Botin · 深色英文、预选 Codex") {
+    NavigationStack {
+        AdoptAgentSheet(preselectedAgentID: DemoData.codexAgentID)
+    }
+    .previewShell(.english, scheme: .dark)
 }

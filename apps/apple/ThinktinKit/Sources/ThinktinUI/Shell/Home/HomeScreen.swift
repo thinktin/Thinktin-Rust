@@ -5,7 +5,8 @@ import ThinktinKit
 ///
 /// - 没有标题。plain 列表，每行一个实例（`HomeInstanceRow`），最后活动新的在前（`AppModel.homeRows`）；
 ///   点一行压栈进它的对话（`NavigationLink(value: AppRoute.conversation(id))`，`Router` 顺带记成当前实例）。
-/// - 左上账号头像 → 设置（sheet，`router.open(.settings)`）；右上“+” → 领养新实例（sheet，`.adopt(agentID: nil)`）。
+/// - 左上账号头像 → 设置（sheet，`router.open(.settings)`）；右上“+” → 新建 Botin（sheet，`.adopt(agentID: nil)`）。
+///   账号里还没有 Botin（第一次登录）时列表是“还没有 Botin”的空状态，按钮也打开新建表单。
 ///   两个都是系统工具栏的玻璃圆按钮（规范 4.2.1），头像放在玻璃圆里面。
 /// - 底部：左边工作台菜单（`WorkbenchMenu`），右边搜索栏（iOS 26 在底部条里，旧系统在导航栈的导航栏下面）。
 ///   搜索栏里有字时列表换成搜索结果（`HomeSearchResults`）；`router.searchRequest` 变了（`open(.search)`、深链）就激活它。
@@ -180,23 +181,24 @@ struct HomeInstanceList: View {
         .listStyle(.plain)
         .refreshable { await model.refresh() }
         .overlay {
-            if rows.isEmpty { emptyState }
+            if let placeholder = model.homePlaceholder { emptyState(placeholder) }
         }
     }
 
+    /// 列表空着时（`AppModel.homePlaceholder`）：第一次在拉、离线没缓存、账号里还没有 Botin（第一次登录）。
     @ViewBuilder
-    private var emptyState: some View {
+    private func emptyState(_ placeholder: HomePlaceholder) -> some View {
         let zh = language == .chinese
-        if !model.hasLoadedInstances {
-            if model.isOffline {
-                // 顶部的离线横幅按首页的策略写“显示的是缓存内容”，这里只说缓存是空的，不再写“离线，暂无数据”和它打架。
-                ContentUnavailableView(
-                    zh ? "离线" : "Offline", systemImage: "wifi.slash",
-                    description: Text(HomeText.offlineEmptyMessage(language)))
-            } else if model.refreshError == nil {
-                ProgressView()
-            }
-        } else if model.refreshError == nil {
+        switch placeholder {
+        case .loading:
+            ProgressView()
+        case .offlineWithoutCache:
+            // 顶部的离线横幅按首页的策略写“显示的是缓存内容”，这里只说缓存是空的，不再写“离线，暂无数据”和它打架。
+            ContentUnavailableView(
+                zh ? "离线" : "Offline", systemImage: "wifi.slash",
+                description: Text(HomeText.offlineEmptyMessage(language)))
+        case .noBotins:
+            // 按钮和右上的“+”一样打开新建表单。
             ContentUnavailableView {
                 Label {
                     Text(HomeText.emptyTitle(language))
@@ -212,6 +214,7 @@ struct HomeInstanceList: View {
                     model.router.open(.adopt(agentID: nil))
                 }
                 .glassButtonStyle(.prominent)
+                .controlSize(.large)
             }
         }
     }

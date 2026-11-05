@@ -196,6 +196,9 @@ public final class ConversationModel {
     /// 页面上什么都没有（还没有运行）。
     public var isEmpty: Bool { turns.isEmpty }
 
+    /// 空状态下面要提示去配模型路由（`ConversationText.setupNote`）：拉到了、还没有任务、也没配默认模型（刚新建的 Botin）。
+    public var needsSetupNote: Bool { hasLoaded && isEmpty && !isMissing && mainRoute == .missing }
+
     /// 往上还能翻（缓存里更早的事件，或者更早的运行）。
     public var canLoadOlder: Bool {
         focusRunID == nil && hasLoaded && (hasOlderEvents || hasOlderRuns)

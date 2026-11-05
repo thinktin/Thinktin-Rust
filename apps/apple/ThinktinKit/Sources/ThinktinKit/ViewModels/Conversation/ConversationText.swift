@@ -413,6 +413,20 @@ public enum ConversationText {
             ? "发一条消息就会开始运行，过程和结果都会显示在这里。" : "Send a message to start a run. Every step and the result show up here."
     }
 
+    /// 还没有任务、也没配默认模型（刚新建的 Botin 就是这样）：空状态下面的一句提示（以前在新建后的“建好了”页上，
+    /// 规范 4.7.1；第 2 轮换成 6.18 的首次引导卡片）。没有能用的 key 时路由页上再引导加 key。
+    public static func setupNote(_ language: DisplayLanguage) -> String {
+        language == .chinese
+            ? "还差一步：给它配模型路由，选一把 key 和模型作为 main。没配之前，任务会停在“等待 key”。"
+            : "One more step: set up its model routes by choosing a key and model for main. Until then, tasks will "
+                + "wait for a key."
+    }
+
+    /// 提示上的按钮（打开这个 Botin 的模型路由）。
+    public static func setupAction(_ language: DisplayLanguage) -> String {
+        language == .chinese ? "配置模型路由" : "Set up model routes"
+    }
+
     public static func instanceMissing(_ language: DisplayLanguage) -> String {
         language == .chinese ? "找不到这个 Botin" : "Botin not found"
     }

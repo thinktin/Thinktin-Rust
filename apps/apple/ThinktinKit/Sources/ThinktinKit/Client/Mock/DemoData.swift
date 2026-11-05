@@ -408,6 +408,34 @@ public enum DemoData {
         )
     }
 
+    /// 刚注册、第一次登录的账号（截图的 `THINKTIN_MOCK_EMPTY=1`、首页空状态的预览和测试）：还没有 Botin，也就没有
+    /// 运行、审批、计划、团队、产出物、收件箱；还没加模型 key、保险箱和 IM 渠道是空的。引擎目录、厂商、团队模板、
+    /// 这台设备照旧。
+    public static func newAccountState(now: Date = Date()) -> MockState {
+        var state = state(now: now)
+        state.user.createdAt = now
+        state.instances = []
+        state.routes = [:]
+        state.runs = []
+        state.events = [:]
+        state.approvals = []
+        state.plans = []
+        state.inbox = []
+        state.credentials = []
+        state.dailyUsage = []
+        state.artifacts = []
+        state.artifactContents = [:]
+        state.vaultItems = []
+        state.vaultUsernames = [:]
+        state.vaultRequests = []
+        state.imChannels = []
+        state.deviceMessages = []
+        state.liveActivities = [:]
+        state.teams = []
+        state.reports = []
+        return state
+    }
+
     /// 当前这台 iPhone（登录时 Mock 把它登记回登录设备）。
     public static func currentDevice(now: Date = Date(), createdAt: Date? = nil) -> DeviceInfo {
         DeviceInfo(

@@ -69,6 +69,29 @@ public enum HomeList {
     }
 }
 
+/// 首页列表空着时显示什么（`HomeList.placeholder`）；列表有行、或者拉取失败（横幅说了怎么回事、可以重试）时不显示。
+public enum HomePlaceholder: Hashable, Sendable {
+    /// 第一次在拉、这台设备上没有缓存：转圈。
+    case loading
+    /// 离线、这台设备上没有 Botin 可显示（第 0 轮的离线文案，`HomeText.offlineEmptyMessage`）。
+    case offlineWithoutCache
+    /// 联网拉到了，账号里还没有 Botin（第一次登录就是这样）：“还没有 Botin”和“新建 Botin”按钮。
+    case noBotins
+}
+
+extension HomeList {
+    /// 列表空着时显示什么（规范 4.2.1 的状态）。`hasLoaded` 是实例列表拿到过（缓存或服务端，`AppModel.hasLoadedInstances`），
+    /// `hasError` 是刷新失败了（不是网络问题，`AppModel.refreshError`）。离线时不引导新建（表单离线不能提交），
+    /// 只说这台设备上没有。
+    public static func placeholder(isEmpty: Bool, hasLoaded: Bool, isOffline: Bool, hasError: Bool) -> HomePlaceholder?
+    {
+        guard isEmpty else { return nil }
+        if isOffline { return .offlineWithoutCache }
+        if hasError { return nil }
+        return hasLoaded ? .noBotins : .loading
+    }
+}
+
 /// 首页空状态的文案（用户 2026-11-05 定的：第一次登录首页是空的，引导新建 Botin）。按钮文字用 `AppRoute.adopt` 的标题“新建 Botin”。
 public enum HomeText {
     public static func emptyTitle(_ language: DisplayLanguage) -> String {

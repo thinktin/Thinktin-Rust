@@ -172,9 +172,34 @@ private struct ConversationContent: View {
                 systemImage: "text.bubble",
                 title: ConversationText.emptyTitle(instanceName: instance?.name, language: language),
                 message: ConversationText.emptyMessage(language))
+            if model.needsSetupNote {
+                ConversationSetupNote { router.open(.modelRoutes(model.instanceID)) }
+            }
         } else if model.isEmpty {
             ConversationLoadingView()
         }
+    }
+}
+
+/// 刚新建的 Botin（还没有任务、没配默认模型）：空状态下面一句“还差一步”和去配模型路由的按钮（规范 4.7.1；第 2 轮换成
+/// 6.18 的首次引导卡片）。没有能用的 key 时路由页上再引导加 key。
+struct ConversationSetupNote: View {
+    let onSetUp: @MainActor () -> Void
+
+    @Environment(\.displayLanguage) private var language
+
+    var body: some View {
+        VStack(spacing: Metrics.Spacing.s) {
+            Text(ConversationText.setupNote(language))
+                .typography(.subheadline)
+                .foregroundStyle(Theme.inkSecondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            Button(ConversationText.setupAction(language), action: onSetUp)
+                .glassButtonStyle(.prominent)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, Metrics.Spacing.m)
     }
 }
 
