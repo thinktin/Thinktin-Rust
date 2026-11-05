@@ -22,6 +22,18 @@ iOS 26 的玻璃，第 0 轮的底座已经做完）；iOS 与 macOS 共享 `Thi
    `.bordered`、`.plain`、iOS 26 的玻璃样式）、`Menu`、`Toggle`、`Picker`、`Stepper`、`TextField`、`.toolbar`、`.sheet`、
    `.confirmationDialog`、`.swipeActions`、`ShareLink`、SF Symbols 图标，不自己画外形、不自己实现手势和动效。只有系统没有的东西
    （对话里的卡片、Logo 这类）才自己画。改版界面时，遇到现在自己画的控件，顺手换成原生的。
+6. **界面用词：Botin 和引擎**（用户 2026-11-05 定的，改版规范 6.6）。代码里的实例（`Instance`）在界面上叫 **Botin**，中英文同一个词，
+   英文复数 Botins；agent 在界面上只以 Botin 的“引擎”/“Engine”出现。写界面文案（页面、按钮、读屏标签、快捷指令和 Siri 短语、
+   App 自己发的通知和实时活动、`Localizable.xcstrings` / `AppShortcuts.xcstrings`）时：
+   - 不写“实例”“instance”“领养”“adopt”：建一个是“新建 Botin”/“New Botin”（`AppRoute.adopt` 的标题），资料页是“Botin 资料”，
+     删除是“删除这个 Botin”，数量上限是“Botin 数已达上限”。新建时选的是引擎，同一个引擎可以给好几个 Botin 用，所以目录里写
+     “N 个 Botin 在用”，不写“已领养”。
+   - 说“谁在干活、谁写的、谁要你批准”写 Botin（“Botin 写的内容”“Botin 需要你批准时”）；说 agent 这个程序本身（目录、版本、许可证、
+     进程出错退出）写“引擎”（“引擎详情”“引擎版本”“引擎出错了”）。产品名照写（Claude Agent、Hermes Agent）。
+   - 团队不是 Botin：团队模板“用模板新建团队”（按钮“新建团队”），不写“领养模板”。
+   - 中文里能不加量词就不加（“新建 Botin”“交给哪个 Botin？”），数数时照常“2 个 Botin”；Botin 和汉字之间留一个空格。
+   - 代码标识符、接口、深链（`thinktin://instance/{id}`）、事件种类、代码注释不跟着改；注释里引的界面文案改成新的。
+   - 服务端给的文字（agent 目录的介绍、服务端发的推送）不归 App 改，见 docs/handoff-ios.md 的“Botin 改名”一节。
 
 ## 2. 目录结构
 
@@ -110,7 +122,7 @@ Linux 上 `tools/client-core/build-linux-swift.sh target/linux`（本机 `libcli
   只写 Swift 代码和启动屏，只用标准库），不要手改生成物。`--check` 查 Swift 代码和启动屏是不是最新的，再和原稿逐像素比：
   - App 里用的 Logo 是原生矢量 `BrandLogo`（`ThinktinUI/Design/BrandLogo.swift`，几何在生成的 `BrandLogo+Geometry.swift`）：
     圆弧转三次贝塞尔，和原稿逐像素一致（`brand_assets.py --check` 比较）。罐体线条用 `ink`，深色模式自动变浅；双圈线是原稿的
-    渐变，`.monochrome` 时用墨色。按线条外缘等比缩放，用 `.frame(height:)` 定大小。现在用在欢迎页（112）和首页“还没有实例”的
+    渐变，`.monochrome` 时用墨色。按线条外缘等比缩放，用 `.frame(height:)` 定大小。现在用在欢迎页（112）和首页“还没有 Botin”的
     空状态（48）。
   - iPhone 图标 1024：浅色（白底不透明）、深色（透明底，罐体线条 `#F2F2F7`）、着色（透明底白色单色）三种。
   - Mac 图标 16～1024：macOS 的圆角方形白底（824/1024，圆角 185，轻阴影），Logo 在里面。
@@ -165,7 +177,7 @@ Linux 上 `tools/client-core/build-linux-swift.sh target/linux`（本机 `libcli
 | `AccountFrozen` | 冻结提示页（保留登录态，解冻后照常） |
 | `UpgradeRequired` | 全屏“请升级”，带 App Store 链接 |
 | `Api(status, code, …)` | `rate_limited` 按 `retry_after_secs` 提示；`conflict` 刷新后重试；`invalid` 显示表单错误；`not_found` 回上一级 |
-| `Api(409, *_limit, …)` | 数量到了上限（11.9 起的约定：码以 `_limit` 结尾、状态 409，`APIErrorCode.isQuantityLimit`）：`ErrorRecovery.limitReached`，横幅不给重试按钮（原样重试没用），文案说先删掉一些。`instance_limit`（实例数，领养、团队模板领养）是“实例数已达上限，删掉不用的实例再领养”；这个版本不认识的 `*_limit` 用通用的“数量已达上限” |
+| `Api(409, *_limit, …)` | 数量到了上限（11.9 起的约定：码以 `_limit` 结尾、状态 409，`APIErrorCode.isQuantityLimit`）：`ErrorRecovery.limitReached`，横幅不给重试按钮（原样重试没用），文案说先删掉一些。`instance_limit`（实例数，新建 Botin、用团队模板新建团队）是“Botin 数已达上限，删掉不用的再新建。”；这个版本不认识的 `*_limit` 用通用的“数量已达上限” |
 | `Network` | 行内可重试的提示；列表页显示缓存数据并标“离线” |
 | `ContainsSecrets(count)` | 发送前的密码拦截弹层（11.6）：一键存进保险箱并换成引用，或坚持发送 |
 | `unsupported(feature)` | 协议里先加了、client-core 还没导出的方法才会抛（11.7 合入后现在没有这种方法）；界面显示“这个功能还没开放”，不给重试 |
@@ -223,7 +235,7 @@ docs/i18n.md 第 3 节“不认识的按状态给通用文案”）：404 / 410 
   （`WidgetSnapshot`，只有几个数和时间，没有任务原文、实例名：锁屏谁都看得见）。`AppModel` 在角标变了、退出登录、启动时没登录时写
   （数没变不重写；一个接一个写，后写的不被先写的盖掉），App 的 `AppGroupWidgetSink` 写完让 WidgetKit 刷新。扩展每半小时自己再读一次
   （“几分钟前更新”）。文案跟着系统语言（扩展读不到 App 里选的语言）。点小组件打开收件箱，中号的三格各自深链到收件箱、审批中心、进行中。
-- **快捷指令和 Siri**（App 的 `Intents/`）：全部停止、查待审批数、给实例下任务、暂停 / 恢复计划；逻辑在 ThinktinKit 的 `QuickActions`
+- **快捷指令和 Siri**（App 的 `Intents/`）：全部停止、查待审批数、给 Botin 下任务、暂停 / 恢复计划；逻辑在 ThinktinKit 的 `QuickActions`
   （有测试），App Intents 只是外壳。都在 App 的进程里跑（快捷指令在后台拉起 App，不打开界面），和界面共用 `AppEnvironment.shared`
   的同一个客户端，所以不用把 Keychain 里的会话、缓存库共享给扩展；做完刷新角标，小组件跟着变。下任务时任务里像有密码或 key 就不发
   （快捷指令里弹不了拦截面板，要在 App 里先存进保险箱）。“全部停止”不再问一遍：它是急停按钮。标题、参数名、短语是中文，英文在
@@ -281,7 +293,7 @@ client-core 只缓存实例、运行、事件、收件箱（cache.rs 的几张�
 | 策略 | 页面 | 横幅 |
 |---|---|---|
 | 有缓存（`cached`） | 首页、实例对话、运行详情、运行树、进行中、实例详情、收件箱 | “离线，显示的是缓存内容” |
-| 没有缓存（`unavailable`） | 计划、审批、模型 key、模型路由、用量、保险箱、团队、agent 目录、领养新实例、产出物、IM 渠道、登录设备、账号 | “离线，暂无数据。联网后会自动刷新。”，页面显示空状态 |
+| 没有缓存（`unavailable`） | 计划、审批、模型 key、模型路由、用量、保险箱、团队、引擎目录（`.agentCatalog`）、新建 Botin（`.adopt`）、产出物、IM 渠道、登录设备、账号 | “离线，暂无数据。联网后会自动刷新。”，页面显示空状态 |
 | 不用联网（`local`） | 设置中心、关于、开源许可、搜索（只搜本机缓存）、登录、冻结页、升级页 | 不显示 |
 
 退出登录和注销都会清掉缓存，换账号后不能显示上一个账号的数据（`AppModel` 同时清掉实例、角标和导航）。
@@ -299,7 +311,7 @@ client-core 只缓存实例、运行、事件、收件箱（cache.rs 的几张�
      `xcodebuild test` 跑 App 的 `ThinktinTests` 和 `ThinktinUITests`；最后 macOS 本机 `swift test`（适配层经 macOS 切片跑一遍）。日志传成 artifact。
   `kit-linux` 最后还有严格模式的 `swift format lint`。
 - **截图**（macOS）：`tools/apple/screenshots.sh [输出目录]` 在 iPhone 模拟器上跑演示模式，截改版规范 7.6 的 14 个页面（首页、对话、
-  实例资料、实例的计划、产出物、设置、保险箱填写请求、领养、首页搜索、审批、收件箱、进行中、运行、计划），浅色、深色各一张
+  Botin 资料、Botin 的计划、产出物、设置、保险箱填写请求、新建 Botin、首页搜索、审批、收件箱、进行中、运行、计划），浅色、深色各一张
   （`01-home-light.png`、`01-home-dark.png`）；`IOS_RUNTIME=18.6`（或 `17.5`）换成那个版本的模拟器看旧系统的回退（没有那个版本的
   iPhone 模拟器就建一台，运行时没装就用 `xcodebuild -downloadPlatform` 下载，这时要写完整的版本号）。GitHub 上是
   `.github/workflows/ios-screenshots.yml`（手动触发填 `ios_runtime`，或者推到 `ios-screenshots-ios18.6` 这样带版本的分支；产物是

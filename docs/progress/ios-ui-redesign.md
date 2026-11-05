@@ -165,6 +165,10 @@
   开源许可页的“引擎”一节）；“负责人 agent”改成“负责人”。产品名（Claude Agent、Hermes Agent、Agent Client Protocol、Claude Agent SDK）、
   事件种类、演示数据里服务端给的 agent 介绍没动。**登录页（`SignInFlow`）的两句“你的常驻 agent”“agent 在云端常驻”没改**：登录页是用户
   自己设计的，等用户定。
+- Botin 改名·文档（2026-11-05）：规范 docs/ios-ui-redesign.md 开头的叫法说明、6.6（记下用户的决定，推翻原来的建议）、6.4（已定：“+”弹
+  “新建 Botin”，起名字、选引擎）、4.7.1（标题、引擎行、按钮“新建”，同一个引擎能建好几个）、4.2.1（空状态的文案）、表格和 7.3 C 线；
+  docs/ios.md 第 1 节第 6 条（界面用词规则）和几处引到的文案；docs/handoff-ios.md 加“Botin 改名”一节：给安卓、服务端推送的对照表，
+  点名 `crates/orchestrator/src/texts.rs` 里给用户看的推送和 IM 文案、`crates/catalog` 的介绍（安卓、服务端的代码没动）。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、

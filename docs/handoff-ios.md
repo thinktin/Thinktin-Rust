@@ -1,4 +1,4 @@
-# 交接：iOS（TestFlight 发版、Logo、界面改版）2026-11-04 更新
+# 交接：iOS（TestFlight 发版、Logo、界面改版）2026-11-05 更新
 
 2026-10-31 已从自动保存快照恢复开发，修复范围与验证见 [iOS 恢复记录](progress/ios-app.md#2026-10-31-ios-恢复记录)。下面保留当时的发版背景。
 
@@ -15,6 +15,37 @@
   PR #26 合进了 `main`：先在 Linux 上验密钥（`key-check`），GitHub 的 Mac 排不上时用 Codemagic（[ios-release.md](ios-release.md) 2.2）。
 - **公开测试链接**：内部测试没有链接（团队的人收邮件、开 TestFlight 点“更新”）。用户要过链接，已说明要开外部测试、过 Beta 审核，
   要反馈邮箱、能打开的隐私政策网址、联系人电话（用户自己填）；**等用户回复要不要开**。
+
+**2026-11-05：界面上的“实例”改叫 Botin（安卓、服务端推送要跟着改）**
+
+用户定的（改版规范 [ios-ui-redesign.md](ios-ui-redesign.md) 6.6，iOS 的用词规则在 [ios.md](ios.md) 第 1 节第 6 条）：
+代码里的实例（`Instance`）在界面上叫 **Botin**，中英文同一个词，英文复数 Botins。用户“新建 Botin”，不再“领养 agent”；新建时选一个
+agent 当它的**引擎**，同一个 agent 可以给好几个 Botin 当引擎（服务端本来就只限每个账号的实例数）。agent 在界面上只以“引擎”/“Engine”
+出现。第一次登录首页是空的：“还没有 Botin” /“Botin 是替你干活的助手。起个名字、选一个引擎，它就能帮你写东西、查资料、跑任务。”/
+按钮“新建 Botin”（英文 “No Botins yet” / “A Botin is an assistant that works for you. Give it a name and pick an engine, and it can write,
+look things up and run tasks for you.” / “New Botin”）。
+
+iOS 和 Mac 已经改完（分支 `ios-ui-redesign`，范围见 [progress/ios-ui-redesign.md](progress/ios-ui-redesign.md)）。**安卓和服务端归别的会话，
+这里没动它们的代码**，要照下面这张表改，两端说法才对得上：
+
+| 旧说法 | 新说法（中文 / English） |
+|---|---|
+| 实例 / instance(s) | Botin / Botin, Botins |
+| 领养 agent、领养新实例 / adopt an agent | 新建 Botin / New Botin（动作说 create） |
+| 实例详情、实例资料 / instance details | Botin 资料 / Botin details |
+| 删除实例 / delete instance | 删除这个 Botin / Delete this Botin |
+| 实例数已达上限 / instance limit | Botin 数已达上限，删掉不用的再新建。/ You've reached the Botin limit. |
+| Agent 目录、agent 详情 / agent catalog | 引擎、引擎详情 / Engines, Engine details |
+| 已领养 N 个 | N 个 Botin 在用 / Used by N Botins |
+| 指干活的那个的 agent（“agent 要你批准”“agent 写的”） | Botin（“Botin 需要你批准”“Botin 写的”） |
+| 指程序本身的 agent（出错、退出、版本、许可证） | 引擎（“引擎出错了”“引擎版本”） |
+| 领养团队模板 | 用模板新建团队（按钮“新建团队”） |
+
+- **安卓**（`apps/android`）：界面文案、读屏描述、安卓自己发的通知照表换；代码标识符、深链 `thinktin://instance/{id}` 不改。
+- **服务端推送和 IM 消息**（`crates/orchestrator/src/texts.rs` 里给用户看的标题和正文，比如“agent 需要账号密码”“agent 想安排一个计划”
+  “agent 请求执行一个操作”）：照表换成 Botin。同一个文件里**写给 agent 自己看的说明**（续跑、委派、交接、问队友）是另一回事，
+  换不换要和用户确认。agent 目录的介绍（`crates/catalog` 的清单里的 `description`）由服务端给，App 照原样显示，要不要改也要另定。
+- iOS 没改的：登录页（`SignInFlow`）的两句“你的常驻 agent”“agent 在云端常驻”（登录页是用户自己设计的，等用户定）。
 
 上一个会话（session_01GuCp3KRgqaK6Kzynw6udRn）的周额度快用完了，下一个 agent 从这里接着做 iOS。阿里云部署的交接在
 [handoff.md](handoff.md)，那是另一条线，别混。
@@ -97,7 +128,7 @@ GitHub → Actions → **iOS release** → Run workflow（分支选 `main`）：
    - Claude 的回复正文是衬线字，我们是无衬线；
    - Claude 新对话页中间一句大号衬线问候语，我们直接是对话记录；
    - Claude 的任务列表顶上有“全部 / 卡住 / 进行中 / 完成”筛选标签，我们是分段列出。
-   我们的实例切换（顶部“写作助手 ▾”）是特有功能，建议保留。改之前先给用户看对比、等他同意。
+   我们的实例切换（顶部“写作助手 ▾”）是特有功能，建议保留。改之前先给用户看对比、等他同意。（2026-11-04 改版后已经没有切换菜单了：首页就是 Botin 列表。）
 2. **要用户决定的清理**：GitHub 上 `ios-testflight`、`ios-screenshots`、`autosave/ios-testflight` 三个分支已经没用了（PR #16 已合并），删分支被自动模式拦了，等用户自己删或授权。
 3. **服务器上线后**发连服务器的版本：打 `ios-v0.1.x` 标签（或手动触发不勾 `demo`）。到时要确认推送（APNs 生产环境）、登录短信、审核账号。
 4. **提审前**：统一版本号（App Store Connect 的 1.0 和工程的 0.1.0）；审核账号（固定验证码、预置实例和 key，要服务端支持，`ios-release.md` 第 4 节）；隐私问卷、截图（截图工作流可以出底稿）。

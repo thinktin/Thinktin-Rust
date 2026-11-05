@@ -1,6 +1,6 @@
 # iOS 界面改版规范（参考 App 的布局 + 系统原生控件）
 
-> 更新日期：2026-11-04　｜　分支 `ios-ui-redesign`　｜　工程说明见 [docs/ios.md](ios.md)，交接见 [docs/handoff-ios.md](handoff-ios.md)
+> 更新日期：2026-11-05（Botin 改名，6.6）　｜　分支 `ios-ui-redesign`　｜　工程说明见 [docs/ios.md](ios.md)，交接见 [docs/handoff-ios.md](handoff-ios.md)
 
 用户给了一个参考 App 的 120 张 iPhone 截图（深色模式、iOS 26 原生风格），要求：**“我们 App 的 UI 就按这个 UI 页面的布局去做，
 按钮相关的东西能用原生的全部用原生的”**。本文把截图逐张对到 ThinkTin 的功能和现有代码，定下改版的视觉、导航、逐页规范、
@@ -13,8 +13,9 @@
 - 登录页用户自己设计，参考里的登录方式页（108）不照做。
 - “现有 / 缺什么”以代码为准（本分支，2026-11-04）：页面看 `ThinktinKit/Navigation/AppRoute.swift`（44 个 case），
   接口看 `ThinktinKit/Client/ClientProtocol.swift`。
-- 参考 App 管它的 agent 叫 Bot，ThinkTin 叫实例（领养出来的 agent）。下文讲参考 App 时说 Bot，讲 ThinkTin 时说实例；
-  界面上到底叫什么要拍板（6.6）。
+- 参考 App 管它的 agent 叫 Bot，ThinkTin 的代码和接口里叫实例（`Instance`）。**2026-11-05 用户定了：界面上叫 Botin**（6.6）：
+  用户“新建 Botin”，新建时选一个引擎（就是 agent）；agent 在界面上只以 Botin 的“引擎”出现。下文讲参考 App 时说 Bot，
+  讲 ThinkTin 的代码、接口、页面结构时照旧说实例；**写进界面的文案一律用 Botin / 引擎**，下文引号里的旧文案（“实例”“领养”）以 6.6 为准换掉。
 - 文中的路径省略了公共前缀：`Screens/`、`Shell/`、`Components/`、`Design/`、`Support/` 在 `apps/apple/ThinktinKit/Sources/ThinktinUI/` 下，
   `ViewModels/`、`Navigation/`、`Models/` 在 `apps/apple/ThinktinKit/Sources/ThinktinKit/` 下。
 - 控件写法里的 `List(.insetGrouped)`、`List(.plain)`、`Picker(.menu)`、`Picker(.inline)`、`Picker(.segmented)`、`Button(.plain)`、
@@ -354,7 +355,7 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 - **原生控件**
   - 根：`NavigationStack` 的根页，不设标题，`.toolbarTitleDisplayMode(.inline)`。
   - 左上：`ToolbarItem(placement: .topBarLeading) { Button { router.open(.settings) } label: { 头像 } }`。
-  - 右上：`ToolbarItem(placement: .topBarTrailing) { Button("领养新实例", systemImage: "plus") { router.open(.adopt(agentID: nil)) } }`。
+  - 右上：`ToolbarItem(placement: .topBarTrailing) { Button("新建 Botin", systemImage: "plus") { router.open(.adopt(agentID: nil)) } }`。
   - 列表：`List { 提示行; 置顶网格行; ForEach { NavigationLink(value: AppRoute.conversation(id)) { HomeInstanceRow } } }`
     + `.listStyle(.plain)` + `.listRowSeparator(.hidden)`；置顶网格是 `LazyVGrid`，放在第一行（`.listRowBackground(Color.clear)`）。
   - 时间：外面包 `TimelineView(.everyMinute)`，用 `Formatting` 的时间格式。
@@ -364,13 +365,16 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
     （第二个 `Text` 在菜单里显示成副标题）。
   - 下拉刷新 `.refreshable { await model.refresh() }`；左滑 `.swipeActions`；长按 `.contextMenu(menuItems:preview:)`（4.2.2）。
   - 空状态：`ContentUnavailableView`。
-- **交互**：点一行压栈进对话；左上进设置（sheet）；“+”领养（sheet）；左下工作台菜单；点搜索栏原地搜索（4.2.4）；
+- **交互**：点一行压栈进对话；左上进设置（sheet）；“+”新建 Botin（sheet）；左下工作台菜单；点搜索栏原地搜索（4.2.4）；
   左滑置顶 / 隐藏（第 2 轮）；长按菜单；下拉刷新；从对话返回时回到原来的滚动位置。
 - **状态**
   - 加载中：没有缓存时 `ProgressView`；有缓存先显示缓存再刷新（现有规则）。
   - 离线：显示缓存 + 顶部离线横幅（现有）。
-  - 没有实例：`ContentUnavailableView`，图标位置放 `BrandLogo`，标题“还没有实例”，按钮“去领养”。
-  - 全部隐藏（113，第 2 轮）：“所有实例都已隐藏” + `Button("显示已隐藏的实例")`（`.bordered`、胶囊）。
+  - 没有实例（第一次登录就是这样）：`ContentUnavailableView`，图标位置放 `BrandLogo`，标题“还没有 Botin”，说明“Botin 是替你干活的助手。
+    起个名字、选一个引擎，它就能帮你写东西、查资料、跑任务。”，按钮“新建 Botin”（用户 2026-11-05 定的文案；英文 “No Botins yet” /
+    “A Botin is an assistant that works for you. Give it a name and pick an engine, and it can write, look things up and run tasks for you.” /
+    “New Botin”；在 `HomeText`）。
+  - 全部隐藏（113，第 2 轮）：“所有 Botin 都已隐藏” + `Button("显示已隐藏的 Botin")`（`.bordered`、胶囊）。
   - 拉取失败：`ErrorBanner`，可重试。
   - 有运行在等你处理：行内第二行换成“N 个在等你处理”（现在抽屉里就有），角标用 `warning` 色。
   - 运行中：状态角标会呼吸（`StatusTone` 规则不变）。
@@ -695,27 +699,32 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 
 ### 4.7 新建与分组
 
-#### 4.7.1 领养新实例（34、35、117）
+#### 4.7.1 新建 Botin（34、35、117）
+
+代码里还是领养（`AppRoute.adopt(agentID:)`、`AdoptionModel`、`adopt(agentID:name:harness:)`），界面上一律是“新建 Botin、选一个引擎”（6.6）。
+同一个 agent 可以给好几个 Botin 当引擎：服务端只限每个账号的实例数，不限每个 agent 领养几次，`adopt` 每调一次就建一个新实例。
 
 - **布局**
-  - large sheet，左上玻璃 ×，标题“领养新实例”。
+  - large sheet，左上玻璃 ×，标题“新建 Botin”。
   - 上面是大头像预览（约 120）；第 2 轮有了头像以后，名字下面加形状网格和色板。
   - 名字输入：占满宽度、圆角 16、填充底，文字居中、`.title2.bold()`，占位“给它取个名字”。
-  - ThinkTin 加一行“Agent”（选领养哪个 agent，默认目录里第一个或上次用的），agent 有多种接入方式时下面再加一行 `Picker(.menu)`；
-    许可说明放成脚注，链到 agent 详情。
-  - 底部全宽胶囊主按钮“领养”，没填名字时灰色、不能点。
+  - ThinkTin 加一行“引擎”（选这个 Botin 用哪个 agent 当引擎，默认目录里第一个或上次用的），引擎有多种接入方式时下面再加一行 `Picker(.menu)`；
+    许可说明放成脚注（“新建即表示你同意按上面的条款使用这个引擎”），链到引擎详情。
+  - 底部全宽胶囊主按钮“新建”，没填名字时灰色、不能点。
 - **原生**：`.sheet` + `NavigationStack` + `Button(role: .close)`；`TextField` + `.submitLabel(.done)` + `.onSubmit`、`@FocusState`；
-  agent 行是 `NavigationLink`，进 Agents 目录里的本地选择列表（复用 `AgentCatalogModel` 的数据）；底部
-  `.safeAreaBar(edge: .bottom) { Button("领养") { … }.buttonStyle(.glassProminent).controlSize(.large).frame(maxWidth: .infinity).disabled(!canSubmit) }`；
+  引擎行是 `NavigationLink`，进 Agents 目录里的本地选择列表（复用 `AgentCatalogModel` 的数据；行上写“N 个 Botin 在用”，不写“已领养”，
+  用过的引擎照样能再选）；底部
+  `.safeAreaBar(edge: .bottom) { Button("新建") { … }.buttonStyle(.glassProminent).controlSize(.large).frame(maxWidth: .infinity).disabled(!canSubmit) }`；
   提交中按钮里换 `ProgressView` + `.interactiveDismissDisabled(true)`；名字问题在输入框下面一行红色 `.footnote`。
-- **交互**：首页“+”打开；填了名字才能领养；领养成功关 sheet，压栈进新实例的对话（4.3.1 的首次状态）；× 或下滑取消，
+- **交互**：首页“+”和首页空状态的“新建 Botin”打开；填了名字才能新建；建好关 sheet，压栈进新 Botin 的对话（4.3.1 的首次状态）；× 或下滑取消，
   已经填了内容时先确认。
 - **状态**：空表单、聚焦、可提交、提交中、名字不合法（`AdoptionModel.nameProblem`）、实例数到上限（`ErrorRecovery.limitReached`）、离线禁用。
 - **ThinkTin 现在**：`Screens/Agents/AdoptAgentSheet.swift`（`AgentsNameField`、接入方式 `ChoiceRow`、许可说明、`PillButton`、
   领养完的 `AdoptionDoneView` 引导配模型或加 key）+ `ViewModels/Agents/AdoptionModel.swift`；入口 `.agentCatalog` → `.agent(id)` → 领养。
 - **要改**：新路由 `.adopt(agentID:)`（第 0 轮）；`AdoptAgentSheet` 改成上面的版式；`AdoptionDoneView` 去掉，“配模型、加 key”的引导挪到
   新实例对话的首次卡片（第 2 轮之前先用对话页现有的“没配 main 路由”提示）。agent 目录（`.agentCatalog`）保留，改成 plain 列表行
-  （40pt 图标 + 名字 + 一句介绍 + 右边“领养 / 已领养”小胶囊，借参考 101–104 的行）；agent 详情可以借插件详情的 sheet 版式（4.8.3）。
+  （40pt 图标 + 名字 + 一句介绍 + 右边“选这个”/“N 个 Botin 在用”小胶囊，借参考 101–104 的行；页面标题“引擎”）；引擎详情可以借插件详情的
+  sheet 版式（4.8.3），主按钮“用它新建 Botin”。
   第 1 轮（头像第 2 轮）。
 
 #### 4.7.2 分组（91、92、93）
@@ -1065,9 +1074,9 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 | 6.1 | 首页和导航结构 | 照参考改成“实例列表为根 + 压栈”，去掉抽屉；抽屉的 6 个入口放首页左下“工作台”菜单 | 第 0、1 轮 |
 | 6.2 | 颜色、气泡、字体 | 底色和卡片改中性灰，强调色保留橙色，agent 回复加灰气泡，字体全用系统的 | 第 0 轮 |
 | 6.3 | 最低系统版本 | 保持 iOS 17，iOS 26 的新接口集中包一层回退 | 第 0 轮 |
-| 6.4 | “+”领养流程 | “+”直接弹领养表单，表单里一行选 agent，许可说明放脚注 | 第 1 轮 |
+| 6.4 | “+”新建 Botin 流程 | **已定**：“+”直接弹“新建 Botin”表单，起名字、选一个引擎，许可说明放脚注 | 第 1 轮 |
 | 6.5 | 设置用 sheet 还是压栈 | 照参考用 sheet | 第 0 轮 |
-| 6.6 | 叫 Bot 还是实例 | 沿用“实例”，本轮不改名 | 全部 |
+| 6.6 | 叫 Bot 还是实例 | **已定（2026-11-05）**：界面上叫 Botin，agent 只以“引擎”出现；代码标识符不改 | 全部 |
 | 6.7 | 首页列表的预览 | 先显示状态，没有状态时显示最近一次运行的摘要或任务 | 第 1 轮 |
 | 6.8 | 资料页的“电脑”行、远程画面 | 改叫“工作区”，进实例沙箱页；观看接管等后端 | 第 1、3 轮 |
 | 6.9 | 头像和实例颜色 | 先做首字头像按名字取色；形状颜色等后端字段；生成、上传不做 | 第 1–3 轮 |
@@ -1125,7 +1134,7 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   - C：提到 iOS 26（不用写回退，但没升级的手机装不了）。
 - **建议**：A。App 还没上架，上架前看一次用户机型分布再决定要不要提。
 
-### 6.4 “+”领养流程
+### 6.4 “+”新建 Botin 流程
 
 - **参考 App**：“+”直接弹新建表单（名字、形状、颜色），建好进对话，Bot 自动打招呼。
 - **ThinkTin 现在**：领养必须先选 agent（`adopt(agentID:name:harness:)`），要让用户看到许可说明；领养后还要配 main 路由和 key 才能跑。
@@ -1135,6 +1144,8 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   - B：“+”先弹 agent 目录（sheet），选了再填名字。
   - C：维持现状，“+”只是进目录。
 - **建议**：A。“配模型、加 key”的引导挪到新实例对话的首次卡片（6.18）。
+- **已定（2026-11-05，用户）**：A，并且照 6.6 改说法：“+”弹“新建 Botin”表单，起名字、选一个引擎（agent），同一个引擎能给好几个 Botin 用
+  （服务端不限每个 agent 领养几次，只限每个账号的实例数）。首次登录首页是空的，空状态的按钮“新建 Botin”也打开这张表单（4.2.1）。
 
 ### 6.5 设置用 sheet 还是压栈
 
@@ -1151,6 +1162,18 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 - **ThinkTin 现在**：界面、文档、安卓、推送文案都叫“实例”，领养的是 agent。
 - **可选**：A 沿用“实例”；B 改叫“Bot”；C 换个更口语的词（比如“助手”）。B、C 要中英文、安卓、推送、文档一起换。
 - **建议**：A，本轮不改。首页、对话、资料页上主要显示的是名字，“实例”两个字出现得不多；要改名就单独做一次全端文案替换。
+- **已定（2026-11-05，用户），推翻上面的建议**：界面上叫 **Botin**（中英文同一个词，英文复数 Botins）。
+  - 用户**新建** Botin，不再“领养 agent”；新建时选它用哪个 agent 当**引擎**，同一个 agent 可以给好几个 Botin 当引擎。
+  - agent 在界面上只以 Botin 的“引擎”/“Engine”出现：目录叫“引擎”、详情叫“引擎详情”、资料页头部写“引擎：Claude Agent · v…”、
+    引擎进程出错写“引擎出错了”。说“谁在干活、谁写的、谁要你批准”时写 Botin（“Botin 写的内容”“Botin 需要你批准时”）。
+    产品名（Claude Agent、Hermes Agent）照写。
+  - 第一次登录首页是空的，空状态见 4.2.1（“还没有 Botin”+ 说明 +“新建 Botin”）。
+  - 团队不是 Botin：团队模板的“领养”改成“用模板新建团队”一类的说法（按钮“新建团队”）。
+  - 代码标识符不改（`Instance`、`InstanceID`、`AppRoute.adopt`、`adopt(agentID:name:harness:)`、`AdoptionModel`），接口和深链
+    （`thinktin://instance/{id}`）也不改；只改界面文案、读屏标签、快捷指令和 Siri 短语、App 自己发的通知和实时活动文字、文档。
+  - 中文里能不加量词就不加：“新建 Botin”“删除这个 Botin”“交给哪个 Botin？”，数数时照常“2 个 Botin”。
+  - 安卓和服务端推送的文案归别的会话，要跟着改，见 docs/handoff-ios.md 的“Botin 改名”一节。
+  - iOS 改完的范围和没改的（登录页的两句、服务端给的 agent 介绍）记在 docs/progress/ios-ui-redesign.md。
 
 ### 6.7 首页列表的预览
 
@@ -1364,7 +1387,7 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 |---|---|---|
 | A 首页（12.16） | 首页完整版（4.2.1，不含置顶隐藏）、长按菜单（4.2.2：实例资料、改名、新建计划、复制 ID、删除）、工作台菜单和“等你处理”提示行、首页嵌入搜索（4.2.4 第 1 轮部分）、`NewTaskSheet` 换选择器版式（4.4.5） | `Shell/Home/*`、`Shell/ShellDestination.swift`、`ViewModels/Shell/HomeListModel.swift`（新）、`AppModel.swift`（小改）、`Tests/*/Shell/` |
 | B 对话（12.5） | 对话页（4.3.1，不含引导卡）、“…”菜单（4.3.2）、消息长按菜单（4.3.4）、时间分隔 | `Screens/Conversation/*`、`Components/ComposerBar.swift`（本轮归 B）、`ViewModels/Conversation/*`、`Tests/*/Conversation*/` |
-| C 实例（12.3） | 实例资料（4.4.1）、“…”菜单（4.4.2）、编辑页（4.4.3）、工作区页（4.6.1）、领养表单（4.7.1）、agent 目录改列表行 | `Screens/Agents/*`（新 `InstanceEditScreen.swift`、`InstanceWorkspaceScreen.swift`）、`ViewModels/Agents/*`、`Tests/*/Agents/` |
+| C 实例（12.3） | 实例资料（4.4.1）、“…”菜单（4.4.2）、编辑页（4.4.3）、工作区页（4.6.1）、新建 Botin 表单（4.7.1，选引擎）、引擎目录改列表行 | `Screens/Agents/*`（新 `InstanceEditScreen.swift`、`InstanceWorkspaceScreen.swift`）、`ViewModels/Agents/*`、`Tests/*/Agents/` |
 | D 计划、产出物、搜索（12.6、12.18、12.21） | 实例的计划和全部计划（4.5.1）、产出物版式和产出物详情（4.5.2、4.5.3 第 1 轮部分）、`SearchResultsView` 拆出来给 A 用（4.2.4） | `Screens/Plans/*`、`Screens/Artifacts/*`、`Screens/Search/*`、对应的 `ViewModels/` 和测试 |
 | E 设置一带（12.12、12.2、12.4、12.13、12.14、12.9 手机这边） | 设置根页（4.9.1）、账号（4.9.2）、用量（4.9.3）、保险箱和登录信息表单（4.9.5、4.9.6）、设备列表和详情（4.9.9）、外观（4.9.11）、语言（4.9.12）、模型 key、IM 渠道换原生 | `Screens/Settings/*`、`ViewModels/Settings/SettingsModel.swift`、`Screens/Account/*`（登录相关不动）、`Screens/Models/*`、`Screens/Vault/*`、`Screens/ImChannels/*`、`Screens/Computer/ComputerLinkViews.swift` |
 
