@@ -32,8 +32,16 @@ struct SearchModelTests {
         #expect(!model.isSearching)
         model.query = "周报"
         let runs = try #require(model.groups.first { $0.kind == .run })
-        let weekly = try #require(runs.results.first { $0.route == .run(DemoData.weeklyRunID) })
+        let weekly = try #require(
+            runs.results.first { $0.route == .run(DemoData.weeklyRunID) && $0.direction == .sent })
         #expect(!weekly.isAIGenerated, "用户自己写的任务")
+        #expect(weekly.instanceID == DemoData.writerID)
+        #expect(weekly.title == "写作助手", "消息的标题是 Botin 名，界面拼成“你发给 X”")
+        // 摘要里也有“周报”：同一次运行另有一条“写作助手 发给你”，带 AI 标识。
+        let reply = try #require(
+            runs.results.first { $0.route == .run(DemoData.weeklyRunID) && $0.direction == .received })
+        #expect(reply.isAIGenerated)
+        #expect(reply.id != weekly.id)
         // 都是标题匹配：新的在前。
         let dates = runs.results.compactMap(\.date)
         #expect(dates == dates.sorted(by: >))
@@ -87,6 +95,56 @@ struct SearchModelTests {
         #expect(!model.isEmpty)
     }
 
+    @Test("筛选胶囊：只留这一类、上限放宽；没输入时“全部”和“Botin”列出 Botin，别的类为空")
+    func filters() throws {
+        let model = model()
+        model.loadCache()
+        #expect(SearchModel.filters == [nil, .run, .instance, .inbox, .artifact, .plan])
+        // 没输入：列出 Botin，最近活动的在前。
+        #expect(!model.suggestions.isEmpty)
+        #expect(model.suggestions.allSatisfy { $0.kind == .instance && $0.instanceID != nil })
+        let dates = model.suggestions.compactMap(\.date)
+        #expect(dates == dates.sorted(by: >))
+        model.filter = .run
+        #expect(model.suggestions.isEmpty)
+        model.filter = .instance
+        #expect(!model.suggestions.isEmpty)
+
+        model.filter = .inbox
+        model.query = "代码审查"
+        #expect(model.groups.map(\.kind) == [.inbox])
+        #expect(model.suggestions.isEmpty)
+        model.filter = nil
+        #expect(model.groups.map(\.kind).contains(.instance))
+        #expect(SearchText.filterTitle(nil, language: .chinese) == "全部")
+        #expect(SearchText.filterTitle(.run, language: .chinese) == "消息")
+        #expect(SearchText.searchKind(.run, language: .chinese) == "搜索消息")
+    }
+
+    @Test("消息的标题和右边的时间")
+    func messageTexts() {
+        #expect(SearchText.messageTitle(.sent, botin: "写作助手", language: .chinese) == "你发给 写作助手")
+        #expect(SearchText.messageTitle(.received, botin: "写作助手", language: .chinese) == "写作助手 发给你")
+        #expect(SearchText.messageTitle(.received, botin: "Writer", language: .english) == "Writer to you")
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Shanghai")!
+        // 2026-11-05（星期四）15:00，上海。
+        let now = Date(timeIntervalSince1970: 1_793_862_000)
+        let hour: TimeInterval = 3600
+        #expect(
+            SearchText.date(now.addingTimeInterval(-hour), now: now, language: .chinese, calendar: calendar) == "14:00")
+        #expect(
+            SearchText.date(now.addingTimeInterval(-24 * hour), now: now, language: .chinese, calendar: calendar)
+                == "昨天")
+        #expect(
+            SearchText.date(now.addingTimeInterval(-48 * hour), now: now, language: .chinese, calendar: calendar)
+                == "星期二")
+        #expect(
+            SearchText.date(now.addingTimeInterval(-10 * 24 * hour), now: now, language: .chinese, calendar: calendar)
+                == "10月26日")
+        #expect(SearchText.kindLabel(.instance, language: .chinese) == "Botin")
+    }
+
     @Test("每组最多显示 20 条，记下一共几条")
     func limit() {
         var state = DemoData.state()
@@ -102,5 +160,8 @@ struct SearchModelTests {
         #expect(runs?.results.count == SearchModel.groupLimit)
         #expect(runs?.total == 30)
         #expect(runs?.results.first?.key == "r0", "新的在前")
+        // 只看消息时放宽到 100 条。
+        model.filter = .run
+        #expect(model.groups.first?.results.count == 30)
     }
 }

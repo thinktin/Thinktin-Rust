@@ -9,7 +9,8 @@ import ThinktinKit
 ///   账号里还没有 Botin（第一次登录）时列表是“还没有 Botin”的空状态，按钮也打开新建表单。
 ///   两个都是系统工具栏的玻璃圆按钮（规范 4.2.1），头像放在玻璃圆里面。
 /// - 底部：左边工作台菜单（`WorkbenchMenu`），右边搜索栏（iOS 26 在底部条里，旧系统在导航栈的导航栏下面）。
-///   搜索栏里有字时列表换成搜索结果（`HomeSearchResults`）；`router.searchRequest` 变了（`open(.search)`、深链）就激活它。
+///   搜索栏激活时列表换成 Search 目录的 `SearchResultsView`（参考 78–80：顶上筛选胶囊，没输入时列出 Botin，结果是
+///   “谁发给谁”的行），iOS 26 上同时藏起导航栏；`router.searchRequest` 变了（`open(.search)`、深链）就激活它。
 ///   macOS 没有底部条：工作台和“+”在工具栏右边，搜索栏是工具栏里的那个。
 /// - 下拉刷新；回到首页时角标太久没刷新就刷新。离线、连接横幅由 `AppDestination` 放在顶部。
 ///
@@ -40,14 +41,15 @@ private struct HomeContent: View {
         let router = model.router
         // 外面是 ZStack 不是 Group：搜索栏挂在一个不变的视图上，输入第一个字换成结果时不会丢焦点。
         ZStack {
-            if search.isSearching {
-                HomeSearchResults(search: search)
+            if isSearchPresented || search.isSearching {
+                SearchResultsView(search: search)
             } else {
                 HomeInstanceList(model: model)
             }
         }
         .themedGroupedBackground()
         .searchable(text: $search.query, isPresented: $isSearchPresented, prompt: Text(SearchText.prompt(language)))
+        .hidesNavigationBarWhileSearching(isSearchPresented)
         .toolbar { HomeToolbar(model: model, language: language) }
         #if os(iOS)
             .toolbarTitleDisplayMode(.inline)
@@ -57,7 +59,11 @@ private struct HomeContent: View {
         .onAppear(perform: activatePendingSearch)
         .onChange(of: router.searchRequest, activatePendingSearch)
         .onChange(of: isSearchPresented) {
-            guard isSearchPresented else { return }
+            // 点 × 回到首页：下次打开从“全部”开始。
+            guard isSearchPresented else {
+                search.filter = nil
+                return
+            }
             // 每次打开搜索都重读缓存（刚跑完的运行也搜得到），联网时再拉计划和产出物。
             search.loadCache()
             if !model.isOffline { Task { [search] in await search.loadOnline() } }
@@ -215,57 +221,6 @@ struct HomeInstanceList: View {
                 }
                 .glassButtonStyle(.prominent)
                 .controlSize(.large)
-            }
-        }
-    }
-}
-
-/// 首页的搜索结果（第 0 轮的最小版：按种类分组；规范 4.2.4 的“谁发给谁”和类型筛选是第 1、2 轮的，
-/// 那时换成 Search 目录拆出来的 `SearchResultsView`）。点一条跳过去（`router.open`）。
-struct HomeSearchResults: View {
-    let search: SearchModel
-
-    @Environment(AppModel.self) private var app
-    @Environment(Router.self) private var router
-    @Environment(\.displayLanguage) private var language
-
-    var body: some View {
-        List {
-            if !search.hasOnlineSources && !search.isLoadingOnline {
-                Text(SearchText.cacheOnly(language))
-                    .typography(.footnote)
-                    .foregroundStyle(Theme.inkSecondary)
-                    .listRowSeparator(.hidden)
-                    .themedPlainRow()
-            }
-            ForEach(search.groups) { group in
-                // plain、没有分隔线（规范 2.5），行底透明（`themedPlainRow()`）。
-                Section {
-                    ForEach(group.results) { result in
-                        SearchResultRow(result: result, appearances: app.appearances) { router.open(result.route) }
-                            .listRowInsets(EdgeInsets())
-                    }
-                    .listRowSeparator(.hidden)
-                    .themedPlainRow()
-                    if group.total > group.results.count {
-                        Text(SearchText.more(group.total - group.results.count, language: language))
-                            .typography(.footnote)
-                            .foregroundStyle(Theme.inkSecondary)
-                            .listRowSeparator(.hidden)
-                            .themedPlainRow()
-                    }
-                } header: {
-                    Text(SearchText.groupTitle(group.kind, language: language))
-                }
-            }
-        }
-        .listStyle(.plain)
-        .scrollDismissesKeyboard(.immediately)
-        .overlay {
-            if search.isEmpty {
-                ContentUnavailableView(
-                    SearchText.noResults(search.query, language: language), systemImage: "magnifyingglass",
-                    description: search.hasOnlineSources ? nil : Text(SearchText.cacheOnly(language)))
             }
         }
     }

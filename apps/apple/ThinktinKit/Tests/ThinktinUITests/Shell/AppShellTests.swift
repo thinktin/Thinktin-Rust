@@ -245,11 +245,11 @@ struct AppShellTests {
         search.query = "写作"
         #expect(search.isSearching)
         #expect(!search.isEmpty)
-        hostAndLayout(NavigationStack { HomeSearchResults(search: search) }.shellEnvironment(model))
+        hostAndLayout(NavigationStack { SearchResultsView(search: search) }.shellEnvironment(model))
         search.query = "没有这个词 zzz"
         #expect(search.isEmpty)
         hostAndLayout(
-            NavigationStack { HomeSearchResults(search: search) }.shellEnvironment(model)
+            NavigationStack { SearchResultsView(search: search) }.shellEnvironment(model)
                 .environment(\.displayLanguage, .english))
 
         model.router.open(.instance(DemoData.writerID))

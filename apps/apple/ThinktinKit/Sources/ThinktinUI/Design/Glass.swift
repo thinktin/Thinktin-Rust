@@ -305,6 +305,24 @@ enum ToolbarBadgeText {
     }
 }
 
+// MARK: - 搜索时藏导航栏（规范 4.2.4）
+
+extension View {
+    /// 首页原地搜索时藏起导航栏（参考 78：顶上只有筛选胶囊）：只在 iOS 26 藏，那里搜索栏在底部条里
+    /// （`BottomBarSearchItem`）；iOS 17 / 18 的搜索栏挂在导航栏下面，藏了导航栏搜索栏也没了，不藏。macOS 不藏。
+    public func hidesNavigationBarWhileSearching(_ isSearching: Bool) -> some View {
+        #if os(iOS)
+            if #available(iOS 26.0, *) {
+                return toolbarVisibility(isSearching ? .hidden : .automatic, for: .navigationBar)
+            } else {
+                return self
+            }
+        #else
+            return self
+        #endif
+    }
+}
+
 // MARK: - 缩放转场（iOS 18；macOS 上没有）
 
 extension View {

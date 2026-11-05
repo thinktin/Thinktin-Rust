@@ -449,6 +449,17 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   - 参考的“群聊”筛选 ThinkTin 没有，换成“收件箱”（6.24）。
   - iOS 17/18 上 `.searchable` 在导航栏下面，照样能用。
   - 第 1 轮做嵌入和空查询列实例，第 2 轮做筛选和“谁发给谁”。
+- **已做（2026-11-05，第 1 轮 D 线，对过参考 78、79、80；第 2 轮的筛选和“谁发给谁”一起提前做了）**：Search 目录拆出
+  `SearchResultsView`，首页（`HomeScreen`，A 线的文件，只换了这一块）在搜索栏激活时就换成它（以前要有字才换），点 × 回首页时筛选
+  回到“全部”；iOS 26 上搜索时藏导航栏（`hidesNavigationBarWhileSearching`，Glass.swift；iOS 17 / 18 的搜索栏挂在导航栏下面，不藏）。
+  顶上 `FilterChipBar`：全部 / 消息 / Botin / 收件箱 / 产出物 / 计划（`SearchModel.filters`、`SearchModel.filter`；6.24 A，参考的“群聊”
+  换成收件箱、“文件”是产出物），用 `floatingBar(edge: .top)` 浮在列表上。没输入：“全部”和“Botin”列出 Botin（最近活动的在前，
+  右边灰字“Botin”，`SearchModel.suggestions`），别的类正中一个小放大镜和“搜索消息”这样一句（`SearchText.searchKind`）。
+  有字：plain 列表、没有分隔线；“全部”按种类分组（运行这一组改叫“消息”），选了一类的不分组、最多 100 条（`filteredLimit`）。
+  一次运行拆成两条消息：任务“你发给 X”、摘要“X 发给你”（`SearchResult.direction`、`SearchText.messageTitle`，各自要包含全部关键词，
+  摘要那条带 AI 标识）。一行 `SearchResultRow`：40pt 头像（Botin、消息）或种类图标方块，粗体标题，右边时间（今天写时刻、昨天、一周内
+  写星期几、更早写日期，`SearchText.date`），一行灰色摘录。没结果是 `ContentUnavailableView`，离线时说只搜了缓存。压栈的 `SearchScreen`
+  内容一样。回复正文（缓存的事件）还没搜。
 
 ### 4.3 对话
 
@@ -1158,9 +1169,9 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 | 75 | 全局设置底部与版本 | 设置根页底部、关于 | `SettingsScreen`、`AboutScreen.swift` | 部分有 | 1；反馈 3 | 4.9.1 |
 | 76 | 反馈空表单 | 发送反馈 | 无（只有举报） | 要后端 | 3 | 4.9.14 |
 | 77 | 反馈关联 Bot 菜单 | 发送反馈 | 无 | 要后端 | 3 | 4.9.14 |
-| 78 | 全局搜索 | 首页搜索 | `Search/SearchScreen.swift`、`SearchModel` | 部分有 | 1；筛选 2 | 4.2.4 |
-| 79 | 搜索消息筛选空状态 | 搜索筛选 | `SearchScreen` | 纯客户端能做 | 2 | 4.2.4 |
-| 80 | 搜索消息结果 | 搜运行（谁发给谁） | `SearchModel`（任务、摘要） | 部分有 | 2（含本机缓存的回复正文）；缓存外全文 3 | 4.2.4 |
+| 78 | 全局搜索 | 首页搜索 | `Search/SearchScreen.swift`（`SearchResultsView`）、`SearchModel` | 部分有 | 已做（2026-11-05，含筛选） | 4.2.4 |
+| 79 | 搜索消息筛选空状态 | 搜索筛选 | `SearchResultsView` | 纯客户端能做 | 已做（提前到第 1 轮） | 4.2.4 |
+| 80 | 搜索消息结果 | 搜运行（谁发给谁） | `SearchModel`（任务、摘要） | 部分有 | 谁发给谁已做（提前到第 1 轮）；本机缓存的回复正文 2；缓存外全文 3 | 4.2.4 |
 | 81 | 资料库底部展开入口 | 产出物分页 | `ArtifactLibraryModel`（只有 `limit`） | 部分有 | 1（本地折叠，已做）/ 3 | 4.5.2 |
 | 82 | 资料库展开后 | 产出物分页 | 同上 | 部分有 | 3 | 4.5.2 |
 | 83 | 资料库媒体完整 | 产出物类型筛选 | `ArtifactScreens.swift`、`ArtifactFiles.category` | 部分有 | 已做（提前到第 1 轮） | 4.5.2 |

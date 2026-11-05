@@ -379,6 +379,13 @@
   Info.plist（project.yml）加 `NSPhotoLibraryAddUsageDescription`，App 的 Info.plist 测试和 docs/ios-appstore.md 3.3 跟着改。
   uicheck 桩：新模块 `Stubs/ImageIO`（`CGImageSource`、缩略图的几个键，`CFData` 当 `Data`）和 `Stubs/Photos`（`PHPhotoLibrary`、
   `PHAssetCreationRequest`），`Package.swift` 里 ThinktinUI 依赖它们。
+- 第 1 轮 D 线·搜索（规范 4.2.4，对过参考 78、79、80；2026-11-05）：新的 `SearchResultsView`（顶上筛选胶囊，没输入时列 Botin 或
+  “搜索消息”，有字时“全部”分组、一类不分组，一行 40pt 头像 + 粗体“你发给 X / X 发给你” + 右边时间 + 灰色摘录），首页搜索栏一激活
+  就换成它（`HomeSearchResults` 删掉，A 线的 `HomeScreen.swift` 只动了这一块和关搜索时重置筛选），iOS 26 搜索时藏导航栏
+  （Glass.swift 的 `hidesNavigationBarWhileSearching`）；压栈的 `SearchScreen` 也用它。视图模型：`SearchModel.filter` / `filters` /
+  `suggestions` / `filteredLimit`，`SearchResult.instanceID` / `direction`（`SearchMessageDirection`），运行拆成任务、摘要两条；
+  `SearchText.filterTitle` / `searchKind` / `messageTitle` / `date` / `kindLabel`，运行那组改叫“消息”。测试 `SearchModelTests` 加两条、
+  改一条，`SearchScreensTests` 加改版的几种状态，`AppShellTests` 的首页搜索换成 `SearchResultsView`。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、

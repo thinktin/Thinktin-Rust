@@ -15,13 +15,33 @@ struct SearchScreensTests {
         hostAndLayout(SearchDestination(route: .search).previewShell().dynamicTypeSize(.accessibility3))
     }
 
+    @Test("改版的搜索：没输入时列出 Botin、选了一类时的提示、全部分组、只看消息、没结果")
+    func results() {
+        let client = MockClient(state: DemoData.state(), stepDelay: 0, autoReply: false)
+        let search = SearchModel(client: client)
+        search.loadCache()
+        let states: [(SearchKind?, String)] = [
+            (nil, ""), (.run, ""), (.instance, ""), (nil, "周报"), (.run, "周报"), (.plan, "没有这个词 zzz"),
+        ]
+        for (filter, query) in states {
+            search.filter = filter
+            search.query = query
+            hostAndLayout(SearchResultsView(search: search).previewShell(client: client))
+            hostAndLayout(SearchResultsView(search: search).previewShell(.english, scheme: .dark, client: client))
+        }
+    }
+
     @Test("结果的一行：带片段、AI 标识、时间；Botin 的结果画它挑的头像")
     func row() {
         let results = [
             SearchResult(
-                kind: .run, key: "r", title: "整理周报", snippet: "…分了三组…", isAIGenerated: true, date: Date(),
-                route: .run("r")),
-            SearchResult(kind: .instance, key: "i", title: "写作助手", route: .conversation("i")),
+                kind: .run, key: "r", title: "写作助手", snippet: "…分了三组…", isAIGenerated: true, date: Date(),
+                route: .run("r"), instanceID: "i", direction: .received),
+            SearchResult(
+                kind: .run, key: "s", title: "写作助手", snippet: "整理周报", date: Date().addingTimeInterval(-3 * 86400),
+                route: .run("s"), instanceID: "i", direction: .sent),
+            SearchResult(kind: .instance, key: "i", title: "写作助手", route: .conversation("i"), instanceID: "i"),
+            SearchResult(kind: .plan, key: "p", title: "每周周报", snippet: "写作助手", route: .plan("p")),
         ]
         for result in results {
             hostAndLayout(SearchResultRow(result: result) {}.previewShell())
@@ -31,6 +51,6 @@ struct SearchScreensTests {
         }
         let appearances = InstanceAppearanceStore(defaults: nil)
         appearances.set(InstanceAppearance(shape: .cloud, color: .navy), for: "i")
-        hostAndLayout(SearchResultRow(result: results[1], appearances: appearances) {}.previewShell())
+        hostAndLayout(SearchResultRow(result: results[2], appearances: appearances) {}.previewShell())
     }
 }
