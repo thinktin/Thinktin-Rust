@@ -170,27 +170,42 @@ struct InstanceDeletionTests {
         #expect(gone.deleteError == nil)
     }
 
-    @Test("删掉了顺带删这台设备上记的头像外观（别处已经删了也删）；删失败的留着")
-    func deleteForgetsAppearance() async {
+    @Test("删掉了顺带删这台设备上按它记的东西（头像外观、置顶、语音、表情回应、主 Botin；别处已经删了也删）；删失败的留着")
+    func deleteForgetsLocalData() async {
         let mock = AgentsFixture.mock()
-        let appearances = InstanceAppearanceStore(defaults: nil)
+        let local = BotinLocalData.inMemory()
         let flower = InstanceAppearance(shape: .flower, color: .orchid)
-        appearances.set(flower, for: DemoData.writerID)
-        appearances.set(flower, for: DemoData.reviewerID)
-        appearances.set(flower, for: "gone")
+        let voice = BotinVoiceSettings(voiceID: "onyx", speed: .half)
+        for id: InstanceID in [DemoData.writerID, DemoData.reviewerID, "gone"] {
+            local.appearances.set(flower, for: id)
+            local.preferences.setPinned(true, for: id)
+            local.voices.set(voice, for: id)
+            local.reactions.toggle("👍", instanceID: id, messageID: "1")
+        }
+        local.primary.set(DemoData.writerID)
 
-        let failing = InstanceDetailModel(client: mock, instanceID: DemoData.writerID, appearances: appearances)
+        let failing = InstanceDetailModel(client: mock, instanceID: DemoData.writerID, local: local)
         mock.failNext(with: .api(status: 503, code: .unavailable, message: "busy", retryAfterSecs: 5))
         #expect(!(await failing.delete()))
-        #expect(appearances.appearance(for: DemoData.writerID) == flower)
+        #expect(local.appearances.appearance(for: DemoData.writerID) == flower)
+        #expect(local.primary.primaryID == DemoData.writerID)
 
-        let model = InstanceDetailModel(client: mock, instanceID: DemoData.reviewerID, appearances: appearances)
+        let model = InstanceDetailModel(client: mock, instanceID: DemoData.reviewerID, local: local)
         #expect(await model.delete())
-        #expect(appearances.appearance(for: DemoData.reviewerID) == nil)
+        #expect(local.appearances.appearance(for: DemoData.reviewerID) == nil)
+        #expect(!local.preferences.isPinned(DemoData.reviewerID))
+        #expect(local.voices.settings[DemoData.reviewerID] == nil)
+        #expect(local.reactions.reactions(instanceID: DemoData.reviewerID, messageID: "1").isEmpty)
+        #expect(local.primary.primaryID == DemoData.writerID, "删的不是主 Botin")
 
-        let gone = InstanceDetailModel(client: mock, instanceID: "gone", appearances: appearances)
+        let gone = InstanceDetailModel(client: mock, instanceID: "gone", local: local)
         #expect(await gone.delete())
-        #expect(appearances.appearance(for: "gone") == nil)
-        #expect(appearances.appearance(for: DemoData.writerID) == flower)
+        #expect(local.appearances.appearance(for: "gone") == nil)
+        #expect(local.appearances.appearance(for: DemoData.writerID) == flower)
+        #expect(local.preferences.isPinned(DemoData.writerID))
+
+        let writer = InstanceDetailModel(client: mock, instanceID: DemoData.writerID, local: local)
+        #expect(await writer.delete())
+        #expect(local.primary.primaryID == nil, "删了主 Botin 就清掉")
     }
 }

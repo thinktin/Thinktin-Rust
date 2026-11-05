@@ -732,7 +732,8 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   速度 0.5x、0.75x、1x、1.25x、1.5x、2x；语言第一项“自动”，后面中文（简体、繁体）、粤语、英语，其余按英文名排（30 种）。
   选了只记在这台设备上（ThinktinKit `ViewModels/Agents/BotinVoice.swift`：`BotinVoiceStore`，`UserDefaults` 一个键、按 Botin 的 id，
   默认的不存，认不出的值当没选；`BotinVoiceEditor` 是草稿，点“完成”才记，点返回放弃），脚注“语音通话即将推出。这里的选择先只保存在
-  这台设备上。”删 Botin（资料页“…”里删、首页长按删，`voices: .shared`，首页那条合进 ios-ui-redesign 时补上）时一起删记录。
+  这台设备上。”删 Botin（资料页“…”里删、首页长按删）、注销账号时一起删记录（2026-11-05 合并后统一走 ThinktinKit 的
+  `BotinLocalData`，见 4.9.2 的“本机记录”）。
   1.4 和 6.23 原来定的是不做语音，这一组以后要不要留由用户定。
 
 #### 4.4.4 头像（18、19、20）
@@ -1166,6 +1167,13 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   改昵称没用 `.alert`（要显示字数和校验）。登录设备、全部停止不在账号页了（设置根页有）；`StopAllRow` 换成 `List` 里的系统
   `Button(role: .destructive)` 一行。
 - **审查修正（2026-11-05）**：账号页第一行的头像也是中性灰的首字圆（`AccountAvatar`，和设置根页同一个 `SettingsProfileRow`）。
+- **本机记录（2026-11-05，四条 r2 线合进来以后补的跨线小事）**：服务端没有、只存在这台设备上的按 Botin 记的五样（头像外观
+  `InstanceAppearanceStore`、首页置顶和隐藏 `InstancePreferencesStore`、语音通话 `BotinVoiceStore`、表情回应 `MessageReactionStore`、
+  主 Botin `PrimaryBotinStore`）放进 ThinktinKit 的 `BotinLocalData`（`AppModel.local`）。删 Botin（资料页、首页长按，都经过
+  `InstanceDetailModel.delete()` 和 `InstanceDetailScreen.leaveDeletedInstance`）、事件流说它没了时 `forget(_:)` 五样一起删；
+  注销账号成功后 `forgetAccount(_:)` 删掉注销前列表里的 Botin 的记录、主 Botin 也清掉（以前只清了头像外观）。退出登录不清。
+  以后再加按 Botin 记在本机的东西，也加进 `BotinLocalData`。
+
 #### 4.9.3 用量（55）
 
 - **参考**：一张卡：“试用用量”+“N 天后结束”+ 细进度条 + 百分比。

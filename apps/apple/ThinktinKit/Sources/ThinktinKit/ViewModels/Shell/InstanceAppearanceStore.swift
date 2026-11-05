@@ -127,8 +127,8 @@ public struct InstanceAppearance: Codable, Hashable, Sendable {
 /// 对话页的标题、Botin 资料按它画头像，没有记录的是 `InstanceAppearance.default`（圆形、按名字取色）。
 ///
 /// 存在 `UserDefaults` 里（一个键，JSON：`{实例 id: {shape, color}}`），只是本机的显示偏好，不上传。退出登录不清
-/// （同一个账号再登录时还在，别的账号的实例 id 对不上，用不到）；删了 Botin（`InstanceDetailModel.delete()`）、注销账号时
-/// 删掉对应的记录（`forget(_:)`）。以后的版本加的形状、颜色这个版本认不出：画的时候当圆形、当没选，存回去时原样留着
+/// （同一个账号再登录时还在，别的账号的实例 id 对不上，用不到）；删了 Botin、注销账号时删掉对应的记录（`forget(_:)`，
+/// 由 `BotinLocalData` 调）。以后的版本加的形状、颜色这个版本认不出：画的时候当圆形、当没选，存回去时原样留着
 /// （装回旧版本再新建一个 Botin 不会把它们抹掉），只有那个 Botin 自己改外观或删掉时才换掉。`defaults` 为 nil 时只记在内存里
 /// （测试、预览）。
 @Observable @MainActor

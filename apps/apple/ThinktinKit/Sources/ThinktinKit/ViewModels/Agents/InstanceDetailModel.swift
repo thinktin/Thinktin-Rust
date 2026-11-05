@@ -51,25 +51,23 @@ public final class InstanceDetailModel {
     public private(set) var isDeleted = false
 
     @ObservationIgnored private let client: any ClientProtocol
-    /// 删掉之后把这个 Botin 的头像外观也删掉（App 里是 `AppModel.appearances`）；nil 不管。
-    @ObservationIgnored private let appearances: InstanceAppearanceStore?
-    /// 这台设备上记的语音通话设置（编辑页的“语音通话”组，App 里是 `BotinVoiceStore.shared`），删掉 Botin 时一起删；
-    /// nil 不管（编辑页这时用 `.shared`）。
-    @ObservationIgnored public let voices: BotinVoiceStore?
+    /// 这台设备上按 Botin 记的东西（App 里是 `AppModel.local`）：删掉 Botin 时一起删它的记录（头像外观、置顶和隐藏、
+    /// 语音通话设置、表情回应、主 Botin）；nil 不管（测试、预览）。
+    @ObservationIgnored public let local: BotinLocalData?
+
+    /// 这台设备上记的语音通话设置（编辑页的“语音通话”组）；没传 `local` 时为 nil（编辑页这时用 `.shared`）。
+    public var voices: BotinVoiceStore? { local?.voices }
 
     /// - Parameters:
     ///   - instance: 已经有的实例（应用框架的实例列表里的），先显示它。
-    ///   - appearances: 记头像外观的地方（`AppModel.appearances`），删掉 Botin 时一起删它的记录。
-    ///   - voices: 记语音通话设置的地方，删掉 Botin 时一起删它的记录。
+    ///   - local: 这台设备上按 Botin 记的东西（`AppModel.local`），删掉 Botin 时一起删它的记录。
     public init(
-        client: any ClientProtocol, instanceID: InstanceID, instance: Instance? = nil,
-        appearances: InstanceAppearanceStore? = nil, voices: BotinVoiceStore? = nil
+        client: any ClientProtocol, instanceID: InstanceID, instance: Instance? = nil, local: BotinLocalData? = nil
     ) {
         self.client = client
         self.instanceID = instanceID
         self.instance = instance?.id == instanceID ? instance : nil
-        self.appearances = appearances
-        self.voices = voices
+        self.local = local
     }
 
     // MARK: 加载
@@ -247,8 +245,8 @@ public final class InstanceDetailModel {
         impactError = result.error
     }
 
-    /// 删除（二次确认之后）。已经不存在了（别处删了）也算删掉了。删掉了顺带删这台设备上记的头像外观、语音通话设置、表情回应，
-    /// 是主 Botin 的话清掉。
+    /// 删除（二次确认之后）。已经不存在了（别处删了）也算删掉了。删掉了顺带删这台设备上按它记的东西（`local`：头像外观、
+    /// 置顶和隐藏、语音通话设置、表情回应，是主 Botin 的话清掉）。
     @discardableResult
     public func delete() async -> Bool {
         guard !isDeleting, !isDeleted else { return false }
@@ -266,13 +264,7 @@ public final class InstanceDetailModel {
                 deleteError = failure
             }
         }
-        if isDeleted {
-            appearances?.forget([instanceID])
-            voices?.forget([instanceID])
-            // 这台设备上记的表情回应（对话页，规范 4.3.4）、主 Botin（4.4.5）也一起清掉。
-            MessageReactionStore.shared.forget(instanceID: instanceID)
-            PrimaryBotinStore.shared.forget(instanceID: instanceID)
-        }
+        if isDeleted { local?.forget([instanceID]) }
         return isDeleted
     }
 }

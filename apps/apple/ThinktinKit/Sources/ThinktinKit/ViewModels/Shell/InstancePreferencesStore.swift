@@ -7,7 +7,7 @@ import Observation
 /// - 置顶和隐藏互斥：隐藏时顺带取消置顶，置顶时顺带取消隐藏。
 /// - 隐藏只是首页不显示：计划照常跑、审批和推送照常来，搜索、深链照样能打开它。
 /// - 和头像外观（`InstanceAppearanceStore`）一样按实例 id 记、不分账号：退出登录不清（同一个账号再登录时还在，
-///   别的账号的实例 id 对不上，用不到）；删掉 Botin 时（`forget(_:)`）删掉它的记录。
+///   别的账号的实例 id 对不上，用不到）；删掉 Botin、注销账号时（`forget(_:)`，由 `BotinLocalData` 调）删掉它的记录。
 /// - 存在 `UserDefaults` 的一个键里（JSON：`{"pinned": [id…], "hidden": [id…]}`）；`defaults` 为 nil 时只记在内存里
 ///   （测试、预览）。
 @Observable @MainActor
@@ -62,7 +62,7 @@ public final class InstancePreferencesStore {
         update(pinned: pinned, hidden: hidden)
     }
 
-    /// 删掉这些 Botin 的记录（删了 Botin、它在服务端没了）。
+    /// 删掉这些 Botin 的记录（删了 Botin、它在服务端没了、注销账号）。
     public func forget(_ ids: [InstanceID]) {
         let gone = Set(ids)
         update(pinned: pinned.filter { !gone.contains($0) }, hidden: hidden.subtracting(gone))

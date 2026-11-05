@@ -24,7 +24,7 @@ struct InstanceDetailScreen: View {
     var body: some View {
         InstanceDetailContent(
             client: client, instanceID: instanceID, instance: app.instances.first { $0.id == instanceID },
-            appearances: app.appearances)
+            local: app.local)
     }
 }
 
@@ -39,13 +39,9 @@ private struct InstanceDetailContent: View {
     @Environment(Router.self) private var router
     @Environment(\.displayLanguage) private var language
 
-    init(
-        client: any ClientProtocol, instanceID: InstanceID, instance: Instance?, appearances: InstanceAppearanceStore
-    ) {
+    init(client: any ClientProtocol, instanceID: InstanceID, instance: Instance?, local: BotinLocalData) {
         _model = State(
-            initialValue: InstanceDetailModel(
-                client: client, instanceID: instanceID, instance: instance, appearances: appearances,
-                voices: .shared))
+            initialValue: InstanceDetailModel(client: client, instanceID: instanceID, instance: instance, local: local))
     }
 
     var body: some View {
@@ -281,12 +277,13 @@ private struct InstanceDetailContent: View {
 }
 
 extension InstanceDetailScreen {
-    /// 实例删掉之后：各层导航栈里从它的第一个页面（对话、实例资料、它的路由、产出物）起都拿掉，删掉首页记的置顶、隐藏，
-    /// 再刷新应用框架的实例列表（当前实例被删时应用框架会换成别的实例）。资料页和首页长按的删除都走这里。
+    /// 实例删掉之后：各层导航栈里从它的第一个页面（对话、实例资料、它的路由、产出物）起都拿掉，删掉这台设备上按它记的东西
+    /// （`AppModel.local`：头像外观、置顶和隐藏、语音、表情回应、主 Botin；`InstanceDetailModel.delete()` 已经删过一遍，
+    /// 这里再删一遍不怕漏），再刷新应用框架的实例列表（当前实例被删时应用框架会换成别的实例）。资料页和首页长按的删除都走这里。
     @MainActor
     static func leaveDeletedInstance(_ id: InstanceID, app: AppModel, router: Router) async {
         router.removeRoutes(of: id)
-        app.instancePreferences.forget([id])
+        app.local.forget([id])
         await app.refresh()
     }
 }

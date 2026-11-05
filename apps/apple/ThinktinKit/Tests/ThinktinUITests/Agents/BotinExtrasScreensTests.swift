@@ -13,15 +13,16 @@ struct BotinExtrasScreensTests {
     @Test("编辑页的语音通话组：没选过、选过（音色、1.5x、日语），浅色中文、深色英文、大字号")
     func editVoiceSection() {
         let mock = MockClient(autoReply: false)
-        let voices = BotinVoiceStore(defaults: nil)
+        let local = BotinLocalData.inMemory()
+        let voices = local.voices
         let fresh = InstanceDetailModel(
-            client: mock, instanceID: DemoData.writerID, instance: mock.state.instances[0], voices: voices)
+            client: mock, instanceID: DemoData.writerID, instance: mock.state.instances[0], local: local)
         hostAndLayout(NavigationStack { InstanceEditScreen(model: fresh) }.previewShell())
 
         voices.set(
             BotinVoiceSettings(voiceID: "cedar", speed: .oneAndHalf, languageCode: "ja"), for: DemoData.reviewerID)
         let chosen = InstanceDetailModel(
-            client: mock, instanceID: DemoData.reviewerID, instance: mock.state.instances[1], voices: voices)
+            client: mock, instanceID: DemoData.reviewerID, instance: mock.state.instances[1], local: local)
         hostAndLayout(NavigationStack { InstanceEditScreen(model: chosen) }.previewShell(.english, scheme: .dark))
         hostAndLayout(
             NavigationStack { InstanceEditScreen(model: chosen) }.previewShell().dynamicTypeSize(.accessibility3))

@@ -605,6 +605,14 @@
     `run.sh test` 的 ThinktinUITests 165 个全过；App 的 `ThinktinTests` 21 个过 16 个（还是那 5 个要 App 包的）；`swift format -i -r apps/apple`
     没改东西，`swift format lint --strict -r apps/apple` 零条。
   - 四条线都合完了。各线留的跨线小事（以前不在各自的范围里，现在都在本分支上了）记在“下一步”第 4 条。
+- 跨线小事（2026-11-05，四条 r2 线合进来以后，只动客户端；原话在 `docs/progress/r2-<名字>.md` 和第 1 轮各线的“下一步”）：
+  - 本机记录一起删（下一步 4 (a)）：新的 ThinktinKit `ViewModels/Shell/BotinLocalData.swift`，把只存在这台设备上的按 Botin 记的五样
+    （头像外观、首页置顶和隐藏、语音通话、表情回应、主 Botin）放在一起，`AppModel.local`（`appearances`、`instancePreferences` 改成
+    从它取）。`forget(_:)` 五样一起删：`InstanceDetailModel.delete()`（参数 `appearances:` / `voices:` 换成 `local:`，资料页和首页长按
+    都传 `app.local`）、`InstanceDetailScreen.leaveDeletedInstance`、事件流说 Botin 没了（`AppModel.instanceDisappeared`，以前只删置顶隐藏）。
+    注销账号成功后 `forgetAccount(_:)`（以前只删头像外观；主 Botin 也清掉）。`UserDefaults.standard` 时语音、表情回应、主 Botin 用
+    App 共用的 `.shared`；对话页、选择主 Botin 页改从 `app.local` 取（测试、预览不再写 standard）。测试：新 `BotinLocalDataTests`，
+    `InstanceDeletionTests` 的删除那条改成五样都查，`BotinVoiceTests`、`BotinExtrasScreensTests` 跟着改参数。规范 4.9.2 加“本机记录”。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、
@@ -653,7 +661,7 @@ TestFlight：28（Botin 改名、空状态，旧表单）、30（新建页重做
    `AccountRow`、`AccountScrollPage`、`AccountPageHeader`、`CheckboxRow`、`SignInButtonStyle`，换完一起删）；出一次截图（下面第 2 条，
    多了 15–18 四张）和参考并排看，按用户的修正再调。
 4. 第 2 轮四条线留下的跨线小事（合进来以后都在本分支，没做；各线的原话在 `docs/progress/r2-<名字>.md` 的“下一步”）：
-   (a) 注销账号只清了头像外观，还要清表情回应、主 Botin、语音选择（`MessageReactionStore`、`PrimaryBotinStore`、`BotinVoiceStore`）；
+   (a) ~~注销账号只清了头像外观~~ 做了（`BotinLocalData`，见“已完成”跨线小事那条）；
    (b) 新任务表单、快捷指令、小组件默认选主 Botin（`PrimaryBotinStore.shared.primaryID`）；(c) Botin 资料页的头像给主 Botin 加星标（参考 10）；
    (d) 对话里“等你接管”的状态行点了 `router.open(.instanceScreen(id))`；(e) 首页工作台菜单要不要加“连接”入口（参考是首页左下的应用按钮；
    加的话改 `WorkbenchEntry`、`isTopLevel` 和 `AppRouteTests` 的顶级页个数）；(f) `MessageMenuContent` / `messageMenu` 没用的

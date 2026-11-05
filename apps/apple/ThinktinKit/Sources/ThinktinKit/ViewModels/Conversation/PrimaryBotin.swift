@@ -37,7 +37,7 @@ public final class PrimaryBotinStore {
         }
     }
 
-    /// 主 Botin 删掉了：清掉。
+    /// 主 Botin 删掉了：清掉（`BotinLocalData.forget(_:)`）。
     public func forget(instanceID: InstanceID) {
         if primaryID == instanceID { set(nil) }
     }

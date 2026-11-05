@@ -22,10 +22,12 @@ struct ConversationScreen: View {
 
     @Environment(\.client) private var client
     @Environment(\.biometricGate) private var gate
+    @Environment(AppModel.self) private var app
 
     var body: some View {
         ConversationContent(
-            client: client, instanceID: instanceID, gate: ConversationGate.resolve(gate, client: client))
+            client: client, instanceID: instanceID, gate: ConversationGate.resolve(gate, client: client),
+            reactions: app.local.reactions)
     }
 }
 
@@ -72,8 +74,11 @@ private struct ConversationContent: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.displayLanguage) private var language
 
-    init(client: any ClientProtocol, instanceID: InstanceID, gate: any BiometricGate) {
-        let model = ConversationModel(client: client, instanceID: instanceID, biometricGate: gate)
+    init(
+        client: any ClientProtocol, instanceID: InstanceID, gate: any BiometricGate, reactions: MessageReactionStore
+    ) {
+        let model = ConversationModel(
+            client: client, instanceID: instanceID, biometricGate: gate, reactionStore: reactions)
         // 查找按画出来的字算位置（`AttributedString(markdown:)` 的真解析），和高亮对得上。
         model.find.plainText = InlineText.plainText
         _model = State(initialValue: model)

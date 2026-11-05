@@ -122,18 +122,20 @@ struct BotinVoiceTests {
     @Test("删了 Botin 顺带删这台设备上记的语音通话设置；删失败的留着")
     func deleteForgetsVoice() async {
         let mock = AgentsFixture.mock()
-        let voices = BotinVoiceStore(defaults: nil)
+        let local = BotinLocalData.inMemory()
+        let voices = local.voices
         let chosen = BotinVoiceSettings(voiceID: "onyx", speed: .half)
         voices.set(chosen, for: DemoData.writerID)
         voices.set(chosen, for: DemoData.reviewerID)
 
-        let failing = InstanceDetailModel(client: mock, instanceID: DemoData.writerID, voices: voices)
+        let failing = InstanceDetailModel(client: mock, instanceID: DemoData.writerID, local: local)
         mock.failNext(with: .api(status: 503, code: .unavailable, message: "busy", retryAfterSecs: 5))
         #expect(!(await failing.delete()))
         #expect(voices.settings(for: DemoData.writerID) == chosen)
 
-        let model = InstanceDetailModel(client: mock, instanceID: DemoData.reviewerID, voices: voices)
+        let model = InstanceDetailModel(client: mock, instanceID: DemoData.reviewerID, local: local)
         #expect(model.voices === voices)
+        #expect(InstanceDetailModel(client: mock, instanceID: DemoData.reviewerID).voices == nil)
         #expect(await model.delete())
         #expect(voices.settings[DemoData.reviewerID] == nil)
         #expect(voices.settings(for: DemoData.writerID) == chosen)

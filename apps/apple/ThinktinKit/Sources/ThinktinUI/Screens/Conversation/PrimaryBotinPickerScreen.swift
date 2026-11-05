@@ -7,10 +7,10 @@ import ThinktinKit
 ///
 /// - 列的是别的 Botin：现在的主 Botin、删掉的不列（`PrimaryBotinPicker.candidates`）。一个都没有时是参考 11 的空状态
 ///   “暂无其他可选的 Botin”；搜不到是系统的“没有结果”。
-/// - 主 Botin 只记在这台设备上（`PrimaryBotinStore.shared`），列表下面的脚注说清楚是干什么的。入口是 Botin 资料“…”菜单的
-///   “替换主 Botin…”。
+/// - 主 Botin 只记在这台设备上（`AppModel.local.primary`，App 里就是 `PrimaryBotinStore.shared`），列表下面的脚注说清楚
+///   是干什么的。入口是 Botin 资料“…”菜单的“替换主 Botin…”。
 struct PrimaryBotinPickerScreen: View {
-    /// 测试、预览传自己的；nil 用整个 App 共用的那份。
+    /// 测试、预览传自己的；nil 用 `AppModel.local.primary`。
     var store: PrimaryBotinStore? = nil
 
     @Environment(AppModel.self) private var app
@@ -20,7 +20,7 @@ struct PrimaryBotinPickerScreen: View {
     @State private var selection: InstanceID?
 
     var body: some View {
-        let store = self.store ?? .shared
+        let store = self.store ?? app.local.primary
         let candidates = PrimaryBotinPicker.candidates(app.instances, primaryID: store.primaryID, query: query)
         let current = store.primary(in: app.instances)
         List {

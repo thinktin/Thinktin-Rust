@@ -54,10 +54,13 @@ public final class AppModel {
     public let client: any ClientProtocol
     /// 导航状态。
     public let router: Router
+    /// 这台设备上按 Botin 记的东西（头像外观、置顶和隐藏、语音、表情回应、主 Botin；服务端都没有这些字段）。
+    /// 删了 Botin、注销账号时一起删（`BotinLocalData.forget(_:)`、`forgetAccount(_:)`）。
+    public let local: BotinLocalData
     /// 这台设备上记的 Botin 头像外观（形状 + 颜色，新建表单写；服务端还没有这个字段，规范 6.9）。
-    public let appearances: InstanceAppearanceStore
+    public var appearances: InstanceAppearanceStore { local.appearances }
     /// 这台设备上记的首页置顶、隐藏（服务端没有这两个字段，规范 4.2.1–4.2.3、6.10 A）。
-    public let instancePreferences: InstancePreferencesStore
+    public var instancePreferences: InstancePreferencesStore { local.preferences }
 
     public private(set) var phase: Phase
     /// 当前用户（`me()`、登录结果）；拉到之前为 nil。
@@ -127,7 +130,7 @@ public final class AppModel {
     /// - Parameters:
     ///   - client: Mock 或真核心；这里会包一层 `ObservedClient`。
     ///   - router: 导航状态（测试里可以传自己的）。
-    ///   - defaults: 记住上次选的实例、Botin 的头像外观；传 nil 不记（测试、预览，头像外观只在内存里）。
+    ///   - defaults: 记住上次选的实例、这台设备上按 Botin 记的东西（`local`）；传 nil 不记（测试、预览，`local` 只在内存里）。
     ///   - preferences: 外观与语言的偏好（12.12，App 里是 `SettingsPreferences.shared`）：启动、登录后按它的界面语言
     ///     设请求语言、同步服务端的用户语言。nil 不同步（测试、预览）。
     ///   - notifications: 系统通知中心（12.8，App 里是 `UNUserNotificationCenter`）；nil 不管。
@@ -157,8 +160,7 @@ public final class AppModel {
         self.language = preferences.map { LanguageSettingsModel(client: observed, preferences: $0) }
         self.router = router
         self.selection = InstanceSelectionStore(defaults: defaults)
-        self.appearances = InstanceAppearanceStore(defaults: defaults)
-        self.instancePreferences = InstancePreferencesStore(defaults: defaults)
+        self.local = BotinLocalData(defaults: defaults)
         self.computerLinks = ComputerLinkStore(defaults: defaults)
         self.onboardingCheck = OnboardingCheck(defaults: defaults)
         self.notifications = notifications
@@ -849,7 +851,7 @@ public final class AppModel {
     private func instanceDisappeared(_ instanceID: InstanceID) {
         guard phase == .signedIn, instances.contains(where: { $0.id == instanceID }) else { return }
         apply(instances: instances.filter { $0.id != instanceID })
-        instancePreferences.forget([instanceID])
+        local.forget([instanceID])
         Task { await refresh() }
     }
 

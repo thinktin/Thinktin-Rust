@@ -156,7 +156,7 @@ public struct BotinVoiceSettings: Codable, Hashable, Sendable {
 /// 这台设备上记的语音通话设置（按 Botin 的 id）：编辑页点“完成”时写（`BotinVoiceEditor.save()`）。
 ///
 /// 存在 `UserDefaults` 里（一个键，JSON：`{实例 id: {voice, speed, language}}`），只是本机的偏好，不上传；默认的不存。
-/// 删了 Botin（`InstanceDetailModel.delete()`）时删掉对应的记录。`defaults` 为 nil 时只记在内存里（测试、预览）。
+/// 删了 Botin、注销账号时删掉对应的记录（`BotinLocalData`）。`defaults` 为 nil 时只记在内存里（测试、预览）。
 @Observable @MainActor
 public final class BotinVoiceStore {
     static let storageKey = "cn.thinktin.agents.botinVoice"
@@ -190,7 +190,7 @@ public final class BotinVoiceStore {
         save()
     }
 
-    /// 删掉这些 Botin 的记录（删了 Botin）。
+    /// 删掉这些 Botin 的记录（删了 Botin、注销账号）。
     public func forget(_ ids: [InstanceID]) {
         var changed = false
         for id in ids where settings.removeValue(forKey: id) != nil {

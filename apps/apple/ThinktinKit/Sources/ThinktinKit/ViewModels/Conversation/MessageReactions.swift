@@ -20,7 +20,7 @@ public enum MessageReactions {
 /// `ConversationFindTarget.summaryID(turnID:)`。
 ///
 /// 存成一张按最后改动排的表（JSON 数组，最久没动的在前），超过 `MessageReactions.maxMessages` 条时从前面删。`defaults` 为 nil 时
-/// 只记在内存里（测试、预览）。删了 Botin 时 `InstanceDetailModel.delete()` 调 `forget(instanceID:)`。
+/// 只记在内存里（测试、预览）。删了 Botin、注销账号时由 `BotinLocalData` 调 `forget(instanceID:)`。
 @Observable @MainActor
 public final class MessageReactionStore {
     static let storageKey = "cn.thinktin.conversation.reactions"
