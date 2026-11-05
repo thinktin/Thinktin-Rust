@@ -1,17 +1,24 @@
 import Foundation
 import Observation
 
-/// 保险箱页顶上的筛选胶囊（改版规范 4.9.5，参考 57 的“全部 / 登录信息 / 支付 / 联系信息”；ThinkTin 只有一种条目，
-/// 换成条目 / 等你填写 / 处理过的）。nil 是“全部”。
+/// 保险箱页顶上的筛选胶囊（改版规范 4.9.5，参考 57 的“全部 / 登录信息 / 支付 / 联系信息”）：照参考排三种条目，后面接
+/// ThinkTin 自己的“等你填写 / 处理过的”请求。现在只能存登录信息（规范 6.16），支付、联系信息的数总是 0。nil 是“全部”。
 public enum VaultFilter: String, CaseIterable, Hashable, Sendable {
+    /// 登录信息（保险箱现在的条目）。
     case items
+    /// 支付（卡片，参考 60；还不能存）。
+    case cards
+    /// 联系信息（参考 61；还不能存）。
+    case contacts
     case pending
     case past
 
     public func title(_ language: DisplayLanguage = .current) -> String {
         let zh = language == .chinese
         switch self {
-        case .items: return zh ? "条目" : "Items"
+        case .items: return zh ? "登录信息" : "Sign-ins"
+        case .cards: return zh ? "支付" : "Payment"
+        case .contacts: return zh ? "联系信息" : "Contacts"
         case .pending: return zh ? "等你填写" : "Waiting"
         case .past: return zh ? "处理过的" : "Past"
         }
@@ -66,6 +73,8 @@ public final class VaultModel {
         switch filter {
         case nil: items.count + requests.count
         case .items?: items.count
+        // 卡片、联系信息还不能存（规范 6.16）。
+        case .cards?, .contacts?: 0
         case .pending?: pendingRequests.count
         case .past?: pastRequests.count
         }

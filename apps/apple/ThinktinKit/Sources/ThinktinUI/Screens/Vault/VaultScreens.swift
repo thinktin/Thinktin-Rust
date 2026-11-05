@@ -54,7 +54,9 @@ private struct VaultContent: View {
                         Text(VaultText.empty(model.filter, language: language))
                             .foregroundStyle(Theme.inkSecondary)
                     } footer: {
-                        Text(VaultText.footer(language))
+                        Text(
+                            model.filter == .cards || model.filter == .contacts
+                                ? VaultExtraText.kindsFooter(language) : VaultText.footer(language))
                     }
                     .themedRow()
                 } else {

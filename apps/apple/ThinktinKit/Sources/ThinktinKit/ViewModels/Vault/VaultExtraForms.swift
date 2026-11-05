@@ -312,9 +312,12 @@ public enum VaultExtraText {
         language == .chinese ? "新建条目" : "New item"
     }
 
-    /// 菜单里还不能存的种类的副标题。
-    public static func comingSoonSubtitle(_ language: DisplayLanguage = .current) -> String {
-        language == .chinese ? "即将推出" : "Coming soon"
+    /// 筛到“支付”“联系信息”时空状态下面的脚注。
+    public static func kindsFooter(_ language: DisplayLanguage = .current) -> String {
+        language == .chinese
+            ? "保险箱暂时只能存登录信息，卡片和联系信息即将推出。Botin 永远看不到完整的卡号和安全码。"
+            : "The vault only holds sign-ins for now; cards and contact info are coming soon. Botins never see full "
+                + "card numbers or security codes."
     }
 
     // MARK: 网站（参考 99）
