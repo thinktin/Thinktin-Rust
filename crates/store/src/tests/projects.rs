@@ -1,12 +1,13 @@
 //! 项目与跨用户协作（8.14 起）的库测试。需要真实 Postgres，没设置 DATABASE_URL 时跳过。
 
 use proto::domain::{
-    Instance, ProjectId, ProjectInviteId, ProjectRole, TeamMember, TeamRole, UserId,
+    Instance, ProjectId, ProjectInviteId, ProjectInviteStatus, ProjectRole, TeamMember, TeamRole,
+    UserId,
 };
 
 use super::{instance, queue_run, user};
 use crate::testing::TestDb;
-use crate::{Db, Error, NewInboxItem};
+use crate::{CreatedInvite, Db, Error, InviteCaps, InviteKey, NewInboxItem};
 
 /// alice 的单人项目（经旧的团队接口建），负责人是 `lead`。
 async fn solo(db: &Db, owner: UserId, lead: &Instance) -> ProjectId {
@@ -362,4 +363,570 @@ async fn inbox_project_fields_are_server_only() {
             .await
             .unwrap();
     assert_eq!((run_id, project_id), (None, Some(project.0)));
+}
+
+const DAY: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 3600);
+
+/// 设了昵称的用户（邀请人要有昵称）。
+async fn named(db: &Db, phone: &str, name: &str) -> UserId {
+    let u = user(db, phone).await;
+    sqlx::query("UPDATE users SET display_name = $2 WHERE id = $1")
+        .bind(u.0)
+        .bind(name)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    u
+}
+
+/// 和编排层一样：加锁前按号码查到收件人，再发邀请。
+async fn invite_phone(
+    db: &Db,
+    inviter: UserId,
+    project: ProjectId,
+    phone: &str,
+    caps: InviteCaps,
+) -> crate::Result<CreatedInvite> {
+    let mut w = db.worker().await.unwrap();
+    let recipient = w.user_by_phone(phone).await.unwrap().map(|u| u.id);
+    let r = w
+        .create_phone_invite(inviter, project, phone, recipient, caps, DAY)
+        .await;
+    match &r {
+        Ok(_) => w.commit().await.unwrap(),
+        Err(_) => w.rollback().await.unwrap(),
+    }
+    r
+}
+
+async fn worker_do<T>(
+    db: &Db,
+    f: impl AsyncFnOnce(&mut crate::Tx<crate::Worker>) -> crate::Result<T>,
+) -> crate::Result<T> {
+    let mut w = db.worker().await.unwrap();
+    let r = f(&mut w).await;
+    match &r {
+        Ok(_) => w.commit().await.unwrap(),
+        Err(_) => w.rollback().await.unwrap(),
+    }
+    r
+}
+
+/// 邀请的一行库里的状态：(status, invitee_id, suppressed_at 有没有)。
+async fn invite_state(db: &Db, id: ProjectInviteId) -> (String, Option<uuid::Uuid>, bool) {
+    sqlx::query_as(
+        "SELECT status, invitee_id, suppressed_at IS NOT NULL FROM project_invites WHERE id = $1",
+    )
+    .bind(id.0)
+    .fetch_one(db.pool())
+    .await
+    .unwrap()
+}
+
+/// 给 `user` 的收件箱放一条这个邀请的提醒（store 测试里没有编排层发通知）。
+async fn invite_item(db: &Db, user: UserId, project: ProjectId, invite: ProjectInviteId) {
+    let mut w = db.worker().await.unwrap();
+    w.insert_inbox(
+        user,
+        &NewInboxItem {
+            kind: "info".into(),
+            title: "t".into(),
+            body: "b".into(),
+            project_id: Some(project),
+            project_invite_id: Some(invite),
+            ..NewInboxItem::default()
+        },
+    )
+    .await
+    .unwrap();
+    w.commit().await.unwrap();
+}
+
+async fn invite_item_read(db: &Db, user: UserId, invite: ProjectInviteId) -> bool {
+    sqlx::query_scalar(
+        "SELECT read_at IS NOT NULL FROM inbox_items WHERE user_id = $1 AND project_invite_id = $2",
+    )
+    .bind(user.0)
+    .bind(invite.0)
+    .fetch_one(db.pool())
+    .await
+    .unwrap()
+}
+
+/// 按手机号邀请（8.14 测试 1）：号码注册没有、拉黑没有、通知到了上限、已经是成员，邀请人拿到的结果都一样；只有
+/// 该通知的人有 `deliver_to`；拉黑的只标不送达；到了上限的照样看得到。
+#[tokio::test]
+async fn phone_invites_look_the_same_whoever_owns_the_number() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = named(db, "+8613800001031", "Alice").await;
+    let bob = user(db, "+8613800001032").await;
+    let carol = user(db, "+8613800001033").await;
+    let dave = user(db, "+8613800001034").await;
+    let erin = named(db, "+8613800001035", "Erin").await;
+    let frank = user(db, "+8613800001036").await;
+    let unregistered = "+8613800001039";
+    let a1 = instance(db, alice).await;
+    let e1 = instance(db, erin).await;
+    let f1 = instance(db, frank).await;
+    let project = solo(db, alice, &a1).await;
+    let erins = solo(db, erin, &e1).await;
+    join_raw(db, project, frank, &[&f1]).await;
+    worker_do(db, async |w| w.block_user(carol, alice).await)
+        .await
+        .unwrap();
+    let caps = InviteCaps {
+        per_inviter_per_day: 6,
+        per_phone_per_day: 1,
+    };
+    // erin 先给 dave 发了一条（送达了），dave 今天的通知到了上限。
+    let first = invite_phone(db, erin, erins, "+8613800001034", caps)
+        .await
+        .unwrap();
+    assert_eq!(first.deliver_to, Some(dave));
+
+    let mut got = vec![];
+    for phone in [
+        "+8613800001032",
+        unregistered,
+        "+8613800001033",
+        "+8613800001034",
+        "+8613800001036",
+    ] {
+        let c = invite_phone(db, alice, project, phone, caps).await.unwrap();
+        assert!(c.created);
+        assert_eq!(c.project_name, "p");
+        got.push(c);
+    }
+    let deliver: Vec<_> = got.iter().map(|c| c.deliver_to).collect();
+    assert_eq!(deliver, vec![Some(bob), None, None, None, None]);
+    // 去掉 id、时间、打码的号码以后一模一样。
+    let norm = |c: &CreatedInvite| {
+        let mut i = c.invite.clone();
+        i.id = ProjectInviteId(uuid::Uuid::nil());
+        i.created_at = chrono::DateTime::UNIX_EPOCH;
+        i.expires_at = chrono::DateTime::UNIX_EPOCH;
+        assert!(i.phone_masked.take().unwrap().contains("****"));
+        i
+    };
+    for c in &got[1..] {
+        assert_eq!(norm(c), norm(&got[0]));
+    }
+    assert_eq!(got[0].invite.status, ProjectInviteStatus::Pending);
+    assert_eq!(
+        got[0].invite.phone_masked.as_deref(),
+        Some("+86138****1032")
+    );
+    // 库里：只有 carol 那条不送达；dave 那条没送达也没标不送达。
+    let mut states = vec![];
+    for c in &got {
+        states.push(invite_state(db, c.invite.id).await);
+    }
+    assert_eq!(states[0], ("pending".into(), Some(bob.0), false));
+    assert_eq!(states[1], ("pending".into(), None, false));
+    assert_eq!(states[2], ("pending".into(), None, true));
+    assert_eq!(states[3], ("pending".into(), None, false));
+    assert_eq!(states[4], ("pending".into(), None, false));
+    // 被邀请的人那边：carol 看不到；dave 看得到（只是没推送）；frank 已经在项目里，看不到。
+    let mut w = db.worker().await.unwrap();
+    assert!(w.invites_for(carol).await.unwrap().is_empty());
+    assert!(w.invites_for(frank).await.unwrap().is_empty());
+    let daves = w.invites_for(dave).await.unwrap();
+    assert_eq!(daves.len(), 2);
+    assert!(daves.iter().any(|p| p.invite_id == got[3].invite.id));
+    let bobs = w.invites_for(bob).await.unwrap();
+    assert_eq!(bobs.len(), 1);
+    let p = &bobs[0];
+    assert_eq!((p.project.id, p.creator.user_id), (project, alice));
+    assert_eq!(p.creator.display_name.as_deref(), Some("Alice"));
+    assert_eq!((p.users, p.agents), (2, 2));
+    assert_eq!(p.members.len(), 2);
+    assert_eq!(p.members[0].role, ProjectRole::Creator);
+    assert_eq!(p.shared_with_project.len(), 5);
+    assert_eq!(p.kept_private.len(), 8);
+    // 按 id 预览：bob 看得到，别人 NotFound。
+    let one = w
+        .invite_preview(bob, InviteKey::Phone(got[0].invite.id))
+        .await
+        .unwrap();
+    assert_eq!(one, bobs[0]);
+    assert!(matches!(
+        w.invite_preview(carol, InviteKey::Phone(got[0].invite.id))
+            .await,
+        Err(Error::NotFound)
+    ));
+    w.rollback().await.unwrap();
+    // 没注册的号码注册以后看得到。
+    let newcomer = user(db, unregistered).await;
+    let mut w = db.worker().await.unwrap();
+    let theirs = w.invites_for(newcomer).await.unwrap();
+    assert_eq!(theirs.len(), 1);
+    assert_eq!(theirs[0].invite_id, got[1].invite.id);
+    w.rollback().await.unwrap();
+    // 再邀请 bob：还是那一条，不再数一次（邀请人到了每天的上限也照样成功）；新号码 429。
+    let caps = InviteCaps {
+        per_inviter_per_day: 5,
+        per_phone_per_day: 1,
+    };
+    let again = invite_phone(db, alice, project, "+8613800001032", caps)
+        .await
+        .unwrap();
+    assert!(!again.created && again.deliver_to.is_none());
+    assert_eq!(again.invite, got[0].invite);
+    let err = invite_phone(db, alice, project, "+8613800001037", caps)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, Error::RetryAfter(s) if (1..=86_400).contains(&s)),
+        "{err:?}"
+    );
+    // 上限是 0 就不限。
+    let c = invite_phone(db, alice, project, "+8613800001037", InviteCaps::default())
+        .await
+        .unwrap();
+    assert!(c.created);
+    // 邀请自己、成员邀请、没昵称的创建者：都不行。
+    let err = invite_phone(db, alice, project, "+8613800001031", InviteCaps::default())
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::Invalid(_)), "{err:?}");
+    let err = invite_phone(db, frank, project, "+8613800001040", InviteCaps::default())
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::NotPermitted(_)), "{err:?}");
+    let f2 = instance(db, frank).await;
+    let franks = solo(db, frank, &f2).await;
+    let err = invite_phone(db, frank, franks, "+8613800001040", InviteCaps::default())
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::Invalid(_)), "{err:?}");
+    // 不是成员的：NotFound。
+    let err = invite_phone(db, erin, project, "+8613800001040", InviteCaps::default())
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::NotFound), "{err:?}");
+}
+
+/// 邀请列表、撤回、链接邀请、上限、过期和清理。
+#[tokio::test]
+async fn invite_lists_revoke_links_and_sweeps() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = named(db, "+8613800001041", "Alice").await;
+    let bob = user(db, "+8613800001042").await;
+    let carol = user(db, "+8613800001043").await;
+    let a1 = instance(db, alice).await;
+    let c1 = instance(db, carol).await;
+    let project = solo(db, alice, &a1).await;
+    join_raw(db, project, carol, &[&c1]).await;
+    let caps = InviteCaps::default();
+    let to_bob = invite_phone(db, alice, project, "+8613800001042", caps)
+        .await
+        .unwrap();
+    invite_item(db, bob, project, to_bob.invite.id).await;
+    // 链接邀请：凭令牌的哈希预览；按 id 找不到。
+    let hash = [9u8; 32];
+    let link = worker_do(db, async |w| {
+        w.create_link_invite(alice, project, &hash, caps, DAY).await
+    })
+    .await
+    .unwrap();
+    assert_eq!(link.kind, proto::domain::ProjectInviteKind::Link);
+    assert!(link.phone_masked.is_none());
+    let mut w = db.worker().await.unwrap();
+    let p = w.invite_preview(bob, InviteKey::Link(&hash)).await.unwrap();
+    assert_eq!((p.invite_id, p.project.id), (link.id, project));
+    assert!(matches!(
+        w.invite_preview(bob, InviteKey::Phone(link.id)).await,
+        Err(Error::NotFound)
+    ));
+    assert!(matches!(
+        w.invite_preview(bob, InviteKey::Link(&[7; 32])).await,
+        Err(Error::NotFound)
+    ));
+    // 列表：只有创建者；成员 NotPermitted；外人 NotFound。
+    let list = w.project_invites(alice, project).await.unwrap();
+    assert_eq!(
+        list.iter().map(|i| i.id).collect::<Vec<_>>(),
+        vec![link.id, to_bob.invite.id]
+    );
+    assert!(matches!(
+        w.project_invites(carol, project).await,
+        Err(Error::NotPermitted(_))
+    ));
+    assert!(matches!(
+        w.project_invites(bob, project).await,
+        Err(Error::NotFound)
+    ));
+    w.rollback().await.unwrap();
+    // 撤回：只有创建者；撤回后 bob 看不到、提醒标已读；再撤一次照样成功（没改）。
+    let err = worker_do(db, async |w| {
+        w.revoke_invite(carol, project, to_bob.invite.id).await
+    })
+    .await
+    .unwrap_err();
+    assert!(matches!(err, Error::NotPermitted(_)), "{err:?}");
+    let other = solo(db, alice, &instance(db, alice).await).await;
+    let err = worker_do(db, async |w| {
+        w.revoke_invite(alice, other, to_bob.invite.id).await
+    })
+    .await
+    .unwrap_err();
+    assert!(matches!(err, Error::NotFound), "{err:?}");
+    assert!(
+        worker_do(db, async |w| w
+            .revoke_invite(alice, project, to_bob.invite.id)
+            .await)
+        .await
+        .unwrap()
+    );
+    assert!(
+        !worker_do(db, async |w| w
+            .revoke_invite(alice, project, to_bob.invite.id)
+            .await)
+        .await
+        .unwrap()
+    );
+    assert!(invite_item_read(db, bob, to_bob.invite.id).await);
+    let mut w = db.worker().await.unwrap();
+    assert!(w.invites_for(bob).await.unwrap().is_empty());
+    w.rollback().await.unwrap();
+    // 撤回以后可以再邀请（新的一条）。
+    let again = invite_phone(db, alice, project, "+8613800001042", caps)
+        .await
+        .unwrap();
+    assert!(again.created && again.invite.id != to_bob.invite.id);
+    invite_item(db, bob, project, again.invite.id).await;
+
+    // 过期：列表里马上按过期算；后台把它标上、提醒标已读；过期的号码再邀请是新的一条。
+    sqlx::query(
+        "UPDATE project_invites SET expires_at = now() - interval '1 second' WHERE id = $1",
+    )
+    .bind(again.invite.id.0)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    let mut w = db.worker().await.unwrap();
+    let list = w.project_invites(alice, project).await.unwrap();
+    let e = list.iter().find(|i| i.id == again.invite.id).unwrap();
+    assert_eq!(e.status, ProjectInviteStatus::Expired);
+    assert!(e.settled_at.is_some());
+    assert!(w.invites_for(bob).await.unwrap().is_empty());
+    w.rollback().await.unwrap();
+    assert_eq!(
+        worker_do(db, async |w| w.expire_project_invites(100).await)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(invite_state(db, again.invite.id).await.0, "expired");
+    assert!(invite_item_read(db, bob, again.invite.id).await);
+    // 清理：结束 30 天以上的删掉，别的留着。
+    sqlx::query("UPDATE project_invites SET settled_at = now() - interval '31 days' WHERE id = $1")
+        .bind(to_bob.invite.id.0)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let purged = worker_do(db, async |w| {
+        w.purge_project_invites(std::time::Duration::from_secs(30 * 86_400), 100)
+            .await
+    })
+    .await
+    .unwrap();
+    assert_eq!(purged, 1);
+    let left: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM project_invites WHERE project_id = $1")
+            .bind(project.0)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    assert_eq!(left, 2);
+
+    // 待处理的上限：20 条（链接、号码都算）。
+    // 已经有一条链接邀请待处理，再发 19 条就满了。
+    for n in 0..19 {
+        invite_phone(db, alice, project, &format!("+86138000020{n:02}"), caps)
+            .await
+            .unwrap();
+    }
+    let err = invite_phone(db, alice, project, "+8613800002099", caps)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, Error::ProjectLimit(crate::ProjectCap::PendingInvites)),
+        "{err:?}"
+    );
+    // 人数上限：10 个人（含创建者）满了就不能再邀请。
+    let other = solo(db, alice, &instance(db, alice).await).await;
+    for n in 0..9 {
+        let u = user(db, &format!("+86138000030{n:02}")).await;
+        join_raw(db, other, u, &[]).await;
+    }
+    let err = invite_phone(db, alice, other, "+8613800003099", caps)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, Error::ProjectLimit(crate::ProjectCap::Members)),
+        "{err:?}"
+    );
+}
+
+/// 拉黑（8.14 测试 9）：拒绝并拉黑以后邀请人那边照样“待接受”，被拉黑的人再发来的不送达；取消拉黑不恢复；拉黑和
+/// 发邀请同时进行时，不会漏下一条送达的；拒绝并拉黑和拉黑同时进行不死锁。
+#[tokio::test]
+async fn blocks_hide_invites_silently() {
+    let Some(t) = TestDb::new().await else { return };
+    let db = &t.db;
+    let alice = named(db, "+8613800001051", "Alice").await;
+    let carol = user(db, "+8613800001053").await;
+    let dave = user(db, "+8613800001054").await;
+    let a1 = instance(db, alice).await;
+    let project = solo(db, alice, &a1).await;
+    let caps = InviteCaps::default();
+    let first = invite_phone(db, alice, project, "+8613800001053", caps)
+        .await
+        .unwrap();
+    assert_eq!(first.deliver_to, Some(carol));
+    invite_item(db, carol, project, first.invite.id).await;
+    worker_do(db, async |w| {
+        w.decline_invite(carol, first.invite.id, true).await
+    })
+    .await
+    .unwrap();
+    let mut w = db.worker().await.unwrap();
+    let seen = w.project_invites(alice, project).await.unwrap();
+    assert_eq!(
+        seen[0].status,
+        ProjectInviteStatus::Pending,
+        "looks pending"
+    );
+    assert!(w.invites_for(carol).await.unwrap().is_empty());
+    let blocks = w.blocks(carol).await.unwrap();
+    assert_eq!(blocks.len(), 1);
+    assert_eq!(
+        (blocks[0].user_id, blocks[0].display_name.as_deref()),
+        (alice, Some("Alice"))
+    );
+    w.rollback().await.unwrap();
+    assert!(invite_item_read(db, carol, first.invite.id).await);
+    assert_eq!(
+        invite_state(db, first.invite.id).await,
+        ("pending".into(), Some(carol.0), true)
+    );
+    // 拉黑以后的新邀请（另一个项目）：不送达、标不送达。
+    let second_project = solo(db, alice, &instance(db, alice).await).await;
+    let second = invite_phone(db, alice, second_project, "+8613800001053", caps)
+        .await
+        .unwrap();
+    assert!(second.created && second.deliver_to.is_none());
+    assert!(invite_state(db, second.invite.id).await.2);
+    // 拒绝已经不送达的：NotFound（看不到）。
+    let err = worker_do(db, async |w| {
+        w.decline_invite(carol, second.invite.id, false).await
+    })
+    .await
+    .unwrap_err();
+    assert!(matches!(err, Error::NotFound), "{err:?}");
+    // 取消拉黑：之前标的不恢复；拉黑没有的人 NotFound；拉黑自己 Invalid；取消两次照样成功。
+    for _ in 0..2 {
+        worker_do(db, async |w| w.unblock_user(carol, alice).await)
+            .await
+            .unwrap();
+    }
+    let mut w = db.worker().await.unwrap();
+    assert!(w.invites_for(carol).await.unwrap().is_empty());
+    assert!(w.blocks(carol).await.unwrap().is_empty());
+    w.rollback().await.unwrap();
+    let err = worker_do(db, async |w| w.block_user(carol, UserId::new()).await)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::NotFound), "{err:?}");
+    let err = worker_do(db, async |w| w.block_user(carol, carol).await)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::Invalid(_)), "{err:?}");
+    // 只拒绝（不拉黑）：标“已拒绝”，提醒标已读。
+    let third_project = solo(db, alice, &instance(db, alice).await).await;
+    let third = invite_phone(db, alice, third_project, "+8613800001053", caps)
+        .await
+        .unwrap();
+    assert_eq!(third.deliver_to, Some(carol));
+    invite_item(db, carol, third_project, third.invite.id).await;
+    worker_do(db, async |w| {
+        w.decline_invite(carol, third.invite.id, false).await
+    })
+    .await
+    .unwrap();
+    assert_eq!(invite_state(db, third.invite.id).await.0, "declined");
+    assert!(invite_item_read(db, carol, third.invite.id).await);
+    // 别人拒绝不了不是发给他的邀请。
+    let fourth = invite_phone(db, alice, third_project, "+8613800001054", caps)
+        .await
+        .unwrap();
+    let err = worker_do(db, async |w| {
+        w.decline_invite(carol, fourth.invite.id, false).await
+    })
+    .await
+    .unwrap_err();
+    assert!(matches!(err, Error::NotFound), "{err:?}");
+
+    // 拉黑和发邀请同时进行：结束后没有 alice 发给 dave 的、送达了的或可见的待处理邀请。
+    for round in 0..5 {
+        let p = solo(db, alice, &instance(db, alice).await).await;
+        let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(2));
+        let (d1, b1) = (db.clone(), barrier.clone());
+        let block = tokio::spawn(async move {
+            b1.wait().await;
+            worker_do(&d1, async |w| w.block_user(dave, alice).await).await
+        });
+        let (d2, b2) = (db.clone(), barrier.clone());
+        let send = tokio::spawn(async move {
+            b2.wait().await;
+            invite_phone(&d2, alice, p, "+8613800001054", InviteCaps::default()).await
+        });
+        block.await.unwrap().unwrap();
+        send.await.unwrap().unwrap();
+        let visible: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM project_invites WHERE inviter_id = $1 AND invitee_phone = $2 \
+               AND status = 'pending' AND suppressed_at IS NULL",
+        )
+        .bind(alice.0)
+        .bind("+8613800001054")
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+        assert_eq!(visible, 0, "round {round}");
+        worker_do(db, async |w| w.unblock_user(dave, alice).await)
+            .await
+            .unwrap();
+    }
+
+    // 拒绝并拉黑和拉黑同时进行：不死锁（谁先都行，后一个可能 NotFound）。
+    for _ in 0..2 {
+        let p = solo(db, alice, &instance(db, alice).await).await;
+        let inv = invite_phone(db, alice, p, "+8613800001053", caps)
+            .await
+            .unwrap();
+        let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(2));
+        let (d1, b1) = (db.clone(), barrier.clone());
+        let decline = tokio::spawn(async move {
+            b1.wait().await;
+            worker_do(&d1, async |w| {
+                w.decline_invite(carol, inv.invite.id, true).await
+            })
+            .await
+        });
+        let (d2, b2) = (db.clone(), barrier.clone());
+        let block = tokio::spawn(async move {
+            b2.wait().await;
+            worker_do(&d2, async |w| w.block_user(carol, alice).await).await
+        });
+        let r = decline.await.unwrap();
+        assert!(matches!(r, Ok(()) | Err(Error::NotFound)), "{r:?}");
+        block.await.unwrap().unwrap();
+        assert!(invite_state(db, inv.invite.id).await.2);
+        worker_do(db, async |w| w.unblock_user(carol, alice).await)
+            .await
+            .unwrap();
+    }
 }

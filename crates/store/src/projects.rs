@@ -58,11 +58,7 @@ impl<R> Tx<R> {
     /// 项目锁（事务结束放开）：改项目的成员、agent、状态的都先拿它（docs/progress/drafts/projects-8.14-plan.md 第 0 节 D3 的
     /// 第 2 步）。人数、agent 数的上限在锁里数。
     pub async fn lock_project(&mut self, id: ProjectId) -> Result<()> {
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
-            .bind(format!("project/{id}"))
-            .execute(self.conn())
-            .await?;
-        Ok(())
+        self.advisory_lock(&format!("project/{id}")).await
     }
 }
 
@@ -80,7 +76,6 @@ impl Tx<Worker> {
 
 /// [`Tx::lock_users`] 锁住的一个用户。
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // 邀请、加入（下一个提交）用到
 pub(crate) struct LockedUser {
     pub id: UserId,
     pub status: UserStatus,
@@ -88,19 +83,9 @@ pub(crate) struct LockedUser {
     pub display_name: Option<String>,
 }
 
-#[allow(dead_code)]
-impl LockedUser {
-    pub fn person(&self) -> ProjectPerson {
-        ProjectPerson {
-            user_id: self.id,
-            display_name: self.display_name.clone(),
-        }
-    }
-}
-
 /// 核对过的项目成员（只在 store 里、在同一个事务里建出来用）：用户行、项目锁、自己的成员行都锁着。
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // 邀请、加入（下一个提交）用到
+#[allow(dead_code)] // project、creator：加入、撤回（后面的提交）用到
 pub(crate) struct ProjectActor {
     pub project: ProjectId,
     pub user: UserId,
@@ -110,7 +95,6 @@ pub(crate) struct ProjectActor {
     pub users: Vec<LockedUser>,
 }
 
-#[allow(dead_code)]
 impl ProjectActor {
     /// 只有创建者能做的事（邀请、移出、改项目）。
     pub fn require_creator(&self, what: &str) -> Result<()> {
