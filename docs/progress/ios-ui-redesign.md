@@ -362,6 +362,15 @@
     142 个全过；App 的 `ThinktinTests` 21 个过 16 个（还是那 5 个要 App 包的：Info.plist 两条、隐私清单、小组件扩展、缓存路径）；
     `swift format -i -r apps/apple` 后 `swift format lint --strict -r apps/apple` 零条。macOS CI 和截图还没跑。
 
+- 第 1 轮 D 线·计划列表（规范 4.5.1，对过参考 21；2026-11-05，进行中，产出物和搜索还没做）：`PlanListScreen` 换成 insetGrouped
+  `List`（右上玻璃“+”，Botin 资料进来的只看这个 Botin、不显示筛选，工作台进来的第一行是 `FilterChipBar`），一行 `PlanRow`
+  （状态图标、单行标题、灰色副标题、状态行），左滑 / 长按暂停、恢复、删除；空着时正中一段说明 +“新建计划”（`ContentUnavailableView`）。
+  视图模型：`PlanListModel.scopeInstanceID`、`showsInstanceFilter`、`placeholder`（`PlanListPlaceholder`），`PlansText.listEmptyMessage`、
+  `awaitingFooter`、`rowSubtitle`；测试 `PlanListModelTests` 加两条，`PlansScreensTests` 加一个 Botin 的计划和 `PlanRow`。
+  `PlansFilterChip`、`PlanListRow`、`PlanAwaitingCard` 删掉；触发器编辑器“规则的写法”换成 `FilterChipBar`。C 线放在
+  `InstanceDetailScreen.swift` 末尾的 `insetGroupedList()`、`clearListRow()` 挪到 `Components/ListStyles.swift`，`AgentsToolbar.trailing`
+  改名 `ToolbarSlot.trailing`（同一个文件）。
+
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、
 字体全用系统的）；6.3 A（保持 iOS 17，iOS 26 的接口在 Design/Glass.swift 里回退）；6.4 A（“+”直接弹领养表单）；6.5 A（设置用 sheet）；

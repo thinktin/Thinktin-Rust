@@ -115,7 +115,7 @@ struct InstanceWorkspaceScreen: View {
         }
         .inlineNavigationTitle(InstanceProfileText.workspace(language))
         .toolbar {
-            ToolbarItem(placement: AgentsToolbar.trailing) {
+            ToolbarItem(placement: ToolbarSlot.trailing) {
                 Button {
                     isShowingHelp = true
                 } label: {

@@ -681,6 +681,16 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   `EmptyStateView`）+ `ViewModels/Plans/PlanListModel.swift`（已经支持 `instanceFilter`）。实例详情的 `workSection` 现在直接列出本实例的计划。
 - **要改**：路由改 `.plans(instanceID:)`（第 0 轮）；`PlanListScreen` 接上 `instanceFilter`，有实例时不显示实例筛选；全部实例的
   计划列表（从工作台进）同一版式，筛选换 `FilterChipBar`。第 1 轮。
+- **已做（2026-11-05，第 1 轮 D 线，对过参考 21）**：`PlanListScreen` 换成 insetGrouped `List`（`insetGroupedList()`，macOS `.inset`），
+  inline 标题“计划”，右上玻璃“+”（`ToolbarSlot.trailing`，预选这个 Botin / 当前的 Botin；离线或没有 Botin 时灰掉）。
+  Botin 资料进来的（`PlanListModel.scopeInstanceID`）只列这个 Botin 的、不显示筛选；工作台进来的第一行是 `FilterChipBar`
+  （全部 + 各个 Botin，带数，透明行跟着内容滚），`PlansFilterChip` 删掉（触发器编辑器的“规则的写法”也换成 `FilterChipBar`）。
+  分组：待确认（标题带数，点行进确认页，脚注说要确认才运行）、按时运行、已暂停；一行 `PlanRow`：左边按状态的图标和颜色
+  （`PlanStatus.systemImage` / `tone`），单行标题，灰色副标题（规则摘要，全部的页面带 Botin 名，`PlansText.rowSubtitle`），
+  一行状态（`PlanMetaLine`），Botin 写的带 AI 标识。左滑：删除（二次确认）+ 暂停 / 恢复；长按是同样的系统菜单（等确认的只有
+  “查看并确认”和删除）。空着时（`PlanListModel.placeholder`）：参考 21 那样正中一段说明（`PlansText.listEmptyMessage`，没有图标和
+  标题）+ “新建计划”玻璃按钮；拉不到时 `ContentUnavailableView` + 重试；全部的页面筛到没有时“看全部”。原来的 `PageHeader`
+  说明拿掉（确认的说明挪到待确认一组的脚注）。
 
 #### 4.5.2 产出物（22、23、26、81、82、83、84）
 
@@ -1073,7 +1083,7 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 | 18 | 头像形状与颜色 | 实例头像 | `Components/InstanceAvatar.swift`、`AvatarShapes.swift` | 纯客户端能做 | 新建时挑已做（本机，2026-11-05）；改头像 2 / 同步 3 | 4.4.4 |
 | 19 | 生成头像 | 实例头像（AI 生成） | 无 | 要后端 | 不做 | 4.4.4 |
 | 20 | 上传头像入口 | 实例头像（上传） | 无 | 要后端 | 不做 | 4.4.4 |
-| 21 | 定时任务空状态 | 实例的计划 | `Plans/PlanListScreen.swift`、`PlanListModel` | 只改界面 | 1 | 4.5.1 |
+| 21 | 定时任务空状态 | 实例的计划 | `Plans/PlanListScreen.swift`、`PlanListModel` | 只改界面 | 1（已做） | 4.5.1 |
 | 22 | 资料库全部 | 产出物 | `Artifacts/ArtifactScreens.swift`、`ArtifactLibraryModel` | 部分有 | 1；链接不做 | 4.5.2 |
 | 23 | 资料库媒体 | 产出物按类型筛选 | `ArtifactScreens.swift`、`ArtifactFiles.isImage` | 部分有 | 2 | 4.5.2 |
 | 24 | 图片预览 | 图片全屏查看 | `ArtifactDetailScreen`（QuickLook） | 部分有 | 2 | 4.5.3 |

@@ -102,26 +102,15 @@ private struct ArtifactLibraryContent: View {
     }
 
     private var filterBar: some View {
-        let model = self.model
-        return ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: Metrics.Spacing.xs) {
-                PlansFilterChip(
-                    title: ArtifactsText.allInstances(language), count: model.artifacts.count,
-                    isSelected: model.filter == nil
-                ) {
-                    model.filter = nil
-                }
-                ForEach(model.filterInstances, id: \.self) { id in
-                    PlansFilterChip(
-                        title: model.instanceName(id) ?? ArtifactsText.deletedInstance(language),
-                        count: model.artifacts.filter { $0.instanceID == id }.count, isSelected: model.filter == id
-                    ) {
-                        model.filter = id
-                    }
-                }
+        @Bindable var model = model
+        let options: [FilterChipBar<InstanceID?>.Option] =
+            [.init(value: nil, title: ArtifactsText.allInstances(language), count: model.artifacts.count)]
+            + model.filterInstances.map { id in
+                .init(
+                    value: id, title: model.instanceName(id) ?? ArtifactsText.deletedInstance(language),
+                    count: model.artifacts.filter { $0.instanceID == id }.count)
             }
-            .padding(.horizontal, Metrics.Spacing.xxs)
-        }
+        return FilterChipBar(options, selection: $model.filter, horizontalInset: 0)
     }
 }
 

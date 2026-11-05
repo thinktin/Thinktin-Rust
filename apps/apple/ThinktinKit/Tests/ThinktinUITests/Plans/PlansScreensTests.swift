@@ -37,9 +37,14 @@ struct PlansScreensTests {
         }
     }
 
-    @Test("没有计划；agent 改了用户的计划")
+    @Test("没有计划；一个 Botin 的计划；agent 改了用户的计划")
     func states() {
         hostAndLayout(PlanListScreen().previewShell(client: PlansPreviewClients.empty()))
+        hostAndLayout(
+            PlanListScreen(instanceFilter: DemoData.writerID).previewShell(
+                .english, scheme: .dark, client: PlansPreviewClients.empty()))
+        hostAndLayout(
+            PlanListScreen(instanceFilter: DemoData.writerID).previewShell(client: PlansPreviewClients.withPlans()))
         hostAndLayout(
             PlanConfirmScreen(planID: DemoData.digestPlanID).previewShell(
                 client: PlansPreviewClients.agentEditedUserPlan()))
@@ -90,8 +95,10 @@ struct PlansScreensTests {
         }
         renderInBothAppearances(PlansCountBadge(count: 3))
         renderInBothAppearances(PlansCountBadge(count: 120))
-        renderInBothAppearances(PlansFilterChip(title: "写作助手", count: 2, isSelected: true) {})
-        renderInBothAppearances(PlansFilterChip(title: "Cron", count: nil, isSelected: false) {})
+        for plan in plans {
+            renderInBothAppearances(PlanRow(plan: plan, instanceName: "写作助手"))
+            renderInBothAppearances(PlanRow(plan: plan, instanceName: nil, isBusy: true))
+        }
         renderInBothAppearances(PlanChangedTag())
         renderInBothAppearances(PlansDayToggle(text: "一", accessibilityName: "周一", isOn: true) {})
         for run in state.runs where run.planID != nil {
@@ -112,6 +119,10 @@ struct PlansScreensTests {
         #expect(PlanStatus.paused.tone == .muted)
         #expect(PlanStatus.scheduled(next: Date()).tone == .active)
         #expect(PlanStatus.idle.tone == .neutral)
+        let images = [
+            PlanStatus.awaitingConfirmation, .paused, .invalidRule, .scheduled(next: Date()), .idle,
+        ].map(\.systemImage)
+        #expect(Set(images).count == images.count)
     }
 
     @Test("时区的显示名")

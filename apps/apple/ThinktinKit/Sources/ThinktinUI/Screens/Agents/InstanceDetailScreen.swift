@@ -85,7 +85,7 @@ private struct InstanceDetailContent: View {
         }
         .toolbar {
             if model.instance != nil && !model.isMissing {
-                ToolbarItem(placement: AgentsToolbar.trailing) {
+                ToolbarItem(placement: ToolbarSlot.trailing) {
                     Button {
                         router.open(.conversation(model.instanceID))
                     } label: {
@@ -93,8 +93,8 @@ private struct InstanceDetailContent: View {
                             .labelStyle(.iconOnly)
                     }
                 }
-                GlassToolbarSpacer(.fixed, placement: AgentsToolbar.trailing)
-                ToolbarItem(placement: AgentsToolbar.trailing) {
+                GlassToolbarSpacer(.fixed, placement: ToolbarSlot.trailing)
+                ToolbarItem(placement: ToolbarSlot.trailing) {
                     moreMenu
                 }
             }
@@ -328,36 +328,7 @@ private struct ProfileHeader: View {
     }
 }
 
-// MARK: - 这个目录共用的小帮手
-
-/// 导航栏右边的位置：iOS `.topBarTrailing`；macOS 没有，放主操作的位置。
-enum AgentsToolbar {
-    static var trailing: ToolbarItemPlacement {
-        #if os(iOS)
-            .topBarTrailing
-        #else
-            .primaryAction
-        #endif
-    }
-}
-
-extension View {
-    /// 分组的圆角卡片列表（规范 2.5 的 insetGrouped）：iOS `.insetGrouped`；macOS 没有，用 `.inset`。
-    func insetGroupedList() -> some View {
-        #if os(iOS)
-            listStyle(.insetGrouped)
-        #else
-            listStyle(.inset)
-        #endif
-    }
-
-    /// 分组列表里不画卡片底的一行（头部、横幅）：透明底、贴边、不要分隔线。
-    func clearListRow() -> some View {
-        listRowBackground(Color.clear)
-            .listRowInsets(EdgeInsets())
-            .listRowSeparator(.hidden)
-    }
-}
+// MARK: - 这个目录共用的小帮手（列表样式、导航栏右边的位置挪到了 Components/ListStyles.swift）
 
 /// 直接显示一个 Botin 的工作区页（预览和界面测试用：用环境里的客户端建资料页的视图模型、拉一次）。
 struct InstanceWorkspacePreview: View {

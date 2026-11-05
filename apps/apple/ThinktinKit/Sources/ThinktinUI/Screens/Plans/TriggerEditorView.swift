@@ -95,16 +95,12 @@ struct TriggerEditorView: View {
 
     private var kindPicker: some View {
         let kinds = TriggerDraft.Kind.allCases
-        return ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: Metrics.Spacing.xs) {
-                ForEach(kinds, id: \.self) { kind in
-                    PlansFilterChip(title: kindName(kind), count: nil, isSelected: draft.kind == kind) {
-                        draft.setKind(kind, now: Date())
-                    }
-                }
-            }
-            .padding(.horizontal, Metrics.Spacing.xxs)
-        }
+        let selection = Binding<TriggerDraft.Kind>(
+            get: { draft.kind }, set: { draft.setKind($0, now: Date()) })
+        return FilterChipBar(
+            kinds.map { .init(value: $0, title: kindName($0)) }, selection: selection,
+            horizontalInset: Metrics.Spacing.xxs
+        )
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text(language == .chinese ? "规则的写法" : "Kind of schedule"))
     }

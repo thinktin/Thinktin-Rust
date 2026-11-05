@@ -352,6 +352,27 @@ public enum PlansText {
     // MARK: 空状态、离线
 
     /// 没有计划时的说明（可以直接对 agent 说）。
+    /// 计划列表空着时正中的说明（规范 4.5.1，参考 21 的位置）：计划是什么、怎么来。
+    public static func listEmptyMessage(_ language: DisplayLanguage = .current) -> String {
+        language == .chinese
+            ? "计划是 Botin 按时重复去做的事。在对话里跟它说“每天 8 点帮我…”，或者在这里新建一个。"
+            : "Plans are tasks a Botin repeats on a schedule. Tell it “every day at 8, …” in the conversation, "
+                + "or create one here."
+    }
+
+    /// 计划列表里“待确认”一组的脚注。
+    public static func awaitingFooter(_ language: DisplayLanguage = .current) -> String {
+        language == .chinese
+            ? "Botin 自己安排或改过的计划，你确认后才会运行。"
+            : "Plans a Botin set up or changed run only after you confirm them."
+    }
+
+    /// 列表一行的副标题：规则摘要，全部计划的页面再带上 Botin 的名字（只看一个 Botin 的页面不带）。
+    public static func rowSubtitle(_ plan: Plan, instanceName: String?, language: DisplayLanguage = .current) -> String
+    {
+        [scheduleSummary(plan, language: language), instanceName].compactMap { $0 }.joined(separator: " · ")
+    }
+
     public static func emptyMessage(_ language: DisplayLanguage = .current) -> String {
         language == .chinese
             ? "新建一个，或者直接对 Botin 说“每天 8 点帮我…”，它会安排好，等你确认。"

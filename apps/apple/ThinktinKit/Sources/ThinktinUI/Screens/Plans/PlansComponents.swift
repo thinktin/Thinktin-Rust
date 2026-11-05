@@ -17,6 +17,17 @@ extension PlanStatus {
         case .idle: .neutral
         }
     }
+
+    /// 列表一行左边的图标（颜色用 `tone`）：待确认、暂停、规则失效、按时运行、不会再运行。
+    var systemImage: String {
+        switch self {
+        case .awaitingConfirmation: "checkmark.seal"
+        case .paused: "pause.circle"
+        case .invalidRule: "exclamationmark.triangle"
+        case .scheduled: "clock"
+        case .idle: "clock.badge.xmark"
+        }
+    }
 }
 
 /// 计划的状态：状态点加状态名（读屏读状态名）。
@@ -56,43 +67,6 @@ struct PlansCountBadge: View {
     }
 }
 
-/// 筛选、单选用的胶囊按钮（全部、各个实例；规则的写法）。选中的用强调色描边。`count` 是后面的小数字（可以没有）。
-struct PlansFilterChip: View {
-    let title: String
-    let count: Int?
-    let isSelected: Bool
-    let action: @MainActor () -> Void
-
-    @Environment(\.displayScale) private var displayScale
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: Metrics.Spacing.xxs) {
-                Text(title)
-                    .lineLimit(1)
-                if let count {
-                    Text(verbatim: "\(count)")
-                        .monospacedDigit()
-                        .foregroundStyle(isSelected ? Theme.accent : Theme.inkTertiary)
-                }
-            }
-            .typography(.subheadline)
-            .foregroundStyle(isSelected ? Theme.ink : Theme.inkSecondary)
-            .padding(.horizontal, Metrics.Spacing.s)
-            .frame(minHeight: Metrics.minTapTarget)
-            .background(isSelected ? Theme.paperElevated : Theme.paper, in: Capsule())
-            .overlay {
-                Capsule().strokeBorder(
-                    isSelected ? Theme.accent : Theme.hairline,
-                    lineWidth: isSelected ? 1 : Metrics.hairline(scale: displayScale))
-            }
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
-    }
-}
-
 /// 几个按钮排一行；字号很大时改成一列。
 struct PlansButtonRow<Content: View>: View {
     private let content: Content
@@ -128,79 +102,11 @@ struct PlanTitleText: View {
     }
 }
 
-/// 列表里的一行：标题、规则摘要、状态 · 实例 · 下一次；右边的“更多”菜单里暂停 / 恢复、删除。
-struct PlanListRow: View {
-    let plan: Plan
-    let instanceName: String
-    let isBusy: Bool
-    let canWrite: Bool
-    let onOpen: @MainActor () -> Void
-    let onSetPaused: @MainActor (Bool) -> Void
-    let onDelete: @MainActor () -> Void
-
-    @Environment(\.displayLanguage) private var language
-
-    var body: some View {
-        let zh = language == .chinese
-        HStack(alignment: .top, spacing: Metrics.Spacing.xs) {
-            Button(action: onOpen) {
-                VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
-                    PlanTitleText(plan: plan)
-                    Text(PlansText.scheduleSummary(plan, language: language))
-                        .typography(.subheadline)
-                        .foregroundStyle(Theme.inkSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    PlanMetaLine(plan: plan, instanceName: instanceName)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityElement(children: .combine)
-            .accessibilityAddTraits(.isButton)
-            if isBusy {
-                ProgressView()
-                    .frame(width: Metrics.minTapTarget, height: Metrics.minTapTarget)
-            } else {
-                Menu {
-                    if plan.isPaused && !plan.awaitingConfirmation {
-                        Button {
-                            onSetPaused(false)
-                        } label: {
-                            Label(zh ? "恢复" : "Resume", systemImage: "play")
-                        }
-                        .disabled(!canWrite)
-                    } else if !plan.awaitingConfirmation {
-                        Button {
-                            onSetPaused(true)
-                        } label: {
-                            Label(zh ? "暂停" : "Pause", systemImage: "pause")
-                        }
-                        .disabled(!canWrite)
-                    }
-                    Button(role: .destructive, action: onDelete) {
-                        Label(zh ? "删除" : "Delete", systemImage: "trash")
-                    }
-                    .disabled(!canWrite)
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .foregroundStyle(Theme.inkSecondary)
-                        .frame(width: Metrics.minTapTarget, height: Metrics.minTapTarget)
-                        .contentShape(Rectangle())
-                }
-                .accessibilityLabel(Text(zh ? "“\(plan.title)”的更多操作" : "More for “\(plan.title)”"))
-            }
-        }
-        .padding(.leading, Metrics.Spacing.m)
-        .padding(.trailing, Metrics.Spacing.xxs)
-        .padding(.vertical, Metrics.Spacing.s)
-    }
-}
-
-/// 一行小字：状态 · 实例 · 下一次（按时运行的）。
+/// 一行小字：状态 · 实例（可以没有）· 下一次（按时运行的）。
 struct PlanMetaLine: View {
     let plan: Plan
-    let instanceName: String
+    /// nil 不显示（计划列表的一行把 Botin 名放在副标题里）。
+    let instanceName: String?
 
     @Environment(\.displayLanguage) private var language
 
@@ -208,10 +114,12 @@ struct PlanMetaLine: View {
         let status = plan.status
         TagChipRow {
             PlanStatusLabel(status: status)
-            Text(instanceName)
-                .typography(.footnote)
-                .foregroundStyle(Theme.inkSecondary)
-                .lineLimit(1)
+            if let instanceName {
+                Text(instanceName)
+                    .typography(.footnote)
+                    .foregroundStyle(Theme.inkSecondary)
+                    .lineLimit(1)
+            }
             if case .scheduled(let next) = status {
                 Text(PlansText.nextFire(next, language: language))
                     .typography(.footnote)
