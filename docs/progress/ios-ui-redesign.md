@@ -633,6 +633,14 @@
   - 首页“等你处理”提示行（第 1 轮 A 线留的，规范 4.2.1、6.1 A1）：ThinktinKit `HomeAttentionHint`（`AppModel.homeAttentionHint`，
     待审批或未读不为 0 才有；文字“2 个审批在等你 · 3 条未读”；有审批去 `.approvals`，只有未读去 `.inbox`），界面 `HomeAttentionRow`
     （列表最上面的玻璃胶囊，警告色图标，`openTopLevel`）。测试：`HomeListTests` 加文字和去处，`AppShellTests` 加出图和点了去哪。
+  - 没做的（要后端、模拟器或用户拍板，记在“下一步”第 4 条）：对话里“等你接管”的状态行（`ClientProtocol` 和 `RunState` 里没有
+    docs/browser.md 说的 `waiting_owner` 这类状态，状态行没有东西可接；路由 `.instanceScreen` 已经有了）；`AppFeature.connections`
+    的 WBS 包号；头像上传存本机；保险箱、IM 表单返回时不问就丢改动；示例任务直接发还是填进输入框；搜回复正文、预览卡取缓存事件、
+    纯黑外观（客户端的新功能，不是两页之间缺的线）；连接目录预选分类时胶囊滚到看得见。
+  - 这一份的 Linux 检查（2026-11-05，在 `daf5a35` 上，之后只改了进度文件）：ThinktinKit `swift build --build-tests` +
+    `swift test` 1169 个全过；uicheck UIKit、AppKit 都编过（没有错误和警告）；`run.sh test` 的 ThinktinUITests 168 个全过；App 的
+    `ThinktinTests` 21 个过 16 个（挂的还是那 5 个要 App 包的：Info.plist、URL scheme、隐私清单和多语言资源、小组件 appex、`~/Library`
+    路径）；`swift format -i -r apps/apple` 没改东西，`swift format lint --strict -r apps/apple` 零条。macOS CI、截图都没跑。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、
@@ -643,8 +651,8 @@
 新建时选它用哪个 agent 当引擎，同一个 agent 可以给好几个 Botin 当引擎（服务端只限每个账号的实例数）。agent 在界面上只以 Botin 的“引擎”/“Engine”出现。
 首次登录首页是空的，空状态“还没有 Botin”+ 说明 + “新建 Botin”按钮。代码里的标识符（`Instance`、`AppRoute.adopt`、`adopt(...)`）不改。
 
-进行中：无人。第 2 轮的四条线 2026-11-05 都合进本分支了（`c6a2aaf`、`7de7dd0`、`a897e14`、`19e299a`，见“已完成”最后一条）；
-合完的四个 `r2/*` 远端分支还没删，等用户看过再删。
+进行中：无人。第 2 轮的四条线 2026-11-05 都合进本分支了（`c6a2aaf`、`7de7dd0`、`a897e14`、`19e299a`），合进来以后能在客户端做的
+跨线小事也做完了（`3e4648a` 到 `daf5a35`，见“已完成”最后两条）；合完的四个 `r2/*` 远端分支还没删，等用户看过再删。
 第 1 轮 A 线的首页补完、B、C、D、E 线和收尾线 2026-11-05 做完，见“已完成”。
 验证和发版（2026-11-05，session_01GuCp3KRgqaK6Kzynw6udRn）：GitHub 的 Mac 一直排不上，改用 Codemagic（`.github/workflows/codemagic.yml`：
 把提交推到 `codemagic/apple-check` / `codemagic/ios-screenshots`）。第 0 轮（bbdb07c）、Botin 版（06894fd）、新建页重做（c78064e）
@@ -680,10 +688,21 @@ TestFlight：28（Botin 改名、空状态，旧表单）、30（新建页重做
    收尾线做完了（参考里没有的页和各线剩下的自画页都换成原生控件，自画组件删了）：剩下的只有登录页（用户自己设计，等他的稿子；它还用
    `AccountRow`、`AccountScrollPage`、`AccountPageHeader`、`CheckboxRow`、`SignInButtonStyle`，换完一起删）；出一次截图（下面第 2 条，
    多了 15–18 四张）和参考并排看，按用户的修正再调。
-4. 第 2 轮四条线留下的跨线小事（合进来以后都在本分支，没做；各线的原话在 `docs/progress/r2-<名字>.md` 的“下一步”）：
-   (a) ~~注销账号只清了头像外观~~ 做了（`BotinLocalData`，见“已完成”跨线小事那条）；
-   (b) ~~新任务、快捷指令默认选主 Botin~~ 做了（小组件不选 Botin，不用接）；(c) ~~资料页头像的星标~~ 做了，首页的行也画了（没有状态角标时）；
-   (d) 对话里“等你接管”的状态行点了 `router.open(.instanceScreen(id))`；(e) ~~首页工作台菜单加“连接”入口~~ 做了；(f) ~~`messageMenu` 没用的 `previewShape` 参数~~ 删了；(g) ~~观看与接管、设置补充页的 `THINKTIN_OPEN_SCREEN` 和截图~~ 加了（`20`–`24`，还没在 CI 上出过图）；(h) `AppFeature.connections.workPackage` 的 “12.26” 是占位，WBS 有了连接的包再改。
+4. 第 2 轮四条线留下的跨线小事（各线的原话在 `docs/progress/r2-<名字>.md` 的“下一步”）。2026-11-05 做了 (a)(b)(c)(e)(f)(g)
+   和首页“等你处理”提示行，见“已完成”跨线小事那条。剩下的：
+   (d) 对话里“等你接管”的状态行点了 `router.open(.instanceScreen(id))`：**要后端**。现在 `RunState` / 事件里没有“等主人接手”
+       （docs/browser.md 的 `agent → waiting_owner → human`），对话页没有这一行可接；后端有了这个状态，对话的状态行加一种、点了
+       `router.open(.instanceScreen(id))`（路由、页面都已经有了）。
+   (h) `AppFeature.connections.workPackage` 的 “12.26” 是占位，WBS 有了连接的包再改（**要定 WBS**）。
+   要用户看一眼、拍板的：首页行上主 Botin 的星标只在没有状态角标时画（有在等你处理、进行中、暂停时先画状态；要不要两个都画）；
+   资料页头像上主 Botin 的星标换掉了状态角标（状态在“工作区”那行）；“等你处理”提示行参考里没有（规范 6.1 A1 的建议），有审批时点了只进
+   审批中心；保险箱、IM 渠道的表单压栈后返回不问就丢改动（第 1 轮 E 线留的，要不要加“放弃修改？”）；示例任务填进输入框还是直接发（B 线留的）；
+   头像“上传”要不要先用 `PhotosPicker` 存在本机（r2/botin 留的：要改 `InstanceAvatar` 和外观存储，多端同步要后端）。
+   客户端能做、但不是两页之间缺的线（第 2 轮功能，没动）：搜索搜本机缓存的回复正文（4.2.4）、首页预览卡的最后一条改从缓存事件取、
+   纯黑外观（4.9.11）、连接目录预选分类时把那个胶囊滚到看得见（`FilterChipBar` 现在不滚，要在模拟器上看）。
+   要在 iOS 26 模拟器上看的（这次加的）：星标在 15 种形状上的位置和大小（44pt 行、80pt 置顶、120pt 资料页）；“等你处理”胶囊和置顶大头像、
+   第一行的间距；工作台菜单 7 项（多了“连接”）；新任务选择页主 Botin 在第一行；截图 `20`–`24`（设置里的四页是不是在设置 sheet 里）。
+   macOS CI 要编的：`EntityQuery.defaultResult()`（uicheck 桩是照文档补的，真 SDK 上快捷指令的 Botin 参数默认值要在 iOS 上点一次看）。
 
 坑和决定：
 - 自画组件删了（2026-11-05 收尾线）：页面一律 `List` / `Form` + `themedGroupedBackground()` + 行的 `themedRow()`，空状态
