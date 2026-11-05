@@ -407,7 +407,7 @@ extension View {
     }
 
     /// 对话里卡片的底（规范 2.1、2.4，参考 118 的选择卡）：和 agent 气泡同一个灰（`agentBubble`）、圆角 20、不画描边
-    /// （按钮包着的卡片用；`Card(bordered: false)` 是同一个样子，自己会撑满宽度）。
+    /// （按钮包着的卡片用；`BubbleCard` 是同一个样子，自己会撑满宽度）。
     func cardSurface() -> some View {
         background(Theme.agentBubble, in: RoundedRectangle(cornerRadius: Metrics.Radius.card, style: .continuous))
     }

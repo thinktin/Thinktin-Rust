@@ -159,7 +159,7 @@ private struct RunDetailContent: View {
             }
         }
         VStack(alignment: .trailing, spacing: Metrics.Spacing.xxs) {
-            Card(background: .bubble, bordered: false) {
+            BubbleCard(fill: Theme.userBubble) {
                 Text(ConversationText.detailLabel(.task, language: language))
                     .typography(.caption)
                     .foregroundStyle(Theme.inkSecondary)
@@ -172,7 +172,7 @@ private struct RunDetailContent: View {
         }
         infoCard(run)
         if let summary = run.summary, !summary.isEmpty {
-            Card {
+            BubbleCard {
                 Text(ConversationText.detailLabel(.summary, language: language))
                     .typography(.caption)
                     .foregroundStyle(Theme.inkSecondary)
@@ -186,7 +186,7 @@ private struct RunDetailContent: View {
                 previewShape: messageBubbleShape)
         }
         if let error = run.error, !error.isEmpty, model.state == .failed {
-            Card {
+            BubbleCard {
                 Text(ConversationText.detailLabel(.error, language: language))
                     .typography(.caption)
                     .foregroundStyle(Theme.inkSecondary)
@@ -219,7 +219,7 @@ private struct RunDetailContent: View {
     private func infoCard(_ run: Run) -> some View {
         let model = self.model
         let instanceName = app.instances.first { $0.id == run.instanceID }?.name
-        return Card {
+        return BubbleCard {
             infoRow(.source, ConversationText.runSourceName(run.source, language: language))
             if let instanceName { infoRow(.instance, instanceName) }
             if let planID = run.planID {

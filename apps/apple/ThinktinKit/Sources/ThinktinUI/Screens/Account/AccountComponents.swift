@@ -341,9 +341,11 @@ struct AccountOfflineState: View {
     @Environment(\.displayLanguage) private var language
 
     var body: some View {
-        EmptyStateView(
-            systemImage: "wifi.slash", title: language == .chinese ? "离线" : "Offline",
-            message: OfflinePolicy.unavailable.bannerMessage(language))
+        ContentUnavailableView {
+            Label(language == .chinese ? "离线" : "Offline", systemImage: "wifi.slash")
+        } description: {
+            Text(OfflinePolicy.unavailable.bannerMessage(language) ?? "")
+        }
     }
 }
 

@@ -3,6 +3,9 @@ import ThinktinKit
 
 /// App 内注销账号（WBS 12.2，App Store 审核指南 5.1.1(v)，16.4）：先列出会删掉什么、勾选“我已了解”，再给本人手机号
 /// 发验证码，输入后最后确认一次再注销。注销成功后应用框架回到登录页（客户端是 `ObservedClient`）。
+///
+/// 改版（参考里没有这一页，照账号页排，规范 2.5、2.7）：`Form`，居中的警告头部，会删掉的内容一组，“我已了解”是系统 `Toggle`，
+/// 验证码一组（发送 / 重发的按钮行、系统输入框），最后一步“注销账号”是底部浮动的红色全宽胶囊。
 struct DeleteAccountView: View {
     @State private var model: DeleteAccountModel
     let maskedPhone: String
@@ -18,57 +21,91 @@ struct DeleteAccountView: View {
 
     var body: some View {
         let zh = language == .chinese
-        AccountScrollPage {
-            VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                Image(systemName: "exclamationmark.triangle")
-                    .font(Typography.largeTitle.font)
-                    .foregroundStyle(Theme.danger)
-                    .accessibilityHidden(true)
-                AccountPageHeader(
-                    title: zh ? "注销账号" : "Delete your account",
-                    message: zh
-                        ? "注销后，账号和下面这些内容会被永久删除，无法恢复："
-                        : "Deleting your account permanently removes it along with everything below. This can't be undone:"
-                )
+        @Bindable var bindable = model
+        Form {
+            Section {
+                VStack(spacing: Metrics.Spacing.xs) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.largeTitle)
+                        .foregroundStyle(Theme.danger)
+                        .accessibilityHidden(true)
+                    Text(zh ? "注销账号" : "Delete your account")
+                        .font(.title2.bold())
+                        .foregroundStyle(Theme.ink)
+                        .accessibilityAddTraits(.isHeader)
+                    Text(
+                        zh
+                            ? "注销后，账号和下面这些内容会被永久删除，无法恢复："
+                            : "Deleting your account permanently removes it along with everything below. This can't be undone:"
+                    )
+                    .typography(.subheadline)
+                    .foregroundStyle(Theme.inkSecondary)
+                }
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, Metrics.Spacing.s)
+                .clearListRow()
             }
-
-            AccountSection {
-                VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-                    ForEach(AccountDeletionNotice.deletedItems(language), id: \.self) { item in
-                        HStack(alignment: .firstTextBaseline, spacing: Metrics.Spacing.xs) {
-                            Image(systemName: "minus.circle")
-                                .foregroundStyle(Theme.danger)
-                                .accessibilityHidden(true)
-                            Text(item)
-                                .typography(.subheadline)
-                                .foregroundStyle(Theme.ink)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
+            Section {
+                ForEach(AccountDeletionNotice.deletedItems(language), id: \.self) { item in
+                    Label {
+                        Text(item)
+                            .typography(.body)
+                            .foregroundStyle(Theme.ink)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } icon: {
+                        Image(systemName: "minus.circle")
+                            .foregroundStyle(Theme.danger)
                     }
                 }
-                .padding(Metrics.Spacing.m)
+            } footer: {
+                Text(AccountDeletionNotice.footnote(language))
             }
-
-            Text(AccountDeletionNotice.footnote(language))
-                .typography(.footnote)
-                .foregroundStyle(Theme.inkSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            CheckboxRow(
-                isOn: model.hasAcknowledged,
-                label: AttributedString(
-                    zh ? "我已了解，注销后账号和内容都无法恢复" : "I understand my account and content can't be recovered"),
-                accessibilityLabel: zh ? "我已了解注销后无法恢复" : "I understand this can't be undone"
-            ) {
-                model.hasAcknowledged.toggle()
+            .themedRow()
+            Section {
+                Toggle(
+                    zh ? "我已了解，注销后账号和内容都无法恢复" : "I understand my account and content can't be recovered",
+                    isOn: $bindable.hasAcknowledged
+                )
+                .disabled(model.isDeleting)
             }
-            .disabled(model.isDeleting)
-
+            .themedRow()
             if let error = model.error {
-                ErrorBanner(error, onDismiss: { model.dismissError() })
+                Section {
+                    ErrorBanner(error, onDismiss: { model.dismissError() })
+                        .clearListRow()
+                }
             }
-
             codeSection
+        }
+        .formStyle(.grouped)
+        .themedGroupedBackground()
+        .scrollDismissesKeyboard(.interactively)
+        .floatingBar(edge: .bottom) {
+            if model.codeSent {
+                Button(role: .destructive) {
+                    confirmsDeletion = true
+                } label: {
+                    ZStack {
+                        Text(zh ? "注销账号" : "Delete account")
+                            .opacity(model.isDeleting ? 0 : 1)
+                        if model.isDeleting { ProgressView() }
+                    }
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                }
+                .glassButtonStyle(.prominent)
+                .buttonBorderShape(.capsule)
+                .controlSize(.large)
+                .tint(StatusTone.failure.color)
+                .disabled(!model.canDelete || app.isOffline)
+                .accessibilityLabel(
+                    Text(model.isDeleting ? (zh ? "正在注销" : "Deleting") : (zh ? "注销账号" : "Delete account"))
+                )
+                .padding(.horizontal, Metrics.Spacing.m)
+                .padding(.vertical, Metrics.Spacing.s)
+                .frame(maxWidth: Metrics.readableWidth)
+            }
         }
         .navigationTitle(zh ? "注销账号" : "Delete account")
         #if os(iOS)
@@ -91,60 +128,53 @@ struct DeleteAccountView: View {
         }
     }
 
-    /// 发验证码、输入验证码、注销按钮。只有倒计时的部分每秒刷新（验证码框不跟着重绘）。
+    /// 验证码一组：发送 / 重发（倒计时的那一行每秒刷新，输入框不跟着重绘）、系统输入框；限流和验证码不对写在脚注里。
     private var codeSection: some View {
         let zh = language == .chinese
-        return VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
-            CountdownNotice { date in model.rateLimitMessage(at: date, language: language) }
-            if model.codeSent {
-                Text(
-                    zh
-                        ? "验证码已发送至 \(maskedPhone)，5 分钟内有效。"
-                        : "We sent a code to \(maskedPhone). It's valid for 5 minutes."
-                )
-                .typography(.subheadline)
-                .foregroundStyle(Theme.inkSecondary)
-                VerificationCodeField(
-                    code: model.code, onChange: { model.updateCode($0) }, isDisabled: model.isDeleting)
-                if model.codeIncorrect {
-                    FieldMessage(text: DeleteAccountModel.incorrectCodeMessage(language))
-                }
-            }
+        return Section {
             TimelineView(.periodic(from: Date(), by: 1)) { context in
                 Button {
                     Task { await model.sendCode() }
                 } label: {
                     HStack(spacing: Metrics.Spacing.xs) {
+                        Text(sendTitle(seconds: model.secondsUntilResend(at: context.date)))
+                            .monospacedDigit()
+                        Spacer(minLength: 0)
                         if model.isSendingCode {
                             ProgressView()
                                 .controlSize(.small)
                         }
-                        Text(sendTitle(seconds: model.secondsUntilResend(at: context.date)))
-                            .monospacedDigit()
                     }
-                    .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.pill(.secondary))
                 .disabled(!model.canSendCode(at: context.date) || app.isOffline)
             }
             if model.codeSent {
-                Button(role: .destructive) {
-                    confirmsDeletion = true
-                } label: {
-                    HStack(spacing: Metrics.Spacing.xs) {
-                        if model.isDeleting {
-                            ProgressView()
-                                .controlSize(.small)
-                                .tint(Theme.onAccent)
-                        }
-                        Text(zh ? "注销账号" : "Delete account")
-                    }
-                    .frame(maxWidth: .infinity)
+                TextField(
+                    zh ? "6 位验证码" : "6-digit code",
+                    text: Binding(get: { model.code }, set: { model.updateCode($0) })
+                )
+                .font(Typography.title3.monospacedFont)
+                .oneTimeCodeInput()
+                .disabled(model.isDeleting)
+                .accessibilityLabel(Text(zh ? "验证码" : "Verification code"))
+            }
+        } header: {
+            Text(zh ? "验证本人手机号" : "Verify your phone number").textCase(nil)
+        } footer: {
+            VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
+                if model.codeSent {
+                    Text(
+                        zh
+                            ? "验证码已发送至 \(maskedPhone)，5 分钟内有效。"
+                            : "We sent a code to \(maskedPhone). It's valid for 5 minutes.")
                 }
-                .buttonStyle(.pill(.destructive))
-                .disabled(!model.canDelete || app.isOffline)
+                if model.codeIncorrect {
+                    FieldMessage(text: DeleteAccountModel.incorrectCodeMessage(language))
+                }
+                CountdownNotice { date in model.rateLimitMessage(at: date, language: language) }
             }
         }
+        .themedRow()
     }
 
     private func sendTitle(seconds: Int) -> String {

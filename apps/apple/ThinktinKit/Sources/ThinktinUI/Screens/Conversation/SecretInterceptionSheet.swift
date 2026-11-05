@@ -100,7 +100,7 @@ struct SecretEntryCard: View {
     @Environment(\.displayLanguage) private var language
 
     var body: some View {
-        Card(bordered: false) {
+        BubbleCard {
             HStack(spacing: Metrics.Spacing.xs) {
                 Image(systemName: entry.isStorable ? "key" : "exclamationmark.lock")
                     .foregroundStyle(entry.isStorable ? Theme.warning : Theme.danger)

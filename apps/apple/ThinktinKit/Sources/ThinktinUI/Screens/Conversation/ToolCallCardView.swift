@@ -170,7 +170,7 @@ struct AgentPlanCardView: View {
     @Environment(\.displayLanguage) private var language
 
     var body: some View {
-        Card(padding: Metrics.Spacing.m, bordered: false) {
+        BubbleCard {
             HStack(spacing: Metrics.Spacing.xs) {
                 Image(systemName: "checklist")
                     .foregroundStyle(Theme.inkSecondary)
