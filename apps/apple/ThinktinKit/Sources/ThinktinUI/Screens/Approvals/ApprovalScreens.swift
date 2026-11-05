@@ -172,12 +172,25 @@ private struct ApprovalDetailContent: View {
                             Label(ApprovalsText.openRun(language), systemImage: "list.bullet.rectangle")
                         }
                         if model.instanceName != nil {
+                            // 回首页再进对话（`router.open`，不压在这一页上），所以是按钮；样子和上面的 `NavigationLink`
+                            // 一样：墨色的字、行尾灰箭头（规范 2.5，Botin 资料页的行也是这样），不是强调色的按钮字。
                             Button {
                                 router.open(.conversation(approval.instanceID))
                             } label: {
-                                Label(
-                                    ApprovalsText.openConversation(language),
-                                    systemImage: "bubble.left.and.bubble.right")
+                                HStack {
+                                    Label {
+                                        Text(ApprovalsText.openConversation(language))
+                                            .foregroundStyle(Theme.ink)
+                                    } icon: {
+                                        Image(systemName: "bubble.left.and.bubble.right")
+                                    }
+                                    Spacer(minLength: Metrics.Spacing.xs)
+                                    Image(systemName: "chevron.right")
+                                        .font(Typography.footnote.font.weight(.semibold))
+                                        .foregroundStyle(Theme.inkTertiary)
+                                        .accessibilityHidden(true)
+                                }
+                                .contentShape(Rectangle())
                             }
                         }
                     }
@@ -248,10 +261,11 @@ struct ApprovalRequestCard: View {
                     .lineLimit(1)
                 Spacer(minLength: 0)
                 if pending {
+                    // 和对话里的审批卡片一样是次要的灰：剩余时间是说明，不是状态（`warning` 只给状态用，规范 2.2）。
                     Text(ConversationText.approvalExpiry(approval.expiresAt, now: now, language: language))
                         .typography(.caption)
                         .monospacedDigit()
-                        .foregroundStyle(Theme.warning)
+                        .foregroundStyle(Theme.inkSecondary)
                 }
             }
             if let title = approval.title, !title.isEmpty {
@@ -362,12 +376,7 @@ struct ApprovalRequestCard: View {
                 Button {
                     onDecide(option)
                 } label: {
-                    Label(
-                        option.name.isEmpty
-                            ? ConversationText.approvalOptionName(option.kind, language: language) : option.name,
-                        systemImage: option.kind.isReject ? "xmark" : "checkmark"
-                    )
-                    .frame(maxWidth: .infinity)
+                    ApprovalOptionLabel(option: option)
                 }
                 .glassButtonStyle(option.id == primaryOptionID ? .prominent : .regular)
                 .buttonBorderShape(.capsule)

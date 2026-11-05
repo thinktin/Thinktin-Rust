@@ -568,7 +568,7 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   也没有“agent 提问 + 选项”的结构化事件；建议第 2 轮在客户端画一张静态卡：先查 main 路由和 key，没配好时卡片引导去配；
   配好了给 3–4 个示例任务，点一个就 `sendMessage`（6.18）。第 1 轮先用 `ContentUnavailableView`“给 X 布置第一个任务”。
 - **已做（第 1 轮 B 线，2026-11-05）**：照参考 02、118 的版式。导航栏中间是能点的 `ConversationTitle`（24pt 头像 + 名字，
-  `Button`，iOS 26 由工具栏画成玻璃胶囊，点了 `router.open(.instance(id))`），右边“…”（4.3.2）。agent 的回复、思考、待办、
+  `Button`，玻璃胶囊是自己画的、见下面的还原度评审修正，点了 `router.open(.instance(id))`），右边“…”（4.3.2）。agent 的回复、思考、待办、
   没有过程记录的运行结果是左边的 `agentBubble` 气泡（圆角 20，内边距 16 × 12，右边留 48pt），“AI 生成”标识在气泡下面；
   用户消息是右边的 `userBubble` 气泡，开头是引用块的（4.3.5）在气泡里先画一小块引用（`QuotedBlock`）。运行之间的时间分隔
   `ConversationTimeSeparator`（ViewModels/Conversation，隔 15 分钟以上或跨天才加，今天 / 昨天 / 星期几 / 日期，`.footnote` +
@@ -583,6 +583,21 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   气泡同一个灰（`cardSurface()`、`Card(bordered: false)`），按钮换成系统的玻璃按钮（`smallCapsuleButton()`；审批的选项是全宽的
   大胶囊，第一个批准类的突出）。举报 sheet 换成 `Form`（原因 `Picker(.inline)`，左上关闭、右上“提交”），密码拦截 sheet 的按钮
   换成系统的、底部“仍然发送”是浮动的全宽玻璃胶囊。`Metrics.Radius.input` 删了。
+- **还原度评审修正（2026-11-05，截图 02 浅深对参考 02、118）**
+  - 标题胶囊：上面“已做”说的“iOS 26 由工具栏画成玻璃胶囊”不对——iOS 26 不给 `.principal` 项套共用的玻璃底，截图里只有光秃秃的头像和名字。
+    现在 `ConversationTitle` 自己画 44pt 高的玻璃胶囊（`glassBackground(in: Capsule(), interactive: true)`，和返回、“…”两个玻璃圆一样高；
+    iOS 17 / 18 是材质），头像离胶囊左边 10pt、和上下一样（同心），名字后面 12pt（参考 118 量出来约 10、13）；名字改成和
+    `capsuleNavigationTitle` 一样的 medium `.body`（参考比系统标题的 semibold 轻一档）。`inlineNavigationTitle(_:ownsGlass:principal:)`
+    多了 `ownsGlass`，为 true 时这一项 `hidesSharedGlassBackground()`（Glass.swift 的帮手多了个 `Bool` 参数），免得哪个系统版本再套一层。
+    实例列表里还没有这个 Botin 时只有一行标题字，不画胶囊。
+  - 对话里的审批卡片：“在审批中心查看”的 44pt 点按区域照旧，但不再占版面（上 −8、下 −12 的负内边距，往上伸到和上一项的间距为止、
+    往下伸进卡片的内边距），字下面从约 30pt 变成和卡片顶上差不多的约 17pt。
+  - 运行状态行：同一组里有待处理的审批卡片时（`ConversationTurn.pendingApprovalItemID`）不再放“去审批”——它只会滚到眼前这张卡片，卡片自己
+    有选项和“在审批中心查看”（`RunStatusPresentation(approvalCardShown:)`，测试在 `ConversationTextTests`）。状态点、“等你审批”、ⓘ 照旧；
+    卡片还没出现时（事件没到）“去审批”照旧去审批中心。运行详情页的状态行在卡片上面，照旧带“去审批”。
+  - 审批选项按钮的字换成 `ApprovalOptionLabel`（勾 / 叉 + 名字，自己排，不用 `Label`），和审批详情页共用（见 7.3 收尾那条的评审修正）。
+  - 留着不改的（评审确认是 ThinkTin 的东西）：全宽的工具调用、审批卡片，“AI 生成”标识，状态行，模型标签胶囊，输入框没有麦克风和语音、
+    右边是橙色的发送 / 停止，“+”，自己的首字头像和占位字，“…”和“+”的橙色，气泡的几何。
 - **ThinkTin 改版前**：`.conversation(id)` → `Screens/Conversation/ConversationScreen.swift`（`ConversationContent`）、
   `ConversationTimeline.swift`、`MessageViews.swift`（`UserMessageView` 右侧卡片，`AssistantTextView` 不带气泡）、
   `ConversationCards.swift`（`SourceHeaderView`）、`ConversationComposer.swift` + `Components/ComposerBar.swift`；
@@ -633,6 +648,12 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   （`MarkdownBlock.findSegments`），视图模型数的和界面画的一一对上；折起来的长消息、三行的引用块里有当前这一处时自动展开。
   逻辑在 ThinktinKit 的 `ConversationFind.swift`（`ConversationModel.find`、`beginFind` / `setFindQuery` / `findPrevious` /
   `findNext` / `endFind`，`render()` 时重新找）和 `MarkdownInline.swift`（Linux 上测试用的近似去标记）。
+
+- **还原度评审修正（2026-11-05，截图 28 对参考 04）**：查找栏四个控件一样高。上 / 下原来是系统的 `.glass` 圆按钮 + `.controlSize(.large)`，
+  有约 53pt，“完成”约 49pt，查找框（44pt）被挤到约屏宽 28%，占位只剩“在对…”。现在箭头是自己画的 44pt 玻璃圆（`glassBackground(in: Circle(),
+  interactive: true)`，能跳时强调色、不能跳时三级灰），“完成”是 44pt 高的玻璃胶囊（字两边 16pt，强调色），控件之间 8pt，两个圆的
+  `GlassGroup` 融合距离也给 8（同 `FilterChipBar`，挨着取样、不连成一块）。参考 04 量出来：都约 45pt 高、间距约 10.7pt、圆约 45pt、
+  “完成”约 64pt、查找框约 155pt；我们的查找框约 160pt。
 
 #### 4.3.4 消息长按（6、90）
 
@@ -1921,6 +1942,11 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   `FormTextField`（`Components/FormFields.swift`）。登录页（1.4）没动：它还用 `AccountRow`、`AccountScrollPage`、`AccountPageHeader`、
   `CheckboxRow` 和胶囊按钮样式（挪到 `Screens/Account/SignInButtonStyle.swift`，只给登录页用），等用户的设计。逐页的做法见
   docs/progress/ios-ui-redesign.md。
+  **还原度评审修正（2026-11-05，截图 10-approval 对第 2 节；这页参考里没有）**：审批详情是 insetGrouped `List`，`List` 的行里系统会把
+  `Label` 的图标挪到行首那一栏、涂成强调色——突出的“允许一次”上就是橙底橙勾（看不见），另外两个选项的图标和字隔了约 20pt。选项按钮的字
+  换成自己排的 `ApprovalOptionLabel`（`HStack` 里勾 / 叉 + 名字，图标跟着按钮的前景色，读屏只念名字），和对话里的审批卡片共用。
+  “还剩 23 小时”从警告色改成次要的灰，和对话里的卡片一样（剩余时间是说明，`warning` 只给状态用，2.2）。第二组“打开对话”还是按钮
+  （`router.open` 回首页再进对话，不压在这一页上），样子改成和上面“查看这次运行”的 `NavigationLink` 一样：墨色的字、行尾灰箭头。
 
 ### 7.4 第 2 轮：纯客户端的新功能
 

@@ -213,11 +213,13 @@ struct SystemNoticeView: View {
 
 /// 运行状态行：状态点、本地化的主文案、说明；等待类状态给一键跳转（去审批、去处理 key、看运行树），失败、取消的
 /// 给“重试”（`onRetry` 不为 nil 时）。点主文案进运行详情。agent 写的审批标题、英文诊断放进可以展开的详情
-/// （`RunStatusPresentation`）。
+/// （`RunStatusPresentation`）。待处理的审批卡片就在上面时（`approvalCardShown`）不放“去审批”。
 struct RunStatusLineView: View {
     let runID: RunID?
     let line: RunStatusLine
     let instanceState: InstanceState?
+    /// 同一组里有待处理的审批卡片（对话页）：“去审批”只会滚到眼前这张卡片，不放。
+    var approvalCardShown = false
     let onAction: (RunStatusAction) -> Void
     var onRetry: (@MainActor () -> Void)? = nil
 
@@ -226,7 +228,8 @@ struct RunStatusLineView: View {
     @State private var showsReason = false
 
     var body: some View {
-        let p = RunStatusPresentation(line: line, instanceState: instanceState, language: language)
+        let p = RunStatusPresentation(
+            line: line, instanceState: instanceState, approvalCardShown: approvalCardShown, language: language)
         let tone = line.state.statusAppearance.tone
         VStack(alignment: .leading, spacing: Metrics.Spacing.xxs) {
             HStack(alignment: .center, spacing: Metrics.Spacing.xs) {

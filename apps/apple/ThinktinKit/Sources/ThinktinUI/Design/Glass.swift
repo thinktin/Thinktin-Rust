@@ -246,11 +246,14 @@ public struct GlassToolbarSpacer: ToolbarContent {
 
 extension ToolbarContent {
     /// 不要 iOS 26 工具栏项共用的玻璃底（自己画了完整的底、不要外面再套一圈玻璃的东西）；旧系统本来就没有，原样。
-    /// 标题胶囊（`capsuleNavigationTitle`）和首页左上的账号按钮用它：iOS 26 给非符号的标签（头像）套的是加了内边距的胶囊
-    /// （约 56×44pt），和旁边的玻璃圆对不上，所以账号按钮去掉共用的底，自己画 44pt 的玻璃圆（`glassBackground(in: Circle())`）。
-    public func hidesSharedGlassBackground() -> some ToolbarContent {
+    /// 标题胶囊（`capsuleNavigationTitle`、对话页的头像 + 名字）和首页左上的账号按钮用它：iOS 26 给非符号的标签（头像）套的是
+    /// 加了内边距的胶囊（约 56×44pt），和旁边的玻璃圆对不上，所以账号按钮去掉共用的底，自己画 44pt 的玻璃圆
+    /// （`glassBackground(in: Circle())`）。
+    ///
+    /// - Parameter hidden: false 时原样（系统决定画不画），给“有时自己画底”的帮手用（`inlineNavigationTitle(_:ownsGlass:principal:)`）。
+    public func hidesSharedGlassBackground(_ hidden: Bool = true) -> some ToolbarContent {
         if #available(iOS 26.0, macOS 26.0, *) {
-            return sharedBackgroundVisibility(.hidden)
+            return sharedBackgroundVisibility(hidden ? .hidden : .automatic)
         } else {
             return self
         }

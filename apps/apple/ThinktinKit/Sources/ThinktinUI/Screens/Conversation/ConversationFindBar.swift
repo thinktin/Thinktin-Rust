@@ -7,7 +7,7 @@ import ThinktinKit
 
 /// 对话内查找的查找栏（规范 4.3.3，参考 04、05）：“…”菜单的“在对话中查找”打开，代替底部的输入框。一行从左到右：
 /// 玻璃胶囊的查找框（放大镜、“在对话中查找”，有字时尾部是“第 i 个，共 n 个”，没找到时红字“第 0 个，共 0 个”）、
-/// 上一个 / 下一个两个玻璃圆（没找到时灰）、“完成”玻璃胶囊（关掉查找栏，输入框回来）。
+/// 上一个 / 下一个两个玻璃圆（没找到时灰）、“完成”玻璃胶囊（关掉查找栏，输入框回来）。四个都是 44pt 高、间距 8，查找框拿剩下的宽度。
 ///
 /// - 查找框一出来就聚焦；改字以后跳到最新一处（最下面），回车和上箭头一样往前（更早）找；计数变了读屏念一遍。
 /// - 只找已经读进来的记录：上面还能翻时，查找栏上面多一个小胶囊“加载更早的”（参考没有，ThinkTin 的记录是分页读的）。
@@ -29,7 +29,8 @@ struct ConversationFindBar: View {
             }
             HStack(spacing: Metrics.Spacing.xs) {
                 field(find)
-                GlassGroup {
+                // 融合距离和间距一样（同 `FilterChipBar`）：两个圆挨着取样背景，但不连成一块。
+                GlassGroup(spacing: Metrics.Spacing.xs) {
                     HStack(spacing: Metrics.Spacing.xs) {
                         arrow(
                             ConversationText.findPrevious(language), systemImage: "chevron.up",
@@ -37,14 +38,7 @@ struct ConversationFindBar: View {
                         arrow(ConversationText.findNext(language), systemImage: "chevron.down", action: model.findNext)
                     }
                 }
-                Button(ConversationText.findDone(language)) {
-                    isFocused.wrappedValue = false
-                    model.endFind()
-                }
-                .typography(.headline)
-                .glassButtonStyle(.regular)
-                .buttonBorderShape(.capsule)
-                .controlSize(.large)
+                doneButton
             }
         }
         // 和输入框一样：离屏幕两边约 31pt，底边贴着安全区（参考 04）。
@@ -99,17 +93,41 @@ struct ConversationFindBar: View {
                         current: find.currentIndex, total: find.matches.count, language: language) : ""))
     }
 
+    /// 上一个 / 下一个：44pt 的玻璃圆，和查找框、“完成”一样高（参考 04 量出来四个都约 45pt、间距约 10pt）。不用系统的
+    /// `.glass` 圆按钮：`.controlSize(.large)` 的圆有约 53pt，比查找框高一截，还把查找框挤到只剩“在对…”。能跳时箭头是强调色
+    /// （和别的玻璃按钮一样跟着全局的强调色），没输入、没找到时是三级灰。
     private func arrow(_ title: String, systemImage: String, action: @escaping @MainActor () -> Void) -> some View {
-        Button(action: action) {
-            Label(title, systemImage: systemImage)
-                .labelStyle(.iconOnly)
+        let canMove = model.find.canMove
+        return Button(action: action) {
+            Image(systemName: systemImage)
                 .font(Typography.body.font.weight(.semibold))
-                .frame(width: Self.height - 20, height: Self.height - 20)
+                .foregroundStyle(canMove ? Theme.accent : Theme.inkTertiary)
+                .frame(width: Self.height, height: Self.height)
+                .glassBackground(in: Circle(), interactive: true)
+                .contentShape(Circle())
         }
-        .glassButtonStyle(.regular)
-        .buttonBorderShape(.circle)
-        .controlSize(.large)
-        .disabled(!model.find.canMove)
+        .buttonStyle(.plain)
+        .disabled(!canMove)
+        .accessibilityLabel(Text(title))
+    }
+
+    /// “完成”：和箭头一样自己画的 44pt 玻璃胶囊（参考 04 约 64pt 宽，字两边约 15pt）。
+    private var doneButton: some View {
+        Button {
+            isFocused.wrappedValue = false
+            model.endFind()
+        } label: {
+            Text(ConversationText.findDone(language))
+                .typography(.headline)
+                .foregroundStyle(Theme.accent)
+                .lineLimit(1)
+                .fixedSize()
+                .padding(.horizontal, Metrics.Spacing.m)
+                .frame(height: Self.height)
+                .glassBackground(in: Capsule(), interactive: true)
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
     }
 
     /// 上面还能翻：先读更早的记录，读进来以后自动再找一遍（`render()` 里）。

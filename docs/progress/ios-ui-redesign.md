@@ -699,6 +699,27 @@
     AppKit 都编过；`run.sh test` 的 ThinktinUITests 168 个全过；App 的 `ThinktinTests` 21 个过 16 个（挂的还是那 5 个要 App 包的）；
     `swift format lint --strict -r apps/apple` 零条；`bash -n tools/apple/screenshots.sh` 过。macOS CI、截图没跑：要它们验的是
     `ToolbarContent.badge(_:)`（真 SDK 上的签名）、账号按钮的玻璃圆、胶囊的字号和 09-search 浅色那张没有介绍（见“下一步”第 1、2 条）。
+- 对话这一组的还原度评审修正（2026-11-05，session_01GuCp3KRgqaK6Kzynw6udRn；截图 02 浅深、28、10 对参考 02、04、118 和规范第 2 节，
+  评审意见逐条对过两边的截图，参考 04 用像素量了一遍；规范 4.3.1、4.3.3 和 7.3 收尾那条各加了一条“还原度评审修正”）：
+  - 标题胶囊：iOS 26 不给 `.principal` 项套玻璃底（截图里头像和名字是光秃秃的，原来的注释说系统会套，不对）。`ConversationTitle` 自己画
+    44pt 高的玻璃胶囊（头像同心、左 10 右 12、名字 medium `.body`）；`inlineNavigationTitle(_:ownsGlass:principal:)` 的 `ownsGlass`
+    把这一项的共用玻璃底关掉（`hidesSharedGlassBackground(_:)` 多了个 `Bool`，默认 true，原来的调用不变）。
+  - 对话里的审批卡片：“在审批中心查看”留 44pt 点按区域、用负内边距不占版面，卡片不再头轻脚重。
+  - 状态行：同一组里有待处理的审批卡片时不放“去审批”（`ConversationTurn.pendingApprovalItemID`、`RunStatusPresentation(approvalCardShown:)`，
+    `ConversationTextTests` 加了断言）；`ConversationModel.pendingApprovalItemID(in:)` 改成用它。运行详情的状态行照旧。
+  - 查找栏：上 / 下是自己画的 44pt 玻璃圆，“完成”是 44pt 玻璃胶囊（原来系统按钮 `.controlSize(.large)` 约 53 / 49pt，把查找框挤到只剩
+    “在对…”），间距 8，两个圆的 `GlassGroup(spacing: 8)`。
+  - 审批详情：选项的字换成 `ApprovalOptionLabel`（`HStack` 自己排；`List` 行里的 `Label` 图标被挪进行首一栏、涂成强调色，“允许一次”上橙底橙勾），
+    对话卡片共用；“还剩 N 小时”改成次要灰（两处一致，`warning` 只给状态）；“打开对话”墨色字 + 行尾灰箭头（还是 `router.open`）。
+  - **品牌**：参考 App 的 Bot 名“小克”从 `InstanceAvatar` 的预览、`InstanceAvatarTests`、`SettingsExtrasTests` 里换掉（写作助手、周报助手）。
+  - 没照做的：评审建议给标题胶囊左边 6pt，用了同心的 10pt（参考 118 量出来约 10）；查找箭头能跳时用强调色而不是评审说的墨色（全局强调色，
+    和“…”、“+”一样，规范 2.2）；查找栏间距用了评审说的 8（参考量出来约 10.7，换成 12 查找框会窄到约 148pt）。截图脚本这次不用改（三张都
+    打开了对的页面）。
+  - 这一份的 Linux 检查（2026-11-05，这次提交上）：ThinktinKit `swift build --build-tests` + `swift test` 1170 个全过（第一次跑有 1 个
+    issue、输出没留下来，接着连跑 4 次都全过，像是并行跑时偶发的计时问题，和这次改动无关）；uicheck UIKit、AppKit 都编过；`run.sh test`
+    的 ThinktinUITests 168 个全过；App 的 `ThinktinTests` 21 个过 16 个（挂的还是那 5 个要 App 包的）；`swift format lint --strict -r apps/apple`
+    零条。macOS CI、截图没跑：要它们验的是标题胶囊在 iOS 26 上只有一层玻璃、`sharedBackgroundVisibility(.automatic)` 的签名、
+    查找栏四个控件一样高、审批详情里“允许一次”的白勾（见“下一步”第 1、2 条）。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、

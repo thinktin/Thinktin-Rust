@@ -5,7 +5,8 @@ import ThinktinKit
 /// `ConversationTimeSeparator`，参考 02 的“星期二 02:22”），每组先是来源行（计划、流水线、委派发起的，居中的小灰字），
 /// 再是用户消息（右边的气泡）、agent 的输出（左边的灰气泡）和各种卡片，最后是运行状态行。往上翻有“加载更早的记录”。
 ///
-/// 等审批时状态行上的“去审批”滚到这一组的审批卡片（`ScrollViewProxy`），等 key 去这个实例的模型路由，等子任务去运行树。
+/// 等审批时状态行上的“去审批”滚到这一组的审批卡片（`ScrollViewProxy`；卡片已经在这一组里时状态行不放“去审批”，
+/// 这时只剩卡片还没对上的情况，去审批中心），等 key 去这个实例的模型路由，等子任务去运行树。
 struct ConversationTimeline<Header: View>: View {
     let model: ConversationModel
     /// 实例状态（页头的“正在唤醒”、状态行上的说明）。
@@ -184,7 +185,8 @@ struct ConversationItemView: View {
             VaultRequestCardView(card: card, model: model)
         case .runStatus(let line):
             RunStatusLineView(
-                runID: turn.runID, line: line, instanceState: instanceState, onAction: onStatusAction,
+                runID: turn.runID, line: line, instanceState: instanceState,
+                approvalCardShown: turn.pendingApprovalItemID != nil, onAction: onStatusAction,
                 onRetry: line.state == .failed || line.state == .cancelled ? sendAgain : nil)
         case .artifact(let card):
             ArtifactCardView(item: item, card: card, instanceID: model.instanceID, onReport: onReport)

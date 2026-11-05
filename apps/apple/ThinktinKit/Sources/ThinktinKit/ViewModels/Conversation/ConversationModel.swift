@@ -227,10 +227,7 @@ public final class ConversationModel {
 
     /// 这一组在等审批时，要滚到的那张待处理审批卡片（`ConversationItem.id`）。
     public func pendingApprovalItemID(in runID: RunID) -> String? {
-        turn(for: runID)?.items.first {
-            if case .approval(let card) = $0.content { return card.isPending }
-            return false
-        }?.id
+        turn(for: runID)?.pendingApprovalItemID
     }
 
     /// 运行只有任务和结果、没有过程记录时的说明（比最早一条事件还早、或者事件已经被清掉了）。

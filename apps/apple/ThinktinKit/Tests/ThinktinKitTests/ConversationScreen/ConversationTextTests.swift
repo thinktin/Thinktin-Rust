@@ -56,6 +56,13 @@ struct ConversationTextTests {
         #expect(approval.reason == "发送消息到「研发群」")
         #expect(approval.reasonIsAIGenerated, "等审批的说明是 agent 写的审批标题")
         #expect(approval.detail == nil)
+        let shown = RunStatusPresentation(
+            line: RunStatusLine(state: .waitingApproval, reason: "发送消息到「研发群」"), approvalCardShown: true,
+            language: .chinese)
+        #expect(shown.action == nil, "待处理的审批卡片就在上面：不放只会滚到它的“去审批”")
+        #expect(shown.actionTitle == nil)
+        #expect(shown.headline == "等你审批", "主文案、详情照旧")
+        #expect(shown.reason == "发送消息到「研发群」")
         #expect(present(RunStatusLine(state: .waitingChildren)).action == .openRunTree)
         let failed = present(
             RunStatusLine(

@@ -64,8 +64,13 @@ struct ApprovalCardView: View {
                         .typography(.footnote)
                         .foregroundStyle(Theme.accent)
                         .frame(minHeight: Metrics.minTapTarget)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                // 点按区域照样 44pt 高，但不占版面：往上伸到和上一项的间距（8）为止、往下伸进卡片的内边距（12），字上下就
+                // 和卡片顶上一样宽（不然字下面空出约 30pt，卡片头轻脚重，2026-11-05 对截图）。
+                .padding(.top, -Metrics.Spacing.xs)
+                .padding(.bottom, -Metrics.Spacing.s)
             }
         }
         .task { await model.checkApproval(card) }
@@ -101,12 +106,7 @@ struct ApprovalCardView: View {
                                 reason: ConversationText.verificationReason(title: card.title, language: language))
                         }
                     } label: {
-                        Label(
-                            option.name.isEmpty
-                                ? ConversationText.approvalOptionName(option.kind, language: language) : option.name,
-                            systemImage: option.kind.isReject ? "xmark" : "checkmark"
-                        )
-                        .frame(maxWidth: .infinity)
+                        ApprovalOptionLabel(option: option)
                     }
                     .glassButtonStyle(option.id == primaryOptionID ? .prominent : .regular)
                     .buttonBorderShape(.capsule)
@@ -155,6 +155,26 @@ struct ApprovalCardView: View {
         case .notLinked:
             NoticeText(text: ConversationText.approvalNotLinked(language), tone: .waiting)
         }
+    }
+}
+
+/// 审批选项按钮上的字（对话里的审批卡片、审批中心和详情页共用）：勾 / 叉 + 选项名，撑满按钮的宽。自己排、不用 `Label`：
+/// 放进 `List` 的行里时，系统把 `Label` 的图标挪到行首那一栏、涂成强调色——突出的“允许一次”上就是橙底橙勾，看不见，
+/// 别的选项图标和字也隔得很开（2026-11-05 对截图）。图标跟着按钮的前景色（突出的按钮上是白的），读屏只念名字。
+struct ApprovalOptionLabel: View {
+    let option: ApprovalOption
+
+    @Environment(\.displayLanguage) private var language
+
+    var body: some View {
+        HStack(spacing: Metrics.Spacing.xs) {
+            Image(systemName: option.kind.isReject ? "xmark" : "checkmark")
+                .accessibilityHidden(true)
+            Text(
+                verbatim: option.name.isEmpty
+                    ? ConversationText.approvalOptionName(option.kind, language: language) : option.name)
+        }
+        .frame(maxWidth: .infinity)
     }
 }
 

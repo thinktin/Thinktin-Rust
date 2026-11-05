@@ -10,10 +10,10 @@ import ThinktinKit
 ///   有没有没处理的（`hasPendingNewTaskRequest`），只认当前实例的；发出消息、事件流重置后滚到底。
 /// - 长按消息是系统菜单（`MessageMenus.swift`：引用回复、复制、选择文本、复制运行 ID、分享、举报）；举报弹
 ///   `ContentReportSheet`，发送前拦下的密码弹 `SecretInterceptionSheet`。选了引用回复，输入框长成卡片、自动聚焦。
-/// - 导航栏左边是系统的返回（回首页）；中间是能点的标题（Botin 的 24pt 头像 + 名字，iOS 26 上系统画成玻璃胶囊），点了进
-///   Botin 资料；实例列表里还没有这个 Botin 时只有页面标题那一行字，不画头像。右边是“…”菜单（`ConversationMenu`：
-///   Botin 资料；计划、新建计划、产出物、模型路由；有任务在跑时“停止当前任务”）。中间这一项由
-///   `inlineNavigationTitle(_:principal:)` 放，别再另加 `.principal`。
+/// - 导航栏左边是系统的返回（回首页）；中间是能点的标题（玻璃胶囊里 Botin 的 24pt 头像 + 名字，`ConversationTitle`），点了进
+///   Botin 资料；实例列表里还没有这个 Botin 时只有页面标题那一行字，不画头像、不画胶囊。右边是“…”菜单（`ConversationMenu`：
+///   Botin 资料、在对话中查找；计划、新建计划、产出物、模型路由；有任务在跑时“停止当前任务”）。中间这一项由
+///   `inlineNavigationTitle(_:ownsGlass:principal:)` 放，别再另加 `.principal`。
 /// - 还没有任务时时间线顶上是 `ConversationWelcome`（参考 118：说明气泡 + 示例任务 / 去配模型路由的卡片）。
 /// - “…”里的“在对话中查找”（规范 4.3.3，参考 04、05）：输入框换成 `ConversationFindBar`，找到的字在气泡里高亮，
 ///   跳到哪一处就滚到哪条消息（先滚到那一组，懒加载的时间线才有那一条，再居中）。
@@ -31,8 +31,11 @@ struct ConversationScreen: View {
     }
 }
 
-/// 对话页导航栏中间（参考 02 的标题胶囊）：24pt 头像 + 名字，点了进 Botin 资料。iOS 26 的工具栏给它套玻璃胶囊，旧系统
-/// 是导航栏里的一行。读屏念名字、当标题，提示“打开 Botin 资料”。
+/// 对话页导航栏中间（参考 02、118 的标题胶囊）：24pt 头像 + 名字，点了进 Botin 资料。玻璃胶囊是自己画的
+/// （`glassBackground(in: Capsule())`，高 44，和两边的返回、“…”玻璃圆一样高）：iOS 26 的工具栏不给 `.principal` 项套共用的
+/// 玻璃底（2026-11-05 的截图里只有光秃秃的头像和名字），所以放它的 `inlineNavigationTitle(_:ownsGlass:principal:)` 把共用的底
+/// 关掉，免得哪个系统版本又套一层。头像离胶囊左边和上下一样远（同心），名字是胶囊标题的 medium `.body`（和
+/// `capsuleNavigationTitle` 一样，参考比系统标题的 semibold 轻一档）。旧系统是材质的胶囊。读屏念名字、当标题，提示“打开 Botin 资料”。
 private struct ConversationTitle: View {
     let name: String
     let appearance: InstanceAppearance
@@ -46,12 +49,16 @@ private struct ConversationTitle: View {
                 InstanceAvatar(name, appearance: appearance, size: Metrics.Avatar.title)
                     .accessibilityHidden(true)
                 Text(verbatim: name)
-                    .typography(.headline)
+                    .font(Typography.body.font.weight(.medium))
                     .foregroundStyle(Theme.ink)
                     .lineLimit(1)
             }
-            .padding(.horizontal, Metrics.Spacing.xxs)
-            .contentShape(Rectangle())
+            // 头像和胶囊同心：左边留的和上下一样（(44 - 24) / 2 = 10），名字后面留 12（参考 118 量出来约 10 和 13）。
+            .padding(.leading, (Metrics.minTapTarget - Metrics.Avatar.title) / 2)
+            .padding(.trailing, Metrics.Spacing.s)
+            .frame(minHeight: Metrics.minTapTarget)
+            .glassBackground(in: Capsule(), interactive: true)
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
@@ -138,7 +145,7 @@ private struct ConversationContent: View {
             }
         }
         .background(Theme.paper)
-        .inlineNavigationTitle(title) {
+        .inlineNavigationTitle(title, ownsGlass: true) {
             if let instance {
                 ConversationTitle(name: instance.name, appearance: app.appearances.resolved(for: instance.id)) {
                     router.open(.instance(instance.id))

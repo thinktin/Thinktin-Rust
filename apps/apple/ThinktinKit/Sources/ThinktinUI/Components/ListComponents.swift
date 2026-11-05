@@ -13,10 +13,13 @@ extension View {
 
     /// 同上，iOS 导航栏中间放自己的内容（对话页的头像 + 名字）代替那一行字：导航栏中间只有这一个 `.principal`，
     /// 别在外面再加一个（两个都会显示，读屏念两遍）。`title` 照样是导航标题（返回按钮的长按菜单、macOS 的窗口标题）。
+    ///
+    /// - Parameter ownsGlass: 内容自己画了玻璃底（对话页的标题胶囊）：把 iOS 26 工具栏项共用的玻璃底关掉
+    ///   （`hidesSharedGlassBackground`），免得套两层。
     func inlineNavigationTitle<Principal: View>(
-        _ title: String, @ViewBuilder principal: () -> Principal
+        _ title: String, ownsGlass: Bool = false, @ViewBuilder principal: () -> Principal
     ) -> some View {
-        modifier(InlineNavigationTitle(title: title, principal: principal()))
+        modifier(InlineNavigationTitle(title: title, ownsGlass: ownsGlass, principal: principal()))
     }
 }
 
@@ -69,6 +72,7 @@ struct InlineTitleText: View {
 
 private struct InlineNavigationTitle<Principal: View>: ViewModifier {
     let title: String
+    let ownsGlass: Bool
     let principal: Principal
 
     func body(content: Content) -> some View {
@@ -80,6 +84,7 @@ private struct InlineNavigationTitle<Principal: View>: ViewModifier {
                     ToolbarItem(placement: .principal) {
                         principal
                     }
+                    .hidesSharedGlassBackground(ownsGlass)
                 }
         #else
             content.navigationTitle(title)
