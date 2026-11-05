@@ -1,14 +1,17 @@
 import Foundation
 import Observation
 
-/// 新建 Botin 的表单（WBS 12.3，规范 docs/ios-ui-redesign.md 4.7.1、6.4 A）：起名字、选一个引擎（目录里的 agent），
-/// 引擎的接入方式多于一个时再选一个。代码里还叫领养：新建就是 `adopt(agentID:name:harness:)`，每调一次建一个新实例，
-/// 同一个 agent 可以给好几个 Botin 当引擎（服务端只限每个账号的实例数）。
+/// 新建 Botin 的表单（WBS 12.3，规范 docs/ios-ui-redesign.md 4.7.1、6.4 A）：起名字、挑头像的形状和颜色、选一个引擎
+/// （目录里的 agent），引擎的接入方式多于一个时再选一个。代码里还叫领养：新建就是 `adopt(agentID:name:harness:)`，
+/// 每调一次建一个新实例，同一个 agent 可以给好几个 Botin 当引擎（服务端只限每个账号的实例数）。
 ///
+/// - 名字默认是空的（用户自己起；以前默认填引擎名，2026-11-05 照参考改了），名字不对时“新建”不能点；输入框下面的
+///   小字只在有用时出现（`nameNote`）。
+/// - 头像：形状默认圆形、颜色默认按名字取（`InstanceAppearance.default`，和没选过的 Botin 一样）；建好之后记进
+///   这台设备的 `InstanceAppearanceStore`（服务端还没有头像字段，规范 6.9）。
 /// - 引擎列表是 `agents()` 的目录（`load()` 拉；传进来的先显示）。默认选哪个见 `defaultEngine`：预选的（引擎详情的
 ///   “用它新建 Botin”）、最近用过的（最近活跃的 Botin 的引擎）、目录里第一个能用的。不能用的（`canPowerNewBotin`）
 ///   列出来但选不了。
-/// - 名字默认是引擎名（和已有的 Botin 重名时加序号）；用户没改过名字时，换引擎名字跟着换。
 /// - 新建成功后界面关掉表单、压栈进新 Botin 的对话（`AppModel.openCreatedInstance`）；配模型路由的提示在对话页
 ///   （`ConversationText.setupNote`），没有能用的 key 时路由页上再引导加 key。
 @Observable @MainActor
@@ -22,8 +25,12 @@ public final class AdoptionModel {
     public private(set) var loadError: ClientError?
     /// 选的引擎；目录还没拉到、没有能用的引擎时为 nil。改它用 `selectEngine(_:)`。
     public private(set) var selectedAgentID: AgentID?
-    /// 输入的名字（提交时去掉首尾空白）。
-    public var name: String
+    /// 输入的名字（提交时去掉首尾空白），默认空的。
+    public var name = ""
+    /// 头像的形状，默认圆形。
+    public var shape: AvatarShape = .circle
+    /// 头像的颜色；nil 按名字取色（默认）。
+    public var color: AvatarColor?
     /// 选的接入方式（选的引擎的 `harnesses` 里的一个；引擎没给接入方式时为空串，新建时不带）。
     public var harness: String
     public private(set) var isAdopting = false
@@ -32,11 +39,11 @@ public final class AdoptionModel {
     public private(set) var adopted: Instance?
 
     @ObservationIgnored private let client: any ClientProtocol
-    /// 账号里已有的 Botin（建议的名字不和它们重名；默认引擎看最近活跃的那个；行上数几个 Botin 在用）。
+    /// 账号里已有的 Botin（默认引擎看最近活跃的那个；行上数几个 Botin 在用）。
     @ObservationIgnored private let instances: [Instance]
     @ObservationIgnored private let preselectedAgentID: AgentID?
-    /// 上一次自动填的名字：名字还是它时，换引擎就换成新引擎的建议。
-    @ObservationIgnored private var suggestion = ""
+    /// 建好之后把头像外观记在这里（App 里是 `AppModel.appearances`）；nil 不记。
+    @ObservationIgnored private let appearances: InstanceAppearanceStore?
     /// 用户自己选过引擎（目录刷新时不再换成默认的）。
     @ObservationIgnored private var userChoseEngine = false
     /// 引擎详情要的引擎（`requestEngine(_:)`）还不在目录里（目录没拉到、拉到的是旧的）：`load()` 拉到后先选它。
@@ -46,15 +53,16 @@ public final class AdoptionModel {
     ///   - agents: 已经有的目录（比如别的页面拉过的），先显示它；`load()` 再拉新的。
     ///   - instances: 账号里已有的 Botin（`AppModel.instances`）。
     ///   - preselectedAgentID: 预选的引擎（`AppRoute.adopt(agentID:)`，从引擎详情进来）。
+    ///   - appearances: 建好之后记头像外观的地方（`AppModel.appearances`）；nil 不记。
     public init(
         client: any ClientProtocol, agents: [AgentInfo] = [], instances: [Instance] = [],
-        preselectedAgentID: AgentID? = nil
+        preselectedAgentID: AgentID? = nil, appearances: InstanceAppearanceStore? = nil
     ) {
         self.client = client
         self.agents = agents
         self.instances = instances.filter { $0.state != .deleted }
         self.preselectedAgentID = preselectedAgentID
-        self.name = ""
+        self.appearances = appearances
         self.harness = ""
         applyDefaultEngine()
     }
@@ -100,7 +108,7 @@ public final class AdoptionModel {
     }
 
     /// 换引擎（选择器、引擎详情的“用它新建 Botin”）。不在目录里、不能用的不换，返回 false。接入方式换成这个引擎默认的；
-    /// 名字还是自动填的就换成这个引擎的建议。
+    /// 名字不动。
     @discardableResult
     public func selectEngine(_ id: AgentID) -> Bool {
         guard let agent = agents.first(where: { $0.id == id }), agent.canPowerNewBotin, !isAdopting else {
@@ -153,9 +161,6 @@ public final class AdoptionModel {
             harness = agent.catalogHarnesses.first ?? ""
         }
         selectedAgentID = agent.id
-        let next = Self.suggestedName(for: agent, existingNames: instances.map(\.name))
-        if name == suggestion { name = next }
-        suggestion = next
     }
 
     // MARK: 表单
@@ -166,33 +171,53 @@ public final class AdoptionModel {
     /// 可以选的接入方式，默认的在前。
     public var harnessOptions: [String] { selectedAgent?.catalogHarnesses ?? [] }
 
-    /// 名字有什么问题（界面在输入框下面提示）；没问题为 nil。
+    /// 名字有什么问题；没问题为 nil。空的也算（“新建”不能点），但输入框下面只在 `nameNote` 说有用时才提示。
     public var nameProblem: InstanceNameProblem? { InstanceNameRule.problem(name) }
 
-    /// 名字对、选了能用的引擎、没在新建、还没建过。离线由界面另外禁用。
+    /// 输入框下面的小字：只在有用时有。还没输入（空的）不提示（按钮灰着就够了）；只输了空格说“起个名字吧。”；
+    /// 太长了说最多几个字；快到上限（还剩 `nameHintThreshold` 个字以内）时提示上限；别的时候为 nil。
+    public func nameNote(_ language: DisplayLanguage = .current) -> NameNote? {
+        if let problem = nameProblem {
+            if problem == .empty && name.isEmpty { return nil }
+            return NameNote(text: problem.message(language), isProblem: true)
+        }
+        let count = InstanceNameRule.normalized(name).unicodeScalars.count
+        guard count > InstanceNameRule.maxLength - Self.nameHintThreshold else { return nil }
+        return NameNote(text: NewBotinText.nameHint(language), isProblem: false)
+    }
+
+    /// 名字还剩几个字到上限时开始提示上限。
+    public static let nameHintThreshold = 10
+
+    /// 名字对、选了能用的引擎、没在新建、还没建过。离线由界面另外禁用（`canCreate(isOffline:)`）。
     public var canSubmit: Bool {
         nameProblem == nil && selectedAgent?.canPowerNewBotin == true && !isAdopting && adopted == nil
     }
 
-    /// 用户自己填了名字（不是自动填的、也不是空的）：取消前先确认。
-    public var hasUserInput: Bool {
-        let typed = InstanceNameRule.normalized(name)
-        return adopted == nil && !typed.isEmpty && typed != InstanceNameRule.normalized(suggestion)
+    /// 底部的“新建”能不能点：`canSubmit`，而且在线。
+    public func canCreate(isOffline: Bool) -> Bool {
+        canSubmit && !isOffline
     }
 
-    /// 建议的名字：引擎的名字，和已有的 Botin 重名时加上序号（“Claude Agent 2”）。
-    public static func suggestedName(for agent: AgentInfo, existingNames: [String]) -> String {
-        let base = AgentsText.displayName(of: agent)
-        let taken = Set(existingNames.map { InstanceNameRule.normalized($0).lowercased() })
-        guard taken.contains(base.lowercased()) else { return base }
-        var n = 2
-        while taken.contains("\(base) \(n)".lowercased()) { n += 1 }
-        return "\(base) \(n)"
+    /// 头像的外观（形状 + 颜色；颜色没选时按名字取）。
+    public var appearance: InstanceAppearance {
+        InstanceAppearance(shape: shape, color: color)
+    }
+
+    /// 头像实际画的颜色（色板上带环的那个）：选了的，没选按现在的名字取。
+    public var resolvedColor: AvatarColor {
+        appearance.resolvedColor(name: name)
+    }
+
+    /// 用户填了东西（名字不是空的，或者挑过形状、颜色）：取消前先确认。
+    public var hasUserInput: Bool {
+        adopted == nil && (!InstanceNameRule.normalized(name).isEmpty || !appearance.isDefault)
     }
 
     // MARK: 新建
 
     /// 新建（领养）。名字不对、没选引擎、正在新建、已经建过时什么也不做，返回 nil；失败记下错误（可以再试）。
+    /// 建好了把头像外观记进 `appearances`（默认的不记）。
     @discardableResult
     public func adopt() async -> Instance? {
         guard canSubmit, let agent = selectedAgent else { return nil }
@@ -204,11 +229,24 @@ public final class AdoptionModel {
             let instance = try await client.adopt(
                 agentID: agent.id, name: InstanceNameRule.normalized(name), harness: harness)
             adopted = instance
+            appearances?.set(appearance, for: instance.id)
             return instance
         } catch {
             self.error = AgentsErrors.from(error)
             return nil
         }
+    }
+}
+
+/// 名字输入框下面的小字（`AdoptionModel.nameNote`）。
+public struct NameNote: Hashable, Sendable {
+    public var text: String
+    /// 是名字的问题（用失败色），不是提示。
+    public var isProblem: Bool
+
+    public init(text: String, isProblem: Bool) {
+        self.text = text
+        self.isProblem = isProblem
     }
 }
 
@@ -259,7 +297,7 @@ extension AgentInfo {
 
 /// 新建 Botin 表单的文案（标题用 `AppRoute.adopt` 的“新建 Botin”）。
 public enum NewBotinText {
-    /// 右上的主按钮。
+    /// 底部的主按钮。
     public static func create(_ language: DisplayLanguage) -> String {
         language == .chinese ? "新建" : "Create"
     }
@@ -273,11 +311,12 @@ public enum NewBotinText {
         language == .chinese ? "Botin 的名字" : "Botin name"
     }
 
+    /// 大号输入框里的占位字。
     public static func namePrompt(_ language: DisplayLanguage) -> String {
-        language == .chinese ? "给它取个名字" : "Give it a name"
+        language == .chinese ? "给 Botin 取个名字" : "Name your Botin"
     }
 
-    /// 名字没问题时输入框下面的提示。
+    /// 名字快到上限时输入框下面的提示（`AdoptionModel.nameNote`）。
     public static func nameHint(_ language: DisplayLanguage) -> String {
         language == .chinese
             ? "最多 \(InstanceNameRule.maxLength) 个字，之后可以改。"
@@ -297,16 +336,55 @@ public enum NewBotinText {
         language == .chinese ? "了解引擎" : "About engines"
     }
 
-    /// 引擎那一组下面的脚注：许可证（没写的不提），专有许可的许可说明和“新建即表示同意”，别的说一句在哪里运行、
-    /// 模型请求发到哪。
-    public static func engineFooter(_ agent: AgentInfo, language: DisplayLanguage) -> String {
+    /// 头像的形状网格、色板（读屏的分组名）。
+    public static func shapeTitle(_ language: DisplayLanguage) -> String {
+        language == .chinese ? "头像形状" : "Avatar shape"
+    }
+
+    public static func colorTitle(_ language: DisplayLanguage) -> String {
+        language == .chinese ? "头像颜色" : "Avatar color"
+    }
+
+    /// 底部按钮上面那一行小字：专有许可（目录给了许可说明）写“新建即表示同意 X 的许可条款”（同意的说法只给专有许可，
+    /// 开源的不用同意什么）；别的写用的什么许可证。后面跟一个“查看”，打开 `licenseDetails` 的全文。
+    public static func licenseCaption(_ agent: AgentInfo, language: DisplayLanguage) -> String {
+        let zh = language == .chinese
+        let name = AgentsText.displayName(of: agent)
+        if requiresConsent(agent) {
+            return zh ? "新建即表示同意 \(name) 的许可条款" : "By creating, you agree to the \(name) license terms"
+        }
+        let license = agent.license?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if license.isEmpty { return zh ? "\(name) 没有注明许可证" : "\(name) doesn't state a license" }
+        let licenseName = AgentsText.licenseName(license, language: language)
+        return zh ? "\(name) 采用 \(licenseName) 许可" : "\(name) is licensed under \(licenseName)"
+    }
+
+    /// 新建要同意许可条款：目录给了许可说明（专有许可才给，比如 Anthropic 的商业条款）。
+    public static func requiresConsent(_ agent: AgentInfo) -> Bool {
+        let note = agent.licenseNote?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return !note.isEmpty
+    }
+
+    /// “查看”：打开许可条款的全文。
+    public static func viewLicense(_ language: DisplayLanguage) -> String {
+        language == .chinese ? "查看" : "View"
+    }
+
+    /// 许可条款全文那张小 sheet 的标题。
+    public static func licenseTitle(_ language: DisplayLanguage) -> String {
+        language == .chinese ? "许可条款" : "License terms"
+    }
+
+    /// 许可条款全文（点“查看”看到的）：许可证（没写的不提），专有许可的许可说明和“新建即表示同意”，别的说一句在哪里
+    /// 运行、模型请求发到哪。
+    public static func licenseDetails(_ agent: AgentInfo, language: DisplayLanguage) -> String {
         let zh = language == .chinese
         var parts: [String] = []
         if let license = agent.license?.trimmingCharacters(in: .whitespacesAndNewlines), !license.isEmpty {
             let name = AgentsText.licenseName(license, language: language)
             parts.append(zh ? "许可证：\(name)。" : "License: \(name).")
         }
-        if let note = agent.licenseNote?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty {
+        if requiresConsent(agent), let note = agent.licenseNote?.trimmingCharacters(in: .whitespacesAndNewlines) {
             parts.append(note)
             parts.append(
                 zh ? "新建即表示你同意按上面的条款使用这个引擎。" : "By creating this Botin, you agree to use the engine under these terms.")

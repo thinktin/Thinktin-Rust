@@ -25,7 +25,9 @@ struct AdoptAgentSheet: View {
 
     var body: some View {
         AdoptAgentForm(
-            model: AdoptionModel(client: client, instances: app.instances, preselectedAgentID: preselectedAgentID))
+            model: AdoptionModel(
+                client: client, instances: app.instances, preselectedAgentID: preselectedAgentID,
+                appearances: app.appearances))
     }
 }
 
@@ -161,7 +163,7 @@ private struct AdoptAgentForm: View {
             Text(NewBotinText.engineTitle(language))
         } footer: {
             if let agent = model.selectedAgent {
-                Text(NewBotinText.engineFooter(agent, language: language))
+                Text(NewBotinText.licenseDetails(agent, language: language))
             }
         }
     }

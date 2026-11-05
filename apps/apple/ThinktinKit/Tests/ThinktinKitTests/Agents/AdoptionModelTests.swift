@@ -3,7 +3,8 @@ import Testing
 
 @testable import ThinktinKit
 
-// 新建 Botin 的表单（代码里还叫领养）：起名、选引擎（默认哪个、能不能选）、选接入方式、新建成功和失败。
+// 新建 Botin 的表单（代码里还叫领养）：起名（默认空的）、头像外观、选引擎（默认哪个、能不能选）、选接入方式、
+// 底部按钮能不能点、新建成功（记下头像外观）和失败。
 
 @MainActor
 @Suite("新建 Botin")
@@ -17,29 +18,50 @@ struct AdoptionModelTests {
     /// 演示目录、演示的 Botin 上的表单。
     private func form(
         _ mock: MockClient = AgentsFixture.mock(), agents: [AgentInfo]? = nil, instances: [Instance]? = nil,
-        preselected: AgentID? = nil
+        preselected: AgentID? = nil, name: String = "", appearances: InstanceAppearanceStore? = nil
     ) -> AdoptionModel {
-        AdoptionModel(
+        let model = AdoptionModel(
             client: mock, agents: agents ?? DemoData.agents, instances: instances ?? demoInstances,
-            preselectedAgentID: preselected)
+            preselectedAgentID: preselected, appearances: appearances)
+        model.name = name
+        return model
     }
 
     // MARK: 名字
 
-    @Test("建议的名字是引擎的名字，和已有的 Botin 重名时加序号")
-    func suggestedName() {
-        #expect(AdoptionModel.suggestedName(for: claude, existingNames: []) == "Claude Agent")
-        #expect(AdoptionModel.suggestedName(for: claude, existingNames: ["Claude Agent"]) == "Claude Agent 2")
-        #expect(
-            AdoptionModel.suggestedName(for: claude, existingNames: [" claude agent ", "Claude Agent 2"])
-                == "Claude Agent 3")
+    @Test("名字默认是空的（不再填引擎名），“新建”不能点；换引擎名字不动")
+    func emptyDefaultName() {
         let model = form(preselected: codex.id)
-        #expect(model.name == "Codex")
-        // 已删除的 Botin 不占名字。
-        var deleted = demoInstances[0]
-        deleted.name = "Codex"
-        deleted.state = .deleted
-        #expect(form(instances: [deleted], preselected: codex.id).name == "Codex")
+        #expect(model.name == "")
+        #expect(model.nameProblem == .empty)
+        #expect(model.selectedAgentID == codex.id)
+        #expect(!model.canSubmit && !model.canCreate(isOffline: false))
+        #expect(!model.hasUserInput)
+        #expect(model.selectEngine(hermes.id))
+        #expect(model.name == "")
+        model.name = "研究助手"
+        #expect(model.canSubmit)
+        #expect(model.selectEngine(claude.id))
+        #expect(model.name == "研究助手")
+        // 没有 Botin（第一次登录）、目录还没拉到也是空的。
+        #expect(AdoptionModel(client: AgentsFixture.mock()).name == "")
+    }
+
+    @Test("输入框下面的小字只在有用时出现：空的不说，只有空格、太长说问题，快到上限提示上限")
+    func nameNote() {
+        let model = form()
+        #expect(model.nameNote(.chinese) == nil)
+        model.name = "  "
+        #expect(model.nameNote(.chinese) == NameNote(text: "起个名字吧。", isProblem: true))
+        model.name = "研究助手"
+        #expect(model.nameNote(.chinese) == nil)
+        model.name = String(repeating: "长", count: InstanceNameRule.maxLength - AdoptionModel.nameHintThreshold)
+        #expect(model.nameNote(.chinese) == nil)
+        model.name += "长"
+        #expect(model.nameNote(.chinese) == NameNote(text: NewBotinText.nameHint(.chinese), isProblem: false))
+        #expect(model.nameNote(.english)?.text.contains("64") == true)
+        model.name = String(repeating: "长", count: InstanceNameRule.maxLength + 1)
+        #expect(model.nameNote(.english) == NameNote(text: "Names can be up to 64 characters.", isProblem: true))
     }
 
     @Test("名字不对、没有引擎时不能提交，也不发请求")
@@ -64,17 +86,80 @@ struct AdoptionModelTests {
         #expect(mock.state.instances.count == 2)
     }
 
-    @Test("用户自己填了名字才算有内容（取消前要确认）")
+    @Test("填了名字、挑过形状或颜色才算有内容（取消前要确认）")
     func userInput() {
         let model = form()
-        #expect(model.name == "Claude Agent")
         #expect(!model.hasUserInput)
         model.name = "  "
         #expect(!model.hasUserInput)
-        model.name = " Claude Agent "
-        #expect(!model.hasUserInput)
         model.name = "研究助手"
         #expect(model.hasUserInput)
+        model.name = ""
+        model.shape = .hexagon
+        #expect(model.hasUserInput)
+        model.shape = .circle
+        #expect(!model.hasUserInput)
+        model.color = .navy
+        #expect(model.hasUserInput)
+    }
+
+    @Test("底部的“新建”：名字对、选了能用的引擎、在线才能点；新建中、建好之后不能")
+    func createButtonEnabled() async throws {
+        let model = form()
+        #expect(!model.canCreate(isOffline: false))
+        model.name = "研究助手"
+        #expect(model.canCreate(isOffline: false))
+        #expect(!model.canCreate(isOffline: true))
+        // 没有能用的引擎（目录是空的、都不能用）。
+        let broken = AgentsFixture.agent("broken", name: "Broken", harnesses: [])
+        #expect(!form(agents: [broken], name: "研究助手").canCreate(isOffline: false))
+        #expect(!form(agents: [], name: "研究助手").canCreate(isOffline: false))
+        // 建好之后。
+        _ = try #require(await model.adopt())
+        #expect(!model.canCreate(isOffline: false))
+    }
+
+    // MARK: 头像
+
+    @Test("头像默认圆形、按名字取色；颜色没选时跟着名字变，选了就固定")
+    func avatarDefaults() {
+        let model = form()
+        #expect(model.appearance == .default)
+        #expect(model.shape == .circle && model.color == nil)
+        model.name = "周报助手"
+        #expect(model.resolvedColor == AvatarColor.forName("周报助手"))
+        model.name = "日程"
+        #expect(model.resolvedColor == AvatarColor.forName("日程"))
+        model.color = .graphite
+        #expect(model.resolvedColor == .graphite)
+        model.name = "周报助手"
+        #expect(model.resolvedColor == .graphite)
+        model.shape = .cloud
+        #expect(model.appearance == InstanceAppearance(shape: .cloud, color: .graphite))
+    }
+
+    @Test("新建成功后把头像外观记进这台设备；默认的不记；失败的不记")
+    func createStoresAppearance() async throws {
+        let store = InstanceAppearanceStore(defaults: nil)
+        let mock = AgentsFixture.mock()
+        let model = form(mock, name: "研究助手", appearances: store)
+        model.shape = .flower
+        model.color = .orchid
+        mock.failNext(with: .network(message: "offline"))
+        #expect(await model.adopt() == nil)
+        #expect(store.appearances.isEmpty)
+        let instance = try #require(await model.adopt())
+        #expect(store.appearance(for: instance.id) == InstanceAppearance(shape: .flower, color: .orchid))
+        // 只挑了形状：颜色还是按名字取（以后改名跟着变）。
+        let shapeOnly = form(mock, name: "校对", appearances: store)
+        shapeOnly.shape = .star
+        let second = try #require(await shapeOnly.adopt())
+        #expect(store.appearance(for: second.id) == InstanceAppearance(shape: .star, color: nil))
+        // 什么都没挑：不记，画出来和以前一样。
+        let plain = try #require(await form(mock, name: "翻译", appearances: store).adopt())
+        #expect(store.appearance(for: plain.id) == nil)
+        #expect(store.resolved(for: plain.id) == .default)
+        #expect(store.appearances.count == 2)
     }
 
     // MARK: 引擎
@@ -139,7 +224,7 @@ struct AdoptionModelTests {
         #expect(model.selectedAgentID == claude.id)
     }
 
-    @Test("换引擎：接入方式换成它默认的；名字还是自动填的就跟着换，用户改过就不动")
+    @Test("换引擎：接入方式换成它默认的；名字不动")
     func switchEngine() {
         let model = form(instances: [])
         #expect(model.selectedAgentID == claude.id)
@@ -150,7 +235,7 @@ struct AdoptionModelTests {
         #expect(model.selectedAgent == codex)
         #expect(!model.showsHarnessChoice)
         #expect(model.harness == "acp")
-        #expect(model.name == "Codex")
+        #expect(model.name == "")
         model.name = "校对"
         #expect(model.selectEngine(hermes.id))
         #expect(model.name == "校对")
@@ -159,10 +244,6 @@ struct AdoptionModelTests {
         model.harness = "cli"
         #expect(model.selectEngine(claude.id))
         #expect(model.harness == "cli")
-        // 名字清空也算用户改过（不会被填回去）。
-        model.name = ""
-        #expect(model.selectEngine(codex.id))
-        #expect(model.name == "")
     }
 
     @Test("拉目录：没有目录时拉到再选默认的；用户选过的还在就留着；拉不到记下错误")
@@ -173,7 +254,7 @@ struct AdoptionModelTests {
         await model.load()
         #expect(model.hasLoadedAgents && model.agents.count == 3)
         #expect(model.selectedAgentID == hermes.id)
-        #expect(model.name == "Hermes Agent")
+        #expect(model.name == "")
         #expect(model.selectEngine(codex.id))
         await model.load()
         #expect(model.selectedAgentID == codex.id)
@@ -208,7 +289,6 @@ struct AdoptionModelTests {
         #expect(model.selectedAgentID == nil)
         await model.load()
         #expect(model.selectedAgentID == hermes.id)
-        #expect(model.name == "Hermes Agent")
         // 再拉一次也留着（算用户选的）。
         await model.load()
         #expect(model.selectedAgentID == hermes.id)
@@ -259,19 +339,19 @@ struct AdoptionModelTests {
     @Test("同一个引擎可以给好几个 Botin 用：每次新建都是一个新的")
     func sameEngineTwice() async throws {
         let mock = AgentsFixture.mock()
-        let first = try #require(await form(mock, preselected: codex.id).adopt())
+        let first = try #require(await form(mock, preselected: codex.id, name: "校对").adopt())
         let second = try #require(
-            await form(mock, instances: mock.state.instances, preselected: codex.id).adopt())
+            await form(mock, instances: mock.state.instances, preselected: codex.id, name: "翻译").adopt())
         #expect(first.id != second.id)
         #expect(first.agentID == codex.id && second.agentID == codex.id)
-        #expect(first.name == "Codex" && second.name == "Codex 2")
+        #expect(first.name == "校对" && second.name == "翻译")
         #expect(mock.state.instances.filter { $0.agentID == codex.id }.count == 3)
     }
 
     @Test("新建失败：记下错误，可以再试")
     func createFails() async {
         let mock = AgentsFixture.mock()
-        let model = form(mock)
+        let model = form(mock, name: "研究助手")
         mock.failNext(with: .api(status: 422, code: .invalid, message: "withdrawn", retryAfterSecs: nil))
         #expect(await model.adopt() == nil)
         #expect(model.error?.isInvalidInput == true)
@@ -284,7 +364,7 @@ struct AdoptionModelTests {
     @Test("Botin 数到了上限（11.9，409 instance_limit）：新建失败，横幅说先删掉不用的，不给重试")
     func createOverInstanceLimit() async {
         let mock = AgentsFixture.mock { $0.instancesPerUser = 2 }
-        let model = form(mock)
+        let model = form(mock, name: "研究助手")
         #expect(await model.adopt() == nil)
         let error = model.error
         #expect(error?.apiCode == .instanceLimit)
@@ -304,7 +384,7 @@ struct AdoptionModelTests {
     func harnessFallback() async throws {
         let agent = AgentsFixture.agent("legacy", name: "Legacy")
         let mock = AgentsFixture.mock { $0.agents.append(agent) }
-        let model = form(mock, agents: [agent])
+        let model = form(mock, agents: [agent], name: "研究助手")
         model.harness = "cli"
         let instance = try #require(await model.adopt())
         #expect(instance.harness == "acp")
@@ -312,17 +392,32 @@ struct AdoptionModelTests {
 
     // MARK: 文案
 
-    @Test("引擎的脚注：专有许可写许可说明和“新建即表示同意”，别的说在沙箱里运行")
-    func engineFooter() {
-        let claudeNote = NewBotinText.engineFooter(claude, language: .chinese)
+    @Test("许可：一行小字只给专有许可说“新建即表示同意”，别的写许可证；全文写许可说明或在沙箱里运行")
+    func licenseTexts() {
+        // 专有许可（目录给了许可说明）：要同意。
+        #expect(NewBotinText.requiresConsent(claude) && !NewBotinText.requiresConsent(codex))
+        #expect(NewBotinText.licenseCaption(claude, language: .chinese) == "新建即表示同意 Claude Agent 的许可条款")
+        #expect(
+            NewBotinText.licenseCaption(claude, language: .english)
+                == "By creating, you agree to the Claude Agent license terms")
+        #expect(NewBotinText.licenseCaption(codex, language: .chinese) == "Codex 采用 Apache-2.0 许可")
+        #expect(NewBotinText.licenseCaption(codex, language: .english) == "Codex is licensed under Apache-2.0")
+        #expect(!NewBotinText.licenseCaption(codex, language: .english).contains("agree"))
+        let unlicensed = AgentsFixture.agent("legacy", name: "Legacy")
+        #expect(NewBotinText.licenseCaption(unlicensed, language: .chinese) == "Legacy 没有注明许可证")
+        #expect(NewBotinText.viewLicense(.chinese) == "查看" && NewBotinText.viewLicense(.english) == "View")
+        // 点“查看”看到的全文。
+        let claudeNote = NewBotinText.licenseDetails(claude, language: .chinese)
         #expect(claudeNote.hasPrefix("许可证："))
         #expect(claudeNote.contains("Anthropic"))
         #expect(claudeNote.hasSuffix("新建即表示你同意按上面的条款使用这个引擎。"))
-        let codexNote = NewBotinText.engineFooter(codex, language: .english)
+        let codexNote = NewBotinText.licenseDetails(codex, language: .english)
         #expect(codexNote.hasPrefix("License: Apache-2.0."))
         #expect(codexNote.contains("sandbox"))
         #expect(!codexNote.contains("agree"))
         #expect(NewBotinText.nameHint(.chinese).contains("64"))
+        #expect(NewBotinText.namePrompt(.chinese) == "给 Botin 取个名字")
+        #expect(NewBotinText.namePrompt(.english) == "Name your Botin")
         // 按钮、转圈的读屏、脚注都说“新建”，和标题“新建 Botin”一致。
         #expect(NewBotinText.create(.chinese) == "新建" && NewBotinText.create(.english) == "Create")
         #expect(NewBotinText.creating(.chinese) == "正在新建" && NewBotinText.creating(.english) == "Creating")
