@@ -24,7 +24,7 @@ fn solo(members: &[TeamMember]) -> Vec<SoloAgent> {
 impl Tx<Tenant> {
     /// 建团队（单人项目）。成员必须是自己的、没删除的实例；最多一个负责人。
     pub async fn create_team(&mut self, name: &str, members: &[TeamMember]) -> Result<Team> {
-        let id = self.create_solo_project(name, &solo(members)).await?;
+        let id = self.create_solo_project(name, "", &solo(members)).await?;
         self.team(id.into()).await
     }
 

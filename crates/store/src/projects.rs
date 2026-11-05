@@ -3,14 +3,22 @@
 //! （`projects.shared_at IS NULL`）；跨用户的写（8.14 起）只走 worker，按成员关系的读在 8.15。
 //!
 //! 团队（`teams.rs`）就是单人项目：`TeamId` 和 `ProjectId` 是同一个 id。
+//!
+//! 8.14 起的跨用户读写都在 `Tx<Worker>` 里，每个方法自己拿锁、自己核对调用的人是不是成员（[`ProjectActor`]）；
+//! 加锁顺序见 docs/progress/drafts/projects-8.14-plan.md 第 0 节 D3：用户行 → 项目锁 → 自己的成员行 → 窄的咨询锁 →
+//! 邀请行 → 别人的成员行 → 项目 agent 行 → 运行 → 实例。
 
 use std::collections::HashSet;
 
 use chrono::{DateTime, Utc};
-use proto::domain::{InstanceId, ProjectId, ProjectStatus};
+use proto::domain::{
+    InstanceId, ProjectAgentView, ProjectBudget, ProjectDetail, ProjectId, ProjectLimits,
+    ProjectMemberView, ProjectPerson, ProjectRole, ProjectStatus, ProjectSummary, UserId,
+    UserStatus,
+};
 use uuid::Uuid;
 
-use crate::{Error, Result, Tenant, Tx, Worker, parse};
+use crate::{Error, Result, Tenant, Tx, Worker, parse, unsigned};
 
 /// 单人项目里的一个 agent（自己的实例）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,6 +78,322 @@ impl Tx<Worker> {
     }
 }
 
+/// [`Tx::lock_users`] 锁住的一个用户。
+#[derive(Debug, Clone)]
+#[allow(dead_code)] // 邀请、加入（下一个提交）用到
+pub(crate) struct LockedUser {
+    pub id: UserId,
+    pub status: UserStatus,
+    pub phone: String,
+    pub display_name: Option<String>,
+}
+
+#[allow(dead_code)]
+impl LockedUser {
+    pub fn person(&self) -> ProjectPerson {
+        ProjectPerson {
+            user_id: self.id,
+            display_name: self.display_name.clone(),
+        }
+    }
+}
+
+/// 核对过的项目成员（只在 store 里、在同一个事务里建出来用）：用户行、项目锁、自己的成员行都锁着。
+#[derive(Debug, Clone)]
+#[allow(dead_code)] // 邀请、加入（下一个提交）用到
+pub(crate) struct ProjectActor {
+    pub project: ProjectId,
+    pub user: UserId,
+    pub role: ProjectRole,
+    pub creator: UserId,
+    /// 锁住的用户（调用的人、创建者和 `also` 里的人）；注销了的不在里面。
+    pub users: Vec<LockedUser>,
+}
+
+#[allow(dead_code)]
+impl ProjectActor {
+    /// 只有创建者能做的事（邀请、移出、改项目）。
+    pub fn require_creator(&self, what: &str) -> Result<()> {
+        if self.role == ProjectRole::Creator {
+            Ok(())
+        } else {
+            Err(Error::NotPermitted(format!(
+                "only the project creator can {what}"
+            )))
+        }
+    }
+
+    pub fn locked(&self, id: UserId) -> Option<&LockedUser> {
+        self.users.iter().find(|u| u.id == id)
+    }
+}
+
+type SummaryRow = (
+    Uuid,
+    String,
+    String,
+    String,
+    String,
+    bool,
+    Uuid,
+    Option<String>,
+    i64,
+    i64,
+    i64,
+    DateTime<Utc>,
+    DateTime<Utc>,
+);
+
+type MemberRow = (Uuid, Option<String>, String, DateTime<Utc>, i64);
+type AgentRow = (Uuid, Uuid, String, String, bool, i32, DateTime<Utc>);
+
+/// 我是成员（没退出）的项目，带人数、agent 数（实例删了的不算）。`$1` 是我。
+const SUMMARY_SQL: &str = "SELECT p.id, p.name, p.goal, p.status, m.role, p.shared_at IS NOT NULL, \
+       p.creator_id, cu.display_name, \
+       (SELECT count(*) FROM project_members x WHERE x.project_id = p.id AND x.left_at IS NULL), \
+       (SELECT count(*) FROM project_agents a JOIN instances i ON i.id = a.instance_id \
+          AND i.state <> 'deleted' WHERE a.project_id = p.id AND a.left_at IS NULL), \
+       (SELECT count(*) FROM project_agents a JOIN instances i ON i.id = a.instance_id \
+          AND i.state <> 'deleted' WHERE a.project_id = p.id AND a.left_at IS NULL AND a.user_id = $1), \
+       p.created_at, m.joined_at \
+  FROM project_members m JOIN projects p ON p.id = m.project_id JOIN users cu ON cu.id = p.creator_id \
+ WHERE m.user_id = $1 AND m.left_at IS NULL";
+
+fn count(v: i64, what: &str) -> Result<u32> {
+    Ok(u32::try_from(unsigned(v, what)?).unwrap_or(u32::MAX))
+}
+
+fn summary(row: SummaryRow) -> Result<ProjectSummary> {
+    let (
+        id,
+        name,
+        goal,
+        status,
+        role,
+        shared,
+        creator,
+        creator_name,
+        members,
+        agents,
+        mine,
+        created_at,
+        joined_at,
+    ) = row;
+    Ok(ProjectSummary {
+        id: ProjectId(id),
+        name,
+        goal,
+        status: parse(&status)?,
+        role: parse(&role)?,
+        shared,
+        creator: ProjectPerson {
+            user_id: UserId(creator),
+            display_name: creator_name,
+        },
+        member_count: count(members, "member count")?,
+        agent_count: count(agents, "agent count")?,
+        my_agent_count: count(mine, "agent count")?,
+        created_at,
+        joined_at,
+    })
+}
+
+impl Tx<Worker> {
+    /// 按 id 顺序给用户行加 `FOR KEY SHARE`（D3 第 1 步：写收件箱、成员行、邀请的外键都要拿这把锁，注销拿的是
+    /// `FOR UPDATE`）。没有的、注销了的不报错，调用方按结果判断。
+    pub(crate) async fn lock_users(&mut self, ids: &[UserId]) -> Result<Vec<LockedUser>> {
+        let mut ids: Vec<Uuid> = ids.iter().map(|u| u.0).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        let rows: Vec<(Uuid, String, String, Option<String>)> = sqlx::query_as(
+            "SELECT id, status, phone, display_name FROM users WHERE id = ANY($1) \
+             ORDER BY id FOR KEY SHARE",
+        )
+        .bind(&ids)
+        .fetch_all(self.conn())
+        .await?;
+        rows.into_iter()
+            .map(|(id, status, phone, display_name)| {
+                Ok(LockedUser {
+                    id: UserId(id),
+                    status: parse(&status)?,
+                    phone,
+                    display_name,
+                })
+            })
+            .collect()
+    }
+
+    /// 核对 `user` 是 `project` 的成员（没退出），项目的状态在 `allow` 里；不是的一律 NotFound（不泄露项目在不在）。
+    /// 按 D3 加锁：用户行（`user`、创建者、`also`）→ 项目锁 → 自己的成员行。
+    pub(crate) async fn project_actor(
+        &mut self,
+        user: UserId,
+        project: ProjectId,
+        also: &[UserId],
+        allow: &[ProjectStatus],
+    ) -> Result<ProjectActor> {
+        let creator: Uuid = sqlx::query_scalar("SELECT creator_id FROM projects WHERE id = $1")
+            .bind(project.0)
+            .fetch_one(self.conn())
+            .await?;
+        let creator = UserId(creator);
+        let mut ids = vec![user, creator];
+        ids.extend_from_slice(also);
+        let users: Vec<LockedUser> = self
+            .lock_users(&ids)
+            .await?
+            .into_iter()
+            .filter(|u| u.status != UserStatus::Deleted)
+            .collect();
+        if !users.iter().any(|u| u.id == user) {
+            return Err(Error::NotFound);
+        }
+        self.lock_project(project).await?;
+        let status: String = sqlx::query_scalar("SELECT status FROM projects WHERE id = $1")
+            .bind(project.0)
+            .fetch_one(self.conn())
+            .await?;
+        if !allow.contains(&parse(&status)?) {
+            return Err(Error::NotFound);
+        }
+        let role: String = sqlx::query_scalar(
+            "SELECT role FROM project_members WHERE project_id = $1 AND user_id = $2 \
+               AND left_at IS NULL FOR NO KEY UPDATE",
+        )
+        .bind(project.0)
+        .bind(user.0)
+        .fetch_one(self.conn())
+        .await?;
+        Ok(ProjectActor {
+            project,
+            user,
+            role: parse(&role)?,
+            creator,
+            users,
+        })
+    }
+
+    /// 我是成员（没退出）的、进行中的项目，按创建时间（8.14 的读法：worker 读、同一句 SQL 里核对成员关系；8.15 换成
+    /// 成员事务，返回的结构不变）。
+    pub async fn my_projects(&mut self, user: UserId) -> Result<Vec<ProjectSummary>> {
+        let rows: Vec<SummaryRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "{SUMMARY_SQL} AND p.status = 'active' ORDER BY p.created_at, p.id"
+        )))
+        .bind(user.0)
+        .fetch_all(self.conn())
+        .await?;
+        rows.into_iter().map(summary).collect()
+    }
+
+    /// 项目详情：只有成员（没退出）看得到，不然 NotFound。成员创建者在前；agent 只列还在的（实例没删），按位置；
+    /// 预算只给我自己的（每个人管自己的 agent）。
+    pub async fn project_detail(
+        &mut self,
+        user: UserId,
+        project: ProjectId,
+    ) -> Result<ProjectDetail> {
+        let row: SummaryRow = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "{SUMMARY_SQL} AND p.status <> 'deleted' AND p.id = $2"
+        )))
+        .bind(user.0)
+        .bind(project.0)
+        .fetch_one(self.conn())
+        .await?;
+        let summary = summary(row)?;
+        let members: Vec<MemberRow> = sqlx::query_as(
+            "SELECT m.user_id, u.display_name, m.role, m.joined_at, \
+                    (SELECT count(*) FROM project_agents a JOIN instances i ON i.id = a.instance_id \
+                       AND i.state <> 'deleted' \
+                      WHERE a.project_id = m.project_id AND a.user_id = m.user_id AND a.left_at IS NULL) \
+               FROM project_members m JOIN users u ON u.id = m.user_id \
+              WHERE m.project_id = $1 AND m.left_at IS NULL \
+              ORDER BY m.role = 'creator' DESC, m.joined_at, m.user_id",
+        )
+        .bind(project.0)
+        .fetch_all(self.conn())
+        .await?;
+        let members = members
+            .into_iter()
+            .map(|(id, display_name, role, joined_at, agents)| {
+                Ok(ProjectMemberView {
+                    user_id: UserId(id),
+                    display_name,
+                    role: parse(&role)?,
+                    joined_at,
+                    agent_count: count(agents, "agent count")?,
+                    is_me: id == user.0,
+                })
+            })
+            .collect::<Result<_>>()?;
+        let agents: Vec<AgentRow> = sqlx::query_as(
+            "SELECT a.instance_id, a.user_id, i.agent_id, i.name, a.is_lead, a.position, a.added_at \
+               FROM project_agents a JOIN instances i ON i.id = a.instance_id AND i.state <> 'deleted' \
+              WHERE a.project_id = $1 AND a.left_at IS NULL ORDER BY a.position, a.instance_id",
+        )
+        .bind(project.0)
+        .fetch_all(self.conn())
+        .await?;
+        let agents = agents
+            .into_iter()
+            .map(
+                |(instance, owner, agent_id, name, is_lead, position, added_at)| ProjectAgentView {
+                    instance_id: InstanceId(instance),
+                    owner_id: UserId(owner),
+                    agent_id,
+                    name,
+                    is_lead,
+                    position: u32::try_from(position).unwrap_or_default(),
+                    added_at,
+                    mine: owner == user.0,
+                },
+            )
+            .collect();
+        let (daily, total): (Option<i64>, Option<i64>) = sqlx::query_as(
+            "SELECT daily_token_limit, total_token_limit FROM project_members \
+              WHERE project_id = $1 AND user_id = $2",
+        )
+        .bind(project.0)
+        .bind(user.0)
+        .fetch_one(self.conn())
+        .await?;
+        Ok(ProjectDetail {
+            summary,
+            members,
+            agents,
+            my_budget: ProjectBudget {
+                daily_token_limit: daily.map(|v| unsigned(v, "token limit")).transpose()?,
+                total_token_limit: total.map(|v| unsigned(v, "token limit")).transpose()?,
+            },
+            limits: ProjectLimits::default(),
+        })
+    }
+
+    /// 改项目的名字、目标（只有创建者；共享了的也能改）。
+    pub async fn update_project(
+        &mut self,
+        user: UserId,
+        project: ProjectId,
+        name: Option<&str>,
+        goal: Option<&str>,
+    ) -> Result<()> {
+        let actor = self
+            .project_actor(user, project, &[], &[ProjectStatus::Active])
+            .await?;
+        actor.require_creator("change the project")?;
+        sqlx::query(
+            "UPDATE projects SET name = coalesce($2, name), goal = coalesce($3, goal), \
+             updated_at = now() WHERE id = $1",
+        )
+        .bind(project.0)
+        .bind(name)
+        .bind(goal)
+        .execute(self.conn())
+        .await?;
+        Ok(())
+    }
+}
+
 const PROJECT_COLUMNS: &str = "id, name, status, shared_at IS NOT NULL, created_at, updated_at";
 
 impl Tx<Tenant> {
@@ -77,14 +401,18 @@ impl Tx<Tenant> {
     pub async fn create_solo_project(
         &mut self,
         name: &str,
+        goal: &str,
         agents: &[SoloAgent],
     ) -> Result<ProjectId> {
         let id = ProjectId::new();
-        sqlx::query("INSERT INTO projects (id, creator_id, name) VALUES ($1, app_user_id(), $2)")
-            .bind(id.0)
-            .bind(name)
-            .execute(self.conn())
-            .await?;
+        sqlx::query(
+            "INSERT INTO projects (id, creator_id, name, goal) VALUES ($1, app_user_id(), $2, $3)",
+        )
+        .bind(id.0)
+        .bind(name)
+        .bind(goal)
+        .execute(self.conn())
+        .await?;
         sqlx::query(
             "INSERT INTO project_members (project_id, user_id, role) VALUES ($1, app_user_id(), 'creator')",
         )
@@ -223,8 +551,12 @@ impl Tx<Tenant> {
         Ok(())
     }
 
-    /// 看得到、进行中、没共享过的单人项目才能改：看不到的 NotFound，共享过的 Conflict。
+    /// 看得到、进行中、没共享过的单人项目才能改：看不到的 NotFound，共享过的 Conflict。先拿项目锁（D4）：不然 worker
+    /// 在锁里数 agent、接受邀请的同时，租户还能往里加 agent，超过上限。锁之前先看一眼，别人的项目不去锁它；锁到以后
+    /// 再读一遍（这期间可能有人加入、变成共享的了）。
     async fn writable_solo(&mut self, id: ProjectId) -> Result<()> {
+        self.own_project(id).await?;
+        self.lock_project(id).await?;
         let p = self.own_project(id).await?;
         if p.status != ProjectStatus::Active {
             return Err(Error::NotFound);
