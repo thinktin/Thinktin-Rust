@@ -191,7 +191,7 @@ public enum HomePlaceholder: Hashable, Sendable {
     case offlineWithoutCache
     /// 联网拉到了，账号里还没有 Botin（第一次登录就是这样）：“还没有 Botin”和“新建 Botin”按钮。
     case noBotins
-    /// 有 Botin，但在这台设备上都隐藏了（参考 113）：“所有 Botin 都已隐藏”和“显示已隐藏的 Botin”。
+    /// 有 Botin，但在这台设备上都隐藏了（参考 113）：“Botin 都藏起来了”和“查看藏起来的 Botin”。
     case allHidden
 }
 

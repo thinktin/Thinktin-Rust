@@ -104,6 +104,11 @@ xcrun simctl spawn "$udid" defaults write com.apple.Preferences DidShowContinuou
   >/dev/null 2>&1 || true
 xcrun simctl spawn "$udid" defaults write com.apple.Preferences DidShowGestureKeyboardIntroduction -bool true \
   >/dev/null 2>&1 || true
+# 键盘开机时读这几项，开着机写进去不生效（2026-11-05 那一轮第一张有键盘的 09-search-light 上还是盖着介绍）：
+# 写完重启一次模拟器。
+xcrun simctl shutdown "$udid" >/dev/null 2>&1 || true
+xcrun simctl boot "$udid"
+xcrun simctl bootstatus "$udid" -b
 
 dd="target/screenshots-derived-data"
 xcodebuild -project apps/apple/Thinktin.xcodeproj -scheme Thinktin -configuration Debug \

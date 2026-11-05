@@ -124,7 +124,7 @@
 | 消息气泡、自画卡片 | 约 20 | `RoundedRectangle(cornerRadius: 20, style: .continuous)`；`Metrics.Radius.card` 16 → 20 |
 | 输入框 | 胶囊；带引用时卡片圆角约 28 | `.glassEffect(in: .capsule)` / `RoundedRectangle(cornerRadius: 28)`；`Metrics.Radius.input` 已删（2026-11-05） |
 | 导航栏圆按钮 | 约 44 | 工具栏系统给，不自己设尺寸 |
-| 实例头像 | 列表 48、置顶 80、资料页 120、编辑页 100、搜索结果 40、标题胶囊 24 | 新组件 `InstanceAvatar(_:appearance:size:badge:)`（形状 + 颜色见 4.4.4）。首页的行照参考 01、119 量出来是 44（`Metrics.Avatar.list` 2026-11-05 改成 44），资料页量出来是 80（C 线） |
+| 实例头像 | 列表 48、置顶 80、资料页 120、编辑页 100、搜索结果 40、标题胶囊 24 | 新组件 `InstanceAvatar(_:appearance:size:badge:)`（形状 + 颜色见 4.4.4）。首页的行照参考 01、119 量出来是 44（`Metrics.Avatar.list` 2026-11-05 改成 44），资料页量出来是 80（C 线）。搜索结果照参考 78、80 量出来和首页的行一样是 44（2026-11-05 改用 `Metrics.Avatar.list`，`search` 40 留给选主 Botin、收件箱的图标）；首页左上的账号头像 36，放在 44pt 的玻璃圆里（`Metrics.Avatar.account`，参考 01、119） |
 | 应用 / agent 图标方块 | 40，圆角约 10 | `Metrics.Radius.control`（10）保留 |
 | 左右边距 | 16–20 | `List` 系统边距；自画内容用 `Metrics.Spacing.m` |
 
@@ -378,7 +378,8 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
     还是“这台设备上还没有保存的 Botin”（`.offlineWithoutCache`）。第一次登录不弹引导（12.17），看到的就是这个空状态（用户 2026-11-05
     定的“首次登录首页是空的”；新用户登录不再进 `.onboarding`，换新机时只有有 Botin、没有 key 的账号才弹，引导从设置里打开）。
     网络回来时实例列表没拉到过就补拉（`AppModel` 收到 `.reachable`），不会一直转圈。已做（2026-11-05）。
-  - 全部隐藏（113，第 2 轮）：“所有 Botin 都已隐藏” + `Button("显示已隐藏的 Botin")`（`.bordered`、胶囊）。
+  - 全部隐藏（113，第 2 轮）：“Botin 都藏起来了” + `Button("查看藏起来的 Botin")`（`.bordered`、胶囊）。文案是 ThinkTin 自己的
+    （2026-11-05 改；原来照参考的“所有 Bot 均已隐藏”“显示已隐藏的 Bot”只换了名词）。
   - 拉取失败：`ErrorBanner`，可重试。
   - 有运行在等你处理：行内第二行换成“N 个在等你处理”（现在抽屉里就有），角标用 `warning` 色。
   - 运行中：状态角标会呼吸（`StatusTone` 规则不变）。
@@ -407,8 +408,9 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   - 左滑（参考 110）：系统 `.swipeActions`，最右边红色“隐藏”，再是灰色“置顶”（`HomeInstanceMenu.swipeItems`）。
   - 置顶、隐藏只存这台设备（`InstancePreferencesStore`，`UserDefaults` 一个键，按实例 id、不分账号，和头像外观一样；6.10 A），
     互斥：隐藏时取消置顶。删了 Botin（资料页、首页长按删除、事件流说没了）时删记录。
-  - 都隐藏了（参考 113）：正中小的 `eye.slash` + 灰字“所有 Botin 都已隐藏” + 玻璃胶囊“显示已隐藏的 Botin”（比
-    `ContentUnavailableView` 小一号，照参考自己排）。部分隐藏时列表最底下一行灰字“已隐藏 N 个 Botin”（参考没有，不然找不到入口）。
+  - 都隐藏了（参考 113）：正中小的 `eye.slash` + 灰字“Botin 都藏起来了” + 玻璃胶囊“查看藏起来的 Botin”（比
+    `ContentUnavailableView` 小一号，照参考自己排；文案 2026-11-05 换成自己的，见下面还原度评审那条）。部分隐藏时列表最底下一行灰字
+    “已隐藏 N 个 Botin”（参考没有，不然找不到入口）。
   - 还没做：从对话返回时回到原来的滚动位置（要在模拟器上看系统是不是本来就保留）。
   - “等你处理”提示行（2026-11-05，四条 r2 线合进来以后补的）：有待审批或收件箱未读时列表最上面一个玻璃胶囊（`HomeAttentionRow`，
     ThinktinKit `HomeAttentionHint`）：“2 个审批在等你 · 3 条未读”，只有一样时只写那一样；图标用警告色（有审批是 `checkmark.shield`，
@@ -416,6 +418,21 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
     进行中的运行不算（只在工作台菜单的副标题上）。参考里没有这一行，在模拟器上看一眼它和置顶大头像、第一行的间距。
 - **审查修正（2026-11-05）**：行的预览是最后一条时，暂停、归档等状态只画在头像角标上（头像对读屏隐藏），读屏在名字后面
   另外念状态（`HomeRowPreview.spokenState`）；置顶的格子同样。预览里引用回复只取正文（`MessageQuote.body`），不显示“你：> 引用…”。
+- **还原度评审修正（2026-11-05，截图 00、01、25、27 对参考 01、113、119、120）**
+  - 左上账号按钮：iOS 26 给非符号的标签（头像）套的是加了内边距的胶囊（约 56×44pt，里面一个 24pt 的头像），和右上 44pt 的“+”圆对不上。
+    现在这一项去掉工具栏共用的玻璃底（`hidesSharedGlassBackground`），按钮自己画 44pt 的玻璃圆（`glassBackground(in: Circle(),
+    interactive: true)`，iOS 17 / 18 是材质），里面 36pt 的 `AccountAvatar` 几乎填满（`Metrics.Avatar.account`，参考约 36–38pt），
+    和系统工具栏按钮一样不跟动态字体变大。macOS 照旧是工具栏里 24pt 的头像。
+  - 工作台的角标：View 的 `.badge(_:)` 在 iOS 26 的工具栏里不画，之前演示数据有 1 个审批、3 条未读，按钮上却没有数。现在角标加在
+    `ToolbarItem` 上（Glass.swift 的 `toolbarItemBadge`，iOS 26 / macOS 26 是 `ToolbarContent.badge(_:)`），数由首页 `body` 读好传给
+    `HomeToolbar`；按钮上的 `toolbarBadge` 只在旧系统上叠数。
+  - 底部搜索栏的占位字从“搜 Botin、任务、收件箱、计划、产出物”改成“搜索”/“Search”（`SearchText.prompt`）：原来的在约 270pt 宽的胶囊里
+    带省略号，参考是一个词；能搜什么由搜索时顶上的筛选胶囊说。
+  - 都隐藏了（参考 113）：`eye.slash` 从 `.title3`（约 26pt）缩到 `.body`（约 19pt），按钮的字从 17pt 改成 medium 的 `.subheadline`。
+    文案换成自己的：“Botin 都藏起来了”“查看藏起来的 Botin”（英文 “Your Botins are all tucked away” / “See Hidden Botins”；`HomeText`），
+    和“关于隐藏”的“随时放回来”一个口气，不再是参考的句子只换名词。
+  - 留着不改的（评审确认是 ThinkTin 的东西）：空状态的 `BrandLogo` 和大号橙色“新建 Botin”、橙色的“+”和工作台图标、`square.grid.2x2`、
+    “等你处理”提示行、预览的警告色和状态角标、首页第一行离按钮近约 12pt（系统 iOS 26 工具栏比参考自画的顶栏低，第一行的绝对位置一样）。
 
 #### 4.2.2 实例长按菜单（32、33、112）
 
@@ -461,7 +478,8 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 
 - **已做（2026-11-05，第 1 轮 A 线，对过参考 114、115、116）**：`HiddenInstancesScreen`，首页本地压栈（`navigationDestination(isPresented:)`，
   不加路由），标题“已隐藏的 Botin”（系统的 inline 标题；参考的标题在玻璃胶囊里，别的线都用系统标题，没照做），右上玻璃“?”。
-  plain 列表、行和首页一样高（44pt 头像 + `.body` 名字），右边玻璃小胶囊“取消隐藏”（`smallCapsuleButton()`），点了带动画回到首页；
+  plain 列表、行和首页一样高（44pt 头像 + `.body` 名字），右边玻璃小胶囊“取消隐藏”（`smallCapsuleButton()`；2026-11-05 改成常规大小，
+  见下面还原度评审那条），点了带动画回到首页；
   点头像和名字进对话（`Router.open`，“首页 → 对话”）。都取消了以后正中一行灰字“没有隐藏的 Botin”（参考 116，没有图标）。
   “?”弹 `HidingHelpSheet`（large，左上 ×，一组分组卡片三行：照常干活 / 只是首页不显示、只在这台设备上 / 随时放回来，
   文案 `HomeText.hidingFacts` 是 ThinkTin 自己的，写的是真实行为）。
@@ -469,12 +487,17 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   `router.open`：以前是本地 `navigationDestination(isPresented:)`，`Router` 看不见它，推送、深链、`popToRoot()` 换掉主栈时它还留在
   栈里（返回落到已隐藏页，首页的刷新在别的页面上跑）。标题照参考 114 放进玻璃胶囊（`capsuleNavigationTitle`：iOS 26 玻璃、
   旧系统材质，工具栏的共用玻璃底去掉免得两层）。
+- **还原度评审修正（2026-11-05，截图 26 对参考 114）**：“取消隐藏”从小号胶囊（约 27pt 高、15pt 字）改成常规大小的玻璃胶囊（约 34pt 高），
+  字是 medium 的 `.footnote`（约 13pt），和参考一样胶囊高、字小。胶囊里的标题（`capsuleNavigationTitle`）从 `.headline`（semibold）
+  改成 medium 的 `.body`，系统标题（`inlineNavigationTitle`）不变。橙色的“?”和“取消隐藏”（强调色）、头像的状态角标、
+  标题“已隐藏的 Botin”照旧。
 
 #### 4.2.4 首页搜索（78、79、80）
 
 - **布局**：点底部搜索栏后原地进入搜索：导航栏收起；顶上一排横向筛选胶囊（全部、消息、实例、收件箱、计划、产出物）；
   底部搜索框聚焦，右边系统给的玻璃 ×。空查询 + “全部”时直接列出实例（行尾一个灰色类型标签）；空查询 + 某一类时中间一个小放大镜 + “搜索消息”；
-  有结果时 plain 列表：40pt 头像 + 粗体“你发给 X” / “X 发给你” + 右边日期（本周内写星期几）+ 下面一行灰色摘录。
+  有结果时 plain 列表：40pt 头像（2026-11-05 照参考 78、80 量出来改成 44，和首页的行一样）+ 粗体“你发给 X” / “X 发给你” + 右边日期
+  （本周内写星期几）+ 下面一行灰色摘录。
 - **原生**：`.searchable(text:isPresented:)` + `DefaultToolbarItem(kind: .search, placement: .bottomBar)`；搜索时
   `.toolbarVisibility(.hidden, for: .navigationBar)`（iOS 18；iOS 17 用 `.toolbar(.hidden, for: .navigationBar)`）；筛选用 `FilterChipBar`，放 `.safeAreaInset(edge: .top)`；空状态
   `ContentUnavailableView`；没结果 `ContentUnavailableView.search(text:)`；`.scrollDismissesKeyboard(.immediately)`。
@@ -503,6 +526,18 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   摘要那条带 AI 标识）。一行 `SearchResultRow`：40pt 头像（Botin、消息）或种类图标方块，粗体标题，右边时间（今天写时刻、昨天、一周内
   写星期几、更早写日期，`SearchText.date`），一行灰色摘录。没结果是 `ContentUnavailableView`，离线时说只搜了缓存。压栈的 `SearchScreen`
   内容一样。回复正文（缓存的事件）还没搜。
+- **还原度评审修正（2026-11-05，截图 09 对参考 78、80）**
+  - 筛选胶囊（`FilterChipBar`，计划、产出物、保险箱、连接目录也用它）：字从 17pt 改成 medium 的 `.footnote`（参考 22、36、78 量出来约
+    13pt），两个字的胶囊从约 58pt 窄到约 52pt，首页搜索的六个胶囊一屏放得下；没选中的字是正文色（`Theme.ink`），只有选中的那个是强调色的
+    `.glassProminent`，以前没选中的字也是橙色，选中的不显眼。搜索里胶囊左右留 20pt（参考第一个胶囊离左边约 20pt），别处照旧。
+  - 一行和首页的行一样排（`SearchLayout`）：44pt 头像（或同样大的种类图标）离左边 22pt、文字从约 82pt 起、右边的种类标签 / 日期离右边
+    22pt、`.footnote`（以前 `.subheadline`），上下各 18pt，一行约 80pt（参考 80 量出来约 81pt）。“还有 N 条”“只搜了缓存”的灰字左右对齐到
+    同一条边。
+  - 占位字改成“搜索”（见 4.2.1 的还原度评审那条）。
+  - 截图脚本：09-search 浅色那张被系统的“滑动输入”介绍盖住了键盘（深色那张没有，是整轮第一次弹键盘才出）。`defaults write` 是开着机写的，
+    键盘没读到；`tools/apple/screenshots.sh` 现在写完重启一次模拟器（`shutdown` → `boot` → `bootstatus -b`）。
+  - 留着不改的：键盘弹着、搜索栏和 × 贴着键盘（iOS 26 系统的，参考没键盘是因为镜像拍不到）；选中的胶囊是橙色 `glassProminent`（参考是白底黑字）；
+    胶囊的种类是 6.24 A 定的。
 
 ### 4.3 对话
 

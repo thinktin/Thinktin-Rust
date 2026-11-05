@@ -677,6 +677,28 @@
     （挂的还是那 5 个要 App 包的：Info.plist、URL scheme、隐私清单和多语言资源、小组件 appex、`~/Library` 路径）；
     `swift format -i -r apps/apple` 没改东西，`swift format lint --strict -r apps/apple` 零条；`bash -n tools/apple/screenshots.sh` 过。
     macOS CI、截图都还没跑。
+- 首页这一组的还原度评审修正（2026-11-05，session_01GuCp3KRgqaK6Kzynw6udRn；截图 00、01、09、25、26、27 对参考 01、78、80、113、114、
+  119、120，评审意见逐条对过两边的截图；规范 4.2.1、4.2.3、4.2.4 各加了一条“还原度评审修正”）：
+  - 左上账号按钮是 44pt 的玻璃圆、36pt 头像几乎填满（`Metrics.Avatar.account`）：这一项 `hidesSharedGlassBackground()`，按钮自己
+    `glassBackground(in: Circle(), interactive: true)`，`.dynamicTypeSize(.large)` 不跟动态字体变大。以前 iOS 26 给头像这种非符号标签套
+    约 56×44pt 的胶囊。macOS 不变。
+  - 工作台角标在 iOS 26 上画出来：Glass.swift 新的 `ToolbarContent.toolbarItemBadge(_:)`（iOS 26 / macOS 26 是 `ToolbarContent.badge(_:)`，
+    uicheck 桩照文档补了），加在 `HomeToolbar` 的 `ToolbarItem` 上，数由 `HomeContent.body` 读好传进去；View 的 `toolbarBadge` 在 26 上
+    原样返回，只在旧系统叠数。
+  - 搜索占位字“搜索”/“Search”（`SearchText.prompt`，加了测试）。
+  - 都隐藏了：`eye.slash` 用 `.body`，按钮字 medium `.subheadline`；**品牌**：文案换成自己的“Botin 都藏起来了”“查看藏起来的 Botin”
+    （原来是参考的句子换名词）。已隐藏页：“取消隐藏”常规大小的玻璃胶囊 + medium `.footnote`；胶囊标题 medium `.body`（`InlineTitleText`
+    多了 `font` 参数，只有胶囊标题传）。
+  - 搜索：`FilterChipBar` 的字 medium `.footnote`、没选中的字 `Theme.ink`（所有用它的页面都跟着变：计划、产出物、保险箱、连接目录、
+    规则写法）；搜索里胶囊左右 20pt；结果一行照首页排（`SearchLayout`：44pt 头像、左右 22pt、上下 18pt，右边小字 `.footnote`）。
+    `Metrics.Avatar.search`（40）留给选主 Botin、收件箱，注释改了。
+  - 截图脚本：键盘的偏好写完重启一次模拟器（09-search 浅色那张被滑动输入的介绍盖住了）。
+  - 没照做的：“显示已隐藏”按钮没加 2pt 的上下内边距凑 36pt（系统按钮的默认高度，差 1–2pt）；连接目录的胶囊左右留白没跟着改成 20pt
+    （评审只说了搜索；参考 36 也是约 20pt，那一页的行的左边距要一起看）。
+  - 这一份的 Linux 检查（2026-11-05，这次提交上）：ThinktinKit `swift build --build-tests` + `swift test` 1170 个全过；uicheck UIKit、
+    AppKit 都编过；`run.sh test` 的 ThinktinUITests 168 个全过；App 的 `ThinktinTests` 21 个过 16 个（挂的还是那 5 个要 App 包的）；
+    `swift format lint --strict -r apps/apple` 零条；`bash -n tools/apple/screenshots.sh` 过。macOS CI、截图没跑：要它们验的是
+    `ToolbarContent.badge(_:)`（真 SDK 上的签名）、账号按钮的玻璃圆、胶囊的字号和 09-search 浅色那张没有介绍（见“下一步”第 1、2 条）。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、
@@ -710,8 +732,9 @@ TestFlight：28（Botin 改名、空状态，旧表单）、30（新建页重做
    `git push origin HEAD:ci/ios-ui-redesign` 就跑（2026-11-05 加的 `ci/**` 触发）。这次新加的要它验：`onSubpageRequest` 里
    `Task { @MainActor in }` 的捕获、设置根页和登录设备的 `navigationDestination(item:)` 跟 `NavigationStack(path:)` 一起用、
    `AppSmokeTests` 的 `OpenScreen` 三条在模拟器上（会写 `UserDefaults.standard`，测完清掉）。以前就列着的、只有它验得出来的：
-   Glass.swift 的 `if #available` 分支；首页工具栏（`#if os(iOS)` 里的 `ToolbarContent`、菜单项的两行 `Text`、`toolbarBadge` 在 iOS 26 上的
-   `.badge`、`BottomBarSearchItem`）；`SheetStack` 里第二层 `.sheet(item:)`；`AgentsDestination` 的 `.adopt(agentID: nil)` 模式；启动屏
+   Glass.swift 的 `if #available` 分支；首页工具栏（`#if os(iOS)` 里的 `ToolbarContent`、菜单项的两行 `Text`、`toolbarItemBadge` 用的
+   `ToolbarContent.badge(_:)`（桩是照文档补的，真 SDK 上要编得过、角标要画在工作台的玻璃圆上）、账号按钮去掉共用玻璃底后自己画的 44pt 圆、
+   `BottomBarSearchItem`）；`SheetStack` 里第二层 `.sheet(item:)`；`AgentsDestination` 的 `.adopt(agentID: nil)` 模式；启动屏
    （`UILaunchScreen` 的两个键、`LaunchLogo` 的 PDF 和颜色集能不能被资源编译器收下，Info.plist 测试查键）；`DesignTokenTests` 在模拟器上
    顺着 `#filePath` 读仓库里的颜色集（模拟器进程读宿主机的文件，按说可以，没验过）；App 测试里 `OpenScreen` 那三条。
 2. 出一次截图对照（规范 7.6 第 3 条）：`git push -f origin HEAD:ios-screenshots`（或 Actions 里手动跑 iOS screenshots），产物 69 张，
@@ -808,8 +831,10 @@ TestFlight：28（Botin 改名、空状态，旧表单）、30（新建页重做
   开着、闲着的实例写“随时可以接任务”、不画角标（实例的“运行中”和运行的“运行中”分不清）。
 - 首页：iOS 17 / 18 上底部条只有工作台菜单（`BottomBarSearchItem` 不放东西），搜索栏照旧在导航栏下面。iOS 26 上
   `BottomBarSearchItem` 的搜索栏从代码激活（`open(.search)`、深链、截图 09-search）还没在真 SDK 上验过，见“已完成”审查修正那条。
-  账号头像用 `AccountAvatar`（中性灰的首字圆，24pt，放在工具栏的玻璃圆里；审查修正前是按昵称取色的 `InstanceAvatar`），还没拉到用户时是
-  `person.crop.circle`。设置根页、账号页的账号行也用它（`SettingsProfileRow`）。
+  账号头像用 `AccountAvatar`（中性灰的首字圆；审查修正前是按昵称取色的 `InstanceAvatar`）：iOS 上是 36pt，放在按钮自己画的 44pt 玻璃圆里
+  （工具栏这一项去掉了共用的玻璃底，不然 iOS 26 套成胶囊），还没拉到用户时是人像；macOS 上 24pt、没拉到用户时是 `person.crop.circle`。
+  设置根页、账号页的账号行也用它（`SettingsProfileRow`）。工具栏项的角标要加在 `ToolbarItem` 上（`toolbarItemBadge`），
+  View 的 `.badge` 在 iOS 26 的工具栏里不画。
 - plain 列表的行要加 `themedPlainRow()`，分组列表的行加 `themedRow()`；只加 `themedGroupedBackground()` 行底还是系统的。新任务没有首页入口了（规范 3.2：引导、快捷指令用 `.newTask`）。
 - `ConversationText` 里旧首页的三句文案删了；`Greeting`（问候语）还在 `Screens/Welcome/`，登录、欢迎页用户自己设计，没动。
 - 截图参数：`THINKTIN_OPEN_SCREEN` 打开的是“首页第一行”，不是写死的 id：演示数据里写作助手 2 分钟前活跃、代码审查 10 分钟前，所以是

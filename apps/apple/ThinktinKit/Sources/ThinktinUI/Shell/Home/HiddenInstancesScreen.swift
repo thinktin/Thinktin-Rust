@@ -5,7 +5,7 @@ import ThinktinKit
 /// 深链换掉主栈时它跟着走），标题“已隐藏的 Botin”在玻璃胶囊里（参考 114，`capsuleNavigationTitle`），右上玻璃“?”弹说明（参考 115）。plain 列表、没有分隔线，每行头像 + 名字 + 右边玻璃小胶囊“取消隐藏”（点了这一行带动画
 /// 拿掉，回到首页的普通行）；点行进它的对话。都取消了以后正中一行灰字“没有隐藏的 Botin”。
 ///
-/// 入口：首页全部隐藏时空状态的“显示已隐藏的 Botin”，和列表最底下一行“已隐藏 N 个 Botin”（参考只有前一个）。
+/// 入口：首页全部隐藏时空状态的“查看藏起来的 Botin”，和列表最底下一行“已隐藏 N 个 Botin”（参考只有前一个）。
 struct HiddenInstancesScreen: View {
     let model: AppModel
 
@@ -61,6 +61,8 @@ struct HiddenInstancesScreen: View {
 
 /// 已隐藏页的一行（参考 114）：44pt 头像（和首页的行一样大，右下角状态角标）、名字（`.body`）、右边“取消隐藏”。
 /// 点名字那一块进对话；读屏把“取消隐藏”放进这一行的操作里。
+///
+/// “取消隐藏”是常规大小的玻璃胶囊（约 34pt 高），字是 medium 的 `.footnote`（参考 114：胶囊比小号的高，字小一号）。
 struct HiddenInstanceRow: View {
     let row: HomeRow
     var appearance: InstanceAppearance = .default
@@ -92,8 +94,9 @@ struct HiddenInstanceRow: View {
             .accessibilityLabel(Text(verbatim: row.instance.name))
             .accessibilityAction(named: Text(HomeText.unhide(language))) { unhide() }
             Button(HomeText.unhide(language)) { unhide() }
-                .typography(.subheadline)
-                .smallCapsuleButton()
+                .font(Typography.footnote.font.weight(.medium))
+                .glassButtonStyle()
+                .buttonBorderShape(.capsule)
         }
     }
 }

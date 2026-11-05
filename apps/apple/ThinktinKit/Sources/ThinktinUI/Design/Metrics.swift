@@ -15,9 +15,12 @@ public enum Metrics {
 
     /// 实例头像（`InstanceAvatar`）的直径，跟着动态字体缩放。
     public enum Avatar {
-        /// 导航栏里：标题胶囊、首页左上的账号按钮（放在工具栏的玻璃圆里）。
+        /// 导航栏里的标题胶囊（对话页、审批的头像 + 名字）。
         public static let title: CGFloat = 24
-        /// 搜索结果的行。
+        /// 首页左上的账号按钮：44pt 玻璃圆里几乎填满的头像（参考 01、119 量出来约 36–38pt）。
+        public static let account: CGFloat = 36
+        /// 小一号的列表行：选主 Botin、收件箱的图标、`InstanceAvatar` 的默认尺寸。搜索结果 2026-11-05 改成和首页一样的
+        /// `list`（参考 78 量出来是 44）。
         public static let search: CGFloat = 40
         /// 首页列表的行（参考 01、119 量出来约 44pt；规范 2.4 原来写 48）。
         public static let list: CGFloat = 44

@@ -104,7 +104,7 @@ struct InstancePreferencesStoreTests {
         }
     }
 
-    @Test("AppModel：首页按它分成置顶、普通、隐藏；都隐藏了是“所有 Botin 都已隐藏”；Botin 没了时删记录")
+    @Test("AppModel：首页按它分成置顶、普通、隐藏；都隐藏了是“Botin 都藏起来了”；Botin 没了时删记录")
     func appModel() async {
         let model = AppModel(client: makeShellMock(), defaults: nil)
         await model.start()

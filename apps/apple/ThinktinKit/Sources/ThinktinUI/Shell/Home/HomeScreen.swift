@@ -7,7 +7,7 @@ import ThinktinKit
 ///   （`AppModel.homeContent`）；点一行压栈进它的对话（`Router.open(.conversation(id))`，顺带记成当前实例）。
 /// - 左上账号头像 → 设置（sheet，`router.open(.settings)`）；右上“+” → 新建 Botin（sheet，`.adopt(agentID: nil)`）。
 ///   账号里还没有 Botin（第一次登录）时列表是“还没有 Botin”的空状态，按钮也打开新建表单。
-///   两个都是系统工具栏的玻璃圆按钮（规范 4.2.1），头像放在玻璃圆里面。
+///   两个都是 44pt 的玻璃圆（规范 4.2.1）：“+”是系统工具栏给的，头像那个自己画（`AccountButton`），头像几乎填满。
 /// - 底部：左边工作台菜单（`WorkbenchMenu`），右边搜索栏（iOS 26 在底部条里，旧系统在导航栈的导航栏下面）。
 ///   搜索栏激活时列表换成 Search 目录的 `SearchResultsView`（参考 78–80：顶上筛选胶囊，没输入时列出 Botin，结果是
 ///   “谁发给谁”的行），iOS 26 上同时藏起导航栏；`router.searchRequest` 变了（`open(.search)`、深链）就激活它。
@@ -51,7 +51,7 @@ private struct HomeContent: View {
         .themedGroupedBackground()
         .searchable(text: $search.query, isPresented: $isSearchPresented, prompt: Text(SearchText.prompt(language)))
         .hidesNavigationBarWhileSearching(isSearchPresented)
-        .toolbar { HomeToolbar(model: model, language: language) }
+        .toolbar { HomeToolbar(model: model, workbenchBadge: model.badges.workbenchTotal, language: language) }
         #if os(iOS)
             .toolbarTitleDisplayMode(.inline)
         #else
@@ -101,8 +101,12 @@ private struct HomeContent: View {
 }
 
 /// 首页的工具栏：iOS 左上账号、右上“+”、底部工作台和搜索栏；macOS 左边账号、右边工作台和“+”。
+///
+/// 工作台的角标加在 `ToolbarItem` 上（`toolbarItemBadge`，iOS 26 的工具栏只画项上的角标），数由首页的 `body` 读好传进来，
+/// 角标跟着 `model.badges` 变。
 private struct HomeToolbar: ToolbarContent {
     let model: AppModel
+    let workbenchBadge: Int
     let language: DisplayLanguage
 
     var body: some ToolbarContent {
@@ -110,12 +114,15 @@ private struct HomeToolbar: ToolbarContent {
             ToolbarItem(placement: .topBarLeading) {
                 AccountButton(model: model)
             }
+            // 玻璃圆是 `AccountButton` 自己画的，不要工具栏再套一层胶囊。
+            .hidesSharedGlassBackground()
             ToolbarItem(placement: .topBarTrailing) {
                 adoptButton
             }
             ToolbarItem(placement: .bottomBar) {
                 WorkbenchMenu(model: model)
             }
+            .toolbarItemBadge(workbenchBadge)
             GlassToolbarSpacer(.fixed, placement: .bottomBar)
             BottomBarSearchItem()
         #else
@@ -125,6 +132,7 @@ private struct HomeToolbar: ToolbarContent {
             ToolbarItem(placement: .primaryAction) {
                 WorkbenchMenu(model: model)
             }
+            .toolbarItemBadge(workbenchBadge)
             ToolbarItem(placement: .primaryAction) {
                 adoptButton
             }
@@ -141,8 +149,13 @@ private struct HomeToolbar: ToolbarContent {
     }
 }
 
-/// 左上的账号头像（昵称的第一个字），点了弹出设置。账号还没拉到时是系统的人像图标。iOS 26 外面是工具栏的玻璃圆
-/// （和右上的“+”一样），头像用导航栏里的尺寸（`Metrics.Avatar.title`）放在里面。
+/// 左上的账号头像（昵称的第一个字），点了弹出设置。和设置里的账号行一样是中性灰的首字头像（不是 Botin 那种彩色的），
+/// 账号还没拉到时是人像。
+///
+/// iOS：44pt 的玻璃圆，36pt 的头像几乎填满（`Metrics.Avatar.account`，参考 01、119），和右上的“+”一样大。玻璃圆自己画
+/// （`glassBackground(in: Circle())`，iOS 17 / 18 是材质）：iOS 26 给非符号的标签套的是加了内边距的胶囊（约 56×44pt），
+/// 所以 `HomeToolbar` 去掉了这一项共用的玻璃底。和系统工具栏的按钮一样不跟动态字体变大。
+/// macOS：工具栏里一个导航栏尺寸的头像（`Metrics.Avatar.title`）。
 private struct AccountButton: View {
     let model: AppModel
 
@@ -153,13 +166,20 @@ private struct AccountButton: View {
         Button {
             model.router.open(.settings)
         } label: {
-            if name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                Image(systemName: "person.crop.circle")
-                    .accessibilityHidden(true)
-            } else {
-                // 和设置里的账号行一样是中性灰的首字头像（不是 Botin 那种彩色的）。
-                AccountAvatar(name, size: Metrics.Avatar.title)
-            }
+            #if os(iOS)
+                AccountAvatar(name, size: Metrics.Avatar.account)
+                    .frame(width: Metrics.minTapTarget, height: Metrics.minTapTarget)
+                    .glassBackground(in: Circle(), interactive: true)
+                    .contentShape(Circle())
+                    .dynamicTypeSize(.large)
+            #else
+                if name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Image(systemName: "person.crop.circle")
+                        .accessibilityHidden(true)
+                } else {
+                    AccountAvatar(name, size: Metrics.Avatar.title)
+                }
+            #endif
         }
         .accessibilityLabel(Text(AppRoute.settings.title(language)))
         .accessibilityValue(Text(verbatim: name))
@@ -342,8 +362,9 @@ struct HomeInstanceList: View {
     }
 }
 
-/// 都隐藏了（参考 113）：正中一个小的 `eye.slash`、一行灰字“所有 Botin 都已隐藏”，下面玻璃胶囊“显示已隐藏的 Botin”。
-/// 参考的图标和字都比 `ContentUnavailableView` 的小一号，这里照参考自己排。
+/// 都隐藏了（参考 113）：正中一个小的 `eye.slash`（`.body` 大小，约 19pt）、一行灰字“Botin 都藏起来了”，下面玻璃胶囊
+/// “查看藏起来的 Botin”（medium 的 `.subheadline`，比系统按钮的字小一号）。参考的图标和字都比 `ContentUnavailableView`
+/// 的小一号，这里照参考自己排；文案是 ThinkTin 自己的（`HomeText`）。
 struct HomeAllHiddenView: View {
     let showHidden: @MainActor () -> Void
 
@@ -352,7 +373,7 @@ struct HomeAllHiddenView: View {
     var body: some View {
         VStack(spacing: Metrics.Spacing.s) {
             Image(systemName: "eye.slash")
-                .font(Typography.title3.font)
+                .font(Typography.body.font)
                 .foregroundStyle(Theme.inkSecondary)
                 .accessibilityHidden(true)
             Text(verbatim: HomeText.allHiddenTitle(language))
@@ -360,6 +381,7 @@ struct HomeAllHiddenView: View {
                 .foregroundStyle(Theme.inkSecondary)
                 .multilineTextAlignment(.center)
             Button(HomeText.showHidden(language)) { showHidden() }
+                .font(Typography.subheadline.font.weight(.medium))
                 .glassButtonStyle()
                 .buttonBorderShape(.capsule)
                 .padding(.top, Metrics.Spacing.s)

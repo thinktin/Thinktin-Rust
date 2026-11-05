@@ -5,6 +5,9 @@ import ThinktinKit
 /// `.glass`（iOS 17 / 18 是 `.borderedProminent` / `.bordered`，见 Design/Glass.swift），外面包一层 `GlassGroup`。
 /// 换选中项时有系统的选择触感。
 ///
+/// 字是 medium 的 `.footnote`（参考 22、36、78 量出来约 13pt，两个字的胶囊约 52pt 宽，首页搜索的六个胶囊一屏放得下）；
+/// 没选中的字是正文色，只有选中的那个用强调色（参考里也只有选中的突出，没选中的字都是强调色时选中的不显眼）。
+///
 /// 用在计划和产出物的“按实例筛选”、产出物的类型、首页搜索的类型（第 1、2 轮由各线换掉 `PlansFilterChip`）。放在
 /// `List` 里时作为第一行，加 `.listRowBackground(Color.clear)` 和 `.listRowInsets(EdgeInsets())`。
 ///
@@ -86,6 +89,8 @@ public struct FilterChipBar<Value: Hashable>: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            .font(Typography.footnote.font.weight(.medium))
+            .foregroundStyle(isSelected ? Theme.onAccent : Theme.ink)
         }
         .glassButtonStyle(isSelected ? .prominent : .regular)
         .buttonBorderShape(.capsule)

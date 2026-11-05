@@ -112,6 +112,9 @@ public struct DefaultToolbarItem: ToolbarContent {
 @available(iOS 26.0, macOS 26.0, *)
 extension ToolbarContent {
     public func sharedBackgroundVisibility(_ visibility: Visibility) -> some ToolbarContent { self }
+    /// 工具栏项上的角标（View 的 `.badge(_:)` 在 iOS 26 的工具栏里不画）。
+    public func badge(_ count: Int) -> some ToolbarContent { self }
+    public func badge(_ label: Text?) -> some ToolbarContent { self }
 }
 
 // MARK: - 底部条（iOS 26、macOS 26）：和 safeAreaInset 一样占安全区，还会延伸滚动边缘效果

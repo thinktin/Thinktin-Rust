@@ -283,8 +283,9 @@ public enum SearchText {
         language == .chinese ? "还有 \(count) 条，换个更具体的词试试" : "\(count) more. Try a more specific search."
     }
 
+    /// 搜索栏的占位字：一个词，在首页底部约 270pt 宽的胶囊里不截断（参考 01、78）；能搜什么由筛选胶囊说。
     public static func prompt(_ language: DisplayLanguage) -> String {
-        language == .chinese ? "搜 Botin、任务、收件箱、计划、产出物" : "Search Botins, tasks, inbox, plans, files"
+        language == .chinese ? "搜索" : "Search"
     }
 
     public static func hint(_ language: DisplayLanguage) -> String {

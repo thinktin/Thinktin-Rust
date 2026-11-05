@@ -246,7 +246,8 @@ public struct GlassToolbarSpacer: ToolbarContent {
 
 extension ToolbarContent {
     /// 不要 iOS 26 工具栏项共用的玻璃底（自己画了完整的底、不要外面再套一圈玻璃的东西）；旧系统本来就没有，原样。
-    /// 首页左上的账号头像不用它：规范 4.2.1 要的是玻璃圆里放头像。
+    /// 标题胶囊（`capsuleNavigationTitle`）和首页左上的账号按钮用它：iOS 26 给非符号的标签（头像）套的是加了内边距的胶囊
+    /// （约 56×44pt），和旁边的玻璃圆对不上，所以账号按钮去掉共用的底，自己画 44pt 的玻璃圆（`glassBackground(in: Circle())`）。
     public func hidesSharedGlassBackground() -> some ToolbarContent {
         if #available(iOS 26.0, macOS 26.0, *) {
             return sharedBackgroundVisibility(.hidden)
@@ -254,15 +255,26 @@ extension ToolbarContent {
             return self
         }
     }
+
+    /// 工具栏项上的角标（首页左下的工作台菜单）：iOS 26 用系统的 `ToolbarContent.badge(_:)`，加在 `ToolbarItem` 上
+    /// （View 的 `.badge(_:)` 在 iOS 26 的工具栏里不画）。0 不显示。旧系统原样：项里的按钮自己加 `toolbarBadge(_:)`，
+    /// 两个一起用。
+    public func toolbarItemBadge(_ count: Int) -> some ToolbarContent {
+        if #available(iOS 26.0, macOS 26.0, *) {
+            return badge(count)
+        } else {
+            return self
+        }
+    }
 }
 
 extension View {
-    /// 工具栏按钮上的角标（首页左下的工作台菜单）：iOS 26 用系统的 `.badge(_:)`；旧系统的工具栏不画按钮的角标，
-    /// 在按钮右上角叠一个强调色的小数字。0 不显示。读屏把数字当按钮的值念（`ToolbarBadgeText.accessibilityValue`），
-    /// 所以按钮的标签里别再写这个数。
+    /// 旧系统工具栏按钮上的角标：iOS 17 / 18、macOS 14 / 15 的工具栏不画按钮的角标，在按钮右上角叠一个强调色的小数字，
+    /// 读屏把数字当按钮的值念（`ToolbarBadgeText.accessibilityValue`），所以按钮的标签里别再写这个数。0 不显示。
+    /// iOS 26、macOS 26 原样：角标由外面 `ToolbarItem` 上的 `toolbarItemBadge(_:)` 画，两个一起用。
     public func toolbarBadge(_ count: Int) -> some View {
         if #available(iOS 26.0, macOS 26.0, *) {
-            return badge(count)
+            return self
         } else {
             return modifier(ToolbarBadgeOverlay(count: count))
         }
@@ -400,6 +412,7 @@ extension View {
                 }
                 .toolbarBadge(3)
             }
+            .toolbarItemBadge(3)
             GlassToolbarSpacer(.fixed, placement: .primaryAction)
             ToolbarItem(placement: .primaryAction) {
                 Menu {

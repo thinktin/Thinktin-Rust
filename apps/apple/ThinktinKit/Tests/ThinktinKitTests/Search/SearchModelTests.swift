@@ -119,6 +119,9 @@ struct SearchModelTests {
         #expect(SearchText.filterTitle(nil, language: .chinese) == "全部")
         #expect(SearchText.filterTitle(.run, language: .chinese) == "消息")
         #expect(SearchText.searchKind(.run, language: .chinese) == "搜索消息")
+        // 占位字是一个词，在首页底部的胶囊里不截断（参考 01、78）；能搜什么由筛选胶囊说。
+        #expect(SearchText.prompt(.chinese) == "搜索")
+        #expect(SearchText.prompt(.english) == "Search")
     }
 
     @Test("消息的标题和右边的时间")

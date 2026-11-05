@@ -55,6 +55,7 @@ struct NativeControlsTests {
                         ToolbarItem(placement: .primaryAction) {
                             Button("工作台", systemImage: "square.grid.2x2") {}.toolbarBadge(3)
                         }
+                        .toolbarItemBadge(3)
                         GlassToolbarSpacer(.fixed, placement: .primaryAction)
                         ToolbarItem(placement: .primaryAction) {
                             Menu {
@@ -107,7 +108,12 @@ struct NativeControlsTests {
                     .toolbarTitleDisplayMode(.inline)
                     .toolbar {
                         ToolbarItem(placement: .topBarLeading) {
-                            Button("设置", systemImage: "person.crop.circle") {}
+                            Button {
+                            } label: {
+                                Text(verbatim: "张")
+                                    .frame(width: Metrics.minTapTarget, height: Metrics.minTapTarget)
+                                    .glassBackground(in: Circle(), interactive: true)
+                            }
                         }
                         .hidesSharedGlassBackground()
                         ToolbarItem(placement: .topBarTrailing) {
@@ -121,6 +127,7 @@ struct NativeControlsTests {
                             }
                             .toolbarBadge(2)
                         }
+                        .toolbarItemBadge(2)
                         GlassToolbarSpacer(.fixed, placement: .bottomBar)
                         BottomBarSearchItem()
                     }

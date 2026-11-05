@@ -101,10 +101,12 @@ Linux 上 `tools/client-core/build-linux-swift.sh target/linux`（本机 `libcli
   `themedPlainRow()`（行底透明）：不加的话系统给 plain 列表的行铺 `systemBackground`（深色纯黑、浅色纯白），和 `paper` 不一样。
 - 字体：全部系统字体（SF），标题不再用衬线；全部用 Dynamic Type 的语义字号，导航标题由系统画。
 - 圆角：消息气泡、自己画的卡片 20（`Metrics.Radius.card`），带引用的输入卡片 28，小控件 10；分组卡片、导航栏按钮由系统给。
-  实例头像的直径在 `Metrics.Avatar`（首页的行 44、置顶 80、资料页量出来是 80、编辑页 100、搜索结果 40、导航栏里的标题胶囊和首页的账号按钮 24）。间距 4 的倍数。
+  实例头像的直径在 `Metrics.Avatar`（首页和搜索结果的行 44、置顶 80、资料页量出来是 80、编辑页 100、选主 Botin 和收件箱的图标 40、
+  首页左上 44pt 玻璃圆里的账号头像 36、导航栏里的标题胶囊 24）。间距 4 的倍数。
 - iOS 26 才有的接口（玻璃、关闭 / 确认按钮的角色、工具栏间隔、底部搜索栏、底部条、工具栏角标）和 iOS 18 的缩放转场只经过
   `ThinktinUI/Design/Glass.swift` 用（`glassButtonStyle`、`glassBackground`、`GlassGroup`、`floatingBar`、`CloseButton`、`ConfirmButton`、
-  `GlassToolbarSpacer`、`BottomBarSearchItem`、`toolbarBadge`、`zoomTransitionSource` 这些），那里带 iOS 17、macOS 14 的退路，页面里不写
+  `GlassToolbarSpacer`、`BottomBarSearchItem`、`toolbarItemBadge` + `toolbarBadge`（iOS 26 的角标加在 `ToolbarItem` 上，View 上的
+  `.badge` 在 iOS 26 的工具栏里不画）、`zoomTransitionSource` 这些），那里带 iOS 17、macOS 14 的退路，页面里不写
   `if #available`。`.toolbar { }` 里不能写 `if #available`（`ToolbarContentBuilder.buildLimitedAvailability` 要 iOS 17.5）。
 - 状态色只用于状态，不用于装饰。运行状态与颜色：排队 / 启动中 `inkSecondary`，运行中 `accent`，等待（审批 / 电脑 / key / 子任务）`warning`，
   成功 `success`，失败 `danger`，取消 `inkTertiary`；重试等待（`backoff`）和认不出的状态同排队。实例状态：运行中、启动中、创建中是会呼吸的点，

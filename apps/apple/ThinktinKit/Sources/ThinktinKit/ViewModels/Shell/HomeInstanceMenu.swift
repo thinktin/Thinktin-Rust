@@ -95,12 +95,13 @@ public enum HomeInstanceMenu {
 /// 首页置顶、隐藏、改名的字（参考 113–116 的版式，字是 ThinkTin 自己的）。
 extension HomeText {
     /// 全部隐藏时的空状态（参考 113）。
+    /// 都隐藏了的首页（参考 113 的版式，文案是 ThinkTin 自己的，和“关于隐藏”的“随时放回来”一个口气）。
     public static func allHiddenTitle(_ language: DisplayLanguage) -> String {
-        language == .chinese ? "所有 Botin 都已隐藏" : "All Botins are hidden"
+        language == .chinese ? "Botin 都藏起来了" : "Your Botins are all tucked away"
     }
 
     public static func showHidden(_ language: DisplayLanguage) -> String {
-        language == .chinese ? "显示已隐藏的 Botin" : "Show Hidden Botins"
+        language == .chinese ? "查看藏起来的 Botin" : "See Hidden Botins"
     }
 
     /// 首页列表最底下的入口（部分隐藏时；参考没有这一行，全部隐藏前找不到入口）。
