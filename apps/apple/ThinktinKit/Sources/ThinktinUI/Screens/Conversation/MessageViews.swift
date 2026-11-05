@@ -19,6 +19,8 @@ struct UserMessageView: View {
     var runID: RunID? = nil
     var onSendAgain: (@MainActor () -> Void)? = nil
     var onQuote: (@MainActor (String) -> Void)? = nil
+    /// 对话内查找的高亮（段：开头有引用块时先引用、再正文，`ConversationFindTarget.userMessage`）。
+    var highlight: ConversationFindHighlight? = nil
 
     @Environment(\.displayLanguage) private var language
     @State private var isExpanded = false
@@ -29,19 +31,22 @@ struct UserMessageView: View {
     var body: some View {
         let long = message.text.count > Self.collapseThreshold
         let parts = MessageQuote.split(message.text)
+        let bodySegment = parts.quote == nil ? 0 : 1
+        // 查找的“当前这一处”在这条里：折起来的先展开，免得高亮的字藏在后面。
+        let showsAll = isExpanded || highlight?.currentSegment != nil
         VStack(alignment: .trailing, spacing: Metrics.Spacing.xxs) {
             HStack(spacing: 0) {
                 Spacer(minLength: messageBubbleGutter)
                 VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
                     if let quote = parts.quote {
-                        QuotedBlock(quote: quote)
+                        QuotedBlock(quote: quote, highlight: highlight?.segment(0))
                     }
-                    Text(verbatim: parts.body)
+                    FindHighlighter.text(parts.body, highlight?.segment(bodySegment))
                         .typography(.body)
                         .foregroundStyle(Theme.ink)
-                        .lineLimit(long && !isExpanded ? 12 : nil)
+                        .lineLimit(long && !showsAll ? 12 : nil)
                         .fixedSize(horizontal: false, vertical: true)
-                    if long {
+                    if long && highlight?.currentSegment == nil {
                         Button {
                             isExpanded.toggle()
                         } label: {
@@ -87,6 +92,8 @@ struct UserMessageView: View {
 /// 用户消息里那一小块引用（引用回复发出去的 Markdown 引用块）：左边一道竖线、次要色的小字，最多 3 行。
 struct QuotedBlock: View {
     let quote: String
+    /// 对话内查找的高亮（“当前这一处”在引用里时不截断）。
+    var highlight: FindSegmentHighlight? = nil
 
     @Environment(\.displayLanguage) private var language
 
@@ -96,10 +103,10 @@ struct QuotedBlock: View {
                 .fill(Theme.inkTertiary)
                 .frame(width: 3)
                 .accessibilityHidden(true)
-            Text(verbatim: quote)
+            FindHighlighter.text(quote, highlight)
                 .typography(.footnote)
                 .foregroundStyle(Theme.inkSecondary)
-                .lineLimit(3)
+                .lineLimit(highlight?.current == nil ? 3 : nil)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .fixedSize(horizontal: false, vertical: true)
@@ -117,13 +124,15 @@ struct AssistantTextView: View {
     let blocks: [MarkdownBlockItem]
     let onReport: (ContentReportTarget) -> Void
     var onQuote: (@MainActor (String) -> Void)? = nil
+    /// 对话内查找的高亮（段见 `ConversationFindTarget.markdown`）。
+    var highlight: ConversationFindHighlight? = nil
 
     @Environment(\.displayLanguage) private var language
 
     var body: some View {
         VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
             HStack(spacing: 0) {
-                MarkdownView(blocks: blocks)
+                MarkdownView(blocks: blocks, highlight: highlight)
                     .padding(.horizontal, Metrics.Spacing.m)
                     .padding(.vertical, Metrics.Spacing.s)
                     .background(Theme.agentBubble, in: messageBubbleShape)

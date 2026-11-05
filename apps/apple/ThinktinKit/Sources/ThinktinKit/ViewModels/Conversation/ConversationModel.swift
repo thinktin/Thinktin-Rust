@@ -87,6 +87,11 @@ public final class ConversationModel {
     public internal(set) var isStopping = false
     public internal(set) var stopError: ClientError?
 
+    // MARK: 对话内查找（ConversationFind.swift）
+
+    /// 查找栏的状态（规范 4.3.3）：开着时输入框换成查找栏，时间线变了重新找。
+    public let find = ConversationFind()
+
     // MARK: 卡片上的操作（ConversationModel+Actions.swift）
 
     /// 正在决定的审批卡片（`ConversationItem.id`）。
@@ -651,6 +656,7 @@ public final class ConversationModel {
             }
         }
         for key in markdown.keys where !seen.contains(key) { markdown[key] = nil }
+        refreshFind()
     }
 }
 

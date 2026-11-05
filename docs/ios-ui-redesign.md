@@ -543,6 +543,16 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 - **要改**：纯客户端。在 `ConversationModel` 已加载的记录（任务、回复文字）里搜，再往上用 `cachedEventsBefore`
   （每个实例本机最多 2000 条）和 `olderRuns`；超出缓存的搜不到，要提示。查找状态放 `ViewModels/Conversation/ConversationFind.swift`，
   查找栏 `Screens/Conversation/ConversationFindBar.swift`。查找时模型标签、错误横幅先藏起来。第 2 轮。
+- **已做（第 2 轮 r2/conversation，2026-11-05）**：照参考 04、05。“…”菜单第一组 Botin 资料后面加“在对话中查找”（`magnifyingglass`，
+  `ConversationMenuItem.find`；只看本次过程、找不到 Botin 时没有）。点了输入框换成 `ConversationFindBar`：玻璃胶囊的查找框（放大镜、
+  占位“在对话中查找”、尾部“第 i 个，共 n 个”，没找到红字“第 0 个，共 0 个”）、上 / 下两个玻璃圆（没找到时灰）、“完成”玻璃胶囊；
+  查找框自动聚焦，回车和上箭头一样往前找，上下到头绕回，计数变了发读屏播报。找的是已读进来的用户消息、agent 回复、没有过程记录的
+  运行的结果（思考、工具调用、卡片不找），不分大小写、变音符号、全角半角；改字后跳到最新一处，新事件、往上翻时当前这一处不跳。
+  上面还能翻时查找栏上方多一个小胶囊“已加载的记录里没有，加载更早的再找”（参考没有）。高亮：所有匹配浅强调色底，当前这一处实心
+  强调色底白字；位置按画出来的字算（`InlineText.plainText`，即 `AttributedString(markdown:)` 的结果），每个 `Text` 是一段
+  （`MarkdownBlock.findSegments`），视图模型数的和界面画的一一对上；折起来的长消息、三行的引用块里有当前这一处时自动展开。
+  逻辑在 ThinktinKit 的 `ConversationFind.swift`（`ConversationModel.find`、`beginFind` / `setFindQuery` / `findPrevious` /
+  `findNext` / `endFind`，`render()` 时重新找）和 `MarkdownInline.swift`（Linux 上测试用的近似去标记）。
 
 #### 4.3.4 消息长按（6、90）
 

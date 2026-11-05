@@ -366,6 +366,8 @@ struct HistoryRecordView: View {
     let runID: RunID?
     let onReport: (ContentReportTarget) -> Void
     var onQuote: (@MainActor (String) -> Void)? = nil
+    /// 对话内查找的高亮（结果这一段）。
+    var highlight: ConversationFindHighlight? = nil
 
     @Environment(\.displayLanguage) private var language
 
@@ -379,7 +381,7 @@ struct HistoryRecordView: View {
                     .padding(.leading, Metrics.Spacing.xs)
                     .accessibilityAddTraits(.isHeader)
                 HStack(spacing: 0) {
-                    MarkdownView(blocks: MarkdownParser.parse(summary))
+                    MarkdownView(blocks: MarkdownParser.parse(summary), highlight: highlight)
                         .padding(.horizontal, Metrics.Spacing.m)
                         .padding(.vertical, Metrics.Spacing.s)
                         .background(Theme.agentBubble, in: messageBubbleShape)

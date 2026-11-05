@@ -9,6 +9,8 @@ import Foundation
 public enum ConversationMenuItem: Hashable, Sendable {
     /// 打开一个页面（Botin 资料、计划、新建计划、产出物、模型路由）。
     case open(AppRoute)
+    /// 在对话中查找（规范 4.3.3，`ConversationModel.beginFind()`）：输入框换成查找栏。
+    case find
     /// 停止正在跑的任务（`ConversationModel.stop()`）。
     case stop
 
@@ -16,6 +18,7 @@ public enum ConversationMenuItem: Hashable, Sendable {
     public func title(_ language: DisplayLanguage) -> String {
         switch self {
         case .open(let route): route.title(language)
+        case .find: ConversationText.findInConversation(language)
         case .stop: ConversationText.stopRun(language)
         }
     }
@@ -32,6 +35,7 @@ public enum ConversationMenuItem: Hashable, Sendable {
             case .modelRoutes: "cpu"
             default: "chevron.right"
             }
+        case .find: "magnifyingglass"
         case .stop: "stop.circle"
         }
     }
@@ -41,12 +45,13 @@ public enum ConversationMenuItem: Hashable, Sendable {
 }
 
 /// “…”菜单的分组（参考 03 是一组三项：查看资料、在聊天中查找、分享为模板；对到 ThinkTin 的功能）：
-/// 第一组 Botin 资料；第二组 计划、新建计划、产出物、模型路由；有任务在跑时最后一组“停止当前任务”。
-/// 对话内查找（4.3.3）是第 2 轮，做了以后放第一组 Botin 资料后面；“分享为模板”不做（6.21）。
+/// 第一组 Botin 资料、在对话中查找（4.3.3，`canFind`）；第二组 计划、新建计划、产出物、模型路由；有任务在跑时最后一组
+/// “停止当前任务”。“分享为模板”不做（6.21）。
 public enum ConversationMenu {
-    public static func sections(instanceID: InstanceID, canStop: Bool) -> [[ConversationMenuItem]] {
+    public static func sections(instanceID: InstanceID, canFind: Bool = true, canStop: Bool) -> [[ConversationMenuItem]]
+    {
         var sections: [[ConversationMenuItem]] = [
-            [.open(.instance(instanceID))],
+            [.open(.instance(instanceID))] + (canFind ? [.find] : []),
             [
                 .open(.plans(instanceID: instanceID)), .open(.newPlan(instanceID: instanceID)),
                 .open(.artifacts(instanceID: instanceID)), .open(.modelRoutes(instanceID)),
@@ -58,9 +63,11 @@ public enum ConversationMenu {
 }
 
 extension ConversationModel {
-    /// 这一页“…”菜单的分组（有任务在跑、没在停时才有“停止当前任务”）。
+    /// 这一页“…”菜单的分组（Botin 还在才能查找；有任务在跑、没在停时才有“停止当前任务”）。
     public var menuSections: [[ConversationMenuItem]] {
-        ConversationMenu.sections(instanceID: instanceID, canStop: activeRunID != nil && !isStopping && !isMissing)
+        ConversationMenu.sections(
+            instanceID: instanceID, canFind: !isMissing && focusRunID == nil,
+            canStop: activeRunID != nil && !isStopping && !isMissing)
     }
 }
 

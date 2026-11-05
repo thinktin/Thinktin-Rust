@@ -7,13 +7,17 @@ import ThinktinKit
 ///
 /// 不用系统的文字选择（`.textSelection`）：系统复制带不上“AI 生成”标识，复制走消息的菜单（`ConversationText.copyText`）。
 /// 链接点了怎么办由外面的 `conversationLinkHandling(_:)` 管（agent 写的链接只放行网址、邮件和 App 自己的深链）。
+///
+/// 对话内查找（规范 4.3.3）时 `highlight` 不为 nil：每块按自己的段（`MarkdownBlock.findSegments`）把找到的字标上底色。
 struct MarkdownView: View {
     let blocks: [MarkdownBlockItem]
+    var highlight: ConversationFindHighlight? = nil
 
     var body: some View {
+        let highlights = BlockFindHighlight.blocks(blocks, highlight)
         VStack(alignment: .leading, spacing: Metrics.Spacing.s) {
             ForEach(blocks) { item in
-                MarkdownBlockView(item: item).equatable()
+                MarkdownBlockView(item: item, highlight: highlights[item.id]).equatable()
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -23,40 +27,41 @@ struct MarkdownView: View {
 /// 一块。
 struct MarkdownBlockView: View, Equatable {
     let item: MarkdownBlockItem
+    var highlight: BlockFindHighlight? = nil
 
     nonisolated static func == (lhs: MarkdownBlockView, rhs: MarkdownBlockView) -> Bool {
-        lhs.item == rhs.item
+        lhs.item == rhs.item && lhs.highlight == rhs.highlight
     }
 
     var body: some View {
         switch item.block {
         case .heading(let level, let text):
-            InlineText(text: text)
+            InlineText(text: text, highlight: highlight?.segment(0))
                 .font(Self.headingFont(level))
                 .foregroundStyle(Theme.ink)
                 .padding(.top, level <= 2 ? Metrics.Spacing.xs : 0)
                 .accessibilityAddTraits(.isHeader)
         case .paragraph(let text):
-            InlineText(text: text)
+            InlineText(text: text, highlight: highlight?.segment(0))
                 .typography(.body)
                 .foregroundStyle(Theme.ink)
         case .list(let list):
-            MarkdownListView(list: list)
+            MarkdownListView(list: list, highlight: highlight)
         case .code(let language, let code, _):
-            CodeBlockView(language: language, code: code)
+            CodeBlockView(language: language, code: code, highlight: highlight?.segment(0))
         case .quote(let text):
             HStack(alignment: .top, spacing: Metrics.Spacing.s) {
                 Capsule()
                     .fill(Theme.hairline)
                     .frame(width: 3)
                     .accessibilityHidden(true)
-                InlineText(text: text)
+                InlineText(text: text, highlight: highlight?.segment(0))
                     .typography(.body)
                     .foregroundStyle(Theme.inkSecondary)
             }
             .fixedSize(horizontal: false, vertical: true)
         case .table(let table):
-            MarkdownTableView(table: table)
+            MarkdownTableView(table: table, highlight: highlight)
         case .rule:
             HairlineRule()
                 .padding(.vertical, Metrics.Spacing.xxs)
@@ -104,11 +109,13 @@ struct HairlineRule: View {
 }
 
 /// 一段带行内格式的文字（`**加粗**`、`*斜体*`、`` `代码` ``、`[链接](…)`，保留换行）。解析失败按原文显示。
+/// 对话内查找时把找到的字标上底色（`FindHighlighter`）。
 struct InlineText: View {
     let text: String
+    var highlight: FindSegmentHighlight? = nil
 
     var body: some View {
-        Text(Self.attributed(text))
+        Text(FindHighlighter.apply(Self.attributed(text), highlight))
             .fixedSize(horizontal: false, vertical: true)
             .tint(Theme.accent)
     }
@@ -118,21 +125,28 @@ struct InlineText: View {
             interpretedSyntax: .inlineOnlyPreservingWhitespace)
         return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
     }
+
+    /// 画出来的字（去掉了行内标记）：对话内查找按它算位置（`ConversationFind.plainText`）。
+    static func plainText(_ text: String) -> String {
+        String(attributed(text).characters)
+    }
 }
 
 /// 列表：每项前面是圆点、序号或勾选框，嵌套的往里缩。
 struct MarkdownListView: View {
     let list: MarkdownList
+    /// 一项一段。
+    var highlight: BlockFindHighlight? = nil
 
     @Environment(\.displayLanguage) private var language
 
     var body: some View {
         VStack(alignment: .leading, spacing: Metrics.Spacing.xs) {
-            ForEach(Array(list.items.enumerated()), id: \.offset) { _, item in
+            ForEach(Array(list.items.enumerated()), id: \.offset) { index, item in
                 HStack(alignment: .firstTextBaseline, spacing: Metrics.Spacing.xs) {
                     marker(item)
                         .frame(minWidth: Metrics.Spacing.m, alignment: .trailing)
-                    InlineText(text: item.text)
+                    InlineText(text: item.text, highlight: highlight?.segment(index))
                         .typography(.body)
                         .foregroundStyle(item.checked == true ? Theme.inkSecondary : Theme.ink)
                 }
@@ -170,6 +184,7 @@ struct MarkdownListView: View {
 struct CodeBlockView: View {
     let language: String?
     let code: String
+    var highlight: FindSegmentHighlight? = nil
 
     @Environment(\.displayLanguage) private var displayLanguage
     @Environment(\.displayScale) private var displayScale
@@ -200,7 +215,7 @@ struct CodeBlockView: View {
             }
             .padding(.horizontal, Metrics.Spacing.s)
             ScrollView(.horizontal, showsIndicators: false) {
-                Text(verbatim: code)
+                FindHighlighter.text(code, highlight)
                     .font(Typography.footnote.monospacedFont)
                     .foregroundStyle(Theme.ink)
                     .fixedSize(horizontal: true, vertical: true)
@@ -218,6 +233,8 @@ struct CodeBlockView: View {
 /// 表格：网格，横向可以滚；读屏按“表头 | 表头”一行一行读（`MarkdownTable.plainText`）。
 struct MarkdownTableView: View {
     let table: MarkdownTable
+    /// 先表头、再一行一行，每格一段（补齐到列数）。
+    var highlight: BlockFindHighlight? = nil
 
     @Environment(\.displayScale) private var displayScale
 
@@ -226,19 +243,22 @@ struct MarkdownTableView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             Grid(alignment: .leading, horizontalSpacing: Metrics.Spacing.m, verticalSpacing: Metrics.Spacing.xs) {
                 GridRow {
-                    ForEach(Array(cells(table.header).enumerated()), id: \.offset) { _, cell in
-                        InlineText(text: cell)
+                    ForEach(Array(cells(table.header).enumerated()), id: \.offset) { column, cell in
+                        InlineText(text: cell, highlight: highlight?.segment(column))
                             .font(Typography.subheadline.font.weight(.semibold))
                             .foregroundStyle(Theme.ink)
                     }
                 }
                 HairlineRule()
-                ForEach(Array(table.rows.enumerated()), id: \.offset) { _, row in
+                ForEach(Array(table.rows.enumerated()), id: \.offset) { rowIndex, row in
                     GridRow {
-                        ForEach(Array(cells(row).enumerated()), id: \.offset) { _, cell in
-                            InlineText(text: cell)
-                                .typography(.subheadline)
-                                .foregroundStyle(Theme.ink)
+                        ForEach(Array(cells(row).enumerated()), id: \.offset) { column, cell in
+                            InlineText(
+                                text: cell,
+                                highlight: highlight?.segment((rowIndex + 1) * table.columnCount + column)
+                            )
+                            .typography(.subheadline)
+                            .foregroundStyle(Theme.ink)
                         }
                     }
                 }

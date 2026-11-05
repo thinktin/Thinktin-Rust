@@ -122,9 +122,12 @@ struct ConversationTurnView: View {
                 itemView(item)
             }
             if let note = model.historyNote(for: turn) {
+                let summaryID = ConversationFindTarget.summaryID(turnID: turn.id)
                 HistoryRecordView(
                     note: note, summary: model.historySummary(for: turn), runID: turn.runID, onReport: onReport,
-                    onQuote: quote)
+                    onQuote: quote, highlight: model.find.highlight(for: summaryID)
+                )
+                .id(summaryID)
             }
             if let status {
                 itemView(status)
@@ -162,10 +165,11 @@ struct ConversationItemView: View {
         case .userMessage(let message):
             UserMessageView(
                 message: message, isAIGenerated: promptIsAIGenerated, runID: turn.runID, onSendAgain: sendAgain,
-                onQuote: quote)
+                onQuote: quote, highlight: model.find.highlight(for: item.id))
         case .assistantText(let text):
             AssistantTextView(
-                item: item, text: text, blocks: model.markdownBlocks(for: item), onReport: onReport, onQuote: quote)
+                item: item, text: text, blocks: model.markdownBlocks(for: item), onReport: onReport, onQuote: quote,
+                highlight: model.find.highlight(for: item.id))
         case .thought(let thought):
             ThoughtView(item: item, thought: thought, onReport: onReport, onQuote: quote)
         case .toolCall(let card):

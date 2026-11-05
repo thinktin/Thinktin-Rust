@@ -101,12 +101,12 @@ struct ConversationLayoutTests {
         #expect(MessageQuote.split("普通消息").body == "普通消息")
     }
 
-    @Test("“…”菜单：Botin 资料一组，计划、新建计划、产出物、模型路由一组，有任务在跑时最后是停止")
+    @Test("“…”菜单：Botin 资料、在对话中查找一组，计划、新建计划、产出物、模型路由一组，有任务在跑时最后是停止")
     func conversationMenu() {
         let idle = ConversationMenu.sections(instanceID: writer, canStop: false)
         #expect(
             idle == [
-                [.open(.instance(writer))],
+                [.open(.instance(writer)), .find],
                 [
                     .open(.plans(instanceID: writer)), .open(.newPlan(instanceID: writer)),
                     .open(.artifacts(instanceID: writer)), .open(.modelRoutes(writer)),
@@ -119,6 +119,12 @@ struct ConversationLayoutTests {
         #expect(ConversationMenuItem.open(.instance(writer)).systemImage == "person.crop.circle")
         #expect(ConversationMenuItem.stop.title(.chinese) == "停止当前任务")
         #expect(ConversationMenuItem.open(.artifacts(instanceID: writer)).systemImage == "folder")
+        #expect(ConversationMenuItem.find.title(.chinese) == "在对话中查找")
+        #expect(ConversationMenuItem.find.systemImage == "magnifyingglass")
+        #expect(
+            ConversationMenu.sections(instanceID: writer, canFind: false, canStop: false).first == [
+                .open(.instance(writer))
+            ])
         // 每一项的图标都是认得的（不是兜底的 chevron）。
         #expect(busy.flatMap { $0 }.allSatisfy { $0.systemImage != "chevron.right" })
     }
