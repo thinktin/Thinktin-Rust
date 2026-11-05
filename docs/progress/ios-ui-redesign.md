@@ -429,6 +429,24 @@
 - 第 1 轮 E 线·模型路由、关于（2026-11-05）：`ModelRoutesScreen` 换 insetGrouped `List`（`RouteSection` / `FallbackRows`，key 用系统
   `Picker(.menu)`，推荐模型是 `Menu` 里的行内 `Picker`，保存只在右上），`AboutScreen` 换 `List`（`BrandLogo` 头部、版本、备案、条款、
   AI 说明）。
+- 第 1 轮 E 线·和参考对不上、自己定的（等用户看）：设置根页的“订阅”“连接应用”“自动设置时区 / 时区”“Bot 电脑”“导入记忆”“帮助中心”
+  “发送反馈”没有（要后端或不做），“连接应用”的位置放 IM 渠道，“权限”的位置放审批（进审批中心），多了“安全”一组（全部停止、下线其他设备）
+  和“关于 / 开源许可 / 上手引导”一组；通知是开关但拨了去系统设置（App 自己关不掉推送）；账号页没有“切换 / 添加账户”，改昵称是压栈页不是
+  弹窗（要显示字数）；用量页“今天”只列设了每日上限的 key（没有平台额度），下面保留 7 / 30 / 90 天的看板；保险箱的胶囊是“全部 / 条目 /
+  等你填写 / 处理过的”，“+”直接进表单（只有一种条目），表单没有“网站”；设备名称行不能点（改名要后端），电脑详情是配对和授权而不是三档
+  执行策略，“移除电脑”是“下线这台设备”，另有“解除配对”；外观的方块选中是橙色的突出按钮（参考是灰），没有第二排；触感照参考做成子页
+  （规范 4.9.13 原来建议根页一行开关）。
+- 第 1 轮 E 线·要在模拟器上看的（Linux 的桩看不出来）：设置根页没有标题时 iOS 26 左上的 × 和第一组的间距；账号行 44pt 头像和
+  `NavigationLink` 箭头；通知 `Toggle` 拨了以后弹回原位（get 读的是系统权限）、回前台重读；版本区 `BrandLogo` 在透明行里深浅色；外观方块
+  `glassButtonStyle` + `.roundedRectangle(radius: 16)` 在 iOS 26 / 17 上的样子和选中的对比；语言 `Picker(.inline)` 去掉 label 后的勾；用量页
+  `Gauge(.linearCapacity)` 的 tint；保险箱 `FilterChipBar` 当第一行的对齐、左滑删除、`navigationDestination(isPresented:)` 在设置的 sheet 栈里
+  压不压得进去、密码眼睛切换时 `Group` 里两个输入框换来换去丢不丢焦点；设备详情里电脑那组（只在真机能签名时出现）；下线其他设备 sheet
+  的红色浮动按钮（`.tint(danger)` + `.prominent`）；模型路由里 `Picker(.menu)` 的行、`Menu` 里放行内 `Picker` 的推荐模型；`appFeedback` 关掉
+  触感后真的不震。
+- 第 1 轮 E 线这一份的 Linux 检查（2026-11-05，最后一次提交上）：ThinktinKit `swift test` 1077 个全过；uicheck UIKit、AppKit 都编过（没有警告；
+  中途 AppKit 报过保险箱 `@Bindable var model` 被 `Task` 闭包捕获的并发警告，局部变量改名 `bindable` 后没了）；`run.sh test` 145 个全过；
+  App 的 `ThinktinTests` 21 个过 16 个（还是那 5 个要 App 包的：Info.plist 两条（这次没有新键）、隐私清单、小组件扩展、缓存路径）；
+  `swift format -i -r apps/apple` 后 `swift format lint --strict -r apps/apple` 零条。macOS CI 和截图还没跑。
 
 决定（2026-11-04）：用户问“发的那套 UI 怎么没照着改”，按规范第 6 节的建议开工，用户随时可以改：
 6.1 A + A1（实例列表为根、去掉抽屉，抽屉的入口放首页左下“工作台”）；6.2 C（中性灰底和卡片、强调色留橙色、agent 回复加气泡、
@@ -439,8 +457,7 @@
 新建时选它用哪个 agent 当引擎，同一个 agent 可以给好几个 Botin 当引擎（服务端只限每个账号的实例数）。agent 在界面上只以 Botin 的“引擎”/“Engine”出现。
 首次登录首页是空的，空状态“还没有 Botin”+ 说明 + “新建 Botin”按钮。代码里的标识符（`Instance`、`AppRoute.adopt`、`adopt(...)`）不改。
 
-进行中：第 1 轮 E 线（设置一带：设置根页、账号、用量、保险箱、登录设备、外观、语言、触感、模型 key、IM 渠道；规范 4.9、7.3 E），
-  session_01GuCp3KRgqaK6Kzynw6udRn，2026-11-05 开始。B、C、D 线 2026-11-05 做完，见“已完成”。
+进行中：没有（第 1 轮 B、C、D、E 线 2026-11-05 做完，见“已完成”）。
 验证和发版（2026-11-05，session_01GuCp3KRgqaK6Kzynw6udRn）：GitHub 的 Mac 一直排不上，改用 Codemagic（`.github/workflows/codemagic.yml`：
 把提交推到 `codemagic/apple-check` / `codemagic/ios-screenshots`）。第 0 轮（bbdb07c）、Botin 版（06894fd）、新建页重做（c78064e）
 的 apple-check 都过了（真 Xcode：模拟器 build + test、ThinktinMac、Kit 的 macOS 测试）。截图对照参考 34、35 后又调了两次版式：
@@ -472,9 +489,23 @@ TestFlight：28（Botin 改名、空状态，旧表单）、30（新建页重做
    D 线已经做了（`HomeScreen.swift` 只动了搜索那一块）。B 线（对话页）做完了，接着可以做第 2 轮的对话内查找（4.3.3，“…”菜单第一组
    Botin 资料后面加一项）。D 线做完了，剩下的：计划的新建 / 编辑表单（`PlanEditorScreen`）、确认页（`PlanConfirmScreen`）、触发器编辑器
    （`TriggerEditorView`）、时区和预授权工具的选择页还是自画版式（`PageHeader`、`GroupedSection`、`Card`、`PillButton`、`PlansTextField`），
-   按第 2 节换成 `Form`；搜索回复正文（本机缓存的事件，4.2.4，第 2 轮）。E 线（设置一带）还没人认领。
+   按第 2 节换成 `Form`；搜索回复正文（本机缓存的事件，4.2.4，第 2 轮）。E 线做完了，剩下的：纯黑外观（4.9.11 第二排，Theme 的动态颜色要能按偏好换值，第 2 轮）；添加 key 的 sheet
+   （`AddCredentialSheet`）、key 的三个小 sheet 里的 `ModelsField`、注销页（`DeleteAccountView`）、开源许可页（`LicensesScreen` /
+   `LicenseDetailViews`）还是自画版式；`AccountSection` / `AccountRow` / `AccountScrollPage` 现在只剩它们和登录页在用，换完后可以删；
+   设置里“连接”汇总页（4.8.1、第 2 轮）做了以后 IM 渠道挪进去；设备改名、保险箱网站、发送反馈等后端（第 3 轮）。
 
 坑和决定：
+- 触感：界面里要震的地方一律用 `appFeedback(_:trigger:)`（`Design/Haptics.swift`），别直接写 `.sensoryFeedback`，不然设置里的“触感反馈”
+  关不掉它。开关在 `SettingsPreferences.hapticsEnabled`，由 `.settingsPreferences()` 放进环境 `\.hapticsEnabled`。
+- 设置根页的分组、顺序、每行去哪都在 ThinktinKit 的 `SettingsModel.sections(_:pendingApprovals:)`（测试 `SettingsModelTests` 逐行查 id），
+  界面照着画；加行要给 `SettingsSection.ID` 里已有的组或新加组（新组记得改测试的 `allCases`）。实时活动的开关不在模型里，界面接在 `.botins`
+  组后面。用户协议、隐私政策的地址在 ThinktinKit 的 `LegalLinks`。
+- “今天”的用量按东八区切天（`UsageToday`，模型网关的每日上限就是这样算的），别改成手机本地的零点。
+- 保险箱的新建 / 修改表单现在是压栈（`navigationDestination(isPresented:)`），不再是 sheet：系统返回就是放弃，没有“有改动先确认”。
+- 设置一带共用的行：`SettingsRowLabel`（标题 + 灰色副标题 + 右边值）、`SettingsProfileRow`（44pt 头像行）、`ExternalLinkRow`（`arrow.up.right`）、
+  `VaultLabeledField`（标签在上的输入框，IM 渠道、模型路由也用）、`DeviceStatusDot`。uicheck 桩这一轮补了 `Group`、`fontDesign(_:)`、
+  `fontWeight(_:)`（`Stubs/SwiftUI/SwiftUI+Settings.swift`），别再加。
+- `ModelsCredentialRow` 不再是按钮（外面包 `NavigationLink(value:)`），`StopAllRow` 是 `List` 里的一行，放进自画的 `GroupedSection` 会没边距。
 - 改版页面共用的列表帮手在 `Components/ListStyles.swift`：`insetGroupedList()`、`clearListRow()`、`ToolbarSlot.trailing`（C 线时叫
   `AgentsToolbar.trailing`，D 线挪出来改了名）。筛选胶囊放 `List` 第一行时 `FilterChipBar(..., horizontalInset: 0)` + `.clearListRow()`。
 - 产出物：大类、日期分组、折叠都在 ThinktinKit 的 `ArtifactLibraryLayout.swift`；缩略图要下整份文件，`ArtifactThumbnailLoader` 限 4 MB、

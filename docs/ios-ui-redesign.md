@@ -1192,29 +1192,29 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 | 50 | 研究应用分类 | 第三方连接器 | 无 | 要后端 | 3 / 待定 | 4.8.1 |
 | 51 | 支持应用分类 | 第三方连接器 | 无 | 要后端 | 3 / 待定 | 4.8.1 |
 | 52 | 未连接插件详情 | 连接器详情（版式借给 agent 详情） | `Agents/AgentDetailScreen.swift`（借版式） | 要后端 | 3；版式 2 | 4.8.3 |
-| 53 | 全局设置上半 | 设置根页 | `Settings/SettingsScreen.swift`、`SettingsModel` | 部分有 | 1 | 4.9.1 |
-| 54 | 账户管理 | 账号 | `Account/AccountView.swift`、`DeleteAccountView.swift` | 部分有 | 1；多账户不做 | 4.9.2 |
-| 55 | 用量 | 用量 | `Models/UsageScreen.swift`、`UsageModel` | 只改界面 | 1 | 4.9.3 |
+| 53 | 全局设置上半 | 设置根页 | `Settings/SettingsScreen.swift`、`SettingsModel` | 部分有 | 1（已做，E 线） | 4.9.1 |
+| 54 | 账户管理 | 账号 | `Account/AccountView.swift`、`DeleteAccountView.swift` | 部分有 | 1；多账户不做（已做，E 线） | 4.9.2 |
+| 55 | 用量 | 用量 | `Models/UsageScreen.swift`、`UsageModel` | 只改界面 | 1（已做，E 线） | 4.9.3 |
 | 56 | 订阅加载状态 | App 内购买（12.23） | 无 | 要后端 | 待定 | 4.9.4 |
-| 57 | 保管库空状态 | 保险箱 | `Vault/VaultScreens.swift`（`VaultScreen`） | 只改界面 | 1 | 4.9.5 |
-| 58 | 保管库新增菜单 | 新建保险箱条目 | `VaultScreen` 的“+” | 部分有 | 1；多类型 3 | 4.9.5 |
-| 59 | 新增登录信息 | 登录信息表单 | `VaultItemEditorView`、`VaultItemEditorModel` | 部分有 | 1；网站 3 | 4.9.6 |
+| 57 | 保管库空状态 | 保险箱 | `Vault/VaultScreens.swift`（`VaultScreen`） | 只改界面 | 1（已做，E 线） | 4.9.5 |
+| 58 | 保管库新增菜单 | 新建保险箱条目 | `VaultScreen` 的“+” | 部分有 | 1；多类型 3（已做，E 线） | 4.9.5 |
+| 59 | 新增登录信息 | 登录信息表单 | `VaultItemEditorView`、`VaultItemEditorModel` | 部分有 | 1；网站 3（已做，E 线） | 4.9.6 |
 | 60 | 新增卡片 | 卡片条目 | 无 | 要后端 | 不做（6.16） | 4.9.7 |
 | 61 | 新增联系信息 | 联系信息条目 | 无 | 要后端 | 待定（6.16） | 4.9.7 |
-| 62 | 权限与规则列表 | 自然语言权限规则 | 无（审批中心 `Approvals/ApprovalScreens.swift`） | 要后端 | 待定（6.15） | 4.9.8 |
+| 62 | 权限与规则列表 | 自然语言权限规则 | 无（审批中心 `Approvals/ApprovalScreens.swift`） | 要后端 | 待定（6.15）；设置里的“审批”入口已做（E 线） | 4.9.8 |
 | 63 | 新增规则 | 自然语言权限规则 | 无 | 要后端 | 待定 | 4.9.8 |
 | 64 | 编辑规则 | 自然语言权限规则 | 无 | 要后端 | 待定 | 4.9.8 |
 | 65 | Bot 电脑设置 | 工作区（重置、磁盘） | `InstanceWorkspaceScreen`（状态说明、版本，2026-11-05） | 要后端 | 1（工作区页，已做）/ 3 | 4.6.1 |
-| 66 | 设备列表 | 登录设备 | `Account/DevicesView.swift`、`DevicesModel` | 只改界面 | 1 | 4.9.9 |
-| 67 | 手机设备详情 | 设备详情 | `DevicesView` 的 `DeviceRow` | 部分有 | 1；改名 3 | 4.9.9 |
+| 66 | 设备列表 | 登录设备 | `Account/DevicesView.swift`、`DevicesModel` | 只改界面 | 1（已做，E 线） | 4.9.9 |
+| 67 | 手机设备详情 | 设备详情 | `DevicesView` 的 `DeviceRow` | 部分有 | 1；改名 3（已做，E 线） | 4.9.9 |
 | 68 | 设备重命名弹窗 | 设备改名 | 无（没有改名接口） | 要后端 | 3 | 4.9.9 |
-| 69 | 电脑详情与执行权限 | 电脑详情、配对、授权 | `Computer/ComputerLinkViews.swift`、`ComputerLinkModel` | 部分有 | 1；三档策略不做 | 4.9.9 |
-| 70 | 全局设置中下 | 设置根页 | `SettingsScreen`、`DisplaySettingsViews.swift` | 部分有 | 1；触感 2 | 4.9.1 |
+| 69 | 电脑详情与执行权限 | 电脑详情、配对、授权 | `Computer/ComputerLinkViews.swift`、`ComputerLinkModel` | 部分有 | 1；三档策略不做（已做，E 线） | 4.9.9 |
+| 70 | 全局设置中下 | 设置根页 | `SettingsScreen`、`DisplaySettingsViews.swift` | 部分有 | 1；触感 2（已做，E 线） | 4.9.1 |
 | 71 | 导入记忆 | 记忆导入 | 无 | 要后端 | 不做（6.20） | 4.9.10 |
-| 72 | 外观设置 | 外观 | `DisplaySettingsViews.swift`（`AppearanceSettingsView`） | 部分有 | 1；纯黑 2 | 4.9.11 |
-| 73 | 应用语言设置 | 界面语言 | `DisplaySettingsViews.swift`（`LanguageSettingsView`） | 只改界面 | 1 | 4.9.12 |
-| 74 | 触感反馈设置 | 触感开关 | 无 | 纯客户端能做 | 2 | 4.9.13 |
-| 75 | 全局设置底部与版本 | 设置根页底部、关于 | `SettingsScreen`、`AboutScreen.swift` | 部分有 | 1；反馈 3 | 4.9.1 |
+| 72 | 外观设置 | 外观 | `DisplaySettingsViews.swift`（`AppearanceSettingsView`） | 部分有 | 1；纯黑 2（第一排已做，E 线） | 4.9.11 |
+| 73 | 应用语言设置 | 界面语言 | `DisplaySettingsViews.swift`（`LanguageSettingsView`） | 只改界面 | 1（已做，E 线） | 4.9.12 |
+| 74 | 触感反馈设置 | 触感开关 | 无 | 纯客户端能做 | 2（已做，E 线，照参考做成子页） | 4.9.13 |
+| 75 | 全局设置底部与版本 | 设置根页底部、关于 | `SettingsScreen`、`AboutScreen.swift` | 部分有 | 1；反馈 3（已做，E 线） | 4.9.1 |
 | 76 | 反馈空表单 | 发送反馈 | 无（只有举报） | 要后端 | 3 | 4.9.14 |
 | 77 | 反馈关联 Bot 菜单 | 发送反馈 | 无 | 要后端 | 3 | 4.9.14 |
 | 78 | 全局搜索 | 首页搜索 | `Search/SearchScreen.swift`（`SearchResultsView`）、`SearchModel` | 部分有 | 已做（2026-11-05，含筛选） | 4.2.4 |
@@ -1606,6 +1606,9 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
   降级链的几行、加备用 key、红字删掉别名；“更多别名”一组；保存在右上 `ConfirmButton`，页尾的大按钮去掉）、关于页（`BrandLogo` 头部 +
   分组）换成原生的。参考里没有这几页，照设置子页、Botin 资料页的写法排。添加 key 的 sheet、key 的三个小 sheet 里的字段、注销页、
   开源许可页还是旧版式。
+- E 线 2026-11-05 做完（设置根页 4.9.1、账号 4.9.2、用量 4.9.3、保险箱和登录信息表单 4.9.5、4.9.6、登录设备和设备详情 4.9.9、外观 4.9.11
+  第一排、语言 4.9.12，顺带做了第 2 轮的触感反馈 4.9.13；模型 key、key 详情、模型路由、IM 渠道、关于页换原生），逐节的做法见各节的“已做”
+  和 docs/progress/ios-ui-redesign.md。纯黑外观（4.9.11 第二排）、添加 key 的 sheet、注销页、开源许可页还是旧版式。
 - 线之间的依赖：A 的首页搜索要用 D 拆出来的 `SearchResultsView`，D 先交这一块，A 之前先嵌现有的 `SearchScreen`（2026-11-05 D 线已经嵌好）。
   A 的长按“改名”自己用 `.alert` + `InstanceNameRule`，不等 C。
 - 收尾（谁先空下来谁做）：参考里没有的页（收件箱、审批中心、进行中、团队和流水线、运行详情、运行树、引导、关于、开源许可）

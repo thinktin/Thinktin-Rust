@@ -28,10 +28,10 @@ private struct VaultContent: View {
 
     var body: some View {
         let zh = language == .chinese
-        @Bindable var model = self.model
+        @Bindable var bindable = self.model
         List {
             Section {
-                FilterChipBar(chipOptions, selection: $model.filter, horizontalInset: 0)
+                FilterChipBar(chipOptions, selection: $bindable.filter, horizontalInset: 0)
                     .accessibilityElement(children: .contain)
                     .accessibilityLabel(Text(zh ? "筛选" : "Filter"))
             }
@@ -395,7 +395,7 @@ private struct VaultItemEditorContent: View {
     @ViewBuilder
     private var fields: some View {
         let zh = language == .chinese
-        @Bindable var model = self.model
+        @Bindable var bindable = self.model
         let problems = model.visibleProblems
         if problems.contains(.full) {
             Section {
@@ -432,7 +432,7 @@ private struct VaultItemEditorContent: View {
         .themedRow()
         Section {
             VaultLabeledField(title: zh ? "账号" : "Username") {
-                TextField(zh ? "可选" : "Optional", text: $model.username)
+                TextField(zh ? "可选" : "Optional", text: $bindable.username)
                     .modelsIdentifierInput()
                     .usernameContentType()
             }
@@ -440,10 +440,10 @@ private struct VaultItemEditorContent: View {
                 HStack {
                     Group {
                         if showsPassword {
-                            TextField(zh ? "密码" : "Password", text: $model.password)
+                            TextField(zh ? "密码" : "Password", text: $bindable.password)
                                 .modelsIdentifierInput()
                         } else {
-                            SecureField(zh ? "密码" : "Password", text: $model.password)
+                            SecureField(zh ? "密码" : "Password", text: $bindable.password)
                         }
                     }
                     .passwordContentType()
@@ -476,7 +476,7 @@ private struct VaultItemEditorContent: View {
         Section {
             VaultLabeledField(title: zh ? "提示" : "Notes") {
                 TextField(
-                    zh ? "比如：发布 npm 包" : "For example: publish npm packages", text: $model.purpose, axis: .vertical
+                    zh ? "比如：发布 npm 包" : "For example: publish npm packages", text: $bindable.purpose, axis: .vertical
                 )
                 .lineLimit(4...8)
             }
@@ -512,9 +512,9 @@ private struct VaultItemEditorContent: View {
     @ViewBuilder
     private func instancesSection(_ problems: [VaultFormProblem]) -> some View {
         let zh = language == .chinese
-        @Bindable var model = self.model
+        @Bindable var bindable = self.model
         Section {
-            Toggle(zh ? "所有 Botin" : "All Botins", isOn: $model.allInstances)
+            Toggle(zh ? "所有 Botin" : "All Botins", isOn: $bindable.allInstances)
             if !model.allInstances {
                 ForEach(model.instances) { instance in
                     let isOn = model.selected.contains(instance.id)
@@ -635,7 +635,7 @@ private struct VaultRequestContent: View {
     @ViewBuilder
     private func content(_ request: VaultRequest) -> some View {
         let zh = language == .chinese
-        @Bindable var model = self.model
+        @Bindable var bindable = self.model
         let status = model.status ?? request.status
         let problems = model.visibleProblems
         Section {
@@ -678,13 +678,13 @@ private struct VaultRequestContent: View {
             Section {
                 if request.needsUsername {
                     VaultLabeledField(title: ConversationText.vaultField(.username, language: language)) {
-                        TextField(zh ? "账号" : "Username", text: $model.username)
+                        TextField(zh ? "账号" : "Username", text: $bindable.username)
                             .modelsIdentifierInput()
                             .usernameContentType()
                     }
                 }
                 VaultLabeledField(title: ConversationText.vaultField(.password, language: language)) {
-                    SecureField(ConversationText.vaultField(.password, language: language), text: $model.password)
+                    SecureField(ConversationText.vaultField(.password, language: language), text: $bindable.password)
                         .passwordContentType()
                 }
             } footer: {

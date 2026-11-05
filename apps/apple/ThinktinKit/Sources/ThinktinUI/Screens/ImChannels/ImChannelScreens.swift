@@ -190,7 +190,7 @@ private struct ImChannelEditorContent: View {
 
     var body: some View {
         let zh = language == .chinese
-        @Bindable var model = self.model
+        @Bindable var bindable = self.model
         let shows = model.attemptedSave
         Form {
             if let error = model.error {
@@ -201,7 +201,7 @@ private struct ImChannelEditorContent: View {
             }
             if let original = model.original {
                 Section {
-                    Toggle(isOn: $model.isReplacingWebhook) {
+                    Toggle(isOn: $bindable.isReplacingWebhook) {
                         SettingsRowLabel(
                             title: "\(ImChannelText.vendor(original.vendor, language: language)) \(original.hint)",
                             subtitle: original.hasSecret ? (zh ? "有签名密钥" : "Signed") : nil)
@@ -214,13 +214,13 @@ private struct ImChannelEditorContent: View {
             if model.editsWebhook {
                 Section {
                     VaultLabeledField(title: zh ? "webhook 地址" : "Webhook address") {
-                        TextField("https://…", text: $model.webhookURL)
+                        TextField("https://…", text: $bindable.webhookURL)
                             .fontDesign(.monospaced)
                             .modelsKeyboard(.url)
                     }
                     if model.supportsSecret {
                         VaultLabeledField(title: zh ? "签名密钥（可选）" : "Signing secret (optional)") {
-                            SecureField(zh ? "签名密钥" : "Signing secret", text: $model.secret)
+                            SecureField(zh ? "签名密钥" : "Signing secret", text: $bindable.secret)
                                 .fontDesign(.monospaced)
                         }
                     }
@@ -249,7 +249,7 @@ private struct ImChannelEditorContent: View {
             }
             Section {
                 VaultLabeledField(title: zh ? "备注" : "Note") {
-                    TextField(zh ? "比如：研发群" : "For example: Dev team", text: $model.label)
+                    TextField(zh ? "比如：研发群" : "For example: Dev team", text: $bindable.label)
                 }
             } footer: {
                 HStack(alignment: .firstTextBaseline) {
