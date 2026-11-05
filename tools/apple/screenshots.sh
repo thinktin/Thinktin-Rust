@@ -149,6 +149,7 @@ shots="
 16-teams teams -
 17-new-task newtask -
 18-onboarding onboarding -
+19-connections connections -
 "
 
 for appearance in light dark; do

@@ -158,7 +158,7 @@ struct AppSmokeTests {
         #expect(model.router.sheet == .adopt(agentID: nil))
     }
 
-    @Test("截图用的启动参数：THINKTIN_OPEN_SCREEN 认九个页面，不分大小写，别的值不认")
+    @Test("截图用的启动参数：THINKTIN_OPEN_SCREEN 认十个页面，不分大小写，别的值不认")
     func openScreenValues() {
         let key = AppConfiguration.openScreenEnvironmentKey
         #expect(key == "THINKTIN_OPEN_SCREEN")
@@ -166,7 +166,7 @@ struct AppSmokeTests {
             AppConfiguration.OpenScreen.allCases.map(\.rawValue)
                 == [
                     "conversation", "plans", "artifacts", "settings", "search", "adopt", "teams", "newtask",
-                    "onboarding",
+                    "onboarding", "connections",
                 ])
         for screen in AppConfiguration.OpenScreen.allCases {
             #expect(AppConfiguration.openScreen(environment: [key: screen.rawValue]) == screen)
@@ -192,6 +192,7 @@ struct AppSmokeTests {
         #expect(Screen.teams.route(instanceID: nil) == .teams)
         #expect(Screen.newtask.route(instanceID: nil) == .newTask)
         #expect(Screen.onboarding.route(instanceID: nil) == .onboarding)
+        #expect(Screen.connections.route(instanceID: nil) == .connections(category: nil))
         for screen in Screen.allCases {
             #expect((screen.route(instanceID: nil) == nil) == screen.needsInstance)
             // 不是实例的页面不管传不传实例都一样。
@@ -236,6 +237,9 @@ struct AppSmokeTests {
         #expect(router.sheet == .newTask)
         await AppConfiguration.OpenScreen.onboarding.open(in: model)
         #expect(router.sheet == .onboarding)
+        // 连接目录压在首页上（和深链一样“首页 → 目标页”）。
+        await AppConfiguration.OpenScreen.connections.open(in: model)
+        #expect(router.path == [.connections(category: nil)] && router.sheet == nil)
     }
 
     @Test("接口地址：没有、没展开、不是 http(s) 时用默认地址")

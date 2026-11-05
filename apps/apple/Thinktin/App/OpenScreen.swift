@@ -17,6 +17,7 @@ extension AppConfiguration.OpenScreen {
         case .teams: .teams
         case .newtask: .newTask
         case .onboarding: .onboarding
+        case .connections: .connections(category: nil)
         }
     }
 

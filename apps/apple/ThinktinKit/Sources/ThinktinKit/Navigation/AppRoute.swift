@@ -112,6 +112,17 @@ public enum AppRoute: Hashable, Sendable, Codable {
 
     case imChannels
 
+    // MARK: 连接（改版规范 4.8、6.12）
+
+    /// 连接目录（参考 36、40–51）：`category` 是选中的分类胶囊，nil 是“全部”。入口是设置里的“连接”。
+    case connections(category: ConnectionCategory?)
+    /// 已连接的列表（参考 37）：目录右上的“已连接 N 个”。
+    case connectedApps
+    /// 目录里一组的完整列表（参考 101–104：为你推荐、精选）。
+    case connectionList(ConnectionList)
+    /// 一个应用的详情（参考 38、39、52、105–107）。目录里点行弹的是 medium / large 的本地 sheet；这个路由是压栈的同一个页面。
+    case connection(ConnectionID)
+
     // MARK: 首次启动与引导（12.17）
 
     /// 新用户引导（领养 → 加 key → 配 main → 发第一个任务）。
@@ -168,6 +179,7 @@ extension AppRoute {
         case .vault, .vaultItem, .vaultRequest: .vault
         case .settings, .licenses, .about: .settings
         case .imChannels: .imChannels
+        case .connections, .connectedApps, .connectionList, .connection: .connections
         case .onboarding: .onboarding
         case .search: .search
         case .home, .newTask, .frozen, .upgrade, .hiddenBotins: .shell

@@ -52,12 +52,14 @@ struct AppConfiguration: Equatable, Sendable {
         case newtask
         /// 上手引导（sheet）。
         case onboarding
+        /// 连接目录（首页 → 连接，`.connections(category: nil)`；规范 4.8）。
+        case connections
 
         /// 是不是某个实例的页面（要先等实例列表拿到）。
         var needsInstance: Bool {
             switch self {
             case .conversation, .plans, .artifacts: true
-            case .settings, .search, .adopt, .teams, .newtask, .onboarding: false
+            case .settings, .search, .adopt, .teams, .newtask, .onboarding, .connections: false
             }
         }
     }
