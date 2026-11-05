@@ -67,6 +67,9 @@ public final class Router {
     /// 新建 Botin 的表单开着时又要用某个引擎新建（表单的“了解引擎”压进去的引擎详情上点了“用它新建 Botin”）：`present`
     /// 退回表单、不再叠一张，表单换成这个引擎（`onChange(of: router.engineRequest)`，换好调 `engineRequestHandled()`）。
     public private(set) var engineRequest: AgentID?
+    /// 打开页面之后要依次打开的子页（`Subpage`，截图脚本用；`requestSubpages(_:)`）。页面不靠它刷新，不观察；`show`、
+    /// `reset` 时清掉。
+    @ObservationIgnored public private(set) var subpageRequests: [Subpage] = []
     /// 暂时不跳转（没登录、冻结、要升级）：深链和推送先记进 `pendingRoute`；改回 false 时自动跳过去。
     public var isHoldingRoutes = false {
         didSet {
@@ -228,6 +231,30 @@ public final class Router {
         engineRequest = nil
     }
 
+    // MARK: 子页
+
+    /// 排在最前面、还没打开的子页。
+    public var nextSubpage: Subpage? { subpageRequests.first }
+
+    /// 记下刚打开的页面里要依次打开的子页（换掉没打开完的）：比如 `show(.instance(id))` 之后
+    /// `[.botinEdit, .botinAvatar]` 是“资料 → 编辑 → 头像”。
+    public func requestSubpages(_ subpages: [Subpage]) {
+        subpageRequests = subpages
+    }
+
+    /// 排在最前面的是 `subpage` 就取走它，返回 true（调的页面接着打开它）。
+    @discardableResult
+    public func takeSubpage(_ subpage: Subpage) -> Bool {
+        takeSubpage { $0 == subpage ? () : nil } != nil
+    }
+
+    /// 排在最前面的子页 `match` 认得（返回非 nil）就取走它，返回 `match` 的结果（带参数的子页用，比如新建哪种保险箱条目）。
+    public func takeSubpage<Value>(_ match: (Subpage) -> Value?) -> Value? {
+        guard let next = subpageRequests.first, let value = match(next) else { return nil }
+        subpageRequests.removeFirst()
+        return value
+    }
+
     /// App 里点的 `thinktin://` 链接（agent 回复、运行详情里的）：按 `open` 的规则打开，压在眼前这一层的栈上，返回还是
     /// 现在的页面（对话不会被换掉）。和 `handle(url:)` 不同，不关 sheet、不重建返回栈。是认得的深链返回 true。
     @discardableResult
@@ -332,6 +359,7 @@ public final class Router {
             return
         }
         dismissAllSheets()
+        subpageRequests = []
         let owner = instanceID ?? route.instanceID
         if let owner { currentInstanceID = owner }
         switch route.presentation {
@@ -374,7 +402,7 @@ public final class Router {
 
     // MARK: 退出登录
 
-    /// 退出登录：导航全部清空（包括当前实例、记下的深链和没处理的搜索、新任务请求），换账号后不能看到上一个账号的页面。
+    /// 退出登录：导航全部清空（包括当前实例、记下的深链和没处理的搜索、新任务请求、子页），换账号后不能看到上一个账号的页面。
     public func reset() {
         path = []
         dismissAllSheets()
@@ -383,5 +411,6 @@ public final class Router {
         handledSearchRequest = searchRequest
         handledNewTaskRequest = newTaskRequest
         engineRequest = nil
+        subpageRequests = []
     }
 }

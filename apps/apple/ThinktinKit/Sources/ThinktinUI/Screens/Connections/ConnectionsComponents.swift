@@ -210,6 +210,7 @@ struct ConnectionsHost<Content: View>: View {
                 .tint(Theme.accent)
                 .presentationDetents([.medium, .large])
             }
+            .onSubpageRequest({ $0.connectionID }) { selected = SelectedConnection(id: $0) }
             .comingSoonAlert($comingSoon, model: model)
     }
 

@@ -158,15 +158,19 @@ struct AppSmokeTests {
         #expect(model.router.sheet == .adopt(agentID: nil))
     }
 
-    @Test("截图用的启动参数：THINKTIN_OPEN_SCREEN 认十五个页面，不分大小写，别的值不认")
+    @Test("截图用的启动参数：THINKTIN_OPEN_SCREEN 认的页面，不分大小写，别的值不认")
     func openScreenValues() {
         let key = AppConfiguration.openScreenEnvironmentKey
         #expect(key == "THINKTIN_OPEN_SCREEN")
         #expect(
             AppConfiguration.OpenScreen.allCases.map(\.rawValue)
                 == [
-                    "conversation", "plans", "artifacts", "settings", "search", "adopt", "teams", "newtask",
-                    "onboarding", "connections", "instancescreen", "permissions", "subscription", "importmemory",
+                    "homepinned", "hiddenbotins", "homeallhidden", "conversation", "conversationfind", "search",
+                    "botinedit", "botinavatar", "workspace", "instancescreen", "primarybotin", "adopt", "engines",
+                    "enginedetail", "plans", "artifacts", "artifactsmedia", "teams", "newtask", "onboarding",
+                    "connections", "connected", "connectiondetail", "settings", "account", "usage", "subscription",
+                    "modelkeys", "vault", "vaultlogin", "vaultcard", "vaultcontact", "permissions", "permissionrule",
+                    "devices", "devicedetail", "computerdetail", "appearance", "language", "haptics", "importmemory",
                     "feedback",
                 ])
         for screen in AppConfiguration.OpenScreen.allCases {
@@ -176,45 +180,111 @@ struct AppSmokeTests {
         #expect(AppConfiguration.openScreen(environment: [key: "InstanceScreen"]) == .instancescreen)
         #expect(AppConfiguration.openScreen(environment: [:]) == nil)
         #expect(AppConfiguration.openScreen(environment: [key: ""]) == nil)
+        #expect(AppConfiguration.openScreen(environment: [key: "home"]) == nil)
         // 抽屉去掉了（规范 3.3），旧的截图参数不认。
         #expect(AppConfiguration.openScreen(environment: [key: "drawer"]) == nil)
         #expect(AppConfiguration.openScreen(environment: ["THINKTIN_OPEN_DRAWER": "1"]) == nil)
     }
 
-    @Test("截图用的启动参数：每个页面的路由；对话、计划、产出物、观看与接管要有实例，设置里的四页压进设置")
+    @Test("截图用的启动参数：每个页面的路由、接着打开的子页、首页的摆法；Botin 的页面要有 Botin")
     func openScreenRoutes() {
         typealias Screen = AppConfiguration.OpenScreen
+        // ThinktinKit 的类型这里不直接写名字（测试 target 只依赖 App），靠推断。
         let id = "0192f3a0-0000-7000-8000-000000000101"
+        #expect(Screen.homepinned.route(instanceID: .init(id)) == .home)
+        #expect(Screen.hiddenbotins.route(instanceID: .init(id)) == .hiddenBotins)
+        #expect(Screen.homeallhidden.route(instanceID: .init(id)) == .home)
         #expect(Screen.conversation.route(instanceID: .init(id)) == .conversation(.init(id)))
+        #expect(Screen.conversationfind.route(instanceID: .init(id)) == .conversation(.init(id)))
+        #expect(Screen.search.route(instanceID: nil) == .search)
+        for screen in [Screen.botinedit, .botinavatar, .workspace] {
+            #expect(screen.route(instanceID: .init(id)) == .instance(.init(id)), "\(screen)")
+        }
+        #expect(Screen.instancescreen.route(instanceID: .init(id)) == .instanceScreen(.init(id)))
+        #expect(Screen.primarybotin.route(instanceID: nil) == .primaryBotin)
+        #expect(Screen.adopt.route(instanceID: nil) == .adopt(agentID: nil))
+        #expect(Screen.engines.route(instanceID: nil) == .agentCatalog)
+        #expect(Screen.enginedetail.route(instanceID: nil) == .agentCatalog)
         #expect(Screen.plans.route(instanceID: .init(id)) == .plans(instanceID: .init(id)))
         #expect(Screen.artifacts.route(instanceID: .init(id)) == .artifacts(instanceID: .init(id)))
-        #expect(Screen.settings.route(instanceID: nil) == .settings)
-        #expect(Screen.search.route(instanceID: nil) == .search)
-        #expect(Screen.adopt.route(instanceID: nil) == .adopt(agentID: nil))
+        #expect(Screen.artifactsmedia.route(instanceID: .init(id)) == .artifacts(instanceID: .init(id)))
         #expect(Screen.teams.route(instanceID: nil) == .teams)
         #expect(Screen.newtask.route(instanceID: nil) == .newTask)
         #expect(Screen.onboarding.route(instanceID: nil) == .onboarding)
         #expect(Screen.connections.route(instanceID: nil) == .connections(category: nil))
-        #expect(Screen.instancescreen.route(instanceID: .init(id)) == .instanceScreen(.init(id)))
-        #expect(Screen.permissions.route(instanceID: nil) == .permissions)
+        #expect(Screen.connected.route(instanceID: nil) == .connectedApps)
+        #expect(Screen.connectiondetail.route(instanceID: nil) == .connectedApps)
+        for screen in [Screen.settings, .appearance, .language, .haptics] {
+            #expect(screen.route(instanceID: nil) == .settings, "\(screen)")
+        }
+        #expect(Screen.account.route(instanceID: nil) == .account)
+        #expect(Screen.usage.route(instanceID: nil) == .usage)
         #expect(Screen.subscription.route(instanceID: nil) == .subscription)
+        #expect(Screen.modelkeys.route(instanceID: nil) == .credentials)
+        for screen in [Screen.vault, .vaultlogin, .vaultcard, .vaultcontact] {
+            #expect(screen.route(instanceID: nil) == .vault, "\(screen)")
+        }
+        #expect(Screen.permissions.route(instanceID: nil) == .permissions)
+        #expect(Screen.permissionrule.route(instanceID: nil) == .permissions)
+        for screen in [Screen.devices, .devicedetail, .computerdetail] {
+            #expect(screen.route(instanceID: nil) == .devices, "\(screen)")
+        }
         #expect(Screen.importmemory.route(instanceID: nil) == .importMemory)
         #expect(Screen.feedback.route(instanceID: nil) == .feedback)
-        #expect(Screen.allCases.filter(\.isInSettings) == [.permissions, .subscription, .importmemory, .feedback])
         for screen in Screen.allCases {
-            #expect((screen.route(instanceID: nil) == nil) == screen.needsInstance)
-            // 不是实例的页面不管传不传实例都一样。
+            #expect(screen.route(instanceID: .init(id)) != nil, "\(screen)")
+            #expect((screen.route(instanceID: nil) == nil) == screen.needsInstance, "\(screen)")
+            // 不是 Botin 的页面不管传不传 Botin 都一样。
             if !screen.needsInstance {
-                #expect(screen.route(instanceID: .init(id)) == screen.route(instanceID: nil))
+                #expect(screen.route(instanceID: .init(id)) == screen.route(instanceID: nil), "\(screen)")
+            }
+            // 压进设置的都是压栈的页面。
+            if screen.isInSettings {
+                #expect(screen.route(instanceID: nil)?.presentation == .push, "\(screen)")
             }
         }
+        #expect(
+            Screen.allCases.filter(\.isInSettings) == [
+                .account, .usage, .subscription, .modelkeys, .vault, .vaultlogin, .vaultcard, .vaultcontact,
+                .permissions, .permissionrule, .devices, .devicedetail, .computerdetail, .importmemory, .feedback,
+            ])
+        // 页面里本地打开的子页。
+        #expect(Screen.conversationfind.subpages == [.conversationFind])
+        #expect(Screen.botinedit.subpages == [.botinEdit])
+        #expect(Screen.botinavatar.subpages == [.botinEdit, .botinAvatar])
+        #expect(Screen.workspace.subpages == [.workspace])
+        #expect(Screen.enginedetail.subpages == [.engineDetail])
+        #expect(Screen.artifactsmedia.subpages == [.artifactsMedia])
+        #expect(Screen.connectiondetail.subpages == [.connectionDetail("computer")])
+        #expect(Screen.vaultlogin.subpages == [.newVaultItem(.login)])
+        #expect(Screen.vaultcard.subpages == [.newVaultItem(.card)])
+        #expect(Screen.vaultcontact.subpages == [.newVaultItem(.contact)])
+        #expect(Screen.permissionrule.subpages == [.newPermissionRule])
+        #expect(Screen.devicedetail.subpages == [.currentDevice])
+        #expect(Screen.computerdetail.subpages == [.computerDevice])
+        #expect(Screen.appearance.subpages == [.appearanceSettings])
+        #expect(Screen.language.subpages == [.languageSettings])
+        #expect(Screen.haptics.subpages == [.hapticsSettings])
+        #expect(
+            Screen.allCases.filter { !$0.subpages.isEmpty } == [
+                .conversationfind, .botinedit, .botinavatar, .workspace, .enginedetail, .artifactsmedia,
+                .connectiondetail, .vaultlogin, .vaultcard, .vaultcontact, .permissionrule, .devicedetail,
+                .computerdetail, .appearance, .language, .haptics,
+            ])
+        #expect(Screen.homepinned.homeArrangement == .pinFirst)
+        #expect(Screen.hiddenbotins.homeArrangement == .hideLast)
+        #expect(Screen.homeallhidden.homeArrangement == .hideAll)
+        #expect(Screen.allCases.filter { $0.homeArrangement != nil } == [.homepinned, .hiddenbotins, .homeallhidden])
     }
 
-    @Test("截图用的启动参数：打开演示数据首页第一个实例（写作助手）的页面，返回栈和深链一样")
+    @Test("截图用的启动参数：打开演示数据首页第一个 Botin（写作助手）的页面，返回栈和深链一样，子页排好")
     @MainActor
     func openScreenInDemo() async {
         let model = AppEnvironment.live().appModel
         let router = model.router
+        let preferences = model.local.preferences
+        // 置顶、隐藏记在这台设备上（UserDefaults.standard）：测完清掉，别的测试和下次运行看到的首页不受影响。
+        defer { preferences.forget(preferences.pinned + Array(preferences.hidden)) }
         // 实例列表还没拿到：实例的页面等不到就不打开，别的照样打开。
         #expect(await AppConfiguration.OpenScreen.conversation.open(in: model, timeout: .zero) == nil)
         #expect(router.path.isEmpty && router.sheet == nil)
@@ -222,42 +292,79 @@ struct AppSmokeTests {
         #expect(router.sheet == .settings)
 
         await model.refresh()
-        let writer = "0192f3a0-0000-7000-8000-000000000101"
-        #expect(model.homeRows.first?.id.rawValue == writer)
-        #expect(await AppConfiguration.OpenScreen.conversation.open(in: model) == .conversation(.init(writer)))
+        preferences.forget(model.instances.map(\.id))
+        let rows = model.homeRows.map(\.id)
+        #expect(
+            rows.map(\.rawValue) == ["0192f3a0-0000-7000-8000-000000000101", "0192f3a0-0000-7000-8000-000000000102"])
+        guard let writer = rows.first, let reviewer = rows.last else { return }
+        #expect(await AppConfiguration.OpenScreen.conversation.open(in: model) == .conversation(writer))
         #expect(router.sheet == nil)
-        #expect(router.path == [.conversation(.init(writer))])
-        #expect(router.currentInstanceID?.rawValue == writer)
+        #expect(router.path == [.conversation(writer)])
+        #expect(router.currentInstanceID == writer)
+        #expect(router.subpageRequests.isEmpty)
         await AppConfiguration.OpenScreen.plans.open(in: model)
-        #expect(router.path == [.conversation(.init(writer)), .plans(instanceID: .init(writer))])
+        #expect(router.path == [.conversation(writer), .plans(instanceID: writer)])
         await AppConfiguration.OpenScreen.artifacts.open(in: model)
-        #expect(router.path == [.conversation(.init(writer)), .artifacts(instanceID: .init(writer))])
+        #expect(router.path == [.conversation(writer), .artifacts(instanceID: writer)])
+        // 页面里本地打开的子页：先开父页面，子页按顺序排好（页面出现后一层层取走）。
+        await AppConfiguration.OpenScreen.conversationfind.open(in: model)
+        #expect(router.path == [.conversation(writer)] && router.subpageRequests == [.conversationFind])
+        await AppConfiguration.OpenScreen.botinavatar.open(in: model)
+        #expect(router.path == [.conversation(writer), .instance(writer)])
+        #expect(router.subpageRequests == [.botinEdit, .botinAvatar])
+        await AppConfiguration.OpenScreen.artifactsmedia.open(in: model)
+        #expect(router.path == [.conversation(writer), .artifacts(instanceID: writer)])
+        #expect(router.subpageRequests == [.artifactsMedia])
         // sheet 开在首页上；搜索回到首页、留一个首页还没处理的搜索请求。
         await AppConfiguration.OpenScreen.adopt.open(in: model)
         #expect(router.path.isEmpty && router.sheet == .adopt(agentID: nil))
+        #expect(router.subpageRequests.isEmpty)
         await AppConfiguration.OpenScreen.search.open(in: model)
         #expect(router.path.isEmpty && router.sheet == nil)
         #expect(router.hasPendingSearchRequest)
-        // 团队压在首页上；新任务、引导是 sheet。
+        await AppConfiguration.OpenScreen.primarybotin.open(in: model)
+        #expect(router.path.isEmpty && router.sheet == .primaryBotin)
+        // 团队、引擎压在首页上；新任务、引导是 sheet。
         await AppConfiguration.OpenScreen.teams.open(in: model)
         #expect(router.path == [.teams] && router.sheet == nil)
+        await AppConfiguration.OpenScreen.enginedetail.open(in: model)
+        #expect(router.path == [.agentCatalog] && router.subpageRequests == [.engineDetail])
         await AppConfiguration.OpenScreen.newtask.open(in: model)
         #expect(router.sheet == .newTask)
         await AppConfiguration.OpenScreen.onboarding.open(in: model)
         #expect(router.sheet == .onboarding)
-        // 连接目录压在首页上（和深链一样“首页 → 目标页”）。
+        // 连接目录、已连接压在首页上（和深链一样“首页 → 目标页”）。
         await AppConfiguration.OpenScreen.connections.open(in: model)
         #expect(router.path == [.connections(category: nil)] && router.sheet == nil)
+        await AppConfiguration.OpenScreen.connectiondetail.open(in: model)
+        #expect(router.path == [.connectedApps])
+        #expect(router.subpageRequests == [.connectionDetail("computer")])
         // 观看与接管经过对话（“首页 → 对话 → 观看与接管”）；设置里的页面压在设置 sheet 的栈里。
         await AppConfiguration.OpenScreen.instancescreen.open(in: model)
-        #expect(router.path == [.conversation(.init(writer)), .instanceScreen(.init(writer))] && router.sheet == nil)
+        #expect(router.path == [.conversation(writer), .instanceScreen(writer)] && router.sheet == nil)
         for screen in AppConfiguration.OpenScreen.allCases where screen.isInSettings {
             let route = screen.route(instanceID: nil)
-            #expect(route != nil && route?.presentation == .push, "\(screen)")
             #expect(await screen.open(in: model) == route)
             #expect(router.path.isEmpty && router.sheet == .settings, "\(screen)")
             #expect(router.sheetPath == route.map { [$0] }, "\(screen)")
+            #expect(router.subpageRequests == screen.subpages, "\(screen)")
         }
+        // 外观、语言、触感反馈是设置根页本地压的子页。
+        for screen in [AppConfiguration.OpenScreen.appearance, .language, .haptics] {
+            #expect(await screen.open(in: model) == .settings)
+            #expect(router.sheet == .settings && router.sheetPath.isEmpty, "\(screen)")
+            #expect(router.subpageRequests == screen.subpages, "\(screen)")
+        }
+        // 首页的置顶、隐藏：每次先清掉再摆。
+        #expect(await AppConfiguration.OpenScreen.homepinned.open(in: model) == .home)
+        #expect(router.path.isEmpty && router.sheet == nil)
+        #expect(preferences.pinned == [writer] && preferences.hidden.isEmpty)
+        #expect(await AppConfiguration.OpenScreen.hiddenbotins.open(in: model) == .hiddenBotins)
+        #expect(router.path == [.hiddenBotins])
+        #expect(preferences.pinned.isEmpty && preferences.hidden == [reviewer])
+        #expect(await AppConfiguration.OpenScreen.homeallhidden.open(in: model) == .home)
+        #expect(preferences.pinned.isEmpty && preferences.hidden == [writer, reviewer])
+        #expect(model.homeRows.isEmpty)
     }
 
     @Test("接口地址：没有、没展开、不是 http(s) 时用默认地址")

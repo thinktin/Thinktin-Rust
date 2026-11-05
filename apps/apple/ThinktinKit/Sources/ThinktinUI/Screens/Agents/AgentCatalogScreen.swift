@@ -69,6 +69,7 @@ private struct AgentCatalogContent: View {
             // 联网后自动刷新（离线横幅上写了“联网后会自动刷新”）。
             if !app.isOffline { Task { await model.load() } }
         }
+        .onSubpageRequest(.engineDetail, when: !model.agents.isEmpty) { selected = model.agents.first }
         .sheet(item: $selected, onDismiss: performPendingAction) { agent in
             NavigationStack {
                 AgentDetailScreen(agentID: agent.id, agent: agent) { action in

@@ -22,6 +22,8 @@ private struct DevicesContent: View {
     @Environment(\.displayLanguage) private var language
     @State private var pendingRevoke: DeviceInfo?
     @State private var showsSignOutOthers = false
+    /// 设备详情：行是 `NavigationLink`，这个只给 `onSubpageRequest`（这台设备、第一台电脑）用。
+    @State private var openedDevice: DeviceID?
 
     init(model: DevicesModel) {
         _model = State(initialValue: model)
@@ -97,6 +99,13 @@ private struct DevicesContent: View {
         .settingsNavigationTitle(AppRoute.devices.title(language))
         .refreshable { await model.load() }
         .task { await model.loadIfNeeded() }
+        .navigationDestination(item: $openedDevice) { id in
+            DeviceDetailScreen(model: model, deviceID: id)
+        }
+        .onSubpageRequest(.currentDevice, when: model.hasLoaded) { openedDevice = model.currentDevice?.id }
+        .onSubpageRequest(.computerDevice, when: model.hasLoaded) {
+            openedDevice = model.devices.first(where: \.isComputer)?.id
+        }
         .deviceRevokeConfirmation(model: model, pending: $pendingRevoke)
         .sheet(isPresented: $showsSignOutOthers) {
             SignOutOthersSheet(model: model)

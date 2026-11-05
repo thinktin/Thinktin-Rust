@@ -637,4 +637,38 @@ struct RouterTests {
         router.reset()
         #expect(router.engineRequest == nil)
     }
+
+    @Test("子页：按顺序只取走排在最前面的那一项；再打开别的页面、退出登录时清掉")
+    func subpageRequests() {
+        let router = Router()
+        #expect(router.nextSubpage == nil)
+        #expect(!router.takeSubpage(.botinEdit))
+        router.show(.instance("i1"))
+        router.requestSubpages([.botinEdit, .botinAvatar])
+        #expect(router.nextSubpage == .botinEdit)
+        // 不是排在最前面的取不走：头像页要等编辑页打开之后。
+        #expect(!router.takeSubpage(.botinAvatar))
+        #expect(router.takeSubpage(.botinEdit))
+        #expect(!router.takeSubpage(.botinEdit))
+        #expect(router.takeSubpage(.botinAvatar))
+        #expect(router.subpageRequests.isEmpty)
+        // 带参数的：认得才取走，返回参数。
+        router.requestSubpages([.newVaultItem(.card)])
+        #expect(router.takeSubpage { $0.connectionID } == nil)
+        #expect(router.takeSubpage { $0.newVaultItemKind } == .card)
+        #expect(router.nextSubpage == nil)
+        #expect(Subpage.connectionDetail("computer").connectionID == "computer")
+        #expect(Subpage.connectionDetail("computer").newVaultItemKind == nil)
+        #expect(Subpage.botinEdit.connectionID == nil)
+        // 新的请求换掉没打开完的。
+        router.requestSubpages([.botinEdit, .botinAvatar])
+        router.requestSubpages([.workspace])
+        #expect(router.subpageRequests == [.workspace])
+        // 深链、推送打开了别的页面：没打开的子页不再打开（不会在用户后来进的页面上弹出来）。
+        router.show(.inbox)
+        #expect(router.nextSubpage == nil)
+        router.requestSubpages([.appearanceSettings])
+        router.reset()
+        #expect(router.nextSubpage == nil)
+    }
 }

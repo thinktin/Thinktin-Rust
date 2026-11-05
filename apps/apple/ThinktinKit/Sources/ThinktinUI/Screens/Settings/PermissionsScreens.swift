@@ -45,6 +45,7 @@ struct PermissionsScreen: View {
         .navigationDestination(item: $editing) { target in
             PermissionRuleEditorScreen(draft: draft(for: target, in: overview))
         }
+        .onSubpageRequest(.newPermissionRule) { editing = .new(.alwaysAsk) }
         .confirmationDialog(
             PermissionsText.deleteConfirmation(language),
             isPresented: Binding(get: { pendingDeletion != nil }, set: { if !$0 { pendingDeletion = nil } }),

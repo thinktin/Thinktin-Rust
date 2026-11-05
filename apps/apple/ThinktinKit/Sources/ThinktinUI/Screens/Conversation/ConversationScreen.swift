@@ -162,6 +162,8 @@ private struct ConversationContent: View {
         }
         .onChange(of: app.resubscribeRequest) { model.resubscribe() }
         .onAppear(perform: focusComposerIfRequested)
+        // 截图（参考 04）：查找栏开着、不聚焦。
+        .onSubpageRequest(.conversationFind) { model.beginFind() }
         .onChange(of: router.newTaskRequest, focusComposerIfRequested)
         .onChange(of: model.quotedText) {
             // 选了“引用回复”：输入框长成卡片，焦点放进去（参考 07）。

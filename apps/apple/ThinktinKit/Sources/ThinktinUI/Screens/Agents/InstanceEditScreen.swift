@@ -117,6 +117,7 @@ struct InstanceEditScreen: View {
                 editor: InstanceAppearanceEditor(
                     instanceID: model.instanceID, name: name, store: app.appearances))
         }
+        .onSubpageRequest(.botinAvatar) { isEditingAvatar = true }
         .onDisappear { model.clearRenameError() }
     }
 

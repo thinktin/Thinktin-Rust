@@ -94,6 +94,7 @@ private struct VaultContent: View {
             // 从条目、请求页回来（主栈里或设置的 sheet 里）：可能改了、删了、填了。
             if router.visibleRoute == .vault && model.hasLoaded { Task { await model.load() } }
         }
+        .onSubpageRequest(when: model.hasLoaded, { $0.newVaultItemKind }) { creating = $0 }
         .navigationDestination(item: $creating) { kind in
             switch kind {
             case .login:

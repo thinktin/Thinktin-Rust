@@ -36,6 +36,13 @@ private struct SettingsContent: View {
     @State private var confirmsSignOut = false
     @State private var isSigningOut = false
     @State private var signOutError: ClientError?
+    /// 外观、语言、触感反馈：行是 `NavigationLink`，这个只给 `onSubpageRequest` 用。
+    @State private var displayPage: DisplayPage?
+
+    /// 设置里本地压进去的三页（没有路由）。
+    private enum DisplayPage: Hashable {
+        case appearance, language, haptics
+    }
 
     init(model: SettingsModel, client: any ClientProtocol) {
         _model = State(initialValue: model)
@@ -87,6 +94,10 @@ private struct SettingsContent: View {
             EmptyView()
         }
         .task { await model.refresh() }
+        .navigationDestination(item: $displayPage) { page in
+            displayPageView(page)
+        }
+        .onSubpageRequest(displayPageRequest) { displayPage = $0 }
         .onChange(of: scenePhase) {
             // 从系统设置回来：通知权限可能改了。
             if scenePhase == .active { Task { await model.refreshNotificationPermission() } }
@@ -101,6 +112,29 @@ private struct SettingsContent: View {
     }
 
     @ViewBuilder
+    private func displayPageView(_ page: DisplayPage) -> some View {
+        switch page {
+        case .appearance:
+            AppearanceSettingsView(preferences: model.preferences)
+        case .language:
+            LanguageSettingsView(
+                model: LanguageSettingsModel(client: client, preferences: model.preferences, user: model.user))
+        case .haptics:
+            HapticsSettingsView(preferences: model.preferences)
+        }
+    }
+
+    /// 截图要直接打开的外观、语言、触感反馈（`Subpage`）。
+    private func displayPageRequest(_ subpage: Subpage) -> DisplayPage? {
+        switch subpage {
+        case .appearanceSettings: .appearance
+        case .languageSettings: .language
+        case .hapticsSettings: .haptics
+        default: nil
+        }
+    }
+
+    @ViewBuilder
     private func rowView(_ row: SettingsRow) -> some View {
         let zh = language == .chinese
         switch row.action {
@@ -110,20 +144,19 @@ private struct SettingsContent: View {
             NavigationLink(value: route) { SettingsRowLabel(row) }
         case .appearance?:
             NavigationLink {
-                AppearanceSettingsView(preferences: model.preferences)
+                displayPageView(.appearance)
             } label: {
                 SettingsRowLabel(row)
             }
         case .language?:
             NavigationLink {
-                LanguageSettingsView(
-                    model: LanguageSettingsModel(client: client, preferences: model.preferences, user: model.user))
+                displayPageView(.language)
             } label: {
                 SettingsRowLabel(row)
             }
         case .haptics?:
             NavigationLink {
-                HapticsSettingsView(preferences: model.preferences)
+                displayPageView(.haptics)
             } label: {
                 SettingsRowLabel(row)
             }

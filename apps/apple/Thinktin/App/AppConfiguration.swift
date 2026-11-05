@@ -27,61 +27,133 @@ struct AppConfiguration: Equatable, Sendable {
     /// 截图用（tools/apple/screenshots.sh，只在 Debug 构建里认）：启动后打开这个 `thinktin://` 深链。模拟器上
     /// `simctl openurl` 每次都先弹系统的“在 ThinkTin 中打开？”确认框，挡住页面。
     static let launchURLEnvironmentKey = "THINKTIN_OPEN_URL"
-    /// 截图用（同上，只在 Debug 构建里认）：启动后打开首页第一个实例（演示数据里是“写作助手”）的哪一页，值见 `OpenScreen`。
-    /// 对话、计划、产出物这些页面没有深链，设置、新建 Botin 是 sheet，首页搜索要激活搜索栏，所以单列一个变量。
+    /// 截图用（同上，只在 Debug 构建里认）：启动后打开哪一页，值见 `OpenScreen`；Botin 的页面是首页第一个 Botin（演示数据里
+    /// 是“写作助手”）的。对话、计划、产出物这些页面没有深链，设置、新建 Botin 是 sheet，首页搜索要激活搜索栏，编辑 Botin、
+    /// 保险箱的新建表单这些是页面里本地打开的，所以单列一个变量。
     static let openScreenEnvironmentKey = "THINKTIN_OPEN_SCREEN"
 
-    /// `THINKTIN_OPEN_SCREEN` 认的页面（docs/ios-ui-redesign.md 7.6 的截图清单）。打开的办法在 `OpenScreen.swift`
-    /// （要 ThinktinKit 的路由，这个文件只依赖 Foundation）。
+    /// `THINKTIN_OPEN_SCREEN` 认的页面（tools/apple/screenshots.sh 的截图清单，和参考截图的对照见
+    /// docs/ios-ui-redesign-shots.md）。打开的办法在 `OpenScreen.swift`（要 ThinktinKit 的路由，这个文件只依赖 Foundation）：
+    /// 有路由的页面按深链的规矩打开，页面里本地打开的子页（编辑 Botin、保险箱的新建表单、设备详情……）先开父页面、
+    /// 再用 `Subpage` 一层层打开。
     enum OpenScreen: String, CaseIterable, Equatable, Sendable {
+        // MARK: 首页和对话
+
+        /// 首页第一个 Botin 置顶（参考 111、120：顶上一排大头像）。置顶只记在这台设备上：截图脚本每次启动都用启动参数清空。
+        case homepinned
+        /// 首页最后一个 Botin 隐藏，打开“已隐藏的 Botin”（`.hiddenBotins`，参考 114）。
+        case hiddenbotins
+        /// 首页的 Botin 全部隐藏：首页是“都隐藏了”的空状态（参考 113）。
+        case homeallhidden
         /// 实例的对话（首页 → 对话）。
         case conversation
+        /// 对话里的查找栏（“…”的“在对话中查找”，参考 04）。
+        case conversationfind
+        /// 首页搜索（激活搜索栏）。
+        case search
+
+        // MARK: Botin
+
+        /// Botin 资料 → 编辑 Botin（首页 → 对话 → 资料 → 编辑，参考 12；语音、速度、语言三行在这页上）。
+        case botinedit
+        /// Botin 资料 → 编辑 → 头像（参考 18）。
+        case botinavatar
+        /// Botin 资料 → 工作区（参考 65）。
+        case workspace
+        /// 实例的观看与接管（首页 → 对话 → 观看与接管，`.instanceScreen`；规范 4.6.2，演示画面）。
+        case instancescreen
+        /// 选择主 Botin（sheet，`.primaryBotin`，参考 11）。
+        case primarybotin
+        /// 新建 Botin（sheet，`.adopt(agentID: nil)`：在表单里选引擎）。
+        case adopt
+        /// 引擎目录（`.agentCatalog`，新建表单的“了解引擎”）。
+        case engines
+        /// 引擎目录 → 第一个引擎的详情 sheet。
+        case enginedetail
+
+        // MARK: 任务与资料
+
         /// 实例的计划（首页 → 对话 → 计划）。
         case plans
         /// 实例的产出物（首页 → 对话 → 产出物）。
         case artifacts
-        /// 设置（sheet）。
-        case settings
-        /// 首页搜索（激活搜索栏）。
-        case search
-        /// 新建 Botin（sheet，`.adopt(agentID: nil)`：在表单里选引擎）。
-        case adopt
+        /// 实例的产出物，选中“媒体”（参考 23）。
+        case artifactsmedia
         /// 团队（工作台菜单的“团队”，首页 → 团队；参考里没有这一页，看它和改版的页面是不是一套样子）。
         case teams
         /// 新任务的 Botin 选择（sheet，参考 11 的选择器版式）。
         case newtask
         /// 上手引导（sheet）。
         case onboarding
+
+        // MARK: 连接
+
         /// 连接目录（首页 → 连接，`.connections(category: nil)`；规范 4.8）。
         case connections
-        /// 实例的观看与接管（首页 → 对话 → 观看与接管，`.instanceScreen`；规范 4.6.2，演示画面）。
-        case instancescreen
-        /// 设置里的权限与规则（设置 sheet 里压一页；规范 4.9.8）。
-        case permissions
-        /// 设置里的订阅（设置 sheet 里压一页；规范 4.9.4）。
+        /// 已连接（首页 → 已连接，`.connectedApps`，参考 37）。
+        case connected
+        /// 已连接 → “电脑”的详情 sheet（参考 38 的位置）。
+        case connectiondetail
+
+        // MARK: 设置（sheet）
+
+        /// 设置（sheet）。
+        case settings
+        /// 设置里的账号（设置 sheet 里压一页；参考 54）。
+        case account
+        /// 设置里的用量（参考 55）。
+        case usage
+        /// 设置里的订阅（参考 56；规范 4.9.4）。
         case subscription
-        /// 设置里的导入记忆（设置 sheet 里压一页；规范 4.9.10）。
+        /// 设置里的模型 key（参考里没有，看它和改版的页面是不是一套样子）。
+        case modelkeys
+        /// 设置里的保险箱（参考 57）。
+        case vault
+        /// 保险箱 → 新建登录信息（参考 59）。
+        case vaultlogin
+        /// 保险箱 → 新建卡片（参考 60）。
+        case vaultcard
+        /// 保险箱 → 新建联系信息（参考 61）。
+        case vaultcontact
+        /// 设置里的权限与规则（规范 4.9.8，参考 62）。
+        case permissions
+        /// 权限与规则 → 新建一条“始终询问”的规则（参考 63）。
+        case permissionrule
+        /// 设置里的登录设备（参考 66）。
+        case devices
+        /// 登录设备 → 这台 iPhone 的详情（参考 67）。
+        case devicedetail
+        /// 登录设备 → 第一台电脑的详情（参考 69）。
+        case computerdetail
+        /// 设置 → 外观（参考 72）。
+        case appearance
+        /// 设置 → 语言（参考 73）。
+        case language
+        /// 设置 → 触感反馈（参考 74）。
+        case haptics
+        /// 设置里的导入记忆（规范 4.9.10，参考 71）。
         case importmemory
-        /// 设置里的发送反馈（设置 sheet 里压一页；规范 4.9.14）。
+        /// 设置里的发送反馈（规范 4.9.14，参考 76）。
         case feedback
 
-        /// 是不是某个实例的页面（要先等实例列表拿到）。
+        /// 是不是某个 Botin 的页面，或者要摆首页的置顶、隐藏（要先等实例列表拿到，取首页第一行）。
         var needsInstance: Bool {
             switch self {
-            case .conversation, .plans, .artifacts, .instancescreen: true
-            case .settings, .search, .adopt, .teams, .newtask, .onboarding, .connections, .permissions, .subscription,
-                .importmemory, .feedback:
-                false
+            case .homepinned, .hiddenbotins, .homeallhidden, .conversation, .conversationfind, .botinedit,
+                .botinavatar, .workspace, .instancescreen, .plans, .artifacts, .artifactsmedia:
+                true
+            default: false
             }
         }
 
-        /// 是不是设置里压进去的页面（先弹设置，再压进设置 sheet 的栈，和用户点进去一样）。
+        /// 是不是设置里压进去的页面（先弹设置，再压进设置 sheet 的栈，和用户点进去一样）。外观、语言、触感反馈是设置根页
+        /// 本地压的子页，不算。
         var isInSettings: Bool {
             switch self {
-            case .permissions, .subscription, .importmemory, .feedback: true
-            case .conversation, .plans, .artifacts, .instancescreen, .settings, .search, .adopt, .teams, .newtask,
-                .onboarding, .connections:
-                false
+            case .account, .usage, .subscription, .modelkeys, .vault, .vaultlogin, .vaultcard, .vaultcontact,
+                .permissions, .permissionrule, .devices, .devicedetail, .computerdetail, .importmemory, .feedback:
+                true
+            default: false
             }
         }
     }

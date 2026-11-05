@@ -100,6 +100,7 @@ private struct ArtifactLibraryContent: View {
         .refreshable { await model.load() }
         // 每次回到这一页都重新拉（详情页里可能删了）。
         .task { await model.load() }
+        .onSubpageRequest(.artifactsMedia) { model.kind = .media }
         .onChange(of: app.isOffline) {
             if !app.isOffline { Task { await model.load() } }
         }

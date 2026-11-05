@@ -31,6 +31,8 @@ struct InstanceDetailScreen: View {
 private struct InstanceDetailContent: View {
     @State private var model: InstanceDetailModel
     @State private var isEditing = false
+    /// 工作区：行是 `NavigationLink`，这个只给 `onSubpageRequest(.workspace)` 用。
+    @State private var isShowingWorkspace = false
     @State private var isConfirmingDeletion = false
     /// 复制了几次 id（成功触感的触发器）。
     @State private var copies = 0
@@ -93,6 +95,11 @@ private struct InstanceDetailContent: View {
         .navigationDestination(isPresented: $isEditing) {
             InstanceEditScreen(model: model)
         }
+        .navigationDestination(isPresented: $isShowingWorkspace) {
+            InstanceWorkspaceScreen(model: model)
+        }
+        .onSubpageRequest(.botinEdit, when: model.instance != nil) { isEditing = true }
+        .onSubpageRequest(.workspace, when: model.instance != nil) { isShowingWorkspace = true }
         .refreshable { await model.load() }
         .task { await model.load() }
         .onChange(of: app.isOffline) {
