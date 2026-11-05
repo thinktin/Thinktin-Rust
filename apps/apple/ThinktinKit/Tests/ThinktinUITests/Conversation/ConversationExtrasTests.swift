@@ -20,9 +20,12 @@ struct ConversationExtrasTests {
     func highlighter() {
         let plain = AttributedString("周报和周报，周报")
         let result = FindHighlighter.apply(plain, FindSegmentHighlight(query: "周报", current: 1))
-        let marked = result.runs.filter { $0.backgroundColor != nil }
+        // 用属性的类型取（`run.backgroundColor` 在 iOS 上 SwiftUI 和 UIKit 的属性域都有，和 nil 比会有歧义）。
+        typealias Background = AttributeScopes.SwiftUIAttributes.BackgroundColorAttribute
+        typealias Foreground = AttributeScopes.SwiftUIAttributes.ForegroundColorAttribute
+        let marked = result.runs.filter { $0[Background.self] != nil }
         #expect(marked.count == 3)
-        #expect(marked.filter { $0.foregroundColor == Theme.onAccent }.count == 1)
+        #expect(marked.filter { $0[Foreground.self] == Theme.onAccent }.count == 1)
         #expect(String(result.characters) == "周报和周报，周报")
         #expect(FindHighlighter.apply(plain, nil) == plain)
         #expect(FindHighlighter.apply(plain, FindSegmentHighlight(query: "")) == plain)
