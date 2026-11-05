@@ -162,7 +162,7 @@ workflows:
       xcode: latest
       vars:
         CARGO_INCREMENTAL: "0"
-        IOS_RUNTIME: ""
+        # IOS_RUNTIME 不在这里写空值：Codemagic 不收空字符串（校验报错，构建起不来）；不设就是最新的运行时。
     cache:
       cache_paths:
         - $HOME/.cargo/registry
