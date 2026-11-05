@@ -341,7 +341,8 @@ public enum VaultExtraText {
     }
 
     public static func invalidWebsite(_ language: DisplayLanguage = .current) -> String {
-        language == .chinese ? "网址看起来不对，比如 https://example.com。" : "That doesn't look like a web address, e.g. https://example.com."
+        language == .chinese
+            ? "网址看起来不对，比如 https://example.com。" : "That doesn't look like a web address, e.g. https://example.com."
     }
 
     // MARK: 卡片（参考 60、94–96）
@@ -374,7 +375,9 @@ public enum VaultExtraText {
         language == .chinese ? "账单地址" : "Billing address"
     }
 
-    public static func billingChoice(_ choice: VaultBillingAddressChoice, language: DisplayLanguage = .current) -> String {
+    public static func billingChoice(_ choice: VaultBillingAddressChoice, language: DisplayLanguage = .current)
+        -> String
+    {
         let zh = language == .chinese
         switch choice {
         case .none: return zh ? "不填" : "None"

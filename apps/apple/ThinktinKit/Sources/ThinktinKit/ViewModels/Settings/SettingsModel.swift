@@ -133,7 +133,8 @@ public final class SettingsModel {
                 rows: [
                     // 权限（参考 53 的第一行）：自然语言规则还没有后端，副标题按演示数据写。
                     SettingsRow(
-                        id: "permissions", systemImage: "hand.raised.square", title: AppRoute.permissions.title(language),
+                        id: "permissions", systemImage: "hand.raised.square",
+                        title: AppRoute.permissions.title(language),
                         subtitle: PermissionsDemoData.overview(language).settingsSubtitle(language),
                         action: .open(.permissions)),
                     SettingsRow(

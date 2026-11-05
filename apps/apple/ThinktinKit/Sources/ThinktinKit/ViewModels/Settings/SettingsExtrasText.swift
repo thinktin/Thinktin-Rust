@@ -37,7 +37,8 @@ public enum SettingsComingSoon: String, CaseIterable, Identifiable, Hashable, Se
                     + "aren't saved; Botins still ask for your approval before anything risky."
         case .subscribe, .restorePurchases:
             return zh
-                ? "App 内订阅还没有开放，方案和价格以上线时为准。" : "In-app subscriptions aren't available yet. Plans and prices will be announced at launch."
+                ? "App 内订阅还没有开放，方案和价格以上线时为准。"
+                : "In-app subscriptions aren't available yet. Plans and prices will be announced at launch."
         case .importMemory:
             return zh
                 ? "把记忆写进 Botin 要等服务端支持。粘贴的内容不会离开这台设备。"

@@ -51,7 +51,8 @@ struct PermissionRulesTests {
             }
             #expect(kind.title(.chinese) != kind.title(.english))
         }
-        #expect(PermissionRuleKind.alwaysAsk.placeholder(.chinese) != PermissionRuleKind.autoAllow.placeholder(.chinese))
+        #expect(
+            PermissionRuleKind.alwaysAsk.placeholder(.chinese) != PermissionRuleKind.autoAllow.placeholder(.chinese))
         #expect(PermissionRuleKind.alwaysAsk.title(.chinese) == "始终询问")
         #expect(PermissionRuleKind.autoAllow.title(.chinese) == "无需询问即允许")
     }
@@ -171,7 +172,8 @@ struct FeedbackDraftTests {
     func body() {
         let draft = FeedbackDraft(text: "  搜索没反应  ", instanceID: "a")
         let info = AppInfo(version: "0.1.0", build: "7")
-        let withBotin = draft.body(instance: instance("a", "小克"), appInfo: info, system: "iOS 18.1.0", language: .chinese)
+        let withBotin = draft.body(
+            instance: instance("a", "小克"), appInfo: info, system: "iOS 18.1.0", language: .chinese)
         #expect(withBotin.hasPrefix("搜索没反应\n\n"))
         #expect(withBotin.contains("App：ThinkTin 0.1.0（7）"))
         #expect(withBotin.contains("系统：iOS 18.1.0"))

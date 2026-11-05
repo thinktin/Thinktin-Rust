@@ -57,7 +57,8 @@ public struct FeedbackDraft: Hashable, Sendable {
     ) -> URL? {
         guard canSend else { return nil }
         let subject = Self.percentEncoded(Self.subject(language))
-        let body = Self.percentEncoded(self.body(instance: instance, appInfo: appInfo, system: system, language: language))
+        let body = Self.percentEncoded(
+            self.body(instance: instance, appInfo: appInfo, system: system, language: language))
         return URL(string: "mailto:\(Self.address)?subject=\(subject)&body=\(body)")
     }
 
