@@ -76,7 +76,8 @@
   C9 编排层 `orchestrator/src/projects.rs`（审计每人一条、回执、邀请通知不带名字；后台扫过期、撤删了的实例、删 30 天前的邀请）。
   C10 接口：`/v1/projects*`、`/v1/project-invites*`、`/v1/blocks*`；`[api.limits] invites_per_day`（20）、
   `invites_per_phone_per_day`（5）；总开关 `[api] cross_user_projects` 默认关；删实例后撤出共享项目。C11 client-core FFI
-  （`projects()`、`create_project_invite_link`、`accept_project_invite_link`、`project_invite_token` 等）。接着 C12 安卓绑定、C13 文档。
+  （`projects()`、`create_project_invite_link`、`accept_project_invite_link`、`project_invite_token` 等）；C12 安卓绑定；C13 文档
+  （projects-impl.md“8.14 做了什么”、compliance.md）。13 步都提交了。接着 8.14 的对抗评审，修完再 8.15。
 - 下一步：8.14 → 8.15–8.19。东京：Phase 0（docs/browser.md 第 8.1 节），过了一个模板开一个 `supported`。用户放好搜索 key（`THINKTIN_PARALLEL_SEARCH_KEY`）后做小测。
 
 ## ⚠️ 紧急交接（2026-10-29 16:00 UTC，本会话 session_016LgPcdynywrhrjCq8VVFLt 周额度快用完）
