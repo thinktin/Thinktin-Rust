@@ -242,7 +242,7 @@ public final class InstanceDetailModel {
         impactError = result.error
     }
 
-    /// 删除（二次确认之后）。已经不存在了（别处删了）也算删掉了。删掉了顺带删这台设备上记的头像外观和表情回应。
+    /// 删除（二次确认之后）。已经不存在了（别处删了）也算删掉了。删掉了顺带删这台设备上记的头像外观、表情回应，是主 Botin 的话清掉。
     @discardableResult
     public func delete() async -> Bool {
         guard !isDeleting, !isDeleted else { return false }
@@ -262,8 +262,9 @@ public final class InstanceDetailModel {
         }
         if isDeleted {
             appearances?.forget([instanceID])
-            // 这台设备上记的表情回应（对话页，规范 4.3.4）也一起删。
+            // 这台设备上记的表情回应（对话页，规范 4.3.4）、主 Botin（4.4.5）也一起清掉。
             MessageReactionStore.shared.forget(instanceID: instanceID)
+            PrimaryBotinStore.shared.forget(instanceID: instanceID)
         }
         return isDeleted
     }

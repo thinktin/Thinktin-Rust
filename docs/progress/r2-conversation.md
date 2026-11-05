@@ -17,11 +17,19 @@
   选择器，回应画在气泡下面，只存这台设备。ThinktinKit 的 `MessageReactions.swift`（`MessageReactionStore`、`EmojiCategory`、
   `EmojiCatalog`），界面 `MessageReactionViews.swift`、`MessageMenus.swift`；测试 `MessageReactionsTests`、`ConversationExtrasTests`。
 
+- 选择主 Botin（参考 10、11）：新路由 `AppRoute.primaryBotin`（sheet），页面 `PrimaryBotinPickerScreen`（×、确认、单选列表、
+  底部搜索、“暂无其他可选的 Botin”），入口是 Botin 资料“…”菜单的“替换主 Botin…”；只存这台设备（ThinktinKit `PrimaryBotin.swift`）。
+  测试 `PrimaryBotinTests`、`AppRouteTests`、`InstanceProfileTests`、`ConversationExtrasTests`。
+
 进行中：
-- 选择主 Botin（参考 11）。
+- 全部 Linux 检查。
 
 下一步：
-- 全部 Linux 检查、规范里的“已做”。
+- 交给整合的人：新任务（`NewTaskSheet`）、快捷指令、小组件默认选 `PrimaryBotinStore.shared.primaryID`；资料页头像加主 Botin 的星标
+  （参考 10）；注销账号时清掉 `MessageReactionStore` / `PrimaryBotinStore`。
+- 要在模拟器上看的（Linux 桩看不出来）：查找栏在 375pt 宽的机器上挤不挤、计数文字会不会截断；高亮的底色在深浅色下的可读性；
+  `onLongPressGesture` 在滚动的时间线里会不会误触、和链接的点按冲不冲突；长按面板中号时两排表情加列表放不放得下；
+  `Picker(.inline)` 在 iOS 26 sheet 里的打勾样式；`Menu` 套 `glassButtonStyle` + `.circle` 的“+”是不是圆的。
 
 坑和决定：
 - 查找的位置按“画出来的字”算：一个 `Text` 是一段（`MarkdownBlock.findSegments` 和 `MarkdownBlockView` 的顺序必须一致，改其中一个要
@@ -34,4 +42,7 @@
   没用了，留着是为了运行详情（别的线在改）的调用处不用改。
 - 回应的键是时间线里那一项的 id（事件序号），事件流重置后对不上，旧回应就看不到了。删了 Botin 时 `InstanceDetailModel.delete()`
   顺带 `MessageReactionStore.shared.forget(instanceID:)`（加了一行）；注销账号时没删（`DeleteAccountView` 只删了头像外观）。
+- `AppRoute.primaryBotin` 归 `.conversation`（`ConversationDestination` 接），这样不用动别的线的接入点；r2/connections 也在加路由，
+  合并时 `AppRoute.swift`、`AppRoute+Title.swift`、`AppRouteTests.swift`（`RouteSamples` 的下标和 `caseCount`）会冲突，两边的 case 都留、
+  下标顺着排。
 - 只动 `Screens/Conversation/*`、`ViewModels/Conversation/*`、`Components/ComposerBar.swift`、路由加 case、桩；不动 `ClientProtocol` / `MockClient` / `CoreClient`。

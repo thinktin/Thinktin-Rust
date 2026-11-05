@@ -104,6 +104,17 @@ struct ConversationExtrasTests {
                 reactions: ["🎉", "❤️"], onReact: { _ in }))
     }
 
+    @Test("选择主 Botin（参考 11）：有别的 Botin 时是单选列表，一个都没有时是空状态；路由交给对话的接入点")
+    func primaryBotin() {
+        hostAndLayout(
+            NavigationStack { PrimaryBotinPickerScreen(store: PrimaryBotinStore(defaults: nil)) }.previewShell())
+        hostAndLayout(
+            NavigationStack { PrimaryBotinPickerScreen(store: PrimaryBotinStore(defaults: nil)) }
+                .previewShell(.english, scheme: .dark, client: MockClient(state: DemoData.newAccountState())))
+        hostAndLayout(ConversationDestination(route: .primaryBotin).previewShell())
+        #expect(AppRoute.primaryBotin.feature == .conversation && AppRoute.primaryBotin.presentation == .sheet)
+    }
+
     @Test("高亮的消息能出图：用户消息（引用和正文）、回复、结果")
     func highlightedMessages() {
         let quoted = MessageQuote.compose(quote: "上周的周报", body: "周报再分一下")

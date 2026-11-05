@@ -18,6 +18,7 @@ extension AppRoute {
         case .run: ("运行详情", "Run details")
         case .runTree: ("运行树", "Run tree")
         case .activeRuns: ("进行中", "In progress")
+        case .primaryBotin: ("选择主 Botin", "Choose main Botin")
         case .agentCatalog: ("引擎", "Engines")
         case .agent: ("引擎详情", "Engine details")
         case .adopt: ("新建 Botin", "New Botin")

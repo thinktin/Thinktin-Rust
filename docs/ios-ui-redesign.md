@@ -703,6 +703,16 @@ docs/ios.md 第 6.1 节现在是“根（当前实例的对话）→ 目标页�
 底部 `.searchable`、空时 `ContentUnavailableView`、没结果 `ContentUnavailableView.search(text:)`）用来改两处现有的选择：
 `Shell/ShellDestination.swift` 的 `NewTaskSheet`（选在哪个实例上下任务）和团队编辑里的成员选择（`Screens/Teams/TeamsScreens.swift`）。
 
+- **已做（第 2 轮 r2/conversation，2026-11-05，用户要求“没有的功能也照参考把页面做出来”，推翻上面的“不做”）**：主 Botin 只记在
+  这台设备上（ThinktinKit `PrimaryBotin.swift` 的 `PrimaryBotinStore`，6.10 说的“本机存就行”的默认 Botin）。新路由
+  `AppRoute.primaryBotin`（sheet，归 `.conversation`，离线也能用，标题“选择主 Botin”），页面 `PrimaryBotinPickerScreen`
+  照参考 11：左上 ×、右上“确认”（`.confirmationAction`，没选或选的就是现在的主 Botin 时灰）、分组列表里系统单选
+  `Picker(.inline)`（头像 + 名字 + 状态）、`.searchable`“搜索 Botin”；不列现在的主 Botin 和删掉的，一个都没有时是参考 11 的
+  “暂无其他可选的 Botin”（`ContentUnavailableView`），搜不到是 `ContentUnavailableView.search`；脚注说明主 Botin 是干什么的、
+  只在这台设备上。入口照参考 10：Botin 资料“…”菜单第一组“替换主 Botin…”（`arrow.left.arrow.right`）、复制 ID。删了 Botin
+  时是主 Botin 的话清掉。**还没接**：新任务（`NewTaskSheet`）、快捷指令、小组件默认交给主 Botin，资料页头像上的星标（参考 10）——
+  这几页归别的线，接的时候读 `PrimaryBotinStore.shared.primaryID`。
+
 ### 4.5 任务与资料
 
 #### 4.5.1 实例的计划（21）

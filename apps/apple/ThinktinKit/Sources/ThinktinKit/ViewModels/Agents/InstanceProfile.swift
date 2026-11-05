@@ -118,7 +118,7 @@ public enum InstanceProfileText {
 
 // MARK: - 资料页右上“…”菜单（4.4.2）
 
-/// 资料页右上“…”菜单的一项（参考 10：替换主 Bot、复制 ID；ThinkTin 没有主 Botin，6.10）。
+/// 资料页右上“…”菜单的一项（参考 10：替换主 Bot、复制 ID；主 Botin 只记在这台设备上，`PrimaryBotinStore`，6.10）。
 public enum InstanceProfileMenuItem: Hashable, Sendable {
     /// 复制 Botin 的 id（复制后有成功的触感）。
     case copyID
@@ -130,6 +130,7 @@ public enum InstanceProfileMenuItem: Hashable, Sendable {
     public func title(_ language: DisplayLanguage) -> String {
         switch self {
         case .copyID: InstanceProfileText.copyID(language)
+        case .open(.primaryBotin): ConversationText.replacePrimaryBotin(hasPrimary: true, language: language)
         case .open(let route): route.title(language)
         case .delete: InstanceProfileText.delete(language)
         }
@@ -143,6 +144,7 @@ public enum InstanceProfileMenuItem: Hashable, Sendable {
             switch route {
             case .modelRoutes: "cpu"
             case .newPlan: "calendar.badge.plus"
+            case .primaryBotin: "arrow.left.arrow.right"
             default: "chevron.right"
             }
         case .delete: "trash"
@@ -152,22 +154,25 @@ public enum InstanceProfileMenuItem: Hashable, Sendable {
     /// 破坏性的（系统标红、放最后一组）。
     public var isDestructive: Bool { self == .delete }
 
-    /// 要联网才能做的（离线时灰掉）：新建计划、删除。复制 id、看模型路由（有缓存）离线也行。
+    /// 要联网才能做的（离线时灰掉）：新建计划、删除。复制 id、看模型路由（有缓存）、换主 Botin（本机）离线也行。
     public var needsConnection: Bool {
         switch self {
         case .copyID: false
         case .open(let route):
-            if case .modelRoutes = route { false } else { true }
+            switch route {
+            case .modelRoutes, .primaryBotin: false
+            default: true
+            }
         case .delete: true
         }
     }
 }
 
-/// 资料页“…”菜单的分组：复制 ID；模型路由、新建计划；最后一组删除。
+/// 资料页“…”菜单的分组：替换主 Botin、复制 ID（参考 10）；模型路由、新建计划；最后一组删除。
 public enum InstanceProfileMenu {
     public static func sections(instanceID: InstanceID) -> [[InstanceProfileMenuItem]] {
         [
-            [.copyID],
+            [.open(.primaryBotin), .copyID],
             [.open(.modelRoutes(instanceID)), .open(.newPlan(instanceID: instanceID))],
             [.delete],
         ]

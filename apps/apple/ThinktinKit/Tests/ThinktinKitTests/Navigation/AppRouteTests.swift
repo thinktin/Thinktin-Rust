@@ -27,9 +27,10 @@ enum RouteSamples {
         .newTask, .frozen, .upgrade,
         .pairComputer(code: "thinktin-pair:v1?d=mac"),
         .adopt(agentID: nil),
+        .primaryBotin,
     ]
 
-    static let caseCount = 45
+    static let caseCount = 46
 
     static func index(of route: AppRoute) -> Int {
         switch route {
@@ -78,6 +79,7 @@ enum RouteSamples {
         case .upgrade: 42
         case .pairComputer: 43
         case .adopt: 44
+        case .primaryBotin: 45
         }
     }
 }
@@ -107,6 +109,7 @@ struct AppRouteTests {
         #expect(AppRoute.agent("claude").title(.english) == "Engine details")
         #expect(AppRoute.plans(instanceID: "i").title(.chinese) == AppRoute.plans(instanceID: nil).title(.chinese))
         #expect(AppRoute.home.title(.chinese) == "首页")
+        #expect(AppRoute.primaryBotin.title(.chinese) == "选择主 Botin")
     }
 
     @Test("页面归哪个功能（工作包）")
@@ -114,7 +117,7 @@ struct AppRouteTests {
         let expected: [AppRoute: AppFeature] = [
             .signIn: .account, .devices: .account, .account: .account, .pairComputer(code: "c"): .account,
             .conversation("i"): .conversation, .run("r"): .conversation,
-            .runTree("r"): .conversation, .activeRuns: .conversation,
+            .runTree("r"): .conversation, .activeRuns: .conversation, .primaryBotin: .conversation,
             .agentCatalog: .agents, .agent("a"): .agents, .instance("i"): .agents,
             .adopt(agentID: nil): .agents, .adopt(agentID: "a"): .agents,
             .credentials: .models, .addCredential: .models, .credential("c"): .models, .modelRoutes("i"): .models,
@@ -148,7 +151,7 @@ struct AppRouteTests {
         }
         for route in [
             AppRoute.newTask, .addCredential, .newPlan(instanceID: nil), .editPlan("p"), .onboarding,
-            .pairComputer(code: "c"), .settings, .adopt(agentID: nil), .adopt(agentID: "claude"),
+            .pairComputer(code: "c"), .settings, .adopt(agentID: nil), .adopt(agentID: "claude"), .primaryBotin,
         ] {
             #expect(route.presentation == .sheet, "\(route)")
         }
@@ -231,7 +234,7 @@ struct AppRouteTests {
         ] {
             #expect(route.offlinePolicy == .unavailable, "\(route)")
         }
-        for route in [AppRoute.licenses, .about, .search, .settings] {
+        for route in [AppRoute.licenses, .about, .search, .settings, .primaryBotin] {
             #expect(route.offlinePolicy == .local, "\(route)")
         }
         #expect(OfflinePolicy.local.bannerMessage(.chinese) == nil)

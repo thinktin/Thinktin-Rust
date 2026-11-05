@@ -43,21 +43,24 @@ struct InstanceProfileTests {
         #expect(model.routeStatus.defaultModelValue(.chinese) == "claude-sonnet-5-5")
     }
 
-    @Test("“…”菜单：复制 ID；模型路由、新建计划；最后删除（标红）；离线时只有复制和路由能用")
+    @Test("“…”菜单：替换主 Botin、复制 ID；模型路由、新建计划；最后删除（标红）；离线时只有换主 Botin、复制和路由能用")
     func menu() {
         let sections = InstanceProfileMenu.sections(instanceID: DemoData.writerID)
         #expect(
             sections == [
-                [.copyID],
+                [.open(.primaryBotin), .copyID],
                 [.open(.modelRoutes(DemoData.writerID)), .open(.newPlan(instanceID: DemoData.writerID))],
                 [.delete],
             ])
         let items = sections.flatMap { $0 }
         #expect(items.filter(\.isDestructive) == [.delete])
-        #expect(items.filter { !$0.needsConnection } == [.copyID, .open(.modelRoutes(DemoData.writerID))])
+        #expect(
+            items.filter { !$0.needsConnection } == [
+                .open(.primaryBotin), .copyID, .open(.modelRoutes(DemoData.writerID)),
+            ])
         // 每一项都有自己的图标（不是兜底的箭头）和字。
         #expect(items.allSatisfy { $0.systemImage != "chevron.right" })
-        #expect(items.map { $0.title(.chinese) }.first == "复制 Botin ID")
+        #expect(items.map { $0.title(.chinese) }.prefix(2) == ["替换主 Botin…", "复制 Botin ID"])
         #expect(InstanceProfileMenuItem.delete.title(.english) == "Delete this Botin")
     }
 
