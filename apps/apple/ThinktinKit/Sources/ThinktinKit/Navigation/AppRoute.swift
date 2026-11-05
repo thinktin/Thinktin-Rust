@@ -45,6 +45,9 @@ public enum AppRoute: Hashable, Sendable, Codable {
     case adopt(agentID: AgentID?)
     /// 实例详情：状态说明、改名、升级 / 回滚、删除。深链 `thinktin://instance/{id}` 打开它（和安卓一致）。
     case instance(InstanceID)
+    /// 观看与接管（规范 4.6.2，参考 27、29–31、89）：实例云端桌面的画面，全屏黑底，只看或接管控制。入口是工作区页的
+    /// “观看与接管”（以后加对话里“等你接管”的状态行）。画面接口还没有，页面是演示（占位画面、“即将推出”）。
+    case instanceScreen(InstanceID)
 
     // MARK: 模型 key（12.4）
 
@@ -156,6 +159,7 @@ extension AppRoute {
         case .signIn, .account, .devices, .pairComputer: .account
         case .conversation, .run, .runTree, .activeRuns: .conversation
         case .agentCatalog, .agent, .adopt, .instance: .agents
+        case .instanceScreen: .agents
         case .credentials, .addCredential, .credential, .modelRoutes, .usage: .models
         case .plans, .plan, .newPlan, .editPlan, .confirmPlan: .plans
         case .teams, .team, .teamTemplates, .pipelineEditor: .teams
@@ -196,6 +200,7 @@ extension AppRoute {
     public var instanceID: InstanceID? {
         switch self {
         case .conversation(let id), .instance(let id), .modelRoutes(let id): id
+        case .instanceScreen(let id): id
         case .newPlan(let id), .artifacts(let id), .plans(let id): id
         default: nil
         }
@@ -207,6 +212,7 @@ extension AppRoute {
     public var returnsToConversation: Bool {
         switch self {
         case .instance, .modelRoutes, .run, .runTree, .artifact: true
+        case .instanceScreen: true
         case .plans(let instanceID), .artifacts(let instanceID): instanceID != nil
         default: false
         }

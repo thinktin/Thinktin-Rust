@@ -9,9 +9,10 @@ import ThinktinKit
 /// - “状态”一行（状态点 + 名字），脚注是状态说明（运行中、休眠、冷存储，唤醒要多久）；
 /// - “引擎”一组：引擎版本、“换到别的版本”（`Picker(.menu)`，选了先确认）、接入方式；脚注是“下次唤醒时生效、工作区保留”，
 ///   刚换过时写换到了哪个版本；
-/// - 右上“?”弹说明（参考 28 的版式：图标 + 标题 + 多行灰字，`WorkspaceHelp`）。
+/// - 右上“?”弹说明（参考 28 的版式：图标 + 标题 + 多行灰字，`WorkspaceHelp`）；
+/// - 最上面一行“观看与接管”（参考 09 资料页的“电脑”行进的那一页）：压进 `InstanceScreenView`（画面接口还没有，是演示）。
 ///
-/// 重置工作区、磁盘空间、看画面要后端（6.17、4.6.2），第 3 轮。离线时不能换版本。
+/// 重置工作区、磁盘空间要后端（6.17），第 3 轮。离线时不能换版本。
 struct InstanceWorkspaceScreen: View {
     let model: InstanceDetailModel
 
@@ -28,6 +29,16 @@ struct InstanceWorkspaceScreen: View {
         let model = self.model
         Form {
             if let instance = model.instance {
+                Section {
+                    NavigationLink {
+                        InstanceScreenView(instanceID: instance.id)
+                    } label: {
+                        LabeledRow(
+                            systemImage: "display", title: InstanceScreenText.title(language),
+                            detail: InstanceScreenText.entryDetail(language))
+                    }
+                }
+                .themedRow()
                 if let upgrade = model.upgradeOption {
                     Section {
                         Button {
@@ -176,16 +187,32 @@ struct InstanceWorkspaceScreen: View {
     }
 }
 
-/// 工作区说明（右上“?”，参考 28 的版式）：large sheet，左上 ×，分组列出每一项（图标 + 标题 + 多行灰字）。
+/// 工作区说明（右上“?”，参考 28 的版式）：状态、版本两组（`WorkspaceHelp`）。
 struct WorkspaceHelpSheet: View {
-    @Environment(\.dismiss) private var dismiss
     @Environment(\.displayLanguage) private var language
 
     var body: some View {
         let language = self.language
+        GroupedHelpSheet(
+            title: InstanceWorkspaceText.helpTitle(language),
+            sections: WorkspaceHelp.sections(language) { $0.localizedName(language) })
+    }
+}
+
+/// 说明 sheet（参考 28 的版式，工作区说明和观看与接管的使用说明共用）：large sheet，左上 ×，分组列出每一项（图标 + 标题 +
+/// 多行灰字）；`footer` 写在最后一组下面。
+struct GroupedHelpSheet: View {
+    let title: String
+    let sections: [WorkspaceHelpSection]
+    var footer: String?
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        let lastID = sections.last?.id
         NavigationStack {
             List {
-                ForEach(WorkspaceHelp.sections(language) { $0.localizedName(language) }) { section in
+                ForEach(sections) { section in
                     Section {
                         ForEach(section.items) { item in
                             Label {
@@ -207,13 +234,17 @@ struct WorkspaceHelpSheet: View {
                     } header: {
                         Text(section.title)
                             .textCase(nil)
+                    } footer: {
+                        if let footer, section.id == lastID {
+                            Text(footer)
+                        }
                     }
                     .themedRow()
                 }
             }
             .insetGroupedList()
             .themedGroupedBackground()
-            .inlineNavigationTitle(InstanceWorkspaceText.helpTitle(language))
+            .inlineNavigationTitle(title)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     CloseButton { dismiss() }

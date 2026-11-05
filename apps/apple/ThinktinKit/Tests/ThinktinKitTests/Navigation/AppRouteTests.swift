@@ -27,9 +27,10 @@ enum RouteSamples {
         .newTask, .frozen, .upgrade,
         .pairComputer(code: "thinktin-pair:v1?d=mac"),
         .adopt(agentID: nil),
+        .instanceScreen("inst-1"),
     ]
 
-    static let caseCount = 45
+    static let caseCount = 46
 
     static func index(of route: AppRoute) -> Int {
         switch route {
@@ -78,6 +79,7 @@ enum RouteSamples {
         case .upgrade: 42
         case .pairComputer: 43
         case .adopt: 44
+        case .instanceScreen: 45
         }
     }
 }
@@ -107,6 +109,8 @@ struct AppRouteTests {
         #expect(AppRoute.agent("claude").title(.english) == "Engine details")
         #expect(AppRoute.plans(instanceID: "i").title(.chinese) == AppRoute.plans(instanceID: nil).title(.chinese))
         #expect(AppRoute.home.title(.chinese) == "首页")
+        #expect(AppRoute.instanceScreen("i").title(.chinese) == InstanceScreenText.title(.chinese))
+        #expect(AppRoute.instanceScreen("i").title(.english) == "Watch and take over")
     }
 
     @Test("页面归哪个功能（工作包）")
@@ -117,6 +121,7 @@ struct AppRouteTests {
             .runTree("r"): .conversation, .activeRuns: .conversation,
             .agentCatalog: .agents, .agent("a"): .agents, .instance("i"): .agents,
             .adopt(agentID: nil): .agents, .adopt(agentID: "a"): .agents,
+            .instanceScreen("i"): .agents,
             .credentials: .models, .addCredential: .models, .credential("c"): .models, .modelRoutes("i"): .models,
             .usage: .models,
             .plans(instanceID: nil): .plans, .plans(instanceID: "i"): .plans, .plan("p"): .plans,
@@ -156,6 +161,7 @@ struct AppRouteTests {
             AppRoute.conversation("i"), .run("r"), .inbox, .vaultRequest("v"),
             .pipelineEditor(planID: nil, teamID: nil),
             .plans(instanceID: nil), .plans(instanceID: "i"), .agentCatalog, .instance("i"), .vault, .credentials,
+            .instanceScreen("i"),
         ] {
             #expect(route.presentation == .push, "\(route)")
         }
@@ -196,6 +202,8 @@ struct AppRouteTests {
         #expect(AppRoute.newPlan(instanceID: nil).instanceID == nil)
         #expect(AppRoute.run("r").instanceID == nil)
         #expect(AppRoute.adopt(agentID: "claude").instanceID == nil)
+        #expect(AppRoute.instanceScreen("g").instanceID == "g")
+        #expect(!AppRoute.instanceScreen("g").isTopLevel)
         #expect(AppRoute.home.instanceID == nil)
     }
 
@@ -203,7 +211,7 @@ struct AppRouteTests {
     func returnsToConversation() {
         for route in [
             AppRoute.instance("i"), .modelRoutes("i"), .run("r"), .runTree("r"), .artifact("a", runID: "r"),
-            .plans(instanceID: "i"), .artifacts(instanceID: "i"),
+            .plans(instanceID: "i"), .artifacts(instanceID: "i"), .instanceScreen("i"),
         ] {
             #expect(route.returnsToConversation, "\(route)")
         }
@@ -227,7 +235,7 @@ struct AppRouteTests {
         for route in [
             AppRoute.plans(instanceID: nil), .plans(instanceID: "i"), .plan("p"), .approvals, .credentials,
             .modelRoutes("i"), .usage, .vault, .teams, .agentCatalog, .imChannels, .devices,
-            .artifacts(instanceID: nil), .adopt(agentID: nil), .adopt(agentID: "claude"),
+            .artifacts(instanceID: nil), .adopt(agentID: nil), .adopt(agentID: "claude"), .instanceScreen("i"),
         ] {
             #expect(route.offlinePolicy == .unavailable, "\(route)")
         }

@@ -4,8 +4,9 @@ import ThinktinKit
 
 @testable import ThinktinUI
 
-/// Botin 的附加页（第 2 轮 r2/botin）：编辑页的“语音通话”组（参考 12、13–17、85–88）、改头像的三个分段（18–20）。
-/// 视图模型的逻辑在 ThinktinKitTests 的 `BotinVoiceTests`、`AvatarSourcesTests` 里测。
+/// Botin 的附加页（第 2 轮 r2/botin）：编辑页的“语音通话”组（参考 12、13–17、85–88）、改头像的三个分段（18–20）、
+/// 观看与接管和它的使用说明（27–31、89）。视图模型的逻辑在 ThinktinKitTests 的 `BotinVoiceTests`、`AvatarSourcesTests`、
+/// `InstanceScreenTests` 里测。
 @MainActor
 @Suite("Botin 附加页的界面")
 struct BotinExtrasScreensTests {
@@ -40,5 +41,36 @@ struct BotinExtrasScreensTests {
                 NavigationStack { InstanceAvatarScreen(editor: editor, tab: tab) }.previewShell()
                     .dynamicTypeSize(.accessibility3))
         }
+    }
+
+    @Test("观看与接管：接入点（有的、找不到的 Botin）、连接中、只看、控制中（触控板模式），使用说明")
+    func instanceScreen() async {
+        for id in [DemoData.writerID, InstanceID("gone")] {
+            hostAndLayout(NavigationStack { AgentsDestination(route: .instanceScreen(id)) }.previewShell())
+            hostAndLayout(
+                NavigationStack { AgentsDestination(route: .instanceScreen(id)) }.previewShell(.english, scheme: .dark))
+        }
+        let connecting = InstanceScreenModel(instanceID: DemoData.writerID, connectDelay: .seconds(3600))
+        hostAndLayout(NavigationStack { InstanceScreenContent(model: connecting) }.previewShell())
+
+        let viewing = InstanceScreenModel(instanceID: DemoData.writerID, connectDelay: .zero)
+        await viewing.connect()
+        #expect(viewing.phase == .viewing)
+        hostAndLayout(NavigationStack { InstanceScreenContent(model: viewing) }.previewShell())
+
+        let controlling = InstanceScreenModel(instanceID: DemoData.reviewerID, connectDelay: .zero)
+        await controlling.connect()
+        controlling.takeControl()
+        controlling.isTrackpadMode = true
+        #expect(controlling.phase == .controlling)
+        hostAndLayout(
+            NavigationStack { InstanceScreenContent(model: controlling) }.previewShell(.english, scheme: .dark))
+        hostAndLayout(
+            NavigationStack { InstanceScreenContent(model: controlling) }.previewShell()
+                .dynamicTypeSize(.accessibility3))
+
+        hostAndLayout(InstanceScreenHelpSheet().previewShell())
+        hostAndLayout(InstanceScreenHelpSheet().previewShell(.english, scheme: .dark).dynamicTypeSize(.accessibility3))
+        hostAndLayout(InstanceScreenPlaceholder(showsPointer: true).previewShell())
     }
 }
