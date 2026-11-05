@@ -112,6 +112,8 @@ impl JpushClient {
             ("tt_inbox", &t.inbox_id),
             ("tt_vault_request", &t.vault_request_id),
             ("tt_egress_request", &t.egress_request_id),
+            ("tt_project", &t.project_id),
+            ("tt_project_invite", &t.project_invite_id),
             ("tt_subtype", &message.subtype),
         ] {
             if let Some(v) = v {
@@ -349,6 +351,8 @@ mod tests {
                 inbox_id: Some("inbox-3".into()),
                 vault_request_id: None,
                 egress_request_id: None,
+                project_id: None,
+                project_invite_id: None,
             },
             ttl: Some(Duration::from_secs(3600)),
             ai_generated: false,
@@ -429,6 +433,16 @@ mod tests {
                 &a["extras"]["tt_vault_request"]
             ),
             (&json!("tt_approval"), &json!(1), &json!("vr-7"))
+        );
+        // 项目回执（8.14）的跳转目标。
+        let mut pi = message(PushKind::Info);
+        pi.target.project_id = Some("p-1".into());
+        pi.target.project_invite_id = Some("pi-2".into());
+        let p = client.payload("1a0018970a8b7c6d5e4", &pi);
+        let x = &p["notification"]["android"]["extras"];
+        assert_eq!(
+            (&x["tt_project"], &x["tt_project_invite"]),
+            (&json!("p-1"), &json!("pi-2"))
         );
         // agent 写的正文带显式标识。
         m.ai_generated = true;

@@ -579,6 +579,8 @@ mod tests {
             subtype: None,
             vault_request_id: None,
             egress_request_id: None,
+            project_id: None,
+            project_invite_id: None,
         }
     }
 

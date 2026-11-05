@@ -140,6 +140,12 @@ pub struct PushTarget {
     /// agent 想访问的网站（2.7，`GET /v1/egress-requests` 里的 id）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub egress_request_id: Option<String>,
+    /// 项目回执（8.14，`thinktin://project/{id}`）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    /// 项目邀请（8.14，`thinktin://project-invite/{id}`）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_invite_id: Option<String>,
 }
 
 /// 发送结果。

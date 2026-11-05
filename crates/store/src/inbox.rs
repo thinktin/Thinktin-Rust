@@ -2,8 +2,8 @@
 
 use chrono::{DateTime, Utc};
 use proto::domain::{
-    ApprovalId, EgressRequestId, InboxItem, InboxItemId, InstanceId, PlanId, RunId, UserId,
-    VaultRequestId, valid_subtype,
+    ApprovalId, EgressRequestId, InboxItem, InboxItemId, InstanceId, PlanId, ProjectId,
+    ProjectInviteId, RunId, UserId, VaultRequestId, valid_subtype,
 };
 use uuid::Uuid;
 
@@ -27,12 +27,15 @@ pub struct NewInboxItem {
     pub vault_request_id: Option<VaultRequestId>,
     /// 出网要问用户的网站（2.7）。
     pub egress_request_id: Option<EgressRequestId>,
+    /// 项目回执（8.14）：只有 worker 写得出（触发器 inbox_project_guard）。
+    pub project_id: Option<ProjectId>,
+    pub project_invite_id: Option<ProjectInviteId>,
 }
 
 macro_rules! columns {
     () => {
         "id, instance_id, run_id, plan_id, approval_id, kind, title, body, ai_generated, read_at, created_at, \
-         subtype, vault_request_id, egress_request_id"
+         subtype, vault_request_id, egress_request_id, project_id, project_invite_id"
     };
 }
 
@@ -49,6 +52,8 @@ type Row = (
     Option<DateTime<Utc>>,
     DateTime<Utc>,
     Option<String>,
+    Option<Uuid>,
+    Option<Uuid>,
     Option<Uuid>,
     Option<Uuid>,
 );
@@ -69,6 +74,8 @@ fn item(r: Row) -> InboxItem {
         subtype,
         vault_request,
         egress_request,
+        project,
+        project_invite,
     ) = r;
     InboxItem {
         id: InboxItemId(id),
@@ -85,6 +92,8 @@ fn item(r: Row) -> InboxItem {
         subtype,
         vault_request_id: vault_request.map(VaultRequestId),
         egress_request_id: egress_request.map(EgressRequestId),
+        project_id: project.map(ProjectId),
+        project_invite_id: project_invite.map(ProjectInviteId),
     }
 }
 
@@ -105,8 +114,8 @@ impl<R> Tx<R> {
         let done = sqlx::query(
             "INSERT INTO inbox_items \
                (id, user_id, instance_id, run_id, plan_id, approval_id, kind, title, body, dedupe_key, ai_generated, \
-                subtype, vault_request_id, egress_request_id) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) \
+                subtype, vault_request_id, egress_request_id, project_id, project_invite_id) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) \
              ON CONFLICT (user_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING",
         )
         .bind(id.0)
@@ -123,6 +132,8 @@ impl<R> Tx<R> {
         .bind(new.subtype.as_deref())
         .bind(new.vault_request_id.map(|v| v.0))
         .bind(new.egress_request_id.map(|v| v.0))
+        .bind(new.project_id.map(|v| v.0))
+        .bind(new.project_invite_id.map(|v| v.0))
         .execute(self.conn())
         .await?;
         Ok((done.rows_affected() == 1).then_some(id))

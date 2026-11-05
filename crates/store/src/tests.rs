@@ -15,6 +15,8 @@ use crate::{
     RunChange,
 };
 
+mod projects;
+
 const LEASE: Duration = Duration::from_secs(60);
 
 async fn user(db: &Db, phone: &str) -> UserId {

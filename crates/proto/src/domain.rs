@@ -74,6 +74,7 @@ id_type!(
     PlanHookId,
     EgressRequestId,
     ProjectId,
+    ProjectInviteId,
 );
 
 // 团队就是只有创建者一个用户的项目（8.13，docs/projects.md 第 3 节）：id 一样。
@@ -1153,6 +1154,12 @@ pub struct InboxItem {
     /// agent 想访问的网站（`kind` 是 `egress_request` 时，2.7）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub egress_request_id: Option<EgressRequestId>,
+    /// 项目回执（8.14：邀请、加入、退出）对应的项目；打开时项目没了接口回 404。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<ProjectId>,
+    /// 项目邀请（`subtype` 是 `project_invite` 时）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_invite_id: Option<ProjectInviteId>,
 }
 
 str_enum!(

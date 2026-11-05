@@ -21,7 +21,7 @@ use notify::im::{ImHook, ImMessage, ImSender};
 use notify::{PushChannel, PushKind, PushMessage, PushOutcome, PushTarget};
 use proto::domain::{
     ApprovalId, EgressRequestId, ImChannelId, ImEvent, ImVendor, InboxItemId, InstanceId, Locale,
-    PlanId, PushChannelKind, RunId, UserId, VaultRequestId,
+    PlanId, ProjectId, ProjectInviteId, PushChannelKind, RunId, UserId, VaultRequestId,
 };
 use serde::{Deserialize, Serialize};
 use store::{Db, ImSlot, NewInboxItem, NewOutboxItem, OutboxItem, Tenant, Tx, Worker};
@@ -111,6 +111,9 @@ pub struct Notice {
     pub vault_request: Option<VaultRequestId>,
     /// agent 想访问的网站（[`PushKind::EgressRequest`]）。
     pub egress_request: Option<EgressRequestId>,
+    /// 项目回执（8.14）对应的项目、邀请。
+    pub project: Option<ProjectId>,
+    pub project_invite: Option<ProjectInviteId>,
     /// 是哪一种提醒（[`proto::domain::notice_subtype`]；运行在等什么时是 `wait_code`）。
     pub subtype: Option<String>,
     /// 推送分组（同一个运行的通知归成一组）。
@@ -137,6 +140,8 @@ impl Notice {
             approval: None,
             vault_request: None,
             egress_request: None,
+            project: None,
+            project_invite: None,
             subtype: None,
             thread_id: None,
             collapse_id: None,
@@ -160,6 +165,8 @@ impl Notice {
             subtype: self.subtype.clone(),
             vault_request_id: self.vault_request,
             egress_request_id: self.egress_request,
+            project_id: self.project,
+            project_invite_id: self.project_invite,
         }
     }
 
@@ -185,6 +192,8 @@ impl Notice {
                 inbox_id: inbox.map(|i| i.to_string()),
                 vault_request_id: self.vault_request.map(|v| v.to_string()),
                 egress_request_id: self.egress_request.map(|v| v.to_string()),
+                project_id: self.project.map(|v| v.to_string()),
+                project_invite_id: self.project_invite.map(|v| v.to_string()),
             },
             ttl: self.ttl,
             ai_generated: self.ai_generated,

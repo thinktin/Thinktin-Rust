@@ -1021,6 +1021,12 @@ pub struct InboxItem {
     /// 拒绝”。用户答了、请求过期了，这一条服务端自动标成已读。
     #[uniffi(default = None)]
     pub egress_request_id: Option<String>,
+    /// 项目回执（8.14：邀请、加入、退出）对应的项目（`thinktin://project/{id}`）。
+    #[uniffi(default = None)]
+    pub project_id: Option<String>,
+    /// 项目邀请（`subtype` 是 project_invite 时，`thinktin://project-invite/{id}`）。
+    #[uniffi(default = None)]
+    pub project_invite_id: Option<String>,
 }
 
 impl From<d::InboxItem> for InboxItem {
@@ -1040,6 +1046,8 @@ impl From<d::InboxItem> for InboxItem {
             subtype: i.subtype,
             vault_request_id: i.vault_request_id.map(|x| x.to_string()),
             egress_request_id: i.egress_request_id.map(|x| x.to_string()),
+            project_id: i.project_id.map(|x| x.to_string()),
+            project_invite_id: i.project_invite_id.map(|x| x.to_string()),
         }
     }
 }

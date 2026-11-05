@@ -32,6 +32,11 @@ async def main():
                    awaiting_confirmation=False, revision=1, policy_json="{}", created_at_ms=0,
                    triggers=[], steps=[])
     assert plan.catch_up == "once" and plan.policy == p, plan
+    # 收件箱条目后加的字段（保险箱、出网、项目回执）默认是空的。
+    item = cc.InboxItem(id="x", instance_id=None, run_id=None, plan_id=None, approval_id=None, kind="info",
+                        title="t", body="b", ai_generated=False, read=False, created_at_ms=0)
+    assert (item.subtype, item.vault_request_id, item.egress_request_id, item.project_id,
+            item.project_invite_id) == (None, None, None, None, None), item
     store = Store()
     d = tempfile.mkdtemp()
     cfg = cc.ClientConfig(base_url="http://127.0.0.1:9", cache_path=os.path.join(d, "c.db"),

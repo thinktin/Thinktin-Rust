@@ -143,6 +143,8 @@ impl ApnsClient {
             ("inbox", &t.inbox_id),
             ("vault_request", &t.vault_request_id),
             ("egress_request", &t.egress_request_id),
+            ("project", &t.project_id),
+            ("project_invite", &t.project_invite_id),
             ("subtype", &message.subtype),
         ] {
             if let Some(v) = v {
@@ -419,6 +421,8 @@ mod tests {
                 inbox_id: None,
                 vault_request_id: None,
                 egress_request_id: None,
+                project_id: None,
+                project_invite_id: None,
             },
             ttl: Some(Duration::from_secs(3600)),
             ai_generated: false,
@@ -506,27 +510,44 @@ mod tests {
         m.target = PushTarget::default();
         client.send(TOKEN, &m).await;
         client.send(TOKEN, &message(PushKind::PlanConfirm)).await;
+        {
+            let seen = fake.seen.lock().unwrap();
+            let (_, headers, body) = &seen[0];
+            assert_eq!(headers["apns-priority"], "10");
+            assert_eq!(body["aps"]["category"], "VAULT_REQUEST");
+            assert_eq!(body["aps"]["badge"], 3);
+            assert_eq!(body["aps"]["interruption-level"], "time-sensitive");
+            assert_eq!(
+                body["tt"],
+                json!({"kind": "vault_request", "run": "run-1", "vault_request": "vr-7"})
+            );
+            let (_, headers, body) = &seen[1];
+            assert_eq!(headers["apns-priority"], "5");
+            assert!(body["aps"].get("badge").is_none(), "no count, no badge key");
+            assert_eq!(
+                body["tt"],
+                json!({"kind": "info", "subtype": "account_restored"})
+            );
+            let (_, headers, body) = &seen[2];
+            assert_eq!(headers["apns-priority"], "10");
+            assert_eq!(body["aps"]["category"], "PLAN_CONFIRM");
+            assert!(body["aps"].get("interruption-level").is_none());
+        }
+        // 项目回执（8.14）的跳转目标。
+        let mut m = message(PushKind::Info);
+        m.subtype = Some("project_invite".into());
+        m.target = PushTarget {
+            project_id: Some("p-1".into()),
+            project_invite_id: Some("pi-2".into()),
+            ..PushTarget::default()
+        };
+        client.send(TOKEN, &m).await;
         let seen = fake.seen.lock().unwrap();
-        let (_, headers, body) = &seen[0];
-        assert_eq!(headers["apns-priority"], "10");
-        assert_eq!(body["aps"]["category"], "VAULT_REQUEST");
-        assert_eq!(body["aps"]["badge"], 3);
-        assert_eq!(body["aps"]["interruption-level"], "time-sensitive");
+        let (_, _, invite) = seen.last().unwrap();
         assert_eq!(
-            body["tt"],
-            json!({"kind": "vault_request", "run": "run-1", "vault_request": "vr-7"})
+            invite["tt"],
+            json!({"kind": "info", "subtype": "project_invite", "project": "p-1", "project_invite": "pi-2"})
         );
-        let (_, headers, body) = &seen[1];
-        assert_eq!(headers["apns-priority"], "5");
-        assert!(body["aps"].get("badge").is_none(), "no count, no badge key");
-        assert_eq!(
-            body["tt"],
-            json!({"kind": "info", "subtype": "account_restored"})
-        );
-        let (_, headers, body) = &seen[2];
-        assert_eq!(headers["apns-priority"], "10");
-        assert_eq!(body["aps"]["category"], "PLAN_CONFIRM");
-        assert!(body["aps"].get("interruption-level").is_none());
     }
 
     #[tokio::test]

@@ -248,6 +248,8 @@ impl FcmClient {
             ("tt_inbox", &t.inbox_id),
             ("tt_vault_request", &t.vault_request_id),
             ("tt_egress_request", &t.egress_request_id),
+            ("tt_project", &t.project_id),
+            ("tt_project_invite", &t.project_invite_id),
             ("tt_subtype", &message.subtype),
         ] {
             if let Some(v) = v {
